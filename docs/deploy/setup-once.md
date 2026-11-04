@@ -139,10 +139,10 @@ FORWARDED_ALLOW_IPS=<위에서 확인한 서브넷>
 ```
 
 ```bash
-docker compose up -d backend proxy
+docker compose up -d backend && docker compose restart proxy
 ```
 
-**proxy도 같이 다시 시작한다.** nginx는 upstream 호스트 이름을 시작할 때 한 번만 풀기 때문에, backend 컨테이너만 다시 만들면 새 IP를 못 찾고 `/api`가 502를 낸다.
+**proxy는 `restart`로 따로 다시 시작한다.** `up -d`는 설정이 바뀐 서비스만 다시 만들고 proxy 설정은 그대로라, `up -d backend proxy`로는 proxy가 재시작되지 않는다. nginx는 upstream 호스트 이름을 시작할 때 한 번만 풀기 때문에, backend 컨테이너만 다시 만들고 proxy를 두면 새 IP를 못 찾고 `/api`가 502를 낸다. backend를 다시 만드는 단계마다 이 두 명령을 함께 쓴다.
 
 - **대역 정책 결정 대기(2026-11-04).** 서버가 고정 대역 정책이면 `docker-compose.yml` 맨 아래 `networks.default`에 `ipam` 블록을 추가하고 `FORWARDED_ALLOW_IPS`도 같은 대역으로 맞춘다. 서버의 다른 스택이 쓰는 대역과 겹치지 않아야 한다(`docker network inspect $(docker network ls -q) -f '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}'`). **서브넷은 오버라이드 파일로 못 바꾼다** — compose가 `ipam.config`를 교체하지 않고 누적 병합해 `Pool overlaps with other one`으로 실패한다(bpm 실측). `docker-compose.yml`을 직접 고친다.
 - 자동 할당 대역은 `docker compose down` 뒤 다시 올리면 바뀔 수 있다. 바뀌면 이 단계를 다시 한다.
@@ -164,7 +164,7 @@ docker compose up -d backend proxy
    - 처음이므로 "Would remove"(삭제 예정)와 "Login IDs that differ only in letter case"는 비어 있어야 한다(둘 다 DB에 이미 있는 행과 비교하는 값이다). 이후 동기화를 실행하기 전에도 미리보기에서 이 두 항목이 비어 있는지 본다 — 대소문자만 다른 loginId가 보이면 **중단**한다. 실 동기화가 새 행을 만들고 옛 행을 지워 그 사람의 권한 부여가 고아가 된다.
 2. **Run sync now.** 결과 카드에서 "Nothing was changed"(중단) 문구가 없고, "Removed"가 미리보기의 "Would remove"와 같은지 본다. 안전장치가 있다: 행 수가 피드 헤더와 맞지 않거나, 빈 피드이거나, 삭제가 `HR_SYNC_DELETE_CAP_PCT`(%)를 넘으면 DB를 전혀 건드리지 않고 중단한다. 같은 동기화는 5분 안에 다시 실행되지 않는다("Directory sync just ran...").
 3. 아래 "Recent runs"에 기록이 남았는지 보고, 홈을 새로고침해 **내 이름·부서가 채워졌는지** 본다. 비어 있으면 Keycloak `preferred_username`이 HR의 loginId와 대소문자까지 같지 않은 것이다(A5 Mappers).
-4. 문제가 없으면 `.env`의 `HR_SYNC_INTERVAL_HOURS=24`로 올리고 `docker compose up -d backend`. 이후 스케줄러가 마지막 회차 기준으로 24시간마다 돈다. 로그인할 때마다 본인 한 명은 하루 1회 HR에서 다시 가져온다(전체 동기화 없이 점진 충전).
+4. 문제가 없으면 `.env`의 `HR_SYNC_INTERVAL_HOURS=24`로 올리고 `docker compose up -d backend && docker compose restart proxy`. 이후 스케줄러가 마지막 회차 기준으로 24시간마다 돈다. 로그인할 때마다 본인 한 명은 하루 1회 HR에서 다시 가져온다(전체 동기화 없이 점진 충전).
 
 HR 연결이 안 되면 "HR sync is not set up on this server."(503, URL·토큰 중 비어 있음) 또는 "Could not reach the HR source."(502)가 뜬다 → [`deploy.md`](deploy.md) §4.
 

@@ -48,7 +48,7 @@
 
 - **서버 `.env`에는 `AUTH_MODE=keycloak`을 명시한다.** compose는 비어 있어도 `keycloak`으로 닫지만(`${AUTH_MODE:-keycloak}`), 명시해 두면 읽는 사람이 헷갈리지 않는다.
 - **`AUTH_MODE=dev`는 로컬 전용이다.** dev 모드는 `X-Dev-User` 헤더를 그대로 믿어 누구나 어떤 사용자로도 들어올 수 있고, 기동할 때 가짜 부서 7개·직원 5명을 DB에 넣는다. 서버 볼륨에 한 번이라도 dev로 띄우면 그 직원이 디렉터리 선택기에 남는다 → [`setup-once.md`](setup-once.md) C절.
-- backend 환경변수는 전부 **런타임** 값이다. `.env`를 고친 뒤 `docker compose up -d`만 하면 backend가 다시 만들어져 반영되고, 프런트 재빌드는 필요 없다(인증 모드는 프런트가 부팅할 때 `GET /api/auth/mode`로 조회한다). 새 env를 코드에 추가할 때는 `settings.py`·`.env.example`·compose `environment:` 세 곳이 함께 움직여야 한다(backend에 `env_file`이 없다, `rules/backend/config.md`).
+- backend 환경변수는 전부 **런타임** 값이다. `.env`를 고친 뒤 `docker compose up -d backend && docker compose restart proxy`로 backend를 다시 만들면 반영되고(nginx가 옛 backend 주소를 잡고 있을 수 있어 proxy를 함께 재시작한다, §4 502 행), 프런트 재빌드는 필요 없다(인증 모드는 프런트가 부팅할 때 `GET /api/auth/mode`로 조회한다). 새 env를 코드에 추가할 때는 `settings.py`·`.env.example`·compose `environment:` 세 곳이 함께 움직여야 한다(backend에 `env_file`이 없다, `rules/backend/config.md`).
 - `APP_PORT`를 바꾸면 Keycloak 클라이언트의 Valid redirect URIs·Web origins에 새 origin을 등록해야 로그인이 된다.
 
 ## 2. 배포
@@ -64,6 +64,7 @@ docker compose up -d --build
 - 마이그레이션이 실패하면 backend가 재시작을 반복한다: `docker compose logs --tail 120 backend`.
 - **`scripts/db-backup.sh`를 바꾼 배포는 사이드카를 다시 만든다.** 스크립트는 바인드 마운트라 `up -d --build`가 db-backup을 재생성하지 않아 옛 루프가 계속 돈다: `docker compose up -d --force-recreate db-backup`.
 - **`nginx/default.conf`를 바꾼 배포는 `docker compose restart proxy`.** 마운트된 파일 내용이 바뀌어도 `up -d`는 컨테이너를 다시 만들지 않는다.
+- **backend가 다시 만들어진 배포(새 이미지 빌드, `.env` 변경) 뒤 `/api`가 502이면 `docker compose restart proxy`.** proxy는 설정이 그대로라 `up -d`가 다시 만들지 않고, nginx는 시작할 때 푼 옛 backend 주소를 계속 쓴다(§4 502 행).
 - 소스 코드가 바뀐 배포만 프런트 이미지가 다시 빌드된다(`--build`). 반영됐는지는 §3과 §6으로 확인한다.
 - **서버에서 하지 말 것**: `docker compose down -v`(`pgdata` 볼륨 삭제), `python -m scripts.reset_db`(이미지에 실려 있지만 모든 테이블을 지운다). [`setup-once.md`](setup-once.md) C절.
 
@@ -108,13 +109,15 @@ curl -s http://localhost:7777/api/auth/mode; echo  # issuer·clientId가 채워�
 | backend 로그에 DB URL 파싱 오류·`password authentication failed` | `POSTGRES_PASSWORD`가 DATABASE_URL에 그대로 들어가므로 URL에 안전한 문자(영문·숫자·`-`·`_`·`.`)만 쓴다(`@ : / # ? %`와 compose가 치환하는 `$`는 금지). 또 postgres 비밀번호는 **볼륨을 처음 만들 때만** 적용되므로 `.env` 값을 나중에 바꿔도 DB의 비밀번호는 그대로다 → [`setup-once.md`](setup-once.md) A4 |
 | backend 로그에 `Can't locate revision` | DB의 `alembic_version`이 이 코드보다 새 리비전이다(더 새 버전을 배포했다가 코드만 되돌렸다). §7 |
 | `/api/auth/mode`의 `keycloakClientId`·`keycloakIssuer`가 빈 문자열 | `.env`에 `KEYCLOAK_CLIENT_ID`·`KEYCLOAK_ISSUER` 누락. compose 기본값이 빈 문자열이라 **에러 없이 조용히** 빈 값이 들어간다. 로그인 시도는 Keycloak `Invalid parameter: client_id` |
-| `/api/auth/mode`의 `mode`가 `dev` | 서버가 dev로 떠 있다(`X-Dev-User` 헤더만으로 로그인이 열린다). 즉시 `.env`를 `AUTH_MODE=keycloak`으로 고치고 `docker compose up -d`. dev로 한 번이라도 떴다면 [`setup-once.md`](setup-once.md) C절의 dev 직원 정리 |
+| `.env`에 넣은 값이 컨테이너에 안 들어간다(코드는 기본값으로 동작) | **backend에는 `env_file`이 없다.** `.env`의 키는 `docker-compose.yml` backend `environment:`에 `VAR: ${VAR:-}`로 매핑돼 있어야 컨테이너에 닿는다. `docker compose exec backend env \| grep <VAR>`로 실제 값을 확인하고, 없으면 `settings.py`·`.env.example`·compose 세 곳을 함께 고친다(`rules/backend/config.md`). 값만 바꿨다면 `docker compose up -d backend && docker compose restart proxy` |
+| backend를 다시 만든 뒤 `/api`가 502 | nginx가 시작할 때 푼 옛 backend 주소를 계속 쓴다(proxy 설정이 그대로라 `up -d`가 proxy를 다시 만들지 않는다) → `docker compose restart proxy` |
+| `/api/auth/mode`의 `mode`가 `dev` | 서버가 dev로 떠 있다(`X-Dev-User` 헤더만으로 로그인이 열린다). 즉시 `.env`를 `AUTH_MODE=keycloak`으로 고치고 `docker compose up -d backend && docker compose restart proxy`. dev로 한 번이라도 떴다면 [`setup-once.md`](setup-once.md) C절의 dev 직원 정리 |
 | 로그인 후 `Invalid parameter: redirect_uri` | Keycloak Valid redirect URIs에 `http://<server-ip>:7777/login`(또는 `/*`)이 없다. 콜백을 `/login`이 받는다 → [`setup-once.md`](setup-once.md) A5 |
 | 복귀 시 `failed to fetch` / `No matching state found` | 토큰 엔드포인트 CORS. Keycloak 클라이언트 **Web origins**에 `http://<server-ip>:7777` 추가. state 오류는 후속 증상이니 깨끗한 `/login`에서 다시 시도 |
 | 로그인 화면의 "End all sessions"(모든 세션 종료)가 Keycloak 확인 화면에서 멈춤 | Valid post logout redirect URIs에 `/login`이 없다 |
 | 로그인했는데 `/api/*`가 401 | 토큰 만료, 또는 `KEYCLOAK_ISSUER`가 realm URL(`/realms/ai-portal`까지)과 다름, 또는 **토큰이 다른 클라이언트에 발급됨**(`azp` ≠ `KEYCLOAK_CLIENT_ID`). 사유는 응답이 아니라 서버 로그에만 있다: `docker compose logs backend \| grep "keycloak token rejected"` |
 | 로그인은 되는데 이름·부서가 비어 있다 | HR 첫 동기화 전이면 정상. 동기화 뒤에도 비면 Keycloak `preferred_username`이 HR의 loginId와 같지 않은 것(대소문자 포함 정확히 일치해야 한다) |
-| 관리 메뉴가 안 보인다 | `APP_SYSADMINS`에 loginId가 정확히(대소문자) 들었는지, 변경 뒤 backend를 다시 만들었는지(`docker compose up -d`). 또는 권한이 부여되지 않았다 → 관리 > Access |
+| 관리 메뉴가 안 보인다 | `APP_SYSADMINS`에 loginId가 정확히(대소문자) 들었는지, 변경 뒤 backend를 다시 만들었는지(`docker compose up -d backend && docker compose restart proxy`). 또는 권한이 부여되지 않았다 → 관리 > Access |
 | 관리 > Directory sync가 "HR sync is not set up on this server."(503) | `N8N_HR_URL`·`N8N_HR_TOKEN` 둘 중 하나가 비어 있다. "Could not reach the HR source."(502, 서버 로그·관리 API 상세는 `HR source error: <상태>`)면 n8n 웹훅 주소·토큰·네트워크 확인 |
 | 관리 > AI "Test connection" 실패 | "AI is turned off."(503)면 `AI_ENABLED=false`. "Could not reach the AI service."(502, 상세는 `AI endpoint error: <상태>`)면 `AI_BASE_URL`·`AI_API_TOKEN`·`AI_MODEL` 확인(토큰이 비면 `Bearer ` 헤더가 깨져 호출이 실패한다) |
 | backend 접속 로그의 클라이언트 주소가 nginx 주소로 찍힌다 | `FORWARDED_ALLOW_IPS` 미설정 → [`setup-once.md`](setup-once.md) A6 |

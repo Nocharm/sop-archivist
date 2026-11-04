@@ -76,7 +76,7 @@ services:
       HR_SYNC_INTERVAL_HOURS: ${HR_SYNC_INTERVAL_HOURS:-24}
       HR_SYNC_DELETE_CAP_PCT: ${HR_SYNC_DELETE_CAP_PCT:-20}
       # uvicorn이 X-Forwarded-For를 믿을 프록시 대역 — compose 네트워크 실제 서브넷(첫 기동 뒤
-      # docker network inspect sop-archivist_default)과 같아야 로그인 IP가 nginx 주소로 찍히지 않는다.
+      # docker network inspect sop-archivist_default)과 같아야 backend 접속 로그의 클라이언트 주소가 nginx 주소로 찍히지 않는다.
       # backend는 호스트에 포트를 열지 않아 그 대역 밖에서는 직접 닿지 않는다.
       FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-}
     depends_on:
