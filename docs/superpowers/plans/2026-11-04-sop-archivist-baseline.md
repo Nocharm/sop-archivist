@@ -14,7 +14,7 @@
 
 ## Global Constraints
 
-- 작업 위치 `/Users/hyeonjin/Documents/sop-archivist`(브랜치 `feat/sop-archivist`, upstream `sop-archivist/main`). 각 태스크 커밋 뒤 `git push`.
+- 작업 위치 `/Users/hyeonjin/Documents/sop-archivist`(브랜치 `feat/sop-archivist`, upstream `sop-archivist/main`). 각 태스크 커밋 뒤 `git push sop-archivist HEAD:main`(로컬 브랜치 이름이 원격 `main`과 달라 그냥 `git push`는 거부된다).
 - 배포 런타임 Python 3.11: `backend/ruff.toml` `target-version = "py311"`, 로컬 venv도 `/opt/homebrew/bin/python3.11`로 만든다.
 - 베이스 이미지 태그는 정확히 `python:3.11-slim`, `node:24.22.1-alpine`, `nginx:1.27-alpine`, `postgres:16-alpine`(서버에 이미 있음). Dockerfile에 `# syntax=` 금지.
 - 포트: 서버 앱 `7777`, 로컬 backend `8777`, 로컬 frontend `3777`.
