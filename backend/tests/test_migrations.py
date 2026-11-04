@@ -4,11 +4,13 @@ import pathlib
 from typing import Any
 
 import pytest
+from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import Column, Integer, MetaData, Table, create_engine, inspect, text
+from sqlalchemy import Column, Engine, Integer, MetaData, Table, create_engine, event, inspect, text
+from sqlalchemy.exc import IntegrityError
 
 from app.db import Base, run_migrations
 
@@ -88,3 +90,73 @@ def test_drift_guard_detects_model_without_revision(tmp_path: pathlib.Path) -> N
     diff = _compare_to_head(db_path, drifted)
 
     assert [op for op, *_ in diff] == ["add_table"]
+
+
+def _create_fk_engine(db_path: pathlib.Path) -> Engine:
+    """앱 엔진처럼 연결마다 FK를 켠 동기 엔진 — RESTRICT·CASCADE를 운영 PG와 같게 본다."""
+    engine = create_engine(_sync_url(db_path))
+
+    @event.listens_for(engine, "connect")
+    def _enable_foreign_keys(dbapi_connection: Any, _record: Any) -> None:
+        dbapi_connection.execute("PRAGMA foreign_keys=ON")
+
+    return engine
+
+
+_INSERT_GRANT = text(
+    "INSERT INTO access_grants (subject_type, subject_id, role_id, permission, created_by, created_at)"
+    " VALUES ('user', 'someone', :role_id, :permission, 'test', '2026-11-04 09:00:00')"
+)
+
+
+def test_access_grant_constraints_hold_in_migrated_db(tmp_path: pathlib.Path) -> None:
+    # compare_metadata는 CheckConstraint 차이를 못 잡는다 — 리비전이 실제로 만든 제약을 DB에 직접 부딪쳐 본다.
+    db_path = tmp_path / "access.db"
+    run_migrations(_async_url(db_path))
+    engine = _create_fk_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO roles (id, name, description, created_at, updated_at)"
+                " VALUES (1, 'R', '', '2026-11-04 09:00:00', '2026-11-04 09:00:00')"
+            ))
+            conn.execute(text("INSERT INTO role_permissions (role_id, permission) VALUES (1, 'system.view')"))
+            conn.execute(_INSERT_GRANT, {"role_id": 1, "permission": None})
+            conn.execute(_INSERT_GRANT, {"role_id": None, "permission": "system.view"})
+
+        # 역할·권한 중 정확히 하나 — 둘 다 비거나 둘 다 찬 부여는 DB가 거부한다
+        for role_id, permission in ((None, None), (1, "system.view")):
+            with pytest.raises(IntegrityError), engine.begin() as conn:
+                conn.execute(_INSERT_GRANT, {"role_id": role_id, "permission": permission})
+        # 부여가 남은 역할은 지울 수 없다(RESTRICT)
+        with pytest.raises(IntegrityError), engine.begin() as conn:
+            conn.execute(text("DELETE FROM roles WHERE id = 1"))
+
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM access_grants WHERE role_id = 1"))
+            conn.execute(text("DELETE FROM roles WHERE id = 1"))
+            remaining = conn.execute(text("SELECT count(*) FROM role_permissions")).scalar()
+        assert remaining == 0  # 역할을 지우면 묶인 권한 행은 CASCADE로 따라 지워진다
+        check_names = {ck["name"] for ck in inspect(engine).get_check_constraints("access_grants")}
+        assert check_names == {"ck_access_grants_role_xor_permission"}
+    finally:
+        engine.dispose()
+
+
+def test_downgrade_to_base_and_back(tmp_path: pathlib.Path) -> None:
+    # scripts.reset_db가 base로 내렸다 head로 올린다 — 모든 리비전의 downgrade가 실제로 돌아야 한다.
+    db_path = tmp_path / "roundtrip.db"
+    run_migrations(_async_url(db_path))
+    config = Config(str(pathlib.Path(__file__).resolve().parent.parent / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", _async_url(db_path))
+    config.attributes["configure_logger"] = False
+
+    command.downgrade(config, "base")
+    engine = create_engine(_sync_url(db_path))
+    try:
+        assert set(inspect(engine).get_table_names()) == {"alembic_version"}
+    finally:
+        engine.dispose()
+
+    run_migrations(_async_url(db_path))
+    assert _compare_to_head(db_path, Base.metadata) == []

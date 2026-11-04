@@ -26,9 +26,18 @@ from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import delete  # noqa: E402
 
 from app.db import SessionLocal  # noqa: E402
-from app.dev_users import seed_dev_directory  # noqa: E402
+from app.dev_users import seed_demo_access, seed_dev_directory  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import BatchJobRun, Department, Employee, HrSyncRun  # noqa: E402
+from app.models import (  # noqa: E402
+    AccessAuditEvent,
+    AccessGrant,
+    BatchJobRun,
+    Department,
+    Employee,
+    HrSyncRun,
+    Role,
+    RolePermission,
+)
 from app.settings import settings  # noqa: E402
 
 
@@ -59,6 +68,31 @@ def clean_directory(client: TestClient) -> Iterator[None]:
     _reset_directory()
     yield
     _reset_directory()
+
+
+def _reset_access(*, seed: bool) -> None:
+    async def _run() -> None:
+        async with SessionLocal() as session:
+            # 부여가 역할을 RESTRICT로 붙잡으므로 부여부터 지운다(role_permissions는 역할 삭제에 CASCADE)
+            for model in (AccessGrant, RolePermission, Role, AccessAuditEvent):
+                await session.execute(delete(model))
+            await session.commit()
+            if seed:
+                await seed_demo_access(session)
+
+    asyncio.run(_run())
+
+
+@pytest.fixture
+def demo_access(client: TestClient) -> Iterator[None]:
+    """권한 표를 공용 데모 상태(역할 2·부여 3, 기록 없음)로 두고, 끝나면 비운다.
+
+    lifespan은 권한을 시드하지 않으므로 비운 상태가 이 픽스처를 안 쓰는 테스트가 보는 처음 상태다.
+    역할·부여를 바꾸는 테스트도 이 픽스처 덕에 실행 순서에 기대지 않는다.
+    """
+    _reset_access(seed=True)
+    yield
+    _reset_access(seed=False)
 
 
 @pytest.fixture
