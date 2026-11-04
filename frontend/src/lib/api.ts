@@ -106,3 +106,233 @@ export interface Me {
 export function getMe(): Promise<Me> {
   return apiFetch<Me>("/me");
 }
+
+// ── 관리 화면 API (Task 10) - 필드 이름은 backend 응답 모델(routers/access.py·admin.py·directory.py) 그대로 ──
+
+/** 부여 대상 종류 - user는 login_id, dept는 dept_code가 subject_id다. */
+export type SubjectType = "user" | "dept";
+
+/** GET /api/access/roles 한 줄 - permissions는 이름순(표시 순서는 화면이 카탈로그 순서로 다시 정한다). */
+export interface Role {
+  id: number;
+  name: string;
+  description: string;
+  permissions: string[];
+  grant_count: number;
+}
+
+export interface RoleInput {
+  name: string;
+  description: string;
+  permissions: string[];
+}
+
+/** 대상이 사라진 부여(조직 개편·퇴직)는 지워지지 않고 subject_missing=true, subject_name=""로 온다. */
+export interface Grant {
+  id: number;
+  subject_type: SubjectType;
+  subject_id: string;
+  subject_name: string;
+  subject_missing: boolean;
+  role_id: number | null;
+  role_name: string | null;
+  permission: string | null;
+  created_by: string;
+  created_at: string;
+}
+
+/** role_id와 permission 중 정확히 하나만 보낸다(둘 다·둘 다 없음은 422). */
+export interface GrantInput {
+  subject_type: SubjectType;
+  subject_id: string;
+  role_id?: number;
+  permission?: string;
+}
+
+/** 변경 기록 한 줄 - action은 role.create|update|delete, grant.add|remove. detail 모양은 action마다 다르다. */
+export interface AuditEvent {
+  id: number;
+  occurred_at: string;
+  actor: string;
+  action: string;
+  detail: Record<string, unknown>;
+}
+
+export interface EffectiveSource {
+  kind: SubjectType;
+  subject_id: string;
+  subject_name: string;
+  /** 역할로 받았으면 역할 이름, 권한 직접 부여면 null */
+  role: string | null;
+}
+
+/** 유효 권한 조회 - sysadmin이면 sources가 비고 permissions는 카탈로그 전부다. */
+export interface EffectiveAccess {
+  login_id: string;
+  known: boolean;
+  active: boolean;
+  is_sysadmin: boolean;
+  permissions: string[];
+  sources: Record<string, EffectiveSource[]>;
+}
+
+export interface DirectoryUser {
+  login_id: string;
+  name: string;
+  korean_name: string;
+  department: string;
+  dept_code: string | null;
+  dept_path: string;
+}
+
+export interface Department {
+  dept_code: string;
+  parent_dept_code: string | null;
+  name: string;
+  name_ko: string;
+  level: number;
+}
+
+export interface HrSyncSummary {
+  scanned: number;
+  upserted: number;
+  deactivated: number;
+  deleted: number;
+  skipped: number;
+  org_mismatches: number;
+  truncated_levels: number;
+  departments_upserted: number;
+  aborted_reason: string | null;
+  created: number;
+  reactivated: number;
+  duplicates: number;
+  managed: number;
+  mass_departure: boolean;
+}
+
+export interface HrSyncPreview {
+  scanned: number;
+  skipped: number;
+  would_upsert: number;
+  would_deactivate: number;
+  would_delete: number;
+  org_mismatches: number;
+  truncated_levels: number;
+  korean_overwrites: number;
+  new_login_ids: string[];
+  delete_login_ids: string[];
+  case_mismatches: string[];
+}
+
+export interface HrSyncRun {
+  id: number;
+  ran_at: string;
+  outcome: string;
+  detail: string | null;
+  scanned: number;
+  created: number;
+  deactivated: number;
+  reactivated: number;
+  deleted: number;
+  skipped: number;
+  duplicates: number;
+  managed: number;
+  mass_departure: boolean;
+}
+
+/** (job, outcome)별 최신 1행 */
+export interface BatchRun {
+  job: string;
+  outcome: string;
+  ran_at: string;
+  detail: string | null;
+}
+
+export interface AiPing {
+  ok: boolean;
+  model: string;
+  latency_ms: number;
+  reply_ok: boolean;
+}
+
+/** KST 하루치 AI 호출 집계 - date는 YYYY-MM-DD */
+export interface AiUsageDay {
+  date: string;
+  calls: number;
+  failed: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+}
+
+export function listRoles(): Promise<Role[]> {
+  return apiFetch<Role[]>("/access/roles");
+}
+
+export function createRole(body: RoleInput): Promise<Role> {
+  return apiFetch<Role>("/access/roles", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function updateRole(id: number, body: RoleInput): Promise<Role> {
+  return apiFetch<Role>(`/access/roles/${id}`, { method: "PUT", body: JSON.stringify(body) });
+}
+
+export function deleteRole(id: number): Promise<void> {
+  return apiFetch<void>(`/access/roles/${id}`, { method: "DELETE" });
+}
+
+export function listGrants(): Promise<Grant[]> {
+  return apiFetch<Grant[]>("/access/grants");
+}
+
+export function addGrant(body: GrantInput): Promise<Grant> {
+  return apiFetch<Grant>("/access/grants", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function removeGrant(id: number): Promise<void> {
+  return apiFetch<void>(`/access/grants/${id}`, { method: "DELETE" });
+}
+
+/** limit을 생략하면 서버 기본(100). 서버는 500으로 자른다. */
+export function listAudit(limit?: number): Promise<AuditEvent[]> {
+  return apiFetch<AuditEvent[]>(limit === undefined ? "/access/audit" : `/access/audit?limit=${limit}`);
+}
+
+export function getEffective(loginId: string): Promise<EffectiveAccess> {
+  return apiFetch<EffectiveAccess>(`/access/effective/${encodeURIComponent(loginId)}`);
+}
+
+// 디렉터리 검색 한 번에 받는 최대 인원 - 서버 상한(50)과 같다
+export const DIRECTORY_SEARCH_LIMIT = 50;
+
+export function searchDirectory(q: string): Promise<DirectoryUser[]> {
+  return apiFetch<DirectoryUser[]>(`/directory?q=${encodeURIComponent(q)}&limit=${DIRECTORY_SEARCH_LIMIT}`);
+}
+
+export function listDepartments(): Promise<Department[]> {
+  return apiFetch<Department[]>("/departments");
+}
+
+export function runHrSync(): Promise<HrSyncSummary> {
+  return apiFetch<HrSyncSummary>("/admin/hr-sync", { method: "POST" });
+}
+
+export function getHrSyncPreview(): Promise<HrSyncPreview> {
+  return apiFetch<HrSyncPreview>("/admin/hr-sync/preview");
+}
+
+export function listHrSyncRuns(): Promise<HrSyncRun[]> {
+  return apiFetch<HrSyncRun[]>("/admin/hr-sync/runs");
+}
+
+export function listBatchRuns(): Promise<BatchRun[]> {
+  return apiFetch<BatchRun[]>("/admin/batch-runs");
+}
+
+export function pingAi(): Promise<AiPing> {
+  return apiFetch<AiPing>("/admin/ai/ping", { method: "POST" });
+}
+
+/** days를 생략하면 서버 기본(30), 범위는 1~365. */
+export function getAiUsage(days?: number): Promise<AiUsageDay[]> {
+  return apiFetch<AiUsageDay[]>(days === undefined ? "/admin/ai/usage" : `/admin/ai/usage?days=${days}`);
+}

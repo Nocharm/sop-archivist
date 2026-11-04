@@ -15,3 +15,10 @@ export function hasPermission(me: Me, key: string): boolean {
 export function canSeeAdmin(me: Me): boolean {
   return PERMISSIONS.some((key) => hasPermission(me, key));
 }
+
+// 백엔드는 권한을 이름순으로 돌려주므로 화면에 올리기 전에 카탈로그 순서로 다시 세운다. 카탈로그에 없는 키는 뒤에 이름순으로 남겨 숨기지 않는다.
+export function orderPermissions(keys: readonly string[]): string[] {
+  const known = PERMISSIONS.filter((key) => keys.includes(key));
+  const unknown = keys.filter((key) => !(PERMISSIONS as readonly string[]).includes(key)).sort();
+  return [...known, ...unknown];
+}
