@@ -80,6 +80,9 @@ def test_drift_guard_detects_model_without_revision(tmp_path: pathlib.Path) -> N
     db_path = tmp_path / "drift.db"
     run_migrations(_async_url(db_path))
     drifted = MetaData()
+    # 실제 모델은 그대로 두고 리비전 없는 테이블 하나만 더한다 — 그래야 diff가 그 한 건만 남는다.
+    for table in Base.metadata.tables.values():
+        table.to_metadata(drifted)
     Table("probe_without_revision", drifted, Column("id", Integer, primary_key=True))
 
     diff = _compare_to_head(db_path, drifted)
