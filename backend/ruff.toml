@@ -1,0 +1,4 @@
+# 배포 런타임(Dockerfile `python:3.11-slim`)에 린트를 고정한다. 로컬 venv가 3.12+면
+# PEP 695 제네릭 같은 상위 문법이 로컬 테스트를 통과한 뒤 서버에서 import SyntaxError로
+# 죽는다 — 형제 프로젝트 bpm이 2026-08-31 backend 기동 불능을 겪은 원인이다. Dockerfile 베이스를 올릴 때 같이 올릴 것.
+target-version = "py311"
