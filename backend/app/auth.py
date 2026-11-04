@@ -45,14 +45,22 @@ def _decode_keycloak_token(token: str) -> str:
         )
     except jwt.PyJWTError as exc:
         # 실패 사유는 서버 로그에만 — 응답에 검증 내부를 싣지 않는다. 토큰 원문은 로그에도 남기지 않는다.
-        logger.warning("keycloak token rejected", extra={"error": type(exc).__name__, "reason": str(exc)})
+        # 앱에 로깅 설정이 없어 lastResort는 %(message)s만 찍으므로 사유를 메시지 인자에도 싣는다.
+        error, reason = type(exc).__name__, str(exc)
+        logger.warning(
+            "keycloak token rejected: %s: %s", error, reason, extra={"error": error, "reason": reason}
+        )
         raise HTTPException(status_code=401, detail="invalid token") from exc
 
     # realm ai-portal은 다른 사내 앱과 공유된다 — 서명·issuer가 맞아도 다른 앱 클라이언트(예: bpm)에
     # 발급된 토큰은 거부한다. 빈 azp·미설정 client id는 어느 쪽이든 불일치로 처리해 fail closed.
     azp = claims.get("azp")
     if not azp or azp != settings.keycloak_client_id:
-        logger.warning("keycloak token rejected", extra={"reason": "issued to another client", "azp": azp})
+        logger.warning(
+            "keycloak token rejected: issued to another client azp=%r",
+            azp,
+            extra={"reason": "issued to another client", "azp": azp},
+        )
         raise HTTPException(status_code=401, detail="token was issued to another client")
 
     username = claims.get("preferred_username") or claims.get("sub")
