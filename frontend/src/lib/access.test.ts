@@ -12,6 +12,7 @@ const BASE_ME: Me = {
   dept_path: "Example Pharma > Quality Division",
   is_sysadmin: false,
   permissions: [],
+  sources: {},
   auth_mode: "dev",
   ai_enabled: false,
 };

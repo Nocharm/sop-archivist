@@ -16,10 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.access.audit import add_audit_event
 from app.access.catalog import PERMISSIONS, is_known_permission
 from app.access.deps import require_permission
-from app.access.resolve import AccessSource, get_effective_access
+from app.access.resolve import get_effective_access
+from app.access.sources import SourceOut, build_source_map, load_subject_names
 from app.clock import KST, now
 from app.db import get_session
-from app.models import AccessAuditEvent, AccessGrant, Department, Employee, Role, RolePermission
+from app.models import AccessAuditEvent, AccessGrant, Role, RolePermission
 
 # 같은 의존성 객체를 라우터와 엔드포인트(행위자 login_id가 필요한 곳)가 함께 써서 요청당 판정은 한 번만 돈다
 # (FastAPI 의존성 캐시). 라우터 단에도 걸어 두어 새 엔드포인트가 게이트 없이 열리는 일이 없게 한다.
@@ -79,13 +80,6 @@ class AuditOut(BaseModel):
     detail: dict[str, Any]
 
 
-class SourceOut(BaseModel):
-    kind: SubjectType
-    subject_id: str
-    subject_name: str
-    role: str | None
-
-
 class EffectiveOut(BaseModel):
     login_id: str
     known: bool
@@ -137,26 +131,6 @@ async def _commit_or_conflict(session: AsyncSession, status_code: int, detail: s
     except IntegrityError as exc:
         await session.rollback()
         raise HTTPException(status_code=status_code, detail=detail) from exc
-
-
-async def _load_subject_names(
-    session: AsyncSession, subjects: set[tuple[str, str]]
-) -> dict[tuple[str, str], str]:
-    """(kind, subject_id) → 표시 이름. 행이 없는 대상은 결과에 없다(사라진 대상 판정)."""
-    user_ids = {sid for kind, sid in subjects if kind == "user"}
-    dept_codes = {sid for kind, sid in subjects if kind == "dept"}
-    names: dict[tuple[str, str], str] = {}
-    if user_ids:
-        rows = await session.execute(
-            select(Employee.login_id, Employee.name).where(Employee.login_id.in_(user_ids))
-        )
-        names.update({("user", login_id): name for login_id, name in rows})
-    if dept_codes:
-        rows = await session.execute(
-            select(Department.dept_code, Department.name).where(Department.dept_code.in_(dept_codes))
-        )
-        names.update({("dept", code): name for code, name in rows})
-    return names
 
 
 def _build_grant_detail(grant: AccessGrant, role_name: str | None) -> dict[str, Any]:
@@ -291,7 +265,7 @@ async def list_grants(
         .outerjoin(Role, Role.id == AccessGrant.role_id)
         .order_by(AccessGrant.id)
     )).all()
-    names = await _load_subject_names(session, {(g.subject_type, g.subject_id) for g, _ in rows})
+    names = await load_subject_names(session, {(g.subject_type, g.subject_id) for g, _ in rows})
     return [
         GrantOut(
             id=grant.id, subject_type=grant.subject_type, subject_id=grant.subject_id,
@@ -320,7 +294,7 @@ async def add_grant(
         if role is None:
             raise HTTPException(status_code=422, detail="unknown role")
         role_name = role.name
-    names = await _load_subject_names(session, {(body.subject_type, body.subject_id)})
+    names = await load_subject_names(session, {(body.subject_type, body.subject_id)})
     subject_name = names.get((body.subject_type, body.subject_id))
     if subject_name is None:
         raise HTTPException(status_code=422, detail="unknown subject")
@@ -395,18 +369,8 @@ async def get_effective(
 ) -> EffectiveOut:
     """사람 하나의 유효 권한과 출처 — require_permission과 같은 판정(get_effective_access)을 그대로 보여 준다."""
     access = await get_effective_access(session, login_id)
-    names = await _load_subject_names(
-        session, {(s.kind, s.subject_id) for srcs in access.sources.values() for s in srcs},
-    )
-
-    def build_source_out(source: AccessSource) -> SourceOut:
-        return SourceOut(
-            kind=source.kind, subject_id=source.subject_id,
-            subject_name=names.get((source.kind, source.subject_id), ""), role=source.role,
-        )
-
     return EffectiveOut(
         login_id=access.login_id, known=access.known, active=access.active, is_sysadmin=access.is_sysadmin,
         permissions=sorted(access.permissions),
-        sources={key: [build_source_out(s) for s in srcs] for key, srcs in access.sources.items()},
+        sources=await build_source_map(session, access),
     )

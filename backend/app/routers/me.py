@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.access.resolve import get_effective_access
+from app.access.sources import SourceOut, build_source_map
 from app.auth import get_current_user
 from app.clock import now
 from app.db import get_session
@@ -28,6 +29,8 @@ class MeOut(BaseModel):
     dept_path: str
     is_sysadmin: bool
     permissions: list[str]
+    # 권한 키 → 출처(/api/access/effective와 같은 모양) — 홈이 "어디서 받은 권한인지"를 보여 준다. sysadmin·dev 전권은 {}
+    sources: dict[str, list[SourceOut]]
     auth_mode: Literal["keycloak", "dev"]
     ai_enabled: bool
 
@@ -62,6 +65,7 @@ async def get_me(
         dept_path=dept_path,
         is_sysadmin=access.is_sysadmin,
         permissions=sorted(access.permissions),
+        sources=await build_source_map(session, access),
         auth_mode=settings.resolved_auth_mode(),
         ai_enabled=settings.ai_enabled,
     )

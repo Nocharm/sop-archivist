@@ -77,7 +77,7 @@ def test_me_unknown_employee(client: TestClient) -> None:
     # HR 동기화 전에 처음 로그인한 사람 — 200, 빈 신원, 권한 없음
     assert _get_me(client, "ghost") == {
         "login_id": "ghost", "name": "", "korean_name": "", "department": "", "dept_path": "",
-        "is_sysadmin": False, "permissions": [], "auth_mode": "dev", "ai_enabled": False,
+        "is_sysadmin": False, "permissions": [], "sources": {}, "auth_mode": "dev", "ai_enabled": False,
     }
     assert _count_records("ghost") == 1
 
@@ -104,6 +104,18 @@ def test_me_dev_unenforced_reports_sysadmin(client: TestClient) -> None:
 
     assert me["is_sysadmin"] is True
     assert me["permissions"] == sorted(PERMISSIONS)
+    assert me["sources"] == {}  # 전권은 부여에서 온 게 아니라 출처가 없다(/api/access/effective와 같다)
+
+
+@pytest.mark.usefixtures("enforce", "demo_access")
+def test_me_sources(client: TestClient) -> None:
+    # 부서 부여는 하위 부서 사람에게 내려오고, 개인 직접 부여는 role이 None이다
+    assert _get_me(client, "qa.member")["sources"]["permission.manage"] == [
+        {"kind": "dept", "subject_id": "DIV-QA", "subject_name": "Quality Division", "role": "Permission Admin"},
+    ]
+    assert _get_me(client, "prod.member")["sources"]["system.view"][0]["role"] is None
+    effective = client.get("/api/access/effective/qa.lead", headers={"X-Dev-User": "qa.lead"}).json()
+    assert _get_me(client, "qa.lead")["sources"] == effective["sources"]
 
 
 def test_me_syncs_one_employee_only_with_real_auth(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

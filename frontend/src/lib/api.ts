@@ -99,6 +99,8 @@ export interface Me {
   dept_path: string;
   is_sysadmin: boolean;
   permissions: string[];
+  /** 권한 키 → 출처(유효 권한 조회와 같은 모양). sysadmin이면 빈 객체다. */
+  sources: Record<string, EffectiveSource[]>;
   auth_mode: "keycloak" | "dev";
   ai_enabled: boolean;
 }
