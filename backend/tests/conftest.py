@@ -31,6 +31,7 @@ from app.main import app  # noqa: E402
 from app.models import (  # noqa: E402
     AccessAuditEvent,
     AccessGrant,
+    AiUsageEvent,
     BatchJobRun,
     Department,
     Employee,
@@ -93,6 +94,23 @@ def demo_access(client: TestClient) -> Iterator[None]:
     _reset_access(seed=True)
     yield
     _reset_access(seed=False)
+
+
+def _reset_ai_usage() -> None:
+    async def _run() -> None:
+        async with SessionLocal() as session:
+            await session.execute(delete(AiUsageEvent))
+            await session.commit()
+
+    asyncio.run(_run())
+
+
+@pytest.fixture
+def clean_ai_usage(client: TestClient) -> Iterator[None]:
+    """AI 사용량 기록을 비운 채로 시작하고 끝낸다 — 세션이 DB 하나를 공유해 다른 테스트의 호출 기록이 집계에 새지 않게."""
+    _reset_ai_usage()
+    yield
+    _reset_ai_usage()
 
 
 @pytest.fixture

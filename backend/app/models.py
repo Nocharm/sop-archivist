@@ -218,3 +218,21 @@ class LoginRecord(Base):
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, index=True
     )
+
+
+class AiUsageEvent(Base):
+    """AI 호출 1건의 계량 기록 — 질문·답변 원문 없이 누가·어떤 기능으로·몇 토큰을 썼는지만 남긴다."""
+
+    __tablename__ = "ai_usage_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+    login_id: Mapped[str] = mapped_column(String(100), index=True)
+    # 호출한 기능 이름("ping" 등) — 호출부가 정하는 짧은 상수라 FK 없이 문자열
+    feature: Mapped[str] = mapped_column(String(50))
+    # 요청 모델 선택자(빈값 = 서버 기본 모델)
+    model: Mapped[str] = mapped_column(String(200), default="")
+    # 서버가 usage를 안 주거나 호출이 실패하면 None
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, default=None)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, default=None)
+    ok: Mapped[bool] = mapped_column(Boolean, default=True)
