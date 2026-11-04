@@ -201,3 +201,29 @@ def test_keycloak_other_client_logs_azp(caplog: pytest.LogCaptureFixture) -> Non
     assert "bpm-frontend" in message
     assert token not in message
     assert record.azp == "bpm-frontend"
+
+
+@pytest.mark.usefixtures("keycloak")
+def test_keycloak_unknown_kid_cannot_forge_log_lines(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # 실제 PyJWKClient 조회 경로 — 미검증 헤더의 kid가 pyjwt 예외 문구에 그대로 실린다.
+    realm_jwk = jwt.algorithms.RSAAlgorithm.to_jwk(_REALM_KEY.public_key(), as_dict=True)
+    jwk_client = jwt.PyJWKClient("http://keycloak.test:8080/realms/ai-portal/protocol/openid-connect/certs")
+    monkeypatch.setattr(jwk_client, "fetch_data", lambda: {"keys": [{**realm_jwk, "kid": "realm-key", "use": "sig"}]})
+    monkeypatch.setattr(auth, "_jwk_client", lambda: jwk_client)
+    forged_kid = "x\nWARNING:app.auth:keycloak token accepted for admin" + "A" * 1000
+    claims = {"iss": ISS, "azp": CID, "sub": "x", "exp": now() + timedelta(minutes=5)}
+    token = jwt.encode(claims, _REALM_KEY, algorithm="RS256", headers={"kid": forged_kid})
+
+    with caplog.at_level(logging.WARNING, logger="app.auth"):
+        assert _reject(_bearer(token)).detail == "invalid token"
+
+    (record,) = [r for r in caplog.records if r.name == "app.auth"]
+    message = record.getMessage()
+    assert record.error == "PyJWKClientError"
+    assert "Unable to find a signing key" in message
+    assert "\n" not in message
+    assert token not in message
+    assert len(record.reason) <= 200
+    assert len(message) < 400

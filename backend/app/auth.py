@@ -10,6 +10,9 @@ from app.settings import settings
 
 logger = logging.getLogger(__name__)
 
+# 거부 사유 로그 상한(문자 수). 사유에는 미검증 헤더 값(kid·crit)이 실릴 수 있어 큰 헤더가 큰 로그 줄이 되지 않게 자른다.
+_MAX_LOG_REASON_CHARS = 200
+
 
 @lru_cache(maxsize=1)
 def _jwk_client() -> jwt.PyJWKClient:
@@ -46,9 +49,10 @@ def _decode_keycloak_token(token: str) -> str:
     except jwt.PyJWTError as exc:
         # 실패 사유는 서버 로그에만 — 응답에 검증 내부를 싣지 않는다. 토큰 원문은 로그에도 남기지 않는다.
         # 앱에 로깅 설정이 없어 lastResort는 %(message)s만 찍으므로 사유를 메시지 인자에도 싣는다.
-        error, reason = type(exc).__name__, str(exc)
+        # 사유는 공격자가 고른 헤더 값(개행 포함)을 담을 수 있어 %r로 이스케이프해 로그 줄 위조를 막는다.
+        error, reason = type(exc).__name__, str(exc)[:_MAX_LOG_REASON_CHARS]
         logger.warning(
-            "keycloak token rejected: %s: %s", error, reason, extra={"error": error, "reason": reason}
+            "keycloak token rejected: %s: %r", error, reason, extra={"error": error, "reason": reason}
         )
         raise HTTPException(status_code=401, detail="invalid token") from exc
 
