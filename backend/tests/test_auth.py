@@ -180,6 +180,24 @@ def test_keycloak_rejection_logs_reason_without_token(caplog: pytest.LogCaptureF
         _reject(_bearer(token))
 
     (record,) = [r for r in caplog.records if r.name == "app.auth"]
+    # 앱은 로깅 설정이 없어 lastResort가 %(message)s만 찍는다 — 사유는 렌더된 메시지에 있어야 보인다.
+    message = record.getMessage()
+    assert "ExpiredSignatureError" in message
+    assert "Signature has expired" in message
+    assert token not in message
     assert record.error == "ExpiredSignatureError"
-    assert token not in record.getMessage()
     assert token not in str(record.__dict__)
+
+
+@pytest.mark.usefixtures("keycloak")
+def test_keycloak_other_client_logs_azp(caplog: pytest.LogCaptureFixture) -> None:
+    token = _make_token(azp="bpm-frontend")
+
+    with caplog.at_level(logging.WARNING, logger="app.auth"):
+        _reject(_bearer(token))
+
+    (record,) = [r for r in caplog.records if r.name == "app.auth"]
+    message = record.getMessage()
+    assert "bpm-frontend" in message
+    assert token not in message
+    assert record.azp == "bpm-frontend"
