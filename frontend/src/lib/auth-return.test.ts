@@ -8,6 +8,7 @@ import {
   consumeReturnTo,
   consumeSsoLogoutHint,
   isSafeReturnPath,
+  normalizeReturnPath,
   peekReturnTo,
   saveReturnTo,
   saveSsoLogoutHint,
@@ -36,17 +37,50 @@ beforeEach(() => {
   vi.stubGlobal("window", { sessionStorage: storage });
 });
 
-describe("isSafeReturnPath", () => {
-  it("allows internal paths (with query)", () => {
-    expect(isSafeReturnPath("/admin")).toBe(true);
-    expect(isSafeReturnPath("/admin?tab=ai")).toBe(true);
+describe("normalizeReturnPath", () => {
+  it("accepts same-origin paths and returns them normalized", () => {
+    expect(normalizeReturnPath("/admin")).toBe("/admin");
+    expect(normalizeReturnPath("/admin?tab=ai#x")).toBe("/admin?tab=ai#x");
+    expect(normalizeReturnPath("/loginfoo")).toBe("/loginfoo"); // "/login"의 접두일 뿐 다른 경로
+    expect(normalizeReturnPath("/a/../admin")).toBe("/admin"); // 점 구간은 파서가 접는다
   });
-  it("rejects external, protocol, login and root paths", () => {
+  it("rejects backslashes and control characters (browsers fold them into //evil.com)", () => {
+    expect(normalizeReturnPath("/\\evil.com")).toBeNull();
+    expect(normalizeReturnPath("/\t/evil.com")).toBeNull();
+    expect(normalizeReturnPath("/\n/evil.com")).toBeNull();
+    expect(normalizeReturnPath("/admin\u007f")).toBeNull();
+    expect(normalizeReturnPath("/admin?next=\\evil.com")).toBeNull();
+  });
+  it("keeps a percent-encoded backslash as a same-origin path", () => {
+    // %5C는 파서가 디코드하지 않아 경로의 한 글자로 남는다 - 사이트 밖으로 나갈 수 없으므로 그대로 허용한다.
+    expect(normalizeReturnPath("/%5Cevil.com")).toBe("/%5Cevil.com");
+  });
+  it("rejects other origins, protocol-relative and non-rooted values", () => {
+    expect(normalizeReturnPath("//evil.com")).toBeNull();
+    expect(normalizeReturnPath("///evil.com")).toBeNull();
+    expect(normalizeReturnPath("https://evil.com")).toBeNull();
+    expect(normalizeReturnPath("javascript:alert(1)")).toBeNull();
+    expect(normalizeReturnPath("admin")).toBeNull();
+    expect(normalizeReturnPath("")).toBeNull();
+  });
+  it("rejects the root and the login page, including dot-segment detours", () => {
+    expect(normalizeReturnPath("/")).toBeNull();
+    expect(normalizeReturnPath("/login")).toBeNull();
+    expect(normalizeReturnPath("/login?next=1")).toBeNull();
+    expect(normalizeReturnPath("/login#x")).toBeNull();
+    expect(normalizeReturnPath("/login/x")).toBeNull();
+    expect(normalizeReturnPath("/admin/../login")).toBeNull();
+    expect(normalizeReturnPath("/./login")).toBeNull();
+  });
+});
+
+describe("isSafeReturnPath", () => {
+  it("mirrors normalizeReturnPath as a boolean", () => {
+    expect(isSafeReturnPath("/admin?tab=ai")).toBe(true);
+    expect(isSafeReturnPath("/loginfoo")).toBe(true);
+    expect(isSafeReturnPath("/\\evil.com")).toBe(false);
     expect(isSafeReturnPath("//evil.com")).toBe(false);
-    expect(isSafeReturnPath("https://evil.com")).toBe(false);
     expect(isSafeReturnPath("/login")).toBe(false);
-    expect(isSafeReturnPath("/login?next=1")).toBe(false);
-    expect(isSafeReturnPath("/")).toBe(false);
   });
 });
 
@@ -57,14 +91,27 @@ describe("returnTo save/peek/consume", () => {
     expect(consumeReturnTo()).toBe("/admin?tab=ai");
     expect(consumeReturnTo()).toBeNull();
   });
+  it("stores and returns the normalized form only", () => {
+    saveReturnTo("/a/../admin?tab=ai#x");
+    expect(storage.getItem("sopa.returnTo")).toBe("/admin?tab=ai#x");
+    expect(consumeReturnTo()).toBe("/admin?tab=ai#x");
+  });
   it("does not store an unsafe path", () => {
-    saveReturnTo("//evil.com");
-    expect(consumeReturnTo()).toBeNull();
+    for (const unsafe of ["//evil.com", "/\\evil.com", "/\t/evil.com", "/login", "/login/x"]) {
+      saveReturnTo(unsafe);
+      expect(storage.getItem("sopa.returnTo"), unsafe).toBeNull();
+    }
   });
   it("never returns an unsafe value even if storage was tampered with", () => {
-    storage.setItem("sopa.returnTo", "https://evil.com");
-    expect(consumeReturnTo()).toBeNull();
-    expect(storage.getItem("sopa.returnTo")).toBeNull(); // the tampered value is removed too
+    for (const tampered of ["https://evil.com", "/\\evil.com", "/\t/evil.com", "//evil.com", "/login/x"]) {
+      storage.setItem("sopa.returnTo", tampered);
+      expect(consumeReturnTo(), tampered).toBeNull();
+      expect(storage.getItem("sopa.returnTo"), tampered).toBeNull(); // the tampered value is removed too
+    }
+  });
+  it("normalizes a tampered-but-same-origin stored value on read", () => {
+    storage.setItem("sopa.returnTo", "/a/../admin");
+    expect(peekReturnTo()).toBe("/admin");
   });
 });
 
