@@ -13,21 +13,49 @@ function getStorage(): Storage | null {
   }
 }
 
-// open redirect 방지 — 내부 경로만("/" 시작, "//"·"/login"·루트 제외)
+// 브라우저는 http URL에서 `\`를 `/`로, 탭·개행을 무시로 처리해 `/\evil.com`·`/\t/evil.com`을 `//evil.com`으로 읽는다.
+// 접두 문자열 비교는 이 파서 차이를 못 막으므로 해당 문자는 아예 거부하고, 나머지는 URL 파서로 직접 확인한다.
+const UNSAFE_RETURN_CHARS = /[\\\x00-\x1f\x7f]/;
+// 상대 경로를 풀기 위한 가짜 기준 origin - 결과 origin이 이 값이어야 같은 사이트 경로다.
+const RETURN_BASE = "http://internal.invalid";
+
+// open redirect 방지 — 같은 origin 경로만 통과시키고 `경로+쿼리+해시`로 정규화해 돌려준다(루트·로그인 페이지 제외).
+export function normalizeReturnPath(path: string): string | null {
+  if (!path.startsWith("/") || UNSAFE_RETURN_CHARS.test(path)) {
+    return null;
+  }
+  let url: URL;
+  try {
+    url = new URL(path, RETURN_BASE);
+  } catch {
+    return null;
+  }
+  if (url.origin !== RETURN_BASE) {
+    return null;
+  }
+  // 정규화된 pathname 기준이라 `/admin/../login`도 걸린다. `/loginfoo`는 다른 경로라 통과.
+  if (url.pathname === "/" || url.pathname === "/login" || url.pathname.startsWith("/login/")) {
+    return null;
+  }
+  return url.pathname + url.search + url.hash;
+}
+
 export function isSafeReturnPath(path: string): boolean {
-  return path.startsWith("/") && !path.startsWith("//") && path !== "/" && !path.startsWith("/login");
+  return normalizeReturnPath(path) !== null;
 }
 
 export function saveReturnTo(path: string): void {
-  if (!isSafeReturnPath(path)) {
+  const normalized = normalizeReturnPath(path);
+  if (normalized === null) {
     return;
   }
-  getStorage()?.setItem(RETURN_TO_KEY, path);
+  getStorage()?.setItem(RETURN_TO_KEY, normalized);
 }
 
+// 저장소는 변조될 수 있어(같은 탭의 다른 스크립트·확장) 읽을 때도 같은 검증을 다시 한다.
 export function peekReturnTo(): string | null {
   const value = getStorage()?.getItem(RETURN_TO_KEY) ?? null;
-  return value !== null && isSafeReturnPath(value) ? value : null;
+  return value === null ? null : normalizeReturnPath(value);
 }
 
 export function consumeReturnTo(): string | null {
