@@ -9,8 +9,10 @@ export function buildOidcSettings(info: AuthModeInfo): UserManagerSettings {
     client_id: info.keycloakClientId,
     // 콜백을 /login이 받는다 - Keycloak 클라이언트의 Valid redirect URIs에 `<origin>/login`이 등록돼 있어야 한다.
     redirect_uri: `${window.location.origin}/login`,
-    // PKCE는 crypto.subtle을 요구 -> 평문 HTTP(insecure context)에선 불가. 사내망 HTTP 접속 위해 비활성.
-    disablePKCE: true,
+    // PKCE는 crypto.subtle을 요구하는데 평문 HTTP(insecure context)에는 그게 없다. 사내망 HTTP 접속(<server-ip>:7777)만 끄고
+    // localhost·HTTPS에서는 켠다(Keycloak 클라이언트는 PKCE를 필수로 걸지 않고 선택으로 둔다). 로그인 페이지 UserManager와
+    // AuthProvider가 이 함수를 같이 쓰므로 같은 값이 나간다 - 한쪽만 다르면 토큰 교환이 깨진다.
+    disablePKCE: !window.crypto?.subtle,
   };
 }
 
