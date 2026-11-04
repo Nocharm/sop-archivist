@@ -2,6 +2,10 @@
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙).
 
+## 2026-11-04
+
+- **SOP Archivist 기반 세팅 설계** — SOP Restructuring T/F용 AI 에이전트를 템플릿에서 분기(`feat/sop-archivist` → 공개 저장소 `Nocharm/sop-archivist`). 제품 기능 전에 bpm의 사내 인프라(서버 71번·포트 7777·Keycloak·HR 디렉터리·사내 GLM·백업·db-viewer)를 이식하고, 표 기반 권한 체계(역할·개인/부서 부여·하위 부서 상속)를 새로 둔다. 설계: `docs/superpowers/specs/2026-11-04-sop-archivist-baseline-design.md`. compose 내부 대역은 배포 전 사용자 확인.
+
 ## 2026-08-05
 
 - **`/agile` 커맨드 신설** — 소규모 기능·UI 작업에 테스트 작성·검증 루프가 과하다는 문제로, 완화 룰(테스트 생략·스모크 확인)과 비협상 룰(보안·심플리시티·커밋 컨벤션)을 명시한 모드 전환 커맨드 추가. 범위 이탈 시 일반 모드로 자동 복귀하는 가드 포함.
