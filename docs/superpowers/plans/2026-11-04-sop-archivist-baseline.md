@@ -10,11 +10,11 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-04-sop-archivist-baseline-design.md`
 
-**이식 출처:** `/Users/hyeonjin/Documents/bpm` @ `1bf6d1cf` — 읽기 전용, 절대 수정하지 않는다. "port X"는 X를 복사한 뒤 그 단계에 적힌 bpm 도메인 결합을 걷어 낸다는 뜻.
+**이식 출처:** `../bpm` @ `1bf6d1cf` — 읽기 전용, 절대 수정하지 않는다. "port X"는 X를 복사한 뒤 그 단계에 적힌 bpm 도메인 결합을 걷어 낸다는 뜻.
 
 ## Global Constraints
 
-- 작업 위치 `/Users/hyeonjin/Documents/sop-archivist`(브랜치 `feat/sop-archivist`, upstream `sop-archivist/main`). 각 태스크 커밋 뒤 `git push sop-archivist HEAD:main`(로컬 브랜치 이름이 원격 `main`과 달라 그냥 `git push`는 거부된다).
+- 작업 위치 이 저장소 루트(브랜치 `feat/sop-archivist`, upstream `sop-archivist/main`). 각 태스크 커밋 뒤 `git push sop-archivist HEAD:main`(로컬 브랜치 이름이 원격 `main`과 달라 그냥 `git push`는 거부된다).
 - 배포 런타임 Python 3.11: `backend/ruff.toml` `target-version = "py311"`, 로컬 venv도 `/opt/homebrew/bin/python3.11`로 만든다.
 - 베이스 이미지 태그는 정확히 `python:3.11-slim`, `node:24.22.1-alpine`, `nginx:1.27-alpine`, `postgres:16-alpine`(서버에 이미 있음). Dockerfile에 `# syntax=` 금지.
 - 포트: 서버 앱 `7777`, 로컬 backend `8777`, 로컬 frontend `3777`.
@@ -322,7 +322,7 @@ def test_batch_runs_requires_system_view(client, enforce): qa.lead → 403, prod
   - `GET /api/admin/ai/usage?days=30`(`ai.admin`, 1..365) → KST 날짜별 `list[{date, calls, failed, prompt_tokens, completion_tokens}]`
   - `fake-ai-server.mjs`(:9999): `/v1/chat/completions`는 `{"ok": true}` content와 usage를, `/v1/models`는 모델 1개를 돌려주는 OpenAI 호환 가짜 서버. 로컬에서 `AI_BASE_URL=http://localhost:9999/v1`.
 
-- [ ] **Step 1: 실패 테스트 작성** — bpm에 `call_ai` 테스트가 있으면 이식(`grep -l call_ai /Users/hyeonjin/Documents/bpm/backend/tests/*.py`), httpx2 전송은 모의.
+- [ ] **Step 1: 실패 테스트 작성** — bpm에 `call_ai` 테스트가 있으면 이식(`grep -l call_ai ../bpm/backend/tests/*.py`), httpx2 전송은 모의.
 
 ```python
 def test_payload_low_reasoning(): payload["chat_template_kwargs"] == {"reasoning_effort": "low", "clear_thinking": True}

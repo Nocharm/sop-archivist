@@ -23,7 +23,7 @@ python3.11 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 AUTH_MODE=dev DEV_ENFORCE_PERMISSIONS=true APP_SYSADMINS=dev.admin .venv/bin/uvicorn app.main:app --reload --port 8777   # 개발 서버
 .venv/bin/python -m pytest tests/ -q      # 테스트 — conftest가 AUTH_MODE·AI·HR 등을 baseline으로 고정해 backend/.env가 있어도 안전
 .venv/bin/ruff check app/ tests/          # 린트(target py311)
-.venv/bin/alembic revision --autogenerate --rev-id 0005 -m "<설명>"   # 모델을 바꾼 뒤 리비전 생성 → 생성물을 직접 검토
+.venv/bin/alembic revision --autogenerate --rev-id "<다음 번호>" -m "<설명>"   # 모델을 바꾼 뒤 리비전 생성 → 생성물을 직접 검토
 
 # frontend (frontend/ 에서)
 npm install
@@ -51,7 +51,7 @@ py -3.11 -m venv .venv; .venv\Scripts\pip install -r requirements-dev.txt
 $env:AUTH_MODE="dev"; $env:DEV_ENFORCE_PERMISSIONS="true"; $env:APP_SYSADMINS="dev.admin"; .venv\Scripts\uvicorn app.main:app --reload --port 8777
 .venv\Scripts\python -m pytest tests\ -q
 .venv\Scripts\ruff check app\ tests\
-.venv\Scripts\alembic revision --autogenerate --rev-id 0005 -m "<설명>"
+.venv\Scripts\alembic revision --autogenerate --rev-id "<다음 번호>" -m "<설명>"
 
 # frontend (frontend\ 에서) — npm/npx 명령은 bash와 동일
 npm install
@@ -101,7 +101,7 @@ docker-compose.yml
 **backend 핵심 모듈:**
 - `app/main.py` lifespan: Alembic `upgrade head` → (dev 모드만) dev 디렉터리 시드 → HR 동기화 스케줄러. 라우터는 `app/routers/`(`auth`·`me`·`directory`·`access`·`admin`).
 - `app/auth.py`: Keycloak은 서명·issuer에 더해 `azp == KEYCLOAK_CLIENT_ID`까지 검사(같은 realm의 다른 앱 토큰 거부, 빈 값이면 전부 거부). dev는 `X-Dev-User` 헤더 신뢰(서버에서 쓰면 안 됨).
-- **`app/access/` = 권한 판정 단일 소스.** `catalog.py` `PERMISSIONS`(권한 키는 코드가 정의) · `resolve.py` `get_effective_access`(개인 부여 ∪ 소속 부서 체인 부여, 역할은 권한으로 펼침, 퇴직자 무권한, `APP_SYSADMINS`는 전권) · `deps.py` `require_permission("<key>")`(라우터 의존성). `require_permission`·`/api/me`·관리 화면의 유효 권한 조회가 모두 `get_effective_access` 하나를 부른다 — 판정을 다른 곳에 새로 쓰지 않는다. 부여는 더하기만 있고 부서 부여는 하위 부서까지 내려간다. 대상은 FK 없이 두어 개편으로 사라진 부서·사람의 부여도 지우지 않고 `subject_missing`으로 보인다.
+- **`app/access/` = 권한 판정 단일 소스.** `catalog.py` `PERMISSIONS`(권한 키는 코드가 정의) · `resolve.py` `get_effective_access`(개인 부여 ∪ 소속 부서 체인 부여, 역할은 권한으로 펼침, 퇴직자 무권한, `APP_SYSADMINS`는 전권) · `deps.py` `require_permission("<key>")`(라우터 의존성). `sources.py`(권한 출처 응답 `SourceOut`·대상 이름 조회 — `/api/me`의 `sources`와 유효 권한 조회가 공유). `require_permission`·`/api/me`·관리 화면의 유효 권한 조회가 모두 `get_effective_access` 하나를 부른다 — 판정을 다른 곳에 새로 쓰지 않는다. 부여는 더하기만 있고 부서 부여는 하위 부서까지 내려간다. 대상은 FK 없이 두어 개편으로 사라진 부서·사람의 부여도 지우지 않고 `subject_missing`으로 보인다.
 - `app/hr/`: HR 웹훅(`client`)·동기화 가드 3종(건수 정합·빈 피드·삭제 상한)·`source="hr"` 행만 지움(`service`)·내장 스케줄러(`scheduler`)·회차 기록(`history`). `app/orgchart.py`: 부서 체인 해석.
 - `app/ai_client.py`·`app/ai_usage.py`: OpenAI 호환 사내 GLM 호출 + 호출 1건당 `ai_usage_events` 한 행(원문 없음).
 - 시각은 전부 `DateTime(timezone=True)`와 `app.clock.now()`(KST). 프런트 표시는 `lib/datetime.ts`(Asia/Seoul).

@@ -16,6 +16,18 @@ interface I18nValue {
 
 const I18nContext = createContext<I18nValue | null>(null);
 
+/** 문구의 {변수}를 값으로 바꾼다. */
+export function interpolateMessage(template: string, vars?: Record<string, string | number>): string {
+  let str = template;
+  if (vars) {
+    for (const [k, v] of Object.entries(vars)) {
+      // 함수 치환 - 문자열 치환은 값의 $&·$'·$$를 패턴으로 읽는다
+      str = str.replaceAll(`{${k}}`, () => String(v));
+    }
+  }
+  return str;
+}
+
 export function LangProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(DEFAULT_LANG);
 
@@ -37,15 +49,8 @@ export function LangProvider({ children }: { children: ReactNode }) {
     window.localStorage.setItem(STORAGE_KEY, next);
   };
 
-  const t = (key: string, vars?: Record<string, string | number>) => {
-    let str = MESSAGES[lang][key] ?? key;
-    if (vars) {
-      for (const [k, v] of Object.entries(vars)) {
-        str = str.replaceAll(`{${k}}`, String(v));
-      }
-    }
-    return str;
-  };
+  const t = (key: string, vars?: Record<string, string | number>) =>
+    interpolateMessage(MESSAGES[lang][key] ?? key, vars);
 
   return <I18nContext.Provider value={{ lang, setLang, t }}>{children}</I18nContext.Provider>;
 }
