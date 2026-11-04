@@ -1,8 +1,9 @@
-// 홈(자리표시) - 내가 누구인지, 어떤 권한을 가졌는지, AI를 쓸 수 있는지만 보여 준다. 제품 화면은 후속 작업.
+// 홈(자리표시) - 내가 누구인지, 어떤 권한을 어디서(역할·부서·직접) 받았는지, AI를 쓸 수 있는지만 보여 준다. 제품 화면은 후속 작업.
 "use client";
 
 import { Bot, ShieldCheck, UserRound } from "lucide-react";
 
+import { SourceLine } from "@/components/permission-source-line";
 import { hasPermission, PERMISSIONS } from "@/lib/access";
 import { getDisplayName } from "@/lib/display-name";
 import { useI18n } from "@/lib/i18n";
@@ -39,16 +40,30 @@ export default function HomePage() {
             {t("home.permissionsEmpty")}
           </p>
         ) : (
-          <ul data-testid="home-permissions" className="flex flex-wrap gap-2">
-            {granted.map((key) => (
-              <li
-                key={key}
-                data-testid={`home-permission-${key}`}
-                className="rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-sm text-gray-700"
-              >
-                {t(`permission.${key}`)}
-              </li>
-            ))}
+          <ul data-testid="home-permissions" className="space-y-2">
+            {granted.map((key) => {
+              const sources = me.sources[key] ?? [];
+              return (
+                <li
+                  key={key}
+                  data-testid={`home-permission-${key}`}
+                  className="space-y-1.5 rounded-md border border-gray-200 bg-gray-50 px-3 py-2"
+                >
+                  <div className="text-sm font-semibold text-gray-900">{t(`permission.${key}`)}</div>
+                  {sources.length > 0 && (
+                    <ul data-testid={`home-permission-source-${key}`} className="space-y-1">
+                      {sources.map((source, index) => (
+                        <SourceLine
+                          key={`${source.kind}-${source.subject_id}-${source.role ?? "direct"}-${index}`}
+                          source={source}
+                          isSelf
+                        />
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

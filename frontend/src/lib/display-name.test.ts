@@ -12,6 +12,7 @@ const BASE_ME: Me = {
   dept_path: "",
   is_sysadmin: false,
   permissions: [],
+  sources: {},
   auth_mode: "dev",
   ai_enabled: false,
 };

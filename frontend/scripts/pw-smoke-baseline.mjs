@@ -81,6 +81,8 @@ await runStep("home as qa.lead", { devUser: "qa.lead" }, async ({ page, takeShot
   const perms = await getText(page, "home-permissions");
   check("home lists Manage permissions", perms.includes("Manage permissions"), perms);
   check("home hides ungranted permissions", !perms.includes("Manage AI") && !perms.includes("Run directory sync"), perms);
+  const manageSource = await getText(page, "home-permission-source-permission.manage");
+  check("Manage permissions source names the department and role", manageSource.includes("Quality Division") && manageSource.includes("Permission Admin"), manageSource);
   check("home identity shows login id", (await getText(page, "home-identity")).includes("qa.lead"));
   check("AI status is shown", (await getText(page, "home-ai-status")).trim().length > 0, await getText(page, "home-ai-status"));
   check("admin link visible", await page.locator('[data-testid="top-bar-admin-link"]').isVisible());
@@ -98,6 +100,8 @@ await runStep("switch dev users", { devUser: "qa.lead" }, async ({ page }) => {
   await page.waitForFunction(() => document.querySelector('[data-testid="top-bar-user"]')?.textContent?.includes("Production Member"), null, { timeout: T });
   const direct = await getText(page, "home-permissions");
   check("direct grant shows only View system status", direct.includes("View system status") && !direct.includes("Manage permissions"), direct);
+  const directSource = await getText(page, "home-permission-source-system.view");
+  check("direct grant source reads You and direct grant", directSource.includes("You") && directSource.includes("direct grant"), directSource);
 
   await switcher.selectOption("qa.member");
   await page.waitForFunction(() => document.querySelector('[data-testid="top-bar-user"]')?.textContent?.includes("QA Member"), null, { timeout: T });
