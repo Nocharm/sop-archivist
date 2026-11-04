@@ -8,6 +8,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 
+import httpx2
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -277,6 +278,22 @@ class SyncTooSoon(Exception):
         self.remaining_seconds = remaining_seconds
 
 
+def get_upstream_status(exc: BaseException) -> int | None:
+    """HR 소스가 돌려준 HTTP 상태 코드 — 응답을 받지 못한 오류(연결·시간 초과)나 HTTP 오류가 아니면 None."""
+    return exc.response.status_code if isinstance(exc, httpx2.HTTPStatusError) else None
+
+
+def describe_failure(exc: BaseException) -> str:
+    """실패 기록용 문구 — 예외 클래스명 + (있으면) HTTP 상태 코드.
+
+    예외 메시지는 쓰지 않는다. httpx 상태 오류 메시지에 웹훅 주소가 들어 있고, 이 문구는 관리 API로 읽힌다.
+    원문은 호출부(스케줄러·라우터)가 서버 로그에만 남긴다.
+    """
+    status = get_upstream_status(exc)
+    name = type(exc).__name__
+    return name if status is None else f"{name}: {status}"
+
+
 def _summarize_for_record(summary: HrSyncSummary) -> str:
     """성공 기록 detail — 요약 카운트 압축 한 줄. 대량 퇴직이면 끝에 표시."""
     line = (
@@ -314,8 +331,9 @@ async def run_full_sync(session: AsyncSession) -> HrSyncSummary:
     except Exception as exc:
         # 실패 기록 전 rollback — sync_all이 중간 상태로 남긴 세션을 정리
         await session.rollback()
-        await record_batch_run(session, JOB_HR_SYNC, "failure", str(exc)[:500])
-        await record_hr_sync_run(session, HrSyncRun(outcome="failure", detail=str(exc)[:500]))
+        detail = describe_failure(exc)
+        await record_batch_run(session, JOB_HR_SYNC, "failure", detail)
+        await record_hr_sync_run(session, HrSyncRun(outcome="failure", detail=detail))
         raise
     if summary.aborted_reason is None:
         _last_full_sync_at = now

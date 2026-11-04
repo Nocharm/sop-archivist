@@ -2,10 +2,27 @@
 
 import asyncio
 
+import httpx2
+
 from app.db import SessionLocal
 from app.hr.client import RawHrEmployee
 from app.models import Employee
 from app.settings import settings
+
+
+# _mock_hr가 설정하는 웹훅 주소 — 실패 기록·응답에 새면 안 되는 값
+HR_TEST_URL = "http://hr.test/webhook"
+
+
+def _make_status_error(status: int = 502) -> httpx2.HTTPStatusError:
+    """실제 raise_for_status가 만드는 예외 — 메시지에 웹훅 주소가 들어 있어 누출 검사의 전제가 된다."""
+    request = httpx2.Request("POST", HR_TEST_URL)
+    try:
+        httpx2.Response(status, request=request).raise_for_status()
+    except httpx2.HTTPStatusError as exc:
+        assert HR_TEST_URL in str(exc)
+        return exc
+    raise AssertionError(f"status {status} did not raise")
 
 
 def _hr_row(login_id: str, **overrides) -> RawHrEmployee:
@@ -26,7 +43,7 @@ def _mock_hr(monkeypatch, employees: list, count: int | None = None, departments
     from app.hr import client as hr_client
     from app.hr import service as hr_service
 
-    monkeypatch.setattr(settings, "n8n_hr_url", "http://hr.test/webhook")
+    monkeypatch.setattr(settings, "n8n_hr_url", HR_TEST_URL)
     monkeypatch.setattr(settings, "n8n_hr_token", "tok")
     monkeypatch.setattr(settings, "hr_sync_delete_cap_pct", 0)
     monkeypatch.setattr(hr_service, "_last_full_sync_at", None)
