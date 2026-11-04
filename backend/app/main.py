@@ -10,6 +10,7 @@ from app.db import SessionLocal, engine, run_migrations
 from app.dev_users import seed_dev_directory
 from app.hr.scheduler import run_hr_sync_loop
 from app.routers import access as access_router
+from app.routers import admin as admin_router
 from app.routers import auth as auth_router
 from app.routers import directory as directory_router
 from app.routers import me as me_router
@@ -40,6 +41,7 @@ app.include_router(auth_router.router)
 app.include_router(directory_router.router)
 app.include_router(me_router.router)
 app.include_router(access_router.router)
+app.include_router(admin_router.router)
 
 
 @app.get("/api/health")
