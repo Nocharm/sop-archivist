@@ -1,0 +1,269 @@
+// 관리 > 권한 > 역할 - 역할 목록과 만들기·수정·삭제(삭제는 확인 모달). 부여가 남은 역할 삭제는 서버가 409로 막고 사람 말 문구로 보여 준다.
+"use client";
+
+import { Pencil, Plus, Trash2 } from "lucide-react";
+import { useState, type FormEvent } from "react";
+
+import { InlineNotice } from "@/components/inline-notice";
+import { Modal } from "@/components/modal";
+import { orderPermissions, PERMISSIONS } from "@/lib/access";
+import { translateOrRaw } from "@/lib/admin-format";
+import { createRole, deleteRole, listRoles, updateRole, type Role } from "@/lib/api";
+import { humanizeApiError } from "@/lib/api-errors";
+import { useI18n } from "@/lib/i18n";
+import { BUTTON_ICON, BUTTON_PRIMARY, BUTTON_SECONDARY, CHIP, INPUT_FIELD } from "@/lib/ui-classes";
+import { useLoaded } from "@/lib/use-loaded";
+
+// 컬럼 길이와 같다(backend RoleName 100, description 500)
+const ROLE_NAME_MAX = 100;
+const ROLE_DESCRIPTION_MAX = 500;
+
+interface RoleFormModalProps {
+  /** null이면 새 역할 */
+  role: Role | null;
+  onClose: () => void;
+  onSaved: () => void;
+}
+
+function RoleFormModal({ role, onClose, onSaved }: RoleFormModalProps) {
+  const { t } = useI18n();
+  const [name, setName] = useState(role?.name ?? "");
+  const [description, setDescription] = useState(role?.description ?? "");
+  const [permissions, setPermissions] = useState<string[]>(role?.permissions ?? []);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  const togglePermission = (key: string) => {
+    setPermissions((prev) => (prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key]));
+  };
+
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    setIsSaving(true);
+    setError(null);
+    const body = { name: name.trim(), description: description.trim(), permissions };
+    try {
+      if (role) await updateRole(role.id, body);
+      else await createRole(body);
+      onSaved();
+    } catch (err) {
+      setError(err);
+      setIsSaving(false);
+    }
+  };
+
+  const canSave = name.trim() !== "" && !isSaving;
+  return (
+    <Modal
+      testId="role-form"
+      title={role ? t("roles.form.editTitle") : t("roles.form.createTitle")}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" data-testid="role-form-cancel" className={BUTTON_SECONDARY} onClick={onClose}>
+            {t("common.cancel")}
+          </button>
+          <button type="submit" form="role-form-element" data-testid="role-form-save" className={BUTTON_PRIMARY} disabled={!canSave}>
+            {isSaving ? t("common.saving") : t("common.save")}
+          </button>
+        </>
+      }
+    >
+      <form id="role-form-element" className="space-y-4" onSubmit={(event) => void handleSubmit(event)}>
+        <label className="block space-y-1">
+          <span className="text-sm font-semibold text-gray-700">{t("roles.form.name")}</span>
+          <input
+            type="text"
+            data-testid="role-form-name"
+            className={INPUT_FIELD}
+            value={name}
+            maxLength={ROLE_NAME_MAX}
+            autoFocus
+            onChange={(event) => setName(event.target.value)}
+          />
+        </label>
+        <label className="block space-y-1">
+          <span className="text-sm font-semibold text-gray-700">{t("roles.form.description")}</span>
+          <textarea
+            data-testid="role-form-description"
+            className={`${INPUT_FIELD} h-20 py-1.5`}
+            value={description}
+            maxLength={ROLE_DESCRIPTION_MAX}
+            onChange={(event) => setDescription(event.target.value)}
+          />
+        </label>
+        <fieldset className="space-y-1.5">
+          <legend className="text-sm font-semibold text-gray-700">{t("roles.form.permissions")}</legend>
+          {PERMISSIONS.map((key) => (
+            <label key={key} className="flex items-center gap-2 text-sm text-gray-800">
+              <input
+                type="checkbox"
+                data-testid={`role-form-perm-${key}`}
+                className="h-4 w-4 accent-accent"
+                checked={permissions.includes(key)}
+                onChange={() => togglePermission(key)}
+              />
+              {t(`permission.${key}`)}
+            </label>
+          ))}
+        </fieldset>
+        {role && <p className="text-xs text-gray-500">{t("roles.form.editNote")}</p>}
+        {error !== null && (
+          <InlineNotice testId="role-form-error" tone="error">
+            {humanizeApiError(error, t)}
+          </InlineNotice>
+        )}
+      </form>
+    </Modal>
+  );
+}
+
+interface DeleteRoleModalProps {
+  role: Role;
+  onClose: () => void;
+  onDeleted: () => void;
+}
+
+function DeleteRoleModal({ role, onClose, onDeleted }: DeleteRoleModalProps) {
+  const { t } = useI18n();
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  const handleDelete = async () => {
+    setIsDeleting(true);
+    setError(null);
+    try {
+      await deleteRole(role.id);
+      onDeleted();
+    } catch (err) {
+      setError(err);
+      setIsDeleting(false);
+    }
+  };
+
+  return (
+    <Modal
+      testId="role-delete"
+      title={t("roles.delete.title")}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" data-testid="role-delete-cancel" className={BUTTON_SECONDARY} onClick={onClose}>
+            {t("common.cancel")}
+          </button>
+          <button type="button" data-testid="role-delete-confirm" className={BUTTON_PRIMARY} disabled={isDeleting} onClick={() => void handleDelete()}>
+            {t("common.delete")}
+          </button>
+        </>
+      }
+    >
+      <p className="text-sm text-gray-800">{t("roles.delete.body", { name: role.name })}</p>
+      {error !== null && (
+        <InlineNotice testId="role-delete-error" tone="error">
+          {humanizeApiError(error, t)}
+        </InlineNotice>
+      )}
+    </Modal>
+  );
+}
+
+export function AccessRoles() {
+  const { t } = useI18n();
+  const roles = useLoaded(listRoles);
+  // "new"는 새 역할 폼, Role은 그 역할의 수정 폼
+  const [formTarget, setFormTarget] = useState<Role | "new" | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Role | null>(null);
+
+  return (
+    <section data-testid="access-roles" className="space-y-4">
+      <div className="flex items-start justify-between gap-4">
+        <p className="text-sm text-gray-600">{t("roles.intro")}</p>
+        <button type="button" data-testid="role-create" className={BUTTON_PRIMARY} onClick={() => setFormTarget("new")}>
+          <Plus size={16} strokeWidth={1.5} />
+          {t("roles.create")}
+        </button>
+      </div>
+
+      {roles.error !== null && (
+        <InlineNotice testId="roles-error" tone="error">
+          {humanizeApiError(roles.error, t)}
+        </InlineNotice>
+      )}
+      {roles.data !== null && roles.data.length === 0 && (
+        <p data-testid="roles-empty" className="text-sm text-gray-500">
+          {t("roles.empty")}
+        </p>
+      )}
+      {roles.data !== null && roles.data.length > 0 && (
+        <ul data-testid="roles-list" className="divide-y divide-gray-200 rounded-md border border-gray-200">
+          {roles.data.map((role) => (
+            <li key={role.id} data-testid={`role-row-${role.id}`} className="flex items-start justify-between gap-4 px-3 py-3">
+              <div className="min-w-0 space-y-1.5">
+                <div className="flex flex-wrap items-baseline gap-x-3">
+                  <span className="text-sm font-semibold text-gray-900">{role.name}</span>
+                  <span className="text-xs text-gray-500">{t("roles.grantCount", { count: role.grant_count })}</span>
+                </div>
+                {role.description && <p className="text-sm text-gray-600">{role.description}</p>}
+                <div className="flex flex-wrap gap-1.5">
+                  {role.permissions.length === 0 ? (
+                    <span className="text-xs text-gray-500">{t("roles.noPermissions")}</span>
+                  ) : (
+                    orderPermissions(role.permissions).map((key) => (
+                      <span key={key} className={CHIP}>
+                        {translateOrRaw(t, `permission.${key}`, key)}
+                      </span>
+                    ))
+                  )}
+                </div>
+              </div>
+              <div className="flex shrink-0 gap-1">
+                <button
+                  type="button"
+                  data-testid={`role-edit-${role.id}`}
+                  className={BUTTON_ICON}
+                  aria-label={t("roles.editLabel", { name: role.name })}
+                  title={t("common.edit")}
+                  onClick={() => setFormTarget(role)}
+                >
+                  <Pencil size={16} strokeWidth={1.5} />
+                </button>
+                <button
+                  type="button"
+                  data-testid={`role-delete-${role.id}`}
+                  className={BUTTON_ICON}
+                  aria-label={t("roles.deleteLabel", { name: role.name })}
+                  title={t("common.delete")}
+                  onClick={() => setDeleteTarget(role)}
+                >
+                  <Trash2 size={16} strokeWidth={1.5} />
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {formTarget !== null && (
+        <RoleFormModal
+          key={formTarget === "new" ? "new" : formTarget.id}
+          role={formTarget === "new" ? null : formTarget}
+          onClose={() => setFormTarget(null)}
+          onSaved={() => {
+            setFormTarget(null);
+            roles.reload();
+          }}
+        />
+      )}
+      {deleteTarget !== null && (
+        <DeleteRoleModal
+          role={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={() => {
+            setDeleteTarget(null);
+            roles.reload();
+          }}
+        />
+      )}
+    </section>
+  );
+}

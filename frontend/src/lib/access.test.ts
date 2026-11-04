@@ -1,7 +1,7 @@
 // 권한 헬퍼 단위 테스트 - 카탈로그 순서(백엔드와 동일), sysadmin 우회, 관리 메뉴 노출 조건.
 import { describe, expect, it } from "vitest";
 
-import { canSeeAdmin, hasPermission, PERMISSIONS } from "./access";
+import { canSeeAdmin, hasPermission, orderPermissions, PERMISSIONS } from "./access";
 import type { Me } from "./api";
 
 const BASE_ME: Me = {
@@ -42,5 +42,18 @@ describe("access", () => {
 
   it("PERMISSIONS matches backend order", () => {
     expect([...PERMISSIONS]).toEqual(["permission.manage", "directory.sync", "ai.admin", "system.view"]);
+  });
+
+  it("orders permissions by the catalog, not alphabetically", () => {
+    expect(orderPermissions(["system.view", "ai.admin", "directory.sync", "permission.manage"])).toEqual([
+      "permission.manage",
+      "directory.sync",
+      "ai.admin",
+      "system.view",
+    ]);
+  });
+
+  it("keeps a key outside the catalog after the known ones", () => {
+    expect(orderPermissions(["zeta.use", "system.view", "alpha.use"])).toEqual(["system.view", "alpha.use", "zeta.use"]);
   });
 });
