@@ -1,0 +1,163 @@
+# 서버(사내 71번) 배포용 — 로컬 PC는 Docker 없이 네이티브 실행 (CLAUDE.md Operations 참고)
+# 같은 서버의 다른 스택(bpm)과 프로젝트 이름·호스트 포트·네트워크 대역이 겹치면 안 된다.
+# 메모리 예약/상한: 공용 서버라 과예약 방지 — reservations 합계 ~816M, limits 합계 ~3.0G.
+# docker compose v2는 swarm 없이도 deploy.resources.limits/reservations(memory)를 적용한다.
+name: sop-archivist
+
+services:
+  proxy:
+    image: nginx:1.27-alpine
+    ports:
+      # 서버 엣지 nginx(443/80)와 bpm(9900·9910)을 피한 비특권 포트
+      - "${APP_PORT:-7777}:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - frontend
+      - backend
+    # OOM·서버 재부팅 뒤 자동 복구 — 운영자가 stop한 컨테이너는 그대로 둔다
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 96M
+        reservations:
+          memory: 32M
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      # Next.js standalone 런타임 V8 old-space 힙 상한(MB) — 무제한 성장 방지
+      NODE_OPTIONS: --max-old-space-size=512
+    expose:
+      - "3000"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          # V8 힙 512M + 네이티브/버퍼 오버헤드 여유분
+          memory: 768M
+        reservations:
+          memory: 256M
+
+  backend:
+    build: ./backend
+    # 모든 backend env는 settings.py · .env.example · 아래 environment 세 곳에 함께 둔다.
+    # 이 서비스에는 env_file이 없다 — 여기 적지 않은 .env 값은 컨테이너에 들어가지 않는다.
+    # int/bool 필드는 빈 문자열이 pydantic 검증 오류(기동 불능)라 Settings 기본값과 같은 값을 폴백으로 둔다.
+    environment:
+      # glibc malloc arena 수 제한 — uvicorn 스레드별 arena 증식으로 인한 RSS 팽창 방지 (python:3.11-slim = glibc)
+      MALLOC_ARENA_MAX: "2"
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sop_archivist}:${POSTGRES_PASSWORD:?set in .env}@db:5432/${POSTGRES_DB:-sop_archivist}
+      # 비면 backend가 dev(X-Dev-User 신뢰)로 해석하므로, .env에서 빠뜨린 서버가 열리지 않게 keycloak으로 닫는다.
+      AUTH_MODE: ${AUTH_MODE:-keycloak}
+      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER:-}
+      KEYCLOAK_AUDIENCE: ${KEYCLOAK_AUDIENCE:-}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-}
+      # dev 모드에서 X-Dev-User가 없을 때 쓰는 사용자 — Settings 기본값과 같다
+      DEV_USER: ${DEV_USER:-dev.admin}
+      APP_SYSADMINS: ${APP_SYSADMINS:-}
+      DEV_ENFORCE_PERMISSIONS: ${DEV_ENFORCE_PERMISSIONS:-false}
+      AI_ENABLED: ${AI_ENABLED:-false}
+      AI_BASE_URL: ${AI_BASE_URL:-}
+      AI_API_TOKEN: ${AI_API_TOKEN:-}
+      AI_MODEL: ${AI_MODEL:-}
+      AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-60}
+      # 응답 max_tokens 상한(사고 토큰 포함) — 작으면 GLM 빈 응답
+      AI_MAX_TOKENS: ${AI_MAX_TOKENS:-8000}
+      # 다중 엔드포인트+모델(JSON 배열) — 비우면 위 단일 AI_* 사용 (.env.example 참고)
+      AI_ENDPOINTS: ${AI_ENDPOINTS:-}
+      # AI 호출 동시성 상한
+      AI_MAX_CONCURRENCY: ${AI_MAX_CONCURRENCY:-4}
+      # 사내 n8n HR 웹훅 동기화 — 둘 다 비우면 비활성(시크릿은 .env로 주입)
+      N8N_HR_URL: ${N8N_HR_URL:-}
+      N8N_HR_TOKEN: ${N8N_HR_TOKEN:-}
+      HR_SYNC_INTERVAL_HOURS: ${HR_SYNC_INTERVAL_HOURS:-24}
+      HR_SYNC_DELETE_CAP_PCT: ${HR_SYNC_DELETE_CAP_PCT:-20}
+      # uvicorn이 X-Forwarded-For를 믿을 프록시 대역 — compose 네트워크 실제 서브넷(첫 기동 뒤
+      # docker network inspect sop-archivist_default)과 같아야 로그인 IP가 nginx 주소로 찍히지 않는다.
+      # backend는 호스트에 포트를 열지 않아 그 대역 밖에서는 직접 닿지 않는다.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "8000"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sop_archivist}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-sop_archivist}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sop_archivist} -d ${POSTGRES_DB:-sop_archivist}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # db-viewer 읽기전용 조회용 공유 브리지 합류 (docs/deploy/db-viewer-readonly.md)
+    # networks:를 명시하는 순간 default 자동 연결이 사라지므로 default를 반드시 함께 적는다.
+    networks:
+      default:
+      dbv-shared:
+        # 공유 네트워크에는 여러 스택의 db가 함께 있다 — 별칭이 유일한 구별 수단이라 bpm 별칭과 달라야 한다
+        # (겹치면 연결 테스트는 초록인데 엉뚱한 DB에 붙는다).
+        aliases: ["${DBV_DB_ALIAS:-sop-archivist-db}"]
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+
+  # 일간 DB 백업 사이드카 — 정책·복구 절차: docs/deploy/backup.md
+  # backend 상태에 묶지 않는다(backend가 죽어도 백업은 돈다) — db가 건강하면 기동한다.
+  db-backup:
+    image: postgres:16-alpine  # db와 동일 이미지 — pg_dump 버전 호환 보장, 추가 다운로드 없음
+    environment:
+      PGHOST: db
+      PGUSER: ${POSTGRES_USER:-sop_archivist}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      PGDATABASE: ${POSTGRES_DB:-sop_archivist}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    volumes:
+      - ./scripts/db-backup.sh:/db-backup.sh:ro
+      - ${BACKUP_DIR:-./backups}:/backups
+    entrypoint: ["sh", "/db-backup.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+    # 백업 루프가 죽으면 조용히 백업이 멈추므로 자동 재기동 (다른 서비스도 같은 정책)
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+        reservations:
+          memory: 16M
+
+volumes:
+  pgdata:
+
+networks:
+  # 대역은 Docker 자동 할당 — 서버 대역 정책이 확정되기 전까지 ipam을 두지 않는다.
+  # 고정 대역을 쓰기로 하면 여기에 ipam 블록을 추가하고 FORWARDED_ALLOW_IPS도 같이 맞춘다.
+  default:
+    driver: bridge
+  # db-viewer가 소유하는 공유 브리지 — 서버에서 먼저 만들어 둔다(external, 어느 compose도 소유하지 않음).
+  # 없으면 up이 "network dbv-shared declared as external, but could not be found"로 실패한다:
+  #   docker network create dbv-shared   (서버에서는 db-viewer 운영자가 정한 대역으로 만든다)
+  dbv-shared:
+    external: true
+    name: ${DBV_NETWORK:-dbv-shared}
