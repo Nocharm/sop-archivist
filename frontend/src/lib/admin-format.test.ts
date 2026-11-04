@@ -1,7 +1,7 @@
-// admin-format 단위 테스트 - 변경 기록 한 줄 요약(action별·깨진 detail), 중단 사유 문장, 모르는 값의 원문 폴백을 실제 영어 사전으로 확인한다.
+// admin-format 단위 테스트 - 변경 기록 한 줄 요약(action별·깨진 detail), 중단 사유 문장, 유효 권한 조회 안내(sysadmin 모순 방지), 모르는 값의 원문 폴백을 실제 사전으로 확인한다.
 import { describe, expect, it } from "vitest";
 
-import { buildAuditSummary, describeRunDetail, getAbortReasonKey, translateOrRaw } from "./admin-format";
+import { buildAuditSummary, describeRunDetail, getAbortReasonKey, getEffectiveNotices, translateOrRaw } from "./admin-format";
 import type { AuditEvent } from "./api";
 import { MESSAGES, type Lang } from "./i18n-messages";
 
@@ -136,5 +136,43 @@ describe("translateOrRaw", () => {
 
   it("falls back to the raw value for an unknown key", () => {
     expect(translateOrRaw(en, "batch.job.new_job", "new_job")).toBe("new_job");
+  });
+});
+
+describe("getEffectiveNotices", () => {
+  const noticeTexts = (access: { known: boolean; active: boolean; is_sysadmin: boolean }, lang: Lang) =>
+    getEffectiveNotices(access).map((notice) => makeTranslator(lang)(notice.key));
+
+  it("shows nothing for a known, active, ordinary person", () => {
+    expect(getEffectiveNotices({ known: true, active: true, is_sysadmin: false })).toEqual([]);
+  });
+
+  it("explains an ordinary person without an employee record as holding no permissions", () => {
+    const notices = getEffectiveNotices({ known: false, active: false, is_sysadmin: false });
+    expect(notices.map((notice) => notice.testId)).toEqual(["effective-unknown"]);
+    expect(noticeTexts({ known: false, active: false, is_sysadmin: false }, "en")[0]).toContain("holds no permissions");
+  });
+
+  it("explains an inactive ordinary person", () => {
+    const notices = getEffectiveNotices({ known: true, active: false, is_sysadmin: false });
+    expect(notices.map((notice) => notice.testId)).toEqual(["effective-inactive"]);
+  });
+
+  it("shows only the sysadmin line for a known, active sysadmin", () => {
+    expect(getEffectiveNotices({ known: true, active: true, is_sysadmin: true }).map((notice) => notice.testId)).toEqual(["effective-sysadmin"]);
+  });
+
+  it.each([
+    ["no employee record", { known: false, active: false, is_sysadmin: true }, "Not in the employee directory yet."],
+    ["a retired employee", { known: true, active: false, is_sysadmin: true }, "Marked as retired in the directory."],
+  ])("never says a sysadmin holds no permissions: %s", (_label, access, note) => {
+    const notices = getEffectiveNotices(access);
+    expect(notices.map((notice) => notice.testId)).toEqual(["effective-sysadmin", "effective-sysadmin-note"]);
+    for (const lang of ["en", "ko"] as const) {
+      const texts = noticeTexts(access, lang);
+      expect(texts.join(" ")).not.toMatch(/holds no permissions|권한이 없습니다/);
+      expect(texts[0]).toBe(lang === "en" ? "System administrator. Holds every permission, whatever the grants say." : "시스템 관리자입니다. 부여와 상관없이 모든 권한을 가집니다.");
+    }
+    expect(noticeTexts(access, "en")[1]).toBe(note);
   });
 });
