@@ -4,6 +4,10 @@
 # 검증(pg_restore --list) 통과 시에만 .dump로 확정 — 깨진 덤프가 정상 파일로 남지 않게.
 # 접속 정보는 표준 PG* 환경변수(PGHOST/PGUSER/PGPASSWORD/PGDATABASE) — compose가 주입.
 
+# 덤프에는 직원 디렉터리를 포함한 모든 행이 들어 있다. 호스트 바인드 마운트에서 다른 계정이 읽지 못하도록
+# 이 스크립트가 만드는 모든 파일(.tmp·.dump)을 소유자 전용(0600)으로 만든다 — mkdir/pg_dump보다 먼저 건다.
+umask 077
+
 BACKUP_DIR=/backups
 BACKUP_TIME="${BACKUP_TIME:-04:00}"            # KST HH:MM — 이 시각 이후 하루 1회
 RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"  # 보존 일수 — 초과분은 백업 성공 시마다 삭제
@@ -65,6 +69,8 @@ run_backup() {
 }
 
 mkdir -p "$BACKUP_DIR"
+# 디렉터리가 이미 있으면(마운트·이전 배포) mkdir의 umask가 적용되지 않으므로 권한을 직접 좁힌다.
+chmod 700 "$BACKUP_DIR"
 log "started (daily at $BACKUP_TIME KST, retention ${RETENTION_DAYS}d)"
 has_dump_today || run_backup
 
