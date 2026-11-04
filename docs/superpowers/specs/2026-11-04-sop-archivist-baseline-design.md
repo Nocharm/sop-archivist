@@ -1,8 +1,8 @@
 # SOP Archivist — 기반 세팅(사내 인프라 이식) 설계
 
 - 날짜: 2026-11-04
-- 저장소: 템플릿 `Nocharm/claude_Template` `main`(`bd31555`)에서 분기한 워크트리 `/Users/hyeonjin/Documents/sop-archivist`(브랜치 `feat/sop-archivist`)에서 시작하고, 첫 커밋부터 **별도 공개 저장소 `Nocharm/sop-archivist`** 로 올린다(사용자 결정 2026-11-04). 템플릿 클론에 remote `sop-archivist`를 두고 이 브랜치를 그 저장소 `main`으로 push한다. 배포 기준은 그 저장소의 `main`, 버전 태그도 그 저장소에만 단다. Windows PC·서버는 새 저장소를 clone한다. 템플릿 규칙 갱신은 필요할 때 템플릿 `main`을 이 브랜치로 수동 머지한다(이 브랜치는 템플릿 메타를 지우므로 템플릿 `main`으로 되돌려 합치지 않는다)
-- 이식 출처: `/Users/hyeonjin/Documents/bpm` @ `1bf6d1cf`(v1.4.0, 운영 배포본)
+- 저장소: 템플릿 `Nocharm/claude_Template` `main`(`bd31555`)에서 분기한 워크트리(이 저장소 루트, 브랜치 `feat/sop-archivist`, 템플릿 클론은 `../claude-code-template`)에서 시작하고, 첫 커밋부터 **별도 공개 저장소 `Nocharm/sop-archivist`** 로 올린다(사용자 결정 2026-11-04). 템플릿 클론에 remote `sop-archivist`를 두고 이 브랜치를 그 저장소 `main`으로 push한다. 배포 기준은 그 저장소의 `main`, 버전 태그도 그 저장소에만 단다. Windows PC·서버는 새 저장소를 clone한다. 템플릿 규칙 갱신은 필요할 때 템플릿 `main`을 이 브랜치로 수동 머지한다(이 브랜치는 템플릿 메타를 지우므로 템플릿 `main`으로 되돌려 합치지 않는다)
+- 이식 출처: `../bpm` @ `1bf6d1cf`(v1.4.0, 운영 배포본)
 - 표기: **(사용자 결정)** = 대화에서 사용자가 정한 것, **(내 판단)** = 설계자가 정한 기본값(사용자 검토 대상)
 
 ## 1. 의도
@@ -52,7 +52,7 @@ SOP Restructuring T/F가 쓸 전용 AI 에이전트 **SOP Archivist**(사용자 
 
 ## 4. 결정 사항
 
-**사용자 결정**: 이름 `SOP Archivist`/식별자 `sop-archivist` · 포트 7777 · 서버 71번·같은 AI 모델 · 사용자=전 부서 SOP 담당자, 로그인 제한 없음 · 권한은 표 기반(역할에 권한을 묶고, 역할 또는 권한을 개인·부서에 부여, 부서 부여는 하위 부서·팀까지 내려감, 권한을 조절하는 권한을 특정 부서가 가질 수 있음) · 템플릿 워크트리에서 시작해 별도 비공개 저장소로.
+**사용자 결정**: 이름 `SOP Archivist`/식별자 `sop-archivist` · 포트 7777 · 서버 71번·같은 AI 모델 · 사용자=전 부서 SOP 담당자, 로그인 제한 없음 · 권한은 표 기반(역할에 권한을 묶고, 역할 또는 권한을 개인·부서에 부여, 부서 부여는 하위 부서·팀까지 내려감, 권한을 조절하는 권한을 특정 부서가 가질 수 있음) · 템플릿 워크트리에서 시작해 별도 공개 저장소로.
 
 **내 판단(검토 대상)**
 - **스택**: bpm과 동일 계열 — frontend Next.js 16.4.3·React 19.2.4·Tailwind 4·`oidc-client-ts`+`react-oidc-context`·`lucide-react`·vitest+jsdom / backend FastAPI·SQLAlchemy async·Pydantic Settings·asyncpg·aiosqlite·`pyjwt[crypto]`. 버전은 bpm `1bf6d1cf`의 고정값을 그대로 쓴다. 도메인 전용 의존성(`@xyflow/react`, dagre, exceljs, jszip, html-to-image, ldap3, pypdf, python-docx, python-pptx, openpyxl, numpy)은 가져오지 않는다 — 문서 파싱 라이브러리는 제품 단계에서 결정.
@@ -71,7 +71,7 @@ SOP Restructuring T/F가 쓸 전용 AI 에이전트 **SOP Archivist**(사용자 
 
 ## 5. 이식 목록
 
-각 항목: bpm 출처 → 새 위치, 방식(**복사** = 이름·접두만 바꿈 / **맞춤** = 범위 축소·재구성). 출처 경로는 모두 `/Users/hyeonjin/Documents/bpm/` 기준.
+각 항목: bpm 출처 → 새 위치, 방식(**복사** = 이름·접두만 바꿈 / **맞춤** = 범위 축소·재구성). 출처 경로는 모두 `../bpm/` 기준.
 
 ### 5.1 저장소 위생·규칙·문서
 - `.gitattributes` → 복사.
