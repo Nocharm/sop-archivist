@@ -1,0 +1,19 @@
+# 저장소 내 모든 텍스트는 LF로 정규화 — Windows PC 경유 시 CRLF 오염 방지.
+# eol=lf는 Windows 체크아웃에서도 LF를 강제해 서버(Linux/Docker) 전송 시 줄바꿈 일관성 보장.
+* text=auto eol=lf
+
+# Windows 전용 스크립트만 CRLF 유지 (해당 쉘이 CRLF를 요구).
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# 바이너리 — 정규화 대상에서 제외.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.woff  binary
+*.woff2 binary
+*.pdf  binary

@@ -105,3 +105,5 @@ For React event handlers, `handle` is the caller-side convention and `on` is the
 - Component files: one exported component per file.
 - Props: define with `interface`, not inline.
 - Avoid `useEffect` for derived state — compute during render.
+- Reading latest state/props **inside an effect** without re-subscribing: use `useEffectEvent` (React 19.2+), not a ref mirror. Ref mirrors remain for non-effect callbacks — effect events must not be called outside effects (lint-enforced). Details: `docs/lessons/react-ts-patterns.md` §7.
+- `<Activity mode="hidden">` preserves state/DOM but **pauses effects while hidden** — check the three traps in `docs/lessons/react-ts-patterns.md` §8 before using it (effect-driven badge sources, intentional forced remounts, Playwright strict-mode collisions).
