@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.db import engine, run_migrations
+from app.routers import auth as auth_router
 
 
 @asynccontextmanager
@@ -18,6 +19,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(title="SOP Archivist", lifespan=lifespan)
+app.include_router(auth_router.router)
 
 
 @app.get("/api/health")
