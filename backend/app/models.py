@@ -2,7 +2,19 @@
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, MetaData, String, Text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    ColumnElement,
+    DateTime,
+    ForeignKey,
+    Integer,
+    MetaData,
+    String,
+    Text,
+    and_,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from app.clock import now as _now_kst
@@ -114,3 +126,95 @@ class HrSyncRun(Base):
     mass_departure: Mapped[bool] = mapped_column(Boolean, default=False)
     # 바뀐 사람 — {"created"|"deactivated"|"reactivated"|"deleted"|"duplicates": [{login_id, name, department}]}
     changes: Mapped[dict | None] = mapped_column(JSON, default=None)
+
+
+class Role(Base):
+    """권한 묶음 — 관리 화면에서 만들고 고친다. 권한 키 목록은 role_permissions."""
+
+    __tablename__ = "roles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    description: Mapped[str] = mapped_column(String(500), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
+class RolePermission(Base):
+    """역할에 든 권한 키 하나. 키는 FK가 아니다 — 카탈로그(app.access.catalog)는 코드라 판정 때 모르는 키를 버린다."""
+
+    __tablename__ = "role_permissions"
+
+    role_id: Mapped[int] = mapped_column(ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True)
+    permission: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+
+class AccessGrant(Base):
+    """부여 — (대상, 역할 또는 권한 하나). 대상은 개인 login_id 또는 부서 dept_code.
+
+    대상은 FK가 아니다: 조직 개편·HR 삭제로 대상 행이 사라져도 부여는 남아 관리 화면에 "대상 없음"으로 보이고,
+    판정에서는 체인·직원 조회에 걸리지 않아 저절로 무시된다.
+    """
+
+    __tablename__ = "access_grants"
+    __table_args__ = (
+        CheckConstraint(
+            "(role_id IS NOT NULL AND permission IS NULL) OR (role_id IS NULL AND permission IS NOT NULL)",
+            name="role_xor_permission",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # "user" | "dept" — API 경계에서 제한한다
+    subject_type: Mapped[str] = mapped_column(String(10))
+    subject_id: Mapped[str] = mapped_column(String(100))
+    # 부여가 남은 역할은 지울 수 없다 — 지우면 받은 사람들의 권한이 조용히 사라지므로 회수를 먼저 요구한다
+    role_id: Mapped[int | None] = mapped_column(
+        ForeignKey("roles.id", ondelete="RESTRICT"), default=None
+    )
+    permission: Mapped[str | None] = mapped_column(String(100), default=None)
+    created_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    @classmethod
+    def build_identity_filter(
+        cls, subject_type: str, subject_id: str, role_id: int | None, permission: str | None
+    ) -> ColumnElement[bool]:
+        """같은 부여를 찾는 조건. role_id·permission 중 하나는 늘 NULL이라 DB unique로는 중복을 못 막아 API·시드가 이걸로 검사한다."""
+        return and_(
+            cls.subject_type == subject_type,
+            cls.subject_id == subject_id,
+            cls.role_id.is_(None) if role_id is None else cls.role_id == role_id,
+            cls.permission.is_(None) if permission is None else cls.permission == permission,
+        )
+
+
+class AccessAuditEvent(Base):
+    """권한 표 변경 기록 — 역할 생성·수정·삭제와 부여·회수. 변경과 같은 트랜잭션에서 남는다(app.access.audit)."""
+
+    __tablename__ = "access_audit_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+    # 변경한 사람 login_id(인증된 요청 사용자)
+    actor: Mapped[str] = mapped_column(String(100))
+    # app.access.audit.ACTIONS 중 하나
+    action: Mapped[str] = mapped_column(String(30))
+    # 무엇이 바뀌었는지 — 역할은 이름·권한(수정은 before/after), 부여는 대상·역할 또는 권한
+    detail: Mapped[dict] = mapped_column(JSON)
+
+
+class LoginRecord(Base):
+    """로그인/활동 기록 — 사용자 현황조사용. /api/me 호출 시 KST 하루 1인 1건 기록(집계·리포트는 후속)."""
+
+    __tablename__ = "login_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    login_id: Mapped[str] = mapped_column(String(100), index=True)
+    # 조회 편의용 표시명 스냅샷(없으면 None)
+    name: Mapped[str | None] = mapped_column(String(200), default=None)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, index=True
+    )
