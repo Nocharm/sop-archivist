@@ -7,7 +7,7 @@ import { useState } from "react";
 import { InlineNotice } from "@/components/inline-notice";
 import { SubjectPicker, type PickedSubject } from "@/components/subject-picker";
 import { orderPermissions } from "@/lib/access";
-import { translateOrRaw } from "@/lib/admin-format";
+import { getEffectiveNotices, translateOrRaw } from "@/lib/admin-format";
 import { getEffective, type EffectiveSource } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { useI18n } from "@/lib/i18n";
@@ -48,21 +48,11 @@ function EffectiveResult({ loginId }: { loginId: string }) {
   const permissions = orderPermissions(result.permissions);
   return (
     <div data-testid="effective-result" className="space-y-3">
-      {!result.known && (
-        <InlineNotice testId="effective-unknown" tone="info">
-          {t("effective.unknown")}
+      {getEffectiveNotices(result).map((notice) => (
+        <InlineNotice key={notice.testId} testId={notice.testId} tone="info">
+          {t(notice.key)}
         </InlineNotice>
-      )}
-      {result.known && !result.active && (
-        <InlineNotice testId="effective-inactive" tone="info">
-          {t("effective.inactive")}
-        </InlineNotice>
-      )}
-      {result.is_sysadmin && (
-        <InlineNotice testId="effective-sysadmin" tone="info">
-          {t("effective.sysadmin")}
-        </InlineNotice>
-      )}
+      ))}
       {permissions.length === 0 ? (
         <p data-testid="effective-none" className="text-sm text-gray-500">
           {t("effective.none")}

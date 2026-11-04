@@ -1,6 +1,29 @@
-// 관리 화면 표시용 순수 변환 - 변경 기록 한 줄 요약, HR 동기화 중단 사유 문장, 모르는 값의 원문 폴백. 컴포넌트는 이 결과를 그대로 그린다.
-import type { AuditEvent } from "./api";
+// 관리 화면 표시용 순수 변환 - 변경 기록 한 줄 요약, HR 동기화 중단 사유 문장, 유효 권한 조회 안내, 모르는 값의 원문 폴백. 컴포넌트는 이 결과를 그대로 그린다.
+import type { AuditEvent, EffectiveAccess } from "./api";
 import type { TFunc } from "./api-errors";
+
+export interface EffectiveNotice {
+  testId: string;
+  /** 번역 키 */
+  key: string;
+}
+
+/**
+ * 유효 권한 조회 결과 위에 올릴 안내 목록(위에서 아래 순서).
+ * 백엔드는 sysadmin이면 직원 행이 없거나 퇴직이어도 권한 전부를 돌려준다(known·active 판정보다 먼저 정해진다).
+ * 그래서 sysadmin에게는 "권한이 없다"는 안내를 절대 붙이지 않고, 디렉터리 상태만 중립 문구로 덧붙인다.
+ */
+export function getEffectiveNotices(access: Pick<EffectiveAccess, "known" | "active" | "is_sysadmin">): EffectiveNotice[] {
+  if (access.is_sysadmin) {
+    const notices: EffectiveNotice[] = [{ testId: "effective-sysadmin", key: "effective.sysadmin" }];
+    if (!access.known) notices.push({ testId: "effective-sysadmin-note", key: "effective.sysadminUnknown" });
+    else if (!access.active) notices.push({ testId: "effective-sysadmin-note", key: "effective.sysadminInactive" });
+    return notices;
+  }
+  if (!access.known) return [{ testId: "effective-unknown", key: "effective.unknown" }];
+  if (!access.active) return [{ testId: "effective-inactive", key: "effective.inactive" }];
+  return [];
+}
 
 /** 번역 키가 사전에 없으면(t가 키를 그대로 돌려줌) 원문을 쓴다 - 새 job·outcome이 생겨도 화면이 키 문자열을 내지 않는다. */
 export function translateOrRaw(t: TFunc, key: string, raw: string): string {

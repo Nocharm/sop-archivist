@@ -577,6 +577,23 @@ await runStep("admin leftovers as qa.lead", { devUser: "qa.lead" }, async ({ pag
   await findById(page, "effective-picker-option-dev.admin").click();
   await wait(page, "effective-sysadmin");
   check("a system administrator is explained and holds all four permissions", (await findByPrefix(page, "effective-perm-").count()) === 4);
+  check("a known, active sysadmin gets no directory note", (await countById(page, "effective-sysadmin-note")) === 0);
+
+  // 디렉터리에 아직 없는 부트스트랩 sysadmin(APP_SYSADMINS) - 백엔드는 known=false여도 권한 전부를 돌려준다. dev.admin은 실제 응답을 쓰려고 로그인 ID를 따로 잡는다.
+  await page.route("**/api/access/effective/bootstrap.admin", (route) =>
+    fulfillJson(route, {
+      login_id: "bootstrap.admin", known: false, active: false, is_sysadmin: true,
+      permissions: ["directory.sync", "permission.manage", "system.view", "ai.admin"], sources: {},
+    }),
+  );
+  await findById(page, "effective-picker-search").fill("bootstrap.admin");
+  await findById(page, "effective-picker-raw-option").click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="effective-sysadmin-note"]'), null, { timeout: T });
+  const bootstrapText = await getText(page, "effective-result");
+  check("a sysadmin without an employee row is still shown as a system administrator", (await findById(page, "effective-sysadmin").isVisible()) && bootstrapText.includes("System administrator"), bootstrapText.replace(/\s+/g, " "));
+  check("the note is neutral and never says it holds no permissions", bootstrapText.includes("Not in the employee directory yet.") && !bootstrapText.includes("holds no permissions") && (await countById(page, "effective-unknown")) === 0, bootstrapText.replace(/\s+/g, " "));
+  check("all four permission rows are still listed, in catalog order", (await findByPrefix(page, "effective-perm-").count()) === 4 && (await countById(page, "effective-none")) === 0 && bootstrapText.indexOf("Manage permissions") < bootstrapText.indexOf("Run directory sync"), bootstrapText.replace(/\s+/g, " "));
+  await takeShot("baseline-admin-lookup-bootstrap.png");
 });
 
 await browser.close();
