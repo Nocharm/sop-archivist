@@ -37,6 +37,11 @@ export function normalizeReturnPath(path: string): string | null {
   if (url.pathname === "/" || url.pathname === "/login" || url.pathname.startsWith("/login/")) {
     return null;
   }
+  // `/.//evil.com`처럼 점 구간이 접히면 pathname이 `//`로 시작한다. 이 문자열을 다시 풀면 프로토콜 상대 URL이
+  // 되어 사이트 밖으로 나가므로(검증을 한 번 더 돌리면 통과하던 비멱등) 정규화 결과가 `//`로 시작하면 거부한다.
+  if (url.pathname.startsWith("//")) {
+    return null;
+  }
   return url.pathname + url.search + url.hash;
 }
 

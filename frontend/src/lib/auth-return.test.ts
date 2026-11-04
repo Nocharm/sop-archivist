@@ -74,6 +74,41 @@ describe("normalizeReturnPath", () => {
   });
 });
 
+// 점 구간이 접히면 `//host`로 시작하는 pathname이 남아, 문자열로 다시 풀 때 프로토콜 상대 URL(외부 사이트)이 된다.
+const COLLAPSING_TO_PROTOCOL_RELATIVE = [
+  "/.//evil.com",
+  "/..//evil.com",
+  "/%2e%2e//evil.com",
+  "/a/..//evil.com",
+  "/.///evil.com",
+  "/.//internal.invalid/admin",
+];
+
+describe("normalizeReturnPath dot-segment collapse", () => {
+  it("rejects paths whose normalized pathname starts with //", () => {
+    for (const input of COLLAPSING_TO_PROTOCOL_RELATIVE) {
+      expect(normalizeReturnPath(input), input).toBeNull();
+      expect(isSafeReturnPath(input), input).toBe(false);
+    }
+  });
+  it("is idempotent: every accepted output re-validates to itself", () => {
+    const accepted = [
+      "/admin",
+      "/admin?tab=ai#x",
+      "/loginfoo",
+      "/a/../admin",
+      "/%5Cevil.com",
+      "/a//b",
+      "/admin/./x?y=1",
+    ];
+    for (const input of accepted) {
+      const once = normalizeReturnPath(input);
+      expect(once, input).not.toBeNull();
+      expect(normalizeReturnPath(once ?? ""), input).toBe(once);
+    }
+  });
+});
+
 describe("isSafeReturnPath", () => {
   it("mirrors normalizeReturnPath as a boolean", () => {
     expect(isSafeReturnPath("/admin?tab=ai")).toBe(true);
@@ -107,6 +142,20 @@ describe("returnTo save/peek/consume", () => {
       storage.setItem("sopa.returnTo", tampered);
       expect(consumeReturnTo(), tampered).toBeNull();
       expect(storage.getItem("sopa.returnTo"), tampered).toBeNull(); // the tampered value is removed too
+    }
+  });
+  it("ignores stored values that collapse to a protocol-relative URL", () => {
+    for (const tampered of COLLAPSING_TO_PROTOCOL_RELATIVE) {
+      storage.setItem("sopa.returnTo", tampered);
+      expect(peekReturnTo(), tampered).toBeNull();
+      expect(consumeReturnTo(), tampered).toBeNull();
+      expect(storage.getItem("sopa.returnTo"), tampered).toBeNull();
+    }
+  });
+  it("does not store a path that collapses to a protocol-relative URL", () => {
+    for (const unsafe of COLLAPSING_TO_PROTOCOL_RELATIVE) {
+      saveReturnTo(unsafe);
+      expect(storage.getItem("sopa.returnTo"), unsafe).toBeNull();
     }
   });
   it("normalizes a tampered-but-same-origin stored value on read", () => {
