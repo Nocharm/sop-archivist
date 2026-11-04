@@ -2,6 +2,7 @@
 
 import asyncio
 
+import httpx2
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
@@ -10,7 +11,7 @@ from app.batch_runs import JOB_DB_BACKUP, JOB_HR_SYNC, record_batch_run
 from app.db import SessionLocal
 from app.hr import history
 from app.models import BatchJobRun, HrSyncRun
-from tests.hr_sync_helpers import _get_employee, _hr_row, _mock_hr, _seed_employee
+from tests.hr_sync_helpers import HR_TEST_URL, _get_employee, _hr_row, _make_status_error, _mock_hr, _seed_employee
 
 pytestmark = pytest.mark.usefixtures("clean_directory")
 
@@ -194,6 +195,49 @@ def test_aborted_sync_writes_failure_batch_run(client: TestClient, monkeypatch) 
 
     row = _get_batch_run(JOB_HR_SYNC, "failure")
     assert row is not None and row.detail == summary.aborted_reason
+
+
+def test_upstream_failure_is_recorded_without_the_webhook_url_and_reraised(
+    client: TestClient, monkeypatch
+) -> None:
+    from app.hr import client as hr_client
+    from app.hr import service as hr_service
+
+    _mock_hr(monkeypatch, [_hr_row("x.user")])
+    error = _make_status_error(503)
+
+    async def fail_fetch():
+        raise error
+
+    monkeypatch.setattr(hr_client, "fetch_all_employees", fail_fetch)
+
+    with pytest.raises(httpx2.HTTPStatusError) as raised:
+        _run_full_sync()
+
+    assert raised.value is error  # 삼키거나 감싸지 않고 원본을 올린다
+    batch_run = _get_batch_run(JOB_HR_SYNC, "failure")
+    assert batch_run is not None and batch_run.detail == "HTTPStatusError: 503"
+    history = _get_history()
+    assert [(run.outcome, run.detail) for run in history] == [("failure", "HTTPStatusError: 503")]
+    assert HR_TEST_URL not in f"{batch_run.detail} {history[0].detail}"
+    assert hr_service._last_full_sync_at is None  # 실패는 5분 가드를 쓰지 않는다
+
+
+def test_non_http_failure_records_only_the_exception_class(client: TestClient, monkeypatch) -> None:
+    from app.hr import client as hr_client
+
+    _mock_hr(monkeypatch, [_hr_row("x.user")])
+
+    async def fail_fetch():
+        raise ValueError(f"bad body from {HR_TEST_URL}")
+
+    monkeypatch.setattr(hr_client, "fetch_all_employees", fail_fetch)
+
+    with pytest.raises(ValueError):
+        _run_full_sync()
+
+    batch_run = _get_batch_run(JOB_HR_SYNC, "failure")
+    assert batch_run is not None and batch_run.detail == "ValueError"
 
 
 def test_record_batch_run_keeps_one_row_per_job_and_outcome(client: TestClient) -> None:

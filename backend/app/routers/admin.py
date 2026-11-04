@@ -4,9 +4,11 @@
 의존성으로 직접 걸어야 하고, 빠뜨리면 test_admin_ops의 라우트 순회 테스트가 잡는다.
 """
 
+import logging
 from datetime import datetime
 from typing import Annotated
 
+import httpx2
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import AfterValidator, BaseModel, ConfigDict
 from sqlalchemy import select
@@ -15,9 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.access.deps import require_permission
 from app.clock import KST
 from app.db import get_session
-from app.hr.service import SyncTooSoon, build_sync_preview, run_full_sync
+from app.hr.service import SyncTooSoon, build_sync_preview, get_upstream_status, run_full_sync
 from app.models import BatchJobRun, HrSyncRun
 from app.settings import settings
+
+logger = logging.getLogger(__name__)
 
 _require_directory_sync = require_permission("directory.sync")
 _require_system_view = require_permission("system.view")
@@ -107,6 +111,15 @@ class BatchRunOut(BaseModel):
     detail: str | None
 
 
+def _build_hr_source_error(exc: httpx2.HTTPError) -> HTTPException:
+    """상류 HR 호출 실패 -> 502. 문구는 상태 코드나 예외 클래스명만 — 예외 메시지에는 웹훅 주소가 들어 있다."""
+    logger.exception("HR source request failed")  # 원문은 서버 로그에만
+    status = get_upstream_status(exc)
+    return HTTPException(
+        status_code=502, detail=f"HR source error: {type(exc).__name__ if status is None else status}"
+    )
+
+
 async def _require_hr_sync(login_id: str = Depends(_require_directory_sync)) -> str:
     """directory.sync 보유자에게만, HR이 설정돼 있을 때 hr-sync 계열을 연다.
 
@@ -119,18 +132,24 @@ async def _require_hr_sync(login_id: str = Depends(_require_directory_sync)) -> 
 
 @router.post("/hr-sync", response_model=HrSyncSummaryOut, dependencies=[Depends(_require_hr_sync)])
 async def run_hr_sync(session: AsyncSession = Depends(get_session)) -> HrSyncSummaryOut:
-    # 중단(aborted_reason)은 오류가 아니라 요약으로 돌려준다. 상류 HR 오류는 서비스가 실패 기록을 남기고 그대로 올린다.
+    # 중단(aborted_reason)은 오류가 아니라 요약으로 돌려준다. 상류 HR 오류는 서비스가 실패 기록을 남긴 뒤 올라오고 502가 된다.
     try:
         summary = await run_full_sync(session)
     except SyncTooSoon as exc:
         raise HTTPException(status_code=409, detail="sync ran too recently") from exc
+    except httpx2.HTTPError as exc:
+        raise _build_hr_source_error(exc) from exc
     return HrSyncSummaryOut.model_validate(summary)
 
 
 @router.get("/hr-sync/preview", response_model=HrSyncPreviewOut, dependencies=[Depends(_require_hr_sync)])
 async def get_hr_sync_preview(session: AsyncSession = Depends(get_session)) -> HrSyncPreviewOut:
-    """DB 무변경 드라이런 — 5분 가드를 쓰지 않는다."""
-    return HrSyncPreviewOut.model_validate(await build_sync_preview(session))
+    """DB 무변경 드라이런 — 5분 가드를 쓰지 않고, 실패해도 기록을 남기지 않는다."""
+    try:
+        preview = await build_sync_preview(session)
+    except httpx2.HTTPError as exc:
+        raise _build_hr_source_error(exc) from exc
+    return HrSyncPreviewOut.model_validate(preview)
 
 
 @router.get("/hr-sync/runs", response_model=list[HrSyncRunOut], dependencies=[Depends(_require_hr_sync)])

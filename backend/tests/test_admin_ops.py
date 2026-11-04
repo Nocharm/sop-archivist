@@ -1,9 +1,11 @@
 """/api/admin/* 운영 API — HR 동기화 실행·프리뷰·이력, 배치 상태. 권한 게이트와 설정·스로틀 오류 계약을 확인한다."""
 
 import re
+from collections.abc import Callable
 from dataclasses import fields
 from typing import Any, NoReturn
 
+import httpx2
 import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
@@ -16,7 +18,14 @@ from app.main import app
 from app.models import BatchJobRun, Employee, HrSyncRun
 from app.settings import settings
 from tests.access_helpers import run_in_session
-from tests.hr_sync_helpers import _get_employee, _hr_row, _mock_hr, _seed_employee
+from tests.hr_sync_helpers import (
+    HR_TEST_URL,
+    _get_employee,
+    _hr_row,
+    _make_status_error,
+    _mock_hr,
+    _seed_employee,
+)
 
 pytestmark = pytest.mark.usefixtures("enforce", "clean_directory", "demo_access")
 
@@ -200,22 +209,77 @@ def test_hr_sync_aborted_run_is_a_recorded_summary_and_can_be_retried(
     assert client.post(HR_SYNC, headers=OPS).status_code == 200  # 중단은 가드를 쓰지 않아 409가 아니다
 
 
-def test_hr_sync_upstream_error_is_not_swallowed(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_hr_sync_unexpected_error_is_not_swallowed(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     from app.hr import client as hr_client
 
     _mock_hr(monkeypatch, [_hr_row("x.user")])
 
     async def fail_fetch() -> NoReturn:
-        raise RuntimeError("upstream down")
+        raise RuntimeError(f"unexpected {HR_TEST_URL}")
 
     monkeypatch.setattr(hr_client, "fetch_all_employees", fail_fetch)
 
-    with pytest.raises(RuntimeError, match="upstream down"):
+    with pytest.raises(RuntimeError):  # HR 호출 실패(502)로 분류되지 않는 오류는 500으로 그대로 올라온다
         client.post(HR_SYNC, headers=OPS)
 
     failure = _get_batch_run(JOB_HR_SYNC, "failure")
-    assert failure is not None and failure.detail == "upstream down"
+    assert failure is not None and failure.detail == "RuntimeError"  # 클래스명만 — 메시지는 기록하지 않는다
     assert _count_rows(HrSyncRun) == 1  # 실패도 회차로 남는다
+
+
+# (오류 만들기, 응답 detail 끝부분, 기록 detail) — 예외 메시지에는 모두 웹훅 주소를 넣는다
+UPSTREAM_FAILURES = [
+    pytest.param(_make_status_error, "502", "HTTPStatusError: 502", id="http-status"),
+    pytest.param(lambda: httpx2.ConnectError(f"cannot reach {HR_TEST_URL}"), "ConnectError", "ConnectError", id="connect"),
+    pytest.param(lambda: httpx2.ReadTimeout(f"timed out {HR_TEST_URL}"), "ReadTimeout", "ReadTimeout", id="timeout"),
+]
+
+
+def _fail_hr_fetch(monkeypatch: pytest.MonkeyPatch, make_error: Callable[[], Exception]) -> None:
+    from app.hr import client as hr_client
+
+    async def fail_fetch() -> NoReturn:
+        raise make_error()
+
+    monkeypatch.setattr(hr_client, "fetch_all_employees", fail_fetch)
+
+
+@pytest.mark.parametrize(("make_error", "shown", "recorded"), UPSTREAM_FAILURES)
+def test_hr_sync_upstream_failure_is_502_and_recorded_without_the_webhook_url(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, make_error: Callable[[], Exception], shown: str, recorded: str
+) -> None:
+    _mock_hr(monkeypatch, [_hr_row("x.user")])
+    _fail_hr_fetch(monkeypatch, make_error)
+
+    response = client.post(HR_SYNC, headers=OPS)
+
+    assert response.status_code == 502
+    assert response.json() == {"detail": f"HR source error: {shown}"}
+    # 서비스가 실패 기록을 남긴 뒤 502가 된다
+    batch_failure = _get_batch_run(JOB_HR_SYNC, "failure")
+    assert batch_failure is not None and batch_failure.detail == recorded
+    history = client.get(HR_RUNS, headers=OPS)
+    assert [(run["outcome"], run["detail"]) for run in history.json()] == [("failure", recorded)]
+    # 어느 응답에도 웹훅 주소가 없다
+    batch_runs = client.get(BATCH_RUNS, headers=OPS)
+    for text in (response.text, history.text, batch_runs.text):
+        assert HR_TEST_URL not in text and "hr.test" not in text
+    assert any(run["detail"] == recorded for run in batch_runs.json())
+
+
+@pytest.mark.parametrize(("make_error", "shown", "recorded"), UPSTREAM_FAILURES)
+def test_hr_sync_preview_upstream_failure_is_502_and_leaves_no_record(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, make_error: Callable[[], Exception], shown: str, recorded: str
+) -> None:
+    _mock_hr(monkeypatch, [_hr_row("x.user")])
+    _fail_hr_fetch(monkeypatch, make_error)
+
+    response = client.get(HR_PREVIEW, headers=OPS)
+
+    assert response.status_code == 502
+    assert response.json() == {"detail": f"HR source error: {shown}"}
+    assert _get_batch_run(JOB_HR_SYNC, "failure") is None  # 드라이런은 시도로 치지 않는다
+    assert _count_rows(HrSyncRun) == 0
 
 
 # ── 프리뷰 ────────────────────────────────────────────────────────────────────
