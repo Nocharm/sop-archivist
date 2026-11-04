@@ -89,3 +89,20 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   }
   return (await response.json()) as T;
 }
+
+/** GET /api/me - 로그인한 사람의 신원과 유효 권한. 직원 행이 없으면(HR 동기화 전 첫 로그인) 신원 칸은 빈 문자열, permissions는 빈 배열. */
+export interface Me {
+  login_id: string;
+  name: string;
+  korean_name: string;
+  department: string;
+  dept_path: string;
+  is_sysadmin: boolean;
+  permissions: string[];
+  auth_mode: "keycloak" | "dev";
+  ai_enabled: boolean;
+}
+
+export function getMe(): Promise<Me> {
+  return apiFetch<Me>("/me");
+}
