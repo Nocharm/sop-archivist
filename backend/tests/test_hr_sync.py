@@ -11,7 +11,7 @@ from app.dev_users import DEV_DEPARTMENTS, DEV_USERS
 from app.hr import client as hr_client
 from app.hr import service as hr_service
 from app.hr.client import RawHrDepartment
-from app.models import Department, Employee
+from app.models import Department, Employee, HrSyncRun
 from app.settings import settings
 from tests.hr_sync_helpers import _get_employee, _hr_row, _mock_hr, _run_sync, _seed_employee
 
@@ -219,6 +219,72 @@ def test_full_sync_throttle_blocks_a_second_run_within_five_minutes(client: Test
     with pytest.raises(hr_service.SyncTooSoon) as exc:
         asyncio.run(_run_guarded())
     assert 0 < exc.value.remaining_seconds <= 300
+
+
+async def _run_guarded_sync() -> hr_service.HrSyncSummary:
+    async with SessionLocal() as session:
+        return await hr_service.run_full_sync(session)
+
+
+def test_overlapping_full_sync_is_rejected_while_one_is_running(client: TestClient, monkeypatch) -> None:
+    _mock_hr(monkeypatch, [_hr_row("lock.user")])
+    monkeypatch.setattr(hr_service, "_full_sync_lock", asyncio.Lock())  # 앞선 테스트의 잠금 상태에 기대지 않는다
+    fetch_calls = {"n": 0}
+
+    async def _scenario() -> hr_service.SyncTooSoon:
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocking_fetch():
+            fetch_calls["n"] += 1
+            entered.set()
+            await release.wait()
+            return 1, [_hr_row("lock.user")]
+
+        monkeypatch.setattr(hr_client, "fetch_all_employees", blocking_fetch)
+        first = asyncio.create_task(_run_guarded_sync())
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        with pytest.raises(hr_service.SyncTooSoon) as overlap:
+            # 잠금이 없으면 이 호출도 HR 응답을 기다리다 시간 초과로 실패한다
+            await asyncio.wait_for(_run_guarded_sync(), timeout=5)
+        release.set()
+        assert (await first).upserted == 1
+        return overlap.value
+
+    overlap = asyncio.run(_scenario())
+
+    assert overlap.remaining_seconds == 0  # 진행 중 거절 — 5분 가드(남은 시간 > 0)와 구분된다
+    assert fetch_calls["n"] == 1  # 거절된 쪽은 HR을 부르지 않았다
+    assert _count_rows(HrSyncRun) == 1  # 거절은 회차로 남지 않는다
+    assert not hr_service._full_sync_lock.locked()
+    # 끝난 뒤엔 5분 가드가 막고(잠금이 아니라), 가드를 풀면 다시 돈다
+    with pytest.raises(hr_service.SyncTooSoon) as throttled:
+        asyncio.run(_run_guarded_sync())
+    assert throttled.value.remaining_seconds > 0
+    assert not hr_service._full_sync_lock.locked()
+    monkeypatch.setattr(hr_service, "_last_full_sync_at", None)
+    monkeypatch.setattr(hr_client, "fetch_all_employees", _fixed_feed)
+    assert asyncio.run(_run_guarded_sync()).aborted_reason is None
+
+
+async def _fixed_feed():
+    return 1, [_hr_row("lock.user")]
+
+
+def test_failed_full_sync_releases_the_lock(client: TestClient, monkeypatch) -> None:
+    _mock_hr(monkeypatch, [_hr_row("lock.user")])
+    monkeypatch.setattr(hr_service, "_full_sync_lock", asyncio.Lock())
+
+    async def fail_fetch():
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(hr_client, "fetch_all_employees", fail_fetch)
+    with pytest.raises(RuntimeError):
+        asyncio.run(_run_guarded_sync())
+
+    assert not hr_service._full_sync_lock.locked()
+    monkeypatch.setattr(hr_client, "fetch_all_employees", _fixed_feed)
+    assert asyncio.run(_run_guarded_sync()).aborted_reason is None  # 실패한 시도는 가드도 잠금도 남기지 않는다
 
 
 def test_aborted_run_does_not_consume_the_throttle(client: TestClient, monkeypatch) -> None:

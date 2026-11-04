@@ -52,6 +52,6 @@ async def run_hr_sync_loop() -> None:
                 summary = await hr_service.run_full_sync(session)
                 logger.info("scheduled HR sync: %s", summary)
         except hr_service.SyncTooSoon:
-            pass  # 수동 sync 직후 겹침 — 다음 주기로
+            logger.info("scheduled HR sync skipped: another sync ran recently or is running")  # 다음 주기로
         except Exception:  # noqa: BLE001 -- 주기 실패가 프로세스를 죽이면 안 됨
             logger.exception("scheduled HR sync failed - retrying next interval")
