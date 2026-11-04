@@ -4,6 +4,7 @@
 loginId가 와도 건드리지 않는다.
 """
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -271,6 +272,9 @@ async def _mirror_departments(session: AsyncSession) -> int:
 # 전체 동기화 5분 가드 — 인메모리(단일 컨테이너 전제)
 _FULL_SYNC_MIN_INTERVAL = 300.0
 _last_full_sync_at: float | None = None
+# 진행 중 동기화 잠금 — 수동 POST끼리, 또는 스케줄러와 겹쳐 둘이 동시에 도는 것을 막는다.
+# 프로세스 잠금으로 충분하다(uvicorn 워커 1개가 설계). 기다리지 않고 바로 SyncTooSoon으로 거절한다.
+_full_sync_lock = asyncio.Lock()
 
 
 class SyncTooSoon(Exception):
@@ -317,31 +321,36 @@ def _build_history_row(summary: HrSyncSummary) -> HrSyncRun:
 
 
 async def run_full_sync(session: AsyncSession) -> HrSyncSummary:
-    """5분 가드 적용 전체 동기화 — 실패·중단 시 가드 미소모(재시도 가능).
+    """5분 가드·중복 실행 잠금을 적용한 전체 동기화 — 실패·중단 시 가드 미소모(재시도 가능).
 
+    다른 동기화가 진행 중이면 기다리지 않고 SyncTooSoon(0)이다. 잠금은 실패 기록까지 쥐고 있다가 푼다.
     실행 기록(batch_job_runs): 정상 완료=success, 가드 중단·예외=failure. 회차 이력(hr_sync_runs)도
-    같은 결과로 1행 남긴다. 스로틀(SyncTooSoon)은 시도가 아니므로 기록하지 않는다.
+    같은 결과로 1행 남긴다. 스로틀·중복 거절(SyncTooSoon)은 시도가 아니므로 기록하지 않는다.
     """
     global _last_full_sync_at
-    now = time.monotonic()
-    if _last_full_sync_at is not None and now - _last_full_sync_at < _FULL_SYNC_MIN_INTERVAL:
-        raise SyncTooSoon(int(_FULL_SYNC_MIN_INTERVAL - (now - _last_full_sync_at)))
-    try:
-        summary = await sync_all(session)
-    except Exception as exc:
-        # 실패 기록 전 rollback — sync_all이 중간 상태로 남긴 세션을 정리
-        await session.rollback()
-        detail = describe_failure(exc)
-        await record_batch_run(session, JOB_HR_SYNC, "failure", detail)
-        await record_hr_sync_run(session, HrSyncRun(outcome="failure", detail=detail))
-        raise
-    if summary.aborted_reason is None:
-        _last_full_sync_at = now
-        await record_batch_run(session, JOB_HR_SYNC, "success", _summarize_for_record(summary))
-    else:
-        await record_batch_run(session, JOB_HR_SYNC, "failure", summary.aborted_reason)
-    await record_hr_sync_run(session, _build_history_row(summary))
-    return summary
+    # locked() 확인과 acquire 사이에 await가 없어 끼어들 수 없다 — 대기 없이 거절하는 원자 구간
+    if _full_sync_lock.locked():
+        raise SyncTooSoon(0)  # 진행 중이라 남은 시간은 알 수 없다
+    async with _full_sync_lock:
+        now = time.monotonic()
+        if _last_full_sync_at is not None and now - _last_full_sync_at < _FULL_SYNC_MIN_INTERVAL:
+            raise SyncTooSoon(int(_FULL_SYNC_MIN_INTERVAL - (now - _last_full_sync_at)))
+        try:
+            summary = await sync_all(session)
+        except Exception as exc:
+            # 실패 기록 전 rollback — sync_all이 중간 상태로 남긴 세션을 정리
+            await session.rollback()
+            detail = describe_failure(exc)
+            await record_batch_run(session, JOB_HR_SYNC, "failure", detail)
+            await record_hr_sync_run(session, HrSyncRun(outcome="failure", detail=detail))
+            raise
+        if summary.aborted_reason is None:
+            _last_full_sync_at = now
+            await record_batch_run(session, JOB_HR_SYNC, "success", _summarize_for_record(summary))
+        else:
+            await record_batch_run(session, JOB_HR_SYNC, "failure", summary.aborted_reason)
+        await record_hr_sync_run(session, _build_history_row(summary))
+        return summary
 
 
 # 1인 동기화 하루 1회 스로틀 — login_id → KST 날짜 iso (인메모리, 단일 컨테이너 전제)
