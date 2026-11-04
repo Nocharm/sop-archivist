@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+/* 디자인 컨셉 확정 전의 중립 토큰 - 흰 바탕, 회색 단계, 악센트 1색. raw hex는 이 @theme 안에서만 쓴다. */
+@theme {
+  --color-accent: #2563eb;
+
+  --color-gray-50: #f9fafb;
+  --color-gray-100: #f3f4f6;
+  --color-gray-200: #e5e7eb;
+  --color-gray-300: #d1d5db;
+  --color-gray-400: #9ca3af;
+  --color-gray-500: #6b7280;
+  --color-gray-600: #4b5563;
+  --color-gray-700: #374151;
+  --color-gray-800: #1f2937;
+  --color-gray-900: #111827;
+
+  /* 시스템 글꼴만 - 사내망 서버라 웹 폰트를 내려받지 않는다. 한글은 macOS·Windows 기본 고딕으로 떨어진다. */
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic",
+    "Noto Sans KR", sans-serif;
+}
+
+body {
+  background: var(--color-white);
+  color: var(--color-gray-900);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
