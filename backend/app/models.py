@@ -85,8 +85,9 @@ class Department(Base):
 class BatchJobRun(Base):
     """배치 작업 실행 기록 — (job, outcome)별 최신 1행만 upsert 보전(관리 화면의 배치 작업 목록 소스).
 
-    db-backup 사이드카는 psql로 같은 테이블에 기록한다 — 스키마를 바꾸면
-    scripts/db-backup.sh의 CREATE TABLE IF NOT EXISTS/INSERT도 함께 갱신할 것.
+    db-backup 사이드카는 psql로 같은 테이블에 INSERT만 한다 — 테이블은 Alembic 0002가 만들고(사이드카가
+    먼저 만들면 0002가 "already exists"로 깨진다), 사이드카는 생길 때까지 기다린다. 컬럼을 바꾸면
+    scripts/db-backup.sh의 INSERT도 함께 갱신할 것.
     """
 
     __tablename__ = "batch_job_runs"
