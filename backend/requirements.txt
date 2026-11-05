@@ -7,3 +7,5 @@ aiosqlite==0.22.1
 alembic==1.20.1
 pyjwt[crypto]==2.13.0
 httpx2==2.3.0
+openpyxl==3.1.5  # To-Be 목록 Excel 템플릿·가져오기(.xlsx 읽기·쓰기)
+python-multipart==0.0.33  # FastAPI가 파일 업로드(multipart/form-data)를 받는 데 필요
