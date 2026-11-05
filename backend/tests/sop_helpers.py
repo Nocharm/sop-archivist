@@ -98,8 +98,10 @@ def get_group_by_unit(client: TestClient, bundle_id: int, unit_id: int, headers:
     return response.json()
 
 
-def assign_as_is(client: TestClient, bundle_id: int, unit: dict, target_doc_id: int, **location: object) -> dict:
-    """view 단위 하나를 원문 그대로 보내 확정하고 GroupOut을 돌려준다.
+def assign_as_is(
+    client: TestClient, bundle_id: int, unit: dict, target_doc_id: int, *, hold_reason: str = "", **location: object
+) -> dict:
+    """view 단위 하나를 원문 그대로 보내 확정(hold_reason을 주면 보류)하고 GroupOut을 돌려준다.
 
     표·행 단위면 원래 격자의 표 새 문장과 칸 문장마다 같은 자리의 칸 새 문장을, 그림이면 그림 새 문장을 만든다.
     location은 칸 키·WI 단계·부분(slot_key·wi_step·wi_part)이고 칸 새 문장도 표와 같은 자리에 둔다.
@@ -126,7 +128,8 @@ def assign_as_is(client: TestClient, bundle_id: int, unit: dict, target_doc_id: 
     elif unit["kind"] == "figure":
         target["kind"] = "figure"
     body = {
-        "action": "confirm",
+        "action": "hold" if hold_reason else "confirm",
+        "hold_reason": hold_reason,
         "units": [{"unit_id": unit["id"], "revision": entry["decision"]["revision"], "disposition": "assigned"}],
         "targets": targets,
     }

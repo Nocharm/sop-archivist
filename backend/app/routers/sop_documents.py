@@ -1,5 +1,5 @@
 """문서 API — 업로드(옛/새)·목록·정보 고치기·삭제·원문 대조 데이터(view)·원본과 그림 내려받기·추출 경고 확인·쪼개기 편집과
-되돌리기·경계 확인. 쓰기는 작성자가 작업 중일 때만 한다(편집 규칙은 app/sop/editing.py)."""
+되돌리기·경계 확인·한/영 짝. 쓰기는 작성자가 작업 중일 때만 한다(편집 규칙은 app/sop/editing.py, 짝 규칙은 app/sop/pairs.py)."""
 
 import asyncio
 import zipfile
@@ -45,6 +45,15 @@ from app.sop.models import (
     UnitEdit,
     UnitPair,
     UnitPairMember,
+)
+from app.sop.pairs import (
+    PairIn,
+    PairResult,
+    PairRevisionIn,
+    build_pair_out,
+    confirm_pair,
+    create_pair,
+    delete_pair,
 )
 from app.sop.status import get_cover_status
 from app.sop.tobe import MAX_DB_INT, remove_match_doc, rename_match_doc, temp_match_code
@@ -537,6 +546,51 @@ async def confirm_unit_boundaries(
     unit_ids = await set_boundary_confirmed(session, document, body.unit_ids, body.confirmed)
     await session.commit()
     return BoundaryOut(unit_ids=unit_ids, confirmed=body.confirmed)
+
+
+@router.post("/{bundle_id}/documents/{doc_id}/pairs", response_model=PairResult, status_code=201)
+async def create_unit_pair(
+    body: PairIn,
+    doc_id: IdPath,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> PairResult:
+    document = await _lock_editable_document(session, ctx, doc_id, body.revision)
+    pair = await create_pair(session, document, body.unit_ids, ctx.login_id)
+    result = PairResult(document_revision=document.revision, pair=await build_pair_out(session, pair))
+    await session.commit()
+    return result
+
+
+@router.post("/{bundle_id}/documents/{doc_id}/pairs/{pair_id}/confirm", response_model=PairResult)
+async def confirm_unit_pair(
+    body: PairRevisionIn,
+    doc_id: IdPath,
+    pair_id: IdPath,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> PairResult:
+    document = await _lock_editable_document(session, ctx, doc_id, body.revision)
+    pair = await confirm_pair(session, document, pair_id, ctx.login_id)
+    result = PairResult(document_revision=document.revision, pair=await build_pair_out(session, pair))
+    await session.commit()
+    return result
+
+
+@router.delete("/{bundle_id}/documents/{doc_id}/pairs/{pair_id}", response_model=PairResult)
+async def delete_unit_pair(
+    doc_id: IdPath,
+    pair_id: IdPath,
+    revision: int = Query(ge=1),
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> PairResult:
+    # 짝을 풀어도 문서 revision이 오르므로 204 대신 새 revision을 돌려준다
+    document = await _lock_editable_document(session, ctx, doc_id, revision)
+    await delete_pair(session, document, pair_id, ctx.login_id)
+    result = PairResult(document_revision=document.revision, pair=None)
+    await session.commit()
+    return result
 
 
 @router.get("/{bundle_id}/documents/{doc_id}/file")

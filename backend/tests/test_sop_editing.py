@@ -6,7 +6,7 @@ from typing import NamedTuple
 import httpx2
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.constants import COVER_KINDS, SYSTEM_HOLD_RELATED_CHANGED
@@ -15,7 +15,6 @@ from app.sop.models import (
     Bundle,
     Extraction,
     SourceBlock,
-    SourceTable,
     TargetSentence,
     Unit,
     UnitDecisionHistory,
@@ -398,15 +397,9 @@ def test_cell_pieces_take_row_from_their_block(client: TestClient) -> None:
     """칸 문장 조각의 표·행 번호는 첫 범위 칸 블록의 것이다(R33) — 행을 넘어 합친 칸을 다시 나누면 조각마다 자기 행."""
     fx = _setup(client, p(HEADING) + tbl([["합성 값 하나.", "Value one."], ["합성 값 둘.", "Value two."]]))
     table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
-
-    async def _make_layout_table(session: AsyncSession) -> None:
-        # Task 14의 레이아웃 표 바꾸기 흉내 — 표 단위를 은퇴시키고 칸 문장의 묶음을 푼다
-        await session.execute(update(SourceTable).where(SourceTable.id == table["table_id"]).values(is_layout=True))
-        await session.execute(update(Unit).where(Unit.id == table["id"]).values(status="retired"))
-        await session.execute(update(Unit).where(Unit.group_unit_id == table["id"]).values(group_unit_id=None))
-        await session.commit()
-
-    run_in_session(_make_layout_table)
+    # 레이아웃 표 칸끼리는 행을 넘어 합칠 수 있다
+    to_layout = {"type": "set_layout_table", "table_id": table["table_id"], "is_layout": True}
+    _ok(_edit(client, fx.bundle_id, fx.doc["id"], to_layout))
     view = get_view(client, fx.bundle_id, fx.doc["id"])
     _ok(_merge(client, fx, find_unit(view, "합성 값 하나."), find_unit(view, "합성 값 둘.")))
     merged = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), "합성 값 하나.\n합성 값 둘.")
