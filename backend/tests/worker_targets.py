@@ -2,6 +2,7 @@
 
 import os
 import time
+from pathlib import Path
 from typing import NoReturn
 
 from app.sop.extract.aux_compare import convert_with_markitdown
@@ -11,6 +12,19 @@ from app.sop.extract.worker import WorkerResult
 # 메인 추출이 놓친 척 보조 변환에만 붙이는 합성 줄
 EXTRA_LINE = "Synthetic line the main reader missed"
 MANY_MISSING_LINES = 250  # 누락 대조 상한(200)보다 많게
+RELEASE_FILE = "release"  # block_until_released가 기다리는 파일 이름
+
+
+def block_until_released(data: bytes, *_args: object) -> WorkerResult:
+    """동시 실행 수 확인용 — data가 가리키는 폴더에 들어왔다는 표시를 남기고, 그 폴더에 release 파일이 생길 때까지 기다린다.
+
+    자식은 별도 프로세스라 부모의 Event를 넘길 수 없어 파일로 신호를 주고받는다.
+    """
+    folder = Path(data.decode())
+    (folder / f"entered-{os.getpid()}").touch()
+    while not (folder / RELEASE_FILE).exists():
+        time.sleep(0.05)
+    return return_tiny_result()
 
 
 def sleep_forever(*_args: object) -> NoReturn:

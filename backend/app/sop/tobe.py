@@ -468,6 +468,11 @@ async def ensure_code_free(session: AsyncSession, bundle_id: int, code: str) -> 
         raise_rule(409, "duplicate_code", doc_code=code)
 
 
+def temp_match_code(document_id: int) -> str:
+    """번호 없는 새 문서의 목록 번호 — 번호를 지어내지 않고, 사람이 문서 번호를 고칠 때까지 쓰는 임시 번호."""
+    return f"NEW-{document_id}"
+
+
 async def add_match_doc(
     session: AsyncSession, bundle: Bundle, *, code: str, title: str, doc_type: str, parent_id: int | None
 ) -> TargetDoc:
@@ -479,6 +484,19 @@ async def add_match_doc(
     await session.flush()  # 문서가 가리킬 id가 필요하다
     bundle.revision += 1
     return doc
+
+
+async def rename_match_doc(session: AsyncSession, bundle: Bundle, target_doc_id: int, code: str) -> None:
+    """올린 새 문서의 번호를 고치면 그 목록 줄 번호도 같이 바꾼다 — 다른 줄과 겹치면 409 duplicate_code.
+
+    바뀌면 묶음 revision을 올린다(목록이 바뀌었다). 문장·부모·N/A·단계는 줄 id를 가리키므로 번호만 바뀐다.
+    """
+    doc = await session.get_one(TargetDoc, target_doc_id)  # 문서의 FK가 가리키므로 늘 있다
+    if doc.code == code:
+        return
+    await ensure_code_free(session, bundle.id, code)
+    doc.code = code
+    bundle.revision += 1
 
 
 async def remove_match_doc(session: AsyncSession, bundle: Bundle, target_doc_id: int) -> None:

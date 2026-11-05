@@ -26,7 +26,7 @@ from app.sop.models import (
     SourceBlock,
     SourceTable,
 )
-from app.sop.tobe import add_match_doc, check_match_doc, ensure_code_free
+from app.sop.tobe import add_match_doc, check_match_doc, ensure_code_free, temp_match_code
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,11 @@ MIB = 1024 * 1024
 MAX_ZIP_ENTRIES = 2000
 MAX_COMPRESSION_RATIO = 200
 MAX_FILE_NAME_CHARS = 255  # documents.file_name 길이 — 넘는 이름이 Postgres에서 500이 되지 않게
+# 동시에 도는 격리 추출 수(업무 상수) — RLIMIT_AS는 자식 하나씩만 막으므로 합계는 여기서 막는다.
+# 자식 최대 RSS 657MiB × 2 + backend ≈ 1.4GiB < compose backend 2G (docs/qa/2026-11-sop-parse-dependencies.md)
+MAX_PARALLEL_PARSES = 2
+# 업로드 하나의 메인·보조 자식이 한 자리를 함께 쓴다. 자리를 기다리는 동안 DB 연결은 이미 놓은 상태다
+_parse_slots = asyncio.Semaphore(MAX_PARALLEL_PARSES)
 _FORMAT_BY_EXTENSION = {".docx": "docx", ".pdf": "pdf"}
 _STATUS_BY_OUTCOME = {"ok": "ready", "rejected": "rejected", "failed": "failed"}
 
@@ -72,7 +77,8 @@ async def ingest_upload(
     """올린 파일 하나를 문서로 만든다. data는 상한보다 1바이트 더 읽은 바이트까지다(넘으면 too_large).
 
     받지 않는 파일(형식·크기·추출 거절)과 추출 실패도 사유와 함께 문서 행으로 남기고, 원본 바이트·추출은 ready만 저장한다.
-    같은 묶음에 같은 내용이면 409 duplicate_file(행 없음). 새 문서(side=new)는 To-Be 목록에 입구 2 줄을 만들어 잇는다.
+    같은 묶음에 같은 내용이면 409 duplicate_file(행 없음). 새 문서(side=new)는 ready일 때만 To-Be 목록에 입구 2 줄을 만들어
+    잇는다 — 거절·실패한 새 문서는 목록·묶음 revision을 건드리지 않아, 고친 파일을 같은 번호로 다시 올릴 수 있다.
     파싱은 수십 초 걸릴 수 있어 그동안 DB 연결을 놓고, 쓰기 직전에 묶음을 잠근 뒤 모든 검사를 다시 한다.
     """
     if len(file_name) > MAX_FILE_NAME_CHARS:
@@ -95,8 +101,9 @@ async def ingest_upload(
         raise_rule(404, "bundle_not_found")
     ensure_editable(locked)
     await _ensure_new_file(session, bundle_id, sha256)
+    links_match_doc = side == "new" and outcome.result is not None
     parent_id = None
-    if side == "new":
+    if links_match_doc:
         parent_id = await check_match_doc(
             session, bundle_id, code=parsed.doc_code, doc_type=doc_type, parent_code=parent_code
         )
@@ -112,8 +119,8 @@ async def ingest_upload(
     except IntegrityError:  # 잠금이 없는 sqlite에서 같은 파일 두 요청이 함께 검사를 통과한 경우
         await session.rollback()
         raise_rule(409, "duplicate_file")
-    if side == "new":
-        code = parsed.doc_code or f"NEW-{document.id}"  # 번호를 지어내지 않고 사람이 고칠 임시 번호를 목록에만 둔다
+    if links_match_doc:
+        code = parsed.doc_code or temp_match_code(document.id)
         if not parsed.doc_code:
             await ensure_code_free(session, bundle_id, code)
         target = await add_match_doc(
@@ -154,15 +161,16 @@ async def _ensure_new_file(session: AsyncSession, bundle_id: int, sha256: str) -
 
 
 async def _extract(data: bytes, file_format: str) -> WorkerResult:
-    """크기·형식 거절은 자식을 띄우지 않고 정하고, 나머지는 격리 추출에 맡긴다."""
+    """크기·형식 거절은 자식을 띄우지 않고 정하고, 나머지는 동시 실행 자리를 얻은 뒤 격리 추출에 맡긴다."""
     if len(data) > get_max_file_bytes():
         return WorkerResult("rejected", "too_large", None, None, None)
     if not file_format:
         return WorkerResult("rejected", "invalid_format", None, None, None)
-    return await extract_in_subprocess(
-        data, file_format, build_limits(),
-        timeout_s=settings.sop_parse_timeout_seconds, memory_mb=settings.sop_parse_memory_mb,
-    )
+    async with _parse_slots:
+        return await extract_in_subprocess(
+            data, file_format, build_limits(),
+            timeout_s=settings.sop_parse_timeout_seconds, memory_mb=settings.sop_parse_memory_mb,
+        )
 
 
 async def _find_missing(outcome: WorkerResult) -> list[MissingText]:

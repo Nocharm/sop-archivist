@@ -4,6 +4,7 @@ import asyncio
 import logging
 import multiprocessing
 from functools import partial
+from pathlib import Path
 from urllib.parse import quote
 
 import pytest
@@ -304,6 +305,36 @@ def test_run_extraction_reports_rejections_without_raising() -> None:
     assert (result.outcome, result.code, result.result) == ("rejected", "tracked_changes", None)
 
 
+def test_parallel_parses_are_capped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # 자식은 release 파일이 생길 때까지 붙잡혀 있다 — 상한이 없으면 셋째 업로드의 자식도 곧바로 들어온다
+    _use_extractor(
+        monkeypatch, target=worker_targets.block_until_released, aux_target=worker_targets.return_tiny_result
+    )
+
+    def count_entered() -> int:
+        return len(list(tmp_path.glob("entered-*")))
+
+    async def run_three_uploads() -> tuple[int, list[worker.WorkerResult]]:
+        # 이 테스트의 이벤트 루프 전용 자리 — 모듈 세마포어를 다른 테스트의 루프와 섞지 않는다
+        monkeypatch.setattr(ingest, "_parse_slots", asyncio.Semaphore(ingest.MAX_PARALLEL_PARSES))
+        tasks = [asyncio.create_task(ingest._extract(str(tmp_path).encode(), "docx")) for _ in range(3)]
+        for _ in range(400):  # 둘이 들어올 때까지 최대 20초
+            if count_entered() >= ingest.MAX_PARALLEL_PARSES:
+                break
+            await asyncio.sleep(0.05)
+        await asyncio.sleep(1)  # 상한이 없다면 셋째 자식이 이 사이에 들어온다
+        entered_while_held = count_entered()
+        (tmp_path / worker_targets.RELEASE_FILE).touch()
+        return entered_while_held, await asyncio.gather(*tasks)
+
+    entered_while_held, results = asyncio.run(run_three_uploads())
+
+    assert entered_while_held == ingest.MAX_PARALLEL_PARSES == 2
+    assert count_entered() == 3  # 자리가 나자 셋째가 돌았다
+    assert [result.outcome for result in results] == ["ok", "ok", "ok"]
+    assert multiprocessing.active_children() == []
+
+
 # --- 보조 대조 결과 저장 ---
 
 
@@ -376,6 +407,49 @@ def test_upload_new_doc_without_code_gets_a_temporary_code(client: TestClient) -
     tobe = client.get(f"/api/bundles/{bundle['id']}/tobe", headers=AUTHOR).json()
     assert [(item["code"], item["entrance"]) for item in tobe["docs"]] == [(f"NEW-{doc['id']}", "match")]
     assert doc["doc_code"] == ""  # 문서 번호는 지어내지 않는다 — 임시 코드는 To-Be 목록에만 둔다
+
+
+def test_rejected_new_doc_leaves_tobe_alone_so_a_fixed_file_can_retry(client: TestClient) -> None:
+    bundle = create_bundle(client)
+    assert put_tobe(client, bundle["id"], [_sop("SOP-NEW")]).status_code == 200
+    tobe_before = client.get(f"/api/bundles/{bundle['id']}/tobe", headers=AUTHOR).json()
+    name = "SYNTHETIC_WI-NEW-01_v1.0_Operation.docx"
+
+    rejected = upload(
+        client, bundle["id"], build_docx(TRACKED_BODY), name, side="new", doc_type="wi", parent_code="SOP-NEW"
+    )
+    tobe_after_rejection = client.get(f"/api/bundles/{bundle['id']}/tobe", headers=AUTHOR).json()
+    retried = upload(client, bundle["id"], _sample_docx(), name, side="new", doc_type="wi", parent_code="SOP-NEW")
+
+    assert (rejected.json()["status"], rejected.json()["target_doc_id"]) == ("rejected", None)
+    assert tobe_after_rejection == tobe_before  # 목록 줄도 revision도 그대로다
+    assert retried.status_code == 201, retried.text
+    assert retried.json()["status"] == "ready" and retried.json()["target_doc_id"] is not None
+    tobe = client.get(f"/api/bundles/{bundle['id']}/tobe", headers=AUTHOR).json()
+    assert [(item["code"], item["entrance"]) for item in tobe["docs"]] == [("SOP-NEW", "assign"), ("WI-NEW-01", "match")]
+
+
+def test_new_doc_code_edit_renames_its_match_doc(client: TestClient) -> None:
+    bundle = create_bundle(client)
+    assert put_tobe(client, bundle["id"], [_sop("SOP-NEW"), _sop("SOP-TAKEN")]).status_code == 200
+    doc = upload(
+        client, bundle["id"], _sample_docx(), "원심분리기 운영.docx", side="new", doc_type="wi", parent_code="SOP-NEW"
+    ).json()
+    url = f"/api/bundles/{bundle['id']}/documents/{doc['id']}"
+    revision_before = get_bundle(client, bundle["id"])["revision"]
+
+    clash = client.patch(url, json={"revision": 1, "doc_code": "SOP-TAKEN"}, headers=AUTHOR)
+    renamed = client.patch(url, json={"revision": 1, "doc_code": "WI-09"}, headers=AUTHOR)
+
+    assert clash.status_code == 409
+    assert clash.json()["detail"] == {"code": "duplicate_code", "doc_code": "SOP-TAKEN"}
+    # 막힌 요청은 아무것도 남기지 않아 같은 revision 1로 다시 고칠 수 있다
+    assert renamed.status_code == 200, renamed.text
+    assert (renamed.json()["doc_code"], renamed.json()["revision"]) == ("WI-09", 2)
+    tobe = client.get(f"/api/bundles/{bundle['id']}/tobe", headers=AUTHOR).json()
+    match = next(item for item in tobe["docs"] if item["id"] == doc["target_doc_id"])
+    assert (match["code"], match["entrance"], match["parent_code"]) == ("WI-09", "match", "SOP-NEW")
+    assert tobe["revision"] == revision_before + 1  # To-Be 목록이 바뀌었다
 
 
 @pytest.mark.parametrize(
