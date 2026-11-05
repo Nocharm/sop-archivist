@@ -40,6 +40,7 @@ from app.models import (  # noqa: E402
     RolePermission,
 )
 from app.settings import settings  # noqa: E402
+from app.sop.models import Bundle, BundleDeletionRecord  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -111,6 +112,25 @@ def clean_ai_usage(client: TestClient) -> Iterator[None]:
     _reset_ai_usage()
     yield
     _reset_ai_usage()
+
+
+def _reset_sop() -> None:
+    async def _run() -> None:
+        async with SessionLocal() as session:
+            # 묶음 삭제가 나머지 SOP 표를 CASCADE로 지운다. 삭제 기록은 FK가 없어 따로 지운다
+            for model in (Bundle, BundleDeletionRecord):
+                await session.execute(delete(model))
+            await session.commit()
+
+    asyncio.run(_run())
+
+
+@pytest.fixture
+def clean_sop(client: TestClient) -> Iterator[None]:
+    """SOP 묶음과 삭제 기록을 비운 채로 시작하고 끝낸다 — 세션이 DB 하나를 공유해 다른 테스트의 묶음이 목록·집계에 새지 않게."""
+    _reset_sop()
+    yield
+    _reset_sop()
 
 
 @pytest.fixture
