@@ -35,8 +35,18 @@ def _para(block_id: int, seq: int, text: str, heading_level: int | None = None, 
         ("Refer to SOP-QC-00005. Next step.", ["Refer to SOP-QC-00005.", "Next step."]),
         ("J. Smith approves it.", ["J. Smith approves it."]),
         ("첫 줄\n둘째 줄.", ["첫 줄\n둘째 줄."]),
+        ("SOP-QC-001 Rev. 2 applies. Ver. 3 follows.", ["SOP-QC-001 Rev. 2 applies.", "Ver. 3 follows."]),
+        ("J.R. Smith approves it.", ["J.R. Smith approves it."]),
+        ("U.S. FDA requires it. Done.", ["U.S. FDA requires it.", "Done."]),
+        ("1. Turn on the unit. Close the lid.", ["1. Turn on the unit.", "Close the lid."]),
+        (" 5.1. 장비를 켠다.", ["5.1. 장비를 켠다."]),
+        # 목록 번호는 블록 첫 토큰일 때만 — 문장 가운데 "Step 1."은 보통 문장 끝이다
+        ("Go to Step 1. Then stop.", ["Go to Step 1.", "Then stop."]),
     ],
-    ids=["korean", "e.g.", "Fig.", "decimal-and-No.", "closing-quote", "doc-code", "initial", "newline"],
+    ids=[
+        "korean", "e.g.", "Fig.", "decimal-and-No.", "closing-quote", "doc-code", "initial", "newline",
+        "Rev.-and-Ver.", "dotted-initials", "U.S.", "list-number", "dotted-list-number", "number-not-first",
+    ],
 )
 def test_split_sentences(text: str, sentences: list[str]) -> None:
     assert [text[start:end] for start, end in split_sentences(text)] == sentences
@@ -153,3 +163,11 @@ def test_suggest_interleaved_pairs() -> None:
     # 한쪽이 MAX_PAIR_SIDE(3)를 넘는 두 덩어리는 짝을 만들지 않고 다음 두 덩어리로 넘어간다
     crowded = [(1, "ko"), (2, "ko"), (3, "ko"), (4, "ko"), (5, "en"), (6, "ko"), (7, "en")]
     assert suggest_interleaved_pairs(crowded) == [([6], [7])]
+
+
+def test_interleaved_pairs_start_at_korean() -> None:
+    # 앞머리 영어 줄(회사명·제목) 하나가 짝 방향을 뒤집지 않는다 — 한글 덩어리 뒤의 영어 덩어리만 잇는다
+    assert suggest_interleaved_pairs([(1, "en"), (2, "ko"), (3, "en"), (4, "ko"), (5, "en")]) == [([2], [3]), ([4], [5])]
+    # 짝을 못 찾은 덩어리는 그것만 건너뛴다 — 끝의 한글, 한글 앞의 영어
+    assert suggest_interleaved_pairs([(1, "ko"), (2, "en"), (3, "en"), (4, "ko")]) == [([1], [2, 3])]
+    assert suggest_interleaved_pairs([(1, "en"), (2, "neutral"), (3, "ko")]) == []

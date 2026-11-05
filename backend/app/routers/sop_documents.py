@@ -173,6 +173,9 @@ class ViewUnitOut(BaseModel):
     # 커버 단위 상태(get_cover_status) — 판단이 없는 새 문서 단위는 null
     status: str | None
     pair_id: int | None
+    # 단위 자리의 블록 — 범위가 없는 표·행·캡션 없는 그림도 어느 블록(그림 이미지)인지 알 수 있게
+    pos_seq: int
+    block_id: int
 
 
 class ViewPairOut(BaseModel):
@@ -261,6 +264,8 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
         .where(SourceBlock.extraction_id == extraction.id)
         .order_by(SourceBlock.seq)
     )
+    blocks = [ViewBlockOut.model_validate(row) for row in block_rows]
+    block_id_by_seq = {block.seq: block.id for block in blocks}
     units = await session.scalars(
         select(Unit)
         .where(Unit.extraction_id == extraction.id, Unit.status == UNIT_ACTIVE)
@@ -278,7 +283,7 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
         document=document_out,
         extraction=extraction,
         tables=[ViewTableOut.model_validate(table) for table in tables],
-        blocks=[ViewBlockOut.model_validate(row) for row in block_rows],
+        blocks=blocks,
         units=[
             ViewUnitOut(
                 id=unit.id,
@@ -293,6 +298,8 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 boundary_confirmed=unit.boundary_confirmed,
                 status=get_cover_status(unit, decisions) if document.side == "old" else None,
                 pair_id=pair_by_unit.get(unit.id),
+                pos_seq=unit.pos_seq,
+                block_id=unit.spans[0][0] if unit.spans else block_id_by_seq[unit.pos_seq],
             )
             for unit in units
         ],
