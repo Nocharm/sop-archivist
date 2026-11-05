@@ -1,6 +1,8 @@
 """DOCX 메인 추출기 — 부분 순서·감싸는 요소·상자·병합 칸·표 안 표·제목·쪽·그림·자동 번호·거절 규칙."""
 
 import pickle
+import struct
+import tracemalloc
 import zipfile
 from dataclasses import replace
 from io import BytesIO
@@ -45,6 +47,18 @@ def _rewrite_zip(data: bytes, entries: dict[str, bytes | None]) -> bytes:
             if content is not None:
                 target.writestr(name, content)
     return buffer.getvalue()
+
+
+def _patch_declared_size(data: bytes, name: str, size: int) -> bytes:
+    """중앙 디렉터리에 적힌 항목의 풀린 크기만 바꾼다 — 크기를 속여 헤더 검사를 지나가는 압축 폭탄."""
+    patched = bytearray(data)
+    position = patched.find(b"PK\x01\x02")
+    while position >= 0:
+        name_length = struct.unpack_from("<H", patched, position + 28)[0]
+        if bytes(patched[position + 46 : position + 46 + name_length]) == name.encode():
+            struct.pack_into("<I", patched, position + 24, size)
+        position = patched.find(b"PK\x01\x02", position + 4)
+    return bytes(patched)
 
 
 def test_docx_paragraph_order_and_parts() -> None:
@@ -208,6 +222,132 @@ def test_docx_nested_table_path() -> None:
         (0, None, "document/body/tbl[1]"),
         (1, 0, "document/body/tbl[1]/tr[1]/tc[1]/tbl[1]"),
     ]
+
+
+def test_docx_keeps_merged_continuation_content() -> None:
+    # 생성 도구가 만든 파일은 vMerge 이어지는 칸에도 글을 남긴다 — 버리지 않고 제자리 칸 블록으로 낸다
+    body = (
+        '<w:tbl><w:tblGrid><w:gridCol w:w="1000"/><w:gridCol w:w="1000"/></w:tblGrid>'
+        '<w:tr><w:tc><w:tcPr><w:vMerge w:val="restart"/></w:tcPr>' + p("위") + "</w:tc>"
+        "<w:tc>" + p("오른쪽 1") + "</w:tc></w:tr>"
+        "<w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr>" + p("숨은 글") + "</w:tc><w:tc>" + p("오른쪽 2") + "</w:tc></w:tr>"
+        "<w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr>" + p("") + "</w:tc><w:tc>" + p("오른쪽 3") + "</w:tc></w:tr>"
+        "</w:tbl>"
+    )
+
+    result = read_docx(build_docx(body), LIMITS)
+
+    # 빈 이어지는 칸(셋째 행)은 여전히 블록을 만들지 않고, 시작 칸의 row_span은 세 행을 덮는다
+    assert [(b.text, b.row_index, b.col_index, b.row_span, b.flags) for b in result.blocks] == [
+        ("위", 0, 0, 3, ("merged_cell",)),
+        ("오른쪽 1", 0, 1, 1, ()),
+        ("숨은 글", 1, 0, 1, ("merged_cell",)),
+        ("오른쪽 2", 1, 1, 1, ()),
+        ("오른쪽 3", 2, 1, 1, ()),
+    ]
+    assert result.warnings == (
+        ExtractedWarning(kind="merged_cell", block_seq=0, detail={"table_index": "0"}),
+        ExtractedWarning(kind="merged_cell_content", block_seq=2, detail={"table_index": "0", "count": "1"}),
+    )
+
+
+def test_docx_merged_continuation_keeps_nested_table() -> None:
+    body = (
+        '<w:tbl><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid>'
+        '<w:tr><w:tc><w:tcPr><w:vMerge w:val="restart"/></w:tcPr>' + p("위") + "</w:tc></w:tr>"
+        "<w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr>" + p("") + tbl([["안쪽"]]) + p("") + "</w:tc></w:tr>"
+        "</w:tbl>"
+    )
+
+    result = read_docx(build_docx(body), LIMITS)
+
+    assert [(b.text, b.table_index, b.row_index, b.flags) for b in result.blocks] == [
+        ("위", 0, 0, ("merged_cell",)),
+        ("\n", 0, 1, ("merged_cell",)),
+        ("안쪽", 1, 0, ()),
+    ]
+    assert [(t.index, t.parent_index) for t in result.tables] == [(0, None), (1, 0)]
+    assert [w.kind for w in result.warnings] == ["merged_cell", "merged_cell_content"]
+
+
+def test_docx_rendered_pages_per_table_row() -> None:
+    # 한 행의 칸들은 나란히 흐른다 — 두 칸이 모두 다음 쪽으로 넘어가도 문서는 한 쪽만 넘어간다
+    split_cell = "<w:tc><w:p><w:r><w:t>{0}</w:t></w:r><w:r><w:lastRenderedPageBreak/><w:t>{0} 뒤</w:t></w:r></w:p></w:tc>"
+    body = (
+        p("앞")
+        + '<w:tbl><w:tblGrid><w:gridCol w:w="1000"/><w:gridCol w:w="1000"/></w:tblGrid>'
+        + "<w:tr>" + split_cell.format("칸1") + split_cell.format("칸2") + "</w:tr>"
+        # 마지막 칸이 넘어가지 않아도 행 뒤는 가장 멀리 간 칸(앞 칸)을 따른다
+        + "<w:tr>" + split_cell.format("칸3") + "<w:tc>" + p("칸4") + "</w:tc></w:tr>"
+        + "<w:tr><w:tc>" + p("셋째 행") + "</w:tc><w:tc>" + p("") + "</w:tc></w:tr>"
+        + "</w:tbl>"
+        + p("뒤")
+    )
+
+    blocks = _read(body)
+
+    assert [(b.text, b.page) for b in blocks] == [
+        ("앞", 1),
+        ("칸1칸1 뒤", 1),
+        ("칸2칸2 뒤", 1),
+        ("칸3칸3 뒤", 2),
+        ("칸4", 2),
+        ("셋째 행", 3),
+        ("", 3),
+        ("뒤", 3),
+    ]
+    assert {b.page_basis for b in blocks} == {"rendered"}
+
+
+def test_docx_figure_inside_table_cell() -> None:
+    images = f"<w:p>{make_drawing_run('image1.png')}{make_drawing_run('image2.png')}</w:p>"
+    body = (
+        '<w:tbl><w:tblGrid><w:gridCol w:w="1000"/><w:gridCol w:w="1000"/></w:tblGrid><w:tr>'
+        f"<w:tc>{p('칸 글')}{images}{p('그림 3 캡션')}</w:tc><w:tc>{p('옆 칸')}</w:tc>"
+        "</w:tr></w:tbl>"
+    )
+
+    blocks = _read(body, media={"image1.png": TINY_PNG, "image2.png": TINY_PNG})
+
+    # 칸 안 그림은 그림마다 칸 블록 바로 뒤에 나오고, 캡션은 묶지 않아 칸 글에 그대로 남는다
+    assert [(b.kind, b.text, b.table_index, b.row_index, b.col_index, b.image_part) for b in blocks] == [
+        ("table_cell", "칸 글\n\n그림 3 캡션", 0, 0, 0, None),
+        ("figure", "", 0, 0, 0, "word/media/image1.png"),
+        ("figure", "", 0, 0, 0, "word/media/image2.png"),
+        ("table_cell", "옆 칸", 0, 0, 1, None),
+    ]
+    assert blocks[1].xml_path == "document/body/tbl[1]/tr[1]/tc[1]/p[2]"
+
+
+def test_docx_picture_only_in_table_cell_is_not_empty() -> None:
+    body = (
+        '<w:tbl><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid><w:tr>'
+        f"<w:tc><w:p>{make_drawing_run('image1.png')}</w:p></w:tc></w:tr></w:tbl>"
+    )
+
+    blocks = _read(body, media={"image1.png": TINY_PNG})
+
+    assert [(b.kind, b.text, b.image_part) for b in blocks] == [
+        ("table_cell", "", None),
+        ("figure", "", "word/media/image1.png"),
+    ]
+
+
+def test_docx_long_xml_path_is_shortened() -> None:
+    # source_blocks·source_tables.xml_path는 500자 — 첫 조각과 끝을 남기고 가운데를 줄인다
+    depth = 60
+    body = '<w:customXml w:element="x">' * depth + tbl([["깊은 칸"]]) + "</w:customXml>" * depth
+
+    result = read_docx(build_docx(body), LIMITS)
+
+    block, table = result.blocks[0], result.tables[0]
+    assert block.text == "깊은 칸"
+    assert len(block.xml_path) == 500
+    assert block.xml_path.startswith("document/…/")
+    assert block.xml_path.endswith("/customXml[1]/tbl[1]/tr[1]/tc[1]")
+    assert len(table.xml_path) == 500
+    assert table.xml_path.startswith("document/…/")
+    assert table.xml_path.endswith("/customXml[1]/tbl[1]")
 
 
 def test_docx_headings_and_section_labels() -> None:
@@ -455,6 +595,26 @@ def test_docx_rejects_unsafe_zip_limits(extra: dict[str, bytes], limits: Extract
         read_docx(data, limits)
 
     assert caught.value.code == "unsafe_zip"
+
+
+def test_docx_rejects_lying_entry_size_without_inflating() -> None:
+    # 중앙 디렉터리는 1000바이트라고 적었지만 실제로는 20 MiB로 풀리는 document.xml
+    real_content = b" " * (20 * 1024 * 1024)
+    rewritten = _rewrite_zip(build_docx(p("본문")), {"word/document.xml": real_content})
+    data = _patch_declared_size(rewritten, "word/document.xml", 1000)
+    del real_content, rewritten
+
+    tracemalloc.start()
+    try:
+        with pytest.raises(ExtractionRejected) as caught:
+            read_docx(data, LIMITS)
+        peak_bytes = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+    assert caught.value.code == "unsafe_zip"
+    # 선언한 크기까지만 풀어야 한다 — 다 풀면 20 MiB를 넘는다
+    assert peak_bytes < 4 * 1024 * 1024
 
 
 def test_extract_result_survives_pickle() -> None:
