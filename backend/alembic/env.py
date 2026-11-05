@@ -8,6 +8,7 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
+import app.sop.models  # noqa: F401  (SOP 표를 autogenerate 대상 메타데이터에 등록)
 from app.models import Base
 from app.settings import settings
 

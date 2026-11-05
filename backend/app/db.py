@@ -8,6 +8,7 @@ from alembic.config import Config
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import app.sop.models  # noqa: F401  (SOP 표를 Base.metadata에 등록)
 from app.models import Base
 from app.settings import settings
 
