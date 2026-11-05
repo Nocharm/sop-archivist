@@ -2,11 +2,13 @@
 
 import socket
 import sys
+import time
 from collections.abc import Iterator
 
 import pytest
 from markitdown import FileConversionException
 
+from app.sop.extract import aux_compare
 from app.sop.extract.aux_compare import (
     MissingText,
     _drop_blank_chars,
@@ -64,6 +66,29 @@ def test_normalize_strips_list_markers_at_every_depth() -> None:
     assert normalize_for_compare(markdown) == "첫째둘째셋째숫자하위"
 
 
+def test_normalize_strips_strike_underline_and_nested_link_brackets() -> None:
+    markdown = "[[SOP-001] 장비](#a(b)c) ~~삭제~~ <u>밑줄</u>"
+
+    assert normalize_for_compare(markdown) == "SOP-001장비삭제밑줄"
+
+
+def test_normalize_keeps_long_link_text_and_targets() -> None:
+    link = f"[{'가' * 700}](#{'x' * 3000})"
+
+    assert normalize_for_compare(link) == "가" * 700
+
+
+def test_normalize_stays_linear_on_unclosed_markup() -> None:
+    hostile = ["[" * 300_000, "![" * 150_000, "[a](" * 100_000, "](" * 150_000, "[" + "[a]" * 100_000, "](" + "(a)" * 100_000]
+
+    started = time.perf_counter()
+    for text in hostile:
+        normalize_for_compare(text)
+
+    # 제곱 시간이면 분 단위가 걸린다 — 실제로는 1초 안쪽이라 느린 기계에서도 여유가 크다
+    assert time.perf_counter() - started < 5
+
+
 def test_normalize_drops_note_reference_marks() -> None:
     markdown = "본문 글자입니다[[1]](#footnote-1)\n\n1. 각주 글자입니다 [↑](#footnote-ref-1)"
 
@@ -115,6 +140,42 @@ def test_escaped_pipe_stays_inside_the_cell() -> None:
     assert find_missing_text(["abcd|efgh"], "| abcd\\|efgh |") == []
 
 
+def test_piece_overlapping_the_previous_hit_is_found() -> None:
+    # 앞 조각이 찾힌 자리(cursor) 안쪽에서 시작하는 조각도 앞쪽 재검색에 잡힌다
+    assert find_missing_text(["가나다라마바사아"], "가나다라마바\n\n라마바사아") == []
+
+
+def test_missing_text_stops_at_max_items() -> None:
+    markdown = "\n\n".join(f"빠진 조각 번호 {n}" for n in range(10))
+
+    missing = find_missing_text(["본문 글자"], markdown, max_items=3)
+
+    assert [item.snippet for item in missing] == ["빠진 조각 번호 0", "빠진 조각 번호 1", "빠진 조각 번호 2"]
+
+
+def test_missing_text_default_cap_is_200() -> None:
+    markdown = "\n\n".join(f"빠진 조각 번호 {n}" for n in range(250))
+
+    assert len(find_missing_text(["본문 글자"], markdown)) == 200
+
+
+def test_missing_text_scan_stops_once_the_cap_is_reached(monkeypatch: pytest.MonkeyPatch) -> None:
+    normalized: list[str] = []
+    real_normalize = aux_compare.normalize_for_compare
+
+    def spy_normalize(text: str) -> str:
+        normalized.append(text)
+        return real_normalize(text)
+
+    monkeypatch.setattr(aux_compare, "normalize_for_compare", spy_normalize)
+    markdown = "\n\n".join(f"빠진 조각 번호 {n}" for n in range(10))
+
+    find_missing_text(["본문 글자"], markdown, max_items=2)
+
+    # 블록 하나 + 누락 조각 둘 — 셋째 조각부터는 정규화도 하지 않는다
+    assert len(normalized) == 3
+
+
 def test_markitdown_converts_docx_and_pdf(no_network: None) -> None:
     docx = build_docx(p("회전 속도를 확인한다.") + tbl([["이름", "Check the speed."]]))
     pdf = build_text_pdf([["Rotor speed must be checked."]])
@@ -155,6 +216,52 @@ def test_real_conversion_of_a_faithful_docx_reports_nothing_missing(no_network: 
     blocks = read_docx(data, LIMITS).blocks
 
     assert find_missing_text([block.text for block in blocks], convert_with_markitdown(data, "docx")) == []
+
+
+def _run(text: str, properties: str = "") -> str:
+    run_properties = f"<w:rPr>{properties}</w:rPr>" if properties else ""
+    return f'<w:r>{run_properties}<w:t xml:space="preserve">{text}</w:t></w:r>'
+
+
+def _link(text: str, anchor: str) -> str:
+    return f'<w:p><w:hyperlink w:anchor="{anchor}">{_run(text)}</w:hyperlink></w:p>'
+
+
+UNDERLINE = '<w:u w:val="single"/>'
+# (MarkItDown이 실제로 내는 표시, 본문 XML) — 표시가 안 나오면 이 케이스가 아무것도 검증하지 못하므로 먼저 확인한다
+MARKUP_SHAPES = {
+    "strikethrough": (
+        "~~삭제선이 있는 글자~~",
+        f"<w:p>{_run('이 문장은 ')}{_run('삭제선이 있는 글자', '<w:strike/>')}{_run(' 입니다')}</w:p>",
+    ),
+    "underline": (
+        "<u>밑줄 있는 글자</u>",
+        f"<w:p>{_run('밑줄 ')}{_run('밑줄 있는 글자', UNDERLINE)}{_run(' 입니다')}</w:p>",
+    ),
+    "link text with brackets": ("[[SOP-001] 장비 점검 절차](#sec1)", _link("[SOP-001] 장비 점검 절차", "sec1")),
+    "link anchor with parentheses": ("(#a(b)c)", _link("괄호 앵커 링크 글자", "a(b)c")),
+    "link anchor over 2000 chars": ("x" * 3000, _link("긴 앵커 링크 글자", "x" * 3000)),
+    "link text over 500 chars": ("](#sec1)", _link("가나다라마바사 " * 100, "sec1")),
+}
+
+
+@pytest.mark.parametrize(("marker", "body"), MARKUP_SHAPES.values(), ids=MARKUP_SHAPES.keys())
+def test_real_conversion_of_markup_shapes_reports_nothing_missing(marker: str, body: str, no_network: None) -> None:
+    data = build_docx(body)
+    blocks = read_docx(data, LIMITS).blocks
+    markdown = convert_with_markitdown(data, "docx")
+
+    assert marker in markdown
+    assert find_missing_text([block.text for block in blocks], markdown) == []
+
+
+def test_real_conversion_still_flags_missing_text_next_to_markup(no_network: None) -> None:
+    data = build_docx(_link("[SOP-001] 장비 점검 절차", "sec1") + p("일반 문단 글자입니다"))
+    blocks = read_docx(data, LIMITS).blocks
+
+    missing = find_missing_text([blocks[1].text], convert_with_markitdown(data, "docx"))
+
+    assert missing == [MissingText("[[SOP-001] 장비 점검 절차](#sec1)", None)]
 
 
 def test_real_conversion_flags_text_the_main_blocks_lack(no_network: None) -> None:

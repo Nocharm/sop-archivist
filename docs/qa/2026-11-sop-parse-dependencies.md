@@ -27,7 +27,17 @@
 | onnxruntime, numpy, flatbuffers, protobuf | 1.31.1, 2.4.6, 25.12.19, 7.36.2 | MIT, BSD-3, Apache-2, BSD-3 | magika |
 | requests, urllib3, certifi, six | 2.34.2, 2.8.0, 2026.10.23, 1.17.0 | Apache-2, MIT, MPL-2.0, MIT | markitdown(URL 변환용. 우리는 쓰지 않는다) |
 
-`pip check`는 깨진 의존성 없음. Python 3.11 휠이 linux x86_64(manylinux)에 전부 있어 서버 빌드에 컴파일이 필요 없다(`pip download --platform manylinux2014_x86_64 --python-version 3.11 --only-binary=:all: -r requirements.txt` 성공).
+`pip check`는 깨진 의존성 없음. Python 3.11 휠이 linux x86_64(manylinux)에 전부 있어 서버 빌드에 컴파일이 필요 없다(아래 명령 성공, `backend/`에서).
+
+```bash
+.venv/bin/pip download -d wheels --platform manylinux2014_x86_64 --platform manylinux_2_28_x86_64 --python-version 3.11 --implementation cp --only-binary=:all: -r requirements.txt
+```
+
+```powershell
+.venv\Scripts\pip download -d wheels --platform manylinux2014_x86_64 --platform manylinux_2_28_x86_64 --python-version 3.11 --implementation cp --only-binary=:all: -r requirements.txt
+```
+
+받은 `wheels/`는 확인 뒤 지운다.
 
 ## MarkItDown이 메인이 될 수 없는 이유 (0.1.9 직접 확인)
 
@@ -44,7 +54,7 @@
 
 ### 오탐을 줄이려고 정규화가 걷는 것
 
-`normalize_for_compare`는 NFKC 뒤 이미지·링크(글만 남김)·`\` 이스케이프·줄 머리 `#`·`>`·`-`·`*`·`+`·`1.`(들여쓴 중첩 포함)·강조 `*`·`_`·`` ` ``를 걷고 빈 글자(공백류 + `INVISIBLE_CHARS`, `docx_reader`와 같은 판정)를 모두 지운다. 위 표의 각주 표식도 걷는다. 걷지 않으면 각주 달린 문서는 본문 문단과 각주마다 "누락 의심"이 뜬다(확인함: 표식 규칙을 끄면 두 조각이 걸린다). 메인 글에도 같은 정규화를 쓰므로 한쪽에만 생기는 차이는 없다.
+`normalize_for_compare`는 NFKC 뒤 이미지·링크 주소 `](…)`(안쪽 괄호 한 겹, 길이 제한 없음)·`\` 이스케이프·줄 머리 `#`·`>`·`-`·`*`·`+`·`1.`(들여쓴 중첩 포함)를 걷고, 글 모양 표시 `*`·`_`·`` ` ``·삭제선 `~~`·밑줄 `<u>`·링크 글을 감싼 대괄호 `[` `]`와 빈 글자(공백류 + `INVISIBLE_CHARS`, `docx_reader`와 같은 판정)를 모두 지운다. 위 표의 각주 표식도 걷는다. 걷지 않으면 각주 달린 문서는 본문 문단과 각주마다 "누락 의심"이 뜬다(확인함: 표식 규칙을 끄면 두 조각이 걸린다). 삭제선(`~~글~~`), 밑줄(`<u>글</u>`), 대괄호가 든 링크 글(`[[SOP-001] 절차](#sec1)`), 괄호가 든 주소(`#a(b)c`), 3000자 주소, 700자 링크 글도 실제 변환 결과로 확인해 오탐이 없다(테스트 `MARKUP_SHAPES`). 링크는 글을 따로 찾지 않고 주소만 지운 뒤 대괄호를 다른 표시와 함께 지운다(글 길이 상한이 없어 700자 링크 글도 걷히고 안쪽 대괄호도 따로 다루지 않는다). 주소 정규식은 안에서 `(` `)`를 못 건너 시작 지점마다 다음 괄호까지만 훑으므로, 200만 자 악의 입력(`[` 반복, `](` 반복, `[`+`[a]` 반복 등)도 0.15초 안쪽이다. 메인 글에도 같은 정규화를 쓰므로 한쪽에만 생기는 차이는 없다.
 
 ## 측정 방법
 
@@ -63,7 +73,7 @@
 | small.pdf | 0.02초 | 0.11초 | 37MiB | 103MiB | 629MiB | +0.4MiB |
 | big.pdf (500쪽) | 6.8초 | 26.5초 | 46MiB | 126MiB | 646MiB | +5.5MiB |
 
-"부모 증가"는 결과(블록·마크다운)를 Pipe로 받은 뒤 부모 RSS가 늘어난 양이다(빈 파이썬 + `aux_compare` 18.5MiB 기준). `find_missing_text`는 부모에서 0.1~0.54초(200만 자, 블록 10만 개).
+"부모 증가"는 결과(블록·마크다운)를 Pipe로 받은 뒤 부모 RSS가 늘어난 양이다(빈 파이썬 + `aux_compare` 18.5MiB 기준). `find_missing_text`는 부모에서 0.1~0.54초(200만 자, 블록 10만 개). 누락 조각마다 건초더미(200만 자)를 훑으므로 모든 줄이 빠진 최악 입력은 조각 수에 비례한다(상한 없이 2천 개 0.5초, 1만 개 2.1초, 3만 개 6.1초). 그래서 `max_items`(기본 200)개를 모으면 멈춘다. 같은 입력이 상한 200에서는 조각 수와 무관하게 0.15초다. 결과 길이가 `max_items`와 같으면 잘렸을 수 있다.
 
 ### import 시간·기본 비용
 
