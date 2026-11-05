@@ -2,6 +2,10 @@
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙).
 
+## 2026-11-05
+
+- **제품 설계: SOP 재구성 End-to-End** — 킥오프 부록 A·B를 `docs/domain/`(판단 기준 R01–R13·SOP 일곱 칸·WI Instruction/Why, 사례 B1–B5)으로 옮겨 AI 지침과 테스트 정답의 근거로 두고, 설계 `docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`를 썼다(두 입구, 원문 불변 블록 위 범위 단위, 제안·확정 분리, 관계 묶음 저장, 결과물 A·B·C는 코드 계산). 백엔드 먼저(계획 1 결정적 코어 → 계획 2 AI 층), 프런트는 Claude Design으로 1차 작업. 사용자 답: 표는 기본 데이터 표(레이아웃 표는 표마다 전환), 한/영은 한 파일, 공개 저장소에 문서·시드를 둔다.
+
 ## 2026-11-04
 
 - **SOP Archivist 기반 세팅 v0.1.0 (Task 1–11 압축)** — SOP Restructuring T/F용 AI 에이전트를 템플릿에서 분기해(`feat/sop-archivist` → 공개 저장소 `Nocharm/sop-archivist`) 제품 기능 전에 bpm의 사내 인프라(서버 71번·포트 7777·Keycloak·HR 디렉터리·사내 GLM·백업·db-viewer)를 도메인 결합 없이 이식하고, 표 기반 권한 체계를 새로 두었다. 설계·계획: `docs/superpowers/specs/2026-11-04-sop-archivist-baseline-design.md`, `docs/superpowers/plans/2026-11-04-sop-archivist-baseline.md`. 주요 결정:
