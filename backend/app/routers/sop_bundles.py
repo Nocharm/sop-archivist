@@ -25,6 +25,7 @@ from app.sop.membership import (
     require_bundle_role,
 )
 from app.sop.models import Bundle, BundleDeletionRecord, BundleEvent, BundleMember
+from app.sop.snapshot import BundleProgress, load_bundle_progress
 
 router = APIRouter(prefix="/api/bundles", tags=["sop-bundles"])
 
@@ -108,16 +109,17 @@ class BundleOut(BundleBase):
     # 멤버 바꾸기 응답에서만 None이 될 수 있다 — 호출한 작성자가 스스로 빠진 경우
     my_role: str | None
     members: list[MemberOut]
+    # 개요의 언어별 진행 숫자(커버 상태별 옛 단위 수)
+    progress: BundleProgress
 
 
 class BundleListItem(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: int
     title: str
     status: str
     my_role: str
     updated_at: KstDatetime
+    progress: BundleProgress
 
 
 class BundleEventOut(BaseModel):
@@ -160,7 +162,10 @@ async def load_members(session: AsyncSession, bundle_ids: Collection[int]) -> di
 async def build_bundle_out(session: AsyncSession, bundle: Bundle, login_id: str) -> BundleOut:
     members = (await load_members(session, [bundle.id]))[bundle.id]
     my_role = next((member.role for member in members if member.login_id == login_id), None)
-    return BundleOut(**BundleBase.model_validate(bundle).model_dump(), my_role=my_role, members=members)
+    progress = (await load_bundle_progress(session, [bundle.id]))[bundle.id]
+    return BundleOut(
+        **BundleBase.model_validate(bundle).model_dump(), my_role=my_role, members=members, progress=progress
+    )
 
 
 async def replace_bundle_members(
@@ -219,13 +224,16 @@ async def list_my_bundles(
     session: AsyncSession = Depends(get_session),
 ) -> list[BundleListItem]:
     await ensure_active_account(session, login_id)
-    rows = await session.execute(
-        select(Bundle.id, Bundle.title, Bundle.status, BundleMember.role.label("my_role"), Bundle.updated_at)
-        .join(BundleMember, BundleMember.bundle_id == Bundle.id)
-        .where(BundleMember.login_id == login_id)
-        .order_by(Bundle.updated_at.desc(), Bundle.id.desc())
-    )
-    return [BundleListItem.model_validate(row) for row in rows]
+    rows = (
+        await session.execute(
+            select(Bundle.id, Bundle.title, Bundle.status, BundleMember.role.label("my_role"), Bundle.updated_at)
+            .join(BundleMember, BundleMember.bundle_id == Bundle.id)
+            .where(BundleMember.login_id == login_id)
+            .order_by(Bundle.updated_at.desc(), Bundle.id.desc())
+        )
+    ).all()
+    progress = await load_bundle_progress(session, [row.id for row in rows])
+    return [BundleListItem(**row._asdict(), progress=progress[row.id]) for row in rows]
 
 
 @router.post("", response_model=BundleOut, status_code=201)

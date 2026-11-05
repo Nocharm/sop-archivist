@@ -89,7 +89,7 @@ def test_list_shows_only_my_bundles_with_my_role(client: TestClient) -> None:
         mine["id"]: ("Mine", "author"),
         shared["id"]: ("Shared", "reviewer"),
     }
-    assert set(rows[0]) == {"id", "title", "status", "my_role", "updated_at"}
+    assert set(rows[0]) == {"id", "title", "status", "my_role", "updated_at", "progress"}
     assert client.get("/api/bundles", headers=OUTSIDER).json() == []
 
 
@@ -388,7 +388,10 @@ def test_admin_list_shows_meta_and_orphans(client: TestClient, monkeypatch: pyte
     rows = {row["id"]: row for row in client.get("/api/admin/bundles", headers=OPS).json()}
 
     orphan = rows[bundle["id"]]
-    assert set(orphan) == {"id", "title", "status", "revision", "members", "has_active_author", "created_at"}  # 내용 없음
+    # 내용 없음 — 진행 숫자는 건수뿐인 메타 정보다(R7)
+    assert set(orphan) == {
+        "id", "title", "status", "revision", "members", "has_active_author", "created_at", "progress",
+    }
     assert orphan["has_active_author"] is False
     assert [(m["login_id"], m["active"]) for m in orphan["members"]] == [("qa.member", False)]
     assert rows[healthy["id"]]["has_active_author"] is True
