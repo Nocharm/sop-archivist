@@ -243,7 +243,8 @@ class ExtractionWarning(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     extraction_id: Mapped[int] = mapped_column(ForeignKey("extractions.id", ondelete="CASCADE"), index=True)
-    kind: Mapped[str] = mapped_column(String(20))
+    # 0006에서 20 → 40 — 누락 의심이 잘렸다는 경고 "missing_text_truncated"(22자)가 들어가게
+    kind: Mapped[str] = mapped_column(String(40))
     block_id: Mapped[int | None] = mapped_column(
         ForeignKey("source_blocks.id", ondelete="CASCADE"), index=True, default=None
     )
