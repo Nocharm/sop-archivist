@@ -14,6 +14,7 @@
 | [deploy/deploy.md](deploy/deploy.md) | 매 배포 런북 — 파이프라인, 베이스 이미지 tar 반입, 헬스체크, 트러블슈팅, 롤백 |
 | [deploy/backup.md](deploy/backup.md) | 일간 DB 백업 정책, 기존 스택 복구·신규 서버 복구, 오프서버 사본 |
 | [deploy/db-viewer-readonly.md](deploy/db-viewer-readonly.md) | db-viewer 읽기 전용 연결(`dbviewer_ro`, 별칭 `sop-archivist-db`) |
+| [qa/2026-11-sop-parse-dependencies.md](qa/2026-11-sop-parse-dependencies.md) | 파싱 의존성·메모리 실측 — MarkItDown 새 패키지 목록, 메인이 될 수 없는 이유, 자식 프로세스 RSS, backend 메모리 상한 결정, Task 8에 넘기는 주의 |
 | [lessons/README.md](lessons/README.md) | 시행착오 방지 — React/TS 패턴, 브라우저 검증 |
 
-예정 폴더(생길 때 이 표에 추가): `qa/`(검증·감사), `design/`(기능별 설계 스냅샷), `history/`(PROGRESS 아카이브).
+예정 폴더(생길 때 이 표에 추가): `design/`(기능별 설계 스냅샷), `history/`(PROGRESS 아카이브).

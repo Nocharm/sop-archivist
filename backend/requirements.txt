@@ -12,3 +12,4 @@ python-multipart==0.0.33  # FastAPI가 파일 업로드(multipart/form-data)를 
 defusedxml==0.7.1  # DOCX XML 파싱에서 DTD·외부 엔티티 금지(설치되면 openpyxl도 이것으로 읽는다)
 pdfminer.six==20260107  # 텍스트 PDF 보조 추출기(쪽별 글자 읽기)
 pillow==13.0.0  # 스캔 PDF 테스트 팩토리에 쓰고, 이후 흐름 그림 PNG(Task 16)를 그리는 운영 의존성이다
+markitdown[docx,pdf]==0.1.9  # DOCX·PDF 보조 추출(메인 누락 대조 전용). 설치 시 딸려 오는 목록과 메모리 실측: docs/qa/2026-11-sop-parse-dependencies.md
