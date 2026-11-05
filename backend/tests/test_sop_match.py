@@ -1,6 +1,6 @@
 """입구 2 — 새 문서를 올리면 생기는 새 문장(절 경로·표·그림), 같은 글자 후보, 한 번에 확정, 수동 짝 맞추기와 편집 뒤 다시 만들기."""
 
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from typing import NamedTuple
 
@@ -11,8 +11,9 @@ from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import engine
+from app.sop.detach import DetachReport
 from app.sop.match import MAX_BULK_MATCH, sync_new_doc_targets
-from app.sop.models import Bundle, BundleEvent, Document, TargetSentence, TargetSource, Unit
+from app.sop.models import Bundle, BundleEvent, Document, TargetDoc, TargetSentence, TargetSource, Unit
 from tests.access_helpers import run_in_session, update_row
 from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
 from tests.sop_helpers import (
@@ -541,6 +542,52 @@ def test_match_doc_text_is_locked(client: TestClient) -> None:
 # ── 편집 뒤 다시 만들기(Task 13이 쓴다) ──────────────────────────────────────
 
 
+class Edit(NamedTuple):
+    created: list[int]
+    retired: list[int]
+
+
+async def _add_unit(session: AsyncSession, like: Unit, **fields: object) -> int:
+    """like와 같은 추출에 다음 local_no로 단위를 만든다 — 주지 않은 칸은 like를 따른다(쪼개기 편집 흉내)."""
+    last_no = await session.scalar(select(func.max(Unit.local_no)).where(Unit.extraction_id == like.extraction_id))
+    columns = ("extraction_id", "kind", "spans", "text", "lang", "table_id", "row_index", "group_unit_id", "pos_seq", "pos_start")
+    unit = Unit(**{**{column: getattr(like, column) for column in columns}, "local_no": last_no + 1, **fields})
+    session.add(unit)
+    await session.flush()
+    return unit.id
+
+
+def _sync_after(
+    document_id: int, edit: Callable[[AsyncSession], Awaitable[Edit]], *, counted: list[str] | None = None
+) -> tuple[Edit, DetachReport]:
+    """edit이 단위를 은퇴·생성하거나 제자리에서 바꾼 뒤 sync_new_doc_targets를 부르고 커밋한다(Task 13·14 편집 흉내).
+
+    counted를 주면 sync가 낸 SQL 문장만 거기에 모은다.
+    """
+
+    async def _run(session: AsyncSession) -> tuple[Edit, DetachReport]:
+        document = await session.get_one(Document, document_id)
+        changes = await edit(session)
+        await session.flush()
+        with _count_queries() as statements:
+            report = await sync_new_doc_targets(
+                session, document, created_unit_ids=changes.created, retired_unit_ids=changes.retired, actor="qa.member"
+            )
+        if counted is not None:
+            counted.extend(statements)
+        await session.commit()
+        return changes, report
+
+    return run_in_session(_run)
+
+
+async def _retire(session: AsyncSession, *unit_ids: int) -> list[Unit]:
+    units = [await session.get_one(Unit, unit_id) for unit_id in unit_ids]
+    for unit in units:
+        unit.status = "retired"
+    return units
+
+
 def test_sync_rebuilds_targets_for_edited_units(client: TestClient) -> None:
     """두 문장 단위를 은퇴시키고 합친 단위를 만들면 — 옛 새 문장은 지우고 새 단위의 새 문장을 같은 절 경로로 만든다."""
     bundle = create_bundle(client, is_synthetic=True)
@@ -550,30 +597,197 @@ def test_sync_rebuilds_targets_for_edited_units(client: TestClient) -> None:
     first, second = find_unit(view, "합성 장비를 켠다."), find_unit(view, "합성 시료를 넣는다.")
     before = _load_targets(new_doc["target_doc_id"])
 
-    async def _merge(session: AsyncSession) -> tuple[int, list[int]]:
-        document = await session.get_one(Document, new_doc["id"])
-        olds = [await session.get_one(Unit, unit["id"]) for unit in (first, second)]
-        last_no = await session.scalar(select(func.max(Unit.local_no)).where(Unit.extraction_id == olds[0].extraction_id))
-        merged = Unit(
-            extraction_id=olds[0].extraction_id, local_no=last_no + 1,
-            kind="sentence", spans=[*olds[0].spans, *olds[1].spans], text=f"{olds[0].text} {olds[1].text}",
-            lang="ko", pos_seq=olds[0].pos_seq, pos_start=olds[0].pos_start,
+    async def _merge(session: AsyncSession) -> Edit:
+        olds = await _retire(session, first["id"], second["id"])
+        merged = await _add_unit(
+            session, olds[0], spans=[*olds[0].spans, *olds[1].spans], text=f"{olds[0].text} {olds[1].text}"
         )
-        session.add(merged)
-        for old in olds:
-            old.status = "retired"
-        await session.flush()
-        report = await sync_new_doc_targets(
-            session, document, created_unit_ids=[merged.id], retired_unit_ids=[old.id for old in olds], actor="qa.member"
-        )
-        await session.commit()
-        return merged.id, report.deleted_target_ids
+        return Edit([merged], [old.id for old in olds])
 
-    merged_id, deleted = run_in_session(_merge)
+    edit, report = _sync_after(new_doc["id"], _merge)
 
     after = _load_targets(new_doc["target_doc_id"])
-    assert sorted(deleted) == sorted(_find_target(before, text)["id"] for text in ("합성 장비를 켠다.", "합성 시료를 넣는다."))
-    assert [(t["confirmed_text"], t["section_path"], t["new_unit_id"], t["status"]) for t in after] == [
-        ("합성 장비를 켠다. 합성 시료를 넣는다.", "1. 준비", merged_id, "unassigned"),
-        ("합성 기록을 남긴다.", "1. 준비", find_unit(view, "합성 기록을 남긴다.")["id"], "unassigned"),
+    assert sorted(report.deleted_target_ids) == sorted(
+        _find_target(before, text)["id"] for text in ("합성 장비를 켠다.", "합성 시료를 넣는다.")
+    )
+    assert [(t["confirmed_text"], t["section_path"], t["new_unit_id"], t["status"], t["order_index"]) for t in after] == [
+        ("합성 장비를 켠다. 합성 시료를 넣는다.", "1. 준비", edit.created[0], "unassigned", 0),
+        ("합성 기록을 남긴다.", "1. 준비", find_unit(view, "합성 기록을 남긴다.")["id"], "unassigned", 1),
     ]
+
+
+def test_sync_refreshes_section_paths_after_heading_edits(client: TestClient) -> None:
+    """제목을 앞 문장과 합치면 뒤 형제들의 절 경로에서 그 제목이 빠지고, 제목을 나누면 새 제목으로 바뀐다(revision +1)."""
+    bundle = create_bundle(client, is_synthetic=True)
+    body = (
+        p("1. 준비", "Heading1") + p("합성 장비를 켠다.") + p("2. 기록", "Heading1")
+        + p("합성 기록을 남긴다.") + p("합성 서명을 한다.")
+    )
+    new_doc = _upload_new(client, bundle["id"], body)
+    view = get_view(client, bundle["id"], new_doc["id"])
+    before = _load_targets(new_doc["target_doc_id"])
+    assert [t["section_path"] for t in before] == ["1. 준비", "2. 기록", "2. 기록"]
+
+    async def _merge_heading(session: AsyncSession) -> Edit:
+        sentence, heading = await _retire(session, find_unit(view, "합성 장비를 켠다.")["id"], find_unit(view, "2. 기록")["id"])
+        merged = await _add_unit(
+            session, sentence, spans=[*sentence.spans, *heading.spans], text=f"{sentence.text}\n{heading.text}"
+        )
+        return Edit([merged], [sentence.id, heading.id])
+
+    _sync_after(new_doc["id"], _merge_heading)
+    merged = _load_targets(new_doc["target_doc_id"])
+
+    async def _split_heading(session: AsyncSession) -> Edit:
+        (heading,) = await _retire(session, find_unit(view, "1. 준비")["id"])
+        block_id = heading.spans[0][0]
+        number = await _add_unit(session, heading, spans=[[block_id, 0, 2]], text="1.")
+        title = await _add_unit(session, heading, spans=[[block_id, 3, 5]], text="준비", pos_start=3)
+        return Edit([number, title], [heading.id])
+
+    _sync_after(new_doc["id"], _split_heading)
+    split = _load_targets(new_doc["target_doc_id"])
+
+    kept = {_find_target(before, text)["id"] for text in ("합성 기록을 남긴다.", "합성 서명을 한다.")}
+    assert [(t["confirmed_text"], t["section_path"]) for t in merged] == [
+        ("합성 장비를 켠다.\n2. 기록", "1. 준비"), ("합성 기록을 남긴다.", "1. 준비"), ("합성 서명을 한다.", "1. 준비"),
+    ]
+    assert [(t["id"], t["revision"]) for t in merged[1:]] == [(target_id, 2) for target_id in sorted(kept)]
+    # 같은 단계 제목 둘이면 뒤 제목이 앞 제목을 닫는다
+    assert [(t["section_path"], t["revision"]) for t in split] == [("준비", 2), ("준비", 3), ("준비", 3)]
+
+
+def test_sync_follows_language_change(client: TestClient) -> None:
+    """언어 바꾸기는 단위를 제자리에서 고친다 — 새 문장 언어가 따라가고 그 새 문장만 revision이 오른다."""
+    bundle = create_bundle(client, is_synthetic=True)
+    new_doc = _upload_new(client, bundle["id"], p("합성 장비를 켠다.") + p("합성 OK 표시를 한다."))
+    view = get_view(client, bundle["id"], new_doc["id"])
+    changed = find_unit(view, "합성 OK 표시를 한다.")
+
+    async def _set_english(session: AsyncSession) -> Edit:
+        (await session.get_one(Unit, changed["id"])).lang = "en"
+        return Edit([], [])
+
+    _sync_after(new_doc["id"], _set_english)
+
+    assert [(t["confirmed_text"], t["lang"], t["revision"]) for t in _load_targets(new_doc["target_doc_id"])] == [
+        ("합성 장비를 켠다.", "ko", 1), ("합성 OK 표시를 한다.", "en", 2),
+    ]
+
+
+def test_sync_moves_cell_targets_between_layout_and_data_tables(client: TestClient) -> None:
+    """데이터 표 → 레이아웃 표면 표 새 문장이 지워지고 칸은 부모 없는 보통 새 문장이 되며, 다시 데이터 표가 되면 같은 칸 새
+    문장이 새 표 새 문장 아래 원래 칸 자리로 묶인다."""
+    bundle = create_bundle(client, is_synthetic=True)
+    body = tbl([["항목", "Item"], ["합성 값", "Synthetic value"]]) + p("합성 문장을 쓴다.")
+    new_doc = _upload_new(client, bundle["id"], body)
+    view = get_view(client, bundle["id"], new_doc["id"])
+    table_unit = next(unit for unit in view["units"] if unit["kind"] == "table")
+    cell_ids = [unit["id"] for unit in view["units"] if unit["group_unit_id"] == table_unit["id"]]
+    table_target, *_ = _load_targets(new_doc["target_doc_id"])
+
+    async def _to_layout(session: AsyncSession) -> Edit:
+        await _retire(session, table_unit["id"])
+        for cell_id in cell_ids:
+            (await session.get_one(Unit, cell_id)).group_unit_id = None
+        return Edit([], [table_unit["id"]])
+
+    _, report = _sync_after(new_doc["id"], _to_layout)
+    as_layout = _load_targets(new_doc["target_doc_id"])
+
+    async def _to_data(session: AsyncSession) -> Edit:
+        cells = [await session.get_one(Unit, cell_id) for cell_id in cell_ids]
+        table = await _add_unit(session, cells[0], kind="table", spans=[], text="", lang="neutral", pos_start=-1)
+        for cell in cells:
+            cell.group_unit_id = table
+        return Edit([table], [])
+
+    edit, _ = _sync_after(new_doc["id"], _to_data)
+    as_data = _load_targets(new_doc["target_doc_id"])
+
+    assert table_target["id"] in report.deleted_target_ids
+    assert [(t["kind"], t["parent_target_id"], t["cell_row"], t["cell_col"]) for t in as_layout] == [
+        ("sentence", None, None, None)
+    ] * 5
+    assert [t["new_unit_id"] for t in as_layout[:4]] == cell_ids
+    new_table, *cells, sentence = as_data
+    assert (new_table["kind"], new_table["new_unit_id"], new_table["grid"]) == ("table", edit.created[0], {"rows": 2, "cols": 2})
+    assert [(c["id"], c["parent_target_id"], c["cell_row"], c["cell_col"], c["revision"]) for c in cells] == [
+        (target["id"], new_table["id"], row, col, 2)
+        for target, (row, col) in zip(as_layout[:4], [(0, 0), (0, 1), (1, 0), (1, 1)], strict=True)
+    ]
+    assert (sentence["confirmed_text"], sentence["revision"]) == ("합성 문장을 쓴다.", 1)
+
+
+@pytest.mark.parametrize("is_manual", [False, True])
+def test_sync_orders_new_targets(client: TestClient, is_manual: bool) -> None:
+    """나눈 단위의 새 문장 — 사람이 순서를 정한 문서면 지금 최댓값 + 1부터 붙고 남은 순서는 그대로, 아니면 단위 순서로 다시 매긴다."""
+    bundle = create_bundle(client, is_synthetic=True)
+    new_doc = _upload_new(client, bundle["id"], p("합성 장비를 켜고 시료를 넣는다.") + p("합성 기록을 남긴다."))
+    view = get_view(client, bundle["id"], new_doc["id"])
+    whole = find_unit(view, "합성 장비를 켜고 시료를 넣는다.")
+    first, second = _load_targets(new_doc["target_doc_id"])
+    if is_manual:
+        update_row(TargetDoc, new_doc["target_doc_id"], manual_order=True)
+        update_row(TargetSentence, first["id"], order_index=10)
+        update_row(TargetSentence, second["id"], order_index=5)
+
+    async def _split(session: AsyncSession) -> Edit:
+        (unit,) = await _retire(session, whole["id"])
+        block_id, start, end = unit.spans[0]
+        cut = unit.text.index(" 시료")
+        left = await _add_unit(session, unit, spans=[[block_id, start, start + cut]], text=unit.text[:cut])
+        right = await _add_unit(
+            session, unit, spans=[[block_id, start + cut + 1, end]], text=unit.text[cut + 1:], pos_start=start + cut + 1
+        )
+        return Edit([left, right], [unit.id])
+
+    edit, _ = _sync_after(new_doc["id"], _split)
+
+    targets = {t["new_unit_id"]: t for t in _load_targets(new_doc["target_doc_id"])}
+    kept = targets[second["new_unit_id"]]
+    orders = [targets[unit_id]["order_index"] for unit_id in edit.created]
+    if is_manual:
+        assert (orders, kept["order_index"]) == ([6, 7], 5)
+    else:
+        assert (orders, kept["order_index"]) == ([0, 1], 2)
+    assert kept["revision"] == 1  # 순서만 바뀐 새 문장은 revision을 올리지 않는다
+
+
+def test_footnote_targets_have_empty_section_path(client: TestClient) -> None:
+    """각주는 본문 뒤에 오지만 마지막 본문 절을 물려받지 않는다."""
+    bundle = create_bundle(client, is_synthetic=True)
+    new_doc = _upload_new(
+        client, bundle["id"], p("1. 준비", "Heading1") + p("합성 장비를 켠다."), footnotes=[p("합성 각주 글이다.")]
+    )
+
+    targets = _load_targets(new_doc["target_doc_id"])
+
+    assert [(t["confirmed_text"], t["section_path"]) for t in targets] == [
+        ("합성 장비를 켠다.", "1. 준비"), ("합성 각주 글이다.", ""),
+    ]
+
+
+def test_sync_uses_bounded_statements(client: TestClient) -> None:
+    """제목 하나를 고쳐 뒤 새 문장 모두의 절 경로가 바뀌어도 sync의 SQL 문장 수는 새 문장 수와 무관하다."""
+
+    def _measure(count: int) -> int:
+        bundle = create_bundle(client, is_synthetic=True)
+        body = p("1. 준비", "Heading1") + "".join(p(f"합성 문장 {n}번을 쓴다.") for n in range(count))
+        new_doc = _upload_new(client, bundle["id"], body)
+        heading = find_unit(get_view(client, bundle["id"], new_doc["id"]), "1. 준비")
+
+        async def _carve_title(session: AsyncSession) -> Edit:
+            (old,) = await _retire(session, heading["id"])
+            title = await _add_unit(session, old, spans=[[old.spans[0][0], 3, 5]], text="준비", pos_start=3)
+            return Edit([title], [old.id])
+
+        statements: list[str] = []
+        _sync_after(new_doc["id"], _carve_title, counted=statements)
+        assert {t["section_path"] for t in _load_targets(new_doc["target_doc_id"])} == {"준비"}
+        return len(statements)
+
+    small, large = _measure(3), _measure(40)
+
+    assert small > 0
+    assert large == small
