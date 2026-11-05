@@ -47,6 +47,17 @@ class Settings(BaseSettings):
     hr_sync_interval_hours: int = 24  # 내장 스케줄러 주기(시간). 0 = off
     hr_sync_delete_cap_pct: int = 20  # 전체 동기화 삭제 상한(% of 배치 관리 행). 0 = 가드 off
 
+    # SOP 문서 업로드·파싱 상한(Tuning) — 부하 검증 전 추천값(설계 §7.1). 넘는 파일은 사유를 남기고 거절한다.
+    sop_max_file_mb: int = 25  # 파일 하나(MiB)
+    sop_max_docx_unzipped_mb: int = 200  # DOCX 압축 해제 합계(MiB)
+    sop_max_pdf_pages: int = 500
+    sop_max_doc_chars: int = 2_000_000  # 문서 하나의 원문 글자 수
+    # 파싱 한 번(초) — 메인 추출과 보조 변환(MarkItDown)이 각자 이만큼 쓴다
+    sop_parse_timeout_seconds: int = 60
+    # 파싱 자식 프로세스 가상 메모리 상한(MiB, 리눅스 RLIMIT_AS). 낮추면 큰 표 문서가 abort한다 — 근거:
+    # docs/qa/2026-11-sop-parse-dependencies.md
+    sop_parse_memory_mb: int = 2048
+
     # 조직 경로 해석에서 제외할 최상위 레벨 수 — HR 조직 상위 2단계(법인·사업부급)는 범용이라 분류 제외.
     # departments 체인 해석에만 적용, employees org 컬럼·폴백은 원본 보존.
     # 비즈니스 상수 — env 미노출 (rules/backend/config.md).

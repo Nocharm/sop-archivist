@@ -1,4 +1,4 @@
-"""SOP 테스트 공유 헬퍼 — 사용자 헤더와 묶음 만들기·읽기·멤버 바꾸기·To-Be 목록 쓰기 (태스크마다 이어서 더한다)."""
+"""SOP 테스트 공유 헬퍼 — 사용자 헤더와 묶음 만들기·읽기·멤버 바꾸기·To-Be 목록 쓰기·문서 올리기 (태스크마다 이어서 더한다)."""
 
 from collections.abc import Iterable
 
@@ -47,3 +47,25 @@ def put_tobe(
     revision = get_bundle(client, bundle_id, headers)["revision"]
     body = {"revision": revision, "docs": docs, "na_slots": list(na_slots), "wi_steps": list(wi_steps)}
     return client.put(f"/api/bundles/{bundle_id}/tobe", json=body, headers=headers)
+
+
+def upload(
+    client: TestClient,
+    bundle_id: int,
+    data: bytes,
+    file_name: str,
+    *,
+    side: str = "old",
+    doc_type: str | None = None,
+    parent_code: str | None = None,
+    headers: dict[str, str] = AUTHOR,
+) -> httpx2.Response:
+    """문서 파일 하나를 올린다 — 거절 응답도 그대로 돌려줘 테스트가 코드를 단언한다. None인 칸은 폼에 싣지 않는다."""
+    form = {"side": side}
+    if doc_type is not None:
+        form["doc_type"] = doc_type
+    if parent_code is not None:
+        form["parent_code"] = parent_code
+    return client.post(
+        f"/api/bundles/{bundle_id}/documents", files={"file": (file_name, data)}, data=form, headers=headers
+    )

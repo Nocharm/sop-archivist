@@ -75,6 +75,14 @@ services:
       N8N_HR_TOKEN: ${N8N_HR_TOKEN:-}
       HR_SYNC_INTERVAL_HOURS: ${HR_SYNC_INTERVAL_HOURS:-24}
       HR_SYNC_DELETE_CAP_PCT: ${HR_SYNC_DELETE_CAP_PCT:-20}
+      # SOP 문서 업로드·파싱 상한 — 폴백은 Settings 기본값과 같다(.env.example 참고)
+      SOP_MAX_FILE_MB: ${SOP_MAX_FILE_MB:-25}
+      SOP_MAX_DOCX_UNZIPPED_MB: ${SOP_MAX_DOCX_UNZIPPED_MB:-200}
+      SOP_MAX_PDF_PAGES: ${SOP_MAX_PDF_PAGES:-500}
+      SOP_MAX_DOC_CHARS: ${SOP_MAX_DOC_CHARS:-2000000}
+      SOP_PARSE_TIMEOUT_SECONDS: ${SOP_PARSE_TIMEOUT_SECONDS:-60}
+      # 파싱 자식 프로세스 RLIMIT_AS(MiB) — 위 MALLOC_ARENA_MAX와 함께여야 충분하다
+      SOP_PARSE_MEMORY_MB: ${SOP_PARSE_MEMORY_MB:-2048}
       # uvicorn이 X-Forwarded-For를 믿을 프록시 대역 — compose 네트워크 실제 서브넷(첫 기동 뒤
       # docker network inspect sop-archivist_default)과 같아야 backend 접속 로그의 클라이언트 주소가 nginx 주소로 찍히지 않는다.
       # backend는 호스트에 포트를 열지 않아 그 대역 밖에서는 직접 닿지 않는다.

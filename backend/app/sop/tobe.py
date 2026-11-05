@@ -1,4 +1,4 @@
-"""새 문서(To-Be) 목록 — 입력·출력 스키마, 읽기, 검사하며 저장하기(API와 Excel 가져오기가 공용)."""
+"""새 문서(To-Be) 목록 — 입력·출력 스키마, 읽기, 검사하며 저장하기(API와 Excel 가져오기가 공용), 올린 새 문서의 목록 줄."""
 
 from collections import Counter
 from collections.abc import Collection
@@ -428,3 +428,70 @@ async def apply_tobe(
         session, bundle_id=bundle.id, actor=actor, action="tobe.update" if source == "api" else "tobe.import",
         target_type="target_doc", target_ids=sorted(changed),
     )
+
+
+# --- 입구 2(match) 새 문서 — 올린 새 문서(side=new)가 목록에 들어오고 나가는 길 ---
+
+
+async def check_match_doc(
+    session: AsyncSession, bundle_id: int, *, code: str, doc_type: str | None, parent_code: str | None
+) -> int | None:
+    """올린 새 문서를 목록에 넣을 수 있는지 검사하고 부모 SOP의 id를 돌려준다 — 목록 쓰기와 같은 거절 코드를 쓴다.
+
+    종류가 sop|wi가 아니면 422 invalid_doc_type, SOP에 부모가 있거나 WI의 부모가 이 묶음의 SOP가 아니면 422 invalid_parent,
+    번호가 이미 목록에 있으면 409 duplicate_code. 번호가 비면 임시 번호를 문서 id가 정해진 뒤에 붙이므로 번호 검사를 건너뛴다.
+    """
+    if doc_type not in TARGET_DOC_TYPES:
+        raise_rule(422, "invalid_doc_type", doc_code=code)
+    parent_id = None
+    if doc_type == "sop":
+        if parent_code is not None:
+            raise_rule(422, "invalid_parent", doc_code=code, parent_code=parent_code)
+    else:
+        parent = None
+        if parent_code is not None:
+            parent = await session.scalar(
+                select(TargetDoc).where(TargetDoc.bundle_id == bundle_id, TargetDoc.code == parent_code)
+            )
+        if parent is None or parent.doc_type != "sop":
+            raise_rule(422, "invalid_parent", doc_code=code, parent_code=parent_code)
+        parent_id = parent.id
+    if code:
+        await ensure_code_free(session, bundle_id, code)
+    return parent_id
+
+
+async def ensure_code_free(session: AsyncSession, bundle_id: int, code: str) -> None:
+    """목록에 같은 번호가 있으면 409 duplicate_code — 올린 새 문서는 목록 줄을 새로 만들 뿐 기존 줄과 합치지 않는다."""
+    taken = await session.scalar(select(TargetDoc.id).where(TargetDoc.bundle_id == bundle_id, TargetDoc.code == code))
+    if taken is not None:
+        raise_rule(409, "duplicate_code", doc_code=code)
+
+
+async def add_match_doc(
+    session: AsyncSession, bundle: Bundle, *, code: str, title: str, doc_type: str, parent_id: int | None
+) -> TargetDoc:
+    """입구 2 문서 한 줄을 만들고 묶음 revision을 올린다(목록이 바뀌었다). 검사는 호출부가 check_match_doc으로 먼저 한다."""
+    doc = TargetDoc(
+        bundle_id=bundle.id, code=code, title=title, doc_type=doc_type, parent_id=parent_id, entrance="match"
+    )
+    session.add(doc)
+    await session.flush()  # 문서가 가리킬 id가 필요하다
+    bundle.revision += 1
+    return doc
+
+
+async def remove_match_doc(session: AsyncSession, bundle: Bundle, target_doc_id: int) -> None:
+    """올린 새 문서를 지울 때 그 목록 줄도 지운다. 새 문장이 있으면 409 doc_has_targets, 이 줄을 부모로 둔 WI가 있으면
+    409 doc_has_children(목록 쓰기에서 부모를 빼면 invalid_parent인 것과 같은 이유). 묶음 revision을 올린다.
+    """
+    doc = await session.get_one(TargetDoc, target_doc_id)  # 문서의 FK가 가리키므로 늘 있다
+    if await count_targets_in(session, [doc.id]):
+        raise_rule(409, "doc_has_targets", codes=[doc.code])
+    children = list(
+        await session.scalars(select(TargetDoc.code).where(TargetDoc.parent_id == doc.id).order_by(TargetDoc.code))
+    )
+    if children:
+        raise_rule(409, "doc_has_children", codes=children)
+    await session.delete(doc)  # N/A·단계는 DB의 ON DELETE CASCADE가 지운다
+    bundle.revision += 1

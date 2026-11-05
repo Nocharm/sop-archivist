@@ -16,6 +16,7 @@ from app.routers import directory as directory_router
 from app.routers import me as me_router
 from app.routers import sop_admin as sop_admin_router
 from app.routers import sop_bundles as sop_bundles_router
+from app.routers import sop_documents as sop_documents_router
 from app.routers import sop_tobe as sop_tobe_router
 from app.settings import settings
 
@@ -47,6 +48,7 @@ app.include_router(access_router.router)
 app.include_router(admin_router.router)
 app.include_router(sop_bundles_router.router)
 app.include_router(sop_tobe_router.router)
+app.include_router(sop_documents_router.router)
 app.include_router(sop_admin_router.router)
 
 
