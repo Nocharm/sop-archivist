@@ -17,7 +17,20 @@ from app.sop.models import Bundle, Document, TargetDoc, TargetDocNaSlot
 from app.sop.tobe import is_within_slot
 from app.sop.tobe_excel import parse_tobe_workbook
 from tests.access_helpers import run_in_session, update_row
-from tests.sop_helpers import AUTHOR, OUTSIDER, REVIEWER, create_bundle, get_bundle, put_tobe, set_members
+from tests.docx_factory import build_docx, p
+from tests.sop_helpers import (
+    AUTHOR,
+    OUTSIDER,
+    REVIEWER,
+    assign_as_is,
+    create_bundle,
+    find_unit,
+    get_bundle,
+    get_view,
+    put_tobe,
+    set_members,
+    upload,
+)
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
 
@@ -330,6 +343,51 @@ def test_tobe_rejects_malformed_input_with_the_default_422(client: TestClient, b
 )
 def test_na_on_a_slot_covers_its_sub_slots_only(slot_key: str, slot: str, expected: bool) -> None:
     assert is_within_slot(slot_key, slot) is expected
+
+
+def test_tobe_rejects_changes_under_targets(client: TestClient) -> None:
+    bundle = create_bundle(client, is_synthetic=True)
+    docs = [_doc("SOP-A"), _doc("WI-A", "wi", parent="SOP-A"), _doc("SOP-B")]
+    steps = [_step("WI-A", 1)]
+    assert put_tobe(client, bundle["id"], docs, wi_steps=steps).status_code == 200
+    ids = {doc["code"]: doc["id"] for doc in _get_tobe(client, bundle["id"])["docs"]}
+    body = p("합성 첫 문장이다.") + p("합성 둘째 문장이다.") + p("합성 셋째 문장이다.")
+    uploaded = upload(client, bundle["id"], build_docx(body), "SYNTHETIC_OLD-1_Tobe.docx")
+    assert uploaded.status_code == 201, uploaded.text
+    view = get_view(client, bundle["id"], uploaded.json()["id"])
+    assign_as_is(client, bundle["id"], find_unit(view, "합성 첫 문장이다."), ids["SOP-A"], slot_key="procedures.maintenance")
+    assign_as_is(
+        client, bundle["id"], find_unit(view, "합성 둘째 문장이다."), ids["WI-A"], wi_step=1, wi_part="instruction"
+    )
+    assign_as_is(client, bundle["id"], find_unit(view, "합성 셋째 문장이다."), ids["SOP-B"], slot_key="purpose")
+    before = _get_tobe(client, bundle["id"])
+
+    cases = [
+        (put_tobe(client, bundle["id"], docs[:2], wi_steps=steps), {"code": "doc_has_targets", "codes": ["SOP-B"]}),
+        (
+            put_tobe(client, bundle["id"], docs, na_slots=[_na("SOP-A", "procedures.maintenance")], wi_steps=steps),
+            {"code": "slot_has_targets", "slots": [{"doc_code": "SOP-A", "slot_key": "procedures.maintenance"}]},
+        ),
+        # 상위 칸 N/A는 하위 칸에 든 문장도 막는다
+        (
+            put_tobe(client, bundle["id"], docs, na_slots=[_na("SOP-A", "procedures")], wi_steps=steps),
+            {"code": "slot_has_targets", "slots": [{"doc_code": "SOP-A", "slot_key": "procedures"}]},
+        ),
+        (put_tobe(client, bundle["id"], docs, wi_steps=[]), {"code": "step_has_targets", "steps": [{"doc_code": "WI-A", "step_no": 1}]}),
+        (
+            put_tobe(client, bundle["id"], [*docs[:2], _doc("SOP-B", "wi", parent="SOP-A")], wi_steps=steps),
+            {"code": "doc_has_targets", "codes": ["SOP-B"]},
+        ),
+        (
+            put_tobe(client, bundle["id"], [docs[0], _doc("WI-A"), docs[2]], wi_steps=[]),
+            {"code": "doc_has_targets", "codes": ["WI-A"]},
+        ),
+    ]
+
+    for response, detail in cases:
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"] == detail
+    assert _get_tobe(client, bundle["id"]) == before
 
 
 # ── match 문서(입구 2) ─────────────────────────────────────────────────────────

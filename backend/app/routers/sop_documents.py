@@ -16,6 +16,7 @@ from app.clock import now
 from app.db import get_session
 from app.routers.admin import KstDatetime
 from app.sop.constants import LANGUAGE_LAYOUTS, MEMBER_ROLES
+from app.sop.detach import detach_units, find_units_needing_confirm
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
 from app.sop.ingest import get_max_file_bytes, ingest_upload
@@ -419,7 +420,7 @@ async def update_document(
 async def delete_document(
     doc_id: IdPath,
     revision: int = Query(ge=1),
-    # 확정된 판단이 붙은 문서를 지울 때의 명시적 확인 — 판단은 단위가 생긴 뒤에 붙으므로 지금은 받기만 한다
+    # 사람의 판단이 걸린 문서를 지울 때의 명시적 확인 — 없으면 409 confirm_required로 화면이 먼저 묻는다
     confirm: bool = Query(False),
     ctx: BundleContext = Depends(_require_author),
     session: AsyncSession = Depends(get_session),
@@ -429,6 +430,16 @@ async def delete_document(
     document = await _get_document(session, bundle.id, doc_id)
     check_revision("document", document.id, revision, document.revision)
     ensure_editable(bundle)
+    unit_ids = list(
+        await session.scalars(
+            select(Unit.id).join(Extraction, Extraction.id == Unit.extraction_id).where(Extraction.document_id == document.id)
+        )
+    )
+    decided = await find_units_needing_confirm(session, unit_ids)
+    if decided and not confirm:
+        raise_rule(409, "confirm_required", unit_ids=decided)
+    # 단위가 CASCADE로 사라지기 전에 떼어 낸다 — 다른 문서 단위와 합쳐졌던 새 문장이 조용히 확정으로 남지 않고 보류가 되게
+    await detach_units(session, bundle_id=bundle.id, unit_ids=unit_ids, cause="retired", actor=ctx.login_id)
     if document.target_doc_id is not None:
         await remove_match_doc(session, bundle, document.target_doc_id)
     # 원본·추출·표·블록·경고(와 그 위의 단위)는 DB의 ON DELETE CASCADE가 지운다
