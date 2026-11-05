@@ -6,6 +6,7 @@
 
 - **제품 설계: SOP 재구성 End-to-End** — 킥오프 부록 A·B를 `docs/domain/`(판단 기준 R01–R13·SOP 일곱 칸·WI Instruction/Why, 사례 B1–B5)으로 옮겨 AI 지침과 테스트 정답의 근거로 두고, 설계 `docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`를 썼다(두 입구, 원문 불변 블록 위 범위 단위, 제안·확정 분리, 관계 묶음 저장, 결과물 A·B·C는 코드 계산). 백엔드 먼저(계획 1 결정적 코어 → 계획 2 AI 층), 프런트는 Claude Design으로 1차 작업. 사용자 답: 표는 기본 데이터 표(레이아웃 표는 표마다 전환), 한/영은 한 파일, 공개 저장소에 문서·시드를 둔다.
 - **구현 계획 1(결정적 코어)** — 설계 승인 뒤 `docs/superpowers/plans/2026-11-05-sop-restructuring-plan1-core.md`(20개 태스크). 스키마는 Alembic 0005 하나, 파싱은 spawn 자식 프로세스, 결과물은 스냅숏 위 순수 함수, 떼어 내기·상태 계산·빈 글자 판정은 각각 한 함수로 모은다.
+- **계획 1 Task 1: 권한 키 3개** — `bundle.create`·`bundle.admin`·`guideline.manage`를 백엔드 카탈로그·프런트 미러·i18n en/ko에 한 커밋으로 더했다(뒤 태스크의 `require_permission`이 쓴다). 관리 탭이 없는 키가 관리 화면을 열지 않도록 `canSeeAdmin`은 `ADMIN_TAB_PERMISSIONS`(기존 4개)만 본다. sysadmin 유효 권한이 7개가 되어 스모크(`pw-smoke-baseline.mjs`)의 개수 단언도 맞췄다.
 
 ## 2026-11-04
 

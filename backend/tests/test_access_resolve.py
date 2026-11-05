@@ -13,7 +13,10 @@ pytestmark = pytest.mark.usefixtures("enforce", "clean_directory", "demo_access"
 
 
 def test_catalog_lists_the_admin_permissions_in_order() -> None:
-    assert PERMISSIONS == ("permission.manage", "directory.sync", "ai.admin", "system.view")
+    assert PERMISSIONS == (
+        "permission.manage", "directory.sync", "ai.admin", "system.view",
+        "bundle.create", "bundle.admin", "guideline.manage",
+    )
     assert is_known_permission("system.view") is True
     assert is_known_permission("sop.draft") is False
 

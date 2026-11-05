@@ -580,7 +580,7 @@ await runStep("admin leftovers as qa.lead", { devUser: "qa.lead" }, async ({ pag
   await findById(page, "effective-picker-search").fill("dev.admin");
   await findById(page, "effective-picker-option-dev.admin").click();
   await wait(page, "effective-sysadmin");
-  check("a system administrator is explained and holds all four permissions", (await findByPrefix(page, "effective-perm-").count()) === 4);
+  check("a system administrator is explained and holds all seven permissions", (await findByPrefix(page, "effective-perm-").count()) === 7);
   check("a known, active sysadmin gets no directory note", (await countById(page, "effective-sysadmin-note")) === 0);
 
   // 디렉터리에 아직 없는 부트스트랩 sysadmin(APP_SYSADMINS) - 백엔드는 known=false여도 권한 전부를 돌려준다. dev.admin은 실제 응답을 쓰려고 로그인 ID를 따로 잡는다.
