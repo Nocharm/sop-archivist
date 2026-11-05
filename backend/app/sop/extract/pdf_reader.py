@@ -12,8 +12,8 @@ from pdfminer.pdfpage import PDFPage
 from pdfminer.pdfparser import PDFParser
 from pdfminer.psexceptions import PSException
 
-# 빈 글자 판정과 본문·문단 코드는 DOCX 추출기와 같은 것을 쓴다(빈 글자 판정은 쪼개기 단계로 옮겨질 때 함께 옮긴다)
-from app.sop.extract.docx_reader import KIND_PARAGRAPH, PART_BODY, _has_visible_char
+# 본문·문단 코드는 DOCX 추출기와, 빈 글자 판정은 쪼개기·커버리지와 같은 것을 쓴다
+from app.sop.extract.docx_reader import KIND_PARAGRAPH, PART_BODY
 from app.sop.extract.types import (
     ExtractedBlock,
     ExtractedWarning,
@@ -21,6 +21,7 @@ from app.sop.extract.types import (
     ExtractLimits,
     ExtractResult,
 )
+from app.sop.segment import has_visible_char
 
 PDF_HEADER = b"%PDF"
 PAGE_BASIS_RENDERED = "rendered"  # PDF의 쪽은 보이는 쪽 그대로다
@@ -102,7 +103,7 @@ def _split_paragraphs(page_text: str) -> list[str]:
     paragraphs: list[str] = []
     lines: list[str] = []
     for line in page_text.split("\n"):
-        if _has_visible_char(line):
+        if has_visible_char(line):
             lines.append(line)
         elif lines:
             paragraphs.append("\n".join(lines))

@@ -27,6 +27,7 @@ from app.sop.models import (
     SourceTable,
 )
 from app.sop.tobe import add_match_doc, check_match_doc, ensure_code_free, temp_match_code
+from app.sop.units import create_initial_units
 
 logger = logging.getLogger(__name__)
 
@@ -130,10 +131,11 @@ async def ingest_upload(
     block_count = warning_count = 0
     if outcome.result is not None:
         session.add(DocumentFile(document_id=document.id, content=data))
-        block_count, warning_count = await _write_extraction(
+        extraction, block_count, warning_count = await _write_extraction(
             session, document.id, outcome.result, outcome.aux_error, missing
         )
-        # 단위 만들기 자리 — 블록 id가 정해진 이 트랜잭션 안, 커밋 직전에 추출 결과로 단위(옛 문서는 판단 행까지)를 만든다
+        # 블록 id가 정해진 이 트랜잭션 안에서 단위(옛 문서는 판단 행까지)·코드 짝을 만든다 — 함께 커밋해 단위를 빠뜨린 문서가 없다
+        await create_initial_units(session, document, extraction)
     record_event(
         session, bundle_id=bundle_id, actor=actor, action="document.upload",
         target_type="document", target_ids=[document.id],
@@ -187,8 +189,8 @@ async def _write_extraction(
     result: ExtractResult,
     aux_error: str | None,
     missing: Sequence[MissingText],
-) -> tuple[int, int]:
-    """추출 한 회차와 표·블록·경고를 쓴다. 추출기의 표 순번·블록 seq를 이 트랜잭션에서 DB id로 바꾼다. (블록 수, 경고 수)."""
+) -> tuple[Extraction, int, int]:
+    """추출 한 회차와 표·블록·경고를 쓴다. 추출기의 표 순번·블록 seq를 이 트랜잭션에서 DB id로 바꾼다. (추출, 블록 수, 경고 수)."""
     extraction = Extraction(
         document_id=document_id, extractor_version=EXTRACTOR_VERSION,
         aux_status="ok" if aux_error is None else "failed", aux_detail=aux_error or "",
@@ -221,7 +223,7 @@ async def _write_extraction(
         })
     if warnings:
         await session.execute(insert(ExtractionWarning), warnings)
-    return len(block_ids), len(warnings)
+    return extraction, len(block_ids), len(warnings)
 
 
 async def _insert_tables(

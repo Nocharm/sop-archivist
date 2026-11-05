@@ -25,6 +25,7 @@ from app.sop.extract.types import (
     ExtractLimits,
     ExtractResult,
 )
+from app.sop.segment import has_visible_char  # 빈 글자 판정은 쪼개기·커버리지와 하나를 쓴다
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -50,8 +51,6 @@ ESTIMATED_CHARS_PER_PAGE = 1800
 SECTION_LABEL_MAX_CHARS = 200  # source_blocks.section_label 길이
 XML_PATH_MAX_CHARS = 500  # source_blocks·source_tables.xml_path 길이
 XML_PATH_ELLIPSIS = "/…/"
-# 공백 외에 "빈 글자"로 보는 보이지 않는 글자 — 쪼개기의 빈 글자 판정과 같은 집합
-INVISIBLE_CHARS = "​‌‍⁠﻿"
 NO_PAGE_MARKS = (0, 0)  # 본문 밖 부분 — 쪽을 매기지 않으므로 값은 쓰이지 않는다
 
 _HEADING_STYLE_RE = re.compile(r"(?:heading|제목)\s*([1-9])")
@@ -293,7 +292,7 @@ def read_docx(data: bytes, limits: ExtractLimits) -> ExtractResult:
     blocks = writer.blocks
     if sum(len(block.text) for block in blocks) > limits.max_chars:
         raise ExtractionRejected("too_many_chars")
-    if not any(block.kind == KIND_FIGURE or _has_visible_char(block.text) for block in blocks):
+    if not any(block.kind == KIND_FIGURE or has_visible_char(block.text) for block in blocks):
         raise ExtractionRejected("empty_document")
     return ExtractResult(
         blocks=tuple(blocks),
@@ -662,7 +661,7 @@ class _Collector:
                     still_open[col] = started
                     # 이어지는 칸은 시작 칸에 합쳐져 보인다 — 빈 칸은 블록을 만들지 않고(같은 글이 두 번 생기지 않게),
                     # 글·그림·상자·표가 남아 있으면 버리지 않고 제자리 블록으로 낸다
-                    if _has_visible_char(record.text) or extras:
+                    if has_visible_char(record.text) or extras:
                         record.is_merge_continuation = True
                         out.append(record)
                         out.extend(extras)
@@ -755,15 +754,11 @@ def _fit_xml_path(path: str) -> str:
     return head + path[len(path) - (XML_PATH_MAX_CHARS - len(head)) :]
 
 
-def _has_visible_char(text: str) -> bool:
-    return any(not (char.isspace() or char in INVISIBLE_CHARS) for char in text)
-
-
 def _is_caption(record: _ParaRecord) -> bool:
     return (
         not record.is_consumed
         and not record.has_figure
-        and _has_visible_char(record.text)
+        and has_visible_char(record.text)
         and (record.style.is_caption or _CAPTION_TEXT_RE.match(record.text) is not None)
     )
 

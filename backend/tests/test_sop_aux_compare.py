@@ -16,9 +16,10 @@ from app.sop.extract.aux_compare import (
     find_missing_text,
     normalize_for_compare,
 )
-from app.sop.extract.docx_reader import _has_visible_char, read_docx
+from app.sop.extract.docx_reader import read_docx
 from app.sop.extract.pdf_reader import read_pdf
 from app.sop.extract.types import ExtractLimits
+from app.sop.segment import is_blank_char
 from tests.docx_factory import build_docx, p, tbl
 from tests.pdf_factory import build_text_pdf
 
@@ -108,8 +109,8 @@ def test_normalize_drops_note_reference_marks() -> None:
 def test_blank_removal_matches_the_extractor_blank_rule() -> None:
     every_char = "".join(map(chr, range(sys.maxunicode + 1)))
 
-    # 쪼개기·커버리지와 같은 "빈 글자" 판정 — docx_reader의 정의와 글자 하나도 어긋나지 않는다
-    assert _drop_blank_chars(every_char) == "".join(char for char in every_char if _has_visible_char(char))
+    # 쪼개기·커버리지와 같은 "빈 글자" 판정 — segment.is_blank_char와 글자 하나도 어긋나지 않는다
+    assert _drop_blank_chars(every_char) == "".join(char for char in every_char if not is_blank_char(char))
     assert normalize_for_compare("\u00a0\u3000\u200b\ufeff \t\n") == ""
 
 
