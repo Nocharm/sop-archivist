@@ -1,4 +1,7 @@
-"""판단 API — 단위 목록·관계 묶음 읽기(멤버)와 관계 묶음 저장·일괄 처분·배정 지우기(작성자·작업 중). 검사와 쓰기는 app/sop/decisions.py."""
+"""판단 API — 단위 목록·관계 묶음·같은 글자 후보 읽기(멤버)와 관계 묶음 저장·일괄 처분·배정 지우기·입구 2 한 번에 확정(작성자·작업 중).
+
+검사와 쓰기는 app/sop/decisions.py(입구 2 한 번에 확정은 app/sop/match.py).
+"""
 
 from typing import Annotated, Literal
 
@@ -22,6 +25,7 @@ from app.sop.decisions import (
 )
 from app.sop.detach import DetachReport
 from app.sop.groups import GroupOut, load_group
+from app.sop.match import BulkMatchIn, IdenticalCandidate, confirm_in_bulk, list_identical_candidates
 from app.sop.membership import BundleContext, require_bundle_role
 from app.sop.tobe import MAX_DB_INT
 
@@ -92,3 +96,19 @@ async def clear_unit_decision(
     report = await clear_unit(session, ctx.bundle, body, ctx.login_id)
     await session.commit()
     return report
+
+
+@router.get("/{bundle_id}/match/identical-candidates", response_model=list[IdenticalCandidate])
+async def get_identical_candidates(
+    ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
+) -> list[IdenticalCandidate]:
+    return await list_identical_candidates(session, ctx.bundle.id)
+
+
+@router.post("/{bundle_id}/match/bulk-confirm", response_model=GroupOut)
+async def confirm_matches_in_bulk(
+    body: BulkMatchIn, ctx: BundleContext = Depends(_require_author), session: AsyncSession = Depends(get_session)
+) -> GroupOut:
+    group = await confirm_in_bulk(session, ctx.bundle, body, ctx.login_id)
+    await session.commit()
+    return group
