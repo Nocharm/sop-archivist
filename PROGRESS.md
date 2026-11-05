@@ -11,6 +11,7 @@
 - **계획 1 Task 3: 묶음·멤버십·작업 기록·묶음 관리** — `/api/bundles`(내 목록·만들기·고치기·삭제·멤버 바꾸기·작업 기록)와 `/api/admin/bundles`(`bundle.admin`, 메타만·멤버 바꾸기 기록 reason `admin`). 멤버십은 권한과 별개로 항상 검사하고(계정 활성 403 → 비멤버 404 → 역할 403, sysadmin도 비멤버면 404), 업무 거절은 `detail={"code",…}`(`app/sop/errors.py`). 쓰기 직전 `lock_bundle`(FOR UPDATE 재읽기)로 같은 revision을 든 두 요청이 둘 다 통과하는 걸 막고, 멤버 바꾸기는 바뀐 게 없으면 revision·기록을 건드리지 않는다.
 - **계획 1 Task 4: To-Be 목록 API와 Excel 가져오기** — `GET/PUT /api/bundles/{id}/tobe`, 템플릿 내려받기, 가져오기. 검사와 저장은 `tobe.apply_tobe` 한 곳(API·Excel 공용)이라 거절 규칙이 같고, 모든 검사가 쓰기 전에 끝나 거절된 요청은 아무것도 남기지 않는다. 문서는 번호로 합쳐 id를 지키고, match 문서(입구 2)는 목록에서 빠져도 지우지 않으며 종류를 못 바꾼다. PUT은 N/A·단계를 요청에 나온 문서 기준으로 통째로 바꾸고(그래서 생략 불가), 가져오기는 N/A를 건드리지 않는다. Excel은 `data_only` 값만 읽고, 템플릿은 `=`로 시작하는 글을 수식이 아닌 문자열 셀로 쓴다(왕복에서 제목이 사라지지 않게). 새 문장 수를 세는 거절(`doc/slot/step_has_targets`)은 구현만 했고 테스트는 문장이 생기는 Task 11에서 더한다.
   - 리뷰 반영: 열 때 깨지는 zip(CRC·압축 손상·암호화)이 500이던 것을 `invalid_tobe_file` 422로, 바뀐 게 없는 PUT·가져오기는 revision·기록을 건드리지 않게(멤버 바꾸기와 같은 규칙), 상위 칸 N/A(`procedures`)가 하위 칸 문장도 막게(`is_within_slot`, 컨트롤러 결정 R8) 했다.
+- **계획 1 Task 5: DOCX 메인 추출기** — `app/sop/extract/`(피클 가능한 불변 결과 타입 + `read_docx`)와 Word 모양 그대로 쓰는 테스트 팩토리 `tests/docx_factory.py`. 문단 글자는 화이트리스트 대신 모든 하위 요소로 내려가고 필드 코드·지운 글·속성(`w:pPr`의 탭 위치 정의)·`mc:Fallback`·상자 글만 뺀다(실제 Word의 감싸는 요소에서 글이 조용히 빠지지 않게). 쪽 나눔을 세는 순서와 블록을 내는 순서가 달라(칸 블록은 칸 글을 다 읽은 뒤, 캡션은 이웃 문단을 본 뒤) 레코드 모으기 → 블록 쓰기 두 단계로 나눴다. 스타일 basedOn 사슬의 번호·개요 수준, VML 그림, 수식 글자(`m:t`)·`w:ptab`도 읽고, 표 칸 안 그림은 그림 블록을 따로 만들지 않는다(표 단위에 함께 간다). `defusedxml`을 더해 openpyxl도 이것으로 읽는다.
 
 ## 2026-11-04
 
