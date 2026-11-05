@@ -1,4 +1,4 @@
-"""문서 API — 업로드(옛/새)·목록·정보 고치기·삭제·원본과 그림 내려받기·추출 경고 확인. 쓰기는 작성자가 작업 중일 때만 한다."""
+"""문서 API — 업로드(옛/새)·목록·정보 고치기·삭제·원문 대조 데이터(view)·원본과 그림 내려받기·추출 경고 확인. 쓰기는 작성자가 작업 중일 때만 한다."""
 
 import asyncio
 import zipfile
@@ -20,8 +20,22 @@ from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
 from app.sop.ingest import get_max_file_bytes, ingest_upload
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
-from app.sop.models import Document, DocumentFile, Extraction, ExtractionWarning, SourceBlock
+from app.sop.models import (
+    Document,
+    DocumentFile,
+    Extraction,
+    ExtractionWarning,
+    SourceBlock,
+    SourceTable,
+    Unit,
+    UnitDecision,
+    UnitEdit,
+    UnitPair,
+    UnitPairMember,
+)
+from app.sop.status import get_cover_status
 from app.sop.tobe import MAX_DB_INT, remove_match_doc, rename_match_doc, temp_match_code
+from app.sop.units import UNIT_ACTIVE, compute_display_id, refresh_code_pairs
 
 router = APIRouter(prefix="/api/bundles", tags=["sop-documents"])
 
@@ -110,6 +124,79 @@ class WarningAckIn(BaseModel):
     note: Annotated[str, StringConstraints(strip_whitespace=True, max_length=MAX_ACK_NOTE_CHARS)] = ""
 
 
+class ViewTableOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    table_index: int
+    parent_table_id: int | None
+    part: str
+    n_rows: int
+    n_cols: int
+    is_layout: bool
+
+
+class ViewBlockOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    seq: int
+    part: str
+    kind: str
+    text: str
+    xml_path: str
+    page: int | None
+    page_basis: str
+    section_label: str
+    heading_level: int | None
+    table_id: int | None
+    row_index: int | None
+    col_index: int | None
+    grid_span: int
+    row_span: int
+    flags: list[str]
+    # 그림 이미지(figures/{block_id})를 받을 수 있는지 — 미디어 경로 자체는 내보내지 않는다
+    has_image: bool
+
+
+class ViewUnitOut(BaseModel):
+    id: int
+    display_id: str
+    kind: str
+    spans: list[tuple[int, int, int]]
+    text: str
+    lang: str
+    table_id: int | None
+    row_index: int | None
+    group_unit_id: int | None
+    boundary_confirmed: bool
+    # 커버 단위 상태(get_cover_status) — 판단이 없는 새 문서 단위는 null
+    status: str | None
+    pair_id: int | None
+
+
+class ViewPairOut(BaseModel):
+    id: int
+    status: str
+    source: str
+    unit_ids: list[int]
+
+
+class ViewEditsOut(BaseModel):
+    can_undo: bool
+    can_redo: bool
+
+
+class DocumentViewOut(BaseModel):
+    document: DocumentBase
+    extraction: ExtractionOut | None
+    tables: list[ViewTableOut]
+    blocks: list[ViewBlockOut]
+    units: list[ViewUnitOut]
+    pairs: list[ViewPairOut]
+    edits: ViewEditsOut
+
+
 async def build_documents_out(session: AsyncSession, documents: Sequence[Document]) -> list[DocumentOut]:
     """문서마다 최신 추출과 그 경고를 붙인다 — 문서 수와 무관하게 쿼리 두 번(추출·경고)이다."""
     doc_ids = [document.id for document in documents]
@@ -148,6 +235,86 @@ async def _get_document(session: AsyncSession, bundle_id: int, doc_id: int) -> D
     if document is None or document.bundle_id != bundle_id:
         raise_rule(404, "document_not_found")
     return document
+
+
+async def build_document_view(session: AsyncSession, document: Document) -> DocumentViewOut:
+    """최신 추출의 표·블록과 활성 단위·짝 — DB 표마다 한 번씩만 읽어 단위 수와 무관하게 쿼리 수가 같다."""
+    document_out = DocumentBase.model_validate(document)
+    extraction = (await build_documents_out(session, [document]))[0].extraction
+    edit_states = set(await session.scalars(select(UnitEdit.state).where(UnitEdit.document_id == document.id).distinct()))
+    # 쪼개기 편집 기록 — 되돌릴 편집(applied)·다시 할 편집(undone)이 남아 있는지
+    edits = ViewEditsOut(can_undo="applied" in edit_states, can_redo="undone" in edit_states)
+    if extraction is None:  # 받지 않았거나 추출에 실패한 문서
+        return DocumentViewOut(
+            document=document_out, extraction=None, tables=[], blocks=[], units=[], pairs=[], edits=edits
+        )
+    tables = await session.scalars(
+        select(SourceTable).where(SourceTable.extraction_id == extraction.id).order_by(SourceTable.table_index)
+    )
+    block_rows = await session.execute(
+        select(
+            SourceBlock.id, SourceBlock.seq, SourceBlock.part, SourceBlock.kind, SourceBlock.text, SourceBlock.xml_path,
+            SourceBlock.page, SourceBlock.page_basis, SourceBlock.section_label, SourceBlock.heading_level,
+            SourceBlock.table_id, SourceBlock.row_index, SourceBlock.col_index, SourceBlock.grid_span,
+            SourceBlock.row_span, SourceBlock.flags, SourceBlock.image_part.is_not(None).label("has_image"),
+        )
+        .where(SourceBlock.extraction_id == extraction.id)
+        .order_by(SourceBlock.seq)
+    )
+    units = await session.scalars(
+        select(Unit)
+        .where(Unit.extraction_id == extraction.id, Unit.status == UNIT_ACTIVE)
+        .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
+    )
+    decisions: dict[int, UnitDecision] = {}
+    if document.side == "old":
+        rows = await session.scalars(
+            select(UnitDecision).join(Unit, Unit.id == UnitDecision.unit_id).where(Unit.extraction_id == extraction.id)
+        )
+        decisions = {decision.unit_id: decision for decision in rows}
+    pairs = await _load_view_pairs(session, document.id)
+    pair_by_unit = {unit_id: pair.id for pair in pairs for unit_id in pair.unit_ids}
+    return DocumentViewOut(
+        document=document_out,
+        extraction=extraction,
+        tables=[ViewTableOut.model_validate(table) for table in tables],
+        blocks=[ViewBlockOut.model_validate(row) for row in block_rows],
+        units=[
+            ViewUnitOut(
+                id=unit.id,
+                display_id=compute_display_id(document, unit),
+                kind=unit.kind,
+                spans=unit.spans,
+                text=unit.text,
+                lang=unit.lang,
+                table_id=unit.table_id,
+                row_index=unit.row_index,
+                group_unit_id=unit.group_unit_id,
+                boundary_confirmed=unit.boundary_confirmed,
+                status=get_cover_status(unit, decisions) if document.side == "old" else None,
+                pair_id=pair_by_unit.get(unit.id),
+            )
+            for unit in units
+        ],
+        pairs=pairs,
+        edits=edits,
+    )
+
+
+async def _load_view_pairs(session: AsyncSession, document_id: int) -> list[ViewPairOut]:
+    """문서의 짝과 그 단위 — 짝 안 단위는 원문 순서로 한 쿼리에 읽는다."""
+    rows = await session.execute(
+        select(UnitPair.id, UnitPair.status, UnitPair.source, UnitPairMember.unit_id)
+        .join(UnitPairMember, UnitPairMember.pair_id == UnitPair.id)
+        .join(Unit, Unit.id == UnitPairMember.unit_id)
+        .where(UnitPair.document_id == document_id)
+        .order_by(UnitPair.id, Unit.pos_seq, Unit.pos_start, Unit.id)
+    )
+    pairs: dict[int, ViewPairOut] = {}
+    for pair_id, status, source, unit_id in rows:
+        pair = pairs.setdefault(pair_id, ViewPairOut(id=pair_id, status=status, source=source, unit_ids=[]))
+        pair.unit_ids.append(unit_id)
+    return list(pairs.values())
 
 
 def build_content_disposition(file_name: str) -> str:
@@ -230,6 +397,8 @@ async def update_document(
             )
         for name, value in changes.items():
             setattr(document, name, value)
+        if "language_layout" in changes:  # 코드 짝은 연달아 배치에서만 제안한다
+            await refresh_code_pairs(session, document)
         document.revision += 1
         record_event(
             session, bundle_id=bundle.id, actor=ctx.login_id, action="document.update",
@@ -263,6 +432,16 @@ async def delete_document(
     )
     await session.commit()
     return Response(status_code=204)
+
+
+@router.get("/{bundle_id}/documents/{doc_id}/view", response_model=DocumentViewOut)
+async def get_document_view(
+    doc_id: IdPath,
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> DocumentViewOut:
+    document = await _get_document(session, ctx.bundle.id, doc_id)
+    return await build_document_view(session, document)
 
 
 @router.get("/{bundle_id}/documents/{doc_id}/file")

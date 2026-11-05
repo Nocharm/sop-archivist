@@ -1,4 +1,4 @@
-"""SOP 테스트 공유 헬퍼 — 사용자 헤더와 묶음 만들기·읽기·멤버 바꾸기·To-Be 목록 쓰기·문서 올리기 (태스크마다 이어서 더한다)."""
+"""SOP 테스트 공유 헬퍼 — 사용자 헤더와 묶음 만들기·읽기·멤버 바꾸기·To-Be 목록 쓰기·문서 올리기·원문 대조 데이터 읽기 (태스크마다 이어서 더한다)."""
 
 from collections.abc import Iterable
 
@@ -69,3 +69,17 @@ def upload(
     return client.post(
         f"/api/bundles/{bundle_id}/documents", files={"file": (file_name, data)}, data=form, headers=headers
     )
+
+
+def get_view(client: TestClient, bundle_id: int, doc_id: int, headers: dict[str, str] = AUTHOR) -> dict:
+    """문서의 원문 대조 데이터(블록·활성 단위·짝)."""
+    response = client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/view", headers=headers)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def find_unit(view: dict, text: str, occurrence: int = 1) -> dict:
+    """글자가 정확히 text인 활성 단위 중 occurrence번째(1부터) — 같은 문장이 여러 곳에 있으면 순서로 고른다."""
+    matches = [unit for unit in view["units"] if unit["text"] == text]
+    assert len(matches) >= occurrence, f"unit #{occurrence} with the given text not found ({len(matches)} match)"
+    return matches[occurrence - 1]

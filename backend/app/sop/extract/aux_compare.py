@@ -9,7 +9,7 @@ from io import BytesIO
 from itertools import accumulate
 from typing import Literal
 
-from app.sop.extract.docx_reader import INVISIBLE_CHARS
+from app.sop.segment import INVISIBLE_CHARS
 
 # 정규화한 조각이 이보다 짧으면 비교하지 않는다 — 번호·약어 같은 짧은 조각은 어디에나 들어 있어 판별력이 없다
 MIN_PIECE_CHARS = 4
@@ -60,7 +60,7 @@ def convert_with_markitdown(data: bytes, file_format: Literal["docx", "pdf"]) ->
 
 
 def _drop_blank_chars(text: str) -> str:
-    """빈 글자(공백류 + INVISIBLE_CHARS)를 모두 지운다 — docx_reader의 판정(isspace 또는 INVISIBLE_CHARS)과 같다.
+    """빈 글자를 모두 지운다 — segment.is_blank_char(isspace 또는 INVISIBLE_CHARS)의 빠른 판이다(같음은 테스트가 전 글자로 지킨다).
 
     str.split()은 isspace() 글자 기준으로 자르므로 글자마다 파이썬 함수를 부르지 않고도 200만 자를 빨리 거른다.
     """
