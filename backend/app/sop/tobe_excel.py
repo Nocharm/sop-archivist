@@ -1,6 +1,7 @@
 """To-Be 목록 Excel — 템플릿 만들기와 가져오기 파일 읽기(저장된 값만 읽고 수식은 무시한다)."""
 
 import zipfile
+import zlib
 from dataclasses import dataclass
 from io import BytesIO
 from typing import NoReturn
@@ -32,6 +33,13 @@ MAX_SCAN_ROWS = 10 * MAX_TOBE_ROWS
 REPLACEMENT_CHAR = "\N{REPLACEMENT CHARACTER}"
 TRUE_TEXTS = frozenset({"Y", "예", "TRUE", "1"})
 FALSE_TEXTS = frozenset({"", "N", "아니오", "FALSE", "0"})
+
+
+# 열었을 때 못 읽는 통합 문서가 던지는 오류 — 구조(KeyError)·XML(ParseError)·값(ValueError) 외에 zip 안쪽이 깨진 경우
+# (BadZipFile=CRC 불일치, zlib.error·EOFError=압축 데이터 손상, RuntimeError=암호화·지원 안 하는 압축(NotImplementedError 포함))
+_UNREADABLE_WORKBOOK_ERRORS = (
+    KeyError, ParseError, InvalidFileException, ValueError, zipfile.BadZipFile, zlib.error, EOFError, RuntimeError,
+)
 
 
 @dataclass
@@ -96,7 +104,7 @@ def parse_tobe_workbook(data: bytes) -> ParsedWorkbook:
             step_rows = _read_rows(workbook, STEP_SHEET, STEP_HEADER)
         finally:
             workbook.close()
-    except (KeyError, ParseError, InvalidFileException, ValueError):
+    except _UNREADABLE_WORKBOOK_ERRORS:
         raise_rule(422, "invalid_tobe_file")
 
     docs = [_parse_doc_row(index, values, order) for order, (index, values) in enumerate(doc_rows)]

@@ -222,17 +222,27 @@ def _check_list_rules(
     return final_types
 
 
+def is_within_slot(slot_key: str, slot: str) -> bool:
+    """slot_key가 slot 자신이거나 그 하위 칸(`procedures` → `procedures.procedure`)인가 — 상위 칸 N/A는 하위 칸도 덮는다."""
+    return slot_key == slot or slot_key.startswith(f"{slot}.")
+
+
 async def _find_blocked_slots(
     session: AsyncSession, wanted_na: Collection[tuple[str, str]], by_code: dict[str, TargetDoc]
 ) -> list[dict[str, str]]:
-    """N/A로 표시하려는 칸 중 새 문장이 이미 있는 칸 — 새로 만드는 문서에는 문장이 없다."""
+    """N/A로 표시하려는 칸(하위 칸 포함) 중 새 문장이 이미 있는 칸 — 새로 만드는 문서에는 문장이 없다."""
     counts = await _count_targets_by(
         session, TargetSentence.slot_key, [by_code[code].id for code, _ in wanted_na if code in by_code]
     )
     return [
         {"doc_code": code, "slot_key": slot_key}
         for code, slot_key in sorted(wanted_na)
-        if code in by_code and counts.get((by_code[code].id, slot_key))
+        if code in by_code
+        and any(
+            doc_id == by_code[code].id and is_within_slot(str(used_key), slot_key)
+            for (doc_id, used_key), count in counts.items()
+            if count
+        )
     ]
 
 
@@ -365,7 +375,7 @@ async def apply_tobe(
     actor: str,
     source: Literal["api", "excel"],
 ) -> None:
-    """검사한 뒤 목록을 저장하고 묶음 revision을 올려 작업 기록을 남긴다. 커밋과 revision 비교는 호출부가 한다.
+    """검사한 뒤 목록을 저장하고, 바뀐 게 있으면 묶음 revision을 올려 작업 기록을 남긴다. 커밋과 revision 비교는 호출부가 한다.
 
     문서는 문서 번호로 기존 줄과 합친다(id 유지). assign 문서만 만들고 고치며, 요청에서 빠진 assign 문서는 지운다.
     match 문서는 종류를 바꿀 수 없고 빠져도 지우지 않는다. N/A와 단계는 이 요청이 가리킨 문서의 것을 통째로 바꾼다
@@ -411,6 +421,8 @@ async def apply_tobe(
     )
     changed |= await _write_step_rows(session, step_rows, wanted_steps, docs_by_code, code_by_id, step_scope)
 
+    if not changed:  # 바뀐 게 없으면 revision을 올리지 않고 기록도 남기지 않는다(멤버 바꾸기와 같은 규칙)
+        return
     bundle.revision += 1
     record_event(
         session, bundle_id=bundle.id, actor=actor, action="tobe.update" if source == "api" else "tobe.import",
