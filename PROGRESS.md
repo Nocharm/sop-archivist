@@ -42,6 +42,7 @@
   - 정한 것: 모든 파일 이름이 `SYNTHETIC_`로 시작해야 해 정답 파일도 `SYNTHETIC_expected.json`이다. 템플릿에 N/A 칸이 없어 `tobe_na_slots`를, 언어·외부 이동 문서·일괄 처분·같은 글자 확정을 나타내려 답에 `lang`·`move_target_code`·`bulk`·`identical`을, 기대 숫자로 `summary`·`flow_edge_total`을 선택 키로 더했다. 메인 추출기는 글 상자 도형을 캡션 없는 그림 단위로도 내므로 정답이 그 그림을 지운다.
 - **계획 1 Task 19: 로컬 데모 시드** — `scripts/seed_sop_demo.py`가 합성 묶음 셋(쪼개기 직후·분류 절반·검토 대기)을 `TestClient(app)`+`X-Dev-User`로 만들어 화면과 같은 API 경로를 타고, 모는 쪽은 E2E 테스트에서 `scripts/sop_demo_driver.py`로 옮겨 시드와 테스트가 한 벌을 쓴다. 가드는 `reset_db`와 같은 HR postgres 판정(`count_hr_rows` 공개)에 `AUTH_MODE=dev`를 더했고, 같은 제목 묶음은 건너뛰며 만들다 실패한 묶음은 지운다(제목만 남으면 다음 실행이 건너뛰어 데모가 덜 만들어진 채 굳는다).
   - 정한 것: "절반"은 입구 1 답 수의 절반을 group 경계에서 끊는다(입구 2 문서의 답은 미배정). `DEV_ENFORCE_PERMISSIONS=true`면 데모 권한에 `bundle.create`가 없어 403이라 docstring에 적었다.
+- **계획 1 Task 20: 문서·v0.2.0** — CLAUDE.md(`app/sop/` 구조, "SOP 규칙 이중 사용 지점" 체크리스트, 메모리 2G·글꼴 반입 제약 행, 데모 시드 명령)·README·백업 문서("덤프가 SOP 원문을 담아 대외비")·설계 문서(계획 1이 정한 세부를 해당 절에 "(계획 1에서 정함)" 한 줄씩)를 갱신하고 서비스 버전을 0.2.0으로 올렸다(CHANGELOG, 미배포). `setup-once.md`의 "권한 4개"는 7개로, 상단 바 버전 기대값은 고정 문구 대신 "배포한 버전"으로 바꿨다. 태그 `v0.2.0`은 전체 리뷰 뒤 컨트롤러가 단다.
 
 ## 2026-11-04
 
