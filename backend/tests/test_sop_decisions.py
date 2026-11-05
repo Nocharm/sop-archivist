@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.constants import STATUSES, SYSTEM_HOLD_RELATED_CHANGED
-from app.sop.models import Bundle, TargetSentence, TargetTextHistory, UnitDecisionHistory
+from app.sop.models import Bundle, TargetSentence, TargetSource, TargetTextHistory, UnitDecisionHistory
 from tests.access_helpers import run_in_session, update_row
 from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
 from tests.sop_helpers import (
@@ -651,6 +651,61 @@ def test_new_doc_target_links_and_detaches(client: TestClient) -> None:
     left = get_group_by_unit(client, fx.bundle_id, old_unit["id"])
     assert left["targets"] == []
     assert (left["units"][0]["decision"]["status"], left["units"][0]["decision"]["disposition"]) == ("on_hold", "assigned")
+
+
+def test_closure_follows_table_cell_target_links(client: TestClient) -> None:
+    """입구 2 표 새 문장 P(출처: 옛 표 TU)의 칸 새 문장 C1이 옛 문단 X를 출처로 삼으면 TU·X·P·C1이 한 관계 묶음이다.
+
+    출처 연결만 보면 TU와 P만으로 닫혀 보이지만, 칸 새 문장은 부모 표와 한 묶음이라 반쪽 확정이 된다.
+    """
+    fx = _setup(client)
+    table_body = tbl([["항목", "Item"], ["합성 값", "Synthetic value"]])
+    new_doc = _upload_ready(
+        client, fx.bundle_id, build_docx(table_body), "SYNTHETIC_SOP-M_Match.docx", side="new", doc_type="sop"
+    )
+    new_view = get_view(client, fx.bundle_id, new_doc["id"])
+    new_table = next(unit for unit in new_view["units"] if unit["kind"] == "table")
+    new_cell = next(unit for unit in new_view["units"] if unit["group_unit_id"] == new_table["id"])
+    old_table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+    paragraph = find_unit(fx.view, RECORDS)
+
+    async def _seed(session: AsyncSession) -> tuple[int, int]:
+        common = {"bundle_id": fx.bundle_id, "target_doc_id": new_doc["target_doc_id"], "origin": "new_doc",
+                  "status": "unassigned"}
+        table = TargetSentence(**common, kind="table", lang="neutral", grid={"rows": 2, "cols": 2},
+                               new_unit_id=new_table["id"])
+        session.add(table)
+        await session.flush()
+        cell = TargetSentence(**common, kind="sentence", lang="ko", confirmed_text=RECORDS, parent_target_id=table.id,
+                              cell_row=0, cell_col=0, new_unit_id=new_cell["id"])
+        session.add(cell)
+        await session.flush()
+        session.add_all([
+            TargetSource(target_id=table.id, unit_id=old_table["id"], seq=0),
+            TargetSource(target_id=cell.id, unit_id=paragraph["id"], seq=0),
+        ])
+        await session.commit()
+        return table.id, cell.id
+
+    table_id, cell_id = run_in_session(_seed)
+    table_in = {"key": "p", "id": table_id, "revision": 1, "kind": "table", "source_unit_ids": [old_table["id"]]}
+    cell_in = {"key": "c1", "id": cell_id, "revision": 1, "parent_key": "p", "source_unit_ids": [paragraph["id"]]}
+
+    half = save_group(client, fx.bundle_id, _body([_unit_in(old_table)], [table_in]))
+    whole = save_group(client, fx.bundle_id, _body([_unit_in(old_table), _unit_in(paragraph)], [table_in, cell_in]))
+
+    assert _reason(half) == "not_closed"
+    assert half.json()["detail"]["target_ids"] == [cell_id]
+    assert half.json()["detail"]["unit_ids"] == [paragraph["id"]]
+    assert whole.status_code == 200, whole.text
+    assert [(t["id"], t["status"], t["change_type"]) for t in whole.json()["targets"]] == [
+        (table_id, "confirmed", "as_is"), (cell_id, "confirmed", "as_is"),
+    ]
+    group = get_group_by_unit(client, fx.bundle_id, old_table["id"])
+    expected_group = f"G-{paragraph['display_id']}"
+    assert [(u["unit_id"], u["group_id"]) for u in group["units"]] == [
+        (paragraph["id"], expected_group), (old_table["id"], expected_group),
+    ]
 
 
 # ── 읽기·권한 ────────────────────────────────────────────────────────────────

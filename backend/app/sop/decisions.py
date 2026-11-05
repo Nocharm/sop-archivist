@@ -18,7 +18,14 @@ from app.sop.constants import SLOT_KEYS
 from app.sop.detach import CONFIRMED, ON_HOLD, ORIGIN_NEW_DOC, DetachReport, detach_units, reset_target
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
-from app.sop.groups import TABLE_UNIT_KINDS, DecisionOut, GroupOut, build_group_out, select_in_chunks
+from app.sop.groups import (
+    TABLE_UNIT_KINDS,
+    DecisionOut,
+    GroupOut,
+    build_group_out,
+    collect_component,
+    select_in_chunks,
+)
 from app.sop.membership import ensure_editable, lock_bundle
 from app.sop.models import (
     Bundle,
@@ -166,8 +173,10 @@ class _State:
     cells: dict[int, list[int]]  # 표·행 단위 → 묶인 활성 칸 문장
     group_of: dict[int, int]  # 칸 문장 → 표·행 단위
     existing: dict[int, TargetSentence]  # 보낸 기존 새 문장과 지울 새 문장
-    current_sources: dict[int, set[int]]  # 기존 새 문장 → 지금 출처
-    linked_targets: set[int]  # U*에 지금 이어진 새 문장
+    member_unit_ids: set[int]  # 보낸 단위와 묶인 칸 문장 전부(은퇴한 칸 포함) — 닫힘 검사의 경계
+    # U*와 기존 새 문장에서 출발한 지금의 연결 요소(collect_component — 묶음 읽기·떼어 내기와 같은 그래프)
+    component_units: set[int]
+    component_targets: set[int]
     docs: dict[int, TargetDoc]
     na_slots: dict[int, list[str]]
     steps: dict[int, set[int]]
@@ -248,12 +257,14 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
 
     table_unit_ids = [unit_id for unit_id, unit in units.items() if unit.kind in TABLE_UNIT_KINDS]
     cell_rows = await select_in_chunks(
-        session, lambda chunk: select(Unit).where(Unit.group_unit_id.in_(chunk), Unit.status == UNIT_ACTIVE),
-        table_unit_ids,
+        session, lambda chunk: select(Unit).where(Unit.group_unit_id.in_(chunk)), table_unit_ids
     )
+    member_unit_ids = set(units) | {cell.id for (cell,) in cell_rows}
     cells: dict[int, list[int]] = defaultdict(list)
     group_of: dict[int, int] = {}
     for (cell,) in sorted(cell_rows, key=lambda row: (row[0].pos_seq, row[0].pos_start, row[0].id)):
+        if cell.status != UNIT_ACTIVE:  # 은퇴한 칸 문장은 출처가 될 수 없다(연결은 떼어 내기가 이미 뗐다)
+            continue
         cells[cell.group_unit_id].append(cell.id)
         group_of[cell.id] = cell.group_unit_id
         units[cell.id] = cell
@@ -272,27 +283,9 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
     unknown = sorted(set(existing_ids) - set(existing))
     if unknown:
         _reject("unknown_target", target_ids=unknown)
-    link_rows = [
-        *await select_in_chunks(
-            session,
-            lambda chunk: select(TargetSource.target_id, TargetSource.unit_id).where(TargetSource.unit_id.in_(chunk)),
-            units,
-        ),
-        *await select_in_chunks(
-            session,
-            lambda chunk: select(TargetSource.target_id, TargetSource.unit_id).where(TargetSource.target_id.in_(chunk)),
-            existing,
-        ),
-    ]
-    current_sources: dict[int, set[int]] = defaultdict(set)
-    linked_targets: set[int] = set()
-    for target_id, unit_id in link_rows:
-        if unit_id in units:
-            linked_targets.add(target_id)
-        if target_id in existing:
-            current_sources[target_id].add(unit_id)
+    component_units, component_targets = await collect_component(session, unit_ids=units, target_ids=existing)
 
-    docs = {doc.id: doc for doc in await session.scalars(select(TargetDoc).where(TargetDoc.bundle_id == bundle_id))}
+    docs ={doc.id: doc for doc in await session.scalars(select(TargetDoc).where(TargetDoc.bundle_id == bundle_id))}
     na_slots: dict[int, list[str]] = defaultdict(list)
     for doc_id, slot_key in await session.execute(
         select(TargetDocNaSlot.target_doc_id, TargetDocNaSlot.slot_key)
@@ -309,7 +302,8 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
         steps[doc_id].add(step_no)
     return _State(
         units=units, decisions=decisions, cells=cells, group_of=group_of, existing=existing,
-        current_sources=current_sources, linked_targets=linked_targets, docs=docs, na_slots=na_slots, steps=steps,
+        member_unit_ids=member_unit_ids, component_units=component_units, component_targets=component_targets,
+        docs=docs, na_slots=na_slots, steps=steps,
         table_shapes=await _load_table_shapes(session, [units[unit_id] for unit_id in table_unit_ids]),
         cell_positions=await _load_cell_positions(session, [units[cell_id] for cell_id in group_of]),
     )
@@ -383,18 +377,20 @@ def _check_revisions(payload: GroupSaveIn, state: _State) -> None:
 
 
 def _check_closure(payload: GroupSaveIn, state: _State) -> None:
-    """닫힘 — 보낸 단위(와 칸 문장)에 이어진 새 문장은 모두 보냈고, 보낸 새 문장의 출처(지금·저장 뒤)는 모두 보낸 단위 안이다.
+    """닫힘 — 지금의 연결 요소(출처 연결과 표·칸 연결)에 든 새 문장은 모두 보냈고 단위는 모두 보낸 단위(와 칸 문장)이며,
+    저장 뒤 출처도 보낸 단위 안이다.
 
-    합침을 반만 확정하거나 다른 단위의 새 문장을 몰래 바꾸는 저장이 생기지 않게 한다(스펙 §6.8).
+    묶음 읽기·떼어 내기와 같은 그래프(collect_component)로 보므로 합침이나 표·칸을 반만 확정하거나 다른 단위의 새 문장을
+    몰래 바꾸는 저장이 생기지 않는다(스펙 §6.8).
     """
     listed = {item.id for item in payload.targets if item.id is not None} | set(payload.removed_target_ids)
-    outside_targets = state.linked_targets - listed
-    foreign_current = {
-        target_id for target_id, unit_ids in state.current_sources.items() if unit_ids - state.units.keys()
-    }
+    outside_targets = state.component_targets - listed
+    outside_units = state.component_units - state.member_unit_ids
     foreign_keys = [item.key for item in payload.targets if set(item.source_unit_ids) - state.units.keys()]
-    if outside_targets or foreign_current or foreign_keys:
-        _reject("not_closed", target_ids=sorted(outside_targets | foreign_current), keys=foreign_keys)
+    if outside_targets or outside_units or foreign_keys:
+        _reject(
+            "not_closed", target_ids=sorted(outside_targets), unit_ids=sorted(outside_units), keys=foreign_keys
+        )
 
 
 def _check_dispositions(payload: GroupSaveIn, state: _State) -> None:
