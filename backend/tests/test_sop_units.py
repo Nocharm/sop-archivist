@@ -117,6 +117,12 @@ def test_upload_creates_units_with_full_coverage(client: TestClient) -> None:
     assert view["edits"] == {"can_undo": False, "can_redo": False}
     figure_block = next(block for block in view["blocks"] if block["kind"] == "figure")
     assert figure_block["has_image"] is True
+    # 단위 자리의 블록 — 범위가 있으면 첫 범위의 블록, 범위 없는 표 단위는 첫 칸 블록
+    block_by_id = {block["id"]: block for block in view["blocks"]}
+    assert all(unit["block_id"] == unit["spans"][0][0] for unit in units if unit["spans"])
+    assert all(block_by_id[unit["block_id"]]["seq"] == unit["pos_seq"] for unit in units)
+    assert block_by_id[table["block_id"]]["text"] == "항목"
+    assert units[-1]["block_id"] == figure_block["id"]
     run_in_session(lambda session: verify_document_coverage(session, doc["id"]))  # 버그 가드가 조용하다
 
 
@@ -164,6 +170,9 @@ def test_nested_merged_tables_and_cell_figures(client: TestClient) -> None:
     assert (figure["group_unit_id"], figure["table_id"], figure["spans"], figure["status"]) == (
         None, None, [], "unassigned",
     )
+    # 범위가 없어도 어느 그림 블록(이미지)인지 자리로 안다
+    figure_block = next(block for block in view["blocks"] if block["kind"] == "figure")
+    assert (figure["block_id"], figure["pos_seq"]) == (figure_block["id"], figure_block["seq"])
     assert view["pairs"] == []  # 묶인 칸 문장과 중립 단위뿐이라 코드 짝이 없다
     run_in_session(lambda session: verify_document_coverage(session, doc["id"]))
 
@@ -207,15 +216,26 @@ def test_layout_change_refreshes_code_pairs(client: TestClient) -> None:
     assert view_interleaved["document"]["revision"] == 3
 
 
+def test_code_pairs_do_not_cross_parts(client: TestClient) -> None:
+    # 본문 끝 한글 문장 바로 뒤에 영어 머리말이 읽힌다(추출 순서: 본문 → 머리말·꼬리말 → 각주·미주)
+    body = p("합성 첫 문장이다.") + p("Synthetic first sentence.") + p("합성 마지막 문장이다.")
+    bundle = create_bundle(client)
+    doc = _upload_ready(client, bundle["id"], build_docx(body, headers=[p("Synthetic header line.")]), OLD_NAME)
+
+    view = get_view(client, bundle["id"], doc["id"])
+
+    assert [block["part"] for block in view["blocks"]] == ["body", "body", "body", "header"]
+    assert _get_pair_texts(view) == [("suggested", ["합성 첫 문장이다.", "Synthetic first sentence."])]
+
+
 def test_refresh_keeps_confirmed_pairs(client: TestClient) -> None:
     bundle = create_bundle(client)
     doc = _upload_ready(client, bundle["id"], _interleaved_docx(), OLD_NAME)
     confirmed_id = get_view(client, bundle["id"], doc["id"])["pairs"][0]["id"]
 
     async def _confirm(session: AsyncSession) -> None:
-        await session.execute(
-            update(UnitPair).where(UnitPair.id == confirmed_id).values(status="confirmed", source="human")
-        )
+        # 코드가 제안한 짝을 사람이 확정한 흔한 경우 — 출처는 code 그대로다
+        await session.execute(update(UnitPair).where(UnitPair.id == confirmed_id).values(status="confirmed"))
         await session.commit()
 
     run_in_session(_confirm)
@@ -225,7 +245,7 @@ def test_refresh_keeps_confirmed_pairs(client: TestClient) -> None:
     refreshed = get_view(client, bundle["id"], doc["id"])
 
     assert _get_pair_texts(kept) == [("confirmed", ["1. 목적", "1. Purpose"])]
-    assert [pair["id"] for pair in refreshed["pairs"]][0] == confirmed_id
+    assert [(pair["id"], pair["source"]) for pair in refreshed["pairs"]][0] == (confirmed_id, "code")
     assert _get_pair_texts(refreshed) == [
         ("confirmed", ["1. 목적", "1. Purpose"]),
         ("suggested", [
@@ -274,4 +294,5 @@ def test_view_query_count_does_not_grow_with_units(client: TestClient) -> None:
         large_view = get_view(client, bundle["id"], large["id"])
 
     assert len(large_view["units"]) > 4 * len(small_view["units"])
+    assert len(small_queries) > 0  # 수집기가 실제로 문장을 셌다
     assert len(large_queries) == len(small_queries)

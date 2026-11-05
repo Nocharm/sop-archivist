@@ -1,5 +1,6 @@
 """규칙 쪼개기 — 빈 글자 판정·문장 경계·언어 판정·블록 → 단위 초안·한/영 연달아 짝 제안(DB를 모르는 순수 함수)."""
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Literal
@@ -11,11 +12,13 @@ INVISIBLE_CHARS = "\u200b\u200c\u200d\u2060\ufeff"
 SENTENCE_TERMINATORS = ".!?。"
 # 문장 끝 뒤에 붙어 있으면 앞 문장에 넣는 닫는 따옴표·괄호
 SENTENCE_CLOSERS = "\"'”’)]"
-# 마침표 앞 토큰이 이것이고(대소문자 무시) 다음 글자가 소문자 라틴·숫자면 자르지 않는다 — "e.g. a", "No. 5", "Fig. 3"
+# 마침표 앞 토큰이 이것이고(대소문자 무시) 다음 글자가 소문자 라틴·숫자면 자르지 않는다 — "e.g. a", "No. 5", "Rev. 2"
 ABBREVIATIONS = (
     "e.g", "i.e", "etc", "no", "nos", "fig", "figs", "vol", "approx", "dr", "mr", "ms", "vs", "eq", "ref", "cf",
-    "ca", "sec", "min",
+    "ca", "sec", "min", "rev", "ver",
 )
+# 블록 첫 토큰인 목록 번호 "1." "5.1." — 그 마침표는 문장 끝이 아니다(번호에 이어 마침표가 오는 자리를 찾는다)
+_LIST_NUMBER_RE = re.compile(r"\d+(?:\.\d+)*(?=\.)")
 # 한글 음절 / (한글 음절 + 라틴 글자)가 이 이상이면 ko — 한글 문장 안의 rpm·START 같은 영어 낱말을 견딘다
 KO_RATIO_THRESHOLD = 0.2
 # docx_reader.FLAG_CLAUSE_NUMBER와 같은 값 — 추출기가 이 모듈을 import하므로 거꾸로 import하지 않는다(테스트가 같음을 지킨다)
@@ -75,9 +78,20 @@ def _is_sentence_end(text: str, terminator: int, after: int) -> bool:
         token = _read_token_before(text, terminator)
         if token.lower() in ABBREVIATIONS and "0" <= following <= "9":
             return False
-        if len(token) == 1 and "A" <= token <= "Z":  # 이니셜 "J. Smith"
+        # 이니셜 — 마침표로 나눈 마지막 조각이 대문자 한 글자("J. Smith", "J.R. Smith", "U.S. FDA")
+        initial = token.rsplit(".", 1)[-1]
+        if len(initial) == 1 and "A" <= initial <= "Z":
             return False
     return True
+
+
+def _find_list_number_dot(text: str) -> int:
+    """블록 첫 토큰이 목록 번호("1." "5.1.")면 번호 뒤 마침표 자리, 아니면 -1 — 블록마다 한 번만 본다."""
+    first = 0
+    while first < len(text) and is_blank_char(text[first]):
+        first += 1
+    number = _LIST_NUMBER_RE.match(text, first)
+    return -1 if number is None else number.end()
 
 
 def split_sentences(text: str) -> list[tuple[int, int]]:
@@ -86,6 +100,7 @@ def split_sentences(text: str) -> list[tuple[int, int]]:
     start = 0
     index = 0
     length = len(text)
+    list_number_dot = _find_list_number_dot(text)
     while index < length:
         if text[index] not in SENTENCE_TERMINATORS:
             index += 1
@@ -96,7 +111,8 @@ def split_sentences(text: str) -> list[tuple[int, int]]:
         while after < length and text[after] in SENTENCE_CLOSERS:
             after += 1
         # 문장 끝 글자 뒤에 빈 글자가 오거나 글이 끝날 때만 경계 후보다 — "3.5", "SOP-QC.01"은 후보가 아니다
-        if (after == length or is_blank_char(text[after])) and _is_sentence_end(text, index, after):
+        is_candidate = after == length or is_blank_char(text[after])
+        if is_candidate and index != list_number_dot and _is_sentence_end(text, index, after):
             _append_trimmed(ranges, text, start, after)
             start = after
         index = after
@@ -239,9 +255,11 @@ def build_unit_text(spans: Sequence[Sequence[int]], block_texts: Mapping[int, st
 
 
 def suggest_interleaved_pairs(units: Sequence[tuple[int, str]]) -> list[tuple[list[int], list[int]]]:
-    """(단위 id, 언어) 순서 목록 → 코드 짝 제안. 중립을 건너뛰고 같은 언어가 이어진 덩어리를 앞에서부터 두 개씩 잇는다.
+    """(단위 id, 언어) 순서 목록 → 코드 짝 제안 [(한글 단위들, 영어 단위들)]. 중립을 건너뛰고 같은 언어가 이어진 덩어리를 만든다.
 
-    이웃한 덩어리는 언어가 늘 다르다. 어느 쪽이든 MAX_PAIR_SIDE를 넘으면 그 두 덩어리는 짝 없이 넘어간다.
+    한/영 연달아는 한글이 먼저다 — 왼쪽부터 한글 덩어리 바로 뒤에 영어 덩어리가 오면 둘을 잇고 그 뒤로 넘어가고, 아니면 그 덩어리
+    하나만 건너뛴다(앞머리의 영어 회사명·제목 줄 하나가 문서 전체 짝을 한 칸씩 밀지 않게). 어느 쪽이든 MAX_PAIR_SIDE를 넘으면
+    그 두 덩어리는 짝 없이 넘어간다. 머리말·본문처럼 부분이 다른 단위는 부르는 쪽이 나눠 넘긴다.
     """
     runs: list[tuple[str, list[int]]] = []
     for unit_id, lang in units:
@@ -252,7 +270,14 @@ def suggest_interleaved_pairs(units: Sequence[tuple[int, str]]) -> list[tuple[li
         else:
             runs.append((lang, [unit_id]))
     pairs = []
-    for (_, left), (_, right) in zip(runs[0::2], runs[1::2]):
-        if len(left) <= MAX_PAIR_SIDE and len(right) <= MAX_PAIR_SIDE:
-            pairs.append((left, right))
+    index = 0
+    while index < len(runs):
+        lang, korean = runs[index]
+        if lang == "ko" and index + 1 < len(runs) and runs[index + 1][0] == "en":
+            english = runs[index + 1][1]
+            if len(korean) <= MAX_PAIR_SIDE and len(english) <= MAX_PAIR_SIDE:
+                pairs.append((korean, english))
+            index += 2
+        else:
+            index += 1
     return pairs

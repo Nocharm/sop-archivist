@@ -1,5 +1,6 @@
 """단위 서비스 — 추출 블록을 규칙으로 쪼개 단위·판단 행·코드 짝을 쓰고, 언어 배치가 바뀌면 짝을 다시 제안하고, 커버리지를 지킨다."""
 
+import asyncio
 from collections.abc import Sequence
 
 from sqlalchemy import delete, func, insert, select, update
@@ -17,7 +18,14 @@ from app.sop.models import (
     UnitPair,
     UnitPairMember,
 )
-from app.sop.segment import BlockView, TableView, build_unit_drafts, build_unit_text, suggest_interleaved_pairs
+from app.sop.segment import (
+    BlockView,
+    TableView,
+    UnitDraft,
+    build_unit_drafts,
+    build_unit_text,
+    suggest_interleaved_pairs,
+)
 
 UNIT_ACTIVE = "active"
 PAIR_SUGGESTED = "suggested"
@@ -44,28 +52,16 @@ async def create_initial_units(session: AsyncSession, document: Document, extrac
         .where(SourceBlock.extraction_id == extraction.id)
         .order_by(SourceBlock.seq)
     )
-    blocks = [BlockView(*row) for row in block_rows]
     table_rows = await session.execute(
         select(SourceTable.id, SourceTable.is_layout).where(SourceTable.extraction_id == extraction.id)
     )
-    drafts = build_unit_drafts(blocks, [TableView(*row) for row in table_rows], document.language_layout)
+    # 200만 자 쪼개기는 수 초까지 걸린다 — 단일 워커 backend가 묶음 잠금을 쥔 채 이벤트 루프를 막지 않게 스레드에서 돈다
+    drafts, unit_rows = await asyncio.to_thread(
+        _build_unit_rows, extraction.id, block_rows.all(), table_rows.all(), document.language_layout
+    )
     if not drafts:
         return
-    block_texts = {block.id: block.text for block in blocks}
-    unit_ids = list(
-        await session.scalars(
-            insert(Unit).returning(Unit.id, sort_by_parameter_order=True),
-            [
-                {
-                    "extraction_id": extraction.id, "local_no": local_no, "kind": draft.kind,
-                    "spans": [list(span) for span in draft.spans], "text": build_unit_text(draft.spans, block_texts),
-                    "lang": draft.lang, "table_id": draft.table_id, "row_index": draft.row_index,
-                    "pos_seq": draft.pos_seq, "pos_start": draft.pos_start,
-                }
-                for local_no, draft in enumerate(drafts, start=1)
-            ],
-        )
-    )
+    unit_ids = list(await session.scalars(insert(Unit).returning(Unit.id, sort_by_parameter_order=True), unit_rows))
     # 표 단위 id는 INSERT 뒤에야 알므로 칸 문장의 묶음은 한 번 더 쓴다
     groups = [
         {"id": unit_id, "group_unit_id": unit_ids[draft.group_index]}
@@ -80,6 +76,25 @@ async def create_initial_units(session: AsyncSession, document: Document, extrac
         )
     if document.language_layout == INTERLEAVED_LAYOUT:
         await _create_code_pairs(session, document.id, extraction.id)
+
+
+def _build_unit_rows(
+    extraction_id: int, block_rows: Sequence[Sequence[object]], table_rows: Sequence[Sequence[object]], layout: str
+) -> tuple[list[UnitDraft], list[dict[str, object]]]:
+    """블록·표 행 → 단위 초안과 INSERT 행(local_no는 1부터) — DB를 쓰지 않는 순수 계산이라 스레드에서 돌린다."""
+    blocks = [BlockView(*row) for row in block_rows]
+    drafts = build_unit_drafts(blocks, [TableView(*row) for row in table_rows], layout)
+    block_texts = {block.id: block.text for block in blocks}
+    rows = [
+        {
+            "extraction_id": extraction_id, "local_no": local_no, "kind": draft.kind,
+            "spans": [list(span) for span in draft.spans], "text": build_unit_text(draft.spans, block_texts),
+            "lang": draft.lang, "table_id": draft.table_id, "row_index": draft.row_index,
+            "pos_seq": draft.pos_seq, "pos_start": draft.pos_start,
+        }
+        for local_no, draft in enumerate(drafts, start=1)
+    ]
+    return drafts, rows
 
 
 async def refresh_code_pairs(session: AsyncSession, document: Document) -> None:
@@ -101,21 +116,25 @@ async def refresh_code_pairs(session: AsyncSession, document: Document) -> None:
 async def _create_code_pairs(session: AsyncSession, document_id: int, extraction_id: int) -> None:
     """활성 단위 중 표·행에 묶이지 않은 것을 순서대로 이웃 짝짓는다.
 
-    묶인 칸 문장은 표의 판단을 따르고, 넣으면 표 앞뒤 문단과 칸이 엇갈려 짝지어지므로 뺀다. 이미 짝이 있는 단위는 그 자리에서
-    순서를 끊는다 — 건너뛰면 그 너머의 단위끼리 짝지어진다.
+    묶인 칸 문장은 표의 판단을 따르고, 넣으면 표 앞뒤 문단과 칸이 엇갈려 짝지어지므로 뺀다. 이미 짝이 있는 단위와 부분(본문·머리말·
+    각주…)이 바뀌는 자리에서 순서를 끊는다 — 건너뛰면 그 너머의 단위끼리, 본문 끝 문장과 머리말이 짝지어진다.
     """
     rows = await session.execute(
-        select(Unit.id, Unit.lang, UnitPairMember.pair_id)
+        select(Unit.id, Unit.lang, SourceBlock.part, UnitPairMember.pair_id)
+        # 단위 자리(pos_seq)의 블록이 그 단위의 부분이다
+        .join(SourceBlock, (SourceBlock.extraction_id == Unit.extraction_id) & (SourceBlock.seq == Unit.pos_seq))
         .outerjoin(UnitPairMember, UnitPairMember.unit_id == Unit.id)
         .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.group_unit_id.is_(None))
         .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
     )
     segments: list[list[tuple[int, str]]] = [[]]
-    for unit_id, lang, pair_id in rows:
+    previous_part = None
+    for unit_id, lang, part, pair_id in rows:
+        if (pair_id is not None or part != previous_part) and segments[-1]:
+            segments.append([])
         if pair_id is None:
             segments[-1].append((unit_id, lang))
-        elif segments[-1]:
-            segments.append([])
+        previous_part = part
     await _insert_pairs(session, document_id, [pair for segment in segments for pair in suggest_interleaved_pairs(segment)])
 
 
