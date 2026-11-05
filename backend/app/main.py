@@ -14,6 +14,8 @@ from app.routers import admin as admin_router
 from app.routers import auth as auth_router
 from app.routers import directory as directory_router
 from app.routers import me as me_router
+from app.routers import sop_admin as sop_admin_router
+from app.routers import sop_bundles as sop_bundles_router
 from app.settings import settings
 
 
@@ -42,6 +44,8 @@ app.include_router(directory_router.router)
 app.include_router(me_router.router)
 app.include_router(access_router.router)
 app.include_router(admin_router.router)
+app.include_router(sop_bundles_router.router)
+app.include_router(sop_admin_router.router)
 
 
 @app.get("/api/health")
