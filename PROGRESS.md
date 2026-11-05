@@ -40,6 +40,8 @@
   - 리뷰 반영(R35): 개요마다 불리는 검토 조건 계산은 원문 글자를 읽지 않는다 — `load_bundle_snapshot(include_text=False)`가 단위·새 문장 글자 열을 SELECT에서 빼고 빈 글로 채운다. 새 묶음 만들기 응답은 조건 계산 없이 `upload_documents`.
 - **계획 1 Task 18: 합성 자료 생성기·처음부터 끝까지 테스트** — `scripts/synthetic_sop.py`가 QC Centrifuge 합성 묶음(옛 DOCX 4·PDF 1, 입구 2 WI-04, To-Be xlsx)과 기대 정답 `SYNTHETIC_expected.json`을 같은 바이트로 만들고(zip·속성 시각 고정), 정답 글자를 문서와 한 곳에서 정한다. `test_sop_e2e.py`는 저장을 모두 정답에서만 만들어 업로드→편집→배정·짝 맞추기→누락 거절→검토 완료를 몰고, 두 작성자의 결과물 형식이 같은지 본다.
   - 정한 것: 모든 파일 이름이 `SYNTHETIC_`로 시작해야 해 정답 파일도 `SYNTHETIC_expected.json`이다. 템플릿에 N/A 칸이 없어 `tobe_na_slots`를, 언어·외부 이동 문서·일괄 처분·같은 글자 확정을 나타내려 답에 `lang`·`move_target_code`·`bulk`·`identical`을, 기대 숫자로 `summary`·`flow_edge_total`을 선택 키로 더했다. 메인 추출기는 글 상자 도형을 캡션 없는 그림 단위로도 내므로 정답이 그 그림을 지운다.
+- **계획 1 Task 19: 로컬 데모 시드** — `scripts/seed_sop_demo.py`가 합성 묶음 셋(쪼개기 직후·분류 절반·검토 대기)을 `TestClient(app)`+`X-Dev-User`로 만들어 화면과 같은 API 경로를 타고, 모는 쪽은 E2E 테스트에서 `scripts/sop_demo_driver.py`로 옮겨 시드와 테스트가 한 벌을 쓴다. 가드는 `reset_db`와 같은 HR postgres 판정(`count_hr_rows` 공개)에 `AUTH_MODE=dev`를 더했고, 같은 제목 묶음은 건너뛰며 만들다 실패한 묶음은 지운다(제목만 남으면 다음 실행이 건너뛰어 데모가 덜 만들어진 채 굳는다).
+  - 정한 것: "절반"은 입구 1 답 수의 절반을 group 경계에서 끊는다(입구 2 문서의 답은 미배정). `DEV_ENFORCE_PERMISSIONS=true`면 데모 권한에 `bundle.create`가 없어 403이라 docstring에 적었다.
 
 ## 2026-11-04
 

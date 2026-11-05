@@ -32,7 +32,7 @@ def should_refuse_reset(is_postgres: bool, hr_rows: int) -> bool:
     return is_postgres and hr_rows > 0
 
 
-async def _count_hr_rows() -> int:
+async def count_hr_rows() -> int:
     async with engine.connect() as conn:
         has_employees = await conn.run_sync(lambda sync_conn: inspect(sync_conn).has_table("employees"))
         if not has_employees:
@@ -50,7 +50,7 @@ def _rebuild_schema() -> None:
 
 async def main() -> int:
     try:
-        hr_rows = await _count_hr_rows()
+        hr_rows = await count_hr_rows()
         if should_refuse_reset(engine.dialect.name == "postgresql", hr_rows):
             target = engine.url.render_as_string(hide_password=True)
             print(
