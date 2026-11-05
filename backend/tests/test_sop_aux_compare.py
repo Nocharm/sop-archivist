@@ -72,6 +72,16 @@ def test_normalize_strips_strike_underline_and_nested_link_brackets() -> None:
     assert normalize_for_compare(markdown) == "SOP-001장비삭제밑줄"
 
 
+def test_normalize_strips_line_heads_hidden_behind_inline_marks() -> None:
+    plain = normalize_for_compare("1. 목적 및 범위")
+
+    assert plain == "목적및범위"
+    assert normalize_for_compare("[1. 목적 및 범위](#sec1)") == plain
+    assert normalize_for_compare("**1. 목적 및 범위**") == plain
+    assert normalize_for_compare("## ~~1. 목적 및 범위~~") == plain
+    assert normalize_for_compare("[- 항목](#a)") == normalize_for_compare("- 항목") == "항목"
+
+
 def test_normalize_keeps_long_link_text_and_targets() -> None:
     link = f"[{'가' * 700}](#{'x' * 3000})"
 
@@ -151,6 +161,11 @@ def test_missing_text_stops_at_max_items() -> None:
     missing = find_missing_text(["본문 글자"], markdown, max_items=3)
 
     assert [item.snippet for item in missing] == ["빠진 조각 번호 0", "빠진 조각 번호 1", "빠진 조각 번호 2"]
+
+
+def test_max_items_below_one_is_rejected() -> None:
+    with pytest.raises(ValueError, match="max_items"):
+        find_missing_text(["본문 글자"], "빠진 조각 번호", max_items=0)
 
 
 def test_missing_text_default_cap_is_200() -> None:
@@ -242,6 +257,14 @@ MARKUP_SHAPES = {
     "link anchor with parentheses": ("(#a(b)c)", _link("괄호 앵커 링크 글자", "a(b)c")),
     "link anchor over 2000 chars": ("x" * 3000, _link("긴 앵커 링크 글자", "x" * 3000)),
     "link text over 500 chars": ("](#sec1)", _link("가나다라마바사 " * 100, "sec1")),
+    # 줄 머리처럼 보이는 글로 시작하는 링크·강조 — 여는 표시가 줄 머리를 가리면 메인 글과 어긋난다
+    "link text starting with a number": ("[1. 목적 및 범위](#sec1)", _link("1. 목적 및 범위", "sec1")),
+    "link text starting with a dash": ("[- 항목 설명입니다](#sec1)", _link("- 항목 설명입니다", "sec1")),
+    "link text starting with a hash": ("[# 번호 제목입니다](#sec1)", _link("# 번호 제목입니다", "sec1")),
+    "link text starting with a quote mark": ("[> 인용문 글자입니다](#sec1)", _link("&gt; 인용문 글자입니다", "sec1")),
+    "bold numbered heading": ("**1. 목적 및 범위**", f"<w:p>{_run('1. 목적 및 범위', '<w:b/>')}</w:p>"),
+    "strikethrough numbered heading": ("~~1. 목적 및 범위~~", f"<w:p>{_run('1. 목적 및 범위', '<w:strike/>')}</w:p>"),
+    "partly bold numbered line": ("**3.** 일부만 굵은 번호 글자", f"<w:p>{_run('3. ', '<w:b/>')}{_run('일부만 굵은 번호 글자')}</w:p>"),
 }
 
 
