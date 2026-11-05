@@ -25,8 +25,6 @@ from app.sop.extract.types import (
 PDF_HEADER = b"%PDF"
 PAGE_BASIS_RENDERED = "rendered"  # PDF의 쪽은 보이는 쪽 그대로다
 WARNING_PDF_LAYOUT = "pdf_layout"
-# pdfminer TextConverter가 쪽 끝마다 쓰는 쪽 나눔 글자 — 원문이 아니라 변환기가 붙인 표시라 뗀다
-PAGE_BREAK = "\f"
 
 
 def read_pdf(data: bytes, limits: ExtractLimits) -> ExtractResult:
@@ -83,11 +81,13 @@ def _iter_page_texts(pages: list[PDFPage]) -> Iterator[str]:
     """쪽마다 pdfminer 글자 — 문서 하나를 한 번만 열고 출력 버퍼만 비워 가며 쓴다."""
     resources = PDFResourceManager()
     output = StringIO()
-    interpreter = PDFPageInterpreter(resources, TextConverter(resources, output, laparams=LAParams()))
+    # all_texts: 기본값(False)이면 Form XObject·그림 안 글은 배치 분석을 건너뛰고 글자만 이어 붙어 나와 줄·낱말이 붙는다
+    laparams = LAParams(all_texts=True)
+    interpreter = PDFPageInterpreter(resources, TextConverter(resources, output, laparams=laparams))
     try:
         for page in pages:
             interpreter.process_page(page)
-            yield output.getvalue().removesuffix(PAGE_BREAK)
+            yield output.getvalue()
             output.seek(0)
             output.truncate(0)
     except PSException as error:
