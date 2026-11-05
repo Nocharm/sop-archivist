@@ -8,6 +8,7 @@
 - **구현 계획 1(결정적 코어)** — 설계 승인 뒤 `docs/superpowers/plans/2026-11-05-sop-restructuring-plan1-core.md`(20개 태스크). 스키마는 Alembic 0005 하나, 파싱은 spawn 자식 프로세스, 결과물은 스냅숏 위 순수 함수, 떼어 내기·상태 계산·빈 글자 판정은 각각 한 함수로 모은다.
 - **계획 1 Task 1: 권한 키 3개** — `bundle.create`·`bundle.admin`·`guideline.manage`를 백엔드 카탈로그·프런트 미러·i18n en/ko에 한 커밋으로 더했다(뒤 태스크의 `require_permission`이 쓴다). 관리 탭이 없는 키가 관리 화면을 열지 않도록 `canSeeAdmin`은 `ADMIN_TAB_PERMISSIONS`(기존 4개)만 본다. sysadmin 유효 권한이 7개가 되어 스모크(`pw-smoke-baseline.mjs`)의 개수 단언도 맞췄다.
 - **계획 1 Task 2: SOP 스키마 리비전 0005** — 묶음·문서·추출·단위·판단·새 문서 문장 22개 표를 `app/sop/models.py`와 `0005_sop_core.py` 하나로 두고 코드 값은 `app/sop/constants.py`에 모았다. `target_docs.parent_id`·`target_sentences.target_doc_id`는 ondelete를 비워(NO ACTION) 둔다. sqlite에서 RESTRICT는 묶음 CASCADE가 부모 SOP를 WI보다 먼저 지우는 순간 실패했다(변이 실험으로 확인). 비어 있을 수 있는 `grid`는 `JSON(none_as_null=True)`로 JSON null이 아닌 SQL NULL을 저장한다. CHECK는 스키마 표에 표시된 상태·역할 4곳만 두었다. 리뷰 반영: 캐스케이드·역조회가 순차 스캔하던 FK 8곳(`units` 둘, `source_blocks.table_id`, `extraction_warnings.block_id`, `target_sentences` 둘, `target_sources.unit_id`, 내 묶음 조회용 `bundle_members.login_id`)에 인덱스를 0005 안에 더했다(미배포라 새 리비전 대신 제자리 수정).
+- **계획 1 Task 3: 묶음·멤버십·작업 기록·묶음 관리** — `/api/bundles`(내 목록·만들기·고치기·삭제·멤버 바꾸기·작업 기록)와 `/api/admin/bundles`(`bundle.admin`, 메타만·멤버 바꾸기 기록 reason `admin`). 멤버십은 권한과 별개로 항상 검사하고(계정 활성 403 → 비멤버 404 → 역할 403, sysadmin도 비멤버면 404), 업무 거절은 `detail={"code",…}`(`app/sop/errors.py`). 쓰기 직전 `lock_bundle`(FOR UPDATE 재읽기)로 같은 revision을 든 두 요청이 둘 다 통과하는 걸 막고, 멤버 바꾸기는 바뀐 게 없으면 revision·기록을 건드리지 않는다.
 
 ## 2026-11-04
 
