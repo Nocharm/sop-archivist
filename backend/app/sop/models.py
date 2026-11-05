@@ -57,7 +57,8 @@ class BundleMember(Base):
     __table_args__ = (CheckConstraint(_build_in_check("role", MEMBER_ROLES), name="role"),)
 
     bundle_id: Mapped[int] = mapped_column(ForeignKey("bundles.id", ondelete="CASCADE"), primary_key=True)
-    login_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    # "내 묶음" 조회는 (bundle_id, login_id) PK를 못 타서 login_id 단독 인덱스가 필요하다
+    login_id: Mapped[str] = mapped_column(String(100), primary_key=True, index=True)
     role: Mapped[str] = mapped_column(String(10))
     added_by: Mapped[str] = mapped_column(String(100))
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
@@ -224,7 +225,9 @@ class SourceBlock(Base):
     page_basis: Mapped[str] = mapped_column(String(10))
     section_label: Mapped[str] = mapped_column(String(200), default="")
     heading_level: Mapped[int | None] = mapped_column(Integer, default=None)
-    table_id: Mapped[int | None] = mapped_column(ForeignKey("source_tables.id", ondelete="CASCADE"), default=None)
+    table_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_tables.id", ondelete="CASCADE"), index=True, default=None
+    )
     row_index: Mapped[int | None] = mapped_column(Integer, default=None)
     col_index: Mapped[int | None] = mapped_column(Integer, default=None)
     grid_span: Mapped[int] = mapped_column(Integer, default=1)
@@ -241,7 +244,9 @@ class ExtractionWarning(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     extraction_id: Mapped[int] = mapped_column(ForeignKey("extractions.id", ondelete="CASCADE"), index=True)
     kind: Mapped[str] = mapped_column(String(20))
-    block_id: Mapped[int | None] = mapped_column(ForeignKey("source_blocks.id", ondelete="CASCADE"), default=None)
+    block_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_blocks.id", ondelete="CASCADE"), index=True, default=None
+    )
     detail: Mapped[dict] = mapped_column(JSON, default=dict)
     needs_ack: Mapped[bool] = mapped_column(Boolean)
     acked_by: Mapped[str | None] = mapped_column(String(100), default=None)
@@ -264,10 +269,14 @@ class Unit(Base):
     spans: Mapped[list] = mapped_column(JSON)
     text: Mapped[str] = mapped_column(Text)
     lang: Mapped[str] = mapped_column(String(7))
-    table_id: Mapped[int | None] = mapped_column(ForeignKey("source_tables.id", ondelete="CASCADE"), default=None)
+    table_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_tables.id", ondelete="CASCADE"), index=True, default=None
+    )
     row_index: Mapped[int | None] = mapped_column(Integer, default=None)
     # 칸 문장이 따르는 표·행 단위 — 그 단위가 지워지면 그룹만 풀린다
-    group_unit_id: Mapped[int | None] = mapped_column(ForeignKey("units.id", ondelete="SET NULL"), default=None)
+    group_unit_id: Mapped[int | None] = mapped_column(
+        ForeignKey("units.id", ondelete="SET NULL"), index=True, default=None
+    )
     status: Mapped[str] = mapped_column(String(8), default="active")
     boundary_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     # 정렬 키 — 첫 범위의 블록 seq와 블록 안 시작 위치(표 단위는 pos_start=-1)
@@ -373,9 +382,11 @@ class TargetSentence(Base):
     change_type: Mapped[str | None] = mapped_column(String(20), default=None)
     origin: Mapped[str] = mapped_column(String(11))
     # 이미 있는 새 문서(side=new)에서 가져온 단위
-    new_unit_id: Mapped[int | None] = mapped_column(ForeignKey("units.id", ondelete="CASCADE"), default=None)
+    new_unit_id: Mapped[int | None] = mapped_column(
+        ForeignKey("units.id", ondelete="CASCADE"), index=True, default=None
+    )
     parent_target_id: Mapped[int | None] = mapped_column(
-        ForeignKey("target_sentences.id", ondelete="CASCADE"), default=None
+        ForeignKey("target_sentences.id", ondelete="CASCADE"), index=True, default=None
     )
     cell_row: Mapped[int | None] = mapped_column(Integer, default=None)
     cell_col: Mapped[int | None] = mapped_column(Integer, default=None)
@@ -396,7 +407,8 @@ class TargetSource(Base):
     __tablename__ = "target_sources"
 
     target_id: Mapped[int] = mapped_column(ForeignKey("target_sentences.id", ondelete="CASCADE"), primary_key=True)
-    unit_id: Mapped[int] = mapped_column(ForeignKey("units.id", ondelete="CASCADE"), primary_key=True)
+    # 복합 PK의 둘째 열이라 단위 쪽 삭제 캐스케이드·역조회가 PK를 못 탄다
+    unit_id: Mapped[int] = mapped_column(ForeignKey("units.id", ondelete="CASCADE"), primary_key=True, index=True)
     seq: Mapped[int] = mapped_column(Integer)
 
 
