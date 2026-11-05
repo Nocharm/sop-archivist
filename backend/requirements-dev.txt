@@ -1,3 +1,4 @@
 -r requirements.txt
 pytest==9.0.3
 ruff==0.15.16
+python-docx==1.2.0  # 합성 SOP DOCX 생성(scripts/synthetic_sop.py) — 처음부터 끝까지 테스트·로컬 데모 시드 전용

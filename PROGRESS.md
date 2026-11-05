@@ -38,6 +38,8 @@
 - **계획 1 Task 17: 검토 흐름·검토 요청 조건·다음 행동** — `review.py`가 결과물과 같은 스냅숏(+ 질의 둘)으로 막는 이유·알림·다음 행동을 계산해 검토 요청 때 잠금 안에서 다시 가리고(422 `not_ready`), 개요 `next_action`과 `GET …/review/readiness`가 같은 계산을 쓴다(질의 15회, 단위 수 무관). 전이는 잠금 → revision → 현재 상태(409 `invalid_transition`) 순이고, 작업 중으로 돌아가면(되돌리기·다시 열기) 의미 검토 확인을 모두 거짓으로 되돌린다.
   - 정한 것: 검토자는 활성 계정만 센다(퇴직 검토자만 남으면 `no_reviewer`). 장비 SOP 알림은 문서마다 하나(`doc_code`, `slot_keys`)이고 `sentence_warnings`는 경고가 붙은 새 문장 수다. 바뀐 항목이 없는 확인 저장은 revision을 올리지 않는다(멤버 저장과 같다).
   - 리뷰 반영(R35): 개요마다 불리는 검토 조건 계산은 원문 글자를 읽지 않는다 — `load_bundle_snapshot(include_text=False)`가 단위·새 문장 글자 열을 SELECT에서 빼고 빈 글로 채운다. 새 묶음 만들기 응답은 조건 계산 없이 `upload_documents`.
+- **계획 1 Task 18: 합성 자료 생성기·처음부터 끝까지 테스트** — `scripts/synthetic_sop.py`가 QC Centrifuge 합성 묶음(옛 DOCX 4·PDF 1, 입구 2 WI-04, To-Be xlsx)과 기대 정답 `SYNTHETIC_expected.json`을 같은 바이트로 만들고(zip·속성 시각 고정), 정답 글자를 문서와 한 곳에서 정한다. `test_sop_e2e.py`는 저장을 모두 정답에서만 만들어 업로드→편집→배정·짝 맞추기→누락 거절→검토 완료를 몰고, 두 작성자의 결과물 형식이 같은지 본다.
+  - 정한 것: 모든 파일 이름이 `SYNTHETIC_`로 시작해야 해 정답 파일도 `SYNTHETIC_expected.json`이다. 템플릿에 N/A 칸이 없어 `tobe_na_slots`를, 언어·외부 이동 문서·일괄 처분·같은 글자 확정을 나타내려 답에 `lang`·`move_target_code`·`bulk`·`identical`을, 기대 숫자로 `summary`·`flow_edge_total`을 선택 키로 더했다. 메인 추출기는 글 상자 도형을 캡션 없는 그림 단위로도 내므로 정답이 그 그림을 지운다.
 
 ## 2026-11-04
 
