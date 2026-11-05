@@ -33,6 +33,11 @@ describe("access", () => {
     expect(canSeeAdmin({ ...BASE_ME, permissions: ["system.view"] })).toBe(true);
   });
 
+  it("admin stays closed for a permission that has no admin tab", () => {
+    // 묶음·지침 권한은 관리 탭이 없어 관리 화면을 열지 않는다(탭은 프런트 단계에서 생긴다)
+    expect(canSeeAdmin({ ...BASE_ME, permissions: ["bundle.create"] })).toBe(false);
+  });
+
   it("admin hidden without permissions", () => {
     expect(canSeeAdmin({ ...BASE_ME, permissions: [] })).toBe(false);
   });
@@ -42,7 +47,15 @@ describe("access", () => {
   });
 
   it("PERMISSIONS matches backend order", () => {
-    expect([...PERMISSIONS]).toEqual(["permission.manage", "directory.sync", "ai.admin", "system.view"]);
+    expect([...PERMISSIONS]).toEqual([
+      "permission.manage",
+      "directory.sync",
+      "ai.admin",
+      "system.view",
+      "bundle.create",
+      "bundle.admin",
+      "guideline.manage",
+    ]);
   });
 
   it("orders permissions by the catalog, not alphabetically", () => {
