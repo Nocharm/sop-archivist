@@ -1,5 +1,6 @@
 """To-Be 목록 — 읽기·통째 쓰기·코드 기준 합치기·검사 규칙, Excel 템플릿 왕복과 가져오기 검사."""
 
+import struct
 import zipfile
 from datetime import datetime
 from io import BytesIO
@@ -13,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop import tobe_excel
 from app.sop.models import Bundle, Document, TargetDoc, TargetDocNaSlot
+from app.sop.tobe import is_within_slot
 from app.sop.tobe_excel import parse_tobe_workbook
 from tests.access_helpers import run_in_session, update_row
 from tests.sop_helpers import AUTHOR, OUTSIDER, REVIEWER, create_bundle, get_bundle, put_tobe, set_members
@@ -313,6 +315,23 @@ def test_tobe_rejects_malformed_input_with_the_default_422(client: TestClient, b
     assert isinstance(response.json()["detail"], list)  # FastAPI 기본 검증 오류 모양
 
 
+@pytest.mark.parametrize(
+    ("slot_key", "slot", "expected"),
+    [
+        ("procedures", "procedures", True),
+        ("procedures.procedure", "procedures", True),
+        ("procedures.maintenance", "procedures", True),
+        ("procedures.procedure", "procedures.procedure", True),
+        ("purpose", "procedures", False),
+        ("procedures", "procedures.procedure", False),  # 하위 칸의 N/A는 상위 칸을 덮지 않는다
+        ("procedures_extra", "procedures", False),  # 접두 글자만 같은 다른 칸
+        ("general_requirements.safety", "general_requirements.operation", False),
+    ],
+)
+def test_na_on_a_slot_covers_its_sub_slots_only(slot_key: str, slot: str, expected: bool) -> None:
+    assert is_within_slot(slot_key, slot) is expected
+
+
 # ── match 문서(입구 2) ─────────────────────────────────────────────────────────
 
 
@@ -449,6 +468,24 @@ def test_tobe_writes_leave_an_activity_record_with_the_touched_doc_ids(client: T
     assert sorted(by_action["tobe.import"]["target_ids"]) == sorted(d["id"] for d in saved["docs"])
 
 
+def test_a_tobe_write_that_changes_nothing_keeps_the_revision_and_records_nothing(client: TestClient) -> None:
+    bundle = create_bundle(client)
+    docs, na_slots, wi_steps = _sample_list()
+    saved = put_tobe(client, bundle["id"], docs, na_slots=na_slots, wi_steps=wi_steps).json()
+    template = client.get(f"/api/bundles/{bundle['id']}/tobe/template.xlsx", headers=AUTHOR).content
+
+    same_put = put_tobe(client, bundle["id"], docs, na_slots=na_slots, wi_steps=wi_steps)
+    same_import = _post_import(client, bundle["id"], template)
+
+    for response in (same_put, same_import):
+        assert response.status_code == 200, response.text
+        assert response.json() == saved  # 목록도 revision(2)도 그대로
+    events = client.get(f"/api/bundles/{bundle['id']}/events", headers=AUTHOR).json()
+    assert [e["action"] for e in events if e["action"].startswith("tobe.")] == ["tobe.update"]
+    # 무변경 저장 뒤에도 방금 읽은 revision으로 다음 저장이 된다
+    assert put_tobe(client, bundle["id"], [*docs, _doc("SOP-2")], na_slots=na_slots, wi_steps=wi_steps).json()["revision"] == 3
+
+
 # ── Excel 템플릿·가져오기 ──────────────────────────────────────────────────────
 
 
@@ -478,7 +515,7 @@ def test_template_roundtrip_imports_same_list(client: TestClient) -> None:
 
     assert imported.status_code == 200, imported.text
     after = imported.json()
-    assert after["revision"] == before["revision"] + 1
+    assert after["revision"] == before["revision"]  # 바뀐 게 없으면 revision을 올리지 않는다
     assert (after["docs"], after["na_slots"], after["wi_steps"]) == (before["docs"], before["na_slots"], before["wi_steps"])
 
 
@@ -743,6 +780,76 @@ def test_import_rejects_files_that_are_not_the_template(client: TestClient) -> N
         {"code": "invalid_tobe_file"},
         {"code": "invalid_tobe_file"},
     ]
+
+
+def _patch_zip_entries(data: bytes, *, flag_bits: int = 0, method: int | None = None) -> bytes:
+    """모든 항목의 일반 플래그·압축 방식을 바꾼다 — 디렉터리는 멀쩡해 열 때가 되어서야 못 읽는 파일을 만든다."""
+    patched = bytearray(data)
+    with zipfile.ZipFile(BytesIO(data)) as archive:
+        infos = archive.infolist()
+        directory_pos = archive.start_dir
+    positions = [(info.header_offset, 6, 8) for info in infos]  # 로컬 머리: 플래그·압축 방식 위치
+    for _ in infos:  # 중앙 디렉터리 항목은 이름·추가·주석 길이만큼 가변이라 차례로 건너뛴다
+        positions.append((directory_pos, 8, 10))
+        name_len, extra_len, comment_len = struct.unpack_from("<HHH", patched, directory_pos + 28)
+        directory_pos += 46 + name_len + extra_len + comment_len
+    for offset, flag_at, method_at in positions:
+        patched[offset + flag_at] |= flag_bits
+        if method is not None:
+            struct.pack_into("<H", patched, offset + method_at, method)
+    return bytes(patched)
+
+
+def _flip_stream_byte(data: bytes, member_suffix: str, fraction: float) -> bytes:
+    """항목의 압축 데이터 한가운데쯤 한 바이트를 뒤집는다 — 디렉터리는 그대로라 압축 해제·CRC 검사에서 걸린다."""
+    corrupted = bytearray(data)
+    with zipfile.ZipFile(BytesIO(data)) as archive:
+        info = next(i for i in archive.infolist() if i.filename.endswith(member_suffix))
+    name_len, extra_len = struct.unpack_from("<HH", data, info.header_offset + 26)
+    corrupted[info.header_offset + 30 + name_len + extra_len + int(info.compress_size * fraction)] ^= 0xFF
+    return bytes(corrupted)
+
+
+def _store_without_compression(data: bytes) -> bytes:
+    """같은 항목을 압축 없이 다시 담는다 — 한 바이트를 뒤집으면 압축 해제는 되지만 CRC가 어긋난다."""
+    repacked = BytesIO()
+    with zipfile.ZipFile(BytesIO(data)) as source, zipfile.ZipFile(repacked, "w", zipfile.ZIP_STORED) as target:
+        for info in source.infolist():
+            target.writestr(info.filename, source.read(info.filename))
+    return repacked.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("stored", "fraction"),
+    [(False, 0.1), (False, 0.5), (False, 0.9), (True, 0.5)],
+    ids=["deflate_start", "deflate_middle", "deflate_end", "stored_bad_crc"],
+)
+def test_import_rejects_a_workbook_whose_compressed_data_is_damaged(
+    client: TestClient, stored: bool, fraction: float
+) -> None:
+    bundle = create_bundle(client)
+    valid = _build_xlsx([[f"D-{i}", "t" * 40, "SOP", None, None] for i in range(60)])
+    if stored:
+        valid = _store_without_compression(valid)
+
+    response = _post_import(client, bundle["id"], _flip_stream_byte(valid, "sheet1.xml", fraction))
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == {"code": "invalid_tobe_file"}
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [{"flag_bits": 0x1}, {"method": 9}],
+    ids=["encrypted_members", "unsupported_compression"],
+)
+def test_import_rejects_a_workbook_zip_that_cannot_be_opened(client: TestClient, patch: dict) -> None:
+    bundle = create_bundle(client)
+
+    response = _post_import(client, bundle["id"], _patch_zip_entries(_build_xlsx(), **patch))
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == {"code": "invalid_tobe_file"}
 
 
 def test_import_without_a_file_is_the_default_422(client: TestClient) -> None:
