@@ -80,6 +80,9 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("bundle_id", "login_id", name=op.f("pk_bundle_members")),
     )
+    with op.batch_alter_table("bundle_members", schema=None) as batch_op:
+        batch_op.create_index(batch_op.f("ix_bundle_members_login_id"), ["login_id"], unique=False)
+
     op.create_table(
         "target_docs",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
@@ -307,6 +310,7 @@ def upgrade() -> None:
     )
     with op.batch_alter_table("source_blocks", schema=None) as batch_op:
         batch_op.create_index(batch_op.f("ix_source_blocks_extraction_id"), ["extraction_id"], unique=False)
+        batch_op.create_index(batch_op.f("ix_source_blocks_table_id"), ["table_id"], unique=False)
 
     op.create_table(
         "units",
@@ -343,6 +347,8 @@ def upgrade() -> None:
     )
     with op.batch_alter_table("units", schema=None) as batch_op:
         batch_op.create_index(batch_op.f("ix_units_extraction_id"), ["extraction_id"], unique=False)
+        batch_op.create_index(batch_op.f("ix_units_group_unit_id"), ["group_unit_id"], unique=False)
+        batch_op.create_index(batch_op.f("ix_units_table_id"), ["table_id"], unique=False)
 
     op.create_table(
         "extraction_warnings",
@@ -370,6 +376,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("pk_extraction_warnings")),
     )
     with op.batch_alter_table("extraction_warnings", schema=None) as batch_op:
+        batch_op.create_index(batch_op.f("ix_extraction_warnings_block_id"), ["block_id"], unique=False)
         batch_op.create_index(
             batch_op.f("ix_extraction_warnings_extraction_id"), ["extraction_id"], unique=False
         )
@@ -432,6 +439,8 @@ def upgrade() -> None:
     )
     with op.batch_alter_table("target_sentences", schema=None) as batch_op:
         batch_op.create_index(batch_op.f("ix_target_sentences_bundle_id"), ["bundle_id"], unique=False)
+        batch_op.create_index(batch_op.f("ix_target_sentences_new_unit_id"), ["new_unit_id"], unique=False)
+        batch_op.create_index(batch_op.f("ix_target_sentences_parent_target_id"), ["parent_target_id"], unique=False)
         batch_op.create_index(
             batch_op.f("ix_target_sentences_target_doc_id"), ["target_doc_id"], unique=False
         )
@@ -515,6 +524,9 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("target_id", "unit_id", name=op.f("pk_target_sources")),
     )
+    with op.batch_alter_table("target_sources", schema=None) as batch_op:
+        batch_op.create_index(batch_op.f("ix_target_sources_unit_id"), ["unit_id"], unique=False)
+
     op.create_table(
         "target_text_history",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
@@ -540,6 +552,9 @@ def downgrade() -> None:
         batch_op.drop_index(batch_op.f("ix_target_text_history_target_id"))
 
     op.drop_table("target_text_history")
+    with op.batch_alter_table("target_sources", schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f("ix_target_sources_unit_id"))
+
     op.drop_table("target_sources")
     op.drop_table("unit_pair_members")
     with op.batch_alter_table("unit_decisions", schema=None) as batch_op:
@@ -552,18 +567,24 @@ def downgrade() -> None:
     op.drop_table("unit_decision_history")
     with op.batch_alter_table("target_sentences", schema=None) as batch_op:
         batch_op.drop_index(batch_op.f("ix_target_sentences_target_doc_id"))
+        batch_op.drop_index(batch_op.f("ix_target_sentences_parent_target_id"))
+        batch_op.drop_index(batch_op.f("ix_target_sentences_new_unit_id"))
         batch_op.drop_index(batch_op.f("ix_target_sentences_bundle_id"))
 
     op.drop_table("target_sentences")
     with op.batch_alter_table("extraction_warnings", schema=None) as batch_op:
         batch_op.drop_index(batch_op.f("ix_extraction_warnings_extraction_id"))
+        batch_op.drop_index(batch_op.f("ix_extraction_warnings_block_id"))
 
     op.drop_table("extraction_warnings")
     with op.batch_alter_table("units", schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f("ix_units_table_id"))
+        batch_op.drop_index(batch_op.f("ix_units_group_unit_id"))
         batch_op.drop_index(batch_op.f("ix_units_extraction_id"))
 
     op.drop_table("units")
     with op.batch_alter_table("source_blocks", schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f("ix_source_blocks_table_id"))
         batch_op.drop_index(batch_op.f("ix_source_blocks_extraction_id"))
 
     op.drop_table("source_blocks")
@@ -594,6 +615,9 @@ def downgrade() -> None:
         batch_op.drop_index(batch_op.f("ix_target_docs_bundle_id"))
 
     op.drop_table("target_docs")
+    with op.batch_alter_table("bundle_members", schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f("ix_bundle_members_login_id"))
+
     op.drop_table("bundle_members")
     with op.batch_alter_table("bundle_events", schema=None) as batch_op:
         batch_op.drop_index(batch_op.f("ix_bundle_events_occurred_at"))

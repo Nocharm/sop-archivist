@@ -298,3 +298,18 @@ def test_target_doc_fks_leave_ondelete_unset(engine: Engine) -> None:
         foreign_keys = [fk for fk in inspector.get_foreign_keys(table) if fk["constrained_columns"] == [column]]
         assert len(foreign_keys) == 1
         assert foreign_keys[0]["options"].get("ondelete") is None
+
+
+def test_fk_columns_hit_by_cascades_are_indexed(engine: Engine) -> None:
+    # 캐스케이드·역조회가 인덱스 없는 FK를 Postgres에서 순차 스캔하지 않게 한다(PK 둘째 열은 PK를 못 탄다)
+    expected = {
+        "bundle_members": {"ix_bundle_members_login_id"},
+        "units": {"ix_units_group_unit_id", "ix_units_table_id"},
+        "source_blocks": {"ix_source_blocks_table_id"},
+        "extraction_warnings": {"ix_extraction_warnings_block_id"},
+        "target_sentences": {"ix_target_sentences_new_unit_id", "ix_target_sentences_parent_target_id"},
+        "target_sources": {"ix_target_sources_unit_id"},
+    }
+    inspector = inspect(engine)
+    for table, names in expected.items():
+        assert names <= {index["name"] for index in inspector.get_indexes(table)}, table
