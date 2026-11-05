@@ -1,11 +1,11 @@
-"""묶음 API — 내 묶음 목록·만들기·고치기·삭제·멤버 바꾸기·작업 기록. 묶음은 멤버만 열 수 있다(sysadmin도 예외 없음)."""
+"""묶음 API — 내 묶음 목록·만들기·고치기·삭제·멤버 바꾸기·작업 기록·검토 흐름. 묶음은 멤버만 열 수 있다(sysadmin도 예외 없음)."""
 
 from collections import Counter
 from collections.abc import Collection
 from typing import Annotated, Self
 
 from fastapi import APIRouter, Depends, Query, Response
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictBool, StringConstraints, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,7 +14,7 @@ from app.auth import get_current_user
 from app.db import get_session
 from app.models import Employee
 from app.routers.admin import KstDatetime
-from app.sop.constants import MEMBER_ROLES
+from app.sop.constants import MEMBER_ROLES, SEMANTIC_CHECK_KEYS
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
 from app.sop.membership import (
@@ -25,12 +25,24 @@ from app.sop.membership import (
     require_bundle_role,
 )
 from app.sop.models import Bundle, BundleDeletionRecord, BundleEvent, BundleMember
+from app.sop.review import (
+    NextAction,
+    Readiness,
+    complete_review,
+    compute_readiness,
+    get_next_action,
+    reopen_review,
+    request_review,
+    return_review,
+    update_semantic_checks,
+)
 from app.sop.snapshot import BundleProgress, load_bundle_progress
 
 router = APIRouter(prefix="/api/bundles", tags=["sop-bundles"])
 
 _require_bundle_create = require_permission("bundle.create")
 _require_author = require_bundle_role("author")
+_require_reviewer = require_bundle_role("reviewer")
 _require_member = require_bundle_role(*MEMBER_ROLES)
 
 # 작업 기록 한 번에 돌려주는 기본·최대 건수 — 큰 limit은 거부하지 않고 최대로 자른다
@@ -48,9 +60,17 @@ def _check_member_role(value: str) -> str:
     return value
 
 
+def _check_semantic_check_keys(value: dict[str, bool]) -> dict[str, bool]:
+    if set(value) != set(SEMANTIC_CHECK_KEYS):
+        raise ValueError(f"checks must have exactly the keys {SEMANTIC_CHECK_KEYS}")
+    return value
+
+
 BundleTitle = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 LoginId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 MemberRole = Annotated[str, AfterValidator(_check_member_role)]
+ReviewReason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+SemanticChecks = Annotated[dict[str, StrictBool], AfterValidator(_check_semantic_check_keys)]
 
 
 class BundleCreateIn(BaseModel):
@@ -79,6 +99,19 @@ class MemberIn(BaseModel):
 class MembersUpdateIn(BaseModel):
     revision: int = Field(ge=1)
     members: list[MemberIn] = Field(max_length=MAX_MEMBERS)
+
+
+class SemanticChecksUpdateIn(BaseModel):
+    revision: int = Field(ge=1)
+    checks: SemanticChecks
+
+
+class ReviewRequestIn(BaseModel):
+    revision: int = Field(ge=1)
+
+
+class ReviewReasonIn(ReviewRequestIn):
+    reason: ReviewReason
 
 
 class MemberOut(BaseModel):
@@ -111,6 +144,8 @@ class BundleOut(BundleBase):
     members: list[MemberOut]
     # 개요의 언어별 진행 숫자(커버 상태별 옛 단위 수)
     progress: BundleProgress
+    # 사람이 다음에 할 일 하나(검토 요청 조건을 해야 하는 순서로 훑은 것)
+    next_action: NextAction
 
 
 class BundleListItem(BaseModel):
@@ -164,7 +199,8 @@ async def build_bundle_out(session: AsyncSession, bundle: Bundle, login_id: str)
     my_role = next((member.role for member in members if member.login_id == login_id), None)
     progress = (await load_bundle_progress(session, [bundle.id]))[bundle.id]
     return BundleOut(
-        **BundleBase.model_validate(bundle).model_dump(), my_role=my_role, members=members, progress=progress
+        **BundleBase.model_validate(bundle).model_dump(), my_role=my_role, members=members, progress=progress,
+        next_action=await get_next_action(session, bundle),
     )
 
 
@@ -312,6 +348,68 @@ async def update_members(
     session: AsyncSession = Depends(get_session),
 ) -> BundleOut:
     await replace_bundle_members(session, ctx.bundle, body, actor=ctx.login_id)
+    await session.commit()
+    return await build_bundle_out(session, ctx.bundle, ctx.login_id)
+
+
+@router.get("/{bundle_id}/review/readiness", response_model=Readiness)
+async def get_review_readiness(
+    ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
+) -> Readiness:
+    return await compute_readiness(session, ctx.bundle)
+
+
+@router.put("/{bundle_id}/semantic-checks", response_model=BundleOut)
+async def put_semantic_checks(
+    body: SemanticChecksUpdateIn,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> BundleOut:
+    await update_semantic_checks(session, ctx.bundle, revision=body.revision, checks=body.checks, actor=ctx.login_id)
+    await session.commit()
+    return await build_bundle_out(session, ctx.bundle, ctx.login_id)
+
+
+@router.post("/{bundle_id}/review/request", response_model=BundleOut)
+async def post_review_request(
+    body: ReviewRequestIn,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> BundleOut:
+    await request_review(session, ctx.bundle, revision=body.revision, actor=ctx.login_id)
+    await session.commit()
+    return await build_bundle_out(session, ctx.bundle, ctx.login_id)
+
+
+@router.post("/{bundle_id}/review/complete", response_model=BundleOut)
+async def post_review_complete(
+    body: ReviewRequestIn,
+    ctx: BundleContext = Depends(_require_reviewer),
+    session: AsyncSession = Depends(get_session),
+) -> BundleOut:
+    await complete_review(session, ctx.bundle, revision=body.revision, actor=ctx.login_id)
+    await session.commit()
+    return await build_bundle_out(session, ctx.bundle, ctx.login_id)
+
+
+@router.post("/{bundle_id}/review/return", response_model=BundleOut)
+async def post_review_return(
+    body: ReviewReasonIn,
+    ctx: BundleContext = Depends(_require_reviewer),
+    session: AsyncSession = Depends(get_session),
+) -> BundleOut:
+    await return_review(session, ctx.bundle, revision=body.revision, reason=body.reason, actor=ctx.login_id)
+    await session.commit()
+    return await build_bundle_out(session, ctx.bundle, ctx.login_id)
+
+
+@router.post("/{bundle_id}/review/reopen", response_model=BundleOut)
+async def post_review_reopen(
+    body: ReviewReasonIn,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> BundleOut:
+    await reopen_review(session, ctx.bundle, revision=body.revision, reason=body.reason, actor=ctx.login_id)
     await session.commit()
     return await build_bundle_out(session, ctx.bundle, ctx.login_id)
 

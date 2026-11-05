@@ -19,6 +19,7 @@ from app.sop.models import (
     Bundle,
     Document,
     Extraction,
+    ExtractionWarning,
     SourceBlock,
     SourceTable,
     TargetDoc,
@@ -56,6 +57,7 @@ class DocumentInfo:
     doc_version: str
     title: str
     file_name: str
+    status: str  # ready | rejected | failed — 검토 요청이 거절·실패 문서가 남았는지 가린다
     order: int  # 문서 순서(0부터) — 옛 문서 먼저, 같은 쪽 안에서는 id 순
 
 
@@ -249,7 +251,7 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int) -> BundleS
         documents={
             document.id: DocumentInfo(
                 id=document.id, side=document.side, doc_code=document.doc_code, doc_version=document.doc_version,
-                title=document.title, file_name=document.file_name, order=order,
+                title=document.title, file_name=document.file_name, status=document.status, order=order,
             )
             for order, document in enumerate(documents)
         },
@@ -364,3 +366,17 @@ async def load_bundle_progress(session: AsyncSession, bundle_ids: Collection[int
             lang_progress.total += count
             setattr(lang_progress, status, getattr(lang_progress, status) + count)
     return progress
+
+
+async def count_unacked_missing_text(session: AsyncSession, bundle_id: int) -> int:
+    """아직 닫지 않은 확인 필요 경고(추출 누락 의심) 수 — 문서마다 최신 추출의 것만 센다(이전 추출은 읽기 전용 이력)."""
+    count = await session.scalar(
+        select(func.count())
+        .select_from(ExtractionWarning)
+        .where(
+            ExtractionWarning.extraction_id.in_(_select_latest_extractions(Document.bundle_id == bundle_id)),
+            ExtractionWarning.needs_ack.is_(True),
+            ExtractionWarning.acked_at.is_(None),
+        )
+    )
+    return count or 0
