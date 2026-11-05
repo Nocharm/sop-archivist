@@ -8,7 +8,7 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
 
 ## v0.2.0 — 2026-11-06
 
-- **범위**: SOP 재구성 **결정적 코어**(AI 없음, 구현 계획 1). 사람이 API만으로 두 입구(입구 1 배정, 입구 2 새 문서와 짝 맞추기)를 업로드부터 검토 완료까지 끝까지 처리할 수 있다. **프런트 화면은 아직 없다** — Claude Design 단계에서 붙인다(그래서 서버에 올려도 화면에서 달라지는 것은 상단 바 버전뿐이고, 기능은 `/api/bundles…`로만 쓴다). AI 분류·번역·짝 제안은 계획 2다. 검증은 합성 SOP(`SYNTHETIC_` 파일)로만 했고 실제 SOP·사내 모델로는 시험하지 않았다. 설계: `docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`, 계획: `docs/superpowers/plans/2026-11-05-sop-restructuring-plan1-core.md`.
+- **범위**: SOP 재구성 **결정적 코어**(AI 없음, 구현 계획 1). 사람이 API만으로 두 입구(입구 1 배정, 입구 2 새 문서와 짝 맞추기)를 업로드부터 검토 완료까지 끝까지 처리할 수 있다. **프런트 화면은 아직 없다** — Claude Design 단계에서 붙인다(그래서 서버에 올려도 화면에서 달라지는 것은 상단 바 버전과, 홈 "내 권한"·관리 > 권한 관리 화면에 새 권한 3개가 더 보이는 것뿐이고, SOP 기능은 `/api/bundles…`로만 쓴다). AI 분류·번역·짝 제안은 계획 2다. 검증은 합성 SOP(`SYNTHETIC_` 파일)로만 했고 실제 SOP·사내 모델로는 시험하지 않았다. 설계: `docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`, 계획: `docs/superpowers/plans/2026-11-05-sop-restructuring-plan1-core.md`.
 - **주요 변경**:
   - 묶음·권한: 묶음(작업 중·검토 대기·검토 완료)과 멤버(작성자·검토자), 작업 기록, 관리자용 묶음 메타 목록(`/api/admin/bundles`). 권한 키 3개 추가(`bundle.create`·`bundle.admin`·`guideline.manage`, 모두 7개). 묶음 내용은 멤버만 본다(시스템 관리자도 비멤버면 404). 동시 편집은 대상별 `revision`이고 충돌은 409와 `current_revision`을 돌려준다.
   - 업로드·추출: DOCX 메인 추출기(원문 글자·위치 불변 블록, 머리말·각주·텍스트 상자·병합 칸 처리), 텍스트 PDF 보조 추출기, MarkItDown 누락 대조("추출 누락 의심" 경고를 사람이 하나씩 닫는다). 추출은 시간·메모리 한도를 건 별도 프로세스(spawn 자식)에서 돌고, 암호·변경 추적·altChunk·스캔 PDF·상한 초과는 사유와 함께 거절한다.
