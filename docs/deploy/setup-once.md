@@ -151,8 +151,8 @@ docker compose up -d backend && docker compose restart proxy
 
 브라우저에서 `http://<server-ip>:7777`로 접속해 `APP_SYSADMINS`에 넣은 계정으로 로그인한다.
 
-- 홈이 열리고 상단 바에 `SOP Archivist v0.1.0`이 보인다.
-- HR 첫 동기화 전이므로 이름·부서는 비어 있다(정상). 그래도 시스템 관리자라 권한 4개가 모두 보이고 상단 바에 관리 메뉴가 있다.
+- 홈이 열리고 상단 바에 `SOP Archivist v<배포한 버전>`(`CHANGELOG.md` 최신 항목)이 보인다.
+- HR 첫 동기화 전이므로 이름·부서는 비어 있다(정상). 그래도 시스템 관리자라 권한 7개가 모두 보이고 상단 바에 관리 메뉴가 있다.
 - 로그인이 안 되면 [`deploy.md`](deploy.md) §4 트러블슈팅 표를 본다. 대개 A5 Keycloak 항목(redirect URI, Web origins, PKCE 필수 해제)이다.
 
 ### A8. 직원 디렉터리 첫 동기화 (HR)
