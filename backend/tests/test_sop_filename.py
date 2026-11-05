@@ -36,3 +36,11 @@ def test_parse_file_name_leaves_values_longer_than_the_column_blank() -> None:
     parsed = parse_file_name(f"{long_code}.docx")
     assert parsed.doc_code == ""
     assert parsed.title == long_code
+
+
+def test_parse_file_name_cuts_the_title_to_the_column_after_nfc() -> None:
+    # NFC는 글자 수를 늘릴 수 있다(악보 기호 하나가 세 글자로 풀린다) — 255자 이름도 제목 칸 500자를 넘지 않게 자른다
+    name = "\U0001d160" * 250 + ".docx"
+    assert len(name) == 255
+
+    assert len(parse_file_name(name).title) == 500

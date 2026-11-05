@@ -350,6 +350,34 @@ def test_docx_long_xml_path_is_shortened() -> None:
     assert table.xml_path.endswith("/customXml[1]/tbl[1]")
 
 
+def test_docx_too_long_image_part_is_dropped_with_a_flag() -> None:
+    # source_blocks.image_part는 200자 — 더 긴 관계 대상(조작한 DOCX)은 저장하지 않고 블록에 표시만 남긴다(문단·칸 그림 모두)
+    too_long, longest = "a" * 190 + ".png", "b" * 185 + ".png"  # word/media/ 를 붙이면 205자, 200자
+    body = (
+        f"<w:p>{make_drawing_run(too_long)}</w:p>"
+        '<w:tbl><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid><w:tr>'
+        f"<w:tc><w:p>{make_drawing_run(too_long)}</w:p></w:tc></w:tr></w:tbl>"
+        f"<w:p>{make_drawing_run(longest)}</w:p>"
+    )
+
+    blocks = _read(body, media={too_long: TINY_PNG, longest: TINY_PNG})
+
+    assert [(b.image_part, b.flags) for b in blocks if b.kind == "figure"] == [
+        (None, ("image_part_too_long",)),
+        (None, ("image_part_too_long",)),
+        (f"word/media/{longest}", ()),
+    ]
+
+
+def test_docx_long_clause_number_label_fits_the_column() -> None:
+    # source_blocks.section_label은 200자 — 조항 번호로 쓰는 앞머리 숫자 묶음이 그보다 길어도 잘라 넣는다
+    number = ".".join(["1"] * 150)
+
+    blocks = _read(p(f"{number} 제목", "Heading1") + p("본문"))
+
+    assert [b.section_label for b in blocks] == [number[:200], number[:200]]
+
+
 def test_docx_headings_and_section_labels() -> None:
     body = (
         p("5. 절차", "Heading1")

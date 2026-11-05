@@ -40,6 +40,7 @@ KIND_PARAGRAPH, KIND_TABLE_CELL, KIND_FIGURE = BLOCK_KINDS
 FLAG_AUTO_NUMBERING = "auto_numbering"
 FLAG_CLAUSE_NUMBER = "clause_number"
 FLAG_MERGED_CELL = "merged_cell"
+FLAG_IMAGE_PART_TOO_LONG = "image_part_too_long"
 WARNING_MERGED_CELL_CONTENT = "merged_cell_content"
 
 DOCUMENT_PART = "word/document.xml"
@@ -49,6 +50,7 @@ RATIO_CHECK_MIN_BYTES = 1024 * 1024
 # 쪽 나눔 정보가 전혀 없을 때 한 쪽으로 치는 글자 수 — 추정 쪽(estimated)임을 함께 표시한다
 ESTIMATED_CHARS_PER_PAGE = 1800
 SECTION_LABEL_MAX_CHARS = 200  # source_blocks.section_label 길이
+IMAGE_PART_MAX_CHARS = 200  # source_blocks.image_part 길이
 XML_PATH_MAX_CHARS = 500  # source_blocks·source_tables.xml_path 길이
 XML_PATH_ELLIPSIS = "/…/"
 NO_PAGE_MARKS = (0, 0)  # 본문 밖 부분 — 쪽을 매기지 않으므로 값은 쓰이지 않는다
@@ -854,7 +856,8 @@ class _BlockWriter:
         if not stripped:
             return
         number = _LABEL_NUMBER_RE.match(stripped)
-        self._section_label = number.group(1) if number is not None else stripped[:SECTION_LABEL_MAX_CHARS]
+        # 앞머리 숫자 묶음도 컬럼보다 길 수 있다("1.1.1…") — 넘치면 Postgres 쓰기가 실패해 업로드가 500이 된다
+        self._section_label = (number.group(1) if number is not None else stripped)[:SECTION_LABEL_MAX_CHARS]
 
     def _get_page(self, marks: tuple[int, int]) -> int:
         rendered, manual = marks
@@ -879,6 +882,9 @@ class _BlockWriter:
         image_part: str | None = None,
         flags: tuple[str, ...] = (),
     ) -> None:
+        if image_part is not None and len(image_part) > IMAGE_PART_MAX_CHARS:
+            # 컬럼보다 긴 관계 대상은 조작한 파일이다 — 잘라 다른 경로를 가리키지 않고, 그림 파일 없이 표시만 남긴다
+            image_part, flags = None, (*flags, FLAG_IMAGE_PART_TOO_LONG)
         page = None
         if record.in_body:
             page = self._get_page(record.marks)

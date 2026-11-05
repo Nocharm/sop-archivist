@@ -17,7 +17,8 @@ __all__ = ["Base", "SessionLocal", "engine", "get_session", "run_migrations"]
 # alembic.ini는 패키지 위치 기준으로 찾는다 — 프로세스 cwd(컨테이너·서비스 매니저마다 다름)에 기대지 않는다.
 _ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
 
-engine = create_async_engine(settings.database_url)
+# hide_parameters: DB 오류 메시지에 바인딩 값([parameters: …])을 싣지 않는다 — 값이 SOP 원문일 수 있고 500의 트레이스백은 로그에 남는다
+engine = create_async_engine(settings.database_url, hide_parameters=True)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 if engine.dialect.name == "sqlite":
