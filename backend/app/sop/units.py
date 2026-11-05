@@ -42,7 +42,8 @@ def compute_display_id(document: Document, unit: Unit) -> str:
 async def create_initial_units(session: AsyncSession, document: Document, extraction: Extraction) -> None:
     """추출 직후 단위를 만든다(커밋은 부르는 쪽). local_no는 정렬 키 순서로 1부터.
 
-    옛 문서는 단위마다 미배정 판단 행을, 한/영 연달아 배치면 코드 짝(제안)을 함께 만든다. 10만 블록 문서도 묶음 INSERT로 쓴다.
+    옛 문서는 단위마다 미배정 판단 행을, 새 문서는 입구 2 새 문장을, 한/영 연달아 배치면 코드 짝(제안)을 함께 만든다.
+    10만 블록 문서도 묶음 INSERT로 쓴다.
     """
     block_rows = await session.execute(
         select(
@@ -74,6 +75,11 @@ async def create_initial_units(session: AsyncSession, document: Document, extrac
         await session.execute(
             insert(UnitDecision), [{"unit_id": unit_id, "bundle_id": document.bundle_id} for unit_id in unit_ids]
         )
+    else:
+        # match → detach → groups → units로 이어지는 순환 import라 여기서 부른다
+        from app.sop.match import create_new_doc_targets
+
+        await create_new_doc_targets(session, document)
     if document.language_layout == INTERLEAVED_LAYOUT:
         await _create_code_pairs(session, document.id, extraction.id)
 
