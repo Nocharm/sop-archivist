@@ -1,4 +1,4 @@
-"""떼어 내기 — 판단을 미배정으로, 출처 연결을 떼고, 같은 관계 묶음의 나머지는 보류로 돌린다(배정 지우기·쪼개기 편집·문서 삭제 공용, 스펙 §7.5)."""
+"""떼어 내기 — 판단을 미배정으로, 출처 연결을 떼고, 같은 관계 묶음의 나머지는 보류로 돌린다(배정 지우기·쪼개기 편집·문서 삭제 공용, 새 문장 쪽은 칸 다시 묶기, 스펙 §7.5)."""
 
 from collections import defaultdict
 from collections.abc import Collection
@@ -83,14 +83,15 @@ async def detach_units(
     *,
     bundle_id: int,
     unit_ids: Collection[int],
-    cause: Literal["retired", "cleared"],
+    cause: Literal["retired", "cleared", "regrouped"],
     actor: str,
 ) -> DetachReport:
     """단위(와 묶인 칸 문장)를 관계 묶음에서 떼어 낸다. 커밋은 호출부가 한다.
 
     1) 연결 요소를 먼저 구하고 2) 판단이 있던 단위는 스냅숏을 남겨 미배정으로, 3) 출처 연결을 떼고(은퇴하는 새 문서 단위면 그
     입구 2 새 문장도 지운다), 4) 출처가 다 빠진 새 문장은 옛 단위에서 온 것이면 지우고 입구 2 것이면 미배정으로, 5) 나머지는 보류.
-    다른 작성자가 확정한 것을 조용히 날리지 않고 사람이 다시 보게 하려는 규칙이다.
+    다른 작성자가 확정한 것을 조용히 날리지 않고 사람이 다시 보게 하려는 규칙이다. cause는 이력에 남는 이유다(regrouped는 칸
+    문장이 다른 표·행으로 다시 묶인 것).
     """
     given = set(unit_ids)
     cell_rows = await select_in_chunks(
@@ -184,6 +185,47 @@ async def detach_units(
     return DetachReport(
         reset_unit_ids=reset_unit_ids, deleted_target_ids=sorted(deleted),
         held_unit_ids=held_unit_ids, held_target_ids=held_target_ids,
+    )
+
+
+async def detach_targets(session: AsyncSession, *, target_ids: Collection[int]) -> DetachReport:
+    """새 문장 쪽 떼어 내기(R32) — 출처 연결을 떼고 미배정이 아닌 것은 미배정으로, 같은 관계 묶음의 나머지는 보류. 커밋은 호출부가 한다.
+
+    새 문서 칸 문장이 다른 표·행으로 다시 묶이면 그 칸 새 문장은 새 부모 아래로 옮겨진다. 확정된 채 옮기면 표를 반만 확정한
+    꼴이 되므로 미배정으로 돌리고, 이어져 있던 옛 단위·새 문장은 지우지 않고 사람이 다시 보게 보류로 둔다.
+    """
+    given = set(target_ids)
+    component_units, component_targets = await collect_component(session, unit_ids=(), target_ids=given)
+    targets = {
+        row[0].id: row[0]
+        for row in await select_in_chunks(
+            session, lambda chunk: select(TargetSentence).where(TargetSentence.id.in_(chunk)), component_targets
+        )
+    }
+    decisions = {
+        row[0].unit_id: row[0]
+        for row in await select_in_chunks(
+            session, lambda chunk: select(UnitDecision).where(UnitDecision.unit_id.in_(chunk)), component_units
+        )
+    }
+    for chunk in iter_chunks(given):
+        await session.execute(delete(TargetSource).where(TargetSource.target_id.in_(chunk)))
+    for target_id in sorted(given):
+        if targets[target_id].status != UNASSIGNED:
+            reset_target(targets[target_id])
+    held_unit_ids = [
+        unit_id for unit_id in sorted(component_units)
+        if unit_id in decisions and decisions[unit_id].status != UNASSIGNED
+    ]
+    held_target_ids = [
+        target_id for target_id in sorted(component_targets - given) if targets[target_id].status != UNASSIGNED
+    ]
+    for unit_id in held_unit_ids:
+        _hold(decisions[unit_id])
+    for target_id in held_target_ids:
+        _hold(targets[target_id])
+    return DetachReport(
+        reset_unit_ids=[], deleted_target_ids=[], held_unit_ids=held_unit_ids, held_target_ids=held_target_ids
     )
 
 
