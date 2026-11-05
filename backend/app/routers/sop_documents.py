@@ -21,7 +21,7 @@ from app.sop.events import record_event
 from app.sop.ingest import get_max_file_bytes, ingest_upload
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
 from app.sop.models import Document, DocumentFile, Extraction, ExtractionWarning, SourceBlock
-from app.sop.tobe import MAX_DB_INT, remove_match_doc
+from app.sop.tobe import MAX_DB_INT, remove_match_doc, rename_match_doc, temp_match_code
 
 router = APIRouter(prefix="/api/bundles", tags=["sop-documents"])
 
@@ -223,6 +223,11 @@ async def update_document(
         if getattr(document, name) != value
     }
     if changes:  # 바뀐 게 없으면 revision을 올리지 않고 기록도 남기지 않는다
+        if "doc_code" in changes and document.target_doc_id is not None:
+            # 새 문서의 번호는 To-Be 목록 줄 번호이기도 하다 — 비우면 다시 임시 번호로 돌아간다
+            await rename_match_doc(
+                session, bundle, document.target_doc_id, changes["doc_code"] or temp_match_code(document.id)
+            )
         for name, value in changes.items():
             setattr(document, name, value)
         document.revision += 1
