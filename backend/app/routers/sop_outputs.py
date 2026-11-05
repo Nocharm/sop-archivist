@@ -1,23 +1,27 @@
-"""결과물 API — 결과물 A·B·C·요약 숫자 읽기(멤버, 모든 상태)와 결과물 C 순서 바꾸기(작성자·작업 중).
+"""결과물 API — 결과물 A·B·C·요약 숫자 읽기와 Excel 내보내기(멤버, 모든 상태), 결과물 C 순서 바꾸기(작성자·작업 중).
 
 계산은 app/sop/outputs.py의 순수 함수, 재료는 app/sop/snapshot.py가 표마다 질의 한 번으로 읽는다.
 """
 
 import asyncio
+import logging
 from collections import Counter, defaultdict
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.clock import now
 from app.db import get_session
+from app.routers.sop_documents import build_content_disposition
 from app.sop.constants import MEMBER_ROLES
 from app.sop.decisions import DbId
 from app.sop.detach import ORIGIN_NEW_DOC
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
+from app.sop.excel_export import GUIDELINE_VERSION_UNSET, ExportMeta, build_export_file_name, build_workbook
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
 from app.sop.models import Bundle, TargetDoc, TargetSentence, WiStep
 from app.sop.outputs import (
@@ -32,11 +36,13 @@ from app.sop.outputs import (
 )
 from app.sop.snapshot import load_bundle_snapshot
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/bundles", tags=["sop-outputs"])
 
 _require_author = require_bundle_role("author")
 _require_member = require_bundle_role(*MEMBER_ROLES)
 
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 MAX_ORDER_ITEMS = 20000  # 순서 바꾸기 한 번에 싣는 새 문장 수 — 새 문서 하나의 새 문장 전부가 들어가는 크기
 
 
@@ -108,6 +114,32 @@ async def get_summary(
     snap = await load_bundle_snapshot(session, ctx.bundle.id)
     ko, en = await asyncio.to_thread(lambda: (build_summary(snap, "ko"), build_summary(snap, "en")))
     return SummaryOut(ko=ko, en=en)
+
+
+@router.get("/{bundle_id}/export.xlsx")
+async def get_export(
+    lang: Literal["ko", "en"] = Query(),
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """언어별 Excel 파일 — 작업 중·검토 중·완료 어느 상태에서나 받고, 받은 사실은 작업 기록에 남는다."""
+    bundle = ctx.bundle
+    snap = await load_bundle_snapshot(session, bundle.id)
+    meta = ExportMeta(exported_by=ctx.login_id, exported_at=now(), guideline_version=GUIDELINE_VERSION_UNSET)
+    try:
+        content = await asyncio.to_thread(build_workbook, snap, lang, meta)
+    except Exception as error:
+        # 파일 생성 실패는 저장 실패와 다른 오류로 알린다(스펙 §7.14). 예외 메시지에 원문이 실릴 수 있어 클래스 이름만 남긴다
+        logger.error("export failed: bundle=%d lang=%s error=%s", bundle.id, lang, type(error).__name__)
+        raise_rule(500, "export_failed")
+    file_name = build_export_file_name(bundle.title, lang, meta.exported_at)
+    record_event(
+        session, bundle_id=bundle.id, actor=ctx.login_id, action="export", target_type="bundle",
+        target_ids=[bundle.id], reason=lang,
+    )
+    await session.commit()
+    headers = {"Content-Disposition": build_content_disposition(file_name)}
+    return Response(content=content, media_type=XLSX_MEDIA_TYPE, headers=headers)
 
 
 async def reorder_targets(
