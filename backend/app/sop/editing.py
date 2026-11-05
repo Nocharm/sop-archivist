@@ -144,6 +144,8 @@ class _Block:
     seq: int
     text: str
     kind: str
+    table_id: int | None
+    row_index: int | None
 
 
 @dataclass
@@ -169,6 +171,27 @@ class _Change:
     revive: list[int] = field(default_factory=list)
     drafts: list[_Draft] = field(default_factory=list)
     langs: dict[int, tuple[str, str]] = field(default_factory=dict)
+    # 은퇴시킬 단위들의 범위 — 앞으로 가는 편집만 채운다(is_unchanged가 새 단위 범위와 견준다)
+    retired_spans: list[tuple[Span, ...]] = field(default_factory=list)
+
+    def is_unchanged(self) -> bool:
+        """새 단위들의 범위가 은퇴시킬 단위들의 범위와 (모음으로) 같고 언어도 그대로면 바뀌는 게 없다.
+
+        경계를 처음 자리나 사이 빈 글자에 다시 놓거나 단위 하나의 범위를 그대로 골라 만든 경우다 — 단위는 범위 그 자체라
+        (스펙 §6.4) 같은 범위를 새 ID로 다시 만들면 표시 ID가 바뀌고 확정 판단이 이유 없이 떼어진다.
+        """
+        if self.revive or self.langs:
+            return False
+        return Counter(tuple(draft.spans) for draft in self.drafts) == Counter(self.retired_spans)
+
+
+def _build_replacement(units: Iterable[Unit], drafts: list[_Draft]) -> _Change:
+    """옛 단위들을 은퇴시키고 drafts를 만드는 변경."""
+    replaced = list(units)
+    return _Change(
+        retire=sorted(unit.id for unit in replaced), drafts=drafts,
+        retired_spans=[tuple(to_spans(unit.spans)) for unit in replaced],
+    )
 
 
 def _get_position(unit: Unit) -> tuple[int, int, int]:
@@ -210,12 +233,13 @@ async def _load_blocks(
 ) -> dict[int, _Block]:
     rows = await select_in_chunks(
         session,
-        lambda chunk: select(SourceBlock.id, SourceBlock.seq, SourceBlock.text, SourceBlock.kind).where(
-            SourceBlock.id.in_(chunk), SourceBlock.extraction_id == extraction_id
-        ),
+        lambda chunk: select(
+            SourceBlock.id, SourceBlock.seq, SourceBlock.text, SourceBlock.kind, SourceBlock.table_id,
+            SourceBlock.row_index,
+        ).where(SourceBlock.id.in_(chunk), SourceBlock.extraction_id == extraction_id),
         block_ids,
     )
-    return {block_id: _Block(seq, text, kind) for block_id, seq, text, kind in rows}
+    return {block_id: _Block(*fields) for block_id, *fields in rows}
 
 
 async def _load_unit_blocks(
@@ -227,12 +251,19 @@ async def _load_unit_blocks(
 def _build_draft(
     like: Unit, spans: list[Span], blocks: Mapping[int, _Block], *, kind: str | None = None, lang: str | None = None
 ) -> _Draft:
-    """like의 표·행·묶음을 물려받는 새 단위 — 자리는 첫 범위의 블록·시작, 언어는 주지 않으면 글자로 판정한다."""
+    """like의 묶음(그룹 단위)을 물려받는 새 단위 — 자리는 첫 범위의 블록·시작, 언어는 주지 않으면 글자로 판정한다.
+
+    칸 문장의 표·행 번호는 첫 범위 칸 블록의 것이다(R33) — 행을 넘어 합친 칸을 다시 나누면 조각마다 자기 행을 가져야
+    표를 행 단위로 나눌 때(Task 14) 칸이 제 행에 묶인다. 문장·제목은 like를 따른다(표 밖이라 없음).
+    """
+    kind = kind or like.kind
+    first = blocks[spans[0][0]]
+    is_cell = kind == "cell_sentence"
+    table_id, row_index = (first.table_id, first.row_index) if is_cell else (like.table_id, like.row_index)
     text = build_unit_text(spans, _get_texts(blocks))
     return _Draft(
-        kind=kind or like.kind, spans=spans, text=text, lang=lang or detect_language(text) or "",
-        table_id=like.table_id, row_index=like.row_index, group_unit_id=like.group_unit_id,
-        pos_seq=blocks[spans[0][0]].seq, pos_start=spans[0][1],
+        kind=kind, spans=spans, text=text, lang=lang or detect_language(text) or "", table_id=table_id,
+        row_index=row_index, group_unit_id=like.group_unit_id, pos_seq=first.seq, pos_start=spans[0][1],
     )
 
 
@@ -259,7 +290,7 @@ async def _plan_split(session: AsyncSession, extraction_id: ExtractionId, op: Sp
     left, right = cut_spans(spans, *located, _get_texts(blocks))
     if not left or not right:
         raise_rule(422, "empty_part", unit_id=unit.id)
-    return _Change(retire=[unit.id], drafts=[_build_draft(unit, left, blocks), _build_draft(unit, right, blocks)])
+    return _build_replacement([unit], [_build_draft(unit, left, blocks), _build_draft(unit, right, blocks)])
 
 
 async def _plan_merge(session: AsyncSession, extraction_id: ExtractionId, op: MergeOp) -> _Change:
@@ -281,7 +312,7 @@ async def _plan_merge(session: AsyncSession, extraction_id: ExtractionId, op: Me
     draft = _build_draft(
         units[0], join_close_spans(spans, _get_texts(blocks)), blocks, kind=_decide_merged_kind(units), lang=langs[0]
     )
-    return _Change(retire=sorted(unit.id for unit in units), drafts=[draft])
+    return _build_replacement(units, [draft])
 
 
 async def _plan_move_boundary(session: AsyncSession, extraction_id: ExtractionId, op: MoveBoundaryOp) -> _Change:
@@ -303,8 +334,8 @@ async def _plan_move_boundary(session: AsyncSession, extraction_id: ExtractionId
     new_left, new_right = [*left_spans[:-1], *head], [*tail, *right_spans[1:]]
     if not new_left or not new_right:
         raise_rule(422, "empty_part", unit_ids=[left.id, right.id])
-    return _Change(
-        retire=sorted(units), drafts=[_build_draft(left, new_left, blocks), _build_draft(right, new_right, blocks)]
+    return _build_replacement(
+        [left, right], [_build_draft(left, new_left, blocks), _build_draft(right, new_right, blocks)]
     )
 
 
@@ -336,7 +367,7 @@ async def _plan_carve(session: AsyncSession, extraction_id: ExtractionId, op: Ca
         before, after = split_around(to_spans(unit.spans), op.block_id, start, end, texts, seqs)
         drafts.extend(_build_draft(unit, part, blocks) for part in (before, after) if part)
     drafts.append(_build_draft(units[0], [carved], blocks, kind=_decide_merged_kind(units)))
-    return _Change(retire=sorted(unit.id for unit in units), drafts=drafts)
+    return _build_replacement(units, drafts)
 
 
 async def _plan_set_language(session: AsyncSession, extraction_id: ExtractionId, op: SetLanguageOp) -> _Change:
@@ -552,10 +583,14 @@ def _record(
 async def apply_edit(
     session: AsyncSession, document: Document, op: EditOp, *, confirm: bool, actor: str
 ) -> EditResult:
-    """편집 하나를 적용하고 기록한다 — 새 편집은 다시 하기 기록(undone)을 지운다. 바뀌는 게 없는 언어 바꾸기는 기록하지 않는다."""
+    """편집 하나를 적용하고 기록한다 — 새 편집은 다시 하기 기록(undone)을 지운다.
+
+    바뀌는 게 없는 편집(같은 언어로 바꾸기, 범위가 그대로인 경계 옮기기·골라 만들기)은 아무것도 쓰지 않는다 — 확인도
+    묻지 않고 revision·기록·다시 하기 기록도 그대로다.
+    """
     extraction_id = await get_latest_extraction_id(session, document.id)
     change = await _plan(session, extraction_id, op)
-    if not (change.retire or change.drafts or change.langs):
+    if change.is_unchanged():
         return EditResult(document_revision=document.revision, created_unit_ids=[], retired_unit_ids=[], detach=None)
     result = await _write_change(session, document, extraction_id, change, confirm=confirm, actor=actor)
     await session.execute(

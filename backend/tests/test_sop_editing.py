@@ -6,12 +6,21 @@ from typing import NamedTuple
 import httpx2
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.constants import COVER_KINDS, SYSTEM_HOLD_RELATED_CHANGED
 from app.sop.coverage import find_coverage_problems
-from app.sop.models import Bundle, Extraction, SourceBlock, TargetSentence, Unit, UnitDecisionHistory, UnitEdit
+from app.sop.models import (
+    Bundle,
+    Extraction,
+    SourceBlock,
+    SourceTable,
+    TargetSentence,
+    Unit,
+    UnitDecisionHistory,
+    UnitEdit,
+)
 from app.sop.segment import build_unit_text
 from tests.access_helpers import run_in_session, update_row
 from tests.docx_factory import build_docx, p, tbl
@@ -354,6 +363,64 @@ def test_move_boundary_and_carve(client: TestClient) -> None:
     reversed_range = _edit(client, fx.bundle_id, fx.doc["id"], {**carve, "start": 5, "end": 5})
     assert _code(blank) == (422, "empty_part")
     assert _code(reversed_range) == (422, "invalid_offset")
+
+
+def test_noop_boundary_edits_change_nothing(client: TestClient) -> None:
+    """경계를 제자리에 놓거나 단위 하나의 범위를 그대로 골라 만들면 범위가 같은 단위라 아무것도 쓰지 않는다.
+
+    확인도 묻지 않고(확정 판단이 그대로 남는다) 표시 ID·revision·되돌리기 기록(다시 하기 포함)도 그대로다.
+    """
+    fx = _setup(client)
+    record, check = find_unit(fx.view, RECORD), find_unit(fx.view, CHECK)
+    assign_as_is(client, fx.bundle_id, record, fx.sop_id, slot_key="purpose")
+    _ok(_split(client, fx, find_unit(fx.view, TWO_IN_ONE), len(FIRST)))
+    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
+    before = get_view(client, fx.bundle_id, fx.doc["id"])
+    block_id, start, end = record["spans"][0]
+    move = {"type": "move_boundary", "left_unit_id": record["id"], "right_unit_id": check["id"]}
+    carve = {"type": "carve", "block_id": block_id, "start": start}
+    # 처음 경계(왼쪽 끝), 사이 빈 글자 뒤(오른쪽 시작), 단위 범위 그대로, 뒤 빈 글자까지 고른 범위
+    ops = [{**move, "at": end}, {**move, "at": check["spans"][0][1]}, {**carve, "end": end}, {**carve, "end": end + 1}]
+
+    results = [_ok(_edit(client, fx.bundle_id, fx.doc["id"], op)) for op in ops]
+
+    assert results == [
+        {"document_revision": before["document"]["revision"], "created_unit_ids": [], "retired_unit_ids": [],
+         "detach": None}
+    ] * len(ops)
+    assert get_view(client, fx.bundle_id, fx.doc["id"]) == before
+    assert before["edits"] == {"can_undo": False, "can_redo": True}
+    assert _load_edit_rows(fx.doc["id"]) == [(1, "split", "undone")]
+    assert find_unit(before, RECORD)["status"] == "confirmed"
+
+
+def test_cell_pieces_take_row_from_their_block(client: TestClient) -> None:
+    """칸 문장 조각의 표·행 번호는 첫 범위 칸 블록의 것이다(R33) — 행을 넘어 합친 칸을 다시 나누면 조각마다 자기 행."""
+    fx = _setup(client, p(HEADING) + tbl([["합성 값 하나.", "Value one."], ["합성 값 둘.", "Value two."]]))
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+
+    async def _make_layout_table(session: AsyncSession) -> None:
+        # Task 14의 레이아웃 표 바꾸기 흉내 — 표 단위를 은퇴시키고 칸 문장의 묶음을 푼다
+        await session.execute(update(SourceTable).where(SourceTable.id == table["table_id"]).values(is_layout=True))
+        await session.execute(update(Unit).where(Unit.id == table["id"]).values(status="retired"))
+        await session.execute(update(Unit).where(Unit.group_unit_id == table["id"]).values(group_unit_id=None))
+        await session.commit()
+
+    run_in_session(_make_layout_table)
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    _ok(_merge(client, fx, find_unit(view, "합성 값 하나."), find_unit(view, "합성 값 둘.")))
+    merged = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), "합성 값 하나.\n합성 값 둘.")
+    assert (merged["kind"], merged["row_index"]) == ("cell_sentence", 0)
+
+    _ok(_split(client, fx, merged, len("합성 값 하나.\n")))
+
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    blocks = {block["id"]: block for block in view["blocks"]}
+    pieces = [find_unit(view, text) for text in ("합성 값 하나.", "합성 값 둘.")]
+    assert [(unit["table_id"], unit["row_index"], unit["group_unit_id"]) for unit in pieces] == [
+        (table["table_id"], 0, None), (table["table_id"], 1, None),
+    ]
+    assert all(unit["row_index"] == blocks[unit["block_id"]]["row_index"] for unit in pieces)
 
 
 # ── 되돌리기·다시 하기 ────────────────────────────────────────────────────────
