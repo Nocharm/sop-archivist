@@ -1,4 +1,5 @@
-"""문서 API — 업로드(옛/새)·목록·정보 고치기·삭제·원문 대조 데이터(view)·원본과 그림 내려받기·추출 경고 확인. 쓰기는 작성자가 작업 중일 때만 한다."""
+"""문서 API — 업로드(옛/새)·목록·정보 고치기·삭제·원문 대조 데이터(view)·원본과 그림 내려받기·추출 경고 확인·쪼개기 편집과
+되돌리기·경계 확인. 쓰기는 작성자가 작업 중일 때만 한다(편집 규칙은 app/sop/editing.py)."""
 
 import asyncio
 import zipfile
@@ -17,6 +18,17 @@ from app.db import get_session
 from app.routers.admin import KstDatetime
 from app.sop.constants import LANGUAGE_LAYOUTS, MEMBER_ROLES
 from app.sop.detach import detach_units, find_units_needing_confirm
+from app.sop.editing import (
+    BoundaryIn,
+    BoundaryOut,
+    EditIn,
+    EditResult,
+    EditStepIn,
+    apply_edit,
+    redo_edit,
+    set_boundary_confirmed,
+    undo_edit,
+)
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
 from app.sop.ingest import get_max_file_bytes, ingest_upload
@@ -460,6 +472,71 @@ async def get_document_view(
 ) -> DocumentViewOut:
     document = await _get_document(session, ctx.bundle.id, doc_id)
     return await build_document_view(session, document)
+
+
+async def _lock_editable_document(
+    session: AsyncSession, ctx: BundleContext, doc_id: int, revision: int | None
+) -> Document:
+    """쪼개기 편집 앞 검사 — 묶음을 잠그고 문서를 읽어 revision(주면)과 작업 중인지 본다. 편집과 같은 트랜잭션이다."""
+    await lock_bundle(session, ctx.bundle)
+    document = await _get_document(session, ctx.bundle.id, doc_id)
+    if revision is not None:
+        check_revision("document", document.id, revision, document.revision)
+    ensure_editable(ctx.bundle)
+    return document
+
+
+@router.post("/{bundle_id}/documents/{doc_id}/edits", response_model=EditResult)
+async def edit_units(
+    body: EditIn,
+    doc_id: IdPath,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> EditResult:
+    document = await _lock_editable_document(session, ctx, doc_id, body.revision)
+    result = await apply_edit(session, document, body.op, confirm=body.confirm, actor=ctx.login_id)
+    await session.commit()
+    return result
+
+
+@router.post("/{bundle_id}/documents/{doc_id}/edits/undo", response_model=EditResult)
+async def undo_unit_edit(
+    body: EditStepIn,
+    doc_id: IdPath,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> EditResult:
+    document = await _lock_editable_document(session, ctx, doc_id, body.revision)
+    result = await undo_edit(session, document, confirm=body.confirm, actor=ctx.login_id)
+    await session.commit()
+    return result
+
+
+@router.post("/{bundle_id}/documents/{doc_id}/edits/redo", response_model=EditResult)
+async def redo_unit_edit(
+    body: EditStepIn,
+    doc_id: IdPath,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> EditResult:
+    document = await _lock_editable_document(session, ctx, doc_id, body.revision)
+    result = await redo_edit(session, document, confirm=body.confirm, actor=ctx.login_id)
+    await session.commit()
+    return result
+
+
+@router.post("/{bundle_id}/documents/{doc_id}/units/boundary", response_model=BoundaryOut)
+async def confirm_unit_boundaries(
+    body: BoundaryIn,
+    doc_id: IdPath,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> BoundaryOut:
+    # 경계 확인은 단위 집합을 바꾸지 않아 문서 revision을 싣지 않고 되돌리기 대상도 아니다
+    document = await _lock_editable_document(session, ctx, doc_id, None)
+    unit_ids = await set_boundary_confirmed(session, document, body.unit_ids, body.confirmed)
+    await session.commit()
+    return BoundaryOut(unit_ids=unit_ids, confirmed=body.confirmed)
 
 
 @router.get("/{bundle_id}/documents/{doc_id}/file")
