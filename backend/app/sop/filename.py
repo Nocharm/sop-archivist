@@ -16,6 +16,8 @@ _SPACES_RE = re.compile(r"\s+")
 # documents.doc_code·doc_version 길이 — 넘는 값을 잘라 다른 번호를 지어내지 않고 빈 칸으로 둔다
 MAX_CODE_CHARS = 100
 MAX_VERSION_CHARS = 50
+# documents·target_docs.title 길이 — 이름은 255자까지지만 NFC가 글자 수를 늘릴 수 있어(악보 기호 하나 → 셋) 제목은 잘라 넣는다
+MAX_TITLE_CHARS = 500
 
 
 @dataclass(frozen=True)
@@ -33,7 +35,7 @@ def parse_file_name(file_name: str) -> ParsedFileName:
     stem = _EXTENSION_RE.sub("", unicodedata.normalize("NFC", file_name)).replace("_", " ")
     doc_code, rest = _take_token(_CODE_RE, stem, MAX_CODE_CHARS)
     version, rest = _take_token(_VERSION_RE, rest, MAX_VERSION_CHARS)
-    return ParsedFileName(doc_code=doc_code, version=version, title=_clean_title(rest))
+    return ParsedFileName(doc_code=doc_code, version=version, title=_clean_title(rest)[:MAX_TITLE_CHARS])
 
 
 def _take_token(pattern: re.Pattern[str], text: str, max_chars: int) -> tuple[str, str]:

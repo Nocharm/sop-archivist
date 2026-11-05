@@ -54,8 +54,8 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_async_migrations() -> None:
-    # 마이그레이션 전용 일회성 엔진 — 앱 엔진(app.db.engine)과 풀을 공유하지 않는다.
-    connectable = create_async_engine(get_url(), poolclass=pool.NullPool)
+    # 마이그레이션 전용 일회성 엔진 — 앱 엔진(app.db.engine)과 풀을 공유하지 않는다. 오류 메시지에 바인딩 값을 싣지 않는 것은 같다.
+    connectable = create_async_engine(get_url(), poolclass=pool.NullPool, hide_parameters=True)
 
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
