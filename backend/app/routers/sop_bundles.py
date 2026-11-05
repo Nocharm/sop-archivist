@@ -360,7 +360,7 @@ async def update_members(
 async def get_review_readiness(
     ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
 ) -> Readiness:
-    return await compute_readiness(session, ctx.bundle)
+    return await compute_readiness(session, ctx.bundle, end_transaction=True)
 
 
 @router.put("/{bundle_id}/semantic-checks", response_model=BundleOut)

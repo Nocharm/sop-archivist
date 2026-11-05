@@ -189,27 +189,34 @@ async def _count_active_reviewers(session: AsyncSession, bundle_id: int) -> int:
     return count or 0
 
 
-async def compute_readiness(session: AsyncSession, bundle: Bundle) -> Readiness:
-    """검토 요청 조건을 지금 상태로 계산한다 — 질의 수는 단위 수와 무관하고, 개요마다 불리므로 원문 글자는 읽지 않는다."""
+async def compute_readiness(session: AsyncSession, bundle: Bundle, *, end_transaction: bool) -> Readiness:
+    """검토 요청 조건을 지금 상태로 계산한다 — 질의 수는 단위 수와 무관하고, 개요마다 불리므로 원문 글자는 읽지 않는다.
+
+    end_transaction=True(읽기 전용 경로)면 재료를 다 읽은 뒤 트랜잭션을 끝내 스냅숏의 묶음 행 공유 잠금을 놓고 계산한다.
+    검토 요청은 False — 묶음을 FOR UPDATE로 잠근 채 조건을 보고 이어서 쓰므로 여기서 끝내면 잠금이 풀린다.
+    """
     snap = await load_bundle_snapshot(session, bundle.id, include_text=False)
     unacked = await count_unacked_missing_text(session, bundle.id)
     reviewers = await _count_active_reviewers(session, bundle.id)
+    semantic_checks = dict(bundle.semantic_checks)
+    if end_transaction:
+        await session.commit()
     return await asyncio.to_thread(
         evaluate_readiness,
         snap,
-        semantic_checks=dict(bundle.semantic_checks),
+        semantic_checks=semantic_checks,
         unacked_missing_text=unacked,
         reviewer_count=reviewers,
     )
 
 
 async def get_next_action(session: AsyncSession, bundle: Bundle) -> NextAction:
-    """개요에 싣는 다음 행동 — 검토 중·완료는 조건을 계산하지 않고 상태만 본다."""
+    """개요에 싣는 다음 행동 — 검토 중·완료는 조건을 계산하지 않고 상태만 본다. 조건을 계산하면 읽기 트랜잭션을 끝낸다."""
     if bundle.status == "in_review":
         return "await_review"
     if bundle.status == "done":
         return "done"
-    return (await compute_readiness(session, bundle)).next_action
+    return (await compute_readiness(session, bundle, end_transaction=True)).next_action
 
 
 # --- 의미 검토 확인 ---
@@ -261,7 +268,7 @@ def _apply_transition(
 async def request_review(session: AsyncSession, bundle: Bundle, *, revision: int, actor: str) -> None:
     """작업 중 → 검토 중. 조건은 잠근 상태에서 다시 계산하고 막는 이유가 있으면 422 not_ready. 커밋은 호출부가 한다."""
     await _lock_for_transition(session, bundle, revision, "in_progress")
-    readiness = await compute_readiness(session, bundle)
+    readiness = await compute_readiness(session, bundle, end_transaction=False)
     if readiness.blockers:
         raise_rule(422, "not_ready", blockers=readiness.blockers)
     # 계획 2: 이 묶음의 대기 중인 AI 작업을 여기서 취소한다

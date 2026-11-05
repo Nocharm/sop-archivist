@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, defer
 
 from app.sop.constants import COVER_KINDS
+from app.sop.detach import UNASSIGNED
 from app.sop.groups import build_unit_order_key
 from app.sop.models import (
     Bundle,
@@ -186,19 +187,26 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
 
     include_text=False면 단위 글자와 새 문장의 확정·AI 글자를 DB에서 읽지 않고 빈 글로 채운다(원문 전체를 싣지 않고 구조·상태만
     필요한 검토 요청 조건용). 그 필드는 미적재 열이라 같은 세션에서 읽으면 안 되므로, 글자가 필요한 결과물은 기본값을 쓴다.
+
+    표마다 따로 읽으므로 먼저 묶음 행에 공유 잠금(FOR SHARE)을 건다 — 쓰기는 모두 같은 행을 FOR UPDATE로 먼저 잠그므로
+    Postgres READ COMMITTED에서도 질의들이 한 시점을 본다(sqlite는 잠금 구문이 없다). 잠금은 트랜잭션 끝까지 가므로 읽기 전용
+    경로는 읽은 뒤 바로 트랜잭션을 끝낸다. 잠금이 없는 sqlite를 위해 뒤 질의는 첫 질의가 읽은 추출로만 거른다.
     """
-    bundle = await session.get_one(Bundle, bundle_id)
-    documents = sorted(
-        await session.scalars(select(Document).where(Document.bundle_id == bundle_id)),
-        key=lambda document: (0 if document.side == "old" else 1, document.id),
-    )
-    latest = _select_latest_extractions(Document.bundle_id == bundle_id)
+    bundle_row = (
+        await session.execute(
+            select(Bundle.id, Bundle.title, Bundle.status, Bundle.is_synthetic, Bundle.created_by, Bundle.created_at)
+            .where(Bundle.id == bundle_id)
+            .with_for_update(read=True)
+        )
+    ).one()
+    documents, document_by_extraction = await _load_documents(session, bundle_id)
+    extraction_ids = list(document_by_extraction)
 
     tables = {
         table_id: TableInfo(table_id, table_index, n_rows, n_cols)
         for table_id, table_index, n_rows, n_cols in await session.execute(
             select(SourceTable.id, SourceTable.table_index, SourceTable.n_rows, SourceTable.n_cols).where(
-                SourceTable.extraction_id.in_(latest)
+                SourceTable.extraction_id.in_(extraction_ids)
             )
         )
     }
@@ -208,7 +216,7 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
                 SourceBlock.id, SourceBlock.extraction_id, SourceBlock.seq, SourceBlock.part, SourceBlock.kind,
                 SourceBlock.page, SourceBlock.page_basis, SourceBlock.section_label, SourceBlock.table_id,
                 SourceBlock.row_index, SourceBlock.col_index,
-            ).where(SourceBlock.extraction_id.in_(latest))
+            ).where(SourceBlock.extraction_id.in_(extraction_ids))
         )
     ).all()
     blocks = {
@@ -222,20 +230,14 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
     }
     block_by_seq = {(row.extraction_id, row.seq): row.id for row in block_rows}
 
-    documents_by_id = {document.id: document for document in documents}
-    unit_statement = (
-        select(Unit, Extraction.document_id)
-        .join(Extraction, Extraction.id == Unit.extraction_id)
-        .where(Unit.extraction_id.in_(latest), Unit.status == UNIT_ACTIVE)
-    )
+    unit_statement = select(Unit).where(Unit.extraction_id.in_(extraction_ids), Unit.status == UNIT_ACTIVE)
     if not include_text:
         unit_statement = unit_statement.options(defer(Unit.text))
-    unit_rows = await session.execute(unit_statement)
     units: dict[int, UnitInfo] = {}
-    for unit, document_id in unit_rows:
-        document = documents_by_id[document_id]
+    for unit in await session.scalars(unit_statement):
+        document = document_by_extraction[unit.extraction_id]
         units[unit.id] = UnitInfo(
-            id=unit.id, document_id=document_id, display_id=compute_display_id(document, unit), kind=unit.kind,
+            id=unit.id, document_id=document.id, display_id=compute_display_id(document, unit), kind=unit.kind,
             lang=unit.lang, text=unit.text if include_text else "", group_unit_id=unit.group_unit_id, table_id=unit.table_id,
             row_index=unit.row_index, order_key=build_unit_order_key(document, unit),
             block_id=unit.spans[0][0] if unit.spans else block_by_seq[(unit.extraction_id, unit.pos_seq)],
@@ -250,11 +252,16 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
         for decision in await session.scalars(select(UnitDecision).where(UnitDecision.bundle_id == bundle_id))
         if decision.unit_id in units  # 은퇴한 단위의 판단은 이력이다
     }
+    old_document_ids = {document.id for document in documents if document.side == "old"}
+    for unit in units.values():
+        if unit.document_id in old_document_ids and unit.id not in decisions:
+            # 옛 단위의 판단 행은 단위와 함께 생기므로, 없으면 단위를 읽은 뒤 문서가 지워진 것이다(잠금 없는 sqlite) — 미배정으로 읽는다
+            decisions[unit.id] = DecisionInfo(
+                unit_id=unit.id, disposition=UNASSIGNED, move_target_code="", reason="", status=UNASSIGNED,
+                hold_reason="", confirmed_by=None, confirmed_at=None,
+            )
     return BundleSnapshot(
-        bundle=BundleInfo(
-            id=bundle.id, title=bundle.title, status=bundle.status, is_synthetic=bundle.is_synthetic,
-            created_by=bundle.created_by, created_at=bundle.created_at,
-        ),
+        bundle=BundleInfo(**bundle_row._asdict()),
         documents={
             document.id: DocumentInfo(
                 id=document.id, side=document.side, doc_code=document.doc_code, doc_version=document.doc_version,
@@ -269,6 +276,19 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
         targets=await _load_targets(session, bundle_id, units.keys(), include_text),
         target_docs=await _load_target_docs(session, bundle_id),
     )
+
+
+async def _load_documents(session: AsyncSession, bundle_id: int) -> tuple[list[Document], dict[int, Document]]:
+    """묶음 문서(옛 문서 먼저, 같은 쪽 안에서는 id 순)와 문서마다 최신 추출 id → 문서 — 한 질의라 둘이 같은 시점이다.
+
+    다시 추출하면 이전 추출은 읽기 전용으로 남으므로 결과물은 최신 추출만 본다(설계 §6.3). 추출이 없는 문서(거절·실패)는 목록에만 있다.
+    """
+    latest = select(func.max(Extraction.id)).where(Extraction.document_id == Document.id).scalar_subquery()
+    rows = (await session.execute(select(Document, latest).where(Document.bundle_id == bundle_id))).tuples().all()
+    documents = sorted(
+        (document for document, _ in rows), key=lambda document: (0 if document.side == "old" else 1, document.id)
+    )
+    return documents, {extraction_id: document for document, extraction_id in rows if extraction_id is not None}
 
 
 async def _load_targets(

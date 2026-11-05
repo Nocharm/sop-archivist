@@ -34,7 +34,7 @@ from app.sop.outputs import (
     build_output_c,
     build_summary,
 )
-from app.sop.snapshot import load_bundle_snapshot
+from app.sop.snapshot import BundleSnapshot, load_bundle_snapshot
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/bundles", tags=["sop-outputs"])
@@ -76,13 +76,20 @@ class TargetOrderOut(BaseModel):
     items: list[OrderItemOut]
 
 
+async def _load_snapshot_for_read(session: AsyncSession, bundle_id: int) -> BundleSnapshot:
+    """읽기 전용 결과물 재료 — 다 읽으면 트랜잭션을 끝내 묶음 행 공유 잠금을 놓는다(스레드 계산 동안 쓰기를 막지 않게)."""
+    snap = await load_bundle_snapshot(session, bundle_id)
+    await session.commit()
+    return snap
+
+
 @router.get("/{bundle_id}/outputs/a", response_model=list[ARow])
 async def get_output_a(
     lang: Literal["ko", "en"] = Query(),
     ctx: BundleContext = Depends(_require_member),
     session: AsyncSession = Depends(get_session),
 ) -> list[ARow]:
-    snap = await load_bundle_snapshot(session, ctx.bundle.id)
+    snap = await _load_snapshot_for_read(session, ctx.bundle.id)
     # 순수 계산이라 큰 묶음이 이벤트 루프를 막지 않게 스레드에서 돈다
     return await asyncio.to_thread(build_output_a, snap, lang)
 
@@ -93,7 +100,7 @@ async def get_output_b(
     ctx: BundleContext = Depends(_require_member),
     session: AsyncSession = Depends(get_session),
 ) -> FlowGraph:
-    snap = await load_bundle_snapshot(session, ctx.bundle.id)
+    snap = await _load_snapshot_for_read(session, ctx.bundle.id)
     return await asyncio.to_thread(build_output_b, snap, lang)
 
 
@@ -103,7 +110,7 @@ async def get_output_c(
     ctx: BundleContext = Depends(_require_member),
     session: AsyncSession = Depends(get_session),
 ) -> COutput:
-    snap = await load_bundle_snapshot(session, ctx.bundle.id)
+    snap = await _load_snapshot_for_read(session, ctx.bundle.id)
     return await asyncio.to_thread(build_output_c, snap, lang)
 
 
@@ -111,7 +118,7 @@ async def get_output_c(
 async def get_summary(
     ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
 ) -> SummaryOut:
-    snap = await load_bundle_snapshot(session, ctx.bundle.id)
+    snap = await _load_snapshot_for_read(session, ctx.bundle.id)
     ko, en = await asyncio.to_thread(lambda: (build_summary(snap, "ko"), build_summary(snap, "en")))
     return SummaryOut(ko=ko, en=en)
 
@@ -124,7 +131,7 @@ async def get_export(
 ) -> Response:
     """언어별 Excel 파일 — 작업 중·검토 중·완료 어느 상태에서나 받고, 받은 사실은 작업 기록에 남는다."""
     bundle = ctx.bundle
-    snap = await load_bundle_snapshot(session, bundle.id)
+    snap = await _load_snapshot_for_read(session, bundle.id)
     meta = ExportMeta(exported_by=ctx.login_id, exported_at=now(), guideline_version=GUIDELINE_VERSION_UNSET)
     try:
         content = await asyncio.to_thread(build_workbook, snap, lang, meta)
