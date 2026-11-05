@@ -1,4 +1,4 @@
-"""결과물 A(문장 비교표)·B(맵핑 흐름)·C(새 문서 기준 묶음)와 언어별 요약 숫자 — 스냅숏만 받는 순수 함수 (스펙 §7.13).
+"""결과물 A(문장 비교표)·B(맵핑 흐름)·C(새 문서 기준 묶음)와 언어별 요약 숫자, 검토 요청 조건의 단위 재료 — 스냅숏만 받는 순수 함수 (스펙 §7.13·§7.15).
 
 세 결과물은 같은 재료(옛 단위·보낸 곳·새 문장)를 다른 방향에서 본다. 그래서 단위의 보낸 곳(_group_dests)·칸 순서(_plan_sections)·
 신규 새 문장(_list_new_targets)을 한 벌만 두고 A·B·C·요약이 함께 쓴다. 번역 새 문장(origin translation)은 계획 2라 싣지 않는다.
@@ -14,7 +14,15 @@ from app.routers.admin import KstDatetime
 from app.sop.constants import COVER_KINDS, SLOT_KEYS, WI_PARTS
 from app.sop.groups import TABLE_UNIT_KINDS, build_group_ids, collapse_table_members
 from app.sop.output_labels import LABELS, OutputLabels
-from app.sop.snapshot import NEUTRAL, BundleSnapshot, DocumentInfo, TargetDocInfo, TargetInfo, UnitInfo
+from app.sop.snapshot import (
+    NEUTRAL,
+    PROGRESS_LANGS,
+    BundleSnapshot,
+    DocumentInfo,
+    TargetDocInfo,
+    TargetInfo,
+    UnitInfo,
+)
 from app.sop.status import get_cover_status
 
 Lang = Literal["ko", "en"]
@@ -644,3 +652,23 @@ def build_summary(snap: BundleSnapshot, lang: Lang) -> Summary:
         translated=0,  # 번역 새 문장은 계획 2 — 계획 1에는 생기지 않는다
         confirmed_rate=round(confirmed / len(units), 4) if units else 0.0,
     )
+
+
+# --- 검토 요청 조건 재료 ---
+
+
+@dataclass(frozen=True)
+class ReviewFacts:
+    cover_status_counts: dict[str, Counter[str]]  # 언어 → 커버 상태 → 옛 커버 단위 수 (진행 숫자와 같은 규칙)
+    duplicate_unit_ids: list[int]  # 서로 다른 새 문서 둘 이상으로 간 판단 단위(칸 문장은 표·행 단위로 접는다), id 순
+
+
+def build_review_facts(snap: BundleSnapshot) -> ReviewFacts:
+    """검토 요청 조건이 읽는 단위 사실 — 요약·결과물과 같은 단위 집합(_list_cover_units)과 같은 보낸 곳 규칙(_group_dests)."""
+    index = _build_index(snap)
+    counts = {
+        lang: Counter(get_cover_status(unit, snap.decisions) for unit in _list_cover_units(index, lang))
+        for lang in PROGRESS_LANGS
+    }
+    duplicates = {_get_decision_unit_id(unit) for unit in index.old_units if len(_group_dests(index, unit)) >= 2}
+    return ReviewFacts(cover_status_counts=counts, duplicate_unit_ids=sorted(duplicates))
