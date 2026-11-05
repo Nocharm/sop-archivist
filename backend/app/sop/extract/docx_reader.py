@@ -39,6 +39,7 @@ KIND_PARAGRAPH, KIND_TABLE_CELL, KIND_FIGURE = BLOCK_KINDS
 FLAG_AUTO_NUMBERING = "auto_numbering"
 FLAG_CLAUSE_NUMBER = "clause_number"
 FLAG_MERGED_CELL = "merged_cell"
+WARNING_MERGED_CELL_CONTENT = "merged_cell_content"
 
 DOCUMENT_PART = "word/document.xml"
 OLE_SIGNATURE = b"\xd0\xcf\x11\xe0"  # 암호·DRM이 걸린 Office 파일은 ZIP이 아니라 OLE 복합 문서다
@@ -47,6 +48,8 @@ RATIO_CHECK_MIN_BYTES = 1024 * 1024
 # 쪽 나눔 정보가 전혀 없을 때 한 쪽으로 치는 글자 수 — 추정 쪽(estimated)임을 함께 표시한다
 ESTIMATED_CHARS_PER_PAGE = 1800
 SECTION_LABEL_MAX_CHARS = 200  # source_blocks.section_label 길이
+XML_PATH_MAX_CHARS = 500  # source_blocks·source_tables.xml_path 길이
+XML_PATH_ELLIPSIS = "/…/"
 # 공백 외에 "빈 글자"로 보는 보이지 않는 글자 — 쪼개기의 빈 글자 판정과 같은 집합
 INVISIBLE_CHARS = "​‌‍⁠﻿"
 NO_PAGE_MARKS = (0, 0)  # 본문 밖 부분 — 쪽을 매기지 않으므로 값은 쓰이지 않는다
@@ -161,6 +164,17 @@ class _PageMarks:
     def snapshot(self) -> tuple[int, int]:
         return (self.rendered, self.manual)
 
+    def restore(self, snapshot: tuple[int, int]) -> None:
+        self.rendered, self.manual = snapshot
+
+
+@dataclass
+class _FigureRef:
+    """문단 안 그림 요소 하나(w:drawing·w:pict·w:object)와 그 안의 첫 그림 관계 id."""
+
+    blip_rel_id: str | None = None
+    vml_rel_id: str | None = None  # a:blip이 없는 옛 VML 그림·OLE 미리보기
+
 
 @dataclass
 class _InlineRead:
@@ -169,10 +183,14 @@ class _InlineRead:
     marks: _PageMarks | None
     pieces: list[str] = field(default_factory=list)
     first_marks: tuple[int, int] | None = None  # 첫 글자를 만났을 때의 쪽 나눔 수 — 블록의 시작 쪽
-    has_figure: bool = False
-    blip_rel_id: str | None = None
-    vml_rel_id: str | None = None
+    figures: list[_FigureRef] = field(default_factory=list)
     textboxes: list[Element] = field(default_factory=list)
+
+    def get_first_image_rel_id(self) -> str | None:
+        """문단 그림 블록의 그림 — 문단 안 첫 a:blip, 없으면 첫 VML 그림."""
+        blips = (figure.blip_rel_id for figure in self.figures if figure.blip_rel_id)
+        vmls = (figure.vml_rel_id for figure in self.figures if figure.vml_rel_id)
+        return next(blips, None) or next(vmls, None)
 
     def add(self, text: str) -> None:
         if not text:
@@ -218,9 +236,24 @@ class _CellRecord:
     col_index: int
     grid_span: int
     row_span: int = 1  # 아래 행의 vMerge 이어지는 칸을 만날 때마다 는다
+    is_merge_continuation: bool = False  # 글이 남은 vMerge 이어지는 칸 — 제자리 블록으로 내고 경고한다
 
 
-_Record = _ParaRecord | _CellRecord
+@dataclass
+class _CellFigureRecord:
+    """표 칸 안 그림 하나 — 칸 블록 바로 뒤에 그림 블록으로 낸다(칸 안에서는 캡션을 묶지 않는다)."""
+
+    part: str
+    in_body: bool
+    xml_path: str
+    marks: tuple[int, int]
+    image_part: str | None
+    table_index: int
+    row_index: int
+    col_index: int
+
+
+_Record = _ParaRecord | _CellRecord | _CellFigureRecord
 
 
 def read_docx(data: bytes, limits: ExtractLimits) -> ExtractResult:
@@ -256,7 +289,8 @@ def read_docx(data: bytes, limits: ExtractLimits) -> ExtractResult:
             if note.get(W_TYPE) not in _SEPARATOR_NOTE_TYPES:
                 collector.read_container(note, note_path, context, None, NO_PAGE_MARKS, collector.records)
 
-    blocks = _build_blocks(collector.records, collector.marks)
+    writer = _build_blocks(collector.records, collector.marks)
+    blocks = writer.blocks
     if sum(len(block.text) for block in blocks) > limits.max_chars:
         raise ExtractionRejected("too_many_chars")
     if not any(block.kind == KIND_FIGURE or _has_visible_char(block.text) for block in blocks):
@@ -264,7 +298,7 @@ def read_docx(data: bytes, limits: ExtractLimits) -> ExtractResult:
     return ExtractResult(
         blocks=tuple(blocks),
         tables=tuple(sorted(collector.tables, key=lambda table: table.index)),
-        warnings=_build_warnings(blocks),
+        warnings=writer.build_warnings(),
     )
 
 
@@ -295,12 +329,20 @@ def _is_unsafe_entry(entry: zipfile.ZipInfo, limits: ExtractLimits) -> bool:
 
 
 def _read_entry(archive: zipfile.ZipFile, name: str) -> bytes | None:
+    """선언된 풀린 크기까지만 푼다 — archive.read는 압축 흐름 전체를 한 번에 풀어, 크기를 속인 항목이 메모리를 다 쓴다."""
     try:
-        return archive.read(name)
+        info = archive.getinfo(name)
     except KeyError:
         return None
-    # 목차는 열렸지만 항목 안쪽이 깨진 경우 — CRC 불일치·압축 손상·암호화·지원 안 하는 압축
-    except (zipfile.BadZipFile, zlib.error, RuntimeError, EOFError) as error:
+    try:
+        with archive.open(info) as entry:
+            # zipfile은 선언 크기에서 멈추므로 속인 크기는 그 끝의 CRC 불일치(BadZipFile)로 드러난다
+            return entry.read(info.file_size)
+    # 선언 크기·CRC·머리가 실제 흐름과 다르다 — 크기를 속인 압축 폭탄과 같은 모양이라 안전 검사 실패로 본다
+    except zipfile.BadZipFile as error:
+        raise ExtractionRejected("unsafe_zip") from error
+    # 항목 안쪽이 깨졌거나(압축 손상·잘림) 읽을 수 없는 방식(암호화·지원 안 하는 압축)
+    except (zlib.error, RuntimeError, EOFError) as error:
         raise ExtractionRejected("invalid_format") from error
 
 
@@ -443,12 +485,13 @@ def _walk_inline(parent: Element, read: _InlineRead) -> None:
         elif tag == W_SYM:
             read.add(_read_sym(child))
         else:
+            # 그림 요소는 서로 겹쳐 놓이지 않으므로(상자 글은 따로 모은다) 안쪽 그림 관계는 마지막 그림 요소의 것이다
             if tag in _FIGURE_TAGS:
-                read.has_figure = True
-            elif tag == A_BLIP and read.blip_rel_id is None:
-                read.blip_rel_id = child.get(R_EMBED)
-            elif tag == V_IMAGEDATA and read.vml_rel_id is None:
-                read.vml_rel_id = child.get(R_ID)
+                read.figures.append(_FigureRef())
+            elif tag == A_BLIP and read.figures and read.figures[-1].blip_rel_id is None:
+                read.figures[-1].blip_rel_id = child.get(R_EMBED)
+            elif tag == V_IMAGEDATA and read.figures and read.figures[-1].vml_rel_id is None:
+                read.figures[-1].vml_rel_id = child.get(R_ID)
             _walk_inline(child, read)
 
 
@@ -560,7 +603,6 @@ class _Collector:
         out: list[_Record],
     ) -> None:
         read, para_marks = self._read_runs(paragraph, marks, host_marks)
-        rel_id = read.blip_rel_id or read.vml_rel_id
         out.append(
             _ParaRecord(
                 part=context.part,
@@ -569,8 +611,8 @@ class _Collector:
                 marks=para_marks,
                 text="".join(read.pieces),
                 style=_read_para_style(paragraph, self.styles),
-                has_figure=read.has_figure,
-                image_part=context.rel_targets.get(rel_id) if rel_id else None,
+                has_figure=bool(read.figures),
+                image_part=_get_image_part(context, read.get_first_image_rel_id()),
                 slot=slot,
             )
         )
@@ -602,29 +644,48 @@ class _Collector:
         for row_index, (row, row_path) in enumerate(rows):
             row_pr = row.find(W_TR_PR)
             col = _read_int(row_pr.find(W_GRID_BEFORE) if row_pr is not None else None, 0)
+            # 한 행의 칸들은 나란히 놓인 흐름이다 — 칸마다 행 시작 쪽에서 출발하고, 행 뒤는 가장 멀리 간 칸을 따른다
+            row_start = marks.snapshot() if marks is not None else None
+            cell_ends: list[tuple[int, int]] = []
             still_open: dict[int, _CellRecord] = {}
             for cell, cell_path in _iter_tagged(row, row_path, _CELL_TAGS):
+                if marks is not None and row_start is not None:
+                    marks.restore(row_start)
                 cell_pr = cell.find(W_TC_PR)
                 span = max(1, _read_int(cell_pr.find(W_GRID_SPAN) if cell_pr is not None else None, 1))
                 v_merge = cell_pr.find(W_V_MERGE) if cell_pr is not None else None
                 merge = None if v_merge is None else v_merge.get(W_VAL, "continue")
+                record, extras = self._read_cell(cell, cell_path, context, marks, host_marks, (index, row_index, col, span))
                 started = open_merges.get(col)
                 if merge == "continue" and started is not None:
-                    # 이어지는 칸은 시작 칸에 합쳐져 보이므로 블록을 만들지 않는다(같은 글이 두 번 생기지 않게)
                     started.row_span += 1
                     still_open[col] = started
+                    # 이어지는 칸은 시작 칸에 합쳐져 보인다 — 빈 칸은 블록을 만들지 않고(같은 글이 두 번 생기지 않게),
+                    # 글·그림·상자·표가 남아 있으면 버리지 않고 제자리 블록으로 낸다
+                    if _has_visible_char(record.text) or extras:
+                        record.is_merge_continuation = True
+                        out.append(record)
+                        out.extend(extras)
                 else:
-                    record = self._read_cell(
-                        cell, cell_path, context, marks, host_marks, (index, row_index, col, span), out
-                    )
+                    out.append(record)
+                    out.extend(extras)
                     if merge == "restart":
                         still_open[col] = record
+                if marks is not None:
+                    cell_ends.append(marks.snapshot())
                 col += span
+            if marks is not None and cell_ends:
+                marks.restore((max(end[0] for end in cell_ends), max(end[1] for end in cell_ends)))
             open_merges = still_open
         n_cols = len(grid.findall(W_GRID_COL)) if grid is not None else 0
         self.tables.append(
             ExtractedTable(
-                index=index, parent_index=parent_index, part=context.part, xml_path=path, n_rows=len(rows), n_cols=n_cols
+                index=index,
+                parent_index=parent_index,
+                part=context.part,
+                xml_path=_fit_xml_path(path),
+                n_rows=len(rows),
+                n_cols=n_cols,
             )
         )
 
@@ -636,13 +697,14 @@ class _Collector:
         marks: _PageMarks | None,
         host_marks: tuple[int, int],
         position: tuple[int, int, int, int],
-        out: list[_Record],
-    ) -> _CellRecord:
-        """칸 하나 = 블록 하나(문단은 "\\n"으로 잇는다). 칸 안의 상자 글·표는 칸 블록 바로 뒤에 문서 순서로 낸다."""
+    ) -> tuple[_CellRecord, list[_Record]]:
+        """칸 하나 = 블록 하나(문단은 "\\n"으로 잇는다)와, 그 뒤에 낼 것들 — 칸 안 그림(그림마다, 순서대로),
+        이어서 상자 글·안쪽 표(문서 순서). 낼지는 부르는 쪽이 정한다(vMerge 이어지는 빈 칸은 내지 않는다)."""
         table_index, row_index, col_index, grid_span = position
         texts: list[str] = []
         first_marks: tuple[int, int] | None = None
         is_numbered = False
+        figures: list[_Record] = []
         after: list[_Record] = []
         for item, item_path in _iter_tagged(cell, path, _BLOCK_TAGS):
             if item.tag == W_P:
@@ -650,6 +712,19 @@ class _Collector:
                 texts.append("".join(read.pieces))
                 first_marks = first_marks or read.first_marks
                 is_numbered = is_numbered or _read_para_style(item, self.styles).is_numbered
+                figures.extend(
+                    _CellFigureRecord(
+                        part=context.part,
+                        in_body=context.in_body,
+                        xml_path=item_path,
+                        marks=para_marks,
+                        image_part=_get_image_part(context, figure.blip_rel_id or figure.vml_rel_id),
+                        table_index=table_index,
+                        row_index=row_index,
+                        col_index=col_index,
+                    )
+                    for figure in read.figures
+                )
                 self._read_textboxes(read.textboxes, item_path, context, para_marks, after)
             else:
                 self._read_table(item, item_path, context, marks, host_marks, table_index, after)
@@ -665,9 +740,19 @@ class _Collector:
             col_index=col_index,
             grid_span=grid_span,
         )
-        out.append(record)
-        out.extend(after)
-        return record
+        return record, figures + after
+
+
+def _get_image_part(context: _PartContext, rel_id: str | None) -> str | None:
+    return context.rel_targets.get(rel_id) if rel_id else None
+
+
+def _fit_xml_path(path: str) -> str:
+    """xml_path를 컬럼 길이에 맞춘다 — 넘치면 첫 조각(부분 이름)과 끝을 남기고 가운데를 "/…/"로 줄인다."""
+    if len(path) <= XML_PATH_MAX_CHARS:
+        return path
+    head = path.split("/", 1)[0] + XML_PATH_ELLIPSIS
+    return head + path[len(path) - (XML_PATH_MAX_CHARS - len(head)) :]
 
 
 def _has_visible_char(text: str) -> bool:
@@ -709,6 +794,7 @@ class _BlockWriter:
         self.blocks: list[ExtractedBlock] = []
         self._section_label = ""
         self._body_chars = 0
+        self._continuation_seqs: dict[int, list[int]] = {}  # 표 → 글이 남은 vMerge 이어지는 칸 블록들
 
     def add_paragraph(self, record: _ParaRecord) -> None:
         """글자가 있으면 문단 블록, 그림이 있으면 그 뒤에 그림 블록. 빈 문단은 블록을 만들지 않는다."""
@@ -724,8 +810,10 @@ class _BlockWriter:
             self._append(record, KIND_FIGURE, record.caption or "", image_part=record.image_part, flags=flags)
 
     def add_cell(self, record: _CellRecord) -> None:
-        is_merged = record.grid_span > 1 or record.row_span > 1
+        is_merged = record.grid_span > 1 or record.row_span > 1 or record.is_merge_continuation
         flags = _pick_flags((FLAG_AUTO_NUMBERING, record.is_numbered), (FLAG_MERGED_CELL, is_merged))
+        if record.is_merge_continuation:
+            self._continuation_seqs.setdefault(record.table_index, []).append(len(self.blocks))
         self._append(
             record,
             KIND_TABLE_CELL,
@@ -737,6 +825,34 @@ class _BlockWriter:
             row_span=record.row_span,
             flags=flags,
         )
+
+    def add_cell_figure(self, record: _CellFigureRecord) -> None:
+        self._append(
+            record,
+            KIND_FIGURE,
+            "",
+            table_index=record.table_index,
+            row_index=record.row_index,
+            col_index=record.col_index,
+            image_part=record.image_part,
+        )
+
+    def build_warnings(self) -> tuple[ExtractedWarning, ...]:
+        """병합 칸 경고는 표마다 하나(첫 병합 칸을 가리킨다), 글이 남은 이어지는 칸 경고도 표마다 하나(개수),
+        자동 번호 경고는 문서에 하나(블록 수)."""
+        warnings: list[ExtractedWarning] = []
+        merged_tables: set[int | None] = set()
+        for block in self.blocks:
+            if FLAG_MERGED_CELL in block.flags and block.table_index not in merged_tables:
+                merged_tables.add(block.table_index)
+                warnings.append(ExtractedWarning(FLAG_MERGED_CELL, block.seq, {"table_index": str(block.table_index)}))
+        for table_index, seqs in self._continuation_seqs.items():
+            detail = {"table_index": str(table_index), "count": str(len(seqs))}
+            warnings.append(ExtractedWarning(WARNING_MERGED_CELL_CONTENT, seqs[0], detail))
+        numbered_count = sum(FLAG_AUTO_NUMBERING in block.flags for block in self.blocks)
+        if numbered_count:
+            warnings.append(ExtractedWarning(FLAG_AUTO_NUMBERING, None, {"count": str(numbered_count)}))
+        return tuple(warnings)
 
     def _update_section_label(self, text: str) -> None:
         stripped = text.strip()
@@ -778,7 +894,7 @@ class _BlockWriter:
                 part=record.part,
                 kind=kind,
                 text=text,
-                xml_path=record.xml_path,
+                xml_path=_fit_xml_path(record.xml_path),
                 page=page,
                 page_basis=self.page_basis,
                 section_label=self._section_label if record.in_body else "",
@@ -794,7 +910,7 @@ class _BlockWriter:
         )
 
 
-def _build_blocks(records: list[_Record], marks: _PageMarks) -> list[ExtractedBlock]:
+def _build_blocks(records: list[_Record], marks: _PageMarks) -> _BlockWriter:
     """쪽 근거는 문서 전체에 하나 — Word 저장 쪽 나눔이 하나라도 있으면 그것, 없으면 수동 쪽 나눔, 둘 다 없으면 추정."""
     page_basis = "rendered" if marks.rendered else "manual" if marks.manual else "estimated"
     _attach_captions(records)
@@ -802,20 +918,8 @@ def _build_blocks(records: list[_Record], marks: _PageMarks) -> list[ExtractedBl
     for record in records:
         if isinstance(record, _CellRecord):
             writer.add_cell(record)
+        elif isinstance(record, _CellFigureRecord):
+            writer.add_cell_figure(record)
         elif not record.is_consumed:
             writer.add_paragraph(record)
-    return writer.blocks
-
-
-def _build_warnings(blocks: list[ExtractedBlock]) -> tuple[ExtractedWarning, ...]:
-    """병합 칸 경고는 표마다 하나(첫 병합 칸을 가리킨다), 자동 번호 경고는 문서에 하나(블록 수)."""
-    warnings: list[ExtractedWarning] = []
-    merged_tables: set[int | None] = set()
-    for block in blocks:
-        if FLAG_MERGED_CELL in block.flags and block.table_index not in merged_tables:
-            merged_tables.add(block.table_index)
-            warnings.append(ExtractedWarning(FLAG_MERGED_CELL, block.seq, {"table_index": str(block.table_index)}))
-    numbered_count = sum(FLAG_AUTO_NUMBERING in block.flags for block in blocks)
-    if numbered_count:
-        warnings.append(ExtractedWarning(FLAG_AUTO_NUMBERING, None, {"count": str(numbered_count)}))
-    return tuple(warnings)
+    return writer
