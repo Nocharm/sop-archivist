@@ -15,6 +15,7 @@ from app.routers.sop_bundles import MemberOut, MembersUpdateIn, load_members, re
 from app.sop.errors import raise_rule
 from app.sop.membership import BundleIdPath
 from app.sop.models import Bundle
+from app.sop.snapshot import BundleProgress, load_bundle_progress
 
 router = APIRouter(prefix="/api/admin/bundles", tags=["sop-admin"])
 
@@ -33,9 +34,11 @@ class AdminBundleOut(BaseModel):
     # 활성 작성자가 한 명도 없으면 false — 정리가 필요한 묶음
     has_active_author: bool
     created_at: KstDatetime
+    # 언어별 진행 숫자 — 글자 없이 건수만이라 메타 정보다(스펙 §9)
+    progress: BundleProgress
 
 
-def build_admin_item(bundle: Bundle, members: list[MemberOut]) -> AdminBundleOut:
+def build_admin_item(bundle: Bundle, members: list[MemberOut], progress: BundleProgress) -> AdminBundleOut:
     return AdminBundleOut(
         id=bundle.id,
         title=bundle.title,
@@ -44,6 +47,7 @@ def build_admin_item(bundle: Bundle, members: list[MemberOut]) -> AdminBundleOut
         members=members,
         has_active_author=any(member.role == "author" and member.active for member in members),
         created_at=bundle.created_at,
+        progress=progress,
     )
 
 
@@ -53,8 +57,10 @@ async def list_admin_bundles(
     session: AsyncSession = Depends(get_session),
 ) -> list[AdminBundleOut]:
     bundles = list(await session.scalars(select(Bundle).order_by(Bundle.id.desc())))
-    members = await load_members(session, [bundle.id for bundle in bundles])
-    return [build_admin_item(bundle, members[bundle.id]) for bundle in bundles]
+    bundle_ids = [bundle.id for bundle in bundles]
+    members = await load_members(session, bundle_ids)
+    progress = await load_bundle_progress(session, bundle_ids)
+    return [build_admin_item(bundle, members[bundle.id], progress[bundle.id]) for bundle in bundles]
 
 
 @router.put("/{bundle_id}/members", response_model=AdminBundleOut)
@@ -70,4 +76,5 @@ async def update_bundle_members_as_admin(
     await replace_bundle_members(session, bundle, body, actor=login_id, reason="admin")
     await session.commit()
     members = await load_members(session, [bundle.id])
-    return build_admin_item(bundle, members[bundle.id])
+    progress = await load_bundle_progress(session, [bundle.id])
+    return build_admin_item(bundle, members[bundle.id], progress[bundle.id])

@@ -1,0 +1,366 @@
+"""결과물 스냅숏 — 묶음 하나의 문서·블록·단위·판단·새 문서·새 문장을 DB 표마다 질의 한 번으로 읽은 불변 값(결과물 A·B·C·요약의 입력)과,
+목록·개요에 싣는 언어별 진행 숫자(묶음 여럿을 질의 한 번으로).
+"""
+
+from collections import defaultdict
+from collections.abc import Collection
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel
+from sqlalchemy import ColumnElement, Select, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
+
+from app.sop.constants import COVER_KINDS
+from app.sop.groups import build_unit_order_key
+from app.sop.models import (
+    Bundle,
+    Document,
+    Extraction,
+    SourceBlock,
+    SourceTable,
+    TargetDoc,
+    TargetDocNaSlot,
+    TargetSentence,
+    TargetSource,
+    Unit,
+    UnitDecision,
+    WiStep,
+)
+from app.sop.units import UNIT_ACTIVE, compute_display_id
+
+PROGRESS_LANGS = ("ko", "en")
+NEUTRAL = "neutral"  # 그림 단위의 언어 — 두 언어 숫자에 모두 센다
+
+
+# --- 스냅숏 ---
+
+
+@dataclass(frozen=True)
+class BundleInfo:
+    id: int
+    title: str
+    status: str
+    is_synthetic: bool
+    created_by: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class DocumentInfo:
+    id: int
+    side: str
+    doc_code: str
+    doc_version: str
+    title: str
+    file_name: str
+    order: int  # 문서 순서(0부터) — 옛 문서 먼저, 같은 쪽 안에서는 id 순
+
+
+@dataclass(frozen=True)
+class TableInfo:
+    id: int
+    table_index: int  # 추출 안 순번(0부터)
+    n_rows: int
+    n_cols: int
+
+
+@dataclass(frozen=True)
+class BlockInfo:
+    id: int
+    part: str
+    kind: str
+    page: int | None
+    page_basis: str
+    section_label: str
+    table_index: int | None  # 표 칸·칸 안 그림이면 그 표의 순번(0부터)
+    row_index: int | None
+    col_index: int | None
+
+
+@dataclass(frozen=True)
+class UnitInfo:
+    id: int
+    document_id: int
+    display_id: str
+    kind: str
+    lang: str
+    text: str
+    group_unit_id: int | None
+    table_id: int | None
+    row_index: int | None
+    order_key: tuple[int, ...]
+    # 자리 블록 — 첫 범위의 블록, 범위가 없는 표·행·캡션 없는 그림은 자리(pos_seq)의 블록(R18)
+    block_id: int
+
+
+@dataclass(frozen=True)
+class DecisionInfo:
+    unit_id: int
+    disposition: str
+    move_target_code: str
+    reason: str
+    status: str
+    hold_reason: str
+    confirmed_by: str | None
+    confirmed_at: datetime | None
+
+
+@dataclass(frozen=True)
+class TargetInfo:
+    id: int
+    target_doc_id: int
+    slot_key: str | None
+    wi_step: int | None
+    wi_part: str | None
+    section_path: str
+    order_index: int
+    lang: str
+    kind: str
+    confirmed_text: str
+    ai_text: str
+    change_type: str | None
+    origin: str
+    new_unit_id: int | None
+    parent_target_id: int | None
+    cell_row: int | None
+    cell_col: int | None
+    grid: dict[str, int] | None
+    status: str
+    hold_reason: str
+    warnings: tuple[dict[str, str], ...]
+    confirmed_by: str | None
+    confirmed_at: datetime | None
+    source_unit_ids: tuple[int, ...]  # 출처 순서(seq)
+
+
+@dataclass(frozen=True)
+class TargetDocInfo:
+    id: int
+    code: str
+    title: str
+    doc_type: str
+    parent_id: int | None
+    entrance: str
+    is_equipment_sop: bool
+    order_index: int
+    manual_order: bool
+    na_slots: dict[str, str]  # 칸 키 → N/A 사유
+    steps: tuple[tuple[int, str], ...]  # (단계 번호, 제목) 번호 순
+
+
+@dataclass(frozen=True)
+class BundleSnapshot:
+    """묶음 한 시점의 결과물 재료 — 단위는 각 문서 최신 추출의 활성 단위(옛·새 문서 모두), 판단은 그 단위의 것."""
+
+    bundle: BundleInfo
+    documents: dict[int, DocumentInfo]
+    tables: dict[int, TableInfo]
+    blocks: dict[int, BlockInfo]
+    units: dict[int, UnitInfo]
+    decisions: dict[int, DecisionInfo]
+    targets: dict[int, TargetInfo]
+    target_docs: dict[int, TargetDocInfo]
+
+
+def _select_latest_extractions(*conditions: ColumnElement[bool]) -> Select[Any]:
+    """문서마다 가장 새 추출 id — 다시 추출하면 이전 추출은 읽기 전용으로 남으므로 결과물은 최신 추출만 본다(설계 §6.3).
+
+    바깥 질의도 Document·Extraction을 조인하므로 자동 상관(correlate)을 끈다 — 켜 두면 문서 행마다의 하위 질의가 된다.
+    """
+    return (
+        select(func.max(Extraction.id))
+        .join(Document, Document.id == Extraction.document_id)
+        .where(*conditions)
+        .group_by(Extraction.document_id)
+        .correlate(None)
+    )
+
+
+async def load_bundle_snapshot(session: AsyncSession, bundle_id: int) -> BundleSnapshot:
+    """묶음의 결과물 재료를 읽는다 — DB 표마다 질의 한 번이라 질의 수는 단위·문장 수와 무관하다."""
+    bundle = await session.get_one(Bundle, bundle_id)
+    documents = sorted(
+        await session.scalars(select(Document).where(Document.bundle_id == bundle_id)),
+        key=lambda document: (0 if document.side == "old" else 1, document.id),
+    )
+    latest = _select_latest_extractions(Document.bundle_id == bundle_id)
+
+    tables = {
+        table_id: TableInfo(table_id, table_index, n_rows, n_cols)
+        for table_id, table_index, n_rows, n_cols in await session.execute(
+            select(SourceTable.id, SourceTable.table_index, SourceTable.n_rows, SourceTable.n_cols).where(
+                SourceTable.extraction_id.in_(latest)
+            )
+        )
+    }
+    block_rows = (
+        await session.execute(
+            select(
+                SourceBlock.id, SourceBlock.extraction_id, SourceBlock.seq, SourceBlock.part, SourceBlock.kind,
+                SourceBlock.page, SourceBlock.page_basis, SourceBlock.section_label, SourceBlock.table_id,
+                SourceBlock.row_index, SourceBlock.col_index,
+            ).where(SourceBlock.extraction_id.in_(latest))
+        )
+    ).all()
+    blocks = {
+        row.id: BlockInfo(
+            id=row.id, part=row.part, kind=row.kind, page=row.page, page_basis=row.page_basis,
+            section_label=row.section_label,
+            table_index=tables[row.table_id].table_index if row.table_id is not None else None,
+            row_index=row.row_index, col_index=row.col_index,
+        )
+        for row in block_rows
+    }
+    block_by_seq = {(row.extraction_id, row.seq): row.id for row in block_rows}
+
+    documents_by_id = {document.id: document for document in documents}
+    unit_rows = await session.execute(
+        select(Unit, Extraction.document_id)
+        .join(Extraction, Extraction.id == Unit.extraction_id)
+        .where(Unit.extraction_id.in_(latest), Unit.status == UNIT_ACTIVE)
+    )
+    units: dict[int, UnitInfo] = {}
+    for unit, document_id in unit_rows:
+        document = documents_by_id[document_id]
+        units[unit.id] = UnitInfo(
+            id=unit.id, document_id=document_id, display_id=compute_display_id(document, unit), kind=unit.kind,
+            lang=unit.lang, text=unit.text, group_unit_id=unit.group_unit_id, table_id=unit.table_id,
+            row_index=unit.row_index, order_key=build_unit_order_key(document, unit),
+            block_id=unit.spans[0][0] if unit.spans else block_by_seq[(unit.extraction_id, unit.pos_seq)],
+        )
+
+    decisions = {
+        decision.unit_id: DecisionInfo(
+            unit_id=decision.unit_id, disposition=decision.disposition, move_target_code=decision.move_target_code,
+            reason=decision.reason, status=decision.status, hold_reason=decision.hold_reason,
+            confirmed_by=decision.confirmed_by, confirmed_at=decision.confirmed_at,
+        )
+        for decision in await session.scalars(select(UnitDecision).where(UnitDecision.bundle_id == bundle_id))
+        if decision.unit_id in units  # 은퇴한 단위의 판단은 이력이다
+    }
+    return BundleSnapshot(
+        bundle=BundleInfo(
+            id=bundle.id, title=bundle.title, status=bundle.status, is_synthetic=bundle.is_synthetic,
+            created_by=bundle.created_by, created_at=bundle.created_at,
+        ),
+        documents={
+            document.id: DocumentInfo(
+                id=document.id, side=document.side, doc_code=document.doc_code, doc_version=document.doc_version,
+                title=document.title, file_name=document.file_name, order=order,
+            )
+            for order, document in enumerate(documents)
+        },
+        tables=tables,
+        blocks=blocks,
+        units=units,
+        decisions=decisions,
+        targets=await _load_targets(session, bundle_id, units.keys()),
+        target_docs=await _load_target_docs(session, bundle_id),
+    )
+
+
+async def _load_targets(session: AsyncSession, bundle_id: int, unit_ids: Collection[int]) -> dict[int, TargetInfo]:
+    """새 문장과 출처(출처 순서) — 출처는 스냅숏 단위만 남긴다.
+
+    질의마다 따로 읽으므로 그 사이에 커밋된 쪼개기 편집이 새 단위를 출처로 이을 수 있다. 그런 연결은 다음 조회에 보이고,
+    이번 결과물은 읽은 단위만으로 계산한다(없는 단위를 가리켜 결과물 전체가 실패하지 않게).
+    """
+    sources: dict[int, list[int]] = defaultdict(list)
+    for target_id, unit_id in await session.execute(
+        select(TargetSource.target_id, TargetSource.unit_id)
+        .join(TargetSentence, TargetSentence.id == TargetSource.target_id)
+        .where(TargetSentence.bundle_id == bundle_id)
+        .order_by(TargetSource.target_id, TargetSource.seq)
+    ):
+        if unit_id in unit_ids:
+            sources[target_id].append(unit_id)
+    return {
+        target.id: TargetInfo(
+            id=target.id, target_doc_id=target.target_doc_id, slot_key=target.slot_key, wi_step=target.wi_step,
+            wi_part=target.wi_part, section_path=target.section_path, order_index=target.order_index,
+            lang=target.lang, kind=target.kind, confirmed_text=target.confirmed_text, ai_text=target.ai_text,
+            change_type=target.change_type, origin=target.origin, new_unit_id=target.new_unit_id,
+            parent_target_id=target.parent_target_id, cell_row=target.cell_row, cell_col=target.cell_col,
+            grid=target.grid, status=target.status, hold_reason=target.hold_reason, warnings=tuple(target.warnings),
+            confirmed_by=target.confirmed_by, confirmed_at=target.confirmed_at,
+            source_unit_ids=tuple(sources.get(target.id, ())),
+        )
+        for target in await session.scalars(select(TargetSentence).where(TargetSentence.bundle_id == bundle_id))
+    }
+
+
+async def _load_target_docs(session: AsyncSession, bundle_id: int) -> dict[int, TargetDocInfo]:
+    na_slots: dict[int, dict[str, str]] = defaultdict(dict)
+    for doc_id, slot_key, reason in await session.execute(
+        select(TargetDocNaSlot.target_doc_id, TargetDocNaSlot.slot_key, TargetDocNaSlot.reason)
+        .join(TargetDoc, TargetDoc.id == TargetDocNaSlot.target_doc_id)
+        .where(TargetDoc.bundle_id == bundle_id)
+    ):
+        na_slots[doc_id][slot_key] = reason
+    steps: dict[int, list[tuple[int, str]]] = defaultdict(list)
+    for doc_id, step_no, title in await session.execute(
+        select(WiStep.target_doc_id, WiStep.step_no, WiStep.title)
+        .join(TargetDoc, TargetDoc.id == WiStep.target_doc_id)
+        .where(TargetDoc.bundle_id == bundle_id)
+        .order_by(WiStep.target_doc_id, WiStep.step_no)
+    ):
+        steps[doc_id].append((step_no, title))
+    return {
+        doc.id: TargetDocInfo(
+            id=doc.id, code=doc.code, title=doc.title, doc_type=doc.doc_type, parent_id=doc.parent_id,
+            entrance=doc.entrance, is_equipment_sop=doc.is_equipment_sop, order_index=doc.order_index,
+            manual_order=doc.manual_order, na_slots=dict(na_slots.get(doc.id, {})), steps=tuple(steps.get(doc.id, ())),
+        )
+        for doc in await session.scalars(select(TargetDoc).where(TargetDoc.bundle_id == bundle_id))
+    }
+
+
+# --- 진행 숫자 ---
+
+
+class LangProgress(BaseModel):
+    """한 언어 옛 커버 단위의 커버 상태별 수(get_cover_status와 같은 규칙) — 그림은 두 언어 모두에 센다."""
+
+    total: int = 0
+    unassigned: int = 0
+    ai_suggested: int = 0
+    confirmed: int = 0
+    on_hold: int = 0
+
+
+class BundleProgress(BaseModel):
+    ko: LangProgress
+    en: LangProgress
+
+
+async def load_bundle_progress(session: AsyncSession, bundle_ids: Collection[int]) -> dict[int, BundleProgress]:
+    """묶음별 언어별 진행 숫자 — 묶음 수와 무관하게 질의 한 번(묶음 목록·개요·관리 목록이 함께 쓴다)."""
+    progress = {bundle_id: BundleProgress(ko=LangProgress(), en=LangProgress()) for bundle_id in bundle_ids}
+    if not bundle_ids:
+        return progress
+    group_decision = aliased(UnitDecision)
+    # 칸 문장은 묶인 표·행 단위의 판단을 따른다 — get_cover_status와 같은 규칙(단위 목록의 상태 거르기와도 같다)
+    cover_status = func.coalesce(group_decision.status, UnitDecision.status)
+    in_bundles = Document.bundle_id.in_(list(bundle_ids))
+    rows = await session.execute(
+        select(Document.bundle_id, Unit.lang, cover_status, func.count())
+        .select_from(Unit)
+        .join(Extraction, Extraction.id == Unit.extraction_id)
+        .join(Document, Document.id == Extraction.document_id)
+        .join(UnitDecision, UnitDecision.unit_id == Unit.id)
+        .outerjoin(group_decision, group_decision.unit_id == Unit.group_unit_id)
+        .where(
+            in_bundles, Document.side == "old", Unit.status == UNIT_ACTIVE, Unit.kind.in_(COVER_KINDS),
+            Unit.extraction_id.in_(_select_latest_extractions(in_bundles)),
+        )
+        .group_by(Document.bundle_id, Unit.lang, cover_status)
+    )
+    for bundle_id, lang, status, count in rows:
+        for counted_lang in PROGRESS_LANGS if lang == NEUTRAL else (lang,):
+            lang_progress: LangProgress = getattr(progress[bundle_id], counted_lang)
+            lang_progress.total += count
+            setattr(lang_progress, status, getattr(lang_progress, status) + count)
+    return progress
