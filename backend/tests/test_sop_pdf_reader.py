@@ -34,11 +34,9 @@ def test_pdf_whitespace_only_lines_are_not_blocks() -> None:
     assert [block.text for block in blocks] == ["First", "Second"]
 
 
-def test_pdf_keeps_form_text_free_of_page_break_char() -> None:
-    """Form XObject 안의 글은 pdfminer가 줄바꿈 없이 내서 변환기의 쪽 나눔 글자(\\f)가 글 끝에 붙는다 — 원문에 남기지 않는다."""
-    form = "BT /F1 12 Tf 10 10 Td (Inside form) Tj ET"
-    page = "q /Fm1 Do Q BT /F1 12 Tf 72 700 Td (Body line) Tj ET"
-    data = assemble_pdf(
+def _build_form_pdf(form: str, page: str = "q /Fm1 Do Q BT /F1 12 Tf 72 700 Td (Body line) Tj ET") -> bytes:
+    """쪽 내용(page) 하나가 Form XObject(form)를 부르는 PDF — 머리말·꼬리말처럼 재사용 조각에 든 글을 흉내 낸다."""
+    return assemble_pdf(
         [
             "<< /Type /Catalog /Pages 2 0 R >>",
             "<< /Type /Pages /Kids [4 0 R] /Count 1 >>",
@@ -51,9 +49,24 @@ def test_pdf_keeps_form_text_free_of_page_break_char() -> None:
         ]
     )
 
-    blocks = read_pdf(data, LIMITS).blocks
+
+def test_pdf_keeps_form_text_free_of_page_break_char() -> None:
+    """변환기가 쪽 끝에 쓰는 쪽 나눔 글자(\\f)가 Form XObject 안의 글 끝에 붙어 원문에 남지 않아야 한다."""
+    blocks = read_pdf(_build_form_pdf("BT /F1 12 Tf 10 10 Td (Inside form) Tj ET"), LIMITS).blocks
 
     assert [block.text for block in blocks] == ["Body line", "Inside form"]
+
+
+def test_pdf_lays_out_text_inside_form_objects() -> None:
+    """Form XObject 안 글도 줄·낱말 배치를 분석한다 — 안 하면 줄과 낱말이 구분 없이 붙어 나온다."""
+    form = (
+        "BT /F1 12 Tf 14 TL 10 100 Td (Header line one) Tj T* (Header line two) Tj ET\n"
+        "BT /F1 12 Tf 10 20 Td [(Word) -300 (gap)] TJ ET"
+    )
+
+    blocks = read_pdf(_build_form_pdf(form), LIMITS).blocks
+
+    assert [block.text for block in blocks] == ["Body line", "Header line one\nHeader line two", "Word gap"]
 
 
 def test_pdf_pages_numbered() -> None:
