@@ -1,6 +1,6 @@
 # 서버(사내 71번) 배포용 — 로컬 PC는 Docker 없이 네이티브 실행 (CLAUDE.md Operations 참고)
 # 같은 서버의 다른 스택(bpm)과 프로젝트 이름·호스트 포트·네트워크 대역이 겹치면 안 된다.
-# 메모리 예약/상한: 공용 서버라 과예약 방지 — reservations 합계 ~816M, limits 합계 ~3.0G.
+# 메모리 예약/상한: 공용 서버라 과예약 방지 — reservations 합계 ~816M, limits 합계 ~4.0G(backend 2G: 업로드 파싱 자식 프로세스 몫).
 # docker compose v2는 swarm 없이도 deploy.resources.limits/reservations(memory)를 적용한다.
 name: sop-archivist
 
@@ -88,7 +88,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          # 파싱 자식 프로세스(메인 추출 + MarkItDown)가 최악 문서에서 ~660MiB를 더 쓴다 — backend 115MiB와 합쳐 768MiB를 넘는다.
+          # 근거·실측: docs/qa/2026-11-sop-parse-dependencies.md
+          memory: 2G
         reservations:
           memory: 256M
 
