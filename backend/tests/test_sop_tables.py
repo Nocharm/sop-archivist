@@ -395,6 +395,36 @@ def test_layout_toggle_makes_cells_independent(client: TestClient) -> None:
     assert _groups_of(view, CELL_TEXTS[:4]) == [None] * 4
 
 
+def test_layout_table_pairs_stay_inside_the_table(client: TestClient) -> None:
+    """R34 — 레이아웃 표의 이웃 짝은 행마다이고 표 앞뒤 문단을 끌어들이지 않는다. 칸 안의 표도 자기 표 안에서만 짝짓는다."""
+    before, after = "합성 목적 문단.", "Synthetic closing line."
+    fx = _setup(client, p(before) + tbl(ROWS[:2]) + p(after))
+    (table,) = _units_of_kind(fx.view, "table")
+    paragraphs = [find_unit(fx.view, text) for text in (before, after)]
+    # 데이터 표 단위는 중립이라 표 경계로 세지 않는다 — 묶인 칸은 빠지고 앞뒤 문단이 이웃 짝이다
+    assert [pair["unit_ids"] for pair in fx.view["pairs"]] == [[unit["id"] for unit in paragraphs]]
+
+    _ok(_edit(client, fx.bundle_id, fx.doc["id"], _set_layout(table["table_id"], True)))
+
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    cells = [find_unit(view, text)["id"] for text in CELL_TEXTS[:4]]
+    assert [pair["unit_ids"] for pair in view["pairs"]] == [cells[:2], cells[2:]]
+    assert [find_unit(view, text)["pair_id"] for text in (before, after)] == [None, None]
+
+    inner = tbl([["합성 안쪽 값.", "Inner value."]])
+    nested = _setup(client, (
+        '<w:tbl><w:tblGrid><w:gridCol w:w="1000"/><w:gridCol w:w="1000"/></w:tblGrid>'
+        f"<w:tr><w:tc>{p('합성 바깥 값.')}{inner}{p('')}</w:tc><w:tc>{p('Outer value.')}</w:tc></w:tr></w:tbl>"
+    ))
+    for table_out in nested.view["tables"]:
+        _ok(_edit(client, nested.bundle_id, nested.doc["id"], _set_layout(table_out["id"], True)))
+
+    view = get_view(client, nested.bundle_id, nested.doc["id"])
+    inner_ids = [find_unit(view, text)["id"] for text in ("합성 안쪽 값.", "Inner value.")]
+    # 바깥 칸 사이에 안쪽 표가 끼어 바깥 행은 짝이 되지 않는다 — 안쪽 표 행만 짝이다
+    assert [pair["unit_ids"] for pair in view["pairs"]] == [inner_ids]
+
+
 def test_layout_back_needs_confirm_when_cells_decided(client: TestClient) -> None:
     """레이아웃 표 칸에 미배정이 아닌 판단이 있으면 데이터 표로 되돌리기에 확인 플래그가 필요하고, 그 판단은 떼어 낸다."""
     fx = _setup(client, tbl(ROWS[:2]))
