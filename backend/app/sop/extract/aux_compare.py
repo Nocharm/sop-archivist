@@ -27,8 +27,8 @@ _NOTE_MARK_RE = re.compile(r"\[(?:\[\d{1,6}\]|↑)\]\(#(?:foot|end)note(?:-ref)?
 _LINK_TARGET_RE = re.compile(rf"\]{_LINK_TARGET}")
 # \w에는 _가 들어 있어 따로 받는다 — 마크다운은 "\_"로 이스케이프한다
 _ESCAPE_RE = re.compile(r"\\([^\w\s]|_)")
-# 줄 머리 표시 — 제목 #, 인용 >, 글머리표(- * +, 중첩은 들여쓰기), 번호 목록 "1."
-_LINE_HEAD_RE = re.compile(r"^(?:[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|[-*+][ \t]+|\d+\.[ \t]+))+", re.MULTILINE)
+# 줄 머리 표시 — 제목 #, 인용 >, 글머리표(- + 와 중첩 들여쓰기; * 는 글 모양 표시로 먼저 지워진다), 번호 목록 "1."
+_LINE_HEAD_RE = re.compile(r"^(?:[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|[-+][ \t]+|\d+\.[ \t]+))+", re.MULTILINE)
 # 글 모양 표시 — 강조 * _, 코드 `, 삭제선 ~~, 밑줄 <u></u>, 링크 글을 감싼 대괄호
 _MARK_RE = re.compile(r"[*_`\[\]]|~~|</?u>")
 _BLANK_REMOVAL = str.maketrans("", "", INVISIBLE_CHARS)
@@ -74,8 +74,10 @@ def normalize_for_compare(text: str) -> str:
     text = _NOTE_MARK_RE.sub("", text)
     text = _LINK_TARGET_RE.sub("", text)
     text = _ESCAPE_RE.sub(r"\1", text)
-    text = _LINE_HEAD_RE.sub("", text)
+    # 글 모양 표시를 줄 머리보다 먼저 지운다 — "[1. 목적](#a)"·"**1. 목적**"의 줄 머리 "1. "가 여는 표시 뒤에 숨어 있으면
+    # 줄 머리 걷기가 놓치고, 같은 글을 표시 없이 쓴 메인 글만 "1. "가 걷혀 둘이 어긋난다
     text = _MARK_RE.sub("", text)
+    text = _LINE_HEAD_RE.sub("", text)
     return _drop_blank_chars(text)
 
 
@@ -103,9 +105,11 @@ def find_missing_text(
     """마크다운 조각 중 메인 블록 글 전체에 들어 있지 않은 것. 포함 검사라 병합 셀을 펼친 표도 문제없다.
 
     조각은 문서 순서대로 오므로 앞 조각이 찾힌 자리 뒤부터 먼저 찾는다(200만 자 문서에서 조각마다 처음부터 훑지 않게).
-    머리말·꼬리말처럼 순서가 어긋난 글은 앞쪽만 다시 찾아 잡는다. 누락 조각은 max_items(1 이상)개를 모으면 멈춘다 —
+    머리말·꼬리말처럼 순서가 어긋난 글은 앞쪽만 다시 찾아 잡는다. 누락 조각은 max_items(1 이상, 아니면 ValueError)개를 모으면 멈춘다 —
     호출하는 쪽은 len(결과) == max_items 이면 더 있을 수 있다고(잘림) 본다.
     """
+    if max_items < 1:
+        raise ValueError(f"max_items must be at least 1, got {max_items}")
     normalized_blocks = [normalize_for_compare(text) for text in block_texts]
     block_ends = list(accumulate(len(text) for text in normalized_blocks))
     haystack = "".join(normalized_blocks)
