@@ -19,6 +19,7 @@ from app.sop.models import (
     UnitPairMember,
 )
 from app.sop.segment import (
+    NEUTRAL,
     BlockView,
     TableView,
     UnitDraft,
@@ -124,9 +125,11 @@ async def _create_code_pairs(session: AsyncSession, document_id: int, extraction
 
     묶인 칸 문장은 표의 판단을 따르고, 넣으면 표 앞뒤 문단과 칸이 엇갈려 짝지어지므로 뺀다. 이미 짝이 있는 단위와 부분(본문·머리말·
     각주…)이 바뀌는 자리에서 순서를 끊는다 — 건너뛰면 그 너머의 단위끼리, 본문 끝 문장과 머리말이 짝지어진다.
+    글자 단위의 표(표 밖은 None, 칸 안의 표는 그 표)가 바뀌는 자리에서도 끊는다(R34) — 레이아웃 표의 한/영 두 열은 행마다 짝이고
+    표 앞뒤 문단과 섞이지 않는다. 그림·표 단위 같은 중립 단위는 짝을 맺지 않으므로 표 경계로 세지 않는다.
     """
     rows = await session.execute(
-        select(Unit.id, Unit.lang, SourceBlock.part, UnitPairMember.pair_id)
+        select(Unit.id, Unit.lang, Unit.table_id, SourceBlock.part, UnitPairMember.pair_id)
         # 단위 자리(pos_seq)의 블록이 그 단위의 부분이다
         .join(SourceBlock, (SourceBlock.extraction_id == Unit.extraction_id) & (SourceBlock.seq == Unit.pos_seq))
         .outerjoin(UnitPairMember, UnitPairMember.unit_id == Unit.id)
@@ -135,12 +138,16 @@ async def _create_code_pairs(session: AsyncSession, document_id: int, extraction
     )
     segments: list[list[tuple[int, str]]] = [[]]
     previous_part = None
-    for unit_id, lang, part, pair_id in rows:
-        if (pair_id is not None or part != previous_part) and segments[-1]:
+    previous_table: int | None = None
+    for unit_id, lang, table_id, part, pair_id in rows:
+        is_table_change = lang != NEUTRAL and table_id != previous_table
+        if (pair_id is not None or part != previous_part or is_table_change) and segments[-1]:
             segments.append([])
         if pair_id is None:
             segments[-1].append((unit_id, lang))
         previous_part = part
+        if lang != NEUTRAL:
+            previous_table = table_id
     await _insert_pairs(session, document_id, [pair for segment in segments for pair in suggest_interleaved_pairs(segment)])
 
 
