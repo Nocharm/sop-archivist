@@ -11,7 +11,7 @@ from typing import Any
 from pydantic import BaseModel
 from sqlalchemy import ColumnElement, Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import aliased, defer
 
 from app.sop.constants import COVER_KINDS
 from app.sop.groups import build_unit_order_key
@@ -181,8 +181,12 @@ def _select_latest_extractions(*conditions: ColumnElement[bool]) -> Select[Any]:
     )
 
 
-async def load_bundle_snapshot(session: AsyncSession, bundle_id: int) -> BundleSnapshot:
-    """묶음의 결과물 재료를 읽는다 — DB 표마다 질의 한 번이라 질의 수는 단위·문장 수와 무관하다."""
+async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include_text: bool = True) -> BundleSnapshot:
+    """묶음의 결과물 재료를 읽는다 — DB 표마다 질의 한 번이라 질의 수는 단위·문장 수와 무관하다.
+
+    include_text=False면 단위 글자와 새 문장의 확정·AI 글자를 DB에서 읽지 않고 빈 글로 채운다(원문 전체를 싣지 않고 구조·상태만
+    필요한 검토 요청 조건용). 그 필드는 미적재 열이라 같은 세션에서 읽으면 안 되므로, 글자가 필요한 결과물은 기본값을 쓴다.
+    """
     bundle = await session.get_one(Bundle, bundle_id)
     documents = sorted(
         await session.scalars(select(Document).where(Document.bundle_id == bundle_id)),
@@ -219,17 +223,20 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int) -> BundleS
     block_by_seq = {(row.extraction_id, row.seq): row.id for row in block_rows}
 
     documents_by_id = {document.id: document for document in documents}
-    unit_rows = await session.execute(
+    unit_statement = (
         select(Unit, Extraction.document_id)
         .join(Extraction, Extraction.id == Unit.extraction_id)
         .where(Unit.extraction_id.in_(latest), Unit.status == UNIT_ACTIVE)
     )
+    if not include_text:
+        unit_statement = unit_statement.options(defer(Unit.text))
+    unit_rows = await session.execute(unit_statement)
     units: dict[int, UnitInfo] = {}
     for unit, document_id in unit_rows:
         document = documents_by_id[document_id]
         units[unit.id] = UnitInfo(
             id=unit.id, document_id=document_id, display_id=compute_display_id(document, unit), kind=unit.kind,
-            lang=unit.lang, text=unit.text, group_unit_id=unit.group_unit_id, table_id=unit.table_id,
+            lang=unit.lang, text=unit.text if include_text else "", group_unit_id=unit.group_unit_id, table_id=unit.table_id,
             row_index=unit.row_index, order_key=build_unit_order_key(document, unit),
             block_id=unit.spans[0][0] if unit.spans else block_by_seq[(unit.extraction_id, unit.pos_seq)],
         )
@@ -259,12 +266,14 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int) -> BundleS
         blocks=blocks,
         units=units,
         decisions=decisions,
-        targets=await _load_targets(session, bundle_id, units.keys()),
+        targets=await _load_targets(session, bundle_id, units.keys(), include_text),
         target_docs=await _load_target_docs(session, bundle_id),
     )
 
 
-async def _load_targets(session: AsyncSession, bundle_id: int, unit_ids: Collection[int]) -> dict[int, TargetInfo]:
+async def _load_targets(
+    session: AsyncSession, bundle_id: int, unit_ids: Collection[int], include_text: bool
+) -> dict[int, TargetInfo]:
     """새 문장과 출처(출처 순서) — 출처는 스냅숏 단위만 남긴다.
 
     질의마다 따로 읽으므로 그 사이에 커밋된 쪼개기 편집이 새 단위를 출처로 이을 수 있다. 그런 연결은 다음 조회에 보이고,
@@ -279,18 +288,22 @@ async def _load_targets(session: AsyncSession, bundle_id: int, unit_ids: Collect
     ):
         if unit_id in unit_ids:
             sources[target_id].append(unit_id)
+    target_statement = select(TargetSentence).where(TargetSentence.bundle_id == bundle_id)
+    if not include_text:
+        target_statement = target_statement.options(defer(TargetSentence.confirmed_text), defer(TargetSentence.ai_text))
     return {
         target.id: TargetInfo(
             id=target.id, target_doc_id=target.target_doc_id, slot_key=target.slot_key, wi_step=target.wi_step,
             wi_part=target.wi_part, section_path=target.section_path, order_index=target.order_index,
-            lang=target.lang, kind=target.kind, confirmed_text=target.confirmed_text, ai_text=target.ai_text,
+            lang=target.lang, kind=target.kind,
+            confirmed_text=target.confirmed_text if include_text else "", ai_text=target.ai_text if include_text else "",
             change_type=target.change_type, origin=target.origin, new_unit_id=target.new_unit_id,
             parent_target_id=target.parent_target_id, cell_row=target.cell_row, cell_col=target.cell_col,
             grid=target.grid, status=target.status, hold_reason=target.hold_reason, warnings=tuple(target.warnings),
             confirmed_by=target.confirmed_by, confirmed_at=target.confirmed_at,
             source_unit_ids=tuple(sources.get(target.id, ())),
         )
-        for target in await session.scalars(select(TargetSentence).where(TargetSentence.bundle_id == bundle_id))
+        for target in await session.scalars(target_statement)
     }
 
 

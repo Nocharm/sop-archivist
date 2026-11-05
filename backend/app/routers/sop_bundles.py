@@ -194,13 +194,16 @@ async def load_members(session: AsyncSession, bundle_ids: Collection[int]) -> di
     return members
 
 
-async def build_bundle_out(session: AsyncSession, bundle: Bundle, login_id: str) -> BundleOut:
+async def build_bundle_out(
+    session: AsyncSession, bundle: Bundle, login_id: str, *, next_action: NextAction | None = None
+) -> BundleOut:
+    """개요 응답. next_action을 알면(방금 만든 묶음) 넘겨 조건 계산을 건너뛴다."""
     members = (await load_members(session, [bundle.id]))[bundle.id]
     my_role = next((member.role for member in members if member.login_id == login_id), None)
     progress = (await load_bundle_progress(session, [bundle.id]))[bundle.id]
     return BundleOut(
         **BundleBase.model_validate(bundle).model_dump(), my_role=my_role, members=members, progress=progress,
-        next_action=await get_next_action(session, bundle),
+        next_action=next_action or await get_next_action(session, bundle),
     )
 
 
@@ -291,7 +294,8 @@ async def create_bundle(
         target_type="bundle", target_ids=[bundle.id],
     )
     await session.commit()
-    return await build_bundle_out(session, bundle, login_id)
+    # 방금 만든 묶음에는 문서가 없다 — 조건을 계산하지 않고 첫 행동을 바로 안내한다
+    return await build_bundle_out(session, bundle, login_id, next_action="upload_documents")
 
 
 @router.get("/{bundle_id}", response_model=BundleOut)
