@@ -26,7 +26,7 @@ from app.sop.excel_export import (
     split_cell_text,
     write_text_cell,
 )
-from app.sop.flow_image import draw_flow_png
+from app.sop.flow_image import KIND_COLORS, MAX_COLUMN_NODES, _limit_nodes, draw_flow_png
 from app.sop.models import Bundle, BundleEvent, SourceBlock, Unit
 from app.sop.outputs import FlowGraph, FlowNode
 from tests.access_helpers import run_in_session, update_row
@@ -394,6 +394,34 @@ def test_flow_image_caps_the_drawn_nodes() -> None:
     with Image.open(BytesIO(draw_flow_png(FlowGraph(nodes=nodes, edges=edges), "en"))) as image:
         width, height = image.size
     assert width == 1100 and height < 2400  # 열마다 30개까지만 그려 문서가 많아도 그림(메모리)이 커지지 않는다
+
+
+def _count_color_pixels(png: bytes, color: tuple[int, int, int]) -> int:
+    with Image.open(BytesIO(png)) as image:
+        rgb = image.convert("RGB")
+        colors = rgb.getcolors(maxcolors=rgb.width * rgb.height) or []
+    return sum(count for count, pixel in colors if pixel == color)
+
+
+def test_flow_image_always_draws_unassigned_delete_and_move_nodes() -> None:
+    # 보낸 곳 문서가 상한보다 많아도 건수가 작은 미배정·삭제·이동 노드는 빠지지 않는다(스펙 §7.13 B)
+    tail = [
+        FlowNode(id="delete", kind="delete", label="삭제", title="", count=1),
+        FlowNode(id="move_external", kind="move_external", label="이동", title="", count=1),
+        FlowNode(id="unassigned", kind="unassigned", label="미배정", title="", count=1),
+    ]
+    docs = [FlowNode(id=f"target:{n}", kind="wi", label=f"WI-{n}", title="", count=10 + n) for n in range(40)]
+    old = [FlowNode(id="old:1", kind="old", label="OLD-1", title="", count=50)]
+    edges = [{"source": "old:1", "target": node.id, "count": node.count} for node in [*docs, *tail]]
+
+    kept, omitted = _limit_nodes([*docs, *tail])
+    assert {node.id for node in tail} <= {node.id for node in kept}
+    assert (len(kept), omitted) == (MAX_COLUMN_NODES + 3, 40 - MAX_COLUMN_NODES)  # 상한은 문서 노드에만 걸린다
+
+    png = draw_flow_png(FlowGraph(nodes=[*old, *docs, *tail], edges=edges), "ko")
+    without = draw_flow_png(FlowGraph(nodes=[*old, *docs], edges=edges[:-3]), "ko")
+    assert _count_color_pixels(png, KIND_COLORS["unassigned"]) > 0  # 빨간 굵은 테두리
+    assert _count_color_pixels(without, KIND_COLORS["unassigned"]) == 0
 
 
 def test_flow_image_handles_empty_graph() -> None:

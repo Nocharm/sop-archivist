@@ -21,7 +21,9 @@ MARGIN = 30
 BOX_W, BOX_H, BOX_GAP = 340, 54, 16
 HEAD_H = 36  # 열 머리 글자 줄 높이
 FOOT_H = 28  # 생략 안내 줄 높이
-MAX_COLUMN_NODES = 30  # 열마다 그리는 노드 수 상한 — 그림 크기(메모리)가 문서 수에 비례해 커지지 않게. 전체 건수는 표에 있다
+MAX_COLUMN_NODES = 30  # 열마다 그리는 문서 노드 수 상한 — 그림 크기(메모리)가 문서 수에 비례해 커지지 않게. 전체 건수는 표에 있다
+# 상한과 무관하게 늘 그리는 끝 노드 — 미배정은 눈에 띄게 보여야 하고(스펙 §7.13 B) 삭제·이동은 셋뿐이라 그림을 키우지 않는다
+PINNED_KINDS = ("unassigned", "delete", "move_external")
 MIN_LINE_W, MAX_LINE_W = 1.5, 14.0  # 건수 비례 선 굵기의 범위(px)
 LINE_ALPHA = 150  # 겹친 선이 비쳐 보이도록 반투명
 
@@ -77,11 +79,12 @@ def _sample_curve(x0: float, y0: float, x1: float, y1: float, steps: int = 48) -
 
 
 def _limit_nodes(nodes: list[FlowNode]) -> tuple[list[FlowNode], int]:
-    """상한을 넘으면 건수가 큰 노드만 원래 순서대로 남기고, 뺀 노드 수를 함께 돌려준다."""
-    if len(nodes) <= MAX_COLUMN_NODES:
+    """문서 노드가 상한을 넘으면 건수가 큰 것만 원래 순서대로 남기고, 뺀 노드 수를 함께 돌려준다. 미배정·삭제·이동 노드는 늘 남는다."""
+    documents = [node for node in nodes if node.kind not in PINNED_KINDS]
+    if len(documents) <= MAX_COLUMN_NODES:
         return nodes, 0
-    kept = {node.id for node in sorted(nodes, key=lambda node: -node.count)[:MAX_COLUMN_NODES]}
-    return [node for node in nodes if node.id in kept], len(nodes) - MAX_COLUMN_NODES
+    kept = {node.id for node in sorted(documents, key=lambda node: -node.count)[:MAX_COLUMN_NODES]}
+    return [node for node in nodes if node.kind in PINNED_KINDS or node.id in kept], len(documents) - MAX_COLUMN_NODES
 
 
 def _place_column(nodes: list[FlowNode], x: float, rows: int) -> dict[str, tuple[float, float]]:
@@ -104,7 +107,7 @@ def _draw_edges(
         outgoing[edge.source].append(edge)
     for edge in sorted(edges, key=lambda e: (center[e.source], center[e.target])):
         incoming[edge.target].append(edge)
-    max_count = max((edge.count for edge in edges), default=1)
+    max_count = max([1, *(edge.count for edge in edges)])  # 0으로 나누지 않게
     for edge in edges:
         out_group, in_group = outgoing[edge.source], incoming[edge.target]
         y0 = boxes[edge.source][1] + BOX_H * (out_group.index(edge) + 1) / (len(out_group) + 1)
