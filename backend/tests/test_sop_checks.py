@@ -177,6 +177,9 @@ def test_negation_dictionary_hits(text: str):
         "SOP No. 12 applies.",
         "Doc. no.5 applies.",
         "불가피한 경우 열어 둔다.",
+        "안전하게 열어 둔다.",
+        "마찬가지로 열어 둔다.",
+        "안내에 따라 열어 둔다.",
         "Open the lid.",
     ],
 )
@@ -252,6 +255,14 @@ def test_long_input_stays_linear():
         "No. " * 25_000,
         "5 mL " * 20_000,
         "않 " * 50_000,
+        "-5 " * 33_000,
+        ".5 " * 33_000,
+        "5 to " * 20_000,
+        "10" + "⁶" * 100_000,
+        "1.1." * 25_000 + " x",
+        "123." * 25_000,
+        "1-" * 50_000,
+        "5 mL ~ " * 15_000,
     ]
 
     started = time.perf_counter()
@@ -260,3 +271,237 @@ def test_long_input_stays_linear():
     elapsed = time.perf_counter() - started
 
     assert elapsed < 5.0
+
+
+# 아래는 수정 1회차(R22~R26) 고정 테스트
+
+
+def test_common_korean_prohibition_forms_match_english_do_not():
+    english = "Do not open the lid."
+    for korean in (
+        "뚜껑을 열지 마십시오.",
+        "뚜껑을 열면 안 된다.",
+        "뚜껑을 열어서는 안 된다.",
+        "뚜껑을 열지 말아야 한다.",
+    ):
+        assert check_sentence([korean], english) == []
+        assert check_sentence([english], korean) == []
+
+
+@pytest.mark.parametrize(
+    "korean",
+    [
+        "뚜껑을 열지 마십시오.",
+        "뚜껑을 열지 마시오.",
+        "뚜껑을 열지 마세요.",
+        "뚜껑을 열지 마라.",
+        "뚜껑을 열지 말라.",
+        "뚜껑을 열지 말아야 한다.",
+        "뚜껑을 열지 말고 둔다.",
+        "뚜껑을 열면 안 된다.",
+        "뚜껑을 열면 안됨",
+        "뚜껑을 열면 안 돼.",
+        "뚜껑을 열면 안 됩니다.",
+        "뚜껑을 열면 안 되며 닫아 둔다.",
+        "뚜껑을 열 수 못 한다.",
+        "뚜껑을 열지 못하다.",
+        "뚜껑을 열지 못함",
+        "뚜껑 개방을 금함",
+        "뚜껑 개방을 금한다.",
+    ],
+)
+def test_korean_prohibition_forms_count_as_negation(korean: str):
+    assert check_sentence([korean], "Open the lid.") == [
+        {"kind": "negation_mismatch", "source": "yes", "target": "no"}
+    ]
+
+
+def test_no_before_a_label_number_is_not_negation_but_bare_no_before_digit_is():
+    assert check_sentence(["문서 번호 12"], "Document No. 12") == []
+    assert check_sentence(["문서 번호 12"], "Document no.12") == []
+    assert check_sentence(["남은 것은 5개"], "no 5 items remain") == [
+        {"kind": "negation_mismatch", "source": "no", "target": "yes"}
+    ]
+
+
+def test_leading_sign_belongs_to_the_number():
+    assert check_sentence(["-20 ℃에서 보관"], "Store at 20 °C") == [
+        {"kind": "number_mismatch", "source": "-20", "target": "20"}
+    ]
+    assert check_sentence(["-20 ℃에서 보관"], "Store at -20 °C") == []
+    assert check_sentence(["Store (-20 ℃)"], "Store at -20 °C") == []
+
+
+@pytest.mark.parametrize("minus", ["−", "–", "‐", "－"])
+def test_minus_sign_variants_fold_to_one_sign(minus: str):
+    assert check_sentence([f"{minus}20 ℃에서 보관"], "Store at -20 °C") == []
+
+
+def test_hyphen_between_numbers_is_a_range_not_a_sign():
+    assert check_sentence(["2-8 ℃에서 보관"], "Store at 2 to 8 °C") == []
+    assert check_sentence(["5–10 min"], "5-10 분") == []
+    assert check_sentence(["5–10 min"], "10 min") == [
+        {"kind": "number_mismatch", "source": "5, 10", "target": "10"}
+    ]
+    assert check_sentence(["-20 ~ -10 ℃"], "-20 to -10 °C") == []
+
+
+def test_hyphen_after_a_letter_is_a_name_not_a_sign():
+    assert check_sentence(["Step-2 수행"], "Step 2") == []
+    assert check_sentence(["COVID-19 시료"], "COVID 19 sample") == []
+
+
+def test_leading_dot_decimal_is_zero_point():
+    assert check_sentence([".5 mL를 넣는다."], "Add 0.5 mL.") == []
+    assert check_sentence([".5 mL를 넣는다."], "Add 5 mL.") == [
+        {"kind": "number_mismatch", "source": "0.5", "target": "5"}
+    ]
+    # 글자에 붙은 점은 소수가 아니다
+    assert check_sentence(["Fig.5 참조"], "See Fig 5") == []
+
+
+def test_superscript_exponent_keeps_its_identity():
+    assert check_sentence(["1×10⁶ cells"], "1×10^6 cells") == []
+    assert check_sentence(["1×10⁶ cells"], "106 cells") == [
+        {"kind": "number_mismatch", "source": "1, 6, 10", "target": "106"}
+    ]
+    assert check_sentence(["10⁻⁶ M"], "10^-6 M") == []
+    assert check_sentence(["10⁻⁶ M"], "10⁶ M") == [
+        {"kind": "number_mismatch", "source": "-6, 10", "target": "6, 10"}
+    ]
+
+
+def test_swapped_number_unit_pairs_warn_as_unit_mismatch():
+    assert check_sentence(["5 mL, 10 min"], "5 mL, 10 min") == []
+    assert check_sentence(["5 mL, 10 min"], "10 mL, 5 min") == [
+        {"kind": "unit_mismatch", "source": "5 mL, 10 min", "target": "5 min, 10 mL"}
+    ]
+    assert check_sentence(["5분간 원심분리 후 10 mL를 옮긴다."], "Transfer 5 mL after centrifuging for 10 min.") == [
+        {"kind": "unit_mismatch", "source": "5 min, 10 mL", "target": "5 mL, 10 min"}
+    ]
+
+
+def test_unit_dropped_from_one_number_warns_as_pair_mismatch():
+    assert check_sentence(["5 mL를 넣고 10 mL를 넣는다."], "Add 5 mL, then add 10.") == [
+        {"kind": "unit_mismatch", "source": "5 mL, 10 mL", "target": "5 mL"}
+    ]
+
+
+def test_pair_check_stays_quiet_when_numbers_or_unit_sets_already_differ():
+    assert [w["kind"] for w in check_sentence(["5 mL, 10 min"], "10 mL, 7 min")] == ["number_mismatch"]
+    assert [w["kind"] for w in check_sentence(["5 mL, 10 min"], "5 mL, 10 h")] == ["unit_mismatch"]
+    assert check_sentence(["5 mL, 10 min"], "5 mL, 10 h")[0]["source"] == "mL, min"
+
+
+def test_range_shares_its_unit_so_spelling_the_range_differently_is_fine():
+    assert check_sentence(["2~8 ℃에서 보관"], "Store at 2 °C to 8 °C") == []
+    assert check_sentence(["2~8 ℃에서 보관"], "Store between 2 and 8 °C") == []
+    assert check_sentence(["2-8 ℃에서 보관"], "Store at 2 to 8 °C") == []
+    assert check_sentence(["5 내지 10 mL"], "5-10 mL") == []
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [
+        ("5 µg", "5 ug"),
+        ("5 µg", "5 μg"),
+        ("5 ng", "5 nanograms"),
+        ("5 µM", "5 uM"),
+        ("5 μM", "5 µM"),
+        ("5 mM", "5 mM"),
+        ("5 nM", "5 nM"),
+        ("3 days", "3일"),
+        ("3 day", "3 days"),
+        ("2 weeks", "2주"),
+        ("5 grams", "5 g"),
+        ("5 milligrams", "5 mg"),
+        ("2 kilograms", "2 kg"),
+        ("5 micrograms", "5 µg"),
+        ("5 liters", "5 L"),
+        ("5 litres", "5 L"),
+        ("5 milliliters", "5 mL"),
+        ("5 millilitres", "5 ml"),
+        ("5 microliters", "5 µL"),
+        ("50 percent", "50 %"),
+        ("37 degrees C", "37 °C"),
+        ("37 degrees Celsius", "37 ℃"),
+        ("5 s", "5 sec"),
+        ("5s", "5초"),
+        ("2 bars", "2 bar"),
+        ("30 psig", "30 psi"),
+        ("100 kilopascals", "100 kPa"),
+    ],
+)
+def test_new_unit_groups_and_spelled_out_forms(source: str, target: str):
+    assert check_sentence([source], target) == []
+
+
+@pytest.mark.parametrize(
+    ("source", "target", "source_value", "target_value"),
+    [
+        ("5 mM", "5 µM", "mM", "µM"),
+        ("5 µM", "5 nM", "µM", "nM"),
+        ("5 mg", "5 µg", "mg", "µg"),
+        ("5 µg", "5 ng", "µg", "ng"),
+        ("3 days", "3 weeks", "day", "week"),
+        ("3 days", "3 h", "day", "h"),
+    ],
+)
+def test_new_unit_groups_stay_distinct(source: str, target: str, source_value: str, target_value: str):
+    assert check_sentence([source], target) == [
+        {"kind": "unit_mismatch", "source": source_value, "target": target_value}
+    ]
+
+
+def test_seconds_letter_s_counts_only_right_after_a_number():
+    assert check_sentence(["Press the s key"], "Press the key") == []
+    assert check_sentence(["5 samples"], "5 tubes") == []
+    assert check_sentence(["Table 5S"], "Table 5") == []
+
+
+def test_warning_values_are_cut_at_300_chars():
+    many = " ".join(str(i) for i in range(1, 400))
+
+    warnings = check_sentence([many], "")
+
+    assert [w["kind"] for w in warnings] == ["number_mismatch"]
+    assert len(warnings[0]["source"]) == 300
+    assert warnings[0]["source"].startswith("1, 2, 3, 4")
+    assert warnings[0]["source"].endswith("…")
+    assert warnings[0]["target"] == ""
+    # 짧은 값은 그대로
+    assert check_sentence(["5분"], "6분")[0]["source"] == "5"
+
+
+def test_warning_values_of_every_kind_are_capped():
+    many_pairs = " ".join(f"{i} mL" for i in range(1, 200))
+    swapped = " ".join(f"{i} mL" for i in range(2, 201))
+
+    pair_warning = check_sentence([many_pairs + " 1 min"], swapped + " 1 min")[0]
+
+    assert pair_warning["kind"] == "number_mismatch"
+    assert max(len(pair_warning["source"]), len(pair_warning["target"])) <= 300
+
+
+def test_leading_clause_number_is_not_a_quantity():
+    assert check_sentence(["5.1 시료를 4 ℃에서 보관한다."], "Store the sample at 4 °C.") == []
+    assert check_sentence(["시료를 4 ℃에서 보관한다."], "5.1 Store the sample at 4 °C.") == []
+    assert check_sentence(["5. 시료를 4 ℃에서 보관한다."], "Store the sample at 4 °C.") == []
+    assert check_sentence(["  5.1.2 시료를 4 ℃에서 보관한다."], "Store the sample at 4 °C.") == []
+
+
+def test_leading_quantity_is_not_mistaken_for_a_clause_number():
+    # 단위가 바로 오는 앞머리 소수, 점 없는 앞머리 수량은 수치로 남는다
+    assert check_sentence(["0.5 mL를 넣는다."], "Add 1 mL.") == [
+        {"kind": "number_mismatch", "source": "0.5", "target": "1"}
+    ]
+    assert check_sentence(["4 ℃에서 보관"], "Store at 5 °C") == [
+        {"kind": "number_mismatch", "source": "4", "target": "5"}
+    ]
+    assert check_sentence(["10 시료를 취한다."], "Take 5 samples.") == [
+        {"kind": "number_mismatch", "source": "10", "target": "5"}
+    ]
+    # 번호는 앞머리에서만 벗긴다
+    assert check_sentence(["시료 5.1 를 취한다."], "Take the sample.") == [
+        {"kind": "number_mismatch", "source": "5.1", "target": ""}
+    ]
