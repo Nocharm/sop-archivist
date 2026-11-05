@@ -140,8 +140,12 @@ def evaluate_readiness(
     blockers = _list_pending_blockers("units", facts.cover_status_counts)
     blockers += _list_pending_blockers("targets", _count_target_statuses(snap))
 
-    # 중복 배정의 사유도 판단 단위에 적힌다
-    unreasoned = [unit_id for unit_id in facts.duplicate_unit_ids if not snap.decisions[unit_id].reason.strip()]
+    # 중복 배정의 사유도 판단 단위에 적힌다 — 판단 행이 없으면 사유도 없는 것이다(조회 경로가 KeyError로 죽지 않게)
+    unreasoned = [
+        unit_id
+        for unit_id in facts.duplicate_unit_ids
+        if (decision := snap.decisions.get(unit_id)) is None or not decision.reason.strip()
+    ]
     if unreasoned:
         blockers.append({"code": "duplicate_without_reason", "count": len(unreasoned), "unit_ids": unreasoned})
     missing_reason = _find_units_missing_reason(snap)
@@ -186,8 +190,8 @@ async def _count_active_reviewers(session: AsyncSession, bundle_id: int) -> int:
 
 
 async def compute_readiness(session: AsyncSession, bundle: Bundle) -> Readiness:
-    """검토 요청 조건을 지금 상태로 계산한다 — 질의 수는 단위 수와 무관하다."""
-    snap = await load_bundle_snapshot(session, bundle.id)
+    """검토 요청 조건을 지금 상태로 계산한다 — 질의 수는 단위 수와 무관하고, 개요마다 불리므로 원문 글자는 읽지 않는다."""
+    snap = await load_bundle_snapshot(session, bundle.id, include_text=False)
     unacked = await count_unacked_missing_text(session, bundle.id)
     reviewers = await _count_active_reviewers(session, bundle.id)
     return await asyncio.to_thread(

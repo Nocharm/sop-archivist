@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from functools import partial
 from typing import NamedTuple
 
 import httpx2
@@ -13,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import engine
 from app.sop.constants import SEMANTIC_CHECK_KEYS
 from app.sop.models import Bundle, ExtractionWarning, TargetSentence, UnitDecision
+from app.sop.review import evaluate_readiness
+from app.sop.snapshot import BundleSnapshot, load_bundle_snapshot
 from tests.access_helpers import run_in_session, update_row
 from tests.docx_factory import build_docx, p, tbl
 from tests.sop_helpers import (
@@ -668,3 +671,47 @@ def test_readiness_uses_bounded_queries(client: TestClient) -> None:
     assert response.status_code == 200
     assert {"code": "units_unassigned", "lang": "ko", "count": 1000} in response.json()["blockers"]
     assert 0 < len(statements) <= MAX_READINESS_STATEMENTS, len(statements)
+
+
+async def _load_snapshot(session: AsyncSession, bundle_id: int, *, include_text: bool) -> tuple[BundleSnapshot, str]:
+    """스냅숏과 그것을 읽는 동안 나간 SQL 전부(한 글)."""
+    with _count_queries() as statements:
+        snap = await load_bundle_snapshot(session, bundle_id, include_text=include_text)
+    return snap, "\n".join(statements)
+
+
+def test_readiness_does_not_read_document_text(client: TestClient) -> None:
+    fx = _make_ready(client)
+    _hold_one_unit(client, fx)  # 막는 이유가 하나 있는 상태에서 두 스냅숏이 같은 판정을 내는지 본다
+
+    full, full_sql = run_in_session(partial(_load_snapshot, bundle_id=fx.bundle_id, include_text=True))
+    bare, bare_sql = run_in_session(partial(_load_snapshot, bundle_id=fx.bundle_id, include_text=False))
+
+    assert any(unit.text for unit in full.units.values())
+    assert any(target.confirmed_text for target in full.targets.values())
+    assert full.units and full.targets and len(bare.units) == len(full.units) and len(bare.targets) == len(full.targets)
+    assert all(unit.text == "" for unit in bare.units.values())
+    assert all(target.confirmed_text == "" and target.ai_text == "" for target in bare.targets.values())
+    for column in ("units.text", "target_sentences.confirmed_text", "target_sentences.ai_text"):
+        assert column in full_sql
+        assert column not in bare_sql  # 글자 열은 DB에서 아예 읽지 않는다
+    options = {"semantic_checks": ALL_CHECKED, "unacked_missing_text": 0, "reviewer_count": 1}
+    expected = [{"code": "units_on_hold", "lang": "ko", "count": 1}]
+    assert evaluate_readiness(full, **options).blockers == expected
+    assert evaluate_readiness(bare, **options) == evaluate_readiness(full, **options)
+    with _count_queries() as statements:  # 엔드포인트와 개요도 글자 없는 스냅숏을 쓴다
+        assert _get_readiness(client, fx.bundle_id)["blockers"] == expected
+        assert get_bundle(client, fx.bundle_id)["next_action"] == "decide_units"
+    sql = "\n".join(statements)
+    assert "FROM units" in sql
+    assert "units.text" not in sql and "target_sentences.confirmed_text" not in sql
+
+
+def test_creating_a_bundle_skips_the_readiness_computation(client: TestClient) -> None:
+    with _count_queries() as statements:
+        response = client.post("/api/bundles", json={"title": "Fresh"}, headers=AUTHOR)
+
+    assert response.status_code == 201, response.text
+    assert response.json()["next_action"] == "upload_documents"
+    snapshot_tables = ("FROM source_blocks", "FROM target_sentences", "FROM target_docs")  # 진행 숫자 집계는 읽지 않는 표
+    assert not [statement for statement in statements if any(table in statement for table in snapshot_tables)]
