@@ -622,6 +622,27 @@ def _check_as_is_table(plan: _Plan, state: _State) -> None:
         _reject("cell_position_mismatch", keys=keys)
 
 
+def _check_as_is_table_cells(plans: list[_Plan], state: _State) -> None:
+    """그대로인 표는 묶인 활성 칸 문장마다 칸 새 문장이 정확히 하나다 — 빠지면 그 칸 글이 결과물에 "그대로"로 적힌 채 사라진다(R27).
+
+    표 구성 변경(사유 필수)은 칸을 빼거나 바꿔 담을 수 있다. 입구 2 칸 새 문장은 parent_key 없이 지금 부모로 묶이므로 행의 부모도 본다.
+    """
+    by_row_id = {plan.row.id: plan for plan in plans if plan.row is not None}
+    cell_sources: dict[str, Counter[int]] = defaultdict(Counter)  # 표 새 문장 key → 칸 문장 → 그것을 출처로 둔 칸 새 문장 수
+    for plan in plans:
+        parent = plan.parent
+        if parent is None and plan.row is not None and plan.row.parent_target_id is not None:
+            parent = by_row_id.get(plan.row.parent_target_id)
+        if parent is not None:
+            cell_sources[parent.item.key].update(plan.sources)
+    for plan in plans:
+        if plan.item.kind == "table" and plan.change_type == "as_is":
+            counts = cell_sources[plan.item.key]
+            missing = sorted(cell_id for cell_id in state.cells.get(plan.sources[0], ()) if counts[cell_id] != 1)
+            if missing:
+                _reject("table_cells_missing", unit_ids=missing)
+
+
 def _check_duplicates(payload: GroupSaveIn, plans: list[_Plan], state: _State) -> None:
     """검사 10 — 한 단위(칸 새 문장은 부모 표로 접어)의 새 문장이 서로 다른 새 문서 둘 이상이면 사유가 있어야 한다(스펙 §6.9)."""
     docs_by_unit: dict[int, set[int]] = defaultdict(set)
@@ -797,6 +818,7 @@ async def save_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveIn
         plan.change_type = _decide_change_type(plan, spread, reasons, state)
     for plan in plans:
         _check_as_is_table(plan, state)
+    _check_as_is_table_cells(plans, state)
     _check_duplicates(payload, plans, state)
     if payload.action == "hold" and not payload.hold_reason.strip():
         _reject("hold_reason_required")
