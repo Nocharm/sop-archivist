@@ -75,6 +75,29 @@ def test_snapshot_ignores_a_document_committed_while_it_loads(client: TestClient
     assert _get_doc_codes(client, bundle_id) == {"OLD-1", "OLD-2", "OLD-3"}
 
 
+@pytest.mark.parametrize(
+    ("path", "module"),
+    [("outputs/a?lang=ko", sop_outputs), ("review/readiness", review)],
+    ids=["output_a", "readiness"],
+)
+def test_snapshot_of_a_bundle_deleted_before_it_loads_is_404(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, path: str, module: ModuleType
+) -> None:
+    """묶음 삭제의 FOR UPDATE를 기다리던 읽기는 깨어나면 행이 없다 — 멤버 검사를 지난 뒤라도 500이 아니라 404다."""
+    bundle_id, _ = _create_bundle_with_document(client)
+
+    async def _delete_then_load(session: AsyncSession, loaded_bundle_id: int, **options: bool) -> snapshot.BundleSnapshot:
+        async with SessionLocal() as other:
+            await other.execute(delete(Bundle).where(Bundle.id == loaded_bundle_id))
+            await other.commit()
+        return await snapshot.load_bundle_snapshot(session, loaded_bundle_id, **options)
+
+    monkeypatch.setattr(module, "load_bundle_snapshot", _delete_then_load)
+    response = client.get(f"/api/bundles/{bundle_id}/{path}", headers=AUTHOR)
+
+    assert (response.status_code, response.json()["detail"]) == (404, {"code": "bundle_not_found"})
+
+
 def test_snapshot_reads_a_missing_cover_decision_as_unassigned(client: TestClient) -> None:
     """판단 행이 없는 옛 단위(잠금 없이 읽는 사이 문서가 지워지면 생긴다)는 미배정으로 읽는다 — 결과물·요약·조건·개요가 500이 되지 않게."""
     bundle_id, document_id = _create_bundle_with_document(client)

@@ -15,6 +15,7 @@ from sqlalchemy.orm import aliased, defer
 
 from app.sop.constants import COVER_KINDS
 from app.sop.detach import UNASSIGNED
+from app.sop.errors import raise_rule
 from app.sop.groups import build_unit_order_key
 from app.sop.models import (
     Bundle,
@@ -198,7 +199,9 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
             .where(Bundle.id == bundle_id)
             .with_for_update(read=True)
         )
-    ).one()
+    ).one_or_none()
+    if bundle_row is None:  # 멤버 검사 뒤 묶음 삭제의 FOR UPDATE를 기다리다 깨어나면 행이 없다
+        raise_rule(404, "bundle_not_found")
     documents, document_by_extraction = await _load_documents(session, bundle_id)
     extraction_ids = list(document_by_extraction)
 
