@@ -14,9 +14,10 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
   - 업로드·추출: DOCX 메인 추출기(원문 글자·위치 불변 블록, 머리말·각주·텍스트 상자·병합 칸 처리), 텍스트 PDF 보조 추출기, MarkItDown 누락 대조("추출 누락 의심" 경고를 사람이 하나씩 닫는다). 추출은 시간·메모리 한도를 건 별도 프로세스(spawn 자식)에서 돌고, 암호·변경 추적·altChunk·스캔 PDF·상한 초과는 사유와 함께 거절한다.
   - 쪼개기: 규칙 기반 문장 쪼개기·한/영 판정·한/영 연달아 짝 제안, 편집(나누기·합치기·경계 옮기기·골라 만들기·표 행 나누기/합치기·레이아웃 표 바꾸기·언어 바꾸기)과 서버 쪽 되돌리기·다시 하기, 쪽 단위 원문 대조 데이터, 한/영 짝 만들기·확정·풀기.
   - 배정·확정: To-Be 목록(API와 Excel 템플릿·가져오기), 관계 묶음 단위 저장(닫힘 검사·일괄 삭제/이동·배정 지우기·떼어 내기), 입구 2 새 문장·수동 짝 맞추기·같은 글자 한 번에 확정, 숫자·단위·부정 문장 검사. "그대로"인 표는 칸 문장마다 칸 새 문장이 하나씩 있어야 저장된다(아니면 422 `invalid_group` `table_cells_missing`, 칸을 빼려면 표 구성 변경과 사유).
+  - 입력 경계: NUL이 든 입력 글자는 422, 파일 이름은 422 `invalid_file_name`이고, PDF 글꼴 맵이 낸 NUL·짝 없는 서로게이트는 같은 길이의 대체 문자(U+FFFD)로 바꾼다. 입구 2 칸 새 문장도 "그대로"인 표의 칸 자리를 지켜야 한다(아니면 422 `cell_position_mismatch`). 스냅숏을 읽기 전에 묶음이 지워지면 404 `bundle_not_found`.
   - 결과물·내보내기: 결과물 A(문장 비교표)·B(맵핑 흐름)·C(새 문서 기준 묶음)와 언어별 요약 숫자를 코드로 계산, 한글판·영어판 Excel(수식 없음, 흐름도 PNG는 저장소에 넣은 NanumGothic OFL 글꼴로 그린다).
   - 검토: 검토 요청 조건과 막는 이유 목록, 지금 할 다음 행동, 의미 검토 4항목, 검토 완료·되돌리기·다시 열기.
-  - 개발 도구: 합성 SOP 생성기와 기대 정답(`backend/scripts/synthetic_sop.py`), 처음부터 끝까지 API 테스트, 로컬 데모 시드(`python -m scripts.seed_sop_demo`, 로컬 전용·운영 DB 금지). backend 테스트 942개.
+  - 개발 도구: 합성 SOP 생성기와 기대 정답(`backend/scripts/synthetic_sop.py`), 처음부터 끝까지 API 테스트, 로컬 데모 시드(`python -m scripts.seed_sop_demo`, 로컬 전용·운영 DB 금지). backend 테스트 1031개.
   - 문서: 제품 설계·도메인 판단 기준(`docs/domain/`)·구현 계획 1·파싱 의존성/메모리 실측(`docs/qa/2026-11-sop-parse-dependencies.md`), 백업 문서에 "덤프에 SOP 원문·원본 파일이 들어 있어 대외비" 명시.
 - **배포 메모**: **서버 미배포** — v0.1.0도 아직 배포 전이라 첫 배포는 `docs/deploy/setup-once.md` 순서대로 하면 이 버전이 올라간다.
   - 새 env 6개(모두 compose `environment:`에 기본값 폴백이 있어 `.env`에 없어도 된다, 설명은 `.env.example`): `SOP_MAX_FILE_MB`(25) · `SOP_MAX_DOCX_UNZIPPED_MB`(200) · `SOP_MAX_PDF_PAGES`(500) · `SOP_MAX_DOC_CHARS`(2000000) · `SOP_PARSE_TIMEOUT_SECONDS`(60) · `SOP_PARSE_MEMORY_MB`(2048, 낮추지 말 것).

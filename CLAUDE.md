@@ -123,7 +123,7 @@ docker-compose.yml
 - **AI 호출:** 페이로드에 직원 실명(`name`·`korean_name`)을 싣지 않는다 — 역할·부서 등 비식별 정보만. 호출은 `call_ai_recorded`를 거쳐 사용량 행을 남기고(실패도 `ok=false`), 사용자에게 보이는 오류는 AI 주소·토큰을 뺀 문구다.
 - **프런트 텍스트:** en·ko 메시지를 한 쌍으로 추가한다(`i18n-messages.test.ts`가 키 집합을 가드). 인터랙티브 요소에는 `data-testid`(`rules/frontend/identifiers.md`).
 - **SOP 규칙 이중 사용 지점 — 아래는 각각 한 곳에만 쓴다.** 두 번째 구현을 만들면 커버리지·상태가 조용히 어긋난다.
-  - **빈 글자 판정 `segment.is_blank_char`**: 추출기·쪼개기·커버리지(`coverage.py`)가 모두 이것을 쓰고, 누락 대조의 `aux_compare.normalize_for_compare`는 같은 판정의 빠른 사본이다. `isspace()`를 새로 쓰지 않는다 — 불변식(공백 아닌 글자를 빠짐없이·겹침 없이 덮는다)이 이 판정 위에 서 있다.
+  - **빈 글자 판정 `segment.py`의 `is_blank_char`·`has_visible_char`·`INVISIBLE_CHARS`**: 추출기·쪼개기·커버리지(`coverage.py`)가 모두 이것을 쓰고, 누락 대조의 `aux_compare.normalize_for_compare`는 같은 판정의 빠른 사본이다. `isspace()`를 새로 쓰지 않는다 — 불변식(공백 아닌 글자를 빠짐없이·겹침 없이 덮는다)이 이 판정 위에 서 있다.
   - **관계 묶음 그래프 `groups.collect_component`**(출처 연결 + 표↔칸 새 문장 연결): 묶음 읽기(`build_group_out`)·저장의 닫힘 검사(`decisions`)·떼어 내기(`detach`)가 같은 그래프를 본다. 묶음 ID와 표 접기도 `groups.py` 하나(결과물 A도 쓴다). 연결 종류를 더하면 `_find_neighbors` 하나만 고친다.
   - **커버 상태 `status.get_cover_status`**: 칸 문장은 묶인 표·행 단위의 판단을 따른다. view·단위 목록·결과물·검토 조건이 이 함수를 부르고, SQL로 다시 쓴 사본 셋(`coalesce(group_decision.status, UnitDecision.status)` — `decisions` 단위 목록 거르기·`snapshot.load_bundle_progress`·`match`)은 규칙을 바꾸면 함께 고친다.
   - **새 문서 새 문장 맞추기 `match.sync_new_doc_targets`**: 쪼개기 편집·되돌리기·다시 하기 뒤 새 문서 하나의 절 경로·언어·칸 부모·좌표·순서를 통째로 다시 맞춘다. 단위를 바꾸는 새 경로가 새 문장을 직접 고치지 않고 이것을 부른다.
