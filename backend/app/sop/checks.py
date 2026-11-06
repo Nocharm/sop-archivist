@@ -45,9 +45,16 @@ _UNIT_GROUPS: dict[str, tuple[str, ...]] = {
     "µM": ("µM", "uM", "μM"),
     "nM": ("nM",),
 }
-# 단위 바로 뒤에 이 글자가 오면 단위가 아니다 — "10 mL 초과"의 초과는 초(sec)가 아니다
-_BLOCKED_NEXT = {"초": "과"}
 _UNIT_ORDER = {label: index for index, label in enumerate(_UNIT_GROUPS)}
+# 한글 단위(분·시간·초·일·주) 뒤에는 끝, 한글 아닌 글자, 아래 이음말만 온다 — 그 밖의 한글이 이어지면 다른 낱말이다
+# ("5.2 일반 사항"의 일, "6.1 분석"의 분, "10 mL 초과"의 초). 의는 넣지 않는다 — "7.1 주의 사항"의 주를 단위로 읽지 않게.
+_HANGUL_CHARS = "ᄀ-ᇿ㄰-㆏가-힣"  # 자모·호환 자모·완성형 음절
+_HANGUL_RE = re.compile(f"[{_HANGUL_CHARS}]")
+_HANGUL_UNIT_CONTINUATIONS = (
+    "간", "동안", "이내", "이상", "이하", "미만", "후", "전", "마다", "씩", "에", "에서",
+    "을", "를", "이", "가", "은", "는", "로", "으로", "까지", "부터", "정도", "째",
+)
+_HANGUL_UNIT_END = f"(?=$|[^{_HANGUL_CHARS}]|{'|'.join(_HANGUL_UNIT_CONTINUATIONS)})"
 
 # 부호·앞점 소수가 붙는 자리 — 앞이 이 글자(또는 문장 처음)일 때만 "-20"의 -가 부호다. 숫자 사이 하이픈("2-8")은 범위,
 # 글자 뒤 하이픈("Step-2")은 이름이다. ^는 거듭제곱 지수("10^-6")를 위해 둔다.
@@ -92,7 +99,10 @@ def _build_unit_lookup() -> dict[str, str]:
 
 
 def _build_unit_alternation() -> str:
-    """단위 철자 정규식 — 긴 철자가 먼저, 라틴 철자 뒤에 라틴 글자가 이어지면 다른 낱말이다."""
+    """단위 철자 정규식 — 긴 철자가 먼저, 라틴 철자 뒤에 라틴 글자가 이어지면 다른 낱말이고 한글 철자는 뒤 글자를 가린다.
+
+    단위 찾기와 조항 번호 판정(_strip_clause_number)이 이 정규식 하나를 쓴다.
+    """
     entries = {
         unicodedata.normalize("NFKC", spelling): _is_caseless(spelling)
         for spellings in _UNIT_GROUPS.values()
@@ -105,8 +115,8 @@ def _build_unit_alternation() -> str:
             body = f"(?i:{body})"
         if key[-1].isascii() and key[-1].isalpha():
             body += "(?![A-Za-z])"
-        elif key in _BLOCKED_NEXT:
-            body += f"(?!{_BLOCKED_NEXT[key]})"
+        elif _HANGUL_RE.match(key[-1]):
+            body += _HANGUL_UNIT_END
         alternatives.append(body)
     return "|".join(alternatives)
 

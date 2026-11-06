@@ -505,3 +505,48 @@ def test_leading_quantity_is_not_mistaken_for_a_clause_number():
     assert check_sentence(["시료 5.1 를 취한다."], "Take the sample.") == [
         {"kind": "number_mismatch", "source": "5.1", "target": ""}
     ]
+
+
+@pytest.mark.parametrize(
+    ("korean", "english"),
+    [
+        ("5.2 일반 사항", "General requirements"),
+        ("6.1 분석 절차", "Analysis procedure"),
+        ("7.1 주의 사항", "Precautions"),
+        ("2.3 초기 설정", "Initial setup"),
+        ("1. 일반", "General"),
+    ],
+)
+def test_clause_number_before_a_word_starting_with_a_unit_syllable(korean: str, english: str):
+    # 일반·분석·주의·초기의 첫 글자는 단위(일·분·주·초)가 아니다 — 조항 번호를 수량으로 남기지 않는다
+    assert check_sentence([korean], english) == []
+
+
+@pytest.mark.parametrize(
+    ("korean", "number", "label"),
+    [
+        ("5분간 둔다.", "5", "min"),
+        ("10분 이내에 끝낸다.", "10", "min"),
+        ("3일 후 확인한다.", "3", "day"),
+        ("2주마다 점검한다.", "2", "week"),
+        ("30초씩 섞는다.", "30", "sec"),
+        ("1시간 동안 둔다.", "1", "h"),
+        ("4 ℃에서 보관한다.", "4", "℃"),
+    ],
+)
+def test_hangul_unit_with_a_following_particle_still_counts(korean: str, number: str, label: str):
+    # 한글 단위 뒤에는 끝·한글 아닌 글자·정한 이음말(간·이내·후·마다·씩·동안·에서 …)만 온다
+    assert check_sentence([korean], f"Do it {number}.") == [{"kind": "unit_mismatch", "source": label, "target": ""}]
+
+
+def test_hangul_unit_followed_by_ui_is_not_a_unit():
+    # 의는 이음말에 넣지 않는다 — "주의"의 주를 단위로 읽지 않으려는 선택이라 "2주의 기간"의 주도 세지 않는다
+    assert check_sentence(["2주의 기간"], "A period of 2") == []
+
+
+def test_clause_number_before_the_word_time_is_a_known_residual():
+    # 알려진 남은 오탐: 시간 뒤에 띄어쓰기가 오면 "1시간 동안"과 구별할 수 없어 "3.4 시간 관리"의 3.4는 수량으로 남는다
+    assert check_sentence(["3.4 시간 관리"], "Time management") == [
+        {"kind": "number_mismatch", "source": "3.4", "target": ""},
+        {"kind": "unit_mismatch", "source": "h", "target": ""},
+    ]
