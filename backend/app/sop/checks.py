@@ -48,7 +48,7 @@ _UNIT_GROUPS: dict[str, tuple[str, ...]] = {
 _UNIT_ORDER = {label: index for index, label in enumerate(_UNIT_GROUPS)}
 # 한글 단위(분·시간·초·일·주) 뒤에는 끝, 한글 아닌 글자, 아래 이음말만 온다 — 그 밖의 한글이 이어지면 다른 낱말이다
 # ("5.2 일반 사항"의 일, "6.1 분석"의 분, "10 mL 초과"의 초). 의는 넣지 않는다 — "7.1 주의 사항"의 주를 단위로 읽지 않게.
-_HANGUL_CHARS = "ᄀ-ᇿ㄰-㆏가-힣"  # 자모·호환 자모·완성형 음절
+_HANGUL_CHARS = "\u1100-\u11ff\u3130-\u318f\uac00-\ud7a3"  # 자모·호환 자모·완성형 음절
 _HANGUL_RE = re.compile(f"[{_HANGUL_CHARS}]")
 _HANGUL_UNIT_CONTINUATIONS = (
     "간", "동안", "이내", "이상", "이하", "미만", "후", "전", "마다", "씩", "에", "에서",
