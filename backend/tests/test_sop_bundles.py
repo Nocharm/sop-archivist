@@ -324,6 +324,41 @@ def test_members_can_change_while_the_bundle_is_in_review(client: TestClient) ->
     assert response.json()["status"] == "in_review"
 
 
+def test_author_cannot_change_own_role_while_the_bundle_is_in_review(client: TestClient) -> None:
+    bundle = create_bundle(client)
+    revision = set_members(client, bundle["id"], [("qa.member", "author"), ("qa.lead", "author")]).json()["revision"]
+    update_row(Bundle, bundle["id"], status="in_review")
+
+    response = set_members(client, bundle["id"], [("qa.member", "reviewer"), ("qa.lead", "author")])
+
+    assert (response.status_code, response.json()["detail"]) == (
+        409, {"code": "own_role_locked", "status": "in_review"},
+    )
+    after = get_bundle(client, bundle["id"])
+    assert after["revision"] == revision  # 거절은 아무것도 바꾸지 않는다
+    assert after["my_role"] == "author"
+
+
+def test_other_members_role_can_change_while_the_bundle_is_in_review(client: TestClient) -> None:
+    bundle = create_bundle(client)
+    set_members(client, bundle["id"], [("qa.member", "author"), ("qa.lead", "author")])
+    update_row(Bundle, bundle["id"], status="in_review")
+
+    response = set_members(client, bundle["id"], [("qa.member", "author"), ("qa.lead", "reviewer")])
+
+    assert response.status_code == 200
+
+
+def test_author_can_change_own_role_while_the_bundle_is_in_progress(client: TestClient) -> None:
+    bundle = create_bundle(client)
+    set_members(client, bundle["id"], [("qa.member", "author"), ("qa.lead", "author")])
+
+    response = set_members(client, bundle["id"], [("qa.member", "reviewer"), ("qa.lead", "author")])
+
+    assert response.status_code == 200
+    assert response.json()["my_role"] == "reviewer"
+
+
 def test_members_with_stale_revision_conflict(client: TestClient) -> None:
     bundle = create_bundle(client)
     members = [{"login_id": "qa.member", "role": "author"}, {"login_id": "qa.lead", "role": "reviewer"}]
@@ -427,6 +462,23 @@ def test_admin_member_change_checks_revision_and_target(client: TestClient) -> N
     assert stale.json()["detail"]["conflicts"] == [{"entity": "bundle", "id": bundle["id"], "current_revision": 1}]
     assert (missing.status_code, missing.json()) == (404, {"detail": {"code": "bundle_not_found"}})
     assert client.get(f"/api/bundles/{bundle['id']}", headers=OPS).status_code == 404  # 거절된 요청은 멤버를 더하지 않았다
+
+
+@pytest.mark.usefixtures("demo_access", "enforce")
+def test_admin_path_also_refuses_own_role_change_in_review(client: TestClient) -> None:
+    add_grant("user", "ops.member", permission="bundle.admin")
+    add_grant("user", "qa.member", permission="bundle.create")
+    bundle = create_bundle(client)
+    updated = set_members(client, bundle["id"], [("qa.member", "author"), ("ops.member", "author")]).json()
+    update_row(Bundle, bundle["id"], status="in_review")
+    members = [{"login_id": "qa.member", "role": "author"}, {"login_id": "ops.member", "role": "reviewer"}]
+    body = {"revision": updated["revision"], "members": members}
+
+    response = client.put(f"/api/admin/bundles/{bundle['id']}/members", json=body, headers=OPS)
+
+    assert (response.status_code, response.json()["detail"]) == (
+        409, {"code": "own_role_locked", "status": "in_review"},
+    )
 
 
 # ── 작업 기록 ─────────────────────────────────────────────────────────────────
