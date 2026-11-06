@@ -5,8 +5,10 @@
 """
 
 import asyncio
+import logging
 import multiprocessing
 import sys
+import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from multiprocessing.connection import Connection
@@ -127,6 +129,10 @@ def _serve_child(
 
     거절(ExtractionRejected)은 target이 rejected로 돌려주므로, 여기서 잡히는 예외는 모두 parse_error다.
     """
+    # 자식의 stderr는 부모 출력(앱 로그)으로 이어진다 — 서드파티(pdfminer·MarkItDown 등)의 로그·경고에 원문 조각이 실릴 수
+    # 있어 자식에서만 끈다(spawn 자식은 따로 뜬 인터프리터라 부모 로깅은 그대로다)
+    logging.disable(logging.CRITICAL)
+    warnings.simplefilter("ignore")
     _limit_memory(memory_mb)
     try:
         result = target(*args)
