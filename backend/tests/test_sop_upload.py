@@ -7,6 +7,7 @@ from functools import partial
 from pathlib import Path
 from urllib.parse import quote
 
+import httpx2
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
@@ -28,7 +29,7 @@ from app.sop.models import (
 from tests import worker_targets
 from tests.access_helpers import run_in_session, update_row
 from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
-from tests.pdf_factory import build_text_pdf
+from tests.pdf_factory import build_mapped_glyph_pdf, build_text_pdf
 from tests.sop_helpers import AUTHOR, REVIEWER, create_bundle, get_bundle, put_tobe, set_members, upload
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
@@ -226,6 +227,63 @@ def test_upload_rejects_overlong_file_names(client: TestClient) -> None:
     assert response.status_code == 422
     assert response.json()["detail"] == {"code": "file_name_too_long", "max_chars": 255}
     assert _list_documents(client, bundle["id"]) == []
+
+
+def _post_raw_file_name(client: TestClient, bundle_id: int, file_name: bytes, data: bytes) -> httpx2.Response:
+    """파일 이름 바이트를 그대로 싣는다 — httpx는 이름의 제어 문자를 %로 바꿔 보내 NUL이 서버에 닿지 않는다."""
+    boundary = "synthetic-boundary"
+    head = (
+        f'--{boundary}\r\nContent-Disposition: form-data; name="side"\r\n\r\nold\r\n'
+        f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="'
+    )
+    tail = b'"\r\nContent-Type: application/octet-stream\r\n\r\n' + data + f"\r\n--{boundary}--\r\n".encode()
+    return client.post(
+        f"/api/bundles/{bundle_id}/documents", content=head.encode() + file_name + tail,
+        headers={**AUTHOR, "Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+
+
+def test_upload_rejects_nul_in_the_file_name(client: TestClient) -> None:
+    bundle = create_bundle(client)
+
+    response = _post_raw_file_name(client, bundle["id"], b"SYNTHETIC_OLD-1\x00.docx", _sample_docx())
+
+    assert (response.status_code, response.json()["detail"]) == (422, {"code": "invalid_file_name"})
+    assert _list_documents(client, bundle["id"]) == []
+
+
+def test_upload_rejects_nul_in_the_form_fields(client: TestClient) -> None:
+    bundle = create_bundle(client)
+
+    response = upload(
+        client, bundle["id"], _sample_docx(), "SYNTHETIC_WI-1_Nul.docx", side="new", doc_type="wi", parent_code="SOP\x001"
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["body", "parent_code"]
+
+
+@pytest.mark.parametrize("unicode_value", ["<0000>", "55296"], ids=["nul", "lone_surrogate"])
+def test_upload_pdf_with_unstorable_glyphs_is_ready_without_missing_text(client: TestClient, unicode_value: str) -> None:
+    """메인 추출과 보조 변환이 같은 대체 문자를 써야 같은 글이 "추출 누락 의심"이 되지 않는다(실제 자식 둘을 돈다)."""
+    bundle = create_bundle(client)
+    data = build_mapped_glyph_pdf("Synthetic ABC line", "B", unicode_value)
+
+    response = upload(client, bundle["id"], data, "SYNTHETIC_OLD-1_Nul.pdf")
+
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "ready", response.json()
+    document_id = response.json()["id"]
+
+    async def _load(session: AsyncSession) -> tuple[list[str], list[str]]:
+        extraction_id = await session.scalar(select(Extraction.id).where(Extraction.document_id == document_id))
+        texts = await session.scalars(select(SourceBlock.text).where(SourceBlock.extraction_id == extraction_id))
+        kinds = await session.scalars(
+            select(ExtractionWarning.kind).where(ExtractionWarning.extraction_id == extraction_id)
+        )
+        return list(texts), list(kinds)
+
+    assert run_in_session(_load) == (["Synthetic A\ufffdC line"], ["pdf_layout"])
 
 
 def test_upload_requires_editable_bundle_and_author(client: TestClient) -> None:

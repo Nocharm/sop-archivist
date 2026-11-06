@@ -9,7 +9,7 @@ from pdfminer.pdfparser import PDFParser
 
 from app.sop.extract.pdf_reader import read_pdf
 from app.sop.extract.types import ExtractionRejected, ExtractLimits
-from tests.pdf_factory import assemble_pdf, build_image_pdf, build_text_pdf
+from tests.pdf_factory import assemble_pdf, build_image_pdf, build_mapped_glyph_pdf, build_text_pdf
 
 LIMITS = ExtractLimits(
     max_unzipped_bytes=20 * 1024 * 1024,
@@ -32,6 +32,14 @@ def test_pdf_whitespace_only_lines_are_not_blocks() -> None:
     blocks = read_pdf(build_text_pdf([["First", "   ", "Second"]]), LIMITS).blocks
 
     assert [block.text for block in blocks] == ["First", "Second"]
+
+
+@pytest.mark.parametrize("unicode_value", ["<0000>", "55296"], ids=["nul", "lone_surrogate"])
+def test_pdf_replaces_unstorable_chars_keeping_the_text_length(unicode_value: str) -> None:
+    """글꼴 맵이 낸 NUL·짝 없는 서로게이트는 Postgres에 들어가지 못한다 — 글자 수가 같은 대체 문자로 바꿔 위치가 밀리지 않게 한다."""
+    blocks = read_pdf(build_mapped_glyph_pdf("Synthetic ABC line", "B", unicode_value), LIMITS).blocks
+
+    assert [block.text for block in blocks] == ["Synthetic A\ufffdC line"]
 
 
 def _build_form_pdf(form: str, page: str = "q /Fm1 Do Q BT /F1 12 Tf 72 700 Td (Body line) Tj ET") -> bytes:

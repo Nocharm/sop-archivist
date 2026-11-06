@@ -9,6 +9,9 @@ from app.sop.constants import MAX_PAIR_SIDE
 
 # 공백 외에 "빈 글자"로 보는 보이지 않는 글자 — ZWSP·ZWNJ·ZWJ·WORD JOINER·BOM(ZWNBSP)
 INVISIBLE_CHARS = "\u200b\u200c\u200d\u2060\ufeff"
+REPLACEMENT_CHAR = "\N{REPLACEMENT CHARACTER}"
+# Postgres text에 못 넣는 글자 — NUL, 그리고 UTF-8로 인코딩되지 않아 드라이버 오류 메시지에 글이 통째로 실리는 짝 없는 서로게이트
+_UNSTORABLE_RE = re.compile("[\x00\ud800-\udfff]")
 SENTENCE_TERMINATORS = ".!?。"
 # 문장 끝 뒤에 붙어 있으면 앞 문장에 넣는 닫는 따옴표·괄호
 SENTENCE_CLOSERS = "\"'”’)]"
@@ -24,6 +27,11 @@ KO_RATIO_THRESHOLD = 0.2
 # docx_reader.FLAG_CLAUSE_NUMBER와 같은 값 — 추출기가 이 모듈을 import하므로 거꾸로 import하지 않는다(테스트가 같음을 지킨다)
 CLAUSE_NUMBER_FLAG = "clause_number"
 NEUTRAL = "neutral"
+
+
+def replace_unstorable_chars(text: str) -> str:
+    """추출 글자를 DB에 담을 수 있게 한다 — 지우면 글자 위치가 밀려 같은 길이의 대체 문자로 바꾼다."""
+    return _UNSTORABLE_RE.sub(REPLACEMENT_CHAR, text)
 
 
 def is_blank_char(ch: str) -> bool:

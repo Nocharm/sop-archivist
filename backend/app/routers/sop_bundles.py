@@ -36,6 +36,7 @@ from app.sop.review import (
     return_review,
     update_semantic_checks,
 )
+from app.sop.schemas import NO_NUL, NoNulStr
 from app.sop.snapshot import BundleProgress, load_bundle_progress
 
 router = APIRouter(prefix="/api/bundles", tags=["sop-bundles"])
@@ -66,23 +67,23 @@ def _check_semantic_check_keys(value: dict[str, bool]) -> dict[str, bool]:
     return value
 
 
-BundleTitle = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
-LoginId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+BundleTitle = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200), NO_NUL]
+LoginId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100), NO_NUL]
 MemberRole = Annotated[str, AfterValidator(_check_member_role)]
-ReviewReason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+ReviewReason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000), NO_NUL]
 SemanticChecks = Annotated[dict[str, StrictBool], AfterValidator(_check_semantic_check_keys)]
 
 
 class BundleCreateIn(BaseModel):
     title: BundleTitle
-    description: str = Field("", max_length=MAX_DESCRIPTION_CHARS)
+    description: NoNulStr = Field("", max_length=MAX_DESCRIPTION_CHARS)
     is_synthetic: bool = False
 
 
 class BundleUpdateIn(BaseModel):
     revision: int = Field(ge=1)
     title: BundleTitle | None = None
-    description: str | None = Field(None, max_length=MAX_DESCRIPTION_CHARS)
+    description: NoNulStr | None = Field(None, max_length=MAX_DESCRIPTION_CHARS)
 
     @model_validator(mode="after")
     def check_something_to_change(self) -> Self:

@@ -42,6 +42,7 @@ from app.sop.models import (
     UnitDecision,
     WiStep,
 )
+from app.sop.schemas import NO_NUL, NoNulStr
 from app.sop.segment import has_visible_char
 from app.sop.status import get_cover_status
 from app.sop.tobe import MAX_DB_INT, is_within_slot
@@ -66,8 +67,8 @@ class UnitDecisionIn(BaseModel):
     unit_id: DbId
     revision: DbId
     disposition: Literal["assigned", "delete", "move_external"]
-    move_target_code: str = Field("", max_length=100)
-    reason: str = Field("", max_length=2000)
+    move_target_code: NoNulStr = Field("", max_length=100)
+    reason: NoNulStr = Field("", max_length=2000)
 
 
 class GridIn(BaseModel):
@@ -90,7 +91,7 @@ class TargetIn(BaseModel):
     wi_part: Literal["instruction", "why"] | None = None
     kind: Literal["sentence", "table", "figure"] = "sentence"
     lang: Literal["ko", "en", "neutral"] | None = None
-    text: str | None = Field(None, max_length=20000)
+    text: NoNulStr | None = Field(None, max_length=20000)
     change_type: Literal["as_is", "tone", "rewritten", "table_restructured"] | None = None
     source_unit_ids: list[DbId] = Field(max_length=200)
     parent_key: str | None = Field(None, max_length=40)
@@ -107,7 +108,7 @@ class TargetIn(BaseModel):
 
 class GroupSaveIn(BaseModel):
     action: Literal["confirm", "hold"]
-    hold_reason: str = Field("", max_length=2000)
+    hold_reason: NoNulStr = Field("", max_length=2000)
     units: list[UnitDecisionIn] = Field(max_length=500)
     targets: list[TargetIn] = Field(max_length=2000)
     removed_target_ids: list[DbId] = Field(default_factory=list, max_length=2000)
@@ -120,8 +121,8 @@ class BulkUnitIn(BaseModel):
 
 class BulkDecisionIn(BaseModel):
     action: Literal["delete", "move_external"]
-    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
-    move_target_code: Annotated[str, StringConstraints(strip_whitespace=True, max_length=100)] = ""
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000), NO_NUL]
+    move_target_code: Annotated[str, StringConstraints(strip_whitespace=True, max_length=100), NO_NUL] = ""
     units: list[BulkUnitIn] = Field(min_length=1, max_length=MAX_BULK_UNITS)
 
     @model_validator(mode="after")

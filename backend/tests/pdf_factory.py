@@ -81,6 +81,31 @@ def assemble_pdf(objects: list[str], trailer: str = "") -> bytes:
     return bytes(out)
 
 
+def build_mapped_glyph_pdf(line: str, glyph: str, unicode_value: str) -> bytes:
+    """line 한 줄을 쓰되 글꼴의 ToUnicode가 글자 glyph를 unicode_value(CMap 값, "<0000>"은 NUL)로 옮기는 PDF."""
+    page = f"BT /F1 12 Tf 72 700 Td ({_escape(line)}) Tj ET"
+    cmap = "\n".join(
+        [
+            "/CIDInit /ProcSet findresource begin", "12 dict begin", "begincmap",
+            "/CMapName /Synthetic def", "/CMapType 2 def",
+            "1 begincodespacerange", "<00> <FF>", "endcodespacerange",
+            "1 beginbfrange", f"<{ord(glyph):02X}> <{ord(glyph):02X}> [{unicode_value}]", "endbfrange",
+            "endcmap", "end", "end",
+        ]
+    )
+    return assemble_pdf(
+        [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [4 0 R] /Count 1 >>",
+            "<< /Type /Font /Subtype /TrueType /BaseFont /Helvetica /ToUnicode 6 0 R >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            "/Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>",
+            f"<< /Length {len(page)} >>\nstream\n{page}\nendstream",
+            f"<< /Length {len(cmap)} >>\nstream\n{cmap}\nendstream",
+        ]
+    )
+
+
 def build_image_pdf() -> bytes:
     """글자 없이 그림 한 장만 든 PDF — 스캔본 흉내."""
     buffer = BytesIO()
