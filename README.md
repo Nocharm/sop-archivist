@@ -49,6 +49,7 @@ npm run dev
 ```powershell
 # === PowerShell (Windows) === (backend\ 에서)
 .venv\Scripts\python -m scripts.seed_sop_demo
+# API 문서(OpenAPI): backend를 띄운 뒤 http://localhost:8777/docs. 호출은 dev 헤더로 — Invoke-RestMethod -Headers @{"X-Dev-User"="qa.member"} http://localhost:8777/api/bundles
 ```
 
 ## 서버 배포
