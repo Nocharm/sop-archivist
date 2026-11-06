@@ -428,6 +428,39 @@ def test_linking_an_old_table_as_is_needs_every_cell_linked(client: TestClient) 
     assert {(t["change_type"], t["status"]) for t in _load_targets(fx.new_doc["target_doc_id"])} == {("as_is", "confirmed")}
 
 
+def test_linking_an_old_table_as_is_keeps_cells_in_place(client: TestClient) -> None:
+    """입구 2 칸 새 문장은 parent_key 없이 묶여도 그대로인 표의 칸 자리를 지킨다 — 칸이 뒤바뀐 표를 "그대로"로 적지 않게(스펙 §6.7).
+
+    자리가 바뀐 표는 표 구성 변경과 사유로만 저장된다.
+    """
+    old_body = tbl([["합성 가 칸", "합성 나 칸"], ["합성 다 칸", "합성 라 칸"]])
+    new_body = tbl([["합성 라 칸", "합성 나 칸"], ["합성 다 칸", "합성 가 칸"]])
+    fx = _setup(client, old_body, new_body)
+    table_unit = next(unit for unit in fx.old_view["units"] if unit["kind"] == "table")
+    cells = {unit["text"]: unit for unit in fx.old_view["units"] if unit["group_unit_id"] == table_unit["id"]}
+    table, *cell_targets = _load_targets(fx.new_doc["target_doc_id"])
+
+    def _save(*, reason: str = "", **table_fields: str) -> httpx2.Response:
+        targets = [
+            _link("table", table, [table_unit], kind="table", **table_fields),
+            *(_link(target["confirmed_text"], target, [cells[target["confirmed_text"]]]) for target in cell_targets),
+        ]
+        units = [{**_assigned(table_unit), "reason": reason}]
+        return save_group(client, fx.bundle_id, {"action": "confirm", "units": units, "targets": targets})
+
+    swapped = _save()
+    assert (swapped.status_code, swapped.json()["detail"]) == (
+        422, {"code": "invalid_group", "reason": "cell_position_mismatch", "keys": ["합성 라 칸"]},
+    )
+    assert {target["status"] for target in _load_targets(fx.new_doc["target_doc_id"])} == {"unassigned"}
+
+    restructured = _save(reason="Synthetic: swapped two cells", change_type="table_restructured")
+    assert restructured.status_code == 200, restructured.text
+    saved_table, *saved_cells = _load_targets(fx.new_doc["target_doc_id"])
+    assert (saved_table["change_type"], saved_table["status"]) == ("table_restructured", "confirmed")
+    assert {(t["change_type"], t["status"]) for t in saved_cells} == {("as_is", "confirmed")}
+
+
 def test_bulk_new_table_needs_its_cells(client: TestClient) -> None:
     """출처 없는 표 새 문장을 신규로 확정하려면 칸 새 문장을 모두 함께 담아야 한다 — 표를 반만 확정하지 않게."""
     bundle = create_bundle(client, is_synthetic=True)
