@@ -180,6 +180,8 @@ def test_negation_dictionary_hits(text: str):
         "안전하게 열어 둔다.",
         "마찬가지로 열어 둔다.",
         "안내에 따라 열어 둔다.",
+        "말라리아 시료를 열어 둔다.",
+        "마라톤 뒤 열어 둔다.",
         "Open the lid.",
     ],
 )
@@ -258,6 +260,11 @@ def test_long_input_stays_linear():
         "-5 " * 33_000,
         ".5 " * 33_000,
         "5 to " * 20_000,
+        "5 또는 " * 20_000,
+        "5 ± " * 25_000,
+        "5분과 " * 25_000,
+        "4/-" * 33_000,
+        "말라" * 50_000,
         "10" + "⁶" * 100_000,
         "1.1." * 25_000 + " x",
         "123." * 25_000,
@@ -346,6 +353,13 @@ def test_hyphen_between_numbers_is_a_range_not_a_sign():
     assert check_sentence(["-20 ~ -10 ℃"], "-20 to -10 °C") == []
 
 
+def test_slash_before_a_minus_is_a_sign():
+    assert check_sentence(["4 ℃/-20 ℃에서 보관"], "Store at 4 °C / -20 °C") == []
+    assert check_sentence(["4 ℃/20 ℃에서 보관"], "Store at 4 °C / -20 °C") == [
+        {"kind": "number_mismatch", "source": "4, 20", "target": "-20, 4"}
+    ]
+
+
 def test_hyphen_after_a_letter_is_a_name_not_a_sign():
     assert check_sentence(["Step-2 수행"], "Step 2") == []
     assert check_sentence(["COVID-19 시료"], "COVID 19 sample") == []
@@ -398,6 +412,29 @@ def test_range_shares_its_unit_so_spelling_the_range_differently_is_fine():
     assert check_sentence(["2~8 ℃에서 보관"], "Store between 2 and 8 °C") == []
     assert check_sentence(["2-8 ℃에서 보관"], "Store at 2 to 8 °C") == []
     assert check_sentence(["5 내지 10 mL"], "5-10 mL") == []
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [
+        ("5 mL 또는 10 mL를 넣는다.", "Add 5 or 10 mL."),
+        ("5 mL 혹은 10 mL를 넣는다.", "Add 5 or 10 mL."),
+        ("5 mL 및 10 mL를 넣는다.", "Add 5 mL OR 10 mL."),
+        ("5 및 10 mL를 넣는다.", "Add 5 mL and 10 mL."),
+        ("5 또는 10 mL를 넣는다.", "Add 5 mL or 10 mL."),
+        ("2일 또는 3일간 둔다.", "Keep for 2 or 3 days."),
+        ("37 ℃ ± 2 ℃로 유지한다.", "Keep at 37 ± 2 °C."),
+    ],
+)
+def test_alternatives_and_tolerances_share_their_unit(source: str, target: str):
+    assert check_sentence([source], target) == []
+
+
+def test_shared_unit_connector_still_needs_a_shared_unit():
+    # 뒤 숫자에 단위가 없으면 나눌 단위도 없다 — 숫자가 같아도 짝이 다르면 알린다
+    assert check_sentence(["5 mL 또는 10 mL"], "5 mL or 10") == [
+        {"kind": "unit_mismatch", "source": "5 mL, 10 mL", "target": "5 mL"}
+    ]
 
 
 @pytest.mark.parametrize(
@@ -532,6 +569,15 @@ def test_clause_number_before_a_word_starting_with_a_unit_syllable(korean: str, 
         ("30초씩 섞는다.", "30", "sec"),
         ("1시간 동안 둔다.", "1", "h"),
         ("4 ℃에서 보관한다.", "4", "℃"),
+        ("30분내 끝낸다.", "30", "min"),
+        ("1시간당 점검한다.", "1", "h"),
+        ("3일경 확인한다.", "3", "day"),
+        ("5분과 함께 둔다.", "5", "min"),
+        ("30초와 비교한다.", "30", "sec"),
+        ("10분보다 길다.", "10", "min"),
+        ("5분만 둔다.", "5", "min"),
+        ("5분쯤 둔다.", "5", "min"),
+        ("10분도 둔다.", "10", "min"),
     ],
 )
 def test_hangul_unit_with_a_following_particle_still_counts(korean: str, number: str, label: str):
@@ -539,9 +585,35 @@ def test_hangul_unit_with_a_following_particle_still_counts(korean: str, number:
     assert check_sentence([korean], f"Do it {number}.") == [{"kind": "unit_mismatch", "source": label, "target": ""}]
 
 
+@pytest.mark.parametrize(
+    ("korean", "english"),
+    [("5분과 10분 둔다.", "Keep for 5 min and 10 min."), ("30초와 60초 섞는다.", "Mix for 30 s and 60 s.")],
+)
+def test_hangul_units_joined_by_a_particle_both_count(korean: str, english: str):
+    assert check_sentence([korean], english) == []
+
+
+def test_excess_is_not_seconds():
+    # 과는 이음말이지만 "초과"의 초는 단위가 아니다
+    assert check_sentence(["10초과 시 폐기한다."], "Discard above 10.") == []
+    assert check_sentence(["2.3 초과 시료"], "Excess samples") == []
+
+
 def test_hangul_unit_followed_by_ui_is_not_a_unit():
     # 의는 이음말에 넣지 않는다 — "주의"의 주를 단위로 읽지 않으려는 선택이라 "2주의 기간"의 주도 세지 않는다
     assert check_sentence(["2주의 기간"], "A period of 2") == []
+
+
+@pytest.mark.parametrize(
+    ("korean", "number", "label"),
+    [("2.3 초도 검사", "2.3", "sec"), ("6.1 분당 회전수", "6.1", "min")],
+)
+def test_clause_number_before_a_word_ending_in_a_particle_is_a_known_residual(korean: str, number: str, label: str):
+    # 알려진 남은 오탐: 도·당을 이음말로 받으면 초도·분당은 "10초도"·"1분당"과 구별되지 않아 조항 번호가 수량으로 남는다
+    assert check_sentence([korean], "Heading") == [
+        {"kind": "number_mismatch", "source": number, "target": ""},
+        {"kind": "unit_mismatch", "source": label, "target": ""},
+    ]
 
 
 def test_clause_number_before_the_word_time_is_a_known_residual():

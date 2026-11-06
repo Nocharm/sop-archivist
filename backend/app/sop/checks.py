@@ -48,17 +48,19 @@ _UNIT_GROUPS: dict[str, tuple[str, ...]] = {
 _UNIT_ORDER = {label: index for index, label in enumerate(_UNIT_GROUPS)}
 # 한글 단위(분·시간·초·일·주) 뒤에는 끝, 한글 아닌 글자, 아래 이음말만 온다 — 그 밖의 한글이 이어지면 다른 낱말이다
 # ("5.2 일반 사항"의 일, "6.1 분석"의 분, "10 mL 초과"의 초). 의는 넣지 않는다 — "7.1 주의 사항"의 주를 단위로 읽지 않게.
+# 과는 앞이 초가 아닐 때만 — "5분과 10분"은 단위지만 "10초과"는 넘는다는 낱말이다.
 _HANGUL_CHARS = "\u1100-\u11ff\u3130-\u318f\uac00-\ud7a3"  # 자모·호환 자모·완성형 음절
 _HANGUL_RE = re.compile(f"[{_HANGUL_CHARS}]")
 _HANGUL_UNIT_CONTINUATIONS = (
     "간", "동안", "이내", "이상", "이하", "미만", "후", "전", "마다", "씩", "에", "에서",
     "을", "를", "이", "가", "은", "는", "로", "으로", "까지", "부터", "정도", "째",
+    "내", "당", "경", "와", "(?<!초)과", "보다", "만", "쯤", "도",
 )
 _HANGUL_UNIT_END = f"(?=$|[^{_HANGUL_CHARS}]|{'|'.join(_HANGUL_UNIT_CONTINUATIONS)})"
 
 # 부호·앞점 소수가 붙는 자리 — 앞이 이 글자(또는 문장 처음)일 때만 "-20"의 -가 부호다. 숫자 사이 하이픈("2-8")은 범위,
 # 글자 뒤 하이픈("Step-2")은 이름이다. ^는 거듭제곱 지수("10^-6")를 위해 둔다.
-_SIGN_CONTEXT = r"\s(\[{~∼〜≈≤≥<>=:;,^"
+_SIGN_CONTEXT = r"\s(\[{~∼〜≈≤≥<>=:;,/^"
 # 세 자리 묶음 쉼표만 지운다 — "1,5"처럼 묶음이 아닌 쉼표는 그대로 둔다
 _THOUSANDS_RE = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?", re.ASCII)
 _INVISIBLE_TABLE = {ord(ch): None for ch in INVISIBLE_CHARS}
@@ -68,14 +70,14 @@ _SUPERSCRIPT_RUN_RE = re.compile("[⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺]+")
 _SUPERSCRIPT_TABLE = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺", "0123456789-+")
 # 문장 맨 앞의 조항 번호("5.1 ", "5. ") — 점이 없는 "5 시료"는 수량일 수 있어 건드리지 않는다
 _CLAUSE_NUMBER_RE = re.compile(r"\s*\d+(?:(?:\.\d+)+\.?|\.)\s+", re.ASCII)
-# 범위 "2-8 ℃"·"4 to 8 °C"의 앞 숫자는 뒤 숫자의 단위를 함께 쓴다
-_RANGE_GAP_RE = re.compile(r"\s*(?:[-~∼〜]|(?i:to|and)|내지)\s*", re.ASCII)
+# 범위 "2-8 ℃"·"4 to 8 °C", 택일 "5 or 10 mL", 허용 오차 "37 ± 2 °C"의 앞 숫자는 뒤 숫자의 단위를 함께 쓴다
+_RANGE_GAP_RE = re.compile(r"\s*(?:[-~∼〜±]|(?i:to|and|or)|내지|또는|혹은|및)\s*", re.ASCII)
 
 # 부정 사전. 한글은 어절 경계가 없어 부분 문자열로 찾고, 영어는 낱말 경계(ASCII)로 찾는다.
-# 불가피(피할 수 없다)는 부정이 아니고, "No. 5"·"no.5"의 No는 번호 약어라 부정이 아니다(점 없는 "no 5"는 부정).
+# 불가피(피할 수 없다)·말라리아·마라톤은 부정이 아니고, "No. 5"·"no.5"의 No는 번호 약어라 부정이 아니다(점 없는 "no 5"는 부정).
 _NEGATION_RE = re.compile(
     r"않|없|금지|금함|금한다|말\s*것|불가(?!피)|아니"
-    r"|마십시오|마시오|마세요|마라|말라|말아|말고"
+    r"|마십시오|마시오|마세요|마라(?!톤)|말라(?!리)|말아|말고"
     r"|안\s*(?:된|됨|돼|됩|되)|못\s*(?:한|하|함)"
     r"|\bnot\b|\bno\b(?!\.\s*\d)|\bnever\b|\bwithout\b|\bprohibited\b|\bcannot\b|n['’]t\b|\bnone\b",
     re.IGNORECASE | re.ASCII,
