@@ -41,6 +41,8 @@ def _get_doc_codes(client: TestClient, bundle_id: int) -> set[str]:
     return {row["old_doc_code"] for row in response.json()}
 
 
+# Postgres에서는 업로드가 로더의 공유 잠금을 기다리므로 로더 안에서 업로드를 기다리는 이 갈고리는 서로를 기다린다
+@pytest.mark.skipif(engine.dialect.name != "sqlite", reason="the race exists only without the bundle row lock")
 def test_snapshot_ignores_a_document_committed_while_it_loads(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """문서 목록을 읽은 뒤 다른 세션이 업로드(블록·단위·판단)를 커밋해도 결과물·개요가 500이 되지 않고, 늦게 온 문서는
     이번 결과에 섞이지 않는다. Postgres는 묶음 행 공유 잠금이 업로드를 기다리게 하지만 sqlite는 잠금이 없어 실제로 끼어든다.
