@@ -9,7 +9,7 @@ from io import BytesIO
 from itertools import accumulate
 from typing import Literal
 
-from app.sop.segment import INVISIBLE_CHARS
+from app.sop.segment import INVISIBLE_CHARS, replace_unstorable_chars
 
 # 정규화한 조각이 이보다 짧으면 비교하지 않는다 — 번호·약어 같은 짧은 조각은 어디에나 들어 있어 판별력이 없다
 MIN_PIECE_CHARS = 4
@@ -56,7 +56,8 @@ def convert_with_markitdown(data: bytes, file_format: Literal["docx", "pdf"]) ->
     converter.register_converter(DocxConverter())
     converter.register_converter(PdfConverter())
     result = converter.convert_stream(BytesIO(data), stream_info=StreamInfo(extension=f".{file_format}"))
-    return result.text_content
+    # 메인 PDF 추출기와 같은 글자로 맞춘다 — 안 그러면 같은 줄이 누락 의심이 되고 경고 조각에 못 담는 글자가 실린다
+    return replace_unstorable_chars(result.text_content)
 
 
 def _drop_blank_chars(text: str) -> str:

@@ -84,6 +84,8 @@ async def ingest_upload(
     """
     if len(file_name) > MAX_FILE_NAME_CHARS:
         raise_rule(422, "file_name_too_long", max_chars=MAX_FILE_NAME_CHARS)
+    if "\x00" in file_name:  # 긴 이름처럼 DB에 담지 못해 거절 행으로도 남길 수 없다
+        raise_rule(422, "invalid_file_name")
     bundle_id = bundle.id  # rollback 뒤에는 만료된 속성을 읽을 수 없다(비동기 지연 로드 금지)
     parsed = parse_file_name(file_name)
     file_format = _detect_format(file_name)

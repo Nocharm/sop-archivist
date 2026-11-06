@@ -55,6 +55,7 @@ from app.sop.pairs import (
     create_pair,
     delete_pair,
 )
+from app.sop.schemas import NO_NUL, NoNulStr
 from app.sop.status import get_cover_status
 from app.sop.tobe import MAX_DB_INT, remove_match_doc, rename_match_doc, temp_match_code
 from app.sop.units import UNIT_ACTIVE, compute_display_id, refresh_code_pairs
@@ -130,9 +131,9 @@ class DocumentOut(DocumentBase):
 
 class DocumentUpdateIn(BaseModel):
     revision: int = Field(ge=1)
-    doc_code: Annotated[str, StringConstraints(strip_whitespace=True, max_length=100)] | None = None
-    doc_version: Annotated[str, StringConstraints(strip_whitespace=True, max_length=50)] | None = None
-    title: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] | None = None
+    doc_code: Annotated[str, StringConstraints(strip_whitespace=True, max_length=100), NO_NUL] | None = None
+    doc_version: Annotated[str, StringConstraints(strip_whitespace=True, max_length=50), NO_NUL] | None = None
+    title: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500), NO_NUL] | None = None
     language_layout: Annotated[str, AfterValidator(_check_language_layout)] | None = None
 
     @model_validator(mode="after")
@@ -143,7 +144,7 @@ class DocumentUpdateIn(BaseModel):
 
 
 class WarningAckIn(BaseModel):
-    note: Annotated[str, StringConstraints(strip_whitespace=True, max_length=MAX_ACK_NOTE_CHARS)] = ""
+    note: Annotated[str, StringConstraints(strip_whitespace=True, max_length=MAX_ACK_NOTE_CHARS), NO_NUL] = ""
 
 
 class ViewTableOut(BaseModel):
@@ -368,8 +369,8 @@ async def upload_document(
     file: UploadFile = File(),
     side: Literal["old", "new"] = Form(),
     # 새 문서(side=new)일 때만 쓴다 — 옛 문서에서는 무시한다
-    doc_type: str | None = Form(None),
-    parent_code: str | None = Form(None),
+    doc_type: NoNulStr | None = Form(None),
+    parent_code: NoNulStr | None = Form(None),
     ctx: BundleContext = Depends(_require_author),
     session: AsyncSession = Depends(get_session),
 ) -> DocumentOut:

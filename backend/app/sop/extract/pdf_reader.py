@@ -21,7 +21,7 @@ from app.sop.extract.types import (
     ExtractLimits,
     ExtractResult,
 )
-from app.sop.segment import has_visible_char
+from app.sop.segment import has_visible_char, replace_unstorable_chars
 
 PDF_HEADER = b"%PDF"
 PAGE_BASIS_RENDERED = "rendered"  # PDF의 쪽은 보이는 쪽 그대로다
@@ -88,7 +88,7 @@ def _iter_page_texts(pages: list[PDFPage]) -> Iterator[str]:
     try:
         for page in pages:
             interpreter.process_page(page)
-            yield output.getvalue()
+            yield replace_unstorable_chars(output.getvalue())  # 글꼴 맵(ToUnicode <0000>)이 낼 수 있다
             output.seek(0)
             output.truncate(0)
     except PSException as error:

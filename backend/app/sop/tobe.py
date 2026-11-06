@@ -21,6 +21,7 @@ from app.sop.models import (
     TargetSentence,
     WiStep,
 )
+from app.sop.schemas import NO_NUL
 
 if TYPE_CHECKING:
     from app.sop.tobe_excel import ParsedWorkbook
@@ -29,7 +30,7 @@ if TYPE_CHECKING:
 MAX_TOBE_ROWS = 2000
 MAX_DB_INT = 2_147_483_647  # Postgres INTEGER 상한 — 넘는 값이 DB까지 가서 500이 되지 않게
 
-DocCode = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+DocCode = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100), NO_NUL]
 
 
 def _blank_to_none(value: object) -> object:
@@ -39,7 +40,7 @@ def _blank_to_none(value: object) -> object:
 
 class TargetDocIn(BaseModel):
     code: DocCode
-    title: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] = ""
+    title: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500), NO_NUL] = ""
     # 허용 값은 규칙 검사(invalid_doc_type)가 코드로 거절한다 — 그래야 화면이 사유를 구분한다
     doc_type: str
     parent_code: Annotated[DocCode | None, BeforeValidator(_blank_to_none)] = None
@@ -50,13 +51,13 @@ class TargetDocIn(BaseModel):
 class NaSlotIn(BaseModel):
     code: DocCode
     slot_key: Annotated[str, StringConstraints(strip_whitespace=True, max_length=100)]
-    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000), NO_NUL]
 
 
 class WiStepIn(BaseModel):
     code: DocCode
     step_no: int = Field(ge=1, le=MAX_DB_INT)
-    title: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] = ""
+    title: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500), NO_NUL] = ""
 
 
 class ToBeIn(BaseModel):
