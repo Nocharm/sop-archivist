@@ -53,6 +53,7 @@
   - 입구 2 칸 자리: parent_key 없이 묶인 칸 새 문장은 `cell_position_mismatch` 검사를 건너뛰어, 칸이 뒤바뀐 표가 "그대로"로 저장됐다. 칸 완비 검사의 부모 찾기를 `_find_parent_plan`으로 꺼내 두 검사가 같은 규칙을 쓴다.
   - NUL: Postgres text는 U+0000을 담지 못해(sqlite는 받아 준다) PDF 글꼴 맵이 낸 NUL이 업로드 500이었다. `read_pdf`와 MarkItDown 쪽을 `replace_unstorable_chars`(같은 길이 대체 문자)로 맞췄다(메인만 바꾸면 같은 줄이 누락 의심이 된다). 글꼴 맵이 낸 짝 없는 서로게이트도 같은 500이고 asyncpg 오류 메시지에 글이 실려 함께 바꾼다. JSON·폼 입력은 `schemas.NO_NUL`로 422, NUL 든 파일 이름은 긴 이름처럼 행을 남기지 못해 422 `invalid_file_name`. `AfterValidator`는 `StringConstraints` 뒤에 둔다(앞이면 길이를 공백 걷기 전에 잰다).
   - 스냅숏: 묶음 삭제의 FOR UPDATE를 기다리던 읽기가 깨어나 행이 없으면 500이던 것을 404 `bundle_not_found`로.
+  - 문장 검사 다듬기: 이음말(내·당·경·와·과·보다·만·쯤·도, `초과`는 제외), 단위를 나누는 이음(또는·혹은·or·및·±), 부호 앞 `/`, 말라리아·마라톤 부정 오탐. 도·당을 받아 `2.3 초도 검사`·`6.1 분당 회전수`는 `3.4 시간 관리`처럼 구별되지 않는 남은 오탐이라 테스트에 적었다.
 
 ## 2026-11-04
 
