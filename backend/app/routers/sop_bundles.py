@@ -211,9 +211,9 @@ async def build_bundle_out(
 async def replace_bundle_members(
     session: AsyncSession, bundle: Bundle, body: MembersUpdateIn, *, actor: str, reason: str = ""
 ) -> None:
-    """멤버를 통째로 바꾼다(작성자 경로와 bundle.admin 경로가 같은 검사를 쓴다). 상태와 무관하게 바꿀 수 있고 커밋은 호출부가 한다.
+    """멤버를 통째로 바꾼다(작성자 경로와 bundle.admin 경로가 같은 검사를 쓴다). 커밋은 호출부가 한다.
 
-    바뀐 것이 없으면 revision도 기록도 건드리지 않는다.
+    상태와 무관하게 바꿀 수 있지만 검토 대기 중에 자기 역할은 바꾸지 못한다. 바뀐 것이 없으면 revision도 기록도 건드리지 않는다.
     """
     await lock_bundle(session, bundle)
     check_revision("bundle", bundle.id, body.revision, bundle.revision)
@@ -240,6 +240,9 @@ async def replace_bundle_members(
     role_changed = {
         login_id for login_id in current.keys() & wanted.keys() if current[login_id].role != wanted[login_id]
     }
+    # 작성자가 자기를 검토자로 바꿔 자기 묶음을 검토 완료하는 길을 막는다(사용자 결정 2026-11-06)
+    if bundle.status == "in_review" and actor in role_changed:
+        raise_rule(409, "own_role_locked", status=bundle.status)
     changed = sorted((current.keys() ^ wanted.keys()) | role_changed)
     if not changed:
         return
