@@ -430,6 +430,36 @@ def test_table_restructure_needs_reason(client: TestClient) -> None:
     assert (cell_target["parent_target_id"], cell_target["cell_col"]) == (table_target["id"], 1)
 
 
+def test_as_is_table_needs_one_cell_target_per_cell_sentence(client: TestClient) -> None:
+    """그대로인 표는 묶인 칸 문장마다 칸 새 문장이 정확히 하나다 — 빠진 칸 글이 결과물에 "그대로"로 적힌 채 사라지지 않게(R27).
+
+    표 구성 변경(사유)은 칸을 빼고 담을 수 있다 — test_table_restructure_needs_reason이 칸 하나만 담아 저장한다.
+    """
+    fx = _setup(client)
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+    cells = [unit for unit in fx.view["units"] if unit["group_unit_id"] == table["id"]]
+    table_target = _target("t", fx.sop_id, [table], slot_key="purpose", kind="table", grid={"rows": 2, "cols": 2})
+    cell_targets = [
+        _target(f"c{index}", fx.sop_id, [cell], slot_key="purpose", parent_key="t", cell_row=index // 2, cell_col=index % 2)
+        for index, cell in enumerate(cells)
+    ]
+
+    def _save(targets: list[dict]) -> httpx2.Response:
+        return save_group(client, fx.bundle_id, _body([_unit_in(table)], [table_target, *targets]))
+
+    bare, partial = _save([]), _save(cell_targets[:3])
+    doubled = _save([*cell_targets, {**cell_targets[0], "key": "again"}])
+
+    for response, unit_ids in ((bare, [cell["id"] for cell in cells]), (partial, [cells[3]["id"]]), (doubled, [cells[0]["id"]])):
+        assert (response.status_code, response.json()["detail"]) == (
+            422, {"code": "invalid_group", "reason": "table_cells_missing", "unit_ids": unit_ids},
+        )
+    assert _count_rows(TargetSentence, bundle_id=fx.bundle_id) == 0
+    whole = _save(cell_targets)
+    assert whole.status_code == 200, whole.text
+    assert sorted(t["change_type"] for t in whole.json()["targets"]) == ["as_is"] * 5
+
+
 def test_hold_requires_reason_and_sets_on_hold(client: TestClient) -> None:
     fx = _setup(client)
     unit = find_unit(fx.view, STORAGE)
@@ -688,18 +718,23 @@ def test_closure_follows_table_cell_target_links(client: TestClient) -> None:
         return table.id, cell.id
 
     table_id, cell_id = run_in_session(_seed)
-    table_in = {"key": "p", "id": table_id, "revision": 1, "kind": "table", "source_unit_ids": [old_table["id"]]}
+    # 옛 표의 칸 문장은 칸 새 문장으로 가지 않으므로 그대로가 아니다(R27) — 표 구성 변경과 사유로 확정한다
+    table_in = {
+        "key": "p", "id": table_id, "revision": 1, "kind": "table", "change_type": "table_restructured",
+        "source_unit_ids": [old_table["id"]],
+    }
     cell_in = {"key": "c1", "id": cell_id, "revision": 1, "parent_key": "p", "source_unit_ids": [paragraph["id"]]}
+    restructured = _unit_in(old_table, reason="Synthetic: cells rebuilt in the new document")
 
-    half = save_group(client, fx.bundle_id, _body([_unit_in(old_table)], [table_in]))
-    whole = save_group(client, fx.bundle_id, _body([_unit_in(old_table), _unit_in(paragraph)], [table_in, cell_in]))
+    half = save_group(client, fx.bundle_id, _body([restructured], [table_in]))
+    whole = save_group(client, fx.bundle_id, _body([restructured, _unit_in(paragraph)], [table_in, cell_in]))
 
     assert _reason(half) == "not_closed"
     assert half.json()["detail"]["target_ids"] == [cell_id]
     assert half.json()["detail"]["unit_ids"] == [paragraph["id"]]
     assert whole.status_code == 200, whole.text
     assert [(t["id"], t["status"], t["change_type"]) for t in whole.json()["targets"]] == [
-        (table_id, "confirmed", "as_is"), (cell_id, "confirmed", "as_is"),
+        (table_id, "confirmed", "table_restructured"), (cell_id, "confirmed", "as_is"),
     ]
     group = get_group_by_unit(client, fx.bundle_id, old_table["id"])
     expected_group = f"G-{paragraph['display_id']}"

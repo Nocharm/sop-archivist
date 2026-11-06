@@ -397,6 +397,37 @@ def test_bulk_confirm_rejects_assigned_unit_and_duplicates(client: TestClient) -
     }
 
 
+def test_linking_an_old_table_as_is_needs_every_cell_linked(client: TestClient) -> None:
+    """입구 2에서 옛 표를 새 문서 표에 그대로로 이어도 옛 칸 문장마다 칸 새 문장 하나가 있어야 한다(입구 1과 같은 R27).
+
+    입구 2 칸 새 문장은 parent_key 없이 지금 부모(표 새 문장)로 묶인다.
+    """
+    body = tbl([["항목", "Item"], ["합성 값", "Synthetic value"]])
+    fx = _setup(client, body, body)
+    table_unit = next(unit for unit in fx.old_view["units"] if unit["kind"] == "table")
+    cells = [unit for unit in fx.old_view["units"] if unit["group_unit_id"] == table_unit["id"]]
+    table, *cell_targets = _load_targets(fx.new_doc["target_doc_id"])
+
+    def _save(cell_sources: list[list[dict]]) -> httpx2.Response:
+        targets = [
+            {
+                "key": f"t{row['id']}", "id": row["id"], "revision": row["revision"], "kind": row["kind"],
+                "source_unit_ids": [unit["id"] for unit in sources],
+            }
+            for row, sources in zip([table, *cell_targets], [[table_unit], *cell_sources], strict=True)
+        ]
+        units = [{"unit_id": table_unit["id"], "revision": 1, "disposition": "assigned"}]
+        return save_group(client, fx.bundle_id, {"action": "confirm", "units": units, "targets": targets})
+
+    unlinked = _save([[], [], [], []])
+    assert (unlinked.status_code, unlinked.json()["detail"]) == (
+        422, {"code": "invalid_group", "reason": "table_cells_missing", "unit_ids": [cell["id"] for cell in cells]},
+    )
+    linked = _save([[cell] for cell in cells])
+    assert linked.status_code == 200, linked.text
+    assert {(t["change_type"], t["status"]) for t in _load_targets(fx.new_doc["target_doc_id"])} == {("as_is", "confirmed")}
+
+
 def test_bulk_new_table_needs_its_cells(client: TestClient) -> None:
     """출처 없는 표 새 문장을 신규로 확정하려면 칸 새 문장을 모두 함께 담아야 한다 — 표를 반만 확정하지 않게."""
     bundle = create_bundle(client, is_synthetic=True)
