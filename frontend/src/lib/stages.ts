@@ -17,7 +17,7 @@ export interface Stage {
 export const STAGES: readonly Stage[] = [
   { key: "overview", path: "", ready: true },
   { key: "documents", path: "/documents", ready: true },
-  { key: "split", path: "/split", step: 1, ready: false },
+  { key: "split", path: "/split", step: 1, ready: true },
   { key: "tobe", path: "/tobe", step: 2, ready: false },
   { key: "classify", path: "/classify", step: 3, ready: false },
   { key: "match", path: "/match", step: 3, ready: false },

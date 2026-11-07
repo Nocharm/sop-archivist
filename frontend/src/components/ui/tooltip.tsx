@@ -50,7 +50,7 @@ export function Tooltip({ label, children, align = "center" }: TooltipProps) {
   return (
     <span
       ref={hostRef}
-      className="inline-flex"
+      className="inline-flex shrink-0"
       onPointerEnter={show}
       onPointerLeave={hide}
       onFocus={show}

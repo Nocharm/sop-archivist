@@ -183,6 +183,50 @@ await runStep("documents list, inline edit and delete prompt", {}, async ({ page
   check("delete prompt closes with Esc", true);
 });
 
+await runStep("split: select, cut, split, undo, check boundary", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  await page.goto(`${BASE}/bundles/${freshId}/split`);
+  const units = page.locator('[data-testid^="split-paper-unit-"].su');
+  await units.first().waitFor({ timeout: T });
+  const before = await units.count();
+  // 영어 문장 하나를 찾아 고른다 - 두 번째 누름이 나눌 선을 만든다
+  const target = page.locator('[data-testid^="split-paper-unit-"].su[lang="en"]', { hasText: " " }).nth(2);
+  const unitId = (await target.getAttribute("data-testid")).replace("split-paper-unit-", "");
+  await target.click();
+  check("first click selects", (await target.getAttribute("data-sel")) === "");
+  const primary = page.locator('[data-testid="split-primary"]');
+  const primaryBox = await primary.boundingBox();
+  const box = await target.boundingBox();
+  await page.mouse.click(box.x + Math.min(box.width / 2, 120), box.y + box.height / 2);
+  await page.locator(`[data-testid="split-paper-unit-${unitId}"][data-cut]`).waitFor({ timeout: T });
+  check("second click draws the cut", true);
+  await takeShot("sop-split-cut.png");
+  await page.keyboard.press("s");
+  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
+  await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-unit-"].su').length === n + 1, before, { timeout: T });
+  check("S splits into two units", true);
+  const after = await primary.boundingBox();
+  check("primary button stays in place", Math.abs(after.y - primaryBox.y) < 1 && Math.abs(after.width - primaryBox.width) < 1);
+  await page.keyboard.press("Control+z");
+  await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-unit-"].su').length === n, before, { timeout: T });
+  check("Ctrl+Z undoes the split", true);
+  const first = units.first();
+  await first.click();
+  const firstId = (await first.getAttribute("data-testid")).replace("split-paper-unit-", "");
+  await page.keyboard.press("Enter");
+  await page.waitForFunction((id) => document.querySelector('[data-testid="split-unit-id"]')?.textContent && !document.querySelector(`[data-testid="split-paper-unit-${id}"][data-sel]`), firstId, { timeout: T });
+  check("Enter checks and moves to the next unit", true);
+  await page.keyboard.press("k");
+  await page.locator(`[data-testid="split-paper-unit-${firstId}"][data-sel]`).waitFor({ timeout: T });
+  check("K goes back", (await getText(page, "split-boundary-state")).includes("Checked"), await getText(page, "split-boundary-state"));
+  await page.keyboard.press("u");
+  await page.waitForFunction(() => document.querySelector('[data-testid="split-boundary-state"]')?.textContent?.includes("Not checked"), null, { timeout: T });
+  check("U unchecks", true);
+  await takeShot("sop-split.png");
+});
+
 await browser.close();
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} check(s) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
