@@ -12,7 +12,12 @@ from dataclasses import dataclass
 from sqlalchemy import Row, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.sop.ai.constants import NEIGHBOR_UNITS
+from app.sop.ai.constants import (
+    MAX_TABLE_CONTEXT_CHARS,
+    MAX_TABLE_CONTEXT_COLS,
+    MAX_TABLE_CONTEXT_ROWS,
+    NEIGHBOR_UNITS,
+)
 from app.sop.constants import COVER_KINDS
 from app.sop.groups import TABLE_UNIT_KINDS, select_in_chunks
 from app.sop.models import SourceBlock, Unit
@@ -50,17 +55,23 @@ def render_table_markdown(grid: Sequence[Sequence[str]]) -> str:
 
 
 def _build_grid(cells: Iterable[Row]) -> list[list[str]]:
-    """칸 블록 → 행 × 열 격자. 병합으로 블록이 없는 자리는 빈 칸이다."""
+    """칸 블록 → 행 × 열 격자. 블록이 실제로 있는 행·열만 남기고(원문의 행·열 번호는 크기에 쓰지 않는다) 앞쪽 MAX_TABLE_CONTEXT_ROWS행·COLS열까지만 만든다.
+
+    칸 번호는 DOCX의 gridBefore·gridSpan에서 오므로 아주 클 수 있다. 번호로 격자를 만들면 칸 몇 개로 메모리를 채울 수 있다.
+    """
     texts = {
         (cell.row_index, cell.col_index): cell.text
         for cell in cells
         if cell.row_index is not None and cell.col_index is not None
     }
-    if not texts:
-        return []
-    n_rows = max(row for row, _ in texts) + 1
-    n_cols = max(col for _, col in texts) + 1
-    return [[texts.get((row, col), "") for col in range(n_cols)] for row in range(n_rows)]
+    rows = sorted({row for row, _ in texts})[:MAX_TABLE_CONTEXT_ROWS]
+    cols = sorted({col for _, col in texts})[:MAX_TABLE_CONTEXT_COLS]
+    return [[texts.get((row, col), "") for col in cols] for row in rows]
+
+
+def _render_table_context(cells: Iterable[Row]) -> str:
+    """표의 칸 블록 → 맥락용 Markdown. 격자는 행·열 수로, 글은 MAX_TABLE_CONTEXT_CHARS로 자른다."""
+    return render_table_markdown(_build_grid(cells))[:MAX_TABLE_CONTEXT_CHARS]
 
 
 def _pick_neighbor_ids(rows: Sequence[Row], indices: Iterable[int], unit_id: int) -> list[int]:
@@ -139,9 +150,13 @@ async def load_unit_context(session: AsyncSession, unit_ids: Sequence[int]) -> d
     for row in cell_rows:
         cells_by_table[row.table_id].append(row)
 
+    # 표 하나를 쓰는 단위가 여럿(표 행 단위 여럿)이어도 표마다 한 번만 그린다
+    markdown_by_table = {table_id: _render_table_context(cells) for table_id, cells in cells_by_table.items()}
+
     contexts: dict[int, UnitContext] = {}
     for unit in unit_rows:
-        table_cells = cells_by_table.get(unit.table_id, []) if unit.kind in TABLE_UNIT_KINDS else []
+        is_table_unit = unit.kind in TABLE_UNIT_KINDS
+        table_cells = cells_by_table.get(unit.table_id, []) if is_table_unit else []
         if unit.spans:
             section = sections_by_block[unit.spans[0][0]]
         else:
@@ -151,6 +166,6 @@ async def load_unit_context(session: AsyncSession, unit_ids: Sequence[int]) -> d
             section=section,
             before=tuple(texts[neighbor_id] for neighbor_id in before),
             after=tuple(texts[neighbor_id] for neighbor_id in after),
-            table_markdown=render_table_markdown(_build_grid(table_cells)),
+            table_markdown=markdown_by_table.get(unit.table_id, "") if is_table_unit else "",
         )
     return contexts

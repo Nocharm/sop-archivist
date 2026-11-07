@@ -289,6 +289,10 @@ def test_call_llm_maps_server_error_and_connection(monkeypatch: pytest.MonkeyPat
         lambda: httpx2.Response(200, json={"choices": [{"message": None}]}),  # message 없음
         lambda: httpx2.Response(200, json=["choices"]),  # 최상위가 객체가 아니다
         lambda: httpx2.Response(200, json={"choices": {"0": 1}}),  # choices가 목록이 아니다
+        lambda: httpx2.Response(200, content="<html>게이트웨이 오류</html>".encode("cp949")),  # UTF-8이 아닌 글자
+        lambda: httpx2.Response(200, json=build_chat_body(["a", "b"])),  # content가 글이 아니다: 목록
+        lambda: httpx2.Response(200, json=build_chat_body(123)),  # 숫자
+        lambda: httpx2.Response(200, json=build_chat_body({"text": "x"})),  # 객체
     ],
 )
 def test_call_llm_treats_a_broken_body_as_a_server_error(monkeypatch: pytest.MonkeyPatch, build_response) -> None:

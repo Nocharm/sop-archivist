@@ -100,8 +100,12 @@ async def call_llm(
         attempt += 1
         try:
             reply = await call_ai_recorded(login_id=login_id, feature=feature, messages=messages, reasoning=reasoning)
-        # 깨진 본문은 call_ai가 JSON 해석·choices·usage 접근에서 이 예외들로 낸다. 그 밖의 예외(기록 DB 오류 등)는 재시도하지 않고 올린다
-        except (httpx2.HTTPError, json.JSONDecodeError, KeyError, IndexError, TypeError, AttributeError) as exc:
+            if not isinstance(reply.content, str):  # call_ai는 content의 형을 가리지 않는다 — 목록·숫자면 깨진 본문이다
+                raise TypeError("reply content is not a string")
+        # 깨진 본문은 call_ai가 글자 해석·JSON 해석·choices·usage 접근에서 이 예외들로 낸다. 그 밖의 예외(기록 DB 오류 등)는 재시도하지 않고 올린다
+        except (
+            httpx2.HTTPError, UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError, AttributeError
+        ) as exc:
             code = _get_failure_code(exc)
             logger.warning(
                 "AI call failed: feature=%s attempt=%d/%d code=%s error=%s",
