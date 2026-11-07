@@ -124,27 +124,43 @@ def bulk_delete(client: TestClient, bundle_id: int, unit_id: int) -> httpx2.Resp
 
 
 def save_table(
-    client: TestClient, bundle_id: int, table_id: int, *, edited_cell: tuple[str, str] | None = None
+    client: TestClient,
+    bundle_id: int,
+    table_id: int,
+    *,
+    edited_cell: tuple[str, str] | None = None,
+    is_reshaped: bool = False,
 ) -> httpx2.Response:
-    """AI 표 새 문장과 칸 새 문장을 저장한다 — edited_cell은 (고칠 칸 글, 새 글)."""
+    """AI 표 새 문장과 칸 새 문장을 저장한다 — edited_cell은 (고칠 칸 글, 새 글), is_reshaped는 칸 글을 둔 채 한 열로 편다."""
     group = get_group_by_unit(client, bundle_id, table_id)
     (table_target,) = [item for item in group["targets"] if item["kind"] == "table"]
+    cell_count = len(group["targets"]) - 1
     targets = []
-    for item in group["targets"]:
-        fields = {
-            "key": str(item["id"]), "id": item["id"], "revision": item["revision"], "kind": item["kind"],
-            "slot_key": item["slot_key"], "source_unit_ids": item["source_unit_ids"],
-        }
-        if item["kind"] == "sentence":
-            fields["parent_key"] = str(table_target["id"])
-            if edited_cell is not None and item["ai_text"] == edited_cell[0]:
-                fields.update(text=edited_cell[1], change_type="rewritten")
+    for index, item in enumerate(target_row for target_row in group["targets"] if target_row["kind"] == "sentence"):
+        fields = _build_table_item(item, parent_key=str(table_target["id"]))
+        if edited_cell is not None and item["ai_text"] == edited_cell[0]:
+            fields.update(text=edited_cell[1], change_type="rewritten")
+        if is_reshaped:
+            fields.update(cell_row=index, cell_col=0)
         targets.append(fields)
+    table_fields = _build_table_item(table_target)
+    if is_reshaped:
+        table_fields.update(grid={"rows": cell_count, "cols": 1}, change_type="table_restructured")
     return save_group(client, bundle_id, {
         "action": "confirm",
-        "units": [{"unit_id": table_id, "revision": group["units"][0]["decision"]["revision"], "disposition": "assigned"}],
-        "targets": targets,
+        "units": [{
+            "unit_id": table_id, "revision": group["units"][0]["decision"]["revision"], "disposition": "assigned",
+            "reason": "합성 사유" if is_reshaped else "",
+        }],
+        "targets": [table_fields, *targets],
     })
+
+
+def _build_table_item(item: dict, **fields: object) -> dict:
+    return {
+        "key": str(item["id"]), "id": item["id"], "revision": item["revision"], "kind": item["kind"],
+        "slot_key": item["slot_key"], "source_unit_ids": item["source_unit_ids"], **fields,
+    }
 
 
 def read_suggestions() -> list[AiSuggestion]:
@@ -171,8 +187,10 @@ def saved(*targets: TargetShape, dispositions: tuple[str, ...] = ("assigned",)) 
     return SavedShape(dispositions=frozenset(dispositions), targets=targets)
 
 
-def target(text: str = "글", place: tuple = PLACE, sources: tuple[int, ...] = (1,)) -> TargetShape:
-    return TargetShape(place=place, text=text, sources=frozenset(sources))
+def target(
+    text: str = "글", place: tuple = PLACE, sources: tuple[int, ...] = (1,), *, restructured: bool = False
+) -> TargetShape:
+    return TargetShape(place=place, text=text, sources=frozenset(sources), restructured=restructured)
 
 
 # --- 판정 ---
@@ -186,6 +204,8 @@ def target(text: str = "글", place: tuple = PLACE, sources: tuple[int, ...] = (
         (shape(target("가"), target("나")), saved(target("나"), target("가")), "as_is"),  # 순서는 뜻이 없다
         (shape(target()), saved(target("다른 글")), "edited"),
         (shape(target()), saved(target(sources=(1, 2))), "edited"),  # 합침으로 출처를 더했다
+        (shape(target()), saved(target(restructured=True)), "edited"),  # 칸 글이 같아도 표 구성을 바꿨다
+        (shape(target()), saved(target(place=OTHER_PLACE, restructured=True)), "rejected"),
         (shape(target("가"), target("나")), saved(target("가")), "edited"),  # 나눔 하나를 버렸다
         (shape(target()), saved(target(), target(place=OTHER_PLACE)), "edited"),  # 일부만 다른 자리
         # 짝을 한 저장에서 따로 처분했다 — 한쪽은 제안대로라 버린 것이 아니다
@@ -452,6 +472,22 @@ def test_table_suggestion_compares_the_cells(client: TestClient, fake_ai: FakeAi
 
     assert response.status_code == 200, response.text
     assert read_suggestions()[0].adoption == "as_is"
+
+
+def test_reshaped_table_records_edited(client: TestClient, fake_ai: FakeAi) -> None:
+    # 칸 글·출처가 같아도 격자가 다르면 그대로가 아니다(§6.7) — 첫 판정이 남으니 여기서 틀리면 고칠 길이 없다
+    bundle = make_ai_bundle(client)
+    table = find_kind(upload_second_document(client, bundle.id, tbl(CELLS)), "table")
+    use_reply(fake_ai)
+    queue_units(client, bundle.id, [table["id"]])
+    run_jobs()
+
+    response = save_table(client, bundle.id, table["id"], is_reshaped=True)
+
+    assert response.status_code == 200, response.text
+    (table_target,) = [item for item in response.json()["targets"] if item["kind"] == "table"]
+    assert (table_target["grid"], table_target["change_type"]) == ({"rows": 4, "cols": 1}, "table_restructured")
+    assert read_suggestions()[0].adoption == "edited"
 
 
 def test_edited_cell_records_edited(client: TestClient, fake_ai: FakeAi) -> None:

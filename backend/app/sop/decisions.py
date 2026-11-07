@@ -612,8 +612,9 @@ def _decide_change_type(
         return "split"
     if plan.text == state.units[source_id].text:
         return "as_is"
-    if requested is None and plan.item.text is None and plan.row is not None:
-        # 글을 비워 행의 글을 받으면 그 글의 종류도 받는다 — 나눔·합침은 구조에서 나와 지금 구조와 어긋날 수 있어 받지 않는다
+    if requested is None and plan.item.text is None and plan.row is not None and plan.row.ai_text:
+        # 글을 비워 AI 글을 받으면 그 글의 종류도 받는다 — 사람이 쓴 새 문장의 종류는 사람이 고르고(스펙 §6.7),
+        # 나눔·합침은 구조에서 나와 지금 구조와 어긋날 수 있어 받지 않는다
         requested = plan.row.change_type if plan.row.change_type in TEXT_CHANGE_TYPES else None
     if requested is None:
         _reject("change_type_required", keys=keys)

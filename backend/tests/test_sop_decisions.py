@@ -601,6 +601,28 @@ def test_held_unit_can_be_cleared(client: TestClient) -> None:
     )
 
 
+def test_human_target_does_not_inherit_its_change_type(client: TestClient) -> None:
+    # 글자 비교 종류는 사람이 고른다(§6.7) — 출처가 바뀌면 지난 종류는 근거가 없으니 다시 고르게 한다
+    fx = _setup(client)
+    first, second = find_unit(fx.view, STORAGE), find_unit(fx.view, RECORDS)
+    saved = save_group(client, fx.bundle_id, _body(
+        [_unit_in(first)],
+        [_target("t", fx.sop_id, [first], slot_key="purpose", text="합성 시료는 냉장 보관한다.", change_type="tone")],
+    ))
+    assert saved.status_code == 200, saved.text
+    target = saved.json()["targets"][0]
+
+    response = save_group(client, fx.bundle_id, _body(
+        [_unit_in(first, 2, "delete", reason="합성 사유"), _unit_in(second)],
+        [{
+            "key": "t", "id": target["id"], "revision": target["revision"], "slot_key": "purpose",
+            "source_unit_ids": [second["id"]],
+        }],
+    ))
+
+    assert _reason(response) == "change_type_required"
+
+
 def test_held_unit_can_be_bulk_disposed_by_a_person(client: TestClient) -> None:
     # 보류 → 확정은 사람의 전이다(§6.8). 일괄 처분은 상태가 아니라 새 문장 유무만 막는다
     fx = _setup(client)
