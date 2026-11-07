@@ -25,6 +25,7 @@ from app.sop.detach import (
     DetachReport,
     detach_units,
     reset_target,
+    sweep_translations,
 )
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
@@ -752,6 +753,15 @@ async def _load_next_orders(session: AsyncSession, plans: list[_Plan]) -> dict[i
     return {doc_id: current.get(doc_id, -1) + 1 for doc_id in doc_ids}
 
 
+def _is_source_changed(plan: _Plan) -> bool:
+    """이 저장이 기존 새 문장의 글이나 자리를 바꾸는가 — 번역은 그 글·자리를 옮긴 것이다. AI 글을 그대로 확정하는 것은 바뀐 것이 아니다."""
+    row = plan.row
+    if row is None or plan.origin == ORIGIN_TRANSLATION:
+        return False
+    before = (row.target_doc_id, row.slot_key, row.wi_step, row.wi_part, row.confirmed_text or row.ai_text)
+    return before != (plan.doc.id, plan.item.slot_key, plan.item.wi_step, plan.item.wi_part, plan.text)
+
+
 def _list_check_texts(plan: _Plan, state: _State) -> list[str]:
     """문장 검사의 원문 — 번역은 출처 연결이 없어 번역 출처 단위의 글과 언어를 넘어 비교한다(스펙 §7.12)."""
     if plan.origin == ORIGIN_TRANSLATION:
@@ -803,9 +813,10 @@ def _apply_plan(
 async def _write_group(
     session: AsyncSession, bundle_id: int, payload: GroupSaveIn, plans: list[_Plan], state: _State, actor: str
 ) -> list[int]:
-    """검사를 모두 통과한 묶음을 쓴다 — 지울 새 문장, 새 문장(표 먼저, 칸은 부모 id를 안 뒤), 출처, 판단, 기록. 쓴 새 문장 id를 돌려준다."""
+    """검사를 모두 통과한 묶음을 쓴다 — 지울 새 문장, 새 문장(표 먼저, 칸은 부모 id를 안 뒤), 출처, 판단, 글·자리가 바뀐 새 문장의 번역, 기록. 쓴 새 문장 id를 돌려준다."""
     stamp = now()
     hold_reason = payload.hold_reason.strip() if payload.action == "hold" else ""
+    changed = state.removed | {plan.row.id for plan in plans if _is_source_changed(plan)}  # 쓰기 전 값과 견준다
     removed = [state.existing[target_id] for target_id in payload.removed_target_ids]
     # 지운 번역은 사람이 버린 제안이다 — 지우면 제안을 가리키는 칸이 사라지므로 먼저 남긴다
     await reject_suggestions(
@@ -858,6 +869,7 @@ async def _write_group(
     await record_group_adoption(
         session, plans=plans, payload=payload, decisions=state.decisions, actor=actor, stamp=stamp
     )
+    await sweep_translations(session, bundle_id, changed, exempt=state.existing.keys())
     unit_ids = [item.unit_id for item in payload.units]
     record_event(
         session, bundle_id=bundle_id, actor=actor, action=f"group.{payload.action}",

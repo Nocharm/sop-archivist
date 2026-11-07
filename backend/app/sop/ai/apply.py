@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.sop.constants import SYSTEM_HOLD_AI_INVALID
 from app.sop.detach import AI_SUGGESTED, ON_HOLD, UNASSIGNED, sweep_translations
 from app.sop.groups import iter_chunks, select_in_chunks
-from app.sop.models import AiJob, AiSuggestion, TargetSentence, TargetSource, Unit, UnitDecision
+from app.sop.models import AiJob, AiSuggestion, TargetSentence, Unit, UnitDecision
 from app.sop.units import UNIT_ACTIVE
 
 
@@ -67,7 +67,7 @@ async def clear_previous_suggestion(session: AsyncSession, decisions: Iterable[U
     제안 하나가 짝 전체를 덮으므로 일부 단위만 다시 받아도 제안을 통째로 걷는다. 남기면 새 문장 없는 ai_suggested 판단이 생긴다.
     사람이 확정·보류한 구성원의 판단과 새 문장은 같은 제안을 가리켜도 그대로 둔다 — 아래 두 상태 조건이 그 경계다.
     짝 한쪽이 이미 채택을 남긴 제안은 applied로 둔다 — stale로 바꾸면 그 사람의 결정이 살아 있는 제안에서 사라진다.
-    지워지는 새 문장의 단위에 달린 번역도 정리한다 — AI 번역은 제안째 걷고, 사람이 정한 번역은 보류해 다시 보게 한다(sweep_translations).
+    지워지는 새 문장의 번역도 다시 보게 한다(sweep_translations).
     넘긴 판단의 revision은 곧 쓸 새 상태가 올리므로 여기서 올리지 않고, 함께 걷힌 다른 단위의 판단만 올린다.
     """
     given = list(decisions)
@@ -89,14 +89,14 @@ async def clear_previous_suggestion(session: AsyncSession, decisions: Iterable[U
     for (sibling,) in siblings:
         _clear_decision(sibling)
         sibling.revision += 1
-    source_units = await select_in_chunks(
+    dropped = await select_in_chunks(
         session,
-        lambda chunk: select(TargetSource.unit_id)
-        .join(TargetSentence, TargetSentence.id == TargetSource.target_id)
-        .where(TargetSentence.suggestion_id.in_(chunk), TargetSentence.status == AI_SUGGESTED),
+        lambda chunk: select(TargetSentence.id).where(
+            TargetSentence.suggestion_id.in_(chunk), TargetSentence.status == AI_SUGGESTED
+        ),
         replaced,
     )
-    replaced |= await sweep_translations(session, {row[0] for row in source_units})
+    await sweep_translations(session, given[0].bundle_id, {row[0] for row in dropped})
     for chunk in iter_chunks(replaced):
         await session.execute(
             update(AiSuggestion)

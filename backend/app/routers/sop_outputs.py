@@ -19,7 +19,7 @@ from app.routers.sop_documents import build_content_disposition
 from app.sop.ai.guidelines import get_rules_version_label
 from app.sop.constants import MEMBER_ROLES
 from app.sop.decisions import DbId
-from app.sop.detach import ORIGIN_NEW_DOC
+from app.sop.detach import ORIGIN_NEW_DOC, ORIGIN_TRANSLATION, sweep_translations
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
 from app.sop.excel_export import ExportMeta, build_export_file_name, build_workbook
@@ -184,6 +184,10 @@ async def reorder_targets(
     locked = sorted(target_id for target_id in moves if doc.doc_type != "wi" or tops[target_id].origin == ORIGIN_NEW_DOC)
     if locked:
         raise_rule(422, "wi_step_not_allowed", target_ids=locked)
+    # 번역의 자리는 출처 새 문장을 따른다(스펙 §7.9) — 저장(decisions.py)과 같은 잠금이다
+    translations = sorted(target_id for target_id in moves if tops[target_id].origin == ORIGIN_TRANSLATION)
+    if translations:
+        raise_rule(422, "translation_locked", target_ids=translations)
     if moves:
         declared = set(await session.scalars(select(WiStep.step_no).where(WiStep.target_doc_id == doc.id)))
         undeclared = sorted(target_id for target_id, step in moves.items() if step is not None and step not in declared)
@@ -196,11 +200,14 @@ async def reorder_targets(
             cells[row.parent_target_id].append(row)
     for order_index, target_id in enumerate(sent):
         tops[target_id].order_index = order_index
+    moved: list[int] = []
     for target_id, step in moves.items():
         # 칸 새 문장은 표와 같은 자리에 있다(관계 묶음 저장 검사 7) — 자리가 바뀐 새 문장은 revision을 올려 낡은 저장을 막는다
         for target in (tops[target_id], *cells.get(target_id, [])):
             target.wi_step = step
             target.revision += 1
+            moved.append(target.id)
+    await sweep_translations(session, bundle.id, moved)
     doc.manual_order = True
     bundle.revision += 1
     record_event(

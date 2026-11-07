@@ -139,6 +139,10 @@ def read_suggestions() -> list[AiSuggestion]:
     return [row for row in read_rows(AiSuggestion) if row.kind == "translate"]
 
 
+def read_source_target_id(target: TargetSentence) -> int:
+    return next(row for row in read_suggestions() if row.id == target.suggestion_id).content["source_target_id"]
+
+
 def get_output_a(client: TestClient, bundle_id: int, lang: str) -> list[dict]:
     response = client.get(f"/api/bundles/{bundle_id}/outputs/a", params={"lang": lang}, headers=AUTHOR)
     assert response.status_code == 200, response.text
@@ -1013,6 +1017,12 @@ def test_retiring_a_unit_with_only_a_confirmed_translation_asks_first(client: Te
     assert (refused.status_code, refused.json()["detail"]["code"]) == (409, "confirm_required")
     assert refused.json()["detail"]["unit_ids"] == [unit["id"]]
 
+    # 출처 새 문장은 이미 없다 — 번역이 가리키는 단위로도 찾아 보류한다
+    edit_document(
+        client, bundle.id, view["document"]["id"], {"type": "split", "unit_id": unit["id"], "at": 3}, confirm=True
+    )
+    assert load_translation(unit["id"]).status == "on_hold"
+
 
 def test_deleting_the_document_takes_its_translations_along(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_ai_bundle(client)
@@ -1105,6 +1115,446 @@ def test_translation_does_not_change_the_cover_counts(client: TestClient, fake_a
     after = client.get(f"/api/bundles/{bundle.id}/summary", headers=AUTHOR).json()
     assert after["en"] == {**before["en"], "translated": 1}
     assert after["ko"] == before["ko"]
+
+
+# --- 출처가 바뀌면 번역을 다시 본다 ---
+
+
+def make_settled_translation(
+    client: TestClient, ai: FakeAi, text: str = LONE_KO, translated: str = TRANSLATED
+) -> tuple[AiBundle, dict, TargetSentence]:
+    """확정 문장 하나와 그 번역을 사람이 확정해 둔 묶음."""
+    bundle, unit = make_assigned_unit(client, text)
+    target = translate(client, ai, bundle.id, unit["id"], translated)
+    assert save_translation(client, bundle.id, target).status_code == 200
+    return bundle, unit, load_translation(unit["id"])
+
+
+def assert_held(unit_id: int, text: str = TRANSLATED) -> None:
+    held = load_translation(unit_id)
+    assert (held.status, held.hold_reason, held.confirmed_text) == ("on_hold", SYSTEM_HOLD_RELATED_CHANGED, text)
+
+
+def assert_swept(client: TestClient, bundle_id: int, unit_id: int) -> None:
+    """AI 번역이 지워지고 제안은 낡은 것이 됐다 — 살아 있는 제안이 없으니 채택 집계에도 이 종류가 없다."""
+    assert load_translations(unit_id) == []
+    assert read_suggestions()[-1].result == "stale"
+    assert "translate" not in client.get(f"/api/bundles/{bundle_id}/ai/status", headers=AUTHOR).json()["adoption"]
+
+
+def save_source(client: TestClient, bundle_id: int, unit_id: int, **changes: object) -> httpx2.Response:
+    """단위의 새 문장 하나를 그대로 다시 저장한다 — 자리는 지금 값이고 changes가 칸을 덮는다."""
+    group = get_group_by_unit(client, bundle_id, unit_id)
+    (source,) = group["targets"]
+    return save_group(client, bundle_id, {
+        "action": "confirm",
+        "units": [{"unit_id": unit_id, "revision": group["units"][0]["decision"]["revision"], "disposition": "assigned"}],
+        "targets": [{
+            "key": "s", "id": source["id"], "revision": source["revision"], "slot_key": source["slot_key"],
+            "wi_step": source["wi_step"], "wi_part": source["wi_part"], "source_unit_ids": [unit_id], **changes,
+        }],
+    })
+
+
+def delete_source_unit(client: TestClient, bundle_id: int, unit_id: int) -> httpx2.Response:
+    """새 문장을 지우고 단위를 삭제로 확정한다."""
+    group = get_group_by_unit(client, bundle_id, unit_id)
+    return save_group(client, bundle_id, {
+        "action": "confirm",
+        "units": [{
+            "unit_id": unit_id, "revision": group["units"][0]["decision"]["revision"], "disposition": "delete",
+            "reason": "합성 사유",
+        }],
+        "targets": [],
+        "removed_target_ids": [target["id"] for target in group["targets"]],
+    })
+
+
+def replace_source(client: TestClient, bundle_id: int, unit_id: int, target_doc_id: int) -> httpx2.Response:
+    """지금 새 문장을 지우고 같은 단위로 새 문장을 만든다 — 같은 저장 안의 교체다."""
+    group = get_group_by_unit(client, bundle_id, unit_id)
+    return save_group(client, bundle_id, {
+        "action": "confirm",
+        "units": [{"unit_id": unit_id, "revision": group["units"][0]["decision"]["revision"], "disposition": "assigned"}],
+        "targets": [{"key": "n", "target_doc_id": target_doc_id, "slot_key": OTHER_SLOT, "source_unit_ids": [unit_id]}],
+        "removed_target_ids": [target["id"] for target in group["targets"]],
+    })
+
+
+def make_merged_target(client: TestClient) -> tuple[AiBundle, int, int]:
+    """두 단위를 한 새 문장으로 합쳐 확정해 둔 묶음 — 합친 글에는 두 단위의 뜻이 다 든다."""
+    bundle = make_ai_bundle(client)
+    view = upload_second_document(client, bundle.id, p(LONE_KO) + p(LONE_KO_2))
+    first, second = find_unit(view, LONE_KO)["id"], find_unit(view, LONE_KO_2)["id"]
+    response = save_group(client, bundle.id, {
+        "action": "confirm",
+        "units": [{"unit_id": unit_id, "revision": 1, "disposition": "assigned"} for unit_id in (first, second)],
+        "targets": [{
+            "key": "t", "target_doc_id": bundle.sop_id, "slot_key": SLOT, "source_unit_ids": [first, second],
+            "text": EDITED,
+        }],
+    })
+    assert response.status_code == 200, response.text
+    return bundle, first, second
+
+
+def make_wi_translation(client: TestClient, ai: FakeAi) -> tuple[AiBundle, dict, dict, TargetSentence]:
+    """WI 1단계의 문장과 그 AI 번역을 둔 묶음 — 단계는 1·2가 선언돼 있다."""
+    bundle = make_ai_bundle(client)
+    steps = [{"code": AI_WI_DOC["code"], "step_no": step, "title": "Synthetic step"} for step in (1, 2)]
+    response = put_tobe(client, bundle.id, [AI_SOP_DOC, AI_WI_DOC], wi_steps=steps)
+    assert response.status_code == 200, response.text
+    unit = upload_second_document(client, bundle.id, p(LONE_KO))["units"][0]
+    assign_as_is(client, bundle.id, unit, bundle.wi_id, wi_step=1, wi_part="instruction")
+    return bundle, unit, get_target(client, bundle.id, unit["id"]), translate(client, ai, bundle.id, unit["id"])
+
+
+def put_order(client: TestClient, bundle_id: int, target_doc_id: int, items: list[dict]) -> httpx2.Response:
+    revision = client.get(f"/api/bundles/{bundle_id}", headers=AUTHOR).json()["revision"]
+    return client.put(
+        f"/api/bundles/{bundle_id}/targets/order",
+        json={"revision": revision, "target_doc_id": target_doc_id, "items": items}, headers=AUTHOR,
+    )
+
+
+def make_match_translation(client: TestClient, ai: FakeAi) -> tuple[AiBundle, dict, dict, TargetSentence]:
+    """입구 2 새 문서의 문장을 옛 단위와 짝지어 확정하고 번역해 둔 묶음 — (묶음, 옛 단위, 새 문서 view, 번역)."""
+    bundle = make_ai_bundle(client)
+    unit = upload_second_document(client, bundle.id, p(LONE_KO))["units"][0]
+    body = p(LONE_KO_2) + p("1. 합성 절", "Heading1") + p(LONE_KO)
+    uploaded = upload(client, bundle.id, build_docx(body), NEW_FILE, side="new", doc_type="sop")
+    assert uploaded.status_code == 201 and uploaded.json()["status"] == "ready", uploaded.text
+    (source,) = [row for row in read_rows(TargetSentence) if row.origin == "new_doc" and row.confirmed_text == LONE_KO]
+    response = save_group(client, bundle.id, {
+        "action": "confirm",
+        "units": [{"unit_id": unit["id"], "revision": 1, "disposition": "assigned"}],
+        "targets": [{"key": "t", "id": source.id, "revision": source.revision, "source_unit_ids": [unit["id"]]}],
+    })
+    assert response.status_code == 200, response.text
+    target = translate(client, ai, bundle.id, unit["id"])
+    return bundle, unit, get_view(client, bundle.id, uploaded.json()["id"]), target
+
+
+def test_deleting_the_source_unit_holds_a_confirmed_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, _ = make_settled_translation(client, fake_ai)
+
+    response = delete_source_unit(client, bundle.id, unit["id"])
+
+    assert response.status_code == 200, response.text
+    assert_held(unit["id"])
+    assert "targets_on_hold" in read_blocker_codes(client, bundle.id)
+
+
+def test_deleting_the_source_unit_removes_an_ai_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit = make_assigned_unit(client)
+    translate(client, fake_ai, bundle.id, unit["id"])
+
+    response = delete_source_unit(client, bundle.id, unit["id"])
+
+    assert response.status_code == 200, response.text
+    assert_swept(client, bundle.id, unit["id"])
+
+
+def test_replacing_the_source_in_one_save_holds_a_confirmed_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, _ = make_settled_translation(client, fake_ai)
+
+    response = replace_source(client, bundle.id, unit["id"], bundle.sop_id)
+
+    assert response.status_code == 200, response.text
+    assert_held(unit["id"])
+
+
+def test_editing_the_source_text_holds_a_confirmed_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    translated = "Leave the synthetic sample for 10 minutes."
+    bundle, unit, _ = make_settled_translation(client, fake_ai, "합성 시료를 10분 동안 둔다.", translated)
+
+    response = save_source(client, bundle.id, unit["id"], text="합성 시료를 20분 동안 둔다.", change_type="rewritten")
+
+    assert response.status_code == 200, response.text
+    assert_held(unit["id"], translated)
+
+
+def test_editing_the_source_text_removes_an_ai_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit = make_assigned_unit(client)
+    translate(client, fake_ai, bundle.id, unit["id"])
+
+    response = save_source(client, bundle.id, unit["id"], text=EDITED, change_type="rewritten")
+
+    assert response.status_code == 200, response.text
+    assert_swept(client, bundle.id, unit["id"])
+
+
+def test_moving_the_source_holds_a_confirmed_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, _ = make_settled_translation(client, fake_ai)
+
+    response = save_source(client, bundle.id, unit["id"], slot_key=OTHER_SLOT)
+
+    assert response.status_code == 200, response.text
+    assert_held(unit["id"])
+
+
+def test_moving_the_source_to_another_document_removes_an_ai_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit = make_assigned_unit(client)
+    translate(client, fake_ai, bundle.id, unit["id"])
+
+    response = save_source(
+        client, bundle.id, unit["id"], target_doc_id=bundle.wi_id, slot_key=None, wi_part="instruction",
+    )
+
+    assert response.status_code == 200, response.text
+    assert_swept(client, bundle.id, unit["id"])
+
+
+def test_saving_the_source_unchanged_keeps_a_confirmed_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, target = make_settled_translation(client, fake_ai)
+
+    response = save_source(client, bundle.id, unit["id"])
+
+    assert response.status_code == 200, response.text
+    kept = load_translation(unit["id"])
+    assert (kept.status, kept.revision) == ("confirmed", target.revision)
+
+
+def test_confirming_an_ai_source_unchanged_keeps_its_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle = make_ai_bundle(client)
+    unit = upload_second_document(client, bundle.id, p(LONE_KO))["units"][0]
+    use_reply(fake_ai)
+    queue_units(client, bundle.id, [unit["id"]])
+    run_jobs()
+    target = translate(client, fake_ai, bundle.id, unit["id"])
+
+    # text를 비우면 AI 글 그대로 확정이다 — 번역이 옮긴 글이 그대로라 바뀐 것이 아니다
+    response = save_source(client, bundle.id, unit["id"])
+
+    assert response.status_code == 200, response.text
+    kept = load_translation(unit["id"])
+    assert (kept.id, kept.status, kept.revision) == (target.id, "ai_suggested", target.revision)
+
+
+def test_translation_saved_with_its_source_is_left_as_the_person_decided(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit = make_assigned_unit(client)
+    target = translate(client, fake_ai, bundle.id, unit["id"])
+    group = get_group_by_unit(client, bundle.id, unit["id"])
+    (source,) = group["targets"]
+
+    response = save_group(client, bundle.id, {
+        "action": "confirm",
+        "units": [{"unit_id": unit["id"], "revision": group["units"][0]["decision"]["revision"], "disposition": "assigned"}],
+        "targets": [
+            {
+                "key": "s", "id": source["id"], "revision": source["revision"], "slot_key": SLOT,
+                "source_unit_ids": [unit["id"]], "text": EDITED, "change_type": "rewritten",
+            },
+            {"key": "t", "id": target.id, "revision": target.revision, "source_unit_ids": []},
+        ],
+    })
+
+    assert response.status_code == 200, response.text
+    assert load_translation(unit["id"]).status == "confirmed"
+    assert read_suggestions()[-1].adoption == "as_is"
+
+
+def test_clearing_a_merged_source_the_translation_does_not_point_at_holds_it(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, first, second = make_merged_target(client)
+    target = translate(client, fake_ai, bundle.id, first)
+    assert save_translation(client, bundle.id, target).status_code == 200
+
+    report = clear_unit(client, bundle.id, second).json()
+
+    assert_held(first)
+    assert target.id in report["held_target_ids"]
+
+
+def test_clearing_a_merged_source_removes_an_ai_translation_of_the_other(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, first, second = make_merged_target(client)
+    target = translate(client, fake_ai, bundle.id, first)
+
+    report = clear_unit(client, bundle.id, second).json()
+
+    assert target.id in report["deleted_target_ids"]
+    assert_swept(client, bundle.id, first)
+
+
+def test_clearing_keeps_a_translation_of_another_target_in_the_group(client: TestClient, fake_ai: FakeAi) -> None:
+    # 같은 관계 묶음이어도 글을 잃지 않은 새 문장의 번역까지 다시 볼 일은 아니다
+    bundle = make_ai_bundle(client)
+    view = upload_second_document(client, bundle.id, p(LONE_KO) + p(LONE_KO_2))
+    first, second = find_unit(view, LONE_KO)["id"], find_unit(view, LONE_KO_2)["id"]
+    response = save_group(client, bundle.id, {
+        "action": "confirm",
+        "units": [
+            {"unit_id": first, "revision": 1, "disposition": "assigned"},
+            {"unit_id": second, "revision": 1, "disposition": "assigned", "reason": "합성 사유"},
+        ],
+        "targets": [
+            {"key": "m", "target_doc_id": bundle.sop_id, "slot_key": SLOT, "source_unit_ids": [first, second], "text": EDITED},
+            {"key": "t", "target_doc_id": bundle.wi_id, "wi_part": "why", "source_unit_ids": [second]},
+        ],
+    })
+    assert response.status_code == 200, response.text
+    (lone,) = [item for item in response.json()["targets"] if item["source_unit_ids"] == [second]]
+    use_translation(fake_ai)
+    assert request_translate(client, bundle.id, unit_ids=[second]).json()["queued"] == 2
+    run_jobs()
+    settled = [row for row in load_translations(second) if read_source_target_id(row) == lone["id"]]
+    assert len(settled) == 1 and save_translation(client, bundle.id, settled[0]).status_code == 200
+
+    clear_unit(client, bundle.id, first)
+
+    assert [row.status for row in load_translations(second) if read_source_target_id(row) == lone["id"]] == ["confirmed"]
+
+
+def test_retiring_a_matched_new_unit_holds_a_confirmed_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, view, target = make_match_translation(client, fake_ai)
+    assert save_translation(client, bundle.id, target).status_code == 200
+
+    edit_document(
+        client, bundle.id, view["document"]["id"],
+        {"type": "split", "unit_id": find_unit(view, LONE_KO)["id"], "at": 3}, confirm=True,
+    )
+
+    assert_held(unit["id"])
+
+
+def test_retiring_a_matched_new_unit_removes_an_ai_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, view, _ = make_match_translation(client, fake_ai)
+
+    edit_document(
+        client, bundle.id, view["document"]["id"],
+        {"type": "split", "unit_id": find_unit(view, LONE_KO)["id"], "at": 3}, confirm=True,
+    )
+
+    assert_swept(client, bundle.id, unit["id"])
+
+
+def test_new_section_for_a_matched_source_holds_a_confirmed_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, view, target = make_match_translation(client, fake_ai)
+    assert save_translation(client, bundle.id, target).status_code == 200
+
+    # 제목을 앞 문장과 합치면 절이 사라져 출처 새 문장의 자리(절 경로)가 바뀐다
+    edit_document(
+        client, bundle.id, view["document"]["id"],
+        {"type": "merge", "unit_ids": [find_unit(view, LONE_KO_2)["id"], find_unit(view, "1. 합성 절")["id"]]},
+        confirm=True,
+    )
+
+    assert_held(unit["id"])
+
+
+def test_moving_the_source_to_another_step_removes_an_ai_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, source, target = make_wi_translation(client, fake_ai)
+
+    response = put_order(client, bundle.id, bundle.wi_id, [{"target_id": source["id"], "wi_step": 2}, {"target_id": target.id}])
+
+    assert response.status_code == 200, response.text
+    assert_swept(client, bundle.id, unit["id"])
+
+
+def test_moving_the_source_to_another_step_holds_a_confirmed_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, source, target = make_wi_translation(client, fake_ai)
+    assert save_translation(client, bundle.id, target).status_code == 200
+
+    response = put_order(client, bundle.id, bundle.wi_id, [{"target_id": source["id"], "wi_step": 2}, {"target_id": target.id}])
+
+    assert response.status_code == 200, response.text
+    assert_held(unit["id"])
+    assert load_translation(unit["id"]).wi_step == 1
+
+
+def test_reordering_without_a_step_change_keeps_the_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, source, target = make_wi_translation(client, fake_ai)
+    assert save_translation(client, bundle.id, target).status_code == 200
+
+    response = put_order(client, bundle.id, bundle.wi_id, [{"target_id": target.id}, {"target_id": source["id"]}])
+
+    assert response.status_code == 200, response.text
+    assert load_translation(unit["id"]).status == "confirmed"
+
+
+def test_order_refuses_moving_a_translation_to_another_step(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, source, target = make_wi_translation(client, fake_ai)
+
+    refused = put_order(client, bundle.id, bundle.wi_id, [{"target_id": source["id"]}, {"target_id": target.id, "wi_step": 2}])
+
+    assert (refused.status_code, refused.json()["detail"]["code"]) == (422, "translation_locked")
+    assert refused.json()["detail"]["target_ids"] == [target.id]
+    assert load_translation(unit["id"]).wi_step == 1
+
+
+# --- 이전 번역 찾기 ---
+
+
+def test_replacing_the_source_then_rerunning_leaves_one_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit = make_assigned_unit(client)
+    translate(client, fake_ai, bundle.id, unit["id"])
+    assert replace_source(client, bundle.id, unit["id"], bundle.sop_id).status_code == 200
+
+    translate(client, fake_ai, bundle.id, unit["id"], "A second synthetic translation.")
+
+    assert load_translation(unit["id"]).ai_text == "A second synthetic translation."
+
+
+def test_ai_translation_of_a_gone_source_is_replaced(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit = make_assigned_unit(client)
+    first = translate(client, fake_ai, bundle.id, unit["id"])
+    old_source = get_target(client, bundle.id, unit["id"])
+    assert replace_source(client, bundle.id, unit["id"], bundle.sop_id).status_code == 200
+
+    # 어느 경로로든 출처가 사라졌는데 AI 번역이 남은 모습 — 지금 경로는 쓸어 내므로 행을 직접 되돌려 둔다
+    async def _restore(session: AsyncSession) -> None:
+        session.add(TargetSentence(
+            id=first.id, bundle_id=first.bundle_id, target_doc_id=first.target_doc_id, slot_key=first.slot_key, lang="en",
+            kind="sentence", ai_text=TRANSLATED, change_type="translated", origin="translation", status="ai_suggested",
+            translation_source_unit_id=unit["id"], suggestion_id=first.suggestion_id, revision=1,
+        ))
+        await session.commit()
+
+    run_in_session(_restore)
+    assert read_suggestions()[0].content["source_target_id"] == old_source["id"]
+
+    translate_again = "A second synthetic translation."
+    use_translation(fake_ai, translate_again)
+    queue_translation(client, bundle.id, unit["id"])
+    run_jobs()
+
+    assert load_translation(unit["id"]).ai_text == translate_again
+
+
+def test_settled_translation_of_a_gone_source_blocks_a_new_one(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, _ = make_settled_translation(client, fake_ai)
+    assert replace_source(client, bundle.id, unit["id"], bundle.sop_id).status_code == 200
+
+    body = request_translate(client, bundle.id, unit_ids=[unit["id"]]).json()
+
+    assert body["skipped"] == [{"unit_id": unit["id"], "reason": "already_translated"}]
+
+
+def test_held_translation_of_a_cleared_merged_source_blocks_a_new_one(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, first, second = make_merged_target(client)
+    target = translate(client, fake_ai, bundle.id, first)
+    assert save_translation(client, bundle.id, target).status_code == 200
+    assert clear_unit(client, bundle.id, first).status_code == 200
+    assert_held(first)
+
+    # 남은 출처로 물어도 같은 새 문장의 번역이 이미 보류로 있다
+    body = request_translate(client, bundle.id, unit_ids=[second]).json()
+
+    assert body["skipped"] == [{"unit_id": second, "reason": "already_translated"}]
+    assert load_translations(second) == []
+
+
+def test_invalid_rerun_keeps_the_previous_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit = make_assigned_unit(client)
+    target = translate(client, fake_ai, bundle.id, unit["id"])
+    fake_ai.chat = lambda data: "not json"
+
+    queue_translation(client, bundle.id, unit["id"])
+    run_jobs()
+
+    kept = load_translation(unit["id"])
+    assert (kept.id, kept.ai_text, kept.status) == (target.id, TRANSLATED, "ai_suggested")
+    assert [(row.result, row.id == kept.suggestion_id) for row in read_suggestions()] == [("applied", True), ("invalid", False)]
+    assert read_rows(AiJob)[-1].status == "done"
 
 
 # --- 결과물 ---
