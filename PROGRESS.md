@@ -78,3 +78,4 @@
 - 실패 기록이 실패해도 원래 AI 오류를 가리지 않는 동작은 그대로이고, 그 경고 로그는 트레이스백 대신 예외 클래스 이름만 남긴다(값이 로그에 실리지 않게).
 - **계획 2 Task 3: 스키마 0007** — AI 작업·제안·지침·임베딩 표 4개와 판단·새 문장·짝의 `suggestion_id`(제안이 지워져도 행은 남는 SET NULL), 번역 출처 칸 `translation_source_unit_id`(`TargetSource`와 따로, 단위가 지워지면 CASCADE)를 더했다. 지침의 "키당 활성 하나"는 부분 유일 인덱스라 sqlite·Postgres 방언 인자를 둘 다 달았고, sqlite는 길이를 강제하지 않아 코드 값 튜플이 컬럼 길이에 들어가는지를 테스트로 묶었다.
 - `ai_suggestions`의 CHECK 둘은 `result`·`adoption`(`kind`는 작업 쪽 CHECK가 막는다). 마이그레이션은 일회용 Postgres 16에서 upgrade·downgrade·`alembic check`와 제약·CASCADE 동작을 실측했다.
+- 묶음을 지우면 제안 행마다 SET NULL이 `suggestion_id` 3곳(판단·새 문장·짝)과 `ai_jobs.document_id`를 찾으므로, 프로젝트의 "CASCADE·SET NULL이 닿는 FK는 인덱스" 관례대로 네 곳에 인덱스를 달았다(표 전체 순차 스캔 방지).

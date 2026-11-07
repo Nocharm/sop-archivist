@@ -325,9 +325,9 @@ class UnitPair(Base):
     status: Mapped[str] = mapped_column(String(10))
     source: Mapped[str] = mapped_column(String(5))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-    # 이 짝을 만든 AI 제안 — 제안이 지워져도 짝은 남는다
+    # 이 짝을 만든 AI 제안 — 제안이 지워져도 짝은 남는다(SET NULL이 이 칸을 찾으므로 인덱스)
     suggestion_id: Mapped[int | None] = mapped_column(
-        ForeignKey("ai_suggestions.id", ondelete="SET NULL"), default=None
+        ForeignKey("ai_suggestions.id", ondelete="SET NULL"), index=True, default=None
     )
 
 
@@ -355,9 +355,9 @@ class UnitDecision(Base):
     hold_reason: Mapped[str] = mapped_column(Text, default="")
     confirmed_by: Mapped[str | None] = mapped_column(String(100), default=None)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
-    # 이 처분을 채운 AI 제안 — 채택 여부를 사람이 저장할 때 이 제안에 기록한다
+    # 이 처분을 채운 AI 제안 — 채택 여부를 사람이 저장할 때 이 제안에 기록한다(SET NULL이 이 칸을 찾으므로 인덱스)
     suggestion_id: Mapped[int | None] = mapped_column(
-        ForeignKey("ai_suggestions.id", ondelete="SET NULL"), default=None
+        ForeignKey("ai_suggestions.id", ondelete="SET NULL"), index=True, default=None
     )
     revision: Mapped[int] = mapped_column(Integer, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
@@ -420,9 +420,9 @@ class TargetSentence(Base):
     warnings: Mapped[list] = mapped_column(JSON, default=list)
     confirmed_by: Mapped[str | None] = mapped_column(String(100), default=None)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
-    # 이 문장을 채운 AI 제안 — 제안이 지워져도 문장은 남는다
+    # 이 문장을 채운 AI 제안 — 제안이 지워져도 문장은 남는다(SET NULL이 이 칸을 찾으므로 인덱스)
     suggestion_id: Mapped[int | None] = mapped_column(
-        ForeignKey("ai_suggestions.id", ondelete="SET NULL"), default=None
+        ForeignKey("ai_suggestions.id", ondelete="SET NULL"), index=True, default=None
     )
     revision: Mapped[int] = mapped_column(Integer, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
@@ -497,7 +497,9 @@ class AiJob(Base):
     kind: Mapped[str] = mapped_column(String(12))
     status: Mapped[str] = mapped_column(String(10))
     # 문서가 지워져도 작업 기록은 남는다
-    document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id", ondelete="SET NULL"), default=None)
+    document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="SET NULL"), index=True, default=None
+    )
     unit_ids: Mapped[list] = mapped_column(JSON, default=list)
     target_ids: Mapped[list] = mapped_column(JSON, default=list)
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
