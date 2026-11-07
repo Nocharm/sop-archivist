@@ -6,7 +6,7 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
 
 - (없음)
 
-## v0.3.0 — 2026-11-07
+## v0.3.0 — 2026-11-08
 
 - **범위**: SOP 재구성 **AI 제안 층**(구현 계획 2). 결정적 코어(v0.2.0) 위에서 AI가 분류·고쳐 쓰기·번역·입구 2 짝 맞추기·한/영 따로 짝·복합 문장 나누기를 **제안**하고 사람이 줄마다 확정한다. AI가 꺼지거나 실패해도 사람 경로는 그대로 돈다. **프런트 화면은 아직 없다**(Claude Design 1차 작업이 별도 워크트리에서 병행 중이라, 서버에 올려도 화면에서 달라지는 것은 상단 바 버전뿐이고 AI 기능은 `/api/bundles/{id}/ai/…`로만 쓴다). **검증은 가짜 AI와 합성 SOP(`SYNTHETIC_` 파일)로만 했고 실제 사내 모델·실제 SOP로는 시험하지 않았다. 유사도 임계값은 합성 자료로만 잡은 값**이다. 설계: `docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`("(계획 2에서 정함)" 항목), 계획: `docs/superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md`(프런트 병행용 API 계약 포함).
 - **주요 변경**:
