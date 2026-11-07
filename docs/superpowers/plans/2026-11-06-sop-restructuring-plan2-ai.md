@@ -50,6 +50,7 @@
 | 새 제안에 밀린 이전 제안은 `result`를 `stale`로 바꾼다 | 밀린 제안이 `applied`로 남으면 채택률의 `pending`이 영영 줄지 않는다 | 제안 목록의 `applied`는 지금 살아 있는 제안만 뜻한다 |
 | 다시 돌린 응답이 무효면 이전 제안도 지우고 보류한다 | 보류 단위 아래 `ai_suggested` 새 문장이 남지 않게 한다 | 이전 제안 글은 제안 기록에서만 본다 |
 | 요청 상한을 넘은 단위는 `limit_reached`로 알린다 | 조용히 빠지면 사람이 전부 요청됐다고 믿는다 | 없음 |
+| 입구 2의 1:N 짝이 새 문서 둘에 걸치면 `shape`는 `split`이되 변경 종류는 LLM 답을 쓴다 | §6.7 나눔은 같은 새 문서 안에서만이고, 문서가 다르면 §6.9 중복 배정이다 | 사람이 저장할 때 사유를 적는다 |
 | 입구 2에서 같은 글자가 반복되면 먼저 id 순으로 1:1로 잇는다(같은 언어·종류, 보이는 글자가 있을 때만) | §13의 "같은 문장 반복". 그대로 두면 거짓 나눔과 거짓 삭제 후보가 나온다 | 반복 문장의 어느 자리끼리 이어졌는지가 바뀔 수 있다 |
 | 캡션 없는 그림처럼 글자가 없는 단위는 입구 2에서 삭제 후보·신규로 표시하지 않고 미배정으로 둔다 | 글자가 없으면 비교할 수 없다. §7.10 "그것도 없으면 사람이 손으로 맞춘다" | 사람이 손으로 맞춘다 |
 | 출처 새 문장의 글·자리가 바뀌거나 사라지면 AI 번역은 지우고 확정 번역은 보류한다 | §7.5 "사람이 다시 보게"와 같은 이유다. 그대로 두면 옛 글의 번역이 확정으로 결과물에 나간다 | 출처를 고칠 때마다 번역을 다시 본다 |
@@ -88,7 +89,7 @@
 - 기존 응답에 더하는 필드: `DecisionOut.suggestion_id`, `GroupTargetOut.suggestion_id`·`translation_source_unit_id`, `BundleOut.ai_jobs`(상태별 건수), `ARow.row_kind`의 값 `translation`.
 - 번역 새 문장의 자리는 출처 새 문장을 따른다. 저장에서 자리는 비우거나, 지금 자리나 출처의 저장 뒤 자리를 보낸다. 그 밖의 자리는 422 `invalid_group`(`translation_locked`)이다. 표 칸 번역은 표 전체와 함께 저장한다. `PUT /targets/order`는 번역 줄도 목록에 담아야 하고, 번역 줄의 단계는 출처의 새 단계로만 바꿀 수 있다. 번역이 든 입구 2 문서를 지우면 409 `doc_has_targets`다.
 - 출처 새 문장의 글·자리·출처 단위가 바뀌거나 출처가 사라지면 AI 번역은 지워지고(제안 `stale`), 확정 번역은 보류(`system:related_unit_changed`)가 된다. 같은 저장에서 번역 글도 고쳤거나 `PUT /targets/order`에서 번역 줄을 출처와 함께 옮겼으면 그대로 둔다. 출처가 남아 있으면 번역 자리는 출처를 따른다. 지워진 AI 번역은 저장·순서 응답에서 빠진다.
-- 사람 확정은 계획 1의 `POST /groups/save` 그대로다. 기존 AI 새 문장에 `text`를 비워 보내면 `ai_text`로 확정한다.
+- 사람 확정은 계획 1의 `POST /groups/save` 그대로다. 기존 AI 새 문장에 `text`를 비워 보내면 `ai_text`로 확정한다. 입구 1·2 모두 제안을 그대로 받으려면 `text`와 `change_type`을 비워 보낸다. `change_type`은 다른 글자 비교 종류(`as_is`·`tone`·`rewritten`)를 고를 때만 보내고, 구조 종류(`split`·`merged`·`new`)는 보내지 않는다. 출처를 바꾸면 종류를 다시 골라야 한다.
 - 지침 관리: `GET /api/admin/guidelines`, `GET /api/admin/guidelines/{key}/versions/{version}`, `POST /api/admin/guidelines/{key}/versions`(`{content, note}`), `POST /api/admin/guidelines/{key}/versions/{version}/activate`. 권한은 `guideline.manage`다.
 
 ## 파일 구조
@@ -832,7 +833,7 @@ def test_confirming_delete_candidate_needs_a_reason(client, fake_ai): ...  # 사
   - `clear_previous_suggestion`은 `origin="new_doc"` 새 문장을 지우지 않고 출처를 떼어 미배정으로 돌린다. 지우면 새 문서의 글이 사라진다.
   - `apply`: 판단·새 문장 revision 확인(낡으면 `stale`). `clear_previous_suggestion`, 출처 연결, 새 문장 `ai_suggested`·`change_type`·경고·`suggestion_id`, 옛 판단 `ai_suggested`·`assigned`.
   - `shape`: 1:1 `one_to_one`, 1:N `split`, N:1 `merged`. `change_type`도 같은 구조 규칙으로 정한다(§6.7).
-  - Task 10의 `decide_adoption`에 `match` 규칙을 더한다: 출처가 제안과 같으면 `as_is`, 다르면 `edited`, 출처가 비면 `rejected`. `_JUDGED_KINDS`·`_build_suggested_shape`를 넓히고, `reset_target`이 `suggestion_id`를 비우므로 판단 행 없는 새 문장의 제안 id는 지우기 전에 모은다.
+  - Task 10의 `decide_adoption`에 `match` 규칙을 더한다: 출처가 제안과 같으면 `as_is`, 다르면 `edited`, 출처가 비면 `rejected`. `one_to_one`·`table`은 변경 종류도 비교해 다르면 `edited`다(§7.10에서 LLM이 내는 것이 종류뿐이고, §13 채택률이 지침을 고치는 근거다). `_JUDGED_KINDS`·`_build_suggested_shape`를 넓히고, `reset_target`이 `suggestion_id`를 비우므로 판단 행 없는 새 문장의 제안 id는 지우기 전에 모은다.
 
 - [ ] **Step 4: 통과 확인** — 위 명령.
 
