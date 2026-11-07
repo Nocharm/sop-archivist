@@ -207,7 +207,7 @@ def test_workbook_sheets_and_headers(client: TestClient) -> None:
     info = {row[0].value: row[1].value for row in ko["정보"].iter_rows()}
     assert info["합성 데이터 여부"] == "예"
     assert (info["묶음 제목"], info["상태"], info["내보낸 사람"], info["만든 사람"], info["지침 버전"]) == (
-        "QC Bundle", "작업 중", "qa.member", "qa.member", "-",
+        "QC Bundle", "작업 중", "qa.member", "qa.member", "rules v1",
     )
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", info["내보낸 시각 (KST)"])
 

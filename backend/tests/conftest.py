@@ -4,6 +4,7 @@ import asyncio
 import os
 import pathlib
 from collections.abc import Iterator
+from typing import Any
 
 # app.settings import 전에 테스트 DB로 고정 — 개발용 dev.db를 건드리지 않는다.
 # cwd와 무관하게 backend/ 아래 같은 파일을 쓰고(.gitignore의 test_*.db), 세션마다 새로 시작한다.
@@ -23,7 +24,7 @@ os.environ["N8N_HR_TOKEN"] = ""
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from sqlalchemy import delete  # noqa: E402
+from sqlalchemy import delete, inspect, select  # noqa: E402
 
 from app.db import SessionLocal  # noqa: E402
 from app.dev_users import seed_demo_access, seed_dev_directory  # noqa: E402
@@ -40,7 +41,7 @@ from app.models import (  # noqa: E402
     RolePermission,
 )
 from app.settings import settings  # noqa: E402
-from app.sop.models import Bundle, BundleDeletionRecord  # noqa: E402
+from app.sop.models import Bundle, BundleDeletionRecord, GuidelineVersion  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -131,6 +132,31 @@ def clean_sop(client: TestClient) -> Iterator[None]:
     _reset_sop()
     yield
     _reset_sop()
+
+
+@pytest.fixture
+def restore_guidelines(client: TestClient) -> Iterator[None]:
+    """지침·프롬프트 버전 표를 테스트 전 상태로 되돌린다.
+
+    lifespan이 키마다 v1을 한 번만 시드하고 표는 세션이 공유하며, 다른 AI 테스트가 활성 버전을 읽는다.
+    그래서 버전을 더하거나 활성을 바꾸거나 지우는 테스트는 앞뒤로 이 픽스처를 써서 실행 순서에 기대지 않게 한다.
+    """
+    columns = [attr.key for attr in inspect(GuidelineVersion).mapper.column_attrs]
+
+    async def _read() -> list[dict[str, Any]]:
+        async with SessionLocal() as session:
+            rows = await session.scalars(select(GuidelineVersion))
+            return [{column: getattr(row, column) for column in columns} for row in rows]
+
+    async def _restore(saved: list[dict[str, Any]]) -> None:
+        async with SessionLocal() as session:
+            await session.execute(delete(GuidelineVersion))
+            session.add_all(GuidelineVersion(**row) for row in saved)
+            await session.commit()
+
+    saved_rows = asyncio.run(_read())
+    yield
+    asyncio.run(_restore(saved_rows))
 
 
 @pytest.fixture

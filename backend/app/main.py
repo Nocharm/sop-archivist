@@ -20,15 +20,20 @@ from app.routers import sop_admin as sop_admin_router
 from app.routers import sop_bundles as sop_bundles_router
 from app.routers import sop_decisions as sop_decisions_router
 from app.routers import sop_documents as sop_documents_router
+from app.routers import sop_guidelines as sop_guidelines_router
 from app.routers import sop_outputs as sop_outputs_router
 from app.routers import sop_tobe as sop_tobe_router
 from app.settings import settings
+from app.sop.ai.guidelines import seed_guidelines
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     # Alembic env.py가 asyncio.run을 쓰므로 실행 중인 루프를 막지 않게 스레드에서 돌린다.
     await asyncio.to_thread(run_migrations)
+    # 지침·프롬프트의 첫 버전 — 버전이 없는 키만 저장소 시드 파일로 만든다(운영·dev 모두, AI가 꺼져 있어도 Excel 정보 시트가 읽는다)
+    async with SessionLocal() as session:
+        await seed_guidelines(session)
     # dev 모드만 가짜 부서·사용자를 시드한다 — 실 인증(keycloak)은 HR 동기화로 채운 실제 디렉터리를 쓴다.
     if settings.resolved_auth_mode() == "dev":
         async with SessionLocal() as session:
@@ -65,6 +70,7 @@ app.include_router(sop_documents_router.router)
 app.include_router(sop_decisions_router.router)
 app.include_router(sop_outputs_router.router)
 app.include_router(sop_admin_router.router)
+app.include_router(sop_guidelines_router.router)
 
 
 @app.get("/api/health")
