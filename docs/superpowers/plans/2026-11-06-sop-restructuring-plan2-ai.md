@@ -50,6 +50,8 @@
 | 새 제안에 밀린 이전 제안은 `result`를 `stale`로 바꾼다 | 밀린 제안이 `applied`로 남으면 채택률의 `pending`이 영영 줄지 않는다 | 제안 목록의 `applied`는 지금 살아 있는 제안만 뜻한다 |
 | 다시 돌린 응답이 무효면 이전 제안도 지우고 보류한다 | 보류 단위 아래 `ai_suggested` 새 문장이 남지 않게 한다 | 이전 제안 글은 제안 기록에서만 본다 |
 | 요청 상한을 넘은 단위는 `limit_reached`로 알린다 | 조용히 빠지면 사람이 전부 요청됐다고 믿는다 | 없음 |
+| 입구 2에서 같은 글자가 반복되면 먼저 id 순으로 1:1로 잇는다(같은 언어·종류, 보이는 글자가 있을 때만) | §13의 "같은 문장 반복". 그대로 두면 거짓 나눔과 거짓 삭제 후보가 나온다 | 반복 문장의 어느 자리끼리 이어졌는지가 바뀔 수 있다 |
+| 캡션 없는 그림처럼 글자가 없는 단위는 입구 2에서 삭제 후보·신규로 표시하지 않고 미배정으로 둔다 | 글자가 없으면 비교할 수 없다. §7.10 "그것도 없으면 사람이 손으로 맞춘다" | 사람이 손으로 맞춘다 |
 | 출처 새 문장의 글·자리가 바뀌거나 사라지면 AI 번역은 지우고 확정 번역은 보류한다 | §7.5 "사람이 다시 보게"와 같은 이유다. 그대로 두면 옛 글의 번역이 확정으로 결과물에 나간다 | 출처를 고칠 때마다 번역을 다시 본다 |
 | 분류의 문서 범위 요청은 미배정만 받고, AI 제안을 다시 받으려면 `unit_ids`로 고른다 | §7.8 "문서 전체의 미배정 단위, 또는 고른 단위". 다시 받으면 상한을 넘는 문서의 뒤쪽이 영영 처리되지 않는다 | 문서 전체를 다시 받으려면 단위를 고른다 |
 | `unit_ids` 분류 요청은 짝도 함께 보낸다(미배정·같은 종류 제안만) | §7.8 "대상 단위(와 짝)". 사람의 저장과 달리 제안은 확정이 아니다 | 짝 구성원 제안이 함께 바뀐다 |
@@ -72,7 +74,7 @@
 | `GET /suggestions/{id}` | | `SuggestionOut` |
 | `POST /suggestions/{id}/adoption` | `{adoption}` (`split`만) | `SuggestionOut` |
 
-- `AiRequestOut`: `{queued, skipped_total, skipped: [{unit_id, reason}]}`(`skipped`는 앞 200건). `reason`은 `not_unassigned`·`already_queued`·`bound_cell`·`not_assigned`·`other_language`·`has_pair`·`already_translated`·`too_short`·`limit_reached` 중 하나다.
+- `AiRequestOut`: `{queued, skipped_total, skipped: [{unit_id, reason}]}`(`skipped`는 앞 200건). `reason`은 `not_unassigned`·`already_queued`·`bound_cell`·`not_assigned`·`other_language`·`has_pair`·`already_translated`·`too_short`·`limit_reached` 중 하나다. `POST /match`는 묶음 전체 요청이라 이미 돌고 있으면 `{unit_id: 0, reason: "already_queued"}`로 알린다. 화면은 `reason`을 읽는다.
 - `AiStatusOut`: `{ai_enabled, embed_enabled, jobs: {queued, running, done, failed, stale, cancelled}, by_kind: {<kind>: 같은 모양}, failed_errors: {<코드>: 건수}, adoption: {<kind>: {applied, as_is, edited, rejected, pending, adoption_rate}}}`. 실패 코드: `timeout`·`server_error`·`connection`·`client_error`·`config`·`interrupted`·`no_candidates`·`internal`.
 - `SuggestionOut`: `{id, job_id, kind, document_id, result, content, warnings, guideline_versions, model, adoption, adopted_by, adopted_at, created_at}`. `result`는 `applied`·`stale`·`invalid`다. 유사도 점수는 어디에도 내지 않는다(§12).
 - `content`:
