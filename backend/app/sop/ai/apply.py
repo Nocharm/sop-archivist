@@ -9,9 +9,9 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.constants import SYSTEM_HOLD_AI_INVALID
-from app.sop.detach import AI_SUGGESTED, ON_HOLD, UNASSIGNED, sweep_translations
+from app.sop.detach import AI_SUGGESTED, ON_HOLD, ORIGIN_NEW_DOC, UNASSIGNED, reset_target, sweep_translations
 from app.sop.groups import iter_chunks, select_in_chunks
-from app.sop.models import AiJob, AiSuggestion, TargetSentence, Unit, UnitDecision
+from app.sop.models import AiJob, AiSuggestion, TargetSentence, TargetSource, Unit, UnitDecision
 from app.sop.units import UNIT_ACTIVE
 
 
@@ -61,20 +61,25 @@ def _clear_decision(decision: UnitDecision) -> None:
     decision.status, decision.disposition, decision.suggestion_id = UNASSIGNED, UNASSIGNED, None
 
 
-async def clear_previous_suggestion(session: AsyncSession, decisions: Iterable[UnitDecision]) -> None:
+async def clear_previous_suggestion(
+    session: AsyncSession, decisions: Iterable[UnitDecision], targets: Iterable[TargetSentence] = ()
+) -> None:
     """밀리는 AI 제안을 걷는다 — 제안은 stale, 그 ai_suggested 새 문장은 삭제(출처·칸 새 문장은 DB CASCADE), 판단은 비운 상태로.
 
     제안 하나가 짝 전체를 덮으므로 일부 단위만 다시 받아도 제안을 통째로 걷는다. 남기면 새 문장 없는 ai_suggested 판단이 생긴다.
     사람이 확정·보류한 구성원의 판단과 새 문장은 같은 제안을 가리켜도 그대로 둔다 — 아래 두 상태 조건이 그 경계다.
     짝 한쪽이 이미 채택을 남긴 제안은 applied로 둔다 — stale로 바꾸면 그 사람의 결정이 살아 있는 제안에서 사라진다.
-    지워지는 새 문장의 번역도 다시 보게 한다(sweep_translations).
+    입구 2 새 문장은 지우지 않고 출처를 떼어 미배정으로 돌린다 — 글이 새 문서 원문이라 지우면 사라진다. targets는 판단 없이 새 문장에만
+    붙은 제안(신규)도 걷으려고 넘긴다.
+    지워지거나 출처를 잃는 새 문장의 번역도 다시 보게 한다(sweep_translations).
     넘긴 판단의 revision은 곧 쓸 새 상태가 올리므로 여기서 올리지 않고, 함께 걷힌 다른 단위의 판단만 올린다.
     """
     given = list(decisions)
+    given_targets = list(targets)
     replaced = {
-        decision.suggestion_id
-        for decision in given
-        if decision.status == AI_SUGGESTED and decision.suggestion_id is not None
+        item.suggestion_id
+        for item in (*given, *given_targets)
+        if item.status == AI_SUGGESTED and item.suggestion_id is not None
     }
     for decision in given:
         _clear_decision(decision)
@@ -91,13 +96,14 @@ async def clear_previous_suggestion(session: AsyncSession, decisions: Iterable[U
         sibling.revision += 1
     dropped = await select_in_chunks(
         session,
-        lambda chunk: select(TargetSentence.id).where(
+        lambda chunk: select(TargetSentence.id, TargetSentence.origin).where(
             TargetSentence.suggestion_id.in_(chunk), TargetSentence.status == AI_SUGGESTED
         ),
         replaced,
     )
     # 지우기 전에 쓴다 — 표가 지워지면 AI 칸 번역이 CASCADE로 함께 사라져 그 제안을 stale로 둘 수 없다
-    await sweep_translations(session, given[0].bundle_id, {row[0] for row in dropped})
+    await sweep_translations(session, (given or given_targets)[0].bundle_id, {row.id for row in dropped})
+    await _reset_new_doc_targets(session, {row.id for row in dropped if row.origin == ORIGIN_NEW_DOC})
     for chunk in iter_chunks(replaced):
         await session.execute(
             update(AiSuggestion)
@@ -107,9 +113,22 @@ async def clear_previous_suggestion(session: AsyncSession, decisions: Iterable[U
         )
         await session.execute(
             delete(TargetSentence)
-            .where(TargetSentence.suggestion_id.in_(chunk), TargetSentence.status == AI_SUGGESTED)
+            .where(
+                TargetSentence.suggestion_id.in_(chunk), TargetSentence.status == AI_SUGGESTED,
+                TargetSentence.origin != ORIGIN_NEW_DOC,
+            )
             .execution_options(synchronize_session=False)
         )
+
+
+async def _reset_new_doc_targets(session: AsyncSession, target_ids: Collection[int]) -> None:
+    for chunk in iter_chunks(target_ids):
+        await session.execute(delete(TargetSource).where(TargetSource.target_id.in_(chunk)))
+    rows = await select_in_chunks(
+        session, lambda chunk: select(TargetSentence).where(TargetSentence.id.in_(chunk)), target_ids
+    )
+    for (target,) in rows:
+        reset_target(target)
 
 
 def add_suggestion(

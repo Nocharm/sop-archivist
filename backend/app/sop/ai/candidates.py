@@ -21,7 +21,7 @@ from app.sop.tobe import is_within_slot
 Retrieval = Literal["embedding", "embedding_failed", "no_index"]  # 후보를 어떻게 골랐나 — 셋은 화면에서 서로 다른 상태다
 
 # 임베딩이 꺼진 것(색인 없음)과 호출이 끝내 실패한 것(검색 실패)은 같은 폴백이어도 다른 상태로 남긴다
-_RETRIEVAL_OF_UNAVAILABLE: dict[UnavailableReason, Retrieval] = {"disabled": "no_index", "failed": "embedding_failed"}
+RETRIEVAL_OF_UNAVAILABLE: dict[UnavailableReason, Retrieval] = {"disabled": "no_index", "failed": "embedding_failed"}
 
 # 칸 키 → (이름, 넣는 것). 도메인 문서 §2 — 하위 칸은 이름 앞에 상위 칸을 붙이고(라벨만 봐도 어느 칸인지 보이게), 문서가 비워 둔 "넣는 것"은 비운다
 SLOT_GUIDE: dict[str, tuple[str, str]] = {
@@ -136,6 +136,6 @@ async def rank_candidates(
         vectors = await embed_texts([query, *(candidate.label for candidate in candidates)], login_id=login_id)
     except EmbeddingUnavailable as unavailable:
         narrowed = await asyncio.to_thread(_narrow_by_text, query, candidates)
-        return [*narrowed, DELETE_CANDIDATE], _RETRIEVAL_OF_UNAVAILABLE[unavailable.reason]
+        return [*narrowed, DELETE_CANDIDATE], RETRIEVAL_OF_UNAVAILABLE[unavailable.reason]
     picked = await asyncio.to_thread(_pick_by_embedding, query, candidates, vectors)
     return [*picked, DELETE_CANDIDATE], "embedding"

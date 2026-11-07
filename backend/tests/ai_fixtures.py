@@ -29,6 +29,7 @@ from tests.sop_helpers import (
 )
 
 AI_OLD_NAME = "SYNTHETIC_OLD-AI.docx"
+AI_NEW_NAME = "SYNTHETIC_SOP-M_New.docx"
 AI_MEMBERS = [("qa.member", "author"), ("qa.lead", "reviewer")]
 AI_SOP_DOC = {"code": "SOP-AI", "title": "Synthetic AI SOP", "doc_type": "sop", "parent_code": None}
 AI_WI_DOC = {"code": "WI-AI", "title": "Synthetic AI WI", "doc_type": "wi", "parent_code": "SOP-AI"}
@@ -49,6 +50,14 @@ class AiBundle(NamedTuple):
     wi_id: int
 
 
+class MatchBundle(NamedTuple):
+    id: int
+    old_document_id: int
+    new_document_id: int
+    target_doc_id: int
+    sop_id: int | None
+
+
 def run_jobs() -> None:
     """쌓인 작업을 끝까지 돌린다 — 테스트에는 워커가 없어(AI_ENABLED=false) 이 호출이 큐를 결정적으로 비운다."""
     asyncio.run(run_jobs_until_idle())
@@ -64,6 +73,26 @@ def make_ai_bundle(client: TestClient) -> AiBundle:
     uploaded = upload(client, bundle_id, build_docx(p(AI_KO_1) + p(AI_EN_1) + p(AI_KO_2) + p(AI_EN_2)), AI_OLD_NAME)
     assert uploaded.status_code == 201 and uploaded.json()["status"] == "ready", uploaded.text
     return AiBundle(bundle_id, uploaded.json()["id"], ids[AI_SOP_DOC["code"]], ids[AI_WI_DOC["code"]])
+
+
+def make_match_bundle(
+    client: TestClient, old_body: str, new_body: str, *, has_assign: bool = False, **docx: Any
+) -> MatchBundle:
+    """옛 문서 하나와 입구 2 새 문서 하나를 갖춘 묶음 — has_assign이면 입구 1 SOP도 둔다. docx는 두 파일에 함께 간다(그림 미디어)."""
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    assert set_members(client, bundle_id, AI_MEMBERS).status_code == 200
+    sop_id = None
+    if has_assign:
+        response = put_tobe(client, bundle_id, [AI_SOP_DOC])
+        assert response.status_code == 200, response.text
+        sop_id = response.json()["docs"][0]["id"]
+    old_doc = upload(client, bundle_id, build_docx(old_body, **docx), AI_OLD_NAME)
+    assert old_doc.status_code == 201 and old_doc.json()["status"] == "ready", old_doc.text
+    # 머리말은 새 문장을 만들지 않으니 같은 본문이어도 파일 내용만 다르게 한다(같은 파일은 duplicate_file)
+    data = build_docx(new_body, headers=[p("합성 새 문서")], **docx)
+    new_doc = upload(client, bundle_id, data, AI_NEW_NAME, side="new", doc_type="sop")
+    assert new_doc.status_code == 201 and new_doc.json()["status"] == "ready", new_doc.text
+    return MatchBundle(bundle_id, old_doc.json()["id"], new_doc.json()["id"], new_doc.json()["target_doc_id"], sop_id)
 
 
 def build_reply(data: dict, **changes: object) -> str:
