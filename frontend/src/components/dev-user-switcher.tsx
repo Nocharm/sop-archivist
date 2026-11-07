@@ -24,13 +24,13 @@ export function DevUserSwitcher() {
   const isListed = LOCAL_USERS.some((user) => user.loginId === current);
 
   return (
-    <label className="inline-flex items-center gap-1.5 text-sm text-gray-600">
+    <label className="inline-flex items-center gap-1.5 text-chrome-ink-2">
       <UserRound size={16} strokeWidth={1.5} />
       <span className="sr-only">{t("nav.devUser")}</span>
       <select
         data-testid="dev-user-switcher"
         value={current}
-        className="h-8 rounded-md border border-gray-300 bg-white px-1.5 text-sm text-gray-700"
+        className="h-7 rounded-md border border-chrome-line bg-chrome px-1.5 text-chrome-ink"
         onChange={handleChange}
       >
         {current !== "" && !isListed && <option value={current}>{current}</option>}

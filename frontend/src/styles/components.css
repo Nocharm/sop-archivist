@@ -1,0 +1,344 @@
+/* 공통 부품의 모양 - 시안(archivist-foundations)의 규칙을 옮겼다. 값은 tokens.css만 쓴다. 레이아웃 미세 조정은 화면에서 Tailwind로 한다. */
+
+@layer components {
+  /* ---- 틀: 상단 막대 44px + 단계 이동(왼쪽 레일 72px 또는 상단 2단 38px) ---- */
+  .app {
+    display: grid;
+    grid-template-rows: 44px minmax(0, 1fr);
+    height: 100vh;
+    min-width: 1120px;
+  }
+  .app-main { min-height: 0; overflow: auto; }
+
+  .tb {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 14px;
+    background: var(--chrome);
+    color: var(--chrome-ink);
+    font-size: var(--fs-ui);
+    line-height: var(--lh-ui);
+    min-width: 0;
+  }
+  .tb-brand {
+    display: inline-flex;
+    align-items: center;
+    height: 30px;
+    padding: 0 4px;
+    border-radius: var(--r-2);
+    font: var(--fw-accent) 16px/24px var(--font-accent);
+    color: var(--brand-ink);
+    white-space: nowrap;
+  }
+  .tb-brand:hover { background: var(--chrome-hover); }
+  .tb-sep { width: 1px; height: 16px; background: var(--chrome-line); flex: none; }
+  .tb-dim { color: var(--chrome-ink-2); }
+  .tb .tag { background: transparent; border-color: var(--chrome-line); color: var(--chrome-ink); }
+  .tb .btn.ghost { color: var(--chrome-ink-2); }
+  .tb .btn.ghost:not(:disabled):hover { background: var(--chrome-hover); color: var(--chrome-ink); }
+  .tb :focus-visible { outline-color: var(--chrome-ink); }
+
+  .frame {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 100%;
+    min-height: 0;
+  }
+  .frame-view { min-height: 0; min-width: 0; overflow: auto; }
+
+  .stages {
+    display: flex;
+    align-items: stretch;
+    gap: 2px;
+    padding: 0 10px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+  }
+  .stg {
+    position: relative;
+    height: 38px;
+    padding: 0 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--ink-2);
+    font-size: var(--fs-ui);
+    line-height: var(--lh-ui);
+    border-radius: var(--r-2) var(--r-2) 0 0;
+    white-space: nowrap;
+    transition: background var(--dur-fast), color var(--dur-fast);
+  }
+  .stg:hover { color: var(--ink); background: var(--hover); }
+  .stg[aria-disabled="true"] { color: var(--ink-4); pointer-events: none; }
+  /* 선택은 굵기가 아니라 밑줄과 번호 칸으로 - 굵기를 바꾸면 글자 폭이 달라져 옆 탭이 밀린다 */
+  .stg[aria-current="page"] { color: var(--ink); }
+  .stg[aria-current="page"]::after {
+    content: "";
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: -1px;
+    height: 2px;
+    background: var(--accent);
+  }
+  .stg-n {
+    width: 18px;
+    height: 18px;
+    border-radius: var(--r-1);
+    display: inline-grid;
+    place-items: center;
+    font: var(--fw-accent) 11px/1 var(--font-accent);
+    background: var(--sunken);
+    color: var(--ink-3);
+    border: 1px solid var(--line);
+    flex: none;
+  }
+  .stg[aria-current="page"] .stg-n {
+    background: var(--hl);
+    border-color: color-mix(in oklab, var(--on-hl) 30%, var(--hl));
+    color: var(--on-hl);
+  }
+
+  :root[data-shell="rail"] .frame {
+    grid-template-rows: minmax(0, 1fr);
+    grid-template-columns: 72px minmax(0, 1fr);
+  }
+  :root[data-shell="rail"] .stages {
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px;
+    background: var(--chrome);
+    border-bottom: 0;
+  }
+  :root[data-shell="rail"] .stg {
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    width: 60px;
+    height: 54px;
+    padding: 0;
+    color: var(--chrome-ink-2);
+    font-size: var(--fs-micro);
+    line-height: var(--lh-micro);
+    border-radius: var(--r-2);
+  }
+  :root[data-shell="rail"] .stg:hover { background: var(--chrome-hover); color: var(--chrome-ink); }
+  :root[data-shell="rail"] .stg[aria-disabled="true"] { color: color-mix(in oklab, var(--chrome-ink) 52%, var(--chrome)); }
+  :root[data-shell="rail"] .stg .stg-n {
+    width: 20px;
+    height: 20px;
+    background: transparent;
+    border-color: var(--chrome-line);
+    color: inherit;
+  }
+  :root[data-shell="rail"] .stg[aria-current="page"] { background: var(--chrome-hover); color: var(--chrome-ink); }
+  :root[data-shell="rail"] .stg[aria-current="page"]::after { display: none; }
+  :root[data-shell="rail"] .stg[aria-current="page"] .stg-n { background: var(--hl); border-color: var(--hl); color: var(--on-hl); }
+  :root[data-shell="rail"] .stages :focus-visible { outline-color: var(--chrome-ink); }
+
+  /* ---- 버튼과 작은 표시 ---- */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: var(--ctl);
+    padding: 0 12px;
+    border-radius: var(--r-2);
+    border: 1px solid var(--line-2);
+    background: var(--surface);
+    color: var(--ink);
+    font-size: var(--fs-ui);
+    line-height: var(--lh-ui);
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast), transform var(--dur-fast) var(--ease-move);
+  }
+  .btn:not(:disabled):hover { background: var(--hover); }
+  .btn:not(:disabled):active { transform: scale(var(--press)); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn.pri { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .btn.pri:not(:disabled):hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .btn.ghost { background: transparent; border-color: transparent; color: var(--ink-2); }
+  .btn.ghost:not(:disabled):hover { background: var(--hover); color: var(--ink); }
+  .btn.danger { background: var(--danger-ink); border-color: var(--danger-ink); color: var(--surface); }
+  .btn.icon { width: var(--ctl); padding: 0; }
+  .btn.wide { width: 100%; }
+
+  kbd {
+    display: inline-grid;
+    place-items: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    border-radius: var(--r-1);
+    border: 1px solid var(--line-2);
+    background: var(--sunken);
+    color: var(--ink-2);
+    font: 600 var(--fs-micro) / 16px var(--font-mono);
+  }
+  .btn.pri kbd {
+    background: transparent;
+    border-color: color-mix(in oklab, var(--on-accent) 45%, var(--accent));
+    color: var(--on-accent);
+  }
+
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: var(--r-1);
+    border: 1px solid var(--line-2);
+    font-size: var(--fs-micro);
+    line-height: 18px;
+    color: var(--ink-2);
+    white-space: nowrap;
+    background: var(--surface);
+  }
+  .lg {
+    display: inline-grid;
+    place-items: center;
+    width: 22px;
+    height: 18px;
+    border-radius: var(--r-1);
+    background: var(--sunken);
+    border: 1px solid var(--line);
+    color: var(--ink-3);
+    font: 600 10px / 16px var(--font-mono);
+    flex: none;
+  }
+
+  /* 상태 표시 - 아이콘·선 모양·라벨을 함께 쓴다. 색만으로 구분하지 않는다. */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 20px;
+    padding: 0 6px 0 4px;
+    border: 1px solid transparent;
+    border-radius: var(--r-1);
+    font-size: var(--fs-cap);
+    line-height: 18px;
+    white-space: nowrap;
+  }
+  .pill.none { color: var(--st-none-ink); border-color: var(--line-2); }
+  .pill.ai { color: var(--st-ai-ink); background: var(--st-ai-tint); border: 1px dashed var(--st-ai-line); }
+  .pill.ok { color: var(--on-accent); background: var(--accent); }
+  .pill.hold { color: var(--st-hold-ink); background: var(--st-hold-tint); border-color: var(--st-hold-line); }
+  .pill.warn { color: var(--warn-ink); background: var(--warn-tint); border-color: color-mix(in oklab, var(--warn-fill) 45%, var(--surface)); }
+  .pill.danger { color: var(--danger-ink); background: var(--danger-tint); border-color: color-mix(in oklab, var(--danger-fill) 45%, var(--surface)); }
+  .pill.quiet { color: var(--ink-2); border-color: var(--line-2); background: var(--surface); }
+
+  /* ---- 제목: 화면당 하나만 밑줄. 글자에서 띄워 취소선(삭제 의미)으로 보이지 않게 한다 ---- */
+  .page-title {
+    font-family: var(--font-accent);
+    font-weight: var(--fw-accent);
+    font-size: 18px;
+    line-height: 24px;
+    color: var(--ink);
+  }
+  /* 제목 밑줄 - 화면당 하나, 표 안에는 쓰지 않는다 */
+  .ul {
+    padding-bottom: 0.16em;
+    background-image: linear-gradient(transparent 88%, var(--accent) 88%);
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+  .head-title {
+    font-family: var(--font-accent);
+    font-weight: var(--fw-accent);
+    font-size: var(--fs-head);
+    line-height: var(--lh-head);
+  }
+
+  /* ---- 표 화면 ---- */
+  .dtable { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--fs-ui); line-height: var(--lh-ui); }
+  .dtable th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--sunken);
+    border-bottom: 1px solid var(--line-2);
+    padding: 6px 10px;
+    text-align: left;
+    font-size: var(--fs-cap);
+    line-height: var(--lh-cap);
+    font-weight: 600;
+    color: var(--ink-3);
+    white-space: nowrap;
+  }
+  .dtable td { padding: var(--row-y) 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .dtable tbody tr { transition: background var(--dur-fast); }
+  .dtable tbody tr[data-link]:hover td { background: var(--hover); cursor: pointer; }
+  .dtable .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .track { display: block; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .track > i { display: block; height: 100%; background: var(--st-ok-fill); border-radius: 2px; }
+
+  /* 스켈레톤: 최종 모양과 같은 크기 */
+  .sk { position: relative; overflow: hidden; background: var(--line); border-radius: var(--r-1); display: block; }
+  .sk::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent 20%, color-mix(in oklab, var(--surface) 60%, transparent) 50%, transparent 80%);
+    animation: sk-shimmer 1400ms var(--ease-move) infinite;
+  }
+  @keyframes sk-shimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+
+  /* 번갈아 나오는 내용은 같은 칸에 겹친다 - 폭과 자리가 변하지 않는다 */
+  .stack { display: inline-grid; }
+  .stack > * { grid-area: 1 / 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; visibility: hidden; }
+  .stack > [data-on] { visibility: visible; }
+
+  /* ---- 떠 있는 층: 메뉴, 툴팁 ---- */
+  .menu {
+    position: fixed;
+    z-index: 40;
+    min-width: 200px;
+    padding: 4px;
+    background: var(--raised);
+    color: var(--ink);
+    border: 1px solid var(--line-2);
+    border-radius: var(--r-2);
+    box-shadow: var(--shadow-2);
+    font-size: var(--fs-ui);
+    line-height: var(--lh-ui);
+    animation: menu-in var(--dur-base) var(--ease-enter);
+  }
+  @keyframes menu-in { from { opacity: 0; transform: translateY(calc(var(--rise) * -1)); } }
+  .menu-label { padding: 6px 8px 2px; font-size: var(--fs-micro); line-height: var(--lh-micro); color: var(--ink-3); }
+  .menu-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: var(--ctl);
+    padding: 0 8px;
+    border-radius: var(--r-1);
+    text-align: left;
+    color: var(--ink);
+  }
+  .menu-item:hover, .menu-item:focus-visible { background: var(--hover); outline: none; }
+  .menu-item:disabled { color: var(--ink-4); cursor: not-allowed; }
+  .menu-item .check { margin-left: auto; color: var(--accent); }
+
+  .tip {
+    position: fixed;
+    z-index: 60;
+    max-width: 260px;
+    padding: 5px 8px;
+    border-radius: var(--r-2);
+    background: var(--ink);
+    color: var(--surface);
+    font-size: var(--fs-cap);
+    line-height: var(--lh-cap);
+    pointer-events: none;
+    animation: tip-in var(--dur-fast) var(--ease-enter);
+  }
+  @keyframes tip-in { from { opacity: 0; } }
+}

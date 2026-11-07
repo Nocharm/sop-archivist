@@ -1,82 +1,142 @@
-// 홈(자리표시) - 내가 누구인지, 어떤 권한을 어디서(역할·부서·직접) 받았는지, AI를 쓸 수 있는지만 보여 준다. 제품 화면은 후속 작업.
+// 홈 = 묶음 목록 - 내가 멤버인 묶음을 최근 순으로 보이고, 권한이 있으면 새 묶음을 만든다. 워드마크와 로그인 복귀가 이리로 온다.
 "use client";
 
-import { Bot, ShieldCheck, UserRound } from "lucide-react";
+import { Plus, RefreshCw } from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 
-import { SourceLine } from "@/components/permission-source-line";
-import { hasPermission, PERMISSIONS } from "@/lib/access";
-import { getDisplayName } from "@/lib/display-name";
+import { NewBundleModal } from "@/components/new-bundle-modal";
+import { BundleStatusPill, RoleTag } from "@/components/status";
+import { hasPermission } from "@/lib/access";
+import { humanizeApiError } from "@/lib/api-errors";
+import { listBundles, type LangProgress } from "@/lib/api-sop";
+import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
 import { useMe } from "@/lib/session";
+import { useDelayedFlag } from "@/lib/use-delayed-flag";
+import { useLoaded } from "@/lib/use-loaded";
 
-export default function HomePage() {
-  const { t, lang } = useI18n();
+const SKELETON_ROWS = 3;
+
+function ProgressCell({ progress, testId }: { progress: LangProgress; testId: string }) {
+  if (progress.total === 0) {
+    return (
+      <td className="num text-ink-4" data-testid={testId}>
+        –
+      </td>
+    );
+  }
+  const percent = Math.round((progress.confirmed / progress.total) * 100);
+  return (
+    <td data-testid={testId}>
+      <div className="flex items-center justify-end gap-2">
+        <span className="tabular-nums">
+          {progress.confirmed}
+          <span className="text-ink-3">{` / ${progress.total}`}</span>
+        </span>
+        <span className="track w-16" aria-hidden>
+          <i style={{ width: `${percent}%` }} />
+        </span>
+      </div>
+    </td>
+  );
+}
+
+export default function BundleListPage() {
+  const { t } = useI18n();
   const me = useMe();
-  // 표시 순서는 백엔드 정렬(알파벳)이 아니라 카탈로그 순서
-  const granted = PERMISSIONS.filter((key) => hasPermission(me, key));
+  const router = useRouter();
+  const { data, error, isLoading, reload } = useLoaded(listBundles);
+  const showSkeleton = useDelayedFlag(isLoading && data === null);
+  const [creating, setCreating] = useState(false);
+  const canCreate = hasPermission(me, "bundle.create");
 
   return (
-    <div className="mx-auto w-full max-w-2xl space-y-8 px-4 py-10">
-      <section data-testid="home-identity" className="space-y-1">
-        <h1 className="flex items-center gap-2 text-xl font-semibold text-gray-900">
-          <UserRound size={16} strokeWidth={1.5} className="text-gray-500" />
-          {getDisplayName(me, lang)}
-        </h1>
-        <p className="text-sm text-gray-600">{me.login_id}</p>
-        {me.dept_path ? (
-          <p className="text-sm text-gray-600">{me.dept_path}</p>
-        ) : (
-          me.department && <p className="text-sm text-gray-600">{me.department}</p>
+    <div className="dense min-h-full bg-surface">
+      <div className="flex h-[52px] items-center justify-between gap-3 border-b border-line px-[var(--pad)]">
+        <h1 className="page-title ul">{t("bundles.title")}</h1>
+        {canCreate && (
+          <button type="button" className="btn pri" data-testid="bundles-new" onClick={() => setCreating(true)}>
+            <Plus size={16} strokeWidth={1.5} aria-hidden />
+            {t("bundles.new")}
+          </button>
         )}
-      </section>
+      </div>
 
-      <section className="space-y-2">
-        <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
-          <ShieldCheck size={16} strokeWidth={1.5} className="text-gray-500" />
-          {t("home.permissions")}
-        </h2>
-        {granted.length === 0 ? (
-          <p data-testid="home-permissions-empty" className="text-sm text-gray-500">
-            {t("home.permissionsEmpty")}
-          </p>
-        ) : (
-          <ul data-testid="home-permissions" className="space-y-2">
-            {granted.map((key) => {
-              const sources = me.sources[key] ?? [];
-              return (
-                <li
-                  key={key}
-                  data-testid={`home-permission-${key}`}
-                  className="space-y-1.5 rounded-md border border-gray-200 bg-gray-50 px-3 py-2"
-                >
-                  <div className="text-sm font-semibold text-gray-900">{t(`permission.${key}`)}</div>
-                  {sources.length > 0 && (
-                    <ul data-testid={`home-permission-source-${key}`} className="space-y-1">
-                      {sources.map((source, index) => (
-                        <SourceLine
-                          key={`${source.kind}-${source.subject_id}-${source.role ?? "direct"}-${index}`}
-                          source={source}
-                          isSelf
-                        />
-                      ))}
-                    </ul>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
-
-      <section className="space-y-2">
-        <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
-          <Bot size={16} strokeWidth={1.5} className="text-gray-500" />
-          {t("home.ai")}
-        </h2>
-        <p data-testid="home-ai-status" className="text-sm text-gray-700">
-          {me.ai_enabled ? t("home.aiOn") : t("home.aiOff")}
+      {error !== null && data === null ? (
+        <div data-testid="bundles-error" className="flex items-center gap-3 px-[var(--pad)] py-6 text-ink-2">
+          {humanizeApiError(error, t)}
+          <button type="button" className="btn" data-testid="bundles-retry" onClick={reload}>
+            <RefreshCw size={14} strokeWidth={1.5} aria-hidden />
+            {t("common.retry")}
+          </button>
+        </div>
+      ) : data !== null && data.length === 0 ? (
+        <p data-testid="bundles-empty" className="px-[var(--pad)] py-6 text-ink-3">
+          {canCreate ? t("bundles.emptyCreate") : t("bundles.empty")}
         </p>
-      </section>
+      ) : (
+        <table className="dtable" data-testid="bundles-list">
+          <thead>
+            <tr>
+              <th>{t("bundles.colTitle")}</th>
+              <th>{t("bundles.colStatus")}</th>
+              <th>{t("bundles.colRole")}</th>
+              <th className="num">
+                <span className="lg">KO</span> {t("bundles.colConfirmed")}
+              </th>
+              <th className="num">
+                <span className="lg">EN</span> {t("bundles.colConfirmed")}
+              </th>
+              <th>{t("bundles.colUpdated")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data === null
+              ? showSkeleton &&
+                Array.from({ length: SKELETON_ROWS }, (_, index) => (
+                  <tr key={index} data-testid="bundles-skeleton">
+                    {[220, 84, 56, 110, 110, 120].map((width, cell) => (
+                      <td key={cell}>
+                        <span className="sk h-5" style={{ width }} />
+                      </td>
+                    ))}
+                  </tr>
+                ))
+              : data.map((bundle) => (
+                  <tr
+                    key={bundle.id}
+                    data-link=""
+                    data-testid={`bundles-row-${bundle.id}`}
+                    onClick={() => router.push(`/bundles/${bundle.id}`)}
+                  >
+                    <td>
+                      <Link
+                        href={`/bundles/${bundle.id}`}
+                        data-testid={`bundles-link-${bundle.id}`}
+                        className="font-semibold text-ink hover:underline"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        {bundle.title}
+                      </Link>
+                    </td>
+                    <td>
+                      <BundleStatusPill status={bundle.status} />
+                    </td>
+                    <td>
+                      <RoleTag role={bundle.my_role} />
+                    </td>
+                    <ProgressCell progress={bundle.progress.ko} testId={`bundles-ko-${bundle.id}`} />
+                    <ProgressCell progress={bundle.progress.en} testId={`bundles-en-${bundle.id}`} />
+                    <td className="whitespace-nowrap tabular-nums text-ink-2">{formatKst(bundle.updated_at)}</td>
+                  </tr>
+                ))}
+          </tbody>
+        </table>
+      )}
+
+      {creating && <NewBundleModal onClose={() => setCreating(false)} />}
     </div>
   );
 }
