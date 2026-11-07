@@ -101,14 +101,33 @@ async def _load_scope_rows(
     return sorted(rows, key=lambda row: (row.extraction_id, row.pos_seq, row.pos_start, row.id))
 
 
-def _find_skip_reason(row: Row[Any], queued: Collection[int], *, is_explicit: bool) -> SkipReason | None:
-    """길이 문턱은 문서 범위만 건다 — 단위를 고른 사람은 짧은 문장도 물어볼 수 있다."""
+async def _load_open_suggestions(
+    session: AsyncSession, bundle_id: int, document_ids: Collection[int]
+) -> list[AiSuggestion]:
+    """문서들의 열린 나누기 제안 — 적용됐고 사람이 아직 채택을 남기지 않은 것. 단위는 content에만 있어 부르는 쪽이 거른다(문서당 수가 적다)."""
+    rows = await session.scalars(
+        select(AiSuggestion).where(
+            AiSuggestion.bundle_id == bundle_id, AiSuggestion.kind == SPLIT_KIND, AiSuggestion.result == "applied",
+            AiSuggestion.adoption.is_(None), AiSuggestion.document_id.in_(list(document_ids)),
+        )
+    )
+    return list(rows)
+
+
+def _find_skip_reason(
+    row: Row[Any], queued: Collection[int], suggested: Collection[int], *, is_explicit: bool
+) -> SkipReason | None:
+    """길이 문턱과 열린 제안은 문서 범위만 건다 — 단위를 고른 사람은 짧은 문장도, 이미 제안이 있는 문장도 다시 물어볼 수 있다."""
+    if row.kind not in _SPLIT_UNIT_KINDS:
+        return "not_splittable"  # 제목·그림·표는 나누기 편집도 받지 않는다 — 문서 범위는 이런 단위를 읽지 않는다
     if row.group_unit_id is not None:
         return "bound_cell"  # 칸 문장의 처분은 그룹 단위가 담는다 — 문서 범위는 이런 칸을 읽지 않는다
     if not can_receive_suggestion(row.status, row.disposition, None, _KINDS):
         return "not_unassigned"
     if row.id in queued:
         return "already_queued"
+    if not is_explicit and row.id in suggested:
+        return "already_suggested"
     if not is_explicit and row.n_chars < MIN_SPLIT_CHARS:
         return "too_short"
     return None
@@ -119,8 +138,9 @@ async def select_split_items(
 ) -> tuple[list[JobItem], list[SkippedOut]]:
     """요청 범위를 작업 줄로 — 옛 문서 최신 추출의 묶이지 않은 문장·칸 문장 중 미배정만 받고 단위 하나에 작업 하나다(설계 §7.11).
 
-    문서 범위는 문턱보다 짧은 문장을 too_short로 알린다. 제목·표·묶인 칸은 후보가 아니라 알리지 않는다 — 건너뜀 목록은 사람이 볼 사유만 싣는다.
-    고른 단위는 묶인 칸이면 bound_cell로 알리고, 제목·그림·표는 나누기 편집도 받지 않는 종류라 422다. 범위의 단위가 이 묶음 것이 아니면 다른 라우터처럼 404다.
+    문서 범위는 열린 나누기 제안이 있는 문장을 already_suggested로, 문턱보다 짧은 문장을 too_short로 알린다. 제목·표·묶인 칸은 후보가 아니라
+    알리지 않는다 — 건너뜀 목록은 사람이 볼 사유만 싣는다. 고른 단위는 묶인 칸이면 bound_cell, 제목·그림·표면 not_splittable로 단위마다 알리고
+    요청 전체를 거절하지 않는다. 범위의 단위가 이 묶음 것이 아니면 다른 라우터처럼 404다.
     """
     documents = await load_latest_extractions(session, bundle_id, document_id)
     requested = set(unit_ids or ())
@@ -128,15 +148,16 @@ async def select_split_items(
     missing = sorted(requested - {row.id for row in rows})
     if missing:
         raise_rule(404, "unit_not_found", unit_ids=missing)
-    wrong_kind = sorted(row.id for row in rows if row.kind not in _SPLIT_UNIT_KINDS)
-    if wrong_kind:
-        raise_rule(422, "invalid_unit_kind", unit_ids=wrong_kind)
 
     queued = await find_active_unit_ids(session, bundle_id, (SPLIT_KIND,))
+    suggested: set[int] = set()
+    if not requested:
+        open_suggestions = await _load_open_suggestions(session, bundle_id, set(documents.values()))
+        suggested = {suggestion.content["unit_id"] for suggestion in open_suggestions}
     items: list[JobItem] = []
     skipped: list[SkippedOut] = []
     for row in rows:
-        reason = _find_skip_reason(row, queued, is_explicit=bool(requested))
+        reason = _find_skip_reason(row, queued, suggested, is_explicit=bool(requested))
         if reason is None:
             items.append(JobItem(document_id=documents[row.extraction_id], unit_ids=[row.id]))
         else:
@@ -228,6 +249,16 @@ async def _is_stale(session: AsyncSession, job: AiJob) -> bool:
     return _hash_text(unit.text) != job.input_snapshot["hashes"][str(unit.id)]
 
 
+async def _retire_older_suggestions(session: AsyncSession, job: AiJob) -> None:
+    """같은 단위의 열린 이전 제안을 낡음으로 — 나누라는 새 답도 나누지 말라는 새 답도 그 단위의 가장 새 답이라 이전 제안이 위에 쌓이지 않게 한다.
+
+    사람이 채택을 남긴 제안은 열린 제안이 아니라 applied 그대로다. 묶음을 잠근 apply 안에서 돌고 문서당 열린 제안은 적어 content를 파이썬에서 거른다.
+    """
+    for suggestion in await _load_open_suggestions(session, job.bundle_id, [job.document_id]):
+        if suggestion.content["unit_id"] == job.unit_ids[0]:
+            suggestion.result = "stale"
+
+
 class SplitHandler:
     """단위 하나 — 글을 조각으로 자르게 해 나눌 위치를 구하고, 낡지 않았을 때만 제안을 쓴다."""
 
@@ -266,9 +297,11 @@ class SplitHandler:
         if await _is_stale(session, job):
             _add_result(session, job, loaded, computed, "stale")
             return "stale"
-        if computed.reply is None:  # 분류와 달리 보류하지 않는다 — 단위의 상태를 바꾸는 제안이 아니다
+        if computed.reply is None:  # 분류와 달리 보류하지 않는다 — 단위의 상태를 바꾸는 제안이 아니다. 무효 답은 이전 제안을 내리지 못한다
             _add_result(session, job, loaded, computed, "invalid")
-        elif computed.offsets:
+            return "done"
+        await _retire_older_suggestions(session, job)
+        if computed.offsets:
             _add_result(session, job, loaded, computed, "applied")
         return "done"
 

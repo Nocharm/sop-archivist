@@ -195,11 +195,7 @@ async def record_adoption(
     await lock_bundle(session, ctx.bundle)
     ensure_editable(ctx.bundle)
     suggestion = await load_suggestion(session, ctx.bundle.id, suggestion_id)
-    record_split_adoption(suggestion, body.adoption, ctx.login_id)
-    record_event(
-        session, bundle_id=ctx.bundle.id, actor=ctx.login_id, action="ai.adopt", target_type="ai_suggestion",
-        target_ids=[suggestion.id], reason=body.adoption,
-    )
+    record_split_adoption(suggestion, body.adoption, ctx.login_id)  # 누가·언제는 제안 행이 담아 작업 기록은 따로 남기지 않는다
     await session.commit()
     return SuggestionOut.model_validate(suggestion)
 

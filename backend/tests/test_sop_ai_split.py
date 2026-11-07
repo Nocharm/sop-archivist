@@ -42,7 +42,10 @@ PART_1 = "합성 밸브의 상태를 확인하고"
 PART_2 = "확인 결과를 합성 기록지에 기록한 뒤 필요한 경우"
 PART_3 = "합성 담당자에게 결과를 보고한다."
 COMPOUND = f"{PART_1} {PART_2} {PART_3}"
-OTHER_COMPOUND = "합성 시료의 온도를 측정하고 측정값을 합성 일지에 적은 뒤 합성 책임자에게 전달한다."
+OTHER_PART_1 = "합성 시료의 온도를 측정하고"
+OTHER_PART_2 = "측정값을 합성 일지에 적은 뒤 합성 책임자에게 전달하고 필요한 경우 합성 관리자에게도 보고한다."
+OTHER_COMPOUND = f"{OTHER_PART_1} {OTHER_PART_2}"
+assert min(len(COMPOUND), len(OTHER_COMPOUND)) >= MIN_SPLIT_CHARS  # 문서 범위 요청이 too_short로 거르지 않는 길이
 EXACT_FLOOR = "합성" * (MIN_SPLIT_CHARS // 2)
 BELOW_FLOOR = EXACT_FLOOR[:-1]
 # 규칙 쪼개기가 문장 끝 뒤 빈 글자 없이 붙은 두 문장을 한 단위로 두는 모양 — 나눌 자리 사이에 빈 글자가 없다
@@ -168,7 +171,7 @@ def test_a_repeated_part_is_matched_in_order() -> None:
 def test_gap_must_be_whitespace_only() -> None:
     text = "A를 한다.\n\n  B를 한다."
     assert find_split_offsets(text, ["A를 한다.", "B를 한다."]) == [text.index("B")]
-    invisible = "A를 한다.​ B를 한다."
+    invisible = "A를 한다.\u200b B를 한다."
     assert find_split_offsets(invisible, ["A를 한다.", "B를 한다."]) == [invisible.index("B")]  # 안 보이는 글자도 빈 글자다
     assert find_split_offsets("A를 한다. 그리고 B를 한다.", ["A를 한다.", "B를 한다."]) is None
     assert find_split_offsets("먼저 A를 한다. B를 한다.", ["A를 한다.", "B를 한다."]) is None  # 첫 조각 앞
@@ -181,7 +184,7 @@ def test_one_part_that_is_the_whole_sentence_means_no_cut() -> None:
     assert find_split_offsets("A를 한다.", ["A를"]) is None  # 일부만 담은 조각은 문장을 다 덮지 못한다
 
 
-@pytest.mark.parametrize("parts", [[], [""], ["A를 한다.", "   "], ["A를 한다.", "​"]])
+@pytest.mark.parametrize("parts", [[], [""], ["A를 한다.", "   "], ["A를 한다.", "\u200b"]])
 def test_empty_or_blank_parts_are_refused(parts: list[str]) -> None:
     assert find_split_offsets("A를 한다. B를 한다.", parts) is None
 
@@ -252,16 +255,57 @@ def test_explicit_units_report_why_they_are_skipped(client: TestClient, fake_ai:
     assert len(read_rows(AiJob)) == 1
 
 
-def test_explicit_units_of_a_kind_that_cannot_split_are_422(client: TestClient, fake_ai: FakeAi) -> None:
+def test_explicit_units_of_a_kind_that_cannot_split_are_skipped_one_by_one(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, view = make_split_bundle(client, HEADING_BLOCK, p(COMPOUND), DATA_TABLE)
     heading, sentence = find_unit(view, HEADING), find_unit(view, COMPOUND)
     table = next(unit for unit in view["units"] if unit["kind"] == "table")
 
     response = request_split(client, bundle.id, unit_ids=[sentence["id"], heading["id"], table["id"]])
 
-    assert response.status_code == 422
-    assert response.json()["detail"] == {"code": "invalid_unit_kind", "unit_ids": sorted([heading["id"], table["id"]])}
-    assert read_rows(AiJob) == []
+    assert response.status_code == 200, response.text  # 한 단위 때문에 요청 전체를 거절하지 않는다
+    body = response.json()
+    assert body["queued"] == 1
+    assert {(item["unit_id"], item["reason"]) for item in body["skipped"]} == {
+        (heading["id"], "not_splittable"), (table["id"], "not_splittable"),
+    }
+    assert [job.unit_ids for job in read_rows(AiJob)] == [[sentence["id"]]]
+
+
+def test_document_scope_skips_units_with_an_open_split_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, view = make_split_bundle(client, p(COMPOUND), p(OTHER_COMPOUND))
+    document_id = view["document"]["id"]
+    suggested, other = find_unit(view, COMPOUND), find_unit(view, OTHER_COMPOUND)
+    use_compound_parts(fake_ai)
+    queue_one(client, bundle.id, suggested["id"])
+    run_jobs()
+
+    body = request_split(client, bundle.id, document_id=document_id).json()
+
+    assert body["queued"] == 1
+    assert body["skipped"] == [{"unit_id": suggested["id"], "reason": "already_suggested"}]
+    assert [job.unit_ids for job in read_rows(AiJob)][-1] == [other["id"]]
+    again = request_split(client, bundle.id, unit_ids=[suggested["id"]])  # 단위를 고르면 다시 물을 수 있다
+    assert again.json()["queued"] == 1 and again.json()["skipped_total"] == 0
+
+
+@pytest.mark.parametrize("closed", ["invalid", "adopted"])
+def test_a_closed_split_suggestion_does_not_block_document_scope(
+    client: TestClient, fake_ai: FakeAi, closed: str
+) -> None:
+    bundle, view = make_split_bundle(client, p(COMPOUND))
+    unit = find_unit(view, COMPOUND)
+    if closed == "invalid":
+        fake_ai.chat = lambda data: "not json"
+    else:
+        use_compound_parts(fake_ai)
+    queue_one(client, bundle.id, unit["id"])
+    run_jobs()
+    if closed == "adopted":
+        assert adopt(client, bundle.id, read_single_suggestion().id, "rejected").status_code == 200
+
+    body = request_split(client, bundle.id, document_id=view["document"]["id"]).json()
+
+    assert (body["queued"], body["skipped_total"]) == (1, 0)
 
 
 def test_request_takes_the_cell_sentences_of_a_layout_table(client: TestClient, fake_ai: FakeAi) -> None:
@@ -797,12 +841,101 @@ def test_adoption_endpoint_works_with_ai_disabled(
     assert adopt(client, bundle.id, suggestion.id, "as_is").status_code == 200
 
 
-def test_adoption_endpoint_records_an_event(client: TestClient, fake_ai: FakeAi) -> None:
+def test_adoption_endpoint_writes_no_bundle_event(client: TestClient, fake_ai: FakeAi) -> None:
+    # 누가·언제는 제안 행(adopted_by·adopted_at)이 이미 담고, 작업 기록의 AI 동작은 요청·취소·다시 시도뿐이다
     bundle, view, unit, suggestion = make_applied_suggestion(client, fake_ai)
+    events_before = [event.action for event in read_rows(BundleEvent)]
 
     assert adopt(client, bundle.id, suggestion.id, "edited").status_code == 200
 
-    events = [event for event in read_rows(BundleEvent) if event.action == "ai.adopt"]
-    assert [(event.bundle_id, event.actor, event.target_type, event.target_ids, event.reason) for event in events] == [
-        (bundle.id, "qa.member", "ai_suggestion", [suggestion.id], "edited"),
+    assert [event.action for event in read_rows(BundleEvent)] == events_before
+    assert "ai.adopt" not in events_before
+
+
+# --- 새 답이 오면 이전 제안 내리기 ---
+
+
+def read_results() -> list[tuple[str, str | None]]:
+    return [(row.result, row.adoption) for row in read_split_suggestions()]
+
+
+def ask_again(client: TestClient, bundle_id: int, unit_id: int) -> None:
+    queue_one(client, bundle_id, unit_id)
+    run_jobs()
+
+
+def test_a_new_cut_retires_the_older_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, view, unit, first = make_applied_suggestion(client, fake_ai)
+
+    ask_again(client, bundle.id, unit["id"])
+
+    assert read_results() == [("stale", None), ("applied", None)]
+    assert read_split_adoption(client, bundle.id) == {
+        "applied": 1, "as_is": 0, "edited": 0, "rejected": 0, "pending": 1, "adoption_rate": None,
+    }
+    assert adopt(client, bundle.id, first.id, "as_is").status_code == 409  # 내려간 제안은 채택을 받지 않는다
+
+
+def test_a_new_answer_leaves_the_suggestions_of_other_units(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, view = make_split_bundle(client, p(COMPOUND), p(OTHER_COMPOUND))
+    document_id = view["document"]["id"]
+    compound, other = find_unit(view, COMPOUND), find_unit(view, OTHER_COMPOUND)
+    fake_ai.chat = lambda data: json.dumps(
+        {
+            "parts": [PART_1, f"{PART_2} {PART_3}"] if data["text"] == COMPOUND else [OTHER_PART_1, OTHER_PART_2],
+            "reason": "합성 이유.", "rule_ids": [],
+        },
+        ensure_ascii=False,
+    )
+    assert request_split(client, bundle.id, document_id=document_id).json()["queued"] == 2
+    run_jobs()
+    assert read_results() == [("applied", None), ("applied", None)]
+
+    ask_again(client, bundle.id, compound["id"])
+
+    assert [(row.content["unit_id"], row.result) for row in read_split_suggestions()] == [
+        (compound["id"], "stale"), (other["id"], "applied"), (compound["id"], "applied"),
     ]
+
+
+def test_an_adopted_older_suggestion_stays_applied(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, view, unit, first = make_applied_suggestion(client, fake_ai)
+    assert adopt(client, bundle.id, first.id, "edited").status_code == 200
+
+    ask_again(client, bundle.id, unit["id"])
+
+    assert read_results() == [("applied", "edited"), ("applied", None)]
+    assert read_split_adoption(client, bundle.id) == {
+        "applied": 2, "as_is": 0, "edited": 1, "rejected": 0, "pending": 1, "adoption_rate": 0.0,
+    }
+
+
+def test_a_no_cut_answer_retires_the_older_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, view, unit, first = make_applied_suggestion(client, fake_ai)
+    use_parts(fake_ai, COMPOUND, reason="한 가지 행동이라 나누지 않는다.", rule_ids=())
+
+    ask_again(client, bundle.id, unit["id"])
+
+    assert read_results() == [("stale", None)]  # 새 제안은 쓰지 않아도 가장 새 답이 "나누지 말라"다
+    assert "split" not in client.get(f"/api/bundles/{bundle.id}/ai/status", headers=AUTHOR).json()["adoption"]
+
+
+def test_an_invalid_rerun_keeps_the_older_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, view, unit, first = make_applied_suggestion(client, fake_ai)
+    fake_ai.chat = lambda data: "not json"
+
+    ask_again(client, bundle.id, unit["id"])
+
+    assert read_results() == [("applied", None), ("invalid", None)]
+    assert read_split_adoption(client, bundle.id)["pending"] == 1
+
+
+def test_a_stale_rerun_keeps_the_older_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, view, unit, first = make_applied_suggestion(client, fake_ai)
+    fake_ai.on_chat = lambda data: edit_document(
+        client, bundle.id, view["document"]["id"], {"type": "split", "unit_id": unit["id"], "at": 5}
+    )
+
+    ask_again(client, bundle.id, unit["id"])
+
+    assert read_results() == [("applied", None), ("stale", None)]
