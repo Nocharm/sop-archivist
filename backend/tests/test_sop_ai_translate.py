@@ -1135,6 +1135,23 @@ def assert_held(unit_id: int, text: str = TRANSLATED) -> None:
     assert (held.status, held.hold_reason, held.confirmed_text) == ("on_hold", SYSTEM_HOLD_RELATED_CHANGED, text)
 
 
+def read_place(target_id: int) -> tuple[int, str | None, int | None, str | None, str]:
+    (target,) = [row for row in read_rows(TargetSentence) if row.id == target_id]
+    return (target.target_doc_id, target.slot_key, target.wi_step, target.wi_part, target.section_path)
+
+
+def confirm_held(client: TestClient, bundle_id: int, unit_id: int, source_id: int) -> None:
+    """보류된 번역이 출처 자리에 있고, 사람이 그 자리 그대로 다시 확정할 수 있다 — 자리 잠금에 걸리면 지우는 수밖에 없다."""
+    held = load_translation(unit_id)
+    assert read_place(held.id) == read_place(source_id)
+    response = save_translation(
+        client, bundle_id, held, slot_key=held.slot_key, wi_step=held.wi_step, wi_part=held.wi_part,
+        target_doc_id=held.target_doc_id,
+    )
+    assert response.status_code == 200, response.text
+    assert load_translation(unit_id).status == "confirmed"
+
+
 def assert_swept(client: TestClient, bundle_id: int, unit_id: int) -> None:
     """AI 번역이 지워지고 제안은 낡은 것이 됐다 — 살아 있는 제안이 없으니 채택 집계에도 이 종류가 없다."""
     assert load_translations(unit_id) == []
@@ -1284,13 +1301,91 @@ def test_editing_the_source_text_removes_an_ai_translation(client: TestClient, f
     assert_swept(client, bundle.id, unit["id"])
 
 
-def test_moving_the_source_holds_a_confirmed_translation(client: TestClient, fake_ai: FakeAi) -> None:
-    bundle, unit, _ = make_settled_translation(client, fake_ai)
+def test_moving_the_source_holds_a_confirmed_translation_at_the_new_place(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, target = make_settled_translation(client, fake_ai)
+    source = get_target(client, bundle.id, unit["id"])
 
     response = save_source(client, bundle.id, unit["id"], slot_key=OTHER_SLOT)
 
     assert response.status_code == 200, response.text
     assert_held(unit["id"])
+    assert load_translation(unit["id"]).slot_key == OTHER_SLOT
+    assert load_translation(unit["id"]).revision == target.revision + 1
+    confirm_held(client, bundle.id, unit["id"], source["id"])
+
+
+def test_moving_the_source_to_another_document_carries_a_settled_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, _ = make_settled_translation(client, fake_ai)
+    source = get_target(client, bundle.id, unit["id"])
+
+    response = save_source(client, bundle.id, unit["id"], target_doc_id=bundle.wi_id, slot_key=None, wi_part="why")
+
+    assert response.status_code == 200, response.text
+    assert_held(unit["id"])
+    held = load_translation(unit["id"])
+    assert (held.target_doc_id, held.slot_key, held.wi_step, held.wi_part) == (bundle.wi_id, None, None, "why")
+    confirm_held(client, bundle.id, unit["id"], source["id"])
+
+
+def test_held_translation_keeps_a_persons_edit_when_it_follows_the_source(client: TestClient, fake_ai: FakeAi) -> None:
+    # 자리 잠금 때문에 옛 자리에 남으면 고친 글을 지우고 다시 받는 수밖에 없다 — 그래서 함께 옮긴다
+    bundle, unit = make_assigned_unit(client)
+    target = translate(client, fake_ai, bundle.id, unit["id"])
+    assert save_translation(client, bundle.id, target, text="An edited synthetic translation.").status_code == 200
+
+    assert save_source(client, bundle.id, unit["id"], slot_key=OTHER_SLOT).status_code == 200
+
+    assert_held(unit["id"], "An edited synthetic translation.")
+    assert save_translation(client, bundle.id, load_translation(unit["id"])).status_code == 200
+    saved = load_translation(unit["id"])
+    assert (saved.status, saved.confirmed_text, saved.slot_key) == ("confirmed", "An edited synthetic translation.", OTHER_SLOT)
+
+
+def test_translation_saved_with_a_moved_source_follows_it(client: TestClient, fake_ai: FakeAi) -> None:
+    # 같은 저장에 담겨 보류되지는 않아도, 옛 자리에 남으면 잠금 때문에 옮길 길이 없다
+    bundle, unit = make_assigned_unit(client)
+    target = translate(client, fake_ai, bundle.id, unit["id"])
+    group = get_group_by_unit(client, bundle.id, unit["id"])
+    (source,) = group["targets"]
+
+    response = save_group(client, bundle.id, {
+        "action": "confirm",
+        "units": [{"unit_id": unit["id"], "revision": group["units"][0]["decision"]["revision"], "disposition": "assigned"}],
+        "targets": [
+            {
+                "key": "s", "id": source["id"], "revision": source["revision"], "slot_key": OTHER_SLOT,
+                "source_unit_ids": [unit["id"]],
+            },
+            {"key": "t", "id": target.id, "revision": target.revision, "source_unit_ids": []},
+        ],
+    })
+
+    assert response.status_code == 200, response.text
+    saved = load_translation(unit["id"])
+    assert (saved.status, saved.slot_key) == ("confirmed", OTHER_SLOT)
+    assert read_place(saved.id) == read_place(source["id"])
+    (read,) = [item for item in response.json()["targets"] if item["id"] == target.id]
+    assert read["slot_key"] == OTHER_SLOT
+
+
+def test_editing_the_source_text_leaves_a_held_translation_in_place(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, target = make_settled_translation(client, fake_ai)
+
+    assert save_source(client, bundle.id, unit["id"], text=EDITED, change_type="rewritten").status_code == 200
+
+    assert_held(unit["id"])
+    assert read_place(target.id) == (bundle.sop_id, SLOT, None, None, "")
+
+
+def test_held_translation_stays_where_it_was_when_its_source_is_gone(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, target = make_settled_translation(client, fake_ai)
+    place = read_place(target.id)
+
+    # 새 문장을 다른 칸에 새로 만들어도 지운 출처의 번역이 따라갈 자리는 아니다
+    assert replace_source(client, bundle.id, unit["id"], bundle.sop_id).status_code == 200
+
+    assert_held(unit["id"])
+    assert read_place(target.id) == place and get_target(client, bundle.id, unit["id"])["slot_key"] == OTHER_SLOT
 
 
 def test_moving_the_source_to_another_document_removes_an_ai_translation(client: TestClient, fake_ai: FakeAi) -> None:
@@ -1432,6 +1527,7 @@ def test_new_section_for_a_matched_source_holds_a_confirmed_translation(client: 
     assert save_translation(client, bundle.id, target).status_code == 200
 
     # 제목을 앞 문장과 합치면 절이 사라져 출처 새 문장의 자리(절 경로)가 바뀐다
+    assert target.section_path == "1. 합성 절"
     edit_document(
         client, bundle.id, view["document"]["id"],
         {"type": "merge", "unit_ids": [find_unit(view, LONE_KO_2)["id"], find_unit(view, "1. 합성 절")["id"]]},
@@ -1439,6 +1535,12 @@ def test_new_section_for_a_matched_source_holds_a_confirmed_translation(client: 
     )
 
     assert_held(unit["id"])
+    held = load_translation(unit["id"])
+    assert held.section_path == ""
+    source_id = get_target(client, bundle.id, unit["id"])["id"]
+    assert read_place(held.id) == read_place(source_id)
+    confirmed = save_translation(client, bundle.id, held)
+    assert confirmed.status_code == 200, confirmed.text
 
 
 def test_moving_the_source_to_another_step_removes_an_ai_translation(client: TestClient, fake_ai: FakeAi) -> None:
@@ -1458,7 +1560,8 @@ def test_moving_the_source_to_another_step_holds_a_confirmed_translation(client:
 
     assert response.status_code == 200, response.text
     assert_held(unit["id"])
-    assert load_translation(unit["id"]).wi_step == 1
+    assert load_translation(unit["id"]).wi_step == 2
+    confirm_held(client, bundle.id, unit["id"], source["id"])
 
 
 def test_reordering_without_a_step_change_keeps_the_translation(client: TestClient, fake_ai: FakeAi) -> None:
