@@ -66,6 +66,7 @@ _SENTENCE, _TABLE, _FIGURE = "sentence", "table", "figure"  # MatchItem.kind —
 _CELL_SEPARATOR = " "  # 양쪽 표 글을 같게 이어야 점수가 뜻이 있다
 _PROMPT_KEY = "prompt.match"
 _FEATURE = "sop.match"
+_CHANGE_ORDER = ("as_is", "tone", "rewritten", "split", "merged")  # 변화가 작은 순서 — 제안 기록의 한 칸을 정한다
 
 _CellT = TypeVar("_CellT")
 _CellKey = tuple[int, int, str, int]  # (행, 열, 언어, 칸 안 순서)
@@ -616,10 +617,10 @@ class _PairInput:
 
 @dataclass(frozen=True)
 class _PairVerdict:
-    """응답을 검사한 결과. change_type이 None이면 무효 — warnings가 이유를 코드로 담고 응답 글은 어디에도 남기지 않는다."""
+    """응답을 검사한 결과. change_types가 비면 무효 — warnings가 이유를 코드로 담고 응답 글은 어디에도 남기지 않는다."""
 
     model: str
-    change_type: str | None = None
+    change_types: Mapping[int, str] = field(default_factory=dict)  # 새 문장 → 변경 종류
     reason: str = ""
     rule_ids: tuple[str, ...] = ()
     warnings: tuple[AiWarning, ...] = (build_warning("invalid_format"),)
@@ -638,31 +639,43 @@ def _build_pair_payload(
 
 
 def _judge_reply(reply: MatchReply | None, job: AiJob, loaded: _PairInput, model: str) -> _PairVerdict:
-    """응답 검사 — 형식이 틀리면 무효이고 규칙 ID는 빼고 경고한다. 구조와 글자 비교가 정한 종류가 응답보다 먼저다(설계 §6.7)."""
+    """응답 검사 — 형식이 틀리면 무효이고 규칙 ID는 빼고 경고한다. 구조와 글자 비교가 정한 종류가 응답보다 먼저다(설계 §6.7).
+
+    나눔은 같은 새 문서 안에서만이다 — 문서가 다르면 중복 배정이라(설계 §6.9) 새 문장마다 그 문서 안의 수로 판단한다.
+    """
     if reply is None:
         return _PairVerdict(model)
     rule_ids, unknown = check_rule_ids(reply.rule_ids, loaded.guidelines)
     old_texts = [unit.text for unit in loaded.units]
-    new_texts = {target_id: loaded.candidates.news[target_id].item.text for target_id in job.target_ids}
-    change_type = decide_ai_change_type(
-        loaded.units, new_texts[job.target_ids[0]], reply.change_type, sentence_count=len(job.target_ids)
-    )
-    checks = {target_id: check_sentence(old_texts, text) for target_id, text in new_texts.items()}
-    return _PairVerdict(model, change_type, reply.reason, rule_ids, tuple(unknown), checks)
+    news = {target_id: loaded.candidates.news[target_id] for target_id in job.target_ids}
+    per_document = Counter(entry.document_id for entry in news.values())
+    change_types = {
+        target_id: decide_ai_change_type(
+            loaded.units, entry.item.text, reply.change_type, sentence_count=per_document[entry.document_id]
+        )
+        for target_id, entry in news.items()
+    }
+    checks = {target_id: check_sentence(old_texts, entry.item.text) for target_id, entry in news.items()}
+    return _PairVerdict(model, change_types, reply.reason, rule_ids, tuple(unknown), checks)
 
 
 def _get_pair_shape(job: AiJob) -> str:
-    """그룹은 한쪽이 늘 하나다 — 합침이 먼저인 순서는 decide_ai_change_type과 같다."""
+    """그룹은 한쪽이 늘 하나다 — 합침이 먼저인 순서는 decide_ai_change_type과 같다. 새 문서 둘에 걸친 1:N도 split이고 종류만 새 문장마다 따로다."""
     if len(job.unit_ids) >= 2:
         return "merged"
     return "split" if len(job.target_ids) >= 2 else "one_to_one"
+
+
+def _get_group_change_type(verdict: _PairVerdict) -> str | None:
+    """제안 기록의 변경 종류, 무효면 None — 문서에 걸친 짝은 새 문장마다 다를 수 있어 가장 큰 변화를 적는다. 각 줄의 종류는 새 문장이 담는다."""
+    return max(verdict.change_types.values(), key=_CHANGE_ORDER.index, default=None)
 
 
 def _add_pair_result(
     session: AsyncSession, job: AiJob, loaded: _PairInput, verdict: _PairVerdict, result: str
 ) -> AiSuggestion:
     content = _build_content(
-        job.unit_ids, job.target_ids, _get_pair_shape(job), verdict.change_type, job.payload["retrieval"],
+        job.unit_ids, job.target_ids, _get_pair_shape(job), _get_group_change_type(verdict), job.payload["retrieval"],
         reason=verdict.reason, rule_ids=verdict.rule_ids,
     )
     return add_suggestion(
@@ -678,10 +691,12 @@ def _plan_pair(
 ) -> _Write:
     """옛 단위는 배정, 새 문장은 그 변경 종류로 — 글은 그대로 두고 출처만 잇는다(설계 §6.7)."""
     return _Write(
-        loaded.candidates.olds[job.unit_ids[0]], _get_pair_shape(job), verdict.change_type,
+        loaded.candidates.olds[job.unit_ids[0]], _get_pair_shape(job), _get_group_change_type(verdict),
         unit_ids=tuple(job.unit_ids), disposition="assigned",
         targets=tuple(
-            _TargetWrite(targets[target_id], verdict.change_type, [*verdict.checks[target_id], *verdict.warnings])
+            _TargetWrite(
+                targets[target_id], verdict.change_types[target_id], [*verdict.checks[target_id], *verdict.warnings]
+            )
             for target_id in job.target_ids
         ),
         links=tuple(product(job.target_ids, [unit.id for unit in loaded.units])),
@@ -695,6 +710,9 @@ class MatchHandler:
         """입력을 읽고 작업 시작 시점의 revision을 적는다 — 다시 시도도 이 단계를 지나므로 그때의 상태가 기준이 된다."""
         candidates = await _load_candidates(session, job.bundle_id, job.unit_ids, job.target_ids)
         if candidates.olds.keys() != set(job.unit_ids) or candidates.news.keys() != set(job.target_ids):
+            return None
+        # 계획 뒤에 언어를 고치면 짝이 언어를 넘게 된다 — revision이 그대로라 여기서 막지 않으면 확정이 lang_mismatch로 거절된다
+        if len({entry.item.lang for entry in (*candidates.olds.values(), *candidates.news.values())}) > 1:
             return None
         try:
             guidelines = await load_active_guidelines(session, (RULES_KEY, _PROMPT_KEY))
@@ -732,7 +750,7 @@ class MatchHandler:
         decisions = await _load_decisions(session, job.unit_ids)
         targets = await _load_targets(session, job.target_ids)
         await clear_previous_suggestion(session, decisions.values(), targets.values())
-        if computed.change_type is None:
+        if not computed.change_types:
             hold_invalid(decisions.values())
             _add_pair_result(session, job, loaded, computed, "invalid")
             return "done"

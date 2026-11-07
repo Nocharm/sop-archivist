@@ -30,6 +30,8 @@ _MATCH_KIND = "match"
 _JUDGED_KINDS = ("classify", "translate", _MATCH_KIND)
 _NO_TEXT_KINDS = (*TABLE_UNIT_KINDS, "figure")  # 새 문장에 글자가 없는 단위
 _LOCKED_PLACE: Place = (None, None, None, None)  # 입구 2 새 문장은 자리·글이 잠겨 있어 판정 재료에 넣지 않는다
+# 변경 종류까지 견주는 입구 2 모습 — 짝 하나에서 LLM이 내는 것은 종류뿐이고(설계 §7.10) 채택률이 지침을 고치는 근거다(설계 §13). 나머지는 종류가 구조에서 나온다
+_TYPED_SHAPES = ("one_to_one", "table")
 
 
 @dataclass(frozen=True)
@@ -41,14 +43,16 @@ class TargetShape:
     sources: frozenset[int]
     # 사람이 표 구성을 바꿨다 — 칸 글이 같아도 그대로가 아니다(설계 §6.7). AI 표는 늘 그대로라 제안 쪽은 False다
     restructured: bool = False
+    # 입구 2 짝 하나와 표의 변경 종류 — 나머지 모습과 입구 1은 비워 견주지 않는다
+    change_type: str | None = None
 
 
 @dataclass(frozen=True)
 class SuggestedShape:
     disposition: str
     targets: tuple[TargetShape, ...]
-    # 입구 2 제안 — 새 문장의 글·자리는 잠겨 있어 출처만 견준다
-    is_sources_only: bool = False
+    # 입구 2 제안 — 새 문장의 글·자리가 잠겨 있고 사람이 바꿀 수 있는 것은 출처와 변경 종류뿐이다
+    is_locked: bool = False
 
 
 @dataclass(frozen=True)
@@ -60,10 +64,11 @@ class SavedShape:
 def decide_adoption(suggested: SuggestedShape, saved: SavedShape) -> str:
     """제안을 버렸는가(처분이 다르거나 새 문장이 모두 사라졌거나 모두 다른 자리), 그대로인가, 고쳤는가.
 
-    입구 2 제안은 출처만 본다 — 같으면 그대로, 모두 비면 버림, 그 밖은 고침이다. 옛 단위의 처분은 사람이 출처를 바꾸면 따라 바뀌어 보지 않는다.
+    입구 2 제안은 출처(짝 하나와 표는 변경 종류까지)만 본다 — 같으면 그대로, 출처가 모두 비면 버림, 그 밖은 고침이다. 옛 단위의 처분은 사람이 출처를 바꾸면
+    따라 바뀌어 보지 않는다.
     """
     is_same = Counter(suggested.targets) == Counter(saved.targets)
-    if suggested.is_sources_only:
+    if suggested.is_locked:
         if is_same:
             return "as_is"
         return "edited" if any(target.sources for target in saved.targets) else "rejected"
@@ -76,9 +81,16 @@ def decide_adoption(suggested: SuggestedShape, saved: SavedShape) -> str:
 
 
 def _list_matched_targets(content: Mapping[str, Any]) -> Sequence[int]:
-    """출처를 견줄 새 문장 — 제안 기록에 칸 연결이 없어 표는 표 새 문장만 본다. 그대로인 표의 칸 자리는 저장 검사가 지킨다."""
+    """출처를 견줄 새 문장 — 제안 기록에 칸 연결이 없어 표는 표 새 문장만 본다.
+
+    칸 자리를 지키는 저장 검사는 그대로인 표에만 걸린다. 표 구성 변경 제안에서 사람이 칸 연결만 고친 저장은 일부러 그대로 채택으로 둔다.
+    """
     target_ids = content["target_ids"]
     return target_ids[:1] if content["shape"] == "table" else target_ids
+
+
+def _read_compared_type(content: Mapping[str, Any], change_type: str | None) -> str | None:
+    return change_type if content["shape"] in _TYPED_SHAPES else None
 
 
 def _build_match_shape(content: Mapping[str, Any]) -> SuggestedShape:
@@ -86,8 +98,11 @@ def _build_match_shape(content: Mapping[str, Any]) -> SuggestedShape:
     if content["shape"] == "delete_candidate":
         return SuggestedShape("delete", ())
     sources = frozenset(content["unit_ids"])
-    targets = tuple(TargetShape(_LOCKED_PLACE, "", sources) for _ in _list_matched_targets(content))
-    return SuggestedShape("assigned", targets, is_sources_only=True)
+    change_type = _read_compared_type(content, content["change_type"])
+    targets = tuple(
+        TargetShape(_LOCKED_PLACE, "", sources, change_type=change_type) for _ in _list_matched_targets(content)
+    )
+    return SuggestedShape("assigned", targets, is_locked=True)
 
 
 def _build_suggested_shape(suggestion: AiSuggestion, units: Iterable[Unit]) -> SuggestedShape:
@@ -121,10 +136,16 @@ def _build_saved_shape(
     입구 2 제안은 단위가 아니라 제안의 새 문장으로 가린다 — 사람이 출처를 바꾸거나 비운 새 문장도 판정에 들어야 한다.
     """
     if suggestion.kind == _MATCH_KIND:
-        matched = set(_list_matched_targets(suggestion.content))
+        content = suggestion.content
+        matched = set(_list_matched_targets(content))
         return SavedShape(
             frozenset(dispositions),
-            tuple(TargetShape(_LOCKED_PLACE, "", frozenset(plan.sources)) for plan in plans if plan.row.id in matched),
+            tuple(
+                TargetShape(
+                    _LOCKED_PLACE, "", frozenset(plan.sources), change_type=_read_compared_type(content, plan.change_type)
+                )
+                for plan in plans if plan.row.id in matched
+            ),
         )
     scope = set(unit_ids)
     targets = tuple(
