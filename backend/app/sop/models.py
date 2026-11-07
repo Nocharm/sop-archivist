@@ -1,4 +1,4 @@
-"""SOP 재구성 ORM 모델 — 묶음·문서·추출·단위·판단·새 문서 문장 (모델을 바꾸면 Alembic 리비전이 필요하다)."""
+"""SOP 재구성 ORM 모델 — 묶음·문서·추출·단위·판단·새 문서 문장, AI 작업·제안·지침·임베딩 (모델을 바꾸면 Alembic 리비전이 필요하다)."""
 
 from collections.abc import Sequence
 from datetime import datetime
@@ -9,16 +9,26 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models import Base, _now
-from app.sop.constants import BUNDLE_STATUSES, MEMBER_ROLES, STATUSES
+from app.sop.constants import (
+    AI_ADOPTIONS,
+    AI_JOB_KINDS,
+    AI_JOB_STATUSES,
+    AI_SUGGESTION_RESULTS,
+    BUNDLE_STATUSES,
+    MEMBER_ROLES,
+    STATUSES,
+)
 
 
 def _build_in_check(column: str, values: Sequence[str]) -> str:
@@ -315,6 +325,10 @@ class UnitPair(Base):
     status: Mapped[str] = mapped_column(String(10))
     source: Mapped[str] = mapped_column(String(5))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # 이 짝을 만든 AI 제안 — 제안이 지워져도 짝은 남는다
+    suggestion_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ai_suggestions.id", ondelete="SET NULL"), default=None
+    )
 
 
 class UnitPairMember(Base):
@@ -341,6 +355,10 @@ class UnitDecision(Base):
     hold_reason: Mapped[str] = mapped_column(Text, default="")
     confirmed_by: Mapped[str | None] = mapped_column(String(100), default=None)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # 이 처분을 채운 AI 제안 — 채택 여부를 사람이 저장할 때 이 제안에 기록한다
+    suggestion_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ai_suggestions.id", ondelete="SET NULL"), default=None
+    )
     revision: Mapped[int] = mapped_column(Integer, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
@@ -386,6 +404,10 @@ class TargetSentence(Base):
     new_unit_id: Mapped[int | None] = mapped_column(
         ForeignKey("units.id", ondelete="CASCADE"), index=True, default=None
     )
+    # 번역 새 문장이 번역한 옛 단위 — TargetSource(관계 묶음의 근거)와 따로 둬서 번역이 묶음·닫힘 검사를 흔들지 않는다
+    translation_source_unit_id: Mapped[int | None] = mapped_column(
+        ForeignKey("units.id", ondelete="CASCADE"), index=True, default=None
+    )
     parent_target_id: Mapped[int | None] = mapped_column(
         ForeignKey("target_sentences.id", ondelete="CASCADE"), index=True, default=None
     )
@@ -398,6 +420,10 @@ class TargetSentence(Base):
     warnings: Mapped[list] = mapped_column(JSON, default=list)
     confirmed_by: Mapped[str | None] = mapped_column(String(100), default=None)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # 이 문장을 채운 AI 제안 — 제안이 지워져도 문장은 남는다
+    suggestion_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ai_suggestions.id", ondelete="SET NULL"), default=None
+    )
     revision: Mapped[int] = mapped_column(Integer, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
@@ -423,3 +449,106 @@ class TargetTextHistory(Base):
     previous_text: Mapped[str] = mapped_column(Text)
     changed_by: Mapped[str] = mapped_column(String(100))
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+# --- AI 층 ---
+
+
+class GuidelineVersion(Base):
+    """AI 지침 한 버전 — 키마다 활성은 하나(부분 유일 인덱스), 지난 버전은 이력으로 남는다. 묶음과 무관한 전역 표."""
+
+    __tablename__ = "guideline_versions"
+    __table_args__ = (
+        UniqueConstraint("key", "version"),
+        # 활성 행만 키당 하나 — 비활성 이력은 제한이 없다. sqlite·Postgres 둘 다 부분 인덱스를 받는다
+        Index(
+            "uq_guideline_active",
+            "key",
+            unique=True,
+            sqlite_where=text("is_active"),
+            postgresql_where=text("is_active"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(40))
+    version: Mapped[int] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(Text)
+    note: Mapped[str] = mapped_column(Text, default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    activated_by: Mapped[str | None] = mapped_column(String(100), default=None)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+
+class AiJob(Base):
+    """AI 작업 — 요청이 쌓는 큐 한 줄. 실행기가 (status, id) 순으로 다음 작업을 꺼낸다."""
+
+    __tablename__ = "ai_jobs"
+    __table_args__ = (
+        CheckConstraint(_build_in_check("kind", AI_JOB_KINDS), name="kind"),
+        CheckConstraint(_build_in_check("status", AI_JOB_STATUSES), name="status"),
+        Index("ix_ai_jobs_status_id", "status", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    bundle_id: Mapped[int] = mapped_column(ForeignKey("bundles.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(12))
+    status: Mapped[str] = mapped_column(String(10))
+    # 문서가 지워져도 작업 기록은 남는다
+    document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id", ondelete="SET NULL"), default=None)
+    unit_ids: Mapped[list] = mapped_column(JSON, default=list)
+    target_ids: Mapped[list] = mapped_column(JSON, default=list)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    # 작업이 읽은 입력의 상태(revision·글자 해시 등) — 적용 때 낡았는지 다시 확인하는 기준
+    input_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    # 실패 코드(원문·서버 메시지 없이 정해진 짧은 코드만)
+    error: Mapped[str] = mapped_column(String(40), default="")
+    requested_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+
+class AiSuggestion(Base):
+    """AI 제안 — 작업 한 건이 낸 결과 한 덩어리. 적용 여부(result)와 사람의 채택 결과(adoption)를 따로 남긴다."""
+
+    __tablename__ = "ai_suggestions"
+    __table_args__ = (
+        CheckConstraint(_build_in_check("result", AI_SUGGESTION_RESULTS), name="result"),
+        # adoption이 NULL(아직 사람이 안 정함)이면 CHECK는 통과한다
+        CheckConstraint(_build_in_check("adoption", AI_ADOPTIONS), name="adoption"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("ai_jobs.id", ondelete="CASCADE"), index=True)
+    bundle_id: Mapped[int] = mapped_column(ForeignKey("bundles.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(12))
+    document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="SET NULL"), index=True, default=None
+    )
+    content: Mapped[dict] = mapped_column(JSON)
+    warnings: Mapped[list] = mapped_column(JSON, default=list)
+    result: Mapped[str] = mapped_column(String(8))
+    input_refs: Mapped[dict] = mapped_column(JSON, default=dict)
+    # 제안을 만들 때 쓴 지침 버전({키: 버전}) — 어느 지침이 어떤 결과를 냈는지 되짚는다
+    guideline_versions: Mapped[dict] = mapped_column(JSON, default=dict)
+    model: Mapped[str] = mapped_column(String(200), default="")
+    adoption: Mapped[str | None] = mapped_column(String(8), default=None)
+    adopted_by: Mapped[str | None] = mapped_column(String(100), default=None)
+    adopted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class EmbeddingCache(Base):
+    """임베딩 캐시 — (모델, 글 해시)가 키. 같은 글을 같은 모델로 다시 보내지 않는다(글 자체는 담지 않는다)."""
+
+    __tablename__ = "embedding_cache"
+
+    model: Mapped[str] = mapped_column(String(200), primary_key=True)
+    text_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    dim: Mapped[int] = mapped_column(Integer)
+    vector: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

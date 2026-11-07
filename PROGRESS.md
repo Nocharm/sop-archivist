@@ -76,3 +76,5 @@
 - 선택 칸(`BundleUpdateIn.description`·`TargetIn.text`)은 `| None`에 `Field` 상한을 걸면 오류 종류가 `too_long`이라 `StringConstraints`+`NO_NUL`을 `Annotated`로 걸었다.
 - **계획 2 Task 2: AI 호출 경계** — 임베딩은 채팅과 서버·모델이 달라 `EMBED_*`를 따로 두되 동시성 세마포어는 `call_ai`와 공유한다(동시 상한이 전체 AI 부하 기준이라서). 느린 AI 호출 동안 DB 연결을 잡지 않으려고 `call_ai_recorded`에서 세션 인자를 없애고 `record_ai_usage`가 호출 뒤 자기 짧은 세션으로 기록한다. `ping_ai`는 권한 판정이 잡은 요청 세션을 호출 직전에 닫는다.
 - 실패 기록이 실패해도 원래 AI 오류를 가리지 않는 동작은 그대로이고, 그 경고 로그는 트레이스백 대신 예외 클래스 이름만 남긴다(값이 로그에 실리지 않게).
+- **계획 2 Task 3: 스키마 0007** — AI 작업·제안·지침·임베딩 표 4개와 판단·새 문장·짝의 `suggestion_id`(제안이 지워져도 행은 남는 SET NULL), 번역 출처 칸 `translation_source_unit_id`(`TargetSource`와 따로, 단위가 지워지면 CASCADE)를 더했다. 지침의 "키당 활성 하나"는 부분 유일 인덱스라 sqlite·Postgres 방언 인자를 둘 다 달았고, sqlite는 길이를 강제하지 않아 코드 값 튜플이 컬럼 길이에 들어가는지를 테스트로 묶었다.
+- `ai_suggestions`의 CHECK 둘은 `result`·`adoption`(`kind`는 작업 쪽 CHECK가 막는다). 마이그레이션은 일회용 Postgres 16에서 upgrade·downgrade·`alembic check`와 제약·CASCADE 동작을 실측했다.
