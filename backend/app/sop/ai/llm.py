@@ -17,6 +17,7 @@ from pydantic import BaseModel, BeforeValidator, StringConstraints, ValidationEr
 
 from app.ai_client import AiReasoning, resolve_endpoint
 from app.ai_usage import call_ai_recorded
+from app.settings import settings
 from app.sop.ai.constants import AI_CALL_ATTEMPTS, AI_RETRY_DELAYS, MAX_AI_TEXT_CHARS
 from app.sop.ai.guidelines import GuidelineRef
 from app.sop.ai.runner import AiCallFailed
@@ -88,7 +89,10 @@ async def call_llm(
 
     실패는 AiCallFailed(code)로 올린다. code는 timeout·server_error·connection·client_error·config.
     시도마다 사용량 한 행이 남는다(`call_ai_recorded`). 설정 오류는 호출하기 전에 가려서 사용량 행도 남기지 않는다.
+    AI가 꺼져 있으면 보내지 않고 config다 — 요청은 503으로 막아도 재시작 복구·다시 시도로 큐에 든 작업은 임베딩만 켜져 있으면 워커가 돌린다.
     """
+    if not settings.ai_enabled:
+        raise AiCallFailed("config")
     try:
         _, model_id = resolve_endpoint(None)
     except ValueError as exc:

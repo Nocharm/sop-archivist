@@ -57,6 +57,17 @@ def _hold(item: UnitDecision | TargetSentence) -> None:
     item.revision += 1
 
 
+def _should_hold(target: TargetSentence) -> bool:
+    """같은 관계 묶음의 나머지 중 보류할 새 문장 — 미배정은 뺀다.
+
+    AI 번역도 뺀다. 출처가 바뀐 번역은 이미 지웠으니 여기 남은 것은 표 아래라 딸려 온, 자기 출처가 그대로인 제안이다. 보류하면 확정
+    글이 빈 보류가 되어 결과물에 빈 줄로 나가고 다시 번역도 못 받는다. 표를 다시 저장할 때 닫힘이 함께 담아 사람이 정한다.
+    """
+    if target.status == UNASSIGNED:
+        return False
+    return not (target.origin == ORIGIN_TRANSLATION and target.status == AI_SUGGESTED)
+
+
 async def _load_translations(
     session: AsyncSession, bundle_id: int, *, target_ids: Collection[int], unit_ids: Collection[int] = ()
 ) -> dict[TargetSentence, int]:
@@ -188,7 +199,7 @@ async def detach_units(
     문장이 다른 표·행으로 다시 묶인 것).
 
     번역은 출처 연결이 없어 따로 찾는다 — 건드린 단위를 옮긴 번역과, 지워지거나 출처를 잃은 새 문장의 번역이다. ai_suggested는
-    제안째 지우고 나머지는 4)가 아닌 5)를 탄다.
+    제안째 지우고 나머지는 4)가 아닌 5)를 탄다. 출처가 그대로인 ai_suggested 번역은 표에 딸려 와도 그대로 둔다(_should_hold).
     """
     given = set(unit_ids)
     cell_rows = await select_in_chunks(
@@ -283,7 +294,7 @@ async def detach_units(
     ]
     held_target_ids = [
         target_id for target_id in sorted(targets)
-        if target_id not in deleted and target_id not in emptied and targets[target_id].status != UNASSIGNED
+        if target_id not in deleted and target_id not in emptied and _should_hold(targets[target_id])
     ]
     for unit_id in held_unit_ids:
         _hold(decisions[unit_id])
@@ -304,7 +315,7 @@ async def detach_targets(session: AsyncSession, *, bundle_id: int, target_ids: C
 
     새 문서 칸 문장이 다른 표·행으로 다시 묶이면 그 칸 새 문장은 새 부모 아래로 옮겨진다. 확정된 채 옮기면 표를 반만 확정한
     꼴이 되므로 미배정으로 돌리고, 이어져 있던 옛 단위·새 문장은 지우지 않고 사람이 다시 보게 보류로 둔다.
-    그 새 문장들의 번역은 먼저 쓸어 낸다 — 뒤의 일반 보류가 AI 번역을 보류로 바꾸면 빈 확정 글의 보류가 된다.
+    그 새 문장들의 번역은 출처가 바뀌었으니 먼저 쓸어 낸다. 다른 칸의 AI 번역은 출처가 그대로라 그대로 둔다(_should_hold).
     """
     given = set(target_ids)
     swept = await sweep_translations(session, bundle_id, given)
@@ -330,9 +341,7 @@ async def detach_targets(session: AsyncSession, *, bundle_id: int, target_ids: C
         unit_id for unit_id in sorted(component_units)
         if unit_id in decisions and decisions[unit_id].status != UNASSIGNED
     ]
-    held_target_ids = [
-        target_id for target_id in sorted(component_targets - given) if targets[target_id].status != UNASSIGNED
-    ]
+    held_target_ids = [target_id for target_id in sorted(component_targets - given) if _should_hold(targets[target_id])]
     for unit_id in held_unit_ids:
         _hold(decisions[unit_id])
     for target_id in held_target_ids:

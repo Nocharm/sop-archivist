@@ -327,6 +327,17 @@ def test_call_llm_maps_a_bad_config_without_calling(monkeypatch: pytest.MonkeyPa
     assert seen == [] and _list_events() == []
 
 
+def test_call_llm_refuses_without_calling_when_ai_is_off(monkeypatch: pytest.MonkeyPatch, sleeps: list[float]) -> None:
+    monkeypatch.setattr(settings, "ai_enabled", False)
+    seen = _install_failing_transport(monkeypatch, lambda request: httpx2.Response(200, json=build_chat_body("{}")))
+
+    with pytest.raises(AiCallFailed) as raised:
+        _call()
+
+    assert raised.value.code == "config"
+    assert seen == [] and sleeps == [] and _list_events() == []
+
+
 def test_call_llm_records_usage_per_attempt(monkeypatch: pytest.MonkeyPatch) -> None:
     replies = iter([
         httpx2.Response(500),

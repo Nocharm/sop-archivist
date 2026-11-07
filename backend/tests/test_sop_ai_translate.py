@@ -28,6 +28,7 @@ from tests.ai_fixtures import (
     REWRITES,
     AiBundle,
     clean_ai_jobs,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
+    clean_embedding_cache,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
     edit_document,
     find_ids,
     find_kind,
@@ -39,8 +40,9 @@ from tests.ai_fixtures import (
     upload_second_document,
     use_reply,
 )
+from tests.ai_helpers import enable_embed
 from tests.docx_factory import build_docx, p, tbl
-from tests.fake_ai import FakeAi
+from tests.fake_ai import FakeAi, hash_vector
 from tests.sop_helpers import (
     AUTHOR,
     REVIEWER,
@@ -175,12 +177,21 @@ def clear_unit(client: TestClient, bundle_id: int, unit_id: int) -> httpx2.Respo
 
 
 def save_table_as_read(
-    client: TestClient, bundle_id: int, unit_id: int, *, link_translation: bool = True
+    client: TestClient,
+    bundle_id: int,
+    unit_id: int,
+    *,
+    link_translation: bool = True,
+    reason: str = "",
+    extra_targets: Sequence[dict] = (),
 ) -> httpx2.Response:
-    """표 단위의 지금 묶음을 그대로 다시 확정한다 — 칸 새 문장은 표 새 문장 아래로, 칸 번역은 link_translation일 때만 parent_key로."""
+    """표 단위의 지금 묶음을 그대로 다시 확정한다 — 칸 새 문장은 표 새 문장 아래로, 칸 번역은 link_translation일 때만 parent_key로.
+
+    reason을 주면 표 구성 변경으로 저장한다(칸이 나뉘어 칸 새 문장이 모자란 표). extra_targets는 묶음에 새로 잇는 새 문장이다.
+    """
     group = get_group_by_unit(client, bundle_id, unit_id)
     table = next(target for target in group["targets"] if target["kind"] == "table")
-    targets = []
+    targets = [*extra_targets]
     for target in group["targets"]:
         is_linked = target["parent_target_id"] == table["id"] and (link_translation or target["origin"] != "translation")
         targets.append({
@@ -188,10 +199,12 @@ def save_table_as_read(
             "slot_key": target["slot_key"], "wi_step": target["wi_step"], "wi_part": target["wi_part"],
             "kind": target["kind"], "source_unit_ids": target["source_unit_ids"],
             "parent_key": str(table["id"]) if is_linked else None,
+            **({"change_type": "table_restructured"} if reason and target["kind"] == "table" else {}),
         })
+    decision = group["units"][0]["decision"]
     return save_group(client, bundle_id, {
         "action": "confirm",
-        "units": [{"unit_id": unit_id, "revision": group["units"][0]["decision"]["revision"], "disposition": "assigned"}],
+        "units": [{"unit_id": unit_id, "revision": decision["revision"], "disposition": "assigned", "reason": reason}],
         "targets": targets,
     })
 
@@ -336,6 +349,24 @@ def test_request_needs_ai_enabled(client: TestClient, fake_ai: FakeAi, monkeypat
     refused = request_translate(client, bundle.id, unit_ids=[unit["id"]])
 
     assert (refused.status_code, refused.json()["detail"]["code"]) == (503, "ai_disabled")
+
+
+@pytest.mark.usefixtures("clean_embedding_cache")
+def test_queued_classify_fails_without_chat_when_ai_is_off(
+    client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """재시작 복구·다시 시도로 큐에 남은 LLM 작업 — 임베딩만 켜져 있어도 워커가 돌아, 꺼진 AI로 원문이 나가면 안 된다."""
+    bundle = make_ai_bundle(client)
+    queue_units(client, bundle.id, find_ids(client, bundle, AI_KO_1))
+    enable_embed(monkeypatch)
+    fake_ai.embed = hash_vector
+    monkeypatch.setattr(settings, "ai_enabled", False)
+
+    run_jobs()
+
+    (job,) = read_rows(AiJob)
+    assert (job.kind, job.status, job.error, job.attempts) == ("classify", "failed", "config", 1)
+    assert fake_ai.requests == []
 
 
 # --- 적용 ---
@@ -1068,7 +1099,7 @@ def test_clearing_a_table_removes_its_ai_cell_translation(client: TestClient, fa
     assert target.id in report["deleted_target_ids"]
 
 
-def test_retiring_one_cell_holds_the_other_cell_translation_in_the_table(client: TestClient, fake_ai: FakeAi) -> None:
+def test_retiring_one_cell_keeps_the_other_cell_ai_translation_in_the_table(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, table, cell = make_assigned_table(client)
     document_id = get_group_by_unit(client, bundle.id, table["id"])["units"][0]["document_id"]
     other = find_unit(get_view(client, bundle.id, document_id), "합성 값")
@@ -1076,8 +1107,18 @@ def test_retiring_one_cell_holds_the_other_cell_translation_in_the_table(client:
 
     edit_document(client, bundle.id, document_id, {"type": "split", "unit_id": cell["id"], "at": 2}, confirm=True)
 
-    held = load_translation(other["id"])
-    assert (held.id, held.status, held.parent_target_id) == (target.id, "on_hold", target.parent_target_id)
+    # 자기 출처 칸은 그대로라 제안으로 남는다 — 표는 보류여도 번역까지 보류하면 확정 글이 빈 보류가 된다
+    kept = load_translation(other["id"])
+    assert (kept.id, kept.status, kept.confirmed_text) == (target.id, "ai_suggested", "")
+    assert (kept.revision, kept.parent_target_id) == (target.revision, target.parent_target_id)
+    assert get_group_by_unit(client, bundle.id, table["id"])["units"][0]["decision"]["status"] == "on_hold"
+
+    # 표를 사람이 다시 저장하면 닫힘이 번역을 함께 담아 제안 글로 확정된다
+    saved = save_table_as_read(client, bundle.id, table["id"], reason="합성 구성 변경")
+
+    assert saved.status_code == 200, saved.text
+    settled = load_translation(other["id"])
+    assert (settled.status, settled.confirmed_text) == ("confirmed", "Synthetic value")
 
 
 # --- 검토 ---
@@ -2087,13 +2128,15 @@ def test_dropping_a_merged_source_with_the_same_text_holds_the_translation(clien
     assert_held(first)
 
 
-def make_matched_table(client: TestClient, ai: FakeAi, *, settle: bool) -> tuple[AiBundle, dict, dict, TargetSentence]:
-    """옛 표를 입구 2 새 문서의 표와 짝지어 확정하고 칸 하나를 번역해 둔 묶음."""
+def make_matched_table(
+    client: TestClient, ai: FakeAi, *, settle: bool, after: str = ""
+) -> tuple[AiBundle, dict, dict, TargetSentence]:
+    """옛 표를 입구 2 새 문서의 표와 짝지어 확정하고 칸 하나를 번역해 둔 묶음. after는 새 문서에서 표 뒤에 놓는 본문이다."""
     bundle = make_ai_bundle(client)
     view = upload_second_document(client, bundle.id, tbl(CELLS))
     table, cell = find_kind(view, "table"), find_unit(view, CELL_TEXT)
     uploaded = upload(
-        client, bundle.id, build_docx(p("합성 머리 문장을 둔다.") + tbl(CELLS)), NEW_FILE, side="new", doc_type="sop",
+        client, bundle.id, build_docx(p("합성 머리 문장을 둔다.") + tbl(CELLS) + after), NEW_FILE, side="new", doc_type="sop",
     )
     assert uploaded.status_code == 201 and uploaded.json()["status"] == "ready", uploaded.text
     rows = [row for row in read_rows(TargetSentence) if row.origin == "new_doc"]
@@ -2141,6 +2184,34 @@ def test_splitting_a_new_table_holds_a_confirmed_cell_translation(client: TestCl
     assert_held(cell["id"], CELL_TRANSLATED)
     held = load_translation(cell["id"])
     assert (held.parent_target_id, held.cell_row, held.cell_col) == (None, None, None)
+
+
+def test_regrouping_a_new_table_keeps_the_ai_translation_of_a_linked_table(client: TestClient, fake_ai: FakeAi) -> None:
+    layout_text = "합성 배치"
+    bundle, cell, view, _ = make_matched_table(client, fake_ai, settle=True, after=tbl([[layout_text, "합성 여백"]]))
+    document_id, layout_id = view["document"]["id"], view["tables"][1]["id"]
+    edit_document(client, bundle.id, document_id, {"type": "set_layout_table", "table_id": layout_id, "is_layout": True})
+    layout_cell = find_unit(get_view(client, bundle.id, document_id), layout_text)
+    # 레이아웃 칸을 표의 옛 칸과 이어서, 레이아웃 표를 다시 묶을 때 맞춘 표가 같은 관계 묶음으로 딸려 오게 한다
+    (linked,) = [row for row in read_rows(TargetSentence) if row.new_unit_id == layout_cell["id"]]
+    link = {
+        "key": "linked", "id": linked.id, "revision": linked.revision, "source_unit_ids": [cell["id"]],
+        "change_type": "rewritten",
+    }
+    saved = save_table_as_read(client, bundle.id, cell["group_unit_id"], extra_targets=[link])
+    assert saved.status_code == 200, saved.text
+    old_document_id = get_group_by_unit(client, bundle.id, cell["group_unit_id"])["units"][0]["document_id"]
+    other = find_unit(get_view(client, bundle.id, old_document_id), "합성 값")
+    target = translate(client, fake_ai, bundle.id, other["id"], "Synthetic value")
+
+    edit_document(
+        client, bundle.id, document_id, {"type": "set_layout_table", "table_id": layout_id, "is_layout": False}, confirm=True,
+    )
+
+    # 자기 출처 칸은 그대로라 제안으로 남고, 같은 표의 확정 번역은 전처럼 보류다
+    kept = load_translation(other["id"])
+    assert (kept.id, kept.status, kept.confirmed_text, kept.revision) == (target.id, "ai_suggested", "", target.revision)
+    assert_held(cell["id"], CELL_TRANSLATED)
 
 
 # --- 결과물 ---
