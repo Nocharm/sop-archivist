@@ -79,3 +79,5 @@
 - **계획 2 Task 3: 스키마 0007** — AI 작업·제안·지침·임베딩 표 4개와 판단·새 문장·짝의 `suggestion_id`(제안이 지워져도 행은 남는 SET NULL), 번역 출처 칸 `translation_source_unit_id`(`TargetSource`와 따로, 단위가 지워지면 CASCADE)를 더했다. 지침의 "키당 활성 하나"는 부분 유일 인덱스라 sqlite·Postgres 방언 인자를 둘 다 달았고, sqlite는 길이를 강제하지 않아 코드 값 튜플이 컬럼 길이에 들어가는지를 테스트로 묶었다.
 - `ai_suggestions`의 CHECK 둘은 `result`·`adoption`(`kind`는 작업 쪽 CHECK가 막는다). 마이그레이션은 일회용 Postgres 16에서 upgrade·downgrade·`alembic check`와 제약·CASCADE 동작을 실측했다.
 - 묶음을 지우면 제안 행마다 SET NULL이 `suggestion_id` 3곳(판단·새 문장·짝)과 `ai_jobs.document_id`를 찾으므로, 프로젝트의 "CASCADE·SET NULL이 닿는 FK는 인덱스" 관례대로 네 곳에 인덱스를 달았다(표 전체 순차 스캔 방지).
+- **계획 2 Task 4: 지침·프롬프트 버전** — 규칙 문서와 프롬프트 4종은 `app/sop/ai/seeds/`에 둔다(도커 이미지가 `app/`만 복사). `rules.md`는 도메인 문서의 바이트 복사본이라 테스트가 같음을 지키고, 기동 때 버전이 없는 키만 v1 활성으로 시드한다. `prompt.pair`는 일부러 없다(한/영 짝은 임베딩과 사람). Excel 정보 시트의 지침 버전은 `"-"` 대신 활성 규칙 버전(`rules v1`)이다.
+- 새 버전 번호를 `max+1`로 셀 때 "그 키의 모든 행을 FOR UPDATE로 읽기"는 막아 주지 못했다(일회용 Postgres 16에서 동시 생성 6건 중 UNIQUE 위반): 기다리던 쪽은 앞선 쪽이 새로 넣은 행을 못 본다. 그래서 키의 가장 오래된 행 하나를 뮤텍스로 잠근 뒤 번호를 따로 읽고, 활성화는 이전 활성을 먼저 끄는 벌크 UPDATE로 순서를 고정한다(부분 유일 인덱스).

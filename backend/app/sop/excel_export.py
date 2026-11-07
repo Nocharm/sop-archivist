@@ -34,7 +34,6 @@ from app.sop.outputs import (
 from app.sop.snapshot import BundleSnapshot
 
 CELL_TEXT_LIMIT = 32767  # Excel 칸 하나의 글자 수 한계(UTF-16 단위)
-GUIDELINE_VERSION_UNSET = "-"  # 지침 버전은 계획 2가 도입한다 — 그 전에는 "-"
 MAX_FILE_NAME_TITLE_CHARS = 150
 REPLACEMENT_CHAR = "\N{REPLACEMENT CHARACTER}"
 # openpyxl이 못 쓰는 제어 문자에 XML 1.0이 금지하는 비문자 두 개를 더한다

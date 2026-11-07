@@ -16,12 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.clock import now
 from app.db import get_session
 from app.routers.sop_documents import build_content_disposition
+from app.sop.ai.guidelines import get_rules_version_label
 from app.sop.constants import MEMBER_ROLES
 from app.sop.decisions import DbId
 from app.sop.detach import ORIGIN_NEW_DOC
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
-from app.sop.excel_export import GUIDELINE_VERSION_UNSET, ExportMeta, build_export_file_name, build_workbook
+from app.sop.excel_export import ExportMeta, build_export_file_name, build_workbook
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
 from app.sop.models import Bundle, TargetDoc, TargetSentence, WiStep
 from app.sop.outputs import (
@@ -131,8 +132,10 @@ async def get_export(
 ) -> Response:
     """언어별 Excel 파일 — 작업 중·검토 중·완료 어느 상태에서나 받고, 받은 사실은 작업 기록에 남는다."""
     bundle = ctx.bundle
+    # 스냅숏 읽기가 트랜잭션을 끝내므로 지침 버전 질의는 그보다 먼저 해야 스레드 계산 동안 트랜잭션이 열려 있지 않다
+    guideline_version = await get_rules_version_label(session)
     snap = await _load_snapshot_for_read(session, bundle.id)
-    meta = ExportMeta(exported_by=ctx.login_id, exported_at=now(), guideline_version=GUIDELINE_VERSION_UNSET)
+    meta = ExportMeta(exported_by=ctx.login_id, exported_at=now(), guideline_version=guideline_version)
     try:
         content = await asyncio.to_thread(build_workbook, snap, lang, meta)
     except Exception as error:
