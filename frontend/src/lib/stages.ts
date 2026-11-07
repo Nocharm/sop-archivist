@@ -20,9 +20,9 @@ export const STAGES: readonly Stage[] = [
   { key: "split", path: "/split", step: 1, ready: true },
   { key: "tobe", path: "/tobe", step: 2, ready: true },
   { key: "classify", path: "/classify", step: 3, ready: true },
-  { key: "match", path: "/match", step: 3, ready: false },
-  { key: "outputs", path: "/outputs", step: 4, ready: false },
-  { key: "review", path: "/review", ready: false },
+  { key: "match", path: "/match", step: 3, ready: true },
+  { key: "outputs", path: "/outputs", step: 4, ready: true },
+  { key: "review", path: "/review", ready: true },
 ];
 
 const BUNDLE_PATH = /^\/bundles\/(\d+)(\/[a-z-]+)?\/?$/;

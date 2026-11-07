@@ -337,6 +337,75 @@ await runStep("classify in list and detail layout", { storage: { "sopa.classifyL
   await takeShot("sop-classify-list.png");
 });
 
+await runStep("match: identical candidates, link a source, mark new", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  for (const id of [halfBundleId, freshId]) {
+    await page.goto(`${BASE}/bundles/${id}/match`);
+    await wait(page, "match");
+    const rows = await page.locator('[data-testid^="match-row-"]').count();
+    console.log(`  bundle ${id}: ${rows} open new sentences, identical ${await page.locator('[data-testid="match-identical"]').count()}`);
+  }
+  await page.goto(`${BASE}/bundles/${halfBundleId}/match`);
+  await wait(page, "match");
+  await page.locator('[data-testid="match-filter-all"]').click();
+  check("new-document sentences are listed", (await page.locator('[data-testid^="match-row-"]').count()) > 0);
+  await takeShot("sop-match.png");
+  await page.locator('[data-testid="match-identical-confirm"]').click();
+  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
+  await page.locator('[data-testid="match-identical"]').waitFor({ state: "detached", timeout: T });
+  check("identical matches confirm together", true);
+  const open = page.locator('[data-testid="match-filter-open"]');
+  await open.click();
+  const first = page.locator('[data-testid^="match-row-"]').first();
+  await first.click();
+  await page.locator('[data-testid^="match-candidate-"]').first().check();
+  await page.locator('[data-testid="match-link"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="match-sources"] li').length > 0, null, { timeout: T });
+  check("a picked old unit becomes the source", true);
+});
+
+await runStep("outputs: A, B, C in both editions and Excel", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
+  await wait(page, "output-c");
+  check("C shows the new documents", (await getText(page, "output-c")).includes("SOP-CF"));
+  await takeShot("sop-outputs-c.png");
+  await page.locator('[data-testid="outputs-tab-a"]').click();
+  await wait(page, "output-a");
+  check("A lists unit rows", (await page.locator('[data-testid="output-a"] tbody tr').count()) > 10);
+  await page.locator('[data-testid="outputs-lang-en"]').click();
+  await page.locator('[data-testid="outputs-tab-b"]').click();
+  await wait(page, "output-b");
+  check("B shows flows from old documents", (await getText(page, "output-b")).includes("OLD-1"));
+  const download = page.waitForEvent("download", { timeout: T });
+  await page.locator('[data-testid="outputs-export-en"]').click();
+  // 헤드리스 Chrome은 blob 내려받기 이름을 "download"로 알린다 - 이름 규칙은 download-name 단위 테스트가 본다
+  await download;
+  check("Excel download starts", true);
+  await page.locator('[data-testid="outputs-check-numbers"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="outputs-check-numbers"]')?.checked === true, null, { timeout: T });
+  check("meaning check saves", true);
+  await page.locator('[data-testid="outputs-check-numbers"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="outputs-check-numbers"]')?.checked === false, null, { timeout: T });
+});
+
+await runStep("review: reviewer completes the bundle in review", { devUser: "qa.lead" }, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/`);
+  const review = page.locator('[data-testid^="bundles-row-"]', { hasText: "검토 대기" });
+  const reviewId = Number((await review.getAttribute("data-testid")).replace("bundles-row-", ""));
+  await page.goto(`${BASE}/bundles/${reviewId}/review`);
+  await wait(page, "output-c");
+  await takeShot("sop-review.png");
+  await page.locator('[data-testid="review-return"]').click();
+  await wait(page, "review-reason");
+  check("return needs a reason", await page.locator('[data-testid="review-reason-confirm"]').isDisabled());
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="review-complete"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="review-status"]')?.textContent?.includes("Review complete"), null, { timeout: T });
+  check("status reads Review complete", true);
+});
+
 await browser.close();
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} check(s) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

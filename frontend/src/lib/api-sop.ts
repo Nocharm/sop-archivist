@@ -546,3 +546,151 @@ export function bulkDecide(
 export function clearDecision(bundleId: number, unitId: number, revision: number): Promise<unknown> {
   return apiFetch(`/bundles/${bundleId}/decisions/clear`, { method: "POST", body: JSON.stringify({ unit_id: unitId, revision }) });
 }
+
+// --- 입구 2 짝 맞추기 ---
+
+export interface IdenticalCandidate {
+  unit_id: number;
+  target_id: number;
+  lang: UnitLang;
+  text: string;
+}
+
+export interface BulkMatchInput {
+  identical: Array<{ unit_id: number; unit_revision: number; target_id: number; target_revision: number }>;
+  new: Array<{ target_id: number; revision: number }>;
+}
+
+export function listIdenticalCandidates(bundleId: number): Promise<IdenticalCandidate[]> {
+  return apiFetch<IdenticalCandidate[]>(`/bundles/${bundleId}/match/identical-candidates`);
+}
+
+export function confirmMatchesInBulk(bundleId: number, body: BulkMatchInput): Promise<Group> {
+  return apiFetch<Group>(`/bundles/${bundleId}/match/bulk-confirm`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export function getGroupByTarget(bundleId: number, targetId: number): Promise<Group> {
+  return apiFetch<Group>(`/bundles/${bundleId}/groups/by-target/${targetId}`);
+}
+
+// --- 결과물 ---
+
+export type OutputLang = "ko" | "en";
+
+export interface OutputLocation {
+  section: string;
+  place: string;
+  page: number | null;
+  page_basis: string;
+}
+
+export interface OutputARow {
+  row_kind: "unit" | "table" | "new";
+  lang: string;
+  old_doc_code: string;
+  old_doc_version: string;
+  location: OutputLocation;
+  unit_id: number | null;
+  display_id: string;
+  source_text: string;
+  dest_kind: string;
+  dest_doc_code: string;
+  dest_doc_title: string;
+  dest_location: string;
+  confirmed_text: string;
+  ai_text: string;
+  change_type: string;
+  group_id: string | null;
+  reason: string;
+  status: string;
+  confirmed_by: string | null;
+  confirmed_at: string | null;
+  warnings: Array<Record<string, string>>;
+}
+
+export interface FlowGraph {
+  nodes: Array<{ id: string; kind: string; label: string; title: string; count: number }>;
+  edges: Array<{ source: string; target: string; count: number }>;
+}
+
+export interface OutputCItem {
+  target_id: number;
+  kind: string;
+  lang: string;
+  text: string;
+  ai_text: string;
+  change_type: string | null;
+  status: string;
+  source_note: string;
+  cell_row: number | null;
+  cell_col: number | null;
+  children: OutputCItem[];
+}
+
+export interface OutputC {
+  docs: Array<{
+    target_doc_id: number;
+    code: string;
+    title: string;
+    doc_type: string;
+    parent_code: string | null;
+    entrance: string;
+    sections: Array<{ location_key: string; label: string; na_reason: string | null; items: OutputCItem[] }>;
+  }>;
+  deleted: Array<{ display_id: string; doc_code: string; section: string; source_text: string; reason: string }>;
+  moved: Array<{ display_id: string; doc_code: string; section: string; source_text: string; move_target_code: string; reason: string }>;
+}
+
+export interface OutputSummary {
+  old_units: number;
+  assigned: number;
+  unassigned: number;
+  duplicate: number;
+  deleted: number;
+  moved: number;
+  new: number;
+  translated: number;
+  confirmed_rate: number;
+}
+
+export function getOutputA(bundleId: number, lang: OutputLang): Promise<OutputARow[]> {
+  return apiFetch<OutputARow[]>(`/bundles/${bundleId}/outputs/a?lang=${lang}`);
+}
+
+export function getOutputB(bundleId: number, lang: OutputLang): Promise<FlowGraph> {
+  return apiFetch<FlowGraph>(`/bundles/${bundleId}/outputs/b?lang=${lang}`);
+}
+
+export function getOutputC(bundleId: number, lang: OutputLang): Promise<OutputC> {
+  return apiFetch<OutputC>(`/bundles/${bundleId}/outputs/c?lang=${lang}`);
+}
+
+export function getSummary(bundleId: number): Promise<Record<OutputLang, OutputSummary>> {
+  return apiFetch(`/bundles/${bundleId}/summary`);
+}
+
+export function downloadExport(bundleId: number, lang: OutputLang): Promise<Blob> {
+  return apiFetchBlob(`/bundles/${bundleId}/export.xlsx?lang=${lang}`);
+}
+
+export function putTargetOrder(bundleId: number, body: { revision: number; target_doc_id: number; items: Array<{ target_id: number; wi_step?: number | null }> }): Promise<unknown> {
+  return apiFetch(`/bundles/${bundleId}/targets/order`, { method: "PUT", body: JSON.stringify(body) });
+}
+
+// --- 검토 ---
+
+export function putSemanticChecks(bundleId: number, revision: number, checks: Record<string, boolean>): Promise<Bundle> {
+  return apiFetch<Bundle>(`/bundles/${bundleId}/semantic-checks`, { method: "PUT", body: JSON.stringify({ revision, checks }) });
+}
+
+export function completeReview(bundleId: number, revision: number): Promise<Bundle> {
+  return apiFetch<Bundle>(`/bundles/${bundleId}/review/complete`, { method: "POST", body: JSON.stringify({ revision }) });
+}
+
+export function returnReview(bundleId: number, revision: number, reason: string): Promise<Bundle> {
+  return apiFetch<Bundle>(`/bundles/${bundleId}/review/return`, { method: "POST", body: JSON.stringify({ revision, reason }) });
+}
+
+export function reopenReview(bundleId: number, revision: number, reason: string): Promise<Bundle> {
+  return apiFetch<Bundle>(`/bundles/${bundleId}/review/reopen`, { method: "POST", body: JSON.stringify({ revision, reason }) });
+}
