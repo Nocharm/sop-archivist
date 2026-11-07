@@ -63,16 +63,22 @@ DELETE_CANDIDATE = Candidate(
 _Place = tuple[str | None, int | None, str | None, str]
 
 
+def _name_of(doc: TargetDocInfo) -> str:
+    """라벨에 쓰는 문서 이름 — 제목은 비어 있을 수 있고 문서를 가르는 건 번호뿐이라 비면 번호로 보인다."""
+    return doc.title or doc.code
+
+
 def _list_sop_places(doc: TargetDocInfo) -> Iterator[_Place]:
+    head = _name_of(doc)
     for slot_key in SLOT_KEYS:
         if any(is_within_slot(slot_key, na_slot) for na_slot in doc.na_slots):  # 상위 칸 N/A는 하위 칸도 덮는다
             continue
         name, guide = SLOT_GUIDE[slot_key]
-        yield slot_key, None, None, (f"{doc.title} / {name}: {guide}" if guide else f"{doc.title} / {name}")
+        yield slot_key, None, None, (f"{head} / {name}: {guide}" if guide else f"{head} / {name}")
 
 
 def _list_wi_places(doc: TargetDocInfo, parent: TargetDocInfo | None) -> Iterator[_Place]:
-    head = f"{doc.title}({parent.title})" if parent is not None else doc.title
+    head = f"{_name_of(doc)}({_name_of(parent)})" if parent is not None else _name_of(doc)
     # 단계를 선언하지 않은 WI는 단계 없이 Instruction·Why만 내놓는다
     steps: list[tuple[int | None, str]] = [(step_no, f"단계 {step_no} {title}".rstrip()) for step_no, title in doc.steps]
     for step_no, step_name in steps or [(None, "")]:
