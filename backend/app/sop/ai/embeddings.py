@@ -20,6 +20,7 @@ from app.ai_usage import record_ai_usage
 from app.db import SessionLocal, engine
 from app.settings import settings
 from app.sop.ai.constants import AI_CALL_ATTEMPTS, AI_RETRY_DELAYS, EMBED_BATCH_SIZE, MAX_EMBED_CHARS
+from app.sop.groups import select_in_chunks
 from app.sop.models import EmbeddingCache
 
 logger = logging.getLogger(__name__)
@@ -98,10 +99,13 @@ async def _embed_batch(model: str, login_id: str, texts: list[str]) -> list[np.n
 
 async def _load_cached_vectors(model: str, text_hashes: list[str]) -> dict[str, np.ndarray]:
     async with SessionLocal() as session:
-        rows = await session.execute(
-            select(EmbeddingCache.text_hash, EmbeddingCache.vector).where(
-                EmbeddingCache.model == model, EmbeddingCache.text_hash.in_(text_hashes)
-            )
+        # 글이 많아도 IN 목록이 asyncpg 바인드 상한(32767)을 넘지 않게 IN_CHUNK_SIZE씩 나눠 읽는다
+        rows = await select_in_chunks(
+            session,
+            lambda chunk: select(EmbeddingCache.text_hash, EmbeddingCache.vector).where(
+                EmbeddingCache.model == model, EmbeddingCache.text_hash.in_(chunk)
+            ),
+            text_hashes,
         )
         return {text_hash: np.frombuffer(vector, dtype=np.float32).copy() for text_hash, vector in rows}
 

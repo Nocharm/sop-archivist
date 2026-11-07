@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
-from typing import Any
+from typing import Any, TypeVar
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import Row, Select, or_, select
@@ -19,6 +19,7 @@ GROUP_ID_PREFIX = "G-"
 IN_CHUNK_SIZE = 5000
 
 Node = tuple[str, int]  # ("u", 단위 id) | ("t", 새 문장 id)
+ChunkKey = TypeVar("ChunkKey", int, str)  # IN 목록 값 — 정수 id와 임베딩 캐시의 글 해시(문자열)가 같은 나누기를 쓴다
 
 
 # --- 순수 계산 ---
@@ -84,14 +85,14 @@ def build_unit_order_key(document: Document, unit: Unit) -> tuple[int, ...]:
     return (0 if document.side == "old" else 1, document.id, unit.pos_seq, unit.pos_start, unit.id)
 
 
-def iter_chunks(ids: Collection[int], size: int = IN_CHUNK_SIZE) -> Iterator[list[int]]:
+def iter_chunks(ids: Collection[ChunkKey], size: int = IN_CHUNK_SIZE) -> Iterator[list[ChunkKey]]:
     ordered = sorted(ids)
     for start in range(0, len(ordered), size):
         yield ordered[start:start + size]
 
 
 async def select_in_chunks(
-    session: AsyncSession, build_statement: Callable[[list[int]], Select[Any]], ids: Collection[int]
+    session: AsyncSession, build_statement: Callable[[list[ChunkKey]], Select[Any]], ids: Collection[ChunkKey]
 ) -> list[Row[Any]]:
     """id 목록을 IN_CHUNK_SIZE씩 나눠 같은 질의를 돌리고 행을 모은다 — id가 적으면 질의 한 번이다."""
     rows: list[Row[Any]] = []
