@@ -42,9 +42,9 @@ def _build_job_filter(bundle_id: int, kind: str | None) -> list[ColumnElement[bo
 
 
 def cap_job_items(items: Sequence[JobItem], skipped: Sequence[SkippedOut]) -> tuple[list[JobItem], list[SkippedOut]]:
-    """요청 한 번의 작업을 MAX_JOBS_PER_REQUEST로 자르고 넘은 단위를 limit_reached로 덧붙인다 — 모든 요청 종류가 쓴다.
+    """요청 한 번의 작업을 MAX_JOBS_PER_REQUEST로 자르고 넘은 단위를 limit_reached로 덧붙인다 — 단위를 작업으로 나누는 요청이 쓴다.
 
-    조용히 빠지면 사람이 전부 요청됐다고 믿는다.
+    조용히 빠지면 사람이 전부 요청됐다고 믿는다. `POST /match`는 일부러 자르지 않는다 — 계획 작업이 그룹을 쌓을 때는 알릴 요청자가 없고, 다시 돌리면 앞쪽을 또 받는다.
     """
     over = [
         SkippedOut(unit_id=unit_id, reason="limit_reached")

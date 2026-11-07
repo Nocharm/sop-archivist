@@ -200,6 +200,18 @@ async def _load_candidates(session: AsyncSession, bundle_id: int) -> _Candidates
     return _Candidates(await _load_old_entries(session, bundle_id), await _load_new_entries(session, bundle_id))
 
 
+def _keep_plannable(entries: Mapping[int, _Entry], identical: Collection[int]) -> dict[int, _Entry]:
+    """계획이 다룰 후보 — 같은 글자 1:1 후보는 한 번에 확정할 몫이고(설계 §7.7), 글자 없는 항목(캡션 없는 그림)은 비교할 수 없어 사람 몫이다(설계 §7.10).
+
+    뺀 행은 짝 없음으로도 세지 않아 삭제 후보·신규가 되지 않고 미배정으로 남는다.
+    """
+    return {
+        entry_id: entry
+        for entry_id, entry in entries.items()
+        if entry_id not in identical and has_visible_char(entry.item.text)
+    }
+
+
 # --- compute ---
 
 
@@ -212,22 +224,13 @@ def _list_items(entries: Mapping[int, _Entry]) -> list[MatchItem]:
     return [entry.item for entry in entries.values()]
 
 
-def _list_embed_texts(items: Iterable[MatchItem]) -> list[str]:
-    """임베딩에 보낼 글 — 글 없는 항목(캡션 없는 그림)은 빼고 점수 0으로 둔다. 빈 글을 서버가 거절하면 묶음 전체가 임베딩을 잃는다."""
-    return sorted({item.text for item in items if has_visible_char(item.text)})
-
-
 def _build_embedding_scores(
     olds: Sequence[MatchItem], news: Sequence[MatchItem], vectors: Mapping[str, np.ndarray]
 ) -> np.ndarray:
-    """코사인 점수 행렬 (옛 수, 새 수) — 벡터 없는 글은 영벡터라 점수가 0이다. 같은 글의 벡터는 공유되니 새 행렬로 쌓는다(제자리 수정 금지)."""
+    """코사인 점수 행렬 (옛 수, 새 수) — 같은 글의 벡터는 공유되니 새 행렬로 쌓는다(제자리 수정 금지)."""
     if not olds or not news:
         return np.zeros((len(olds), len(news)), dtype=np.float32)
-    blank = np.zeros(next((len(vector) for vector in vectors.values()), 1), dtype=np.float32)
-    return cosine_matrix(
-        np.stack([vectors.get(item.text, blank) for item in olds]),
-        np.stack([vectors.get(item.text, blank) for item in news]),
-    )
+    return cosine_matrix(np.stack([vectors[item.text] for item in olds]), np.stack([vectors[item.text] for item in news]))
 
 
 # --- apply ---
@@ -427,7 +430,9 @@ def _build_content(write: _Write, retrieval: Retrieval) -> dict[str, object]:
 def _add_suggestion(session: AsyncSession, job: AiJob, write: _Write, retrieval: Retrieval) -> AiSuggestion:
     """작업은 계획 하나지만 제안은 항목마다다 — 종류는 match이고, 문서는 작업이 아니라 그 항목의 것이다."""
     suggestion = add_suggestion(
-        session, job, content=_build_content(write, retrieval), result="applied", input_refs=write.entry.input_refs
+        session, job, content=_build_content(write, retrieval),
+        warnings=[warning for item in write.targets for warning in item.warnings], result="applied",
+        input_refs=write.entry.input_refs,
     )
     suggestion.kind, suggestion.document_id = MATCH_KIND, write.entry.document_id
     return suggestion
@@ -448,11 +453,11 @@ class MatchPlanHandler:
     """묶음 전체 — 후보를 읽어 짝을 고르고, 낡지 않은 항목만 쓴다. 바뀐 행 하나가 나머지를 막지 않는다."""
 
     async def load(self, session: AsyncSession, job: AiJob) -> _Candidates:
-        """후보를 읽고 revision을 적는다 — 같은 글자 1:1 후보는 한 번에 확정할 몫이라 뺀다(설계 §7.7). 뺀 행은 짝 없음으로도 세지 않는다."""
-        olds, news = await _load_candidates(session, job.bundle_id)
-        for candidate in await list_identical_candidates(session, job.bundle_id):
-            olds.pop(candidate.unit_id, None)
-            news.pop(candidate.target_id, None)
+        """계획이 다룰 후보를 읽고 revision을 적는다."""
+        candidates = await _load_candidates(session, job.bundle_id)
+        identical = await list_identical_candidates(session, job.bundle_id)
+        olds = _keep_plannable(candidates.olds, {candidate.unit_id for candidate in identical})
+        news = _keep_plannable(candidates.news, {candidate.target_id for candidate in identical})
         job.input_snapshot = {
             "unit_revisions": {str(unit_id): entry.revision for unit_id, entry in olds.items()},
             "target_revisions": {str(target_id): entry.revision for target_id, entry in news.items()},
@@ -463,7 +468,7 @@ class MatchPlanHandler:
         olds, news = _list_items(loaded.olds), _list_items(loaded.news)
         threshold, retrieval = MATCH_EMBED_THRESHOLD, "embedding"
         try:
-            vectors = await embed_texts(_list_embed_texts((*olds, *news)), login_id=job.requested_by)
+            vectors = await embed_texts(sorted({item.text for item in (*olds, *news)}), login_id=job.requested_by)
         except EmbeddingUnavailable as unavailable:
             threshold, retrieval = MATCH_TEXT_THRESHOLD, RETRIEVAL_OF_UNAVAILABLE[unavailable.reason]
             scores = await asyncio.to_thread(build_text_scores, olds, news)

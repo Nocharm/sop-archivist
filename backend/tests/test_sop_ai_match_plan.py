@@ -34,7 +34,15 @@ from tests.ai_fixtures import (
 from tests.ai_helpers import enable_embed
 from tests.docx_factory import TINY_PNG, make_drawing_run, p, tbl
 from tests.fake_ai import FakeAi
-from tests.sop_helpers import AUTHOR, REVIEWER, assign_as_is, find_unit, get_view
+from tests.sop_helpers import (
+    AUTHOR,
+    REVIEWER,
+    assign_as_is,
+    find_unit,
+    get_group_by_unit,
+    get_view,
+    save_group,
+)
 
 pytestmark = pytest.mark.usefixtures("clean_sop", "clean_ai_jobs", "clean_embedding_cache")
 
@@ -309,6 +317,23 @@ def test_plan_queues_one_llm_job_per_sentence_group(
     assert read_rows(AiSuggestion) == []
 
 
+def test_repeated_text_pairs_one_to_one_and_leaves_no_delete_candidate(client: TestClient, fake_ai: FakeAi) -> None:
+    """같은 문장이 두 곳에 있으면 거짓 나눔과 거짓 삭제 후보가 나오던 자리다. 이 짝은 한 번에 확정 후보가 아니라 변경 종류 작업으로 간다."""
+    bundle = make_match_bundle(client, p(SAME) + p(OLD_1) + p(SAME), p(SAME) + p(NEW_1) + p(SAME))
+    view = get_view(client, bundle.id, bundle.old_document_id)
+    first, second = find_unit(view, SAME, 1)["id"], find_unit(view, SAME, 2)["id"]
+    old_once = find_unit(view, OLD_1)["id"]
+
+    plan(client, bundle.id)
+
+    same_targets = [row.id for row in read_rows(TargetSentence) if row.confirmed_text == SAME]
+    assert {tuple(job.unit_ids): job.target_ids for job in read_jobs()} == {
+        (first,): [same_targets[0]], (old_once,): [read_target(NEW_1).id], (second,): [same_targets[1]],
+    }
+    assert read_rows(AiSuggestion) == []
+    assert client.get(f"/api/bundles/{bundle.id}/match/identical-candidates", headers=AUTHOR).json() == []
+
+
 def test_same_vector_across_languages_never_pairs(
     client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -441,8 +466,12 @@ def test_cell_warning_compares_the_old_and_new_cell(client: TestClient, fake_ai:
 
     plan(client, bundle.id)
 
-    assert read_target(new[0][1]).warnings == [{"kind": "number_mismatch", "source": "10", "target": "20"}]
+    mismatch = [{"kind": "number_mismatch", "source": "10", "target": "20"}]
+    assert read_target(new[0][1]).warnings == mismatch
     assert read_target(new[0][0]).warnings == []
+    assert read_suggestion("table").warnings == mismatch  # 제안을 읽는 쪽도 같은 경고를 본다
+    body = client.get(f"/api/bundles/{bundle.id}/ai/suggestions", params={"kind": "match"}, headers=AUTHOR).json()
+    assert body["items"][0]["warnings"] == mismatch
 
 
 def test_different_shape_table_suggests_restructured(client: TestClient, fake_ai: FakeAi) -> None:
@@ -593,6 +622,43 @@ def test_blank_texts_are_not_embedded(client: TestClient, fake_ai: FakeAi, monke
     assert read_links() == set()
 
 
+@pytest.mark.parametrize(("old_blank", "new_blank"), [(True, True), (True, False), (False, True)])
+def test_blank_units_stay_unassigned(
+    client: TestClient, fake_ai: FakeAi, old_blank: bool, new_blank: bool
+) -> None:
+    """글자가 없으면 비교할 수 없어 사람이 손으로 맞춘다(설계 §7.10) — 삭제 후보도 신규도 아니다."""
+    old_body = (make_figure("") if old_blank else "") + p(LONE_OLD)
+    new_body = (make_figure("") if new_blank else "") + p(LONE_NEW)
+    bundle = make_match_bundle(client, old_body, new_body, media=MEDIA)
+    view = get_view(client, bundle.id, bundle.old_document_id)
+
+    plan(client, bundle.id)
+
+    if old_blank:
+        unit = find_kind(view, "figure")["id"]
+        assert_untouched(read_decision(unit))
+        assert read_decision(unit).revision == 1
+    if new_blank:
+        (figure,) = read_kind("figure")
+        assert (figure.status, figure.change_type, figure.suggestion_id) == ("unassigned", None, None)
+        assert figure.revision == 1
+    # 글이 있는 항목은 그대로 처리된다
+    assert {row.content["shape"] for row in read_rows(AiSuggestion)} == {"delete_candidate", "new"}
+    assert read_links() == set()
+
+
+def test_table_without_text_stays_unassigned(client: TestClient, fake_ai: FakeAi) -> None:
+    empty_cells = [["", ""], ["", ""]]
+    bundle = make_match_bundle(client, p(LONE_OLD) + tbl(empty_cells), p(LONE_NEW) + tbl(empty_cells))
+    table_unit = find_kind(get_view(client, bundle.id, bundle.old_document_id), "table")["id"]
+
+    plan(client, bundle.id)
+
+    assert_untouched(read_decision(table_unit))
+    assert [row.status for row in read_kind("table")] == ["unassigned"]
+    assert {row.content["shape"] for row in read_rows(AiSuggestion)} == {"delete_candidate", "new"}
+
+
 def test_scores_are_not_stored(client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch) -> None:
     bundle = make_match_bundle(
         client, p(OLD_1) + p(LONE_OLD) + tbl(CELLS), p(NEW_1) + p(LONE_NEW) + tbl(CELLS),
@@ -716,6 +782,54 @@ def test_new_target_with_a_previous_suggestion_is_reset_not_deleted(client: Test
     again = read_target(LONE_NEW)
     assert again.id == target.id and again.suggestion_id != first
     assert next(row for row in read_rows(AiSuggestion) if row.id == first).result == "stale"
+
+
+# --- 사람 확정 ---
+
+
+def confirm_group(client: TestClient, bundle_id: int, unit_id: int, **unit_fields: object) -> dict:
+    """제안 그대로 관계 묶음을 저장한다 — 화면이 묶음을 읽어 되보내는 모습이다."""
+    group = get_group_by_unit(client, bundle_id, unit_id)
+    body = {
+        "action": "confirm",
+        "units": [
+            {"unit_id": unit["unit_id"], "revision": unit["decision"]["revision"], **unit_fields}
+            for unit in group["units"]
+        ],
+        "targets": [
+            {
+                "key": str(target["id"]), "id": target["id"], "revision": target["revision"], "kind": target["kind"],
+                "source_unit_ids": target["source_unit_ids"], "change_type": target["change_type"],
+            }
+            for target in group["targets"]
+        ],
+    }
+    response = save_group(client, bundle_id, body)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_person_confirms_plan_suggestions_through_group_save(client: TestClient, fake_ai: FakeAi) -> None:
+    changed = [CELLS[0], [REWRITTEN_CELL, CELLS[1][1]]]
+    old_body = tbl(CELLS) + make_figure(CAPTION) + p(LONE_OLD)
+    bundle = make_match_bundle(client, old_body, tbl(changed) + make_figure(CAPTION), media=MEDIA)
+    view = get_view(client, bundle.id, bundle.old_document_id)
+    table, figure = find_kind(view, "table")["id"], find_kind(view, "figure")["id"]
+    (lone,) = read_old_ids(client, bundle, LONE_OLD)
+    plan(client, bundle.id)
+    texts = {row.id: row.confirmed_text for row in read_rows(TargetSentence)}
+
+    confirmed_table = confirm_group(client, bundle.id, table, disposition="assigned")
+    confirmed_figure = confirm_group(client, bundle.id, figure, disposition="assigned")
+    deleted = confirm_group(client, bundle.id, lone, disposition="delete", reason=REASON)
+
+    for group in (confirmed_table, confirmed_figure, deleted):
+        assert {unit["decision"]["status"] for unit in group["units"]} == {"confirmed"}
+    assert {target["status"] for target in (*confirmed_table["targets"], *confirmed_figure["targets"])} == {"confirmed"}
+    assert deleted["targets"] == []
+    assert (read_decision(lone).disposition, read_decision(lone).reason) == ("delete", REASON)
+    assert read_target(REWRITTEN_CELL).change_type == "rewritten"
+    assert {row.id: row.confirmed_text for row in read_rows(TargetSentence)} == texts  # 입구 2 글자는 그대로다
 
 
 # --- 낡은 항목 ---
