@@ -71,6 +71,21 @@ function extractDetail(bodyText: string): string {
  * init.headers는 일반 객체로 넘긴다(Headers 인스턴스는 펼쳐지지 않는다).
  */
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await sendRequest(path, init);
+  if (response.status === 204) {
+    // 본문 없음 - 호출자는 T를 void로 둔다
+    return undefined as T;
+  }
+  return (await response.json()) as T;
+}
+
+/** 파일 내려받기(Excel 등) - 인증 헤더가 필요해 <a href>로는 받지 못한다. 오류는 apiFetch와 같은 ApiError */
+export async function apiFetchBlob(path: string, init?: RequestInit): Promise<Blob> {
+  const response = await sendRequest(path, init);
+  return response.blob();
+}
+
+async function sendRequest(path: string, init?: RequestInit): Promise<Response> {
   const method = init?.method ?? "GET";
   const headers: Record<string, string> = {};
   // multipart 같은 비문자열 body에는 브라우저가 Content-Type을 직접 정해야 하므로 문자열 body에만 JSON을 선언한다.
@@ -107,11 +122,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     error.rule = rule;
     throw error;
   }
-  if (response.status === 204) {
-    // 본문 없음 - 호출자는 T를 void로 둔다
-    return undefined as T;
-  }
-  return (await response.json()) as T;
+  return response;
 }
 
 /** GET /api/me - 로그인한 사람의 신원과 유효 권한. 직원 행이 없으면(HR 동기화 전 첫 로그인) 신원 칸은 빈 문자열, permissions는 빈 배열. */

@@ -26,7 +26,7 @@ const check = (name, ok, detail = "") => {
 
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 
-async function runStep(name, { devUser = "qa.member", storage = {} } = {}, run) {
+async function runStep(name, { devUser = "qa.member", storage = {}, allowConsoleErrors = false } = {}, run) {
   console.log(`\n# ${name}`);
   const ctx = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
   await ctx.addInitScript(
@@ -47,7 +47,7 @@ async function runStep(name, { devUser = "qa.member", storage = {} } = {}, run) 
   page.on("pageerror", (err) => consoleErrors.push(String(err)));
   try {
     await run({ page, takeShot: (file) => page.screenshot({ path: resolve(SHOT_DIR, file) }) });
-    check(`${name}: no console errors`, consoleErrors.length === 0, consoleErrors.join(" | "));
+    if (!allowConsoleErrors) check(`${name}: no console errors`, consoleErrors.length === 0, consoleErrors.join(" | "));
   } catch (err) {
     check(`${name}: completed`, false, err instanceof Error ? err.message : String(err));
   } finally {
@@ -225,6 +225,42 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   await page.waitForFunction(() => document.querySelector('[data-testid="split-boundary-state"]')?.textContent?.includes("Not checked"), null, { timeout: T });
   check("U unchecks", true);
   await takeShot("sop-split.png");
+});
+
+// 일부러 거절당하는 저장이 있어 콘솔 오류를 허용한다
+await runStep("to-be: nested rows, N/A detail, edit and save", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/tobe`);
+  await page.locator('[data-testid$="-row"][data-testid^="tobe-"]').first().waitFor({ timeout: T });
+  const codes = await page.locator('[data-testid$="-code"][data-testid^="tobe-"]').evaluateAll((els) => els.map((el) => el.value));
+  check("SOP first, its WIs under it", codes[0] === "SOP-CF" && codes.slice(1).every((code) => code.startsWith("WI-")), codes.join(","));
+  check("save is off until something changes", await page.locator('[data-testid="tobe-save"]').isDisabled());
+  const sopRow = page.locator('[data-testid$="-row"][data-testid^="tobe-"]').first();
+  const sopKey = (await sopRow.getAttribute("data-testid")).replace("tobe-", "").replace("-row", "");
+  await page.locator(`[data-testid="tobe-${sopKey}-toggle"]`).click();
+  check("troubleshooting is N/A with its reason", await page.locator(`[data-testid="tobe-${sopKey}-na-procedures.troubleshooting"]`).isChecked());
+  await takeShot("sop-tobe.png");
+  const title = page.locator(`[data-testid="tobe-${sopKey}-title"]`);
+  const before = await title.inputValue();
+  await title.fill(`${before} (edited)`);
+  await wait(page, "tobe-dirty");
+  await page.locator('[data-testid="tobe-save"]').click();
+  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
+  await page.locator('[data-testid="tobe-dirty"]').waitFor({ state: "detached", timeout: T });
+  check("saved and clean again", (await title.inputValue()) === `${before} (edited)`);
+  await title.fill(before);
+  await page.locator('[data-testid="tobe-save"]').click();
+  await page.locator('[data-testid="tobe-dirty"]').waitFor({ state: "detached", timeout: T });
+  // 잘못된 줄 - 부모 없는 WI는 서버가 거절하고 사람 말로 보인다
+  await page.locator('[data-testid="tobe-add"]').click();
+  const newCode = page.locator('[data-testid^="tobe-new-"][data-testid$="-code"]');
+  await newCode.fill("WI-99");
+  const newKey = (await newCode.getAttribute("data-testid")).replace("tobe-", "").replace("-code", "");
+  await page.locator(`[data-testid="tobe-${newKey}-parent"]`).selectOption("");
+  await page.locator('[data-testid="tobe-save"]').click();
+  await page.locator('[data-testid="toast-error"]').first().waitFor({ timeout: T });
+  check("server rejection reads as a sentence", (await getText(page, "toast-error")).includes("WI-99"), await getText(page, "toast-error"));
+  await page.locator('[data-testid="tobe-discard"]').click();
+  await page.locator('[data-testid="tobe-dirty"]').waitFor({ state: "detached", timeout: T });
 });
 
 await browser.close();

@@ -1,6 +1,6 @@
 // SOP 재구성 API 호출과 응답 타입 - 백엔드 routers/sop_*.py의 응답 모델을 옮긴 것. 공용 래퍼는 api.ts의 apiFetch.
 
-import { apiFetch } from "./api";
+import { apiFetch, apiFetchBlob } from "./api";
 
 /** 의미 검토 항목 - 백엔드 constants.SEMANTIC_CHECK_KEYS와 같은 값 */
 export const SEMANTIC_CHECK_KEYS = ["numbers", "conditions", "tables", "figures"] as const;
@@ -333,4 +333,84 @@ export function deletePair(bundleId: number, docId: number, pairId: number, revi
 
 export function ackWarning(bundleId: number, warningId: number, note = ""): Promise<ExtractionWarning> {
   return apiFetch<ExtractionWarning>(`/bundles/${bundleId}/warnings/${warningId}/ack`, { method: "POST", body: JSON.stringify({ note }) });
+}
+
+// --- To-Be 목록 ---
+
+export type Entrance = "assign" | "match";
+
+export interface TargetDoc {
+  id: number;
+  code: string;
+  title: string;
+  doc_type: TargetDocType;
+  parent_code: string | null;
+  entrance: Entrance;
+  is_equipment_sop: boolean;
+  order_index: number;
+  document_id: number | null;
+}
+
+export interface NaSlot {
+  code: string;
+  slot_key: string;
+  reason: string;
+}
+
+export interface WiStep {
+  code: string;
+  step_no: number;
+  title: string;
+}
+
+export interface ToBe {
+  revision: number;
+  docs: TargetDoc[];
+  na_slots: NaSlot[];
+  wi_steps: WiStep[];
+}
+
+export interface ToBeInput {
+  revision: number;
+  docs: Array<Pick<TargetDoc, "code" | "title" | "doc_type" | "parent_code" | "is_equipment_sop" | "order_index">>;
+  na_slots: NaSlot[];
+  wi_steps: WiStep[];
+}
+
+/** SOP 칸 - backend constants.SLOT_KEYS와 같은 값·순서. 점이 있으면 하위 칸 */
+export const SLOT_KEYS = [
+  "purpose",
+  "scope",
+  "definitions",
+  "responsibilities",
+  "general_requirements",
+  "general_requirements.safety",
+  "general_requirements.operation",
+  "procedures",
+  "procedures.procedure",
+  "procedures.electronic_record_control",
+  "procedures.troubleshooting",
+  "procedures.maintenance",
+  "document_relationships",
+  "document_relationships.attachments",
+  "document_relationships.appendices",
+] as const;
+
+export function getToBe(bundleId: number): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe`);
+}
+
+export function putToBe(bundleId: number, body: ToBeInput): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe`, { method: "PUT", body: JSON.stringify(body) });
+}
+
+export function importToBe(bundleId: number, file: File, revision: number): Promise<ToBe> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("revision", String(revision));
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/import`, { method: "POST", body: form });
+}
+
+export function downloadToBeTemplate(bundleId: number): Promise<Blob> {
+  return apiFetchBlob(`/bundles/${bundleId}/tobe/template.xlsx`);
 }
