@@ -10,7 +10,7 @@ from sqlalchemy import delete
 
 from app.db import SessionLocal
 from app.sop.ai.runner import run_jobs_until_idle
-from app.sop.models import AiJob
+from app.sop.models import AiJob, EmbeddingCache
 from tests.docx_factory import build_docx, p
 from tests.sop_helpers import create_bundle, put_tobe, set_members, upload
 
@@ -63,3 +63,20 @@ def clean_ai_jobs(client: TestClient) -> Iterator[None]:
     _clear_ai_jobs()
     yield
     _clear_ai_jobs()
+
+
+def _clear_embedding_cache() -> None:
+    async def _run() -> None:
+        async with SessionLocal() as session:
+            await session.execute(delete(EmbeddingCache))
+            await session.commit()
+
+    asyncio.run(_run())
+
+
+@pytest.fixture
+def clean_embedding_cache(client: TestClient) -> Iterator[None]:
+    """임베딩 캐시를 비운 채로 시작하고 끝낸다 — 세션이 DB 하나를 공유해 다른 시험이 캐시한 글이 호출 횟수 검사에 새지 않게."""
+    _clear_embedding_cache()
+    yield
+    _clear_embedding_cache()

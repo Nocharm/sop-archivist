@@ -1,5 +1,6 @@
 """AI 테스트 공유 헬퍼 — httpx2 전송 모의(MockTransport)·응답 빌더·설정 위장 (test_ai_client/test_ai_admin 공용)."""
 
+import hashlib
 import json
 from collections.abc import Awaitable, Callable
 
@@ -78,3 +79,30 @@ def enable_embed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "embed_base_url", AI_TEST_BASE_URL)
     monkeypatch.setattr(settings, "embed_api_token", AI_TEST_TOKEN)
     monkeypatch.setattr(settings, "embed_model", "embed-test")
+
+
+def build_embed_body(vectors: list[list[float]], prompt_tokens: int | None = 5) -> dict:
+    """OpenAI 호환 embeddings 응답 본문 — 토큰이 None이면 usage 키 자체를 뺀다(비표준 서버)."""
+    body: dict = {"data": [{"index": index, "embedding": vector} for index, vector in enumerate(vectors)]}
+    if prompt_tokens is not None:
+        body["usage"] = {"prompt_tokens": prompt_tokens, "total_tokens": prompt_tokens}
+    return body
+
+
+def vector_for(text: str, dim: int = 8) -> list[float]:
+    """글마다 결정적으로 다르고 영벡터가 아닌 가짜 임베딩 — 해시 바이트를 -0.5~0.5로 펼친다."""
+    digest = hashlib.sha256(text.encode("utf-8")).digest()
+    return [digest[index] / 255 - 0.5 for index in range(dim)]
+
+
+def install_embed_transport(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    """/embeddings를 `vector_for`로 답하는 전송을 설치한다 — 돌려받은 리스트에 호출마다 보낸 input이 쌓인다."""
+    inputs_per_call: list[list[str]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        inputs = read_payload(request)["input"]
+        inputs_per_call.append(inputs)
+        return httpx2.Response(200, json=build_embed_body([vector_for(text) for text in inputs]))
+
+    install_ai_transport(monkeypatch, handler)
+    return inputs_per_call

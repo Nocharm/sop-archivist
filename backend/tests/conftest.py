@@ -19,6 +19,7 @@ os.environ["DEV_USER"] = "dev.admin"
 os.environ["DEV_ENFORCE_PERMISSIONS"] = "false"
 os.environ["APP_SYSADMINS"] = ""
 os.environ["AI_ENABLED"] = "false"
+os.environ["EMBED_ENABLED"] = "false"  # 켜져 있으면 lifespan이 AI 워커를 띄워 시험의 run_jobs()와 작업을 다툰다
 os.environ["N8N_HR_URL"] = ""
 os.environ["N8N_HR_TOKEN"] = ""
 
