@@ -27,17 +27,18 @@ def _doc(
     doc_id: int,
     doc_type: str = "sop",
     *,
+    title: str | None = None,
     parent_id: int | None = None,
     entrance: str = "assign",
     order_index: int | None = None,
     na_slots: dict[str, str] | None = None,
     steps: tuple[tuple[int, str], ...] = (),
 ) -> TargetDocInfo:
-    """합성 새 문서 정보 — 순서 열은 따로 주지 않으면 id를 따른다."""
+    """합성 새 문서 정보 — 제목·순서 열은 따로 주지 않으면 종류별 기본 제목과 id를 따른다."""
     return TargetDocInfo(
         id=doc_id,
         code=f"DOC-{doc_id}",
-        title=SOP_TITLE if doc_type == "sop" else WI_TITLE,
+        title=title if title is not None else (SOP_TITLE if doc_type == "sop" else WI_TITLE),
         doc_type=doc_type,
         parent_id=parent_id,
         entrance=entrance,
@@ -128,6 +129,20 @@ def test_wi_label_omits_a_parent_that_is_not_in_the_docs() -> None:
     labels = [candidate.label for candidate in list_candidates([wi])]
 
     assert labels == [f"{WI_TITLE} / 단계 1 / Instruction", f"{WI_TITLE} / 단계 1 / Why"]
+
+
+def test_untitled_documents_are_labelled_by_their_code() -> None:
+    # 제목은 비어 있을 수 있고(문서를 가르는 건 번호뿐) 빈 제목 둘이 같은 라벨을 만들면 LLM이 칸을 가릴 수 없다
+    docs = [_doc(1, title=""), _doc(2, title=""), _doc(3, "wi", title="", parent_id=1)]
+
+    candidates = list_candidates(docs)
+
+    labels_of = {doc_id: [c.label for c in candidates if c.target_doc_id == doc_id] for doc_id in (1, 2, 3)}
+    assert labels_of[1][0] == "DOC-1 / Purpose: 절차가 필요한 이유, 관리 목적"
+    assert labels_of[2][0] == "DOC-2 / Purpose: 절차가 필요한 이유, 관리 목적"
+    assert labels_of[3] == ["DOC-3(DOC-1) / Instruction", "DOC-3(DOC-1) / Why"]  # 부모 제목이 비어도 번호로 푼다
+    labels = [candidate.label for candidate in candidates]
+    assert len(set(labels)) == len(labels)  # 어느 두 후보도 라벨이 같지 않다
 
 
 def test_match_documents_are_not_candidates() -> None:
