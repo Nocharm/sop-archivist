@@ -115,6 +115,8 @@ class DecisionOut(BaseModel):
     confirmed_by: str | None
     confirmed_at: KstDatetime | None
     revision: int
+    # 이 처분의 근거가 된 AI 제안 — 사람이 확정해도 남고, 배정을 지우면 비워진다
+    suggestion_id: int | None
 
 
 class GroupUnitOut(BaseModel):

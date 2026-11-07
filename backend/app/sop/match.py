@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.clock import now
+from app.sop.ai.adoption import adopt_suggestions
 from app.sop.checks import check_sentence
 from app.sop.decisions import NEUTRAL, SENTENCE_SOURCE_KINDS, DbId
 from app.sop.detach import CONFIRMED, ORIGIN_NEW_DOC, UNASSIGNED, DetachReport, detach_units, is_unassigned
@@ -477,7 +478,7 @@ def _confirm(item: UnitDecision | TargetSentence, actor: str, stamp: datetime) -
 
 
 async def _write_bulk(session: AsyncSession, payload: BulkMatchIn, state: _BulkState, actor: str) -> None:
-    """같은 글자 짝은 출처 연결·그대로·양쪽 확정, 신규는 신규 확정. 글자가 같아도 쓰기 길은 관계 묶음 저장처럼 문장 검사를 거친다."""
+    """같은 글자 짝은 출처 연결·그대로·양쪽 확정, 신규는 신규 확정(AI 제안이었으면 그대로 채택). 글자가 같아도 쓰기 길은 관계 묶음 저장처럼 문장 검사를 거친다."""
     stamp = now()
     links = []
     for item in payload.identical:
@@ -495,12 +496,15 @@ async def _write_bulk(session: AsyncSession, payload: BulkMatchIn, state: _BulkS
         _confirm(target, actor, stamp)
     if links:
         await session.execute(insert(TargetSource), links)
+    suggestion_ids = {state.targets[item.target_id].suggestion_id for item in payload.new}
+    await adopt_suggestions(session, suggestion_ids - {None}, actor, stamp)
 
 
 async def confirm_in_bulk(session: AsyncSession, bundle: Bundle, payload: BulkMatchIn, actor: str) -> GroupOut:
     """같은 글자 1:1 짝(그대로)과 출처 없는 입구 2 새 문장(신규)을 한 트랜잭션으로 확정한다. 커밋은 호출부가 한다.
 
-    항목마다 서버가 다시 확인하고 하나라도 어긋나면 아무것도 쓰지 않는다. AI 제안 짝은 이 길로 확정하지 않는다(스펙 §7.7).
+    항목마다 서버가 다시 확인하고 하나라도 어긋나면 아무것도 쓰지 않는다. AI 제안 짝은 이 길로 확정하지 않는다(스펙 §7.7) —
+    같은 글자 짝은 미배정만 받고, 신규는 코드가 확인할 수 있어 AI 제안이어도 받는다.
     """
     await lock_bundle(session, bundle)
     ensure_editable(bundle)

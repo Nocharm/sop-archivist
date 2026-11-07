@@ -13,6 +13,8 @@ from sqlalchemy.orm import aliased
 from sqlalchemy.orm.util import AliasedClass
 
 from app.clock import now
+from app.sop.ai.adoption import record_group_adoption, record_unit_adoption, reject_suggestions
+from app.sop.ai.apply import AI_SUGGESTED
 from app.sop.checks import check_sentence
 from app.sop.constants import SLOT_KEYS
 from app.sop.detach import CONFIRMED, ON_HOLD, ORIGIN_NEW_DOC, DetachReport, detach_units, reset_target
@@ -487,7 +489,10 @@ def _resolve_lang(item: TargetIn, row: TargetSentence | None, state: _State) -> 
 
 
 def _resolve_text(item: TargetIn, row: TargetSentence | None, state: _State) -> str:
-    """확정 글자 — 비운 새 새 문장에 출처가 하나면 원문 그대로(그대로 보내기, 스펙 §7.7). 표·그림은 글자가 없다."""
+    """확정 글자 — 비운 새 새 문장에 출처가 하나면 원문 그대로(그대로 보내기, 스펙 §7.7). 표·그림은 글자가 없다.
+
+    비운 기존 새 문장은 지금 글을 두고, 아직 확정 글이 없는 AI 새 문장이면 제안 글로 확정한다.
+    """
     keys = [item.key]
     if item.kind != "sentence":
         if item.text:
@@ -496,7 +501,7 @@ def _resolve_text(item: TargetIn, row: TargetSentence | None, state: _State) -> 
     if item.text is not None:
         text = item.text
     elif row is not None:
-        text = row.confirmed_text
+        text = row.confirmed_text or row.ai_text
     elif len(item.source_unit_ids) == 1:
         text = state.units[item.source_unit_ids[0]].text
     else:
@@ -607,6 +612,9 @@ def _decide_change_type(
         return "split"
     if plan.text == state.units[source_id].text:
         return "as_is"
+    if requested is None and plan.item.text is None and plan.row is not None:
+        # 글을 비워 행의 글을 받으면 그 글의 종류도 받는다 — 나눔·합침은 구조에서 나와 지금 구조와 어긋날 수 있어 받지 않는다
+        requested = plan.row.change_type if plan.row.change_type in TEXT_CHANGE_TYPES else None
     if requested is None:
         _reject("change_type_required", keys=keys)
     # 글자가 다른데 "그대로"라고 하면 결과물이 원문과 다른 글을 그대로라고 적는다
@@ -720,7 +728,7 @@ def _apply_plan(
     if target is None:
         target = TargetSentence(bundle_id=bundle_id, origin=ORIGIN_UNITS, section_path="", ai_text="", revision=0)
         session.add(target)
-    elif plan.text != target.confirmed_text:
+    elif target.confirmed_text and plan.text != target.confirmed_text:  # 첫 확정의 AI 새 문장은 이전 확정 글이 없다
         session.add(TargetTextHistory(target_id=target.id, previous_text=target.confirmed_text, changed_by=actor))
     if plan.origin != ORIGIN_NEW_DOC:
         if target.target_doc_id != plan.doc.id:
@@ -797,6 +805,9 @@ async def _write_group(
         decision.reason = item.reason.strip()
         _set_human_status(decision, payload.action, hold_reason, actor, stamp)
         decision.revision += 1
+    await record_group_adoption(
+        session, plans=plans, payload=payload, decisions=state.decisions, actor=actor, stamp=stamp
+    )
     unit_ids = [item.unit_id for item in payload.units]
     record_event(
         session, bundle_id=bundle_id, actor=actor, action=f"group.{payload.action}",
@@ -861,7 +872,10 @@ async def _find_units_with_targets(session: AsyncSession, unit_ids: Collection[i
 async def dispose_units(
     session: AsyncSession, bundle: Bundle, payload: BulkDecisionIn, actor: str
 ) -> list[UnitDecisionRowOut]:
-    """여러 단위를 같은 삭제·이동 사유로 확정한다 — 단위마다 따로 저장한 것과 같고, 새 문장이 달린 단위가 섞이면 409."""
+    """여러 단위를 같은 삭제·이동 사유로 확정한다 — 단위마다 따로 저장한 것과 같고, 새 문장이 달린 단위가 섞이면 409.
+
+    AI 제안 단위가 섞여도 409다 — AI 제안은 사람이 줄마다 본다(스펙 §7.7). 사람이 보류해 둔 제안 단위는 지날 수 있어 채택을 남긴다.
+    """
     await lock_bundle(session, bundle)
     ensure_editable(bundle)
     unit_ids = [item.unit_id for item in payload.units]
@@ -876,6 +890,9 @@ async def dispose_units(
     ]
     if conflicts:
         raise_rule(409, "revision_conflict", conflicts=conflicts)
+    suggested = sorted(unit_id for unit_id, (_, decision) in loaded.items() if decision.status == AI_SUGGESTED)
+    if suggested:
+        raise_rule(409, "ai_suggested_units", unit_ids=suggested)
     with_targets = await _find_units_with_targets(session, unit_ids)
     if with_targets:
         raise_rule(409, "unit_has_targets", unit_ids=with_targets)
@@ -886,6 +903,10 @@ async def dispose_units(
         decision.move_target_code = payload.move_target_code if payload.action == "move_external" else ""
         _set_human_status(decision, "confirm", "", actor, stamp)
         decision.revision += 1
+    await record_unit_adoption(
+        session, plans=(), dispositions=dict.fromkeys(unit_ids, payload.action),
+        decisions={unit_id: loaded[unit_id][1] for unit_id in unit_ids}, actor=actor, stamp=stamp,
+    )
     record_event(
         session, bundle_id=bundle.id, actor=actor, action="decision.bulk", target_type="unit", target_ids=unit_ids,
         reason=payload.reason,
@@ -899,7 +920,10 @@ async def clear_unit(session: AsyncSession, bundle: Bundle, payload: ClearIn, ac
     await lock_bundle(session, bundle)
     ensure_editable(bundle)
     loaded = await _load_decision_units(session, bundle.id, [payload.unit_id])
-    check_revision("unit", payload.unit_id, payload.revision, loaded[payload.unit_id][1].revision)
+    decision = loaded[payload.unit_id][1]
+    check_revision("unit", payload.unit_id, payload.revision, decision.revision)
+    if decision.suggestion_id is not None:  # 떼어 내기가 이 칸을 비우므로 먼저 남긴다
+        await reject_suggestions(session, [decision.suggestion_id], actor)
     report = await detach_units(session, bundle_id=bundle.id, unit_ids=[payload.unit_id], cause="cleared", actor=actor)
     if report.reset_unit_ids or report.deleted_target_ids or report.held_unit_ids or report.held_target_ids:
         record_event(

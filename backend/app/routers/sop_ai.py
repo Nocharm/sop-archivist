@@ -1,11 +1,15 @@
-"""AI API — 분류 요청(작성자, AI가 켜져 있을 때)과 작업 현황(멤버)·취소·실패분 다시 시도(작성자, 작업 중 묶음만). 뒤의 세 경로는 AI가 꺼져 있어도 동작한다."""
+"""AI API — 분류 요청(작성자, AI가 켜져 있을 때)과 작업 현황·제안 읽기(멤버)·취소·실패분 다시 시도(작성자, 작업 중 묶음만). 분류 요청 말고는 AI가 꺼져 있어도 동작한다."""
 
-from fastapi import APIRouter, Depends
+from typing import Annotated, Literal
+
+from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
 from app.settings import settings
+from app.sop.ai.adoption import list_suggestions, load_adoption_stats, load_suggestion
 from app.sop.ai.classify import CLASSIFY_KIND, select_classify_items
+from app.sop.ai.constants import DEFAULT_SUGGESTIONS_PAGE, MAX_SUGGESTIONS_PAGE
 from app.sop.ai.jobs import (
     build_request_out,
     cancel_active_jobs,
@@ -13,16 +17,30 @@ from app.sop.ai.jobs import (
     load_job_breakdown,
     retry_failed_jobs,
 )
-from app.sop.ai.schemas import AiRequestOut, AiStatusOut, CancelOut, JobKindIn, RetryOut, ScopeIn
+from app.sop.ai.schemas import (
+    AiRequestOut,
+    AiStatusOut,
+    CancelOut,
+    JobKind,
+    JobKindIn,
+    RetryOut,
+    ScopeIn,
+    SuggestionOut,
+    SuggestionsPageOut,
+)
 from app.sop.constants import MEMBER_ROLES
 from app.sop.errors import raise_rule
 from app.sop.events import record_event
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
+from app.sop.tobe import MAX_DB_INT
 
 router = APIRouter(prefix="/api/bundles/{bundle_id}/ai", tags=["sop-ai"])
 
 _require_author = require_bundle_role("author")
 _require_member = require_bundle_role(*MEMBER_ROLES)
+
+# 경로의 제안 ID 범위 — 정수 범위를 넘는 값이 DB까지 가서 500이 되지 않게
+SuggestionIdPath = Annotated[int, Path(ge=1, le=MAX_DB_INT)]
 
 
 def require_ai_enabled() -> None:
@@ -64,8 +82,32 @@ async def get_ai_status(
         jobs=breakdown.jobs,
         by_kind=breakdown.by_kind,
         failed_errors=breakdown.failed_errors,
-        adoption={},  # 계획 2: 채택 기록이 생기면 kind별 채택률을 싣는다
+        adoption=await load_adoption_stats(session, ctx.bundle.id),
     )
+
+
+@router.get("/suggestions", response_model=SuggestionsPageOut)
+async def get_suggestions(
+    kind: JobKind | None = Query(None),
+    document_id: int | None = Query(None, ge=1, le=MAX_DB_INT),
+    result: Literal["applied", "stale", "invalid"] | None = Query(None),
+    limit: int = Query(DEFAULT_SUGGESTIONS_PAGE, ge=1, le=MAX_SUGGESTIONS_PAGE),
+    offset: int = Query(0, ge=0, le=MAX_DB_INT),
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> SuggestionsPageOut:
+    return await list_suggestions(
+        session, ctx.bundle.id, kind=kind, document_id=document_id, result=result, limit=limit, offset=offset
+    )
+
+
+@router.get("/suggestions/{suggestion_id}", response_model=SuggestionOut)
+async def get_suggestion(
+    suggestion_id: SuggestionIdPath,
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> SuggestionOut:
+    return SuggestionOut.model_validate(await load_suggestion(session, ctx.bundle.id, suggestion_id))
 
 
 @router.post("/cancel", response_model=CancelOut)
