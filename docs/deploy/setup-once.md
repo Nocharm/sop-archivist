@@ -81,6 +81,10 @@ chmod 600 .env          # 시크릿이 들어가니 소유자만 읽게
 | `N8N_HR_URL` / `N8N_HR_TOKEN` | `http://<n8n-host>:5678/webhook/hr-dept` / 웹훅 토큰(`X-API-Key`) |
 | `HR_SYNC_INTERVAL_HOURS` | **처음엔 `0`**. 첫 수동 동기화(A8)를 확인한 뒤 `24` |
 | `HR_SYNC_DELETE_CAP_PCT` | `20` |
+| `SOP_MAX_FILE_MB` / `SOP_MAX_DOCX_UNZIPPED_MB` | `25` / `200` (파일 하나·DOCX 압축 해제 합계, MiB. 파일 상한은 nginx `client_max_body_size`(50m)보다 크게 올리지 않는다) |
+| `SOP_MAX_PDF_PAGES` / `SOP_MAX_DOC_CHARS` | `500` / `2000000` (넘는 파일은 문서 목록에 "거절"과 사유로 남는다) |
+| `SOP_PARSE_TIMEOUT_SECONDS` | `60` (파싱 한 번 시간 한도, 메인 추출과 보조 변환이 각자 이만큼 쓴다) |
+| `SOP_PARSE_MEMORY_MB` | `2048` (파싱 자식 프로세스 메모리 상한). 낮추지 않는다(`docs/qa/2026-11-sop-parse-dependencies.md`) |
 | `FORWARDED_ALLOW_IPS` | 지금은 비워 둔다. A6에서 채운다 |
 
 - **`POSTGRES_PASSWORD`는 URL에 안전한 문자만.** 이 값이 backend의 `DATABASE_URL`에 그대로 들어간다(`postgresql+asyncpg://사용자:비밀번호@db:5432/…`). `@ : / # ? %` 같은 문자나 compose가 치환하는 `$`가 있으면 URL이 깨져 backend가 기동하지 못한다.
