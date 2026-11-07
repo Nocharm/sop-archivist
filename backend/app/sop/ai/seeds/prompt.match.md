@@ -23,8 +23,8 @@ Output a single JSON object and nothing else: no text before or after it, no cod
 
 ## How to decide
 
-- `as_is`: the new text says the same thing in the same words. Differences in spacing, punctuation, or letter case alone do not count.
-- `tone`: the content is the same and only the style changed, such as the sentence ending or register (R02, RW06), for example `~한다` to `~하여야 한다`. Every number, unit, condition, exception, role, and order is the same.
+- `as_is`: the new text says the same thing in the same words.
+- `tone`: the content is the same and only the style changed, such as the sentence ending or register (R02, RW06), for example `~한다` to `~하여야 한다`, or only spacing, punctuation, or letter case. Every number, unit, condition, exception, role, and order is the same.
 - `rewritten`: anything else. The wording or structure changed beyond style, or a number, unit, tolerance, negation, condition, exception, role, or order differs (RW01), or content was added or dropped. When a value differs, say so in `reason`.
 - When unsure between two values, choose the one that shows more change. A reviewer can lower it but may not notice a hidden change.
 - Whether the sentences are split or merged is decided elsewhere. Judge only the change in content and style.

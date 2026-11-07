@@ -33,9 +33,9 @@ from tests.ai_fixtures import (
     run_plan,
     use_vectors,
 )
-from tests.docx_factory import TINY_PNG, make_drawing_run, p, tbl
+from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
 from tests.fake_ai import FakeAi
-from tests.sop_helpers import AUTHOR, get_group_by_unit, get_view, save_group
+from tests.sop_helpers import AUTHOR, find_unit, get_group_by_unit, get_view, save_group, upload
 
 pytestmark = pytest.mark.usefixtures("clean_sop", "clean_ai_jobs", "clean_embedding_cache")
 
@@ -49,6 +49,8 @@ OLD_MERGE_B = "합성 필터 교체일을 적는다."
 NEW_MERGED = "합성 필터를 교체하고 교체일을 적는다."
 OLD_DOSE = "합성 시료를 5 mL 넣는다."
 NEW_DOSE = "합성 시료를 10 mL 넣는다."
+NEW_OTHER_DOC = "합성 배관 점검 주기를 다른 문서에 적는다."
+SECOND_NEW_FILE = "SYNTHETIC_SOP-N_New.docx"
 REPEATED = "두 문서에 되풀이되는 합성 문장이다."
 LONE_OLD = "옛 문서에만 남은 교육 일정 공지문이다."
 LONE_NEW = "새로 넣은 비상 연락망 안내 문장이다."
@@ -99,6 +101,24 @@ def make_pair(client: TestClient, ai: FakeAi, old: str = OLD, new: str = ORIGINA
     return bundle, unit_id
 
 
+def add_new_document(client: TestClient, bundle_id: int, body: str) -> None:
+    uploaded = upload(client, bundle_id, build_docx(body), SECOND_NEW_FILE, side="new", doc_type="sop")
+    assert uploaded.status_code == 201 and uploaded.json()["status"] == "ready", uploaded.text
+
+
+def make_cross_document_pair(
+    client: TestClient, ai: FakeAi, monkeypatch: pytest.MonkeyPatch
+) -> tuple[MatchBundle, int]:
+    """옛 단위 하나가 새 문서 둘의 문장 하나씩으로 간 짝에 제안을 받아 둔 묶음."""
+    bundle = make_match_bundle(client, p(OLD_SPLIT), p(NEW_SPLIT_A))
+    add_new_document(client, bundle.id, p(NEW_SPLIT_B))
+    (unit_id,) = read_old_ids(client, bundle, OLD_SPLIT)
+    use_vectors(monkeypatch, ai, {OLD_SPLIT: 0, NEW_SPLIT_A: 0, NEW_SPLIT_B: 0})
+    use_match_reply(ai, change_type="tone")
+    pair_up(client, bundle.id)
+    return bundle, unit_id
+
+
 def build_group_body(client: TestClient, bundle_id: int, unit_id: int, **unit_fields: object) -> dict:
     """관계 묶음을 읽어 그대로 되보낼 저장 본문 — 화면이 하는 일이다."""
     group = get_group_by_unit(client, bundle_id, unit_id)
@@ -116,6 +136,13 @@ def build_group_body(client: TestClient, bundle_id: int, unit_id: int, **unit_fi
             for target in group["targets"]
         ],
     }
+
+
+def clear_change_types(body: dict) -> dict:
+    """제안을 그대로 받는 저장 — 글과 종류를 비워 보낸다."""
+    for target in body["targets"]:
+        target["change_type"] = None
+    return body
 
 
 def save_ok(client: TestClient, bundle_id: int, body: dict) -> dict:
@@ -188,6 +215,51 @@ def test_split_and_merged_come_from_structure(
     (merged,) = read_suggestions("merged")
     assert merged.content["change_type"] == "merged"
     assert sorted(merged.content["unit_ids"]) == read_old_ids(client, bundle, OLD_MERGE_A, OLD_MERGE_B)
+
+
+def test_pair_across_new_documents_keeps_the_reply(
+    client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 나눔은 같은 새 문서 안에서만이다 — 문서가 다르면 중복 배정이다(설계 §6.7, §6.9)
+    make_cross_document_pair(client, fake_ai, monkeypatch)
+
+    assert (read_target(NEW_SPLIT_A).change_type, read_target(NEW_SPLIT_B).change_type) == ("tone", "tone")
+    (suggestion,) = read_suggestions("split")
+    assert suggestion.content["change_type"] == "tone"
+
+
+def test_pair_across_new_documents_needs_a_reason_to_confirm(
+    client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle, unit_id = make_cross_document_pair(client, fake_ai, monkeypatch)
+    body = clear_change_types(build_group_body(client, bundle.id, unit_id, disposition="assigned"))
+
+    refused = save_group(client, bundle.id, body)
+
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["detail"]["reason"] == "duplicate_without_reason"
+
+    body["units"][0]["reason"] = REASON
+    save_ok(client, bundle.id, body)
+
+    assert (read_target(NEW_SPLIT_A).status, read_target(NEW_SPLIT_B).change_type) == ("confirmed", "tone")
+    (suggestion,) = read_suggestions("split")
+    assert suggestion.adoption == "as_is"
+
+
+def test_split_inside_one_of_two_new_documents(
+    client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = make_match_bundle(client, p(OLD_SPLIT), p(NEW_OTHER_DOC))  # 첫 새 문장이 나눔이 아니어야 기록 칸의 순서를 본다
+    add_new_document(client, bundle.id, p(NEW_SPLIT_A) + p(NEW_SPLIT_B))
+    use_vectors(monkeypatch, fake_ai, {OLD_SPLIT: 0, NEW_SPLIT_A: 0, NEW_SPLIT_B: 0, NEW_OTHER_DOC: 0})
+    use_match_reply(fake_ai, change_type="tone")
+
+    pair_up(client, bundle.id)
+
+    assert [read_target(text).change_type for text in (NEW_SPLIT_A, NEW_SPLIT_B, NEW_OTHER_DOC)] == ["split", "split", "tone"]
+    (suggestion,) = read_suggestions("split")
+    assert suggestion.content["change_type"] == "split"  # 제안 기록의 한 칸에는 가장 큰 변화를 적는다
 
 
 def test_old_units_become_ai_suggested_assigned(client: TestClient, fake_ai: FakeAi) -> None:
@@ -386,6 +458,17 @@ def test_reply_schema_cleans_text() -> None:
     assert parsed.rule_ids == ["R02"]
 
 
+def test_seed_names_small_differences_under_tone() -> None:
+    # 글이 조금이라도 다르면 그대로가 될 수 없다(설계 §6.7)
+    lines = (SEEDS_DIR / "prompt.match.md").read_text(encoding="utf-8").splitlines()
+
+    as_is = next(line for line in lines if line.startswith("- `as_is`:"))
+    tone = next(line for line in lines if line.startswith("- `tone`:"))
+
+    assert "spacing" not in as_is
+    assert "spacing, punctuation, or letter case" in tone
+
+
 def test_seed_example_parses_as_match_reply() -> None:
     seed = (SEEDS_DIR / "prompt.match.md").read_text(encoding="utf-8")
 
@@ -452,6 +535,27 @@ def test_language_change_during_call_is_stale(client: TestClient, fake_ai: FakeA
     (job,) = read_jobs()
     assert job.status == "stale"
     assert read_links() == set()
+
+
+@pytest.mark.parametrize("side", ["old", "new"])
+def test_language_change_before_start_is_stale_without_a_call(client: TestClient, fake_ai: FakeAi, side: str) -> None:
+    # 시작 뒤의 언어 고치기는 적용 때 잡히지만, 시작 전이면 스냅숏이 바뀐 언어를 읽어 언어가 다른 짝을 쓴다
+    bundle = make_match_bundle(client, p(OLD), p(ORIGINAL_NEW_TEXT))
+    document_id, text = (bundle.old_document_id, OLD) if side == "old" else (bundle.new_document_id, ORIGINAL_NEW_TEXT)
+    unit_id = find_unit(get_view(client, bundle.id, document_id), text)["id"]
+    use_match_reply(fake_ai)
+    response = request_match(client, bundle.id)
+    assert response.status_code == 200, response.text
+    run_plan()
+    edit_document(client, bundle.id, document_id, {"type": "set_language", "unit_ids": [unit_id], "lang": "en"})
+
+    run_jobs()
+
+    (job,) = read_jobs()
+    assert job.status == "stale"
+    assert fake_ai.requests == []
+    assert read_links() == set()
+    assert read_target(ORIGINAL_NEW_TEXT).status == "unassigned"
 
 
 def test_split_of_the_old_unit_during_call_is_stale(client: TestClient, fake_ai: FakeAi) -> None:
@@ -612,10 +716,7 @@ def test_confirming_split_and_merged_keeps_the_structure(
     pair_up(client, bundle.id)
 
     for unit_id in (split, merged):  # 저장 칸은 구조 종류를 받지 않는다 — 비워 보내면 서버가 구조에서 다시 정한다
-        body = build_group_body(client, bundle.id, unit_id, disposition="assigned")
-        for target in body["targets"]:
-            target["change_type"] = None
-        save_ok(client, bundle.id, body)
+        save_ok(client, bundle.id, clear_change_types(build_group_body(client, bundle.id, unit_id, disposition="assigned")))
 
     assert {row.content["shape"]: row.adoption for row in read_suggestions("split", "merged")} == {
         "split": "as_is", "merged": "as_is",
@@ -624,8 +725,76 @@ def test_confirming_split_and_merged_keeps_the_structure(
     assert read_target(NEW_MERGED).change_type == "merged"
 
 
-def test_change_type_alone_does_not_edit_the_adoption(client: TestClient, fake_ai: FakeAi) -> None:
-    # 판정은 출처만 본다(계획 Task 13)
+def test_blank_confirm_accepts_a_tone_pair(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit_id = make_pair(client, fake_ai, change_type="tone")
+
+    save_ok(client, bundle.id, clear_change_types(build_group_body(client, bundle.id, unit_id, disposition="assigned")))
+
+    target = read_target(ORIGINAL_NEW_TEXT)
+    assert (target.status, target.change_type) == ("confirmed", "tone")
+    (suggestion,) = read_suggestions("one_to_one")
+    assert suggestion.adoption == "as_is"
+
+
+def test_blank_confirm_accepts_an_as_is_table_with_a_rewritten_cell(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle = make_match_bundle(client, tbl(CELLS), tbl(CHANGED_CELLS))
+    table = find_kind(get_view(client, bundle.id, bundle.old_document_id), "table")["id"]
+    pair_up(client, bundle.id)
+    changed_cell = CHANGED_CELLS[1][0]
+    assert read_target(changed_cell).change_type == "rewritten"
+
+    save_ok(client, bundle.id, clear_change_types(build_group_body(client, bundle.id, table, disposition="assigned")))
+
+    assert (read_target(changed_cell).status, read_target(changed_cell).change_type) == ("confirmed", "rewritten")
+    (table_target,) = [row for row in read_rows(TargetSentence) if row.kind == "table"]
+    assert table_target.change_type == "as_is"
+    (suggestion,) = read_suggestions("table")
+    assert suggestion.adoption == "as_is"
+
+
+def test_blank_confirm_with_changed_sources_needs_a_type(
+    client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 출처를 바꾸면 지난 종류는 근거가 없다
+    bundle = make_match_bundle(client, p(OLD) + p(OTHER_OLD), p(ORIGINAL_NEW_TEXT))
+    paired, other = read_old_ids(client, bundle, OLD, OTHER_OLD)
+    use_vectors(monkeypatch, fake_ai, {OLD: 0, ORIGINAL_NEW_TEXT: 0, OTHER_OLD: 1})
+    use_match_reply(fake_ai, change_type="tone")
+    pair_up(client, bundle.id)
+    body = clear_change_types(build_group_body(client, bundle.id, paired, disposition="delete", reason=REASON))
+    body["units"].append({"unit_id": other, "revision": read_decision(other).revision, "disposition": "assigned"})
+    body["targets"][0]["source_unit_ids"] = [other]
+
+    response = save_group(client, bundle.id, body)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["reason"] == "change_type_required"
+
+
+def test_hand_made_pair_needs_a_type(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle = make_match_bundle(client, p(OLD), p(ORIGINAL_NEW_TEXT))
+    (unit_id,) = read_old_ids(client, bundle, OLD)
+    body = build_target_body(read_target(ORIGINAL_NEW_TEXT), source_unit_ids=[unit_id])
+    body["units"] = [{"unit_id": unit_id, "revision": read_decision(unit_id).revision, "disposition": "assigned"}]
+
+    response = save_group(client, bundle.id, body)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["reason"] == "change_type_required"
+    body["targets"][0]["change_type"] = "tone"
+    save_ok(client, bundle.id, body)
+
+    # 사람이 고른 종류는 제안이 아니다 — 출처가 같아도 다시 저장하려면 종류를 보낸다
+    again = build_target_body(read_target(ORIGINAL_NEW_TEXT), source_unit_ids=[unit_id])
+    again["units"] = [{"unit_id": unit_id, "revision": read_decision(unit_id).revision, "disposition": "assigned"}]
+    response = save_group(client, bundle.id, again)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["reason"] == "change_type_required"
+
+
+def test_changing_the_type_of_a_pair_records_edited(client: TestClient, fake_ai: FakeAi) -> None:
+    # 짝에서 LLM이 내는 것은 종류뿐이라 종류를 고치면 제안을 고친 것이다(설계 §7.10, §13)
     bundle, unit_id = make_pair(client, fake_ai, change_type="tone")
     body = build_group_body(client, bundle.id, unit_id, disposition="assigned")
     body["targets"][0]["change_type"] = "rewritten"
@@ -634,7 +803,21 @@ def test_change_type_alone_does_not_edit_the_adoption(client: TestClient, fake_a
 
     assert read_target(ORIGINAL_NEW_TEXT).change_type == "rewritten"
     (suggestion,) = read_suggestions("one_to_one")
-    assert suggestion.adoption == "as_is"
+    assert suggestion.adoption == "edited"
+
+
+def test_restructuring_an_as_is_table_records_edited(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle = make_match_bundle(client, tbl(CELLS), tbl(CHANGED_CELLS))
+    table = find_kind(get_view(client, bundle.id, bundle.old_document_id), "table")["id"]
+    pair_up(client, bundle.id)
+    body = build_group_body(client, bundle.id, table, disposition="assigned", reason=REASON)
+    (table_item,) = [item for item in body["targets"] if item["kind"] == "table"]
+    table_item["change_type"] = "table_restructured"
+
+    save_ok(client, bundle.id, body)
+
+    (suggestion,) = read_suggestions("table")
+    assert suggestion.adoption == "edited"
 
 
 def test_hold_leaves_the_adoption_open(client: TestClient, fake_ai: FakeAi) -> None:
@@ -836,6 +1019,25 @@ def test_removing_a_confirmed_new_target_keeps_the_first_verdict(client: TestCli
     assert suggestion.adoption == "as_is"
 
 
+def test_cell_link_edit_on_a_restructured_table_stays_as_is(client: TestClient, fake_ai: FakeAi) -> None:
+    # 제안 기록에 칸 연결이 없어 표 새 문장만 견준다 — 칸 연결만 더한 저장은 일부러 그대로 채택이다
+    bundle = make_match_bundle(client, tbl(CELLS), tbl([[*row, "합성 비고"] for row in CELLS]))
+    view = get_view(client, bundle.id, bundle.old_document_id)
+    table, cell = find_kind(view, "table")["id"], find_unit(view, CELLS[0][0])["id"]
+    pair_up(client, bundle.id)
+    body = clear_change_types(build_group_body(client, bundle.id, table, disposition="assigned", reason=REASON))
+    (table_item,) = [item for item in body["targets"] if item["kind"] == "table"]
+    table_item["change_type"] = "table_restructured"
+    (cell_item,) = [item for item in body["targets"] if item["id"] == read_target(CELLS[0][0]).id]
+    cell_item["source_unit_ids"] = [cell]
+
+    save_ok(client, bundle.id, body)
+
+    assert (read_target(CELLS[0][0]).id, cell) in read_links()
+    (suggestion,) = read_suggestions("table")
+    assert suggestion.adoption == "as_is"
+
+
 def test_table_suggestion_compares_the_table_target(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_match_bundle(client, tbl(CELLS), tbl(CHANGED_CELLS))
     table = find_kind(get_view(client, bundle.id, bundle.old_document_id), "table")["id"]
@@ -900,6 +1102,22 @@ def links(*sources: frozenset[int]) -> tuple[TargetShape, ...]:
 def test_decide_adoption_for_match_compares_sources_only(
     suggested: tuple[TargetShape, ...], saved: tuple[TargetShape, ...], expected: str
 ) -> None:
-    shape = SuggestedShape("assigned", suggested, is_sources_only=True)
+    shape = SuggestedShape("assigned", suggested, is_locked=True)
 
     assert decide_adoption(shape, SavedShape(frozenset(("delete",)), saved)) == expected
+
+
+@pytest.mark.parametrize(
+    ("saved", "expected"),
+    [
+        (TargetShape(NO_PLACE, "", frozenset((1,)), change_type="tone"), "as_is"),
+        (TargetShape(NO_PLACE, "", frozenset((1,)), change_type="rewritten"), "edited"),
+        (TargetShape(NO_PLACE, "", frozenset(), change_type="new"), "rejected"),
+    ],
+)
+def test_decide_adoption_compares_the_type_when_the_shape_carries_one(saved: TargetShape, expected: str) -> None:
+    suggested = SuggestedShape(
+        "assigned", (TargetShape(NO_PLACE, "", frozenset((1,)), change_type="tone"),), is_locked=True
+    )
+
+    assert decide_adoption(suggested, SavedShape(frozenset(("assigned",)), (saved,))) == expected
