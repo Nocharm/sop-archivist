@@ -82,17 +82,24 @@ def _get_failure_code(exc: Exception) -> str:
     return "server_error"  # 본문이 깨진 응답 — 서버 쪽 문제로 본다
 
 
+def ensure_llm_enabled() -> None:
+    """AI가 꺼져 있으면 config로 끝낸다 — 요청은 503으로 막아도 재시작 복구·다시 시도로 큐에 든 작업은 임베딩만 켜져 있으면 워커가 돌린다.
+
+    LLM까지 가야 끝나는 작업은 임베딩보다 먼저 부른다. 실패가 정해진 작업은 아무것도 보내지 않는다.
+    """
+    if not settings.ai_enabled:
+        raise AiCallFailed("config")
+
+
 async def call_llm(
     *, login_id: str, feature: str, messages: list[dict], reasoning: AiReasoning | None
 ) -> LlmReply:
     """채팅 호출 하나 — 시간 초과·5xx·연결 오류·깨진 응답 본문은 AI_RETRY_DELAYS만큼 쉬며 AI_CALL_ATTEMPTS번까지 다시 하고, 4xx는 바로 실패한다.
 
     실패는 AiCallFailed(code)로 올린다. code는 timeout·server_error·connection·client_error·config.
-    시도마다 사용량 한 행이 남는다(`call_ai_recorded`). 설정 오류는 호출하기 전에 가려서 사용량 행도 남기지 않는다.
-    AI가 꺼져 있으면 보내지 않고 config다 — 요청은 503으로 막아도 재시작 복구·다시 시도로 큐에 든 작업은 임베딩만 켜져 있으면 워커가 돌린다.
+    시도마다 사용량 한 행이 남는다(`call_ai_recorded`). AI 꺼짐·설정 오류는 호출하기 전에 가려서 사용량 행도 남기지 않는다.
     """
-    if not settings.ai_enabled:
-        raise AiCallFailed("config")
+    ensure_llm_enabled()
     try:
         _, model_id = resolve_endpoint(None)
     except ValueError as exc:

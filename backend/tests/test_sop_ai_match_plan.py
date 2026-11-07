@@ -17,6 +17,7 @@ from app.sop.ai.constants import AI_CALL_ATTEMPTS
 from app.sop.models import AiJob, AiSuggestion, Bundle, TargetSentence, UnitDecision
 from tests.access_helpers import run_in_session
 from tests.ai_fixtures import (
+    axis,
     clean_ai_jobs,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
     clean_embedding_cache,  # noqa: F401
     edit_document,
@@ -177,6 +178,31 @@ def test_match_request_needs_ai_an_author_and_an_editable_bundle(
     run_in_session(_set_in_review)
     refused = request_match(client, bundle.id)
     assert (refused.status_code, refused.json()["detail"]["code"]) == (409, "bundle_not_editable")
+
+
+def test_queued_plan_sends_nothing_when_ai_is_off(
+    client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """다시 시도로 돌아온 계획 — 쌓을 변경 종류 작업이 모두 실패할 텐데 묶음 전체를 임베딩하면 안 된다."""
+    bundle = make_match_bundle(client, p(OLD_1), p(NEW_1))
+    assert request_match(client, bundle.id).status_code == 200
+    enable_embed(monkeypatch)
+    embedded: list[str] = []
+
+    def embed(text: str) -> list[float]:
+        embedded.append(text)
+        return axis(0)
+
+    fake_ai.embed = embed
+    monkeypatch.setattr(settings, "ai_enabled", False)
+
+    run_jobs()
+
+    assert [(job.kind, job.status, job.error, job.attempts) for job in read_rows(AiJob)] == [
+        ("match_plan", "failed", "config", 1)
+    ]
+    assert fake_ai.requests == [] and embedded == []
+    assert read_rows(AiSuggestion) == []
 
 
 # --- 후보 ---

@@ -35,7 +35,7 @@ from app.sop.ai.guidelines import (
     load_active_guidelines,
 )
 from app.sop.ai.jobs import JobItem, cap_job_items, ensure_units_found, find_active_unit_ids
-from app.sop.ai.llm import AiStr, build_messages, call_llm, parse_reply
+from app.sop.ai.llm import AiStr, build_messages, call_llm, ensure_llm_enabled, parse_reply
 from app.sop.ai.runner import AiCallFailed
 from app.sop.ai.schemas import SkippedOut, SkipReason
 from app.sop.checks import MAX_WARNING_VALUE_LEN, check_sentence
@@ -568,6 +568,7 @@ class ClassifyHandler:
         )
 
     async def compute(self, job: AiJob, loaded: _Loaded) -> _Verdict:
+        ensure_llm_enabled()  # 후보 추리기가 원문을 임베딩으로 보내기 전에 본다
         ranked, retrieval = await rank_candidates(_build_query(loaded), loaded.candidates, login_id=job.requested_by)
         reply = await call_llm(
             login_id=job.requested_by,

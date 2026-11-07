@@ -32,7 +32,7 @@ from app.sop.ai.context import UnitContext, load_unit_context
 from app.sop.ai.embeddings import EmbeddingUnavailable, embed_texts
 from app.sop.ai.guidelines import RULES_KEY, GuidelineRef, format_guideline_versions, load_active_guidelines
 from app.sop.ai.jobs import ACTIVE_JOB_STATUSES, JobItem, enqueue_jobs
-from app.sop.ai.llm import AiStr, build_messages, call_llm, parse_reply
+from app.sop.ai.llm import AiStr, build_messages, call_llm, ensure_llm_enabled, parse_reply
 from app.sop.ai.matching import MatchGroup, MatchItem, MatchProposal, build_text_scores, propose_groups
 from app.sop.ai.runner import AiCallFailed
 from app.sop.ai.schemas import SkippedOut
@@ -536,6 +536,7 @@ class MatchPlanHandler:
         return _Candidates(olds, news)
 
     async def compute(self, job: AiJob, loaded: _Candidates) -> _Plan:
+        ensure_llm_enabled()  # 계획은 LLM을 부르지 않지만 쌓을 변경 종류 작업이 모두 실패한다 — 묶음 전체를 임베딩하지 않는다
         olds, news = _list_items(loaded.olds), _list_items(loaded.news)
         threshold, retrieval = MATCH_EMBED_THRESHOLD, "embedding"
         try:
