@@ -813,7 +813,8 @@ async def _write_change(
         reset = None
         if change.regroup:
             reset = await detach_targets(
-                session, target_ids=await _find_new_doc_targets(session, [*change.retire, *change.regroup])
+                session, bundle_id=document.bundle_id,
+                target_ids=await _find_new_doc_targets(session, [*change.retire, *change.regroup]),
             )
         await _apply_regroup(session, change.regroup)
         await _apply_layouts(session, change.layouts)

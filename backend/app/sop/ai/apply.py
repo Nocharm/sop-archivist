@@ -96,6 +96,8 @@ async def clear_previous_suggestion(session: AsyncSession, decisions: Iterable[U
         ),
         replaced,
     )
+    # 지우기 전에 쓴다 — 표가 지워지면 AI 칸 번역이 CASCADE로 함께 사라져 그 제안을 stale로 둘 수 없다
+    await sweep_translations(session, given[0].bundle_id, {row[0] for row in dropped})
     for chunk in iter_chunks(replaced):
         await session.execute(
             update(AiSuggestion)
@@ -108,7 +110,6 @@ async def clear_previous_suggestion(session: AsyncSession, decisions: Iterable[U
             .where(TargetSentence.suggestion_id.in_(chunk), TargetSentence.status == AI_SUGGESTED)
             .execution_options(synchronize_session=False)
         )
-    await sweep_translations(session, given[0].bundle_id, {row[0] for row in dropped})
 
 
 def add_suggestion(

@@ -4,7 +4,7 @@ from collections import Counter, defaultdict
 from collections.abc import Collection, Hashable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Any, Literal, NoReturn, Self
+from typing import Annotated, Any, Literal, NamedTuple, NoReturn, Self
 
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 from sqlalchemy import Select, delete, func, insert, or_, select
@@ -24,6 +24,7 @@ from app.sop.detach import (
     ORIGIN_TRANSLATION,
     DetachReport,
     detach_units,
+    load_source_target_ids,
     reset_target,
     sweep_translations,
 )
@@ -190,6 +191,8 @@ class _State:
     group_of: dict[int, int]  # 칸 문장 → 표·행 단위
     existing: dict[int, TargetSentence]  # 보낸 기존 새 문장과 지울 새 문장
     removed: set[int]  # 지울 새 문장
+    sources: dict[int, set[int]]  # 기존 새 문장 → 지금 출처 단위
+    translation_sources: dict[int, TargetSentence]  # 번역 → 그 출처 새 문장(지금 값). 출처가 이미 없어진 번역은 빠진다
     translation_texts: dict[int, str]  # 번역 출처 단위 → 글자 — 번역의 문장 검사가 읽는다. 은퇴한 단위도 든다
     member_unit_ids: set[int]  # 보낸 단위와 묶인 칸 문장 전부(은퇴한 칸 포함) — 닫힘 검사의 경계
     # U*와 기존 새 문장에서 출발한 지금의 연결 요소(collect_component — 묶음 읽기·떼어 내기와 같은 그래프)
@@ -200,6 +203,18 @@ class _State:
     steps: dict[int, set[int]]
     table_shapes: dict[int, tuple[int, int]]  # 원문 표 id → (행 수, 열 수)
     cell_positions: dict[int, tuple[int, int]]  # 칸 문장 → 블록의 (행, 열)
+
+
+class _Place(NamedTuple):
+    """새 문장의 자리 — 번역이 출처를 따르는 범위다. 절 경로는 저장이 바꾸지 않아 여기 없고 sweep_translations가 옮긴다."""
+
+    doc_id: int
+    slot_key: str | None
+    wi_step: int | None
+    wi_part: str | None
+    cell_row: int | None
+    cell_col: int | None
+    parent_id: int | None
 
 
 @dataclass
@@ -302,10 +317,24 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
     if unknown:
         _reject("unknown_target", target_ids=unknown)
     component_units, component_targets = await collect_component(session, unit_ids=units, target_ids=existing)
+    sources: dict[int, set[int]] = defaultdict(set)
+    for target_id, unit_id in await select_in_chunks(
+        session,
+        lambda chunk: select(TargetSource.target_id, TargetSource.unit_id).where(TargetSource.target_id.in_(chunk)),
+        existing,
+    ):
+        sources[target_id].add(unit_id)
     translation_unit_ids = {row.translation_source_unit_id for row in existing.values()} - {None}
     translation_rows = await select_in_chunks(
         session, lambda chunk: select(Unit.id, Unit.text).where(Unit.id.in_(chunk)), translation_unit_ids
     )
+    source_ids = await load_source_target_ids(
+        session, [row.id for row in existing.values() if row.origin == ORIGIN_TRANSLATION]
+    )
+    source_rows = await select_in_chunks(
+        session, lambda chunk: select(TargetSentence).where(TargetSentence.id.in_(chunk)), set(source_ids.values())
+    )
+    source_by_id = {row[0].id: row[0] for row in source_rows}
 
     docs ={doc.id: doc for doc in await session.scalars(select(TargetDoc).where(TargetDoc.bundle_id == bundle_id))}
     na_slots: dict[int, list[str]] = defaultdict(list)
@@ -324,7 +353,10 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
         steps[doc_id].add(step_no)
     return _State(
         units=units, decisions=decisions, cells=cells, group_of=group_of, existing=existing,
-        removed=set(payload.removed_target_ids),
+        removed=set(payload.removed_target_ids), sources=sources,
+        translation_sources={
+            target_id: source_by_id[source_id] for target_id, source_id in source_ids.items() if source_id in source_by_id
+        },
         translation_texts={unit_id: text for unit_id, text in translation_rows},
         member_unit_ids=member_unit_ids, component_units=component_units, component_targets=component_targets,
         docs=docs, na_slots=na_slots, steps=steps,
@@ -478,19 +510,44 @@ def _check_locked(item: TargetIn, row: TargetSentence) -> None:
         _reject("match_target_locked", keys=[item.key])
 
 
-def _check_translation_locked(item: TargetIn, row: TargetSentence) -> None:
-    """번역 새 문장은 출처 연결 없이 출처 새 문장의 자리에 머문다(스펙 §7.9) — 사람은 글만 고친다. 비운 자리는 지금 값이고 다른 값은 422."""
-    is_changed = (
-        bool(item.source_unit_ids)
-        or item.target_doc_id not in (None, row.target_doc_id)
-        or (item.slot_key, item.wi_step, item.wi_part) not in (
-            (None, None, None), (row.slot_key, row.wi_step, row.wi_part)
-        )
-        or item.cell_row not in (None, row.cell_row)
-        or item.cell_col not in (None, row.cell_col)
+def _read_place(row: TargetSentence) -> _Place:
+    return _Place(row.target_doc_id, row.slot_key, row.wi_step, row.wi_part, row.cell_row, row.cell_col, row.parent_target_id)
+
+
+def _get_saved_place(plan: _Plan) -> _Place:
+    """기존 새 문장의 저장 뒤 자리 — 입구 2 새 문장은 자리가 잠겨 있어 지금 자리다."""
+    if plan.origin == ORIGIN_NEW_DOC:
+        return _read_place(plan.row)
+    item = plan.item
+    parent_id = plan.parent.row.id if plan.parent is not None and plan.parent.row is not None else None
+    return _Place(plan.doc.id, item.slot_key, item.wi_step, item.wi_part, plan.cell_row, plan.cell_col, parent_id)
+
+
+def _is_sent_at(item: TargetIn, place: _Place) -> bool:
+    """보낸 자리가 place인가 — 비운 칸은 어느 자리와도 맞는다. 칸 키·단계·부분은 함께 비우거나 함께 맞아야 한다."""
+    return (
+        item.target_doc_id in (None, place.doc_id)
+        and (item.slot_key, item.wi_step, item.wi_part) in ((None, None, None), place[1:4])
+        and item.cell_row in (None, place.cell_row)
+        and item.cell_col in (None, place.cell_col)
     )
-    if is_changed:
-        _reject("translation_locked", keys=[item.key])
+
+
+def _settle_translation_place(plan: _Plan, by_row_id: dict[int, _Plan], state: _State) -> None:
+    """번역의 저장 뒤 자리를 정한다 — 출처가 있으면 출처의 저장 뒤 자리다(스펙 §7.9). 사람은 글만 고치고, 행에 쓰는 것은 sweep_translations다.
+
+    보내는 자리는 비었거나 지금 자리이거나 출처의 저장 뒤 자리여야 한다. 표를 옮기는 저장이 칸 번역을 묶음째 되보내면 셋 다 나온다.
+    칸 부모 검사가 끝자리를 보도록 _link_cell_target보다 먼저 돈다.
+    """
+    row = plan.row
+    places = [_read_place(row)]
+    source = state.translation_sources.get(row.id)
+    if source is not None:
+        source_plan = by_row_id.get(source.id)
+        places.append(_get_saved_place(source_plan) if source_plan is not None else _read_place(source))
+    if plan.item.source_unit_ids or not any(_is_sent_at(plan.item, place) for place in places):
+        _reject("translation_locked", keys=[plan.item.key])
+    plan.doc, plan.cell_row, plan.cell_col = state.docs[places[-1].doc_id], places[-1].cell_row, places[-1].cell_col
 
 
 def _check_source_kinds(item: TargetIn, state: _State) -> None:
@@ -569,9 +626,7 @@ def _plan_target(item: TargetIn, state: _State) -> _Plan:
         _reject("unknown_target_doc", keys=keys)
     if row is not None and origin == ORIGIN_NEW_DOC:
         _check_locked(item, row)
-    elif row is not None and origin == ORIGIN_TRANSLATION:
-        _check_translation_locked(item, row)
-    else:
+    elif origin != ORIGIN_TRANSLATION:  # 번역의 자리는 출처를 봐야 해서 모든 계획이 선 뒤에 본다(_settle_translation_place)
         if doc.entrance == "match":
             _reject("match_doc_new_target", keys=keys)
         if not item.source_unit_ids:
@@ -753,13 +808,28 @@ async def _load_next_orders(session: AsyncSession, plans: list[_Plan]) -> dict[i
     return {doc_id: current.get(doc_id, -1) + 1 for doc_id in doc_ids}
 
 
-def _is_source_changed(plan: _Plan) -> bool:
-    """이 저장이 기존 새 문장의 글이나 자리를 바꾸는가 — 번역은 그 글·자리를 옮긴 것이다. AI 글을 그대로 확정하는 것은 바뀐 것이 아니다."""
-    row = plan.row
-    if row is None or plan.origin == ORIGIN_TRANSLATION:
+def _is_text_changed(plan: _Plan) -> bool:
+    """이 저장이 지금 글을 바꾸는가 — AI 글을 그대로 확정하는 것은 바뀐 것이 아니다. 쓰기 전에 견준다."""
+    return plan.text != (plan.row.confirmed_text or plan.row.ai_text)
+
+
+def _is_source_changed(plan: _Plan, state: _State) -> bool:
+    """이 저장이 기존 새 문장의 글·자리·출처 단위를 바꾸는가 — 번역은 그것을 옮긴 것이라 다시 봐야 한다. 쓰기 전에 견준다."""
+    if plan.row is None or plan.origin == ORIGIN_TRANSLATION:
         return False
-    before = (row.target_doc_id, row.slot_key, row.wi_step, row.wi_part, row.confirmed_text or row.ai_text)
-    return before != (plan.doc.id, plan.item.slot_key, plan.item.wi_step, plan.item.wi_part, plan.text)
+    return (
+        _is_text_changed(plan)
+        or _get_saved_place(plan) != _read_place(plan.row)
+        or set(plan.sources) != state.sources[plan.row.id]
+    )
+
+
+def _is_echoed(plan: _Plan, changed: set[int], state: _State) -> bool:
+    """출처가 바뀌었는데 글을 고치지 않은 번역인가 — 표 저장은 닫힘 때문에 칸 번역을 늘 담으므로 되보냄은 사람이 본 것이 아니다."""
+    if plan.origin != ORIGIN_TRANSLATION or _is_text_changed(plan):
+        return False
+    source = state.translation_sources.get(plan.row.id)
+    return source is not None and source.id in changed
 
 
 def _list_check_texts(plan: _Plan, state: _State) -> list[str]:
@@ -816,7 +886,11 @@ async def _write_group(
     """검사를 모두 통과한 묶음을 쓴다 — 지울 새 문장, 새 문장(표 먼저, 칸은 부모 id를 안 뒤), 출처, 판단, 글·자리가 바뀐 새 문장의 번역, 기록. 쓴 새 문장 id를 돌려준다."""
     stamp = now()
     hold_reason = payload.hold_reason.strip() if payload.action == "hold" else ""
-    changed = state.removed | {plan.row.id for plan in plans if _is_source_changed(plan)}  # 쓰기 전 값과 견준다
+    changed = state.removed | {plan.row.id for plan in plans if _is_source_changed(plan, state)}
+    echoed = {plan.row.id for plan in plans if _is_echoed(plan, changed, state)}
+    edited = {plan.row.id for plan in plans if plan.origin == ORIGIN_TRANSLATION and _is_text_changed(plan)}
+    # 되보낸 번역은 쓰지 않는다 — 쓰면 AI 번역이 확정이 되고 채택이 남는다. 정리는 아래 sweep_translations가 한다
+    plans = [plan for plan in plans if plan.row is None or plan.row.id not in echoed]
     removed = [state.existing[target_id] for target_id in payload.removed_target_ids]
     # 지운 번역은 사람이 버린 제안이다 — 지우면 제안을 가리키는 칸이 사라지므로 먼저 남긴다
     await reject_suggestions(
@@ -869,7 +943,7 @@ async def _write_group(
     await record_group_adoption(
         session, plans=plans, payload=payload, decisions=state.decisions, actor=actor, stamp=stamp
     )
-    await sweep_translations(session, bundle_id, changed, exempt=state.existing.keys())
+    swept = await sweep_translations(session, bundle_id, changed, exempt=edited)
     unit_ids = [item.unit_id for item in payload.units]
     record_event(
         session, bundle_id=bundle_id, actor=actor, action=f"group.{payload.action}",
@@ -877,7 +951,7 @@ async def _write_group(
         target_ids=unit_ids or [*(target.id for target in written), *payload.removed_target_ids], reason=hold_reason,
     )
     await session.flush()
-    return [target.id for target in written]
+    return [*(target.id for target in written), *(echoed - swept)]
 
 
 # --- 진입점 ---
@@ -897,6 +971,10 @@ async def save_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveIn
     _check_dispositions(payload, state)
     plans = [_plan_target(item, state) for item in payload.targets]
     by_key = {plan.item.key: plan for plan in plans}
+    by_row_id = {plan.row.id: plan for plan in plans if plan.row is not None}
+    for plan in plans:
+        if plan.origin == ORIGIN_TRANSLATION:
+            _settle_translation_place(plan, by_row_id, state)
     for plan in plans:
         _link_cell_target(plan, by_key, state)
     reasons = {item.unit_id: item.reason.strip() for item in payload.units}
@@ -907,7 +985,6 @@ async def save_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveIn
     )
     for plan in plans:
         plan.change_type = _decide_change_type(plan, spread, reasons, state)
-    by_row_id = {plan.row.id: plan for plan in plans if plan.row is not None}
     for plan in plans:
         _check_as_is_table(plan, by_row_id, state)
     _check_as_is_table_cells(plans, by_row_id, state)
