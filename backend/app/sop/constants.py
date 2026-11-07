@@ -29,3 +29,11 @@ EQUIPMENT_SLOT_KEYS = ("procedures.electronic_record_control", "procedures.troub
 SEMANTIC_CHECK_KEYS = ("numbers", "conditions", "tables", "figures")
 SYSTEM_HOLD_RELATED_CHANGED = "system:related_unit_changed"  # 화면은 "관련 단위가 바뀜"으로 보인다
 MAX_PAIR_SIDE = 3  # 한/영 짝 한쪽 최대 단위 수(작은 다대다)
+
+# --- AI 층(계획 2) ---
+AI_JOB_KINDS = ("classify", "translate", "match_plan", "match", "pair", "split")
+AI_JOB_STATUSES = ("queued", "running", "done", "failed", "stale", "cancelled")
+AI_SUGGESTION_RESULTS = ("applied", "stale", "invalid")  # 적용됨 | 낡아서 안 씀 | 응답이 규칙 위반
+AI_ADOPTIONS = ("as_is", "edited", "rejected")  # 사람의 결과: 그대로 채택 | 고쳐서 채택 | 버림
+GUIDELINE_KEYS = ("rules", "prompt.classify", "prompt.translate", "prompt.match", "prompt.split")
+SYSTEM_HOLD_AI_INVALID = "system:ai_invalid_response"  # AI 응답이 규칙을 어겨 보류된 행 — 화면은 "AI 응답 무효"로 보인다
