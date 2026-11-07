@@ -28,3 +28,6 @@ MIN_SPLIT_CHARS = 60  # 이보다 짧은 문장은 복합 문장 나누기를 �
 NEIGHBOR_UNITS = 2  # 맥락으로 앞뒤에 함께 보내는 단위 수(한쪽 기준)
 MAX_REWRITE_SENTENCES = 5  # 단위 하나를 고쳐 쓸 때 언어별 최대 문장 수
 MAX_AI_TEXT_CHARS = 20000  # AI 응답 글자 한 칸의 상한 — 사람이 저장하는 TargetIn.text 상한과 같아야 그대로 확정할 수 있다
+MAX_TABLE_CONTEXT_ROWS = 200  # 표 맥락(Markdown)에 싣는 앞쪽 행 수 — 넘는 행은 버린다
+MAX_TABLE_CONTEXT_COLS = 50  # 표 맥락에 싣는 앞쪽 열 수 — 넘는 열은 버린다
+MAX_TABLE_CONTEXT_CHARS = 20000  # 표 맥락 Markdown의 글자 상한 — 넘으면 뒤를 잘라 표 하나가 프롬프트를 채우지 않게 한다

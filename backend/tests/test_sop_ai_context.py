@@ -12,7 +12,7 @@ from app.db import engine
 from app.sop import groups
 from app.sop.ai import context
 from app.sop.ai.context import UnitContext, load_unit_context, render_table_markdown
-from app.sop.models import Unit
+from app.sop.models import SourceBlock, Unit
 from tests.access_helpers import run_in_session
 from tests.docx_factory import build_docx, p, tbl
 from tests.sop_helpers import create_bundle, find_unit, get_view, upload
@@ -191,3 +191,95 @@ def test_context_reads_ids_in_chunks(view: dict, monkeypatch: pytest.MonkeyPatch
         assert _load(all_ids) == expected
 
     assert len(chunked) > 5  # 조각마다 질의가 나뉜다 — 한 문장에 몰아 싣지 않는다
+
+
+# --- 표 맥락 크기 ---
+
+
+def _get_table_unit(view: dict) -> dict:
+    return next(unit for unit in view["units"] if unit["kind"] == "table")
+
+
+def _move_cells(view: dict, positions: dict[str, tuple[int, int]]) -> None:
+    """칸 글자 → (행, 열)로 칸 블록의 번호를 바꾼다 — 조작한 DOCX가 싣는 큰·성긴 번호를 만든다."""
+    block_ids = {block["text"]: block["id"] for block in view["blocks"] if block["kind"] == "table_cell"}
+
+    async def _move(session: AsyncSession) -> None:
+        for text, (row, col) in positions.items():
+            await session.execute(
+                update(SourceBlock).where(SourceBlock.id == block_ids[text]).values(row_index=row, col_index=col)
+            )
+        await session.commit()
+
+    run_in_session(_move)
+
+
+def test_table_context_compacts_sparse_indexes(view: dict) -> None:
+    _move_cells(view, {"항목": (0, 0), "값": (1, 1_000), "a|b": (2, 1_000_000), "c": (3, 2_000_000_000)})
+    table = _get_table_unit(view)
+
+    markdown = _load([table["id"]])[table["id"]].table_markdown
+
+    # 원문의 행·열 번호는 격자 크기에 쓰이지 않는다 — 칸이 실제로 있는 행·열만 남아 4×4다
+    assert markdown == render_table_markdown(
+        [["항목", "", "", ""], ["", "값", "", ""], ["", "", "a|b", ""], ["", "", "", "c"]]
+    )
+
+
+def test_table_context_keeps_the_leading_rows_and_columns_past_the_caps(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(context, "MAX_TABLE_CONTEXT_ROWS", 3)
+    monkeypatch.setattr(context, "MAX_TABLE_CONTEXT_COLS", 2)
+    rows = [[f"r{row}c{col}" for col in range(4)] for row in range(5)]
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    table_view = _upload_view(client, bundle_id, tbl(rows), "SYNTHETIC_CTX-CAP.docx")
+    table = _get_table_unit(table_view)
+
+    markdown = _load([table["id"]])[table["id"]].table_markdown
+
+    assert markdown == render_table_markdown([row[:2] for row in rows[:3]])
+
+
+def test_table_context_diagonal_sparse_table_stays_within_the_caps(
+    view: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(context, "MAX_TABLE_CONTEXT_ROWS", 2)
+    monkeypatch.setattr(context, "MAX_TABLE_CONTEXT_COLS", 2)
+    # 칸마다 다른 행·열이라 압축해도 4×4 — 상한이 없으면 칸 네 개가 열여섯 칸 표가 된다
+    _move_cells(view, {"항목": (0, 10), "값": (1, 20), "a|b": (2, 30), "c": (3, 40)})
+    table = _get_table_unit(view)
+
+    markdown = _load([table["id"]])[table["id"]].table_markdown
+
+    assert markdown == render_table_markdown([["항목", ""], ["", "값"]])
+
+
+def test_table_context_is_cut_at_the_char_cap(view: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(context, "MAX_TABLE_CONTEXT_CHARS", 30)
+    table = _get_table_unit(view)
+
+    markdown = _load([table["id"]])[table["id"]].table_markdown
+
+    assert len(TABLE_MARKDOWN) > 30
+    assert markdown == TABLE_MARKDOWN[:30]
+
+
+def test_table_is_rendered_once_for_all_its_units(view: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    table = _get_table_unit(view)
+    cells = [unit["id"] for unit in view["units"] if unit["kind"] == "cell_sentence"][:2]
+
+    async def _make_rows(session: AsyncSession) -> None:
+        await session.execute(update(Unit).where(Unit.id.in_(cells)).values(kind="table_row"))
+        await session.commit()
+
+    run_in_session(_make_rows)
+    render_calls: list[int] = []
+    real_render = context.render_table_markdown
+    monkeypatch.setattr(context, "render_table_markdown", lambda grid: render_calls.append(1) or real_render(grid))
+
+    contexts = _load([unit["id"] for unit in view["units"]])
+
+    # 표 단위 하나와 표 행 단위 둘이 같은 표를 쓰므로 표 하나를 한 번만 그리고, 표가 아닌 단위는 그리지 않는다
+    assert len(render_calls) == 1
+    assert {contexts[unit_id].table_markdown for unit_id in [table["id"], *cells]} == {TABLE_MARKDOWN}
