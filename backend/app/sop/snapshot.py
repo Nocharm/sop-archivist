@@ -128,6 +128,7 @@ class TargetInfo:
     change_type: str | None
     origin: str
     new_unit_id: int | None
+    translation_source_unit_id: int | None  # 은퇴한 단위면 스냅숏 단위에 없다 — 번역은 보류로 남는다
     parent_target_id: int | None
     cell_row: int | None
     cell_col: int | None
@@ -321,7 +322,7 @@ async def _load_targets(
             lang=target.lang, kind=target.kind,
             confirmed_text=target.confirmed_text if include_text else "", ai_text=target.ai_text if include_text else "",
             change_type=target.change_type, origin=target.origin, new_unit_id=target.new_unit_id,
-            parent_target_id=target.parent_target_id, cell_row=target.cell_row, cell_col=target.cell_col,
+            translation_source_unit_id=target.translation_source_unit_id, parent_target_id=target.parent_target_id, cell_row=target.cell_row, cell_col=target.cell_col,
             grid=target.grid, status=target.status, hold_reason=target.hold_reason, warnings=tuple(target.warnings),
             confirmed_by=target.confirmed_by, confirmed_at=target.confirmed_at,
             source_unit_ids=tuple(sources.get(target.id, ())),
