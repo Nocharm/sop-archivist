@@ -38,7 +38,7 @@ npm run dev
 
 ### SOP 데모 묶음 (로컬 전용, 운영 DB 금지)
 
-화면이 아직 없으므로 데모 데이터는 API로 본다. 합성 SOP 묶음 3개(쪼개기 직후·분류 절반·검토 대기)를 앱 API 경로 그대로 만든다. 작성자는 `qa.member`, 검토자는 `qa.lead`(dev 사용자)다. 같은 제목의 묶음이 이미 있으면 건너뛰므로 다시 돌려도 된다. `AUTH_MODE=dev`가 아니거나 HR 직원이 든 postgres면 아무것도 만들지 않고 멈춘다. backend 의존성은 `requirements-dev.txt`(합성 DOCX 생성용 `python-docx` 포함)로 설치해야 한다.
+화면이 아직 없으므로 데모 데이터는 API로 본다. 합성 SOP 묶음 4개(쪼개기 직후·분류 절반·검토 대기·AI 제안)를 앱 API 경로 그대로 만든다. AI 제안 묶음은 프로세스 안의 가짜 AI가 합성 정답으로 답한 제안이고 실제 모델을 부르지 않는다. 작성자는 `qa.member`, 검토자는 `qa.lead`(dev 사용자)다. 같은 제목의 묶음이 이미 있으면 건너뛰므로 다시 돌려도 된다. `AUTH_MODE=dev`가 아니거나 HR 직원이 든 postgres면 아무것도 만들지 않고 멈춘다. backend 의존성은 `requirements-dev.txt`(합성 DOCX 생성용 `python-docx` 포함)로 설치해야 한다.
 
 ```bash
 # === bash (macOS/Linux) === (backend/ 에서)

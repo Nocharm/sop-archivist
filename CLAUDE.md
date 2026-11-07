@@ -19,8 +19,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # === bash (macOS/Linux) ===
 # backend (backend/ 에서, 로컬 네이티브) — 배포 런타임과 같은 Python 3.11로 venv를 만든다
 python3.11 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/python -m scripts.reset_db      # 로컬 데모 DB 초기화(backend/dev.db): Alembic base→head + dev 디렉터리·데모 권한. 서버 실행 금지
-.venv/bin/python -m scripts.seed_sop_demo # 로컬 전용(운영 DB 금지): 합성 SOP 묶음 3개(쪼개기 직후·분류 절반·검토 대기)를 앱 API로 만든다(작성자 qa.member, 검토자 qa.lead). 같은 제목이 있으면 건너뛰어 다시 돌려도 된다. AUTH_MODE=dev에서만 돈다(dev 의존성 python-docx 필요, DEV_ENFORCE_PERMISSIONS=true면 bundle.create가 없어 403)
+.venv/bin/python -m scripts.reset_db      # 로컬 데모 DB 초기화(backend/dev.db): Alembic base→head + 지침·dev 디렉터리·데모 권한. 서버 실행 금지
+.venv/bin/python -m scripts.seed_sop_demo # 로컬 전용(운영 DB 금지): 합성 SOP 묶음 4개(쪼개기 직후·분류 절반·검토 대기·AI 제안)를 앱 API로 만든다(작성자 qa.member, 검토자 qa.lead). AI 제안 단계는 프로세스 안의 가짜 전송으로 돌아 AI 설정이 필요 없고 실제 모델을 부르지 않는다. 같은 제목이 있으면 건너뛰어 다시 돌려도 된다. AUTH_MODE=dev에서만 돈다(dev 의존성 python-docx 필요, DEV_ENFORCE_PERMISSIONS=true면 bundle.create가 없어 403)
 AUTH_MODE=dev DEV_ENFORCE_PERMISSIONS=true APP_SYSADMINS=dev.admin .venv/bin/uvicorn app.main:app --reload --port 8777   # 개발 서버
 .venv/bin/python -m pytest tests/ -q      # 테스트 — conftest가 AUTH_MODE·AI·HR 등을 baseline으로 고정해 backend/.env가 있어도 안전
 .venv/bin/ruff check app/ tests/          # 린트(target py311)
@@ -37,9 +37,10 @@ npx vitest run                            # 단위 테스트 — 커밋 전 필�
 npm i --no-save playwright-core           # package.json 불변
 BASE_URL=http://localhost:3777 node scripts/pw-smoke-baseline.mjs   # 산출물은 저장소 루트 .shots/(gitignore). Chrome 경로는 CHROME_PATH
 
-# 가짜 AI — 고정 응답, 배선 확인용 (저장소 루트에서, 포트 9999)
+# 가짜 AI — 고정 응답, 배선 확인용 (저장소 루트에서, 포트 9999). 합성 응답이라 프롬프트 품질·정확도의 근거가 아니다
 node frontend/scripts/fake-ai-server.mjs
-#   backend를 AI_ENABLED=true AI_BASE_URL=http://localhost:9999/v1 AI_MODEL=fake AI_API_TOKEN=fake 로 띄운다.
+#   backend를 AI_ENABLED=true AI_BASE_URL=http://localhost:9999/v1 AI_MODEL=fake AI_API_TOKEN=fake AI_ENDPOINTS="" 로 띄운다.
+#   임베딩까지 쓰면 EMBED_ENABLED=true EMBED_BASE_URL=http://localhost:9999/v1 EMBED_API_TOKEN=fake EMBED_MODEL=fake 를 더한다(벡터가 글자 해시라 입구 2 짝은 안 생겨 신규로 간다).
 #   토큰이 비면 ai_client가 "Bearer " 헤더를 보내 호출이 실패하므로 가짜 서버에도 아무 값이나 넣는다.
 # dev 인증 = localStorage `sopa.devUser` / 헤더 `X-Dev-User`. 권한 차등은 DEV_ENFORCE_PERMISSIONS=true로 본다(dev.admin이 sysadmin).
 ```
@@ -67,7 +68,8 @@ $env:BASE_URL="http://localhost:3777"; $env:CHROME_PATH="C:\Program Files\Google
 
 # 가짜 AI (저장소 루트에서)
 node frontend\scripts\fake-ai-server.mjs
-# backend: $env:AI_ENABLED="true"; $env:AI_BASE_URL="http://localhost:9999/v1"; $env:AI_MODEL="fake"; $env:AI_API_TOKEN="fake"
+# backend: $env:AI_ENABLED="true"; $env:AI_BASE_URL="http://localhost:9999/v1"; $env:AI_MODEL="fake"; $env:AI_API_TOKEN="fake"; $env:AI_ENDPOINTS=""
+# 임베딩까지: $env:EMBED_ENABLED="true"; $env:EMBED_BASE_URL="http://localhost:9999/v1"; $env:EMBED_API_TOKEN="fake"; $env:EMBED_MODEL="fake"
 ```
 
 ```bash
@@ -131,7 +133,7 @@ docker-compose.yml
   - **입력 글자의 NUL·서로게이트 `schemas.NO_NUL`/`NoNulStr`**: Postgres text는 NUL을 담지 못하고 sqlite는 받아 줘 테스트에 안 보인다. DB까지 가는 새 글자 입력 칸은 이 타입을 쓴다(`StringConstraints`가 있으면 그 뒤에 `NO_NUL`, 앞에 두면 길이를 공백을 걷기 전에 잰다). 선택 칸은 `Field(max_length)`가 아니라 `Annotated[str, StringConstraints(max_length=…), NO_NUL] | None`으로 쓴다(`| None`에 `Field` 상한을 걸면 오류 종류가 `string_too_long`이 아니라 `too_long`이다). 저장 못 하는 글자(NUL·U+D800–DFFF)의 판정은 `segment.has_unstorable_char` 하나이고, 파일 이름은 `ingest_upload`가 422 `invalid_file_name`으로 막으며, 추출·AI 응답 글자는 `segment.replace_unstorable_chars`가 같은 길이의 대체 문자로 바꾼다.
   - **업무 규칙 거절 `errors.raise_rule(status, code, **context)`**: `detail={"code", ...문맥}` 모양 하나(입력 형식 오류만 422 `{"detail": [{type, loc, msg}]}` — `main.handle_validation_error`가 `input`·`ctx`를 빼 요청 원문이 응답·로그로 되돌아가지 않게 한다). revision 충돌은 `check_revision`이 409 `revision_conflict`와 `conflicts[].current_revision`으로 낸다. `app/sop`·`routers/sop_*`에서 `HTTPException`을 직접 던지지 않는다.
   - **결과물 `outputs.py`**: A·B·C·요약 숫자는 스냅숏(`snapshot.py`)만 받는 순수 함수이고 보낸 곳·칸 순서·신규 판정은 한 벌이다. Excel(`excel_export.py`)은 이 결과를 옮겨 쓰기만 하고, 검토 조건(`review.py`)은 `outputs.build_review_facts`의 단위 재료를 쓴다 — 같은 규칙을 다시 계산하지 않는다. Excel의 모든 글 칸은 `write_text_cell` 하나로 쓴다(수식 방지).
-- **SOP 데모·E2E는 한 벌의 몰이를 쓴다**: `backend/scripts/sop_demo_driver.py`(API로 업로드→편집→배정→검토까지 모는 쪽)를 E2E 테스트(`tests/test_sop_e2e.py`)와 데모 시드(`scripts/seed_sop_demo.py`)가 함께 쓰고, 정답은 합성 생성기 `scripts/synthetic_sop.py`가 만드는 `SYNTHETIC_expected.json`(모든 합성 파일 이름은 `SYNTHETIC_`로 시작)이다. SOP API 모양이나 규칙을 바꾸면 드라이버·생성기 정답과 두 소비자를 함께 확인한다. 시드 명령은 위 Commands(로컬 전용, 운영 DB 금지).
+- **SOP 데모·E2E는 한 벌의 몰이를 쓴다**: `backend/scripts/sop_demo_driver.py`(API로 업로드→편집→배정→검토까지 모는 쪽)를 E2E 테스트(`tests/test_sop_e2e.py`)와 데모 시드(`scripts/seed_sop_demo.py`)가 함께 쓰고, 정답은 합성 생성기 `scripts/synthetic_sop.py`가 만드는 `SYNTHETIC_expected.json`(모든 합성 파일 이름은 `SYNTHETIC_`로 시작)이다. SOP API 모양이나 규칙을 바꾸면 드라이버·생성기 정답과 두 소비자를 함께 확인한다. AI 경로는 `tests/fake_ai.py`의 `SyntheticAnswers`가 같은 정답으로 답한다(단순한 답은 정답, 합침·중복 배정·표·외부 이동은 무효 응답으로 사람 경로) — 합성 검증이고 실제 모델 연결이 아니다. 시드 명령은 위 Commands(로컬 전용, 운영 DB 금지).
 
 ## Operations / Deployment
 

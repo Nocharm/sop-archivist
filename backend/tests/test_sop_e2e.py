@@ -18,9 +18,15 @@ from app.sop.constants import COVER_KINDS
 from app.sop.coverage import find_coverage_problems
 from scripts.sop_demo_driver import LANGS, TEXT_KINDS, SyntheticDriver, find_unit_by_text, iter_c_items
 from scripts.synthetic_sop import FIXED_ZIP_TIME, SyntheticBundle, build_synthetic_bundle
+from tests.ai_fixtures import (
+    clean_ai_jobs,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
+    clean_embedding_cache,  # noqa: F401
+    run_jobs,
+)
+from tests.fake_ai import SyntheticAnswers, install_fake_ai
 from tests.sop_helpers import AUTHOR, REVIEWER, save_group
 
-pytestmark = pytest.mark.usefixtures("clean_sop")
+pytestmark = pytest.mark.usefixtures("clean_sop", "clean_ai_jobs", "clean_embedding_cache")
 
 SECOND_AUTHOR = {"X-Dev-User": "ops.member"}
 MISSING_TEXT_WARNINGS = ("missing_text", "missing_text_truncated")
@@ -226,3 +232,58 @@ def test_two_authors_get_identical_output_format(client: TestClient, synthetic: 
 
     first, second = outputs
     assert first == second
+
+
+def test_end_to_end_with_fake_ai(
+    client: TestClient, synthetic: SyntheticBundle, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = SyntheticDriver(client, synthetic, AUTHOR)
+    run.start()
+    answers = SyntheticAnswers(synthetic.expected)
+    install_fake_ai(monkeypatch, chat=answers.chat, embed=answers.embed)
+
+    run.request_classification()
+    run_jobs()
+
+    assert run.get("/ai/status")["jobs"]["failed"] == 0
+    assert run.get("/ai/suggestions", result="invalid")["total"] > 0  # 합침·중복 배정·표는 사람 경로로 간다
+    confirmed = run.confirm_suggestions()
+    assert confirmed > 0
+    run.settle_remaining()  # 보류를 지우고 정답대로 저장, 입구 2 포함
+    run.put_semantic_checks()
+    status_code, body = run.request_review()
+    assert status_code == 200, body
+    for lang in LANGS:
+        output_c = run.get("/outputs/c", lang=lang)
+        assert _list_c_items(output_c) == _list_expected_c_items(synthetic.expected, lang)
+    adoption = run.get("/ai/status")["adoption"]
+    assert adoption["classify"]["as_is"] > 0 and adoption["classify"]["pending"] == 0
+    assert adoption["match"]["as_is"] > 0 and adoption["match"]["pending"] == 0
+    # 대기 0은 사람이 받은 제안에서 나온다 — 받은 수만큼 그대로 채택이다
+    assert adoption["classify"]["as_is"] + adoption["match"]["as_is"] == confirmed
+
+
+def test_ai_off_still_finishes_the_human_path(client: TestClient, synthetic: SyntheticBundle) -> None:
+    assert settings.ai_enabled is False
+    run = SyntheticDriver(client, synthetic, AUTHOR)
+    run.start()
+    document_id = run.uploads["OLD-1"]["id"]
+    ai_requests = {
+        "/ai/classify": {"document_id": document_id},
+        "/ai/translate": {"direction": "ko_to_en", "document_id": document_id},
+        "/ai/match": {},
+        "/ai/split": {"document_id": document_id},
+    }
+
+    for path, request in ai_requests.items():
+        response = client.post(f"/api/bundles/{run.bundle_id}{path}", json=request, headers=AUTHOR)
+        assert (response.status_code, response.json()["detail"]["code"]) == (503, "ai_disabled"), path
+
+    run.save_answers(skip_omitted=False)
+    run.put_semantic_checks()
+    status_code, body = run.request_review()
+    assert status_code == 200, body
+    assert body["status"] == "in_review"
+    for lang in LANGS:
+        output_c = run.get("/outputs/c", lang=lang)
+        assert _list_c_items(output_c) == _list_expected_c_items(synthetic.expected, lang)

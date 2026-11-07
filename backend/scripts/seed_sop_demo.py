@@ -1,6 +1,7 @@
-"""로컬 데모 시드 — 합성 SOP 묶음 세 개를 서로 다른 단계로 앱 API에 만든다. 로컬 개발 전용, 운영 실행 금지.
+"""로컬 데모 시드 — 합성 SOP 묶음 네 개를 서로 다른 단계로 앱 API에 만든다. 로컬 개발 전용, 운영 실행 금지.
 
-단계: 1 쪼개기 직후(업로드·언어 배치·편집까지), 2 분류 절반(입구 1 답의 절반 저장), 3 검토 대기(전부 저장 후 검토 요청).
+단계: 1 쪼개기 직후(업로드·언어 배치·편집까지), 2 분류 절반(입구 1 답의 절반 저장), 3 검토 대기(전부 저장 후 검토 요청),
+4 AI 제안(가짜 AI의 분류·입구 2 짝 제안까지, 확정하지 않는다 — 합성 응답이고 실제 모델이 아니다).
 작성자 qa.member, 검토자 qa.lead. 앱 API를 TestClient로 그대로 불러(X-Dev-User) 화면이 쓰는 경로와 로직을 두 벌 두지 않는다.
 이미 같은 제목 묶음이 있으면 그 묶음은 건너뛰어 여러 번 돌려도 같은 결과다. 끝에 묶음별 상태·진행 숫자만 찍고 원문 글자는 찍지 않는다.
 
@@ -26,12 +27,14 @@ from fastapi.testclient import TestClient
 from app.db import engine
 from app.main import app
 from app.settings import settings
+from app.sop.ai.runner import run_jobs_until_idle
 from scripts.reset_db import count_hr_rows, should_refuse_reset
 from scripts.sop_demo_driver import LANGS, SyntheticDriver
 from scripts.synthetic_sop import SyntheticBundle, build_synthetic_bundle
+from tests.fake_ai import SyntheticAnswers, fake_ai_session
 from tests.sop_helpers import AUTHOR
 
-PROGRESS_KEYS = ("total", "confirmed", "on_hold", "unassigned")  # 출력하는 진행 숫자
+PROGRESS_KEYS = ("total", "confirmed", "ai_suggested", "on_hold", "unassigned")  # 출력하는 진행 숫자
 
 
 @dataclass(frozen=True)
@@ -55,10 +58,22 @@ def _await_review(driver: SyntheticDriver) -> None:
     assert status_code == 200, body
 
 
+def _suggest_with_ai(driver: SyntheticDriver) -> None:
+    """가짜 AI의 제안까지만 — 프런트 분류 화면용이라 확정하지 않는다. 작업은 요청과 같은 앱 루프에서 돌린다(DB 연결이 그 루프에 묶여 있다)."""
+    answers = SyntheticAnswers(driver.expected)
+    with fake_ai_session() as fake:
+        fake.chat, fake.embed = answers.chat, answers.embed
+        driver.request_classification()
+        driver.client.portal.call(run_jobs_until_idle)
+    status = driver.get("/ai/status")
+    assert status["jobs"]["failed"] == 0, status
+
+
 DEMO_STAGES = (
     DemoStage("SYNTHETIC 1 쪼개기 직후", _stop_after_split),
     DemoStage("SYNTHETIC 2 분류 절반", _classify_half),
     DemoStage("SYNTHETIC 3 검토 대기", _await_review),
+    DemoStage("SYNTHETIC 4 AI 제안", _suggest_with_ai),
 )
 
 
@@ -101,7 +116,9 @@ def _print_summary(client: TestClient, outcomes: dict[str, str]) -> None:
 
 
 def _seed_demo() -> None:
-    # TestClient를 with로 열어 앱 lifespan(마이그레이션·dev 디렉터리 시드)을 돌리고 요청을 한 이벤트 루프에서 처리한다
+    # 로컬 .env가 AI를 켜 두어도 워커를 띄우지 않는다 — run_jobs_until_idle과 작업을 다투고, 가짜 전송이 풀린 뒤 남은 작업이 실제 주소로 나간다
+    settings.ai_enabled = settings.embed_enabled = False
+    # TestClient를 with로 열어 앱 lifespan(마이그레이션·지침·dev 디렉터리 시드)을 돌리고 요청을 한 이벤트 루프에서 처리한다
     with TestClient(app) as client:
         existing = {bundle["title"] for bundle in _list_bundles(client)}
         outcomes = {stage.title: "skipped" for stage in DEMO_STAGES if stage.title in existing}
