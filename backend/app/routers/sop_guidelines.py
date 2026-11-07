@@ -5,7 +5,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Path
 from pydantic import BaseModel, ConfigDict, StringConstraints
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +24,7 @@ from app.sop.constants import GUIDELINE_KEYS
 from app.sop.errors import raise_rule
 from app.sop.models import GuidelineVersion
 from app.sop.schemas import NO_NUL
+from app.sop.tobe import MAX_DB_INT
 
 router = APIRouter(prefix="/api/admin/guidelines", tags=["sop-guidelines"])
 
@@ -32,6 +33,8 @@ _require_guideline_manage = require_permission("guideline.manage")
 
 MAX_CONTENT_CHARS = 200_000
 MAX_NOTE_CHARS = 2000
+# 버전 번호는 DB INTEGER다 — 상한 밖 값이 DB까지 가면 sqlite는 404인데 Postgres는 비교 중 500이 된다
+VersionPath = Annotated[int, Path(ge=1, le=MAX_DB_INT)]
 
 # 공백만인 내용은 막고 앞뒤 공백은 걷는다. NO_NUL은 StringConstraints 뒤에 둔다 — 앞에 두면 길이를 공백을 걷기 전에 잰다
 GuidelineContent = Annotated[
@@ -100,7 +103,7 @@ async def list_guidelines(
 @router.get("/{key}/versions/{version}", response_model=GuidelineVersionOut)
 async def get_guideline_version(
     key: str,
-    version: int,
+    version: VersionPath,
     _login_id: str = Depends(_require_guideline_manage),
     session: AsyncSession = Depends(get_session),
 ) -> GuidelineVersion:
@@ -132,7 +135,7 @@ async def create_version(
 @router.post("/{key}/versions/{version}/activate", response_model=GuidelineVersionOut)
 async def activate_version(
     key: str,
-    version: int,
+    version: VersionPath,
     login_id: str = Depends(_require_guideline_manage),
     session: AsyncSession = Depends(get_session),
 ) -> GuidelineVersion:
