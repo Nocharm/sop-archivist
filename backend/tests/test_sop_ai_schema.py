@@ -296,9 +296,15 @@ def test_check_constraint_names_and_older_checks_survive(engine: Engine) -> None
 def test_ai_tables_are_indexed_for_their_lookups(engine: Engine) -> None:
     # 작업 큐는 (status, id)로 다음 작업을 고르고, CASCADE가 닿는 FK는 인덱스가 있어야 PG에서 순차 스캔하지 않는다
     expected = {
-        "ai_jobs": {"ix_ai_jobs_bundle_id", "ix_ai_jobs_status_id"},
+        "ai_jobs": {"ix_ai_jobs_bundle_id", "ix_ai_jobs_status_id", "ix_ai_jobs_document_id"},
         "ai_suggestions": {"ix_ai_suggestions_job_id", "ix_ai_suggestions_bundle_id", "ix_ai_suggestions_document_id"},
-        "target_sentences": {"ix_target_sentences_translation_source_unit_id"},
+        # 제안·문서가 지워질 때 SET NULL이 이 칸들을 찾는다 — 묶음 삭제가 제안 행마다 표 전체를 훑지 않게
+        "unit_decisions": {"ix_unit_decisions_suggestion_id"},
+        "unit_pairs": {"ix_unit_pairs_suggestion_id"},
+        "target_sentences": {
+            "ix_target_sentences_translation_source_unit_id",
+            "ix_target_sentences_suggestion_id",
+        },
     }
     inspector = inspect(engine)
     for table, names in expected.items():

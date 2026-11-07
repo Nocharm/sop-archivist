@@ -89,6 +89,7 @@ def upgrade() -> None:
     )
     with op.batch_alter_table("ai_jobs", schema=None) as batch_op:
         batch_op.create_index(batch_op.f("ix_ai_jobs_bundle_id"), ["bundle_id"], unique=False)
+        batch_op.create_index(batch_op.f("ix_ai_jobs_document_id"), ["document_id"], unique=False)
         batch_op.create_index("ix_ai_jobs_status_id", ["status", "id"], unique=False)
 
     # ai_suggestions를 판단·새 문장·짝의 suggestion_id FK보다 먼저 만든다
@@ -133,6 +134,7 @@ def upgrade() -> None:
     with op.batch_alter_table("target_sentences", schema=None) as batch_op:
         batch_op.add_column(sa.Column("translation_source_unit_id", sa.Integer(), nullable=True))
         batch_op.add_column(sa.Column("suggestion_id", sa.Integer(), nullable=True))
+        batch_op.create_index(batch_op.f("ix_target_sentences_suggestion_id"), ["suggestion_id"], unique=False)
         batch_op.create_index(
             batch_op.f("ix_target_sentences_translation_source_unit_id"), ["translation_source_unit_id"], unique=False
         )
@@ -153,6 +155,7 @@ def upgrade() -> None:
 
     with op.batch_alter_table("unit_decisions", schema=None) as batch_op:
         batch_op.add_column(sa.Column("suggestion_id", sa.Integer(), nullable=True))
+        batch_op.create_index(batch_op.f("ix_unit_decisions_suggestion_id"), ["suggestion_id"], unique=False)
         batch_op.create_foreign_key(
             batch_op.f("fk_unit_decisions_suggestion_id_ai_suggestions"),
             "ai_suggestions",
@@ -163,6 +166,7 @@ def upgrade() -> None:
 
     with op.batch_alter_table("unit_pairs", schema=None) as batch_op:
         batch_op.add_column(sa.Column("suggestion_id", sa.Integer(), nullable=True))
+        batch_op.create_index(batch_op.f("ix_unit_pairs_suggestion_id"), ["suggestion_id"], unique=False)
         batch_op.create_foreign_key(
             batch_op.f("fk_unit_pairs_suggestion_id_ai_suggestions"),
             "ai_suggestions",
@@ -176,10 +180,12 @@ def downgrade() -> None:
     """Downgrade schema."""
     with op.batch_alter_table("unit_pairs", schema=None) as batch_op:
         batch_op.drop_constraint(batch_op.f("fk_unit_pairs_suggestion_id_ai_suggestions"), type_="foreignkey")
+        batch_op.drop_index(batch_op.f("ix_unit_pairs_suggestion_id"))
         batch_op.drop_column("suggestion_id")
 
     with op.batch_alter_table("unit_decisions", schema=None) as batch_op:
         batch_op.drop_constraint(batch_op.f("fk_unit_decisions_suggestion_id_ai_suggestions"), type_="foreignkey")
+        batch_op.drop_index(batch_op.f("ix_unit_decisions_suggestion_id"))
         batch_op.drop_column("suggestion_id")
 
     with op.batch_alter_table("target_sentences", schema=None) as batch_op:
@@ -188,6 +194,7 @@ def downgrade() -> None:
         )
         batch_op.drop_constraint(batch_op.f("fk_target_sentences_suggestion_id_ai_suggestions"), type_="foreignkey")
         batch_op.drop_index(batch_op.f("ix_target_sentences_translation_source_unit_id"))
+        batch_op.drop_index(batch_op.f("ix_target_sentences_suggestion_id"))
         batch_op.drop_column("suggestion_id")
         batch_op.drop_column("translation_source_unit_id")
 
@@ -199,6 +206,7 @@ def downgrade() -> None:
     op.drop_table("ai_suggestions")
     with op.batch_alter_table("ai_jobs", schema=None) as batch_op:
         batch_op.drop_index("ix_ai_jobs_status_id")
+        batch_op.drop_index(batch_op.f("ix_ai_jobs_document_id"))
         batch_op.drop_index(batch_op.f("ix_ai_jobs_bundle_id"))
 
     op.drop_table("ai_jobs")
