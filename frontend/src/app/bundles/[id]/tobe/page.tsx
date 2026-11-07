@@ -14,28 +14,11 @@ import { buildDownloadName } from "@/lib/download-name";
 import { useI18n } from "@/lib/i18n";
 import { genId } from "@/lib/id";
 import { saveBlob } from "@/lib/save-file";
+import { SLOT_LABELS } from "@/lib/slot-labels";
 import { buildToBeInput, changeDocType, createDraft, isDraftDirty, orderDocs, removeDoc, renameDoc, type DraftDoc, type ToBeDraft } from "@/lib/tobe-draft";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 
-// SOP 칸 이름은 화면 언어와 상관없이 영어(디자인 문서 12절)
-const SLOT_LABELS: Record<(typeof SLOT_KEYS)[number], string> = {
-  purpose: "Purpose",
-  scope: "Scope",
-  definitions: "Definitions",
-  responsibilities: "Responsibilities",
-  general_requirements: "General requirements",
-  "general_requirements.safety": "Safety",
-  "general_requirements.operation": "Operation",
-  procedures: "Procedures",
-  "procedures.procedure": "Procedure",
-  "procedures.electronic_record_control": "Electronic record control",
-  "procedures.troubleshooting": "Troubleshooting",
-  "procedures.maintenance": "Maintenance",
-  document_relationships: "Document relationships",
-  "document_relationships.attachments": "Attachments",
-  "document_relationships.appendices": "Appendices",
-};
 
 const CELL_INPUT = "h-7 w-full rounded-md border border-line-2 bg-surface px-1.5 text-[13px] text-ink focus:border-accent focus:outline-none disabled:border-transparent disabled:bg-transparent";
 

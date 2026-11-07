@@ -17,6 +17,8 @@ export interface PaperCut {
 interface PaperProps {
   model: PaperModel;
   selectedId: number | null;
+  /** 함께 밑줄을 긋는 단위(분류에서 짝의 두 쪽) */
+  highlightIds?: ReadonlySet<number>;
   /** 합치기·짝 맞추기로 고른 단위 */
   pickedIds?: ReadonlySet<number>;
   /** 나눌 자리 미리 보기(고른 단위 안) */
@@ -54,7 +56,7 @@ function readNodeOffset(node: Node, nodeOffset: number): { blockId: number; offs
   return { blockId: Number(block.dataset.block), offset: Number(piece.dataset.start) + (node.nodeType === Node.TEXT_NODE ? nodeOffset : 0) };
 }
 
-export function Paper({ model, selectedId, pickedIds, cut, warnBlockIds, isDone, onUnitClick, onRangeSelect, testId }: PaperProps) {
+export function Paper({ model, selectedId, highlightIds, pickedIds, cut, warnBlockIds, isDone, onUnitClick, onRangeSelect, testId }: PaperProps) {
   function renderSegment(block: ViewBlock, segment: Segment, index: number): ReactNode {
     const text = block.text.slice(segment.start, segment.end);
     if (segment.unitId === null) {
@@ -73,7 +75,7 @@ export function Paper({ model, selectedId, pickedIds, cut, warnBlockIds, isDone,
         lang={unit?.lang === "neutral" ? undefined : unit?.lang}
         data-unit={segment.unitId}
         data-testid={`${testId}-unit-${segment.unitId}`}
-        data-sel={segment.unitId === selectedId ? "" : undefined}
+        data-sel={segment.unitId === selectedId || highlightIds?.has(segment.unitId) ? "" : undefined}
         data-pick={pickedIds?.has(segment.unitId) ? "" : undefined}
         data-warn={warnBlockIds?.has(block.id) ? "" : undefined}
         data-done={isDone?.(segment.unitId) ? "" : undefined}
@@ -112,7 +114,7 @@ export function Paper({ model, selectedId, pickedIds, cut, warnBlockIds, isDone,
               aria-label={tableUnit.display_id}
               data-unit={tableUnit.id}
               data-testid={`${testId}-unit-${tableUnit.id}`}
-              data-sel={tableUnit.id === selectedId ? "" : undefined}
+              data-sel={tableUnit.id === selectedId || highlightIds?.has(tableUnit.id) ? "" : undefined}
               onClick={(event) => onUnitClick(tableUnit.id, null, event)}
             />
           )}

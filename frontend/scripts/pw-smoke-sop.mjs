@@ -263,6 +263,80 @@ await runStep("to-be: nested rows, N/A detail, edit and save", { allowConsoleErr
   await page.locator('[data-testid="tobe-dirty"]').waitFor({ state: "detached", timeout: T });
 });
 
+await runStep("classify: choose, confirm, delete with reason, edit, clear, bulk", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/classify`);
+  const rows = page.locator('[data-testid^="classify-row-u"]');
+  await rows.first().waitFor({ timeout: T });
+  check("unassigned filter first", (await page.locator('[data-testid="classify-filter-unassigned"]').getAttribute("aria-selected")) === "true");
+  const firstKey = (await rows.first().getAttribute("data-testid")).replace("classify-row-", "");
+  const rowBox = await rows.first().boundingBox();
+  const primary = page.locator('[data-testid="classify-primary"]');
+  const primaryBox = await primary.boundingBox();
+  const ids = await page.locator('[data-testid^="classify-row-u"] .font-mono').allInnerTexts();
+  check("pair rows carry both IDs", ids.some((text) => text.includes(" · ")), ids.slice(0, 4).join(" | "));
+  await page.keyboard.press("Enter");
+  await wait(page, "classify-destination-menu");
+  check("Enter opens the destination menu", true);
+  await page.locator('[data-testid^="classify-dest-slot:"]:not([disabled])').first().click();
+  check("primary turns into Confirm", (await primary.getAttribute("data-state")) === "confirm");
+  await takeShot("sop-classify-chosen.png");
+  await page.keyboard.press("Enter");
+  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
+  await page.waitForFunction((key) => document.querySelector(`[data-testid="classify-row-${key}"]`)?.getAttribute("data-status") === "confirmed", firstKey, { timeout: T });
+  check("confirmed row stays in place", Math.abs((await rows.first().boundingBox()).y - rowBox.y) < 1);
+  check("selection moved to the next row", (await rows.first().getAttribute("aria-current")) !== "true");
+  const after = await primary.boundingBox();
+  check("primary button did not move", Math.abs(after.y - primaryBox.y) < 1 && Math.abs(after.width - primaryBox.width) < 1);
+
+  // 삭제 - 사유 없이는 저장하지 않는다
+  await page.locator('[data-testid="classify-destination"]').click();
+  await page.locator('[data-testid="classify-dest-delete"]').click();
+  await page.keyboard.press("Enter");
+  await page.locator('[data-testid="toast-error"]').first().waitFor({ timeout: T });
+  check("delete without a reason is stopped", true);
+  await page.locator('[data-testid="classify-reason"]').fill("Structural heading");
+  await page.locator('[data-testid="classify-primary"]').click();
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((el) => el.textContent?.includes("Confirmed")), null, { timeout: T });
+
+  // 고쳐서 확정 - 바뀐 글은 변경 종류를 묻는다
+  await page.locator('[data-testid="classify-destination"]').click();
+  await page.locator('[data-testid^="classify-dest-slot:"]:not([disabled])').nth(1).click();
+  await page.keyboard.press("e");
+  const textarea = page.locator('textarea[data-testid^="classify-text-"]').last();
+  await textarea.waitFor({ timeout: T });
+  await textarea.fill("Edited sentence for the smoke test.");
+  await page.locator('[data-testid^="classify-change-"]').first().waitFor({ timeout: T });
+  check("save-and-confirm label while editing", (await primary.getAttribute("data-state")) === "save");
+  await takeShot("sop-classify-edit.png");
+  await textarea.press("Control+Enter");
+  await page.locator('[data-testid="classify-primary"][data-state="choose"]').waitFor({ timeout: T });
+  check("Ctrl+Enter saves the edit and moves on", true);
+
+  // 배정 지우기
+  await page.locator(`[data-testid="classify-row-${firstKey}"]`).click();
+  await page.keyboard.press("u");
+  await page.waitForFunction((key) => document.querySelector(`[data-testid="classify-row-${key}"]`)?.getAttribute("data-status") === "unassigned", firstKey, { timeout: T });
+  check("U clears the assignment", true);
+
+  // 여러 줄 삭제
+  await rows.nth(4).click();
+  await rows.nth(5).click({ modifiers: ["Control"] });
+  await wait(page, "classify-bulk");
+  await page.locator('[data-testid="classify-bulk-delete"]').click();
+  await page.locator('[data-testid="classify-bulk-reason"]').fill("Header text");
+  await page.locator('[data-testid="classify-bulk-confirm"]').click();
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((el) => /units confirmed/.test(el.textContent ?? "")), null, { timeout: T });
+  check("bulk delete confirms the picked rows", true);
+  await takeShot("sop-classify.png");
+});
+
+await runStep("classify in list and detail layout", { storage: { "sopa.classifyLayout": "list" } }, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/classify`);
+  await page.locator('[data-testid="classify"][data-layout="list"]').waitFor({ timeout: T });
+  check("list layout is used", true);
+  await takeShot("sop-classify-list.png");
+});
+
 await browser.close();
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} check(s) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

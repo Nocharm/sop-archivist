@@ -1,0 +1,744 @@
+// 분류(입구 1) 사람 경로 - 목록 한 줄은 한/영 짝 하나. 보낼 곳을 고르면 원문이 새 문장에 그대로 들어가고(점선), Enter로 확정해 다음 줄로 간다(디자인 문서 9절).
+// 배치는 사람마다: 원문 3단(232 / 가변 / 392, 기본) 또는 목록 + 상세(318 / 가변). AI 자리는 안내만 둔다.
+"use client";
+
+import { ArrowDown, ArrowUp, Sparkles, Trash2, ExternalLink } from "lucide-react";
+import { useParams } from "next/navigation";
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+
+import { DestinationPicker, describeDestination, type DestinationPickerHandle } from "@/components/classify/destination-picker";
+import { Modal } from "@/components/modal";
+import { Paper } from "@/components/paper/paper";
+import { SourceFontMenu } from "@/components/paper/source-font-menu";
+import { UnitStatusIcon, UnitStatusPill } from "@/components/status";
+import { showToast } from "@/components/ui/toast";
+import { Tooltip } from "@/components/ui/tooltip";
+import { humanizeApiError } from "@/lib/api-errors";
+import {
+  bulkDecide,
+  clearDecision,
+  getDocumentView,
+  getGroupByUnit,
+  getToBe,
+  listAllUnits,
+  listDocuments,
+  saveGroup,
+  type DocumentView,
+  type Group,
+  type UnitRow,
+} from "@/lib/api-sop";
+import { loadBundle, useBundle } from "@/lib/bundle-store";
+import {
+  buildDestinationOptions,
+  buildGroupSave,
+  buildRows,
+  findNextOpen,
+  readDestination,
+  type CellSource,
+  type ClassifyRow,
+  type Destination,
+  type RowDraft,
+} from "@/lib/classify-model";
+import { formatKst } from "@/lib/datetime";
+import { useI18n } from "@/lib/i18n";
+import { buildPaperModel } from "@/lib/paper-model";
+import { SLOT_LABELS } from "@/lib/slot-labels";
+import { useDelayedFlag } from "@/lib/use-delayed-flag";
+import { useLoaded } from "@/lib/use-loaded";
+import { useUiPref } from "@/lib/use-ui-pref";
+
+type Filter = "unassigned" | "ai_suggested" | "on_hold" | "confirmed" | "all";
+const FILTERS: Filter[] = ["unassigned", "ai_suggested", "on_hold", "confirmed", "all"];
+
+const EMPTY_DRAFT: RowDraft = { destination: null, texts: {}, changeTypes: {}, reason: "", moveCode: "" };
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+}
+
+/** 줄의 단위마다 그룹을 불러 합친다 - 짝의 두 쪽이 서로 다른 관계 묶음일 수 있다 */
+async function loadRowGroup(bundleId: number, unitIds: number[]): Promise<Group> {
+  const groups = await Promise.all(unitIds.map((id) => getGroupByUnit(bundleId, id)));
+  const units = new Map<number, Group["units"][number]>();
+  const targets = new Map<number, Group["targets"][number]>();
+  for (const group of groups) {
+    for (const unit of group.units) units.set(unit.unit_id, unit);
+    for (const target of group.targets) targets.set(target.id, target);
+  }
+  return { units: [...units.values()], targets: [...targets.values()] };
+}
+
+export default function ClassifyPage() {
+  const { t } = useI18n();
+  const bundleId = Number(useParams<{ id: string }>().id);
+  const { bundle } = useBundle(bundleId);
+  const canEdit = bundle?.my_role === "author" && bundle.status === "in_progress";
+  const layout = useUiPref("classifyLayout");
+
+  // --- 데이터 ---
+  const docs = useLoaded(() => listDocuments(bundleId), String(bundleId));
+  const oldDocIds = (docs.data ?? []).filter((doc) => doc.side === "old" && doc.status === "ready").map((doc) => doc.id);
+  const views = useLoaded<DocumentView[] | null>(
+    () => (docs.data === null ? Promise.resolve(null) : Promise.all(oldDocIds.map((id) => getDocumentView(bundleId, id)))),
+    docs.data === null ? "" : oldDocIds.join(","),
+  );
+  const [unitsKey, setUnitsKey] = useState(0);
+  const units = useLoaded(() => listAllUnits(bundleId), `${bundleId}:${unitsKey}`);
+  const tobe = useLoaded(() => getToBe(bundleId), String(bundleId));
+
+  const unitMap = useMemo(() => new Map((units.data ?? []).map((row) => [row.unit_id, row])), [units.data]);
+  const viewList = views.data;
+  const rows = useMemo(() => (viewList ? buildRows(viewList, unitMap) : []), [viewList, unitMap]);
+  const rowMap = new Map(rows.map((row) => [row.key, row]));
+  const rowOfUnit = new Map(rows.flatMap((row) => row.unitIds.map((id) => [id, row.key] as const)));
+  const options = useMemo(() => (tobe.data ? buildDestinationOptions(tobe.data, SLOT_LABELS) : []), [tobe.data]);
+  const ready = viewList !== null && units.data !== null && tobe.data !== null;
+  const showSkeleton = useDelayedFlag(!ready && docs.error === null);
+
+  // --- 목록: 필터를 누를 때만 다시 줄 세운다(확정한 줄은 그 자리에 남는다) ---
+  const [filter, setFilter] = useState<Filter>("unassigned");
+  const [snapshot, setSnapshot] = useState<{ filter: Filter; keys: string[] } | null>(null);
+  const counts: Record<Filter, number> = { unassigned: 0, ai_suggested: 0, on_hold: 0, confirmed: 0, all: rows.length };
+  for (const row of rows) counts[row.status] += 1;
+  const listKeys = snapshot && snapshot.filter === filter ? snapshot.keys.filter((key) => rowMap.has(key)) : rows.filter((row) => filter === "all" || row.status === filter).map((row) => row.key);
+
+  // 처음 불러온 순간의 목록을 붙잡는다 - 그래야 확정한 줄이 필터에서 바로 빠지지 않는다(렌더 중 상태 맞추기)
+  if (snapshot === null && rows.length > 0 && units.data !== null) {
+    setSnapshot({ filter, keys: rows.filter((item) => filter === "all" || item.status === filter).map((item) => item.key) });
+  }
+
+  function applyFilter(next: Filter) {
+    setFilter(next);
+    setSnapshot({ filter: next, keys: rows.filter((row) => next === "all" || row.status === next).map((row) => row.key) });
+  }
+
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const activeKey = selectedKey && rowMap.has(selectedKey) ? selectedKey : (listKeys[0] ?? null);
+  const row: ClassifyRow | null = activeKey ? (rowMap.get(activeKey) ?? null) : null;
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+
+  // --- 고른 줄의 관계 묶음과 초안 ---
+  const group = useLoaded<Group | null>(() => (row ? loadRowGroup(bundleId, row.unitIds) : Promise.resolve(null)), `${activeKey}:${unitsKey}`);
+  const groupData = group.data;
+  const [draftState, setDraftState] = useState<{ key: string | null; base: Group | null; draft: RowDraft; editing: boolean }>({
+    key: null,
+    base: null,
+    draft: EMPTY_DRAFT,
+    editing: false,
+  });
+  const live = draftState.key === activeKey && draftState.base === groupData;
+  const draft = live ? draftState.draft : EMPTY_DRAFT;
+  const editing = live && draftState.editing;
+  const savedDestination = readDestination(groupData, row?.unitIds ?? []);
+  const destination: Destination | null = draft.destination ?? savedDestination;
+  const isDraftDest = draft.destination !== null || row?.status !== "confirmed";
+  const rowUnits: UnitRow[] = (row?.unitIds ?? []).map((id) => unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined);
+  const firstDecision = rowUnits[0]?.decision;
+  const savedReason = rowUnits.map((unit) => unit.decision.reason || unit.decision.hold_reason).find(Boolean) ?? "";
+  const reason = draft.reason || savedReason;
+  const moveCode = draft.moveCode || firstDecision?.move_target_code || "";
+
+  function setDraft(patch: Partial<RowDraft>, nextEditing = editing) {
+    setDraftState({ key: activeKey, base: groupData, draft: { ...draft, reason, moveCode, ...patch }, editing: nextEditing });
+  }
+
+  const pickerRef = useRef<DestinationPickerHandle>(null);
+  const reasonRef = useRef<HTMLInputElement>(null);
+  const firstTextRef = useRef<HTMLTextAreaElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [bulk, setBulk] = useState<"delete" | "move" | null>(null);
+
+  // --- 원문 ---
+  const viewOfRow = row && viewList ? (viewList.find((view) => view.document.id === row.documentId) ?? null) : null;
+  const paperModel = useMemo(() => (viewOfRow ? buildPaperModel(viewOfRow) : null), [viewOfRow]);
+
+  function existingText(unitId: number): string | null {
+    const target = groupData?.targets.find((item) => item.parent_target_id === null && item.source_unit_ids.includes(unitId));
+    return target ? target.confirmed_text || target.ai_text : null;
+  }
+
+  function sentenceFor(unitId: number): string {
+    return draft.texts[unitId] ?? existingText(unitId) ?? unitMap.get(unitId)?.text ?? "";
+  }
+
+  function selectRow(key: string, scroll = true) {
+    setSelectedKey(key);
+    // 목록은 키보드로 옮길 때만 따라간다(용지는 아래 이펙트가 늘 맞춘다)
+    if (scroll) requestAnimationFrame(() => document.querySelector(`[data-testid="classify-row-${key}"]`)?.scrollIntoView({ block: "nearest" }));
+  }
+
+  function moveRow(step: 1 | -1) {
+    if (listKeys.length === 0) return;
+    const index = activeKey ? listKeys.indexOf(activeKey) : -1;
+    selectRow(listKeys[Math.min(Math.max(index + step, 0), listKeys.length - 1)]);
+  }
+
+  function buildTables(): Map<number, { rows: number; cols: number; cells: CellSource[] }> {
+    const tables = new Map<number, { rows: number; cols: number; cells: CellSource[] }>();
+    if (!viewOfRow || !row) return tables;
+    for (const unitId of row.unitIds) {
+      const unit = viewOfRow.units.find((item) => item.id === unitId);
+      if (!unit || unit.kind !== "table" || unit.table_id === null) continue;
+      const table = viewOfRow.tables.find((item) => item.id === unit.table_id);
+      const cells = viewOfRow.units
+        .filter((item) => item.group_unit_id === unit.id && item.kind === "cell_sentence")
+        .map((item) => ({ id: item.id, lang: item.lang, text: item.text, row: item.row_index ?? 0, col: viewOfRow.blocks.find((block) => block.id === item.block_id)?.col_index ?? 0 }));
+      tables.set(unit.id, { rows: table?.n_rows ?? 1, cols: table?.n_cols ?? 1, cells });
+    }
+    return tables;
+  }
+
+  async function runSave(action: "confirm" | "hold") {
+    if (!row || !destination || busy) return;
+    const needsReason = action === "hold" || destination.kind === "delete" || destination.kind === "move";
+    if (needsReason && !reason.trim()) {
+      showToast(t(action === "hold" ? "classify.holdReasonNeeded" : "classify.reasonNeeded"), "error");
+      reasonRef.current?.focus();
+      return;
+    }
+    if (destination.kind === "move" && !moveCode.trim()) {
+      showToast(t("classify.moveCodeNeeded"), "error");
+      return;
+    }
+    const texts = Object.fromEntries(row.unitIds.map((id) => [id, sentenceFor(id)]));
+    const body = buildGroupSave(
+      { ...draft, destination, texts, reason, moveCode },
+      {
+        units: rowUnits.map((unit) => ({ id: unit.unit_id, kind: unit.kind, lang: unit.lang, text: unit.text, revision: unit.decision.revision })),
+        group: groupData,
+        tables: buildTables(),
+      },
+      action,
+      action === "hold" ? reason.trim() : "",
+    );
+    setBusy(true);
+    try {
+      await saveGroup(bundleId, body);
+      showToast(action === "hold" ? t("classify.held") : t("classify.confirmed"));
+      // 다음 미확정 줄로 - 지금 줄은 목록 자리에 남는다
+      const next = action === "confirm" ? findNextOpen(listKeys, rowMap, row.key) : null;
+      setDraftState({ key: null, base: null, draft: EMPTY_DRAFT, editing: false });
+      if (next) selectRow(next);
+      setUnitsKey((key) => key + 1);
+      void loadBundle(bundleId);
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+      setUnitsKey((key) => key + 1);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runClear() {
+    if (!row || busy) return;
+    const decided = rowUnits.filter((unit) => unit.decision.disposition !== "unassigned" || unit.status !== "unassigned");
+    if (decided.length === 0) return;
+    setBusy(true);
+    try {
+      for (const unit of decided) await clearDecision(bundleId, unit.unit_id, unit.decision.revision);
+      showToast(t("classify.cleared"));
+      setDraftState({ key: null, base: null, draft: EMPTY_DRAFT, editing: false });
+      setUnitsKey((key) => key + 1);
+      void loadBundle(bundleId);
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+      setUnitsKey((key) => key + 1);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handlePrimary() {
+    if (!destination) {
+      pickerRef.current?.open();
+      return;
+    }
+    void runSave("confirm");
+  }
+
+  function startEdit() {
+    if (!destination || destination.kind === "delete" || destination.kind === "move") return;
+    setDraft({}, true);
+    requestAnimationFrame(() => firstTextRef.current?.focus());
+  }
+
+  function handleRowClick(key: string, event: ReactMouseEvent) {
+    if (event.ctrlKey || event.metaKey || event.shiftKey) {
+      setChecked((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        if (activeKey && !next.has(activeKey) && prev.size === 0) next.add(activeKey);
+        return next;
+      });
+      return;
+    }
+    setChecked(new Set());
+    selectRow(key, false);
+  }
+
+  function handlePaperClick(unitId: number) {
+    const key = rowOfUnit.get(unitId);
+    if (!key) return;
+    if (!listKeys.includes(key)) applyFilter("all");
+    selectRow(key);
+  }
+
+  const handleKey = useEffectEvent((event: KeyboardEvent) => {
+    if (bulk || isTypingTarget(event.target) || document.querySelector('[role="dialog"],[role="menu"]')) {
+      if (event.key === "Escape" && editing) setDraft({}, false);
+      // 고치는 중에는 Enter가 줄바꿈이라 Ctrl+Enter로 저장한다
+      if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && editing && isTypingTarget(event.target)) {
+        event.preventDefault();
+        void runSave("confirm");
+      }
+      return;
+    }
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    const key = event.key.toLowerCase();
+    if (key === "j") moveRow(1);
+    else if (key === "k") moveRow(-1);
+    else if (key === "escape") setChecked(new Set());
+    else if (!canEdit || !row) return;
+    else if (key === "enter") handlePrimary();
+    else if (key === "e") startEdit();
+    else if (key === "h" && destination) void runSave("hold");
+    else if (key === "u") void runClear();
+    else return;
+    event.preventDefault();
+  });
+
+  // 용지는 늘 고른 문장이 보이게 - 처음 열 때와 줄을 바꿀 때
+  const firstUnitId = row?.unitIds[0] ?? null;
+  const paperReady = paperModel !== null;
+  useEffect(() => {
+    if (firstUnitId === null || !paperReady) return;
+    const frame = requestAnimationFrame(() => document.querySelector(`[data-testid="classify-paper-unit-${firstUnitId}"]`)?.scrollIntoView({ block: "center" }));
+    return () => cancelAnimationFrame(frame);
+  }, [firstUnitId, paperReady]);
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
+
+  // --- 그리기 ---
+  const primaryState = !destination ? "choose" : editing ? "save" : "confirm";
+  const disposed = destination?.kind === "delete" || destination?.kind === "move";
+  const holdBlocked = !destination;
+
+  const listRows = (
+    <ul className="min-h-0 overflow-y-auto" data-testid="classify-list" style={{ scrollbarGutter: "stable" }}>
+      {listKeys.map((key) => {
+        const item = rowMap.get(key);
+        if (!item) return null;
+        const first = unitMap.get(item.unitIds[0]);
+        const decision = first?.decision;
+        const destText = decision?.disposition === "delete" ? t("classify.deleted") : decision?.disposition === "move_external" ? t("classify.moved") : decision?.disposition === "assigned" ? t("classify.assigned") : "";
+        return (
+          <li key={key}>
+            <button
+              type="button"
+              className={`grid w-full grid-cols-[16px_minmax(0,1fr)] gap-x-2 gap-y-px border-b border-line py-[var(--row-y)] pl-2.5 pr-2 text-left transition-colors hover:bg-hover ${layout === "list" ? "min-h-[97px]" : "min-h-[58px]"}`}
+              style={key === activeKey ? { background: "var(--sel-bg)", boxShadow: "inset 3px 0 0 var(--accent)" } : undefined}
+              aria-current={key === activeKey ? "true" : undefined}
+              data-testid={`classify-row-${key}`}
+              data-status={item.status}
+              onClick={(event) => handleRowClick(key, event)}
+            >
+              <span className="row-span-3 pt-0.5">
+                {checked.has(key) ? <input type="checkbox" checked readOnly className="pointer-events-none" aria-label={t("classify.picked")} /> : <UnitStatusIcon status={item.status} />}
+              </span>
+              <span className="flex items-center gap-1.5 font-mono text-[11px] leading-4 text-ink-3">
+                {item.unitIds.map((id) => unitMap.get(id)?.display_id).join(" · ")}
+              </span>
+              <span className={`${layout === "list" ? "line-clamp-2" : "truncate"} text-[13px] leading-5 ${item.status === "confirmed" ? "text-ink-3" : "text-ink"}`}>{first?.kind === "table" ? t("classify.tableUnit") : first?.text}</span>
+              {layout === "list" && <span className="truncate text-xs text-ink-3">{destText}</span>}
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+
+  const filterTabs = (
+    <div className="flex flex-wrap gap-0.5 border-b border-line p-2" role="tablist" data-testid="classify-filters">
+      {FILTERS.filter((item) => item !== "ai_suggested" || counts.ai_suggested > 0).map((item) => (
+        <button
+          key={item}
+          type="button"
+          role="tab"
+          aria-selected={filter === item}
+          className={`inline-flex h-[26px] items-center gap-1.5 rounded-md px-2 text-xs transition-colors hover:bg-hover ${filter === item ? "bg-accent-tint text-ink" : "text-ink-2"}`}
+          data-testid={`classify-filter-${item}`}
+          onClick={() => applyFilter(item)}
+        >
+          {item === "all" ? "All" : t(`status.unit.${item}`)}
+          <span className="tabular-nums text-ink-3">{counts[item]}</span>
+        </button>
+      ))}
+    </div>
+  );
+
+  const listFoot = checked.size > 0 && canEdit && (
+    <div className="flex items-center gap-1.5 border-t border-line p-2 text-xs" data-testid="classify-bulk">
+      <span className="flex-1 text-ink-2">{t("classify.pickedCount", { n: checked.size })}</span>
+      <button type="button" className="btn h-7" data-testid="classify-bulk-delete" onClick={() => setBulk("delete")}>
+        <Trash2 size={14} strokeWidth={1.5} aria-hidden />
+        {t("classify.deleted")}
+      </button>
+      <button type="button" className="btn h-7" data-testid="classify-bulk-move" onClick={() => setBulk("move")}>
+        <ExternalLink size={14} strokeWidth={1.5} aria-hidden />
+        {t("classify.moved")}
+      </button>
+    </div>
+  );
+
+  const header = (
+    <div className="flex h-7 items-center gap-2">
+      <span className="min-w-0 truncate font-mono text-sm font-semibold" data-testid="classify-row-id">
+        {rowUnits.map((unit) => unit.display_id).join(" · ") || "–"}
+      </span>
+      {row && <UnitStatusPill status={row.status} testId="classify-row-status" />}
+      <span className="flex-1" />
+      <Tooltip label={t("classify.prev")}>
+        <button type="button" className="btn ghost icon h-7 w-7" aria-label={t("classify.prev")} data-testid="classify-prev" onClick={() => moveRow(-1)}>
+          <ArrowUp size={14} strokeWidth={1.5} aria-hidden />
+        </button>
+      </Tooltip>
+      <Tooltip label={t("classify.next")}>
+        <button type="button" className="btn ghost icon h-7 w-7" aria-label={t("classify.next")} data-testid="classify-next" onClick={() => moveRow(1)}>
+          <ArrowDown size={14} strokeWidth={1.5} aria-hidden />
+        </button>
+      </Tooltip>
+    </div>
+  );
+
+  const picker = (
+    <DestinationPicker
+      ref={pickerRef}
+      options={options}
+      value={destination}
+      isDraft={isDraftDest}
+      disabled={!canEdit || !row || busy}
+      onChange={(next) => setDraft({ destination: next })}
+    />
+  );
+
+  // 주 버튼 - 세 라벨이 같은 칸에 겹쳐 폭과 자리가 변하지 않는다
+  const primary = (
+    <button type="button" className="btn pri h-[38px] w-full" data-testid="classify-primary" data-state={primaryState} disabled={!canEdit || !row || busy} onClick={handlePrimary}>
+      <span className="stack">
+        <span data-on={primaryState === "choose" ? "" : undefined}>
+          {t("classify.chooseDestination")} <kbd>↵</kbd>
+        </span>
+        <span data-on={primaryState === "confirm" ? "" : undefined}>
+          {t("classify.confirm")} <kbd>↵</kbd>
+        </span>
+        <span data-on={primaryState === "save" ? "" : undefined}>
+          {t("classify.saveConfirm")} <kbd>↵</kbd>
+        </span>
+      </span>
+    </button>
+  );
+
+  const secondary = (
+    <div className="grid grid-cols-[1.15fr_0.7fr_1.15fr] gap-1.5">
+      <button type="button" className="btn h-8 gap-1 px-1 text-xs font-normal" data-testid="classify-edit" disabled={!canEdit || !destination || disposed || editing || busy} onClick={startEdit}>
+        {t("classify.editConfirm")} <kbd>E</kbd>
+      </button>
+      <Tooltip label={holdBlocked ? t("classify.holdNeedsDestination") : t("classify.holdHint")}>
+        <button type="button" className="btn h-8 w-full gap-1 px-1 text-xs font-normal" data-testid="classify-hold" disabled={!canEdit || holdBlocked || busy} onClick={() => void runSave("hold")}>
+          {t("classify.hold")} <kbd>H</kbd>
+        </button>
+      </Tooltip>
+      <button type="button" className="btn h-8 gap-1 px-1 text-xs font-normal" data-testid="classify-clear" disabled={!canEdit || !row || row.status === "unassigned" || busy} onClick={() => void runClear()}>
+        {t("classify.clear")} <kbd>U</kbd>
+      </button>
+    </div>
+  );
+
+  const sentenceUnits = rowUnits.filter((unit) => unit.kind !== "table" && unit.kind !== "figure");
+  const newSentences = (
+    <section className="grid gap-2" data-testid="classify-new">
+      <h2 className="text-xs font-semibold text-ink-3">{t("classify.newSentence")}</h2>
+      {disposed ? (
+        <p className="rounded-md border border-dashed border-line-2 px-3 py-2 text-ink-3">{t("classify.noNewSentence")}</p>
+      ) : rowUnits.some((unit) => unit.kind === "table" || unit.kind === "figure") ? (
+        <p className="rounded-md border border-line-2 px-3 py-2 text-ink-2">{t(rowUnits.some((unit) => unit.kind === "table") ? "classify.tableAsIs" : "classify.figureAsIs")}</p>
+      ) : (
+        sentenceUnits.map((unit, index) => {
+          const text = destination ? sentenceFor(unit.unit_id) : "";
+          const changed = destination !== null && text.trim() !== unit.text.trim();
+          return (
+            <div key={unit.unit_id} className="grid gap-1">
+              <div className={`grid min-h-[70px] grid-cols-[22px_minmax(0,1fr)] gap-2 rounded-md px-2.5 py-2 ${!destination ? "border border-dashed border-line-2 text-ink-4" : editing ? "border border-focus" : row?.status === "confirmed" && !draft.destination ? "border border-line-2" : "border border-dashed border-line-2"}`}>
+                <span className="lg">{unit.lang === "neutral" ? "–" : unit.lang.toUpperCase()}</span>
+                {editing ? (
+                  <textarea
+                    ref={index === 0 ? firstTextRef : undefined}
+                    lang={unit.lang === "neutral" ? undefined : unit.lang}
+                    className="min-h-[52px] w-full resize-y bg-transparent text-[15px] leading-[26px] outline-none focus-visible:outline-none"
+                    style={{ fontFamily: unit.lang === "en" ? "var(--font-source-en)" : "var(--font-source)" }}
+                    data-testid={`classify-text-${unit.unit_id}`}
+                    value={text}
+                    onChange={(event) => setDraft({ texts: { ...draft.texts, [unit.unit_id]: event.target.value } }, true)}
+                  />
+                ) : (
+                  <p lang={unit.lang === "neutral" ? undefined : unit.lang} className="whitespace-pre-wrap text-[15px] leading-[26px]" style={{ fontFamily: unit.lang === "en" ? "var(--font-source-en)" : "var(--font-source)" }} data-testid={`classify-text-${unit.unit_id}`}>
+                    {text || "_"}
+                  </p>
+                )}
+              </div>
+              {changed && (
+                <label className="flex items-center gap-2 text-xs text-ink-2">
+                  {t("classify.changeType")}
+                  <select
+                    className="h-7 rounded-md border border-line-2 bg-surface px-1.5 text-[13px] text-ink"
+                    data-testid={`classify-change-${unit.unit_id}`}
+                    value={draft.changeTypes[unit.unit_id] ?? "rewritten"}
+                    disabled={!canEdit}
+                    onChange={(event) => setDraft({ changeTypes: { ...draft.changeTypes, [unit.unit_id]: event.target.value === "tone" ? "tone" : "rewritten" } })}
+                  >
+                    <option value="tone">{t("change.tone")}</option>
+                    <option value="rewritten">{t("change.rewritten")}</option>
+                  </select>
+                </label>
+              )}
+            </div>
+          );
+        })
+      )}
+    </section>
+  );
+
+  const renderDetails = (withNewSentences: boolean) => (
+    <>
+      <section className="flex gap-2 rounded-md border border-dashed border-st-ai-line px-3 py-2 text-xs text-ink-2" style={{ borderColor: "var(--st-ai-line)" }} data-testid="classify-ai">
+        <Sparkles size={14} strokeWidth={1.5} className="mt-0.5 shrink-0 text-st-ai" aria-hidden />
+        {t("classify.aiLater")}
+      </section>
+      {withNewSentences && newSentences}
+      <section className="grid grid-cols-[96px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-2">
+        <span className="text-xs text-ink-3">{t("classify.reason")}</span>
+        {canEdit ? (
+          <input
+            ref={reasonRef}
+            className="h-8 rounded-md border border-line-2 bg-surface px-2 text-[13px] text-ink focus:border-accent focus:outline-none"
+            data-testid="classify-reason"
+            placeholder={disposed ? t("classify.reasonRequired") : t("classify.reasonOptional")}
+            value={reason}
+            maxLength={2000}
+            onChange={(event) => setDraft({ reason: event.target.value })}
+          />
+        ) : (
+          <span>{reason || "–"}</span>
+        )}
+        {destination?.kind === "move" && (
+          <>
+            <span className="text-xs text-ink-3">{t("classify.moveTo")}</span>
+            <input
+              className="h-8 rounded-md border border-line-2 bg-surface px-2 font-mono text-[13px] text-ink focus:border-accent focus:outline-none"
+              data-testid="classify-move-code"
+              placeholder="SOP-XX-00000"
+              value={moveCode}
+              maxLength={100}
+              disabled={!canEdit}
+              onChange={(event) => setDraft({ moveCode: event.target.value })}
+            />
+          </>
+        )}
+        <span className="text-xs text-ink-3">{t("classify.checks")}</span>
+        <span className="text-ink-2" data-testid="classify-checks">
+          {(groupData?.targets.flatMap((target) => target.warnings) ?? []).map((warning, index) => (
+            <span key={index} className="pill warn mr-1">
+              {t(`check.${warning.code ?? warning.kind ?? "other"}`)}
+            </span>
+          ))}
+          {(groupData?.targets.flatMap((target) => target.warnings).length ?? 0) === 0 && "–"}
+        </span>
+        <span className="text-xs text-ink-3">{t("classify.confirmedBy")}</span>
+        <span className="text-ink-2" data-testid="classify-confirmed-by">
+          {firstDecision?.confirmed_by ? `${firstDecision.confirmed_by} · ${formatKst(firstDecision.confirmed_at)}` : "–"}
+        </span>
+      </section>
+    </>
+  );
+
+  const loading = (
+    <div className="p-4" data-testid="classify-loading">
+      {showSkeleton && <span className="sk h-[480px] w-full" />}
+    </div>
+  );
+
+  const error = docs.error ?? views.error ?? units.error ?? tobe.error;
+  if (!ready) {
+    return error !== null ? (
+      <p className="p-6 text-ink-2" data-testid="classify-error">
+        {humanizeApiError(error, t)}
+      </p>
+    ) : (
+      loading
+    );
+  }
+
+  const paperPane = (
+    <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)]">
+      <div className="flex h-11 items-center gap-2.5 border-b border-line bg-surface px-[var(--pad)]">
+        <span className="font-mono text-[13px] font-semibold">{viewOfRow?.document.doc_code ?? ""}</span>
+        <span className="min-w-0 flex-1 truncate text-ink-2">{viewOfRow?.document.title ?? ""}</span>
+        {bundle?.is_synthetic && <span className="tag">Synthetic data</span>}
+        <SourceFontMenu />
+      </div>
+      <div className="desk" data-testid="classify-desk">
+        {paperModel && row ? (
+          <Paper
+            model={paperModel}
+            selectedId={row.unitIds[0]}
+            highlightIds={new Set(row.unitIds)}
+            isDone={(unitId) => unitMap.get(unitId)?.status === "confirmed" && !row.unitIds.includes(unitId)}
+            onUnitClick={(unitId) => handlePaperClick(unitId)}
+            testId="classify-paper"
+          />
+        ) : (
+          <p className="text-ink-3">{rows.length === 0 ? t("classify.noUnits") : ""}</p>
+        )}
+      </div>
+    </div>
+  );
+
+  const body =
+    layout === "list" ? (
+      <div className="grid h-full min-h-0 grid-cols-[318px_minmax(0,1fr)]" data-testid="classify" data-layout="list">
+        <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] border-r border-line bg-surface">
+          {filterTabs}
+          {listRows}
+          {listFoot}
+        </div>
+        <div className="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] bg-surface">
+          <div className="border-b border-line px-[var(--pad)] py-2.5">{header}</div>
+          <div className="grid grid-cols-[minmax(0,1fr)_200px_auto] items-center gap-2 border-b border-line px-[var(--pad)] py-2.5">
+            {picker}
+            {primary}
+            {secondary}
+          </div>
+          <div className="grid min-h-0 content-start gap-4 overflow-y-auto p-[var(--pad)]">
+            <div className="grid grid-cols-2 gap-3">
+              <section className="grid content-start gap-2">
+                <h2 className="text-xs font-semibold text-ink-3">{t("classify.source")}</h2>
+                {rowUnits.map((unit) => (
+                  <div key={unit.unit_id} className="grid min-h-[70px] grid-cols-[22px_minmax(0,1fr)] gap-2 rounded-md border border-line bg-paper px-2.5 py-2">
+                    <span className="lg">{unit.lang === "neutral" ? "–" : unit.lang.toUpperCase()}</span>
+                    <p lang={unit.lang === "neutral" ? undefined : unit.lang} className="whitespace-pre-wrap text-[15px] leading-[26px]" style={{ fontFamily: unit.lang === "en" ? "var(--font-source-en)" : "var(--font-source)" }}>
+                      {unit.kind === "table" ? t("classify.tableUnit") : unit.text}
+                    </p>
+                  </div>
+                ))}
+              </section>
+              {newSentences}
+            </div>
+            {renderDetails(false)}
+          </div>
+        </div>
+      </div>
+    ) : (
+      <div className="grid h-full min-h-0 grid-cols-[232px_minmax(0,1fr)_392px]" data-testid="classify" data-layout="paper">
+        <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] border-r border-line bg-surface">
+          {filterTabs}
+          {listRows}
+          {listFoot}
+        </div>
+        {paperPane}
+        <aside className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] border-l border-line bg-surface" data-testid="classify-inspector">
+          <div className="grid gap-2 border-b border-line p-[var(--pad)]">
+            {header}
+            {picker}
+            {primary}
+            {secondary}
+          </div>
+          <div className="grid min-h-0 content-start gap-4 overflow-y-auto p-[var(--pad)]">{renderDetails(true)}</div>
+        </aside>
+      </div>
+    );
+
+  return (
+    <>
+      {body}
+      {bulk && (
+        <BulkModal
+          action={bulk}
+          count={[...checked].flatMap((key) => rowMap.get(key)?.unitIds ?? []).length}
+          onClose={() => setBulk(null)}
+          onConfirm={async (bulkReason, code) => {
+            const unitRows = [...checked].flatMap((key) => rowMap.get(key)?.unitIds ?? []).map((id) => unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined);
+            try {
+              await bulkDecide(bundleId, {
+                action: bulk === "delete" ? "delete" : "move_external",
+                reason: bulkReason,
+                move_target_code: code,
+                units: unitRows.map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision })),
+              });
+              showToast(t("classify.bulkDone", { n: unitRows.length }));
+              setBulk(null);
+              setChecked(new Set());
+              setUnitsKey((key) => key + 1);
+              void loadBundle(bundleId);
+            } catch (err) {
+              showToast(humanizeApiError(err, t), "error");
+            }
+          }}
+        />
+      )}
+      <span className="sr-only" aria-live="polite">
+        {row ? describeDestination(destination, options, t)?.label ?? "" : ""}
+      </span>
+    </>
+  );
+}
+
+function BulkModal({ action, count, onClose, onConfirm }: { action: "delete" | "move"; count: number; onClose: () => void; onConfirm: (reason: string, code: string) => Promise<void> }) {
+  const { t } = useI18n();
+  const [reason, setReason] = useState("");
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const ready = reason.trim() !== "" && (action === "delete" || code.trim() !== "");
+  return (
+    <Modal
+      title={action === "delete" ? t("classify.bulkDeleteTitle") : t("classify.bulkMoveTitle")}
+      onClose={onClose}
+      testId="classify-bulk-modal"
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose}>
+            {t("common.cancel")}
+          </button>
+          <button
+            type="button"
+            className={`btn ${action === "delete" ? "danger" : "pri"}`}
+            data-testid="classify-bulk-confirm"
+            disabled={!ready || busy}
+            onClick={async () => {
+              setBusy(true);
+              await onConfirm(reason.trim(), code.trim());
+              setBusy(false);
+            }}
+          >
+            {t("classify.bulkRun", { n: count })}
+          </button>
+        </>
+      }
+    >
+      <div className="grid gap-1.5 rounded-md bg-sunken px-3 py-2.5 text-[13px] leading-5 text-ink-2">{t("classify.bulkBody", { n: count })}</div>
+      <label className="grid gap-1">
+        <span className="text-xs text-ink-2">{t("classify.reason")}</span>
+        <input className="h-8 rounded-md border border-line-2 bg-surface px-2 text-[13px]" data-testid="classify-bulk-reason" value={reason} maxLength={2000} autoFocus onChange={(event) => setReason(event.target.value)} />
+      </label>
+      {action === "move" && (
+        <label className="grid gap-1">
+          <span className="text-xs text-ink-2">{t("classify.moveTo")}</span>
+          <input className="h-8 rounded-md border border-line-2 bg-surface px-2 font-mono text-[13px]" data-testid="classify-bulk-code" value={code} maxLength={100} onChange={(event) => setCode(event.target.value)} />
+        </label>
+      )}
+    </Modal>
+  );
+}

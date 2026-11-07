@@ -83,14 +83,15 @@ export function Menu({ anchorRef, onClose, testId, align = "start", children }: 
 
 interface MenuRadioProps {
   checked: boolean;
+  disabled?: boolean;
   onSelect: () => void;
   testId: string;
   children: ReactNode;
 }
 
-export function MenuRadio({ checked, onSelect, testId, children }: MenuRadioProps) {
+export function MenuRadio({ checked, disabled = false, onSelect, testId, children }: MenuRadioProps) {
   return (
-    <button type="button" role="menuitemradio" aria-checked={checked} data-testid={testId} className="menu-item" onClick={onSelect}>
+    <button type="button" role="menuitemradio" aria-checked={checked} disabled={disabled} data-testid={testId} className="menu-item" onClick={onSelect}>
       {children}
       {checked && <Check size={14} strokeWidth={1.5} className="check" aria-hidden />}
     </button>

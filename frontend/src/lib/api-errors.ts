@@ -78,7 +78,9 @@ function humanizeKnownDetail(err: ApiError, t: TFunc): string | null {
 // 업무 규칙 거절 코드 → rule.<code> 문구. 문맥 중 글자·숫자 값만 문구 변수로 넘긴다. 모르는 코드는 상태 코드 문구로 떨어진다.
 function humanizeRule(err: ApiError, t: TFunc): string | null {
   if (!err.rule) return null;
-  const key = `rule.${err.rule.code}`;
+  // 묶음 저장 거절(invalid_group)처럼 세부 사유가 있으면 그 문구를 먼저 찾는다
+  const detailKey = typeof err.rule.reason === "string" ? `rule.${err.rule.code}.${err.rule.reason}` : null;
+  const key = detailKey && t(detailKey) !== detailKey ? detailKey : `rule.${err.rule.code}`;
   const vars: Record<string, string | number> = {};
   for (const [name, value] of Object.entries(err.rule)) {
     if (typeof value === "string" || typeof value === "number") vars[name] = value;

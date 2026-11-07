@@ -414,3 +414,135 @@ export function importToBe(bundleId: number, file: File, revision: number): Prom
 export function downloadToBeTemplate(bundleId: number): Promise<Blob> {
   return apiFetchBlob(`/bundles/${bundleId}/tobe/template.xlsx`);
 }
+
+// --- 배정·확정(입구 1) ---
+
+export type Disposition = "unassigned" | "assigned" | "delete" | "move_external";
+export type ChangeType = "as_is" | "tone" | "rewritten" | "table_restructured" | "new";
+export type WiPart = "instruction" | "why";
+
+export interface Decision {
+  disposition: Disposition;
+  move_target_code: string;
+  reason: string;
+  status: CoverStatus;
+  hold_reason: string;
+  confirmed_by: string | null;
+  confirmed_at: string | null;
+  revision: number;
+}
+
+export interface UnitRow {
+  unit_id: number;
+  document_id: number;
+  display_id: string;
+  kind: UnitKind;
+  lang: UnitLang;
+  text: string;
+  table_id: number | null;
+  row_index: number | null;
+  group_unit_id: number | null;
+  status: CoverStatus;
+  decision: Decision;
+  target_ids: number[];
+}
+
+export interface GroupUnit {
+  unit_id: number;
+  display_id: string;
+  document_id: number;
+  kind: UnitKind;
+  lang: UnitLang;
+  text: string;
+  group_id: string | null;
+  decision: Decision;
+  cell_unit_ids: number[];
+}
+
+export interface GroupTarget {
+  id: number;
+  target_doc_id: number;
+  slot_key: string | null;
+  wi_step: number | null;
+  wi_part: WiPart | null;
+  section_path: string;
+  order_index: number;
+  lang: UnitLang;
+  kind: "sentence" | "table" | "figure";
+  confirmed_text: string;
+  ai_text: string;
+  change_type: ChangeType | null;
+  origin: string;
+  new_unit_id: number | null;
+  parent_target_id: number | null;
+  cell_row: number | null;
+  cell_col: number | null;
+  grid: { rows: number; cols: number } | null;
+  status: CoverStatus;
+  hold_reason: string;
+  warnings: Array<Record<string, string>>;
+  source_unit_ids: number[];
+  group_id: string | null;
+  revision: number;
+}
+
+export interface Group {
+  units: GroupUnit[];
+  targets: GroupTarget[];
+}
+
+export interface TargetInput {
+  key: string;
+  id?: number;
+  revision?: number;
+  target_doc_id?: number;
+  slot_key?: string | null;
+  wi_step?: number | null;
+  wi_part?: WiPart | null;
+  kind?: "sentence" | "table" | "figure";
+  lang?: UnitLang;
+  text?: string;
+  change_type?: ChangeType | null;
+  source_unit_ids: number[];
+  parent_key?: string | null;
+  cell_row?: number | null;
+  cell_col?: number | null;
+  grid?: { rows: number; cols: number } | null;
+}
+
+export interface GroupSaveInput {
+  action: "confirm" | "hold";
+  hold_reason: string;
+  units: Array<{ unit_id: number; revision: number; disposition: "assigned" | "delete" | "move_external"; move_target_code: string; reason: string }>;
+  targets: TargetInput[];
+  removed_target_ids: number[];
+}
+
+export async function listAllUnits(bundleId: number): Promise<UnitRow[]> {
+  const items: UnitRow[] = [];
+  // 한 번에 1000개까지 - 묶음이 크면 이어서 받는다
+  for (let offset = 0; ; offset += 1000) {
+    const page = await apiFetch<{ total: number; items: UnitRow[] }>(`/bundles/${bundleId}/units?limit=1000&offset=${offset}`);
+    items.push(...page.items);
+    if (items.length >= page.total || page.items.length === 0) return items;
+  }
+}
+
+export function getGroupByUnit(bundleId: number, unitId: number): Promise<Group> {
+  return apiFetch<Group>(`/bundles/${bundleId}/groups/by-unit/${unitId}`);
+}
+
+export function saveGroup(bundleId: number, body: GroupSaveInput): Promise<Group> {
+  return apiFetch<Group>(`/bundles/${bundleId}/groups/save`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export function bulkDecide(
+  bundleId: number,
+  body: { action: "delete" | "move_external"; reason: string; move_target_code: string; units: Array<{ unit_id: number; revision: number }> },
+): Promise<Array<{ unit_id: number; decision: Decision }>> {
+  return apiFetch(`/bundles/${bundleId}/decisions/bulk`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export function clearDecision(bundleId: number, unitId: number, revision: number): Promise<unknown> {
+  return apiFetch(`/bundles/${bundleId}/decisions/clear`, { method: "POST", body: JSON.stringify({ unit_id: unitId, revision }) });
+}
