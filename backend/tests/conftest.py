@@ -43,6 +43,7 @@ from app.models import (  # noqa: E402
 )
 from app.settings import settings  # noqa: E402
 from app.sop.models import Bundle, BundleDeletionRecord, GuidelineVersion  # noqa: E402
+from tests.fake_ai import FakeAi, install_fake_ai  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -158,6 +159,15 @@ def restore_guidelines(client: TestClient) -> Iterator[None]:
     saved_rows = asyncio.run(_read())
     yield
     asyncio.run(_restore(saved_rows))
+
+
+@pytest.fixture
+def fake_ai(monkeypatch: pytest.MonkeyPatch) -> FakeAi:
+    """AI를 켜고 가짜 전송을 깐다 — 시험은 `fake_ai.chat`으로 응답을, `fake_ai.on_chat`으로 호출 중 끼어들기를 정한다.
+
+    시험 인자로 쓰는 픽스처라 모듈에서 import하면 F811이 나서 여기에 둔다.
+    """
+    return install_fake_ai(monkeypatch, chat=lambda data: "{}")
 
 
 @pytest.fixture

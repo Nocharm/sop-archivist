@@ -305,12 +305,12 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
         units=units, decisions=decisions, cells=cells, group_of=group_of, existing=existing,
         member_unit_ids=member_unit_ids, component_units=component_units, component_targets=component_targets,
         docs=docs, na_slots=na_slots, steps=steps,
-        table_shapes=await _load_table_shapes(session, [units[unit_id] for unit_id in table_unit_ids]),
-        cell_positions=await _load_cell_positions(session, [units[cell_id] for cell_id in group_of]),
+        table_shapes=await load_table_shapes(session, [units[unit_id] for unit_id in table_unit_ids]),
+        cell_positions=await load_cell_positions(session, [units[cell_id] for cell_id in group_of]),
     )
 
 
-async def _load_table_shapes(session: AsyncSession, table_units: list[Unit]) -> dict[int, tuple[int, int]]:
+async def load_table_shapes(session: AsyncSession, table_units: list[Unit]) -> dict[int, tuple[int, int]]:
     table_ids = {unit.table_id for unit in table_units if unit.table_id is not None}
     if not table_ids:
         return {}
@@ -320,7 +320,7 @@ async def _load_table_shapes(session: AsyncSession, table_units: list[Unit]) -> 
     return {table_id: (n_rows, n_cols) for table_id, n_rows, n_cols in rows}
 
 
-async def _load_cell_positions(session: AsyncSession, cell_units: list[Unit]) -> dict[int, tuple[int, int]]:
+async def load_cell_positions(session: AsyncSession, cell_units: list[Unit]) -> dict[int, tuple[int, int]]:
     """칸 문장 → 그 칸 블록의 (행, 열). 칸 문장은 칸 블록 하나 안의 범위다."""
     cells_by_block: dict[int, list[int]] = defaultdict(list)
     for cell in cell_units:
