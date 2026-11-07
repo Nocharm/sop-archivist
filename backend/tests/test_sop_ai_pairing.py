@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import httpx2
 import numpy as np
@@ -40,6 +40,9 @@ PAIR_FILE = "SYNTHETIC_OLD-PAIR.docx"
 KO = ["합성 장비의 전원을 켠다.", "합성 시료를 장비에 넣는다.", "합성 결과를 기록한다."]
 EN = ["Turn on the synthetic instrument.", "Load the synthetic sample into the instrument.", "Record the synthetic result."]
 AXES = {**{text: index for index, text in enumerate(KO)}, **{text: index for index, text in enumerate(EN)}}  # 짝끼리 같은 축
+EXTRA_EN = "An extra synthetic sentence."  # 짝이 없는 영어 문장 — 짝 없이 남는다
+HEADER_KO, HEADER_EN = "합성 문서의 머리말이다.", "This is the synthetic header."
+FOOTER_EN = "This is the synthetic footer."
 ADOPTION_KEYS = {"applied", "as_is", "edited", "rejected", "pending", "adoption_rate"}
 CONTENT_KEYS = {"pair_id", "ko_unit_id", "en_unit_id"}
 
@@ -50,10 +53,10 @@ class PairBundle(NamedTuple):
 
 
 def upload_document(
-    client: TestClient, bundle_id: int, body: str, file_name: str = PAIR_FILE, layout: str = SEPARATE
+    client: TestClient, bundle_id: int, body: str, file_name: str = PAIR_FILE, layout: str = SEPARATE, **docx: Any
 ) -> PairBundle:
-    """문서 하나를 올려 배치를 고른다 — 올릴 때는 연달아 배치라 코드 짝이 생기고, 배치를 바꾸면 걷힌다."""
-    uploaded = upload(client, bundle_id, build_docx(body), file_name)
+    """문서 하나를 올려 배치를 고른다 — 올릴 때는 연달아 배치라 코드 짝이 생기고, 배치를 바꾸면 걷힌다. docx는 머리말·꼬리말 같은 build_docx 인자다."""
+    uploaded = upload(client, bundle_id, build_docx(body, **docx), file_name)
     assert uploaded.status_code == 201 and uploaded.json()["status"] == "ready", uploaded.text
     document = PairBundle(bundle_id, uploaded.json()["id"])
     if layout != "ko_en_interleaved":
@@ -67,12 +70,13 @@ def make_separate_bundle(
     en: list[str] | None = None,
     layout: str = SEPARATE,
     table: list[list[str]] | None = None,
+    **docx: Any,
 ) -> PairBundle:
     """한글 문장이 먼저, 영어 문장이 그 뒤에 따로 나오는 문서 하나(table이 있으면 끝에 표 하나)를 가진 묶음."""
     bundle_id = create_bundle(client, is_synthetic=True)["id"]
     assert set_members(client, bundle_id, AI_MEMBERS).status_code == 200
     body = "".join(p(text) for text in [*(KO if ko is None else ko), *(EN if en is None else en)])
-    return upload_document(client, bundle_id, body + ("" if table is None else tbl(table)), layout=layout)
+    return upload_document(client, bundle_id, body + ("" if table is None else tbl(table)), layout=layout, **docx)
 
 
 def set_layout(client: TestClient, bundle: PairBundle, layout: str) -> None:
@@ -325,6 +329,24 @@ def test_suggested_pairs_are_written_with_source_ai(
     assert {row.suggestion_id for row in read_rows(UnitPair)} == {suggestion.id for suggestion in suggestions.values()}
 
 
+def test_ai_pairs_show_in_the_unit_lists(client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch) -> None:
+    """화면이 읽는 두 목록 — 문서 보기와 단위 목록 — 에 AI 제안 짝의 id가 실린다."""
+    bundle = make_separate_bundle(client)
+    use_vectors(monkeypatch, fake_ai, AXES)
+
+    suggest_pairs(client, bundle)
+
+    pair_of = {unit_id: pair["id"] for pair in list_view_pairs(client, bundle) for unit_id in pair["unit_ids"]}
+    assert len(pair_of) == 6
+    view_units = get_view(client, bundle.id, bundle.document_id)["units"]
+    assert {unit["id"]: unit["pair_id"] for unit in view_units} == pair_of
+    listed = client.get(
+        f"/api/bundles/{bundle.id}/units", params={"document_id": bundle.document_id, "limit": 1000}, headers=AUTHOR
+    )
+    assert listed.status_code == 200, listed.text
+    assert {unit["unit_id"]: unit["pair_id"] for unit in listed.json()["items"]} == pair_of
+
+
 def test_scores_are_not_stored_or_shown(client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch) -> None:
     bundle = make_separate_bundle(client)
     use_vectors(monkeypatch, fake_ai, AXES)
@@ -390,6 +412,42 @@ def test_table_cell_sentences_are_not_candidates(
 
     (pair,) = list_view_pairs(client, bundle)
     assert pair["unit_ids"] == get_unit_ids(client, bundle, KO[0], EN[0])
+
+
+def test_pairs_stay_within_one_part(client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch) -> None:
+    """본문 문장은 꼬리말 문장과 짝지어지지 않는다 — 부분이 다르면 가장 가까워도 후보가 아니고, 같은 부분의 짝을 가리지도 않는다."""
+    bundle = make_separate_bundle(
+        client, KO[:1], EN[:1], headers=[p(HEADER_KO) + p(HEADER_EN)], footers=[p(FOOTER_EN)]
+    )
+    enable_embed(monkeypatch)
+    vectors = {  # 본문 한글 KO[0]은 본문 영어 EN[0](0.8)보다 꼬리말 영어(0.9)에 더 가깝다
+        KO[0]: [1.0, 0.0, 0.0, 0.0], EN[0]: [0.8, 0.6, 0.0, 0.0], FOOTER_EN: [0.9, 0.0, 0.436, 0.0],
+        HEADER_KO: [0.0, 0.0, 0.0, 1.0], HEADER_EN: [0.0, 0.0, 0.0, 1.0],
+    }
+    fake_ai.embed = lambda text: vectors[text]
+
+    suggest_pairs(client, bundle)
+
+    ko_0, en_0, header_ko, header_en, footer = get_unit_ids(client, bundle, KO[0], EN[0], HEADER_KO, HEADER_EN, FOOTER_EN)
+    assert sorted(pair["unit_ids"] for pair in list_view_pairs(client, bundle)) == sorted([[ko_0, en_0], [header_ko, header_en]])
+    assert footer not in {row.unit_id for row in read_rows(UnitPairMember)}
+
+
+def test_pairs_cross_table_boundaries(client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch) -> None:
+    """한글 표의 칸과 영어 표의 칸이 짝인 배치가 있어 표 경계는 넘는다(부분만 지킨다)."""
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    assert set_members(client, bundle_id, AI_MEMBERS).status_code == 200
+    body = tbl([[KO[0]]]) + p(KO[1]) + tbl([[EN[0]]]) + p(EN[1])
+    bundle = upload_document(client, bundle_id, body, layout="ko_en_interleaved")
+    for table in get_view(client, bundle.id, bundle.document_id)["tables"]:
+        edit_document(client, bundle.id, bundle.document_id, {"type": "set_layout_table", "table_id": table["id"], "is_layout": True})
+    set_layout(client, bundle, SEPARATE)
+    use_vectors(monkeypatch, fake_ai, AXES)
+
+    suggest_pairs(client, bundle)
+
+    ko_cell, ko_1, en_cell, en_1 = get_unit_ids(client, bundle, KO[0], KO[1], EN[0], EN[1])
+    assert sorted(pair["unit_ids"] for pair in list_view_pairs(client, bundle)) == sorted([[ko_cell, en_cell], [ko_1, en_1]])
 
 
 def test_rerun_leaves_existing_pairs_alone(client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -498,6 +556,56 @@ def test_hand_made_and_code_pairs_record_no_adoption(client: TestClient) -> None
     assert delete_pair_by_hand(client, bundle, by_hand["id"]).status_code == 200
 
     assert read_rows(AiSuggestion) == []
+
+
+def test_replacing_an_ai_pair_by_hand_records_rejected_and_the_same_set_records_as_is(
+    client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """사람이 만든 짝이 AI 제안 짝을 바꾸면 채택이 남는다 — 같은 단위 집합이면 그대로, 다르면 버림이다."""
+    bundle = make_separate_bundle(client, en=[*EN, EXTRA_EN])
+    use_vectors(monkeypatch, fake_ai, {**AXES, EXTRA_EN: 6})
+    suggest_pairs(client, bundle)
+    first, second, third = list_view_pairs(client, bundle)
+    ko_0, en_0, extra = get_unit_ids(client, bundle, KO[0], EN[0], EXTRA_EN)
+    assert first["unit_ids"] == [ko_0, en_0] and extra not in {unit for pair in (first, second, third) for unit in pair["unit_ids"]}
+
+    widened = create_pair_by_hand(client, bundle, [ko_0, en_0, extra])  # 첫 제안 짝의 한 단위를 포함하되 집합이 다르다
+
+    assert widened["unit_ids"] == [ko_0, en_0, extra]
+    changed = read_pair_suggestions()[first["id"]]
+    assert (changed.adoption, changed.adopted_by, changed.result) == ("rejected", AUTHOR["X-Dev-User"], "applied")
+    assert first["id"] not in {row.id for row in read_rows(UnitPair)}
+    assert read_pair_stats(client, bundle) == {
+        "applied": 3, "as_is": 0, "edited": 0, "rejected": 1, "pending": 2, "adoption_rate": 0.0,
+    }
+
+    again = create_pair_by_hand(client, bundle, second["unit_ids"])  # 같은 집합으로 다시 만든다
+
+    assert (again["status"], again["source"], again["unit_ids"]) == ("confirmed", "human", second["unit_ids"])
+    kept = read_pair_suggestions()[second["id"]]
+    assert (kept.adoption, kept.adopted_by) == ("as_is", AUTHOR["X-Dev-User"])
+    assert read_pair_stats(client, bundle) == {
+        "applied": 3, "as_is": 1, "edited": 0, "rejected": 1, "pending": 1, "adoption_rate": 0.5,
+    }
+
+
+def test_replacing_a_pair_records_one_decision_per_replaced_ai_pair(
+    client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """한 번에 AI 제안 짝 둘을 바꾸면 둘 다 버림이다 — 이미 채택된 제안은 그대로다."""
+    bundle = make_separate_bundle(client)
+    use_vectors(monkeypatch, fake_ai, AXES)
+    suggest_pairs(client, bundle)
+    first, second, third = list_view_pairs(client, bundle)
+    assert confirm_pair_by_hand(client, bundle, third["id"]).status_code == 200
+    (ko_0, en_0), (ko_1, en_1) = first["unit_ids"], second["unit_ids"]
+
+    created = create_pair_by_hand(client, bundle, [ko_0, en_1])  # 두 제안 짝에서 한 단위씩
+
+    assert created["unit_ids"] == [ko_0, en_1]
+    suggestions = read_pair_suggestions()
+    assert [suggestions[pair["id"]].adoption for pair in (first, second, third)] == ["rejected", "rejected", "as_is"]
+    assert {row.unit_id for row in read_rows(UnitPairMember)}.isdisjoint({ko_1, en_0})  # 짝 상대를 잃은 단위는 짝 없이 남는다
 
 
 def test_a_pair_that_lost_its_unit_is_not_pending_and_keeps_no_adoption(
