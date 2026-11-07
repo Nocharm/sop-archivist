@@ -2,7 +2,7 @@
 
 서버에 SOP Archivist를 **처음 세울 때 한 번만 하는 작업**을 순서대로 모은 문서. 매 배포마다 반복하는 절차(코드 pull → `docker compose up -d --build` → 헬스체크)는 1회성이 아니다 → [`deploy.md`](deploy.md). 백업·복구는 [`backup.md`](backup.md), db-viewer 연결은 [`db-viewer-readonly.md`](db-viewer-readonly.md).
 
-> 서버 명령은 모두 bash(리눅스) 기준이다. 실 IP·사내 호스트명은 이 문서에 쓰지 않는다 — `<server-ip>`, `<keycloak-host>`, `<n8n-host>`, `<ai-host>`를 실제 값으로 바꿔 읽는다. 실값과 시크릿은 서버의 `.env`에만 둔다.
+> 서버 명령은 모두 bash(리눅스) 기준이다. 실 IP·사내 호스트명은 이 문서에 쓰지 않는다 — `<server-ip>`, `<keycloak-host>`, `<n8n-host>`, `<ai-host>`, `<embed-host>`를 실제 값으로 바꿔 읽는다. 실값과 시크릿은 서버의 `.env`에만 둔다.
 
 | 순서 | 할 일 | 절 |
 |---|---|---|
@@ -76,6 +76,8 @@ chmod 600 .env          # 시크릿이 들어가니 소유자만 읽게
 | `AI_ENABLED` | `true` |
 | `AI_BASE_URL` / `AI_MODEL` / `AI_API_TOKEN` | `https://<ai-host>/v1` / 사내 모델 이름 / 발급받은 토큰 |
 | `AI_TIMEOUT_SECONDS` / `AI_MAX_TOKENS` | `120`~`180` / `8000` (사고 토큰 포함 상한, 작으면 빈 응답) |
+| `EMBED_ENABLED` | 임베딩 서버가 준비되면 `true`, 아니면 `false`로 둔다(아래 주의) |
+| `EMBED_BASE_URL` / `EMBED_MODEL` / `EMBED_API_TOKEN` | `http://<embed-host>:8000/v1` / 사내 임베딩 모델 이름(한/영 짝에는 다국어 모델) / 발급받은 토큰 |
 | `N8N_HR_URL` / `N8N_HR_TOKEN` | `http://<n8n-host>:5678/webhook/hr-dept` / 웹훅 토큰(`X-API-Key`) |
 | `HR_SYNC_INTERVAL_HOURS` | **처음엔 `0`**. 첫 수동 동기화(A8)를 확인한 뒤 `24` |
 | `HR_SYNC_DELETE_CAP_PCT` | `20` |
@@ -85,6 +87,8 @@ chmod 600 .env          # 시크릿이 들어가니 소유자만 읽게
 - **postgres 비밀번호는 볼륨을 처음 만들 때만 적용된다.** 첫 `up` 전에 값을 확정한다. 나중에 `.env`만 바꾸면 DB의 비밀번호는 그대로라 backend 접속이 `password authentication failed`로 실패한다(바꾸려면 db에서 `ALTER USER`와 `.env`를 함께).
 - **`APP_SYSADMINS`는 `.env.example`에서 비어 있다(`dev.admin`은 로컬 예시로 주석에만 있다). 서버에서 반드시 채운다.** 비우면 서버에 관리자가 0명이다 — HR 첫 동기화 전에는 권한 표로 관리자를 만들 수도 없으니 **최소 1명**을 넣는다. 이 값은 권한 표와 무관하게 모든 권한을 갖는 비상 열쇠다.
 - **`AI_API_TOKEN=fake`는 로컬 가짜 AI 서버용 예시다.** 서버에는 실제 토큰을 넣는다. 토큰이 비면 `Bearer ` 헤더가 깨져 호출이 실패한다.
+- **임베딩(`EMBED_*`)은 채팅(`AI_*`)과 따로다.** 주소·모델·토큰이 다른 서버이고, `EMBED_API_TOKEN`도 시크릿이다(커밋 금지). 켠다면 토큰이 비면 `Bearer ` 헤더가 깨져 호출이 실패하는 것도 채팅과 같다. 둘 다 선택이고 `AI_ENABLED`·`EMBED_ENABLED` 중 하나라도 켜면 backend의 AI 작업 워커가 뜬다. 첫 배포는 `EMBED_ENABLED=false`로 시작해도 되고, 꺼 두면 후보 칸 추리기는 전체 칸이나 글자 유사도로, 입구 2 짝은 글자 유사도로 줄고 한/영 따로 짝 제안만 막힌다(사람이 손으로 잇는다). SOP 원문은 이 두 주소로만 나간다.
+- **AI 제안의 품질과 유사도 임계값은 아직 합성 자료 기준이다.** 실제 모델로 시험한 적이 없으니, 첫 배포 뒤 실제 SOP로 제안을 보고 임계값(`backend/app/sop/ai/constants.py`)과 지침·프롬프트(`/api/admin/guidelines`의 버전, `guideline.manage` 권한)를 다시 정한다.
 - 값에 `$`가 들어가면 compose가 변수로 읽으니 `$$`로 쓴다.
 - **backend에는 `env_file:`이 없다.** `.env`의 키가 컨테이너에 닿으려면 `docker-compose.yml`의 backend `environment:`에 명시 매핑돼 있어야 한다. 새 env를 추가할 때는 `settings.py` + `.env.example` + compose 셋이 함께 움직인다(`rules/backend/config.md`).
 - **서버 DB에는 dev 모드를 쓰지 않는다.** `AUTH_MODE=dev`는 로컬 sqlite 전용이다 → C절.

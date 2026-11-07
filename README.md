@@ -2,7 +2,7 @@
 
 SOP Restructuring T/F가 쓰는 사내 AI 에이전트 웹 서비스 (FastAPI + Next.js, 사내 서버에 docker compose로 배포). 사용자는 전 부서의 SOP 담당자다.
 
-현재(v0.2.0)는 기반 세팅(**사내 로그인(Keycloak)·직원 디렉터리(HR 웹훅 동기화)·사내 AI 연결·표 기반 권한 체계·관리 화면·DB 자동 백업**) 위에 **SOP 재구성의 결정적 코어**를 얹은 단계다. 옛 SOP·WI를 묶음으로 올리면(DOCX 기본, 텍스트 PDF 보조) 별도 프로세스에서 원문을 빠짐없이 추출하고 규칙으로 문장 단위로 쪼갠다. 작성자는 단위마다 새 SOP·WI의 칸에 배정·확정하거나(입구 1), 이미 쓴 새 문서와 문장 짝을 맞춘다(입구 2). 확정 결과로 문장 비교표(A)·맵핑 흐름도(B)·새 문서 기준 묶음(C)을 코드가 계산해 한글판·영어판 Excel로 내보내고, 검토자에게 검토를 요청한다. 지금은 **API만 있고 화면은 아직 없다**(프런트는 Claude Design 단계에서 붙인다). AI 분류·번역·짝 제안은 다음 단계(계획 2)다. 설계: [`docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`](docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md).
+현재(v0.3.0)는 기반 세팅(**사내 로그인(Keycloak)·직원 디렉터리(HR 웹훅 동기화)·사내 AI 연결·표 기반 권한 체계·관리 화면·DB 자동 백업**) 위에 **SOP 재구성의 결정적 코어**와 그 위의 **AI 제안 층**을 얹은 단계다. 옛 SOP·WI를 묶음으로 올리면(DOCX 기본, 텍스트 PDF 보조) 별도 프로세스에서 원문을 빠짐없이 추출하고 규칙으로 문장 단위로 쪼갠다. 작성자는 단위마다 새 SOP·WI의 칸에 배정·확정하거나(입구 1), 이미 쓴 새 문서와 문장 짝을 맞춘다(입구 2). 확정 결과로 문장 비교표(A)·맵핑 흐름도(B)·새 문서 기준 묶음(C)을 코드가 계산해 한글판·영어판 Excel로 내보내고, 검토자에게 검토를 요청한다. AI는 작성자가 요청할 때 제안만 한다: 단위를 보낼 칸과 한·영 고쳐 쓴 문장(입구 1), 번역, 옛·새 문장 짝과 변경 종류(입구 2), 한/영 따로 문서의 한글·영어 짝, 복합 문장 나누기 위치. 사람이 줄마다 확정하고, AI가 꺼지거나 실패해도 사람 경로는 그대로 돈다. 지금은 **API만 있고 화면은 아직 없다**(프런트는 Claude Design 단계에서 붙인다. 별도 워크트리에서 병행 중). AI 층은 합성 SOP와 가짜 AI로만 검증했고 실제 사내 모델로는 시험하지 않았다. 설계: [`docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`](docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md).
 
 ## 로컬 실행 (Docker 없이)
 
@@ -52,6 +52,17 @@ npm run dev
 # API 문서(OpenAPI): backend를 띄운 뒤 http://localhost:8777/docs. 호출은 dev 헤더로 — Invoke-RestMethod -Headers @{"X-Dev-User"="qa.member"} http://localhost:8777/api/bundles
 ```
 
+### AI·임베딩 서버 (선택)
+
+AI 제안은 사내 채팅 모델(`AI_*`)과 별개의 사내 임베딩 모델(`EMBED_*`, OpenAI 호환 `/embeddings`)을 쓴다. 둘 다 기본은 꺼짐이고, 꺼져 있어도 사람이 끝까지 가는 경로(업로드부터 검토 완료까지)는 그대로 돈다. SOP 원문은 이 두 주소로만 나간다. 값과 설명은 [`.env.example`](.env.example)이 전체 목록이고, 시크릿(`*_API_TOKEN`)은 커밋하지 않는다.
+
+| 키 | 뜻 |
+|---|---|
+| `AI_ENABLED` / `AI_BASE_URL` / `AI_API_TOKEN` / `AI_MODEL` | 채팅 모델. 분류·고쳐 쓰기·번역·입구 2 변경 종류·나누기 제안이 쓴다 |
+| `EMBED_ENABLED` / `EMBED_BASE_URL` / `EMBED_API_TOKEN` / `EMBED_MODEL` | 임베딩 모델. 후보 칸 추리기·입구 2 짝·한/영 따로 짝 제안이 쓴다. 꺼져 있으면 후보는 전체 칸이나 글자 유사도로 줄이고, 한/영 따로 짝 요청은 409 `embedding_disabled`다 |
+
+로컬에서 배선만 확인할 때는 가짜 AI 서버(`frontend/scripts/fake-ai-server.mjs`)를 쓴다. 명령은 [`CLAUDE.md`](CLAUDE.md) Commands에 있고, 응답이 고정이라 정확도의 근거가 아니다.
+
 ## 서버 배포
 
 서버(사내 71번)는 docker compose로 올린다(접속 `http://<server-ip>:7777`). 처음 세울 때는 [`setup-once.md`](docs/deploy/setup-once.md)를 순서대로, 이후 배포는 [`deploy.md`](docs/deploy/deploy.md)를 따른다.
@@ -79,4 +90,5 @@ docker-compose.yml   # proxy · frontend · backend · db · db-backup
 - 문서 인덱스: [`docs/README.md`](docs/README.md)
 - 설계 명세: [`SOP 재구성 End-to-End 설계`](docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md)(제품), [`기반 세팅 설계`](docs/superpowers/specs/2026-11-04-sop-archivist-baseline-design.md)
 - 구현 계획 1(결정적 코어): [`docs/superpowers/plans/2026-11-05-sop-restructuring-plan1-core.md`](docs/superpowers/plans/2026-11-05-sop-restructuring-plan1-core.md), 파싱 의존성·메모리 실측: [`docs/qa/2026-11-sop-parse-dependencies.md`](docs/qa/2026-11-sop-parse-dependencies.md)
+- 구현 계획 2(AI 제안 층, 프런트 병행용 API 계약 포함): [`docs/superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md`](docs/superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md)
 - 작업 가이드(명령·구조·체크리스트): [`CLAUDE.md`](CLAUDE.md), 변경 기록: [`CHANGELOG.md`](CHANGELOG.md), 진행 현황: [`PROGRESS.md`](PROGRESS.md)

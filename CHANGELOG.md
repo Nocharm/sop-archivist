@@ -6,6 +6,26 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
 
 - (없음)
 
+## v0.3.0 — 2026-11-07
+
+- **범위**: SOP 재구성 **AI 제안 층**(구현 계획 2). 결정적 코어(v0.2.0) 위에서 AI가 분류·고쳐 쓰기·번역·입구 2 짝 맞추기·한/영 따로 짝·복합 문장 나누기를 **제안**하고 사람이 줄마다 확정한다. AI가 꺼지거나 실패해도 사람 경로는 그대로 돈다. **프런트 화면은 아직 없다**(Claude Design 1차 작업이 별도 워크트리에서 병행 중이라, 서버에 올려도 화면에서 달라지는 것은 상단 바 버전뿐이고 AI 기능은 `/api/bundles/{id}/ai/…`로만 쓴다). **검증은 가짜 AI와 합성 SOP(`SYNTHETIC_` 파일)로만 했고 실제 사내 모델·실제 SOP로는 시험하지 않았다. 유사도 임계값은 합성 자료로만 잡은 값**이다. 설계: `docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`("(계획 2에서 정함)" 항목), 계획: `docs/superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md`(프런트 병행용 API 계약 포함).
+- **주요 변경**:
+  - 작업 실행기: 요청은 `ai_jobs` 행을 쌓고 곧바로 응답한다. backend 안의 단일 워커가 `load`(짧은 세션) → `compute`(세션 없이 AI 호출) → `apply`(묶음 잠금·`revision` 재확인) 세 단계로 처리하고, 늦게 온 응답은 적용하지 않아 작업이 `stale`·`cancelled`로 끝난다. 재시작으로 끊긴 작업은 `queued`로 돌아가 3번 시도한 뒤 `failed`다. 관리 화면 AI 연결 테스트도 호출 동안 DB 연결을 잡지 않는다.
+  - 임베딩: 사내 OpenAI 호환 `/embeddings` 클라이언트와 (모델, 글자 해시) 캐시. 코사인 유사도는 backend에서 계산한다(`numpy`). 꺼져 있으면 후보는 전체 칸·글자 유사도로 줄고 한/영 따로 짝 제안만 막힌다(409 `embedding_disabled`).
+  - 지침·프롬프트 버전: 키 5개(`rules`·`prompt.classify`·`prompt.translate`·`prompt.match`·`prompt.split`)의 첫 버전을 저장소 시드에서 만들고, `guideline.manage`가 `/api/admin/guidelines`로 새 버전을 올리고 활성화한다. 모든 제안이 쓴 버전을 기록한다.
+  - AI 제안 6종(작업 종류 `classify`·`translate`·`match_plan`·`match`·`pair`·`split`): 입구 1 분류와 한·영 고쳐 쓰기(임베딩으로 후보 3칸 → LLM 고르기), 번역(한↔영), 입구 2 짝 맞추기(코드가 묶고 LLM은 변경 종류만, 표·그림은 코드), 한/영 따로 짝(임베딩만), 복합 문장 나누기 위치. 요청·진행·취소·다시 시도·제안 목록·채택 기록 API와 한/영 짝 보기의 출처 `ai`.
+  - 채택률: 사람이 저장할 때 코드가 그대로(`as_is`)·고쳐서(`edited`)·버림(`rejected`)을 계산해 제안에 남기고, 종류별 집계가 AI 상태 응답에 실린다.
+  - 사람 경로 보강: 일괄 삭제·이동은 AI 제안 단위가 섞이면 409 `ai_suggested_units`. 번역 줄은 출처 새 문장을 따르고(출처가 바뀌면 AI 번역은 지우고 확정 번역은 보류), 저장 못 하는 글자(NUL·짝 없는 서로게이트)가 든 입력은 422이고 AI 응답의 그런 글자는 대체 문자로 바꾼다.
+  - 기존 API 응답은 필드 추가만: `DecisionOut.suggestion_id`·`GroupTargetOut.suggestion_id`/`translation_source_unit_id`·`BundleOut.ai_jobs`·`ARow.row_kind` 값 `translation`.
+  - 개발 도구: 가짜 AI(`backend/tests/fake_ai.py`의 합성 정답, `frontend/scripts/fake-ai-server.mjs`의 분류·번역·짝·임베딩 응답), 두 입구를 가짜 AI로 끝까지 도는 E2E, 데모 시드의 AI 제안 묶음. backend 테스트 1859개(v0.2.0은 1031개).
+  - 문서: 설계 문서에 계획 2 결정 반영, `CLAUDE.md`(`app/sop/ai/` 구조·AI 제안 층 불변식), `README.md`·`docs/deploy/setup-once.md`(`EMBED_*`)·`docs/deploy/deploy.md`(AI 작업 실패 트러블슈팅 행).
+- **배포 메모**: **서버 미배포** — v0.1.0·v0.2.0도 아직 배포 전이라 첫 배포는 `docs/deploy/setup-once.md` 순서대로 하면 이 버전이 올라가고, v0.2.0 배포 메모(env 6개·backend 메모리 2G·새 PyPI 의존성)도 함께 적용된다. **실제 모델로는 검증하지 못했다**: 임계값(`backend/app/sop/ai/constants.py`)·지침·프롬프트는 실제 SOP를 본 뒤 다시 정하고, 429·408을 다시 시도하지 않는 현재 동작도 그때 다시 본다.
+  - 새 env 4개(모두 compose `environment:`에 기본값 폴백이 있어 `.env`에 없어도 기본 꺼짐, 설명은 `.env.example`): `EMBED_ENABLED`(false)·`EMBED_BASE_URL`·`EMBED_API_TOKEN`(시크릿, 커밋 금지)·`EMBED_MODEL`. 채팅 `AI_*`와는 다른 서버·모델이다. `AI_ENABLED`·`EMBED_ENABLED` 중 하나라도 켜면 AI 작업 워커가 뜬다. 임베딩을 켜려면 사내 임베딩 서버 주소·모델(한/영 짝에는 다국어 모델)·토큰이 필요하다.
+  - DB: Alembic `0007_sop_ai`(표 4개 추가: `ai_jobs`·`ai_suggestions`·`guideline_versions`·`embedding_cache`)가 backend 기동 때 head까지 자동 적용된다(단일 워커). 기존 표는 건드리지 않고, 첫 기동에서 지침 5개의 첫 버전이 시드된다.
+  - 새 PyPI 의존성: `numpy==2.4.6` 고정. MarkItDown이 이미 들여오는 `onnxruntime`의 버전이라 새 휠을 더하지 않고, 베이스 이미지는 그대로라 tar 반입은 없다.
+  - **db-viewer 점검 필요**: 새 표 중 `ai_suggestions`는 고쳐 쓴 문장·원문 인용이 담기고 `embedding_cache`의 벡터도 원문에서 나온 값이다. `ALTER DEFAULT PRIVILEGES`가 새 표에 SELECT를 자동으로 주므로, 배포 직후 `docs/deploy/db-viewer-readonly.md` 기준으로 REVOKE 여부를 정한다(v0.2.0의 SOP 표도 같은 점검 대상이다).
+  - 배포일은 서버 배포 뒤 여기에 적는다.
+
 ## v0.2.1 — 2026-11-06
 
 - **범위**: 검토 규칙 수정.
