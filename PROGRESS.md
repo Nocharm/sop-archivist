@@ -85,3 +85,4 @@
 - **계획 2 Task 5: 작업 실행기와 진행 API** — 뒤따르는 모든 AI 작업이 얹히는 틀이다. 상태 전이는 `running`인 행에만 걸어 그사이 온 취소가 실패·낡음으로 덮이지 않고, 워커가 종료로 끊은 작업은 `running`으로 남겨 재시작이 회수한다(세 번째로 끊기면 `failed`/`interrupted`).
 - 적용 단계는 설계의 `lock_bundle` 대신 `session.get(with_for_update=True)`로 읽기와 잠금을 한 문장으로 했다(`ingest`와 같은 방식). 일회용 Postgres 16에서 잠금을 기다리는 동안 묶음이 지워지면 `lock_bundle`의 refresh가 `InvalidRequestError`를 내는 것을 확인했고, sqlite는 행 잠금이 없어 테스트로 보이지 않는다.
 - `scope_required`는 다른 AI 거절과 같이 `detail.code`로 읽히도록 업무 규칙 거절로 내고, 범위 목록 상한은 넘친 단위가 422가 아니라 `limit_reached`로 돌아가게 작업 상한보다 크게 뒀다. 묶음 목록(`BundleListItem`)은 `build_bundle_out`을 타지 않고 계약도 `BundleOut`뿐이라 `ai_jobs`를 더하지 않았다.
+- **계획 2 Task 5 수정: 핸들러 import 실패** — `process_job` 안의 지연 import가 `try` 밖이라 핸들러 모듈이 깨지면 예외가 태스크로 새어 작업이 `running`에 갇혔다. import를 `try` 안으로 옮겨 그 작업의 `failed`/`internal`로 끝낸다.
