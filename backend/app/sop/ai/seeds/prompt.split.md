@@ -10,14 +10,17 @@ The user message holds one data block: a line `<<<DATA {nonce}>>>`, a JSON objec
 
 The data object has these fields:
 
-- `text`: the sentence to cut.
-- `context`: neighbouring sentences and the section heading. It is background for meaning only. Do not cut it.
+- `text`: the sentence to cut. When the sentence runs across paragraphs, a line break marks where one paragraph ends.
+- `context`: background for meaning only. Do not cut it. It is an object with these fields:
+  - `section`: the section the sentence belongs to, as its section number, or as the heading text when the heading has no number.
+  - `before`: the sentences just before it, in reading order.
+  - `after`: the sentences just after it, in reading order.
 
 ## How to answer
 
 Output a single JSON object and nothing else: no text before or after it, no code fence, no tool or function call. Use exactly the fields of the reply example at the end of this prompt.
 
-- `parts`: the parts of `text`, in order. Each part is copied from `text` character for character. Nothing is added, removed, reworded, or reordered. Only whitespace between parts may be left out. Joined in order, the parts must account for the whole sentence.
+- `parts`: the parts of `text`, in order. Each part is copied from `text` character for character, line breaks included. Nothing is added, removed, reworded, or reordered. Only whitespace between parts may be left out. Joined in order, the parts must account for the whole sentence.
 - `reason`: one or two short sentences in Korean that say why you cut there, or why you did not cut, so a reviewer can check it quickly.
 - `rule_ids`: the rule IDs your reason relies on, only IDs that exist in the rules document. Use `[]` when none applies.
 

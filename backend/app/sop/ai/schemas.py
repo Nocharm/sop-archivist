@@ -5,7 +5,7 @@ from typing import Annotated, Literal, Self
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 from app.routers.admin import KstDatetime
-from app.sop.constants import AI_JOB_KINDS
+from app.sop.constants import AI_ADOPTIONS, AI_JOB_KINDS
 from app.sop.errors import raise_rule
 from app.sop.tobe import MAX_DB_INT
 
@@ -26,6 +26,18 @@ def _check_job_kind(value: str) -> str:
 
 
 JobKind = Annotated[str, AfterValidator(_check_job_kind)]
+
+
+def _check_adoption(value: str) -> str:
+    if value not in AI_ADOPTIONS:
+        raise ValueError(f"adoption must be one of {AI_ADOPTIONS}")
+    return value
+
+
+class AdoptionIn(BaseModel):
+    """사람이 직접 남기는 채택 결과 — 나누기 제안만 받는다(다른 종류는 사람의 저장이 채택을 정한다)."""
+
+    adoption: Annotated[str, AfterValidator(_check_adoption)]
 
 
 class ScopeIn(BaseModel):

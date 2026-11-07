@@ -1,4 +1,4 @@
-"""AI API — 분류·번역·짝 맞추기 요청(작성자, AI가 켜져 있을 때), 한/영 따로 짝 제안 요청(작성자, 임베딩이 켜져 있을 때)과 작업 현황·제안 읽기(멤버)·취소·실패분 다시 시도(작성자, 작업 중 묶음만). 요청 말고는 AI가 꺼져 있어도 동작한다."""
+"""AI API — 분류·번역·짝 맞추기·복합 문장 나누기 요청(작성자, AI가 켜져 있을 때), 한/영 따로 짝 제안 요청(작성자, 임베딩이 켜져 있을 때)과 작업 현황·제안 읽기(멤버)·나누기 제안 채택 기록·취소·실패분 다시 시도(작성자, 작업 중 묶음만). 요청 말고는 AI가 꺼져 있어도 동작한다."""
 
 from collections.abc import Sequence
 from typing import Annotated, Literal
@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
 from app.settings import settings
-from app.sop.ai.adoption import list_suggestions, load_adoption_stats, load_suggestion
+from app.sop.ai.adoption import list_suggestions, load_adoption_stats, load_suggestion, record_split_adoption
 from app.sop.ai.classify import CLASSIFY_KIND, select_classify_items
 from app.sop.ai.constants import DEFAULT_SUGGESTIONS_PAGE, MAX_SUGGESTIONS_PAGE
 from app.sop.ai.jobs import (
@@ -22,6 +22,7 @@ from app.sop.ai.jobs import (
 from app.sop.ai.match_jobs import MATCH_PLAN_KIND, select_match_items
 from app.sop.ai.pairing import PAIR_KIND, select_pair_items
 from app.sop.ai.schemas import (
+    AdoptionIn,
     AiRequestOut,
     AiStatusOut,
     CancelOut,
@@ -35,6 +36,7 @@ from app.sop.ai.schemas import (
     SuggestionsPageOut,
     TranslateIn,
 )
+from app.sop.ai.split import SPLIT_KIND, select_split_items
 from app.sop.ai.translate import TRANSLATE_KIND, select_translate_items
 from app.sop.constants import MEMBER_ROLES
 from app.sop.errors import raise_rule
@@ -129,6 +131,20 @@ async def request_pair(
     return await _queue_request(session, ctx, PAIR_KIND, items, skipped)
 
 
+@router.post("/split", response_model=AiRequestOut, dependencies=[Depends(require_ai_enabled)])
+async def request_split(
+    body: ScopeIn,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> AiRequestOut:
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    items, skipped = await select_split_items(
+        session, ctx.bundle.id, document_id=body.document_id, unit_ids=body.unit_ids
+    )
+    return await _queue_request(session, ctx, SPLIT_KIND, items, skipped)
+
+
 @router.get("/status", response_model=AiStatusOut)
 async def get_ai_status(
     ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
@@ -166,6 +182,26 @@ async def get_suggestion(
     session: AsyncSession = Depends(get_session),
 ) -> SuggestionOut:
     return SuggestionOut.model_validate(await load_suggestion(session, ctx.bundle.id, suggestion_id))
+
+
+@router.post("/suggestions/{suggestion_id}/adoption", response_model=SuggestionOut)
+async def record_adoption(
+    suggestion_id: SuggestionIdPath,
+    body: AdoptionIn,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> SuggestionOut:
+    """나누기 제안의 채택 결과를 사람이 남긴다 — 나누기 편집은 따로 하고, 이 기록이 채택률의 재료다."""
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    suggestion = await load_suggestion(session, ctx.bundle.id, suggestion_id)
+    record_split_adoption(suggestion, body.adoption, ctx.login_id)
+    record_event(
+        session, bundle_id=ctx.bundle.id, actor=ctx.login_id, action="ai.adopt", target_type="ai_suggestion",
+        target_ids=[suggestion.id], reason=body.adoption,
+    )
+    await session.commit()
+    return SuggestionOut.model_validate(suggestion)
 
 
 @router.post("/cancel", response_model=CancelOut)
