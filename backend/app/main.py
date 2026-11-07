@@ -17,6 +17,7 @@ from app.routers import auth as auth_router
 from app.routers import directory as directory_router
 from app.routers import me as me_router
 from app.routers import sop_admin as sop_admin_router
+from app.routers import sop_ai as sop_ai_router
 from app.routers import sop_bundles as sop_bundles_router
 from app.routers import sop_decisions as sop_decisions_router
 from app.routers import sop_documents as sop_documents_router
@@ -25,6 +26,7 @@ from app.routers import sop_outputs as sop_outputs_router
 from app.routers import sop_tobe as sop_tobe_router
 from app.settings import settings
 from app.sop.ai.guidelines import seed_guidelines
+from app.sop.ai.runner import requeue_running_jobs, run_ai_worker
 
 
 @asynccontextmanager
@@ -38,14 +40,20 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     if settings.resolved_auth_mode() == "dev":
         async with SessionLocal() as session:
             await seed_dev_directory(session)
+    # 끊긴 작업은 AI가 꺼져 있어도 회수한다 — 꺼낼 워커가 다시 떴을 때 running으로 남아 있으면 영영 돌지 않는다
+    await requeue_running_jobs()
     hr_task: asyncio.Task[None] | None = None
     if settings.hr_enabled and settings.hr_sync_interval_hours > 0:
         hr_task = asyncio.create_task(run_hr_sync_loop())
+    ai_task: asyncio.Task[None] | None = None
+    if settings.ai_enabled or settings.embed_enabled:
+        ai_task = asyncio.create_task(run_ai_worker())
     yield
-    if hr_task is not None:
-        hr_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await hr_task  # 취소가 끝나길 기다려 종료 때 "Task was destroyed" 경고를 막는다
+    for task in (hr_task, ai_task):
+        if task is not None:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task  # 취소가 끝나길 기다려 종료 때 "Task was destroyed" 경고를 막는다
     await engine.dispose()
 
 
@@ -71,6 +79,7 @@ app.include_router(sop_decisions_router.router)
 app.include_router(sop_outputs_router.router)
 app.include_router(sop_admin_router.router)
 app.include_router(sop_guidelines_router.router)
+app.include_router(sop_ai_router.router)
 
 
 @app.get("/api/health")
