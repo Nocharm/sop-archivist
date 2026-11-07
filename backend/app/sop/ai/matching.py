@@ -6,10 +6,12 @@
 from collections import defaultdict
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from itertools import product
 
 import numpy as np
 
 from app.sop.ai.similarity import text_similarity
+from app.sop.segment import has_visible_char
 
 _ONE_TO_ONE_KINDS = ("table", "figure")  # 글자를 나누거나 합칠 수 없는 종류 — 묶지 않고 1:1로만 잇는다
 
@@ -65,6 +67,31 @@ def _build_same_kind_mask(olds: Sequence[MatchItem], news: Sequence[MatchItem]) 
     return old_codes[:, np.newaxis] == new_codes
 
 
+def _index_by_text(items: Sequence[MatchItem]) -> dict[tuple[str, str, str], list[int]]:
+    """(언어, 종류, 글) → 위치들(넘긴 순서) — 글이 없으면 같다고 말할 수 없어 뺀다."""
+    positions: dict[tuple[str, str, str], list[int]] = defaultdict(list)
+    for position, item in enumerate(items):
+        if has_visible_char(item.text):
+            positions[(item.lang, item.kind, item.text)].append(position)
+    return positions
+
+
+def _pair_identical_texts(olds: Sequence[MatchItem], news: Sequence[MatchItem], eligible: np.ndarray) -> list[_Component]:
+    """글이 똑같은 항목을 id 순으로 1:1로 잇는다 — 되풀이되는 문장은 점수가 모두 같아, 그대로 묶으면 거짓 나눔과 거짓 삭제 후보가 나온다.
+
+    이은 행·열은 eligible에서 지운다(제자리 수정). 남는 항목이 이은 항목에 다시 붙으면 N:M이 되살아난다.
+    """
+    news_by_text = _index_by_text(news)
+    pairs: list[_Component] = []
+    for key, old_positions in _index_by_text(olds).items():
+        for old, new in zip(old_positions, news_by_text.get(key, ()), strict=False):  # 짧은 쪽까지 — 남는 쪽은 아래 간선이 다룬다
+            if eligible[old, new]:
+                eligible[old, :] = False
+                eligible[:, new] = False
+                pairs.append(({old}, {new}))
+    return pairs
+
+
 def _pick_best(ranked: np.ndarray, eligible: np.ndarray, axis: int) -> dict[int, int]:
     """{위치: 그 위치의 최고 상대} — axis=1이면 옛 → 새, 0이면 새 → 옛. 첫 최댓값을 주는 argmax와 id 순 행렬 덕에 동점은 작은 id가 이긴다."""
     best = ranked.argmax(axis=axis)
@@ -105,6 +132,13 @@ def _reduce_to_stars(component: _Component, best_olds: Mapping[int, int]) -> lis
     return [({old}, news) for old, news in stars.items()]
 
 
+def _keep_best_pair(star: _Component, ranked: np.ndarray) -> _Component:
+    """별에서 점수가 가장 높은 쌍만 남긴다 — 위치가 id 순이고 max는 첫 최댓값을 주어 동점은 작은 id가 이긴다."""
+    old_side, new_side = star
+    old, new = max(product(sorted(old_side), sorted(new_side)), key=lambda pair: ranked[pair])
+    return {old}, {new}
+
+
 def _list_ids(items: Sequence[MatchItem], positions: Collection[int]) -> tuple[int, ...]:
     return tuple(items[position].id for position in sorted(positions))
 
@@ -114,8 +148,8 @@ def propose_groups(
 ) -> MatchProposal:
     """점수 행렬 scores[옛][새]에서 짝을 고른다 — 넘긴 순서와 상관없이 같은 입력은 같은 결과다.
 
-    각 옛 → 최고 새, 각 새 → 최고 옛 간선(임계값 이상, 같은 언어·종류)의 연결 요소를 구해 별 모양은 그대로 쓰고 N:M은 줄인다.
-    표·그림은 서로 최고인 간선만 쓴다. 임계값과 같은 점수는 짝이다.
+    글이 똑같은 항목을 먼저 1:1로 잇고, 남은 항목은 각 옛 → 최고 새, 각 새 → 최고 옛 간선(임계값 이상, 같은 언어·종류)의 연결 요소를
+    구해 별 모양은 그대로 쓰고 N:M은 줄인다. 표·그림은 별마다 가장 높은 쌍만 남긴다. 임계값과 같은 점수는 짝이다.
     """
     if not olds or not news:
         return MatchProposal((), tuple(sorted(old.id for old in olds)), tuple(sorted(new.id for new in news)))
@@ -126,17 +160,15 @@ def propose_groups(
     ordered_scores = scores[np.ix_(old_order, new_order)]
 
     eligible = (ordered_scores >= threshold) & _build_same_kind_mask(ordered_olds, ordered_news)
+    pairs = _pair_identical_texts(ordered_olds, ordered_news, eligible)
     ranked = np.where(eligible, ordered_scores, -np.inf)
     best_news = _pick_best(ranked, eligible, axis=1)
     best_olds = _pick_best(ranked, eligible, axis=0)
     edges = {*best_news.items(), *((old, new) for new, old in best_olds.items())}
-    kept = [
-        (old, new)
-        for old, new in edges
-        if ordered_olds[old].kind not in _ONE_TO_ONE_KINDS or (best_news.get(old) == new and best_olds.get(new) == old)
-    ]
-
-    pairs = [star for component in _split_components(kept) for star in _reduce_to_stars(component, best_olds)]
+    for component in _split_components(edges):
+        for star in _reduce_to_stars(component, best_olds):
+            is_one_to_one = ordered_olds[min(star[0])].kind in _ONE_TO_ONE_KINDS
+            pairs.append(_keep_best_pair(star, ranked) if is_one_to_one else star)
     groups = sorted(
         (MatchGroup(_list_ids(ordered_olds, old_side), _list_ids(ordered_news, new_side)) for old_side, new_side in pairs),
         key=lambda group: group.old_ids,
