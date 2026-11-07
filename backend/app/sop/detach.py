@@ -59,10 +59,10 @@ def _hold(item: UnitDecision | TargetSentence) -> None:
 
 async def _load_translations(
     session: AsyncSession, bundle_id: int, *, target_ids: Collection[int], unit_ids: Collection[int] = ()
-) -> dict[int, TargetSentence]:
-    """출처 새 문장이나 번역 출처 단위로 찾은 번역 새 문장 — 번역 출처 단위는 합친 새 문장의 출처 하나일 뿐이라 둘이 다르다."""
+) -> dict[TargetSentence, int]:
+    """출처 새 문장이나 번역 출처 단위로 찾은 {번역 새 문장: 출처 새 문장 id} — 번역 출처 단위는 합친 새 문장의 출처 하나일 뿐이라 둘이 다르다."""
     translations = (
-        select(TargetSentence)
+        select(TargetSentence, TRANSLATED_TARGET_ID)
         .join(AiSuggestion, AiSuggestion.id == TargetSentence.suggestion_id)
         .where(TargetSentence.bundle_id == bundle_id, TargetSentence.origin == ORIGIN_TRANSLATION)
     )
@@ -72,7 +72,7 @@ async def _load_translations(
             session, lambda chunk: translations.where(TargetSentence.translation_source_unit_id.in_(chunk)), unit_ids
         ),
     ]
-    return {row[0].id: row[0] for row in rows}
+    return {row[0]: row[1] for row in rows}
 
 
 async def _mark_suggestions_stale(session: AsyncSession, targets: Iterable[TargetSentence]) -> None:
@@ -93,19 +93,35 @@ async def drop_translations(session: AsyncSession, targets: Collection[TargetSen
         await session.delete(target)
 
 
+def _follow_source(target: TargetSentence, source: TargetSentence) -> None:
+    target.target_doc_id, target.slot_key = source.target_doc_id, source.slot_key
+    target.wi_step, target.wi_part, target.section_path = source.wi_step, source.wi_part, source.section_path
+
+
 async def sweep_translations(
     session: AsyncSession, bundle_id: int, target_ids: Collection[int], *, exempt: Collection[int] = ()
 ) -> None:
     """글·자리가 바뀌었거나 사라진 출처 새 문장의 번역을 다시 보게 한다 — ai_suggested는 지우고 나머지는 보류다(스펙 §7.5, §7.9).
 
-    옛 글의 번역이 확정인 채 결과물로 나가지 않게 하는 규칙이다. exempt는 같은 저장에서 사람이 직접 정한 번역이다.
+    옛 글의 번역이 확정인 채 결과물로 나가지 않게 하는 규칙이다. exempt는 같은 저장에서 사람이 직접 정한 번역이라 보류하지 않는다.
+    남긴 번역은 출처가 남아 있으면 그 자리로 옮긴다 — 번역의 자리는 출처와 같아야 하고 잠겨 있어, 옛 자리에 두면 사람이 고친 글을
+    지우고 다시 받는 수밖에 없다. 그래서 호출부는 출처를 쓴 뒤에 부른다. 출처가 없어졌으면 자리는 그대로다.
     """
     translations = await _load_translations(session, bundle_id, target_ids=target_ids)
-    swept = [target for target in translations.values() if target.id not in exempt]
-    await drop_translations(session, [target for target in swept if target.status == AI_SUGGESTED])
-    for target in swept:
-        if target.status != AI_SUGGESTED:
+    await drop_translations(
+        session, [target for target in translations if target.status == AI_SUGGESTED and target.id not in exempt]
+    )
+    rows = await select_in_chunks(
+        session, lambda chunk: select(TargetSentence).where(TargetSentence.id.in_(chunk)), set(translations.values())
+    )
+    sources = {row[0].id: row[0] for row in rows}
+    for target, source_id in translations.items():
+        if target.status == AI_SUGGESTED:
+            continue
+        if target.id not in exempt:
             _hold(target)
+        if source_id in sources:
+            _follow_source(target, sources[source_id])
 
 
 async def find_units_needing_confirm(session: AsyncSession, unit_ids: Collection[int]) -> list[int]:
@@ -231,9 +247,9 @@ async def detach_units(
     }
     changed = deleted | {target_id for target_id, unit_ids in sources.items() if unit_ids & touched}
     translations = await _load_translations(session, bundle_id, target_ids=changed, unit_ids=touched)
-    suggested = [target for target in translations.values() if target.status == AI_SUGGESTED]
+    suggested = [target for target in translations if target.status == AI_SUGGESTED]
     await _mark_suggestions_stale(session, suggested)
-    targets.update(translations)
+    targets.update({target.id: target for target in translations})
     deleted |= {target.id for target in suggested}
     # 남길 칸 번역은 표에서 떼어야 CASCADE로 같이 지워지지 않는다
     for target in targets.values():
