@@ -38,8 +38,14 @@ class Settings(BaseSettings):
     # 다중 엔드포인트+모델 — JSON 배열 [{"name","base_url","token","model","models"}]. .env에서 추가/삭제.
     # 비우면 위 단일 설정(AI_BASE_URL 등) 사용. 토큰은 시크릿이라 .env 전용.
     ai_endpoints: str = ""
-    # AI 부하 가드 — 백엔드 전체 동시 AI 호출 상한
+    # AI 부하 가드 — 백엔드 전체 동시 AI 호출 상한(채팅·임베딩이 함께 센다)
     ai_max_concurrency: int = 4
+
+    # 임베딩 서버(OpenAI 호환 /embeddings) — 채팅 서버와 주소·모델이 달라 AI_*와 따로 둔다. 로컬 기본 비활성
+    embed_enabled: bool = False
+    embed_base_url: str = ""  # 예: http://<embed-host>:8000/v1
+    embed_api_token: str = ""  # Bearer 토큰 (시크릿 — .env만, git 금지)
+    embed_model: str = ""
 
     # 사내 n8n HR 웹훅 — 사용자·조직도 단일 소스. 둘 다 비우면 비활성.
     n8n_hr_url: str = ""  # 예: http://<n8n-host>:5678/webhook/hr-dept

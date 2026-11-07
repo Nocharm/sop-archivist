@@ -14,12 +14,19 @@ from tests.ai_helpers import (
     build_chat_body,
     capture_requests,
     enable_ai,
+    enable_embed,
     install_ai_transport,
     read_payload,
     reply_with,
 )
 
 MESSAGES = [{"role": "user", "content": "hi"}]
+
+# 서버가 index를 뒤섞어 돌려줘도 입력 순서대로 되돌려야 한다
+SHUFFLED_EMBEDDINGS = {
+    "data": [{"index": 1, "embedding": [0.0, 1.0]}, {"index": 0, "embedding": [1.0, 0.0]}],
+    "usage": {"prompt_tokens": 4},
+}
 
 TWO_ENDPOINTS = json.dumps(
     [
@@ -153,6 +160,57 @@ def test_http_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
         asyncio.run(ai_client.call_ai(MESSAGES))
 
 
+# ── 임베딩 ─────────────────────────────────────────────────────────────────────
+
+
+def test_call_embeddings_posts_inputs_and_orders_by_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    enable_embed(monkeypatch)
+    seen: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        return httpx2.Response(200, json=SHUFFLED_EMBEDDINGS)
+
+    install_ai_transport(monkeypatch, handler)
+
+    reply = asyncio.run(ai_client.call_embeddings(["a", "b"]))
+
+    [request] = seen
+    assert request.url.path.endswith("/embeddings")
+    assert request.headers["Authorization"] == f"Bearer {AI_TEST_TOKEN}"
+    assert read_payload(request) == {"model": "embed-test", "input": ["a", "b"]}
+    assert reply.vectors == [[1.0, 0.0], [0.0, 1.0]]
+    assert reply.prompt_tokens == 4
+
+
+def test_call_embeddings_rejects_a_count_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    enable_embed(monkeypatch)
+    one_vector = {"data": [{"index": 0, "embedding": [1.0, 0.0]}]}
+    install_ai_transport(monkeypatch, lambda request: httpx2.Response(200, json=one_vector))
+
+    # 개수가 어긋난 응답을 그대로 쓰면 벡터가 다른 문장에 붙는다
+    with pytest.raises(ValueError, match="count"):
+        asyncio.run(ai_client.call_embeddings(["a", "b"]))
+
+
+def test_call_embeddings_without_usage_has_no_token_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    enable_embed(monkeypatch)
+    no_usage = {"data": [{"index": 0, "embedding": [1.0]}]}
+    install_ai_transport(monkeypatch, lambda request: httpx2.Response(200, json=no_usage))
+
+    reply = asyncio.run(ai_client.call_embeddings(["a"]))
+
+    assert reply.prompt_tokens is None  # usage를 안 주는 서버
+
+
+def test_call_embeddings_http_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    enable_embed(monkeypatch)
+    install_ai_transport(monkeypatch, lambda request: httpx2.Response(500))
+
+    with pytest.raises(httpx2.HTTPStatusError):
+        asyncio.run(ai_client.call_embeddings(["a"]))
+
+
 # ── 동시성 ─────────────────────────────────────────────────────────────────────
 
 
@@ -188,6 +246,34 @@ def test_concurrency_limit(monkeypatch: pytest.MonkeyPatch, limit: int) -> None:
         return peak
 
     assert asyncio.run(scenario()) == limit
+
+
+def test_embeddings_share_the_concurrency_limit_with_chat(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 채팅 1건 + 임베딩 1건을 동시에 시작해도 상한 1이면 겹치지 않는다 — 같은 세마포어를 쓴다는 증거
+    enable_ai(monkeypatch)
+    enable_embed(monkeypatch)
+    monkeypatch.setattr(settings, "ai_max_concurrency", 1)
+    monkeypatch.setattr(ai_client, "_semaphores", {})
+
+    async def scenario() -> int:
+        active = 0
+        peak = 0
+
+        async def handler(request: httpx2.Request) -> httpx2.Response:
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0.05)  # 겹칠 기회를 준다
+            active -= 1
+            if request.url.path.endswith("/embeddings"):
+                return httpx2.Response(200, json={"data": [{"index": 0, "embedding": [1.0]}]})
+            return httpx2.Response(200, json=build_chat_body("{}"))
+
+        install_ai_transport(monkeypatch, handler)
+        await asyncio.gather(ai_client.call_ai(MESSAGES), ai_client.call_embeddings(["a"]))
+        return peak
+
+    assert asyncio.run(scenario()) == 1
 
 
 # ── 모델 목록 ──────────────────────────────────────────────────────────────────

@@ -74,3 +74,5 @@
 - **계획 2 사전 점검** — 실행 전 계획을 설계·코드와 대조해 어긋난 곳을 계획에 바로 고쳤다. `runner`↔핸들러 순환 import, `AiStr` 길이 상한, 깨진 서버 응답의 실패 코드, 밀린 제안의 `stale` 처리(채택률 `pending`), 요청 상한을 넘은 단위의 `limit_reached` 알림(프런트 계약에 추가)이 주요 항목이다.
 - **계획 2 Task 1: 입력 경계 마무리** — v0.2.0 보고서의 짝 없는 서로게이트 500은 pydantic이 이미 422로 거절하는데 기본 422 본문의 `input`이 그 글자를 되돌리다 응답 인코딩이 깨지는 것이 원인이었다. 그래서 `RequestValidationError` 핸들러가 `type·loc·msg`만 돌려주게 해 값이 응답과 로그로 되돌아가지 않게 하고(프런트는 `msg`만 읽어 영향 없음), 저장 못 하는 글자의 판정은 `segment.has_unstorable_char`로 모았다.
 - 선택 칸(`BundleUpdateIn.description`·`TargetIn.text`)은 `| None`에 `Field` 상한을 걸면 오류 종류가 `too_long`이라 `StringConstraints`+`NO_NUL`을 `Annotated`로 걸었다.
+- **계획 2 Task 2: AI 호출 경계** — 임베딩은 채팅과 서버·모델이 달라 `EMBED_*`를 따로 두되 동시성 세마포어는 `call_ai`와 공유한다(동시 상한이 전체 AI 부하 기준이라서). 느린 AI 호출 동안 DB 연결을 잡지 않으려고 `call_ai_recorded`에서 세션 인자를 없애고 `record_ai_usage`가 호출 뒤 자기 짧은 세션으로 기록한다. `ping_ai`는 권한 판정이 잡은 요청 세션을 호출 직전에 닫는다.
+- 실패 기록이 실패해도 원래 AI 오류를 가리지 않는 동작은 그대로이고, 그 경고 로그는 트레이스백 대신 예외 클래스 이름만 남긴다(값이 로그에 실리지 않게).

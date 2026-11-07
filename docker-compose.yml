@@ -70,6 +70,11 @@ services:
       AI_ENDPOINTS: ${AI_ENDPOINTS:-}
       # AI 호출 동시성 상한
       AI_MAX_CONCURRENCY: ${AI_MAX_CONCURRENCY:-4}
+      # 임베딩 서버(OpenAI 호환 /embeddings) — 채팅 AI_*와 따로. 꺼 두면 임베딩을 쓰는 기능이 비활성(시크릿은 .env로 주입)
+      EMBED_ENABLED: ${EMBED_ENABLED:-false}
+      EMBED_BASE_URL: ${EMBED_BASE_URL:-}
+      EMBED_API_TOKEN: ${EMBED_API_TOKEN:-}
+      EMBED_MODEL: ${EMBED_MODEL:-}
       # 사내 n8n HR 웹훅 동기화 — 둘 다 비우면 비활성(시크릿은 .env로 주입)
       N8N_HR_URL: ${N8N_HR_URL:-}
       N8N_HR_TOKEN: ${N8N_HR_TOKEN:-}

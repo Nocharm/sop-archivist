@@ -45,6 +45,14 @@ class AiReply:
 
 
 @dataclass(frozen=True)
+class EmbedReply:
+    """embeddings 1회 응답 — 입력 순서대로 정렬한 벡터 + usage(비표준 서버는 None)."""
+
+    vectors: list[list[float]]
+    prompt_tokens: int | None = None
+
+
+@dataclass(frozen=True)
 class AiEndpoint:
     """OpenAI 호환 엔드포인트 1개 — models가 있으면 그 목록만 노출(/models 조회 생략)."""
 
@@ -151,6 +159,28 @@ async def call_ai(
         prompt_tokens=usage.get("prompt_tokens"),
         completion_tokens=usage.get("completion_tokens"),
     )
+
+
+async def call_embeddings(texts: list[str]) -> EmbedReply:
+    """OpenAI 호환 /embeddings 호출 → 입력 순서대로 정렬한 벡터 + usage 반환.
+
+    채팅(AI_*)과 별개인 임베딩 서버(EMBED_*)로 보내고, 동시성 상한은 채팅과 같은 세마포어를 쓴다.
+    서버가 index를 뒤섞어 줄 수 있어 index로 정렬하며, 개수가 다르면 ValueError — 벡터가 다른 문장에 붙으면 안 된다.
+    네트워크/HTTP 오류는 예외로 전파. 토큰·원문은 로그에 남기지 않는다.
+    """
+    url = f"{settings.embed_base_url.rstrip('/')}/embeddings"
+    payload = {"model": settings.embed_model, "input": texts}
+    headers = {"Authorization": f"Bearer {settings.embed_api_token}"}
+    async with _get_semaphore():
+        async with httpx2.AsyncClient(timeout=settings.ai_timeout_seconds) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+    items = sorted(data["data"], key=lambda item: item["index"])
+    if len(items) != len(texts):
+        raise ValueError(f"embeddings count mismatch: sent {len(texts)}, got {len(items)}")
+    usage = data.get("usage") or {}
+    return EmbedReply(vectors=[item["embedding"] for item in items], prompt_tokens=usage.get("prompt_tokens"))
 
 
 async def _discover_models(endpoint: AiEndpoint) -> list[str]:
