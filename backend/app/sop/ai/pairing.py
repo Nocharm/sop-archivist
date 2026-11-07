@@ -2,6 +2,7 @@
 
 LLM을 부르지 않고 임베딩만 쓴다. 점수는 compute 안에서만 쓰고 제안·작업·응답·로그 어디에도 남기지 않는다(설계 §12).
 짝은 사람이 확정하기 전까지 제안이고, 이미 짝인 단위는 후보가 아니라서 사람이나 코드가 맺은 짝을 덮지 않는다.
+짝은 같은 부분(본문·머리말·꼬리말·각주) 안에서만 맺는다.
 """
 
 import asyncio
@@ -23,7 +24,7 @@ from app.sop.ai.schemas import SkippedOut
 from app.sop.ai.similarity import cosine_matrix
 from app.sop.editing import PAIR_LANGS, TEXT_KINDS
 from app.sop.errors import raise_rule
-from app.sop.models import AiJob, Document, Unit, UnitPair, UnitPairMember
+from app.sop.models import AiJob, Document, SourceBlock, Unit, UnitPair, UnitPairMember
 from app.sop.pairs import PAIR_SOURCE_AI
 from app.sop.segment import has_visible_char
 from app.sop.units import PAIR_SUGGESTED, UNIT_ACTIVE, get_latest_extraction_id
@@ -93,6 +94,7 @@ class _Loaded:
     """load가 읽어 둔 입력 — compute는 세션 없이 이 값만 본다. items는 {단위 id: 항목}이고 apply가 낡음을 견주는 기준이다."""
 
     items: dict[int, MatchItem]
+    parts: dict[int, str]  # 단위 id → 원문 부분(본문·머리말·꼬리말·각주) — 단위는 바뀌지 않아 apply가 다시 읽지 않는다
     input_refs: dict[str, object]
 
 
@@ -102,16 +104,20 @@ async def _load_document(session: AsyncSession, job: AiJob) -> Document | None:
     return document if document is not None and document.language_layout == _SEPARATE_LAYOUT else None
 
 
-async def _load_items(session: AsyncSession, document_id: int) -> tuple[int | None, dict[int, MatchItem]]:
-    """(최신 추출 id, 짝 없는 활성 한글·영어 글자 단위) — 표·행에 묶인 칸 문장은 표의 판단을 따라 코드 짝처럼 뺀다.
+async def _load_items(
+    session: AsyncSession, document_id: int
+) -> tuple[int | None, dict[int, MatchItem], dict[int, str]]:
+    """(최신 추출 id, 짝 없는 활성 한글·영어 글자 단위, 단위의 원문 부분) — 표·행에 묶인 칸 문장은 표의 판단을 따라 코드 짝처럼 뺀다.
 
     글자가 없는 단위는 비교할 수 없어 임베딩에 보내지 않고 사람 몫으로 남긴다(설계 §7.10, 입구 2와 같다).
     """
     extraction_id = await get_latest_extraction_id(session, document_id)
     if extraction_id is None:
-        return None, {}
+        return None, {}, {}
     rows = await session.execute(
-        select(Unit.id, Unit.lang, Unit.kind, Unit.text)
+        select(Unit.id, Unit.lang, Unit.kind, Unit.text, SourceBlock.part)
+        # 단위 자리(pos_seq)의 블록이 그 단위의 부분이다
+        .join(SourceBlock, (SourceBlock.extraction_id == Unit.extraction_id) & (SourceBlock.seq == Unit.pos_seq))
         .outerjoin(UnitPairMember, UnitPairMember.unit_id == Unit.id)
         .where(
             Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.kind.in_(TEXT_KINDS),
@@ -119,12 +125,25 @@ async def _load_items(session: AsyncSession, document_id: int) -> tuple[int | No
         )
         .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
     )
-    return extraction_id, {row.id: MatchItem(row.id, row.lang, row.kind, row.text) for row in rows if has_visible_char(row.text)}
+    visible = [row for row in rows if has_visible_char(row.text)]
+    return (
+        extraction_id,
+        {row.id: MatchItem(row.id, row.lang, row.kind, row.text) for row in visible},
+        {row.id: row.part for row in visible},
+    )
 
 
-def _build_scores(kos: Sequence[MatchItem], ens: Sequence[MatchItem], vectors: Mapping[str, np.ndarray]) -> np.ndarray:
-    """코사인 점수 행렬 (한글 수, 영어 수)."""
-    return cosine_matrix(np.stack([vectors[item.text] for item in kos]), np.stack([vectors[item.text] for item in ens]))
+def _build_scores(
+    kos: Sequence[MatchItem], ens: Sequence[MatchItem], vectors: Mapping[str, np.ndarray], parts: Mapping[int, str]
+) -> np.ndarray:
+    """코사인 점수 행렬 (한글 수, 영어 수) — 부분이 다른 쌍은 -inf라 임계값을 넘지 못하고 같은 부분의 최고를 가리지도 않는다.
+
+    본문 문장이 머리말·꼬리말·각주 문장과 짝지어지면 안 된다(코드 짝과 같은 경계). 표 경계는 넘는다 — 한글 표와 영어 표가 짝인 배치가 있다.
+    """
+    scores = cosine_matrix(np.stack([vectors[item.text] for item in kos]), np.stack([vectors[item.text] for item in ens]))
+    ko_parts = np.array([parts[item.id] for item in kos])
+    en_parts = np.array([parts[item.id] for item in ens])
+    return np.where(ko_parts[:, np.newaxis] == en_parts[np.newaxis, :], scores, -np.inf)
 
 
 class PairHandler:
@@ -134,8 +153,8 @@ class PairHandler:
         document = await _load_document(session, job)
         if document is None:
             return None
-        extraction_id, items = await _load_items(session, document.id)
-        return _Loaded(items, {} if extraction_id is None else await load_input_refs(session, extraction_id))
+        extraction_id, items, parts = await _load_items(session, document.id)
+        return _Loaded(items, parts, {} if extraction_id is None else await load_input_refs(session, extraction_id))
 
     async def compute(self, job: AiJob, loaded: _Loaded) -> list[tuple[int, int]]:
         kos = [item for item in loaded.items.values() if item.lang == "ko"]
@@ -146,7 +165,7 @@ class PairHandler:
             vectors = await embed_texts(sorted({item.text for item in loaded.items.values()}), login_id=job.requested_by)
         except EmbeddingUnavailable as unavailable:
             raise AiCallFailed(_FAILURE_OF_UNAVAILABLE[unavailable.reason]) from unavailable
-        scores = await asyncio.to_thread(_build_scores, kos, ens, vectors)
+        scores = await asyncio.to_thread(_build_scores, kos, ens, vectors, loaded.parts)
         return await asyncio.to_thread(propose_language_pairs, kos, ens, scores, PAIR_THRESHOLD)
 
     async def apply(self, session: AsyncSession, job: AiJob, loaded: _Loaded, computed: list[tuple[int, int]]) -> str:
@@ -157,7 +176,7 @@ class PairHandler:
         document = await _load_document(session, job)
         if document is None:
             return "stale"
-        _, current = await _load_items(session, document.id)
+        _, current, _ = await _load_items(session, document.id)
         fresh = [
             (ko_id, en_id) for ko_id, en_id in computed
             if current.get(ko_id) == loaded.items[ko_id] and current.get(en_id) == loaded.items[en_id]

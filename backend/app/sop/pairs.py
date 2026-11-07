@@ -1,7 +1,7 @@
 """한/영 짝 — 사람이 짝을 만들고(확정) 제안 짝을 확정하거나 푼다 (스펙 §6.5). 묶음 잠금·문서 revision 검사·커밋은 라우터가 한다."""
 
-from collections import Counter
-from collections.abc import Sequence
+from collections import Counter, defaultdict
+from collections.abc import Mapping, Sequence
 
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
@@ -48,6 +48,7 @@ async def create_pair(session: AsyncSession, document: Document, unit_ids: Seque
     """같은 문서의 활성 글자 단위로 사람이 짝을 만든다 — 확정·출처 human. 제안 짝에 든 단위면 그 제안 짝을 먼저 지운다.
 
     한글·영어가 모두 있고 한쪽 MAX_PAIR_SIDE 이하여야 한다. 다른 확정 짝에 든 단위가 있으면 409 unit_already_paired.
+    지우는 AI 제안 짝은 채택을 남긴다 — 사람이 같은 단위 집합으로 다시 만들면 그대로, 아니면 버림이다.
     """
     ensure_unique_units(unit_ids)
     units = await load_active_units(session, await get_latest_extraction_id(session, document.id), unit_ids)
@@ -62,16 +63,20 @@ async def create_pair(session: AsyncSession, document: Document, unit_ids: Seque
         raise_rule(422, "pair_side_too_large", max_side=MAX_PAIR_SIDE)
     current = (
         await session.execute(
-            select(UnitPairMember.unit_id, UnitPair.id, UnitPair.status)
+            select(UnitPairMember.unit_id, UnitPair.id, UnitPair.status, UnitPair.suggestion_id)
             .join(UnitPair, UnitPair.id == UnitPairMember.pair_id)
             .where(UnitPairMember.unit_id.in_(unit_ids))
         )
     ).all()
-    taken = sorted(unit_id for unit_id, _, status in current if status != PAIR_SUGGESTED)
+    taken = sorted(unit_id for unit_id, _, status, _ in current if status != PAIR_SUGGESTED)
     if taken:
         raise_rule(409, "unit_already_paired", unit_ids=taken)
-    suggested = sorted({pair_id for _, pair_id, _ in current})
+    suggested = sorted({pair_id for _, pair_id, _, _ in current})
     if suggested:
+        await _record_replaced_adoption(
+            session, {pair_id: suggestion_id for _, pair_id, _, suggestion_id in current if suggestion_id is not None},
+            set(unit_ids), actor,
+        )
         # 짝 단위는 DB의 ON DELETE CASCADE가 함께 지운다
         await session.execute(delete(UnitPair).where(UnitPair.id.in_(suggested)))
     pair = UnitPair(document_id=document.id, status=PAIR_CONFIRMED, source=PAIR_SOURCE_HUMAN)
@@ -81,6 +86,27 @@ async def create_pair(session: AsyncSession, document: Document, unit_ids: Seque
     _record(session, document, "pair.create", pair.id, actor)
     await session.flush()
     return pair
+
+
+async def _record_replaced_adoption(
+    session: AsyncSession, suggestion_by_pair: Mapping[int, int], unit_ids: set[int], actor: str
+) -> None:
+    """사람이 만든 짝이 바꾸는 AI 제안 짝의 채택 — 단위 집합이 같으면 그대로, 다르면 버림이다. 짝 행이 지워지면 제안을 찾을 길이 없어 지우기 전에 쓴다."""
+    if not suggestion_by_pair:
+        return
+    members: dict[int, set[int]] = defaultdict(set)
+    rows = await session.execute(
+        select(UnitPairMember.pair_id, UnitPairMember.unit_id).where(UnitPairMember.pair_id.in_(list(suggestion_by_pair)))
+    )
+    for pair_id, unit_id in rows:
+        members[pair_id].add(unit_id)
+    is_same = {pair_id: members[pair_id] == unit_ids for pair_id in suggestion_by_pair}
+    await adopt_suggestions(
+        session, [suggestion_by_pair[pair_id] for pair_id, same in is_same.items() if same], actor, now()
+    )
+    await reject_suggestions(
+        session, [suggestion_by_pair[pair_id] for pair_id, same in is_same.items() if not same], actor
+    )
 
 
 async def confirm_pair(session: AsyncSession, document: Document, pair_id: int, actor: str) -> UnitPair:
