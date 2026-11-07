@@ -30,11 +30,13 @@ _NO_TEXT_KINDS = (*TABLE_UNIT_KINDS, "figure")  # 새 문장에 글자가 없는
 
 @dataclass(frozen=True)
 class TargetShape:
-    """새 문장 하나의 판정 재료 — 자리·글자·출처. 순서는 뜻이 없고 변경 종류는 글자에서 나온다."""
+    """새 문장 하나의 판정 재료 — 자리·글자·출처·표 구성. 순서는 뜻이 없고 글자 비교 종류는 글자에서 나온다."""
 
     place: Place
     text: str
     sources: frozenset[int]
+    # 사람이 표 구성을 바꿨다 — 칸 글이 같아도 그대로가 아니다(설계 §6.7). AI 표는 늘 그대로라 제안 쪽은 False다
+    restructured: bool = False
 
 
 @dataclass(frozen=True)
@@ -85,7 +87,8 @@ def _build_saved_shape(plans: Sequence["_Plan"], unit_ids: Collection[int], disp
     scope = set(unit_ids)
     targets = tuple(
         TargetShape(
-            (plan.doc.id, plan.item.slot_key, plan.item.wi_step, plan.item.wi_part), plan.text, frozenset(plan.sources)
+            (plan.doc.id, plan.item.slot_key, plan.item.wi_step, plan.item.wi_part), plan.text, frozenset(plan.sources),
+            restructured=plan.change_type == "table_restructured",
         )
         for plan in plans
         if scope.intersection((plan.parent or plan).sources)
