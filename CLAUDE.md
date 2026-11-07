@@ -101,7 +101,7 @@ docker-compose.yml
 ```
 
 **backend 핵심 모듈:**
-- `app/main.py` lifespan: Alembic `upgrade head` → (dev 모드만) dev 디렉터리 시드 → HR 동기화 스케줄러. 라우터는 `app/routers/`(`auth`·`me`·`directory`·`access`·`admin`과 SOP용 `sop_bundles`·`sop_tobe`·`sop_documents`·`sop_decisions`·`sop_outputs`·`sop_admin`).
+- `app/main.py` lifespan: Alembic `upgrade head` → (dev 모드만) dev 디렉터리 시드 → 끊긴 AI 작업 회수(늘) → HR 동기화 스케줄러, AI 작업 워커(`app/sop/ai/runner.py`, AI나 임베딩이 켜져 있을 때만). 라우터는 `app/routers/`(`auth`·`me`·`directory`·`access`·`admin`과 SOP용 `sop_bundles`·`sop_tobe`·`sop_documents`·`sop_decisions`·`sop_outputs`·`sop_admin`·`sop_ai`).
 - `app/auth.py`: Keycloak은 서명·issuer에 더해 `azp == KEYCLOAK_CLIENT_ID`까지 검사(같은 realm의 다른 앱 토큰 거부, 빈 값이면 전부 거부). dev는 `X-Dev-User` 헤더 신뢰(서버에서 쓰면 안 됨).
 - **`app/access/` = 권한 판정 단일 소스.** `catalog.py` `PERMISSIONS`(권한 키는 코드가 정의) · `resolve.py` `get_effective_access`(개인 부여 ∪ 소속 부서 체인 부여, 역할은 권한으로 펼침, 퇴직자 무권한, `APP_SYSADMINS`는 전권) · `deps.py` `require_permission("<key>")`(라우터 의존성). `sources.py`(권한 출처 응답 `SourceOut`·대상 이름 조회 — `/api/me`의 `sources`와 유효 권한 조회가 공유). `require_permission`·`/api/me`·관리 화면의 유효 권한 조회가 모두 `get_effective_access` 하나를 부른다 — 판정을 다른 곳에 새로 쓰지 않는다. 부여는 더하기만 있고 부서 부여는 하위 부서까지 내려간다. 대상은 FK 없이 두어 개편으로 사라진 부서·사람의 부여도 지우지 않고 `subject_missing`으로 보인다.
 - `app/hr/`: HR 웹훅(`client`)·동기화 가드 3종(건수 정합·빈 피드·삭제 상한)·`source="hr"` 행만 지움(`service`)·내장 스케줄러(`scheduler`)·회차 기록(`history`). `app/orgchart.py`: 부서 체인 해석.

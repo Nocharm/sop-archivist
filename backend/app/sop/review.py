@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Employee
+from app.sop.ai.jobs import cancel_active_jobs
 from app.sop.constants import EQUIPMENT_SLOT_KEYS, SEMANTIC_CHECK_KEYS
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
@@ -271,7 +272,7 @@ async def request_review(session: AsyncSession, bundle: Bundle, *, revision: int
     readiness = await compute_readiness(session, bundle, end_transaction=False)
     if readiness.blockers:
         raise_rule(422, "not_ready", blockers=readiness.blockers)
-    # 계획 2: 이 묶음의 대기 중인 AI 작업을 여기서 취소한다
+    await cancel_active_jobs(session, bundle.id)
     _apply_transition(session, bundle, to_status="in_review", action="review.request", actor=actor)
 
 

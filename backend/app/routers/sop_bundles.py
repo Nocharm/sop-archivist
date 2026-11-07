@@ -14,6 +14,8 @@ from app.auth import get_current_user
 from app.db import get_session
 from app.models import Employee
 from app.routers.admin import KstDatetime
+from app.sop.ai.jobs import load_job_counts
+from app.sop.ai.schemas import AiJobCounts
 from app.sop.constants import MEMBER_ROLES, SEMANTIC_CHECK_KEYS
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
@@ -147,6 +149,8 @@ class BundleOut(BundleBase):
     progress: BundleProgress
     # 사람이 다음에 할 일 하나(검토 요청 조건을 해야 하는 순서로 훑은 것)
     next_action: NextAction
+    # AI 작업 상태별 건수
+    ai_jobs: AiJobCounts
 
 
 class BundleListItem(BaseModel):
@@ -202,9 +206,10 @@ async def build_bundle_out(
     members = (await load_members(session, [bundle.id]))[bundle.id]
     my_role = next((member.role for member in members if member.login_id == login_id), None)
     progress = (await load_bundle_progress(session, [bundle.id]))[bundle.id]
+    ai_jobs = await load_job_counts(session, bundle.id)
     return BundleOut(
         **BundleBase.model_validate(bundle).model_dump(), my_role=my_role, members=members, progress=progress,
-        next_action=next_action or await get_next_action(session, bundle),
+        next_action=next_action or await get_next_action(session, bundle), ai_jobs=ai_jobs,
     )
 
 

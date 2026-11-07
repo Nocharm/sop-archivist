@@ -82,3 +82,6 @@
 - **계획 2 Task 4: 지침·프롬프트 버전** — 규칙 문서와 프롬프트 4종은 `app/sop/ai/seeds/`에 둔다(도커 이미지가 `app/`만 복사). `rules.md`는 도메인 문서의 바이트 복사본이라 테스트가 같음을 지키고, 기동 때 버전이 없는 키만 v1 활성으로 시드한다. `prompt.pair`는 일부러 없다(한/영 짝은 임베딩과 사람). Excel 정보 시트의 지침 버전은 `"-"` 대신 활성 규칙 버전(`rules v1`)이다.
 - 새 버전 번호를 `max+1`로 셀 때 "그 키의 모든 행을 FOR UPDATE로 읽기"는 막아 주지 못했다(일회용 Postgres 16에서 동시 생성 6건 중 UNIQUE 위반): 기다리던 쪽은 앞선 쪽이 새로 넣은 행을 못 본다. 그래서 키의 가장 오래된 행 하나를 뮤텍스로 잠근 뒤 번호를 따로 읽고, 활성화는 이전 활성을 먼저 끄는 벌크 UPDATE로 순서를 고정한다(부분 유일 인덱스).
 - **계획 2 Task 4 수정: 지침 버전 경로 범위** — `version` 경로 값에 하한 1·Postgres INTEGER 상한을 걸었다(기존 `IdPath` 관례). 상한 밖 값은 sqlite에선 404지만 Postgres에선 비교 중 500이 되는데 sqlite 테스트는 이를 못 본다. 권한 의존성이 먼저라 권한 없는 사람은 여전히 403이다.
+- **계획 2 Task 5: 작업 실행기와 진행 API** — 뒤따르는 모든 AI 작업이 얹히는 틀이다. 상태 전이는 `running`인 행에만 걸어 그사이 온 취소가 실패·낡음으로 덮이지 않고, 워커가 종료로 끊은 작업은 `running`으로 남겨 재시작이 회수한다(세 번째로 끊기면 `failed`/`interrupted`).
+- 적용 단계는 설계의 `lock_bundle` 대신 `session.get(with_for_update=True)`로 읽기와 잠금을 한 문장으로 했다(`ingest`와 같은 방식). 일회용 Postgres 16에서 잠금을 기다리는 동안 묶음이 지워지면 `lock_bundle`의 refresh가 `InvalidRequestError`를 내는 것을 확인했고, sqlite는 행 잠금이 없어 테스트로 보이지 않는다.
+- `scope_required`는 다른 AI 거절과 같이 `detail.code`로 읽히도록 업무 규칙 거절로 내고, 범위 목록 상한은 넘친 단위가 422가 아니라 `limit_reached`로 돌아가게 작업 상한보다 크게 뒀다. 묶음 목록(`BundleListItem`)은 `build_bundle_out`을 타지 않고 계약도 `BundleOut`뿐이라 `ai_jobs`를 더하지 않았다.
