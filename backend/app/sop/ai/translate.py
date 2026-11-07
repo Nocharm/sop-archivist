@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel
-from sqlalchemy import Row, func, select
+from sqlalchemy import Row, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -26,7 +26,14 @@ from app.sop.ai.llm import AiStr, build_messages, call_llm, parse_reply
 from app.sop.ai.runner import AiCallFailed
 from app.sop.ai.schemas import SkippedOut, SkipReason
 from app.sop.checks import check_sentence
-from app.sop.detach import AI_SUGGESTED, CONFIRMED, ON_HOLD, ORIGIN_TRANSLATION
+from app.sop.detach import (
+    AI_SUGGESTED,
+    CONFIRMED,
+    ON_HOLD,
+    ORIGIN_TRANSLATION,
+    TRANSLATED_TARGET_ID,
+    drop_translations,
+)
 from app.sop.errors import raise_rule
 from app.sop.groups import select_in_chunks
 from app.sop.models import (
@@ -111,21 +118,25 @@ async def _load_unit_targets(session: AsyncSession, unit_ids: Collection[int]) -
     return targets
 
 
-async def _load_settled_units(session: AsyncSession, unit_ids: Collection[int], to_lang: str) -> set[int]:
-    """사람이 확정·보류한 번역이 있는 단위 — 보류도 사람이 볼 차례라 AI가 옆에 새 번역을 놓지 않는다."""
-    rows = await select_in_chunks(
-        session,
-        lambda chunk: select(TargetSentence.translation_source_unit_id).where(
-            TargetSentence.translation_source_unit_id.in_(chunk), TargetSentence.lang == to_lang,
-            TargetSentence.status.in_((CONFIRMED, ON_HOLD)),
-        ),
-        unit_ids,
+async def _load_settled(session: AsyncSession, bundle_id: int, to_lang: str) -> tuple[set[int], set[int]]:
+    """사람이 확정·보류한 번역이 가리키는 (단위들, 출처 새 문장들) — 보류도 사람이 볼 차례라 AI가 옆에 새 번역을 놓지 않는다.
+
+    합친 새 문장의 번역은 출처 하나만 가리켜서, 그 출처가 떨어져 나가면 남은 출처로는 단위가 맞지 않아 새 문장으로도 본다.
+    """
+    rows = await session.execute(
+        select(TargetSentence.translation_source_unit_id, TRANSLATED_TARGET_ID)
+        .join(AiSuggestion, AiSuggestion.id == TargetSentence.suggestion_id)
+        .where(
+            TargetSentence.bundle_id == bundle_id, TargetSentence.origin == ORIGIN_TRANSLATION,
+            TargetSentence.lang == to_lang, TargetSentence.status.in_((CONFIRMED, ON_HOLD)),
+        )
     )
-    return {row[0] for row in rows}
+    settled = rows.all()
+    return {unit_id for unit_id, _ in settled}, {target_id for _, target_id in settled}
 
 
 def _find_skip_reason(
-    row: Row[Any], from_lang: str, source_units: set[int], *, paired: set[int], settled: set[int], queued: set[int]
+    row: Row[Any], from_lang: str, source_units: set[int], *, paired: set[int], is_settled: bool, queued: set[int]
 ) -> SkipReason | None:
     """source_units는 번역할 새 문장들의 출처 전부다 — 비었으면 옮길 문장이 없는 단위(구성을 바꾼 표에서 빠진 칸)다."""
     if row.disposition != "assigned":
@@ -136,7 +147,7 @@ def _find_skip_reason(
         return "has_pair"
     if not source_units:
         return "not_assigned"
-    if source_units & settled:
+    if is_settled:
         return "already_translated"
     if source_units & queued:
         return "already_queued"
@@ -166,14 +177,17 @@ async def select_translate_items(
         row.id: {unit_id for sources in unit_targets[row.id].values() for unit_id in sources} for row in scope
     }
     paired = await _load_paired_units(session, ids, to_lang)
-    settled = await _load_settled_units(session, {unit_id for units in source_units.values() for unit_id in units}, to_lang)
+    settled_units, settled_targets = await _load_settled(session, bundle_id, to_lang)
     queued = await find_active_unit_ids(session, bundle_id, _KINDS)
 
     items: list[JobItem] = []
     skipped: list[SkippedOut] = []
     seen: set[int] = set()
     for row in scope:
-        reason = _find_skip_reason(row, from_lang, source_units[row.id], paired=paired, settled=settled, queued=queued)
+        is_settled = bool(source_units[row.id] & settled_units or unit_targets[row.id].keys() & settled_targets)
+        reason = _find_skip_reason(
+            row, from_lang, source_units[row.id], paired=paired, is_settled=is_settled, queued=queued
+        )
         if reason is not None:
             skipped.append(SkippedOut(unit_id=row.id, reason=reason))
             continue
@@ -214,20 +228,29 @@ async def _load_previous_translations(session: AsyncSession, job: AiJob) -> list
     """이 출처 새 문장의 지금 번역들, 사람이 정한 번역이 있으면 None — AI는 그 옆에 또 놓지 않는다.
 
     나눈 단위는 조각마다 작업이 따로라 단위와 언어만으로 찾으면 앞 조각의 번역을 밀어낸다. 번역에는 출처 새 문장 칸이 없어 제안 기록으로 가린다.
-    합친 새 문장의 번역은 어느 출처를 가리켜도 같은 번역이다.
+    합친 새 문장의 번역은 어느 출처를 가리켜도 같은 번역이다. 출처 새 문장이 없어진 번역은 이 새 문장의 단위를 가리키면 이전 번역으로 본다.
     """
-    source_id, to_lang = job.target_ids[0], job.payload["to"]
-    rows = await session.execute(
-        select(TargetSentence, AiSuggestion.content)
+    source_id = job.target_ids[0]
+    alive = aliased(TargetSentence)
+    rows = await session.scalars(
+        select(TargetSentence)
         .join(AiSuggestion, AiSuggestion.id == TargetSentence.suggestion_id)
+        .outerjoin(alive, alive.id == TRANSLATED_TARGET_ID)
         .where(
-            TargetSentence.translation_source_unit_id.in_(
-                select(TargetSource.unit_id).where(TargetSource.target_id == source_id)
+            TargetSentence.bundle_id == job.bundle_id, TargetSentence.origin == ORIGIN_TRANSLATION,
+            TargetSentence.lang == job.payload["to"],
+            or_(
+                TRANSLATED_TARGET_ID == source_id,
+                and_(
+                    alive.id.is_(None),
+                    TargetSentence.translation_source_unit_id.in_(
+                        select(TargetSource.unit_id).where(TargetSource.target_id == source_id)
+                    ),
+                ),
             ),
-            TargetSentence.lang == to_lang,
         )
     )
-    previous = [target for target, content in rows if content["source_target_id"] == source_id]
+    previous = list(rows)
     return None if any(target.status != AI_SUGGESTED for target in previous) else previous
 
 
@@ -259,14 +282,6 @@ def _add_result(session: AsyncSession, job: AiJob, loaded: _Loaded, computed: _V
         guideline_versions=format_guideline_versions(loaded.guidelines), model=computed.model,
         input_refs=loaded.input_refs,
     )
-
-
-async def _drop_translations(session: AsyncSession, targets: Sequence[TargetSentence]) -> None:
-    """밀리는 AI 번역을 걷는다 — ai_suggested 번역의 제안은 사람이 아직 정하지 않았으니 stale로 둘 수 있다."""
-    for target in targets:
-        suggestion = await session.get_one(AiSuggestion, target.suggestion_id)
-        suggestion.result = "stale"
-        await session.delete(target)
 
 
 def _build_translation(job: AiJob, source: TargetSentence, computed: _Verdict, suggestion_id: int) -> TargetSentence:
@@ -324,11 +339,11 @@ class TranslateHandler:
             _add_result(session, job, loaded, computed, "stale")
             return "stale"
 
-        await _drop_translations(session, previous)
-        if computed.text is None:
+        if computed.text is None:  # 분류와 달리 보류가 없다 — 쓸 수 있는 이전 번역을 망가진 응답으로 걷지 않는다
             _add_result(session, job, loaded, computed, "invalid")
             return "done"
 
+        await drop_translations(session, previous)
         suggestion = _add_result(session, job, loaded, computed, "applied")
         await session.flush()  # 새 문장이 제안 id를 가리킨다
         target = _build_translation(job, source, computed, suggestion.id)
