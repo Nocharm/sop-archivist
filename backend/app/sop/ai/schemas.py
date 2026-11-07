@@ -14,7 +14,7 @@ MAX_SCOPE_UNITS = 20_000
 
 SkipReason = Literal[
     "not_unassigned", "already_queued", "bound_cell", "not_assigned", "other_language", "has_pair",
-    "already_translated", "too_short", "limit_reached",
+    "already_translated", "too_short", "limit_reached", "already_suggested", "not_splittable",
 ]
 RequestId = Annotated[int, Field(ge=1, le=MAX_DB_INT)]
 
