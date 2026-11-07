@@ -13,7 +13,7 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
   - 작업 실행기: 요청은 `ai_jobs` 행을 쌓고 곧바로 응답한다. backend 안의 단일 워커가 `load`(짧은 세션) → `compute`(세션 없이 AI 호출) → `apply`(묶음 잠금·`revision` 재확인) 세 단계로 처리하고, 늦게 온 응답은 적용하지 않아 작업이 `stale`·`cancelled`로 끝난다. 재시작으로 끊긴 작업은 `queued`로 돌아가 3번 시도한 뒤 `failed`다. 관리 화면 AI 연결 테스트도 호출 동안 DB 연결을 잡지 않는다.
   - 임베딩: 사내 OpenAI 호환 `/embeddings` 클라이언트와 (모델, 글자 해시) 캐시. 코사인 유사도는 backend에서 계산한다(`numpy`). 꺼져 있으면 후보는 전체 칸·글자 유사도로 줄고 한/영 따로 짝 제안만 막힌다(409 `embedding_disabled`).
   - 지침·프롬프트 버전: 키 5개(`rules`·`prompt.classify`·`prompt.translate`·`prompt.match`·`prompt.split`)의 첫 버전을 저장소 시드에서 만들고, `guideline.manage`가 `/api/admin/guidelines`로 새 버전을 올리고 활성화한다. 모든 제안이 쓴 버전을 기록한다.
-  - AI 제안 6종(작업 종류 `classify`·`translate`·`match_plan`·`match`·`pair`·`split`): 입구 1 분류와 한·영 고쳐 쓰기(임베딩으로 후보 3칸 → LLM 고르기), 번역(한↔영), 입구 2 짝 맞추기(코드가 묶고 LLM은 변경 종류만, 표·그림은 코드), 한/영 따로 짝(임베딩만), 복합 문장 나누기 위치. 요청·진행·취소·다시 시도·제안 목록·채택 기록 API와 한/영 짝 보기의 출처 `ai`.
+  - AI 작업 6종(종류 `classify`·`translate`·`match_plan`·`match`·`pair`·`split`): 입구 1 분류와 한·영 고쳐 쓰기(임베딩으로 후보 3칸 → LLM 고르기), 번역(한↔영), 입구 2 짝 맞추기(코드가 묶고 LLM은 변경 종류만, 표·그림은 코드), 한/영 따로 짝(임베딩만), 복합 문장 나누기 위치. 요청·진행·취소·다시 시도·제안 목록·채택 기록 API와 한/영 짝 보기의 출처 `ai`.
   - 채택률: 사람이 저장할 때 코드가 그대로(`as_is`)·고쳐서(`edited`)·버림(`rejected`)을 계산해 제안에 남기고, 종류별 집계가 AI 상태 응답에 실린다.
   - 사람 경로 보강: 일괄 삭제·이동은 AI 제안 단위가 섞이면 409 `ai_suggested_units`. 번역 줄은 출처 새 문장을 따르고(출처가 바뀌면 AI 번역은 지우고 확정 번역은 보류), 저장 못 하는 글자(NUL·짝 없는 서로게이트)가 든 입력은 422이고 AI 응답의 그런 글자는 대체 문자로 바꾼다.
   - 기존 API 응답은 필드 추가만: `DecisionOut.suggestion_id`·`GroupTargetOut.suggestion_id`/`translation_source_unit_id`·`BundleOut.ai_jobs`·`ARow.row_kind` 값 `translation`.
