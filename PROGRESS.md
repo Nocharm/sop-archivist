@@ -2,6 +2,10 @@
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙).
 
+## 2026-11-07
+
+- **프런트 디자인 기초(feat/sop-frontend)** — 컨셉 세션 결과 `frontend/docs/design/2026-11-07-frontend-design-foundations.md`와 `tokens.css`(G Graphite 라이트·다크)를 넣었다. 시안 사본 `mock/`은 글꼴 사본이 있어 추적하지 않는다. 병행 규칙(frontend/만)의 예외로 이 브랜치에서 `PROGRESS.md`만 갱신하고 main 합칠 때 한 항목으로 압축한다(사용자 결정).
+
 ## 2026-11-05
 
 - **제품 설계: SOP 재구성 End-to-End** — 킥오프 부록 A·B를 `docs/domain/`(판단 기준 R01–R13·SOP 일곱 칸·WI Instruction/Why, 사례 B1–B5)으로 옮겨 AI 지침과 테스트 정답의 근거로 두고, 설계 `docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`를 썼다(두 입구, 원문 불변 블록 위 범위 단위, 제안·확정 분리, 관계 묶음 저장, 결과물 A·B·C는 코드 계산). 백엔드 먼저(계획 1 결정적 코어 → 계획 2 AI 층), 프런트는 Claude Design으로 1차 작업. 사용자 답: 표는 기본 데이터 표(레이아웃 표는 표마다 전환), 한/영은 한 파일, 공개 저장소에 문서·시드를 둔다.

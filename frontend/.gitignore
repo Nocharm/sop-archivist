@@ -24,3 +24,6 @@ npm-debug.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# design mock: reference only, holds font copies not cleared for the repo
+/docs/design/mock/
