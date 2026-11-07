@@ -3,17 +3,19 @@
 import asyncio
 import hashlib
 import logging
+import math
 from collections.abc import Callable, Sequence
 
 import httpx2
 import numpy as np
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import engine
 from app.models import AiUsageEvent
 from app.settings import settings
+from app.sop import groups
 from app.sop.ai import embeddings
 from app.sop.ai.constants import AI_CALL_ATTEMPTS, AI_RETRY_DELAYS, EMBED_BATCH_SIZE, MAX_EMBED_CHARS
 from app.sop.ai.embeddings import EmbeddingUnavailable, embed_texts
@@ -124,6 +126,35 @@ def test_embed_texts_batches_by_size(monkeypatch: pytest.MonkeyPatch) -> None:
     assert [len(batch) for batch in calls] == [EMBED_BATCH_SIZE, 1]  # 65개 → 2번
     assert calls[0] == texts[:EMBED_BATCH_SIZE] and calls[1] == texts[EMBED_BATCH_SIZE:]
     assert list(result) == texts
+
+
+def test_embed_texts_reads_the_cache_in_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
+    chunk_size = 3
+    real_iter_chunks = groups.iter_chunks
+    # select_in_chunks가 기본 크기로 부르는 iter_chunks를 작은 크기로 바꿔, 글 수가 한 조각을 넘는 상황을 만든다
+    monkeypatch.setattr(groups, "iter_chunks", lambda ids, size=chunk_size: real_iter_chunks(ids, size))
+    calls = install_embed_transport(monkeypatch)
+    cached_texts = [f"cached-{index}" for index in range(8)]
+    new_texts = ["new-0", "new-1"]
+    first = _embed(cached_texts)
+
+    selects: list[str] = []
+
+    def count_cache_selects(conn: object, cursor: object, statement: str, *args: object) -> None:
+        if statement.lstrip().upper().startswith("SELECT") and "embedding_cache" in statement:
+            selects.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", count_cache_selects)
+    try:
+        second = _embed(cached_texts + new_texts)
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", count_cache_selects)
+
+    assert len(selects) == math.ceil(len(cached_texts + new_texts) / chunk_size)  # 읽기가 조각마다 한 번
+    assert calls == [cached_texts, new_texts]  # 조각 사이에 합친 결과로도 없는 글만 보낸다
+    assert list(second) == cached_texts + new_texts
+    for text in cached_texts:
+        np.testing.assert_array_equal(second[text], first[text])
 
 
 def test_embed_texts_truncates_long_text_before_hashing(monkeypatch: pytest.MonkeyPatch) -> None:
