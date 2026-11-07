@@ -5,6 +5,7 @@
 ## 2026-11-07
 
 - **프런트 디자인 기초(feat/sop-frontend)** — 컨셉 세션 결과 `frontend/docs/design/2026-11-07-frontend-design-foundations.md`와 `tokens.css`(G Graphite 라이트·다크)를 넣었다. 시안 사본 `mock/`은 글꼴 사본이 있어 추적하지 않는다. 병행 규칙(frontend/만)의 예외로 이 브랜치에서 `PROGRESS.md`만 갱신하고 main 합칠 때 한 항목으로 압축한다(사용자 결정).
+- **프런트 기반 1: 글꼴·토큰·첫 페인트 설정** — 글꼴 셋을 저장소에 넣어 `next/font/local`로 읽는다(Pretendard 그대로, Gmarket Sans는 예약 이름 때문에 `Archivist Accent`로 이름만 바꾼 woff2, JetBrains Mono v2.304 정식본, 라이선스 동봉). 토큰은 `src/styles/tokens.css`가 실사본이고 Tailwind 이름은 `@theme inline`으로 잇는다. 기존 관리 화면의 회색 단계 이름을 토큰 역할에 연결해 화면 코드를 고치지 않고 새 색으로 옮겼다. 화면 설정 4개와 언어는 `<head>` 부트 스크립트가 첫 페인트 전에 `<html>` 속성으로 붙이고, 훅(`use-ui-pref.ts`)은 그 속성을 `useSyncExternalStore`로 읽는다(마운트 뒤 복원하던 `sopa.lang`이 첫 화면에서 튀던 것).
 
 ## 2026-11-05
 

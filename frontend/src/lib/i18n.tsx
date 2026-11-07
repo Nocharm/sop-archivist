@@ -1,12 +1,10 @@
-// 앱 전체 i18n — LangProvider + useI18n + t(key, vars). 기본 영어, 한국어 전환, localStorage 영속.
+// 앱 전체 i18n — LangProvider + useI18n + t(key, vars). 기본 영어, 한국어 전환. 저장·복원은 ui-prefs가 맡는다.
 "use client";
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, type ReactNode } from "react";
 
 import { MESSAGES, type Lang } from "@/lib/i18n-messages";
-
-const STORAGE_KEY = "sopa.lang";
-const DEFAULT_LANG: Lang = "en";
+import { setLangPref, useLangPref } from "@/lib/use-ui-pref";
 
 interface I18nValue {
   lang: Lang;
@@ -29,25 +27,9 @@ export function interpolateMessage(template: string, vars?: Record<string, strin
 }
 
 export function LangProvider({ children }: { children: ReactNode }) {
-  const [lang, setLangState] = useState<Lang>(DEFAULT_LANG);
-
-  // localStorage는 클라이언트 전용 — 마운트 후 복원해 초기 SSR 렌더(기본 언어)와 일치시킴
-  useEffect(() => {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
-    if (saved === "en" || saved === "ko") {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setLangState(saved); // intentional: one-time hydration restore from localStorage
-    }
-  }, []);
-
-  useEffect(() => {
-    document.documentElement.lang = lang;
-  }, [lang]);
-
-  const setLang = (next: Lang) => {
-    setLangState(next);
-    window.localStorage.setItem(STORAGE_KEY, next);
-  };
+  // 언어는 첫 페인트 전 부트 스크립트가 <html lang>에 붙인다 - 마운트 뒤 복원하면 첫 화면이 영어로 튄다
+  const lang = useLangPref();
+  const setLang = (next: Lang) => setLangPref(next);
 
   const t = (key: string, vars?: Record<string, string | number>) =>
     interpolateMessage(MESSAGES[lang][key] ?? key, vars);
