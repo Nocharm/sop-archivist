@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.clock import now
+from app.sop.ai.adoption import adopt_suggestions, reject_suggestions
 from app.sop.constants import MAX_PAIR_SIDE
 from app.sop.decisions import DbId
 from app.sop.editing import PAIR_LANGS, TEXT_KINDS, ensure_unique_units, load_active_units
@@ -17,6 +19,7 @@ from app.sop.units import PAIR_SUGGESTED, get_latest_extraction_id
 
 PAIR_CONFIRMED = "confirmed"
 PAIR_SOURCE_HUMAN = "human"
+PAIR_SOURCE_AI = "ai"
 
 
 class PairIn(BaseModel):
@@ -81,18 +84,28 @@ async def create_pair(session: AsyncSession, document: Document, unit_ids: Seque
 
 
 async def confirm_pair(session: AsyncSession, document: Document, pair_id: int, actor: str) -> UnitPair:
-    """제안 짝(코드·AI)을 확정한다 — 출처는 그대로 둔다. 이미 확정이면 아무것도 쓰지 않는다(revision·기록 그대로)."""
+    """제안 짝(코드·AI)을 확정한다 — 출처는 그대로 둔다. 이미 확정이면 아무것도 쓰지 않는다(revision·기록 그대로).
+
+    AI 제안 짝이면 그대로 채택으로 남긴다 — 짝은 글을 고칠 수 없어 확정이 곧 제안 그대로다(설계 §6.11).
+    """
     pair = await _get_pair(session, document, pair_id)
     if pair.status != PAIR_CONFIRMED:
         pair.status = PAIR_CONFIRMED
+        if pair.suggestion_id is not None:
+            await adopt_suggestions(session, [pair.suggestion_id], actor, now())
         _record(session, document, "pair.confirm", pair.id, actor)
         await session.flush()
     return pair
 
 
 async def delete_pair(session: AsyncSession, document: Document, pair_id: int, actor: str) -> None:
-    """짝을 푼다(제안·확정 모두) — 단위는 짝 없이 남는다."""
+    """짝을 푼다(제안·확정 모두) — 단위는 짝 없이 남는다.
+
+    아직 채택이 없는 AI 제안 짝을 풀면 버림으로 남긴다. 짝 행이 지워지면 제안을 찾을 길이 없어 지우기 전에 쓴다(이미 채택된 제안은 그대로).
+    """
     pair = await _get_pair(session, document, pair_id)
+    if pair.suggestion_id is not None:
+        await reject_suggestions(session, [pair.suggestion_id], actor)
     await session.delete(pair)
     _record(session, document, "pair.delete", pair_id, actor)
     await session.flush()

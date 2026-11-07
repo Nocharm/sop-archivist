@@ -1,4 +1,4 @@
-"""AI API — 분류·번역·짝 맞추기 요청(작성자, AI가 켜져 있을 때)과 작업 현황·제안 읽기(멤버)·취소·실패분 다시 시도(작성자, 작업 중 묶음만). 요청 말고는 AI가 꺼져 있어도 동작한다."""
+"""AI API — 분류·번역·짝 맞추기 요청(작성자, AI가 켜져 있을 때), 한/영 따로 짝 제안 요청(작성자, 임베딩이 켜져 있을 때)과 작업 현황·제안 읽기(멤버)·취소·실패분 다시 시도(작성자, 작업 중 묶음만). 요청 말고는 AI가 꺼져 있어도 동작한다."""
 
 from collections.abc import Sequence
 from typing import Annotated, Literal
@@ -20,12 +20,14 @@ from app.sop.ai.jobs import (
     retry_failed_jobs,
 )
 from app.sop.ai.match_jobs import MATCH_PLAN_KIND, select_match_items
+from app.sop.ai.pairing import PAIR_KIND, select_pair_items
 from app.sop.ai.schemas import (
     AiRequestOut,
     AiStatusOut,
     CancelOut,
     JobKind,
     JobKindIn,
+    PairRequestIn,
     RetryOut,
     ScopeIn,
     SkippedOut,
@@ -53,6 +55,12 @@ def require_ai_enabled() -> None:
     """LLM을 쓰는 요청(분류·번역·짝 맞추기·나누기)의 의존성 — 사람 경로는 AI가 꺼져 있어도 그대로라 여기에만 건다."""
     if not settings.ai_enabled:
         raise_rule(503, "ai_disabled")
+
+
+def require_embed_enabled() -> None:
+    """임베딩만 쓰는 요청(한/영 따로 짝 제안)의 의존성 — LLM은 필요 없어 ai_enabled와 상관없고, 꺼져 있으면 사람이 손으로 잇는다."""
+    if not settings.embed_enabled:
+        raise_rule(409, "embedding_disabled")
 
 
 async def _queue_request(
@@ -107,6 +115,18 @@ async def request_match(
     ensure_editable(ctx.bundle)
     items, skipped = await select_match_items(session, ctx.bundle.id)
     return await _queue_request(session, ctx, MATCH_PLAN_KIND, items, skipped)
+
+
+@router.post("/pair", response_model=AiRequestOut, dependencies=[Depends(require_embed_enabled)])
+async def request_pair(
+    body: PairRequestIn,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> AiRequestOut:
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    items, skipped = await select_pair_items(session, ctx.bundle.id, body.document_id)
+    return await _queue_request(session, ctx, PAIR_KIND, items, skipped)
 
 
 @router.get("/status", response_model=AiStatusOut)
