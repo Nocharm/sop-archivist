@@ -85,7 +85,7 @@
 - 오류: 404 `suggestion_not_found` · 503 `ai_disabled` · 409 `embedding_disabled` · 409 `no_assign_targets` · 409 `no_match_documents` · 409 `not_separate_layout` · 409 `not_manual_adoption` · 422 `scope_required` · 409 `bundle_not_editable`. 계획 1의 `POST /decisions/bulk`는 AI 제안 단위가 섞이면 409 `ai_suggested_units`를 낸다.
 - 기존 응답에 더하는 필드: `DecisionOut.suggestion_id`, `GroupTargetOut.suggestion_id`·`translation_source_unit_id`, `BundleOut.ai_jobs`(상태별 건수), `ARow.row_kind`의 값 `translation`.
 - 번역 새 문장의 자리는 출처 새 문장을 따른다. 저장에서 자리는 비우거나, 지금 자리나 출처의 저장 뒤 자리를 보낸다. 그 밖의 자리는 422 `invalid_group`(`translation_locked`)이다. 표 칸 번역은 표 전체와 함께 저장한다. `PUT /targets/order`는 번역 줄도 목록에 담아야 하고, 번역 줄의 단계는 출처의 새 단계로만 바꿀 수 있다. 번역이 든 입구 2 문서를 지우면 409 `doc_has_targets`다.
-- 출처 새 문장의 글·자리·출처 단위가 바뀌거나 출처가 사라지면 AI 번역은 지워지고(제안 `stale`), 확정 번역은 보류(`system:related_unit_changed`)가 된다. 같은 저장에서 번역 글도 고쳤으면 사람이 본 것으로 보고 그대로 둔다. 출처가 남아 있으면 번역 자리는 출처를 따른다.
+- 출처 새 문장의 글·자리·출처 단위가 바뀌거나 출처가 사라지면 AI 번역은 지워지고(제안 `stale`), 확정 번역은 보류(`system:related_unit_changed`)가 된다. 같은 저장에서 번역 글도 고쳤거나 `PUT /targets/order`에서 번역 줄을 출처와 함께 옮겼으면 그대로 둔다. 출처가 남아 있으면 번역 자리는 출처를 따른다. 지워진 AI 번역은 저장·순서 응답에서 빠진다.
 - 사람 확정은 계획 1의 `POST /groups/save` 그대로다. 기존 AI 새 문장에 `text`를 비워 보내면 `ai_text`로 확정한다.
 - 지침 관리: `GET /api/admin/guidelines`, `GET /api/admin/guidelines/{key}/versions/{version}`, `POST /api/admin/guidelines/{key}/versions`(`{content, note}`), `POST /api/admin/guidelines/{key}/versions/{version}/activate`. 권한은 `guideline.manage`다.
 
