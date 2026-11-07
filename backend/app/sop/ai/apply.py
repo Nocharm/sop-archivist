@@ -66,7 +66,8 @@ def _clear_decision(decision: UnitDecision) -> None:
 async def clear_previous_suggestion(session: AsyncSession, decisions: Iterable[UnitDecision]) -> None:
     """밀리는 AI 제안을 걷는다 — 제안은 stale, 그 ai_suggested 새 문장은 삭제(출처·칸 새 문장은 DB CASCADE), 판단은 비운 상태로.
 
-    제안 하나가 짝 전체를 덮으므로 짝의 한쪽만 다시 받아도 제안을 통째로 걷는다. 남기면 새 문장 없는 ai_suggested 판단이 생긴다.
+    제안 하나가 짝 전체를 덮으므로 일부 단위만 다시 받아도 제안을 통째로 걷는다. 남기면 새 문장 없는 ai_suggested 판단이 생긴다.
+    사람이 확정·보류한 구성원의 판단과 새 문장은 같은 제안을 가리켜도 그대로 둔다 — 아래 두 상태 조건이 그 경계다.
     넘긴 판단의 revision은 곧 쓸 새 상태가 올리므로 여기서 올리지 않고, 함께 걷힌 다른 단위의 판단만 올린다.
     """
     given = list(decisions)

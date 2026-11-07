@@ -19,6 +19,7 @@ from app.sop.ai.apply import decide_ai_change_type, load_fresh_decisions
 from app.sop.ai.classify import ClassifyReply
 from app.sop.ai.constants import CANDIDATE_TOP_K, MAX_REWRITE_SENTENCES
 from app.sop.ai.guidelines import SEEDS_DIR
+from app.sop.checks import check_sentence
 from app.sop.constants import SLOT_KEYS, SYSTEM_HOLD_AI_INVALID
 from app.sop.models import (
     AiJob,
@@ -141,6 +142,24 @@ def get_target(client: TestClient, bundle_id: int, unit_id: int) -> dict:
     return target
 
 
+def save_ai_target(client: TestClient, bundle_id: int, unit_id: int, action: str) -> httpx2.Response:
+    """AI 새 문장을 사람이 글자 그대로 확정하거나 보류한다."""
+    group = get_group_by_unit(client, bundle_id, unit_id)
+    return save_group(client, bundle_id, {
+        "action": action,
+        "hold_reason": "합성 보류" if action == "hold" else "",
+        "units": [{"unit_id": unit_id, "revision": group["units"][0]["decision"]["revision"], "disposition": "assigned"}],
+        "targets": [
+            {
+                "key": str(target["id"]), "id": target["id"], "revision": target["revision"],
+                "slot_key": target["slot_key"], "source_unit_ids": target["source_unit_ids"],
+                "text": target["ai_text"], "change_type": target["change_type"],
+            }
+            for target in group["targets"]
+        ],
+    })
+
+
 def upload_second_document(client: TestClient, bundle_id: int, body: str, **options: Any) -> dict:
     response = upload(client, bundle_id, build_docx(body, **options), SECOND_FILE)
     assert response.status_code == 201 and response.json()["status"] == "ready", response.text
@@ -214,14 +233,110 @@ def test_request_for_a_document_queues_every_pair_once(client: TestClient, fake_
     ]
 
 
-def test_request_keeps_to_the_members_it_names(client: TestClient, fake_ai: FakeAi) -> None:
-    # 사람이 고른 범위 밖의 짝을 몰래 함께 고치지 않는다(§7.7)
+def test_request_for_one_side_brings_its_pair_mate(client: TestClient, fake_ai: FakeAi) -> None:
+    # 제안은 확정이 아니라 고른 단위의 짝도 함께 받는다(§7.8 "대상 단위(와 짝)") — 작업 안의 단위는 문서 순서다
     bundle = make_ai_bundle(client)
-    ko, _ = find_ids(client, bundle, AI_KO_1, AI_EN_1)
+    ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
 
-    assert request_classify(client, bundle.id, unit_ids=[ko]).json()["queued"] == 1
+    body = request_classify(client, bundle.id, unit_ids=[en]).json()
 
+    assert body == {"queued": 1, "skipped_total": 0, "skipped": []}
+    assert read_single_job().unit_ids == [ko, en]
+
+
+def test_request_brings_a_mate_with_a_same_kind_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle = make_ai_bundle(client)
+    ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
+    use_reply(fake_ai)
+    queue_units(client, bundle.id, [ko, en])
+    run_jobs()
+
+    use_reply(fake_ai, rewrites={"ko": ["합성 장비를 켜야 한다."], "en": ["The instrument shall be on."]})
+    queue_units(client, bundle.id, [ko])
+    run_jobs()
+
+    assert get_target(client, bundle.id, en)["ai_text"] == "The instrument shall be on."
+    assert read_decision(en).suggestion_id == read_decision(ko).suggestion_id
+    assert [suggestion.result for suggestion in read_rows(AiSuggestion)] == ["stale", "applied"]
+
+
+@pytest.mark.parametrize("hold_reason", ["", "합성 보류"])
+def test_request_leaves_a_person_owned_mate_out(client: TestClient, fake_ai: FakeAi, hold_reason: str) -> None:
+    # 사람이 정한 구성원은 AI가 쓸 수 없다. 고른 단위가 아니므로 건너뜀으로도 알리지 않는다
+    bundle = make_ai_bundle(client)
+    view = get_view(client, bundle.id, bundle.document_id)
+    ko, en = find_unit(view, AI_KO_1)["id"], find_unit(view, AI_EN_1)
+    assign_as_is(client, bundle.id, en, bundle.sop_id, hold_reason=hold_reason, slot_key="scope")
+
+    body = request_classify(client, bundle.id, unit_ids=[ko]).json()
+
+    assert body == {"queued": 1, "skipped_total": 0, "skipped": []}
     assert read_single_job().unit_ids == [ko]
+
+
+def test_request_does_not_bring_the_mate_of_a_skipped_unit(client: TestClient, fake_ai: FakeAi) -> None:
+    # 고른 단위가 못 가면 사람이 부르지 않은 짝만 혼자 가게 되므로 함께 멈춘다
+    bundle = make_ai_bundle(client)
+    view = get_view(client, bundle.id, bundle.document_id)
+    decided = find_unit(view, AI_KO_1)
+    assign_as_is(client, bundle.id, decided, bundle.sop_id, slot_key="scope")
+
+    body = request_classify(client, bundle.id, unit_ids=[decided["id"]]).json()
+
+    assert body == {"queued": 0, "skipped_total": 1, "skipped": [{"unit_id": decided["id"], "reason": "not_unassigned"}]}
+    assert read_rows(AiJob) == []
+
+
+def test_document_scope_skips_units_with_a_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
+    # 다시 받기는 단위를 골라서만 한다(§7.8 "문서 전체의 미배정 단위, 또는 고른 단위")
+    bundle = make_ai_bundle(client)
+    use_reply(fake_ai)
+    request_classify(client, bundle.id, document_id=bundle.document_id)
+    run_jobs()
+    unit_ids = find_ids(client, bundle, AI_KO_1, AI_EN_1, AI_KO_2, AI_EN_2)
+
+    body = request_classify(client, bundle.id, document_id=bundle.document_id).json()
+
+    assert (body["queued"], body["skipped_total"]) == (0, 4)
+    assert body["skipped"] == [{"unit_id": unit_id, "reason": "not_unassigned"} for unit_id in unit_ids]
+    assert len(read_rows(AiSuggestion)) == 2
+
+
+def test_chosen_units_can_ask_again_even_with_a_document_in_the_request(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle = make_ai_bundle(client)
+    ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
+    use_reply(fake_ai)
+    queue_units(client, bundle.id, [ko, en])
+    run_jobs()
+
+    body = request_classify(client, bundle.id, document_id=bundle.document_id, unit_ids=[ko, en]).json()
+
+    assert body == {"queued": 1, "skipped_total": 0, "skipped": []}
+
+
+def test_repeated_document_requests_reach_the_tail_past_the_limit(
+    client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 끝난 앞쪽을 다시 받으면 상한을 넘는 문서의 뒤쪽이 영영 처리되지 않는다
+    bundle = make_ai_bundle(client)
+    first = find_ids(client, bundle, AI_KO_1, AI_EN_1)
+    second = find_ids(client, bundle, AI_KO_2, AI_EN_2)
+    monkeypatch.setattr(jobs, "MAX_JOBS_PER_REQUEST", 1)
+    use_reply(fake_ai)
+
+    capped = request_classify(client, bundle.id, document_id=bundle.document_id).json()
+    run_jobs()
+    tail = request_classify(client, bundle.id, document_id=bundle.document_id).json()
+    run_jobs()
+    done = request_classify(client, bundle.id, document_id=bundle.document_id).json()
+
+    assert capped["queued"] == 1
+    assert capped["skipped"] == [{"unit_id": unit_id, "reason": "limit_reached"} for unit_id in second]
+    assert tail["queued"] == 1
+    assert tail["skipped"] == [{"unit_id": unit_id, "reason": "not_unassigned"} for unit_id in first]
+    assert (done["queued"], done["skipped_total"]) == (0, 4)
+    assert [request["units"][0]["id"] for request in fake_ai.requests] == [first[0], second[0]]
+    assert read_decision(second[0]).status == "ai_suggested"
 
 
 def test_request_records_an_event_with_the_job_ids(client: TestClient, fake_ai: FakeAi) -> None:
@@ -385,6 +500,7 @@ def test_applied_suggestion_fills_status_and_keeps_confirmed_text_empty(client: 
     assert suggestion.content["rule_ids"] == ["R01"]
     assert suggestion.content["evidence"] == [{"unit_id": ko, "quote": AI_KO_1}]
     assert suggestion.content["change_type"] == "tone"
+    assert suggestion.content["rewrites"] == {"ko": [REWRITES["ko"]], "en": [REWRITES["en"]]}
     assert suggestion.content["retrieval"] == "no_index"
     assert len(suggestion.content["target_ids"]) == 2 and target["id"] in suggestion.content["target_ids"]
     assert set(suggestion.guideline_versions) == {"rules", "prompt.classify"}
@@ -419,6 +535,19 @@ def test_rewrite_with_two_sentences_is_split(client: TestClient, fake_ai: FakeAi
     assert {target["change_type"] for target in targets} == {"split"}
     assert all(target["source_unit_ids"] == [ko] for target in targets)
     assert get_target(client, bundle.id, en)["change_type"] == "tone"
+
+
+def test_rewrites_record_only_what_became_targets(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle = make_ai_bundle(client)
+    view = upload_second_document(client, bundle.id, p("합성 단독 문장."))
+    unit = find_unit(view, "합성 단독 문장.")
+    use_reply(fake_ai, rewrites={"ko": [REWRITE], "en": ["A language with no unit."]})
+    queue_units(client, bundle.id, [unit["id"]])
+
+    run_jobs()
+
+    assert read_single_suggestion().content["rewrites"] == {"ko": [REWRITE], "en": []}
+    assert len(get_group_by_unit(client, bundle.id, unit["id"])["targets"]) == 1
 
 
 def test_unchanged_rewrite_is_as_is_whatever_the_model_says(client: TestClient, fake_ai: FakeAi) -> None:
@@ -470,6 +599,19 @@ def test_delete_candidate_sets_disposition_without_targets(client: TestClient, f
     content = read_single_suggestion().content
     assert (content["disposition"], content["target_doc_id"], content["slot_key"]) == ("delete", None, None)
     assert (content["change_type"], content["target_ids"]) == ("deleted", [])
+    assert content["rewrites"] == {"ko": [], "en": []}
+
+
+def test_delete_candidate_ignores_rewrites_in_the_reply(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle = make_ai_bundle(client)
+    ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
+    use_reply(fake_ai, candidate="delete")
+    queue_units(client, bundle.id, [ko, en])
+
+    run_jobs()
+
+    assert get_group_by_unit(client, bundle.id, ko)["targets"] == []
+    assert read_single_suggestion().content["rewrites"] == {"ko": [], "en": []}
 
 
 def test_table_unit_copies_cells_as_is(client: TestClient, fake_ai: FakeAi) -> None:
@@ -498,6 +640,7 @@ def test_table_unit_copies_cells_as_is(client: TestClient, fake_ai: FakeAi) -> N
         coordinates[cell["text"]] = (target["cell_row"], target["cell_col"])
     assert coordinates == {"합성 항목": (0, 0), "합성 값": (0, 1), "합성 압력": (1, 0), "10 bar": (1, 1)}
     assert read_decision(table["id"]).status == "ai_suggested"
+    assert read_single_suggestion().content["rewrites"] == {"ko": [], "en": []}
     assert "| 합성 항목 | 합성 값 |" in fake_ai.requests[0]["context"][0]["table"]
 
 
@@ -618,10 +761,11 @@ def test_unknown_rule_id_is_dropped_with_warning(client: TestClient, fake_ai: Fa
     run_jobs()
 
     suggestion = read_single_suggestion()
-    warning = {"kind": "unknown_rule_id", "value": "R99"}
+    warning = {"kind": "unknown_rule_id", "source": "R99", "target": ""}
     assert suggestion.content["rule_ids"] == ["R01"]
     assert suggestion.warnings == [warning]
     assert get_target(client, bundle.id, ko)["warnings"] == [warning]
+    assert set(warning) == set(check_sentence(["1"], "2")[0])  # Excel이 이 칸들을 읽어 경고를 적는다
 
 
 def test_quote_outside_the_unit_warns_evidence_not_found(client: TestClient, fake_ai: FakeAi) -> None:
@@ -639,7 +783,8 @@ def test_quote_outside_the_unit_warns_evidence_not_found(client: TestClient, fak
 
     suggestion = read_single_suggestion()
     assert suggestion.warnings == [
-        {"kind": "evidence_not_found", "value": "없는 문장"}, {"kind": "evidence_not_found", "value": AI_KO_2},
+        {"kind": "evidence_not_found", "source": "없는 문장", "target": ""},
+        {"kind": "evidence_not_found", "source": AI_KO_2, "target": ""},
     ]
     assert [item["unit_id"] for item in suggestion.content["evidence"]] == [ko]
     assert get_target(client, bundle.id, ko)["warnings"] == suggestion.warnings
@@ -653,7 +798,7 @@ def test_long_warning_value_is_clipped(client: TestClient, fake_ai: FakeAi) -> N
 
     run_jobs()
 
-    assert len(read_single_suggestion().warnings[0]["value"]) == 300
+    assert len(read_single_suggestion().warnings[0]["source"]) == 300
 
 
 def test_seed_example_parses_as_classify_reply() -> None:
@@ -708,7 +853,8 @@ def test_invalid_suggestion_never_stores_the_raw_reply(client: TestClient, fake_
     assert suggestion.result == "invalid"
     assert MARKER not in json.dumps([suggestion.content, suggestion.warnings], ensure_ascii=False)
     assert suggestion.content["unit_ids"] == [ko, en] and suggestion.content["target_ids"] == []
-    assert all(set(warning) <= {"kind", "value"} for warning in suggestion.warnings)
+    assert suggestion.content["rewrites"] == {"ko": [], "en": []}
+    assert all(set(warning) == {"kind", "source", "target"} for warning in suggestion.warnings)
 
 
 def test_too_many_sentences_is_invalid(client: TestClient, fake_ai: FakeAi) -> None:
@@ -721,7 +867,7 @@ def test_too_many_sentences_is_invalid(client: TestClient, fake_ai: FakeAi) -> N
 
     suggestion = read_single_suggestion()
     assert suggestion.result == "invalid"
-    assert suggestion.warnings == [{"kind": "too_many_sentences", "value": "ko"}]
+    assert suggestion.warnings == [{"kind": "too_many_sentences", "source": "ko", "target": ""}]
 
 
 def test_invalid_reply_clears_the_previous_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
@@ -1065,6 +1211,7 @@ def test_new_suggestion_replaces_same_kind_without_duplicates(client: TestClient
     assert (first.result, second.result) == ("stale", "applied")
     assert group["targets"][0]["suggestion_id"] == second.id == read_decision(ko).suggestion_id
     assert read_decision(ko).revision == 3
+    assert first.content["rewrites"]["ko"] == [REWRITE]  # 지워진 ai_text의 유일한 사본이다(§6.11)
 
 
 def test_replacing_a_delete_suggestion_with_a_place_leaves_no_trace(client: TestClient, fake_ai: FakeAi) -> None:
@@ -1078,25 +1225,84 @@ def test_replacing_a_delete_suggestion_with_a_place_leaves_no_trace(client: Test
     queue_units(client, bundle.id, [ko, en])
     run_jobs()
 
-    assert read_decision(ko).disposition == "assigned"
+    decision = read_decision(ko)
+    first, second = read_rows(AiSuggestion)
+    assert (decision.disposition, decision.status, decision.suggestion_id) == ("assigned", "ai_suggested", second.id)
+    assert (first.result, second.result) == ("stale", "applied")
+    target = get_target(client, bundle.id, ko)
+    assert (target["ai_text"], target["status"], target["suggestion_id"]) == (REWRITE, "ai_suggested", second.id)
 
 
-def test_replacing_one_side_of_a_pair_clears_the_whole_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
-    # 제안 하나가 짝을 덮는다 — 한쪽만 다시 받을 때 다른 쪽을 남기면 새 문장 없는 ai_suggested 판단이 된다
+def test_replacing_one_unit_of_a_dissolved_pair_clears_the_whole_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
+    # 제안 하나가 옛 짝을 덮는다 — 짝을 풀어 한쪽만 다시 받을 때 다른 쪽을 남기면 새 문장 없는 ai_suggested 판단이 된다
     bundle = make_ai_bundle(client)
     ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
     use_reply(fake_ai)
     queue_units(client, bundle.id, [ko, en])
     run_jobs()
+    view = get_view(client, bundle.id, bundle.document_id)
+    pair_id = next(pair["id"] for pair in view["pairs"] if ko in pair["unit_ids"])
+    dissolved = client.delete(
+        f"/api/bundles/{bundle.id}/documents/{bundle.document_id}/pairs/{pair_id}",
+        params={"revision": view["document"]["revision"]}, headers=AUTHOR,
+    )
+    assert dissolved.status_code == 200, dissolved.text
 
     queue_units(client, bundle.id, [ko])
     run_jobs()
 
+    assert fake_ai.requests[-1]["units"][0]["id"] == ko and len(fake_ai.requests[-1]["units"]) == 1
     other = read_decision(en)
     assert (other.status, other.disposition, other.suggestion_id, other.revision) == ("unassigned", "unassigned", None, 3)
     assert get_group_by_unit(client, bundle.id, en)["targets"] == []
     assert get_target(client, bundle.id, ko)["ai_text"] == REWRITE
     assert [suggestion.result for suggestion in read_rows(AiSuggestion)] == ["stale", "applied"]
+
+
+@pytest.mark.parametrize("action", ["confirm", "hold"])
+def test_person_owned_mate_survives_reclassify_of_other_side(client: TestClient, fake_ai: FakeAi, action: str) -> None:
+    # 밀린 제안이 짝을 함께 덮어도 사람이 정한 판단과 새 문장은 그대로다 — 상태 조건이 빠지면 확정 글이 지워진다
+    bundle = make_ai_bundle(client)
+    ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
+    use_reply(fake_ai)
+    queue_units(client, bundle.id, [ko, en])
+    run_jobs()
+    saved = save_ai_target(client, bundle.id, en, action)
+    assert saved.status_code == 200, saved.text
+    mate_before = get_target(client, bundle.id, en)
+    decision_before = read_decision(en)
+
+    queue_units(client, bundle.id, [ko])
+    run_jobs()
+
+    assert len(fake_ai.requests[-1]["units"]) == 1  # 사람이 정한 구성원은 다시 보내지 않는다
+    assert get_target(client, bundle.id, en) == mate_before
+    decision = read_decision(en)
+    assert (decision.status, decision.revision, decision.suggestion_id) == (
+        decision_before.status, decision_before.revision, decision_before.suggestion_id,
+    )
+    assert get_target(client, bundle.id, ko)["status"] == "ai_suggested"
+    assert [suggestion.result for suggestion in read_rows(AiSuggestion)] == ["stale", "applied"]
+
+
+def test_mate_confirmed_during_pair_call_stales_the_job(client: TestClient, fake_ai: FakeAi) -> None:
+    # 작업은 짝을 한 덩어리로 다룬다 — 한쪽이 사람 것이 되면 다른 쪽에도 쓰지 않는다
+    bundle = make_ai_bundle(client)
+    ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
+    view = get_view(client, bundle.id, bundle.document_id)
+    use_reply(fake_ai)
+    fake_ai.on_chat = lambda data: assign_as_is(
+        client, bundle.id, find_unit(view, AI_EN_1), bundle.sop_id, slot_key="scope"
+    )
+    queue_units(client, bundle.id, [ko, en])
+
+    run_jobs()
+
+    assert (read_single_job().status, read_single_suggestion().result) == ("stale", "stale")
+    assert read_decision(ko).status == "unassigned"
+    assert get_group_by_unit(client, bundle.id, ko)["targets"] == []
+    target = get_target(client, bundle.id, en)
+    assert (target["status"], target["confirmed_text"], target["ai_text"]) == ("confirmed", AI_EN_1, "")
 
 
 def test_match_suggestion_is_not_overwritten_by_classify(client: TestClient, fake_ai: FakeAi) -> None:

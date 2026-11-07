@@ -6,7 +6,7 @@ AI는 제안만 한다: 새 문장의 `confirmed_text`를 쓰지 않고, 응답�
 import hashlib
 from collections import defaultdict
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import count, repeat
 from typing import Any, Literal
 
@@ -68,6 +68,7 @@ CLASSIFY_KIND = "classify"
 _KINDS = (CLASSIFY_KIND,)  # 분류는 같은 종류 제안 위에만 쓴다 — 입구 2 제안을 덮지 않는다(설계 §6.8)
 _PROMPT_KEY = "prompt.classify"
 _FEATURE = "sop.classify"
+_REWRITE_LANGS = ("ko", "en")
 
 AiWarning = dict[str, str]
 _Place = tuple[int | None, str | None, int | None, str | None]  # (새 문서, 칸, WI 단계, WI 부분)
@@ -133,13 +134,18 @@ async def _load_scope_rows(
         rows = await select_in_chunks(session, lambda chunk: statement.where(Unit.id.in_(chunk)), unit_ids)
     else:
         rows = list((await session.execute(statement)).all())
-    return sorted(rows, key=lambda row: (row.extraction_id, row.pos_seq, row.pos_start, row.id))
+    return sorted(rows, key=_get_row_order)
 
 
-def _find_skip_reason(row: Row[Any], queued: Collection[int]) -> SkipReason | None:
+def _get_row_order(row: Row[Any]) -> tuple[int, int, int, int]:
+    return (row.extraction_id, row.pos_seq, row.pos_start, row.id)
+
+
+def _find_skip_reason(row: Row[Any], kinds: Collection[str], queued: Collection[int]) -> SkipReason | None:
+    """kinds는 다시 받을 수 있는 제안 종류다 — 비우면 미배정만 받는다."""
     if row.group_unit_id is not None:
         return "bound_cell"  # 칸 문장의 처분은 그룹 단위가 담는다
-    if not can_receive_suggestion(row.status, row.disposition, row.suggestion_kind, _KINDS):
+    if not can_receive_suggestion(row.status, row.disposition, row.suggestion_kind, kinds):
         return "not_unassigned"
     if row.id in queued:
         return "already_queued"
@@ -155,12 +161,29 @@ async def _load_pair_ids(session: AsyncSession, unit_ids: Collection[int]) -> di
     return {unit_id: pair_id for unit_id, pair_id in rows}
 
 
+async def _load_open_mates(
+    session: AsyncSession, extraction_ids: Collection[int], rows: Sequence[Row[Any]], queued: Collection[int]
+) -> list[Row[Any]]:
+    """받아들인 단위의 짝 구성원 중 AI가 쓸 수 있는 단위 — 확정·보류 구성원은 빠진다. 고른 단위가 아니라 건너뜀으로 알리지 않는다."""
+    chosen = {row.id for row in rows}
+    pair_ids = set((await _load_pair_ids(session, chosen)).values())
+    members = await select_in_chunks(
+        session, lambda chunk: select(UnitPairMember.unit_id).where(UnitPairMember.pair_id.in_(chunk)), pair_ids
+    )
+    mate_ids = {member.unit_id for member in members} - chosen
+    if not mate_ids:  # 빈 목록을 넘기면 _load_scope_rows가 추출 전체를 읽는다
+        return []
+    mates = await _load_scope_rows(session, extraction_ids, mate_ids)
+    return [mate for mate in mates if _find_skip_reason(mate, _KINDS, queued) is None]
+
+
 async def select_classify_items(
     session: AsyncSession, bundle_id: int, *, document_id: int | None, unit_ids: Sequence[int] | None
 ) -> tuple[list[JobItem], list[SkippedOut]]:
-    """요청 범위를 작업 줄로 — 옛 문서 최신 추출의 활성 단위 중 묶이지 않은 커버 단위와 표·행 단위만 받는다.
+    """요청 범위를 작업 줄로 — 옛 문서 최신 추출의 활성 단위 중 묶이지 않은 커버 단위와 표·행 단위만 받는다(설계 §7.8).
 
-    짝(제안 포함)은 범위에 든 구성원끼리 한 작업이다. 사람이 고르지 않은 짝 단위를 몰래 함께 바꾸지 않는다(설계 §7.7).
+    문서 범위는 미배정만 받는다. 끝난 앞쪽을 다시 받으면 상한을 넘는 문서의 뒤쪽이 영영 처리되지 않아, 같은 종류 제안을 다시 받는 것은
+    단위를 고른 요청뿐이다. 고른 단위는 AI가 쓸 수 있는 짝 구성원을 함께 담고, 짝(제안 포함)은 한 작업이다.
     범위의 단위가 이 묶음 것이 아니면 다른 라우터처럼 404다.
     """
     await _ensure_assign_documents(session, bundle_id)
@@ -172,15 +195,18 @@ async def select_classify_items(
         raise_rule(404, "unit_not_found", unit_ids=missing)
 
     queued = await find_active_unit_ids(session, bundle_id, _KINDS)
+    kinds = _KINDS if requested else ()
     skipped: list[SkippedOut] = []
     accepted: list[Row[Any]] = []
     for row in rows:
-        reason = _find_skip_reason(row, queued)
+        reason = _find_skip_reason(row, kinds, queued)
         if reason is None:
             accepted.append(row)
         else:
             skipped.append(SkippedOut(unit_id=row.id, reason=reason))
 
+    if requested:
+        accepted = sorted([*accepted, *await _load_open_mates(session, documents, accepted, queued)], key=_get_row_order)
     pair_ids = await _load_pair_ids(session, [row.id for row in accepted])
     grouped: dict[tuple[str, int], list[Row[Any]]] = {}
     for row in accepted:  # 사전은 넣은 순서를 지켜 작업도 첫 구성원의 문서 순서를 따른다
@@ -229,6 +255,12 @@ async def _load_input_refs(session: AsyncSession, extraction_id: int) -> dict[st
 # --- compute ---
 
 
+def _pick_rewrites(reply: ClassifyReply | None = None, units: Iterable[Unit] = ()) -> dict[str, list[str]]:
+    """제안 기록에 남길 고쳐 쓴 문장 — 새 문장이 되는 언어만. 제안이 밀려 ai_text가 지워진 뒤에도 이 기록은 남는다(설계 §6.11)."""
+    langs = {unit.lang for unit in units if unit.kind in SENTENCE_SOURCE_KINDS}
+    return {lang: list(reply.rewrites.get(lang, [])) if reply and lang in langs else [] for lang in _REWRITE_LANGS}
+
+
 @dataclass(frozen=True)
 class _Verdict:
     """응답을 검사한 결과. reply가 None이면 무효 — warnings가 이유를 코드로 담고 응답 글은 어디에도 남기지 않는다."""
@@ -240,11 +272,12 @@ class _Verdict:
     rule_ids: tuple[str, ...] = ()
     evidence: tuple[dict[str, object], ...] = ()
     warnings: tuple[AiWarning, ...] = ()
+    rewrites: dict[str, list[str]] = field(default_factory=_pick_rewrites)
 
 
 def _build_warning(kind: str, value: str = "") -> AiWarning:
-    """경고는 코드와 정리된 값만 담는다. 값은 AI가 준 글이라 길이를 잘라 저장 JSON이 부풀지 않게 한다."""
-    return {"kind": kind, "value": value[:MAX_WARNING_VALUE_LEN]}
+    """경고는 코드와 정리된 값만 담는다 — 모양은 check_sentence와 같아야 Excel이 읽는다. 값은 AI가 준 글이라 길이를 잘라 저장 JSON이 부풀지 않게 한다."""
+    return {"kind": kind, "source": value[:MAX_WARNING_VALUE_LEN], "target": ""}
 
 
 def _read_unit_text(unit: Unit, context: UnitContext) -> str:
@@ -338,7 +371,8 @@ def _judge_reply(
     unknown = [_build_warning("unknown_rule_id", rule_id) for rule_id in reply.rule_ids if rule_id not in known_rules]
     texts = {unit.id: _read_unit_text(unit, loaded.contexts[unit.id]) for unit in loaded.units}
     evidence, not_found = _check_evidence(reply, texts)
-    return _Verdict(model, retrieval, reply, candidate, rule_ids, tuple(evidence), (*unknown, *not_found))
+    rewrites = _pick_rewrites() if candidate == DELETE_CANDIDATE else _pick_rewrites(reply, loaded.units)
+    return _Verdict(model, retrieval, reply, candidate, rule_ids, tuple(evidence), (*unknown, *not_found), rewrites)
 
 
 # --- apply ---
@@ -365,6 +399,7 @@ def _build_content(job: AiJob, verdict: _Verdict, target_ids: Sequence[int] = ()
         "rule_ids": list(verdict.rule_ids),
         "evidence": list(verdict.evidence),
         "change_type": change_type,
+        "rewrites": verdict.rewrites,
         "retrieval": verdict.retrieval,
         "target_ids": list(target_ids),
     }
@@ -434,7 +469,8 @@ async def _write_targets(
     suggestion_id: int,
     units: Sequence[Unit],
     *,
-    reply: ClassifyReply,
+    rewrites: Mapping[str, Sequence[str]],
+    requested_change_type: str,
     candidate: Candidate,
     warnings: Sequence[AiWarning],
     doc: TargetDocInfo,
@@ -448,10 +484,10 @@ async def _write_targets(
         if unit.kind in SENTENCE_SOURCE_KINDS:
             sources_by_lang[unit.lang].append(unit)
     for lang, sources in sources_by_lang.items():
-        sentences = reply.rewrites[lang]
+        sentences = rewrites[lang]
         source_texts = [source.text for source in sources]
         for text in sentences:
-            change_type = decide_ai_change_type(sources, text, reply.change_type, sentence_count=len(sentences))
+            change_type = decide_ai_change_type(sources, text, requested_change_type, sentence_count=len(sentences))
             target = _build_target(
                 job, candidate, suggestion_id, kind="sentence", lang=lang, ai_text=text, change_type=change_type,
                 order_index=next(orders), warnings=[*check_sentence(source_texts, text), *warnings],
@@ -559,8 +595,8 @@ class ClassifyHandler:
         await session.flush()  # 새 문장·판단이 제안 id를 가리킨다
         if candidate != DELETE_CANDIDATE:
             target_ids = await _write_targets(
-                session, job, suggestion.id, units, reply=reply, candidate=candidate, warnings=computed.warnings,
-                doc=docs[candidate.target_doc_id],
+                session, job, suggestion.id, units, rewrites=computed.rewrites, requested_change_type=reply.change_type,
+                candidate=candidate, warnings=computed.warnings, doc=docs[candidate.target_doc_id],
             )
             suggestion.content = _build_content(job, computed, target_ids)
         for decision in decisions.values():
