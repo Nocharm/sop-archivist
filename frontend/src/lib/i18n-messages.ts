@@ -229,6 +229,9 @@ const en = {
   "layout.classify": "Classify",
   "layout.paper": "Source page",
   "layout.list": "List and detail",
+  "layout.theme": "Theme",
+  "layout.light": "Light",
+  "layout.dark": "Dark",
   "stage.nav": "Bundle steps",
   "stage.overview": "Overview",
   "stage.documents": "Documents",
@@ -633,6 +636,11 @@ const en = {
   "review.reopened": "Reopened",
   "rule.invalid_transition": "This step is not available in the bundle's current status.",
   "rule.export_failed": "The Excel file could not be built.",
+  "classify.aiCheck": "Check the suggestion against the source before confirming. AI suggestions are never confirmed in bulk.",
+  "classify.aiNone": "No AI suggestion for this row.",
+  "classify.aiAsk": "Ask AI",
+  "classify.aiQueued": "Sent to AI. The suggestion appears when the job finishes.",
+  "classify.aiSkipped": "AI skipped this row.",
 };
 
 type MessageKey = keyof typeof en;
@@ -864,6 +872,9 @@ const ko: Record<MessageKey, string> = {
   "layout.classify": "분류",
   "layout.paper": "원문 3단",
   "layout.list": "목록 + 상세",
+  "layout.theme": "테마",
+  "layout.light": "밝게",
+  "layout.dark": "어둡게",
   "stage.nav": "묶음 단계",
   "stage.overview": "개요",
   "stage.documents": "문서",
@@ -1268,6 +1279,11 @@ const ko: Record<MessageKey, string> = {
   "review.reopened": "다시 열었습니다",
   "rule.invalid_transition": "지금 묶음 상태에서는 할 수 없습니다.",
   "rule.export_failed": "Excel 파일을 만들지 못했습니다.",
+  "classify.aiCheck": "확정 전에 원문과 맞춰 보세요. AI 제안은 한 번에 확정하지 않습니다.",
+  "classify.aiNone": "이 줄에는 AI 제안이 없습니다.",
+  "classify.aiAsk": "AI에 묻기",
+  "classify.aiQueued": "AI에 보냈습니다. 작업이 끝나면 제안이 나옵니다.",
+  "classify.aiSkipped": "AI가 이 줄을 건너뛰었습니다.",
 };
 
 export const MESSAGES: Record<Lang, Record<string, string>> = { en, ko };

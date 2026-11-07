@@ -13,6 +13,7 @@ export function LayoutMenu() {
   const { t } = useI18n();
   const shell = useUiPref("shell");
   const classifyLayout = useUiPref("classifyLayout");
+  const theme = useUiPref("theme");
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
@@ -34,7 +35,7 @@ export function LayoutMenu() {
       </Tooltip>
       {open && (
         <Menu anchorRef={triggerRef} onClose={() => setOpen(false)} testId="layout-menu" align="end">
-          <div className="grid grid-cols-2 gap-x-1">
+          <div className="grid grid-cols-3 gap-x-1">
             <div role="group" aria-label={t("layout.navigation")}>
               <div className="menu-label">{t("layout.navigation")}</div>
               <MenuRadio checked={shell === "rail"} testId="layout-menu-shell-rail" onSelect={() => setUiPref("shell", "rail")}>
@@ -59,6 +60,15 @@ export function LayoutMenu() {
                 onSelect={() => setUiPref("classifyLayout", "list")}
               >
                 {t("layout.list")}
+              </MenuRadio>
+            </div>
+            <div role="group" aria-label={t("layout.theme")}>
+              <div className="menu-label">{t("layout.theme")}</div>
+              <MenuRadio checked={theme === "light"} testId="layout-menu-theme-light" onSelect={() => setUiPref("theme", "light")}>
+                {t("layout.light")}
+              </MenuRadio>
+              <MenuRadio checked={theme === "dark"} testId="layout-menu-theme-dark" onSelect={() => setUiPref("theme", "dark")}>
+                {t("layout.dark")}
               </MenuRadio>
             </div>
           </div>

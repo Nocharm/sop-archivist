@@ -19,6 +19,7 @@
   --color-surface: var(--surface);
   --color-sunken: var(--sunken);
   --color-raised: var(--raised);
+  --color-scrim: var(--scrim);
   --color-paper: var(--paper);
   --color-paper-ink: var(--paper-ink);
   --color-ink: var(--ink);

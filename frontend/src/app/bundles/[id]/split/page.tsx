@@ -305,6 +305,7 @@ export default function SplitPage() {
               warnBlockIds={warnBlockIds}
               onUnitClick={handleUnitClick}
               onRangeSelect={canEdit ? (next) => setRange(next) : undefined}
+              figureSource={docId !== null ? { bundleId, docId } : undefined}
               testId="split-paper"
             />
           ) : view.error !== null ? (

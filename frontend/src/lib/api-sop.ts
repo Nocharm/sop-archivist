@@ -694,3 +694,49 @@ export function returnReview(bundleId: number, revision: number, reason: string)
 export function reopenReview(bundleId: number, revision: number, reason: string): Promise<Bundle> {
   return apiFetch<Bundle>(`/bundles/${bundleId}/review/reopen`, { method: "POST", body: JSON.stringify({ revision, reason }) });
 }
+
+// --- AI 제안(계획 2) ---
+
+export interface AiSuggestion {
+  id: number;
+  job_id: number;
+  kind: string;
+  document_id: number | null;
+  result: "applied" | "stale" | "invalid";
+  content: {
+    unit_ids?: number[];
+    disposition?: string;
+    target_doc_id?: number | null;
+    slot_key?: string | null;
+    wi_step?: number | null;
+    wi_part?: string | null;
+    reason?: string;
+    rule_ids?: string[];
+    evidence?: Array<{ unit_id: number; quote: string }>;
+    change_type?: string;
+    retrieval?: string;
+    [key: string]: unknown;
+  };
+  warnings: Array<Record<string, unknown>>;
+  guideline_versions: Record<string, number>;
+  model: string;
+  adoption: string | null;
+  created_at: string;
+}
+
+export async function listSuggestions(bundleId: number, kind: string): Promise<AiSuggestion[]> {
+  const items: AiSuggestion[] = [];
+  for (let offset = 0; ; offset += 1000) {
+    const page = await apiFetch<{ total: number; items: AiSuggestion[] }>(`/bundles/${bundleId}/ai/suggestions?kind=${kind}&result=applied&limit=1000&offset=${offset}`);
+    items.push(...page.items);
+    if (items.length >= page.total || page.items.length === 0) return items;
+  }
+}
+
+export function requestClassify(bundleId: number, unitIds: number[]): Promise<{ queued: number; skipped_total: number }> {
+  return apiFetch(`/bundles/${bundleId}/ai/classify`, { method: "POST", body: JSON.stringify({ unit_ids: unitIds }) });
+}
+
+export function getFigureImage(bundleId: number, docId: number, blockId: number): Promise<Blob> {
+  return apiFetchBlob(`/bundles/${bundleId}/documents/${docId}/figures/${blockId}`);
+}

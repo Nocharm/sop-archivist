@@ -6,6 +6,8 @@ export const UI_PREFS = {
   shell: { key: "sopa.shell", attr: "data-shell", values: ["rail", "bar"], fallback: "rail" },
   classifyLayout: { key: "sopa.classifyLayout", attr: "data-layout", values: ["paper", "list"], fallback: "paper" },
   sourceFontKo: { key: "sopa.sourceFontKo", attr: "data-src-ko", values: ["pretendard", "malgun", "batang"], fallback: "pretendard" },
+  // 다크는 토큰만 바꾼다(tokens.css :root[data-theme="dark"]) - 화면 코드는 테마를 분기하지 않는다
+  theme: { key: "sopa.theme", attr: "data-theme", values: ["light", "dark"], fallback: "light" },
   sourceFontEn: {
     key: "sopa.sourceFontEn",
     attr: "data-src-en",

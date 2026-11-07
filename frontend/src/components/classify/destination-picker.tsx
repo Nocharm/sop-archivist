@@ -17,6 +17,8 @@ interface DestinationPickerProps {
   value: Destination | null;
   /** 사람이 아직 확정하지 않은 값 - 점선 */
   isDraft: boolean;
+  /** AI가 낸 값 - 보라 점선(보라는 AI에만 쓴다) */
+  isAi?: boolean;
   disabled: boolean;
   onChange: (next: Destination) => void;
   ref?: Ref<DestinationPickerHandle>;
@@ -30,7 +32,7 @@ export function describeDestination(value: Destination | null, options: Destinat
   return option ? { code: option.docCode, label: option.label } : { code: "", label: "?" };
 }
 
-export function DestinationPicker({ options, value, isDraft, disabled, onChange, ref }: DestinationPickerProps) {
+export function DestinationPicker({ options, value, isDraft, isAi = false, disabled, onChange, ref }: DestinationPickerProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -38,7 +40,7 @@ export function DestinationPicker({ options, value, isDraft, disabled, onChange,
   const current = describeDestination(value, options, t);
   const currentId = value ? getDestinationId(value) : null;
   const docCodes = [...new Set(options.map((option) => option.docCode))];
-  const tone = !value ? "border-dashed text-ink-3" : value.kind === "delete" ? "border-danger text-danger bg-danger-tint" : isDraft ? "border-dashed" : "";
+  const tone = !value ? "border-dashed text-ink-3" : value.kind === "delete" ? "border-danger text-danger bg-danger-tint" : isAi ? "border-dashed bg-st-ai-tint" : isDraft ? "border-dashed" : "";
 
   function pick(next: Destination) {
     onChange(next);
@@ -51,6 +53,7 @@ export function DestinationPicker({ options, value, isDraft, disabled, onChange,
         ref={triggerRef}
         type="button"
         className={`flex h-9 w-full min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-md border border-line-2 bg-surface px-2.5 text-left font-semibold ${tone}`}
+        style={isAi && value ? { borderColor: "var(--st-ai-line)" } : undefined}
         data-testid="classify-destination"
         aria-haspopup="menu"
         aria-expanded={open}

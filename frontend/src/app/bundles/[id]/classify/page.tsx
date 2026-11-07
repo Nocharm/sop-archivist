@@ -17,12 +17,16 @@ import { humanizeApiError } from "@/lib/api-errors";
 import {
   bulkDecide,
   clearDecision,
+  getAiStatus,
   getDocumentView,
   getGroupByUnit,
   getToBe,
   listAllUnits,
   listDocuments,
+  listSuggestions,
+  requestClassify,
   saveGroup,
+  type AiSuggestion,
   type DocumentView,
   type Group,
   type UnitRow,
@@ -85,6 +89,14 @@ export default function ClassifyPage() {
   const [unitsKey, setUnitsKey] = useState(0);
   const units = useLoaded(() => listAllUnits(bundleId), `${bundleId}:${unitsKey}`);
   const tobe = useLoaded(() => getToBe(bundleId), String(bundleId));
+  const ai = useLoaded(() => getAiStatus(bundleId), String(bundleId));
+  const suggestions = useLoaded(() => listSuggestions(bundleId, "classify"), `${bundleId}:${unitsKey}`);
+  // 단위마다 가장 최근의 적용된 분류 제안 - 사람이 확정하면 제안은 이력으로만 남는다
+  const suggestionOf = useMemo(() => {
+    const map = new Map<number, AiSuggestion>();
+    for (const item of suggestions.data ?? []) for (const id of item.content.unit_ids ?? []) if ((map.get(id)?.id ?? 0) < item.id) map.set(id, item);
+    return map;
+  }, [suggestions.data]);
 
   const unitMap = useMemo(() => new Map((units.data ?? []).map((row) => [row.unit_id, row])), [units.data]);
   const viewList = views.data;
@@ -104,7 +116,10 @@ export default function ClassifyPage() {
 
   // 처음 불러온 순간의 목록을 붙잡는다 - 그래야 확정한 줄이 필터에서 바로 빠지지 않는다(렌더 중 상태 맞추기)
   if (snapshot === null && rows.length > 0 && units.data !== null) {
-    setSnapshot({ filter, keys: rows.filter((item) => filter === "all" || item.status === filter).map((item) => item.key) });
+    // AI 제안이 있으면 그것부터 본다(명세 §12-6)
+    const first: Filter = counts.ai_suggested > 0 ? "ai_suggested" : filter;
+    setFilter(first);
+    setSnapshot({ filter: first, keys: rows.filter((item) => first === "all" || item.status === first).map((item) => item.key) });
   }
 
   function applyFilter(next: Filter) {
@@ -140,6 +155,18 @@ export default function ClassifyPage() {
 
   function setDraft(patch: Partial<RowDraft>, nextEditing = editing) {
     setDraftState({ key: activeKey, base: groupData, draft: { ...draft, reason, moveCode, ...patch }, editing: nextEditing });
+  }
+
+  const rowSuggestion = row ? (row.unitIds.map((id) => suggestionOf.get(id)).find(Boolean) ?? null) : null;
+
+  async function askAi() {
+    if (!row) return;
+    try {
+      const result = await requestClassify(bundleId, row.unitIds);
+      showToast(result.queued > 0 ? t("classify.aiQueued") : t("classify.aiSkipped"));
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+    }
   }
 
   const pickerRef = useRef<DestinationPickerHandle>(null);
@@ -420,6 +447,7 @@ export default function ClassifyPage() {
       options={options}
       value={destination}
       isDraft={isDraftDest}
+      isAi={row?.status === "ai_suggested" && draft.destination === null}
       disabled={!canEdit || !row || busy}
       onChange={(next) => setDraft({ destination: next })}
     />
@@ -514,10 +542,40 @@ export default function ClassifyPage() {
 
   const renderDetails = (withNewSentences: boolean) => (
     <>
-      <section className="flex gap-2 rounded-md border border-dashed border-st-ai-line px-3 py-2 text-xs text-ink-2" style={{ borderColor: "var(--st-ai-line)" }} data-testid="classify-ai">
-        <Sparkles size={14} strokeWidth={1.5} className="mt-0.5 shrink-0 text-st-ai" aria-hidden />
-        {t("classify.aiLater")}
-      </section>
+      {rowSuggestion && row?.status === "ai_suggested" ? (
+        <section className="grid gap-1.5 rounded-md border border-dashed bg-st-ai-tint px-3 py-2 text-[13px] text-ink" style={{ borderColor: "var(--st-ai-line)" }} data-testid="classify-ai">
+          <span className="flex items-center gap-1.5 text-xs font-semibold text-st-ai">
+            <Sparkles size={14} strokeWidth={1.5} aria-hidden />
+            AI suggested
+            {(rowSuggestion.content.rule_ids ?? []).map((rule) => (
+              <span key={rule} className="tag font-mono" data-testid={`classify-ai-rule-${rule}`}>
+                {rule}
+              </span>
+            ))}
+          </span>
+          {rowSuggestion.content.reason && <p data-testid="classify-ai-reason">{rowSuggestion.content.reason}</p>}
+          {(rowSuggestion.content.evidence ?? []).length > 0 && (
+            <ul className="grid gap-0.5 text-xs text-ink-2">
+              {(rowSuggestion.content.evidence ?? []).map((item, index) => (
+                <li key={index} className="truncate">
+                  <span className="font-mono text-ink-3">{unitMap.get(item.unit_id)?.display_id} </span>“{item.quote}”
+                </li>
+              ))}
+            </ul>
+          )}
+          <span className="text-[11px] text-ink-3">{t("classify.aiCheck")}</span>
+        </section>
+      ) : (
+        <section className="flex items-start gap-2 rounded-md border border-dashed px-3 py-2 text-xs text-ink-2" style={{ borderColor: "var(--st-ai-line)" }} data-testid="classify-ai">
+          <Sparkles size={14} strokeWidth={1.5} className="mt-0.5 shrink-0 text-st-ai" aria-hidden />
+          <span className="flex-1">{ai.data?.ai_enabled ? t("classify.aiNone") : t("classify.aiLater")}</span>
+          {ai.data?.ai_enabled && canEdit && row && row.status === "unassigned" && (
+            <button type="button" className="btn h-7" data-testid="classify-ai-request" disabled={busy} onClick={() => void askAi()}>
+              {t("classify.aiAsk")}
+            </button>
+          )}
+        </section>
+      )}
       {withNewSentences && newSentences}
       <section className="grid grid-cols-[96px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-2">
         <span className="text-xs text-ink-3">{t("classify.reason")}</span>
@@ -598,6 +656,7 @@ export default function ClassifyPage() {
             highlightIds={new Set(row.unitIds)}
             isDone={(unitId) => unitMap.get(unitId)?.status === "confirmed" && !row.unitIds.includes(unitId)}
             onUnitClick={(unitId) => handlePaperClick(unitId)}
+            figureSource={viewOfRow ? { bundleId, docId: viewOfRow.document.id } : undefined}
             testId="classify-paper"
           />
         ) : (

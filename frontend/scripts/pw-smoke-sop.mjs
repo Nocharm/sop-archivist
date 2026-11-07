@@ -406,6 +406,46 @@ await runStep("review: reviewer completes the bundle in review", { devUser: "qa.
   check("status reads Review complete", true);
 });
 
+await runStep("classify: AI suggestions come first and confirm one by one", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/`);
+  await page.locator('[data-testid^="bundles-row-"]').first().waitFor({ timeout: T });
+  const aiRow = page.locator('[data-testid^="bundles-row-"]', { hasText: "AI 제안" });
+  if ((await aiRow.count()) === 0) {
+    console.log("  (no AI demo bundle in this seed - skipped)");
+    return;
+  }
+  const aiId = Number((await aiRow.getAttribute("data-testid")).replace("bundles-row-", ""));
+  await page.goto(`${BASE}/bundles/${aiId}/classify`);
+  await page.locator('[data-testid^="classify-row-u"]').first().waitFor({ timeout: T });
+  check("AI suggested filter opens first", (await page.locator('[data-testid="classify-filter-ai_suggested"]').getAttribute("aria-selected")) === "true");
+  await page.locator('[data-testid="classify-ai-reason"]').waitFor({ timeout: T });
+  check("reason and rule IDs are shown", (await page.locator('[data-testid^="classify-ai-rule-"]').count()) > 0);
+  await takeShot("sop-classify-ai.png");
+  const firstKey = (await page.locator('[data-testid^="classify-row-u"]').first().getAttribute("data-testid")).replace("classify-row-", "");
+  await page.keyboard.press("Enter");
+  await page.waitForFunction((key) => document.querySelector(`[data-testid="classify-row-${key}"]`)?.getAttribute("data-status") === "confirmed", firstKey, { timeout: T });
+  check("Enter confirms the AI suggestion", true);
+  await page.goto(`${BASE}/bundles/${halfBundleId}/split`);
+  await page.locator('[data-testid^="figure-"]').first().waitFor({ timeout: T });
+  check("figure image loads on the paper", true);
+});
+
+await runStep("dark theme from the layout menu, before first paint next time", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/classify`);
+  await page.locator('[data-testid^="classify-row-u"]').first().waitFor({ timeout: T });
+  await page.locator('[data-testid="top-bar-layout"]').click();
+  await page.locator('[data-testid="layout-menu-theme-dark"]').click();
+  check("dark applies at once", (await page.evaluate(() => document.documentElement.dataset.theme)) === "dark");
+  await page.keyboard.press("Escape");
+  await takeShot("sop-classify-dark.png");
+  await page.goto(`${BASE}/bundles/${halfBundleId}`, { waitUntil: "commit" });
+  const early = await page.evaluate(() => new Promise((done) => {
+    if (document.readyState !== "loading") done(document.documentElement.dataset.theme);
+    else document.addEventListener("DOMContentLoaded", () => done(document.documentElement.dataset.theme), { once: true });
+  }));
+  check("stored theme applies before the app mounts", early === "dark", String(early));
+});
+
 await browser.close();
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} check(s) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

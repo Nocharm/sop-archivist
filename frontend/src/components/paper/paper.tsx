@@ -5,6 +5,7 @@
 import { ImageIcon } from "lucide-react";
 import type { MouseEvent, ReactNode } from "react";
 
+import { FigureImage } from "@/components/paper/figure-image";
 import type { ViewBlock } from "@/lib/api-sop";
 import type { PaperItem, PaperModel, Segment } from "@/lib/paper-model";
 
@@ -29,6 +30,8 @@ interface PaperProps {
   isDone?: (unitId: number) => boolean;
   onUnitClick: (unitId: number, at: { blockId: number; offset: number } | null, event: MouseEvent) => void;
   onRangeSelect?: (range: { blockId: number; start: number; end: number }) => void;
+  /** 그림을 받을 묶음·문서 - 없으면 그림 자리 상자만 */
+  figureSource?: { bundleId: number; docId: number };
   testId: string;
 }
 
@@ -56,7 +59,7 @@ function readNodeOffset(node: Node, nodeOffset: number): { blockId: number; offs
   return { blockId: Number(block.dataset.block), offset: Number(piece.dataset.start) + (node.nodeType === Node.TEXT_NODE ? nodeOffset : 0) };
 }
 
-export function Paper({ model, selectedId, highlightIds, pickedIds, cut, warnBlockIds, isDone, onUnitClick, onRangeSelect, testId }: PaperProps) {
+export function Paper({ model, selectedId, highlightIds, pickedIds, cut, warnBlockIds, isDone, onUnitClick, onRangeSelect, figureSource, testId }: PaperProps) {
   function renderSegment(block: ViewBlock, segment: Segment, index: number): ReactNode {
     const text = block.text.slice(segment.start, segment.end);
     if (segment.unitId === null) {
@@ -138,9 +141,13 @@ export function Paper({ model, selectedId, highlightIds, pickedIds, cut, warnBlo
     if (block.kind === "figure") {
       return (
         <figure key={block.id} className="pfig">
-          <span className="pfig-box" aria-hidden>
-            <ImageIcon size={28} strokeWidth={1.5} />
-          </span>
+          {figureSource && block.has_image ? (
+            <FigureImage bundleId={figureSource.bundleId} docId={figureSource.docId} blockId={block.id} />
+          ) : (
+            <span className="pfig-box" aria-hidden>
+              <ImageIcon size={28} strokeWidth={1.5} />
+            </span>
+          )}
           <p data-block={block.id}>{renderBlockText(block)}</p>
         </figure>
       );
