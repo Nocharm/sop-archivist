@@ -50,6 +50,8 @@
 | 새 제안에 밀린 이전 제안은 `result`를 `stale`로 바꾼다 | 밀린 제안이 `applied`로 남으면 채택률의 `pending`이 영영 줄지 않는다 | 제안 목록의 `applied`는 지금 살아 있는 제안만 뜻한다 |
 | 다시 돌린 응답이 무효면 이전 제안도 지우고 보류한다 | 보류 단위 아래 `ai_suggested` 새 문장이 남지 않게 한다 | 이전 제안 글은 제안 기록에서만 본다 |
 | 요청 상한을 넘은 단위는 `limit_reached`로 알린다 | 조용히 빠지면 사람이 전부 요청됐다고 믿는다 | 없음 |
+| 분류의 문서 범위 요청은 미배정만 받고, AI 제안을 다시 받으려면 `unit_ids`로 고른다 | §7.8 "문서 전체의 미배정 단위, 또는 고른 단위". 다시 받으면 상한을 넘는 문서의 뒤쪽이 영영 처리되지 않는다 | 문서 전체를 다시 받으려면 단위를 고른다 |
+| `unit_ids` 분류 요청은 짝도 함께 보낸다(미배정·같은 종류 제안만) | §7.8 "대상 단위(와 짝)". 사람의 저장과 달리 제안은 확정이 아니다 | 짝 구성원 제안이 함께 바뀐다 |
 
 ## API 계약 (프런트 병행용)
 
@@ -73,7 +75,7 @@
 - `AiStatusOut`: `{ai_enabled, embed_enabled, jobs: {queued, running, done, failed, stale, cancelled}, by_kind: {<kind>: 같은 모양}, failed_errors: {<코드>: 건수}, adoption: {<kind>: {applied, as_is, edited, rejected, pending, adoption_rate}}}`. 실패 코드: `timeout`·`server_error`·`connection`·`client_error`·`config`·`interrupted`·`no_candidates`·`internal`.
 - `SuggestionOut`: `{id, job_id, kind, document_id, result, content, warnings, guideline_versions, model, adoption, adopted_by, adopted_at, created_at}`. `result`는 `applied`·`stale`·`invalid`다. 유사도 점수는 어디에도 내지 않는다(§12).
 - `content`:
-  - `classify`: `{unit_ids, disposition, target_doc_id, slot_key, wi_step, wi_part, reason, rule_ids, evidence: [{unit_id, quote}], change_type, retrieval, target_ids}`. `retrieval`은 `embedding`·`embedding_failed`·`no_index`다.
+  - `classify`: `{unit_ids, disposition, target_doc_id, slot_key, wi_step, wi_part, reason, rule_ids, evidence: [{unit_id, quote}], change_type, rewrites: {ko: [...], en: [...]}, retrieval, target_ids}`. `retrieval`은 `embedding`·`embedding_failed`·`no_index`다.
   - `translate`: `{unit_id, source_target_id, to, target_id}`
   - `match`: `{unit_ids, target_ids, shape, change_type, reason, rule_ids, retrieval}`. `shape`는 `one_to_one`·`split`·`merged`·`delete_candidate`·`new`·`table`·`figure`다.
   - `pair`: `{pair_id, ko_unit_id, en_unit_id}`
@@ -599,7 +601,7 @@ def test_reasoning_and_feature_are_recorded(client, fake_ai, clean_ai_usage): ..
 - [ ] **Step 2: 실패 확인** — `.venv/bin/python -m pytest tests/test_sop_ai_classify.py -q`
 
 - [ ] **Step 3: 구현**
-  - 요청 대상: 옛 문서 최신 추출의 활성 단위 중 묶이지 않은 커버 단위와 표·행 단위. 묶인 칸은 `bound_cell`로 건너뛴다. 미배정 또는 `classify` AI 제안만 받는다. 작업은 `MAX_JOBS_PER_REQUEST`개까지이고 넘은 단위는 `limit_reached`로 알린다(모든 요청 공통). 짝(`UnitPair`, 제안 포함)의 대상 구성원을 한 작업으로 묶는다.
+  - 요청 대상: 옛 문서 최신 추출의 활성 단위 중 묶이지 않은 커버 단위와 표·행 단위. 묶인 칸은 `bound_cell`로 건너뛴다. 문서 범위는 미배정만 받고(그 밖은 `not_unassigned`), `classify` AI 제안을 다시 받는 것은 `unit_ids`로만 한다. `unit_ids`는 고른 단위의 짝 구성원도 함께 담는다(미배정이거나 같은 종류 제안인 구성원만, 확정·보류 구성원은 건드리지 않는다). 작업은 `MAX_JOBS_PER_REQUEST`개까지이고 넘은 단위는 `limit_reached`로 알린다(모든 요청 공통). 짝(`UnitPair`, 제안 포함)의 대상 구성원을 한 작업으로 묶는다.
   - `load`: 판단 revision과 글자 해시를 `input_snapshot`에 적어 저장한다(작업 시작 시점 스냅숏이라 다시 시도에도 그대로 맞다). 같은 곳에서 `load_unit_context`, `load_target_docs`, 활성 지침(`rules`·`prompt.classify`), 문서 `sha256`·추출 id(`input_refs`)를 읽는다. 칸 후보가 없으면 `AiCallFailed("no_candidates")`.
   - `compute`: 쿼리 글은 대상 단위 글을 줄바꿈으로 이은 것이다. `rank_candidates` → `call_llm(feature="sop.classify", reasoning="high")` → `parse_reply` → 검증. 데이터에는 `task="classify"`, `units`, `context`, `candidates`(key·label), `tobe`(번호·제목·종류·부모)를 싣는다.
   - 검증: 후보 소속(밖이면 무효), 언어별 고쳐 쓰기 존재(문장 단위가 있는 언어마다 보이는 글자 필요, `delete` 제외), 규칙 ID 거르기(`unknown_rule_id`), 근거 인용(`evidence_not_found`, 공백 정규화 비교).
@@ -653,7 +655,7 @@ def test_unit_retired_by_edit_leaves_adoption_empty(client, fake_ai): ...
 - [ ] **Step 2: 실패 확인** — `.venv/bin/python -m pytest tests/test_sop_ai_adoption.py -q`
 
 - [ ] **Step 3: 구현**
-  - `_resolve_text`: 기존 행이 있고 `item.text is None`이면 `row.confirmed_text or row.ai_text`.
+  - `_resolve_text`: 기존 행이 있고 `item.text is None`이면 `row.confirmed_text or row.ai_text`. 이때 변경 종류 요청값이 비었으면 행의 `change_type`을 쓴다(`text`를 비운 AI 고쳐 씀 확정이 `change_type_required`에 걸리지 않게).
   - `_apply_plan`: `TargetTextHistory`는 이전 확정 글이 있을 때만 남긴다. `suggestion_id`는 지우지 않는다(근거가 된 제안).
   - `_write_group` 끝에서 `record_group_adoption`을 부른다. 판정 기준: 처분이 다르거나 새 문장이 모두 사라졌거나 모두 다른 자리면 `rejected`, 글자·자리가 제안 그대로면 `as_is`, 그 밖은 `edited`.
   - `reset_decision`·`reset_target`이 `suggestion_id`를 비운다. `clear_unit`은 그 전에 제안 id를 모아 `reject_suggestions`.
@@ -719,6 +721,7 @@ def test_excel_a_sheet_has_the_translation_row(client, fake_ai): ...
   - 건너뛰기: 처분이 `assigned`가 아니면 `not_assigned`, 다른 언어면 `other_language`, 반대 언어 짝이 있으면 `has_pair`, 같은 단위·도착 언어의 확정·보류 번역이 있으면 `already_translated`.
   - 데이터: `task="translate"`, `text`, `from`, `to`, `doc_type`(sop·wi, 문체용), 지침 `rules`·`prompt.translate`, `reasoning="low"`, 기능 `sop.translate`.
   - `apply`: 출처 새 문장이 있고 revision이 같아야 한다. 이전 AI 번역(같은 단위·도착 언어·`ai_suggested`)을 지우고 §7.9대로 새 문장을 만든다. 경고는 `check_sentence([단위 글자], 번역)`.
+  - `clear_previous_suggestion`이 출처 새 문장을 지우면 그 단위의 `ai_suggested` 번역도 지우고, 확정 번역은 보류한다(§7.5 떼어 내기와 같은 규칙).
   - `decisions.py`: 번역 행은 `source_unit_ids` 없이 저장한다. `_plan_target`의 `sources_required`와 `_decide_change_type`이 `origin="translation"`을 `translated`로 처리한다. 언어는 행의 언어다.
   - `detach_units`: 건드린 단위를 `translation_source_unit_id`로 가리키는 새 문장 중 `ai_suggested`는 지우고, 나머지는 보류(`_hold`, 보고에 포함). `find_units_needing_confirm`은 확정 번역을 센다.
   - `outputs.py`: `_build_index`의 번역 `continue`를 없앤다. 표(§7.13 규칙 2): 그 언어의 번역 새 문장마다 `row_kind="translation"`, `display_id`=출처 단위, `source_text=""`, 위치=출처 단위 위치, 줄 위치는 출처 단위 `order_key` 기준. `_get_item_key`는 `translation_source_unit_id`의 정렬 키를 쓴다. `translated` 요약 숫자를 센다.
@@ -819,6 +822,7 @@ def test_confirming_delete_candidate_needs_a_reason(client, fake_ai): ...  # 사
 
 - [ ] **Step 3: 구현**
   - 데이터: `task="match"`, `old`(글자·절), `new`(글자·절). 지침 `rules`·`prompt.match`, `reasoning="low"`, 기능 `sop.match`.
+  - `clear_previous_suggestion`은 `origin="new_doc"` 새 문장을 지우지 않고 출처를 떼어 미배정으로 돌린다. 지우면 새 문서의 글이 사라진다.
   - `apply`: 판단·새 문장 revision 확인(낡으면 `stale`). `clear_previous_suggestion`, 출처 연결, 새 문장 `ai_suggested`·`change_type`·경고·`suggestion_id`, 옛 판단 `ai_suggested`·`assigned`.
   - `shape`: 1:1 `one_to_one`, 1:N `split`, N:1 `merged`. `change_type`도 같은 구조 규칙으로 정한다(§6.7).
   - Task 10의 `decide_adoption`에 `match` 규칙을 더한다: 출처가 제안과 같으면 `as_is`, 다르면 `edited`, 출처가 비면 `rejected`.
