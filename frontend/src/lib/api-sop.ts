@@ -129,3 +129,78 @@ export function getAiStatus(bundleId: number): Promise<AiStatus> {
 export function requestReview(bundleId: number, revision: number): Promise<Bundle> {
   return apiFetch<Bundle>(`/bundles/${bundleId}/review/request`, { method: "POST", body: JSON.stringify({ revision }) });
 }
+
+// --- 문서 ---
+
+export type DocSide = "old" | "new";
+export type DocStatus = "ready" | "rejected" | "failed";
+export type LanguageLayout = "ko_en_interleaved" | "ko_en_separate" | "en_only" | "ko_only";
+export const LANGUAGE_LAYOUTS: readonly LanguageLayout[] = ["ko_en_interleaved", "ko_en_separate", "en_only", "ko_only"];
+export type TargetDocType = "sop" | "wi";
+
+export interface ExtractionWarning {
+  id: number;
+  kind: string;
+  block_id: number | null;
+  detail: Record<string, unknown>;
+  needs_ack: boolean;
+  acked_by: string | null;
+  acked_at: string | null;
+  ack_note: string;
+}
+
+export interface SopDocument {
+  id: number;
+  side: DocSide;
+  file_name: string;
+  file_format: string;
+  size_bytes: number;
+  doc_code: string;
+  doc_version: string;
+  title: string;
+  language_layout: LanguageLayout;
+  status: DocStatus;
+  status_reason: string;
+  revision: number;
+  target_doc_id: number | null;
+  uploaded_by: string;
+  uploaded_at: string;
+  extraction: { id: number; aux_status: "ok" | "failed"; warnings: ExtractionWarning[] } | null;
+}
+
+export interface DocumentUpdateInput {
+  revision: number;
+  doc_code?: string;
+  doc_version?: string;
+  title?: string;
+  language_layout?: LanguageLayout;
+}
+
+export interface UploadInput {
+  file: File;
+  side: DocSide;
+  docType?: TargetDocType;
+  parentCode?: string;
+}
+
+export function listDocuments(bundleId: number): Promise<SopDocument[]> {
+  return apiFetch<SopDocument[]>(`/bundles/${bundleId}/documents`);
+}
+
+export function uploadDocument(bundleId: number, { file, side, docType, parentCode }: UploadInput): Promise<SopDocument> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("side", side);
+  if (side === "new" && docType) form.append("doc_type", docType);
+  if (side === "new" && parentCode) form.append("parent_code", parentCode);
+  return apiFetch<SopDocument>(`/bundles/${bundleId}/documents`, { method: "POST", body: form });
+}
+
+export function updateDocument(bundleId: number, docId: number, body: DocumentUpdateInput): Promise<SopDocument> {
+  return apiFetch<SopDocument>(`/bundles/${bundleId}/documents/${docId}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export function deleteDocument(bundleId: number, docId: number, revision: number, confirm = false): Promise<void> {
+  const query = new URLSearchParams({ revision: String(revision), confirm: String(confirm) });
+  return apiFetch<void>(`/bundles/${bundleId}/documents/${docId}?${query}`, { method: "DELETE" });
+}

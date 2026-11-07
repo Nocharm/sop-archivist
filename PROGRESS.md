@@ -7,6 +7,7 @@
 - **프런트 디자인 기초(feat/sop-frontend)** — 컨셉 세션 결과 `frontend/docs/design/2026-11-07-frontend-design-foundations.md`와 `tokens.css`(G Graphite 라이트·다크)를 넣었다. 시안 사본 `mock/`은 글꼴 사본이 있어 추적하지 않는다. 병행 규칙(frontend/만)의 예외로 이 브랜치에서 `PROGRESS.md`만 갱신하고 main 합칠 때 한 항목으로 압축한다(사용자 결정).
 - **프런트 기반 1: 글꼴·토큰·첫 페인트 설정** — 글꼴 셋을 저장소에 넣어 `next/font/local`로 읽는다(Pretendard 그대로, Gmarket Sans는 예약 이름 때문에 `Archivist Accent`로 이름만 바꾼 woff2, JetBrains Mono v2.304 정식본, 라이선스 동봉). 토큰은 `src/styles/tokens.css`가 실사본이고 Tailwind 이름은 `@theme inline`으로 잇는다. 기존 관리 화면의 회색 단계 이름을 토큰 역할에 연결해 화면 코드를 고치지 않고 새 색으로 옮겼다. 화면 설정 4개와 언어는 `<head>` 부트 스크립트가 첫 페인트 전에 `<html>` 속성으로 붙이고, 훅(`use-ui-pref.ts`)은 그 속성을 `useSyncExternalStore`로 읽는다(마운트 뒤 복원하던 `sopa.lang`이 첫 화면에서 튀던 것).
 - **프런트 기반 2: 틀·묶음 목록·개요** — 상단 막대 44px와 단계 이동 한 벌을 `<html data-shell>`에 따라 CSS가 왼쪽 레일 또는 상단 탭으로 그린다(배치가 첫 페인트부터 맞다). 아직 없는 화면은 레일에서 비활성으로 자리만 지킨다. `/`는 묶음 목록, 내 신원·권한은 `/account`로 옮기고 기반 스모크를 따라 고쳤다. 개요는 다음 행동·언어별 배정 현황·검토 요청 조건(통과한 줄도 남김)·AI 작업·멤버. 묶음은 상단 막대와 화면이 같이 쓰는 캐시(`bundle-store`)로 한 번만 부른다. SOP 화면 스모크 `scripts/pw-smoke-sop.mjs`(시드 묶음 3개 기준)를 더했다.
+- **문서 화면** — 번호·판·제목은 칸에서 바로 고치고(빈 값은 점선 칩이 같은 자리를 차지), 언어 배치·추출·보조 검사·경고를 한 줄에 둔다. 올리기는 옛 SOP/새 문서를 고른 뒤 파일을 차례로 올려 파일마다 결과를 보인다(서버 파싱 자리를 다투지 않게). 지우기는 서버의 409 `confirm_required`를 받아 판단 걸린 단위 수를 보인 뒤 한 번 더 묻는다. SOP API의 규칙 거절(`detail={code,…}`)을 `ApiError.rule`로 받아 `rule.<code>` 문구로 옮기고, 모르는 코드는 422여도 JSON 원문을 보이지 않는다. 저장 알림은 오른쪽 아래 토스트.
 
 ## 2026-11-05
 

@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 
 import { StageNav } from "@/components/stage-nav";
 import { TopBar } from "@/components/top-bar";
+import { ToastHost } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
 import { useI18n } from "@/lib/i18n";
 import { useSession } from "@/lib/session";
@@ -50,6 +51,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       ) : (
         <main className="app-main">{body}</main>
       )}
+      <ToastHost />
     </div>
   );
 }

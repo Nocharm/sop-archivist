@@ -12,6 +12,9 @@ export function setAuthToken(token: string | null): void {
 
 /** HTTP 오류 응답. status 0은 서버에 닿지 못한 네트워크 오류, detail은 사람이 읽을 수 있게 정리한 서버 사유. */
 export class ApiError extends Error {
+  /** SOP API의 업무 규칙 거절 - detail이 {code, ...문맥} 모양일 때만 있다(backend app/sop/errors.raise_rule) */
+  rule: ApiRule | null = null;
+
   constructor(
     readonly status: number,
     readonly detail: string,
@@ -22,11 +25,28 @@ export class ApiError extends Error {
   }
 }
 
+export interface ApiRule {
+  code: string;
+  [context: string]: unknown;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
 // FastAPI는 문자열 detail(업무 오류) 또는 {msg} 배열(422 검증 실패)을 준다. JSON이 아니면(프록시 오류 등) 원문 그대로.
+function extractRule(bodyText: string): ApiRule | null {
+  try {
+    const parsed: unknown = JSON.parse(bodyText);
+    if (isRecord(parsed) && isRecord(parsed.detail) && typeof parsed.detail.code === "string") {
+      return { ...parsed.detail, code: parsed.detail.code };
+    }
+  } catch {
+    // JSON 아님 - 규칙 거절이 아니다
+  }
+  return null;
+}
+
 function extractDetail(bodyText: string): string {
   try {
     const parsed: unknown = JSON.parse(bodyText);
@@ -76,12 +96,16 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   }
 
   if (!response.ok) {
-    const detail = extractDetail(await response.text().catch(() => ""));
-    throw new ApiError(
+    const bodyText = await response.text().catch(() => "");
+    const rule = extractRule(bodyText);
+    const detail = rule ? rule.code : extractDetail(bodyText);
+    const error = new ApiError(
       response.status,
       detail,
       `API ${method} ${path} failed: ${response.status}${detail ? ` - ${detail}` : ""}`,
     );
+    error.rule = rule;
+    throw error;
   }
   if (response.status === 204) {
     // 본문 없음 - 호출자는 T를 void로 둔다

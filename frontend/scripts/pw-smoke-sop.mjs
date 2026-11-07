@@ -1,5 +1,5 @@
 // SOP 화면 스모크(Playwright + 시스템 Chrome) - 묶음 목록, 개요, 단계 이동(레일·상단 탭), 배치 메뉴, 첫 페인트 전 설정.
-// 전제: backend/에서 reset_db → seed_sop_demo(합성 묶음 3개) 직후, backend 8777 + frontend 3777. 데이터를 바꾸지 않는다.
+// 전제: backend/에서 reset_db → seed_sop_demo(합성 묶음 3개) 직후, backend 8777 + frontend 3777. 고친 값은 시나리오 안에서 되돌린다.
 // 실행(frontend/ 에서): node scripts/pw-smoke-sop.mjs   환경 변수: BASE_URL, CHROME_PATH
 // playwright-core는 저장소 의존성이 아니다: `npm i --no-save playwright-core` (package.json 불변)
 import { mkdirSync } from "node:fs";
@@ -147,6 +147,40 @@ await runStep("reviewer sees the bundle in review", { devUser: "qa.lead" }, asyn
   await wait(page, "overview-next");
   check("waiting for review", (await page.locator('[data-testid="overview-next"]').getAttribute("data-action")) === "await_review");
   check("role tag reads Reviewer", (await getText(page, "overview-role")).includes("Reviewer"));
+});
+
+await runStep("documents list, inline edit and delete prompt", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
+  await page.locator('[data-testid$="-row"][data-testid^="documents-"]').first().waitFor({ timeout: T });
+  check("documents is the current step", (await page.locator('[data-testid="stage-nav-documents"]').getAttribute("aria-current")) === "page");
+  const list = await getText(page, "documents-list");
+  check("extraction status is English", list.includes("Ready"), list);
+  check("aux check label", list.includes("Checked") || list.includes("Aux check unavailable"), list);
+  const firstRow = page.locator('[data-testid$="-row"][data-testid^="documents-"]').first();
+  const docId = (await firstRow.getAttribute("data-testid")).replace("documents-", "").replace("-row", "");
+  const version = page.locator(`[data-testid="documents-${docId}-version"]`);
+  const before = (await version.innerText()).trim();
+  const rowY = (await firstRow.boundingBox()).y;
+  await version.click();
+  const input = page.locator(`[data-testid="documents-${docId}-version-input"]`);
+  await input.fill("R09");
+  await input.press("Enter");
+  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="documents-${id}-version"]`)?.textContent?.trim() === "R09", docId, { timeout: T });
+  check("version saved inline", true);
+  check("row did not move while editing", Math.abs((await firstRow.boundingBox()).y - rowY) < 1);
+  await takeShot("sop-documents.png");
+  // 되돌린다 - 원래 빈 값이면 비운다
+  await page.locator(`[data-testid="documents-${docId}-version"]`).click();
+  await input.fill(before === "Add version" ? "" : before);
+  await input.press("Enter");
+  await page.waitForFunction((id) => !document.querySelector(`[data-testid="documents-${id}-version-input"]`), docId, { timeout: T });
+  await page.locator(`[data-testid="documents-${docId}-delete"]`).click();
+  await wait(page, "delete-document");
+  await takeShot("sop-documents-delete.png");
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="delete-document"]').waitFor({ state: "detached", timeout: T });
+  check("delete prompt closes with Esc", true);
 });
 
 await browser.close();

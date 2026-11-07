@@ -97,6 +97,13 @@ describe("apiFetch errors", () => {
     expect((err as ApiError).detail).toBe("missing permission: ai.admin");
   });
 
+  it("keeps a rule rejection's code and context", async () => {
+    stubFetch(jsonResponse({ detail: { code: "revision_conflict", conflicts: [{ id: 3 }] } }, 409));
+    const err = await apiFetch("/bundles/1", { method: "PATCH" }).catch((e: unknown) => e);
+    expect((err as ApiError).detail).toBe("revision_conflict");
+    expect((err as ApiError).rule).toEqual({ code: "revision_conflict", conflicts: [{ id: 3 }] });
+  });
+
   it("joins validation detail", async () => {
     stubFetch(jsonResponse({ detail: [{ msg: "a" }, { msg: "b" }] }, 422));
     const err = await apiFetch("/access/roles", { method: "POST" }).catch((e: unknown) => e);
