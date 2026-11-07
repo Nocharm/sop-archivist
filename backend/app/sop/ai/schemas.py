@@ -42,6 +42,12 @@ class ScopeIn(BaseModel):
         return self
 
 
+class TranslateIn(ScopeIn):
+    """번역 요청 — 범위에 오너가 고른 방향을 더한다(설계 §7.9)."""
+
+    direction: Literal["ko_to_en", "en_to_ko"]
+
+
 class JobKindIn(BaseModel):
     """취소·다시 시도의 범위 — 비우면 묶음의 모든 종류."""
 

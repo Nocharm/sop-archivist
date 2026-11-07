@@ -14,10 +14,18 @@ from sqlalchemy.orm.util import AliasedClass
 
 from app.clock import now
 from app.sop.ai.adoption import record_group_adoption, record_unit_adoption, reject_suggestions
-from app.sop.ai.apply import AI_SUGGESTED
 from app.sop.checks import check_sentence
 from app.sop.constants import SLOT_KEYS
-from app.sop.detach import CONFIRMED, ON_HOLD, ORIGIN_NEW_DOC, DetachReport, detach_units, reset_target
+from app.sop.detach import (
+    AI_SUGGESTED,
+    CONFIRMED,
+    ON_HOLD,
+    ORIGIN_NEW_DOC,
+    ORIGIN_TRANSLATION,
+    DetachReport,
+    detach_units,
+    reset_target,
+)
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
 from app.sop.groups import (
@@ -180,6 +188,8 @@ class _State:
     cells: dict[int, list[int]]  # 표·행 단위 → 묶인 활성 칸 문장
     group_of: dict[int, int]  # 칸 문장 → 표·행 단위
     existing: dict[int, TargetSentence]  # 보낸 기존 새 문장과 지울 새 문장
+    removed: set[int]  # 지울 새 문장
+    translation_texts: dict[int, str]  # 번역 출처 단위 → 글자 — 번역의 문장 검사가 읽는다. 은퇴한 단위도 든다
     member_unit_ids: set[int]  # 보낸 단위와 묶인 칸 문장 전부(은퇴한 칸 포함) — 닫힘 검사의 경계
     # U*와 기존 새 문장에서 출발한 지금의 연결 요소(collect_component — 묶음 읽기·떼어 내기와 같은 그래프)
     component_units: set[int]
@@ -291,6 +301,10 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
     if unknown:
         _reject("unknown_target", target_ids=unknown)
     component_units, component_targets = await collect_component(session, unit_ids=units, target_ids=existing)
+    translation_unit_ids = {row.translation_source_unit_id for row in existing.values()} - {None}
+    translation_rows = await select_in_chunks(
+        session, lambda chunk: select(Unit.id, Unit.text).where(Unit.id.in_(chunk)), translation_unit_ids
+    )
 
     docs ={doc.id: doc for doc in await session.scalars(select(TargetDoc).where(TargetDoc.bundle_id == bundle_id))}
     na_slots: dict[int, list[str]] = defaultdict(list)
@@ -309,6 +323,8 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
         steps[doc_id].add(step_no)
     return _State(
         units=units, decisions=decisions, cells=cells, group_of=group_of, existing=existing,
+        removed=set(payload.removed_target_ids),
+        translation_texts={unit_id: text for unit_id, text in translation_rows},
         member_unit_ids=member_unit_ids, component_units=component_units, component_targets=component_targets,
         docs=docs, na_slots=na_slots, steps=steps,
         table_shapes=await load_table_shapes(session, [units[unit_id] for unit_id in table_unit_ids]),
@@ -461,6 +477,21 @@ def _check_locked(item: TargetIn, row: TargetSentence) -> None:
         _reject("match_target_locked", keys=[item.key])
 
 
+def _check_translation_locked(item: TargetIn, row: TargetSentence) -> None:
+    """번역 새 문장은 출처 연결 없이 출처 새 문장의 자리에 머문다(스펙 §7.9) — 사람은 글만 고친다. 비운 자리는 지금 값이고 다른 값은 422."""
+    is_changed = (
+        bool(item.source_unit_ids)
+        or item.target_doc_id not in (None, row.target_doc_id)
+        or (item.slot_key, item.wi_step, item.wi_part) not in (
+            (None, None, None), (row.slot_key, row.wi_step, row.wi_part)
+        )
+        or item.cell_row not in (None, row.cell_row)
+        or item.cell_col not in (None, row.cell_col)
+    )
+    if is_changed:
+        _reject("translation_locked", keys=[item.key])
+
+
 def _check_source_kinds(item: TargetIn, state: _State) -> None:
     """문장은 문장·제목·칸 문장에서, 표는 표·행 단위 하나에서, 그림은 그림 단위 하나에서 온다(R28)."""
     kinds = [state.units[unit_id].kind for unit_id in item.source_unit_ids]
@@ -474,7 +505,7 @@ def _check_source_kinds(item: TargetIn, state: _State) -> None:
 
 
 def _resolve_lang(item: TargetIn, row: TargetSentence | None, state: _State) -> str:
-    """문장 새 문장의 언어는 모든 출처 단위의 언어(번역은 계획 2), 표·그림은 중립."""
+    """문장 새 문장의 언어는 모든 출처 단위의 언어(출처가 없는 번역은 행의 언어), 표·그림은 중립."""
     if item.kind != "sentence":
         expected = NEUTRAL
     else:
@@ -523,7 +554,7 @@ def _resolve_grid(item: TargetIn, row: TargetSentence | None) -> dict[str, int] 
 
 
 def _plan_target(item: TargetIn, state: _State) -> _Plan:
-    """검사 5–8(위치·언어·종류·글자) — 새 문장은 assign 문서에만 만들고, 입구 2 새 문장은 출처·변경 종류만 바뀐다."""
+    """검사 5–8(위치·언어·종류·글자) — 새 문장은 assign 문서에만 만들고, 입구 2 새 문장은 출처·변경 종류만, 번역 새 문장은 글만 바뀐다."""
     keys = [item.key]
     row = state.existing[item.id] if item.id is not None else None
     origin = row.origin if row is not None else ORIGIN_UNITS
@@ -537,6 +568,8 @@ def _plan_target(item: TargetIn, state: _State) -> _Plan:
         _reject("unknown_target_doc", keys=keys)
     if row is not None and origin == ORIGIN_NEW_DOC:
         _check_locked(item, row)
+    elif row is not None and origin == ORIGIN_TRANSLATION:
+        _check_translation_locked(item, row)
     else:
         if doc.entrance == "match":
             _reject("match_doc_new_target", keys=keys)
@@ -556,12 +589,16 @@ def _link_cell_target(plan: _Plan, by_key: dict[str, _Plan], state: _State) -> N
     """검사 7 — 칸 새 문장은 같은 요청의 표 새 문장 아래, 같은 새 문서·자리, 격자 안, 출처는 그 표 단위에 묶인 칸 문장 하나.
 
     기존 칸 새 문장의 부모는 바뀌지 않는다. 입구 2 칸 새 문장은 구조가 새 문서 그대로라 parent_key를 비워도 된다.
+    칸 번역도 자리가 정해져 있어 비워도 되지만, 함께 지워질 표 아래에는 남을 수 없다(부모를 지우면 DB CASCADE로 같이 사라진다).
     """
     item, row = plan.item, plan.row
     keys = [item.key]
     current_parent = row.parent_target_id if row is not None else None
     if item.parent_key is None:
-        if current_parent is not None and plan.origin != ORIGIN_NEW_DOC:
+        is_kept = plan.origin == ORIGIN_NEW_DOC or (
+            plan.origin == ORIGIN_TRANSLATION and current_parent not in state.removed
+        )
+        if current_parent is not None and not is_kept:
             _reject("invalid_cell_target", keys=keys)
         plan.is_cell = current_parent is not None
         if not plan.is_cell and (plan.cell_row is not None or plan.cell_col is not None):
@@ -576,7 +613,7 @@ def _link_cell_target(plan: _Plan, by_key: dict[str, _Plan], state: _State) -> N
         _reject("invalid_cell_target", keys=keys)
     if plan.cell_row >= parent.grid["rows"] or plan.cell_col >= parent.grid["cols"]:
         _reject("invalid_cell_target", keys=keys)
-    if plan.origin != ORIGIN_NEW_DOC:
+    if plan.origin not in (ORIGIN_NEW_DOC, ORIGIN_TRANSLATION):
         location = (item.slot_key, item.wi_step, item.wi_part)
         parent_location = (parent.item.slot_key, parent.item.wi_step, parent.item.wi_part)
         table_unit_id = parent.sources[0] if parent.sources else None
@@ -588,9 +625,11 @@ def _link_cell_target(plan: _Plan, by_key: dict[str, _Plan], state: _State) -> N
 def _decide_change_type(
     plan: _Plan, spread: Counter[tuple[int, int]], reasons: dict[int, str], state: _State
 ) -> str:
-    """검사 9 — 구조에서 나오는 종류(신규·합침·나눔)가 먼저, 그다음 사람이 고른 글자 비교 종류."""
+    """검사 9 — 구조에서 나오는 종류(번역·신규·합침·나눔)가 먼저, 그다음 사람이 고른 글자 비교 종류."""
     keys = [plan.item.key]
     requested = plan.item.change_type
+    if plan.origin == ORIGIN_TRANSLATION:
+        return "translated"
     if not plan.sources:
         return "new"
     if plan.item.kind == "table":
@@ -713,6 +752,13 @@ async def _load_next_orders(session: AsyncSession, plans: list[_Plan]) -> dict[i
     return {doc_id: current.get(doc_id, -1) + 1 for doc_id in doc_ids}
 
 
+def _list_check_texts(plan: _Plan, state: _State) -> list[str]:
+    """문장 검사의 원문 — 번역은 출처 연결이 없어 번역 출처 단위의 글과 언어를 넘어 비교한다(스펙 §7.12)."""
+    if plan.origin == ORIGIN_TRANSLATION:
+        return [state.translation_texts[plan.row.translation_source_unit_id]]
+    return [state.units[unit_id].text for unit_id in plan.sources]
+
+
 def _apply_plan(
     session: AsyncSession,
     plan: _Plan,
@@ -731,7 +777,9 @@ def _apply_plan(
         session.add(target)
     elif target.confirmed_text and plan.text != target.confirmed_text:  # 첫 확정의 AI 새 문장은 이전 확정 글이 없다
         session.add(TargetTextHistory(target_id=target.id, previous_text=target.confirmed_text, changed_by=actor))
-    if plan.origin != ORIGIN_NEW_DOC:
+    if plan.origin == ORIGIN_TRANSLATION:
+        target.confirmed_text = plan.text
+    elif plan.origin != ORIGIN_NEW_DOC:
         if target.target_doc_id != plan.doc.id:
             # 순서를 사람이 정한 문서면 끝에, 아니면 결과물이 출처 위치로 정렬하므로 0
             is_appended = plan.doc.manual_order and not plan.is_cell
@@ -744,11 +792,8 @@ def _apply_plan(
         target.cell_row, target.cell_col = (plan.cell_row, plan.cell_col) if plan.is_cell else (None, None)
         target.parent_target_id = plan.parent.row.id if plan.parent is not None and plan.parent.row else None
     target.change_type = plan.change_type
-    target.warnings = (
-        check_sentence([state.units[unit_id].text for unit_id in plan.sources], plan.text)
-        if plan.item.kind == "sentence" and plan.sources
-        else []
-    )
+    check_texts = _list_check_texts(plan, state)
+    target.warnings = check_sentence(check_texts, plan.text) if plan.item.kind == "sentence" and check_texts else []
     _set_human_status(target, action, hold_reason, actor, stamp)
     target.revision += 1
     plan.row = target
@@ -762,6 +807,10 @@ async def _write_group(
     stamp = now()
     hold_reason = payload.hold_reason.strip() if payload.action == "hold" else ""
     removed = [state.existing[target_id] for target_id in payload.removed_target_ids]
+    # 지운 번역은 사람이 버린 제안이다 — 지우면 제안을 가리키는 칸이 사라지므로 먼저 남긴다
+    await reject_suggestions(
+        session, [target.suggestion_id for target in removed if target.origin == ORIGIN_TRANSLATION], actor
+    )
     if removed:
         await session.execute(delete(TargetSource).where(TargetSource.target_id.in_([t.id for t in removed])))
     dropped = [target for target in removed if target.origin != ORIGIN_NEW_DOC]
@@ -813,7 +862,7 @@ async def _write_group(
     record_event(
         session, bundle_id=bundle_id, actor=actor, action=f"group.{payload.action}",
         target_type="unit" if unit_ids else "target",
-        target_ids=unit_ids or [target.id for target in written], reason=hold_reason,
+        target_ids=unit_ids or [*(target.id for target in written), *payload.removed_target_ids], reason=hold_reason,
     )
     await session.flush()
     return [target.id for target in written]

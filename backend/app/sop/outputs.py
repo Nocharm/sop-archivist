@@ -1,7 +1,8 @@
 """결과물 A(문장 비교표)·B(맵핑 흐름)·C(새 문서 기준 묶음)와 언어별 요약 숫자, 검토 요청 조건의 단위 재료 — 스냅숏만 받는 순수 함수 (스펙 §7.13·§7.15).
 
 세 결과물은 같은 재료(옛 단위·보낸 곳·새 문장)를 다른 방향에서 본다. 그래서 단위의 보낸 곳(_group_dests)·칸 순서(_plan_sections)·
-신규 새 문장(_list_new_targets)을 한 벌만 두고 A·B·C·요약이 함께 쓴다. 번역 새 문장(origin translation)은 계획 2라 싣지 않는다.
+신규 새 문장(_list_new_targets)을 한 벌만 두고 A·B·C·요약이 함께 쓴다. 번역 새 문장은 출처 연결이 없어 단위의 보낸 곳·관계 묶음에
+끼지 않고, A의 번역 줄과 C의 칸 항목, 요약의 번역 숫자로만 나온다.
 """
 
 from collections import Counter, defaultdict
@@ -27,7 +28,6 @@ from app.sop.status import get_cover_status
 
 Lang = Literal["ko", "en"]
 ORIGIN_NEW_DOC = "new_doc"
-ORIGIN_TRANSLATION = "translation"
 # 나눔 문장 번호 — 스무 개를 넘으면 "(21)" 꼴로 이어 간다
 CIRCLED_NUMBERS = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
 DISPOSITION_NODES = {"delete": "delete", "move_external": "move_external"}  # 그 밖(미배정)은 "unassigned"
@@ -45,9 +45,9 @@ class LocationOut(BaseModel):
 
 
 class ARow(BaseModel):
-    """결과물 A 한 줄 — 옛 단위 한 줄(중복 배정은 보낸 곳마다), 표 줄, 입구 2 신규 줄."""
+    """결과물 A 한 줄 — 옛 단위 한 줄(중복 배정은 보낸 곳마다), 표 줄, 번역 줄, 입구 2 신규 줄."""
 
-    row_kind: Literal["unit", "table", "new"]
+    row_kind: Literal["unit", "table", "translation", "new"]
     lang: str
     old_doc_code: str
     old_doc_version: str
@@ -166,6 +166,7 @@ class _Index:
     unit_targets: dict[int, list[TargetInfo]]  # 출처 단위 → 그 단위를 출처로 둔 새 문장
     doc_targets: dict[int, list[TargetInfo]]  # 새 문서 → 그 문서의 새 문장
     children: dict[int, list[TargetInfo]]  # 표 새 문장 → 칸 새 문장(행·열 순)
+    translations: dict[int, list[TargetInfo]]  # 번역 출처 단위 → 그 단위의 번역 새 문장(두 언어 모두)
     unit_groups: dict[int, str]  # 관계 묶음 ID — GET groups와 같은 접기·같은 ID
     target_groups: dict[int, str]
     doc_order: list[TargetDocInfo]  # SOP(순서) 다음 그 SOP의 WI들, 부모 없는 WI는 끝
@@ -215,14 +216,15 @@ def _build_index(snap: BundleSnapshot) -> _Index:
     unit_targets: dict[int, list[TargetInfo]] = defaultdict(list)
     doc_targets: dict[int, list[TargetInfo]] = defaultdict(list)
     children: dict[int, list[TargetInfo]] = defaultdict(list)
+    translations: dict[int, list[TargetInfo]] = defaultdict(list)
     for target in sorted(snap.targets.values(), key=lambda target: target.id):
-        if target.origin == ORIGIN_TRANSLATION:  # 번역 새 문장은 계획 2 — 계획 1에는 생기지 않고, 줄 규칙도 계획 2에서 정한다
-            continue
         doc_targets[target.target_doc_id].append(target)
         if target.parent_target_id is not None:
             children[target.parent_target_id].append(target)
         for unit_id in target.source_unit_ids:
             unit_targets[unit_id].append(target)
+        if target.translation_source_unit_id is not None:
+            translations[target.translation_source_unit_id].append(target)
     for cell_targets in children.values():
         cell_targets.sort(key=lambda target: (target.cell_row or 0, target.cell_col or 0, target.id))
 
@@ -239,7 +241,7 @@ def _build_index(snap: BundleSnapshot) -> _Index:
     doc_order = _order_target_docs(snap)
     return _Index(
         snap=snap, old_units=old_units, cells=cells, unit_targets=unit_targets, doc_targets=doc_targets,
-        children=children, unit_groups=unit_groups, target_groups=target_groups, doc_order=doc_order,
+        children=children, translations=translations, unit_groups=unit_groups, target_groups=target_groups, doc_order=doc_order,
         doc_rank={doc.id: rank for rank, doc in enumerate(doc_order)},
     )
 
@@ -265,7 +267,7 @@ def _format_doc_code(document: DocumentInfo) -> str:
 
 
 def _get_item_key(index: _Index, doc: TargetDocInfo, target: TargetInfo) -> tuple[object, ...]:
-    """칸 안 순서 — 사람이 정한 문서는 order_index, 아니면 입구 2 새 문장은 새 문서의 자리, 나머지는 첫 출처의 정렬 키.
+    """칸 안 순서 — 사람이 정한 문서는 order_index, 아니면 입구 2 새 문장은 새 문서의 자리, 번역은 번역 출처 단위, 나머지는 첫 출처의 정렬 키.
 
     입구 2 새 문장의 자리는 새 문서 안의 실제 순서다(스펙 §6.7) — 짝지은 옛 단위 순서로 섞지 않는다.
     """
@@ -274,6 +276,8 @@ def _get_item_key(index: _Index, doc: TargetDocInfo, target: TargetInfo) -> tupl
     units = index.snap.units
     if target.origin == ORIGIN_NEW_DOC and target.new_unit_id in units:
         return (units[target.new_unit_id].order_key, target.id)
+    if target.translation_source_unit_id in units:
+        return (units[target.translation_source_unit_id].order_key, target.id)
     if target.source_unit_ids:
         return (units[target.source_unit_ids[0]].order_key, target.id)
     return ((2, target.order_index), target.id)
@@ -392,6 +396,10 @@ def _format_target_location(target: TargetInfo, labels: OutputLabels) -> str:
     return target.section_path
 
 
+def _list_translations(index: _Index, unit_id: int, lang: Lang) -> list[TargetInfo]:
+    return [target for target in index.translations.get(unit_id, []) if target.lang == lang]
+
+
 def _format_place(index: _Index, unit: UnitInfo, labels: OutputLabels) -> str:
     block = index.snap.blocks[unit.block_id]
     pieces = [labels.parts[block.part]] if block.part in labels.parts else []
@@ -432,6 +440,14 @@ class _Dest:
     warnings: list[dict[str, str]]
 
 
+def _locate_unit(index: _Index, unit: UnitInfo, labels: OutputLabels) -> LocationOut:
+    block = index.snap.blocks[unit.block_id]
+    return LocationOut(
+        section=block.section_label, place=_format_place(index, unit, labels), page=block.page,
+        page_basis=block.page_basis,
+    )
+
+
 def _describe_dest(doc: TargetDocInfo, targets: list[TargetInfo], is_own: bool, labels: OutputLabels) -> _Dest:
     locations = [_format_target_location(target, labels) for target in targets]
     location = locations[0] if len(set(locations)) == 1 else _number_lines(locations)
@@ -454,7 +470,6 @@ def _build_unit_rows(index: _Index, unit: UnitInfo, row_kind: Literal["unit", "t
     decision_unit_id = _get_decision_unit_id(unit)
     decision = snap.decisions[decision_unit_id]
     document = snap.documents[unit.document_id]
-    block = snap.blocks[unit.block_id]
     dests = [_describe_dest(doc, targets, is_own, labels) for doc, targets, is_own in _group_dests(index, unit)]
     if not dests:
         dest_kind = DISPOSITION_NODES.get(decision.disposition, "")
@@ -467,11 +482,7 @@ def _build_unit_rows(index: _Index, unit: UnitInfo, row_kind: Literal["unit", "t
     return [
         ARow(
             row_kind=row_kind, lang=unit.lang, old_doc_code=_format_doc_code(document),
-            old_doc_version=document.doc_version,
-            location=LocationOut(
-                section=block.section_label, place=_format_place(index, unit, labels), page=block.page,
-                page_basis=block.page_basis,
-            ),
+            old_doc_version=document.doc_version, location=_locate_unit(index, unit, labels),
             unit_id=unit.id, display_id=unit.display_id, source_text=_format_source_text(index, unit, labels),
             dest_kind=dest.kind, dest_doc_code=dest.doc_code, dest_doc_title=dest.doc_title,
             dest_location=dest.location, confirmed_text=dest.confirmed_text, ai_text=dest.ai_text,
@@ -483,17 +494,50 @@ def _build_unit_rows(index: _Index, unit: UnitInfo, row_kind: Literal["unit", "t
     ]
 
 
+def _build_translation_row(index: _Index, target: TargetInfo, labels: OutputLabels) -> ARow:
+    """번역 줄(스펙 §7.13 규칙 2) — 옛 문장 칸은 비고 위치·표시 ID는 출처 단위의 것이다. 출처가 은퇴한 번역(보류)은 둘 다 비어 있다."""
+    snap = index.snap
+    doc = snap.target_docs[target.target_doc_id]
+    unit = snap.units.get(target.translation_source_unit_id)
+    document = snap.documents[unit.document_id] if unit else None
+    return ARow(
+        row_kind="translation", lang=target.lang, old_doc_code=_format_doc_code(document) if document else "",
+        old_doc_version=document.doc_version if document else "",
+        location=_locate_unit(index, unit, labels) if unit else LocationOut(section="", place="", page=None, page_basis=""),
+        unit_id=target.translation_source_unit_id, display_id=unit.display_id if unit else "", source_text="",
+        dest_kind=doc.doc_type, dest_doc_code=doc.code, dest_doc_title=doc.title,
+        dest_location=_format_target_location(target, labels), confirmed_text=target.confirmed_text,
+        ai_text=target.ai_text, change_type=target.change_type or "",
+        group_id=index.target_groups.get(target.parent_target_id or target.id), reason="", status=target.status,
+        confirmed_by=target.confirmed_by, confirmed_at=target.confirmed_at, warnings=list(target.warnings),
+    )
+
+
 def _build_old_rows(index: _Index, lang: Lang, labels: OutputLabels) -> list[ARow]:
-    """옛 문서 줄 — 커버 단위(그 언어와 그림)와 표 줄. 표 줄은 그 언어 칸 문장이 있거나 칸이 아예 없을 때만."""
+    """옛 문서 줄 — 커버 단위(그 언어와 그림)와 표 줄, 단위 바로 뒤에 그 언어의 번역 줄.
+
+    출처 단위는 다른 언어라 자기 줄이 없어도 그 자리를 잡는다. 표 줄은 그 언어 칸 문장이나 칸 번역이 있거나 칸이 아예 없을 때만.
+    """
     rows: list[ARow] = []
     for unit in index.old_units:
         if unit.kind in TABLE_UNIT_KINDS:
             cells = index.cells.get(unit.id, [])
-            if not cells or any(_is_in_lang(cell.lang, lang) for cell in cells):
+            if not cells or any(_is_in_lang(cell.lang, lang) or _list_translations(index, cell.id, lang) for cell in cells):
                 rows += _build_unit_rows(index, unit, "table", labels)
         elif _is_in_lang(unit.lang, lang):
             rows += _build_unit_rows(index, unit, "unit", labels)
+        rows += [_build_translation_row(index, target, labels) for target in _list_translations(index, unit.id, lang)]
     return rows
+
+
+def _build_orphan_rows(index: _Index, lang: Lang, labels: OutputLabels) -> list[ARow]:
+    """출처 단위가 쪼개기 편집으로 은퇴한 번역 줄 — 줄 자리가 없어도 보류를 사람이 볼 수 있게 옛 문서 줄 끝에 둔다."""
+    placed = {unit.id for unit in index.old_units}
+    return [
+        _build_translation_row(index, target, labels)
+        for unit_id in sorted(index.translations.keys() - placed)
+        for target in _list_translations(index, unit_id, lang)
+    ]
 
 
 def _build_new_row(index: _Index, doc: TargetDocInfo, target: TargetInfo, labels: OutputLabels) -> ARow:
@@ -509,11 +553,11 @@ def _build_new_row(index: _Index, doc: TargetDocInfo, target: TargetInfo, labels
 
 
 def build_output_a(snap: BundleSnapshot, lang: Lang) -> list[ARow]:
-    """결과물 A — 옛 문서 순서의 줄들 뒤에 입구 2 신규 줄을 새 문서별로 모은다."""
+    """결과물 A — 옛 문서 순서의 줄들(번역 줄 포함) 뒤에 입구 2 신규 줄을 새 문서별로 모은다."""
     labels = LABELS[lang]
     index = _build_index(snap)
     new_rows = [_build_new_row(index, doc, target, labels) for doc, target in _list_new_targets(index, lang, labels)]
-    return _build_old_rows(index, lang, labels) + new_rows
+    return _build_old_rows(index, lang, labels) + _build_orphan_rows(index, lang, labels) + new_rows
 
 
 # --- B ---
@@ -565,18 +609,21 @@ def build_output_b(snap: BundleSnapshot, lang: Lang) -> FlowGraph:
 
 
 def _format_source_note(index: _Index, target: TargetInfo, labels: OutputLabels) -> str:
-    """받은 옛 단위 — "← OLD-1 §5.1, OLD-2 §5.1 (합침)". 같은 문서·절은 한 번, 절이 없으면 문서 번호만."""
-    if not target.source_unit_ids:
-        return ""
+    """받은 옛 단위 — "← OLD-1 §5.1, OLD-2 §5.1 (합침)". 같은 문서·절은 한 번, 절이 없으면 문서 번호만. 번역은 번역 출처 단위."""
     snap = index.snap
+    unit_ids = target.source_unit_ids
+    if target.translation_source_unit_id in snap.units:
+        unit_ids = (target.translation_source_unit_id,)
+    if not unit_ids:
+        return ""
     refs = []
-    for unit_id in target.source_unit_ids:
+    for unit_id in unit_ids:
         unit = snap.units[unit_id]
         code = _format_doc_code(snap.documents[unit.document_id])
         section = snap.blocks[unit.block_id].section_label
         refs.append(f"{code} §{section}" if section else code)
     note = "← " + ", ".join(dict.fromkeys(refs))
-    suffix = {"merged": labels.merged, "split": labels.split}.get(target.change_type or "")
+    suffix = {"merged": labels.merged, "split": labels.split, "translated": labels.translated}.get(target.change_type or "")
     return f"{note} {suffix}" if suffix else note
 
 
@@ -649,7 +696,7 @@ def build_summary(snap: BundleSnapshot, lang: Lang) -> Summary:
         deleted=dispositions["delete"],
         moved=dispositions["move_external"],
         new=len(_list_new_targets(index, lang, LABELS[lang])),
-        translated=0,  # 번역 새 문장은 계획 2 — 계획 1에는 생기지 않는다
+        translated=sum(target.lang == lang for targets in index.translations.values() for target in targets),
         confirmed_rate=round(confirmed / len(units), 4) if units else 0.0,
     )
 

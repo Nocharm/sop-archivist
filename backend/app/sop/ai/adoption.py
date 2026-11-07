@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
 from app.sop.ai.schemas import AdoptionStats, SuggestionOut, SuggestionsPageOut
+from app.sop.detach import ORIGIN_TRANSLATION
 from app.sop.errors import raise_rule
 from app.sop.groups import TABLE_UNIT_KINDS, iter_chunks, select_in_chunks
 from app.sop.models import AiSuggestion, TargetSentence, Unit, UnitDecision
@@ -24,7 +25,8 @@ if TYPE_CHECKING:  # decisions가 이 모듈을 불러 쓰므로 타입만 가�
 
 Place = tuple[int | None, str | None, int | None, str | None]  # (새 문서, 칸, WI 단계, WI 부분)
 
-_JUDGED_KINDS = ("classify",)  # 처분·자리·고쳐 쓴 글을 content에 담아 저장과 견줄 수 있는 종류
+# 저장과 견줄 수 있는 종류 — classify는 content의 처분·자리·고쳐 쓴 글, translate는 새 문장의 ai_text와 견준다
+_JUDGED_KINDS = ("classify", "translate")
 _NO_TEXT_KINDS = (*TABLE_UNIT_KINDS, "figure")  # 새 문장에 글자가 없는 단위
 
 
@@ -83,7 +85,7 @@ def _build_suggested_shape(suggestion: AiSuggestion, units: Iterable[Unit]) -> S
 
 
 def _build_saved_shape(plans: Sequence["_Plan"], unit_ids: Collection[int], dispositions: Iterable[str]) -> SavedShape:
-    """이 제안의 단위에서 나온 새 문장만 — 칸 새 문장은 출처가 칸 문장이라 부모 표 새 문장의 출처로 가린다."""
+    """이 제안의 단위에서 나온 새 문장만 — 칸 새 문장은 출처가 칸 문장이라 부모 표 새 문장의 출처로 가린다. 표 아래 칸 번역은 자기 제안이 따로 있다."""
     scope = set(unit_ids)
     targets = tuple(
         TargetShape(
@@ -91,7 +93,7 @@ def _build_saved_shape(plans: Sequence["_Plan"], unit_ids: Collection[int], disp
             restructured=plan.change_type == "table_restructured",
         )
         for plan in plans
-        if scope.intersection((plan.parent or plan).sources)
+        if plan.origin != ORIGIN_TRANSLATION and scope.intersection((plan.parent or plan).sources)
     )
     return SavedShape(frozenset(dispositions), targets)
 
@@ -164,6 +166,25 @@ async def record_group_adoption(
     await record_unit_adoption(
         session, plans=plans, dispositions=dispositions, decisions=decisions, actor=actor, stamp=stamp
     )
+    await _record_translation_adoption(session, plans, actor, stamp)
+
+
+async def _record_translation_adoption(
+    session: AsyncSession, plans: Sequence["_Plan"], actor: str, stamp: datetime
+) -> None:
+    """번역 제안은 판단 행이 아니라 새 문장에 이어져 있다 — 확정한 글이 제안 글 그대로면 as_is, 고쳤으면 edited."""
+    plan_by_suggestion = {plan.row.suggestion_id: plan for plan in plans if plan.origin == ORIGIN_TRANSLATION}
+    rows = await select_in_chunks(
+        session,
+        lambda chunk: select(AiSuggestion).where(
+            AiSuggestion.id.in_(chunk), AiSuggestion.adoption.is_(None), AiSuggestion.kind.in_(_JUDGED_KINDS)
+        ),
+        plan_by_suggestion,
+    )
+    for (suggestion,) in rows:
+        plan = plan_by_suggestion[suggestion.id]
+        suggestion.adoption = "as_is" if plan.text == plan.row.ai_text else "edited"
+        suggestion.adopted_by, suggestion.adopted_at = actor, stamp
 
 
 async def _write_adoption(
@@ -186,7 +207,7 @@ async def adopt_suggestions(
 
 
 async def reject_suggestions(session: AsyncSession, suggestion_ids: Collection[int], actor: str) -> None:
-    """사람이 배정을 지워 제안을 버렸다 — 이미 정해진 제안은 그대로 둔다."""
+    """사람이 배정을 지우거나 번역을 지워 제안을 버렸다 — 이미 정해진 제안은 그대로 둔다."""
     await _write_adoption(session, suggestion_ids, "rejected", actor, now())
 
 

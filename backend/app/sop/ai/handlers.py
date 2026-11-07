@@ -2,5 +2,6 @@
 
 from app.sop.ai.classify import CLASSIFY_HANDLER, CLASSIFY_KIND
 from app.sop.ai.runner import JobHandler
+from app.sop.ai.translate import TRANSLATE_HANDLER, TRANSLATE_KIND
 
-HANDLERS: dict[str, JobHandler] = {CLASSIFY_KIND: CLASSIFY_HANDLER}
+HANDLERS: dict[str, JobHandler] = {CLASSIFY_KIND: CLASSIFY_HANDLER, TRANSLATE_KIND: TRANSLATE_HANDLER}

@@ -1,5 +1,6 @@
-"""AI API — 분류 요청(작성자, AI가 켜져 있을 때)과 작업 현황·제안 읽기(멤버)·취소·실패분 다시 시도(작성자, 작업 중 묶음만). 분류 요청 말고는 AI가 꺼져 있어도 동작한다."""
+"""AI API — 분류·번역 요청(작성자, AI가 켜져 있을 때)과 작업 현황·제안 읽기(멤버)·취소·실패분 다시 시도(작성자, 작업 중 묶음만). 요청 말고는 AI가 꺼져 있어도 동작한다."""
 
+from collections.abc import Sequence
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Path, Query
@@ -11,6 +12,7 @@ from app.sop.ai.adoption import list_suggestions, load_adoption_stats, load_sugg
 from app.sop.ai.classify import CLASSIFY_KIND, select_classify_items
 from app.sop.ai.constants import DEFAULT_SUGGESTIONS_PAGE, MAX_SUGGESTIONS_PAGE
 from app.sop.ai.jobs import (
+    JobItem,
     build_request_out,
     cancel_active_jobs,
     enqueue_jobs,
@@ -25,9 +27,12 @@ from app.sop.ai.schemas import (
     JobKindIn,
     RetryOut,
     ScopeIn,
+    SkippedOut,
     SuggestionOut,
     SuggestionsPageOut,
+    TranslateIn,
 )
+from app.sop.ai.translate import TRANSLATE_KIND, select_translate_items
 from app.sop.constants import MEMBER_ROLES
 from app.sop.errors import raise_rule
 from app.sop.events import record_event
@@ -49,6 +54,21 @@ def require_ai_enabled() -> None:
         raise_rule(503, "ai_disabled")
 
 
+async def _queue_request(
+    session: AsyncSession, ctx: BundleContext, kind: str, items: Sequence[JobItem], skipped: Sequence[SkippedOut]
+) -> AiRequestOut:
+    """고른 작업을 쌓고 기록을 남겨 커밋한다 — 요청 종류마다 같은 마무리다."""
+    jobs = enqueue_jobs(session, bundle_id=ctx.bundle.id, kind=kind, requested_by=ctx.login_id, items=items)
+    if jobs:  # 쌓인 게 없으면 바뀐 것도 없으니 기록도 남기지 않는다
+        await session.flush()
+        record_event(
+            session, bundle_id=ctx.bundle.id, actor=ctx.login_id, action="ai.request", target_type="ai_job",
+            target_ids=[job.id for job in jobs], reason=kind,
+        )
+    await session.commit()
+    return build_request_out(len(jobs), skipped)
+
+
 @router.post("/classify", response_model=AiRequestOut, dependencies=[Depends(require_ai_enabled)])
 async def request_classify(
     body: ScopeIn,
@@ -60,15 +80,21 @@ async def request_classify(
     items, skipped = await select_classify_items(
         session, ctx.bundle.id, document_id=body.document_id, unit_ids=body.unit_ids
     )
-    jobs = enqueue_jobs(session, bundle_id=ctx.bundle.id, kind=CLASSIFY_KIND, requested_by=ctx.login_id, items=items)
-    if jobs:  # 쌓인 게 없으면 바뀐 것도 없으니 기록도 남기지 않는다
-        await session.flush()
-        record_event(
-            session, bundle_id=ctx.bundle.id, actor=ctx.login_id, action="ai.request", target_type="ai_job",
-            target_ids=[job.id for job in jobs], reason=CLASSIFY_KIND,
-        )
-    await session.commit()
-    return build_request_out(len(jobs), skipped)
+    return await _queue_request(session, ctx, CLASSIFY_KIND, items, skipped)
+
+
+@router.post("/translate", response_model=AiRequestOut, dependencies=[Depends(require_ai_enabled)])
+async def request_translate(
+    body: TranslateIn,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> AiRequestOut:
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    items, skipped = await select_translate_items(
+        session, ctx.bundle.id, direction=body.direction, document_id=body.document_id, unit_ids=body.unit_ids
+    )
+    return await _queue_request(session, ctx, TRANSLATE_KIND, items, skipped)
 
 
 @router.get("/status", response_model=AiStatusOut)

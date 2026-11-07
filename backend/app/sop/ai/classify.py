@@ -101,7 +101,7 @@ async def _ensure_assign_documents(session: AsyncSession, bundle_id: int) -> Non
         raise_rule(409, "no_assign_targets")
 
 
-async def _load_latest_extractions(session: AsyncSession, bundle_id: int, document_id: int | None) -> dict[int, int]:
+async def load_latest_extractions(session: AsyncSession, bundle_id: int, document_id: int | None) -> dict[int, int]:
     """옛 문서마다 최신 추출 {추출 id: 문서 id}. 문서를 짚었는데 이 묶음의 옛 문서가 아니면 404."""
     if document_id is not None:
         document = await session.get(Document, document_id)
@@ -187,7 +187,7 @@ async def select_classify_items(
     범위의 단위가 이 묶음 것이 아니면 다른 라우터처럼 404다.
     """
     await _ensure_assign_documents(session, bundle_id)
-    documents = await _load_latest_extractions(session, bundle_id, document_id)
+    documents = await load_latest_extractions(session, bundle_id, document_id)
     requested = set(unit_ids or ())
     rows = await _load_scope_rows(session, documents, requested)
     missing = sorted(requested - {row.id for row in rows})
@@ -244,7 +244,7 @@ def _hash_unit(unit: Unit) -> str:
     return hashlib.sha256(f"{unit.lang}\n{unit.text}".encode()).hexdigest()
 
 
-async def _load_input_refs(session: AsyncSession, extraction_id: int) -> dict[str, object]:
+async def load_input_refs(session: AsyncSession, extraction_id: int) -> dict[str, object]:
     """제안 기록에 남기는 입력 문서 버전 — 파일 해시와 추출 id(설계 §6.11)."""
     sha256 = await session.scalar(
         select(Document.sha256).join(Extraction, Extraction.document_id == Document.id).where(Extraction.id == extraction_id)
@@ -559,7 +559,7 @@ class ClassifyHandler:
             candidates=tuple(candidates),
             docs=docs,
             guidelines=guidelines,
-            input_refs=await _load_input_refs(session, units[0].extraction_id),
+            input_refs=await load_input_refs(session, units[0].extraction_id),
         )
 
     async def compute(self, job: AiJob, loaded: _Loaded) -> _Verdict:

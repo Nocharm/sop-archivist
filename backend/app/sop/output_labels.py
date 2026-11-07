@@ -45,6 +45,7 @@ class OutputLabels:
     continued: str
     merged: str
     split: str
+    translated: str
     slots: dict[str, str]
     wi_parts: dict[str, str]
 
@@ -71,6 +72,7 @@ LABELS = {
         continued="(이어짐)",
         merged="(합침)",
         split="(나눔)",
+        translated="(번역)",
         slots=SLOT_LABELS,
         wi_parts=WI_PART_LABELS,
     ),
@@ -95,6 +97,7 @@ LABELS = {
         continued="(continued)",
         merged="(merged)",
         split="(split)",
+        translated="(translated)",
         slots=SLOT_LABELS,
         wi_parts=WI_PART_LABELS,
     ),
