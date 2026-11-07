@@ -50,6 +50,7 @@
 | 새 제안에 밀린 이전 제안은 `result`를 `stale`로 바꾼다 | 밀린 제안이 `applied`로 남으면 채택률의 `pending`이 영영 줄지 않는다 | 제안 목록의 `applied`는 지금 살아 있는 제안만 뜻한다 |
 | 다시 돌린 응답이 무효면 이전 제안도 지우고 보류한다 | 보류 단위 아래 `ai_suggested` 새 문장이 남지 않게 한다 | 이전 제안 글은 제안 기록에서만 본다 |
 | 요청 상한을 넘은 단위는 `limit_reached`로 알린다 | 조용히 빠지면 사람이 전부 요청됐다고 믿는다 | 없음 |
+| 출처 새 문장의 글·자리가 바뀌거나 사라지면 AI 번역은 지우고 확정 번역은 보류한다 | §7.5 "사람이 다시 보게"와 같은 이유다. 그대로 두면 옛 글의 번역이 확정으로 결과물에 나간다 | 출처를 고칠 때마다 번역을 다시 본다 |
 | 분류의 문서 범위 요청은 미배정만 받고, AI 제안을 다시 받으려면 `unit_ids`로 고른다 | §7.8 "문서 전체의 미배정 단위, 또는 고른 단위". 다시 받으면 상한을 넘는 문서의 뒤쪽이 영영 처리되지 않는다 | 문서 전체를 다시 받으려면 단위를 고른다 |
 | `unit_ids` 분류 요청은 짝도 함께 보낸다(미배정·같은 종류 제안만) | §7.8 "대상 단위(와 짝)". 사람의 저장과 달리 제안은 확정이 아니다 | 짝 구성원 제안이 함께 바뀐다 |
 
@@ -76,13 +77,15 @@
 - `SuggestionOut`: `{id, job_id, kind, document_id, result, content, warnings, guideline_versions, model, adoption, adopted_by, adopted_at, created_at}`. `result`는 `applied`·`stale`·`invalid`다. 유사도 점수는 어디에도 내지 않는다(§12).
 - `content`:
   - `classify`: `{unit_ids, disposition, target_doc_id, slot_key, wi_step, wi_part, reason, rule_ids, evidence: [{unit_id, quote}], change_type, rewrites: {ko: [...], en: [...]}, retrieval, target_ids}`. `retrieval`은 `embedding`·`embedding_failed`·`no_index`다.
-  - `translate`: `{unit_id, source_target_id, to, target_id}`
+  - `translate`: `{unit_id, source_target_id, to, target_id, text}`
   - `match`: `{unit_ids, target_ids, shape, change_type, reason, rule_ids, retrieval}`. `shape`는 `one_to_one`·`split`·`merged`·`delete_candidate`·`new`·`table`·`figure`다.
   - `pair`: `{pair_id, ko_unit_id, en_unit_id}`
   - `split`: `{unit_id, offsets, reason, rule_ids}`. `offsets`는 `SplitOp.at`에 그대로 쓰는 위치이고, 뒤쪽부터 적용하면 앞 위치가 바뀌지 않는다.
 - `adoption`의 `applied`는 나머지 숫자의 합이 아니다. 작업 뒤 은퇴한 단위의 제안은 `applied`에만 있고 `pending`에 없다.
 - 오류: 404 `suggestion_not_found` · 503 `ai_disabled` · 409 `embedding_disabled` · 409 `no_assign_targets` · 409 `no_match_documents` · 409 `not_separate_layout` · 409 `not_manual_adoption` · 422 `scope_required` · 409 `bundle_not_editable`. 계획 1의 `POST /decisions/bulk`는 AI 제안 단위가 섞이면 409 `ai_suggested_units`를 낸다.
 - 기존 응답에 더하는 필드: `DecisionOut.suggestion_id`, `GroupTargetOut.suggestion_id`·`translation_source_unit_id`, `BundleOut.ai_jobs`(상태별 건수), `ARow.row_kind`의 값 `translation`.
+- 번역 새 문장의 자리는 출처 새 문장을 따른다. 저장에서 자리를 바꾸면 422 `invalid_group`(`translation_locked`)이다. 표 칸 번역은 표 전체와 함께 저장한다. `PUT /targets/order`는 번역 줄도 목록에 담아야 하고, 번역 줄의 단계를 바꾸면 `translation_locked`로 거절한다. 번역이 든 입구 2 문서를 지우면 409 `doc_has_targets`다.
+- 출처 새 문장의 글이나 자리가 바뀌거나 출처가 사라지면 AI 번역은 지워지고(제안 `stale`), 확정 번역은 보류(`system:related_unit_changed`)가 된다.
 - 사람 확정은 계획 1의 `POST /groups/save` 그대로다. 기존 AI 새 문장에 `text`를 비워 보내면 `ai_text`로 확정한다.
 - 지침 관리: `GET /api/admin/guidelines`, `GET /api/admin/guidelines/{key}/versions/{version}`, `POST /api/admin/guidelines/{key}/versions`(`{content, note}`), `POST /api/admin/guidelines/{key}/versions/{version}/activate`. 권한은 `guideline.manage`다.
 
