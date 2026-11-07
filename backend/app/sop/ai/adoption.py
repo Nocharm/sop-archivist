@@ -26,6 +26,7 @@ if TYPE_CHECKING:  # decisions가 이 모듈을 불러 쓰므로 타입만 가�
 Place = tuple[int | None, str | None, int | None, str | None]  # (새 문서, 칸, WI 단계, WI 부분)
 
 _MATCH_KIND = "match"
+_SPLIT_KIND = "split"  # 이어진 판단·새 문장·짝이 없어 저장이 채택을 정하지 않는다 — 사람이 직접 남긴다(record_split_adoption)
 # 저장과 견줄 수 있는 종류 — classify는 content의 처분·자리·고쳐 쓴 글, translate는 새 문장의 ai_text, match는 content의 출처와 견준다
 _JUDGED_KINDS = ("classify", "translate", _MATCH_KIND)
 _NO_TEXT_KINDS = (*TABLE_UNIT_KINDS, "figure")  # 새 문장에 글자가 없는 단위
@@ -292,13 +293,25 @@ async def reject_suggestions(session: AsyncSession, suggestion_ids: Collection[i
     await _write_adoption(session, suggestion_ids, "rejected", actor, now())
 
 
+def record_split_adoption(suggestion: AiSuggestion, adoption: str, actor: str) -> None:
+    """나누기 제안의 채택을 사람이 직접 남긴다 — 적용된 나누기 제안이고 아직 채택이 비어 있을 때뿐이며, 아니면 409 not_manual_adoption.
+
+    나누기는 편집 길로 일어나 제안과 이어진 행이 없고(단위는 미배정 그대로 은퇴한다) 저장이 채택을 정할 수 없다. 처음 정한 판정이 남는다.
+    """
+    if suggestion.kind != _SPLIT_KIND or suggestion.result != "applied" or suggestion.adoption is not None:
+        raise_rule(409, "not_manual_adoption")
+    _set_adoption(suggestion, adoption, actor, now())
+
+
 async def load_adoption_stats(session: AsyncSession, bundle_id: int) -> dict[str, AdoptionStats]:
     """종류별 채택 집계 — 제안이 적용된 적 없는 종류는 빠진다.
 
     applied는 지금 살아 있는 제안이고, 채택은 밀린 제안(보류한 짝)에 기록돼도 사람의 결정이라 함께 센다. pending은 사람이 아직
     정할 수 있는 제안뿐이다 — 단위가 편집으로 은퇴해 아무 판단·새 문장·짝도 가리키지 않는 제안은 영영 줄지 않는 대기가 된다.
+    나누기 제안은 처음부터 이어진 행이 없어(나누면 단위가 은퇴하는 게 정상이다) 채택이 비어 있는 동안 늘 사람이 정할 몫이다.
     """
     can_decide = or_(
+        AiSuggestion.kind == _SPLIT_KIND,
         exists().where(UnitDecision.suggestion_id == AiSuggestion.id),
         exists().where(TargetSentence.suggestion_id == AiSuggestion.id),
         exists().where(UnitPair.suggestion_id == AiSuggestion.id),
