@@ -107,10 +107,10 @@ async def _record_failure(job_id: int, code: str) -> None:
 
 async def process_job(job_id: int) -> None:
     """작업 하나를 끝까지 돌린다 — 실패는 작업 행에 남기고 밖으로 내지 않는다. 취소(CancelledError)만 그대로 올라간다."""
-    # 핸들러 모듈들이 이 모듈의 AiCallFailed·JobHandler를 쓰므로 맨 위에서 가져오면 순환 import다
-    from app.sop.ai.handlers import HANDLERS
-
     try:
+        # 핸들러 모듈들이 이 모듈의 AiCallFailed·JobHandler를 쓰므로 맨 위에서 가져오면 순환 import다
+        from app.sop.ai.handlers import HANDLERS
+
         await _run_stages(job_id, HANDLERS)
     except AiCallFailed as exc:
         await _record_failure(job_id, exc.code)

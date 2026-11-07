@@ -3,6 +3,7 @@
 import asyncio
 import inspect
 import logging
+import sys
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -280,6 +281,19 @@ def test_unexpected_exception_is_internal_and_logs_no_text(
 def test_kind_without_a_handler_ends_failed_as_internal(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delitem(HANDLERS, "classify", raising=False)
     job_id = _enqueue(_new_bundle(client))
+
+    run_jobs()
+
+    job = _get_job(job_id)
+    assert (job.status, job.error) == ("failed", "internal")
+
+
+def test_handler_module_that_cannot_be_imported_fails_the_job(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job_id = _enqueue(_new_bundle(client))
+    # sys.modules의 None은 다음 import를 ImportError로 막는다 — 태스크 밖으로 새면 작업이 running에 갇힌다
+    monkeypatch.setitem(sys.modules, "app.sop.ai.handlers", None)
 
     run_jobs()
 
