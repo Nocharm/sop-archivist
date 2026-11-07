@@ -277,7 +277,7 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
         units=units,
         decisions=decisions,
         targets=await _load_targets(session, bundle_id, units.keys(), include_text),
-        target_docs=await _load_target_docs(session, bundle_id),
+        target_docs=await load_target_docs(session, bundle_id),
     )
 
 
@@ -330,7 +330,8 @@ async def _load_targets(
     }
 
 
-async def _load_target_docs(session: AsyncSession, bundle_id: int) -> dict[int, TargetDocInfo]:
+async def load_target_docs(session: AsyncSession, bundle_id: int) -> dict[int, TargetDocInfo]:
+    """묶음의 새 문서 전부와 칸 N/A·WI 단계 — 스냅숏이 쓰고 AI 후보 만들기도 직접 읽는다(질의 세 번)."""
     na_slots: dict[int, dict[str, str]] = defaultdict(dict)
     for doc_id, slot_key, reason in await session.execute(
         select(TargetDocNaSlot.target_doc_id, TargetDocNaSlot.slot_key, TargetDocNaSlot.reason)
