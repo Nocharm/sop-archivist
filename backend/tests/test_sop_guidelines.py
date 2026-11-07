@@ -352,6 +352,26 @@ def test_unknown_version_is_404(client: TestClient) -> None:
         assert response.json()["detail"]["code"] == "guideline_version_not_found"
 
 
+# 0은 하한, 2**31은 Postgres int4 상한 밖 — 경계에서 막지 않으면 sqlite는 404인데 Postgres는 비교 중 500이 된다
+@pytest.mark.parametrize("version", [0, 2_147_483_648])
+def test_version_outside_the_int4_range_is_422_on_both_routes(client: TestClient, version: int) -> None:
+    for response in (
+        client.get(f"{GUIDELINES}/rules/versions/{version}", headers=ADMIN),
+        _activate(client, "rules", version),
+    ):
+        assert response.status_code == 422
+
+
+@pytest.mark.usefixtures("enforce", "clean_directory", "demo_access")
+def test_permission_is_checked_before_the_version_bound(client: TestClient) -> None:
+    for response in (
+        client.get(f"{GUIDELINES}/rules/versions/2147483648", headers=NOBODY),
+        _activate(client, "rules", 2_147_483_648, headers=NOBODY),
+    ):
+        assert response.status_code == 403
+        assert response.json() == {"detail": "missing permission: guideline.manage"}
+
+
 # --- 권한 ---
 
 
