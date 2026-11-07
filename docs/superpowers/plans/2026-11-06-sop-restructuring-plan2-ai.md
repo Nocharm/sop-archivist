@@ -80,7 +80,8 @@
   - `match`: `{unit_ids, target_ids, shape, change_type, reason, rule_ids, retrieval}`. `shape`는 `one_to_one`·`split`·`merged`·`delete_candidate`·`new`·`table`·`figure`다.
   - `pair`: `{pair_id, ko_unit_id, en_unit_id}`
   - `split`: `{unit_id, offsets, reason, rule_ids}`. `offsets`는 `SplitOp.at`에 그대로 쓰는 위치이고, 뒤쪽부터 적용하면 앞 위치가 바뀌지 않는다.
-- 오류: 503 `ai_disabled` · 409 `embedding_disabled` · 409 `no_assign_targets` · 409 `no_match_documents` · 409 `not_separate_layout` · 409 `not_manual_adoption` · 422 `scope_required` · 409 `bundle_not_editable`. 계획 1의 `POST /decisions/bulk`는 AI 제안 단위가 섞이면 409 `ai_suggested_units`를 낸다.
+- `adoption`의 `applied`는 나머지 숫자의 합이 아니다. 작업 뒤 은퇴한 단위의 제안은 `applied`에만 있고 `pending`에 없다.
+- 오류: 404 `suggestion_not_found` · 503 `ai_disabled` · 409 `embedding_disabled` · 409 `no_assign_targets` · 409 `no_match_documents` · 409 `not_separate_layout` · 409 `not_manual_adoption` · 422 `scope_required` · 409 `bundle_not_editable`. 계획 1의 `POST /decisions/bulk`는 AI 제안 단위가 섞이면 409 `ai_suggested_units`를 낸다.
 - 기존 응답에 더하는 필드: `DecisionOut.suggestion_id`, `GroupTargetOut.suggestion_id`·`translation_source_unit_id`, `BundleOut.ai_jobs`(상태별 건수), `ARow.row_kind`의 값 `translation`.
 - 사람 확정은 계획 1의 `POST /groups/save` 그대로다. 기존 AI 새 문장에 `text`를 비워 보내면 `ai_text`로 확정한다.
 - 지침 관리: `GET /api/admin/guidelines`, `GET /api/admin/guidelines/{key}/versions/{version}`, `POST /api/admin/guidelines/{key}/versions`(`{content, note}`), `POST /api/admin/guidelines/{key}/versions/{version}/activate`. 권한은 `guideline.manage`다.
@@ -724,6 +725,7 @@ def test_excel_a_sheet_has_the_translation_row(client, fake_ai): ...
   - `clear_previous_suggestion`이 출처 새 문장을 지우면 그 단위의 `ai_suggested` 번역도 지우고, 확정 번역은 보류한다(§7.5 떼어 내기와 같은 규칙).
   - `decisions.py`: 번역 행은 `source_unit_ids` 없이 저장한다. `_plan_target`의 `sources_required`와 `_decide_change_type`이 `origin="translation"`을 `translated`로 처리한다. 언어는 행의 언어다.
   - `detach_units`: 건드린 단위를 `translation_source_unit_id`로 가리키는 새 문장 중 `ai_suggested`는 지우고, 나머지는 보류(`_hold`, 보고에 포함). `find_units_needing_confirm`은 확정 번역을 센다.
+  - `adoption.py`: `translate`를 판정 대상 종류에 더한다. 번역 글 그대로 확정이면 `as_is`, 고치면 `edited`, 지우면 `rejected`다. `can_decide`가 제안에 이어진 새 문장을 찾으므로 판단 행이 없어도 `pending`에 잡혀야 한다.
   - `outputs.py`: `_build_index`의 번역 `continue`를 없앤다. 표(§7.13 규칙 2): 그 언어의 번역 새 문장마다 `row_kind="translation"`, `display_id`=출처 단위, `source_text=""`, 위치=출처 단위 위치, 줄 위치는 출처 단위 `order_key` 기준. `_get_item_key`는 `translation_source_unit_id`의 정렬 키를 쓴다. `translated` 요약 숫자를 센다.
 
 - [ ] **Step 4: 통과 확인** — 위 명령, `tests/test_sop_outputs.py tests/test_sop_excel.py tests/test_sop_review.py` 통과.
@@ -825,7 +827,7 @@ def test_confirming_delete_candidate_needs_a_reason(client, fake_ai): ...  # 사
   - `clear_previous_suggestion`은 `origin="new_doc"` 새 문장을 지우지 않고 출처를 떼어 미배정으로 돌린다. 지우면 새 문서의 글이 사라진다.
   - `apply`: 판단·새 문장 revision 확인(낡으면 `stale`). `clear_previous_suggestion`, 출처 연결, 새 문장 `ai_suggested`·`change_type`·경고·`suggestion_id`, 옛 판단 `ai_suggested`·`assigned`.
   - `shape`: 1:1 `one_to_one`, 1:N `split`, N:1 `merged`. `change_type`도 같은 구조 규칙으로 정한다(§6.7).
-  - Task 10의 `decide_adoption`에 `match` 규칙을 더한다: 출처가 제안과 같으면 `as_is`, 다르면 `edited`, 출처가 비면 `rejected`.
+  - Task 10의 `decide_adoption`에 `match` 규칙을 더한다: 출처가 제안과 같으면 `as_is`, 다르면 `edited`, 출처가 비면 `rejected`. `_JUDGED_KINDS`·`_build_suggested_shape`를 넓히고, `reset_target`이 `suggestion_id`를 비우므로 판단 행 없는 새 문장의 제안 id는 지우기 전에 모은다.
 
 - [ ] **Step 4: 통과 확인** — 위 명령.
 
@@ -858,7 +860,7 @@ def test_pair_job_works_with_ai_off_when_embeddings_on(client, fake_ai): ...
 
 - [ ] **Step 2: 실패 확인** — `.venv/bin/python -m pytest tests/test_sop_ai_pairing.py -q`
 
-- [ ] **Step 3: 구현** — 문서 하나에 작업 하나. `load`는 짝이 없는 활성 문장·제목 단위(ko·en)와 문서 `revision`, `compute`는 `embed_texts`(실패면 `AiCallFailed("connection")`)와 상호 최고 판정(`PAIR_THRESHOLD`), `apply`는 짝이 생긴 단위를 다시 확인해 건너뛰고 짝마다 `UnitPair`·멤버·제안 행을 쓴다. `confirm_pair`·`delete_pair`가 `suggestion_id`로 채택을 기록한다.
+- [ ] **Step 3: 구현** — 문서 하나에 작업 하나. `load`는 짝이 없는 활성 문장·제목 단위(ko·en)와 문서 `revision`, `compute`는 `embed_texts`(실패면 `AiCallFailed("connection")`)와 상호 최고 판정(`PAIR_THRESHOLD`), `apply`는 짝이 생긴 단위를 다시 확인해 건너뛰고 짝마다 `UnitPair`·멤버·제안 행을 쓴다. `confirm_pair`·`delete_pair`가 `suggestion_id`로 채택을 기록한다. `can_decide`에 `UnitPair.suggestion_id`를 더해 `pair` 제안도 `pending`에 잡는다.
 
 - [ ] **Step 4: 통과 확인** — 위 명령, `tests/test_sop_pairs.py` 통과.
 
@@ -900,7 +902,7 @@ def test_adoption_endpoint_is_split_only(client, fake_ai): ...  # 다른 kind 40
 - [ ] **Step 3: 구현**
   - 조각을 `str.find`로 차례로 찾는다. 사이가 공백뿐이어야 하고 첫 조각 앞·끝 조각 뒤도 공백뿐이어야 한다. 조각 시작 위치(첫 조각 제외)를 돌려준다.
   - 대상: 옛 문서, 묶이지 않은 문장·칸 문장, 미배정. 문서 범위 요청은 `MIN_SPLIT_CHARS` 미만을 `too_short`로 건너뛴다.
-  - `POST /suggestions/{id}/adoption`: `kind == "split"`만, `adoption`이 비어 있을 때만.
+  - `POST /suggestions/{id}/adoption`: `kind == "split"`만, `adoption`이 비어 있을 때만. `split` 제안은 이어진 행이 없어 `can_decide` 규칙을 타지 않으므로, 채택이 비어 있으면 `pending`으로 센다.
   - 지침 `rules`·`prompt.split`, `reasoning="low"`, 기능 `sop.split`.
 
 - [ ] **Step 4: 통과 확인** — 위 명령.
