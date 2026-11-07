@@ -397,6 +397,26 @@ def test_bulk_confirm_rejects_assigned_unit_and_duplicates(client: TestClient) -
     }
 
 
+def test_held_unit_without_destination_is_not_identical(client: TestClient) -> None:
+    """보낼 곳 없이 보류한 옛 단위는 사람이 결정을 남긴 단위라 글자가 같아도 후보도, 한 번에 확정할 대상도 아니다."""
+    fx = _setup(client, p("합성 장비를 켠다."), p("합성 장비를 켠다.") + p("합성 라벨을 붙인다."))
+    (candidate,) = _get_candidates(client, fx.bundle_id)
+    unit = find_unit(fx.old_view, "합성 장비를 켠다.")
+    held = save_group(client, fx.bundle_id, {
+        "action": "hold", "hold_reason": "Synthetic: undecided", "targets": [],
+        "units": [{"unit_id": unit["id"], "revision": 1, "disposition": "unassigned"}],
+    })
+    assert held.status_code == 200, held.text
+
+    taken = _bulk_confirm(client, fx.bundle_id, {"identical": [_identical_in(candidate, unit_revision=2)]})
+
+    assert _get_candidates(client, fx.bundle_id) == []
+    assert taken.status_code == 422, taken.text
+    assert taken.json()["detail"] == {
+        "code": "not_identical", "unit_id": candidate["unit_id"], "target_id": candidate["target_id"],
+    }
+
+
 def test_linking_an_old_table_as_is_needs_every_cell_linked(client: TestClient) -> None:
     """입구 2에서 옛 표를 새 문서 표에 그대로로 이어도 옛 칸 문장마다 칸 새 문장 하나가 있어야 한다(입구 1과 같은 R27).
 

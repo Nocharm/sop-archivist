@@ -12,9 +12,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.clock import now
+from app.sop.ai.adoption import adopt_suggestions
 from app.sop.checks import check_sentence
 from app.sop.decisions import NEUTRAL, SENTENCE_SOURCE_KINDS, DbId
-from app.sop.detach import CONFIRMED, ORIGIN_NEW_DOC, UNASSIGNED, DetachReport, detach_units, is_unassigned
+from app.sop.detach import (
+    CONFIRMED,
+    ORIGIN_NEW_DOC,
+    UNASSIGNED,
+    DetachReport,
+    detach_units,
+    is_unassigned,
+    sweep_translations,
+)
 from app.sop.errors import raise_rule
 from app.sop.events import record_event
 from app.sop.groups import TABLE_UNIT_KINDS, GroupOut, build_group_out, select_in_chunks
@@ -247,12 +256,13 @@ async def create_new_doc_targets(
 
 def _refresh_targets(
     targets: list[TargetSentence], wants: dict[int, _Want], ids_by_unit: dict[int, int], is_manual: bool
-) -> None:
-    """남은 새 문장의 자리를 지금 단위에 맞춘다.
+) -> list[int]:
+    """남은 새 문장의 자리를 지금 단위에 맞추고 자리가 바뀐 새 문장을 돌려준다.
 
     절 경로·언어·칸 부모와 좌표가 바뀌면 revision을 올린다(낡은 화면이 덮어쓰지 않게). 순서는 사람이 정한 문서가 아니면 단위
     순서로 다시 매기고, 순서만 바뀐 것은 revision을 올리지 않는다(편집마다 문서의 모든 새 문장이 409가 되지 않게).
     """
+    moved: list[int] = []
     for target in targets:
         want = wants[target.new_unit_id]
         parent_id = ids_by_unit[want.group_unit_id] if want.group_unit_id is not None else None
@@ -260,8 +270,10 @@ def _refresh_targets(
         if placement != (target.section_path, target.lang, target.parent_target_id, target.cell_row, target.cell_col):
             target.section_path, target.lang, target.parent_target_id, target.cell_row, target.cell_col = placement
             target.revision += 1
+            moved.append(target.id)
         if not is_manual and target.order_index != want.rank:
             target.order_index = want.rank
+    return moved
 
 
 async def sync_new_doc_targets(
@@ -276,7 +288,8 @@ async def sync_new_doc_targets(
 
     1) 단위가 은퇴했거나 새 문장을 갖지 않게 된 새 문장은 떼어 내며 지우고(detach_units, 표가 지워지면 칸도 함께)
     2) 새 문장이 없는 단위마다 만들고(표 먼저 — 칸이 다시 묶이면 부모가 있어야 한다) 3) 남은 새 문장의 절 경로·언어·칸 부모와
-    좌표·순서를 고친다. 제목 편집·언어 바꾸기·표 묶음 바꾸기는 단위를 제자리에서 바꾸므로 만든·은퇴한 단위만 보면 낡는다.
+    좌표·순서를 고치고 자리가 바뀐 새 문장의 번역을 다시 보게 한다. 제목 편집·언어 바꾸기·표 묶음 바꾸기는 단위를 제자리에서 바꾸므로
+    만든·은퇴한 단위만 보면 낡는다.
     created_unit_ids는 전체를 다시 맞추므로 참고만 한다. 질의 수는 단위 수와 무관하다(수정은 바뀐 칸 묶음별 executemany).
     """
     wants = {want.unit_id: want for want in await _load_wants(session, document)}
@@ -292,7 +305,7 @@ async def sync_new_doc_targets(
     missing = [want for want in wants.values() if want.unit_id not in ids_by_unit]
     is_manual = await _is_manual_order(session, document)
     await _insert_targets(session, document, missing, ids_by_unit, _decide_new_orders(missing, targets, is_manual))
-    _refresh_targets(targets, wants, ids_by_unit, is_manual)
+    await sweep_translations(session, document.bundle_id, _refresh_targets(targets, wants, ids_by_unit, is_manual))
     await session.flush()
     return report
 
@@ -477,7 +490,7 @@ def _confirm(item: UnitDecision | TargetSentence, actor: str, stamp: datetime) -
 
 
 async def _write_bulk(session: AsyncSession, payload: BulkMatchIn, state: _BulkState, actor: str) -> None:
-    """같은 글자 짝은 출처 연결·그대로·양쪽 확정, 신규는 신규 확정. 글자가 같아도 쓰기 길은 관계 묶음 저장처럼 문장 검사를 거친다."""
+    """같은 글자 짝은 출처 연결·그대로·양쪽 확정, 신규는 신규 확정(AI 제안이었으면 그대로 채택). 글자가 같아도 쓰기 길은 관계 묶음 저장처럼 문장 검사를 거친다."""
     stamp = now()
     links = []
     for item in payload.identical:
@@ -495,12 +508,15 @@ async def _write_bulk(session: AsyncSession, payload: BulkMatchIn, state: _BulkS
         _confirm(target, actor, stamp)
     if links:
         await session.execute(insert(TargetSource), links)
+    suggestion_ids = {state.targets[item.target_id].suggestion_id for item in payload.new}
+    await adopt_suggestions(session, suggestion_ids - {None}, actor, stamp)
 
 
 async def confirm_in_bulk(session: AsyncSession, bundle: Bundle, payload: BulkMatchIn, actor: str) -> GroupOut:
     """같은 글자 1:1 짝(그대로)과 출처 없는 입구 2 새 문장(신규)을 한 트랜잭션으로 확정한다. 커밋은 호출부가 한다.
 
-    항목마다 서버가 다시 확인하고 하나라도 어긋나면 아무것도 쓰지 않는다. AI 제안 짝은 이 길로 확정하지 않는다(스펙 §7.7).
+    항목마다 서버가 다시 확인하고 하나라도 어긋나면 아무것도 쓰지 않는다. AI 제안 짝은 이 길로 확정하지 않는다(스펙 §7.7) —
+    같은 글자 짝은 미배정만 받고, 신규는 코드가 확인할 수 있어 AI 제안이어도 받는다.
     """
     await lock_bundle(session, bundle)
     ensure_editable(bundle)

@@ -19,7 +19,7 @@ from app.routers.sop_documents import build_content_disposition
 from app.sop.ai.guidelines import get_rules_version_label
 from app.sop.constants import MEMBER_ROLES
 from app.sop.decisions import DbId
-from app.sop.detach import ORIGIN_NEW_DOC
+from app.sop.detach import ORIGIN_NEW_DOC, ORIGIN_TRANSLATION, load_source_target_ids, sweep_translations
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
 from app.sop.excel_export import ExportMeta, build_export_file_name, build_workbook
@@ -184,6 +184,15 @@ async def reorder_targets(
     locked = sorted(target_id for target_id in moves if doc.doc_type != "wi" or tops[target_id].origin == ORIGIN_NEW_DOC)
     if locked:
         raise_rule(422, "wi_step_not_allowed", target_ids=locked)
+    # 번역의 단계는 출처와 함께 같은 단계로만 옮긴다(스펙 §7.9) — 저장(decisions.py)과 같은 잠금이다
+    translations = [target_id for target_id in moves if tops[target_id].origin == ORIGIN_TRANSLATION]
+    source_ids = await load_source_target_ids(session, translations)
+    astray = sorted(
+        target_id for target_id in translations
+        if source_ids[target_id] not in moves or moves[source_ids[target_id]] != moves[target_id]
+    )
+    if astray:
+        raise_rule(422, "translation_locked", target_ids=astray)
     if moves:
         declared = set(await session.scalars(select(WiStep.step_no).where(WiStep.target_doc_id == doc.id)))
         undeclared = sorted(target_id for target_id, step in moves.items() if step is not None and step not in declared)
@@ -196,11 +205,15 @@ async def reorder_targets(
             cells[row.parent_target_id].append(row)
     for order_index, target_id in enumerate(sent):
         tops[target_id].order_index = order_index
+    moved: list[int] = []
     for target_id, step in moves.items():
         # 칸 새 문장은 표와 같은 자리에 있다(관계 묶음 저장 검사 7) — 자리가 바뀐 새 문장은 revision을 올려 낡은 저장을 막는다
         for target in (tops[target_id], *cells.get(target_id, [])):
             target.wi_step = step
             target.revision += 1
+            moved.append(target.id)
+    # 함께 옮긴 번역은 자리를 사람이 정한 것이고, 출처만 옮기면 쓸어 낸다
+    swept = await sweep_translations(session, bundle.id, moved, exempt=translations)
     doc.manual_order = True
     bundle.revision += 1
     record_event(
@@ -213,7 +226,7 @@ async def reorder_targets(
         target_doc_id=doc.id,
         items=[
             OrderItemOut(target_id=target_id, order_index=tops[target_id].order_index, wi_step=tops[target_id].wi_step)
-            for target_id in sent
+            for target_id in sent if target_id not in swept
         ],
     )
 

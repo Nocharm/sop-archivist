@@ -89,8 +89,17 @@ def test_list_shows_only_my_bundles_with_my_role(client: TestClient) -> None:
         mine["id"]: ("Mine", "author"),
         shared["id"]: ("Shared", "reviewer"),
     }
-    assert set(rows[0]) == {"id", "title", "status", "my_role", "updated_at", "progress"}
+    assert set(rows[0]) == {"id", "title", "status", "my_role", "updated_at", "progress", "is_synthetic"}
     assert client.get("/api/bundles", headers=OUTSIDER).json() == []
+
+
+def test_bundle_list_carries_is_synthetic(client: TestClient) -> None:
+    synthetic = create_bundle(client, title="Synthetic", is_synthetic=True)
+    plain = create_bundle(client, title="Plain")
+
+    rows = client.get("/api/bundles", headers=AUTHOR).json()
+
+    assert {row["id"]: row["is_synthetic"] for row in rows} == {synthetic["id"]: True, plain["id"]: False}
 
 
 def test_non_member_gets_404_even_sysadmin(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

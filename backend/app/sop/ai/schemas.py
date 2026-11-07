@@ -5,7 +5,7 @@ from typing import Annotated, Literal, Self
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 from app.routers.admin import KstDatetime
-from app.sop.constants import AI_JOB_KINDS
+from app.sop.constants import AI_ADOPTIONS, AI_JOB_KINDS
 from app.sop.errors import raise_rule
 from app.sop.tobe import MAX_DB_INT
 
@@ -14,7 +14,7 @@ MAX_SCOPE_UNITS = 20_000
 
 SkipReason = Literal[
     "not_unassigned", "already_queued", "bound_cell", "not_assigned", "other_language", "has_pair",
-    "already_translated", "too_short", "limit_reached",
+    "already_translated", "too_short", "limit_reached", "already_suggested", "not_splittable",
 ]
 RequestId = Annotated[int, Field(ge=1, le=MAX_DB_INT)]
 
@@ -23,6 +23,21 @@ def _check_job_kind(value: str) -> str:
     if value not in AI_JOB_KINDS:
         raise ValueError(f"kind must be one of {AI_JOB_KINDS}")
     return value
+
+
+JobKind = Annotated[str, AfterValidator(_check_job_kind)]
+
+
+def _check_adoption(value: str) -> str:
+    if value not in AI_ADOPTIONS:
+        raise ValueError(f"adoption must be one of {AI_ADOPTIONS}")
+    return value
+
+
+class AdoptionIn(BaseModel):
+    """사람이 직접 남기는 채택 결과 — 나누기 제안만 받는다(다른 종류는 사람의 저장이 채택을 정한다)."""
+
+    adoption: Annotated[str, AfterValidator(_check_adoption)]
 
 
 class ScopeIn(BaseModel):
@@ -39,10 +54,22 @@ class ScopeIn(BaseModel):
         return self
 
 
+class PairRequestIn(BaseModel):
+    """한/영 짝 제안 요청 — 문서 하나(설계 §7.11). 짝은 한 문서 안에서만 맺어 단위 목록은 받지 않는다."""
+
+    document_id: RequestId
+
+
+class TranslateIn(ScopeIn):
+    """번역 요청 — 범위에 오너가 고른 방향을 더한다(설계 §7.9)."""
+
+    direction: Literal["ko_to_en", "en_to_ko"]
+
+
 class JobKindIn(BaseModel):
     """취소·다시 시도의 범위 — 비우면 묶음의 모든 종류."""
 
-    kind: Annotated[str, AfterValidator(_check_job_kind)] | None = None
+    kind: JobKind | None = None
 
 
 class CancelOut(BaseModel):
@@ -109,3 +136,8 @@ class SuggestionOut(BaseModel):
     adopted_by: str | None
     adopted_at: KstDatetime | None
     created_at: KstDatetime
+
+
+class SuggestionsPageOut(BaseModel):
+    total: int
+    items: list[SuggestionOut]

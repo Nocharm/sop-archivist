@@ -1,27 +1,148 @@
-"""AI 진행 API — 작업 현황(멤버)과 취소·실패분 다시 시도(작성자, 작업 중 묶음만). 이 세 경로는 AI가 꺼져 있어도 동작한다."""
+"""AI API — 분류·번역·짝 맞추기·복합 문장 나누기 요청(작성자, AI가 켜져 있을 때), 한/영 따로 짝 제안 요청(작성자, 임베딩이 켜져 있을 때)과 작업 현황·제안 읽기(멤버)·나누기 제안 채택 기록·취소·실패분 다시 시도(작성자, 작업 중 묶음만). 요청 말고는 AI가 꺼져 있어도 동작한다."""
 
-from fastapi import APIRouter, Depends
+from collections.abc import Sequence
+from typing import Annotated, Literal
+
+from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
 from app.settings import settings
-from app.sop.ai.jobs import cancel_active_jobs, load_job_breakdown, retry_failed_jobs
-from app.sop.ai.schemas import AiStatusOut, CancelOut, JobKindIn, RetryOut
+from app.sop.ai.adoption import list_suggestions, load_adoption_stats, load_suggestion, record_split_adoption
+from app.sop.ai.classify import CLASSIFY_KIND, select_classify_items
+from app.sop.ai.constants import DEFAULT_SUGGESTIONS_PAGE, MAX_SUGGESTIONS_PAGE
+from app.sop.ai.jobs import (
+    JobItem,
+    build_request_out,
+    cancel_active_jobs,
+    enqueue_jobs,
+    load_job_breakdown,
+    retry_failed_jobs,
+)
+from app.sop.ai.match_jobs import MATCH_PLAN_KIND, select_match_items
+from app.sop.ai.pairing import PAIR_KIND, select_pair_items
+from app.sop.ai.schemas import (
+    AdoptionIn,
+    AiRequestOut,
+    AiStatusOut,
+    CancelOut,
+    JobKind,
+    JobKindIn,
+    PairRequestIn,
+    RetryOut,
+    ScopeIn,
+    SkippedOut,
+    SuggestionOut,
+    SuggestionsPageOut,
+    TranslateIn,
+)
+from app.sop.ai.split import SPLIT_KIND, select_split_items
+from app.sop.ai.translate import TRANSLATE_KIND, select_translate_items
 from app.sop.constants import MEMBER_ROLES
 from app.sop.errors import raise_rule
 from app.sop.events import record_event
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
+from app.sop.tobe import MAX_DB_INT
 
 router = APIRouter(prefix="/api/bundles/{bundle_id}/ai", tags=["sop-ai"])
 
 _require_author = require_bundle_role("author")
 _require_member = require_bundle_role(*MEMBER_ROLES)
 
+# 경로의 제안 ID 범위 — 정수 범위를 넘는 값이 DB까지 가서 500이 되지 않게
+SuggestionIdPath = Annotated[int, Path(ge=1, le=MAX_DB_INT)]
+
 
 def require_ai_enabled() -> None:
     """LLM을 쓰는 요청(분류·번역·짝 맞추기·나누기)의 의존성 — 사람 경로는 AI가 꺼져 있어도 그대로라 여기에만 건다."""
     if not settings.ai_enabled:
         raise_rule(503, "ai_disabled")
+
+
+def require_embed_enabled() -> None:
+    """임베딩만 쓰는 요청(한/영 따로 짝 제안)의 의존성 — LLM은 필요 없어 ai_enabled와 상관없고, 꺼져 있으면 사람이 손으로 잇는다."""
+    if not settings.embed_enabled:
+        raise_rule(409, "embedding_disabled")
+
+
+async def _queue_request(
+    session: AsyncSession, ctx: BundleContext, kind: str, items: Sequence[JobItem], skipped: Sequence[SkippedOut]
+) -> AiRequestOut:
+    """고른 작업을 쌓고 기록을 남겨 커밋한다 — 요청 종류마다 같은 마무리다."""
+    jobs = enqueue_jobs(session, bundle_id=ctx.bundle.id, kind=kind, requested_by=ctx.login_id, items=items)
+    if jobs:  # 쌓인 게 없으면 바뀐 것도 없으니 기록도 남기지 않는다
+        await session.flush()
+        record_event(
+            session, bundle_id=ctx.bundle.id, actor=ctx.login_id, action="ai.request", target_type="ai_job",
+            target_ids=[job.id for job in jobs], reason=kind,
+        )
+    await session.commit()
+    return build_request_out(len(jobs), skipped)
+
+
+@router.post("/classify", response_model=AiRequestOut, dependencies=[Depends(require_ai_enabled)])
+async def request_classify(
+    body: ScopeIn,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> AiRequestOut:
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    items, skipped = await select_classify_items(
+        session, ctx.bundle.id, document_id=body.document_id, unit_ids=body.unit_ids
+    )
+    return await _queue_request(session, ctx, CLASSIFY_KIND, items, skipped)
+
+
+@router.post("/translate", response_model=AiRequestOut, dependencies=[Depends(require_ai_enabled)])
+async def request_translate(
+    body: TranslateIn,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> AiRequestOut:
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    items, skipped = await select_translate_items(
+        session, ctx.bundle.id, direction=body.direction, document_id=body.document_id, unit_ids=body.unit_ids
+    )
+    return await _queue_request(session, ctx, TRANSLATE_KIND, items, skipped)
+
+
+@router.post("/match", response_model=AiRequestOut, dependencies=[Depends(require_ai_enabled)])
+async def request_match(
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> AiRequestOut:
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    items, skipped = await select_match_items(session, ctx.bundle.id)
+    return await _queue_request(session, ctx, MATCH_PLAN_KIND, items, skipped)
+
+
+@router.post("/pair", response_model=AiRequestOut, dependencies=[Depends(require_embed_enabled)])
+async def request_pair(
+    body: PairRequestIn,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> AiRequestOut:
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    items, skipped = await select_pair_items(session, ctx.bundle.id, body.document_id)
+    return await _queue_request(session, ctx, PAIR_KIND, items, skipped)
+
+
+@router.post("/split", response_model=AiRequestOut, dependencies=[Depends(require_ai_enabled)])
+async def request_split(
+    body: ScopeIn,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> AiRequestOut:
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    items, skipped = await select_split_items(
+        session, ctx.bundle.id, document_id=body.document_id, unit_ids=body.unit_ids
+    )
+    return await _queue_request(session, ctx, SPLIT_KIND, items, skipped)
 
 
 @router.get("/status", response_model=AiStatusOut)
@@ -35,13 +156,53 @@ async def get_ai_status(
         jobs=breakdown.jobs,
         by_kind=breakdown.by_kind,
         failed_errors=breakdown.failed_errors,
-        adoption={},  # 계획 2: 채택 기록이 생기면 kind별 채택률을 싣는다
+        adoption=await load_adoption_stats(session, ctx.bundle.id),
     )
+
+
+@router.get("/suggestions", response_model=SuggestionsPageOut)
+async def get_suggestions(
+    kind: JobKind | None = Query(None),
+    document_id: int | None = Query(None, ge=1, le=MAX_DB_INT),
+    result: Literal["applied", "stale", "invalid"] | None = Query(None),
+    limit: int = Query(DEFAULT_SUGGESTIONS_PAGE, ge=1, le=MAX_SUGGESTIONS_PAGE),
+    offset: int = Query(0, ge=0, le=MAX_DB_INT),
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> SuggestionsPageOut:
+    return await list_suggestions(
+        session, ctx.bundle.id, kind=kind, document_id=document_id, result=result, limit=limit, offset=offset
+    )
+
+
+@router.get("/suggestions/{suggestion_id}", response_model=SuggestionOut)
+async def get_suggestion(
+    suggestion_id: SuggestionIdPath,
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> SuggestionOut:
+    return SuggestionOut.model_validate(await load_suggestion(session, ctx.bundle.id, suggestion_id))
+
+
+@router.post("/suggestions/{suggestion_id}/adoption", response_model=SuggestionOut)
+async def record_adoption(
+    suggestion_id: SuggestionIdPath,
+    body: AdoptionIn,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> SuggestionOut:
+    """나누기 제안의 채택 결과를 사람이 남긴다 — 나누기 편집은 따로 하고, 이 기록이 채택률의 재료다."""
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    suggestion = await load_suggestion(session, ctx.bundle.id, suggestion_id)
+    record_split_adoption(suggestion, body.adoption, ctx.login_id)  # 누가·언제는 제안 행이 담아 작업 기록은 따로 남기지 않는다
+    await session.commit()
+    return SuggestionOut.model_validate(suggestion)
 
 
 @router.post("/cancel", response_model=CancelOut)
 async def cancel_jobs(
-    body: JobKindIn,
+    body: JobKindIn = JobKindIn(),  # 계약이 {kind?}라 본문 없는 POST도 "모든 종류"다
     ctx: BundleContext = Depends(_require_author),
     session: AsyncSession = Depends(get_session),
 ) -> CancelOut:
@@ -58,7 +219,7 @@ async def cancel_jobs(
 
 @router.post("/retry", response_model=RetryOut)
 async def retry_jobs(
-    body: JobKindIn,
+    body: JobKindIn = JobKindIn(),
     ctx: BundleContext = Depends(_require_author),
     session: AsyncSession = Depends(get_session),
 ) -> RetryOut:

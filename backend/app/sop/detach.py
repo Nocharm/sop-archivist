@@ -1,29 +1,33 @@
-"""떼어 내기 — 판단을 미배정으로, 출처 연결을 떼고, 같은 관계 묶음의 나머지는 보류로 돌린다(배정 지우기·쪼개기 편집·문서 삭제 공용, 새 문장 쪽은 칸 다시 묶기, 스펙 §7.5)."""
+"""떼어 내기 — 판단을 미배정으로, 출처 연결을 떼고, 같은 관계 묶음의 나머지와 그 단위의 번역을 정리한다(배정 지우기·쪼개기 편집·문서 삭제 공용, 새 문장 쪽은 칸 다시 묶기, 스펙 §7.5)."""
 
 from collections import defaultdict
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
 from typing import Literal
 
 from pydantic import BaseModel
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.constants import SYSTEM_HOLD_RELATED_CHANGED
 from app.sop.groups import collect_component, iter_chunks, select_in_chunks
-from app.sop.models import TargetSentence, TargetSource, Unit, UnitDecision, UnitDecisionHistory
+from app.sop.models import AiSuggestion, TargetSentence, TargetSource, Unit, UnitDecision, UnitDecisionHistory
 
 UNASSIGNED = "unassigned"
+AI_SUGGESTED = "ai_suggested"
 CONFIRMED = "confirmed"
 ON_HOLD = "on_hold"
 ORIGIN_NEW_DOC = "new_doc"
+ORIGIN_TRANSLATION = "translation"
+# 번역이 옮긴 출처 새 문장 — 번역 행에는 이 칸이 없어 제안 기록에서 읽는다. 스키마를 늘리지 않으려는 선택이고 sqlite·Postgres가 같은 식을 쓴다
+TRANSLATED_TARGET_ID = AiSuggestion.content["source_target_id"].as_integer()
 
 
 class DetachReport(BaseModel):
     # 판단을 미배정으로 되돌린 단위(이미 미배정이던 단위는 빠진다)
     reset_unit_ids: list[int]
-    # 지운 새 문장(지운 표 새 문장 아래 칸 새 문장 포함)
+    # 지운 새 문장(지운 표 새 문장 아래 칸 새 문장, 출처가 바뀐 AI 번역 포함)
     deleted_target_ids: list[int]
-    # 같은 관계 묶음이라 보류(관련 단위가 바뀜)로 돌린 단위·새 문장
+    # 같은 관계 묶음이라, 또는 출처가 바뀐 번역이라 보류(관련 단위가 바뀜)로 돌린 단위·새 문장
     held_unit_ids: list[int]
     held_target_ids: list[int]
 
@@ -36,6 +40,7 @@ def reset_decision(decision: UnitDecision) -> None:
     decision.disposition, decision.move_target_code, decision.reason = UNASSIGNED, "", ""
     decision.status, decision.hold_reason = UNASSIGNED, ""
     decision.confirmed_by, decision.confirmed_at = None, None
+    decision.suggestion_id = None
     decision.revision += 1
 
 
@@ -43,6 +48,7 @@ def reset_target(target: TargetSentence) -> None:
     """출처가 다 빠진 입구 2 새 문장 — 새 문서 원문 그대로라 지우지 않고 미배정으로 돌린다."""
     target.status, target.change_type, target.hold_reason, target.warnings = UNASSIGNED, None, "", []
     target.confirmed_by, target.confirmed_at = None, None
+    target.suggestion_id = None
     target.revision += 1
 
 
@@ -51,8 +57,89 @@ def _hold(item: UnitDecision | TargetSentence) -> None:
     item.revision += 1
 
 
+async def _load_translations(
+    session: AsyncSession, bundle_id: int, *, target_ids: Collection[int], unit_ids: Collection[int] = ()
+) -> dict[TargetSentence, int]:
+    """출처 새 문장이나 번역 출처 단위로 찾은 {번역 새 문장: 출처 새 문장 id} — 번역 출처 단위는 합친 새 문장의 출처 하나일 뿐이라 둘이 다르다."""
+    translations = (
+        select(TargetSentence, TRANSLATED_TARGET_ID)
+        .join(AiSuggestion, AiSuggestion.id == TargetSentence.suggestion_id)
+        .where(TargetSentence.bundle_id == bundle_id, TargetSentence.origin == ORIGIN_TRANSLATION)
+    )
+    rows = [
+        *await select_in_chunks(session, lambda chunk: translations.where(TRANSLATED_TARGET_ID.in_(chunk)), target_ids),
+        *await select_in_chunks(
+            session, lambda chunk: translations.where(TargetSentence.translation_source_unit_id.in_(chunk)), unit_ids
+        ),
+    ]
+    return {row[0]: row[1] for row in rows}
+
+
+async def _mark_suggestions_stale(session: AsyncSession, targets: Iterable[TargetSentence]) -> None:
+    """지워지는 AI 번역의 제안 — ai_suggested 번역은 사람이 아직 정하지 않았으니 채택 기록을 덮을 일이 없다."""
+    for chunk in iter_chunks({target.suggestion_id for target in targets}):
+        await session.execute(
+            update(AiSuggestion)
+            .where(AiSuggestion.id.in_(chunk))
+            .values(result="stale")
+            .execution_options(synchronize_session=False)
+        )
+
+
+async def drop_translations(session: AsyncSession, targets: Collection[TargetSentence]) -> None:
+    """AI 번역을 지우고 제안을 stale로 둔다."""
+    await _mark_suggestions_stale(session, targets)
+    for target in targets:
+        await session.delete(target)
+
+
+async def load_source_target_ids(session: AsyncSession, translation_ids: Collection[int]) -> dict[int, int]:
+    """번역 새 문장 → 출처 새 문장 id — 기록에서 읽으므로 출처가 지워졌어도 나온다."""
+    rows = await select_in_chunks(
+        session,
+        lambda chunk: select(TargetSentence.id, TRANSLATED_TARGET_ID)
+        .join(AiSuggestion, AiSuggestion.id == TargetSentence.suggestion_id)
+        .where(TargetSentence.id.in_(chunk)),
+        translation_ids,
+    )
+    return {target_id: source_id for target_id, source_id in rows}
+
+
+def _follow_source(target: TargetSentence, source: TargetSentence) -> None:
+    target.target_doc_id, target.slot_key = source.target_doc_id, source.slot_key
+    target.wi_step, target.wi_part, target.section_path = source.wi_step, source.wi_part, source.section_path
+    target.cell_row, target.cell_col, target.parent_target_id = source.cell_row, source.cell_col, source.parent_target_id
+
+
+async def sweep_translations(
+    session: AsyncSession, bundle_id: int, target_ids: Collection[int], *, exempt: Collection[int] = ()
+) -> set[int]:
+    """글·자리·출처 단위가 바뀌었거나 사라진 출처 새 문장의 번역을 다시 보게 한다 — ai_suggested는 지우고 나머지는 보류다(스펙 §7.5, §7.9).
+
+    옛 글의 번역이 확정인 채 결과물로 나가지 않게 하는 규칙이다. 지운 번역 id를 돌려준다. exempt는 같은 저장에서 사람이 글을 고친
+    번역이다 — 사람이 본 것이라 보류하지 않되 자리는 따른다. 묶음을 되보내느라 함께 온 번역은 본 것이 아니라 여기 들지 않는다.
+    남긴 번역은 출처가 남아 있으면 그 자리로 옮긴다 — 번역의 자리는 출처와 같아야 하고 잠겨 있어, 옛 자리에 두면 사람이 고친 글을
+    지우고 다시 받는 수밖에 없다. 그래서 호출부는 출처를 쓴 뒤에 부른다. 출처가 없어졌으면 자리는 그대로다.
+    """
+    translations = await _load_translations(session, bundle_id, target_ids=target_ids)
+    dropped = [target for target in translations if target.status == AI_SUGGESTED and target.id not in exempt]
+    await drop_translations(session, dropped)
+    rows = await select_in_chunks(
+        session, lambda chunk: select(TargetSentence).where(TargetSentence.id.in_(chunk)), set(translations.values())
+    )
+    sources = {row[0].id: row[0] for row in rows}
+    for target, source_id in translations.items():
+        if target.status == AI_SUGGESTED:
+            continue
+        if target.id not in exempt:
+            _hold(target)
+        if source_id in sources:
+            _follow_source(target, sources[source_id])
+    return {target.id for target in dropped}
+
+
 async def find_units_needing_confirm(session: AsyncSession, unit_ids: Collection[int]) -> list[int]:
-    """떼어 내면 사람의 결정이 사라지는 단위 — 미배정이 아닌 판단, 확정 새 문장의 출처, 미배정이 아닌 입구 2 새 문장의 새 단위."""
+    """떼어 내면 사람의 결정이 사라지는 단위 — 미배정이 아닌 판단, 확정 새 문장의 출처, 확정 번역의 출처, 미배정이 아닌 입구 2 새 문장의 새 단위."""
     decided = await select_in_chunks(
         session,
         lambda chunk: select(UnitDecision.unit_id).where(
@@ -68,6 +155,13 @@ async def find_units_needing_confirm(session: AsyncSession, unit_ids: Collection
         .where(TargetSource.unit_id.in_(chunk), TargetSentence.status == CONFIRMED),
         unit_ids,
     )
+    translated = await select_in_chunks(
+        session,
+        lambda chunk: select(TargetSentence.translation_source_unit_id).where(
+            TargetSentence.translation_source_unit_id.in_(chunk), TargetSentence.status == CONFIRMED
+        ),
+        unit_ids,
+    )
     carried = await select_in_chunks(
         session,
         lambda chunk: select(TargetSentence.new_unit_id).where(
@@ -75,7 +169,7 @@ async def find_units_needing_confirm(session: AsyncSession, unit_ids: Collection
         ),
         unit_ids,
     )
-    return sorted({row[0] for row in (*decided, *sourced, *carried)})
+    return sorted({row[0] for row in (*decided, *sourced, *translated, *carried)})
 
 
 async def detach_units(
@@ -92,6 +186,9 @@ async def detach_units(
     입구 2 새 문장도 지운다), 4) 출처가 다 빠진 새 문장은 옛 단위에서 온 것이면 지우고 입구 2 것이면 미배정으로, 5) 나머지는 보류.
     다른 작성자가 확정한 것을 조용히 날리지 않고 사람이 다시 보게 하려는 규칙이다. cause는 이력에 남는 이유다(regrouped는 칸
     문장이 다른 표·행으로 다시 묶인 것).
+
+    번역은 출처 연결이 없어 따로 찾는다 — 건드린 단위를 옮긴 번역과, 지워지거나 출처를 잃은 새 문장의 번역이다. ai_suggested는
+    제안째 지우고 나머지는 4)가 아닌 5)를 탄다.
     """
     given = set(unit_ids)
     cell_rows = await select_in_chunks(
@@ -151,14 +248,28 @@ async def detach_units(
     deleted = set(own_targets)
     emptied: set[int] = set()
     for target in targets.values():
-        if target.id in deleted or sources[target.id] - touched:
+        if target.id in deleted or target.origin == ORIGIN_TRANSLATION or sources[target.id] - touched:
             continue
         if target.origin != ORIGIN_NEW_DOC:
             deleted.add(target.id)
         elif sources[target.id]:
             emptied.add(target.id)
     # 지운 표 새 문장 아래 칸 새 문장은 DB의 ON DELETE CASCADE가 함께 지운다
-    deleted |= {target.id for target in targets.values() if target.parent_target_id in deleted}
+    deleted |= {
+        target.id for target in targets.values()
+        if target.parent_target_id in deleted and target.origin != ORIGIN_TRANSLATION
+    }
+    changed = deleted | {target_id for target_id, unit_ids in sources.items() if unit_ids & touched}
+    translations = await _load_translations(session, bundle_id, target_ids=changed, unit_ids=touched)
+    suggested = [target for target in translations if target.status == AI_SUGGESTED]
+    await _mark_suggestions_stale(session, suggested)
+    targets.update({target.id: target for target in translations})
+    deleted |= {target.id for target in suggested}
+    # 남길 칸 번역은 표에서 떼어야 CASCADE로 같이 지워지지 않는다
+    for target in targets.values():
+        if target.origin == ORIGIN_TRANSLATION and target.id not in deleted and target.parent_target_id in deleted:
+            target.parent_target_id, target.cell_row, target.cell_col = None, None, None
+    await session.flush()
     for chunk in iter_chunks(deleted):
         await session.execute(
             delete(TargetSentence).where(TargetSentence.id.in_(chunk)).execution_options(synchronize_session=False)
@@ -188,13 +299,15 @@ async def detach_units(
     )
 
 
-async def detach_targets(session: AsyncSession, *, target_ids: Collection[int]) -> DetachReport:
+async def detach_targets(session: AsyncSession, *, bundle_id: int, target_ids: Collection[int]) -> DetachReport:
     """새 문장 쪽 떼어 내기(R32) — 출처 연결을 떼고 미배정이 아닌 것은 미배정으로, 같은 관계 묶음의 나머지는 보류. 커밋은 호출부가 한다.
 
     새 문서 칸 문장이 다른 표·행으로 다시 묶이면 그 칸 새 문장은 새 부모 아래로 옮겨진다. 확정된 채 옮기면 표를 반만 확정한
     꼴이 되므로 미배정으로 돌리고, 이어져 있던 옛 단위·새 문장은 지우지 않고 사람이 다시 보게 보류로 둔다.
+    그 새 문장들의 번역은 먼저 쓸어 낸다 — 뒤의 일반 보류가 AI 번역을 보류로 바꾸면 빈 확정 글의 보류가 된다.
     """
     given = set(target_ids)
+    swept = await sweep_translations(session, bundle_id, given)
     component_units, component_targets = await collect_component(session, unit_ids=(), target_ids=given)
     targets = {
         row[0].id: row[0]
@@ -225,7 +338,7 @@ async def detach_targets(session: AsyncSession, *, target_ids: Collection[int]) 
     for target_id in held_target_ids:
         _hold(targets[target_id])
     return DetachReport(
-        reset_unit_ids=[], deleted_target_ids=[], held_unit_ids=held_unit_ids, held_target_ids=held_target_ids
+        reset_unit_ids=[], deleted_target_ids=sorted(swept), held_unit_ids=held_unit_ids, held_target_ids=held_target_ids
     )
 
 

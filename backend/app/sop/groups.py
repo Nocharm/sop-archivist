@@ -115,6 +115,8 @@ class DecisionOut(BaseModel):
     confirmed_by: str | None
     confirmed_at: KstDatetime | None
     revision: int
+    # 이 처분의 근거가 된 AI 제안 — 사람이 확정해도 남고, 배정을 지우면 비워진다
+    suggestion_id: int | None
 
 
 class GroupUnitOut(BaseModel):
@@ -146,6 +148,8 @@ class GroupTargetOut(BaseModel):
     change_type: str | None
     origin: str
     new_unit_id: int | None
+    # 번역이 옮긴 옛 단위 — 번역은 출처 연결이 없어 source_unit_ids는 비고, 묶음도 문장 하나(칸 번역은 그 표)다
+    translation_source_unit_id: int | None
     parent_target_id: int | None
     cell_row: int | None
     cell_col: int | None
@@ -157,6 +161,8 @@ class GroupTargetOut(BaseModel):
     source_unit_ids: list[int]
     group_id: str | None
     revision: int
+    # 이 문장을 채운 AI 제안
+    suggestion_id: int | None
 
 
 class GroupOut(BaseModel):
@@ -293,10 +299,11 @@ def _build_target_out(target: TargetSentence, source_unit_ids: list[int], group_
         id=target.id, target_doc_id=target.target_doc_id, slot_key=target.slot_key, wi_step=target.wi_step,
         wi_part=target.wi_part, section_path=target.section_path, order_index=target.order_index, lang=target.lang,
         kind=target.kind, confirmed_text=target.confirmed_text, ai_text=target.ai_text, change_type=target.change_type,
-        origin=target.origin, new_unit_id=target.new_unit_id, parent_target_id=target.parent_target_id,
+        origin=target.origin, new_unit_id=target.new_unit_id,
+        translation_source_unit_id=target.translation_source_unit_id, parent_target_id=target.parent_target_id,
         cell_row=target.cell_row, cell_col=target.cell_col, grid=target.grid, status=target.status,
         hold_reason=target.hold_reason, warnings=target.warnings, source_unit_ids=source_unit_ids, group_id=group_id,
-        revision=target.revision,
+        revision=target.revision, suggestion_id=target.suggestion_id,
     )
 
 

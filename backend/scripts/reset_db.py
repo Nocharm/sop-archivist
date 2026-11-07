@@ -1,4 +1,4 @@
-"""로컬 데모 DB 초기화 — Alembic base로 내렸다 head로 올린 뒤 dev 디렉터리·데모 권한을 시드한다. 운영 실행 금지.
+"""로컬 데모 DB 초기화 — Alembic base로 내렸다 head로 올린 뒤 지침·dev 디렉터리·데모 권한을 시드한다. 운영 실행 금지.
 
 대상은 DATABASE_URL(기본 backend/dev.db sqlite). postgres에 HR 직원이 있으면 운영 DB로 보고 아무것도
 지우지 않은 채 종료 코드 1로 멈춘다 — 운영 이미지에도 이 스크립트가 실려 있어, 접속 대상 하나만 틀려도
@@ -20,11 +20,13 @@ from sqlalchemy import func, inspect, select
 from app.db import SessionLocal, engine, run_migrations
 from app.dev_users import seed_demo_access, seed_dev_directory
 from app.models import AccessGrant, Department, Employee, Role, RolePermission
+from app.sop.ai.guidelines import seed_guidelines
+from app.sop.models import GuidelineVersion
 
 _ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
 
 # 리셋 뒤 행 수를 찍어 확인하는 테이블
-_VERIFY_MODELS = (Employee, Department, Role, RolePermission, AccessGrant)
+_VERIFY_MODELS = (Employee, Department, Role, RolePermission, AccessGrant, GuidelineVersion)
 
 
 def should_refuse_reset(is_postgres: bool, hr_rows: int) -> bool:
@@ -65,6 +67,8 @@ async def main() -> int:
         print("schema  alembic base -> head")
 
         async with SessionLocal() as session:
+            # 지침은 앱 lifespan도 시드하지만 떠 있는 백엔드는 다시 돌지 않는다 — 비워 두면 재시작 전까지 export.xlsx가 500이다
+            await seed_guidelines(session)
             await seed_dev_directory(session)
             await seed_demo_access(session)
             counts = {

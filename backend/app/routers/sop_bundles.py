@@ -160,6 +160,7 @@ class BundleListItem(BaseModel):
     my_role: str
     updated_at: KstDatetime
     progress: BundleProgress
+    is_synthetic: bool
 
 
 class BundleEventOut(BaseModel):
@@ -274,7 +275,10 @@ async def list_my_bundles(
     await ensure_active_account(session, login_id)
     rows = (
         await session.execute(
-            select(Bundle.id, Bundle.title, Bundle.status, BundleMember.role.label("my_role"), Bundle.updated_at)
+            select(
+                Bundle.id, Bundle.title, Bundle.status, BundleMember.role.label("my_role"), Bundle.updated_at,
+                Bundle.is_synthetic,
+            )
             .join(BundleMember, BundleMember.bundle_id == Bundle.id)
             .where(BundleMember.login_id == login_id)
             .order_by(Bundle.updated_at.desc(), Bundle.id.desc())

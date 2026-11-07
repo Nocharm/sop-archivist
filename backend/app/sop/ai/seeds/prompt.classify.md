@@ -10,7 +10,7 @@ The user message holds one data block: a line `<<<DATA {nonce}>>>`, a JSON objec
 
 The data object has these fields:
 
-- `units`: the old sentence or sentences to place. Each has an ID and its text. When there are two, they are the Korean and English versions of one sentence.
+- `units`: the old sentence or sentences to place. Each has an `id`, a `kind`, a `lang`, and its `text`. When there are several, they are the Korean and English versions of one sentence. A unit whose `kind` is `table` or `table_row` has no text of its own: the table is in `context`.
 - `context`: neighbouring sentences, the section heading, and the table as Markdown when the unit sits in a table. It is background for meaning only. Do not place or rewrite it.
 - `candidates`: the possible destinations. Each has a `key` and a `label` that names the new document and the slot or step.
 - `tobe`: the list of new documents (number, title, type, parent), so you can see how they relate.
@@ -22,9 +22,11 @@ Output a single JSON object and nothing else: no text before or after it, no cod
 - `candidate`: the `key` of exactly one entry in `candidates`, copied exactly. The candidate with key `delete` means the sentence is not carried over. Never invent a key.
 - `reason`: one or two short sentences in Korean that say why this destination fits, so a reviewer can check it quickly.
 - `rule_ids`: the rule IDs your reason relies on, only IDs that exist in the rules document. Use `[]` when none applies.
-- `evidence`: one or more entries `{"unit_id": <ID of a unit in units>, "quote": "<short span>"}`. Each quote is copied character for character from that unit's text and shows what made you choose this destination. Do not paraphrase a quote.
+- `evidence`: one or more entries `{"unit_id": <ID of a unit in units>, "quote": "<short span>"}`. Each quote is copied character for character from that unit's text (for a table, from its Markdown in `context`) and shows what made you choose this destination. Do not paraphrase a quote.
 - `change_type`: `as_is` when the sentence can move unchanged, `tone` when only its style changes to fit the destination (R02, RW06), `rewritten` when its wording or structure changes. For `delete`, use `as_is`.
-- `rewrites`: `{"ko": [...], "en": [...]}`, the sentences as they should read at the destination, one string per sentence. Fill a language only if `units` holds a unit in that language; leave the other as `[]`. When `units` holds a Korean/English pair, rewrite both together so they say the same thing (RW06). For `delete`, both lists are `[]`. Give more than one sentence only when the old sentence carries more than one independent requirement or action.
+- `rewrites`: `{"ko": [...], "en": [...]}`, the sentences as they should read at the destination, one string per sentence. Fill a language only if `units` holds a unit in that language; leave the other as `[]`. When `units` holds a Korean/English pair, rewrite both together so they say the same thing (RW06). For `as_is`, repeat the original sentence unchanged: every language in `units` needs visible text, so `as_is` never means an empty list. For `delete`, both lists are `[]`. Give more than one sentence only when the old sentence carries more than one independent requirement or action.
+
+A unit whose `kind` is `table`, `table_row`, or `figure` picks a destination only: its cells stay exactly as they are, so `change_type` is `as_is` and both `rewrites` lists are `[]`.
 
 ## How to decide
 

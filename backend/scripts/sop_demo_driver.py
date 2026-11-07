@@ -163,8 +163,10 @@ class SyntheticDriver:
     # 4·6단계: 저장
 
     def save_answers(self, *, skip_omitted: bool) -> None:
+        self._save_groups(self._group_answers(skip_omitted=skip_omitted))
+
+    def _save_groups(self, groups: dict[str, list[dict]]) -> None:
         """입구 1 답을 group별로 저장하고, 입구 2는 같은 글자 후보·신규를 한 번에 확정한 뒤 나머지를 관계 묶음으로 맞춘다."""
-        groups = self._group_answers(skip_omitted=skip_omitted)
         match_docs = self._find_match_docs()
         revisions = self.load_decision_revisions()
         for answers in groups.values():
@@ -310,11 +312,78 @@ class SyntheticDriver:
         new = []
         for spec in self.expected["match"]["new_texts"]:
             target = self.find_match_target(spec["doc"], spec["text"])
-            new.append({"target_id": target["id"], "revision": target["revision"]})
+            if target["status"] != "confirmed":  # AI 신규 제안을 사람이 이미 받았으면 끝난 줄이다
+                new.append({"target_id": target["id"], "revision": target["revision"]})
         saved = self.post("/match/bulk-confirm", {"identical": items, "new": new})
         assert sorted(target["change_type"] for target in saved["targets"]) == sorted(
             ["as_is"] * len(items) + ["new"] * len(new)
         )
+
+    # 4단계의 AI 경로: 요청 → 사람이 제안을 받는다 → 남은 답을 저장한다
+
+    def request_classification(self) -> None:
+        """구조 제목을 일괄 삭제한 뒤 입구 1 문서마다 분류를, 이어서 입구 2 짝 계획을 요청한다.
+
+        일괄 처분은 AI 제안 단위를 받지 않아(409 ai_suggested_units) AI 앞에 끝낸다. 작업은 쌓인 순서로 돌아 계획은 분류가 남긴 미배정만 본다.
+        """
+        revisions = self.load_decision_revisions()
+        for answers in self._group_answers().values():
+            if any(answer.get("bulk") for answer in answers):
+                self.save_group(answers, revisions)
+        match_docs = self._find_match_docs()
+        for code, view in self.views.items():
+            if view["document"]["side"] == "old" and code not in match_docs:
+                self.post("/ai/classify", {"document_id": view["document"]["id"]})
+        self.post("/ai/match", {})
+
+    def confirm_suggestions(self) -> int:
+        """적용된 AI 제안을 사람이 그대로 받는다 — 제안마다 관계 묶음 저장 한 번이고, 받은 제안 수를 돌려준다."""
+        answers = {self.find_answer_unit(answer)["id"]: answer for answer in self.expected["answers"]}
+        page = self.get("/ai/suggestions", result="applied", limit="1000")
+        assert page["total"] == len(page["items"])
+        for suggestion in page["items"]:
+            self._accept_suggestion(suggestion["content"], answers)
+        return page["total"]
+
+    def _accept_suggestion(self, content: dict, answers: dict[int, dict]) -> None:
+        """제안의 묶음을 그대로 확정한다 — 글·변경 종류를 비워 보내면 서버가 제안대로 정하고, 구조 종류는 보내지 않는다. 사유만 사람이 적는다.
+
+        신규 제안은 단위가 없어 새 문장으로 묶음을 읽는다. 짝은 언어마다 묶음이 따로라 한 저장에 모은다. 표는 가짜 AI가 무효로 답해 여기 오지 않는다.
+        """
+        paths = [f"/groups/by-unit/{unit_id}" for unit_id in content["unit_ids"]] or [
+            f"/groups/by-target/{target_id}" for target_id in content["target_ids"]
+        ]
+        groups = [self.get(path) for path in paths]
+        units = {unit["unit_id"]: unit for group in groups for unit in group["units"]}
+        targets = {target["id"]: target for group in groups for target in group["targets"]}
+        body = {
+            "action": "confirm",
+            "units": [
+                {
+                    "unit_id": unit_id, "revision": unit["decision"]["revision"], "disposition": unit["decision"]["disposition"],
+                    "reason": answers[unit_id]["reason"],
+                }
+                for unit_id, unit in units.items()
+            ],
+            "targets": [
+                {
+                    "key": str(target_id), "id": target_id, "revision": target["revision"], "kind": target["kind"],
+                    "slot_key": target["slot_key"], "wi_step": target["wi_step"], "wi_part": target["wi_part"],
+                    "source_unit_ids": target["source_unit_ids"],
+                }
+                for target_id, target in targets.items()
+            ],
+        }
+        response = save_group(self.client, self.bundle_id, body, self.headers)
+        assert response.status_code == 200, response.text
+
+    def settle_remaining(self) -> None:
+        """AI가 끝내지 못한 답을 정답대로 저장한다 — 보류는 확정이 지우고, 입구 2 같은 글자 후보와 남은 신규도 여기서 확정한다."""
+        statuses = {item["unit_id"]: item["status"] for item in self.get("/units", limit="1000")["items"]}
+        self._save_groups({
+            group: answers for group, answers in self._group_answers().items()
+            if any(statuses[self.find_answer_unit(answer)["id"]] != "confirmed" for answer in answers)
+        })
 
     # 5단계 이후
 

@@ -618,6 +618,20 @@ def test_cancel_and_retry_refuse_an_unknown_kind(client: TestClient) -> None:
         assert _post_ai(client, bundle_id, path, {"kind": "nope"}).status_code == 422
 
 
+def test_cancel_and_retry_accept_a_post_without_a_body(client: TestClient) -> None:
+    # 계약은 `{kind?}`라 본문을 아예 안 보내도 "모든 종류"다 — 필수 본문이면 422가 된다
+    bundle_id = _new_bundle(client)
+    queued = _enqueue(bundle_id)
+    failed = _enqueue(bundle_id, "translate", status="failed", error="timeout")
+
+    cancelled = client.post(f"/api/bundles/{bundle_id}/ai/cancel", headers=AUTHOR)
+    retried = client.post(f"/api/bundles/{bundle_id}/ai/retry", headers=AUTHOR)
+
+    assert (cancelled.status_code, cancelled.json()) == (200, {"cancelled": 1})
+    assert (retried.status_code, retried.json()) == (200, {"queued": 1})
+    assert (_get_job(queued).status, _get_job(failed).status) == ("cancelled", "queued")
+
+
 def test_retry_requeues_only_failed(client: TestClient) -> None:
     bundle_id = _new_bundle(client)
     failed = _enqueue(bundle_id, status="failed", error="timeout", attempts=2)

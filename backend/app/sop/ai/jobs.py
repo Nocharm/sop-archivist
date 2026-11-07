@@ -9,7 +9,8 @@ from sqlalchemy import ColumnElement, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
-from app.sop.ai.schemas import AiJobCounts
+from app.sop.ai.constants import MAX_JOBS_PER_REQUEST, MAX_SKIPPED_REPORTED
+from app.sop.ai.schemas import AiJobCounts, AiRequestOut, SkippedOut
 from app.sop.models import AiJob
 
 ACTIVE_JOB_STATUSES = ("queued", "running")
@@ -38,6 +39,24 @@ def _build_job_filter(bundle_id: int, kind: str | None) -> list[ColumnElement[bo
     if kind is not None:
         conditions.append(AiJob.kind == kind)
     return conditions
+
+
+def cap_job_items(items: Sequence[JobItem], skipped: Sequence[SkippedOut]) -> tuple[list[JobItem], list[SkippedOut]]:
+    """요청 한 번의 작업을 MAX_JOBS_PER_REQUEST로 자르고 넘은 단위를 limit_reached로 덧붙인다 — 단위를 작업으로 나누는 요청이 쓴다.
+
+    조용히 빠지면 사람이 전부 요청됐다고 믿는다. `POST /match`는 일부러 자르지 않는다 — 계획 작업이 그룹을 쌓을 때는 알릴 요청자가 없고, 다시 돌리면 앞쪽을 또 받는다.
+    """
+    over = [
+        SkippedOut(unit_id=unit_id, reason="limit_reached")
+        for item in items[MAX_JOBS_PER_REQUEST:]
+        for unit_id in item.unit_ids
+    ]
+    return list(items[:MAX_JOBS_PER_REQUEST]), [*skipped, *over]
+
+
+def build_request_out(queued: int, skipped: Sequence[SkippedOut]) -> AiRequestOut:
+    """요청 응답 — 건너뛴 단위는 앞쪽만 싣고 전체 수는 따로 알린다."""
+    return AiRequestOut(queued=queued, skipped_total=len(skipped), skipped=list(skipped[:MAX_SKIPPED_REPORTED]))
 
 
 def enqueue_jobs(
