@@ -157,6 +157,8 @@ class GroupTargetOut(BaseModel):
     source_unit_ids: list[int]
     group_id: str | None
     revision: int
+    # 이 문장을 채운 AI 제안
+    suggestion_id: int | None
 
 
 class GroupOut(BaseModel):
@@ -296,7 +298,7 @@ def _build_target_out(target: TargetSentence, source_unit_ids: list[int], group_
         origin=target.origin, new_unit_id=target.new_unit_id, parent_target_id=target.parent_target_id,
         cell_row=target.cell_row, cell_col=target.cell_col, grid=target.grid, status=target.status,
         hold_reason=target.hold_reason, warnings=target.warnings, source_unit_ids=source_unit_ids, group_id=group_id,
-        revision=target.revision,
+        revision=target.revision, suggestion_id=target.suggestion_id,
     )
 
 
