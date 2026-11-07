@@ -83,7 +83,7 @@ class BundleCreateIn(BaseModel):
 class BundleUpdateIn(BaseModel):
     revision: int = Field(ge=1)
     title: BundleTitle | None = None
-    description: NoNulStr | None = Field(None, max_length=MAX_DESCRIPTION_CHARS)
+    description: Annotated[str, StringConstraints(max_length=MAX_DESCRIPTION_CHARS), NO_NUL] | None = None
 
     @model_validator(mode="after")
     def check_something_to_change(self) -> Self:

@@ -4,7 +4,9 @@ import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from app.db import SessionLocal, engine, run_migrations
 from app.dev_users import seed_dev_directory
@@ -43,6 +45,15 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(title="SOP Archivist", lifespan=lifespan)
+
+
+@app.exception_handler(RequestValidationError)
+async def handle_validation_error(_request: Request, exc: RequestValidationError) -> JSONResponse:
+    """422 본문에는 type·loc·msg만 싣는다 — 기본 핸들러의 input·ctx는 요청 원문을 응답과 로그로 되돌리고, 짝 없는 서로게이트가 있으면 응답 인코딩에서 500이 된다."""
+    detail = [{"type": error["type"], "loc": list(error["loc"]), "msg": error["msg"]} for error in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": detail})
+
+
 app.include_router(auth_router.router)
 app.include_router(directory_router.router)
 app.include_router(me_router.router)

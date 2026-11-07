@@ -72,3 +72,5 @@
 - **프런트 병행 프롬프트** — 사용자가 프런트 1차를 별도 워크트리로 계획 2와 병행하기로 해서, 시작 프롬프트와 경계(frontend/만, 버전·main은 건드리지 않음)를 `docs/design/2026-11-06-frontend-first-pass-prompt.md`에 뒀다.
 - **구현 계획 2(AI 층)** — 설계 §14 범위를 17개 태스크로 나눴다. 작업은 `load`(짧은 세션)·`compute`(세션 없음)·`apply`(묶음 잠금, revision 재확인) 세 단계이고, 번역 출처는 관계 묶음을 흔들지 않게 별도 칸으로 둔다. 프런트가 병행하므로 API 계약을 계획 문서에 먼저 적었다.
 - **계획 2 사전 점검** — 실행 전 계획을 설계·코드와 대조해 어긋난 곳을 계획에 바로 고쳤다. `runner`↔핸들러 순환 import, `AiStr` 길이 상한, 깨진 서버 응답의 실패 코드, 밀린 제안의 `stale` 처리(채택률 `pending`), 요청 상한을 넘은 단위의 `limit_reached` 알림(프런트 계약에 추가)이 주요 항목이다.
+- **계획 2 Task 1: 입력 경계 마무리** — v0.2.0 보고서의 짝 없는 서로게이트 500은 pydantic이 이미 422로 거절하는데 기본 422 본문의 `input`이 그 글자를 되돌리다 응답 인코딩이 깨지는 것이 원인이었다. 그래서 `RequestValidationError` 핸들러가 `type·loc·msg`만 돌려주게 해 값이 응답과 로그로 되돌아가지 않게 하고(프런트는 `msg`만 읽어 영향 없음), 저장 못 하는 글자의 판정은 `segment.has_unstorable_char`로 모았다.
+- 선택 칸(`BundleUpdateIn.description`·`TargetIn.text`)은 `| None`에 `Field` 상한을 걸면 오류 종류가 `too_long`이라 `StringConstraints`+`NO_NUL`을 `Annotated`로 걸었다.

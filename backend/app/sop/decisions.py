@@ -91,7 +91,7 @@ class TargetIn(BaseModel):
     wi_part: Literal["instruction", "why"] | None = None
     kind: Literal["sentence", "table", "figure"] = "sentence"
     lang: Literal["ko", "en", "neutral"] | None = None
-    text: NoNulStr | None = Field(None, max_length=20000)
+    text: Annotated[str, StringConstraints(max_length=20000), NO_NUL] | None = None
     change_type: Literal["as_is", "tone", "rewritten", "table_restructured"] | None = None
     source_unit_ids: list[DbId] = Field(max_length=200)
     parent_key: str | None = Field(None, max_length=40)
