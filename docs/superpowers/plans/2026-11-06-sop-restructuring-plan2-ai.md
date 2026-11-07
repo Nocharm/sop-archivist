@@ -75,7 +75,7 @@
 | `GET /suggestions/{id}` | | `SuggestionOut` |
 | `POST /suggestions/{id}/adoption` | `{adoption}` (`split`만) | `SuggestionOut` |
 
-- `AiRequestOut`: `{queued, skipped_total, skipped: [{unit_id, reason}]}`(`skipped`는 앞 200건). `reason`은 `not_unassigned`·`already_queued`·`bound_cell`·`not_assigned`·`other_language`·`has_pair`·`already_translated`·`too_short`·`limit_reached` 중 하나다. `POST /match`·`POST /pair`는 단위를 고르지 않는 요청이라 이미 돌고 있으면 `{unit_id: 0, reason: "already_queued"}`로 알린다. 화면은 `reason`을 읽는다.
+- `AiRequestOut`: `{queued, skipped_total, skipped: [{unit_id, reason}]}`(`skipped`는 앞 200건). `reason`은 `not_unassigned`·`already_queued`·`bound_cell`·`not_assigned`·`other_language`·`has_pair`·`already_translated`·`too_short`·`limit_reached`·`already_suggested`·`not_splittable` 중 하나다. `POST /match`·`POST /pair`는 단위를 고르지 않는 요청이라 이미 돌고 있으면 `{unit_id: 0, reason: "already_queued"}`로 알린다. 화면은 `reason`을 읽는다.
 - `AiStatusOut`: `{ai_enabled, embed_enabled, jobs: {queued, running, done, failed, stale, cancelled}, by_kind: {<kind>: 같은 모양}, failed_errors: {<코드>: 건수}, adoption: {<kind>: {applied, as_is, edited, rejected, pending, adoption_rate}}}`. 실패 코드: `timeout`·`server_error`·`connection`·`client_error`·`config`·`interrupted`·`no_candidates`·`internal`.
 - `SuggestionOut`: `{id, job_id, kind, document_id, result, content, warnings, guideline_versions, model, adoption, adopted_by, adopted_at, created_at}`. `result`는 `applied`·`stale`·`invalid`다. 유사도 점수는 어디에도 내지 않는다(§12).
 - `content`:
@@ -83,7 +83,7 @@
   - `translate`: `{unit_id, source_target_id, to, target_id, text}`
   - `match`: `{unit_ids, target_ids, shape, change_type, reason, rule_ids, retrieval}`. `shape`는 `one_to_one`·`split`·`merged`·`delete_candidate`·`new`·`table`·`figure`다.
   - `pair`: `{pair_id, ko_unit_id, en_unit_id}`
-  - `split`: `{unit_id, offsets, reason, rule_ids}`. `offsets`는 `SplitOp.at`에 그대로 쓰는 위치이고, 뒤쪽부터 적용하면 앞 위치가 바뀌지 않는다.
+  - `split`: `{unit_id, offsets, reason, rule_ids}`. 조각이 원문과 맞지 않으면 `result`가 `invalid`이고 경고 종류는 `parts_mismatch`다. `offsets`는 `SplitOp.at`에 그대로 쓰는 위치이고, 뒤쪽부터 적용하면 앞 위치가 바뀌지 않는다.
 - `adoption`의 `applied`는 나머지 숫자의 합이 아니다. 작업 뒤 은퇴한 단위의 제안은 `applied`에만 있고 `pending`에 없다.
 - 오류: 404 `suggestion_not_found` · 503 `ai_disabled` · 409 `embedding_disabled` · 409 `no_assign_targets` · 409 `no_match_documents` · 409 `not_separate_layout` · 409 `not_manual_adoption` · 422 `scope_required` · 409 `bundle_not_editable`. 계획 1의 `POST /decisions/bulk`는 AI 제안 단위가 섞이면 409 `ai_suggested_units`를 낸다.
 - 짝 보기의 `pairs[].source`에 값 `ai`가 더해진다(`status`는 `suggested`).
