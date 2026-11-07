@@ -12,6 +12,7 @@ from app.sop.constants import STATUSES, SYSTEM_HOLD_RELATED_CHANGED
 from app.sop.models import Bundle, TargetSentence, TargetSource, TargetTextHistory, UnitDecisionHistory
 from tests.access_helpers import run_in_session, update_row
 from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
+from tests.fake_ai import FakeAi
 from tests.sop_helpers import (
     AUTHOR,
     REVIEWER,
@@ -44,6 +45,7 @@ WARM_UP = "합성 장비를 5분간 예열한다."
 RECORDS = "합성 기록은 보관한다."
 STORAGE = "합성 시료는 4 ℃에서 보관한다."
 HEADER_TEXTS = ("합성 머리말 하나", "합성 머리말 둘", "합성 머리말 셋")
+NO_DESTINATION = "Synthetic: no destination yet"
 
 TOBE_DOCS = [
     {"code": "SOP-NEW", "title": "Synthetic SOP", "doc_type": "sop", "parent_code": None},
@@ -480,6 +482,173 @@ def test_hold_requires_reason_and_sets_on_hold(client: TestClient) -> None:
     assert (target["status"], target["hold_reason"]) == ("on_hold", "Synthetic: ask the owner")
 
 
+def _hold_without_destination(
+    client: TestClient, fx: Fixture, unit: dict, revision: int = 1, reason: str = NO_DESTINATION
+) -> httpx2.Response:
+    body = _body([_unit_in(unit, revision, disposition="unassigned")], [], action="hold", hold_reason=reason)
+    return save_group(client, fx.bundle_id, body)
+
+
+def _get_decision(client: TestClient, fx: Fixture, unit: dict) -> dict:
+    return get_group_by_unit(client, fx.bundle_id, unit["id"])["units"][0]["decision"]
+
+
+def test_hold_without_destination_saves_on_hold(client: TestClient) -> None:
+    fx = _setup(client)
+    unit = find_unit(fx.view, STORAGE)
+
+    response = _hold_without_destination(client, fx, unit)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["targets"] == []
+    (entry,) = response.json()["units"]
+    decision = entry["decision"]
+    assert entry["unit_id"] == unit["id"]
+    assert (
+        decision["status"], decision["disposition"], decision["hold_reason"], decision["confirmed_by"],
+        decision["revision"],
+    ) == ("on_hold", "unassigned", NO_DESTINATION, None, 2)
+    row = next(row for row in _list_units(client, fx.bundle_id, limit=1000)["items"] if row["unit_id"] == unit["id"])
+    assert (row["status"], row["decision"]["disposition"], row["target_ids"]) == ("on_hold", "unassigned", [])
+
+
+def test_confirm_with_unassigned_is_422(client: TestClient) -> None:
+    fx = _setup(client)
+    unit = find_unit(fx.view, STORAGE)
+
+    response = save_group(client, fx.bundle_id, _body([_unit_in(unit, disposition="unassigned")], []))
+
+    assert _reason(response) == "hold_required"
+    assert response.json()["detail"]["unit_ids"] == [unit["id"]]
+    assert _get_decision(client, fx, unit)["revision"] == 1
+
+
+def test_hold_without_destination_refuses_targets(client: TestClient) -> None:
+    fx = _setup(client)
+    unit = find_unit(fx.view, STORAGE)
+    target = _target("t", fx.sop_id, [unit], slot_key="responsibilities")
+    body = _body([_unit_in(unit, disposition="unassigned")], [target], action="hold", hold_reason=NO_DESTINATION)
+
+    response = save_group(client, fx.bundle_id, body)
+
+    assert _reason(response) == "disposed_with_targets"
+    assert response.json()["detail"]["unit_ids"] == [unit["id"]]
+    assert get_group_by_unit(client, fx.bundle_id, unit["id"])["targets"] == []
+    assert _get_decision(client, fx, unit)["revision"] == 1
+
+
+def test_hold_needs_a_reason(client: TestClient) -> None:
+    fx = _setup(client)
+    unit = find_unit(fx.view, STORAGE)
+
+    missing = _hold_without_destination(client, fx, unit, reason="")
+    blank = _hold_without_destination(client, fx, unit, reason="  ")
+
+    assert _reason(missing) == "hold_reason_required"
+    assert _reason(blank) == "hold_reason_required"
+    decision = _get_decision(client, fx, unit)
+    assert (decision["status"], decision["revision"]) == ("unassigned", 1)
+
+
+def test_held_unit_can_be_assigned_later(client: TestClient) -> None:
+    fx = _setup(client)
+    unit = find_unit(fx.view, STORAGE)
+    assert _hold_without_destination(client, fx, unit).status_code == 200
+    target = _target("t", fx.sop_id, [unit], slot_key="responsibilities")
+
+    response = save_group(client, fx.bundle_id, _body([_unit_in(unit, revision=2)], [target]))
+
+    assert response.status_code == 200, response.text
+    decision = response.json()["units"][0]["decision"]
+    assert (
+        decision["status"], decision["disposition"], decision["hold_reason"], decision["confirmed_by"],
+        decision["revision"],
+    ) == ("confirmed", "assigned", "", "qa.member", 3)
+    (saved,) = response.json()["targets"]
+    assert (saved["confirmed_text"], saved["status"]) == (STORAGE, "confirmed")
+
+
+def test_held_unit_can_be_held_again(client: TestClient) -> None:
+    fx = _setup(client)
+    unit = find_unit(fx.view, STORAGE)
+    assert _hold_without_destination(client, fx, unit).status_code == 200
+
+    response = _hold_without_destination(client, fx, unit, revision=2, reason="Synthetic: still waiting")
+
+    assert response.status_code == 200, response.text
+    decision = response.json()["units"][0]["decision"]
+    assert (decision["status"], decision["hold_reason"], decision["revision"]) == (
+        "on_hold", "Synthetic: still waiting", 3,
+    )
+
+
+def test_held_unit_can_be_cleared(client: TestClient) -> None:
+    fx = _setup(client)
+    unit = find_unit(fx.view, STORAGE)
+    assert _hold_without_destination(client, fx, unit).status_code == 200
+
+    response = client.post(
+        f"/api/bundles/{fx.bundle_id}/decisions/clear", json={"unit_id": unit["id"], "revision": 2}, headers=AUTHOR
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "reset_unit_ids": [unit["id"]], "deleted_target_ids": [], "held_unit_ids": [], "held_target_ids": [],
+    }
+    decision = _get_decision(client, fx, unit)
+    assert (decision["status"], decision["disposition"], decision["hold_reason"], decision["revision"]) == (
+        "unassigned", "unassigned", "", 3,
+    )
+
+
+def test_held_unit_can_be_bulk_disposed_by_a_person(client: TestClient) -> None:
+    # 보류 → 확정은 사람의 전이다(§6.8). 일괄 처분은 상태가 아니라 새 문장 유무만 막는다
+    fx = _setup(client)
+    unit = find_unit(fx.view, HEADER_TEXTS[0])
+    assert _hold_without_destination(client, fx, unit).status_code == 200
+    body = {"action": "delete", "reason": "구조 제목", "units": [{"unit_id": unit["id"], "revision": 2}]}
+
+    response = client.post(f"/api/bundles/{fx.bundle_id}/decisions/bulk", json=body, headers=AUTHOR)
+
+    assert response.status_code == 200, response.text
+    decision = response.json()[0]["decision"]
+    assert (decision["status"], decision["disposition"], decision["hold_reason"]) == ("confirmed", "delete", "")
+
+
+def test_held_unit_blocks_review_and_shows_in_output_a(client: TestClient) -> None:
+    fx = _setup(client)
+    unit = find_unit(fx.view, STORAGE)
+    before = client.get(f"/api/bundles/{fx.bundle_id}/summary", headers=AUTHOR).json()["ko"]
+    assert _hold_without_destination(client, fx, unit).status_code == 200
+
+    readiness = client.get(f"/api/bundles/{fx.bundle_id}/review/readiness", headers=AUTHOR).json()
+    rows = client.get(f"/api/bundles/{fx.bundle_id}/outputs/a", params={"lang": "ko"}, headers=AUTHOR).json()
+    summary = client.get(f"/api/bundles/{fx.bundle_id}/summary", headers=AUTHOR).json()["ko"]
+
+    assert {"code": "units_on_hold", "lang": "ko", "count": 1} in readiness["blockers"]
+    row = next(row for row in rows if row["unit_id"] == unit["id"])
+    assert (row["dest_kind"], row["dest_doc_code"], row["status"]) == ("", "", "on_hold")
+    # 보낸 곳이 비어 있으니 요약은 미배정으로 센다 — 보류 전과 같은 숫자다
+    assert before["assigned"] == 0
+    assert (summary["assigned"], summary["unassigned"]) == (before["assigned"], before["unassigned"])
+
+
+def test_classify_skips_a_person_held_unit(client: TestClient, fake_ai: FakeAi) -> None:
+    fx = _setup(client)
+    unit = find_unit(fx.view, STORAGE)
+    assert _hold_without_destination(client, fx, unit).status_code == 200
+
+    response = client.post(
+        f"/api/bundles/{fx.bundle_id}/ai/classify", json={"unit_ids": [unit["id"]]}, headers=AUTHOR
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "queued": 0, "skipped_total": 1, "skipped": [{"unit_id": unit["id"], "reason": "not_unassigned"}],
+    }
+    assert fake_ai.requests == []
+
+
 def test_sentence_checks_are_stored(client: TestClient) -> None:
     fx = _setup(client)
     unit = find_unit(fx.view, STORAGE)
@@ -770,6 +939,27 @@ def test_units_list_filters_and_pages(client: TestClient) -> None:
     assert [r["unit_id"] for r in page["items"]] == [r["unit_id"] for r in everything["items"][1:3]]
     too_many = client.get(f"/api/bundles/{fx.bundle_id}/units", params={"limit": 1001}, headers=AUTHOR)
     assert too_many.status_code == 422
+
+
+def test_units_rows_carry_pair_id(client: TestClient) -> None:
+    fx = _setup(client)
+    confirmed, suggested = fx.view["pairs"]
+    confirm = client.post(
+        f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/pairs/{confirmed['id']}/confirm",
+        json={"revision": fx.view["document"]["revision"]}, headers=AUTHOR,
+    )
+    assert confirm.status_code == 200, confirm.text
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    assert {pair["status"] for pair in view["pairs"]} == {"confirmed", "suggested"}  # 제안·확정 짝 모두
+
+    rows = {row["unit_id"]: row for row in _list_units(client, fx.bundle_id, limit=1000)["items"]}
+
+    # /documents/{id}/view의 units[].pair_id와 같은 뜻이다
+    assert {unit_id: row["pair_id"] for unit_id, row in rows.items()} == {unit["id"]: unit["pair_id"] for unit in view["units"]}
+    assert {row["pair_id"] for unit_id, row in rows.items() if unit_id in confirmed["unit_ids"]} == {confirmed["id"]}
+    assert {row["pair_id"] for unit_id, row in rows.items() if unit_id in suggested["unit_ids"]} == {suggested["id"]}
+    unpaired = [row for row in rows.values() if row["pair_id"] is None]
+    assert unpaired and find_unit(fx.view, STORAGE)["id"] in {row["unit_id"] for row in unpaired}
 
 
 def test_reviewer_cannot_save_and_in_review_is_locked(client: TestClient) -> None:

@@ -40,6 +40,7 @@ from app.sop.models import (
     TargetTextHistory,
     Unit,
     UnitDecision,
+    UnitPairMember,
     WiStep,
 )
 from app.sop.schemas import NO_NUL, NoNulStr
@@ -66,7 +67,8 @@ TEXT_CHANGE_TYPES = ("tone", "rewritten")  # 글자가 출처와 다를 때 사�
 class UnitDecisionIn(BaseModel):
     unit_id: DbId
     revision: DbId
-    disposition: Literal["assigned", "delete", "move_external"]
+    # unassigned는 보낼 곳 없는 보류 — action이 hold일 때만 된다(_check_dispositions)
+    disposition: Literal["assigned", "delete", "move_external", "unassigned"]
     move_target_code: NoNulStr = Field("", max_length=100)
     reason: NoNulStr = Field("", max_length=2000)
 
@@ -152,6 +154,8 @@ class UnitRowOut(BaseModel):
     table_id: int | None
     row_index: int | None
     group_unit_id: int | None
+    # 한/영 짝 — /documents/{id}/view의 units[].pair_id와 같은 뜻(제안·확정 짝 모두), 짝이 없으면 None
+    pair_id: int | None
     # 커버 상태 — 묶인 칸 문장은 그룹 단위의 상태(get_cover_status)
     status: str
     # 단위 자신의 판단 행 — 묶인 칸 문장의 판단 행은 늘 미배정이다(처분은 그룹 단위가 담는다)
@@ -395,11 +399,20 @@ def _check_closure(payload: GroupSaveIn, state: _State) -> None:
 
 
 def _check_dispositions(payload: GroupSaveIn, state: _State) -> None:
-    """배정이면 그 단위(표는 칸 문장 포함)를 출처로 갖는 새 문장이 있고, 삭제·이동이면 없으며 사유가 있다."""
+    """배정이면 그 단위(표는 칸 문장 포함)를 출처로 갖는 새 문장이 있고, 삭제·이동이면 없으며 사유가 있다.
+
+    보낼 곳 없는 보류(unassigned)는 보류 저장에서만, 새 문장 없이 된다. 사유는 hold_reason이 맡는다.
+    """
     sourced = {unit_id for item in payload.targets for unit_id in item.source_unit_ids}
     for item in payload.units:
         unit_ids = [item.unit_id]
         has_targets = bool({item.unit_id, *state.cells.get(item.unit_id, ())} & sourced)
+        if item.disposition == "unassigned":
+            if payload.action != "hold":
+                _reject("hold_required", unit_ids=unit_ids)
+            if has_targets:
+                _reject("disposed_with_targets", unit_ids=unit_ids)
+            continue
         if item.disposition == "assigned":
             if not has_targets:
                 _reject("assigned_without_targets", unit_ids=unit_ids)
@@ -918,7 +931,7 @@ async def list_units(
     limit: int,
     offset: int,
 ) -> UnitsPageOut:
-    """옛 문서 활성 단위(판단 가능 단위 전부) — 판단·새 문장 id·커버 상태. 정렬 키 순이고 질의는 셋(개수·쪽·새 문장)이다."""
+    """옛 문서 활성 단위(판단 가능 단위 전부) — 판단·새 문장 id·짝·커버 상태. 정렬 키 순이고 질의는 넷(개수·쪽·새 문장·짝)이다."""
     group_decision = aliased(UnitDecision)
     # 상태로 거르려면 SQL이 커버 상태를 알아야 한다 — get_cover_status와 같은 규칙(그룹 단위 판단이 먼저)
     cover_status = func.coalesce(group_decision.status, UnitDecision.status)
@@ -958,6 +971,12 @@ async def list_units(
         )
         for unit_id, target_id in links:
             target_ids[unit_id].append(target_id)
+    pair_rows = await select_in_chunks(
+        session,
+        lambda chunk: select(UnitPairMember.unit_id, UnitPairMember.pair_id).where(UnitPairMember.unit_id.in_(chunk)),
+        [unit.id for unit, *_ in rows],
+    )
+    pair_ids = {unit_id: pair_id for unit_id, pair_id in pair_rows}
     items = []
     for unit, document, decision, group in rows:
         decisions = {unit.id: decision} if group is None else {unit.id: decision, group.unit_id: group}
@@ -965,7 +984,7 @@ async def list_units(
             UnitRowOut(
                 unit_id=unit.id, document_id=document.id, display_id=compute_display_id(document, unit),
                 kind=unit.kind, lang=unit.lang, text=unit.text, table_id=unit.table_id, row_index=unit.row_index,
-                group_unit_id=unit.group_unit_id, status=get_cover_status(unit, decisions),
+                group_unit_id=unit.group_unit_id, pair_id=pair_ids.get(unit.id), status=get_cover_status(unit, decisions),
                 decision=DecisionOut.model_validate(decision), target_ids=target_ids.get(unit.id, []),
             )
         )
