@@ -42,6 +42,12 @@ class ScopeIn(BaseModel):
         return self
 
 
+class PairRequestIn(BaseModel):
+    """한/영 짝 제안 요청 — 문서 하나(설계 §7.11). 짝은 한 문서 안에서만 맺어 단위 목록은 받지 않는다."""
+
+    document_id: RequestId
+
+
 class TranslateIn(ScopeIn):
     """번역 요청 — 범위에 오너가 고른 방향을 더한다(설계 §7.9)."""
 

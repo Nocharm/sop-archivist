@@ -17,7 +17,7 @@ from app.sop.ai.schemas import AdoptionStats, SuggestionOut, SuggestionsPageOut
 from app.sop.detach import ORIGIN_NEW_DOC, ORIGIN_TRANSLATION
 from app.sop.errors import raise_rule
 from app.sop.groups import TABLE_UNIT_KINDS, iter_chunks, select_in_chunks
-from app.sop.models import AiSuggestion, TargetSentence, Unit, UnitDecision
+from app.sop.models import AiSuggestion, TargetSentence, Unit, UnitDecision, UnitPair
 from app.sop.units import UNIT_ACTIVE
 
 if TYPE_CHECKING:  # decisions가 이 모듈을 불러 쓰므로 타입만 가져온다
@@ -296,11 +296,12 @@ async def load_adoption_stats(session: AsyncSession, bundle_id: int) -> dict[str
     """종류별 채택 집계 — 제안이 적용된 적 없는 종류는 빠진다.
 
     applied는 지금 살아 있는 제안이고, 채택은 밀린 제안(보류한 짝)에 기록돼도 사람의 결정이라 함께 센다. pending은 사람이 아직
-    정할 수 있는 제안뿐이다 — 단위가 편집으로 은퇴해 아무 판단·새 문장도 가리키지 않는 제안은 영영 줄지 않는 대기가 된다.
+    정할 수 있는 제안뿐이다 — 단위가 편집으로 은퇴해 아무 판단·새 문장·짝도 가리키지 않는 제안은 영영 줄지 않는 대기가 된다.
     """
     can_decide = or_(
         exists().where(UnitDecision.suggestion_id == AiSuggestion.id),
         exists().where(TargetSentence.suggestion_id == AiSuggestion.id),
+        exists().where(UnitPair.suggestion_id == AiSuggestion.id),
     )
     rows = await session.execute(
         select(

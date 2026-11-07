@@ -131,6 +131,12 @@ def request_match(client: TestClient, bundle_id: int, headers: dict[str, str] = 
     return client.post(f"/api/bundles/{bundle_id}/ai/match", json={}, headers=headers)
 
 
+def request_pair(
+    client: TestClient, bundle_id: int, document_id: int, *, headers: dict[str, str] = AUTHOR
+) -> httpx2.Response:
+    return client.post(f"/api/bundles/{bundle_id}/ai/pair", json={"document_id": document_id}, headers=headers)
+
+
 def run_plan() -> None:
     """맨 앞 작업 하나만 돌린다 — 계획이 쌓은 변경 종류 작업은 큐에 남겨 그대로 본다."""
 

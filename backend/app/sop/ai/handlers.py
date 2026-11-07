@@ -2,6 +2,7 @@
 
 from app.sop.ai.classify import CLASSIFY_HANDLER, CLASSIFY_KIND
 from app.sop.ai.match_jobs import MATCH_HANDLER, MATCH_KIND, MATCH_PLAN_HANDLER, MATCH_PLAN_KIND
+from app.sop.ai.pairing import PAIR_HANDLER, PAIR_KIND
 from app.sop.ai.runner import JobHandler
 from app.sop.ai.translate import TRANSLATE_HANDLER, TRANSLATE_KIND
 
@@ -10,4 +11,5 @@ HANDLERS: dict[str, JobHandler] = {
     TRANSLATE_KIND: TRANSLATE_HANDLER,
     MATCH_PLAN_KIND: MATCH_PLAN_HANDLER,
     MATCH_KIND: MATCH_HANDLER,
+    PAIR_KIND: PAIR_HANDLER,
 }
