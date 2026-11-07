@@ -1,4 +1,4 @@
-"""AI API — 분류·번역 요청(작성자, AI가 켜져 있을 때)과 작업 현황·제안 읽기(멤버)·취소·실패분 다시 시도(작성자, 작업 중 묶음만). 요청 말고는 AI가 꺼져 있어도 동작한다."""
+"""AI API — 분류·번역·짝 맞추기 요청(작성자, AI가 켜져 있을 때)과 작업 현황·제안 읽기(멤버)·취소·실패분 다시 시도(작성자, 작업 중 묶음만). 요청 말고는 AI가 꺼져 있어도 동작한다."""
 
 from collections.abc import Sequence
 from typing import Annotated, Literal
@@ -19,6 +19,7 @@ from app.sop.ai.jobs import (
     load_job_breakdown,
     retry_failed_jobs,
 )
+from app.sop.ai.match_jobs import MATCH_PLAN_KIND, select_match_items
 from app.sop.ai.schemas import (
     AiRequestOut,
     AiStatusOut,
@@ -95,6 +96,17 @@ async def request_translate(
         session, ctx.bundle.id, direction=body.direction, document_id=body.document_id, unit_ids=body.unit_ids
     )
     return await _queue_request(session, ctx, TRANSLATE_KIND, items, skipped)
+
+
+@router.post("/match", response_model=AiRequestOut, dependencies=[Depends(require_ai_enabled)])
+async def request_match(
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> AiRequestOut:
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    items, skipped = await select_match_items(session, ctx.bundle.id)
+    return await _queue_request(session, ctx, MATCH_PLAN_KIND, items, skipped)
 
 
 @router.get("/status", response_model=AiStatusOut)
