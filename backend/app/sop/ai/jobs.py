@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.clock import now
 from app.sop.ai.constants import MAX_JOBS_PER_REQUEST, MAX_SKIPPED_REPORTED
 from app.sop.ai.schemas import AiJobCounts, AiRequestOut, SkippedOut
+from app.sop.errors import raise_rule
 from app.sop.models import AiJob
 
 ACTIVE_JOB_STATUSES = ("queued", "running")
@@ -52,6 +53,13 @@ def cap_job_items(items: Sequence[JobItem], skipped: Sequence[SkippedOut]) -> tu
         for unit_id in item.unit_ids
     ]
     return list(items[:MAX_JOBS_PER_REQUEST]), [*skipped, *over]
+
+
+def ensure_units_found(requested: Collection[int], found: Collection[int]) -> None:
+    """고른 단위가 범위에 모두 있어야 한다 — 없으면 404. 응답이 요청만큼 커지지 않게 id는 앞쪽만 싣고 전체 수를 함께 알린다."""
+    missing = sorted(set(requested) - set(found))
+    if missing:
+        raise_rule(404, "unit_not_found", unit_ids=missing[:MAX_SKIPPED_REPORTED], missing_total=len(missing))
 
 
 def build_request_out(queued: int, skipped: Sequence[SkippedOut]) -> AiRequestOut:

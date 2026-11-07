@@ -10,6 +10,7 @@ import logging
 from collections.abc import Sequence
 from typing import Literal
 
+import httpx2
 import numpy as np
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
@@ -49,10 +50,15 @@ def _to_unit_vector(values: object) -> np.ndarray:
     return vector / norm
 
 
-async def _call_with_retries(texts: list[str]) -> tuple[list[np.ndarray], int | None]:
-    """/embeddings를 한 번 부르고 벡터를 단위 벡터로 바꾼다. 어떤 예외든 AI_RETRY_DELAYS만큼 쉬며 AI_CALL_ATTEMPTS번까지 다시 해 보고, 끝내 실패하면 마지막 예외를 올린다.
+def _is_client_error(exc: Exception) -> bool:
+    """다시 해도 같은 실패(토큰·모델 이름 등) — 채팅(`llm.py`)의 client_error와 같은 기준이다."""
+    return isinstance(exc, httpx2.HTTPStatusError) and exc.response.status_code < 500
 
-    예외 종류를 가리지 않는 이유: 망가진 응답 본문은 KeyError·IndexError·TypeError·JSON 오류로도 나오고 서버가 잠깐 이상한 값을 줄 수도 있다.
+
+async def _call_with_retries(texts: list[str]) -> tuple[list[np.ndarray], int | None]:
+    """/embeddings를 한 번 부르고 벡터를 단위 벡터로 바꾼다. AI_RETRY_DELAYS만큼 쉬며 AI_CALL_ATTEMPTS번까지 다시 해 보고, 끝내 실패하면 마지막 예외를 올린다. 4xx는 바로 올린다.
+
+    그 밖의 예외를 가리지 않는 이유: 망가진 응답 본문은 KeyError·IndexError·TypeError·JSON 오류로도 나오고 서버가 잠깐 이상한 값을 줄 수도 있다.
     """
     for attempt in range(AI_CALL_ATTEMPTS):
         try:
@@ -66,7 +72,7 @@ async def _call_with_retries(texts: list[str]) -> tuple[list[np.ndarray], int | 
                 AI_CALL_ATTEMPTS,
                 type(exc).__name__,
             )
-            if attempt == AI_CALL_ATTEMPTS - 1:
+            if _is_client_error(exc) or attempt == AI_CALL_ATTEMPTS - 1:
                 raise
         await asyncio.sleep(AI_RETRY_DELAYS[attempt])
 

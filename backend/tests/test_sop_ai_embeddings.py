@@ -258,6 +258,56 @@ def test_embed_failure_raises_unavailable_without_text_in_logs(
     assert (event.feature, event.ok, event.prompt_tokens, event.completion_tokens) == (EMBED_USAGE_FEATURE, False, None, None)
 
 
+@pytest.mark.parametrize("status", [400, 401, 404, 408, 429])
+def test_embed_client_error_fails_without_retrying(
+    monkeypatch: pytest.MonkeyPatch, sleeps: list[float], status: int
+) -> None:
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(status)
+
+    install_ai_transport(monkeypatch, handler)
+
+    with pytest.raises(EmbeddingUnavailable) as raised:
+        _embed(["a"])
+
+    assert raised.value.reason == "failed"
+    assert len(requests) == 1 and sleeps == []
+    [event] = _list_usage()
+    assert event.ok is False
+
+
+def _raise_timeout(request: httpx2.Request) -> httpx2.Response:
+    raise httpx2.ReadTimeout("timed out", request=request)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        pytest.param(lambda request: httpx2.Response(500), id="server-error"),
+        pytest.param(lambda request: httpx2.Response(200, content=b"<html>not json</html>"), id="broken-body"),
+        pytest.param(_raise_timeout, id="timeout"),
+    ],
+)
+def test_embed_server_side_failure_uses_every_attempt(
+    monkeypatch: pytest.MonkeyPatch, sleeps: list[float], reply: Handler
+) -> None:
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return reply(request)
+
+    install_ai_transport(monkeypatch, handler)
+
+    with pytest.raises(EmbeddingUnavailable):
+        _embed(["a"])
+
+    assert len(requests) == AI_CALL_ATTEMPTS and sleeps == list(AI_RETRY_DELAYS)
+
+
 def _raise_connect_error(request: httpx2.Request) -> httpx2.Response:
     raise httpx2.ConnectError("connection refused", request=request)
 

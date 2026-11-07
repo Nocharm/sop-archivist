@@ -34,7 +34,7 @@ from app.sop.ai.guidelines import (
     format_guideline_versions,
     load_active_guidelines,
 )
-from app.sop.ai.jobs import JobItem, cap_job_items, find_active_unit_ids
+from app.sop.ai.jobs import JobItem, cap_job_items, ensure_units_found, find_active_unit_ids
 from app.sop.ai.llm import AiStr, build_messages, call_llm, parse_reply
 from app.sop.ai.runner import AiCallFailed
 from app.sop.ai.schemas import SkippedOut, SkipReason
@@ -190,9 +190,7 @@ async def select_classify_items(
     documents = await load_latest_extractions(session, bundle_id, document_id)
     requested = set(unit_ids or ())
     rows = await _load_scope_rows(session, documents, requested)
-    missing = sorted(requested - {row.id for row in rows})
-    if missing:
-        raise_rule(404, "unit_not_found", unit_ids=missing)
+    ensure_units_found(requested, {row.id for row in rows})
 
     queued = await find_active_unit_ids(session, bundle_id, _KINDS)
     kinds = _KINDS if requested else ()

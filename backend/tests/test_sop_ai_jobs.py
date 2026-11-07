@@ -19,7 +19,7 @@ from app import main as main_mod
 from app.db import SessionLocal, engine
 from app.routers.sop_ai import require_ai_enabled
 from app.settings import settings
-from app.sop.ai import runner
+from app.sop.ai import jobs, runner
 from app.sop.ai.constants import MAX_AI_TEXT_CHARS, MAX_JOBS_PER_REQUEST
 from app.sop.ai.handlers import HANDLERS
 from app.sop.ai.jobs import JobItem, cancel_active_jobs, enqueue_jobs, find_active_unit_ids, load_job_counts
@@ -39,6 +39,7 @@ from app.sop.models import AiJob, AiSuggestion, Bundle
 from tests.access_helpers import run_in_session
 from tests.ai_fixtures import AiBundle, make_ai_bundle, run_jobs
 from tests.ai_fixtures import clean_ai_jobs  # noqa: F401 -- 픽스처는 아래 usefixtures가 이름으로 찾는다
+from tests.fake_ai import FakeAi
 from tests.sop_helpers import (
     AUTHOR,
     OUTSIDER,
@@ -671,6 +672,23 @@ def test_require_ai_enabled_refuses_with_503_when_ai_is_off(
 
     monkeypatch.setattr(settings, "ai_enabled", True)
     require_ai_enabled()
+
+
+@pytest.mark.parametrize(
+    ("kind", "scope"), [("classify", {}), ("translate", {"direction": "ko_to_en"}), ("split", {})]
+)
+def test_unit_not_found_reports_the_first_ids_and_the_total(
+    client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch, kind: str, scope: dict[str, str]
+) -> None:
+    bundle = make_ai_bundle(client)
+    missing = [9_000_001, 9_000_002, 9_000_003]
+    monkeypatch.setattr(jobs, "MAX_SKIPPED_REPORTED", 2)
+
+    refused = client.post(f"/api/bundles/{bundle.id}/ai/{kind}", json={**scope, "unit_ids": missing}, headers=AUTHOR)
+
+    assert (refused.status_code, refused.json()["detail"]) == (
+        404, {"code": "unit_not_found", "unit_ids": missing[:2], "missing_total": 3},
+    )
 
 
 # --- 워커 루프 ---

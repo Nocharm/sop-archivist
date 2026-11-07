@@ -361,7 +361,9 @@ def test_request_refuses_units_and_documents_outside_the_bundle(client: TestClie
     by_unit = request_classify(client, bundle.id, unit_ids=[foreign])
     by_document = request_classify(client, bundle.id, document_id=other.document_id)
 
-    assert (by_unit.status_code, by_unit.json()["detail"]) == (404, {"code": "unit_not_found", "unit_ids": [foreign]})
+    assert (by_unit.status_code, by_unit.json()["detail"]) == (
+        404, {"code": "unit_not_found", "unit_ids": [foreign], "missing_total": 1},
+    )
     assert (by_document.status_code, by_document.json()["detail"]["code"]) == (404, "document_not_found")
     assert read_rows(AiJob) == []
 
