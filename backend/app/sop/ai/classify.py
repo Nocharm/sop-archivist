@@ -234,7 +234,7 @@ class _Loaded:
     input_refs: dict[str, object]
 
 
-async def _load_units(session: AsyncSession, unit_ids: Collection[int]) -> list[Unit]:
+async def load_units(session: AsyncSession, unit_ids: Collection[int]) -> list[Unit]:
     rows = await select_in_chunks(session, lambda chunk: select(Unit).where(Unit.id.in_(chunk)), set(unit_ids))
     return sorted((row[0] for row in rows), key=lambda unit: (unit.pos_seq, unit.pos_start, unit.id))
 
@@ -275,9 +275,18 @@ class _Verdict:
     rewrites: dict[str, list[str]] = field(default_factory=_pick_rewrites)
 
 
-def _build_warning(kind: str, value: str = "") -> AiWarning:
+def build_warning(kind: str, value: str = "") -> AiWarning:
     """경고는 코드와 정리된 값만 담는다 — 모양은 check_sentence와 같아야 Excel이 읽는다. 값은 AI가 준 글이라 길이를 잘라 저장 JSON이 부풀지 않게 한다."""
     return {"kind": kind, "source": value[:MAX_WARNING_VALUE_LEN], "target": ""}
+
+
+def check_rule_ids(
+    rule_ids: Sequence[str], guidelines: Mapping[str, GuidelineRef]
+) -> tuple[tuple[str, ...], list[AiWarning]]:
+    """지금 규칙 문서에 있는 ID만 남긴다 — 없는 ID는 빼고 경고한다."""
+    known_rules = extract_rule_ids(guidelines[RULES_KEY].content)
+    kept = tuple(rule_id for rule_id in rule_ids if rule_id in known_rules)
+    return kept, [build_warning("unknown_rule_id", rule_id) for rule_id in rule_ids if rule_id not in known_rules]
 
 
 def _read_unit_text(unit: Unit, context: UnitContext) -> str:
@@ -328,9 +337,9 @@ def _find_rewrite_problem(units: Iterable[Unit], reply: ClassifyReply) -> AiWarn
     for lang in sorted({unit.lang for unit in units if unit.kind in SENTENCE_SOURCE_KINDS}):
         sentences = reply.rewrites.get(lang, [])
         if not sentences or not all(map(has_visible_char, sentences)):
-            return _build_warning("missing_rewrite", lang)
+            return build_warning("missing_rewrite", lang)
         if len(sentences) > MAX_REWRITE_SENTENCES:
-            return _build_warning("too_many_sentences", lang)
+            return build_warning("too_many_sentences", lang)
     return None
 
 
@@ -349,7 +358,7 @@ def _check_evidence(
         if quote and quote in _squeeze_spaces(texts.get(item.unit_id, "")):
             found.append({"unit_id": item.unit_id, "quote": item.quote})
         else:
-            warnings.append(_build_warning("evidence_not_found", item.quote))
+            warnings.append(build_warning("evidence_not_found", item.quote))
     return found, warnings
 
 
@@ -358,17 +367,15 @@ def _judge_reply(
 ) -> _Verdict:
     """응답 검사 — 형식·후보 소속·고쳐 쓰기가 틀리면 무효이고, 규칙 ID·근거는 빼고 경고한다(설계 §7.8 4단계)."""
     if reply is None:
-        return _Verdict(model, retrieval, warnings=(_build_warning("invalid_format"),))
+        return _Verdict(model, retrieval, warnings=(build_warning("invalid_format"),))
     candidate = next((item for item in ranked if item.key == reply.candidate), None)
     if candidate is None:
-        return _Verdict(model, retrieval, warnings=(_build_warning("unknown_candidate", reply.candidate),))
+        return _Verdict(model, retrieval, warnings=(build_warning("unknown_candidate", reply.candidate),))
     if candidate != DELETE_CANDIDATE:
         problem = _find_rewrite_problem(loaded.units, reply)
         if problem is not None:
             return _Verdict(model, retrieval, warnings=(problem,))
-    known_rules = extract_rule_ids(loaded.guidelines[RULES_KEY].content)
-    rule_ids = tuple(rule_id for rule_id in reply.rule_ids if rule_id in known_rules)
-    unknown = [_build_warning("unknown_rule_id", rule_id) for rule_id in reply.rule_ids if rule_id not in known_rules]
+    rule_ids, unknown = check_rule_ids(reply.rule_ids, loaded.guidelines)
     texts = {unit.id: _read_unit_text(unit, loaded.contexts[unit.id]) for unit in loaded.units}
     evidence, not_found = _check_evidence(reply, texts)
     rewrites = _pick_rewrites() if candidate == DELETE_CANDIDATE else _pick_rewrites(reply, loaded.units)
@@ -548,7 +555,7 @@ class ClassifyHandler:
         candidates = list_candidates(docs.values())
         if not candidates:
             raise AiCallFailed("no_candidates")
-        units = await _load_units(session, job.unit_ids)
+        units = await load_units(session, job.unit_ids)
         job.input_snapshot = {
             "revisions": {str(unit_id): decision.revision for unit_id, decision in decisions.items()},
             "hashes": {str(unit.id): _hash_unit(unit) for unit in units},
@@ -576,7 +583,7 @@ class ClassifyHandler:
         decisions = await load_fresh_decisions(
             session, unit_ids=job.unit_ids, snapshot=job.input_snapshot["revisions"], kinds=_KINDS
         )
-        units = await _load_units(session, job.unit_ids)
+        units = await load_units(session, job.unit_ids)
         docs = await load_target_docs(session, job.bundle_id)
         reply, candidate = computed.reply, computed.candidate
         is_text_changed = any(_hash_unit(unit) != job.input_snapshot["hashes"].get(str(unit.id)) for unit in units)

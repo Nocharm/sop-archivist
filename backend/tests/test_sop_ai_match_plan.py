@@ -1,6 +1,5 @@
 """입구 2 짝 계획 — 요청, 후보 고르기, 임베딩·글자 점수, 문장 그룹 작업, 표·그림·남은 항목의 제안, 다시 돌리기, 낡은 항목 (설계 §6.7, §7.7, §7.10, §8.4, §12)."""
 
-import asyncio
 import json
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -15,21 +14,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.settings import settings
 from app.sop.ai import embeddings
 from app.sop.ai.constants import AI_CALL_ATTEMPTS
-from app.sop.ai.runner import claim_next_job, process_job
-from app.sop.models import AiJob, AiSuggestion, Bundle, TargetSentence, TargetSource, UnitDecision
+from app.sop.models import AiJob, AiSuggestion, Bundle, TargetSentence, UnitDecision
 from tests.access_helpers import run_in_session
 from tests.ai_fixtures import (
-    MatchBundle,
     clean_ai_jobs,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
     clean_embedding_cache,  # noqa: F401
     edit_document,
     find_kind,
     make_ai_bundle,
     make_match_bundle,
+    plan,
     read_decision,
+    read_links,
+    read_old_ids,
     read_rows,
+    read_target,
+    request_match,
     run_jobs,
     use_reply,
+    use_vectors,
 )
 from tests.ai_helpers import enable_embed
 from tests.docx_factory import TINY_PNG, make_drawing_run, p, tbl
@@ -76,38 +79,6 @@ def make_figure(caption: str) -> str:
     return f"<w:p>{make_drawing_run('image1.png')}</w:p>" + (p(caption, "Caption") if caption else "")
 
 
-def request_match(client: TestClient, bundle_id: int, headers: dict[str, str] = AUTHOR) -> httpx2.Response:
-    return client.post(f"/api/bundles/{bundle_id}/ai/match", json={}, headers=headers)
-
-
-def run_plan() -> None:
-    """맨 앞 작업 하나만 돌린다 — 계획이 쌓은 변경 종류 작업은 큐에 남겨 그대로 본다."""
-
-    async def _run() -> None:
-        job_id = await claim_next_job()
-        assert job_id is not None
-        await process_job(job_id)
-
-    asyncio.run(_run())
-
-
-def plan(client: TestClient, bundle_id: int) -> None:
-    response = request_match(client, bundle_id)
-    assert response.status_code == 200, response.text
-    assert response.json()["queued"] == 1, response.text
-    run_plan()
-
-
-def axis(index: int) -> list[float]:
-    return [1.0 if position == index else 0.0 for position in range(8)]
-
-
-def use_vectors(monkeypatch: pytest.MonkeyPatch, ai: FakeAi, axes: dict[str, int]) -> None:
-    """글마다 축 하나를 준다 — 같은 축의 글끼리만 점수가 1이고 나머지는 0이다."""
-    enable_embed(monkeypatch)
-    ai.embed = lambda text: axis(axes[text])
-
-
 def run_beside(work: Callable[..., T], *args: Any) -> T:
     """가짜 AI 훅은 실행기의 이벤트 루프 안에서 돈다 — 다른 스레드에서 끝날 때까지 기다린다."""
     with ThreadPoolExecutor(max_workers=1) as pool:
@@ -128,26 +99,12 @@ def change_once_during_embedding(ai: FakeAi, change: Callable[[], None]) -> None
     ai.embed = embed_and_change
 
 
-def read_old_ids(client: TestClient, bundle: MatchBundle, *texts: str) -> list[int]:
-    view = get_view(client, bundle.id, bundle.old_document_id)
-    return [find_unit(view, text)["id"] for text in texts]
-
-
-def read_target(text: str) -> TargetSentence:
-    (target,) = [row for row in read_rows(TargetSentence) if row.confirmed_text == text]
-    return target
-
-
 def read_kind(kind: str) -> list[TargetSentence]:
     return [row for row in read_rows(TargetSentence) if row.kind == kind and row.parent_target_id is None]
 
 
 def read_jobs(kind: str = "match") -> list[AiJob]:
     return [row for row in read_rows(AiJob) if row.kind == kind]
-
-
-def read_links() -> set[tuple[int, int]]:
-    return {(row.target_id, row.unit_id) for row in read_rows(TargetSource)}
 
 
 def read_suggestion(shape: str) -> AiSuggestion:

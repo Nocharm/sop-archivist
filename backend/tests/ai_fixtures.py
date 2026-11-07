@@ -12,9 +12,10 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import SessionLocal
-from app.sop.ai.runner import run_jobs_until_idle
-from app.sop.models import AiJob, AiSuggestion, EmbeddingCache, TargetSentence, UnitDecision
+from app.sop.ai.runner import claim_next_job, process_job, run_jobs_until_idle
+from app.sop.models import AiJob, AiSuggestion, EmbeddingCache, TargetSentence, TargetSource, UnitDecision
 from tests.access_helpers import run_in_session
+from tests.ai_helpers import enable_embed
 from tests.docx_factory import build_docx, p
 from tests.fake_ai import FakeAi
 from tests.sop_helpers import (
@@ -126,8 +127,45 @@ def queue_units(client: TestClient, bundle_id: int, unit_ids: Sequence[int]) -> 
     assert response.json()["skipped_total"] == 0, response.text
 
 
+def request_match(client: TestClient, bundle_id: int, headers: dict[str, str] = AUTHOR) -> httpx2.Response:
+    return client.post(f"/api/bundles/{bundle_id}/ai/match", json={}, headers=headers)
+
+
+def run_plan() -> None:
+    """맨 앞 작업 하나만 돌린다 — 계획이 쌓은 변경 종류 작업은 큐에 남겨 그대로 본다."""
+
+    async def _run() -> None:
+        job_id = await claim_next_job()
+        assert job_id is not None
+        await process_job(job_id)
+
+    asyncio.run(_run())
+
+
+def plan(client: TestClient, bundle_id: int) -> None:
+    response = request_match(client, bundle_id)
+    assert response.status_code == 200, response.text
+    assert response.json()["queued"] == 1, response.text
+    run_plan()
+
+
+def axis(index: int) -> list[float]:
+    return [1.0 if position == index else 0.0 for position in range(8)]
+
+
+def use_vectors(monkeypatch: pytest.MonkeyPatch, ai: FakeAi, axes: dict[str, int]) -> None:
+    """글마다 축 하나를 준다 — 같은 축의 글끼리만 점수가 1이고 나머지는 0이다."""
+    enable_embed(monkeypatch)
+    ai.embed = lambda text: axis(axes[text])
+
+
 def find_ids(client: TestClient, bundle: AiBundle, *texts: str) -> list[int]:
     view = get_view(client, bundle.id, bundle.document_id)
+    return [find_unit(view, text)["id"] for text in texts]
+
+
+def read_old_ids(client: TestClient, bundle: MatchBundle, *texts: str) -> list[int]:
+    view = get_view(client, bundle.id, bundle.old_document_id)
     return [find_unit(view, text)["id"] for text in texts]
 
 
@@ -140,6 +178,15 @@ def read_rows(model: type[Any]) -> list[Any]:
 
 def read_decision(unit_id: int) -> UnitDecision:
     return run_in_session(lambda session: session.get(UnitDecision, unit_id))
+
+
+def read_target(text: str) -> TargetSentence:
+    (target,) = [row for row in read_rows(TargetSentence) if row.confirmed_text == text]
+    return target
+
+
+def read_links() -> set[tuple[int, int]]:
+    return {(row.target_id, row.unit_id) for row in read_rows(TargetSource)}
 
 
 def get_target(client: TestClient, bundle_id: int, unit_id: int) -> dict:
@@ -166,21 +213,21 @@ def edit_document(client: TestClient, bundle_id: int, document_id: int, op: dict
     assert response.status_code == 200, response.text
 
 
-async def _add_match_suggestion(session: AsyncSession, bundle_id: int) -> AiSuggestion:
-    job = AiJob(bundle_id=bundle_id, kind="match", status="done", requested_by="qa.member")
+async def _add_suggestion(session: AsyncSession, bundle_id: int, kind: str = "match") -> AiSuggestion:
+    job = AiJob(bundle_id=bundle_id, kind=kind, status="done", requested_by="qa.member")
     session.add(job)
     await session.flush()
-    suggestion = AiSuggestion(job_id=job.id, bundle_id=bundle_id, kind="match", content={}, result="applied")
+    suggestion = AiSuggestion(job_id=job.id, bundle_id=bundle_id, kind=kind, content={}, result="applied")
     session.add(suggestion)
     await session.flush()
     return suggestion
 
 
-def attach_match_suggestion(bundle_id: int, unit_id: int) -> int:
-    """입구 2 제안이 그 단위를 채운 모습 — 다른 종류 제안 위에 분류가 쓰면 안 되는지를 보려고 DB에 직접 둔다."""
+def attach_suggestion(bundle_id: int, unit_id: int, kind: str) -> int:
+    """그 종류의 제안이 단위를 채운 모습을 DB에 직접 둔다."""
 
     async def _attach(session: AsyncSession) -> int:
-        suggestion = await _add_match_suggestion(session, bundle_id)
+        suggestion = await _add_suggestion(session, bundle_id, kind)
         decision = await session.get(UnitDecision, unit_id)
         decision.status, decision.disposition, decision.suggestion_id = "ai_suggested", "assigned", suggestion.id
         decision.revision += 1
@@ -190,11 +237,16 @@ def attach_match_suggestion(bundle_id: int, unit_id: int) -> int:
     return run_in_session(_attach)
 
 
+def attach_match_suggestion(bundle_id: int, unit_id: int) -> int:
+    """입구 2 제안이 그 단위를 채운 모습 — 다른 종류 제안 위에 분류가 쓰면 안 되는지를 본다."""
+    return attach_suggestion(bundle_id, unit_id, "match")
+
+
 def attach_new_target_suggestion(bundle_id: int, target_doc_id: int) -> int:
     """입구 2 새 문장 하나를 신규 제안 상태로 두고 그 id를 돌려준다 — 그 제안을 만드는 작업은 아직 없어 DB에 직접 둔다."""
 
     async def _attach(session: AsyncSession) -> int:
-        suggestion = await _add_match_suggestion(session, bundle_id)
+        suggestion = await _add_suggestion(session, bundle_id)
         target = await session.scalar(select(TargetSentence).where(TargetSentence.target_doc_id == target_doc_id))
         target.status, target.suggestion_id, target.change_type = "ai_suggested", suggestion.id, "new"
         target.revision += 1

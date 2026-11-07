@@ -7,14 +7,14 @@ from collections import Counter, defaultdict
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import case, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
 from app.sop.ai.schemas import AdoptionStats, SuggestionOut, SuggestionsPageOut
-from app.sop.detach import ORIGIN_TRANSLATION
+from app.sop.detach import ORIGIN_NEW_DOC, ORIGIN_TRANSLATION
 from app.sop.errors import raise_rule
 from app.sop.groups import TABLE_UNIT_KINDS, iter_chunks, select_in_chunks
 from app.sop.models import AiSuggestion, TargetSentence, Unit, UnitDecision
@@ -25,9 +25,11 @@ if TYPE_CHECKING:  # decisions가 이 모듈을 불러 쓰므로 타입만 가�
 
 Place = tuple[int | None, str | None, int | None, str | None]  # (새 문서, 칸, WI 단계, WI 부분)
 
-# 저장과 견줄 수 있는 종류 — classify는 content의 처분·자리·고쳐 쓴 글, translate는 새 문장의 ai_text와 견준다
-_JUDGED_KINDS = ("classify", "translate")
+_MATCH_KIND = "match"
+# 저장과 견줄 수 있는 종류 — classify는 content의 처분·자리·고쳐 쓴 글, translate는 새 문장의 ai_text, match는 content의 출처와 견준다
+_JUDGED_KINDS = ("classify", "translate", _MATCH_KIND)
 _NO_TEXT_KINDS = (*TABLE_UNIT_KINDS, "figure")  # 새 문장에 글자가 없는 단위
+_LOCKED_PLACE: Place = (None, None, None, None)  # 입구 2 새 문장은 자리·글이 잠겨 있어 판정 재료에 넣지 않는다
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,8 @@ class TargetShape:
 class SuggestedShape:
     disposition: str
     targets: tuple[TargetShape, ...]
+    # 입구 2 제안 — 새 문장의 글·자리는 잠겨 있어 출처만 견준다
+    is_sources_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -54,18 +58,43 @@ class SavedShape:
 
 
 def decide_adoption(suggested: SuggestedShape, saved: SavedShape) -> str:
-    """제안을 버렸는가(처분이 다르거나 새 문장이 모두 사라졌거나 모두 다른 자리), 그대로인가, 고쳤는가."""
+    """제안을 버렸는가(처분이 다르거나 새 문장이 모두 사라졌거나 모두 다른 자리), 그대로인가, 고쳤는가.
+
+    입구 2 제안은 출처만 본다 — 같으면 그대로, 모두 비면 버림, 그 밖은 고침이다. 옛 단위의 처분은 사람이 출처를 바꾸면 따라 바뀌어 보지 않는다.
+    """
+    is_same = Counter(suggested.targets) == Counter(saved.targets)
+    if suggested.is_sources_only:
+        if is_same:
+            return "as_is"
+        return "edited" if any(target.sources for target in saved.targets) else "rejected"
     if suggested.disposition not in saved.dispositions:
         return "rejected"
     places = {target.place for target in suggested.targets}
     if places and not any(target.place in places for target in saved.targets):
         return "rejected"
-    return "as_is" if Counter(suggested.targets) == Counter(saved.targets) else "edited"
+    return "as_is" if is_same else "edited"
+
+
+def _list_matched_targets(content: Mapping[str, Any]) -> Sequence[int]:
+    """출처를 견줄 새 문장 — 제안 기록에 칸 연결이 없어 표는 표 새 문장만 본다. 그대로인 표의 칸 자리는 저장 검사가 지킨다."""
+    target_ids = content["target_ids"]
+    return target_ids[:1] if content["shape"] == "table" else target_ids
+
+
+def _build_match_shape(content: Mapping[str, Any]) -> SuggestedShape:
+    """짝이면 새 문장마다 제안의 단위 전부가 출처고, 신규는 단위가 없어 출처가 비어 있다. 삭제 후보는 처분만 견준다."""
+    if content["shape"] == "delete_candidate":
+        return SuggestedShape("delete", ())
+    sources = frozenset(content["unit_ids"])
+    targets = tuple(TargetShape(_LOCKED_PLACE, "", sources) for _ in _list_matched_targets(content))
+    return SuggestedShape("assigned", targets, is_sources_only=True)
 
 
 def _build_suggested_shape(suggestion: AiSuggestion, units: Iterable[Unit]) -> SuggestedShape:
     """제안 기록에서 이 저장에 담긴 단위 몫만 꺼낸다. 표·그림과 칸은 기록에 글이 없고 적용 때 원문 그대로 만들어진다."""
     content = suggestion.content
+    if suggestion.kind == _MATCH_KIND:
+        return _build_match_shape(content)
     disposition = content["disposition"]
     if disposition != "assigned":
         return SuggestedShape(disposition, ())
@@ -84,8 +113,19 @@ def _build_suggested_shape(suggestion: AiSuggestion, units: Iterable[Unit]) -> S
     return SuggestedShape(disposition, tuple(targets))
 
 
-def _build_saved_shape(plans: Sequence["_Plan"], unit_ids: Collection[int], dispositions: Iterable[str]) -> SavedShape:
-    """이 제안의 단위에서 나온 새 문장만 — 칸 새 문장은 출처가 칸 문장이라 부모 표 새 문장의 출처로 가린다. 표 아래 칸 번역은 자기 제안이 따로 있다."""
+def _build_saved_shape(
+    plans: Sequence["_Plan"], suggestion: AiSuggestion, unit_ids: Collection[int], dispositions: Iterable[str]
+) -> SavedShape:
+    """이 제안의 단위에서 나온 새 문장만 — 칸 새 문장은 출처가 칸 문장이라 부모 표 새 문장의 출처로 가린다. 표 아래 칸 번역은 자기 제안이 따로 있다.
+
+    입구 2 제안은 단위가 아니라 제안의 새 문장으로 가린다 — 사람이 출처를 바꾸거나 비운 새 문장도 판정에 들어야 한다.
+    """
+    if suggestion.kind == _MATCH_KIND:
+        matched = set(_list_matched_targets(suggestion.content))
+        return SavedShape(
+            frozenset(dispositions),
+            tuple(TargetShape(_LOCKED_PLACE, "", frozenset(plan.sources)) for plan in plans if plan.row.id in matched),
+        )
     scope = set(unit_ids)
     targets = tuple(
         TargetShape(
@@ -111,6 +151,10 @@ async def _load_units_with_cells(session: AsyncSession, unit_ids: Collection[int
     for (unit,) in rows:
         units[unit.group_unit_id if unit.group_unit_id is not None else unit.id].append(unit)
     return units
+
+
+def _set_adoption(suggestion: AiSuggestion, adoption: str, actor: str, stamp: datetime) -> None:
+    suggestion.adoption, suggestion.adopted_by, suggestion.adopted_at = adoption, actor, stamp
 
 
 async def record_unit_adoption(
@@ -145,9 +189,8 @@ async def record_unit_adoption(
     for (suggestion,) in rows:
         unit_ids = unit_ids_by_suggestion[suggestion.id]
         suggested = _build_suggested_shape(suggestion, (unit for unit_id in unit_ids for unit in units[unit_id]))
-        saved = _build_saved_shape(plans, unit_ids, (dispositions[unit_id] for unit_id in unit_ids))
-        suggestion.adoption, suggestion.adopted_by = decide_adoption(suggested, saved), actor
-        suggestion.adopted_at = stamp
+        saved = _build_saved_shape(plans, suggestion, unit_ids, (dispositions[unit_id] for unit_id in unit_ids))
+        _set_adoption(suggestion, decide_adoption(suggested, saved), actor, stamp)
 
 
 async def record_group_adoption(
@@ -167,6 +210,24 @@ async def record_group_adoption(
         session, plans=plans, dispositions=dispositions, decisions=decisions, actor=actor, stamp=stamp
     )
     await _record_translation_adoption(session, plans, actor, stamp)
+    await _record_new_target_adoption(session, plans, actor, stamp)
+
+
+async def _record_new_target_adoption(
+    session: AsyncSession, plans: Sequence["_Plan"], actor: str, stamp: datetime
+) -> None:
+    """판단이 가리키지 않는 입구 2 제안(신규)은 새 문장에서 찾는다 — 짝 제안은 앞의 단위 쪽 기록이 이미 정했다."""
+    suggestion_ids = {plan.row.suggestion_id for plan in plans if plan.origin == ORIGIN_NEW_DOC} - {None}
+    rows = await select_in_chunks(
+        session,
+        lambda chunk: select(AiSuggestion).where(
+            AiSuggestion.id.in_(chunk), AiSuggestion.adoption.is_(None), AiSuggestion.kind == _MATCH_KIND
+        ),
+        suggestion_ids,
+    )
+    for (suggestion,) in rows:
+        adoption = decide_adoption(_build_suggested_shape(suggestion, ()), _build_saved_shape(plans, suggestion, (), ()))
+        _set_adoption(suggestion, adoption, actor, stamp)
 
 
 async def _record_translation_adoption(
@@ -183,8 +244,7 @@ async def _record_translation_adoption(
     )
     for (suggestion,) in rows:
         plan = plan_by_suggestion[suggestion.id]
-        suggestion.adoption = "as_is" if plan.text == plan.row.ai_text else "edited"
-        suggestion.adopted_by, suggestion.adopted_at = actor, stamp
+        _set_adoption(suggestion, "as_is" if plan.text == plan.row.ai_text else "edited", actor, stamp)
 
 
 async def _write_adoption(
