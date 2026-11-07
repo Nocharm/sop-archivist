@@ -28,6 +28,11 @@ CLAUSE_NUMBER_FLAG = "clause_number"
 NEUTRAL = "neutral"
 
 
+def has_unstorable_char(text: str) -> bool:
+    """DB에 담지 못하는 글자(NUL·짝 없는 서로게이트)가 있는가 — 입력 경계·파일 이름 검사가 AI 응답 정리(replace)와 같은 판정을 쓴다."""
+    return _UNSTORABLE_RE.search(text) is not None
+
+
 def replace_unstorable_chars(text: str) -> str:
     """추출 글자를 DB에 담을 수 있게 한다 — 지우면 글자 위치가 밀려 같은 길이의 대체 문자로 바꾼다."""
     return _UNSTORABLE_RE.sub("\N{REPLACEMENT CHARACTER}", text)
