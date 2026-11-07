@@ -10,7 +10,7 @@ from itertools import product
 
 import numpy as np
 
-from app.sop.ai.similarity import text_similarity
+from app.sop.ai.similarity import build_text_bigrams, compare_bigrams
 from app.sop.segment import has_visible_char
 
 _ONE_TO_ONE_KINDS = ("table", "figure")  # 글자를 나누거나 합칠 수 없는 종류 — 묶지 않고 1:1로만 잇는다
@@ -50,12 +50,17 @@ def _is_comparable(old: MatchItem, new: MatchItem) -> bool:
 
 
 def build_text_scores(olds: Sequence[MatchItem], news: Sequence[MatchItem]) -> np.ndarray:
-    """글자 유사도 행렬 (옛 수, 새 수) — 임베딩이 없을 때의 점수다. 언어·종류가 다른 칸은 짝이 될 수 없어 계산을 건너뛴다."""
+    """글자 유사도 행렬 (옛 수, 새 수) — 임베딩이 없을 때의 점수다. 언어·종류가 다른 칸은 짝이 될 수 없어 계산을 건너뛴다.
+
+    수천 × 수천이고 스레드에서 GIL을 잡고 돌아, 2-gram은 항목마다 한 번만 센다.
+    """
     scores = np.zeros((len(olds), len(news)), dtype=np.float32)
+    new_bigrams = [build_text_bigrams(new.text) for new in news]
     for row, old in enumerate(olds):
+        old_bigrams = build_text_bigrams(old.text)
         for col, new in enumerate(news):
             if _is_comparable(old, new):
-                scores[row, col] = text_similarity(old.text, new.text)
+                scores[row, col] = compare_bigrams(old_bigrams, new_bigrams[col])
     return scores
 
 

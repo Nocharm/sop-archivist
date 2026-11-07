@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from collections import Counter
 from collections.abc import Awaitable, Callable
 
 import httpx2
@@ -9,6 +10,7 @@ import pytest
 
 from app import ai_client
 from app.settings import settings
+from app.sop.ai import similarity
 
 # 실주소가 아닌 예약 TLD — 오류 응답·로그에 새면 안 되는 값이라 누출 검사의 전제가 된다
 AI_TEST_BASE_URL = "http://ai.test/v1"
@@ -58,6 +60,19 @@ def capture_requests(monkeypatch: pytest.MonkeyPatch, content: str | None = "{}"
 
     install_ai_transport(monkeypatch, handler)
     return seen
+
+
+def record_bigram_counts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """2-gram을 센 글을 모은다 — 글자 유사도가 항목마다 한 번만 세는지 본다."""
+    counted: list[str] = []
+    count_bigrams = similarity._count_bigrams
+
+    def count_and_record(text: str) -> Counter[str]:
+        counted.append(text)
+        return count_bigrams(text)
+
+    monkeypatch.setattr(similarity, "_count_bigrams", count_and_record)
+    return counted
 
 
 def read_payload(request: httpx2.Request) -> dict:

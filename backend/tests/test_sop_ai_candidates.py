@@ -14,7 +14,13 @@ from app.sop.ai.constants import AI_CALL_ATTEMPTS, CANDIDATE_TOP_K, MAX_TEXT_CAN
 from app.sop.constants import SLOT_KEYS
 from app.sop.snapshot import TargetDocInfo
 from tests.ai_fixtures import clean_embedding_cache  # noqa: F401 -- 픽스처는 아래 usefixtures가 이름으로 찾는다
-from tests.ai_helpers import enable_embed, install_ai_transport, install_embed_transport, vector_for
+from tests.ai_helpers import (
+    enable_embed,
+    install_ai_transport,
+    install_embed_transport,
+    record_bigram_counts,
+    vector_for,
+)
 
 pytestmark = pytest.mark.usefixtures("clean_embedding_cache", "clean_ai_usage")
 
@@ -225,6 +231,16 @@ def test_rank_without_embeddings_narrows_by_text_when_many() -> None:
     assert len(ranked) == MAX_TEXT_CANDIDATES + 1 and ranked[-1] == DELETE_CANDIDATE
     assert ranked[0] == target  # 가장 비슷한 후보가 먼저
     assert ranked[1:-1] == others[: MAX_TEXT_CANDIDATES - 1]  # 동점은 목록 순으로 앞쪽부터 채운다
+
+
+def test_text_narrowing_counts_the_query_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    counted = record_bigram_counts(monkeypatch)
+    candidates = _fake_candidates(MAX_TEXT_CANDIDATES + 5)
+
+    _rank("합성 질의", candidates)
+
+    assert counted.count("합성질의") == 1
+    assert len(counted) == len(candidates) + 1
 
 
 def test_rank_falls_back_when_embedding_fails(monkeypatch: pytest.MonkeyPatch) -> None:

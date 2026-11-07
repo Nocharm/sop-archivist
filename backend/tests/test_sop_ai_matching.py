@@ -1,10 +1,12 @@
 """입구 2 짝 묶기(순수) — 1:1·나눔·합침, N:M 줄이기, 임계값, 언어·종류 규칙, 표·그림 1:1, 글자 점수 (설계 §7.10)."""
 
 import numpy as np
+import pytest
 
 from app.sop.ai.constants import MATCH_TEXT_THRESHOLD
 from app.sop.ai.matching import MatchGroup, MatchItem, build_text_scores, propose_groups
 from app.sop.ai.similarity import text_similarity
+from tests.ai_helpers import record_bigram_counts
 
 THRESHOLD = 0.75
 TEXT_KO = "합성 장비의 전원을 켠다."
@@ -256,6 +258,25 @@ def test_text_scores_compare_only_the_same_language_and_kind() -> None:
     assert scores[0, 1] == text_similarity(TEXT_KO, TEXT_EN)
     assert scores[0, 2] == 0.0  # 글자가 같아도 종류가 다르다
     assert scores[1].tolist() == [0.0, 0.0, 0.0]  # 글자가 같아도 언어가 다르다
+
+
+def test_text_scores_count_each_item_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    counted = record_bigram_counts(monkeypatch)  # 짝마다 다시 세면 1000 × 1000에 20초가 걸렸다
+    olds = [item(1, text=ONCE_OLD), item(2, text=REPEATED)]
+    news = [item(10, text=ONCE_NEW), item(20, text=TEXT_KO), item(30, text=REPEATED)]
+
+    build_text_scores(olds, news)
+
+    assert len(counted) == len(olds) + len(news)
+
+
+def test_text_scores_equal_text_similarity_on_every_pair() -> None:
+    texts = [TEXT_KO, TEXT_EN, ONCE_OLD, ONCE_NEW, "aaa", "aa", "a", "", "   ", " a a ", "abab abab", "ababab"]
+    items = [item(index, text=text) for index, text in enumerate(texts)]
+
+    scores = build_text_scores(items, items)
+
+    np.testing.assert_allclose(scores, [[text_similarity(old, new) for new in texts] for old in texts], rtol=1e-6)
 
 
 def test_text_scores_of_an_empty_side_are_an_empty_matrix() -> None:

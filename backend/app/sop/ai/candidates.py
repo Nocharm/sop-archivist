@@ -13,7 +13,7 @@ import numpy as np
 
 from app.sop.ai.constants import CANDIDATE_TOP_K, MAX_TEXT_CANDIDATES
 from app.sop.ai.embeddings import EmbeddingUnavailable, UnavailableReason, embed_texts
-from app.sop.ai.similarity import cosine_matrix, text_similarity, top_k_indices
+from app.sop.ai.similarity import build_text_bigrams, compare_bigrams, cosine_matrix, top_k_indices
 from app.sop.constants import SLOT_KEYS, WI_PARTS
 from app.sop.snapshot import TargetDocInfo
 from app.sop.tobe import is_within_slot
@@ -120,7 +120,8 @@ def _narrow_by_text(query: str, candidates: Sequence[Candidate]) -> list[Candida
     """MAX_TEXT_CANDIDATES 이하면 목록 그대로, 넘으면 글자 유사도 높은 순으로 그만큼(동점은 목록 순)."""
     if len(candidates) <= MAX_TEXT_CANDIDATES:
         return list(candidates)
-    scores = np.asarray([text_similarity(query, candidate.label) for candidate in candidates])
+    query_bigrams = build_text_bigrams(query)
+    scores = np.asarray([compare_bigrams(query_bigrams, build_text_bigrams(candidate.label)) for candidate in candidates])
     return [candidates[index] for index in top_k_indices(scores, MAX_TEXT_CANDIDATES)]
 
 
