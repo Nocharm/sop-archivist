@@ -16,8 +16,8 @@ from tests.ai_fixtures import (
     AI_SOP_DOC,
     AI_WI_DOC,
     AiBundle,
-    attach_match_suggestion,
     attach_new_target_suggestion,
+    attach_suggestion,
     build_reply,
     clean_ai_jobs,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
     edit_document,
@@ -446,10 +446,10 @@ def test_merging_a_person_chosen_unit_records_edited(client: TestClient, fake_ai
 
 
 def test_kind_without_a_rule_stays_undecided(client: TestClient, fake_ai: FakeAi) -> None:
-    # 입구 2 제안은 견줄 처분·자리를 담지 않아 아직 판정 규칙이 없다 — 사람의 저장은 그대로 돈다
+    # 복합 문장 나누기 제안은 저장과 견줄 것이 없어 판정 규칙이 없다 — 사람의 저장은 그대로 돈다
     bundle = make_ai_bundle(client)
     ko, = find_ids(client, bundle, AI_KO_1)
-    attach_match_suggestion(bundle.id, ko)
+    attach_suggestion(bundle.id, ko, "split")
 
     response = save_group(client, bundle.id, {
         "action": "confirm",

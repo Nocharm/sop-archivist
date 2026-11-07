@@ -892,9 +892,13 @@ async def _write_group(
     # 되보낸 번역은 쓰지 않는다 — 쓰면 AI 번역이 확정이 되고 채택이 남는다. 정리는 아래 sweep_translations가 한다
     plans = [plan for plan in plans if plan.row is None or plan.row.id not in echoed]
     removed = [state.existing[target_id] for target_id in payload.removed_target_ids]
-    # 지운 번역은 사람이 버린 제안이다 — 지우면 제안을 가리키는 칸이 사라지므로 먼저 남긴다
+    # 지운 번역과 판단 없는 입구 2 제안(신규)은 사람이 버린 제안이다 — 지우면 제안을 가리키는 칸이 사라지므로 먼저 남긴다.
+    # 판단이 가리키는 짝 제안은 지운 새 문장이 있어도 뒤의 채택 기록이 정한다
     await reject_suggestions(
-        session, [target.suggestion_id for target in removed if target.origin == ORIGIN_TRANSLATION], actor
+        session,
+        {target.suggestion_id for target in removed if target.origin != ORIGIN_UNITS}
+        - {decision.suggestion_id for decision in state.decisions.values()} - {None},
+        actor,
     )
     if removed:
         await session.execute(delete(TargetSource).where(TargetSource.target_id.in_([t.id for t in removed])))
