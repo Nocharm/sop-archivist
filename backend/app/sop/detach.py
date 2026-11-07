@@ -36,6 +36,7 @@ def reset_decision(decision: UnitDecision) -> None:
     decision.disposition, decision.move_target_code, decision.reason = UNASSIGNED, "", ""
     decision.status, decision.hold_reason = UNASSIGNED, ""
     decision.confirmed_by, decision.confirmed_at = None, None
+    decision.suggestion_id = None
     decision.revision += 1
 
 
@@ -43,6 +44,7 @@ def reset_target(target: TargetSentence) -> None:
     """출처가 다 빠진 입구 2 새 문장 — 새 문서 원문 그대로라 지우지 않고 미배정으로 돌린다."""
     target.status, target.change_type, target.hold_reason, target.warnings = UNASSIGNED, None, "", []
     target.confirmed_by, target.confirmed_at = None, None
+    target.suggestion_id = None
     target.revision += 1
 
 

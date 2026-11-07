@@ -25,6 +25,9 @@ def _check_job_kind(value: str) -> str:
     return value
 
 
+JobKind = Annotated[str, AfterValidator(_check_job_kind)]
+
+
 class ScopeIn(BaseModel):
     """AI 요청의 범위 — 문서 하나 또는 단위 목록. 빈 목록은 없는 것과 같다."""
 
@@ -42,7 +45,7 @@ class ScopeIn(BaseModel):
 class JobKindIn(BaseModel):
     """취소·다시 시도의 범위 — 비우면 묶음의 모든 종류."""
 
-    kind: Annotated[str, AfterValidator(_check_job_kind)] | None = None
+    kind: JobKind | None = None
 
 
 class CancelOut(BaseModel):
@@ -109,3 +112,8 @@ class SuggestionOut(BaseModel):
     adopted_by: str | None
     adopted_at: KstDatetime | None
     created_at: KstDatetime
+
+
+class SuggestionsPageOut(BaseModel):
+    total: int
+    items: list[SuggestionOut]

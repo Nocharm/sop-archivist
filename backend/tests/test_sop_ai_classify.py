@@ -4,12 +4,11 @@ import json
 import re
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
 
 import httpx2
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AiUsageEvent
@@ -29,7 +28,6 @@ from app.sop.models import (
     GuidelineVersion,
     TargetDoc,
     Unit,
-    UnitDecision,
     UnitPair,
     UnitPairMember,
 )
@@ -41,13 +39,26 @@ from tests.ai_fixtures import (
     AI_KO_2,
     AI_SOP_DOC,
     AI_WI_DOC,
-    AiBundle,
+    REWRITE,
+    REWRITES,
+    attach_match_suggestion,
+    build_reply,
     clean_ai_jobs,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
     clean_embedding_cache,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
+    edit_document,
+    find_ids,
+    find_kind,
+    get_target,
     make_ai_bundle,
+    queue_units,
+    read_decision,
+    read_rows,
+    request_classify,
     run_jobs,
+    upload_second_document,
+    use_reply,
 )
-from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
+from tests.docx_factory import TINY_PNG, make_drawing_run, p, tbl
 from tests.fake_ai import FakeAi, extract_data, hash_vector, install_fake_ai
 from tests.sop_helpers import (
     AUTHOR,
@@ -58,17 +69,12 @@ from tests.sop_helpers import (
     get_view,
     put_tobe,
     save_group,
-    upload,
 )
 
 pytestmark = pytest.mark.usefixtures("clean_sop", "clean_ai_jobs")
 
-REWRITES = {"ko": "합성 장비의 전원을 켜야 한다.", "en": "The synthetic instrument shall be turned on."}
-REWRITE = REWRITES["ko"]
 FIRST_SLOT = "c1"  # 임베딩이 꺼져 있으면 후보가 목록 순서 그대로라 c1은 SOP-AI의 Purpose 칸이다
-TEXT_KINDS = ("sentence", "heading", "cell_sentence")
 CELLS = [["합성 항목", "합성 값"], ["합성 압력", "10 bar"]]
-SECOND_FILE = "SYNTHETIC_OLD-TABLE.docx"
 MARKER = "RAW-REPLY-MARKER"
 MISSING_REWRITE_REPLY = json.dumps({
     "candidate": FIRST_SLOT, "reason": MARKER, "rule_ids": [], "evidence": [], "change_type": "tone",
@@ -80,53 +86,6 @@ UNKNOWN_CANDIDATE_REPLY = json.dumps({
 })
 
 
-def build_reply(data: dict, **changes: object) -> str:
-    """data에 맞는 유효한 응답 — 첫 칸 후보를 고르고 들어온 언어마다 고쳐 쓴 문장을 낸다. changes가 칸을 덮는다."""
-    unit = data["units"][0]
-    langs = {member["lang"] for member in data["units"] if member["kind"] in TEXT_KINDS}
-    reply = {
-        "candidate": data["candidates"][0]["key"],
-        "reason": "합성 이유.",
-        "rule_ids": ["R01"],
-        "evidence": [{"unit_id": unit["id"], "quote": unit["text"]}] if unit["text"] else [],
-        "change_type": "tone" if langs else "as_is",
-        "rewrites": {lang: [REWRITES[lang]] for lang in langs},
-    }
-    return json.dumps({**reply, **changes}, ensure_ascii=False)
-
-
-def use_reply(ai: FakeAi, **changes: object) -> None:
-    ai.chat = lambda data: build_reply(data, **changes)
-
-
-def request_classify(
-    client: TestClient, bundle_id: int, *, headers: dict[str, str] = AUTHOR, **scope: object
-) -> httpx2.Response:
-    return client.post(f"/api/bundles/{bundle_id}/ai/classify", json=scope, headers=headers)
-
-
-def queue_units(client: TestClient, bundle_id: int, unit_ids: Sequence[int]) -> None:
-    response = request_classify(client, bundle_id, unit_ids=list(unit_ids))
-    assert response.status_code == 200, response.text
-    assert response.json()["skipped_total"] == 0, response.text
-
-
-def find_ids(client: TestClient, bundle: AiBundle, *texts: str) -> list[int]:
-    view = get_view(client, bundle.id, bundle.document_id)
-    return [find_unit(view, text)["id"] for text in texts]
-
-
-def read_rows(model: type[Any]) -> list[Any]:
-    async def _read(session: AsyncSession) -> list[Any]:
-        return list(await session.scalars(select(model).order_by(*model.__table__.primary_key.columns)))
-
-    return run_in_session(_read)
-
-
-def read_decision(unit_id: int) -> UnitDecision:
-    return run_in_session(lambda session: session.get(UnitDecision, unit_id))
-
-
 def read_single_suggestion() -> AiSuggestion:
     (suggestion,) = read_rows(AiSuggestion)
     return suggestion
@@ -135,11 +94,6 @@ def read_single_suggestion() -> AiSuggestion:
 def read_single_job() -> AiJob:
     (job,) = read_rows(AiJob)
     return job
-
-
-def get_target(client: TestClient, bundle_id: int, unit_id: int) -> dict:
-    (target,) = get_group_by_unit(client, bundle_id, unit_id)["targets"]
-    return target
 
 
 def save_ai_target(client: TestClient, bundle_id: int, unit_id: int, action: str) -> httpx2.Response:
@@ -158,44 +112,6 @@ def save_ai_target(client: TestClient, bundle_id: int, unit_id: int, action: str
             for target in group["targets"]
         ],
     })
-
-
-def upload_second_document(client: TestClient, bundle_id: int, body: str, **options: Any) -> dict:
-    response = upload(client, bundle_id, build_docx(body, **options), SECOND_FILE)
-    assert response.status_code == 201 and response.json()["status"] == "ready", response.text
-    return get_view(client, bundle_id, response.json()["id"])
-
-
-def find_kind(view: dict, kind: str) -> dict:
-    return next(unit for unit in view["units"] if unit["kind"] == kind)
-
-
-def edit_document(client: TestClient, bundle_id: int, document_id: int, op: dict) -> None:
-    revision = get_view(client, bundle_id, document_id)["document"]["revision"]
-    response = client.post(
-        f"/api/bundles/{bundle_id}/documents/{document_id}/edits",
-        json={"revision": revision, "confirm": False, "op": op}, headers=AUTHOR,
-    )
-    assert response.status_code == 200, response.text
-
-
-def attach_match_suggestion(bundle_id: int, unit_id: int) -> int:
-    """입구 2 제안이 그 단위를 채운 모습 — 다른 종류 제안 위에 분류가 쓰면 안 되는지를 보려고 DB에 직접 둔다."""
-
-    async def _attach(session: AsyncSession) -> int:
-        job = AiJob(bundle_id=bundle_id, kind="match", status="done", requested_by="qa.member")
-        session.add(job)
-        await session.flush()
-        suggestion = AiSuggestion(job_id=job.id, bundle_id=bundle_id, kind="match", content={}, result="applied")
-        session.add(suggestion)
-        await session.flush()
-        decision = await session.get(UnitDecision, unit_id)
-        decision.status, decision.disposition, decision.suggestion_id = "ai_suggested", "assigned", suggestion.id
-        decision.revision += 1
-        await session.commit()
-        return suggestion.id
-
-    return run_in_session(_attach)
 
 
 @pytest.fixture
@@ -1259,9 +1175,12 @@ def test_replacing_one_unit_of_a_dissolved_pair_clears_the_whole_suggestion(clie
     assert [suggestion.result for suggestion in read_rows(AiSuggestion)] == ["stale", "applied"]
 
 
-@pytest.mark.parametrize("action", ["confirm", "hold"])
-def test_person_owned_mate_survives_reclassify_of_other_side(client: TestClient, fake_ai: FakeAi, action: str) -> None:
+@pytest.mark.parametrize(("action", "first_result"), [("confirm", "applied"), ("hold", "stale")])
+def test_person_owned_mate_survives_reclassify_of_other_side(
+    client: TestClient, fake_ai: FakeAi, action: str, first_result: str
+) -> None:
     # 밀린 제안이 짝을 함께 덮어도 사람이 정한 판단과 새 문장은 그대로다 — 상태 조건이 빠지면 확정 글이 지워진다
+    # 확정은 채택을 남겨 그 제안이 applied로 남고(채택률), 보류는 아직 결정이 아니라 제안이 밀린다
     bundle = make_ai_bundle(client)
     ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
     use_reply(fake_ai)
@@ -1282,7 +1201,7 @@ def test_person_owned_mate_survives_reclassify_of_other_side(client: TestClient,
         decision_before.status, decision_before.revision, decision_before.suggestion_id,
     )
     assert get_target(client, bundle.id, ko)["status"] == "ai_suggested"
-    assert [suggestion.result for suggestion in read_rows(AiSuggestion)] == ["stale", "applied"]
+    assert [suggestion.result for suggestion in read_rows(AiSuggestion)] == [first_result, "applied"]
 
 
 def test_mate_confirmed_during_pair_call_stales_the_job(client: TestClient, fake_ai: FakeAi) -> None:
