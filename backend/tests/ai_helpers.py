@@ -70,3 +70,11 @@ def enable_ai(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "ai_base_url", AI_TEST_BASE_URL)
     monkeypatch.setattr(settings, "ai_api_token", AI_TEST_TOKEN)
     monkeypatch.setattr(settings, "ai_model", "glm-test")
+
+
+def enable_embed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """임베딩을 켜고 전용 설정(EMBED_*)을 가리킨다 — 채팅 설정(AI_*)과 따로 읽는지 보려고 AI는 건드리지 않는다."""
+    monkeypatch.setattr(settings, "embed_enabled", True)
+    monkeypatch.setattr(settings, "embed_base_url", AI_TEST_BASE_URL)
+    monkeypatch.setattr(settings, "embed_api_token", AI_TEST_TOKEN)
+    monkeypatch.setattr(settings, "embed_model", "embed-test")

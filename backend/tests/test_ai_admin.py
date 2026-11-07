@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import KST, now
+from app.db import engine
 from app.main import app
 from app.models import AiUsageEvent
 from app.routers.admin import _sum_usage_by_kst_day
@@ -18,6 +19,7 @@ from tests.access_helpers import run_in_session
 from tests.ai_helpers import (
     AI_TEST_BASE_URL,
     AI_TEST_TOKEN,
+    build_chat_body,
     capture_requests,
     enable_ai,
     install_ai_transport,
@@ -134,6 +136,21 @@ def test_ai_ping_success_records_usage(client: TestClient, monkeypatch: pytest.M
     [event] = _list_events()
     assert (event.login_id, event.feature, event.ok) == ("ops.member", "ping", True)
     assert (event.prompt_tokens, event.completion_tokens) == (11, 7)
+
+
+def test_ping_holds_no_db_connection_during_the_call(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 권한 판정이 요청 세션으로 연결을 잡았다 — 느린 AI 호출 동안 풀 연결을 붙들고 있으면 안 된다
+    enable_ai(monkeypatch)
+    seen: list[int] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(engine.pool.checkedout())
+        return httpx2.Response(200, json=build_chat_body('{"ok": true}'))
+
+    install_ai_transport(monkeypatch, handler)
+
+    assert client.post(PING, headers=OPS).status_code == 200
+    assert seen == [0]
 
 
 @pytest.mark.parametrize(

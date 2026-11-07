@@ -256,10 +256,11 @@ async def ping_ai(
     login_id: str = Depends(_require_ai_enabled), session: AsyncSession = Depends(get_session)
 ) -> AiPingOut:
     """사내 AI에 고정 문구 한 번을 보내 연결을 점검한다 — 성공·실패 모두 사용량 행이 남는다."""
+    # 권한 판정이 이 요청 세션으로 연결을 잡았다 — 느린 AI 호출 동안 풀 연결을 붙들지 않게 먼저 돌려준다(이후 DB는 쓰지 않는다)
+    await session.close()
     started = time.perf_counter()
     try:
         reply = await call_ai_recorded(
-            session,
             login_id=login_id,
             feature=AI_PING_FEATURE,
             messages=[

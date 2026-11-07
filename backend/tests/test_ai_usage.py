@@ -1,6 +1,8 @@
-"""AI 호출 계량(app.ai_usage) — 성공·실패 모두 1행, 원문 없음, 실패 기록이 원래 오류를 가리지 않음."""
+"""AI 호출 계량(app.ai_usage) — 성공·실패 모두 1행(자기 세션), 원문 없음, 실패 기록이 원래 오류를 가리지 않음."""
 
+import asyncio
 import json
+import logging
 from collections.abc import Callable
 from typing import NoReturn
 
@@ -9,7 +11,8 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai_usage import call_ai_recorded
+from app import ai_usage
+from app.ai_usage import call_ai_recorded, record_ai_usage
 from app.models import AiUsageEvent
 from app.settings import settings
 from tests.access_helpers import run_in_session
@@ -28,11 +31,24 @@ def _list_events() -> list[AiUsageEvent]:
 
 
 def _call_recorded(**overrides: object):
-    async def _call(session: AsyncSession):
-        kwargs = dict(login_id="ops.member", feature="unit", messages=MESSAGES)
-        return await call_ai_recorded(session, **{**kwargs, **overrides})
+    kwargs = dict(login_id="ops.member", feature="unit", messages=MESSAGES)
+    return asyncio.run(call_ai_recorded(**{**kwargs, **overrides}))
 
-    return run_in_session(_call)
+
+def _break_recording(monkeypatch: pytest.MonkeyPatch) -> None:
+    """기록용 세션의 commit을 실패시킨다 — DB가 죽은 상황."""
+    real_session_factory = ai_usage.SessionLocal
+
+    def make_session() -> AsyncSession:
+        session = real_session_factory()
+
+        async def fail_commit() -> NoReturn:
+            raise RuntimeError("db down")
+
+        monkeypatch.setattr(session, "commit", fail_commit)
+        return session
+
+    monkeypatch.setattr(ai_usage, "SessionLocal", make_session)
 
 
 def test_success_records_one_row_with_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -117,34 +133,40 @@ def test_config_error_is_recorded_as_a_failure(monkeypatch: pytest.MonkeyPatch) 
     assert [event.ok for event in _list_events()] == [False]
 
 
-def test_failed_recording_does_not_mask_the_ai_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_failed_recording_does_not_mask_the_ai_error(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     enable_ai(monkeypatch)
     install_ai_transport(monkeypatch, lambda request: httpx2.Response(500))
+    _break_recording(monkeypatch)
 
-    async def _call(session: AsyncSession) -> None:
-        async def fail_commit() -> NoReturn:
-            raise RuntimeError("db down")
-
-        monkeypatch.setattr(session, "commit", fail_commit)
-        await call_ai_recorded(session, login_id="ops.member", feature="unit", messages=MESSAGES)
-
-    with pytest.raises(httpx2.HTTPStatusError):  # 호출자가 받는 건 AI 오류 — 계량 실패(RuntimeError)가 아니다
-        run_in_session(_call)
+    with caplog.at_level(logging.WARNING, logger="app.ai_usage"):
+        with pytest.raises(httpx2.HTTPStatusError):  # 호출자가 받는 건 AI 오류 — 계량 실패(RuntimeError)가 아니다
+            _call_recorded()
 
     assert _list_events() == []
+    # 로그에는 예외 클래스 이름만 — 메시지·트레이스백에는 값이 실릴 수 있다
+    assert "RuntimeError" in caplog.text
+    assert "db down" not in caplog.text and "Traceback" not in caplog.text
 
 
 def test_failed_recording_after_a_good_reply_is_not_swallowed(monkeypatch: pytest.MonkeyPatch) -> None:
     # 성공 쪽은 삼키지 않는다 — DB가 죽었는데 조용히 계량이 빠지면 안 된다
     enable_ai(monkeypatch)
     install_ai_transport(monkeypatch, reply_with("{}"))
-
-    async def _call(session: AsyncSession) -> None:
-        async def fail_commit() -> NoReturn:
-            raise RuntimeError("db down")
-
-        monkeypatch.setattr(session, "commit", fail_commit)
-        await call_ai_recorded(session, login_id="ops.member", feature="unit", messages=MESSAGES)
+    _break_recording(monkeypatch)
 
     with pytest.raises(RuntimeError, match="db down"):
-        run_in_session(_call)
+        _call_recorded()
+
+
+def test_record_ai_usage_writes_one_row_in_its_own_session() -> None:
+    asyncio.run(
+        record_ai_usage(
+            login_id="ops.member", feature="unit", model="glm-test", prompt_tokens=5, completion_tokens=6, ok=True
+        )
+    )
+
+    [event] = _list_events()
+    assert (event.login_id, event.feature, event.model, event.ok) == ("ops.member", "unit", "glm-test", True)
+    assert (event.prompt_tokens, event.completion_tokens) == (5, 6)
