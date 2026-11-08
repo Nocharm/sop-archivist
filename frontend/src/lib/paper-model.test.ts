@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewUnit } from "./api-sop";
-import { buildPaperModel, canSplitAt, toBlockOffset, toUnitOffset } from "./paper-model";
+import { buildPaperModel, canSplitAt, readWarningText, toBlockOffset, toUnitOffset } from "./paper-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -78,5 +78,13 @@ describe("offset conversion", () => {
     expect(canSplitAt(unit, 5)).toBe(true);
     expect(canSplitAt(unit, 0)).toBe(false);
     expect(canSplitAt(unit, 9)).toBe(false);
+  });
+});
+
+describe("extraction warnings", () => {
+  // 누락 글 경고는 backend ingest가 detail.snippet에 담는다 - 비어 보이면 작성자가 글을 못 보고 확인해야 한다
+  it("shows the missing text the extractor flagged", () => {
+    expect(readWarningText({ snippet: "빠진 문장" })).toBe("빠진 문장");
+    expect(readWarningText({ table_index: "2" })).toBe("");
   });
 });

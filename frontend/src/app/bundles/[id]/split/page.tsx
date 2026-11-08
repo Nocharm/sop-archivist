@@ -35,7 +35,7 @@ import {
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { buildGroupSave } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
-import { buildPaperModel, canSplitAt, toBlockOffset, toUnitOffset } from "@/lib/paper-model";
+import { buildPaperModel, canSplitAt, readWarningText, toBlockOffset, toUnitOffset } from "@/lib/paper-model";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 
@@ -618,7 +618,7 @@ export default function SplitPage() {
                   .map((warning) => (
                     <li key={warning.id} className="flex items-center gap-2 text-[13px]" data-testid={`split-warning-${warning.id}`}>
                       <span className={`pill ${warning.acked_by ? "quiet" : "warn"}`}>{warning.acked_by ? "Checked" : t(`warn.${warning.kind}`)}</span>
-                      <span className="min-w-0 flex-1 truncate text-ink-2">{typeof warning.detail.text === "string" ? warning.detail.text : ""}</span>
+                      <span className="min-w-0 flex-1 truncate text-ink-2">{readWarningText(warning.detail)}</span>
                       {!warning.acked_by && canEdit && (
                         <button type="button" className="btn h-7" data-testid={`split-warning-ack-${warning.id}`} disabled={busy} onClick={() => void runSimple(() => ackWarning(bundleId, warning.id), t("split.warningChecked"))}>
                           {t("split.markChecked")}

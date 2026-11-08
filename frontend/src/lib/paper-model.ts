@@ -120,3 +120,8 @@ export function canSplitAt(unit: ViewUnit, at: number): boolean {
   if (toBlockOffset(unit.spans, at) === null) return false;
   return unit.text.slice(0, at).trim().length > 0 && unit.text.slice(at).trim().length > 0;
 }
+
+/** 추출 경고의 보일 글 - 누락 글 경고는 backend ingest가 원문 조각을 detail.snippet에 담는다. 다른 경고는 글이 없다 */
+export function readWarningText(detail: Record<string, unknown>): string {
+  return typeof detail.snippet === "string" ? detail.snippet : "";
+}
