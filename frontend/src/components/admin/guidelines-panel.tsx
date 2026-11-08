@@ -1,4 +1,5 @@
 // 관리 화면 - AI 지침·프롬프트 버전. 왼쪽은 지침 종류(rules·prompt.*)와 활성 버전, 오른쪽은 버전 이력·내용 보기·새 버전 쓰기·활성화.
+// 내용은 Markdown이라 보기는 읽기 보기(MarkdownView)로 그리고, 고칠 때만 원문을 쓴다(쓰기·미리 보기 전환).
 // 버전은 지우지 않고 쌓인다. 새 버전은 만든 뒤 따로 활성화해야 AI 작업이 쓴다(백엔드 sop_guidelines.py).
 "use client";
 
@@ -6,6 +7,7 @@ import { Check, FilePlus2, RefreshCw } from "lucide-react";
 import { useState } from "react";
 
 import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { MarkdownView } from "@/components/ui/markdown-view";
 import { BusyLabel, Collapse, Refresh } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -30,9 +32,9 @@ function VersionViewer({ guideline, version, onEdit }: { guideline: Guideline; v
         <span className="sk h-[280px] w-full" />
       ) : (
         <>
-          <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap rounded-md border border-line bg-sunken p-3 font-mono text-xs leading-5 text-ink" data-testid="guideline-content">
-            {loaded.data.content}
-          </pre>
+          <div className="max-h-[560px] overflow-auto rounded-md border border-line bg-surface px-5 py-4">
+            <MarkdownView source={loaded.data.content} testId="guideline-content" />
+          </div>
           <div>
             <button type="button" className="btn" data-testid="guideline-edit" onClick={() => loaded.data && onEdit(loaded.data.content)}>
               <FilePlus2 size={14} strokeWidth={1.5} aria-hidden />
@@ -52,6 +54,7 @@ export function GuidelinesPanel() {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [viewVersion, setViewVersion] = useState<number | null>(null);
   const [draft, setDraft] = useState<{ content: string; note: string } | null>(null);
+  const [isPreview, setIsPreview] = useState(false);
   const [saving, setSaving] = useState(false);
   const [activating, setActivating] = useState<number | null>(null);
   const [confirming, setConfirming] = useState<number | null>(null);
@@ -188,18 +191,50 @@ export function GuidelinesPanel() {
             </table>
           </div>
           <Collapse open={draft === null && shownVersion !== null}>
-            {shownVersion !== null && <VersionViewer guideline={guideline} version={shownVersion} onEdit={(content) => setDraft({ content, note: "" })} />}
+            {shownVersion !== null && (
+              <VersionViewer
+                guideline={guideline}
+                version={shownVersion}
+                onEdit={(content) => {
+                  setDraft({ content, note: "" });
+                  setIsPreview(false);
+                }}
+              />
+            )}
           </Collapse>
           <Collapse open={draft !== null}>
             <div className="grid gap-2 rounded-lg border border-accent-line bg-surface p-3" data-testid="guideline-editor">
-              <span className="text-xs font-semibold text-ink-3">{t("guidelines.newVersion", { key: guideline.key })}</span>
-              <textarea
-                className="h-[360px] w-full resize-y rounded-md border border-line-2 bg-surface p-2 font-mono text-xs leading-5 text-ink focus:border-accent focus:outline-none"
-                value={draft?.content ?? ""}
-                maxLength={CONTENT_MAX}
-                data-testid="guideline-editor-content"
-                onChange={(event) => setDraft((prev) => (prev ? { ...prev, content: event.target.value } : prev))}
-              />
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-ink-3">{t("guidelines.newVersion", { key: guideline.key })}</span>
+                <span className="flex-1" />
+                <div className="flex gap-0.5 rounded-md bg-sunken p-0.5" role="group" aria-label={t("guidelines.editorMode")}>
+                  {([false, true] as const).map((item) => (
+                    <button
+                      key={String(item)}
+                      type="button"
+                      aria-pressed={isPreview === item}
+                      className={`h-[26px] rounded px-2.5 text-xs ${isPreview === item ? "bg-surface font-semibold text-ink shadow-sm" : "text-ink-2"}`}
+                      data-testid={item ? "guideline-editor-preview" : "guideline-editor-write"}
+                      onClick={() => setIsPreview(item)}
+                    >
+                      {t(item ? "guidelines.preview" : "guidelines.write")}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {isPreview ? (
+                <div className="h-[360px] overflow-auto rounded-md border border-line-2 bg-surface px-5 py-4 fade-in">
+                  <MarkdownView source={draft?.content ?? ""} testId="guideline-editor-rendered" />
+                </div>
+              ) : (
+                <textarea
+                  className="h-[360px] w-full resize-y rounded-md border border-line-2 bg-surface p-2 font-mono text-xs leading-5 text-ink focus:border-accent focus:outline-none"
+                  value={draft?.content ?? ""}
+                  maxLength={CONTENT_MAX}
+                  data-testid="guideline-editor-content"
+                  onChange={(event) => setDraft((prev) => (prev ? { ...prev, content: event.target.value } : prev))}
+                />
+              )}
               <input
                 className="h-8 rounded-md border border-line-2 bg-surface px-2 text-[13px] text-ink focus:border-accent focus:outline-none"
                 placeholder={t("guidelines.notePlaceholder")}
