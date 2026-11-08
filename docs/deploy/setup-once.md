@@ -159,8 +159,8 @@ docker compose up -d backend && docker compose restart proxy
 
 브라우저에서 `http://<server-ip>:7777`로 접속해 `APP_SYSADMINS`에 넣은 계정으로 로그인한다.
 
-- 홈이 열리고 상단 바에 `SOP Archivist v<배포한 버전>`(`CHANGELOG.md` 최신 항목)이 보인다.
-- HR 첫 동기화 전이므로 이름·부서는 비어 있다(정상). 그래도 시스템 관리자라 권한 7개가 모두 보이고 상단 바에 관리 메뉴가 있다.
+- 홈(묶음 목록)이 열리고 상단 바에 `SOP Archivist v<배포한 버전>`(`CHANGELOG.md` 최신 항목)이 보인다.
+- 상단 바의 내 이름(또는 로그인 ID)을 눌러 `/account`를 연다. HR 첫 동기화 전이므로 이름·부서는 비어 있다(정상). 그래도 시스템 관리자라 권한 7개가 모두 보이고 상단 바에 관리 메뉴가 있다.
 - 로그인이 안 되면 [`deploy.md`](deploy.md) §4 트러블슈팅 표를 본다. 대개 A5 Keycloak 항목(redirect URI, Web origins, PKCE 필수 해제)이다.
 
 ### A8. 직원 디렉터리 첫 동기화 (HR)
@@ -171,7 +171,7 @@ docker compose up -d backend && docker compose restart proxy
    - "Rows read"가 기대한 전사 인원 규모이고, "Skipped rows"가 이상하게 많지 않다.
    - 처음이므로 "Would remove"(삭제 예정)와 "Login IDs that differ only in letter case"는 비어 있어야 한다(둘 다 DB에 이미 있는 행과 비교하는 값이다). 이후 동기화를 실행하기 전에도 미리보기에서 이 두 항목이 비어 있는지 본다 — 대소문자만 다른 loginId가 보이면 **중단**한다. 실 동기화가 새 행을 만들고 옛 행을 지워 그 사람의 권한 부여가 고아가 된다.
 2. **Run sync now.** 결과 카드에서 "Nothing was changed"(중단) 문구가 없고, "Removed"가 미리보기의 "Would remove"와 같은지 본다. 안전장치가 있다: 행 수가 피드 헤더와 맞지 않거나, 빈 피드이거나, 삭제가 `HR_SYNC_DELETE_CAP_PCT`(%)를 넘으면 DB를 전혀 건드리지 않고 중단한다. 같은 동기화는 5분 안에 다시 실행되지 않는다("Directory sync just ran...").
-3. 아래 "Recent runs"에 기록이 남았는지 보고, 홈을 새로고침해 **내 이름·부서가 채워졌는지** 본다. 비어 있으면 Keycloak `preferred_username`이 HR의 loginId와 대소문자까지 같지 않은 것이다(A5 Mappers).
+3. 아래 "Recent runs"에 기록이 남았는지 보고, `/account`(상단 바 이름 링크)를 새로고침해 **내 이름·부서가 채워졌는지** 본다. 비어 있으면 Keycloak `preferred_username`이 HR의 loginId와 대소문자까지 같지 않은 것이다(A5 Mappers).
 4. 문제가 없으면 `.env`의 `HR_SYNC_INTERVAL_HOURS=24`로 올리고 `docker compose up -d backend && docker compose restart proxy`. 이후 스케줄러가 마지막 회차 기준으로 24시간마다 돈다. 로그인할 때마다 본인 한 명은 하루 1회 HR에서 다시 가져온다(전체 동기화 없이 점진 충전).
 
 HR 연결이 안 되면 "HR sync is not set up on this server."(503, URL·토큰 중 비어 있음) 또는 "Could not reach the HR source."(502)가 뜬다 → [`deploy.md`](deploy.md) §4.
