@@ -10,7 +10,7 @@ import { UnitStatusIcon, UnitStatusPill } from "@/components/status";
 import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
 import {
-  clearDecision,
+  clearDecisions,
   confirmMatchesInBulk,
   getGroupByTarget,
   getOutputC,
@@ -146,12 +146,12 @@ export default function MatchPage() {
   }
 
   function clearSources() {
-    void run(async () => {
-      for (const id of linked) {
-        const unit = unitMap.get(id);
-        if (unit) await clearDecision(bundleId, id, unit.decision.revision);
-      }
-    }, t("classify.cleared"));
+    // 합친 출처(둘 이상)는 하나를 지우면 나머지가 보류로 바뀌어 revision이 오른다 - clearDecisions가 다시 읽는다
+    const units = linked.flatMap((id) => {
+      const unit = unitMap.get(id);
+      return unit ? [{ unit_id: id, revision: unit.decision.revision }] : [];
+    });
+    void run(() => clearDecisions(bundleId, units), t("classify.cleared"));
   }
 
   if (outputs.data === null) {
@@ -260,7 +260,17 @@ export default function MatchPage() {
                     </li>
                   );
                 })}
-                {candidates.length === 0 && <li className="text-ink-3">{t("match.noCandidates")}</li>}
+                {/* 불러오지 못한 것과 후보가 없는 것은 다르게 보인다(디자인 문서 10절) */}
+                {units.error !== null && units.data === null ? (
+                  <li className="text-ink-2" data-testid="match-candidates-error">
+                    {humanizeApiError(units.error, t)}{" "}
+                    <button type="button" className="btn ghost h-6" data-testid="match-candidates-retry" onClick={() => setReloadKey((value) => value + 1)}>
+                      {t("common.retry")}
+                    </button>
+                  </li>
+                ) : (
+                  candidates.length === 0 && units.data !== null && <li className="text-ink-3">{t("match.noCandidates")}</li>
+                )}
               </ul>
             </section>
           </>
@@ -279,6 +289,14 @@ export default function MatchPage() {
               <span className="font-mono text-sm font-semibold">{selected.docCode}</span>
               <UnitStatusPill status={toCoverStatus(selected.item.status)} testId="match-status" />
             </div>
+            {group.error !== null && (
+              <p className="text-[13px] text-ink-2" data-testid="match-group-error">
+                {humanizeApiError(group.error, t)}{" "}
+                <button type="button" className="btn ghost h-6" data-testid="match-group-retry" onClick={group.reload}>
+                  {t("common.retry")}
+                </button>
+              </p>
+            )}
             <button type="button" className="btn pri h-[38px] w-full" data-testid="match-link" disabled={!canEdit || busy || picked.length === 0} onClick={linkSources}>
               <Link2 size={16} strokeWidth={1.5} aria-hidden />
               {picked.length > 0 ? t("match.link", { n: picked.length }) : t("match.linkNone")}

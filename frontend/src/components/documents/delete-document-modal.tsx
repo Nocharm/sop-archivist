@@ -42,6 +42,7 @@ export function DeleteDocumentModal({ bundleId, document, onClose, onDeleted }: 
     <Modal
       title={t("documents.deleteTitle")}
       onClose={onClose}
+      isBusy={saving}
       testId="delete-document"
       footer={
         <>

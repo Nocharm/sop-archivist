@@ -76,8 +76,9 @@ export default function SplitPage() {
     () => (docId === null ? Promise.resolve(null) : getDocumentView(bundleId, docId)),
     `${docId}:${viewKey}`,
   );
-  const showSkeleton = useDelayedFlag(view.data === null && docId !== null);
-  const data = view.data;
+  // 문서를 바꾸는 동안 이전 문서의 보기는 쓰지 않는다 - 새 docId에 이전 문서의 revision·단위를 실어 보내게 된다
+  const data = view.data !== null && view.data.document.id === docId ? view.data : null;
+  const showSkeleton = useDelayedFlag(data === null && docId !== null);
   const model = useMemo(() => (data ? buildPaperModel(data) : null), [data]);
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -227,7 +228,8 @@ export default function SplitPage() {
   }
 
   function setBoundary(unit: ViewUnit, confirmed: boolean) {
-    if (docId === null) return;
+    // 다른 요청이 도는 중이면 보내지 않으니 먼저 칠하지도 않는다
+    if (docId === null || busy) return;
     setLocalChecks({ base: data, values: { ...checkOverrides, [unit.id]: confirmed } });
     void runSimple(() => setBoundaryConfirmed(bundleId, docId, [unit.id], confirmed), null, () => {
       // Enter는 확인하고 다음 확인 안 된 단위로 간다
@@ -660,6 +662,7 @@ export default function SplitPage() {
           title={t("split.holdTitle")}
           testId="split-hold-modal"
           onClose={() => setHoldFor(null)}
+          isBusy={busy}
           footer={
             <>
               <button type="button" className="btn" data-testid="split-hold-modal-cancel" onClick={() => setHoldFor(null)}>

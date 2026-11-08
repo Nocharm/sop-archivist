@@ -16,7 +16,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { humanizeApiError } from "@/lib/api-errors";
 import {
   bulkDecide,
-  clearDecision,
+  clearDecisions,
   getDocumentView,
   getGroupByUnit,
   getToBe,
@@ -292,7 +292,7 @@ export default function ClassifyPage() {
     if (decided.length === 0) return;
     setBusy(true);
     try {
-      for (const unit of decided) await clearDecision(bundleId, unit.unit_id, unit.decision.revision);
+      await clearDecisions(bundleId, decided.map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision })));
       showToast(t("classify.cleared"));
       dropDraft(row.key);
       setUnitsKey((key) => key + 1);
@@ -826,6 +826,7 @@ function BulkModal({ action, count, onClose, onConfirm }: { action: "delete" | "
     <Modal
       title={action === "delete" ? t("classify.bulkDeleteTitle") : t("classify.bulkMoveTitle")}
       onClose={onClose}
+      isBusy={busy}
       testId="classify-bulk-modal"
       footer={
         <>

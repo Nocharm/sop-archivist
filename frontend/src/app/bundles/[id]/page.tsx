@@ -356,6 +356,7 @@ function RequestReviewModal({ bundle, onClose }: { bundle: Bundle; onClose: () =
     <Modal
       title={t("overview.requestReviewTitle")}
       onClose={onClose}
+      isBusy={saving}
       testId="request-review"
       footer={
         <>

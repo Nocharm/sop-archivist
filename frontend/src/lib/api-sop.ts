@@ -551,8 +551,36 @@ export function bulkDecide(
   return apiFetch(`/bundles/${bundleId}/decisions/bulk`, { method: "POST", body: JSON.stringify(body) });
 }
 
-export function clearDecision(bundleId: number, unitId: number, revision: number): Promise<unknown> {
-  return apiFetch(`/bundles/${bundleId}/decisions/clear`, { method: "POST", body: JSON.stringify({ unit_id: unitId, revision }) });
+/** 배정 지우기 결과 - backend detach.DetachReport */
+export interface DetachReport {
+  reset_unit_ids: number[];
+  deleted_target_ids: number[];
+  held_unit_ids: number[];
+  held_target_ids: number[];
+}
+
+export function clearDecision(bundleId: number, unitId: number, revision: number): Promise<DetachReport> {
+  return apiFetch<DetachReport>(`/bundles/${bundleId}/decisions/clear`, { method: "POST", body: JSON.stringify({ unit_id: unitId, revision }) });
+}
+
+/**
+ * 여러 단위를 차례로 지운다 - 앞 단위를 지우면 같은 관계 묶음의 나머지가 보류로 바뀌며 revision이 오르므로,
+ * 그렇게 바뀐 단위는 지우기 전에 묶음을 다시 읽어 지금 revision을 쓴다(낡은 revision이면 409).
+ */
+export async function clearDecisions(bundleId: number, units: Array<{ unit_id: number; revision: number }>): Promise<void> {
+  const reset = new Set<number>();
+  const changed = new Set<number>();
+  for (const unit of units) {
+    if (reset.has(unit.unit_id)) continue;
+    let revision = unit.revision;
+    if (changed.has(unit.unit_id)) {
+      const group = await getGroupByUnit(bundleId, unit.unit_id);
+      revision = group.units.find((item) => item.unit_id === unit.unit_id)?.decision.revision ?? revision;
+    }
+    const report = await clearDecision(bundleId, unit.unit_id, revision);
+    for (const id of report.reset_unit_ids) reset.add(id);
+    for (const id of report.held_unit_ids) changed.add(id);
+  }
 }
 
 // --- 입구 2 짝 맞추기 ---

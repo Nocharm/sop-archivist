@@ -68,7 +68,7 @@ export function UploadModal({ bundleId, onClose, onUploaded }: UploadModalProps)
     );
 
   return (
-    <Modal title={t("documents.upload")} onClose={running ? () => undefined : onClose} testId="upload" footer={footer}>
+    <Modal title={t("documents.upload")} onClose={onClose} isBusy={running} testId="upload" footer={footer}>
       {rows === null ? (
         <div className="space-y-3">
           <fieldset className="space-y-1.5">

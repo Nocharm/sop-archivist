@@ -26,6 +26,7 @@ export function ConfirmModal({ title, target, summary, confirmLabel, danger = fa
       title={title}
       onClose={onClose}
       testId={testId}
+      isBusy={busy}
       footer={
         <>
           <button type="button" className="btn" data-testid={`${testId}-cancel`} onClick={onClose}>

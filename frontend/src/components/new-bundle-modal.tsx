@@ -41,6 +41,7 @@ export function NewBundleModal({ onClose }: { onClose: () => void }) {
     <Modal
       title={t("bundles.newTitle")}
       onClose={onClose}
+      isBusy={saving}
       testId="new-bundle"
       footer={
         <>
