@@ -2,9 +2,10 @@
 "use client";
 
 import { ChevronDown, ChevronRight, Download, FileUp, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -13,6 +14,7 @@ import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { buildDownloadName } from "@/lib/download-name";
 import { useI18n } from "@/lib/i18n";
 import { genId } from "@/lib/id";
+import { useLeaveGuard } from "@/lib/leave-guard";
 import { saveBlob } from "@/lib/save-file";
 import { SLOT_LABELS } from "@/lib/slot-labels";
 import { addStep, buildToBeInput, changeDocType, createDraft, isDraftDirty, orderDocs, removeDoc, removeStep, renameDoc, setNaSlot, type DraftDoc, type ToBeDraft } from "@/lib/tobe-draft";
@@ -24,6 +26,7 @@ const CELL_INPUT = "h-7 w-full rounded-md border border-line-2 bg-surface px-1.5
 
 export default function ToBePage() {
   const { t } = useI18n();
+  const router = useRouter();
   const bundleId = Number(useParams<{ id: string }>().id);
   const { bundle } = useBundle(bundleId);
   const canEdit = bundle?.my_role === "author" && bundle.status === "in_progress";
@@ -33,11 +36,14 @@ export default function ToBePage() {
   const [edit, setEdit] = useState<{ base: ToBe; draft: ToBeDraft } | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
+  // 저장하지 않은 편집이 있을 때 막은 링크 이동 - 확인하면 버리고 간다
+  const [leaveTo, setLeaveTo] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const draft = data && edit?.base === data ? edit.draft : data ? createDraft(data) : null;
   const dirty = data !== null && draft !== null && isDraftDirty(draft, data);
   const rows = draft ? orderDocs(draft.docs) : [];
+  useLeaveGuard(dirty, setLeaveTo);
   const sops = draft ? draft.docs.filter((doc) => doc.doc_type === "sop") : [];
 
   function update(next: ToBeDraft) {
@@ -371,6 +377,21 @@ export default function ToBePage() {
                 })}
           </tbody>
         </table>
+      )}
+      {leaveTo !== null && (
+        <ConfirmModal
+          title={t("tobe.leaveTitle")}
+          summary={<span>{t("tobe.leaveBody")}</span>}
+          confirmLabel={t("tobe.leaveConfirm")}
+          danger
+          testId="tobe-leave"
+          onClose={() => setLeaveTo(null)}
+          onConfirm={() => {
+            setLeaveTo(null);
+            setEdit(null);
+            router.push(leaveTo);
+          }}
+        />
       )}
       {draft !== null && rows.length === 0 && (
         <p className="px-[var(--pad)] py-6 text-ink-3" data-testid="tobe-empty">
