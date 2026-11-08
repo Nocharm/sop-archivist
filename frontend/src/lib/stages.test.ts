@@ -1,7 +1,7 @@
 // 묶음 주소 읽기 - 단계 경로와 묶음 밖 주소를 가른다.
 import { describe, expect, it } from "vitest";
 
-import { getStageHref, parseBundlePath } from "./stages";
+import { getStageHref, parseBundlePath, pickNextStage } from "./stages";
 
 describe("parseBundlePath", () => {
   it("reads the overview and a stage", () => {
@@ -20,5 +20,15 @@ describe("parseBundlePath", () => {
   it("builds stage links", () => {
     expect(getStageHref(4, "overview")).toBe("/bundles/4");
     expect(getStageHref(4, "match")).toBe("/bundles/4/match");
+  });
+});
+
+describe("pickNextStage", () => {
+  // 남은 것이 입구 2 새 문장뿐이면 분류에는 할 일이 없다 - 짝 맞추기로 간다
+  it("sends decide_units to Match when only new-document sentences are left", () => {
+    expect(pickNextStage("decide_units", ["targets_unassigned"])).toBe("match");
+    expect(pickNextStage("decide_units", ["units_unassigned", "targets_unassigned"])).toBe("classify");
+    expect(pickNextStage("decide_units", null)).toBe("classify");
+    expect(pickNextStage("fill_tobe", ["targets_unassigned"])).toBe("tobe");
   });
 });

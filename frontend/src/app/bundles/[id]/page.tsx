@@ -24,9 +24,9 @@ import { loadBundle, putBundle, useBundle } from "@/lib/bundle-store";
 import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useI18n } from "@/lib/i18n";
 import type { Lang } from "@/lib/i18n-messages";
-import { getStageHref, NEXT_ACTION_STAGE, STAGES } from "@/lib/stages";
+import { getStageHref, pickNextStage, STAGES } from "@/lib/stages";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
-import { useLoaded } from "@/lib/use-loaded";
+import { useLoaded, type Loaded } from "@/lib/use-loaded";
 
 type TFunc = (key: string, vars?: Record<string, string | number>) => string;
 
@@ -188,10 +188,10 @@ function Coverage({ bundle }: { bundle: Bundle }) {
   );
 }
 
-function NextActionCard({ bundle, onRequestReview }: { bundle: Bundle; onRequestReview: () => void }) {
+function NextActionCard({ bundle, blockerCodes, onRequestReview }: { bundle: Bundle; blockerCodes: string[] | null; onRequestReview: () => void }) {
   const { t } = useI18n();
   const action = bundle.next_action;
-  const stageKey = NEXT_ACTION_STAGE[action];
+  const stageKey = pickNextStage(action, blockerCodes);
   const stage = STAGES.find((item) => item.key === stageKey);
   const isAuthor = bundle.my_role === "author";
   let button = null;
@@ -233,9 +233,9 @@ function NextActionCard({ bundle, onRequestReview }: { bundle: Bundle; onRequest
   );
 }
 
-function ReviewGate({ bundle, onRequestReview }: { bundle: Bundle; onRequestReview: () => void }) {
+function ReviewGate({ bundle, readiness, onRequestReview }: { bundle: Bundle; readiness: Loaded<Readiness>; onRequestReview: () => void }) {
   const { t } = useI18n();
-  const { data, error, isLoading, reload } = useLoaded(() => getReadiness(bundle.id), `${bundle.id}:${bundle.revision}`);
+  const { data, error, isLoading, reload } = readiness;
   const showSkeleton = useDelayedFlag(isLoading && data === null);
   // 저장된 확인 값은 처음에 비어 있을 수 있어 전체 수는 항목 목록에서 센다
   const semanticTotal = SEMANTIC_CHECK_KEYS.length;
@@ -390,6 +390,8 @@ export default function BundleOverviewPage() {
   const { bundle, error, reload } = useBundle(bundleId);
   const [requesting, setRequesting] = useState(false);
   const showSkeleton = useDelayedFlag(bundle === null && error === null);
+  // 검토 요청 조건 - 오른쪽 조건 칸과 다음 행동 카드(남은 것이 새 문장뿐이면 짝 맞추기로)가 함께 쓴다
+  const readiness = useLoaded(() => getReadiness(bundleId), `${bundleId}:${bundle?.revision ?? 0}`);
 
   if (bundle === null) {
     if (error !== null) {
@@ -426,11 +428,11 @@ export default function BundleOverviewPage() {
           <BundleStatusPill status={bundle.status} testId="overview-status" />
           {bundle.my_role && <RoleTag role={bundle.my_role} testId="overview-role" />}
         </div>
-        <NextActionCard bundle={bundle} onRequestReview={() => setRequesting(true)} />
+        <NextActionCard bundle={bundle} blockerCodes={readiness.data?.blockers.map((item) => item.code) ?? null} onRequestReview={() => setRequesting(true)} />
         <Coverage bundle={bundle} />
       </div>
       <aside className="grid content-start gap-4 overflow-y-auto border-l border-line bg-surface px-[var(--pad)] py-[18px]">
-        <ReviewGate bundle={bundle} onRequestReview={() => setRequesting(true)} />
+        <ReviewGate bundle={bundle} readiness={readiness} onRequestReview={() => setRequesting(true)} />
         <AiJobPanel bundleId={bundle.id} />
         <Members bundle={bundle} />
       </aside>
