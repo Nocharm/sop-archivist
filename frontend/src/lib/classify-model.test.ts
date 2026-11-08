@@ -7,6 +7,7 @@ import {
   buildGroupSave,
   buildRows,
   buildSentenceSlots,
+  buildViewsKey,
   findNextOpen,
   findSystemHold,
   pickRowStatus,
@@ -269,5 +270,13 @@ describe("system hold codes", () => {
   it("finds the system code to show as a label", () => {
     expect(findSystemHold({ ...base, hold_reason: "system:related_unit_changed" })).toBe("related_unit_changed");
     expect(findSystemHold({ ...base, hold_reason: "다음 주 확인" })).toBeNull();
+  });
+});
+
+describe("views loader key", () => {
+  // 키가 같으면 불러오기가 다시 돌지 않는다 - 문서가 없는 묶음이 스켈레톤에 갇혔다
+  it("changes once the documents load, even when no old document is ready", () => {
+    expect(buildViewsKey(null)).not.toBe(buildViewsKey([]));
+    expect(buildViewsKey([3, 5])).toBe(buildViewsKey([3, 5]));
   });
 });

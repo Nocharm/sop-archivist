@@ -67,6 +67,14 @@ export function buildRows(views: DocumentView[], unitRows: Map<number, UnitRow>)
   return rows;
 }
 
+/**
+ * 옛 문서 보기들을 불러오는 키 - 문서 목록을 받기 전(null)과 받은 뒤(빈 목록 포함)가 달라야 불러오기가 돈다.
+ * 같으면 준비된 옛 문서가 없는 묶음이 스켈레톤에 머문다.
+ */
+export function buildViewsKey(oldDocIds: number[] | null): string {
+  return oldDocIds === null ? "" : `docs:${oldDocIds.join(",")}`;
+}
+
 // --- 보낼 곳 ---
 
 export type Destination =

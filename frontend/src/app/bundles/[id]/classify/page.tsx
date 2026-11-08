@@ -36,6 +36,7 @@ import {
   buildGroupSave,
   buildRows,
   buildSentenceSlots,
+  buildViewsKey,
   findNextOpen,
   findSystemHold,
   isTextChangeType,
@@ -91,7 +92,7 @@ export default function ClassifyPage() {
   const oldDocIds = (docs.data ?? []).filter((doc) => doc.side === "old" && doc.status === "ready").map((doc) => doc.id);
   const views = useLoaded<DocumentView[] | null>(
     () => (docs.data === null ? Promise.resolve(null) : Promise.all(oldDocIds.map((id) => getDocumentView(bundleId, id)))),
-    docs.data === null ? "" : oldDocIds.join(","),
+    buildViewsKey(docs.data === null ? null : oldDocIds),
   );
   const [unitsKey, setUnitsKey] = useState(0);
   const units = useLoaded(() => listAllUnits(bundleId), `${bundleId}:${unitsKey}`);
