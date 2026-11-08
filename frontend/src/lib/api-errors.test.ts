@@ -152,3 +152,21 @@ describe("humanizeApiError copy", () => {
     }
   });
 });
+
+describe("humanizeApiError rule rejections", () => {
+  function makeRuleError(status: number, rule: { code: string; [key: string]: unknown }): ApiError {
+    const err = new ApiError(status, rule.code);
+    err.rule = rule;
+    return err;
+  }
+
+  it("reads a known rule code with its context", () => {
+    const text = humanizeApiError(makeRuleError(409, { code: "confirm_required", unit_ids: [1, 2, 3] }), makeTranslator("en"));
+    expect(text).toContain("3");
+  });
+
+  it("never shows the raw JSON of an unknown rule, even on 422", () => {
+    expect(humanizeApiError(makeRuleError(422, { code: "made_up_rule" }), t)).toBe("error.unknown");
+    expect(humanizeApiError(makeRuleError(409, { code: "made_up_rule" }), t)).toBe("error.conflict");
+  });
+});

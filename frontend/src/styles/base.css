@@ -1,0 +1,31 @@
+/* 문서 전체 기본값과 사용자 설정 - 값은 tokens.css, 설정 속성은 첫 페인트 전 <html>에 붙는다(src/lib/ui-prefs.ts). */
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+/* 한글은 어절로 끊는다. 긴 ID·URL은 칸을 넘지 않게 아무 데서나 끊는다. */
+:lang(ko) {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+/* 원문 글꼴 - PC 글꼴 이름만 쓰므로 파일이 없다. 없는 PC에서는 뒤 대체 글꼴로 보인다. */
+:root[data-src-ko="pretendard"] { --font-source: var(--font-ui); }
+:root[data-src-ko="malgun"] { --font-source: "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; }
+:root[data-src-ko="batang"] { --font-source: Batang, AppleMyungjo, serif; }
+:root[data-src-en="arial"] { --font-source-en: Arial, Helvetica, sans-serif; }
+:root[data-src-en="pretendard"] { --font-source-en: var(--font-ui); }
+:root[data-src-en="times"] { --font-source-en: "Times New Roman", Times, serif; }
+:root[data-src-en="calibri"] { --font-source-en: Calibri, Carlito, Arial, sans-serif; }

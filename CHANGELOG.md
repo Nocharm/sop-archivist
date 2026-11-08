@@ -6,6 +6,18 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
 
 - (없음)
 
+## v0.4.0 — 2026-11-08
+
+- **범위**: SOP 재구성 **프런트 1차 화면**(`feat/sop-frontend` 머지). 지금까지 API로만 쓰던 결정적 코어(v0.2.0)와 AI 제안 층(v0.3.0)을 화면에서 쓸 수 있다. 백엔드는 바뀌지 않았다. 설계 기초: `frontend/docs/design/2026-11-07-frontend-design-foundations.md`.
+- **주요 변경**:
+  - 디자인 기초: G Graphite 토큰(라이트·다크, `src/styles/tokens.css`)과 저장소에 넣은 글꼴(Pretendard·Archivist Accent(Gmarket Sans 이름만 바꿈)·JetBrains Mono, OFL 라이선스 동봉). 화면 설정(배치·테마 등)과 언어는 첫 페인트 전에 붙는다.
+  - 앱 틀: 왼쪽 레일 또는 상단 탭 단계 이동, `/`는 묶음 목록, 내 신원·권한은 `/account`로 옮겼다. 묶음 개요(다음 행동·언어별 배정 현황·검토 요청 조건·AI 작업·멤버).
+  - 단계 화면: 문서(올리기·바로 고치기·지우기 확인), 원문 대조 쪼개기(나누기·합치기·새 단위·표 행·한/영 짝·되돌리기, 키보드 조작), To-Be 편집(N/A 칸·WI 단계·Excel), 분류(사람 경로와 AI 제안 표시·"AI에 묻기"), 짝 맞추기(입구 2), 결과물 A·B·C(KO/EN판·Excel), 검토.
+  - 다크 테마 공개와 실제 글자 대비 감사(`frontend/scripts/pw-contrast-audit.mjs`, 9화면×2테마 4.5:1 통과). SOP 화면 스모크 `frontend/scripts/pw-smoke-sop.mjs`.
+  - 1차에서 뺀 것: 경계 손잡이 끌기·줄 더블클릭, 보낼 곳 없는 보류(`H`), 결과물 B·C 최종 시안.
+- **배포 메모**: **서버 미배포** — 첫 배포는 `docs/deploy/setup-once.md` 순서대로 하면 이 버전이 올라가고, v0.2.0·v0.3.0 배포 메모도 함께 적용된다. 새 env·DB 리비전·새 의존성 없음(글꼴은 저장소에 들어 있어 빌드 때 외부 다운로드가 없다).
+  - 배포일은 서버 배포 뒤 여기에 적는다.
+
 ## v0.3.0 — 2026-11-08
 
 - **범위**: SOP 재구성 **AI 제안 층**(구현 계획 2). 결정적 코어(v0.2.0) 위에서 AI가 분류·고쳐 쓰기·번역·입구 2 짝 맞추기·한/영 따로 짝·복합 문장 나누기를 **제안**하고 사람이 줄마다 확정한다. AI가 꺼지거나 실패해도 사람 경로는 그대로 돈다. **프런트 화면은 아직 없다**(Claude Design 1차 작업이 별도 워크트리에서 병행 중이라, 서버에 올려도 화면에서 달라지는 것은 상단 바 버전뿐이고 AI 기능은 `/api/bundles/{id}/ai/…`로만 쓴다). **검증은 가짜 AI와 합성 SOP(`SYNTHETIC_` 파일)로만 했고 실제 사내 모델·실제 SOP로는 시험하지 않았다. 유사도 임계값은 합성 자료로만 잡은 값**이다. 설계: `docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`("(계획 2에서 정함)" 항목), 계획: `docs/superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md`(프런트 병행용 API 계약 포함).

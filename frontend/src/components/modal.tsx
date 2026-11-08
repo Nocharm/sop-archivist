@@ -33,7 +33,7 @@ export function Modal({ title, onClose, testId, children, footer }: ModalProps) 
     // click이 아니라 mousedown 기준 - 모달 안에서 드래그를 시작해 바깥에서 손을 떼도 잘못 닫히지 않는다
     <div
       data-testid={`${testId}-backdrop`}
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-gray-900/40 px-4 py-16"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-scrim px-4 py-16"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -43,7 +43,7 @@ export function Modal({ title, onClose, testId, children, footer }: ModalProps) 
         aria-modal="true"
         aria-labelledby={titleId}
         data-testid={testId}
-        className="w-full max-w-lg rounded-lg border border-gray-200 bg-white shadow-lg"
+        className="w-full max-w-lg rounded-lg border border-gray-200 bg-raised shadow-lg"
       >
         <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
           <h2 id={titleId} className="text-base font-semibold text-gray-900">

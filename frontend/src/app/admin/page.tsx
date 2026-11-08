@@ -52,7 +52,7 @@ function AccessSection() {
             role="tab"
             aria-selected={sub === key}
             data-testid={`access-sub-${key}`}
-            className="h-8 rounded px-3 text-sm text-gray-600 hover:text-gray-900 aria-selected:bg-white aria-selected:font-semibold aria-selected:text-gray-900 aria-selected:shadow-sm"
+            className="h-8 rounded px-3 text-sm text-gray-600 hover:text-gray-900 aria-selected:bg-surface aria-selected:font-semibold aria-selected:text-gray-900 aria-selected:shadow-sm"
             onClick={() => setSub(key)}
           >
             {t(`admin.sub.${key}`)}

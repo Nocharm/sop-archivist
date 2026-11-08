@@ -2,6 +2,10 @@
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙).
 
+## 2026-11-08
+
+- **프런트 1차 화면 머지(feat/sop-frontend → main, v0.4.0)** — Claude Design 컨셉(G Graphite 라이트·다크, 설계 기초 `frontend/docs/design/2026-11-07-frontend-design-foundations.md`) 위에 SOP 재구성의 모든 단계 화면을 얹었다: 앱 틀(레일/상단 탭, 첫 페인트 전 화면 설정)·묶음 목록·개요, 문서, 원문 대조 쪼개기, To-Be 편집, 분류(사람 경로 + AI 제안 표시), 짝 맞추기·결과물·검토. 화면 규칙은 순수 모델(`paper-model`·`tobe-draft`·`classify-model`)에 두고 테스트했고, SOP 규칙 거절은 `ApiError.rule` → `rule.<code>` 문구로 옮긴다. 다크 테마는 실제 글자 대비 감사(`scripts/pw-contrast-audit.mjs`, 9화면×2테마 4.5:1)를 통과했다. 1차에서 뺀 것: 경계 손잡이 끌기·줄 더블클릭, 보낼 곳 없는 보류(`H`), 결과물 B·C 최종 시안.
+
 ## 2026-11-05
 
 - **제품 설계: SOP 재구성 End-to-End** — 킥오프 부록 A·B를 `docs/domain/`(판단 기준 R01–R13·SOP 일곱 칸·WI Instruction/Why, 사례 B1–B5)으로 옮겨 AI 지침과 테스트 정답의 근거로 두고, 설계 `docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`를 썼다(두 입구, 원문 불변 블록 위 범위 단위, 제안·확정 분리, 관계 묶음 저장, 결과물 A·B·C는 코드 계산). 백엔드 먼저(계획 1 결정적 코어 → 계획 2 AI 층), 프런트는 Claude Design으로 1차 작업. 사용자 답: 표는 기본 데이터 표(레이아웃 표는 표마다 전환), 한/영은 한 파일, 공개 저장소에 문서·시드를 둔다.

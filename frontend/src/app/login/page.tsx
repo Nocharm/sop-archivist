@@ -130,7 +130,7 @@ export default function LoginPage() {
   return (
     <div className="flex flex-1 items-center justify-center px-4">
       <div className="w-full max-w-sm space-y-4">
-        <div data-testid="login-card" className="space-y-4 rounded-lg border border-gray-200 bg-white p-6">
+        <div data-testid="login-card" className="space-y-4 rounded-lg border border-gray-200 bg-surface p-6">
           <div>
             <h1 className="text-lg font-semibold text-gray-900">SOP Archivist</h1>
             <p className="text-sm text-gray-600">{t("login.subtitle")}</p>
@@ -142,7 +142,7 @@ export default function LoginPage() {
                 type="button"
                 data-testid="login-keycloak"
                 disabled={!isKeycloakReady(modeInfo)}
-                className="flex h-10 w-full items-center justify-center gap-2 rounded-md bg-accent text-sm font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex h-10 w-full items-center justify-center gap-2 rounded-md bg-accent text-sm font-semibold text-on-accent hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={() => void handleKeycloakSignin()}
               >
                 <Lock size={16} strokeWidth={1.5} />
@@ -187,7 +187,7 @@ export default function LoginPage() {
 
         {/* 로그아웃 직후 1회 노출 - SSO 세션은 아직 살아 있음을 알리고 전체 종료를 제공한다(keycloak 전용) */}
         {modeInfo.mode === "keycloak" && ssoHint && (
-          <div data-testid="login-sso-panel" className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
+          <div data-testid="login-sso-panel" className="space-y-3 rounded-lg border border-gray-200 bg-surface p-4">
             <p className="text-sm text-gray-600">{t("login.ssoActiveBody")}</p>
             <button
               type="button"

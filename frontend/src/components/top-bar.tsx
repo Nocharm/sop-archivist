@@ -1,62 +1,83 @@
-// 상단 바 - 서비스 이름·버전, 현재 사용자, 관리 링크, 언어, 로그아웃, dev 사용자 전환기. app-shell이 로그인한 모든 화면에 한 번 둔다.
+// 상단 막대 44px - 워드마크·버전, 묶음 안이면 묶음 제목과 합성 표시, 오른쪽에 사용자·배치·언어·관리·로그아웃(디자인 문서 8절). app-shell이 로그인한 모든 화면에 한 번 둔다.
 "use client";
 
-import { LogOut, Settings } from "lucide-react";
+import { FlaskConical, Languages, LogOut, Settings } from "lucide-react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 import { DevUserSwitcher } from "@/components/dev-user-switcher";
-import { LangToggle } from "@/components/lang-toggle";
+import { LayoutMenu } from "@/components/layout-menu";
+import { Tooltip } from "@/components/ui/tooltip";
 import { canSeeAdmin } from "@/lib/access";
+import { useBundle } from "@/lib/bundle-store";
 import { getDisplayName } from "@/lib/display-name";
 import { useI18n } from "@/lib/i18n";
 import { useSession } from "@/lib/session";
+import { parseBundlePath } from "@/lib/stages";
 
 // next.config.ts env가 package.json version을 빌드 때 인라인한다
 const APP_VERSION = process.env.APP_VERSION ?? "";
 
 export function TopBar() {
-  const { t, lang } = useI18n();
+  const { t, lang, setLang } = useI18n();
   const { me, signOut } = useSession();
+  const inBundle = parseBundlePath(usePathname());
+  const { bundle } = useBundle(inBundle?.bundleId ?? null);
+  const nextLang = lang === "ko" ? "en" : "ko";
 
   return (
-    <header className="flex h-12 shrink-0 items-center justify-between gap-4 border-b border-gray-200 bg-white px-4">
-      <div className="flex items-baseline gap-2">
-        <Link href="/" data-testid="top-bar-service" className="text-base font-semibold text-gray-900">
-          SOP Archivist
-        </Link>
-        <span data-testid="top-bar-version" className="text-xs text-gray-500">
-          {`v${APP_VERSION}`}
-        </span>
-      </div>
-      <div className="flex items-center gap-3">
-        <DevUserSwitcher />
-        {me && (
-          <span data-testid="top-bar-user" className="text-sm text-gray-700">
-            {getDisplayName(me, lang)}
-            {me.department && <span className="text-gray-500">{` · ${me.department}`}</span>}
+    <header className="tb" data-testid="top-bar">
+      <Link href="/" data-testid="top-bar-service" className="tb-brand">
+        SOP Archivist
+      </Link>
+      <span data-testid="top-bar-version" className="tb-dim font-mono text-[11px]">
+        {`v${APP_VERSION}`}
+      </span>
+      {inBundle && (
+        <>
+          <span className="tb-sep" aria-hidden />
+          <span data-testid="top-bar-bundle-title" className="min-w-0 truncate">
+            {bundle?.title ?? ""}
           </span>
-        )}
-        {me && canSeeAdmin(me) && (
-          <Link
-            href="/admin"
-            data-testid="top-bar-admin-link"
-            className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-gray-600 hover:bg-gray-100"
-          >
-            <Settings size={16} strokeWidth={1.5} />
-            {t("nav.admin")}
+          {bundle?.is_synthetic && (
+            <span data-testid="top-bar-synthetic" className="tag">
+              <FlaskConical size={12} strokeWidth={1.5} aria-hidden />
+              Synthetic data
+            </span>
+          )}
+        </>
+      )}
+      <span className="flex-1" />
+      <DevUserSwitcher />
+      {me && (
+        <Link href="/account" data-testid="top-bar-user" className="whitespace-nowrap rounded-md px-1 hover:underline">
+          {getDisplayName(me, lang)}
+          {me.department && <span className="tb-dim">{` · ${me.department}`}</span>}
+        </Link>
+      )}
+      <LayoutMenu />
+      <button
+        type="button"
+        data-testid="top-bar-lang"
+        className="btn ghost"
+        aria-label={t("nav.langSwitch")}
+        onClick={() => setLang(nextLang)}
+      >
+        <Languages size={16} strokeWidth={1.5} aria-hidden />
+        {nextLang === "ko" ? "한국어" : "English"}
+      </button>
+      {me && canSeeAdmin(me) && (
+        <Tooltip label={t("nav.admin")} align="end">
+          <Link href="/admin" data-testid="top-bar-admin-link" className="btn ghost icon" aria-label={t("nav.admin")}>
+            <Settings size={16} strokeWidth={1.5} aria-hidden />
           </Link>
-        )}
-        <LangToggle testId="top-bar-lang" />
-        <button
-          type="button"
-          data-testid="top-bar-signout"
-          className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-gray-600 hover:bg-gray-100"
-          onClick={signOut}
-        >
-          <LogOut size={16} strokeWidth={1.5} />
-          {t("nav.signOut")}
+        </Tooltip>
+      )}
+      <Tooltip label={t("nav.signOut")} align="end">
+        <button type="button" data-testid="top-bar-signout" className="btn ghost icon" aria-label={t("nav.signOut")} onClick={signOut}>
+          <LogOut size={16} strokeWidth={1.5} aria-hidden />
         </button>
-      </div>
+      </Tooltip>
     </header>
   );
 }

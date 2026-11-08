@@ -1,4 +1,4 @@
-// 기반 화면 스모크(Playwright + 시스템 Chrome) - dev 로그인, 상단 바, 홈의 내 권한, 언어 전환, 로그아웃/재로그인, 관리 화면(권한 관리·운영 패널).
+// 기반 화면 스모크(Playwright + 시스템 Chrome) - dev 로그인, 상단 바, 내 계정의 권한, 언어 전환, 로그아웃/재로그인, 관리 화면(권한 관리·운영 패널).
 // 전제: backend를 DEV_ENFORCE_PERMISSIONS=true APP_SYSADMINS=dev.admin 으로 8777에 띄우고(reset_db 직후), frontend `npm run dev`(3777).
 // 관리 화면 시나리오는 "Smoke Role"을 만들었다가 지우므로 실행 사이에 reset_db가 꼭 필요하진 않지만, 중간에 실패하면 역할이 남아 다음 실행이 409로 깨진다 - 그땐 reset_db.
 // 실행(frontend/ 에서): node scripts/pw-smoke-baseline.mjs   환경 변수: BASE_URL, CHROME_PATH
@@ -70,73 +70,73 @@ const wait = (page, id) => page.locator(`[data-testid="${id}"]`).waitFor({ state
 // ── 시나리오 ────────────────────────────────────────────────
 
 // 1) 부서 부여로 권한을 받는 qa.lead(DIV-QA -> Permission Admin)가 홈에서 자기 신원·권한을 본다
-await runStep("home as qa.lead", { devUser: "qa.lead" }, async ({ page, takeShot }) => {
-  await page.goto(`${BASE}/`);
+await runStep("account as qa.lead", { devUser: "qa.lead" }, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/account`);
   await wait(page, "top-bar-version");
   check("service name", (await getText(page, "top-bar-service")).trim() === "SOP Archivist");
   check("version matches package.json", (await getText(page, "top-bar-version")).trim() === `v${APP_VERSION}`, await getText(page, "top-bar-version"));
-  await wait(page, "home-permissions");
+  await wait(page, "account-permissions");
   check("top bar shows name", (await getText(page, "top-bar-user")).includes("QA Lead"), await getText(page, "top-bar-user"));
   check("top bar shows department", (await getText(page, "top-bar-user")).includes("Quality Division"));
-  const perms = await getText(page, "home-permissions");
-  check("home lists Manage permissions", perms.includes("Manage permissions"), perms);
-  check("home hides ungranted permissions", !perms.includes("Manage AI") && !perms.includes("Run directory sync"), perms);
-  const manageSource = await getText(page, "home-permission-source-permission.manage");
+  const perms = await getText(page, "account-permissions");
+  check("account lists Manage permissions", perms.includes("Manage permissions"), perms);
+  check("account hides ungranted permissions", !perms.includes("Manage AI") && !perms.includes("Run directory sync"), perms);
+  const manageSource = await getText(page, "account-permission-source-permission.manage");
   check("Manage permissions source names the department and role", manageSource.includes("Quality Division") && manageSource.includes("Permission Admin"), manageSource);
-  check("home identity shows login id", (await getText(page, "home-identity")).includes("qa.lead"));
-  check("AI status is shown", (await getText(page, "home-ai-status")).trim().length > 0, await getText(page, "home-ai-status"));
+  check("account identity shows login id", (await getText(page, "account-identity")).includes("qa.lead"));
+  check("AI status is shown", (await getText(page, "account-ai-status")).trim().length > 0, await getText(page, "account-ai-status"));
   check("admin link visible", await page.locator('[data-testid="top-bar-admin-link"]').isVisible());
   check("dev switcher shows current user", (await page.locator('[data-testid="dev-user-switcher"]').inputValue()) === "qa.lead");
-  await takeShot("baseline-home.png");
+  await takeShot("baseline-account.png");
 });
 
 // 2) 사용자 전환기 - 새로고침 없이 신원·권한이 따라 바뀐다(부서 상속·개인 직접 부여·sysadmin)
 await runStep("switch dev users", { devUser: "qa.lead" }, async ({ page }) => {
-  await page.goto(`${BASE}/`);
-  await wait(page, "home-permissions");
+  await page.goto(`${BASE}/account`);
+  await wait(page, "account-permissions");
   const switcher = page.locator('[data-testid="dev-user-switcher"]');
 
   await switcher.selectOption("prod.member");
   await page.waitForFunction(() => document.querySelector('[data-testid="top-bar-user"]')?.textContent?.includes("Production Member"), null, { timeout: T });
-  const direct = await getText(page, "home-permissions");
+  const direct = await getText(page, "account-permissions");
   check("direct grant shows only View system status", direct.includes("View system status") && !direct.includes("Manage permissions"), direct);
-  const directSource = await getText(page, "home-permission-source-system.view");
+  const directSource = await getText(page, "account-permission-source-system.view");
   check("direct grant source reads You and direct grant", directSource.includes("You") && directSource.includes("direct grant"), directSource);
 
   await switcher.selectOption("qa.member");
   await page.waitForFunction(() => document.querySelector('[data-testid="top-bar-user"]')?.textContent?.includes("QA Member"), null, { timeout: T });
-  check("child department inherits Manage permissions", (await getText(page, "home-permissions")).includes("Manage permissions"));
+  check("child department inherits Manage permissions", (await getText(page, "account-permissions")).includes("Manage permissions"));
 
   await switcher.selectOption("dev.admin");
   await page.waitForFunction(() => document.querySelector('[data-testid="top-bar-user"]')?.textContent?.includes("Dev Admin"), null, { timeout: T });
-  const all = await getText(page, "home-permissions");
+  const all = await getText(page, "account-permissions");
   check("sysadmin sees all four permissions", ["Manage permissions", "Run directory sync", "Manage AI", "View system status"].every((l) => all.includes(l)), all);
   check("catalog order, not alphabetical", all.indexOf("Manage permissions") < all.indexOf("Run directory sync") && all.indexOf("Run directory sync") < all.indexOf("Manage AI") && all.indexOf("Manage AI") < all.indexOf("View system status"), all.replace(/\s+/g, " "));
 });
 
 // 3) 직원 행이 없는 첫 로그인 - 이름 대신 login_id, 권한 없음, 관리 링크 없음
 await runStep("unknown employee", { devUser: "ghost.user" }, async ({ page, takeShot }) => {
-  await page.goto(`${BASE}/`);
-  await wait(page, "home-permissions-empty");
+  await page.goto(`${BASE}/account`);
+  await wait(page, "account-permissions-empty");
   check("falls back to login id", (await getText(page, "top-bar-user")).includes("ghost.user"), await getText(page, "top-bar-user"));
-  check("no permission list", (await page.locator('[data-testid="home-permissions"]').count()) === 0);
+  check("no permission list", (await page.locator('[data-testid="account-permissions"]').count()) === 0);
   check("admin link hidden", (await page.locator('[data-testid="top-bar-admin-link"]').count()) === 0);
   check("dev switcher shows the unlisted account", (await page.locator('[data-testid="dev-user-switcher"]').inputValue()) === "ghost.user");
-  await takeShot("baseline-home-empty.png");
+  await takeShot("baseline-account-empty.png");
 });
 
 // 4) 언어 전환 - 라벨·이름이 한국어로 바뀌고 새로고침해도 유지
 await runStep("language switch", { devUser: "qa.lead" }, async ({ page, takeShot }) => {
-  await page.goto(`${BASE}/`);
-  await wait(page, "home-permissions");
+  await page.goto(`${BASE}/account`);
+  await wait(page, "account-permissions");
   await page.locator('[data-testid="top-bar-lang"]').click();
-  await page.waitForFunction(() => document.querySelector('[data-testid="home-permissions"]')?.textContent?.includes("권한 관리"), null, { timeout: T });
-  check("permission label is Korean", (await getText(page, "home-permissions")).includes("권한 관리"));
+  await page.waitForFunction(() => document.querySelector('[data-testid="account-permissions"]')?.textContent?.includes("권한 관리"), null, { timeout: T });
+  check("permission label is Korean", (await getText(page, "account-permissions")).includes("권한 관리"));
   check("top bar shows Korean name", (await getText(page, "top-bar-user")).includes("품질리드"), await getText(page, "top-bar-user"));
-  await takeShot("baseline-home-ko.png");
+  await takeShot("baseline-account-ko.png");
   await page.reload();
-  await wait(page, "home-permissions");
-  check("language survives reload", (await getText(page, "home-permissions")).includes("권한 관리"));
+  await wait(page, "account-permissions");
+  check("language survives reload", (await getText(page, "account-permissions")).includes("권한 관리"));
 });
 
 // 5) 로그아웃 -> 로그인 화면 -> 계정 선택으로 재로그인
@@ -146,14 +146,14 @@ await runStep("sign out and sign in", {}, async ({ page, takeShot }) => {
   check("unauthenticated visit lands on /login", new URL(page.url()).pathname === "/login", page.url());
   await takeShot("baseline-login.png");
   await page.locator('[data-testid="login-dev-user-qa.lead"]').click();
-  await wait(page, "home-permissions");
+  await wait(page, "top-bar-user");
   check("signed in as qa.lead", (await getText(page, "top-bar-user")).includes("QA Lead"));
   await page.locator('[data-testid="top-bar-signout"]').click();
   await wait(page, "login-dev-user-qa.member");
   check("sign out returns to /login", new URL(page.url()).pathname === "/login", page.url());
   check("top bar is gone on /login", (await page.locator('[data-testid="top-bar-service"]').count()) === 0);
   await page.locator('[data-testid="login-dev-user-qa.member"]').click();
-  await wait(page, "home-permissions");
+  await wait(page, "top-bar-user");
   check("signed in as qa.member", (await getText(page, "top-bar-user")).includes("QA Member"));
 });
 
@@ -171,7 +171,7 @@ await runStep("me failure and retry", { devUser: "qa.lead", allowConsoleErrors: 
   await takeShot("baseline-me-error.png");
   await page.unroute("**/api/me");
   await page.locator('[data-testid="app-shell-retry"]').click();
-  await wait(page, "home-permissions");
+  await wait(page, "top-bar-user");
   check("retry recovers the home screen", (await getText(page, "top-bar-user")).includes("QA Lead"));
 });
 
@@ -389,10 +389,13 @@ await runStep("admin follows the dev user switch", { devUser: "qa.lead" }, async
 });
 
 // 11) 권한이 하나도 없으면 관리 화면은 홈으로 돌려보낸다
-await runStep("admin without permissions", { devUser: "ghost.user" }, async ({ page }) => {
+// 디렉터리에 없는 계정은 묶음 목록이 403(활성 계정 아님)이라 콘솔 오류를 허용하고, 빈 화면 대신 사람 말 문구가 보이는지 본다
+await runStep("admin without permissions", { devUser: "ghost.user", allowConsoleErrors: true }, async ({ page }) => {
   await page.goto(`${BASE}/admin`);
-  await wait(page, "home-permissions-empty");
+  await page.waitForURL((url) => url.pathname === "/", { timeout: T });
+  await wait(page, "top-bar-user");
   check("redirected to home", new URL(page.url()).pathname === "/", page.url());
+  await wait(page, "bundles-error");
   check("no admin tabs were rendered", (await countById(page, "admin-tab-access")) === 0);
 });
 

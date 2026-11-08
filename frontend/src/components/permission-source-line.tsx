@@ -10,7 +10,7 @@ import { CHIP } from "@/lib/ui-classes";
 export function SourceLine({ source, isSelf = false }: { source: EffectiveSource; isSelf?: boolean }) {
   const { t } = useI18n();
   const Icon = source.kind === "dept" ? Building2 : UserRound;
-  const subject = isSelf && source.kind === "user" ? t("home.sourceYou") : source.subject_name || source.subject_id;
+  const subject = isSelf && source.kind === "user" ? t("account.sourceYou") : source.subject_name || source.subject_id;
   return (
     <li className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-700">
       <span className={`${CHIP} gap-1`}>

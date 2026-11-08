@@ -1,30 +1,64 @@
 @import "tailwindcss";
+@import "../styles/tokens.css";
+@import "../styles/base.css";
+@import "../styles/components.css";
 
-/* 디자인 컨셉 확정 전의 중립 토큰 - 흰 바탕, 회색 단계, 악센트 1색. raw hex는 이 @theme 안에서만 쓴다. */
-@theme {
-  --color-accent: #2563eb;
+/*
+  Tailwind 이름을 디자인 토큰에 잇는다. raw 값은 tokens.css에만 둔다.
+  회색 단계는 기존 관리 화면이 쓰던 이름을 토큰 역할로 옮긴 것이다. 새 화면은 의미 이름(ink, line, surface…)을 쓴다.
+  --font-mono는 tokens.css의 같은 이름이 Tailwind 기본값을 덮으므로 여기서 다시 잇지 않는다(자기 참조가 된다).
+*/
+@theme inline {
+  --font-sans: var(--font-ui);
 
-  --color-gray-50: #f9fafb;
-  --color-gray-100: #f3f4f6;
-  --color-gray-200: #e5e7eb;
-  --color-gray-300: #d1d5db;
-  --color-gray-400: #9ca3af;
-  --color-gray-500: #6b7280;
-  --color-gray-600: #4b5563;
-  --color-gray-700: #374151;
-  --color-gray-800: #1f2937;
-  --color-gray-900: #111827;
+  --radius-sm: var(--r-1);
+  --radius-md: var(--r-2);
+  --radius-lg: var(--r-3);
 
-  /* 시스템 글꼴만 - 사내망 서버라 웹 폰트를 내려받지 않는다. 한글은 macOS·Windows 기본 고딕으로 떨어진다. */
-  --font-sans:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic",
-    "Noto Sans KR", sans-serif;
-}
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-sunken: var(--sunken);
+  --color-raised: var(--raised);
+  --color-scrim: var(--scrim);
+  --color-paper: var(--paper);
+  --color-paper-ink: var(--paper-ink);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-ink-4: var(--ink-4);
+  --color-line: var(--line);
+  --color-line-2: var(--line-2);
+  --color-hover: var(--hover);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-tint: var(--accent-tint);
+  --color-on-accent: var(--on-accent);
+  --color-sel: var(--sel-bg);
+  --color-chrome: var(--chrome);
+  --color-chrome-ink: var(--chrome-ink);
+  --color-chrome-ink-2: var(--chrome-ink-2);
+  --color-chrome-line: var(--chrome-line);
+  --color-chrome-hover: var(--chrome-hover);
+  --color-hl: var(--hl);
+  --color-on-hl: var(--on-hl);
+  --color-st-none: var(--st-none-ink);
+  --color-st-ai: var(--st-ai-ink);
+  --color-st-ai-tint: var(--st-ai-tint);
+  --color-st-hold: var(--st-hold-ink);
+  --color-st-hold-tint: var(--st-hold-tint);
+  --color-warn: var(--warn-ink);
+  --color-warn-tint: var(--warn-tint);
+  --color-danger: var(--danger-ink);
+  --color-danger-tint: var(--danger-tint);
 
-body {
-  background: var(--color-white);
-  color: var(--color-gray-900);
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  --color-gray-50: var(--sunken);
+  --color-gray-100: var(--hover);
+  --color-gray-200: var(--line);
+  --color-gray-300: var(--line-2);
+  --color-gray-400: var(--ink-4);
+  --color-gray-500: var(--ink-3);
+  --color-gray-600: var(--ink-2);
+  --color-gray-700: var(--ink-2);
+  --color-gray-800: var(--ink);
+  --color-gray-900: var(--ink);
 }
