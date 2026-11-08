@@ -23,6 +23,7 @@ import {
 } from "@/lib/api-sop";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
+import { buildIdenticalBatches } from "@/lib/match-model";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 
@@ -110,23 +111,12 @@ export default function MatchPage() {
   }
 
   function confirmIdenticalAll() {
-    const items = (identical.data ?? []).flatMap((candidate) => {
-      const unit = unitMap.get(candidate.unit_id);
-      return unit ? [{ candidate, unit }] : [];
-    });
+    const candidates = identical.data ?? [];
+    if (candidates.length === 0) return;
     void run(async () => {
-      // 새 문장 revision은 묶음을 불러야 알 수 있다 - 후보마다 한 번
-      const revisions = await Promise.all(items.map(({ candidate }) => getGroupByTarget(bundleId, candidate.target_id)));
-      await confirmMatchesInBulk(bundleId, {
-        identical: items.map(({ candidate, unit }, index) => ({
-          unit_id: candidate.unit_id,
-          unit_revision: unit.decision.revision,
-          target_id: candidate.target_id,
-          target_revision: revisions[index].targets.find((item) => item.id === candidate.target_id)?.revision ?? 1,
-        })),
-        new: [],
-      });
-    }, t("match.identicalDone", { n: items.length }));
+      // 서버 상한(1000)씩 차례로 - revision은 후보 목록에 실려 온다
+      for (const batch of buildIdenticalBatches(candidates)) await confirmMatchesInBulk(bundleId, batch);
+    }, t("match.identicalDone", { n: candidates.length }));
   }
 
   // 출처가 하나고 글자가 같으면 그대로, 둘 이상이면 합침 - 서버가 정한다. 글자가 다를 때만 사람이 말투·고쳐 씀을 고른다

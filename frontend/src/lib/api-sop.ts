@@ -558,6 +558,8 @@ export interface IdenticalCandidate {
   target_id: number;
   lang: UnitLang;
   text: string;
+  unit_revision: number;
+  target_revision: number;
 }
 
 export interface BulkMatchInput {

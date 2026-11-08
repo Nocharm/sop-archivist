@@ -58,6 +58,9 @@ class IdenticalCandidate(BaseModel):
     target_id: int
     lang: str
     text: str
+    # 한 번에 확정 요청에 그대로 싣는 revision — 화면이 후보마다 묶음을 다시 부르지 않아도 된다
+    unit_revision: int
+    target_revision: int
 
 
 class IdenticalItemIn(BaseModel):
@@ -322,7 +325,7 @@ async def list_identical_candidates(session: AsyncSession, bundle_id: int) -> li
     group_decision = aliased(UnitDecision)
     old_rows = (
         await session.execute(
-            select(Unit.id, Unit.lang, Unit.text, Unit.group_unit_id)
+            select(Unit.id, Unit.lang, Unit.text, Unit.group_unit_id, UnitDecision.revision)
             .join(Extraction, Extraction.id == Unit.extraction_id)
             .join(Document, Document.id == Extraction.document_id)
             .join(UnitDecision, UnitDecision.unit_id == Unit.id)
@@ -340,7 +343,10 @@ async def list_identical_candidates(session: AsyncSession, bundle_id: int) -> li
     ).all()
     new_rows = (
         await session.execute(
-            select(TargetSentence.id, TargetSentence.lang, TargetSentence.confirmed_text, TargetSentence.parent_target_id)
+            select(
+                TargetSentence.id, TargetSentence.lang, TargetSentence.confirmed_text, TargetSentence.parent_target_id,
+                TargetSentence.revision,
+            )
             .where(
                 TargetSentence.bundle_id == bundle_id, TargetSentence.origin == ORIGIN_NEW_DOC,
                 TargetSentence.kind == "sentence", TargetSentence.status == UNASSIGNED,
@@ -362,7 +368,12 @@ async def list_identical_candidates(session: AsyncSession, bundle_id: int) -> li
             continue
         old, new = old_matches[0], new_matches[0]
         if old.group_unit_id is None and new.parent_target_id is None:
-            candidates.append(IdenticalCandidate(unit_id=old.id, target_id=new.id, lang=lang, text=text))
+            candidates.append(
+                IdenticalCandidate(
+                    unit_id=old.id, target_id=new.id, lang=lang, text=text,
+                    unit_revision=old.revision, target_revision=new.revision,
+                )
+            )
     return candidates
 
 

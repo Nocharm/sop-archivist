@@ -240,10 +240,11 @@ def test_identical_candidates_are_unique_pairs(client: TestClient) -> None:
 
     candidates = _get_candidates(client, fx.bundle_id)
 
+    # 두 revision이 실려 있어 화면이 한 번에 확정 전에 후보마다 묶음을 다시 부르지 않는다
     expected = [
         {
             "unit_id": find_unit(fx.old_view, text)["id"], "target_id": _find_target(targets, text)["id"],
-            "lang": "ko", "text": text,
+            "lang": "ko", "text": text, "unit_revision": 1, "target_revision": _find_target(targets, text)["revision"],
         }
         for text in ("합성 장비를 켠다.", "합성 기록을 남긴다.")
     ]
