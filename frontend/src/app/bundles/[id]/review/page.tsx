@@ -115,7 +115,7 @@ export default function ReviewPage() {
           testId="review-reason"
           footer={
             <>
-              <button type="button" className="btn" onClick={() => setReasonFor(null)}>
+              <button type="button" className="btn" data-testid="review-reason-cancel" onClick={() => setReasonFor(null)}>
                 {t("common.cancel")}
               </button>
               <button

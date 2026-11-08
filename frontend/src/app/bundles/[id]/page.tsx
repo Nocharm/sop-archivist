@@ -247,7 +247,7 @@ function ReviewGate({ bundle, onRequestReview }: { bundle: Bundle; onRequestRevi
       {error !== null && data === null ? (
         <div className="flex items-center gap-2 text-ink-2" data-testid="overview-gate-error">
           {humanizeApiError(error, t)}
-          <button type="button" className="btn ghost icon" aria-label={t("common.retry")} onClick={reload}>
+          <button type="button" className="btn ghost icon" aria-label={t("common.retry")} data-testid="overview-gate-retry" onClick={reload}>
             <RefreshCw size={14} strokeWidth={1.5} aria-hidden />
           </button>
         </div>
@@ -396,7 +396,7 @@ export default function BundleOverviewPage() {
       return (
         <div data-testid="overview-error" className="flex items-center gap-3 px-6 py-6 text-ink-2">
           {humanizeApiError(error, t)}
-          <button type="button" className="btn" onClick={reload}>
+          <button type="button" className="btn" data-testid="overview-retry" onClick={reload}>
             <RefreshCw size={14} strokeWidth={1.5} aria-hidden />
             {t("common.retry")}
           </button>

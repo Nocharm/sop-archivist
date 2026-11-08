@@ -830,7 +830,7 @@ function BulkModal({ action, count, onClose, onConfirm }: { action: "delete" | "
       testId="classify-bulk-modal"
       footer={
         <>
-          <button type="button" className="btn" onClick={onClose}>
+          <button type="button" className="btn" data-testid="classify-bulk-cancel" onClick={onClose}>
             {t("common.cancel")}
           </button>
           <button

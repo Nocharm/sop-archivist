@@ -255,7 +255,7 @@ export default function ToBePage() {
       {error !== null && data === null ? (
         <div className="flex items-center gap-3 border-t border-line px-[var(--pad)] py-6 text-ink-2" data-testid="tobe-error">
           {humanizeApiError(error, t)}
-          <button type="button" className="btn" onClick={reload}>
+          <button type="button" className="btn" data-testid="tobe-retry" onClick={reload}>
             <RefreshCw size={14} strokeWidth={1.5} aria-hidden />
             {t("common.retry")}
           </button>

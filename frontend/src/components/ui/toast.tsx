@@ -63,7 +63,7 @@ export function ToastHost() {
             <CircleCheck size={16} strokeWidth={1.5} className="shrink-0 text-accent" aria-hidden />
           )}
           <span className="min-w-0">{toast.text}</span>
-          <button type="button" className="btn ghost icon h-6 w-6" aria-label={t("common.close")} onClick={() => dismissToast(toast.id)}>
+          <button type="button" className="btn ghost icon h-6 w-6" aria-label={t("common.close")} data-testid={`toast-close-${toast.id}`} onClick={() => dismissToast(toast.id)}>
             <X size={14} strokeWidth={1.5} aria-hidden />
           </button>
         </div>

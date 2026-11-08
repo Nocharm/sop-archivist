@@ -303,34 +303,34 @@ export function getDocumentView(bundleId: number, docId: number): Promise<Docume
   return apiFetch<DocumentView>(`/bundles/${bundleId}/documents/${docId}/view`);
 }
 
-const docPath = (bundleId: number, docId: number) => `/bundles/${bundleId}/documents/${docId}`;
+const buildDocPath = (bundleId: number, docId: number) => `/bundles/${bundleId}/documents/${docId}`;
 
 export function editUnits(bundleId: number, docId: number, revision: number, op: EditOp, confirm = false): Promise<EditResult> {
-  return apiFetch<EditResult>(`${docPath(bundleId, docId)}/edits`, { method: "POST", body: JSON.stringify({ revision, confirm, op }) });
+  return apiFetch<EditResult>(`${buildDocPath(bundleId, docId)}/edits`, { method: "POST", body: JSON.stringify({ revision, confirm, op }) });
 }
 
 export function undoEdit(bundleId: number, docId: number, revision: number, confirm = false): Promise<EditResult> {
-  return apiFetch<EditResult>(`${docPath(bundleId, docId)}/edits/undo`, { method: "POST", body: JSON.stringify({ revision, confirm }) });
+  return apiFetch<EditResult>(`${buildDocPath(bundleId, docId)}/edits/undo`, { method: "POST", body: JSON.stringify({ revision, confirm }) });
 }
 
 export function redoEdit(bundleId: number, docId: number, revision: number, confirm = false): Promise<EditResult> {
-  return apiFetch<EditResult>(`${docPath(bundleId, docId)}/edits/redo`, { method: "POST", body: JSON.stringify({ revision, confirm }) });
+  return apiFetch<EditResult>(`${buildDocPath(bundleId, docId)}/edits/redo`, { method: "POST", body: JSON.stringify({ revision, confirm }) });
 }
 
 export function setBoundaryConfirmed(bundleId: number, docId: number, unitIds: number[], confirmed: boolean): Promise<{ unit_ids: number[]; confirmed: boolean }> {
-  return apiFetch(`${docPath(bundleId, docId)}/units/boundary`, { method: "POST", body: JSON.stringify({ unit_ids: unitIds, confirmed }) });
+  return apiFetch(`${buildDocPath(bundleId, docId)}/units/boundary`, { method: "POST", body: JSON.stringify({ unit_ids: unitIds, confirmed }) });
 }
 
 export function createPair(bundleId: number, docId: number, revision: number, unitIds: number[]): Promise<PairResult> {
-  return apiFetch<PairResult>(`${docPath(bundleId, docId)}/pairs`, { method: "POST", body: JSON.stringify({ revision, unit_ids: unitIds }) });
+  return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs`, { method: "POST", body: JSON.stringify({ revision, unit_ids: unitIds }) });
 }
 
 export function confirmPair(bundleId: number, docId: number, pairId: number, revision: number): Promise<PairResult> {
-  return apiFetch<PairResult>(`${docPath(bundleId, docId)}/pairs/${pairId}/confirm`, { method: "POST", body: JSON.stringify({ revision }) });
+  return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}/confirm`, { method: "POST", body: JSON.stringify({ revision }) });
 }
 
 export function deletePair(bundleId: number, docId: number, pairId: number, revision: number): Promise<PairResult> {
-  return apiFetch<PairResult>(`${docPath(bundleId, docId)}/pairs/${pairId}?revision=${revision}`, { method: "DELETE" });
+  return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}?revision=${revision}`, { method: "DELETE" });
 }
 
 export function ackWarning(bundleId: number, warningId: number, note = ""): Promise<ExtractionWarning> {
