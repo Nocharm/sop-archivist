@@ -10,6 +10,7 @@
 | [domain/restructuring-rules.md](domain/restructuring-rules.md) | SOP 재구성 판단 기준(R01–R13, SOP 일곱 칸, WI Instruction/Why, 고쳐 쓰기 원칙) — AI 지침의 원문·테스트 정답의 근거 |
 | [domain/restructuring-cases.md](domain/restructuring-cases.md) | SOP 재구성 사례(QC Centrifuge 등)와 데이터를 쓰는 원칙 |
 | [superpowers/specs/2026-11-04-sop-archivist-baseline-design.md](superpowers/specs/2026-11-04-sop-archivist-baseline-design.md) | 기반 세팅 설계(범위·사내 서버 제약·이식 목록·권한 체계) |
+| [deploy/workflow-manual.html](deploy/workflow-manual.html) | 그림으로 보는 작업 흐름 설명서(v0.7.0 기준) — 전체 흐름·개요 화면·입구 1/2·분류·상태 변화·검토 조건·AI·막힌 곳·첫 배포 순서. 브라우저로 연다. 코드가 바뀌면 낡으니 기준 커밋을 꼬리말에서 본다 |
 | [deploy/setup-once.md](deploy/setup-once.md) | 서버 최초 1회 셋업 — `.env`, Keycloak 클라이언트, 첫 기동·`FORWARDED_ALLOW_IPS`, 첫 HR 동기화, `permission.manage` 위임, 절대 하지 말 것 |
 | [deploy/deploy.md](deploy/deploy.md) | 매 배포 런북 — 파이프라인, 베이스 이미지 tar 반입, 헬스체크, 트러블슈팅, 롤백 |
 | [deploy/backup.md](deploy/backup.md) | 일간 DB 백업 정책(덤프에 SOP 원문·원본 파일이 들어 있어 대외비), 기존 스택 복구·신규 서버 복구, 오프서버 사본 |
