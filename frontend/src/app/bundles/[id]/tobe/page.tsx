@@ -15,7 +15,7 @@ import { useI18n } from "@/lib/i18n";
 import { genId } from "@/lib/id";
 import { saveBlob } from "@/lib/save-file";
 import { SLOT_LABELS } from "@/lib/slot-labels";
-import { buildToBeInput, changeDocType, createDraft, isDraftDirty, orderDocs, removeDoc, renameDoc, type DraftDoc, type ToBeDraft } from "@/lib/tobe-draft";
+import { addStep, buildToBeInput, changeDocType, createDraft, isDraftDirty, orderDocs, removeDoc, removeStep, renameDoc, type DraftDoc, type ToBeDraft } from "@/lib/tobe-draft";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 
@@ -161,14 +161,15 @@ export default function ToBePage() {
     const steps = draft.wi_steps.filter((step) => step.code === doc.code).sort((a, b) => a.step_no - b.step_no);
     return (
       <div className="grid gap-1 py-1" data-testid={`tobe-${doc.key}-steps`}>
-        {steps.map((step, index) => (
+        {steps.map((step) => (
           <div key={step.step_no} className="grid grid-cols-[48px_minmax(0,1fr)_32px] items-center gap-2">
+            {/* 서버의 단계 번호 그대로 - 결과물 C·Excel과 같은 번호다 */}
             <span className="stg-n justify-self-end" aria-hidden>
-              {index + 1}
+              {step.step_no}
             </span>
             <input
               className={CELL_INPUT}
-              data-testid={`tobe-${doc.key}-step-${index + 1}`}
+              data-testid={`tobe-${doc.key}-step-${step.step_no}`}
               value={step.title}
               maxLength={500}
               placeholder={t("tobe.stepTitle")}
@@ -182,7 +183,8 @@ export default function ToBePage() {
                 type="button"
                 className="btn ghost icon h-7 w-7"
                 aria-label={t("tobe.removeStep")}
-                onClick={() => update({ ...draft, wi_steps: draft.wi_steps.filter((item) => item !== step) })}
+                data-testid={`tobe-${doc.key}-remove-step-${step.step_no}`}
+                onClick={() => update(removeStep(draft, doc.key, step.step_no))}
               >
                 <Trash2 size={14} strokeWidth={1.5} aria-hidden />
               </button>
@@ -194,12 +196,7 @@ export default function ToBePage() {
             type="button"
             className="btn ghost h-7 justify-self-start"
             data-testid={`tobe-${doc.key}-add-step`}
-            onClick={() =>
-              update({
-                ...draft,
-                wi_steps: [...draft.wi_steps, { code: doc.code, step_no: (steps.at(-1)?.step_no ?? 0) + 1, title: "" }],
-              })
-            }
+            onClick={() => update(addStep(draft, doc.key))}
           >
             <Plus size={14} strokeWidth={1.5} aria-hidden />
             {t("tobe.addStep")}

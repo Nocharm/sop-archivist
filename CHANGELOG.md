@@ -4,7 +4,7 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
 
 ## Unreleased
 
-- (없음)
+- To-Be WI 단계를 지워도 남은 단계 번호가 바뀌지 않는다(전에는 분류한 문장이 다른 단계 밑으로 옮겨갔다).
 
 ## v0.4.0 — 2026-11-08
 

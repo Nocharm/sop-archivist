@@ -88,7 +88,25 @@ export function changeDocType(draft: ToBeDraft, key: string, nextType: TargetDoc
   };
 }
 
-/** 저장 요청 - 보이는 순서가 order_index다. 단계 번호는 문서마다 1부터 다시 매긴다 */
+/** 새 단계는 그 WI에서 가장 큰 번호 다음을 받는다 - 지운 번호를 다시 쓰지 않는다 */
+export function addStep(draft: ToBeDraft, key: string): ToBeDraft {
+  const doc = draft.docs.find((item) => item.key === key);
+  if (!doc) return draft;
+  const last = Math.max(0, ...draft.wi_steps.filter((step) => step.code === doc.code).map((step) => step.step_no));
+  return { ...draft, wi_steps: [...draft.wi_steps, { code: doc.code, step_no: last + 1, title: "" }] };
+}
+
+/** 단계를 지워도 남은 단계의 번호는 그대로다(빈 번호 허용) */
+export function removeStep(draft: ToBeDraft, key: string, stepNo: number): ToBeDraft {
+  const doc = draft.docs.find((item) => item.key === key);
+  if (!doc) return draft;
+  return { ...draft, wi_steps: draft.wi_steps.filter((step) => !(step.code === doc.code && step.step_no === stepNo)) };
+}
+
+/**
+ * 저장 요청 - 보이는 순서가 order_index다. 단계 번호는 그대로 보낸다:
+ * 서버는 (code, step_no)로 단계를 알아보고 분류한 문장은 wi_step 번호를 가리키므로, 다시 매기면 문장이 다른 단계 밑으로 옮겨간다.
+ */
 export function buildToBeInput(draft: ToBeDraft, revision: number): ToBeInput {
   const rows = orderDocs(draft.docs);
   const steps: WiStep[] = [];
@@ -96,7 +114,7 @@ export function buildToBeInput(draft: ToBeDraft, revision: number): ToBeInput {
     draft.wi_steps
       .filter((step) => step.code === doc.code)
       .sort((a, b) => a.step_no - b.step_no)
-      .forEach((step, index) => steps.push({ code: doc.code, step_no: index + 1, title: step.title.trim() }));
+      .forEach((step) => steps.push({ code: doc.code, step_no: step.step_no, title: step.title.trim() }));
   }
   return {
     revision,

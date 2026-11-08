@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ToBe } from "./api-sop";
-import { buildToBeInput, changeDocType, createDraft, isDraftDirty, orderDocs, removeDoc, renameDoc } from "./tobe-draft";
+import { addStep, buildToBeInput, changeDocType, createDraft, isDraftDirty, orderDocs, removeDoc, removeStep, renameDoc } from "./tobe-draft";
 
 const BASE: ToBe = {
   revision: 4,
@@ -40,13 +40,26 @@ describe("tobe draft", () => {
     expect(next.docs.find((doc) => doc.key === "id-1")?.is_equipment_sop).toBe(false);
   });
 
-  it("orders the request as shown and renumbers steps", () => {
+  // 서버는 (code, step_no)로 단계를 알아보고 분류한 문장은 wi_step 번호를 가리킨다 - 번호를 다시 매기면 문장이 다른 단계로 옮겨간다
+  it("orders the request as shown and keeps step numbers, gaps included", () => {
     const input = buildToBeInput(createDraft(BASE), 4);
     expect(input.docs.map((doc) => [doc.code, doc.order_index])).toEqual([["SOP-1", 0], ["WI-01", 1]]);
     expect(input.wi_steps).toEqual([
       { code: "WI-01", step_no: 1, title: "A" },
-      { code: "WI-01", step_no: 2, title: "B" },
+      { code: "WI-01", step_no: 3, title: "B" },
     ]);
+  });
+
+  it("keeps the later steps' numbers when an earlier step is removed", () => {
+    const draft = createDraft(BASE);
+    const next = removeStep(draft, "id-2", 1);
+    expect(buildToBeInput(next, 4).wi_steps).toEqual([{ code: "WI-01", step_no: 3, title: "B" }]);
+  });
+
+  it("gives a new step the next number after the largest", () => {
+    const next = addStep(removeStep(createDraft(BASE), "id-2", 3), "id-2");
+    expect(buildToBeInput(next, 4).wi_steps.map((step) => step.step_no)).toEqual([1, 2]);
+    expect(buildToBeInput(addStep(createDraft(BASE), "id-2"), 4).wi_steps.map((step) => step.step_no)).toEqual([1, 3, 4]);
   });
 
   it("is clean right after loading", () => {
