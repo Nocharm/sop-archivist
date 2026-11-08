@@ -15,6 +15,7 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
 - 쪼개기 화면의 "누락 글" 경고에 빠진 글이 보인다.
 - 짝 맞추기의 "같은 문장 한 번에 확정"이 1,000개를 넘어도 동작한다(1,000개씩 나눠 보낸다). API: `GET /match/identical-candidates` 항목에 `unit_revision`·`target_revision`이 더해졌다(기존 필드 그대로).
 - 묶음 목록에서 합성 데이터 묶음에 "Synthetic data" 표시가 붙는다.
+- 보안: API 응답이 브라우저 캐시에 남지 않는다(nginx `/api/`에 `Cache-Control: no-store`). 배포 때 proxy 컨테이너를 다시 띄워야 적용된다.
 
 ## v0.4.0 — 2026-11-08
 
