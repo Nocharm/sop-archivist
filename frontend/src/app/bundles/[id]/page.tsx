@@ -21,7 +21,7 @@ import {
   type Readiness,
   type ReadinessIssue,
 } from "@/lib/api-sop";
-import { putBundle, useBundle } from "@/lib/bundle-store";
+import { loadBundle, putBundle, useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
 import type { Lang } from "@/lib/i18n-messages";
 import { getStageHref, NEXT_ACTION_STAGE, STAGES } from "@/lib/stages";
@@ -345,6 +345,8 @@ function RequestReviewModal({ bundle, onClose }: { bundle: Bundle; onClose: () =
     } catch (err) {
       setError(err);
       setSaving(false);
+      // revision·상태가 바뀌어 409일 수 있다 - 새 묶음으로 다시 시도할 수 있게 불러온다
+      void loadBundle(bundle.id);
     }
   }
 

@@ -12,7 +12,7 @@ import { BundleStatusPill } from "@/components/status";
 import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
 import { completeReview, getOutputC, reopenReview, returnReview, type OutputLang } from "@/lib/api-sop";
-import { putBundle, useBundle } from "@/lib/bundle-store";
+import { loadBundle, putBundle, useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
 import { getStageHref } from "@/lib/stages";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
@@ -42,6 +42,8 @@ export default function ReviewPage() {
       setReason("");
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
+      // 상태·revision이 바뀌어 거절됐을 수 있다(409) - 새 값을 받아야 다시 눌렀을 때 같은 이유로 실패하지 않는다
+      void loadBundle(bundleId);
     } finally {
       setBusy(false);
     }
