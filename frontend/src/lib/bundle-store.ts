@@ -58,6 +58,14 @@ export function loadBundle(bundleId: number): Promise<void> {
   return tracked;
 }
 
+/** 로그아웃·사용자 전환 때 - 앞 사용자의 묶음(멤버 실명 포함)이 다음 사용자에게 보이지 않게 모두 잊고, 도는 요청의 응답도 버린다 */
+export function clearBundleStore(): void {
+  entries.clear();
+  inflight.clear();
+  for (const bundleId of latest.keys()) latest.set(bundleId, ++sequence);
+  emit();
+}
+
 /** 화면에 들어올 때 - 상단 막대와 화면이 함께 들어오면 요청은 한 번이다 */
 function refreshOnEntry(bundleId: number): void {
   if (!inflight.has(bundleId)) void loadBundle(bundleId);

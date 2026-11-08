@@ -4,6 +4,7 @@
 import { UserRound } from "lucide-react";
 import type { ChangeEvent } from "react";
 
+import { clearBundleStore } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
 import { getStoredDevUser, LOCAL_USERS, storeDevUser } from "@/lib/dev-auth";
 import { useSession } from "@/lib/session";
@@ -13,9 +14,11 @@ export function DevUserSwitcher() {
   const { mode, reloadMe } = useSession();
   if (mode !== "dev") return null;
 
-  // 저장 -> /api/me 재조회. apiFetch가 요청마다 저장값을 읽으므로 새 사용자로 나간다.
+  // 저장 -> 묶음 캐시 비우기 -> /api/me 재조회. apiFetch가 요청마다 저장값을 읽으므로 새 사용자로 나간다.
+  // 화면은 앱 틀이 사용자마다 다시 그려 새 사용자로 다시 불러온다
   const handleChange = (e: ChangeEvent<HTMLSelectElement>) => {
     storeDevUser(e.target.value);
+    clearBundleStore();
     reloadMe();
   };
 

@@ -317,34 +317,34 @@ export function getDocumentView(bundleId: number, docId: number): Promise<Docume
   return apiFetch<DocumentView>(`/bundles/${bundleId}/documents/${docId}/view`);
 }
 
-const docPath = (bundleId: number, docId: number) => `/bundles/${bundleId}/documents/${docId}`;
+const buildDocPath = (bundleId: number, docId: number) => `/bundles/${bundleId}/documents/${docId}`;
 
 export function editUnits(bundleId: number, docId: number, revision: number, op: EditOp, confirm = false): Promise<EditResult> {
-  return apiFetch<EditResult>(`${docPath(bundleId, docId)}/edits`, { method: "POST", body: JSON.stringify({ revision, confirm, op }) });
+  return apiFetch<EditResult>(`${buildDocPath(bundleId, docId)}/edits`, { method: "POST", body: JSON.stringify({ revision, confirm, op }) });
 }
 
 export function undoEdit(bundleId: number, docId: number, revision: number, confirm = false): Promise<EditResult> {
-  return apiFetch<EditResult>(`${docPath(bundleId, docId)}/edits/undo`, { method: "POST", body: JSON.stringify({ revision, confirm }) });
+  return apiFetch<EditResult>(`${buildDocPath(bundleId, docId)}/edits/undo`, { method: "POST", body: JSON.stringify({ revision, confirm }) });
 }
 
 export function redoEdit(bundleId: number, docId: number, revision: number, confirm = false): Promise<EditResult> {
-  return apiFetch<EditResult>(`${docPath(bundleId, docId)}/edits/redo`, { method: "POST", body: JSON.stringify({ revision, confirm }) });
+  return apiFetch<EditResult>(`${buildDocPath(bundleId, docId)}/edits/redo`, { method: "POST", body: JSON.stringify({ revision, confirm }) });
 }
 
 export function setBoundaryConfirmed(bundleId: number, docId: number, unitIds: number[], confirmed: boolean): Promise<{ unit_ids: number[]; confirmed: boolean }> {
-  return apiFetch(`${docPath(bundleId, docId)}/units/boundary`, { method: "POST", body: JSON.stringify({ unit_ids: unitIds, confirmed }) });
+  return apiFetch(`${buildDocPath(bundleId, docId)}/units/boundary`, { method: "POST", body: JSON.stringify({ unit_ids: unitIds, confirmed }) });
 }
 
 export function createPair(bundleId: number, docId: number, revision: number, unitIds: number[]): Promise<PairResult> {
-  return apiFetch<PairResult>(`${docPath(bundleId, docId)}/pairs`, { method: "POST", body: JSON.stringify({ revision, unit_ids: unitIds }) });
+  return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs`, { method: "POST", body: JSON.stringify({ revision, unit_ids: unitIds }) });
 }
 
 export function confirmPair(bundleId: number, docId: number, pairId: number, revision: number): Promise<PairResult> {
-  return apiFetch<PairResult>(`${docPath(bundleId, docId)}/pairs/${pairId}/confirm`, { method: "POST", body: JSON.stringify({ revision }) });
+  return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}/confirm`, { method: "POST", body: JSON.stringify({ revision }) });
 }
 
 export function deletePair(bundleId: number, docId: number, pairId: number, revision: number): Promise<PairResult> {
-  return apiFetch<PairResult>(`${docPath(bundleId, docId)}/pairs/${pairId}?revision=${revision}`, { method: "DELETE" });
+  return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}?revision=${revision}`, { method: "DELETE" });
 }
 
 export function ackWarning(bundleId: number, warningId: number, note = ""): Promise<ExtractionWarning> {
@@ -565,8 +565,36 @@ export function bulkDecide(
   return apiFetch(`/bundles/${bundleId}/decisions/bulk`, { method: "POST", body: JSON.stringify(body) });
 }
 
-export function clearDecision(bundleId: number, unitId: number, revision: number): Promise<unknown> {
-  return apiFetch(`/bundles/${bundleId}/decisions/clear`, { method: "POST", body: JSON.stringify({ unit_id: unitId, revision }) });
+/** 배정 지우기 결과 - backend detach.DetachReport */
+export interface DetachReport {
+  reset_unit_ids: number[];
+  deleted_target_ids: number[];
+  held_unit_ids: number[];
+  held_target_ids: number[];
+}
+
+export function clearDecision(bundleId: number, unitId: number, revision: number): Promise<DetachReport> {
+  return apiFetch<DetachReport>(`/bundles/${bundleId}/decisions/clear`, { method: "POST", body: JSON.stringify({ unit_id: unitId, revision }) });
+}
+
+/**
+ * 여러 단위를 차례로 지운다 - 앞 단위를 지우면 같은 관계 묶음의 나머지가 보류로 바뀌며 revision이 오르므로,
+ * 그렇게 바뀐 단위는 지우기 전에 묶음을 다시 읽어 지금 revision을 쓴다(낡은 revision이면 409).
+ */
+export async function clearDecisions(bundleId: number, units: Array<{ unit_id: number; revision: number }>): Promise<void> {
+  const reset = new Set<number>();
+  const changed = new Set<number>();
+  for (const unit of units) {
+    if (reset.has(unit.unit_id)) continue;
+    let revision = unit.revision;
+    if (changed.has(unit.unit_id)) {
+      const group = await getGroupByUnit(bundleId, unit.unit_id);
+      revision = group.units.find((item) => item.unit_id === unit.unit_id)?.decision.revision ?? revision;
+    }
+    const report = await clearDecision(bundleId, unit.unit_id, revision);
+    for (const id of report.reset_unit_ids) reset.add(id);
+    for (const id of report.held_unit_ids) changed.add(id);
+  }
 }
 
 // --- 입구 2 짝 맞추기 ---
@@ -609,7 +637,7 @@ export interface OutputLocation {
 }
 
 export interface OutputARow {
-  row_kind: "unit" | "table" | "new";
+  row_kind: "unit" | "table" | "translation" | "new";
   lang: string;
   old_doc_code: string;
   old_doc_version: string;

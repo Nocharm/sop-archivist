@@ -40,6 +40,7 @@ export function NewBundleModal({ onClose }: { onClose: () => void }) {
     <Modal
       title={t("bundles.newTitle")}
       onClose={onClose}
+      isBusy={saving}
       testId="new-bundle"
       footer={
         <>
@@ -79,6 +80,7 @@ export function NewBundleModal({ onClose }: { onClose: () => void }) {
             data-testid="new-bundle-description"
             className={`${INPUT_FIELD} h-20 py-1.5`}
             value={description}
+            maxLength={2000}
             onChange={(event) => setDescription(event.target.value)}
           />
         </label>

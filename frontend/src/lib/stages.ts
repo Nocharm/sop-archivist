@@ -55,3 +55,12 @@ export const NEXT_ACTION_STAGE: Record<NextAction, StageKey | null> = {
   await_review: "review",
   done: null,
 };
+
+/**
+ * 다음 행동의 화면 - decide_units는 backend가 단위(units_*)와 새 문장(targets_*)을 함께 센다. 남은 것이 새 문장뿐이면
+ * 입구 2 새 문장이라 분류가 아니라 짝 맞추기에서 정한다. 막는 이유를 아직 모르면(null) 기본 화면이다.
+ */
+export function pickNextStage(action: NextAction, blockerCodes: string[] | null): StageKey | null {
+  const isTargetsOnly = blockerCodes !== null && blockerCodes.some((code) => code.startsWith("targets_")) && !blockerCodes.some((code) => code.startsWith("units_"));
+  return action === "decide_units" && isTargetsOnly ? "match" : NEXT_ACTION_STAGE[action];
+}

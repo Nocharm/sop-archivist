@@ -8,7 +8,7 @@ import type { Bundle } from "./api-sop";
 const getBundle = vi.fn<(id: number) => Promise<Bundle>>();
 vi.mock("./api-sop", () => ({ getBundle: (id: number) => getBundle(id) }));
 
-const { loadBundle, putBundle, useBundle } = await import("./bundle-store");
+const { clearBundleStore, loadBundle, putBundle, useBundle } = await import("./bundle-store");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -84,6 +84,19 @@ describe("bundle store", () => {
       await older.promise;
     });
     expect(screen.bundle).toMatchObject({ status: "in_review", revision: 6 });
+    act(() => root.unmount());
+  });
+
+  it("forgets every bundle on sign-out or user switch, including a load still in flight", async () => {
+    const older = defer<Bundle>();
+    getBundle.mockReturnValueOnce(older.promise);
+    const root = await mountScreen(14);
+    await act(async () => {
+      clearBundleStore();
+      older.resolve(makeBundle(14, "in_progress", 1));
+      await older.promise;
+    });
+    expect(screen.bundle).toBeNull();
     act(() => root.unmount());
   });
 });

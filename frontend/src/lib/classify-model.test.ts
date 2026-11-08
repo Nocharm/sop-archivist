@@ -10,6 +10,8 @@ import {
   buildViewsKey,
   findNextOpen,
   findSystemHold,
+  pickFirstFilter,
+  readCheckKey,
   pickRowStatus,
   readDestination,
   readHumanReason,
@@ -278,5 +280,19 @@ describe("views loader key", () => {
   it("changes once the documents load, even when no old document is ready", () => {
     expect(buildViewsKey(null)).not.toBe(buildViewsKey([]));
     expect(buildViewsKey([3, 5])).toBe(buildViewsKey([3, 5]));
+  });
+});
+
+describe("checks and filters", () => {
+  it("names AI and sentence checks, and falls back for unknown kinds", () => {
+    expect(readCheckKey({ kind: "evidence_not_found", value: "q" })).toBe("check.evidence_not_found");
+    expect(readCheckKey({ code: "number_mismatch" })).toBe("check.number_mismatch");
+    expect(readCheckKey({ kind: "something_new" })).toBe("check.other");
+  });
+
+  it("opens on the first filter that has rows", () => {
+    expect(pickFirstFilter({ unassigned: 0, ai_suggested: 0, on_hold: 3, confirmed: 5, all: 8 })).toBe("on_hold");
+    expect(pickFirstFilter({ unassigned: 2, ai_suggested: 1, on_hold: 0, confirmed: 0, all: 3 })).toBe("ai_suggested");
+    expect(pickFirstFilter({ unassigned: 0, ai_suggested: 0, on_hold: 0, confirmed: 0, all: 0 })).toBe("unassigned");
   });
 });

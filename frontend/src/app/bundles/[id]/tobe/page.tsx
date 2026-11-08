@@ -19,7 +19,7 @@ import { useLeaveGuard } from "@/lib/leave-guard";
 import { navigate } from "@/lib/nav-buffer";
 import { saveBlob } from "@/lib/save-file";
 import { SLOT_LABELS } from "@/lib/slot-labels";
-import { addStep, buildToBeInput, changeDocType, createDraft, isDraftDirty, orderDocs, removeDoc, removeStep, renameDoc, setNaSlot, type DraftDoc, type ToBeDraft } from "@/lib/tobe-draft";
+import { addStep, buildToBeInput, changeDocType, createDraft, findDraftProblem, isDraftDirty, orderDocs, removeDoc, removeStep, renameDoc, setNaSlot, type DraftDoc, type ToBeDraft } from "@/lib/tobe-draft";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 
@@ -76,6 +76,12 @@ export default function ToBePage() {
 
   async function handleSave() {
     if (!draft || !data) return;
+    // 서버는 줄을 말하지 않고 거절한다 - 보내기 전에 어느 줄인지 알린다
+    const problem = findDraftProblem(draft);
+    if (problem) {
+      showToast(t(problem.kind === "empty_code" ? "tobe.problemEmptyCode" : "tobe.problemNaReason", { n: problem.row, code: problem.code }), "error");
+      return;
+    }
     setSaving(true);
     try {
       await putToBe(bundleId, buildToBeInput(draft, data.revision));
@@ -250,7 +256,7 @@ export default function ToBePage() {
       {error !== null && data === null ? (
         <div className="flex items-center gap-3 border-t border-line px-[var(--pad)] py-6 text-ink-2" data-testid="tobe-error">
           {humanizeApiError(error, t)}
-          <button type="button" className="btn" onClick={reload}>
+          <button type="button" className="btn" data-testid="tobe-retry" onClick={reload}>
             <RefreshCw size={14} strokeWidth={1.5} aria-hidden />
             {t("common.retry")}
           </button>

@@ -22,9 +22,10 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   let body: ReactNode;
   if (me) {
-    // 경로가 바뀔 때마다 새로 그려 진입 전환을 한 번 탄다(같은 경로의 쿼리 변경은 그대로)
+    // 경로가 바뀔 때마다 새로 그려 진입 전환을 한 번 탄다(같은 경로의 쿼리 변경은 그대로).
+    // 사용자가 바뀌어도(dev 전환) 다시 그린다 - 앞 사용자로 불러온 원문·제안이 남아 보이지 않게
     body = (
-      <div key={pathname} className="page-enter">
+      <div key={`${me.login_id}:${pathname}`} className="page-enter">
         {children}
       </div>
     );

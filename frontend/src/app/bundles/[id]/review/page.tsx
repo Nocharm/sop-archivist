@@ -23,7 +23,7 @@ type ReasonAction = "return" | "reopen";
 export default function ReviewPage() {
   const { t } = useI18n();
   const bundleId = Number(useParams<{ id: string }>().id);
-  const { bundle } = useBundle(bundleId);
+  const { bundle, error: bundleError, reload: reloadBundle } = useBundle(bundleId);
   const [lang, setLang] = useState<OutputLang>("ko");
   const output = useLoaded(() => getOutputC(bundleId, lang), `${bundleId}:${lang}:${bundle?.revision ?? 0}`);
   const showSkeleton = useDelayedFlag(output.data === null && output.error === null);
@@ -49,7 +49,17 @@ export default function ReviewPage() {
     }
   }
 
-  if (!bundle) return null;
+  if (!bundle) {
+    // 불러오지 못했으면 빈 화면 대신 이유와 다시 시도를 보인다
+    return bundleError !== null ? (
+      <p className="flex items-center gap-3 p-6 text-ink-2" data-testid="review-error">
+        {humanizeApiError(bundleError, t)}
+        <button type="button" className="btn" data-testid="review-retry" onClick={reloadBundle}>
+          {t("common.retry")}
+        </button>
+      </p>
+    ) : null;
+  }
 
   return (
     <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)]" data-testid="review">
@@ -101,10 +111,11 @@ export default function ReviewPage() {
         <Modal
           title={reasonFor === "return" ? t("review.returnTitle") : t("review.reopenTitle")}
           onClose={() => setReasonFor(null)}
+          isBusy={busy}
           testId="review-reason"
           footer={
             <>
-              <button type="button" className="btn" onClick={() => setReasonFor(null)}>
+              <button type="button" className="btn" data-testid="review-reason-cancel" onClick={() => setReasonFor(null)}>
                 {t("common.cancel")}
               </button>
               <button

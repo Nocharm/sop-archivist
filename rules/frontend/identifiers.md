@@ -7,8 +7,8 @@ UI 요소에 안정적인 식별자(`data-testid`)를 부여해, 나중에 디�
 ## 규칙
 
 - **인터랙티브·상태 요소에 `data-testid`를 부여한다** — 사용자가 조작하거나 동작/상태가 바뀌는 요소.
-- **형식: `ComponentName-role`** — PascalCase 컴포넌트명 + `camelCase` 역할. 예: `UserProfile-submitButton`, `LoginForm-emailInput`.
-- **리스트 항목은 식별 키를 덧붙인다** — `TodoList-item-${todo.id}` 처럼 인스턴스를 유일하게 구분.
+- **형식: `surface-role`** — 화면·컴포넌트 이름과 역할을 소문자 케밥으로 잇는다(이 저장소의 관례). 예: `classify-primary`, `new-bundle-submit`, `top-bar-user`.
+- **리스트 항목은 식별 키를 덧붙인다** — `bundles-row-${bundle.id}`, `classify-row-${key}` 처럼 인스턴스를 유일하게 구분.
 - **식별 전용으로만 쓴다** — `data-testid`로 스타일링하거나 동작을 분기하지 않는다. 스타일은 `className`, 동작은 props로.
 
 ## 부여 대상 / 비대상
@@ -24,7 +24,7 @@ UI 요소에 안정적인 식별자(`data-testid`)를 부여해, 나중에 디�
 
 - **테스트** — `screen.getByTestId(...)`, `page.getByTestId(...)`. className/텍스트보다 리팩터링에 안정적.
 - **디버깅** — 브라우저에서 `[data-testid="..."]`로 즉시 선택, 로그·이슈에서 요소를 정확히 지칭.
-- **기능개선** — 대화에서 "`UserProfile-submitButton` 동작 바꿔줘"처럼 요소를 모호함 없이 참조.
+- **기능개선** — 대화에서 "`classify-primary` 동작 바꿔줘"처럼 요소를 모호함 없이 참조.
 
 ## Don't
 

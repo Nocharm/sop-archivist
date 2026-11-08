@@ -149,6 +149,24 @@ export function buildToBeInput(draft: ToBeDraft, revision: number): ToBeInput {
   };
 }
 
+/** 서버가 어느 줄인지 말하지 않고 거절하는 입력(빈 번호, 사유 없는 N/A) - 보이는 순서의 몇 번째 줄인지와 그 번호 */
+export interface DraftProblem {
+  kind: "empty_code" | "empty_na_reason";
+  /** 보이는 순서로 1부터 */
+  row: number;
+  code: string;
+}
+
+export function findDraftProblem(draft: ToBeDraft): DraftProblem | null {
+  const rows = orderDocs(draft.docs);
+  for (const [index, { doc }] of rows.entries()) {
+    const code = doc.code.trim();
+    if (!code) return { kind: "empty_code", row: index + 1, code };
+    if (draft.na_slots.some((slot) => slot.doc_key === doc.key && !slot.reason.trim())) return { kind: "empty_na_reason", row: index + 1, code };
+  }
+  return null;
+}
+
 export function isDraftDirty(draft: ToBeDraft, base: ToBe): boolean {
   return JSON.stringify(buildToBeInput(draft, base.revision)) !== JSON.stringify(buildToBeInput(createDraft(base), base.revision));
 }

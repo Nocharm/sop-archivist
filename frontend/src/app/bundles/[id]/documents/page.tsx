@@ -74,7 +74,7 @@ export default function DocumentsPage() {
       {error !== null && data === null ? (
         <div data-testid="documents-error" className="flex items-center gap-3 px-[var(--pad)] py-6 text-ink-2">
           {humanizeApiError(error, t)}
-          <button type="button" className="btn" onClick={reload}>
+          <button type="button" className="btn" data-testid="documents-retry" onClick={reload}>
             <RefreshCw size={14} strokeWidth={1.5} aria-hidden />
             {t("common.retry")}
           </button>

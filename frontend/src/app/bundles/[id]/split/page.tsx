@@ -78,8 +78,9 @@ export default function SplitPage() {
     () => (docId === null ? Promise.resolve(null) : getDocumentView(bundleId, docId)),
     `${docId}:${viewKey}`,
   );
-  const showSkeleton = useDelayedFlag(view.data === null && docId !== null);
-  const data = view.data;
+  // 문서를 바꾸는 동안 이전 문서의 보기는 쓰지 않는다 - 새 docId에 이전 문서의 revision·단위를 실어 보내게 된다
+  const data = view.data !== null && view.data.document.id === docId ? view.data : null;
+  const showSkeleton = useDelayedFlag(data === null && docId !== null);
   const model = useMemo(() => (data ? buildPaperModel(data) : null), [data]);
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -103,7 +104,7 @@ export default function SplitPage() {
     return pos ? { blockId: pos.blockId, offset: pos.offset } : null;
   })();
   const warnings = data?.extraction?.warnings ?? [];
-  const warnBlockIds = new Set(warnings.filter((w) => w.block_id !== null && w.needs_ack && !w.acked_by).map((w) => w.block_id as number));
+  const warnBlockIds = new Set(warnings.flatMap((w) => (w.block_id !== null && w.needs_ack && !w.acked_by ? [w.block_id] : [])));
   const pair = selected?.pair_id ? data?.pairs.find((item) => item.id === selected.pair_id) ?? null : null;
 
   function selectDoc(nextId: number) {
@@ -147,7 +148,7 @@ export default function SplitPage() {
     setBusy(true);
     try {
       const result = await run(false);
-      afterChange(result, okText);
+      handleChangeDone(result, okText);
     } catch (err) {
       const unitIds = err instanceof ApiError && err.rule?.code === "confirm_required" ? err.rule.unit_ids : null;
       if (Array.isArray(unitIds)) {
@@ -192,7 +193,7 @@ export default function SplitPage() {
     }
   }
 
-  function afterChange(result: EditResult, okText: string) {
+  function handleChangeDone(result: EditResult, okText: string) {
     clearTransient();
     selectUnit(result.created_unit_ids[0] ?? null);
     showToast(okText);
@@ -229,7 +230,8 @@ export default function SplitPage() {
   }
 
   function setBoundary(unit: ViewUnit, confirmed: boolean) {
-    if (docId === null) return;
+    // 다른 요청이 도는 중이면 보내지 않으니 먼저 칠하지도 않는다
+    if (docId === null || busy) return;
     setLocalChecks({ base: data, values: { ...checkOverrides, [unit.id]: confirmed } });
     void runSimple(() => setBoundaryConfirmed(bundleId, docId, [unit.id], confirmed), null, () => {
       // Enter는 확인하고 다음 확인 안 된 단위로 간다
@@ -447,7 +449,7 @@ export default function SplitPage() {
                   selected={selected}
                   canEdit={canEdit}
                   busy={busy}
-                  onChanged={(result) => (result ? afterChange(result, t("split.didSplit")) : refresh())}
+                  onChanged={(result) => (result ? handleChangeDone(result, t("split.didSplit")) : refresh())}
                 />
               )}
 
@@ -488,7 +490,7 @@ export default function SplitPage() {
                             (unit) =>
                               unit && (
                                 <li key={unit.id}>
-                                  <button type="button" className="grid w-full gap-0.5 rounded-md border border-line px-2 py-1.5 text-left hover:bg-hover" onClick={() => selectUnit(unit.id, true)}>
+                                  <button type="button" className="grid w-full gap-0.5 rounded-md border border-line px-2 py-1.5 text-left hover:bg-hover" data-testid={`split-pair-unit-${unit.id}`} onClick={() => selectUnit(unit.id, true)}>
                                     <span className="flex items-center gap-1.5 font-mono text-[11px] text-ink-3">
                                       <span className="lg">{unit.lang.toUpperCase()}</span>
                                       {unit.display_id}
@@ -675,6 +677,7 @@ export default function SplitPage() {
           title={t("split.holdTitle")}
           testId="split-hold-modal"
           onClose={() => setHoldFor(null)}
+          isBusy={busy}
           footer={
             <>
               <button type="button" className="btn" data-testid="split-hold-modal-cancel" onClick={() => setHoldFor(null)}>
@@ -720,7 +723,7 @@ export default function SplitPage() {
             setPending(null);
             setBusy(true);
             try {
-              afterChange(await run(), t("common.saved"));
+              handleChangeDone(await run(), t("common.saved"));
             } catch (err) {
               showToast(humanizeApiError(err, t), "error");
               refresh();

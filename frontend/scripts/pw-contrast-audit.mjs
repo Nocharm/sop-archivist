@@ -23,7 +23,7 @@ async function auditPage(page) {
       const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
       return [r, g, b, a / 255];
     };
-    const lum = ([r, g, b]) => {
+    const getLuminance = ([r, g, b]) => {
       const f = (v) => {
         const c = v / 255;
         return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
@@ -32,7 +32,7 @@ async function auditPage(page) {
     };
     const blend = (top, bottom) => top.slice(0, 3).map((v, i) => v * top[3] + bottom[i] * (1 - top[3]));
     // 겹친 배경을 아래부터 쌓아 실제 배경을 만든다
-    const backgroundOf = (el) => {
+    const findBackground = (el) => {
       const layers = [];
       for (let node = el; node; node = node.parentElement) {
         const bg = toRgba(getComputedStyle(node).backgroundColor);
@@ -56,9 +56,9 @@ async function auditPage(page) {
       if (rect.width === 0 || style.visibility === "hidden" || Number(style.opacity) === 0) continue;
       if (el.closest("[disabled],[aria-disabled='true'],:disabled,.sk,option,select")) continue;
       if (Number(getComputedStyle(el.closest("*")).opacity) < 1 || el.closest("button:disabled")) continue;
-      const fg = blend(toRgba(style.color), backgroundOf(el));
-      const bg = backgroundOf(el);
-      const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a);
+      const fg = blend(toRgba(style.color), findBackground(el));
+      const bg = findBackground(el);
+      const [hi, lo] = [getLuminance(fg), getLuminance(bg)].sort((a, b) => b - a);
       const ratio = (hi + 0.05) / (lo + 0.05);
       const size = parseFloat(style.fontSize);
       const large = size >= 24 || (size >= 18.66 && Number(style.fontWeight) >= 600);
@@ -82,6 +82,9 @@ for (const theme of ["light", "dark"]) {
   await page.locator('[data-testid^="bundles-row-"]').first().waitFor({ timeout: T });
   const half = page.locator('[data-testid^="bundles-row-"]', { hasText: "분류 절반" });
   const id = Number((await half.getAttribute("data-testid")).replace("bundles-row-", ""));
+  // AI 제안의 보라 점선·제안 표시는 4번째 시드 묶음에만 있다
+  const aiRow = page.locator('[data-testid^="bundles-row-"]', { hasText: "AI 제안" });
+  const aiId = Number((await aiRow.getAttribute("data-testid")).replace("bundles-row-", ""));
   const screens = [
     ["bundles", "/", '[data-testid^="bundles-row-"]'],
     ["overview", `/bundles/${id}`, '[data-testid="overview-gate-units"]'],
@@ -92,6 +95,8 @@ for (const theme of ["light", "dark"]) {
     ["match", `/bundles/${id}/match`, '[data-testid^="match-row-"]'],
     ["outputs", `/bundles/${id}/outputs`, '[data-testid="output-c"]'],
     ["review", `/bundles/${id}/review`, '[data-testid="output-c"]'],
+    ["classify-ai", `/bundles/${aiId}/classify`, '[data-testid="classify-ai-reason"]'],
+    ["outputs-ai", `/bundles/${aiId}/outputs`, '[data-testid="output-c"]'],
   ];
   // 감사가 실제로 잡는지 먼저 본다 - 일부러 흐린 글자 하나를 넣는다
   await page.evaluate(() => {

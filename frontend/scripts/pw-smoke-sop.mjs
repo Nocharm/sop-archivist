@@ -414,6 +414,9 @@ await runStep("split: H holds a unit without a destination", {}, async ({ page }
   await page.waitForLoadState("networkidle");
   check("held unit shows on Classify with its reason", (await page.locator('[data-testid="classify-reason"]').inputValue()) === "Smoke: not sure where it goes");
   check("it has no destination", (await getText(page, "classify-destination")).includes("Choose"), await getText(page, "classify-destination"));
+  // 저장된 사유를 지우면 빈 채로 남는다(전에는 저장된 값으로 되돌아갔다)
+  await page.locator('[data-testid="classify-reason"]').fill("");
+  check("a cleared reason stays empty", (await page.locator('[data-testid="classify-reason"]').inputValue()) === "");
 });
 
 await runStep("classify: hold an unassigned row without a destination", {}, async ({ page }) => {
@@ -421,13 +424,28 @@ await runStep("classify: hold an unassigned row without a destination", {}, asyn
   const rows = page.locator('[data-testid^="classify-row-u"]');
   await rows.first().waitFor({ timeout: T });
   const key = (await rows.first().getAttribute("data-testid")).replace("classify-row-", "");
-  // 줄의 관계 묶음이 다 온 뒤에 쓴다 - 불러오는 동안 쓴 글은 버려진다(검토 M3, 따로 고친다)
-  await page.waitForLoadState("networkidle");
+  // 줄의 관계 묶음을 불러오는 중에 바로 쓴다 - 그 글이 버려지지 않아야 한다(검토 M3)
   check("hold is available with no destination", !(await page.locator('[data-testid="classify-hold"]').isDisabled()));
   await page.locator('[data-testid="classify-reason"]').fill("Smoke: decide later");
   await page.locator('[data-testid="classify-hold"]').click();
   await page.waitForFunction((rowKey) => document.querySelector(`[data-testid="classify-row-${rowKey}"]`)?.getAttribute("data-status") === "on_hold", key, { timeout: T });
   check("the row is on hold", true);
+});
+
+await runStep("classify: an edit survives looking at another row", {}, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${freshBundleId}/classify`);
+  const rows = page.locator('[data-testid^="classify-row-u"]');
+  await rows.nth(2).waitFor({ timeout: T });
+  await rows.nth(1).click();
+  await page.locator('[data-testid="classify-destination"]').click();
+  await page.locator('[data-testid^="classify-dest-slot:"]:not([disabled])').first().click();
+  await page.keyboard.press("e");
+  const textarea = page.locator('textarea[data-testid^="classify-text-"]').first();
+  await textarea.fill("Smoke: edit kept across rows");
+  await rows.nth(2).click();
+  await rows.nth(1).click();
+  await textarea.waitFor({ timeout: T });
+  check("the edit is still there", (await textarea.inputValue()) === "Smoke: edit kept across rows");
 });
 
 await runStep("split rows of a table, then classify a row as a table", { allowConsoleErrors: true }, async ({ page }) => {

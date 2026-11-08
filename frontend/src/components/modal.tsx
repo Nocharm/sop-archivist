@@ -14,14 +14,16 @@ interface ModalProps {
   children: ReactNode;
   /** 하단 버튼 줄 - 비우면 본문만 그린다 */
   footer?: ReactNode;
+  /** 요청이 도는 중 - Esc·바깥 누름·닫기 단추로 닫지 않는다(닫히면 요청이 실패해도 알릴 곳이 없다) */
+  isBusy?: boolean;
 }
 
-export function Modal({ title, onClose, testId, children, footer }: ModalProps) {
+export function Modal({ title, onClose, testId, children, footer, isBusy = false }: ModalProps) {
   const { t } = useI18n();
   const titleId = useId();
   // 최신 onClose를 읽되 리스너를 다시 걸지 않는다
   const handleKeyDown = useEffectEvent((event: KeyboardEvent) => {
-    if (event.key === "Escape") onClose();
+    if (event.key === "Escape" && !isBusy) onClose();
   });
 
   useEffect(() => {
@@ -35,7 +37,7 @@ export function Modal({ title, onClose, testId, children, footer }: ModalProps) 
       data-testid={`${testId}-backdrop`}
       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-scrim px-4 py-16"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (event.target === event.currentTarget && !isBusy) onClose();
       }}
     >
       <div
@@ -49,7 +51,7 @@ export function Modal({ title, onClose, testId, children, footer }: ModalProps) 
           <h2 id={titleId} className="text-base font-semibold text-gray-900">
             {title}
           </h2>
-          <button type="button" data-testid={`${testId}-close`} className={BUTTON_ICON} aria-label={t("common.close")} onClick={onClose}>
+          <button type="button" data-testid={`${testId}-close`} className={BUTTON_ICON} aria-label={t("common.close")} disabled={isBusy} onClick={onClose}>
             <X size={16} strokeWidth={1.5} />
           </button>
         </div>

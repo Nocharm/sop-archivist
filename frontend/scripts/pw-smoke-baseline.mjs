@@ -69,7 +69,7 @@ const wait = (page, id) => page.locator(`[data-testid="${id}"]`).waitFor({ state
 
 // ── 시나리오 ────────────────────────────────────────────────
 
-// 1) 부서 부여로 권한을 받는 qa.lead(DIV-QA -> Permission Admin)가 홈에서 자기 신원·권한을 본다
+// 1) 부서 부여로 권한을 받는 qa.lead(DIV-QA -> Permission Admin)가 /account에서 자기 신원·권한을 본다
 await runStep("account as qa.lead", { devUser: "qa.lead" }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/account`);
   await wait(page, "top-bar-version");
