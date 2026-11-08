@@ -39,6 +39,8 @@ cd frontend; $env:BACKEND_URL="http://localhost:8777"; npm run dev
 4. **워크트리 세션(`.claude/worktrees/<name>`)의 Bash 제약**: 세션이 워크트리에 격리되면 harness가 "워크트리 밖을 건드릴 수 있다"고 판단하는 명령을 통째로 거부한다 — `cat >> file <<'EOF'` 히어독 append, `cd <루트 체크아웃>`이 섞인 체인, `sed -i`+`git add`처럼 파일 수정과 git을 한 줄에 묶은 것, `&&`가 길게 이어진 복합 명령. 빈 출력이 아니라 **명령 자체가 안 돈다**. 대처: 파일 추가·수정은 Write/Edit 도구로, git·테스트·서버 기동은 **한 줄에 하나씩** 워크트리 안 절대경로로. 워크트리엔 `node_modules`·`backend/.venv`가 없으므로 `cp -Rc`(APFS 클론, 심링크 금지 — turbopack이 거부)로 복제해 둔다.
 5. **CSS transform이 걸린 SVG `<g>`는 `locator.click()`이 못 맞춘다**: Playwright가 잡는 클릭점이 실제 그려진 자리와 어긋나 "svg subtree intercepts pointer events"로 30초 타임아웃. `boundingBox()` 중심을 `page.mouse.click(x, y, { button })`으로 찍으면 된다.
 6. **평문 HTTP는 localhost에서 재현되지 않는다**: localhost는 secure context라 `crypto.randomUUID`·`crypto.subtle`·Clipboard API가 돌아간다. 서버(원격 IP, 평문 HTTP)에서만 깨지는 코드는 LAN IP로 접속해 다시 확인한다.
+7. **헤드리스 Chrome은 blob 내려받기 이름을 `download`로 알린다**: 인증 헤더가 필요한 파일(Excel 등)은 `apiFetchBlob`으로 받아 `<a download="…">`로 저장하는데, 헤드리스에서 `download.suggestedFilename()`은 `download`가 나온다(앵커의 `download` 속성은 정확했다). 스모크는 내려받기가 시작됐는지만 보고, 파일 이름 규칙은 `lib/download-name.test.ts` 단위 테스트가 본다.
+8. **대비는 토큰 쌍이 아니라 그려진 글자로 잰다**: 토큰 표가 전부 통과해도 다른 값이 새어 들어오면 화면 글자가 안 보일 수 있다. `scripts/pw-contrast-audit.mjs`는 글자마다 배경을 아래에서부터 쌓아 실제 대비를 재고(oklch·color-mix는 1×1 캔버스로 sRGB 변환), 시작 전에 일부러 넣은 흐린 글자를 잡는지 확인한다. 감사가 아무것도 못 잡는 상태로 "전부 통과"하는 것을 막기 위해서다.
 
 ## 기타
 - 스크린샷은 Read로 직접 볼 수 있다.

@@ -169,7 +169,8 @@ docker-compose.yml
 형제 프로젝트 bpm을 6개월 운영하며 실측으로 얻은 교훈 중 이 프로젝트에도 유효한 것만 `docs/lessons/`에 옮겼다(인덱스 [`docs/lessons/README.md`](docs/lessons/README.md)). **프런트 화면이나 검증 스크립트를 건드리기 전에 해당 문서를 먼저 읽을 것.**
 
 - [`docs/lessons/react-ts-patterns.md`](docs/lessons/react-ts-patterns.md) — useCallback deps TDZ → ref 미러, `useEffectEvent`(§7)·`<Activity>`(§8), 이펙트 안 setState 린트, Tailwind display 클래스 이중 지정 금지.
-- [`docs/lessons/browser-verification.md`](docs/lessons/browser-verification.md) — Playwright + 시스템 Chrome 검증, **dev DB 오염 함정**("0 events"·"목록이 비어 있음"은 코드가 아니라 오염일 수 있다), node 스크립트 cwd, 워크트리 세션 Bash 제약, 평문 HTTP는 localhost에서 재현되지 않는다.
+- [`docs/lessons/browser-verification.md`](docs/lessons/browser-verification.md) — Playwright + 시스템 Chrome 검증, **dev DB 오염 함정**("0 events"·"목록이 비어 있음"은 코드가 아니라 오염일 수 있다), node 스크립트 cwd, 워크트리 세션 Bash 제약, 평문 HTTP는 localhost에서 재현되지 않는다, 헤드리스 blob 내려받기 이름, 그려진 글자 대비 감사.
+- [`docs/lessons/remote-sessions.md`](docs/lessons/remote-sessions.md) — 클라우드 세션이 연결된 PC 폴더를 다룰 때: **파일 전송은 비동기라 체크섬을 확인하고 쓴다**, 다른 경로로 마운트된 워크트리를 prune하지 않는다, git 쓰기에는 삭제 권한, VM에서는 맥 `node_modules`가 돌지 않는다.
 
 ---
 
