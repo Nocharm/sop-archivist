@@ -1,8 +1,15 @@
 // 결과물 C - 새 문서를 칸·단계 순서로 미리 본다. 결과물 화면과 검토 화면이 같이 쓴다. 확정 전 새 문장은 점선.
 "use client";
 
+import { ArrowDown, ArrowUp } from "lucide-react";
+
+import { Tooltip } from "@/components/ui/tooltip";
 import type { OutputC, OutputCItem, OutputLang } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
+import { canMoveTarget, type MoveDir } from "@/lib/target-order";
+
+/** 순서 바꾸기 - 결과물 화면에서 작성자에게만 넘긴다. 검토 화면은 넘기지 않아 단추가 없다 */
+export type MoveTarget = (targetDocId: number, locationKey: string, targetId: number, dir: MoveDir) => void;
 
 function CItemView({ item }: { item: OutputCItem }) {
   if (item.kind === "table") {
@@ -29,7 +36,29 @@ function CItemView({ item }: { item: OutputCItem }) {
   );
 }
 
-export function OutputCView({ data, lang }: { data: OutputC; lang: OutputLang }) {
+function MoveButtons({ items, item, onMove, busy }: { items: OutputCItem[]; item: OutputCItem; onMove: (dir: MoveDir) => void; busy: boolean }) {
+  const { t } = useI18n();
+  return (
+    <span className="row-actions absolute right-0 top-0 flex gap-0.5 bg-paper" style={{ fontFamily: "var(--font-ui)" }}>
+      {([-1, 1] as const).map((dir) => (
+        <Tooltip key={dir} label={t(dir < 0 ? "outputs.moveUp" : "outputs.moveDown")} align="end">
+          <button
+            type="button"
+            className="btn ghost icon h-6 w-6"
+            aria-label={t(dir < 0 ? "outputs.moveUp" : "outputs.moveDown")}
+            data-testid={`output-c-move-${dir < 0 ? "up" : "down"}-${item.target_id}`}
+            disabled={busy || !canMoveTarget(items, item.target_id, dir)}
+            onClick={() => onMove(dir)}
+          >
+            {dir < 0 ? <ArrowUp size={12} strokeWidth={1.5} aria-hidden /> : <ArrowDown size={12} strokeWidth={1.5} aria-hidden />}
+          </button>
+        </Tooltip>
+      ))}
+    </span>
+  );
+}
+
+export function OutputCView({ data, lang, onMove, moving = false }: { data: OutputC; lang: OutputLang; onMove?: MoveTarget; moving?: boolean }) {
   const { t } = useI18n();
   return (
     <div className="grid gap-6 p-[var(--pad)]" data-testid="output-c">
@@ -51,7 +80,16 @@ export function OutputCView({ data, lang }: { data: OutputC; lang: OutputLang })
                 ) : section.items.length === 0 ? (
                   <p className="text-ink-4">–</p>
                 ) : (
-                  section.items.map((item) => <CItemView key={item.target_id} item={item} />)
+                  section.items.map((item) =>
+                    onMove ? (
+                      <div key={item.target_id} className="hover-row relative pr-14">
+                        <CItemView item={item} />
+                        <MoveButtons items={section.items} item={item} busy={moving} onMove={(dir) => onMove(doc.target_doc_id, section.location_key, item.target_id, dir)} />
+                      </div>
+                    ) : (
+                      <CItemView key={item.target_id} item={item} />
+                    ),
+                  )
                 )}
               </section>
             ))}

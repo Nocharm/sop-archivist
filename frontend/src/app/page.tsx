@@ -3,19 +3,22 @@
 
 import { FlaskConical, Plus, RefreshCw } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { NewBundleModal } from "@/components/new-bundle-modal";
+import { LoadMoreRows } from "@/components/ui/load-more";
+import { Truncate } from "@/components/ui/motion";
 import { BundleStatusPill, RoleTag } from "@/components/status";
 import { hasPermission } from "@/lib/access";
 import { humanizeApiError } from "@/lib/api-errors";
 import { listBundles, type LangProgress } from "@/lib/api-sop";
 import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
+import { navigate } from "@/lib/nav-buffer";
 import { useMe } from "@/lib/session";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
+import { useProgressiveList } from "@/lib/use-progressive-list";
 
 const SKELETON_ROWS = 3;
 
@@ -46,11 +49,11 @@ function ProgressCell({ progress, testId }: { progress: LangProgress; testId: st
 export default function BundleListPage() {
   const { t } = useI18n();
   const me = useMe();
-  const router = useRouter();
   const { data, error, isLoading, reload } = useLoaded(listBundles);
   const showSkeleton = useDelayedFlag(isLoading && data === null);
   const [creating, setCreating] = useState(false);
   const canCreate = hasPermission(me, "bundle.create");
+  const rows = useProgressiveList(data ?? [], "bundles");
 
   return (
     <div className="dense min-h-full bg-surface">
@@ -104,21 +107,21 @@ export default function BundleListPage() {
                     ))}
                   </tr>
                 ))
-              : data.map((bundle) => (
+              : rows.visible.map((bundle) => (
                   <tr
                     key={bundle.id}
                     data-link=""
                     data-testid={`bundles-row-${bundle.id}`}
-                    onClick={() => router.push(`/bundles/${bundle.id}`)}
+                    onClick={() => navigate(`/bundles/${bundle.id}`)}
                   >
                     <td>
                       <Link
                         href={`/bundles/${bundle.id}`}
                         data-testid={`bundles-link-${bundle.id}`}
-                        className="font-semibold text-ink hover:underline"
+                        className="inline-block max-w-[420px] align-middle font-semibold text-ink hover:underline"
                         onClick={(event) => event.stopPropagation()}
                       >
-                        {bundle.title}
+                        <Truncate text={bundle.title} />
                       </Link>
                       {/* 합성 데이터는 목록에서도 합성으로 보인다 - 실제 묶음과 섞여 보이지 않게 */}
                       {bundle.is_synthetic && (
@@ -139,6 +142,7 @@ export default function BundleListPage() {
                     <td className="whitespace-nowrap tabular-nums text-ink-2">{formatKst(bundle.updated_at)}</td>
                   </tr>
                 ))}
+            {data !== null && rows.hasMore && <LoadMoreRows sentinelRef={rows.sentinelRef} columns={6} testId="bundles-more" />}
           </tbody>
         </table>
       )}

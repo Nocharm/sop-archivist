@@ -1,7 +1,7 @@
 // 관리 화면 - 권한별로 보이는 탭(권한 관리·직원 동기화·배치 작업·AI). 권한 없는 탭은 렌더하지 않고, 탭이 하나도 없으면 홈으로 보낸다.
 "use client";
 
-import { Activity, Bot, RefreshCw, ShieldCheck, type LucideIcon } from "lucide-react";
+import { Activity, Bot, FolderKanban, RefreshCw, ScrollText, ShieldCheck, type LucideIcon } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 
@@ -11,12 +11,14 @@ import { AccessGrants } from "@/components/admin/access-grants";
 import { AccessRoles } from "@/components/admin/access-roles";
 import { AiPanel } from "@/components/admin/ai-panel";
 import { BatchRunsPanel } from "@/components/admin/batch-runs-panel";
+import { BundlesPanel } from "@/components/admin/bundles-panel";
+import { GuidelinesPanel } from "@/components/admin/guidelines-panel";
 import { HrSyncPanel } from "@/components/admin/hr-sync-panel";
 import { hasPermission, type PermissionKey } from "@/lib/access";
 import { useI18n } from "@/lib/i18n";
 import { useMe } from "@/lib/session";
 
-type AdminTabKey = "access" | "directory" | "batch" | "ai";
+type AdminTabKey = "access" | "directory" | "batch" | "ai" | "bundles" | "guidelines";
 type AccessSubKey = "roles" | "grants" | "audit" | "lookup";
 
 interface AdminTab {
@@ -31,6 +33,8 @@ const ADMIN_TABS: AdminTab[] = [
   { key: "directory", permission: "directory.sync", Icon: RefreshCw },
   { key: "batch", permission: "system.view", Icon: Activity },
   { key: "ai", permission: "ai.admin", Icon: Bot },
+  { key: "bundles", permission: "bundle.admin", Icon: FolderKanban },
+  { key: "guidelines", permission: "guideline.manage", Icon: ScrollText },
 ];
 
 const ACCESS_SUBS: AccessSubKey[] = ["roles", "grants", "audit", "lookup"];
@@ -108,11 +112,13 @@ function AdminContent() {
         ))}
       </div>
       {/* 사용자를 바꾸거나 탭을 옮기면 패널을 새로 마운트해 이전 사용자의 데이터·오류가 남지 않게 한다 */}
-      <div key={`${me.login_id}:${activeTab.key}`} role="tabpanel" data-testid={`admin-panel-${activeTab.key}`}>
+      <div key={`${me.login_id}:${activeTab.key}`} className="fade-in" role="tabpanel" data-testid={`admin-panel-${activeTab.key}`}>
         {activeTab.key === "access" && <AccessSection />}
         {activeTab.key === "directory" && <HrSyncPanel />}
         {activeTab.key === "batch" && <BatchRunsPanel />}
         {activeTab.key === "ai" && <AiPanel />}
+        {activeTab.key === "bundles" && <BundlesPanel />}
+        {activeTab.key === "guidelines" && <GuidelinesPanel />}
       </div>
     </div>
   );

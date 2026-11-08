@@ -1,7 +1,7 @@
 // 문서 - 묶음에 올린 옛 SOP와 새 문서. 번호·판·제목은 칸에서 바로 고치고, 언어 배치를 고르고, 추출 상태와 경고를 본다(디자인 문서 8절 표 화면).
 "use client";
 
-import { RefreshCw, Trash2, Upload } from "lucide-react";
+import { Download, RefreshCw, Trash2, Upload } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 
@@ -12,10 +12,12 @@ import { InlineText } from "@/components/inline-text";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { humanizeApiError } from "@/lib/api-errors";
+import { downloadDocumentFile } from "@/lib/api-manage";
 import { LANGUAGE_LAYOUTS, listDocuments, updateDocument, type DocumentUpdateInput, type SopDocument } from "@/lib/api-sop";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
+import { saveBlob } from "@/lib/save-file";
 import { useLoaded } from "@/lib/use-loaded";
 
 const SKELETON_ROWS = 4;
@@ -28,6 +30,14 @@ export default function DocumentsPage() {
   const showSkeleton = useDelayedFlag(isLoading && data === null);
   const [uploading, setUploading] = useState(false);
   const [deleting, setDeleting] = useState<SopDocument | null>(null);
+
+  async function handleDownload(document: SopDocument) {
+    try {
+      saveBlob(await downloadDocumentFile(bundleId, document.id), document.file_name);
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+    }
+  }
   const canEdit = bundle?.my_role === "author" && bundle.status === "in_progress";
 
   // 문서가 바뀌면 개요 숫자·다음 행동도 바뀐다 - 묶음도 같이 다시 읽는다
@@ -85,7 +95,7 @@ export default function DocumentsPage() {
               <th>{t("documents.colExtraction")}</th>
               <th>{t("documents.colAux")}</th>
               <th>{t("documents.colWarnings")}</th>
-              {canEdit && <th aria-label={t("common.delete")} />}
+              <th aria-label={t("manage.rowActions")} />
             </tr>
           </thead>
           <tbody>
@@ -93,7 +103,7 @@ export default function DocumentsPage() {
               ? showSkeleton &&
                 Array.from({ length: SKELETON_ROWS }, (_, index) => (
                   <tr key={index} data-testid="documents-skeleton">
-                    {[32, 56, 72, 320, 150, 56, 64, 80].map((width, cell) => (
+                    {[32, 56, 72, 320, 150, 56, 64, 80, 40].map((width, cell) => (
                       <td key={cell}>
                         <span className="sk h-5" style={{ width }} />
                       </td>
@@ -177,21 +187,36 @@ export default function DocumentsPage() {
                       <td>
                         <WarningChips warnings={document.extraction?.warnings ?? []} testId={`${prefix}-warnings`} />
                       </td>
-                      {canEdit && (
-                        <td className="w-10">
-                          <Tooltip label={t("documents.deleteTitle")} align="end">
-                            <button
-                              type="button"
-                              className="btn ghost icon h-7 w-7"
-                              data-testid={`${prefix}-delete`}
-                              aria-label={t("documents.deleteTitle")}
-                              onClick={() => setDeleting(document)}
-                            >
-                              <Trash2 size={14} strokeWidth={1.5} aria-hidden />
-                            </button>
-                          </Tooltip>
-                        </td>
-                      )}
+                      <td className="w-[72px]">
+                        <span className="row-actions inline-flex gap-0.5">
+                          {document.status === "ready" && (
+                            <Tooltip label={t("manage.downloadOriginal")} align="end">
+                              <button
+                                type="button"
+                                className="btn ghost icon h-7 w-7"
+                                data-testid={`${prefix}-download`}
+                                aria-label={t("manage.downloadOriginal")}
+                                onClick={() => void handleDownload(document)}
+                              >
+                                <Download size={14} strokeWidth={1.5} aria-hidden />
+                              </button>
+                            </Tooltip>
+                          )}
+                          {canEdit && (
+                            <Tooltip label={t("documents.deleteTitle")} align="end">
+                              <button
+                                type="button"
+                                className="btn ghost icon h-7 w-7"
+                                data-testid={`${prefix}-delete`}
+                                aria-label={t("documents.deleteTitle")}
+                                onClick={() => setDeleting(document)}
+                              >
+                                <Trash2 size={14} strokeWidth={1.5} aria-hidden />
+                              </button>
+                            </Tooltip>
+                          )}
+                        </span>
+                      </td>
                     </tr>
                   );
                 })}

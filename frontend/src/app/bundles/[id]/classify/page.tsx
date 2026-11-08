@@ -7,10 +7,13 @@ import { useParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 
 import { DestinationPicker, describeDestination, type DestinationPickerHandle } from "@/components/classify/destination-picker";
+import { AiAskMenu, type AiAskItem } from "@/components/manage/ai-ask-menu";
 import { Modal } from "@/components/modal";
 import { Paper } from "@/components/paper/paper";
 import { SourceFontMenu } from "@/components/paper/source-font-menu";
 import { UnitStatusIcon, UnitStatusPill } from "@/components/status";
+import { LoadMoreBlock } from "@/components/ui/load-more";
+import { Refresh } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -30,6 +33,7 @@ import {
   type Group,
   type UnitRow,
 } from "@/lib/api-sop";
+import { requestAi, type AiKind, type AiScope } from "@/lib/api-manage";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import {
   buildDestinationOptions,
@@ -54,6 +58,7 @@ import { SLOT_LABELS } from "@/lib/slot-labels";
 import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
+import { useProgressiveList } from "@/lib/use-progressive-list";
 import { useUiPref } from "@/lib/use-ui-pref";
 
 type Filter = "unassigned" | "ai_suggested" | "on_hold" | "confirmed" | "all";
@@ -142,6 +147,8 @@ export default function ClassifyPage() {
 
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const activeKey = selectedKey && rowMap.has(selectedKey) ? selectedKey : (listKeys[0] ?? null);
+  // 긴 목록은 묶음씩 그린다 - 키보드로 고른 줄까지는 늘 그려 둔다
+  const progressive = useProgressiveList(listKeys, `${filter}:${snapshot?.filter ?? ""}`, { minVisible: activeKey ? listKeys.indexOf(activeKey) + 1 : 0 });
   const row: ClassifyRow | null = activeKey ? (rowMap.get(activeKey) ?? null) : null;
   const [checked, setChecked] = useState<Set<string>>(new Set());
 
@@ -193,6 +200,23 @@ export default function ClassifyPage() {
 
   // --- 원문 ---
   const viewOfRow = row && viewList ? (viewList.find((view) => view.document.id === row.documentId) ?? null) : null;
+  /** 줄 하나를 넘는 AI 요청 - 이 문서 전체 분류, 확정·배정된 줄의 다른 언어 번역 */
+  async function askAiScope(kind: AiKind, body: AiScope & { direction?: "ko_to_en" | "en_to_ko" }) {
+    try {
+      const result = await requestAi(bundleId, kind, body);
+      showToast(result.queued > 0 ? t("ai.queuedCount", { n: result.queued }) : t("ai.nothingQueued", { n: result.skipped_total }));
+      aiJobs.watch();
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+    }
+  }
+  const rowLangs = new Set(rowUnits.map((unit) => unit.lang));
+  const aiMenuItems: AiAskItem[] = [];
+  if (viewOfRow) aiMenuItems.push({ key: "document", label: t("ai.classifyDocument"), run: () => askAiScope("classify", { document_id: viewOfRow.document.id }) });
+  if (row && row.status !== "unassigned" && rowLangs.has("ko")) aiMenuItems.push({ key: "to-en", label: t("ai.translateToEn"), run: () => askAiScope("translate", { unit_ids: row.unitIds, direction: "ko_to_en" }) });
+  if (row && row.status !== "unassigned" && rowLangs.has("en")) aiMenuItems.push({ key: "to-ko", label: t("ai.translateToKo"), run: () => askAiScope("translate", { unit_ids: row.unitIds, direction: "en_to_ko" }) });
+  if (row) aiMenuItems.push({ key: "split", label: t("ai.splitRow"), run: () => askAiScope("split", { unit_ids: row.unitIds }) });
+
   const paperModel = useMemo(() => (viewOfRow ? buildPaperModel(viewOfRow) : null), [viewOfRow]);
 
   const saveUnits = rowUnits.map((unit) => ({ id: unit.unit_id, kind: unit.kind, lang: unit.lang, text: unit.text, revision: unit.decision.revision }));
@@ -368,8 +392,8 @@ export default function ClassifyPage() {
   const disposed = destination?.kind === "delete" || destination?.kind === "move";
 
   const listRows = (
-    <ul className="min-h-0 overflow-y-auto" data-testid="classify-list" style={{ scrollbarGutter: "stable" }}>
-      {listKeys.map((key) => {
+    <ul className="min-h-0 overflow-y-auto" data-testid="classify-list">
+      {progressive.visible.map((key) => {
         const item = rowMap.get(key);
         if (!item) return null;
         const first = unitMap.get(item.unitIds[0]);
@@ -398,6 +422,11 @@ export default function ClassifyPage() {
           </li>
         );
       })}
+      {progressive.hasMore && (
+        <li>
+          <LoadMoreBlock sentinelRef={progressive.sentinelRef} rowHeight={layout === "list" ? 97 : 58} testId="classify-more" />
+        </li>
+      )}
     </ul>
   );
 
@@ -598,11 +627,14 @@ export default function ClassifyPage() {
               </span>
             )}
           </span>
-          {aiJobs.status?.ai_enabled && canEdit && row && row.status === "unassigned" && (
-            <button type="button" className="btn h-7" data-testid="classify-ai-request" disabled={busy} onClick={() => void askAi()}>
-              {t("classify.aiAsk")}
-            </button>
-          )}
+          <span className="flex shrink-0 flex-col items-end gap-1">
+            {aiJobs.status?.ai_enabled && canEdit && row && row.status === "unassigned" && (
+              <button type="button" className="btn h-7" data-testid="classify-ai-request" disabled={busy} onClick={() => void askAi()}>
+                {t("classify.aiAsk")}
+              </button>
+            )}
+            {aiJobs.status?.ai_enabled && canEdit && row && <AiAskMenu items={aiMenuItems} label={t("ai.more")} testId="classify-ai-more" disabled={busy} />}
+          </span>
         </section>
       )}
       {withNewSentences && newSentences}
@@ -718,7 +750,7 @@ export default function ClassifyPage() {
             {primary}
             {secondary}
           </div>
-          <div className="grid min-h-0 content-start gap-4 overflow-y-auto p-[var(--pad)]">
+          <Refresh token={activeKey ?? ""} className="grid min-h-0 content-start gap-4 overflow-y-auto p-[var(--pad)]">
             <div className="grid grid-cols-2 gap-3">
               <section className="grid content-start gap-2">
                 <h2 className="text-xs font-semibold text-ink-3">{t("classify.source")}</h2>
@@ -734,7 +766,7 @@ export default function ClassifyPage() {
               {newSentences}
             </div>
             {renderDetails(false)}
-          </div>
+          </Refresh>
         </div>
       </div>
     ) : (
@@ -752,7 +784,9 @@ export default function ClassifyPage() {
             {primary}
             {secondary}
           </div>
-          <div className="grid min-h-0 content-start gap-4 overflow-y-auto p-[var(--pad)]">{renderDetails(true)}</div>
+          <Refresh token={activeKey ?? ""} className="grid min-h-0 content-start gap-4 overflow-y-auto p-[var(--pad)]">
+            {renderDetails(true)}
+          </Refresh>
         </aside>
       </div>
     );

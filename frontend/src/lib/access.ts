@@ -15,7 +15,7 @@ export const PERMISSIONS = [
 export type PermissionKey = (typeof PERMISSIONS)[number];
 
 // 관리 화면 탭이 있는 권한 - 묶음·지침 권한은 관리 탭이 아직 없어 관리 화면을 열지 않는다
-export const ADMIN_TAB_PERMISSIONS: readonly PermissionKey[] = ["permission.manage", "directory.sync", "ai.admin", "system.view"];
+export const ADMIN_TAB_PERMISSIONS: readonly PermissionKey[] = ["permission.manage", "directory.sync", "ai.admin", "system.view", "bundle.admin", "guideline.manage"];
 
 // sysadmin은 permissions 목록이 비어 있어도 전부 가진다(백엔드 resolve와 같은 규칙)
 export function hasPermission(me: Me, key: string): boolean {

@@ -40,3 +40,7 @@
 - 한 엘리먼트에 display 유틸리티 두 개를 같이 두면 어느 쪽이 이기는지는 **생성된 CSS의 순서**가 정한다 — 실측에선 `hidden`이 `inline-flex`에 졌고, "숨긴" 칩이 `overflow:hidden` 컨테이너에 잘린 채 그대로 보였다(Playwright `:visible` 카운트로만 발견).
 - 규칙: display는 **조건부로 하나만** — `${shown ? "inline-flex" : "hidden"}`. 실측용으로 "렌더는 하되 숨김"이 필요하면 `hidden` 대신 `visibility`/`absolute` 오프스크린을 쓰거나, 실측 프레임엔 전부 보이게 두고 다음 프레임에 숨긴다(§3 rAF 패턴).
 - 같은 이유로 `flex`+`hidden`, `block`+`hidden`도 금지. 조건부 렌더(`{cond && ...}`)가 가능하면 그쪽이 가장 안전하다.
+
+## 10. 직접 만든 CSS 클래스 이름이 Tailwind 유틸리티와 겹치지 않게
+- Tailwind v4는 소스에 나온 낱말이 유틸리티 이름이면 그 규칙을 만든다. 접기 부품에 `.collapse`를 붙였더니 유틸리티 `collapse`(`visibility: collapse`)가 utilities 층에서 이겨 펼친 내용이 끝내 안 보였다(SOP 스모크의 "숨은 요소" 타임아웃으로만 발견, 2026-11-09).
+- 규칙: `components.css`·`motion.css`에 새 클래스를 만들 때 Tailwind 유틸리티 이름(`collapse`·`hidden`·`block`·`contents`·`truncate`·`container`·`static` 등)과 겹치는지 먼저 본다. 이 저장소의 접기는 `.fold`다.

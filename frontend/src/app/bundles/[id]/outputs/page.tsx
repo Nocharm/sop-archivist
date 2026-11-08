@@ -8,6 +8,8 @@ import { useState } from "react";
 
 import { OutputCView } from "@/components/outputs/output-c";
 import { UnitStatusPill } from "@/components/status";
+import { LoadMoreRows } from "@/components/ui/load-more";
+import { Truncate } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
 import {
@@ -17,6 +19,7 @@ import {
   getOutputC,
   getSummary,
   putSemanticChecks,
+  putTargetOrder,
   SEMANTIC_CHECK_KEYS,
   type CoverStatus,
   type OutputLang,
@@ -27,6 +30,8 @@ import { useI18n } from "@/lib/i18n";
 import { saveBlob } from "@/lib/save-file";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
+import { buildTargetOrder, type MoveDir } from "@/lib/target-order";
+import { useProgressiveList } from "@/lib/use-progressive-list";
 
 type Tab = "a" | "b" | "c";
 
@@ -47,9 +52,32 @@ export default function OutputsPage() {
   const outC = useLoaded(() => (tab === "c" ? getOutputC(bundleId, lang) : Promise.resolve(null)), `c:${tab}:${key}`);
   const summary = useLoaded(() => getSummary(bundleId), `${bundleId}:${bundle?.revision ?? 0}`);
   const current = tab === "a" ? outA : tab === "b" ? outB : outC;
+  // 결과물 A는 수천 행이 될 수 있어 묶음씩 그린다 - 판을 바꾸면 처음부터
+  const rowsA = useProgressiveList(outA.data ?? [], `a:${lang}:${key}`);
   const showSkeleton = useDelayedFlag(current.data === null && current.error === null);
   const [exporting, setExporting] = useState<OutputLang | null>(null);
   const [savingChecks, setSavingChecks] = useState(false);
+
+  const [moving, setMoving] = useState(false);
+
+  // 한 판에서 옮기면 다른 판을 함께 읽어 새 문서 전체 순서를 보낸다(서버는 그 문서의 새 문장 전부를 받는다)
+  async function moveTarget(targetDocId: number, locationKey: string, targetId: number, dir: MoveDir) {
+    if (!outC.data || !bundle || moving) return;
+    setMoving(true);
+    try {
+      const other = await getOutputC(bundleId, lang === "ko" ? "en" : "ko");
+      const order = buildTargetOrder(outC.data, other, targetDocId, locationKey, targetId, dir);
+      if (order) {
+        await putTargetOrder(bundleId, { revision: bundle.revision, target_doc_id: targetDocId, items: order.map((id) => ({ target_id: id })) });
+        await loadBundle(bundleId);
+      }
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+      void loadBundle(bundleId);
+    } finally {
+      setMoving(false);
+    }
+  }
 
   async function handleExport(exportLang: OutputLang) {
     setExporting(exportLang);
@@ -125,39 +153,37 @@ export default function OutputsPage() {
             <table className="dtable" data-testid="output-a">
               <thead>
                 <tr>
-                  <th>{t("outputs.colOld")}</th>
-                  <th>ID</th>
+                  <th>{t("outputs.colOldUnit")}</th>
                   <th>{t("outputs.colSource")}</th>
                   <th>{t("outputs.colDest")}</th>
-                  <th>{t("outputs.colNew")}</th>
-                  <th>{t("outputs.colChange")}</th>
+                  <th>{t("outputs.colNewChange")}</th>
                   <th>{t("bundles.colStatus")}</th>
                 </tr>
               </thead>
               <tbody>
-                {outA.data.map((row, index) => (
-                  <tr key={`${row.unit_id}-${index}`}>
+                {rowsA.visible.map((row, index) => (
+                  <tr key={`${row.unit_id}-${index}`} data-testid={`output-a-row-${index}`}>
                     <td className="whitespace-nowrap">
-                      <span className="font-mono text-xs">{row.old_doc_code}</span>
-                      <span className="block text-xs text-ink-3">{row.location.section}</span>
+                      <span className="font-mono text-xs">
+                        {row.old_doc_code} <span className="text-ink-3">{row.location.section}</span>
+                      </span>
+                      <span className="block font-mono text-[11px] text-ink-3">{row.display_id}</span>
                     </td>
-                    <td className="whitespace-nowrap font-mono text-[11px] text-ink-3">{row.display_id}</td>
-                    <td className="min-w-[220px]" style={{ fontFamily: "var(--font-source)" }}>
-                      {row.source_text || <span className="text-ink-4">–</span>}
-                    </td>
+                    <td style={{ fontFamily: "var(--font-source)" }}>{row.source_text || <span className="text-ink-4">–</span>}</td>
                     <td className="whitespace-nowrap">
                       <span className="font-mono text-xs">{row.dest_doc_code}</span>
                       <span className="block text-xs text-ink-3">{row.dest_location || row.dest_kind}</span>
                     </td>
-                    <td className="min-w-[220px]" style={{ fontFamily: "var(--font-source)" }}>
+                    <td style={{ fontFamily: "var(--font-source)" }}>
                       {row.confirmed_text || <span className="text-ink-4">–</span>}
+                      {row.change_type && <span className="block text-xs text-ink-3" style={{ fontFamily: "var(--font-ui)" }}>{row.change_type}</span>}
                     </td>
-                    <td className="whitespace-nowrap text-ink-2">{row.change_type}</td>
                     <td>
                       <UnitStatusPill status={toCoverStatus(row.status)} />
                     </td>
                   </tr>
                 ))}
+                {rowsA.hasMore && <LoadMoreRows sentinelRef={rowsA.sentinelRef} columns={5} testId="output-a-more" />}
               </tbody>
             </table>
           ) : tab === "b" && outB.data ? (
@@ -171,7 +197,7 @@ export default function OutputsPage() {
                     <section key={node.id} className="grid grid-cols-[180px_minmax(0,1fr)] gap-4 rounded-lg border border-line bg-surface p-3">
                       <div>
                         <span className="font-mono text-[13px] font-semibold">{node.label}</span>
-                        <span className="block truncate text-xs text-ink-3">{node.title}</span>
+                        <Truncate className="text-xs text-ink-3" text={node.title} />
                         <span className="text-xs tabular-nums text-ink-2">{t("outputs.units", { n: node.count })}</span>
                       </div>
                       <ul className="grid gap-1">
@@ -180,7 +206,7 @@ export default function OutputsPage() {
                           return (
                             <li key={edge.target} className="grid grid-cols-[16px_140px_minmax(0,1fr)_40px] items-center gap-2 text-[13px]">
                               <ArrowRight size={14} strokeWidth={1.5} className="text-ink-3" aria-hidden />
-                              <span className="truncate font-mono text-xs">{targetNode?.label ?? edge.target}</span>
+                              <Truncate className="font-mono text-xs" text={targetNode?.label ?? edge.target} />
                               <span className="track">
                                 <i style={{ width: `${(edge.count / total) * 100}%`, background: targetNode?.kind === "delete" ? "var(--danger-fill)" : targetNode?.kind === "unassigned" ? "var(--st-none-fill)" : undefined }} />
                               </span>
@@ -194,7 +220,7 @@ export default function OutputsPage() {
                 })}
             </div>
           ) : tab === "c" && outC.data ? (
-            <OutputCView data={outC.data} lang={lang} />
+            <OutputCView data={outC.data} lang={lang} onMove={canEdit ? (docId, sectionKey, targetId, dir) => void moveTarget(docId, sectionKey, targetId, dir) : undefined} moving={moving} />
           ) : null}
         </div>
       </div>

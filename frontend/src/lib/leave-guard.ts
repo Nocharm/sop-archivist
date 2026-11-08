@@ -4,6 +4,8 @@
 
 import { useEffect, useEffectEvent } from "react";
 
+import { registerLeaveGuard } from "./nav-buffer";
+
 /** 막아야 할 앱 안 이동이면 그 주소(경로+쿼리), 아니면 null - 새 탭·바깥 링크·내려받기·같은 자리는 놓아준다 */
 export function findLeaveHref(event: MouseEvent): string | null {
   if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return null;
@@ -34,9 +36,12 @@ export function useLeaveGuard(isDirty: boolean, onLeave: (href: string) => void)
     }
     window.addEventListener("beforeunload", handleBeforeUnload);
     document.addEventListener("click", handleClick, true);
+    // 버튼 등에서 부르는 navigate()도 같은 확인 창으로 넘긴다
+    const unregister = registerLeaveGuard({ onLeave: (href) => handleLeave(href) });
     return () => {
       window.removeEventListener("beforeunload", handleBeforeUnload);
       document.removeEventListener("click", handleClick, true);
+      unregister();
     };
   }, [isDirty]);
 }

@@ -6,10 +6,12 @@ import { ArrowDown, ArrowUp, Link2, Merge, Redo2, Scissors, SquarePlus, Undo2, U
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useState, type ReactNode } from "react";
 
+import { SplitAiSection } from "@/components/manage/split-ai";
 import { Paper, type PaperCut } from "@/components/paper/paper";
 import { SourceFontMenu } from "@/components/paper/source-font-menu";
 import { Modal } from "@/components/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { Truncate } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api";
@@ -314,7 +316,7 @@ export default function SplitPage() {
             onClick={() => selectDoc(doc.id)}
           >
             <b className="font-mono text-xs font-semibold leading-[18px]">{doc.doc_code || doc.file_name}</b>
-            <span className="truncate text-xs leading-[18px] text-ink-3">{doc.title}</span>
+            <Truncate className="text-xs leading-[18px] text-ink-3" text={doc.title} />
           </button>
         ))}
       </nav>
@@ -435,6 +437,19 @@ export default function SplitPage() {
                 </p>
                 {cut && <p className="text-xs text-ink-3">{t("split.cutHint")}</p>}
               </Section>
+
+              {data && docId !== null && (
+                <SplitAiSection
+                  bundleId={bundleId}
+                  docId={docId}
+                  layout={data.document.language_layout}
+                  revision={data.document.revision}
+                  selected={selected}
+                  canEdit={canEdit}
+                  busy={busy}
+                  onChanged={(result) => (result ? afterChange(result, t("split.didSplit")) : refresh())}
+                />
+              )}
 
               {canEdit && (selected.kind === "sentence" || selected.kind === "heading" || selected.kind === "cell_sentence") && (
                 <Section title={t("split.language")} testId="split-language">
@@ -618,7 +633,7 @@ export default function SplitPage() {
                   .map((warning) => (
                     <li key={warning.id} className="flex items-center gap-2 text-[13px]" data-testid={`split-warning-${warning.id}`}>
                       <span className={`pill ${warning.acked_by ? "quiet" : "warn"}`}>{warning.acked_by ? "Checked" : t(`warn.${warning.kind}`)}</span>
-                      <span className="min-w-0 flex-1 truncate text-ink-2">{readWarningText(warning.detail)}</span>
+                      <Truncate className="flex-1 text-ink-2" text={readWarningText(warning.detail)} />
                       {!warning.acked_by && canEdit && (
                         <button type="button" className="btn h-7" data-testid={`split-warning-ack-${warning.id}`} disabled={busy} onClick={() => void runSimple(() => ackWarning(bundleId, warning.id), t("split.warningChecked"))}>
                           {t("split.markChecked")}

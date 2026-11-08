@@ -7,6 +7,8 @@ import { useParams } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import { UnitStatusIcon, UnitStatusPill } from "@/components/status";
+import { LoadMoreBlock } from "@/components/ui/load-more";
+import { BusyLabel, Collapse, Refresh, Truncate } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
 import {
@@ -21,11 +23,14 @@ import {
   type OutputCItem,
   type UnitRow,
 } from "@/lib/api-sop";
+import { listAppliedSuggestions, requestAi } from "@/lib/api-manage";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
 import { buildIdenticalBatches } from "@/lib/match-model";
+import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
+import { useProgressiveList } from "@/lib/use-progressive-list";
 
 interface NewSentence {
   item: OutputCItem;
@@ -35,6 +40,11 @@ interface NewSentence {
 }
 
 type Filter = "open" | "done" | "all";
+
+/** 제안 응답의 ID 목록 - 숫자만 골라 쓴다 */
+function readIds(value: unknown): number[] {
+  return Array.isArray(value) ? value.filter((item): item is number => typeof item === "number") : [];
+}
 
 function toCoverStatus(status: string): CoverStatus {
   return status === "confirmed" || status === "on_hold" || status === "ai_suggested" ? status : "unassigned";
@@ -69,6 +79,7 @@ export default function MatchPage() {
   const visible = sentences.filter((entry) => filter === "all" || (filter === "open") === (entry.item.status !== "confirmed"));
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const selected = sentences.find((entry) => entry.item.target_id === selectedId) ?? visible[0] ?? null;
+  const progressive = useProgressiveList(visible, filter, { minVisible: selected ? visible.indexOf(selected) + 1 : 0 });
 
   const group = useLoaded(() => (selected ? getGroupByTarget(bundleId, selected.item.target_id) : Promise.resolve(null)), `${selected?.item.target_id}:${reloadKey}`);
   const target = group.data?.targets.find((item) => item.id === selected?.item.target_id) ?? null;
@@ -79,6 +90,14 @@ export default function MatchPage() {
   const [picked, setPicked] = useState<number[]>([]);
   const [changeType, setChangeType] = useState<"tone" | "rewritten">("rewritten");
   const [busy, setBusy] = useState(false);
+  const [asking, setAsking] = useState(false);
+  // AI 짝 제안 - 작업이 끝나면 목록·제안을 다시 읽는다
+  const aiJobs = useAiJobs(bundleId, () => setReloadKey((value) => value + 1));
+  const aiRunning = (aiJobs.status?.by_kind.match?.queued ?? 0) + (aiJobs.status?.by_kind.match?.running ?? 0);
+  const matchSuggestions = useLoaded(() => listAppliedSuggestions(bundleId, "match"), key);
+  const aiSuggestion = selected ? ((matchSuggestions.data ?? []).filter((item) => readIds(item.content.target_ids).includes(selected.item.target_id)).at(-1) ?? null) : null;
+  const aiShape = typeof aiSuggestion?.content.shape === "string" ? aiSuggestion.content.shape : null;
+  const aiPickable = (aiSuggestion?.content.unit_ids ?? []).filter((id) => !linked.includes(id) && !picked.includes(id));
   // 출처 후보: 같은 언어의 아직 정하지 않은 옛 단위. 검색어가 있으면 글자로 거른다
   const candidates: UnitRow[] = (units.data ?? []).filter(
     (row) =>
@@ -140,6 +159,35 @@ export default function MatchPage() {
     );
   }
 
+  // AI가 이은 출처를 그대로 받는다 - 글과 변경 종류를 비워 보내면 제안대로 확정된다(계획 2 API 계약)
+  function acceptAi() {
+    if (!target || linked.length === 0) return;
+    void run(
+      () =>
+        saveGroup(bundleId, {
+          action: "confirm",
+          hold_reason: "",
+          units: linked.map((id) => ({ unit_id: id, revision: unitMap.get(id)?.decision.revision ?? 1, disposition: "assigned", move_target_code: "", reason: "" })),
+          targets: [{ key: "t", id: target.id, revision: target.revision, change_type: null, source_unit_ids: linked }],
+          removed_target_ids: [],
+        }),
+      t("match.linked"),
+    );
+  }
+
+  async function askMatch() {
+    setAsking(true);
+    try {
+      const result = await requestAi(bundleId, "match");
+      showToast(result.queued > 0 ? t("ai.queuedCount", { n: result.queued }) : t("ai.nothingQueued", { n: result.skipped_total }));
+      aiJobs.watch();
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+    } finally {
+      setAsking(false);
+    }
+  }
+
   function confirmNew() {
     if (!target) return;
     void run(() => confirmMatchesInBulk(bundleId, { identical: [], new: [{ target_id: target.id, revision: target.revision }] }), t("match.newDone"));
@@ -181,7 +229,7 @@ export default function MatchPage() {
           ))}
         </div>
         <ul className="min-h-0 overflow-y-auto" data-testid="match-list">
-          {visible.map((entry) => (
+          {progressive.visible.map((entry) => (
             <li key={entry.item.target_id}>
               <button
                 type="button"
@@ -202,10 +250,15 @@ export default function MatchPage() {
                   <span className="lg">{entry.lang.toUpperCase()}</span>
                   {entry.docCode}
                 </span>
-                <span className="truncate text-[13px] leading-5">{entry.item.text}</span>
+                <Truncate className="text-[13px] leading-5" text={entry.item.text} lang={entry.lang} />
               </button>
             </li>
           ))}
+          {progressive.hasMore && (
+            <li>
+              <LoadMoreBlock sentinelRef={progressive.sentinelRef} rowHeight={58} testId="match-more" />
+            </li>
+          )}
         </ul>
       </div>
 
@@ -222,7 +275,7 @@ export default function MatchPage() {
           </section>
         )}
         {selected ? (
-          <>
+          <Refresh token={selected.item.target_id} className="grid gap-4">
             <section className="sheet px-[30px] py-[18px]" data-testid="match-new">
               <p className="mb-1 text-xs text-ink-3" style={{ fontFamily: "var(--font-ui)" }}>
                 <span className="font-mono">{selected.docCode}</span> · {selected.section}
@@ -263,7 +316,7 @@ export default function MatchPage() {
                 {candidates.length === 0 && <li className="text-ink-3">{t("match.noCandidates")}</li>}
               </ul>
             </section>
-          </>
+          </Refresh>
         ) : (
           <p className="text-ink-3" data-testid="match-empty">
             {t("match.empty")}
@@ -319,9 +372,47 @@ export default function MatchPage() {
                 </ul>
               )}
             </section>
-            <section className="flex gap-2 rounded-md border border-dashed px-3 py-2 text-xs text-ink-2" style={{ borderColor: "var(--st-ai-line)" }}>
-              <Sparkles size={14} strokeWidth={1.5} className="mt-0.5 shrink-0 text-st-ai" aria-hidden />
-              {t("match.aiLater")}
+            <section className="grid gap-2 rounded-md border border-dashed px-3 py-2 text-xs text-ink-2" style={{ borderColor: "var(--st-ai-line)" }} data-testid="match-ai">
+              <span className="flex items-start gap-2">
+                <Sparkles size={14} strokeWidth={1.5} className="mt-0.5 shrink-0 text-st-ai" aria-hidden />
+                <span className="flex-1">
+                  {!aiJobs.status?.ai_enabled ? t("match.aiLater") : aiSuggestion ? t("ai.matchSuggested") : t("ai.matchNone")}
+                  {aiRunning > 0 && <span className="mt-0.5 block text-st-ai">{t("classify.aiRunning", { n: aiRunning })}</span>}
+                </span>
+                {aiJobs.status?.ai_enabled && canEdit && (
+                  <button type="button" className="btn h-7 shrink-0" data-testid="match-ai-request" disabled={busy || asking} onClick={() => void askMatch()}>
+                    <BusyLabel busy={asking} label={t("ai.askMatch")} />
+                  </button>
+                )}
+              </span>
+              <Collapse open={aiSuggestion !== null}>
+                <div className="grid gap-1.5 rounded-md bg-st-ai-tint p-2 text-[13px] text-ink" data-testid="match-ai-suggestion">
+                  <span className="flex flex-wrap items-center gap-1">
+                    {aiShape && <span className="tag">{t(`ai.shape.${aiShape}`) === `ai.shape.${aiShape}` ? aiShape : t(`ai.shape.${aiShape}`)}</span>}
+                    {(aiSuggestion?.content.rule_ids ?? []).map((rule) => (
+                      <span key={rule} className="tag font-mono">
+                        {rule}
+                      </span>
+                    ))}
+                  </span>
+                  {aiSuggestion?.content.reason && <p>{aiSuggestion.content.reason}</p>}
+                  {canEdit && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {selected.item.status === "ai_suggested" && linked.length > 0 && (
+                        <button type="button" className="btn pri h-7" data-testid="match-ai-accept" disabled={busy} onClick={acceptAi}>
+                          {t("ai.acceptMatch")}
+                        </button>
+                      )}
+                      {aiPickable.length > 0 && (
+                        <button type="button" className="btn h-7" data-testid="match-ai-pick" disabled={busy} onClick={() => setPicked(aiPickable)}>
+                          {t("ai.pickSuggested", { n: aiPickable.length })}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  <span className="text-[11px] text-ink-3">{t("classify.aiCheck")}</span>
+                </div>
+              </Collapse>
             </section>
           </>
         )}

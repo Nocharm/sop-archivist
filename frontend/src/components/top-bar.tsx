@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 
 import { DevUserSwitcher } from "@/components/dev-user-switcher";
 import { LayoutMenu } from "@/components/layout-menu";
+import { BackLink, NavProgress } from "@/components/nav-host";
 import { Tooltip } from "@/components/ui/tooltip";
 import { canSeeAdmin } from "@/lib/access";
 import { useBundle } from "@/lib/bundle-store";
@@ -33,6 +34,7 @@ export function TopBar() {
       <span data-testid="top-bar-version" className="tb-dim font-mono text-[11px]">
         {`v${APP_VERSION}`}
       </span>
+      <BackLink />
       {inBundle && (
         <>
           <span className="tb-sep" aria-hidden />
@@ -78,6 +80,7 @@ export function TopBar() {
           <LogOut size={16} strokeWidth={1.5} aria-hidden />
         </button>
       </Tooltip>
+      <NavProgress />
     </header>
   );
 }

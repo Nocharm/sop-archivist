@@ -96,10 +96,24 @@ export interface Readiness {
   next_action: NextAction;
 }
 
+export interface AdoptionStats {
+  applied: number;
+  as_is: number;
+  edited: number;
+  rejected: number;
+  pending: number;
+  adoption_rate: number | null;
+}
+
 export interface AiStatus {
   ai_enabled: boolean;
   embed_enabled: boolean;
   jobs: AiJobCounts;
+  /** 종류별 같은 모양(classify·translate·match·pair·split) */
+  by_kind: Record<string, AiJobCounts>;
+  /** 실패 코드별 건수(timeout·server_error·connection·client_error·config·interrupted·no_candidates·internal) */
+  failed_errors: Record<string, number>;
+  adoption: Record<string, AdoptionStats>;
 }
 
 export interface BundleCreateInput {

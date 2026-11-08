@@ -5,6 +5,7 @@ import { Loader2, RefreshCw } from "lucide-react";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { NavHost } from "@/components/nav-host";
 import { StageNav } from "@/components/stage-nav";
 import { TopBar } from "@/components/top-bar";
 import { ToastHost } from "@/components/ui/toast";
@@ -16,11 +17,17 @@ import { parseBundlePath } from "@/lib/stages";
 export function AppShell({ children }: { children: ReactNode }) {
   const { t } = useI18n();
   const { me, error, reloadMe } = useSession();
-  const inBundle = parseBundlePath(usePathname());
+  const pathname = usePathname();
+  const inBundle = parseBundlePath(pathname);
 
   let body: ReactNode;
   if (me) {
-    body = children;
+    // 경로가 바뀔 때마다 새로 그려 진입 전환을 한 번 탄다(같은 경로의 쿼리 변경은 그대로)
+    body = (
+      <div key={pathname} className="page-enter">
+        {children}
+      </div>
+    );
   } else if (error !== null) {
     body = (
       <div data-testid="app-shell-error" className="mx-auto w-full max-w-md space-y-3 px-4 py-12 text-center">
@@ -42,6 +49,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="app">
+      {me && <NavHost />}
       <TopBar />
       {inBundle && me ? (
         <div className="frame min-h-0">

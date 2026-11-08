@@ -6,6 +6,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 
+import { ActivitySection, BundleHeading, MembersSection } from "@/components/manage/bundle-manage";
+import { AiJobPanel } from "@/components/manage/ai-job-panel";
 import { Modal } from "@/components/modal";
 import { BundleStatusPill, RoleTag } from "@/components/status";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -15,15 +17,12 @@ import {
   requestReview,
   SEMANTIC_CHECK_KEYS,
   type Bundle,
-  type BundleMember,
   type LangProgress,
   type Readiness,
   type ReadinessIssue,
 } from "@/lib/api-sop";
 import { loadBundle, putBundle, useBundle } from "@/lib/bundle-store";
-import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useI18n } from "@/lib/i18n";
-import type { Lang } from "@/lib/i18n-messages";
 import { getStageHref, NEXT_ACTION_STAGE, STAGES } from "@/lib/stages";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
@@ -94,11 +93,6 @@ function countPending(progress: Bundle["progress"]): number {
     const item = progress[lang];
     return total + item.unassigned + item.ai_suggested + item.on_hold;
   }, 0);
-}
-
-function getMemberName(member: BundleMember, lang: Lang): string {
-  if (lang === "ko" && member.korean_name) return member.korean_name;
-  return member.name || member.login_id;
 }
 
 function CoverageBar({ progress, lang }: { progress: LangProgress; lang: string }) {
@@ -293,45 +287,6 @@ function ReviewGate({ bundle, onRequestReview }: { bundle: Bundle; onRequestRevi
   );
 }
 
-function AiJobPanel({ bundleId }: { bundleId: number }) {
-  const { t } = useI18n();
-  // 작업이 남아 있는 동안 숫자가 따라오고, 끝나면 묶음(진행 현황·다음 행동)을 다시 불러온다
-  const { status: data } = useAiJobs(bundleId, () => void loadBundle(bundleId));
-  let body: string;
-  if (data === null) body = "";
-  else if (!data.ai_enabled) body = t("overview.aiOff");
-  else body = t("overview.aiJobs", { running: data.jobs.running, queued: data.jobs.queued, failed: data.jobs.failed });
-  return (
-    <section className="grid gap-2.5" data-testid="overview-ai">
-      <h2 className="text-xs font-semibold text-ink-3">{t("overview.aiJob")}</h2>
-      <p className="min-h-[22px] text-ink-2">{body}</p>
-    </section>
-  );
-}
-
-function Members({ bundle }: { bundle: Bundle }) {
-  const { t, lang } = useI18n();
-  return (
-    <section className="grid gap-2.5" data-testid="overview-members">
-      <h2 className="text-xs font-semibold text-ink-3">{t("overview.members")}</h2>
-      <ul className="grid gap-2">
-        {bundle.members.map((member) => (
-          <li key={member.login_id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2" data-testid={`overview-member-${member.login_id}`}>
-            <span className="min-w-0">
-              <span className="block truncate">{getMemberName(member, lang)}</span>
-              <small className="block font-mono text-[11px] leading-4 text-ink-3">{member.login_id}</small>
-            </span>
-            <span className="flex items-center gap-1">
-              {!member.active && <span className="pill danger">{t("overview.noAccess")}</span>}
-              <RoleTag role={member.role} />
-            </span>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
 function RequestReviewModal({ bundle, onClose }: { bundle: Bundle; onClose: () => void }) {
   const { t } = useI18n();
   const [saving, setSaving] = useState(false);
@@ -418,20 +373,18 @@ export default function BundleOverviewPage() {
   return (
     <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_340px]" data-testid="overview">
       <div className="grid content-start gap-4 overflow-y-auto px-[22px] py-[18px]">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="head-title" data-testid="overview-title">
-            {bundle.title}
-          </h1>
+        <BundleHeading bundle={bundle}>
           <BundleStatusPill status={bundle.status} testId="overview-status" />
           {bundle.my_role && <RoleTag role={bundle.my_role} testId="overview-role" />}
-        </div>
+        </BundleHeading>
         <NextActionCard bundle={bundle} onRequestReview={() => setRequesting(true)} />
         <Coverage bundle={bundle} />
       </div>
       <aside className="grid content-start gap-4 overflow-y-auto border-l border-line bg-surface px-[var(--pad)] py-[18px]">
         <ReviewGate bundle={bundle} onRequestReview={() => setRequesting(true)} />
-        <AiJobPanel bundleId={bundle.id} />
-        <Members bundle={bundle} />
+        <AiJobPanel bundle={bundle} />
+        <MembersSection bundle={bundle} />
+        <ActivitySection bundle={bundle} />
       </aside>
       {requesting && <RequestReviewModal bundle={bundle} onClose={() => setRequesting(false)} />}
     </div>

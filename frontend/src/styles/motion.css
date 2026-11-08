@@ -1,0 +1,87 @@
+/* 단과 움직임 - 창은 움직이지 않고 단마다 따로 스크롤한다. 스크롤바는 움직이는 동안만 보이고 자리는 늘 잡아 둬 폭이 튀지 않는다.
+   이동 버퍼·접기·쉬머·모핑의 모양. 시간은 tokens.css의 --dur-*·--ease-*만 쓴다(움직임 줄이기에서 0이 된다). */
+
+@layer components {
+  /* 창 전체는 고정 - 상단 막대와 단계 이동은 제자리, 본문 단만 스크롤 */
+  .app { height: 100dvh; overflow: hidden; }
+  .tb { position: relative; }
+
+  /* 스크롤바: 평소엔 투명(자리만 차지), 스크롤하는 동안(.is-scrolling, nav-host가 붙인다)만 보인다 */
+  * { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+  .is-scrolling { scrollbar-color: color-mix(in oklab, var(--ink) 30%, transparent) transparent; }
+
+  /* 스크롤 단은 스크롤바 자리를 늘 잡아 둔다(나타날 때 내용이 밀리지 않게)와 바깥으로 스크롤이 번지지 않게 */
+  .app-main, .frame-view, .desk, .pane, .overflow-auto, .overflow-y-auto {
+    scrollbar-gutter: stable;
+    overscroll-behavior: contain;
+  }
+  .pane { min-height: 0; overflow-y: auto; }
+
+  /* 페이지 진입 - 경로가 바뀌면 서서히 나타난다. 자리는 옮기지 않는다(좌표를 재는 동안 행이 움직여 보이지 않게) */
+  .page-enter { height: 100%; min-height: 0; animation: page-in var(--dur-slow) var(--ease-enter); }
+  @keyframes page-in { from { opacity: 0; } }
+
+  /* 이동 진행 막대 - 상단 막대 아래 2px. 버퍼(0.6초) 동안 70%, 보낸 뒤 90%, 도착하면 100% 후 사라짐 */
+  .nav-progress {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 2px;
+    width: 0;
+    background: var(--hl);
+    opacity: 0;
+    pointer-events: none;
+    transition: width 0ms linear, opacity var(--dur-base);
+  }
+  .nav-progress[data-phase="buffer"] { width: 70%; opacity: 1; transition: width 600ms linear, opacity var(--dur-fast); }
+  .nav-progress[data-phase="loading"] { width: 90%; opacity: 1; transition: width 2400ms var(--ease-exit), opacity var(--dur-fast); }
+  .nav-progress[data-phase="done"] { width: 100%; opacity: 0; transition: width var(--dur-base) var(--ease-enter), opacity var(--dur-slow) 120ms; }
+
+  /* 버퍼 중인 링크 - 다시 누르면 취소된다는 것을 숨쉬는 바탕으로 보인다 */
+  a[data-nav-pending] { animation: nav-pulse 900ms var(--ease-move) infinite; }
+  @keyframes nav-pulse { 50% { background-color: var(--accent-tint); } }
+  .tb a[data-nav-pending], .stages a[data-nav-pending] { animation-name: nav-pulse-chrome; }
+  [data-shell="bar"] .stages a[data-nav-pending] { animation-name: nav-pulse; }
+  @keyframes nav-pulse-chrome { 50% { background-color: var(--chrome-hover); } }
+
+  /* 접기·펼치기 - 높이를 재지 않고 grid 행으로 전환. 이름이 fold인 것은 Tailwind 유틸리티 collapse(visibility: collapse)와 겹치지 않게 */
+  .fold {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transition: grid-template-rows var(--dur-slow) var(--ease-move), opacity var(--dur-base) var(--ease-exit);
+  }
+  .fold[data-open] { grid-template-rows: 1fr; opacity: 1; transition: grid-template-rows var(--dur-slow) var(--ease-move), opacity var(--dur-slow) var(--ease-enter); }
+  .fold-inner { min-height: 0; overflow: hidden; }
+  .fold:not([data-open]) .fold-inner { visibility: hidden; transition: visibility 0s var(--dur-slow); }
+
+  /* 내용이 바뀐 자리 - 위를 한 번 쓸고 지나간다 */
+  .refresh { position: relative; }
+  .refresh-sweep {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    border-radius: inherit;
+    background: linear-gradient(100deg, transparent 20%, color-mix(in oklab, var(--accent) 12%, transparent) 50%, transparent 80%);
+    background-size: 220% 100%;
+    animation: refresh-sweep 700ms var(--ease-move) both;
+  }
+  @keyframes refresh-sweep { from { background-position: 120% 0; opacity: 1; } to { background-position: -120% 0; opacity: 0; } }
+
+  /* 폭 모핑 - 바깥 폭이 안쪽 내용 폭을 따라 전환한다 */
+  .morph { display: inline-flex; justify-content: center; overflow: hidden; white-space: nowrap; }
+  .morph[data-animate] { transition: width var(--dur-base) var(--ease-move); }
+  .morph-inner { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+
+  /* 호버로 드러나는 보조 동작 - 자리는 늘 잡아 두고 보이기만 바꾼다(호버로 높이·폭이 변하지 않게) */
+  .row-actions { opacity: 0; transition: opacity var(--dur-fast); }
+  tr:hover .row-actions, .hover-row:hover .row-actions, .row-actions:focus-within { opacity: 1; }
+  @media (hover: none) { .row-actions { opacity: 1; } }
+
+  /* 긴 글 툴팁 */
+  .tip-wide { max-width: 480px; white-space: normal; }
+
+  /* 탭 패널이 바뀔 때 - 내용이 살짝 나타난다 */
+  .fade-in { animation: fade-in var(--dur-base) var(--ease-enter); }
+  @keyframes fade-in { from { opacity: 0; } }
+}

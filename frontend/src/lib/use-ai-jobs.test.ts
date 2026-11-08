@@ -13,7 +13,7 @@ const { AI_POLL_MS, useAiJobs } = await import("./use-ai-jobs");
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function makeStatus(counts: Partial<AiJobCounts>): AiStatus {
-  return { ai_enabled: true, embed_enabled: false, jobs: { queued: 0, running: 0, done: 0, failed: 0, stale: 0, cancelled: 0, ...counts } };
+  return { ai_enabled: true, embed_enabled: false, jobs: { queued: 0, running: 0, done: 0, failed: 0, stale: 0, cancelled: 0, ...counts }, by_kind: {}, failed_errors: {}, adoption: {} };
 }
 
 const box: { watch: () => void; status: AiStatus | null } = { watch: () => undefined, status: null };

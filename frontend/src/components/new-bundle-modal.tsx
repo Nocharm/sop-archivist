@@ -1,7 +1,6 @@
 // 새 묶음 만들기 - 제목·설명·합성 표시. 만들면 바로 그 묶음의 개요로 간다(첫 다음 행동은 문서 올리기).
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { Modal } from "@/components/modal";
@@ -9,13 +8,13 @@ import { humanizeApiError } from "@/lib/api-errors";
 import { createBundle } from "@/lib/api-sop";
 import { putBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
+import { navigate } from "@/lib/nav-buffer";
 import { INPUT_FIELD } from "@/lib/ui-classes";
 
 const MAX_TITLE = 200;
 
 export function NewBundleModal({ onClose }: { onClose: () => void }) {
   const { t } = useI18n();
-  const router = useRouter();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [isSynthetic, setIsSynthetic] = useState(false);
@@ -30,7 +29,7 @@ export function NewBundleModal({ onClose }: { onClose: () => void }) {
     try {
       const bundle = await createBundle({ title: title.trim(), description, is_synthetic: isSynthetic });
       putBundle(bundle);
-      router.push(`/bundles/${bundle.id}`);
+      navigate(`/bundles/${bundle.id}`, { immediate: true });
     } catch (err) {
       setError(err);
       setSaving(false);

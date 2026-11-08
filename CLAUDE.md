@@ -113,7 +113,7 @@ docker-compose.yml
 - `app/ai_client.py`·`app/ai_usage.py`: OpenAI 호환 사내 GLM 호출(`call_ai`)과 임베딩 호출(`call_embeddings`, `EMBED_*`, 같은 동시성 세마포어) + 호출 1건당 `ai_usage_events` 한 행(원문 없음). 사용량은 `record_ai_usage`가 자기 짧은 세션으로 남긴다.
 - 시각은 전부 `DateTime(timezone=True)`와 `app.clock.now()`(KST). 프런트 표시는 `lib/datetime.ts`(Asia/Seoul).
 
-**frontend 핵심:** `src/lib/api.ts` `apiFetch`(인증 헤더, dev 사용자는 요청마다 localStorage에서 읽음) · `api-errors.ts` `humanizeApiError`(상태 코드별 사람 말 문구, 서버 원문은 422 검증 사유에만) · `access.ts` 권한 카탈로그 미러 · `i18n-messages.ts` en/ko 메시지 · `keycloak-login.ts` OIDC 설정 단일 소스(PKCE는 `crypto.subtle`이 있을 때만) · `genId()`·`copyText()`(secure context 우회). localStorage 키 접두는 `sopa.`.
+**frontend 핵심:** `src/lib/api.ts` `apiFetch`(인증 헤더, dev 사용자는 요청마다 localStorage에서 읽음) · `api-errors.ts` `humanizeApiError`(상태 코드별 사람 말 문구, 서버 원문은 422 검증 사유에만) · `access.ts` 권한 카탈로그 미러 · `i18n-messages.ts` en/ko 메시지 · `keycloak-login.ts` OIDC 설정 단일 소스(PKCE는 `crypto.subtle`이 있을 때만) · `genId()`·`copyText()`(secure context 우회). localStorage 키 접두는 `sopa.`. **이동·움직임 공통 층**: 앱 안 이동은 `lib/nav-buffer.ts` `navigate()`(0.6초 버퍼, 같은 곳 재클릭·Esc 취소)로 하고 링크 클릭은 `components/nav-host.tsx`가 창 캡처 단계에서 같은 길로 돌린다 — 사람이 고른 이동에 `router.push`를 새로 쓰지 않는다(저장 안 한 변경 가드 `useLeaveGuard`도 이 길에 걸려 있다). 접기·쉬머·폭 모핑·말줄임 툴팁은 `components/ui/motion.tsx`, 긴 목록은 `lib/use-progressive-list.ts`, 호버로 드러나는 보조 단추는 `.row-actions`(`styles/motion.css`). 백엔드에만 있던 묶음 관리·AI 요청·관리 묶음·AI 지침 API는 `lib/api-manage.ts`.
 
 언어 규칙은 backend → `rules/languages/python.md`, frontend → `rules/languages/typescript.md`. 컨테이너/설정 규칙은 `rules/backend/` 참고.
 

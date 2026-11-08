@@ -1,11 +1,12 @@
 // To-Be 목록 - 새 SOP·WI 표를 고치고 통째로 저장한다. SOP는 칸 N/A(사유), WI는 단계를 줄 아래에서 편다. Excel 템플릿 내려받기·가져오기(명세 §12-5).
 "use client";
 
-import { ChevronDown, ChevronRight, Download, FileUp, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { useParams, useRouter } from "next/navigation";
+import { ChevronRight, Download, FileUp, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { useParams } from "next/navigation";
 import { useRef, useState } from "react";
 
 import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { CollapseRow } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -15,6 +16,7 @@ import { buildDownloadName } from "@/lib/download-name";
 import { useI18n } from "@/lib/i18n";
 import { genId } from "@/lib/id";
 import { useLeaveGuard } from "@/lib/leave-guard";
+import { navigate } from "@/lib/nav-buffer";
 import { saveBlob } from "@/lib/save-file";
 import { SLOT_LABELS } from "@/lib/slot-labels";
 import { addStep, buildToBeInput, changeDocType, createDraft, isDraftDirty, orderDocs, removeDoc, removeStep, renameDoc, setNaSlot, type DraftDoc, type ToBeDraft } from "@/lib/tobe-draft";
@@ -26,7 +28,6 @@ const CELL_INPUT = "h-7 w-full rounded-md border border-line-2 bg-surface px-1.5
 
 export default function ToBePage() {
   const { t } = useI18n();
-  const router = useRouter();
   const bundleId = Number(useParams<{ id: string }>().id);
   const { bundle } = useBundle(bundleId);
   const canEdit = bundle?.my_role === "author" && bundle.status === "in_progress";
@@ -291,7 +292,7 @@ export default function ToBePage() {
                     <tr key={doc.key} data-testid={`${prefix}-row`}>
                       <td>
                         <button type="button" className="btn ghost icon h-6 w-6" aria-expanded={isOpen} aria-label={t("tobe.details")} data-testid={`${prefix}-toggle`} onClick={() => toggleOpen(doc.key)}>
-                          {isOpen ? <ChevronDown size={14} strokeWidth={1.5} aria-hidden /> : <ChevronRight size={14} strokeWidth={1.5} aria-hidden />}
+                          <ChevronRight size={14} strokeWidth={1.5} aria-hidden className={`transition-transform duration-[var(--dur-base)] ${isOpen ? "rotate-90" : ""}`} />
                         </button>
                       </td>
                       <td className={depth === 1 ? "pl-6" : undefined}>
@@ -357,22 +358,22 @@ export default function ToBePage() {
                       </td>
                       {canEdit && (
                         <td>
+                          <span className="row-actions">
                           <Tooltip label={isMatch ? t("tobe.matchLocked") : t("tobe.removeDoc")} align="end">
                             <button type="button" className="btn ghost icon h-7 w-7" aria-label={t("tobe.removeDoc")} data-testid={`${prefix}-remove`} disabled={isMatch} onClick={() => update(removeDoc(draft, doc.key))}>
                               <Trash2 size={14} strokeWidth={1.5} aria-hidden />
                             </button>
                           </Tooltip>
+                          </span>
                         </td>
                       )}
                     </tr>
                   );
-                  if (!isOpen) return [row];
                   return [
                     row,
-                    <tr key={`${doc.key}-detail`} className="bg-sunken">
-                      <td />
-                      <td colSpan={canEdit ? 8 : 7}>{renderDetail(doc)}</td>
-                    </tr>,
+                    <CollapseRow key={`${doc.key}-detail`} open={isOpen} colSpan={canEdit ? 8 : 7} className="bg-sunken">
+                      {renderDetail(doc)}
+                    </CollapseRow>,
                   ];
                 })}
           </tbody>
@@ -389,7 +390,7 @@ export default function ToBePage() {
           onConfirm={() => {
             setLeaveTo(null);
             setEdit(null);
-            router.push(leaveTo);
+            navigate(leaveTo, { immediate: true });
           }}
         />
       )}
