@@ -24,6 +24,8 @@ export interface BundleProgress {
 export interface BundleListItem {
   id: number;
   title: string;
+  /** 합성 데이터 묶음 - 목록에서도 합성으로 보인다 */
+  is_synthetic: boolean;
   status: BundleStatus;
   my_role: MemberRole;
   updated_at: string;
@@ -448,6 +450,8 @@ export interface UnitRow {
   status: CoverStatus;
   decision: Decision;
   target_ids: number[];
+  /** 한/영 짝(제안·확정 모두) - 문서 보기의 units[].pair_id와 같은 뜻, 짝이 없으면 null */
+  pair_id: number | null;
 }
 
 export interface GroupUnit {

@@ -1,7 +1,7 @@
 // 홈 = 묶음 목록 - 내가 멤버인 묶음을 최근 순으로 보이고, 권한이 있으면 새 묶음을 만든다. 워드마크와 로그인 복귀가 이리로 온다.
 "use client";
 
-import { Plus, RefreshCw } from "lucide-react";
+import { FlaskConical, Plus, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -120,6 +120,13 @@ export default function BundleListPage() {
                       >
                         {bundle.title}
                       </Link>
+                      {/* 합성 데이터는 목록에서도 합성으로 보인다 - 실제 묶음과 섞여 보이지 않게 */}
+                      {bundle.is_synthetic && (
+                        <span className="tag ml-2 align-middle" data-testid={`bundles-synthetic-${bundle.id}`}>
+                          <FlaskConical size={12} strokeWidth={1.5} aria-hidden />
+                          Synthetic data
+                        </span>
+                      )}
                     </td>
                     <td>
                       <BundleStatusPill status={bundle.status} />
