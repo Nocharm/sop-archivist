@@ -11,7 +11,6 @@ import { BundleStatusPill, RoleTag } from "@/components/status";
 import { Tooltip } from "@/components/ui/tooltip";
 import { humanizeApiError } from "@/lib/api-errors";
 import {
-  getAiStatus,
   getReadiness,
   requestReview,
   SEMANTIC_CHECK_KEYS,
@@ -22,6 +21,7 @@ import {
   type ReadinessIssue,
 } from "@/lib/api-sop";
 import { loadBundle, putBundle, useBundle } from "@/lib/bundle-store";
+import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useI18n } from "@/lib/i18n";
 import type { Lang } from "@/lib/i18n-messages";
 import { getStageHref, NEXT_ACTION_STAGE, STAGES } from "@/lib/stages";
@@ -295,7 +295,8 @@ function ReviewGate({ bundle, onRequestReview }: { bundle: Bundle; onRequestRevi
 
 function AiJobPanel({ bundleId }: { bundleId: number }) {
   const { t } = useI18n();
-  const { data } = useLoaded(() => getAiStatus(bundleId), String(bundleId));
+  // 작업이 남아 있는 동안 숫자가 따라오고, 끝나면 묶음(진행 현황·다음 행동)을 다시 불러온다
+  const { status: data } = useAiJobs(bundleId, () => void loadBundle(bundleId));
   let body: string;
   if (data === null) body = "";
   else if (!data.ai_enabled) body = t("overview.aiOff");

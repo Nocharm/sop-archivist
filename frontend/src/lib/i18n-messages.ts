@@ -655,6 +655,7 @@ const en = {
   "classify.aiNone": "No AI suggestion for this row.",
   "classify.aiAsk": "Ask AI",
   "classify.aiQueued": "Sent to AI. The suggestion appears when the job finishes.",
+  "classify.aiRunning": "AI jobs in progress: {n}",
   "classify.aiSkipped": "AI skipped this row.",
 };
 
@@ -1313,6 +1314,7 @@ const ko: Record<MessageKey, string> = {
   "classify.aiNone": "이 줄에는 AI 제안이 없습니다.",
   "classify.aiAsk": "AI에 묻기",
   "classify.aiQueued": "AI에 보냈습니다. 작업이 끝나면 제안이 나옵니다.",
+  "classify.aiRunning": "진행 중인 AI 작업 {n}건",
   "classify.aiSkipped": "AI가 이 줄을 건너뛰었습니다.",
 };
 

@@ -17,7 +17,6 @@ import { humanizeApiError } from "@/lib/api-errors";
 import {
   bulkDecide,
   clearDecision,
-  getAiStatus,
   getDocumentView,
   getGroupByUnit,
   getToBe,
@@ -51,6 +50,7 @@ import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
 import { buildPaperModel } from "@/lib/paper-model";
 import { SLOT_LABELS } from "@/lib/slot-labels";
+import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 import { useUiPref } from "@/lib/use-ui-pref";
@@ -96,7 +96,12 @@ export default function ClassifyPage() {
   const [unitsKey, setUnitsKey] = useState(0);
   const units = useLoaded(() => listAllUnits(bundleId), `${bundleId}:${unitsKey}`);
   const tobe = useLoaded(() => getToBe(bundleId), String(bundleId));
-  const ai = useLoaded(() => getAiStatus(bundleId), String(bundleId));
+  // AI 작업이 끝나면 단위·제안·묶음을 다시 불러온다 - 제안이 보이고 다음 저장이 낡은 revision으로 409가 나지 않는다
+  const aiJobs = useAiJobs(bundleId, () => {
+    setUnitsKey((key) => key + 1);
+    void loadBundle(bundleId);
+  });
+  const aiBusy = (aiJobs.status?.jobs.queued ?? 0) + (aiJobs.status?.jobs.running ?? 0);
   const suggestions = useLoaded(() => listSuggestions(bundleId, "classify"), `${bundleId}:${unitsKey}`);
   // 단위마다 가장 최근의 적용된 분류 제안 - 사람이 확정하면 제안은 이력으로만 남는다
   const suggestionOf = useMemo(() => {
@@ -173,6 +178,7 @@ export default function ClassifyPage() {
     try {
       const result = await requestClassify(bundleId, row.unitIds);
       showToast(result.queued > 0 ? t("classify.aiQueued") : t("classify.aiSkipped"));
+      aiJobs.watch();
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
     }
@@ -583,8 +589,15 @@ export default function ClassifyPage() {
       ) : (
         <section className="flex items-start gap-2 rounded-md border border-dashed px-3 py-2 text-xs text-ink-2" style={{ borderColor: "var(--st-ai-line)" }} data-testid="classify-ai">
           <Sparkles size={14} strokeWidth={1.5} className="mt-0.5 shrink-0 text-st-ai" aria-hidden />
-          <span className="flex-1">{ai.data?.ai_enabled ? t("classify.aiNone") : t("classify.aiLater")}</span>
-          {ai.data?.ai_enabled && canEdit && row && row.status === "unassigned" && (
+          <span className="flex-1">
+            {aiJobs.status?.ai_enabled ? t("classify.aiNone") : t("classify.aiLater")}
+            {aiBusy > 0 && (
+              <span className="mt-0.5 block text-st-ai" data-testid="classify-ai-running">
+                {t("classify.aiRunning", { n: aiBusy })}
+              </span>
+            )}
+          </span>
+          {aiJobs.status?.ai_enabled && canEdit && row && row.status === "unassigned" && (
             <button type="button" className="btn h-7" data-testid="classify-ai-request" disabled={busy} onClick={() => void askAi()}>
               {t("classify.aiAsk")}
             </button>
