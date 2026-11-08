@@ -36,8 +36,12 @@ import {
   buildDestinationOptions,
   buildGroupSave,
   buildRows,
+  buildSentenceSlots,
   findNextOpen,
+  findSystemHold,
+  isTextChangeType,
   readDestination,
+  readHumanReason,
   type CellSource,
   type ClassifyRow,
   type Destination,
@@ -53,6 +57,9 @@ import { useUiPref } from "@/lib/use-ui-pref";
 
 type Filter = "unassigned" | "ai_suggested" | "on_hold" | "confirmed" | "all";
 const FILTERS: Filter[] = ["unassigned", "ai_suggested", "on_hold", "confirmed", "all"];
+
+// backend constants.SYSTEM_HOLD_* - 모르는 코드는 "시스템 보류"로 보인다
+const SYSTEM_HOLDS = ["related_unit_changed", "ai_invalid_response"];
 
 const EMPTY_DRAFT: RowDraft = { destination: null, texts: {}, changeTypes: {}, reason: "", moveCode: "" };
 
@@ -149,7 +156,9 @@ export default function ClassifyPage() {
   const isDraftDest = draft.destination !== null || row?.status !== "confirmed";
   const rowUnits: UnitRow[] = (row?.unitIds ?? []).map((id) => unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined);
   const firstDecision = rowUnits[0]?.decision;
-  const savedReason = rowUnits.map((unit) => unit.decision.reason || unit.decision.hold_reason).find(Boolean) ?? "";
+  // system: 코드는 사람 사유가 아니다 - 사유 칸에 넣지 않고 아래에 사람 말로 보인다(넣으면 삭제가 실제 사유 없이 통과한다)
+  const savedReason = rowUnits.map((unit) => readHumanReason(unit.decision)).find(Boolean) ?? "";
+  const systemHold = rowUnits.map((unit) => findSystemHold(unit.decision)).find((code) => code !== null) ?? null;
   const reason = draft.reason || savedReason;
   const moveCode = draft.moveCode || firstDecision?.move_target_code || "";
 
@@ -179,14 +188,9 @@ export default function ClassifyPage() {
   const viewOfRow = row && viewList ? (viewList.find((view) => view.document.id === row.documentId) ?? null) : null;
   const paperModel = useMemo(() => (viewOfRow ? buildPaperModel(viewOfRow) : null), [viewOfRow]);
 
-  function existingText(unitId: number): string | null {
-    const target = groupData?.targets.find((item) => item.parent_target_id === null && item.source_unit_ids.includes(unitId));
-    return target ? target.confirmed_text || target.ai_text : null;
-  }
-
-  function sentenceFor(unitId: number): string {
-    return draft.texts[unitId] ?? existingText(unitId) ?? unitMap.get(unitId)?.text ?? "";
-  }
+  const saveUnits = rowUnits.map((unit) => ({ id: unit.unit_id, kind: unit.kind, lang: unit.lang, text: unit.text, revision: unit.decision.revision }));
+  // 새 문장 칸 - AI가 나눈 문장은 칸 여럿, 합친 문장은 칸 하나다
+  const slots = buildSentenceSlots(groupData, saveUnits);
 
   function selectRow(key: string, scroll = true) {
     setSelectedKey(key);
@@ -205,36 +209,39 @@ export default function ClassifyPage() {
     if (!viewOfRow || !row) return tables;
     for (const unitId of row.unitIds) {
       const unit = viewOfRow.units.find((item) => item.id === unitId);
-      if (!unit || unit.kind !== "table" || unit.table_id === null) continue;
+      if (!unit || (unit.kind !== "table" && unit.kind !== "table_row") || unit.table_id === null) continue;
       const table = viewOfRow.tables.find((item) => item.id === unit.table_id);
+      // 행 단위("행으로 나누기")는 그 행 하나짜리 표이고 칸 자리는 그 행 기준이다 - 서버 칸 자리 검사(원문 칸 블록 좌표)와 같다
+      const isRow = unit.kind === "table_row";
+      const firstRow = isRow ? (unit.row_index ?? 0) : 0;
       const cells = viewOfRow.units
         .filter((item) => item.group_unit_id === unit.id && item.kind === "cell_sentence")
-        .map((item) => ({ id: item.id, lang: item.lang, text: item.text, row: item.row_index ?? 0, col: viewOfRow.blocks.find((block) => block.id === item.block_id)?.col_index ?? 0 }));
-      tables.set(unit.id, { rows: table?.n_rows ?? 1, cols: table?.n_cols ?? 1, cells });
+        .map((item) => {
+          const block = viewOfRow.blocks.find((candidate) => candidate.id === item.block_id);
+          return { id: item.id, lang: item.lang, text: item.text, row: (block?.row_index ?? item.row_index ?? 0) - firstRow, col: block?.col_index ?? 0 };
+        });
+      tables.set(unit.id, { rows: isRow ? 1 : (table?.n_rows ?? 1), cols: table?.n_cols ?? 1, cells });
     }
     return tables;
   }
 
   async function runSave(action: "confirm" | "hold") {
-    if (!row || !destination || busy) return;
-    const needsReason = action === "hold" || destination.kind === "delete" || destination.kind === "move";
+    // 보낼 곳 없이는 보류만 된다(처분 unassigned + hold, 사유는 hold_reason)
+    if (!row || busy || (!destination && action !== "hold")) return;
+    const needsReason = action === "hold" || destination?.kind === "delete" || destination?.kind === "move";
     if (needsReason && !reason.trim()) {
       showToast(t(action === "hold" ? "classify.holdReasonNeeded" : "classify.reasonNeeded"), "error");
       reasonRef.current?.focus();
       return;
     }
-    if (destination.kind === "move" && !moveCode.trim()) {
+    if (destination?.kind === "move" && !moveCode.trim()) {
       showToast(t("classify.moveCodeNeeded"), "error");
       return;
     }
-    const texts = Object.fromEntries(row.unitIds.map((id) => [id, sentenceFor(id)]));
+    // 고친 칸만 글을 보낸다 - 손대지 않은 AI 제안은 글·종류를 비워 보내 제안 그대로 받는다
     const body = buildGroupSave(
-      { ...draft, destination, texts, reason, moveCode },
-      {
-        units: rowUnits.map((unit) => ({ id: unit.unit_id, kind: unit.kind, lang: unit.lang, text: unit.text, revision: unit.decision.revision })),
-        group: groupData,
-        tables: buildTables(),
-      },
+      { ...draft, destination, reason, moveCode },
+      { units: saveUnits, group: groupData, tables: buildTables() },
       action,
       action === "hold" ? reason.trim() : "",
     );
@@ -329,7 +336,7 @@ export default function ClassifyPage() {
     else if (!canEdit || !row) return;
     else if (key === "enter") handlePrimary();
     else if (key === "e") startEdit();
-    else if (key === "h" && destination) void runSave("hold");
+    else if (key === "h") void runSave("hold");
     else if (key === "u") void runClear();
     else return;
     event.preventDefault();
@@ -352,7 +359,6 @@ export default function ClassifyPage() {
   // --- 그리기 ---
   const primaryState = !destination ? "choose" : editing ? "save" : "confirm";
   const disposed = destination?.kind === "delete" || destination?.kind === "move";
-  const holdBlocked = !destination;
 
   const listRows = (
     <ul className="min-h-0 overflow-y-auto" data-testid="classify-list" style={{ scrollbarGutter: "stable" }}>
@@ -379,7 +385,7 @@ export default function ClassifyPage() {
               <span className="flex items-center gap-1.5 font-mono text-[11px] leading-4 text-ink-3">
                 {item.unitIds.map((id) => unitMap.get(id)?.display_id).join(" · ")}
               </span>
-              <span className={`${layout === "list" ? "line-clamp-2" : "truncate"} text-[13px] leading-5 ${item.status === "confirmed" ? "text-ink-3" : "text-ink"}`}>{first?.kind === "table" ? t("classify.tableUnit") : first?.text}</span>
+              <span className={`${layout === "list" ? "line-clamp-2" : "truncate"} text-[13px] leading-5 ${item.status === "confirmed" ? "text-ink-3" : "text-ink"}`}>{first?.kind === "table" || first?.kind === "table_row" ? t("classify.tableUnit") : first?.text}</span>
               {layout === "list" && <span className="truncate text-xs text-ink-3">{destText}</span>}
             </button>
           </li>
@@ -475,8 +481,8 @@ export default function ClassifyPage() {
       <button type="button" className="btn h-8 gap-1 px-1 text-xs font-normal" data-testid="classify-edit" disabled={!canEdit || !destination || disposed || editing || busy} onClick={startEdit}>
         {t("classify.editConfirm")} <kbd>E</kbd>
       </button>
-      <Tooltip label={holdBlocked ? t("classify.holdNeedsDestination") : t("classify.holdHint")}>
-        <button type="button" className="btn h-8 w-full gap-1 px-1 text-xs font-normal" data-testid="classify-hold" disabled={!canEdit || holdBlocked || busy} onClick={() => void runSave("hold")}>
+      <Tooltip label={t("classify.holdHint")}>
+        <button type="button" className="btn h-8 w-full gap-1 px-1 text-xs font-normal" data-testid="classify-hold" disabled={!canEdit || !row || busy} onClick={() => void runSave("hold")}>
           {t("classify.hold")} <kbd>H</kbd>
         </button>
       </Tooltip>
@@ -486,52 +492,61 @@ export default function ClassifyPage() {
     </div>
   );
 
-  const sentenceUnits = rowUnits.filter((unit) => unit.kind !== "table" && unit.kind !== "figure");
+  const isTableRow = rowUnits.some((unit) => unit.kind === "table" || unit.kind === "table_row");
   const newSentences = (
     <section className="grid gap-2" data-testid="classify-new">
       <h2 className="text-xs font-semibold text-ink-3">{t("classify.newSentence")}</h2>
       {disposed ? (
         <p className="rounded-md border border-dashed border-line-2 px-3 py-2 text-ink-3">{t("classify.noNewSentence")}</p>
-      ) : rowUnits.some((unit) => unit.kind === "table" || unit.kind === "figure") ? (
-        <p className="rounded-md border border-line-2 px-3 py-2 text-ink-2">{t(rowUnits.some((unit) => unit.kind === "table") ? "classify.tableAsIs" : "classify.figureAsIs")}</p>
+      ) : isTableRow || rowUnits.some((unit) => unit.kind === "figure") ? (
+        <p className="rounded-md border border-line-2 px-3 py-2 text-ink-2">{t(isTableRow ? "classify.tableAsIs" : "classify.figureAsIs")}</p>
       ) : (
-        sentenceUnits.map((unit, index) => {
-          const text = destination ? sentenceFor(unit.unit_id) : "";
-          const changed = destination !== null && text.trim() !== unit.text.trim();
+        slots.map((slot, index) => {
+          const text = destination ? (draft.texts[slot.key] ?? slot.text) : "";
+          // 나눔·합침은 서버가 구조에서 정한다 - 글자 비교 종류는 출처 하나인 칸에서만 고른다
+          const structural = slot.target?.change_type === "split" || slot.target?.change_type === "merged" || slot.sourceIds.length > 1 || slots.filter((other) => other.sourceIds.includes(slot.sourceIds[0])).length > 1;
+          const changed = destination !== null && slot.sourceText !== null && text.trim() !== "" && text.trim() !== slot.sourceText.trim();
+          const keptType = isTextChangeType(slot.target?.change_type) ? slot.target.change_type : null;
           return (
-            <div key={unit.unit_id} className="grid gap-1">
+            <div key={slot.key} className="grid gap-1">
               <div className={`grid min-h-[70px] grid-cols-[22px_minmax(0,1fr)] gap-2 rounded-md px-2.5 py-2 ${!destination ? "border border-dashed border-line-2 text-ink-4" : editing ? "border border-focus" : row?.status === "confirmed" && !draft.destination ? "border border-line-2" : "border border-dashed border-line-2"}`}>
-                <span className="lg">{unit.lang === "neutral" ? "–" : unit.lang.toUpperCase()}</span>
+                <span className="lg">{slot.lang === "neutral" ? "–" : slot.lang.toUpperCase()}</span>
                 {editing ? (
                   <textarea
                     ref={index === 0 ? firstTextRef : undefined}
-                    lang={unit.lang === "neutral" ? undefined : unit.lang}
+                    lang={slot.lang === "neutral" ? undefined : slot.lang}
                     className="min-h-[52px] w-full resize-y bg-transparent text-[15px] leading-[26px] outline-none focus-visible:outline-none"
-                    style={{ fontFamily: unit.lang === "en" ? "var(--font-source-en)" : "var(--font-source)" }}
-                    data-testid={`classify-text-${unit.unit_id}`}
+                    style={{ fontFamily: slot.lang === "en" ? "var(--font-source-en)" : "var(--font-source)" }}
+                    data-testid={`classify-text-${slot.key}`}
                     value={text}
-                    onChange={(event) => setDraft({ texts: { ...draft.texts, [unit.unit_id]: event.target.value } }, true)}
+                    onChange={(event) => setDraft({ texts: { ...draft.texts, [slot.key]: event.target.value } }, true)}
                   />
                 ) : (
-                  <p lang={unit.lang === "neutral" ? undefined : unit.lang} className="whitespace-pre-wrap text-[15px] leading-[26px]" style={{ fontFamily: unit.lang === "en" ? "var(--font-source-en)" : "var(--font-source)" }} data-testid={`classify-text-${unit.unit_id}`}>
+                  <p lang={slot.lang === "neutral" ? undefined : slot.lang} className="whitespace-pre-wrap text-[15px] leading-[26px]" style={{ fontFamily: slot.lang === "en" ? "var(--font-source-en)" : "var(--font-source)" }} data-testid={`classify-text-${slot.key}`}>
                     {text || "_"}
                   </p>
                 )}
               </div>
-              {changed && (
-                <label className="flex items-center gap-2 text-xs text-ink-2">
-                  {t("classify.changeType")}
-                  <select
-                    className="h-7 rounded-md border border-line-2 bg-surface px-1.5 text-[13px] text-ink"
-                    data-testid={`classify-change-${unit.unit_id}`}
-                    value={draft.changeTypes[unit.unit_id] ?? "rewritten"}
-                    disabled={!canEdit}
-                    onChange={(event) => setDraft({ changeTypes: { ...draft.changeTypes, [unit.unit_id]: event.target.value === "tone" ? "tone" : "rewritten" } })}
-                  >
-                    <option value="tone">{t("change.tone")}</option>
-                    <option value="rewritten">{t("change.rewritten")}</option>
-                  </select>
-                </label>
+              {destination !== null && structural ? (
+                <span className="text-xs text-ink-2" data-testid={`classify-change-${slot.key}`}>
+                  {t("classify.changeType")} · {t(slot.sourceIds.length > 1 ? "change.merged" : "change.split")}
+                </span>
+              ) : (
+                changed && (
+                  <label className="flex items-center gap-2 text-xs text-ink-2">
+                    {t("classify.changeType")}
+                    <select
+                      className="h-7 rounded-md border border-line-2 bg-surface px-1.5 text-[13px] text-ink"
+                      data-testid={`classify-change-${slot.key}`}
+                      value={draft.changeTypes[slot.key] ?? keptType ?? "rewritten"}
+                      disabled={!canEdit}
+                      onChange={(event) => setDraft({ changeTypes: { ...draft.changeTypes, [slot.key]: event.target.value === "tone" ? "tone" : "rewritten" } })}
+                    >
+                      <option value="tone">{t("change.tone")}</option>
+                      <option value="rewritten">{t("change.rewritten")}</option>
+                    </select>
+                  </label>
+                )
               )}
             </div>
           );
@@ -604,6 +619,14 @@ export default function ClassifyPage() {
               disabled={!canEdit}
               onChange={(event) => setDraft({ moveCode: event.target.value })}
             />
+          </>
+        )}
+        {systemHold !== null && (
+          <>
+            <span className="text-xs text-ink-3">{t("classify.systemHold")}</span>
+            <span className="text-ink-2" data-testid="classify-system-hold">
+              <span className="pill warn">{t(SYSTEM_HOLDS.includes(systemHold) ? `hold.system.${systemHold}` : "hold.system.other")}</span>
+            </span>
           </>
         )}
         <span className="text-xs text-ink-3">{t("classify.checks")}</span>

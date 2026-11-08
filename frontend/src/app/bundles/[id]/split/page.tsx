@@ -8,6 +8,7 @@ import { useEffect, useEffectEvent, useMemo, useState, type ReactNode } from "re
 
 import { Paper, type PaperCut } from "@/components/paper/paper";
 import { SourceFontMenu } from "@/components/paper/source-font-menu";
+import { Modal } from "@/components/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -20,8 +21,10 @@ import {
   deletePair,
   editUnits,
   getDocumentView,
+  getGroupByUnit,
   listDocuments,
   redoEdit,
+  saveGroup,
   setBoundaryConfirmed,
   undoEdit,
   type DocumentView,
@@ -30,6 +33,7 @@ import {
   type ViewUnit,
 } from "@/lib/api-sop";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
+import { buildGroupSave } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
 import { buildPaperModel, canSplitAt, toBlockOffset, toUnitOffset } from "@/lib/paper-model";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
@@ -83,6 +87,8 @@ export default function SplitPage() {
   const [picked, setPicked] = useState<number[]>([]);
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<PendingConfirm | null>(null);
+  // 보낼 곳 없는 보류(명세 §6.8) - 판단을 받는 단위 id와 사유
+  const [holdFor, setHoldFor] = useState<{ unitId: number; reason: string } | null>(null);
   // 경계 확인은 바로 보이게 먼저 칠한다 - 지금 보기 데이터에 묶여 있어 새 데이터가 오면 저절로 버려진다
   const [localChecks, setLocalChecks] = useState<{ base: DocumentView | null; values: Record<number, boolean> }>({ base: null, values: {} });
   const checkOverrides = localChecks.base === data ? localChecks.values : {};
@@ -148,6 +154,37 @@ export default function SplitPage() {
         showToast(humanizeApiError(err, t), "error");
         refresh();
       }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** 고른 단위(칸 문장이면 묶인 표·행 단위)를 보낼 곳 없이 보류한다 - 아직 판단이 없는 단위만 */
+  function startHold() {
+    if (!selected || !model) return;
+    const unitId = selected.group_unit_id ?? selected.id;
+    if (model.units.get(unitId)?.status !== "unassigned") {
+      showToast(t("split.holdDecided"), "error");
+      return;
+    }
+    setHoldFor({ unitId, reason: "" });
+  }
+
+  async function runHold() {
+    if (!holdFor || !holdFor.reason.trim() || busy) return;
+    setBusy(true);
+    try {
+      // 관계 묶음 저장은 닫혀야 한다 - 그 단위의 묶음을 읽어 함께 보낸다
+      const group = await getGroupByUnit(bundleId, holdFor.unitId);
+      const units = group.units.map((unit) => ({ id: unit.unit_id, kind: unit.kind, lang: unit.lang, text: unit.text, revision: unit.decision.revision }));
+      const draft = { destination: null, texts: {}, changeTypes: {}, reason: "", moveCode: "" };
+      await saveGroup(bundleId, buildGroupSave(draft, { units, group, tables: new Map() }, "hold", holdFor.reason.trim()));
+      setHoldFor(null);
+      showToast(t("split.held"));
+      refresh();
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+      refresh();
     } finally {
       setBusy(false);
     }
@@ -249,7 +286,7 @@ export default function SplitPage() {
     else if (key === "enter" && !isChecked(selected)) setBoundary(selected, true);
     else if (key === "u" && isChecked(selected)) setBoundary(selected, false);
     else if (key === "s" && cut) splitAtCut();
-    else if (key === "h") showToast(t("split.holdLater"));
+    else if (key === "h") startHold();
     else return;
     event.preventDefault();
   });
@@ -365,8 +402,8 @@ export default function SplitPage() {
               <Scissors size={14} strokeWidth={1.5} aria-hidden />
               {t("split.split")} <kbd>S</kbd>
             </button>
-            <Tooltip label={t("split.holdLater")}>
-              <button type="button" className="btn w-full" data-testid="split-hold" disabled>
+            <Tooltip label={t("split.holdHint")}>
+              <button type="button" className="btn w-full" data-testid="split-hold" disabled={!canEdit || !selected || busy} onClick={startHold}>
                 {t("split.hold")} <kbd>H</kbd>
               </button>
             </Tooltip>
@@ -602,6 +639,7 @@ export default function SplitPage() {
                   ["split.keySplit", "S"],
                   ["split.keyUncheck", "U"],
                   ["split.keyPick", "Ctrl"],
+                  ["split.keyHold", "H"],
                   ["split.keyUndo", "Ctrl Z"],
                 ] as const
               ).map(([label, keys]) => (
@@ -617,6 +655,43 @@ export default function SplitPage() {
         </div>
       </aside>
 
+      {holdFor && (
+        <Modal
+          title={t("split.holdTitle")}
+          testId="split-hold-modal"
+          onClose={() => setHoldFor(null)}
+          footer={
+            <>
+              <button type="button" className="btn" data-testid="split-hold-modal-cancel" onClick={() => setHoldFor(null)}>
+                {t("common.cancel")}
+              </button>
+              <button type="submit" form="split-hold-form" className="btn pri" data-testid="split-hold-modal-confirm" disabled={!holdFor.reason.trim() || busy}>
+                {t("split.holdRun")}
+              </button>
+            </>
+          }
+        >
+          <form
+            id="split-hold-form"
+            className="grid gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void runHold();
+            }}
+          >
+            <p className="text-[13px] text-ink-2">{t("split.holdBody")}</p>
+            <input
+              autoFocus
+              className="h-8 rounded-md border border-line-2 bg-surface px-2 text-[13px] text-ink focus:border-accent focus:outline-none"
+              data-testid="split-hold-reason"
+              placeholder={t("split.holdReason")}
+              value={holdFor.reason}
+              maxLength={2000}
+              onChange={(event) => setHoldFor({ ...holdFor, reason: event.target.value })}
+            />
+          </form>
+        </Modal>
+      )}
       {pending && (
         <ConfirmModal
           title={t("split.confirmTitle")}

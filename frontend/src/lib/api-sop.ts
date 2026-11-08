@@ -418,7 +418,10 @@ export function downloadToBeTemplate(bundleId: number): Promise<Blob> {
 // --- 배정·확정(입구 1) ---
 
 export type Disposition = "unassigned" | "assigned" | "delete" | "move_external";
-export type ChangeType = "as_is" | "tone" | "rewritten" | "table_restructured" | "new";
+/** 새 문장의 변경 종류 - backend constants와 같은 값. 나눔·합침·번역·신규는 서버가 구조에서 정한다 */
+export type ChangeType = "as_is" | "tone" | "rewritten" | "table_restructured" | "split" | "merged" | "translated" | "new";
+/** 저장 요청에 보낼 수 있는 종류 - backend TargetIn.change_type */
+export type ChangeTypeInput = "as_is" | "tone" | "rewritten" | "table_restructured";
 export type WiPart = "instruction" | "why";
 
 export interface Decision {
@@ -502,7 +505,7 @@ export interface TargetInput {
   kind?: "sentence" | "table" | "figure";
   lang?: UnitLang;
   text?: string;
-  change_type?: ChangeType | null;
+  change_type?: ChangeTypeInput | null;
   source_unit_ids: number[];
   parent_key?: string | null;
   cell_row?: number | null;
@@ -513,7 +516,8 @@ export interface TargetInput {
 export interface GroupSaveInput {
   action: "confirm" | "hold";
   hold_reason: string;
-  units: Array<{ unit_id: number; revision: number; disposition: "assigned" | "delete" | "move_external"; move_target_code: string; reason: string }>;
+  /** unassigned는 보낼 곳 없는 보류 - action이 hold일 때만 된다 */
+  units: Array<{ unit_id: number; revision: number; disposition: Disposition; move_target_code: string; reason: string }>;
   targets: TargetInput[];
   removed_target_ids: number[];
 }
