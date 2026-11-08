@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ToBe } from "./api-sop";
-import { addStep, buildToBeInput, changeDocType, createDraft, isDraftDirty, orderDocs, removeDoc, removeStep, renameDoc, setNaSlot } from "./tobe-draft";
+import { addStep, buildToBeInput, changeDocType, createDraft, isDraftDirty, findDraftProblem, orderDocs, removeDoc, removeStep, renameDoc, setNaSlot } from "./tobe-draft";
 
 const BASE: ToBe = {
   revision: 4,
@@ -111,5 +111,22 @@ describe("tobe draft", () => {
   it("is clean right after loading", () => {
     expect(isDraftDirty(createDraft(BASE), BASE)).toBe(false);
     expect(isDraftDirty(renameDoc(createDraft(BASE), "id-2", "WI-09"), BASE)).toBe(true);
+  });
+});
+
+describe("problems the server would refuse without saying which row", () => {
+  it("names the row with no number, by its position", () => {
+    const draft = createDraft(BASE);
+    const withBlank = { ...draft, docs: [...draft.docs, { ...draft.docs[1], key: "new-a", code: "  " }] };
+    expect(findDraftProblem(withBlank)).toEqual({ kind: "empty_code", row: 3, code: "" });
+  });
+
+  it("names the SOP whose N/A section has no reason", () => {
+    const draft = setNaSlot(createDraft(BASE), "id-1", "purpose", true);
+    expect(findDraftProblem(draft)).toEqual({ kind: "empty_na_reason", row: 1, code: "SOP-1" });
+  });
+
+  it("finds nothing in a clean list", () => {
+    expect(findDraftProblem(createDraft(BASE))).toBeNull();
   });
 });

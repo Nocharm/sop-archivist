@@ -17,7 +17,7 @@ import { genId } from "@/lib/id";
 import { useLeaveGuard } from "@/lib/leave-guard";
 import { saveBlob } from "@/lib/save-file";
 import { SLOT_LABELS } from "@/lib/slot-labels";
-import { addStep, buildToBeInput, changeDocType, createDraft, isDraftDirty, orderDocs, removeDoc, removeStep, renameDoc, setNaSlot, type DraftDoc, type ToBeDraft } from "@/lib/tobe-draft";
+import { addStep, buildToBeInput, changeDocType, createDraft, findDraftProblem, isDraftDirty, orderDocs, removeDoc, removeStep, renameDoc, setNaSlot, type DraftDoc, type ToBeDraft } from "@/lib/tobe-draft";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 
@@ -75,6 +75,12 @@ export default function ToBePage() {
 
   async function handleSave() {
     if (!draft || !data) return;
+    // 서버는 줄을 말하지 않고 거절한다 - 보내기 전에 어느 줄인지 알린다
+    const problem = findDraftProblem(draft);
+    if (problem) {
+      showToast(t(problem.kind === "empty_code" ? "tobe.problemEmptyCode" : "tobe.problemNaReason", { n: problem.row, code: problem.code }), "error");
+      return;
+    }
     setSaving(true);
     try {
       await putToBe(bundleId, buildToBeInput(draft, data.revision));
