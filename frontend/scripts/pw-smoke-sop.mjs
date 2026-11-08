@@ -1,5 +1,6 @@
 // SOP 화면 스모크(Playwright + 시스템 Chrome) - 묶음 목록, 개요, 단계 이동(레일·상단 탭), 배치 메뉴, 첫 페인트 전 설정.
-// 전제: backend/에서 reset_db → seed_sop_demo(합성 묶음 3개) 직후, backend 8777 + frontend 3777. 고친 값은 시나리오 안에서 되돌린다.
+// 전제: backend/에서 reset_db → seed_sop_demo(합성 묶음 4개) 직후, backend 8777 + frontend 3777. 고친 값은 시나리오 안에서 되돌린다.
+// AI 나눔 확정 시나리오는 backend가 AI를 켜고 가짜 AI(FAKE_AI_SPLIT=1 node scripts/fake-ai-server.mjs)를 볼 때만 돈다 - 꺼져 있으면 건너뛴다.
 // 실행(frontend/ 에서): node scripts/pw-smoke-sop.mjs   환경 변수: BASE_URL, CHROME_PATH
 // playwright-core는 저장소 의존성이 아니다: `npm i --no-save playwright-core` (package.json 불변)
 import { mkdirSync } from "node:fs";
@@ -75,6 +76,7 @@ await runStep("bundle list", {}, async ({ page, takeShot }) => {
   halfBundleId = Number((await half.getAttribute("data-testid")).replace("bundles-row-", ""));
   check("half-classified row shows KO 21 / 43", (await getText(page, `bundles-ko-${halfBundleId}`)).includes("21 / 43"));
   check("no stage nav outside a bundle", (await page.locator('[data-testid="stage-nav"]').count()) === 0);
+  check("synthetic bundles are marked in the list", (await page.locator(`[data-testid="bundles-synthetic-${halfBundleId}"]`).count()) === 1);
   await takeShot("sop-bundle-list.png");
 });
 
@@ -263,6 +265,53 @@ await runStep("to-be: nested rows, N/A detail, edit and save", { allowConsoleErr
   await page.locator('[data-testid="tobe-dirty"]').waitFor({ state: "detached", timeout: T });
 });
 
+// 검토 v0.4.0: 앞 단계를 지워도 뒤 단계 번호가 그대로여야 한다(분류한 문장이 단계 번호를 가리킨다), 저장 안 한 편집은 나갈 때 묻는다
+await runStep("to-be: removing a step keeps the other numbers, leaving asks first", {}, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/tobe`);
+  await page.locator('[data-testid$="-row"][data-testid^="tobe-"]').first().waitFor({ timeout: T });
+  const wiRow = page.locator('[data-testid$="-row"][data-testid^="tobe-"]').nth(1);
+  const wiKey = (await wiRow.getAttribute("data-testid")).replace("tobe-", "").replace("-row", "");
+  await page.locator(`[data-testid="tobe-${wiKey}-toggle"]`).click();
+  await wait(page, `tobe-${wiKey}-add-step`);
+  const readNumbers = async () =>
+    (await page.locator(`[data-testid^="tobe-${wiKey}-step-"]`).evaluateAll((els) => els.map((el) => el.getAttribute("data-testid")))).map((id) => Number(id.split("-step-")[1]));
+  const before = await readNumbers();
+  const top = Math.max(0, ...before);
+  await page.locator(`[data-testid="tobe-${wiKey}-add-step"]`).click();
+  await page.locator(`[data-testid="tobe-${wiKey}-add-step"]`).click();
+  await page.locator(`[data-testid="tobe-${wiKey}-step-${top + 1}"]`).fill("Smoke step A");
+  await page.locator(`[data-testid="tobe-${wiKey}-step-${top + 2}"]`).fill("Smoke step B");
+  await page.locator('[data-testid="tobe-save"]').click();
+  await page.locator('[data-testid="tobe-dirty"]').waitFor({ state: "detached", timeout: T });
+  await page.locator(`[data-testid="tobe-${wiKey}-remove-step-${top + 1}"]`).click();
+  await page.locator('[data-testid="tobe-save"]').click();
+  await page.locator('[data-testid="tobe-dirty"]').waitFor({ state: "detached", timeout: T });
+  const after = await readNumbers();
+  check("the later step keeps its number after an earlier one is removed", after.includes(top + 2) && !after.includes(top + 1), after.join(","));
+  check("its title stays with its number", (await page.locator(`[data-testid="tobe-${wiKey}-step-${top + 2}"]`).inputValue()) === "Smoke step B");
+  check("the steps that were there are untouched", before.every((no) => after.includes(no)), `${before} -> ${after}`);
+
+  // 저장 안 한 편집 - 단계 링크를 누르면 먼저 묻는다
+  await page.locator(`[data-testid="tobe-${wiKey}-step-${top + 2}"]`).fill("Smoke step B (unsaved)");
+  await page.locator('[data-testid="stage-nav-classify"]').click();
+  await wait(page, "tobe-leave");
+  check("leaving with unsaved edits asks first", page.url().endsWith("/tobe"));
+  await page.locator('[data-testid="tobe-leave-cancel"]').click();
+  check("cancel stays on To-Be with the edit", (await page.locator(`[data-testid="tobe-${wiKey}-step-${top + 2}"]`).inputValue()) === "Smoke step B (unsaved)");
+  await page.locator('[data-testid="stage-nav-classify"]').click();
+  await page.locator('[data-testid="tobe-leave-confirm"]').click();
+  await page.waitForURL(/\/classify$/, { timeout: T });
+  check("confirm discards and leaves", true);
+
+  // 되돌리기
+  await page.goto(`${BASE}/bundles/${halfBundleId}/tobe`);
+  await page.locator(`[data-testid="tobe-${wiKey}-toggle"]`).click();
+  await page.locator(`[data-testid="tobe-${wiKey}-remove-step-${top + 2}"]`).click();
+  await page.locator('[data-testid="tobe-save"]').click();
+  await page.locator('[data-testid="tobe-dirty"]').waitFor({ state: "detached", timeout: T });
+  check("restored the step list", (await readNumbers()).join(",") === before.join(","));
+});
+
 await runStep("classify: choose, confirm, delete with reason, edit, clear, bulk", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/classify`);
   const rows = page.locator('[data-testid^="classify-row-u"]');
@@ -320,7 +369,7 @@ await runStep("classify: choose, confirm, delete with reason, edit, clear, bulk"
 
   // 여러 줄 삭제
   await rows.nth(4).click();
-  await rows.nth(5).click({ modifiers: ["Control"] });
+  await rows.nth(5).click({ modifiers: ["ControlOrMeta"] });
   await wait(page, "classify-bulk");
   await page.locator('[data-testid="classify-bulk-delete"]').click();
   await page.locator('[data-testid="classify-bulk-reason"]').fill("Header text");
@@ -335,6 +384,101 @@ await runStep("classify in list and detail layout", { storage: { "sopa.classifyL
   await page.locator('[data-testid="classify"][data-layout="list"]').waitFor({ timeout: T });
   check("list layout is used", true);
   await takeShot("sop-classify-list.png");
+});
+
+// 검토 v0.4.0: 쪼개기 직후 묶음에서 보낼 곳 없는 보류(쪼개기 H·분류 H), 표 행 분류, AI 나눔 확정
+let freshBundleId = null;
+
+await runStep("split: H holds a unit without a destination", {}, async ({ page }) => {
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  freshBundleId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  await page.goto(`${BASE}/bundles/${freshBundleId}/split`);
+  const unit = page.locator('[data-testid^="split-paper-unit-"]:not(.ptbl-cap)').nth(2);
+  await unit.waitFor({ timeout: T });
+  await unit.click();
+  const heldId = await getText(page, "split-unit-id");
+  await page.keyboard.press("h");
+  await wait(page, "split-hold-modal");
+  check("hold needs a reason", await page.locator('[data-testid="split-hold-modal-confirm"]').isDisabled());
+  await page.locator('[data-testid="split-hold-reason"]').fill("Smoke: not sure where it goes");
+  await page.locator('[data-testid="split-hold-modal-confirm"]').click();
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((el) => el.textContent?.includes("Held")), null, { timeout: T });
+  check("H holds the unit", true);
+  await page.goto(`${BASE}/bundles/${freshBundleId}/classify`);
+  await page.locator('[data-testid^="classify-row-u"]').first().waitFor({ timeout: T });
+  // 짝 줄이면 줄 상태는 덜 끝난 쪽(짝의 미배정)을 따른다 - 전체에서 찾는다
+  await page.locator('[data-testid="classify-filter-all"]').click();
+  const held = page.locator('[data-testid^="classify-row-u"]', { hasText: heldId });
+  await held.first().click();
+  await page.waitForLoadState("networkidle");
+  check("held unit shows on Classify with its reason", (await page.locator('[data-testid="classify-reason"]').inputValue()) === "Smoke: not sure where it goes");
+  check("it has no destination", (await getText(page, "classify-destination")).includes("Choose"), await getText(page, "classify-destination"));
+});
+
+await runStep("classify: hold an unassigned row without a destination", {}, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${freshBundleId}/classify`);
+  const rows = page.locator('[data-testid^="classify-row-u"]');
+  await rows.first().waitFor({ timeout: T });
+  const key = (await rows.first().getAttribute("data-testid")).replace("classify-row-", "");
+  // 줄의 관계 묶음이 다 온 뒤에 쓴다 - 불러오는 동안 쓴 글은 버려진다(검토 M3, 따로 고친다)
+  await page.waitForLoadState("networkidle");
+  check("hold is available with no destination", !(await page.locator('[data-testid="classify-hold"]').isDisabled()));
+  await page.locator('[data-testid="classify-reason"]').fill("Smoke: decide later");
+  await page.locator('[data-testid="classify-hold"]').click();
+  await page.waitForFunction((rowKey) => document.querySelector(`[data-testid="classify-row-${rowKey}"]`)?.getAttribute("data-status") === "on_hold", key, { timeout: T });
+  check("the row is on hold", true);
+});
+
+await runStep("split rows of a table, then classify a row as a table", { allowConsoleErrors: true }, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${freshBundleId}/split`);
+  const cap = page.locator('button.ptbl-cap[data-testid^="split-paper-unit-"]').first();
+  await cap.waitFor({ timeout: T });
+  await cap.click();
+  await page.locator('[data-testid="split-table-rows"]').click();
+  // 판단이 걸린 단위가 있으면 서버가 먼저 묻는다
+  const confirm = page.locator('[data-testid="split-confirm-confirm"]');
+  if (await confirm.isVisible().catch(() => false)) await confirm.click();
+  await page.locator('[data-testid="split-table-merge"]').waitFor({ timeout: T });
+  const rowId = await getText(page, "split-unit-id");
+  check("rows are split", rowId.length > 0, rowId);
+  await page.goto(`${BASE}/bundles/${freshBundleId}/classify`);
+  await page.locator('[data-testid^="classify-row-u"]').first().waitFor({ timeout: T });
+  await page.locator('[data-testid="classify-filter-all"]').click();
+  const row = page.locator('[data-testid^="classify-row-u"]', { hasText: rowId }).first();
+  await row.click();
+  const key = (await row.getAttribute("data-testid")).replace("classify-row-", "");
+  await page.locator('[data-testid="classify-destination"]').click();
+  await page.locator('[data-testid^="classify-dest-slot:"]:not([disabled])').first().click();
+  await page.locator('[data-testid="classify-primary"]').click();
+  await page.waitForFunction((rowKey) => document.querySelector(`[data-testid="classify-row-${rowKey}"]`)?.getAttribute("data-status") === "confirmed", key, { timeout: T });
+  check("a table row confirms as a one-row table", true);
+});
+
+await runStep("classify: an AI split keeps both sentences when confirmed", {}, async ({ page }) => {
+  const status = await page.request.get(`${BASE}/api/bundles/${freshBundleId}/ai/status`, { headers: { "X-Dev-User": "qa.member" } });
+  if (!status.ok() || !(await status.json()).ai_enabled) {
+    console.log("  (AI is off in this backend - skipped)");
+    return;
+  }
+  await page.goto(`${BASE}/bundles/${freshBundleId}/classify`);
+  const rows = page.locator('[data-testid^="classify-row-u"]');
+  await rows.first().waitFor({ timeout: T });
+  const row = rows.nth(1);
+  await row.click();
+  const key = (await row.getAttribute("data-testid")).replace("classify-row-", "");
+  await page.locator('[data-testid="classify-ai-request"]').click();
+  // 폴링으로 제안이 저절로 들어온다(새로고침 없이)
+  await page.waitForFunction((rowKey) => document.querySelector(`[data-testid="classify-row-${rowKey}"]`)?.getAttribute("data-status") === "ai_suggested", key, { timeout: 30000 });
+  check("the AI suggestion appears without a reload", true);
+  await page.locator('[data-testid^="classify-text-t"]').nth(1).waitFor({ timeout: T });
+  const slots = await page.locator('[data-testid^="classify-text-t"]').count();
+  check("both split sentences are shown", slots >= 2, String(slots));
+  await page.locator('[data-testid="classify-primary"]').click();
+  await page.waitForFunction((rowKey) => document.querySelector(`[data-testid="classify-row-${rowKey}"]`)?.getAttribute("data-status") === "confirmed", key, { timeout: T });
+  await row.click();
+  await page.locator('[data-testid^="classify-text-t"]').first().waitFor({ timeout: T });
+  check("both sentences are still there after confirming", (await page.locator('[data-testid^="classify-text-t"]').count()) === slots);
 });
 
 await runStep("match: identical candidates, link a source, mark new", {}, async ({ page, takeShot }) => {
@@ -444,6 +588,19 @@ await runStep("dark theme from the layout menu, before first paint next time", {
     else document.addEventListener("DOMContentLoaded", () => done(document.documentElement.dataset.theme), { once: true });
   }));
   check("stored theme applies before the app mounts", early === "dark", String(early));
+});
+
+// 검토 v0.4.0: 준비된 옛 문서가 없는 묶음의 분류는 로딩에 머물지 않는다
+await runStep("classify on a bundle with no documents shows the empty state", { devUser: "dev.admin" }, async ({ page }) => {
+  await page.goto(`${BASE}/`);
+  await page.locator('[data-testid="bundles-new"]').click();
+  await page.locator('[data-testid="new-bundle-title"]').fill("SYNTHETIC smoke empty bundle");
+  await page.locator('[data-testid="new-bundle-synthetic"]').check();
+  await page.locator('[data-testid="new-bundle-submit"]').click();
+  await page.waitForURL(/\/bundles\/\d+$/, { timeout: T });
+  await page.goto(`${page.url()}/classify`);
+  await page.getByText("No units to classify yet.").waitFor({ timeout: T });
+  check("empty state instead of an endless skeleton", true);
 });
 
 await browser.close();
