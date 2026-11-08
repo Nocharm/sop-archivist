@@ -1,6 +1,6 @@
 # SOP 재구성 계획 2: AI 층 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **상태: 구현 완료(v0.3.0, 2026-11-08). 다시 실행하지 않는다.** 체크박스와 커밋·푸시 지시(`git push sop-archivist …`)는 계획 당시의 것이라 갱신하지 않았다(지금은 `origin` 단일 저장소). 지금도 참조하는 살아 있는 부분은 아래 "API 계약" 블록뿐이다(`CLAUDE.md`·`README.md`가 가리킨다). 계획 1과 기반 세팅 계획은 같은 이유로 지웠다(git history에 있다).
 
 **Goal:** 계획 1의 결정적 코어 위에 AI 제안 층(분류·고쳐 쓰기·번역·입구 2 짝·한/영 짝·복합 문장 나누기)을 얹어, AI가 제안하고 사람이 줄마다 확정하는 흐름을 API로 끝까지 돌린다. AI가 꺼지거나 실패해도 계획 1의 사람 경로는 그대로 돈다.
 
