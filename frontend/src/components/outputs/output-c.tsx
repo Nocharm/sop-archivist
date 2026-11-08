@@ -14,7 +14,10 @@ function CItemView({ item }: { item: OutputCItem }) {
           {[...rows.entries()].sort((a, b) => a[0] - b[0]).map(([index, cells]) => (
             <tr key={index}>
               {cells.sort((a, b) => (a.cell_col ?? 0) - (b.cell_col ?? 0)).map((cell) => (
-                <td key={cell.target_id}>{cell.text}</td>
+                // 확정 글이 없으면 AI 글 - 문장과 같은 규칙, 확정 전 칸은 점선
+                <td key={cell.target_id} className={cell.status === "confirmed" ? undefined : "border-dashed"}>
+                  {cell.text || cell.ai_text}
+                </td>
               ))}
             </tr>
           ))}

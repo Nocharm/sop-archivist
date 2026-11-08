@@ -623,7 +623,7 @@ export interface OutputLocation {
 }
 
 export interface OutputARow {
-  row_kind: "unit" | "table" | "new";
+  row_kind: "unit" | "table" | "translation" | "new";
   lang: string;
   old_doc_code: string;
   old_doc_version: string;
