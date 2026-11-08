@@ -1,35 +1,15 @@
 # SOP Archivist 프런트 디자인 기초
 
-컨셉 세션에서 사용자와 정한 내용을 구현 세션으로 넘기는 문서다. 이 문서만 읽고 시작할 수 있게 썼다. 이전 세션의 대화와 메모리는 새 세션에 없다.
+컨셉 세션에서 사용자와 정한 프런트 디자인 결정이다. 화면 코드 주석이 `디자인 문서 N절`로 이 문서의 절 번호를 참조하니 번호를 바꾸지 않는다(구현 세션 인계용 0·1절은 v0.4.0 머지 뒤 지웠다).
 
 - 작성일: 2026-11-07
-- 상태: 디자인 컨셉과 16절의 동작 결정 3개 확정. 앱 코드는 아직 고치지 않았다. `frontend/docs/design/`만 커밋되지 않은 채 있다.
+- 상태: 디자인 컨셉과 16절의 동작 결정 3개 확정, 1차 화면은 v0.4.0으로 구현됐다.
 - 시안: https://claude.ai/artifact/PajjK9RYdKLXJ1cQZJaco3 (사용자 계정 비공개)
 - 시안 로컬 사본: `mock/archivist-foundations.html` (브라우저로 바로 열린다. 화면 안에서 `J` `K` `Enter`도 동작한다)
 - 캡처: `mock/shots/`
 - 토큰: `tokens.css` (시안과 49개 색 값이 라이트·다크 모두 일치함을 확인)
 
 `mock/`은 참고용이고 커밋하지 않는다. 시안 안의 글꼴 사본은 저장소 배포용이 아니다.
-
-## 0. 새 세션 시작 프롬프트
-
-```text
-SOP Archivist 프런트 1차 구현을 시작한다. 작업 폴더는 /Users/hyeonjin/Documents/sop-archivist-frontend, 브랜치는 feat/sop-frontend다.
-
-먼저 읽는다.
-- frontend/docs/design/2026-11-07-frontend-design-foundations.md (디자인 결정, 이 문서가 기준)
-- docs/design/2026-11-06-frontend-first-pass-prompt.md (병행 규칙과 화면 순서)
-- CLAUDE.md, rules/, frontend/AGENTS.md, docs/lessons/
-
-디자인 컨셉과 토큰은 정해졌으므로 다시 제안하지 않는다. 문서 16절의 "시작 전 확인"부터 처리하고, 구현 계획을 세워 사용자 확인을 받은 뒤 시작한다.
-```
-
-## 1. 먼저 알아 둘 상태
-
-- 작업 브랜치 `feat/sop-frontend`는 `c6ecbc1`에 있고 `sop-archivist/main`보다 15커밋 뒤다. 뒤처진 커밋은 AI 층 작업이고 `frontend/`는 건드리지 않았다. 시작할 때 `git fetch sop-archivist && git merge sop-archivist/main`을 먼저 한다.
-- AI API는 합친 뒤 `/docs`(OpenAPI)로 확인한다. 2026-11-07 기준 main에는 `/ai/status`, `/ai/cancel`, `/ai/retry`만 있고 `POST /classify`, `GET /suggestions`는 없다. 없는 부분은 `docs/superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md`의 "API 계약" 절이 약속이다.
-- 1차 프롬프트의 병행 규칙이 그대로 유효하다. `frontend/`만 고치고, 버전과 CHANGELOG, 태그는 건드리지 않고, 푸시는 `git push sop-archivist HEAD:feat/sop-frontend`만 쓰고, main 합치기는 사용자가 정한다.
-- 이 문서는 1차 프롬프트의 1단계(디자인 컨셉과 토큰)를 끝낸 결과다. 화면 순서는 그 프롬프트의 2, 3단계를 따른다.
 
 ## 2. 의도
 

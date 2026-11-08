@@ -67,7 +67,7 @@ SOP Restructuring T/F가 쓸 전용 AI 에이전트 **SOP Archivist**(사용자 
 - **UI 식별자**: 템플릿 기본 `data-testid` 유지(bpm의 `data-id`는 레거시 관례라 새 프로젝트엔 이유 없음).
 - **UI 모양**: 디자인 컨셉 전이라 중립 최소 스타일(흰 바탕·시스템 폰트 or Pretendard·단일 악센트 1색). 토큰 체계는 제품 단계 디자인 결정 후.
 - **서비스 버전**: `frontend/package.json` `version` `0.1.0`에서 시작, 상단 바 표시, 루트 `CHANGELOG.md`, 태그는 bpm 규칙(`rules/common/git.md` "On Main Merge")을 `Nocharm/sop-archivist` `main` 머지 기준으로 적용. 기반 세팅이 `main`에 들어가는 시점이 `v0.1.0`.
-- **템플릿 메타 정리**: 이 브랜치에서 `docs/template/` 삭제, 템플릿 seed 주석 제거(`/setup-from-template`가 하는 정리와 동일).
+- **템플릿 메타 정리**: 이 브랜치에서 `docs/template/` 삭제, 템플릿 seed 주석 제거(템플릿의 setup-from-template 커맨드가 하는 정리와 동일, 커맨드 파일은 2026-11-08 삭제).
 
 ## 5. 이식 목록
 
