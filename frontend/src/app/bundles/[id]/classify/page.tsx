@@ -40,9 +40,12 @@ import {
   findNextOpen,
   findSystemHold,
   isTextChangeType,
+  pickFirstFilter,
+  readCheckKey,
   readDestination,
   readHumanReason,
   type CellSource,
+  type ClassifyFilter,
   type ClassifyRow,
   type Destination,
   type RowDraft,
@@ -56,13 +59,20 @@ import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 import { useUiPref } from "@/lib/use-ui-pref";
 
-type Filter = "unassigned" | "ai_suggested" | "on_hold" | "confirmed" | "all";
+type Filter = ClassifyFilter;
 const FILTERS: Filter[] = ["unassigned", "ai_suggested", "on_hold", "confirmed", "all"];
 
 // backend constants.SYSTEM_HOLD_* - 모르는 코드는 "시스템 보류"로 보인다
 const SYSTEM_HOLDS = ["related_unit_changed", "ai_invalid_response"];
 
-const EMPTY_DRAFT: RowDraft = { destination: null, texts: {}, changeTypes: {}, reason: "", moveCode: "" };
+/** 화면의 줄 초안 - 사유·이동 코드는 null이면 손대지 않은 것(저장된 값을 보인다), ""이면 사람이 비운 것 */
+interface PageDraft extends Omit<RowDraft, "reason" | "moveCode"> {
+  reason: string | null;
+  moveCode: string | null;
+  editing: boolean;
+}
+
+const EMPTY_DRAFT: PageDraft = { destination: null, texts: {}, changeTypes: {}, reason: null, moveCode: null, editing: false };
 
 function isTypingTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
@@ -129,8 +139,8 @@ export default function ClassifyPage() {
 
   // 처음 불러온 순간의 목록을 붙잡는다 - 그래야 확정한 줄이 필터에서 바로 빠지지 않는다(렌더 중 상태 맞추기)
   if (snapshot === null && rows.length > 0 && units.data !== null) {
-    // AI 제안이 있으면 그것부터 본다(명세 §12-6)
-    const first: Filter = counts.ai_suggested > 0 ? "ai_suggested" : filter;
+    // AI 제안이 있으면 그것부터 본다(명세 §12-6), 없으면 줄이 있는 첫 상태 - 빈 목록으로 열지 않는다
+    const first = pickFirstFilter(counts);
     setFilter(first);
     setSnapshot({ filter: first, keys: rows.filter((item) => first === "all" || item.status === first).map((item) => item.key) });
   }
@@ -148,15 +158,12 @@ export default function ClassifyPage() {
   // --- 고른 줄의 관계 묶음과 초안 ---
   const group = useLoaded<Group | null>(() => (row ? loadRowGroup(bundleId, row.unitIds) : Promise.resolve(null)), `${activeKey}:${unitsKey}`);
   const groupData = group.data;
-  const [draftState, setDraftState] = useState<{ key: string | null; base: Group | null; draft: RowDraft; editing: boolean }>({
-    key: null,
-    base: null,
-    draft: EMPTY_DRAFT,
-    editing: false,
-  });
-  const live = draftState.key === activeKey && draftState.base === groupData;
-  const draft = live ? draftState.draft : EMPTY_DRAFT;
-  const editing = live && draftState.editing;
+  // 초안은 줄마다 따로 둔다 - 묶음을 불러오는 동안 쓴 글이나 다른 줄을 보고 돌아왔을 때의 편집이 남는다. 저장·지우기하면 그 줄 초안을 버린다
+  const [drafts, setDrafts] = useState<Record<string, PageDraft>>({});
+  const draft = (activeKey && drafts[activeKey]) || EMPTY_DRAFT;
+  const editing = draft.editing;
+  // 고른 줄의 묶음이 아직 오지 않았으면 저장하지 않는다(이전 줄의 묶음으로 요청을 만들게 된다)
+  const groupPending = group.isLoading || (row !== null && groupData === null);
   const savedDestination = readDestination(groupData, row?.unitIds ?? []);
   const destination: Destination | null = draft.destination ?? savedDestination;
   const isDraftDest = draft.destination !== null || row?.status !== "confirmed";
@@ -165,11 +172,20 @@ export default function ClassifyPage() {
   // system: 코드는 사람 사유가 아니다 - 사유 칸에 넣지 않고 아래에 사람 말로 보인다(넣으면 삭제가 실제 사유 없이 통과한다)
   const savedReason = rowUnits.map((unit) => readHumanReason(unit.decision)).find(Boolean) ?? "";
   const systemHold = rowUnits.map((unit) => findSystemHold(unit.decision)).find((code) => code !== null) ?? null;
-  const reason = draft.reason || savedReason;
-  const moveCode = draft.moveCode || firstDecision?.move_target_code || "";
+  const reason = draft.reason ?? savedReason;
+  const moveCode = draft.moveCode ?? firstDecision?.move_target_code ?? "";
 
-  function setDraft(patch: Partial<RowDraft>, nextEditing = editing) {
-    setDraftState({ key: activeKey, base: groupData, draft: { ...draft, reason, moveCode, ...patch }, editing: nextEditing });
+  function setDraft(patch: Partial<PageDraft>, nextEditing = editing) {
+    if (!activeKey) return;
+    setDrafts((prev) => ({ ...prev, [activeKey]: { ...draft, ...patch, editing: nextEditing } }));
+  }
+
+  function dropDraft(key: string) {
+    setDrafts((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   }
 
   const rowSuggestion = row ? (row.unitIds.map((id) => suggestionOf.get(id)).find(Boolean) ?? null) : null;
@@ -234,7 +250,7 @@ export default function ClassifyPage() {
 
   async function runSave(action: "confirm" | "hold") {
     // 보낼 곳 없이는 보류만 된다(처분 unassigned + hold, 사유는 hold_reason)
-    if (!row || busy || (!destination && action !== "hold")) return;
+    if (!row || busy || groupPending || (!destination && action !== "hold")) return;
     const needsReason = action === "hold" || destination?.kind === "delete" || destination?.kind === "move";
     if (needsReason && !reason.trim()) {
       showToast(t(action === "hold" ? "classify.holdReasonNeeded" : "classify.reasonNeeded"), "error");
@@ -258,7 +274,7 @@ export default function ClassifyPage() {
       showToast(action === "hold" ? t("classify.held") : t("classify.confirmed"));
       // 다음 미확정 줄로 - 지금 줄은 목록 자리에 남는다
       const next = action === "confirm" ? findNextOpen(listKeys, rowMap, row.key) : null;
-      setDraftState({ key: null, base: null, draft: EMPTY_DRAFT, editing: false });
+      dropDraft(row.key);
       if (next) selectRow(next);
       setUnitsKey((key) => key + 1);
       void loadBundle(bundleId);
@@ -278,7 +294,7 @@ export default function ClassifyPage() {
     try {
       for (const unit of decided) await clearDecision(bundleId, unit.unit_id, unit.decision.revision);
       showToast(t("classify.cleared"));
-      setDraftState({ key: null, base: null, draft: EMPTY_DRAFT, editing: false });
+      dropDraft(row.key);
       setUnitsKey((key) => key + 1);
       void loadBundle(bundleId);
     } catch (err) {
@@ -440,6 +456,12 @@ export default function ClassifyPage() {
         {rowUnits.map((unit) => unit.display_id).join(" · ") || "–"}
       </span>
       {row && <UnitStatusPill status={row.status} testId="classify-row-status" />}
+      {/* 저장 뒤 다시 불러오기가 실패해도 화면은 남기고 다시 시도할 수 있게 한다 */}
+      {(units.error ?? suggestions.error) !== null && (
+        <button type="button" className="pill warn" data-testid="classify-refresh-error" onClick={() => setUnitsKey((key) => key + 1)}>
+          {t("classify.refreshFailed")}
+        </button>
+      )}
       <span className="flex-1" />
       <Tooltip label={t("classify.prev")}>
         <button type="button" className="btn ghost icon h-7 w-7" aria-label={t("classify.prev")} data-testid="classify-prev" onClick={() => moveRow(-1)}>
@@ -647,7 +669,7 @@ export default function ClassifyPage() {
         <span className="text-ink-2" data-testid="classify-checks">
           {(groupData?.targets.flatMap((target) => target.warnings) ?? []).map((warning, index) => (
             <span key={index} className="pill warn mr-1">
-              {t(`check.${warning.code ?? warning.kind ?? "other"}`)}
+              {t(readCheckKey(warning))}
             </span>
           ))}
           {(groupData?.targets.flatMap((target) => target.warnings).length ?? 0) === 0 && "–"}
@@ -781,6 +803,8 @@ export default function ClassifyPage() {
               void loadBundle(bundleId);
             } catch (err) {
               showToast(humanizeApiError(err, t), "error");
+              // revision이 낡아 거절됐을 수 있다 - 다시 불러와야 다음 시도가 같은 이유로 실패하지 않는다
+              setUnitsKey((key) => key + 1);
             }
           }}
         />

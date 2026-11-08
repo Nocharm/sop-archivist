@@ -373,3 +373,33 @@ export function findNextOpen(keys: string[], rows: Map<string, ClassifyRow>, cur
   const ordered = [...keys.slice(index + 1), ...keys.slice(0, Math.max(index, 0))];
   return ordered.find((key) => rows.get(key)?.status !== "confirmed") ?? null;
 }
+
+// --- 목록 필터와 검사 문구 ---
+
+export type ClassifyFilter = "unassigned" | "ai_suggested" | "on_hold" | "confirmed" | "all";
+
+/** 처음 열 때의 필터 - AI 제안이 있으면 그것부터(명세 §12-6), 없으면 줄이 있는 첫 상태. 아무것도 없으면 미배정 */
+export function pickFirstFilter(counts: Record<ClassifyFilter, number>): ClassifyFilter {
+  const order: ClassifyFilter[] = ["ai_suggested", "unassigned", "on_hold", "confirmed"];
+  return order.find((filter) => counts[filter] > 0) ?? "unassigned";
+}
+
+// 화면 문구가 있는 검사 - 문장 검사(backend checks.py)와 AI 응답 검사(ai/classify.py·split.py의 build_warning)
+const CHECK_KINDS = new Set([
+  "number_mismatch",
+  "unit_mismatch",
+  "negation_mismatch",
+  "unknown_rule_id",
+  "evidence_not_found",
+  "missing_rewrite",
+  "too_many_sentences",
+  "invalid_format",
+  "unknown_candidate",
+  "parts_mismatch",
+]);
+
+/** 새 문장 경고의 문구 키 - 모르는 종류는 "확인 필요" */
+export function readCheckKey(warning: Record<string, string>): string {
+  const kind = warning.code ?? warning.kind ?? "";
+  return CHECK_KINDS.has(kind) ? `check.${kind}` : "check.other";
+}
