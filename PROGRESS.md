@@ -4,7 +4,7 @@
 
 ## 2026-11-08
 
-- **교훈 추가(원격 세션·브라우저 검증)** — 프런트 1차 세션에서 겪은 것을 `docs/lessons/remote-sessions.md`(파일 전송 비동기로 커밋이 한 칸씩 밀린 사고와 체크섬 확인, 다른 경로 마운트의 `prunable` 오표시, git lock 파일과 삭제 권한, VM의 백그라운드 프로세스·맥 `node_modules`, 브라우저 검증 위치)와 `browser-verification.md` 7·8(헤드리스 blob 내려받기 이름, 그려진 글자 대비 감사)로 남겼다.
+- **교훈 추가(원격 세션·브라우저 검증)** — 프런트 1차 세션에서 겪은 것을 `docs/lessons/remote-sessions.md`(파일 전송 비동기로 커밋이 한 칸씩 밀린 사고와 체크섬 확인, 다른 경로 마운트의 `prunable` 오표시, git lock 파일과 삭제 권한, VM의 백그라운드 프로세스·맥 `node_modules`, 브라우저 검증 위치)와 `browser-verification.md` 7·8(헤드리스 blob 내려받기 이름, 그려진 글자 대비 감사)로 남겼다. 템플릿 분리 때 겪은 것은 `git-operations.md`(재작성 중 다른 세션의 푸시를 명시 lease가 막은 일, zsh 인자 분리)로 남겼다.
 - **템플릿에서 저장소 분리** — 이 폴더는 템플릿 클론의 워크트리였고 공개 저장소 히스토리 앞에 템플릿 커밋 32개가 붙어 있었다. 템플릿 커밋을 걷어 낸 히스토리(145커밋, 트리·작성 정보 그대로 대조)로 `main`과 태그 v0.1.0–v0.4.0을 lease 걸어 강제 푸시하고(사용자 결정, '태그는 옮기지 않는다' 규칙의 일회성 예외), 폴더를 독립 clone(`origin`, `main`)으로 바꿨다. 템플릿 쪽 remote·브랜치·프런트 워크트리는 지웠다. 기존 clone은 다시 받아야 한다.
 - **머지 뒤 문서 정리** — 문서 규칙(머지된 기능의 인계 문서 삭제)대로 프런트 시작 프롬프트(`docs/design/`)와 디자인 기초 문서의 인계 0·1절을 지웠다(나머지 절 번호는 코드 주석이 참조해 그대로). 템플릿에서 온 `.claude/commands/setup-from-template.md`도 지웠다.
 - **프런트 1차 화면 머지(feat/sop-frontend → main, v0.4.0)** — Claude Design 컨셉(G Graphite 라이트·다크, 설계 기초 `frontend/docs/design/2026-11-07-frontend-design-foundations.md`) 위에 SOP 재구성의 모든 단계 화면을 얹었다: 앱 틀(레일/상단 탭, 첫 페인트 전 화면 설정)·묶음 목록·개요, 문서, 원문 대조 쪼개기, To-Be 편집, 분류(사람 경로 + AI 제안 표시), 짝 맞추기·결과물·검토. 화면 규칙은 순수 모델(`paper-model`·`tobe-draft`·`classify-model`)에 두고 테스트했고, SOP 규칙 거절은 `ApiError.rule` → `rule.<code>` 문구로 옮긴다. 다크 테마는 실제 글자 대비 감사(`scripts/pw-contrast-audit.mjs`, 9화면×2테마 4.5:1)를 통과했다. 1차에서 뺀 것: 경계 손잡이 끌기·줄 더블클릭, 보낼 곳 없는 보류(`H`), 결과물 B·C 최종 시안.
