@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ToBe } from "./api-sop";
-import { addStep, buildToBeInput, changeDocType, createDraft, isDraftDirty, orderDocs, removeDoc, removeStep, renameDoc } from "./tobe-draft";
+import { addStep, buildToBeInput, changeDocType, createDraft, isDraftDirty, orderDocs, removeDoc, removeStep, renameDoc, setNaSlot } from "./tobe-draft";
 
 const BASE: ToBe = {
   revision: 4,
@@ -23,21 +23,67 @@ describe("tobe draft", () => {
   });
 
   it("renames references with the code", () => {
-    const next = renameDoc(createDraft(BASE), "id-1", "SOP-2");
-    expect(next.docs.find((doc) => doc.key === "id-2")?.parent_code).toBe("SOP-2");
-    expect(next.na_slots[0].code).toBe("SOP-2");
+    const input = buildToBeInput(renameDoc(createDraft(BASE), "id-1", "SOP-2"), 4);
+    expect(input.docs.find((doc) => doc.code === "WI-01")?.parent_code).toBe("SOP-2");
+    expect(input.na_slots).toEqual([{ code: "SOP-2", slot_key: "scope", reason: "n/a" }]);
   });
 
   it("drops a removed doc's slots and orphans its WIs", () => {
-    const next = removeDoc(createDraft(BASE), "id-1");
-    expect(next.na_slots).toHaveLength(0);
-    expect(next.docs[0].parent_code).toBeNull();
+    const input = buildToBeInput(removeDoc(createDraft(BASE), "id-1"), 4);
+    expect(input.na_slots).toHaveLength(0);
+    expect(input.docs[0].parent_code).toBeNull();
   });
 
   it("clears what the new type cannot have", () => {
     const next = changeDocType(createDraft(BASE), "id-1", "wi");
     expect(next.na_slots).toHaveLength(0);
     expect(next.docs.find((doc) => doc.key === "id-1")?.is_equipment_sop).toBe(false);
+  });
+
+  it("orphans the WIs under a SOP that becomes a WI", () => {
+    const input = buildToBeInput(changeDocType(createDraft(BASE), "id-1", "wi"), 4);
+    expect(input.docs.find((doc) => doc.code === "WI-01")?.parent_code).toBeNull();
+  });
+
+  // 코드는 키 입력마다 바뀐다 - 하위 항목을 코드로 묶으면 지나가는 같은 코드가 남의 것을 빼앗는다
+  describe("references stay with their row while codes are typed", () => {
+    const TWO_SOPS: ToBe = {
+      ...BASE,
+      docs: [...BASE.docs, { id: 3, code: "SOP-12", title: "Other", doc_type: "sop", parent_code: null, entrance: "assign", is_equipment_sop: false, order_index: 2, document_id: null }],
+      na_slots: [...BASE.na_slots, { code: "SOP-12", slot_key: "purpose", reason: "b" }],
+    };
+
+    it("does not take another SOP's WIs and N/A when passing through its code", () => {
+      // SOP-12 -> SOP-1 -> SOP-13 (지우고 다시 친다)
+      const draft = renameDoc(renameDoc(createDraft(TWO_SOPS), "id-3", "SOP-1"), "id-3", "SOP-13");
+      const input = buildToBeInput(draft, 4);
+      expect(input.docs.find((doc) => doc.code === "WI-01")?.parent_code).toBe("SOP-1");
+      expect(input.na_slots).toEqual([
+        { code: "SOP-1", slot_key: "scope", reason: "n/a" },
+        { code: "SOP-13", slot_key: "purpose", reason: "b" },
+      ]);
+    });
+
+    it("lists each WI once while two SOPs share a code", () => {
+      const draft = renameDoc(createDraft(TWO_SOPS), "id-3", "SOP-1");
+      expect(orderDocs(draft.docs).map(({ doc }) => doc.key)).toEqual(["id-1", "id-2", "id-3"]);
+    });
+
+    it("removes only the row's own steps when another row has the same code", () => {
+      const draft = createDraft(BASE);
+      const withTwin = { ...draft, docs: [...draft.docs, { ...draft.docs[0], key: "new-a" }] };
+      const next = removeDoc(withTwin, "new-a");
+      expect(buildToBeInput(next, 4).wi_steps).toHaveLength(2);
+    });
+
+    it("keeps two new empty-code rows apart", () => {
+      let draft = createDraft(BASE);
+      const blank = { code: "", title: "", doc_type: "sop" as const, parent_key: null, is_equipment_sop: false, entrance: "assign" as const };
+      draft = { ...draft, docs: [...draft.docs, { ...blank, key: "new-a" }, { ...draft.docs[0], ...blank, key: "new-b" }] };
+      draft = setNaSlot(draft, "new-a", "purpose", true);
+      draft = renameDoc(draft, "new-b", "SOP-9");
+      expect(buildToBeInput(draft, 4).na_slots.filter((slot) => slot.slot_key === "purpose")).toEqual([{ code: "", slot_key: "purpose", reason: "" }]);
+    });
   });
 
   // 서버는 (code, step_no)로 단계를 알아보고 분류한 문장은 wi_step 번호를 가리킨다 - 번호를 다시 매기면 문장이 다른 단계로 옮겨간다

@@ -15,7 +15,7 @@ import { useI18n } from "@/lib/i18n";
 import { genId } from "@/lib/id";
 import { saveBlob } from "@/lib/save-file";
 import { SLOT_LABELS } from "@/lib/slot-labels";
-import { addStep, buildToBeInput, changeDocType, createDraft, isDraftDirty, orderDocs, removeDoc, removeStep, renameDoc, type DraftDoc, type ToBeDraft } from "@/lib/tobe-draft";
+import { addStep, buildToBeInput, changeDocType, createDraft, isDraftDirty, orderDocs, removeDoc, removeStep, renameDoc, setNaSlot, type DraftDoc, type ToBeDraft } from "@/lib/tobe-draft";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 
@@ -38,7 +38,7 @@ export default function ToBePage() {
   const draft = data && edit?.base === data ? edit.draft : data ? createDraft(data) : null;
   const dirty = data !== null && draft !== null && isDraftDirty(draft, data);
   const rows = draft ? orderDocs(draft.docs) : [];
-  const sopCodes = draft ? draft.docs.filter((doc) => doc.doc_type === "sop" && doc.code.trim()).map((doc) => doc.code) : [];
+  const sops = draft ? draft.docs.filter((doc) => doc.doc_type === "sop") : [];
 
   function update(next: ToBeDraft) {
     if (data) setEdit({ base: data, draft: next });
@@ -60,10 +60,10 @@ export default function ToBePage() {
   function addDoc() {
     if (!draft) return;
     const key = `new-${genId()}`;
-    const firstSop = sopCodes[0] ?? null;
+    const firstSop = sops[0]?.key ?? null;
     update({
       ...draft,
-      docs: [...draft.docs, { key, code: "", title: "", doc_type: firstSop ? "wi" : "sop", parent_code: firstSop, is_equipment_sop: false, entrance: "assign" }],
+      docs: [...draft.docs, { key, code: "", title: "", doc_type: firstSop ? "wi" : "sop", parent_key: firstSop, is_equipment_sop: false, entrance: "assign" }],
     });
   }
 
@@ -113,7 +113,7 @@ export default function ToBePage() {
         <div className="grid gap-1 py-1" data-testid={`tobe-${doc.key}-slots`}>
           <p className="text-xs text-ink-3">{t("tobe.naHint")}</p>
           {SLOT_KEYS.map((slotKey) => {
-            const slot = draft.na_slots.find((item) => item.code === doc.code && item.slot_key === slotKey);
+            const slot = draft.na_slots.find((item) => item.doc_key === doc.key && item.slot_key === slotKey);
             const child = slotKey.includes(".");
             return (
               <div key={slotKey} className={`grid grid-cols-[220px_minmax(0,1fr)] items-center gap-3 ${child ? "pl-5" : ""}`}>
@@ -123,14 +123,7 @@ export default function ToBePage() {
                     data-testid={`tobe-${doc.key}-na-${slotKey}`}
                     checked={slot !== undefined}
                     disabled={!canEdit}
-                    onChange={(event) =>
-                      update({
-                        ...draft,
-                        na_slots: event.target.checked
-                          ? [...draft.na_slots, { code: doc.code, slot_key: slotKey, reason: "" }]
-                          : draft.na_slots.filter((item) => !(item.code === doc.code && item.slot_key === slotKey)),
-                      })
-                    }
+                    onChange={(event) => update(setNaSlot(draft, doc.key, slotKey, event.target.checked))}
                   />
                   <span className={slot ? "text-ink-3" : ""}>{SLOT_LABELS[slotKey]}</span>
                 </label>
@@ -158,7 +151,7 @@ export default function ToBePage() {
         </div>
       );
     }
-    const steps = draft.wi_steps.filter((step) => step.code === doc.code).sort((a, b) => a.step_no - b.step_no);
+    const steps = draft.wi_steps.filter((step) => step.doc_key === doc.key).sort((a, b) => a.step_no - b.step_no);
     return (
       <div className="grid gap-1 py-1" data-testid={`tobe-${doc.key}-steps`}>
         {steps.map((step) => (
@@ -285,8 +278,8 @@ export default function ToBePage() {
               : rows.flatMap(({ doc, depth }) => {
                   const isMatch = doc.entrance === "match";
                   const isOpen = open.has(doc.key);
-                  const naCount = draft.na_slots.filter((slot) => slot.code === doc.code).length;
-                  const stepCount = draft.wi_steps.filter((step) => step.code === doc.code).length;
+                  const naCount = draft.na_slots.filter((slot) => slot.doc_key === doc.key).length;
+                  const stepCount = draft.wi_steps.filter((step) => step.doc_key === doc.key).length;
                   const prefix = `tobe-${doc.key}`;
                   const row = (
                     <tr key={doc.key} data-testid={`${prefix}-row`}>
@@ -326,14 +319,14 @@ export default function ToBePage() {
                           <select
                             className={`${CELL_INPUT} font-mono`}
                             data-testid={`${prefix}-parent`}
-                            value={doc.parent_code ?? ""}
+                            value={doc.parent_key ?? ""}
                             disabled={!canEdit}
-                            onChange={(event) => patchDoc(doc.key, { parent_code: event.target.value || null })}
+                            onChange={(event) => patchDoc(doc.key, { parent_key: event.target.value || null })}
                           >
                             <option value="">{t("tobe.noParent")}</option>
-                            {sopCodes.map((code) => (
-                              <option key={code} value={code}>
-                                {code}
+                            {sops.map((sop) => (
+                              <option key={sop.key} value={sop.key}>
+                                {sop.code.trim() || t("tobe.noCode")}
                               </option>
                             ))}
                           </select>
