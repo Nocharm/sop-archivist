@@ -3,7 +3,7 @@
 
 import { Loader2, RefreshCw } from "lucide-react";
 import { usePathname } from "next/navigation";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 
 import { StageNav } from "@/components/stage-nav";
 import { TopBar } from "@/components/top-bar";
@@ -20,7 +20,8 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   let body: ReactNode;
   if (me) {
-    body = children;
+    // 사용자가 바뀌면(dev 전환) 화면을 다시 그린다 - 앞 사용자로 불러온 원문·제안이 남아 보이지 않게
+    body = <Fragment key={me.login_id}>{children}</Fragment>;
   } else if (error !== null) {
     body = (
       <div data-testid="app-shell-error" className="mx-auto w-full max-w-md space-y-3 px-4 py-12 text-center">
