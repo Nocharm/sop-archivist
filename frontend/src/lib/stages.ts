@@ -27,6 +27,22 @@ export const STAGES: readonly Stage[] = [
   { key: "history", path: "/history", ready: true },
 ];
 
+export interface StageSlot {
+  step?: number;
+  stages: Stage[];
+}
+
+/** 레일 칸 - 번호가 같은 이웃 단계(배정의 두 입구: 분류·짝 맞추기)는 번호 하나 아래 한 칸에 묶는다 */
+export function groupStages(stages: readonly Stage[]): StageSlot[] {
+  const slots: StageSlot[] = [];
+  for (const stage of stages) {
+    const last = slots.at(-1);
+    if (stage.step !== undefined && last?.step === stage.step) last.stages.push(stage);
+    else slots.push({ step: stage.step, stages: [stage] });
+  }
+  return slots;
+}
+
 // 문서가 하나도 없으면 들어가 봐야 할 일이 없는 단계. To-Be는 Excel로 문서보다 먼저 채울 수 있어 열어 둔다
 const NEEDS_DOCUMENTS: ReadonlySet<StageKey> = new Set(["split", "classify", "match", "outputs", "review"]);
 

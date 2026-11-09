@@ -147,6 +147,33 @@
   :root[data-shell="rail"] .stg[aria-current="page"] .stg-n { background: var(--hl); border-color: var(--hl); color: var(--on-hl); }
   :root[data-shell="rail"] .stages :focus-visible { outline-color: var(--chrome-ink); }
 
+  /* 번호를 나눠 쓰는 단계 한 칸(3 = 분류·짝 맞추기) - 상단 2단에서는 번호 뒤 두 탭, 레일에서는 번호 아래 두 줄 */
+  .stg-group { display: inline-flex; align-items: center; gap: 2px; padding-left: 10px; }
+  .stg.sub { padding: 0 8px; }
+  .stg-group:has([aria-current="page"]) > .stg-n {
+    background: var(--hl);
+    border-color: color-mix(in oklab, var(--on-hl) 30%, var(--hl));
+    color: var(--on-hl);
+  }
+  :root[data-shell="rail"] .stg-group {
+    flex-direction: column;
+    gap: 2px;
+    width: 60px;
+    padding: 6px 0 3px;
+    border: 1px solid var(--chrome-line);
+    border-radius: var(--r-2);
+  }
+  :root[data-shell="rail"] .stg-group > .stg-n {
+    width: 20px;
+    height: 20px;
+    margin-bottom: 1px;
+    background: transparent;
+    border-color: var(--chrome-line);
+    color: var(--chrome-ink-2);
+  }
+  :root[data-shell="rail"] .stg-group:has([aria-current="page"]) > .stg-n { background: var(--hl); border-color: var(--hl); color: var(--on-hl); }
+  :root[data-shell="rail"] .stg.sub { width: 54px; height: 24px; }
+
   /* ---- 버튼과 작은 표시 ---- */
   .btn {
     display: inline-flex;

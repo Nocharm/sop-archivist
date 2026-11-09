@@ -1,7 +1,7 @@
 // 묶음 주소 읽기 - 단계 경로와 묶음 밖 주소를 가른다.
 import { describe, expect, it } from "vitest";
 
-import { getStageHref, isStageLocked, parseBundlePath, pickNextStage } from "./stages";
+import { getStageHref, groupStages, isStageLocked, parseBundlePath, pickNextStage, STAGES } from "./stages";
 
 describe("parseBundlePath", () => {
   it("reads the overview and a stage", () => {
@@ -52,5 +52,20 @@ describe("isStageLocked", () => {
 
   it("reads the history page path", () => {
     expect(parseBundlePath("/bundles/3/history")).toEqual({ bundleId: 3, stage: "history" });
+  });
+});
+
+describe("groupStages", () => {
+  it("puts the two step-3 entrances, classify and match, in one slot", () => {
+    const slots = groupStages(STAGES);
+    const shared = slots.find((slot) => slot.stages.length > 1);
+    expect(shared?.step).toBe(3);
+    expect(shared?.stages.map((stage) => stage.key)).toEqual(["classify", "match"]);
+  });
+
+  it("keeps every other stage in its own slot, in order", () => {
+    expect(groupStages(STAGES).map((slot) => slot.stages.map((stage) => stage.key).join("+"))).toEqual([
+      "overview", "documents", "split", "tobe", "classify+match", "outputs", "review", "history",
+    ]);
   });
 });
