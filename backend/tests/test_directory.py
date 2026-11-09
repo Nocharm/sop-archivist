@@ -111,6 +111,20 @@ def test_directory_rejects_an_oversized_query(client: TestClient) -> None:
     assert client.get("/api/directory", params={"q": "x" * 200}).status_code == 200
 
 
+def test_directory_all_lists_every_active_person(client: TestClient) -> None:
+    _seed_many(60)
+    _seed_employee("quit.person", source="hr", active=False, name="Quit Person")
+
+    response = client.get("/api/directory/all")
+
+    assert response.status_code == 200
+    ids = [person["login_id"] for person in response.json()]
+    assert len(ids) == 60 + len(DEV_LOGIN_IDS)  # 50명 상한 없이 전원
+    assert "quit.person" not in ids
+    assert ids == sorted(ids)
+    assert set(response.json()[0]) == {"login_id", "name", "korean_name", "department", "dept_code", "dept_path"}
+
+
 def test_departments_list(client: TestClient) -> None:
     response = client.get("/api/departments")
 

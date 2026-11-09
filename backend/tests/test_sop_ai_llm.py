@@ -131,7 +131,7 @@ def test_seed_prompts_name_the_markers_that_wrap_data_emits() -> None:
     close_template = re.sub(r"[0-9a-f]{16}", "{nonce}", lines[3])
     seeds = sorted(SEEDS_DIR.glob("prompt.*.md"))
 
-    assert len(seeds) == 4
+    assert len(seeds) == 5  # classify·translate·match·split·doc_meta
     for seed in seeds:
         text = seed.read_text(encoding="utf-8")
         # 프롬프트가 모델에게 알려 주는 표지와 코드가 내보내는 표지가 갈라지면 모델이 표지를 못 찾는다

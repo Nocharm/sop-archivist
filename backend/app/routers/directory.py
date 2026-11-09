@@ -69,6 +69,27 @@ async def search_directory(
     ]
 
 
+@router.get("/api/directory/all", response_model=list[DirectoryUserOut])
+async def list_directory_all(
+    _: str = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[DirectoryUserOut]:
+    """재직자 전원 — 사람 고르기가 한 번 받아 브라우저에서 순위를 매긴다(이름·한글 이름·아이디, 내 부서 먼저). 공개 범위는 검색과 같다."""
+    rows = (await session.scalars(select(Employee).where(Employee.active.is_(True)).order_by(Employee.login_id))).all()
+    dept_index = await load_dept_index(session)
+    return [
+        DirectoryUserOut(
+            login_id=emp.login_id,
+            name=emp.name,
+            korean_name=emp.korean_name,
+            department=emp.department,
+            dept_code=emp.dept_code,
+            dept_path=resolve_org_path(emp, dept_index),
+        )
+        for emp in rows
+    ]
+
+
 @router.get("/api/departments", response_model=list[DepartmentOut])
 async def list_departments(
     _: str = Depends(get_current_user),

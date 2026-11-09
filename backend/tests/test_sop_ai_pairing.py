@@ -55,11 +55,11 @@ class PairBundle(NamedTuple):
 def upload_document(
     client: TestClient, bundle_id: int, body: str, file_name: str = PAIR_FILE, layout: str = SEPARATE, **docx: Any
 ) -> PairBundle:
-    """문서 하나를 올려 배치를 고른다 — 올릴 때는 연달아 배치라 코드 짝이 생기고, 배치를 바꾸면 걷힌다. docx는 머리말·꼬리말 같은 build_docx 인자다."""
+    """문서 하나를 올려 배치를 고른다 — 업로드가 탐지한 배치가 원하는 배치와 다르면 바꾼다(연달아 배치면 코드 짝이 생기고, 바꾸면 걷힌다). docx는 머리말·꼬리말 같은 build_docx 인자다."""
     uploaded = upload(client, bundle_id, build_docx(body, **docx), file_name)
     assert uploaded.status_code == 201 and uploaded.json()["status"] == "ready", uploaded.text
     document = PairBundle(bundle_id, uploaded.json()["id"])
-    if layout != "ko_en_interleaved":
+    if uploaded.json()["language_layout"] != layout:
         set_layout(client, document, layout)
     return document
 

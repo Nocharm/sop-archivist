@@ -81,8 +81,21 @@ class FakeAi:
         return httpx2.Response(200, json=build_chat_body(self.chat(data)))
 
 
-def install_fake_ai(monkeypatch: pytest.MonkeyPatch, *, chat: Chat, embed: Embed | None = None) -> FakeAi:
-    """AI를 켜고 전송을 가짜로 바꾼다 — embed를 주면 임베딩도 켠다. 망은 타지 않는다."""
+def _skip_doc_meta(*_args: object, **_kwargs: object) -> bool:
+    return False
+
+
+def install_fake_ai(
+    monkeypatch: pytest.MonkeyPatch, *, chat: Chat, embed: Embed | None = None, doc_meta: bool = False
+) -> FakeAi:
+    """AI를 켜고 전송을 가짜로 바꾼다 — embed를 주면 임베딩도 켠다. 망은 타지 않는다.
+
+    업로드마다 자동으로 쌓이는 문서 정보 작업(doc_meta)은 doc_meta=True인 시험만 켠다 — 다른 AI 시험의 작업·제안 수를 바꾸지 않게.
+    """
+    if not doc_meta:
+        from app.routers import sop_documents
+
+        monkeypatch.setattr(sop_documents, "enqueue_doc_meta", _skip_doc_meta)
     enable_ai(monkeypatch)
     if embed is not None:
         enable_embed(monkeypatch)

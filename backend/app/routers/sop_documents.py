@@ -29,6 +29,8 @@ from app.sop.editing import (
     set_boundary_confirmed,
     undo_edit,
 )
+from app.sop.ai.doc_meta_job import build_ai_meta, enqueue_doc_meta, load_open_doc_meta
+from app.sop.filename import parse_file_name
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
 from app.sop.ingest import get_max_file_bytes, ingest_upload
@@ -124,9 +126,23 @@ class DocumentBase(BaseModel):
     uploaded_at: KstDatetime
 
 
+class AiMetaOut(BaseModel):
+    doc_code: str | None
+    doc_version: str | None
+    suggestion_id: int
+
+
+PrefillField = Literal["doc_code", "doc_version", "language_layout"]
+PrefillSource = Literal["file_name", "content"]
+
+
 class DocumentOut(DocumentBase):
     # 받지 않았거나(rejected) 추출에 실패한(failed) 문서는 추출이 없다
     extraction: ExtractionOut | None
+    # 업로드 응답에서만 — 서버가 미리 채운 칸이 어디서 왔는지(화면의 출처 표). 목록 조회에서는 빈 객체
+    prefill_sources: dict[PrefillField, PrefillSource] = {}
+    # 비어 있는 번호·버전에 대한 AI 제안(문서에 쓰지 않은 값) — 사람이 눌러 저장한다
+    ai_meta: AiMetaOut | None = None
 
 
 class DocumentUpdateIn(BaseModel):
@@ -244,15 +260,18 @@ async def build_documents_out(session: AsyncSession, documents: Sequence[Documen
         )
         for warning in rows:
             warnings[warning.extraction_id].append(WarningOut.model_validate(warning))
+    ai_suggestions = await load_open_doc_meta(session, doc_ids)
     out = []
     for document in documents:
         extraction = extraction_by_doc.get(document.id)
+        ai_meta = build_ai_meta(document, ai_suggestions.get(document.id))
         out.append(
             DocumentOut(
                 **DocumentBase.model_validate(document).model_dump(),
                 extraction=None if extraction is None else ExtractionOut(
                     id=extraction.id, aux_status=extraction.aux_status, warnings=warnings[extraction.id]
                 ),
+                ai_meta=None if ai_meta is None else AiMetaOut.model_validate(ai_meta),
             )
         )
     return out
@@ -396,7 +415,25 @@ async def upload_document(
         # 빈 칸은 "부모 없음" — To-Be 목록 쓰기와 같은 뜻
         parent_code=(parent_code or "").strip() or None,
     )
-    return (await build_documents_out(session, [document]))[0]
+    # 규칙이 비운 번호·버전이 있으면 AI에게 묻는다(켜져 있을 때만) — 제안은 문서 목록에 따로 보인다
+    if enqueue_doc_meta(session, document, ctx.login_id):
+        await session.commit()
+    out = (await build_documents_out(session, [document]))[0]
+    out.prefill_sources = _find_prefill_sources(file.filename or "", document)
+    return out
+
+
+def _find_prefill_sources(file_name: str, document: Document) -> dict[PrefillField, PrefillSource]:
+    """채운 값이 파일 이름에서 왔는지 본문에서 왔는지 — 파일 이름이 늘 먼저라 다시 읽어 가른다."""
+    if document.status != "ready":
+        return {}
+    parsed = parse_file_name(file_name)
+    sources: dict[PrefillField, PrefillSource] = {"language_layout": "content"}
+    for field, from_name in (("doc_code", parsed.doc_code), ("doc_version", parsed.version)):
+        value = getattr(document, field)
+        if value:
+            sources[field] = "file_name" if from_name else "content"
+    return sources
 
 
 @router.get("/{bundle_id}/documents", response_model=list[DocumentOut])
@@ -427,6 +464,16 @@ async def update_document(
         if getattr(document, name) != value
     }
     if changes:  # 바뀐 게 없으면 revision을 올리지 않고 기록도 남기지 않는다
+        # 비어 있던 칸을 AI 제안이 있는 채로 채우면 채택을 남긴다(같은 값 as_is, 다른 값 edited) — 처음 정한 판정이 남는다
+        suggestion = (await load_open_doc_meta(session, [document.id])).get(document.id)
+        if suggestion is not None and suggestion.adoption is None:
+            for name, key in (("doc_code", "doc_code"), ("doc_version", "doc_version")):
+                offered = suggestion.content.get(key)
+                if name in changes and offered and not getattr(document, name):
+                    suggestion.adoption = "as_is" if changes[name] == offered else "edited"
+                    suggestion.adopted_by = ctx.login_id
+                    suggestion.adopted_at = now()
+                    break
         if "doc_code" in changes and document.target_doc_id is not None:
             # 새 문서의 번호는 To-Be 목록 줄 번호이기도 하다 — 비우면 다시 임시 번호로 돌아간다
             await rename_match_doc(

@@ -15,6 +15,7 @@ from app.sop.events import record_event
 from app.sop.extract.aux_compare import MAX_MISSING_ITEMS, MissingText, find_missing_text
 from app.sop.extract.types import EXTRACTOR_VERSION, ExtractedBlock, ExtractedTable, ExtractLimits, ExtractResult
 from app.sop.extract.worker import WorkerResult, extract_in_subprocess
+from app.sop.doc_meta import HeaderFields, detect_header_fields, detect_language_layout
 from app.sop.filename import parse_file_name
 from app.sop.membership import ensure_editable
 from app.sop.models import (
@@ -112,11 +113,17 @@ async def ingest_upload(
             session, bundle_id, code=parsed.doc_code, doc_type=doc_type, parent_code=parent_code
         )
 
+    # 파일 이름 값이 먼저, 비면 본문 첫 장에서 읽은 값. New 문서의 번호는 짝 문서 코드(To-Be 줄)라 파일 이름에서만
+    header = detect_header_fields(outcome.result.blocks) if outcome.result is not None else HeaderFields(None, None)
+    doc_code = parsed.doc_code or (header.doc_code if side == "old" else None) or ""
     document = Document(
         bundle_id=bundle_id, side=side, file_name=file_name, file_format=file_format, size_bytes=len(data),
-        sha256=sha256, doc_code=parsed.doc_code, doc_version=parsed.version, title=parsed.title,
+        sha256=sha256, doc_code=doc_code, doc_version=parsed.version or header.version or "", title=parsed.title,
         status=_STATUS_BY_OUTCOME[outcome.outcome], status_reason=outcome.code, uploaded_by=actor,
     )
+    # 언어 배치는 Unit을 만들기 전에 정한다(배치가 Unit 언어를 가른다) — 사람은 문서 목록에서 바꿀 수 있다
+    if outcome.result is not None:
+        document.language_layout = detect_language_layout(outcome.result.blocks)
     session.add(document)
     try:
         await session.flush()

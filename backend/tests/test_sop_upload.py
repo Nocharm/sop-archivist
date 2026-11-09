@@ -120,7 +120,7 @@ def test_upload_docx_ready(client: TestClient) -> None:
     assert blocks[1].table_id is not None and blocks[1].flags == []
     assert _count(SourceTable, SourceTable.extraction_id == doc["extraction"]["id"]) == 1
     assert _count(DocumentFile, DocumentFile.document_id == doc["id"]) == 1
-    assert _list_documents(client, bundle["id"]) == [doc]
+    assert _list_documents(client, bundle["id"]) == [{**doc, "prefill_sources": {}}]  # 출처 표는 업로드 응답에만
 
 
 def test_upload_maps_tables_and_warning_blocks_to_ids(client: TestClient) -> None:
