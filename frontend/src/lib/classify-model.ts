@@ -2,6 +2,7 @@
 
 import type {
   ChangeType,
+  ChangeTypeInput,
   CoverStatus,
   Decision,
   DocumentView,
@@ -81,6 +82,8 @@ export type Destination =
   | { kind: "slot"; docId: number; slotKey: string }
   /** step이 null이면 단계 없는 자리(단계를 선언하지 않은 WI) */
   | { kind: "step"; docId: number; step: number | null; part: WiPart }
+  /** 이미 쓴 문서(입구 2)의 문장에 출처로 잇기 - 여럿이면 나눔 */
+  | { kind: "link"; targetIds: number[] }
   | { kind: "delete" }
   | { kind: "move" };
 
@@ -100,6 +103,8 @@ export function getDestinationId(destination: Destination): string {
       return `slot:${destination.docId}:${destination.slotKey}`;
     case "step":
       return `step:${destination.docId}:${destination.step ?? "none"}:${destination.part}`;
+    case "link":
+      return `link:${[...destination.targetIds].sort((a, b) => a - b).join(",")}`;
     default:
       return destination.kind;
   }
@@ -152,6 +157,9 @@ export function readDestination(group: Group | null, unitIds: number[]): Destina
   const units = group.units.filter((unit) => unitIds.includes(unit.unit_id));
   if (units.some((unit) => unit.decision.disposition === "delete")) return { kind: "delete" };
   if (units.some((unit) => unit.decision.disposition === "move_external")) return { kind: "move" };
+  // 이미 쓴 문서의 문장에 이어져 있으면 그것이 보낼 곳이다(칸 새 문장이 함께 남아 있어도)
+  const linked = group.targets.filter((item) => item.origin === "new_doc" && item.parent_target_id === null && item.source_unit_ids.some((id) => unitIds.includes(id)));
+  if (linked.length > 0) return { kind: "link", targetIds: linked.map((item) => item.id) };
   const target = group.targets.find((item) => item.parent_target_id === null && item.origin === "units" && item.source_unit_ids.some((id) => unitIds.includes(id)));
   if (!target) return null;
   if (target.wi_part !== null) return { kind: "step", docId: target.target_doc_id, step: target.wi_step, part: target.wi_part };
@@ -170,6 +178,8 @@ export interface RowDraft {
   /** 새 문장 칸(SentenceSlot.key)별로 사람이 고친 글자 - 고치지 않은 칸은 없다. 비우면 원문 그대로 */
   texts: Record<string, string>;
   changeTypes: Record<string, "tone" | "rewritten">;
+  /** 이은 문장(target id)별 변경 종류 - null은 AI 제안 그대로 받기, 없으면 지금 사람 값 또는 고쳐 씀 */
+  linkChangeTypes?: Record<number, ChangeTypeInput | null>;
   reason: string;
   moveCode: string;
 }
@@ -312,6 +322,7 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
   if (!destination || destination.kind === "delete" || destination.kind === "move") {
     return { action, hold_reason: holdReason, units, targets: [], removed_target_ids: existing.map((target) => target.id) };
   }
+  if (destination.kind === "link") return buildLinkSave(destination.targetIds, draft, context, action, holdReason, units);
   const place = placeTarget(destination);
   const targets: TargetInput[] = [];
   const kept = new Set<number>();
@@ -365,6 +376,53 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
     targets,
     removed_target_ids: existing.filter((target) => !kept.has(target.id)).map((target) => target.id),
   };
+}
+
+/**
+ * 이미 쓴 문서의 문장에 잇는 저장 - 서버는 닫힌 관계 묶음 전체를 받아야 저장하므로 묶음의 입구 2 문장을 모두 보낸다.
+ * 보낼 곳은 바꾸기다: 줄의 칸 새 문장(과 그 번역)은 지우고, 줄 단위만 출처였던 문장은 미배정으로 돌린다(removed).
+ * 고른 문장에는 같은 언어의 줄 단위를 출처로 더하고, 나머지는 줄 단위를 뺀 출처로 되보낸다.
+ */
+function buildLinkSave(
+  targetIds: number[],
+  draft: RowDraft,
+  context: SaveContext,
+  action: "confirm" | "hold",
+  holdReason: string,
+  units: GroupSaveInput["units"],
+): GroupSaveInput {
+  const rowIds = new Set(context.units.map((unit) => unit.id));
+  const picked = new Set(targetIds);
+  const targets: TargetInput[] = [];
+  const removed: number[] = [];
+  for (const target of context.group?.targets ?? []) {
+    const touchesRow = target.source_unit_ids.some((id) => rowIds.has(id));
+    if (target.origin !== "new_doc") {
+      // 줄의 칸 새 문장과 그 번역(번역은 출처 연결 대신 옮긴 단위를 가진다)은 바꾸기로 지운다. 줄과 관계없는 것은 되보낸다
+      const ownsRow = touchesRow || (target.translation_source_unit_id !== null && rowIds.has(target.translation_source_unit_id));
+      if (ownsRow) removed.push(target.id);
+      else targets.push({ key: `t${target.id}`, id: target.id, revision: target.revision, kind: target.kind, source_unit_ids: target.source_unit_ids });
+      continue;
+    }
+    const others = target.source_unit_ids.filter((id) => !rowIds.has(id));
+    const added = picked.has(target.id) ? context.units.filter((unit) => unit.lang === target.lang).map((unit) => unit.id) : [];
+    const sources = [...others, ...added];
+    if (sources.length === 0) {
+      // 줄만 출처였던 문장 - 서버가 미배정으로 되돌린다. 원래 출처가 없던 문장은 묶음에 따라온 것이라 그대로 되보낸다
+      if (touchesRow) removed.push(target.id);
+      else targets.push({ key: `t${target.id}`, id: target.id, revision: target.revision, kind: target.kind, source_unit_ids: [] });
+      continue;
+    }
+    const base: TargetInput = { key: `t${target.id}`, id: target.id, revision: target.revision, kind: target.kind, source_unit_ids: sources };
+    if (!picked.has(target.id)) {
+      targets.push(base);
+      continue;
+    }
+    const chosen = draft.linkChangeTypes?.[target.id];
+    if (chosen === null) targets.push(base);
+    else targets.push({ ...base, change_type: chosen ?? (isTextChangeType(target.change_type) && target.status !== "ai_suggested" ? target.change_type : "rewritten") });
+  }
+  return { action, hold_reason: holdReason, units, targets, removed_target_ids: removed };
 }
 
 /** 확정하면 다음 미확정 줄로 - 지금 줄 뒤에서 먼저 찾고 없으면 앞에서 */

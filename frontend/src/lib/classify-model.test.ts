@@ -98,7 +98,7 @@ describe("save request", () => {
     targets: [
       {
         id: 90, target_doc_id: 6, slot_key: "scope", wi_step: null, wi_part: null, section_path: "", order_index: 0, lang: "ko", kind: "sentence",
-        confirmed_text: "가", ai_text: "", change_type: "as_is", origin: "units", new_unit_id: null, parent_target_id: null, cell_row: null, cell_col: null,
+        confirmed_text: "가", ai_text: "", change_type: "as_is", origin: "units", new_unit_id: null, translation_source_unit_id: null, parent_target_id: null, cell_row: null, cell_col: null,
         grid: null, status: "confirmed", hold_reason: "", warnings: [], source_unit_ids: [10], group_id: null, revision: 4,
       },
     ],
@@ -135,7 +135,7 @@ describe("save request", () => {
 function makeTarget(extra: Partial<GroupTarget>): GroupTarget {
   return {
     id: 1, target_doc_id: 6, slot_key: "scope", wi_step: null, wi_part: null, section_path: "", order_index: 0, lang: "ko", kind: "sentence",
-    confirmed_text: "", ai_text: "", change_type: "as_is", origin: "units", new_unit_id: null, parent_target_id: null, cell_row: null, cell_col: null,
+    confirmed_text: "", ai_text: "", change_type: "as_is", origin: "units", new_unit_id: null, translation_source_unit_id: null, parent_target_id: null, cell_row: null, cell_col: null,
     grid: null, status: "ai_suggested", hold_reason: "", warnings: [], source_unit_ids: [10], group_id: null, revision: 1, ...extra,
   };
 }
@@ -311,5 +311,54 @@ describe("getRowStep", () => {
 
   it("ignores other keys", () => {
     expect(getRowStep("Enter")).toBeNull();
+  });
+});
+
+describe("link destination saves the whole closed group", () => {
+  const first = makeTarget({ id: 71, origin: "new_doc", target_doc_id: 9, slot_key: null, confirmed_text: "첫째", status: "confirmed", change_type: "rewritten", source_unit_ids: [10], revision: 3 });
+  const second = makeTarget({ id: 72, origin: "new_doc", target_doc_id: 9, slot_key: null, confirmed_text: "둘째", status: "unassigned", change_type: null, source_unit_ids: [], revision: 1 });
+  const contextOf = (targets: GroupTarget[]) => ({ units: ONE_UNIT, group: { units: [], targets }, tables: new Map() });
+
+  it("echoes the sibling target of a split", () => {
+    const body = buildGroupSave(makeDraft({ destination: { kind: "link", targetIds: [71, 72] } }), contextOf([first, second]), "confirm");
+    expect(body.units[0]).toMatchObject({ unit_id: 10, disposition: "assigned" });
+    expect(body.targets.map((target) => [target.id, target.source_unit_ids])).toEqual([[71, [10]], [72, [10]]]);
+    expect(body.removed_target_ids).toEqual([]);
+  });
+
+  it("removes the row's own slot sentence when it moves to a written sentence", () => {
+    const slotSentence = makeTarget({ id: 80, source_unit_ids: [10] });
+    const body = buildGroupSave(makeDraft({ destination: { kind: "link", targetIds: [72] } }), contextOf([slotSentence, second]), "confirm");
+    expect(body.removed_target_ids).toEqual([80]);
+    expect(body.targets.map((target) => target.id)).toEqual([72]);
+  });
+
+  it("resets a written sentence that loses its only source", () => {
+    const body = buildGroupSave(makeDraft({ destination: { kind: "link", targetIds: [72] } }), contextOf([first, second]), "confirm");
+    expect(body.removed_target_ids).toEqual([71]);
+    expect(body.targets).toEqual([expect.objectContaining({ id: 72, source_unit_ids: [10] })]);
+  });
+
+  it("keeps the other source on a merged sentence", () => {
+    const merged = makeTarget({ id: 73, origin: "new_doc", target_doc_id: 9, slot_key: null, status: "confirmed", change_type: "merged", source_unit_ids: [10, 11] });
+    const body = buildGroupSave(makeDraft({ destination: { kind: "link", targetIds: [72] } }), contextOf([merged, second]), "confirm");
+    expect(body.targets.map((target) => [target.id, target.source_unit_ids])).toEqual([[73, [11]], [72, [10]]]);
+    expect(body.targets[0]).not.toHaveProperty("change_type");
+    expect(body.removed_target_ids).toEqual([]);
+  });
+
+  it("sends no change type to accept an AI link, and rewritten when nothing is known", () => {
+    const suggested = makeTarget({ id: 74, origin: "new_doc", target_doc_id: 9, slot_key: null, status: "ai_suggested", change_type: "tone", source_unit_ids: [10] });
+    const accept = buildGroupSave(makeDraft({ destination: { kind: "link", targetIds: [74] }, linkChangeTypes: { 74: null } }), contextOf([suggested]), "confirm");
+    expect(accept.targets[0]).not.toHaveProperty("change_type");
+    const fresh = buildGroupSave(makeDraft({ destination: { kind: "link", targetIds: [72] } }), contextOf([second]), "confirm");
+    expect(fresh.targets[0]).toMatchObject({ id: 72, change_type: "rewritten" });
+    const kept = buildGroupSave(makeDraft({ destination: { kind: "link", targetIds: [71] } }), contextOf([first]), "confirm");
+    expect(kept.targets[0]).toMatchObject({ id: 71, change_type: "rewritten" });
+  });
+
+  it("reads a link before a slot", () => {
+    const slotSentence = makeTarget({ id: 80, source_unit_ids: [10] });
+    expect(readDestination({ units: [], targets: [slotSentence, first] }, [10])).toEqual({ kind: "link", targetIds: [71] });
   });
 });

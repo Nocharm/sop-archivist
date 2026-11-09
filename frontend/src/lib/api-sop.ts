@@ -506,6 +506,8 @@ export interface GroupTarget {
   change_type: ChangeType | null;
   origin: string;
   new_unit_id: number | null;
+  /** 번역이 옮긴 Old 단위 - 번역은 출처 연결이 없다 */
+  translation_source_unit_id: number | null;
   parent_target_id: number | null;
   cell_row: number | null;
   cell_col: number | null;
@@ -622,6 +624,42 @@ export interface IdenticalCandidate {
 export interface BulkMatchInput {
   identical: Array<{ unit_id: number; unit_revision: number; target_id: number; target_revision: number }>;
   new: Array<{ target_id: number; revision: number }>;
+}
+
+/** 이미 쓴 문서(입구 2)의 최상위 문장 - Assign 화면의 New 원문 */
+export interface WrittenSentence {
+  target_id: number;
+  target_doc_id: number;
+  doc_code: string;
+  section_path: string;
+  order_index: number;
+  lang: UnitLang;
+  kind: "sentence" | "table" | "figure";
+  text: string;
+  status: CoverStatus;
+  change_type: ChangeType | null;
+  source_unit_ids: number[];
+  /** 같은 New 문서의 한/영 짝 상대가 만든 문장 */
+  partner_target_id: number | null;
+  revision: number;
+}
+
+/** Old 단위 하나에 가까운 이미 쓴 문서 문장 - 유사도는 확률로 보이지 않는다 */
+export interface NewCandidate {
+  target_id: number;
+  target_doc_id: number;
+  doc_code: string;
+  section_path: string;
+  text: string;
+  basis: "embedding" | "text";
+}
+
+export function listWrittenSentences(bundleId: number): Promise<WrittenSentence[]> {
+  return apiFetch<WrittenSentence[]>(`/bundles/${bundleId}/written-sentences`);
+}
+
+export function listNewCandidates(bundleId: number, unitId: number): Promise<NewCandidate[]> {
+  return apiFetch<NewCandidate[]>(`/bundles/${bundleId}/units/${unitId}/new-candidates`);
 }
 
 export function listIdenticalCandidates(bundleId: number): Promise<IdenticalCandidate[]> {
