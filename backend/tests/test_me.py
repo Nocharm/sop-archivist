@@ -72,12 +72,35 @@ def test_me_records_again_on_a_new_kst_day(client: TestClient) -> None:
     assert _count_records("qa.member") == 2  # KST 자정 직전 기록은 오늘 접속을 막지 않는다
 
 
+def test_me_last_login_is_empty_on_the_first_day(client: TestClient) -> None:
+    assert _get_me(client, "qa.member")["last_login_at"] is None
+
+
+def test_me_last_login_is_the_previous_access_day(client: TestClient) -> None:
+    day_start = now().replace(hour=0, minute=0, second=0, microsecond=0)
+    older = day_start - timedelta(days=3, hours=-9)
+    latest = day_start - timedelta(days=1, hours=-14, minutes=-5)
+
+    async def _add_history(session: AsyncSession) -> None:
+        session.add_all([LoginRecord(login_id="qa.member", occurred_at=older), LoginRecord(login_id="qa.member", occurred_at=latest)])
+        session.add(LoginRecord(login_id="qa.lead", occurred_at=day_start - timedelta(hours=1)))  # 다른 사람 기록은 섞지 않는다
+        await session.commit()
+
+    run_in_session(_add_history)
+
+    first = _get_me(client, "qa.member")
+    again = _get_me(client, "qa.member")  # 오늘 기록이 생긴 뒤에도 같은 값(오늘 기록은 지금 접속이다)
+
+    assert first["last_login_at"] == latest.isoformat()
+    assert again["last_login_at"] == latest.isoformat()
+
+
 @pytest.mark.usefixtures("enforce", "demo_access")
 def test_me_unknown_employee(client: TestClient) -> None:
     # HR 동기화 전에 처음 로그인한 사람 — 200, 빈 신원, 권한 없음
     assert _get_me(client, "ghost") == {
         "login_id": "ghost", "name": "", "korean_name": "", "department": "", "dept_path": "",
-        "is_sysadmin": False, "permissions": [], "sources": {}, "auth_mode": "dev", "ai_enabled": False,
+        "is_sysadmin": False, "permissions": [], "sources": {}, "auth_mode": "dev", "ai_enabled": False, "last_login_at": None,
     }
     assert _count_records("ghost") == 1
 

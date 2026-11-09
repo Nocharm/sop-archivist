@@ -4,7 +4,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.access.resolve import get_effective_access
@@ -15,6 +15,7 @@ from app.db import get_session
 from app.hr.service import sync_one
 from app.models import Employee, LoginRecord
 from app.orgchart import load_dept_index, resolve_org_path
+from app.routers.admin import KstDatetime
 from app.settings import settings
 
 router = APIRouter(tags=["me"])
@@ -33,6 +34,8 @@ class MeOut(BaseModel):
     sources: dict[str, list[SourceOut]]
     auth_mode: Literal["keycloak", "dev"]
     ai_enabled: bool
+    # 오늘 이전 마지막 접속일의 첫 접속 시각(접속 기록이 KST 하루 1행이라 하루 단위다). 처음 쓰는 날은 None
+    last_login_at: KstDatetime | None
 
 
 @router.get("/api/me", response_model=MeOut)
@@ -51,6 +54,9 @@ async def get_me(
         .where(LoginRecord.login_id == login_id, LoginRecord.occurred_at >= day_start)
         .limit(1)
     )
+    last_login_at = await session.scalar(
+        select(func.max(LoginRecord.occurred_at)).where(LoginRecord.login_id == login_id, LoginRecord.occurred_at < day_start)
+    )
     if already is None:
         session.add(LoginRecord(login_id=login_id, name=emp.name if emp else None))
         await session.commit()
@@ -68,4 +74,5 @@ async def get_me(
         sources=await build_source_map(session, access),
         auth_mode=settings.resolved_auth_mode(),
         ai_enabled=settings.ai_enabled,
+        last_login_at=last_login_at,
     )
