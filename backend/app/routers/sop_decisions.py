@@ -28,6 +28,7 @@ from app.sop.groups import GroupOut, load_group
 from app.sop.match import BulkMatchIn, IdenticalCandidate, confirm_in_bulk, list_identical_candidates
 from app.sop.membership import BundleContext, require_bundle_role
 from app.sop.tobe import MAX_DB_INT
+from app.sop.written import NewCandidateOut, WrittenSentenceOut, list_new_candidates, list_written_sentences
 
 router = APIRouter(prefix="/api/bundles", tags=["sop-decisions"])
 
@@ -96,6 +97,22 @@ async def clear_unit_decision(
     report = await clear_unit(session, ctx.bundle, body, ctx.login_id)
     await session.commit()
     return report
+
+
+@router.get("/{bundle_id}/written-sentences", response_model=list[WrittenSentenceOut])
+async def get_written_sentences(
+    ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
+) -> list[WrittenSentenceOut]:
+    """Assign 화면의 New 원문 — 이미 쓴 문서(입구 2)의 최상위 문장과 출처·한/영 짝 상대."""
+    return await list_written_sentences(session, ctx.bundle.id)
+
+
+@router.get("/{bundle_id}/units/{unit_id}/new-candidates", response_model=list[NewCandidateOut])
+async def get_new_candidates(
+    unit_id: IdPath, ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
+) -> list[NewCandidateOut]:
+    """Old 단위 하나에 가까운 이미 쓴 문서 문장 — 임베딩 캐시만 읽고 없으면 글자 유사도(LLM·임베딩 호출 없음)."""
+    return await list_new_candidates(session, ctx.bundle.id, unit_id)
 
 
 @router.get("/{bundle_id}/match/identical-candidates", response_model=list[IdenticalCandidate])

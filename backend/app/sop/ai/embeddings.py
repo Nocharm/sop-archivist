@@ -128,6 +128,17 @@ async def _store_vectors(model: str, vectors: dict[str, np.ndarray]) -> None:
         await session.commit()
 
 
+async def load_cached_vectors(texts: Sequence[str]) -> dict[str, np.ndarray]:
+    """캐시에 이미 있는 글의 벡터만 — 임베딩 서버를 부르지 않는다(사용량 행도 없다). 꺼져 있으면 빈 값. 키는 넘긴 글 그대로."""
+    if not settings.embed_enabled:
+        return {}
+    hash_of = {text: hashlib.sha256(text[:MAX_EMBED_CHARS].encode("utf-8")).hexdigest() for text in texts}
+    if not hash_of:
+        return {}
+    vectors = await _load_cached_vectors(settings.embed_model, sorted(set(hash_of.values())))
+    return {text: vectors[text_hash] for text, text_hash in hash_of.items() if text_hash in vectors}
+
+
 async def embed_texts(texts: Sequence[str], *, login_id: str) -> dict[str, np.ndarray]:
     """글마다 단위 정규화된 float32 벡터를 돌려준다 — 키는 넘긴 글 그대로이고, 캐시에 없는 글만 배치로 임베딩 서버에 보낸다.
 

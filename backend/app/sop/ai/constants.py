@@ -8,6 +8,11 @@ MAX_TEXT_CANDIDATES = 20  # 임베딩 없이 글자 유사도로 볼 때의 후�
 MATCH_EMBED_THRESHOLD = 0.75  # 입구 2 임베딩 유사도 — 낮추면 옛·새 짝이 늘고 오답도 는다
 MATCH_TEXT_THRESHOLD = 0.5  # 입구 2 글자 유사도(임베딩이 꺼져 있을 때)
 PAIR_THRESHOLD = 0.7  # 한/영 따로 짝 제안의 임베딩 유사도
+# Assign 화면의 New 문장 후보(Old Unit 하나 → 이미 쓴 문서 문장) — 사람이 고를 거리를 좁히는 값이라 짝 제안 기준보다 낮다.
+# 합성 자료로만 잡은 값이다(실제 SOP·모델 시험 뒤 다시 정한다). 낮추면 후보가 늘고 엉뚱한 문장도 는다.
+CANDIDATE_MIN_EMBED = 0.5  # 임베딩 코사인
+CANDIDATE_MIN_TEXT = 0.2  # 글자 2-gram Dice(임베딩 캐시에 없을 때)
+CANDIDATE_LIMIT = 5  # 한 번에 보이는 후보 수 — 나머지는 화면의 가까운 곳·전체에서 고른다
 
 # --- 임베딩 ---
 EMBED_BATCH_SIZE = 64  # /embeddings 한 번에 보내는 글 수
