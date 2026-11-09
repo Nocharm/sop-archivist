@@ -116,8 +116,8 @@
   <a href="#docs">5. 문서 올리기와 추출</a>
   <a href="#split">6. 쪼개기</a>
   <a href="#tobe">7. To-Be 목록</a>
-  <a href="#classify">8. 분류 (입구 1)</a>
-  <a href="#match">9. 짝 맞추기 (입구 2)</a>
+  <a href="#classify">8. Assign — 보낼 곳 정하기</a>
+  <a href="#match">9. Assign — 이미 쓴 문서와 잇기</a>
   <a href="#ai">10. AI가 하는 일</a>
   <a href="#outputs">11. 결과물 A·B·C</a>
   <a href="#review">12. 검토</a>
@@ -179,7 +179,7 @@
   <li><b>사람은 판단하고 확정한다</b>: "AI 제안" 상태인 줄만 보면 되게 만든다.</li>
 </ul>
 "실패로 보는 것"도 정해 두었다: AI가 추적표를 쓰거나 원문을 고쳐 저장하거나 사람 확인 없이 확정되는 것, 배정 안 된 문장이 남았는데 "완료"가 뜨는 것, 원문이 사내 모델 밖으로 나가는 것.</div>
-<p>화면은 왼쪽 레일(또는 상단 탭)의 단계 순서와 같다: <b>Overview · Documents · 1 Split · 2 To-Be · 3 Classify / Match · 4 Outputs · Review</b>. 분류와 짝 맞추기는 같은 단계의 두 입구라 번호 3 아래 한 칸에 함께 있다.</p>
+<p>화면은 왼쪽 레일(또는 상단 탭)의 단계 순서와 같다: <b>Overview · Documents · 1 Split · 2 To-Be · 3 Assign · 4 Outputs · Review</b>. 배정의 두 입구(분류 = 아직 안 쓴 문서의 칸, 짝 맞추기 = 이미 쓴 New 문서의 문장)는 Assign 한 화면에서 Old 조각마다 정한다.</p>
 </section>
 
 <!-- ============================================================ 2 -->
@@ -406,102 +406,97 @@
 
 <!-- ============================================================ 8 -->
 <section id="classify">
-<h2><span class="no">8</span>분류 (입구 1)</h2>
-<p>옛 단위를 하나씩 골라 보낼 곳을 정하고, 새 문장을 확정한다. 한/영 짝은 한 줄로 묶여 함께 확정된다.</p>
-<figure class="shot" data-shot="classify-pick">
-  <div class="frame"><img width="1440" height="900" src="img/classify-pick.png" alt="분류 보낼 곳" loading="lazy"></div>
-  <figcaption><span class="fig">그림 8-1</span>분류(묶음 2, 절반 진행). <span class="s">S3</span>의 앞쪽 단위에 보낼 곳을 고르는 중.
-    <ol class="marks"><li data-n="1">상태 거르기: 미배정·AI 제안·보류·확정·전체(개수).</li><li data-n="2">줄 목록. 짝이면 <code>OLD-1-003 · OLD-1-004</code>처럼 두 ID가 한 줄이다.</li><li data-n="3">원문 용지. 지금 줄에 밑줄, 앞뒤 문맥을 함께 본다. 원문은 바뀌지 않는다.</li><li data-n="4">보낼 곳 메뉴: 새 문서별 칸·WI 단계(N/A 칸은 고를 수 없다), 그리고 삭제·다른 문서로 이동.</li></ol>
+<h2><span class="no">8</span>Assign — 보낼 곳 정하기</h2>
+<p>Old 조각을 한 줄씩(한/영 짝은 함께) 골라 보낼 곳을 정한다. 보낼 곳은 <b>아직 안 쓴 To-Be 문서의 칸</b>(분류, 입구 1)이거나 <b>이미 쓴 New 문서의 문장</b>(짝 맞추기, 입구 2, 9장), 또는 삭제·다른 문서로 이동이다. 어느 쪽인지는 To-Be에서 문서마다 정한 입구가 정하고, 사람은 고르기만 한다.</p>
+<figure class="shot" data-shot="assign-start">
+  <div class="frame"><img width="1440" height="900" src="img/assign-start.png" alt="Assign 처음 화면" loading="lazy"></div>
+  <figcaption><span class="fig">그림 8-1</span>Assign(묶음 2, 절반 진행)을 막 연 모습. 아직 아무 조각도 고르지 않았다.
+    <ol class="marks"><li data-n="1">상태 거르기: 미배정·AI 제안·보류·확정·전체(개수)와 출처 없는 New. ↑↓·J/K는 고른 상태의 조각만 밟는다.</li><li data-n="2">Old 원문이 곧 목록이다. Split과 같은 Unit 조각이고, 끝에 상태 표시, 확정한 조각 아래에 간 곳이 붙는다.</li><li data-n="3">고른 조각이 없으면 오른쪽 칸이 안내를 보인다.</li><li data-n="4">범례(조각 표시·New 원문 표시·키). 조각을 고르면 오른쪽 위 (i)로 숨는다.</li></ol>
   </figcaption>
 </figure>
-<figure class="shot" data-shot="classify-row">
-  <div class="frame"><img width="1440" height="900" src="img/classify-row.png" alt="오른쪽 패널" loading="lazy"></div>
-  <figcaption><span class="fig">그림 8-2</span>같은 줄의 오른쪽 패널(메뉴를 닫은 모습).
-    <ol class="marks"><li data-n="1">보낼 곳. 아직 고르지 않았다.</li><li data-n="2">주 단추(↵): 보낼 곳 고르기 → 확정. 보낼 곳만 고르면 원문 그대로 새 문장이 된다("그대로").</li><li data-n="3">고쳐서 확정(E): 새 문장 글을 고친 뒤 저장(Ctrl+↵).</li><li data-n="4">보류(H): 보낼 곳 없이도 사유를 남기고 보류할 수 있다.</li><li data-n="5">새 문장 자리. 보낼 곳을 고르면 한·영 새 문장 칸이 생긴다.</li></ol>
+<figure class="shot" data-shot="assign-place">
+  <div class="frame"><img width="1440" height="900" src="img/assign-place.png" alt="칸 고르기" loading="lazy"></div>
+  <figcaption><span class="fig">그림 8-2</span>조각 하나에 아직 안 쓴 문서의 칸을 고른 모습.
+    <ol class="marks"><li data-n="1">고른 곳 상자: 칸 이름과 새 문장 칸(한·영). 처음에는 원문 그대로다.</li><li data-n="2">확정(↵). 확정하면 다음 미완 조각으로 간다.</li><li data-n="3">고쳐서 확정(E): 새 문장 글을 고친 뒤 저장(Ctrl+↵).</li><li data-n="4">보류(H): 보낼 곳 없이도 사유를 남기고 보류할 수 있다.</li><li data-n="5">③ 전체: 문서 → 칸·단계로 한 단계씩 펼쳐 고른다(N/A 칸은 고를 수 없다). 위쪽 ① 추천·② 가까운 곳이 먼저다.</li></ol>
   </figcaption>
 </figure>
-<figure class="shot" data-shot="classify-confirmed">
-  <div class="frame"><img width="1440" height="900" src="img/classify-confirmed.png" alt="확정된 줄" loading="lazy"></div>
+<figure class="shot" data-shot="assign-confirmed">
+  <div class="frame"><img width="1440" height="900" src="img/assign-confirmed.png" alt="확정된 조각" loading="lazy"></div>
   <figcaption><span class="fig">그림 8-3</span>확정된 <span class="s">S1</span>. 한글·영어 새 문장이 따로 있고 각자 변경 종류를 가진다.
-    <ol class="marks"><li data-n="1">S1 줄(한/영 짝).</li><li data-n="2">보낸 곳: SOP-CF · Purpose.</li><li data-n="3">새 문장(고친 글). 원문과 다르게 고칠 때는 "고쳐서 확정(E)".</li><li data-n="4">변경 종류: 그대로 / 말투 / 고쳐 씀 중 사람이 고른다. 글자가 원문과 같으면 코드가 "그대로"로 둔다.</li><li data-n="5">확정한 사람·시각.</li><li data-n="6">배정 지우기(U): 미배정으로 되돌린다. 확정·보류 단위에 AI 제안을 다시 받으려면 먼저 이걸 한다.</li></ol>
+    <ol class="marks"><li data-n="1">S1 조각(한/영 짝).</li><li data-n="2">확정한 곳: SOP-CF · Purpose.</li><li data-n="3">새 문장(고친 글). 변경 종류는 그대로 / 말투 / 고쳐 씀 중 사람이 고른다. 글자가 원문과 같으면 코드가 "그대로"로 둔다.</li><li data-n="4">확정한 사람·시각.</li><li data-n="5">배정 지우기(U): 미배정으로 되돌린다. 확정·보류 조각에 AI 제안을 다시 받으려면 먼저 이걸 한다.</li></ol>
   </figcaption>
 </figure>
-<figure class="shot" data-shot="classify-list">
-  <div class="frame"><img width="1440" height="900" src="img/classify-list.png" alt="목록 배치" loading="lazy"></div>
-  <figcaption><span class="fig">그림 8-4</span>같은 화면의 "목록 + 상세" 배치(상단 막대의 배치 단추로 사람마다 고른다). 용지 없이 원문과 새 문장을 나란히 본다.
-    <ol class="marks"><li data-n="1">넓은 줄 목록.</li><li data-n="2">원문(Source).</li><li data-n="3">새 문장.</li><li data-n="4">주 단추.</li></ol>
-  </figcaption>
-</figure>
-<h3>따라갈 문장을 분류하면</h3>
+<h3>따라갈 문장을 배정하면</h3>
 <table>
   <tr><th style="width:44px"></th><th>하는 일</th><th>저장 때 서버가 보는 것</th></tr>
   <tr><td><span class="s">S1</span></td><td>SOP-CF · Purpose를 고르고 "고쳐서 확정"으로 한·영 새 문장을 고친다. 변경 종류 고쳐 씀.</td><td>새 문장 언어 = 출처 언어, 글 비어 있지 않음.</td></tr>
   <tr><td><span class="s">S2</span></td><td>Responsibilities, 문장 끝만 SOP 문체로 → 말투.</td><td>—</td></tr>
-  <tr><td><span class="s">S3</span></td><td>한글 두 단위를 WI-01 3단계·4단계로 각각. 영어 한 단위는 새 문장 둘(3·4단계)로 → 나눔(코드가 계산).</td><td>관계 묶음이 닫혀 있는가.</td></tr>
-  <tr><td><span class="s">S4</span></td><td>OLD-1과 OLD-2의 두 단위를 한 새 문장으로 → 합침. 두 줄이 같은 관계 묶음이라 <b>한 번에</b> 저장된다.</td><td>보낸 새 문장의 모든 출처가 저장 안에 있는가.</td></tr>
-  <tr><td><span class="s">S5</span></td><td>삭제 + 사유.</td><td>삭제·이동·중복 배정·표 구성 변경은 사유 필수.</td></tr>
-  <tr><td><span class="s">S6</span></td><td>SOP-CF Safety와 WI-01 4단계 둘 다로 → 중복 배정 + 사유.</td><td>서로 다른 새 문서 둘 이상이면 중복 배정(같은 문서 안 여러 문장은 나눔).</td></tr>
+  <tr><td><span class="s">S3</span></td><td>한글 두 조각을 WI-01 3단계·4단계로 각각. 영어 한 조각은 새 문장 둘(3·4단계)로 → 나눔(코드가 계산).</td><td>관계 묶음이 닫혀 있는가.</td></tr>
+  <tr><td><span class="s">S4</span></td><td>OLD-1과 OLD-2의 두 조각을 한 새 문장으로 → 합침. 한 번 확정이 같은 묶음의 다른 조각도 확정한다(고른 곳 상자 아래 "함께 확정되는 것").</td><td>보낸 새 문장의 모든 출처가 저장 안에 있는가.</td></tr>
+  <tr><td><span class="s">S5</span></td><td>④ 삭제·외부 이동에서 삭제 + 사유.</td><td>삭제·이동·중복 배정·표 구성 변경은 사유 필수.</td></tr>
+  <tr><td><span class="s">S6</span></td><td>두 문서로 보내기 → 중복 배정 + 사유.</td><td>서로 다른 새 문서 둘 이상이면 중복 배정(같은 문서 안 여러 문장은 나눔).</td></tr>
   <tr><td><span class="s">S7</span></td><td>다른 문서로 이동 + 대상 번호 SOP-QC-99999 + 사유.</td><td>—</td></tr>
-  <tr><td><span class="s">S8</span></td><td>표 단위를 WI-01 4단계로. 칸 문장은 표를 따른다. 칸 자리가 원문과 다르면 "표 구성 변경" + 사유.</td><td>"그대로" 표는 칸마다 칸 새 문장이 있어야 한다.</td></tr>
-  <tr><td><span class="s">S12</span></td><td>구조 제목·머리말을 여러 개 골라(Ctrl+클릭) 같은 사유로 한 번에 삭제.</td><td>여러 개 한 번에는 삭제·이동만, AI 제안 단위가 섞이면 통째 거절.</td></tr>
+  <tr><td><span class="s">S8</span></td><td>표 조각을 WI-01 4단계로. 칸 문장은 표를 따른다. 칸 자리가 원문과 다르면 "표 구성 변경" + 사유.</td><td>"그대로" 표는 칸마다 칸 새 문장이 있어야 한다.</td></tr>
+  <tr><td><span class="s">S12</span></td><td>구조 제목·머리말을 Shift+클릭으로 여러 개 골라 같은 사유로 한 번에 삭제.</td><td>여러 개 한 번에는 삭제·이동만, AI 제안 조각이 섞이면 통째 거절.</td></tr>
 </table>
-<div class="box sys"><b>뒤에서: 문장 검사</b>확정할 때 원문과 새 문장의 숫자·단위·부정어 차이를 코드가 검사해 경고한다(그림 8-3의 Checks 줄). 막지는 않고 결과물·Excel에 경고로 남는다.</div>
+<div class="box sys"><b>뒤에서: 문장 검사</b>확정할 때 원문과 새 문장의 숫자·단위·부정어 차이를 코드가 검사해 경고한다(Checks 줄). 막지는 않고 결과물·Excel에 경고로 남는다.</div>
 <div class="box fb"><b>피드백 거리</b>
 <ul>
-  <li>단축키: J/K 다음·이전, ↵ 확정, E 고쳐서 확정(저장 Ctrl+↵), H 보류, U 배정 지우기, Ctrl+클릭 여러 줄.</li>
-  <li>확정된 줄에서도 주 단추가 "Confirm"으로 보인다(다시 저장의 뜻). 의미가 헷갈리지 않는지 볼 만하다.</li>
-  <li>짝을 저장하면 짝도 같이 확정되지만, 서버가 짝을 <b>몰래</b> 바꾸지는 않는다(화면이 명시적으로 함께 보낸다).</li>
+  <li>단축키: ↑↓·J/K 다음·이전, ↵ 확정, E 고쳐서 확정(저장 Ctrl+↵), H 보류, U 배정 지우기, Shift+클릭 여러 조각.</li>
+  <li>문서마다 따로 확대(마우스를 올리고 Ctrl+휠, Ctrl +/−), 두 문서 사이 세로선을 끌어 폭 조절. 둘 다 사람마다 기억한다.</li>
+  <li>확정된 조각에서도 주 단추가 "Confirm"으로 보인다(다시 저장의 뜻).</li>
 </ul></div>
 </section>
 
 <!-- ============================================================ 9 -->
 <section id="match">
-<h2><span class="no">9</span>짝 맞추기 (입구 2)</h2>
-<p>새 문서를 이미 써 둔 경우다. 새 문서(WI-04)를 추출하면 시스템이 새 단위마다 새 문장을 하나씩 만든다(확정 글 = 새 문서 원문 그대로, 자리 = 실제 절). 짝 맞추기는 이 새 문장들에 <b>옛 단위를 출처로 붙이는 일</b>이다. 그래서 두 입구가 같은 표를 채우고 결과물 계산이 하나다.</p>
-<figure class="shot" data-shot="match">
-  <div class="frame"><img width="1440" height="900" src="img/match.png" alt="짝 맞추기" loading="lazy"></div>
-  <figcaption><span class="fig">그림 9-1</span>짝 맞추기(묶음 4). 왼쪽 목록은 옛 단위가 아니라 <b>WI-04의 새 문장</b>이다.
-    <ol class="marks"><li data-n="1">같은 글자 짝 한 번에 확정: 옛 문장과 글자가 똑같고 후보가 하나뿐인 1:1 짝 4개를 "그대로"로 몰아서 확정한다(코드가 확인할 수 있는 경우만).</li><li data-n="2">새 문장 줄(WI-04 · 1. Preparation).</li><li data-n="3">이을 옛 단위 후보(검색 가능).</li><li data-n="4">고른 옛 단위를 출처로 잇기.</li><li data-n="5">짝 없는 새 문장은 "신규"로 확정 <span class="s">S11</span>.</li><li data-n="6">변경 종류. 출처가 하나이고 글이 다르면 말투/고쳐 씀을 고른다.</li></ol>
+<h2><span class="no">9</span>Assign — 이미 쓴 문서와 잇기</h2>
+<p>New 문서를 이미 써서 업로드한 경우다. 새 문서(WI-04)를 추출하면 시스템이 New 단위마다 새 문장을 하나씩 만든다(확정 글 = 새 문서 원문 그대로, 자리 = 실제 절). Old 조각을 고르면 그 New 원문이 옆에 열리고, <b>New 문장을 눌러 Old 조각을 출처로 잇는다</b>. 그래서 두 입구가 같은 표를 채우고 결과물 계산이 하나다.</p>
+<figure class="shot" data-shot="assign-link">
+  <div class="frame"><img width="1440" height="900" src="img/assign-link.png" alt="New 문장에 잇기" loading="lazy"></div>
+  <figcaption><span class="fig">그림 9-1</span>Old 조각 하나를 WI-04의 문장에 잇는 중(묶음 2).
+    <ol class="marks"><li data-n="1">같은 글자 짝 한 번에 확정: Old 문장과 글자가 똑같고 후보가 하나뿐인 1:1 짝을 "그대로"로 몰아서 확정한다.</li><li data-n="2">New 원문(이미 쓴 문서). 점선 = 추천 문장, <code>← 5-001</code> = 이미 붙은 Old 출처, 위험색 = 출처 없음.</li><li data-n="3">고른 New 문장. Ctrl(⌘)+클릭으로 여러 개 고르면 나눔이다. 다른 Old 조각이 이미 붙은 문장을 고르면 합침이다.</li><li data-n="4">고른 곳 상자: 문장마다 변경 종류(AI 제안 그대로·그대로·말투·고쳐 씀). 나눔·합침은 서버가 구조로 정해 자동 표시만 한다.</li><li data-n="5">두 문서 사이 세로선. 끌어서 폭(30~70%), 더블클릭은 반반.</li><li data-n="6">문서별 확대. 이 문서 위에 마우스를 올리고 Ctrl+휠도 같다.</li></ol>
   </figcaption>
 </figure>
-<figure class="shot" data-shot="match-done">
-  <div class="frame"><img width="1440" height="900" src="img/match-done.png" alt="나눈 짝" loading="lazy"></div>
-  <figcaption><span class="fig">그림 9-2</span>확정된 <span class="s">S10</span>(묶음 3). 옛 단위 하나가 새 문장 둘의 출처다.
-    <ol class="marks"><li data-n="1">"Select the program."(WI-04 · 2. Operation).</li><li data-n="2">출처: <code>OLD-5-005</code> "Select the program and press RUN …". "Press RUN …" 줄도 같은 출처를 가진다.</li><li data-n="3">변경 종류 칸이 "Rewritten"으로 보인다 — <b>저장된 값은 나눔(split)</b>이고 결과물 A도 나눔으로 나온다. 화면 표시가 틀렸다(15장).</li></ol>
+<figure class="shot" data-shot="assign-unsourced">
+  <div class="frame"><img width="1440" height="900" src="img/assign-unsourced.png" alt="출처 없는 New 문장" loading="lazy"></div>
+  <figcaption><span class="fig">그림 9-2</span>출처 없는 New 문장 차례로 보기.
+    <ol class="marks"><li data-n="1">출처 없는 New 칩. 남아 있으면 검토 요청을 막는다(위험색 숫자).</li><li data-n="2">지금 볼 문장. Old 조각을 누르면 그 조각이 이 문장의 출처가 된다.</li><li data-n="3">Old SOP에 없던 내용이면 "신규로 표시" <span class="s">S11</span>.</li></ol>
   </figcaption>
 </figure>
 <div class="box sys"><b>뒤에서</b>
 <ul>
-  <li>입구 2 새 문장의 글·자리는 새 문서 원문으로 잠겨 있다. 고칠 수 있는 것은 출처와 변경 종류뿐이다.</li>
-  <li>짝이 없는 옛 단위는 삭제 후보다(<code>OLD-5-007</code> 구매 이력 → 삭제 + 사유).</li>
-  <li>쪼개기에서 새 문서를 고치면 그 새 문서의 새 문장 전체를 다시 맞춘다(절 경로·언어·순서).</li>
+  <li>New 문장의 글·자리는 새 문서 원문으로 잠겨 있다. 고칠 수 있는 것은 출처와 변경 종류뿐이다.</li>
+  <li>짝 맞추기는 같은 언어끼리다. Old 조각에 없는 언어의 문장은 고를 수 없다. 한/영 짝 조각은 New 문장의 짝을 다른 언어 조각에 자동으로 붙이고, New 쪽이 한 언어뿐이면 그 언어만 잇는다(다른 언어 조각은 미배정으로 남는다).</li>
+  <li>보낼 곳은 바꾸기가 기본이다. 다른 곳을 고르면 이전 연결을 뗀다(출처만 붙어 있던 New 문장은 출처 없음으로 돌아간다).</li>
+  <li>짝이 없는 Old 조각은 삭제 후보다(<code>OLD-5-007</code> 구매 이력 → 삭제 + 사유).</li>
 </ul></div>
-<div class="box warn"><b>지금 막힌 곳</b>짝 맞추기 목록에는 문장만 나온다. 새 문서에 표·그림이 있는 입구 2 묶음은 그 줄을 처리할 화면이 없어 검토로 못 간다(남은 막힘).</div>
+<div class="box warn"><b>지금 막힌 곳</b>New 문서 안의 표·그림은 화면에서 Old에 잇지 못한다(AI가 잇거나 신규로 표시). 실제 출처가 있는 New 표가 신규로 남을 수 있다.</div>
 </section>
 
 <!-- ============================================================ 10 -->
 <section id="ai">
 <h2><span class="no">10</span>AI가 하는 일</h2>
 <p>AI는 작성자가 <b>요청할 때만</b> 돌고, 결과는 제안으로만 남는다. 아래 화면의 제안은 실제 모델이 아니라 <b>가짜 AI가 합성 정답으로 답한 것</b>이다.</p>
-<figure class="shot" data-shot="classify-ai">
-  <div class="frame"><img width="1440" height="900" src="img/classify-ai.png" alt="AI 제안" loading="lazy"></div>
-  <figcaption><span class="fig">그림 10-1</span>AI 제안이 붙은 <span class="s">S1</span>(묶음 4). 줄 머리의 보라 점선 원과 <span class="tag">AI suggested</span>가 제안 상태다.
-    <ol class="marks"><li data-n="1">AI 제안 줄.</li><li data-n="2">제안 카드: 이유, 인용한 원문 위치. 제안은 줄마다 사람이 본다 — 여러 개 한 번에 확정은 없다.</li><li data-n="3">인용한 규칙 ID(<code>R01</code>). 활성 지침에 없는 ID는 빼고 경고한다.</li><li data-n="4">고쳐 쓴 한·영 문장 제안. SOP로 가면 SOP 문체, WI로 가면 WI 문체.</li><li data-n="5">↵ 그대로 받기 — 제안 문장이 확정 문장이 된다.</li><li data-n="6">고쳐서 확정. 채택 여부는 코드가 판정한다(그대로 / 고쳐서 / 버림).</li></ol>
+<figure class="shot" data-shot="assign-ai">
+  <div class="frame"><img width="1440" height="900" src="img/assign-ai.png" alt="AI 제안" loading="lazy"></div>
+  <figcaption><span class="fig">그림 10-1</span>AI 제안이 붙은 조각(묶음 4). 끝의 ✦와 <span class="tag">AI suggested</span>가 제안 상태다.
+    <ol class="marks"><li data-n="1">AI 제안 거르기. AI 제안이 있으면 이것부터 연다.</li><li data-n="2">제안 이유.</li><li data-n="3">① 추천 맨 위 카드가 AI 제안이다. 같은 글자·비슷한 문장 후보가 그 아래에 온다.</li><li data-n="4">고른 곳 상자: 제안된 칸과 고쳐 쓴 한·영 문장(SOP로 가면 SOP 문체, WI로 가면 WI 문체).</li><li data-n="5">↵ 그대로 받기 — 제안 문장이 확정 문장이 된다. 채택 여부는 코드가 판정한다(그대로 / 고쳐서 / 버림).</li></ol>
   </figcaption>
 </figure>
-<figure class="shot" data-shot="classify-hold">
-  <div class="frame"><img width="1440" height="900" src="img/classify-hold.png" alt="시스템 보류" loading="lazy"></div>
+<figure class="shot" data-shot="assign-hold">
+  <div class="frame"><img width="1440" height="900" src="img/assign-hold.png" alt="시스템 보류" loading="lazy"></div>
   <figcaption><span class="fig">그림 10-2</span>시스템이 건 보류.
     <ol class="marks"><li data-n="1">보류 거르기.</li><li data-n="2">시스템 보류 라벨. AI 응답이 형식이 틀렸거나 후보 밖을 골랐으면 그 단위만 "AI 응답 무효"로 보류하고 나머지는 진행한다. 사람이 쓴 사유가 아니라 라벨로 보인다.</li></ol>
   </figcaption>
 </figure>
 <table>
   <tr><th>AI 작업 종류</th><th>어디서</th><th>하는 일</th><th>쓰는 것</th></tr>
-  <tr><td>분류 <code>classify</code></td><td>분류</td><td>임베딩으로 칸 후보 3개를 추리고("삭제"는 늘 후보), LLM이 하나를 골라 이유·규칙 ID·근거 인용·변경 종류·한영 고쳐 쓰기를 낸다. "다른 문서로 이동"은 제안하지 않는다(묶음 밖을 모르므로).</td><td>임베딩 + LLM</td></tr>
-  <tr><td>번역 <code>translate</code></td><td>분류</td><td>방향을 골라(한→영, 영→한) 짝 없는 문장의 반대 언어를 제안. 출처 새 문장이 바뀌면 AI 번역은 지우고 확정 번역은 보류로 돌린다.</td><td>LLM</td></tr>
-  <tr><td>입구 2 <code>match_plan</code> → <code>match</code></td><td>짝 맞추기</td><td>코드가 옛 단위와 새 문장을 묶고(임베딩, 없으면 글자 유사도), LLM에는 변경 종류만 묻는다.</td><td>임베딩 + LLM</td></tr>
+  <tr><td>분류 <code>classify</code></td><td>Assign</td><td>임베딩으로 칸 후보 3개를 추리고("삭제"는 늘 후보), LLM이 하나를 골라 이유·규칙 ID·근거 인용·변경 종류·한영 고쳐 쓰기를 낸다. "다른 문서로 이동"은 제안하지 않는다(묶음 밖을 모르므로).</td><td>임베딩 + LLM</td></tr>
+  <tr><td>번역 <code>translate</code></td><td>Assign</td><td>방향을 골라(한→영, 영→한) 짝 없는 문장의 반대 언어를 제안. 출처 새 문장이 바뀌면 AI 번역은 지우고 확정 번역은 보류로 돌린다.</td><td>LLM</td></tr>
+  <tr><td>입구 2 <code>match_plan</code> → <code>match</code></td><td>Assign</td><td>코드가 옛 단위와 새 문장을 묶고(임베딩, 없으면 글자 유사도), LLM에는 변경 종류만 묻는다.</td><td>임베딩 + LLM</td></tr>
   <tr><td>한/영 짝 <code>pair</code></td><td>쪼개기</td><td>한/영 따로 문서의 한글·영어 문장 짝 제안.</td><td>임베딩만</td></tr>
-  <tr><td>나누기 <code>split</code></td><td>쪼개기·분류</td><td>복합 문장을 나눌 자리 제안. 받아들이면 나누기 편집이 된다.</td><td>LLM</td></tr>
+  <tr><td>나누기 <code>split</code></td><td>쪼개기·Assign</td><td>복합 문장을 나눌 자리 제안. 받아들이면 나누기 편집이 된다.</td><td>LLM</td></tr>
 </table>
 <div class="box ai"><b>AI가 하지 않는 것 (코드가 막는다)</b>
 <ul>
@@ -795,18 +790,16 @@
 </table>
 <h3>써 보며 보인 것 (화면)</h3>
 <ul>
-  <li><b>짝 맞추기의 변경 종류 표시가 틀린 경우</b>: 1→2로 나뉜 새 문장(<span class="s">S10</span>)을 고르면 "Rewritten"으로 보인다. 저장값과 결과물 A는 나눔이다(그림 9-2). 버그로 보인다.</li>
   <li>결과물 A의 보낸 곳·변경 종류 칸이 내부 코드값으로 보인다(<code>delete</code>, <code>as_is</code>, <code>tone</code>).</li>
   <li>결과물 B의 "삭제/다른 문서로 이동"만 한글이다.</li>
   <li>결과물 C에 문장별 출처 표시가 없다(명세는 <code>← OLD-1 §5.1 (합침)</code> 꼴).</li>
-  <li>분류에서 이미 확정한 줄의 주 단추도 "Confirm"이다.</li>
-  <li>짝 맞추기 화면의 "AI match suggestions appear here once the AI layer is connected" 안내는, 이미 AI 제안이 저장된 묶음에서도 AI가 꺼져 있으면 보인다.</li>
+  <li>Assign에서 이미 확정한 조각의 주 단추도 "Confirm"이다.</li>
 </ul>
 <h3>현재 한계</h3>
 <ul>
-  <li><b>입구 2의 표·그림</b>: 짝 맞추기에 문장만 나와, 새 문서에 표·그림이 있으면 검토로 못 간다(남은 막힘).</li>
+  <li><b>입구 2의 표·그림</b>: Assign은 New 문서의 문장만 잇는다. 새 문서에 표·그림이 있으면 AI가 잇거나 신규로 표시해야 검토로 간다.</li>
   <li><b>AI는 가짜 AI로만 검증</b>: 실제 사내 모델·실제 SOP로 정확도·채택률을 잰 적이 없다. 유사도 임계값도 합성 자료로 잡은 값이다.</li>
-  <li>옛 표 → 새 문단 잇기, 짝 맞추기로 확정한 문장의 분류 재저장은 아직 없다.</li>
+  <li>옛 표 → 새 문단 잇기는 아직 없다.</li>
   <li>운영 서버에는 v0.8.0이 올라가 있다(2026-11-09, GitLab 파이프라인 — Keycloak 로그인·HR 동기화 24시간 주기). 실제 SOP로 처음부터 끝까지 돌려 본 적은 아직 없다.</li>
 </ul>
 <div class="box"><b>다음에 해 볼 만한 것</b>실제 SOP 한 묶음(대외비라 서버에서)으로 처음부터 끝까지 돌려 보며, 위 결정 표의 "물어볼 것"에 답을 모으는 것. 특히 분량(줄 수)과 AI 제안의 질이 설계의 큰 가정이다.</div>

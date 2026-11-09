@@ -64,6 +64,7 @@ import {
   readCheckKey,
   readDestination,
   readHumanReason,
+  readLinkDefault,
   type CellSource,
   type ClassifyFilter,
   type ClassifyRow,
@@ -770,6 +771,7 @@ export default function AssignPage() {
             rows={pickedRows}
             changeTypes={draft.linkChangeTypes ?? {}}
             aiPending={aiPending}
+            defaults={Object.fromEntries(pickedRows.map((item) => [item.target_id, readLinkDefault({ lang: item.lang, confirmed_text: item.text, change_type: item.change_type, status: item.status }, rowUnits)]))}
             auto={auto}
             mergedWith={mergedWith}
             onChange={(targetId, value) => setDraft({ linkChangeTypes: { ...(draft.linkChangeTypes ?? {}), [targetId]: value } })}

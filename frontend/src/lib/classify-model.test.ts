@@ -379,6 +379,12 @@ describe("link destination saves the whole closed group", () => {
     expect(body.targets[0]).toMatchObject({ id: 75, source_unit_ids: [20] });
   });
 
+  it("defaults to as-is when the written sentence has the same text", () => {
+    const same = makeTarget({ id: 76, origin: "new_doc", target_doc_id: 9, slot_key: null, confirmed_text: "원문", status: "unassigned", change_type: null, source_unit_ids: [] });
+    const body = buildGroupSave(makeDraft({ destination: { kind: "link", targetIds: [76] } }), { units: ONE_UNIT, group: { units: [], targets: [same] }, tables: new Map() }, "confirm");
+    expect(body.targets[0]).toMatchObject({ id: 76, change_type: "as_is" });
+  });
+
   it("reads a link before a slot", () => {
     const slotSentence = makeTarget({ id: 80, source_unit_ids: [10] });
     expect(readDestination({ units: [], targets: [slotSentence, first] }, [10])).toEqual({ kind: "link", targetIds: [71] });

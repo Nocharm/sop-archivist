@@ -378,6 +378,13 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
   };
 }
 
+/** 사람이 고르지 않은 연결의 변경 종류 - 같은 언어 원문과 글이 같으면 그대로, 사람이 고른 적 있으면 그 값, 아니면 고쳐 씀 */
+export function readLinkDefault(target: Pick<GroupTarget, "lang" | "confirmed_text" | "change_type" | "status">, units: Array<Pick<SourceUnit, "lang" | "text">>): ChangeTypeInput {
+  const same = units.find((unit) => unit.lang === target.lang);
+  if (same && same.text.trim() === target.confirmed_text.trim()) return "as_is";
+  return isTextChangeType(target.change_type) && target.status !== "ai_suggested" ? target.change_type : "rewritten";
+}
+
 /**
  * 이미 쓴 문서의 문장에 잇는 저장 - 서버는 닫힌 관계 묶음 전체를 받아야 저장하므로 묶음의 입구 2 문장을 모두 보낸다.
  * 보낼 곳은 바꾸기다: 줄의 칸 새 문장(과 그 번역)은 지우고, 줄 단위만 출처였던 문장은 미배정으로 돌린다(removed).
@@ -420,7 +427,7 @@ function buildLinkSave(
     }
     const chosen = draft.linkChangeTypes?.[target.id];
     if (chosen === null) targets.push(base);
-    else targets.push({ ...base, change_type: chosen ?? (isTextChangeType(target.change_type) && target.status !== "ai_suggested" ? target.change_type : "rewritten") });
+    else targets.push({ ...base, change_type: chosen ?? readLinkDefault(target, context.units) });
   }
   // 묶음 안 다른 단위(합쳐진 다른 출처 등)도 지금 판단 그대로 실어야 닫힌다 - 확정 한 번이 이것도 확정한다(화면이 "함께 확정되는 것"으로 보인다)
   const others = (context.group?.units ?? [])

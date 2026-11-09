@@ -94,49 +94,66 @@ const SCENES = [
     marks: [`[data-testid$="-steps"]`, `[data-testid$="-add-step"]`],
   },
   {
-    name: "classify-pick", user: "qa.member", path: "/bundles/2/classify",
-    prep: (page) => click(page, id("classify-destination")),
-    // 열린 메뉴가 주 단추·보류를 덮으므로 그 둘은 메뉴를 닫은 다음 장면(classify-row)에서 가리킨다
-    marks: [id("classify-filters"), `[data-testid^="classify-row-"]`, id("classify-paper"), id("classify-destination-menu")],
+    name: "assign-start", user: "qa.member", path: "/bundles/2/assign",
+    marks: [id("assign-filters"), id("assign-old"), id("assign-pick-prompt"), id("assign-legend")],
   },
   {
-    name: "classify-row", user: "qa.member", path: "/bundles/2/classify",
-    marks: [id("classify-destination"), id("classify-primary"), id("classify-edit"), id("classify-hold"), id("classify-new")],
-  },
-  {
-    name: "classify-confirmed", user: "qa.member", path: "/bundles/2/classify",
+    name: "assign-place", user: "qa.member", path: "/bundles/2/assign",
     prep: async (page) => {
-      await click(page, id("classify-filter-confirmed"));
-      await page.waitForTimeout(400);
-      await page.locator(id("classify-list")).getByText("이 절차는 Eppendorf").first().click();
+      await page.keyboard.press("j");
+      await page.waitForLoadState("networkidle");
+      await click(page, id("assign-acc-all"));
+      await page.locator('[data-testid^="assign-tree-p"]').first().click();
+      await page.locator('[data-testid^="assign-tree-place-"]:not([disabled])').first().click();
     },
-    marks: [`${id("classify-list")} >> text=이 절차는 Eppendorf`, id("classify-destination"), `[data-testid^="classify-text-"]`, `[data-testid^="classify-change-"]`, id("classify-confirmed-by"), id("classify-clear")],
-  },
-  { name: "classify-list", user: "qa.member", path: "/bundles/2/classify", layout: "list", marks: [id("classify-list"), text("Source"), text("New sentence"), id("classify-primary")] },
-  {
-    name: "classify-ai", user: "qa.member", path: "/bundles/4/classify",
-    marks: [`[data-testid^="classify-row-"]`, id("classify-ai"), `[data-testid^="classify-ai-rule-"]`, `[data-testid^="classify-text-"]`, id("classify-primary"), id("classify-edit")],
+    marks: [id("assign-chosen"), id("assign-primary"), id("assign-edit"), id("assign-hold"), `[data-testid^="assign-tree-place-"]`],
   },
   {
-    name: "classify-hold", user: "qa.member", path: "/bundles/4/classify",
+    name: "assign-confirmed", user: "qa.member", path: "/bundles/2/assign",
     prep: async (page) => {
-      await click(page, id("classify-filter-on_hold"));
-      await page.waitForTimeout(400);
+      await click(page, id("assign-filter-confirmed"));
+      await page.locator(id("assign-old")).getByText("이 절차는 Eppendorf").first().click();
+      await page.waitForLoadState("networkidle");
     },
-    marks: [id("classify-filter-on_hold"), id("classify-system-hold")],
+    marks: [`${id("assign-old")} >> text=이 절차는 Eppendorf`, id("assign-chosen"), `[data-testid^="assign-text-"]`, id("assign-confirmed-by"), id("assign-clear")],
   },
   {
-    name: "match", user: "qa.member", path: "/bundles/4/match",
-    marks: [id("match-identical"), `[data-testid^="match-row-"]`, id("match-candidates"), id("match-link"), id("match-new-confirm"), id("match-change")],
-  },
-  {
-    name: "match-done", user: "qa.member", path: "/bundles/3/match",
+    name: "assign-link", user: "qa.member", path: "/bundles/2/assign",
     prep: async (page) => {
-      await click(page, id("match-filter-done"));
-      await page.waitForTimeout(300);
-      await clickText(page, "Select the program.");
+      await click(page, id("assign-filter-unassigned"));
+      const candidate = page.locator(`${id("assign-new")} button.new-line[data-state="candidate"]`);
+      for (let step = 0; step < 40 && (await candidate.count()) === 0; step += 1) {
+        await page.keyboard.press("j");
+        await page.waitForLoadState("networkidle");
+      }
+      await candidate.first().click();
     },
-    marks: [`[data-testid^="match-row-"] >> text=Select the program.`, id("match-sources"), id("match-change")],
+    marks: [id("assign-identical"), id("assign-new"), `${id("assign-new")} button.new-line[data-state="picked"]`, id("assign-chosen"), id("assign-divider"), id("assign-new-zoom")],
+  },
+  {
+    name: "assign-unsourced", user: "qa.member", path: "/bundles/2/assign",
+    prep: async (page) => {
+      await click(page, id("assign-filter-unsourced"));
+      await page.waitForLoadState("networkidle");
+    },
+    marks: [id("assign-filter-unsourced"), `${id("assign-new")} button.new-line[data-state="focus"]`, id("assign-mark-new")],
+  },
+  {
+    name: "assign-ai", user: "qa.member", path: "/bundles/4/assign",
+    prep: async (page) => {
+      await page.keyboard.press("j");
+      await page.locator(id("assign-rec-0")).waitFor({ timeout: T });
+    },
+    marks: [id("assign-filter-ai_suggested"), id("assign-ai-reason"), id("assign-rec-0"), id("assign-chosen"), id("assign-primary")],
+  },
+  {
+    name: "assign-hold", user: "qa.member", path: "/bundles/4/assign",
+    prep: async (page) => {
+      await click(page, id("assign-filter-on_hold"));
+      await page.keyboard.press("j");
+      await page.waitForLoadState("networkidle");
+    },
+    marks: [id("assign-filter-on_hold"), id("assign-system-hold")],
   },
   {
     name: "outputs-a", user: "qa.member", path: "/bundles/3/outputs",
@@ -240,12 +257,11 @@ for (const scene of SCENES) {
   if (only && !only.has(scene.name)) continue;
   if (skipMutating && scene.mutates) continue;
   const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 1 });
-  await context.addInitScript(([user, layout]) => {
+  await context.addInitScript((user) => {
     if (location.protocol === "about:") return;
     localStorage.setItem("sopa.devUser", user);
-    localStorage.setItem("sopa.classifyLayout", layout);
     localStorage.setItem("sopa.theme", "light");
-  }, [scene.user, scene.layout ?? "paper"]);
+  }, scene.user);
   if (scene.sampleBatch) await context.route("**/api/admin/batch-runs", (route) => route.fulfill({ json: SAMPLE_BATCH_RUNS }));
   const page = await context.newPage();
   const errors = [];

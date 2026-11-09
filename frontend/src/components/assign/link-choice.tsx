@@ -9,6 +9,8 @@ interface LinkChoiceProps {
   changeTypes: Record<number, ChangeTypeInput | null>;
   /** 아직 사람이 받지 않은 AI 연결 - 기본은 제안 그대로(null) */
   aiPending: ReadonlySet<number>;
+  /** 사람이 고르지 않았을 때 저장될 값(글이 같으면 그대로) - 눌린 칩으로 보인다 */
+  defaults: Record<number, ChangeTypeInput>;
   auto: "split" | "merged" | null;
   mergedWith: string[];
   onChange: (targetId: number, value: ChangeTypeInput | null) => void;
@@ -16,12 +18,12 @@ interface LinkChoiceProps {
 
 const KINDS: ChangeTypeInput[] = ["as_is", "tone", "rewritten"];
 
-export function LinkChoice({ rows, changeTypes, aiPending, auto, mergedWith, onChange }: LinkChoiceProps) {
+export function LinkChoice({ rows, changeTypes, aiPending, defaults, auto, mergedWith, onChange }: LinkChoiceProps) {
   const { t } = useI18n();
   return (
     <div className="grid gap-2">
       {rows.map((row) => {
-        const current = row.target_id in changeTypes ? changeTypes[row.target_id] : aiPending.has(row.target_id) ? null : undefined;
+        const current = row.target_id in changeTypes ? changeTypes[row.target_id] : aiPending.has(row.target_id) ? null : defaults[row.target_id];
         return (
           <div key={row.target_id} className="grid gap-1.5" data-testid={`assign-link-${row.target_id}`}>
             <p className="text-[13px] leading-5 text-ink" lang={row.lang === "neutral" ? undefined : row.lang}>

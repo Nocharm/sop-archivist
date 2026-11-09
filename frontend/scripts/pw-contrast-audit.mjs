@@ -85,17 +85,27 @@ for (const theme of ["light", "dark"]) {
   // AI 제안의 보라 점선·제안 표시는 4번째 시드 묶음에만 있다
   const aiRow = page.locator('[data-testid^="bundles-row-"]', { hasText: "AI 제안" });
   const aiId = Number((await aiRow.getAttribute("data-testid")).replace("bundles-row-", ""));
+  // Assign에서 New 원문 후보(점선)가 있는 조각까지 옮겨 하나를 고른 상태 - 연결 상자·New 원문 표시를 함께 본다
+  async function pickCandidate(page) {
+    const candidate = page.locator('[data-testid="assign-new"] button.new-line[data-state="candidate"]');
+    for (let step = 0; step < 40 && (await candidate.count()) === 0; step += 1) {
+      await page.keyboard.press("j");
+      await page.waitForLoadState("networkidle");
+    }
+    await candidate.first().click();
+  }
   const screens = [
     ["bundles", "/", '[data-testid^="bundles-row-"]'],
     ["overview", `/bundles/${id}`, '[data-testid="overview-gate-units"]'],
     ["documents", `/bundles/${id}/documents`, '[data-testid$="-row"][data-testid^="documents-"]'],
     ["split", `/bundles/${id}/split`, '[data-testid^="split-paper-unit-"]'],
     ["tobe", `/bundles/${id}/tobe`, '[data-testid$="-row"][data-testid^="tobe-"]'],
-    ["classify", `/bundles/${id}/classify`, '[data-testid^="classify-row-u"]'],
-    ["match", `/bundles/${id}/match`, '[data-testid^="match-row-"]'],
+    ["assign", `/bundles/${id}/assign`, '[data-testid="assign-legend"]'],
+    ["assign-link", `/bundles/${id}/assign`, '[data-testid="assign-bar"]', pickCandidate],
+    ["assign-unsourced", `/bundles/${id}/assign`, '[data-testid="assign-filter-unsourced"]', (page) => page.locator('[data-testid="assign-filter-unsourced"]').click()],
     ["outputs", `/bundles/${id}/outputs`, '[data-testid="output-c"]'],
     ["review", `/bundles/${id}/review`, '[data-testid="output-c"]'],
-    ["classify-ai", `/bundles/${aiId}/classify`, '[data-testid="classify-ai-reason"]'],
+    ["assign-ai", `/bundles/${aiId}/assign`, '[data-testid="assign-bar"]', async (page) => { await page.keyboard.press("j"); await page.locator('[data-testid="assign-rec-0"]').waitFor({ timeout: T }); }],
     ["outputs-ai", `/bundles/${aiId}/outputs`, '[data-testid="output-c"]'],
   ];
   // 감사가 실제로 잡는지 먼저 본다 - 일부러 흐린 글자 하나를 넣는다
@@ -110,9 +120,13 @@ for (const theme of ["light", "dark"]) {
     console.log("FAIL audit did not flag the low-contrast probe");
     total += 1;
   }
-  for (const [name, path, ready] of screens) {
+  for (const [name, path, ready, prep] of screens) {
     await page.goto(`${BASE}${path}`);
     await page.locator(ready).first().waitFor({ timeout: T });
+    if (prep) {
+      await prep(page);
+      await page.waitForLoadState("networkidle");
+    }
     await page.waitForTimeout(300);
     const failures = await auditPage(page);
     total += failures.length;
