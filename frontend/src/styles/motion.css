@@ -116,7 +116,8 @@
     animation: toast-in var(--dur-slow) var(--ease-enter);
     transition: transform var(--dur-slow) var(--ease-exit), opacity var(--dur-slow) var(--ease-exit);
   }
-  .toast.error { box-shadow: inset 3px 0 0 var(--danger-fill), var(--shadow-2); }
+  /* 왼쪽 위험색 막대 쪽 모서리는 직각 - 둥근 막대는 손톱처럼 보인다 */
+  .toast.error { box-shadow: inset 3px 0 0 var(--danger-fill), var(--shadow-2); border-top-left-radius: 0; border-bottom-left-radius: 0; }
   .toast-slot[data-leaving] .toast { transform: translateX(110%); opacity: 0; }
   @keyframes toast-in { from { opacity: 0; transform: translateY(-12px); } }
 }
