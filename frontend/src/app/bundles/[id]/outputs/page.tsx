@@ -31,6 +31,7 @@ import { saveBlob } from "@/lib/save-file";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 import { buildTargetOrder, type MoveDir } from "@/lib/target-order";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useProgressiveList } from "@/lib/use-progressive-list";
 
 type Tab = "a" | "b" | "c";
@@ -246,16 +247,14 @@ export default function OutputsPage() {
         <section className="grid gap-2" data-testid="outputs-checks">
           <h2 className="text-xs font-semibold text-ink-3">{t("outputs.checks")}</h2>
           {SEMANTIC_CHECK_KEYS.map((item) => (
-            <label key={item} className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                data-testid={`outputs-check-${item}`}
-                checked={bundle?.semantic_checks[item] === true}
-                disabled={!canEdit || savingChecks}
-                onChange={(event) => void toggleCheck(item, event.target.checked)}
-              />
-              {t(`outputs.check.${item}`)}
-            </label>
+            <Checkbox
+              key={item}
+              testId={`outputs-check-${item}`}
+              checked={bundle?.semantic_checks[item] === true}
+              disabled={!canEdit || savingChecks}
+              onChange={(next) => void toggleCheck(item, next)}
+              label={t(`outputs.check.${item}`)}
+            />
           ))}
         </section>
         <section className="grid gap-2" data-testid="outputs-export">

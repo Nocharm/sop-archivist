@@ -2,7 +2,7 @@
 // 배치는 사람마다: 원문 3단(232 / 가변 / 392, 기본) 또는 목록 + 상세(318 / 가변). AI 자리는 안내만 둔다.
 "use client";
 
-import { ArrowDown, ArrowUp, Sparkles, Trash2, ExternalLink } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, Sparkles, Trash2, ExternalLink } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 
@@ -428,7 +428,7 @@ export default function ClassifyPage() {
               onClick={(event) => handleRowClick(key, event)}
             >
               <span className="row-span-3 pt-0.5">
-                {checked.has(key) ? <input type="checkbox" checked readOnly className="pointer-events-none" aria-label={t("classify.picked")} /> : <UnitStatusIcon status={item.status} />}
+                {checked.has(key) ? <span className="cbx" role="img" aria-label={t("classify.picked")}><span className="cbx-box is-on"><Check size={12} strokeWidth={2.5} aria-hidden /></span></span> : <UnitStatusIcon status={item.status} />}
               </span>
               <span className="flex items-center gap-1.5 font-mono text-[11px] leading-4 text-ink-3">
                 {item.unitIds.map((id) => unitMap.get(id)?.display_id).join(" · ")}

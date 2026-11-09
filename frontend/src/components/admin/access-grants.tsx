@@ -15,8 +15,10 @@ import { addGrant, listGrants, listRoles, removeGrant, type Grant, type GrantInp
 import { humanizeApiError, type TFunc } from "@/lib/api-errors";
 import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
-import { BUTTON_ICON, BUTTON_PRIMARY, BUTTON_SECONDARY, CHIP } from "@/lib/ui-classes";
+import { BUTTON_PRIMARY, BUTTON_SECONDARY, CHIP } from "@/lib/ui-classes";
 import { useListView } from "@/lib/use-list-view";
+import { MorphButton } from "@/components/ui/morph-button";
+import { Tooltip } from "@/components/ui/tooltip";
 import { useLoaded } from "@/lib/use-loaded";
 
 const SUBJECT_TYPES: SubjectType[] = ["user", "dept"];
@@ -263,9 +265,11 @@ export function AccessGrants() {
       card: "title",
       cell: (grant) => (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="inline-flex items-center gap-1.5 text-gray-500" title={t(`grants.subject.${grant.subject_type}`)}>
-            <SubjectTypeIcon type={grant.subject_type} />
-          </span>
+          <Tooltip label={t(`grants.subject.${grant.subject_type}`)}>
+            <span className="inline-flex items-center gap-1.5 text-gray-500" role="img" aria-label={t(`grants.subject.${grant.subject_type}`)}>
+              <SubjectTypeIcon type={grant.subject_type} />
+            </span>
+          </Tooltip>
           <span className="font-semibold text-gray-900">{getGrantSubjectLabel(grant)}</span>
           {!grant.subject_missing && <span className="text-xs font-normal text-gray-500">{grant.subject_id}</span>}
           {grant.subject_missing && (
@@ -297,16 +301,7 @@ export function AccessGrants() {
       card: "actions",
       className: "text-right",
       cell: (grant) => (
-        <button
-          type="button"
-          data-testid={`grant-remove-${grant.id}`}
-          className={BUTTON_ICON}
-          aria-label={t("grants.revokeLabel")}
-          title={t("grants.revokeLabel")}
-          onClick={() => setRevokeTarget(grant)}
-        >
-          <Undo2 size={16} strokeWidth={1.5} />
-        </button>
+        <MorphButton icon={Undo2} tone="danger" label={t("grants.revokeLabel")} testId={`grant-remove-${grant.id}`} onClick={() => setRevokeTarget(grant)} />
       ),
     },
   ];

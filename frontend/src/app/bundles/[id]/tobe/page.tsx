@@ -22,6 +22,7 @@ import { saveBlob } from "@/lib/save-file";
 import { SLOT_LABELS } from "@/lib/slot-labels";
 import { addStep, buildToBeInput, changeDocType, createDraft, findDraftProblem, isDraftDirty, orderDocs, removeDoc, removeStep, renameDoc, setNaSlot, type DraftDoc, type ToBeDraft } from "@/lib/tobe-draft";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useLoaded } from "@/lib/use-loaded";
 
 
@@ -131,16 +132,13 @@ export default function ToBePage() {
             const child = slotKey.includes(".");
             return (
               <div key={slotKey} className={`grid grid-cols-[220px_minmax(0,1fr)] items-center gap-3 ${child ? "pl-5" : ""}`}>
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    data-testid={`tobe-${doc.key}-na-${slotKey}`}
-                    checked={slot !== undefined}
-                    disabled={!canEdit}
-                    onChange={(event) => update(setNaSlot(draft, doc.key, slotKey, event.target.checked))}
-                  />
-                  <span className={slot ? "text-ink-3" : ""}>{SLOT_LABELS[slotKey]}</span>
-                </label>
+                <Checkbox
+                  testId={`tobe-${doc.key}-na-${slotKey}`}
+                  checked={slot !== undefined}
+                  disabled={!canEdit}
+                  onChange={(next) => update(setNaSlot(draft, doc.key, slotKey, next))}
+                  label={<span className={slot ? "text-ink-3" : ""}>{SLOT_LABELS[slotKey]}</span>}
+                />
                 {slot ? (
                   <input
                     className={CELL_INPUT}
@@ -356,7 +354,7 @@ export default function ToBePage() {
                       </td>
                       <td>
                         {doc.doc_type === "sop" ? (
-                          <input type="checkbox" className="mt-1.5" data-testid={`${prefix}-equipment`} aria-label={t("tobe.colEquipment")} checked={doc.is_equipment_sop} disabled={!canEdit} onChange={(event) => patchDoc(doc.key, { is_equipment_sop: event.target.checked })} />
+                          <Checkbox className="mt-1.5" testId={`${prefix}-equipment`} ariaLabel={t("tobe.colEquipment")} checked={doc.is_equipment_sop} disabled={!canEdit} onChange={(next) => patchDoc(doc.key, { is_equipment_sop: next })} />
                         ) : (
                           <span className="text-ink-4">–</span>
                         )}

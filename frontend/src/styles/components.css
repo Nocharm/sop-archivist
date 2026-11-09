@@ -651,7 +651,7 @@
     transition: background var(--dur-fast), border-color var(--dur-fast);
   }
   .cbx:hover .cbx-box { border-color: var(--ink-4); }
-  .cbx-input:checked + .cbx-box, .cbx-input:indeterminate + .cbx-box { background: var(--accent); border-color: var(--accent); }
+  .cbx-input:checked + .cbx-box, .cbx-input:indeterminate + .cbx-box, .cbx-box.is-on { background: var(--accent); border-color: var(--accent); }
   .cbx-input:focus-visible + .cbx-box { outline: 2px solid var(--focus); outline-offset: 2px; }
   .cbx-label { min-width: 0; }
 

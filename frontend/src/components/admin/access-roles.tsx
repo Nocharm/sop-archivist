@@ -11,7 +11,9 @@ import { translateOrRaw } from "@/lib/admin-format";
 import { createRole, deleteRole, listRoles, updateRole, type Role } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { useI18n } from "@/lib/i18n";
-import { BUTTON_ICON, BUTTON_PRIMARY, BUTTON_SECONDARY, CHIP, INPUT_FIELD } from "@/lib/ui-classes";
+import { BUTTON_PRIMARY, BUTTON_SECONDARY, CHIP, INPUT_FIELD } from "@/lib/ui-classes";
+import { Checkbox } from "@/components/ui/checkbox";
+import { MorphButton } from "@/components/ui/morph-button";
 import { useLoaded } from "@/lib/use-loaded";
 
 // 컬럼 길이와 같다(backend RoleName 100, description 500)
@@ -95,16 +97,14 @@ function RoleFormModal({ role, onClose, onSaved }: RoleFormModalProps) {
         <fieldset className="space-y-1.5">
           <legend className="text-sm font-semibold text-gray-700">{t("roles.form.permissions")}</legend>
           {PERMISSIONS.map((key) => (
-            <label key={key} className="flex items-center gap-2 text-sm text-gray-800">
-              <input
-                type="checkbox"
-                data-testid={`role-form-perm-${key}`}
-                className="h-4 w-4 accent-accent"
-                checked={permissions.includes(key)}
-                onChange={() => togglePermission(key)}
-              />
-              {t(`permission.${key}`)}
-            </label>
+            <Checkbox
+              key={key}
+              testId={`role-form-perm-${key}`}
+              className="text-sm text-ink"
+              checked={permissions.includes(key)}
+              onChange={() => togglePermission(key)}
+              label={t(`permission.${key}`)}
+            />
           ))}
         </fieldset>
         {role && <p className="text-xs text-gray-500">{t("roles.form.editNote")}</p>}
@@ -217,26 +217,8 @@ export function AccessRoles() {
                 </div>
               </div>
               <div className="flex shrink-0 gap-1">
-                <button
-                  type="button"
-                  data-testid={`role-edit-${role.id}`}
-                  className={BUTTON_ICON}
-                  aria-label={t("roles.editLabel", { name: role.name })}
-                  title={t("common.edit")}
-                  onClick={() => setFormTarget(role)}
-                >
-                  <Pencil size={16} strokeWidth={1.5} />
-                </button>
-                <button
-                  type="button"
-                  data-testid={`role-delete-${role.id}`}
-                  className={BUTTON_ICON}
-                  aria-label={t("roles.deleteLabel", { name: role.name })}
-                  title={t("common.delete")}
-                  onClick={() => setDeleteTarget(role)}
-                >
-                  <Trash2 size={16} strokeWidth={1.5} />
-                </button>
+                <MorphButton icon={Pencil} label={t("common.edit")} testId={`role-edit-${role.id}`} onClick={() => setFormTarget(role)} />
+                <MorphButton icon={Trash2} tone="danger" label={t("common.delete")} testId={`role-delete-${role.id}`} onClick={() => setDeleteTarget(role)} />
               </div>
             </li>
           ))}

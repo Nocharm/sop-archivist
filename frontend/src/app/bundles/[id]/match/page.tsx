@@ -31,6 +31,7 @@ import { buildIdenticalBatches } from "@/lib/match-model";
 import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useProgressiveList } from "@/lib/use-progressive-list";
 
 interface NewSentence {
@@ -298,13 +299,12 @@ export default function MatchPage() {
                   return (
                     <li key={row.unit_id}>
                       <label className={`grid cursor-pointer grid-cols-[18px_minmax(0,1fr)] gap-2 rounded-md border px-2.5 py-2 ${isLinked ? "border-accent bg-accent-tint" : isPicked ? "border-dashed border-accent" : "border-line bg-surface hover:bg-hover"}`}>
-                        <input
-                          type="checkbox"
+                        <Checkbox
                           className="mt-1"
-                          data-testid={`match-candidate-${row.unit_id}`}
+                          testId={`match-candidate-${row.unit_id}`}
                           checked={isLinked || isPicked}
                           disabled={!canEdit || isLinked}
-                          onChange={(event) => setPicked((prev) => (event.target.checked ? [...prev, row.unit_id] : prev.filter((id) => id !== row.unit_id)))}
+                          onChange={(next) => setPicked((prev) => (next ? [...prev, row.unit_id] : prev.filter((id) => id !== row.unit_id)))}
                         />
                         <span className="min-w-0">
                           <span className="block font-mono text-[11px] text-ink-3">{row.display_id}</span>
