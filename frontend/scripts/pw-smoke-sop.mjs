@@ -308,14 +308,14 @@ await runStep("to-be: removing a step keeps the other numbers, leaving asks firs
 
   // 저장 안 한 편집 - 단계 링크를 누르면 먼저 묻는다
   await page.locator(`[data-testid="tobe-${wiKey}-step-${top + 2}"]`).fill("Smoke step B (unsaved)");
-  await page.locator('[data-testid="stage-nav-classify"]').click();
+  await page.locator('[data-testid="stage-nav-assign"]').click();
   await wait(page, "tobe-leave");
   check("leaving with unsaved edits asks first", page.url().endsWith("/tobe"));
   await page.locator('[data-testid="tobe-leave-cancel"]').click();
   check("cancel stays on To-Be with the edit", (await page.locator(`[data-testid="tobe-${wiKey}-step-${top + 2}"]`).inputValue()) === "Smoke step B (unsaved)");
-  await page.locator('[data-testid="stage-nav-classify"]').click();
+  await page.locator('[data-testid="stage-nav-assign"]').click();
   await page.locator('[data-testid="tobe-leave-confirm"]').click();
-  await page.waitForURL(/\/classify$/, { timeout: T });
+  await page.waitForURL(/\/assign$/, { timeout: T });
   check("confirm discards and leaves", true);
 
   // 되돌리기
@@ -327,82 +327,87 @@ await runStep("to-be: removing a step keeps the other numbers, leaving asks firs
   check("restored the step list", (await readNumbers()).join(",") === before.join(","));
 });
 
-await runStep("classify: choose, confirm, delete with reason, edit, clear, bulk", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
-  await page.goto(`${BASE}/bundles/${halfBundleId}/classify`);
-  const rows = page.locator('[data-testid^="classify-row-u"]');
-  await rows.first().waitFor({ timeout: T });
-  check("unassigned filter first", (await page.locator('[data-testid="classify-filter-unassigned"]').getAttribute("aria-selected")) === "true");
-  const firstKey = (await rows.first().getAttribute("data-testid")).replace("classify-row-", "");
-  const rowBox = await rows.first().boundingBox();
-  const primary = page.locator('[data-testid="classify-primary"]');
-  const primaryBox = await primary.boundingBox();
-  const ids = await page.locator('[data-testid^="classify-row-u"] .font-mono').allInnerTexts();
-  check("pair rows carry both IDs", ids.some((text) => text.includes(" · ")), ids.slice(0, 4).join(" | "));
-  await page.keyboard.press("Enter");
-  await wait(page, "classify-destination-menu");
-  check("Enter opens the destination menu", true);
-  await page.locator('[data-testid^="classify-dest-slot:"]:not([disabled])').first().click();
-  check("primary turns into Confirm", (await primary.getAttribute("data-state")) === "confirm");
-  await takeShot("sop-classify-chosen.png");
-  await page.keyboard.press("Enter");
-  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
-  await page.waitForFunction((key) => document.querySelector(`[data-testid="classify-row-${key}"]`)?.getAttribute("data-status") === "confirmed", firstKey, { timeout: T });
-  check("confirmed row stays in place", Math.abs((await rows.first().boundingBox()).y - rowBox.y) < 1);
-  check("selection moved to the next row", (await rows.first().getAttribute("aria-current")) !== "true");
-  const after = await primary.boundingBox();
-  check("primary button did not move", Math.abs(after.y - primaryBox.y) < 1 && Math.abs(after.width - primaryBox.width) < 1);
-
-  // 삭제 - 사유 없이는 저장하지 않는다
-  await page.locator('[data-testid="classify-destination"]').click();
-  await page.locator('[data-testid="classify-dest-delete"]').click();
-  await page.keyboard.press("Enter");
-  await page.locator('[data-testid="toast-error"]').first().waitFor({ timeout: T });
-  check("delete without a reason is stopped", true);
-  await page.locator('[data-testid="classify-reason"]').fill("Structural heading");
-  await page.locator('[data-testid="classify-primary"]').click();
-  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((el) => el.textContent?.includes("Confirmed")), null, { timeout: T });
-
-  // 고쳐서 확정 - 바뀐 글은 변경 종류를 묻는다
-  await page.locator('[data-testid="classify-destination"]').click();
-  await page.locator('[data-testid^="classify-dest-slot:"]:not([disabled])').nth(1).click();
-  await page.keyboard.press("e");
-  const textarea = page.locator('textarea[data-testid^="classify-text-"]').last();
-  await textarea.waitFor({ timeout: T });
-  await textarea.fill("Edited sentence for the smoke test.");
-  await page.locator('[data-testid^="classify-change-"]').first().waitFor({ timeout: T });
-  check("save-and-confirm label while editing", (await primary.getAttribute("data-state")) === "save");
-  await takeShot("sop-classify-edit.png");
-  await textarea.press("Control+Enter");
-  await page.locator('[data-testid="classify-primary"][data-state="choose"]').waitFor({ timeout: T });
-  check("Ctrl+Enter saves the edit and moves on", true);
-
-  // 배정 지우기
-  await page.locator(`[data-testid="classify-row-${firstKey}"]`).click();
-  await page.keyboard.press("u");
-  await page.waitForFunction((key) => document.querySelector(`[data-testid="classify-row-${key}"]`)?.getAttribute("data-status") === "unassigned", firstKey, { timeout: T });
-  check("U clears the assignment", true);
-
-  // 여러 줄 삭제
-  await rows.nth(4).click();
-  await rows.nth(5).click({ modifiers: ["ControlOrMeta"] });
-  await wait(page, "classify-bulk");
-  await page.locator('[data-testid="classify-bulk-delete"]').click();
-  await page.locator('[data-testid="classify-bulk-reason"]').fill("Header text");
-  await page.locator('[data-testid="classify-bulk-confirm"]').click();
-  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((el) => /units confirmed/.test(el.textContent ?? "")), null, { timeout: T });
-  check("bulk delete confirms the picked rows", true);
-  await takeShot("sop-classify.png");
-});
-
-await runStep("classify in list and detail layout", { storage: { "sopa.classifyLayout": "list" } }, async ({ page, takeShot }) => {
-  await page.goto(`${BASE}/bundles/${halfBundleId}/classify`);
-  await page.locator('[data-testid="classify"][data-layout="list"]').waitFor({ timeout: T });
-  check("list layout is used", true);
-  await takeShot("sop-classify-list.png");
-});
-
-// 검토 v0.4.0: 쪼개기 직후 묶음에서 보낼 곳 없는 보류(쪼개기 H·분류 H), 표 행 분류, AI 나눔 확정
+// Assign(v0.10.0) - Old 원문 조각이 곧 목록이다. 줄은 ↑↓·J/K로 옮기고, 지금 줄은 오른쪽 머리(assign-row-id·assign-row-status)로 읽는다
+const rowStatus = async (page) => (await getText(page, "assign-row-status")).trim();
+const rowIds = async (page) => (await getText(page, "assign-row-id")).trim();
+async function selectRowById(page, id) {
+  await page.locator('[data-testid="assign-filter-all"]').click();
+  // ↓로 끝까지, 못 찾으면 ↑로 처음까지 - 지금 줄이 어디든 한 번은 지난다
+  for (const key of ["j", "k"]) {
+    let last = "";
+    for (let step = 0; step < 400; step += 1) {
+      await page.keyboard.press(key);
+      await page.locator('[data-testid="assign-row-id"]').waitFor({ timeout: T });
+      const ids = await rowIds(page);
+      if (ids.includes(id)) return;
+      if (ids === last) break;
+      last = ids;
+    }
+  }
+  throw new Error(`row ${id} not reached`);
+}
+async function pickFirstPlace(page) {
+  await page.locator('[data-testid="assign-acc-all"]').click();
+  await page.locator('[data-testid^="assign-tree-p"]').first().click();
+  await page.locator('[data-testid^="assign-tree-place-"]:not([disabled])').first().click();
+  await page.locator('[data-testid="assign-primary"][data-state="confirm"]').waitFor({ timeout: T });
+}
+const progressDone = async (page) => Number((await getText(page, "assign-progress")).split("/")[0]);
 let freshBundleId = null;
+
+await runStep("assign: legend first, place, delete with reason, edit, clear, bulk", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-pick-prompt");
+  check("nothing picked shows the legend", (await page.locator('[data-testid="assign-legend"]').count()) === 1);
+  check("unassigned filter first", (await page.locator('[data-testid="assign-filter-unassigned"]').getAttribute("aria-selected")) === "true");
+  await page.keyboard.press("j");
+  await wait(page, "assign-row-id");
+  check("J picks the first open unit", (await rowStatus(page)) === "Unassigned", await rowStatus(page));
+  check("legend moves to the (i) button", (await page.locator('[data-testid="assign-legend-button"]').count()) === 1);
+  const firstIds = await rowIds(page);
+  const before = await progressDone(page);
+  await pickFirstPlace(page);
+  await takeShot("sop-assign-chosen.png");
+  await page.locator('[data-testid="assign-primary"]').click();
+  await page.waitForFunction((done) => Number(document.querySelector('[data-testid="assign-progress"]')?.textContent?.split("/")[0]) === done + 1, before, { timeout: T });
+  check("Enter-path confirm moves on to the next unit", (await rowIds(page)) !== firstIds);
+  // 삭제는 사유가 있어야 한다
+  await page.locator('[data-testid="assign-acc-move"]').click();
+  await page.locator('[data-testid="assign-pick-delete"]').click();
+  await page.locator('[data-testid="assign-primary"]').click();
+  await page.locator('[data-testid="toast-error"]').first().waitFor({ timeout: T });
+  check("delete without a reason is refused", true);
+  await page.locator('[data-testid="assign-reason"]').fill("Structural heading");
+  await page.locator('[data-testid="assign-primary"]').click();
+  await page.waitForFunction((done) => Number(document.querySelector('[data-testid="assign-progress"]')?.textContent?.split("/")[0]) === done + 2, before, { timeout: T });
+  check("delete with a reason confirms", true);
+  // 고쳐 확정 - E로 새 문장을 고치면 변경 종류를 고른다
+  await pickFirstPlace(page);
+  await page.keyboard.press("e");
+  const textarea = page.locator('textarea[data-testid^="assign-text-"]').first();
+  await textarea.fill("Smoke: rewritten sentence");
+  await page.locator('[data-testid^="assign-slot-change-"]').first().waitFor({ timeout: T });
+  check("an edited sentence asks for a change type", true);
+  await page.keyboard.press("Escape");
+  // 비우기
+  await selectRowById(page, firstIds.split(" · ")[0]);
+  check("the first unit is confirmed", (await rowStatus(page)) === "Confirmed", await rowStatus(page));
+  await page.keyboard.press("u");
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-row-status"]')?.textContent?.includes("Unassigned"), null, { timeout: T });
+  check("U clears the unit", true);
+  // 일괄 - Shift+클릭으로 여럿
+  await page.locator('[data-testid="assign-filter-unassigned"]').click();
+  const units = page.locator('[data-testid^="assign-paper-unit-"]');
+  await units.nth(4).click({ modifiers: ["Shift"] });
+  await units.nth(6).click({ modifiers: ["Shift"] });
+  await wait(page, "assign-bulk");
+  await page.locator('[data-testid="assign-bulk-delete"]').click();
+  await page.locator('[data-testid="assign-bulk-reason"]').fill("Header text");
+  await page.locator('[data-testid="assign-bulk-confirm"]').click();
+  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
+  check("bulk delete with Shift+click", true);
+  await takeShot("sop-assign.png");
+});
 
 await runStep("split: H holds a unit without a destination", {}, async ({ page }) => {
   await page.goto(`${BASE}/`);
@@ -420,50 +425,47 @@ await runStep("split: H holds a unit without a destination", {}, async ({ page }
   await page.locator('[data-testid="split-hold-modal-confirm"]').click();
   await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((el) => el.textContent?.includes("Held")), null, { timeout: T });
   check("H holds the unit", true);
-  await page.goto(`${BASE}/bundles/${freshBundleId}/classify`);
-  await page.locator('[data-testid^="classify-row-u"]').first().waitFor({ timeout: T });
-  // 짝 줄이면 줄 상태는 덜 끝난 쪽(짝의 미배정)을 따른다 - 전체에서 찾는다
-  await page.locator('[data-testid="classify-filter-all"]').click();
-  const held = page.locator('[data-testid^="classify-row-u"]', { hasText: heldId });
-  await held.first().click();
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await selectRowById(page, heldId.trim());
   await page.waitForLoadState("networkidle");
-  check("held unit shows on Classify with its reason", (await page.locator('[data-testid="classify-reason"]').inputValue()) === "Smoke: not sure where it goes");
-  check("it has no destination", (await getText(page, "classify-destination")).includes("Choose"), await getText(page, "classify-destination"));
-  // 저장된 사유를 지우면 빈 채로 남는다(전에는 저장된 값으로 되돌아갔다)
-  await page.locator('[data-testid="classify-reason"]').fill("");
-  check("a cleared reason stays empty", (await page.locator('[data-testid="classify-reason"]').inputValue()) === "");
+  check("held unit shows on Assign with its reason", (await page.locator('[data-testid="assign-reason"]').inputValue()) === "Smoke: not sure where it goes");
+  check("it has no destination", (await page.locator('[data-testid="assign-chosen"].is-empty').count()) === 1);
+  // 저장된 사유를 지우면 빈 채로 남는다
+  await page.locator('[data-testid="assign-reason"]').fill("");
+  check("a cleared reason stays empty", (await page.locator('[data-testid="assign-reason"]').inputValue()) === "");
 });
 
-await runStep("classify: hold an unassigned row without a destination", {}, async ({ page }) => {
-  await page.goto(`${BASE}/bundles/${freshBundleId}/classify`);
-  const rows = page.locator('[data-testid^="classify-row-u"]');
-  await rows.first().waitFor({ timeout: T });
-  const key = (await rows.first().getAttribute("data-testid")).replace("classify-row-", "");
-  // 줄의 관계 묶음을 불러오는 중에 바로 쓴다 - 그 글이 버려지지 않아야 한다(검토 M3)
-  check("hold is available with no destination", !(await page.locator('[data-testid="classify-hold"]').isDisabled()));
-  await page.locator('[data-testid="classify-reason"]').fill("Smoke: decide later");
-  await page.locator('[data-testid="classify-hold"]').click();
-  await page.waitForFunction((rowKey) => document.querySelector(`[data-testid="classify-row-${rowKey}"]`)?.getAttribute("data-status") === "on_hold", key, { timeout: T });
-  check("the row is on hold", true);
+await runStep("assign: hold an unassigned unit without a destination", {}, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.keyboard.press("j");
+  await wait(page, "assign-row-id");
+  check("hold is available with no destination", !(await page.locator('[data-testid="assign-hold"]').isDisabled()));
+  await page.locator('[data-testid="assign-reason"]').fill("Smoke: decide later");
+  await page.locator('[data-testid="assign-hold"]').click();
+  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
+  check("the unit is on hold", true);
 });
 
-await runStep("classify: an edit survives looking at another row", {}, async ({ page }) => {
-  await page.goto(`${BASE}/bundles/${freshBundleId}/classify`);
-  const rows = page.locator('[data-testid^="classify-row-u"]');
-  await rows.nth(2).waitFor({ timeout: T });
-  await rows.nth(1).click();
-  await page.locator('[data-testid="classify-destination"]').click();
-  await page.locator('[data-testid^="classify-dest-slot:"]:not([disabled])').first().click();
+await runStep("assign: an edit survives looking at another unit", {}, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.keyboard.press("j");
+  await page.keyboard.press("j");
+  await wait(page, "assign-row-id");
+  await pickFirstPlace(page);
   await page.keyboard.press("e");
-  const textarea = page.locator('textarea[data-testid^="classify-text-"]').first();
-  await textarea.fill("Smoke: edit kept across rows");
-  await rows.nth(2).click();
-  await rows.nth(1).click();
+  const textarea = page.locator('textarea[data-testid^="assign-text-"]').first();
+  await textarea.fill("Smoke: edit kept across units");
+  await page.locator('[data-testid="assign-legend-button"]').focus();
+  await page.keyboard.press("j");
+  await page.keyboard.press("k");
   await textarea.waitFor({ timeout: T });
-  check("the edit is still there", (await textarea.inputValue()) === "Smoke: edit kept across rows");
+  check("the edit is still there", (await textarea.inputValue()) === "Smoke: edit kept across units");
 });
 
-await runStep("split rows of a table, then classify a row as a table", { allowConsoleErrors: true }, async ({ page }) => {
+await runStep("split rows of a table, then assign a row as a table", { allowConsoleErrors: true }, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${freshBundleId}/split`);
   const cap = page.locator('button.ptbl-cap[data-testid^="split-paper-unit-"]').first();
   await cap.waitFor({ timeout: T });
@@ -475,72 +477,105 @@ await runStep("split rows of a table, then classify a row as a table", { allowCo
   await page.locator('[data-testid="split-table-merge"]').waitFor({ timeout: T });
   const rowId = await getText(page, "split-unit-id");
   check("rows are split", rowId.length > 0, rowId);
-  await page.goto(`${BASE}/bundles/${freshBundleId}/classify`);
-  await page.locator('[data-testid^="classify-row-u"]').first().waitFor({ timeout: T });
-  await page.locator('[data-testid="classify-filter-all"]').click();
-  const row = page.locator('[data-testid^="classify-row-u"]', { hasText: rowId }).first();
-  await row.click();
-  const key = (await row.getAttribute("data-testid")).replace("classify-row-", "");
-  await page.locator('[data-testid="classify-destination"]').click();
-  await page.locator('[data-testid^="classify-dest-slot:"]:not([disabled])').first().click();
-  await page.locator('[data-testid="classify-primary"]').click();
-  await page.waitForFunction((rowKey) => document.querySelector(`[data-testid="classify-row-${rowKey}"]`)?.getAttribute("data-status") === "confirmed", key, { timeout: T });
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await selectRowById(page, rowId.trim());
+  await pickFirstPlace(page);
+  await page.locator('[data-testid="assign-primary"]').click();
+  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
   check("a table row confirms as a one-row table", true);
 });
 
-await runStep("classify: an AI split keeps both sentences when confirmed", {}, async ({ page }) => {
+await runStep("assign: an AI split keeps both sentences when confirmed", {}, async ({ page }) => {
   const status = await page.request.get(`${BASE}/api/bundles/${freshBundleId}/ai/status`, { headers: { "X-Dev-User": "qa.member" } });
   if (!status.ok() || !(await status.json()).ai_enabled) {
     console.log("  (AI is off in this backend - skipped)");
     return;
   }
-  await page.goto(`${BASE}/bundles/${freshBundleId}/classify`);
-  const rows = page.locator('[data-testid^="classify-row-u"]');
-  await rows.first().waitFor({ timeout: T });
-  const row = rows.nth(1);
-  await row.click();
-  const key = (await row.getAttribute("data-testid")).replace("classify-row-", "");
-  await page.locator('[data-testid="classify-ai-request"]').click();
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.keyboard.press("j");
+  await page.keyboard.press("j");
+  await page.locator('[data-testid="assign-ai-request"]').click();
   // 폴링으로 제안이 저절로 들어온다(새로고침 없이)
-  await page.waitForFunction((rowKey) => document.querySelector(`[data-testid="classify-row-${rowKey}"]`)?.getAttribute("data-status") === "ai_suggested", key, { timeout: 30000 });
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-row-status"]')?.textContent?.includes("AI suggested"), null, { timeout: 30000 });
   check("the AI suggestion appears without a reload", true);
-  await page.locator('[data-testid^="classify-text-t"]').nth(1).waitFor({ timeout: T });
-  const slots = await page.locator('[data-testid^="classify-text-t"]').count();
+  await page.locator('[data-testid^="assign-text-t"]').nth(1).waitFor({ timeout: T });
+  const slots = await page.locator('[data-testid^="assign-text-t"]').count();
   check("both split sentences are shown", slots >= 2, String(slots));
-  await page.locator('[data-testid="classify-primary"]').click();
-  await page.waitForFunction((rowKey) => document.querySelector(`[data-testid="classify-row-${rowKey}"]`)?.getAttribute("data-status") === "confirmed", key, { timeout: T });
-  await row.click();
-  await page.locator('[data-testid^="classify-text-t"]').first().waitFor({ timeout: T });
-  check("both sentences are still there after confirming", (await page.locator('[data-testid^="classify-text-t"]').count()) === slots);
+  const ids = await rowIds(page);
+  await page.locator('[data-testid="assign-primary"]').click();
+  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
+  await selectRowById(page, ids.split(" · ")[0]);
+  await page.locator('[data-testid^="assign-text-t"]').first().waitFor({ timeout: T });
+  check("both sentences are still there after confirming", (await page.locator('[data-testid^="assign-text-t"]').count()) === slots);
 });
 
-await runStep("match: identical candidates, link a source, mark new", {}, async ({ page, takeShot }) => {
-  await page.goto(`${BASE}/`);
-  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
-  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
-  for (const id of [halfBundleId, freshId]) {
-    await page.goto(`${BASE}/bundles/${id}/match`);
-    await wait(page, "match");
-    const rows = await page.locator('[data-testid^="match-row-"]').count();
-    console.log(`  bundle ${id}: ${rows} open new sentences, identical ${await page.locator('[data-testid="match-identical"]').count()}`);
-  }
-  await page.goto(`${BASE}/bundles/${halfBundleId}/match`);
-  await wait(page, "match");
-  await page.locator('[data-testid="match-filter-all"]').click();
-  check("new-document sentences are listed", (await page.locator('[data-testid^="match-row-"]').count()) > 0);
-  await takeShot("sop-match.png");
-  await page.locator('[data-testid="match-identical-confirm"]').click();
+await runStep("assign: written New document - identical, link by clicking, split with Ctrl, zoom, width, mark new", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-identical");
+  await page.locator('[data-testid="assign-identical"]').click();
   await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
-  await page.locator('[data-testid="match-identical"]').waitFor({ state: "detached", timeout: T });
+  await page.locator('[data-testid="assign-identical"]').waitFor({ state: "detached", timeout: T });
   check("identical matches confirm together", true);
-  const open = page.locator('[data-testid="match-filter-open"]');
-  await open.click();
-  const first = page.locator('[data-testid^="match-row-"]').first();
-  await first.click();
-  await page.locator('[data-testid^="match-candidate-"]').first().check();
-  await page.locator('[data-testid="match-link"]').click();
-  await page.waitForFunction(() => document.querySelectorAll('[data-testid="match-sources"] li').length > 0, null, { timeout: T });
-  check("a picked old unit becomes the source", true);
+  // 쓴 문서의 문장에 잇기 - 원문에서 직접 누른다
+  // 비슷한 New 문장 후보(점선)가 있는 Old 조각까지 옮긴다 - 후보는 같은 언어만 나온다(짝 맞추기는 같은 언어끼리)
+  await page.locator('[data-testid="assign-filter-unassigned"]').click();
+  const candidate = page.locator('[data-testid="assign-new"] button.new-line[data-state="candidate"]');
+  for (let step = 0; step < 40 && (await candidate.count()) === 0; step += 1) {
+    await page.keyboard.press("j");
+    await page.waitForLoadState("networkidle");
+  }
+  // 누르면 후보가 아니라 고른 문장이 된다 - 같은 줄을 계속 가리키게 testid로 붙잡는다
+  const firstLine = page.locator(`[data-testid="${await candidate.first().getAttribute("data-testid")}"]`);
+  const lang = (await firstLine.locator(".ptag").innerText()).trim().toLowerCase();
+  await firstLine.click();
+  check("clicking a New sentence picks it", (await firstLine.getAttribute("data-state")) === "picked");
+  // 맥에서 Ctrl+클릭은 오른쪽 클릭이다 - 화면은 ⌘도 같은 뜻으로 받는다
+  const multi = process.platform === "darwin" ? "Meta" : "Control";
+  const sameLang = page.locator(`[data-testid="assign-new"] button.new-line:has(.ptag.${lang}):not([data-state="picked"])`);
+  const second = page.locator(`[data-testid="${await sameLang.first().getAttribute("data-testid")}"]`);
+  await second.click({ modifiers: [multi] });
+  await page.locator('[data-testid^="assign-link-"]').nth(1).waitFor({ timeout: T });
+  check("Ctrl+click adds a second sentence", (await page.locator('[data-testid^="assign-link-"]').count()) >= 2);
+  await takeShot("sop-assign-link.png");
+  await second.click({ modifiers: [multi] });
+  const linkedId = (await firstLine.getAttribute("data-testid")).replace("assign-new-", "");
+  const readSources = async () => {
+    const response = await page.request.get(`${BASE}/api/bundles/${halfBundleId}/written-sentences`, { headers: { "X-Dev-User": "qa.member" } });
+    return ((await response.json()).find((row) => String(row.target_id) === linkedId)?.source_unit_ids ?? []).length;
+  };
+  const sourcesBefore = await readSources();
+  // 앞 단계의 토스트가 아직 떠 있을 수 있다 - 저장 응답을 기다린다
+  const saved = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
+  await page.locator('[data-testid="assign-primary"]').click();
+  check("the link saves", (await saved).ok());
+  await page.waitForLoadState("networkidle");
+  check("linking to a written sentence adds the Old source", (await readSources()) > sourcesBefore, String(sourcesBefore));
+  // 문서별 확대 - Old 위에서 Ctrl+휠, New는 그대로(다음 조각으로 넘어가 New 원문이 닫혔으면 연다)
+  // 다음 조각의 후보가 늦게 오면 New 원문이 저절로 열렸다 닫힌다 - 자리 잡을 때까지 기다렸다가 닫혀 있으면 연다
+  await page.waitForLoadState("networkidle");
+  await page.waitForTimeout(400);
+  if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-toggle-new"]').click();
+  await wait(page, "assign-new-zoom-value");
+  const oldZoom = await getText(page, "assign-old-zoom-value");
+  const newZoom = await getText(page, "assign-new-zoom-value");
+  await page.locator('[data-testid="assign-old"] .pane-body').hover();
+  await page.keyboard.down("Control");
+  await page.mouse.wheel(0, -120);
+  await page.keyboard.up("Control");
+  await page.waitForFunction((value) => document.querySelector('[data-testid="assign-old-zoom-value"]')?.textContent !== value, oldZoom, { timeout: T });
+  check("Ctrl+wheel zooms only the hovered document", (await getText(page, "assign-new-zoom-value")) === newZoom);
+  const width = await page.locator('[data-testid="assign-divider"]').getAttribute("aria-valuenow");
+  await page.locator('[data-testid="assign-divider"]').focus();
+  await page.keyboard.press("ArrowRight");
+  check("the divider moves with the arrow keys", (await page.locator('[data-testid="assign-divider"]').getAttribute("aria-valuenow")) !== width);
+  // 출처 없는 New - 신규로 표시
+  await page.locator('[data-testid="assign-filter-unsourced"]').click();
+  await wait(page, "assign-mark-new");
+  await page.locator('[data-testid="assign-mark-new"]').click();
+  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
+  check("an unsourced New sentence is marked new", true);
 });
 
 await runStep("outputs: A, B, C in both editions and Excel", {}, async ({ page, takeShot }) => {
@@ -583,7 +618,7 @@ await runStep("review: reviewer completes the bundle in review", { devUser: "qa.
   check("status reads Review complete", true);
 });
 
-await runStep("classify: AI suggestions come first and confirm one by one", {}, async ({ page, takeShot }) => {
+await runStep("assign: AI suggestions come first and confirm one by one", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);
   await page.locator('[data-testid^="bundles-row-"]').first().waitFor({ timeout: T });
   const aiRow = page.locator('[data-testid^="bundles-row-"]', { hasText: "AI 제안" });
@@ -592,15 +627,16 @@ await runStep("classify: AI suggestions come first and confirm one by one", {}, 
     return;
   }
   const aiId = Number((await aiRow.getAttribute("data-testid")).replace("bundles-row-", ""));
-  await page.goto(`${BASE}/bundles/${aiId}/classify`);
-  await page.locator('[data-testid^="classify-row-u"]').first().waitFor({ timeout: T });
-  check("AI suggested filter opens first", (await page.locator('[data-testid="classify-filter-ai_suggested"]').getAttribute("aria-selected")) === "true");
-  await page.locator('[data-testid="classify-ai-reason"]').waitFor({ timeout: T });
-  check("reason and rule IDs are shown", (await page.locator('[data-testid^="classify-ai-rule-"]').count()) > 0);
-  await takeShot("sop-classify-ai.png");
-  const firstKey = (await page.locator('[data-testid^="classify-row-u"]').first().getAttribute("data-testid")).replace("classify-row-", "");
+  await page.goto(`${BASE}/bundles/${aiId}/assign`);
+  await wait(page, "assign-bar");
+  check("AI suggested filter opens first", (await page.locator('[data-testid="assign-filter-ai_suggested"]').getAttribute("aria-selected")) === "true");
+  await page.keyboard.press("j");
+  await wait(page, "assign-rec-0");
+  check("the AI suggestion is the first card", (await getText(page, "assign-rec-0")).includes("AI"));
+  await takeShot("sop-assign-ai.png");
+  const before = await progressDone(page);
   await page.keyboard.press("Enter");
-  await page.waitForFunction((key) => document.querySelector(`[data-testid="classify-row-${key}"]`)?.getAttribute("data-status") === "confirmed", firstKey, { timeout: T });
+  await page.waitForFunction((done) => Number(document.querySelector('[data-testid="assign-progress"]')?.textContent?.split("/")[0]) === done + 1, before, { timeout: T });
   check("Enter confirms the AI suggestion", true);
   await page.goto(`${BASE}/bundles/${halfBundleId}/split`);
   await page.locator('[data-testid^="figure-"]').first().waitFor({ timeout: T });
@@ -608,14 +644,14 @@ await runStep("classify: AI suggestions come first and confirm one by one", {}, 
 });
 
 await runStep("dark theme from the layout menu, before first paint next time", {}, async ({ page, takeShot }) => {
-  await page.goto(`${BASE}/bundles/${halfBundleId}/classify`);
-  await page.locator('[data-testid^="classify-row-u"]').first().waitFor({ timeout: T });
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
   await page.locator('[data-testid="top-bar-user"]').click();
   await page.locator('[data-testid="user-menu-layout"]').hover();
   await page.locator('[data-testid="layout-menu-theme-dark"]').click();
   check("dark applies at once", (await page.evaluate(() => document.documentElement.dataset.theme)) === "dark");
   await page.keyboard.press("Escape");
-  await takeShot("sop-classify-dark.png");
+  await takeShot("sop-assign-dark.png");
   await page.goto(`${BASE}/bundles/${halfBundleId}`, { waitUntil: "commit" });
   const early = await page.evaluate(() => new Promise((done) => {
     if (document.readyState !== "loading") done(document.documentElement.dataset.theme);
@@ -646,7 +682,7 @@ await runStep("members picker keeps Add inside the panel and adds the person", {
 });
 
 // 바로 생성(2026-11-09): 이름 없이 BND 코드로 만들고, 문서가 없으면 Split~Review는 잠기고 To-Be는 열려 있다
-await runStep("new bundle in one click, locked stages, empty classify", { devUser: "dev.admin" }, async ({ page }) => {
+await runStep("new bundle in one click, locked stages, empty assign", { devUser: "dev.admin" }, async ({ page }) => {
   await page.goto(`${BASE}/`);
   await page.locator('[data-testid="bundles-new"]').click();
   await page.waitForURL(/\/bundles\/\d+$/, { timeout: T });
@@ -658,8 +694,8 @@ await runStep("new bundle in one click, locked stages, empty classify", { devUse
   await page.locator('[data-testid="overview-menu-synthetic"]').click();
   await page.locator('[data-testid="top-bar-synthetic"]').waitFor({ timeout: T });
   check("test-data mark set from the menu", true);
-  await page.goto(`${page.url()}/classify`);
-  await wait(page, "classify-empty");
+  await page.goto(`${page.url()}/assign`);
+  await wait(page, "assign-empty");
   check("empty state instead of an endless skeleton", true);
 });
 

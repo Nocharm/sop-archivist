@@ -14,6 +14,8 @@ interface OldPaneProps {
   docOptions: SelectOption<string>[];
   docId: string;
   onDocChange: (docId: string) => void;
+  /** 고른 문서의 제목 - 좁으면 말줄임 */
+  docTitle: string;
   model: PaperModel | null;
   /** 모델을 아직 못 받았을 때(스켈레톤·빈 화면) */
   placeholder: ReactNode;
@@ -43,6 +45,7 @@ export function OldPane(props: OldPaneProps) {
           <span className="pane-title">{props.docOptions[0]?.label}</span>
         )}
         <span className="tag">Old</span>
+        <span className="pane-sub">{props.docTitle}</span>
         <span className="flex-1" />
         <PaneZoom value={props.zoom} onStep={props.onZoom} testId="assign-old-zoom" />
       </div>

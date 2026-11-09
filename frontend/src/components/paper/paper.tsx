@@ -344,6 +344,8 @@ export function Paper({
   // 두 번 누를 때 브라우저가 낱말을 고르지 않게 - 나눌 자리를 정하는 동작이다
   function handleMouseDown(event: MouseEvent<HTMLDivElement>) {
     if (onUnitDoubleClick && event.detail > 1 && (event.target as HTMLElement).closest(".su[data-unit]")) event.preventDefault();
+    // 끌어 고르기가 없는 화면(Assign)에서 Shift+클릭은 여럿 고르기다 - 브라우저가 글자 선택을 늘려 클릭을 삼키지 않게
+    if (!onRangeSelect && event.shiftKey && (event.target as HTMLElement).closest(".su[data-unit]")) event.preventDefault();
   }
 
   function handleMouseUp() {

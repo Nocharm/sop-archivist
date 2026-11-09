@@ -422,7 +422,15 @@ function buildLinkSave(
     if (chosen === null) targets.push(base);
     else targets.push({ ...base, change_type: chosen ?? (isTextChangeType(target.change_type) && target.status !== "ai_suggested" ? target.change_type : "rewritten") });
   }
-  return { action, hold_reason: holdReason, units, targets, removed_target_ids: removed };
+  // 묶음 안 다른 단위(합쳐진 다른 출처 등)도 지금 판단 그대로 실어야 닫힌다 - 확정 한 번이 이것도 확정한다(화면이 "함께 확정되는 것"으로 보인다)
+  const others = (context.group?.units ?? [])
+    .filter((unit) => !rowIds.has(unit.unit_id))
+    .map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision, disposition: unit.decision.disposition, move_target_code: unit.decision.move_target_code, reason: unit.decision.reason }));
+  // 이은 문장이 없는 언어의 줄 단위는 싣지 않는다(설계 §5 - 한쪽만 있으면 있는 쪽만 저장, 남은 쪽은 미배정으로 남는다)
+  const pickedLangs = new Set((context.group?.targets ?? []).filter((target) => picked.has(target.id)).map((target) => target.lang));
+  const rowLang = new Map(context.units.map((unit) => [unit.id, unit.lang]));
+  const linked = units.filter((unit) => pickedLangs.has(rowLang.get(unit.unit_id) ?? "neutral"));
+  return { action, hold_reason: holdReason, units: [...linked, ...others], targets, removed_target_ids: removed };
 }
 
 /** 확정하면 다음 미확정 줄로 - 지금 줄 뒤에서 먼저 찾고 없으면 앞에서 */

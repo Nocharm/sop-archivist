@@ -947,8 +947,11 @@
   .assign-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 30px; }
   .assign-panes { display: grid; grid-template-columns: minmax(0, var(--split, 50%)) 12px minmax(0, 1fr); min-height: 0; }
   .assign-panes[data-single] { grid-template-columns: minmax(0, 1fr); }
-  .assign-pane { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 6px; min-width: 0; min-height: 0; }
-  .pane-head { display: flex; align-items: center; gap: 8px; min-height: 28px; font-size: var(--fs-cap); color: var(--ink-3); }
+  .assign-pane { display: grid; grid-template-rows: auto minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; min-height: 0; }
+  .pane-sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); }
+  .pane-head { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 28px; font-size: var(--fs-cap); color: var(--ink-3); }
+  .pane-head > * { flex-shrink: 0; }
+  .pane-head > .pane-sub { flex-shrink: 1; }
   .pane-title { font: 600 var(--fs-cap) / 1 var(--font-mono); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .pane-body { min-height: 0; overflow-y: auto; scrollbar-gutter: stable; padding: 2px 4px 24px; }
   /* 문서별 확대 - 원문 글자·줄 높이·용지 폭이 --z를 따른다 */
@@ -988,6 +991,12 @@
   .new-src { display: inline-block; margin-left: 6px; padding: 0 4px; border-radius: var(--r-1); font: 600 10px / 16px var(--font-mono); vertical-align: 1px; background: var(--st-ok-tint); color: var(--st-ok-ink); }
   .new-src.is-new { background: var(--sunken); color: var(--ink-3); }
   .pg .new-block { margin: 4px 0; padding: 6px 8px; border: 1px dashed var(--line-2); border-radius: var(--r-1); font: var(--fs-cap) / var(--lh-cap) var(--font-ui); color: var(--ink-3); }
+
+  .assign-side { display: grid; grid-auto-rows: max-content; align-content: start; min-height: 0; overflow-y: auto; border-left: 1px solid var(--line); background: var(--surface); }
+  .assign-side-head { display: grid; gap: 6px; padding: 12px var(--pad); border-bottom: 1px solid var(--line); }
+  .chosen-box { display: grid; gap: 8px; padding: 10px 12px; border: 1.5px solid var(--accent); border-radius: var(--r-3); background: var(--accent-tint); }
+  .chosen-box.is-empty { border-style: dashed; border-color: var(--line-2); background: transparent; color: var(--ink-3); font-size: 13px; line-height: 19px; }
+  .chosen-label { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-micro); font-weight: 700; letter-spacing: 0.04em; color: var(--ink-3); }
 
   /* 오른쪽 칸 - 범례, 아코디언, 추천 카드, 전체 나무 */
   .assign-legend { display: grid; gap: 14px; padding: 14px; font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-2); }

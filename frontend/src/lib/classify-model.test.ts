@@ -357,6 +357,28 @@ describe("link destination saves the whole closed group", () => {
     expect(kept.targets[0]).toMatchObject({ id: 71, change_type: "rewritten" });
   });
 
+  it("lists the other source units of a merged sentence so the group is closed", () => {
+    const merged = makeTarget({ id: 73, origin: "new_doc", target_doc_id: 9, slot_key: null, status: "confirmed", change_type: "as_is", source_unit_ids: [11] });
+    const other: Group["units"][number] = {
+      unit_id: 11, display_id: "OLD-5-001", document_id: 5, kind: "sentence", lang: "ko", text: "다른 원문", group_id: null, cell_unit_ids: [],
+      decision: { disposition: "assigned", move_target_code: "", reason: "같은 글자", status: "confirmed", hold_reason: "", confirmed_by: null, confirmed_at: null, revision: 4 },
+    };
+    const body = buildGroupSave(makeDraft({ destination: { kind: "link", targetIds: [73] } }), { units: ONE_UNIT, group: { units: [other], targets: [merged] }, tables: new Map() }, "confirm");
+    expect(body.units).toEqual([
+      expect.objectContaining({ unit_id: 10, disposition: "assigned" }),
+      { unit_id: 11, revision: 4, disposition: "assigned", move_target_code: "", reason: "같은 글자" },
+    ]);
+    expect(body.targets[0]).toMatchObject({ id: 73, source_unit_ids: [11, 10] });
+  });
+
+  it("saves only the language that has a written sentence", () => {
+    const pairUnits = [ONE_UNIT[0], { id: 20, kind: "sentence", lang: "en" as const, text: "Source", revision: 2 }];
+    const english = makeTarget({ id: 75, origin: "new_doc", target_doc_id: 9, slot_key: null, lang: "en", status: "unassigned", change_type: null, source_unit_ids: [] });
+    const body = buildGroupSave(makeDraft({ destination: { kind: "link", targetIds: [75] } }), { units: pairUnits, group: { units: [], targets: [english] }, tables: new Map() }, "confirm");
+    expect(body.units.map((unit) => unit.unit_id)).toEqual([20]);
+    expect(body.targets[0]).toMatchObject({ id: 75, source_unit_ids: [20] });
+  });
+
   it("reads a link before a slot", () => {
     const slotSentence = makeTarget({ id: 80, source_unit_ids: [10] });
     expect(readDestination({ units: [], targets: [slotSentence, first] }, [10])).toEqual({ kind: "link", targetIds: [71] });
