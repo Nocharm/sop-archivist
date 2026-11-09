@@ -11,6 +11,7 @@ import { BackLink, NavProgress } from "@/components/nav-host";
 import { UserMenu } from "@/components/user-menu";
 import { useBundle } from "@/lib/bundle-store";
 import { parseBundlePath } from "@/lib/stages";
+import { getBundleLabel } from "@/lib/bundle-label";
 
 // next.config.ts env가 package.json version을 빌드 때 인라인한다
 const APP_VERSION = process.env.APP_VERSION ?? "";
@@ -32,7 +33,7 @@ export function TopBar() {
         <>
           <span className="tb-sep" aria-hidden />
           <span data-testid="top-bar-bundle-title" className="min-w-0 truncate">
-            {bundle?.title ?? ""}
+            {bundle ? getBundleLabel(bundle) : ""}
           </span>
           {bundle?.is_synthetic && (
             <span data-testid="top-bar-synthetic" className="tag">

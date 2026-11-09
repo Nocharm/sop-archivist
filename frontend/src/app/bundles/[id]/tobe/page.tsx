@@ -24,6 +24,7 @@ import { addStep, buildToBeInput, changeDocType, createDraft, findDraftProblem, 
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useLoaded } from "@/lib/use-loaded";
+import { getBundleLabel } from "@/lib/bundle-label";
 
 
 const CELL_INPUT = "h-7 w-full rounded-md border border-line-2 bg-surface px-1.5 text-[13px] text-ink focus:border-accent focus:outline-none disabled:border-transparent disabled:bg-transparent";
@@ -115,7 +116,7 @@ export default function ToBePage() {
 
   async function handleTemplate() {
     try {
-      saveBlob(await downloadToBeTemplate(bundleId), buildDownloadName([bundle?.title, "tobe"], "xlsx"));
+      saveBlob(await downloadToBeTemplate(bundleId), buildDownloadName([bundle ? getBundleLabel(bundle) : undefined, "tobe"], "xlsx"));
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
     }

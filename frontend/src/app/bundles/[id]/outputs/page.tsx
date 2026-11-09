@@ -33,6 +33,7 @@ import { useLoaded } from "@/lib/use-loaded";
 import { buildTargetOrder, type MoveDir } from "@/lib/target-order";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useProgressiveList } from "@/lib/use-progressive-list";
+import { getBundleLabel } from "@/lib/bundle-label";
 
 type Tab = "a" | "b" | "c";
 
@@ -84,7 +85,7 @@ export default function OutputsPage() {
     setExporting(exportLang);
     try {
       const blob = await downloadExport(bundleId, exportLang);
-      saveBlob(blob, buildDownloadName([bundle?.title, exportLang.toUpperCase()], "xlsx"));
+      saveBlob(blob, buildDownloadName([bundle ? getBundleLabel(bundle) : undefined, exportLang.toUpperCase()], "xlsx"));
       showToast(t("outputs.fileCreated"));
     } catch (err) {
       showToast(`${t("outputs.exportFailed")} ${humanizeApiError(err, t)}`, "error");

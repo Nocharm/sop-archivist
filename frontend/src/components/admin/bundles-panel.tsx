@@ -21,6 +21,7 @@ import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useListView } from "@/lib/use-list-view";
 import { useLoaded } from "@/lib/use-loaded";
 import { useProgressiveList } from "@/lib/use-progressive-list";
+import { getBundleLabel } from "@/lib/bundle-label";
 
 const LIST_KEY = "admin-bundles";
 
@@ -47,7 +48,7 @@ export function BundlesPanel() {
   const needle = query.trim().toLowerCase();
   const filtered = all
     .filter((bundle) => !onlyAttention || !bundle.has_active_author)
-    .filter((bundle) => needle === "" || bundle.title.toLowerCase().includes(needle) || bundle.members.some((member) => member.login_id.includes(needle)));
+    .filter((bundle) => needle === "" || getBundleLabel(bundle).toLowerCase().includes(needle) || bundle.code.toLowerCase().includes(needle) || bundle.members.some((member) => member.login_id.includes(needle)));
   const attentionCount = all.filter((bundle) => !bundle.has_active_author).length;
   const rows = useProgressiveList(filtered, `${needle}:${onlyAttention}`);
   const view = useListView(LIST_KEY);
@@ -63,7 +64,8 @@ export function BundlesPanel() {
       cell: (bundle) => (
         <>
           <Link href={`/bundles/${bundle.id}`} className="block font-semibold text-ink hover:underline" data-testid={`admin-bundle-link-${bundle.id}`}>
-            <Truncate text={bundle.title} />
+            <span className="mr-2 font-mono text-[12px] text-ink-3">{bundle.code}</span>
+            {bundle.title.trim() !== "" && <Truncate text={bundle.title} />}
           </Link>
           {!bundle.has_active_author && <span className="pill danger mt-1">{t("adminBundles.noAuthor")}</span>}
         </>
@@ -161,7 +163,7 @@ export function BundlesPanel() {
       )}
       {editing && (
         <MembersModal
-          title={t("adminBundles.membersTitle", { title: editing.title })}
+          title={t("adminBundles.membersTitle", { title: getBundleLabel(editing) })}
           members={editing.members}
           testId="admin-bundle-members-modal"
           onClose={() => setEditing(null)}

@@ -9,6 +9,7 @@ export interface BundleUpdateInput {
   revision: number;
   title?: string;
   description?: string;
+  is_synthetic?: boolean;
 }
 
 export function updateBundle(bundleId: number, body: BundleUpdateInput): Promise<Bundle> {
@@ -36,11 +37,28 @@ export interface BundleEvent {
   target_type: string;
   target_ids: Array<number | string>;
   reason: string;
+  /** 바뀐 값의 전/후(이름·설명·시험용 표시, 멤버 변경). 지난 사건과 다른 종류는 빈 객체 */
+  detail: EventDetail;
 }
 
-/** 최근 사건부터. 서버 상한은 500건이다 */
-export function listBundleEvents(bundleId: number, limit = 500): Promise<BundleEvent[]> {
-  return apiFetch<BundleEvent[]>(`/bundles/${bundleId}/events?limit=${limit}`);
+export interface EventChange {
+  from: string | boolean;
+  to: string | boolean;
+}
+
+export interface EventDetail {
+  title?: EventChange;
+  description?: EventChange;
+  is_synthetic?: EventChange;
+  added?: Array<{ login_id: string; role: string }>;
+  removed?: string[];
+  role_changed?: Array<{ login_id: string; from: string; to: string }>;
+}
+
+/** 최근 사건부터. beforeId를 주면 그보다 오래된 쪽(History 화면의 다음 쪽). 서버 상한은 한 번에 500건이다 */
+export function listBundleEvents(bundleId: number, limit = 500, beforeId?: number): Promise<BundleEvent[]> {
+  const before = beforeId === undefined ? "" : `&before_id=${beforeId}`;
+  return apiFetch<BundleEvent[]>(`/bundles/${bundleId}/events?limit=${limit}${before}`);
 }
 
 export function downloadDocumentFile(bundleId: number, docId: number): Promise<Blob> {
@@ -94,6 +112,7 @@ export function setSuggestionAdoption(bundleId: number, suggestionId: number, ad
 
 export interface AdminBundle {
   id: number;
+  code: string;
   title: string;
   status: BundleStatus;
   revision: number;

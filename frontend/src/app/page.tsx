@@ -1,17 +1,17 @@
 // 홈 = 묶음 목록 - 내가 멤버인 묶음을 최근 순으로 보이고, 권한이 있으면 새 묶음을 만든다. 워드마크와 로그인 복귀가 이리로 온다.
 "use client";
 
-import { FlaskConical, Plus, RefreshCw } from "lucide-react";
+import { FlaskConical, FolderOpen, Plus, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
-import { NewBundleModal } from "@/components/new-bundle-modal";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Truncate } from "@/components/ui/motion";
 import { BundleStatusPill, RoleTag } from "@/components/status";
 import { hasPermission } from "@/lib/access";
 import { humanizeApiError } from "@/lib/api-errors";
-import { listBundles, type BundleListItem, type LangProgress } from "@/lib/api-sop";
+import { createBundle, listBundles, type BundleListItem, type LangProgress } from "@/lib/api-sop";
 import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
 import { navigate } from "@/lib/nav-buffer";
@@ -20,6 +20,7 @@ import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useListView } from "@/lib/use-list-view";
 import { useLoaded } from "@/lib/use-loaded";
 import { useProgressiveList } from "@/lib/use-progressive-list";
+import { showToast } from "@/components/ui/toast";
 
 const SKELETON_ROWS = 3;
 const LIST_KEY = "bundles";
@@ -46,6 +47,19 @@ export default function BundleListPage() {
   const { data, error, isLoading, reload } = useLoaded(listBundles);
   const showSkeleton = useDelayedFlag(isLoading && data === null);
   const [creating, setCreating] = useState(false);
+
+  // 이름을 묻지 않고 바로 만든다 - 이름 대신 순차 코드(BND-0013)가 보이고, 이름은 개요에서 나중에 붙인다
+  async function handleCreate() {
+    if (creating) return;
+    setCreating(true);
+    try {
+      const bundle = await createBundle({});
+      navigate(`/bundles/${bundle.id}`, { immediate: true });
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+      setCreating(false);
+    }
+  }
   const canCreate = hasPermission(me, "bundle.create");
   const rows = useProgressiveList(data ?? [], "bundles");
   const view = useListView(LIST_KEY);
@@ -66,7 +80,10 @@ export default function BundleListPage() {
             className="min-w-0 font-semibold text-ink hover:underline"
             onClick={(event) => event.stopPropagation()}
           >
-            <Truncate text={bundle.title} />
+            <span className="mr-2 font-mono text-[12px] text-ink-3" data-testid={`bundles-code-${bundle.id}`}>
+              {bundle.code}
+            </span>
+            {bundle.title.trim() !== "" && <Truncate text={bundle.title} />}
           </Link>
           {/* 합성 데이터는 목록에서도 합성으로 보인다 - 실제 묶음과 섞여 보이지 않게 */}
           {bundle.is_synthetic && (
@@ -122,7 +139,7 @@ export default function BundleListPage() {
         <div className="flex items-center gap-2">
           <ListViewToggle listKey={LIST_KEY} view={view} testId="bundles-view" />
           {canCreate && (
-            <button type="button" className="btn pri" data-testid="bundles-new" onClick={() => setCreating(true)}>
+            <button type="button" className="btn pri" data-testid="bundles-new" disabled={creating} onClick={() => void handleCreate()}>
               <Plus size={16} strokeWidth={1.5} aria-hidden />
               {t("bundles.new")}
             </button>
@@ -139,9 +156,20 @@ export default function BundleListPage() {
           </button>
         </div>
       ) : data !== null && data.length === 0 ? (
-        <p data-testid="bundles-empty" className="px-[var(--pad)] py-6 text-ink-3">
-          {canCreate ? t("bundles.emptyCreate") : t("bundles.empty")}
-        </p>
+        <EmptyState
+          icon={FolderOpen}
+          testId="bundles-empty"
+          title={t("bundles.emptyTitle")}
+          body={canCreate ? t("bundles.emptyCreate") : t("bundles.empty")}
+          action={
+            canCreate && (
+              <button type="button" className="btn pri" data-testid="bundles-empty-new" disabled={creating} onClick={() => void handleCreate()}>
+                <Plus size={16} strokeWidth={1.5} aria-hidden />
+                {t("bundles.new")}
+              </button>
+            )
+          }
+        />
       ) : (
         <DataList
           view={view}
@@ -158,7 +186,6 @@ export default function BundleListPage() {
         />
       )}
 
-      {creating && <NewBundleModal onClose={() => setCreating(false)} />}
     </div>
   );
 }

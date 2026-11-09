@@ -20,7 +20,7 @@ import {
 function makeViewUnit(id: number, lang: "ko" | "en", pos: number): ViewUnit {
   return {
     id, display_id: `D-${id}`, kind: "sentence", spans: [[pos, 0, 3]], text: `t${id}`, lang, table_id: null, row_index: null,
-    group_unit_id: null, boundary_confirmed: false, status: "unassigned", pair_id: null, pos_seq: pos, block_id: pos,
+    group_unit_id: null, boundary_confirmed: false, status: "unassigned", pair_id: null, pos_seq: pos, block_id: pos, is_edited: false,
   };
 }
 

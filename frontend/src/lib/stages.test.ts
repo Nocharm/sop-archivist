@@ -1,7 +1,7 @@
 // 묶음 주소 읽기 - 단계 경로와 묶음 밖 주소를 가른다.
 import { describe, expect, it } from "vitest";
 
-import { getStageHref, parseBundlePath, pickNextStage } from "./stages";
+import { getStageHref, isStageLocked, parseBundlePath, pickNextStage } from "./stages";
 
 describe("parseBundlePath", () => {
   it("reads the overview and a stage", () => {
@@ -30,5 +30,27 @@ describe("pickNextStage", () => {
     expect(pickNextStage("decide_units", ["units_unassigned", "targets_unassigned"])).toBe("classify");
     expect(pickNextStage("decide_units", null)).toBe("classify");
     expect(pickNextStage("fill_tobe", ["targets_unassigned"])).toBe("tobe");
+  });
+});
+
+describe("isStageLocked", () => {
+  it("locks the document-dependent stages while there are no documents", () => {
+    for (const key of ["split", "classify", "match", "outputs", "review"] as const) {
+      expect(isStageLocked(key, 0)).toBe(true);
+    }
+  });
+
+  it("keeps overview, documents, To-Be and history open", () => {
+    for (const key of ["overview", "documents", "tobe", "history"] as const) {
+      expect(isStageLocked(key, 0)).toBe(false);
+    }
+  });
+
+  it("unlocks everything once a document exists", () => {
+    expect(isStageLocked("split", 1)).toBe(false);
+  });
+
+  it("reads the history page path", () => {
+    expect(parseBundlePath("/bundles/3/history")).toEqual({ bundleId: 3, stage: "history" });
   });
 });

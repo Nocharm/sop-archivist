@@ -372,7 +372,8 @@
     color: var(--ink-3);
     transition: background var(--dur-fast), color var(--dur-fast);
   }
-  .view-toggle button:hover { color: var(--ink); }
+  .view-toggle button { cursor: pointer; transition: background var(--dur-fast), color var(--dur-fast); }
+  .view-toggle button:hover { color: var(--ink); background: var(--menu-hover); }
   .view-toggle button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--line-2); }
 
   .track { display: block; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
@@ -727,4 +728,128 @@
   .menu.flyout { position: absolute; top: -5px; width: 220px; min-width: 0; }
   .menu.flyout[data-side="right"] { left: calc(100% + 6px); }
   .menu.flyout[data-side="left"] { right: calc(100% + 6px); }
+}
+
+/* ---- 개요 개편(2026-11-09): 단계 레일 History·잠금, 다음 할 일 배지, 오른쪽 상자, 검토 조건 카드, 작업 기록 ---- */
+@layer components {
+  /* History는 레일 맨 아래(상단 탭에서는 끝) */
+  :root[data-shell="rail"] .stg[data-stage="history"] { margin-top: auto; }
+  :root:not([data-shell="rail"]) .stg[data-stage="history"] { margin-left: auto; }
+  .stg[aria-disabled="true"] { cursor: not-allowed; opacity: 0.55; }
+
+  /* 다음 할 일 아이콘 - 화면이 열릴 때 한 번 위로 올라오며 자리를 잡고 멈춘다(정지 상태가 완성된 그림) */
+  .next-badge {
+    display: grid;
+    place-items: center;
+    width: 56px;
+    height: 56px;
+    border-radius: var(--r-3);
+    background: var(--accent-tint);
+    color: var(--accent);
+    animation: next-badge-in 1.2s var(--ease-enter) 1 both;
+  }
+  .next-badge > svg { animation: next-icon-lift 1.2s var(--ease-enter) 1 both; }
+  @keyframes next-badge-in { 0% { transform: scale(0.86); } 60% { transform: scale(1.04); } 100% { transform: none; } }
+  @keyframes next-icon-lift { 0% { transform: translateY(8px); opacity: 0; } 50% { transform: translateY(-3px); opacity: 1; } 100% { transform: none; } }
+
+  /* 시작 단추 - 평소 라벨만, 호버 때 넓어지며 재생 아이콘이 나타난다 */
+  .start-btn { transition: padding var(--dur-slow) var(--ease-enter), background var(--dur-fast); }
+  .start-btn .start-ico { display: inline-flex; max-width: 0; margin-right: -6px; opacity: 0; overflow: hidden; transition: max-width var(--dur-slow) var(--ease-enter), margin-right var(--dur-slow) var(--ease-enter), opacity var(--dur-base); }
+  .start-btn:hover, .start-btn:focus-visible { padding: 0 18px; }
+  .start-btn:hover .start-ico, .start-btn:focus-visible .start-ico { max-width: 18px; margin-right: 0; opacity: 1; }
+
+  /* 오른쪽 열 - 섹션마다 따로 상자 */
+  .side-box { padding: 12px; border: 1px solid var(--line); border-radius: var(--r-3); background: var(--surface); min-width: 0; }
+  .side-box-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0; font-size: var(--fs-cap); line-height: var(--lh-cap); font-weight: 700; color: var(--ink-2); }
+
+  /* 검토 요청 조건 카드 - Fail 위, Pass 아래 */
+  .gate-group { font-size: var(--fs-micro); line-height: var(--lh-micro); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+  .gate-group.fail { color: var(--danger-ink); }
+  .gate-group.pass { color: var(--accent); }
+  .gate-card { display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: start; gap: 8px; padding: 7px 10px; border-radius: var(--r-2); font-size: var(--fs-ui); line-height: 19px; }
+  .gate-card > svg { margin-top: 2px; }
+  .gate-card.fail { background: var(--danger-tint); color: var(--ink); }
+  .gate-card.fail > svg { color: var(--danger-ink); }
+  .gate-card.pass { background: var(--accent-tint); color: var(--ink-2); }
+  .gate-card.pass > svg { color: var(--accent); }
+  .text-link { font-size: var(--fs-cap); font-weight: 600; color: var(--accent); cursor: pointer; }
+  .text-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+  /* 작업 기록 한 줄 - 종류 아이콘, 누르면 설명 모달 */
+  .event-line { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; padding: 5px 4px; border-radius: var(--r-2); cursor: pointer; }
+  .event-line:hover, .event-line:focus-visible { background: var(--hover); outline: none; }
+  .event-ic { display: grid; place-items: center; width: 26px; height: 26px; flex: none; border-radius: var(--r-2); background: var(--accent-tint); color: var(--accent); }
+  .event-line[data-group="ai"] .event-ic { background: var(--st-ai-tint); color: var(--st-ai-ink); }
+  .event-line[data-group="review"] .event-ic { background: var(--st-hold-tint); color: var(--st-hold-ink); }
+  .event-line[data-group="document"] .event-ic { background: var(--sunken); color: var(--ink-2); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .next-badge, .next-badge > svg { animation: none; }
+    .start-btn, .start-btn .start-ico { transition: none; }
+  }
+}
+
+/* ---- 거르기 칩(History 종류 등) ---- */
+@layer components {
+  .chip-toggle { height: 26px; padding: 0 10px; border-radius: 13px; border: 1px solid var(--line-2); background: var(--surface); color: var(--ink-2); font-size: var(--fs-cap); cursor: pointer; transition: background var(--dur-fast), color var(--dur-fast), border-color var(--dur-fast); }
+  .chip-toggle:hover { background: var(--menu-hover); color: var(--ink); }
+  .chip-toggle[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--surface); }
+}
+
+/* ---- 문서 화면(2026-11-09): 버전 칸, 언어 배치 그림, 구분 표, 링크 제목, 미리보기 종이 ---- */
+@layer components {
+  .ver-input { display: inline-flex; align-items: center; gap: 2px; }
+  .ver-box { display: inline-grid; grid-template-columns: minmax(0, 1fr) 18px; width: 84px; height: 26px; border: 1px solid var(--line-2); border-radius: var(--r-2); background: var(--surface); overflow: hidden; }
+  .ver-box:focus-within { border-color: var(--focus); }
+  .ver-box input { min-width: 0; padding: 0 7px; border: 0; background: transparent; color: var(--ink); font: 600 var(--fs-ui) / 24px var(--font-mono); outline: none; }
+  .ver-box input::placeholder { color: var(--ink-4); font-family: var(--font-ui); font-weight: 400; }
+  .ver-steps { display: grid; grid-template-rows: 1fr 1fr; border-left: 1px solid var(--line); }
+  .ver-steps button { display: grid; place-items: center; color: var(--ink-3); cursor: pointer; }
+  .ver-steps button + button { border-top: 1px solid var(--line); }
+  .ver-steps button:hover { background: var(--hover); color: var(--ink); }
+  .ver-clear { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: var(--ink-3); opacity: 0; cursor: pointer; transition: opacity var(--dur-fast); }
+  .ver-input:hover .ver-clear, .ver-clear:focus-visible { opacity: 1; }
+  .ver-clear:hover { background: var(--hover); color: var(--danger-ink); }
+  @media (hover: none) { .ver-clear { opacity: 1; } }
+
+  .layout-picto { display: inline-grid; gap: 2px; width: 22px; height: 16px; padding: 2px; flex: none; border: 1px solid var(--line-2); border-radius: 2px; }
+  .layout-picto[data-dir="cols"] { grid-auto-flow: column; }
+  .layout-picto i { display: block; border-radius: 1px; }
+  .layout-picto i.ko { background: var(--lang-ko); }
+  .layout-picto i.en { background: var(--lang-en); }
+
+  .side-tag { display: inline-block; padding: 0 6px; border: 1px solid var(--line-2); border-radius: var(--r-1); font: 600 var(--fs-micro) / 18px var(--font-mono); color: var(--ink-2); }
+  .side-tag.new { border-color: var(--accent-line); color: var(--accent); }
+
+  .inline-link { display: block; max-width: 100%; padding: 0 6px; font-size: 13px; line-height: 24px; font-weight: 600; color: var(--ink); border-radius: var(--r-1); }
+  .inline-link:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+
+  .preview-paper { position: relative; max-height: 360px; overflow: hidden; padding: 16px 20px; border: 1px solid var(--line); background: var(--paper); color: var(--paper-ink); font-size: 13px; line-height: 21px; }
+  .preview-paper p { margin: 0 0 6px; }
+  .preview-paper::after { content: ""; position: absolute; inset: auto 0 0; height: 56px; background: linear-gradient(transparent, var(--paper)); }
+}
+
+/* ---- 업로드 모달(2026-11-09): Old/New 카드, 결과 행, 출처 표 ---- */
+@layer components {
+  .side-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .side-card { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: start; gap: 10px; padding: 12px; border: 1.5px solid var(--line-2); border-radius: var(--r-3); background: var(--surface); text-align: left; cursor: pointer; transition: border-color var(--dur-fast), background var(--dur-fast); }
+  .side-card:hover { border-color: var(--accent-line); }
+  .side-card[aria-checked="true"] { border-color: var(--accent); background: var(--accent-tint); box-shadow: inset 0 0 0 1px var(--accent); }
+  .side-card:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .side-card-pic { display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--r-2); background: var(--sunken); border: 1px solid var(--line); color: var(--ink-2); }
+  .side-card[aria-checked="true"] .side-card-pic { color: var(--accent); }
+
+  /* 결과 행 - 파일 줄 아래에 번호·버전·배치 세 칸 */
+  .upload-results { display: grid; border: 1px solid var(--line); border-radius: var(--r-2); overflow: hidden; }
+  .upload-row { display: grid; grid-template-columns: minmax(0, 1fr) 128px minmax(0, 1fr); align-items: center; gap: 6px 10px; padding: 8px 10px; border-top: 1px solid var(--line); }
+  .upload-row > :first-child { grid-column: 1 / -1; }
+  .upload-row.head { border-top: 0; padding-block: 5px; background: var(--sunken); font-size: var(--fs-micro); line-height: var(--lh-micro); font-weight: 600; color: var(--ink-3); }
+  .upload-row.head > :first-child { display: none; }
+  .src-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .src-badge { flex: none; padding: 0 5px; border-radius: var(--r-1); font-size: 10px; line-height: 16px; font-weight: 600; background: var(--accent-tint); color: var(--accent); }
+  .src-badge.ai { background: var(--st-ai-tint); color: var(--st-ai-ink); }
+}
+@layer components {
+  .ai-suggest { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 24px; padding: 0 6px; border: 1px dashed var(--st-ai-line); border-radius: var(--r-1); color: var(--ink-3); font-size: var(--fs-ui); cursor: pointer; }
+  .ai-suggest:hover { color: var(--ink); background: var(--st-ai-tint); }
 }

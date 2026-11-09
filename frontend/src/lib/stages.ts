@@ -2,7 +2,7 @@
 
 import type { NextAction } from "./api-sop";
 
-export type StageKey = "overview" | "documents" | "split" | "tobe" | "classify" | "match" | "outputs" | "review";
+export type StageKey = "overview" | "documents" | "split" | "tobe" | "classify" | "match" | "outputs" | "review" | "history";
 
 export interface Stage {
   key: StageKey;
@@ -23,7 +23,16 @@ export const STAGES: readonly Stage[] = [
   { key: "match", path: "/match", step: 3, ready: true },
   { key: "outputs", path: "/outputs", step: 4, ready: true },
   { key: "review", path: "/review", ready: true },
+  // 레일 맨 아래 - 작업 기록 전체(개요 Activity의 "모두 보기")
+  { key: "history", path: "/history", ready: true },
 ];
+
+// 문서가 하나도 없으면 들어가 봐야 할 일이 없는 단계. To-Be는 Excel로 문서보다 먼저 채울 수 있어 열어 둔다
+const NEEDS_DOCUMENTS: ReadonlySet<StageKey> = new Set(["split", "classify", "match", "outputs", "review"]);
+
+export function isStageLocked(key: StageKey, documentCount: number): boolean {
+  return documentCount === 0 && NEEDS_DOCUMENTS.has(key);
+}
 
 const BUNDLE_PATH = /^\/bundles\/(\d+)(\/[a-z-]+)?\/?$/;
 

@@ -1,7 +1,25 @@
 // 묶음 개요 - 왼쪽은 제목·상태, 지금 할 일 하나, 언어별 배정 현황. 오른쪽 340px은 검토 요청 조건, AI 작업, 멤버(디자인 문서 8절).
 "use client";
 
-import { ArrowRight, Check, Info, RefreshCw, X } from "lucide-react";
+import {
+  BadgeCheck,
+  Check,
+  FileUp,
+  FileWarning,
+  Hourglass,
+  Info,
+  ListTree,
+  MessageSquareText,
+  Play,
+  RefreshCw,
+  Send,
+  ShieldCheck,
+  Split,
+  TriangleAlert,
+  UserPlus,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
@@ -18,6 +36,7 @@ import {
   SEMANTIC_CHECK_KEYS,
   type Bundle,
   type LangProgress,
+  type NextAction,
   type Readiness,
   type ReadinessIssue,
 } from "@/lib/api-sop";
@@ -25,7 +44,9 @@ import { loadBundle, putBundle, useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
 import { getStageHref, pickNextStage, STAGES } from "@/lib/stages";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
+import { splitGates } from "@/lib/review-gates";
 import { useLoaded, type Loaded } from "@/lib/use-loaded";
+import { getBundleLabel } from "@/lib/bundle-label";
 
 type TFunc = (key: string, vars?: Record<string, string | number>) => string;
 
@@ -38,6 +59,24 @@ const COVER_STATES = [
 ] as const;
 
 const PROGRESS_LANGS = ["ko", "en"] as const;
+
+// 다음 할 일 종류별 아이콘 - 화면이 열릴 때 한 번 움직이고 멈춘다(.next-badge)
+const NEXT_ICONS: Record<NextAction, LucideIcon> = {
+  upload_documents: FileUp,
+  resolve_documents: FileWarning,
+  fill_tobe: ListTree,
+  decide_units: Split,
+  ack_warnings: TriangleAlert,
+  fill_reasons: MessageSquareText,
+  semantic_checks: ShieldCheck,
+  add_reviewer: UserPlus,
+  request_review: Send,
+  await_review: Hourglass,
+  done: BadgeCheck,
+};
+
+// 검토 요청 조건 카드를 Fail·Pass 묶음마다 몇 개까지 먼저 보일지
+const GATES_PREVIEW = 3;
 
 function sumCounts(issues: ReadinessIssue[], prefix: string): number {
   return issues.filter((issue) => issue.code.startsWith(prefix)).reduce((total, issue) => total + (issue.count ?? 0), 0);
@@ -182,14 +221,22 @@ function Coverage({ bundle }: { bundle: Bundle }) {
   );
 }
 
-function NextActionCard({ bundle, blockerCodes, onRequestReview }: { bundle: Bundle; blockerCodes: string[] | null; onRequestReview: () => void }) {
+function NextActionCard({ bundle, blockerCodes, onRequestReview, onAddReviewer }: { bundle: Bundle; blockerCodes: string[] | null; onRequestReview: () => void; onAddReviewer: () => void }) {
   const { t } = useI18n();
   const action = bundle.next_action;
   const stageKey = pickNextStage(action, blockerCodes);
   const stage = STAGES.find((item) => item.key === stageKey);
   const isAuthor = bundle.my_role === "author";
+  const Icon = NEXT_ICONS[action];
   let button = null;
-  if (action === "request_review" && isAuthor) {
+  if (action === "add_reviewer" && isAuthor && bundle.status === "in_progress") {
+    button = (
+      <button type="button" className="btn pri" data-testid="overview-next-go" onClick={onAddReviewer}>
+        <UserPlus size={16} strokeWidth={1.5} aria-hidden />
+        {t("overview.addReviewer")}
+      </button>
+    );
+  } else if (action === "request_review" && isAuthor) {
     button = (
       <button type="button" className="btn pri" data-testid="overview-next-go" onClick={onRequestReview}>
         {t("overview.requestReview")}
@@ -197,32 +244,36 @@ function NextActionCard({ bundle, blockerCodes, onRequestReview }: { bundle: Bun
     );
   } else if (stage) {
     button = stage.ready ? (
-      <Link href={getStageHref(bundle.id, stage.key)} className="btn pri" data-testid="overview-next-go">
+      <Link href={getStageHref(bundle.id, stage.key)} className="btn pri start-btn" data-testid="overview-next-go">
+        <span className="start-ico" aria-hidden>
+          <Play size={15} strokeWidth={1.8} />
+        </span>
         {t("overview.start")}
-        <ArrowRight size={16} strokeWidth={1.5} aria-hidden />
       </Link>
     ) : (
       // 화면이 아직 없는 단계 - 자리는 지키고 왜 못 가는지 보인다
       <Tooltip label={t("overview.stageNotReady")}>
         <button type="button" className="btn pri" data-testid="overview-next-go" disabled>
           {t("overview.start")}
-          <ArrowRight size={16} strokeWidth={1.5} aria-hidden />
         </button>
       </Tooltip>
     );
   }
   return (
     <section
-      className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-0.5 rounded-lg border border-line-2 bg-surface px-4 py-3.5"
+      className="grid grid-cols-[56px_minmax(0,1fr)_auto] items-center gap-x-4 rounded-lg border border-line-2 bg-surface px-4 py-3.5"
       data-testid="overview-next"
       data-action={action}
     >
-      <span className="text-xs text-ink-3">{t("overview.nextAction")}</span>
-      <div className="col-start-2 row-span-3 row-start-1">{button}</div>
-      <h2 className="head-title justify-self-start">
-        <span className="ul">{t(`next.${action}.title`, { n: countPending(bundle.progress) })}</span>
-      </h2>
-      <p className="text-ink-2">{t(`next.${action}.body`)}</p>
+      <span className="next-badge" key={action} aria-hidden>
+        <Icon size={26} strokeWidth={1.5} />
+      </span>
+      <div className="grid min-w-0 gap-0.5">
+        <span className="text-xs text-ink-3">{t("overview.nextAction")}</span>
+        <h2 className="head-title justify-self-start">{t(`next.${action}.title`, { n: countPending(bundle.progress) })}</h2>
+        <p className="text-ink-2">{t(`next.${action}.body`)}</p>
+      </div>
+      <div>{button}</div>
     </section>
   );
 }
@@ -234,10 +285,18 @@ function ReviewGate({ bundle, readiness, onRequestReview }: { bundle: Bundle; re
   // 저장된 확인 값은 처음에 비어 있을 수 있어 전체 수는 항목 목록에서 센다
   const semanticTotal = SEMANTIC_CHECK_KEYS.length;
   const canRequest = data?.ready === true && bundle.my_role === "author" && bundle.status === "in_progress";
+  const [showAll, setShowAll] = useState(false);
+  const lines = data === null ? [] : buildGateLines(data, semanticTotal, t);
+  const split = splitGates(lines, showAll ? Infinity : GATES_PREVIEW);
+  const hidden = split.failHidden + split.passHidden;
+  const passed = lines.filter((line) => line.ok).length;
 
   return (
-    <section className="grid gap-2.5" data-testid="overview-gate">
-      <h2 className="text-xs font-semibold text-ink-3">{t("overview.reviewRequest")}</h2>
+    <section className="side-box grid gap-2.5" data-testid="overview-gate">
+      <h2 className="side-box-title">
+        {t("overview.reviewRequest")}
+        {data !== null && <span className="font-mono text-[11px] font-normal text-ink-3">{`${passed} / ${lines.length}`}</span>}
+      </h2>
       {error !== null && data === null ? (
         <div className="flex items-center gap-2 text-ink-2" data-testid="overview-gate-error">
           {humanizeApiError(error, t)}
@@ -246,29 +305,41 @@ function ReviewGate({ bundle, readiness, onRequestReview }: { bundle: Bundle; re
           </button>
         </div>
       ) : (
-        <ul className="grid gap-1.5" data-testid="overview-gate-list">
-          {data === null
-            ? Array.from({ length: 7 }, (_, index) => (
-                <li key={index} className="h-[22px]">
-                  {showSkeleton && <span className="sk h-4 w-48" />}
-                </li>
-              ))
-            : buildGateLines(data, semanticTotal, t).map((line) => (
-                <li
-                  key={line.key}
-                  className={`grid grid-cols-[16px_minmax(0,1fr)] gap-2 ${line.ok ? "text-ink-2" : "text-ink"}`}
-                  data-testid={`overview-gate-${line.key}`}
-                  data-ok={line.ok ? "" : undefined}
-                >
-                  {line.ok ? (
-                    <Check size={16} strokeWidth={1.5} className="mt-[3px] text-accent" aria-label={t("gate.passed")} />
-                  ) : (
-                    <X size={16} strokeWidth={1.5} className="mt-[3px] text-danger" aria-label={t("gate.blocked")} />
-                  )}
-                  {line.label}
-                </li>
-              ))}
-        </ul>
+        <div className="grid gap-2" data-testid="overview-gate-list">
+          {data === null ? (
+            Array.from({ length: 4 }, (_, index) => <span key={index} className="block h-[34px]">{showSkeleton && <span className="sk h-full w-full" />}</span>)
+          ) : (
+            <>
+              {split.fail.length > 0 && (
+                <div className="grid gap-1.5">
+                  <span className="gate-group fail">{`Fail ${lines.length - passed}`}</span>
+                  {split.fail.map((line) => (
+                    <div key={line.key} className="gate-card fail" data-testid={`overview-gate-${line.key}`}>
+                      <X size={15} strokeWidth={1.8} aria-label={t("gate.blocked")} />
+                      {line.label}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {split.pass.length > 0 && (
+                <div className="grid gap-1.5">
+                  <span className="gate-group pass">{`Pass ${passed}`}</span>
+                  {split.pass.map((line) => (
+                    <div key={line.key} className="gate-card pass" data-testid={`overview-gate-${line.key}`} data-ok="">
+                      <Check size={15} strokeWidth={1.8} aria-label={t("gate.passed")} />
+                      {line.label}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {(hidden > 0 || showAll) && (
+                <button type="button" className="text-link justify-self-start" data-testid="overview-gate-more" onClick={() => setShowAll((prev) => !prev)}>
+                  {showAll ? t("overview.gatesLess") : t("overview.gatesMore", { n: hidden })}
+                </button>
+              )}
+            </>
+          )}
+        </div>
       )}
       {data?.notices.map((notice, index) => (
         <p key={`${notice.code}-${index}`} className="grid grid-cols-[16px_minmax(0,1fr)] gap-2 text-ink-2" data-testid={`overview-notice-${notice.code}`}>
@@ -326,7 +397,7 @@ function RequestReviewModal({ bundle, onClose }: { bundle: Bundle; onClose: () =
     >
       <p className="text-ink-2">{t("overview.requestReviewBody")}</p>
       <div className="grid gap-1.5 rounded-md bg-sunken px-3 py-2.5 text-ink-2">
-        <span className="font-semibold text-ink">{bundle.title}</span>
+        <span className="font-semibold text-ink">{getBundleLabel(bundle)}</span>
         <span>{t("overview.reviewers", { names: reviewers.join(", ") })}</span>
       </div>
       {error !== null && (
@@ -344,6 +415,7 @@ export default function BundleOverviewPage() {
   const bundleId = Number(params.id);
   const { bundle, error, reload } = useBundle(bundleId);
   const [requesting, setRequesting] = useState(false);
+  const [editingMembers, setEditingMembers] = useState(false);
   const showSkeleton = useDelayedFlag(bundle === null && error === null);
   // 검토 요청 조건 - 오른쪽 조건 칸과 다음 행동 카드(남은 것이 새 문장뿐이면 짝 맞추기로)가 함께 쓴다
   const readiness = useLoaded(() => getReadiness(bundleId), `${bundleId}:${bundle?.revision ?? 0}`);
@@ -380,14 +452,25 @@ export default function BundleOverviewPage() {
           <BundleStatusPill status={bundle.status} testId="overview-status" />
           {bundle.my_role && <RoleTag role={bundle.my_role} testId="overview-role" />}
         </BundleHeading>
-        <NextActionCard bundle={bundle} blockerCodes={readiness.data?.blockers.map((item) => item.code) ?? null} onRequestReview={() => setRequesting(true)} />
+        <NextActionCard
+          bundle={bundle}
+          blockerCodes={readiness.data?.blockers.map((item) => item.code) ?? null}
+          onRequestReview={() => setRequesting(true)}
+          onAddReviewer={() => setEditingMembers(true)}
+        />
         <Coverage bundle={bundle} />
       </div>
-      <aside className="grid content-start gap-4 overflow-y-auto border-l border-line bg-surface px-[var(--pad)] py-[18px]">
+      <aside className="grid content-start gap-3 overflow-y-auto border-l border-line px-3 py-[18px]">
         <ReviewGate bundle={bundle} readiness={readiness} onRequestReview={() => setRequesting(true)} />
-        <AiJobPanel bundle={bundle} />
-        <MembersSection bundle={bundle} />
-        <ActivitySection bundle={bundle} />
+        <div className="side-box">
+          <AiJobPanel bundle={bundle} />
+        </div>
+        <div className="side-box">
+          <MembersSection bundle={bundle} editing={editingMembers} onEditingChange={setEditingMembers} />
+        </div>
+        <div className="side-box">
+          <ActivitySection bundle={bundle} />
+        </div>
       </aside>
       {requesting && <RequestReviewModal bundle={bundle} onClose={() => setRequesting(false)} />}
     </div>

@@ -1,14 +1,15 @@
 // 개요의 묶음 관리 - 제목·설명 바로 고치기, 더보기 메뉴(묶음 삭제), 멤버 고치기, 작업 기록. 작성자이고 작업 중일 때만 고칠 수 있다.
 "use client";
 
-import { MoreHorizontal, Pencil, Trash2, Users } from "lucide-react";
+import { FlaskConical, MoreHorizontal, Pencil, Trash2, Users } from "lucide-react";
+import Link from "next/link";
 import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
+import { EventIcon, EventModal, getEventLabel } from "@/components/manage/event-modal";
 import { MembersModal } from "@/components/manage/members-modal";
 import { RoleTag } from "@/components/status";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
-import { LoadMoreBlock } from "@/components/ui/load-more";
-import { Collapse, MorphWidth, Truncate } from "@/components/ui/motion";
+import { Truncate } from "@/components/ui/motion";
 import { Menu } from "@/components/ui/menu";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -16,17 +17,19 @@ import { humanizeApiError } from "@/lib/api-errors";
 import { deleteBundle, listBundleEvents, putMembers, updateBundle, type BundleEvent } from "@/lib/api-manage";
 import type { Bundle } from "@/lib/api-sop";
 import { loadBundle, putBundle } from "@/lib/bundle-store";
-import { formatKst } from "@/lib/datetime";
+import { formatKstShort } from "@/lib/datetime";
+import { getEventGroup } from "@/lib/event-kinds";
 import { getDisplayName } from "@/lib/display-name";
 import { useI18n } from "@/lib/i18n";
 import { navigate } from "@/lib/nav-buffer";
+import { getStageHref } from "@/lib/stages";
 import { useLoaded } from "@/lib/use-loaded";
-import { useProgressiveList } from "@/lib/use-progressive-list";
+import { getBundleLabel } from "@/lib/bundle-label";
 
 const TITLE_MAX = 200;
 const DESCRIPTION_MAX = 2000;
 // 작업 기록에서 처음 보이는 줄 수 - 나머지는 "모두 보기"로 펼친다
-const EVENTS_PREVIEW = 6;
+const EVENTS_PREVIEW = 10;
 
 export function canManageBundle(bundle: Bundle): boolean {
   return bundle.my_role === "author" && bundle.status === "in_progress";
@@ -96,7 +99,8 @@ function EditableLine({
       onBlur: () => void commit(),
       onKeyDown: handleKey,
     };
-    return multiline ? <textarea rows={2} {...shared} className={`${shared.className} py-1`} /> : <input {...shared} />;
+    // 설명 칸은 끌어서 높이를 바꿀 수 있지만 64~200px 사이에서만
+    return multiline ? <textarea rows={2} {...shared} className={`${shared.className} min-h-16 max-h-[200px] resize-y py-1`} /> : <input {...shared} />;
   }
 
   return (
@@ -134,9 +138,12 @@ export function BundleHeading({ bundle, children }: { bundle: Bundle; children?:
 
   return (
     <div className="grid gap-1">
-      <div className="flex flex-wrap items-center gap-2">
-        <h1 className="head-title min-w-0">
-          <EditableLine value={bundle.title} placeholder="" editable={editable} maxLength={TITLE_MAX} testId="overview-title" className="head-title" onSave={(next) => save("title", next)} />
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h1 className="head-title flex min-w-0 flex-wrap items-baseline gap-x-3">
+          <span className="font-mono tracking-normal" data-testid="overview-code">
+            {bundle.code}
+          </span>
+          <EditableLine value={bundle.title} placeholder={t("manage.addName")} editable={editable} maxLength={TITLE_MAX} testId="overview-title" className="text-[20px] leading-7 text-ink-2" onSave={(next) => save("title", next)} />
         </h1>
         {children}
         <BundleMenu bundle={bundle} />
@@ -163,11 +170,21 @@ function BundleMenu({ bundle }: { bundle: Bundle }) {
   const [busy, setBusy] = useState(false);
   if (!canManageBundle(bundle)) return null;
 
+  async function toggleSynthetic() {
+    setOpen(false);
+    try {
+      putBundle(await updateBundle(bundle.id, { revision: bundle.revision, is_synthetic: !bundle.is_synthetic }));
+      showToast(t("common.saved"));
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+    }
+  }
+
   async function handleDelete() {
     setBusy(true);
     try {
       await deleteBundle(bundle.id, bundle.revision);
-      showToast(t("manage.deleted", { title: bundle.title }));
+      showToast(t("manage.deleted", { title: getBundleLabel(bundle) }));
       navigate("/", { immediate: true });
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
@@ -186,10 +203,15 @@ function BundleMenu({ bundle }: { bundle: Bundle }) {
       </Tooltip>
       {open && (
         <Menu anchorRef={anchorRef} onClose={() => setOpen(false)} testId="overview-menu-list" align="start">
+          <button type="button" role="menuitem" className="menu-item" data-testid="overview-menu-synthetic" onClick={() => void toggleSynthetic()}>
+            <FlaskConical size={14} strokeWidth={1.5} className="text-ink-3" aria-hidden />
+            {bundle.is_synthetic ? t("manage.unmarkSynthetic") : t("manage.markSynthetic")}
+          </button>
+          <div className="menu-sep" role="separator" />
           <button
             type="button"
             role="menuitem"
-            className="menu-item text-danger"
+            className="menu-item danger"
             data-testid="overview-menu-delete"
             onClick={() => {
               setOpen(false);
@@ -204,7 +226,7 @@ function BundleMenu({ bundle }: { bundle: Bundle }) {
       {deleting && (
         <ConfirmModal
           title={t("manage.deleteTitle")}
-          target={bundle.title}
+          target={getBundleLabel(bundle)}
           summary={<span>{t("manage.deleteBody")}</span>}
           confirmLabel={t("manage.deleteBundle")}
           danger
@@ -218,9 +240,18 @@ function BundleMenu({ bundle }: { bundle: Bundle }) {
   );
 }
 
-export function MembersSection({ bundle }: { bundle: Bundle }) {
+interface MembersSectionProps {
+  bundle: Bundle;
+  /** 개요의 다음 할 일(검토자 추가)이 모달을 열 수 있게 밖에서 쥘 수 있다 */
+  editing?: boolean;
+  onEditingChange?: (next: boolean) => void;
+}
+
+export function MembersSection({ bundle, editing: editingProp, onEditingChange }: MembersSectionProps) {
   const { t, lang } = useI18n();
-  const [editing, setEditing] = useState(false);
+  const [editingState, setEditingState] = useState(false);
+  const editing = editingProp ?? editingState;
+  const setEditing = onEditingChange ?? setEditingState;
   const editable = canManageBundle(bundle);
   return (
     <section className="grid gap-2.5" data-testid="overview-members">
@@ -263,40 +294,38 @@ export function MembersSection({ bundle }: { bundle: Bundle }) {
   );
 }
 
-function EventLine({ event }: { event: BundleEvent }) {
+function EventLine({ event, onOpen }: { event: BundleEvent; onOpen: () => void }) {
   const { t } = useI18n();
-  const key = `event.${event.action}`;
-  const label = t(key) === key ? event.action : t(key);
   return (
-    <li className="grid gap-0.5 border-b border-line py-1.5 last:border-b-0" data-testid={`overview-event-${event.id}`}>
-      <span className="flex items-baseline gap-2 text-[13px] leading-5">
-        <span className="min-w-0 flex-1 truncate">{label}</span>
-        <span className="shrink-0 tabular-nums text-xs text-ink-3">{formatKst(event.occurred_at)}</span>
-      </span>
-      <span className="flex min-w-0 items-baseline gap-2 text-xs text-ink-3">
-        <span className="shrink-0 font-mono">{event.actor}</span>
-        {event.reason && <Truncate className="min-w-0 flex-1" text={event.reason} />}
-      </span>
+    <li>
+      <button type="button" className="event-line" data-testid={`overview-event-${event.id}`} data-group={getEventGroup(event.action)} onClick={onOpen}>
+        <span className="event-ic" aria-hidden>
+          <EventIcon action={event.action} />
+        </span>
+        <span className="grid min-w-0 text-left">
+          <span className="truncate text-[13px] leading-5">{getEventLabel(event.action, t)}</span>
+          <span className="truncate font-mono text-[11px] leading-4 text-ink-3">{event.actor}</span>
+        </span>
+        <span className="shrink-0 tabular-nums text-[11px] text-ink-4">{formatKstShort(event.occurred_at)}</span>
+      </button>
     </li>
   );
 }
 
 export function ActivitySection({ bundle }: { bundle: Bundle }) {
   const { t } = useI18n();
-  const [showAll, setShowAll] = useState(false);
-  const events = useLoaded(() => listBundleEvents(bundle.id), `${bundle.id}:${bundle.revision}`);
+  const [opened, setOpened] = useState<BundleEvent | null>(null);
+  // 최근 몇 개만 - 나머지는 History 화면(레일 맨 아래)에서 본다
+  const events = useLoaded(() => listBundleEvents(bundle.id, EVENTS_PREVIEW), `${bundle.id}:${bundle.revision}`);
   const list = events.data ?? [];
-  const rest = useProgressiveList(list.slice(EVENTS_PREVIEW), `${bundle.id}:${showAll}`, { pageSize: 40 });
-
+  const historyHref = getStageHref(bundle.id, "history");
   return (
     <section className="grid gap-1.5" data-testid="overview-activity">
       <div className="flex h-6 items-center justify-between">
-        <h2 className="text-xs font-semibold text-ink-3">{t("manage.activity")}</h2>
-        {list.length > EVENTS_PREVIEW && (
-          <button type="button" className="btn ghost h-6 px-1.5 text-xs" data-testid="overview-activity-toggle" aria-expanded={showAll} onClick={() => setShowAll((prev) => !prev)}>
-            <MorphWidth>{showAll ? t("manage.showLess") : t("manage.showAll", { n: list.length })}</MorphWidth>
-          </button>
-        )}
+        <h2 className="side-box-title">{t("manage.activity")}</h2>
+        <Link href={historyHref} className="btn ghost h-6 px-1.5 text-xs" data-testid="overview-activity-all">
+          {t("manage.viewAll")}
+        </Link>
       </div>
       {events.error !== null && events.data === null ? (
         <p className="text-ink-3">{humanizeApiError(events.error, t)}</p>
@@ -309,22 +338,13 @@ export function ActivitySection({ bundle }: { bundle: Bundle }) {
       ) : list.length === 0 ? (
         <p className="text-ink-3">–</p>
       ) : (
-        <>
-          <ul className="grid">
-            {list.slice(0, EVENTS_PREVIEW).map((event) => (
-              <EventLine key={event.id} event={event} />
-            ))}
-          </ul>
-          <Collapse open={showAll}>
-            <ul className="grid">
-              {rest.visible.map((event) => (
-                <EventLine key={event.id} event={event} />
-              ))}
-            </ul>
-            {rest.hasMore && <LoadMoreBlock sentinelRef={rest.sentinelRef} rowHeight={48} testId="overview-activity-more" />}
-          </Collapse>
-        </>
+        <ul className="grid">
+          {list.map((event) => (
+            <EventLine key={event.id} event={event} onOpen={() => setOpened(event)} />
+          ))}
+        </ul>
       )}
+      {opened && <EventModal event={opened} historyHref={historyHref} onClose={() => setOpened(null)} />}
     </section>
   );
 }

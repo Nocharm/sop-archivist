@@ -23,6 +23,8 @@ export interface BundleProgress {
 
 export interface BundleListItem {
   id: number;
+  /** 순차 코드(BND-0013) - 이름이 비었을 때 이름 자리에 보인다 */
+  code: string;
   title: string;
   /** 합성 데이터 묶음 - 목록에서도 합성으로 보인다 */
   is_synthetic: boolean;
@@ -64,7 +66,10 @@ export interface AiJobCounts {
 
 export interface Bundle {
   id: number;
+  code: string;
   title: string;
+  /** 올린 문서 수 - 0이면 Split~Review 단계가 잠긴다 */
+  document_count: number;
   description: string;
   status: BundleStatus;
   is_synthetic: boolean;
@@ -117,9 +122,9 @@ export interface AiStatus {
 }
 
 export interface BundleCreateInput {
-  title: string;
-  description: string;
-  is_synthetic: boolean;
+  title?: string;
+  description?: string;
+  is_synthetic?: boolean;
 }
 
 export function listBundles(): Promise<BundleListItem[]> {
@@ -182,6 +187,10 @@ export interface SopDocument {
   uploaded_by: string;
   uploaded_at: string;
   extraction: { id: number; aux_status: "ok" | "failed"; warnings: ExtractionWarning[] } | null;
+  /** 업로드 응답에서만 - 서버가 미리 채운 칸이 어디서 왔는지(파일 이름·본문 첫 장). 목록 조회에서는 빈 객체 */
+  prefill_sources?: Partial<Record<"doc_code" | "doc_version" | "language_layout", "file_name" | "content">>;
+  /** 비어 있는 번호·버전에 대한 AI 제안(문서에 쓰지 않은 값). 누르면 사람이 저장한다 */
+  ai_meta?: { doc_code: string | null; doc_version: string | null; suggestion_id: number } | null;
 }
 
 export interface DocumentUpdateInput {
@@ -273,6 +282,8 @@ export interface ViewUnit {
   pair_id: number | null;
   pos_seq: number;
   block_id: number;
+  /** 사람이 나누거나 합쳐 생긴 단위(되돌리지 않은 편집) */
+  is_edited: boolean;
 }
 
 export interface ViewPair {
