@@ -30,6 +30,20 @@
     font: var(--fw-accent) 16px/24px var(--font-accent);
     color: var(--brand-ink);
     white-space: nowrap;
+    gap: 7px;
+    --mark-base: var(--chrome-ink);
+    --mark-pop: var(--hl);
+  }
+  .tb-brand svg { flex: none; }
+  /* 로그인 카드 제목 - 종이 바탕이라 마크는 본문 잉크와 액센트 */
+  .login-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: var(--fw-accent) 18px/26px var(--font-accent);
+    color: var(--ink);
+    --mark-base: var(--ink);
+    --mark-pop: var(--accent);
   }
   .tb-brand:hover { background: var(--chrome-hover); }
   .tb-sep { width: 1px; height: 16px; background: var(--chrome-line); flex: none; }

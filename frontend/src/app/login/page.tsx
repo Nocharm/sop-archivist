@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { AuthLoadingScreen } from "@/components/auth-loading";
+import { BrandMark } from "@/components/brand-mark";
 import { LangToggle } from "@/components/lang-toggle";
 import { getCachedAuthMode, type AuthModeInfo } from "@/lib/auth-mode";
 import {
@@ -135,7 +136,7 @@ export default function LoginPage() {
             <LangToggle testId="login-lang" />
           </div>
           <div className="pr-20">
-            <h1 className="text-lg font-semibold text-ink">SOP Archivist</h1>
+            <h1 className="login-brand"><BrandMark size={28} />SOP Archivist</h1>
             <p className="text-sm text-ink-2">{t("login.subtitle")}</p>
           </div>
 

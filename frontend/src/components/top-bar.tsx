@@ -5,6 +5,7 @@ import { FlaskConical, LogOut } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { BrandMark } from "@/components/brand-mark";
 import { DevUserSwitcher } from "@/components/dev-user-switcher";
 import { LangToggle } from "@/components/lang-toggle";
 import { BackLink, NavProgress } from "@/components/nav-host";
@@ -27,6 +28,7 @@ export function TopBar() {
   return (
     <header className="tb" data-testid="top-bar">
       <Link href="/" data-testid="top-bar-service" className="tb-brand">
+        <BrandMark size={22} />
         SOP Archivist
       </Link>
       <span data-testid="top-bar-version" className="tb-dim font-mono text-[11px]">
