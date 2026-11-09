@@ -6,6 +6,18 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
 
 - (없음)
 
+## v0.7.1 — 2026-11-09
+
+- **범위**: 배포 방식. 사내 정책에 따라 서버에서 손으로 compose 하지 않고 사내 GitLab 파이프라인으로 배포한다. 앱 코드는 바뀌지 않았다.
+- **주요 변경**:
+  - `.gitlab-ci.yml`: MR·`main` push·웹 실행에만 파이프라인. test 3개(backend ruff·pytest, frontend lint·tsc·vitest, 배포 스크립트 시험)는 자동, `deploy-production`은 `main`에서만 수동 ▶이고 테스트 통과가 전제다. 태그 파이프라인은 없다.
+  - `ci/deploy.sh`: 서버 Docker 소켓으로 `docker compose up -d --build`를 서버 데몬에서 돈다(레지스트리·DinD 없음). 가드(배포 폴더 경로, `.env`의 `AUTH_MODE=keycloak`·`BACKUP_DIR`, 호스트가 같은 경로로 보는지) → 공유 네트워크·베이스 이미지 점검 → `.env`·`backups/`를 남긴 동기화 → 빌드·기동 → proxy 재시작·db-backup 재생성 → proxy 안 헬스체크. docker 호출은 빈 환경이라 CI 변수가 `.env`를 덮지 못하고, `.env` 값과 인증 모드 응답 본문은 출력하지 않는다.
+  - `ci/test-deploy.sh`: 가짜 docker로 동기화 보존·가드·환경 격리·이미지·네트워크·db-backup 재생성·헬스체크 재시도·비밀값 비노출을 시험한다(51건).
+  - 문서: 새 `docs/deploy/gitlab-runner.md`(GitLab 설정, 러너 두 개 등록, 배포 폴더, 평소 흐름, `.env`만 바꿀 때, 트러블슈팅, 되돌리기, 비상 수동 경로). `deploy.md`·`setup-once.md`·`backup.md`·`db-viewer-readonly.md`는 서버 clone 대신 배포 폴더와 파이프라인 ▶로 맞췄다. 운영·진단·복구 명령은 배포 폴더에서 손으로 하는 절차로 남겼다.
+- **검증**: `ci/test-deploy.sh` 51/51(macOS sh·dash), shellcheck 통과, `.gitlab-ci.yml` YAML 파싱(job·태그·rules 확인), CI가 돌릴 명령을 로컬에서 실행(ruff·pytest 1879, lint·tsc·vitest 233). busybox(`docker:27-cli`)·GNU 컨테이너 실행은 로컬 Docker가 컨테이너를 시작하지 못해 못 했다 — GitLab의 `deploy-script-test`가 첫 확인이다. 러너 등록·실제 파이프라인·helper 이미지의 `pull_policy = never` 동작·서버에서의 배포는 미검증.
+- **배포 메모**: **서버 미배포**. 첫 배포는 GitLab Runner로 한다(`docs/deploy/setup-once.md` A3·A6, `docs/deploy/gitlab-runner.md`). 새 env·DB 리비전·새 의존성 없음. 파이프라인으로 되돌릴 수 있는 가장 옛 버전은 이 v0.7.1이다.
+  - 배포일은 서버 배포 뒤 여기에 적는다.
+
 ## v0.7.0 — 2026-11-09
 
 - **범위**: 화면 안 마크다운 뷰어. 백엔드는 바뀌지 않았다.
