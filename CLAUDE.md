@@ -39,6 +39,7 @@ BASE_URL=http://localhost:3777 node scripts/pw-smoke-baseline.mjs   # 산출물�
 #   SOP 화면 스모크·글자 대비 감사는 reset_db → seed_sop_demo 직후 DB에서(dev.db 대신 DATABASE_URL로 별도 sqlite 파일을 쓰면 다시 돌리기 쉽다)
 BASE_URL=http://localhost:3777 node scripts/pw-smoke-sop.mjs        # AI 나눔 확정 단계는 backend가 가짜 AI(FAKE_AI_SPLIT=1)를 볼 때만 돈다
 BASE_URL=http://localhost:3777 node scripts/pw-contrast-audit.mjs   # 11화면 × 라이트·다크, 4.5:1
+BASE_URL=http://localhost:3777 node scripts/pw-manual-shots.mjs     # 시스템 설명서(docs/manual/) 화면 그림·번호 위치 다시 뽑기 — reset_db → seed_sop_demo 직후, 끝에 묶음 3을 검토 완료로 바꾼다
 
 # 가짜 AI — 고정 응답, 배선 확인용 (저장소 루트에서, 포트 9999). 합성 응답이라 프롬프트 품질·정확도의 근거가 아니다
 node frontend/scripts/fake-ai-server.mjs   # FAKE_AI_SPLIT=1이면 분류 답이 문장을 둘로 나눈다(AI 나눔 확정 경로 스모크용)
@@ -70,6 +71,7 @@ npm i --no-save playwright-core
 $env:BASE_URL="http://localhost:3777"; $env:CHROME_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"; node scripts\pw-smoke-baseline.mjs
 node scripts\pw-smoke-sop.mjs        # seed_sop_demo 직후. 설명은 bash 쪽과 같다
 node scripts\pw-contrast-audit.mjs
+node scripts\pw-manual-shots.mjs     # 설명서 그림 다시 뽑기. 설명은 bash 쪽과 같다
 
 # 가짜 AI (저장소 루트에서)
 node frontend\scripts\fake-ai-server.mjs   # 나눔 모드: $env:FAKE_AI_SPLIT="1"
@@ -108,7 +110,7 @@ frontend/   # Next.js 앱(src/app 라우트, src/components, src/lib), scripts/ 
 nginx/      # 리버스 프록시 설정
 scripts/    # db-backup.sh (사이드카가 마운트)
 ci/         # deploy.sh(GitLab 배포 Job 본체, POSIX sh) · test-deploy.sh(가짜 docker로 검증) — .gitlab-ci.yml이 부른다
-docs/       # 인덱스 docs/README.md — deploy/(런북·gitlab-runner.md) · lessons/(시행착오) · superpowers/(명세·계획)
+docs/       # 인덱스 docs/README.md — deploy/(런북·gitlab-runner.md) · manual/(시스템 설명서·화면 그림) · lessons/(시행착오) · superpowers/(명세·계획)
 docker-compose.yml
 .gitlab-ci.yml  # 사내 GitLab: test 3개(MR·main 자동) · deploy-production(main 수동 ▶)
 ```

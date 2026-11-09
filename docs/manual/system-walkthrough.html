@@ -1,0 +1,860 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SOP Archivist 시스템 설명서</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f4f5f7; --surface: #ffffff; --sunken: #eef0f3; --ink: #1d2128; --ink-2: #4a515c; --ink-3: #6b7280;
+    --line: #dde1e6; --line-2: #c8cdd4; --accent: #0b5cad; --accent-tint: #e7f0fa; --ai: #7a3fb8; --ai-tint: #f3ecfb;
+    --code: #b93b00; --hold: #8a5a00; --hold-tint: #fbf1dc; --ok: #1f7a4d; --ok-tint: #e3f4ea; --danger: #b42318; --danger-tint: #fdecea;
+    --mark: #e8590c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #15171b; --surface: #1d2025; --sunken: #24282e; --ink: #e8eaed; --ink-2: #c3c7ce; --ink-3: #9aa1ab;
+      --line: #30353c; --line-2: #3d434b; --accent: #7cb7f0; --accent-tint: #1d2c3d; --ai: #c9a5f0; --ai-tint: #2c2338;
+      --code: #ffa36b; --hold: #f0c36b; --hold-tint: #3a2f19; --ok: #7bd3a3; --ok-tint: #1b3327; --danger: #f29b92; --danger-tint: #3b1f1d;
+      --mark: #ff8a3d;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 16px; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.7 -apple-system, "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", sans-serif; word-break: keep-all; overflow-wrap: anywhere; }
+  .layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); max-width: 1320px; margin: 0 auto; gap: 32px; padding: 0 24px; }
+  nav.toc { position: sticky; top: 0; align-self: start; max-height: 100vh; overflow-y: auto; padding: 28px 0; font-size: 13px; line-height: 1.5; }
+  nav.toc a { display: block; padding: 4px 8px; border-radius: 5px; color: var(--ink-2); text-decoration: none; }
+  nav.toc a:hover { background: var(--sunken); color: var(--ink); }
+  nav.toc .grp { margin: 14px 8px 4px; font-size: 11px; color: var(--ink-3); letter-spacing: .02em; }
+  main { min-width: 0; padding: 28px 0 80px; max-width: 980px; }
+  header.top { padding: 8px 0 20px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+  h1 { font-size: 30px; line-height: 1.3; margin: 0 0 6px; }
+  .meta { color: var(--ink-3); font-size: 13px; }
+  section { padding-top: 28px; }
+  h2 { font-size: 23px; line-height: 1.35; margin: 26px 0 10px; padding-top: 18px; border-top: 1px solid var(--line); }
+  h2 .no { display: inline-grid; place-items: center; min-width: 30px; height: 30px; margin-right: 10px; border-radius: 7px; background: var(--accent); color: var(--surface); font-size: 15px; vertical-align: 2px; }
+  h3 { font-size: 17px; margin: 26px 0 6px; }
+  h4 { font-size: 15px; margin: 18px 0 4px; }
+  p { margin: 8px 0; }
+  ul, ol { margin: 6px 0; padding-left: 22px; }
+  li { margin: 3px 0; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; }
+  code { padding: 1px 5px; border-radius: 4px; background: var(--sunken); }
+  a { color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13.5px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  th, td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  th { background: var(--sunken); font-size: 12.5px; color: var(--ink-2); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  .box { margin: 12px 0; padding: 12px 16px; border-radius: 9px; border: 1px solid var(--line); background: var(--surface); }
+  .box > b:first-child { display: block; margin-bottom: 4px; font-size: 13px; }
+  .box.sys { border-left: 4px solid var(--accent); }
+  .box.rule { border-left: 4px solid var(--ok); }
+  .box.fb { border-left: 4px solid var(--mark); background: color-mix(in srgb, var(--mark) 6%, var(--surface)); }
+  .box.ai { border-left: 4px solid var(--ai); background: var(--ai-tint); }
+  .box.warn { border-left: 4px solid var(--hold); background: var(--hold-tint); }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+  .tag { display: inline-block; padding: 0 6px; border-radius: 4px; border: 1px solid var(--line-2); font-size: 12px; line-height: 18px; color: var(--ink-2); background: var(--surface); white-space: nowrap; }
+  .tag.ko { border-color: var(--accent); color: var(--accent); }
+  .tag.en { border-color: var(--ok); color: var(--ok); }
+  .s { display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 11px; background: var(--ink); color: var(--surface); font-size: 11.5px; font-weight: 700; margin-right: 4px; vertical-align: 1px; }
+  .src { padding: 2px 6px; border-radius: 4px; background: var(--sunken); }
+  .arrow { color: var(--ink-3); margin: 0 4px; }
+  /* 스크린샷 + 번호 표시 */
+  figure.shot { margin: 16px 0 22px; }
+  .frame { position: relative; border: 1px solid var(--line-2); border-radius: 8px; overflow: hidden; background: var(--surface); box-shadow: 0 1px 2px rgb(0 0 0 / .06), 0 6px 20px rgb(0 0 0 / .06); }
+  .frame img { display: block; width: 100%; height: auto; }
+  .mk { position: absolute; border: 2px solid var(--mark); border-radius: 5px; pointer-events: none; transition: background .12s; }
+  .mk.on { background: color-mix(in srgb, var(--mark) 22%, transparent); }
+  .mk b { position: absolute; left: -11px; top: -11px; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--mark); color: #fff; font-size: 12px; line-height: 1; box-shadow: 0 0 0 2px #fff; }
+  figcaption { margin-top: 8px; font-size: 13.5px; color: var(--ink-2); }
+  figcaption .fig { font-weight: 700; color: var(--ink); margin-right: 6px; }
+  ol.marks { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 3px; }
+  /* 번호는 줄 왼쪽에 띄운다 - 줄 안의 code·b 같은 글자 요소가 grid 칸으로 흩어지지 않게 block으로 둔다 */
+  ol.marks li { position: relative; padding: 2px 4px 2px 32px; border-radius: 5px; cursor: default; }
+  ol.marks li:hover { background: var(--sunken); }
+  ol.marks li::before { content: attr(data-n); position: absolute; left: 5px; top: 4px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--mark); color: #fff; font-size: 11px; font-weight: 700; }
+  .open { font-size: 12px; margin-left: 6px; }
+  /* 그림(SVG) */
+  .diagram { margin: 14px 0; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow-x: auto; }
+  .diagram svg { display: block; width: 100%; height: auto; min-width: 640px; }
+  svg text { font-family: inherit; fill: var(--ink); }
+  svg .n { fill: var(--surface); stroke: var(--line-2); stroke-width: 1.5; }
+  svg .n.code { fill: var(--accent-tint); stroke: var(--accent); }
+  svg .n.human { fill: var(--ok-tint); stroke: var(--ok); }
+  svg .n.ai { fill: var(--ai-tint); stroke: var(--ai); stroke-dasharray: 5 3; }
+  svg .n.hold { fill: var(--hold-tint); stroke: var(--hold); }
+  svg .n.bad { fill: var(--danger-tint); stroke: var(--danger); }
+  svg .n.done { fill: var(--sunken); stroke: var(--ink-2); }
+  svg .e { fill: none; stroke: var(--ink-3); stroke-width: 1.6; marker-end: url(#ar); }
+  svg .e.ai { stroke: var(--ai); stroke-dasharray: 5 3; }
+  svg .e.sys { stroke: var(--hold); stroke-dasharray: 2 3; }
+  svg .lbl { font-size: 12px; fill: var(--ink-2); }
+  svg .sm { font-size: 11px; fill: var(--ink-3); }
+  svg .tt { font-size: 14px; font-weight: 700; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px; color: var(--ink-2); margin-top: 8px; }
+  .legend i { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: -2px; margin-right: 5px; border: 1.5px solid; }
+  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--ink-3); }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: minmax(0, 1fr); padding: 0 16px; }
+    nav.toc { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+<nav class="toc" aria-label="목차">
+  <div class="grp">시작</div>
+  <a href="#read">0. 읽는 법</a>
+  <a href="#big">1. 한 장으로 보기</a>
+  <a href="#terms">2. 용어와 데이터의 모양</a>
+  <a href="#sample">3. 예시 묶음과 따라갈 문장</a>
+  <div class="grp">작업 흐름</div>
+  <a href="#bundle">4. 묶음 만들기와 개요</a>
+  <a href="#docs">5. 문서 올리기와 추출</a>
+  <a href="#split">6. 쪼개기</a>
+  <a href="#tobe">7. To-Be 목록</a>
+  <a href="#classify">8. 분류 (입구 1)</a>
+  <a href="#match">9. 짝 맞추기 (입구 2)</a>
+  <a href="#ai">10. AI가 하는 일</a>
+  <a href="#outputs">11. 결과물 A·B·C</a>
+  <a href="#review">12. 검토</a>
+  <div class="grp">시스템</div>
+  <a href="#life">13. 라이프사이클</a>
+  <a href="#admin">14. 관리자 화면과 권한</a>
+  <a href="#feedback">15. 피드백해 볼 곳</a>
+</nav>
+
+<main>
+<header class="top">
+  <h1>SOP Archivist 시스템 설명서</h1>
+  <div class="meta">합성 예시 묶음 하나를 처음부터 끝까지 따라가며 시스템을 설명한다 · v0.8.0 기준 · 화면은 모두 실제 앱을 찍은 것이고 자료는 합성이다(실제 SOP 아님)</div>
+</header>
+
+<!-- ============================================================ 0 -->
+<section id="read">
+<h2><span class="no">0</span>읽는 법</h2>
+<p>이 문서는 사용 안내가 아니라 <b>시스템을 이해하고 피드백하기 위한 설명서</b>다. 옛 SOP 묶음 하나(합성 "QC Centrifuge")가 새 SOP·WI로 바뀌는 과정을 장마다 따라가고, 같은 문장들이 각 단계에서 어떻게 보이는지 계속 짚는다.</p>
+<div class="cols">
+  <div class="box"><b>화면 그림</b>실제 앱을 1440×900으로 찍었다. 주황 번호는 아래 목록과 짝이고, 목록 줄에 마우스를 올리면 그 자리가 칠해진다. 그림을 누르면 원본 크기로 열린다.</div>
+  <div class="box sys"><b>뒤에서 시스템이 하는 일</b>화면 뒤에서 코드가 무엇을 계산하고 무엇을 막는지.</div>
+  <div class="box rule"><b>판단 기준</b>사람이 고르는 기준, 또는 코드가 거절하는 규칙.</div>
+  <div class="box fb"><b>피드백 거리</b>설계 때 정한 것 중 다시 볼 만한 결정, 써 보며 이상했던 점. 15장에 다시 모았다.</div>
+</div>
+<p>문장 앞의 <span class="s">S1</span> 같은 표시는 3장에서 정한 "따라갈 문장"이다. 화면의 상태 라벨은 화면 언어와 상관없이 영어다(<span class="tag">In progress</span>, <span class="tag">Confirmed</span> 등).</p>
+</section>
+
+<!-- ============================================================ 1 -->
+<section id="big">
+<h2><span class="no">1</span>한 장으로 보기</h2>
+<p>옛 SOP 파일이 <b>문장 단위로 쪼개지고</b>, 새 SOP·WI의 <b>자리로 옮겨져</b>, 그 결과로 <b>추적표가 계산되고</b>, 검토로 간다. 한 앱 안에서 끝나고 단계 사이에 파일을 내려받아 다시 올리지 않는다.</p>
+<div class="diagram">
+<svg viewBox="0 0 980 300" role="img" aria-label="전체 흐름">
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor" style="color:var(--ink-3)"/></marker></defs>
+  <rect class="n human" x="10" y="40" width="120" height="58" rx="8"/><text x="70" y="64" text-anchor="middle" class="tt">업로드</text><text x="70" y="84" text-anchor="middle" class="sm">사람 · 옛 문서</text>
+  <rect class="n code" x="160" y="40" width="120" height="58" rx="8"/><text x="220" y="64" text-anchor="middle" class="tt">추출</text><text x="220" y="84" text-anchor="middle" class="sm">코드 · 원문 블록</text>
+  <rect class="n code" x="310" y="40" width="120" height="58" rx="8"/><text x="370" y="64" text-anchor="middle" class="tt">쪼개기</text><text x="370" y="84" text-anchor="middle" class="sm">코드 + 사람 확인</text>
+  <rect class="n human" x="460" y="40" width="120" height="58" rx="8"/><text x="520" y="64" text-anchor="middle" class="tt">To-Be 목록</text><text x="520" y="84" text-anchor="middle" class="sm">사람 · 새 문서 칸</text>
+  <rect class="n human" x="610" y="10" width="150" height="58" rx="8"/><text x="685" y="34" text-anchor="middle" class="tt">분류 (입구 1)</text><text x="685" y="54" text-anchor="middle" class="sm">칸에 배정·고쳐 쓰기</text>
+  <rect class="n human" x="610" y="80" width="150" height="58" rx="8"/><text x="685" y="104" text-anchor="middle" class="tt">짝 맞추기 (입구 2)</text><text x="685" y="124" text-anchor="middle" class="sm">써 둔 새 문서와 잇기</text>
+  <rect class="n code" x="790" y="40" width="80" height="58" rx="8"/><text x="830" y="64" text-anchor="middle" class="tt">결과물</text><text x="830" y="84" text-anchor="middle" class="sm">A · B · C</text>
+  <rect class="n human" x="890" y="40" width="80" height="58" rx="8"/><text x="930" y="64" text-anchor="middle" class="tt">검토</text><text x="930" y="84" text-anchor="middle" class="sm">사람</text>
+  <path class="e" d="M130,69 H156"/><path class="e" d="M280,69 H306"/><path class="e" d="M430,69 H456"/>
+  <path class="e" d="M580,60 C595,50 598,40 606,39"/><path class="e" d="M580,78 C595,88 598,105 606,108"/>
+  <path class="e" d="M760,39 C775,40 778,58 786,62"/><path class="e" d="M760,109 C775,108 778,84 786,78"/><path class="e" d="M870,69 H886"/>
+  <rect class="n ai" x="610" y="190" width="150" height="54" rx="8"/><text x="685" y="212" text-anchor="middle" class="tt" style="fill:var(--ai)">AI 제안</text><text x="685" y="231" text-anchor="middle" class="sm">칸·고쳐 쓴 문장·짝·번역</text>
+  <path class="e ai" d="M660,190 V142"/><path class="e ai" d="M685,190 C685,170 700,150 700,142"/>
+  <text x="770" y="225" class="lbl">AI는 제안만 한다. 확정은 줄마다 사람이 한다.</text>
+  <text x="10" y="150" class="lbl">한 묶음 안에서 새 문서마다 입구를 고른다(써 둔 WI는 입구 2, 아직이면 입구 1).</text>
+  <text x="10" y="172" class="lbl">AI가 꺼지거나 실패해도 사람 경로는 끝까지 돈다.</text>
+</svg>
+<div class="legend"><span><i style="border-color:var(--accent);background:var(--accent-tint)"></i>코드가 계산</span><span><i style="border-color:var(--ok);background:var(--ok-tint)"></i>사람이 판단·확정</span><span><i style="border-color:var(--ai);background:var(--ai-tint);border-style:dashed"></i>AI가 제안</span></div>
+</div>
+<div class="box rule"><b>일을 셋으로 가르는 원칙 (명세 §1)</b>
+<ul>
+  <li><b>코드가 셀 수 있는 것은 코드가 한다</b>: 추출, 누락·중복 계산, 결과물. 사람이 세지 않는다.</li>
+  <li><b>AI는 정해진 칸 중에서 고르는 제안만 한다</b>: 근거와 규칙 ID를 붙이고, 확정하지 않는다.</li>
+  <li><b>사람은 판단하고 확정한다</b>: "AI 제안" 상태인 줄만 보면 되게 만든다.</li>
+</ul>
+"실패로 보는 것"도 정해 두었다: AI가 추적표를 쓰거나 원문을 고쳐 저장하거나 사람 확인 없이 확정되는 것, 배정 안 된 문장이 남았는데 "완료"가 뜨는 것, 원문이 사내 모델 밖으로 나가는 것.</div>
+<p>화면은 왼쪽 레일(또는 상단 탭)의 단계 순서와 같다: <b>Overview · Documents · 1 Split · 2 To-Be · 3 Classify · 3 Match · 4 Outputs · Review</b>. 분류와 짝 맞추기가 둘 다 3번인 것은 같은 단계의 두 입구라서다.</p>
+</section>
+
+<!-- ============================================================ 2 -->
+<section id="terms">
+<h2><span class="no">2</span>용어와 데이터의 모양</h2>
+<p>결과물 A·B·C는 모두 아래 세 가지 기록에서 계산된다: <b>단위 판단</b>(옛 문장이 어디로 가는가), <b>새 문장</b>(새 문서 자리에 들어갈 글), <b>출처 연결</b>(새 문장 ↔ 옛 단위). 나머지 용어는 이 셋을 만들기 위한 것이다.</p>
+<div class="diagram">
+<svg viewBox="0 0 980 330" role="img" aria-label="데이터 모양">
+  <rect class="n" x="10" y="20" width="150" height="50" rx="8"/><text x="85" y="42" text-anchor="middle" class="tt">묶음</text><text x="85" y="60" text-anchor="middle" class="sm">재구성 한 건 · 멤버</text>
+  <rect class="n" x="10" y="110" width="150" height="50" rx="8"/><text x="85" y="132" text-anchor="middle" class="tt">문서 (옛 / 새)</text><text x="85" y="150" text-anchor="middle" class="sm">원본 파일·언어 배치</text>
+  <rect class="n code" x="10" y="200" width="150" height="50" rx="8"/><text x="85" y="222" text-anchor="middle" class="tt">원문 블록</text><text x="85" y="240" text-anchor="middle" class="sm">문단·표 칸·그림, 불변</text>
+  <rect class="n code" x="230" y="200" width="160" height="50" rx="8"/><text x="310" y="222" text-anchor="middle" class="tt">단위</text><text x="310" y="240" text-anchor="middle" class="sm">블록 위 글자 범위</text>
+  <rect class="n human" x="460" y="200" width="160" height="50" rx="8"/><text x="540" y="222" text-anchor="middle" class="tt">단위 판단</text><text x="540" y="240" text-anchor="middle" class="sm">처분·사유·상태</text>
+  <rect class="n human" x="700" y="200" width="160" height="50" rx="8"/><text x="780" y="222" text-anchor="middle" class="tt">새 문장</text><text x="780" y="240" text-anchor="middle" class="sm">자리·글·변경 종류·상태</text>
+  <rect class="n" x="700" y="90" width="160" height="50" rx="8"/><text x="780" y="112" text-anchor="middle" class="tt">To-Be 새 문서</text><text x="780" y="130" text-anchor="middle" class="sm">SOP 칸 / WI 단계</text>
+  <rect class="n code" x="700" y="270" width="160" height="44" rx="8"/><text x="780" y="297" text-anchor="middle" class="tt">결과물 A·B·C</text>
+  <path class="e" d="M85,70 V106"/><path class="e" d="M85,160 V196"/><path class="e" d="M160,225 H226"/><path class="e" d="M390,225 H456"/>
+  <path class="e" d="M700,218 C600,180 450,180 392,210"/><text x="545" y="174" text-anchor="middle" class="lbl">출처 연결 (다대다)</text>
+  <path class="e" d="M780,140 V196"/><text x="790" y="172" class="sm">자리</text>
+  <path class="e" d="M780,250 V266"/><path class="e" d="M160,45 C420,45 700,60 760,86"/><text x="430" y="40" class="sm">묶음에 To-Be 목록이 한 번 저장된다</text>
+  <text x="230" y="290" class="sm">단위는 제자리에서 바뀌지 않는다. 나누기·합치기는 옛 단위를 은퇴시키고 새 단위를 만든다.</text>
+</svg>
+</div>
+<table>
+  <tr><th style="width:150px">용어</th><th>뜻</th><th style="width:300px">예시 묶음에서</th></tr>
+  <tr><td>묶음 (bundle)</td><td>재구성 한 건. 옛 SOP 여러 개를 새 SOP·WI로 바꾸는 작업 하나. 상태·To-Be·멤버가 묶음에 붙는다.</td><td>"SYNTHETIC QC Centrifuge"</td></tr>
+  <tr><td>옛 문서 / 새 문서</td><td>옛 문서는 재구성 대상 SOP. 새 문서는 To-Be 목록의 새 SOP·WI. 입구 2에서는 새 문서 파일도 올린다.</td><td>옛: OLD-1–5 · 새: SOP-CF, WI-01–04</td></tr>
+  <tr><td>원문 블록</td><td>추출기가 원본에서 읽은 문단·표 칸·그림 하나. 원문 글자 그대로이고 <b>절대 바뀌지 않는다</b>. 본문·머리말·꼬리말·각주·텍스트 상자를 구별한다.</td><td>OLD-3의 머리말 "SYNTHETIC OLD-3 Beckman Coulter"도 블록이다</td></tr>
+  <tr><td>단위 (unit)</td><td>블록 위의 글자 범위. 종류: 문장 / 제목 / 그림 / 표 / 표의 행 / 칸 문장. 표시 ID는 <code>문서번호-순번</code>.</td><td><code>OLD-1-051</code> "로터를 장착하고 뚜껑을 닫은 후"</td></tr>
+  <tr><td>커버 단위</td><td>누락 계산의 원소: 문장(칸 문장 포함)·제목·그림. 표·행 단위는 칸 문장들의 보낸 곳을 담는 그릇이라 따로 세지 않는다.</td><td>OLD-1의 표는 칸 문장 6개를 센다</td></tr>
+  <tr><td>처분</td><td>단위가 어디로 가는가: 미배정 / 배정(새 문서 자리) / 삭제 / 다른 문서로 이동.</td><td>반복 문장은 삭제, 교정 문장은 SOP-QC-99999로 이동</td></tr>
+  <tr><td>새 문장</td><td>새 문서 한 자리에 들어갈 문장(또는 표·그림). 출처 옛 단위 0개 이상과 이어진다. 확정 문장과 AI 제안 문장을 따로 보관한다.</td><td>"이 SOP는 QC 원심분리기를 …정한다." (SOP-CF Purpose)</td></tr>
+  <tr><td>위치 (자리)</td><td>SOP는 칸 키(<code>procedures.maintenance</code> 등), WI는 (몇 번째 단계, Instruction 또는 Why), 입구 2 문서는 그 문서의 실제 절.</td><td>WI-01 · 3단계 · Instruction</td></tr>
+  <tr><td>관계 묶음</td><td>나뉘거나(1→N) 합쳐진(N→1) 단위·새 문장끼리의 묶음. ID는 구성원에서 계산한다(<code>G-OLD-1-028</code>).</td><td>S3(나눔), S4(합침)</td></tr>
+  <tr><td>짝 (pair)</td><td>같은 내용의 한글 단위와 영어 단위를 잇는 것. 짝은 한 화면에서 함께 확정한다. 커버리지는 언어별로 따로 센다.</td><td>OLD-1-003 ↔ OLD-1-004</td></tr>
+  <tr><td>입구 1 / 입구 2</td><td>입구 1: To-Be를 아직 안 씀 → 옛 단위를 칸에 배정. 입구 2: 새 문서를 이미 씀 → 옛 단위를 새 문장의 출처로 잇는다. 새 문서마다 고른다.</td><td>SOP-CF·WI-01–03은 입구 1, WI-04는 입구 2</td></tr>
+  <tr><td>상태</td><td>커버 단위와 새 문장의 확인 상태. <b>정확히 하나</b>: 미배정 / AI 제안 / 확정 / 보류.</td><td><span class="tag">Unassigned</span> <span class="tag">AI suggested</span> <span class="tag">Confirmed</span> <span class="tag">On hold</span></td></tr>
+  <tr><td>변경 종류</td><td>그대로 / 말투 / 고쳐 씀 / 나눔 / 합침 / 번역 / 삭제 / 신규 / 표 구성 변경. <b>구조에서 나오는 종류</b>(나눔·합침·번역·신규·삭제)는 코드가 계산하고, <b>글자 비교 종류</b>(그대로·말투·고쳐 씀)는 사람이 정한다(AI가 제안).</td><td>S1 고쳐 씀, S2 말투, S3 나눔, S4 합침</td></tr>
+</table>
+<div class="box sys"><b>코드가 지키는 불변식</b>
+<ul>
+  <li>한 추출 안에서 커버 단위들은 <b>공백 아닌 모든 글자를 빠짐없이, 겹치지 않게</b> 덮는다. 그래서 "빠진 글자 없음"을 코드가 증명한다.</li>
+  <li>원문은 바뀌지 않는다. 고친 글은 새 문장에 따로 저장한다.</li>
+  <li>사람의 저장 단위는 <b>관계 묶음</b>이다. 합침을 반만 확정하는 상태가 생기지 않는다.</li>
+  <li>여러 작성자가 동시에 고칠 수 있어서, 바뀌는 대상마다 <code>revision</code>을 두고 남이 먼저 바꿨으면 409로 막고 최신을 다시 읽게 한다.</li>
+</ul></div>
+</section>
+
+<!-- ============================================================ 3 -->
+<section id="sample">
+<h2><span class="no">3</span>예시 묶음과 따라갈 문장</h2>
+<p>테스트 정답으로도 쓰는 합성 사례다(<code>backend/scripts/synthetic_sop.py</code>, 도메인 사례 §1). 옛 SOP 5개를 새 SOP 1개와 WI 4개로 다시 짠다. 모든 문장은 지어낸 것이다. 데모 시드는 같은 자료로 묶음 4개를 서로 다른 단계까지 몰아 둔다: <b>1 쪼개기 직후 · 2 분류 절반 · 3 검토 대기 · 4 AI 제안</b>. 아래 화면들은 단계에 맞는 묶음에서 찍었다.</p>
+<h3>올리는 파일</h3>
+<table>
+  <tr><th>문서</th><th>형식 · 언어 배치</th><th>이 문서로 보여 주는 것</th></tr>
+  <tr><td class="mono">OLD-1 Eppendorf</td><td>DOCX · 한/영 연달아</td><td>고쳐 쓰기·말투·그대로, 복합 문장 나누기, 데이터 표, 캡션 그림, 같은 문장 반복(삭제), OLD-2와 합칠 문장</td></tr>
+  <tr><td class="mono">OLD-2 Eppendorf 5702R</td><td>DOCX · 한/영 연달아</td><td>합침의 다른 쪽, 중복 배정(SOP와 WI 둘 다), 일부러 남기는 누락(검토 요청 거절 확인용)</td></tr>
+  <tr><td class="mono">OLD-3 Beckman Coulter</td><td>DOCX · 한/영 따로</td><td>한글 전체 뒤 영어 전체, 머리말·꼬리말, 이력 문장 삭제</td></tr>
+  <tr><td class="mono">OLD-4 Thermoscientific</td><td>DOCX · 한/영 연달아</td><td>한/영 두 열 <b>레이아웃 표</b>, 텍스트 상자, <b>다른 문서로 이동</b></td></tr>
+  <tr><td class="mono">OLD-5 Labogene</td><td>텍스트 PDF · 영어만</td><td>PDF 보조 추출, 입구 2의 옛 쪽</td></tr>
+  <tr><td class="mono">WI-04 Labogene 운전</td><td>DOCX · 영어만 · <b>새 문서</b></td><td>입구 2: 이미 써 둔 WI. 같은 글자 짝·고쳐 쓴 짝·나눈 짝·신규 문장</td></tr>
+  <tr><td class="mono">SYNTHETIC_tobe.xlsx</td><td>Excel</td><td>To-Be 목록 가져오기: SOP-CF와 WI-01–03, WI 단계</td></tr>
+</table>
+<h3>새 문서 (To-Be)</h3>
+<table>
+  <tr><th>번호</th><th>제목</th><th>종류</th><th>입구</th><th>칸 또는 단계</th></tr>
+  <tr><td class="mono">SOP-CF</td><td>Use and Maintenance of QC Centrifuge</td><td>SOP (장비 SOP)</td><td>1</td><td>7칸 + 하위 칸. Troubleshooting은 N/A(사유)</td></tr>
+  <tr><td class="mono">WI-01</td><td>Operation of Eppendorf Centrifuge</td><td>WI (부모 SOP-CF)</td><td>1</td><td>1 Pre-cool and check · 2 Load the tubes · 3 Mount the rotor and close the lid · 4 Start the run · 5 Unload and clean</td></tr>
+  <tr><td class="mono">WI-02</td><td>Operation of Beckman Coulter Centrifuge</td><td>WI</td><td>1</td><td>1 Load · 2 Start · 3 Clean the rotor</td></tr>
+  <tr><td class="mono">WI-03</td><td>Operation of Thermoscientific Centrifuge</td><td>WI</td><td>1</td><td>1 Power on · 2 Set and start the run</td></tr>
+  <tr><td class="mono">WI-04</td><td>Labogene Centrifuge Operation</td><td>WI</td><td>2</td><td>파일의 실제 절: 1. Preparation · 2. Operation · 3. After use</td></tr>
+</table>
+<h3 id="tracked">따라갈 문장</h3>
+<p>장마다 이 문장들이 어떻게 보이는지 짚는다. 한/영 짝이 있는 문장은 한글 쪽만 적었다.</p>
+<table>
+  <tr><th style="width:44px"></th><th>원문 (위치)</th><th>보낸 곳</th><th>확정 문장 · 변경 종류</th></tr>
+  <tr><td><span class="s">S1</span></td><td>이 절차는 Eppendorf 원심분리기를 안전하고 일관되게 사용하는 방법을 정한다. <span class="src mono">OLD-1 §1</span></td><td>SOP-CF · Purpose</td><td>이 SOP는 QC 원심분리기를 안전하고 일관되게 사용하고 유지 관리하기 위한 요구사항을 정한다. · <b>고쳐 씀</b></td></tr>
+  <tr><td><span class="s">S2</span></td><td>QC 분석자는 사용 전에 원심분리기 상태를 점검한다. <span class="src mono">OLD-1 §4</span></td><td>SOP-CF · Responsibilities</td><td>…점검하<b>여야 한다</b>. · <b>말투</b> (SOP 문체, 규칙 R02)</td></tr>
+  <tr><td><span class="s">S3</span></td><td>로터를 장착하고 뚜껑을 닫은 후 START 버튼을 누른다. <span class="src mono">OLD-1 §5</span> / Mount the rotor, close the lid and press START.</td><td>WI-01 · 3단계와 4단계 Instruction</td><td>한글: 쪼개기에서 <b>단위를 둘로 나눈 뒤</b> 각각 3·4단계로. 영어: 단위는 하나로 두고 <b>새 문장 둘로 나눔</b>(1:2) · <b>나눔</b></td></tr>
+  <tr><td><span class="s">S4</span></td><td>원심분리 후 로터가 완전히 멈춘 것을 확인한다. <span class="src mono">OLD-1 §5</span> + 회전이 멈춘 뒤 뚜껑을 연다. <span class="src mono">OLD-2 §1</span></td><td>WI-01 · 5단계 Instruction</td><td>로터가 완전히 멈춘 것을 확인한 후 뚜껑을 연다. · <b>합침</b> (출처 둘)</td></tr>
+  <tr><td><span class="s">S5</span></td><td>보호 장갑과 보안경을 착용한다. <span class="src mono">OLD-1 §6</span> (§5와 같은 글자 반복)</td><td>삭제</td><td>사유: 같은 문장이 5절에도 있어 한 번만 남긴다.</td></tr>
+  <tr><td><span class="s">S6</span></td><td>불균형 경고가 울리면 즉시 운전을 멈추어야 한다. <span class="src mono">OLD-2 §1</span></td><td>SOP-CF · Safety <b>와</b> WI-01 · 4단계</td><td><b>중복 배정</b>(서로 다른 새 문서 둘) — 사유 필수</td></tr>
+  <tr><td><span class="s">S7</span></td><td>원심분리기 교정은 장비 교정 SOP에 따른다. <span class="src mono">OLD-4 §2</span></td><td>다른 문서로 이동 (SOP-QC-99999)</td><td>사유: 교정 절차는 장비 교정 SOP가 관리한다.</td></tr>
+  <tr><td><span class="s">S8</span></td><td>표 Rotor | Speed | Time / F-45-30-11 | 14,000 rpm | 10 min <span class="src mono">OLD-1 §5</span></td><td>WI-01 · 4단계 (표 통째로)</td><td>표 새 문장 하나 + 칸 문장 6개 · <b>그대로</b></td></tr>
+  <tr><td><span class="s">S9</span></td><td>그림 1. 로터 장착 위치 (캡션 포함) <span class="src mono">OLD-1 §5</span></td><td>WI-01 · 3단계</td><td>그림은 언어 중립, 내용은 읽지 않음 · <b>그대로</b></td></tr>
+  <tr><td><span class="s">S10</span></td><td>Select the program and press RUN to start the centrifuge. <span class="src mono">OLD-5</span></td><td>WI-04 · 2. Operation (입구 2)</td><td>WI-04의 "Select the program." + "Press RUN to start the centrifuge."의 출처 · <b>나눔</b></td></tr>
+  <tr><td><span class="s">S11</span></td><td>(WI-04에만 있음) Record the run in the equipment logbook.</td><td>WI-04 · 3. After use</td><td>출처 없음 · <b>신규</b></td></tr>
+  <tr><td><span class="s">S12</span></td><td>1. 목적 / 1. Purpose 같은 구조 제목, OLD-3 머리말·꼬리말</td><td>삭제 (여러 개 한 번에)</td><td>사유: 구조 제목·머리말은 새 문서 양식이 대신한다.</td></tr>
+</table>
+</section>
+
+<!-- ============================================================ 4 -->
+<section id="bundle">
+<h2><span class="no">4</span>묶음 만들기와 개요</h2>
+<figure class="shot" data-shot="home">
+  <div class="frame"><img width="1440" height="900" src="img/home.png" alt="묶음 목록" loading="lazy"></div>
+  <figcaption><span class="fig">그림 4-1</span>묶음 목록(홈). 내가 <b>멤버인</b> 묶음만 보인다.
+    <ol class="marks"><li data-n="1">묶음 한 줄. 누르면 개요로 간다. 합성 묶음에는 <span class="tag">Synthetic data</span> 표시가 붙는다.</li><li data-n="2">묶음 상태 칩. 진행 중은 연한 파랑, 검토 대기는 연한 호박, 완료는 꽉 찬 회색(13장).</li><li data-n="3">언어별 확정 진행(확정 단위 / 커버 단위).</li><li data-n="4">표·카드 보기 전환. 고른 보기는 목록마다 이 브라우저에 기억된다.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="new-bundle">
+  <div class="frame"><img width="1440" height="900" src="img/new-bundle.png" alt="새 묶음" loading="lazy"></div>
+  <figcaption><span class="fig">그림 4-2</span>새 묶음 만들기. <code>bundle.create</code> 권한이 있어야 단추가 보인다(관리자로 찍었다 — 관리자는 아무 묶음의 멤버도 아니라 목록이 비어 있다).
+    <ol class="marks"><li data-n="1">제목(필수)과 설명.</li><li data-n="2">합성 데이터 표시. 시험용 묶음이 실제 묶음과 섞여 보이지 않게 한다.</li><li data-n="3">만들면 만든 사람이 <b>작성자</b>가 된다.</li></ol>
+  </figcaption>
+</figure>
+<div class="box sys"><b>멤버와 권한은 따로 논다</b>
+<ul>
+  <li>묶음 <b>내용</b>은 멤버만 본다. 시스템 관리자도 멤버가 아니면 내용을 못 본다(대신 <code>bundle.admin</code>으로 자기를 멤버로 넣을 수 있고 기록이 남는다).</li>
+  <li>멤버 역할은 둘: <b>작성자</b>(모든 편집, 멤버 관리, 검토 요청, 다시 열기, 작업 중 묶음 삭제)와 <b>검토자</b>(읽기·내보내기, 검토 완료·되돌리기). 한 사람은 한 묶음에서 한 역할만 갖는다 — 작성자가 자기 묶음을 검토 완료하지 못하게.</li>
+  <li>작성자는 늘 한 명 이상이어야 하고(마지막 작성자는 못 뺀다), 검토 대기 중에는 누구도 자기 역할을 바꾸지 못한다.</li>
+  <li>퇴직자(HR에서 비활성)는 멤버여도 들어오지 못한다.</li>
+</ul></div>
+<figure class="shot" data-shot="overview-start">
+  <div class="frame"><img width="1440" height="900" src="img/overview-start.png" alt="개요" loading="lazy"></div>
+  <figcaption><span class="fig">그림 4-3</span>개요(묶음 1, 쪼개기 직후). 묶음을 열면 처음 보이는 화면이다.
+    <ol class="marks"><li data-n="1">다음에 할 일. 지금 상태에서 가장 앞에 막힌 일을 하나 골라 그 화면으로 보낸다.</li><li data-n="2">언어별 커버리지: 확정·AI 제안·보류·미배정 수. 한글 43, 영어 55 — 언어별로 따로 센다.</li><li data-n="3">검토 요청 조건. 하나라도 ✕면 검토 요청 단추가 잠긴다(12장).</li><li data-n="4">멤버와 관리(검토자 추가).</li><li data-n="5">작업 기록: 누가·언제·무엇을. 글자 내용은 싣지 않고 ID로 가리킨다.</li></ol>
+  </figcaption>
+</figure>
+<div class="box fb"><b>피드백 거리</b>제목·설명 고치기, 묶음 삭제(⋯ 메뉴)도 개요에 있다. 묶음 삭제는 전부 영구 삭제이고 전역 기록에만 남는다. "다음에 할 일" 하나만으로 충분한지, 여러 막힘을 한 번에 보여 줘야 하는지 볼 만하다.</div>
+</section>
+
+<!-- ============================================================ 5 -->
+<section id="docs">
+<h2><span class="no">5</span>문서 올리기와 추출</h2>
+<figure class="shot" data-shot="upload">
+  <div class="frame"><img width="1440" height="900" src="img/upload.png" alt="문서 올리기" loading="lazy"></div>
+  <figcaption><span class="fig">그림 5-1</span>문서 올리기 창.
+    <ol class="marks"><li data-n="1">옛 문서: 재구성 대상 SOP.</li><li data-n="2">새 문서: 입구 2용으로 이미 써 둔 SOP·WI. 고르면 종류(SOP/WI)와 부모 SOP를 함께 정하고, 올라가면 To-Be 목록에 그 문서 줄이 생긴다.</li><li data-n="3">파일 고르기(여러 개). 업로드 요청이 추출이 끝날 때까지 기다렸다가 결과를 돌려준다(보통 몇 초).</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="documents">
+  <div class="frame"><img width="1440" height="900" src="img/documents.png" alt="문서 목록" loading="lazy"></div>
+  <figcaption><span class="fig">그림 5-2</span>문서 화면(묶음 1). 문서 번호·버전·제목은 파일 이름에서 읽어 채운다. 없는 값은 지어내지 않고 빈 칸(점선)으로 둔다.
+    <ol class="marks"><li data-n="1">문서 올리기.</li><li data-n="2">언어 배치: 한/영 연달아 · 한/영 따로 · 영어만 · 한글만. 이 값이 짝 제안 방식을 정한다.</li><li data-n="3">추출 상태: <span class="tag">Ready</span>(연한 회색) / <span class="tag">Rejected</span>·<span class="tag">Failed</span>(꽉 찬 빨강). 거절·실패 문서가 남아 있으면 검토 요청이 안 된다.</li><li data-n="4">보조 검사(MarkItDown 대조) 결과.</li><li data-n="5">추출 경고. OLD-5는 PDF라 "다단·표·읽기 순서가 실제와 다를 수 있다" 경고가 붙었다.</li><li data-n="6">표·카드 전환.</li></ol>
+  </figcaption>
+</figure>
+<div class="box sys"><b>뒤에서: 추출</b>
+<ul>
+  <li><b>메인 추출기</b>(자체 구현)가 DOCX XML을 직접 읽는다. 머리말·꼬리말·각주·미주·텍스트 상자를 본문과 구별하고, 필드 코드는 버리고 결과만, 병합 셀은 중복 없이 읽는다. 그림은 캡션과 묶는다. 위치는 XML 경로와 쪽 번호(근거: Word가 저장한 쪽 나눔 / 수동 / 추정)로 남긴다.</li>
+  <li><b>보조 추출기</b>(MarkItDown)로 같은 파일을 한 번 더 바꿔, 그 글자가 메인 결과에 다 있는지 코드로 대조한다. 없으면 "추출 누락 의심" 경고를 띄운다(문서당 200개까지). 사람이 하나씩 "확인함"으로 닫아야 검토 요청이 된다. 메인 결과를 자동으로 고치지는 않는다.</li>
+  <li>파싱은 <b>따로 띄운 자식 프로세스</b>에서 시간·메모리 한도를 걸고 돈다(동시에 2개까지). 이상한 파일이 서버를 멈추지 못하게 하려는 것이다.</li>
+  <li>텍스트 PDF는 보조로만 받는다: 빈 줄로 문단을 나누고 표 구조는 만들지 않는다.</li>
+</ul></div>
+<div class="box rule"><b>거절하는 것</b> — 이유를 알리고 받지 않는다. 빈 추출을 성공으로 치지 않는다.
+<ul>
+  <li>암호·DRM 파일, 스캔 이미지 PDF, 암호화 PDF</li>
+  <li><b>변경 추적이 남은 DOCX</b>: "변경 내용을 모두 수락하거나 거부한 뒤 다시 올려 주세요"</li>
+  <li>다른 문서를 끼워 넣은 DOCX(altChunk), 같은 묶음에 같은 파일(해시)</li>
+  <li>한도 초과: 파일 25 MiB, 압축 해제 200 MiB, PDF 500쪽, 문서 200만 자, 파싱 60초</li>
+</ul></div>
+<div class="box fb"><b>피드백 거리</b>다시 추출하는 화면은 없다. 다시 올리면 새 추출이 생기고, 이전 판단은 새 추출로 옮겨 오지 않는다(이번 범위 밖). 실제 SOP에서 변경 추적이 남은 파일이 많다면 거절 정책이 업무를 막을 수 있다.</div>
+</section>
+
+<!-- ============================================================ 6 -->
+<section id="split">
+<h2><span class="no">6</span>쪼개기</h2>
+<p>코드가 문단·조항 번호·표 구조·문장 끝 규칙으로 먼저 자른다. 한글(<code>~다.</code> <code>~음.</code>)·영어 문장 끝을 보되 소수점, 약어(<code>e.g.</code> <code>No.</code> <code>Fig.</code>), <code>Rev. 2</code>, 문서 번호, 목록 번호는 자르지 않는다. 사람은 원문 용지를 보며 경계를 확인하고 필요하면 고친다.</p>
+<figure class="shot" data-shot="split-unit">
+  <div class="frame"><img width="1440" height="900" src="img/split-unit.png" alt="쪼개기" loading="lazy"></div>
+  <figcaption><span class="fig">그림 6-1</span>쪼개기(묶음 1). <span class="s">S3</span>의 한글 복합 문장을 둘로 나눈 뒤의 앞쪽 단위를 고른 모습.
+    <ol class="marks"><li data-n="1">문서 목록. 옛·새 문서 모두 쪼갠다.</li><li data-n="2">원문 용지 위 고른 단위(밑줄). "로터를 장착하고 뚜껑을 닫은 후"와 "START 버튼을 누른다."가 이제 서로 다른 단위다.</li><li data-n="3">단위 ID(<code>OLD-1-051</code>)·언어·경계 확인 상태.</li><li data-n="4">경계 맞음 → 다음 단위(↵). 판단을 확정하면 경계도 확인된 것으로 친다.</li><li data-n="5">나누기(S): 용지에서 자를 자리를 누르고 S.</li><li data-n="6">언어 KO/EN. 기본은 글자로 코드가 판정하고, 틀리면 사람이 바꾼다.</li><li data-n="7">한/영 짝. 나눈 한글 반쪽은 영어 쪽과 1:1이 아니어서 "No pair"다 — 이 경우 영어 단위는 분류에서 새 문장 둘로 나눈다.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="split-table">
+  <div class="frame"><img width="1440" height="900" src="img/split-table.png" alt="표 단위" loading="lazy"></div>
+  <figcaption><span class="fig">그림 6-2</span>표 단위 <span class="s">S8</span>. 표 위의 가는 손잡이를 누르면 표 전체가 한 단위로 골라진다(칸 글자를 누르면 칸 문장이 골라진다).
+    <ol class="marks"><li data-n="1">표 손잡이.</li><li data-n="2">표 단위 ID.</li><li data-n="3">표 편집: <b>행 단위로 나누기</b>(행마다 다른 곳으로 보낼 때), <b>레이아웃 표로 바꾸기</b>.</li></ol>
+  </figcaption>
+</figure>
+<div class="box sys"><b>표를 다루는 두 방식</b>
+<ul>
+  <li><b>데이터 표(기본)</b>: 표 하나가 한 단위이고, 칸 글자도 칸 문장으로 추적한다. 칸 문장은 표(또는 행)의 보낸 곳과 상태를 따른다.</li>
+  <li><b>레이아웃 표</b>: 본문을 배치하려고 쓴 표(예: OLD-4의 한/영 두 열). 칸 글을 보통 문단처럼 다뤄 칸 문장마다 따로 배정한다. 작성자가 표마다 바꾼다 — 코드가 판별해 제안하지는 않는다(드물어서).</li>
+</ul></div>
+<figure class="shot" data-shot="split-pdf">
+  <div class="frame"><img width="1440" height="900" src="img/split-pdf.png" alt="PDF 쪼개기" loading="lazy"></div>
+  <figcaption><span class="fig">그림 6-3</span>OLD-5(텍스트 PDF). 빈 줄로 나뉜 문단이 블록이 되고, 여기서는 문단마다 한 문장이다.
+    <ol class="marks"><li data-n="1">OLD-5.</li><li data-n="2">용지. <span class="s">S10</span> "Select the program and press RUN …"이 한 단위로 있다 — 입구 2에서 새 문장 둘의 출처가 된다.</li></ol>
+  </figcaption>
+</figure>
+<div class="box sys"><b>뒤에서: 편집은 단위를 은퇴시킨다</b>
+<ul>
+  <li>편집 종류: 나누기, 합치기(떨어진 문장도), 경계 옮기기, 골라 만들기, 표 행 나누기·합치기, 레이아웃 표, 언어 바꾸기, 경계 확인.</li>
+  <li>단위는 제자리에서 바뀌지 않는다. 편집하면 옛 단위가 은퇴하고 새 단위가 미배정으로 생긴다. 결과물 A의 단위 ID가 흔들리지 않는 이유다.</li>
+  <li>이미 판단이 있는 단위를 은퇴시키면 확인을 받는다. 그 판단은 이력으로 가고, 같은 관계 묶음의 나머지는 지우지 않고 <b>시스템 보류("관련 단위가 바뀜")</b>로 돌린다. 다른 작성자가 확정한 것을 조용히 날리지 않으려는 것이다.</li>
+  <li>되돌리기·다시 하기는 서버에 문서마다 기록한다(여러 작성자가 같은 기록을 본다). 되돌리면 은퇴한 단위가 원래 ID로 살아나지만 판단은 자동 복원하지 않는다.</li>
+  <li>편집이 끝날 때마다 "글자를 빠짐없이 덮는가"를 다시 검사한다.</li>
+</ul></div>
+<div class="box fb"><b>피드백 거리</b>한/영 연달아 문서의 짝은 코드가 이웃끼리 제안한다. 한/영 따로 문서(OLD-3)는 임베딩(AI 쪽)이 제안하거나 사람이 손으로 잇는다 — AI가 없으면 짝을 하나씩 손으로 잇는 비용이 크다. 경계 확인(↵)은 검토 요청 조건이 아니다(판단 확정이 대신한다).</div>
+</section>
+
+<!-- ============================================================ 7 -->
+<section id="tobe">
+<h2><span class="no">7</span>To-Be 목록</h2>
+<p>분류를 시작하기 전에 새 문서 목록을 넣는다. 분류가 "새로 판단하기"에서 <b>"정해진 칸 중에서 고르기"</b>로 바뀌어 사람도 AI도 틀릴 여지가 준다.</p>
+<figure class="shot" data-shot="tobe">
+  <div class="frame"><img width="1440" height="900" src="img/tobe.png" alt="To-Be" loading="lazy"></div>
+  <figcaption><span class="fig">그림 7-1</span>To-Be 목록(묶음 1).
+    <ol class="marks"><li data-n="1">Excel 템플릿 내려받기(시트 "새 문서", "WI 단계").</li><li data-n="2">Excel 가져오기. 값만 읽고 수식은 무시한다. 번호 중복·부모 없는 WI·SOP 아닌 부모는 거절.</li><li data-n="3">새 문서 줄 더하기.</li><li data-n="4">줄 펼치기: SOP는 칸과 N/A, WI는 단계.</li><li data-n="5">저장. 묶음 <code>revision</code>으로 동시 편집을 막는다.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="tobe-sop">
+  <div class="frame"><img width="1440" height="900" src="img/tobe-sop.png" alt="SOP 칸" loading="lazy"></div>
+  <figcaption><span class="fig">그림 7-2</span>SOP-CF 펼침. WI-04는 입구 열이 <span class="tag">Match</span>(입구 2)이고 종류를 바꿀 수 없다.
+    <ol class="marks"><li data-n="1">SOP의 고정 7칸(Purpose / Scope / Definitions / Responsibilities / General Requirements / Procedures / Document Relationships)과 하위 칸. 사용자 정의 칸은 없다.</li><li data-n="2">N/A 표시. 사유가 필수이고 AI는 N/A를 정하지 않는다. 상위 칸이 N/A면 그 아래에도 배정할 수 없다.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="tobe-wi">
+  <div class="frame"><img width="1440" height="900" src="img/tobe-wi.png" alt="WI 단계" loading="lazy"></div>
+  <figcaption><span class="fig">그림 7-3</span>WI 펼침. WI에는 정해진 칸이 없고 자리는 "몇 번째 단계의 Instruction 또는 Why"다.
+    <ol class="marks"><li data-n="1">단계 번호와 제목. 미리 적어 두면 그 단계에 배정하고, 안 적었으면 WI에 배정한 뒤 결과물 C에서 순서를 정한다.</li><li data-n="2">단계 더하기. 단계 번호는 다시 매기지 않는다(서버가 번호로 단계를 알아본다).</li></ol>
+  </figcaption>
+</figure>
+<div class="box rule"><b>판단 기준(도메인 문서)</b>
+<ul>
+  <li>R01: SOP는 준수할 정책·요구사항·역할, WI는 수행할 방법·순서. 문체는 보조 신호이고 의미로 판단한다.</li>
+  <li>R02: SOP 문체 <code>~하여야 한다</code> <code>~되어야 한다</code>, WI 문체 <code>~한다</code> <code>~을 확인한다</code>.</li>
+  <li>R10: Why는 실수 가능성·눈에 안 띄는 중요성·필수 순서·주의 근거가 있을 때만 둔다.</li>
+  <li>장비 SOP인데 Procedures 아래 하위 칸이 비어 있고 N/A도 아니면 경고한다(완료를 막지는 않는다 — 그림 4-3의 ⓘ 줄).</li>
+</ul></div>
+<div class="box fb"><b>피드백 거리</b>이미 새 문장이 들어간 문서를 지우거나 SOP↔WI를 바꾸는 변경은 거절한다(먼저 비워야 한다). AI로 문서 하나를 분류한 뒤에는 그 문서를 지우기 전에 줄마다 비워야 해서 번거로울 수 있다. "다른 문서로 이동"은 대상 번호만 기록하고 다른 묶음에 자동으로 넣지 않는다.</div>
+</section>
+
+<!-- ============================================================ 8 -->
+<section id="classify">
+<h2><span class="no">8</span>분류 (입구 1)</h2>
+<p>옛 단위를 하나씩 골라 보낼 곳을 정하고, 새 문장을 확정한다. 한/영 짝은 한 줄로 묶여 함께 확정된다.</p>
+<figure class="shot" data-shot="classify-pick">
+  <div class="frame"><img width="1440" height="900" src="img/classify-pick.png" alt="분류 보낼 곳" loading="lazy"></div>
+  <figcaption><span class="fig">그림 8-1</span>분류(묶음 2, 절반 진행). <span class="s">S3</span>의 앞쪽 단위에 보낼 곳을 고르는 중.
+    <ol class="marks"><li data-n="1">상태 거르기: 미배정·AI 제안·보류·확정·전체(개수).</li><li data-n="2">줄 목록. 짝이면 <code>OLD-1-003 · OLD-1-004</code>처럼 두 ID가 한 줄이다.</li><li data-n="3">원문 용지. 지금 줄에 밑줄, 앞뒤 문맥을 함께 본다. 원문은 바뀌지 않는다.</li><li data-n="4">보낼 곳 메뉴: 새 문서별 칸·WI 단계(N/A 칸은 고를 수 없다), 그리고 삭제·다른 문서로 이동.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="classify-row">
+  <div class="frame"><img width="1440" height="900" src="img/classify-row.png" alt="오른쪽 패널" loading="lazy"></div>
+  <figcaption><span class="fig">그림 8-2</span>같은 줄의 오른쪽 패널(메뉴를 닫은 모습).
+    <ol class="marks"><li data-n="1">보낼 곳. 아직 고르지 않았다.</li><li data-n="2">주 단추(↵): 보낼 곳 고르기 → 확정. 보낼 곳만 고르면 원문 그대로 새 문장이 된다("그대로").</li><li data-n="3">고쳐서 확정(E): 새 문장 글을 고친 뒤 저장(Ctrl+↵).</li><li data-n="4">보류(H): 보낼 곳 없이도 사유를 남기고 보류할 수 있다.</li><li data-n="5">새 문장 자리. 보낼 곳을 고르면 한·영 새 문장 칸이 생긴다.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="classify-confirmed">
+  <div class="frame"><img width="1440" height="900" src="img/classify-confirmed.png" alt="확정된 줄" loading="lazy"></div>
+  <figcaption><span class="fig">그림 8-3</span>확정된 <span class="s">S1</span>. 한글·영어 새 문장이 따로 있고 각자 변경 종류를 가진다.
+    <ol class="marks"><li data-n="1">S1 줄(한/영 짝).</li><li data-n="2">보낸 곳: SOP-CF · Purpose.</li><li data-n="3">새 문장(고친 글). 원문과 다르게 고칠 때는 "고쳐서 확정(E)".</li><li data-n="4">변경 종류: 그대로 / 말투 / 고쳐 씀 중 사람이 고른다. 글자가 원문과 같으면 코드가 "그대로"로 둔다.</li><li data-n="5">확정한 사람·시각.</li><li data-n="6">배정 지우기(U): 미배정으로 되돌린다. 확정·보류 단위에 AI 제안을 다시 받으려면 먼저 이걸 한다.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="classify-list">
+  <div class="frame"><img width="1440" height="900" src="img/classify-list.png" alt="목록 배치" loading="lazy"></div>
+  <figcaption><span class="fig">그림 8-4</span>같은 화면의 "목록 + 상세" 배치(상단 막대의 배치 단추로 사람마다 고른다). 용지 없이 원문과 새 문장을 나란히 본다.
+    <ol class="marks"><li data-n="1">넓은 줄 목록.</li><li data-n="2">원문(Source).</li><li data-n="3">새 문장.</li><li data-n="4">주 단추.</li></ol>
+  </figcaption>
+</figure>
+<h3>따라갈 문장을 분류하면</h3>
+<table>
+  <tr><th style="width:44px"></th><th>하는 일</th><th>저장 때 서버가 보는 것</th></tr>
+  <tr><td><span class="s">S1</span></td><td>SOP-CF · Purpose를 고르고 "고쳐서 확정"으로 한·영 새 문장을 고친다. 변경 종류 고쳐 씀.</td><td>새 문장 언어 = 출처 언어, 글 비어 있지 않음.</td></tr>
+  <tr><td><span class="s">S2</span></td><td>Responsibilities, 문장 끝만 SOP 문체로 → 말투.</td><td>—</td></tr>
+  <tr><td><span class="s">S3</span></td><td>한글 두 단위를 WI-01 3단계·4단계로 각각. 영어 한 단위는 새 문장 둘(3·4단계)로 → 나눔(코드가 계산).</td><td>관계 묶음이 닫혀 있는가.</td></tr>
+  <tr><td><span class="s">S4</span></td><td>OLD-1과 OLD-2의 두 단위를 한 새 문장으로 → 합침. 두 줄이 같은 관계 묶음이라 <b>한 번에</b> 저장된다.</td><td>보낸 새 문장의 모든 출처가 저장 안에 있는가.</td></tr>
+  <tr><td><span class="s">S5</span></td><td>삭제 + 사유.</td><td>삭제·이동·중복 배정·표 구성 변경은 사유 필수.</td></tr>
+  <tr><td><span class="s">S6</span></td><td>SOP-CF Safety와 WI-01 4단계 둘 다로 → 중복 배정 + 사유.</td><td>서로 다른 새 문서 둘 이상이면 중복 배정(같은 문서 안 여러 문장은 나눔).</td></tr>
+  <tr><td><span class="s">S7</span></td><td>다른 문서로 이동 + 대상 번호 SOP-QC-99999 + 사유.</td><td>—</td></tr>
+  <tr><td><span class="s">S8</span></td><td>표 단위를 WI-01 4단계로. 칸 문장은 표를 따른다. 칸 자리가 원문과 다르면 "표 구성 변경" + 사유.</td><td>"그대로" 표는 칸마다 칸 새 문장이 있어야 한다.</td></tr>
+  <tr><td><span class="s">S12</span></td><td>구조 제목·머리말을 여러 개 골라(Ctrl+클릭) 같은 사유로 한 번에 삭제.</td><td>여러 개 한 번에는 삭제·이동만, AI 제안 단위가 섞이면 통째 거절.</td></tr>
+</table>
+<div class="box sys"><b>뒤에서: 문장 검사</b>확정할 때 원문과 새 문장의 숫자·단위·부정어 차이를 코드가 검사해 경고한다(그림 8-3의 Checks 줄). 막지는 않고 결과물·Excel에 경고로 남는다.</div>
+<div class="box fb"><b>피드백 거리</b>
+<ul>
+  <li>단축키: J/K 다음·이전, ↵ 확정, E 고쳐서 확정(저장 Ctrl+↵), H 보류, U 배정 지우기, Ctrl+클릭 여러 줄.</li>
+  <li>확정된 줄에서도 주 단추가 "Confirm"으로 보인다(다시 저장의 뜻). 의미가 헷갈리지 않는지 볼 만하다.</li>
+  <li>짝을 저장하면 짝도 같이 확정되지만, 서버가 짝을 <b>몰래</b> 바꾸지는 않는다(화면이 명시적으로 함께 보낸다).</li>
+</ul></div>
+</section>
+
+<!-- ============================================================ 9 -->
+<section id="match">
+<h2><span class="no">9</span>짝 맞추기 (입구 2)</h2>
+<p>새 문서를 이미 써 둔 경우다. 새 문서(WI-04)를 추출하면 시스템이 새 단위마다 새 문장을 하나씩 만든다(확정 글 = 새 문서 원문 그대로, 자리 = 실제 절). 짝 맞추기는 이 새 문장들에 <b>옛 단위를 출처로 붙이는 일</b>이다. 그래서 두 입구가 같은 표를 채우고 결과물 계산이 하나다.</p>
+<figure class="shot" data-shot="match">
+  <div class="frame"><img width="1440" height="900" src="img/match.png" alt="짝 맞추기" loading="lazy"></div>
+  <figcaption><span class="fig">그림 9-1</span>짝 맞추기(묶음 4). 왼쪽 목록은 옛 단위가 아니라 <b>WI-04의 새 문장</b>이다.
+    <ol class="marks"><li data-n="1">같은 글자 짝 한 번에 확정: 옛 문장과 글자가 똑같고 후보가 하나뿐인 1:1 짝 4개를 "그대로"로 몰아서 확정한다(코드가 확인할 수 있는 경우만).</li><li data-n="2">새 문장 줄(WI-04 · 1. Preparation).</li><li data-n="3">이을 옛 단위 후보(검색 가능).</li><li data-n="4">고른 옛 단위를 출처로 잇기.</li><li data-n="5">짝 없는 새 문장은 "신규"로 확정 <span class="s">S11</span>.</li><li data-n="6">변경 종류. 출처가 하나이고 글이 다르면 말투/고쳐 씀을 고른다.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="match-done">
+  <div class="frame"><img width="1440" height="900" src="img/match-done.png" alt="나눈 짝" loading="lazy"></div>
+  <figcaption><span class="fig">그림 9-2</span>확정된 <span class="s">S10</span>(묶음 3). 옛 단위 하나가 새 문장 둘의 출처다.
+    <ol class="marks"><li data-n="1">"Select the program."(WI-04 · 2. Operation).</li><li data-n="2">출처: <code>OLD-5-005</code> "Select the program and press RUN …". "Press RUN …" 줄도 같은 출처를 가진다.</li><li data-n="3">변경 종류 칸이 "Rewritten"으로 보인다 — <b>저장된 값은 나눔(split)</b>이고 결과물 A도 나눔으로 나온다. 화면 표시가 틀렸다(15장).</li></ol>
+  </figcaption>
+</figure>
+<div class="box sys"><b>뒤에서</b>
+<ul>
+  <li>입구 2 새 문장의 글·자리는 새 문서 원문으로 잠겨 있다. 고칠 수 있는 것은 출처와 변경 종류뿐이다.</li>
+  <li>짝이 없는 옛 단위는 삭제 후보다(<code>OLD-5-007</code> 구매 이력 → 삭제 + 사유).</li>
+  <li>쪼개기에서 새 문서를 고치면 그 새 문서의 새 문장 전체를 다시 맞춘다(절 경로·언어·순서).</li>
+</ul></div>
+<div class="box warn"><b>지금 막힌 곳</b>짝 맞추기 목록에는 문장만 나온다. 새 문서에 표·그림이 있는 입구 2 묶음은 그 줄을 처리할 화면이 없어 검토로 못 간다(남은 막힘).</div>
+</section>
+
+<!-- ============================================================ 10 -->
+<section id="ai">
+<h2><span class="no">10</span>AI가 하는 일</h2>
+<p>AI는 작성자가 <b>요청할 때만</b> 돌고, 결과는 제안으로만 남는다. 아래 화면의 제안은 실제 모델이 아니라 <b>가짜 AI가 합성 정답으로 답한 것</b>이다.</p>
+<figure class="shot" data-shot="classify-ai">
+  <div class="frame"><img width="1440" height="900" src="img/classify-ai.png" alt="AI 제안" loading="lazy"></div>
+  <figcaption><span class="fig">그림 10-1</span>AI 제안이 붙은 <span class="s">S1</span>(묶음 4). 줄 머리의 보라 점선 원과 <span class="tag">AI suggested</span>가 제안 상태다.
+    <ol class="marks"><li data-n="1">AI 제안 줄.</li><li data-n="2">제안 카드: 이유, 인용한 원문 위치. 제안은 줄마다 사람이 본다 — 여러 개 한 번에 확정은 없다.</li><li data-n="3">인용한 규칙 ID(<code>R01</code>). 활성 지침에 없는 ID는 빼고 경고한다.</li><li data-n="4">고쳐 쓴 한·영 문장 제안. SOP로 가면 SOP 문체, WI로 가면 WI 문체.</li><li data-n="5">↵ 그대로 받기 — 제안 문장이 확정 문장이 된다.</li><li data-n="6">고쳐서 확정. 채택 여부는 코드가 판정한다(그대로 / 고쳐서 / 버림).</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="classify-hold">
+  <div class="frame"><img width="1440" height="900" src="img/classify-hold.png" alt="시스템 보류" loading="lazy"></div>
+  <figcaption><span class="fig">그림 10-2</span>시스템이 건 보류.
+    <ol class="marks"><li data-n="1">보류 거르기.</li><li data-n="2">시스템 보류 라벨. AI 응답이 형식이 틀렸거나 후보 밖을 골랐으면 그 단위만 "AI 응답 무효"로 보류하고 나머지는 진행한다. 사람이 쓴 사유가 아니라 라벨로 보인다.</li></ol>
+  </figcaption>
+</figure>
+<table>
+  <tr><th>AI 작업 종류</th><th>어디서</th><th>하는 일</th><th>쓰는 것</th></tr>
+  <tr><td>분류 <code>classify</code></td><td>분류</td><td>임베딩으로 칸 후보 3개를 추리고("삭제"는 늘 후보), LLM이 하나를 골라 이유·규칙 ID·근거 인용·변경 종류·한영 고쳐 쓰기를 낸다. "다른 문서로 이동"은 제안하지 않는다(묶음 밖을 모르므로).</td><td>임베딩 + LLM</td></tr>
+  <tr><td>번역 <code>translate</code></td><td>분류</td><td>방향을 골라(한→영, 영→한) 짝 없는 문장의 반대 언어를 제안. 출처 새 문장이 바뀌면 AI 번역은 지우고 확정 번역은 보류로 돌린다.</td><td>LLM</td></tr>
+  <tr><td>입구 2 <code>match_plan</code> → <code>match</code></td><td>짝 맞추기</td><td>코드가 옛 단위와 새 문장을 묶고(임베딩, 없으면 글자 유사도), LLM에는 변경 종류만 묻는다.</td><td>임베딩 + LLM</td></tr>
+  <tr><td>한/영 짝 <code>pair</code></td><td>쪼개기</td><td>한/영 따로 문서의 한글·영어 문장 짝 제안.</td><td>임베딩만</td></tr>
+  <tr><td>나누기 <code>split</code></td><td>쪼개기·분류</td><td>복합 문장을 나눌 자리 제안. 받아들이면 나누기 편집이 된다.</td><td>LLM</td></tr>
+</table>
+<div class="box ai"><b>AI가 하지 않는 것 (코드가 막는다)</b>
+<ul>
+  <li>확정하지 않는다. 확정·보류된 단위를 덮지 않는다. 같은 종류의 이전 제안 위에만 쓴다(짝 제안이 분류 제안을 덮지 않는다).</li>
+  <li>원문을 고치지 않는다. AI 제안 문장은 확정 문장과 따로 보관한다.</li>
+  <li>직원 실명을 보내지 않는다(역할·부서 같은 비식별 정보만). 모델은 사내 GLM이다.</li>
+  <li>늦게 온 응답은 적용하지 않는다: 요청 때 적어 둔 대상의 <code>revision</code>·해시가 그 사이 바뀌었으면 <code>stale</code>로 끝난다. 검토 요청을 하면 대기 중 작업은 취소된다.</li>
+</ul></div>
+<div class="box sys"><b>뒤에서: 작업 실행</b>요청은 작업 행을 쌓고 곧바로 응답한다. 백엔드 안의 실행기가 작업마다 <b>읽기(짧게) → AI 호출(DB 연결 없이) → 적용(묶음을 잠그고 다시 확인)</b> 세 단계로 돈다. 요청 한 번은 작업 2,000건까지이고 넘은 단위는 "건너뜀"으로 알린다. 모든 제안은 쓴 지침·프롬프트 버전과 모델을 기록하고, 채택률(그대로·고쳐서·버림)을 계산한다.</div>
+<div class="box fb"><b>피드백 거리</b>
+<ul>
+  <li>임계값(짝 유사도 등)은 합성 자료로만 잡은 값이다. 실제 모델·SOP로는 아직 시험하지 않았다 — 정확도·채택률은 근거가 없다.</li>
+  <li>표 단위 AI 제안은 보낼 곳만 고르고 칸 글은 그대로 둔다(칸 고쳐 쓰기는 사람 또는 칸 번역).</li>
+  <li>"AI 제안 여러 개 한 번에 확정"을 일부러 막았다(목표: 사람이 줄마다 본다). 실제 분량에서 이 비용이 견딜 만한지가 큰 질문이다.</li>
+</ul></div>
+</section>
+
+<!-- ============================================================ 11 -->
+<section id="outputs">
+<h2><span class="no">11</span>결과물 A·B·C</h2>
+<p>세 결과물은 모두 확정 결과로 <b>코드가 계산</b>한다(AI 없음). 한글판과 영어판을 따로 만들고, 같은 데이터(옛 단위·보낸 곳·새 문장)를 서로 다른 방향에서 본다. 작업 중에도 볼 수 있고 Excel로 내려받을 수 있다.</p>
+<figure class="shot" data-shot="outputs-a">
+  <div class="frame"><img width="1440" height="900" src="img/outputs-a.png" alt="결과물 A" loading="lazy"></div>
+  <figcaption><span class="fig">그림 11-1</span>A 문장 비교표(묶음 3, 한글). 옛 커버 단위마다 한 줄, 옛 문서 순서.
+    <ol class="marks"><li data-n="1">A 탭.</li><li data-n="2">옛 단위(문서·절·ID) · 원문 · 보낸 곳 · 새 문장과 변경 종류 · 상태. 나눔은 한 칸에 ①②, 합침은 출처 줄마다 같은 관계 묶음 ID, 중복 배정은 보낸 곳마다 줄을 나눈다.</li><li data-n="3">언어 전환(한글판/영어판).</li><li data-n="4">요약 숫자: 옛 단위·배정·미배정·중복·삭제·이동·신규·확정률(한글 43 단위, 삭제 16, 이동 1, 중복 1).</li><li data-n="5">의미 검토 4항목(숫자·조건·표·그림). 작성자가 직접 표시해야 검토 요청이 된다 — 기계적 커버리지와 사람의 의미 검토를 따로 보이려는 것.</li><li data-n="6">언어별 Excel 내려받기.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="outputs-b">
+  <div class="frame"><img width="1440" height="900" src="img/outputs-b.png" alt="결과물 B" loading="lazy"></div>
+  <figcaption><span class="fig">그림 11-2</span>B 맵핑 흐름. 옛 문서마다 단위가 어느 새 문서·삭제·이동으로 몇 개씩 갔는지. 미배정이 있으면 따로 눈에 띄게 둔다. OLD-5는 영어만이라 한글판에 없다.
+    <ol class="marks"><li data-n="1">OLD-1(23 단위) → SOP-CF 8 · WI-01 7 · 삭제 8 …</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="outputs-c">
+  <div class="frame"><img width="1440" height="900" src="img/outputs-c.png" alt="결과물 C" loading="lazy"></div>
+  <figcaption><span class="fig">그림 11-3</span>C 새 문서 기준. 새 SOP와 그 아래 WI마다 칸·단계별로 받은 문장. 다음 단계(문서 생성)에 넘길 재료다.
+    <ol class="marks"><li data-n="1">SOP-CF: <span class="s">S1</span> Purpose, <span class="s">S2</span> Responsibilities, <span class="s">S6</span> Safety(둘째 줄). 빈 칸은 "–", N/A 칸은 사유와 함께.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="outputs-c-wi">
+  <div class="frame"><img width="1440" height="900" src="img/outputs-c-wi.png" alt="결과물 C WI" loading="lazy"></div>
+  <figcaption><span class="fig">그림 11-4</span>C의 WI-01. 단계 · Instruction/Why 순서로 쌓인다.
+    <ol class="marks"><li data-n="1">WI-01: 2단계 Why(R10), 3단계에 <span class="s">S3</span> 앞쪽과 <span class="s">S9</span> 그림([Figure]). C에서 새 문장 순서와 WI 단계를 바꿀 수 있다(작업 중일 때).</li></ol>
+  </figcaption>
+</figure>
+<div class="box sys"><b>Excel</b>언어별 파일 하나, 시트는 A 비교표 · B 흐름(요약 숫자 + 건수 표 + 흐름도 그림) · C 새 문서 · 정보(묶음·상태·지침 버전·합성 여부). 수식은 쓰지 않는다 — <code>=</code> <code>+</code> <code>-</code> <code>@</code>로 시작하는 글도 문자열로 쓴다. 흐름도 그림은 서버가 저장소에 넣은 한글 글꼴로 그린다.</div>
+<div class="box fb"><b>피드백 거리</b>
+<ul>
+  <li>A의 보낸 곳·변경 종류 칸이 내부 코드값(<code>delete</code>, <code>as_is</code>, <code>tone</code>, <code>rewritten</code>)으로 보인다. 사람 말 라벨이 아니다.</li>
+  <li>B의 "삭제", "다른 문서로 이동"만 한글이라 영어 화면과 섞인다.</li>
+  <li>명세는 C에 출처를 <code>← OLD-1 §5.1, OLD-2 §1 (합침)</code> 꼴로 보이게 했는데, 지금 화면 C에는 문장별 출처가 없다(삭제·이동 칸에만 원문이 보인다).</li>
+</ul></div>
+</section>
+
+<!-- ============================================================ 12 -->
+<section id="review">
+<h2><span class="no">12</span>검토</h2>
+<figure class="shot" data-shot="overview-ready">
+  <div class="frame"><img width="1440" height="900" src="img/overview-ready.png" alt="검토 조건" loading="lazy"></div>
+  <figcaption><span class="fig">그림 12-1</span>검토 대기 중인 묶음 3의 개요. 조건이 모두 채워져 검토를 요청한 상태다.
+    <ol class="marks"><li data-n="1">상태 <span class="tag">In review</span>. 검토 대기·완료에서는 내용을 고칠 수 없다(읽기와 내보내기만).</li><li data-n="2">검토 요청 조건. 아래 표가 전부다.</li></ol>
+  </figcaption>
+</figure>
+<table>
+  <tr><th>조건</th><th>채우는 곳</th></tr>
+  <tr><td>옛 문서가 있고 거절·실패 문서가 없음</td><td>문서</td></tr>
+  <tr><td>미배정·AI 제안·보류인 커버 단위가 없음(두 언어 모두)</td><td>분류</td></tr>
+  <tr><td>미배정·AI 제안·보류인 새 문장이 없음</td><td>짝 맞추기(입구 2), 번역</td></tr>
+  <tr><td>삭제·이동·중복 배정·표 구성 변경에 사유</td><td>분류 사유 칸</td></tr>
+  <tr><td>"추출 누락 의심" 경고를 모두 확인함</td><td>쪼개기</td></tr>
+  <tr><td>의미 검토 4항목 표시</td><td>결과물</td></tr>
+  <tr><td>검토자 1명 이상</td><td>개요 › 멤버</td></tr>
+</table>
+<figure class="shot" data-shot="review-reviewer">
+  <div class="frame"><img width="1440" height="900" src="img/review-reviewer.png" alt="검토자 화면" loading="lazy"></div>
+  <figcaption><span class="fig">그림 12-2</span>검토자(qa.lead)가 본 검토 화면. 결과물 C 모양으로 새 문서를 읽는다.
+    <ol class="marks"><li data-n="1">상태.</li><li data-n="2">검토 완료 → <span class="tag">Review complete</span>.</li><li data-n="3">되돌리기(사유 필수) → 작업 중.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="review-return">
+  <div class="frame"><img width="1440" height="900" src="img/review-return.png" alt="되돌리기" loading="lazy"></div>
+  <figcaption><span class="fig">그림 12-3</span>되돌리기 사유 입력.
+    <ol class="marks"><li data-n="1">사유(작업 기록에 남는다).</li><li data-n="2">되돌리면 의미 검토 4항목이 모두 지워져 작성자가 다시 표시해야 한다.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="review-done">
+  <div class="frame"><img width="1440" height="900" src="img/review-done.png" alt="검토 완료" loading="lazy"></div>
+  <figcaption><span class="fig">그림 12-4</span>검토 완료 뒤(검토자 화면).
+    <ol class="marks"><li data-n="1"><span class="tag">Review complete</span> — 꽉 찬 회색.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="review-reopen">
+  <div class="frame"><img width="1440" height="900" src="img/review-reopen.png" alt="다시 열기" loading="lazy"></div>
+  <figcaption><span class="fig">그림 12-5</span>같은 묶음을 작성자가 본 모습.
+    <ol class="marks"><li data-n="1">상태.</li><li data-n="2">다시 열기(사유) → 작업 중. 정식 승인은 Veeva에서 하므로 이 앱의 완료는 작업 단계 표시다.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="home-done">
+  <div class="frame"><img width="1440" height="900" src="img/home-done.png" alt="목록의 완료 묶음" loading="lazy"></div>
+  <figcaption><span class="fig">그림 12-6</span>목록에서 본 상태 칩.
+    <ol class="marks"><li data-n="1">완료(꽉 찬 회색).</li><li data-n="2">진행 중(연한 파랑).</li></ol>
+  </figcaption>
+</figure>
+</section>
+
+<!-- ============================================================ 13 -->
+<section id="life">
+<h2><span class="no">13</span>라이프사이클</h2>
+<p>시스템 안의 것들이 어떤 상태를 거치는지 한 곳에 모았다. 상태 칩 색은 진하기 3단(테두리 → 연한 바탕 → 꽉 참)으로 무게를 나타낸다.</p>
+
+<h3>묶음</h3>
+<div class="diagram">
+<svg viewBox="0 0 980 230" role="img" aria-label="묶음 상태">
+  <rect class="n code" x="40" y="70" width="190" height="64" rx="10"/><text x="135" y="98" text-anchor="middle" class="tt">작업 중</text><text x="135" y="118" text-anchor="middle" class="sm">in_progress · 모든 편집</text>
+  <rect class="n hold" x="395" y="70" width="190" height="64" rx="10"/><text x="490" y="98" text-anchor="middle" class="tt">검토 대기</text><text x="490" y="118" text-anchor="middle" class="sm">in_review · 읽기·내보내기만</text>
+  <rect class="n done" x="750" y="70" width="190" height="64" rx="10"/><text x="845" y="98" text-anchor="middle" class="tt">검토 완료</text><text x="845" y="118" text-anchor="middle" class="sm">done · 읽기·내보내기만</text>
+  <path class="e" d="M230,90 H391"/><text x="310" y="80" text-anchor="middle" class="lbl">검토 요청 (작성자)</text><text x="310" y="64" text-anchor="middle" class="sm">조건 7개 통과 · 대기 AI 작업 취소</text>
+  <path class="e" d="M585,90 H746"/><text x="665" y="80" text-anchor="middle" class="lbl">검토 완료 (검토자)</text>
+  <path class="e" d="M395,122 C320,160 260,160 232,126"/><text x="312" y="170" text-anchor="middle" class="lbl">되돌리기 (검토자, 사유)</text>
+  <path class="e" d="M760,134 C650,215 300,215 200,136"/><text x="490" y="214" text-anchor="middle" class="lbl">다시 열기 (작성자, 사유) — 의미 검토 4항목은 지워진다</text>
+  <text x="40" y="40" class="sm">만들기 → 작업 중. 삭제는 작업 중일 때 작성자만(전부 영구 삭제, 전역 기록).</text>
+</svg>
+</div>
+
+<h3>문서</h3>
+<div class="diagram">
+<svg viewBox="0 0 980 170" role="img" aria-label="문서 상태">
+  <rect class="n human" x="20" y="55" width="140" height="56" rx="8"/><text x="90" y="80" text-anchor="middle" class="tt">업로드</text><text x="90" y="98" text-anchor="middle" class="sm">작업 중일 때만</text>
+  <rect class="n code" x="220" y="55" width="160" height="56" rx="8"/><text x="300" y="80" text-anchor="middle" class="tt">추출 (자식 프로세스)</text><text x="300" y="98" text-anchor="middle" class="sm">메인 → MarkItDown 대조</text>
+  <rect class="n done" x="450" y="10" width="150" height="46" rx="8"/><text x="525" y="38" text-anchor="middle" class="tt">Ready</text>
+  <rect class="n bad" x="450" y="66" width="150" height="46" rx="8"/><text x="525" y="94" text-anchor="middle" class="tt">Rejected</text>
+  <rect class="n bad" x="450" y="122" width="150" height="40" rx="8"/><text x="525" y="147" text-anchor="middle" class="tt">Failed</text>
+  <path class="e" d="M160,83 H216"/><path class="e" d="M380,75 C410,50 420,35 446,33"/><path class="e" d="M380,85 H446"/><path class="e" d="M380,95 C410,120 420,140 446,142"/>
+  <text x="620" y="32" class="lbl">단위가 만들어지고 쪼개기·분류 대상. 새 문서면 To-Be 줄이 생긴다.</text>
+  <text x="620" y="90" class="lbl">정책상 거절(변경 추적·DRM·한도 등) — 사유를 보인다.</text>
+  <text x="620" y="146" class="lbl">파서 예외 — 예외 이름만 남긴다. 둘 다 지우거나 다시 올려야 검토 요청 가능.</text>
+</svg>
+</div>
+
+<h3>단위와 새 문장의 상태</h3>
+<div class="diagram">
+<svg viewBox="0 0 980 300" role="img" aria-label="단위 상태">
+  <rect class="n" x="40" y="120" width="160" height="56" rx="10"/><text x="120" y="145" text-anchor="middle" class="tt">미배정</text><text x="120" y="163" text-anchor="middle" class="sm">Unassigned · 테두리</text>
+  <rect class="n ai" x="330" y="20" width="170" height="56" rx="10"/><text x="415" y="45" text-anchor="middle" class="tt" style="fill:var(--ai)">AI 제안</text><text x="415" y="63" text-anchor="middle" class="sm">AI suggested · 점선</text>
+  <rect class="n code" x="640" y="120" width="170" height="56" rx="10"/><text x="725" y="145" text-anchor="middle" class="tt">확정</text><text x="725" y="163" text-anchor="middle" class="sm">Confirmed · 꽉 찬 파랑</text>
+  <rect class="n hold" x="330" y="220" width="170" height="56" rx="10"/><text x="415" y="245" text-anchor="middle" class="tt">보류</text><text x="415" y="263" text-anchor="middle" class="sm">On hold · 사유 또는 시스템 라벨</text>
+  <path class="e ai" d="M200,135 C250,90 280,60 326,52"/><text x="236" y="80" class="lbl" style="fill:var(--ai)">AI 작업</text>
+  <path class="e ai" d="M415,20 C440,0 470,0 480,16"/><text x="500" y="12" class="sm">더 새로운 같은 종류 제안이 덮음</text>
+  <path class="e" d="M500,55 C560,70 600,100 650,118"/><text x="590" y="80" class="lbl">사람 확정 (↵)</text>
+  <path class="e" d="M200,148 H636"/><text x="420" y="140" text-anchor="middle" class="lbl">사람 확정</text>
+  <path class="e" d="M180,176 C230,230 280,248 326,248"/><text x="200" y="226" class="lbl">사람 보류 (사유)</text>
+  <path class="e" d="M415,76 V216"/><text x="425" y="190" class="lbl">사람 보류</text>
+  <path class="e" d="M500,240 C580,230 640,200 680,180"/><text x="600" y="232" class="lbl">사람 확정</text>
+  <path class="e" d="M700,176 C680,215 560,250 504,256"/><text x="620" y="270" class="lbl">사람 보류</text>
+  <path class="e sys" d="M640,170 C560,200 520,210 504,228"/><text x="830" y="196" class="sm" style="fill:var(--hold)">시스템 보류:</text><text x="830" y="211" class="sm" style="fill:var(--hold)">관련 단위가 바뀜,</text><text x="830" y="226" class="sm" style="fill:var(--hold)">AI 응답 무효,</text><text x="830" y="241" class="sm" style="fill:var(--hold)">출처가 바뀐 확정 번역</text>
+  <path class="e" d="M640,135 C450,105 300,110 204,132"/><text x="840" y="110" class="sm">어느 상태든 → 미배정:</text><text x="840" y="125" class="sm">배정 지우기(U), 또는</text><text x="840" y="140" class="sm">쪼개기 편집으로 단위 은퇴</text>
+</svg>
+</div>
+<p>칸 문장은 자기 표·행의 상태를 따르고, 한/영 짝 줄은 덜 끝난 쪽 상태를 보인다. AI 결과는 미배정 단위, 또는 <b>같은 종류</b> AI 작업의 이전 제안 위에만 들어간다.</p>
+
+<h3>한 문장의 일생 <span class="s">S3</span></h3>
+<div class="diagram">
+<svg viewBox="0 0 980 190" role="img" aria-label="S3의 일생">
+  <rect class="n code" x="10" y="20" width="170" height="60" rx="8"/><text x="95" y="44" text-anchor="middle" class="tt">원문 블록</text><text x="95" y="64" text-anchor="middle" class="sm">"로터를 장착하고 … 누른다."</text>
+  <rect class="n code" x="210" y="20" width="160" height="60" rx="8"/><text x="290" y="44" text-anchor="middle" class="tt">단위 하나</text><text x="290" y="64" text-anchor="middle" class="sm">규칙 쪼개기 결과</text>
+  <rect class="n human" x="400" y="20" width="170" height="60" rx="8"/><text x="485" y="44" text-anchor="middle" class="tt">나누기 편집</text><text x="485" y="64" text-anchor="middle" class="sm">옛 단위 은퇴 → 051 · 052</text>
+  <rect class="n human" x="600" y="20" width="170" height="60" rx="8"/><text x="685" y="44" text-anchor="middle" class="tt">분류 확정</text><text x="685" y="64" text-anchor="middle" class="sm">WI-01 3단계 · 4단계</text>
+  <rect class="n code" x="800" y="20" width="170" height="60" rx="8"/><text x="885" y="44" text-anchor="middle" class="tt">결과물</text><text x="885" y="64" text-anchor="middle" class="sm">A 두 줄 · C 3·4단계</text>
+  <path class="e" d="M180,50 H206"/><path class="e" d="M370,50 H396"/><path class="e" d="M570,50 H596"/><path class="e" d="M770,50 H796"/>
+  <text x="10" y="120" class="lbl">영어 짝 "Mount the rotor, close the lid and press START."는 단위를 그대로 두고 새 문장 둘(3·4단계)을 만든다 → 변경 종류 "나눔"을 코드가 계산.</text>
+  <text x="10" y="142" class="lbl">한글은 단위를 나눴기 때문에 각 줄이 1:1이고 변경 종류는 말투·그대로다. 같은 내용도 언어마다 다른 길로 갈 수 있다.</text>
+  <text x="10" y="164" class="lbl">나중에 누가 051을 다시 합치면, 051·052의 판단은 이력으로 가고 새 단위는 미배정에서 시작한다(확인을 받는다).</text>
+</svg>
+</div>
+
+<h3>AI 작업</h3>
+<div class="diagram">
+<svg viewBox="0 0 980 190" role="img" aria-label="AI 작업 상태">
+  <rect class="n human" x="10" y="60" width="130" height="52" rx="8"/><text x="75" y="84" text-anchor="middle" class="tt">요청</text><text x="75" y="101" text-anchor="middle" class="sm">작성자 · ai.request</text>
+  <rect class="n" x="180" y="60" width="130" height="52" rx="8"/><text x="245" y="91" text-anchor="middle" class="tt">queued</text>
+  <rect class="n code" x="350" y="60" width="150" height="52" rx="8"/><text x="425" y="84" text-anchor="middle" class="tt">running</text><text x="425" y="101" text-anchor="middle" class="sm">읽기 → 호출 → 적용</text>
+  <rect class="n done" x="560" y="6" width="120" height="40" rx="8"/><text x="620" y="31" text-anchor="middle" class="tt">done</text>
+  <rect class="n bad" x="560" y="54" width="120" height="40" rx="8"/><text x="620" y="79" text-anchor="middle" class="tt">failed</text>
+  <rect class="n hold" x="560" y="102" width="120" height="40" rx="8"/><text x="620" y="127" text-anchor="middle" class="tt">stale</text>
+  <rect class="n" x="560" y="150" width="120" height="36" rx="8"/><text x="620" y="173" text-anchor="middle" class="tt">cancelled</text>
+  <path class="e" d="M140,86 H176"/><path class="e" d="M310,86 H346"/>
+  <path class="e" d="M500,76 C530,40 540,28 556,26"/><path class="e" d="M500,82 H556" transform="translate(0,-8)"/><path class="e" d="M500,96 C530,110 540,120 556,122"/><path class="e" d="M310,100 C420,175 500,170 556,168"/>
+  <text x="700" y="30" class="lbl">제안이 붙는다(같은 종류 이전 제안은 stale로 밀림)</text>
+  <text x="700" y="78" class="lbl">AI 꺼짐·오류 — 다시 시도(ai.retry) 가능</text>
+  <text x="700" y="126" class="lbl">그 사이 사람이 단위를 바꿈 — 적용하지 않음</text>
+  <text x="700" y="172" class="lbl">취소(ai.cancel) 또는 검토 요청으로 자동 취소</text>
+</svg>
+</div>
+
+<h3>지침·프롬프트 버전</h3>
+<p>키별(<code>rules</code>, <code>prompt.classify</code>, <code>prompt.translate</code>, <code>prompt.match</code>, <code>prompt.split</code>)로 버전이 쌓이고 키마다 <b>활성 버전 하나</b>를 AI 작업이 쓴다. 버전은 지우지 않는다. 새 버전은 만든 뒤 따로 활성화해야 쓰인다. 모든 제안은 쓴 버전을 기록하므로, 버전을 바꿔도 이전 제안 기록은 그대로다. 처음 기동 때 저장소의 시드 파일(도메인 문서)에서 첫 버전을 만든다.</p>
+</section>
+
+<!-- ============================================================ 14 -->
+<section id="admin">
+<h2><span class="no">14</span>관리자 화면과 권한</h2>
+<p>권한은 <b>표 기반</b>이다. 권한 키는 코드가 정의하고, 사람·부서에 역할 또는 권한을 <b>더하기만</b> 한다. 부서에 준 권한은 하위 부서까지 내려간다. 시스템 관리자(<code>APP_SYSADMINS</code>)는 모든 권한을 가진다. 묶음 멤버십(4장)과는 별개다.</p>
+<table>
+  <tr><th>권한 키</th><th>할 수 있는 것</th><th>관리 화면 메뉴</th></tr>
+  <tr><td><code>permission.manage</code></td><td>역할·부여 관리, 변경 기록, 유효 권한 조회</td><td>Access</td></tr>
+  <tr><td><code>directory.sync</code></td><td>HR 직원 디렉터리 동기화 실행·미리보기</td><td>Directory sync</td></tr>
+  <tr><td><code>system.view</code></td><td>배치 작업(백업·동기화) 결과 보기</td><td>Batch jobs</td></tr>
+  <tr><td><code>ai.admin</code></td><td>사내 AI 연결 시험, 사용량</td><td>AI</td></tr>
+  <tr><td><code>bundle.create</code></td><td>묶음 만들기(운영에서는 TF 부서에 역할로)</td><td>— (홈의 New bundle)</td></tr>
+  <tr><td><code>bundle.admin</code></td><td>모든 묶음의 <b>메타</b>(제목·상태·멤버·진행 숫자)와 멤버 변경. 내용은 멤버가 되어야 본다</td><td>Bundles</td></tr>
+  <tr><td><code>guideline.manage</code></td><td>AI 지침·프롬프트 버전 올리기·활성화</td><td>AI guidelines</td></tr>
+</table>
+<figure class="shot" data-shot="admin-roles">
+  <div class="frame"><img width="1440" height="900" src="img/admin-roles.png" alt="역할" loading="lazy"></div>
+  <figcaption><span class="fig">그림 14-1</span>관리 화면. 왼쪽 세로 메뉴에 권한별로 보이는 항목만 나온다(권한이 없으면 메뉴 자체가 없다).
+    <ol class="marks"><li data-n="1">Access(권한) 묶음. 아래 넷이 하위 항목이다.</li><li data-n="2">Roles: 권한 묶음에 이름을 붙인 것.</li><li data-n="3">새 역할.</li><li data-n="4">역할 목록과 들어 있는 권한·부여 수.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="admin-grants">
+  <div class="frame"><img width="1440" height="900" src="img/admin-grants.png" alt="부여" loading="lazy"></div>
+  <figcaption><span class="fig">그림 14-2</span>부여(Grants).
+    <ol class="marks"><li data-n="1">Grants.</li><li data-n="2">부여 더하기: 사람 또는 부서에 역할 또는 권한 하나.</li><li data-n="3">부여 목록. 개편으로 사라진 부서·사람의 부여도 지우지 않고 "찾을 수 없음"으로 보인다. 표·카드 전환이 된다.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="admin-audit">
+  <div class="frame"><img width="1440" height="900" src="img/admin-audit.png" alt="변경 기록" loading="lazy"></div>
+  <figcaption><span class="fig">그림 14-3</span>변경 기록(Audit log). 역할·부여의 모든 변경, 최신 순.
+    <ol class="marks"><li data-n="1">Audit log.</li><li data-n="2">시각·누가·무엇을·요약.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="admin-lookup">
+  <div class="frame"><img width="1440" height="900" src="img/admin-lookup.png" alt="유효 권한 조회" loading="lazy"></div>
+  <figcaption><span class="fig">그림 14-4</span>유효 권한 조회(Lookup). 사람을 고르면 개인 부여 ∪ 소속 부서 체인 부여를 합친 결과와 각 권한의 출처를 보인다. 판정은 <code>/api/me</code>와 같은 함수 하나에서 나온다.
+    <ol class="marks"><li data-n="1">Lookup.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="admin-directory">
+  <div class="frame"><img width="1440" height="900" src="img/admin-directory.png" alt="직원 동기화" loading="lazy"></div>
+  <figcaption><span class="fig">그림 14-5</span>직원 동기화(로컬이라 HR 연결이 없다는 안내가 보인다).
+    <ol class="marks"><li data-n="1">Directory sync.</li><li data-n="2">지금 동기화: HR 웹훅에서 직원·부서를 받아 반영. 가드 셋(건수 정합·빈 피드·삭제 상한)에 걸리면 아무것도 바꾸지 않는다.</li><li data-n="3">미리보기: 바꿀 내용만 보여 주고 바꾸지 않는다. 주기 실행은 서버 설정으로 돈다.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="admin-batch">
+  <div class="frame"><img width="1440" height="900" src="img/admin-batch.png" alt="배치 작업" loading="lazy"></div>
+  <figcaption><span class="fig">그림 14-6</span>배치 작업. 로컬에는 기록이 없어 <b>예시 응답</b>으로 찍었다. 작업마다 성공·실패의 가장 최근 결과를 보인다(DB 백업은 매일 04:00, 14일 보존).
+    <ol class="marks"><li data-n="1">Batch jobs.</li><li data-n="2">결과 칩: 성공은 연한 회색, 실패는 꽉 찬 빨강.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="admin-ai">
+  <div class="frame"><img width="1440" height="900" src="img/admin-ai.png" alt="AI" loading="lazy"></div>
+  <figcaption><span class="fig">그림 14-7</span>AI. 사용량은 데모 시드의 가짜 AI 호출이 남긴 것이다.
+    <ol class="marks"><li data-n="1">AI.</li><li data-n="2">연결 시험: 모델과 응답 시간.</li><li data-n="3">일별 호출·실패·토큰. 호출 한 번마다 한 행이고 원문은 싣지 않는다.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="admin-bundles">
+  <div class="frame"><img width="1440" height="900" src="img/admin-bundles.png" alt="묶음 관리" loading="lazy"></div>
+  <figcaption><span class="fig">그림 14-8</span>묶음 관리. 내용 없이 메타만.
+    <ol class="marks"><li data-n="1">Bundles.</li><li data-n="2">활성 작성자가 없는 묶음만 거르기(작성자가 모두 퇴직한 묶음 정리용).</li><li data-n="3">모든 묶음의 제목·상태·멤버·진행. 줄에서 멤버를 고칠 수 있고, 자기를 넣으면 기록에 남는다.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="admin-guidelines">
+  <div class="frame"><img width="1440" height="900" src="img/admin-guidelines.png" alt="AI 지침" loading="lazy"></div>
+  <figcaption><span class="fig">그림 14-9</span>AI 지침.
+    <ol class="marks"><li data-n="1">지침 키(rules, prompt.*)와 활성 버전.</li><li data-n="2">버전 이력. 줄을 누르면 그 버전을 본다. 활성이 아닌 버전에 "활성화".</li><li data-n="3">내용. 마크다운으로 그려 보이고, 고칠 때는 원문 + 미리 보기로 새 버전을 만든다.</li></ol>
+  </figcaption>
+</figure>
+<figure class="shot" data-shot="account">
+  <div class="frame"><img width="1440" height="900" src="img/account.png" alt="내 계정" loading="lazy"></div>
+  <figcaption><span class="fig">그림 14-10</span>내 신원·권한(상단 막대의 이름을 누르면).
+    <ol class="marks"><li data-n="1">로그인 ID·이름·부서(HR 디렉터리에서).</li><li data-n="2">내 유효 권한과 각 권한이 어디서 왔는지(개인 부여 / 부서 부여 / 시스템 관리자).</li></ol>
+  </figcaption>
+</figure>
+<div class="box sys"><b>로그인</b>운영은 사내 Keycloak(같은 realm을 여러 앱이 공유)이고, 토큰의 발급 클라이언트(<code>azp</code>)까지 검사해 다른 앱의 토큰을 거부한다. 로컬 개발은 dev 모드로 사용자를 골라 쓴다(이 문서의 그림). 퇴직자는 무권한이다.</div>
+</section>
+
+<!-- ============================================================ 15 -->
+<section id="feedback">
+<h2><span class="no">15</span>피드백해 볼 곳</h2>
+<h3>설계 때 정한 것 중 다시 볼 만한 결정</h3>
+<table>
+  <tr><th style="width:36%">결정</th><th>이유(당시)</th><th style="width:28%">물어볼 것</th></tr>
+  <tr><td>AI 제안은 여러 개 한 번에 확정하지 않는다</td><td>사람이 줄마다 본다(목표 3)</td><td>실제 SOP 수백 줄에서 감당할 만한가</td></tr>
+  <tr><td>변경 추적이 남은 DOCX는 거절</td><td>어느 쪽을 기준으로 할지 정하기 전에는 진행하지 않는다</td><td>실제 파일에 변경 추적이 흔한가</td></tr>
+  <tr><td>다시 추출해도 이전 판단을 옮기지 않는다</td><td>범위 밖(복잡도)</td><td>추출기를 고치면 작업을 다시 해야 하는데 괜찮은가</td></tr>
+  <tr><td>레이아웃 표는 사람이 표마다 바꾼다</td><td>본문이 표 안에 든 경우가 드물다</td><td>실제로 드문가</td></tr>
+  <tr><td>제목도 커버 단위 — 구조 제목은 여러 개 골라 한 번에 삭제</td><td>아무 글자도 조용히 빠지지 않게</td><td>제목 삭제 작업이 귀찮지 않은가(자동 처리 여지)</td></tr>
+  <tr><td>"다른 문서로 이동"은 번호만 기록</td><td>다른 묶음과 엮지 않는다</td><td>이동한 문장을 받는 쪽에서 찾을 방법이 필요한가</td></tr>
+  <tr><td>그림은 내용을 읽지 않고 "그대로"로 고정</td><td>그림 변경 추적은 범위 밖</td><td>그림이 바뀌는 경우는 어떻게 남기나</td></tr>
+  <tr><td>한 사람은 한 묶음에서 한 역할</td><td>작성자의 자기 검토 방지</td><td>작은 팀에서 검토자를 늘 따로 둘 수 있나</td></tr>
+  <tr><td>이 앱의 "완료"는 작업 표시, 정식 승인은 Veeva</td><td>전자서명·재인증 없음</td><td>QA가 이 의미를 같은 뜻으로 받아들이나</td></tr>
+</table>
+<h3>써 보며 보인 것 (화면)</h3>
+<ul>
+  <li><b>짝 맞추기의 변경 종류 표시가 틀린 경우</b>: 1→2로 나뉜 새 문장(<span class="s">S10</span>)을 고르면 "Rewritten"으로 보인다. 저장값과 결과물 A는 나눔이다(그림 9-2). 버그로 보인다.</li>
+  <li>결과물 A의 보낸 곳·변경 종류 칸이 내부 코드값으로 보인다(<code>delete</code>, <code>as_is</code>, <code>tone</code>).</li>
+  <li>결과물 B의 "삭제/다른 문서로 이동"만 한글이다.</li>
+  <li>결과물 C에 문장별 출처 표시가 없다(명세는 <code>← OLD-1 §5.1 (합침)</code> 꼴).</li>
+  <li>분류에서 이미 확정한 줄의 주 단추도 "Confirm"이다.</li>
+  <li>짝 맞추기 화면의 "AI match suggestions appear here once the AI layer is connected" 안내는, 이미 AI 제안이 저장된 묶음에서도 AI가 꺼져 있으면 보인다.</li>
+</ul>
+<h3>현재 한계</h3>
+<ul>
+  <li><b>입구 2의 표·그림</b>: 짝 맞추기에 문장만 나와, 새 문서에 표·그림이 있으면 검토로 못 간다(남은 막힘).</li>
+  <li><b>AI는 가짜 AI로만 검증</b>: 실제 사내 모델·실제 SOP로 정확도·채택률을 잰 적이 없다. 유사도 임계값도 합성 자료로 잡은 값이다.</li>
+  <li>옛 표 → 새 문단 잇기, 짝 맞추기로 확정한 문장의 분류 재저장은 아직 없다.</li>
+  <li>서버 미배포(GitLab 파이프라인 준비만 끝남 — <code>docs/deploy/gitlab-runner.md</code>).</li>
+</ul>
+<div class="box"><b>다음에 해 볼 만한 것</b>실제 SOP 한 묶음(대외비라 서버에서)으로 처음부터 끝까지 돌려 보며, 위 결정 표의 "물어볼 것"에 답을 모으는 것. 특히 분량(줄 수)과 AI 제안의 질이 설계의 큰 가정이다.</div>
+</section>
+
+<footer>
+  기준: main <code>41dbe2d</code> (v0.8.0). 화면 그림은 <code>frontend/scripts/pw-manual-shots.mjs</code>가 데모 DB(reset_db → seed_sop_demo)에서 찍었다 — 화면이 바뀌면 그 스크립트로 다시 뽑는다. 설명의 근거: 제품 명세 <code>docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md</code>, 판단 기준 <code>docs/domain/</code>, 합성 사례 <code>backend/scripts/synthetic_sop.py</code>.
+</footer>
+</main>
+</div>
+
+<script src="img/marks.js"></script>
+<script>
+  // 스크린샷 위에 번호 상자를 얹고, 캡션 목록 줄에 마우스를 올리면 그 상자를 칠한다
+  (function () {
+    var marks = window.MANUAL_MARKS || {};
+    document.querySelectorAll("figure.shot").forEach(function (fig) {
+      var name = fig.getAttribute("data-shot");
+      var frame = fig.querySelector(".frame");
+      var img = frame.querySelector("img");
+      var link = document.createElement("a");
+      link.href = img.getAttribute("src");
+      link.target = "_blank";
+      link.rel = "noopener";
+      frame.insertBefore(link, img);
+      link.appendChild(img);
+      var boxes = {};
+      (marks[name] || []).forEach(function (m) {
+        var box = document.createElement("div");
+        box.className = "mk";
+        box.style.left = m.x + "%";
+        box.style.top = m.y + "%";
+        box.style.width = m.w + "%";
+        box.style.height = m.h + "%";
+        var label = document.createElement("b");
+        label.textContent = m.n;
+        box.appendChild(label);
+        frame.appendChild(box);
+        boxes[m.n] = box;
+      });
+      fig.querySelectorAll("ol.marks li").forEach(function (li) {
+        var box = boxes[li.getAttribute("data-n")];
+        if (!box) return;
+        li.addEventListener("mouseenter", function () { box.classList.add("on"); });
+        li.addEventListener("mouseleave", function () { box.classList.remove("on"); });
+      });
+    });
+  })();
+</script>
+</body>
+</html>
