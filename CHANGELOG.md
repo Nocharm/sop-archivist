@@ -18,7 +18,7 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
   - 칸에 확정한 한 언어 조각에 "영어 만들기/한국어 만들기"(AI 번역 요청).
   - 서버: 이미 쓴 문서 문장 목록 `GET …/written-sentences`(출처·한/영 짝 상대), Old 단위 하나의 New 후보 `GET …/units/{id}/new-candidates`(임베딩 캐시만 읽고 없으면 글자 유사도, 합성 자료로 잡은 기준).
   - 버그: 짝 맞추기에서 Old 하나를 New 둘에 잇는(나눔) 저장, 합쳐진 문장에 출처를 더하는 저장이 `not_closed`로 거절되던 문제 — Assign은 닫힌 관계 묶음 전체를 보낸다.
-- **검증**: backend pytest 1924 전부 통과, ruff. frontend tsc·lint·vitest 340, 프로덕션 빌드 경고 0. 브라우저 스모크 기반·SOP(Assign 흐름으로 다시 씀) 전부 통과, 대비 감사 전부 통과. 설명서 8·9장과 그림을 Assign으로 다시 썼다.
+- **검증**: backend pytest 1924 전부 통과, ruff. frontend tsc·lint·vitest 345, 프로덕션 빌드 경고 0. 브라우저 스모크 기반·SOP(Assign 흐름으로 다시 씀) 전부 통과, 최종 리뷰 지적(연결을 칸·삭제로 바꿀 때 연결이 남던 문제 등) 반영, 대비 감사 전부 통과. 설명서 8·9장과 그림을 Assign으로 다시 썼다.
 - **배포 메모**: 스키마 변경·새 env·새 의존성 없음. v0.9.0(미배포)과 함께 한 번에 배포한다 — v0.9.0 배포 메모(Alembic `0008`·`0009`, AI 지침 키 `prompt.doc_meta`)도 함께 적용된다. 서버 미배포.
 
 ## v0.9.0 — 2026-11-09
