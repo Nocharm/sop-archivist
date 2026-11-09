@@ -196,6 +196,8 @@ class ViewUnitOut(BaseModel):
     # 커버 단위 상태(get_cover_status) — 판단이 없는 새 문서 단위는 null
     status: str | None
     pair_id: int | None
+    # 사람이 나누거나 합쳐 생긴 단위(되돌리지 않은 편집이 만든 단위) — Split 종이의 "나눔·합침" 표시
+    is_edited: bool
     # 단위 자리의 블록 — 범위가 없는 표·행·캡션 없는 그림도 어느 블록(그림 이미지)인지 알 수 있게
     pos_seq: int
     block_id: int
@@ -301,6 +303,10 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
         )
         decisions = {decision.unit_id: decision for decision in rows}
     pairs = await _load_view_pairs(session, document.id)
+    created_lists = await session.scalars(
+        select(UnitEdit.created_unit_ids).where(UnitEdit.document_id == document.id, UnitEdit.state == "applied")
+    )
+    edited_ids = {unit_id for created in created_lists for unit_id in created}
     pair_by_unit = {unit_id: pair.id for pair in pairs for unit_id in pair.unit_ids}
     return DocumentViewOut(
         document=document_out,
@@ -321,6 +327,7 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 boundary_confirmed=unit.boundary_confirmed,
                 status=get_cover_status(unit, decisions) if document.side == "old" else None,
                 pair_id=pair_by_unit.get(unit.id),
+                is_edited=unit.id in edited_ids,
                 pos_seq=unit.pos_seq,
                 block_id=unit.spans[0][0] if unit.spans else block_id_by_seq[unit.pos_seq],
             )

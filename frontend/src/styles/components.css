@@ -853,3 +853,75 @@
   .ai-suggest { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 24px; padding: 0 6px; border: 1px dashed var(--st-ai-line); border-radius: var(--r-1); color: var(--ink-3); font-size: var(--fs-ui); cursor: pointer; }
   .ai-suggest:hover { color: var(--ink); background: var(--st-ai-tint); }
 }
+
+/* ---- Split 개편(2026-11-09): 종이 조각·틈 합치기, 글자 태그·아이콘 표시, 바깥 윤곽 선택, 인라인 확인, 나누기 팝업 ---- */
+@layer components {
+  .pg { position: relative; }
+  /* 윤곽 선택을 쓰면 밑줄 대신 윤곽 */
+  .pg[data-contour] .su[data-sel] { text-decoration: none; box-shadow: none; background: none; }
+  .sel-contour { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 1; }
+  .sel-contour path { fill: color-mix(in oklab, var(--accent) 7%, transparent); stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; }
+
+  /* 문단 = 종이 조각. 확인한 문단 위아래로 틈을 두고, 조각 안 여백을 줄여 전체 길이는 거의 같다 */
+  /* 앞 태그·끝 아이콘 자리만큼 용지 좌우 여백을 넓히고, 문단 사이 간격은 조금 줄여 틈이 생겨도 길이가 거의 같다 */
+  .pg[data-strips] { --pg-pad-l: 62px; --pg-pad-r: 52px; padding-left: var(--pg-pad-l); padding-right: var(--pg-pad-r); gap: 7px; }
+  .pg[data-strips] .strip { position: relative; }
+  .pg[data-strips] .strip > p { margin-block: 0; }
+  .strip-gap { position: relative; height: 7px; margin: -1px calc(-1 * var(--pg-pad-r)) -1px calc(-1 * var(--pg-pad-l)); background: var(--bg); border-block: 1px solid var(--line); }
+  .strip-gap::before { content: ""; position: absolute; inset: -8px 0; }
+  .strip-merge { position: absolute; left: 50%; top: 50%; height: 24px; padding: 0 10px; font-size: var(--fs-cap); translate: -50% -50%; scale: 0.92; opacity: 0; pointer-events: none; z-index: 2; box-shadow: var(--shadow-1); transition: opacity var(--dur-fast), scale var(--dur-base) var(--ease-enter); }
+  .strip-gap:hover .strip-merge, .strip-merge:focus-visible { opacity: 1; scale: 1; pointer-events: auto; }
+  .strip-gap:hover::after { content: ""; position: absolute; left: var(--pg-pad-l); right: var(--pg-pad-r); top: 50%; border-top: 1px dashed var(--accent); }
+
+  /* 확인한 문장은 글자를 조금 흐리게 */
+  .pg[data-strips] .su[data-checked]:not([data-sel]) { color: color-mix(in oklab, var(--paper-ink) 72%, var(--paper)); }
+
+  /* 문단 앞 글자 태그 - 둘이면 사선으로 쪼갠 한 태그 */
+  .strip-tags { position: absolute; left: calc(-1 * var(--pg-pad-l) + 12px); top: 4px; display: flex; flex-direction: column; gap: 3px; }
+  .ptag { display: inline-grid; place-items: center; min-width: 24px; height: 17px; padding: 0 4px; border-radius: var(--r-1); font: 700 10px / 1 var(--font-mono); }
+  .ptag.ko { background: color-mix(in oklab, var(--lang-ko) 16%, var(--paper)); color: var(--lang-ko); }
+  .ptag.en { background: color-mix(in oklab, var(--lang-en) 18%, var(--paper)); color: var(--lang-en); }
+  .ptag.hold { background: var(--st-hold-fill); color: var(--on-hl); }
+  .ptag.duo { display: inline-flex; justify-content: space-between; gap: 6px; min-width: 38px; background: linear-gradient(118deg, var(--duo-bg) 0 54%, var(--st-hold-fill) 54% 100%); }
+  .ptag.duo > :first-child { color: var(--duo-ink); }
+  .ptag.duo > :last-child { color: var(--on-hl); }
+  .ptag.duo.ko { --duo-bg: color-mix(in oklab, var(--lang-ko) 16%, var(--paper)); --duo-ink: var(--lang-ko); }
+  .ptag.duo.en { --duo-bg: color-mix(in oklab, var(--lang-en) 18%, var(--paper)); --duo-ink: var(--lang-en); }
+
+  /* 종이 오른쪽 끝 아이콘 표시 */
+  .strip-marks { position: absolute; right: calc(-1 * var(--pg-pad-r) + 10px); top: 6px; display: flex; gap: 5px; align-items: center; }
+  .pmark { flex: none; color: var(--ink-3); }
+  .pmark.checked { color: var(--accent); }
+  .pmark.pair { color: var(--st-ai-ink); }
+  .pmark.classified { color: var(--accent); }
+  .pmark.ai { color: var(--st-ai-ink); }
+
+  /* 문장 끝 확인 단추 - 앱 단추 모양 그대로, 글자 높이에 맞춘 크기. 호버 때 라벨이 펼쳐진다 */
+  .inline-check { display: inline-flex; align-items: center; vertical-align: 1px; height: 19px; max-width: 21px; margin-left: 5px; padding: 0 4px; overflow: hidden; border: 1px solid var(--accent); border-radius: var(--r-1); background: var(--accent); color: var(--on-accent); font: 600 11px / 1 var(--font-ui); white-space: nowrap; cursor: pointer; user-select: none; position: relative; z-index: 2; transition: max-width var(--dur-slow) var(--ease-enter), padding var(--dur-slow) var(--ease-enter); animation: inline-check-in var(--dur-slow) var(--ease-enter); }
+  .inline-check > svg { flex: none; }
+  .inline-check-label { margin-left: 4px; opacity: 0; transition: opacity var(--dur-base); }
+  .inline-check:hover, .inline-check:focus-visible { max-width: 120px; padding: 0 7px 0 4px; }
+  .inline-check:hover .inline-check-label, .inline-check:focus-visible .inline-check-label { opacity: 1; }
+  @keyframes inline-check-in { from { opacity: 0; scale: 0.6; } }
+
+  /* 나눌 선 자리 팝업 - 선 바로 아래 */
+  .cut-anchor { position: relative; display: inline-block; width: 0; }
+  .cut-pop { position: absolute; left: 0; top: 1.5em; translate: -50% 0; z-index: 3; display: inline-flex; gap: 6px; padding: 6px; border: 1px solid var(--line-2); border-radius: var(--r-3); background: var(--raised); box-shadow: var(--shadow-2); white-space: nowrap; font-family: var(--font-ui); user-select: none; }
+  .cut-pop::before { content: ""; position: absolute; left: 50%; top: -6px; width: 10px; height: 10px; translate: -50% 0; rotate: 45deg; background: var(--raised); border-left: 1px solid var(--line-2); border-top: 1px solid var(--line-2); }
+
+  /* 경계 확인 상태 칩 - 확인 전은 노란 테두리, 확인함은 파란 채움 */
+  .check-chip { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 11px; font-size: var(--fs-cap); font-weight: 600; }
+  .check-chip.no { background: var(--st-hold-tint); color: var(--st-hold-ink); box-shadow: inset 0 0 0 1px var(--st-hold-line); }
+  .check-chip.yes { background: var(--accent); color: var(--on-accent); }
+
+  /* 범례 */
+  .split-legend { display: grid; gap: 6px; padding: 10px 12px 12px; border-top: 1px solid var(--line); font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-2); }
+  .split-legend-title { margin-top: 2px; font-size: var(--fs-micro); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
+  .split-legend-row { display: flex; align-items: center; gap: 8px; }
+
+  [data-testid="split-inspector"] { min-width: 0; overflow-wrap: anywhere; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .inline-check, .inline-check-label, .strip-merge { transition: none; animation: none; }
+  }
+}

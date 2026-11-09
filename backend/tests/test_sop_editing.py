@@ -762,3 +762,21 @@ def test_random_edit_sequences_keep_coverage(client: TestClient) -> None:
 
     # 시드가 고정이라 매번 같은 열이다 — 모든 편집 종류가 한 번 이상 실제로 적용됐는지 본다
     assert set(applied) == {"split", "merge", "move_boundary", "carve", "undo", "redo"}, applied
+
+
+def test_view_marks_units_made_by_an_edit(client: TestClient) -> None:
+    fx = _setup(client)
+    unit = find_unit(fx.view, TWO_IN_ONE)
+    assert {member["is_edited"] for member in fx.view["units"]} == {False}
+
+    _ok(_split(client, fx, unit, len(FIRST)))
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    edited = {member["id"] for member in view["units"] if member["is_edited"]}
+
+    assert edited == {find_unit(view, FIRST)["id"], find_unit(view, SECOND)["id"]}
+
+    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
+    undone = get_view(client, fx.bundle_id, fx.doc["id"])
+
+    assert [member["is_edited"] for member in undone["units"] if member["id"] == unit["id"]] == [False]
+    assert not any(member["is_edited"] for member in undone["units"])

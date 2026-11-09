@@ -1,8 +1,8 @@
-// 쪼개기(원문 대조) - 왼쪽 문서 목록, 가운데 용지, 오른쪽 고른 단위 정보와 편집(디자인 문서 8절, 명세 §12-4).
-// 문장을 처음 누르면 고르고, 다시 누르면 누른 자리에 나눌 선이 생긴다(S로 나눈다). 끌어 고르면 새 단위로 만들 수 있다.
+// Split(원문 대조) - 왼쪽 문서 목록과 표시 범례, 가운데 용지, 오른쪽 고른 단위 정보와 편집(명세 §12-4, 2026-11-09 개편).
+// 문장을 누르면 고르고 끝에 확인 단추가 나온다. 두 번 누르면 그 자리에 나눌 선과 나누기 팝업이 뜬다(S). 끌어 고르면 새 단위로 만들 수 있다.
 "use client";
 
-import { ArrowDown, ArrowUp, Link2, Merge, Redo2, Scissors, SquarePlus, Undo2, Unlink } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, CircleCheck, Circle, FolderCheck, Link2, Merge, Redo2, Scissors, Sparkles, SquarePlus, Undo2, Unlink, X } from "lucide-react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useState, type ReactNode } from "react";
 
@@ -11,6 +11,7 @@ import { Paper, type PaperCut } from "@/components/paper/paper";
 import { SourceFontMenu } from "@/components/paper/source-font-menu";
 import { Modal } from "@/components/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { InfoTip } from "@/components/ui/info-tip";
 import { Truncate } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -37,7 +38,8 @@ import {
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { buildGroupSave } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
-import { buildPaperModel, canSplitAt, readWarningText, toBlockOffset, toUnitOffset } from "@/lib/paper-model";
+import { buildPaperModel, canSplitAt, readWarningText, shouldRecenter, toBlockOffset, toUnitOffset } from "@/lib/paper-model";
+import { getSplitKeyAction } from "@/lib/split-keys";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 
@@ -52,10 +54,13 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 }
 
-function Section({ title, children, testId }: { title: string; children: ReactNode; testId?: string }) {
+function Section({ title, info, children, testId }: { title: string; info?: string; children: ReactNode; testId?: string }) {
   return (
-    <section className="grid gap-2" data-testid={testId}>
-      <h2 className="text-xs font-semibold text-ink-3">{title}</h2>
+    <section className="grid min-w-0 gap-2" data-testid={testId}>
+      <h2 className="flex items-center gap-1 text-xs font-semibold text-ink-3">
+        {title}
+        {info && <InfoTip text={info} testId={`${testId ?? "split-section"}-info`} />}
+      </h2>
       {children}
     </section>
   );
@@ -131,7 +136,15 @@ export default function SplitPage() {
     setCutAt(null);
     setRange(null);
     if (scroll && unitId !== null) {
-      requestAnimationFrame(() => document.querySelector(`[data-testid="split-paper-unit-${unitId}"]`)?.scrollIntoView({ block: "nearest" }));
+      // 화면 아래 끝에 붙지 않게 - 위아래 가장자리 쪽이면 가운데쯤으로 옮긴다
+      requestAnimationFrame(() => {
+        const target = document.querySelector(`[data-testid="split-paper-unit-${unitId}"]`);
+        const desk = document.querySelector('[data-testid="split-desk"]');
+        if (!target || !desk) return;
+        const box = target.getBoundingClientRect();
+        const view = desk.getBoundingClientRect();
+        if (shouldRecenter(box.top, box.bottom, view.top, view.bottom)) target.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      });
     }
   }
 
@@ -261,37 +274,43 @@ export default function SplitPage() {
       setPicked((prev) => (prev.includes(unitId) ? prev : [...prev, unitId]));
       return;
     }
-    if (unitId !== selectedId) {
-      selectUnit(unitId);
-      return;
-    }
-    // 고른 문장을 다시 누르면 그 자리에 나눌 선
+    // 고른 문장을 다시 한 번 눌러서는 나누지 않는다 - 나누기는 두 번 누르기로(실수로 선이 생기지 않게)
+    if (unitId !== selectedId) selectUnit(unitId);
+    void at;
+  }
+
+  /** 두 번 누른 자리에 나눌 선 - 다른 문장이면 먼저 고른다 */
+  function handleUnitDoubleClick(unitId: number, at: { blockId: number; offset: number } | null) {
+    if (pickMode !== null) return;
     const unit = model?.units.get(unitId);
     if (!unit || !at || !canEdit) return;
+    if (unitId !== selectedId) selectUnit(unitId);
     const unitOffset = toUnitOffset(unit.spans, at.blockId, at.offset);
     if (unitOffset !== null && canSplitAt(unit, unitOffset)) setCutAt({ unitId, at: unitOffset });
   }
 
   const handleKey = useEffectEvent((event: KeyboardEvent) => {
-    if (pending || isTypingTarget(event.target) || document.querySelector('[role="dialog"],[role="menu"]')) return;
-    const key = event.key.toLowerCase();
-    const mod = event.metaKey || event.ctrlKey;
-    if (mod && key === "z") {
-      if (!canEdit) return;
+    if (pending) return;
+    const action = getSplitKeyAction(event, {
+      typing: isTypingTarget(event.target),
+      layerOpen: document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]') !== null,
+      hasCut: cut !== null,
+      checked: selected !== null && isChecked(selected),
+      canEdit,
+    });
+    if (action === null) return;
+    if (action === "undo" || action === "redo") {
       event.preventDefault();
-      if (event.shiftKey ? data?.edits.can_redo : data?.edits.can_undo) runStep(event.shiftKey ? "redo" : "undo");
+      if (action === "redo" ? data?.edits.can_redo : data?.edits.can_undo) runStep(action);
       return;
     }
-    if (mod || event.altKey) return;
-    if (key === "j") moveSelection(1);
-    else if (key === "k") moveSelection(-1);
-    else if (key === "escape") clearTransient();
-    else if (!canEdit || !selected) return;
-    else if (key === "enter" && !isChecked(selected)) setBoundary(selected, true);
-    else if (key === "u" && isChecked(selected)) setBoundary(selected, false);
-    else if (key === "s" && cut) splitAtCut();
-    else if (key === "h") startHold();
-    else return;
+    if (action === "next" || action === "prev") moveSelection(action === "next" ? 1 : -1);
+    else if (action === "escape") clearTransient();
+    else if (!selected) return;
+    else if (action === "check") setBoundary(selected, true);
+    else if (action === "uncheck") setBoundary(selected, false);
+    else if (action === "split") splitAtCut();
+    else if (action === "hold") startHold();
     event.preventDefault();
   });
 
@@ -307,7 +326,8 @@ export default function SplitPage() {
   return (
     <div className="grid h-full min-h-0 grid-cols-[232px_minmax(0,1fr)_392px]" data-testid="split">
       {/* 왼쪽: 문서 */}
-      <nav className="grid content-start gap-0.5 overflow-y-auto border-r border-line bg-surface p-2" aria-label={t("split.documents")} data-testid="split-docs">
+      <nav className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] border-r border-line bg-surface" aria-label={t("split.documents")} data-testid="split-docs">
+        <div className="grid content-start gap-0.5 overflow-y-auto p-2">
         {readyDocs.map((doc) => (
           <button
             key={doc.id}
@@ -321,6 +341,45 @@ export default function SplitPage() {
             <Truncate className="text-xs leading-[18px] text-ink-3" text={doc.title} />
           </button>
         ))}
+        </div>
+        {/* 용지 표시의 뜻 - 앞은 글자 태그, 끝은 아이콘 */}
+        <div className="split-legend" data-testid="split-legend">
+          <span className="split-legend-title">{t("split.legendTags")}</span>
+          <span className="split-legend-row">
+            <span className="ptag duo ko">
+              <span>KO</span>
+              <span>H</span>
+            </span>
+            {t("split.legendLangHold")}
+          </span>
+          <span className="split-legend-title">{t("split.legendMarks")}</span>
+          <span className="split-legend-row">
+            <CircleCheck size={14} strokeWidth={2} className="pmark checked" aria-hidden />
+            {t("split.legendChecked")}
+          </span>
+          <span className="split-legend-row">
+            <Link2 size={14} strokeWidth={1.6} className="pmark pair" aria-hidden />
+            {t("split.legendPair")}
+          </span>
+          <span className="split-legend-row">
+            <FolderCheck size={14} strokeWidth={1.6} className="pmark classified" aria-hidden />
+            {t("split.legendClassified")}
+          </span>
+          <span className="split-legend-row">
+            <Sparkles size={14} strokeWidth={1.6} className="pmark ai" aria-hidden />
+            {t("split.legendAi")}
+          </span>
+          <span className="split-legend-row">
+            <Scissors size={14} strokeWidth={1.6} className="pmark edited" aria-hidden />
+            {t("split.legendEdited")}
+          </span>
+          <span className="split-legend-row">
+            <span className="w-[14px] text-center text-[11px] text-ink-4" aria-hidden>
+              Aa
+            </span>
+            {t("split.legendDim")}
+          </span>
+        </div>
       </nav>
 
       {/* 가운데: 용지 */}
@@ -345,9 +404,49 @@ export default function SplitPage() {
               cut={cut}
               warnBlockIds={warnBlockIds}
               onUnitClick={handleUnitClick}
+              onUnitDoubleClick={canEdit ? handleUnitDoubleClick : undefined}
               onRangeSelect={canEdit ? (next) => setRange(next) : undefined}
               figureSource={docId !== null ? { bundleId, docId } : undefined}
               testId="split-paper"
+              contour
+              strips={{
+                isChecked,
+                canMerge: canEdit && !busy,
+                mergeLabel: t("split.mergeAdjacent"),
+                onGapMerge: (firstId, secondId) => runEdit({ type: "merge", unit_ids: [firstId, secondId] }, t("split.didMerge")),
+              }}
+              renderUnitEnd={(unitId) => {
+                const unit = model.units.get(unitId);
+                if (!canEdit || !unit || isChecked(unit) || cut) return null;
+                return (
+                  <button
+                    type="button"
+                    className="inline-check"
+                    data-testid="split-inline-check"
+                    aria-label={t("split.checkBoundary")}
+                    disabled={busy}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setBoundary(unit, true);
+                    }}
+                  >
+                    <Check size={11} strokeWidth={3} aria-hidden />
+                    <span className="inline-check-label">{t("split.checkBoundary")}</span>
+                  </button>
+                );
+              }}
+              renderAtCut={() => (
+                <span className="cut-pop" role="group" aria-label={t("split.split")} onClick={(event) => event.stopPropagation()}>
+                  <button type="button" className="btn pri h-7" data-testid="split-cut-run" disabled={busy} onClick={splitAtCut}>
+                    <Scissors size={14} strokeWidth={1.5} aria-hidden />
+                    {t("split.cutHere")} <kbd>S</kbd>
+                  </button>
+                  <button type="button" className="btn h-7" data-testid="split-cut-cancel" onClick={() => setCutAt(null)}>
+                    <X size={14} strokeWidth={1.5} aria-hidden />
+                    {t("common.cancel")} <kbd>Esc</kbd>
+                  </button>
+                </span>
+              )}
             />
           ) : view.error !== null ? (
             <p className="text-ink-2" data-testid="split-error">
@@ -372,7 +471,8 @@ export default function SplitPage() {
             </span>
             {selected && <span className="lg">{selected.lang === "neutral" ? "–" : selected.lang.toUpperCase()}</span>}
             {selected && (
-              <span className={`pill ${isChecked(selected) ? "quiet" : "none"}`} data-testid="split-boundary-state">
+              <span className={`check-chip ${isChecked(selected) ? "yes" : "no"}`} data-testid="split-boundary-state">
+                {isChecked(selected) ? <Check size={12} strokeWidth={2.6} aria-hidden /> : <Circle size={11} strokeWidth={2.2} aria-hidden />}
                 {isChecked(selected) ? "Checked" : "Not checked"}
               </span>
             )}
@@ -474,7 +574,7 @@ export default function SplitPage() {
               )}
 
               {selected.lang !== "neutral" && (
-                <Section title={t("split.pair")} testId="split-pair">
+                <Section title={t("split.pair")} info={t("split.pairInfo")} testId="split-pair">
                   {pair ? (
                     <>
                       <span className="flex items-center gap-2">
@@ -548,8 +648,7 @@ export default function SplitPage() {
               )}
 
               {canEdit && (
-                <Section title={t("split.merge")} testId="split-merge">
-                  <p className="text-xs text-ink-3">{pickMode === "pair" ? t("split.pairPickHint") : t("split.mergeHint")}</p>
+                <Section title={t("split.merge")} info={pickMode === "pair" ? t("split.pairPickHint") : t("split.mergeHint")} testId="split-merge">
                   {pickedUnits.length > 0 && (
                     <ol className="grid gap-1" data-testid="split-picked">
                       {pickedUnits.map((unit, index) => (
@@ -628,7 +727,7 @@ export default function SplitPage() {
           )}
 
           {warnings.some((w) => w.needs_ack) && (
-            <Section title={t("split.warnings")} testId="split-warnings">
+            <Section title={t("split.warnings")} info={t("split.warningsInfo")} testId="split-warnings">
               <ul className="grid gap-1.5">
                 {warnings
                   .filter((w) => w.needs_ack)
@@ -652,7 +751,8 @@ export default function SplitPage() {
               {(
                 [
                   ["split.keyCheck", "↵"],
-                  ["split.keyMove", "J K"],
+                  ["split.keyMove", "↑ ↓ · J K"],
+                  ["split.keyCut", t("split.doubleClick")],
                   ["split.keySplit", "S"],
                   ["split.keyUncheck", "U"],
                   ["split.keyPick", "Ctrl"],
