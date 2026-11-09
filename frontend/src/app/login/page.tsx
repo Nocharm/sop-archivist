@@ -135,8 +135,8 @@ export default function LoginPage() {
             <LangToggle testId="login-lang" />
           </div>
           <div className="pr-20">
-            <h1 className="text-lg font-semibold text-gray-900">SOP Archivist</h1>
-            <p className="text-sm text-gray-600">{t("login.subtitle")}</p>
+            <h1 className="text-lg font-semibold text-ink">SOP Archivist</h1>
+            <p className="text-sm text-ink-2">{t("login.subtitle")}</p>
           </div>
 
           {modeInfo.mode === "keycloak" && (
@@ -152,12 +152,12 @@ export default function LoginPage() {
                 {t("login.keycloak")}
               </button>
               {!isKeycloakReady(modeInfo) && (
-                <p data-testid="login-unavailable" className="text-sm text-gray-600">
+                <p data-testid="login-unavailable" className="text-sm text-ink-2">
                   {t("login.unavailable")}
                 </p>
               )}
               {signinFailed && (
-                <p data-testid="login-error" className="text-sm text-gray-600">
+                <p data-testid="login-error" className="text-sm text-ink-2">
                   {t("login.startFailed")}
                 </p>
               )}
@@ -166,20 +166,20 @@ export default function LoginPage() {
 
           {modeInfo.mode === "dev" && (
             <div className="space-y-2">
-              <p className="text-sm text-gray-600">{t("login.devHint")}</p>
+              <p className="text-sm text-ink-2">{t("login.devHint")}</p>
               <ul className="space-y-1">
                 {LOCAL_USERS.map((user) => (
                   <li key={user.loginId}>
                     <button
                       type="button"
                       data-testid={`login-dev-user-${user.loginId}`}
-                      className="flex w-full flex-col items-start rounded-md border border-gray-200 px-3 py-2 text-left hover:bg-gray-50"
+                      className="flex w-full flex-col items-start rounded-md border border-line px-3 py-2 text-left hover:bg-sunken"
                       onClick={() => handlePickDev(user.loginId)}
                     >
-                      <span className="text-sm font-semibold text-gray-900">
+                      <span className="text-sm font-semibold text-ink">
                         {lang === "ko" ? user.koreanName : user.name}
                       </span>
-                      <span className="text-xs text-gray-500">{`${user.loginId} · ${user.department}`}</span>
+                      <span className="text-xs text-ink-3">{`${user.loginId} · ${user.department}`}</span>
                     </button>
                   </li>
                 ))}
@@ -190,12 +190,12 @@ export default function LoginPage() {
 
         {/* 로그아웃 직후 1회 노출 - SSO 세션은 아직 살아 있음을 알리고 전체 종료를 제공한다(keycloak 전용) */}
         {modeInfo.mode === "keycloak" && ssoHint && (
-          <div data-testid="login-sso-panel" className="space-y-3 rounded-lg border border-gray-200 bg-surface p-4">
-            <p className="text-sm text-gray-600">{t("login.ssoActiveBody")}</p>
+          <div data-testid="login-sso-panel" className="space-y-3 rounded-lg border border-line bg-surface p-4">
+            <p className="text-sm text-ink-2">{t("login.ssoActiveBody")}</p>
             <button
               type="button"
               data-testid="login-sso-signout-all"
-              className="flex h-9 w-full items-center justify-center gap-2 rounded-md border border-gray-300 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+              className="flex h-9 w-full items-center justify-center gap-2 rounded-md border border-line-2 text-sm font-semibold text-ink-2 hover:bg-sunken"
               onClick={() => void handleSsoSignoutAll()}
             >
               <LogOut size={16} strokeWidth={1.5} />

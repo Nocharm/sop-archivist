@@ -387,6 +387,7 @@ function RequestReviewModal({ bundle, onClose }: { bundle: Bundle; onClose: () =
       footer={
         <>
           <button type="button" className="btn" data-testid="request-review-cancel" onClick={onClose}>
+            <X size={16} strokeWidth={1.5} aria-hidden />
             {t("common.cancel")}
           </button>
           <button type="button" className="btn pri" data-testid="request-review-confirm" disabled={saving} onClick={handleConfirm}>

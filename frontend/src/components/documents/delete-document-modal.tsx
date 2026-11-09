@@ -1,7 +1,7 @@
 // 문서 지우기 확인 - 아이콘·제목·대상·요약 상자. 사람이 정한 단위가 걸려 있으면 서버가 409로 먼저 묻고, 그 수를 보인 뒤 한 번 더 확인받는다.
 "use client";
 
-import { Trash2 } from "lucide-react";
+import { Trash2, X } from "lucide-react";
 import { useState } from "react";
 
 import { Modal } from "@/components/modal";
@@ -47,9 +47,11 @@ export function DeleteDocumentModal({ bundleId, document, onClose, onDeleted }: 
       footer={
         <>
           <button type="button" className="btn" data-testid="delete-document-cancel" onClick={onClose}>
+            <X size={16} strokeWidth={1.5} aria-hidden />
             {t("common.cancel")}
           </button>
           <button type="button" className="btn danger" data-testid="delete-document-confirm" disabled={saving} onClick={() => void handleDelete()}>
+            <Trash2 size={16} strokeWidth={1.5} aria-hidden />
             {decidedCount === null ? t("common.delete") : t("documents.deleteAnyway")}
           </button>
         </>

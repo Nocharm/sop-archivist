@@ -3,7 +3,7 @@
 // 버전은 지우지 않고 쌓인다. 새 버전은 만든 뒤 따로 활성화해야 AI 작업이 쓴다(백엔드 sop_guidelines.py).
 "use client";
 
-import { Check, FilePlus2, RefreshCw } from "lucide-react";
+import { Check, FilePlus2, RefreshCw, X } from "lucide-react";
 import { useState } from "react";
 
 import { ConfirmModal } from "@/components/ui/confirm-modal";
@@ -272,6 +272,7 @@ export function GuidelinesPanel() {
               />
               <div className="flex justify-end gap-2">
                 <button type="button" className="btn" onClick={() => setDraft(null)}>
+                  <X size={16} strokeWidth={1.5} aria-hidden />
                   {t("common.cancel")}
                 </button>
                 <button type="button" className="btn pri" data-testid="guideline-editor-save" disabled={saving || !draft?.content.trim()} onClick={() => void saveDraft()}>

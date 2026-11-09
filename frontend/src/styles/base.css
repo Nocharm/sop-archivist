@@ -10,6 +10,11 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* 누를 수 있는 것은 손가락 - Tailwind preflight가 button 커서를 default로 둬서 따로 클래스가 없는 탭·칩·토글이 화살표로 남는다 */
+:where(button:not(:disabled), [role="button"]:not([aria-disabled="true"]), summary) {
+  cursor: pointer;
+}
+
 :focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 1px;

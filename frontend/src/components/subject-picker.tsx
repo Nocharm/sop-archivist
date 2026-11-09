@@ -34,7 +34,7 @@ interface SubjectPickerProps {
 }
 
 const OPTION_CLASS =
-  "flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1 text-left text-sm text-gray-800 hover:bg-gray-100 aria-pressed:bg-accent/10 aria-pressed:font-semibold";
+  "flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1 text-left text-sm text-ink hover:bg-hover aria-pressed:bg-accent/10 aria-pressed:font-semibold";
 
 // 사람 목록을 한 번에 그리는 수 - 끝에 닿으면 같은 수만큼 더 붙인다
 const PEOPLE_PAGE = 25;
@@ -136,7 +136,7 @@ function DepartmentTree({ testId, value, onChange }: Omit<SubjectPickerProps, "s
               data-testid={`${testId}-toggle-${node.code}`}
               aria-expanded={isOpen}
               aria-label={`${isOpen ? t("picker.collapse") : t("picker.expand")}: ${name}`}
-              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-gray-500 hover:bg-gray-100"
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-ink-3 hover:bg-hover"
               onClick={() => setOpenOverrides((prev) => ({ ...prev, [node.code]: !isOpen }))}
             >
               {isOpen ? <ChevronDown size={16} strokeWidth={1.5} /> : <ChevronRight size={16} strokeWidth={1.5} />}
@@ -152,7 +152,7 @@ function DepartmentTree({ testId, value, onChange }: Omit<SubjectPickerProps, "s
             onClick={() => onChange({ id: node.code, label: name })}
           >
             <span className="min-w-0 truncate">{name}</span>
-            <span className="shrink-0 text-xs text-gray-500">{node.code}</span>
+            <span className="shrink-0 text-xs text-ink-3">{node.code}</span>
           </button>
         </div>
         {hasChildren && isOpen && <ul>{node.children.map((child) => renderNode(child, depth + 1))}</ul>}
@@ -168,17 +168,17 @@ function DepartmentTree({ testId, value, onChange }: Omit<SubjectPickerProps, "s
     );
   }
   if (departments.data === null) {
-    return <p className="text-sm text-gray-500">{t("common.loading")}</p>;
+    return <p className="text-sm text-ink-3">{t("common.loading")}</p>;
   }
   if (tree.length === 0) {
     return (
-      <p data-testid={`${testId}-empty`} className="text-sm text-gray-500">
+      <p data-testid={`${testId}-empty`} className="text-sm text-ink-3">
         {t("picker.deptEmpty")}
       </p>
     );
   }
   return (
-    <ul data-testid={`${testId}-tree`} className="max-h-56 overflow-auto rounded-md border border-gray-200 py-1">
+    <ul data-testid={`${testId}-tree`} className="max-h-56 overflow-auto rounded-md border border-line py-1">
       {tree.map((root) => renderNode(root, 0))}
     </ul>
   );
@@ -194,7 +194,7 @@ export function SubjectPicker({ testId, subjectType, value, onChange, allowLogin
       ) : (
         <DepartmentTree testId={testId} value={value} onChange={onChange} />
       )}
-      <p data-testid={`${testId}-selected`} className="text-sm text-gray-600">
+      <p data-testid={`${testId}-selected`} className="text-sm text-ink-2">
         {value ? t("picker.selected", { name: value.label }) : t("picker.none")}
       </p>
     </div>

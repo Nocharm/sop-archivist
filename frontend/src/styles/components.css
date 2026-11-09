@@ -626,6 +626,9 @@
   .mbtn:not(:disabled):hover, .mbtn:focus-visible { border-color: var(--line-2); background: var(--surface); color: var(--ink); }
   .mbtn:not(:disabled):active { transform: scale(var(--press)); }
   .mbtn:disabled { opacity: 0.5; cursor: not-allowed; }
+  /* 좁은 칸 끝에 둘 때 - 자리는 아이콘 하나만 차지하고 라벨은 왼쪽 위로 펼쳐져 옆 칸을 밀지 않는다 */
+  .mbtn-host { position: relative; display: inline-block; width: var(--ctl); height: var(--ctl); vertical-align: middle; }
+  .mbtn-host > .mbtn, .mbtn-host > * > .mbtn { position: absolute; top: 0; right: 0; z-index: 1; }
   .mbtn.reveal { border-color: var(--line-2); background: var(--surface); color: var(--ink); }
   .mbtn.danger:not(:disabled):hover, .mbtn.danger:focus-visible, .mbtn.danger.reveal {
     /* .btn.danger와 같은 짝 - 위험색 잉크 바탕에 표면색 글자라 두 테마 모두 대비가 선다 */

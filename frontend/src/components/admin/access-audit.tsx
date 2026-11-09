@@ -5,6 +5,7 @@ import { ScrollText } from "lucide-react";
 import { InlineNotice } from "@/components/inline-notice";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PanelTitle } from "@/components/admin/panel-title";
 import { buildAuditSummary, translateOrRaw } from "@/lib/admin-format";
 import { listAudit, type AuditEvent } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -32,7 +33,7 @@ export function AccessAudit() {
   return (
     <section data-testid="access-audit" className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-gray-600">{t("audit.intro")}</p>
+        <PanelTitle title={t("admin.sub.audit")} info={t("audit.intro")} testId="audit-info" />
         <ListViewToggle listKey={LIST_KEY} view={view} testId="audit-view" />
       </div>
 

@@ -2,14 +2,14 @@
 // 저장은 목록 통째 바꾸기(PUT members)라 화면에서 모은 뒤 한 번에 보낸다. 규칙(작성자 1명 이상, 자기 역할 잠금)은 서버가 판정한다.
 "use client";
 
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, X } from "lucide-react";
 import { useState } from "react";
 
 import { Modal } from "@/components/modal";
 import { SubjectPicker, type PickedSubject } from "@/components/subject-picker";
 import { BusyLabel, Collapse } from "@/components/ui/motion";
 import { Select } from "@/components/ui/select";
-import { Tooltip } from "@/components/ui/tooltip";
+import { MorphButton } from "@/components/ui/morph-button";
 import { humanizeApiError } from "@/lib/api-errors";
 import type { MemberInput } from "@/lib/api-manage";
 import type { BundleMember, MemberRole } from "@/lib/api-sop";
@@ -80,6 +80,7 @@ export function MembersModal({ title, members, testId, onSave, onClose }: Member
       footer={
         <>
           <button type="button" className="btn" data-testid={`${testId}-cancel`} onClick={onClose}>
+            <X size={16} strokeWidth={1.5} aria-hidden />
             {t("common.cancel")}
           </button>
           <button type="button" className="btn pri" data-testid={`${testId}-save`} disabled={!changed || saving || authorCount === 0} onClick={() => void handleSave()}>
@@ -106,18 +107,8 @@ export function MembersModal({ title, members, testId, onSave, onClose }: Member
               options={roleOptions}
               onChange={(role) => setRows((prev) => prev.map((item) => (item.login_id === row.login_id ? { ...item, role } : item)))}
             />
-            <span className="row-actions">
-              <Tooltip label={t("members.remove")} align="end">
-                <button
-                  type="button"
-                  className="btn ghost icon h-7 w-7"
-                  aria-label={t("members.remove")}
-                  data-testid={`${testId}-remove-${row.login_id}`}
-                  onClick={() => setRows((prev) => prev.filter((item) => item.login_id !== row.login_id))}
-                >
-                  <Trash2 size={14} strokeWidth={1.5} aria-hidden />
-                </button>
-              </Tooltip>
+            <span className="row-actions mbtn-host">
+              <MorphButton icon={Trash2} tone="danger" label={t("members.remove")} testId={`${testId}-remove-${row.login_id}`} onClick={() => setRows((prev) => prev.filter((item) => item.login_id !== row.login_id))} />
             </span>
           </li>
         ))}
@@ -140,6 +131,7 @@ export function MembersModal({ title, members, testId, onSave, onClose }: Member
             <Select testId={`${testId}-new-role`} ariaLabel={t("members.role")} value={pickedRole} options={roleOptions} onChange={setPickedRole} />
             <span className="flex-1" />
             <button type="button" className="btn ghost" onClick={() => setAdding(false)}>
+              <X size={16} strokeWidth={1.5} aria-hidden />
               {t("common.cancel")}
             </button>
             <button type="button" className="btn" data-testid={`${testId}-add-confirm`} disabled={!picked} onClick={addPicked}>

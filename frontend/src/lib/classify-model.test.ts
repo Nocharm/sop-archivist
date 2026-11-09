@@ -10,6 +10,7 @@ import {
   buildViewsKey,
   findNextOpen,
   findSystemHold,
+  getRowStep,
   pickFirstFilter,
   readCheckKey,
   pickRowStatus,
@@ -294,5 +295,21 @@ describe("checks and filters", () => {
     expect(pickFirstFilter({ unassigned: 0, ai_suggested: 0, on_hold: 3, confirmed: 5, all: 8 })).toBe("on_hold");
     expect(pickFirstFilter({ unassigned: 2, ai_suggested: 1, on_hold: 0, confirmed: 0, all: 3 })).toBe("ai_suggested");
     expect(pickFirstFilter({ unassigned: 0, ai_suggested: 0, on_hold: 0, confirmed: 0, all: 0 })).toBe("unassigned");
+  });
+});
+
+describe("getRowStep", () => {
+  it("moves down with J and the down arrow", () => {
+    expect(getRowStep("j")).toBe(1);
+    expect(getRowStep("ArrowDown")).toBe(1);
+  });
+
+  it("moves up with K and the up arrow", () => {
+    expect(getRowStep("K")).toBe(-1);
+    expect(getRowStep("ArrowUp")).toBe(-1);
+  });
+
+  it("ignores other keys", () => {
+    expect(getRowStep("Enter")).toBeNull();
   });
 });

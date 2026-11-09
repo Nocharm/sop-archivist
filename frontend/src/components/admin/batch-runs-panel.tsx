@@ -6,6 +6,7 @@ import { InlineNotice } from "@/components/inline-notice";
 import { OutcomePill } from "@/components/status";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PanelTitle } from "@/components/admin/panel-title";
 import { describeRunDetail, translateOrRaw } from "@/lib/admin-format";
 import { listBatchRuns, type BatchRun } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -31,7 +32,7 @@ export function BatchRunsPanel() {
   return (
     <section data-testid="batch-runs-panel" className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-gray-600">{t("batch.intro")}</p>
+        <PanelTitle title={t("admin.tab.batch")} info={t("batch.intro")} testId="batch-info" />
         <ListViewToggle listKey={LIST_KEY} view={view} testId="batch-view" />
       </div>
 

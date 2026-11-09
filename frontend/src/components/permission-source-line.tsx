@@ -12,13 +12,13 @@ export function SourceLine({ source, isSelf = false }: { source: EffectiveSource
   const Icon = source.kind === "dept" ? Building2 : UserRound;
   const subject = isSelf && source.kind === "user" ? t("account.sourceYou") : source.subject_name || source.subject_id;
   return (
-    <li className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-700">
+    <li className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-ink-2">
       <span className={`${CHIP} gap-1`}>
         <Icon size={16} strokeWidth={1.5} />
         {t(`effective.source.${source.kind}`)}
       </span>
       <span>{subject}</span>
-      <span className="text-gray-500">{source.role === null ? t("effective.sourceDirect") : t("effective.sourceRole", { role: source.role })}</span>
+      <span className="text-ink-3">{source.role === null ? t("effective.sourceDirect") : t("effective.sourceRole", { role: source.role })}</span>
     </li>
   );
 }

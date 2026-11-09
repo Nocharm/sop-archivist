@@ -1,7 +1,7 @@
 // 확인 창 한 벌 - 아이콘·제목·대상·요약 상자(디자인 문서 11절). window.confirm은 쓰지 않는다.
 "use client";
 
-import { TriangleAlert } from "lucide-react";
+import { TriangleAlert, X, type LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { Modal } from "@/components/modal";
@@ -13,13 +13,15 @@ interface ConfirmModalProps {
   summary: ReactNode;
   confirmLabel: string;
   danger?: boolean;
+  /** 확정 단추 앞 아이콘 - 지우기는 Trash2처럼 동작을 드러낸다 */
+  confirmIcon?: LucideIcon;
   busy?: boolean;
   testId: string;
   onConfirm: () => void;
   onClose: () => void;
 }
 
-export function ConfirmModal({ title, target, summary, confirmLabel, danger = false, busy = false, testId, onConfirm, onClose }: ConfirmModalProps) {
+export function ConfirmModal({ title, target, summary, confirmLabel, danger = false, confirmIcon: ConfirmIcon, busy = false, testId, onConfirm, onClose }: ConfirmModalProps) {
   const { t } = useI18n();
   return (
     <Modal
@@ -30,9 +32,11 @@ export function ConfirmModal({ title, target, summary, confirmLabel, danger = fa
       footer={
         <>
           <button type="button" className="btn" data-testid={`${testId}-cancel`} onClick={onClose}>
+            <X size={16} strokeWidth={1.5} aria-hidden />
             {t("common.cancel")}
           </button>
           <button type="button" className={`btn ${danger ? "danger" : "pri"}`} data-testid={`${testId}-confirm`} disabled={busy} onClick={onConfirm}>
+            {ConfirmIcon && <ConfirmIcon size={16} strokeWidth={1.5} aria-hidden />}
             {confirmLabel}
           </button>
         </>

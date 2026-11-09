@@ -2,11 +2,13 @@
 // 표 안 값은 고른 판의 언어로 API가 채워 준다. Excel은 요청 중 → 파일 생성 / 실패 두 단계로 보인다(디자인 문서 10절).
 "use client";
 
-import { ArrowRight, Download } from "lucide-react";
+import { ArrowRight, Download, Table2, Workflow } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 
+import { EditionToggle } from "@/components/outputs/edition-toggle";
 import { OutputCView } from "@/components/outputs/output-c";
+import { EmptyState } from "@/components/ui/empty-state";
 import { UnitStatusPill } from "@/components/status";
 import { LoadMoreRows } from "@/components/ui/load-more";
 import { Truncate } from "@/components/ui/motion";
@@ -131,26 +133,15 @@ export default function OutputsPage() {
             ))}
           </div>
           <span className="flex-1" />
-          <div className="flex gap-0.5 rounded-md bg-sunken p-0.5" role="group" aria-label={t("outputs.edition")}>
-            {(["ko", "en"] as const).map((item) => (
-              <button
-                key={item}
-                type="button"
-                aria-pressed={lang === item}
-                className={`h-[26px] rounded px-2.5 font-mono text-xs ${lang === item ? "bg-surface font-semibold text-ink shadow-sm" : "text-ink-2"}`}
-                data-testid={`outputs-lang-${item}`}
-                onClick={() => setLang(item)}
-              >
-                {item.toUpperCase()}
-              </button>
-            ))}
-          </div>
+          <EditionToggle value={lang} onChange={setLang} testId="outputs-lang" />
         </div>
         <div className="min-h-0 overflow-auto">
           {current.error !== null && current.data === null ? (
             <p className="p-6 text-ink-2">{humanizeApiError(current.error, t)}</p>
           ) : current.data === null ? (
             <div className="p-4">{showSkeleton && <span className="sk h-[420px] w-full" />}</div>
+          ) : tab === "a" && outA.data?.length === 0 ? (
+            <EmptyState icon={Table2} testId="output-a-empty" title={t("outputs.emptyTitle")} body={t("outputs.emptyA")} />
           ) : tab === "a" && outA.data ? (
             <table className="dtable" data-testid="output-a">
               <thead>
@@ -188,6 +179,8 @@ export default function OutputsPage() {
                 {rowsA.hasMore && <LoadMoreRows sentinelRef={rowsA.sentinelRef} columns={5} testId="output-a-more" />}
               </tbody>
             </table>
+          ) : tab === "b" && outB.data && !outB.data.nodes.some((node) => node.kind === "old") ? (
+            <EmptyState icon={Workflow} testId="output-b-empty" title={t("outputs.emptyTitle")} body={t("outputs.emptyB")} />
           ) : tab === "b" && outB.data ? (
             <div className="grid gap-3 p-[var(--pad)]" data-testid="output-b">
               {outB.data.nodes
@@ -227,9 +220,9 @@ export default function OutputsPage() {
         </div>
       </div>
 
-      <aside className="grid content-start gap-5 overflow-y-auto border-l border-line bg-surface p-[var(--pad)]" data-testid="outputs-side">
-        <section className="grid gap-2" data-testid="outputs-summary">
-          <h2 className="text-xs font-semibold text-ink-3">{t("outputs.summary", { lang: lang.toUpperCase() })}</h2>
+      <aside className="grid content-start gap-3 overflow-y-auto border-l border-line px-3 py-[18px]" data-testid="outputs-side">
+        <section className="side-box grid gap-2" data-testid="outputs-summary">
+          <h2 className="side-box-title">{t("outputs.summary", { lang: lang.toUpperCase() })}</h2>
           {sum ? (
             <dl className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 tabular-nums">
               {(["old_units", "assigned", "unassigned", "duplicate", "deleted", "moved", "new"] as const).map((item) => (
@@ -245,8 +238,8 @@ export default function OutputsPage() {
             <span className="sk h-32 w-full" />
           )}
         </section>
-        <section className="grid gap-2" data-testid="outputs-checks">
-          <h2 className="text-xs font-semibold text-ink-3">{t("outputs.checks")}</h2>
+        <section className="side-box grid gap-2" data-testid="outputs-checks">
+          <h2 className="side-box-title">{t("outputs.checks")}</h2>
           {SEMANTIC_CHECK_KEYS.map((item) => (
             <Checkbox
               key={item}
@@ -258,14 +251,14 @@ export default function OutputsPage() {
             />
           ))}
         </section>
-        <section className="grid gap-2" data-testid="outputs-export">
-          <h2 className="text-xs font-semibold text-ink-3">Excel</h2>
+        <section className="side-box grid gap-2" data-testid="outputs-export">
+          <h2 className="side-box-title">Excel</h2>
           {(["ko", "en"] as const).map((item) => (
             <button key={item} type="button" className="btn w-full justify-start" data-testid={`outputs-export-${item}`} disabled={exporting !== null} onClick={() => void handleExport(item)}>
               <Download size={14} strokeWidth={1.5} aria-hidden />
               <span className="stack">
                 <span data-on={exporting === item ? undefined : ""}>{t("outputs.export", { lang: item.toUpperCase() })}</span>
-                <span data-on={exporting === item ? "" : undefined}>Request in progress</span>
+                <span data-on={exporting === item ? "" : undefined}>{t("outputs.exporting")}</span>
               </span>
             </button>
           ))}

@@ -1,7 +1,7 @@
 // 관리 > 권한 > 부여 - 사람·부서에 준 역할/권한 목록, 부여 추가(대상 선택기)와 회수(확인 모달). 대상이 사라진 부여는 지우지 않고 배지로 보여 사람이 정리하게 한다.
 "use client";
 
-import { Building2, KeyRound, Plus, TriangleAlert, Undo2, UserRound } from "lucide-react";
+import { Building2, KeyRound, Plus, TriangleAlert, Undo2, UserRound, X } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { InlineNotice } from "@/components/inline-notice";
@@ -20,13 +20,14 @@ import { useListView } from "@/lib/use-list-view";
 import { MorphButton } from "@/components/ui/morph-button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PanelTitle } from "@/components/admin/panel-title";
 import { useLoaded } from "@/lib/use-loaded";
 
 const SUBJECT_TYPES: SubjectType[] = ["user", "dept"];
 const LIST_KEY = "admin-grants";
 
 const SEGMENT_CLASS =
-  "inline-flex h-8 items-center gap-1.5 border border-gray-300 px-3 text-sm text-gray-700 first:rounded-l-md last:rounded-r-md hover:bg-gray-50 aria-pressed:border-accent aria-pressed:bg-accent/10 aria-pressed:font-semibold aria-pressed:text-gray-900";
+  "inline-flex h-8 items-center gap-1.5 border border-line-2 px-3 text-sm text-ink-2 first:rounded-l-md last:rounded-r-md hover:bg-sunken aria-pressed:border-accent aria-pressed:bg-accent/10 aria-pressed:font-semibold aria-pressed:text-ink";
 
 // 부여가 가리키는 것의 표시 이름 - 역할이면 역할 이름, 직접 부여면 권한 라벨
 function getGrantWhatLabel(grant: Grant, t: TFunc): string {
@@ -94,6 +95,7 @@ function GrantFormModal({ onClose, onSaved }: GrantFormModalProps) {
       footer={
         <>
           <button type="button" data-testid="grant-cancel" className={BUTTON_SECONDARY} onClick={onClose}>
+            <X size={16} strokeWidth={1.5} aria-hidden />
             {t("common.cancel")}
           </button>
           <button type="submit" form="grant-form-element" data-testid="grant-save" className={BUTTON_PRIMARY} disabled={!canSave}>
@@ -104,7 +106,7 @@ function GrantFormModal({ onClose, onSaved }: GrantFormModalProps) {
     >
       <form id="grant-form-element" className="space-y-4" onSubmit={(event) => void handleSubmit(event)}>
         <div className="space-y-1.5">
-          <span className="text-sm font-semibold text-gray-700">{t("grants.form.subjectType")}</span>
+          <span className="text-sm font-semibold text-ink-2">{t("grants.form.subjectType")}</span>
           <div className="flex">
             {SUBJECT_TYPES.map((type) => (
               <button
@@ -123,12 +125,12 @@ function GrantFormModal({ onClose, onSaved }: GrantFormModalProps) {
         </div>
 
         <div className="space-y-1.5">
-          <span className="text-sm font-semibold text-gray-700">{t("grants.form.subject")}</span>
+          <span className="text-sm font-semibold text-ink-2">{t("grants.form.subject")}</span>
           <SubjectPicker testId="grant-subject-picker" subjectType={subjectType} value={subject} onChange={setSubject} />
         </div>
 
         <div className="space-y-1.5">
-          <span className="text-sm font-semibold text-gray-700">{t("grants.form.what")}</span>
+          <span className="text-sm font-semibold text-ink-2">{t("grants.form.what")}</span>
           <div className="flex">
             <button
               type="button"
@@ -163,7 +165,7 @@ function GrantFormModal({ onClose, onSaved }: GrantFormModalProps) {
                 onChange={setRoleId}
               />
               {roles.data !== null && roles.data.length === 0 && (
-                <p data-testid="grant-no-roles" className="text-xs text-gray-500">
+                <p data-testid="grant-no-roles" className="text-xs text-ink-3">
                   {t("grants.form.noRoles")}
                 </p>
               )}
@@ -229,15 +231,17 @@ function RevokeGrantModal({ grant, onClose, onRevoked }: RevokeGrantModalProps) 
       footer={
         <>
           <button type="button" data-testid="grant-remove-cancel" className={BUTTON_SECONDARY} onClick={onClose}>
+            <X size={16} strokeWidth={1.5} aria-hidden />
             {t("common.cancel")}
           </button>
-          <button type="button" data-testid="grant-remove-confirm" className={BUTTON_PRIMARY} disabled={isRevoking} onClick={() => void handleRevoke()}>
+          <button type="button" data-testid="grant-remove-confirm" className="btn danger" disabled={isRevoking} onClick={() => void handleRevoke()}>
+            <Undo2 size={16} strokeWidth={1.5} aria-hidden />
             {t("grants.revoke.confirm")}
           </button>
         </>
       }
     >
-      <p className="text-sm text-gray-800">
+      <p className="text-sm text-ink">
         {t("grants.revoke.body", {
           what: getGrantWhatLabel(grant, t),
           subject: getGrantSubjectLabel(grant),
@@ -267,12 +271,12 @@ export function AccessGrants() {
       cell: (grant) => (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <Tooltip label={t(`grants.subject.${grant.subject_type}`)}>
-            <span className="inline-flex items-center gap-1.5 text-gray-500" role="img" aria-label={t(`grants.subject.${grant.subject_type}`)}>
+            <span className="inline-flex items-center gap-1.5 text-ink-3" role="img" aria-label={t(`grants.subject.${grant.subject_type}`)}>
               <SubjectTypeIcon type={grant.subject_type} />
             </span>
           </Tooltip>
-          <span className="font-semibold text-gray-900">{getGrantSubjectLabel(grant)}</span>
-          {!grant.subject_missing && <span className="text-xs font-normal text-gray-500">{grant.subject_id}</span>}
+          <span className="font-semibold text-ink">{getGrantSubjectLabel(grant)}</span>
+          {!grant.subject_missing && <span className="text-xs font-normal text-ink-3">{grant.subject_id}</span>}
           {grant.subject_missing && (
             <span data-testid={`grant-missing-${grant.id}`} className={`${CHIP} gap-1`}>
               <TriangleAlert size={16} strokeWidth={1.5} />
@@ -309,8 +313,9 @@ export function AccessGrants() {
 
   return (
     <section data-testid="access-grants" className="space-y-4">
-      <div className="flex items-start justify-between gap-4">
-        <p className="text-sm text-gray-600">{t("grants.intro")}</p>
+      <div className="flex items-center gap-4">
+        <PanelTitle title={t("admin.sub.grants")} info={t("grants.intro")} testId="grants-info" />
+        <span className="flex-1" />
         <ListViewToggle listKey={LIST_KEY} view={view} testId="grants-view" />
         <button type="button" data-testid="grant-create" className={`${BUTTON_PRIMARY} shrink-0`} onClick={() => setIsFormOpen(true)}>
           <Plus size={16} strokeWidth={1.5} />

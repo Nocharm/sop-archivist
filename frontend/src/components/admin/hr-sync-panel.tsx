@@ -8,6 +8,7 @@ import { InlineNotice } from "@/components/inline-notice";
 import { OutcomePill } from "@/components/status";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PanelTitle } from "@/components/admin/panel-title";
 import { describeRunDetail, getAbortReasonKey } from "@/lib/admin-format";
 import { getHrSyncPreview, listHrSyncRuns, runHrSync, type HrSyncPreview, type HrSyncRun, type HrSyncSummary } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -30,9 +31,9 @@ function StatGrid({ testId, items }: { testId: string; items: StatItem[] }) {
   return (
     <dl data-testid={testId} className="grid grid-cols-2 gap-2 sm:grid-cols-4">
       {items.map((item) => (
-        <div key={item.label} className="rounded-md border border-gray-200 px-3 py-2">
-          <dt className="text-xs text-gray-500">{item.label}</dt>
-          <dd className="text-base font-semibold text-gray-900">{item.value}</dd>
+        <div key={item.label} className="rounded-md border border-line px-3 py-2">
+          <dt className="text-xs text-ink-3">{item.label}</dt>
+          <dd className="text-base font-semibold text-ink">{item.value}</dd>
         </div>
       ))}
     </dl>
@@ -45,10 +46,10 @@ function LoginIdList({ testId, title, ids }: { testId: string; title: string; id
   const shown = ids.slice(0, LIST_PREVIEW_COUNT);
   return (
     <div data-testid={testId} className="space-y-1">
-      <h4 className="text-sm font-semibold text-gray-700">{title}</h4>
-      <p className="text-sm text-gray-700">
+      <h4 className="text-sm font-semibold text-ink-2">{title}</h4>
+      <p className="text-sm text-ink-2">
         {shown.join(", ")}
-        {ids.length > shown.length && <span className="text-gray-500">{` ${t("hr.list.more", { count: ids.length - shown.length })}`}</span>}
+        {ids.length > shown.length && <span className="text-ink-3">{` ${t("hr.list.more", { count: ids.length - shown.length })}`}</span>}
       </p>
     </div>
   );
@@ -58,7 +59,7 @@ function RunSummary({ summary }: { summary: HrSyncSummary }) {
   const { t } = useI18n();
   return (
     <div data-testid="hr-sync-result" className="space-y-3">
-      <h3 className="text-sm font-semibold text-gray-900">{t("hr.result.title")}</h3>
+      <h3 className="text-sm font-semibold text-ink">{t("hr.result.title")}</h3>
       {summary.aborted_reason !== null && (
         <InlineNotice testId="hr-sync-aborted" tone="error">
           {t("hr.aborted", { reason: t(getAbortReasonKey(summary.aborted_reason)) })}
@@ -91,7 +92,7 @@ function PreviewSummary({ preview }: { preview: HrSyncPreview }) {
   const { t } = useI18n();
   return (
     <div data-testid="hr-sync-preview-result" className="space-y-3">
-      <h3 className="text-sm font-semibold text-gray-900">{t("hr.preview.title")}</h3>
+      <h3 className="text-sm font-semibold text-ink">{t("hr.preview.title")}</h3>
       <StatGrid
         testId="hr-sync-preview-stats"
         items={[
@@ -178,7 +179,7 @@ export function HrSyncPanel() {
 
   return (
     <section data-testid="hr-sync-panel" className="space-y-6">
-      <p className="text-sm text-gray-600">{t("hr.intro")}</p>
+      <PanelTitle title={t("admin.tab.directory")} info={t("hr.intro")} testId="hr-info" />
 
       <div className="flex flex-wrap gap-2">
         <button type="button" data-testid="hr-sync-run" className={BUTTON_PRIMARY} disabled={busy !== null} onClick={() => void handleRun()}>
@@ -201,7 +202,7 @@ export function HrSyncPanel() {
 
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-gray-900">{t("hr.runs.title")}</h3>
+          <h3 className="text-sm font-semibold text-ink">{t("hr.runs.title")}</h3>
           <ListViewToggle listKey={LIST_KEY} view={view} testId="hr-sync-runs-view" />
         </div>
         {runs.error !== null && (

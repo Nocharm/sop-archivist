@@ -47,10 +47,10 @@ export function Modal({ title, onClose, testId, children, footer, isBusy = false
         aria-modal="true"
         aria-labelledby={titleId}
         data-testid={testId}
-        className={`w-full ${wide ? "max-w-3xl" : "max-w-lg"} rounded-lg border border-gray-200 bg-raised shadow-lg`}
+        className={`w-full ${wide ? "max-w-3xl" : "max-w-lg"} rounded-lg border border-line bg-raised shadow-lg`}
       >
-        <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-          <h2 id={titleId} className="text-base font-semibold text-gray-900">
+        <div className="flex items-center justify-between border-b border-line px-4 py-3">
+          <h2 id={titleId} className="text-base font-semibold text-ink">
             {title}
           </h2>
           <button type="button" data-testid={`${testId}-close`} className={BUTTON_ICON} aria-label={t("common.close")} disabled={isBusy} onClick={onClose}>
@@ -58,7 +58,7 @@ export function Modal({ title, onClose, testId, children, footer, isBusy = false
           </button>
         </div>
         <div className="space-y-4 px-4 py-4">{children}</div>
-        {footer && <div className="flex justify-end gap-2 border-t border-gray-200 px-4 py-3">{footer}</div>}
+        {footer && <div className="flex justify-end gap-2 border-t border-line px-4 py-3">{footer}</div>}
       </div>
     </div>
   );

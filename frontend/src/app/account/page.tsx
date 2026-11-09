@@ -19,21 +19,21 @@ export default function AccountPage() {
   return (
     <div className="mx-auto w-full max-w-2xl space-y-8 px-4 py-10">
       <section data-testid="account-identity" className="space-y-1">
-        <h1 className="flex items-center gap-2 text-xl font-semibold text-gray-900">
-          <UserRound size={16} strokeWidth={1.5} className="text-gray-500" />
+        <h1 className="flex items-center gap-2 text-xl font-semibold text-ink">
+          <UserRound size={16} strokeWidth={1.5} className="text-ink-3" />
           {getDisplayName(me, lang)}
         </h1>
-        <p className="text-sm text-gray-600">{me.login_id}</p>
+        <p className="text-sm text-ink-2">{me.login_id}</p>
         {me.dept_path ? (
-          <p className="text-sm text-gray-600">{me.dept_path}</p>
+          <p className="text-sm text-ink-2">{me.dept_path}</p>
         ) : (
-          me.department && <p className="text-sm text-gray-600">{me.department}</p>
+          me.department && <p className="text-sm text-ink-2">{me.department}</p>
         )}
       </section>
 
       <section className="space-y-2">
-        <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
-          <ShieldCheck size={16} strokeWidth={1.5} className="text-gray-500" />
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
+          <ShieldCheck size={16} strokeWidth={1.5} className="text-ink-3" />
           {t("account.permissions")}
         </h2>
         {granted.length === 0 ? (
@@ -46,9 +46,9 @@ export default function AccountPage() {
                 <li
                   key={key}
                   data-testid={`account-permission-${key}`}
-                  className="space-y-1.5 rounded-md border border-gray-200 bg-gray-50 px-3 py-2"
+                  className="space-y-1.5 rounded-md border border-line bg-sunken px-3 py-2"
                 >
-                  <div className="text-sm font-semibold text-gray-900">{t(`permission.${key}`)}</div>
+                  <div className="text-sm font-semibold text-ink">{t(`permission.${key}`)}</div>
                   {sources.length > 0 && (
                     <ul data-testid={`account-permission-source-${key}`} className="space-y-1">
                       {sources.map((source, index) => (
@@ -68,11 +68,11 @@ export default function AccountPage() {
       </section>
 
       <section className="space-y-2">
-        <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
-          <Bot size={16} strokeWidth={1.5} className="text-gray-500" />
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
+          <Bot size={16} strokeWidth={1.5} className="text-ink-3" />
           {t("account.ai")}
         </h2>
-        <p data-testid="account-ai-status" className="text-sm text-gray-700">
+        <p data-testid="account-ai-status" className="text-sm text-ink-2">
           {me.ai_enabled ? t("account.aiOn") : t("account.aiOff")}
         </p>
       </section>

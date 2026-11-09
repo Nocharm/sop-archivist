@@ -8,6 +8,7 @@ import { InlineNotice } from "@/components/inline-notice";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { Select } from "@/components/ui/select";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PanelTitle } from "@/components/admin/panel-title";
 import { getAiUsage, pingAi, type AiPing, type AiUsageDay } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { useI18n } from "@/lib/i18n";
@@ -34,7 +35,7 @@ function PingOutcome({ result }: { result: PingResult }) {
   return (
     <InlineNotice testId="ai-ping-result" tone="info">
       <p>{t("ai.ping.connected", { model: result.ping.model, ms: result.ping.latency_ms })}</p>
-      <p className="text-gray-600">{result.ping.reply_ok ? t("ai.ping.replyOk") : t("ai.ping.replyOff")}</p>
+      <p className="text-ink-2">{result.ping.reply_ok ? t("ai.ping.replyOk") : t("ai.ping.replyOff")}</p>
     </InlineNotice>
   );
 }
@@ -74,7 +75,7 @@ export function AiPanel() {
 
   return (
     <section data-testid="ai-panel" className="space-y-6">
-      <p className="text-sm text-gray-600">{t("ai.intro")}</p>
+      <PanelTitle title={t("admin.tab.ai")} info={t("ai.intro")} testId="ai-info" />
 
       <div className="space-y-3">
         <button type="button" data-testid="ai-ping" className={BUTTON_PRIMARY} disabled={isPinging} onClick={() => void handlePing()}>
@@ -86,7 +87,7 @@ export function AiPanel() {
 
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-4">
-          <h3 className="shrink-0 text-sm font-semibold text-gray-900">{t("ai.usage.title")}</h3>
+          <h3 className="shrink-0 text-sm font-semibold text-ink">{t("ai.usage.title")}</h3>
           <div className="flex items-center gap-2">
             <Select
               testId="ai-usage-days"

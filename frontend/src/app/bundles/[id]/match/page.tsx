@@ -330,7 +330,7 @@ export default function MatchPage() {
             </section>
           </Refresh>
         ) : (
-          <EmptyState icon={Link2} testId="match-empty" title={t("match.empty")} />
+          <EmptyState icon={Link2} testId="match-empty" title={t("match.emptyTitle")} body={t("match.empty")} />
         )}
       </div>
 

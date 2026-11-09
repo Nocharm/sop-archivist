@@ -2,11 +2,13 @@
 // 확정·완료는 일반 버튼이고 전자서명이 아니다. "Review complete"이지 "approved"가 아니다 - 정식 승인은 Veeva에서 한다.
 "use client";
 
+import { CircleCheck, Gauge, RotateCcw, Undo2, X } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 
 import { Modal } from "@/components/modal";
+import { EditionToggle } from "@/components/outputs/edition-toggle";
 import { OutputCView } from "@/components/outputs/output-c";
 import { BundleStatusPill } from "@/components/status";
 import { showToast } from "@/components/ui/toast";
@@ -70,30 +72,28 @@ export default function ReviewPage() {
           {bundle.status === "in_progress" ? t("review.hintProgress") : bundle.status === "in_review" ? (isReviewer ? t("review.hintReviewer") : t("review.hintWaiting")) : t("review.hintDone")}
         </span>
         <span className="flex-1" />
-        <div className="flex gap-0.5 rounded-md bg-sunken p-0.5" role="group" aria-label={t("outputs.edition")}>
-          {(["ko", "en"] as const).map((item) => (
-            <button key={item} type="button" aria-pressed={lang === item} className={`h-[26px] rounded px-2.5 font-mono text-xs ${lang === item ? "bg-surface font-semibold text-ink shadow-sm" : "text-ink-2"}`} data-testid={`review-lang-${item}`} onClick={() => setLang(item)}>
-              {item.toUpperCase()}
-            </button>
-          ))}
-        </div>
+        <EditionToggle value={lang} onChange={setLang} testId="review-lang" />
         {bundle.status === "in_progress" && isAuthor && (
           <Link href={getStageHref(bundleId, "overview")} className="btn" data-testid="review-go-overview">
+            <Gauge size={16} strokeWidth={1.5} aria-hidden />
             {t("review.toOverview")}
           </Link>
         )}
         {bundle.status === "in_review" && isReviewer && (
           <>
             <button type="button" className="btn" data-testid="review-return" disabled={busy} onClick={() => setReasonFor("return")}>
+              <Undo2 size={16} strokeWidth={1.5} aria-hidden />
               {t("review.return")}
             </button>
             <button type="button" className="btn pri" data-testid="review-complete" disabled={busy} onClick={() => void run(() => completeReview(bundleId, bundle.revision), t("review.completed"))}>
+              <CircleCheck size={16} strokeWidth={1.5} aria-hidden />
               {t("review.complete")}
             </button>
           </>
         )}
         {bundle.status === "done" && isAuthor && (
           <button type="button" className="btn" data-testid="review-reopen" disabled={busy} onClick={() => setReasonFor("reopen")}>
+            <RotateCcw size={16} strokeWidth={1.5} aria-hidden />
             {t("review.reopen")}
           </button>
         )}
@@ -116,6 +116,7 @@ export default function ReviewPage() {
           footer={
             <>
               <button type="button" className="btn" data-testid="review-reason-cancel" onClick={() => setReasonFor(null)}>
+                <X size={16} strokeWidth={1.5} aria-hidden />
                 {t("common.cancel")}
               </button>
               <button
@@ -130,6 +131,7 @@ export default function ReviewPage() {
                   )
                 }
               >
+                {reasonFor === "return" ? <Undo2 size={16} strokeWidth={1.5} aria-hidden /> : <RotateCcw size={16} strokeWidth={1.5} aria-hidden />}
                 {reasonFor === "return" ? t("review.return") : t("review.reopen")}
               </button>
             </>

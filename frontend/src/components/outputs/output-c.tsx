@@ -1,8 +1,9 @@
 // 결과물 C - 새 문서를 칸·단계 순서로 미리 본다. 결과물 화면과 검토 화면이 같이 쓴다. 확정 전 새 문장은 점선.
 "use client";
 
-import { ArrowDown, ArrowUp } from "lucide-react";
+import { ArrowDown, ArrowUp, FileStack } from "lucide-react";
 
+import { EmptyState } from "@/components/ui/empty-state";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { OutputC, OutputCItem, OutputLang } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
@@ -63,6 +64,7 @@ function MoveButtons({ items, item, onMove, busy }: { items: OutputCItem[]; item
 
 export function OutputCView({ data, lang, onMove, moving = false }: { data: OutputC; lang: OutputLang; onMove?: MoveTarget; moving?: boolean }) {
   const { t } = useI18n();
+  if (data.docs.length === 0) return <EmptyState icon={FileStack} testId="output-c-empty" title={t("outputs.emptyTitle")} body={t("outputs.emptyC")} />;
   return (
     <div className="grid gap-6 p-[var(--pad)]" data-testid="output-c">
       {data.docs.map((doc) => (

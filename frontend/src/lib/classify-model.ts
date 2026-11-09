@@ -403,3 +403,11 @@ export function readCheckKey(warning: Record<string, string>): string {
   const kind = warning.code ?? warning.kind ?? "";
   return CHECK_KINDS.has(kind) ? `check.${kind}` : "check.other";
 }
+
+/** 목록 이동 키 - J·↓는 다음 줄, K·↑는 앞 줄(Split 화면과 같은 키) */
+export function getRowStep(key: string): 1 | -1 | null {
+  const lower = key.toLowerCase();
+  if (lower === "j" || lower === "arrowdown") return 1;
+  if (lower === "k" || lower === "arrowup") return -1;
+  return null;
+}

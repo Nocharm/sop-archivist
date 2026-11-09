@@ -14,9 +14,9 @@ export function InlineNotice({ testId, tone, children }: InlineNoticeProps) {
     <div
       data-testid={testId}
       role={tone === "error" ? "alert" : "status"}
-      className="flex items-start gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-sm text-gray-800"
+      className="flex items-start gap-2 rounded-md border border-line-2 bg-sunken px-3 py-2 text-sm text-ink"
     >
-      <Icon size={16} strokeWidth={1.5} className="mt-0.5 shrink-0 text-gray-500" />
+      <Icon size={16} strokeWidth={1.5} className="mt-0.5 shrink-0 text-ink-3" />
       <div className="min-w-0">{children}</div>
     </div>
   );

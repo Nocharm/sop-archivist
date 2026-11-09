@@ -6,6 +6,7 @@ import { useState } from "react";
 import { InlineNotice } from "@/components/inline-notice";
 import { SourceLine } from "@/components/permission-source-line";
 import { SubjectPicker, type PickedSubject } from "@/components/subject-picker";
+import { PanelTitle } from "@/components/admin/panel-title";
 import { orderPermissions } from "@/lib/access";
 import { getEffectiveNotices, translateOrRaw } from "@/lib/admin-format";
 import { getEffective } from "@/lib/api";
@@ -26,7 +27,7 @@ function EffectiveResult({ loginId }: { loginId: string }) {
   }
   const result = effective.data;
   if (result === null) {
-    return <p className="text-sm text-gray-500">{t("effective.loading")}</p>;
+    return <p className="text-sm text-ink-3">{t("effective.loading")}</p>;
   }
 
   const permissions = orderPermissions(result.permissions);
@@ -38,14 +39,14 @@ function EffectiveResult({ loginId }: { loginId: string }) {
         </InlineNotice>
       ))}
       {permissions.length === 0 ? (
-        <p data-testid="effective-none" className="text-sm text-gray-500">
+        <p data-testid="effective-none" className="text-sm text-ink-3">
           {t("effective.none")}
         </p>
       ) : (
-        <ul className="divide-y divide-gray-200 rounded-md border border-gray-200">
+        <ul className="divide-y divide-line rounded-md border border-line">
           {permissions.map((key) => (
             <li key={key} data-testid={`effective-perm-${key}`} className="space-y-1.5 px-3 py-2.5">
-              <div className="text-sm font-semibold text-gray-900">{translateOrRaw(t, `permission.${key}`, key)}</div>
+              <div className="text-sm font-semibold text-ink">{translateOrRaw(t, `permission.${key}`, key)}</div>
               {(result.sources[key] ?? []).length > 0 && (
                 <ul className="space-y-1">
                   {(result.sources[key] ?? []).map((source, index) => (
@@ -67,9 +68,9 @@ export function AccessEffective() {
 
   return (
     <section data-testid="access-effective" className="space-y-4">
-      <p className="text-sm text-gray-600">{t("effective.intro")}</p>
+      <PanelTitle title={t("admin.sub.lookup")} info={t("effective.intro")} testId="effective-info" />
       <div className="space-y-1.5">
-        <span className="text-sm font-semibold text-gray-700">{t("effective.pickerLabel")}</span>
+        <span className="text-sm font-semibold text-ink-2">{t("effective.pickerLabel")}</span>
         <SubjectPicker testId="effective-picker" subjectType="user" value={person} onChange={setPerson} allowLoginIdEntry />
       </div>
       {person !== null && <EffectiveResult key={person.id} loginId={person.id} />}

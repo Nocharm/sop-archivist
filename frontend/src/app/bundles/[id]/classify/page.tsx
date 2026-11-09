@@ -2,7 +2,7 @@
 // 배치는 사람마다: 원문 3단(232 / 가변 / 392, 기본) 또는 목록 + 상세(318 / 가변). AI 자리는 안내만 둔다.
 "use client";
 
-import { ArrowDown, ArrowUp, Check, ExternalLink, Inbox, Sparkles, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ExternalLink, Inbox, Sparkles, Trash2, X } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 
@@ -43,6 +43,7 @@ import {
   buildSentenceSlots,
   buildViewsKey,
   findNextOpen,
+  getRowStep,
   findSystemHold,
   isTextChangeType,
   pickFirstFilter,
@@ -368,7 +369,7 @@ export default function ClassifyPage() {
   }
 
   const handleKey = useEffectEvent((event: KeyboardEvent) => {
-    if (bulk || isTypingTarget(event.target) || document.querySelector('[role="dialog"],[role="menu"]')) {
+    if (bulk || isTypingTarget(event.target) || document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]')) {
       if (event.key === "Escape" && editing) setDraft({}, false);
       // 고치는 중에는 Enter가 줄바꿈이라 Ctrl+Enter로 저장한다
       if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && editing && isTypingTarget(event.target)) {
@@ -379,8 +380,8 @@ export default function ClassifyPage() {
     }
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const key = event.key.toLowerCase();
-    if (key === "j") moveRow(1);
-    else if (key === "k") moveRow(-1);
+    const step = getRowStep(key);
+    if (step !== null) moveRow(step);
     else if (key === "escape") setChecked(new Set());
     else if (!canEdit || !row) return;
     else if (key === "enter") handlePrimary();
@@ -755,7 +756,7 @@ export default function ClassifyPage() {
             testId="classify-paper"
           />
         ) : (
-          rows.length === 0 ? <EmptyState icon={Inbox} testId="classify-empty" title={t("classify.noUnits")} compact /> : <p />
+          rows.length === 0 ? <EmptyState icon={Inbox} testId="classify-empty" title={t("classify.emptyTitle")} body={t("classify.noUnits")} /> : <p />
         )}
       </div>
     </div>
@@ -869,6 +870,7 @@ function BulkModal({ action, count, onClose, onConfirm }: { action: "delete" | "
       footer={
         <>
           <button type="button" className="btn" data-testid="classify-bulk-cancel" onClick={onClose}>
+            <X size={16} strokeWidth={1.5} aria-hidden />
             {t("common.cancel")}
           </button>
           <button
@@ -882,6 +884,7 @@ function BulkModal({ action, count, onClose, onConfirm }: { action: "delete" | "
               setBusy(false);
             }}
           >
+            {action === "delete" ? <Trash2 size={16} strokeWidth={1.5} aria-hidden /> : <ExternalLink size={16} strokeWidth={1.5} aria-hidden />}
             {t("classify.bulkRun", { n: count })}
           </button>
         </>

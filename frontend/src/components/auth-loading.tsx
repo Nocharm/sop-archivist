@@ -9,7 +9,7 @@ export function AuthLoadingScreen() {
   const { t } = useI18n();
   return (
     <div data-testid="auth-loading" className="flex flex-1 items-center justify-center">
-      <div className="flex items-center gap-2 text-sm text-gray-500">
+      <div className="flex items-center gap-2 text-sm text-ink-3">
         <Loader2 size={16} strokeWidth={1.5} className="animate-spin" />
         <p>{t("auth.signingIn")}</p>
       </div>

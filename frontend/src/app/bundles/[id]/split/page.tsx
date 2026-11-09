@@ -2,7 +2,8 @@
 // 문장을 누르면 고르고 끝에 확인 단추가 나온다. 두 번 누르면 그 자리에 나눌 선과 나누기 팝업이 뜬다(S). 끌어 고르면 새 단위로 만들 수 있다.
 "use client";
 
-import { ArrowDown, ArrowUp, Check, Circle, CircleCheck, FileText, FolderCheck, Link2, Merge, Redo2, Scissors, Sparkles, SquarePlus, Undo2, Unlink, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, Circle, CircleCheck, FileText, FolderCheck, Link2, Merge, Redo2, Scissors, Sparkles, SquarePlus, Undo2, Unlink, Upload, X } from "lucide-react";
+import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useState, type ReactNode } from "react";
 
@@ -11,6 +12,7 @@ import { Paper, type PaperCut } from "@/components/paper/paper";
 import { SourceFontMenu } from "@/components/paper/source-font-menu";
 import { Modal } from "@/components/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { getStageHref } from "@/lib/stages";
 import { InfoTip } from "@/components/ui/info-tip";
 import { Truncate } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
@@ -454,7 +456,18 @@ export default function SplitPage() {
               {humanizeApiError(view.error, t)}
             </p>
           ) : docs.data !== null && readyDocs.length === 0 ? (
-            <EmptyState icon={FileText} testId="split-empty" title={t("split.noDocuments")} />
+            <EmptyState
+              icon={FileText}
+              testId="split-empty"
+              title={t("documents.emptyTitle")}
+              body={t("split.noDocuments")}
+              action={
+                <Link href={getStageHref(bundleId, "documents")} className="btn pri" data-testid="split-empty-documents">
+                  <Upload size={16} strokeWidth={1.5} aria-hidden />
+                  {t("documents.upload")}
+                </Link>
+              }
+            />
           ) : (
             showSkeleton && <span className="sk mx-auto block h-[640px] w-full max-w-[600px]" />
           )}
@@ -780,6 +793,7 @@ export default function SplitPage() {
           footer={
             <>
               <button type="button" className="btn" data-testid="split-hold-modal-cancel" onClick={() => setHoldFor(null)}>
+                <X size={16} strokeWidth={1.5} aria-hidden />
                 {t("common.cancel")}
               </button>
               <button type="submit" form="split-hold-form" className="btn pri" data-testid="split-hold-modal-confirm" disabled={!holdFor.reason.trim() || busy}>

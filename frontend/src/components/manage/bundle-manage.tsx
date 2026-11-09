@@ -231,6 +231,7 @@ function BundleMenu({ bundle }: { bundle: Bundle }) {
           summary={<span>{t("manage.deleteBody")}</span>}
           confirmLabel={t("manage.deleteBundle")}
           danger
+          confirmIcon={Trash2}
           busy={busy}
           testId="overview-delete"
           onConfirm={() => void handleDelete()}

@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { useRef, useState } from "react";
 
 import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { MorphButton } from "@/components/ui/morph-button";
 import { CollapseRow } from "@/components/ui/motion";
 import { Select } from "@/components/ui/select";
 import { showToast } from "@/components/ui/toast";
@@ -186,15 +187,9 @@ export default function ToBePage() {
               }
             />
             {canEdit && (
-              <button
-                type="button"
-                className="btn ghost icon h-7 w-7"
-                aria-label={t("tobe.removeStep")}
-                data-testid={`tobe-${doc.key}-remove-step-${step.step_no}`}
-                onClick={() => update(removeStep(draft, doc.key, step.step_no))}
-              >
-                <Trash2 size={14} strokeWidth={1.5} aria-hidden />
-              </button>
+              <span className="mbtn-host justify-self-end">
+                <MorphButton icon={Trash2} tone="danger" label={t("tobe.removeStep")} testId={`tobe-${doc.key}-remove-step-${step.step_no}`} onClick={() => update(removeStep(draft, doc.key, step.step_no))} />
+              </span>
             )}
           </div>
         ))}
@@ -368,12 +363,14 @@ export default function ToBePage() {
                       </td>
                       {canEdit && (
                         <td>
-                          <span className="row-actions">
-                          <Tooltip label={isMatch ? t("tobe.matchLocked") : t("tobe.removeDoc")} align="end">
-                            <button type="button" className="btn ghost icon h-7 w-7" aria-label={t("tobe.removeDoc")} data-testid={`${prefix}-remove`} disabled={isMatch} onClick={() => update(removeDoc(draft, doc.key))}>
-                              <Trash2 size={14} strokeWidth={1.5} aria-hidden />
-                            </button>
-                          </Tooltip>
+                          <span className="row-actions mbtn-host">
+                          {isMatch ? (
+                            <Tooltip label={t("tobe.matchLocked")} align="end">
+                              <MorphButton icon={Trash2} tone="danger" label={t("tobe.removeDoc")} testId={`${prefix}-remove`} disabled />
+                            </Tooltip>
+                          ) : (
+                            <MorphButton icon={Trash2} tone="danger" label={t("tobe.removeDoc")} testId={`${prefix}-remove`} onClick={() => update(removeDoc(draft, doc.key))} />
+                          )}
                           </span>
                         </td>
                       )}
@@ -405,7 +402,7 @@ export default function ToBePage() {
         />
       )}
       {draft !== null && rows.length === 0 && (
-        <EmptyState icon={ListTree} testId="tobe-empty" title={canEdit ? t("tobe.emptyEdit") : t("tobe.empty")} />
+        <EmptyState icon={ListTree} testId="tobe-empty" title={t("tobe.emptyTitle")} body={canEdit ? t("tobe.emptyEdit") : t("tobe.empty")} />
       )}
     </div>
   );
