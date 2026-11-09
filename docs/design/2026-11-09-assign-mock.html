@@ -1,0 +1,788 @@
+<title>Assign 통합 화면</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: guide band on top, then the working screen (rail · Old list · Old/New papers · destination panel), live enough to click through. */
+:root {
+  --bg: oklch(.965 .004 250); --surface: #fff; --sunken: oklch(.978 .0032 250); --paper: #fff;
+  --ink: oklch(.25 .012 255); --ink-2: oklch(.39 .009 255); --ink-3: oklch(.49 .0066 255); --ink-4: oklch(.56 .0054 255);
+  --line: oklch(.915 .0064 250); --line-2: oklch(.85 .008 250);
+  --accent: oklch(.45 .125 250); --on-accent: #fff;
+  --ok: oklch(.50 .13 155); --hold: oklch(.47 .10 70); --hold-fill: oklch(.67 .155 70);
+  --ai: oklch(.47 .165 305); --bad: oklch(.49 .175 27);
+  --chrome: oklch(.24 .01 255); --chrome-ink: oklch(.95 .004 255); --chrome-ink-2: oklch(.78 .006 255); --chrome-line: oklch(.36 .01 255); --chrome-hover: oklch(.30 .012 255);
+  --hl: oklch(.80 .11 235); --on-hl: oklch(.2 .02 255);
+  --shadow-1: 0 1px 2px oklch(.25 .02 255 / .10), 0 6px 18px oklch(.25 .02 255 / .06);
+  --hover: color-mix(in oklab, var(--ink) 5%, var(--surface));
+  --accent-tint: color-mix(in oklab, var(--accent) 9%, var(--surface));
+  --ok-tint: color-mix(in oklab, var(--ok) 11%, var(--surface));
+  --ai-tint: color-mix(in oklab, var(--ai) 8%, var(--surface));
+  --bad-tint: color-mix(in oklab, var(--bad) 9%, var(--surface));
+  --font: "Pretendard", -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: oklch(.185 .0056 255); --surface: oklch(.222 .008 255); --sunken: oklch(.2 .008 255); --paper: oklch(.245 .008 255);
+  --ink: oklch(.945 .0032 255); --ink-2: oklch(.815 .0048 255); --ink-3: oklch(.71 .0056 255); --ink-4: oklch(.64 .0056 255);
+  --line: oklch(.31 .008 255); --line-2: oklch(.40 .008 255); --accent: oklch(.78 .11 235); --on-accent: oklch(.2 .02 255);
+  --ok: oklch(.78 .13 155); --hold: oklch(.85 .105 82); --hold-fill: oklch(.67 .135 78); --ai: oklch(.81 .095 305); --bad: oklch(.77 .125 24);
+  --chrome: oklch(.16 .006 255); --chrome-line: oklch(.30 .01 255); --chrome-hover: oklch(.25 .01 255);
+  --shadow-1: 0 1px 2px oklch(0 0 0 / .5), 0 8px 24px oklch(0 0 0 / .28);
+  --hover: color-mix(in oklab, var(--ink) 9%, var(--surface)); color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: oklch(.185 .0056 255); --surface: oklch(.222 .008 255); --sunken: oklch(.2 .008 255); --paper: oklch(.245 .008 255);
+  --ink: oklch(.945 .0032 255); --ink-2: oklch(.815 .0048 255); --ink-3: oklch(.71 .0056 255); --ink-4: oklch(.64 .0056 255);
+  --line: oklch(.31 .008 255); --line-2: oklch(.40 .008 255); --accent: oklch(.78 .11 235); --on-accent: oklch(.2 .02 255);
+  --ok: oklch(.78 .13 155); --hold: oklch(.85 .105 82); --hold-fill: oklch(.67 .135 78); --ai: oklch(.81 .095 305); --bad: oklch(.77 .125 24);
+  --chrome: oklch(.16 .006 255); --chrome-line: oklch(.30 .01 255); --chrome-hover: oklch(.25 .01 255);
+  --shadow-1: 0 1px 2px oklch(0 0 0 / .5), 0 8px 24px oklch(0 0 0 / .28);
+  --hover: color-mix(in oklab, var(--ink) 9%, var(--surface)); color-scheme: dark; }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 14px/22px var(--font); margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 24px 64px; }
+.wrap { max-width: 1440px; margin: 0 auto; display: grid; gap: 18px; }
+h1 { font-size: 22px; line-height: 30px; margin: 0; text-wrap: balance; }
+.lede { color: var(--ink-2); margin: 4px 0 0; max-width: 90ch; }
+svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+button { font: inherit; color: inherit; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 5px; border: 1px solid var(--line-2); background: var(--surface); color: var(--ink); font: 600 13px var(--font); cursor: pointer; white-space: nowrap; }
+.btn:hover:not(:disabled) { background: var(--hover); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn.primary:hover:not(:disabled) { background: color-mix(in oklab, var(--accent) 88%, var(--ink)); }
+.btn.danger { background: var(--bad); border-color: var(--bad); color: var(--surface); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.sm { height: 26px; padding: 0 9px; font-size: 12px; }
+kbd { font: 600 10px/16px var(--mono); padding: 0 4px; border-radius: 3px; border: 1px solid currentColor; opacity: .75; }
+.mono { font-family: var(--mono); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* guide band */
+.guide { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 12px 14px; border-radius: 7px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-1); }
+.guide-n { font: 700 12px var(--mono); color: var(--accent); white-space: nowrap; }
+.guide-bar { height: 3px; border-radius: 2px; background: var(--line); margin-top: 6px; overflow: hidden; width: 120px; }
+.guide-bar i { display: block; height: 100%; background: var(--accent); transition: width .25s; }
+.guide-cap { color: var(--ink-2); min-width: 0; }
+.guide-cap b { color: var(--ink); }
+.guide-nav { display: flex; gap: 6px; }
+@media (max-width: 760px) { .guide { grid-template-columns: 1fr; } }
+
+/* app frame */
+.frame { border: 1px solid var(--line); border-radius: 7px; overflow-x: auto; box-shadow: var(--shadow-1); }
+.app { display: grid; grid-template-columns: 72px minmax(0, 1fr) 360px; min-width: 1240px; height: 700px; background: var(--bg); }
+.rail { background: var(--chrome); display: flex; flex-direction: column; gap: 2px; padding: 6px; }
+.stg { width: 60px; height: 50px; border-radius: 5px; display: grid; place-items: center; align-content: center; gap: 3px; color: var(--chrome-ink-2); font-size: 11px; line-height: 14px; }
+.stg .n { width: 20px; height: 20px; border-radius: 3px; border: 1px solid var(--chrome-line); display: grid; place-items: center; font: 700 11px var(--mono); }
+.stg.cur { background: var(--chrome-hover); color: var(--chrome-ink); }
+.stg.cur .n { background: var(--hl); border-color: var(--hl); color: var(--on-hl); }
+
+/* list */
+.list { background: var(--surface); border-right: 1px solid var(--line); display: grid; grid-template-rows: auto auto minmax(0, 1fr); min-height: 0; }
+.list-top { padding: 10px; display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--line); }
+.chip { height: 26px; padding: 0 8px; border-radius: 4px; border: 0; background: transparent; font-size: 12px; color: var(--ink-2); cursor: pointer; display: inline-flex; align-items: center; gap: 5px; }
+.chip[aria-pressed="true"] { background: var(--sunken); color: var(--ink); font-weight: 600; box-shadow: inset 0 0 0 1px var(--line-2); }
+.chip .c { font-variant-numeric: tabular-nums; color: var(--ink-3); }
+.chip.warn .c { color: var(--bad); font-weight: 700; }
+.prog { padding: 8px 12px; font-size: 12px; color: var(--ink-3); border-bottom: 1px solid var(--line); }
+.prog .bar { height: 3px; border-radius: 2px; background: var(--line); margin-top: 5px; overflow: hidden; }
+.prog .bar i { display: block; height: 100%; background: var(--ok); transition: width .25s; }
+.rows { overflow-y: auto; }
+.row { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--line); cursor: pointer; width: 100%; text-align: left; background: transparent; border-left: 0; border-right: 0; border-top: 0; }
+.row:hover { background: var(--hover); }
+.row[aria-current="true"] { background: var(--accent-tint); box-shadow: inset 2px 0 0 var(--accent); }
+.row .id { font: 11px var(--mono); color: var(--ink-3); }
+.row .tx { font-size: 13px; line-height: 19px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .to { font-size: 11px; color: var(--ink-3); margin-top: 2px; }
+.row .to b { font-family: var(--mono); color: var(--ok); font-weight: 600; }
+.row .to b.del { color: var(--bad); }
+.dot { width: 13px; height: 13px; border-radius: 50%; border: 1.5px solid var(--ink-4); margin-top: 3px; }
+.dot.ok { border-color: var(--ok); background: var(--ok); box-shadow: inset 0 0 0 2px var(--surface); }
+.dot.ai { border-color: var(--ai); border-style: dashed; }
+
+/* papers */
+.desk { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 10px; padding: 12px 16px 16px; overflow: hidden; min-height: 0; }
+.desk-bar { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-3); min-height: 28px; }
+.desk-bar .sp { flex: 1; }
+.zoom { display: inline-flex; align-items: center; border: 1px solid var(--line-2); border-radius: 5px; background: var(--surface); }
+.zoom button { width: 26px; height: 26px; border: 0; background: transparent; cursor: pointer; font: 600 14px var(--font); color: var(--ink-2); }
+.zoom button:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+.zoom button:disabled { opacity: .4; cursor: not-allowed; }
+.zoom span { min-width: 44px; text-align: center; font: 600 11px var(--mono); color: var(--ink-2); }
+/* 두 문서는 나란히 - 사이 세로선을 끌어 폭을 나누고, 문서마다 따로 확대한다(--z) */
+.stack { min-height: 0; display: grid; grid-template-columns: minmax(0, var(--split)) 12px minmax(0, 1fr); }
+.stack.single { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+.stack.single .pane { width: min(100%, calc(640px * var(--z))); }
+.pane { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 6px; min-height: 0; min-width: 0; }
+.divider { cursor: col-resize; position: relative; touch-action: none; }
+.divider::before { content: ""; position: absolute; left: 5px; top: 34px; bottom: 0; width: 2px; border-radius: 1px; background: var(--line-2); transition: background .15s; }
+.divider::after { content: ""; position: absolute; left: 3px; top: 50%; width: 6px; height: 28px; border-radius: 3px; border: 1px solid var(--line-2); background: var(--surface); transform: translateY(-50%); }
+.divider:hover::before, .divider:focus-visible::before, .divider.drag::before { background: var(--accent); }
+.divider:hover::after, .divider.drag::after { border-color: var(--accent); }
+.divider:focus-visible { outline: none; }
+.pz { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); opacity: .55; transition: opacity .15s; }
+.pane:hover .pz, .pz:focus-within { opacity: 1; }
+.pz button { width: 22px; height: 22px; border: 0; background: transparent; cursor: pointer; font: 600 13px var(--font); color: var(--ink-2); }
+.pz button:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+.pz button:disabled { opacity: .4; cursor: not-allowed; }
+.pz span { min-width: 38px; text-align: center; font: 600 10px var(--mono); color: var(--ink-2); }
+.phead { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-3); min-height: 26px; }
+.phead b { font: 600 12px var(--mono); color: var(--ink); }
+.phead .tag { font-size: 11px; padding: 0 6px; border-radius: 3px; border: 1px solid var(--line-2); color: var(--ink-2); }
+.phead .sp { flex: 1; }
+.paper { background: var(--paper); border: 1px solid var(--line); border-radius: 4px; box-shadow: var(--shadow-1); overflow-y: auto; padding: 18px 22px; font-size: calc(14px * var(--z)); line-height: 1.6; }
+.sec { font-size: 12px; font-weight: 700; color: var(--ink-3); margin: 14px 0 4px; }
+.sec:first-child { margin-top: 0; }
+.ps { display: block; width: calc(100% + 16px); text-align: left; border: 0; background: transparent; padding: 5px 8px; margin: 1px -8px; border-radius: 4px; font-size: inherit; line-height: inherit; cursor: pointer; position: relative; color: inherit; }
+.ps:hover { background: var(--hover); }
+.ps.dim { color: var(--ink-3); }
+.ps.cur { box-shadow: inset 0 0 0 1.5px var(--accent); background: var(--accent-tint); }
+.ps .num { font: 11px var(--mono); color: var(--ink-4); margin-right: 6px; }
+.ps.cand { box-shadow: inset 0 0 0 1.5px var(--accent); background: transparent; outline: 1.5px dashed var(--accent); outline-offset: -1.5px; box-shadow: none; }
+.ps.pick { background: var(--accent-tint); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.ps.unsrc { box-shadow: inset 0 0 0 1.5px var(--bad); background: var(--bad-tint); }
+.ps .src { display: inline-flex; gap: 4px; margin-left: 6px; vertical-align: 1px; }
+.ps .src span { font: 10px/16px var(--mono); padding: 0 4px; border-radius: 3px; background: var(--ok-tint); color: var(--ok); }
+.ps .gone { font: 10px/16px var(--mono); padding: 0 4px; border-radius: 3px; margin-left: 6px; background: var(--sunken); color: var(--ink-3); }
+
+/* Old 원문 = Split 화면의 Unit 조각 - 이 자체가 목록이다 */
+.strips { overflow-y: auto; display: grid; align-content: start; gap: 7px; padding: 2px 2px 24px; font-size: calc(14px * var(--z)); line-height: 1.6; }
+.strips .sec { margin: 8px 0 -2px 4px; }
+.strip { position: relative; display: block; width: 100%; text-align: left; padding: 8px 40px 8px 44px; background: var(--paper); border: 1px solid var(--line); border-radius: 3px; box-shadow: 0 1px 1px oklch(.25 .02 255 / .05); cursor: pointer; font: inherit; color: var(--ink); }
+.strip:hover { border-color: var(--line-2); }
+.strip.cur { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--shadow-1); }
+.strip.done { color: var(--ink-3); }
+.strip .ltag { position: absolute; left: 10px; top: calc(8px + .2em); font: 600 10px/16px var(--mono); padding: 0 4px; border-radius: 3px; background: color-mix(in oklab, var(--accent) 12%, var(--surface)); color: var(--accent); }
+.strip .mk { position: absolute; right: 10px; top: calc(8px + .25em); display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; }
+.strip .mk.ok { color: var(--ok); }
+.strip .mk.ai { color: var(--ai); }
+.strip .mk.none { border: 1.5px solid var(--ink-4); width: 14px; height: 14px; right: 12px; }
+.strip .to { display: block; font: 600 11px/16px var(--mono); color: var(--ok); margin-top: 2px; }
+.strip .to.del { color: var(--bad); }
+.prog-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-3); }
+.prog-inline .bar { width: 72px; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.prog-inline .bar i { display: block; height: 100%; background: var(--ok); }
+
+/* panel */
+.panel { background: var(--surface); border-left: 1px solid var(--line); overflow-y: auto; display: grid; align-content: start; }
+.ph { position: relative; padding: 12px 44px 12px 14px; border-bottom: 1px solid var(--line); display: grid; gap: 6px; }
+/* 범례 - 고른 문장이 없으면 오른쪽 칸 전체, 있으면 오른쪽 위 (i)에 호버로 */
+.legend { padding: 14px; display: grid; gap: 14px; font-size: 12px; line-height: 18px; color: var(--ink-2); }
+.legend h3 { margin: 0 0 6px; font-size: 11px; font-weight: 700; color: var(--ink-3); letter-spacing: .06em; }
+.lg-rows { display: grid; gap: 6px; }
+.lg-row { display: grid; grid-template-columns: 58px minmax(0, 1fr); align-items: center; gap: 8px; }
+.lg-row .sw { justify-self: center; display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 18px; }
+.sw .ltag-s { font: 600 10px/16px var(--mono); padding: 0 4px; border-radius: 3px; background: color-mix(in oklab, var(--accent) 12%, var(--surface)); color: var(--accent); }
+.sw .box { width: 30px; height: 14px; border-radius: 3px; }
+.sw .box.cand { outline: 1.5px dashed var(--accent); outline-offset: -1.5px; }
+.sw .box.pick { background: var(--accent-tint); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.sw .box.unsrc { background: var(--bad-tint); box-shadow: inset 0 0 0 1.5px var(--bad); }
+.legend-intro { display: grid; gap: 4px; padding: 12px; border-radius: 6px; background: var(--sunken); color: var(--ink-2); }
+.legend-intro b { color: var(--ink); font-size: 13px; }
+.lg-wrap { position: absolute; top: 10px; right: 10px; }
+.lg-btn { width: 26px; height: 26px; border-radius: 50%; border: 1px solid transparent; background: transparent; color: var(--ink-3); display: grid; place-items: center; cursor: help; }
+.lg-btn:hover, .lg-btn:focus-visible { color: var(--ink); background: var(--hover); }
+.lg-pop { position: absolute; top: 32px; right: 0; width: 310px; z-index: 5; background: var(--surface); border: 1px solid var(--line-2); border-radius: 7px; box-shadow: var(--shadow-1); visibility: hidden; opacity: 0; transform: translateY(-4px); transition: opacity .15s, transform .15s, visibility .15s; }
+.lg-wrap:hover .lg-pop, .lg-wrap:focus-within .lg-pop { visibility: visible; opacity: 1; transform: none; }
+.ph .top { display: flex; align-items: center; gap: 8px; }
+.ph .top b { font: 600 13px var(--mono); }
+.pill { font-size: 11px; line-height: 18px; padding: 0 7px; border-radius: 9px; border: 1px solid var(--line-2); color: var(--ink-2); display: inline-flex; align-items: center; gap: 4px; }
+.pill.ok { border-color: var(--ok); color: var(--ok); }
+.pill.ai { border-color: var(--ai); color: var(--ai); border-style: dashed; }
+.ph .tx { font-size: 13px; line-height: 20px; color: var(--ink-2); }
+.chosen { margin: 12px 14px 0; padding: 10px 12px; border-radius: 6px; border: 1.5px solid var(--accent); background: var(--accent-tint); display: grid; gap: 8px; }
+.chosen.empty { border: 1.5px dashed var(--line-2); background: transparent; color: var(--ink-3); font-size: 13px; }
+.chosen .lbl { font-size: 11px; font-weight: 700; color: var(--ink-3); letter-spacing: .04em; }
+.chosen .dest { font-size: 13px; line-height: 19px; }
+.chosen .dest b { font-family: var(--mono); font-weight: 600; }
+.chgs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.chgs .chip { border: 1px solid var(--line-2); }
+.chgs .auto { font-size: 11px; color: var(--accent); font-weight: 700; }
+.note { font-size: 12px; line-height: 18px; color: var(--ink-2); }
+textarea, input[type=text] { width: 100%; border: 1px solid var(--line-2); border-radius: 5px; background: var(--surface); color: var(--ink); font: 13px/19px var(--font); padding: 6px 8px; resize: vertical; }
+.acts { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.acc { border-bottom: 1px solid var(--line); }
+.acc-h { width: 100%; display: flex; align-items: center; gap: 8px; padding: 10px 14px; border: 0; background: transparent; cursor: pointer; font-size: 12px; font-weight: 700; color: var(--ink-2); text-align: left; }
+.acc-h:hover { background: var(--hover); }
+.acc-h .ct { color: var(--ink-4); font-weight: 600; }
+.acc-h .chev { margin-left: auto; transition: transform .2s; }
+.acc-h[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.acc-b { padding: 0 14px 12px; display: grid; gap: 6px; }
+.card { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; padding: 9px 10px; border-radius: 6px; border: 1px solid var(--line-2); background: var(--surface); text-align: left; cursor: pointer; width: 100%; }
+.card:hover { border-color: var(--accent); }
+.card[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-tint); }
+.card .ic { width: 22px; height: 22px; border-radius: 4px; display: grid; place-items: center; background: var(--sunken); color: var(--ink-2); }
+.card .ic.new { color: var(--accent); }
+.card .ic.del { color: var(--bad); }
+.card .d { font-size: 12px; color: var(--ink-3); }
+.card .d b { font-family: var(--mono); color: var(--ink); font-weight: 600; }
+.card .t { font-size: 13px; line-height: 19px; }
+.card .w { font-size: 11px; color: var(--ai); margin-top: 2px; }
+.tree { display: grid; gap: 2px; }
+.tg { font-size: 11px; font-weight: 700; color: var(--ink-4); margin: 6px 0 2px; }
+.tn { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: transparent; padding: 5px 6px; border-radius: 4px; cursor: pointer; text-align: left; font-size: 13px; }
+.tn:hover { background: var(--hover); }
+.tn .chev { transition: transform .2s; color: var(--ink-4); }
+.tn[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.tn b { font-family: var(--mono); font-weight: 600; font-size: 12px; }
+.tn .sub { color: var(--ink-3); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tkids { padding-left: 20px; display: grid; gap: 1px; }
+.leaf { display: block; width: 100%; border: 0; background: transparent; text-align: left; padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 12px; line-height: 17px; color: var(--ink-2); }
+.leaf:hover { background: var(--hover); color: var(--ink); }
+.leaf .num { font-family: var(--mono); color: var(--ink-4); margin-right: 5px; }
+.leaf.na { color: var(--ink-4); text-decoration: line-through; cursor: not-allowed; }
+.done-box { padding: 28px 22px; text-align: center; display: grid; gap: 6px; justify-items: center; color: var(--ink-2); }
+.done-box .big { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: var(--ok-tint); color: var(--ok); }
+
+/* the place the guide points to */
+.cue { position: relative; z-index: 1; animation: cue 1.4s ease-in-out infinite; }
+@keyframes cue { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 0%, transparent); } 50% { box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent) 45%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .lg-pop, .pz { transition: none; } .cue { animation: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 50%, transparent); } .guide-bar i, .prog .bar i, .acc-h .chev, .tn .chev { transition: none; } }
+
+.notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px 28px; }
+.notes h2 { font-size: 13px; margin: 0 0 6px; }
+.notes ul { margin: 0; padding-left: 18px; color: var(--ink-2); font-size: 13px; line-height: 20px; display: grid; gap: 4px; }
+.notes li.g { color: var(--ink-3); }
+.notes li.g::marker { color: var(--hold-fill); }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>3단계 Assign — Old 문장 한 줄씩</h1>
+    <p class="lede">분류와 짝 맞추기를 한 화면으로 합친 목업입니다. 위 안내 띠가 누를 곳을 짚고, 누르면 다음 단계로 넘어갑니다. 안내와 상관없이 자유롭게 눌러도 됩니다. 데이터는 합성 QC 원심분리기 Bundle입니다.</p>
+  </header>
+
+  <section class="guide" aria-live="polite">
+    <div>
+      <div class="guide-n" id="g-n">1 / 21</div>
+      <div class="guide-bar"><i id="g-bar"></i></div>
+    </div>
+    <div class="guide-cap" id="g-cap"></div>
+    <div class="guide-nav">
+      <button class="btn sm" id="g-reset" type="button">처음부터</button>
+      <button class="btn sm" id="g-prev" type="button">이전</button>
+      <button class="btn sm primary" id="g-next" type="button">다음</button>
+    </div>
+  </section>
+
+  <div class="frame"><div class="app" id="app"></div></div>
+
+  <section class="notes">
+    <div>
+      <h2>정한 것</h2>
+      <ul>
+        <li>레일의 3단계는 Assign 한 항목. 분류·짝 맞추기 화면은 없어진다.</li>
+        <li>따로 된 Old 문장 목록은 없다. Split 화면의 Unit 조각이 곧 목록이고, 끝에 상태(확정·AI 제안·미배정)와 간 곳이 붙는다.</li>
+        <li>두 문서는 나란히. 사이 세로선을 끌어 폭을 나눈다(30~70%, 더블클릭 반반).</li>
+        <li>문서마다 따로 확대 — 마우스를 올리고 Ctrl+휠 또는 Ctrl +/− (Ctrl 0은 100%), 문서 머리의 −/+.</li>
+        <li>범례는 고른 문장이 없을 때 오른쪽 칸에, 고른 뒤에는 오른쪽 위 (i)에 호버로.</li>
+        <li>Old 문장을 한 줄씩. 보낼 곳 하나에 이미 쓴 New 문서의 문장과 아직 안 쓴 문서의 칸이 함께 나온다.</li>
+        <li>New 원문은 옆에 펼치고, AI 후보는 오른쪽 아코디언 맨 위. 그 아래는 가까운 곳 → 전체(문서 → 절·칸 → 문장) 순서로 한 단계씩 펼친다.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>제 추측 (확인 필요)</h2>
+      <ul>
+        <li class="g">New 원문은 지금 후보·고른 곳이 이미 쓴 문서일 때만 자동으로 열린다. 아니면 "New 원문 열기"로 연다.</li>
+        <li class="g">문서별 확대와 폭 비율은 사람마다 기억한다. 브라우저 확대(Ctrl +/−)는 문서 위에 마우스가 있을 때만 가로챈다.</li>
+        <li class="g">나눔은 New 문장 여러 개 고르기(Ctrl+클릭), 합침은 다른 Old 문장이 이미 붙은 New 문장을 고를 때 자동 표시.</li>
+        <li class="g">출처 없는 New 문장은 목록 위 별도 칩. 남아 있으면 검토 요청이 막히므로 빨간 숫자.</li>
+        <li class="g">목업에선 KO 조각만 보였지만 실제 원문에는 EN 조각도 있고, 한/영 짝은 함께 골라진다(지금 분류의 짝 한 줄과 같음).</li>
+      </ul>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const ICON = {
+    file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
+    slot: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 10h8M8 14h5"/>',
+    trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>',
+    chev: '<path d="M9 6l6 6-6 6"/>',
+    check: '<path d="M5 12l5 5 9-10"/>',
+    spark: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/>',
+    gauge: '<path d="M4 15a8 8 0 1 1 16 0"/><path d="M12 15l4-4"/>',
+    files: '<path d="M8 3h8l4 4v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M4 7v12a2 2 0 0 0 2 2"/>',
+    clip: '<rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4h6v3H9z"/><path d="M9 13l2 2 4-4"/>',
+  };
+  const icon = (name, cls = "i") => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICON[name]}</svg>`;
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  // --- 합성 데이터 ---
+  const OLD = [
+    { id: "OLD-1-012", sec: "4. 설치", text: "원심분리기는 수평한 실험대 위에 설치한다." },
+    { id: "OLD-1-013", sec: "4. 설치", text: "전원 코드를 연결한 뒤 전원 스위치를 켠다." },
+    { id: "OLD-1-021", sec: "5. 운전", text: "튜브는 무게를 맞춰 대칭으로 배치하고, 뚜껑을 닫은 뒤 START 버튼을 누른다." },
+    { id: "OLD-1-022", sec: "5. 운전", text: "회전이 완전히 멈춘 뒤 뚜껑을 연다." },
+    { id: "OLD-1-023", sec: "5. 운전", text: "뚜껑을 열기 전에 회전 표시등이 꺼졌는지 확인한다." },
+    { id: "OLD-1-030", sec: "6. 안전", text: "원심분리기를 다룰 때는 보호 장갑과 보안경을 착용한다." },
+    { id: "OLD-1-031", sec: "7. 기록", text: "QC 팀장은 원심분리기 사용 기록을 매월 검토한다." },
+    { id: "OLD-1-040", sec: "8. 기타", text: "구형 모델(CF-200)은 2019년 이후 사용하지 않는다." },
+  ];
+  const WRITTEN = { code: "WI-04", title: "Labogene 원심분리기 운전", secs: [
+    { t: "1. 준비", s: [{ id: "1.1", text: "원심분리기가 수평한 실험대 위에 놓였는지 확인한다." }, { id: "1.2", text: "전원 코드를 꽂고 스위치를 켠다." }] },
+    { t: "2. 운전", s: [{ id: "2.1", text: "튜브를 무게별로 대칭이 되게 놓는다." }, { id: "2.2", text: "뚜껑을 닫고 START를 누른다." }] },
+    { t: "3. 마무리", s: [{ id: "3.1", text: "회전 표시등이 꺼지고 회전이 멈춘 뒤 뚜껑을 연다." }, { id: "3.2", text: "사용 후 로터를 70% 에탄올로 닦는다." }] },
+  ] };
+  const NEW_BY_ID = Object.fromEntries(WRITTEN.secs.flatMap((sec) => sec.s.map((s) => [s.id, { ...s, sec: sec.t }])));
+  const UNWRITTEN = [
+    { code: "SOP-CF", title: "QC 원심분리기 사용·관리", slots: [
+      { key: "purpose", label: "목적" }, { key: "scope", label: "적용 범위" }, { key: "defs", label: "정의" }, { key: "resp", label: "책임" },
+      { key: "safety", label: "일반 요구사항 › 안전" }, { key: "oper", label: "일반 요구사항 › 운전" }, { key: "proc", label: "절차", na: true },
+    ] },
+    { code: "WI-05", title: "Eppendorf 원심분리기 운전", slots: [
+      { key: "w5-1i", label: "1 준비 · Instruction" }, { key: "w5-1w", label: "1 준비 · Why" }, { key: "w5-2i", label: "2 운전 · Instruction" },
+    ] },
+  ];
+  const SLOT = Object.fromEntries(UNWRITTEN.flatMap((doc) => doc.slots.map((s) => [s.key, { ...s, doc: doc.code }])));
+  const SUG = {
+    "OLD-1-012": [{ k: "new", ids: ["1.1"], chg: "말투", why: "같은 지시, 표현만 다름" }, { k: "slot", slot: "oper", why: "설치 요건으로 볼 수도 있음" }],
+    "OLD-1-013": [{ k: "new", ids: ["1.2"], chg: "말투", why: "같은 지시, 표현만 다름" }],
+    "OLD-1-021": [{ k: "new", ids: ["2.1", "2.2"], chg: "나눔", why: "한 문장이 두 단계로 나뉨" }, { k: "new", ids: ["2.2"], chg: "고쳐 씀", why: "뒤쪽 절반만 맞음" }],
+    "OLD-1-022": [{ k: "new", ids: ["3.1"], chg: "고쳐 씀", why: "OLD-1-023과 함께 한 문장이 됨" }],
+    "OLD-1-023": [{ k: "new", ids: ["3.1"], chg: "고쳐 씀", why: "OLD-1-022와 함께 한 문장이 됨" }],
+    "OLD-1-030": [{ k: "slot", slot: "safety", ai: "원심분리기를 다룰 때는 보호 장갑과 보안경을 착용하여야 한다.", why: "보호구 요건" }, { k: "slot", slot: "oper", why: "운전 중 주의" }],
+    "OLD-1-031": [{ k: "slot", slot: "defs", why: "용어가 들어 있음" }, { k: "slot", slot: "scope", why: "적용 대상 언급" }],
+    "OLD-1-040": [{ k: "delete", why: "폐기된 모델 — New 문서에 대응 없음", reason: "CF-200 폐기(2019)로 해당 없음" }],
+  };
+
+  // --- 상태 ---
+  let st;
+  function reset() {
+    st = { sel: null, pending: null, dec: {}, acc: { ai: true, near: false, all: false, del: false }, tree: {}, mode: "old", selNew: null, marked: new Set(), showNew: false, zoom: { old: 1, new: 1 }, split: 0.5 };
+  }
+
+  function getCands(id) { return SUG[id] ?? []; }
+  function getLinkedBy(newId, except) {
+    return OLD.filter((o) => o.id !== except && st.dec[o.id]?.k === "new" && st.dec[o.id].ids.includes(newId)).map((o) => o.id);
+  }
+  function getAutoChange(p) {
+    if (!p || p.k !== "new") return null;
+    if (p.ids.length > 1) return "나눔";
+    if (p.ids.some((id) => getLinkedBy(id, st.sel).length > 0)) return "합침";
+    return null;
+  }
+  function getUnsourced() {
+    return Object.keys(NEW_BY_ID).filter((id) => getLinkedBy(id, null).length === 0 && !st.marked.has(id));
+  }
+  function getNextOpen(after) {
+    const i = OLD.findIndex((o) => o.id === after);
+    return [...OLD.slice(i + 1), ...OLD.slice(0, i + 1)].find((o) => !st.dec[o.id]) ?? null;
+  }
+  function makePending(c) {
+    if (c.k === "new") return { k: "new", ids: [...c.ids], chg: c.chg };
+    if (c.k === "slot") return { k: "slot", slot: c.slot, text: c.ai ?? OLD.find((o) => o.id === st.sel).text };
+    return { k: "delete", reason: c.reason ?? "" };
+  }
+
+  function doAct(act, ev) {
+    const [name, arg] = act.split(":");
+    const shift = ev && (ev.ctrlKey || ev.metaKey);
+    if (name === "zoom") {
+      const [, pane, dir] = act.split(":");
+      const next = dir === "0" ? 1 : st.zoom[pane] + (dir === "+" ? 0.1 : -0.1);
+      st.zoom[pane] = Math.round(Math.min(1.6, Math.max(0.7, next)) * 10) / 10;
+    }
+    else if (name === "split") { if (st.split === 0.5) st.split = 0.56; }
+    else if (name === "legend") { /* 범례를 열어 봄 - 안내 단계만 넘긴다 */ }
+    else if (name === "move") {
+      const i = OLD.findIndex((o) => o.id === st.sel);
+      const next = OLD[Math.min(OLD.length - 1, Math.max(0, i + Number(arg)))];
+      if (next && next.id !== st.sel) doAct(`sel:${next.id}`);
+    }
+    else if (name === "sel") { st.mode = "old"; st.sel = arg; st.pending = null; st.acc = { ai: true, near: false, all: false, del: false }; st.tree = {}; }
+    else if (name === "pick") { st.pending = makePending(getCands(st.sel)[Number(arg)]); }
+    else if (name === "pickNew") {
+      if (st.mode === "unsrc") { st.selNew = arg; }
+      else if (shift && st.pending?.k === "new") {
+        const ids = st.pending.ids.includes(arg) ? st.pending.ids.filter((x) => x !== arg) : [...st.pending.ids, arg];
+        st.pending = ids.length ? { ...st.pending, ids } : null;
+      } else { st.pending = { k: "new", ids: [arg], chg: "그대로" }; }
+    }
+    else if (name === "pickSlot") { st.pending = { k: "slot", slot: arg, text: OLD.find((o) => o.id === st.sel).text }; }
+    else if (name === "pickDel") { st.pending = { k: "delete", reason: "" }; }
+    else if (name === "chg") { if (st.pending) st.pending.chg = arg; }
+    else if (name === "acc") { st.acc[arg] = !st.acc[arg]; }
+    else if (name === "tree") { st.tree[arg] = !st.tree[arg]; }
+    else if (name === "toggleNew") { st.showNew = !st.showNew; }
+    else if (name === "unpick") { st.pending = null; }
+    else if (name === "confirm") {
+      if (!st.pending) return;
+      const auto = getAutoChange(st.pending);
+      // 합침은 먼저 붙은 Old 문장도 같은 변경 종류가 된다
+      if (auto === "합침") for (const id of st.pending.ids) for (const other of getLinkedBy(id, st.sel)) st.dec[other].chg = "합침";
+      st.dec[st.sel] = { ...st.pending, chg: auto ?? st.pending.chg };
+      const next = getNextOpen(st.sel);
+      st.pending = null; st.acc = { ai: true, near: false, all: false, del: false }; st.tree = {}; st.showNew = false;
+      if (next) st.sel = next.id;
+    }
+    else if (name === "filter") { st.mode = arg; st.pending = null; if (arg === "unsrc") st.selNew = getUnsourced()[0] ?? null; }
+    else if (name === "markNew") { if (st.selNew) st.marked.add(st.selNew); st.selNew = getUnsourced()[0] ?? null; }
+  }
+
+  // --- 안내 단계 ---
+  const STEPS = [
+    { act: "sel:OLD-1-012", cap: "<b>아무 문장도 고르지 않았을 때.</b> 오른쪽 칸에 범례(표시 읽는 법·단축키)가 보입니다. 왼쪽 Old 원문은 Split 화면과 같은 Unit 조각이고, 이 자체가 목록입니다. 첫 조각을 누르세요." },
+    { act: "legend", cap: "문장을 고르면 범례는 오른쪽 위 (i)로 숨습니다. 마우스를 올려 보세요." },
+    { act: "zoom:old:+", cap: "<b>문서마다 따로 확대.</b> 문서 위에 마우스를 올리고 Ctrl+휠, 또는 Ctrl +/− (Ctrl 0은 100%). 문서 머리의 −/+ 도 같습니다. Old 쪽 +를 누르거나 Ctrl+휠을 굴려 보세요." },
+    { act: "split", cap: "<b>폭 나누기.</b> 두 문서 사이 세로선을 끌어 폭을 조절합니다(30~70%). 더블클릭하면 반반, 선에 포커스를 두고 ←→로도 됩니다. 끌어 보세요." },
+    { act: "pick:0", cap: "<b>보낼 곳 고르기.</b> AI 추천 첫 카드(WI-04 1.1)는 New 원문에도 점선으로 보입니다. 카드를 누르세요." },
+    { act: "confirm", cap: "New 원문의 1.1이 채워졌습니다. 변경 종류는 AI가 고른 \"말투\"이고 바꿀 수 있습니다. 확정(↵)하면 다음 Old 문장으로 넘어갑니다." },
+    { act: "pickNew:1.2", cap: "<b>직접 고르기.</b> 이번엔 카드 대신 New 원문에서 점선 표시된 1.2 문장을 직접 누르세요." },
+    { act: "confirm", cap: "직접 고른 것도 같은 결과입니다. 확정하세요." },
+    { act: "pick:0", cap: "<b>나눔.</b> OLD-1-021은 New 문서에서 두 단계(2.1·2.2)로 나뉘었습니다. AI 카드 하나가 두 문장을 같이 고릅니다. 직접 고를 때는 Ctrl+클릭으로 여러 개를 고릅니다." },
+    { act: "confirm", cap: "변경 종류가 \"나눔\"으로 자동 표시됩니다. 확정하세요." },
+    { act: "pick:0", cap: "<b>합침 1/2.</b> OLD-1-022는 3.1로 갑니다. 카드를 누르세요." },
+    { act: "confirm", cap: "확정하세요." },
+    { act: "pick:0", cap: "<b>합침 2/2.</b> OLD-1-023도 같은 3.1을 추천받습니다. 이미 OLD-1-022가 붙은 문장이라 고르면 \"합침\"이 됩니다. 카드를 누르세요." },
+    { act: "confirm", cap: "두 Old 문장이 한 New 문장으로 합쳐졌습니다. New 원문의 3.1 옆에 출처 둘이 붙습니다. 확정하세요." },
+    { act: "pick:0", cap: "<b>아직 안 쓴 문서로.</b> OLD-1-030의 추천은 SOP-CF(아직 안 쓴 문서)의 칸입니다. 그래서 New 원문 대신 Old 원문만 보입니다. 카드를 누르세요." },
+    { act: "confirm", cap: "새 문장 칸에 AI가 다듬은 글이 들어 있습니다(그대로 고칠 수 있음). 확정하세요." },
+    { act: "acc:all", cap: "<b>추천이 틀렸을 때.</b> OLD-1-031의 AI 추천(정의·적용 범위)은 맞지 않습니다. 아래 \"③ 전체\"를 펼치세요." },
+    { act: "tree:SOP-CF", cap: "문서 → 칸 순서로 한 단계씩 펼칩니다. SOP-CF를 펼치세요." },
+    { act: "pickSlot:resp", cap: "\"책임\" 칸을 고르세요. N/A로 표시한 칸(절차)은 고를 수 없습니다." },
+    { act: "confirm", cap: "확정하세요." },
+    { act: "pick:0", cap: "<b>삭제.</b> OLD-1-040은 폐기된 모델 이야기라 갈 곳이 없습니다. AI가 삭제를 추천합니다. 카드를 누르세요." },
+    { act: "confirm", cap: "삭제는 사유가 필요합니다. AI 사유가 미리 들어 있으니 확인하고 확정하세요." },
+    { act: "filter:unsrc", cap: "<b>Old 문장이 다 끝났습니다.</b> 그런데 Old 출처가 하나도 붙지 않은 New 문장이 1개 남았습니다(검토 요청을 막음). 목록 위 \"출처 없는 New\"를 누르세요." },
+    { act: "markNew", cap: "3.2는 Old SOP에 없던 새 내용입니다. \"신규로 표시\"를 누르세요." },
+    { act: null, cap: "<b>끝.</b> 3단계가 끝났습니다. 목록의 각 줄에 간 곳이 남고, 결과물·검토 조건은 지금과 같은 표를 씁니다. 처음부터 다시 보거나 자유롭게 눌러 보세요." },
+  ];
+  let step = 0;
+  function goTo(n) {
+    reset();
+    for (let i = 0; i < n; i++) if (STEPS[i].act) doAct(STEPS[i].act);
+    step = n;
+    render();
+  }
+  function handle(act, ev) {
+    doAct(act, ev);
+    if (STEPS[step]?.act === act) step = Math.min(step + 1, STEPS.length - 1);
+    render();
+  }
+
+  // --- 그리기 ---
+  const app = document.getElementById("app");
+
+  function renderRail() {
+    const items = [["gauge", "Overview"], ["files", "Documents"], ["1", "Split"], ["2", "To-Be"], ["3", "Assign", true], ["4", "Outputs"], ["clip", "Review"]];
+    return `<nav class="rail" aria-label="단계">${items.map(([m, l, cur]) =>
+      `<span class="stg${cur ? " cur" : ""}">${/\d/.test(m) ? `<span class="n">${m}</span>` : icon(m)}${l}</span>`).join("")}</nav>`;
+  }
+
+  function renderDestLabel(d) {
+    if (!d) return "";
+    if (d.k === "new") return `<b>${WRITTEN.code} ${d.ids.join(" + ")}</b>`;
+    if (d.k === "slot") return `<b>${SLOT[d.slot].doc}</b> ${esc(SLOT[d.slot].label)}`;
+    return `<b class="del">삭제</b>`;
+  }
+
+  function isNewPaperOpen() {
+    if (st.mode === "unsrc") return true;
+    if (st.showNew) return true;
+    if (st.dec[st.sel]) return st.dec[st.sel].k === "new";
+    if (st.pending) return st.pending.k === "new";
+    return getCands(st.sel)[0]?.k === "new";
+  }
+
+  // 문서 한 장 - 머리에 그 문서만의 확대 단추
+  function renderPane(key, head, body) {
+    const z = st.zoom[key];
+    return `<div class="pane" data-pane="${key}" style="--z:${z}"><div class="phead">${head}<span class="sp"></span>
+      <span class="pz" role="group" aria-label="문서 확대"><button type="button" data-act="zoom:${key}:-" ${z <= 0.7 ? "disabled" : ""} aria-label="작게">−</button><span>${Math.round(z * 100)}%</span><button type="button" data-act="zoom:${key}:+" ${z >= 1.6 ? "disabled" : ""} aria-label="크게">+</button></span></div>${body}</div>`;
+  }
+
+  function renderDesk() {
+    const two = isNewPaperOpen();
+    const open = OLD.filter((o) => !st.dec[o.id]).length;
+    const uns = getUnsourced().length;
+    const bar = `<div class="desk-bar">
+      <button type="button" class="chip" data-act="filter:old" aria-pressed="${st.mode === "old"}">Old 남음 <span class="c">${open}</span></button>
+      <button type="button" class="chip${uns ? " warn" : ""}" data-act="filter:unsrc" aria-pressed="${st.mode === "unsrc"}">출처 없는 New <span class="c">${uns}</span></button>
+      <span class="prog-inline">${OLD.length - open}/${OLD.length}<span class="bar"><i style="width:${((OLD.length - open) / OLD.length) * 100}%"></i></span></span>
+      <span class="sp"></span>
+      ${st.mode === "old" ? `<button type="button" class="btn sm" data-act="toggleNew">${two ? "New 원문 닫기" : "New 원문 열기"}</button>` : ""}</div>`;
+    const stack = two
+      ? `<div class="stack" style="--split:${st.split * 100}%">${renderOldPaper()}<div class="divider" role="separator" aria-orientation="vertical" aria-label="두 문서 폭" aria-valuenow="${Math.round(st.split * 100)}" tabindex="0" data-divider data-cue="split"></div>${renderNewPaper()}</div>`
+      : `<div class="stack single" style="--z:${st.zoom.old}">${renderOldPaper()}</div>`;
+    return `<div class="desk">${bar}${stack}</div>`;
+  }
+
+  function renderOldPaper() {
+    let last = "";
+    const body = OLD.map((o) => {
+      const head = o.sec !== last ? `<div class="sec">${o.sec}</div>` : "";
+      last = o.sec;
+      const d = st.dec[o.id];
+      const cls = o.id === st.sel && st.mode === "old" ? "cur" : d ? "done" : "";
+      const mk = d ? `<span class="mk ok">${icon("check")}</span>` : getCands(o.id).length ? `<span class="mk ai">${icon("spark")}</span>` : `<span class="mk none"></span>`;
+      const to = d ? `<span class="to${d.k === "delete" ? " del" : ""}">→ ${d.k === "new" ? `${WRITTEN.code} ${d.ids.join("+")}` : d.k === "slot" ? `${SLOT[d.slot].doc} ${esc(SLOT[d.slot].label)}` : "삭제"}</span>` : "";
+      return `${head}<button type="button" class="strip ${cls}" data-act="sel:${o.id}"><span class="ltag">KO</span>${esc(o.text)}${to}${mk}</button>`;
+    }).join("");
+    return renderPane("old", `<b>OLD-1</b> QC 원심분리기 사용 및 유지관리 <span class="tag">Old</span>`, `<div class="strips">${body}</div>`);
+  }
+
+  function renderNewPaper() {
+    const pend = st.mode === "old" ? (st.pending?.k === "new" ? st.pending.ids : []) : [];
+    const top = st.mode === "old" && !st.pending && !st.dec[st.sel] ? getCands(st.sel).filter((c) => c.k === "new").flatMap((c) => c.ids) : [];
+    const own = st.mode === "old" && st.dec[st.sel]?.k === "new" ? st.dec[st.sel].ids : [];
+    const body = WRITTEN.secs.map((sec) => `<div class="sec">${sec.t}</div>` + sec.s.map((s) => {
+      const srcs = getLinkedBy(s.id, null);
+      let cls = "";
+      if (st.mode === "unsrc" && s.id === st.selNew) cls = "unsrc";
+      else if (pend.includes(s.id) || own.includes(s.id)) cls = "pick";
+      else if (top.includes(s.id)) cls = "cand";
+      const marked = st.marked.has(s.id) ? `<span class="gone">신규</span>` : "";
+      return `<button type="button" class="ps ${cls}" data-act="pickNew:${s.id}"><span class="num">${s.id}</span>${esc(s.text)}${srcs.length ? `<span class="src">${srcs.map((x) => `<span>← ${x.slice(4)}</span>`).join("")}</span>` : ""}${marked}</button>`;
+    }).join("")).join("");
+    return renderPane("new", `<b>${WRITTEN.code}</b> ${WRITTEN.title} <span class="tag">New · 이미 쓴 문서</span>`, `<div class="paper">${body}</div>`);
+  }
+
+  function renderCard(c, i) {
+    const pressed = st.pending && JSON.stringify(makePending(c)) === JSON.stringify({ ...st.pending });
+    if (c.k === "new") {
+      const texts = c.ids.map((id) => esc(NEW_BY_ID[id].text)).join("<br>");
+      return `<button type="button" class="card" data-act="pick:${i}" aria-pressed="${!!pressed}"><span class="ic new">${icon("file")}</span>
+        <span><span class="d"><b>${WRITTEN.code} ${c.ids.join(" + ")}</b> · 이미 쓴 문서 · ${c.chg}</span><span class="t" style="display:block">${texts}</span><span class="w">${icon("spark", "i")} ${esc(c.why)}</span></span></button>`;
+    }
+    if (c.k === "slot") {
+      const s = SLOT[c.slot];
+      return `<button type="button" class="card" data-act="pick:${i}" aria-pressed="${!!pressed}"><span class="ic">${icon("slot")}</span>
+        <span><span class="d"><b>${s.doc}</b> · 아직 안 쓴 문서</span><span class="t" style="display:block">${esc(s.label)}</span><span class="w">${esc(c.why)}</span></span></button>`;
+    }
+    return `<button type="button" class="card" data-act="pick:${i}" aria-pressed="${!!pressed}"><span class="ic del">${icon("trash")}</span>
+      <span><span class="d">처분</span><span class="t" style="display:block">삭제</span><span class="w">${esc(c.why)}</span></span></button>`;
+  }
+
+  function renderNear() {
+    const top = getCands(st.sel)[0];
+    if (!top) return `<span class="note">추천이 없어 가까운 곳을 정할 수 없습니다.</span>`;
+    if (top.k === "new") {
+      const flat = WRITTEN.secs.flatMap((sec) => sec.s.map((s) => s.id));
+      const i = flat.indexOf(top.ids[0]);
+      const near = flat.slice(Math.max(0, i - 1), i + top.ids.length + 1).filter((id) => !top.ids.includes(id));
+      return near.map((id) => `<button type="button" class="leaf" data-act="pickNew:${id}"><span class="num">${id}</span>${esc(NEW_BY_ID[id].text)}</button>`).join("");
+    }
+    if (top.k === "slot") {
+      const doc = UNWRITTEN.find((d) => d.code === SLOT[top.slot].doc);
+      return doc.slots.filter((s) => !getCands(st.sel).some((c) => c.slot === s.key)).slice(0, 4)
+        .map((s) => `<button type="button" class="leaf${s.na ? " na" : ""}" ${s.na ? "disabled" : `data-act="pickSlot:${s.key}"`}><span class="num">${doc.code}</span>${esc(s.label)}${s.na ? " · N/A" : ""}</button>`).join("");
+    }
+    return `<span class="note">삭제 추천 — 가까운 곳 없음</span>`;
+  }
+
+  function renderTree() {
+    const w = WRITTEN;
+    const wOpen = !!st.tree[w.code];
+    const written = `<div class="tg">이미 쓴 문서 · 문장에 붙이기</div>
+      <button type="button" class="tn" data-act="tree:${w.code}" aria-expanded="${wOpen}">${icon("chev", "i chev")}<b>${w.code}</b><span class="sub">${w.title}</span></button>
+      ${wOpen ? `<div class="tkids">${w.secs.map((sec) => `<span class="tg" style="margin:4px 0 0">${sec.t}</span>` + sec.s.map((s) => `<button type="button" class="leaf" data-act="pickNew:${s.id}"><span class="num">${s.id}</span>${esc(s.text)}</button>`).join("")).join("")}</div>` : ""}`;
+    const unwritten = `<div class="tg">아직 안 쓴 문서 · 칸에 새 문장</div>` + UNWRITTEN.map((doc) => {
+      const open = !!st.tree[doc.code];
+      return `<button type="button" class="tn" data-act="tree:${doc.code}" aria-expanded="${open}">${icon("chev", "i chev")}<b>${doc.code}</b><span class="sub">${doc.title}</span></button>
+        ${open ? `<div class="tkids">${doc.slots.map((s) => `<button type="button" class="leaf${s.na ? " na" : ""}" ${s.na ? "disabled" : `data-act="pickSlot:${s.key}"`}>${esc(s.label)}${s.na ? " · N/A" : ""}</button>`).join("")}</div>` : ""}`;
+    }).join("");
+    return `<div class="tree">${written}${unwritten}</div>`;
+  }
+
+  function renderAcc(key, title, count, body) {
+    return `<div class="acc"><button type="button" class="acc-h" data-act="acc:${key}" aria-expanded="${st.acc[key]}">${title}${count !== null ? ` <span class="ct">${count}</span>` : ""}${icon("chev", "i chev")}</button>
+      ${st.acc[key] ? `<div class="acc-b">${body}</div>` : ""}</div>`;
+  }
+
+  function renderChosen() {
+    const d = st.dec[st.sel];
+    const p = st.pending;
+    if (d && !p) return `<div class="chosen"><span class="lbl">확정함</span><div class="dest">${renderDestLabel(d)}${d.chg ? ` · ${d.chg}` : ""}</div></div>`;
+    if (!p) return `<div class="chosen empty">보낼 곳을 고르세요 — AI 카드, New 원문의 문장, 아래 목록 어디서든.</div>`;
+    if (p.k === "new") {
+      const auto = getAutoChange(p);
+      const merged = p.ids.flatMap((id) => getLinkedBy(id, st.sel));
+      return `<div class="chosen"><span class="lbl">고른 곳 · 이미 쓴 문서의 문장</span>
+        <div class="dest">${renderDestLabel(p)}<br><span class="note">${p.ids.map((id) => esc(NEW_BY_ID[id].text)).join("<br>")}</span></div>
+        <div class="chgs"><span class="note">변경 종류</span>${auto ? `<span class="auto">${auto} (자동)</span>` : ["그대로", "말투", "고쳐 씀"].map((c) => `<button type="button" class="chip" data-act="chg:${c}" aria-pressed="${p.chg === c}">${c}</button>`).join("")}</div>
+        ${merged.length ? `<span class="note">${merged.join(", ")}이(가) 이미 붙은 문장입니다 — 함께 한 문장으로 합쳐집니다.</span>` : ""}
+        ${auto === "나눔" ? `<span class="note">Old 한 문장이 New ${p.ids.length}문장으로 나뉩니다.</span>` : ""}</div>`;
+    }
+    if (p.k === "slot") {
+      const s = SLOT[p.slot];
+      return `<div class="chosen"><span class="lbl">고른 곳 · 아직 안 쓴 문서의 칸</span><div class="dest"><b>${s.doc}</b> ${esc(s.label)}</div>
+        <label class="note" for="newtext">새 문장 (KO)</label><textarea id="newtext" rows="2">${esc(p.text)}</textarea></div>`;
+    }
+    return `<div class="chosen"><span class="lbl">처분 · 삭제</span><label class="note" for="reason">사유 (필수)</label><input id="reason" type="text" value="${esc(p.reason)}"></div>`;
+  }
+
+  function renderLegend() {
+    const row = (sw, text) => `<div class="lg-row"><span class="sw">${sw}</span><span>${text}</span></div>`;
+    return `<div class="legend">
+      <div><h3>OLD 원문 · UNIT 조각</h3><div class="lg-rows">
+        ${row(`<span class="ltag-s">KO</span>`, "문단 앞 · 언어(KO/EN). 한/영 짝은 함께 골라진다")}
+        ${row(`<span style="color:var(--ok)">${icon("check")}</span>`, "끝 · 보낼 곳 확정")}
+        ${row(`<span style="color:var(--ai)">${icon("spark")}</span>`, "끝 · AI 제안 있음")}
+        ${row(`<span class="mk none" style="position:static;display:inline-block;width:12px;height:12px;border:1.5px solid var(--ink-4);border-radius:50%"></span>`, "끝 · 아직 정하지 않음")}
+        ${row(`<span class="mono" style="font-size:11px;color:var(--ok);font-weight:600">→ 1.1</span>`, "확정한 조각 아래 · 간 곳")}
+      </div></div>
+      <div><h3>NEW 원문 · 이미 쓴 문서</h3><div class="lg-rows">
+        ${row(`<span class="box cand"></span>`, "점선 · AI 후보 문장")}
+        ${row(`<span class="box pick"></span>`, "채움 · 지금 고른 문장")}
+        ${row(`<span class="mono" style="font-size:10px;padding:0 4px;border-radius:3px;background:var(--ok-tint);color:var(--ok);white-space:nowrap">← 1-012</span>`, "붙은 Old 출처. 둘이면 합침")}
+        ${row(`<span class="box unsrc"></span>`, "출처 없음 · 검토 요청을 막는다")}
+      </div></div>
+      <div><h3>키</h3><div class="lg-rows">
+        ${row(`<kbd>↑↓</kbd>`, "Old 조각 옮기기 (J/K도 같음)")}
+        ${row(`<kbd>↵</kbd>`, "확정하고 다음 조각으로")}
+        ${row(`<kbd>H</kbd> <kbd>U</kbd>`, "보류 · 비우기")}
+        ${row(`<kbd>Ctrl</kbd>`, "+휠 또는 +/− · 마우스를 올린 문서만 확대 (0은 100%)")}
+      </div></div></div>`;
+  }
+
+  function renderLegendButton() {
+    return `<span class="lg-wrap"><button type="button" class="lg-btn" aria-label="범례" data-legend data-cue="legend"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></button><span class="lg-pop" role="tooltip">${renderLegend()}</span></span>`;
+  }
+
+  function renderPanel() {
+    if (st.mode === "old" && !st.sel) {
+      return `<aside class="panel"><div class="legend" style="padding-bottom:0"><div class="legend-intro"><b>Old 조각을 고르세요</b><span>왼쪽 원문의 조각을 누르거나 ↑↓로 옮기면, 여기에서 보낼 곳을 정합니다.</span></div></div>${renderLegend()}</aside>`;
+    }
+    if (st.mode === "unsrc") {
+      const id = st.selNew;
+      if (!id) return `<aside class="panel"><div class="done-box"><span class="big">${icon("check")}</span><b>3단계 끝</b><span class="note">Old 문장은 모두 갈 곳이 있고, New 문장은 모두 출처가 있거나 신규입니다.</span></div></aside>`;
+      return `<aside class="panel"><div class="ph"><div class="top"><b>${WRITTEN.code} ${id}</b><span class="pill">출처 없음</span></div><div class="tx">${esc(NEW_BY_ID[id].text)}</div>${renderLegendButton()}</div>
+        <div class="chosen empty">Old SOP에 없던 내용이면 신규로, 출처가 있으면 Old 원문에서 문장을 고르세요.</div>
+        <div class="acts" style="grid-template-columns:1fr 1fr"><button type="button" class="btn primary" data-act="markNew">신규로 표시</button><button type="button" class="btn" disabled>Old 문장 고르기</button></div></aside>`;
+    }
+    const o = OLD.find((x) => x.id === st.sel);
+    const d = st.dec[o.id];
+    const cands = getCands(o.id);
+    const status = d ? `<span class="pill ok">${icon("check")} Confirmed</span>` : cands.length ? `<span class="pill ai">AI suggested</span>` : `<span class="pill">Unassigned</span>`;
+    const needReason = st.pending?.k === "delete";
+    return `<aside class="panel">
+      <div class="ph"><div class="top"><b>${o.id}</b>${status}</div><div class="tx">${esc(o.text)}</div>${renderLegendButton()}</div>
+      ${renderChosen()}
+      <div class="acts"><button type="button" class="btn primary" data-act="confirm" ${st.pending ? "" : "disabled"}>${needReason ? "삭제 확정" : "확정"} <kbd>↵</kbd></button>
+        <button type="button" class="btn">보류 <kbd>H</kbd></button><button type="button" class="btn" data-act="unpick" ${st.pending ? "" : "disabled"}>비우기 <kbd>U</kbd></button></div>
+      ${renderAcc("ai", "① AI 추천", cands.length, cands.map(renderCard).join("") || `<span class="note">추천 없음</span>`)}
+      ${renderAcc("near", "② 가까운 곳", null, renderNear())}
+      ${renderAcc("all", "③ 전체", null, renderTree())}
+      ${renderAcc("del", "④ 삭제·외부 이동", null, `<button type="button" class="leaf" data-act="pickDel">삭제 (사유 필요)</button><button type="button" class="leaf" disabled>다른 Bundle로 이동</button>`)}
+    </aside>`;
+  }
+
+  function updateGuide() {
+    const s = STEPS[step];
+    document.getElementById("g-n").textContent = `${step + 1} / ${STEPS.length}`;
+    document.getElementById("g-bar").style.width = `${(step / (STEPS.length - 1)) * 100}%`;
+    document.getElementById("g-cap").innerHTML = s.cap;
+    document.getElementById("g-prev").disabled = step === 0;
+    document.getElementById("g-next").disabled = step === STEPS.length - 1;
+    app.querySelectorAll(".cue").forEach((el) => el.classList.remove("cue"));
+    if (s.act) {
+      const target = app.querySelector(`[data-act="${s.act}"], [data-cue="${s.act}"]`);
+      if (target) { target.classList.add("cue"); target.scrollIntoView({ block: "nearest", inline: "nearest" }); }
+    }
+  }
+
+  // 다시 그려도 각 문서·오른쪽 칸의 스크롤 자리는 지킨다
+  function render() {
+    const keep = [...app.querySelectorAll(".strips, .paper, .panel")].map((el) => [el.className.split(" ")[0] + (el.closest("[data-pane]")?.dataset.pane ?? ""), el.scrollTop]);
+    app.innerHTML = renderRail() + renderDesk() + renderPanel();
+    for (const [key, top] of keep) {
+      const el = [...app.querySelectorAll(".strips, .paper, .panel")].find((x) => x.className.split(" ")[0] + (x.closest("[data-pane]")?.dataset.pane ?? "") === key);
+      if (el) el.scrollTop = top;
+    }
+    updateGuide();
+  }
+
+  // 안내 단계만 넘기고 화면은 그대로(호버 중인 범례·끄는 중인 선이 다시 그려지지 않게)
+  function advanceIf(act) {
+    if (STEPS[step]?.act === act) { step = Math.min(step + 1, STEPS.length - 1); updateGuide(); }
+  }
+
+  // 확대는 그 문서의 --z만 바꾼다 - 다시 그리지 않아 스크롤과 호버가 유지된다
+  function zoomPane(pane, dir) {
+    const act = `zoom:${pane}:${dir}`;
+    doAct(act);
+    const el = app.querySelector(`[data-pane="${pane}"]`);
+    if (el) {
+      const z = st.zoom[pane];
+      el.style.setProperty("--z", z);
+      el.querySelector(".pz span").textContent = `${Math.round(z * 100)}%`;
+      el.querySelector(`[data-act="zoom:${pane}:-"]`).disabled = z <= 0.7;
+      el.querySelector(`[data-act="zoom:${pane}:+"]`).disabled = z >= 1.6;
+    }
+    advanceIf(dir === "-" ? null : `zoom:${pane}:+`);
+  }
+
+  let hoverPane = null;
+  let wheelAcc = 0;
+  app.addEventListener("pointerover", (ev) => {
+    hoverPane = ev.target.closest("[data-pane]")?.dataset.pane ?? null;
+    if (ev.target.closest("[data-legend]")) advanceIf("legend");
+  });
+  app.addEventListener("focusin", (ev) => { if (ev.target.closest("[data-legend]")) advanceIf("legend"); });
+  app.addEventListener("wheel", (ev) => {
+    if (!(ev.ctrlKey || ev.metaKey)) return;
+    const pane = ev.target.closest("[data-pane]");
+    if (!pane) return;
+    ev.preventDefault();
+    // 트랙패드 핀치는 작은 값이 잦다 - 모아서 한 칸씩
+    wheelAcc += ev.deltaY;
+    if (Math.abs(wheelAcc) < 40) return;
+    zoomPane(pane.dataset.pane, wheelAcc < 0 ? "+" : "-");
+    wheelAcc = 0;
+  }, { passive: false });
+
+  app.addEventListener("click", (ev) => {
+    const el = ev.target.closest("[data-act]");
+    if (!el || el.disabled) return;
+    const act = el.dataset.act;
+    if (act.startsWith("zoom:")) { const [, pane, dir] = act.split(":"); zoomPane(pane, dir); return; }
+    handle(act, ev);
+  });
+
+  // 세로선 끌기 - 30~70%, 더블클릭은 반반, 포커스 뒤 ←→
+  app.addEventListener("pointerdown", (ev) => {
+    const div = ev.target.closest("[data-divider]");
+    if (!div) return;
+    ev.preventDefault();
+    const stack = div.parentElement;
+    const rect = stack.getBoundingClientRect();
+    div.classList.add("drag");
+    div.setPointerCapture(ev.pointerId);
+    const move = (e) => {
+      st.split = Math.min(0.7, Math.max(0.3, (e.clientX - rect.left) / rect.width));
+      stack.style.setProperty("--split", `${st.split * 100}%`);
+    };
+    const up = () => { div.classList.remove("drag"); div.removeEventListener("pointermove", move); div.removeEventListener("pointerup", up); advanceIf("split"); };
+    div.addEventListener("pointermove", move);
+    div.addEventListener("pointerup", up);
+  });
+  app.addEventListener("dblclick", (ev) => { if (ev.target.closest("[data-divider]")) { st.split = 0.5; render(); } });
+
+  document.addEventListener("keydown", (ev) => {
+    if (ev.target.closest && ev.target.closest("textarea, input")) return;
+    if ((ev.ctrlKey || ev.metaKey) && hoverPane && ["=", "+", "-", "_", "0"].includes(ev.key)) {
+      ev.preventDefault();
+      zoomPane(hoverPane, ev.key === "0" ? "0" : ev.key === "-" || ev.key === "_" ? "-" : "+");
+      return;
+    }
+    if (ev.target.closest && ev.target.closest("[data-divider]") && (ev.key === "ArrowLeft" || ev.key === "ArrowRight")) {
+      ev.preventDefault();
+      st.split = Math.min(0.7, Math.max(0.3, st.split + (ev.key === "ArrowLeft" ? -0.03 : 0.03)));
+      ev.target.parentElement.style.setProperty("--split", `${st.split * 100}%`);
+      advanceIf("split");
+      return;
+    }
+    if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    const key = ev.key.toLowerCase();
+    if (st.mode === "old" && (key === "arrowdown" || key === "j" || key === "arrowup" || key === "k")) {
+      ev.preventDefault();
+      if (!st.sel) handle(`sel:${OLD[0].id}`); else handle(`move:${key === "arrowdown" || key === "j" ? 1 : -1}`);
+      return;
+    }
+    if (ev.key === "Enter" && st.pending) { ev.preventDefault(); handle("confirm"); }
+  });
+  document.getElementById("g-reset").addEventListener("click", () => goTo(0));
+  document.getElementById("g-prev").addEventListener("click", () => goTo(Math.max(0, step - 1)));
+  document.getElementById("g-next").addEventListener("click", () => goTo(Math.min(STEPS.length - 1, step + 1)));
+  goTo(0);
+})();
+</script>
