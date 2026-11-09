@@ -1,7 +1,7 @@
 # 화면 개편 — T/F 첫 실사용 전 피드백 반영 설계
 
 - 날짜: 2026-11-09 · 대상 버전: v0.9.0 (MINOR, 사용자에게 보이는 변경)
-- 목업(승인본): `docs/design/2026-11-09-ui-revamp-mocks/` — `mock-1-shell.html`(공통 틀) · `mock-2-overview.html`(Bundle 개요) · `mock-3-documents.html`(문서) · `mock-4-split.html`(Split). 브라우저로 열어 호버·클릭으로 동작을 본다. 목업은 앱 토큰(`tokens.css`)을 옮겨 그린 것이라 색·간격은 토큰 이름을 그대로 따른다.
+- 목업(승인본): 공통 틀·Bundle 개요·문서·Split 네 장의 HTML 목업(main 머지 뒤 지움 — git history의 `docs/design/2026-11-09-ui-revamp-mocks/`).
 
 ## 1. 왜
 

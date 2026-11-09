@@ -4,4 +4,4 @@
 
 | 경로 | 내용 |
 |---|---|
-| [2026-11-09-ui-revamp-mocks/](2026-11-09-ui-revamp-mocks/) | 첫 실사용 피드백 개편(v0.9.0) 승인 목업 — 공통 틀(1)·Bundle 개요(2)·문서(3)·Split(4). 설계: `docs/superpowers/specs/2026-11-09-ui-feedback-revamp-design.md` |
+| (없음) | 진행 중인 설계 스냅샷이 없다 |

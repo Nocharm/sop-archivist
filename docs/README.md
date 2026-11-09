@@ -6,7 +6,7 @@
 |------|------|
 | [superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md](superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md) | 제품 설계: SOP 재구성 End-to-End(쪼개기 → 분류·제안 → 결과물 A·B·C, 두 입구, 데이터 모델, AI 경계, 화면 인수인계) |
 | [superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md](superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md) | 구현 계획 2: AI 층(v0.3.0 — 구현 완료, 다시 실행하지 않는다). 살아 있는 부분은 프런트와 맞춘 "API 계약" 블록. 계획 1(결정적 코어, v0.2.0)과 기반 세팅 계획(v0.1.0)은 끝나서 지웠다(git history) — 계획이 정한 세부는 설계 문서에 "(계획 N에서 정함)"으로 반영 |
-| [superpowers/specs/2026-11-09-ui-feedback-revamp-design.md](superpowers/specs/2026-11-09-ui-feedback-revamp-design.md) · [plans/2026-11-09-ui-feedback-revamp.md](superpowers/plans/2026-11-09-ui-feedback-revamp.md) · [design/2026-11-09-ui-revamp-mocks/](design/2026-11-09-ui-revamp-mocks/) | 첫 실사용 피드백 개편(v0.9.0) 설계·구현 계획·승인 목업 HTML. main 머지 뒤 계획과 목업은 폐기 대상(설계는 남김) |
+| [superpowers/specs/2026-11-09-ui-feedback-revamp-design.md](superpowers/specs/2026-11-09-ui-feedback-revamp-design.md) | 첫 실사용 피드백 개편(v0.9.0) 설계 — 공통 부품·라벨 원칙·Bundle 바로 생성·History·문서 정보 탐지·Split 종이 조각·피커. 구현 계획과 승인 목업은 main 머지 뒤 지웠다(git history) |
 | [../frontend/docs/design/2026-11-07-frontend-design-foundations.md](../frontend/docs/design/2026-11-07-frontend-design-foundations.md) | 프런트 디자인 기초 — 토큰(색 값의 단일 소스는 `frontend/src/styles/tokens.css`)·글꼴·화면 구조·상태 표현·동작 규칙·언어. 화면 코드 주석이 "디자인 문서 N절"로 절 번호를 참조한다 |
 | [domain/restructuring-rules.md](domain/restructuring-rules.md) | SOP 재구성 판단 기준(R01–R13, SOP 일곱 칸, WI Instruction/Why, 고쳐 쓰기 원칙) — AI 지침의 원문·테스트 정답의 근거 |
 | [domain/restructuring-cases.md](domain/restructuring-cases.md) | SOP 재구성 사례(QC Centrifuge 등)와 데이터를 쓰는 원칙 |
