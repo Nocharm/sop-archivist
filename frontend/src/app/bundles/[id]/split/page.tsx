@@ -2,7 +2,7 @@
 // 문장을 누르면 고르고 끝에 확인 단추가 나온다. 두 번 누르면 그 자리에 나눌 선과 나누기 팝업이 뜬다(S). 끌어 고르면 새 단위로 만들 수 있다.
 "use client";
 
-import { ArrowDown, ArrowUp, Check, CircleCheck, Circle, FolderCheck, Link2, Merge, Redo2, Scissors, Sparkles, SquarePlus, Undo2, Unlink, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, Circle, CircleCheck, FileText, FolderCheck, Link2, Merge, Redo2, Scissors, Sparkles, SquarePlus, Undo2, Unlink, X } from "lucide-react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useState, type ReactNode } from "react";
 
@@ -15,6 +15,7 @@ import { InfoTip } from "@/components/ui/info-tip";
 import { Truncate } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
+import { EmptyState } from "@/components/ui/empty-state";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import {
@@ -453,9 +454,7 @@ export default function SplitPage() {
               {humanizeApiError(view.error, t)}
             </p>
           ) : docs.data !== null && readyDocs.length === 0 ? (
-            <p className="text-ink-3" data-testid="split-empty">
-              {t("split.noDocuments")}
-            </p>
+            <EmptyState icon={FileText} testId="split-empty" title={t("split.noDocuments")} />
           ) : (
             showSkeleton && <span className="sk mx-auto block h-[640px] w-full max-w-[600px]" />
           )}

@@ -2,7 +2,7 @@
 // 활성 작성자가 없는 묶음은 "정리 필요"로 먼저 보이고, 그 묶음만 거르는 보기도 있다.
 "use client";
 
-import { Search, Users } from "lucide-react";
+import { FolderOpen, Search, Users } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -11,6 +11,7 @@ import { BundleStatusPill } from "@/components/status";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { Truncate } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
+import { EmptyState } from "@/components/ui/empty-state";
 import { humanizeApiError } from "@/lib/api-errors";
 import { listAdminBundles, putAdminMembers, type AdminBundle } from "@/lib/api-manage";
 import type { LangProgress } from "@/lib/api-sop";
@@ -143,9 +144,7 @@ export function BundlesPanel() {
           </button>
         </p>
       ) : data !== null && filtered.length === 0 ? (
-        <p className="text-ink-3" data-testid="admin-bundles-empty">
-          {t("adminBundles.empty")}
-        </p>
+        <EmptyState icon={FolderOpen} testId="admin-bundles-empty" title={t("adminBundles.empty")} compact />
       ) : (
         <DataList
           view={view}

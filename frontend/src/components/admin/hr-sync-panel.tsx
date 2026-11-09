@@ -1,12 +1,13 @@
 // 관리 > 직원 동기화 - HR 원본 동기화 실행·변경 미리보기(드라이런)와 최근 실행 이력. HR 미설정(503)·상류 오류(502)는 사람 말 문구로만 보여 준다.
 "use client";
 
-import { Eye, Loader2, RefreshCw } from "lucide-react";
+import { Eye, History, Loader2, RefreshCw } from "lucide-react";
 import { useState } from "react";
 
 import { InlineNotice } from "@/components/inline-notice";
 import { OutcomePill } from "@/components/status";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
+import { EmptyState } from "@/components/ui/empty-state";
 import { describeRunDetail, getAbortReasonKey } from "@/lib/admin-format";
 import { getHrSyncPreview, listHrSyncRuns, runHrSync, type HrSyncPreview, type HrSyncRun, type HrSyncSummary } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -209,9 +210,7 @@ export function HrSyncPanel() {
           </InlineNotice>
         )}
         {runs.data !== null && runs.data.length === 0 && (
-          <p data-testid="hr-sync-runs-empty" className="text-sm text-gray-500">
-            {t("hr.runs.empty")}
-          </p>
+          <EmptyState icon={History} testId="hr-sync-runs-empty" title={t("hr.runs.empty")} compact />
         )}
         {runs.data !== null && runs.data.length > 0 && (
           <DataList

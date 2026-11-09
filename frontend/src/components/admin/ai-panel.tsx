@@ -1,12 +1,13 @@
 // 관리 > AI - 사내 AI 연결 테스트(ping)와 일별 사용량. AI 꺼짐(503)·상류 오류(502)는 사람 말 문구로만 보여 준다(주소·토큰·원문 상태 코드 비노출).
 "use client";
 
-import { Loader2, Zap } from "lucide-react";
+import { Bot, Loader2, Zap } from "lucide-react";
 import { useState } from "react";
 
 import { InlineNotice } from "@/components/inline-notice";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { Select } from "@/components/ui/select";
+import { EmptyState } from "@/components/ui/empty-state";
 import { getAiUsage, pingAi, type AiPing, type AiUsageDay } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { useI18n } from "@/lib/i18n";
@@ -103,9 +104,7 @@ export function AiPanel() {
           </InlineNotice>
         )}
         {usage.data !== null && usage.data.length === 0 && (
-          <p data-testid="ai-usage-empty" className="text-sm text-gray-500">
-            {t("ai.usage.empty")}
-          </p>
+          <EmptyState icon={Bot} testId="ai-usage-empty" title={t("ai.usage.empty")} compact />
         )}
         {usage.data !== null && usage.data.length > 0 && (
           <DataList

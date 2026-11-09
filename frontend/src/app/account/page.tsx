@@ -1,9 +1,10 @@
 // 내 계정 - 내가 누구인지, 어떤 권한을 어디서(역할·부서·직접) 받았는지, AI를 쓸 수 있는지. 상단 막대의 이름을 누르면 온다(홈은 묶음 목록).
 "use client";
 
-import { Bot, ShieldCheck, UserRound } from "lucide-react";
+import { Bot, KeyRound, ShieldCheck, UserRound } from "lucide-react";
 
 import { SourceLine } from "@/components/permission-source-line";
+import { EmptyState } from "@/components/ui/empty-state";
 import { hasPermission, PERMISSIONS } from "@/lib/access";
 import { getDisplayName } from "@/lib/display-name";
 import { useI18n } from "@/lib/i18n";
@@ -36,9 +37,7 @@ export default function AccountPage() {
           {t("account.permissions")}
         </h2>
         {granted.length === 0 ? (
-          <p data-testid="account-permissions-empty" className="text-sm text-gray-500">
-            {t("account.permissionsEmpty")}
-          </p>
+          <EmptyState icon={KeyRound} testId="account-permissions-empty" title={t("account.permissionsEmpty")} compact />
         ) : (
           <ul data-testid="account-permissions" className="space-y-2">
             {granted.map((key) => {

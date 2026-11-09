@@ -1,7 +1,7 @@
 // To-Be 목록 - 새 SOP·WI 표를 고치고 통째로 저장한다. SOP는 칸 N/A(사유), WI는 단계를 줄 아래에서 편다. Excel 템플릿 내려받기·가져오기(명세 §12-5).
 "use client";
 
-import { ChevronRight, Download, FileUp, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ChevronRight, Download, FileUp, ListTree, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useRef, useState } from "react";
 
@@ -23,6 +23,7 @@ import { SLOT_LABELS } from "@/lib/slot-labels";
 import { addStep, buildToBeInput, changeDocType, createDraft, findDraftProblem, isDraftDirty, orderDocs, removeDoc, removeStep, renameDoc, setNaSlot, type DraftDoc, type ToBeDraft } from "@/lib/tobe-draft";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { Checkbox } from "@/components/ui/checkbox";
+import { EmptyState } from "@/components/ui/empty-state";
 import { useLoaded } from "@/lib/use-loaded";
 import { getBundleLabel } from "@/lib/bundle-label";
 
@@ -404,9 +405,7 @@ export default function ToBePage() {
         />
       )}
       {draft !== null && rows.length === 0 && (
-        <p className="px-[var(--pad)] py-6 text-ink-3" data-testid="tobe-empty">
-          {canEdit ? t("tobe.emptyEdit") : t("tobe.empty")}
-        </p>
+        <EmptyState icon={ListTree} testId="tobe-empty" title={canEdit ? t("tobe.emptyEdit") : t("tobe.empty")} />
       )}
     </div>
   );

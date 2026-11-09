@@ -1,7 +1,7 @@
 // 관리 > 권한 > 부여 - 사람·부서에 준 역할/권한 목록, 부여 추가(대상 선택기)와 회수(확인 모달). 대상이 사라진 부여는 지우지 않고 배지로 보여 사람이 정리하게 한다.
 "use client";
 
-import { Building2, Plus, TriangleAlert, Undo2, UserRound } from "lucide-react";
+import { Building2, KeyRound, Plus, TriangleAlert, Undo2, UserRound } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { InlineNotice } from "@/components/inline-notice";
@@ -19,6 +19,7 @@ import { BUTTON_PRIMARY, BUTTON_SECONDARY, CHIP } from "@/lib/ui-classes";
 import { useListView } from "@/lib/use-list-view";
 import { MorphButton } from "@/components/ui/morph-button";
 import { Tooltip } from "@/components/ui/tooltip";
+import { EmptyState } from "@/components/ui/empty-state";
 import { useLoaded } from "@/lib/use-loaded";
 
 const SUBJECT_TYPES: SubjectType[] = ["user", "dept"];
@@ -323,9 +324,7 @@ export function AccessGrants() {
         </InlineNotice>
       )}
       {grants.data !== null && grants.data.length === 0 && (
-        <p data-testid="grants-empty" className="text-sm text-gray-500">
-          {t("grants.empty")}
-        </p>
+        <EmptyState icon={KeyRound} testId="grants-empty" title={t("grants.empty")} compact />
       )}
       {grants.data !== null && grants.data.length > 0 && (
         <DataList

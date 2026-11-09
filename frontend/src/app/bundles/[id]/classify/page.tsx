@@ -2,7 +2,7 @@
 // 배치는 사람마다: 원문 3단(232 / 가변 / 392, 기본) 또는 목록 + 상세(318 / 가변). AI 자리는 안내만 둔다.
 "use client";
 
-import { ArrowDown, ArrowUp, Check, Sparkles, Trash2, ExternalLink } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ExternalLink, Inbox, Sparkles, Trash2 } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 
@@ -64,6 +64,7 @@ import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 import { useProgressiveList } from "@/lib/use-progressive-list";
 import { useUiPref } from "@/lib/use-ui-pref";
+import { EmptyState } from "@/components/ui/empty-state";
 
 type Filter = ClassifyFilter;
 const FILTERS: Filter[] = ["unassigned", "ai_suggested", "on_hold", "confirmed", "all"];
@@ -754,7 +755,7 @@ export default function ClassifyPage() {
             testId="classify-paper"
           />
         ) : (
-          <p className="text-ink-3">{rows.length === 0 ? t("classify.noUnits") : ""}</p>
+          rows.length === 0 ? <EmptyState icon={Inbox} testId="classify-empty" title={t("classify.noUnits")} compact /> : <p />
         )}
       </div>
     </div>

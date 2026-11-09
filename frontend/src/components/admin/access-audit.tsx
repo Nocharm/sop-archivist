@@ -1,8 +1,10 @@
 // 관리 > 권한 > 변경 기록 - 역할·부여 변경을 최신순으로 보여 준다(누가·언제·무엇을). 한 줄 요약은 lib/admin-format이 만든다.
 "use client";
 
+import { ScrollText } from "lucide-react";
 import { InlineNotice } from "@/components/inline-notice";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
+import { EmptyState } from "@/components/ui/empty-state";
 import { buildAuditSummary, translateOrRaw } from "@/lib/admin-format";
 import { listAudit, type AuditEvent } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -40,9 +42,7 @@ export function AccessAudit() {
         </InlineNotice>
       )}
       {audit.data !== null && audit.data.length === 0 && (
-        <p data-testid="audit-empty" className="text-sm text-gray-500">
-          {t("audit.empty")}
-        </p>
+        <EmptyState icon={ScrollText} testId="audit-empty" title={t("audit.empty")} compact />
       )}
       {audit.data !== null && audit.data.length > 0 && (
         <DataList

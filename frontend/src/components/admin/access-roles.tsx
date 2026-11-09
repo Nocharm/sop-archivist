@@ -1,7 +1,7 @@
 // 관리 > 권한 > 역할 - 역할 목록과 만들기·수정·삭제(삭제는 확인 모달). 부여가 남은 역할 삭제는 서버가 409로 막고 사람 말 문구로 보여 준다.
 "use client";
 
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2, Users } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { InlineNotice } from "@/components/inline-notice";
@@ -14,6 +14,7 @@ import { useI18n } from "@/lib/i18n";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, CHIP, INPUT_FIELD } from "@/lib/ui-classes";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MorphButton } from "@/components/ui/morph-button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { useLoaded } from "@/lib/use-loaded";
 
 // 컬럼 길이와 같다(backend RoleName 100, description 500)
@@ -190,9 +191,7 @@ export function AccessRoles() {
         </InlineNotice>
       )}
       {roles.data !== null && roles.data.length === 0 && (
-        <p data-testid="roles-empty" className="text-sm text-gray-500">
-          {t("roles.empty")}
-        </p>
+        <EmptyState icon={Users} testId="roles-empty" title={t("roles.empty")} compact />
       )}
       {roles.data !== null && roles.data.length > 0 && (
         <ul data-testid="roles-list" className="divide-y divide-gray-200 rounded-md border border-gray-200">

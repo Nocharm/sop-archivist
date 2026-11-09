@@ -23,8 +23,8 @@ describe("MESSAGES", () => {
       "permission.directory.sync": ["Run directory sync", "직원 동기화 실행"],
       "permission.ai.admin": ["Manage AI", "AI 관리"],
       "permission.system.view": ["View system status", "시스템 상태 보기"],
-      "permission.bundle.create": ["Create bundles", "묶음 만들기"],
-      "permission.bundle.admin": ["Manage all bundles", "전체 묶음 관리"],
+      "permission.bundle.create": ["Create bundles", "Bundle 만들기"],
+      "permission.bundle.admin": ["Manage all bundles", "전체 Bundle 관리"],
       "permission.guideline.manage": ["Manage AI guidelines", "AI 지침 관리"],
     };
     for (const [key, [en, ko]] of Object.entries(labels)) {

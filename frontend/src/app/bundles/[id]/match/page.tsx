@@ -32,6 +32,7 @@ import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 import { Checkbox } from "@/components/ui/checkbox";
+import { EmptyState } from "@/components/ui/empty-state";
 import { useProgressiveList } from "@/lib/use-progressive-list";
 
 interface NewSentence {
@@ -329,9 +330,7 @@ export default function MatchPage() {
             </section>
           </Refresh>
         ) : (
-          <p className="text-ink-3" data-testid="match-empty">
-            {t("match.empty")}
-          </p>
+          <EmptyState icon={Link2} testId="match-empty" title={t("match.empty")} />
         )}
       </div>
 

@@ -1,9 +1,11 @@
 // 관리 > 배치 작업 - 작업별 가장 최근 결과(성공/실패 각각 최신 1행). 직원 동기화·DB 백업 같은 백그라운드 작업이 잘 도는지 한눈에 본다.
 "use client";
 
+import { Clock3 } from "lucide-react";
 import { InlineNotice } from "@/components/inline-notice";
 import { OutcomePill } from "@/components/status";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
+import { EmptyState } from "@/components/ui/empty-state";
 import { describeRunDetail, translateOrRaw } from "@/lib/admin-format";
 import { listBatchRuns, type BatchRun } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -39,9 +41,7 @@ export function BatchRunsPanel() {
         </InlineNotice>
       )}
       {runs.data !== null && runs.data.length === 0 && (
-        <p data-testid="batch-empty" className="text-sm text-gray-500">
-          {t("batch.empty")}
-        </p>
+        <EmptyState icon={Clock3} testId="batch-empty" title={t("batch.empty")} compact />
       )}
       {runs.data !== null && runs.data.length > 0 && (
         <DataList
