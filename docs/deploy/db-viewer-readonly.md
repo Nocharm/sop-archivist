@@ -1,6 +1,6 @@
 # db-viewer 읽기전용 조회 연결 (서버 수작업분)
 
-같은 71번 서버의 **db-viewer**(스키마 탐색·ERD·행 미리보기, `:6678`)가 이 앱의 PostgreSQL을 **읽기 전용**으로 조회하기 위한 절차. 앱 코드는 바뀌지 않는다. 저장소에 이미 반영된 것은 `docker-compose.yml`의 네트워크 항목 한 덩어리뿐이고, **나머지는 사람이 서버에서 한 번 실행해야 하는 작업**이라 이 문서에 모았다. 서버 명령은 모두 bash 기준이다.
+같은 71번 서버의 **db-viewer**(스키마 탐색·ERD·행 미리보기, `:6678`)가 이 앱의 PostgreSQL을 **읽기 전용**으로 조회하기 위한 절차. 앱 코드는 바뀌지 않는다. 저장소에 이미 반영된 것은 `docker-compose.yml`의 네트워크 항목 한 덩어리뿐이고, **나머지는 사람이 서버에서 한 번 실행해야 하는 작업**이라 이 문서에 모았다. 서버 명령은 모두 bash 기준이고, `docker compose` 명령은 배포 폴더(기본 `/data/deployments/sop-archivist`, [`gitlab-runner.md`](gitlab-runner.md) 3절)에서 실행한다.
 
 db-viewer 쪽 원본 런북(연결 방식·네트워크 정책·트러블슈팅 총괄)은 그 저장소의 `docs/connect-sources.md`다. 여기는 **이 스택에서 밟는 부분**만 적는다.
 
@@ -111,7 +111,7 @@ docker exec -i $DB sh -c 'psql -U dbviewer_ro -d "$POSTGRES_DB" -tAc "SELECT cou
 docker exec -i $DB sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "DROP OWNED BY dbviewer_ro" -c "DROP ROLE dbviewer_ro"'
 ```
 
-`DROP ROLE`만 실행하면 권한이 남아 있어 `cannot be dropped because some objects depend on it`로 실패한다. `DROP OWNED BY`가 그 롤에 준 권한을 먼저 걷는다(실측). compose 합류까지 빼려면 `docker-compose.yml`의 db `networks`에서 `dbv-shared`를 되돌리고 `docker compose up -d db` 후 `docker compose restart backend proxy`.
+`DROP ROLE`만 실행하면 권한이 남아 있어 `cannot be dropped because some objects depend on it`로 실패한다. `DROP OWNED BY`가 그 롤에 준 권한을 먼저 걷는다(실측). compose 합류까지 빼려면 `docker-compose.yml`의 db `networks`에서 `dbv-shared`를 되돌리는 커밋을 GitLab 파이프라인으로 배포한다(배포 폴더의 compose 파일을 손으로 고치면 다음 배포가 덮어쓴다). 배포 뒤 backend가 DB 연결 오류를 내면 배포 폴더에서 `docker compose restart backend proxy`.
 
 **`docker compose down -v` 이후** — `dbv-shared`는 `external`이라 남지만 `pgdata`가 지워지면 **`dbviewer_ro` 롤과 권한도 함께 사라진다.** 덤프를 복원해도 돌아오지 않는다(`pg_dump`는 롤을 담지 않는다). §3 SQL을 롤 생성부터 다시 실행한다. db-viewer 쪽 소스 등록은 그대로 유효하다([`backup.md`](backup.md) §4).
 

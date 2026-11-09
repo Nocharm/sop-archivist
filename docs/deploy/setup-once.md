@@ -1,15 +1,15 @@
 # 초기 1회 셋업 (서버 71번)
 
-서버에 SOP Archivist를 **처음 세울 때 한 번만 하는 작업**을 순서대로 모은 문서. 매 배포마다 반복하는 절차(코드 pull → `docker compose up -d --build` → 헬스체크)는 1회성이 아니다 → [`deploy.md`](deploy.md). 백업·복구는 [`backup.md`](backup.md), db-viewer 연결은 [`db-viewer-readonly.md`](db-viewer-readonly.md).
+서버에 SOP Archivist를 **처음 세울 때 한 번만 하는 작업**을 순서대로 모은 문서. 매 배포마다 반복하는 절차(GitLab에 push → 파이프라인 ▶ → 헬스체크)는 1회성이 아니다 → [`deploy.md`](deploy.md). **배포는 GitLab 파이프라인으로만 한다** — 서버에서 `git clone`·`docker compose up`을 손으로 치지 않는다. 러너·배포 폴더·되돌리기는 [`gitlab-runner.md`](gitlab-runner.md). 백업·복구는 [`backup.md`](backup.md), db-viewer 연결은 [`db-viewer-readonly.md`](db-viewer-readonly.md).
 
-> 서버 명령은 모두 bash(리눅스) 기준이다. 실 IP·사내 호스트명은 이 문서에 쓰지 않는다 — `<server-ip>`, `<keycloak-host>`, `<n8n-host>`, `<ai-host>`, `<embed-host>`를 실제 값으로 바꿔 읽는다. 실값과 시크릿은 서버의 `.env`에만 둔다.
+> 서버 명령은 모두 bash(리눅스) 기준이다. `docker compose` 명령은 **배포 폴더**(기본 `/data/deployments/sop-archivist`)에서 실행한다. 실 IP·사내 호스트명은 이 문서에 쓰지 않는다 — `<server-ip>`, `<keycloak-host>`, `<n8n-host>`, `<ai-host>`, `<embed-host>`를 실제 값으로 바꿔 읽는다. 실값과 시크릿은 서버의 `.env`에만 둔다.
 
 | 순서 | 할 일 | 절 |
 |---|---|---|
 | ① | 서버 전제와 `dbv-shared` 확인 | A1·A2 |
-| ② | 코드 받기, `.env` 작성 (`AUTH_MODE=keycloak`, `APP_SYSADMINS` 포함) | A3·A4 |
+| ② | GitLab 설정·러너·배포 폴더, `.env` 작성 (`AUTH_MODE=keycloak`, `APP_SYSADMINS` 포함) | A3·A4 |
 | ③ | Keycloak 클라이언트 `sop-archivist-frontend` 만들기 | A5 |
-| ④ | 첫 `up`, 내부 대역 확인 → `FORWARDED_ALLOW_IPS` 기입 | A6 |
+| ④ | 첫 파이프라인 ▶, 내부 대역 확인 → `FORWARDED_ALLOW_IPS` 기입 후 파이프라인 재실행 | A6 |
 | ⑤ | 시스템 관리자로 로그인 확인 | A7 |
 | ⑥ | 관리 화면 Directory sync: 미리보기 → 실행 | A8 |
 | ⑦ | 권한 관리 부서에 `permission.manage` 역할 부여 | A9 |
@@ -22,7 +22,7 @@
 ### A1. 서버 전제 — Docker / Compose
 
 ```bash
-docker --version && docker compose version   # Compose v2
+docker --version && docker compose version   # Compose v2 (진단·비상 경로용 — 파이프라인은 docker:27-cli 이미지 안의 compose를 쓴다)
 df -h .                                      # pgdata 볼륨 + 백업 덤프 여유 확인
 ss -ltn | grep ':7777 ' || echo "7777 비어 있음"
 ```
@@ -40,23 +40,38 @@ docker network create --subnet 10.203.0.0/24 dbv-shared      # 없을 때만
 
 `10.203.0.0/24`는 db-viewer 운영자가 정한 값이고, 이 네트워크는 **어느 compose도 소유하지 않는다**. 실제 조회를 열려면 계정 발급·소스 등록이 더 필요하다 → A10.
 
-### A3. 코드 받기
+### A3. GitLab 설정·러너·배포 폴더
 
-```bash
-git clone https://github.com/Nocharm/sop-archivist.git <배포 디렉터리>   # 서버에서 GitHub에 닿지 않으면 Windows PC에서 scp
-cd <배포 디렉터리>
-```
+서버에 저장소를 clone하지 않는다. 코드는 배포 Job이 배포 폴더에 깐다. [`gitlab-runner.md`](gitlab-runner.md)를 순서대로 한다:
 
-compose 프로젝트 이름이 `sop-archivist`로 고정돼 있어 `-p` 없이도 bpm 스택과 이름(컨테이너·네트워크·볼륨)이 겹치지 않는다. 이후 모든 `docker compose` 명령은 이 디렉터리에서 실행한다.
+1. 1절 — GitLab 프로젝트 설정(`main` 보호, Private, Auto DevOps 끔, 되돌리기 설정 두 개, 러너 두 개 만들기).
+2. 2절 — 서버에 러너 컨테이너 `gitlab-runner-sop-archivist`를 띄우고 `sop-archivist-test`·`sop-archivist-deploy`를 등록.
+3. 3절 — 배포 폴더 `/data/deployments/sop-archivist`를 만든다(`.env`는 A4).
+
+compose 프로젝트 이름이 `sop-archivist`로 고정돼 있어 `-p` 없이도 bpm 스택과 이름(컨테이너·네트워크·볼륨)이 겹치지 않는다. 이후 손으로 치는 `docker compose` 진단 명령은 배포 폴더에서 실행한다.
 
 ### A4. `.env` 작성
 
+PC에서 `.env.example`을 복사해 아래 값을 채운 뒤 서버 배포 폴더로 옮긴다. 배포 폴더는 첫 파이프라인 전에는 비어 있어 거기에 `.env.example`이 없다.
+
 ```bash
+# PC (bash)
 cp .env.example .env
-chmod 600 .env          # 시크릿이 들어가니 소유자만 읽게
 ```
 
-`.env`는 **git에 커밋하지 않는다.** 서버 재구축에 필수인 자산이니 **git 밖 안전한 위치에 사본을 따로 보관**한다 — 백업 사이드카는 DB만 덤프한다([`backup.md`](backup.md)).
+```powershell
+# PC (PowerShell)
+Copy-Item .env.example .env
+```
+
+```bash
+# PC → 서버 (scp는 bash·PowerShell 동일)
+scp .env <계정>@<server-ip>:/data/deployments/sop-archivist/.env
+# 서버
+chmod 600 /data/deployments/sop-archivist/.env   # 시크릿이 들어가니 소유자만 읽게
+```
+
+`.env`는 **git·CI 변수에 넣지 않는다.** 배포 Job은 읽기만 하고, `AUTH_MODE`가 `keycloak`이 아니거나 `BACKUP_DIR`이 배포 폴더 안의 다른 상대 경로면 배포를 거절한다. PC의 사본은 아래 "사본 보관" 위치로 옮기고 작업 폴더에 두지 않는다(저장소 폴더 안의 `.env`는 `.gitignore` 대상이지만 실수 여지를 남기지 않는다). 서버 재구축에 필수인 자산이니 **git 밖 안전한 위치에 사본을 따로 보관**한다 — 백업 사이드카는 DB만 덤프한다([`backup.md`](backup.md)).
 
 서버에서 채울 값 (`.env.example`이 전체 목록과 설명):
 
@@ -65,7 +80,7 @@ chmod 600 .env          # 시크릿이 들어가니 소유자만 읽게
 | `APP_PORT` | `7777` |
 | `POSTGRES_USER` / `POSTGRES_DB` | 기본 `sop_archivist` 그대로 둬도 된다 |
 | `POSTGRES_PASSWORD` | **강한 임의값**. `openssl rand -hex 24`처럼 영문·숫자만. 아래 주의 |
-| `BACKUP_DIR` / `BACKUP_RETENTION_DAYS` | `./backups` / `14` |
+| `BACKUP_DIR` / `BACKUP_RETENTION_DAYS` | `./backups` / `14` (배포 폴더 밖 절대 경로도 된다. 배포 폴더 안의 다른 상대 경로는 배포 동기화가 지워 거절된다) |
 | `DBV_NETWORK` / `DBV_DB_ALIAS` | `dbv-shared` / `sop-archivist-db` |
 | `AUTH_MODE` | **`keycloak`을 명시**한다 (compose 기본값도 keycloak이지만 적어 둔다) |
 | `KEYCLOAK_ISSUER` | `http://<keycloak-host>:8080/realms/ai-portal` (realm URL까지) |
@@ -131,29 +146,26 @@ realm `ai-portal`(다른 사내 앱과 공유)에 frontend용 **public 클라이
 
 ### A6. 첫 기동과 내부 대역 → `FORWARDED_ALLOW_IPS`
 
+첫 기동은 첫 파이프라인이다. PC에서 `git push gitlab main`(+ 태그) → GitLab `main` 파이프라인의 test 3개 통과 → `deploy-production` ▶ ([`gitlab-runner.md`](gitlab-runner.md) 4절). Job 로그 끝에 `[deploy] health: /api/health ok, auth mode keycloak, / 200`이 찍히면 기동된 것이다(첫 기동은 마이그레이션 때문에 몇 분 걸릴 수 있다). 서버에서 직접 보고 대역을 확인한다:
+
 ```bash
-docker compose up -d --build
+cd /data/deployments/sop-archivist
 docker compose ps                                              # 5개 서비스 Up, db healthy
-curl -s http://localhost:7777/api/health                       # {"status":"ok"}
-curl -s http://localhost:7777/api/auth/mode; echo              # mode=keycloak, keycloakClientId=sop-archivist-frontend
+curl -s http://localhost:7777/api/auth/mode; echo              # keycloakClientId=sop-archivist-frontend (Job 로그에는 본문을 찍지 않는다)
 docker network inspect sop-archivist_default -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}'   # 예: 172.18.0.0/16
 ```
 
 compose 내부 네트워크 대역은 Docker가 자동으로 할당한다. backend(uvicorn)가 `X-Forwarded-For`를 믿을 프록시 대역이 이 서브넷이어야 접속 로그의 클라이언트 주소가 nginx 주소로 찍히지 않는다. 위 명령으로 나온 서브넷을 `.env`에 적는다:
 
 ```bash
-# .env
+# 배포 폴더의 .env
 FORWARDED_ALLOW_IPS=<위에서 확인한 서브넷>
 ```
 
-```bash
-docker compose up -d backend && docker compose restart proxy
-```
-
-**proxy는 `restart`로 따로 다시 시작한다.** `up -d`는 설정이 바뀐 서비스만 다시 만들고 proxy 설정은 그대로라, `up -d backend proxy`로는 proxy가 재시작되지 않는다. nginx는 upstream 호스트 이름을 시작할 때 한 번만 풀기 때문에, backend 컨테이너만 다시 만들고 proxy를 두면 새 IP를 못 찾고 `/api`가 502를 낸다. backend를 다시 만드는 단계마다 이 두 명령을 함께 쓴다.
+그리고 GitLab에서 **Run pipeline**(브랜치 `main`) → `deploy-production` ▶ ([`gitlab-runner.md`](gitlab-runner.md) 5절). 손으로 `up`을 치지 않는다. compose가 env가 바뀐 backend를 다시 만들고, 배포 스크립트가 proxy를 늘 재시작한다 — nginx는 upstream 호스트 이름을 시작할 때 한 번만 풀어서, backend만 다시 만들고 proxy를 두면 새 IP를 못 찾고 `/api`가 502를 낸다.
 
 - **대역 정책 결정 대기(2026-11-04).** 서버가 고정 대역 정책이면 `docker-compose.yml` 맨 아래 `networks.default`에 `ipam` 블록을 추가하고 `FORWARDED_ALLOW_IPS`도 같은 대역으로 맞춘다. 서버의 다른 스택이 쓰는 대역과 겹치지 않아야 한다(`docker network inspect $(docker network ls -q) -f '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}'`). **서브넷은 오버라이드 파일로 못 바꾼다** — compose가 `ipam.config`를 교체하지 않고 누적 병합해 `Pool overlaps with other one`으로 실패한다(bpm 실측). `docker-compose.yml`을 직접 고친다.
-- 자동 할당 대역은 `docker compose down` 뒤 다시 올리면 바뀔 수 있다. 바뀌면 이 단계를 다시 한다.
+- 자동 할당 대역은 `docker compose down` 뒤 다시 올리면 바뀔 수 있다. 바뀌면 이 단계를 다시 한다(배포 Job은 `down`을 하지 않는다).
 
 ### A7. 시스템 관리자로 로그인 확인
 
@@ -172,7 +184,7 @@ docker compose up -d backend && docker compose restart proxy
    - 처음이므로 "Would remove"(삭제 예정)와 "Login IDs that differ only in letter case"는 비어 있어야 한다(둘 다 DB에 이미 있는 행과 비교하는 값이다). 이후 동기화를 실행하기 전에도 미리보기에서 이 두 항목이 비어 있는지 본다 — 대소문자만 다른 loginId가 보이면 **중단**한다. 실 동기화가 새 행을 만들고 옛 행을 지워 그 사람의 권한 부여가 고아가 된다.
 2. **Run sync now.** 결과 카드에서 "Nothing was changed"(중단) 문구가 없고, "Removed"가 미리보기의 "Would remove"와 같은지 본다. 안전장치가 있다: 행 수가 피드 헤더와 맞지 않거나, 빈 피드이거나, 삭제가 `HR_SYNC_DELETE_CAP_PCT`(%)를 넘으면 DB를 전혀 건드리지 않고 중단한다. 같은 동기화는 5분 안에 다시 실행되지 않는다("Directory sync just ran...").
 3. 아래 "Recent runs"에 기록이 남았는지 보고, `/account`(상단 바 이름 링크)를 새로고침해 **내 이름·부서가 채워졌는지** 본다. 비어 있으면 Keycloak `preferred_username`이 HR의 loginId와 대소문자까지 같지 않은 것이다(A5 Mappers).
-4. 문제가 없으면 `.env`의 `HR_SYNC_INTERVAL_HOURS=24`로 올리고 `docker compose up -d backend && docker compose restart proxy`. 이후 스케줄러가 마지막 회차 기준으로 24시간마다 돈다. 로그인할 때마다 본인 한 명은 하루 1회 HR에서 다시 가져온다(전체 동기화 없이 점진 충전).
+4. 문제가 없으면 배포 폴더 `.env`의 `HR_SYNC_INTERVAL_HOURS=24`로 올리고 파이프라인을 다시 돌린다(Run pipeline → ▶, [`gitlab-runner.md`](gitlab-runner.md) 5절). 이후 스케줄러가 마지막 회차 기준으로 24시간마다 돈다. 로그인할 때마다 본인 한 명은 하루 1회 HR에서 다시 가져온다(전체 동기화 없이 점진 충전).
 
 HR 연결이 안 되면 "HR sync is not set up on this server."(503, URL·토큰 중 비어 있음) 또는 "Could not reach the HR source."(502)가 뜬다 → [`deploy.md`](deploy.md) §4.
 
@@ -213,10 +225,11 @@ docker compose logs --tail 5 db-backup    # "[db-backup] ... ok sop-archivist_..
 ## C. 절대 하지 말 것
 
 - **서버에서 `python -m scripts.reset_db`.** 스크립트는 backend 이미지에 실려 있고 Alembic으로 모든 테이블을 `base`까지 내렸다 다시 올린다. 서버 postgres에서 막아 주는 조건은 "HR이 채운 직원이 있을 때" 하나뿐이라, **HR 첫 동기화 전에는 가드가 없다.** 그 전에 실행하면 역할·부여·변경 기록·접속 기록이 전부 사라진다. 로컬 데모 시드 전용이다.
-- **운영에서 `docker compose down -v`.** `pgdata` 볼륨이 삭제된다. 롤백은 코드만 되돌리면 된다([`deploy.md`](deploy.md) §7).
+- **운영에서 `docker compose down -v`.** `pgdata` 볼륨이 삭제된다. 롤백은 이전 파이프라인의 배포 Job Retry로 한다([`deploy.md`](deploy.md) §7). 배포 Job도 `down`을 하지 않는다.
 - **서버 볼륨에 dev 모드(`AUTH_MODE=dev`)를 쓰지 않는다.** dev는 `X-Dev-User` 헤더를 그대로 믿는 로컬 우회이고, 기동할 때 가짜 부서 7개·직원 5명(`dev.admin`·`qa.lead`·`qa.member`·`prod.member`·`ops.member`, `source='dev'`)을 DB에 넣는다. HR 동기화는 `source='hr'` 행만 다루므로 이 가짜 직원은 keycloak으로 바꿔도 **디렉터리 선택기에 남는다.** 코드가 자동으로 지우지 않는다(파괴적 동작이라 의도적으로 두지 않았다). 서버를 한 번이라도 dev로 띄웠다면 손으로 정리한다:
 
   ```bash
+  cd /data/deployments/sop-archivist
   docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
   ```
 

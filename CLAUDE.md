@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **SOP Archivist — SOP Restructuring T/F가 쓰는 사내 AI 에이전트 웹 서비스** (FastAPI + Next.js, 사내 서버에 docker compose로 배포). 제품은 옛 SOP 묶음을 새 SOP·WI 구조로 다시 짜는 일(문서 쪼개기 → 배정·고쳐 쓰기 → 결과물 A·B·C·Excel → 검토)을 돕는다. **제품 명세: [`docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`](docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md)**(판단 기준은 `docs/domain/`), 기반 명세: [`docs/superpowers/specs/2026-11-04-sop-archivist-baseline-design.md`](docs/superpowers/specs/2026-11-04-sop-archivist-baseline-design.md), 구현 계획: `docs/superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md`(계획 2 AI 층, 완료 — 살아 있는 것은 "API 계약" 블록. 계획 1·기반 계획은 끝나 지웠다), 프런트 디자인 기초: `frontend/docs/design/2026-11-07-frontend-design-foundations.md`, 진행 현황: `PROGRESS.md`.
 
-> 상태: **v0.7.0 결정적 코어 + AI 제안 층 + 프런트 화면(백엔드 기능 전부 연결, 이동·움직임 공통 층) 완료, 서버 미배포(`docs/deploy/setup-once.md` 대기), 실제 모델 미검증** — v0.1.0 기반(사내 로그인 Keycloak·직원 디렉터리 HR 웹훅·사내 AI·표 기반 권한 체계) 위에 SOP 재구성의 결정적 코어(v0.2.0: 묶음·멤버십, 업로드·격리 추출(DOCX 메인, PDF·MarkItDown 보조), 규칙 쪼개기·편집·되돌리기, To-Be 목록, 배정·확정(두 입구), 결과물 A·B·C, Excel 내보내기, 검토 흐름)와 그 위의 AI 제안 층(v0.3.0: 분류·고쳐 쓰기·번역·입구 2 짝 맞추기·한/영 따로 짝·복합 문장 나누기 제안, 지침·프롬프트 버전, 채택률)을 얹었다. AI는 제안만 하고 사람이 줄마다 확정하며, AI가 꺼지거나 실패해도 사람 경로는 그대로 돈다. 프런트는 1차 화면(v0.4.0: 모든 단계 화면, G Graphite 라이트·다크, 설계 기초 `frontend/docs/design/2026-11-07-frontend-design-foundations.md`)이 붙었다. AI 층은 가짜 AI와 합성 SOP로만 검증했고 **유사도 임계값은 합성 자료로만 잡은 값**이다(실제 모델·SOP 시험 뒤 다시 정한다). 배포·운영 절차는 `docs/deploy/`(인덱스 `docs/README.md`).
+> 상태: **v0.7.1 결정적 코어 + AI 제안 층 + 프런트 화면(백엔드 기능 전부 연결, 이동·움직임 공통 층) + GitLab Runner 배포 파이프라인 완료, 서버 미배포(`docs/deploy/setup-once.md`·`gitlab-runner.md` 대기), 실제 모델 미검증** — v0.1.0 기반(사내 로그인 Keycloak·직원 디렉터리 HR 웹훅·사내 AI·표 기반 권한 체계) 위에 SOP 재구성의 결정적 코어(v0.2.0: 묶음·멤버십, 업로드·격리 추출(DOCX 메인, PDF·MarkItDown 보조), 규칙 쪼개기·편집·되돌리기, To-Be 목록, 배정·확정(두 입구), 결과물 A·B·C, Excel 내보내기, 검토 흐름)와 그 위의 AI 제안 층(v0.3.0: 분류·고쳐 쓰기·번역·입구 2 짝 맞추기·한/영 따로 짝·복합 문장 나누기 제안, 지침·프롬프트 버전, 채택률)을 얹었다. AI는 제안만 하고 사람이 줄마다 확정하며, AI가 꺼지거나 실패해도 사람 경로는 그대로 돈다. 프런트는 1차 화면(v0.4.0: 모든 단계 화면, G Graphite 라이트·다크, 설계 기초 `frontend/docs/design/2026-11-07-frontend-design-foundations.md`)이 붙었다. AI 층은 가짜 AI와 합성 SOP로만 검증했고 **유사도 임계값은 합성 자료로만 잡은 값**이다(실제 모델·SOP 시험 뒤 다시 정한다). 배포·운영 절차는 `docs/deploy/`(인덱스 `docs/README.md`), 배포는 사내 GitLab 파이프라인으로만 한다(`docs/deploy/gitlab-runner.md`).
 > **서비스 버전**: `frontend/package.json` `version`이 단일 소스(빌드 때 상단 바 서비스 이름 옆 표시), 기록은 루트 `CHANGELOG.md`, `Nocharm/sop-archivist` `main` 머지마다 올리고 `vX.Y.Z` 태그(`rules/common/git.md` "On Main Merge — 서비스 버전"). 운영 배포 여부도 CHANGELOG에 적는다.
 > DB: 로컬 네이티브는 sqlite 파일(무설정, 연결마다 `PRAGMA foreign_keys=ON`이라 FK·cascade가 서버와 같다), 서버 compose는 postgres. 스키마는 **Alembic**(backend 기동 때 head까지 자동 적용). 로컬 데모 시드: `backend/scripts/reset_db.py`(서버 실행 금지), SOP 데모 묶음은 그 위에 `backend/scripts/seed_sop_demo.py`(아래 Commands).
 > **원칙**: AI 페이로드에 직원 실명을 싣지 않는다(역할·부서 등 비식별 정보만). 공개 저장소이므로 실서버 IP·사내 호스트명·시크릿은 추적 파일에 넣지 않는다(플레이스홀더 `<server-ip>` 등).
@@ -73,13 +73,17 @@ node scripts\pw-contrast-audit.mjs
 
 # 가짜 AI (저장소 루트에서)
 node frontend\scripts\fake-ai-server.mjs   # 나눔 모드: $env:FAKE_AI_SPLIT="1"
+
+# 배포 스크립트 검증은 POSIX sh가 필요하다 — Git Bash에서 sh ci/test-deploy.sh, 아니면 GitLab의 deploy-script-test Job 결과를 본다
 # backend: $env:AI_ENABLED="true"; $env:AI_BASE_URL="http://localhost:9999/v1"; $env:AI_MODEL="fake"; $env:AI_API_TOKEN="fake"; $env:AI_ENDPOINTS=""
 # 임베딩까지: $env:EMBED_ENABLED="true"; $env:EMBED_BASE_URL="http://localhost:9999/v1"; $env:EMBED_API_TOKEN="fake"; $env:EMBED_MODEL="fake"
 ```
 
 ```bash
-# 서버 배포 (리눅스 서버, 저장소 루트, .env 필요 — .env.example 참고) — 절차 전체: docs/deploy/
-docker compose up -d --build   # 접속: http://<server-ip>:7777
+# 서버 배포 = 사내 GitLab 파이프라인 (서버에서 직접 compose 하지 않는다) — 절차 전체: docs/deploy/gitlab-runner.md
+# PC(GitHub main을 받은 뒤): git push gitlab main && git push gitlab vX.Y.Z → GitLab main 파이프라인 test 통과 → deploy-production ▶
+# 배포 Job(ci/deploy.sh)이 서버 배포 폴더(기본 /data/deployments/sop-archivist, .env는 거기에만)로 checkout을 맞추고 docker compose up -d --build. 접속: http://<server-ip>:7777
+sh ci/test-deploy.sh            # 배포 스크립트 검증(가짜 docker, 저장소 루트에서) — busybox·GNU 둘 다에서 돌아야 한다
 # 로컬 Docker로 컨테이너 검증할 때도 공유 브리지를 먼저 만든다: docker network create dbv-shared
 ```
 
@@ -103,8 +107,10 @@ backend/    # FastAPI 앱(app/, SOP 기능은 app/sop/), Alembic(alembic/), 로�
 frontend/   # Next.js 앱(src/app 라우트, src/components, src/lib), scripts/ = 스모크·가짜 AI
 nginx/      # 리버스 프록시 설정
 scripts/    # db-backup.sh (사이드카가 마운트)
-docs/       # 인덱스 docs/README.md — deploy/(런북) · lessons/(시행착오) · superpowers/(명세·계획)
+ci/         # deploy.sh(GitLab 배포 Job 본체, POSIX sh) · test-deploy.sh(가짜 docker로 검증) — .gitlab-ci.yml이 부른다
+docs/       # 인덱스 docs/README.md — deploy/(런북·gitlab-runner.md) · lessons/(시행착오) · superpowers/(명세·계획)
 docker-compose.yml
+.gitlab-ci.yml  # 사내 GitLab: test 3개(MR·main 자동) · deploy-production(main 수동 ▶)
 ```
 
 **backend 핵심 모듈:**
@@ -154,6 +160,7 @@ docker-compose.yml
 
 | 제약 | 이유 | 반영 |
 |---|---|---|
+| **배포는 GitLab Runner — 서버에서 직접 compose 하지 않는다** | 사내 정책(사용자 결정, 2026-11-09). GitHub가 개발 원본, 사용자가 PC에서 사내 GitLab(CE, 미러 없음)으로 push | `.gitlab-ci.yml`(test 자동·deploy 수동 ▶, `main`만) → 배포 러너(Protected, 도커 소켓 + 배포 폴더를 **양쪽 같은 경로로** 마운트)가 `ci/deploy.sh`로 서버 데몬에서 `compose up -d --build`. 레지스트리·DinD 없음, 러너는 `pull_policy = never`. `.env`는 서버 배포 폴더에만(가드: `AUTH_MODE=keycloak`·`BACKUP_DIR`). 배포 스크립트의 docker 호출은 빈 환경(`env -i`) — CI 변수가 `.env`를 덮지 못하게. `set -x`·`.env`/`compose config` 출력·`down`·`prune`·`--remove-orphans` 금지. 운영·진단·복구는 배포 폴더에서 손으로(`docs/deploy/gitlab-runner.md`) |
 | 서버 71번, bpm 옆 | 사용자 결정 | 별도 compose 스택·별도 postgres(내 판단). 앱 nginx 노출 포트 **7777**(사용자 결정, 9900·9910은 bpm 사용 중) |
 | 서버는 Docker Hub 차단 | 베이스 이미지는 연결된 PC에서 amd64 tar로 반입 | bpm과 **같은 태그만** 쓴다: `python:3.11-slim`, `node:24.22.1-alpine`, `nginx:1.27-alpine`, `postgres:16-alpine`(이미 서버에 있음 → 새 tar 반입 불필요). Dockerfile에 `# syntax=` 금지 |
 | 배포 런타임 Python 3.11 | 로컬 3.12 문법으로 서버 기동 불능 사고(bpm 2026-08-31) | `backend/ruff.toml` `target-version = "py311"` |

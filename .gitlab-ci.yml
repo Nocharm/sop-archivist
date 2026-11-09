@@ -1,0 +1,86 @@
+# GitLab CI for SOP Archivist (company GitLab, server deploy runner).
+# Tests run on merge requests and on main; the production deploy is a manual job on main.
+# Runner setup, project settings, rollback and the emergency manual path: docs/deploy/gitlab-runner.md.
+# Keep this file free of hostnames, IPs, secrets and pull_policy (that lives in the runner config).
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "web"
+    # Anything else (feature-branch pushes, tag pushes) makes no pipeline, so a branch with
+    # an open MR never gets a duplicate branch pipeline.
+
+stages:
+  - test
+  - deploy
+
+backend-test:
+  stage: test
+  tags: [sop-archivist-test]
+  image: python:3.11-slim
+  interruptible: true
+  variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+    PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  cache:
+    key:
+      prefix: pip
+      files: [backend/requirements.txt, backend/requirements-dev.txt]
+    paths: [.cache/pip]
+  script:
+    - cd backend
+    - python -m pip install -r requirements-dev.txt
+    - ruff check app/ tests/
+    # conftest pins AUTH/AI/HR settings to the baseline, so no CI variables are needed.
+    - python -m pytest tests/ -q
+
+frontend-test:
+  stage: test
+  tags: [sop-archivist-test]
+  image: node:24.22.1-alpine
+  interruptible: true
+  variables:
+    npm_config_cache: "$CI_PROJECT_DIR/.cache/npm"
+  cache:
+    key:
+      prefix: npm
+      files: [frontend/package-lock.json]
+    paths: [.cache/npm]
+  script:
+    - cd frontend
+    - npm ci
+    - npm run lint
+    - npx tsc --noEmit -p tsconfig.json
+    - npx vitest run
+    # No `npm run build` here: the deploy's image build runs it.
+
+deploy-script-test:
+  stage: test
+  tags: [sop-archivist-test]
+  # Same busybox userland as deploy-production; no Docker socket (the test fakes docker).
+  image: docker:27-cli
+  interruptible: true
+  script:
+    - sh ci/test-deploy.sh
+
+deploy-production:
+  stage: deploy
+  # Protected runner with the host Docker socket and the deploy folder mounted at the same path.
+  tags: [sop-archivist-deploy]
+  image: docker:27-cli
+  needs: [backend-test, frontend-test, deploy-script-test]
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+      # The main pipeline waits as "blocked" until ▶ is pressed; a failed deploy fails it.
+      allow_failure: false
+  resource_group: sop-archivist-production
+  environment:
+    name: production
+    deployment_tier: production
+  interruptible: false
+  timeout: 45 minutes
+  script:
+    # Deploy folder: CI variable SOP_DEPLOY_DIR, else the script default.
+    - sh ci/deploy.sh
