@@ -17,7 +17,7 @@ import {
   pingAi,
   removeGrant,
   runHrSync,
-  searchDirectory,
+  listDirectoryAll,
   setAuthToken,
   updateRole,
 } from "./api";
@@ -103,10 +103,10 @@ describe("access helpers", () => {
 });
 
 describe("directory helpers", () => {
-  it("searches with an encoded query and the server's 50 cap", async () => {
+  it("loads the whole directory for the picker", async () => {
     const fetchMock = stubFetch();
-    await searchDirectory("김 & lee");
-    expect(getLastCall(fetchMock)[0]).toBe(`/api/directory?q=${encodeURIComponent("김 & lee")}&limit=50`);
+    await listDirectoryAll();
+    expect(getLastCall(fetchMock)).toEqual(["/api/directory/all", "GET", undefined]);
   });
 
   it("lists departments", async () => {

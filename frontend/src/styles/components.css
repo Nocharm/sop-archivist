@@ -925,3 +925,13 @@
     .inline-check, .inline-check-label, .strip-merge { transition: none; animation: none; }
   }
 }
+
+/* ---- 사람 고르기 목록(2026-11-09): 25명씩 이어 그리고 긴 부서 경로는 말줄임 ---- */
+@layer components {
+  .picker-list { max-height: 14rem; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--r-2); }
+  .picker-list > li + li { border-top: 1px solid var(--line); }
+  .picker-option { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; padding: 6px 10px; text-align: left; font-size: var(--fs-ui); color: var(--ink); cursor: pointer; }
+  .picker-option:hover, .picker-option:focus-visible { background: var(--menu-hover); outline: none; }
+  .picker-option[aria-pressed="true"] { background: var(--accent-tint); box-shadow: inset 2px 0 0 var(--accent); font-weight: 600; }
+  .picker-more { padding: 8px 10px; }
+}

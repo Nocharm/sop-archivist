@@ -340,11 +340,10 @@ export function getEffective(loginId: string): Promise<EffectiveAccess> {
   return apiFetch<EffectiveAccess>(`/access/effective/${encodeURIComponent(loginId)}`);
 }
 
-// 디렉터리 검색 한 번에 받는 최대 인원 - 서버 상한(50)과 같다
-export const DIRECTORY_SEARCH_LIMIT = 50;
 
-export function searchDirectory(q: string): Promise<DirectoryUser[]> {
-  return apiFetch<DirectoryUser[]>(`/directory?q=${encodeURIComponent(q)}&limit=${DIRECTORY_SEARCH_LIMIT}`);
+/** 재직자 전원 - 피커가 한 번 받아 브라우저에서 순위를 매긴다(directory-cache) */
+export function listDirectoryAll(): Promise<DirectoryUser[]> {
+  return apiFetch<DirectoryUser[]>("/directory/all");
 }
 
 export function listDepartments(): Promise<Department[]> {

@@ -19,6 +19,7 @@ import {
   tryConsumeAuthRetry,
 } from "@/lib/auth-return";
 import { clearBundleStore } from "@/lib/bundle-store";
+import { clearDirectoryCache } from "@/lib/directory-cache";
 import { getStoredDevUser, storeDevUser } from "@/lib/dev-auth";
 import { buildOidcSettings } from "@/lib/keycloak-login";
 import { SessionProvider } from "@/lib/session";
@@ -111,6 +112,7 @@ function AuthGate({ children }: { children: ReactNode }) {
     }
     await auth.removeUser();
     clearBundleStore();
+    clearDirectoryCache();
     router.replace(LOGIN_PATH);
   };
 
@@ -149,6 +151,7 @@ function DevGate({ children }: { children: ReactNode }) {
   const signOut = () => {
     storeDevUser(null);
     clearBundleStore();
+    clearDirectoryCache();
     router.replace(LOGIN_PATH);
   };
 

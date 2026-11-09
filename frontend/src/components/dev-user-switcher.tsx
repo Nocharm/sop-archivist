@@ -6,6 +6,7 @@ import { UserRound } from "lucide-react";
 import { Select } from "@/components/ui/select";
 
 import { clearBundleStore } from "@/lib/bundle-store";
+import { clearDirectoryCache } from "@/lib/directory-cache";
 import { useI18n } from "@/lib/i18n";
 import { getStoredDevUser, LOCAL_USERS, storeDevUser } from "@/lib/dev-auth";
 import { useSession } from "@/lib/session";
@@ -20,6 +21,7 @@ export function DevUserSwitcher() {
   const handleChange = (loginId: string) => {
     storeDevUser(loginId);
     clearBundleStore();
+    clearDirectoryCache();
     reloadMe();
   };
 

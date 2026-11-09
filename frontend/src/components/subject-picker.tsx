@@ -1,17 +1,22 @@
-// 부여 대상 선택기 - 사람은 디렉터리 검색(디바운스, 최대 50명), 부서는 접고 펴는 트리. 부여 추가 폼과 유효 권한 조회가 공유한다.
+// 대상 선택기 - 사람은 직원 전체를 한 번 받아 브라우저에서 순위를 매기고(25명씩 이어 그림), 부서는 접고 펴는 트리. 멤버 관리·부여 추가·유효 권한 조회가 공유한다.
 "use client";
 
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { InlineNotice } from "@/components/inline-notice";
-import { DIRECTORY_SEARCH_LIMIT, listDepartments, searchDirectory, type SubjectType } from "@/lib/api";
+import { listDepartments, type SubjectType } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { buildDeptTree, getDeptName, type DeptNode } from "@/lib/dept-tree";
+import { Truncate } from "@/components/ui/motion";
+import { loadDirectoryOnce } from "@/lib/directory-cache";
 import { getDisplayName } from "@/lib/display-name";
 import { useI18n } from "@/lib/i18n";
+import { orderBrowse, rankPeople } from "@/lib/people-order";
+import { useMe } from "@/lib/session";
 import { INPUT_FIELD } from "@/lib/ui-classes";
 import { useLoaded } from "@/lib/use-loaded";
+import { useProgressiveList } from "@/lib/use-progressive-list";
 
 /** 고른 대상 - id는 사람이면 login_id, 부서면 dept_code(백엔드 subject_id), label은 화면에 보일 이름 */
 export interface PickedSubject {
@@ -28,31 +33,28 @@ interface SubjectPickerProps {
   allowLoginIdEntry?: boolean;
 }
 
-// 입력이 멈춘 뒤 검색을 보내기까지의 대기(ms)
-const SEARCH_DEBOUNCE_MS = 250;
-
 const OPTION_CLASS =
   "flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1 text-left text-sm text-gray-800 hover:bg-gray-100 aria-pressed:bg-accent/10 aria-pressed:font-semibold";
 
+// 사람 목록을 한 번에 그리는 수 - 끝에 닿으면 같은 수만큼 더 붙인다
+const PEOPLE_PAGE = 25;
+
 function PersonSearch({ testId, value, onChange, allowLoginIdEntry }: Omit<SubjectPickerProps, "subjectType">) {
   const { t, lang } = useI18n();
+  const me = useMe();
   const [query, setQuery] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), SEARCH_DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
-  }, [query]);
-
-  const search = useLoaded(() => searchDirectory(debouncedQuery), debouncedQuery);
-  const people = search.data ?? [];
+  const directory = useLoaded(loadDirectoryOnce, "directory");
+  // 내 부서의 상위 체인을 알려고 부서 표를 같이 받는다(실패하면 체인 없이 원래 순서)
+  const departments = useLoaded(listDepartments, "departments");
+  const people = directory.data ?? [];
   const typedId = query.trim();
-  // 입력 뒤 디바운스를 기다리는 동안과 요청이 진행 중인 동안
-  const isSearching = typedId !== debouncedQuery || search.isLoading;
+  // 검색어가 있으면 이름 > 한글 이름 > 아이디 순위, 없으면 내 부서 → 상위 부서 → 나머지
+  const ordered = typedId ? rankPeople(people, typedId) : orderBrowse(people, me.login_id, departments.data ?? []);
+  const { visible, hasMore, sentinelRef } = useProgressiveList(ordered, typedId, { pageSize: PEOPLE_PAGE });
   const showLoginIdEntry = allowLoginIdEntry === true && typedId !== "" && !people.some((person) => person.login_id === typedId);
 
   return (
-    <div className="space-y-2">
+    <div className="min-w-0 space-y-2">
       <input
         type="text"
         data-testid={`${testId}-search`}
@@ -63,51 +65,53 @@ function PersonSearch({ testId, value, onChange, allowLoginIdEntry }: Omit<Subje
         aria-label={t("picker.searchPerson")}
         onChange={(event) => setQuery(event.target.value)}
       />
-      {search.error !== null && (
+      {directory.error !== null && (
         <InlineNotice testId={`${testId}-error`} tone="error">
-          {humanizeApiError(search.error, t)}
+          {humanizeApiError(directory.error, t)}
         </InlineNotice>
       )}
-      {search.data !== null && (
-        <ul data-testid={`${testId}-list`} className="max-h-56 divide-y divide-gray-100 overflow-auto rounded-md border border-gray-200">
-          {people.map((person) => (
-            <li key={person.login_id}>
-              <button
-                type="button"
-                data-testid={`${testId}-option-${person.login_id}`}
-                aria-pressed={value?.id === person.login_id}
-                className={`${OPTION_CLASS} w-full`}
-                onClick={() => onChange({ id: person.login_id, label: getDisplayName(person, lang) })}
-              >
-                <span className="shrink-0">{getDisplayName(person, lang)}</span>
-                <span className="shrink-0 text-xs text-gray-500">{person.login_id}</span>
-                <span className="min-w-0 truncate text-xs text-gray-500">{person.dept_path || person.department}</span>
-              </button>
-            </li>
-          ))}
-          {showLoginIdEntry && (
-            <li>
-              <button
-                type="button"
-                data-testid={`${testId}-raw-option`}
-                className={`${OPTION_CLASS} w-full`}
-                onClick={() => onChange({ id: typedId, label: typedId })}
-              >
-                {t("picker.lookupLoginId", { id: typedId })}
-              </button>
-            </li>
-          )}
-          {people.length === 0 && !showLoginIdEntry && (
-            <li data-testid={`${testId}-empty`} className="px-3 py-2 text-sm text-gray-500">
-              {t("picker.noResults")}
-            </li>
-          )}
-        </ul>
+      {directory.data === null && directory.error === null ? (
+        <p data-testid={`${testId}-status`} className="min-h-4 text-xs text-ink-3">
+          {t("picker.searching")}
+        </p>
+      ) : (
+        directory.data !== null && (
+          <ul data-testid={`${testId}-list`} className="picker-list">
+            {visible.map((person) => (
+              <li key={person.login_id}>
+                <button
+                  type="button"
+                  data-testid={`${testId}-option-${person.login_id}`}
+                  aria-pressed={value?.id === person.login_id}
+                  className="picker-option"
+                  onClick={() => onChange({ id: person.login_id, label: getDisplayName(person, lang) })}
+                >
+                  <span className="shrink-0 font-medium">{getDisplayName(person, lang)}</span>
+                  <span className="shrink-0 font-mono text-xs text-ink-3">{person.login_id}</span>
+                  <Truncate className="min-w-0 flex-1 text-xs text-ink-3" text={person.dept_path || person.department} />
+                </button>
+              </li>
+            ))}
+            {hasMore && (
+              <li ref={sentinelRef} className="picker-more" data-testid={`${testId}-more`} aria-hidden>
+                <span className="sk h-3 w-40" />
+              </li>
+            )}
+            {showLoginIdEntry && (
+              <li>
+                <button type="button" data-testid={`${testId}-raw-option`} className="picker-option" onClick={() => onChange({ id: typedId, label: typedId })}>
+                  {t("picker.lookupLoginId", { id: typedId })}
+                </button>
+              </li>
+            )}
+            {ordered.length === 0 && !showLoginIdEntry && (
+              <li data-testid={`${testId}-empty`} className="px-3 py-2 text-sm text-ink-3">
+                {t("picker.noResults")}
+              </li>
+            )}
+          </ul>
+        )
       )}
-      {/* 높이를 늘 확보해 검색 중 표시가 켜지고 꺼질 때 아래 요소가 밀리지 않게 한다 */}
-      <p data-testid={`${testId}-status`} className="min-h-4 text-xs text-gray-500">
-        {isSearching ? t("picker.searching") : people.length >= DIRECTORY_SEARCH_LIMIT ? t("picker.limitHint", { count: DIRECTORY_SEARCH_LIMIT }) : ""}
-      </p>
     </div>
   );
 }
