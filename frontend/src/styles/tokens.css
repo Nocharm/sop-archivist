@@ -122,6 +122,8 @@
   --accent-line: color-mix(in oklab, var(--accent) 28%, var(--surface));
   --accent-hover: color-mix(in oklab, var(--accent) 88%, var(--ink));
   --hover: color-mix(in oklab, var(--ink) 5%, var(--surface));
+  /* 떠 있는 목록의 호버 행 - 다크에서도 보이게 accent를 섞는다(--sel-mix가 테마마다 다르다) */
+  --menu-hover: color-mix(in oklab, var(--accent) calc(var(--sel-mix) + 4%), var(--raised));
   --st-ai-tint: color-mix(in oklab, var(--st-ai-fill) var(--tint), var(--surface));
   --st-ok-tint: color-mix(in oklab, var(--st-ok-fill) var(--tint), var(--surface));
   --st-hold-tint: color-mix(in oklab, var(--st-hold-fill) var(--tint), var(--surface));
