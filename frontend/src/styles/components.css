@@ -570,3 +570,99 @@
   white-space: normal;
 }
 .dcard .dl-title-row { flex-wrap: wrap; }
+
+/* ---- 공통 부품(2026-11-09 개편): 모핑 단추·체크박스·빈 화면·정보 아이콘. 값은 토큰만 쓴다 ---- */
+@layer components {
+  /* 모핑 단추 - 평소 아이콘만, 호버·포커스 때 라벨이 오른쪽으로 펼쳐진다 */
+  .morph {
+    display: inline-flex;
+    align-items: center;
+    height: var(--ctl);
+    padding: 0 7px;
+    border-radius: var(--r-2);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--ink-3);
+    font-size: var(--fs-ui);
+    line-height: var(--lh-ui);
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    cursor: pointer;
+    transition: background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast), transform var(--dur-fast) var(--ease-move);
+  }
+  .morph-label {
+    max-width: 0;
+    margin-left: 0;
+    opacity: 0;
+    overflow: hidden;
+    transition: max-width var(--dur-slow) var(--ease-enter), margin-left var(--dur-slow) var(--ease-enter), opacity var(--dur-base);
+  }
+  .morph:not(:disabled):hover .morph-label, .morph:focus-visible .morph-label, .morph.reveal .morph-label {
+    max-width: 160px;
+    margin-left: 6px;
+    opacity: 1;
+  }
+  .morph:not(:disabled):hover, .morph:focus-visible { border-color: var(--line-2); background: var(--surface); color: var(--ink); }
+  .morph:not(:disabled):active { transform: scale(var(--press)); }
+  .morph:disabled { opacity: 0.5; cursor: not-allowed; }
+  .morph.reveal { border-color: var(--line-2); background: var(--surface); color: var(--ink); }
+  .morph.danger:not(:disabled):hover, .morph.danger:focus-visible, .morph.danger.reveal {
+    /* .btn.danger와 같은 짝 - 위험색 잉크 바탕에 표면색 글자라 두 테마 모두 대비가 선다 */
+    background: var(--danger-ink);
+    border-color: var(--danger-ink);
+    color: var(--surface);
+  }
+  .morph.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .morph.primary:not(:disabled):hover, .morph.primary:focus-visible { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--on-accent); }
+
+  /* 체크박스 - 숨긴 네이티브 입력 + 토큰으로 그린 네모 */
+  .cbx { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; position: relative; }
+  .cbx.is-disabled { cursor: not-allowed; opacity: 0.55; }
+  .cbx-input { position: absolute; opacity: 0; width: 16px; height: 16px; margin: 0; cursor: inherit; }
+  .cbx-box {
+    display: grid;
+    place-items: center;
+    width: 16px;
+    height: 16px;
+    flex: none;
+    border-radius: var(--r-1);
+    border: 1.5px solid var(--line-2);
+    background: var(--surface);
+    color: var(--on-accent);
+    transition: background var(--dur-fast), border-color var(--dur-fast);
+  }
+  .cbx:hover .cbx-box { border-color: var(--ink-4); }
+  .cbx-input:checked + .cbx-box, .cbx-input:indeterminate + .cbx-box { background: var(--accent); border-color: var(--accent); }
+  .cbx-input:focus-visible + .cbx-box { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .cbx-label { min-width: 0; }
+
+  /* 빈 화면 - 가운데 박스 */
+  .empty-state {
+    display: grid;
+    justify-items: center;
+    gap: 8px;
+    max-width: 520px;
+    margin: 24px auto;
+    padding: 36px 24px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-3);
+    background: var(--surface);
+    text-align: center;
+  }
+  .empty-state.compact { margin: 8px auto; padding: 20px 16px; border-style: dashed; }
+  .empty-state-badge { display: grid; place-items: center; width: 52px; height: 52px; border-radius: var(--r-3); background: var(--accent-tint); color: var(--accent); }
+  .empty-state.compact .empty-state-badge { width: 40px; height: 40px; }
+  .empty-state-title { margin: 4px 0 0; font-size: var(--fs-title); line-height: var(--lh-title); font-weight: 700; color: var(--ink); }
+  .empty-state-body { margin: 0; max-width: 42ch; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-3); }
+  .empty-state > :last-child:not(p) { margin-top: 6px; }
+
+  /* 정보 아이콘 */
+  .info-tip { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: var(--ink-4); cursor: help; vertical-align: middle; }
+  .info-tip:hover, .info-tip:focus-visible { color: var(--accent); outline: none; }
+  .info-tip:focus-visible { box-shadow: 0 0 0 2px var(--focus); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .morph-label { transition: none; }
+  }
+}
