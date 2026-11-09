@@ -18,14 +18,14 @@ interface MorphButtonProps {
 }
 
 export function getMorphClassName(tone: MorphTone, revealLabel: boolean): string {
-  return ["morph", tone === "default" ? "" : tone, revealLabel ? "reveal" : ""].filter(Boolean).join(" ");
+  return ["mbtn", tone === "default" ? "" : tone, revealLabel ? "reveal" : ""].filter(Boolean).join(" ");
 }
 
 export function MorphButton({ icon: Icon, label, tone = "default", onClick, testId, disabled = false, revealLabel = false, type = "button" }: MorphButtonProps) {
   return (
     <button type={type} className={getMorphClassName(tone, revealLabel)} aria-label={label} data-testid={testId} disabled={disabled} onClick={onClick}>
       <Icon size={16} strokeWidth={1.5} aria-hidden />
-      <span className="morph-label" aria-hidden>
+      <span className="mbtn-label" aria-hidden>
         {label}
       </span>
     </button>

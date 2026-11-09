@@ -592,7 +592,7 @@
 /* ---- 공통 부품(2026-11-09 개편): 모핑 단추·체크박스·빈 화면·정보 아이콘. 값은 토큰만 쓴다 ---- */
 @layer components {
   /* 모핑 단추 - 평소 아이콘만, 호버·포커스 때 라벨이 오른쪽으로 펼쳐진다 */
-  .morph {
+  .mbtn {
     display: inline-flex;
     align-items: center;
     height: var(--ctl);
@@ -609,30 +609,30 @@
     cursor: pointer;
     transition: background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast), transform var(--dur-fast) var(--ease-move);
   }
-  .morph-label {
+  .mbtn-label {
     max-width: 0;
     margin-left: 0;
     opacity: 0;
     overflow: hidden;
     transition: max-width var(--dur-slow) var(--ease-enter), margin-left var(--dur-slow) var(--ease-enter), opacity var(--dur-base);
   }
-  .morph:not(:disabled):hover .morph-label, .morph:focus-visible .morph-label, .morph.reveal .morph-label {
+  .mbtn:not(:disabled):hover .mbtn-label, .mbtn:focus-visible .mbtn-label, .mbtn.reveal .mbtn-label {
     max-width: 160px;
     margin-left: 6px;
     opacity: 1;
   }
-  .morph:not(:disabled):hover, .morph:focus-visible { border-color: var(--line-2); background: var(--surface); color: var(--ink); }
-  .morph:not(:disabled):active { transform: scale(var(--press)); }
-  .morph:disabled { opacity: 0.5; cursor: not-allowed; }
-  .morph.reveal { border-color: var(--line-2); background: var(--surface); color: var(--ink); }
-  .morph.danger:not(:disabled):hover, .morph.danger:focus-visible, .morph.danger.reveal {
+  .mbtn:not(:disabled):hover, .mbtn:focus-visible { border-color: var(--line-2); background: var(--surface); color: var(--ink); }
+  .mbtn:not(:disabled):active { transform: scale(var(--press)); }
+  .mbtn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .mbtn.reveal { border-color: var(--line-2); background: var(--surface); color: var(--ink); }
+  .mbtn.danger:not(:disabled):hover, .mbtn.danger:focus-visible, .mbtn.danger.reveal {
     /* .btn.danger와 같은 짝 - 위험색 잉크 바탕에 표면색 글자라 두 테마 모두 대비가 선다 */
     background: var(--danger-ink);
     border-color: var(--danger-ink);
     color: var(--surface);
   }
-  .morph.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-  .morph.primary:not(:disabled):hover, .morph.primary:focus-visible { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--on-accent); }
+  .mbtn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .mbtn.primary:not(:disabled):hover, .mbtn.primary:focus-visible { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--on-accent); }
 
   /* 체크박스 - 숨긴 네이티브 입력 + 토큰으로 그린 네모 */
   .cbx { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; position: relative; }
@@ -681,6 +681,6 @@
   .info-tip:focus-visible { box-shadow: 0 0 0 2px var(--focus); }
 
   @media (prefers-reduced-motion: reduce) {
-    .morph-label { transition: none; }
+    .mbtn-label { transition: none; }
   }
 }

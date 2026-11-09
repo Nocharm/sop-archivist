@@ -84,4 +84,39 @@
   /* 탭 패널이 바뀔 때 - 내용이 살짝 나타난다 */
   .fade-in { animation: fade-in var(--dur-base) var(--ease-enter); }
   @keyframes fade-in { from { opacity: 0; } }
+
+  /* 알림 - 오른쪽 위(상단 막대 44px 아래). 들어올 때 위에서 내려오고, 빠질 때 오른쪽으로 밀려 나간 뒤 높이를 접어 아래 알림이 올라온다 */
+  .toast-stack {
+    position: fixed;
+    top: calc(44px + 8px);
+    right: max(16px, env(safe-area-inset-right, 0px));
+    z-index: 70;
+    display: grid;
+    justify-items: end;
+    width: min(380px, calc(100vw - 32px));
+    pointer-events: none;
+  }
+  .toast-slot { display: grid; grid-template-rows: 1fr; width: 100%; transition: grid-template-rows var(--dur-slow) var(--ease-move) var(--dur-slow); }
+  .toast-slot[data-leaving] { grid-template-rows: 0fr; }
+  .toast-clip { min-height: 0; overflow: hidden; display: flex; justify-content: flex-end; padding-bottom: 8px; }
+  .toast {
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 100%;
+    padding: 8px 8px 8px 12px;
+    border: 1px solid var(--line-2);
+    border-radius: var(--r-2);
+    background: var(--raised);
+    color: var(--ink);
+    font-size: var(--fs-ui);
+    line-height: var(--lh-ui);
+    box-shadow: var(--shadow-2);
+    animation: toast-in var(--dur-slow) var(--ease-enter);
+    transition: transform var(--dur-slow) var(--ease-exit), opacity var(--dur-slow) var(--ease-exit);
+  }
+  .toast.error { box-shadow: inset 3px 0 0 var(--danger-fill), var(--shadow-2); }
+  .toast-slot[data-leaving] .toast { transform: translateX(110%); opacity: 0; }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(-12px); } }
 }

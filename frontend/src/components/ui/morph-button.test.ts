@@ -26,15 +26,15 @@ afterEach(() => {
 
 describe("getMorphClassName", () => {
   it("marks danger buttons", () => {
-    expect(getMorphClassName("danger", false)).toBe("morph danger");
+    expect(getMorphClassName("danger", false)).toBe("mbtn danger");
   });
 
   it("keeps the label open when asked", () => {
-    expect(getMorphClassName("default", true)).toBe("morph reveal");
+    expect(getMorphClassName("default", true)).toBe("mbtn reveal");
   });
 
   it("combines tone and reveal", () => {
-    expect(getMorphClassName("primary", true)).toBe("morph primary reveal");
+    expect(getMorphClassName("primary", true)).toBe("mbtn primary reveal");
   });
 });
 
