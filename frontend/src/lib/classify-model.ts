@@ -303,81 +303,6 @@ function placeTarget(destination: Destination): Pick<TargetInput, "target_doc_id
   throw new Error("not a placement");
 }
 
-/**
- * 줄 하나의 묶음 저장 요청. 짝이면 두 단위를 함께 저장한다. 기존 새 문장은 id로 고치고(나눔·합침도 그대로), 딸려 온 번역과
- * 입구 2 새 문장은 손대지 않고 되보내며, 사람이 지우지 않은 새 문장은 지우지 않는다. 보낼 곳 없이 보류하면 새 문장 없이 보류한다.
- */
-export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "confirm" | "hold", holdReason = ""): GroupSaveInput {
-  const { destination } = draft;
-  if (!destination && action !== "hold") throw new Error("destination required");
-  const existing = context.group?.targets ?? [];
-  const units = context.units.map((unit) => ({
-    unit_id: unit.id,
-    revision: unit.revision,
-    disposition: !destination ? ("unassigned" as const) : destination.kind === "delete" ? ("delete" as const) : destination.kind === "move" ? ("move_external" as const) : ("assigned" as const),
-    move_target_code: destination?.kind === "move" ? draft.moveCode.trim() : "",
-    // 보낼 곳 없는 보류의 사유는 hold_reason이 맡는다
-    reason: destination ? draft.reason.trim() : "",
-  }));
-  if (!destination || destination.kind === "delete" || destination.kind === "move") {
-    return { action, hold_reason: holdReason, units, targets: [], removed_target_ids: existing.map((target) => target.id) };
-  }
-  if (destination.kind === "link") return buildLinkSave(destination.targetIds, draft, context, action, holdReason, units);
-  const place = placeTarget(destination);
-  const targets: TargetInput[] = [];
-  const kept = new Set<number>();
-  for (const unit of context.units) {
-    const key = `u${unit.id}`;
-    if (TABLE_KINDS.includes(unit.kind)) {
-      const own = findOwnTarget(context.group, unit.id, "table");
-      const ref = own ? { id: own.id, revision: own.revision } : {};
-      if (own) kept.add(own.id);
-      const table = context.tables.get(unit.id);
-      targets.push({ key, ...ref, ...place, kind: "table", lang: "neutral", change_type: "as_is", source_unit_ids: [unit.id], grid: table ? { rows: table.rows, cols: table.cols } : null });
-      for (const cell of table?.cells ?? []) {
-        const cellOwn = existing.find((target) => target.parent_target_id !== null && target.source_unit_ids.includes(cell.id));
-        if (cellOwn) kept.add(cellOwn.id);
-        targets.push({
-          key: `c${cell.id}`,
-          ...(cellOwn ? { id: cellOwn.id, revision: cellOwn.revision } : {}),
-          ...place,
-          kind: "sentence",
-          lang: cell.lang,
-          text: cell.text,
-          change_type: "as_is",
-          source_unit_ids: [cell.id],
-          parent_key: key,
-          cell_row: cell.row,
-          cell_col: cell.col,
-        });
-      }
-      continue;
-    }
-    if (unit.kind === "figure") {
-      const own = findOwnTarget(context.group, unit.id, "figure");
-      if (own) kept.add(own.id);
-      targets.push({ key, ...(own ? { id: own.id, revision: own.revision } : {}), ...place, kind: "figure", lang: "neutral", change_type: "as_is", source_unit_ids: [unit.id] });
-    }
-  }
-  for (const slot of buildSentenceSlots(context.group, context.units)) {
-    if (slot.target) kept.add(slot.target.id);
-    targets.push(buildSentenceTarget(slot, draft, place));
-  }
-  // 딸려 온 번역(출처를 따라 자리가 잠긴다)과 입구 2 새 문장(자리·글이 잠긴다)은 그대로 되보낸다
-  for (const target of existing) {
-    if (kept.has(target.id) || target.origin === "units") continue;
-    kept.add(target.id);
-    targets.push({ key: `t${target.id}`, id: target.id, revision: target.revision, kind: target.kind, source_unit_ids: target.source_unit_ids });
-  }
-  return {
-    action,
-    hold_reason: holdReason,
-    units,
-    targets,
-    removed_target_ids: existing.filter((target) => !kept.has(target.id)).map((target) => target.id),
-  };
-}
-
 /** 사람이 고르지 않은 연결의 변경 종류 - 같은 언어 원문과 글이 같으면 그대로, 사람이 고른 적 있으면 그 값, 아니면 고쳐 씀 */
 export function readLinkDefault(target: Pick<GroupTarget, "lang" | "confirmed_text" | "change_type" | "status">, units: Array<Pick<SourceUnit, "lang" | "text">>): ChangeTypeInput {
   const same = units.find((unit) => unit.lang === target.lang);
@@ -386,58 +311,126 @@ export function readLinkDefault(target: Pick<GroupTarget, "lang" | "confirmed_te
 }
 
 /**
- * 이미 쓴 문서의 문장에 잇는 저장 - 서버는 닫힌 관계 묶음 전체를 받아야 저장하므로 묶음의 입구 2 문장을 모두 보낸다.
- * 보낼 곳은 바꾸기다: 줄의 칸 새 문장(과 그 번역)은 지우고, 줄 단위만 출처였던 문장은 미배정으로 돌린다(removed).
- * 고른 문장에는 같은 언어의 줄 단위를 출처로 더하고, 나머지는 줄 단위를 뺀 출처로 되보낸다.
+ * 손대지 않는 새 문장을 되보낸다. 줄 단위로 만든 문장(origin units)은 서버가 보낸 자리를 그대로 읽으므로 지금 자리를 같이 싣고,
+ * 입구 2·번역 문장은 자리가 잠겨 있어 id·출처만 보낸다.
  */
-function buildLinkSave(
-  targetIds: number[],
-  draft: RowDraft,
-  context: SaveContext,
-  action: "confirm" | "hold",
-  holdReason: string,
-  units: GroupSaveInput["units"],
-): GroupSaveInput {
-  const rowIds = new Set(context.units.map((unit) => unit.id));
-  const picked = new Set(targetIds);
+function echoTarget(target: GroupTarget, sources: number[] = target.source_unit_ids): TargetInput {
+  const base: TargetInput = { key: `t${target.id}`, id: target.id, revision: target.revision, kind: target.kind, source_unit_ids: sources };
+  if (target.origin !== "units") return base;
+  const cell = target.parent_target_id !== null ? { parent_key: `t${target.parent_target_id}`, cell_row: target.cell_row, cell_col: target.cell_col } : {};
+  return { ...base, target_doc_id: target.target_doc_id, slot_key: target.slot_key, wi_step: target.wi_step, wi_part: target.wi_part, ...cell };
+}
+
+/**
+ * 줄 하나의 묶음 저장 요청. 짝이면 두 단위를 함께 저장한다. 서버는 닫힌 관계 묶음 전체를 받아야 저장하므로 묶음의 다른 단위·문장도
+ * 지금 값 그대로 싣는다(확정 한 번이 그것들도 확정한다 - 화면이 "함께 확정되는 것"으로 보인다).
+ * 보낼 곳은 바꾸기다: 줄의 칸 새 문장(과 번역)은 새 자리로 바뀌거나 지우고, 이미 쓴 문서(입구 2) 문장에서는 줄 단위를 출처에서 뺀다
+ * (줄만 출처였던 문장은 removed로 보내 서버가 미배정으로 돌린다). 보낼 곳이 link면 고른 문장에 같은 언어 줄 단위를 출처로 더한다.
+ */
+export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "confirm" | "hold", holdReason = ""): GroupSaveInput {
+  const { destination } = draft;
+  if (!destination && action !== "hold") throw new Error("destination required");
+  const existing = context.group?.targets ?? [];
+  const picked = new Set(destination?.kind === "link" ? destination.targetIds : []);
+  // 이은 문장이 없는 언어의 줄 단위는 이번 저장의 줄이 아니다(설계 §5) - 묶음의 다른 단위처럼 지금 그대로 둔다
+  const pickedLangs = new Set(existing.filter((target) => picked.has(target.id)).map((target) => target.lang));
+  const active = destination?.kind === "link" ? context.units.filter((unit) => pickedLangs.has(unit.lang)) : context.units;
+  const rowIds = new Set(active.map((unit) => unit.id));
+  const units: GroupSaveInput["units"] = active.map((unit) => ({
+    unit_id: unit.id,
+    revision: unit.revision,
+    disposition: !destination ? ("unassigned" as const) : destination.kind === "delete" ? ("delete" as const) : destination.kind === "move" ? ("move_external" as const) : ("assigned" as const),
+    move_target_code: destination?.kind === "move" ? draft.moveCode.trim() : "",
+    // 보낼 곳 없는 보류의 사유는 hold_reason이 맡는다
+    reason: destination ? draft.reason.trim() : "",
+  }));
   const targets: TargetInput[] = [];
-  const removed: number[] = [];
-  for (const target of context.group?.targets ?? []) {
-    const touchesRow = target.source_unit_ids.some((id) => rowIds.has(id));
-    if (target.origin !== "new_doc") {
-      // 줄의 칸 새 문장과 그 번역(번역은 출처 연결 대신 옮긴 단위를 가진다)은 바꾸기로 지운다. 줄과 관계없는 것은 되보낸다
-      const ownsRow = touchesRow || (target.translation_source_unit_id !== null && rowIds.has(target.translation_source_unit_id));
-      if (ownsRow) removed.push(target.id);
-      else targets.push({ key: `t${target.id}`, id: target.id, revision: target.revision, kind: target.kind, source_unit_ids: target.source_unit_ids });
-      continue;
+  const kept = new Set<number>();
+  const isPlace = destination?.kind === "slot" || destination?.kind === "step";
+  if (isPlace) {
+    const place = placeTarget(destination);
+    for (const unit of active) {
+      const key = `u${unit.id}`;
+      if (TABLE_KINDS.includes(unit.kind)) {
+        const own = findOwnTarget(context.group, unit.id, "table");
+        const ref = own ? { id: own.id, revision: own.revision } : {};
+        if (own) kept.add(own.id);
+        const table = context.tables.get(unit.id);
+        targets.push({ key, ...ref, ...place, kind: "table", lang: "neutral", change_type: "as_is", source_unit_ids: [unit.id], grid: table ? { rows: table.rows, cols: table.cols } : null });
+        for (const cell of table?.cells ?? []) {
+          const cellOwn = existing.find((target) => target.parent_target_id !== null && target.source_unit_ids.includes(cell.id));
+          if (cellOwn) kept.add(cellOwn.id);
+          targets.push({
+            key: `c${cell.id}`,
+            ...(cellOwn ? { id: cellOwn.id, revision: cellOwn.revision } : {}),
+            ...place,
+            kind: "sentence",
+            lang: cell.lang,
+            text: cell.text,
+            change_type: "as_is",
+            source_unit_ids: [cell.id],
+            parent_key: key,
+            cell_row: cell.row,
+            cell_col: cell.col,
+          });
+        }
+        continue;
+      }
+      if (unit.kind === "figure") {
+        const own = findOwnTarget(context.group, unit.id, "figure");
+        if (own) kept.add(own.id);
+        targets.push({ key, ...(own ? { id: own.id, revision: own.revision } : {}), ...place, kind: "figure", lang: "neutral", change_type: "as_is", source_unit_ids: [unit.id] });
+      }
     }
-    const others = target.source_unit_ids.filter((id) => !rowIds.has(id));
-    const added = picked.has(target.id) ? context.units.filter((unit) => unit.lang === target.lang).map((unit) => unit.id) : [];
-    const sources = [...others, ...added];
-    if (sources.length === 0) {
-      // 줄만 출처였던 문장 - 서버가 미배정으로 되돌린다. 원래 출처가 없던 문장은 묶음에 따라온 것이라 그대로 되보낸다
-      if (touchesRow) removed.push(target.id);
-      else targets.push({ key: `t${target.id}`, id: target.id, revision: target.revision, kind: target.kind, source_unit_ids: [] });
-      continue;
+    for (const slot of buildSentenceSlots(context.group, active)) {
+      if (slot.target) kept.add(slot.target.id);
+      targets.push(buildSentenceTarget(slot, draft, place));
     }
-    const base: TargetInput = { key: `t${target.id}`, id: target.id, revision: target.revision, kind: target.kind, source_unit_ids: sources };
-    if (!picked.has(target.id)) {
-      targets.push(base);
-      continue;
-    }
-    const chosen = draft.linkChangeTypes?.[target.id];
-    if (chosen === null) targets.push(base);
-    else targets.push({ ...base, change_type: chosen ?? readLinkDefault(target, context.units) });
   }
-  // 묶음 안 다른 단위(합쳐진 다른 출처 등)도 지금 판단 그대로 실어야 닫힌다 - 확정 한 번이 이것도 확정한다(화면이 "함께 확정되는 것"으로 보인다)
+  // 칸 새 문장의 칸 문장(표)은 표와 함께 다뤄진다 - 표가 지워지면 따라 지워진다
+  const cellOf = new Set(existing.filter((target) => target.parent_target_id !== null).map((target) => target.id));
+  const removed: number[] = [];
+  for (const target of existing) {
+    if (kept.has(target.id)) continue;
+    const touchesRow = target.source_unit_ids.some((id) => rowIds.has(id)) || (target.translation_source_unit_id !== null && rowIds.has(target.translation_source_unit_id));
+    if (target.origin === "new_doc") {
+      const others = target.source_unit_ids.filter((id) => !rowIds.has(id));
+      const added = picked.has(target.id) ? active.filter((unit) => unit.lang === target.lang).map((unit) => unit.id) : [];
+      const sources = [...others, ...added];
+      if (sources.length === 0) {
+        // 줄만 출처였던 문장은 서버가 미배정으로 되돌린다. 원래 출처가 없던 문장은 묶음에 따라온 것이라 그대로 되보낸다
+        if (touchesRow) removed.push(target.id);
+        else targets.push(echoTarget(target, []));
+        continue;
+      }
+      if (!picked.has(target.id)) {
+        targets.push(echoTarget(target, sources));
+        continue;
+      }
+      const chosen = draft.linkChangeTypes?.[target.id];
+      const base = echoTarget(target, sources);
+      targets.push(chosen === null ? base : { ...base, change_type: chosen ?? readLinkDefault(target, active) });
+      continue;
+    }
+    // 번역은 출처 새 문장을 따른다 - 칸이 그대로면 함께 되보내고, 줄이 다른 곳으로 가면 줄의 번역은 지운다
+    if (target.origin === "translation" && isPlace) {
+      targets.push(echoTarget(target));
+      continue;
+    }
+    if (touchesRow) {
+      removed.push(target.id);
+      continue;
+    }
+    // 줄과 관계없는 문장(다른 단위의 칸 새 문장 등) - 지운 표의 칸 문장이 아니면 지금 자리 그대로 되보낸다
+    if (cellOf.has(target.id) && removed.includes(target.parent_target_id ?? -1)) continue;
+    targets.push(echoTarget(target));
+  }
+  // 묶음의 다른 단위(합쳐진 다른 출처, 이번에 잇지 않는 언어의 짝 단위 등)도 지금 판단 그대로 실어야 닫힌다. 표의 칸 단위는 표를 따른다
+  const cellUnits = new Set((context.group?.units ?? []).flatMap((unit) => unit.cell_unit_ids));
   const others = (context.group?.units ?? [])
-    .filter((unit) => !rowIds.has(unit.unit_id))
+    .filter((unit) => !rowIds.has(unit.unit_id) && !cellUnits.has(unit.unit_id))
     .map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision, disposition: unit.decision.disposition, move_target_code: unit.decision.move_target_code, reason: unit.decision.reason }));
-  // 이은 문장이 없는 언어의 줄 단위는 싣지 않는다(설계 §5 - 한쪽만 있으면 있는 쪽만 저장, 남은 쪽은 미배정으로 남는다)
-  const pickedLangs = new Set((context.group?.targets ?? []).filter((target) => picked.has(target.id)).map((target) => target.lang));
-  const rowLang = new Map(context.units.map((unit) => [unit.id, unit.lang]));
-  const linked = units.filter((unit) => pickedLangs.has(rowLang.get(unit.unit_id) ?? "neutral"));
-  return { action, hold_reason: holdReason, units: [...linked, ...others], targets, removed_target_ids: removed };
+  return { action, hold_reason: holdReason, units: [...units, ...others], targets, removed_target_ids: removed };
 }
 
 /** 확정하면 다음 미확정 줄로 - 지금 줄 뒤에서 먼저 찾고 없으면 앞에서 */

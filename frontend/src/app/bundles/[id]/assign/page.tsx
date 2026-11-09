@@ -248,6 +248,14 @@ export default function AssignPage() {
       })
     : [];
   const linkIds = destination?.kind === "link" ? destination.targetIds : [];
+  // 고른 문장의 관계 묶음(합쳐진 다른 출처 등)은 고를 때 부른다 - 함께 확정되는 것을 미리 보이고 저장도 같은 묶음으로 한다
+  const knownTargets = new Set(groupData?.targets.map((target) => target.id) ?? []);
+  const missingIds = linkIds.filter((id) => !knownTargets.has(id));
+  const pickedGroups = useLoaded<Group[]>(
+    () => (missingIds.length > 0 ? Promise.all(missingIds.map((id) => getGroupByTarget(bundleId, id))) : Promise.resolve([])),
+    `${activeKey}:${unitsKey}:${missingIds.join(",")}`,
+  );
+  const saveGroupData = groupData ? mergeGroups([groupData, ...(pickedGroups.data ?? [])]) : null;
   const candidateIds = new Set(destination ? [] : recommendations.flatMap((rec) => (rec.destination.kind === "link" ? rec.destination.targetIds : [])));
   const aiPending = new Set(linkIds.filter((id) => writtenMap.get(id)?.status === "ai_suggested" && (writtenMap.get(id)?.source_unit_ids ?? []).some((unit) => row?.unitIds.includes(unit))));
 
@@ -359,16 +367,9 @@ export default function AssignPage() {
     return tables;
   }
 
-  /** 연결 저장은 줄 묶음 + 고른 문장들의 묶음을 합친 닫힌 묶음으로 만든다 - 서버가 나눔·합침을 not_closed로 거절하지 않게 */
-  async function loadSaveGroup(targetIds: number[]): Promise<Group | null> {
-    const known = new Set(groupData?.targets.map((target) => target.id) ?? []);
-    const extra = await Promise.all(targetIds.filter((id) => !known.has(id)).map((id) => getGroupByTarget(bundleId, id)));
-    return mergeGroups([...(groupData ? [groupData] : []), ...extra]);
-  }
-
   async function runSave(action: "confirm" | "hold") {
     // 보낼 곳 없이는 보류만 된다(처분 unassigned + hold, 사유는 hold_reason)
-    if (!row || busy || groupPending || (!destination && action !== "hold")) return;
+    if (!row || busy || groupPending || pickedGroups.isLoading || (!destination && action !== "hold")) return;
     const spansDocs = new Set(linkIds.map((id) => writtenMap.get(id)?.target_doc_id)).size > 1;
     const needsReason = action === "hold" || destination?.kind === "delete" || destination?.kind === "move" || spansDocs;
     if (needsReason && !reason.trim()) {
@@ -382,7 +383,6 @@ export default function AssignPage() {
     }
     setBusy(true);
     try {
-      const saveGroupData = destination?.kind === "link" ? await loadSaveGroup(destination.targetIds) : groupData;
       // 고친 칸만 글을 보낸다 - 손대지 않은 AI 제안은 글·종류를 비워 보내 제안 그대로 받는다
       const body = buildGroupSave(
         { ...draft, destination, reason, moveCode },
@@ -547,6 +547,8 @@ export default function AssignPage() {
       return;
     }
     if (event.metaKey || event.ctrlKey || event.altKey) return;
+    // 포커스된 단추·링크(추천 카드·나무 항목 등)의 Enter·Space는 그 단추를 누른다
+    if ((event.key === "Enter" || event.key === " ") && event.target instanceof HTMLElement && event.target.closest("button, a, [role='option']")) return;
     // 세로선에 포커스가 있으면 ←→는 폭이다
     if (event.target instanceof HTMLElement && event.target.closest(".pane-divider")) return;
     const key = event.key.toLowerCase();
@@ -757,7 +759,10 @@ export default function AssignPage() {
     for (const item of pickedRows) byLang.set(item.lang, (byLang.get(item.lang) ?? 0) + 1);
     const mergedWith = [...new Set(pickedRows.flatMap((item) => item.source_unit_ids).filter((id) => !row?.unitIds.includes(id)))].map((id) => unitMap.get(id)?.display_id ?? String(id));
     const auto = [...byLang.values()].some((count) => count > 1) ? "split" : mergedWith.length > 0 ? "merged" : null;
-    const coConfirmed = groupData ? listCoConfirmed(groupData, row?.unitIds ?? [], linkIds) : [];
+    // 잇지 않는 언어의 짝 조각도 지금 그대로 함께 저장된다 - 줄이 아니라 함께 확정되는 쪽으로 보인다
+    const linkedLangs = new Set(pickedRows.map((item) => item.lang));
+    const savedRowIds = destination.kind === "link" ? rowUnits.filter((unit) => linkedLangs.has(unit.lang)).map((unit) => unit.unit_id) : (row?.unitIds ?? []);
+    const coConfirmed = saveGroupData ? listCoConfirmed(saveGroupData, savedRowIds, linkIds) : [];
     const spansDocs = new Set(pickedRows.map((item) => item.target_doc_id)).size > 1;
     return (
       <div className="chosen-box" data-testid="assign-chosen">

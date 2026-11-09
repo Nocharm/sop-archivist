@@ -390,3 +390,58 @@ describe("link destination saves the whole closed group", () => {
     expect(readDestination({ units: [], targets: [slotSentence, first] }, [10])).toEqual({ kind: "link", targetIds: [71] });
   });
 });
+
+describe("leaving a link and links next to other placements", () => {
+  const decisionOf = (status: Decision["status"], reason = ""): Decision => ({ disposition: "assigned", move_target_code: "", reason, status, hold_reason: "", confirmed_by: null, confirmed_at: null, revision: 3 });
+  const unitOf = (id: number, lang: "ko" | "en", status: Decision["status"] = "confirmed"): Group["units"][number] => ({
+    unit_id: id, display_id: `OLD-1-0${id}`, document_id: 1, kind: "sentence", lang, text: `원문 ${id}`, group_id: null, cell_unit_ids: [], decision: decisionOf(status),
+  });
+  const written = (id: number, sources: number[], lang: "ko" | "en" = "ko") =>
+    makeTarget({ id, origin: "new_doc", target_doc_id: 9, slot_key: null, lang, confirmed_text: `문장 ${id}`, status: "confirmed", change_type: "rewritten", source_unit_ids: sources });
+
+  it("picking a slot for a linked row takes the row off the written sentence", () => {
+    const body = buildGroupSave(makeDraft(), { units: ONE_UNIT, group: { units: [unitOf(10, "ko")], targets: [written(71, [10])] }, tables: new Map() }, "confirm");
+    expect(body.removed_target_ids).toEqual([71]);
+    expect(body.targets.map((target) => target.source_unit_ids)).toEqual([[10]]);
+    expect(body.targets[0]).toMatchObject({ slot_key: "scope" });
+  });
+
+  it("a slot for a merge-linked row keeps the other source and lists it", () => {
+    const body = buildGroupSave(makeDraft(), { units: ONE_UNIT, group: { units: [unitOf(10, "ko"), unitOf(11, "ko")], targets: [written(71, [10, 11])] }, tables: new Map() }, "confirm");
+    expect(body.removed_target_ids).toEqual([]);
+    expect(body.targets).toContainEqual(expect.objectContaining({ id: 71, source_unit_ids: [11] }));
+    expect(body.units.map((unit) => unit.unit_id)).toEqual([10, 11]);
+  });
+
+  it("deleting a merge-linked row keeps the merged sentence for the other source", () => {
+    const body = buildGroupSave(makeDraft({ destination: { kind: "delete" }, reason: "없앰" }), { units: ONE_UNIT, group: { units: [unitOf(10, "ko"), unitOf(11, "ko")], targets: [written(71, [10, 11])] }, tables: new Map() }, "confirm");
+    expect(body.removed_target_ids).toEqual([]);
+    expect(body.targets).toEqual([expect.objectContaining({ id: 71, source_unit_ids: [11] })]);
+    expect(body.units.map((unit) => [unit.unit_id, unit.disposition])).toEqual([[10, "delete"], [11, "assigned"]]);
+  });
+
+  it("linking one language of a placed pair leaves the other language placed", () => {
+    const pairUnits = [ONE_UNIT[0], { id: 20, kind: "sentence", lang: "en" as const, text: "Source", revision: 2 }];
+    const koSlot = makeTarget({ id: 80, source_unit_ids: [10], status: "confirmed" });
+    const enSlot = makeTarget({ id: 81, lang: "en", source_unit_ids: [20], status: "confirmed" });
+    const koWritten = written(75, [], "ko");
+    const body = buildGroupSave(
+      makeDraft({ destination: { kind: "link", targetIds: [75] } }),
+      { units: pairUnits, group: { units: [unitOf(10, "ko"), unitOf(20, "en")], targets: [koSlot, enSlot, koWritten] }, tables: new Map() },
+      "confirm",
+    );
+    expect(body.removed_target_ids).toEqual([80]);
+    expect(body.targets).toContainEqual(expect.objectContaining({ id: 81, source_unit_ids: [20], slot_key: "scope", target_doc_id: 6 }));
+    expect(body.units.map((unit) => unit.unit_id)).toEqual([10, 20]);
+  });
+
+  it("echoes another unit's slot sentence with its place", () => {
+    const otherSlot = makeTarget({ id: 90, source_unit_ids: [11], status: "confirmed", slot_key: "purpose" });
+    const body = buildGroupSave(
+      makeDraft({ destination: { kind: "link", targetIds: [71] } }),
+      { units: ONE_UNIT, group: { units: [unitOf(11, "ko")], targets: [written(71, [11]), otherSlot] }, tables: new Map() },
+      "confirm",
+    );
+    expect(body.targets).toContainEqual(expect.objectContaining({ id: 90, target_doc_id: 6, slot_key: "purpose", wi_step: null, wi_part: null, source_unit_ids: [11] }));
+  });
+});
