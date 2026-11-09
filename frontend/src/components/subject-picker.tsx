@@ -183,7 +183,8 @@ function DepartmentTree({ testId, value, onChange }: Omit<SubjectPickerProps, "s
 export function SubjectPicker({ testId, subjectType, value, onChange, allowLoginIdEntry }: SubjectPickerProps) {
   const { t } = useI18n();
   return (
-    <div data-testid={testId} className="space-y-2">
+    // min-w-0: 그리드·플렉스 부모 안에서 긴 부서 경로가 칸을 넓혀 옆 단추를 밀어내지 않게 목록 쪽에서 말줄임한다
+    <div data-testid={testId} className="min-w-0 space-y-2">
       {subjectType === "user" ? (
         <PersonSearch testId={testId} value={value} onChange={onChange} allowLoginIdEntry={allowLoginIdEntry} />
       ) : (
