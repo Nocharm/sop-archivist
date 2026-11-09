@@ -14,6 +14,7 @@ import { SourceFontMenu } from "@/components/paper/source-font-menu";
 import { UnitStatusIcon, UnitStatusPill } from "@/components/status";
 import { LoadMoreBlock } from "@/components/ui/load-more";
 import { Refresh } from "@/components/ui/motion";
+import { Select } from "@/components/ui/select";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -591,19 +592,21 @@ export default function ClassifyPage() {
                 </span>
               ) : (
                 changed && (
-                  <label className="flex items-center gap-2 text-xs text-ink-2">
+                  <span className="flex items-center gap-2 text-xs text-ink-2">
                     {t("classify.changeType")}
-                    <select
-                      className="h-7 rounded-md border border-line-2 bg-surface px-1.5 text-[13px] text-ink"
-                      data-testid={`classify-change-${slot.key}`}
+                    <Select
+                      testId={`classify-change-${slot.key}`}
+                      ariaLabel={t("classify.changeType")}
+                      size="sm"
                       value={draft.changeTypes[slot.key] ?? keptType ?? "rewritten"}
                       disabled={!canEdit}
-                      onChange={(event) => setDraft({ changeTypes: { ...draft.changeTypes, [slot.key]: event.target.value === "tone" ? "tone" : "rewritten" } })}
-                    >
-                      <option value="tone">{t("change.tone")}</option>
-                      <option value="rewritten">{t("change.rewritten")}</option>
-                    </select>
-                  </label>
+                      options={[
+                        { value: "tone", label: t("change.tone") },
+                        { value: "rewritten", label: t("change.rewritten") },
+                      ]}
+                      onChange={(next) => setDraft({ changeTypes: { ...draft.changeTypes, [slot.key]: next } })}
+                    />
+                  </span>
                 )
               )}
             </div>

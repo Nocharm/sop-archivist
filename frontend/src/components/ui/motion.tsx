@@ -139,7 +139,8 @@ export function Truncate({ text, className = "", lang, testId }: { text: string;
 
   function show() {
     const host = hostRef.current;
-    if (!host || host.scrollWidth <= host.clientWidth) return;
+    // 한 줄 말줄임(가로)과 카드 제목의 두 줄 자르기(세로) 둘 다 잘렸을 때만 띄운다
+    if (!host || (host.scrollWidth <= host.clientWidth && host.scrollHeight <= host.clientHeight)) return;
     if (timerRef.current !== null) window.clearTimeout(timerRef.current);
     timerRef.current = window.setTimeout(() => setOpen(true), TIP_DELAY_MS);
   }

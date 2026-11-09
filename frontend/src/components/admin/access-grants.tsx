@@ -7,16 +7,20 @@ import { useState, type FormEvent } from "react";
 import { InlineNotice } from "@/components/inline-notice";
 import { Modal } from "@/components/modal";
 import { SubjectPicker, type PickedSubject } from "@/components/subject-picker";
+import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
+import { Select } from "@/components/ui/select";
 import { PERMISSIONS } from "@/lib/access";
 import { translateOrRaw } from "@/lib/admin-format";
 import { addGrant, listGrants, listRoles, removeGrant, type Grant, type GrantInput, type SubjectType } from "@/lib/api";
 import { humanizeApiError, type TFunc } from "@/lib/api-errors";
 import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
-import { BUTTON_ICON, BUTTON_PRIMARY, BUTTON_SECONDARY, CHIP, INPUT_FIELD, TABLE_CELL, TABLE_HEAD_CELL } from "@/lib/ui-classes";
+import { BUTTON_ICON, BUTTON_PRIMARY, BUTTON_SECONDARY, CHIP } from "@/lib/ui-classes";
+import { useListView } from "@/lib/use-list-view";
 import { useLoaded } from "@/lib/use-loaded";
 
 const SUBJECT_TYPES: SubjectType[] = ["user", "dept"];
+const LIST_KEY = "admin-grants";
 
 const SEGMENT_CLASS =
   "inline-flex h-8 items-center gap-1.5 border border-gray-300 px-3 text-sm text-gray-700 first:rounded-l-md last:rounded-r-md hover:bg-gray-50 aria-pressed:border-accent aria-pressed:bg-accent/10 aria-pressed:font-semibold aria-pressed:text-gray-900";
@@ -144,20 +148,17 @@ function GrantFormModal({ onClose, onSaved }: GrantFormModalProps) {
           </div>
           {kind === "role" ? (
             <>
-              <select
-                data-testid="grant-role-select"
-                className={INPUT_FIELD}
+              <Select
+                testId="grant-role-select"
+                ariaLabel={t("grants.form.role")}
+                className="w-full"
                 value={roleId}
-                aria-label={t("grants.form.role")}
-                onChange={(event) => setRoleId(event.target.value)}
-              >
-                <option value="">{t("grants.form.rolePlaceholder")}</option>
-                {(roles.data ?? []).map((role) => (
-                  <option key={role.id} value={String(role.id)}>
-                    {role.name}
-                  </option>
-                ))}
-              </select>
+                options={[
+                  { value: "", label: t("grants.form.rolePlaceholder") },
+                  ...(roles.data ?? []).map((role) => ({ value: String(role.id), label: role.name })),
+                ]}
+                onChange={setRoleId}
+              />
               {roles.data !== null && roles.data.length === 0 && (
                 <p data-testid="grant-no-roles" className="text-xs text-gray-500">
                   {t("grants.form.noRoles")}
@@ -170,20 +171,17 @@ function GrantFormModal({ onClose, onSaved }: GrantFormModalProps) {
               )}
             </>
           ) : (
-            <select
-              data-testid="grant-permission-select"
-              className={INPUT_FIELD}
+            <Select
+              testId="grant-permission-select"
+              ariaLabel={t("grants.form.permission")}
+              className="w-full"
               value={permission}
-              aria-label={t("grants.form.permission")}
-              onChange={(event) => setPermission(event.target.value)}
-            >
-              <option value="">{t("grants.form.permissionPlaceholder")}</option>
-              {PERMISSIONS.map((key) => (
-                <option key={key} value={key}>
-                  {t(`permission.${key}`)}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: "", label: t("grants.form.permissionPlaceholder") },
+                ...PERMISSIONS.map((key) => ({ value: key, label: t(`permission.${key}`) })),
+              ]}
+              onChange={setPermission}
+            />
           )}
         </div>
 
@@ -256,11 +254,68 @@ export function AccessGrants() {
   const grants = useLoaded(listGrants);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<Grant | null>(null);
+  const view = useListView(LIST_KEY);
+
+  const columns: DataColumn<Grant>[] = [
+    {
+      key: "subject",
+      header: t("grants.column.subject"),
+      card: "title",
+      cell: (grant) => (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="inline-flex items-center gap-1.5 text-gray-500" title={t(`grants.subject.${grant.subject_type}`)}>
+            <SubjectTypeIcon type={grant.subject_type} />
+          </span>
+          <span className="font-semibold text-gray-900">{getGrantSubjectLabel(grant)}</span>
+          {!grant.subject_missing && <span className="text-xs font-normal text-gray-500">{grant.subject_id}</span>}
+          {grant.subject_missing && (
+            <span data-testid={`grant-missing-${grant.id}`} className={`${CHIP} gap-1`}>
+              <TriangleAlert size={16} strokeWidth={1.5} />
+              {t(`grants.missing.${grant.subject_type}`)}
+            </span>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "what",
+      header: t("grants.column.what"),
+      card: "body",
+      minWidth: 220,
+      cell: (grant) => (
+        <div className="flex flex-wrap items-center gap-2">
+          <span>{getGrantWhatLabel(grant, t)}</span>
+          <span className={CHIP}>{grant.role_id === null ? t("grants.kind.permission") : t("grants.kind.role")}</span>
+        </div>
+      ),
+    },
+    { key: "by", header: t("grants.column.by"), cell: (grant) => grant.created_by },
+    { key: "when", header: t("grants.column.when"), nowrap: true, cell: (grant) => <span className="tabular-nums">{formatKst(grant.created_at)}</span> },
+    {
+      key: "revoke",
+      header: <span className="sr-only">{t("grants.revokeLabel")}</span>,
+      card: "actions",
+      className: "text-right",
+      cell: (grant) => (
+        <button
+          type="button"
+          data-testid={`grant-remove-${grant.id}`}
+          className={BUTTON_ICON}
+          aria-label={t("grants.revokeLabel")}
+          title={t("grants.revokeLabel")}
+          onClick={() => setRevokeTarget(grant)}
+        >
+          <Undo2 size={16} strokeWidth={1.5} />
+        </button>
+      ),
+    },
+  ];
 
   return (
     <section data-testid="access-grants" className="space-y-4">
       <div className="flex items-start justify-between gap-4">
         <p className="text-sm text-gray-600">{t("grants.intro")}</p>
+        <ListViewToggle listKey={LIST_KEY} view={view} testId="grants-view" />
         <button type="button" data-testid="grant-create" className={`${BUTTON_PRIMARY} shrink-0`} onClick={() => setIsFormOpen(true)}>
           <Plus size={16} strokeWidth={1.5} />
           {t("grants.create")}
@@ -278,62 +333,16 @@ export function AccessGrants() {
         </p>
       )}
       {grants.data !== null && grants.data.length > 0 && (
-        <div className="overflow-x-auto rounded-md border border-gray-200">
-          <table data-testid="grants-table" className="w-full min-w-[40rem]">
-            <thead className="border-b border-gray-200 bg-gray-50">
-              <tr>
-                <th className={TABLE_HEAD_CELL}>{t("grants.column.subject")}</th>
-                <th className={TABLE_HEAD_CELL}>{t("grants.column.what")}</th>
-                <th className={TABLE_HEAD_CELL}>{t("grants.column.by")}</th>
-                <th className={TABLE_HEAD_CELL}>{t("grants.column.when")}</th>
-                <th className={TABLE_HEAD_CELL}>
-                  <span className="sr-only">{t("grants.revokeLabel")}</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {grants.data.map((grant) => (
-                <tr key={grant.id} data-testid={`grant-row-${grant.id}`}>
-                  <td className={TABLE_CELL}>
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <span className="inline-flex items-center gap-1.5 text-gray-500" title={t(`grants.subject.${grant.subject_type}`)}>
-                        <SubjectTypeIcon type={grant.subject_type} />
-                      </span>
-                      <span className="font-semibold text-gray-900">{getGrantSubjectLabel(grant)}</span>
-                      {!grant.subject_missing && <span className="text-xs text-gray-500">{grant.subject_id}</span>}
-                      {grant.subject_missing && (
-                        <span data-testid={`grant-missing-${grant.id}`} className={`${CHIP} gap-1`}>
-                          <TriangleAlert size={16} strokeWidth={1.5} />
-                          {t(`grants.missing.${grant.subject_type}`)}
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className={TABLE_CELL}>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span>{getGrantWhatLabel(grant, t)}</span>
-                      <span className={CHIP}>{grant.role_id === null ? t("grants.kind.permission") : t("grants.kind.role")}</span>
-                    </div>
-                  </td>
-                  <td className={TABLE_CELL}>{grant.created_by}</td>
-                  <td className={`${TABLE_CELL} whitespace-nowrap`}>{formatKst(grant.created_at)}</td>
-                  <td className={`${TABLE_CELL} text-right`}>
-                    <button
-                      type="button"
-                      data-testid={`grant-remove-${grant.id}`}
-                      className={BUTTON_ICON}
-                      aria-label={t("grants.revokeLabel")}
-                      title={t("grants.revokeLabel")}
-                      onClick={() => setRevokeTarget(grant)}
-                    >
-                      <Undo2 size={16} strokeWidth={1.5} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataList
+          view={view}
+          rows={grants.data}
+          columns={columns}
+          getRowKey={(grant) => grant.id}
+          testId="grants-table"
+          rowTestId={(grant) => `grant-row-${grant.id}`}
+          cardMinWidth={300}
+          framed
+        />
       )}
 
       {isFormOpen && (

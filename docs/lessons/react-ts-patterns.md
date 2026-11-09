@@ -44,3 +44,8 @@
 ## 10. 직접 만든 CSS 클래스 이름이 Tailwind 유틸리티와 겹치지 않게
 - Tailwind v4는 소스에 나온 낱말이 유틸리티 이름이면 그 규칙을 만든다. 접기 부품에 `.collapse`를 붙였더니 유틸리티 `collapse`(`visibility: collapse`)가 utilities 층에서 이겨 펼친 내용이 끝내 안 보였다(SOP 스모크의 "숨은 요소" 타임아웃으로만 발견, 2026-11-09).
 - 규칙: `components.css`·`motion.css`에 새 클래스를 만들 때 Tailwind 유틸리티 이름(`collapse`·`hidden`·`block`·`contents`·`truncate`·`container`·`static` 등)과 겹치는지 먼저 본다. 이 저장소의 접기는 `.fold`다.
+
+## 11. 표 칸의 `truncate`·nowrap은 표를 옆으로 민다 — 남은 폭 열은 `max-width: 0`
+- 자동 배치 표(`table-layout: auto`)는 칸 내용의 최소 폭을 열 폭 하한으로 쓴다. `truncate`(nowrap)나 공백 없는 긴 글이 든 칸은 말줄임되지 않고 표 전체를 넓혀, 1120px에서 문서 표 오른쪽 열이 화면 밖으로 나갔다(긴 파일 이름 worst case로만 발견, 2026-11-09).
+- 규칙: 긴 글이 들어오는 열은 `DataList` 열의 `grow`(`.dl-grow` = `width:100%; max-width:0; overflow-wrap:anywhere`)로 두고 최소 폭은 `minWidth`로 준다. `overflow-wrap: anywhere`를 모든 칸에 걸면 안 된다 — 최소 폭이 한 글자가 되어, grow 열이 폭을 가져갈 때 짧은 열(작업 이름 등)이 한 글자씩 세로로 접힌다(배치 표 worst case). 일반 칸은 `break-word`다. grid 카드 안에서도 같은 일이 생기므로 트랙은 `minmax(0, 1fr)`로 둔다.
+- `@layer components` 규칙은 Tailwind 유틸리티(`truncate`·`block`)를 특이도와 상관없이 이기지 못한다. 유틸리티를 덮어야 하는 좁은 규칙(카드 제목 두 줄 자르기)은 층 밖에 둔다.

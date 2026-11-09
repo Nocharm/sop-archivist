@@ -1,4 +1,4 @@
-// 관리 화면 - 권한별로 보이는 탭(권한 관리·직원 동기화·배치 작업·AI). 권한 없는 탭은 렌더하지 않고, 탭이 하나도 없으면 홈으로 보낸다.
+// 관리 화면 - 왼쪽 세로 메뉴(권한 아래 역할·부여·기록·조회를 펼쳐 둔다)와 오른쪽 본문. 권한 없는 탭은 렌더하지 않고, 탭이 하나도 없으면 홈으로 보낸다.
 "use client";
 
 import { Activity, Bot, FolderKanban, RefreshCw, ScrollText, ShieldCheck, type LucideIcon } from "lucide-react";
@@ -39,35 +39,14 @@ const ADMIN_TABS: AdminTab[] = [
 
 const ACCESS_SUBS: AccessSubKey[] = ["roles", "grants", "audit", "lookup"];
 
-const TAB_CLASS =
-  "inline-flex h-9 items-center gap-1.5 border-b-2 border-transparent px-3 text-sm text-gray-600 hover:text-gray-900 aria-selected:border-accent aria-selected:font-semibold aria-selected:text-gray-900";
-
-function AccessSection() {
-  const { t } = useI18n();
-  const [sub, setSub] = useState<AccessSubKey>("roles");
-
+function AccessPanel({ sub }: { sub: AccessSubKey }) {
   return (
-    <div className="space-y-5">
-      <div role="tablist" className="flex gap-1 rounded-md bg-gray-100 p-1">
-        {ACCESS_SUBS.map((key) => (
-          <button
-            key={key}
-            type="button"
-            role="tab"
-            aria-selected={sub === key}
-            data-testid={`access-sub-${key}`}
-            className="h-8 rounded px-3 text-sm text-gray-600 hover:text-gray-900 aria-selected:bg-surface aria-selected:font-semibold aria-selected:text-gray-900 aria-selected:shadow-sm"
-            onClick={() => setSub(key)}
-          >
-            {t(`admin.sub.${key}`)}
-          </button>
-        ))}
-      </div>
+    <>
       {sub === "roles" && <AccessRoles />}
       {sub === "grants" && <AccessGrants />}
       {sub === "audit" && <AccessAudit />}
       {sub === "lookup" && <AccessEffective />}
-    </div>
+    </>
   );
 }
 
@@ -76,6 +55,7 @@ function AdminContent() {
   const me = useMe();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const [sub, setSub] = useState<AccessSubKey>("roles");
 
   const allowedTabs = ADMIN_TABS.filter((tab) => hasPermission(me, tab.permission));
   // 숨겨진 탭을 가리키는 딥링크(?tab=)는 허용된 첫 탭으로 떨어진다
@@ -92,33 +72,66 @@ function AdminContent() {
     window.history.replaceState(null, "", `/admin?tab=${key}`);
   };
 
+  // 권한 하위 항목을 누르면 권한 탭으로 옮기면서 그 항목을 연다
+  const selectSub = (key: AccessSubKey) => {
+    setSub(key);
+    if (activeTab.key !== "access") selectTab("access");
+  };
+
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-6 px-4 py-8">
-      <h1 className="text-xl font-semibold text-gray-900">{t("nav.admin")}</h1>
-      <div role="tablist" className="flex gap-1 border-b border-gray-200">
-        {allowedTabs.map(({ key, Icon }) => (
-          <button
-            key={key}
-            type="button"
-            role="tab"
-            aria-selected={activeTab.key === key}
-            data-testid={`admin-tab-${key}`}
-            className={TAB_CLASS}
-            onClick={() => selectTab(key)}
-          >
-            <Icon size={16} strokeWidth={1.5} />
-            {t(`admin.tab.${key}`)}
-          </button>
-        ))}
+    <div className="flex min-h-full flex-col bg-surface">
+      <div className="flex h-[52px] shrink-0 items-center border-b border-line px-[var(--pad)]">
+        <h1 className="page-title ul">{t("nav.admin")}</h1>
       </div>
-      {/* 사용자를 바꾸거나 탭을 옮기면 패널을 새로 마운트해 이전 사용자의 데이터·오류가 남지 않게 한다 */}
-      <div key={`${me.login_id}:${activeTab.key}`} className="fade-in" role="tabpanel" data-testid={`admin-panel-${activeTab.key}`}>
-        {activeTab.key === "access" && <AccessSection />}
-        {activeTab.key === "directory" && <HrSyncPanel />}
-        {activeTab.key === "batch" && <BatchRunsPanel />}
-        {activeTab.key === "ai" && <AiPanel />}
-        {activeTab.key === "bundles" && <BundlesPanel />}
-        {activeTab.key === "guidelines" && <GuidelinesPanel />}
+      <div className="grid flex-1 grid-cols-[208px_minmax(0,1fr)]">
+        {/* 세로 탭 - 식별자(admin-tab-*·access-sub-*)와 ?tab= 주소는 이전 가로 탭과 같다 */}
+        <div className="border-r border-line">
+          <div role="tablist" aria-orientation="vertical" aria-label={t("nav.admin")} className="side-nav">
+            {allowedTabs.map(({ key, Icon }) => (
+              <div key={key} className="grid gap-px">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab.key === key}
+                  data-testid={`admin-tab-${key}`}
+                  className="side-nav-item"
+                  onClick={() => selectTab(key)}
+                >
+                  <Icon size={16} strokeWidth={1.5} aria-hidden />
+                  {t(`admin.tab.${key}`)}
+                </button>
+                {key === "access" &&
+                  ACCESS_SUBS.map((subKey) => (
+                    <button
+                      key={subKey}
+                      type="button"
+                      role="tab"
+                      aria-selected={activeTab.key === "access" && sub === subKey}
+                      data-testid={`access-sub-${subKey}`}
+                      className="side-nav-item sub"
+                      onClick={() => selectSub(subKey)}
+                    >
+                      {t(`admin.sub.${subKey}`)}
+                    </button>
+                  ))}
+              </div>
+            ))}
+          </div>
+        </div>
+        {/* 사용자를 바꾸거나 탭을 옮기면 패널을 새로 마운트해 이전 사용자의 데이터·오류가 남지 않게 한다 */}
+        <div
+          key={`${me.login_id}:${activeTab.key}:${activeTab.key === "access" ? sub : ""}`}
+          className="fade-in min-w-0 px-6 py-5"
+          role="tabpanel"
+          data-testid={`admin-panel-${activeTab.key}`}
+        >
+          {activeTab.key === "access" && <AccessPanel sub={sub} />}
+          {activeTab.key === "directory" && <HrSyncPanel />}
+          {activeTab.key === "batch" && <BatchRunsPanel />}
+          {activeTab.key === "ai" && <AiPanel />}
+          {activeTab.key === "bundles" && <BundlesPanel />}
+          {activeTab.key === "guidelines" && <GuidelinesPanel />}
+        </div>
       </div>
     </div>
   );

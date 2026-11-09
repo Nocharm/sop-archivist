@@ -5,14 +5,18 @@ import { Loader2, Zap } from "lucide-react";
 import { useState } from "react";
 
 import { InlineNotice } from "@/components/inline-notice";
-import { getAiUsage, pingAi, type AiPing } from "@/lib/api";
+import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
+import { Select } from "@/components/ui/select";
+import { getAiUsage, pingAi, type AiPing, type AiUsageDay } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { useI18n } from "@/lib/i18n";
-import { BUTTON_PRIMARY, INPUT_FIELD_AUTO, TABLE_CELL, TABLE_HEAD_CELL } from "@/lib/ui-classes";
+import { BUTTON_PRIMARY } from "@/lib/ui-classes";
+import { useListView } from "@/lib/use-list-view";
 import { useLoaded } from "@/lib/use-loaded";
 
 // 사용량 조회 기간 선택지(일) - 서버 범위(1~365) 안에서 고른다
 const USAGE_DAY_OPTIONS = [7, 30, 90];
+const LIST_KEY = "admin-ai-usage";
 const DEFAULT_USAGE_DAYS = 30;
 
 type PingResult = { kind: "ok"; ping: AiPing } | { kind: "error"; error: unknown };
@@ -38,6 +42,20 @@ export function AiPanel() {
   const { t } = useI18n();
   const [days, setDays] = useState(DEFAULT_USAGE_DAYS);
   const usage = useLoaded(() => getAiUsage(days), String(days));
+  const view = useListView(LIST_KEY);
+  const countColumn = (key: "calls" | "failed" | "prompt_tokens" | "completion_tokens", label: string): DataColumn<AiUsageDay> => ({
+    key,
+    header: label,
+    align: "end",
+    cell: (day) => day[key],
+  });
+  const usageColumns: DataColumn<AiUsageDay>[] = [
+    { key: "date", header: t("ai.usage.column.date"), card: "title", nowrap: true, cell: (day) => <span className="tabular-nums">{day.date}</span> },
+    countColumn("calls", t("ai.usage.column.calls")),
+    countColumn("failed", t("ai.usage.column.failed")),
+    countColumn("prompt_tokens", t("ai.usage.column.prompt")),
+    countColumn("completion_tokens", t("ai.usage.column.completion")),
+  ];
   const [isPinging, setIsPinging] = useState(false);
   const [pingResult, setPingResult] = useState<PingResult | null>(null);
 
@@ -68,19 +86,16 @@ export function AiPanel() {
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-4">
           <h3 className="shrink-0 text-sm font-semibold text-gray-900">{t("ai.usage.title")}</h3>
-          <select
-            data-testid="ai-usage-days"
-            className={INPUT_FIELD_AUTO}
-            value={days}
-            aria-label={t("ai.usage.range")}
-            onChange={(event) => setDays(Number(event.target.value))}
-          >
-            {USAGE_DAY_OPTIONS.map((option) => (
-              <option key={option} value={option}>
-                {t("ai.usage.days", { days: option })}
-              </option>
-            ))}
-          </select>
+          <div className="flex items-center gap-2">
+            <Select
+              testId="ai-usage-days"
+              ariaLabel={t("ai.usage.range")}
+              value={String(days)}
+              options={USAGE_DAY_OPTIONS.map((option) => ({ value: String(option), label: t("ai.usage.days", { days: option }) }))}
+              onChange={(next) => setDays(Number(next))}
+            />
+            <ListViewToggle listKey={LIST_KEY} view={view} testId="ai-usage-view" />
+          </div>
         </div>
         {usage.error !== null && (
           <InlineNotice testId="ai-usage-error" tone="error">
@@ -93,30 +108,16 @@ export function AiPanel() {
           </p>
         )}
         {usage.data !== null && usage.data.length > 0 && (
-          <div className="overflow-x-auto rounded-md border border-gray-200">
-            <table data-testid="ai-usage-table" className="w-full min-w-[32rem]">
-              <thead className="border-b border-gray-200 bg-gray-50">
-                <tr>
-                  <th className={TABLE_HEAD_CELL}>{t("ai.usage.column.date")}</th>
-                  <th className={TABLE_HEAD_CELL}>{t("ai.usage.column.calls")}</th>
-                  <th className={TABLE_HEAD_CELL}>{t("ai.usage.column.failed")}</th>
-                  <th className={TABLE_HEAD_CELL}>{t("ai.usage.column.prompt")}</th>
-                  <th className={TABLE_HEAD_CELL}>{t("ai.usage.column.completion")}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {usage.data.map((day) => (
-                  <tr key={day.date} data-testid={`ai-usage-row-${day.date}`}>
-                    <td className={TABLE_CELL}>{day.date}</td>
-                    <td className={TABLE_CELL}>{day.calls}</td>
-                    <td className={TABLE_CELL}>{day.failed}</td>
-                    <td className={TABLE_CELL}>{day.prompt_tokens}</td>
-                    <td className={TABLE_CELL}>{day.completion_tokens}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataList
+            view={view}
+            rows={usage.data}
+            columns={usageColumns}
+            getRowKey={(day) => day.date}
+            testId="ai-usage-table"
+            rowTestId={(day) => `ai-usage-row-${day.date}`}
+            cardMinWidth={260}
+            framed
+          />
         )}
       </div>
     </section>

@@ -42,7 +42,7 @@ export function AiAskMenu({ items, label, testId, disabled = false }: { items: A
         onClick={() => setOpen((prev) => !prev)}
       >
         <BusyLabel busy={running !== null} icon={<Sparkles size={12} strokeWidth={1.5} className="text-st-ai" aria-hidden />} label={label} />
-        <ChevronDown size={12} strokeWidth={1.5} aria-hidden />
+        <ChevronDown size={12} strokeWidth={1.5} className="select-chevron" aria-hidden />
       </button>
       {open && (
         <Menu anchorRef={anchorRef} onClose={() => setOpen(false)} testId={`${testId}-list`} align="end">

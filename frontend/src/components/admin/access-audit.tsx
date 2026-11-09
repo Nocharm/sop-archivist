@@ -2,24 +2,37 @@
 "use client";
 
 import { InlineNotice } from "@/components/inline-notice";
+import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { buildAuditSummary, translateOrRaw } from "@/lib/admin-format";
-import { listAudit } from "@/lib/api";
+import { listAudit, type AuditEvent } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
-import { TABLE_CELL, TABLE_HEAD_CELL } from "@/lib/ui-classes";
+import { useListView } from "@/lib/use-list-view";
 import { useLoaded } from "@/lib/use-loaded";
 
 // 한 번에 보여 주는 최근 변경 수 - 서버 기본값과 같다
 const AUDIT_LIMIT = 100;
+const LIST_KEY = "admin-audit";
 
 export function AccessAudit() {
   const { t } = useI18n();
   const audit = useLoaded(() => listAudit(AUDIT_LIMIT));
+  const view = useListView(LIST_KEY);
+
+  const columns: DataColumn<AuditEvent>[] = [
+    { key: "action", header: t("audit.column.action"), card: "title", nowrap: true, cell: (event) => translateOrRaw(t, `audit.action.${event.action}`, event.action) },
+    { key: "time", header: t("audit.column.time"), card: "badge", nowrap: true, cell: (event) => <span className="tabular-nums font-normal text-ink-2">{formatKst(event.occurred_at)}</span> },
+    { key: "actor", header: t("audit.column.actor"), cell: (event) => event.actor },
+    { key: "summary", header: t("audit.column.summary"), card: "body", grow: true, minWidth: 220, cell: (event) => buildAuditSummary(event, t) },
+  ];
 
   return (
     <section data-testid="access-audit" className="space-y-4">
-      <p className="text-sm text-gray-600">{t("audit.intro")}</p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-gray-600">{t("audit.intro")}</p>
+        <ListViewToggle listKey={LIST_KEY} view={view} testId="audit-view" />
+      </div>
 
       {audit.error !== null && (
         <InlineNotice testId="audit-error" tone="error">
@@ -32,29 +45,18 @@ export function AccessAudit() {
         </p>
       )}
       {audit.data !== null && audit.data.length > 0 && (
-        <div className="overflow-x-auto rounded-md border border-gray-200">
-          <table data-testid="audit-table" className="w-full min-w-[40rem]">
-            <thead className="border-b border-gray-200 bg-gray-50">
-              <tr>
-                <th className={TABLE_HEAD_CELL}>{t("audit.column.time")}</th>
-                <th className={TABLE_HEAD_CELL}>{t("audit.column.actor")}</th>
-                <th className={TABLE_HEAD_CELL}>{t("audit.column.action")}</th>
-                <th className={TABLE_HEAD_CELL}>{t("audit.column.summary")}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {audit.data.map((event) => (
-                // data-action은 식별 전용(스모크가 어떤 변경인지 읽는다) - 화면 문구는 번역된 작업 이름
-                <tr key={event.id} data-testid={`audit-row-${event.id}`} data-action={event.action}>
-                  <td className={`${TABLE_CELL} whitespace-nowrap`}>{formatKst(event.occurred_at)}</td>
-                  <td className={TABLE_CELL}>{event.actor}</td>
-                  <td className={`${TABLE_CELL} whitespace-nowrap`}>{translateOrRaw(t, `audit.action.${event.action}`, event.action)}</td>
-                  <td className={TABLE_CELL}>{buildAuditSummary(event, t)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataList
+          view={view}
+          rows={audit.data}
+          columns={columns}
+          getRowKey={(event) => event.id}
+          testId="audit-table"
+          rowTestId={(event) => `audit-row-${event.id}`}
+          // data-action은 식별 전용(스모크가 어떤 변경인지 읽는다) - 화면 문구는 번역된 작업 이름
+          getRowData={(event) => ({ "data-action": event.action })}
+          cardMinWidth={320}
+          framed
+        />
       )}
     </section>
   );

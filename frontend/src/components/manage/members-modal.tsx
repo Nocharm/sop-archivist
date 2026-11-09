@@ -8,6 +8,7 @@ import { useState } from "react";
 import { Modal } from "@/components/modal";
 import { SubjectPicker, type PickedSubject } from "@/components/subject-picker";
 import { BusyLabel, Collapse } from "@/components/ui/motion";
+import { Select } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
 import { humanizeApiError } from "@/lib/api-errors";
 import type { MemberInput } from "@/lib/api-manage";
@@ -46,6 +47,7 @@ export function MembersModal({ title, members, testId, onSave, onClose }: Member
   const changed =
     rows.length !== members.length || rows.some((row) => members.find((member) => member.login_id === row.login_id)?.role !== row.role);
   const authorCount = rows.filter((row) => row.role === "author").length;
+  const roleOptions = ROLES.map((role) => ({ value: role, label: t(`role.${role}`) }));
 
   function addPicked() {
     if (!picked) return;
@@ -96,22 +98,14 @@ export function MembersModal({ title, members, testId, onSave, onClose }: Member
                 {!row.active && <span className="pill danger">{t("overview.noAccess")}</span>}
               </small>
             </span>
-            <select
-              className="h-7 rounded-md border border-line-2 bg-surface px-1.5 text-[13px] text-ink"
-              aria-label={t("members.role")}
-              data-testid={`${testId}-role-${row.login_id}`}
+            <Select
+              testId={`${testId}-role-${row.login_id}`}
+              ariaLabel={t("members.role")}
+              size="sm"
               value={row.role}
-              onChange={(event) => {
-                const role = event.target.value as MemberRole;
-                setRows((prev) => prev.map((item) => (item.login_id === row.login_id ? { ...item, role } : item)));
-              }}
-            >
-              {ROLES.map((role) => (
-                <option key={role} value={role}>
-                  {t(`role.${role}`)}
-                </option>
-              ))}
-            </select>
+              options={roleOptions}
+              onChange={(role) => setRows((prev) => prev.map((item) => (item.login_id === row.login_id ? { ...item, role } : item)))}
+            />
             <span className="row-actions">
               <Tooltip label={t("members.remove")} align="end">
                 <button
@@ -143,19 +137,7 @@ export function MembersModal({ title, members, testId, onSave, onClose }: Member
         <div className="grid gap-2 rounded-md border border-line p-3">
           <SubjectPicker testId={`${testId}-picker`} subjectType="user" value={picked} onChange={setPicked} allowLoginIdEntry />
           <div className="flex items-center gap-2">
-            <select
-              className="h-8 rounded-md border border-line-2 bg-surface px-2 text-[13px] text-ink"
-              aria-label={t("members.role")}
-              data-testid={`${testId}-new-role`}
-              value={pickedRole}
-              onChange={(event) => setPickedRole(event.target.value as MemberRole)}
-            >
-              {ROLES.map((role) => (
-                <option key={role} value={role}>
-                  {t(`role.${role}`)}
-                </option>
-              ))}
-            </select>
+            <Select testId={`${testId}-new-role`} ariaLabel={t("members.role")} value={pickedRole} options={roleOptions} onChange={setPickedRole} />
             <span className="flex-1" />
             <button type="button" className="btn ghost" onClick={() => setAdding(false)}>
               {t("common.cancel")}

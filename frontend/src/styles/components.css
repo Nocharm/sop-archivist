@@ -47,6 +47,15 @@
   }
   .frame-view { min-height: 0; min-width: 0; overflow: auto; }
 
+  /* 본문 폭 상한 - 넓은 화면에서 가운데에 두고 양옆은 바탕색으로 비운다. 옆선은 상자 밖 그림자라 창이 좁아 꽉 찰 때는 스크롤 칸에 잘려 보이지 않는다 */
+  .page-wrap {
+    width: 100%;
+    max-width: var(--page-max);
+    margin-inline: auto;
+    box-shadow: -1px 0 0 var(--line), 1px 0 0 var(--line);
+  }
+  .page-wrap[data-width="wide"] { max-width: var(--page-max-wide); }
+
   .stages {
     display: flex;
     align-items: stretch;
@@ -232,6 +241,11 @@
   .pill.warn { color: var(--warn-ink); background: var(--warn-tint); border-color: color-mix(in oklab, var(--warn-fill) 45%, var(--surface)); }
   .pill.danger { color: var(--danger-ink); background: var(--danger-tint); border-color: color-mix(in oklab, var(--danger-fill) 45%, var(--surface)); }
   .pill.quiet { color: var(--ink-2); border-color: var(--line-2); background: var(--surface); }
+  /* 진하기 3단 - 색 가짓수는 늘리지 않고 무게로 나눈다: 테두리(조용함) · 연한 바탕(진행·기다림·주의) · 꽉 참(끝남·확정·실패) */
+  .pill.active { color: var(--accent); background: var(--accent-tint); border-color: var(--accent-line); }
+  .pill.muted { color: var(--ink-2); background: var(--sunken); border-color: var(--line); }
+  .pill.done { color: var(--surface); background: var(--ink-2); }
+  .pill.fail { color: var(--surface); background: var(--danger-ink); }
   /* 사람이 아직 보지 않은 코드 제안(한/영 짝 등) - 점선 */
   .pill.dash { color: var(--ink-2); border: 1px dashed var(--line-2); }
 
@@ -273,10 +287,92 @@
     color: var(--ink-3);
     white-space: nowrap;
   }
-  .dtable td { padding: var(--row-y) 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  /* 일반 칸은 낱말 단위로만 접는다(break-word는 최소 폭을 줄이지 않아 짧은 열이 한 글자씩 세로로 접히지 않는다).
+     공백 없는 긴 글이 들어오는 열은 DataList grow(.dl-grow)로 두어 그 칸 안에서 아무 데서나 접는다 */
+  .dtable td { padding: var(--row-y) 10px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: break-word; }
   .dtable tbody tr { transition: background var(--dur-fast); }
   .dtable tbody tr[data-link]:hover td { background: var(--hover); cursor: pointer; }
   .dtable .num { text-align: right; font-variant-numeric: tabular-nums; }
+  /* 남은 폭을 채우는 열 - max-width 0이 칸 내용의 최소 폭을 표 폭 계산에서 빼서 긴 글이 표를 옆으로 밀지 않는다(말줄임·줄바꿈은 칸 안에서) */
+  .dtable .dl-grow { width: 100%; max-width: 0; overflow-wrap: anywhere; }
+
+  /* 카드 보기 - 표와 같은 열 정의를 촘촘한 카드로. 열 수는 카드 최소 폭(--card-min)과 화면 폭이 정한다 */
+  .dcards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(var(--card-min, 300px), 100%), 1fr));
+    gap: var(--gap);
+    padding: var(--pad);
+  }
+  .dcards.flush { padding: 0; }
+  .dlist-frame { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-3); background: var(--surface); }
+  .dlist-frame .dtable tbody tr:last-child td { border-bottom: 0; }
+  .dcard {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    gap: 6px;
+    min-width: 0;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    background: var(--surface);
+    font-size: var(--fs-ui);
+    line-height: var(--lh-ui);
+    overflow-wrap: anywhere;
+    transition: background var(--dur-fast), border-color var(--dur-fast);
+  }
+  .dcard[data-link] { cursor: pointer; }
+  .dcard[data-selected] { background: var(--sel-bg); border-color: var(--accent); }
+  .dcard[data-link]:hover { background: var(--hover); border-color: var(--line-2); }
+  .dcard-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-width: 0; }
+  .dcard-title { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; min-width: 0; flex: 1; font-weight: 600; }
+  .dcard-badges { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; flex: none; max-width: 50%; }
+  .dcard-body { min-width: 0; color: var(--ink-2); }
+  .dcard-meta { display: flex; flex-wrap: wrap; gap: 2px 14px; min-width: 0; margin: 0; }
+  .dcard-meta > div { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; max-width: 100%; }
+  .dcard-meta dt { flex: none; font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-3); white-space: nowrap; }
+  .dcard-meta dd { min-width: 0; margin: 0; color: var(--ink); }
+  /* 동작 단추는 줄을 차지하지 않고 오른쪽 아래에 겹쳐 뜬다(호버·포커스로 드러남) - 바탕을 깔아 밑 글자와 섞이지 않게 */
+  .dcard-actions { position: absolute; right: 6px; bottom: 6px; display: flex; gap: 2px; padding: 2px; border-radius: var(--r-2); background: inherit; }
+
+  /* 관리 화면 세로 메뉴 - 본문이 길어도 메뉴는 머리 아래에 붙어 있다. 고른 항목은 굵기 대신 바탕과 왼쪽 막대로(폭이 변하지 않게) */
+  .side-nav { position: sticky; top: 0; display: grid; gap: 2px; padding: 12px 8px; }
+  .side-nav-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: var(--ctl);
+    padding: 0 10px;
+    border-radius: var(--r-2);
+    color: var(--ink-2);
+    font-size: var(--fs-ui);
+    line-height: var(--lh-ui);
+    text-align: left;
+    transition: background var(--dur-fast), color var(--dur-fast);
+  }
+  .side-nav-item:hover { background: var(--hover); color: var(--ink); }
+  .side-nav-item[aria-selected="true"] { background: var(--sel-bg); color: var(--ink); }
+  .side-nav-item[aria-selected="true"]::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 2px; border-radius: 1px; background: var(--accent); }
+  .side-nav-item.sub { height: 28px; padding-left: 34px; font-size: var(--fs-cap); }
+  /* 하위 항목이 있는 상위 항목은 묶음 제목 역할만 한다 - 고른 표시는 하위 항목 하나에만 */
+  .side-nav-item[aria-selected="true"]:has(~ .sub) { background: transparent; font-weight: 600; }
+  .side-nav-item[aria-selected="true"]:has(~ .sub)::before { display: none; }
+
+  /* 표·카드 전환 - 두 칸짜리 눌림 단추 */
+  .view-toggle { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-2); background: var(--sunken); }
+  .view-toggle button {
+    display: inline-grid;
+    place-items: center;
+    width: 26px;
+    height: 24px;
+    border-radius: var(--r-1);
+    color: var(--ink-3);
+    transition: background var(--dur-fast), color var(--dur-fast);
+  }
+  .view-toggle button:hover { color: var(--ink); }
+  .view-toggle button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--line-2); }
 
   .track { display: block; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
   .track > i { display: block; height: 100%; background: var(--st-ok-fill); border-radius: 2px; }
@@ -298,9 +394,10 @@
   .stack > [data-on] { visibility: visible; }
 
   /* ---- 떠 있는 층: 메뉴, 툴팁 ---- */
+  /* 층 순서: 모달·토스트 50 < 메뉴 55 < 툴팁 60 - 모달 안에서 연 드롭다운이 모달 아래로 깔리지 않게 */
   .menu {
     position: fixed;
-    z-index: 40;
+    z-index: 55;
     min-width: 200px;
     padding: 4px;
     background: var(--raised);
@@ -327,7 +424,47 @@
   }
   .menu-item:hover, .menu-item:focus-visible { background: var(--hover); outline: none; }
   .menu-item:disabled { color: var(--ink-4); cursor: not-allowed; }
-  .menu-item .check { margin-left: auto; color: var(--accent); }
+  .menu-item .check { margin-left: auto; color: var(--accent); flex: none; }
+  .menu-item[aria-selected="true"] { color: var(--accent); }
+
+  /* 값 고르기 목록 - 긴 선택지는 자르지 않고 줄을 바꾸고, 항목이 많으면 목록 안에서 스크롤한다 */
+  .menu[role="listbox"] { max-width: min(480px, calc(100vw - 16px)); max-height: min(320px, calc(100vh - 16px)); overflow-y: auto; }
+  .menu-item.opt { height: auto; min-height: var(--ctl); padding-block: 5px; overflow-wrap: anywhere; }
+
+  /* 값 고르기 트리거 - 입력 칸과 같은 테두리·높이. 값이 길면 말줄임하고 화살표 자리는 늘 남긴다 */
+  .select-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    max-width: 100%;
+    height: var(--ctl);
+    padding: 0 8px 0 10px;
+    border: 1px solid var(--line-2);
+    border-radius: var(--r-2);
+    background: var(--surface);
+    color: var(--ink);
+    font-size: var(--fs-ui);
+    line-height: var(--lh-ui);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color var(--dur-fast), background var(--dur-fast);
+  }
+  .select-trigger:not(:disabled):hover { border-color: var(--ink-4); }
+  .select-trigger[aria-expanded="true"] { border-color: var(--accent); }
+  .select-trigger:disabled { opacity: 0.6; cursor: not-allowed; }
+  .select-trigger.sm { height: 28px; padding: 0 6px 0 8px; }
+  .select-value { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 드롭다운 화살표는 호버·키보드 포커스·열림에서만 보인다. 자리는 늘 차지해 폭이 변하지 않는다(메뉴를 여는 다른 단추도 같은 클래스를 쓴다) */
+  .select-chevron { flex: none; color: var(--ink-3); opacity: 0; transition: opacity var(--dur-fast), transform var(--dur-fast); }
+  :is(button, a):not(:disabled):hover > .select-chevron,
+  :is(button, a):focus-visible > .select-chevron,
+  [aria-expanded="true"] > .select-chevron { opacity: 1; }
+  [aria-expanded="true"] > .select-chevron { transform: rotate(180deg); }
+  @media (hover: none) { .select-chevron { opacity: 1; } }
+  .select-trigger.chrome { background: var(--chrome); border-color: var(--chrome-line); color: var(--chrome-ink); }
+  .select-trigger.chrome:not(:disabled):hover { background: var(--chrome-hover); border-color: var(--chrome-line); }
+  .select-trigger.chrome .select-chevron { color: var(--chrome-ink-2); }
 
   .tip {
     position: fixed;
@@ -424,3 +561,12 @@
     background: var(--sunken);
   }
 }
+
+/* 카드 제목은 한 줄 말줄임 대신 두 줄까지 보인다 - Truncate의 truncate·block 유틸리티를 이겨야 해서 층 밖에 둔다(층 없는 규칙이 모든 층보다 앞선다) */
+.dcard-title .truncate:not(.one-line) {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+}
+.dcard .dl-title-row { flex-wrap: wrap; }

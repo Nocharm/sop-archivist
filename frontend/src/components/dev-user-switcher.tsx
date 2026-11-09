@@ -2,7 +2,8 @@
 "use client";
 
 import { UserRound } from "lucide-react";
-import type { ChangeEvent } from "react";
+
+import { Select } from "@/components/ui/select";
 
 import { clearBundleStore } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
@@ -16,8 +17,8 @@ export function DevUserSwitcher() {
 
   // 저장 -> 묶음 캐시 비우기 -> /api/me 재조회. apiFetch가 요청마다 저장값을 읽으므로 새 사용자로 나간다.
   // 화면은 앱 틀이 사용자마다 다시 그려 새 사용자로 다시 불러온다
-  const handleChange = (e: ChangeEvent<HTMLSelectElement>) => {
-    storeDevUser(e.target.value);
+  const handleChange = (loginId: string) => {
+    storeDevUser(loginId);
     clearBundleStore();
     reloadMe();
   };
@@ -27,22 +28,21 @@ export function DevUserSwitcher() {
   const isListed = LOCAL_USERS.some((user) => user.loginId === current);
 
   return (
-    <label className="inline-flex items-center gap-1.5 text-chrome-ink-2">
-      <UserRound size={16} strokeWidth={1.5} />
-      <span className="sr-only">{t("nav.devUser")}</span>
-      <select
-        data-testid="dev-user-switcher"
+    <span className="inline-flex items-center gap-1.5 text-chrome-ink-2">
+      <UserRound size={16} strokeWidth={1.5} aria-hidden />
+      <Select
+        testId="dev-user-switcher"
+        ariaLabel={t("nav.devUser")}
         value={current}
-        className="h-7 rounded-md border border-chrome-line bg-chrome px-1.5 text-chrome-ink"
+        size="sm"
+        tone="chrome"
+        className="max-w-[240px]"
+        options={[
+          ...(current !== "" && !isListed ? [{ value: current, label: current }] : []),
+          ...LOCAL_USERS.map((user) => ({ value: user.loginId, label: `${user.name} (${user.loginId})` })),
+        ]}
         onChange={handleChange}
-      >
-        {current !== "" && !isListed && <option value={current}>{current}</option>}
-        {LOCAL_USERS.map((user) => (
-          <option key={user.loginId} value={user.loginId}>
-            {user.name} ({user.loginId})
-          </option>
-        ))}
-      </select>
-    </label>
+      />
+    </span>
   );
 }

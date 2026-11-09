@@ -257,7 +257,9 @@ await runStep("to-be: nested rows, N/A detail, edit and save", { allowConsoleErr
   const newCode = page.locator('[data-testid^="tobe-new-"][data-testid$="-code"]');
   await newCode.fill("WI-99");
   const newKey = (await newCode.getAttribute("data-testid")).replace("tobe-", "").replace("-code", "");
-  await page.locator(`[data-testid="tobe-${newKey}-parent"]`).selectOption("");
+  // 값 고르기는 기본 <select>가 아니다 - 트리거를 누르고 "없음" 항목을 누른다
+  await page.locator(`[data-testid="tobe-${newKey}-parent"]`).click();
+  await page.locator(`[data-testid="tobe-${newKey}-parent-option-none"]`).click();
   await page.locator('[data-testid="tobe-save"]').click();
   await page.locator('[data-testid="toast-error"]').first().waitFor({ timeout: T });
   check("server rejection reads as a sentence", (await getText(page, "toast-error")).includes("WI-99"), await getText(page, "toast-error"));

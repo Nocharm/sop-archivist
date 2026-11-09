@@ -71,7 +71,7 @@ export function DestinationPicker({ options, value, isDraft, isAi = false, disab
         ) : (
           <span className="font-normal">{t("classify.chooseWhere")}</span>
         )}
-        <ChevronDown size={14} strokeWidth={1.5} className="ml-auto shrink-0" aria-hidden />
+        <ChevronDown size={14} strokeWidth={1.5} className="select-chevron ml-auto" aria-hidden />
       </button>
       {open && (
         <Menu anchorRef={triggerRef} onClose={() => setOpen(false)} testId="classify-destination-menu" align="start">

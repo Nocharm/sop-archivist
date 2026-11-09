@@ -9,6 +9,9 @@ import { DeleteDocumentModal } from "@/components/documents/delete-document-moda
 import { AuxPill, DocStatusPill, getDocReason, WarningChips } from "@/components/documents/doc-status";
 import { UploadModal } from "@/components/documents/upload-modal";
 import { InlineText } from "@/components/inline-text";
+import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
+import { Truncate } from "@/components/ui/motion";
+import { Select } from "@/components/ui/select";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -18,9 +21,11 @@ import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { saveBlob } from "@/lib/save-file";
+import { useListView } from "@/lib/use-list-view";
 import { useLoaded } from "@/lib/use-loaded";
 
 const SKELETON_ROWS = 4;
+const LIST_KEY = "documents";
 
 export default function DocumentsPage() {
   const { t } = useI18n();
@@ -30,6 +35,7 @@ export default function DocumentsPage() {
   const showSkeleton = useDelayedFlag(isLoading && data === null);
   const [uploading, setUploading] = useState(false);
   const [deleting, setDeleting] = useState<SopDocument | null>(null);
+  const view = useListView(LIST_KEY);
 
   async function handleDownload(document: SopDocument) {
     try {
@@ -59,16 +65,148 @@ export default function DocumentsPage() {
     }
   }
 
+  const columns: DataColumn<SopDocument>[] = [
+    { key: "side", header: t("documents.colSide"), nowrap: true, skeletonWidth: 32, cell: (document) => t(`documents.side.${document.side}`) },
+    {
+      key: "code",
+      header: t("documents.colCode"),
+      card: "title",
+      skeletonWidth: 56,
+      cell: (document) => (
+        <InlineText
+          value={document.doc_code}
+          placeholder={t("documents.addCode")}
+          editable={canEdit}
+          mono
+          width={112}
+          maxLength={100}
+          testId={`documents-${document.id}-code`}
+          onSave={(doc_code) => saveField(document, { doc_code })}
+        />
+      ),
+    },
+    {
+      key: "version",
+      header: t("documents.colVersion"),
+      skeletonWidth: 72,
+      cell: (document) => (
+        <InlineText
+          value={document.doc_version}
+          placeholder={t("documents.addVersion")}
+          editable={canEdit}
+          width={96}
+          maxLength={50}
+          testId={`documents-${document.id}-version`}
+          onSave={(doc_version) => saveField(document, { doc_version })}
+        />
+      ),
+    },
+    {
+      key: "title",
+      header: t("documents.colTitle"),
+      card: "title",
+      grow: true,
+      minWidth: 220,
+      skeletonWidth: 320,
+      cell: (document) => (
+        <>
+          <InlineText
+            value={document.title}
+            placeholder={t("documents.addTitle")}
+            editable={canEdit && document.status === "ready"}
+            width="fill"
+            maxLength={500}
+            testId={`documents-${document.id}-title`}
+            onSave={(title) => saveField(document, { title })}
+          />
+          <Truncate text={document.file_name} className="px-[7px] font-mono text-[11px] font-normal leading-4 text-ink-3" />
+          {document.status !== "ready" && (
+            <span className="block px-[7px] text-xs font-normal text-danger" data-testid={`documents-${document.id}-reason`}>
+              {getDocReason(document, t)}
+            </span>
+          )}
+        </>
+      ),
+    },
+    {
+      key: "layout",
+      header: t("documents.colLayout"),
+      skeletonWidth: 150,
+      cell: (document) =>
+        document.status === "ready" ? (
+          <Select
+            testId={`documents-${document.id}-layout`}
+            ariaLabel={t("documents.colLayout")}
+            size="sm"
+            value={document.language_layout}
+            disabled={!canEdit}
+            options={LANGUAGE_LAYOUTS.map((layout) => ({ value: layout, label: t(`layoutKind.${layout}`) }))}
+            onChange={(next) => void saveField(document, { language_layout: next }).catch(() => undefined)}
+          />
+        ) : (
+          <span className="text-ink-4">–</span>
+        ),
+    },
+    { key: "status", header: t("documents.colExtraction"), card: "badge", skeletonWidth: 56, cell: (document) => <DocStatusPill status={document.status} testId={`documents-${document.id}-status`} /> },
+    { key: "aux", header: t("documents.colAux"), card: "badge", skeletonWidth: 64, cell: (document) => <AuxPill document={document} testId={`documents-${document.id}-aux`} /> },
+    {
+      key: "warnings",
+      header: t("documents.colWarnings"),
+      skeletonWidth: 80,
+      cell: (document) => <WarningChips warnings={document.extraction?.warnings ?? []} testId={`documents-${document.id}-warnings`} />,
+    },
+    {
+      key: "actions",
+      header: <span className="sr-only">{t("manage.rowActions")}</span>,
+      card: "actions",
+      className: "w-[72px]",
+      skeletonWidth: 40,
+      cell: (document) => (
+        <span className="row-actions inline-flex gap-0.5">
+          {document.status === "ready" && (
+            <Tooltip label={t("manage.downloadOriginal")} align="end">
+              <button
+                type="button"
+                className="btn ghost icon h-7 w-7"
+                data-testid={`documents-${document.id}-download`}
+                aria-label={t("manage.downloadOriginal")}
+                onClick={() => void handleDownload(document)}
+              >
+                <Download size={14} strokeWidth={1.5} aria-hidden />
+              </button>
+            </Tooltip>
+          )}
+          {canEdit && (
+            <Tooltip label={t("documents.deleteTitle")} align="end">
+              <button
+                type="button"
+                className="btn ghost icon h-7 w-7"
+                data-testid={`documents-${document.id}-delete`}
+                aria-label={t("documents.deleteTitle")}
+                onClick={() => setDeleting(document)}
+              >
+                <Trash2 size={14} strokeWidth={1.5} aria-hidden />
+              </button>
+            </Tooltip>
+          )}
+        </span>
+      ),
+    },
+  ];
+
   return (
     <div className="dense flex min-h-full flex-col bg-surface">
-      <div className="flex h-[52px] shrink-0 items-center justify-between gap-3 px-[var(--pad)]">
+      <div className="flex h-[52px] shrink-0 items-center justify-between gap-3 border-b border-line px-[var(--pad)]">
         <h1 className="page-title ul">{t("documents.title")}</h1>
-        {canEdit && (
-          <button type="button" className="btn pri" data-testid="documents-upload" onClick={() => setUploading(true)}>
-            <Upload size={16} strokeWidth={1.5} aria-hidden />
-            {t("documents.upload")}
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          <ListViewToggle listKey={LIST_KEY} view={view} testId="documents-view" />
+          {canEdit && (
+            <button type="button" className="btn pri" data-testid="documents-upload" onClick={() => setUploading(true)}>
+              <Upload size={16} strokeWidth={1.5} aria-hidden />
+              {t("documents.upload")}
+            </button>
+          )}
+        </div>
       </div>
 
       {error !== null && data === null ? (
@@ -80,148 +218,21 @@ export default function DocumentsPage() {
           </button>
         </div>
       ) : data !== null && data.length === 0 ? (
-        <p data-testid="documents-empty" className="border-t border-line px-[var(--pad)] py-6 text-ink-3">
+        <p data-testid="documents-empty" className="px-[var(--pad)] py-6 text-ink-3">
           {canEdit ? t("documents.emptyEdit") : t("documents.empty")}
         </p>
       ) : (
-        <table className="dtable border-t border-line" data-testid="documents-list">
-          <thead>
-            <tr>
-              <th>{t("documents.colSide")}</th>
-              <th>{t("documents.colCode")}</th>
-              <th>{t("documents.colVersion")}</th>
-              <th>{t("documents.colTitle")}</th>
-              <th>{t("documents.colLayout")}</th>
-              <th>{t("documents.colExtraction")}</th>
-              <th>{t("documents.colAux")}</th>
-              <th>{t("documents.colWarnings")}</th>
-              <th aria-label={t("manage.rowActions")} />
-            </tr>
-          </thead>
-          <tbody>
-            {data === null
-              ? showSkeleton &&
-                Array.from({ length: SKELETON_ROWS }, (_, index) => (
-                  <tr key={index} data-testid="documents-skeleton">
-                    {[32, 56, 72, 320, 150, 56, 64, 80, 40].map((width, cell) => (
-                      <td key={cell}>
-                        <span className="sk h-5" style={{ width }} />
-                      </td>
-                    ))}
-                  </tr>
-                ))
-              : data.map((document) => {
-                  const ready = document.status === "ready";
-                  const prefix = `documents-${document.id}`;
-                  return (
-                    <tr key={document.id} data-testid={`${prefix}-row`}>
-                      <td className="whitespace-nowrap">{t(`documents.side.${document.side}`)}</td>
-                      <td>
-                        <InlineText
-                          value={document.doc_code}
-                          placeholder={t("documents.addCode")}
-                          editable={canEdit}
-                          mono
-                          width={96}
-                          maxLength={100}
-                          testId={`${prefix}-code`}
-                          onSave={(doc_code) => saveField(document, { doc_code })}
-                        />
-                      </td>
-                      <td>
-                        <InlineText
-                          value={document.doc_version}
-                          placeholder={t("documents.addVersion")}
-                          editable={canEdit}
-                          width={72}
-                          maxLength={50}
-                          testId={`${prefix}-version`}
-                          onSave={(doc_version) => saveField(document, { doc_version })}
-                        />
-                      </td>
-                      <td className="min-w-[260px]">
-                        <InlineText
-                          value={document.title}
-                          placeholder={t("documents.addTitle")}
-                          editable={canEdit && ready}
-                          width={300}
-                          maxLength={500}
-                          testId={`${prefix}-title`}
-                          onSave={(title) => saveField(document, { title })}
-                        />
-                        <span className="block truncate font-mono text-[11px] leading-4 text-ink-3">{document.file_name}</span>
-                        {!ready && (
-                          <span className="block text-xs text-danger" data-testid={`${prefix}-reason`}>
-                            {getDocReason(document, t)}
-                          </span>
-                        )}
-                      </td>
-                      <td>
-                        {ready ? (
-                          <select
-                            data-testid={`${prefix}-layout`}
-                            className="h-7 rounded-md border border-line-2 bg-surface px-1.5 text-[13px] text-ink disabled:opacity-60"
-                            value={document.language_layout}
-                            disabled={!canEdit}
-                            onChange={(event) => {
-                              const next = LANGUAGE_LAYOUTS.find((layout) => layout === event.target.value);
-                              if (next) void saveField(document, { language_layout: next }).catch(() => undefined);
-                            }}
-                          >
-                            {LANGUAGE_LAYOUTS.map((layout) => (
-                              <option key={layout} value={layout}>
-                                {t(`layoutKind.${layout}`)}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <span className="text-ink-4">–</span>
-                        )}
-                      </td>
-                      <td>
-                        <DocStatusPill status={document.status} testId={`${prefix}-status`} />
-                      </td>
-                      <td>
-                        <AuxPill document={document} testId={`${prefix}-aux`} />
-                      </td>
-                      <td>
-                        <WarningChips warnings={document.extraction?.warnings ?? []} testId={`${prefix}-warnings`} />
-                      </td>
-                      <td className="w-[72px]">
-                        <span className="row-actions inline-flex gap-0.5">
-                          {document.status === "ready" && (
-                            <Tooltip label={t("manage.downloadOriginal")} align="end">
-                              <button
-                                type="button"
-                                className="btn ghost icon h-7 w-7"
-                                data-testid={`${prefix}-download`}
-                                aria-label={t("manage.downloadOriginal")}
-                                onClick={() => void handleDownload(document)}
-                              >
-                                <Download size={14} strokeWidth={1.5} aria-hidden />
-                              </button>
-                            </Tooltip>
-                          )}
-                          {canEdit && (
-                            <Tooltip label={t("documents.deleteTitle")} align="end">
-                              <button
-                                type="button"
-                                className="btn ghost icon h-7 w-7"
-                                data-testid={`${prefix}-delete`}
-                                aria-label={t("documents.deleteTitle")}
-                                onClick={() => setDeleting(document)}
-                              >
-                                <Trash2 size={14} strokeWidth={1.5} aria-hidden />
-                              </button>
-                            </Tooltip>
-                          )}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-          </tbody>
-        </table>
+        <DataList
+          view={view}
+          rows={data}
+          columns={columns}
+          getRowKey={(document) => document.id}
+          testId="documents-list"
+          rowTestId={(document) => `documents-${document.id}-row`}
+          showSkeleton={showSkeleton}
+          skeletonRows={SKELETON_ROWS}
+          cardMinWidth={360}
+        />
       )}
 
       {uploading && <UploadModal bundleId={bundleId} onClose={() => setUploading(false)} onUploaded={refreshAll} />}

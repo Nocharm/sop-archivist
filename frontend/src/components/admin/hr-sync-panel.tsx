@@ -5,14 +5,18 @@ import { Eye, Loader2, RefreshCw } from "lucide-react";
 import { useState } from "react";
 
 import { InlineNotice } from "@/components/inline-notice";
-import { describeRunDetail, getAbortReasonKey, translateOrRaw } from "@/lib/admin-format";
-import { getHrSyncPreview, listHrSyncRuns, runHrSync, type HrSyncPreview, type HrSyncSummary } from "@/lib/api";
+import { OutcomePill } from "@/components/status";
+import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
+import { describeRunDetail, getAbortReasonKey } from "@/lib/admin-format";
+import { getHrSyncPreview, listHrSyncRuns, runHrSync, type HrSyncPreview, type HrSyncRun, type HrSyncSummary } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
-import { BUTTON_PRIMARY, BUTTON_SECONDARY, TABLE_CELL, TABLE_HEAD_CELL } from "@/lib/ui-classes";
+import { BUTTON_PRIMARY, BUTTON_SECONDARY } from "@/lib/ui-classes";
+import { useListView } from "@/lib/use-list-view";
 import { useLoaded } from "@/lib/use-loaded";
 
+const LIST_KEY = "admin-hr-runs";
 // 미리보기에서 로그인 ID 목록을 접어 보여 주는 개수 - 서버는 최대 50개를 준다
 const LIST_PREVIEW_COUNT = 20;
 
@@ -112,6 +116,34 @@ type SyncResult = { kind: "run"; summary: HrSyncSummary } | { kind: "preview"; p
 export function HrSyncPanel() {
   const { t } = useI18n();
   const runs = useLoaded(listHrSyncRuns);
+  const view = useListView(LIST_KEY);
+  const countColumn = (key: "scanned" | "created" | "deactivated" | "deleted"): DataColumn<HrSyncRun> => ({
+    key,
+    header: t(`hr.runs.column.${key}`),
+    align: "end",
+    cell: (run) => run[key],
+  });
+  const runColumns: DataColumn<HrSyncRun>[] = [
+    { key: "time", header: t("hr.runs.column.time"), card: "title", nowrap: true, cell: (run) => <span className="tabular-nums">{formatKst(run.ran_at)}</span> },
+    { key: "outcome", header: t("hr.runs.column.outcome"), card: "badge", nowrap: true, cell: (run) => <OutcomePill outcome={run.outcome} /> },
+    countColumn("scanned"),
+    countColumn("created"),
+    countColumn("deactivated"),
+    countColumn("deleted"),
+    {
+      key: "notes",
+      header: t("hr.runs.column.notes"),
+      card: "body",
+      grow: true,
+      minWidth: 160,
+      cell: (run) => (
+        <>
+          {run.mass_departure && <div>{t("hr.massDeparture")}</div>}
+          {describeRunDetail(run.outcome, run.detail, t)}
+        </>
+      ),
+    },
+  ];
   const [busy, setBusy] = useState<"run" | "preview" | null>(null);
   const [result, setResult] = useState<SyncResult | null>(null);
   const [actionError, setActionError] = useState<unknown>(null);
@@ -167,7 +199,10 @@ export function HrSyncPanel() {
       {result?.kind === "preview" && <PreviewSummary preview={result.preview} />}
 
       <div className="space-y-3">
-        <h3 className="text-sm font-semibold text-gray-900">{t("hr.runs.title")}</h3>
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-gray-900">{t("hr.runs.title")}</h3>
+          <ListViewToggle listKey={LIST_KEY} view={view} testId="hr-sync-runs-view" />
+        </div>
         {runs.error !== null && (
           <InlineNotice testId="hr-sync-runs-error" tone="error">
             {humanizeApiError(runs.error, t)}
@@ -179,37 +214,16 @@ export function HrSyncPanel() {
           </p>
         )}
         {runs.data !== null && runs.data.length > 0 && (
-          <div className="overflow-x-auto rounded-md border border-gray-200">
-            <table data-testid="hr-sync-runs" className="w-full min-w-[40rem]">
-              <thead className="border-b border-gray-200 bg-gray-50">
-                <tr>
-                  <th className={TABLE_HEAD_CELL}>{t("hr.runs.column.time")}</th>
-                  <th className={TABLE_HEAD_CELL}>{t("hr.runs.column.outcome")}</th>
-                  <th className={TABLE_HEAD_CELL}>{t("hr.runs.column.scanned")}</th>
-                  <th className={TABLE_HEAD_CELL}>{t("hr.runs.column.created")}</th>
-                  <th className={TABLE_HEAD_CELL}>{t("hr.runs.column.deactivated")}</th>
-                  <th className={TABLE_HEAD_CELL}>{t("hr.runs.column.deleted")}</th>
-                  <th className={TABLE_HEAD_CELL}>{t("hr.runs.column.notes")}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {runs.data.map((run) => (
-                  <tr key={run.id} data-testid={`hr-sync-run-row-${run.id}`}>
-                    <td className={`${TABLE_CELL} whitespace-nowrap`}>{formatKst(run.ran_at)}</td>
-                    <td className={TABLE_CELL}>{translateOrRaw(t, `outcome.${run.outcome}`, run.outcome)}</td>
-                    <td className={TABLE_CELL}>{run.scanned}</td>
-                    <td className={TABLE_CELL}>{run.created}</td>
-                    <td className={TABLE_CELL}>{run.deactivated}</td>
-                    <td className={TABLE_CELL}>{run.deleted}</td>
-                    <td className={TABLE_CELL}>
-                      {run.mass_departure && <div>{t("hr.massDeparture")}</div>}
-                      {describeRunDetail(run.outcome, run.detail, t)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataList
+            view={view}
+            rows={runs.data}
+            columns={runColumns}
+            getRowKey={(run) => run.id}
+            testId="hr-sync-runs"
+            rowTestId={(run) => `hr-sync-run-row-${run.id}`}
+            cardMinWidth={300}
+            framed
+          />
         )}
       </div>
     </section>

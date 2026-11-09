@@ -15,6 +15,11 @@
   --pad: 16px;
   --gap: 12px;
 
+  /* Page width. Content stops growing past these so the eye does not sweep a 2560px row.
+     List and reading screens use page-max; the three-column work screens (split, classify, match) use page-max-wide. */
+  --page-max: 1280px;
+  --page-max-wide: 1600px;
+
   /* Motion. Enter is slow out, exit is fast. Pointer-opened layers move, keyboard flow changes content at once. */
   --dur-fast: 100ms;
   --dur-base: 160ms;

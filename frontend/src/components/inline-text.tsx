@@ -3,6 +3,11 @@
 
 import { useState, type KeyboardEvent } from "react";
 
+import { Truncate } from "@/components/ui/motion";
+
+// 보기·빈 칩·입력이 같은 상자다(높이 24, 테두리 1, 좌우 6) - 눌러 고치기로 바뀌어도 글자 자리와 칸 폭이 그대로다
+const BOX = "block h-6 max-w-full rounded-sm border px-1.5 text-left text-[13px] leading-[22px]";
+
 interface InlineTextProps {
   value: string;
   placeholder: string;
@@ -13,14 +18,16 @@ interface InlineTextProps {
   maxLength: number;
   /** 저장 - 실패하면 throw. 입력은 그대로 열려 있다 */
   onSave: (next: string) => Promise<void>;
-  /** 입력 폭(px) - 보기와 고치기가 같은 폭이라 옆 칸이 밀리지 않는다 */
-  width: number;
+  /** 상자 폭(px) 또는 칸 폭 채우기 - 보기와 고치기가 같은 폭이라 옆 칸이 밀리지 않는다 */
+  width: number | "fill";
 }
 
 export function InlineText({ value, placeholder, editable, testId, mono = false, maxLength, onSave, width }: InlineTextProps) {
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const font = mono ? "font-mono" : "";
+  const fill = width === "fill" ? "w-full" : "";
+  const style = width === "fill" ? undefined : { width };
 
   if (!editable) {
     return value ? (
@@ -66,8 +73,8 @@ export function InlineText({ value, placeholder, editable, testId, mono = false,
     return (
       <input
         data-testid={`${testId}-input`}
-        className={`h-6 rounded-sm border border-focus bg-surface px-1.5 text-[13px] text-ink outline-none ${font}`}
-        style={{ width }}
+        className={`${BOX} border-focus bg-surface text-ink outline-none ${font} ${fill}`}
+        style={style}
         value={draft}
         maxLength={maxLength}
         autoFocus
@@ -83,17 +90,19 @@ export function InlineText({ value, placeholder, editable, testId, mono = false,
     <button
       type="button"
       data-testid={testId}
-      className={`max-w-full truncate rounded-sm px-1 text-left hover:bg-hover ${font}`}
-      style={{ minWidth: 24 }}
+      className={`${BOX} border-transparent hover:bg-hover ${font} ${fill}`}
+      style={style}
       onClick={() => setDraft(value)}
     >
-      {value}
+      {/* one-line: 카드 제목의 두 줄 자르기에서 빼서 상자 높이를 지킨다 */}
+      <Truncate text={value} className="one-line" />
     </button>
   ) : (
     <button
       type="button"
       data-testid={testId}
-      className="h-6 whitespace-nowrap rounded-sm border border-dashed border-line-2 px-1.5 text-xs text-ink-3 hover:bg-hover"
+      className={`${BOX} overflow-hidden whitespace-nowrap border-dashed border-line-2 text-xs text-ink-3 hover:bg-hover ${fill}`}
+      style={style}
       onClick={() => setDraft("")}
     >
       {placeholder}

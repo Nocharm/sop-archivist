@@ -2,21 +2,36 @@
 "use client";
 
 import { InlineNotice } from "@/components/inline-notice";
+import { OutcomePill } from "@/components/status";
+import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { describeRunDetail, translateOrRaw } from "@/lib/admin-format";
-import { listBatchRuns } from "@/lib/api";
+import { listBatchRuns, type BatchRun } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
-import { TABLE_CELL, TABLE_HEAD_CELL } from "@/lib/ui-classes";
+import { useListView } from "@/lib/use-list-view";
 import { useLoaded } from "@/lib/use-loaded";
+
+const LIST_KEY = "admin-batch";
 
 export function BatchRunsPanel() {
   const { t } = useI18n();
   const runs = useLoaded(listBatchRuns);
+  const view = useListView(LIST_KEY);
+
+  const columns: DataColumn<BatchRun>[] = [
+    { key: "job", header: t("batch.column.job"), card: "title", cell: (run) => translateOrRaw(t, `batch.job.${run.job}`, run.job) },
+    { key: "outcome", header: t("batch.column.outcome"), card: "badge", nowrap: true, cell: (run) => <OutcomePill outcome={run.outcome} /> },
+    { key: "time", header: t("batch.column.time"), nowrap: true, cell: (run) => <span className="tabular-nums">{formatKst(run.ran_at)}</span> },
+    { key: "detail", header: t("batch.column.detail"), card: "body", grow: true, minWidth: 200, cell: (run) => describeRunDetail(run.outcome, run.detail, t) },
+  ];
 
   return (
     <section data-testid="batch-runs-panel" className="space-y-4">
-      <p className="text-sm text-gray-600">{t("batch.intro")}</p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-gray-600">{t("batch.intro")}</p>
+        <ListViewToggle listKey={LIST_KEY} view={view} testId="batch-view" />
+      </div>
 
       {runs.error !== null && (
         <InlineNotice testId="batch-error" tone="error">
@@ -29,28 +44,16 @@ export function BatchRunsPanel() {
         </p>
       )}
       {runs.data !== null && runs.data.length > 0 && (
-        <div className="overflow-x-auto rounded-md border border-gray-200">
-          <table data-testid="batch-table" className="w-full min-w-[36rem]">
-            <thead className="border-b border-gray-200 bg-gray-50">
-              <tr>
-                <th className={TABLE_HEAD_CELL}>{t("batch.column.job")}</th>
-                <th className={TABLE_HEAD_CELL}>{t("batch.column.outcome")}</th>
-                <th className={TABLE_HEAD_CELL}>{t("batch.column.time")}</th>
-                <th className={TABLE_HEAD_CELL}>{t("batch.column.detail")}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {runs.data.map((run) => (
-                <tr key={`${run.job}-${run.outcome}`} data-testid={`batch-row-${run.job}-${run.outcome}`}>
-                  <td className={TABLE_CELL}>{translateOrRaw(t, `batch.job.${run.job}`, run.job)}</td>
-                  <td className={TABLE_CELL}>{translateOrRaw(t, `outcome.${run.outcome}`, run.outcome)}</td>
-                  <td className={`${TABLE_CELL} whitespace-nowrap`}>{formatKst(run.ran_at)}</td>
-                  <td className={TABLE_CELL}>{describeRunDetail(run.outcome, run.detail, t)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataList
+          view={view}
+          rows={runs.data}
+          columns={columns}
+          getRowKey={(run) => `${run.job}-${run.outcome}`}
+          testId="batch-table"
+          rowTestId={(run) => `batch-row-${run.job}-${run.outcome}`}
+          cardMinWidth={300}
+          framed
+        />
       )}
     </section>
   );

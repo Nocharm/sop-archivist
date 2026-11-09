@@ -12,7 +12,7 @@ export function DocStatusPill({ status, testId }: { status: DocStatus; testId?: 
   const { t } = useI18n();
   const ready = status === "ready";
   return (
-    <span className={`pill ${ready ? "quiet" : "danger"}`} data-testid={testId}>
+    <span className={`pill ${ready ? "muted" : "fail"}`} data-testid={testId}>
       {ready ? <CircleCheck size={12} strokeWidth={1.5} aria-hidden /> : <CircleX size={12} strokeWidth={1.5} aria-hidden />}
       {t(`status.doc.${status}`)}
     </span>

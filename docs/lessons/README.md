@@ -4,7 +4,7 @@
 
 | 문서 | 언제 읽나 |
 |------|-----------|
-| [react-ts-patterns.md](react-ts-patterns.md) | useCallback deps/TDZ, ref 미러, `useEffectEvent`(§7), `<Activity>`(§8), 이펙트 내 setState 린트, Tailwind display 클래스 충돌 |
+| [react-ts-patterns.md](react-ts-patterns.md) | useCallback deps/TDZ, ref 미러, `useEffectEvent`(§7), `<Activity>`(§8), 이펙트 내 setState 린트, Tailwind display 클래스 충돌, 표 칸 nowrap이 표를 미는 문제(§11) |
 | [browser-verification.md](browser-verification.md) | Playwright + 시스템 Chrome으로 화면을 검증할 때 (dev DB 오염 함정 필독, 워크트리 세션 Bash 제약) |
 | [git-operations.md](git-operations.md) | 히스토리 재작성·강제 푸시 전에 (같은 폴더의 다른 세션 확인, lease에 예상 해시 명시, zsh 인자는 배열로) |
 | [remote-sessions.md](remote-sessions.md) | 클라우드 세션이 연결된 PC 폴더를 다룰 때 (파일 전송 비동기·체크섬 확인, 워크트리 prune 금지, git 삭제 권한, VM의 맥 `node_modules`) |

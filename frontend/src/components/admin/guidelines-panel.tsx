@@ -7,16 +7,19 @@ import { Check, FilePlus2, RefreshCw } from "lucide-react";
 import { useState } from "react";
 
 import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { MarkdownView } from "@/components/ui/markdown-view";
 import { BusyLabel, Collapse, Refresh } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
-import { activateGuidelineVersion, createGuidelineVersion, getGuidelineVersion, listGuidelines, type Guideline } from "@/lib/api-manage";
+import { activateGuidelineVersion, createGuidelineVersion, getGuidelineVersion, listGuidelines, type Guideline, type GuidelineVersionMeta } from "@/lib/api-manage";
 import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
+import { useListView } from "@/lib/use-list-view";
 import { useLoaded } from "@/lib/use-loaded";
 
+const LIST_KEY = "admin-guideline-versions";
 // 백엔드 GuidelineContent·GuidelineNote 상한과 같은 값이어야 한다 - 넘기면 422로 돌아온다
 const CONTENT_MAX = 200_000;
 const NOTE_MAX = 2000;
@@ -61,6 +64,68 @@ export function GuidelinesPanel() {
 
   const guideline = data?.find((item) => item.key === selectedKey) ?? data?.[0] ?? null;
   const shownVersion = viewVersion ?? guideline?.active_version ?? guideline?.versions[0]?.version ?? null;
+  const view = useListView(LIST_KEY);
+  const versionColumns: DataColumn<GuidelineVersionMeta>[] = [
+    {
+      key: "version",
+      header: t("guidelines.version"),
+      card: "title",
+      nowrap: true,
+      className: "w-[150px]",
+      cell: (version) => (
+        <span className="font-mono">
+          v{version.version}
+          {version.is_active && (
+            <span className="pill ok ml-2 font-sans">
+              <Check size={12} strokeWidth={1.5} aria-hidden />
+              {t("guidelines.active")}
+            </span>
+          )}
+        </span>
+      ),
+    },
+    {
+      key: "note",
+      header: t("guidelines.note"),
+      card: "body",
+      grow: true,
+      minWidth: 160,
+      cell: (version) => <span className="text-ink-2">{version.note || <span className="text-ink-4">–</span>}</span>,
+    },
+    {
+      key: "createdBy",
+      header: t("guidelines.createdBy"),
+      nowrap: true,
+      cell: (version) => (
+        <span className="text-ink-2">
+          <span className="font-mono text-xs">{version.created_by}</span> · <span className="tabular-nums">{formatKst(version.created_at)}</span>
+        </span>
+      ),
+    },
+    {
+      key: "actions",
+      header: <span className="sr-only">{t("manage.rowActions")}</span>,
+      card: "actions",
+      className: "w-[180px] text-right",
+      cell: (version) =>
+        !version.is_active && (
+          <span className="row-actions">
+            <button
+              type="button"
+              className="btn h-7"
+              data-testid={`guideline-activate-${version.version}`}
+              disabled={activating !== null}
+              onClick={(event) => {
+                event.stopPropagation();
+                setConfirming(version.version);
+              }}
+            >
+              <BusyLabel busy={activating === version.version} label={t("guidelines.activate")} />
+            </button>
+          </span>
+        ),
+    },
+  ];
 
   function selectKey(key: string) {
     setSelectedKey(key);
@@ -132,63 +197,25 @@ export function GuidelinesPanel() {
       </nav>
       {guideline && (
         <section className="grid content-start gap-4" data-testid="guideline-detail">
-          <div className="dense overflow-hidden rounded-lg border border-line bg-surface">
-            <table className="dtable" data-testid="guideline-versions">
-              <thead>
-                <tr>
-                  <th className="w-[150px]">{t("guidelines.version")}</th>
-                  <th>{t("guidelines.note")}</th>
-                  <th>{t("guidelines.createdBy")}</th>
-                  <th className="w-[180px]" aria-label={t("manage.rowActions")} />
-                </tr>
-              </thead>
-              <tbody>
-                {guideline.versions.map((version) => (
-                  <tr
-                    key={version.version}
-                    data-link=""
-                    className={shownVersion === version.version ? "bg-sel" : ""}
-                    data-testid={`guideline-version-${version.version}`}
-                    onClick={() => {
-                      setViewVersion(version.version);
-                      setDraft(null);
-                    }}
-                  >
-                    <td className="whitespace-nowrap font-mono">
-                      v{version.version}
-                      {version.is_active && (
-                        <span className="pill ok ml-2">
-                          <Check size={12} strokeWidth={1.5} aria-hidden />
-                          {t("guidelines.active")}
-                        </span>
-                      )}
-                    </td>
-                    <td className="text-ink-2">{version.note || <span className="text-ink-4">–</span>}</td>
-                    <td className="whitespace-nowrap text-ink-2">
-                      <span className="font-mono text-xs">{version.created_by}</span> · <span className="tabular-nums">{formatKst(version.created_at)}</span>
-                    </td>
-                    <td className="text-right">
-                      {!version.is_active && (
-                        <span className="row-actions">
-                          <button
-                            type="button"
-                            className="btn h-7"
-                            data-testid={`guideline-activate-${version.version}`}
-                            disabled={activating !== null}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setConfirming(version.version);
-                            }}
-                          >
-                            <BusyLabel busy={activating === version.version} label={t("guidelines.activate")} />
-                          </button>
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="grid gap-2">
+            <div className="flex justify-end">
+              <ListViewToggle listKey={LIST_KEY} view={view} testId="guideline-versions-view" />
+            </div>
+            <DataList
+              view={view}
+              rows={guideline.versions}
+              columns={versionColumns}
+              getRowKey={(version) => version.version}
+              testId="guideline-versions"
+              rowTestId={(version) => `guideline-version-${version.version}`}
+              onRowClick={(version) => {
+                setViewVersion(version.version);
+                setDraft(null);
+              }}
+              isRowSelected={(version) => shownVersion === version.version}
+              cardMinWidth={260}
+              framed
+            />
           </div>
           <Collapse open={draft === null && shownVersion !== null}>
             {shownVersion !== null && (

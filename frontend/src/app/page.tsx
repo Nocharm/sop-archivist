@@ -6,43 +6,37 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { NewBundleModal } from "@/components/new-bundle-modal";
-import { LoadMoreRows } from "@/components/ui/load-more";
+import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { Truncate } from "@/components/ui/motion";
 import { BundleStatusPill, RoleTag } from "@/components/status";
 import { hasPermission } from "@/lib/access";
 import { humanizeApiError } from "@/lib/api-errors";
-import { listBundles, type LangProgress } from "@/lib/api-sop";
+import { listBundles, type BundleListItem, type LangProgress } from "@/lib/api-sop";
 import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
 import { navigate } from "@/lib/nav-buffer";
 import { useMe } from "@/lib/session";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
+import { useListView } from "@/lib/use-list-view";
 import { useLoaded } from "@/lib/use-loaded";
 import { useProgressiveList } from "@/lib/use-progressive-list";
 
 const SKELETON_ROWS = 3;
+const LIST_KEY = "bundles";
 
-function ProgressCell({ progress, testId }: { progress: LangProgress; testId: string }) {
-  if (progress.total === 0) {
-    return (
-      <td className="num text-ink-4" data-testid={testId}>
-        –
-      </td>
-    );
-  }
+function ProgressValue({ progress }: { progress: LangProgress }) {
+  if (progress.total === 0) return <span className="text-ink-4">–</span>;
   const percent = Math.round((progress.confirmed / progress.total) * 100);
   return (
-    <td data-testid={testId}>
-      <div className="flex items-center justify-end gap-2">
-        <span className="tabular-nums">
-          {progress.confirmed}
-          <span className="text-ink-3">{` / ${progress.total}`}</span>
-        </span>
-        <span className="track w-16" aria-hidden>
-          <i style={{ width: `${percent}%` }} />
-        </span>
-      </div>
-    </td>
+    <span className="inline-flex items-center justify-end gap-2">
+      <span className="tabular-nums">
+        {progress.confirmed}
+        <span className="text-ink-3">{` / ${progress.total}`}</span>
+      </span>
+      <span className="track w-16" aria-hidden>
+        <i style={{ width: `${percent}%` }} />
+      </span>
+    </span>
   );
 }
 
@@ -54,17 +48,86 @@ export default function BundleListPage() {
   const [creating, setCreating] = useState(false);
   const canCreate = hasPermission(me, "bundle.create");
   const rows = useProgressiveList(data ?? [], "bundles");
+  const view = useListView(LIST_KEY);
+
+  const columns: DataColumn<BundleListItem>[] = [
+    {
+      key: "title",
+      header: t("bundles.colTitle"),
+      card: "title",
+      grow: true,
+      minWidth: 240,
+      skeletonWidth: 220,
+      cell: (bundle) => (
+        <span className="dl-title-row flex min-w-0 items-center gap-x-2 gap-y-1">
+          <Link
+            href={`/bundles/${bundle.id}`}
+            data-testid={`bundles-link-${bundle.id}`}
+            className="min-w-0 font-semibold text-ink hover:underline"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <Truncate text={bundle.title} />
+          </Link>
+          {/* 합성 데이터는 목록에서도 합성으로 보인다 - 실제 묶음과 섞여 보이지 않게 */}
+          {bundle.is_synthetic && (
+            <span className="tag flex-none" data-testid={`bundles-synthetic-${bundle.id}`}>
+              <FlaskConical size={12} strokeWidth={1.5} aria-hidden />
+              Synthetic data
+            </span>
+          )}
+        </span>
+      ),
+    },
+    { key: "status", header: t("bundles.colStatus"), card: "badge", nowrap: true, skeletonWidth: 84, cell: (bundle) => <BundleStatusPill status={bundle.status} /> },
+    { key: "role", header: t("bundles.colRole"), card: "badge", nowrap: true, skeletonWidth: 56, cell: (bundle) => <RoleTag role={bundle.my_role} /> },
+    {
+      key: "ko",
+      header: (
+        <>
+          <span className="lg">KO</span> {t("bundles.colConfirmed")}
+        </>
+      ),
+      align: "end",
+      nowrap: true,
+      skeletonWidth: 110,
+      cellTestId: (bundle) => `bundles-ko-${bundle.id}`,
+      cell: (bundle) => <ProgressValue progress={bundle.progress.ko} />,
+    },
+    {
+      key: "en",
+      header: (
+        <>
+          <span className="lg">EN</span> {t("bundles.colConfirmed")}
+        </>
+      ),
+      align: "end",
+      nowrap: true,
+      skeletonWidth: 110,
+      cellTestId: (bundle) => `bundles-en-${bundle.id}`,
+      cell: (bundle) => <ProgressValue progress={bundle.progress.en} />,
+    },
+    {
+      key: "updated",
+      header: t("bundles.colUpdated"),
+      nowrap: true,
+      skeletonWidth: 120,
+      cell: (bundle) => <span className="tabular-nums text-ink-2">{formatKst(bundle.updated_at)}</span>,
+    },
+  ];
 
   return (
     <div className="dense min-h-full bg-surface">
       <div className="flex h-[52px] items-center justify-between gap-3 border-b border-line px-[var(--pad)]">
         <h1 className="page-title ul">{t("bundles.title")}</h1>
-        {canCreate && (
-          <button type="button" className="btn pri" data-testid="bundles-new" onClick={() => setCreating(true)}>
-            <Plus size={16} strokeWidth={1.5} aria-hidden />
-            {t("bundles.new")}
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          <ListViewToggle listKey={LIST_KEY} view={view} testId="bundles-view" />
+          {canCreate && (
+            <button type="button" className="btn pri" data-testid="bundles-new" onClick={() => setCreating(true)}>
+              <Plus size={16} strokeWidth={1.5} aria-hidden />
+              {t("bundles.new")}
+            </button>
+          )}
+        </div>
       </div>
 
       {error !== null && data === null ? (
@@ -80,71 +143,19 @@ export default function BundleListPage() {
           {canCreate ? t("bundles.emptyCreate") : t("bundles.empty")}
         </p>
       ) : (
-        <table className="dtable" data-testid="bundles-list">
-          <thead>
-            <tr>
-              <th>{t("bundles.colTitle")}</th>
-              <th>{t("bundles.colStatus")}</th>
-              <th>{t("bundles.colRole")}</th>
-              <th className="num">
-                <span className="lg">KO</span> {t("bundles.colConfirmed")}
-              </th>
-              <th className="num">
-                <span className="lg">EN</span> {t("bundles.colConfirmed")}
-              </th>
-              <th>{t("bundles.colUpdated")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data === null
-              ? showSkeleton &&
-                Array.from({ length: SKELETON_ROWS }, (_, index) => (
-                  <tr key={index} data-testid="bundles-skeleton">
-                    {[220, 84, 56, 110, 110, 120].map((width, cell) => (
-                      <td key={cell}>
-                        <span className="sk h-5" style={{ width }} />
-                      </td>
-                    ))}
-                  </tr>
-                ))
-              : rows.visible.map((bundle) => (
-                  <tr
-                    key={bundle.id}
-                    data-link=""
-                    data-testid={`bundles-row-${bundle.id}`}
-                    onClick={() => navigate(`/bundles/${bundle.id}`)}
-                  >
-                    <td>
-                      <Link
-                        href={`/bundles/${bundle.id}`}
-                        data-testid={`bundles-link-${bundle.id}`}
-                        className="inline-block max-w-[420px] align-middle font-semibold text-ink hover:underline"
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        <Truncate text={bundle.title} />
-                      </Link>
-                      {/* 합성 데이터는 목록에서도 합성으로 보인다 - 실제 묶음과 섞여 보이지 않게 */}
-                      {bundle.is_synthetic && (
-                        <span className="tag ml-2 align-middle" data-testid={`bundles-synthetic-${bundle.id}`}>
-                          <FlaskConical size={12} strokeWidth={1.5} aria-hidden />
-                          Synthetic data
-                        </span>
-                      )}
-                    </td>
-                    <td>
-                      <BundleStatusPill status={bundle.status} />
-                    </td>
-                    <td>
-                      <RoleTag role={bundle.my_role} />
-                    </td>
-                    <ProgressCell progress={bundle.progress.ko} testId={`bundles-ko-${bundle.id}`} />
-                    <ProgressCell progress={bundle.progress.en} testId={`bundles-en-${bundle.id}`} />
-                    <td className="whitespace-nowrap tabular-nums text-ink-2">{formatKst(bundle.updated_at)}</td>
-                  </tr>
-                ))}
-            {data !== null && rows.hasMore && <LoadMoreRows sentinelRef={rows.sentinelRef} columns={6} testId="bundles-more" />}
-          </tbody>
-        </table>
+        <DataList
+          view={view}
+          rows={data === null ? null : rows.visible}
+          columns={columns}
+          getRowKey={(bundle) => bundle.id}
+          testId="bundles-list"
+          rowTestId={(bundle) => `bundles-row-${bundle.id}`}
+          onRowClick={(bundle) => navigate(`/bundles/${bundle.id}`)}
+          showSkeleton={showSkeleton}
+          skeletonRows={SKELETON_ROWS}
+          more={{ hasMore: rows.hasMore, sentinelRef: rows.sentinelRef, testId: "bundles-more" }}
+          cardMinWidth={380}
+        />
       )}
 
       {creating && <NewBundleModal onClose={() => setCreating(false)} />}

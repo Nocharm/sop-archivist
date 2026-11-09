@@ -196,6 +196,14 @@ SOP Archivist는 품질 조직의 SOP Restructuring T/F가 옛 GMP SOP를 새 SO
 
 그 밖의 상태도 같은 의미 색 안에서 나눈다. 시안의 "상태 어휘" 표에 전부 있다.
 
+**칩의 진하기 3단(2026-11-09).** 색 가짓수(회색·파랑·호박·빨강·보라)는 늘리지 않고 무게로 나눈다. 아이콘·선 모양은 그대로 둬서 색만으로 구분하지 않는다. 클래스는 `components.css` `.pill.*`.
+
+| 단 | 모양 | 뜻 | 쓰는 곳 |
+|---|---|---|---|
+| 테두리 | `none`·`quiet` | 손대지 않음·조용함 | Unassigned, Checked, 모르는 실행 결과 |
+| 연한 바탕 | `active`(파랑)·`muted`(회색)·`hold`·`warn`·`danger`·`ai` | 진행·기다림·주의 | In progress, Ready, Succeeded, In review, 경고, 작성자 없음 |
+| 꽉 참 | `ok`(파랑)·`done`(회색)·`fail`(빨강) | 확정·끝남·실패 | Confirmed, Review complete, Rejected·Failed(문서·실행 결과) |
+
 | 대상 | 라벨 |
 |---|---|
 | 묶음 | In progress, In review, Review complete |

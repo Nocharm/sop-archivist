@@ -66,6 +66,15 @@ async function runStep(name, { devUser = null, allowConsoleErrors = false } = {}
 
 const getText = (page, id) => page.locator(`[data-testid="${id}"]`).innerText();
 const wait = (page, id) => page.locator(`[data-testid="${id}"]`).waitFor({ state: "visible", timeout: T });
+// 값 고르기(components/ui/select.tsx)는 기본 <select>가 아니다 - 트리거를 누르고 목록의 항목을 누른다. 첫 단계부터 쓰여 위에 둔다
+const pickOption = async (page, id, value) => {
+  await page.locator(`[data-testid="${id}"]`).click();
+  await page.locator(`[data-testid="${id}-option-${value === "" ? "none" : value}"]`).click();
+};
+const pickOptionByLabel = async (page, id, label) => {
+  await page.locator(`[data-testid="${id}"]`).click();
+  await page.locator(`[data-testid="${id}-list"] [role="option"]`, { hasText: label }).click();
+};
 
 // ── 시나리오 ────────────────────────────────────────────────
 
@@ -86,7 +95,7 @@ await runStep("account as qa.lead", { devUser: "qa.lead" }, async ({ page, takeS
   check("account identity shows login id", (await getText(page, "account-identity")).includes("qa.lead"));
   check("AI status is shown", (await getText(page, "account-ai-status")).trim().length > 0, await getText(page, "account-ai-status"));
   check("admin link visible", await page.locator('[data-testid="top-bar-admin-link"]').isVisible());
-  check("dev switcher shows current user", (await page.locator('[data-testid="dev-user-switcher"]').inputValue()) === "qa.lead");
+  check("dev switcher shows current user", (await page.locator('[data-testid="dev-user-switcher"]').getAttribute("data-value")) === "qa.lead");
   await takeShot("baseline-account.png");
 });
 
@@ -94,20 +103,18 @@ await runStep("account as qa.lead", { devUser: "qa.lead" }, async ({ page, takeS
 await runStep("switch dev users", { devUser: "qa.lead" }, async ({ page }) => {
   await page.goto(`${BASE}/account`);
   await wait(page, "account-permissions");
-  const switcher = page.locator('[data-testid="dev-user-switcher"]');
-
-  await switcher.selectOption("prod.member");
+  await pickOption(page, "dev-user-switcher", "prod.member");
   await page.waitForFunction(() => document.querySelector('[data-testid="top-bar-user"]')?.textContent?.includes("Production Member"), null, { timeout: T });
   const direct = await getText(page, "account-permissions");
   check("direct grant shows only View system status", direct.includes("View system status") && !direct.includes("Manage permissions"), direct);
   const directSource = await getText(page, "account-permission-source-system.view");
   check("direct grant source reads You and direct grant", directSource.includes("You") && directSource.includes("direct grant"), directSource);
 
-  await switcher.selectOption("qa.member");
+  await pickOption(page, "dev-user-switcher", "qa.member");
   await page.waitForFunction(() => document.querySelector('[data-testid="top-bar-user"]')?.textContent?.includes("QA Member"), null, { timeout: T });
   check("child department inherits Manage permissions", (await getText(page, "account-permissions")).includes("Manage permissions"));
 
-  await switcher.selectOption("dev.admin");
+  await pickOption(page, "dev-user-switcher", "dev.admin");
   await page.waitForFunction(() => document.querySelector('[data-testid="top-bar-user"]')?.textContent?.includes("Dev Admin"), null, { timeout: T });
   const all = await getText(page, "account-permissions");
   check("sysadmin sees all four permissions", ["Manage permissions", "Run directory sync", "Manage AI", "View system status"].every((l) => all.includes(l)), all);
@@ -121,7 +128,7 @@ await runStep("unknown employee", { devUser: "ghost.user" }, async ({ page, take
   check("falls back to login id", (await getText(page, "top-bar-user")).includes("ghost.user"), await getText(page, "top-bar-user"));
   check("no permission list", (await page.locator('[data-testid="account-permissions"]').count()) === 0);
   check("admin link hidden", (await page.locator('[data-testid="top-bar-admin-link"]').count()) === 0);
-  check("dev switcher shows the unlisted account", (await page.locator('[data-testid="dev-user-switcher"]').inputValue()) === "ghost.user");
+  check("dev switcher shows the unlisted account", (await page.locator('[data-testid="dev-user-switcher"]').getAttribute("data-value")) === "ghost.user");
   await takeShot("baseline-account-empty.png");
 });
 
@@ -257,7 +264,7 @@ await runStep("admin access as qa.lead", { devUser: "qa.lead" }, async ({ page, 
   check("person search narrows to matches", (await countById(page, "grant-subject-picker-option-prod.member")) === 1);
   await findById(page, "grant-subject-picker-option-prod.member").click();
   check("selection is echoed", (await getText(page, "grant-subject-picker-selected")).includes("Production Member"), await getText(page, "grant-subject-picker-selected"));
-  await findById(page, "grant-role-select").selectOption({ label: "Smoke Role" });
+  await pickOptionByLabel(page, "grant-role-select", "Smoke Role");
   await findById(page, "grant-save").click();
   await waitHidden(page, "grant-form");
   const smokeGrant = findByPrefix(page, "grant-row-", { hasText: "Smoke Role" });
@@ -382,7 +389,7 @@ await runStep("admin as prod.member", { devUser: "prod.member" }, async ({ page,
 await runStep("admin follows the dev user switch", { devUser: "qa.lead" }, async ({ page }) => {
   await page.goto(`${BASE}/admin`);
   await wait(page, "roles-list");
-  await page.locator('[data-testid="dev-user-switcher"]').selectOption("prod.member");
+  await pickOption(page, "dev-user-switcher", "prod.member");
   await wait(page, "admin-tab-batch");
   check("access tab disappears after switching to prod.member", (await countById(page, "admin-tab-access")) === 0);
   check("batch tab takes over", await isSelected(page, "admin-tab-batch"));

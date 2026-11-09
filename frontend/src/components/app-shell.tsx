@@ -12,7 +12,10 @@ import { ToastHost } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
 import { useI18n } from "@/lib/i18n";
 import { useSession } from "@/lib/session";
-import { parseBundlePath } from "@/lib/stages";
+import { parseBundlePath, type StageKey } from "@/lib/stages";
+
+// 칸 셋으로 일하는 화면은 넓은 상한을 쓴다(tokens.css --page-max-wide). 나머지는 목록·읽기 상한
+const WIDE_STAGES: ReadonlySet<StageKey> = new Set(["split", "classify", "match"]);
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { t } = useI18n();
@@ -25,7 +28,11 @@ export function AppShell({ children }: { children: ReactNode }) {
     // 경로가 바뀔 때마다 새로 그려 진입 전환을 한 번 탄다(같은 경로의 쿼리 변경은 그대로).
     // 사용자가 바뀌어도(dev 전환) 다시 그린다 - 앞 사용자로 불러온 원문·제안이 남아 보이지 않게
     body = (
-      <div key={`${me.login_id}:${pathname}`} className="page-enter">
+      <div
+        key={`${me.login_id}:${pathname}`}
+        className="page-enter page-wrap"
+        data-width={inBundle?.stage && WIDE_STAGES.has(inBundle.stage) ? "wide" : "base"}
+      >
         {children}
       </div>
     );

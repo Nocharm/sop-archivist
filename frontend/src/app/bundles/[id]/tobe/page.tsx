@@ -7,6 +7,7 @@ import { useRef, useState } from "react";
 
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { CollapseRow } from "@/components/ui/motion";
+import { Select } from "@/components/ui/select";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -316,33 +317,36 @@ export default function ToBePage() {
                         <input className={CELL_INPUT} data-testid={`${prefix}-title`} value={doc.title} maxLength={500} disabled={!canEdit} onChange={(event) => patchDoc(doc.key, { title: event.target.value })} />
                       </td>
                       <td>
-                        <select
-                          className={CELL_INPUT}
-                          data-testid={`${prefix}-type`}
+                        <Select
+                          testId={`${prefix}-type`}
+                          ariaLabel={t("tobe.colType")}
+                          size="sm"
+                          className="w-full"
                           value={doc.doc_type}
                           disabled={!canEdit || isMatch}
-                          onChange={(event) => update(changeDocType(draft, doc.key, event.target.value === "wi" ? "wi" : "sop"))}
-                        >
-                          <option value="sop">SOP</option>
-                          <option value="wi">WI</option>
-                        </select>
+                          options={[
+                            { value: "sop", label: "SOP" },
+                            { value: "wi", label: "WI" },
+                          ]}
+                          onChange={(next) => update(changeDocType(draft, doc.key, next))}
+                        />
                       </td>
                       <td>
                         {doc.doc_type === "wi" ? (
-                          <select
-                            className={`${CELL_INPUT} font-mono`}
-                            data-testid={`${prefix}-parent`}
+                          <Select
+                            testId={`${prefix}-parent`}
+                            ariaLabel={t("tobe.colParent")}
+                            size="sm"
+                            mono
+                            className="w-full"
                             value={doc.parent_key ?? ""}
                             disabled={!canEdit}
-                            onChange={(event) => patchDoc(doc.key, { parent_key: event.target.value || null })}
-                          >
-                            <option value="">{t("tobe.noParent")}</option>
-                            {sops.map((sop) => (
-                              <option key={sop.key} value={sop.key}>
-                                {sop.code.trim() || t("tobe.noCode")}
-                              </option>
-                            ))}
-                          </select>
+                            options={[
+                              { value: "", label: t("tobe.noParent") },
+                              ...sops.map((sop) => ({ value: sop.key, label: sop.code.trim() || t("tobe.noCode") })),
+                            ]}
+                            onChange={(next) => patchDoc(doc.key, { parent_key: next || null })}
+                          />
                         ) : (
                           <span className="text-ink-4">–</span>
                         )}

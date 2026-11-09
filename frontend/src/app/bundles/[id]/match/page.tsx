@@ -9,6 +9,7 @@ import { useMemo, useState } from "react";
 import { UnitStatusIcon, UnitStatusPill } from "@/components/status";
 import { LoadMoreBlock } from "@/components/ui/load-more";
 import { BusyLabel, Collapse, Refresh, Truncate } from "@/components/ui/motion";
+import { Select } from "@/components/ui/select";
 import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
 import {
@@ -362,19 +363,27 @@ export default function MatchPage() {
                 {t("classify.clear")}
               </button>
             </div>
-            <label className="flex items-center gap-2 text-xs text-ink-2">
+            <span className="flex items-center gap-2 text-xs text-ink-2">
               {t("classify.changeType")}
               {needsChangeType ? (
-                <select className="h-7 rounded-md border border-line-2 bg-surface px-1.5 text-[13px] text-ink" data-testid="match-change" value={changeType} disabled={!canEdit} onChange={(event) => setChangeType(event.target.value === "tone" ? "tone" : "rewritten")}>
-                  <option value="tone">{t("change.tone")}</option>
-                  <option value="rewritten">{t("change.rewritten")}</option>
-                </select>
+                <Select
+                  testId="match-change"
+                  ariaLabel={t("classify.changeType")}
+                  size="sm"
+                  value={changeType}
+                  disabled={!canEdit}
+                  options={[
+                    { value: "tone", label: t("change.tone") },
+                    { value: "rewritten", label: t("change.rewritten") },
+                  ]}
+                  onChange={setChangeType}
+                />
               ) : (
                 <span className="text-[13px] text-ink" data-testid="match-change">
                   {sourcesAfter.length === 0 ? "–" : isExact ? t("change.as_is") : t("change.merged")}
                 </span>
               )}
-            </label>
+            </span>
             <section className="grid gap-2">
               <h2 className="text-xs font-semibold text-ink-3">{t("match.sources")}</h2>
               {linked.length === 0 ? (

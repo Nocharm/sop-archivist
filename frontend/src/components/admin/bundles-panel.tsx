@@ -8,7 +8,7 @@ import { useState } from "react";
 
 import { MembersModal } from "@/components/manage/members-modal";
 import { BundleStatusPill } from "@/components/status";
-import { LoadMoreRows } from "@/components/ui/load-more";
+import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { Truncate } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -18,8 +18,11 @@ import { formatKst } from "@/lib/datetime";
 import { getDisplayName } from "@/lib/display-name";
 import { useI18n } from "@/lib/i18n";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
+import { useListView } from "@/lib/use-list-view";
 import { useLoaded } from "@/lib/use-loaded";
 import { useProgressiveList } from "@/lib/use-progressive-list";
+
+const LIST_KEY = "admin-bundles";
 
 function ProgressText({ progress }: { progress: LangProgress }) {
   if (progress.total === 0) return <span className="text-ink-4">–</span>;
@@ -47,6 +50,64 @@ export function BundlesPanel() {
     .filter((bundle) => needle === "" || bundle.title.toLowerCase().includes(needle) || bundle.members.some((member) => member.login_id.includes(needle)));
   const attentionCount = all.filter((bundle) => !bundle.has_active_author).length;
   const rows = useProgressiveList(filtered, `${needle}:${onlyAttention}`);
+  const view = useListView(LIST_KEY);
+
+  const columns: DataColumn<AdminBundle>[] = [
+    {
+      key: "title",
+      header: t("bundles.colTitle"),
+      card: "title",
+      grow: true,
+      minWidth: 220,
+      skeletonWidth: 220,
+      cell: (bundle) => (
+        <>
+          <Link href={`/bundles/${bundle.id}`} className="block font-semibold text-ink hover:underline" data-testid={`admin-bundle-link-${bundle.id}`}>
+            <Truncate text={bundle.title} />
+          </Link>
+          {!bundle.has_active_author && <span className="pill danger mt-1">{t("adminBundles.noAuthor")}</span>}
+        </>
+      ),
+    },
+    { key: "status", header: t("bundles.colStatus"), card: "badge", nowrap: true, skeletonWidth: 84, cell: (bundle) => <BundleStatusPill status={bundle.status} /> },
+    {
+      key: "members",
+      header: t("overview.members"),
+      card: "body",
+      className: "max-w-[280px]",
+      skeletonWidth: 200,
+      cell: (bundle) => (
+        <Truncate
+          className="text-ink-2"
+          text={bundle.members.map((member) => `${getDisplayName(member, lang)} (${t(`role.${member.role}`)}${member.active ? "" : `, ${t("overview.noAccess")}`})`).join(", ")}
+        />
+      ),
+    },
+    { key: "ko", header: <span className="lg">KO</span>, cardLabel: <span className="lg">KO</span>, align: "end", nowrap: true, skeletonWidth: 60, cell: (bundle) => <ProgressText progress={bundle.progress.ko} /> },
+    { key: "en", header: <span className="lg">EN</span>, cardLabel: <span className="lg">EN</span>, align: "end", nowrap: true, skeletonWidth: 60, cell: (bundle) => <ProgressText progress={bundle.progress.en} /> },
+    {
+      key: "created",
+      header: t("adminBundles.created"),
+      nowrap: true,
+      skeletonWidth: 110,
+      cell: (bundle) => <span className="tabular-nums text-ink-2">{formatKst(bundle.created_at)}</span>,
+    },
+    {
+      key: "actions",
+      header: <span className="sr-only">{t("manage.rowActions")}</span>,
+      card: "actions",
+      className: "w-10",
+      skeletonWidth: 32,
+      cell: (bundle) => (
+        <span className="row-actions">
+          <button type="button" className="btn ghost h-7 px-2 text-xs" data-testid={`admin-bundle-members-${bundle.id}`} onClick={() => setEditing(bundle)}>
+            <Users size={14} strokeWidth={1.5} aria-hidden />
+            {t("members.manage")}
+          </button>
+        </span>
+      ),
+    },
+  ];
 
   return (
     <div className="grid gap-4" data-testid="admin-bundles">
@@ -70,6 +131,7 @@ export function BundlesPanel() {
         >
           {t("adminBundles.attention", { n: attentionCount })}
         </button>
+        <ListViewToggle listKey={LIST_KEY} view={view} testId="admin-bundles-view" />
       </div>
       {error !== null && data === null ? (
         <p className="text-ink-2" data-testid="admin-bundles-error">
@@ -83,73 +145,19 @@ export function BundlesPanel() {
           {t("adminBundles.empty")}
         </p>
       ) : (
-        <div className="dense overflow-hidden rounded-lg border border-line bg-surface">
-          <table className="dtable" data-testid="admin-bundles-list">
-            <thead>
-              <tr>
-                <th>{t("bundles.colTitle")}</th>
-                <th>{t("bundles.colStatus")}</th>
-                <th>{t("overview.members")}</th>
-                <th className="num">
-                  <span className="lg">KO</span>
-                </th>
-                <th className="num">
-                  <span className="lg">EN</span>
-                </th>
-                <th>{t("adminBundles.created")}</th>
-                <th aria-label={t("manage.rowActions")} />
-              </tr>
-            </thead>
-            <tbody>
-              {data === null
-                ? showSkeleton &&
-                  Array.from({ length: 5 }, (_, index) => (
-                    <tr key={index}>
-                      {[220, 84, 200, 60, 60, 110, 32].map((width, cell) => (
-                        <td key={cell}>
-                          <span className="sk h-5" style={{ width }} />
-                        </td>
-                      ))}
-                    </tr>
-                  ))
-                : rows.visible.map((bundle) => (
-                    <tr key={bundle.id} data-testid={`admin-bundle-${bundle.id}`}>
-                      <td className="max-w-[320px]">
-                        <Link href={`/bundles/${bundle.id}`} className="block font-semibold text-ink hover:underline" data-testid={`admin-bundle-link-${bundle.id}`}>
-                          <Truncate text={bundle.title} />
-                        </Link>
-                        {!bundle.has_active_author && <span className="pill danger mt-1">{t("adminBundles.noAuthor")}</span>}
-                      </td>
-                      <td>
-                        <BundleStatusPill status={bundle.status} />
-                      </td>
-                      <td className="max-w-[280px]">
-                        <Truncate
-                          className="text-ink-2"
-                          text={bundle.members.map((member) => `${getDisplayName(member, lang)} (${t(`role.${member.role}`)}${member.active ? "" : `, ${t("overview.noAccess")}`})`).join(", ")}
-                        />
-                      </td>
-                      <td className="num">
-                        <ProgressText progress={bundle.progress.ko} />
-                      </td>
-                      <td className="num">
-                        <ProgressText progress={bundle.progress.en} />
-                      </td>
-                      <td className="whitespace-nowrap tabular-nums text-ink-2">{formatKst(bundle.created_at)}</td>
-                      <td className="w-10">
-                        <span className="row-actions">
-                          <button type="button" className="btn ghost h-7 px-2 text-xs" data-testid={`admin-bundle-members-${bundle.id}`} onClick={() => setEditing(bundle)}>
-                            <Users size={14} strokeWidth={1.5} aria-hidden />
-                            {t("members.manage")}
-                          </button>
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-              {data !== null && rows.hasMore && <LoadMoreRows sentinelRef={rows.sentinelRef} columns={7} testId="admin-bundles-more" />}
-            </tbody>
-          </table>
-        </div>
+        <DataList
+          view={view}
+          rows={data === null ? null : rows.visible}
+          columns={columns}
+          getRowKey={(bundle) => bundle.id}
+          testId="admin-bundles-list"
+          rowTestId={(bundle) => `admin-bundle-${bundle.id}`}
+          showSkeleton={showSkeleton}
+          skeletonRows={5}
+          more={{ hasMore: rows.hasMore, sentinelRef: rows.sentinelRef, testId: "admin-bundles-more" }}
+          cardMinWidth={340}
+          framed
+        />
       )}
       {editing && (
         <MembersModal

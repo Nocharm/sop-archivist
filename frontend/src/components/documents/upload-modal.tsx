@@ -6,6 +6,7 @@ import { useRef, useState } from "react";
 
 import { DocStatusPill, getDocReason } from "@/components/documents/doc-status";
 import { Modal } from "@/components/modal";
+import { Select } from "@/components/ui/select";
 import { humanizeApiError } from "@/lib/api-errors";
 import { uploadDocument, type DocSide, type SopDocument, type TargetDocType } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
@@ -92,10 +93,17 @@ export function UploadModal({ bundleId, onClose, onUploaded }: UploadModalProps)
             <div className="grid grid-cols-2 gap-3">
               <label className="space-y-1">
                 <span className="text-xs text-ink-2">{t("documents.docType")}</span>
-                <select data-testid="upload-doc-type" className={INPUT_FIELD} value={docType} onChange={(event) => setDocType(event.target.value === "wi" ? "wi" : "sop")}>
-                  <option value="sop">SOP</option>
-                  <option value="wi">WI</option>
-                </select>
+                <Select
+                  testId="upload-doc-type"
+                  ariaLabel={t("documents.docType")}
+                  className="w-full"
+                  value={docType}
+                  options={[
+                    { value: "sop", label: "SOP" },
+                    { value: "wi", label: "WI" },
+                  ]}
+                  onChange={setDocType}
+                />
               </label>
               <label className="space-y-1">
                 <span className="text-xs text-ink-2">{t("documents.parentCode")}</span>
