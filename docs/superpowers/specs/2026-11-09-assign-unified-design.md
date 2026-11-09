@@ -1,7 +1,7 @@
 # 3단계 Assign 통합 화면 설계
 
 - 날짜: 2026-11-09 · 대상 버전: v0.10.0 (MINOR, 화면 동작이 바뀐다)
-- 목업(사용자 확인본, 단계별 따라가기): https://claude.ai/artifact/KWf4qXJBqKrV5YsdHiLdPx (비공개 Artifact. 같은 파일을 `docs/design/2026-11-09-assign-mock.html`에 두었다 — 브라우저로 열면 그대로 돈다)
+- 목업(사용자 확인본, 단계별 따라가기): https://claude.ai/artifact/KWf4qXJBqKrV5YsdHiLdPx (비공개 Artifact. 저장소 사본 `docs/design/2026-11-09-assign-mock.html`은 main 머지 뒤 지웠다 — git history)
 - 판단 기준: 제품 명세 `docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md` §5(두 입구)·§7.10(입구 2 짝 맞추기)
 
 ## 1. 왜
@@ -109,7 +109,7 @@
 - 순수 모델: 지금 `classify-model`·`match-model`의 규칙을 `assign-model`로 모으고 시험한다(저장 묶음 만들기, 추천 섞기, 짝 자동 붙이기, 다음 미완, 확대·폭 범위).
 - i18n: `classify.*`·`match.*` 중 쓰는 것을 `assign.*`로, 안 쓰는 키는 지운다(en·ko 한 쌍 규칙).
 - 스모크(`pw-smoke-sop`)의 분류·짝 맞추기 단계, 대비 감사 화면 목록, 설명서 그림(`pw-manual-shots`)과 `docs/manual/system-walkthrough.html`의 분류·짝 맞추기 장.
-- 목업 HTML을 `docs/design/2026-11-09-assign-mock.html`로 저장소에 넣고(`docs/design/README.md` 색인), 머지 뒤 지운다(설계 스냅샷 폐기 정책).
+- 목업 HTML은 개발 동안 `docs/design/`에 두었다가 머지 뒤 지웠다(설계 스냅샷 폐기 정책).
 
 ## 9. 검증
 
