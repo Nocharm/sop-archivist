@@ -236,7 +236,9 @@ def test_concurrency_limit(monkeypatch: pytest.MonkeyPatch, limit: int) -> None:
 
         install_ai_transport(monkeypatch, handler)
         tasks = [asyncio.create_task(ai_client.call_ai(MESSAGES)) for _ in range(limit + 1)]
-        for _ in range(100):  # 상한까지 찰 때까지(최대 1초) 기다린다
+        # 상한까지 찰 때까지 기다린다 — 차면 바로 빠지므로 평소엔 짧다. 최대치는 느린 CI 러너에서 호출이
+        # 다 들어오기 전에 단언하지 않게 10초로 둔다(1초였을 때는 러너가 느리면 peak가 상한보다 작게 끝날 수 있었다)
+        for _ in range(1000):
             if active == limit:
                 break
             await asyncio.sleep(0.01)

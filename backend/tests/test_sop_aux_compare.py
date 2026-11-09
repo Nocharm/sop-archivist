@@ -96,8 +96,9 @@ def test_normalize_stays_linear_on_unclosed_markup() -> None:
     for text in hostile:
         normalize_for_compare(text)
 
-    # 제곱 시간이면 분 단위가 걸린다 — 실제로는 1초 안쪽이라 느린 기계에서도 여유가 크다
-    assert time.perf_counter() - started < 5
+    # 제곱 시간이면 분 단위가 걸린다 — 로컬은 1초 안쪽이지만 GitLab CI 러너는 몇 배 느려서(같은 꼴의
+    # test_sop_checks 선형성 시험이 로컬 1.8초 → CI 6.6초), 러너 속도와 상관없이 회귀만 잡도록 30초로 둔다
+    assert time.perf_counter() - started < 30
 
 
 def test_normalize_drops_note_reference_marks() -> None:

@@ -37,6 +37,8 @@ pytestmark = pytest.mark.usefixtures("clean_embedding_cache", "clean_ai_usage")
 SENTINEL = "SENTINEL-TEXT"
 EMBED_USAGE_FEATURE = "sop.embed"
 UNIT_NORM_TOLERANCE = 1e-6
+# 멈춤(교착)을 잡는 상한일 뿐 시간을 재는 단언이 아니다 — 느린 GitLab CI 러너에서도 정상 경로가 넘지 않게 넉넉히 둔다
+HANG_GUARD_SECONDS = 30
 
 Handler = Callable[[httpx2.Request], httpx2.Response]
 
@@ -409,7 +411,7 @@ def test_concurrent_inserts_of_the_same_text_do_not_conflict(monkeypatch: pytest
 
         install_ai_transport(monkeypatch, handler)
         results = await asyncio.wait_for(
-            asyncio.gather(embed_texts(["same"], login_id="ops.a"), embed_texts(["same"], login_id="ops.b")), timeout=10
+            asyncio.gather(embed_texts(["same"], login_id="ops.a"), embed_texts(["same"], login_id="ops.b")), timeout=HANG_GUARD_SECONDS
         )
         return calls, list(results)
 

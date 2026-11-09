@@ -57,6 +57,8 @@ NO_JOBS = dict.fromkeys(AI_JOB_STATUSES, 0)
 WITH_REVIEWER = [("qa.member", "author"), ("qa.lead", "reviewer")]
 SENTINEL = "SENTINEL-TEXT"
 FAST_POLL_SECONDS = 0.01
+# 멈춤(교착)을 잡는 상한일 뿐 시간을 재는 단언이 아니다 — 느린 GitLab CI 러너에서도 정상 경로가 넘지 않게 넉넉히 둔다
+HANG_GUARD_SECONDS = 30
 
 
 class StubHandler:
@@ -166,7 +168,7 @@ async def _wait_for_statuses(job_ids: Sequence[int], expected: Sequence[str]) ->
                     return
             await asyncio.sleep(FAST_POLL_SECONDS)
 
-    await asyncio.wait_for(_poll(), timeout=5)
+    await asyncio.wait_for(_poll(), timeout=HANG_GUARD_SECONDS)
 
 
 def _post_ai(
@@ -713,7 +715,7 @@ def test_worker_loop_stops_cleanly_on_cancel(
 
         monkeypatch.setitem(HANDLERS, "classify", StubHandler(on_compute=hold_until_cancelled))
         worker = asyncio.create_task(run_ai_worker())
-        await asyncio.wait_for(started.wait(), timeout=5)
+        await asyncio.wait_for(started.wait(), timeout=HANG_GUARD_SECONDS)
 
         worker.cancel()
         with pytest.raises(asyncio.CancelledError):

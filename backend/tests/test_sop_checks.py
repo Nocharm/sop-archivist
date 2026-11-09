@@ -277,7 +277,9 @@ def test_long_input_stays_linear():
         check_sentence([text], text + " 끝")
     elapsed = time.perf_counter() - started
 
-    assert elapsed < 5.0
+    # 선형인지만 본다 — 제곱 시간이면 이 입력에서 분 단위가 걸린다. 로컬은 약 1.8초(입력 4배에 시간 4~7배로 선형)인데
+    # GitLab CI 러너가 느려 6.6초가 나와 5.0초 상한에 걸렸다(2026-11-09). 러너 속도와 상관없이 회귀만 잡도록 30초로 둔다
+    assert elapsed < 30.0
 
 
 # 아래는 수정 1회차(R22~R26) 고정 테스트

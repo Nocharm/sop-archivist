@@ -15,6 +15,9 @@ from app.models import Department, Employee, HrSyncRun
 from app.settings import settings
 from tests.hr_sync_helpers import _get_employee, _hr_row, _mock_hr, _run_sync, _seed_employee
 
+# 멈춤(교착)을 잡는 상한일 뿐 시간을 재는 단언이 아니다 — 느린 GitLab CI 러너에서도 정상 경로가 넘지 않게 넉넉히 둔다
+HANG_GUARD_SECONDS = 30
+
 pytestmark = pytest.mark.usefixtures("clean_directory")
 
 
@@ -243,10 +246,10 @@ def test_overlapping_full_sync_is_rejected_while_one_is_running(client: TestClie
 
         monkeypatch.setattr(hr_client, "fetch_all_employees", blocking_fetch)
         first = asyncio.create_task(_run_guarded_sync())
-        await asyncio.wait_for(entered.wait(), timeout=5)
+        await asyncio.wait_for(entered.wait(), timeout=HANG_GUARD_SECONDS)
         with pytest.raises(hr_service.SyncTooSoon) as overlap:
             # 잠금이 없으면 이 호출도 HR 응답을 기다리다 시간 초과로 실패한다
-            await asyncio.wait_for(_run_guarded_sync(), timeout=5)
+            await asyncio.wait_for(_run_guarded_sync(), timeout=HANG_GUARD_SECONDS)
         release.set()
         assert (await first).upserted == 1
         return overlap.value
