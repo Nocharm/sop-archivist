@@ -2,7 +2,8 @@
 import { describe, expect, it } from "vitest";
 
 import type { Decision, Group, GroupTarget, GroupUnit, NewCandidate, WrittenSentence } from "./api-sop";
-import { addPartnerTargets, buildRecommendations, clampSplit, clampZoom, listCoConfirmed, listUnsourced, mergeGroups, stepZoom } from "./assign-model";
+import { addPartnerTargets, buildRecommendations, canMakeOtherLanguage, clampSplit, clampZoom, listCoConfirmed, listSiblingPlaces, listUnsourced, mergeGroups, pickNearby, stepZoom } from "./assign-model";
+import type { DestinationOption } from "./classify-model";
 
 function makeDecision(status: Decision["status"]): Decision {
   return { disposition: "assigned", move_target_code: "", reason: "", status, hold_reason: "", confirmed_by: null, confirmed_at: null, revision: 1 };
@@ -121,5 +122,48 @@ describe("zoom and split ranges", () => {
     expect(clampSplit(0.9)).toBe(0.7);
     expect(clampSplit(0.1)).toBe(0.3);
     expect(clampSplit(0.55)).toBe(0.55);
+  });
+});
+
+describe("pickNearby", () => {
+  const rows = [makeWritten(1), makeWritten(2), makeWritten(3, { kind: "table" }), makeWritten(4), makeWritten(5, { target_doc_id: 8 })];
+
+  it("returns the sentences around the picked ones in the same document", () => {
+    expect(pickNearby(rows, [2]).map((row) => row.target_id)).toEqual([1, 4]);
+  });
+
+  it("skips tables and other documents", () => {
+    expect(pickNearby(rows, [4]).map((row) => row.target_id)).toEqual([2]);
+  });
+});
+
+describe("listSiblingPlaces", () => {
+  const option = (slotKey: string, docId = 6, disabled = false): DestinationOption => ({
+    id: `slot:${docId}:${slotKey}`, destination: { kind: "slot", docId, slotKey }, docCode: "SOP-CF", label: slotKey, disabled, depth: 0,
+  });
+  const options = [option("purpose"), option("scope"), option("defs", 6, true), option("resp"), option("other", 7)];
+
+  it("lists the other places of the same To-Be document, N/A included", () => {
+    expect(listSiblingPlaces(options, { kind: "slot", docId: 6, slotKey: "scope" }).map((item) => item.label)).toEqual(["purpose", "defs", "resp"]);
+  });
+
+  it("has nothing for links and disposals", () => {
+    expect(listSiblingPlaces(options, { kind: "delete" })).toEqual([]);
+  });
+});
+
+describe("canMakeOtherLanguage", () => {
+  const slot = { kind: "slot", docId: 6, slotKey: "scope" } as const;
+
+  it("offers the missing language for a confirmed one-language row in a slot", () => {
+    expect(canMakeOtherLanguage(["ko"], slot, true)).toBe("en");
+    expect(canMakeOtherLanguage(["en"], slot, true)).toBe("ko");
+  });
+
+  it("offers nothing before confirming, for pairs, or for links", () => {
+    expect(canMakeOtherLanguage(["ko"], slot, false)).toBeNull();
+    expect(canMakeOtherLanguage(["ko", "en"], slot, true)).toBeNull();
+    expect(canMakeOtherLanguage(["ko"], { kind: "link", targetIds: [1] }, true)).toBeNull();
+    expect(canMakeOtherLanguage(["neutral"], slot, true)).toBeNull();
   });
 });

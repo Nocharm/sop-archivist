@@ -989,7 +989,58 @@
   .new-src.is-new { background: var(--sunken); color: var(--ink-3); }
   .pg .new-block { margin: 4px 0; padding: 6px 8px; border: 1px dashed var(--line-2); border-radius: var(--r-1); font: var(--fs-cap) / var(--lh-cap) var(--font-ui); color: var(--ink-3); }
 
+  /* 오른쪽 칸 - 범례, 아코디언, 추천 카드, 전체 나무 */
+  .assign-legend { display: grid; gap: 14px; padding: 14px; font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-2); }
+  .assign-legend h3 { margin: 0 0 6px; font-size: var(--fs-micro); font-weight: 700; letter-spacing: 0.06em; color: var(--ink-3); }
+  .legend-row { display: grid; grid-template-columns: 58px minmax(0, 1fr); align-items: center; gap: 8px; padding-block: 2px; }
+  .legend-swatch { justify-self: center; display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }
+  .legend-box { width: 30px; height: 14px; border-radius: var(--r-1); }
+  .legend-box[data-state="candidate"] { outline: 1.5px dashed var(--accent); outline-offset: -1.5px; }
+  .legend-box[data-state="picked"] { background: var(--accent-tint); box-shadow: inset 0 0 0 1.5px var(--accent); }
+  .legend-box[data-state="unsourced"] { background: var(--danger-tint); box-shadow: inset 0 0 0 1.5px var(--danger-ink); }
+  .legend-wrap { position: relative; }
+  .legend-pop { position: absolute; top: calc(100% + 4px); right: 0; z-index: 30; width: 320px; border: 1px solid var(--line-2); border-radius: var(--r-3); background: var(--raised); box-shadow: var(--shadow-2); visibility: hidden; opacity: 0; translate: 0 -4px; transition: opacity var(--dur-fast), translate var(--dur-fast), visibility var(--dur-fast); }
+  .legend-wrap:hover .legend-pop, .legend-wrap:focus-within .legend-pop { visibility: visible; opacity: 1; translate: 0 0; }
+
+  .dest-acc-item { border-top: 1px solid var(--line); }
+  .dest-acc-head { display: flex; width: 100%; align-items: center; gap: 8px; padding: 10px var(--pad); font-size: var(--fs-cap); font-weight: 700; color: var(--ink-2); text-align: left; cursor: pointer; }
+  .dest-acc-head:hover { background: var(--hover); }
+  .dest-acc-count { color: var(--ink-4); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .dest-acc-chev { margin-left: auto; color: var(--ink-4); transition: rotate var(--dur-fast); }
+  .dest-acc-head[aria-expanded="true"] .dest-acc-chev { rotate: 90deg; }
+  .dest-acc-body { display: grid; gap: 6px; padding: 0 var(--pad) 12px; }
+
+  .dest-card { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; width: 100%; padding: 9px 10px; border: 1px solid var(--line-2); border-radius: var(--r-3); background: var(--surface); text-align: left; cursor: pointer; transition: border-color var(--dur-fast), background var(--dur-fast); }
+  .dest-card:hover { border-color: var(--accent); }
+  .dest-card[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-tint); }
+  .dest-card-icon { display: grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-1); background: var(--sunken); color: var(--ink-2); }
+  .dest-card[data-tone="link"] .dest-card-icon { color: var(--accent); }
+  .dest-card[data-tone="danger"] .dest-card-icon { color: var(--danger-ink); }
+  .dest-card-title { display: block; font-size: var(--fs-cap); color: var(--ink-3); }
+  .dest-card-title b { font-family: var(--font-mono); font-weight: 600; color: var(--ink); }
+  .dest-card-text { display: block; font-size: 13px; line-height: 19px; color: var(--ink); }
+  .dest-card-note { display: block; margin-top: 2px; font-size: var(--fs-micro); color: var(--ink-3); }
+
+  .dest-tree { display: grid; gap: 1px; }
+  .tree-group { margin: 6px 0 2px; font-size: var(--fs-micro); font-weight: 700; color: var(--ink-3); }
+  .tree-node { display: flex; width: 100%; align-items: center; gap: 6px; padding: 5px 6px; border-radius: var(--r-1); font-size: 13px; text-align: left; cursor: pointer; }
+  .tree-node:hover { background: var(--hover); }
+  .tree-node b { font: 600 var(--fs-cap) var(--font-mono); }
+  .tree-chev { color: var(--ink-4); transition: rotate var(--dur-fast); }
+  .tree-node[aria-expanded="true"] .tree-chev { rotate: 90deg; }
+  .tree-sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-cap); color: var(--ink-3); }
+  .tree-kids { display: grid; gap: 1px; padding-left: 18px; }
+  .tree-section { margin: 4px 0 0; font-size: var(--fs-micro); font-weight: 600; color: var(--ink-3); }
+  .tree-leaf { display: block; width: 100%; padding: 4px 8px; border-radius: var(--r-1); font-size: var(--fs-cap); line-height: 17px; color: var(--ink-2); text-align: left; cursor: pointer; }
+  .tree-leaf .ptag { margin-right: 5px; }
+  .tree-leaf:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+  .tree-leaf:disabled { color: var(--ink-4); cursor: not-allowed; }
+
+  .mini-chip { height: 24px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: var(--r-1); font-size: var(--fs-micro); color: var(--ink-2); cursor: pointer; }
+  .mini-chip:hover { background: var(--hover); color: var(--ink); }
+  .mini-chip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-tint); color: var(--ink); font-weight: 600; }
+
   @media (prefers-reduced-motion: reduce) {
-    .pane-zoom, .pane-divider::before { transition: none; }
+    .pane-zoom, .pane-divider::before, .legend-pop, .dest-acc-chev, .tree-chev, .dest-card { transition: none; }
   }
 }

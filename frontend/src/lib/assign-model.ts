@@ -1,7 +1,7 @@
 // Assign 화면 모델 - Old 조각 한 줄씩 보낼 곳을 정한다(설계 docs/superpowers/specs/2026-11-09-assign-unified-design.md).
 // 저장 요청은 classify-model의 buildGroupSave(보낼 곳 link 포함)가 만들고, 여기는 묶음 합치기·함께 확정·짝 자동·추천 섞기·범위 규칙이다.
 
-import type { Destination } from "./classify-model";
+import type { Destination, DestinationOption } from "./classify-model";
 import type { Group, NewCandidate, UnitLang, WrittenSentence } from "./api-sop";
 
 /** 연결 저장 전에 줄 묶음과 고른 문장들의 묶음을 하나로 - 서버는 닫힌 묶음 전체를 받아야 저장한다 */
@@ -101,4 +101,30 @@ export function stepZoom(zoom: number, dir: "+" | "-" | "0"): number {
 /** 두 문서 폭 - 왼쪽(Old) 비율 30~70% */
 export function clampSplit(ratio: number): number {
   return Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, ratio));
+}
+
+/** ② 가까운 곳 - 고른 문장 앞뒤의 문장(같은 New 문서, 표·그림 제외) */
+export function pickNearby(rows: WrittenSentence[], targetIds: number[], span = 1): WrittenSentence[] {
+  const anchor = rows.find((row) => targetIds.includes(row.target_id));
+  if (!anchor) return [];
+  const doc = rows.filter((row) => row.target_doc_id === anchor.target_doc_id && row.kind === "sentence");
+  const positions = doc.map((row, index) => (targetIds.includes(row.target_id) ? index : -1)).filter((index) => index >= 0);
+  const from = Math.min(...positions) - span;
+  const to = Math.max(...positions) + span;
+  return doc.filter((row, index) => index >= from && index <= to && !targetIds.includes(row.target_id));
+}
+
+/** ② 가까운 곳 - 같은 To-Be 문서의 다른 칸·단계(N/A도 보이되 고를 수 없다) */
+export function listSiblingPlaces(options: DestinationOption[], destination: Destination, limit = 4): DestinationOption[] {
+  if (destination.kind !== "slot" && destination.kind !== "step") return [];
+  const own = keyOf(destination);
+  return options.filter((option) => (option.destination.kind === "slot" || option.destination.kind === "step") && option.destination.docId === destination.docId && keyOf(option.destination) !== own).slice(0, limit);
+}
+
+/** "영어 만들기"·"한국어 만들기" - 한 언어만 있는 줄을 아직 안 쓴 문서의 칸에 확정한 뒤, 없는 언어 */
+export function canMakeOtherLanguage(rowLangs: UnitLang[], destination: Destination | null, confirmed: boolean): "ko" | "en" | null {
+  if (!confirmed || !destination || (destination.kind !== "slot" && destination.kind !== "step")) return null;
+  const langs = new Set(rowLangs.filter((lang) => lang !== "neutral"));
+  if (langs.size !== 1) return null;
+  return langs.has("ko") ? "en" : "ko";
 }
