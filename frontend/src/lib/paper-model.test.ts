@@ -168,6 +168,11 @@ describe("canMergeAdjacent", () => {
     expect(canMergeAdjacent(makeSplitUnit({ id: 1 }), makeSplitUnit({ id: 2 }))).toBe(true);
   });
 
+  it("refuses different languages and the same unit on both sides", () => {
+    expect(canMergeAdjacent(makeSplitUnit({ id: 1, lang: "ko" }), makeSplitUnit({ id: 2, lang: "en" }))).toBe(false);
+    expect(canMergeAdjacent(makeSplitUnit({ id: 3 }), makeSplitUnit({ id: 3 }))).toBe(false);
+  });
+
   it("refuses tables, figures and units in different cells", () => {
     expect(canMergeAdjacent(makeSplitUnit(), makeSplitUnit({ id: 2, kind: "figure" }))).toBe(false);
     expect(canMergeAdjacent(makeSplitUnit({ kind: "cell_sentence", table_id: 3, block_id: 10 }), makeSplitUnit({ id: 2, kind: "cell_sentence", table_id: 3, block_id: 11 }))).toBe(false);

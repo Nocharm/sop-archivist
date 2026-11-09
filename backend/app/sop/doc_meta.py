@@ -60,6 +60,15 @@ def detect_language_layout(blocks: Sequence[ExtractedBlock]) -> str:
     ]
     if not langs:
         return DEFAULT_LAYOUT
+    # 한쪽 언어 문단뿐인데 표 칸에 두 언어가 다 있으면 KO|EN 레이아웃 표 문서다 — 기본(연달아)으로 두어 표의 코드 짝을 지킨다
+    cell_langs = {
+        lang
+        for block in blocks
+        if block.part == "body" and block.kind == "table_cell"
+        if (lang := detect_language(block.text)) is not None
+    }
+    if len(set(langs)) == 1 and cell_langs == {"ko", "en"}:
+        return DEFAULT_LAYOUT
     if "ko" not in langs:
         return "en_only"
     if "en" not in langs:

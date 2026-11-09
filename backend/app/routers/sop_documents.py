@@ -29,6 +29,7 @@ from app.sop.editing import (
     set_boundary_confirmed,
     undo_edit,
 )
+from app.sop.ai.adoption import record_doc_meta_adoption
 from app.sop.ai.doc_meta_job import build_ai_meta, enqueue_doc_meta, load_open_doc_meta
 from app.sop.filename import parse_file_name
 from app.sop.errors import check_revision, raise_rule
@@ -465,15 +466,9 @@ async def update_document(
     }
     if changes:  # 바뀐 게 없으면 revision을 올리지 않고 기록도 남기지 않는다
         # 비어 있던 칸을 AI 제안이 있는 채로 채우면 채택을 남긴다(같은 값 as_is, 다른 값 edited) — 처음 정한 판정이 남는다
+        empty_before = [name for name in ("doc_code", "doc_version") if not getattr(document, name)]
         suggestion = (await load_open_doc_meta(session, [document.id])).get(document.id)
-        if suggestion is not None and suggestion.adoption is None:
-            for name, key in (("doc_code", "doc_code"), ("doc_version", "doc_version")):
-                offered = suggestion.content.get(key)
-                if name in changes and offered and not getattr(document, name):
-                    suggestion.adoption = "as_is" if changes[name] == offered else "edited"
-                    suggestion.adopted_by = ctx.login_id
-                    suggestion.adopted_at = now()
-                    break
+        record_doc_meta_adoption(suggestion, changes, empty_before, ctx.login_id)
         if "doc_code" in changes and document.target_doc_id is not None:
             # 새 문서의 번호는 To-Be 목록 줄 번호이기도 하다 — 비우면 다시 임시 번호로 돌아간다
             await rename_match_doc(

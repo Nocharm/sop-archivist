@@ -104,3 +104,13 @@ def test_listing_does_not_repeat_the_sources(client: TestClient) -> None:
     listed = client.get(f"/api/bundles/{bundle['id']}/documents", headers={"X-Dev-User": "qa.member"}).json()
 
     assert listed[0]["prefill_sources"] == {}
+
+
+def test_layout_table_with_both_languages_keeps_interleaved() -> None:
+    # 한글 제목 하나 + 본문 전체가 KO|EN 두 열 레이아웃 표인 문서 — 문단만 보면 ko_only지만 표 칸에 두 언어가 다 있다
+    blocks = [_block(0, "원심분리기 운전")] + [
+        _block(1 + index, "장갑을 낀다." if index % 2 == 0 else "Wear gloves.", kind="table_cell", table_index=0)
+        for index in range(10)
+    ]
+
+    assert detect_language_layout(blocks) == "ko_en_interleaved"

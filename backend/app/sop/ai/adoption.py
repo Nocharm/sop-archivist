@@ -175,6 +175,26 @@ async def _load_units_with_cells(session: AsyncSession, unit_ids: Collection[int
     return units
 
 
+_DOC_META_FIELDS = ("doc_code", "doc_version")
+
+
+def decide_doc_meta_adoption(offered: Mapping[str, Any], saved: Mapping[str, Any]) -> str | None:
+    """문서 정보 제안의 채택 — 제안이 있던 칸을 사람이 저장했을 때만 판정한다. 모두 같은 값이면 as_is, 하나라도 다르면 edited."""
+    judged = [field for field in _DOC_META_FIELDS if offered.get(field) and field in saved]
+    if not judged:
+        return None
+    return "as_is" if all(saved[field] == offered[field] for field in judged) else "edited"
+
+
+def record_doc_meta_adoption(suggestion: AiSuggestion | None, saved: Mapping[str, Any], empty_before: Collection[str], actor: str) -> None:
+    """문서 PATCH 트랜잭션 안에서 — 비어 있던 칸을 채웠을 때만 판정하고, 처음 정한 판정이 남는다."""
+    if suggestion is None or suggestion.adoption is not None:
+        return
+    adoption = decide_doc_meta_adoption(suggestion.content, {field: value for field, value in saved.items() if field in empty_before})
+    if adoption is not None:
+        _set_adoption(suggestion, adoption, actor, now())
+
+
 def _set_adoption(suggestion: AiSuggestion, adoption: str, actor: str, stamp: datetime) -> None:
     suggestion.adoption, suggestion.adopted_by, suggestion.adopted_at = adoption, actor, stamp
 

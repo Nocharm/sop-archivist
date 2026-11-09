@@ -56,6 +56,8 @@ export default function HistoryPage() {
     void Promise.resolve().then(onReachEnd);
   }, []);
 
+  // 받은 수가 바뀔 때마다 다시 건다 - 거르기 칩으로 보이는 줄이 적어 끝 표지가 계속 화면에 있어도,
+  // 새로 건 관찰자의 첫 알림이 다음 쪽을 부른다(한 번 건 관찰자는 교차가 바뀔 때만 알린다)
   useEffect(() => {
     if (!sentinel) return;
     const observer = new IntersectionObserver((entries) => {
@@ -63,7 +65,7 @@ export default function HistoryPage() {
     }, { rootMargin: "400px 0px" });
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [sentinel]);
+  }, [sentinel, events.length]);
 
   const shown = group === "all" ? events : events.filter((event) => getEventGroup(event.action) === group);
   const isFirstLoad = events.length === 0 && hasMore && error === null;

@@ -120,3 +120,30 @@ def test_saving_the_suggested_value_records_adoption(client: TestClient, fake_ai
     assert saved.json()["ai_meta"]["doc_code"] is None  # 채운 칸은 더 제안하지 않는다
     _, suggestions = _load_doc_meta_rows()
     assert [(suggestion.adoption, suggestion.adopted_by) for suggestion in suggestions] == [("as_is", "qa.member")]
+
+
+def test_typing_a_different_value_records_edited(client: TestClient, fake_ai: FakeAi) -> None:
+    fake_ai.chat = lambda data: json.dumps({"doc_code": "SOP-QC-2207", "version": "2.0"})
+    bundle_id, uploaded = _upload_plain(client)
+    run_jobs()
+
+    saved = client.patch(
+        f"/api/bundles/{bundle_id}/documents/{uploaded['id']}",
+        json={"revision": uploaded["revision"], "doc_version": "3.1", "doc_code": "SOP-QC-2207"}, headers=AUTHOR,
+    )
+
+    assert saved.status_code == 200, saved.text
+    _, suggestions = _load_doc_meta_rows()
+    # 두 칸을 함께 저장하면 둘 다 본다 — 하나라도 고쳤으면 edited
+    assert [suggestion.adoption for suggestion in suggestions] == ["edited"]
+
+
+def test_decide_doc_meta_adoption_rules() -> None:
+    from app.sop.ai.adoption import decide_doc_meta_adoption
+
+    offered = {"doc_code": "SOP-QC-2207", "doc_version": "2.0"}
+    assert decide_doc_meta_adoption(offered, {"doc_code": "SOP-QC-2207"}) == "as_is"
+    assert decide_doc_meta_adoption(offered, {"doc_code": "SOP-QC-9999"}) == "edited"
+    assert decide_doc_meta_adoption(offered, {"doc_code": "SOP-QC-2207", "doc_version": "3.0"}) == "edited"
+    assert decide_doc_meta_adoption(offered, {"title": "x"}) is None
+    assert decide_doc_meta_adoption({"doc_code": None, "doc_version": "2.0"}, {"doc_code": "A-B"}) is None

@@ -6,6 +6,7 @@ import { Loader2, Upload, X } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { DocStatusPill, getDocReason } from "@/components/documents/doc-status";
+import { AiSuggestChip } from "@/components/documents/ai-suggest-chip";
 import { LayoutLabel } from "@/components/documents/layout-picto";
 import { SideChoice } from "@/components/documents/side-choice";
 import { InlineText } from "@/components/inline-text";
@@ -41,9 +42,11 @@ interface UploadModalProps {
   onClose: () => void;
   /** 파일 하나가 끝날 때마다 - 목록을 바로 다시 그린다 */
   onUploaded: () => void;
+  /** 부모가 다시 읽은 최신 문서 - 업로드 뒤 늦게 끝나는 AI 제안(ai_meta)을 결과 행에 보인다 */
+  latest?: SopDocument[];
 }
 
-export function UploadModal({ bundleId, onClose, onUploaded }: UploadModalProps) {
+export function UploadModal({ bundleId, onClose, onUploaded, latest = [] }: UploadModalProps) {
   const { t } = useI18n();
   const fileRef = useRef<HTMLInputElement>(null);
   const [side, setSide] = useState<DocSide>("old");
@@ -169,6 +172,7 @@ export function UploadModal({ bundleId, onClose, onUploaded }: UploadModalProps)
           </div>
           {rows.map((row, index) => {
             const document = row.state === "done" ? row.document : undefined;
+            const aiMeta = document ? latest.find((item) => item.id === document.id)?.ai_meta : undefined;
             const editable = document?.status === "ready";
             return (
               <div key={row.name} className="upload-row" data-testid={`upload-row-${index}`}>
@@ -204,10 +208,16 @@ export function UploadModal({ bundleId, onClose, onUploaded }: UploadModalProps)
                         onSave={(doc_code) => saveRow(index, "doc_code", { doc_code })}
                       />
                       <SourceBadge source={row.sources?.doc_code} />
+                      {!document.doc_code && aiMeta?.doc_code && (
+                        <AiSuggestChip value={aiMeta.doc_code} testId={`upload-row-${index}-code-ai`} onAccept={() => void saveRow(index, "doc_code", { doc_code: aiMeta.doc_code ?? "" })} />
+                      )}
                     </span>
                     <span className="src-cell">
                       <VersionInput value={document.doc_version} testId={`upload-row-${index}-version`} onCommit={(doc_version) => void saveRow(index, "doc_version", { doc_version })} />
                       <SourceBadge source={row.sources?.doc_version} />
+                      {!document.doc_version && aiMeta?.doc_version && (
+                        <AiSuggestChip value={aiMeta.doc_version} testId={`upload-row-${index}-version-ai`} onAccept={() => void saveRow(index, "doc_version", { doc_version: aiMeta.doc_version ?? "" })} />
+                      )}
                     </span>
                     <span className="src-cell">
                       <Select

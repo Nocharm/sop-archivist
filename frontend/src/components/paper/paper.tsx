@@ -288,7 +288,9 @@ export function Paper({
         if (prev.type === "block" && item.type === "block" && prev.block.kind !== "figure" && item.block.kind !== "figure") {
           const prevUnits = listBlockUnits(model, prev.block.id).map((id) => model.units.get(id)).filter((unit): unit is ViewUnit => unit !== undefined);
           const nextUnits = listBlockUnits(model, item.block.id).map((id) => model.units.get(id)).filter((unit): unit is ViewUnit => unit !== undefined);
-          const isCut = [prevUnits, nextUnits].some((units) => units.length > 0 && units.every((unit) => strips.isChecked(unit)));
+          // 한 단위가 두 문단에 걸쳐 있으면 그 사이는 경계가 아니다 - 틈을 긋지 않는다
+          const sharesUnit = prevUnits.some((unit) => nextUnits.includes(unit));
+          const isCut = !sharesUnit && [prevUnits, nextUnits].some((units) => units.length > 0 && units.every((unit) => strips.isChecked(unit)));
           if (isCut) {
             const first = prevUnits[prevUnits.length - 1];
             const second = nextUnits[0];

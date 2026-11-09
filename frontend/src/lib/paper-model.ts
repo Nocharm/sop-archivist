@@ -199,8 +199,9 @@ export function getMarks(unit: ViewUnit): UnitMark[] {
 
 const MERGEABLE_KINDS = new Set(["sentence", "heading", "cell_sentence"]);
 
-/** 종이 틈의 "위아래 합치기" - 둘 다 문장류이고 같은 자리(본문끼리, 또는 같은 표 칸)일 때만 */
+/** 종이 틈의 "위아래 합치기" - 서로 다른 두 문장류, 같은 언어(서버가 섞인 언어를 거절한다), 같은 자리(본문끼리, 또는 같은 표 칸)일 때만 */
 export function canMergeAdjacent(a: ViewUnit, b: ViewUnit): boolean {
+  if (a.id === b.id || a.lang !== b.lang) return false;
   if (!MERGEABLE_KINDS.has(a.kind) || !MERGEABLE_KINDS.has(b.kind)) return false;
   if (a.table_id !== b.table_id) return false;
   return a.table_id === null || a.block_id === b.block_id;

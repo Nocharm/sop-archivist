@@ -8,6 +8,7 @@ import { useState } from "react";
 import { DeleteDocumentModal } from "@/components/documents/delete-document-modal";
 import { AuxPill, DocStatusPill, getDocReason, WarningChips } from "@/components/documents/doc-status";
 import { LayoutLabel } from "@/components/documents/layout-picto";
+import { AiSuggestChip } from "@/components/documents/ai-suggest-chip";
 import { PreviewModal } from "@/components/documents/preview-popover";
 import { UploadModal } from "@/components/documents/upload-modal";
 import { InlineText } from "@/components/inline-text";
@@ -26,20 +27,11 @@ import { useI18n } from "@/lib/i18n";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { saveBlob } from "@/lib/save-file";
 import { useListView } from "@/lib/use-list-view";
+import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useLoaded } from "@/lib/use-loaded";
 
 const SKELETON_ROWS = 4;
 
-/** 비어 있는 칸의 AI 제안 - 흐린 값과 AI 표, 누르면 사람이 그 값으로 저장한다(AI는 문서에 쓰지 않는다) */
-function AiSuggestChip({ value, testId, onAccept }: { value: string; testId: string; onAccept: () => void }) {
-  const { t } = useI18n();
-  return (
-    <button type="button" className="ai-suggest" data-testid={testId} aria-label={t("documents.acceptAi", { value })} onClick={onAccept}>
-      <span className="truncate font-mono">{value}</span>
-      <span className="src-badge ai">AI</span>
-    </button>
-  );
-}
 const LIST_KEY = "documents";
 
 export default function DocumentsPage() {
@@ -52,6 +44,8 @@ export default function DocumentsPage() {
   const [deleting, setDeleting] = useState<SopDocument | null>(null);
   const [previewing, setPreviewing] = useState<SopDocument | null>(null);
   const view = useListView(LIST_KEY);
+  // 업로드 뒤 AI가 비운 번호·버전을 묻는 작업이 끝나면 목록을 다시 읽어 제안이 바로 보이게 한다
+  const aiJobs = useAiJobs(bundleId, reload);
 
   async function handleDownload(document: SopDocument) {
     try {
@@ -92,10 +86,9 @@ export default function DocumentsPage() {
       minWidth: 164,
       nowrap: true,
       skeletonWidth: 120,
-      cell: (document) =>
-        canEdit && !document.doc_code && document.ai_meta?.doc_code ? (
-          <AiSuggestChip value={document.ai_meta.doc_code} testId={`documents-${document.id}-code-ai`} onAccept={() => void saveField(document, { doc_code: document.ai_meta?.doc_code ?? "" }).catch(() => undefined)} />
-        ) : (
+      // AI 제안은 칸을 가리지 않고 옆에 둔다 - 눌러 받거나, 칸에 다른 값을 적어 고친다(채택 edited)
+      cell: (document) => (
+        <span className="inline-flex max-w-full items-center gap-1.5">
         <InlineText
           value={document.doc_code}
           placeholder={t("documents.colCode")}
@@ -106,23 +99,29 @@ export default function DocumentsPage() {
           testId={`documents-${document.id}-code`}
           onSave={(doc_code) => saveField(document, { doc_code })}
         />
-        ),
+        {canEdit && !document.doc_code && document.ai_meta?.doc_code && (
+          <AiSuggestChip value={document.ai_meta.doc_code} testId={`documents-${document.id}-code-ai`} onAccept={() => void saveField(document, { doc_code: document.ai_meta?.doc_code ?? "" }).catch(() => undefined)} />
+        )}
+        </span>
+      ),
     },
     {
       key: "version",
       header: t("documents.colVersion"),
       skeletonWidth: 72,
-      cell: (document) =>
-        canEdit && !document.doc_version && document.ai_meta?.doc_version ? (
-          <AiSuggestChip value={document.ai_meta.doc_version} testId={`documents-${document.id}-version-ai`} onAccept={() => void saveField(document, { doc_version: document.ai_meta?.doc_version ?? "" }).catch(() => undefined)} />
-        ) : (
+      cell: (document) => (
+        <span className="inline-flex items-center gap-1.5">
         <VersionInput
           value={document.doc_version}
           disabled={!canEdit}
           testId={`documents-${document.id}-version`}
           onCommit={(doc_version) => void saveField(document, { doc_version }).catch(() => undefined)}
         />
-        ),
+        {canEdit && !document.doc_version && document.ai_meta?.doc_version && (
+          <AiSuggestChip value={document.ai_meta.doc_version} testId={`documents-${document.id}-version-ai`} onAccept={() => void saveField(document, { doc_version: document.ai_meta?.doc_version ?? "" }).catch(() => undefined)} />
+        )}
+        </span>
+      ),
     },
     {
       key: "title",
@@ -252,7 +251,17 @@ export default function DocumentsPage() {
         />
       )}
 
-      {uploading && <UploadModal bundleId={bundleId} onClose={() => setUploading(false)} onUploaded={refreshAll} />}
+      {uploading && (
+        <UploadModal
+          bundleId={bundleId}
+          latest={data ?? []}
+          onClose={() => setUploading(false)}
+          onUploaded={() => {
+            refreshAll();
+            aiJobs.watch();
+          }}
+        />
+      )}
       {previewing && <PreviewModal bundleId={bundleId} document={previewing} onClose={() => setPreviewing(null)} />}
       {deleting && (
         <DeleteDocumentModal
