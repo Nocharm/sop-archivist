@@ -16,9 +16,11 @@ interface ModalProps {
   footer?: ReactNode;
   /** 요청이 도는 중 - Esc·바깥 누름·닫기 단추로 닫지 않는다(닫히면 요청이 실패해도 알릴 곳이 없다) */
   isBusy?: boolean;
+  /** 칸이 여럿 나란한 모달(업로드 결과 행) - 기본보다 넓게 */
+  wide?: boolean;
 }
 
-export function Modal({ title, onClose, testId, children, footer, isBusy = false }: ModalProps) {
+export function Modal({ title, onClose, testId, children, footer, isBusy = false, wide = false }: ModalProps) {
   const { t } = useI18n();
   const titleId = useId();
   // 최신 onClose를 읽되 리스너를 다시 걸지 않는다
@@ -45,7 +47,7 @@ export function Modal({ title, onClose, testId, children, footer, isBusy = false
         aria-modal="true"
         aria-labelledby={titleId}
         data-testid={testId}
-        className="w-full max-w-lg rounded-lg border border-gray-200 bg-raised shadow-lg"
+        className={`w-full ${wide ? "max-w-3xl" : "max-w-lg"} rounded-lg border border-gray-200 bg-raised shadow-lg`}
       >
         <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
           <h2 id={titleId} className="text-base font-semibold text-gray-900">

@@ -1,6 +1,8 @@
 // 표 칸 안에서 바로 고치는 짧은 글 - 빈 값은 점선 칩으로 같은 자리를 차지하고, 누르면 입력이 된다. Enter·바깥 누름은 저장, Esc는 취소.
 "use client";
 
+import { Pencil } from "lucide-react";
+import Link from "next/link";
 import { useState, type KeyboardEvent } from "react";
 
 import { Truncate } from "@/components/ui/motion";
@@ -20,15 +22,25 @@ interface InlineTextProps {
   onSave: (next: string) => Promise<void>;
   /** 상자 폭(px) 또는 칸 폭 채우기 - 보기와 고치기가 같은 폭이라 옆 칸이 밀리지 않는다 */
   width: number | "fill";
+  /** 값이 링크일 때(문서 제목 → Split) - 누르면 그리로 가고, 고치기는 호버 때 나오는 연필로 */
+  href?: string;
+  editLabel?: string;
 }
 
-export function InlineText({ value, placeholder, editable, testId, mono = false, maxLength, onSave, width }: InlineTextProps) {
+export function InlineText({ value, placeholder, editable, testId, mono = false, maxLength, onSave, width, href, editLabel }: InlineTextProps) {
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const font = mono ? "font-mono" : "";
   const fill = width === "fill" ? "w-full" : "";
   const style = width === "fill" ? undefined : { width };
 
+  if (!editable && href && value) {
+    return (
+      <Link href={href} className={`inline-link ${font}`} data-testid={testId}>
+        <Truncate text={value} className="one-line" />
+      </Link>
+    );
+  }
   if (!editable) {
     return value ? (
       <span className={font} data-testid={testId}>
@@ -86,6 +98,20 @@ export function InlineText({ value, placeholder, editable, testId, mono = false,
     );
   }
 
+  if (href && value) {
+    return (
+      <span className={`hover-row inline-flex max-w-full items-center gap-1 ${fill}`}>
+        <Link href={href} className={`inline-link min-w-0 ${font}`} data-testid={testId}>
+          <Truncate text={value} className="one-line" />
+        </Link>
+        <span className="row-actions">
+          <button type="button" className="btn ghost icon h-6 w-6" aria-label={editLabel ?? placeholder} data-testid={`${testId}-edit`} onClick={() => setDraft(value)}>
+            <Pencil size={13} strokeWidth={1.5} aria-hidden />
+          </button>
+        </span>
+      </span>
+    );
+  }
   return value ? (
     <button
       type="button"
