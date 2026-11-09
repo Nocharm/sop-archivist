@@ -1,6 +1,5 @@
 // 묶음 안 단계 이동 - 한 벌의 마크업을 <html data-shell>에 따라 CSS가 왼쪽 레일(72px) 또는 상단 2단(38px)으로 그린다. 그래서 저장된 배치가 첫 페인트부터 맞다.
 // 문서가 하나도 없으면 문서가 있어야 할 일이 생기는 단계(Split~Review)는 잠기고, History는 레일 맨 아래에 붙는다.
-// 번호가 같은 단계(3 = 분류·짝 맞추기, 배정의 두 입구)는 번호 하나 아래 한 칸에 묶는다(groupStages).
 "use client";
 
 import { ClipboardCheck, Files, Gauge, History } from "lucide-react";
@@ -10,7 +9,7 @@ import type { ReactNode } from "react";
 import { Tooltip } from "@/components/ui/tooltip";
 import { useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
-import { getStageHref, groupStages, isStageLocked, STAGES, type Stage, type StageKey } from "@/lib/stages";
+import { getStageHref, isStageLocked, STAGES, type Stage, type StageKey } from "@/lib/stages";
 
 const STAGE_ICONS: Partial<Record<StageKey, typeof Files>> = {
   overview: Gauge,
@@ -18,8 +17,6 @@ const STAGE_ICONS: Partial<Record<StageKey, typeof Files>> = {
   review: ClipboardCheck,
   history: History,
 };
-
-const SLOTS = groupStages(STAGES);
 
 export function StageNav({ bundleId, current }: { bundleId: number; current: StageKey | null }) {
   const { t } = useI18n();
@@ -66,18 +63,7 @@ export function StageNav({ bundleId, current }: { bundleId: number; current: Sta
 
   return (
     <nav className="stages" aria-label={t("stage.nav")} data-testid="stage-nav">
-      {SLOTS.map((slot) => {
-        if (slot.stages.length > 1) {
-          return (
-            <div key={slot.stages.map((stage) => stage.key).join("+")} className="stg-group" role="group" aria-label={String(slot.step)} data-testid={`stage-nav-step-${slot.step}`}>
-              <span className="stg-n" aria-hidden>
-                {slot.step}
-              </span>
-              {slot.stages.map((stage) => renderStage(stage, null, "stg sub"))}
-            </div>
-          );
-        }
-        const [stage] = slot.stages;
+      {STAGES.map((stage) => {
         const Icon = STAGE_ICONS[stage.key];
         const mark =
           stage.step !== undefined ? (

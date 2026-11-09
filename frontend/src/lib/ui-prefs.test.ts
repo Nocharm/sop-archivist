@@ -1,7 +1,7 @@
 // 부트 스크립트와 설정 쓰기 - 저장값이 있으면 첫 페인트 전 속성이 그 값이고, 모르는 값과 막힌 저장소는 기본값으로 둔다.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { buildPrefsBootScript, getDefaultPrefAttrs } from "./ui-prefs";
+import { buildPrefsBootScript, getDefaultPrefAttrs, UI_PREFS } from "./ui-prefs";
 import { setLangPref, setUiPref } from "./use-ui-pref";
 
 function resetHtml(): void {
@@ -29,7 +29,6 @@ describe("prefs boot script", () => {
     const root = document.documentElement;
     expect(root.getAttribute("data-shell")).toBe("bar");
     expect(root.getAttribute("data-src-en")).toBe("times");
-    expect(root.getAttribute("data-layout")).toBe("paper");
     expect(root.lang).toBe("ko");
   });
 
@@ -50,6 +49,12 @@ describe("prefs boot script", () => {
   });
 });
 
+describe("UI_PREFS", () => {
+  it("no longer has the classify layout setting", () => {
+    expect(Object.keys(UI_PREFS)).not.toContain("classifyLayout");
+  });
+});
+
 describe("setUiPref / setLangPref", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -57,9 +62,9 @@ describe("setUiPref / setLangPref", () => {
   });
 
   it("writes the attribute and storage together", () => {
-    setUiPref("classifyLayout", "list");
-    expect(document.documentElement.getAttribute("data-layout")).toBe("list");
-    expect(window.localStorage.getItem("sopa.classifyLayout")).toBe("list");
+    setUiPref("shell", "bar");
+    expect(document.documentElement.getAttribute("data-shell")).toBe("bar");
+    expect(window.localStorage.getItem("sopa.shell")).toBe("bar");
     setLangPref("ko");
     expect(document.documentElement.lang).toBe("ko");
     expect(window.localStorage.getItem("sopa.lang")).toBe("ko");

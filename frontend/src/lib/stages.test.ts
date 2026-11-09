@@ -1,12 +1,12 @@
 // 묶음 주소 읽기 - 단계 경로와 묶음 밖 주소를 가른다.
 import { describe, expect, it } from "vitest";
 
-import { getStageHref, groupStages, isStageLocked, parseBundlePath, pickNextStage, STAGES } from "./stages";
+import { getStageHref, isStageLocked, NEXT_ACTION_STAGE, parseBundlePath, STAGES } from "./stages";
 
 describe("parseBundlePath", () => {
   it("reads the overview and a stage", () => {
     expect(parseBundlePath("/bundles/12")).toEqual({ bundleId: 12, stage: "overview" });
-    expect(parseBundlePath("/bundles/12/classify")).toEqual({ bundleId: 12, stage: "classify" });
+    expect(parseBundlePath("/bundles/12/assign")).toEqual({ bundleId: 12, stage: "assign" });
     expect(parseBundlePath("/bundles/12/tobe/")).toEqual({ bundleId: 12, stage: "tobe" });
   });
 
@@ -19,23 +19,21 @@ describe("parseBundlePath", () => {
 
   it("builds stage links", () => {
     expect(getStageHref(4, "overview")).toBe("/bundles/4");
-    expect(getStageHref(4, "match")).toBe("/bundles/4/match");
+    expect(getStageHref(4, "assign")).toBe("/bundles/4/assign");
   });
 });
 
-describe("pickNextStage", () => {
-  // 남은 것이 입구 2 새 문장뿐이면 분류에는 할 일이 없다 - 짝 맞추기로 간다
-  it("sends decide_units to Match when only new-document sentences are left", () => {
-    expect(pickNextStage("decide_units", ["targets_unassigned"])).toBe("match");
-    expect(pickNextStage("decide_units", ["units_unassigned", "targets_unassigned"])).toBe("classify");
-    expect(pickNextStage("decide_units", null)).toBe("classify");
-    expect(pickNextStage("fill_tobe", ["targets_unassigned"])).toBe("tobe");
+describe("NEXT_ACTION_STAGE", () => {
+  it("sends unit decisions and reasons to Assign", () => {
+    expect(NEXT_ACTION_STAGE.decide_units).toBe("assign");
+    expect(NEXT_ACTION_STAGE.fill_reasons).toBe("assign");
+    expect(NEXT_ACTION_STAGE.fill_tobe).toBe("tobe");
   });
 });
 
 describe("isStageLocked", () => {
   it("locks the document-dependent stages while there are no documents", () => {
-    for (const key of ["split", "classify", "match", "outputs", "review"] as const) {
+    for (const key of ["split", "assign", "outputs", "review"] as const) {
       expect(isStageLocked(key, 0)).toBe(true);
     }
   });
@@ -55,17 +53,8 @@ describe("isStageLocked", () => {
   });
 });
 
-describe("groupStages", () => {
-  it("puts the two step-3 entrances, classify and match, in one slot", () => {
-    const slots = groupStages(STAGES);
-    const shared = slots.find((slot) => slot.stages.length > 1);
-    expect(shared?.step).toBe(3);
-    expect(shared?.stages.map((stage) => stage.key)).toEqual(["classify", "match"]);
-  });
-
-  it("keeps every other stage in its own slot, in order", () => {
-    expect(groupStages(STAGES).map((slot) => slot.stages.map((stage) => stage.key).join("+"))).toEqual([
-      "overview", "documents", "split", "tobe", "classify+match", "outputs", "review", "history",
-    ]);
+describe("STAGES", () => {
+  it("has one step-3 stage, Assign", () => {
+    expect(STAGES.filter((stage) => stage.step === 3).map((stage) => stage.key)).toEqual(["assign"]);
   });
 });

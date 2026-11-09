@@ -15,7 +15,7 @@ import { useSession } from "@/lib/session";
 import { parseBundlePath, type StageKey } from "@/lib/stages";
 
 // 칸 셋으로 일하는 화면은 넓은 상한을 쓴다(tokens.css --page-max-wide). 나머지는 목록·읽기 상한
-const WIDE_STAGES: ReadonlySet<StageKey> = new Set(["split", "classify", "match"]);
+const WIDE_STAGES: ReadonlySet<StageKey> = new Set(["split", "assign"]);
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { t } = useI18n();

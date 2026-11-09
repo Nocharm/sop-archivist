@@ -2,7 +2,7 @@
 // 레이아웃 하위 메뉴는 호버나 →로 열리고, 화면 오른쪽에 자리가 없으면 왼쪽으로 뒤집혀 열린다(pickFlyoutSide).
 "use client";
 
-import { ChevronDown, ChevronRight, Clock3, Columns3, List, LogOut, Moon, PanelLeft, PanelTop, Shield, Sun, UserRound, type LucideIcon } from "lucide-react";
+import { ChevronDown, ChevronRight, Clock3, LogOut, Moon, PanelLeft, PanelTop, Shield, Sun, UserRound, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
@@ -32,7 +32,6 @@ function IconRadio({ icon: Icon, checked, testId, onSelect, children }: { icon: 
 function LayoutFlyout({ side }: { side: "right" | "left" }) {
   const { t } = useI18n();
   const shell = useUiPref("shell");
-  const classifyLayout = useUiPref("classifyLayout");
   const theme = useUiPref("theme");
   return (
     <div className="menu flyout" data-side={side} role="menu" aria-label={t("layout.button")} data-testid="user-menu-layout-flyout">
@@ -43,15 +42,6 @@ function LayoutFlyout({ side }: { side: "right" | "left" }) {
         </IconRadio>
         <IconRadio icon={PanelTop} checked={shell === "bar"} testId="layout-menu-shell-bar" onSelect={() => setUiPref("shell", "bar")}>
           {t("layout.bar")}
-        </IconRadio>
-      </div>
-      <div role="group" aria-label={t("layout.classify")}>
-        <div className="menu-label">{t("layout.classify")}</div>
-        <IconRadio icon={Columns3} checked={classifyLayout === "paper"} testId="layout-menu-classify-paper" onSelect={() => setUiPref("classifyLayout", "paper")}>
-          {t("layout.paper")}
-        </IconRadio>
-        <IconRadio icon={List} checked={classifyLayout === "list"} testId="layout-menu-classify-list" onSelect={() => setUiPref("classifyLayout", "list")}>
-          {t("layout.list")}
         </IconRadio>
       </div>
       <div role="group" aria-label={t("layout.theme")}>

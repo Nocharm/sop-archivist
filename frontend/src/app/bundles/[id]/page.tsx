@@ -42,7 +42,7 @@ import {
 } from "@/lib/api-sop";
 import { loadBundle, putBundle, useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
-import { getStageHref, pickNextStage, STAGES } from "@/lib/stages";
+import { getStageHref, NEXT_ACTION_STAGE, STAGES } from "@/lib/stages";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { splitGates } from "@/lib/review-gates";
 import { useLoaded, type Loaded } from "@/lib/use-loaded";
@@ -221,10 +221,10 @@ function Coverage({ bundle }: { bundle: Bundle }) {
   );
 }
 
-function NextActionCard({ bundle, blockerCodes, onRequestReview, onAddReviewer }: { bundle: Bundle; blockerCodes: string[] | null; onRequestReview: () => void; onAddReviewer: () => void }) {
+function NextActionCard({ bundle, onRequestReview, onAddReviewer }: { bundle: Bundle; onRequestReview: () => void; onAddReviewer: () => void }) {
   const { t } = useI18n();
   const action = bundle.next_action;
-  const stageKey = pickNextStage(action, blockerCodes);
+  const stageKey = NEXT_ACTION_STAGE[action];
   const stage = STAGES.find((item) => item.key === stageKey);
   const isAuthor = bundle.my_role === "author";
   const Icon = NEXT_ICONS[action];
@@ -455,7 +455,6 @@ export default function BundleOverviewPage() {
         </BundleHeading>
         <NextActionCard
           bundle={bundle}
-          blockerCodes={readiness.data?.blockers.map((item) => item.code) ?? null}
           onRequestReview={() => setRequesting(true)}
           onAddReviewer={() => setEditingMembers(true)}
         />
