@@ -48,8 +48,9 @@
   .frame-view { min-height: 0; min-width: 0; overflow: auto; }
 
   /* 본문 폭 상한 - 넓은 화면에서 가운데에 두고 양옆은 바탕색으로 비운다. 옆선은 상자 밖 그림자라 창이 좁아 꽉 찰 때는 스크롤 칸에 잘려 보이지 않는다 */
+  /* 좁은 창에서도 양옆에 바탕이 조금 보이게 최소 여백을 둔다 */
   .page-wrap {
-    width: 100%;
+    width: calc(100% - 2 * clamp(12px, 1.5vw, 16px));
     max-width: var(--page-max);
     margin-inline: auto;
     box-shadow: -1px 0 0 var(--line), 1px 0 0 var(--line);
@@ -683,4 +684,47 @@
   @media (prefers-reduced-motion: reduce) {
     .mbtn-label { transition: none; }
   }
+}
+
+/* ---- 상단 막대 사용자 메뉴·언어 스위치(2026-11-09 개편) ---- */
+@layer components {
+  .user-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    max-width: 320px;
+    height: 32px;
+    padding: 0 8px;
+    border-radius: var(--r-2);
+    color: var(--chrome-ink);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background var(--dur-fast);
+  }
+  .user-btn:hover, .user-btn[aria-expanded="true"] { background: var(--chrome-hover); }
+  .user-btn .tb-dim { font-size: var(--fs-cap); }
+  .user-btn .select-chevron { color: var(--chrome-ink-2); }
+
+  /* 네모난 두 칸 스위치 - 지금 언어 칸이 채워진다 */
+  .lang-toggle { display: inline-grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 2px; border: 1px solid var(--line-2); border-radius: var(--r-1); font: 600 var(--fs-micro) / 1 var(--font-mono); }
+  .lang-toggle button { min-width: 26px; padding: 5px 6px; border-radius: 2px; color: var(--ink-3); cursor: pointer; transition: background var(--dur-fast), color var(--dur-fast); }
+  .lang-toggle button:hover { color: var(--ink); }
+  .lang-toggle button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+  .lang-toggle.chrome { border-color: var(--chrome-line); }
+  .lang-toggle.chrome button { color: var(--chrome-ink-2); }
+  .lang-toggle.chrome button:hover { color: var(--chrome-ink); }
+  .lang-toggle.chrome button[aria-pressed="true"] { background: var(--chrome-ink); color: var(--chrome); }
+
+  .user-menu-who { padding: 6px 8px 8px; margin-bottom: 4px; border-bottom: 1px solid var(--line); max-width: 260px; }
+  .menu-sep { height: 1px; margin: 4px; background: var(--line); }
+  .menu-item.danger { color: var(--danger-ink); }
+  .menu-item.danger:not(:disabled):hover, .menu-item.danger:focus-visible { background: var(--danger-tint); box-shadow: inset 2px 0 0 var(--danger-fill); }
+  .menu-item[data-flyout-open] { background: var(--menu-hover); box-shadow: inset 2px 0 0 var(--accent); border-radius: 0 var(--r-1) var(--r-1) 0; }
+  .user-menu-last { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; padding: 6px 8px 4px; border-top: 1px solid var(--line); font-size: var(--fs-micro); line-height: var(--lh-micro); color: var(--ink-4); }
+
+  /* 하위 메뉴 - 레이아웃 항목 옆에 붙는다. 오른쪽에 자리가 없으면 왼쪽(data-side) */
+  .menu.flyout { position: absolute; top: -5px; width: 220px; min-width: 0; }
+  .menu.flyout[data-side="right"] { left: calc(100% + 6px); }
+  .menu.flyout[data-side="left"] { right: calc(100% + 6px); }
 }

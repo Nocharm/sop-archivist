@@ -138,6 +138,8 @@ export interface Me {
   sources: Record<string, EffectiveSource[]>;
   auth_mode: "keycloak" | "dev";
   ai_enabled: boolean;
+  /** 오늘 이전 마지막 접속일의 첫 접속 시각(KST 하루 단위). 처음 쓰는 날은 null */
+  last_login_at: string | null;
 }
 
 export function getMe(): Promise<Me> {

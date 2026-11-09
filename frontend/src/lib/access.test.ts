@@ -15,6 +15,7 @@ const BASE_ME: Me = {
   sources: {},
   auth_mode: "dev",
   ai_enabled: false,
+  last_login_at: null,
 };
 
 describe("access", () => {

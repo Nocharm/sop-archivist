@@ -130,8 +130,11 @@ export default function LoginPage() {
   return (
     <div className="flex flex-1 items-center justify-center px-4">
       <div className="w-full max-w-sm space-y-4">
-        <div data-testid="login-card" className="space-y-4 rounded-lg border border-gray-200 bg-surface p-6">
-          <div>
+        <div data-testid="login-card" className="relative space-y-4 rounded-lg border border-line bg-surface p-6">
+          <div className="absolute right-3 top-3">
+            <LangToggle testId="login-lang" />
+          </div>
+          <div className="pr-20">
             <h1 className="text-lg font-semibold text-gray-900">SOP Archivist</h1>
             <p className="text-sm text-gray-600">{t("login.subtitle")}</p>
           </div>
@@ -201,9 +204,6 @@ export default function LoginPage() {
           </div>
         )}
 
-        <div className="flex justify-center">
-          <LangToggle testId="login-lang" />
-        </div>
       </div>
     </div>
   );
