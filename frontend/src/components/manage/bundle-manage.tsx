@@ -110,8 +110,9 @@ function EditableLine({
           {value}
         </span>
       ) : (
-        <span className={`text-ink-4 ${className}`} data-testid={testId}>
-          {editable ? placeholder : ""}
+        <span className={className} data-testid={testId}>
+          {/* 빈 칸 안내는 바깥 글자색(className)과 상관없이 흐리지만 읽히는 ink-3 - 대비 4.5:1 */}
+          <span className="text-ink-3">{editable ? placeholder : ""}</span>
         </span>
       )}
       {editable && (

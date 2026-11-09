@@ -42,9 +42,13 @@ async function click(page, selector) {
 const SCENES = [
   { name: "home", user: "qa.member", path: "/", marks: [id("bundles-row-2"), `${id("bundles-row-2")} .pill`, id("bundles-ko-2"), id("bundles-view")] },
   {
+    // 바로 생성(2026-11-09): 이름 없이 BND 코드로 만들어 개요로 들어가고, 문서가 없으면 Split~Review가 잠긴다
     name: "new-bundle", user: "dev.admin", path: "/",
-    prep: (page) => click(page, id("bundles-new")),
-    marks: [id("new-bundle-title"), id("new-bundle-synthetic"), id("new-bundle-submit")],
+    prep: async (page) => {
+      await click(page, id("bundles-new"));
+      await page.locator(id("overview-code")).waitFor({ timeout: 15000 });
+    },
+    marks: [id("overview-code"), id("overview-menu"), id("overview-next"), id("stage-nav-split"), id("stage-nav-history")],
   },
   { name: "overview-start", user: "qa.member", path: "/bundles/1", marks: [id("overview-next"), id("overview-coverage"), id("overview-gate"), id("overview-members"), id("overview-activity")] },
   {
@@ -59,7 +63,7 @@ const SCENES = [
   {
     name: "split-unit", user: "qa.member", path: "/bundles/1/split",
     prep: (page) => clickText(page, "로터를 장착하고 뚜껑을 닫은 후"),
-    marks: [id("split-docs"), `${id("split-paper")} >> text=로터를 장착하고 뚜껑을 닫은 후`, id("split-unit-id"), id("split-primary"), id("split-split"), id("split-language"), id("split-pair")],
+    marks: [id("split-docs"), `${id("split-paper")} >> text=로터를 장착하고 뚜껑을 닫은 후`, id("split-inline-check"), id("split-unit-id"), id("split-primary"), id("split-split"), id("split-language"), id("split-pair"), id("split-legend")],
   },
   {
     name: "split-table", user: "qa.member", path: "/bundles/1/split",

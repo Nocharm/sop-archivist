@@ -882,9 +882,11 @@
   .ptag.ko { background: color-mix(in oklab, var(--lang-ko) 16%, var(--paper)); color: var(--lang-ko); }
   .ptag.en { background: color-mix(in oklab, var(--lang-en) 18%, var(--paper)); color: var(--lang-en); }
   .ptag.hold { background: var(--st-hold-fill); color: var(--on-hl); }
-  .ptag.duo { display: inline-flex; justify-content: space-between; gap: 6px; min-width: 38px; background: linear-gradient(118deg, var(--duo-bg) 0 54%, var(--st-hold-fill) 54% 100%); }
-  .ptag.duo > :first-child { color: var(--duo-ink); }
-  .ptag.duo > :last-child { color: var(--on-hl); }
+  /* 두 칸이 각자 바탕을 갖고, 뒤 칸의 왼쪽을 사선으로 잘라 앞 칸에 겹친다 - 글자가 늘 자기 바탕 위에 있다 */
+  .ptag.duo { display: inline-flex; padding: 0; background: none; }
+  .ptag.duo > span { display: grid; place-items: center; height: 17px; }
+  .ptag.duo > :first-child { padding: 0 9px 0 4px; border-radius: var(--r-1) 0 0 var(--r-1); background: var(--duo-bg); color: var(--duo-ink); }
+  .ptag.duo > :last-child { margin-left: -6px; padding: 0 4px 0 9px; border-radius: 0 var(--r-1) var(--r-1) 0; background: var(--st-hold-fill); color: var(--on-hl); clip-path: polygon(6px 0, 100% 0, 100% 100%, 0 100%); }
   .ptag.duo.ko { --duo-bg: color-mix(in oklab, var(--lang-ko) 16%, var(--paper)); --duo-ink: var(--lang-ko); }
   .ptag.duo.en { --duo-bg: color-mix(in oklab, var(--lang-en) 18%, var(--paper)); --duo-ink: var(--lang-en); }
 

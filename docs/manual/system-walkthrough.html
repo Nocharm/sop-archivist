@@ -281,9 +281,9 @@
   </figcaption>
 </figure>
 <figure class="shot" data-shot="new-bundle">
-  <div class="frame"><img width="1440" height="900" src="img/new-bundle.png" alt="새 묶음" loading="lazy"></div>
-  <figcaption><span class="fig">그림 4-2</span>새 묶음 만들기. <code>bundle.create</code> 권한이 있어야 단추가 보인다(관리자로 찍었다 — 관리자는 아무 묶음의 멤버도 아니라 목록이 비어 있다).
-    <ol class="marks"><li data-n="1">제목(필수)과 설명.</li><li data-n="2">합성 데이터 표시. 시험용 묶음이 실제 묶음과 섞여 보이지 않게 한다.</li><li data-n="3">만들면 만든 사람이 <b>작성자</b>가 된다.</li></ol>
+  <div class="frame"><img width="1440" height="900" src="img/new-bundle.png" alt="새 Bundle" loading="lazy"></div>
+  <figcaption><span class="fig">그림 4-2</span>New bundle 단추 한 번으로 바로 만든 Bundle. <code>bundle.create</code> 권한이 있어야 단추가 보인다. 이름을 묻지 않고 순차 코드로 만들고, 만든 사람이 <b>작성자</b>가 된다.
+    <ol class="marks"><li data-n="1">Bundle 코드(<code>BND-0005</code>). 이름은 옆 연필로 나중에 붙인다.</li><li data-n="2"><code>…</code> 메뉴: 시험용 데이터 표시(실제 Bundle과 섞여 보이지 않게)와 삭제.</li><li data-n="3">다음 할 일: Old SOP 업로드.</li><li data-n="4">문서가 없으면 Split부터 Review까지 잠긴다(To-Be는 Excel로 먼저 채울 수 있어 열려 있다).</li><li data-n="5">History: 이 Bundle의 작업 기록 전체.</li></ol>
   </figcaption>
 </figure>
 <div class="box sys"><b>멤버와 권한은 따로 논다</b>
@@ -341,7 +341,7 @@
 <figure class="shot" data-shot="split-unit">
   <div class="frame"><img width="1440" height="900" src="img/split-unit.png" alt="쪼개기" loading="lazy"></div>
   <figcaption><span class="fig">그림 6-1</span>쪼개기(묶음 1). <span class="s">S3</span>의 한글 복합 문장을 둘로 나눈 뒤의 앞쪽 단위를 고른 모습.
-    <ol class="marks"><li data-n="1">문서 목록. 옛·새 문서 모두 쪼갠다.</li><li data-n="2">원문 용지 위 고른 단위(밑줄). "로터를 장착하고 뚜껑을 닫은 후"와 "START 버튼을 누른다."가 이제 서로 다른 단위다.</li><li data-n="3">단위 ID(<code>OLD-1-051</code>)·언어·경계 확인 상태.</li><li data-n="4">경계 맞음 → 다음 단위(↵). 판단을 확정하면 경계도 확인된 것으로 친다.</li><li data-n="5">나누기(S): 용지에서 자를 자리를 누르고 S.</li><li data-n="6">언어 KO/EN. 기본은 글자로 코드가 판정하고, 틀리면 사람이 바꾼다.</li><li data-n="7">한/영 짝. 나눈 한글 반쪽은 영어 쪽과 1:1이 아니어서 "No pair"다 — 이 경우 영어 단위는 분류에서 새 문장 둘로 나눈다.</li></ol>
+    <ol class="marks"><li data-n="1">문서 목록. Old·New 문서 모두 쪼갠다. 아래 범례는 용지 표시의 뜻이다.</li><li data-n="2">원문 용지 위 고른 Unit(글자 영역의 바깥 윤곽). "로터를 장착하고 뚜껑을 닫은 후"와 "START 버튼을 누른다."가 이제 서로 다른 Unit이다.</li><li data-n="3">문장 끝 확인 단추. 누르면(또는 ↵) 경계를 확인하고 다음 Unit으로 간다.</li><li data-n="4">Unit ID(<code>OLD-1-051</code>)·언어·경계 확인 상태(확인 전 노란 칩, 확인함 파란 칩).</li><li data-n="5">경계 맞음 → 다음 Unit(↵). 판단을 확정하면 경계도 확인된 것으로 친다.</li><li data-n="6">나누기(S): 용지에서 자를 자리를 <b>두 번 누르면</b> 선과 "여기서 나누기" 팝업이 뜬다.</li><li data-n="7">언어 KO/EN. 기본은 글자로 코드가 판정하고, 틀리면 사람이 바꾼다.</li><li data-n="8">한/영 짝. 나눈 한글 반쪽은 영어 쪽과 1:1이 아니어서 "No pair"다 — 이 경우 영어 Unit은 분류에서 New 문장 둘로 나눈다.</li><li data-n="9">범례: 문단 앞 글자 태그(KO·EN·보류 H), 끝 아이콘(확인·짝·분류 확정·AI 제안·나눔/합침). 확인한 문단은 위아래가 잘린 종이 조각으로 보이고, 그 틈에 마우스를 올리면 위아래 합치기가 나온다.</li></ol>
   </figcaption>
 </figure>
 <figure class="shot" data-shot="split-table">

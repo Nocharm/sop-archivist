@@ -101,17 +101,21 @@ await runStep("overview in rail", {}, async ({ page, takeShot }) => {
 await runStep("layout menu switches to top tabs and keeps it", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}`);
   await wait(page, "overview-gate-units");
-  await page.locator('[data-testid="top-bar-layout"]').click();
-  await wait(page, "layout-menu");
+  // 레이아웃은 사용자 메뉴 안의 하위 메뉴다(2026-11-09 개편)
+  await page.locator('[data-testid="top-bar-user"]').click();
+  await wait(page, "user-menu");
   await page.keyboard.press("Escape");
-  await page.locator('[data-testid="layout-menu"]').waitFor({ state: "detached", timeout: T });
-  check("Esc returns focus to the layout button", await page.evaluate(() => document.activeElement?.getAttribute("data-testid") === "top-bar-layout"));
-  await page.locator('[data-testid="top-bar-layout"]').click();
+  await page.locator('[data-testid="user-menu"]').waitFor({ state: "detached", timeout: T });
+  check("Esc returns focus to the user button", await page.evaluate(() => document.activeElement?.getAttribute("data-testid") === "top-bar-user"));
+  await page.locator('[data-testid="top-bar-user"]').click();
+  await page.locator('[data-testid="user-menu-layout"]').hover();
+  await wait(page, "user-menu-layout-flyout");
+  check("layout flyout opens on hover", true);
   await page.locator('[data-testid="layout-menu-shell-bar"]').click();
   const navBox = await getBox(page, "stage-nav");
   check("top tabs span the width", navBox.width > 1000 && Math.round(navBox.height) === 39, JSON.stringify(navBox));
   await page.mouse.click(600, 600);
-  await page.locator('[data-testid="layout-menu"]').waitFor({ state: "detached", timeout: T });
+  await page.locator('[data-testid="user-menu"]').waitFor({ state: "detached", timeout: T });
   await takeShot("sop-overview-bar.png");
   // 새로 열 때 첫 HTML 파싱 직후(React 전)에 이미 상단 탭이어야 한다
   await page.goto(`${BASE}/bundles/${halfBundleId}`, { waitUntil: "commit" });
@@ -160,23 +164,27 @@ await runStep("documents list, inline edit and delete prompt", {}, async ({ page
   check("aux check label", list.includes("Checked") || list.includes("Aux check unavailable"), list);
   const firstRow = page.locator('[data-testid$="-row"][data-testid^="documents-"]').first();
   const docId = (await firstRow.getAttribute("data-testid")).replace("documents-", "").replace("-row", "");
+  // 버전 칸 - 숫자와 점만 받고, 위 단추는 소수점 아래가 0이면 앞자리를 올린다
   const version = page.locator(`[data-testid="documents-${docId}-version"]`);
-  const before = (await version.innerText()).trim();
+  const before = await version.inputValue();
   const rowY = (await firstRow.boundingBox()).y;
-  await version.click();
-  const input = page.locator(`[data-testid="documents-${docId}-version-input"]`);
-  await input.fill("R09");
-  await input.press("Enter");
+  await version.fill("v2.9a");
+  check("version keeps only digits and a dot", (await version.inputValue()) === "2.9", await version.inputValue());
+  await version.press("Enter");
   await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
-  await page.waitForFunction((id) => document.querySelector(`[data-testid="documents-${id}-version"]`)?.textContent?.trim() === "R09", docId, { timeout: T });
-  check("version saved inline", true);
+  await page.locator(`[data-testid="documents-${docId}-version-up"]`).click();
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="documents-${id}-version"]`)?.value === "2.10", docId, { timeout: T });
+  check("version up moves the minor number", true);
   check("row did not move while editing", Math.abs((await firstRow.boundingBox()).y - rowY) < 1);
   await takeShot("sop-documents.png");
-  // 되돌린다 - 원래 빈 값이면 비운다
-  await page.locator(`[data-testid="documents-${docId}-version"]`).click();
-  await input.fill(before === "Add version" ? "" : before);
-  await input.press("Enter");
-  await page.waitForFunction((id) => !document.querySelector(`[data-testid="documents-${id}-version-input"]`), docId, { timeout: T });
+  // 되돌린다 - 원래 빈 값이면 x로 비운다
+  await firstRow.hover();
+  if (before === "") await page.locator(`[data-testid="documents-${docId}-version-clear"]`).click();
+  else {
+    await version.fill(before);
+    await version.press("Enter");
+  }
+  await page.waitForFunction(([id, value]) => document.querySelector(`[data-testid="documents-${id}-version"]`)?.value === value, [docId, before], { timeout: T });
   await page.locator(`[data-testid="documents-${docId}-delete"]`).click();
   await wait(page, "delete-document");
   await takeShot("sop-documents-delete.png");
@@ -193,17 +201,22 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   const units = page.locator('[data-testid^="split-paper-unit-"].su');
   await units.first().waitFor({ timeout: T });
   const before = await units.count();
-  // 영어 문장 하나를 찾아 고른다 - 두 번째 누름이 나눌 선을 만든다
+  // 영어 문장 하나를 찾아 고른다 - 한 번 더 누르면 아무것도 안 하고, 두 번 누르기(더블클릭)가 나눌 선을 만든다
   const target = page.locator('[data-testid^="split-paper-unit-"].su[lang="en"]', { hasText: " " }).nth(2);
   const unitId = (await target.getAttribute("data-testid")).replace("split-paper-unit-", "");
   await target.click();
   check("first click selects", (await target.getAttribute("data-sel")) === "");
+  check("first click shows the inline confirm", (await page.locator('[data-testid="split-inline-check"]').count()) === 1);
+  check("selection is drawn as one contour", (await page.locator(".sel-contour path").count()) === 1);
   const primary = page.locator('[data-testid="split-primary"]');
   const primaryBox = await primary.boundingBox();
   const box = await target.boundingBox();
   await page.mouse.click(box.x + Math.min(box.width / 2, 120), box.y + box.height / 2);
+  await page.waitForTimeout(300);
+  check("a second single click does not cut", (await page.locator(`[data-testid="split-paper-unit-${unitId}"][data-cut]`).count()) === 0);
+  await page.mouse.dblclick(box.x + Math.min(box.width / 2, 120), box.y + box.height / 2);
   await page.locator(`[data-testid="split-paper-unit-${unitId}"][data-cut]`).waitFor({ timeout: T });
-  check("second click draws the cut", true);
+  check("double-click draws the cut with the split popup", (await page.locator('[data-testid="split-cut-run"]').count()) === 1);
   await takeShot("sop-split-cut.png");
   await page.keyboard.press("s");
   await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
@@ -597,7 +610,8 @@ await runStep("classify: AI suggestions come first and confirm one by one", {}, 
 await runStep("dark theme from the layout menu, before first paint next time", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/classify`);
   await page.locator('[data-testid^="classify-row-u"]').first().waitFor({ timeout: T });
-  await page.locator('[data-testid="top-bar-layout"]').click();
+  await page.locator('[data-testid="top-bar-user"]').click();
+  await page.locator('[data-testid="user-menu-layout"]').hover();
   await page.locator('[data-testid="layout-menu-theme-dark"]').click();
   check("dark applies at once", (await page.evaluate(() => document.documentElement.dataset.theme)) === "dark");
   await page.keyboard.press("Escape");
@@ -610,16 +624,42 @@ await runStep("dark theme from the layout menu, before first paint next time", {
   check("stored theme applies before the app mounts", early === "dark", String(early));
 });
 
-// 검토 v0.4.0: 준비된 옛 문서가 없는 묶음의 분류는 로딩에 머물지 않는다
-await runStep("classify on a bundle with no documents shows the empty state", { devUser: "dev.admin" }, async ({ page }) => {
+// 멤버 피커(2026-11-09 운영 버그): 이름을 고르면 "추가" 단추가 피커 칸 안에 보이고 눌러 목록에 들어간다.
+// 긴 부서 경로는 HR 데이터에서만 나온다 - 로컬에서는 employees 표에 긴 경로 직원을 넣고 돌리면 같은 조건이 된다.
+await runStep("members picker keeps Add inside the panel and adds the person", {}, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}`);
+  await wait(page, "overview-members-manage");
+  await page.locator('[data-testid="overview-members-manage"]').click();
+  await page.locator('[data-testid="overview-members-modal-add"]').click();
+  await wait(page, "overview-members-modal-picker-list");
+  const first = page.locator('[data-testid^="overview-members-modal-picker-option-"]').first();
+  check("empty search lists my department first", (await first.getAttribute("data-testid")).endsWith("qa.member"));
+  await page.locator('[data-testid="overview-members-modal-picker-search"]').fill("prod");
+  await page.locator('[data-testid="overview-members-modal-picker-option-prod.member"]').click();
+  const add = await getBox(page, "overview-members-modal-add-confirm");
+  const panel = await getBox(page, "overview-members-modal-picker");
+  check("Add stays inside the picker panel", add.x + add.width <= panel.x + panel.width + 1, JSON.stringify({ add, panel }));
+  await page.locator('[data-testid="overview-members-modal-add-confirm"]').click();
+  check("picked person joins the list", (await page.locator('[data-testid="overview-members-modal-row-prod.member"]').count()) === 1);
+  check("Save turns on", await page.locator('[data-testid="overview-members-modal-save"]').isEnabled());
+  await page.keyboard.press("Escape");
+});
+
+// 바로 생성(2026-11-09): 이름 없이 BND 코드로 만들고, 문서가 없으면 Split~Review는 잠기고 To-Be는 열려 있다
+await runStep("new bundle in one click, locked stages, empty classify", { devUser: "dev.admin" }, async ({ page }) => {
   await page.goto(`${BASE}/`);
   await page.locator('[data-testid="bundles-new"]').click();
-  await page.locator('[data-testid="new-bundle-title"]').fill("SYNTHETIC smoke empty bundle");
-  await page.locator('[data-testid="new-bundle-synthetic"]').check();
-  await page.locator('[data-testid="new-bundle-submit"]').click();
   await page.waitForURL(/\/bundles\/\d+$/, { timeout: T });
+  const code = (await getText(page, "overview-code")).trim();
+  check("new bundle shows its BND code", /^BND-\d{4,}$/.test(code), code);
+  check("Split is locked without documents", (await page.locator('[data-testid="stage-nav-split"][aria-disabled="true"]').count()) === 1);
+  check("To-Be stays open without documents", (await page.locator('a[data-testid="stage-nav-tobe"]').count()) === 1);
+  await page.locator('[data-testid="overview-menu"]').click();
+  await page.locator('[data-testid="overview-menu-synthetic"]').click();
+  await page.locator('[data-testid="top-bar-synthetic"]').waitFor({ timeout: T });
+  check("test-data mark set from the menu", true);
   await page.goto(`${page.url()}/classify`);
-  await page.getByText("No units to classify yet.").waitFor({ timeout: T });
+  await wait(page, "classify-empty");
   check("empty state instead of an endless skeleton", true);
 });
 

@@ -110,7 +110,7 @@
 
   /* 언어 표시(언어 배치 그림·Split 태그) - 한국어는 accent, 영어는 초록 */
   --lang-ko: var(--accent);
-  --lang-en: oklch(.52 .12 160);
+  --lang-en: oklch(.45 .11 160);
 
   --tint: 11%;
   --tint2: 20%;

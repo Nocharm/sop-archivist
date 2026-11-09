@@ -94,7 +94,10 @@ await runStep("account as qa.lead", { devUser: "qa.lead" }, async ({ page, takeS
   check("Manage permissions source names the department and role", manageSource.includes("Quality Division") && manageSource.includes("Permission Admin"), manageSource);
   check("account identity shows login id", (await getText(page, "account-identity")).includes("qa.lead"));
   check("AI status is shown", (await getText(page, "account-ai-status")).trim().length > 0, await getText(page, "account-ai-status"));
-  check("admin link visible", await page.locator('[data-testid="top-bar-admin-link"]').isVisible());
+  await page.locator('[data-testid="top-bar-user"]').click();
+  await page.locator('[data-testid="user-menu-admin"]').waitFor({ state: "visible", timeout: T }).catch(() => undefined);
+  check("admin link in the user menu", await page.locator('[data-testid="user-menu-admin"]').isVisible());
+  await page.keyboard.press("Escape");
   check("dev switcher shows current user", (await page.locator('[data-testid="dev-user-switcher"]').getAttribute("data-value")) === "qa.lead");
   await takeShot("baseline-account.png");
 });
@@ -127,7 +130,9 @@ await runStep("unknown employee", { devUser: "ghost.user" }, async ({ page, take
   await wait(page, "account-permissions-empty");
   check("falls back to login id", (await getText(page, "top-bar-user")).includes("ghost.user"), await getText(page, "top-bar-user"));
   check("no permission list", (await page.locator('[data-testid="account-permissions"]').count()) === 0);
-  check("admin link hidden", (await page.locator('[data-testid="top-bar-admin-link"]').count()) === 0);
+  await page.locator('[data-testid="top-bar-user"]').click();
+  check("admin link hidden", (await page.locator('[data-testid="user-menu-admin"]').count()) === 0);
+  await page.keyboard.press("Escape");
   check("dev switcher shows the unlisted account", (await page.locator('[data-testid="dev-user-switcher"]').getAttribute("data-value")) === "ghost.user");
   await takeShot("baseline-account-empty.png");
 });
@@ -136,7 +141,7 @@ await runStep("unknown employee", { devUser: "ghost.user" }, async ({ page, take
 await runStep("language switch", { devUser: "qa.lead" }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/account`);
   await wait(page, "account-permissions");
-  await page.locator('[data-testid="top-bar-lang"]').click();
+  await page.locator('[data-testid="top-bar-lang-ko"]').click();
   await page.waitForFunction(() => document.querySelector('[data-testid="account-permissions"]')?.textContent?.includes("권한 관리"), null, { timeout: T });
   check("permission label is Korean", (await getText(page, "account-permissions")).includes("권한 관리"));
   check("top bar shows Korean name", (await getText(page, "top-bar-user")).includes("품질리드"), await getText(page, "top-bar-user"));
@@ -155,7 +160,8 @@ await runStep("sign out and sign in", {}, async ({ page, takeShot }) => {
   await page.locator('[data-testid="login-dev-user-qa.lead"]').click();
   await wait(page, "top-bar-user");
   check("signed in as qa.lead", (await getText(page, "top-bar-user")).includes("QA Lead"));
-  await page.locator('[data-testid="top-bar-signout"]').click();
+  await page.locator('[data-testid="top-bar-user"]').click();
+  await page.locator('[data-testid="user-menu-signout"]').click();
   await wait(page, "login-dev-user-qa.member");
   check("sign out returns to /login", new URL(page.url()).pathname === "/login", page.url());
   check("top bar is gone on /login", (await page.locator('[data-testid="top-bar-service"]').count()) === 0);
@@ -452,7 +458,7 @@ await runStep("admin ops panels as ops.member", { devUser: "ops.member", allowCo
 
   await findById(page, "ai-ping").click();
   await wait(page, "ai-ping-result");
-  await page.locator('[data-testid="top-bar-lang"]').click();
+  await page.locator('[data-testid="top-bar-lang-ko"]').click();
   await page.waitForFunction(() => document.querySelector('[data-testid="admin-tab-batch"]')?.textContent?.includes("배치 작업"), null, { timeout: T });
   check("tab labels switch to Korean", (await getText(page, "admin-tab-directory")).includes("직원 동기화"), await getText(page, "admin-tab-directory"));
   check("the plain-language error follows the language", (await getText(page, "ai-ping-result")).includes("AI가 꺼져 있습니다"), await getText(page, "ai-ping-result"));
