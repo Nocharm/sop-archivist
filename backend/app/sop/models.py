@@ -20,6 +20,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models import Base, _now
+from app.sop.bundle_code import format_bundle_code
 from app.sop.constants import (
     AI_ADOPTIONS,
     AI_JOB_KINDS,
@@ -59,6 +60,11 @@ class Bundle(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
+    @property
+    def code(self) -> str:
+        """화면·API가 쓰는 순차 코드(BND-0013) — id에서 만든다."""
+        return format_bundle_code(self.id)
+
 
 class BundleMember(Base):
     """묶음 멤버 — (묶음, loginId)가 키, 역할은 author|reviewer."""
@@ -87,6 +93,8 @@ class BundleEvent(Base):
     target_type: Mapped[str] = mapped_column(String(30), default="")
     target_ids: Mapped[list] = mapped_column(JSON, default=list)
     reason: Mapped[str] = mapped_column(Text, default="")
+    # 바뀐 값의 전/후(이름·설명·시험용 표시, 멤버) — SOP 원문 글자는 담지 않는다. 지난 사건은 빈 객체
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class BundleDeletionRecord(Base):

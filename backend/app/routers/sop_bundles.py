@@ -6,7 +6,7 @@ from typing import Annotated, Self
 
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictBool, StringConstraints, model_validator
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.access.deps import require_permission
@@ -17,6 +17,7 @@ from app.routers.admin import KstDatetime
 from app.sop.ai.jobs import load_job_counts
 from app.sop.ai.schemas import AiJobCounts
 from app.sop.constants import MEMBER_ROLES, SEMANTIC_CHECK_KEYS
+from app.sop.bundle_code import format_bundle_code
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
 from app.sop.membership import (
@@ -26,7 +27,7 @@ from app.sop.membership import (
     lock_bundle,
     require_bundle_role,
 )
-from app.sop.models import Bundle, BundleDeletionRecord, BundleEvent, BundleMember
+from app.sop.models import Bundle, BundleDeletionRecord, BundleEvent, BundleMember, Document
 from app.sop.review import (
     NextAction,
     Readiness,
@@ -69,7 +70,8 @@ def _check_semantic_check_keys(value: dict[str, bool]) -> dict[str, bool]:
     return value
 
 
-BundleTitle = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200), NO_NUL]
+# 이름은 비어도 된다 — 이름 없이 만든 Bundle은 코드(BND-0013)로 보인다
+BundleTitle = Annotated[str, StringConstraints(strip_whitespace=True, max_length=200), NO_NUL]
 LoginId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100), NO_NUL]
 MemberRole = Annotated[str, AfterValidator(_check_member_role)]
 ReviewReason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000), NO_NUL]
@@ -77,7 +79,7 @@ SemanticChecks = Annotated[dict[str, StrictBool], AfterValidator(_check_semantic
 
 
 class BundleCreateIn(BaseModel):
-    title: BundleTitle
+    title: BundleTitle = ""
     description: NoNulStr = Field("", max_length=MAX_DESCRIPTION_CHARS)
     is_synthetic: bool = False
 
@@ -86,11 +88,12 @@ class BundleUpdateIn(BaseModel):
     revision: int = Field(ge=1)
     title: BundleTitle | None = None
     description: Annotated[str, StringConstraints(max_length=MAX_DESCRIPTION_CHARS), NO_NUL] | None = None
+    is_synthetic: StrictBool | None = None
 
     @model_validator(mode="after")
     def check_something_to_change(self) -> Self:
-        if self.title is None and self.description is None:
-            raise ValueError("title or description is required")
+        if self.title is None and self.description is None and self.is_synthetic is None:
+            raise ValueError("title, description or is_synthetic is required")
         return self
 
 
@@ -130,6 +133,7 @@ class BundleBase(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    code: str
     title: str
     description: str
     status: str
@@ -151,10 +155,13 @@ class BundleOut(BundleBase):
     next_action: NextAction
     # AI 작업 상태별 건수
     ai_jobs: AiJobCounts
+    # 올린 문서 수 — 0이면 화면이 문서가 있어야 할 일이 생기는 단계를 잠근다
+    document_count: int
 
 
 class BundleListItem(BaseModel):
     id: int
+    code: str
     title: str
     status: str
     my_role: str
@@ -173,6 +180,7 @@ class BundleEventOut(BaseModel):
     target_type: str
     target_ids: list[int | str]
     reason: str
+    detail: dict[str, object]
 
 
 async def load_members(session: AsyncSession, bundle_ids: Collection[int]) -> dict[int, list[MemberOut]]:
@@ -208,9 +216,11 @@ async def build_bundle_out(
     my_role = next((member.role for member in members if member.login_id == login_id), None)
     progress = (await load_bundle_progress(session, [bundle.id]))[bundle.id]
     ai_jobs = await load_job_counts(session, bundle.id)
+    document_count = await session.scalar(select(func.count(Document.id)).where(Document.bundle_id == bundle.id)) or 0
     return BundleOut(
         **BundleBase.model_validate(bundle).model_dump(), my_role=my_role, members=members, progress=progress,
         next_action=next_action or await get_next_action(session, bundle), ai_jobs=ai_jobs,
+        document_count=document_count,
     )
 
 
@@ -252,6 +262,8 @@ async def replace_bundle_members(
     changed = sorted((current.keys() ^ wanted.keys()) | role_changed)
     if not changed:
         return
+    # 아래에서 행의 역할을 바꾸기 전에 기록용 전 값을 잡아 둔다
+    previous_roles = {login_id: member.role for login_id, member in current.items()}
 
     for login_id, member in current.items():
         if login_id not in wanted:
@@ -261,9 +273,16 @@ async def replace_bundle_members(
     for login_id in wanted.keys() - current.keys():
         session.add(BundleMember(bundle_id=bundle.id, login_id=login_id, role=wanted[login_id], added_by=actor))
     bundle.revision += 1
+    detail = {
+        "added": [{"login_id": login_id, "role": wanted[login_id]} for login_id in sorted(wanted.keys() - current.keys())],
+        "removed": sorted(current.keys() - wanted.keys()),
+        "role_changed": [
+            {"login_id": login_id, "from": previous_roles[login_id], "to": wanted[login_id]} for login_id in sorted(role_changed)
+        ],
+    }
     record_event(
         session, bundle_id=bundle.id, actor=actor, action="bundle.members",
-        target_type="member", target_ids=changed, reason=reason,
+        target_type="member", target_ids=changed, reason=reason, detail=detail,
     )
 
 
@@ -285,7 +304,7 @@ async def list_my_bundles(
         )
     ).all()
     progress = await load_bundle_progress(session, [row.id for row in rows])
-    return [BundleListItem(**row._asdict(), progress=progress[row.id]) for row in rows]
+    return [BundleListItem(**row._asdict(), code=format_bundle_code(row.id), progress=progress[row.id]) for row in rows]
 
 
 @router.post("", response_model=BundleOut, status_code=201)
@@ -318,6 +337,24 @@ async def get_bundle(
     return await build_bundle_out(session, ctx.bundle, ctx.login_id)
 
 
+# 사건 기록에 남기는 설명의 전/후 길이 — 원문이 아닌 사람이 쓴 설명이지만 기록이 커지지 않게 자른다
+EVENT_DESCRIPTION_CHARS = 200
+
+
+def _build_update_detail(bundle: Bundle, body: BundleUpdateIn) -> dict[str, dict[str, object]]:
+    """실제로 바뀌는 칸만 전/후로 남긴다."""
+    detail: dict[str, dict[str, object]] = {}
+    if body.title is not None and body.title != bundle.title:
+        detail["title"] = {"from": bundle.title, "to": body.title}
+    if body.description is not None and body.description != bundle.description:
+        detail["description"] = {
+            "from": bundle.description[:EVENT_DESCRIPTION_CHARS], "to": body.description[:EVENT_DESCRIPTION_CHARS],
+        }
+    if body.is_synthetic is not None and body.is_synthetic != bundle.is_synthetic:
+        detail["is_synthetic"] = {"from": bundle.is_synthetic, "to": body.is_synthetic}
+    return detail
+
+
 @router.patch("/{bundle_id}", response_model=BundleOut)
 async def update_bundle(
     body: BundleUpdateIn,
@@ -328,14 +365,17 @@ async def update_bundle(
     await lock_bundle(session, bundle)
     check_revision("bundle", bundle.id, body.revision, bundle.revision)
     ensure_editable(bundle)
+    detail = _build_update_detail(bundle, body)
     if body.title is not None:
         bundle.title = body.title
     if body.description is not None:
         bundle.description = body.description
+    if body.is_synthetic is not None:
+        bundle.is_synthetic = body.is_synthetic
     bundle.revision += 1
     record_event(
         session, bundle_id=bundle.id, actor=ctx.login_id, action="bundle.update",
-        target_type="bundle", target_ids=[bundle.id],
+        target_type="bundle", target_ids=[bundle.id], detail=detail,
     )
     await session.commit()
     return await build_bundle_out(session, bundle, ctx.login_id)
@@ -434,14 +474,25 @@ async def post_review_reopen(
 @router.get("/{bundle_id}/events", response_model=list[BundleEventOut])
 async def list_bundle_events(
     limit: int = Query(DEFAULT_EVENTS_LIMIT, ge=1),
+    before_id: int | None = Query(None, ge=1, le=2_147_483_647),
     ctx: BundleContext = Depends(_require_member),
     session: AsyncSession = Depends(get_session),
 ) -> list[BundleEvent]:
     # 같은 초에 쌓인 사건은 autoincrement id가 순서를 정한다
+    # 이전 쪽(History 화면): 앞 쪽 마지막 사건보다 오래된 것 — 같은 정렬(시각, id)을 이어 간다
+    stmt = select(BundleEvent).where(BundleEvent.bundle_id == ctx.bundle.id)
+    if before_id is not None:
+        anchor = await session.get(BundleEvent, before_id)
+        if anchor is not None and anchor.bundle_id == ctx.bundle.id:
+            stmt = stmt.where(
+                or_(
+                    BundleEvent.occurred_at < anchor.occurred_at,
+                    and_(BundleEvent.occurred_at == anchor.occurred_at, BundleEvent.id < anchor.id),
+                )
+            )
+        else:
+            stmt = stmt.where(BundleEvent.id < before_id)
     rows = await session.scalars(
-        select(BundleEvent)
-        .where(BundleEvent.bundle_id == ctx.bundle.id)
-        .order_by(BundleEvent.occurred_at.desc(), BundleEvent.id.desc())
-        .limit(min(limit, MAX_EVENTS_LIMIT))
+        stmt.order_by(BundleEvent.occurred_at.desc(), BundleEvent.id.desc()).limit(min(limit, MAX_EVENTS_LIMIT))
     )
     return list(rows)

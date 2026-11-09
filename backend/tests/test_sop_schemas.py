@@ -58,9 +58,9 @@ def test_input_text_rejects_nul(model: type[BaseModel], fields: dict[str, object
 def test_nul_check_keeps_strip_and_length_rules() -> None:
     """길이는 공백을 걷은 뒤에 잰다 — NUL 검사를 StringConstraints 앞에 두면 이 순서가 뒤집힌다."""
     assert BundleCreateIn(title=f"  {'x' * 200}  ").title == "x" * 200
-    for title in ("   ", "x" * 201):
-        with pytest.raises(ValidationError):
-            BundleCreateIn(title=title)
+    assert BundleCreateIn(title="   ").title == ""  # 이름 없이 만들 수 있다(코드로 보인다)
+    with pytest.raises(ValidationError):
+        BundleCreateIn(title="x" * 201)
 
 
 def test_api_rejects_nul_in_a_json_field(client: TestClient) -> None:

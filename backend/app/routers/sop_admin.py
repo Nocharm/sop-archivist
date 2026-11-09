@@ -27,6 +27,7 @@ class AdminBundleOut(BaseModel):
     """묶음 메타 한 줄 — 내용은 싣지 않는다. revision은 멤버 바꾸기 요청이 들고 와야 해서 싣는다."""
 
     id: int
+    code: str
     title: str
     status: str
     revision: int
@@ -41,6 +42,7 @@ class AdminBundleOut(BaseModel):
 def build_admin_item(bundle: Bundle, members: list[MemberOut], progress: BundleProgress) -> AdminBundleOut:
     return AdminBundleOut(
         id=bundle.id,
+        code=bundle.code,
         title=bundle.title,
         status=bundle.status,
         revision=bundle.revision,

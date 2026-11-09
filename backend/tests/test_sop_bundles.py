@@ -10,9 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.clock import KST
 from app.models import Employee
 from app.settings import settings
+from app.sop.bundle_code import format_bundle_code
 from app.sop.models import Bundle, BundleDeletionRecord, BundleEvent
 from tests.access_helpers import add_grant, run_in_session, update_row
-from tests.sop_helpers import ADMIN, AUTHOR, OUTSIDER, REVIEWER, create_bundle, get_bundle, set_members
+from tests.docx_factory import build_docx, p
+from tests.sop_helpers import ADMIN, AUTHOR, OUTSIDER, REVIEWER, create_bundle, get_bundle, set_members, upload
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
 
@@ -69,12 +71,49 @@ def test_create_bundle_keeps_the_synthetic_flag_and_trims_the_title(client: Test
     assert response.json()["is_synthetic"] is True
 
 
-@pytest.mark.parametrize("body", [{"title": ""}, {"title": "   "}, {"title": "x" * 201}, {}])
+@pytest.mark.parametrize("body", [{"title": "x" * 201}, {"title": 5}, {"title": "a\u0000b"}])
 def test_create_bundle_rejects_a_bad_title(client: TestClient, body: dict) -> None:
     response = client.post("/api/bundles", json=body, headers=AUTHOR)
 
     assert response.status_code == 422
     assert _count_bundles() == 0
+
+
+@pytest.mark.parametrize("body", [{}, {"title": ""}, {"title": "   "}])
+def test_create_without_a_title_gets_a_code(client: TestClient, body: dict) -> None:
+    response = client.post("/api/bundles", json=body, headers=AUTHOR)
+
+    assert response.status_code == 201
+    created = response.json()
+    assert created["title"] == ""
+    assert created["code"] == f"BND-{created['id']:04d}"
+
+
+def test_bundle_code_format() -> None:
+    assert format_bundle_code(7) == "BND-0007"
+    assert format_bundle_code(12345) == "BND-12345"
+
+
+def test_list_and_read_carry_the_code(client: TestClient) -> None:
+    bundle = create_bundle(client, title="Coded")
+
+    rows = client.get("/api/bundles", headers=AUTHOR).json()
+
+    assert [row["code"] for row in rows] == [f"BND-{bundle['id']:04d}"]
+    assert get_bundle(client, bundle["id"])["code"] == f"BND-{bundle['id']:04d}"
+
+
+def test_update_can_clear_the_title_and_flip_the_synthetic_flag(client: TestClient) -> None:
+    bundle = create_bundle(client, title="Named")
+
+    cleared = client.patch(f"/api/bundles/{bundle['id']}", json={"revision": 1, "title": "  "}, headers=AUTHOR)
+    flagged = client.patch(f"/api/bundles/{bundle['id']}", json={"revision": 2, "is_synthetic": True}, headers=AUTHOR)
+    empty = client.patch(f"/api/bundles/{bundle['id']}", json={"revision": 3}, headers=AUTHOR)
+
+    assert (cleared.status_code, cleared.json()["title"]) == (200, "")
+    assert (flagged.status_code, flagged.json()["is_synthetic"]) == (200, True)
+    assert empty.status_code == 422
+    assert [event["action"] for event in _get_events(client, bundle["id"])][:2] == ["bundle.update", "bundle.update"]
 
 
 def test_list_shows_only_my_bundles_with_my_role(client: TestClient) -> None:
@@ -89,7 +128,7 @@ def test_list_shows_only_my_bundles_with_my_role(client: TestClient) -> None:
         mine["id"]: ("Mine", "author"),
         shared["id"]: ("Shared", "reviewer"),
     }
-    assert set(rows[0]) == {"id", "title", "status", "my_role", "updated_at", "progress", "is_synthetic"}
+    assert set(rows[0]) == {"id", "code", "title", "status", "my_role", "updated_at", "progress", "is_synthetic"}
     assert client.get("/api/bundles", headers=OUTSIDER).json() == []
 
 
@@ -173,7 +212,7 @@ def test_patch_with_only_one_field_keeps_the_other(client: TestClient) -> None:
     assert (after["title"], after["description"]) == ("Keep me", "Only this")
 
 
-@pytest.mark.parametrize("body", [{"revision": 1}, {"revision": 1, "title": " "}, {"title": "No revision"}])
+@pytest.mark.parametrize("body", [{"revision": 1}, {"revision": 1, "title": "x" * 201}, {"title": "No revision"}])
 def test_patch_rejects_an_empty_or_malformed_body(client: TestClient, body: dict) -> None:
     bundle = create_bundle(client)
 
@@ -434,7 +473,7 @@ def test_admin_list_shows_meta_and_orphans(client: TestClient, monkeypatch: pyte
     orphan = rows[bundle["id"]]
     # 내용 없음 — 진행 숫자는 건수뿐인 메타 정보다(R7)
     assert set(orphan) == {
-        "id", "title", "status", "revision", "members", "has_active_author", "created_at", "progress",
+        "id", "code", "title", "status", "revision", "members", "has_active_author", "created_at", "progress",
     }
     assert orphan["has_active_author"] is False
     assert [(m["login_id"], m["active"]) for m in orphan["members"]] == [("qa.member", False)]
@@ -536,3 +575,64 @@ def test_events_stay_private_to_the_bundle(client: TestClient) -> None:
     _patch_title(client, other["id"], 1, "Other edit", headers=REVIEWER)
 
     assert [event["action"] for event in _get_events(client, mine["id"])] == ["bundle.create"]
+
+
+# ── 사건의 전/후 값과 이전 사건 넘겨 보기 ─────────────────────────────────────────
+
+
+def test_title_change_keeps_before_and_after(client: TestClient) -> None:
+    bundle = client.post("/api/bundles", json={}, headers=AUTHOR).json()
+
+    _patch_title(client, bundle["id"], 1, "Centrifuge")
+
+    latest = _get_events(client, bundle["id"])[0]
+    assert latest["action"] == "bundle.update"
+    assert latest["detail"] == {"title": {"from": "", "to": "Centrifuge"}}
+
+
+def test_description_change_is_clipped_in_the_detail(client: TestClient) -> None:
+    bundle = create_bundle(client)
+
+    client.patch(f"/api/bundles/{bundle['id']}", json={"revision": 1, "description": "d" * 500}, headers=AUTHOR)
+
+    detail = _get_events(client, bundle["id"])[0]["detail"]
+    assert detail["description"]["from"] == ""
+    assert detail["description"]["to"] == "d" * 200
+
+
+def test_member_change_lists_who_moved(client: TestClient) -> None:
+    bundle = create_bundle(client)
+
+    set_members(client, bundle["id"], [("qa.member", "author"), ("qa.lead", "reviewer")])
+    set_members(client, bundle["id"], [("qa.member", "author"), ("qa.lead", "author")])
+    set_members(client, bundle["id"], [("qa.member", "author")])
+
+    removed, changed, added = (event["detail"] for event in _get_events(client, bundle["id"])[:3])
+    assert added == {"added": [{"login_id": "qa.lead", "role": "reviewer"}], "removed": [], "role_changed": []}
+    assert changed == {"added": [], "removed": [], "role_changed": [{"login_id": "qa.lead", "from": "reviewer", "to": "author"}]}
+    assert removed == {"added": [], "removed": ["qa.lead"], "role_changed": []}
+
+
+def test_events_page_backwards_with_before_id(client: TestClient) -> None:
+    bundle = create_bundle(client)
+    for revision in range(1, 7):
+        _patch_title(client, bundle["id"], revision, f"Title {revision}")
+
+    first = client.get(f"/api/bundles/{bundle['id']}/events?limit=3", headers=AUTHOR).json()
+    second = client.get(f"/api/bundles/{bundle['id']}/events?limit=3&before_id={first[-1]['id']}", headers=AUTHOR).json()
+    third = client.get(f"/api/bundles/{bundle['id']}/events?limit=3&before_id={second[-1]['id']}", headers=AUTHOR).json()
+
+    ids = [event["id"] for event in first + second + third]
+    assert len(ids) == 7 and len(set(ids)) == 7
+    assert ids == sorted(ids, reverse=True)
+    assert third[-1]["action"] == "bundle.create"
+
+
+def test_bundle_out_counts_documents(client: TestClient) -> None:
+    bundle = create_bundle(client)
+    assert bundle["document_count"] == 0
+
+    response = upload(client, bundle["id"], build_docx(p("보호 장갑을 착용한다.")), "SYNTHETIC_OLD-1_Count.docx")
+
+    assert response.status_code == 201, response.text
+    assert get_bundle(client, bundle["id"])["document_count"] == 1
