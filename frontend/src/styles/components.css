@@ -940,3 +940,56 @@
   .picker-option[aria-pressed="true"] { background: var(--accent-tint); box-shadow: inset 2px 0 0 var(--accent); font-weight: 600; }
   .picker-more { padding: 8px 10px; }
 }
+
+/* ---- Assign: Old 조각 ‖ New 원문 나란히(설계 docs/superpowers/specs/2026-11-09-assign-unified-design.md §3) ---- */
+@layer components {
+  .assign-desk { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 10px; min-width: 0; min-height: 0; padding: 10px 14px 14px; background: var(--bg); }
+  .assign-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 30px; }
+  .assign-panes { display: grid; grid-template-columns: minmax(0, var(--split, 50%)) 12px minmax(0, 1fr); min-height: 0; }
+  .assign-panes[data-single] { grid-template-columns: minmax(0, 1fr); }
+  .assign-pane { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 6px; min-width: 0; min-height: 0; }
+  .pane-head { display: flex; align-items: center; gap: 8px; min-height: 28px; font-size: var(--fs-cap); color: var(--ink-3); }
+  .pane-title { font: 600 var(--fs-cap) / 1 var(--font-mono); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .pane-body { min-height: 0; overflow-y: auto; scrollbar-gutter: stable; padding: 2px 4px 24px; }
+  /* 문서별 확대 - 원문 글자·줄 높이·용지 폭이 --z를 따른다 */
+  .assign-pane .sheet { max-width: calc(640px * var(--z, 1)); }
+  .assign-pane .pg { font-size: calc(var(--fs-read) * var(--z, 1)); line-height: calc(var(--lh-read) * var(--z, 1)); }
+  .assign-pane .pg p:lang(ko), .assign-pane .pg .su:lang(ko) { line-height: calc(27px * var(--z, 1)); }
+  .assign-panes[data-single] .assign-pane { justify-self: center; width: min(100%, calc(680px * var(--z, 1))); }
+
+  .pane-zoom { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: var(--r-1); background: var(--surface); opacity: 0.6; transition: opacity var(--dur-fast); }
+  .assign-pane:hover .pane-zoom, .pane-zoom:focus-within { opacity: 1; }
+  .pane-zoom button { display: grid; place-items: center; width: 22px; height: 22px; color: var(--ink-2); cursor: pointer; }
+  .pane-zoom button:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+  .pane-zoom button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .pane-zoom span { min-width: 38px; text-align: center; font: 600 10px / 1 var(--font-mono); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+  .pane-divider { position: relative; cursor: col-resize; touch-action: none; }
+  .pane-divider::before { content: ""; position: absolute; left: 5px; top: 34px; bottom: 0; width: 2px; background: var(--line-2); transition: background var(--dur-fast); }
+  .pane-divider::after { content: ""; position: absolute; left: 3px; top: 50%; width: 6px; height: 28px; border: 1px solid var(--line-2); border-radius: 3px; background: var(--surface); translate: 0 -50%; }
+  .pane-divider:hover::before, .pane-divider:focus-visible::before, .pane-divider[data-drag]::before { background: var(--accent); }
+  .pane-divider:hover::after, .pane-divider:focus-visible::after, .pane-divider[data-drag]::after { border-color: var(--accent); }
+  .pane-divider:focus-visible { outline: none; }
+
+  /* 확정한 조각의 간 곳 */
+  .strip-note { display: block; margin-top: 2px; font: 600 var(--fs-micro) / 16px var(--font-mono); color: var(--st-ok-ink); }
+  .strip-note.is-delete { color: var(--danger-ink); }
+
+  /* New 원문 줄 - 점선 후보, 채움 고름, 위험색 출처 없음 */
+  .new-sheet { gap: 2px; }
+  .pg .new-sec { margin: 10px 0 2px; font: 600 var(--fs-cap) / var(--lh-cap) var(--font-ui); color: var(--ink-3); }
+  .new-line { display: block; width: calc(100% + 16px); margin-inline: -8px; padding: 4px 8px; border-radius: var(--r-1); text-align: left; color: inherit; font: inherit; cursor: pointer; }
+  .new-line:hover { background: var(--hover); }
+  .new-line .ptag { margin-right: 6px; vertical-align: 1px; }
+  .new-line[data-state="candidate"] { outline: 1.5px dashed var(--accent); outline-offset: -1.5px; }
+  .new-line[data-state="picked"] { background: var(--accent-tint); box-shadow: inset 0 0 0 1.5px var(--accent); }
+  .new-line[data-state="unsourced"] { box-shadow: inset 2px 0 0 var(--danger-fill); }
+  .new-line[data-state="focus"] { background: var(--danger-tint); box-shadow: inset 0 0 0 1.5px var(--danger-ink); }
+  .new-src { display: inline-block; margin-left: 6px; padding: 0 4px; border-radius: var(--r-1); font: 600 10px / 16px var(--font-mono); vertical-align: 1px; background: var(--st-ok-tint); color: var(--st-ok-ink); }
+  .new-src.is-new { background: var(--sunken); color: var(--ink-3); }
+  .pg .new-block { margin: 4px 0; padding: 6px 8px; border: 1px dashed var(--line-2); border-radius: var(--r-1); font: var(--fs-cap) / var(--lh-cap) var(--font-ui); color: var(--ink-3); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pane-zoom, .pane-divider::before { transition: none; }
+  }
+}

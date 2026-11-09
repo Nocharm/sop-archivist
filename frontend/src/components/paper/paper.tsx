@@ -45,7 +45,18 @@ interface PaperProps {
   figureSource?: { bundleId: number; docId: number };
   testId: string;
   /** Split - 문단을 종이 조각으로, 앞에 태그, 끝에 표시. isChecked는 먼저 칠한 경계 확인까지 본다 */
-  strips?: { isChecked: (unit: ViewUnit) => boolean; canMerge: boolean; onGapMerge: (firstId: number, secondId: number) => void; mergeLabel: string };
+  strips?: {
+    isChecked: (unit: ViewUnit) => boolean;
+    canMerge: boolean;
+    onGapMerge: (firstId: number, secondId: number) => void;
+    mergeLabel: string;
+    /** Assign - 모든 문단을 조각으로 두므로 경계 확인 표시는 뺀다 */
+    hideChecked?: boolean;
+    /** Assign - 보기를 다시 부르지 않아도 지금 커버 상태로 표시한다 */
+    statusOf?: (unitId: number) => ViewUnit["status"] | undefined;
+    /** Assign - 조각 아래 한 줄(간 곳) */
+    renderNote?: (unitIds: number[]) => ReactNode;
+  };
   /** 고른 단위를 밑줄 대신 바깥 윤곽으로 감싼다 */
   contour?: boolean;
   /** 고른 단위의 끝에 붙는 것(확인 단추) */
@@ -248,8 +259,9 @@ export function Paper({
     const langs = [...new Set(units.map((unit) => getTags(unit).lang).filter((lang): lang is "KO" | "EN" => lang !== null))];
     const hold = units.some((unit) => getTags(unit).hold);
     const allChecked = units.length > 0 && units.every((unit) => strips.isChecked(unit));
-    const marks = new Set<UnitMark>(units.flatMap((unit) => getMarks(unit).filter((mark) => mark !== "checked")));
-    if (allChecked) marks.add("checked");
+    const live = units.map((unit) => ({ ...unit, status: strips.statusOf?.(unit.id) ?? unit.status }));
+    const marks = new Set<UnitMark>(live.flatMap((unit) => getMarks(unit).filter((mark) => mark !== "checked")));
+    if (allChecked && !strips.hideChecked) marks.add("checked");
     return (
       <div key={block.id} className="strip" data-checked={allChecked ? "" : undefined} data-testid={`${testId}-strip-${block.id}`}>
         <span className="strip-tags" aria-hidden>
@@ -268,6 +280,7 @@ export function Paper({
           {langs.length === 0 && hold && <span className="ptag hold">H</span>}
         </span>
         {paragraph}
+        {strips.renderNote?.(units.map((unit) => unit.id))}
         <span className="strip-marks" aria-hidden>
           {MARK_ORDER.filter((mark) => marks.has(mark)).map((mark) => {
             const Icon = MARK_ICONS[mark];
