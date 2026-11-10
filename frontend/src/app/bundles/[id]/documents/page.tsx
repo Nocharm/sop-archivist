@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { useState } from "react";
 
 import { DeleteDocumentModal } from "@/components/documents/delete-document-modal";
-import { AuxPill, DocStatusPill, getDocReason, WarningChips } from "@/components/documents/doc-status";
+import { AuxPill, DocStatusPill, getDocReason, WarningChips, WarningChipsOneLine } from "@/components/documents/doc-status";
 import { LayoutLabel } from "@/components/documents/layout-picto";
 import { AiSuggestChip } from "@/components/documents/ai-suggest-chip";
 import { PreviewModal } from "@/components/documents/preview-popover";
@@ -127,15 +127,16 @@ export default function DocumentsPage() {
     cell: (document) => {
       const hasWarnings = (document.extraction?.warnings ?? []).length > 0;
       return (
-        <span className="flex flex-col gap-1">
-          <span className="flex items-center justify-between gap-2">
+        // 줄 높이를 제목 칸(두 줄)에 맞춘다 - 윗줄 단추를 24px로 줄이고, 칸 위아래 여백만큼 음수 여백을 준다
+        <span className="-my-1 flex min-w-0 flex-col">
+          <span className="flex items-center justify-between gap-2 [&_.mbtn]:h-6">
             <span className="flex items-center gap-1.5">
               <DocStatusPill status={document.status} testId={`documents-${document.id}-status`} />
               <AuxPill document={document} testId={`documents-${document.id}-aux`} />
             </span>
             {renderActions(document)}
           </span>
-          {hasWarnings && renderWarnings(document)}
+          {hasWarnings && <WarningChipsOneLine key={(document.extraction?.warnings ?? []).map((warning) => warning.kind).join()} warnings={document.extraction?.warnings ?? []} testId={`documents-${document.id}-warnings`} />}
         </span>
       );
     },

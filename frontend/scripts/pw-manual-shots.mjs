@@ -114,7 +114,7 @@ const SCENES = [
   },
   {
     name: "assign-start", user: "qa.member", path: "/bundles/2/assign",
-    marks: [id("assign-filters"), id("assign-old"), id("assign-pick-prompt"), id("assign-legend")],
+    marks: [id("assign-filters"), id("assign-old"), id("assign-pick-prompt"), id("assign-help")],
   },
   {
     name: "assign-place", app: { name: "assign" }, user: "qa.member", path: "/bundles/2/assign",

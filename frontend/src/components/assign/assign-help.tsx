@@ -1,0 +1,56 @@
+// Assign 인스펙터 맨 아래 도움말 - 단축키와 표시(Old·New 줄 끝 표시, 이어진 곳 보기)의 뜻. 틀은 공통 `HelpPanel`이 맡는다.
+"use client";
+
+import { CircleCheck, Link2, Sparkles } from "lucide-react";
+import type { ReactNode } from "react";
+
+import { HelpPanel } from "@/components/ui/help-panel";
+import { useI18n } from "@/lib/i18n";
+
+function Row({ swatch, children }: { swatch: ReactNode; children: ReactNode }) {
+  return (
+    <span className="help-panel-row">
+      <span className="help-panel-swatch">{swatch}</span>
+      <span className="min-w-0">{children}</span>
+    </span>
+  );
+}
+
+export function AssignHelp() {
+  const { t } = useI18n();
+  const keys: readonly (readonly [string, ReactNode])[] = [
+    [t("assign.legend.keyMove"), <kbd key="move">↑ ↓ · J K</kbd>],
+    [t("assign.legend.keyConfirm"), <kbd key="confirm">↵</kbd>],
+    [t("assign.legend.keyEdit"), <kbd key="edit">E</kbd>],
+    [t("assign.help.keyHold"), <kbd key="hold">H</kbd>],
+    [t("assign.help.keyClear"), <kbd key="clear">U</kbd>],
+    [t("assign.help.keyShift"), <kbd key="shift">Shift + {t("assign.help.click")}</kbd>],
+    [t("assign.help.keyCtrl"), <kbd key="ctrl">Ctrl + {t("assign.help.click")}</kbd>],
+    [t("assign.help.keyZoom"), <kbd key="zoom">Ctrl + {t("assign.help.wheel")}</kbd>],
+    [t("assign.help.keyMenu"), <kbd key="menu">↑ ↓ ← →</kbd>],
+    [t("assign.help.keyEsc"), <kbd key="esc">Esc</kbd>],
+  ];
+  return (
+    <HelpPanel
+      screen="assign"
+      keys={keys}
+      marks={
+        <>
+          <Row swatch={<span className="ptag ko">KO</span>}>{t("assign.legend.lang")}</Row>
+          <Row swatch={<CircleCheck size={14} strokeWidth={2} className="pmark classified" aria-hidden />}>{t("assign.legend.confirmed")}</Row>
+          <Row swatch={<Sparkles size={14} strokeWidth={1.6} className="pmark ai" aria-hidden />}>{t("assign.legend.ai")}</Row>
+          <Row swatch={<Link2 size={14} strokeWidth={1.6} className="pmark pair" aria-hidden />}>{t("assign.legend.pair")}</Row>
+          <Row swatch={<span className="strip-note">→ 1.1</span>}>{t("assign.legend.goneTo")}</Row>
+          <Row swatch={<span className="legend-box" data-state="candidate" />}>{t("assign.legend.candidate")}</Row>
+          <Row swatch={<span className="legend-box" data-state="picked" />}>{t("assign.legend.picked")}</Row>
+          <Row swatch={<span className="new-src">← 1-012</span>}>{t("assign.legend.source")}</Row>
+          <Row swatch={<span className="legend-box" data-state="unsourced" />}>{t("assign.legend.unsourced")}</Row>
+          <Row swatch={<span className="legend-box" data-state="hover" />}>{t("assign.help.markHover")}</Row>
+          <Row swatch={<span className="legend-box" data-state="flash" />}>{t("assign.help.markJump")}</Row>
+          <Row swatch={<span className="legend-line" aria-hidden />}>{t("assign.help.markLine")}</Row>
+          <Row swatch={<span className="legend-line is-dashed" aria-hidden />}>{t("assign.help.markUnsaved")}</Row>
+        </>
+      }
+    />
+  );
+}

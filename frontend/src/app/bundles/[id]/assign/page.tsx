@@ -8,7 +8,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent } from "react";
 
-import { AssignLegend, LegendButton } from "@/components/assign/assign-legend";
+import { AssignHelp } from "@/components/assign/assign-help";
 import { DestCard } from "@/components/assign/dest-card";
 import { DestinationAccordion, type AccordionSection } from "@/components/assign/destination-accordion";
 import { DestinationTree } from "@/components/assign/destination-tree";
@@ -1148,11 +1148,11 @@ export default function AssignPage() {
     </section>
   );
 
-  function renderSide() {
+  function renderSideBody() {
     if (mode === "unsourced") {
       const target = writtenMap.get(focusNew ?? -1);
       return (
-        <aside className="assign-side" data-testid="assign-inspector">
+        <div className="assign-side-body">
           {target ? (
             <>
               <div className="assign-side-head">
@@ -1161,8 +1161,6 @@ export default function AssignPage() {
                     {target.doc_code} {target.section_path}
                   </span>
                   <span className="pill warn">{t("assign.unsourced.title")}</span>
-                  <span className="flex-1" />
-                  <LegendButton />
                 </div>
                 <p className="text-[13px] leading-5 text-ink" lang={target.lang === "neutral" ? undefined : target.lang}>
                   {target.text}
@@ -1178,22 +1176,21 @@ export default function AssignPage() {
           ) : (
             <EmptyState icon={Check} testId="assign-unsourced-done" title={t("assign.unsourced.title")} body={t("assign.unsourced.done")} compact />
           )}
-        </aside>
+        </div>
       );
     }
     if (!row) {
       return (
-        <aside className="assign-side" data-testid="assign-inspector">
+        <div className="assign-side-body">
           <div className="grid gap-1 rounded-md bg-sunken p-3 text-[13px] text-ink-2" style={{ margin: "var(--pad)" }} data-testid="assign-pick-prompt">
             <b className="text-ink">{t("assign.pickTitle")}</b>
             {t("assign.pickBody")}
           </div>
-          <AssignLegend />
-        </aside>
+        </div>
       );
     }
     return (
-      <aside className="assign-side" data-testid="assign-inspector">
+      <div className="assign-side-body">
         <div className="assign-side-head">
           <div className="flex items-center gap-2">
             <Truncate className="min-w-0 flex-1 font-mono text-sm font-semibold" text={rowUnits.map((unit) => unit.display_id).join(" · ") || "–"} testId="assign-row-id" />
@@ -1206,9 +1203,6 @@ export default function AssignPage() {
                 {t("classify.refreshFailed")}
               </button>
             )}
-            <span className="flex-none">
-              <LegendButton />
-            </span>
           </div>
           {rowSuggestion && row.status === "ai_suggested" && aiWhy && (
             <p className="flex items-start gap-1.5 text-xs text-st-ai" data-testid="assign-ai-reason">
@@ -1224,7 +1218,7 @@ export default function AssignPage() {
         </div>
         <DestinationAccordion sections={accSections} open={accOpen} onToggle={toggleAcc} />
         <div className="p-[var(--pad)]">{aiNote}</div>
-      </aside>
+      </div>
     );
   }
 
@@ -1440,7 +1434,10 @@ export default function AssignPage() {
             </div>
           )}
         </div>
-        {renderSide()}
+        <aside className="assign-side" data-testid="assign-inspector">
+          {renderSideBody()}
+          <AssignHelp />
+        </aside>
       </div>
       {menu && menuItems.length > 0 && (
         <LinkMenu key={menu.seq} anchor={menu.anchor} offset={menu.offset} items={menuItems} isUnsaved={menuItems.includes("cancel")} busy={busy} onAction={runMenu} onClose={() => setMenu(null)} />

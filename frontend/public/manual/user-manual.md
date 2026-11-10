@@ -398,7 +398,7 @@ AI가 켜져 있으면 한쪽 언어만 있는 새 문장에 **Make English** �
 
 - 마우스를 올린 문서에서 <kbd>Ctrl</kbd>+휠 또는 <kbd>Ctrl</kbd>+<kbd>+</kbd> <kbd>-</kbd>로 그 문서만 확대·축소합니다.
 - 두 문서 사이의 세로선을 끌어 폭을 바꿉니다. 확대와 폭은 이 브라우저에 기억됩니다.
-- **Legend** 는 표시와 단축키 풀이를 엽니다.
+- 오른쪽 칸 맨 아래의 **Help** 는 **Shortcuts** 와 **Marks** 두 탭으로 단축키와 표시의 뜻을 풀이합니다. 처음에는 접혀 있고, 펼침과 탭은 이 브라우저에 기억됩니다.
 
 ### 단축키 {#assign-keys}
 
@@ -412,6 +412,7 @@ AI가 켜져 있으면 한쪽 언어만 있는 새 문장에 **Make English** �
 | <kbd>Shift</kbd>+누르기 | Old Unit 여럿 고르기(지우기·옮기기) |
 | <kbd>Ctrl</kbd>+누르기 | New 문장 더하기(나눔) |
 | <kbd>Ctrl</kbd>+휠 | 마우스를 올린 문서 확대·축소 |
+| <kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd> | 그 자리 메뉴 안에서 항목 옮기기 |
 | <kbd>Esc</kbd> | 그 자리 메뉴 닫기 |
 
 ## 4단계 Outputs {#outputs}
