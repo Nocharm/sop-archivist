@@ -10,6 +10,7 @@ import { MembersModal } from "@/components/manage/members-modal";
 import { BundleStatusPill } from "@/components/status";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { Truncate } from "@/components/ui/motion";
+import { MorphButton } from "@/components/ui/morph-button";
 import { showToast } from "@/components/ui/toast";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LoadError } from "@/components/ui/load-error";
@@ -99,14 +100,12 @@ export function BundlesPanel() {
       key: "actions",
       header: <span className="sr-only">{t("manage.rowActions")}</span>,
       card: "actions",
-      className: "w-10",
+      className: "w-[100px]",
       skeletonWidth: 32,
       cell: (bundle) => (
-        <span className="row-actions">
-          <button type="button" className="btn ghost h-7 px-2 text-xs" data-testid={`admin-bundle-members-${bundle.id}`} onClick={() => setEditing(bundle)}>
-            <Users size={14} strokeWidth={1.5} aria-hidden />
-            {t("members.manage")}
-          </button>
+        // 라벨이 펼쳐질 자리를 고정해(.mbtn-set) 옆 열을 밀거나 덮지 않는다
+        <span className="row-actions mbtn-set w-[100px]">
+          <MorphButton icon={Users} label={t("members.manage")} testId={`admin-bundle-members-${bundle.id}`} onClick={() => setEditing(bundle)} />
         </span>
       ),
     },

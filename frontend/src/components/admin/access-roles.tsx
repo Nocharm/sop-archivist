@@ -225,7 +225,8 @@ export function AccessRoles() {
                   )}
                 </div>
               </div>
-              <div className="flex shrink-0 gap-1">
+              {/* 아이콘 단추 둘의 폭(32px × 2 + 사이 2px)을 고정해 라벨이 펼쳐져도 옆 권한 칩이 밀리지 않게 한다 */}
+              <div className="mbtn-set w-[66px] shrink-0">
                 <MorphButton icon={Pencil} label={t("common.edit")} testId={`role-edit-${role.id}`} onClick={() => setFormTarget(role)} />
                 <MorphButton icon={Trash2} tone="danger" label={t("common.delete")} testId={`role-delete-${role.id}`} onClick={() => setDeleteTarget(role)} />
               </div>

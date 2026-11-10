@@ -307,9 +307,12 @@ export function AccessGrants() {
       key: "revoke",
       header: <span className="sr-only">{t("grants.revokeLabel")}</span>,
       card: "actions",
-      className: "text-right",
+      className: "w-[100px] text-right",
       cell: (grant) => (
-        <MorphButton icon={Undo2} tone="danger" label={t("grants.revokeLabel")} testId={`grant-remove-${grant.id}`} onClick={() => setRevokeTarget(grant)} />
+        // 라벨이 펼쳐질 자리를 고정해(.mbtn-set) 옆 열 폭이 변하지 않게 한다
+        <span className="mbtn-set w-[100px]">
+          <MorphButton icon={Undo2} tone="danger" label={t("grants.revokeLabel")} testId={`grant-remove-${grant.id}`} onClick={() => setRevokeTarget(grant)} />
+        </span>
       ),
     },
   ];
