@@ -91,7 +91,7 @@ export function MembersModal({ title, members, testId, onSave, onClose }: Member
     >
       <ul className="grid gap-1" data-testid={`${testId}-list`}>
         {rows.map((row) => (
-          <li key={row.login_id} className="hover-row grid grid-cols-[minmax(0,1fr)_auto_28px] items-center gap-2 rounded-md px-2 py-1.5 hover:bg-hover" data-testid={`${testId}-row-${row.login_id}`}>
+          <li key={row.login_id} className="hover-row grid grid-cols-[minmax(0,1fr)_auto_88px] items-center gap-2 rounded-md px-2 py-1.5 hover:bg-hover" data-testid={`${testId}-row-${row.login_id}`}>
             <span className="min-w-0">
               <span className="block truncate">{row.label}</span>
               <small className="flex items-center gap-1.5 font-mono text-[11px] leading-4 text-ink-3">
@@ -107,7 +107,8 @@ export function MembersModal({ title, members, testId, onSave, onClose }: Member
               options={roleOptions}
               onChange={(role) => setRows((prev) => prev.map((item) => (item.login_id === row.login_id ? { ...item, role } : item)))}
             />
-            <span className="row-actions mbtn-host">
+            {/* 마지막 칸(88px)은 빼기 단추가 라벨까지 펼쳐질 폭 - 펼쳐져도 이름·역할을 덮지 않는다 */}
+            <span className="row-actions mbtn-set justify-self-end">
               <MorphButton icon={Trash2} tone="danger" label={t("members.remove")} testId={`${testId}-remove-${row.login_id}`} onClick={() => setRows((prev) => prev.filter((item) => item.login_id !== row.login_id))} />
             </span>
           </li>

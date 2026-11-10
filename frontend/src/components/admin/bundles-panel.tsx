@@ -144,6 +144,8 @@ export function BundlesPanel() {
           view={view}
           rows={data === null ? null : rows.visible}
           columns={columns}
+          // 카드에서 동작 단추가 맨 아래 한 줄을 차지한다 - 라벨이 펼쳐져도 메타 글자를 덮지 않는다
+          cardActions="row"
           getRowKey={(bundle) => bundle.id}
           testId="admin-bundles-list"
           rowTestId={(bundle) => `admin-bundle-${bundle.id}`}

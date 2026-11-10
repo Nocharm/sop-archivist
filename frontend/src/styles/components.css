@@ -356,6 +356,8 @@
   /* cardActions="row" - 동작 단추가 카드 맨 아래 한 줄을 차지한다(늘 보이고 본문을 가리지 않는다). 키가 다른 옆 카드와도 바닥이 맞는다 */
   .dcard.has-foot { display: flex; flex-direction: column; }
   .dcard-foot { display: flex; justify-content: flex-end; gap: 2px; margin-top: auto; padding-top: 6px; border-top: 1px solid var(--line); }
+  /* 표에서 호버로 드러나는 단추(.row-actions)도 카드 아랫줄에서는 늘 보인다 */
+  .dcard-foot .row-actions { opacity: 1; }
   /* 구역 머리(getRowGroup) - 표에서는 줄 전체, 카드에서는 격자 한 줄 전체를 차지한다. 둘째 구역부터는 위를 더 띄운다 */
   .dgroup-head { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--ink-2); }
   .dgroup-n { padding: 0 6px; border: 1px solid var(--line-2); border-radius: var(--r-1); font: 600 var(--fs-micro) / 18px var(--font-mono); color: var(--ink-3); }
@@ -653,11 +655,8 @@
   .mbtn:not(:disabled):hover, .mbtn:focus-visible { border-color: var(--line-2); background: var(--surface); color: var(--ink); }
   .mbtn:not(:disabled):active { transform: scale(var(--press)); }
   .mbtn:disabled { opacity: 0.5; cursor: not-allowed; }
-  /* 좁은 칸 끝에 둘 때 - 자리는 아이콘 하나만 차지하고 라벨은 왼쪽 위로 펼쳐져 옆 칸을 밀지 않는다 */
-  .mbtn-host { position: relative; display: inline-block; width: var(--ctl); height: var(--ctl); vertical-align: middle; }
-  .mbtn-host > .mbtn, .mbtn-host > * > .mbtn { position: absolute; top: 0; right: 0; z-index: 1; }
-  /* 줄 끝 단추 묶음(문서 목록) - 쓰는 쪽이 아이콘 단추 수만큼 폭을 고정해 두고 단추는 오른쪽에 붙는다.
-     하나에 올리면 나머지는 흐려지며 왼쪽으로 비켜나고 라벨은 기본보다 천천히 펼쳐진다. 펼쳐진 단추는 고정 폭 밖 왼쪽으로 겹쳐 넘칠 뿐 옆 칸을 밀지 않는다 */
+  /* 줄 끝 단추 자리 - 쓰는 쪽이 라벨이 다 펼쳐질 폭(단추 하나를 펼친 폭 + 그 오른쪽 아이콘 단추들)을 고정해 두고 단추는 오른쪽에 붙는다.
+     하나에 올리면 나머지는 흐려지고 라벨은 기본보다 천천히 펼쳐진다. 펼쳐져도 이 자리 안이라 옆 칸을 밀거나 덮지 않는다(폭이 모자라면 왼쪽으로 넘쳐 덮는다) */
   .mbtn-set { display: inline-flex; justify-content: flex-end; gap: 2px; vertical-align: middle; }
   .mbtn-set > .mbtn {
     flex: none;

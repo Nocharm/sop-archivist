@@ -37,9 +37,9 @@ const SKELETON_ROWS = 4;
 
 const LIST_KEY = "documents";
 
-// 동작 칸이 미리 잡는 폭 - 아이콘 단추 셋(32px × 3 + 사이 2px × 2). 라벨은 이 자리 밖 왼쪽으로 겹쳐 펼쳐져(.mbtn-set) 다른 열이 움직이지 않는다.
-// 가장 긴 라벨이 다 펼쳐질 폭(약 200px)을 잡으면 표가 본문 폭(1280)을 넘어 제목 열이 줄어든다
-const ACTIONS_WIDTH = "w-[100px]";
+// 동작 칸이 미리 잡는 폭 - 단추 하나를 펼치면 그 단추 라벨 + 오른쪽 단추들(흐려져도 자리는 남는다)이 이 안에 들어가 옆 칸 글자를 덮지 않는다.
+// 가장 넓은 경우는 맨 왼쪽 Preview(영어 약 86px + 34px × 2). 라벨은 짧게 둔다(Download) - 늘린 폭만큼 제목 열 최소 폭을 줄여 표 최소 폭은 그대로다
+const ACTIONS_WIDTH = "w-[156px]";
 
 // 표가 이 폭(본문 폭, px)에 다 들어가지 않으면 뒤쪽 네 열(추출·보조·경고·동작)을 한 열 두 줄로 접는다 - 한 줄 배치의 표 최소 폭(영어 약 1223, 한국어 약 1176)보다 조금 크게
 const TRAIL_WRAP_BELOW = 1230;
@@ -97,7 +97,7 @@ export default function DocumentsPage() {
         <MorphButton icon={Eye} label={t("documents.preview")} testId={`documents-${document.id}-preview`} onClick={() => setPreviewing(document)} />
       )}
       {document.status === "ready" && (
-        <MorphButton icon={Download} label={t("manage.downloadOriginal")} testId={`documents-${document.id}-download`} onClick={() => void handleDownload(document)} />
+        <MorphButton icon={Download} label={t("documents.download")} testId={`documents-${document.id}-download`} onClick={() => void handleDownload(document)} />
       )}
       {canEdit && <MorphButton icon={Trash2} tone="danger" label={t("documents.deleteShort")} testId={`documents-${document.id}-delete`} onClick={() => setDeleting(document)} />}
     </span>
@@ -122,7 +122,7 @@ export default function DocumentsPage() {
     header: `${t("documents.colExtraction")} · ${t("documents.colAux")}`,
     card: "none",
     className: "align-middle",
-    minWidth: 290,
+    minWidth: 340, // 알약 둘 + 동작 칸(ACTIONS_WIDTH) - 라벨이 펼쳐져도 알약을 덮지 않는다
     skeletonWidth: 200,
     cell: (document) => {
       const hasWarnings = (document.extraction?.warnings ?? []).length > 0;
@@ -198,7 +198,7 @@ export default function DocumentsPage() {
       header: t("documents.colTitle"),
       card: "title",
       grow: true,
-      minWidth: 220,
+      minWidth: 164,
       skeletonWidth: 320,
       cell: (document) => (
         <>

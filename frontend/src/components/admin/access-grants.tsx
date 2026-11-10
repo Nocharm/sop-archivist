@@ -307,10 +307,10 @@ export function AccessGrants() {
       key: "revoke",
       header: <span className="sr-only">{t("grants.revokeLabel")}</span>,
       card: "actions",
-      className: "w-[100px] text-right",
+      className: "w-[124px] text-right",
       cell: (grant) => (
-        // 라벨이 펼쳐질 자리를 고정해(.mbtn-set) 옆 열 폭이 변하지 않게 한다
-        <span className="mbtn-set w-[100px]">
+        // 라벨이 다 펼쳐질 자리(영어 Revoke grant 약 117px)를 고정해(.mbtn-set) 옆 열 폭이 변하지 않고 옆 칸 글자도 덮지 않게 한다
+        <span className="mbtn-set w-[124px]">
           <MorphButton icon={Undo2} tone="danger" label={t("grants.revokeLabel")} testId={`grant-remove-${grant.id}`} onClick={() => setRevokeTarget(grant)} />
         </span>
       ),
@@ -342,6 +342,8 @@ export function AccessGrants() {
           view={view}
           rows={grants.data}
           columns={columns}
+          // 카드에서 동작 단추가 맨 아래 한 줄을 차지한다 - 라벨이 펼쳐져도 메타 글자를 덮지 않는다
+          cardActions="row"
           getRowKey={(grant) => grant.id}
           testId="grants-table"
           rowTestId={(grant) => `grant-row-${grant.id}`}

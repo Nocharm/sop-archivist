@@ -217,7 +217,8 @@ export default function ToBePage() {
     return (
       <div className="grid gap-1 py-1" data-testid={`tobe-${doc.key}-steps`}>
         {steps.map((step) => (
-          <div key={step.step_no} className="grid grid-cols-[48px_minmax(0,1fr)_32px] items-center gap-2">
+          // 마지막 칸은 단계 지우기 단추가 라벨까지 펼쳐질 폭 - 펼쳐져도 단계 이름 입력을 덮지 않는다
+          <div key={step.step_no} className="grid grid-cols-[48px_minmax(0,1fr)_128px] items-center gap-2">
             {/* 서버의 단계 번호 그대로 - 결과물 C·Excel과 같은 번호다 */}
             <span className="stg-n justify-self-end" aria-hidden>
               {step.step_no}
@@ -234,7 +235,7 @@ export default function ToBePage() {
               }
             />
             {canEdit && (
-              <span className="mbtn-host justify-self-end">
+              <span className="mbtn-set justify-self-end">
                 <MorphButton icon={Trash2} tone="danger" label={t("tobe.removeStep")} testId={`tobe-${doc.key}-remove-step-${step.step_no}`} onClick={() => update(removeStep(draft, doc.key, step.step_no))} />
               </span>
             )}
@@ -317,7 +318,8 @@ export default function ToBePage() {
               <th className="w-24">{t("tobe.colEntrance")}</th>
               <th className="w-28">{t("tobe.colEquipment")}</th>
               <th className="w-32">{t("tobe.colDetail")}</th>
-              {canEdit && <th className="w-10" aria-label={t("common.delete")} />}
+              {/* 빼기 단추가 라벨까지 펼쳐질 폭을 미리 잡는다 - 펼쳐져도 옆 칸(세부)의 글자를 덮지 않는다 */}
+              {canEdit && <th className="w-[108px]" aria-label={t("common.delete")} />}
             </tr>
           </thead>
           <tbody>
@@ -412,8 +414,8 @@ export default function ToBePage() {
                         </button>
                       </td>
                       {canEdit && (
-                        <td>
-                          <span className="row-actions mbtn-host">
+                        <td className="text-right">
+                          <span className="row-actions mbtn-set">
                           {isMatch ? (
                             <Tooltip label={t("tobe.matchLocked")} align="end">
                               <MorphButton icon={Trash2} tone="danger" label={t("tobe.removeDoc")} testId={`${prefix}-remove`} disabled />
