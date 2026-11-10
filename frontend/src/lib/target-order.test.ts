@@ -2,10 +2,10 @@
 import { describe, expect, it } from "vitest";
 
 import type { OutputC, OutputCItem } from "./api-sop";
-import { buildIndentItems, buildTargetOrder, canMoveTarget } from "./target-order";
+import { buildPatchItems, buildTargetOrder, canMoveTarget } from "./target-order";
 
 function item(id: number, lang: string): OutputCItem {
-  return { target_id: id, kind: "sentence", lang, text: `t${id}`, ai_text: "", change_type: null, status: "confirmed", source_note: "", number: null, indent_level: 0, cell_row: null, cell_col: null, children: [] };
+  return { target_id: id, kind: "sentence", lang, text: `t${id}`, ai_text: "", change_type: null, status: "confirmed", source_note: "", number: null, indent_level: 0, number_style: "numbered", cell_row: null, cell_col: null, children: [] };
 }
 
 function output(lang: string, sections: Array<[string, number[]]>): OutputC {
@@ -50,16 +50,21 @@ describe("buildTargetOrder", () => {
   });
 });
 
-describe("buildIndentItems", () => {
+describe("buildPatchItems", () => {
   const ko = output("ko", [["purpose", [1, 2]], ["scope", [3]]]);
   const en = output("en", [["purpose", [11, 12]]]);
 
   it("sends the whole document in its current order with a depth only on the changed lines", () => {
     // 짝 상대(12)에도 같은 깊이 - 나머지 줄은 깊이를 빼서 그대로 둔다
-    expect(buildIndentItems(ko, en, 7, new Map([[2, 1], [12, 1]]))).toEqual([{ target_id: 1 }, { target_id: 2, indent_level: 1 }, { target_id: 11 }, { target_id: 12, indent_level: 1 }, { target_id: 3 }]);
+    const patches = new Map([[2, { indent_level: 1 }], [12, { indent_level: 1 }]]);
+    expect(buildPatchItems(ko, en, 7, patches)).toEqual([{ target_id: 1 }, { target_id: 2, indent_level: 1 }, { target_id: 11 }, { target_id: 12, indent_level: 1 }, { target_id: 3 }]);
+  });
+
+  it("puts a number style on the one changed line only - the server mirrors it to the pair partner", () => {
+    expect(buildPatchItems(ko, en, 7, new Map([[3, { number_style: "note" as const }]]))).toEqual([{ target_id: 1 }, { target_id: 2 }, { target_id: 11 }, { target_id: 12 }, { target_id: 3, number_style: "note" }]);
   });
 
   it("returns null for an unknown document", () => {
-    expect(buildIndentItems(ko, en, 9, new Map())).toBeNull();
+    expect(buildPatchItems(ko, en, 9, new Map())).toBeNull();
   });
 });

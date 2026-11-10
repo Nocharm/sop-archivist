@@ -860,6 +860,40 @@ await runStep("outputs: indent a line on C and its section number changes", {}, 
   check("Shift+Tab on the picked row outdents it back", true);
 });
 
+await runStep("outputs: mark a line as a note on C, the count continues and the note is italic", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
+  await wait(page, "output-c");
+  // 같은 칸에서 같은 깊이로 이어지는 번호 줄 둘(X, Y) - X를 주석으로 바꾸면 Y가 X의 번호를 이어 받는다
+  const pair = await page.evaluate(() => {
+    for (const section of document.querySelectorAll('[data-testid="output-c"] section')) {
+      const rows = [...section.querySelectorAll('[data-testid^="output-c-row-"]')].map((row) => {
+        const id = row.getAttribute("data-testid").replace("output-c-row-", "");
+        return { id, number: row.querySelector(`[data-testid="output-c-number-${id}"]`)?.textContent?.trim() ?? null, markable: !!row.querySelector(`[data-testid="output-c-mark-note-${id}"]`) };
+      });
+      for (let i = 0; i + 1 < rows.length; i += 1) {
+        const [x, y] = [rows[i], rows[i + 1]];
+        if (x.markable && x.number && y.number && x.number.split(".").length === y.number.split(".").length) return { x: x.id, y: y.id, xNumber: x.number, yNumber: y.number };
+      }
+    }
+    return null;
+  });
+  check("C has two numbered lines in a row to mark", pair !== null);
+  await page.locator(`[data-testid="output-c-row-${pair.x}"]`).hover();
+  await page.locator(`[data-testid="output-c-mark-note-${pair.x}"]`).click();
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="output-c-number-${id}"]`) === null, pair.x, { timeout: T });
+  const yAfter = (await page.locator(`[data-testid="output-c-number-${pair.y}"]`).innerText()).trim();
+  check("the next numbered line continues the count", yAfter === pair.xNumber, `${pair.yNumber} -> ${yAfter} (expected ${pair.xNumber})`);
+  const fontStyle = await page.locator(`[data-testid="output-c-item-${pair.x}"]`).evaluate((node) => getComputedStyle(node).fontStyle);
+  check("the note is shown in italics", fontStyle === "italic", fontStyle);
+  check("the note button shows as picked", (await page.locator(`[data-testid="output-c-mark-note-${pair.x}"]`).getAttribute("aria-pressed")) === "true");
+  await takeShot("sop-outputs-c-note.png");
+  // 되돌려 둔다 - 아래 단계와 다시 돌리기가 같은 번호를 본다
+  await page.locator(`[data-testid="output-c-row-${pair.x}"]`).hover();
+  await page.locator(`[data-testid="output-c-mark-numbered-${pair.x}"]`).click();
+  await page.waitForFunction(({ id, number }) => document.querySelector(`[data-testid="output-c-number-${id}"]`)?.textContent?.trim() === number, { id: pair.x, number: pair.xNumber }, { timeout: T });
+  check("Numbered brings the number back", (await page.locator(`[data-testid="output-c-number-${pair.y}"]`).innerText()).trim() === pair.yNumber);
+});
+
 // 작성자가 요청을 거둔 뒤 다시 요청해 둔다 - 아래 검토자 단계가 같은 Bundle을 검토 대기로 받는다
 await runStep("review: author withdraws the request and asks again", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);

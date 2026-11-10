@@ -1,28 +1,39 @@
 // 결과물 C - 새 문서를 칸·단계 순서로 미리 본다. 결과물 화면과 검토 화면이 같이 쓴다. 확정 전 새 문장은 점선.
 "use client";
 
-import { ArrowDown, ArrowUp, FileStack, IndentDecrease, IndentIncrease, ListTree } from "lucide-react";
+import { ArrowDown, ArrowUp, FileStack, IndentDecrease, IndentIncrease, Italic, List, ListOrdered, ListTree, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { Fragment, type ReactNode } from "react";
 
 import { EmptyState } from "@/components/ui/empty-state";
 import { Tooltip } from "@/components/ui/tooltip";
-import type { OutputC, OutputCItem, OutputLang } from "@/lib/api-sop";
+import type { NumberStyle, OutputC, OutputCItem, OutputLang } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
-import { canIndent, getSectionDepths, isIndentable, readIndentKey, type IndentDir } from "@/lib/section-number";
+import { canIndent, getSectionDepths, isCounted, isIndentable, NUMBER_STYLES, readIndentKey, type IndentDir } from "@/lib/section-number";
 import { canMoveTarget, type MoveDir } from "@/lib/target-order";
 
 /** 순서 바꾸기 - 결과물 화면에서 작성자에게만 넘긴다. 검토 화면은 넘기지 않아 단추가 없다 */
 export type MoveTarget = (targetDocId: number, locationKey: string, targetId: number, dir: MoveDir) => void;
 /** 들여·내어쓰기 - 지금 보이는 깊이에서 한 단계. 검토 화면은 넘기지 않는다 */
 export type IndentTarget = (targetDocId: number, targetId: number, depth: number) => void;
+/** 번호 표시 바꾸기 - 이 줄만 보내면 한/영 짝 상대·번역 줄은 서버가 따라 바꾼다. 검토 화면은 넘기지 않는다 */
+export type MarkTarget = (targetDocId: number, targetId: number, style: NumberStyle) => void;
+
+const MARK_ICONS: Record<NumberStyle, LucideIcon> = { numbered: ListOrdered, omitted: List, note: Italic };
+const MARK_KEYS: Record<NumberStyle, { label: string; tip: string }> = {
+  numbered: { label: "outputs.markNumbered", tip: "outputs.markNumberedTip" },
+  omitted: { label: "outputs.markOmitted", tip: "outputs.markOmittedTip" },
+  note: { label: "outputs.markNote", tip: "outputs.markNoteTip" },
+};
 
 function CItemView({ item }: { item: OutputCItem }) {
+  // 주석 줄은 번호 없이 기울여 보인다 - 표 칸은 표의 표시를 싣는다
+  const isNote = item.number_style === "note";
   if (item.kind === "table") {
     const rows = new Map<number, OutputCItem[]>();
     for (const cell of item.children) rows.set(cell.cell_row ?? 0, [...(rows.get(cell.cell_row ?? 0) ?? []), cell]);
     return (
-      <table className="ptbl my-1">
+      <table className={`ptbl my-1 ${isNote ? "italic" : ""}`}>
         <tbody>
           {[...rows.entries()].sort((a, b) => a[0] - b[0]).map(([index, cells]) => (
             <tr key={index}>
@@ -39,7 +50,11 @@ function CItemView({ item }: { item: OutputCItem }) {
     );
   }
   return (
-    <p className={`${item.status === "confirmed" ? "" : "rounded-sm border border-dashed border-line-2 px-1"}`} data-testid={`output-c-item-${item.target_id}`}>
+    <p
+      className={`${item.status === "confirmed" ? "" : "rounded-sm border border-dashed border-line-2 px-1"} ${isNote ? "italic" : ""}`}
+      data-testid={`output-c-item-${item.target_id}`}
+      data-number-style={item.number_style}
+    >
       {item.kind === "figure" ? "[Figure]" : item.text || item.ai_text}
     </p>
   );
@@ -52,12 +67,38 @@ interface RowButtonsProps {
   onMove: (dir: MoveDir) => void;
   /** 깊이를 바꿀 수 없는 줄(입구 2 문서·번역 줄)이면 없다 */
   indent: { canOut: boolean; canIn: boolean; onIndent: (dir: IndentDir) => void } | null;
+  /** 번호 표시를 바꿀 수 없는 줄(입구 2 문서·번역 줄)이면 없다 */
+  onMark: ((style: NumberStyle) => void) | null;
 }
 
-function RowButtons({ items, item, busy, onMove, indent }: RowButtonsProps) {
+function RowButtons({ items, item, busy, onMove, indent, onMark }: RowButtonsProps) {
   const { t } = useI18n();
   return (
     <span className="row-actions absolute right-0 top-0 flex gap-0.5 bg-paper" style={{ fontFamily: "var(--font-ui)" }}>
+      {onMark && (
+        // 세 칸 눌림 단추 - 떠 있는 메뉴를 쓰지 않아 옆 글자를 덮지 않는다. 아이콘만 있으니 툴팁이 뜻을 알려 준다
+        <span className="view-toggle c-mark mr-1" role="group" aria-label={t("outputs.markGroup")} data-testid={`output-c-mark-${item.target_id}`}>
+          {NUMBER_STYLES.map((style) => {
+            const Icon = MARK_ICONS[style];
+            return (
+              <Tooltip key={style} label={t(MARK_KEYS[style].tip)} align="end">
+                <button
+                  type="button"
+                  aria-pressed={item.number_style === style}
+                  aria-label={t(MARK_KEYS[style].label)}
+                  data-testid={`output-c-mark-${style}-${item.target_id}`}
+                  disabled={busy}
+                  onClick={() => {
+                    if (item.number_style !== style) onMark(style);
+                  }}
+                >
+                  <Icon size={12} strokeWidth={1.5} aria-hidden />
+                </button>
+              </Tooltip>
+            );
+          })}
+        </span>
+      )}
       {indent &&
         ([-1, 1] as const).map((dir) => (
           // 단추는 탭 순서에 있고, 툴팁이 줄을 고른 뒤 쓰는 글쇠도 알려 준다
@@ -111,12 +152,13 @@ interface OutputCViewProps {
   lang: OutputLang;
   onMove?: MoveTarget;
   onIndent?: IndentTarget;
+  onMark?: MarkTarget;
   moving?: boolean;
   /** 비었을 때 갈 곳(To-Be) - 고칠 수 있는 화면에서만 준다 */
   tobeHref?: string;
 }
 
-export function OutputCView({ data, lang, onMove, onIndent, moving = false, tobeHref }: OutputCViewProps) {
+export function OutputCView({ data, lang, onMove, onIndent, onMark, moving = false, tobeHref }: OutputCViewProps) {
   const { t } = useI18n();
   if (data.docs.length === 0) {
     return (
@@ -148,6 +190,7 @@ export function OutputCView({ data, lang, onMove, onIndent, moving = false, tobe
             </header>
             {doc.sections.map((section) => {
               const depths = getSectionDepths(section);
+              const counted = section.items.map(isCounted);
               return (
                 <section key={section.location_key} className="grid gap-1">
                   <h3 className="text-[13px] font-semibold text-ink-2" style={{ fontFamily: "var(--font-ui)" }} data-testid={`output-c-section-${doc.target_doc_id}-${section.location_key}`}>
@@ -166,11 +209,12 @@ export function OutputCView({ data, lang, onMove, onIndent, moving = false, tobe
                         </NumberedLine>
                       );
                       if (!onMove) return <Fragment key={item.target_id}>{line}</Fragment>;
+                      const editable = isIndentable(doc.entrance, item);
                       const indent =
-                        onIndent && isIndentable(doc.entrance, item)
+                        onIndent && editable
                           ? {
-                              canOut: canIndent(depths, index, -1),
-                              canIn: canIndent(depths, index, 1),
+                              canOut: canIndent(depths, counted, index, -1),
+                              canIn: canIndent(depths, counted, index, 1),
                               onIndent: (dir: IndentDir) => onIndent(doc.target_doc_id, item.target_id, depths[index] + dir),
                             }
                           : null;
@@ -179,7 +223,8 @@ export function OutputCView({ data, lang, onMove, onIndent, moving = false, tobe
                           key={item.target_id}
                           // 줄을 눌러 고르면 Tab·Shift+Tab이 들이고 내어 쓴다. 탭 순서에는 넣지 않고(-1) Esc로 놓아 Tab이 페이지 이동을 빼앗지 않게 한다
                           tabIndex={indent ? -1 : undefined}
-                          className="hover-row c-row relative pr-[104px]"
+                          // 오른쪽은 줄 끝 단추(번호 표시 셋 + 들여쓰기 둘 + 옮기기 둘)가 다 들어갈 폭 - 호버로 드러나도 글자를 덮지 않는다
+                          className="hover-row c-row relative pr-[184px]"
                           data-testid={`output-c-row-${item.target_id}`}
                           onKeyDown={(event) => {
                             if (!indent || event.target !== event.currentTarget) return;
@@ -192,7 +237,13 @@ export function OutputCView({ data, lang, onMove, onIndent, moving = false, tobe
                           }}
                         >
                           {line}
-                          <RowButtons items={section.items} item={item} busy={moving} indent={indent} onMove={(dir) => onMove(doc.target_doc_id, section.location_key, item.target_id, dir)} />
+                          <RowButtons
+                            items={section.items}
+                            item={item}
+                            busy={moving}
+                            indent={indent}
+                            onMark={onMark && editable ? (style) => onMark(doc.target_doc_id, item.target_id, style) : null}
+                            onMove={(dir) => onMove(doc.target_doc_id, section.location_key, item.target_id, dir)} />
                         </div>
                       );
                     })

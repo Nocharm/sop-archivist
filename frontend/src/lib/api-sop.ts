@@ -743,8 +743,10 @@ export interface OutputARow {
   dest_doc_code: string;
   dest_doc_title: string;
   dest_location: string;
-  /** 새 문서 안 섹션 번호 - 번호 없는 곳은 빈 글, 새 문장이 여럿이면 "① 1.1\n② 2.1" */
+  /** 새 문서 안 섹션 번호 - 번호 없는 곳은 빈 글, 새 문장이 여럿이면 "① 1.1\n② 2.1"(번호 없는 새 문장은 "② " 뒤가 빈다) */
   dest_number: string;
+  /** 보낸 새 문장이 모두 주석 줄이면 true - 확정 문장을 기울여 보인다 */
+  dest_is_note: boolean;
   confirmed_text: string;
   ai_text: string;
   change_type: string;
@@ -761,6 +763,9 @@ export interface FlowGraph {
   edges: Array<{ source: string; target: string; count: number }>;
 }
 
+/** 줄 번호 표시 - backend app/sop/constants.py NumberStyle과 같은 값 */
+export type NumberStyle = "numbered" | "omitted" | "note";
+
 export interface OutputCItem {
   target_id: number;
   kind: string;
@@ -772,8 +777,10 @@ export interface OutputCItem {
   source_note: string;
   /** 섹션 번호(칸 번호 + 들여쓰기, 6.1.2) - 표 칸은 표의 번호, 입구 2 문서·단계 없는 WI는 null */
   number: string | null;
-  /** 사람이 정한 깊이 그대로 - 번호는 서버가 앞줄 깊이 + 1까지로 눌러 읽어 센다 */
+  /** 사람이 정한 깊이 그대로 - 번호는 서버가 앞 번호 줄 깊이 + 1까지로 눌러 읽어 센다 */
   indent_level: number;
+  /** 번호 표시 - 생략·주석 줄은 number가 null이고 세지 않는다. 표 칸은 표의 값 */
+  number_style: NumberStyle;
   cell_row: number | null;
   cell_col: number | null;
   children: OutputCItem[];
@@ -826,7 +833,15 @@ export function downloadExport(bundleId: number, lang: OutputLang): Promise<Blob
   return apiFetchBlob(`/bundles/${bundleId}/export.xlsx?lang=${lang}`);
 }
 
-export function putTargetOrder(bundleId: number, body: { revision: number; target_doc_id: number; items: Array<{ target_id: number; wi_step?: number | null; indent_level?: number }> }): Promise<unknown> {
+/** 순서 바꾸기 요청 한 줄 - 뺀 값은 그대로 둔다. number_style은 서버가 한/영 짝 상대와 번역 줄에 함께 옮긴다 */
+export interface TargetOrderItem {
+  target_id: number;
+  wi_step?: number | null;
+  indent_level?: number;
+  number_style?: NumberStyle;
+}
+
+export function putTargetOrder(bundleId: number, body: { revision: number; target_doc_id: number; items: TargetOrderItem[] }): Promise<unknown> {
   return apiFetch(`/bundles/${bundleId}/targets/order`, { method: "PUT", body: JSON.stringify(body) });
 }
 

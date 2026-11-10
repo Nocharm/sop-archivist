@@ -27,6 +27,7 @@ import {
   putTargetOrder,
   SEMANTIC_CHECK_KEYS,
   type CoverStatus,
+  type NumberStyle,
   type OutputLang,
 } from "@/lib/api-sop";
 import { loadBundle, putBundle, useBundle } from "@/lib/bundle-store";
@@ -37,7 +38,7 @@ import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 import { readOutputsView, writeOutputsView, type OutputsTab } from "@/lib/outputs-view-prefs";
 import { findPartnerTarget } from "@/lib/section-number";
-import { buildIndentItems, buildTargetOrder, type MoveDir } from "@/lib/target-order";
+import { buildPatchItems, buildTargetOrder, type MoveDir } from "@/lib/target-order";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useProgressiveList } from "@/lib/use-progressive-list";
 import { getBundleLabel } from "@/lib/bundle-label";
@@ -109,11 +110,30 @@ export default function OutputsPage() {
     setMoving(true);
     try {
       const [other, units] = await Promise.all([getOutputC(bundleId, lang === "ko" ? "en" : "ko"), listAllUnits(bundleId)]);
-      const docIds = new Set(buildIndentItems(outC.data, other, targetDocId, new Map())?.map((item) => item.target_id) ?? []);
+      const docIds = new Set(buildPatchItems(outC.data, other, targetDocId, new Map())?.map((item) => item.target_id) ?? []);
       const partner = findPartnerTarget(targetId, units, docIds);
-      const levels = new Map([[targetId, depth]]);
-      if (partner !== null) levels.set(partner, depth);
-      const items = buildIndentItems(outC.data, other, targetDocId, levels);
+      const patches = new Map([[targetId, { indent_level: depth }]]);
+      if (partner !== null) patches.set(partner, { indent_level: depth });
+      const items = buildPatchItems(outC.data, other, targetDocId, patches);
+      if (items) {
+        await putTargetOrder(bundleId, { revision: bundle.revision, target_doc_id: targetDocId, items });
+        await loadBundle(bundleId);
+      }
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+      void loadBundle(bundleId);
+    } finally {
+      setMoving(false);
+    }
+  }
+
+  // 번호 표시는 이 줄만 보낸다 - 한/영 짝 상대와 번역 줄은 서버가 같은 값으로 따라 바꾼다
+  async function markTarget(targetDocId: number, targetId: number, style: NumberStyle) {
+    if (!outC.data || !bundle || moving) return;
+    setMoving(true);
+    try {
+      const other = await getOutputC(bundleId, lang === "ko" ? "en" : "ko");
+      const items = buildPatchItems(outC.data, other, targetDocId, new Map([[targetId, { number_style: style }]]));
       if (items) {
         await putTargetOrder(bundleId, { revision: bundle.revision, target_doc_id: targetDocId, items });
         await loadBundle(bundleId);
@@ -217,7 +237,14 @@ export default function OutputsPage() {
                       )}
                     </td>
                     <td style={{ fontFamily: "var(--font-source)" }}>
-                      {row.confirmed_text || <span className="text-ink-4">–</span>}
+                      {/* 보낸 새 문장이 모두 주석 줄이면 결과물 C처럼 기울여 보인다 */}
+                      {row.confirmed_text ? (
+                        <span className={row.dest_is_note ? "italic" : undefined} data-testid={row.dest_is_note ? `output-a-note-${index}` : undefined}>
+                          {row.confirmed_text}
+                        </span>
+                      ) : (
+                        <span className="text-ink-4">–</span>
+                      )}
                       {row.change_type && <span className="block text-xs text-ink-3" style={{ fontFamily: "var(--font-ui)" }}>{labelCode(t, "change", row.change_type)}</span>}
                     </td>
                     <td>
@@ -269,6 +296,7 @@ export default function OutputsPage() {
               lang={lang}
               onMove={canEdit ? (docId, sectionKey, targetId, dir) => void moveTarget(docId, sectionKey, targetId, dir) : undefined}
               onIndent={canEdit ? (docId, targetId, depth) => void indentTarget(docId, targetId, depth) : undefined}
+              onMark={canEdit ? (docId, targetId, style) => void markTarget(docId, targetId, style) : undefined}
               // 다시 받는 동안의 깊이는 낡았다 - 연달아 누른 Tab이 낡은 깊이로 보내지 않게 막는다
               moving={moving || outC.isLoading} tobeHref={canEdit ? getStageHref(bundleId, "tobe") : undefined} />
           ) : null}

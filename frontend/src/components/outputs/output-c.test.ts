@@ -11,7 +11,7 @@ import { OutputCView } from "./output-c";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function makeItem(extra: Partial<OutputCItem>): OutputCItem {
-  return { target_id: 1, kind: "sentence", lang: "ko", text: "", ai_text: "", change_type: null, status: "ai_suggested", source_note: "", number: null, indent_level: 0, cell_row: null, cell_col: null, children: [], ...extra };
+  return { target_id: 1, kind: "sentence", lang: "ko", text: "", ai_text: "", change_type: null, status: "ai_suggested", source_note: "", number: null, indent_level: 0, number_style: "numbered", cell_row: null, cell_col: null, children: [], ...extra };
 }
 
 describe("OutputCView", () => {
@@ -61,5 +61,38 @@ describe("OutputCView", () => {
     expect(back.defaultPrevented).toBe(false);
     act(() => root.unmount());
   });
-});
 
+  it("shows a note in italics without a number, indents it, and sends a mark change for that line only", () => {
+    const items = [
+      makeItem({ target_id: 1, text: "가", status: "confirmed", number: "2.1" }),
+      makeItem({ target_id: 2, text: "주석", status: "confirmed", number: null, number_style: "note", indent_level: 1 }),
+      makeItem({ target_id: 3, text: "나", status: "confirmed", number: "2.2" }),
+      makeItem({ target_id: 4, text: "번역", status: "confirmed", number: "2.3", change_type: "translated" }),
+    ];
+    const data: OutputC = {
+      docs: [{ target_doc_id: 1, code: "SOP-1", title: "T", doc_type: "sop", parent_code: null, entrance: "assign", sections: [{ location_key: "scope", label: "Scope", number: "2", na_reason: null, items }] }],
+      deleted: [],
+      moved: [],
+    };
+    const onMark = vi.fn();
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    act(() => root.render(createElement(LangProvider, null, createElement(OutputCView, { data, lang: "ko", onMove: () => {}, onIndent: () => {}, onMark }))));
+    expect(host.querySelector('[data-testid="output-c-number-2"]')).toBeNull();
+    expect(host.querySelector('[data-testid="output-c-item-2"]')?.className).toContain("italic");
+    expect(host.querySelector('[data-testid="output-c-item-1"]')?.className).not.toContain("italic");
+    // 주석 줄도 사람이 정한 깊이만큼 들여 그린다
+    expect(host.querySelector<HTMLElement>('[data-testid="output-c-row-2"] .c-line')?.style.paddingLeft).toBe("calc(1 * var(--c-indent))");
+    // 셋째 줄의 상한은 앞 번호 줄(2.1, 깊이 0) + 1 - 주석 줄의 깊이 1에 기대지 않는다
+    expect(host.querySelector<HTMLButtonElement>('[data-testid="output-c-indent-3"]')?.disabled).toBe(false);
+    expect(host.querySelector('[data-testid="output-c-mark-note-2"]')?.getAttribute("aria-pressed")).toBe("true");
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="output-c-mark-omitted-3"]')?.click());
+    expect(onMark).toHaveBeenCalledWith(1, 3, "omitted");
+    // 이미 고른 표시를 다시 눌러도 보내지 않는다
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="output-c-mark-note-2"]')?.click());
+    expect(onMark).toHaveBeenCalledTimes(1);
+    // 번역 줄은 출처의 표시를 따라가므로 고르는 단추가 없다
+    expect(host.querySelector('[data-testid="output-c-mark-4"]')).toBeNull();
+    act(() => root.unmount());
+  });
+});

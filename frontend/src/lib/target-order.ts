@@ -1,6 +1,6 @@
 // 결과물 C 순서 바꾸기 - 한 판(KO 또는 EN) 안에서 새 문장 하나를 위·아래로 옮긴 뒤, 서버가 받는 "그 새 문서의 새 문장 전부, 새 순서대로" 목록을 만든다.
 // 판마다 자기 언어 문장만 보이므로 두 판을 칸(location_key)마다 이어 붙인다. 각 판 안의 상대 순서만 화면에 드러나니 이 이음으로 충분하다.
-import type { OutputC, OutputCItem } from "./api-sop";
+import type { OutputC, OutputCItem, TargetOrderItem } from "./api-sop";
 
 export type MoveDir = -1 | 1;
 
@@ -60,11 +60,14 @@ export function buildTargetOrder(current: OutputC, other: OutputC, targetDocId: 
   return order && moved ? order : null;
 }
 
+/** 줄 하나에 바꿀 값 - 깊이·번호 표시. 뺀 값은 서버가 그대로 둔다 */
+export type TargetPatch = Omit<TargetOrderItem, "target_id" | "wi_step">;
+
 /**
- * 깊이만 바꾸는 요청 목록 - 서버는 문서의 새 문장 전부를 받으므로 지금 순서 그대로 싣고, 바꿀 줄(levels)에만 indent_level을 붙인다.
- * 나머지 줄은 indent_level을 빼서 그대로 둔다.
+ * 깊이·번호 표시만 바꾸는 요청 목록 - 서버는 문서의 새 문장 전부를 받으므로 지금 순서 그대로 싣고, 바꿀 줄(patches)에만 값을 붙인다.
+ * 나머지 줄은 값을 빼서 그대로 둔다.
  */
-export function buildIndentItems(current: OutputC, other: OutputC, targetDocId: number, levels: ReadonlyMap<number, number>): Array<{ target_id: number; indent_level?: number }> | null {
+export function buildPatchItems(current: OutputC, other: OutputC, targetDocId: number, patches: ReadonlyMap<number, TargetPatch>): TargetOrderItem[] | null {
   const order = listDocOrder(current, other, targetDocId, (_key, items) => items);
-  return order && order.map((id) => (levels.has(id) ? { target_id: id, indent_level: levels.get(id) } : { target_id: id }));
+  return order && order.map((id) => ({ target_id: id, ...patches.get(id) }));
 }
