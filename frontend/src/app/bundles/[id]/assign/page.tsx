@@ -1091,25 +1091,21 @@ export default function AssignPage() {
       ) : (
         <span>{reason || "–"}</span>
       )}
-      {/* 지우기·옮기기 중 어느 쪽이든 이 줄의 자리는 잡아 둔다 - 지우기↔옮기기를 바꿔도 아래(확인·확정자)가 밀리지 않게. 지우기일 때는 비워 둔다 */}
-      {disposed && (
-        <>
-          <span className="text-xs text-ink-3">{destination?.kind === "move" ? t("classify.moveTo") : ""}</span>
-          {destination?.kind === "move" ? (
-            <input
-              className="h-8 rounded-md border border-line-2 bg-surface px-2 font-mono text-[13px] text-ink focus:border-accent focus:outline-none"
-              data-testid="assign-move-code"
-              placeholder="SOP-XX-00000"
-              value={moveCode}
-              maxLength={100}
-              disabled={!canEdit}
-              onChange={(event) => setDraft({ moveCode: event.target.value })}
-            />
-          ) : (
-            <span className="block h-8" aria-hidden />
-          )}
-        </>
-      )}
+      {/* 이 줄의 자리는 어떤 목적지에서도 늘 잡아 둔다 - 자리·잇기에서 지우기·옮기기로 바꿔도 아래(확인·확정자)가 밀리지 않게(To-Be 사유 칸과 같은 방식). 옮기기일 때만 채운다 */}
+      <span className="self-center text-xs text-ink-3">{destination?.kind === "move" ? t("classify.moveTo") : ""}</span>
+      <span className="relative block h-8 min-w-0 self-center">
+        {destination?.kind === "move" && (
+          <input
+            className="absolute inset-0 h-8 w-full rounded-md border border-line-2 bg-surface px-2 font-mono text-[13px] text-ink focus:border-accent focus:outline-none"
+            data-testid="assign-move-code"
+            placeholder="SOP-XX-00000"
+            value={moveCode}
+            maxLength={100}
+            disabled={!canEdit}
+            onChange={(event) => setDraft({ moveCode: event.target.value })}
+          />
+        )}
+      </span>
       {systemHold !== null && (
         <>
           <span className="text-xs text-ink-3">{t("classify.systemHold")}</span>

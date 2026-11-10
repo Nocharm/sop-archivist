@@ -10,6 +10,7 @@ import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { LoadError } from "@/components/ui/load-error";
 import { MarkdownView } from "@/components/ui/markdown-view";
+import { MorphButton } from "@/components/ui/morph-button";
 import { BusyLabel, Collapse, Refresh } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -107,22 +108,12 @@ export function GuidelinesPanel() {
       key: "actions",
       header: <span className="sr-only">{t("manage.rowActions")}</span>,
       card: "actions",
-      className: "w-[180px] text-right",
+      className: "w-[100px] text-right",
       cell: (version) =>
         !version.is_active && (
-          <span className="row-actions">
-            <button
-              type="button"
-              className="btn h-7"
-              data-testid={`guideline-activate-${version.version}`}
-              disabled={activating !== null}
-              onClick={(event) => {
-                event.stopPropagation();
-                setConfirming(version.version);
-              }}
-            >
-              <BusyLabel busy={activating === version.version} label={t("guidelines.activate")} />
-            </button>
+          // 행 선택으로 번지지 않게 감싼 칸에서 막는다. 라벨이 펼쳐질 자리는 고정(.mbtn-set)
+          <span className="row-actions mbtn-set w-[100px]" onClick={(event) => event.stopPropagation()}>
+            <MorphButton icon={Check} label={t("guidelines.activate")} testId={`guideline-activate-${version.version}`} disabled={activating !== null} onClick={() => setConfirming(version.version)} />
           </span>
         ),
     },
