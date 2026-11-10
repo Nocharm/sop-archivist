@@ -35,6 +35,11 @@ describe("getSectionDepths", () => {
 });
 
 describe("canIndent", () => {
+  it("stops at the backend's deepest level (9)", () => {
+    expect(canIndent([9, 9], 1, 1)).toBe(false);
+    expect(canIndent([8, 8], 1, 1)).toBe(true);
+  });
+
   const depths = [0, 1, 1, 0];
 
   it("lets a line go at most one deeper than the line before", () => {

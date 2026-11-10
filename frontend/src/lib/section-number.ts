@@ -28,11 +28,14 @@ export function getSectionDepths(section: Pick<Section, "number" | "items">): nu
  * 한 단계 들이거나 내어 쓸 수 있는가. 들이기는 앞줄 깊이 + 1까지(칸 첫 줄은 0 - WI의 Why 첫 줄처럼 앞 칸에 이어 세는 경우도 0으로 둔다),
  * 내어쓰기는 0보다 깊을 때만. 입구 2 문서(번호를 새로 매기지 않음)와 번역 줄(출처를 따라감)은 깊이를 따로 바꾸지 않는다.
  */
+/** backend app/sop/constants.py MAX_INDENT_LEVEL과 같은 값 - 넘기면 API가 422로 거절한다 */
+const MAX_INDENT_LEVEL = 9;
+
 export function canIndent(depths: readonly number[], index: number, dir: IndentDir): boolean {
   const depth = depths[index];
   if (depth === undefined) return false;
   if (dir < 0) return depth > 0;
-  return index > 0 && depth <= depths[index - 1];
+  return index > 0 && depth <= depths[index - 1] && depth < MAX_INDENT_LEVEL;
 }
 
 /**

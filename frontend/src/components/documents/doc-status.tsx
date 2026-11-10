@@ -141,7 +141,7 @@ export function WarningChipsOneLine({ warnings, testId }: { warnings: Extraction
       ))}
       <span data-plus className={hidden.length > 0 ? "inline-flex shrink-0" : "invisible absolute"}>
         <Tooltip label={hiddenNames} align="end">
-          <span className={`pill ${hidden.some((group) => group.open > 0) ? "warn" : "quiet"}`} aria-label={hiddenNames} tabIndex={hidden.length > 0 ? 0 : -1} data-testid={`${testId}-more`}>
+          <span role="note" className={`pill ${hidden.some((group) => group.open > 0) ? "warn" : "quiet"}`} aria-label={hiddenNames} tabIndex={hidden.length > 0 ? 0 : -1} data-testid={`${testId}-more`}>
             {`+${hidden.length}`}
           </span>
         </Tooltip>

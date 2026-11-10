@@ -45,7 +45,7 @@ const ACTIONS_WIDTH = "w-[100px]";
 const TRAIL_WRAP_BELOW = 1230;
 
 export default function DocumentsPage() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const bundleId = Number(useParams<{ id: string }>().id);
   const { bundle } = useBundle(bundleId);
   const { data, error, isLoading, reload } = useLoaded(() => listDocuments(bundleId), String(bundleId));
@@ -136,7 +136,7 @@ export default function DocumentsPage() {
             </span>
             {renderActions(document)}
           </span>
-          {hasWarnings && <WarningChipsOneLine key={(document.extraction?.warnings ?? []).map((warning) => warning.kind).join()} warnings={document.extraction?.warnings ?? []} testId={`documents-${document.id}-warnings`} />}
+          {hasWarnings && <WarningChipsOneLine key={`${lang}:${(document.extraction?.warnings ?? []).map((warning) => warning.kind).join()}`} warnings={document.extraction?.warnings ?? []} testId={`documents-${document.id}-warnings`} />}
         </span>
       );
     },

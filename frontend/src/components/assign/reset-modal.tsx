@@ -2,10 +2,11 @@
 "use client";
 
 import { RotateCcw } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { showToast } from "@/components/ui/toast";
+import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { resetAssignments } from "@/lib/api-sop";
 import { loadBundle } from "@/lib/bundle-store";
@@ -28,6 +29,11 @@ export function ResetModal({ bundleId, scope, revision, onDone, onClose }: Reset
   const { t } = useI18n();
   const documentId = scope.kind === "document" ? scope.documentId : undefined;
   const preview = useLoaded(() => resetAssignments(bundleId, { revision, document_id: documentId, dry_run: true }), `${bundleId}:${documentId ?? "all"}:${revision}`);
+  // 미리 세기가 409면 revision이 낡았다 - 실제 실행 때처럼 묶음을 다시 받아 새 revision으로 다시 센다
+  const isStale = preview.error instanceof ApiError && preview.error.status === 409;
+  useEffect(() => {
+    if (isStale) void loadBundle(bundleId);
+  }, [isStale, bundleId]);
   const [busy, setBusy] = useState(false);
   const counts = preview.data;
   const total = counts ? counts.unassigned_units + counts.held_units + counts.deleted_targets + counts.held_targets : 0;
