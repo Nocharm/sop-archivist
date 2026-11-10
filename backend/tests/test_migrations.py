@@ -189,3 +189,30 @@ def test_downgrade_to_base_and_back(tmp_path: pathlib.Path) -> None:
 
     run_migrations(_async_url(db_path))
     assert _compare_to_head(db_path, Base.metadata) == []
+
+
+def test_request_id_backfills_existing_jobs_as_their_own_requests(tmp_path: pathlib.Path) -> None:
+    # 0012 이전 작업은 어느 요청에서 왔는지 몰라 저마다 한 요청('job-<id>')이 된다
+    db_path = tmp_path / "request_id.db"
+    run_migrations(_async_url(db_path))
+    config = Config(str(pathlib.Path(__file__).resolve().parent.parent / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", _async_url(db_path))
+    config.attributes["configure_logger"] = False
+    command.downgrade(config, "0011")
+    engine = create_engine(_sync_url(db_path))  # FK를 켜지 않아 묶음 행 없이 작업 행만 넣는다
+    try:
+        with engine.begin() as conn:
+            for _ in range(2):
+                conn.execute(text(
+                    "INSERT INTO ai_jobs (bundle_id, kind, status, unit_ids, target_ids, payload, input_snapshot,"
+                    " attempts, error, requested_by, created_at)"
+                    " VALUES (1, 'classify', 'done', '[]', '[]', '{}', '{}', 0, '', 'qa.member', '2026-11-10 00:00:00')"
+                ))
+
+        command.upgrade(config, "head")
+
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT id, request_id FROM ai_jobs ORDER BY id")).all()
+        assert [request_id for _, request_id in rows] == [f"job-{job_id}" for job_id, _ in rows]
+    finally:
+        engine.dispose()

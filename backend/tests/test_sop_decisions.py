@@ -666,7 +666,7 @@ def test_classify_skips_a_person_held_unit(client: TestClient, fake_ai: FakeAi) 
 
     assert response.status_code == 200, response.text
     assert response.json() == {
-        "queued": 0, "skipped_total": 1, "skipped": [{"unit_id": unit["id"], "reason": "not_unassigned"}],
+        "queued": 0, "request_id": None, "skipped_total": 1, "skipped": [{"unit_id": unit["id"], "reason": "not_unassigned"}],
         "skipped_by_reason": {"not_unassigned": 1},
     }
     assert fake_ai.requests == []

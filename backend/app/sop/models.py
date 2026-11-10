@@ -2,6 +2,7 @@
 
 from collections.abc import Sequence
 from datetime import datetime
+from uuid import uuid4
 
 from sqlalchemy import (
     JSON,
@@ -499,6 +500,11 @@ class GuidelineVersion(Base):
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
 
+def generate_request_id() -> str:
+    """요청 한 번을 가리키는 값 — 작업 id는 flush 뒤에야 생겨 요청 쪽에서 미리 만든다."""
+    return uuid4().hex
+
+
 class AiJob(Base):
     """AI 작업 — 요청이 쌓는 큐 한 줄. 실행기가 (status, id) 순으로 다음 작업을 꺼낸다."""
 
@@ -526,6 +532,9 @@ class AiJob(Base):
     # 실패 코드(원문·서버 메시지 없이 정해진 짧은 코드만)
     error: Mapped[str] = mapped_column(String(40), default="")
     requested_by: Mapped[str] = mapped_column(String(100))
+    # 요청 한 번이 쌓은 작업들의 묶음 값 — 화면이 "n / N"으로 묶어 보인다. 입구 2 계획 작업이 쌓는 변경 종류 작업은
+    # 계획 작업의 값을 잇는다. 0012 이전 행은 'job-<id>'로 채워 저마다 한 요청이다
+    request_id: Mapped[str] = mapped_column(String(32), default=generate_request_id)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

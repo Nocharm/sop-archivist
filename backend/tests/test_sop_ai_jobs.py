@@ -882,6 +882,7 @@ def test_request_out_has_the_contract_shape(client: TestClient) -> None:
 
     assert out.model_dump() == {
         "queued": 1,
+        "request_id": None,
         "skipped_total": 1,
         "skipped": [{"unit_id": 7, "reason": "not_unassigned"}],
         "skipped_by_reason": {"not_unassigned": 1},

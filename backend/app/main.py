@@ -80,6 +80,7 @@ app.include_router(sop_outputs_router.router)
 app.include_router(sop_admin_router.router)
 app.include_router(sop_guidelines_router.router)
 app.include_router(sop_ai_router.router)
+app.include_router(sop_ai_router.jobs_router)
 
 
 @app.get("/api/health")

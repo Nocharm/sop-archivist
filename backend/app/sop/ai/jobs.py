@@ -12,7 +12,7 @@ from app.clock import now
 from app.sop.ai.constants import MAX_JOBS_PER_REQUEST, MAX_SKIPPED_REPORTED
 from app.sop.ai.schemas import AiJobCounts, AiRequestOut, SkippedOut
 from app.sop.errors import raise_rule
-from app.sop.models import AiJob
+from app.sop.models import AiJob, generate_request_id
 
 ACTIVE_JOB_STATUSES = ("queued", "running")
 
@@ -62,10 +62,11 @@ def ensure_units_found(requested: Collection[int], found: Collection[int]) -> No
         raise_rule(404, "unit_not_found", unit_ids=missing[:MAX_SKIPPED_REPORTED], missing_total=len(missing))
 
 
-def build_request_out(queued: int, skipped: Sequence[SkippedOut]) -> AiRequestOut:
+def build_request_out(queued: int, skipped: Sequence[SkippedOut], request_id: str | None = None) -> AiRequestOut:
     """요청 응답 — 건너뛴 단위는 앞쪽만 싣고 전체 수는 따로 알린다."""
     return AiRequestOut(
         queued=queued,
+        request_id=request_id,
         skipped_total=len(skipped),
         skipped=list(skipped[:MAX_SKIPPED_REPORTED]),
         skipped_by_reason=dict(Counter(item.reason for item in skipped)),
@@ -73,9 +74,16 @@ def build_request_out(queued: int, skipped: Sequence[SkippedOut]) -> AiRequestOu
 
 
 def enqueue_jobs(
-    session: AsyncSession, *, bundle_id: int, kind: str, requested_by: str, items: Sequence[JobItem]
+    session: AsyncSession,
+    *,
+    bundle_id: int,
+    kind: str,
+    requested_by: str,
+    items: Sequence[JobItem],
+    request_id: str | None = None,
 ) -> list[AiJob]:
-    """행만 추가한다 — id는 flush 뒤에 생긴다."""
+    """행만 추가한다 — id는 flush 뒤에 생긴다. 한 번에 쌓은 작업은 같은 request_id를 받고, 넘겨받으면(계획 작업의 뒤 작업) 그 값을 잇는다."""
+    request_id = request_id or generate_request_id()
     jobs = [
         AiJob(
             bundle_id=bundle_id,
@@ -86,6 +94,7 @@ def enqueue_jobs(
             target_ids=list(item.target_ids),
             payload=item.payload,
             requested_by=requested_by,
+            request_id=request_id,
         )
         for item in items
     ]

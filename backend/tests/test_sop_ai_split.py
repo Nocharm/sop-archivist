@@ -3,6 +3,7 @@
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import ANY
 
 import httpx2
 import pytest
@@ -236,7 +237,7 @@ def test_explicit_units_ignore_the_length_floor(client: TestClient, fake_ai: Fak
 
     response = request_split(client, bundle.id, unit_ids=[unit["id"]])
 
-    assert response.json() == {"queued": 1, "skipped_total": 0, "skipped": [], "skipped_by_reason": {}}
+    assert response.json() == {"queued": 1, "request_id": ANY, "skipped_total": 0, "skipped": [], "skipped_by_reason": {}}
     (job,) = read_rows(AiJob)
     assert (job.kind, job.unit_ids, job.document_id) == ("split", [unit["id"]], view["document"]["id"])
 

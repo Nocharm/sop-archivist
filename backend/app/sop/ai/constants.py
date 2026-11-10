@@ -24,6 +24,11 @@ MAX_SKIPPED_REPORTED = 200  # 응답의 skipped·unit_not_found에 싣는 앞쪽
 DEFAULT_SUGGESTIONS_PAGE = 200  # GET /suggestions 한 쪽 기본 건수
 MAX_SUGGESTIONS_PAGE = 1000  # GET /suggestions 한 쪽 상한
 
+# --- 최근 작업 목록(GET /api/ai/jobs/recent) ---
+RECENT_JOBS_WINDOW_HOURS = 24  # 끝난 작업을 목록에 남기는 시간 — 대기·실행 중은 늘 실린다
+MAX_RECENT_JOBS = 100  # 응답에 싣는 작업 수(최신 순) — 요청별 진행 수는 requests가 자르지 않고 센다
+MAX_RECENT_REQUESTS = 100  # 응답에 싣는 요청 묶음 수(최신 순)
+
 # --- 실행기·재시도 ---
 AI_POLL_SECONDS = 2.0  # 워커가 빈자리·새 작업을 기다리는 주기(초)
 AI_CALL_ATTEMPTS = 3  # AI 호출 한 번의 총 시도 수
