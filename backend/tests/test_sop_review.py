@@ -1,4 +1,4 @@
-"""검토 흐름 — 검토 요청 조건(막는 이유·알림)·의미 검토 확인·요청/완료/되돌리기/다시 열기·다음 행동."""
+"""검토 흐름 — 검토 요청 조건(막는 이유·알림)·의미 검토 확인·요청/거두기/완료/되돌리기/다시 열기·다음 행동."""
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -24,6 +24,7 @@ from tests.sop_helpers import (
     OUTSIDER,
     REVIEWER,
     assign_as_is,
+    confirm_boundaries,
     create_bundle,
     find_unit,
     get_bundle,
@@ -92,7 +93,7 @@ def _list_events(client: TestClient, bundle_id: int) -> list[dict]:
 
 
 def _setup(client: TestClient, *, docs: list[dict] | None = None, na_slots: list[dict] | None = None) -> Fixture:
-    """멤버(작성자·검토자)와 To-Be, 옛 문서(한국어 둘·영어 하나)를 갖췄지만 판단은 하나도 안 한 묶음."""
+    """멤버(작성자·검토자)와 To-Be, 옛 문서(한국어 둘·영어 하나)를 갖추고 경계도 모두 확인했지만 판단은 하나도 안 한 묶음."""
     bundle_id = create_bundle(client, is_synthetic=True)["id"]
     assert set_members(client, bundle_id, WITH_REVIEWER).status_code == 200
     tobe = docs or [SOP_DOC]
@@ -102,6 +103,7 @@ def _setup(client: TestClient, *, docs: list[dict] | None = None, na_slots: list
     uploaded = upload(client, bundle_id, build_docx(p(KO_1) + p(KO_2) + p(EN_1)), OLD_NAME)
     assert uploaded.status_code == 201 and uploaded.json()["status"] == "ready", uploaded.text
     doc = uploaded.json()
+    assert confirm_boundaries(client, bundle_id, doc["id"]) == 3
     return Fixture(bundle_id, ids[tobe[0]["code"]], ids, doc["extraction"]["id"], get_view(client, bundle_id, doc["id"]))
 
 
@@ -195,6 +197,17 @@ def _drop_reviewer(client: TestClient, fx: Fixture) -> list[dict]:
     return [{"code": "no_reviewer"}]
 
 
+def _set_boundary(client: TestClient, fx: Fixture, unit_ids: list[int], confirmed: bool) -> None:
+    url = f"/api/bundles/{fx.bundle_id}/documents/{fx.view['document']['id']}/units/boundary"
+    response = client.post(url, json={"unit_ids": unit_ids, "confirmed": confirmed}, headers=AUTHOR)
+    assert response.status_code == 200, response.text
+
+
+def _uncheck_one_boundary(client: TestClient, fx: Fixture) -> list[dict]:
+    _set_boundary(client, fx, [_unit_id(fx, KO_2)], False)
+    return [{"code": "unchecked_boundaries", "count": 1, "document_ids": [fx.view["document"]["id"]]}]
+
+
 def _upload_rejected(client: TestClient, fx: Fixture) -> list[dict]:
     rejected = upload(client, fx.bundle_id, b"Synthetic notes", "SYNTHETIC notes.txt")
     assert rejected.status_code == 201 and rejected.json()["status"] == "rejected", rejected.text
@@ -203,8 +216,8 @@ def _upload_rejected(client: TestClient, fx: Fixture) -> list[dict]:
 
 @pytest.mark.parametrize(
     "spoil",
-    [_hold_one_unit, _add_unacked_warning, _uncheck_numbers, _drop_reviewer, _upload_rejected],
-    ids=["on_hold", "unacked_missing_text", "semantic_check", "no_reviewer", "rejected_document"],
+    [_hold_one_unit, _add_unacked_warning, _uncheck_one_boundary, _uncheck_numbers, _drop_reviewer, _upload_rejected],
+    ids=["on_hold", "unacked_missing_text", "unchecked_boundary", "semantic_check", "no_reviewer", "rejected_document"],
 )
 def test_blockers_cover_each_condition(client: TestClient, spoil: Callable[[TestClient, Fixture], list[dict]]) -> None:
     fx = _make_ready(client)
@@ -293,6 +306,46 @@ def test_table_restructured_needs_a_reason(client: TestClient) -> None:
     ]
     update_row(UnitDecision, table["id"], reason="Synthetic: columns merged")
     assert "missing_reason" not in {b["code"] for b in _get_readiness(client, fx.bundle_id)["blockers"]}
+
+
+def test_boundaries_count_only_text_units_of_every_document(client: TestClient) -> None:
+    """경계 확인은 글자 범위가 있는 단위(문장·제목·그림·칸 문장)만 센다 — 표·행 묶음 단위는 칸 문장이 대신한다."""
+    fx = _make_ready(client)
+    table_doc = upload(client, fx.bundle_id, build_docx(tbl([["항목", "Item"], ["합성 값", "Synthetic value"]])), "SYNTHETIC_TABLE.docx")
+    assert table_doc.status_code == 201, table_doc.text
+    doc_id = table_doc.json()["id"]
+    units = get_view(client, fx.bundle_id, doc_id)["units"]
+    cells = [unit["id"] for unit in units if unit["kind"] == "cell_sentence"]
+    assert len(cells) == 4 and len(units) > len(cells)
+
+    blocked = _get_readiness(client, fx.bundle_id)
+    _set_boundary(client, fx, [_unit_id(fx, KO_1)], False)
+    both = _get_readiness(client, fx.bundle_id)
+    url = f"/api/bundles/{fx.bundle_id}/documents/{doc_id}/units/boundary"
+    assert client.post(url, json={"unit_ids": cells, "confirmed": True}, headers=AUTHOR).status_code == 200
+    _set_boundary(client, fx, [_unit_id(fx, KO_1)], True)
+    cleared = _get_readiness(client, fx.bundle_id)
+
+    assert {"code": "unchecked_boundaries", "count": 4, "document_ids": [doc_id]} in blocked["blockers"]
+    assert {"code": "unchecked_boundaries", "count": 5, "document_ids": sorted([fx.view["document"]["id"], doc_id])} in both[
+        "blockers"
+    ]
+    assert "unchecked_boundaries" not in {blocker["code"] for blocker in cleared["blockers"]}
+
+
+def test_edited_units_need_their_boundaries_checked_again(client: TestClient) -> None:
+    fx = _setup(client)
+    doc_id = fx.view["document"]["id"]
+    unit = find_unit(fx.view, KO_2)
+    edit = {"revision": fx.view["document"]["revision"], "op": {"type": "split", "unit_id": unit["id"], "at": 3}}
+
+    split = client.post(f"/api/bundles/{fx.bundle_id}/documents/{doc_id}/edits", json=edit, headers=AUTHOR)
+
+    assert split.status_code == 200, split.text
+    assert {"code": "unchecked_boundaries", "count": 2, "document_ids": [doc_id]} in _get_readiness(client, fx.bundle_id)[
+        "blockers"
+    ]
+    assert get_bundle(client, fx.bundle_id)["next_action"] == "check_boundaries"
 
 
 def test_acking_the_warning_clears_the_blocker(client: TestClient) -> None:
@@ -494,6 +547,37 @@ def test_author_reopens_done_bundle_with_reason(client: TestClient) -> None:
     assert _put_checks(client, fx.bundle_id).status_code == 200  # 다시 열리면 고칠 수 있다
 
 
+def test_author_withdraws_review_request(client: TestClient) -> None:
+    fx = _make_ready(client)
+    assert _request(client, fx.bundle_id).status_code == 200
+    revision = get_bundle(client, fx.bundle_id)["revision"]
+
+    withdrawn = _post(client, fx.bundle_id, "withdraw", AUTHOR)
+
+    assert withdrawn.status_code == 200, withdrawn.text
+    assert (withdrawn.json()["status"], withdrawn.json()["revision"]) == ("in_progress", revision + 1)
+    assert withdrawn.json()["semantic_checks"] == ALL_UNCHECKED  # 고친 뒤 다시 요청하므로 의미 검토도 다시 확인한다
+    assert withdrawn.json()["next_action"] == "semantic_checks"
+    latest = _list_events(client, fx.bundle_id)[0]
+    assert (latest["action"], latest["actor"], latest["reason"]) == ("review.withdraw", "qa.member", "")
+    assert _put_checks(client, fx.bundle_id).status_code == 200  # 작업 중이라 다시 고칠 수 있다
+    assert _request(client, fx.bundle_id).status_code == 200  # 고친 뒤 다시 요청할 수 있다
+
+
+def test_reviewer_cannot_withdraw_review_request(client: TestClient) -> None:
+    fx = _make_ready(client)
+    assert _request(client, fx.bundle_id).status_code == 200
+
+    as_reviewer = _post(client, fx.bundle_id, "withdraw", REVIEWER)
+
+    assert (as_reviewer.status_code, as_reviewer.json()["detail"]) == (403, {"code": "role_required", "roles": ["author"]})
+    assert get_bundle(client, fx.bundle_id)["status"] == "in_review"
+    for headers in (OUTSIDER, ADMIN):  # 멤버가 아니면 sysadmin도 같은 404
+        body = {"revision": get_bundle(client, fx.bundle_id)["revision"]}
+        response = client.post(f"/api/bundles/{fx.bundle_id}/review/withdraw", json=body, headers=headers)
+        assert (response.status_code, response.json()["detail"]) == (404, {"code": "bundle_not_found"})
+
+
 def test_author_cannot_complete_review(client: TestClient) -> None:
     fx = _make_ready(client)
     assert _request(client, fx.bundle_id).status_code == 200
@@ -532,11 +616,13 @@ def test_request_and_readiness_follow_membership(client: TestClient) -> None:
         ("in_progress", "complete", REVIEWER, {}),
         ("in_progress", "return", REVIEWER, {"reason": RETURN_REASON}),
         ("in_progress", "reopen", AUTHOR, {"reason": REOPEN_REASON}),
+        ("in_progress", "withdraw", AUTHOR, {}),
         ("in_review", "request", AUTHOR, {}),
         ("in_review", "reopen", AUTHOR, {"reason": REOPEN_REASON}),
         ("done", "request", AUTHOR, {}),
         ("done", "complete", REVIEWER, {}),
         ("done", "return", REVIEWER, {"reason": RETURN_REASON}),
+        ("done", "withdraw", AUTHOR, {}),
     ],
 )
 def test_transitions_refuse_the_wrong_state(
@@ -561,6 +647,7 @@ def test_transitions_refuse_the_wrong_state(
         ("in_progress", "request", AUTHOR, {}),
         ("in_review", "complete", REVIEWER, {}),
         ("in_review", "return", REVIEWER, {"reason": RETURN_REASON}),
+        ("in_review", "withdraw", AUTHOR, {}),
         ("done", "reopen", AUTHOR, {"reason": REOPEN_REASON}),
     ],
 )
@@ -609,6 +696,8 @@ def test_next_action_sequence(client: TestClient) -> None:
 
     uploaded = upload(client, bundle_id, build_docx(p(KO_1) + p(EN_1)), OLD_NAME)
     assert uploaded.status_code == 201, uploaded.text
+    assert get_bundle(client, bundle_id)["next_action"] == "check_boundaries"
+    assert confirm_boundaries(client, bundle_id, uploaded.json()["id"]) == 2
     assert get_bundle(client, bundle_id)["next_action"] == "fill_tobe"
 
     tobe = put_tobe(client, bundle_id, [SOP_DOC])
@@ -641,6 +730,8 @@ def test_next_action_follows_the_first_unmet_condition(client: TestClient) -> No
     assert get_bundle(client, fx.bundle_id)["next_action"] == "ack_warnings"
     update_row(UnitDecision, _unit_id(fx, EN_1), status="on_hold", hold_reason=HOLD_REASON)
     assert get_bundle(client, fx.bundle_id)["next_action"] == "decide_units"
+    _set_boundary(client, fx, [_unit_id(fx, KO_1)], False)
+    assert get_bundle(client, fx.bundle_id)["next_action"] == "check_boundaries"
     rejected = upload(client, fx.bundle_id, b"Synthetic notes", "SYNTHETIC notes.txt")
     assert rejected.json()["status"] == "rejected"
     assert get_bundle(client, fx.bundle_id)["next_action"] == "resolve_documents"
@@ -695,7 +786,7 @@ def test_readiness_does_not_read_document_text(client: TestClient) -> None:
     for column in ("units.text", "target_sentences.confirmed_text", "target_sentences.ai_text"):
         assert column in full_sql
         assert column not in bare_sql  # 글자 열은 DB에서 아예 읽지 않는다
-    options = {"semantic_checks": ALL_CHECKED, "unacked_missing_text": 0, "reviewer_count": 1}
+    options = {"semantic_checks": ALL_CHECKED, "unacked_missing_text": 0, "unchecked_boundaries": {}, "reviewer_count": 1}
     expected = [{"code": "units_on_hold", "lang": "ko", "count": 1}]
     assert evaluate_readiness(full, **options).blockers == expected
     assert evaluate_readiness(bare, **options) == evaluate_readiness(full, **options)

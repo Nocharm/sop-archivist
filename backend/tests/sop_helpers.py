@@ -78,6 +78,13 @@ def get_view(client: TestClient, bundle_id: int, doc_id: int, headers: dict[str,
     return response.json()
 
 
+def confirm_boundaries(client: TestClient, bundle_id: int, doc_id: int, headers: dict[str, str] = AUTHOR) -> int:
+    """문서에 남은 단위의 경계를 한 번에 확인하고 바뀐 건수를 돌려준다 — 검토 요청 조건을 갖춘 묶음을 만드는 테스트가 쓴다."""
+    response = client.post(f"/api/bundles/{bundle_id}/documents/{doc_id}/units/boundary/all", headers=headers)
+    assert response.status_code == 200, response.text
+    return response.json()["confirmed_count"]
+
+
 def find_unit(view: dict, text: str, occurrence: int = 1) -> dict:
     """글자가 정확히 text인 활성 단위 중 occurrence번째(1부터) — 같은 문장이 여러 곳에 있으면 순서로 고른다."""
     matches = [unit for unit in view["units"] if unit["text"] == text]

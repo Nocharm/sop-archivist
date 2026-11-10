@@ -11,7 +11,8 @@ import { useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
 import { getStageHref, isStageLocked, STAGES, type Stage, type StageKey } from "@/lib/stages";
 
-const STAGE_ICONS: Partial<Record<StageKey, typeof Files>> = {
+// 번호가 없는 단계의 표시 - 설명서(조각 머리)도 같은 표시를 쓴다
+export const STAGE_ICONS: Partial<Record<StageKey, typeof Files>> = {
   overview: Gauge,
   documents: Files,
   review: ClipboardCheck,

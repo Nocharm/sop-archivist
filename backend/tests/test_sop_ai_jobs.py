@@ -45,6 +45,7 @@ from tests.sop_helpers import (
     OUTSIDER,
     REVIEWER,
     assign_as_is,
+    confirm_boundaries,
     create_bundle,
     get_bundle,
     get_view,
@@ -193,6 +194,7 @@ def _list_events(client: TestClient, bundle_id: int) -> list[dict]:
 def _make_ready(client: TestClient) -> AiBundle:
     """모든 단위를 확정하고 의미 검토 4항목을 표시해 검토 요청이 통과하는 묶음."""
     bundle = make_ai_bundle(client)
+    confirm_boundaries(client, bundle.id, bundle.document_id)
     for unit in get_view(client, bundle.id, bundle.document_id)["units"]:
         assign_as_is(client, bundle.id, unit, bundle.sop_id, slot_key="purpose")
     body = {"revision": get_bundle(client, bundle.id)["revision"], "checks": dict.fromkeys(SEMANTIC_CHECK_KEYS, True)}

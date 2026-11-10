@@ -5,6 +5,8 @@ export type SplitKeyAction = "next" | "prev" | "check" | "uncheck" | "split" | "
 export interface SplitKeyContext {
   /** 글 입력 칸에 포커스가 있다 */
   typing: boolean;
+  /** 단추·링크에 포커스가 있다 - Enter와 Space는 그 단추의 것이다(경계 확인까지 같이 하지 않는다) */
+  onControl: boolean;
   /** 메뉴·모달처럼 키를 먼저 받아야 할 층이 열려 있다 */
   layerOpen: boolean;
   /** 나눌 선이 놓여 있다 */
@@ -27,6 +29,7 @@ export function getSplitKeyAction(event: KeyLike, ctx: SplitKeyContext): SplitKe
   const key = event.key.toLowerCase();
   if ((event.metaKey || event.ctrlKey) && key === "z") return ctx.canEdit ? (event.shiftKey ? "redo" : "undo") : null;
   if (event.metaKey || event.ctrlKey || event.altKey) return null;
+  if (ctx.onControl && (key === "enter" || key === " ")) return null;
   if (key === "j" || key === "arrowdown") return "next";
   if (key === "k" || key === "arrowup") return "prev";
   if (key === "escape") return "escape";

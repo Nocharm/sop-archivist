@@ -1,0 +1,110 @@
+/* 설명서 화면(/manual, components/manual/) - 조각은 Split의 종이 조각과 같은 문법: 읽지 않은 조각은 점선(연필), 읽음 표시를 하면 실선과 그림자(잉크). 색은 토큰만 쓴다. */
+
+@layer components {
+  .manual { display: grid; grid-template-columns: 248px minmax(0, 1fr); height: 100%; min-height: 0; }
+
+  /* ---- 왼쪽 칸: 머리(제목·찾기·읽은 양)와 발(단축키)은 붙어 있고 목차만 스크롤한다 ---- */
+  .manual-side { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; border-right: 1px solid var(--line); background: var(--surface); }
+  .manual-side-head { display: grid; gap: 12px; padding: 16px 14px 12px; border-bottom: 1px solid var(--line); }
+  .manual-meta { margin-top: 4px; font: 400 var(--fs-micro) / var(--lh-micro) var(--font-mono); color: var(--ink-3); }
+  .manual-search-clear { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: var(--r-1); color: var(--ink-3); }
+  .manual-search-clear:hover { background: var(--hover); color: var(--ink); }
+
+  .manual-progress { display: grid; gap: 6px; font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-2); }
+  .manual-ticks { display: flex; gap: 3px; }
+  .manual-tick { flex: 1; height: 6px; border: 1px dashed var(--line-2); border-radius: 1px; transition: background-color var(--dur-base), border-color var(--dur-base); }
+  .manual-tick[data-state="read"] { border: 1px solid var(--accent); background: var(--accent); }
+  .manual-tick[data-state="updated"] { border: 1px solid var(--st-hold-fill); background: var(--st-hold-fill); }
+
+  .manual-toc { display: grid; align-content: start; gap: 1px; min-height: 0; padding: 8px 8px 12px; overflow-y: auto; overscroll-behavior: contain; }
+  .manual-toc-item {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr) 14px;
+    align-items: start;
+    gap: 6px;
+    padding: 6px 8px;
+    border-radius: var(--r-1);
+    color: var(--ink-2);
+    font-size: var(--fs-ui);
+    line-height: var(--lh-ui);
+    transition: background-color var(--dur-fast), color var(--dur-fast);
+  }
+  .manual-toc-item:hover { background: var(--hover); color: var(--ink); }
+  /* 고른 줄은 굵기 대신 바탕과 왼쪽 막대로(폭이 변하지 않게). 막대 쪽 모서리는 직각 */
+  .manual-toc-item[aria-current="true"] { background: var(--sel-bg); color: var(--ink); box-shadow: inset 2px 0 0 var(--accent); border-radius: 0 var(--r-1) var(--r-1) 0; }
+  .manual-toc-tag { font: 400 var(--fs-micro) / var(--lh-ui) var(--font-mono); color: var(--ink-3); }
+  .manual-toc-state { margin-top: 3px; color: var(--ink-4); }
+  .manual-toc-item[data-state="read"] .manual-toc-state { color: var(--accent); }
+  .manual-toc-item[data-state="updated"] .manual-toc-state { color: var(--st-hold-ink); }
+  .manual-toc-subs { display: grid; gap: 1px; padding: 2px 0 6px 48px; }
+  .manual-toc-sub { padding: 3px 8px; border-radius: var(--r-1); font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-3); transition: background-color var(--dur-fast), color var(--dur-fast); }
+  .manual-toc-sub:hover { background: var(--hover); color: var(--ink); }
+
+  .manual-side-foot { display: grid; gap: 10px; padding: 12px 14px 14px; border-top: 1px solid var(--line); }
+  /* 글쇠 안내는 한 줄에 들어가는 만큼 나란히 흐른다 - 낮은 창에서 목차가 높이를 더 갖는다 */
+  .manual-keys { display: flex; flex-wrap: wrap; gap: 5px 12px; margin: 0; font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-3); }
+  .manual-keys > div { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+  .manual-keys dt { display: flex; gap: 3px; }
+  .manual-keys dd { margin: 0; }
+  .manual-source { display: inline-flex; align-items: center; gap: 6px; justify-self: start; font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-3); }
+  .manual-source:hover { color: var(--accent); }
+
+  /* ---- 책상: 조각을 읽는 폭으로 가운데에 쌓는다. 스크롤·바탕은 .desk ---- */
+  /* 붙는 머리는 스크롤 칸의 안쪽 여백만큼 내려와 붙는다 - 위 여백을 첫 조각의 바깥 여백으로 옮겨 책상 맨 위에 붙게 한다 */
+  .manual-desk { display: flex; flex-direction: column; gap: 14px; padding-top: 0; padding-bottom: 48px; }
+  .manual-desk > :first-child { margin-top: 18px; }
+  .manual-desk > * { flex: none; width: 100%; max-width: 860px; margin-inline: auto; }
+  .manual-note { padding: 6px 10px; border: 1px dashed var(--line-2); border-radius: var(--r-1); font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-2); }
+  .md.manual-lead { padding: 2px 2px 4px; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2); }
+
+  .manual-unit {
+    background: var(--paper);
+    color: var(--paper-ink);
+    border: 1px dashed var(--line-2);
+    border-radius: var(--r-1);
+    /* 글쇠·목차로 옮겼을 때 위 테두리가 책상 끝에 붙지 않게 */
+    scroll-margin-top: 10px;
+    transition: border-color var(--dur-base), box-shadow var(--dur-base);
+  }
+  .manual-unit[data-state="read"] { border-style: solid; box-shadow: var(--shadow-1); }
+  .manual-unit[data-state="updated"] { border-style: solid; border-color: var(--st-hold-line); box-shadow: var(--shadow-1); }
+
+  /* 조각 머리 - 글을 내려도 책상 위에 붙는다. 표·코드 칸(position: relative) 위로 올라와야 해서 z-index를 준다. 조각에 overflow를 걸면 붙지 않는다 */
+  .manual-unit-head {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 5px 10px 5px 14px;
+    background: var(--paper);
+    border-bottom: 1px solid var(--line);
+    border-radius: var(--r-1) var(--r-1) 0 0;
+  }
+  .manual-unit-head > * { flex: none; }
+  .manual-unit-head > .flex-1 { flex: 1; }
+  .manual-tag { padding: 0 5px; border: 1px solid var(--line); border-radius: var(--r-1); background: var(--sunken); color: var(--ink-3); font: 600 var(--fs-micro) / 18px var(--font-mono); }
+  /* 지금 조각은 단계 레일의 지금 단계와 같은 표시 */
+  .manual-unit[data-current] .manual-tag { background: var(--hl); border-color: color-mix(in oklab, var(--on-hl) 30%, var(--hl)); color: var(--on-hl); }
+  .manual-unit-stage { display: inline-grid; place-items: center; color: var(--ink-3); }
+  .manual-unit-head > .manual-unit-title {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font: var(--fw-accent) var(--fs-title) / var(--lh-title) var(--font-accent);
+    color: var(--ink);
+  }
+
+  .md.manual-unit-body { padding: 14px 22px 22px; color: var(--paper-ink); }
+  /* 조각 안의 작은 제목은 본문보다 크게, 주소의 #자리로 왔을 때 붙은 머리에 가리지 않게 */
+  .md.manual-unit-body h3 { margin-top: 1.7em; font-size: var(--fs-title); line-height: var(--lh-title); scroll-margin-top: 56px; }
+
+  /* 포커스 테두리를 그리지 않는 두 곳 - 책상의 포커스는 글쇠로 글을 내리려고 코드가 주는 것이고, 찾기 칸은 감싼 테두리(focus-within)가 포커스를 보인다 */
+  .manual-desk:focus-visible,
+  .manual-search-input:focus-visible { outline: none; }
+}
+

@@ -2,6 +2,7 @@
 "use client";
 
 import { ChevronRight } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
 import type { WrittenSentence } from "@/lib/api-sop";
@@ -11,6 +12,8 @@ import { useI18n } from "@/lib/i18n";
 interface DestinationTreeProps {
   written: WrittenSentence[];
   options: DestinationOption[];
+  /** 보낼 곳이 하나도 없을 때 안내가 가리키는 To-Be 화면 */
+  tobeHref: string;
   onPickLink: (targetId: number, additive: boolean) => void;
   onPickPlace: (destination: Destination) => void;
 }
@@ -21,7 +24,7 @@ function groupBy<T>(items: T[], keyOf: (item: T) => string): Array<[string, T[]]
   return [...groups.entries()];
 }
 
-export function DestinationTree({ written, options, onPickLink, onPickPlace }: DestinationTreeProps) {
+export function DestinationTree({ written, options, tobeHref, onPickLink, onPickPlace }: DestinationTreeProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState<Set<string>>(new Set());
   const toggle = (key: string) => setOpen((prev) => (prev.has(key) ? new Set([...prev].filter((item) => item !== key)) : new Set([...prev, key])));
@@ -41,6 +44,16 @@ export function DestinationTree({ written, options, onPickLink, onPickPlace }: D
     (row) => String(row.target_doc_id),
   );
   const placeDocs = groupBy(options, (option) => option.docCode);
+  if (writtenDocs.length === 0 && placeDocs.length === 0) {
+    return (
+      <div className="grid gap-1.5 px-3 py-4 text-[13px] leading-5 text-ink-2" data-testid="assign-tree-empty">
+        <p>{t("assign.tree.empty")}</p>
+        <Link href={tobeHref} className="text-link" data-testid="assign-tree-open-tobe">
+          {t("assign.openTobe")}
+        </Link>
+      </div>
+    );
+  }
   return (
     <div className="dest-tree">
       {writtenDocs.length > 0 && <p className="tree-group">{t("assign.tree.written")}</p>}

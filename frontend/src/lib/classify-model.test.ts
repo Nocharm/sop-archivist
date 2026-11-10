@@ -11,6 +11,7 @@ import {
   findNextOpen,
   findSystemHold,
   getRowStep,
+  hasDraftChange,
   pickFirstFilter,
   readCheckKey,
   pickRowStatus,
@@ -311,6 +312,28 @@ describe("getRowStep", () => {
 
   it("ignores other keys", () => {
     expect(getRowStep("Enter")).toBeNull();
+  });
+});
+
+describe("hasDraftChange", () => {
+  const untouched = { destination: null, texts: {}, changeTypes: {}, linkChangeTypes: {}, reason: null, moveCode: null };
+
+  it("is false for a draft that only opened the editor", () => {
+    expect(hasDraftChange(untouched)).toBe(false);
+    expect(hasDraftChange({ ...untouched, linkChangeTypes: undefined })).toBe(false);
+  });
+
+  it("is true once a destination, a reason or a move code was touched", () => {
+    expect(hasDraftChange({ ...untouched, destination: { kind: "delete" } })).toBe(true);
+    // 사유를 지워 빈 글자로 만든 것도 저장 전 변경이다
+    expect(hasDraftChange({ ...untouched, reason: "" })).toBe(true);
+    expect(hasDraftChange({ ...untouched, moveCode: "QA-SOP-9" })).toBe(true);
+  });
+
+  it("is true for edited text and change kinds", () => {
+    expect(hasDraftChange({ ...untouched, texts: { "1:ko": "새 글" } })).toBe(true);
+    expect(hasDraftChange({ ...untouched, changeTypes: { "1:ko": "tone" } })).toBe(true);
+    expect(hasDraftChange({ ...untouched, linkChangeTypes: { 7: null } })).toBe(true);
   });
 });
 

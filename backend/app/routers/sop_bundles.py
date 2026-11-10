@@ -38,6 +38,7 @@ from app.sop.review import (
     request_review,
     return_review,
     update_semantic_checks,
+    withdraw_review,
 )
 from app.sop.schemas import NO_NUL, NoNulStr
 from app.sop.snapshot import BundleProgress, load_bundle_progress
@@ -438,6 +439,17 @@ async def post_review_request(
     return await build_bundle_out(session, ctx.bundle, ctx.login_id)
 
 
+@router.post("/{bundle_id}/review/withdraw", response_model=BundleOut)
+async def post_review_withdraw(
+    body: ReviewRequestIn,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> BundleOut:
+    await withdraw_review(session, ctx.bundle, revision=body.revision, actor=ctx.login_id)
+    await session.commit()
+    return await build_bundle_out(session, ctx.bundle, ctx.login_id)
+
+
 @router.post("/{bundle_id}/review/complete", response_model=BundleOut)
 async def post_review_complete(
     body: ReviewRequestIn,
@@ -475,12 +487,16 @@ async def post_review_reopen(
 async def list_bundle_events(
     limit: int = Query(DEFAULT_EVENTS_LIMIT, ge=1),
     before_id: int | None = Query(None, ge=1, le=2_147_483_647),
+    # 사건 종류 앞머리("review.") — Overview가 가장 최근 검토 사건(되돌린 사유)을 편집 기록에 묻히지 않고 찾는다
+    action_prefix: str | None = Query(None, pattern=r"^[a-z_]{1,30}\.$"),
     ctx: BundleContext = Depends(_require_member),
     session: AsyncSession = Depends(get_session),
 ) -> list[BundleEvent]:
     # 같은 초에 쌓인 사건은 autoincrement id가 순서를 정한다
     # 이전 쪽(History 화면): 앞 쪽 마지막 사건보다 오래된 것 — 같은 정렬(시각, id)을 이어 간다
     stmt = select(BundleEvent).where(BundleEvent.bundle_id == ctx.bundle.id)
+    if action_prefix is not None:
+        stmt = stmt.where(BundleEvent.action.startswith(action_prefix, autoescape=True))
     if before_id is not None:
         anchor = await session.get(BundleEvent, before_id)
         if anchor is not None and anchor.bundle_id == ctx.bundle.id:

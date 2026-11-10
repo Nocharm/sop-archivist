@@ -62,7 +62,7 @@ function AuthGate({ children }: { children: ReactNode }) {
     if (auth.isLoading || auth.isAuthenticated || auth.activeNavigator || auth.error) return;
     if (isLoginPage) return;
     if (!signingOutRef.current) {
-      saveReturnTo(pathname + window.location.search); // 딥링크 보존 - 로그인 후 복귀
+      saveReturnTo(pathname + window.location.search + window.location.hash); // 딥링크 보존(설명서의 #자리 포함) - 로그인 후 복귀
     }
     router.replace(LOGIN_PATH);
   }, [auth.isLoading, auth.isAuthenticated, auth.activeNavigator, auth.error, isLoginPage, pathname, router]);
@@ -143,7 +143,7 @@ function DevGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!stored && !isLoginPage) {
-      saveReturnTo(pathname + window.location.search); // 딥링크 보존 - dev 로그인 후 복귀
+      saveReturnTo(pathname + window.location.search + window.location.hash); // 딥링크 보존(설명서의 #자리 포함) - dev 로그인 후 복귀
       router.replace(LOGIN_PATH);
     }
   }, [stored, isLoginPage, pathname, router]);

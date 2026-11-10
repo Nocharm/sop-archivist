@@ -130,7 +130,7 @@ export function MembersModal({ title, members, testId, onSave, onClose }: Member
           <div className="flex items-center gap-2">
             <Select testId={`${testId}-new-role`} ariaLabel={t("members.role")} value={pickedRole} options={roleOptions} onChange={setPickedRole} />
             <span className="flex-1" />
-            <button type="button" className="btn ghost" onClick={() => setAdding(false)}>
+            <button type="button" className="btn ghost" data-testid={`${testId}-add-cancel`} onClick={() => setAdding(false)}>
               <X size={16} strokeWidth={1.5} aria-hidden />
               {t("common.cancel")}
             </button>

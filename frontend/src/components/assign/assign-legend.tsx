@@ -39,6 +39,7 @@ export function AssignLegend() {
         <Row swatch={<kbd>↑↓</kbd>}>{t("assign.legend.keyMove")}</Row>
         <Row swatch={<kbd>↵</kbd>}>{t("assign.legend.keyConfirm")}</Row>
         <Row swatch={<><kbd>H</kbd> <kbd>U</kbd></>}>{t("assign.legend.keyHoldClear")}</Row>
+        <Row swatch={<kbd>E</kbd>}>{t("assign.legend.keyEdit")}</Row>
         <Row swatch={<kbd>Shift</kbd>}>{t("assign.legend.keyBulk")}</Row>
         <Row swatch={<kbd>Ctrl</kbd>}>{t("assign.legend.keyCtrl")}</Row>
       </section>

@@ -9,6 +9,7 @@ import { Modal } from "@/components/modal";
 import { SubjectPicker, type PickedSubject } from "@/components/subject-picker";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { Select } from "@/components/ui/select";
+import { showToast } from "@/components/ui/toast";
 import { PERMISSIONS } from "@/lib/access";
 import { translateOrRaw } from "@/lib/admin-format";
 import { addGrant, listGrants, listRoles, removeGrant, type Grant, type GrantInput, type SubjectType } from "@/lib/api";
@@ -80,6 +81,7 @@ function GrantFormModal({ onClose, onSaved }: GrantFormModalProps) {
         : { subject_type: subjectType, subject_id: subject.id, permission };
     try {
       await addGrant(body);
+      showToast(t("common.saved"));
       onSaved();
     } catch (err) {
       setError(err);
@@ -226,6 +228,7 @@ function RevokeGrantModal({ grant, onClose, onRevoked }: RevokeGrantModalProps) 
   return (
     <Modal
       testId="grant-remove-modal"
+      size="sm"
       title={t("grants.revoke.title")}
       onClose={onClose}
       footer={

@@ -2,7 +2,8 @@
 // 문서 번호·버전·언어 배치를 미리 채우므로, 파일마다 결과와 채운 값(출처 표)을 보이고 그 자리에서 고칠 수 있다.
 "use client";
 
-import { Loader2, Upload, X } from "lucide-react";
+import { Loader2, Scissors, Upload, X } from "lucide-react";
+import Link from "next/link";
 import { useRef, useState } from "react";
 
 import { DocStatusPill, getDocReason } from "@/components/documents/doc-status";
@@ -17,6 +18,7 @@ import { VersionInput } from "@/components/ui/version-input";
 import { humanizeApiError } from "@/lib/api-errors";
 import { LANGUAGE_LAYOUTS, updateDocument, uploadDocument, type DocSide, type DocumentUpdateInput, type SopDocument, type TargetDocType } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
+import { getStageHref } from "@/lib/stages";
 import { INPUT_FIELD } from "@/lib/ui-classes";
 
 interface UploadRow {
@@ -92,6 +94,7 @@ export function UploadModal({ bundleId, onClose, onUploaded, latest = [] }: Uplo
     }
   }
 
+  const hasReady = rows?.some((row) => row.document?.status === "ready") ?? false;
   const footer =
     rows === null ? (
       <>
@@ -104,13 +107,22 @@ export function UploadModal({ bundleId, onClose, onUploaded, latest = [] }: Uplo
         </button>
       </>
     ) : (
-      <button type="button" className="btn pri" data-testid="upload-done" disabled={running} onClick={onClose}>
-        {t("common.close")}
-      </button>
+      <>
+        <button type="button" className={hasReady ? "btn" : "btn pri"} data-testid="upload-done" disabled={running} onClick={onClose}>
+          {t("common.close")}
+        </button>
+        {/* 읽힌 문서가 있으면 다음 단계로 바로 간다 - 닫고 레일에서 Split을 다시 찾지 않게 */}
+        {hasReady && !running && (
+          <Link href={getStageHref(bundleId, "split")} className="btn pri" data-testid="upload-go-split" onClick={onClose}>
+            <Scissors size={16} strokeWidth={1.5} aria-hidden />
+            {t("upload.goSplit")}
+          </Link>
+        )}
+      </>
     );
 
   return (
-    <Modal title={t("documents.upload")} onClose={onClose} isBusy={running} testId="upload" footer={footer} wide>
+    <Modal title={t("documents.upload")} onClose={onClose} isBusy={running} testId="upload" footer={footer} size="xl">
       {rows === null ? (
         <div className="space-y-3">
           <SideChoice value={side} onChange={setSide} />

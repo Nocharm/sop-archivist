@@ -179,6 +179,7 @@ export default function BundleListPage() {
           testId="bundles-list"
           rowTestId={(bundle) => `bundles-row-${bundle.id}`}
           onRowClick={(bundle) => navigate(`/bundles/${bundle.id}`)}
+          hasRowLink
           showSkeleton={showSkeleton}
           skeletonRows={SKELETON_ROWS}
           more={{ hasMore: rows.hasMore, sentinelRef: rows.sentinelRef, testId: "bundles-more" }}

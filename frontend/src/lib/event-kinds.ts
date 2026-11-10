@@ -1,6 +1,7 @@
 // 작업 기록 사건의 아이콘과 묶음(History 필터) - 사건 이름(action)의 앞부분으로 가른다. 모르는 사건은 Bundle 묶음.
 import {
   Bot,
+  CheckCheck,
   CircleCheckBig,
   ClipboardCheck,
   FilePlus2,
@@ -50,6 +51,7 @@ const ICON_BY_ACTION: Record<string, LucideIcon> = {
   "unit.edit": Scissors,
   "unit.undo": Undo2,
   "unit.redo": Undo2,
+  "unit.check_all": CheckCheck,
   "pair.create": Link2,
   "pair.confirm": Link2,
   "pair.delete": Link2,

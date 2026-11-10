@@ -289,7 +289,7 @@
 <div class="box sys"><b>멤버와 권한은 따로 논다</b>
 <ul>
   <li>묶음 <b>내용</b>은 멤버만 본다. 시스템 관리자도 멤버가 아니면 내용을 못 본다(대신 <code>bundle.admin</code>으로 자기를 멤버로 넣을 수 있고 기록이 남는다).</li>
-  <li>멤버 역할은 둘: <b>작성자</b>(모든 편집, 멤버 관리, 검토 요청, 다시 열기, 작업 중 묶음 삭제)와 <b>검토자</b>(읽기·내보내기, 검토 완료·되돌리기). 한 사람은 한 묶음에서 한 역할만 갖는다 — 작성자가 자기 묶음을 검토 완료하지 못하게.</li>
+  <li>멤버 역할은 둘: <b>작성자</b>(모든 편집, 멤버 관리, 검토 요청과 요청 거두기, 다시 열기, 작업 중 묶음 삭제)와 <b>검토자</b>(읽기·내보내기, 검토 완료·되돌리기). 한 사람은 한 묶음에서 한 역할만 갖는다 — 작성자가 자기 묶음을 검토 완료하지 못하게.</li>
   <li>작성자는 늘 한 명 이상이어야 하고(마지막 작성자는 못 뺀다), 검토 대기 중에는 누구도 자기 역할을 바꾸지 못한다.</li>
   <li>퇴직자(HR에서 비활성)는 멤버여도 들어오지 못한다.</li>
 </ul></div>
@@ -369,7 +369,7 @@
   <li>되돌리기·다시 하기는 서버에 문서마다 기록한다(여러 작성자가 같은 기록을 본다). 되돌리면 은퇴한 단위가 원래 ID로 살아나지만 판단은 자동 복원하지 않는다.</li>
   <li>편집이 끝날 때마다 "글자를 빠짐없이 덮는가"를 다시 검사한다.</li>
 </ul></div>
-<div class="box fb"><b>피드백 거리</b>한/영 연달아 문서의 짝은 코드가 이웃끼리 제안한다. 한/영 따로 문서(OLD-3)는 임베딩(AI 쪽)이 제안하거나 사람이 손으로 잇는다 — AI가 없으면 짝을 하나씩 손으로 잇는 비용이 크다. 경계 확인(↵)은 검토 요청 조건이 아니다(판단 확정이 대신한다).</div>
+<div class="box fb"><b>피드백 거리</b>한/영 연달아 문서의 짝은 코드가 이웃끼리 제안한다. 한/영 따로 문서(OLD-3)는 임베딩(AI 쪽)이 제안하거나 사람이 손으로 잇는다 — AI가 없으면 짝을 하나씩 손으로 잇는 비용이 크다. 경계 확인(↵)은 검토 요청 조건이다 — 결과물과 Excel이 Unit이 잘린 자리를 따르기 때문이다. 글이 있는 Unit(문장·제목·그림·칸 문장)을 모두 확인해야 하고, 문서마다 남은 수가 보이며 <b>Check the rest</b>로 한 문서의 나머지를 한 번에 확인할 수 있다(작업 기록 <code>unit.check_all</code>). 쪼개거나 합쳐 생긴 Unit은 확인 전으로 시작한다.</div>
 </section>
 
 <!-- ============================================================ 7 -->
@@ -557,7 +557,7 @@
 <figure class="shot" data-shot="overview-ready">
   <div class="frame"><img width="1440" height="900" src="img/overview-ready.png" alt="검토 조건" loading="lazy"></div>
   <figcaption><span class="fig">그림 12-1</span>검토 대기 중인 묶음 3의 개요. 조건이 모두 채워져 검토를 요청한 상태다.
-    <ol class="marks"><li data-n="1">상태 <span class="tag">In review</span>. 검토 대기·완료에서는 내용을 고칠 수 없다(읽기와 내보내기만).</li><li data-n="2">검토 요청 조건. 아래 표가 전부다.</li></ol>
+    <ol class="marks"><li data-n="1">상태 <span class="tag">In review</span>. 검토 대기·완료에서는 내용을 고칠 수 없다(읽기와 내보내기만).</li><li data-n="2">검토 요청 조건. 아래 표가 전부다. 검토 대기 중에는 작성자에게 <b>Withdraw request</b>가 보인다 — 사유 없이 작업 중으로 되돌린다.</li></ol>
   </figcaption>
 </figure>
 <table>
@@ -567,6 +567,7 @@
   <tr><td>미배정·AI 제안·보류인 새 문장이 없음</td><td>짝 맞추기(입구 2), 번역</td></tr>
   <tr><td>삭제·이동·중복 배정·표 구성 변경에 사유</td><td>분류 사유 칸</td></tr>
   <tr><td>"추출 누락 의심" 경고를 모두 확인함</td><td>쪼개기</td></tr>
+  <tr><td>모든 Unit의 경계를 확인함(옛·새 문서, 글이 있는 Unit)</td><td>쪼개기</td></tr>
   <tr><td>의미 검토 4항목 표시</td><td>결과물</td></tr>
   <tr><td>검토자 1명 이상</td><td>개요 › 멤버</td></tr>
 </table>
@@ -613,10 +614,11 @@
   <rect class="n code" x="40" y="70" width="190" height="64" rx="10"/><text x="135" y="98" text-anchor="middle" class="tt">작업 중</text><text x="135" y="118" text-anchor="middle" class="sm">in_progress · 모든 편집</text>
   <rect class="n hold" x="395" y="70" width="190" height="64" rx="10"/><text x="490" y="98" text-anchor="middle" class="tt">검토 대기</text><text x="490" y="118" text-anchor="middle" class="sm">in_review · 읽기·내보내기만</text>
   <rect class="n done" x="750" y="70" width="190" height="64" rx="10"/><text x="845" y="98" text-anchor="middle" class="tt">검토 완료</text><text x="845" y="118" text-anchor="middle" class="sm">done · 읽기·내보내기만</text>
-  <path class="e" d="M230,90 H391"/><text x="310" y="80" text-anchor="middle" class="lbl">검토 요청 (작성자)</text><text x="310" y="64" text-anchor="middle" class="sm">조건 7개 통과 · 대기 AI 작업 취소</text>
+  <path class="e" d="M230,90 H391"/><text x="310" y="80" text-anchor="middle" class="lbl">검토 요청 (작성자)</text><text x="310" y="64" text-anchor="middle" class="sm">조건 8개 통과 · 대기 AI 작업 취소</text>
   <path class="e" d="M585,90 H746"/><text x="665" y="80" text-anchor="middle" class="lbl">검토 완료 (검토자)</text>
+  <path class="e" d="M395,108 H234"/><text x="312" y="122" text-anchor="middle" class="sm">요청 거두기 (작성자)</text>
   <path class="e" d="M395,122 C320,160 260,160 232,126"/><text x="312" y="170" text-anchor="middle" class="lbl">되돌리기 (검토자, 사유)</text>
-  <path class="e" d="M760,134 C650,215 300,215 200,136"/><text x="490" y="214" text-anchor="middle" class="lbl">다시 열기 (작성자, 사유) — 의미 검토 4항목은 지워진다</text>
+  <path class="e" d="M760,134 C650,215 300,215 200,136"/><text x="490" y="214" text-anchor="middle" class="lbl">다시 열기 (작성자, 사유) — 작업 중으로 돌아오면 의미 검토 4항목은 지워진다</text>
   <text x="40" y="40" class="sm">만들기 → 작업 중. 삭제는 작업 중일 때 작성자만(전부 영구 삭제, 전역 기록).</text>
 </svg>
 </div>

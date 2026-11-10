@@ -23,7 +23,7 @@ function hasAny(counts: AiJobCounts | undefined): boolean {
 
 export function AiJobPanel({ bundle }: { bundle: Bundle }) {
   const { t } = useI18n();
-  const { status, watch } = useAiJobs(bundle.id, () => void loadBundle(bundle.id));
+  const { status, error: pollError, watch } = useAiJobs(bundle.id, () => void loadBundle(bundle.id));
   const [working, setWorking] = useState<"cancel" | "retry" | null>(null);
   const canEdit = bundle.my_role === "author" && bundle.status === "in_progress";
   const active = (status?.jobs.queued ?? 0) + (status?.jobs.running ?? 0);
@@ -55,14 +55,19 @@ export function AiJobPanel({ bundle }: { bundle: Bundle }) {
       <Refresh token={`${status?.jobs.running ?? 0}:${status?.jobs.queued ?? 0}:${failed}`}>
         <p className="min-h-[22px] text-ink-2 tabular-nums">{summary}</p>
       </Refresh>
+      {pollError !== null && (
+        <p className="text-[13px] text-st-hold" role="status" data-testid="overview-ai-stale">
+          {t("ai.statusStale")}
+        </p>
+      )}
       <Collapse open={status?.ai_enabled === true && kinds.length > 0}>
         <table className="w-full text-[13px] tabular-nums" data-testid="overview-ai-kinds">
           <thead>
             <tr className="text-xs text-ink-3">
               <th className="py-1 text-left font-normal">{t("ai.kindHead")}</th>
               <th className="py-1 text-right font-normal">{t("ai.active")}</th>
-              <th className="py-1 text-right font-normal">Done</th>
-              <th className="py-1 text-right font-normal">Failed</th>
+              <th className="py-1 text-right font-normal">{t("status.job.done")}</th>
+              <th className="py-1 text-right font-normal">{t("status.job.failed")}</th>
               <th className="py-1 text-right font-normal">{t("ai.adopted")}</th>
             </tr>
           </thead>

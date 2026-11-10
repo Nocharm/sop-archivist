@@ -61,6 +61,12 @@ export function listBundleEvents(bundleId: number, limit = 500, beforeId?: numbe
   return apiFetch<BundleEvent[]>(`/bundles/${bundleId}/events?limit=${limit}${before}`);
 }
 
+/** 가장 최근 검토 기록 하나(요청·완료·되돌림·다시 열기) - 편집 기록에 묻히지 않게 서버가 검토 기록만 고른다. 없으면 null */
+export async function getLatestReviewEvent(bundleId: number): Promise<BundleEvent | null> {
+  const events = await apiFetch<BundleEvent[]>(`/bundles/${bundleId}/events?limit=1&action_prefix=review.`);
+  return events[0] ?? null;
+}
+
 export function downloadDocumentFile(bundleId: number, docId: number): Promise<Blob> {
   return apiFetchBlob(`/bundles/${bundleId}/documents/${docId}/file`);
 }

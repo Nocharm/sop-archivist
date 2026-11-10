@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ToBe } from "./api-sop";
-import { addStep, buildToBeInput, changeDocType, createDraft, isDraftDirty, findDraftProblem, orderDocs, removeDoc, removeStep, renameDoc, setNaSlot } from "./tobe-draft";
+import { addStep, buildToBeInput, changeDocType, createDraft, isDraftDirty, isSameToBe, findDraftProblem, orderDocs, removeDoc, removeStep, renameDoc, setNaSlot } from "./tobe-draft";
 
 const BASE: ToBe = {
   revision: 4,
@@ -111,6 +111,17 @@ describe("tobe draft", () => {
   it("is clean right after loading", () => {
     expect(isDraftDirty(createDraft(BASE), BASE)).toBe(false);
     expect(isDraftDirty(renameDoc(createDraft(BASE), "id-2", "WI-09"), BASE)).toBe(true);
+  });
+});
+
+describe("isSameToBe", () => {
+  it("ignores a revision that moved for another reason", () => {
+    expect(isSameToBe({ ...BASE, revision: 9 }, BASE)).toBe(true);
+  });
+
+  it("sees a renamed document or a changed step as different", () => {
+    expect(isSameToBe({ ...BASE, docs: BASE.docs.map((doc) => (doc.id === 2 ? { ...doc, title: "Changed" } : doc)) }, BASE)).toBe(false);
+    expect(isSameToBe({ ...BASE, wi_steps: BASE.wi_steps.slice(0, 1) }, BASE)).toBe(false);
   });
 });
 

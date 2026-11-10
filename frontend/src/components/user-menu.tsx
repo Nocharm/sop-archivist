@@ -1,9 +1,10 @@
-// 사용자 메뉴 - 상단 막대의 이름 단추 하나에 내 계정·관리·레이아웃(하위 메뉴)·로그아웃·마지막 로그인을 모은다.
+// 사용자 메뉴 - 상단 막대의 이름 단추 하나에 내 계정·관리·레이아웃(하위 메뉴)·설명서·로그아웃·마지막 로그인을 모은다.
 // 레이아웃 하위 메뉴는 호버나 →로 열리고, 화면 오른쪽에 자리가 없으면 왼쪽으로 뒤집혀 열린다(pickFlyoutSide).
 "use client";
 
-import { ChevronDown, ChevronRight, Clock3, LogOut, Moon, PanelLeft, PanelTop, Shield, Sun, UserRound, type LucideIcon } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronRight, Clock3, LogOut, Moon, PanelLeft, PanelTop, Shield, Sun, UserRound, type LucideIcon } from "lucide-react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
 import { Menu, MenuRadio } from "@/components/ui/menu";
@@ -12,6 +13,7 @@ import { formatKstShort } from "@/lib/datetime";
 import { getDisplayName } from "@/lib/display-name";
 import { pickFlyoutSide } from "@/lib/flyout";
 import { useI18n } from "@/lib/i18n";
+import { getManualHref } from "@/lib/manual";
 import { useSession } from "@/lib/session";
 import { setUiPref, useUiPref } from "@/lib/use-ui-pref";
 
@@ -60,6 +62,7 @@ function LayoutFlyout({ side }: { side: "right" | "left" }) {
 export function UserMenu() {
   const { t, lang } = useI18n();
   const { me, signOut } = useSession();
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [flyout, setFlyout] = useState<"right" | "left" | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -163,6 +166,11 @@ export function UserMenu() {
             </button>
             {flyout && <LayoutFlyout side={flyout} />}
           </div>
+          {/* 상단 막대의 설명서 단추와 같은 곳 - 지금 화면의 조각을 새 탭으로 */}
+          <a href={getManualHref(pathname)} target="_blank" rel="noreferrer" role="menuitem" className="menu-item" data-testid="user-menu-manual" onClick={closeAll}>
+            <BookOpen size={15} strokeWidth={1.5} className="text-ink-3" aria-hidden />
+            {t("nav.manual")}
+          </a>
           <div className="menu-sep" role="separator" />
           <button type="button" role="menuitem" className="menu-item danger" data-testid="user-menu-signout" onClick={() => { closeAll(); signOut(); }}>
             <LogOut size={15} strokeWidth={1.5} aria-hidden />

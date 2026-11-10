@@ -5,7 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { LangProvider } from "@/lib/i18n";
 
-import { Modal } from "./modal";
+import { ConfirmModal } from "./ui/confirm-modal";
+import { Modal, type ModalSize } from "./modal";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -36,5 +37,40 @@ describe("Modal", () => {
     act(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
     expect(onClose).toHaveBeenCalledTimes(1);
     act(() => root.unmount());
+  });
+});
+
+// 창 폭 - 시선이 좌우로 덜 움직이게 기본을 좁게 두고, 넓은 창은 고른 곳에서만 쓴다
+function renderPanel(element: ReturnType<typeof createElement>) {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  act(() => root.render(createElement(LangProvider, null, element)));
+  const panel = host.querySelector('[data-testid="m"]');
+  const classes = panel ? Array.from(panel.classList) : [];
+  act(() => root.unmount());
+  host.remove();
+  return classes.filter((name) => name.startsWith("max-w-"));
+}
+
+describe("Modal width", () => {
+  it("is the form width unless a size is given", () => {
+    // eslint-disable-next-line react/no-children-prop
+    expect(renderPanel(createElement(Modal, { title: "T", testId: "m", onClose: vi.fn(), children: "body" }))).toEqual(["max-w-md"]);
+  });
+
+  it.each<[ModalSize, string]>([
+    ["sm", "max-w-sm"],
+    ["md", "max-w-md"],
+    ["lg", "max-w-lg"],
+    ["xl", "max-w-3xl"],
+  ])("draws size %s as %s", (size, expected) => {
+    // eslint-disable-next-line react/no-children-prop
+    expect(renderPanel(createElement(Modal, { title: "T", testId: "m", onClose: vi.fn(), size, children: "body" }))).toEqual([expected]);
+  });
+
+  it("keeps a confirm window at the narrowest width", () => {
+    const element = createElement(ConfirmModal, { title: "T", summary: "body", confirmLabel: "OK", testId: "m", onConfirm: vi.fn(), onClose: vi.fn() });
+    expect(renderPanel(element)).toEqual(["max-w-sm"]);
   });
 });

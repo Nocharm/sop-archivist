@@ -1,4 +1,4 @@
-"""검토 흐름 — 검토 요청 조건(막는 이유·알림)과 다음 행동, 의미 검토 확인, 상태 전이(요청·완료·되돌리기·다시 열기) (스펙 §7.15).
+"""검토 흐름 — 검토 요청 조건(막는 이유·알림)과 다음 행동, 의미 검토 확인, 상태 전이(요청·거두기·완료·되돌리기·다시 열기) (스펙 §7.15).
 
 조건은 결과물·진행 숫자와 같은 스냅숏에서 계산해 화면의 숫자와 어긋나지 않게 하고, 질의 수는 단위 수와 무관하다.
 """
@@ -25,13 +25,14 @@ from app.sop.snapshot import (
     PROGRESS_LANGS,
     BundleSnapshot,
     count_unacked_missing_text,
+    count_unchecked_boundaries,
     load_bundle_snapshot,
 )
 from app.sop.tobe import is_within_slot
 
 NextAction = Literal[
-    "upload_documents", "resolve_documents", "fill_tobe", "decide_units", "ack_warnings", "fill_reasons",
-    "semantic_checks", "add_reviewer", "request_review", "await_review", "done",
+    "upload_documents", "resolve_documents", "check_boundaries", "fill_tobe", "decide_units", "ack_warnings",
+    "fill_reasons", "semantic_checks", "add_reviewer", "request_review", "await_review", "done",
 ]
 Issue = dict[str, object]
 
@@ -118,6 +119,9 @@ def _pick_next_action(snap: BundleSnapshot, codes: set[str]) -> NextAction:
         return "upload_documents"
     if "unresolved_documents" in codes:
         return "resolve_documents"
+    # 판단한 단위를 다시 자르면 판단이 떨어지므로 경계부터 굳힌다(단계 순서도 쪼개기가 To-Be·배정보다 앞)
+    if "unchecked_boundaries" in codes:
+        return "check_boundaries"
     if not snap.target_docs:
         return "fill_tobe"
     if any(code.startswith(("units_", "targets_")) for code in codes):
@@ -134,7 +138,12 @@ def _pick_next_action(snap: BundleSnapshot, codes: set[str]) -> NextAction:
 
 
 def evaluate_readiness(
-    snap: BundleSnapshot, *, semantic_checks: Mapping[str, object], unacked_missing_text: int, reviewer_count: int
+    snap: BundleSnapshot,
+    *,
+    semantic_checks: Mapping[str, object],
+    unacked_missing_text: int,
+    unchecked_boundaries: Mapping[int, int],
+    reviewer_count: int,
 ) -> Readiness:
     """스냅숏과 질의 몇 개로 읽은 숫자만으로 조건을 가린다 — 순수 함수라 큰 묶음도 스레드에서 돈다."""
     facts = build_review_facts(snap)
@@ -154,6 +163,15 @@ def evaluate_readiness(
         blockers.append({"code": "missing_reason", "count": len(missing_reason), "unit_ids": missing_reason})
     if unacked_missing_text:
         blockers.append({"code": "unacked_missing_text", "count": unacked_missing_text})
+    # 결과물·Excel이 이 단위 경계대로 나오므로, 사람이 경계를 다 본 뒤에만 검토로 넘긴다
+    if unchecked_boundaries:
+        blockers.append(
+            {
+                "code": "unchecked_boundaries",
+                "count": sum(unchecked_boundaries.values()),
+                "document_ids": sorted(unchecked_boundaries),
+            }
+        )
     unchecked = [key for key in SEMANTIC_CHECK_KEYS if semantic_checks.get(key) is not True]
     if unchecked:
         blockers.append({"code": "semantic_checks_incomplete", "missing": unchecked})
@@ -198,6 +216,7 @@ async def compute_readiness(session: AsyncSession, bundle: Bundle, *, end_transa
     """
     snap = await load_bundle_snapshot(session, bundle.id, include_text=False)
     unacked = await count_unacked_missing_text(session, bundle.id)
+    unchecked_boundaries = await count_unchecked_boundaries(session, bundle.id)
     reviewers = await _count_active_reviewers(session, bundle.id)
     semantic_checks = dict(bundle.semantic_checks)
     if end_transaction:
@@ -207,6 +226,7 @@ async def compute_readiness(session: AsyncSession, bundle: Bundle, *, end_transa
         snap,
         semantic_checks=semantic_checks,
         unacked_missing_text=unacked,
+        unchecked_boundaries=unchecked_boundaries,
         reviewer_count=reviewers,
     )
 
@@ -274,6 +294,12 @@ async def request_review(session: AsyncSession, bundle: Bundle, *, revision: int
         raise_rule(422, "not_ready", blockers=readiness.blockers)
     await cancel_active_jobs(session, bundle.id)
     _apply_transition(session, bundle, to_status="in_review", action="review.request", actor=actor)
+
+
+async def withdraw_review(session: AsyncSession, bundle: Bundle, *, revision: int, actor: str) -> None:
+    """검토 중 → 작업 중(작성자가 요청을 거둔다). 자기 요청을 물리는 것이라 사유를 받지 않는다. 커밋은 호출부가 한다."""
+    await _lock_for_transition(session, bundle, revision, "in_review")
+    _apply_transition(session, bundle, to_status="in_progress", action="review.withdraw", actor=actor)
 
 
 async def complete_review(session: AsyncSession, bundle: Bundle, *, revision: int, actor: str) -> None:

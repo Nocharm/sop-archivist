@@ -167,6 +167,11 @@ export function findDraftProblem(draft: ToBeDraft): DraftProblem | null {
   return null;
 }
 
+/** 두 서버 목록의 내용이 같은가 - revision만 다른 것(멤버·제목처럼 To-Be 밖의 변경)은 같다고 본다 */
+export function isSameToBe(left: ToBe, right: ToBe): boolean {
+  return JSON.stringify(buildToBeInput(createDraft(left), 0)) === JSON.stringify(buildToBeInput(createDraft(right), 0));
+}
+
 export function isDraftDirty(draft: ToBeDraft, base: ToBe): boolean {
   return JSON.stringify(buildToBeInput(draft, base.revision)) !== JSON.stringify(buildToBeInput(createDraft(base), base.revision));
 }

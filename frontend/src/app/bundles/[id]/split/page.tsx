@@ -2,7 +2,7 @@
 // 문장을 누르면 고르고 끝에 확인 단추가 나온다. 두 번 누르면 그 자리에 나눌 선과 나누기 팝업이 뜬다(S). 끌어 고르면 새 단위로 만들 수 있다.
 "use client";
 
-import { ArrowDown, ArrowUp, Check, Circle, CircleCheck, FileText, FolderCheck, Link2, Merge, Redo2, Scissors, Sparkles, SquarePlus, Undo2, Unlink, Upload, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, CheckCheck, Circle, CircleCheck, FileText, FolderCheck, Link2, Merge, Redo2, Scissors, Sparkles, SquarePlus, Undo2, Unlink, Upload, X } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useState, type ReactNode } from "react";
@@ -11,6 +11,8 @@ import { SplitAiSection } from "@/components/manage/split-ai";
 import { Paper, type PaperCut } from "@/components/paper/paper";
 import { SourceFontMenu } from "@/components/paper/source-font-menu";
 import { Modal } from "@/components/modal";
+import { ReadOnlyNote } from "@/components/read-only-note";
+import { LoadError } from "@/components/ui/load-error";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { getStageHref } from "@/lib/stages";
 import { InfoTip } from "@/components/ui/info-tip";
@@ -22,6 +24,7 @@ import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import {
   ackWarning,
+  confirmAllBoundaries,
   confirmPair,
   createPair,
   deletePair,
@@ -41,7 +44,7 @@ import {
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { buildGroupSave } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
-import { buildPaperModel, canSplitAt, readWarningText, shouldRecenter, toBlockOffset, toUnitOffset } from "@/lib/paper-model";
+import { buildPaperModel, canSplitAt, countUnchecked, readWarningText, shouldRecenter, toBlockOffset, toUnitOffset } from "@/lib/paper-model";
 import { getSplitKeyAction } from "@/lib/split-keys";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
@@ -104,6 +107,9 @@ export default function SplitPage() {
   const [localChecks, setLocalChecks] = useState<{ base: DocumentView | null; values: Record<number, boolean> }>({ base: null, values: {} });
   const checkOverrides = localChecks.base === data ? localChecks.values : {};
   const isChecked = (unit: ViewUnit) => checkOverrides[unit.id] ?? unit.boundary_confirmed;
+  // 지금 문서는 방금 누른 확인까지 센다 - 다른 문서는 목록이 준 수를 쓴다
+  const uncheckedLeft = data ? countUnchecked(data.units, isChecked) : 0;
+  const [isCheckRestOpen, setIsCheckRestOpen] = useState(false);
 
   const selected: ViewUnit | null = (selectedId !== null && model?.units.get(selectedId)) || null;
   const cut: PaperCut | null = (() => {
@@ -131,6 +137,8 @@ export default function SplitPage() {
 
   function refresh() {
     setViewKey((key) => key + 1);
+    // 문서 목록의 남은 경계 수도 같이 맞춘다
+    docs.reload();
     void loadBundle(bundleId);
   }
 
@@ -296,6 +304,8 @@ export default function SplitPage() {
     if (pending) return;
     const action = getSplitKeyAction(event, {
       typing: isTypingTarget(event.target),
+      // 용지의 단위 손잡이(data-unit)는 단추여도 화면 단축키를 그대로 받는다
+      onControl: event.target instanceof HTMLElement && event.target.closest("button, a, [role='option']") !== null && event.target.closest("[data-unit]") === null,
       layerOpen: document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]') !== null,
       hasCut: cut !== null,
       checked: selected !== null && isChecked(selected),
@@ -340,7 +350,10 @@ export default function SplitPage() {
             data-testid={`split-doc-${doc.id}`}
             onClick={() => selectDoc(doc.id)}
           >
-            <b className="font-mono text-xs font-semibold leading-[18px]">{doc.doc_code || doc.file_name}</b>
+            <span className="flex items-start gap-1.5">
+              <b className="min-w-0 flex-1 font-mono text-xs font-semibold leading-[18px] [overflow-wrap:anywhere]">{doc.doc_code || doc.file_name}</b>
+              <DocBoundaryMark docId={doc.id} left={doc.id === docId && data ? uncheckedLeft : doc.unchecked_boundaries} />
+            </span>
             <Truncate className="text-xs leading-[18px] text-ink-3" text={doc.title} />
           </button>
         ))}
@@ -386,11 +399,13 @@ export default function SplitPage() {
       </nav>
 
       {/* 가운데: 용지 */}
-      <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)]">
+      {/* 열을 minmax(0,1fr)로 못 박는다 - 암묵 열(auto)은 위 줄의 한 줄 글자만큼 넓어져, 1280보다 좁은 창에서 용지가 오른쪽 패널 밑으로 들어갔다 */}
+      <div className="grid min-h-0 grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)]">
         <div className="flex h-11 items-center gap-2.5 border-b border-line bg-surface px-[var(--pad)]">
           <span className="font-mono text-[13px] font-semibold">{document_?.doc_code ?? ""}</span>
           <span className="min-w-0 flex-1 truncate text-ink-2">{document_?.title ?? ""}</span>
           {bundle?.is_synthetic && <span className="tag">Synthetic data</span>}
+          <ReadOnlyNote bundle={bundle} testId="split" />
           {page?.page != null && (
             <span className="tabular-nums text-xs text-ink-3" data-testid="split-page">
               {page.page_basis === "estimated" ? "≈ " : ""}p.{page.page}
@@ -452,9 +467,9 @@ export default function SplitPage() {
               )}
             />
           ) : view.error !== null ? (
-            <p className="text-ink-2" data-testid="split-error">
-              {humanizeApiError(view.error, t)}
-            </p>
+            <LoadError error={view.error} onRetry={view.reload} testId="split" />
+          ) : docs.error !== null && docs.data === null ? (
+            <LoadError error={docs.error} onRetry={docs.reload} testId="split-docs" />
           ) : docs.data !== null && readyDocs.length === 0 ? (
             <EmptyState
               icon={FileText}
@@ -536,6 +551,24 @@ export default function SplitPage() {
               </Tooltip>
             </div>
           </div>
+          {/* 남은 경계 - 모두 확인해야 검토를 요청할 수 있다 */}
+          {data && (
+            <div className="flex min-h-7 items-center gap-1.5 text-xs leading-[18px] text-ink-2">
+              {uncheckedLeft > 0 ? (
+                <Circle size={13} strokeWidth={2} className="pmark" aria-hidden />
+              ) : (
+                <CircleCheck size={14} strokeWidth={2} className="pmark checked" aria-hidden />
+              )}
+              <span data-testid="split-unchecked-count">{uncheckedLeft > 0 ? t("split.uncheckedLeft", { n: uncheckedLeft }) : t("split.allChecked")}</span>
+              <span className="flex-1" />
+              {canEdit && uncheckedLeft > 0 && (
+                <button type="button" className="btn ghost h-7" data-testid="split-check-rest" disabled={busy} onClick={() => setIsCheckRestOpen(true)}>
+                  <CheckCheck size={14} strokeWidth={1.5} aria-hidden />
+                  {t("split.checkRest")}
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="grid content-start gap-4 overflow-y-auto p-[var(--pad)]">
@@ -591,7 +624,7 @@ export default function SplitPage() {
                     <>
                       <span className="flex items-center gap-2">
                         <span className={`pill ${pair.status === "confirmed" ? "ok" : "dash"}`} data-testid="split-pair-status">
-                          {pair.status === "confirmed" ? "Confirmed" : "Suggested"}
+                          {t(pair.status === "confirmed" ? "status.pair.confirmed" : "status.pair.suggested")}
                         </span>
                       </span>
                       <ul className="grid gap-1">
@@ -745,7 +778,7 @@ export default function SplitPage() {
                   .filter((w) => w.needs_ack)
                   .map((warning) => (
                     <li key={warning.id} className="flex items-center gap-2 text-[13px]" data-testid={`split-warning-${warning.id}`}>
-                      <span className={`pill ${warning.acked_by ? "quiet" : "warn"}`}>{warning.acked_by ? "Checked" : t(`warn.${warning.kind}`)}</span>
+                      <span className={`pill ${warning.acked_by ? "quiet" : "warn"}`}>{warning.acked_by ? t("status.warning.checked") : t(`warn.${warning.kind}`)}</span>
                       <Truncate className="flex-1 text-ink-2" text={readWarningText(warning.detail)} />
                       {!warning.acked_by && canEdit && (
                         <button type="button" className="btn h-7" data-testid={`split-warning-ack-${warning.id}`} disabled={busy} onClick={() => void runSimple(() => ackWarning(bundleId, warning.id), t("split.warningChecked"))}>
@@ -823,6 +856,24 @@ export default function SplitPage() {
           </form>
         </Modal>
       )}
+      {isCheckRestOpen && docId !== null && (
+        <ConfirmModal
+          title={t("split.checkRestTitle")}
+          summary={<span>{t("split.checkRestBody", { n: uncheckedLeft })}</span>}
+          confirmLabel={t("split.checkRestRun", { n: uncheckedLeft })}
+          confirmIcon={CheckCheck}
+          busy={busy}
+          testId="split-check-rest-modal"
+          onClose={() => setIsCheckRestOpen(false)}
+          onConfirm={() => {
+            setIsCheckRestOpen(false);
+            void runSimple(async () => {
+              const result = await confirmAllBoundaries(bundleId, docId);
+              showToast(t("split.checkedRest", { n: result.confirmed_count }));
+            }, null);
+          }}
+        />
+      )}
       {pending && (
         <ConfirmModal
           title={t("split.confirmTitle")}
@@ -847,5 +898,25 @@ export default function SplitPage() {
         />
       )}
     </div>
+  );
+}
+
+/** 문서 목록 한 줄의 경계 표시 - 남았으면 수, 다 했으면 확인 표시 */
+function DocBoundaryMark({ docId, left }: { docId: number; left: number }) {
+  const { t } = useI18n();
+  const label = left > 0 ? t("split.uncheckedLeft", { n: left }) : t("split.allChecked");
+  return (
+    <Tooltip label={label}>
+      <span className="flex h-[18px] flex-none items-center gap-1 font-mono text-[11px] font-semibold text-ink-3" aria-label={label} data-testid={`split-doc-left-${docId}`}>
+        {left > 0 ? (
+          <>
+            <Circle size={11} strokeWidth={2.2} aria-hidden />
+            {left}
+          </>
+        ) : (
+          <CircleCheck size={13} strokeWidth={2} className="pmark checked" aria-hidden />
+        )}
+      </span>
+    </Tooltip>
   );
 }

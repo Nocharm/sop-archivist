@@ -3,7 +3,8 @@
 // 오른쪽은 고른 곳·확정·우선순위 아코디언이다(설계 docs/superpowers/specs/2026-11-09-assign-unified-design.md).
 "use client";
 
-import { Check, ExternalLink, FilePen, FileText, Inbox, Link2, ListChecks, Sparkles, Trash2, X } from "lucide-react";
+import { Check, ExternalLink, FilePen, FileText, FileUp, Inbox, Link2, ListChecks, RefreshCw, Sparkles, Trash2, X } from "lucide-react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
@@ -17,9 +18,12 @@ import { OldPane } from "@/components/assign/old-pane";
 import { PaneDivider } from "@/components/assign/pane-divider";
 import { AiAskMenu, type AiAskItem } from "@/components/manage/ai-ask-menu";
 import { Modal } from "@/components/modal";
+import { ReadOnlyNote } from "@/components/read-only-note";
 import { SourceFontMenu } from "@/components/paper/source-font-menu";
 import { UnitStatusPill } from "@/components/status";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
+import { LoadError } from "@/components/ui/load-error";
 import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
 import { listAppliedSuggestions, requestAi, type AiKind, type AiScope } from "@/lib/api-manage";
@@ -59,6 +63,7 @@ import {
   findSystemHold,
   getDestinationId,
   getRowStep,
+  hasDraftChange,
   isTextChangeType,
   pickFirstFilter,
   readCheckKey,
@@ -74,9 +79,12 @@ import {
 } from "@/lib/classify-model";
 import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
+import { useLeaveGuard } from "@/lib/leave-guard";
 import { buildIdenticalBatches } from "@/lib/match-model";
+import { navigate } from "@/lib/nav-buffer";
 import { buildPaperModel, shouldRecenter } from "@/lib/paper-model";
 import { SLOT_LABELS } from "@/lib/slot-labels";
+import { getStageHref } from "@/lib/stages";
 import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
@@ -236,6 +244,11 @@ export default function AssignPage() {
     });
   }
 
+  // 저장 전 고름·고친 글이 남은 줄이 있으면 다른 화면으로 가기 전에 묻는다(초안은 이 화면의 상태라 나가면 사라진다)
+  const unsavedCount = Object.values(drafts).filter(hasDraftChange).length;
+  const [leaveTo, setLeaveTo] = useState<string | null>(null);
+  useLeaveGuard(unsavedCount > 0, setLeaveTo);
+
   // --- 추천(① 추천 카드) - 저장된 AI 제안 → 같은 글자 → 비슷한 문장 ---
   const aiWhy = typeof rowSuggestion?.content.reason === "string" ? rowSuggestion.content.reason : "";
   const isAiRow = row?.status === "ai_suggested" && savedDestination !== null;
@@ -308,6 +321,7 @@ export default function AssignPage() {
   const firstTextRef = useRef<HTMLTextAreaElement>(null);
   const [busy, setBusy] = useState(false);
   const [bulk, setBulk] = useState<"delete" | "move" | null>(null);
+  const [confirmingIdentical, setConfirmingIdentical] = useState(false);
   const [openAcc, setOpenAcc] = useState<{ key: string; open: Set<string> }>({ key: "", open: new Set(["rec"]) });
   const accOpen = openAcc.key === toggleKey ? openAcc.open : new Set(["rec"]);
   function toggleAcc(section: string) {
@@ -441,13 +455,15 @@ export default function AssignPage() {
     }
   }
 
-  function confirmIdenticalAll() {
+  async function confirmIdenticalAll() {
     const items = identical.data ?? [];
-    if (items.length === 0) return;
     // 서버 상한(1000)씩 차례로 - revision은 후보 목록에 실려 온다
-    void run(async () => {
-      for (const batch of buildIdenticalBatches(items)) await confirmMatchesInBulk(bundleId, batch);
-    }, t("match.identicalDone", { n: items.length }));
+    if (items.length > 0) {
+      await run(async () => {
+        for (const batch of buildIdenticalBatches(items)) await confirmMatchesInBulk(bundleId, batch);
+      }, t("match.identicalDone", { n: items.length }));
+    }
+    setConfirmingIdentical(false);
   }
 
   function markNew() {
@@ -667,7 +683,7 @@ export default function AssignPage() {
   const accSections: AccordionSection[] = [
     { key: "rec", title: t("assign.acc.rec"), count: recommendations.length, body: recommendations.length === 0 ? <p className="text-xs text-ink-3">{t("assign.acc.none")}</p> : recommendations.map(renderRecommendation) },
     { key: "near", title: t("assign.acc.near"), body: renderNearby() },
-    { key: "all", title: t("assign.acc.all"), body: <DestinationTree written={written} options={options} onPickLink={pickNewSentence} onPickPlace={pickDestination} /> },
+    { key: "all", title: t("assign.acc.all"), body: <DestinationTree written={written} options={options} tobeHref={getStageHref(bundleId, "tobe")} onPickLink={pickNewSentence} onPickPlace={pickDestination} /> },
     {
       key: "move",
       title: t("assign.acc.move"),
@@ -827,15 +843,16 @@ export default function AssignPage() {
           </span>
         </span>
       </button>
-      <div className="grid grid-cols-3 gap-1.5">
-        <button type="button" className="btn h-8 gap-1 px-1 text-xs font-normal" data-testid="assign-edit" disabled={!canEdit || !isPlace || editing || busy} onClick={startEdit}>
+      {/* 세 등분하면 긴 라벨(Edit and confirm)이 단추 밖으로 넘친다 - 글자 길이만큼 잡고 남는 폭을 나눈다 */}
+      <div className="flex gap-1.5">
+        <button type="button" className="btn h-8 flex-auto gap-1 px-1 text-xs font-normal" data-testid="assign-edit" disabled={!canEdit || !isPlace || editing || busy} onClick={startEdit}>
           <FilePen size={13} strokeWidth={1.5} aria-hidden />
           {t("classify.editConfirm")} <kbd>E</kbd>
         </button>
-        <button type="button" className="btn h-8 gap-1 px-1 text-xs font-normal" data-testid="assign-hold" disabled={!canEdit || !row || busy} onClick={() => void runSave("hold")}>
+        <button type="button" className="btn h-8 flex-auto gap-1 px-1 text-xs font-normal" data-testid="assign-hold" disabled={!canEdit || !row || busy} onClick={() => void runSave("hold")}>
           {t("classify.hold")} <kbd>H</kbd>
         </button>
-        <button type="button" className="btn h-8 gap-1 px-1 text-xs font-normal" data-testid="assign-clear" disabled={!canEdit || !row || row.status === "unassigned" || busy} onClick={() => void runClear()}>
+        <button type="button" className="btn h-8 flex-auto gap-1 px-1 text-xs font-normal" data-testid="assign-clear" disabled={!canEdit || !row || row.status === "unassigned" || busy} onClick={() => void runClear()}>
           {t("classify.clear")} <kbd>U</kbd>
         </button>
       </div>
@@ -911,6 +928,11 @@ export default function AssignPage() {
             {t("classify.aiRunning", { n: aiBusy })}
           </span>
         )}
+        {aiJobs.error !== null && (
+          <span className="mt-0.5 block text-st-hold" role="status" data-testid="assign-ai-stale">
+            {t("ai.statusStale")}
+          </span>
+        )}
       </span>
     </section>
   );
@@ -968,7 +990,8 @@ export default function AssignPage() {
             </span>
             <UnitStatusPill status={row.status} testId="assign-row-status" />
             {(units.error ?? suggestions.error) !== null && (
-              <button type="button" className="pill warn" data-testid="assign-refresh-error" onClick={() => setUnitsKey((key) => key + 1)}>
+              <button type="button" className="btn h-6 gap-1 px-1.5 text-xs font-normal text-st-hold" data-testid="assign-refresh-error" onClick={() => setUnitsKey((key) => key + 1)}>
+                <RefreshCw size={12} strokeWidth={1.5} aria-hidden />
                 {t("classify.refreshFailed")}
               </button>
             )}
@@ -994,11 +1017,12 @@ export default function AssignPage() {
   }
 
   const error = docs.error ?? views.error ?? units.error ?? tobe.error ?? writtenList.error;
+  const reloadAll = () => {
+    for (const source of [docs, views, units, tobe, writtenList]) if (source.error !== null) source.reload();
+  };
   if (!ready) {
     return error !== null ? (
-      <p className="p-6 text-ink-2" data-testid="assign-error">
-        {humanizeApiError(error, t)}
-      </p>
+      <LoadError error={error} onRetry={reloadAll} testId="assign" />
     ) : (
       <div className="p-4" data-testid="assign-loading">
         {showSkeleton && <span className="sk h-[480px] w-full" />}
@@ -1020,7 +1044,7 @@ export default function AssignPage() {
             data-testid={`assign-filter-${item}`}
             onClick={() => applyFilter(item)}
           >
-            {item === "all" ? "All" : t(`status.unit.${item}`)}
+            {item === "all" ? t("assign.acc.all") : t(`status.unit.${item}`)}
             <span className="tabular-nums text-ink-3">{counts[item]}</span>
           </button>
         ))}
@@ -1041,6 +1065,7 @@ export default function AssignPage() {
       <span className="text-xs tabular-nums text-ink-3" data-testid="assign-progress">
         {t("assign.progress", { done, total: rows.length })}
       </span>
+      <ReadOnlyNote bundle={bundle} testId="assign" />
       <span className="flex-1" />
       {checked.size > 0 && canEdit && (
         <span className="flex items-center gap-1.5 text-xs" data-testid="assign-bulk">
@@ -1056,7 +1081,7 @@ export default function AssignPage() {
         </span>
       )}
       {canEdit && (identical.data?.length ?? 0) > 0 && (
-        <button type="button" className="btn h-7" data-testid="assign-identical" disabled={busy} onClick={confirmIdenticalAll}>
+        <button type="button" className="btn h-7" data-testid="assign-identical" disabled={busy} onClick={() => setConfirmingIdentical(true)}>
           <Link2 size={14} strokeWidth={1.5} aria-hidden />
           {t("assign.identical", { n: identical.data?.length ?? 0 })}
         </button>
@@ -1093,7 +1118,18 @@ export default function AssignPage() {
         <div className="assign-desk">
           {bar}
           {rows.length === 0 ? (
-            <EmptyState icon={Inbox} testId="assign-empty" title={t("classify.emptyTitle")} body={t("classify.noUnits")} />
+            <EmptyState
+              icon={Inbox}
+              testId="assign-empty"
+              title={t("classify.emptyTitle")}
+              body={t("classify.noUnits")}
+              action={
+                <Link href={getStageHref(bundleId, "documents")} className="btn" data-testid="assign-empty-documents">
+                  <FileUp size={16} strokeWidth={1.5} aria-hidden />
+                  {t("assign.openDocuments")}
+                </Link>
+              }
+            />
           ) : (
             <div ref={panesRef} className="assign-panes" data-single={newOpen ? undefined : ""} style={{ "--split": `${view.split * 100}%` }}>
               <OldPane
@@ -1139,6 +1175,34 @@ export default function AssignPage() {
         </div>
         {renderSide()}
       </div>
+      {confirmingIdentical && (
+        <ConfirmModal
+          title={t("assign.identicalTitle")}
+          summary={t("assign.identicalBody", { n: identical.data?.length ?? 0 })}
+          confirmLabel={t("assign.identicalConfirm")}
+          confirmIcon={Link2}
+          busy={busy}
+          testId="assign-identical-modal"
+          onConfirm={() => void confirmIdenticalAll()}
+          onClose={() => setConfirmingIdentical(false)}
+        />
+      )}
+      {leaveTo !== null && (
+        <ConfirmModal
+          title={t("assign.leaveTitle")}
+          summary={t("assign.leaveBody", { n: unsavedCount })}
+          confirmLabel={t("assign.leaveConfirm")}
+          danger
+          testId="assign-leave"
+          onConfirm={() => {
+            const href = leaveTo;
+            setLeaveTo(null);
+            setDrafts({});
+            navigate(href, { immediate: true });
+          }}
+          onClose={() => setLeaveTo(null)}
+        />
+      )}
       {bulk && (
         <BulkModal
           action={bulk}

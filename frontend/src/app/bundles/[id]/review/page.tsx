@@ -1,4 +1,4 @@
-// 검토 - 검토자는 결과물을 읽고 검토 완료 또는 이유를 적어 되돌린다. 작성자는 상태를 보고, 끝난 묶음을 이유를 적어 다시 연다(명세 §12-9).
+// 검토 - 검토자는 결과물을 읽고 검토 완료 또는 이유를 적어 되돌린다. 작성자는 상태를 보고, 기다리는 요청을 거두거나 끝난 묶음을 이유를 적어 다시 연다(명세 §12-9).
 // 확정·완료는 일반 버튼이고 전자서명이 아니다. "Review complete"이지 "approved"가 아니다 - 정식 승인은 Veeva에서 한다.
 "use client";
 
@@ -7,13 +7,18 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 
+import { BundleLoadError } from "@/components/bundle-load-error";
 import { Modal } from "@/components/modal";
 import { EditionToggle } from "@/components/outputs/edition-toggle";
 import { OutputCView } from "@/components/outputs/output-c";
 import { BundleStatusPill } from "@/components/status";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { LoadError } from "@/components/ui/load-error";
 import { showToast } from "@/components/ui/toast";
+import { WithdrawReviewButton } from "@/components/withdraw-review";
 import { humanizeApiError } from "@/lib/api-errors";
 import { completeReview, getOutputC, reopenReview, returnReview, type OutputLang } from "@/lib/api-sop";
+import { getBundleLabel } from "@/lib/bundle-label";
 import { loadBundle, putBundle, useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
 import { getStageHref } from "@/lib/stages";
@@ -31,6 +36,8 @@ export default function ReviewPage() {
   const showSkeleton = useDelayedFlag(output.data === null && output.error === null);
   const [reasonFor, setReasonFor] = useState<ReasonAction | null>(null);
   const [reason, setReason] = useState("");
+  // 검토 완료는 Bundle을 잠그는 한 번의 누름이라 확인 창을 거친다(되돌림·다시 열기는 사유 창이 그 역할을 한다)
+  const [completing, setCompleting] = useState(false);
   const [busy, setBusy] = useState(false);
   const isReviewer = bundle?.my_role === "reviewer";
   const isAuthor = bundle?.my_role === "author";
@@ -42,6 +49,7 @@ export default function ReviewPage() {
       showToast(message);
       setReasonFor(null);
       setReason("");
+      setCompleting(false);
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
       // 상태·revision이 바뀌어 거절됐을 수 있다(409) - 새 값을 받아야 다시 눌렀을 때 같은 이유로 실패하지 않는다
@@ -53,14 +61,7 @@ export default function ReviewPage() {
 
   if (!bundle) {
     // 불러오지 못했으면 빈 화면 대신 이유와 다시 시도를 보인다
-    return bundleError !== null ? (
-      <p className="flex items-center gap-3 p-6 text-ink-2" data-testid="review-error">
-        {humanizeApiError(bundleError, t)}
-        <button type="button" className="btn" data-testid="review-retry" onClick={reloadBundle}>
-          {t("common.retry")}
-        </button>
-      </p>
-    ) : null;
+    return bundleError !== null ? <BundleLoadError error={bundleError} onRetry={reloadBundle} testId="review" /> : null;
   }
 
   return (
@@ -79,13 +80,14 @@ export default function ReviewPage() {
             {t("review.toOverview")}
           </Link>
         )}
+        {bundle.status === "in_review" && isAuthor && <WithdrawReviewButton bundle={bundle} className="btn" testId="review-withdraw" />}
         {bundle.status === "in_review" && isReviewer && (
           <>
             <button type="button" className="btn" data-testid="review-return" disabled={busy} onClick={() => setReasonFor("return")}>
               <Undo2 size={16} strokeWidth={1.5} aria-hidden />
               {t("review.return")}
             </button>
-            <button type="button" className="btn pri" data-testid="review-complete" disabled={busy} onClick={() => void run(() => completeReview(bundleId, bundle.revision), t("review.completed"))}>
+            <button type="button" className="btn pri" data-testid="review-complete" disabled={busy} onClick={() => setCompleting(true)}>
               <CircleCheck size={16} strokeWidth={1.5} aria-hidden />
               {t("review.complete")}
             </button>
@@ -102,11 +104,24 @@ export default function ReviewPage() {
         {output.data ? (
           <OutputCView data={output.data} lang={lang} />
         ) : output.error !== null ? (
-          <p className="p-6 text-ink-2">{humanizeApiError(output.error, t)}</p>
+          <LoadError error={output.error} onRetry={output.reload} testId="review-outputs" />
         ) : (
           <div className="p-4">{showSkeleton && <span className="sk h-[420px] w-full max-w-[760px]" />}</div>
         )}
       </div>
+      {completing && (
+        <ConfirmModal
+          title={t("review.completeTitle")}
+          target={getBundleLabel(bundle)}
+          summary={t("review.completeBody")}
+          confirmLabel={t("review.complete")}
+          confirmIcon={CircleCheck}
+          busy={busy}
+          testId="review-complete-modal"
+          onConfirm={() => void run(() => completeReview(bundleId, bundle.revision), t("review.completed"))}
+          onClose={() => setCompleting(false)}
+        />
+      )}
       {reasonFor && (
         <Modal
           title={reasonFor === "return" ? t("review.returnTitle") : t("review.reopenTitle")}

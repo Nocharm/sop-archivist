@@ -44,14 +44,16 @@ class DemoStage:
 
 
 def _stop_after_split(driver: SyntheticDriver) -> None:
-    """start()가 끝낸 상태(업로드·언어 배치·쪼개기 편집) 그대로 둔다."""
+    """start()가 끝낸 상태(업로드·언어 배치·쪼개기 편집) 그대로 둔다 — 경계 확인도 하지 않은 채다."""
 
 
 def _classify_half(driver: SyntheticDriver) -> None:
+    driver.confirm_boundaries()
     driver.save_entrance1_half()
 
 
 def _await_review(driver: SyntheticDriver) -> None:
+    driver.confirm_boundaries()
     driver.save_answers(skip_omitted=False)
     driver.put_semantic_checks()
     status_code, body = driver.request_review()
@@ -60,6 +62,7 @@ def _await_review(driver: SyntheticDriver) -> None:
 
 def _suggest_with_ai(driver: SyntheticDriver) -> None:
     """가짜 AI의 제안까지만 — 프런트 분류 화면용이라 확정하지 않는다. 작업은 요청과 같은 앱 루프에서 돌린다(DB 연결이 그 루프에 묶여 있다)."""
+    driver.confirm_boundaries()
     answers = SyntheticAnswers(driver.expected)
     with fake_ai_session() as fake:
         fake.chat, fake.embed = answers.chat, answers.embed

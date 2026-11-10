@@ -149,6 +149,8 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
     }
     unmatched = set(old_cover) ^ set(addressed)
     assert sorted(addressed) == sorted(old_cover), [old_cover.get(unit_id, unit_id) for unit_id in unmatched]
+    # 쪼개기가 끝났으면 경계를 모두 확인한다(검토 요청 조건)
+    run.confirm_boundaries()
 
     # 4. 답 저장(누락 하나는 남긴다) — 입구 2는 같은 글자 후보로 한 번에 확정한 뒤 나머지를 관계 묶음으로
     run.save_answers(skip_omitted=True)
@@ -239,6 +241,7 @@ def test_end_to_end_with_fake_ai(
 ) -> None:
     run = SyntheticDriver(client, synthetic, AUTHOR)
     run.start()
+    run.confirm_boundaries()
     answers = SyntheticAnswers(synthetic.expected)
     install_fake_ai(monkeypatch, chat=answers.chat, embed=answers.embed)
 
@@ -267,6 +270,7 @@ def test_ai_off_still_finishes_the_human_path(client: TestClient, synthetic: Syn
     assert settings.ai_enabled is False
     run = SyntheticDriver(client, synthetic, AUTHOR)
     run.start()
+    run.confirm_boundaries()
     document_id = run.uploads["OLD-1"]["id"]
     ai_requests = {
         "/ai/classify": {"document_id": document_id},

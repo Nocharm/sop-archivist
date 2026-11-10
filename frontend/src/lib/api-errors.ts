@@ -9,7 +9,9 @@ const STATUS_KEYS: Record<number, string> = {
   0: "error.network",
   401: "error.unauthorized",
   403: "error.forbidden",
+  404: "error.notFound",
   409: "error.conflict",
+  413: "error.tooLarge",
   502: "error.upstream",
   503: "error.unavailable",
 };

@@ -153,6 +153,10 @@ class BoundaryOut(BaseModel):
     confirmed: bool
 
 
+class BoundaryAllOut(BaseModel):
+    confirmed_count: int
+
+
 class EditResult(BaseModel):
     document_revision: int
     # 이 요청으로 활성이 된 단위(되살린 것은 id 순, 새로 만든 것은 원문 순)와 은퇴한 단위(id 순)
@@ -958,3 +962,23 @@ async def set_boundary_confirmed(
         unit.boundary_confirmed = confirmed
     await session.flush()
     return sorted(units)
+
+
+async def confirm_all_boundaries(session: AsyncSession, document: Document, *, actor: str) -> int:
+    """문서에 남은 활성 단위의 경계를 한 번에 확인으로 돌리고 바뀐 건수를 돌려준다.
+
+    하나씩 확인하는 길(`set_boundary_confirmed`)은 요청당 단위 수 상한이 있어 큰 표 문서를 한 번에 못 끝낸다.
+    검토 요청 조건을 한꺼번에 채우는 동작이라 누가 했는지 작업 기록 한 줄을 남긴다(바뀐 것이 없으면 남기지 않는다).
+    """
+    extraction_id = await get_latest_extraction_id(session, document.id)
+    result = await session.execute(
+        update(Unit)
+        .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.boundary_confirmed.is_(False))
+        .values(boundary_confirmed=True)
+    )
+    if result.rowcount:
+        record_event(
+            session, bundle_id=document.bundle_id, actor=actor, action="unit.check_all", target_type="document",
+            target_ids=[document.id], detail={"count": result.rowcount},
+        )
+    return result.rowcount

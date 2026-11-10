@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewUnit } from "./api-sop";
-import { buildContourPath, buildPaperModel, canMergeAdjacent, canSplitAt, getMarks, getTags, readWarningText, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
+import { buildContourPath, buildPaperModel, canMergeAdjacent, canSplitAt, countUnchecked, getMarks, getTags, readWarningText, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -160,6 +160,27 @@ describe("getTags and getMarks", () => {
     const unit = makeSplitUnit({ boundary_confirmed: true, pair_id: 4, is_edited: true, status: "confirmed" });
     expect(getMarks(unit)).toEqual(["edited", "pair", "classified", "checked"]);
     expect(getMarks(makeSplitUnit({ status: "ai_suggested" }))).toEqual(["ai"]);
+  });
+});
+
+describe("countUnchecked", () => {
+  const units = [
+    makeSplitUnit({ id: 1 }),
+    makeSplitUnit({ id: 2, boundary_confirmed: true }),
+    makeSplitUnit({ id: 3, kind: "heading" }),
+    makeSplitUnit({ id: 4, kind: "figure" }),
+    makeSplitUnit({ id: 5, kind: "cell_sentence" }),
+    makeSplitUnit({ id: 6, kind: "table", spans: [] }),
+    makeSplitUnit({ id: 7, kind: "table_row", spans: [] }),
+  ];
+
+  it("counts text units still to check and leaves table groups to their cells", () => {
+    expect(countUnchecked(units, (unit) => unit.boundary_confirmed)).toBe(4);
+  });
+
+  it("follows what the screen already painted as checked", () => {
+    expect(countUnchecked(units, (unit) => unit.boundary_confirmed || unit.id === 1)).toBe(3);
+    expect(countUnchecked(units, () => true)).toBe(0);
   });
 });
 

@@ -4,6 +4,8 @@
 import {
   BadgeCheck,
   Check,
+  CheckCheck,
+  ChevronRight,
   FileUp,
   FileWarning,
   Hourglass,
@@ -26,9 +28,12 @@ import { useState } from "react";
 
 import { ActivitySection, BundleHeading, MembersSection } from "@/components/manage/bundle-manage";
 import { AiJobPanel } from "@/components/manage/ai-job-panel";
+import { BundleLoadError } from "@/components/bundle-load-error";
 import { Modal } from "@/components/modal";
+import { ReviewReturnNote } from "@/components/review-return-note";
 import { BundleStatusPill, RoleTag } from "@/components/status";
 import { Tooltip } from "@/components/ui/tooltip";
+import { WithdrawReviewButton } from "@/components/withdraw-review";
 import { humanizeApiError } from "@/lib/api-errors";
 import {
   getReadiness,
@@ -44,7 +49,7 @@ import { loadBundle, putBundle, useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
 import { getStageHref, NEXT_ACTION_STAGE, STAGES } from "@/lib/stages";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
-import { splitGates } from "@/lib/review-gates";
+import { GATE_STAGE, splitGates, type GateKey } from "@/lib/review-gates";
 import { useLoaded, type Loaded } from "@/lib/use-loaded";
 import { getBundleLabel } from "@/lib/bundle-label";
 
@@ -64,6 +69,7 @@ const PROGRESS_LANGS = ["ko", "en"] as const;
 const NEXT_ICONS: Record<NextAction, LucideIcon> = {
   upload_documents: FileUp,
   resolve_documents: FileWarning,
+  check_boundaries: CheckCheck,
   fill_tobe: ListTree,
   decide_units: Split,
   ack_warnings: TriangleAlert,
@@ -87,7 +93,7 @@ function findIssue(issues: ReadinessIssue[], code: string): ReadinessIssue | und
 }
 
 interface GateLine {
-  key: string;
+  key: GateKey;
   ok: boolean;
   label: string;
 }
@@ -101,6 +107,7 @@ function buildGateLines(readiness: Readiness, semanticTotal: number, t: TFunc): 
   const targets = sumCounts(blockers, "targets_");
   const reasons = sumCounts(blockers, "duplicate_without_reason") + sumCounts(blockers, "missing_reason");
   const warnings = findIssue(blockers, "unacked_missing_text");
+  const boundaries = findIssue(blockers, "unchecked_boundaries");
   const semantic = findIssue(blockers, "semantic_checks_incomplete");
   const semanticMissing = semantic?.missing?.length ?? 0;
   const unresolvedCount = Array.isArray(unresolved?.document_ids) ? unresolved.document_ids.length : 0;
@@ -109,6 +116,11 @@ function buildGateLines(readiness: Readiness, semanticTotal: number, t: TFunc): 
       key: "documents",
       ok: !noDocs && !unresolved,
       label: noDocs ? t("gate.noDocuments") : unresolved ? t("gate.unresolvedDocuments", { n: unresolvedCount }) : t("gate.documentsOk"),
+    },
+    {
+      key: "boundaries",
+      ok: !boundaries,
+      label: boundaries ? t("gate.boundaries", { n: boundaries.count ?? 0 }) : t("gate.boundariesOk"),
     },
     { key: "units", ok: units === 0, label: units ? t("gate.units", { n: units }) : t("gate.unitsOk") },
     { key: "targets", ok: targets === 0, label: targets ? t("gate.targets", { n: targets }) : t("gate.targetsOk") },
@@ -278,13 +290,21 @@ function NextActionCard({ bundle, onRequestReview, onAddReviewer }: { bundle: Bu
   );
 }
 
-function ReviewGate({ bundle, readiness, onRequestReview }: { bundle: Bundle; readiness: Loaded<Readiness>; onRequestReview: () => void }) {
+interface ReviewGateProps {
+  bundle: Bundle;
+  readiness: Loaded<Readiness>;
+  onRequestReview: () => void;
+  onAddReviewer: () => void;
+}
+
+function ReviewGate({ bundle, readiness, onRequestReview, onAddReviewer }: ReviewGateProps) {
   const { t } = useI18n();
   const { data, error, isLoading, reload } = readiness;
   const showSkeleton = useDelayedFlag(isLoading && data === null);
   // 저장된 확인 값은 처음에 비어 있을 수 있어 전체 수는 항목 목록에서 센다
   const semanticTotal = SEMANTIC_CHECK_KEYS.length;
-  const canRequest = data?.ready === true && bundle.my_role === "author" && bundle.status === "in_progress";
+  const isAuthor = bundle.my_role === "author";
+  const canRequest = data?.ready === true && isAuthor && bundle.status === "in_progress";
   const [showAll, setShowAll] = useState(false);
   const lines = data === null ? [] : buildGateLines(data, semanticTotal, t);
   const split = splitGates(lines, showAll ? Infinity : GATES_PREVIEW);
@@ -313,12 +333,37 @@ function ReviewGate({ bundle, readiness, onRequestReview }: { bundle: Bundle; re
               {split.fail.length > 0 && (
                 <div className="grid gap-1.5">
                   <span className="gate-group fail">{`Fail ${lines.length - passed}`}</span>
-                  {split.fail.map((line) => (
-                    <div key={line.key} className="gate-card fail" data-testid={`overview-gate-${line.key}`}>
-                      <X size={15} strokeWidth={1.8} aria-label={t("gate.blocked")} />
-                      {line.label}
-                    </div>
-                  ))}
+                  {split.fail.map((line) => {
+                    // 막힌 조건은 푸는 곳으로 가는 길이다 - 화면이 있으면 그 단계로, 검토자 조건은 작성자에게 멤버 창을 연다
+                    const stage = GATE_STAGE[line.key];
+                    const body = (
+                      <>
+                        <X size={15} strokeWidth={1.8} aria-label={t("gate.blocked")} />
+                        <span>{line.label}</span>
+                        <ChevronRight className="go-arrow" size={14} strokeWidth={1.5} aria-hidden />
+                      </>
+                    );
+                    if (stage !== null) {
+                      return (
+                        <Link key={line.key} href={getStageHref(bundle.id, stage)} className="gate-card fail go" data-testid={`overview-gate-${line.key}`}>
+                          {body}
+                        </Link>
+                      );
+                    }
+                    if (isAuthor) {
+                      return (
+                        <button key={line.key} type="button" className="gate-card fail go" data-testid={`overview-gate-${line.key}`} onClick={onAddReviewer}>
+                          {body}
+                        </button>
+                      );
+                    }
+                    return (
+                      <div key={line.key} className="gate-card fail" data-testid={`overview-gate-${line.key}`}>
+                        <X size={15} strokeWidth={1.8} aria-label={t("gate.blocked")} />
+                        {line.label}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
               {split.pass.length > 0 && (
@@ -350,10 +395,20 @@ function ReviewGate({ bundle, readiness, onRequestReview }: { bundle: Bundle; re
         </p>
       ))}
       {bundle.status === "in_progress" && (
-        <button type="button" className="btn wide" data-testid="overview-request-review" disabled={!canRequest} onClick={onRequestReview}>
-          {t("overview.requestReview")}
-        </button>
+        <>
+          <button type="button" className="btn wide" data-testid="overview-request-review" disabled={!canRequest} onClick={onRequestReview}>
+            {t("overview.requestReview")}
+          </button>
+          {/* 꺼진 단추가 이유를 말한다 - 조건을 아직 못 읽었으면 비워 둔다 */}
+          {!canRequest && data !== null && (
+            <p className="text-xs text-ink-3" data-testid="overview-request-hint">
+              {isAuthor ? t("overview.requestBlocked") : t("overview.requestAuthorOnly")}
+            </p>
+          )}
+        </>
       )}
+      {/* 요청한 자리에서 물린다 - 검토자가 보기 전에 고칠 것이 생긴 작성자의 길 */}
+      {bundle.status === "in_review" && isAuthor && <WithdrawReviewButton bundle={bundle} className="btn wide" testId="overview-withdraw-review" />}
     </section>
   );
 }
@@ -383,6 +438,7 @@ function RequestReviewModal({ bundle, onClose }: { bundle: Bundle; onClose: () =
       title={t("overview.requestReviewTitle")}
       onClose={onClose}
       isBusy={saving}
+      size="sm"
       testId="request-review"
       footer={
         <>
@@ -411,7 +467,6 @@ function RequestReviewModal({ bundle, onClose }: { bundle: Bundle; onClose: () =
 }
 
 export default function BundleOverviewPage() {
-  const { t } = useI18n();
   const params = useParams<{ id: string }>();
   const bundleId = Number(params.id);
   const { bundle, error, reload } = useBundle(bundleId);
@@ -422,17 +477,7 @@ export default function BundleOverviewPage() {
   const readiness = useLoaded(() => getReadiness(bundleId), `${bundleId}:${bundle?.revision ?? 0}`);
 
   if (bundle === null) {
-    if (error !== null) {
-      return (
-        <div data-testid="overview-error" className="flex items-center gap-3 px-6 py-6 text-ink-2">
-          {humanizeApiError(error, t)}
-          <button type="button" className="btn" data-testid="overview-retry" onClick={reload}>
-            <RefreshCw size={14} strokeWidth={1.5} aria-hidden />
-            {t("common.retry")}
-          </button>
-        </div>
-      );
-    }
+    if (error !== null) return <BundleLoadError error={error} onRetry={reload} testId="overview" />;
     return (
       <div className="grid gap-4 px-[22px] py-[18px]" data-testid="overview-loading">
         {showSkeleton && (
@@ -453,6 +498,7 @@ export default function BundleOverviewPage() {
           <BundleStatusPill status={bundle.status} testId="overview-status" />
           {bundle.my_role && <RoleTag role={bundle.my_role} testId="overview-role" />}
         </BundleHeading>
+        <ReviewReturnNote bundle={bundle} />
         <NextActionCard
           bundle={bundle}
           onRequestReview={() => setRequesting(true)}
@@ -461,7 +507,7 @@ export default function BundleOverviewPage() {
         <Coverage bundle={bundle} />
       </div>
       <aside className="grid content-start gap-3 overflow-y-auto border-l border-line px-3 py-[18px]">
-        <ReviewGate bundle={bundle} readiness={readiness} onRequestReview={() => setRequesting(true)} />
+        <ReviewGate bundle={bundle} readiness={readiness} onRequestReview={() => setRequesting(true)} onAddReviewer={() => setEditingMembers(true)} />
         <div className="side-box">
           <AiJobPanel bundle={bundle} />
         </div>

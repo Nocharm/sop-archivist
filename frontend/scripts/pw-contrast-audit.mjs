@@ -94,6 +94,15 @@ for (const theme of ["light", "dark"]) {
     }
     await candidate.first().click();
   }
+  async function markManualPieces(page) {
+    const firstId = (await page.locator('[data-testid^="manual-toc-"]').first().getAttribute("data-testid")).replace("manual-toc-", "");
+    await page.evaluate((id) => window.localStorage.setItem("sopa.manual.read", JSON.stringify({ [id]: "stale" })), firstId);
+    await page.reload();
+    await page.locator('[data-testid^="manual-unit-"]').first().waitFor({ timeout: T });
+    await page.keyboard.press("j");
+    await page.keyboard.press("Enter");
+    await page.locator('.manual-unit[data-state="read"]').waitFor({ timeout: T });
+  }
   const screens = [
     ["bundles", "/", '[data-testid^="bundles-row-"]'],
     ["overview", `/bundles/${id}`, '[data-testid="overview-gate-units"]'],
@@ -107,6 +116,9 @@ for (const theme of ["light", "dark"]) {
     ["review", `/bundles/${id}/review`, '[data-testid="output-c"]'],
     ["assign-ai", `/bundles/${aiId}/assign`, '[data-testid="assign-bar"]', async (page) => { await page.keyboard.press("j"); await page.locator('[data-testid="assign-rec-0"]').waitFor({ timeout: T }); }],
     ["outputs-ai", `/bundles/${aiId}/outputs`, '[data-testid="output-c"]'],
+    ["manual", "/manual", '[data-testid^="manual-unit-"]'],
+    // 읽음 표시의 세 모양을 함께 본다 - 첫 조각은 글이 바뀐 것(Updated), 둘째는 방금 읽은 것(Read), 나머지는 Unread
+    ["manual-marked", "/manual", '[data-testid^="manual-unit-"]', markManualPieces],
   ];
   // 감사가 실제로 잡는지 먼저 본다 - 일부러 흐린 글자 하나를 넣는다
   await page.evaluate(() => {

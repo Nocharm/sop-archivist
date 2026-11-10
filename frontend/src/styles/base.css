@@ -15,9 +15,15 @@ body {
   cursor: pointer;
 }
 
-:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 1px;
+/*
+  포커스 테두리의 기본값 - base 레이어에 둬서 컴포넌트 규칙과 유틸리티(outline-none)가 이긴다.
+  테두리를 끄는 곳은 대신할 포커스 표시(테두리 색·focus-within·바탕)를 같이 둔다.
+*/
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 1px;
+  }
 }
 
 /* 한글은 어절로 끊는다. 긴 ID·URL은 칸을 넘지 않게 아무 데서나 끊는다. */

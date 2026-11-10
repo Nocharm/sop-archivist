@@ -29,6 +29,10 @@ describe("NEXT_ACTION_STAGE", () => {
     expect(NEXT_ACTION_STAGE.fill_reasons).toBe("assign");
     expect(NEXT_ACTION_STAGE.fill_tobe).toBe("tobe");
   });
+
+  it("sends the meaning checks to Outputs, where the checkboxes are", () => {
+    expect(NEXT_ACTION_STAGE.semantic_checks).toBe("outputs");
+  });
 });
 
 describe("isStageLocked", () => {

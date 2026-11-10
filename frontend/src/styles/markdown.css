@@ -20,6 +20,23 @@
   .md hr { border: 0; border-top: 1px solid var(--line); margin: 1.4em 0; }
   .md blockquote { margin: 0.8em 0; padding: 8px 12px; border-left: 3px solid var(--accent-line); background: var(--accent-tint); border-radius: 0 var(--r-1) var(--r-1) 0; color: var(--ink-2); }
 
+  /* 알림 - 연필과 잉크: TIP은 점선(권하는 말), NOTE는 실선 막대(알아 둘 것), WARNING은 보류 색(멈춰서 볼 것). 보라는 AI 전용이라 쓰지 않는다 */
+  .md blockquote.md-callout { background: var(--surface); }
+  .md blockquote.md-callout[data-kind="tip"] { border: 1px dashed var(--line-2); border-radius: var(--r-1); }
+  .md blockquote.md-callout[data-kind="note"] { border-left-color: var(--accent); background: var(--accent-tint); }
+  .md blockquote.md-callout[data-kind="warning"] { border-left-color: var(--st-hold-fill); background: var(--st-hold-tint); color: var(--ink); }
+  .md-callout-label { display: block; margin-bottom: 2px; font: 600 var(--fs-micro) / var(--lh-micro) var(--font-mono); letter-spacing: 0.06em; color: var(--ink-3); }
+  .md-callout[data-kind="note"] .md-callout-label { color: var(--accent); }
+  .md-callout[data-kind="warning"] .md-callout-label { color: var(--st-hold-ink); }
+
+  /* 그림 - 화면 그림은 밝은 바탕이라 테두리로 종이와 가른다. 글 폭에 맞춰 줄고, 누르면 원래 크기가 새 탭에 열린다 */
+  .md-fig { margin: 1.1em 0; }
+  /* 작게 잘라 찍은 그림(메뉴·창 하나)은 원래 크기보다 키우지 않는다 - 글자가 뭉개진다 */
+  .md-fig a { display: inline-block; max-width: 100%; vertical-align: top; border: 1px solid var(--line-2); border-radius: var(--r-2); overflow: hidden; background: var(--sunken); cursor: zoom-in; }
+  .md-fig a:hover { border-color: var(--accent-line); }
+  .md-fig img { display: block; max-width: 100%; height: auto; }
+  .md-fig figcaption { margin-top: 6px; font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-3); }
+
   .md code { font-family: var(--font-mono); font-size: 0.88em; padding: 0.05em 0.35em; border-radius: var(--r-1); background: var(--sunken); border: 1px solid var(--line); cursor: copy; transition: background-color var(--dur-fast); }
   .md pre { margin: 0.6em 0; padding: 10px 12px; overflow-x: auto; border-radius: var(--r-2); background: var(--sunken); border: 1px solid var(--line); }
   .md pre code { padding: 0; border: 0; background: none; font-size: var(--fs-cap); line-height: var(--lh-cap); cursor: text; }

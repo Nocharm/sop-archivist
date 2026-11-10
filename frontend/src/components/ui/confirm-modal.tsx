@@ -29,6 +29,7 @@ export function ConfirmModal({ title, target, summary, confirmLabel, danger = fa
       onClose={onClose}
       testId={testId}
       isBusy={busy}
+      size="sm"
       footer={
         <>
           <button type="button" className="btn" data-testid={`${testId}-cancel`} onClick={onClose}>
@@ -43,7 +44,7 @@ export function ConfirmModal({ title, target, summary, confirmLabel, danger = fa
       }
     >
       <div className="grid justify-items-center gap-2 text-center">
-        <span className="grid size-11 place-items-center rounded-full bg-st-hold-tint text-st-hold" aria-hidden>
+        <span className="grid size-11 place-items-center rounded-lg bg-st-hold-tint text-st-hold" aria-hidden>
           <TriangleAlert size={20} strokeWidth={1.5} />
         </span>
         {target && <span className="font-mono text-xs text-ink-3">{target}</span>}

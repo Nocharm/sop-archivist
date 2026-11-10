@@ -122,6 +122,11 @@ export function SplitAiSection({ bundleId, docId, layout, revision, selected, ca
         AI
         {pending > 0 && <span className="pill ai">{t("ai.pendingCount", { n: pending })}</span>}
         {running > 0 && <span className="font-normal text-ink-3">{t("classify.aiRunning", { n: running })}</span>}
+        {jobs.error !== null && (
+          <span className="font-normal text-st-hold" role="status" data-testid="split-ai-stale">
+            {t("ai.statusStale")}
+          </span>
+        )}
       </span>
       <Collapse open={forUnit !== null}>
         <div className="grid gap-1.5 rounded-md bg-st-ai-tint p-2" data-testid="split-ai-suggestion">

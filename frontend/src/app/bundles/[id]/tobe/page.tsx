@@ -3,14 +3,16 @@
 
 import { ChevronRight, Download, FileUp, ListTree, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
+import { ReadOnlyNote } from "@/components/read-only-note";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { MorphButton } from "@/components/ui/morph-button";
 import { CollapseRow } from "@/components/ui/motion";
 import { Select } from "@/components/ui/select";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
+import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { downloadToBeTemplate, getToBe, importToBe, putToBe, SLOT_KEYS, type ToBe } from "@/lib/api-sop";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
@@ -21,7 +23,7 @@ import { useLeaveGuard } from "@/lib/leave-guard";
 import { navigate } from "@/lib/nav-buffer";
 import { saveBlob } from "@/lib/save-file";
 import { SLOT_LABELS } from "@/lib/slot-labels";
-import { addStep, buildToBeInput, changeDocType, createDraft, findDraftProblem, isDraftDirty, orderDocs, removeDoc, removeStep, renameDoc, setNaSlot, type DraftDoc, type ToBeDraft } from "@/lib/tobe-draft";
+import { addStep, buildToBeInput, changeDocType, createDraft, findDraftProblem, isDraftDirty, isSameToBe, orderDocs, removeDoc, removeStep, renameDoc, setNaSlot, type DraftDoc, type ToBeDraft } from "@/lib/tobe-draft";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -30,6 +32,11 @@ import { getBundleLabel } from "@/lib/bundle-label";
 
 
 const CELL_INPUT = "h-7 w-full rounded-md border border-line-2 bg-surface px-1.5 text-[13px] text-ink focus:border-accent focus:outline-none disabled:border-transparent disabled:bg-transparent";
+
+/** 409 revision_conflict - 보낸 revision이 서버 것보다 낡았다 */
+function isRevisionConflict(err: unknown): boolean {
+  return err instanceof ApiError && err.rule?.code === "revision_conflict";
+}
 
 export default function ToBePage() {
   const { t } = useI18n();
@@ -44,6 +51,10 @@ export default function ToBePage() {
   const [saving, setSaving] = useState(false);
   // 저장하지 않은 편집이 있을 때 막은 링크 이동 - 확인하면 버리고 간다
   const [leaveTo, setLeaveTo] = useState<string | null>(null);
+  // 가져오기 전에 한 번 묻는다 - 목록이 비어 있지 않으면 파일이 통째로 바꾼다
+  const [pendingImport, setPendingImport] = useState<File | null>(null);
+  // 고치는 동안 다른 곳에서 To-Be가 저장됐다 - 최신을 불러올지 묻는다
+  const [hasConflict, setHasConflict] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const draft = data && edit?.base === data ? edit.draft : data ? createDraft(data) : null;
@@ -89,7 +100,18 @@ export default function ToBePage() {
     }
     setSaving(true);
     try {
-      await putToBe(bundleId, buildToBeInput(draft, data.revision));
+      try {
+        await putToBe(bundleId, buildToBeInput(draft, data.revision));
+      } catch (err) {
+        if (!isRevisionConflict(err)) throw err;
+        // revision은 Bundle 것이라 멤버·제목만 바뀌어도 밀린다 - To-Be가 그대로면 새 revision으로 한 번 더 보낸다
+        const latest = await getToBe(bundleId);
+        if (!isSameToBe(latest, data)) {
+          setHasConflict(true);
+          return;
+        }
+        await putToBe(bundleId, buildToBeInput(draft, latest.revision));
+      }
       showToast(t("common.saved"));
       reload();
       void loadBundle(bundleId);
@@ -99,6 +121,17 @@ export default function ToBePage() {
       setSaving(false);
     }
   }
+
+  // Ctrl/⌘+S - 고친 것이 있으면 저장한다. 고칠 수 있는 화면에서는 브라우저의 "페이지 저장"이 뜨지 않게 늘 막는다
+  const handleSaveKey = useEffectEvent((event: KeyboardEvent) => {
+    if (!canEdit || !(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== "s") return;
+    event.preventDefault();
+    if (dirty && !saving && document.querySelector('[role="dialog"]') === null) void handleSave();
+  });
+  useEffect(() => {
+    window.addEventListener("keydown", handleSaveKey);
+    return () => window.removeEventListener("keydown", handleSaveKey);
+  }, []);
 
   async function handleImport(file: File) {
     if (!data) return;
@@ -110,10 +143,23 @@ export default function ToBePage() {
       void loadBundle(bundleId);
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
+      // revision이 밀려 거절됐으면 최신을 불러와야 다시 고른 파일이 같은 이유로 또 거절되지 않는다
+      if (isRevisionConflict(err)) reload();
     } finally {
       setSaving(false);
+      setPendingImport(null);
       if (fileRef.current) fileRef.current.value = "";
     }
+  }
+
+  function pickImportFile(file: File) {
+    if (data !== null && data.docs.length > 0) setPendingImport(file);
+    else void handleImport(file);
+  }
+
+  function cancelImport() {
+    setPendingImport(null);
+    if (fileRef.current) fileRef.current.value = "";
   }
 
   async function handleTemplate() {
@@ -210,8 +256,9 @@ export default function ToBePage() {
 
   return (
     <div className="dense flex min-h-full flex-col bg-surface">
-      <div className="flex h-[52px] shrink-0 items-center gap-2 px-[var(--pad)]">
+      <div className="flex h-[52px] shrink-0 items-center gap-2 border-b border-line px-[var(--pad)]">
         <h1 className="page-title ul">To-Be</h1>
+        <ReadOnlyNote bundle={bundle} testId="tobe" />
         <span className="flex-1" />
         <button type="button" className="btn ghost" data-testid="tobe-template" onClick={() => void handleTemplate()}>
           <Download size={14} strokeWidth={1.5} aria-hidden />
@@ -219,7 +266,7 @@ export default function ToBePage() {
         </button>
         {canEdit && (
           <>
-            <input ref={fileRef} type="file" accept=".xlsx" className="sr-only" data-testid="tobe-import-file" onChange={(event) => event.target.files?.[0] && void handleImport(event.target.files[0])} />
+            <input ref={fileRef} type="file" accept=".xlsx" className="sr-only" data-testid="tobe-import-file" onChange={(event) => event.target.files?.[0] && pickImportFile(event.target.files[0])} />
             <Tooltip label={t("tobe.importHint")}>
               <button type="button" className="btn ghost" data-testid="tobe-import" disabled={saving || dirty} onClick={() => fileRef.current?.click()}>
                 <FileUp size={14} strokeWidth={1.5} aria-hidden />
@@ -231,7 +278,7 @@ export default function ToBePage() {
               {t("tobe.addDoc")}
             </button>
             {/* 주 버튼 하나 - 고친 것이 있을 때만 켜진다. 라벨은 같은 칸에서 바뀐다 */}
-            <button type="button" className="btn pri" data-testid="tobe-save" disabled={!dirty || saving} onClick={() => void handleSave()}>
+            <button type="button" className="btn pri" data-testid="tobe-save" aria-keyshortcuts="Control+S Meta+S" disabled={!dirty || saving} onClick={() => void handleSave()}>
               <span className="stack">
                 <span data-on={saving ? undefined : ""}>{t("common.save")}</span>
                 <span data-on={saving ? "" : undefined}>{t("common.saving")}</span>
@@ -399,6 +446,35 @@ export default function ToBePage() {
             setEdit(null);
             navigate(leaveTo, { immediate: true });
           }}
+        />
+      )}
+      {pendingImport !== null && (
+        <ConfirmModal
+          title={t("tobe.importTitle")}
+          target={pendingImport.name}
+          summary={t("tobe.importBody", { n: data?.docs.length ?? 0 })}
+          confirmLabel={t("tobe.importConfirm")}
+          confirmIcon={FileUp}
+          busy={saving}
+          testId="tobe-import-modal"
+          onConfirm={() => void handleImport(pendingImport)}
+          onClose={cancelImport}
+        />
+      )}
+      {hasConflict && (
+        <ConfirmModal
+          title={t("tobe.conflictTitle")}
+          summary={t("tobe.conflictBody")}
+          confirmLabel={t("tobe.conflictConfirm")}
+          confirmIcon={RefreshCw}
+          testId="tobe-conflict"
+          onConfirm={() => {
+            setHasConflict(false);
+            setEdit(null);
+            reload();
+            void loadBundle(bundleId);
+          }}
+          onClose={() => setHasConflict(false)}
         />
       )}
       {draft !== null && rows.length === 0 && (

@@ -186,6 +186,11 @@ export function getTags(unit: ViewUnit): { lang: "KO" | "EN" | null; hold: boole
 
 export type UnitMark = "edited" | "pair" | "classified" | "ai" | "checked";
 
+/** 경계 확인이 남은 단위 수 - 글자 범위가 있는 단위만 센다(표·행 묶음은 칸 문장이 대신한다). 서버 `count_unchecked_boundaries`와 같은 기준 */
+export function countUnchecked(units: readonly ViewUnit[], isChecked: (unit: ViewUnit) => boolean): number {
+  return units.filter((unit) => !SPANLESS_KINDS.has(unit.kind) && !isChecked(unit)).length;
+}
+
 /** 종이 오른쪽 끝 아이콘 표시 - 순서가 늘 같아야 줄마다 같은 자리에 온다 */
 export function getMarks(unit: ViewUnit): UnitMark[] {
   const marks: UnitMark[] = [];

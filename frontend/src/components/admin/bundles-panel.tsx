@@ -12,7 +12,7 @@ import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-
 import { Truncate } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { EmptyState } from "@/components/ui/empty-state";
-import { humanizeApiError } from "@/lib/api-errors";
+import { LoadError } from "@/components/ui/load-error";
 import { listAdminBundles, putAdminMembers, type AdminBundle } from "@/lib/api-manage";
 import type { LangProgress } from "@/lib/api-sop";
 import { formatKst } from "@/lib/datetime";
@@ -115,7 +115,7 @@ export function BundlesPanel() {
   return (
     <div className="grid gap-4" data-testid="admin-bundles">
       <div className="flex flex-wrap items-center gap-2">
-        <label className="flex h-8 min-w-[260px] flex-1 items-center gap-2 rounded-md border border-line-2 bg-surface px-2">
+        <label className="flex h-8 min-w-[260px] flex-1 items-center gap-2 rounded-md border border-line-2 bg-surface px-2 focus-within:border-accent focus-within:ring-1 focus-within:ring-accent">
           <Search size={14} strokeWidth={1.5} className="text-ink-3" aria-hidden />
           <input
             className="min-w-0 flex-1 bg-transparent text-[13px] outline-none focus-visible:outline-none"
@@ -137,12 +137,7 @@ export function BundlesPanel() {
         <ListViewToggle listKey={LIST_KEY} view={view} testId="admin-bundles-view" />
       </div>
       {error !== null && data === null ? (
-        <p className="text-ink-2" data-testid="admin-bundles-error">
-          {humanizeApiError(error, t)}{" "}
-          <button type="button" className="btn ghost" onClick={reload}>
-            {t("common.retry")}
-          </button>
-        </p>
+        <LoadError error={error} onRetry={reload} testId="admin-bundles" compact />
       ) : data !== null && filtered.length === 0 ? (
         <EmptyState icon={FolderOpen} testId="admin-bundles-empty" title={t("adminBundles.empty")} compact />
       ) : (

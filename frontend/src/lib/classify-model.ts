@@ -184,6 +184,12 @@ export interface RowDraft {
   moveCode: string;
 }
 
+/** 저장 전 변경이 있는 초안인가 - 고른 곳·고친 글·변경 종류·사유·이동 코드 중 하나라도 손댔으면 참(편집 칸만 열어 둔 것은 변경이 아니다) */
+export function hasDraftChange(draft: Pick<RowDraft, "destination" | "texts" | "changeTypes" | "linkChangeTypes"> & { reason: string | null; moveCode: string | null }): boolean {
+  if (draft.destination !== null || draft.reason !== null || draft.moveCode !== null) return true;
+  return [draft.texts, draft.changeTypes, draft.linkChangeTypes ?? {}].some((map) => Object.keys(map).length > 0);
+}
+
 interface SourceUnit {
   id: number;
   kind: string;

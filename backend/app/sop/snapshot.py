@@ -418,3 +418,23 @@ async def count_unacked_missing_text(session: AsyncSession, bundle_id: int) -> i
         )
     )
     return count or 0
+
+
+async def count_unchecked_boundaries(session: AsyncSession, bundle_id: int) -> dict[int, int]:
+    """경계를 아직 확인하지 않은 단위 수(문서 id → 건수, 0인 문서는 뺀다) — 검토 요청 조건과 문서 목록이 같이 쓴다.
+
+    글자 범위가 있는 단위(COVER_KINDS)만 센다. 표·행 묶음 단위는 범위가 없고 그 칸 문장이 대신한다.
+    """
+    rows = await session.execute(
+        select(Extraction.document_id, func.count())
+        .select_from(Unit)
+        .join(Extraction, Extraction.id == Unit.extraction_id)
+        .where(
+            Unit.extraction_id.in_(_select_latest_extractions(Document.bundle_id == bundle_id)),
+            Unit.status == UNIT_ACTIVE,
+            Unit.kind.in_(COVER_KINDS),
+            Unit.boundary_confirmed.is_(False),
+        )
+        .group_by(Extraction.document_id)
+    )
+    return {document_id: count for document_id, count in rows}

@@ -86,7 +86,7 @@ function PersonSearch({ testId, value, onChange, allowLoginIdEntry }: Omit<Subje
                   className="picker-option"
                   onClick={() => onChange({ id: person.login_id, label: getDisplayName(person, lang) })}
                 >
-                  <span className="shrink-0 font-medium">{getDisplayName(person, lang)}</span>
+                  <span className="shrink-0 font-semibold">{getDisplayName(person, lang)}</span>
                   <span className="shrink-0 font-mono text-xs text-ink-3">{person.login_id}</span>
                   <Truncate className="min-w-0 flex-1 text-xs text-ink-3" text={person.dept_path || person.department} />
                 </button>

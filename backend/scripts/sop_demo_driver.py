@@ -88,6 +88,15 @@ class SyntheticDriver:
             self._apply_edit(edit)
         self.refresh_views()
 
+    def confirm_boundaries(self) -> None:
+        """올린 문서 모두에서 남은 단위의 경계를 한 번에 확인한다 — 검토 요청 조건이라 쪼개기 편집이 끝난 뒤에 부른다."""
+        for uploaded in self.uploads.values():
+            response = self.client.post(
+                self._url(f"/documents/{uploaded['id']}/units/boundary/all"), headers=self.headers
+            )
+            assert response.status_code == 200, response.text
+        self.refresh_views()
+
     def delete_bundle(self) -> None:
         """묶음을 지운다 — 만들다 만 묶음이 제목만 남아 다음 실행을 막지 않게 데모 시드가 정리할 때 쓴다."""
         response = self.client.delete(

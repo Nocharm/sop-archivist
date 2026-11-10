@@ -553,6 +553,22 @@ def test_events_list_newest_first(client: TestClient) -> None:
     assert client.get(f"/api/bundles/{bundle_id}/events?limit=0", headers=AUTHOR).status_code == 422
 
 
+def test_events_can_be_narrowed_to_one_kind_of_action(client: TestClient) -> None:
+    bundle = create_bundle(client)
+    bundle_id = bundle["id"]
+    _patch_title(client, bundle_id, 1, "Renamed")
+    set_members(client, bundle_id, [("qa.member", "author"), ("qa.lead", "reviewer")])
+
+    narrowed = client.get(f"/api/bundles/{bundle_id}/events?action_prefix=bundle.&limit=2", headers=AUTHOR)
+    none_found = client.get(f"/api/bundles/{bundle_id}/events?action_prefix=review.", headers=AUTHOR)
+
+    assert [event["action"] for event in narrowed.json()] == ["bundle.members", "bundle.update"]
+    assert none_found.json() == []
+    for bad in ("review", "%.", "Review.", "."):  # 앞머리는 소문자·밑줄 + 마침표 하나
+        response = client.get(f"/api/bundles/{bundle_id}/events", params={"action_prefix": bad}, headers=AUTHOR)
+        assert response.status_code == 422
+
+
 def test_events_with_the_same_time_are_ordered_by_id(client: TestClient) -> None:
     bundle = create_bundle(client)
     same_time = datetime(2030, 1, 1, tzinfo=KST)  # 지금보다 뒤라 목록 맨 앞에 온다

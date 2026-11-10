@@ -2,18 +2,19 @@
 // 종류 칩으로 거르고, 줄을 누르면 개요 Activity와 같은 설명 모달(전/후 값)이 뜬다.
 "use client";
 
-import { History, RefreshCw } from "lucide-react";
+import { History } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { EventIcon, EventModal, getEventLabel, listEventChanges } from "@/components/manage/event-modal";
 import { EmptyState } from "@/components/ui/empty-state";
+import { LoadError } from "@/components/ui/load-error";
 import { LoadMoreRows } from "@/components/ui/load-more";
-import { humanizeApiError } from "@/lib/api-errors";
 import { listBundleEvents, type BundleEvent } from "@/lib/api-manage";
 import { formatKst } from "@/lib/datetime";
 import { EVENT_GROUPS, getEventGroup, type EventGroup } from "@/lib/event-kinds";
 import { useI18n } from "@/lib/i18n";
+import { getRowOpenProps } from "@/lib/row-open";
 
 // 한 번에 받는 사건 수
 const PAGE_SIZE = 100;
@@ -90,13 +91,7 @@ export default function HistoryPage() {
         </div>
       </div>
       {error !== null && events.length === 0 ? (
-        <div className="flex items-center gap-3 px-[var(--pad)] py-6 text-ink-2" data-testid="history-error">
-          {humanizeApiError(error, t)}
-          <button type="button" className="btn" data-testid="history-retry" onClick={() => void loadMore()}>
-            <RefreshCw size={14} strokeWidth={1.5} aria-hidden />
-            {t("common.retry")}
-          </button>
-        </div>
+        <LoadError error={error} onRetry={() => void loadMore()} testId="history" />
       ) : !isFirstLoad && shown.length === 0 && !hasMore ? (
         <EmptyState icon={History} testId="history-empty" title={t("history.emptyTitle")} body={t("history.emptyBody")} />
       ) : (
@@ -113,7 +108,7 @@ export default function HistoryPage() {
             {shown.map((event) => {
               const changes = listEventChanges(event.detail ?? {}, t);
               return (
-                <tr key={event.id} className="cursor-pointer hover:bg-hover" data-testid={`history-row-${event.id}`} onClick={() => setOpened(event)}>
+                <tr key={event.id} data-link="" data-testid={`history-row-${event.id}`} {...getRowOpenProps(() => setOpened(event))}>
                   <td className="whitespace-nowrap tabular-nums text-ink-2">{formatKst(event.occurred_at)}</td>
                   <td>
                     <span className="inline-flex items-center gap-2">
@@ -132,10 +127,12 @@ export default function HistoryPage() {
                 </tr>
               );
             })}
-            {hasMore && <LoadMoreRows sentinelRef={setSentinel} columns={4} testId="history-more" />}
+            {/* 이어 받기가 실패하면 쉬머 대신 아래에 실패 줄을 둔다 - 쉬머가 남으면 끝없이 불러오는 것처럼 보인다 */}
+            {hasMore && error === null && <LoadMoreRows sentinelRef={setSentinel} columns={4} testId="history-more" />}
           </tbody>
         </table>
       )}
+      {error !== null && events.length > 0 && <LoadError error={error} onRetry={() => void loadMore()} testId="history-more" compact />}
       {opened && <EventModal event={opened} onClose={() => setOpened(null)} />}
     </div>
   );

@@ -8,7 +8,9 @@ import { useState } from "react";
 
 import { EditionToggle } from "@/components/outputs/edition-toggle";
 import { OutputCView } from "@/components/outputs/output-c";
+import { ReadOnlyNote } from "@/components/read-only-note";
 import { EmptyState } from "@/components/ui/empty-state";
+import { LoadError } from "@/components/ui/load-error";
 import { UnitStatusPill } from "@/components/status";
 import { LoadMoreRows } from "@/components/ui/load-more";
 import { Truncate } from "@/components/ui/motion";
@@ -32,12 +34,19 @@ import { useI18n } from "@/lib/i18n";
 import { saveBlob } from "@/lib/save-file";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
+import { readOutputsView, writeOutputsView, type OutputsTab } from "@/lib/outputs-view-prefs";
 import { buildTargetOrder, type MoveDir } from "@/lib/target-order";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useProgressiveList } from "@/lib/use-progressive-list";
 import { getBundleLabel } from "@/lib/bundle-label";
+import { getStageHref } from "@/lib/stages";
 
-type Tab = "a" | "b" | "c";
+// 삭제·바깥 문서 이동처럼 자리가 없는 보낸 곳과 변경 종류는 코드값 대신 화면 문구로 보인다(모르는 값은 그대로)
+function labelCode(t: (key: string) => string, prefix: string, code: string): string {
+  const key = `${prefix}.${code}`;
+  const text = t(key);
+  return text === key ? code : text;
+}
 
 function toCoverStatus(status: string): CoverStatus {
   return status === "confirmed" || status === "on_hold" || status === "ai_suggested" ? status : "unassigned";
@@ -48,8 +57,17 @@ export default function OutputsPage() {
   const bundleId = Number(useParams<{ id: string }>().id);
   const { bundle } = useBundle(bundleId);
   const canEdit = bundle?.my_role === "author" && bundle.status === "in_progress";
-  const [tab, setTab] = useState<Tab>("c");
-  const [lang, setLang] = useState<OutputLang>("ko");
+  // 탭과 언어는 마지막으로 본 값에서 다시 연다 - 다른 단계에 다녀와도 처음(C·KO)으로 돌아가지 않는다
+  const [view, setView] = useState(readOutputsView);
+  const { tab, lang } = view;
+  function setTab(next: OutputsTab) {
+    setView((prev) => ({ ...prev, tab: next }));
+    writeOutputsView({ tab: next });
+  }
+  function setLang(next: OutputLang) {
+    setView((prev) => ({ ...prev, lang: next }));
+    writeOutputsView({ lang: next });
+  }
   const key = `${bundleId}:${lang}:${bundle?.revision ?? 0}`;
   const outA = useLoaded(() => (tab === "a" ? getOutputA(bundleId, lang) : Promise.resolve(null)), `a:${tab}:${key}`);
   const outB = useLoaded(() => (tab === "b" ? getOutputB(bundleId, lang) : Promise.resolve(null)), `b:${tab}:${key}`);
@@ -117,6 +135,7 @@ export default function OutputsPage() {
       <div className="dense grid min-h-0 grid-rows-[auto_minmax(0,1fr)] bg-surface">
         <div className="flex h-[52px] items-center gap-3 border-b border-line px-[var(--pad)]">
           <h1 className="page-title ul">{t("stage.outputs")}</h1>
+          <ReadOnlyNote bundle={bundle} testId="outputs" />
           <div className="ml-2 flex gap-0.5 rounded-md bg-sunken p-0.5" role="tablist">
             {(["a", "b", "c"] as const).map((item) => (
               <button
@@ -124,7 +143,7 @@ export default function OutputsPage() {
                 type="button"
                 role="tab"
                 aria-selected={tab === item}
-                className={`h-[26px] rounded px-2.5 text-xs ${tab === item ? "bg-surface font-semibold text-ink shadow-sm" : "text-ink-2"}`}
+                className={`h-[26px] rounded-sm px-2.5 text-xs ${tab === item ? "bg-surface font-semibold text-ink shadow-sm" : "text-ink-2"}`}
                 data-testid={`outputs-tab-${item}`}
                 onClick={() => setTab(item)}
               >
@@ -137,7 +156,7 @@ export default function OutputsPage() {
         </div>
         <div className="min-h-0 overflow-auto">
           {current.error !== null && current.data === null ? (
-            <p className="p-6 text-ink-2">{humanizeApiError(current.error, t)}</p>
+            <LoadError error={current.error} onRetry={current.reload} testId="outputs" />
           ) : current.data === null ? (
             <div className="p-4">{showSkeleton && <span className="sk h-[420px] w-full" />}</div>
           ) : tab === "a" && outA.data?.length === 0 ? (
@@ -165,11 +184,11 @@ export default function OutputsPage() {
                     <td style={{ fontFamily: "var(--font-source)" }}>{row.source_text || <span className="text-ink-4">–</span>}</td>
                     <td className="whitespace-nowrap">
                       <span className="font-mono text-xs">{row.dest_doc_code}</span>
-                      <span className="block text-xs text-ink-3">{row.dest_location || row.dest_kind}</span>
+                      <span className="block text-xs text-ink-3">{row.dest_location || labelCode(t, "outputs.dest", row.dest_kind)}</span>
                     </td>
                     <td style={{ fontFamily: "var(--font-source)" }}>
                       {row.confirmed_text || <span className="text-ink-4">–</span>}
-                      {row.change_type && <span className="block text-xs text-ink-3" style={{ fontFamily: "var(--font-ui)" }}>{row.change_type}</span>}
+                      {row.change_type && <span className="block text-xs text-ink-3" style={{ fontFamily: "var(--font-ui)" }}>{labelCode(t, "change", row.change_type)}</span>}
                     </td>
                     <td>
                       <UnitStatusPill status={toCoverStatus(row.status)} />
@@ -215,7 +234,7 @@ export default function OutputsPage() {
                 })}
             </div>
           ) : tab === "c" && outC.data ? (
-            <OutputCView data={outC.data} lang={lang} onMove={canEdit ? (docId, sectionKey, targetId, dir) => void moveTarget(docId, sectionKey, targetId, dir) : undefined} moving={moving} />
+            <OutputCView data={outC.data} lang={lang} onMove={canEdit ? (docId, sectionKey, targetId, dir) => void moveTarget(docId, sectionKey, targetId, dir) : undefined} moving={moving} tobeHref={canEdit ? getStageHref(bundleId, "tobe") : undefined} />
           ) : null}
         </div>
       </div>

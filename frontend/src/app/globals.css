@@ -4,6 +4,7 @@
 @import "../styles/components.css";
 @import "../styles/motion.css";
 @import "../styles/markdown.css";
+@import "../styles/manual.css";
 
 /*
   Tailwind 이름을 디자인 토큰에 잇는다. raw 값은 tokens.css에만 둔다.
@@ -16,6 +17,9 @@
   --radius-sm: var(--r-1);
   --radius-md: var(--r-2);
   --radius-lg: var(--r-3);
+
+  --shadow-sm: var(--shadow-1);
+  --shadow-lg: var(--shadow-2);
 
   --color-bg: var(--bg);
   --color-surface: var(--surface);

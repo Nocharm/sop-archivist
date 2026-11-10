@@ -1,7 +1,7 @@
 // 문서 - Bundle에 올린 Old SOP와 New 문서. 번호·버전·제목은 칸에서 바로 고치고(제목을 누르면 그 문서의 Split), 언어 배치를 고르고, 추출 상태와 경고를 본다.
 "use client";
 
-import { Download, Eye, FileText, RefreshCw, Trash2, Upload } from "lucide-react";
+import { Download, Eye, FileText, Trash2, Upload } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 
@@ -12,8 +12,10 @@ import { AiSuggestChip } from "@/components/documents/ai-suggest-chip";
 import { PreviewModal } from "@/components/documents/preview-popover";
 import { UploadModal } from "@/components/documents/upload-modal";
 import { InlineText } from "@/components/inline-text";
+import { ReadOnlyNote } from "@/components/read-only-note";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { EmptyState } from "@/components/ui/empty-state";
+import { LoadError } from "@/components/ui/load-error";
 import { MorphButton } from "@/components/ui/morph-button";
 import { Truncate } from "@/components/ui/motion";
 import { Select } from "@/components/ui/select";
@@ -202,7 +204,10 @@ export default function DocumentsPage() {
   return (
     <div className="dense flex min-h-full flex-col bg-surface">
       <div className="flex h-[52px] shrink-0 items-center justify-between gap-3 border-b border-line px-[var(--pad)]">
-        <h1 className="page-title ul">{t("documents.title")}</h1>
+        <div className="flex min-w-0 items-center gap-3">
+          <h1 className="page-title ul">{t("documents.title")}</h1>
+          <ReadOnlyNote bundle={bundle} testId="documents" />
+        </div>
         <div className="flex items-center gap-2">
           <ListViewToggle listKey={LIST_KEY} view={view} testId="documents-view" />
           {canEdit && (
@@ -215,13 +220,7 @@ export default function DocumentsPage() {
       </div>
 
       {error !== null && data === null ? (
-        <div data-testid="documents-error" className="flex items-center gap-3 px-[var(--pad)] py-6 text-ink-2">
-          {humanizeApiError(error, t)}
-          <button type="button" className="btn" data-testid="documents-retry" onClick={reload}>
-            <RefreshCw size={14} strokeWidth={1.5} aria-hidden />
-            {t("common.retry")}
-          </button>
-        </div>
+        <LoadError error={error} onRetry={reload} testId="documents" />
       ) : data !== null && data.length === 0 ? (
         <EmptyState
           icon={FileText}

@@ -20,6 +20,7 @@ export function PreviewModal({ bundleId, document, onClose }: { bundleId: number
     <Modal
       title={document.doc_code ? `${document.doc_code} · ${t("documents.preview")}` : t("documents.preview")}
       testId="documents-preview"
+      size="lg"
       onClose={onClose}
       footer={
         <>
@@ -44,7 +45,7 @@ export function PreviewModal({ bundleId, document, onClose }: { bundleId: number
       ) : (
         <div className="preview-paper" data-testid="documents-preview-text">
           {blocks.map((block) => (
-            <p key={block.id} className={block.heading_level !== null ? "font-bold text-ink" : undefined}>
+            <p key={block.id} className={block.heading_level !== null ? "font-semibold text-ink" : undefined}>
               {block.text}
             </p>
           ))}

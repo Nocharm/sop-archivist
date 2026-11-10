@@ -1,7 +1,8 @@
 // 검토 요청 조건 카드 - Fail을 위, Pass를 아래로 나누고 각각 앞 몇 개만 보인 뒤 나머지 수를 센다.
 import { describe, expect, it } from "vitest";
 
-import { splitGates } from "./review-gates";
+import { GATE_STAGE, splitGates } from "./review-gates";
+import { NEXT_ACTION_STAGE } from "./stages";
 
 const gate = (key: string, ok: boolean) => ({ key, ok });
 
@@ -21,5 +22,21 @@ describe("splitGates", () => {
     const gates = [gate("a", false), gate("b", false), gate("c", false), gate("d", false)];
 
     expect(splitGates(gates, Infinity).fail).toHaveLength(4);
+  });
+});
+
+describe("GATE_STAGE", () => {
+  it("opens the same screen as the next action for the same blocker", () => {
+    expect(GATE_STAGE.documents).toBe(NEXT_ACTION_STAGE.upload_documents);
+    expect(GATE_STAGE.boundaries).toBe(NEXT_ACTION_STAGE.check_boundaries);
+    expect(GATE_STAGE.boundaries).toBe("split");
+    expect(GATE_STAGE.units).toBe(NEXT_ACTION_STAGE.decide_units);
+    expect(GATE_STAGE.warnings).toBe(NEXT_ACTION_STAGE.ack_warnings);
+    expect(GATE_STAGE.reasons).toBe(NEXT_ACTION_STAGE.fill_reasons);
+    expect(GATE_STAGE.semantic).toBe(NEXT_ACTION_STAGE.semantic_checks);
+  });
+
+  it("leaves the reviewer blocker to the members window", () => {
+    expect(GATE_STAGE.reviewer).toBeNull();
   });
 });

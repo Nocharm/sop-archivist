@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { getSplitKeyAction, type SplitKeyContext } from "./split-keys";
 
-const ctx: SplitKeyContext = { typing: false, layerOpen: false, hasCut: false, checked: false, canEdit: true };
+const ctx: SplitKeyContext = { typing: false, onControl: false, layerOpen: false, hasCut: false, checked: false, canEdit: true };
 
 function press(key: string, extra: Partial<{ metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }> = {}) {
   return { key, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...extra };
@@ -15,6 +15,13 @@ describe("getSplitKeyAction", () => {
     expect(getSplitKeyAction(press("j"), ctx)).toBe("next");
     expect(getSplitKeyAction(press("ArrowUp"), ctx)).toBe("prev");
     expect(getSplitKeyAction(press("K"), ctx)).toBe("prev");
+  });
+
+  it("leaves Enter to a focused button but keeps the other keys", () => {
+    expect(getSplitKeyAction(press("Enter"), { ...ctx, onControl: true })).toBeNull();
+    expect(getSplitKeyAction(press("Enter"), ctx)).toBe("check");
+    expect(getSplitKeyAction(press("j"), { ...ctx, onControl: true })).toBe("next");
+    expect(getSplitKeyAction(press("h"), { ...ctx, onControl: true })).toBe("hold");
   });
 
   it("ignores keys while typing or with a layer open", () => {

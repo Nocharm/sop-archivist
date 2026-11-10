@@ -307,6 +307,9 @@
   .dtable td { padding: var(--row-y) 10px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: break-word; }
   .dtable tbody tr { transition: background var(--dur-fast); }
   .dtable tbody tr[data-link]:hover td { background: var(--hover); cursor: pointer; }
+  /* 키보드로 닿은 줄 - 테두리는 줄 안쪽으로(바깥으로 내면 옆 줄·틀에 잘린다) */
+  .dtable tbody tr[data-link]:focus-visible { outline-offset: -2px; }
+  .dtable tbody tr[data-link]:focus-visible td { background: var(--hover); }
   .dtable .num { text-align: right; font-variant-numeric: tabular-nums; }
   /* 남은 폭을 채우는 열 - max-width 0이 칸 내용의 최소 폭을 표 폭 계산에서 빼서 긴 글이 표를 옆으로 밀지 않는다(말줄임·줄바꿈은 칸 안에서) */
   .dtable .dl-grow { width: 100%; max-width: 0; overflow-wrap: anywhere; }
@@ -339,7 +342,7 @@
   }
   .dcard[data-link] { cursor: pointer; }
   .dcard[data-selected] { background: var(--sel-bg); border-color: var(--accent); }
-  .dcard[data-link]:hover { background: var(--hover); border-color: var(--line-2); }
+  .dcard[data-link]:hover, .dcard[data-link]:focus-visible { background: var(--hover); border-color: var(--line-2); }
   .dcard-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-width: 0; }
   .dcard-title { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; min-width: 0; flex: 1; font-weight: 600; }
   .dcard-badges { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; flex: none; max-width: 50%; }
@@ -710,6 +713,8 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
+    /* 긴 Bundle 제목이 옆에 있어도 줄지 않는다 - 줄어드는 쪽은 제목이다 */
+    flex: none;
     min-width: 0;
     max-width: 320px;
     height: 32px;
@@ -789,6 +794,15 @@
   .gate-card.fail > svg { color: var(--danger-ink); }
   .gate-card.pass { background: var(--accent-tint); color: var(--ink-2); }
   .gate-card.pass > svg { color: var(--accent); }
+  /* 누르면 그 조건을 푸는 화면으로 가는 카드 - 호버는 밑줄(형광펜 배경을 쓰지 않는다) */
+  .gate-card.go { grid-template-columns: 16px minmax(0, 1fr) 14px; width: 100%; text-align: left; cursor: pointer; }
+  .gate-card.go > svg.go-arrow { margin-top: 3px; color: var(--ink-3); }
+  .gate-card.go:hover > span { text-decoration: underline; text-underline-offset: 3px; }
+  .gate-card.go:hover > svg.go-arrow { color: var(--ink); }
+
+  /* 되돌림·다시 열기 쪽지 - 왼쪽 막대 강조(막대 쪽 모서리는 직각) */
+  .return-note { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 10px; padding: 10px 14px 10px 12px; border: 1px solid var(--line); border-left: 3px solid var(--st-hold-ink); border-radius: 0 var(--r-3) var(--r-3) 0; background: var(--st-hold-tint); font-size: var(--fs-ui); line-height: 20px; }
+  .return-note > svg { margin-top: 2px; color: var(--st-hold-ink); }
   .text-link { font-size: var(--fs-cap); font-weight: 600; color: var(--accent); cursor: pointer; }
   .text-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 

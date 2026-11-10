@@ -3,11 +3,12 @@
 // 버전은 지우지 않고 쌓인다. 새 버전은 만든 뒤 따로 활성화해야 AI 작업이 쓴다(백엔드 sop_guidelines.py).
 "use client";
 
-import { Check, FilePlus2, RefreshCw, X } from "lucide-react";
+import { Check, FilePlus2, X } from "lucide-react";
 import { useState } from "react";
 
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
+import { LoadError } from "@/components/ui/load-error";
 import { MarkdownView } from "@/components/ui/markdown-view";
 import { BusyLabel, Collapse, Refresh } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
@@ -30,7 +31,7 @@ function VersionViewer({ guideline, version, onEdit }: { guideline: Guideline; v
   return (
     <Refresh token={`${guideline.key}:${version}`} className="grid gap-2">
       {loaded.error !== null ? (
-        <p className="text-ink-2">{humanizeApiError(loaded.error, t)}</p>
+        <LoadError error={loaded.error} onRetry={loaded.reload} testId="guideline-content" compact />
       ) : loaded.data === null ? (
         <span className="sk h-[280px] w-full" />
       ) : (
@@ -166,13 +167,7 @@ export function GuidelinesPanel() {
 
   if (error !== null && data === null) {
     return (
-      <p className="flex items-center gap-2 text-ink-2" data-testid="admin-guidelines-error">
-        {humanizeApiError(error, t)}
-        <button type="button" className="btn" onClick={reload}>
-          <RefreshCw size={14} strokeWidth={1.5} aria-hidden />
-          {t("common.retry")}
-        </button>
-      </p>
+      <LoadError error={error} onRetry={reload} testId="admin-guidelines" compact />
     );
   }
 
@@ -240,7 +235,7 @@ export function GuidelinesPanel() {
                       key={String(item)}
                       type="button"
                       aria-pressed={isPreview === item}
-                      className={`h-[26px] rounded px-2.5 text-xs ${isPreview === item ? "bg-surface font-semibold text-ink shadow-sm" : "text-ink-2"}`}
+                      className={`h-[26px] rounded-sm px-2.5 text-xs ${isPreview === item ? "bg-surface font-semibold text-ink shadow-sm" : "text-ink-2"}`}
                       data-testid={item ? "guideline-editor-preview" : "guideline-editor-write"}
                       onClick={() => setIsPreview(item)}
                     >
@@ -271,7 +266,7 @@ export function GuidelinesPanel() {
                 onChange={(event) => setDraft((prev) => (prev ? { ...prev, note: event.target.value } : prev))}
               />
               <div className="flex justify-end gap-2">
-                <button type="button" className="btn" onClick={() => setDraft(null)}>
+                <button type="button" className="btn" data-testid="guideline-editor-cancel" onClick={() => setDraft(null)}>
                   <X size={16} strokeWidth={1.5} aria-hidden />
                   {t("common.cancel")}
                 </button>

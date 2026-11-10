@@ -54,11 +54,12 @@ export function getStageHref(bundleId: number, key: StageKey): string {
 export const NEXT_ACTION_STAGE: Record<NextAction, StageKey | null> = {
   upload_documents: "documents",
   resolve_documents: "documents",
+  check_boundaries: "split",
   fill_tobe: "tobe",
   decide_units: "assign",
   ack_warnings: "split",
   fill_reasons: "assign",
-  semantic_checks: "review",
+  semantic_checks: "outputs",
   add_reviewer: null,
   request_review: null,
   await_review: "review",

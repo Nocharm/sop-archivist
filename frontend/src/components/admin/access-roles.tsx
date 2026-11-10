@@ -14,6 +14,7 @@ import { useI18n } from "@/lib/i18n";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, CHIP, INPUT_FIELD } from "@/lib/ui-classes";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MorphButton } from "@/components/ui/morph-button";
+import { showToast } from "@/components/ui/toast";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PanelTitle } from "@/components/admin/panel-title";
 import { useLoaded } from "@/lib/use-loaded";
@@ -49,6 +50,7 @@ function RoleFormModal({ role, onClose, onSaved }: RoleFormModalProps) {
     try {
       if (role) await updateRole(role.id, body);
       else await createRole(body);
+      showToast(t("common.saved"));
       onSaved();
     } catch (err) {
       setError(err);
@@ -99,16 +101,19 @@ function RoleFormModal({ role, onClose, onSaved }: RoleFormModalProps) {
         </label>
         <fieldset className="space-y-1.5">
           <legend className="text-sm font-semibold text-ink-2">{t("roles.form.permissions")}</legend>
-          {PERMISSIONS.map((key) => (
-            <Checkbox
-              key={key}
-              testId={`role-form-perm-${key}`}
-              className="text-sm text-ink"
-              checked={permissions.includes(key)}
-              onChange={() => togglePermission(key)}
-              label={t(`permission.${key}`)}
-            />
-          ))}
+          {/* 두 줄로 세운다 - 흘려 놓으면 좁은 창에서 이름과 옆 칸이 붙는다 */}
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+            {PERMISSIONS.map((key) => (
+              <Checkbox
+                key={key}
+                testId={`role-form-perm-${key}`}
+                className="text-sm text-ink"
+                checked={permissions.includes(key)}
+                onChange={() => togglePermission(key)}
+                label={t(`permission.${key}`)}
+              />
+            ))}
+          </div>
         </fieldset>
         {role && <p className="text-xs text-ink-3">{t("roles.form.editNote")}</p>}
         {error !== null && (
@@ -147,6 +152,7 @@ function DeleteRoleModal({ role, onClose, onDeleted }: DeleteRoleModalProps) {
   return (
     <Modal
       testId="role-delete"
+      size="sm"
       title={t("roles.delete.title")}
       onClose={onClose}
       footer={

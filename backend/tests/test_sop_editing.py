@@ -641,6 +641,44 @@ def test_boundary_confirm_flag(client: TestClient) -> None:
     assert find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), FIRST)["boundary_confirmed"] is False
 
 
+def test_confirm_all_boundaries_marks_the_rest(client: TestClient) -> None:
+    fx = _setup(client)
+    two = find_unit(fx.view, TWO_IN_ONE)
+    url = f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/units/boundary"
+    assert client.post(url, json={"unit_ids": [two["id"]], "confirmed": True}, headers=AUTHOR).status_code == 200
+
+    first = client.post(f"{url}/all", headers=AUTHOR)
+    again = client.post(f"{url}/all", headers=AUTHOR)
+
+    assert first.status_code == again.status_code == 200, (first.text, again.text)
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    rest = len(view["units"]) - 1
+    assert all(unit["boundary_confirmed"] for unit in view["units"])
+    assert (first.json(), again.json()) == ({"confirmed_count": rest}, {"confirmed_count": 0})
+    assert (view["document"]["revision"], view["edits"]) == (1, {"can_undo": False, "can_redo": False})
+    # 누가 한꺼번에 확인했는지는 기록 한 줄로 남고, 바뀐 것이 없으면 남기지 않는다
+    events = client.get(f"/api/bundles/{fx.bundle_id}/events?action_prefix=unit.", headers=AUTHOR).json()
+    assert [(event["action"], event["actor"], event["target_type"], event["target_ids"], event["detail"]) for event in events] == [
+        ("unit.check_all", "qa.member", "document", [fx.doc["id"]], {"count": rest})
+    ]
+
+
+def test_document_list_counts_unchecked_boundaries(client: TestClient) -> None:
+    fx = _setup(client)
+    url = f"/api/bundles/{fx.bundle_id}/documents"
+    total = sum(unit["kind"] in COVER_KINDS for unit in fx.view["units"])
+    two = find_unit(fx.view, TWO_IN_ONE)
+
+    before = client.get(url, headers=AUTHOR).json()
+    marked = client.post(f"{url}/{fx.doc['id']}/units/boundary", json={"unit_ids": [two["id"]], "confirmed": True}, headers=AUTHOR)
+    after = client.get(url, headers=AUTHOR).json()
+
+    assert marked.status_code == 200, marked.text
+    assert total > 1 and fx.doc["unchecked_boundaries"] == total  # 올린 직후 응답에도 실린다
+    assert [doc["unchecked_boundaries"] for doc in before] == [total]
+    assert [doc["unchecked_boundaries"] for doc in after] == [total - 1]
+
+
 def test_edits_are_for_authors_while_in_progress(client: TestClient) -> None:
     fx = _setup(client)
     assert set_members(client, fx.bundle_id, [("qa.member", "author"), ("qa.lead", "reviewer")]).status_code == 200
@@ -655,6 +693,7 @@ def test_edits_are_for_authors_while_in_progress(client: TestClient) -> None:
             client.post(f"{base}/edits/undo", json={"revision": 1}, headers=headers),
             client.post(f"{base}/edits/redo", json={"revision": 1}, headers=headers),
             client.post(f"{base}/units/boundary", json=boundary, headers=headers),
+            client.post(f"{base}/units/boundary/all", headers=headers),
         ]
         return {_code(response) for response in responses}
 

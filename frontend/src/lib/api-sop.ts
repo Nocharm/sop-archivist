@@ -45,6 +45,7 @@ export interface BundleMember {
 export type NextAction =
   | "upload_documents"
   | "resolve_documents"
+  | "check_boundaries"
   | "fill_tobe"
   | "decide_units"
   | "ack_warnings"
@@ -187,6 +188,8 @@ export interface SopDocument {
   uploaded_by: string;
   uploaded_at: string;
   extraction: { id: number; aux_status: "ok" | "failed"; warnings: ExtractionWarning[] } | null;
+  /** 경계를 아직 확인하지 않은 단위 수 - 0이 아니면 검토 요청이 막힌다 */
+  unchecked_boundaries: number;
   /** 업로드 응답에서만 - 서버가 미리 채운 칸이 어디서 왔는지(파일 이름·본문 첫 장). 목록 조회에서는 빈 객체 */
   prefill_sources?: Partial<Record<"doc_code" | "doc_version" | "language_layout", "file_name" | "content">>;
   /** 비어 있는 번호·버전에 대한 AI 제안(문서에 쓰지 않은 값). 누르면 사람이 저장한다 */
@@ -294,7 +297,7 @@ export interface ViewPair {
 }
 
 export interface DocumentView {
-  document: Omit<SopDocument, "extraction">;
+  document: Omit<SopDocument, "extraction" | "unchecked_boundaries">;
   extraction: SopDocument["extraction"];
   tables: ViewTable[];
   blocks: ViewBlock[];
@@ -344,6 +347,11 @@ export function redoEdit(bundleId: number, docId: number, revision: number, conf
 
 export function setBoundaryConfirmed(bundleId: number, docId: number, unitIds: number[], confirmed: boolean): Promise<{ unit_ids: number[]; confirmed: boolean }> {
   return apiFetch(`${buildDocPath(bundleId, docId)}/units/boundary`, { method: "POST", body: JSON.stringify({ unit_ids: unitIds, confirmed }) });
+}
+
+/** 문서에 남은 단위의 경계를 한 번에 확인한다 - 하나씩 확인하는 길은 요청당 단위 수 상한이 있다 */
+export function confirmAllBoundaries(bundleId: number, docId: number): Promise<{ confirmed_count: number }> {
+  return apiFetch(`${buildDocPath(bundleId, docId)}/units/boundary/all`, { method: "POST" });
 }
 
 export function createPair(bundleId: number, docId: number, revision: number, unitIds: number[]): Promise<PairResult> {
@@ -782,6 +790,10 @@ export function putTargetOrder(bundleId: number, body: { revision: number; targe
 
 export function putSemanticChecks(bundleId: number, revision: number, checks: Record<string, boolean>): Promise<Bundle> {
   return apiFetch<Bundle>(`/bundles/${bundleId}/semantic-checks`, { method: "PUT", body: JSON.stringify({ revision, checks }) });
+}
+
+export function withdrawReview(bundleId: number, revision: number): Promise<Bundle> {
+  return apiFetch<Bundle>(`/bundles/${bundleId}/review/withdraw`, { method: "POST", body: JSON.stringify({ revision }) });
 }
 
 export function completeReview(bundleId: number, revision: number): Promise<Bundle> {

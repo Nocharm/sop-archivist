@@ -8,6 +8,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { LoadMoreRows } from "@/components/ui/load-more";
 import { Tooltip } from "@/components/ui/tooltip";
 import { useI18n } from "@/lib/i18n";
+import { getRowOpenProps } from "@/lib/row-open";
 import { setListView, type ListView } from "@/lib/use-list-view";
 
 export type CardSlot = "title" | "badge" | "body" | "meta" | "actions" | "none";
@@ -41,6 +42,8 @@ interface DataListProps<T> {
   testId: string;
   rowTestId: (row: T) => string;
   onRowClick?: (row: T) => void;
+  /** 줄 안에 같은 곳으로 가는 링크가 이미 있다 - 줄 자체는 Tab 순서에 넣지 않는다(같은 곳에 두 번 서지 않게) */
+  hasRowLink?: boolean;
   /** 줄에 덧붙이는 식별용 data 속성(스모크가 읽는 값 등) */
   getRowData?: (row: T) => Record<`data-${string}`, string>;
   /** 옆 칸에 내용을 펼쳐 보는 목록에서 지금 고른 줄 */
@@ -69,13 +72,19 @@ export function DataList<T>(props: DataListProps<T>) {
   );
 }
 
+// 누르면 열리는 줄의 속성 - 안에 링크가 없으면 키보드로도 닿게 한다
+function getRowHandlers<T>(onRowClick: ((row: T) => void) | undefined, hasRowLink: boolean, row: T) {
+  if (!onRowClick) return undefined;
+  return hasRowLink ? { onClick: () => onRowClick(row) } : getRowOpenProps(() => onRowClick(row));
+}
+
 function getCellClass<T>(column: DataColumn<T>): string {
   return [column.align === "end" ? "num" : "", column.nowrap ? "whitespace-nowrap" : "", column.grow ? "dl-grow" : "", column.className ?? ""]
     .filter(Boolean)
     .join(" ");
 }
 
-function Table<T>({ rows, columns, getRowKey, testId, rowTestId, getRowData, onRowClick, isRowSelected, showSkeleton = false, skeletonRows = 3, more }: DataListProps<T>) {
+function Table<T>({ rows, columns, getRowKey, testId, rowTestId, getRowData, onRowClick, hasRowLink = false, isRowSelected, showSkeleton = false, skeletonRows = 3, more }: DataListProps<T>) {
   return (
     <table className="dtable" data-testid={testId}>
       <thead>
@@ -107,7 +116,7 @@ function Table<T>({ rows, columns, getRowKey, testId, rowTestId, getRowData, onR
                 {...getRowData?.(row)}
                 data-testid={rowTestId(row)}
                 data-link={onRowClick ? "" : undefined}
-                onClick={onRowClick ? () => onRowClick(row) : undefined}
+                {...getRowHandlers(onRowClick, hasRowLink, row)}
               >
                 {columns.map((column) => (
                   <td key={column.key} className={getCellClass(column)} data-testid={column.cellTestId?.(row)}>
@@ -122,7 +131,7 @@ function Table<T>({ rows, columns, getRowKey, testId, rowTestId, getRowData, onR
   );
 }
 
-function CardGrid<T>({ rows, columns, getRowKey, testId, rowTestId, getRowData, onRowClick, isRowSelected, showSkeleton = false, skeletonRows = 3, more, cardMinWidth = 300, flush = false, framed = false }: DataListProps<T>) {
+function CardGrid<T>({ rows, columns, getRowKey, testId, rowTestId, getRowData, onRowClick, hasRowLink = false, isRowSelected, showSkeleton = false, skeletonRows = 3, more, cardMinWidth = 300, flush = false, framed = false }: DataListProps<T>) {
   const slot = (column: DataColumn<T>): CardSlot => column.card ?? "meta";
   const pick = (name: CardSlot) => columns.filter((column) => slot(column) === name);
   const titles = pick("title");
@@ -145,7 +154,7 @@ function CardGrid<T>({ rows, columns, getRowKey, testId, rowTestId, getRowData, 
               {...getRowData?.(row)}
               data-testid={rowTestId(row)}
               data-link={onRowClick ? "" : undefined}
-              onClick={onRowClick ? () => onRowClick(row) : undefined}
+              {...getRowHandlers(onRowClick, hasRowLink, row)}
             >
               {(titles.length > 0 || badges.length > 0) && (
                 <div className="dcard-head">

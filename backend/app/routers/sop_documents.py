@@ -19,12 +19,14 @@ from app.routers.admin import KstDatetime
 from app.sop.constants import LANGUAGE_LAYOUTS, MEMBER_ROLES
 from app.sop.detach import detach_units, find_units_needing_confirm
 from app.sop.editing import (
+    BoundaryAllOut,
     BoundaryIn,
     BoundaryOut,
     EditIn,
     EditResult,
     EditStepIn,
     apply_edit,
+    confirm_all_boundaries,
     redo_edit,
     set_boundary_confirmed,
     undo_edit,
@@ -59,6 +61,7 @@ from app.sop.pairs import (
     delete_pair,
 )
 from app.sop.schemas import NO_NUL, NoNulStr
+from app.sop.snapshot import count_unchecked_boundaries
 from app.sop.status import get_cover_status
 from app.sop.tobe import MAX_DB_INT, remove_match_doc, rename_match_doc, temp_match_code
 from app.sop.units import UNIT_ACTIVE, compute_display_id, refresh_code_pairs
@@ -144,6 +147,8 @@ class DocumentOut(DocumentBase):
     prefill_sources: dict[PrefillField, PrefillSource] = {}
     # 비어 있는 번호·버전에 대한 AI 제안(문서에 쓰지 않은 값) — 사람이 눌러 저장한다
     ai_meta: AiMetaOut | None = None
+    # 경계를 아직 확인하지 않은 단위 수 — 0이 아니면 검토 요청을 막는다(쪼개기 문서 목록의 남은 수)
+    unchecked_boundaries: int = 0
 
 
 class DocumentUpdateIn(BaseModel):
@@ -243,7 +248,7 @@ class DocumentViewOut(BaseModel):
 
 
 async def build_documents_out(session: AsyncSession, documents: Sequence[Document]) -> list[DocumentOut]:
-    """문서마다 최신 추출과 그 경고를 붙인다 — 문서 수와 무관하게 쿼리 두 번(추출·경고)이다."""
+    """문서마다 최신 추출·그 경고·경계 확인이 남은 단위 수를 붙인다 — 문서 수와 무관하게 쿼리 세 번이다(한 묶음의 문서들)."""
     doc_ids = [document.id for document in documents]
     extraction_by_doc: dict[int, Extraction] = {}
     if doc_ids:
@@ -262,6 +267,7 @@ async def build_documents_out(session: AsyncSession, documents: Sequence[Documen
         for warning in rows:
             warnings[warning.extraction_id].append(WarningOut.model_validate(warning))
     ai_suggestions = await load_open_doc_meta(session, doc_ids)
+    unchecked = await count_unchecked_boundaries(session, documents[0].bundle_id) if documents else {}
     out = []
     for document in documents:
         extraction = extraction_by_doc.get(document.id)
@@ -273,6 +279,7 @@ async def build_documents_out(session: AsyncSession, documents: Sequence[Documen
                     id=extraction.id, aux_status=extraction.aux_status, warnings=warnings[extraction.id]
                 ),
                 ai_meta=None if ai_meta is None else AiMetaOut.model_validate(ai_meta),
+                unchecked_boundaries=unchecked.get(document.id, 0),
             )
         )
     return out
@@ -596,6 +603,18 @@ async def confirm_unit_boundaries(
     unit_ids = await set_boundary_confirmed(session, document, body.unit_ids, body.confirmed)
     await session.commit()
     return BoundaryOut(unit_ids=unit_ids, confirmed=body.confirmed)
+
+
+@router.post("/{bundle_id}/documents/{doc_id}/units/boundary/all", response_model=BoundaryAllOut)
+async def confirm_all_unit_boundaries(
+    doc_id: IdPath,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> BoundaryAllOut:
+    document = await _lock_editable_document(session, ctx, doc_id, None)
+    confirmed_count = await confirm_all_boundaries(session, document, actor=ctx.login_id)
+    await session.commit()
+    return BoundaryAllOut(confirmed_count=confirmed_count)
 
 
 @router.post("/{bundle_id}/documents/{doc_id}/pairs", response_model=PairResult, status_code=201)

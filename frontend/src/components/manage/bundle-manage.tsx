@@ -3,12 +3,13 @@
 
 import { FlaskConical, MoreHorizontal, Pencil, Trash2, Users } from "lucide-react";
 import Link from "next/link";
-import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
 import { EventIcon, EventModal, getEventLabel } from "@/components/manage/event-modal";
 import { MembersModal } from "@/components/manage/members-modal";
 import { RoleTag } from "@/components/status";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { LoadError } from "@/components/ui/load-error";
 import { Truncate } from "@/components/ui/motion";
 import { Menu } from "@/components/ui/menu";
 import { showToast } from "@/components/ui/toast";
@@ -33,6 +34,41 @@ const EVENTS_PREVIEW = 10;
 
 export function canManageBundle(bundle: Bundle): boolean {
   return bundle.my_role === "author" && bundle.status === "in_progress";
+}
+
+/** 멤버는 검토 대기·완료에서도 작성자가 바꾼다 - 검토자가 자리를 비우면 바꿀 길이 있어야 한다(서버도 상태를 가리지 않는다) */
+export function canManageMembers(bundle: Bundle): boolean {
+  return bundle.my_role === "author";
+}
+
+/** 긴 설명 접기 - 세 줄까지만 보이고, 넘칠 때만 펼침 단추가 생긴다(넘침은 그려진 높이로 잰다) */
+function ClampedText({ text, className, testId }: { text: string; className: string; testId: string }) {
+  const { t } = useI18n();
+  const ref = useRef<HTMLSpanElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || expanded) return;
+    // 관찰을 시작하면 한 번 불리고, 폭이 바뀌어 줄 수가 달라질 때마다 다시 잰다
+    const observer = new ResizeObserver(() => setOverflows(node.scrollHeight > node.clientHeight + 1));
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [text, expanded]);
+
+  return (
+    <span className="grid min-w-0 justify-items-start gap-0.5">
+      <span ref={ref} className={`min-w-0 break-words ${expanded ? "" : "line-clamp-3"} ${className}`} data-testid={testId}>
+        {text}
+      </span>
+      {(overflows || expanded) && (
+        <button type="button" className="text-link" aria-expanded={expanded} data-testid={`${testId}-more`} onClick={() => setExpanded((prev) => !prev)}>
+          {expanded ? t("manage.showLess") : t("manage.showMore")}
+        </button>
+      )}
+    </span>
+  );
 }
 
 /** 글 한 줄 바로 고치기 - 호버하면 연필이 나타나고, 누르면 입력이 된다. Enter 저장, Esc 취소 */
@@ -105,7 +141,9 @@ function EditableLine({
 
   return (
     <span className="hover-row inline-flex min-w-0 max-w-full items-center gap-1.5">
-      {value ? (
+      {value && multiline ? (
+        <ClampedText text={value} className={className} testId={testId} />
+      ) : value ? (
         <span className={`min-w-0 ${className}`} data-testid={testId}>
           {value}
         </span>
@@ -254,7 +292,7 @@ export function MembersSection({ bundle, editing: editingProp, onEditingChange }
   const [editingState, setEditingState] = useState(false);
   const editing = editingProp ?? editingState;
   const setEditing = onEditingChange ?? setEditingState;
-  const editable = canManageBundle(bundle);
+  const editable = canManageMembers(bundle);
   return (
     <section className="grid gap-2.5" data-testid="overview-members">
       <div className="flex h-6 items-center justify-between">
@@ -287,7 +325,13 @@ export function MembersSection({ bundle, editing: editingProp, onEditingChange }
           testId="overview-members-modal"
           onClose={() => setEditing(false)}
           onSave={async (members) => {
-            putBundle(await putMembers(bundle.id, bundle.revision, members));
+            try {
+              putBundle(await putMembers(bundle.id, bundle.revision, members));
+            } catch (err) {
+              // 다른 사람이 먼저 바꿔 409일 수 있다 - 최신 Bundle을 받아 두어 다시 누르면 새 revision으로 간다
+              void loadBundle(bundle.id);
+              throw err;
+            }
             showToast(t("common.saved"));
           }}
         />
@@ -330,7 +374,7 @@ export function ActivitySection({ bundle }: { bundle: Bundle }) {
         </Link>
       </div>
       {events.error !== null && events.data === null ? (
-        <p className="text-ink-3">{humanizeApiError(events.error, t)}</p>
+        <LoadError error={events.error} onRetry={events.reload} testId="overview-activity" compact />
       ) : events.data === null ? (
         <div className="grid gap-2">
           {[0, 1, 2].map((row) => (

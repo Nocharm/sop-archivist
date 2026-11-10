@@ -1,4 +1,4 @@
-// 기반 화면 스모크(Playwright + 시스템 Chrome) - dev 로그인, 상단 바, 내 계정의 권한, 언어 전환, 로그아웃/재로그인, 관리 화면(권한 관리·운영 패널).
+// 기반 화면 스모크(Playwright + 시스템 Chrome) - dev 로그인, 상단 바, 내 계정의 권한, 언어 전환, 로그아웃/재로그인, 관리 화면(권한 관리·운영 패널), 사용 설명서.
 // 전제: backend를 DEV_ENFORCE_PERMISSIONS=true APP_SYSADMINS=dev.admin 으로 8777에 띄우고(reset_db 직후), frontend `npm run dev`(3777).
 // 관리 화면 시나리오는 "Smoke Role"을 만들었다가 지우므로 실행 사이에 reset_db가 꼭 필요하진 않지만, 중간에 실패하면 역할이 남아 다음 실행이 409로 깨진다 - 그땐 reset_db.
 // 실행(frontend/ 에서): node scripts/pw-smoke-baseline.mjs   환경 변수: BASE_URL, CHROME_PATH
@@ -614,6 +614,51 @@ await runStep("admin leftovers as qa.lead", { devUser: "qa.lead" }, async ({ pag
   check("the note is neutral and never says it holds no permissions", bootstrapText.includes("Not in the employee directory yet.") && !bootstrapText.includes("holds no permissions") && (await countById(page, "effective-unknown")) === 0, bootstrapText.replace(/\s+/g, " "));
   check("all four permission rows are still listed, in catalog order", (await findByPrefix(page, "effective-perm-").count()) === 4 && (await countById(page, "effective-none")) === 0 && bootstrapText.indexOf("Manage permissions") < bootstrapText.indexOf("Run directory sync"), bootstrapText.replace(/\s+/g, " "));
   await takeShot("baseline-admin-lookup-bootstrap.png");
+});
+
+// 15) 사용 설명서 - 로그인 전에 받은 조각 링크가 로그인 뒤 같은 조각으로 돌아오고, 읽음 표시가 읽은 양에 잡히며, 상단 바 도움말이 지금 화면을 설명하는 조각을 가리킨다
+await runStep("manual", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/manual#account`);
+  await wait(page, "login-dev-user-qa.member");
+  check("a logged-out manual link lands on /login", new URL(page.url()).pathname === "/login", page.url());
+  await page.locator('[data-testid="login-dev-user-qa.member"]').click();
+  await wait(page, "manual-unit-account");
+  await page.locator('[data-testid="manual-toc-account"][aria-current="true"]').waitFor({ timeout: T });
+  const landed = new URL(page.url());
+  check("sign-in returns to the same piece", landed.pathname === "/manual" && landed.hash === "#account", page.url());
+  check("the linked piece is the current one", (await page.locator('[data-testid="manual-unit-account"]').getAttribute("data-current")) !== null);
+  check("the help link is hidden on the manual itself", (await page.locator('[data-testid="top-bar-manual"]').count()) === 0);
+  check("an English screen says the manual is Korean only", await page.locator('[data-testid="manual-korean-only"]').isVisible());
+
+  const before = await getText(page, "manual-progress");
+  const total = /^0 of (\d+) read$/.exec(before)?.[1];
+  check("nothing is read at first", total !== undefined, before);
+  await page.keyboard.press("Enter");
+  await page.locator('[data-testid="manual-unit-account"][data-state="read"]').waitFor({ timeout: T });
+  check("Enter marks the current piece as read", (await getText(page, "manual-progress")) === `1 of ${total} read`, await getText(page, "manual-progress"));
+  check("the piece shows Read", (await getText(page, "manual-unit-account-state")).includes("Read"), await getText(page, "manual-unit-account-state"));
+  await takeShot("baseline-manual.png");
+  await page.reload();
+  await wait(page, "manual-unit-account");
+  check("the mark survives a reload", (await getText(page, "manual-progress")) === `1 of ${total} read`, await getText(page, "manual-progress"));
+  await page.locator('[data-testid="manual-unit-account-unmark"]').click();
+  await page.locator('[data-testid="manual-unit-account"][data-state="unread"]').waitFor({ timeout: T });
+  check("Unmark clears it", (await getText(page, "manual-progress")) === before, await getText(page, "manual-progress"));
+
+  await page.locator('[data-testid="manual-search"]').fill("zzzz-no-such-word");
+  await wait(page, "manual-empty");
+  await page.locator('[data-testid="manual-empty-clear"]').click();
+  await wait(page, "manual-unit-account");
+  check("clearing an empty search brings the pieces back", (await page.locator("section.manual-unit").count()) === Number(total));
+
+  // 도움말은 새 탭으로 열린다 - 가리키는 자리만 본다
+  await page.goto(`${BASE}/account`);
+  await wait(page, "top-bar-manual");
+  const accountLink = page.locator('[data-testid="top-bar-manual"]');
+  check("the help link on /account points at the account piece", (await accountLink.getAttribute("href")) === "/manual#account" && (await accountLink.getAttribute("target")) === "_blank", (await accountLink.getAttribute("href")) ?? "");
+  await page.goto(`${BASE}/`);
+  await wait(page, "top-bar-manual");
+  check("the help link on the Bundle list points at getting started", (await page.locator('[data-testid="top-bar-manual"]').getAttribute("href")) === "/manual#start");
 });
 
 await browser.close();

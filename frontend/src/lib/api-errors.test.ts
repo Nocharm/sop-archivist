@@ -41,7 +41,9 @@ describe("humanizeApiError status fallbacks", () => {
   it.each([
     [401, "missing bearer token", "error.unauthorized"],
     [403, "something else", "error.forbidden"],
+    [404, "something else", "error.notFound"],
     [409, "something else", "error.conflict"],
+    [413, "something else", "error.tooLarge"],
     [502, "something else", "error.upstream"],
     [503, "something else", "error.unavailable"],
     [0, "Failed to fetch", "error.network"],
@@ -55,7 +57,7 @@ describe("humanizeApiError status fallbacks", () => {
 
   it("falls back to error.unknown for other statuses and non-API errors", () => {
     expect(humanizeApiError(new ApiError(500, "boom"), t)).toBe("error.unknown");
-    expect(humanizeApiError(new ApiError(404, "other"), t)).toBe("error.unknown");
+    expect(humanizeApiError(new ApiError(418, "other"), t)).toBe("error.unknown");
     expect(humanizeApiError(new Error("boom"), t)).toBe("error.unknown");
     expect(humanizeApiError("weird", t)).toBe("error.unknown");
   });

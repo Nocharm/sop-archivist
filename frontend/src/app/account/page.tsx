@@ -1,7 +1,7 @@
 // 내 계정 - 내가 누구인지, 어떤 권한을 어디서(역할·부서·직접) 받았는지, AI를 쓸 수 있는지. 상단 막대의 이름을 누르면 온다(홈은 묶음 목록).
 "use client";
 
-import { Bot, KeyRound, ShieldCheck, UserRound } from "lucide-react";
+import { Bot, KeyRound, ShieldCheck } from "lucide-react";
 
 import { SourceLine } from "@/components/permission-source-line";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -19,10 +19,7 @@ export default function AccountPage() {
   return (
     <div className="mx-auto w-full max-w-2xl space-y-8 px-4 py-10">
       <section data-testid="account-identity" className="space-y-1">
-        <h1 className="flex items-center gap-2 text-xl font-semibold text-ink">
-          <UserRound size={16} strokeWidth={1.5} className="text-ink-3" />
-          {getDisplayName(me, lang)}
-        </h1>
+        <h1 className="page-title ul">{getDisplayName(me, lang)}</h1>
         <p className="text-sm text-ink-2">{me.login_id}</p>
         {me.dept_path ? (
           <p className="text-sm text-ink-2">{me.dept_path}</p>

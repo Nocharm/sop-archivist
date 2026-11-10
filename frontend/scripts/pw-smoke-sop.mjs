@@ -240,6 +240,28 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   await page.waitForFunction(() => document.querySelector('[data-testid="split-boundary-state"]')?.textContent?.includes("Not checked"), null, { timeout: T });
   check("U unchecks", true);
   await takeShot("sop-split.png");
+  // 남은 경계 - 문서마다 수가 보이고, Check the rest가 지금 문서의 나머지를 한 번에 확인한다
+  const left = await getText(page, "split-unchecked-count");
+  check("the remaining boundaries are counted", /^\d+ left to check$/.test(left.trim()), left);
+  const docLeft = page.locator('[data-testid^="split-doc-left-"]');
+  check("every document shows what is left", (await docLeft.count()) >= 1 && /\d/.test(await docLeft.first().innerText()), String(await docLeft.count()));
+  await page.locator('[data-testid="split-check-rest"]').click();
+  await wait(page, "split-check-rest-modal");
+  const modalBox = await page.locator('[data-testid="split-check-rest-modal"]').boundingBox();
+  check("confirm windows are narrow", modalBox.width <= 384, String(modalBox.width));
+  await takeShot("sop-split-check-rest.png");
+  await page.locator('[data-testid="split-check-rest-modal-confirm"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="split-unchecked-count"]')?.textContent?.includes("All boundaries checked"), null, { timeout: T });
+  check("Check the rest checks every remaining boundary", true);
+  check("the button leaves when nothing is left", (await page.locator('[data-testid="split-check-rest"]').count()) === 0);
+  await page.goto(`${BASE}/bundles/${freshId}/history`);
+  await page.waitForFunction(() => document.body.textContent?.includes("Checked all remaining boundaries"), null, { timeout: T });
+  check("history records the bulk check", true);
+  // 다른 문서의 경계가 남아 있어 다음 할 일은 여전히 경계 확인이고 검토 요청 조건도 열려 있다
+  await page.goto(`${BASE}/bundles/${freshId}`);
+  await wait(page, "overview-gate-boundaries");
+  check("next action is checking boundaries", (await page.locator('[data-testid="overview-next"]').getAttribute("data-action")) === "check_boundaries");
+  check("boundaries gate is open", (await page.locator('[data-testid="overview-gate-boundaries"]').getAttribute("data-ok")) === null);
 });
 
 // 일부러 거절당하는 저장이 있어 콘솔 오류를 허용한다
@@ -515,6 +537,8 @@ await runStep("assign: written New document - identical, link by clicking, split
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
   await wait(page, "assign-identical");
   await page.locator('[data-testid="assign-identical"]').click();
+  // 여러 줄을 한 번에 확정하므로 확인 창을 거친다
+  await page.locator('[data-testid="assign-identical-modal-confirm"]').click();
   await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
   await page.locator('[data-testid="assign-identical"]').waitFor({ state: "detached", timeout: T });
   check("identical matches confirm together", true);
@@ -522,9 +546,21 @@ await runStep("assign: written New document - identical, link by clicking, split
   // 비슷한 New 문장 후보(점선)가 있는 Old 조각까지 옮긴다 - 후보는 같은 언어만 나온다(짝 맞추기는 같은 언어끼리)
   await page.locator('[data-testid="assign-filter-unassigned"]').click();
   const candidate = page.locator('[data-testid="assign-new"] button.new-line[data-state="candidate"]');
+  // 줄을 옮길 때마다 그 줄의 후보 요청이 끝나기를 기다린다 - networkidle은 첫 로드 뒤로는 곧바로 풀려서,
+  // 기다리지 않으면 응답보다 먼저 다음 줄로 넘어가 닿는 줄이 실행 속도에 따라 달라진다
+  let openCandidateRequests = 0;
+  const countCandidateRequest = (delta) => (request) => {
+    if (request.url().includes("/new-candidates")) openCandidateRequests += delta;
+  };
+  page.on("request", countCandidateRequest(1));
+  page.on("requestfinished", countCandidateRequest(-1));
+  page.on("requestfailed", countCandidateRequest(-1));
   for (let step = 0; step < 40 && (await candidate.count()) === 0; step += 1) {
     await page.keyboard.press("j");
-    await page.waitForLoadState("networkidle");
+    // 요청이 나갈 틈(문장이 없는 줄은 요청이 없다) → 걸린 요청이 없을 때까지 → 응답을 그릴 틈
+    await page.waitForTimeout(150);
+    while (openCandidateRequests > 0) await page.waitForTimeout(50);
+    await page.waitForTimeout(100);
   }
   // 누르면 후보가 아니라 고른 문장이 된다 - 같은 줄을 계속 가리키게 testid로 붙잡는다
   const firstLine = page.locator(`[data-testid="${await candidate.first().getAttribute("data-testid")}"]`);
@@ -549,7 +585,8 @@ await runStep("assign: written New document - identical, link by clicking, split
   // 앞 단계의 토스트가 아직 떠 있을 수 있다 - 저장 응답을 기다린다
   const saved = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
   await page.locator('[data-testid="assign-primary"]').click();
-  check("the link saves", (await saved).ok());
+  const savedResponse = await saved;
+  check("the link saves", savedResponse.ok(), savedResponse.ok() ? "" : (await savedResponse.text()).slice(0, 300));
   await page.waitForLoadState("networkidle");
   check("linking to a written sentence adds the Old source", (await readSources()) > sourcesBefore, String(sourcesBefore));
   // 문서별 확대 - Old 위에서 Ctrl+휠, New는 그대로(다음 조각으로 넘어가 New 원문이 닫혔으면 연다)
@@ -602,6 +639,56 @@ await runStep("outputs: A, B, C in both editions and Excel", {}, async ({ page, 
   await page.waitForFunction(() => document.querySelector('[data-testid="outputs-check-numbers"]')?.checked === false, null, { timeout: T });
 });
 
+// 작성자가 요청을 거둔 뒤 다시 요청해 둔다 - 아래 검토자 단계가 같은 Bundle을 검토 대기로 받는다
+await runStep("review: author withdraws the request and asks again", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/`);
+  const review = page.locator('[data-testid^="bundles-row-"]', { hasText: "검토 대기" });
+  const reviewId = Number((await review.getAttribute("data-testid")).replace("bundles-row-", ""));
+  await page.goto(`${BASE}/bundles/${reviewId}/review`);
+  await wait(page, "review-withdraw");
+  check("the review page offers withdraw to the author", true);
+  await page.goto(`${BASE}/bundles/${reviewId}`);
+  await wait(page, "overview-withdraw-review");
+  await takeShot("sop-overview-in-review.png");
+  await page.locator('[data-testid="overview-withdraw-review"]').click();
+  await wait(page, "overview-withdraw-review-modal");
+  await page.locator('[data-testid="overview-withdraw-review-modal-confirm"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="overview-return-note"]')?.dataset.action === "review.withdraw", null, { timeout: T });
+  check("withdrawing leaves a note on the overview", true);
+  check("the withdraw note carries no reason", (await page.locator('[data-testid="overview-return-reason"]').count()) === 0);
+  check("withdrawing clears the meaning checks", (await page.locator('[data-testid="overview-next"]').getAttribute("data-action")) === "semantic_checks");
+  check("the withdraw button leaves with the status", (await page.locator('[data-testid="overview-withdraw-review"]').count()) === 0);
+  await page.goto(`${BASE}/bundles/${reviewId}/history`);
+  await page.waitForFunction(() => document.body.textContent?.includes("Withdrew the review request"), null, { timeout: T });
+  check("history records the withdrawal", true);
+  await page.goto(`${BASE}/bundles/${reviewId}/outputs`);
+  for (const key of ["numbers", "conditions", "tables", "figures"]) {
+    await page.locator(`[data-testid="outputs-check-${key}"]`).click();
+    await page.waitForFunction((id) => document.querySelector(`[data-testid="${id}"]`)?.checked === true, `outputs-check-${key}`, { timeout: T });
+  }
+  await page.goto(`${BASE}/bundles/${reviewId}`);
+  await page.locator('[data-testid="overview-request-review"]').click();
+  await wait(page, "request-review");
+  const requestBox = await page.locator('[data-testid="request-review"]').boundingBox();
+  check("the request window is narrow", requestBox.width <= 384, String(requestBox.width));
+  await takeShot("sop-request-review.png");
+  await page.locator('[data-testid="request-review-confirm"]').click();
+  await wait(page, "overview-withdraw-review");
+  check("the bundle is in review again", (await page.locator('[data-testid="overview-next"]').getAttribute("data-action")) === "await_review");
+});
+
+await runStep("review: reviewer does not see withdraw", { devUser: "qa.lead" }, async ({ page }) => {
+  await page.goto(`${BASE}/`);
+  const review = page.locator('[data-testid^="bundles-row-"]', { hasText: "검토 대기" });
+  const reviewId = Number((await review.getAttribute("data-testid")).replace("bundles-row-", ""));
+  await page.goto(`${BASE}/bundles/${reviewId}/review`);
+  await wait(page, "review-return");
+  check("no withdraw on the review page", (await page.locator('[data-testid="review-withdraw"]').count()) === 0);
+  await page.goto(`${BASE}/bundles/${reviewId}`);
+  await wait(page, "overview-next");
+  check("no withdraw on the overview", (await page.locator('[data-testid="overview-withdraw-review"]').count()) === 0);
+});
+
 await runStep("review: reviewer completes the bundle in review", { devUser: "qa.lead" }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);
   const review = page.locator('[data-testid^="bundles-row-"]', { hasText: "검토 대기" });
@@ -614,6 +701,8 @@ await runStep("review: reviewer completes the bundle in review", { devUser: "qa.
   check("return needs a reason", await page.locator('[data-testid="review-reason-confirm"]').isDisabled());
   await page.keyboard.press("Escape");
   await page.locator('[data-testid="review-complete"]').click();
+  // 검토 완료는 확인 창을 거친다
+  await page.locator('[data-testid="review-complete-modal-confirm"]').click();
   await page.waitForFunction(() => document.querySelector('[data-testid="review-status"]')?.textContent?.includes("Review complete"), null, { timeout: T });
   check("status reads Review complete", true);
 });
