@@ -65,7 +65,12 @@ export function LinkMenu({ anchor, offset, items, isUnsaved, busy, onAction, onC
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => measure());
     };
-    const focusTimer = window.setTimeout(() => menuEl?.querySelector<HTMLElement>(ITEM_SELECTOR)?.focus({ preventScroll: true }), FOCUS_DELAY_MS);
+    const focusFirst = () => {
+      if (!menuEl?.contains(document.activeElement)) menuEl?.querySelector<HTMLElement>(ITEM_SELECTOR)?.focus({ preventScroll: true });
+    };
+    const focusTimer = window.setTimeout(focusFirst, FOCUS_DELAY_MS);
+    // 화면이 바쁘면 등장 애니메이션이 늦게 시작해 400ms에 아직 숨어 있을 수 있다 - 그때는 포커스가 안 들어가므로 다 나타난 뒤에 한 번 더
+    menuEl?.addEventListener("animationend", focusFirst);
     const handleDown = (event: PointerEvent) => {
       if (!menuEl?.contains(event.target as Node)) requestClose();
     };
@@ -81,6 +86,7 @@ export function LinkMenu({ anchor, offset, items, isUnsaved, busy, onAction, onC
     return () => {
       cancelAnimationFrame(frame);
       window.clearTimeout(focusTimer);
+      menuEl?.removeEventListener("animationend", focusFirst);
       popEscLayer(layer);
       window.removeEventListener("scroll", schedule, true);
       window.removeEventListener("resize", schedule);

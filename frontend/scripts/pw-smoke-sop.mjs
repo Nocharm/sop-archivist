@@ -766,6 +766,8 @@ await runStep("assign: KO/EN pair - recommendation shows picked, in-place menu c
   await page.locator('[data-testid="assign-link-menu-confirm"]').waitFor({ state: "visible", timeout: T });
   check("the in-place menu says the pick is not saved", (await page.locator('[data-testid="assign-link-menu-unsaved"]').count()) === 1);
   await takeShot("sop-assign-menu-confirm.png");
+  // 메뉴는 380ms에 보이고 400ms에 첫 항목으로 포커스를 옮긴다 - 그 사이에 누르면 Enter가 아직 추천 카드에 간다
+  await page.waitForFunction(() => document.activeElement?.getAttribute("data-testid") === "assign-link-menu-confirm", null, { timeout: T });
   const saved = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
   await page.keyboard.press("Enter");
   const savedResponse = await saved;
