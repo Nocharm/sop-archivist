@@ -144,14 +144,18 @@ class RecentRequestOut(BaseModel):
     error_counts: dict[str, int]  # 실패 코드 → 건수(failed만)
     created_at: KstDatetime  # 첫 작업이 쌓인 때
     started_at: KstDatetime | None  # 가장 이른 시작
+    running_started_at: KstDatetime | None  # 지금 실행 중인 작업의 가장 이른 시작 — 작업 목록 상한과 상관없이 "오래 걸림"을 잰다
     finished_at: KstDatetime | None  # 모든 작업이 끝났을 때 가장 늦은 끝, 아니면 null
+    document_id: int | None  # 요청의 작업이 모두 한 문서일 때 그 문서, 아니면 null(지워졌으면 제목·파일 이름이 빈 글자)
+    document_title: str
+    document_file_name: str
 
 
 class RecentJobsOut(BaseModel):
     server_time: KstDatetime  # 화면이 "오래 도는 중"을 판단하는 기준 시각
-    jobs: list[RecentJobOut]  # 최신 순, 앞쪽 MAX_RECENT_JOBS건
+    jobs: list[RecentJobOut]  # 대기·실행 중 먼저, 그다음 최신 순 — 앞쪽 MAX_RECENT_JOBS건
     jobs_total: int  # 범위 안 작업 전체 수
-    requests: list[RecentRequestOut]  # 최신 순, 앞쪽 MAX_RECENT_REQUESTS건
+    requests: list[RecentRequestOut]  # 도는 요청 먼저, 그다음 최신 순 — 앞쪽 MAX_RECENT_REQUESTS건
     requests_total: int
 
 

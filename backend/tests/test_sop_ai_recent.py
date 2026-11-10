@@ -96,7 +96,8 @@ def test_finished_jobs_stay_for_a_day_and_active_jobs_always(client: TestClient)
 
     body = get_recent(client)
 
-    assert [job["id"] for job in body["jobs"]] == [recent_failed, old_queued]
+    # 도는 작업이 먼저다
+    assert [job["id"] for job in body["jobs"]] == [old_queued, recent_failed]
     assert old_done not in {job["id"] for job in body["jobs"]}
     assert body["jobs_total"] == 2
 
@@ -126,6 +127,48 @@ def test_requests_are_newest_first_and_capped(client: TestClient) -> None:
     assert [request["request_id"] for request in body["requests"]] == [by_job[job_id] for job_id in newest]
 
 
+def test_an_older_running_request_stays_ahead_of_newer_finished_ones(client: TestClient) -> None:
+    # 끝난 새 요청이 상한보다 많아도 도는 오래된 요청은 목록·작업 목록 맨 앞에 있다(상단 바 수·화면 다시 읽기가 이것에 기댄다)
+    bundle = make_ai_bundle(client)
+    started = now() - timedelta(minutes=10)
+    running = add_jobs(bundle.id, 2, kind="doc_meta", status="running", started_at=started)
+    run_in_session(lambda session: _set_document(session, running[0], bundle.document_id))
+    run_in_session(lambda session: _set_document(session, running[1], bundle.document_id))
+    for _ in range(MAX_RECENT_REQUESTS + 2):
+        add_jobs(bundle.id, status="done", finished_at=now())
+    add_jobs(bundle.id, MAX_RECENT_JOBS, status="done", finished_at=now())
+
+    body = get_recent(client)
+
+    assert body["requests_total"] == MAX_RECENT_REQUESTS + 4
+    assert len(body["requests"]) == MAX_RECENT_REQUESTS
+    first = body["requests"][0]
+    assert (first["kind"], first["jobs"]["running"], first["finished_at"]) == ("doc_meta", 2, None)
+    assert first["running_started_at"] is not None
+    assert (first["document_id"], first["document_file_name"].startswith("SYNTHETIC_")) == (bundle.document_id, True)
+    assert [job["id"] for job in body["jobs"][:2]] == sorted(running, reverse=True)
+    assert all(request["finished_at"] is not None for request in body["requests"][1:])
+
+
+def test_request_carries_its_document_only_when_it_is_about_one(client: TestClient) -> None:
+    bundle = make_ai_bundle(client)
+    one = add_jobs(bundle.id, 2)
+    for job_id in one:
+        run_in_session(lambda session, job_id=job_id: _set_document(session, job_id, bundle.document_id))
+    mixed = add_jobs(bundle.id, 2)
+    run_in_session(lambda session: _set_document(session, mixed[0], bundle.document_id))
+    add_jobs(bundle.id)
+
+    by_first = {request["request_id"]: request for request in get_recent(client)["requests"]}
+    shapes = sorted((request["total"], request["document_id"] is not None) for request in by_first.values())
+
+    assert shapes == [(1, False), (2, False), (2, True)]
+    (with_doc,) = [request for request in by_first.values() if request["document_id"] is not None]
+    assert with_doc["document_file_name"].startswith("SYNTHETIC_")
+    # 실행 중이 없으면 비어 있다
+    assert all(request["running_started_at"] is None for request in by_first.values())
+
+
 def test_requests_group_their_jobs_and_count_progress(client: TestClient) -> None:
     bundle_id = make_bundle(client, "Progress")
     first = add_jobs(bundle_id, 3)
@@ -135,7 +178,8 @@ def test_requests_group_their_jobs_and_count_progress(client: TestClient) -> Non
 
     body = get_recent(client)
 
-    newer, older = body["requests"]
+    # 아직 도는 요청(older)이 끝난 더 새 요청보다 앞이다
+    older, newer = body["requests"]
     assert body["requests_total"] == 2
     assert (newer["kind"], newer["total"], newer["jobs"]["done"]) == ("translate", 2, 2)
     assert newer["finished_at"] is not None  # 모든 작업이 끝났다
