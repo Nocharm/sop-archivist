@@ -87,6 +87,8 @@ class SkippedOut(BaseModel):
 
 class AiRequestOut(BaseModel):
     queued: int
+    # 이번에 쌓은 작업들의 묶음 값 — GET /api/ai/jobs/recent의 request_id와 같다. 쌓인 게 없으면 null
+    request_id: str | None = None
     skipped_total: int
     skipped: list[SkippedOut]  # 앞쪽 MAX_SKIPPED_REPORTED건
     # 건너뛴 단위 전체의 사유별 수(합 = skipped_total) — 화면이 "왜 0건인지"를 잘린 목록 없이 말한다
@@ -102,6 +104,55 @@ class AiJobCounts(BaseModel):
     failed: int = 0
     stale: int = 0
     cancelled: int = 0
+
+
+class RecentJobOut(BaseModel):
+    """최근 작업 한 줄 — 요청한 사람은 이름 없이 나인지만 싣는다."""
+
+    id: int
+    request_id: str
+    bundle_id: int
+    bundle_code: str
+    bundle_title: str
+    kind: str
+    status: str
+    error: str  # 실패 코드(빈 글자 = 없음)
+    document_id: int | None
+    document_title: str  # 문서가 없거나 지워졌으면 빈 글자
+    document_file_name: str
+    unit_count: int
+    target_count: int
+    attempts: int
+    requested_by_me: bool
+    created_at: KstDatetime
+    started_at: KstDatetime | None
+    finished_at: KstDatetime | None
+
+
+class RecentRequestOut(BaseModel):
+    """요청 한 번의 진행 — 작업 목록의 상한과 상관없이 그 요청의 모든 작업을 센다("n / N" = 끝난 수 / total)."""
+
+    request_id: str
+    bundle_id: int
+    bundle_code: str
+    bundle_title: str
+    kind: str  # 요청의 첫 작업 종류(짝 맞추기는 match_plan — 뒤에 쌓이는 match 작업도 이 요청으로 센다)
+    kinds: list[str]  # 이 요청에 든 작업 종류 전부(정렬)
+    requested_by_me: bool
+    total: int
+    jobs: AiJobCounts
+    error_counts: dict[str, int]  # 실패 코드 → 건수(failed만)
+    created_at: KstDatetime  # 첫 작업이 쌓인 때
+    started_at: KstDatetime | None  # 가장 이른 시작
+    finished_at: KstDatetime | None  # 모든 작업이 끝났을 때 가장 늦은 끝, 아니면 null
+
+
+class RecentJobsOut(BaseModel):
+    server_time: KstDatetime  # 화면이 "오래 도는 중"을 판단하는 기준 시각
+    jobs: list[RecentJobOut]  # 최신 순, 앞쪽 MAX_RECENT_JOBS건
+    jobs_total: int  # 범위 안 작업 전체 수
+    requests: list[RecentRequestOut]  # 최신 순, 앞쪽 MAX_RECENT_REQUESTS건
+    requests_total: int
 
 
 class AdoptionStats(BaseModel):

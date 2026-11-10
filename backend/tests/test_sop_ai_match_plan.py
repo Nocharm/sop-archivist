@@ -4,6 +4,7 @@ import json
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, TypeVar
+from unittest.mock import ANY
 
 import httpx2
 import pytest
@@ -32,6 +33,7 @@ from tests.ai_fixtures import (
     read_target,
     request_match,
     run_jobs,
+    run_plan,
     use_reply,
     use_vectors,
 )
@@ -134,7 +136,7 @@ def test_match_request_queues_one_plan_job_for_the_bundle(client: TestClient, fa
 
     response = request_match(client, bundle.id)
 
-    assert response.json() == {"queued": 1, "skipped_total": 0, "skipped": [], "skipped_by_reason": {}}
+    assert response.json() == {"queued": 1, "request_id": ANY, "skipped_total": 0, "skipped": [], "skipped_by_reason": {}}
     (job,) = read_rows(AiJob)
     assert (job.kind, job.status, job.unit_ids, job.target_ids) == ("match_plan", "queued", [], [])
     assert job.requested_by == AUTHOR["X-Dev-User"]
@@ -147,7 +149,7 @@ def test_active_plan_job_reports_already_queued(client: TestClient, fake_ai: Fak
     body = request_match(client, bundle.id).json()
 
     assert body == {
-        "queued": 0, "skipped_total": 1, "skipped": [{"unit_id": 0, "reason": "already_queued"}],
+        "queued": 0, "request_id": None, "skipped_total": 1, "skipped": [{"unit_id": 0, "reason": "already_queued"}],
         "skipped_by_reason": {"already_queued": 1},
     }
     assert len(read_jobs("match_plan")) == 1
@@ -161,6 +163,18 @@ def test_active_llm_job_also_blocks_a_new_plan(client: TestClient, fake_ai: Fake
     body = request_match(client, bundle.id).json()
 
     assert body["queued"] == 0 and body["skipped"][0]["reason"] == "already_queued"
+
+
+def test_sentence_jobs_continue_the_plan_request(client: TestClient, fake_ai: FakeAi) -> None:
+    # 사람이 낸 짝 맞추기 요청 하나의 진행(n / N)에 계획 작업이 쌓은 변경 종류 작업도 든다
+    bundle = make_match_bundle(client, p(OLD_1), p(NEW_1))
+    request_id = request_match(client, bundle.id).json()["request_id"]
+
+    run_plan()
+
+    (plan_job,) = read_jobs("match_plan")
+    (sentence_job,) = read_jobs()
+    assert plan_job.request_id == sentence_job.request_id == request_id
 
 
 def test_match_request_needs_ai_an_author_and_an_editable_bundle(

@@ -574,6 +574,7 @@ class MatchPlanHandler:
             by_kind[loaded.olds[group.old_ids[0]].item.kind].append(group)
         enqueue_jobs(
             session, bundle_id=job.bundle_id, kind=MATCH_KIND, requested_by=job.requested_by,
+            request_id=job.request_id,  # 사람이 낸 짝 맞추기 요청 하나로 진행을 센다
             items=[
                 JobItem(
                     document_id=loaded.olds[group.old_ids[0]].document_id, unit_ids=group.old_ids,

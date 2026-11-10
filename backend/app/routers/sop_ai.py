@@ -1,4 +1,4 @@
-"""AI API — 분류·번역·짝 맞추기·복합 문장 나누기 요청(작성자, AI가 켜져 있을 때), 한/영 따로 짝 제안 요청(작성자, 임베딩이 켜져 있을 때)과 작업 현황·제안 읽기(멤버)·나누기 제안 채택 기록·취소·실패분 다시 시도(작성자, 작업 중 묶음만). 요청 말고는 AI가 꺼져 있어도 동작한다."""
+"""AI API — 내가 멤버인 묶음 전체의 최근 작업 목록(멤버), 분류·번역·짝 맞추기·복합 문장 나누기 요청(작성자, AI가 켜져 있을 때), 한/영 따로 짝 제안 요청(작성자, 임베딩이 켜져 있을 때)과 작업 현황·제안 읽기(멤버)·나누기 제안 채택 기록·취소·실패분 다시 시도(작성자, 작업 중 묶음만). 요청 말고는 AI가 꺼져 있어도 동작한다."""
 
 from collections.abc import Sequence
 from typing import Annotated, Literal
@@ -6,6 +6,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import get_current_user
 from app.db import get_session
 from app.settings import settings
 from app.sop.ai.adoption import list_suggestions, load_adoption_stats, load_suggestion, record_split_adoption
@@ -21,6 +22,7 @@ from app.sop.ai.jobs import (
 )
 from app.sop.ai.match_jobs import MATCH_PLAN_KIND, select_match_items
 from app.sop.ai.pairing import PAIR_KIND, select_pair_items
+from app.sop.ai.recent import list_recent_jobs
 from app.sop.ai.schemas import (
     AdoptionIn,
     AiRequestOut,
@@ -29,6 +31,7 @@ from app.sop.ai.schemas import (
     JobKind,
     JobKindIn,
     PairRequestIn,
+    RecentJobsOut,
     RetryOut,
     ScopeIn,
     SkippedOut,
@@ -41,10 +44,12 @@ from app.sop.ai.translate import TRANSLATE_KIND, select_translate_items
 from app.sop.constants import MEMBER_ROLES
 from app.sop.errors import raise_rule
 from app.sop.events import record_event
-from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
+from app.sop.membership import BundleContext, ensure_active_account, ensure_editable, lock_bundle, require_bundle_role
 from app.sop.tobe import MAX_DB_INT
 
 router = APIRouter(prefix="/api/bundles/{bundle_id}/ai", tags=["sop-ai"])
+# 묶음을 가로지르는 읽기 — 묶음 경로가 없어 멤버십은 질의가 거른다(권한과 별개, 역할 무관)
+jobs_router = APIRouter(prefix="/api/ai/jobs", tags=["sop-ai"])
 
 _require_author = require_bundle_role("author")
 _require_member = require_bundle_role(*MEMBER_ROLES)
@@ -77,7 +82,7 @@ async def _queue_request(
             target_ids=[job.id for job in jobs], reason=kind,
         )
     await session.commit()
-    return build_request_out(len(jobs), skipped)
+    return build_request_out(len(jobs), skipped, jobs[0].request_id if jobs else None)
 
 
 @router.post("/classify", response_model=AiRequestOut, dependencies=[Depends(require_ai_enabled)])
@@ -232,3 +237,12 @@ async def retry_jobs(
     )
     await session.commit()
     return RetryOut(queued=queued)
+
+
+@jobs_router.get("/recent", response_model=RecentJobsOut)
+async def get_recent_jobs(
+    login_id: str = Depends(get_current_user), session: AsyncSession = Depends(get_session)
+) -> RecentJobsOut:
+    """내가 멤버인 묶음의 대기·실행 중 작업과 하루 안에 끝난 작업 — 상단 바 표시가 묶음과 상관없이 읽는다."""
+    await ensure_active_account(session, login_id)
+    return await list_recent_jobs(session, login_id)

@@ -296,7 +296,11 @@ def test_check_constraint_names_and_older_checks_survive(engine: Engine) -> None
 def test_ai_tables_are_indexed_for_their_lookups(engine: Engine) -> None:
     # 작업 큐는 (status, id)로 다음 작업을 고르고, CASCADE가 닿는 FK는 인덱스가 있어야 PG에서 순차 스캔하지 않는다
     expected = {
-        "ai_jobs": {"ix_ai_jobs_bundle_id", "ix_ai_jobs_status_id", "ix_ai_jobs_document_id"},
+        "ai_jobs": {
+            "ix_ai_jobs_bundle_id", "ix_ai_jobs_status_id", "ix_ai_jobs_document_id",
+            # 최근 작업 목록: 요청별 집계와 묶음마다 하루 안에 끝난 작업 찾기
+            "ix_ai_jobs_request_id", "ix_ai_jobs_bundle_id_finished_at",
+        },
         "ai_suggestions": {"ix_ai_suggestions_job_id", "ix_ai_suggestions_bundle_id", "ix_ai_suggestions_document_id"},
         # 제안·문서가 지워질 때 SET NULL이 이 칸들을 찾는다 — 묶음 삭제가 제안 행마다 표 전체를 훑지 않게
         "unit_decisions": {"ix_unit_decisions_suggestion_id"},
@@ -311,6 +315,8 @@ def test_ai_tables_are_indexed_for_their_lookups(engine: Engine) -> None:
         assert names <= {index["name"] for index in inspector.get_indexes(table)}, table
     status_index = next(i for i in inspector.get_indexes("ai_jobs") if i["name"] == "ix_ai_jobs_status_id")
     assert status_index["column_names"] == ["status", "id"]
+    window_index = next(i for i in inspector.get_indexes("ai_jobs") if i["name"] == "ix_ai_jobs_bundle_id_finished_at")
+    assert window_index["column_names"] == ["bundle_id", "finished_at"]
 
 
 def test_embedding_cache_is_keyed_by_model_and_text_hash(engine: Engine) -> None:

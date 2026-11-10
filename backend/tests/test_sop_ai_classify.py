@@ -4,6 +4,7 @@ import json
 import re
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import ANY
 
 import httpx2
 import pytest
@@ -132,7 +133,7 @@ def test_request_queues_one_job_per_pair(client: TestClient, fake_ai: FakeAi) ->
     response = request_classify(client, bundle.id, unit_ids=[ko, en])
 
     assert response.status_code == 200, response.text
-    assert response.json() == {"queued": 1, "skipped_total": 0, "skipped": [], "skipped_by_reason": {}}
+    assert response.json() == {"queued": 1, "request_id": ANY, "skipped_total": 0, "skipped": [], "skipped_by_reason": {}}
     job = read_single_job()
     assert (job.kind, job.status, job.unit_ids) == ("classify", "queued", [ko, en])
     assert (job.document_id, job.requested_by) == (bundle.document_id, "qa.member")
@@ -156,7 +157,7 @@ def test_request_for_one_side_brings_its_pair_mate(client: TestClient, fake_ai: 
 
     body = request_classify(client, bundle.id, unit_ids=[en]).json()
 
-    assert body == {"queued": 1, "skipped_total": 0, "skipped": [], "skipped_by_reason": {}}
+    assert body == {"queued": 1, "request_id": ANY, "skipped_total": 0, "skipped": [], "skipped_by_reason": {}}
     assert read_single_job().unit_ids == [ko, en]
 
 
@@ -186,7 +187,7 @@ def test_request_leaves_a_person_owned_mate_out(client: TestClient, fake_ai: Fak
 
     body = request_classify(client, bundle.id, unit_ids=[ko]).json()
 
-    assert body == {"queued": 1, "skipped_total": 0, "skipped": [], "skipped_by_reason": {}}
+    assert body == {"queued": 1, "request_id": ANY, "skipped_total": 0, "skipped": [], "skipped_by_reason": {}}
     assert read_single_job().unit_ids == [ko]
 
 
@@ -200,7 +201,7 @@ def test_request_does_not_bring_the_mate_of_a_skipped_unit(client: TestClient, f
     body = request_classify(client, bundle.id, unit_ids=[decided["id"]]).json()
 
     assert body == {
-        "queued": 0, "skipped_total": 1, "skipped": [{"unit_id": decided["id"], "reason": "not_unassigned"}],
+        "queued": 0, "request_id": None, "skipped_total": 1, "skipped": [{"unit_id": decided["id"], "reason": "not_unassigned"}],
         "skipped_by_reason": {"not_unassigned": 1},
     }
     assert read_rows(AiJob) == []
@@ -230,7 +231,7 @@ def test_chosen_units_can_ask_again_even_with_a_document_in_the_request(client: 
 
     body = request_classify(client, bundle.id, document_id=bundle.document_id, unit_ids=[ko, en]).json()
 
-    assert body == {"queued": 1, "skipped_total": 0, "skipped": [], "skipped_by_reason": {}}
+    assert body == {"queued": 1, "request_id": ANY, "skipped_total": 0, "skipped": [], "skipped_by_reason": {}}
 
 
 def test_repeated_document_requests_reach_the_tail_past_the_limit(
@@ -313,7 +314,7 @@ def test_duplicate_request_does_not_queue_twice(client: TestClient, fake_ai: Fak
     body = request_classify(client, bundle.id, unit_ids=[ko, en]).json()
 
     assert body == {
-        "queued": 0, "skipped_total": 2,
+        "queued": 0, "request_id": None, "skipped_total": 2,
         "skipped": [{"unit_id": ko, "reason": "already_queued"}, {"unit_id": en, "reason": "already_queued"}],
         "skipped_by_reason": {"already_queued": 2},
     }
@@ -1259,7 +1260,7 @@ def test_match_suggestion_is_not_overwritten_by_classify(client: TestClient, fak
     body = request_classify(client, bundle.id, unit_ids=[ko]).json()
 
     assert body == {
-        "queued": 0, "skipped_total": 1, "skipped": [{"unit_id": ko, "reason": "not_unassigned"}],
+        "queued": 0, "request_id": None, "skipped_total": 1, "skipped": [{"unit_id": ko, "reason": "not_unassigned"}],
         "skipped_by_reason": {"not_unassigned": 1},
     }
     assert read_decision(ko).suggestion_id == match_id
