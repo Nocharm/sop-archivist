@@ -2457,6 +2457,77 @@ def test_moving_only_the_source_resets_a_held_translation_depth(client: TestClie
     assert (load_translation(unit["id"]).wi_step, load_translation(unit["id"]).indent_level) == (2, 0)
 
 
+def test_marking_the_source_carries_a_confirmed_translation_without_a_hold(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, translation = make_settled_translation(client, fake_ai)
+    source = get_target(client, bundle.id, unit["id"])
+
+    response = put_order(
+        client, bundle.id, bundle.sop_id, [{"target_id": source["id"], "number_style": "note"}, {"target_id": translation.id}]
+    )
+
+    assert response.status_code == 200, response.text
+    assert {item["target_id"]: item["number_style"] for item in response.json()["items"]} == {
+        source["id"]: "note", translation.id: "note",
+    }
+    # 표시는 번호만 바꾸므로 확정 번역을 보류로 돌리지 않고 revision도 그대로다
+    followed = load_translation(unit["id"])
+    assert (followed.status, followed.number_style, followed.revision) == ("confirmed", "note", translation.revision)
+    (ko_item,) = read_slot_items(get_output_c(client, bundle.id, "ko"), "SOP-AI")
+    (en_item,) = read_slot_items(get_output_c(client, bundle.id, "en"), "SOP-AI")
+    assert (ko_item["number"], ko_item["number_style"]) == (None, "note")
+    assert (en_item["target_id"], en_item["number"], en_item["number_style"]) == (translation.id, None, "note")
+
+
+def test_a_translation_cannot_be_marked_apart_from_its_source(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, translation = make_settled_translation(client, fake_ai)
+    source = get_target(client, bundle.id, unit["id"])
+
+    alone = put_order(
+        client, bundle.id, bundle.sop_id,
+        [{"target_id": source["id"]}, {"target_id": translation.id, "number_style": "omitted"}],
+    )
+    together = put_order(
+        client, bundle.id, bundle.sop_id,
+        [{"target_id": source["id"], "number_style": "omitted"}, {"target_id": translation.id, "number_style": "omitted"}],
+    )
+
+    assert (alone.status_code, alone.json()["detail"]) == (
+        422, {"code": "translation_locked", "target_ids": [translation.id]},
+    )
+    assert together.status_code == 200, together.text
+    assert load_translation(unit["id"]).number_style == "omitted"
+
+
+def test_moving_the_source_to_another_slot_keeps_both_marks(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, translation = make_settled_translation(client, fake_ai)
+    source = get_target(client, bundle.id, unit["id"])
+    marked = put_order(
+        client, bundle.id, bundle.sop_id, [{"target_id": source["id"], "number_style": "note"}, {"target_id": translation.id}]
+    )
+    assert marked.status_code == 200, marked.text
+
+    response = save_source(client, bundle.id, unit["id"], slot_key=OTHER_SLOT)
+
+    # 표시는 앞뒤 줄에 기대지 않는 그 줄의 성격이라 다른 칸으로 옮겨도 남는다(깊이만 0으로 돌아간다)
+    assert response.status_code == 200, response.text
+    moved = load_translation(unit["id"])
+    assert (moved.slot_key, moved.number_style) == (OTHER_SLOT, "note")
+    (ko_item,) = read_slot_items(get_output_c(client, bundle.id, "ko"), "SOP-AI", OTHER_SLOT)
+    assert (ko_item["target_id"], ko_item["number"], ko_item["number_style"]) == (source["id"], None, "note")
+
+
+def test_a_new_translation_starts_with_its_source_mark(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit = make_assigned_unit(client)
+    source = get_target(client, bundle.id, unit["id"])
+    assert put_order(
+        client, bundle.id, bundle.sop_id, [{"target_id": source["id"], "number_style": "omitted"}]
+    ).status_code == 200
+
+    translation = translate(client, fake_ai, bundle.id, unit["id"])
+
+    assert translation.number_style == "omitted"
+
+
 def test_a_new_translation_starts_at_its_source_depth(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, unit = make_assigned_unit(client)
     source = get_target(client, bundle.id, unit["id"])

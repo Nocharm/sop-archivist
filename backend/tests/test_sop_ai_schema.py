@@ -286,7 +286,7 @@ def test_check_constraint_names_and_older_checks_survive(engine: Engine) -> None
         "ai_suggestions": {"ck_ai_suggestions_result", "ck_ai_suggestions_adoption"},
         # 0007이 sqlite 배치로 다시 만드는 표 — 기존 CHECK가 빠지지 않아야 한다
         "unit_decisions": {"ck_unit_decisions_status"},
-        "target_sentences": {"ck_target_sentences_status"},
+        "target_sentences": {"ck_target_sentences_status", "ck_target_sentences_number_style"},
     }
     inspector = inspect(engine)
     for table, names in expected.items():

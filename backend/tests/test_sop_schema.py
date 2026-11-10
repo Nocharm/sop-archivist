@@ -280,14 +280,14 @@ def test_bundle_delete_cascades(engine: Engine) -> None:
 
 def test_check_constraint_names(engine: Engine) -> None:
     expected = {
-        "bundles": "ck_bundles_status",
-        "bundle_members": "ck_bundle_members_role",
-        "unit_decisions": "ck_unit_decisions_status",
-        "target_sentences": "ck_target_sentences_status",
+        "bundles": {"ck_bundles_status"},
+        "bundle_members": {"ck_bundle_members_role"},
+        "unit_decisions": {"ck_unit_decisions_status"},
+        "target_sentences": {"ck_target_sentences_status", "ck_target_sentences_number_style"},
     }
     inspector = inspect(engine)
-    for table, name in expected.items():
-        assert {ck["name"] for ck in inspector.get_check_constraints(table)} == {name}
+    for table, names in expected.items():
+        assert {ck["name"] for ck in inspector.get_check_constraints(table)} == names
 
 
 def test_target_doc_fks_leave_ondelete_unset(engine: Engine) -> None:

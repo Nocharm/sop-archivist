@@ -120,7 +120,7 @@ def _follow_source(target: TargetSentence, source: TargetSentence) -> None:
     target.target_doc_id, target.slot_key = source.target_doc_id, source.slot_key
     target.wi_step, target.wi_part, target.section_path = source.wi_step, source.wi_part, source.section_path
     target.cell_row, target.cell_col, target.parent_target_id = source.cell_row, source.cell_col, source.parent_target_id
-    target.indent_level = source.indent_level
+    target.indent_level, target.number_style = source.indent_level, source.number_style
 
 
 async def sweep_translations(

@@ -6,7 +6,7 @@ XML에 못 쓰는 문자는 바꾸고 =·+·-·@로 시작하는 글도 수식�
 
 import re
 import unicodedata
-from collections.abc import Iterator, Sequence
+from collections.abc import Collection, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from io import BytesIO
@@ -19,6 +19,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from app.clock import KST
+from app.sop.constants import NUMBER_NOTE
 from app.sop.flow_image import draw_flow_png
 from app.sop.output_labels import LABELS, OutputLabels
 from app.sop.outputs import (
@@ -42,11 +43,13 @@ _FORMULA_LEADS = ("=", "+", "-", "@")
 _FILE_NAME_FORBIDDEN_RE = re.compile(r'[\\/:*?"<>|]')
 _WRAP_TOP = Alignment(wrap_text=True, vertical="top")
 _BOLD = Font(bold=True)
+_ITALIC = Font(italic=True)  # 주석 줄(번호 없이 기울임)의 글 칸
 _HEADER_FILL = PatternFill("solid", fgColor="E8EAF0")
 
 # 결과물 A 칸 순서(스펙 §7.13) — 표시 ID 칸은 이어짐 표시가 들어가는 칸이다
 A_ID_COLUMN = 5
 A_COLUMN_WIDTHS = (8, 12, 8, 26, 14, 50, 14, 14, 26, 28, 12, 50, 40, 14, 14, 28, 10, 14, 18, 40)
+A_NOTE_COLUMNS = (12, 13)  # 보낸 새 문장이 주석 줄이면 기울여 쓰는 칸 — 확정 문장·AI 제안 문장
 # 결과물 C — 문서·칸·항목·표 칸이 들여쓰기 열이고 나머지는 항목의 세부다. 번호 열은 칸·항목의 섹션 번호(outputs가 센 값)
 (C_DOC, C_SECTION, C_NUMBER, C_ITEM, C_CELL, C_POSITION, C_ID, C_AI, C_CHANGE, C_STATUS, C_SOURCE, C_MOVE, C_REASON) = (
     range(13)
@@ -231,15 +234,23 @@ def _put_header_row(sheet: Worksheet, row: int, headers: Sequence[str]) -> None:
         cell.font, cell.fill = _BOLD, _HEADER_FILL
 
 
-def _put_chunked_row(sheet: Worksheet, row: int, cells: Sequence[str], id_column: int, continued: str) -> int:
-    """한 줄을 쓴다. 칸 한계를 넘는 글은 다음 줄들에 이어 싣고, 이어진 줄의 표시 ID 칸에 이어짐 표시를 둔다. 다음 빈 줄 번호를 돌려준다."""
+def _put_chunked_row(
+    sheet: Worksheet, row: int, cells: Sequence[str], id_column: int, continued: str,
+    italic_columns: Collection[int] = (),
+) -> int:
+    """한 줄을 쓴다. 칸 한계를 넘는 글은 다음 줄들에 이어 싣고, 이어진 줄의 표시 ID 칸에 이어짐 표시를 둔다. 다음 빈 줄 번호를 돌려준다.
+
+    italic_columns(1부터 센 열)의 글은 이어진 조각까지 기울여 쓴다 — 주석 줄 표시다.
+    """
     pieces = [split_cell_text(text) for text in cells]
     height = max(len(chunks) for chunks in pieces)
     for offset in range(height):
         for column, chunks in enumerate(pieces, start=1):
             text = continued if offset and column == id_column else (chunks[offset] if offset < len(chunks) else "")
             if text:
-                _put_text(sheet, row + offset, column, text)
+                cell = _put_text(sheet, row + offset, column, text)
+                if column in italic_columns and not (offset and column == id_column):
+                    cell.font = _ITALIC
     return row + height
 
 
@@ -306,7 +317,10 @@ def _write_sheet_a(sheet: Worksheet, snap: BundleSnapshot, lang: Lang, labels: E
     _put_header_row(sheet, 2, labels.a_headers)
     next_row = 3
     for row in build_output_a(snap, lang):
-        next_row = _put_chunked_row(sheet, next_row, _list_a_cells(row, labels, output), A_ID_COLUMN, output.continued)
+        next_row = _put_chunked_row(
+            sheet, next_row, _list_a_cells(row, labels, output), A_ID_COLUMN, output.continued,
+            A_NOTE_COLUMNS if row.dest_is_note else (),
+        )
     _set_widths(sheet, A_COLUMN_WIDTHS)
     sheet.freeze_panes = "A3"
     sheet.auto_filter.ref = f"A2:{get_column_letter(len(labels.a_headers))}{max(next_row - 1, 2)}"
@@ -361,12 +375,15 @@ def _write_sheet_b(sheet: Worksheet, snap: BundleSnapshot, lang: Lang, labels: E
 # --- C 새 문서 ---
 
 
-def _make_c_cells(values: dict[int, str]) -> list[str]:
-    return [values.get(column, "") for column in range(len(C_COLUMN_WIDTHS))]
+_CRow = tuple[list[str], frozenset[int]]  # 칸 글과 기울여 쓸 열(1부터 센다)
 
 
-def _list_c_item_cells(item: CItem, depth: int, labels: ExcelLabels, output: OutputLabels) -> Iterator[list[str]]:
-    """새 문장 한 줄과, 표 새 문장이면 그 칸 새 문장들(한 단계 더 들여쓴 열)."""
+def _make_c_cells(values: dict[int, str], italic: Collection[int] = ()) -> _CRow:
+    return [values.get(column, "") for column in range(len(C_COLUMN_WIDTHS))], frozenset(column + 1 for column in italic)
+
+
+def _list_c_item_cells(item: CItem, depth: int, labels: ExcelLabels, output: OutputLabels) -> Iterator[_CRow]:
+    """새 문장 한 줄과, 표 새 문장이면 그 칸 새 문장들(한 단계 더 들여쓴 열). 주석 줄은 항목·AI 제안 글을 기울여 쓴다."""
     marker = {"table": labels.table_marker, "figure": labels.figure_marker}.get(item.kind, "")
     values = {
         C_ITEM + depth: item.text or marker,
@@ -379,7 +396,7 @@ def _list_c_item_cells(item: CItem, depth: int, labels: ExcelLabels, output: Out
         values[C_NUMBER] = item.number
     if item.cell_row is not None and item.cell_col is not None:
         values[C_POSITION] = labels.cell_position.format(row=item.cell_row + 1, col=item.cell_col + 1)
-    yield _make_c_cells(values)
+    yield _make_c_cells(values, (C_ITEM + depth, C_AI) if item.number_style == NUMBER_NOTE else ())
     for child in item.children:
         yield from _list_c_item_cells(child, depth + 1, labels, output)
 
@@ -388,7 +405,7 @@ def _format_old_ref(doc_code: str, section: str) -> str:
     return f"{doc_code} §{section}" if section else doc_code
 
 
-def _list_c_cells(snap: BundleSnapshot, lang: Lang, labels: ExcelLabels) -> Iterator[list[str]]:
+def _list_c_cells(snap: BundleSnapshot, lang: Lang, labels: ExcelLabels) -> Iterator[_CRow]:
     """결과물 C를 줄 단위 칸 글로 — 새 문서, 그 칸, 항목 순으로 들여쓰고 끝에 삭제·다른 문서로 이동을 따로 둔다."""
     output, result = LABELS[lang], build_output_c(snap, lang)
     for doc in result.docs:
@@ -425,8 +442,8 @@ def _write_sheet_c(sheet: Worksheet, snap: BundleSnapshot, lang: Lang, labels: E
     _put_status_line(sheet, labels, snap)
     _put_header_row(sheet, 2, labels.c_headers)
     next_row = 3
-    for cells in _list_c_cells(snap, lang, labels):
-        next_row = _put_chunked_row(sheet, next_row, cells, C_ID + 1, LABELS[lang].continued)
+    for cells, italic in _list_c_cells(snap, lang, labels):
+        next_row = _put_chunked_row(sheet, next_row, cells, C_ID + 1, LABELS[lang].continued, italic)
     _set_widths(sheet, C_COLUMN_WIDTHS)
     sheet.freeze_panes = "A3"
 
