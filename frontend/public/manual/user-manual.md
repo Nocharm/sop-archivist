@@ -125,6 +125,8 @@ Bundle은 함께 재구성할 문서 묶음입니다. Old SOP 여러 편과 새�
 
 ![Documents 화면](img/documents.png "올린 문서 목록. 문서 번호·버전·언어 배치는 자동으로 채워진다")
 
+본문 폭이 좁으면 표의 뒤쪽이 두 줄로 접힙니다. 윗줄에 **Extraction**·**Aux check** 알약과 줄 단추가, 아랫줄에 경고가 놓입니다(경고가 없는 줄은 아랫줄이 비어 있습니다).
+
 ### 올리기 {#upload}
 
 ![Upload documents 창](img/upload.png "올릴 종류를 먼저 고르고 파일을 넣는다")

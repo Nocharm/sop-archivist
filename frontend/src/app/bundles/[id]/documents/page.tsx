@@ -30,6 +30,7 @@ import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { saveBlob } from "@/lib/save-file";
 import { useListView } from "@/lib/use-list-view";
 import { useAiJobs } from "@/lib/use-ai-jobs";
+import { useElementWidth } from "@/lib/use-element-width";
 import { useLoaded } from "@/lib/use-loaded";
 
 const SKELETON_ROWS = 4;
@@ -39,6 +40,9 @@ const LIST_KEY = "documents";
 // 동작 칸이 미리 잡는 폭 - 아이콘 단추 셋(32px × 3 + 사이 2px × 2). 라벨은 이 자리 밖 왼쪽으로 겹쳐 펼쳐져(.mbtn-set) 다른 열이 움직이지 않는다.
 // 가장 긴 라벨이 다 펼쳐질 폭(약 200px)을 잡으면 표가 본문 폭(1280)을 넘어 제목 열이 줄어든다
 const ACTIONS_WIDTH = "w-[100px]";
+
+// 표가 이 폭(본문 폭, px)에 다 들어가지 않으면 뒤쪽 네 열(추출·보조·경고·동작)을 한 열 두 줄로 접는다 - 한 줄 배치의 표 최소 폭(영어 약 1223, 한국어 약 1176)보다 조금 크게
+const TRAIL_WRAP_BELOW = 1230;
 
 export default function DocumentsPage() {
   const { t } = useI18n();
@@ -50,6 +54,9 @@ export default function DocumentsPage() {
   const [deleting, setDeleting] = useState<SopDocument | null>(null);
   const [previewing, setPreviewing] = useState<SopDocument | null>(null);
   const view = useListView(LIST_KEY);
+  const [hostRef, hostWidth] = useElementWidth();
+  // 카드는 열 정의가 자리(card)로만 쓰여 접을 일이 없다 - 접는 건 표뿐
+  const isTrailWrapped = view === "table" && hostWidth !== null && hostWidth < TRAIL_WRAP_BELOW;
   // 업로드 뒤 AI가 비운 번호·버전을 묻는 작업이 끝나면 목록을 다시 읽어 제안이 바로 보이게 한다
   const aiJobs = useAiJobs(bundleId, reload);
 
@@ -83,6 +90,56 @@ export default function DocumentsPage() {
 
   // Old 구역 먼저, New 구역 다음 - 구역 안 순서는 서버가 준 그대로
   const rows = data === null ? null : [...data.filter((document) => document.side === "old"), ...data.filter((document) => document.side !== "old")];
+
+  const renderActions = (document: SopDocument) => (
+    <span className={`mbtn-set ${ACTIONS_WIDTH}`}>
+      {document.status === "ready" && (
+        <MorphButton icon={Eye} label={t("documents.preview")} testId={`documents-${document.id}-preview`} onClick={() => setPreviewing(document)} />
+      )}
+      {document.status === "ready" && (
+        <MorphButton icon={Download} label={t("manage.downloadOriginal")} testId={`documents-${document.id}-download`} onClick={() => void handleDownload(document)} />
+      )}
+      {canEdit && <MorphButton icon={Trash2} tone="danger" label={t("documents.deleteShort")} testId={`documents-${document.id}-delete`} onClick={() => setDeleting(document)} />}
+    </span>
+  );
+  const renderWarnings = (document: SopDocument) => <WarningChips warnings={document.extraction?.warnings ?? []} testId={`documents-${document.id}-warnings`} />;
+
+  // 뒤쪽 네 열 - 한 줄 배치(넓을 때와 카드). 카드는 status·aux가 배지, actions가 아랫줄 단추 자리다
+  const statusColumn: DataColumn<SopDocument> = { key: "status", header: t("documents.colExtraction"), card: "badge", className: "align-middle", skeletonWidth: 56, cell: (document) => <DocStatusPill status={document.status} testId={`documents-${document.id}-status`} /> };
+  const auxColumn: DataColumn<SopDocument> = { key: "aux", header: t("documents.colAux"), card: "badge", className: "align-middle", skeletonWidth: 64, cell: (document) => <AuxPill document={document} testId={`documents-${document.id}-aux`} /> };
+  const warningsColumn: DataColumn<SopDocument> = { key: "warnings", header: t("documents.colWarnings"), className: "align-middle", skeletonWidth: 80, cell: renderWarnings };
+  const actionsColumn: DataColumn<SopDocument> = {
+    key: "actions",
+    header: <span className="sr-only">{t("manage.rowActions")}</span>,
+    card: "actions",
+    className: "align-middle",
+    skeletonWidth: 40,
+    cell: renderActions,
+  };
+  // 좁을 때 한 열 두 줄 - 윗줄은 알약(왼쪽)과 줄 단추(오른쪽), 아랫줄은 경고를 길게(없으면 아랫줄을 비운다). 라벨이 펼쳐지는 곳은 윗줄뿐이라 경고를 덮지 않는다
+  const trailColumn: DataColumn<SopDocument> = {
+    key: "trail",
+    header: `${t("documents.colExtraction")} · ${t("documents.colAux")}`,
+    card: "none",
+    className: "align-middle",
+    minWidth: 290,
+    skeletonWidth: 200,
+    cell: (document) => {
+      const hasWarnings = (document.extraction?.warnings ?? []).length > 0;
+      return (
+        <span className="flex flex-col gap-1">
+          <span className="flex items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5">
+              <DocStatusPill status={document.status} testId={`documents-${document.id}-status`} />
+              <AuxPill document={document} testId={`documents-${document.id}-aux`} />
+            </span>
+            {renderActions(document)}
+          </span>
+          {hasWarnings && renderWarnings(document)}
+        </span>
+      );
+    },
+  };
 
   // 제목 칸만 여러 줄이라 나머지 칸은 줄 가운데에 맞춘다(align-middle)
   const columns: DataColumn<SopDocument>[] = [
@@ -184,33 +241,7 @@ export default function DocumentsPage() {
           <span className="text-ink-4">–</span>
         ),
     },
-    { key: "status", header: t("documents.colExtraction"), card: "badge", className: "align-middle", skeletonWidth: 56, cell: (document) => <DocStatusPill status={document.status} testId={`documents-${document.id}-status`} /> },
-    { key: "aux", header: t("documents.colAux"), card: "badge", className: "align-middle", skeletonWidth: 64, cell: (document) => <AuxPill document={document} testId={`documents-${document.id}-aux`} /> },
-    {
-      key: "warnings",
-      header: t("documents.colWarnings"),
-      className: "align-middle",
-      skeletonWidth: 80,
-      cell: (document) => <WarningChips warnings={document.extraction?.warnings ?? []} testId={`documents-${document.id}-warnings`} />,
-    },
-    {
-      key: "actions",
-      header: <span className="sr-only">{t("manage.rowActions")}</span>,
-      card: "actions",
-      className: "align-middle",
-      skeletonWidth: 40,
-      cell: (document) => (
-        <span className={`mbtn-set ${ACTIONS_WIDTH}`}>
-          {document.status === "ready" && (
-            <MorphButton icon={Eye} label={t("documents.preview")} testId={`documents-${document.id}-preview`} onClick={() => setPreviewing(document)} />
-          )}
-          {document.status === "ready" && (
-            <MorphButton icon={Download} label={t("manage.downloadOriginal")} testId={`documents-${document.id}-download`} onClick={() => void handleDownload(document)} />
-          )}
-          {canEdit && <MorphButton icon={Trash2} tone="danger" label={t("documents.deleteShort")} testId={`documents-${document.id}-delete`} onClick={() => setDeleting(document)} />}
-        </span>
-      ),
-    },
+    ...(isTrailWrapped ? [trailColumn] : [statusColumn, auxColumn, warningsColumn, actionsColumn]),
   ];
 
   return (
@@ -249,6 +280,7 @@ export default function DocumentsPage() {
           }
         />
       ) : (
+        <div ref={hostRef}>
         <DataList
           view={view}
           rows={rows}
@@ -262,6 +294,7 @@ export default function DocumentsPage() {
           skeletonRows={SKELETON_ROWS}
           cardMinWidth={480}
         />
+        </div>
       )}
 
       {uploading && (
