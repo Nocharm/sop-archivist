@@ -6,6 +6,7 @@ import { X } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { MESSAGES } from "@/lib/i18n-messages";
 import type { SplitAiRequestResult } from "@/lib/use-split-ai";
+import { Tooltip } from "@/components/ui/tooltip";
 
 interface SplitAiResultProps {
   result: SplitAiRequestResult;
@@ -33,9 +34,11 @@ export function SplitAiResult({ result, onClose }: SplitAiResultProps) {
           </ul>
         )}
       </div>
-      <button type="button" className="btn ghost icon h-6 w-6 flex-none" aria-label={t("common.close")} data-testid="split-ai-result-close" onClick={onClose}>
-        <X size={13} strokeWidth={1.6} aria-hidden />
-      </button>
+      <Tooltip label={t("common.close")} align="end">
+        <button type="button" className="btn ghost icon h-6 w-6 flex-none" aria-label={t("common.close")} data-testid="split-ai-result-close" onClick={onClose}>
+          <X size={13} strokeWidth={1.6} aria-hidden />
+        </button>
+      </Tooltip>
     </div>
   );
 }

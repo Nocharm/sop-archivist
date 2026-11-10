@@ -32,6 +32,7 @@ import { BundleLoadError } from "@/components/bundle-load-error";
 import { Modal } from "@/components/modal";
 import { ReviewReturnNote } from "@/components/review-return-note";
 import { BundleStatusPill, RoleTag } from "@/components/status";
+import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import { Tooltip } from "@/components/ui/tooltip";
 import { WithdrawReviewButton } from "@/components/withdraw-review";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -301,6 +302,7 @@ function ReviewGate({ bundle, readiness, onRequestReview, onAddReviewer }: Revie
   const { t } = useI18n();
   const { data, error, isLoading, reload } = readiness;
   const showSkeleton = useDelayedFlag(isLoading && data === null);
+  const tip = useDelegatedTip();
   // 저장된 확인 값은 처음에 비어 있을 수 있어 전체 수는 항목 목록에서 센다
   const semanticTotal = SEMANTIC_CHECK_KEYS.length;
   const isAuthor = bundle.my_role === "author";
@@ -320,12 +322,14 @@ function ReviewGate({ bundle, readiness, onRequestReview, onAddReviewer }: Revie
       {error !== null && data === null ? (
         <div className="flex items-center gap-2 text-ink-2" data-testid="overview-gate-error">
           {humanizeApiError(error, t)}
-          <button type="button" className="btn ghost icon" aria-label={t("common.retry")} data-testid="overview-gate-retry" onClick={reload}>
-            <RefreshCw size={14} strokeWidth={1.5} aria-hidden />
-          </button>
+          <Tooltip label={t("common.retry")}>
+            <button type="button" className="btn ghost icon" aria-label={t("common.retry")} data-testid="overview-gate-retry" onClick={reload}>
+              <RefreshCw size={14} strokeWidth={1.5} aria-hidden />
+            </button>
+          </Tooltip>
         </div>
       ) : (
-        <div className="grid gap-2" data-testid="overview-gate-list">
+        <div className="grid gap-2" data-testid="overview-gate-list" {...tip.handlers}>
           {data === null ? (
             Array.from({ length: 4 }, (_, index) => <span key={index} className="block h-[34px]">{showSkeleton && <span className="sk h-full w-full" />}</span>)
           ) : (
@@ -338,7 +342,7 @@ function ReviewGate({ bundle, readiness, onRequestReview, onAddReviewer }: Revie
                     const stage = GATE_STAGE[line.key];
                     const body = (
                       <>
-                        <X size={15} strokeWidth={1.8} aria-label={t("gate.blocked")} />
+                        <X size={15} strokeWidth={1.8} aria-label={t("gate.blocked")} data-tip={t("gate.blocked")} />
                         <span>{line.label}</span>
                         <ChevronRight className="go-arrow" size={14} strokeWidth={1.5} aria-hidden />
                       </>
@@ -359,7 +363,7 @@ function ReviewGate({ bundle, readiness, onRequestReview, onAddReviewer }: Revie
                     }
                     return (
                       <div key={line.key} className="gate-card fail" data-testid={`overview-gate-${line.key}`}>
-                        <X size={15} strokeWidth={1.8} aria-label={t("gate.blocked")} />
+                        <X size={15} strokeWidth={1.8} aria-label={t("gate.blocked")} data-tip={t("gate.blocked")} />
                         {line.label}
                       </div>
                     );
@@ -371,7 +375,7 @@ function ReviewGate({ bundle, readiness, onRequestReview, onAddReviewer }: Revie
                   <span className="gate-group pass">{`Pass ${passed}`}</span>
                   {split.pass.map((line) => (
                     <div key={line.key} className="gate-card pass" data-testid={`overview-gate-${line.key}`} data-ok="">
-                      <Check size={15} strokeWidth={1.8} aria-label={t("gate.passed")} />
+                      <Check size={15} strokeWidth={1.8} aria-label={t("gate.passed")} data-tip={t("gate.passed")} />
                       {line.label}
                     </div>
                   ))}
@@ -384,6 +388,7 @@ function ReviewGate({ bundle, readiness, onRequestReview, onAddReviewer }: Revie
               )}
             </>
           )}
+          {tip.node}
         </div>
       )}
       {data?.notices.map((notice, index) => (

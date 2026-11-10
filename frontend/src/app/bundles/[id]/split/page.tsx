@@ -555,12 +555,16 @@ export default function SplitPage() {
           {/* ID와 확인 상태는 각각 한 줄 - 좁은 패널에서 접히지 않게 */}
           <div className="flex h-7 items-center gap-1">
             <Truncate className="min-w-0 flex-1 font-mono text-sm font-semibold" text={selected?.display_id ?? "–"} testId="split-unit-id" />
-            <button type="button" className="btn ghost icon h-7 w-7 flex-none" aria-label={t("split.prev")} data-testid="split-prev" onClick={() => moveSelection(-1)}>
-              <ArrowUp size={14} strokeWidth={1.5} aria-hidden />
-            </button>
-            <button type="button" className="btn ghost icon h-7 w-7 flex-none" aria-label={t("split.next")} data-testid="split-next" onClick={() => moveSelection(1)}>
-              <ArrowDown size={14} strokeWidth={1.5} aria-hidden />
-            </button>
+            <Tooltip label={t("split.prev")}>
+              <button type="button" className="btn ghost icon h-7 w-7 flex-none" aria-label={t("split.prev")} data-testid="split-prev" onClick={() => moveSelection(-1)}>
+                <ArrowUp size={14} strokeWidth={1.5} aria-hidden />
+              </button>
+            </Tooltip>
+            <Tooltip label={t("split.next")}>
+              <button type="button" className="btn ghost icon h-7 w-7 flex-none" aria-label={t("split.next")} data-testid="split-next" onClick={() => moveSelection(1)}>
+                <ArrowDown size={14} strokeWidth={1.5} aria-hidden />
+              </button>
+            </Tooltip>
           </div>
           {selected && (
             <div className="flex items-center gap-2 whitespace-nowrap" data-testid="split-unit-state">

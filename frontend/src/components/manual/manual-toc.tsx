@@ -5,7 +5,9 @@ import { FileText, Search, X } from "lucide-react";
 import { Fragment, useEffect, useRef, type MouseEvent, type RefObject } from "react";
 
 import { ReadStateIcon } from "@/components/manual/read-state";
+import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import { Collapse } from "@/components/ui/motion";
+import { Tooltip } from "@/components/ui/tooltip";
 import { useI18n } from "@/lib/i18n";
 import { getReadState, MANUAL_LANG, MANUAL_SOURCE_URL, type ManualDoc, type ManualSection, type ReadMarks } from "@/lib/manual";
 
@@ -32,6 +34,7 @@ const KEY_ROWS = [
 
 export function ManualToc({ doc, visible, marks, currentId, query, searchRef, onQueryChange, onOpen }: ManualTocProps) {
   const { t } = useI18n();
+  const tip = useDelegatedTip();
   const navRef = useRef<HTMLElement>(null);
   const done = doc.sections.filter((section) => getReadState(section, marks) === "read").length;
 
@@ -71,18 +74,20 @@ export function ManualToc({ doc, visible, marks, currentId, query, searchRef, on
             onChange={(event) => onQueryChange(event.target.value)}
           />
           {query !== "" && (
-            <button
-              type="button"
-              className="manual-search-clear"
-              aria-label={t("manual.searchClear")}
-              data-testid="manual-search-clear"
-              onClick={() => {
-                onQueryChange("");
-                searchRef.current?.focus();
-              }}
-            >
-              <X size={14} strokeWidth={1.5} aria-hidden />
-            </button>
+            <Tooltip label={t("manual.searchClear")} align="end">
+              <button
+                type="button"
+                className="manual-search-clear"
+                aria-label={t("manual.searchClear")}
+                data-testid="manual-search-clear"
+                onClick={() => {
+                  onQueryChange("");
+                  searchRef.current?.focus();
+                }}
+              >
+                <X size={14} strokeWidth={1.5} aria-hidden />
+              </button>
+            </Tooltip>
           )}
         </label>
         <div className="manual-progress">
@@ -96,7 +101,7 @@ export function ManualToc({ doc, visible, marks, currentId, query, searchRef, on
         </div>
       </div>
 
-      <nav ref={navRef} className="manual-toc" aria-label={t("manual.toc")} data-testid="manual-toc">
+      <nav ref={navRef} className="manual-toc" aria-label={t("manual.toc")} data-testid="manual-toc" {...tip.handlers}>
         {visible.map((section) => {
           const current = section.id === currentId;
           return (
@@ -125,6 +130,7 @@ export function ManualToc({ doc, visible, marks, currentId, query, searchRef, on
             </Fragment>
           );
         })}
+        {tip.node}
       </nav>
 
       <div className="manual-side-foot">

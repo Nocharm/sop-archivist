@@ -26,9 +26,9 @@ export function ReadStatePill({ state, testId }: { state: ReadState; testId: str
   return state === "updated" ? <Tooltip label={t("manual.updatedHint")}>{pill}</Tooltip> : pill;
 }
 
-/** 목차 줄 끝의 작은 표시 - 색은 줄의 data-state를 보고 CSS가 정한다 */
+/** 목차 줄 끝의 작은 표시 - 색은 줄의 data-state를 보고 CSS가 정한다. 목차가 길어 툴팁은 목차 쪽 `useDelegatedTip`이 `data-tip`으로 띄운다 */
 export function ReadStateIcon({ state }: { state: ReadState }) {
   const { t } = useI18n();
   const { Icon } = READ_STATE[state];
-  return <Icon size={14} strokeWidth={1.5} className="manual-toc-state" aria-label={t(`manual.state.${state}`)} />;
+  return <Icon size={14} strokeWidth={1.5} className="manual-toc-state" aria-label={t(`manual.state.${state}`)} data-tip={t(`manual.state.${state}`)} />;
 }

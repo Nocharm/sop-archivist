@@ -8,6 +8,7 @@ import { useEffect, useEffectEvent, useId, useRef, type KeyboardEvent as ReactKe
 import { isTopEscLayer, popEscLayer, pushEscLayer } from "@/components/ui/floating";
 import { useI18n } from "@/lib/i18n";
 import { BUTTON_ICON } from "@/lib/ui-classes";
+import { Tooltip } from "@/components/ui/tooltip";
 
 // Tab이 닿는 요소 - 꺼진 것과 숨긴 네이티브 입력(tabindex=-1)은 뺀다
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -114,9 +115,11 @@ export function Modal({ title, onClose, testId, children, footer, isBusy = false
           <h2 id={titleId} className="text-base font-semibold text-ink">
             {title}
           </h2>
-          <button type="button" data-testid={`${testId}-close`} data-modal-close className={BUTTON_ICON} aria-label={t("common.close")} disabled={isBusy} onClick={onClose}>
-            <X size={16} strokeWidth={1.5} />
-          </button>
+          <Tooltip label={t("common.close")} align="end">
+            <button type="button" data-testid={`${testId}-close`} data-modal-close className={BUTTON_ICON} aria-label={t("common.close")} disabled={isBusy} onClick={onClose}>
+              <X size={16} strokeWidth={1.5} />
+            </button>
+          </Tooltip>
         </div>
         <div data-modal-body className="space-y-4 px-4 py-4">{children}</div>
         {footer && <div className="flex justify-end gap-2 border-t border-line px-4 py-3">{footer}</div>}

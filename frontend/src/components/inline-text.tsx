@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useState, type KeyboardEvent } from "react";
 
 import { Truncate } from "@/components/ui/motion";
+import { Tooltip } from "@/components/ui/tooltip";
 
 // 보기·빈 칩·입력이 같은 상자다(높이 24, 테두리 1, 좌우 6) - 눌러 고치기로 바뀌어도 글자 자리와 칸 폭이 그대로다
 const BOX = "block h-6 max-w-full rounded-sm border px-1.5 text-left text-[13px] leading-[22px]";
@@ -105,9 +106,11 @@ export function InlineText({ value, placeholder, editable, testId, mono = false,
           <Truncate text={value} className="one-line" />
         </Link>
         <span className="row-actions">
-          <button type="button" className="btn ghost icon h-6 w-6" aria-label={editLabel ?? placeholder} data-testid={`${testId}-edit`} onClick={() => setDraft(value)}>
-            <Pencil size={13} strokeWidth={1.5} aria-hidden />
-          </button>
+          <Tooltip label={editLabel ?? placeholder}>
+            <button type="button" className="btn ghost icon h-6 w-6" aria-label={editLabel ?? placeholder} data-testid={`${testId}-edit`} onClick={() => setDraft(value)}>
+              <Pencil size={13} strokeWidth={1.5} aria-hidden />
+            </button>
+          </Tooltip>
         </span>
       </span>
     );

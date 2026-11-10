@@ -7,6 +7,7 @@ import { useSyncExternalStore } from "react";
 
 import { useI18n } from "@/lib/i18n";
 import { genId } from "@/lib/id";
+import { Tooltip } from "@/components/ui/tooltip";
 
 type ToastTone = "ok" | "error";
 
@@ -75,9 +76,11 @@ export function ToastHost() {
                 <CircleCheck size={16} strokeWidth={1.5} className="shrink-0 text-accent" aria-hidden />
               )}
               <span className="min-w-0">{toast.text}</span>
-              <button type="button" className="btn ghost icon h-6 w-6" aria-label={t("common.close")} data-testid={`toast-close-${toast.id}`} onClick={() => dismissToast(toast.id)}>
-                <X size={14} strokeWidth={1.5} aria-hidden />
-              </button>
+              <Tooltip label={t("common.close")} align="end">
+                <button type="button" className="btn ghost icon h-6 w-6" aria-label={t("common.close")} data-testid={`toast-close-${toast.id}`} onClick={() => dismissToast(toast.id)}>
+                  <X size={14} strokeWidth={1.5} aria-hidden />
+                </button>
+              </Tooltip>
             </div>
           </div>
         </div>

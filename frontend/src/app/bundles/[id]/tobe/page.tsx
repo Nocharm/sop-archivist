@@ -341,9 +341,11 @@ export default function ToBePage() {
                   const row = (
                     <tr key={doc.key} data-testid={`${prefix}-row`}>
                       <td>
-                        <button type="button" className="btn ghost icon h-6 w-6" aria-expanded={isOpen} aria-label={t("tobe.details")} data-testid={`${prefix}-toggle`} onClick={() => toggleOpen(doc.key)}>
-                          <ChevronRight size={14} strokeWidth={1.5} aria-hidden className={`transition-transform duration-[var(--dur-base)] ${isOpen ? "rotate-90" : ""}`} />
-                        </button>
+                        <Tooltip label={t("tobe.details")}>
+                          <button type="button" className="btn ghost icon h-6 w-6" aria-expanded={isOpen} aria-label={t("tobe.details")} data-testid={`${prefix}-toggle`} onClick={() => toggleOpen(doc.key)}>
+                            <ChevronRight size={14} strokeWidth={1.5} aria-hidden className={`transition-transform duration-[var(--dur-base)] ${isOpen ? "rotate-90" : ""}`} />
+                          </button>
+                        </Tooltip>
                       </td>
                       <td className={depth === 1 ? "pl-6" : undefined}>
                         <input
