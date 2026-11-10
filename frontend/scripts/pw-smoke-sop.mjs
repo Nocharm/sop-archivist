@@ -548,9 +548,24 @@ await runStep("assign: an AI split keeps both sentences when confirmed", {}, asy
   await page.keyboard.press("j");
   await page.keyboard.press("j");
   await page.locator('[data-testid="assign-ai-request"]').click();
+  // 상단 바 표시가 대기·실행 중을 보인다(워커가 2초마다 꺼내므로 요청 직후에는 대기 중이다)
+  await page.locator('[data-testid="top-bar-ai"][data-state="active"]').waitFor({ timeout: T });
+  check("the top bar shows the AI job in progress", (await getText(page, "top-bar-ai-active")).trim() === "1");
   // 폴링으로 제안이 저절로 들어온다(새로고침 없이)
   await page.waitForFunction(() => document.querySelector('[data-testid="assign-row-status"]')?.textContent?.includes("AI suggested"), null, { timeout: 30000 });
   check("the AI suggestion appears without a reload", true);
+  // 내가 한 요청이 끝나면 알림이 뜨고, 목록에는 끝난 요청이 n / N과 함께 남는다
+  await page.locator('[data-testid="toast-ok"]', { hasText: /^AI Classify finished · BND-/ }).first().waitFor({ timeout: 30000 });
+  check("a toast says the request finished", true);
+  await page.locator('[data-testid="top-bar-ai"]:not([data-state="active"])').waitFor({ timeout: T });
+  await page.locator('[data-testid="top-bar-ai"]').click();
+  await wait(page, "ai-jobs-popover");
+  const doneRow = page.locator('[data-testid^="ai-jobs-request-"][data-outcome="done"]').first();
+  await doneRow.waitFor({ timeout: T });
+  const progress = (await doneRow.locator('[data-testid$="-progress"]').innerText()).trim();
+  check("the job list shows the finished request with its progress", /^(\d+) \/ \1$/.test(progress), progress);
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="ai-jobs-popover"]').waitFor({ state: "detached", timeout: T });
   await page.locator('[data-testid^="assign-text-t"]').nth(1).waitFor({ timeout: T });
   const slots = await page.locator('[data-testid^="assign-text-t"]').count();
   check("both split sentences are shown", slots >= 2, String(slots));

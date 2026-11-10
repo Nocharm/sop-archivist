@@ -140,6 +140,8 @@ for (const theme of ["light", "dark"]) {
     ["review", `/bundles/${id}/review`, '[data-testid="output-c"]'],
     ["assign-ai", `/bundles/${aiId}/assign`, '[data-testid="assign-bar"]', async (page) => { await page.keyboard.press("j"); await page.locator('[data-testid="assign-rec-0"]').waitFor({ timeout: T }); }],
     ["outputs-ai", `/bundles/${aiId}/outputs`, '[data-testid="output-c"]'],
+    // 상단 바 AI 작업 목록을 연 상태 - 시드의 AI 제안 단계가 남긴 끝난 요청이 보인다
+    ["ai-jobs", `/bundles/${aiId}`, '[data-testid="top-bar-ai"]', async (page) => { await page.locator('[data-testid="top-bar-ai"]').click(); await page.locator('[data-testid^="ai-jobs-request-"]').first().waitFor({ timeout: T }); }],
     ["manual", "/manual", '[data-testid^="manual-unit-"]'],
     // 읽음 표시의 세 모양을 함께 본다 - 첫 조각은 글이 바뀐 것(Updated), 둘째는 방금 읽은 것(Read), 나머지는 Unread
     ["manual-marked", "/manual", '[data-testid^="manual-unit-"]', markManualPieces],
