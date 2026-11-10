@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
 from app.dev_users import DEV_USERS
-from app.sop.ai.constants import MAX_RECENT_JOBS, RECENT_JOBS_WINDOW_HOURS
+from app.sop.ai.constants import MAX_RECENT_JOBS, MAX_RECENT_REQUESTS, RECENT_JOBS_WINDOW_HOURS
 from app.sop.ai.jobs import JobItem, enqueue_jobs
 from app.sop.models import AiJob
 from tests.access_helpers import run_in_session
@@ -112,6 +112,18 @@ def test_jobs_are_newest_first_and_capped(client: TestClient) -> None:
     # 요청별 수는 작업 목록 상한과 상관없이 전부 센다
     (request,) = body["requests"]
     assert request["total"] == MAX_RECENT_JOBS + 5
+
+
+def test_requests_are_newest_first_and_capped(client: TestClient) -> None:
+    bundle_id = make_bundle(client, "Requests")
+    firsts = [add_jobs(bundle_id)[0] for _ in range(MAX_RECENT_REQUESTS + 3)]
+
+    body = get_recent(client)
+
+    assert body["requests_total"] == MAX_RECENT_REQUESTS + 3
+    by_job = {job["id"]: job["request_id"] for job in body["jobs"]}
+    newest = sorted(firsts, reverse=True)[:MAX_RECENT_REQUESTS]
+    assert [request["request_id"] for request in body["requests"]] == [by_job[job_id] for job_id in newest]
 
 
 def test_requests_group_their_jobs_and_count_progress(client: TestClient) -> None:

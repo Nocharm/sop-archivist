@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from sqlalchemy import ColumnElement, Row, func, or_, select
+from sqlalchemy import CompoundSelect, Row, func, select, union
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
@@ -32,13 +32,16 @@ class _RequestTally:
     errors: Counter[str] = field(default_factory=Counter)
 
 
-def _build_window_filter(login_id: str, since: datetime) -> list[ColumnElement[bool]]:
-    """멤버십(역할 무관)으로 묶음을 거르고, 끝난 작업은 since 뒤에 끝난 것만 남긴다."""
+def _build_window_ids(login_id: str, since: datetime) -> CompoundSelect:
+    """범위 안 작업 id — 대기·실행 중과 since 뒤에 끝난 작업을 따로 골라 합친다.
+
+    OR 한 조건으로 쓰면 인덱스를 못 탄다. 앞쪽은 (status, id), 뒤쪽은 (bundle_id, finished_at) 인덱스가 찾는다.
+    멤버십(역할 무관)으로 묶음을 거른다. 바깥 질의가 같은 표라 자동 상관을 끈다.
+    """
     member_bundles = select(BundleMember.bundle_id).where(BundleMember.login_id == login_id)
-    return [
-        AiJob.bundle_id.in_(member_bundles),
-        or_(AiJob.status.in_(ACTIVE_JOB_STATUSES), AiJob.finished_at >= since),
-    ]
+    active = select(AiJob.id).where(AiJob.status.in_(ACTIVE_JOB_STATUSES), AiJob.bundle_id.in_(member_bundles))
+    finished = select(AiJob.id).where(AiJob.bundle_id.in_(member_bundles), AiJob.finished_at >= since)
+    return union(active.correlate(None), finished.correlate(None))
 
 
 def _fold_request_rows(rows: Sequence[Row]) -> dict[str, _RequestTally]:
@@ -61,30 +64,40 @@ def _fold_request_rows(rows: Sequence[Row]) -> dict[str, _RequestTally]:
     return tallies
 
 
-async def _load_requests(
-    session: AsyncSession, login_id: str, window: list[ColumnElement[bool]]
-) -> tuple[list[str], dict[str, _RequestTally]]:
-    """범위에 걸친 요청들의 모든 작업을 센다 — 일부만 범위에 든 요청도 total이 줄지 않게 범위가 아니라 요청으로 고른다."""
-    window_requests = select(AiJob.request_id).where(*window).distinct()
-    member_bundles = select(BundleMember.bundle_id).where(BundleMember.login_id == login_id)
+async def _load_requests(session: AsyncSession, window_ids: CompoundSelect) -> tuple[list[str], int, dict[str, _RequestTally]]:
+    """범위에 걸친 요청 중 최신 MAX_RECENT_REQUESTS개(범위 안 첫 작업 id 순)를 SQL에서 자른 뒤, 그 요청들의 모든 작업을 센다.
+
+    일부만 범위에 든 요청도 total이 줄지 않게 범위가 아니라 요청 id로 센다(request_id 인덱스).
+    """
+    in_window = AiJob.id.in_(window_ids)
+    shown = list(
+        await session.scalars(
+            select(AiJob.request_id)
+            .where(in_window)
+            .group_by(AiJob.request_id)
+            .order_by(func.min(AiJob.id).desc())
+            .limit(MAX_RECENT_REQUESTS)
+        )
+    )
+    total = await session.scalar(select(func.count(AiJob.request_id.distinct())).where(in_window)) or 0
+    if not shown:
+        return [], total, {}
     rows = await session.execute(
         select(
             AiJob.request_id, AiJob.bundle_id, AiJob.requested_by, AiJob.kind, AiJob.status, AiJob.error,
             func.count(), func.min(AiJob.id), func.min(AiJob.created_at), func.min(AiJob.started_at),
             func.max(AiJob.finished_at),
         )
-        .where(AiJob.request_id.in_(window_requests), AiJob.bundle_id.in_(member_bundles))
+        .where(AiJob.request_id.in_(shown))
         .group_by(AiJob.request_id, AiJob.bundle_id, AiJob.requested_by, AiJob.kind, AiJob.status, AiJob.error)
     )
-    tallies = _fold_request_rows(rows.all())
-    ordered = sorted(tallies, key=lambda request_id: tallies[request_id].first_id, reverse=True)
-    return ordered, tallies
+    return shown, total, _fold_request_rows(rows.all())
 
 
 async def list_recent_jobs(session: AsyncSession, login_id: str) -> RecentJobsOut:
-    """질의 넷(작업·전체 수·요청 집계·묶음 제목) — 원문·제안·payload는 읽지 않는다."""
+    """질의 여섯(작업 쪽·작업 수·요청 쪽·요청 수·요청 집계·묶음 제목), 모두 인덱스로 범위를 찾는다 — 원문·제안·payload는 읽지 않는다."""
     current = now()
-    window = _build_window_filter(login_id, current - timedelta(hours=RECENT_JOBS_WINDOW_HOURS))
+    window_ids = _build_window_ids(login_id, current - timedelta(hours=RECENT_JOBS_WINDOW_HOURS))
     job_rows = (
         await session.execute(
             select(
@@ -94,14 +107,13 @@ async def list_recent_jobs(session: AsyncSession, login_id: str) -> RecentJobsOu
             )
             .join(Bundle, Bundle.id == AiJob.bundle_id)
             .outerjoin(Document, Document.id == AiJob.document_id)
-            .where(*window)
+            .where(AiJob.id.in_(window_ids))
             .order_by(AiJob.id.desc())
             .limit(MAX_RECENT_JOBS)
         )
     ).all()
-    jobs_total = await session.scalar(select(func.count()).select_from(AiJob).where(*window)) or 0
-    ordered, tallies = await _load_requests(session, login_id, window)
-    shown = ordered[:MAX_RECENT_REQUESTS]
+    jobs_total = await session.scalar(select(func.count()).select_from(AiJob).where(AiJob.id.in_(window_ids))) or 0
+    shown, requests_total, tallies = await _load_requests(session, window_ids)
     bundle_ids = {tallies[request_id].bundle_id for request_id in shown}
     titles = (
         dict((await session.execute(select(Bundle.id, Bundle.title).where(Bundle.id.in_(bundle_ids)))).all())
@@ -124,7 +136,7 @@ async def list_recent_jobs(session: AsyncSession, login_id: str) -> RecentJobsOu
         ],
         jobs_total=jobs_total,
         requests=[_build_request_out(request_id, tallies[request_id], titles, login_id) for request_id in shown],
-        requests_total=len(ordered),
+        requests_total=requests_total,
     )
 
 

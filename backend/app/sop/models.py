@@ -513,6 +513,8 @@ class AiJob(Base):
         CheckConstraint(_build_in_check("kind", AI_JOB_KINDS), name="kind"),
         CheckConstraint(_build_in_check("status", AI_JOB_STATUSES), name="status"),
         Index("ix_ai_jobs_status_id", "status", "id"),
+        # 최근 작업 목록이 묶음마다 하루 안에 끝난 작업을 찾는다(대기·실행 중은 위 (status, id)가 찾는다)
+        Index("ix_ai_jobs_bundle_id_finished_at", "bundle_id", "finished_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -534,7 +536,7 @@ class AiJob(Base):
     requested_by: Mapped[str] = mapped_column(String(100))
     # 요청 한 번이 쌓은 작업들의 묶음 값 — 화면이 "n / N"으로 묶어 보인다. 입구 2 계획 작업이 쌓는 변경 종류 작업은
     # 계획 작업의 값을 잇는다. 0012 이전 행은 'job-<id>'로 채워 저마다 한 요청이다
-    request_id: Mapped[str] = mapped_column(String(32), default=generate_request_id)
+    request_id: Mapped[str] = mapped_column(String(32), index=True, default=generate_request_id)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
