@@ -1038,12 +1038,11 @@
 @layer components {
   .assign-desk { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 10px; min-width: 0; min-height: 0; padding: 10px 14px 14px; background: var(--bg); }
   /* 필터 필 - 상태마다 아이콘·색(status.tsx와 같은 뜻), 고른 필은 채움 */
-  .fpill { --fp-ink: var(--ink-2); --fp-fill: var(--ink-2); --fp-tint: var(--surface); --fp-line: var(--line-2); display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px 0 7px; border: 1px solid var(--fp-line); border-radius: 13px; background: var(--fp-tint); color: var(--fp-ink); font-size: var(--fs-cap); font-weight: 600; white-space: nowrap; cursor: pointer; transition: background var(--dur-fast), color var(--dur-fast); }
+  .fpill { --fp-on: var(--surface); --fp-ink: var(--ink-2); --fp-fill: var(--ink-2); --fp-tint: var(--surface); --fp-line: var(--line-2); display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px 0 7px; border: 1px solid var(--fp-line); border-radius: 13px; background: var(--fp-tint); color: var(--fp-ink); font-size: var(--fs-cap); font-weight: 600; white-space: nowrap; cursor: pointer; transition: background var(--dur-fast), color var(--dur-fast); }
   .fpill:hover { background: color-mix(in oklab, var(--fp-fill) 14%, var(--fp-tint)); }
   .fpill[aria-selected="true"] { background: var(--fp-fill); border-color: var(--fp-fill); color: var(--fp-on); }
   /* 수 배지는 바탕을 깔지 않고 테두리만 - 바탕을 섞으면 글자 대비가 4.5:1 아래로 내려간다 */
   .fpill .fpill-n { min-width: 18px; padding: 0 5px; border-radius: 9px; box-shadow: inset 0 0 0 1px color-mix(in oklab, currentColor 45%, transparent); font: 600 10px / 16px var(--font-mono); text-align: center; font-variant-numeric: tabular-nums; }
-  .fpill { --fp-on: var(--surface); }
   .fpill[data-tone="none"] { --fp-ink: var(--st-none-ink); --fp-fill: var(--st-none-ink); --fp-tint: var(--surface); }
   .fpill[data-tone="ai"] { --fp-ink: var(--st-ai-ink); --fp-fill: var(--st-ai-ink); --fp-tint: var(--st-ai-tint); --fp-line: var(--st-ai-line); }
   .fpill[data-tone="hold"] { --fp-ink: var(--st-hold-ink); --fp-fill: var(--st-hold-ink); --fp-tint: var(--st-hold-tint); --fp-line: var(--st-hold-line); }

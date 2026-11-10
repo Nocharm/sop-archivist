@@ -30,11 +30,11 @@ export function TopBar() {
 
   return (
     <header className="tb" data-testid="top-bar">
-      <Link href="/" data-testid="top-bar-service" className="tb-brand">
+      <Link href="/" data-testid="top-bar-service" className="tb-brand shrink-0 whitespace-nowrap">
         <BrandMark size={22} />
         SOP Archivist
       </Link>
-      <span data-testid="top-bar-version" className="tb-dim font-mono text-[11px]">
+      <span data-testid="top-bar-version" className="tb-dim shrink-0 whitespace-nowrap font-mono text-[11px]">
         {`v${APP_VERSION}`}
       </span>
       <BackLink />
@@ -45,7 +45,7 @@ export function TopBar() {
             {bundle ? getBundleLabel(bundle) : ""}
           </span>
           {bundle?.is_synthetic && (
-            <span data-testid="top-bar-synthetic" className="tag">
+            <span data-testid="top-bar-synthetic" className="tag shrink-0 whitespace-nowrap">
               <FlaskConical size={12} strokeWidth={1.5} aria-hidden />
               Synthetic data
             </span>
