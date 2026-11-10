@@ -59,13 +59,14 @@ DROP_REASON = "Synthetic: obsolete note"
 
 KO_A_HEADERS = [
     "언어", "옛 문서 번호", "버전", "원문 위치", "단위 ID", "원문 문장", "보낸 곳 종류", "새 문서 번호", "새 문서 제목",
-    "새 문서 안 위치", "확정 문장", "AI 제안 문장", "변경 종류", "관계 묶음 ID", "이유", "상태", "확정한 사람",
-    "확정 시각", "경고",
+    "새 문서 안 위치", "새 문서 안 번호", "확정 문장", "AI 제안 문장", "변경 종류", "관계 묶음 ID", "이유", "상태",
+    "확정한 사람", "확정 시각", "경고",
 ]
 EN_A_HEADERS = [
     "Language", "Old doc no.", "Version", "Source location", "Unit ID", "Source sentence", "Destination type",
-    "New doc no.", "New doc title", "Location in new doc", "Confirmed sentence", "AI-suggested sentence",
-    "Change type", "Relation group ID", "Reason", "Status", "Confirmed by", "Confirmed at", "Warnings",
+    "New doc no.", "New doc title", "Location in new doc", "Number in new doc", "Confirmed sentence",
+    "AI-suggested sentence", "Change type", "Relation group ID", "Reason", "Status", "Confirmed by", "Confirmed at",
+    "Warnings",
 ]
 
 
@@ -254,25 +255,36 @@ def test_sheet_c_indents_docs_slots_items_and_tails(client: TestClient) -> None:
 
     sheet = _load(client, fx.bundle_id, "ko")["C 새 문서"]
     rows = [[cell.value for cell in row] for row in sheet.iter_rows(min_row=3)]
-    doc, doc_col, slot_col, item_col, cell_col = "SOP SOP-NEW · Synthetic SOP", 0, 1, 2, 3
+    doc, doc_col, slot_col, number_col, item_col, cell_col = "SOP SOP-NEW · Synthetic SOP", 0, 1, 2, 3, 4
     assert rows[0][doc_col] == doc
     scope = next(row for row in rows if row[slot_col] == "Scope")
-    assert (scope[8], scope[11]) == ("N/A", na_reason)
+    assert (scope[number_col], scope[9], scope[12]) == ("2", "N/A", na_reason)
 
     responsibilities = rows.index(next(row for row in rows if row[slot_col] == "Responsibilities"))
-    assert rows[responsibilities + 1][item_col] == KEEP and rows[responsibilities + 1][9] == "← OLD-1"
+    assert rows[responsibilities][number_col] == "4"
+    keep_row = rows[responsibilities + 1]
+    assert (keep_row[number_col], keep_row[item_col], keep_row[10]) == ("4.1", KEEP, "← OLD-1")
 
     table_row = rows.index(next(row for row in rows if row[item_col] == "[표]"))
+    assert rows[table_row][number_col] == "5.1"
     cells = rows[table_row + 1 : table_row + 5]
-    assert [(row[cell_col], row[4]) for row in cells] == [
+    assert [(row[cell_col], row[5]) for row in cells] == [
         ("항목", "1행 1열"), ("값", "1행 2열"), ("합성 값", "2행 1열"), ("합성 결과", "2행 2열"),
     ]
     assert all(row[item_col] is None for row in cells)  # 칸 문장은 항목보다 한 단계 더 들여쓴 열에 있다
+    assert all(row[number_col] is None for row in cells)  # 표 칸은 표의 번호라 표 줄에만 적는다
 
     tail = rows.index(next(row for row in rows if row[doc_col] == "다른 문서로 이동"))
     assert rows[tail + 1][item_col] == DROP
     moved_row = rows[tail + 1]
-    assert (moved_row[5], moved_row[10], moved_row[11]) == (dropped["display_id"], "SOP-OTHER-1", moved_reason)
+    assert (moved_row[6], moved_row[11], moved_row[12]) == (dropped["display_id"], "SOP-OTHER-1", moved_reason)
+
+    # 결과물 A의 새 위치 번호 열은 결과물 A 응답의 dest_number를 옮겨 쓴 값이다
+    sheet_a = _load(client, fx.bundle_id, "ko")["A 비교표"]
+    id_col, number_a_col = _find_column(sheet_a, "단위 ID"), _find_column(sheet_a, "새 문서 안 번호")
+    keep_id = find_unit(fx.view, KEEP)["display_id"]
+    (keep_a,) = [row for row in sheet_a.iter_rows(min_row=3) if row[id_col - 1].value == keep_id]
+    assert keep_a[number_a_col - 1].value == "4.1"
 
 
 # ── 제어 문자·수식 글 ────────────────────────────────────────────────────────

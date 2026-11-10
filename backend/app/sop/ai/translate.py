@@ -286,6 +286,7 @@ def _build_translation(job: AiJob, source: TargetSentence, computed: _Verdict, s
     return TargetSentence(
         bundle_id=job.bundle_id, target_doc_id=source.target_doc_id, slot_key=source.slot_key, wi_step=source.wi_step,
         wi_part=source.wi_part, section_path=source.section_path, order_index=source.order_index,
+        indent_level=source.indent_level,
         lang=job.payload["to"], kind="sentence", confirmed_text="", ai_text=computed.text, change_type="translated",
         origin=ORIGIN_TRANSLATION, translation_source_unit_id=job.unit_ids[0], parent_target_id=source.parent_target_id,
         cell_row=source.cell_row, cell_col=source.cell_col, status=AI_SUGGESTED, warnings=list(computed.warnings),

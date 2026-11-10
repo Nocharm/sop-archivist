@@ -886,6 +886,9 @@ def _apply_plan(
             target.order_index = next_orders[plan.doc.id] if is_appended else 0
             if is_appended:
                 next_orders[plan.doc.id] += 1
+        place = (plan.doc.id, plan.item.slot_key, plan.item.wi_step, plan.item.wi_part)
+        if place != (target.target_doc_id, target.slot_key, target.wi_step, target.wi_part):
+            target.indent_level = 0  # 깊이는 그 칸 앞뒤 줄에 기댄 값이라 다른 칸으로 가면 맨 바깥에서 다시 시작한다
         target.target_doc_id = plan.doc.id
         target.slot_key, target.wi_step, target.wi_part = plan.item.slot_key, plan.item.wi_step, plan.item.wi_part
         target.kind, target.lang, target.confirmed_text, target.grid = plan.item.kind, plan.lang, plan.text, plan.grid

@@ -17,7 +17,7 @@ from app.clock import now
 from app.db import get_session
 from app.routers.sop_documents import build_content_disposition
 from app.sop.ai.guidelines import get_rules_version_label
-from app.sop.constants import MEMBER_ROLES
+from app.sop.constants import MAX_INDENT_LEVEL, MEMBER_ROLES
 from app.sop.decisions import DbId
 from app.sop.detach import ORIGIN_NEW_DOC, ORIGIN_TRANSLATION, load_source_target_ids, sweep_translations
 from app.sop.errors import check_revision, raise_rule
@@ -56,6 +56,8 @@ class OrderItemIn(BaseModel):
     target_id: DbId
     # 보낸 경우에만 바꾼다 — null은 "단계 없음"으로 옮긴다는 뜻이라 생략과 다르다(model_fields_set으로 가린다)
     wi_step: DbId | None = None
+    # 들여쓰기 깊이 — 보낸 경우에만 바꾼다(null도 바꾸지 않음). 앞줄보다 깊은 값도 받는다(결과물이 셀 때 눌러 읽는다)
+    indent_level: int | None = Field(default=None, ge=0, le=MAX_INDENT_LEVEL)
 
 
 class TargetOrderIn(BaseModel):
@@ -69,6 +71,7 @@ class OrderItemOut(BaseModel):
     target_id: int
     order_index: int
     wi_step: int | None
+    indent_level: int
 
 
 class TargetOrderOut(BaseModel):
@@ -152,10 +155,44 @@ async def get_export(
     return Response(content=content, media_type=XLSX_MEDIA_TYPE, headers=headers)
 
 
+async def _check_indents(
+    session: AsyncSession, doc: TargetDoc, tops: dict[int, TargetSentence], items: list[OrderItemIn]
+) -> dict[int, int]:
+    """바뀌는 깊이(새 문장 → 깊이)를 돌려준다 — 깊이가 바뀌는 출처의 번역도 출처의 새 깊이로 싣는다. 쓰기 전에 검사만 한다.
+
+    입구 2 문서는 번호를 새로 매기지 않으므로 깊이를 받지 않는다(422 indent_not_allowed). 번역의 깊이는 출처를 따라 잠겨 있어
+    출처의 바뀐 뒤 깊이와 다르게 보내면 422 translation_locked다(단계 잠금과 같은 규칙).
+    """
+    indents = {
+        item.target_id: item.indent_level
+        for item in items
+        if item.indent_level is not None and item.indent_level != tops[item.target_id].indent_level
+    }
+    if indents and doc.entrance == "match":
+        raise_rule(422, "indent_not_allowed", target_ids=sorted(indents))
+    translation_ids = [target_id for target_id, row in tops.items() if row.origin == ORIGIN_TRANSLATION]
+    if not indents or not translation_ids:
+        return indents
+    source_ids = await load_source_target_ids(session, translation_ids)
+
+    def get_final_level(target_id: int) -> int | None:
+        return indents.get(target_id, tops[target_id].indent_level) if target_id in tops else None
+
+    astray = sorted(
+        target_id for target_id in indents
+        if target_id in source_ids and get_final_level(source_ids[target_id]) != indents[target_id]
+    )
+    if astray:
+        raise_rule(422, "translation_locked", target_ids=astray)
+    # 번역은 출처와 같은 깊이다 — 깊이만 바뀐 것은 글·자리가 그대로라 sweep_translations(보류·지우기)를 거치지 않고 따라간다
+    followers = {target_id: indents[source_id] for target_id, source_id in source_ids.items() if source_id in indents}
+    return {**indents, **followers}
+
+
 async def reorder_targets(
     session: AsyncSession, bundle: Bundle, payload: TargetOrderIn, actor: str
 ) -> TargetOrderOut:
-    """새 문서 하나의 새 문장 순서(와 WI 단계)를 사람이 정한다 — 이후 그 문서는 order_index 순이고 새로 들어오는 새 문장은 끝에 붙는다.
+    """새 문서 하나의 새 문장 순서(와 WI 단계·들여쓰기)를 사람이 정한다 — 이후 그 문서는 order_index 순이고 새로 들어오는 새 문장은 끝에 붙는다.
 
     목록은 칸 새 문장이 아닌 새 문장 전부를 한 번씩 담아야 한다(빠진 새 문장의 자리를 지어내지 않게). 검사를 모두 마친 뒤에 쓴다.
     """
@@ -198,6 +235,7 @@ async def reorder_targets(
         undeclared = sorted(target_id for target_id, step in moves.items() if step is not None and step not in declared)
         if undeclared:
             raise_rule(422, "unknown_wi_step", target_ids=undeclared)
+    indents = await _check_indents(session, doc, tops, payload.items)
 
     cells: dict[int, list[TargetSentence]] = defaultdict(list)
     for row in rows:
@@ -205,6 +243,9 @@ async def reorder_targets(
             cells[row.parent_target_id].append(row)
     for order_index, target_id in enumerate(sent):
         tops[target_id].order_index = order_index
+    # 깊이는 번호만 바꾸는 표시라 revision을 올리지 않는다(저장 경로는 깊이를 보내지 않아 덮어쓸 일이 없다)
+    for target_id, level in indents.items():
+        tops[target_id].indent_level = level
     moved: list[int] = []
     for target_id, step in moves.items():
         # 칸 새 문장은 표와 같은 자리에 있다(관계 묶음 저장 검사 7) — 자리가 바뀐 새 문장은 revision을 올려 낡은 저장을 막는다
@@ -225,7 +266,10 @@ async def reorder_targets(
         revision=bundle.revision,
         target_doc_id=doc.id,
         items=[
-            OrderItemOut(target_id=target_id, order_index=tops[target_id].order_index, wi_step=tops[target_id].wi_step)
+            OrderItemOut(
+                target_id=target_id, order_index=tops[target_id].order_index, wi_step=tops[target_id].wi_step,
+                indent_level=tops[target_id].indent_level,
+            )
             for target_id in sent if target_id not in swept
         ],
     )

@@ -2351,6 +2351,87 @@ def test_manual_order_keeps_a_translation_next_to_its_source(client: TestClient,
     ]
 
 
+def test_indenting_the_source_carries_a_confirmed_translation_without_a_hold(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, translation = make_settled_translation(client, fake_ai)
+    source = get_target(client, bundle.id, unit["id"])
+
+    response = put_order(
+        client, bundle.id, bundle.sop_id, [{"target_id": source["id"], "indent_level": 2}, {"target_id": translation.id}]
+    )
+
+    assert response.status_code == 200, response.text
+    assert {item["target_id"]: item["indent_level"] for item in response.json()["items"]} == {
+        source["id"]: 2, translation.id: 2,
+    }
+    # 깊이는 번호만 바꾸는 표시라 확정 번역을 보류로 돌리지 않는다
+    followed = load_translation(unit["id"])
+    assert (followed.status, followed.indent_level, followed.revision) == ("confirmed", 2, translation.revision)
+    # 칸의 첫 줄은 앞줄이 없어 맨 바깥으로 눌러 읽는다 — 두 판 모두 같은 번호
+    (ko_item,) = read_slot_items(get_output_c(client, bundle.id, "ko"), "SOP-AI")
+    (en_item,) = read_slot_items(get_output_c(client, bundle.id, "en"), "SOP-AI")
+    assert (ko_item["number"], ko_item["indent_level"]) == ("1.1", 2)
+    assert (en_item["target_id"], en_item["number"], en_item["indent_level"]) == (translation.id, "1.1", 2)
+
+
+def test_indenting_the_source_keeps_an_ai_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit = make_assigned_unit(client)
+    translation = translate(client, fake_ai, bundle.id, unit["id"])
+    source = get_target(client, bundle.id, unit["id"])
+
+    response = put_order(
+        client, bundle.id, bundle.sop_id, [{"target_id": source["id"], "indent_level": 1}, {"target_id": translation.id}]
+    )
+
+    assert response.status_code == 200, response.text
+    kept = load_translation(unit["id"])
+    assert (kept.id, kept.status, kept.indent_level) == (translation.id, "ai_suggested", 1)
+
+
+def test_a_translation_cannot_be_indented_apart_from_its_source(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, translation = make_settled_translation(client, fake_ai)
+    source = get_target(client, bundle.id, unit["id"])
+
+    alone = put_order(
+        client, bundle.id, bundle.sop_id, [{"target_id": source["id"]}, {"target_id": translation.id, "indent_level": 1}]
+    )
+    together = put_order(
+        client, bundle.id, bundle.sop_id,
+        [{"target_id": source["id"], "indent_level": 1}, {"target_id": translation.id, "indent_level": 1}],
+    )
+
+    assert (alone.status_code, alone.json()["detail"]) == (
+        422, {"code": "translation_locked", "target_ids": [translation.id]},
+    )
+    assert together.status_code == 200, together.text
+    assert load_translation(unit["id"]).indent_level == 1
+
+
+def test_moving_the_source_to_another_slot_resets_both_depths(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, translation = make_settled_translation(client, fake_ai)
+    source = get_target(client, bundle.id, unit["id"])
+    indented = put_order(
+        client, bundle.id, bundle.sop_id, [{"target_id": source["id"], "indent_level": 2}, {"target_id": translation.id}]
+    )
+    assert indented.status_code == 200, indented.text
+
+    response = save_source(client, bundle.id, unit["id"], slot_key=OTHER_SLOT)
+
+    # 깊이는 그 칸 앞뒤 줄에 기댄 값이라 다른 칸에서는 맨 바깥부터다 — 번역은 출처를 따라 함께 돌아온다
+    assert response.status_code == 200, response.text
+    assert get_target(client, bundle.id, unit["id"])["indent_level"] == 0
+    assert (load_translation(unit["id"]).slot_key, load_translation(unit["id"]).indent_level) == (OTHER_SLOT, 0)
+
+
+def test_a_new_translation_starts_at_its_source_depth(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit = make_assigned_unit(client)
+    source = get_target(client, bundle.id, unit["id"])
+    assert put_order(client, bundle.id, bundle.sop_id, [{"target_id": source["id"], "indent_level": 3}]).status_code == 200
+
+    translation = translate(client, fake_ai, bundle.id, unit["id"])
+
+    assert translation.indent_level == 3
+
+
 def test_held_translation_of_a_retired_unit_stays_visible(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_ai_bundle(client)
     view = upload_second_document(client, bundle.id, p(LONE_KO))

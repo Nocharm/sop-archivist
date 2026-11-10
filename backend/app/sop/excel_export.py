@@ -46,10 +46,12 @@ _HEADER_FILL = PatternFill("solid", fgColor="E8EAF0")
 
 # 결과물 A 칸 순서(스펙 §7.13) — 표시 ID 칸은 이어짐 표시가 들어가는 칸이다
 A_ID_COLUMN = 5
-A_COLUMN_WIDTHS = (8, 12, 8, 26, 14, 50, 14, 14, 26, 28, 50, 40, 14, 14, 28, 10, 14, 18, 40)
-# 결과물 C — 문서·칸·항목·표 칸이 들여쓰기 열이고 나머지는 항목의 세부다
-(C_DOC, C_SECTION, C_ITEM, C_CELL, C_POSITION, C_ID, C_AI, C_CHANGE, C_STATUS, C_SOURCE, C_MOVE, C_REASON) = range(12)
-C_COLUMN_WIDTHS = (34, 30, 50, 40, 12, 14, 40, 14, 10, 30, 18, 30)
+A_COLUMN_WIDTHS = (8, 12, 8, 26, 14, 50, 14, 14, 26, 28, 12, 50, 40, 14, 14, 28, 10, 14, 18, 40)
+# 결과물 C — 문서·칸·항목·표 칸이 들여쓰기 열이고 나머지는 항목의 세부다. 번호 열은 칸·항목의 섹션 번호(outputs가 센 값)
+(C_DOC, C_SECTION, C_NUMBER, C_ITEM, C_CELL, C_POSITION, C_ID, C_AI, C_CHANGE, C_STATUS, C_SOURCE, C_MOVE, C_REASON) = (
+    range(13)
+)
+C_COLUMN_WIDTHS = (34, 30, 12, 50, 40, 12, 14, 40, 14, 10, 30, 18, 30)
 
 
 @dataclass(frozen=True)
@@ -96,11 +98,11 @@ EXCEL_LABELS: dict[str, ExcelLabels] = {
         bundle_statuses={"in_progress": "작업 중", "in_review": "검토 대기", "done": "검토 완료"},
         a_headers=(
             "언어", "옛 문서 번호", "버전", "원문 위치", "단위 ID", "원문 문장", "보낸 곳 종류", "새 문서 번호",
-            "새 문서 제목", "새 문서 안 위치", "확정 문장", "AI 제안 문장", "변경 종류", "관계 묶음 ID", "이유", "상태",
-            "확정한 사람", "확정 시각", "경고",
+            "새 문서 제목", "새 문서 안 위치", "새 문서 안 번호", "확정 문장", "AI 제안 문장", "변경 종류", "관계 묶음 ID",
+            "이유", "상태", "확정한 사람", "확정 시각", "경고",
         ),
         c_headers=(
-            "문서", "칸", "항목", "표 칸", "표 칸 위치", "단위 ID", "AI 제안 문장", "변경 종류", "상태", "옛 단위",
+            "문서", "칸", "번호", "항목", "표 칸", "표 칸 위치", "단위 ID", "AI 제안 문장", "변경 종류", "상태", "옛 단위",
             "이동 대상", "이유",
         ),
         both_langs="공통",
@@ -130,11 +132,12 @@ EXCEL_LABELS: dict[str, ExcelLabels] = {
         bundle_statuses={"in_progress": "In progress", "in_review": "Awaiting review", "done": "Review complete"},
         a_headers=(
             "Language", "Old doc no.", "Version", "Source location", "Unit ID", "Source sentence", "Destination type",
-            "New doc no.", "New doc title", "Location in new doc", "Confirmed sentence", "AI-suggested sentence",
-            "Change type", "Relation group ID", "Reason", "Status", "Confirmed by", "Confirmed at", "Warnings",
+            "New doc no.", "New doc title", "Location in new doc", "Number in new doc", "Confirmed sentence",
+            "AI-suggested sentence", "Change type", "Relation group ID", "Reason", "Status", "Confirmed by", "Confirmed at",
+            "Warnings",
         ),
         c_headers=(
-            "Document", "Slot", "Item", "Table cell", "Cell position", "Unit ID", "AI-suggested sentence",
+            "Document", "Slot", "No.", "Item", "Table cell", "Cell position", "Unit ID", "AI-suggested sentence",
             "Change type", "Status", "Old units", "Moved to", "Reason",
         ),
         both_langs="Both",
@@ -284,6 +287,7 @@ def _list_a_cells(row: ARow, labels: ExcelLabels, output: OutputLabels) -> list[
         row.dest_doc_code,
         row.dest_doc_title,
         row.dest_location,
+        row.dest_number,
         row.confirmed_text,
         row.ai_text,
         output.change_types.get(row.change_type, row.change_type),
@@ -371,6 +375,8 @@ def _list_c_item_cells(item: CItem, depth: int, labels: ExcelLabels, output: Out
         C_STATUS: output.statuses.get(item.status, item.status),
         C_SOURCE: item.source_note,
     }
+    if depth == 0 and item.number is not None:  # 표 칸은 표의 번호라 표 줄에만 적는다
+        values[C_NUMBER] = item.number
     if item.cell_row is not None and item.cell_col is not None:
         values[C_POSITION] = labels.cell_position.format(row=item.cell_row + 1, col=item.cell_col + 1)
     yield _make_c_cells(values)
@@ -391,6 +397,8 @@ def _list_c_cells(snap: BundleSnapshot, lang: Lang, labels: ExcelLabels) -> Iter
         yield _make_c_cells({C_DOC: f"{doc.doc_type.upper()} {doc.code}{title}{parent}"})
         for section in doc.sections:
             values = {C_SECTION: section.label}
+            if section.number is not None:
+                values[C_NUMBER] = section.number
             if section.na_reason is not None:
                 values |= {C_STATUS: labels.na, C_REASON: section.na_reason}
             yield _make_c_cells(values)
