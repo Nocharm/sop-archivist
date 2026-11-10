@@ -16,11 +16,14 @@ from app.sop.decisions import (
     BulkDecisionIn,
     ClearIn,
     GroupSaveIn,
+    ResetIn,
+    ResetOut,
     UnitDecisionRowOut,
     UnitsPageOut,
     clear_unit,
     dispose_units,
     list_units,
+    reset_assignments,
     save_group,
 )
 from app.sop.detach import DetachReport
@@ -97,6 +100,16 @@ async def clear_unit_decision(
     report = await clear_unit(session, ctx.bundle, body, ctx.login_id)
     await session.commit()
     return report
+
+
+@router.post("/{bundle_id}/decisions/reset", response_model=ResetOut)
+async def reset_decisions(
+    body: ResetIn, ctx: BundleContext = Depends(_require_author), session: AsyncSession = Depends(get_session)
+) -> ResetOut:
+    """문서 하나(document_id) 또는 묶음 전체의 배정 초기화. dry_run이면 건수만 돌려주고 바꾸지 않는다."""
+    out = await reset_assignments(session, ctx.bundle, body, ctx.login_id)
+    await session.commit()
+    return out
 
 
 @router.get("/{bundle_id}/written-sentences", response_model=list[WrittenSentenceOut])
