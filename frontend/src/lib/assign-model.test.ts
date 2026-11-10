@@ -111,6 +111,32 @@ describe("buildRecommendations", () => {
     const recs = buildRecommendations({ aiLinks: [], aiPlaces: [], identical: [], similar: [1, 2, 3, 4, 5, 6, 7].map(similar) });
     expect(recs).toHaveLength(5);
   });
+
+  it("shows a KO/EN New pair as one card with both sentences on a KO/EN pair row", () => {
+    // 한/영 짝 줄의 KO 조각 후보 72, EN 조각 후보 82 - 둘은 New 짝이라 어느 쪽을 골라도 같은 곳이다
+    const written = new Map([
+      [72, makeWritten(72, { partner_target_id: 82 })],
+      [82, makeWritten(82, { lang: "en", partner_target_id: 72 })],
+      [73, makeWritten(73)],
+    ]);
+    const recs = buildRecommendations(
+      { aiLinks: [], aiPlaces: [], identical: [], similar: [similar(72), similar(82), similar(73)] },
+      (ids) => addPartnerTargets(ids, ["ko", "en"], written),
+    );
+    expect(recs.map((rec) => rec.destination)).toEqual([
+      { kind: "link", targetIds: [72, 82] },
+      { kind: "link", targetIds: [73] },
+    ]);
+  });
+
+  it("keeps one card per sentence when the row has one language", () => {
+    const written = new Map([
+      [72, makeWritten(72, { partner_target_id: 82 })],
+      [82, makeWritten(82, { lang: "en", partner_target_id: 72 })],
+    ]);
+    const recs = buildRecommendations({ aiLinks: [], aiPlaces: [], identical: [], similar: [similar(72)] }, (ids) => addPartnerTargets(ids, ["ko"], written));
+    expect(recs.map((rec) => rec.destination)).toEqual([{ kind: "link", targetIds: [72] }]);
+  });
 });
 
 describe("listUnsourced", () => {

@@ -121,11 +121,11 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
     expected = synthetic.expected
     run = SyntheticDriver(client, synthetic, AUTHOR)
 
-    # 1–3. 묶음·검토자·To-Be → 옛 문서 5개·새 문서 1개 → 언어 배치·편집
+    # 1–3. 묶음·검토자·To-Be → 옛 문서 6개·새 문서 2개 → 언어 배치·편집
     run.start()
 
     assert {code: uploaded["status"] for code, uploaded in run.uploads.items()} == dict.fromkeys(
-        ("OLD-1", "OLD-2", "OLD-3", "OLD-4", "OLD-5", "WI-04"), "ready"
+        ("OLD-1", "OLD-2", "OLD-3", "OLD-4", "OLD-5", "WI-04", "OLD-6", "WI-05"), "ready"
     )
     warnings = [warning["kind"] for uploaded in run.uploads.values() for warning in uploaded["extraction"]["warnings"]]
     assert not set(warnings) & set(MISSING_TEXT_WARNINGS)

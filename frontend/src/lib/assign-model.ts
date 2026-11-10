@@ -66,13 +66,17 @@ function keyOf(destination: Destination): string {
   return destination.kind;
 }
 
-/** ① 추천 - AI 연결 → AI 칸·삭제 → 같은 글자 → 비슷한 문장, 같은 곳은 한 번만, 최대 5 */
-export function buildRecommendations(input: RecommendInput): Recommendation[] {
+/**
+ * ① 추천 - AI 연결 → AI 칸·삭제 → 같은 글자 → 비슷한 문장, 같은 곳은 한 번만, 최대 5.
+ * expandLink는 고를 때 더해질 문장(한/영 짝 줄이면 New 짝, addPartnerTargets)을 미리 더한다 - 짝의 두 문장이 카드 둘로 갈리지 않게.
+ */
+export function buildRecommendations(input: RecommendInput, expandLink: (targetIds: number[]) => number[] = (ids) => ids): Recommendation[] {
+  const link = (targetIds: number[]): Destination => ({ kind: "link", targetIds: expandLink(targetIds) });
   const all: Recommendation[] = [
-    ...input.aiLinks.map((item): Omit<Recommendation, "key"> => ({ destination: { kind: "link", targetIds: item.targetIds }, why: item.why, source: "ai" })),
+    ...input.aiLinks.map((item): Omit<Recommendation, "key"> => ({ destination: link(item.targetIds), why: item.why, source: "ai" })),
     ...input.aiPlaces.map((item): Omit<Recommendation, "key"> => ({ destination: item.destination, why: item.why, source: "ai" })),
-    ...input.identical.map((id): Omit<Recommendation, "key"> => ({ destination: { kind: "link", targetIds: [id] }, why: "", source: "identical" })),
-    ...input.similar.map((item): Omit<Recommendation, "key"> => ({ destination: { kind: "link", targetIds: [item.target_id] }, why: "", source: "similar" })),
+    ...input.identical.map((id): Omit<Recommendation, "key"> => ({ destination: link([id]), why: "", source: "identical" })),
+    ...input.similar.map((item): Omit<Recommendation, "key"> => ({ destination: link([item.target_id]), why: "", source: "similar" })),
   ].map((rec) => ({ ...rec, key: keyOf(rec.destination) }));
   const seen = new Set<string>();
   return all.filter((rec) => !seen.has(rec.key) && seen.add(rec.key)).slice(0, MAX_RECOMMENDATIONS);

@@ -1,4 +1,4 @@
-"""합성 SOP 묶음 생성기 — QC Centrifuge 사례(옛 SOP 5개 → 새 SOP 1개·WI 4개)의 파일과 기대 정답 JSON을 만든다(스펙 §13, 도메인 사례 §1).
+"""합성 SOP 묶음 생성기 — QC Centrifuge 사례(옛 SOP 6개 → 새 SOP 1개·WI 5개)의 파일과 기대 정답 JSON을 만든다(스펙 §13, 도메인 사례 §1).
 
 모든 문장은 지어낸 것이고 실제 SOP 문장이 아니다. 파일 이름은 `SYNTHETIC_`로 시작하고 DOCX 핵심 속성 title·subject에
 `SYNTHETIC`이 들어간다. 같은 입력이면 같은 바이트다(zip 항목 시각·문서 속성 시각을 고정한다).
@@ -6,7 +6,8 @@
 
 만드는 파일(out_dir 아래):
 - OLD-1·OLD-2(Eppendorf, 한/영 연달아)·OLD-3(Beckman Coulter, 한/영 따로)·OLD-4(Thermoscientific, 연달아) DOCX,
-  OLD-5(Labogene, 영어만) 텍스트 PDF, 입구 2 새 문서 WI-04(Labogene 운전, 영어만) DOCX
+  OLD-5(Labogene, 영어만) 텍스트 PDF, 입구 2 새 문서 WI-04(Labogene 운전, 영어만) DOCX,
+  OLD-6(Hanil 세척, 한/영 연달아)과 입구 2 새 문서 WI-05(Hanil 세척, 한/영 연달아) DOCX — 한/영 짝 줄 → New 한/영 짝 문장
 - `SYNTHETIC_tobe.xlsx` — To-Be 목록 가져오기 템플릿(SOP-CF와 WI-01–03, 단계)
 - `SYNTHETIC_expected.json` — 기대 정답(아래 형식, 계획 2의 가짜 AI도 같은 파일을 정답으로 쓴다)
 
@@ -108,6 +109,20 @@ PRESS_RUN = "Press RUN to start the centrifuge."
 LOGBOOK = "Record the run in the equipment logbook."
 WI04_PREPARATION, WI04_OPERATION, WI04_AFTER_USE = "1. Preparation", "2. Operation", "3. After use"
 
+# 입구 2 한/영 — OLD-6(옛, 한/영 연달아)의 한/영 짝 줄이 WI-05(새, 한/영 연달아)의 한/영 짝 문장으로 간다. 글자는 고쳐 써서
+# 같은 글자 후보가 아니라 비슷한 문장 추천으로 나온다(Assign 화면의 "한/영 짝 줄 → New 한/영 짝 추천" 길)
+PAIR_MATCH_CODE = "WI-05"
+WI05_HEADING_KO, WI05_HEADING_EN = "1. 세척", "1. Cleaning"
+WI05_SECTION = WI05_HEADING_EN  # 같은 단계 제목이 이어지면 뒤 제목이 절 경로다
+ROTOR_CLEAN = (
+    ("사용 후 로터를 꺼내 중성 세제로 닦는다.", "After use, take out the rotor and clean it with a mild detergent."),
+    ("사용 후 로터를 분리하여 중성 세제로 세척한다.", "After use, remove the rotor and wash it with a mild detergent."),
+)
+RING_CHECK = (
+    ("로터 뚜껑의 고무링이 손상되었는지 확인한다.", "Check the rubber ring of the rotor lid for damage."),
+    ("로터 뚜껑의 고무링에 손상이 없는지 확인한다.", "Check that the rubber ring of the rotor lid is not damaged."),
+)
+
 
 @dataclass(frozen=True)
 class SyntheticDocument:
@@ -139,8 +154,8 @@ def _wi(
     return _target(code, {"wi_step": step, "wi_part": part}, text, change_type, lang, key=key)
 
 
-def _match(section_path: str, text: str, change_type: str) -> dict:
-    return _target(MATCH_CODE, {"section_path": section_path}, text, change_type, "en")
+def _match(section_path: str, text: str, change_type: str, *, code: str = MATCH_CODE, lang: str = "en") -> dict:
+    return _target(code, {"section_path": section_path}, text, change_type, lang)
 
 
 def _target(code: str, location: dict, text: str, change_type: str, lang: str, *, key: str | None = None) -> dict:
@@ -606,6 +621,27 @@ def _build_old_5(sheet: _AnswerSheet) -> bytes:
     return build_text_pdf([lines[:-1]])
 
 
+def _build_old_6(sheet: _AnswerSheet) -> bytes:
+    """OLD-6 Hanil 세척 — 한/영 연달아, 제목 없는 한/영 짝 두 줄. 줄마다 WI-05의 한/영 짝 문장으로 고쳐 쓴다(입구 2)."""
+    doc, add = "OLD-6", sheet.add
+    document = _new_docx(doc, "Hanil Centrifuge Cleaning")
+    for (old_ko, old_en), (new_ko, new_en) in (ROTOR_CLEAN, RING_CHECK):
+        _add_paragraphs(
+            document,
+            add(doc, old_ko, "ko", _match(WI05_SECTION, new_ko, "rewritten", code=PAIR_MATCH_CODE, lang="ko")),
+            add(doc, old_en, "en", _match(WI05_SECTION, new_en, "rewritten", code=PAIR_MATCH_CODE, lang="en")),
+        )
+    return _save_docx(document)
+
+
+def _build_wi_05() -> bytes:
+    """WI-05 Hanil 세척 — 입구 2 새 문서(한/영 연달아). 한/영 절 제목 한 쌍 아래 한/영 짝 문장 두 쌍."""
+    document = _new_docx(PAIR_MATCH_CODE, "Hanil Centrifuge Cleaning")
+    _add_paragraphs(document, WI05_HEADING_KO, WI05_HEADING_EN, style="Heading 1")
+    _add_paragraphs(document, ROTOR_CLEAN[1][0], ROTOR_CLEAN[1][1], RING_CHECK[1][0], RING_CHECK[1][1])
+    return _save_docx(document)
+
+
 def _build_wi_04() -> tuple[bytes, list[dict]]:
     """WI-04 Labogene 운전 — 입구 2 새 문서(영어만). OLD-5와 같은 글자 문장·고쳐 쓴 문장·나눈 문장·신규 문장."""
     document = _new_docx(MATCH_CODE, "Labogene Centrifuge Operation")
@@ -649,6 +685,7 @@ def build_synthetic_bundle(out_dir: Path) -> SyntheticBundle:
     old_3 = _build_old_3(sheet)
     old_4, layout_edits = _build_old_4(sheet)
     old_5 = _build_old_5(sheet)
+    old_6 = _build_old_6(sheet)
     wi_04, new_texts = _build_wi_04()
     files = (
         # (파일 이름, 바이트, 쪽, 언어 배치, 새 문서 종류, 부모 번호)
@@ -658,6 +695,9 @@ def build_synthetic_bundle(out_dir: Path) -> SyntheticBundle:
         ("SYNTHETIC_OLD-4_Thermoscientific_Centrifuge.docx", old_4, "old", "interleaved", None, None),
         ("SYNTHETIC_OLD-5_Labogene_Centrifuge.pdf", old_5, "old", "en_only", None, None),
         ("SYNTHETIC_WI-04_Labogene_Centrifuge_Operation.docx", wi_04, "new", "en_only", "wi", SOP_CODE),
+        # 기존 문서 뒤에 둔다 — 앞 문서의 업로드 순서·답 순서(group 번호)가 그대로여야 데모·스모크가 같은 줄을 본다
+        ("SYNTHETIC_OLD-6_Hanil_Centrifuge_Cleaning.docx", old_6, "old", "interleaved", None, None),
+        ("SYNTHETIC_WI-05_Hanil_Centrifuge_Cleaning.docx", _build_wi_05(), "new", "interleaved", "wi", SOP_CODE),
     )
     documents = []
     for name, data, side, layout, doc_type, parent_code in files:

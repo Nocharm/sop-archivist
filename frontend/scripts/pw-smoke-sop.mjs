@@ -74,7 +74,7 @@ await runStep("bundle list", {}, async ({ page, takeShot }) => {
   check("role is shown", text.includes("Author"), text);
   const half = page.locator('[data-testid^="bundles-row-"]', { hasText: "분류 절반" });
   halfBundleId = Number((await half.getAttribute("data-testid")).replace("bundles-row-", ""));
-  check("half-classified row shows KO 21 / 43", (await getText(page, `bundles-ko-${halfBundleId}`)).includes("21 / 43"));
+  check("half-classified row shows KO 21 / 45", (await getText(page, `bundles-ko-${halfBundleId}`)).includes("21 / 45"));
   check("no stage nav outside a bundle", (await page.locator('[data-testid="stage-nav"]').count()) === 0);
   check("synthetic bundles are marked in the list", (await page.locator(`[data-testid="bundles-synthetic-${halfBundleId}"]`).count()) === 1);
   await takeShot("sop-bundle-list.png");
@@ -86,7 +86,7 @@ await runStep("overview in rail", {}, async ({ page, takeShot }) => {
   check("top bar shows the bundle title", (await getText(page, "top-bar-bundle-title")).includes("분류 절반"));
   check("synthetic mark in the top bar", (await page.locator('[data-testid="top-bar-synthetic"]').count()) === 1);
   check("next action is deciding units", (await page.locator('[data-testid="overview-next"]').getAttribute("data-action")) === "decide_units");
-  check("KO rate 49%", (await getText(page, "overview-rate-ko")).includes("49"), await getText(page, "overview-rate-ko"));
+  check("KO rate 47%", (await getText(page, "overview-rate-ko")).includes("47"), await getText(page, "overview-rate-ko"));
   check("units gate is open", (await page.locator('[data-testid="overview-gate-units"]').getAttribute("data-ok")) === null);
   check("request review is disabled", await page.locator('[data-testid="overview-request-review"]').isDisabled());
   const overview = page.locator('[data-testid="stage-nav-overview"]');
@@ -712,7 +712,7 @@ await runStep("assign: a one-language link on a KO/EN pair row unpairs it and le
 
 // 그 자리 메뉴·고른 표시(v0.13) - 한/영 짝 줄에서 추천을 누르면(New도 한/영 짝이면 짝 문장까지 골라져) 카드에 고른 표시와 "저장 안 됨"이 보이고,
 // 누른 곳 옆 메뉴의 Confirm(↵)으로 저장된다. 저장한 줄의 "→ 간 곳"과 New의 "← 출처"는 맞은편으로 가서 끊기 메뉴를 띄운다.
-// 지금 합성 묶음의 쓴 New 문서는 영어뿐이라 New 짝이 없다 - 그때는 한 언어로 잇고(남은 문장은 짝이 풀린다) 짝 비교는 assign-model 단위 시험이 본다
+// 합성 묶음의 OLD-6 한/영 짝 줄 → WI-05 한/영 짝 문장이 이 길이다. 한/영 짝 New 후보가 없는 자료면 한 언어로 잇는다(짝 비교는 assign-model 단위 시험도 본다)
 await runStep("assign: KO/EN pair - recommendation shows picked, in-place menu confirms, links navigate", {}, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}${path}`, { headers })).json();
@@ -727,15 +727,17 @@ await runStep("assign: KO/EN pair - recommendation shows picked, in-place menu c
       const members = pair.unit_ids.map((id) => unitOf.get(id));
       if (members.length !== 2 || members.some((unit) => !unit || unit.status !== "unassigned")) continue;
       const langs = new Set(members.map((unit) => unit.lang));
-      for (const unit of members) {
-        const candidates = await getJson(`/units/${unit.id}/new-candidates`);
-        const hit = candidates.find((item) => {
-          const partner = written.get(written.get(item.target_id)?.partner_target_id ?? -1);
-          return partner && langs.has(partner.lang) && partner.lang !== unit.lang;
-        });
-        if (!fallback && candidates.length > 0) fallback = { unit, other: members.find((item) => item !== unit), targetId: candidates[0].target_id, partnerId: null };
-        if (hit) {
-          found = { unit, other: members.find((item) => item !== unit), targetId: hit.target_id, partnerId: written.get(hit.target_id).partner_target_id };
+      const tops = [];
+      for (const unit of members) tops.push((await getJson(`/units/${unit.id}/new-candidates`))[0]?.target_id ?? null);
+      for (const [index, unit] of members.entries()) {
+        const targetId = tops[index];
+        if (targetId === null) continue;
+        if (!fallback) fallback = { unit, other: members[1 - index], targetId, partnerId: null };
+        // 두 언어의 첫 후보가 서로 New 짝이어야 한다 - 글자 2-gram은 언어 끝말만 같아도 먼 문장을 후보로 올린다(합성 OLD-6 → WI-05)
+        const partnerId = written.get(targetId)?.partner_target_id ?? null;
+        const partner = written.get(partnerId ?? -1);
+        if (partner && langs.has(partner.lang) && partner.lang !== unit.lang && tops[1 - index] === partnerId) {
+          found = { unit, other: members[1 - index], targetId, partnerId };
           break;
         }
       }
@@ -745,6 +747,7 @@ await runStep("assign: KO/EN pair - recommendation shows picked, in-place menu c
   }
   found ??= fallback;
   check("the synthetic bundle has a KO/EN pair row with a New candidate", found !== null);
+  check("the candidate is a KO/EN New pair (OLD-6 → WI-05)", found?.partnerId != null);
   if (!found) return;
   console.log(`  (New pair candidate: ${found.partnerId !== null ? "yes" : "no - one-language link"})`);
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
@@ -799,6 +802,14 @@ await runStep("assign: KO/EN pair - recommendation shows picked, in-place menu c
   await page.locator(`[data-testid="assign-new-${found.targetId}"]`).hover();
   await page.locator(`[data-pane="old"] [data-link-hover]`).first().waitFor({ timeout: T });
   check("hovering a New sentence highlights its Old source", (await page.locator(`[data-pane="old"] [data-link-hover] [data-unit="${found.unit.id}"]`).count()) === 1);
+  // 다시 불러와도 저장된 곳이 보인다 - 줄은 확정, 짝 New 두 문장이 이 줄의 곳으로 골라져 있다
+  await page.reload();
+  await wait(page, "assign-pick-prompt");
+  await selectRowById(page, found.unit.display_id);
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-row-status"]')?.textContent?.includes("Confirmed"), null, { timeout: T });
+  const linkedLines = [found.targetId, found.partnerId].filter((id) => id !== null);
+  for (const id of linkedLines) await page.locator(`[data-testid="assign-new-${id}"][data-state="picked"]`).waitFor({ timeout: T });
+  check("after reload the row is confirmed and its New sentences are shown as its place", true);
 });
 
 await runStep("outputs: A, B, C in both editions and Excel", {}, async ({ page, takeShot }) => {
