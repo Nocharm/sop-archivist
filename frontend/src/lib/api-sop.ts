@@ -548,6 +548,7 @@ export interface GroupTarget {
   source_unit_ids: number[];
   group_id: string | null;
   revision: number;
+  indent_level: number;
 }
 
 export interface Group {
@@ -742,6 +743,8 @@ export interface OutputARow {
   dest_doc_code: string;
   dest_doc_title: string;
   dest_location: string;
+  /** 새 문서 안 섹션 번호 - 번호 없는 곳은 빈 글, 새 문장이 여럿이면 "① 1.1\n② 2.1" */
+  dest_number: string;
   confirmed_text: string;
   ai_text: string;
   change_type: string;
@@ -767,6 +770,10 @@ export interface OutputCItem {
   change_type: string | null;
   status: string;
   source_note: string;
+  /** 섹션 번호(칸 번호 + 들여쓰기, 6.1.2) - 표 칸은 표의 번호, 입구 2 문서·단계 없는 WI는 null */
+  number: string | null;
+  /** 사람이 정한 깊이 그대로 - 번호는 서버가 앞줄 깊이 + 1까지로 눌러 읽어 센다 */
+  indent_level: number;
   cell_row: number | null;
   cell_col: number | null;
   children: OutputCItem[];
@@ -780,7 +787,8 @@ export interface OutputC {
     doc_type: string;
     parent_code: string | null;
     entrance: string;
-    sections: Array<{ location_key: string; label: string; na_reason: string | null; items: OutputCItem[] }>;
+    /** number: SOP 칸 번호(5.1)·WI 단계 번호(3), 번호가 없는 칸은 null */
+    sections: Array<{ location_key: string; label: string; number: string | null; na_reason: string | null; items: OutputCItem[] }>;
   }>;
   deleted: Array<{ display_id: string; doc_code: string; section: string; source_text: string; reason: string }>;
   moved: Array<{ display_id: string; doc_code: string; section: string; source_text: string; move_target_code: string; reason: string }>;
@@ -818,7 +826,7 @@ export function downloadExport(bundleId: number, lang: OutputLang): Promise<Blob
   return apiFetchBlob(`/bundles/${bundleId}/export.xlsx?lang=${lang}`);
 }
 
-export function putTargetOrder(bundleId: number, body: { revision: number; target_doc_id: number; items: Array<{ target_id: number; wi_step?: number | null }> }): Promise<unknown> {
+export function putTargetOrder(bundleId: number, body: { revision: number; target_doc_id: number; items: Array<{ target_id: number; wi_step?: number | null; indent_level?: number }> }): Promise<unknown> {
   return apiFetch(`/bundles/${bundleId}/targets/order`, { method: "PUT", body: JSON.stringify(body) });
 }
 

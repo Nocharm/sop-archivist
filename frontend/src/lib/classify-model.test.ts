@@ -111,7 +111,7 @@ describe("save request", () => {
       {
         id: 90, target_doc_id: 6, slot_key: "scope", wi_step: null, wi_part: null, section_path: "", order_index: 0, lang: "ko", kind: "sentence",
         confirmed_text: "가", ai_text: "", change_type: "as_is", origin: "units", new_unit_id: null, translation_source_unit_id: null, parent_target_id: null, cell_row: null, cell_col: null,
-        grid: null, status: "confirmed", hold_reason: "", warnings: [], source_unit_ids: [10], group_id: null, revision: 4,
+        grid: null, status: "confirmed", hold_reason: "", warnings: [], source_unit_ids: [10], group_id: null, revision: 4, indent_level: 0,
       },
     ],
   };
@@ -148,7 +148,7 @@ function makeTarget(extra: Partial<GroupTarget>): GroupTarget {
   return {
     id: 1, target_doc_id: 6, slot_key: "scope", wi_step: null, wi_part: null, section_path: "", order_index: 0, lang: "ko", kind: "sentence",
     confirmed_text: "", ai_text: "", change_type: "as_is", origin: "units", new_unit_id: null, translation_source_unit_id: null, parent_target_id: null, cell_row: null, cell_col: null,
-    grid: null, status: "ai_suggested", hold_reason: "", warnings: [], source_unit_ids: [10], group_id: null, revision: 1, ...extra,
+    grid: null, status: "ai_suggested", hold_reason: "", warnings: [], source_unit_ids: [10], group_id: null, revision: 1, indent_level: 0, ...extra,
   };
 }
 

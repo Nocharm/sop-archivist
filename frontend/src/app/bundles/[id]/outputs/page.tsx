@@ -22,6 +22,7 @@ import {
   getOutputB,
   getOutputC,
   getSummary,
+  listAllUnits,
   putSemanticChecks,
   putTargetOrder,
   SEMANTIC_CHECK_KEYS,
@@ -35,7 +36,8 @@ import { saveBlob } from "@/lib/save-file";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 import { readOutputsView, writeOutputsView, type OutputsTab } from "@/lib/outputs-view-prefs";
-import { buildTargetOrder, type MoveDir } from "@/lib/target-order";
+import { findPartnerTarget } from "@/lib/section-number";
+import { buildIndentItems, buildTargetOrder, type MoveDir } from "@/lib/target-order";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useProgressiveList } from "@/lib/use-progressive-list";
 import { getBundleLabel } from "@/lib/bundle-label";
@@ -91,6 +93,29 @@ export default function OutputsPage() {
       const order = buildTargetOrder(outC.data, other, targetDocId, locationKey, targetId, dir);
       if (order) {
         await putTargetOrder(bundleId, { revision: bundle.revision, target_doc_id: targetDocId, items: order.map((id) => ({ target_id: id })) });
+        await loadBundle(bundleId);
+      }
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+      void loadBundle(bundleId);
+    } finally {
+      setMoving(false);
+    }
+  }
+
+  // 깊이 하나를 바꿔도 서버는 문서 전체 순서를 받는다. 한/영 짝 원문 줄의 상대에도 같은 깊이를 보내 두 판의 번호가 같게 한다
+  async function indentTarget(targetDocId: number, targetId: number, depth: number) {
+    if (!outC.data || !bundle || moving) return;
+    setMoving(true);
+    try {
+      const [other, units] = await Promise.all([getOutputC(bundleId, lang === "ko" ? "en" : "ko"), listAllUnits(bundleId)]);
+      const docIds = new Set(buildIndentItems(outC.data, other, targetDocId, new Map())?.map((item) => item.target_id) ?? []);
+      const partner = findPartnerTarget(targetId, units, docIds);
+      const levels = new Map([[targetId, depth]]);
+      if (partner !== null) levels.set(partner, depth);
+      const items = buildIndentItems(outC.data, other, targetDocId, levels);
+      if (items) {
+        await putTargetOrder(bundleId, { revision: bundle.revision, target_doc_id: targetDocId, items });
         await loadBundle(bundleId);
       }
     } catch (err) {
@@ -185,6 +210,11 @@ export default function OutputsPage() {
                     <td className="whitespace-nowrap">
                       <span className="font-mono text-xs">{row.dest_doc_code}</span>
                       <span className="block text-xs text-ink-3">{row.dest_location || labelCode(t, "outputs.dest", row.dest_kind)}</span>
+                      {row.dest_number && (
+                        <span className="block whitespace-pre-line font-mono text-[11px] text-ink-2" data-testid={`output-a-number-${index}`}>
+                          {row.dest_number}
+                        </span>
+                      )}
                     </td>
                     <td style={{ fontFamily: "var(--font-source)" }}>
                       {row.confirmed_text || <span className="text-ink-4">–</span>}
@@ -234,7 +264,13 @@ export default function OutputsPage() {
                 })}
             </div>
           ) : tab === "c" && outC.data ? (
-            <OutputCView data={outC.data} lang={lang} onMove={canEdit ? (docId, sectionKey, targetId, dir) => void moveTarget(docId, sectionKey, targetId, dir) : undefined} moving={moving} tobeHref={canEdit ? getStageHref(bundleId, "tobe") : undefined} />
+            <OutputCView
+              data={outC.data}
+              lang={lang}
+              onMove={canEdit ? (docId, sectionKey, targetId, dir) => void moveTarget(docId, sectionKey, targetId, dir) : undefined}
+              onIndent={canEdit ? (docId, targetId, depth) => void indentTarget(docId, targetId, depth) : undefined}
+              // 다시 받는 동안의 깊이는 낡았다 - 연달아 누른 Tab이 낡은 깊이로 보내지 않게 막는다
+              moving={moving || outC.isLoading} tobeHref={canEdit ? getStageHref(bundleId, "tobe") : undefined} />
           ) : null}
         </div>
       </div>

@@ -35,7 +35,7 @@ function makeTarget(id: number, extra: Partial<GroupTarget> = {}): GroupTarget {
   return {
     id, target_doc_id: 9, slot_key: null, wi_step: null, wi_part: null, section_path: "", order_index: 0, lang: "ko", kind: "sentence",
     confirmed_text: `문장 ${id}`, ai_text: "", change_type: null, origin: "new_doc", new_unit_id: null, translation_source_unit_id: null, parent_target_id: null, cell_row: null, cell_col: null,
-    grid: null, status: "ai_suggested", hold_reason: "", warnings: [], source_unit_ids: [], group_id: null, revision: 1, ...extra,
+    grid: null, status: "ai_suggested", hold_reason: "", warnings: [], source_unit_ids: [], group_id: null, revision: 1, indent_level: 0, ...extra,
   };
 }
 

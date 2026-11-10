@@ -821,6 +821,30 @@ await runStep("outputs: A, B, C in both editions and Excel", {}, async ({ page, 
   await page.waitForFunction(() => document.querySelector('[data-testid="outputs-check-numbers"]')?.checked === false, null, { timeout: T });
 });
 
+await runStep("outputs: indent a line on C and its section number changes", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
+  await wait(page, "output-c");
+  // 들일 수 있는 첫 줄(앞줄이 있고 번호가 있는 줄)
+  const button = page.locator('[data-testid^="output-c-indent-"]:not([disabled])').first();
+  const targetId = (await button.getAttribute("data-testid")).replace("output-c-indent-", "");
+  const number = page.locator(`[data-testid="output-c-number-${targetId}"]`);
+  const before = (await number.innerText()).trim();
+  await page.locator(`[data-testid="output-c-row-${targetId}"]`).hover();
+  await button.click();
+  await page.waitForFunction(({ id, old }) => {
+    const text = document.querySelector(`[data-testid="output-c-number-${id}"]`)?.textContent?.trim();
+    return text && text !== old;
+  }, { id: targetId, old: before }, { timeout: T });
+  const after = (await number.innerText()).trim();
+  check("indenting adds a level to the number", after.split(".").length === before.split(".").length + 1, `${before} -> ${after}`);
+  await takeShot("sop-outputs-c-indent.png");
+  // 줄을 눌러 고른 뒤 Shift+Tab이 내어 쓴다
+  await page.locator(`[data-testid="output-c-row-${targetId}"]`).click({ position: { x: 4, y: 4 } });
+  await page.keyboard.press("Shift+Tab");
+  await page.waitForFunction(({ id, old }) => document.querySelector(`[data-testid="output-c-number-${id}"]`)?.textContent?.trim() === old, { id: targetId, old: before }, { timeout: T });
+  check("Shift+Tab on the picked row outdents it back", true);
+});
+
 // 작성자가 요청을 거둔 뒤 다시 요청해 둔다 - 아래 검토자 단계가 같은 Bundle을 검토 대기로 받는다
 await runStep("review: author withdraws the request and asks again", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);

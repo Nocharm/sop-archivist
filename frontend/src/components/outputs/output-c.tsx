@@ -1,17 +1,21 @@
 // 결과물 C - 새 문서를 칸·단계 순서로 미리 본다. 결과물 화면과 검토 화면이 같이 쓴다. 확정 전 새 문장은 점선.
 "use client";
 
-import { ArrowDown, ArrowUp, FileStack, ListTree } from "lucide-react";
+import { ArrowDown, ArrowUp, FileStack, IndentDecrease, IndentIncrease, ListTree } from "lucide-react";
 import Link from "next/link";
+import { Fragment, type ReactNode } from "react";
 
 import { EmptyState } from "@/components/ui/empty-state";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { OutputC, OutputCItem, OutputLang } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
+import { canIndent, getSectionDepths, isIndentable, type IndentDir } from "@/lib/section-number";
 import { canMoveTarget, type MoveDir } from "@/lib/target-order";
 
 /** 순서 바꾸기 - 결과물 화면에서 작성자에게만 넘긴다. 검토 화면은 넘기지 않아 단추가 없다 */
 export type MoveTarget = (targetDocId: number, locationKey: string, targetId: number, dir: MoveDir) => void;
+/** 들여·내어쓰기 - 지금 보이는 깊이에서 한 단계. 검토 화면은 넘기지 않는다 */
+export type IndentTarget = (targetDocId: number, targetId: number, depth: number) => void;
 
 function CItemView({ item }: { item: OutputCItem }) {
   if (item.kind === "table") {
@@ -41,10 +45,34 @@ function CItemView({ item }: { item: OutputCItem }) {
   );
 }
 
-function MoveButtons({ items, item, onMove, busy }: { items: OutputCItem[]; item: OutputCItem; onMove: (dir: MoveDir) => void; busy: boolean }) {
+interface RowButtonsProps {
+  items: OutputCItem[];
+  item: OutputCItem;
+  busy: boolean;
+  onMove: (dir: MoveDir) => void;
+  /** 깊이를 바꿀 수 없는 줄(입구 2 문서·번역 줄)이면 없다 */
+  indent: { canOut: boolean; canIn: boolean; onIndent: (dir: IndentDir) => void } | null;
+}
+
+function RowButtons({ items, item, busy, onMove, indent }: RowButtonsProps) {
   const { t } = useI18n();
   return (
     <span className="row-actions absolute right-0 top-0 flex gap-0.5 bg-paper" style={{ fontFamily: "var(--font-ui)" }}>
+      {indent &&
+        ([-1, 1] as const).map((dir) => (
+          <Tooltip key={`i${dir}`} label={t(dir < 0 ? "outputs.outdent" : "outputs.indent")} align="end">
+            <button
+              type="button"
+              className="btn ghost icon h-6 w-6"
+              aria-label={t(dir < 0 ? "outputs.outdent" : "outputs.indent")}
+              data-testid={`output-c-${dir < 0 ? "outdent" : "indent"}-${item.target_id}`}
+              disabled={busy || !(dir < 0 ? indent.canOut : indent.canIn)}
+              onClick={() => indent.onIndent(dir)}
+            >
+              {dir < 0 ? <IndentDecrease size={12} strokeWidth={1.5} aria-hidden /> : <IndentIncrease size={12} strokeWidth={1.5} aria-hidden />}
+            </button>
+          </Tooltip>
+        ))}
       {([-1, 1] as const).map((dir) => (
         <Tooltip key={dir} label={t(dir < 0 ? "outputs.moveUp" : "outputs.moveDown")} align="end">
           <button
@@ -63,16 +91,31 @@ function MoveButtons({ items, item, onMove, busy }: { items: OutputCItem[]; item
   );
 }
 
+/** 줄 앞 섹션 번호 - 깊이만큼 들여 그린다. 번호가 없는 칸(입구 2 문서·단계 없는 WI)도 깊이는 그린다 */
+function NumberedLine({ item, depth, children }: { item: OutputCItem; depth: number; children: ReactNode }) {
+  return (
+    <div className="c-line" data-numbered={item.number !== null ? "" : undefined} style={{ paddingLeft: `calc(${depth} * var(--c-indent))` }}>
+      {item.number !== null && (
+        <span className="c-no" data-testid={`output-c-number-${item.target_id}`}>
+          {item.number}
+        </span>
+      )}
+      <div className="min-w-0">{children}</div>
+    </div>
+  );
+}
+
 interface OutputCViewProps {
   data: OutputC;
   lang: OutputLang;
   onMove?: MoveTarget;
+  onIndent?: IndentTarget;
   moving?: boolean;
   /** 비었을 때 갈 곳(To-Be) - 고칠 수 있는 화면에서만 준다 */
   tobeHref?: string;
 }
 
-export function OutputCView({ data, lang, onMove, moving = false, tobeHref }: OutputCViewProps) {
+export function OutputCView({ data, lang, onMove, onIndent, moving = false, tobeHref }: OutputCViewProps) {
   const { t } = useI18n();
   if (data.docs.length === 0) {
     return (
@@ -102,29 +145,59 @@ export function OutputCView({ data, lang, onMove, moving = false, tobeHref }: Ou
               <span className="font-semibold">{doc.title}</span>
               <span className="tag ml-auto">{doc.doc_type.toUpperCase()}</span>
             </header>
-            {doc.sections.map((section) => (
-              <section key={section.location_key} className="grid gap-1">
-                <h3 className="text-[13px] font-semibold text-ink-2" style={{ fontFamily: "var(--font-ui)" }}>
-                  {section.label}
-                </h3>
-                {section.na_reason !== null ? (
-                  <p className="text-ink-3">N/A · {section.na_reason}</p>
-                ) : section.items.length === 0 ? (
-                  <p className="text-ink-4">–</p>
-                ) : (
-                  section.items.map((item) =>
-                    onMove ? (
-                      <div key={item.target_id} className="hover-row relative pr-14">
-                        <CItemView item={item} />
-                        <MoveButtons items={section.items} item={item} busy={moving} onMove={(dir) => onMove(doc.target_doc_id, section.location_key, item.target_id, dir)} />
-                      </div>
-                    ) : (
-                      <CItemView key={item.target_id} item={item} />
-                    ),
-                  )
-                )}
-              </section>
-            ))}
+            {doc.sections.map((section) => {
+              const depths = getSectionDepths(section);
+              return (
+                <section key={section.location_key} className="grid gap-1">
+                  <h3 className="text-[13px] font-semibold text-ink-2" style={{ fontFamily: "var(--font-ui)" }} data-testid={`output-c-section-${doc.target_doc_id}-${section.location_key}`}>
+                    {section.number !== null && <span className="mr-1.5 font-mono">{section.number}</span>}
+                    {section.label}
+                  </h3>
+                  {section.na_reason !== null ? (
+                    <p className="text-ink-3">N/A · {section.na_reason}</p>
+                  ) : section.items.length === 0 ? (
+                    <p className="text-ink-4">–</p>
+                  ) : (
+                    section.items.map((item, index) => {
+                      const line = (
+                        <NumberedLine item={item} depth={depths[index]}>
+                          <CItemView item={item} />
+                        </NumberedLine>
+                      );
+                      if (!onMove) return <Fragment key={item.target_id}>{line}</Fragment>;
+                      const indent =
+                        onIndent && isIndentable(doc.entrance, item)
+                          ? {
+                              canOut: canIndent(depths, index, -1),
+                              canIn: canIndent(depths, index, 1),
+                              onIndent: (dir: IndentDir) => onIndent(doc.target_doc_id, item.target_id, depths[index] + dir),
+                            }
+                          : null;
+                      return (
+                        <div
+                          key={item.target_id}
+                          // 줄을 눌러 고르면 Tab·Shift+Tab이 들이고 내어 쓴다. 탭 순서에는 넣지 않고(-1) Esc로 놓아 Tab이 페이지 이동을 빼앗지 않게 한다
+                          tabIndex={indent ? -1 : undefined}
+                          className="hover-row c-row relative pr-[104px]"
+                          data-testid={`output-c-row-${item.target_id}`}
+                          onKeyDown={(event) => {
+                            if (!indent || event.target !== event.currentTarget) return;
+                            if (event.key === "Escape") event.currentTarget.blur();
+                            if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
+                            event.preventDefault();
+                            const dir: IndentDir = event.shiftKey ? -1 : 1;
+                            if (!moving && (dir < 0 ? indent.canOut : indent.canIn)) indent.onIndent(dir);
+                          }}
+                        >
+                          {line}
+                          <RowButtons items={section.items} item={item} busy={moving} indent={indent} onMove={(dir) => onMove(doc.target_doc_id, section.location_key, item.target_id, dir)} />
+                        </div>
+                      );
+                    })
+                  )}
+                </section>
+              );
+            })}
           </div>
         </article>
       ))}

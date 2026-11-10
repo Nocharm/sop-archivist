@@ -433,8 +433,9 @@ AI가 켜져 있으면 한쪽 언어만 있는 새 문장에 **Make English** �
 ![결과물 C](img/outputs-c.png "C · New documents. 칸마다 모인 새 문장")
 
 - **Output language** 에서 한국어와 영어를 바꿉니다. 고른 탭과 언어는 이 브라우저에 기억됩니다.
-- **A · Units** 의 열은 **Old unit**, **Source**, **Destination**, **New sentence · Change**, **Status** 입니다. 지우거나 다른 문서로 옮긴 Unit은 **Deleted and moved** 에 따로 모입니다.
+- **A · Units** 의 열은 **Old unit**, **Source**, **Destination**, **New sentence · Change**, **Status** 입니다. **Destination** 에는 새 문서 안 섹션 번호(아래)도 함께 나오고, 새 문장 여럿으로 나뉘었으면 ①② 차례로 적힙니다. 지우거나 다른 문서로 옮긴 Unit은 **Deleted and moved** 에 따로 모입니다.
 - **C · New documents** 에서는 **Move up** · **Move down** 으로 칸 안의 문장 순서를 바꿉니다. 번역 문장은 출처 문장을 따라 움직입니다. 새 문서가 없으면 **Open To-Be** 로 가서 목록부터 적습니다.
+- **섹션 번호**: 칸마다 정해진 번호(SOP는 칸 자리, WI는 단계 번호)가 있고, 그 안 문장은 들여쓰기 깊이대로 5.1, 5.2, 5.2.1처럼 번호가 붙습니다. 줄에 마우스를 올려 **Indent** · **Outdent** 를 누르거나, 줄을 눌러 고른 뒤 <kbd>Tab</kbd> · <kbd>Shift</kbd>+<kbd>Tab</kbd>을 누릅니다(<kbd>Esc</kbd>로 고름을 놓음). 들여쓰기는 앞 줄보다 한 단계 깊게까지만 됩니다. 한/영 짝 문장은 상대 언어 줄도 같은 깊이가 되어 두 판의 번호가 같고, 번역 문장은 출처 문장의 깊이를 따릅니다. 이미 쓴 New 문서는 자기 번호를 그대로 쓰므로 들여 쓸 수 없습니다. 번호는 **A · Units** 와 Excel에도 나옵니다.
 
 ### 요약과 의미 확인 {#outputs-checks}
 

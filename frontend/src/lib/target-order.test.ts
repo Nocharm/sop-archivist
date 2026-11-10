@@ -2,10 +2,10 @@
 import { describe, expect, it } from "vitest";
 
 import type { OutputC, OutputCItem } from "./api-sop";
-import { buildTargetOrder, canMoveTarget } from "./target-order";
+import { buildIndentItems, buildTargetOrder, canMoveTarget } from "./target-order";
 
 function item(id: number, lang: string): OutputCItem {
-  return { target_id: id, kind: "sentence", lang, text: `t${id}`, ai_text: "", change_type: null, status: "confirmed", source_note: "", cell_row: null, cell_col: null, children: [] };
+  return { target_id: id, kind: "sentence", lang, text: `t${id}`, ai_text: "", change_type: null, status: "confirmed", source_note: "", number: null, indent_level: 0, cell_row: null, cell_col: null, children: [] };
 }
 
 function output(lang: string, sections: Array<[string, number[]]>): OutputC {
@@ -18,7 +18,7 @@ function output(lang: string, sections: Array<[string, number[]]>): OutputC {
         doc_type: "sop",
         parent_code: null,
         entrance: "assign",
-        sections: sections.map(([key, ids]) => ({ location_key: key, label: key, na_reason: null, items: ids.map((id) => item(id, lang)) })),
+        sections: sections.map(([key, ids]) => ({ location_key: key, label: key, number: null, na_reason: null, items: ids.map((id) => item(id, lang)) })),
       },
     ],
     deleted: [],
@@ -47,5 +47,19 @@ describe("buildTargetOrder", () => {
   it("tells whether a move is possible", () => {
     expect(canMoveTarget(ko.docs[0].sections[0].items, 1, -1)).toBe(false);
     expect(canMoveTarget(ko.docs[0].sections[0].items, 1, 1)).toBe(true);
+  });
+});
+
+describe("buildIndentItems", () => {
+  const ko = output("ko", [["purpose", [1, 2]], ["scope", [3]]]);
+  const en = output("en", [["purpose", [11, 12]]]);
+
+  it("sends the whole document in its current order with a depth only on the changed lines", () => {
+    // 짝 상대(12)에도 같은 깊이 - 나머지 줄은 깊이를 빼서 그대로 둔다
+    expect(buildIndentItems(ko, en, 7, new Map([[2, 1], [12, 1]]))).toEqual([{ target_id: 1 }, { target_id: 2, indent_level: 1 }, { target_id: 11 }, { target_id: 12, indent_level: 1 }, { target_id: 3 }]);
+  });
+
+  it("returns null for an unknown document", () => {
+    expect(buildIndentItems(ko, en, 9, new Map())).toBeNull();
   });
 });
