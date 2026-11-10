@@ -168,6 +168,14 @@ const SCENES = [
     marks: [id("assign-filter-ai_suggested"), id("assign-ai-reason"), id("assign-rec-0"), id("assign-chosen"), id("assign-primary")],
   },
   {
+    // 상단 바 AI 작업 목록 - seed가 묶음 4에 쌓은 요청(하루 안)이 보인다
+    name: "ai-jobs", appOnly: true, app: { clip: id("ai-jobs-popover") }, user: "qa.member", path: "/bundles/4",
+    prep: async (page) => {
+      await page.locator(id("top-bar-ai")).click();
+      await page.locator(id("ai-jobs-popover")).waitFor({ timeout: T });
+    },
+  },
+  {
     name: "assign-hold", user: "qa.member", path: "/bundles/4/assign",
     prep: async (page) => {
       await click(page, id("assign-filter-on_hold"));
