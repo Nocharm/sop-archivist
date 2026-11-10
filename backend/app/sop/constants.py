@@ -1,5 +1,7 @@
 """SOP 재구성의 코드 값 — DB CHECK, 검증, 화면 표시가 모두 이 튜플을 단일 소스로 쓴다."""
 
+from typing import Literal, get_args
+
 BUNDLE_STATUSES = ("in_progress", "in_review", "done")
 MEMBER_ROLES = ("author", "reviewer")
 DOC_SIDES = ("old", "new")
@@ -31,6 +33,10 @@ SYSTEM_HOLD_RELATED_CHANGED = "system:related_unit_changed"  # 화면은 "관련
 MAX_PAIR_SIDE = 3  # 한/영 짝 한쪽 최대 단위 수(작은 다대다)
 # 새 문장 들여쓰기 최대 깊이 — 9면 칸 번호 아래로 열 단계(6.1.1 … 6.1.1.1.1.1.1.1.1.1)까지. 순서 바꾸기 입력의 상한이다
 MAX_INDENT_LEVEL = 9
+# 새 문장 번호 표시 — 번호(기본) | 번호 생략 | 주석(번호 없이 기울임). 생략·주석 줄은 번호를 받지 않고 다음 번호 줄이 이어 센다
+NumberStyle = Literal["numbered", "omitted", "note"]
+NUMBER_STYLES: tuple[NumberStyle, ...] = get_args(NumberStyle)
+NUMBERED, NUMBER_OMITTED, NUMBER_NOTE = NUMBER_STYLES
 
 # --- AI 층(계획 2) ---
 AI_JOB_KINDS = ("classify", "translate", "match_plan", "match", "pair", "split", "doc_meta")

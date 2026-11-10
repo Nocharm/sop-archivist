@@ -4,13 +4,17 @@
 """
 
 from functools import partial
+from io import BytesIO
 
 import pytest
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
+from openpyxl.worksheet.worksheet import Worksheet
 
 from app.sop.constants import MAX_INDENT_LEVEL, SLOT_KEYS
 from app.sop.outputs import SLOT_NUMBERS, number_lines
-from tests.sop_helpers import get_bundle
+from tests.docx_factory import build_docx, p
+from tests.sop_helpers import AUTHOR, assign_as_is, create_bundle, find_unit, get_bundle, get_view, put_tobe, upload
 from tests.test_sop_outputs import (
     DUPLICATE,
     MERGED,
@@ -201,3 +205,233 @@ def test_reorder_rejects_bad_indents(client: TestClient) -> None:
     # 지금 깊이 그대로(0)를 보내는 것은 바꾸지 않는 것이라 입구 2 문서의 순서 바꾸기를 막지 않는다
     assert same_on_match.status_code == 200, same_on_match.text
     assert deepest.status_code == 200, deepest.text
+
+
+# ── 번호 표시: 번호·생략·주석 ───────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("depths", "expected"),
+    [
+        # 생략·주석 줄(None)은 번호가 없고 다음 번호 줄이 이어 센다
+        ([0, None, 0], ["5.1", None, "5.2"]),
+        # 첫 줄이 생략이면 다음 번호 줄이 칸의 첫 번호다
+        ([None, 0, 0], [None, "5.1", "5.2"]),
+        ([None, 3], [None, "5.1"]),
+        # 깊은 자리의 생략은 그 깊이의 세기를 멈추지 않는다
+        ([0, 1, None, 1], ["5.1", "5.1.1", None, "5.1.2"]),
+        # 눌러 읽기의 상한은 앞 번호 줄만 본다 — 생략 줄의 깊이는 세지 않는다
+        ([0, None, 2], ["5.1", None, "5.1.1"]),
+        ([0, 1, None, 0, 1], ["5.1", "5.1.1", None, "5.2", "5.2.1"]),
+        ([None, None], [None, None]),
+    ],
+)
+def test_number_lines_skips_unnumbered_lines(depths: list[int | None], expected: list[str | None]) -> None:
+    assert number_lines("5", depths) == expected
+
+
+def _put_styles(client: TestClient, bundle_id: int, target_doc_id: int, ids: list[int], styles: dict[int, str]) -> dict:
+    revision = get_bundle(client, bundle_id)["revision"]
+    items = [
+        {"target_id": target_id, **({"number_style": styles[target_id]} if target_id in styles else {})}
+        for target_id in ids
+    ]
+    response = _put_order(client, bundle_id, {"revision": revision, "target_doc_id": target_doc_id, "items": items})
+    assert response.status_code == 200, response.text
+    return {item["target_id"]: item["number_style"] for item in response.json()["items"]}
+
+
+def test_omitted_and_note_lines_take_no_number_in_outputs_a_and_c(client: TestClient) -> None:
+    fx = _setup(client)
+    wi = _get_output(client, fx.bundle_id, "outputs/c", "ko")["docs"][1]
+    (split_a,), (duplicate,), (split_b, figure), () = [section["items"] for section in wi["sections"]]
+    ids = [split_a["target_id"], duplicate["target_id"], split_b["target_id"], figure["target_id"]]
+    assert {item["number_style"] for item in (split_a, duplicate, split_b, figure)} == {"numbered"}
+
+    styles = _put_styles(
+        client, fx.bundle_id, fx.wi_id, ids, {duplicate["target_id"]: "note", split_b["target_id"]: "omitted"}
+    )
+
+    assert styles == {
+        split_a["target_id"]: "numbered", duplicate["target_id"]: "note", split_b["target_id"]: "omitted",
+        figure["target_id"]: "numbered",
+    }
+    wi = _get_output(client, fx.bundle_id, "outputs/c", "ko")["docs"][1]
+    assert [[(item["number"], item["number_style"]) for item in section["items"]] for section in wi["sections"]] == [
+        [("1.1", "numbered")], [(None, "note")], [(None, "omitted"), ("2.1", "numbered")], [],
+    ]
+    # 결과물 A — 번호 없는 새 문장은 번호 칸이 비고(나눔이면 그 자리만), 주석 줄이면 dest_is_note
+    rows = _get_output(client, fx.bundle_id, "outputs/a", "ko")
+    d1 = partial(_display, fx.old1)
+    (split_row,) = [row for row in rows if row["display_id"] == d1(SPLIT_SOURCE)]
+    assert (split_row["dest_number"], split_row["dest_is_note"]) == ("① 1.1\n② ", False)
+    duplicate_rows = [row for row in rows if row["display_id"] == d1(DUPLICATE)]
+    assert [(row["dest_doc_code"], row["dest_number"], row["dest_is_note"]) for row in duplicate_rows] == [
+        ("SOP-NEW", "4.1", False), ("WI-01", "", True),
+    ]
+    (figure_row,) = [row for row in rows if row["display_id"] == _display_of_kind(fx.old1, "figure")]
+    assert figure_row["dest_number"] == "2.1"
+
+    # 다시 번호로 돌리면 번호가 돌아온다
+    _put_styles(client, fx.bundle_id, fx.wi_id, ids, {duplicate["target_id"]: "numbered", split_b["target_id"]: "numbered"})
+    wi = _get_output(client, fx.bundle_id, "outputs/c", "ko")["docs"][1]
+    assert [[item["number"] for item in section["items"]] for section in wi["sections"]] == [
+        ["1.1"], ["1.2"], ["2.1", "2.2"], [],
+    ]
+
+
+def test_a_marked_table_carries_its_mark_to_its_cells(client: TestClient) -> None:
+    fx = _setup(client)
+    sop = _get_output(client, fx.bundle_id, "outputs/c", "ko")["docs"][0]
+    (table,) = next(section["items"] for section in sop["sections"] if section["location_key"] == "general_requirements")
+    ids = _list_top_target_ids(client, fx.bundle_id, 0)
+
+    _put_styles(client, fx.bundle_id, fx.sop_id, ids, {table["target_id"]: "omitted"})
+
+    sop = _get_output(client, fx.bundle_id, "outputs/c", "ko")["docs"][0]
+    (table,) = next(section["items"] for section in sop["sections"] if section["location_key"] == "general_requirements")
+    assert (table["number"], table["number_style"]) == (None, "omitted")
+    assert {(cell["number"], cell["number_style"]) for cell in table["children"]} == {(None, "omitted")}
+
+
+def test_reorder_rejects_bad_number_styles(client: TestClient) -> None:
+    fx = _setup(client)
+    revision = get_bundle(client, fx.bundle_id)["revision"]
+    sop_items = [{"target_id": target_id} for target_id in _list_top_target_ids(client, fx.bundle_id, 0)]
+    match_items = [{"target_id": target_id} for target_id in _list_top_target_ids(client, fx.bundle_id, 2)]
+
+    unknown = _put_order(client, fx.bundle_id, {
+        "revision": revision, "target_doc_id": fx.sop_id,
+        "items": [{**sop_items[0], "number_style": "hidden"}, *sop_items[1:]],
+    })
+    on_match = _put_order(client, fx.bundle_id, {
+        "revision": revision, "target_doc_id": fx.match_id,
+        "items": [{**match_items[0], "number_style": "note"}, *match_items[1:]],
+    })
+    same_on_match = _put_order(client, fx.bundle_id, {
+        "revision": revision, "target_doc_id": fx.match_id,
+        "items": [{**match_items[0], "number_style": "numbered"}, *match_items[1:]],
+    })
+
+    assert (unknown.status_code, unknown.json()["detail"][0]["type"]) == (422, "literal_error")
+    assert (on_match.status_code, on_match.json()["detail"]) == (
+        422, {"code": "number_style_not_allowed", "target_ids": [match_items[0]["target_id"]]},
+    )
+    # 지금 표시 그대로를 보내는 것은 바꾸지 않는 것이라 입구 2 문서의 순서 바꾸기를 막지 않는다
+    assert same_on_match.status_code == 200, same_on_match.text
+
+
+def test_excel_leaves_unnumbered_cells_empty_and_italicizes_notes(client: TestClient) -> None:
+    fx = _setup(client)
+    wi = _get_output(client, fx.bundle_id, "outputs/c", "ko")["docs"][1]
+    (split_a,), (duplicate,), (split_b, figure), () = [section["items"] for section in wi["sections"]]
+    ids = [split_a["target_id"], duplicate["target_id"], split_b["target_id"], figure["target_id"]]
+    _put_styles(client, fx.bundle_id, fx.wi_id, ids, {duplicate["target_id"]: "note", split_b["target_id"]: "omitted"})
+
+    response = client.get(f"/api/bundles/{fx.bundle_id}/export.xlsx", params={"lang": "ko"}, headers=AUTHOR)
+    assert response.status_code == 200, response.text
+    workbook = load_workbook(BytesIO(response.content))
+
+    sheet_c = workbook["C 새 문서"]
+    number_col, item_col = _find_header(sheet_c, "번호"), _find_header(sheet_c, "항목")
+    rows = {row[item_col - 1].value: row for row in sheet_c.iter_rows(min_row=3) if row[item_col - 1].value}
+    assert (rows[SPLIT_A][number_col - 1].value, rows[SPLIT_A][item_col - 1].font.i) == ("1.1", False)
+    # 주석 줄 — 번호 칸이 비고 항목 글이 기울어 있다
+    note_rows = [row for row in sheet_c.iter_rows(min_row=3) if row[item_col - 1].value == DUPLICATE]
+    assert [(row[number_col - 1].value, row[item_col - 1].font.i) for row in note_rows] == [("4.1", False), (None, True)]
+    # 생략 줄 — 번호 칸만 비고 기울이지 않는다
+    assert (rows[SPLIT_B][number_col - 1].value, rows[SPLIT_B][item_col - 1].font.i) == (None, False)
+
+    sheet_a = workbook["A 비교표"]
+    dest_code_col, confirmed_col = _find_header(sheet_a, "새 문서 번호"), _find_header(sheet_a, "확정 문장")
+    a_number_col = _find_header(sheet_a, "새 문서 안 번호")
+    duplicate_rows = [
+        (row[dest_code_col - 1].value, row[a_number_col - 1].value, row[confirmed_col - 1].font.i)
+        for row in sheet_a.iter_rows(min_row=3) if row[confirmed_col - 1].value == DUPLICATE
+    ]
+    assert duplicate_rows == [("SOP-NEW", "4.1", False), ("WI-01", None, True)]
+
+
+def _find_header(sheet: Worksheet, header: str) -> int:
+    return next(cell.column for cell in sheet[2] if cell.value == header)
+
+
+PAIRED = [
+    ("합성 장비를 켠다.", "Turn on the synthetic unit."),
+    ("합성 시료를 넣는다.", "Load the synthetic sample."),
+    ("합성 결과를 적는다.", "Record the synthetic result."),
+]
+PAIR_SLOT = "procedures.procedure"
+
+
+def _setup_pairs(client: TestClient) -> tuple[int, int, list[tuple[int, int]]]:
+    """한/영 연달아 옛 문서의 짝 셋을 사람이 잇고 각 원문을 SOP 한 칸에 그대로 보낸 묶음 — (묶음, SOP, [(한 새 문장, 영 새 문장)])."""
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    response = put_tobe(client, bundle_id, [{"code": "SOP-P", "title": "Synthetic SOP", "doc_type": "sop", "parent_code": None}])
+    assert response.status_code == 200, response.text
+    sop_id = response.json()["docs"][0]["id"]
+    body = "".join(p(ko) + p(en) for ko, en in PAIRED)
+    uploaded = upload(client, bundle_id, build_docx(body), "SYNTHETIC_OLD-P_Pairs.docx")
+    assert uploaded.status_code == 201, uploaded.text
+    doc_id = uploaded.json()["id"]
+    targets = []
+    for ko, en in PAIRED:
+        view = get_view(client, bundle_id, doc_id)
+        units = [find_unit(view, ko), find_unit(view, en)]
+        assert [unit["lang"] for unit in units] == ["ko", "en"]
+        paired = client.post(
+            f"/api/bundles/{bundle_id}/documents/{doc_id}/pairs",
+            json={"revision": view["document"]["revision"], "unit_ids": [unit["id"] for unit in units]}, headers=AUTHOR,
+        )
+        assert paired.status_code == 201, paired.text
+        ids = []
+        for unit in units:
+            (target,) = assign_as_is(client, bundle_id, unit, sop_id, slot_key=PAIR_SLOT)["targets"]
+            ids.append(target["id"])
+        targets.append((ids[0], ids[1]))
+    return bundle_id, sop_id, targets
+
+
+def _read_pair_slot(client: TestClient, bundle_id: int, lang: str) -> list[tuple[str | None, str]]:
+    (sop,) = _get_output(client, bundle_id, "outputs/c", lang)["docs"]
+    section = next(section for section in sop["sections"] if section["location_key"] == PAIR_SLOT)
+    return [(item["number"], item["number_style"]) for item in section["items"]]
+
+
+def test_a_pair_counts_as_one_and_a_mark_on_one_member_reaches_its_partner(client: TestClient) -> None:
+    bundle_id, sop_id, targets = _setup_pairs(client)
+    ids = [target_id for pair in targets for target_id in pair]
+    # 두 판이 나란하면 짝의 두 원문 줄이 같은 번호다
+    numbered = [("6.1.1", "numbered"), ("6.1.2", "numbered"), ("6.1.3", "numbered")]
+    assert _read_pair_slot(client, bundle_id, "ko") == numbered
+    assert _read_pair_slot(client, bundle_id, "en") == numbered
+
+    (ko_second, en_second) = targets[1]
+    styles = _put_styles(client, bundle_id, sop_id, ids, {ko_second: "omitted"})
+
+    # 한쪽만 보내도 서버가 짝 상대에 같은 표시를 옮긴다 — 두 판이 함께 6.1.1, 생략, 6.1.2
+    assert (styles[ko_second], styles[en_second]) == ("omitted", "omitted")
+    expected = [("6.1.1", "numbered"), (None, "omitted"), ("6.1.2", "numbered")]
+    assert _read_pair_slot(client, bundle_id, "ko") == expected
+    assert _read_pair_slot(client, bundle_id, "en") == expected
+
+    # 상대에 지금 값 그대로를 함께 보내도(프런트가 목록 전체를 실어 보내는 경우) 바꾼 쪽이 이긴다
+    (ko_third, en_third) = targets[2]
+    styles = _put_styles(client, bundle_id, sop_id, ids, {en_third: "note", ko_third: "numbered"})
+    assert (styles[ko_third], styles[en_third]) == ("note", "note")
+
+
+def test_a_pair_cannot_be_marked_two_ways_at_once(client: TestClient) -> None:
+    bundle_id, sop_id, targets = _setup_pairs(client)
+    ids = [target_id for pair in targets for target_id in pair]
+    (ko_first, en_first) = targets[0]
+    revision = get_bundle(client, bundle_id)["revision"]
+    styles = {ko_first: "note", en_first: "omitted"}
+    items = [{"target_id": target_id, **({"number_style": styles[target_id]} if target_id in styles else {})} for target_id in ids]
+
+    response = _put_order(client, bundle_id, {"revision": revision, "target_doc_id": sop_id, "items": items})
+
+    assert (response.status_code, response.json()["detail"]) == (
+        422, {"code": "number_style_pair_mismatch", "target_ids": sorted((ko_first, en_first))},
+    )
+    assert _read_pair_slot(client, bundle_id, "ko")[0] == ("6.1.1", "numbered")

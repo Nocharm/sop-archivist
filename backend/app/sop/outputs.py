@@ -13,7 +13,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from app.routers.admin import KstDatetime
-from app.sop.constants import COVER_KINDS, SLOT_KEYS, WI_PARTS
+from app.sop.constants import COVER_KINDS, NUMBER_NOTE, NUMBERED, SLOT_KEYS, WI_PARTS
 from app.sop.groups import TABLE_UNIT_KINDS, build_group_ids, collapse_table_members
 from app.sop.output_labels import LABELS, OutputLabels
 from app.sop.snapshot import (
@@ -63,6 +63,8 @@ class ARow(BaseModel):
     dest_location: str
     # 새 문서 안 섹션 번호(결과물 C와 같은 값) — 여러 새 문장이면 "① 6.1.1\n② 6.1.2", 번호가 없는 자리(입구 2 문서·단계 없는 WI)는 빈 글
     dest_number: str
+    # 보낸 새 문장이 모두 주석 줄(번호 없이 기울임)인가 — Excel A가 확정·AI 제안 문장 칸을 기울여 쓴다
+    dest_is_note: bool
     confirmed_text: str
     ai_text: str
     change_type: str
@@ -102,9 +104,11 @@ class CItem(BaseModel):
     change_type: str | None
     status: str
     source_note: str
-    # 섹션 번호(칸 번호 + 들여쓰기 깊이, 예: 6.1.2.1) — 표 칸은 표의 번호, 입구 2 문서·단계 없는 WI는 None
+    # 섹션 번호(칸 번호 + 들여쓰기 깊이, 예: 6.1.2.1) — 표 칸은 표의 번호, 입구 2 문서·단계 없는 WI·생략·주석 줄은 None
     number: str | None
     indent_level: int  # 사람이 정한 깊이 그대로(번호는 눌러 읽은 깊이로 센다)
+    # 번호 표시 numbered | omitted | note — 생략·주석은 number가 None, 주석은 글을 기울여 보인다. 표 칸은 표의 값이다
+    number_style: str
     cell_row: int | None
     cell_col: int | None
     children: list["CItem"]  # 표 새 문장의 칸 새 문장(행·열 순)
@@ -371,15 +375,19 @@ def _build_slot_numbers() -> dict[str, str]:
 SLOT_NUMBERS = _build_slot_numbers()
 
 
-def number_lines(base: str, depths: Sequence[int]) -> list[str]:
+def number_lines(base: str, depths: Sequence[int | None]) -> list[str | None]:
     """칸 번호 base 아래 줄 번호 — 깊이 d 줄은 base 뒤에 d + 1 마디(5 → 5.1, 5.2, 5.2.1).
 
-    깊이는 앞줄 깊이 + 1을 넘지 못한다(첫 줄은 0) — 넘으면 그만큼으로 눌러 읽는다. 저장한 깊이는 바꾸지 않으므로 앞줄을 옮기거나
-    내어 쓰면 눌렸던 줄이 사람이 정한 깊이로 돌아온다.
+    깊이는 앞 번호 줄의 깊이 + 1을 넘지 못한다(첫 번호 줄은 0) — 넘으면 그만큼으로 눌러 읽는다. 저장한 깊이는 바꾸지 않으므로
+    앞줄을 옮기거나 내어 쓰면 눌렸던 줄이 사람이 정한 깊이로 돌아온다. 깊이가 None인 줄(번호 생략·주석)은 번호가 None이고
+    세지도 않는다 — 다음 번호 줄이 그 앞 번호 줄에 이어 센다(5.1, 생략, 5.2).
     """
-    counters: list[int] = []  # 깊이별 지금 번호 — 길이가 앞줄의 눌러 읽은 깊이 + 1이다
-    numbers = []
+    counters: list[int] = []  # 깊이별 지금 번호 — 길이가 앞 번호 줄의 눌러 읽은 깊이 + 1이다
+    numbers: list[str | None] = []
     for depth in depths:
+        if depth is None:
+            numbers.append(None)
+            continue
         level = max(0, min(depth, len(counters)))
         del counters[level + 1:]
         if len(counters) == level:
@@ -392,8 +400,10 @@ def number_lines(base: str, depths: Sequence[int]) -> list[str]:
 def _number_targets(index: _Index, lang: Lang, labels: OutputLabels) -> dict[int, str]:
     """그 언어판의 새 문장 → 섹션 번호. 줄은 그 판에 보이는 것(그 언어와 중립)만 센다 — 판마다 번호가 빈틈없이 이어진다.
 
-    번역 줄은 따로 세지 않는 규칙이 아니라 출처와 같은 깊이(detach._follow_source가 맞춘다)·같은 정렬 자리라서 두 판의 줄이 서로
-    짝을 이루면 출처와 같은 번호가 된다. 표 칸 새 문장은 표의 번호를 따른다. 입구 2 문서·단계 없는 WI 칸은 번호가 없다.
+    번역 줄은 따로 세지 않는 규칙이 아니라 출처와 같은 깊이·표시(detach._follow_source가 맞춘다)·같은 정렬 자리라서 두 판의 줄이
+    서로 짝을 이루면 출처와 같은 번호가 된다. 한/영 짝 원문 줄도 깊이·표시를 함께 정하므로(순서 바꾸기가 짝 상대에 표시를 옮긴다)
+    두 판이 나란하면 같은 번호다. 번호 생략·주석 줄은 번호가 없고 세지 않는다. 표 칸 새 문장은 표의 번호를 따른다(표가 번호가
+    없으면 칸도 없다). 입구 2 문서·단계 없는 WI 칸은 번호가 없다.
     """
     numbers: dict[int, str] = {}
     for doc in index.doc_order:
@@ -402,7 +412,10 @@ def _number_targets(index: _Index, lang: Lang, labels: OutputLabels) -> dict[int
             if plan.number is not None:
                 runs.setdefault(plan.number, []).extend(target for target in plan.targets if _is_in_lang(target.lang, lang))
         for base, targets in runs.items():
-            for target, number in zip(targets, number_lines(base, [target.indent_level for target in targets]), strict=True):
+            depths = [target.indent_level if target.number_style == NUMBERED else None for target in targets]
+            for target, number in zip(targets, number_lines(base, depths), strict=True):
+                if number is None:
+                    continue
                 numbers[target.id] = number
                 for child in index.children.get(target.id, []):
                     numbers[child.id] = number
@@ -507,10 +520,21 @@ class _Dest:
     doc_title: str
     location: str
     number: str
+    is_note: bool
     confirmed_text: str
     ai_text: str
     change_type: str
     warnings: list[dict[str, str]]
+
+
+def _get_number_style(index: _Index, target: TargetInfo) -> str:
+    """새 문장의 번호 표시 — 표 칸 새 문장은 표의 값을 따른다(번호도 표의 것이다)."""
+    parent = index.snap.targets.get(target.parent_target_id) if target.parent_target_id is not None else None
+    return (parent or target).number_style
+
+
+def _is_note(index: _Index, target: TargetInfo) -> bool:
+    return _get_number_style(index, target) == NUMBER_NOTE
 
 
 def _locate_unit(index: _Index, unit: UnitInfo, labels: OutputLabels) -> LocationOut:
@@ -522,19 +546,20 @@ def _locate_unit(index: _Index, unit: UnitInfo, labels: OutputLabels) -> Locatio
 
 
 def _describe_dest(
-    doc: TargetDocInfo, targets: list[TargetInfo], is_own: bool, labels: OutputLabels, number_of: NumberOf
+    index: _Index, doc: TargetDocInfo, targets: list[TargetInfo], is_own: bool, labels: OutputLabels,
+    number_of: NumberOf,
 ) -> _Dest:
     locations = [_format_target_location(target, labels) for target in targets]
     location = locations[0] if len(set(locations)) == 1 else _number_lines(locations)
     # 번호는 새 문장마다 다르므로 여러 새 문장이면 확정 문장 칸과 같은 ①② 순서로 적는다
     number = _number_lines([number_of(target) for target in targets])
     if not is_own:
-        return _Dest(doc.doc_type, doc.code, doc.title, location, number, "", "", targets[0].change_type or "", [])
+        return _Dest(doc.doc_type, doc.code, doc.title, location, number, False, "", "", targets[0].change_type or "", [])
     change_types = {target.change_type or "" for target in targets}
     # 한 새 문서 안에서 여러 새 문장으로 간 것은 나눔이다(스펙 §6.9) — 합침과 섞이면 나눔으로 적는다
     change_type = change_types.pop() if len(change_types) == 1 else "split"
     return _Dest(
-        doc.doc_type, doc.code, doc.title, location, number,
+        doc.doc_type, doc.code, doc.title, location, number, all(_is_note(index, target) for target in targets),
         _number_lines([target.confirmed_text for target in targets]),
         _number_lines([target.ai_text for target in targets]),
         change_type, [warning for target in targets for warning in target.warnings],
@@ -550,13 +575,14 @@ def _build_unit_rows(
     decision = snap.decisions[decision_unit_id]
     document = snap.documents[unit.document_id]
     dests = [
-        _describe_dest(doc, targets, is_own, labels, number_of) for doc, targets, is_own in _group_dests(index, unit)
+        _describe_dest(index, doc, targets, is_own, labels, number_of)
+        for doc, targets, is_own in _group_dests(index, unit)
     ]
     if not dests:
         dest_kind = DISPOSITION_NODES.get(decision.disposition, "")
         dests = [
             _Dest(
-                dest_kind, decision.move_target_code if dest_kind == "move_external" else "", "", "", "", "", "",
+                dest_kind, decision.move_target_code if dest_kind == "move_external" else "", "", "", "", False, "", "",
                 "deleted" if dest_kind == "delete" else "", [],
             )
         ]
@@ -566,7 +592,8 @@ def _build_unit_rows(
             old_doc_version=document.doc_version, location=_locate_unit(index, unit, labels),
             unit_id=unit.id, display_id=unit.display_id, source_text=_format_source_text(index, unit, labels),
             dest_kind=dest.kind, dest_doc_code=dest.doc_code, dest_doc_title=dest.doc_title,
-            dest_location=dest.location, dest_number=dest.number, confirmed_text=dest.confirmed_text, ai_text=dest.ai_text,
+            dest_location=dest.location, dest_number=dest.number, dest_is_note=dest.is_note,
+            confirmed_text=dest.confirmed_text, ai_text=dest.ai_text,
             change_type=dest.change_type, group_id=index.unit_groups.get(decision_unit_id), reason=decision.reason,
             status=get_cover_status(unit, snap.decisions), confirmed_by=decision.confirmed_by,
             confirmed_at=decision.confirmed_at, warnings=dest.warnings,
@@ -588,7 +615,7 @@ def _build_translation_row(index: _Index, target: TargetInfo, labels: OutputLabe
         unit_id=target.translation_source_unit_id, display_id=unit.display_id if unit else "", source_text="",
         dest_kind=doc.doc_type, dest_doc_code=doc.code, dest_doc_title=doc.title,
         dest_location=_format_target_location(target, labels), dest_number=number_of(target),
-        confirmed_text=target.confirmed_text,
+        dest_is_note=_is_note(index, target), confirmed_text=target.confirmed_text,
         ai_text=target.ai_text, change_type=target.change_type or "",
         group_id=index.target_groups.get(target.parent_target_id or target.id), reason="", status=target.status,
         confirmed_by=target.confirmed_by, confirmed_at=target.confirmed_at, warnings=list(target.warnings),
@@ -632,7 +659,7 @@ def _build_new_row(
         location=LocationOut(section="", place="", page=None, page_basis=""), unit_id=None, display_id="",
         source_text="", dest_kind=doc.doc_type, dest_doc_code=doc.code, dest_doc_title=doc.title,
         dest_location=_format_target_location(target, labels), dest_number=number_of(target),
-        confirmed_text=target.confirmed_text,
+        dest_is_note=_is_note(index, target), confirmed_text=target.confirmed_text,
         ai_text=target.ai_text, change_type=target.change_type or "",
         group_id=index.target_groups.get(target.parent_target_id or target.id), reason="", status=target.status,
         confirmed_by=target.confirmed_by, confirmed_at=target.confirmed_at, warnings=list(target.warnings),
@@ -728,7 +755,8 @@ def _build_item(index: _Index, target: TargetInfo, lang: Lang, labels: OutputLab
     return CItem(
         target_id=target.id, kind=target.kind, lang=target.lang, text=target.confirmed_text, ai_text=target.ai_text,
         change_type=target.change_type, status=target.status, source_note=_format_source_note(index, target, labels),
-        number=numbers.get(target.id), indent_level=target.indent_level, cell_row=target.cell_row,
+        number=numbers.get(target.id), indent_level=target.indent_level,
+        number_style=_get_number_style(index, target), cell_row=target.cell_row,
         cell_col=target.cell_col,
         children=[
             _build_item(index, child, lang, labels, numbers)

@@ -143,6 +143,35 @@ def test_access_grant_constraints_hold_in_migrated_db(tmp_path: pathlib.Path) ->
         engine.dispose()
 
 
+def test_target_number_style_check_holds_in_migrated_db(tmp_path: pathlib.Path) -> None:
+    # 0011이 더한 CHECK를 마이그레이션된 DB에 직접 부딪쳐 본다 — 지난 행은 server_default로 번호 줄이다
+    db_path = tmp_path / "number_style.db"
+    run_migrations(_async_url(db_path))
+    engine = create_engine(_sync_url(db_path))  # FK를 켜지 않아 부모 행 없이 새 문장 한 행만 넣는다
+    try:
+        with engine.begin() as conn:
+            columns = conn.execute(text("PRAGMA table_info(target_sentences)")).all()
+            # (cid, name, type, notnull, dflt_value, pk) — 기본값 없는 필수 칸만 채운다
+            values = {
+                name: ("confirmed" if name == "status" else 1 if "INT" in type_.upper() else "x")
+                for _, name, type_, notnull, default, pk in columns
+                if notnull and default is None and not pk
+            }
+            names = ", ".join(values)
+            conn.execute(
+                text(f"INSERT INTO target_sentences (id, {names}) VALUES (1, {', '.join(':' + n for n in values)})"),
+                values,
+            )
+            assert conn.execute(text("SELECT number_style FROM target_sentences WHERE id = 1")).scalar() == "numbered"
+            conn.execute(text("UPDATE target_sentences SET number_style = 'note' WHERE id = 1"))
+        with pytest.raises(IntegrityError), engine.begin() as conn:
+            conn.execute(text("UPDATE target_sentences SET number_style = 'hidden' WHERE id = 1"))
+        check_names = {ck["name"] for ck in inspect(engine).get_check_constraints("target_sentences")}
+        assert check_names == {"ck_target_sentences_status", "ck_target_sentences_number_style"}
+    finally:
+        engine.dispose()
+
+
 def test_downgrade_to_base_and_back(tmp_path: pathlib.Path) -> None:
     # scripts.reset_db가 base로 내렸다 head로 올린다 — 모든 리비전의 downgrade가 실제로 돌아야 한다.
     db_path = tmp_path / "roundtrip.db"

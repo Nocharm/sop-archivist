@@ -28,6 +28,8 @@ from app.sop.constants import (
     AI_SUGGESTION_RESULTS,
     BUNDLE_STATUSES,
     MEMBER_ROLES,
+    NUMBER_STYLES,
+    NUMBERED,
     STATUSES,
 )
 
@@ -391,7 +393,10 @@ class TargetSentence(Base):
     """새 문서 안의 문장·표·그림 한 건. confirmed_text는 사람이 확정한 글, ai_text는 AI 제안(확정과 분리)."""
 
     __tablename__ = "target_sentences"
-    __table_args__ = (CheckConstraint(_build_in_check("status", STATUSES), name="status"),)
+    __table_args__ = (
+        CheckConstraint(_build_in_check("status", STATUSES), name="status"),
+        CheckConstraint(_build_in_check("number_style", NUMBER_STYLES), name="number_style"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     bundle_id: Mapped[int] = mapped_column(ForeignKey("bundles.id", ondelete="CASCADE"), index=True)
@@ -404,6 +409,8 @@ class TargetSentence(Base):
     order_index: Mapped[int] = mapped_column(Integer, default=0)
     # 칸 안 들여쓰기 깊이(0 = 맨 바깥) — 사람이 정한 값 그대로 두고, 결과물 번호를 셀 때 앞줄 깊이 + 1로 눌러 읽는다
     indent_level: Mapped[int] = mapped_column(Integer, default=0)
+    # 번호 표시(NUMBER_STYLES) — 생략·주석 줄은 번호를 받지 않는다. 표 칸 새 문장은 이 값 대신 표의 값을 따른다
+    number_style: Mapped[str] = mapped_column(String(8), default=NUMBERED)
     lang: Mapped[str] = mapped_column(String(7))
     kind: Mapped[str] = mapped_column(String(8))
     confirmed_text: Mapped[str] = mapped_column(Text, default="")
