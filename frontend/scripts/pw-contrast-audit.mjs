@@ -87,12 +87,14 @@ for (const theme of ["light", "dark"]) {
   const aiId = Number((await aiRow.getAttribute("data-testid")).replace("bundles-row-", ""));
   // Assign에서 New 원문 후보(점선)가 있는 조각까지 옮겨 하나를 고른 상태 - 연결 상자·New 원문 표시를 함께 본다
   async function pickCandidate(page) {
-    const candidate = page.locator('[data-testid="assign-new"] button.new-line[data-state="candidate"]');
+    const candidate = page.locator('[data-testid="assign-new"] .new-line[data-state="candidate"]');
     for (let step = 0; step < 40 && (await candidate.count()) === 0; step += 1) {
       await page.keyboard.press("j");
       await page.waitForLoadState("networkidle");
     }
-    await candidate.first().click();
+    await candidate.first().locator(".new-hit").click();
+    // 그 자리 메뉴(확정·취소)까지 뜬 상태로 잰다 - 늦게 뜨므로 보일 때까지 기다린다
+    await page.locator('[data-testid="assign-link-menu-confirm"]').waitFor({ state: "visible", timeout: T });
   }
   async function markManualPieces(page) {
     const firstId = (await page.locator('[data-testid^="manual-toc-"]').first().getAttribute("data-testid")).replace("manual-toc-", "");

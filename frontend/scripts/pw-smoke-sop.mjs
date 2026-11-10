@@ -565,7 +565,7 @@ await runStep("assign: written New document - identical, link by clicking, split
   // 쓴 문서의 문장에 잇기 - 원문에서 직접 누른다
   // 비슷한 New 문장 후보(점선)가 있는 Old 조각까지 옮긴다 - 후보는 같은 언어만 나온다(짝 맞추기는 같은 언어끼리)
   await page.locator('[data-testid="assign-filter-unassigned"]').click();
-  const candidate = page.locator('[data-testid="assign-new"] button.new-line[data-state="candidate"]');
+  const candidate = page.locator('[data-testid="assign-new"] .new-line[data-state="candidate"]');
   // 줄을 옮길 때마다 그 줄의 후보 요청이 끝나기를 기다린다 - networkidle은 첫 로드 뒤로는 곧바로 풀려서,
   // 기다리지 않으면 응답보다 먼저 다음 줄로 넘어가 닿는 줄이 실행 속도에 따라 달라진다
   let openCandidateRequests = 0;
@@ -585,17 +585,18 @@ await runStep("assign: written New document - identical, link by clicking, split
   // 누르면 후보가 아니라 고른 문장이 된다 - 같은 줄을 계속 가리키게 testid로 붙잡는다
   const firstLine = page.locator(`[data-testid="${await candidate.first().getAttribute("data-testid")}"]`);
   const lang = (await firstLine.locator(".ptag").innerText()).trim().toLowerCase();
-  await firstLine.click();
+  // 줄 가운데를 누르면 오른쪽 출처 칩에 닿을 수 있다 - 고르는 단추를 누른다
+  await firstLine.locator(".new-hit").click();
   check("clicking a New sentence picks it", (await firstLine.getAttribute("data-state")) === "picked");
   // 맥에서 Ctrl+클릭은 오른쪽 클릭이다 - 화면은 ⌘도 같은 뜻으로 받는다
   const multi = process.platform === "darwin" ? "Meta" : "Control";
-  const sameLang = page.locator(`[data-testid="assign-new"] button.new-line:has(.ptag.${lang}):not([data-state="picked"])`);
+  const sameLang = page.locator(`[data-testid="assign-new"] .new-line:has(.ptag.${lang}):not([data-state="picked"])`);
   const second = page.locator(`[data-testid="${await sameLang.first().getAttribute("data-testid")}"]`);
-  await second.click({ modifiers: [multi] });
+  await second.locator(".new-hit").click({ modifiers: [multi] });
   await page.locator('[data-testid^="assign-link-"]').nth(1).waitFor({ timeout: T });
   check("Ctrl+click adds a second sentence", (await page.locator('[data-testid^="assign-link-"]').count()) >= 2);
   await takeShot("sop-assign-link.png");
-  await second.click({ modifiers: [multi] });
+  await second.locator(".new-hit").click({ modifiers: [multi] });
   const linkedId = (await firstLine.getAttribute("data-testid")).replace("assign-new-", "");
   const readSources = async () => {
     const response = await page.request.get(`${BASE}/api/bundles/${halfBundleId}/written-sentences`, { headers: { "X-Dev-User": "qa.member" } });
@@ -664,7 +665,7 @@ await runStep("assign: a one-language link on a KO/EN pair row unpairs it and le
   await wait(page, "assign-pick-prompt");
   await selectRowById(page, found.linked.display_id);
   check("the row holds both languages", (await rowIds(page)).includes(found.leftover.display_id), await rowIds(page));
-  const line = page.locator(`[data-testid="assign-new-${found.targetId}"]`);
+  const line = page.locator(`[data-testid="assign-new-pick-${found.targetId}"]`);
   await line.waitFor({ timeout: T });
   await line.click();
   await wait(page, "assign-link-leftover");
@@ -698,6 +699,95 @@ await runStep("assign: a one-language link on a KO/EN pair row unpairs it and le
   await page.waitForLoadState("networkidle");
   units = await readUnits();
   check("the leftover sentence is confirmed", units.get(found.leftover.id)?.status === "confirmed", units.get(found.leftover.id)?.status);
+});
+
+// 그 자리 메뉴·고른 표시(v0.13) - 한/영 짝 줄에서 추천을 누르면(New도 한/영 짝이면 짝 문장까지 골라져) 카드에 고른 표시와 "저장 안 됨"이 보이고,
+// 누른 곳 옆 메뉴의 Confirm(↵)으로 저장된다. 저장한 줄의 "→ 간 곳"과 New의 "← 출처"는 맞은편으로 가서 끊기 메뉴를 띄운다.
+// 지금 합성 묶음의 쓴 New 문서는 영어뿐이라 New 짝이 없다 - 그때는 한 언어로 잇고(남은 문장은 짝이 풀린다) 짝 비교는 assign-model 단위 시험이 본다
+await runStep("assign: KO/EN pair - recommendation shows picked, in-place menu confirms, links navigate", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}${path}`, { headers })).json();
+  // 둘 다 판단이 없는 한/영 짝 가운데 New 후보가 있는 것 - New 쪽도 한/영 짝인 후보를 먼저 찾는다
+  const written = new Map((await getJson("/written-sentences")).map((row) => [row.target_id, row]));
+  let found = null;
+  let fallback = null;
+  for (const doc of (await getJson("/documents")).filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await getJson(`/documents/${doc.id}/view`);
+    const unitOf = new Map(view.units.map((unit) => [unit.id, unit]));
+    for (const pair of view.pairs) {
+      const members = pair.unit_ids.map((id) => unitOf.get(id));
+      if (members.length !== 2 || members.some((unit) => !unit || unit.status !== "unassigned")) continue;
+      const langs = new Set(members.map((unit) => unit.lang));
+      for (const unit of members) {
+        const candidates = await getJson(`/units/${unit.id}/new-candidates`);
+        const hit = candidates.find((item) => {
+          const partner = written.get(written.get(item.target_id)?.partner_target_id ?? -1);
+          return partner && langs.has(partner.lang) && partner.lang !== unit.lang;
+        });
+        if (!fallback && candidates.length > 0) fallback = { unit, other: members.find((item) => item !== unit), targetId: candidates[0].target_id, partnerId: null };
+        if (hit) {
+          found = { unit, other: members.find((item) => item !== unit), targetId: hit.target_id, partnerId: written.get(hit.target_id).partner_target_id };
+          break;
+        }
+      }
+      if (found) break;
+    }
+    if (found) break;
+  }
+  found ??= fallback;
+  check("the synthetic bundle has a KO/EN pair row with a New candidate", found !== null);
+  if (!found) return;
+  console.log(`  (New pair candidate: ${found.partnerId !== null ? "yes" : "no - one-language link"})`);
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-pick-prompt");
+  await selectRowById(page, found.unit.display_id);
+  const targetText = written.get(found.targetId).text;
+  const cards = page.locator('[data-testid^="assign-rec-"]:not([data-testid$="-pending"])');
+  await cards.first().waitFor({ timeout: T });
+  let card = null;
+  for (let index = 0; index < (await cards.count()); index += 1) {
+    if ((await cards.nth(index).innerText()).includes(targetText)) card = cards.nth(index);
+  }
+  check("the candidate is one of the recommendations", card !== null);
+  if (!card) return;
+  await card.click();
+  // 짝 문장이 더해져도 고른 표시가 켜진다(예전에는 ID 비교라 영영 꺼져 있었다)
+  check("the recommendation shows as picked on a KO/EN pair row", (await card.getAttribute("aria-pressed")) === "true");
+  check("the card says it is not saved yet", (await card.locator('[data-testid$="-pending"]').count()) === 1);
+  if (found.partnerId !== null) check("both New sentences of the pair are picked", (await page.locator(`[data-testid="assign-new-pick-${found.partnerId}"]`).getAttribute("aria-pressed")) === "true");
+  await wait(page, "assign-link-menu-confirm");
+  await page.locator('[data-testid="assign-link-menu-confirm"]').waitFor({ state: "visible", timeout: T });
+  check("the in-place menu says the pick is not saved", (await page.locator('[data-testid="assign-link-menu-unsaved"]').count()) === 1);
+  await takeShot("sop-assign-menu-confirm.png");
+  const saved = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
+  await page.keyboard.press("Enter");
+  const savedResponse = await saved;
+  check("Enter in the menu saves the link", savedResponse.ok(), savedResponse.ok() ? "" : (await savedResponse.text()).slice(0, 300));
+  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
+  await page.waitForLoadState("networkidle");
+  const after = new Map((await getJson("/written-sentences")).map((row) => [row.target_id, row]));
+  check("the New sentence gets its Old source", after.get(found.targetId)?.source_unit_ids.includes(found.unit.id), JSON.stringify(after.get(found.targetId)?.source_unit_ids));
+  if (found.partnerId !== null) check("the partner New sentence gets the other Old source", after.get(found.partnerId)?.source_unit_ids.includes(found.other.id), JSON.stringify(after.get(found.partnerId)?.source_unit_ids));
+  // Old 조각 아래 "→ 간 곳"을 누르면 New의 그 문장으로 가고 끊기 메뉴가 뜬다
+  const note = page.locator(`[data-testid="assign-note-${found.unit.id}"]`);
+  await note.waitFor({ timeout: T });
+  await note.click();
+  await page.locator('[data-testid="assign-link-menu-unlink"]').waitFor({ state: "visible", timeout: T });
+  check("the jump lands on the linked New sentence", (await page.locator(`[data-pane="new"] [data-flash]`).getAttribute("data-target")) !== null);
+  check("lines are drawn between the two documents", (await page.locator('[data-testid="assign-link-lines"] g').count()) > 0);
+  await takeShot("sop-assign-jump-new.png");
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="assign-link-menu"]').waitFor({ state: "detached", timeout: T });
+  check("Esc closes the menu", true);
+  // New 문장의 "← 출처"를 누르면 Old의 그 조각으로
+  await page.locator(`[data-testid="assign-new-src-${found.targetId}-${found.unit.id}"]`).click();
+  await page.locator('[data-testid="assign-link-menu-unlink"]').waitFor({ state: "visible", timeout: T });
+  check("the source chip jumps to the Old unit", (await page.locator(`[data-pane="old"] [data-flash] [data-unit="${found.unit.id}"]`).count()) === 1);
+  // 마우스를 올리면 맞은편이 강조된다
+  await page.locator('[data-testid="assign-link-menu-close"]').click();
+  await page.locator(`[data-testid="assign-new-${found.targetId}"]`).hover();
+  await page.locator(`[data-pane="old"] [data-link-hover]`).first().waitFor({ timeout: T });
+  check("hovering a New sentence highlights its Old source", (await page.locator(`[data-pane="old"] [data-link-hover] [data-unit="${found.unit.id}"]`).count()) === 1);
 });
 
 await runStep("outputs: A, B, C in both editions and Excel", {}, async ({ page, takeShot }) => {

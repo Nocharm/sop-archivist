@@ -140,14 +140,16 @@ const SCENES = [
     name: "assign-link", app: {}, user: "qa.member", path: "/bundles/2/assign",
     prep: async (page) => {
       await click(page, id("assign-filter-unassigned"));
-      const candidate = page.locator(`${id("assign-new")} button.new-line[data-state="candidate"]`);
+      const candidate = page.locator(`${id("assign-new")} .new-line[data-state="candidate"]`);
       for (let step = 0; step < 40 && (await candidate.count()) === 0; step += 1) {
         await page.keyboard.press("j");
         await page.waitForLoadState("networkidle");
       }
-      await candidate.first().click();
+      await candidate.first().locator(".new-hit").click();
+      // 고르면 누른 곳 옆에 확정 메뉴가 늦게 뜬다 - 다 뜬 뒤에 찍는다
+      await page.locator(id("assign-link-menu-confirm")).waitFor({ state: "visible", timeout: T });
     },
-    marks: [id("assign-identical"), id("assign-new"), `${id("assign-new")} button.new-line[data-state="picked"]`, id("assign-chosen"), id("assign-divider"), id("assign-new-zoom")],
+    marks: [id("assign-identical"), id("assign-new"), `${id("assign-new")} .new-line[data-state="picked"]`, id("assign-chosen"), id("assign-divider"), id("assign-new-zoom")],
   },
   {
     name: "assign-unsourced", user: "qa.member", path: "/bundles/2/assign",
@@ -155,7 +157,7 @@ const SCENES = [
       await click(page, id("assign-filter-unsourced"));
       await page.waitForLoadState("networkidle");
     },
-    marks: [id("assign-filter-unsourced"), `${id("assign-new")} button.new-line[data-state="focus"]`, id("assign-mark-new")],
+    marks: [id("assign-filter-unsourced"), `${id("assign-new")} .new-line[data-state="focus"]`, id("assign-mark-new")],
   },
   {
     name: "assign-ai", app: {}, user: "qa.member", path: "/bundles/4/assign",

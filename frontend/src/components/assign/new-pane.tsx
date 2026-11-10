@@ -1,8 +1,8 @@
-// Assign 오른쪽 - 이미 쓴 New 문서의 원문. 점선 = 후보, 채움 = 고른 문장, ← 1-012 = 붙은 Old 출처, 위험색 = 출처 없음.
+// Assign 오른쪽 - 이미 쓴 New 문서의 원문. 점선 = 후보, 채움 = 고른 문장, ← 1-012 = 붙은 Old 출처(누르면 Old의 그 조각으로), 위험색 = 출처 없음.
 // 표·그림은 이번 화면에서 잇지 않아 회색 상자로만 보인다(설계 §2).
 "use client";
 
-import { Fragment } from "react";
+import { Fragment, type MouseEvent } from "react";
 
 import { PaneZoom } from "@/components/assign/pane-zoom";
 import { Select, type SelectOption } from "@/components/ui/select";
@@ -19,7 +19,10 @@ interface NewPaneProps {
   /** 출처 없는 New 모드에서 고른 문장 */
   focusId: number | null;
   sourceLabel: (unitId: number) => string;
-  onPick: (targetId: number, additive: boolean) => void;
+  /** 줄을 누름 - anchor는 그 줄(그 자리 메뉴가 붙는다) */
+  onPick: (targetId: number, additive: boolean, anchor: HTMLElement, event: MouseEvent) => void;
+  /** 출처 칩을 누름 - Old의 그 조각으로 간다 */
+  onJumpSource: (unitId: number, targetId: number) => void;
   zoom: number;
   onZoom: (dir: "+" | "-") => void;
 }
@@ -65,25 +68,40 @@ export function NewPane(props: NewPaneProps) {
               return (
                 <Fragment key={row.target_id}>
                   {head}
-                  <button
-                    type="button"
-                    className="new-line"
-                    data-state={readState(row, props)}
-                    aria-pressed={props.pickedIds.has(row.target_id)}
-                    data-testid={`assign-new-${row.target_id}`}
-                    onClick={(event) => props.onPick(row.target_id, event.ctrlKey || event.metaKey)}
-                  >
-                    <span className={`ptag ${row.lang}`}>{row.lang === "neutral" ? "–" : row.lang.toUpperCase()}</span>
-                    <span lang={row.lang === "neutral" ? undefined : row.lang} className="new-text">
-                      {row.text}
-                    </span>
-                    {row.source_unit_ids.map((unitId) => (
-                      <span key={unitId} className="new-src">
-                        ← {props.sourceLabel(unitId)}
+                  <div className="new-line" data-state={readState(row, props)} data-target={row.target_id} data-testid={`assign-new-${row.target_id}`}>
+                    <button
+                      type="button"
+                      className="new-hit"
+                      aria-pressed={props.pickedIds.has(row.target_id)}
+                      data-testid={`assign-new-pick-${row.target_id}`}
+                      onClick={(event) => {
+                        const line = event.currentTarget.parentElement;
+                        if (line) props.onPick(row.target_id, event.ctrlKey || event.metaKey, line, event);
+                      }}
+                    >
+                      <span className={`ptag ${row.lang}`}>{row.lang === "neutral" ? "–" : row.lang.toUpperCase()}</span>
+                      <span lang={row.lang === "neutral" ? undefined : row.lang} className="new-text">
+                        {row.text}
                       </span>
-                    ))}
-                    {row.change_type === "new" && <span className="new-src is-new">{t("assign.markedNew")}</span>}
-                  </button>
+                    </button>
+                    {(row.source_unit_ids.length > 0 || row.change_type === "new") && (
+                      <span className="new-srcs">
+                        {row.source_unit_ids.map((unitId) => (
+                          <button
+                            key={unitId}
+                            type="button"
+                            className="new-src"
+                            aria-label={t("assign.jumpOld", { id: props.sourceLabel(unitId) })}
+                            data-testid={`assign-new-src-${row.target_id}-${unitId}`}
+                            onClick={() => props.onJumpSource(unitId, row.target_id)}
+                          >
+                            ← {props.sourceLabel(unitId)}
+                          </button>
+                        ))}
+                        {row.change_type === "new" && <span className="new-src is-new">{t("assign.markedNew")}</span>}
+                      </span>
+                    )}
+                  </div>
                 </Fragment>
               );
             })}

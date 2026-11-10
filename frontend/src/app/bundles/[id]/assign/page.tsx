@@ -6,13 +6,15 @@
 import { Check, Circle, CircleCheck, CircleDashed, CirclePause, ExternalLink, FilePen, FileText, FileUp, Inbox, Link2, ListChecks, ListFilter, RefreshCw, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent } from "react";
 
 import { AssignLegend, LegendButton } from "@/components/assign/assign-legend";
 import { DestCard } from "@/components/assign/dest-card";
 import { DestinationAccordion, type AccordionSection } from "@/components/assign/destination-accordion";
 import { DestinationTree } from "@/components/assign/destination-tree";
 import { LinkChoice } from "@/components/assign/link-choice";
+import { findNewLine, findOldStrip, LinkLines } from "@/components/assign/link-lines";
+import { LinkMenu } from "@/components/assign/link-menu";
 import { NewPane } from "@/components/assign/new-pane";
 import { OldPane } from "@/components/assign/old-pane";
 import { PaneDivider } from "@/components/assign/pane-divider";
@@ -52,7 +54,23 @@ import {
   type UnitRow,
   type WrittenSentence,
 } from "@/lib/api-sop";
-import { addPartnerTargets, buildRecommendations, canMakeOtherLanguage, listCoConfirmed, listSiblingPlaces, listUnsourced, mergeGroups, pickNearby, stepZoom, type Recommendation } from "@/lib/assign-model";
+import {
+  addPartnerTargets,
+  buildLinkPairs,
+  buildRecommendations,
+  canMakeOtherLanguage,
+  isRecommendationPicked,
+  listCoConfirmed,
+  listLinkMenuItems,
+  listSiblingPlaces,
+  listUnlinkRemainder,
+  listUnsourced,
+  mergeGroups,
+  pickNearby,
+  stepZoom,
+  type LinkMenuItem,
+  type Recommendation,
+} from "@/lib/assign-model";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import {
@@ -141,6 +159,40 @@ function findLinkDoc(destination: Destination | null, written: Map<number, Writt
   return destination?.kind === "link" ? (written.get(destination.targetIds[0])?.target_doc_id ?? null) : null;
 }
 
+/** 그 자리 메뉴 - 붙을 요소, 누른 자리(요소 기준, 키보드·이동이면 null), 어느 줄의 어느 New 문장에 대한 메뉴인지 */
+interface MenuState {
+  /** 열 때마다 새 값 - 메뉴를 새로 그려 늦게 뜨는 움직임과 포커스 옮기기를 다시 한다 */
+  seq: number;
+  anchor: HTMLElement;
+  offset: { x: number; y: number } | null;
+  rowKey: string;
+  targetId: number | null;
+}
+
+/** 누른 자리를 요소 기준으로 - 키보드로 누르면(detail 0) 포인터 자리가 없다 */
+function readMenuOffset(anchor: HTMLElement, event: MouseEvent | null): { x: number; y: number } | null {
+  if (!event || event.detail === 0) return null;
+  const rect = anchor.getBoundingClientRect();
+  return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+}
+
+/** 이동해 간 자리를 잠깐 번쩍인다 - 다시 이동하면 처음부터 */
+function flashElement(el: HTMLElement) {
+  delete el.dataset.flash;
+  void el.offsetWidth; // 애니메이션을 다시 시작하게 스타일을 한 번 계산시킨다
+  el.dataset.flash = "";
+  window.setTimeout(() => delete el.dataset.flash, 1300);
+}
+
+/** 이동해 간 자리를 보이게 - 이미 화면 안이면 움직이지 않는다 */
+function revealElement(el: HTMLElement) {
+  const pane = el.closest(".pane-body");
+  if (!pane) return;
+  const box = el.getBoundingClientRect();
+  const frame = pane.getBoundingClientRect();
+  if (shouldRecenter(box.top, box.bottom, frame.top, frame.bottom)) el.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+}
+
 export default function AssignPage() {
   const { t } = useI18n();
   const bundleId = Number(useParams<{ id: string }>().id);
@@ -226,6 +278,14 @@ export default function AssignPage() {
   }
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [selNew, setSelNew] = useState<number | null>(null);
+  // 그 자리 메뉴와 이동 - 이동은 고른 줄·열린 문서가 다시 그려진 뒤에 그 자리를 찾는다
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const menuSeq = useRef(0);
+  function openMenu(anchor: HTMLElement, event: MouseEvent | null, rowKey: string, targetId: number | null) {
+    menuSeq.current += 1;
+    setMenu({ seq: menuSeq.current, anchor, offset: readMenuOffset(anchor, event), rowKey, targetId });
+  }
+  const [jump, setJump] = useState<{ side: "old" | "new"; id: number; targetId: number; rowKey: string } | null>(null);
   const focusNew = mode === "unsourced" ? (unsourced.find((item) => item.target_id === selNew)?.target_id ?? unsourced[0]?.target_id ?? null) : null;
 
   // --- 고른 줄의 관계 묶음·후보와 초안 ---
@@ -312,6 +372,9 @@ export default function AssignPage() {
   const autoNewDoc = mode === "unsourced" ? (writtenMap.get(focusNew ?? -1)?.target_doc_id ?? null) : (findLinkDoc(destination, writtenMap) ?? findLinkDoc(topLink, writtenMap));
   const newDocId = (manualNewDoc?.key === toggleKey ? manualNewDoc.docId : null) ?? autoNewDoc ?? writtenDocs[0]?.[0] ?? null;
   const newRows = written.filter((item) => item.target_doc_id === newDocId);
+  // 두 문서 사이 이음 - 저장된 출처와 고른 줄의 저장 전 고름
+  const oldUnitIds = useMemo(() => new Set(oldView?.units.map((unit) => unit.id) ?? []), [oldView]);
+  const linkPairs = buildLinkPairs(newRows, oldUnitIds, draft.destination?.kind === "link" ? { units: rowUnits.map((unit) => ({ id: unit.unit_id, lang: unit.lang })), targetIds: draft.destination.targetIds } : null);
 
   const [view, setView] = useState(readAssignView);
   function changeView(patch: Partial<typeof view>) {
@@ -373,6 +436,7 @@ export default function AssignPage() {
   function selectRow(key: string, scroll = true) {
     setMode("old");
     setSelectedKey(key);
+    setMenu(null);
     const first = rowMap.get(key)?.unitIds[0];
     if (scroll && first !== undefined) scrollToUnit(first);
   }
@@ -551,23 +615,83 @@ export default function AssignPage() {
     setDraft({ destination: next.kind === "link" ? { kind: "link", targetIds: addPartnerTargets(next.targetIds, rowLangs, writtenMap) } : next, linkChangeTypes: linkTypes });
   }
 
-  function pickNewSentence(targetId: number, additive: boolean) {
+  /** New 문장 고르기 - 고른 곳이 바뀌었으면 true */
+  function pickNewSentence(targetId: number, additive: boolean): boolean {
     if (mode === "unsourced") {
       setSelNew(targetId);
-      return;
+      return false;
     }
-    if (!row || !canEdit) return;
+    if (!row || !canEdit) return false;
     // 짝 맞추기는 같은 언어끼리다(명세 §7.10) - 이 줄에 없는 언어의 New 문장은 이을 Old 조각이 없다
     const lang = writtenMap.get(targetId)?.lang;
     if (lang && !rowLangs.includes(lang)) {
       showToast(t("assign.langMismatch", { lang: lang.toUpperCase() }), "error");
-      return;
+      return false;
     }
     const current = destination?.kind === "link" ? destination.targetIds : [];
     const next = additive ? (current.includes(targetId) ? current.filter((id) => id !== targetId) : [...current, targetId]) : [targetId];
     if (next.length === 0) setDraft({ destination: null });
     else pickDestination({ kind: "link", targetIds: next });
+    return next.length > 0;
   }
+
+  /** New 원문의 줄을 누름 - 이미 확정해 이은 문장이면 고름을 바꾸지 않고 끊기 메뉴를, 아니면 고른 뒤 확정 메뉴를 그 자리에 띄운다 */
+  function handleNewPick(targetId: number, additive: boolean, anchor: HTMLElement, event: MouseEvent) {
+    if (mode === "old" && row && !additive && draft.destination === null && savedDestination?.kind === "link" && savedDestination.targetIds.includes(targetId)) {
+      openMenu(anchor, event, row.key, targetId);
+      return;
+    }
+    if (pickNewSentence(targetId, additive) && row) openMenu(anchor, event, row.key, additive ? null : targetId);
+  }
+
+  /** Old 조각 아래 "→ 간 곳"을 누름 - 그 줄을 고르고 New 문서(닫혀 있거나 다른 문서면 열어서)의 그 문장으로 간다 */
+  function jumpToNew(unitId: number, targetId: number) {
+    const key = rowOfUnit.get(unitId);
+    const docId = writtenMap.get(targetId)?.target_doc_id;
+    if (!key || docId === undefined) return;
+    setMode("old");
+    setSelectedKey(key);
+    setChecked(new Set());
+    setMenu(null);
+    setNewToggle({ key, open: true });
+    setManualNewDoc({ key, docId });
+    setJump({ side: "new", id: targetId, targetId, rowKey: key });
+  }
+
+  /** New 문장의 "← 출처" 칩을 누름 - 그 출처 줄을 고르고(다른 Old 문서면 그 문서로) Old의 그 조각으로 간다 */
+  function jumpToOld(unitId: number, targetId: number) {
+    const key = rowOfUnit.get(unitId);
+    const docId = writtenMap.get(targetId)?.target_doc_id;
+    if (!key) return;
+    setMode("old");
+    setSelectedKey(key);
+    setChecked(new Set());
+    setMenu(null);
+    // 지금 보던 New 문서를 그대로 열어 둔다 - 줄이 바뀌어도 이 문장 옆에서 이어 보게
+    setNewToggle({ key, open: true });
+    if (docId !== undefined) setManualNewDoc({ key, docId });
+    setJump({ side: "old", id: unitId, targetId, rowKey: key });
+  }
+
+  // 이동한 뒤 - 그 자리가 그려지면 보이게 하고 번쩍인 뒤 그 옆에 메뉴를 띄운다(다른 문서를 받는 중이면 몇 프레임 기다린다)
+  useEffect(() => {
+    if (!jump) return;
+    let tries = 0;
+    let frame = requestAnimationFrame(function step() {
+      const el = jump.side === "new" ? findNewLine(document, jump.id) : findOldStrip(document, jump.id);
+      if (!el) {
+        tries += 1;
+        if (tries < 60) frame = requestAnimationFrame(step);
+        else setJump(null);
+        return;
+      }
+      revealElement(el);
+      flashElement(el);
+      openMenu(el, null, jump.rowKey, jump.targetId);
+      setJump(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [jump]);
 
   function handleOldClick(unitId: number, keys: { shiftKey: boolean }) {
     if (mode === "unsourced") {
@@ -605,7 +729,8 @@ export default function AssignPage() {
   }
 
   const handleKey = useEffectEvent((event: KeyboardEvent) => {
-    if (bulk || isTypingTarget(event.target) || document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]')) {
+    // 그 자리 메뉴는 화면 단축키를 막지 않는다 - 메뉴가 떠 있어도 ↵가 확정이다(메뉴 안의 키는 메뉴가 먼저 받는다)
+    if (bulk || isTypingTarget(event.target) || document.querySelector('[role="dialog"],[role="menu"]:not([data-link-menu]),[role="listbox"]')) {
       if (event.key === "Escape" && editing) setDraft({}, false);
       // 고치는 중에는 Enter가 줄바꿈이라 Ctrl+Enter로 저장한다
       if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && editing && isTypingTarget(event.target)) {
@@ -656,8 +781,15 @@ export default function AssignPage() {
     return { title: option?.docCode ?? "", text: option?.label ?? "" };
   }
 
+  /** 추천을 누름 - 고른 뒤 그 카드 옆에 확정 메뉴를 띄운다(고른 상자가 카드보다 위라 화면 밖일 수 있다) */
+  function pickRecommendation(rec: Recommendation, event: MouseEvent<HTMLButtonElement>) {
+    pickDestination(rec.destination);
+    if (row) openMenu(event.currentTarget, event, row.key, null);
+  }
+
   function renderRecommendation(rec: Recommendation, index: number) {
-    const pressed = draft.destination !== null && getDestinationId(draft.destination) === getDestinationId(rec.destination);
+    const pressed = isRecommendationPicked(draft.destination, rec.destination, rowLangs, writtenMap);
+    const pending = pressed ? t("assign.unsaved") : undefined;
     const sourceLabel = t(`assign.src.${rec.source}`);
     const note = [sourceLabel, rec.why].filter(Boolean).join(" · ");
     if (rec.destination.kind === "link") {
@@ -675,13 +807,27 @@ export default function AssignPage() {
           text={targets.map((item) => item.text).join(" / ")}
           note={note}
           pressed={pressed}
+          pending={pending}
           testId={`assign-rec-${index}`}
-          onClick={() => pickDestination(rec.destination)}
+          onClick={(event) => pickRecommendation(rec, event)}
         />
       );
     }
     if (rec.destination.kind === "delete" || rec.destination.kind === "move") {
-      return <DestCard key={rec.key} icon={Trash2} tone="danger" title={t("assign.acc.move")} text={t(rec.destination.kind === "delete" ? "classify.deleted" : "classify.moved")} note={note} pressed={pressed} testId={`assign-rec-${index}`} onClick={() => pickDestination(rec.destination)} />;
+      return (
+        <DestCard
+          key={rec.key}
+          icon={Trash2}
+          tone="danger"
+          title={t("assign.acc.move")}
+          text={t(rec.destination.kind === "delete" ? "classify.deleted" : "classify.moved")}
+          note={note}
+          pressed={pressed}
+          pending={pending}
+          testId={`assign-rec-${index}`}
+          onClick={(event) => pickRecommendation(rec, event)}
+        />
+      );
     }
     const label = renderPlaceLabel(rec.destination);
     return (
@@ -696,8 +842,9 @@ export default function AssignPage() {
         text={label.text}
         note={note}
         pressed={pressed}
+        pending={pending}
         testId={`assign-rec-${index}`}
-        onClick={() => pickDestination(rec.destination)}
+        onClick={(event) => pickRecommendation(rec, event)}
       />
     );
   }
@@ -1076,6 +1223,41 @@ export default function AssignPage() {
     );
   }
 
+  // 그 자리 메뉴 - 메뉴를 연 줄이 지금 고른 줄이고 그 줄의 묶음을 받은 뒤에만(받기 전에는 이음을 모른다)
+  const menuItems: LinkMenuItem[] =
+    menu && row && menu.rowKey === row.key && !groupPending
+      ? listLinkMenuItems({
+          picked: draft.destination !== null && (menu.targetId === null || linkIds.includes(menu.targetId)),
+          linked: menu.targetId !== null && savedDestination?.kind === "link" && savedDestination.targetIds.includes(menu.targetId),
+          confirmed: row.status === "confirmed",
+          canEdit,
+        })
+      : [];
+
+  function runMenu(item: LinkMenuItem) {
+    const targetId = menu?.targetId ?? null;
+    if (item === "close") setMenu(null);
+    else if (item === "confirm") {
+      setMenu(null);
+      void runSave("confirm");
+    } else if (item === "cancel") {
+      // 고름을 되돌린다 - 저장된 곳(없으면 빈 고름)으로
+      setDraft({ destination: null, linkChangeTypes: {} });
+      setMenu(null);
+    } else if (item === "link" && targetId !== null) {
+      // 고른 뒤 같은 메뉴가 확정·취소로 바뀐다
+      if (!pickNewSentence(targetId, false)) setMenu(null);
+    } else if (item === "unlink" && targetId !== null) {
+      const remainder = listUnlinkRemainder(savedDestination?.kind === "link" ? savedDestination.targetIds : [], targetId, writtenMap);
+      // 다른 문장이 남으면 그것만 고른 상태로(확정해야 저장된다), 하나뿐이면 배정을 지운다
+      if (remainder.length > 0) pickDestination({ kind: "link", targetIds: remainder });
+      else {
+        setMenu(null);
+        void runClear();
+      }
+    }
+  }
+
   const error = docs.error ?? views.error ?? units.error ?? tobe.error ?? writtenList.error;
   const reloadAll = () => {
     for (const source of [docs, views, units, tobe, writtenList]) if (source.error !== null) source.reload();
@@ -1168,6 +1350,7 @@ export default function AssignPage() {
   const oldDocOptions = oldDocs.map((doc) => ({ value: String(doc.id), label: doc.doc_code || doc.file_name }));
   const newDocOptions = writtenDocs.map(([docId, code]) => ({ value: String(docId), label: code }));
   const highlightIds = new Set(row?.unitIds ?? []);
+  const pickedNew = new Set(linkIds);
   const pickedOld = new Set([...checked].flatMap((key) => rowMap.get(key)?.unitIds ?? []));
   const placeOf = (unitIds: number[]) => {
     const decided = unitIds.map((id) => unitMap.get(id)).find((unit) => unit?.status === "confirmed");
@@ -1175,7 +1358,16 @@ export default function AssignPage() {
     if (decided.decision.disposition === "delete") return <span className="strip-note is-delete">→ {t("classify.deleted")}</span>;
     if (decided.decision.disposition === "move_external") return <span className="strip-note">→ {decided.decision.move_target_code}</span>;
     const linked = written.filter((item) => item.source_unit_ids.some((id) => unitIds.includes(id)));
-    if (linked.length > 0) return <span className="strip-note">→ {linked[0].doc_code} {linked.map((item) => item.section_path || item.order_index).join(" + ")}</span>;
+    if (linked.length > 0) {
+      // 지금 열린 New 문서의 문장이 있으면 그리로 - 없으면 첫 문장의 문서를 연다
+      const goal = linked.find((item) => item.target_doc_id === newDocId) ?? linked[0];
+      const sourceId = goal.source_unit_ids.find((id) => unitIds.includes(id)) ?? unitIds[0];
+      return (
+        <button type="button" className="strip-note" aria-label={`${t("assign.jumpNew")}: ${linked[0].doc_code}`} data-testid={`assign-note-${unitIds[0]}`} onClick={() => jumpToNew(sourceId, goal.target_id)}>
+          → {linked[0].doc_code} {linked.map((item) => item.section_path || item.order_index).join(" + ")}
+        </button>
+      );
+    }
     return <span className="strip-note">→ {t("classify.assigned")}</span>;
   };
 
@@ -1228,13 +1420,15 @@ export default function AssignPage() {
                     onDocChange={(value) => setManualNewDoc({ key: toggleKey, docId: Number(value) })}
                     rows={newRows}
                     candidateIds={candidateIds}
-                    pickedIds={new Set(linkIds)}
+                    pickedIds={pickedNew}
                     focusId={focusNew}
                     sourceLabel={(unitId) => (unitMap.get(unitId)?.display_id ?? String(unitId)).replace(/^OLD-/, "")}
-                    onPick={pickNewSentence}
+                    onPick={handleNewPick}
+                    onJumpSource={jumpToOld}
                     zoom={view.zoomNew}
                     onZoom={(dir) => zoomPane("new", dir)}
                   />
+                  <LinkLines pairs={linkPairs} focusUnits={highlightIds} focusTargets={pickedNew} />
                 </>
               )}
             </div>
@@ -1242,6 +1436,9 @@ export default function AssignPage() {
         </div>
         {renderSide()}
       </div>
+      {menu && menuItems.length > 0 && (
+        <LinkMenu key={menu.seq} anchor={menu.anchor} offset={menu.offset} items={menuItems} isUnsaved={menuItems.includes("cancel")} busy={busy} onAction={runMenu} onClose={() => setMenu(null)} />
+      )}
       {confirmingIdentical && (
         <ConfirmModal
           title={t("assign.identicalTitle")}

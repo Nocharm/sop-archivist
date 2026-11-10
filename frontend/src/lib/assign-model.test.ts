@@ -2,7 +2,25 @@
 import { describe, expect, it } from "vitest";
 
 import type { Decision, Group, GroupTarget, GroupUnit, NewCandidate, WrittenSentence } from "./api-sop";
-import { addPartnerTargets, buildRecommendations, canMakeOtherLanguage, clampSplit, clampZoom, listCoConfirmed, listSiblingPlaces, listUnsourced, mergeGroups, pickNearby, stepZoom } from "./assign-model";
+import {
+  addPartnerTargets,
+  buildLinkPairs,
+  buildRecommendations,
+  canMakeOtherLanguage,
+  clampSplit,
+  clampZoom,
+  findLinkPartners,
+  isRecommendationPicked,
+  listCoConfirmed,
+  listLinkMenuItems,
+  listSiblingPlaces,
+  listUnlinkRemainder,
+  listUnsourced,
+  mergeGroups,
+  pickDrawnLinks,
+  pickNearby,
+  stepZoom,
+} from "./assign-model";
 import type { DestinationOption } from "./classify-model";
 
 function makeDecision(status: Decision["status"]): Decision {
@@ -165,5 +183,101 @@ describe("canMakeOtherLanguage", () => {
     expect(canMakeOtherLanguage(["ko", "en"], slot, true)).toBeNull();
     expect(canMakeOtherLanguage(["ko"], { kind: "link", targetIds: [1] }, true)).toBeNull();
     expect(canMakeOtherLanguage(["neutral"], slot, true)).toBeNull();
+  });
+});
+
+describe("isRecommendationPicked", () => {
+  // 한/영 짝: KO 71 ↔ EN 72
+  const written = new Map([
+    [71, makeWritten(71, { lang: "ko", partner_target_id: 72 })],
+    [72, makeWritten(72, { lang: "en", partner_target_id: 71 })],
+    [73, makeWritten(73, { lang: "ko" })],
+  ]);
+
+  it("is on for a KO/EN pair row after picking adds the partner sentence", () => {
+    // pickDestination이 짝을 더한 초안
+    const draft = { kind: "link" as const, targetIds: addPartnerTargets([71], ["ko", "en"], written) };
+    expect(draft.targetIds).toEqual([71, 72]);
+    expect(isRecommendationPicked(draft, { kind: "link", targetIds: [71] }, ["ko", "en"], written)).toBe(true);
+  });
+
+  it("is on for a one-language row where no partner is added", () => {
+    expect(isRecommendationPicked({ kind: "link", targetIds: [71] }, { kind: "link", targetIds: [71] }, ["ko"], written)).toBe(true);
+  });
+
+  it("is off when the draft holds another sentence or an extra one", () => {
+    expect(isRecommendationPicked({ kind: "link", targetIds: [73] }, { kind: "link", targetIds: [71] }, ["ko", "en"], written)).toBe(false);
+    expect(isRecommendationPicked({ kind: "link", targetIds: [71, 72, 73] }, { kind: "link", targetIds: [71] }, ["ko", "en"], written)).toBe(false);
+  });
+
+  it("is off with no draft and compares places by id", () => {
+    expect(isRecommendationPicked(null, { kind: "link", targetIds: [71] }, ["ko"], written)).toBe(false);
+    expect(isRecommendationPicked({ kind: "slot", docId: 3, slotKey: "purpose" }, { kind: "slot", docId: 3, slotKey: "purpose" }, ["ko"], written)).toBe(true);
+    expect(isRecommendationPicked({ kind: "delete" }, { kind: "slot", docId: 3, slotKey: "purpose" }, ["ko"], written)).toBe(false);
+  });
+});
+
+describe("buildLinkPairs", () => {
+  const rows = [makeWritten(71, { lang: "ko", source_unit_ids: [10] }), makeWritten(72, { lang: "en", source_unit_ids: [11, 99] }), makeWritten(73, { lang: "ko" })];
+
+  it("keeps only sources in the open Old document", () => {
+    expect(buildLinkPairs(rows, new Set([10, 11]), null)).toEqual([
+      { unitId: 10, targetId: 71, draft: false },
+      { unitId: 11, targetId: 72, draft: false },
+    ]);
+  });
+
+  it("adds unsaved picks against same-language units only, once", () => {
+    const pairs = buildLinkPairs(rows, new Set([10, 11, 12]), { units: [{ id: 10, lang: "ko" }, { id: 12, lang: "en" }], targetIds: [71, 73] });
+    expect(pairs.filter((pair) => pair.draft)).toEqual([{ unitId: 10, targetId: 73, draft: true }]);
+  });
+});
+
+describe("findLinkPartners and pickDrawnLinks", () => {
+  const pairs = [
+    { unitId: 10, targetId: 71, draft: false },
+    { unitId: 10, targetId: 72, draft: false },
+    { unitId: 11, targetId: 72, draft: false },
+  ];
+
+  it("finds the other side", () => {
+    expect(findLinkPartners(pairs, "old", 10)).toEqual([71, 72]);
+    expect(findLinkPartners(pairs, "new", 72)).toEqual([10, 11]);
+    expect(findLinkPartners(pairs, "new", 5)).toEqual([]);
+  });
+
+  it("draws all lines when few and marks focused ones strong", () => {
+    const drawn = pickDrawnLinks(pairs, new Set([11]), new Set());
+    expect(drawn.map((pair) => pair.strong)).toEqual([false, false, true]);
+  });
+
+  it("draws only focused lines when there are many", () => {
+    expect(pickDrawnLinks(pairs, new Set(), new Set([71]), 2)).toEqual([{ unitId: 10, targetId: 71, draft: false, strong: true }]);
+    expect(pickDrawnLinks(pairs, new Set(), new Set(), 2)).toEqual([]);
+  });
+});
+
+describe("listLinkMenuItems", () => {
+  it("offers confirm after picking, unlink on a confirmed link, link otherwise", () => {
+    expect(listLinkMenuItems({ picked: true, linked: true, confirmed: true, canEdit: true })).toEqual(["confirm", "cancel"]);
+    expect(listLinkMenuItems({ picked: false, linked: true, confirmed: true, canEdit: true })).toEqual(["unlink", "close"]);
+    expect(listLinkMenuItems({ picked: false, linked: true, confirmed: false, canEdit: true })).toEqual(["confirm", "unlink", "close"]);
+    expect(listLinkMenuItems({ picked: false, linked: false, confirmed: false, canEdit: true })).toEqual(["link", "close"]);
+  });
+
+  it("shows nothing when the bundle cannot be edited", () => {
+    expect(listLinkMenuItems({ picked: true, linked: false, confirmed: false, canEdit: false })).toEqual([]);
+  });
+});
+
+describe("listUnlinkRemainder", () => {
+  it("drops the sentence and its KO/EN partner", () => {
+    const written = new Map([
+      [71, makeWritten(71, { partner_target_id: 72 })],
+      [72, makeWritten(72, { lang: "en", partner_target_id: 71 })],
+      [73, makeWritten(73)],
+    ]);
+    expect(listUnlinkRemainder([71, 72, 73], 71, written)).toEqual([73]);
+    expect(listUnlinkRemainder([73], 73, written)).toEqual([]);
   });
 });

@@ -1,7 +1,7 @@
 // Assign 화면 모델 - Old 조각 한 줄씩 보낼 곳을 정한다(설계 docs/superpowers/specs/2026-11-09-assign-unified-design.md).
 // 저장 요청은 classify-model의 buildGroupSave(보낼 곳 link 포함)가 만들고, 여기는 묶음 합치기·함께 확정·짝 자동·추천 섞기·범위 규칙이다.
 
-import type { Destination, DestinationOption } from "./classify-model";
+import { getDestinationId, type Destination, type DestinationOption } from "./classify-model";
 import type { Group, NewCandidate, UnitLang, WrittenSentence } from "./api-sop";
 
 /** 연결 저장 전에 줄 묶음과 고른 문장들의 묶음을 하나로 - 서버는 닫힌 묶음 전체를 받아야 저장한다 */
@@ -76,6 +76,89 @@ export function buildRecommendations(input: RecommendInput): Recommendation[] {
   ].map((rec) => ({ ...rec, key: keyOf(rec.destination) }));
   const seen = new Set<string>();
   return all.filter((rec) => !seen.has(rec.key) && seen.add(rec.key)).slice(0, MAX_RECOMMENDATIONS);
+}
+
+/**
+ * 추천 카드가 지금 고른 곳인가 - 문장 추천은 고를 때 New 짝 문장이 더해지므로(addPartnerTargets) 짝까지 넣은 묶음과 견준다.
+ * 추천의 ID만 견주면 한/영 짝 줄에서 고른 표시가 영영 켜지지 않는다.
+ */
+export function isRecommendationPicked(draft: Destination | null, rec: Destination, rowLangs: UnitLang[], written: Map<number, WrittenSentence>): boolean {
+  if (draft === null) return false;
+  if (rec.kind !== "link" || draft.kind !== "link") return getDestinationId(draft) === getDestinationId(rec);
+  const expected = new Set(addPartnerTargets(rec.targetIds, rowLangs, written));
+  return draft.targetIds.length === expected.size && draft.targetIds.every((id) => expected.has(id));
+}
+
+/** Old 조각 하나와 New 문장 하나의 이음 - draft는 고르기만 하고 아직 저장하지 않은 것 */
+export interface LinkPair {
+  unitId: number;
+  targetId: number;
+  draft: boolean;
+}
+
+/**
+ * 두 문서 사이에 그릴 이음 - 지금 열린 New 문서의 문장 출처 중 지금 열린 Old 문서의 조각만, 그리고 고른 줄의 아직 저장 안 한 고름.
+ * 고름은 같은 언어 Old 조각과 잇는다(짝 맞추기는 같은 언어끼리, 명세 §7.10).
+ */
+export function buildLinkPairs(
+  newRows: WrittenSentence[],
+  oldUnitIds: ReadonlySet<number>,
+  draft: { units: Array<{ id: number; lang: UnitLang }>; targetIds: number[] } | null,
+): LinkPair[] {
+  const pairs: LinkPair[] = [];
+  const seen = new Set<string>();
+  for (const row of newRows) {
+    for (const unitId of row.source_unit_ids) {
+      if (!oldUnitIds.has(unitId)) continue;
+      seen.add(`${unitId}:${row.target_id}`);
+      pairs.push({ unitId, targetId: row.target_id, draft: false });
+    }
+  }
+  if (!draft) return pairs;
+  const langOf = new Map(newRows.map((row) => [row.target_id, row.lang]));
+  for (const targetId of draft.targetIds) {
+    const lang = langOf.get(targetId);
+    if (lang === undefined) continue;
+    for (const unit of draft.units) {
+      if (unit.lang !== lang || !oldUnitIds.has(unit.id) || seen.has(`${unit.id}:${targetId}`)) continue;
+      pairs.push({ unitId: unit.id, targetId, draft: true });
+    }
+  }
+  return pairs;
+}
+
+/** 마우스를 올린 쪽의 맞은편 - Old 조각이면 이어진 New 문장들, New 문장이면 출처 Old 조각들 */
+export function findLinkPartners(pairs: LinkPair[], side: "old" | "new", id: number): number[] {
+  const result = pairs.filter((pair) => (side === "old" ? pair.unitId : pair.targetId) === id).map((pair) => (side === "old" ? pair.targetId : pair.unitId));
+  return [...new Set(result)];
+}
+
+/** 이음이 이보다 많으면 고르거나 마우스를 올린 것만 그린다 - 선이 화면을 덮고 매 스크롤마다 잴 것이 많아진다 */
+export const MAX_LINES_ALL = 40;
+
+/** 그릴 선 - 고른 줄·고른 문장·마우스를 올린 것에 닿는 선은 진하게, 많을 때는 그것만 */
+export function pickDrawnLinks(pairs: LinkPair[], focusUnits: ReadonlySet<number>, focusTargets: ReadonlySet<number>, max = MAX_LINES_ALL): Array<LinkPair & { strong: boolean }> {
+  const marked = pairs.map((pair) => ({ ...pair, strong: pair.draft || focusUnits.has(pair.unitId) || focusTargets.has(pair.targetId) }));
+  return marked.length > max ? marked.filter((pair) => pair.strong) : marked;
+}
+
+export type LinkMenuItem = "confirm" | "cancel" | "link" | "unlink" | "close";
+
+/**
+ * 그 자리 메뉴의 항목 - 고른 뒤(저장 전)는 확정·취소, 이미 이어진 것은 끊기(AI가 이어 둔 것은 확정도), 그 밖의 후보는 잇기.
+ * 고칠 수 없는 묶음이면 메뉴를 띄우지 않는다.
+ */
+export function listLinkMenuItems(state: { picked: boolean; linked: boolean; confirmed: boolean; canEdit: boolean }): LinkMenuItem[] {
+  if (!state.canEdit) return [];
+  if (state.picked) return ["confirm", "cancel"];
+  if (state.linked) return state.confirmed ? ["unlink", "close"] : ["confirm", "unlink", "close"];
+  return ["link", "close"];
+}
+
+/** 끊은 뒤 남는 고름 - 끊는 문장과 그 한/영 짝 문장을 함께 뺀다(짝 한쪽만 남기면 다음 고름이 짝을 다시 붙인다) */
+export function listUnlinkRemainder(targetIds: number[], targetId: number, written: Map<number, WrittenSentence>): number[] {
+  const partner = written.get(targetId)?.partner_target_id ?? null;
+  return targetIds.filter((id) => id !== targetId && id !== partner);
 }
 
 /** 출처가 없고 신규로도 표시하지 않은 New 문장 - 검토 요청을 막는다. 표·그림은 이번 화면에서 잇지 않는다(설계 §2) */

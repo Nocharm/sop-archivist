@@ -1050,7 +1050,7 @@
   .fpill[data-tone="all"] { --fp-ink: var(--ink); --fp-fill: var(--ink); --fp-tint: var(--surface); }
   .fpill[data-tone="danger"] { --fp-ink: var(--danger-ink); --fp-fill: var(--danger-ink); --fp-tint: var(--danger-tint); --fp-line: color-mix(in oklab, var(--danger-fill) 45%, var(--surface)); }
   .assign-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 30px; }
-  .assign-panes { display: grid; grid-template-columns: minmax(0, var(--split, 50%)) 12px minmax(0, 1fr); min-height: 0; }
+  .assign-panes { position: relative; display: grid; grid-template-columns: minmax(0, var(--split, 50%)) 12px minmax(0, 1fr); min-height: 0; }
   .assign-panes[data-single] { grid-template-columns: minmax(0, 1fr); }
   .assign-pane { display: grid; grid-template-rows: auto minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; min-height: 0; }
   .pane-sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); }
@@ -1085,22 +1085,54 @@
   .pane-divider:hover::after, .pane-divider:focus-visible::after, .pane-divider[data-drag]::after { border-color: var(--accent); }
   .pane-divider:focus-visible { outline: none; }
 
-  /* 확정한 조각의 간 곳 */
-  .strip-note { display: block; margin-top: 2px; font: 600 var(--fs-micro) / 16px var(--font-mono); color: var(--st-ok-ink); }
+  /* 확정한 조각의 간 곳 - 이어진 문장이면 단추(누르면 New 문서의 그 문장으로) */
+  .strip-note { display: block; margin-top: 2px; font: 600 var(--fs-micro) / 16px var(--font-mono); color: var(--st-ok-ink); text-align: left; }
   .strip-note.is-delete { color: var(--danger-ink); }
+  button.strip-note { padding: 0 4px; margin-inline: -4px; border-radius: var(--r-1); cursor: pointer; }
+  button.strip-note:hover { background: var(--st-ok-tint); text-decoration: underline; text-underline-offset: 2px; }
+
+  /* 이어진 맞은편 강조(마우스를 올린 조각의 짝) - 왼쪽 막대 쪽 모서리는 직각 */
+  .pg[data-strips] .strip[data-link-hover], .cell-piece[data-link-hover], .new-line[data-link-hover] { background: var(--accent-tint); box-shadow: inset 3px 0 0 var(--accent); border-top-left-radius: 0; border-bottom-left-radius: 0; }
+  /* 이동해 간 자리 - 잠깐 테두리가 번쩍인다 */
+  [data-flash] { animation: link-flash 1.2s ease-out both; }
+  @keyframes link-flash { 0%, 35% { outline: 2px solid var(--accent); outline-offset: 2px; } 100% { outline: 2px solid transparent; outline-offset: 2px; } }
+  /* 두 문서 사이 이음 선 - 옅게, 고른 것·마우스를 올린 것만 진하게. 아직 저장 안 한 고름은 점선 */
+  .link-lines { position: absolute; inset: 0; z-index: 3; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+  .link-lines g { color: var(--accent); opacity: 0.22; }
+  .link-lines g[data-strong] { opacity: 0.85; }
+  .link-lines path { fill: none; stroke: currentColor; stroke-width: 1.25; }
+  .link-lines g[data-strong] path { stroke-width: 1.75; }
+  .link-lines g[data-draft] path { stroke-dasharray: 4 3; }
+  .link-lines circle { fill: currentColor; }
+
+  /* 그 자리 메뉴 - Split "Split here" 상자처럼 조금 늦게 뜬다 */
+  .link-menu { position: fixed; z-index: 40; display: grid; gap: 6px; padding: 6px; border: 1px solid var(--line-2); border-radius: var(--r-3); background: var(--raised); box-shadow: var(--shadow-2); font-family: var(--font-ui); white-space: nowrap; animation: cut-pop-in-fixed 200ms cubic-bezier(.16, 1, .3, 1) 380ms both; }
+  .link-menu-row { display: inline-flex; gap: 6px; }
+  .link-menu-note { display: inline-flex; align-items: center; gap: 5px; padding: 0 2px; font-size: var(--fs-micro); font-weight: 600; color: var(--st-hold-ink); }
+  .link-menu-note::before, .dest-card-pending::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .link-menu .link-menu-unlink { color: var(--danger-ink); }
+  @keyframes cut-pop-in-fixed { from { opacity: 0; visibility: hidden; translate: 0 -5px; } }
 
   /* New 원문 줄 - 점선 후보, 채움 고름, 위험색 출처 없음 */
   .new-sheet { gap: 2px; }
   .pg .new-sec { margin: 10px 0 2px; font: 600 var(--fs-cap) / var(--lh-cap) var(--font-ui); color: var(--ink-3); }
-  .new-line { display: block; width: calc(100% + 16px); margin-inline: -8px; padding: 4px 8px; border-radius: var(--r-1); text-align: left; color: inherit; font: inherit; cursor: pointer; }
+  /* 줄 = 고르는 단추(줄 전체를 덮는다) + 출처 칩 단추 - 단추 안에 단추를 넣지 않는다 */
+  .new-line { position: relative; display: flex; align-items: baseline; gap: 6px; width: calc(100% + 16px); margin-inline: -8px; padding: 4px 8px; border-radius: var(--r-1); }
   .new-line:hover { background: var(--hover); }
+  .new-hit { flex: 1 1 auto; min-width: 0; padding: 0; text-align: left; color: inherit; font: inherit; cursor: pointer; }
+  .new-hit::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+  .new-hit:focus-visible { outline: none; }
+  .new-line:has(> .new-hit:focus-visible) { outline: 2px solid var(--focus); outline-offset: 1px; }
   .new-line .ptag { margin-right: 6px; vertical-align: 1px; }
+  .new-srcs { position: relative; z-index: 1; flex: none; display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; max-width: 45%; }
   .new-line[data-state="candidate"] { outline: 1.5px dashed var(--accent); outline-offset: -1.5px; }
   .new-line[data-state="picked"] { background: var(--accent-tint); box-shadow: inset 0 0 0 1.5px var(--accent); }
   /* 왼쪽 막대 쪽 모서리는 둥글리지 않는다(둥근 막대는 손톱처럼 보인다 - 메뉴 호버와 같은 규칙) */
   .new-line[data-state="unsourced"] { box-shadow: inset 2px 0 0 var(--danger-fill); border-radius: 0 var(--r-1) var(--r-1) 0; }
   .new-line[data-state="focus"] { background: var(--danger-tint); box-shadow: inset 0 0 0 1.5px var(--danger-ink); }
-  .new-src { display: inline-block; margin-left: 6px; padding: 0 4px; border-radius: var(--r-1); font: 600 10px / 16px var(--font-mono); vertical-align: 1px; background: var(--st-ok-tint); color: var(--st-ok-ink); }
+  .new-src { display: inline-block; padding: 0 4px; border-radius: var(--r-1); font: 600 10px / 16px var(--font-mono); white-space: nowrap; background: var(--st-ok-tint); color: var(--st-ok-ink); }
+  button.new-src { cursor: pointer; box-shadow: inset 0 0 0 1px transparent; }
+  button.new-src:hover { box-shadow: inset 0 0 0 1px var(--st-ok-ink); text-decoration: underline; text-underline-offset: 2px; }
   .new-src.is-new { background: var(--sunken); color: var(--ink-3); }
   .pg .new-block { margin: 4px 0; padding: 6px 8px; border: 1px dashed var(--line-2); border-radius: var(--r-1); font: var(--fs-cap) / var(--lh-cap) var(--font-ui); color: var(--ink-3); }
 
@@ -1141,6 +1173,7 @@
   .dest-card-title b { font-family: var(--font-mono); font-weight: 600; color: var(--ink); }
   .dest-card-text { display: block; font-size: 13px; line-height: 19px; color: var(--ink); }
   .dest-card-note { display: block; margin-top: 2px; font-size: var(--fs-micro); color: var(--ink-3); }
+  .dest-card-pending { display: inline-flex; align-items: center; gap: 5px; margin-top: 4px; font-size: var(--fs-micro); font-weight: 600; color: var(--st-hold-ink); }
 
   .dest-tree { display: grid; gap: 1px; }
   .tree-group { margin: 6px 0 2px; font-size: var(--fs-micro); font-weight: 700; color: var(--ink-3); }
@@ -1163,5 +1196,6 @@
 
   @media (prefers-reduced-motion: reduce) {
     .pane-zoom, .pane-divider::before, .legend-pop, .dest-acc-chev, .tree-chev, .dest-card { transition: none; }
+    .link-menu { animation: cut-pop-wait 1ms linear 380ms both; }
   }
 }
