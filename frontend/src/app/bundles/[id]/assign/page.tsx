@@ -935,26 +935,31 @@ export default function AssignPage() {
                   </p>
                 )}
               </div>
+              {/* 고쳐 쓰는 동안은 변경 종류 줄의 자리를 미리 잡는다 - 글이 원문과 달라지는 순간 아래가 밀리지 않게(To-Be 사유 칸과 같은 방식) */}
               {structural ? (
                 <span className="text-xs text-ink-2">
                   {t("classify.changeType")} · {t(slot.sourceIds.length > 1 ? "change.merged" : "change.split")}
                 </span>
               ) : (
-                changed && (
-                  <span className="flex items-center gap-2 text-xs text-ink-2">
-                    {t("classify.changeType")}
-                    <Select
-                      testId={`assign-slot-change-${slot.key}`}
-                      ariaLabel={t("classify.changeType")}
-                      size="sm"
-                      value={draft.changeTypes[slot.key] ?? keptType ?? "rewritten"}
-                      disabled={!canEdit}
-                      options={[
-                        { value: "tone", label: t("change.tone") },
-                        { value: "rewritten", label: t("change.rewritten") },
-                      ]}
-                      onChange={(next) => setDraft({ changeTypes: { ...draft.changeTypes, [slot.key]: next } })}
-                    />
+                (changed || editing) && (
+                  <span className="flex h-7 items-center gap-2 text-xs text-ink-2">
+                    {changed && (
+                      <>
+                        {t("classify.changeType")}
+                        <Select
+                          testId={`assign-slot-change-${slot.key}`}
+                          ariaLabel={t("classify.changeType")}
+                          size="sm"
+                          value={draft.changeTypes[slot.key] ?? keptType ?? "rewritten"}
+                          disabled={!canEdit}
+                          options={[
+                            { value: "tone", label: t("change.tone") },
+                            { value: "rewritten", label: t("change.rewritten") },
+                          ]}
+                          onChange={(next) => setDraft({ changeTypes: { ...draft.changeTypes, [slot.key]: next } })}
+                        />
+                      </>
+                    )}
                   </span>
                 )
               )}
@@ -1086,18 +1091,23 @@ export default function AssignPage() {
       ) : (
         <span>{reason || "–"}</span>
       )}
-      {destination?.kind === "move" && (
+      {/* 지우기·옮기기 중 어느 쪽이든 이 줄의 자리는 잡아 둔다 - 지우기↔옮기기를 바꿔도 아래(확인·확정자)가 밀리지 않게. 지우기일 때는 비워 둔다 */}
+      {disposed && (
         <>
-          <span className="text-xs text-ink-3">{t("classify.moveTo")}</span>
-          <input
-            className="h-8 rounded-md border border-line-2 bg-surface px-2 font-mono text-[13px] text-ink focus:border-accent focus:outline-none"
-            data-testid="assign-move-code"
-            placeholder="SOP-XX-00000"
-            value={moveCode}
-            maxLength={100}
-            disabled={!canEdit}
-            onChange={(event) => setDraft({ moveCode: event.target.value })}
-          />
+          <span className="text-xs text-ink-3">{destination?.kind === "move" ? t("classify.moveTo") : ""}</span>
+          {destination?.kind === "move" ? (
+            <input
+              className="h-8 rounded-md border border-line-2 bg-surface px-2 font-mono text-[13px] text-ink focus:border-accent focus:outline-none"
+              data-testid="assign-move-code"
+              placeholder="SOP-XX-00000"
+              value={moveCode}
+              maxLength={100}
+              disabled={!canEdit}
+              onChange={(event) => setDraft({ moveCode: event.target.value })}
+            />
+          ) : (
+            <span className="block h-8" aria-hidden />
+          )}
         </>
       )}
       {systemHold !== null && (
