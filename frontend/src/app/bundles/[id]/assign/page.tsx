@@ -31,6 +31,7 @@ import {
   bulkDecide,
   clearDecisions,
   confirmMatchesInBulk,
+  deletePair,
   getDocumentView,
   getGroupByTarget,
   getGroupByUnit,
@@ -65,6 +66,8 @@ import {
   getRowStep,
   hasDraftChange,
   isTextChangeType,
+  listLinkLeftovers,
+  listUnpairedKeys,
   pickFirstFilter,
   readCheckKey,
   readDestination,
@@ -202,17 +205,29 @@ export default function AssignPage() {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const activeKey = selectedKey && rowMap.has(selectedKey) ? selectedKey : null;
   const row: ClassifyRow | null = activeKey ? (rowMap.get(activeKey) ?? null) : null;
+  // 한 언어만 이어 짝을 푼 줄 - 원문 보기를 다시 받아 남은 문장의 줄이 생기면 그 줄로 옮긴다(렌더 중 상태 맞추기)
+  const [splitRow, setSplitRow] = useState<{ from: string; unit: number } | null>(null);
+  if (splitRow !== null) {
+    // 그 사이 사람이 다른 줄을 골랐으면 따라가지 않는다
+    if (selectedKey !== splitRow.from) setSplitRow(null);
+    else if (rowMap.get(`u${splitRow.unit}`)?.unitIds.length === 1) {
+      setSplitRow(null);
+      setSelectedKey(`u${splitRow.unit}`);
+    }
+  }
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [selNew, setSelNew] = useState<number | null>(null);
   const focusNew = mode === "unsourced" ? (unsourced.find((item) => item.target_id === selNew)?.target_id ?? unsourced[0]?.target_id ?? null) : null;
 
   // --- 고른 줄의 관계 묶음·후보와 초안 ---
-  const group = useLoaded<Group | null>(() => (row ? loadRowGroup(bundleId, row.unitIds) : Promise.resolve(null)), `${activeKey}:${unitsKey}`);
+  // 짝을 풀면 줄 키는 그대로인데 단위가 달라질 수 있다 - 줄의 단위를 키에 넣어 묶음·후보를 다시 받는다
+  const rowKey = `${activeKey}:${row?.unitIds.join(",") ?? ""}:${unitsKey}`;
+  const group = useLoaded<Group | null>(() => (row ? loadRowGroup(bundleId, row.unitIds) : Promise.resolve(null)), rowKey);
   const groupData = group.data;
   const sentenceUnitIds = (row?.unitIds ?? []).filter((id) => unitMap.get(id)?.kind !== "table" && unitMap.get(id)?.kind !== "table_row" && unitMap.get(id)?.kind !== "figure");
   const similar = useLoaded<NewCandidate[]>(
     () => (written.length > 0 && sentenceUnitIds.length > 0 ? loadRowCandidates(bundleId, sentenceUnitIds) : Promise.resolve([])),
-    `${activeKey}:${unitsKey}:${written.length > 0}`,
+    `${rowKey}:${written.length > 0}`,
   );
   const [drafts, setDrafts] = useState<Record<string, PageDraft>>({});
   const draft = (activeKey && drafts[activeKey]) || EMPTY_DRAFT;
@@ -266,7 +281,7 @@ export default function AssignPage() {
   const missingIds = linkIds.filter((id) => !knownTargets.has(id));
   const pickedGroups = useLoaded<Group[]>(
     () => (missingIds.length > 0 ? Promise.all(missingIds.map((id) => getGroupByTarget(bundleId, id))) : Promise.resolve([])),
-    `${activeKey}:${unitsKey}:${missingIds.join(",")}`,
+    `${rowKey}:${missingIds.join(",")}`,
   );
   const saveGroupData = groupData ? mergeGroups([groupData, ...(pickedGroups.data ?? [])]) : null;
   const candidateIds = new Set(destination ? [] : recommendations.flatMap((rec) => (rec.destination.kind === "link" ? rec.destination.targetIds : [])));
@@ -381,6 +396,30 @@ export default function AssignPage() {
     return tables;
   }
 
+  /**
+   * 한 언어만 이어 확정한 짝 줄의 짝을 푼다 - 남은 언어 문장이 제 줄이 되어 사람이 따로 끝낸다(명세 §6.5).
+   * 이음은 이미 저장됐으니 여기서 실패해도 되돌리지 않고 따로 알린다(Split에서 손으로 풀 수 있다).
+   */
+  async function splitPairRow(pairRow: ClassifyRow, leftovers: number[]): Promise<boolean> {
+    if (pairRow.pairId === null) return false;
+    const ids = leftovers.map((id) => unitMap.get(id)?.display_id ?? String(id)).join(", ");
+    try {
+      // 짝 풀기는 문서 revision을 본다 - 이 화면에 들어온 뒤 Split에서 고쳤을 수 있어 새로 읽는다
+      const fresh = (await listDocuments(bundleId)).find((doc) => doc.id === pairRow.documentId);
+      await deletePair(bundleId, pairRow.documentId, pairRow.pairId, fresh?.revision ?? 0);
+    } catch (err) {
+      showToast(`${t("assign.leftover.unpairFailed", { ids })} ${humanizeApiError(err, t)}`, "error");
+      // 다른 곳에서 이미 풀었을 수도 있다 - 지금 짝 모양을 다시 받는다
+      views.reload();
+      return false;
+    }
+    // 거르기 자리의 짝 줄을 풀린 줄들로 바꾼다 - 남은 문장이 목록에서 사라지지 않게
+    setSnapshot((prev) => prev && { ...prev, keys: prev.keys.flatMap((key) => (key === pairRow.key ? listUnpairedKeys(pairRow) : [key])) });
+    views.reload();
+    showToast(t("assign.leftover.split", { ids }));
+    return true;
+  }
+
   async function runSave(action: "confirm" | "hold") {
     // 보낼 곳 없이는 보류만 된다(처분 unassigned + hold, 사유는 hold_reason)
     if (!row || busy || groupPending || pickedGroups.isLoading || (!destination && action !== "hold")) return;
@@ -398,17 +437,16 @@ export default function AssignPage() {
     setBusy(true);
     try {
       // 고친 칸만 글을 보낸다 - 손대지 않은 AI 제안은 글·종류를 비워 보내 제안 그대로 받는다
-      const body = buildGroupSave(
-        { ...draft, destination, reason, moveCode },
-        { units: saveUnits, group: saveGroupData, tables: buildTables() },
-        action,
-        action === "hold" ? reason.trim() : "",
-      );
+      const context = { units: saveUnits, group: saveGroupData, tables: buildTables() };
+      const body = buildGroupSave({ ...draft, destination, reason, moveCode }, context, action, action === "hold" ? reason.trim() : "");
+      const leftovers = action === "confirm" ? listLinkLeftovers(destination, context) : [];
       await saveGroup(bundleId, body);
       showToast(action === "hold" ? t("classify.held") : t("classify.confirmed"));
-      // 다음 미확정 줄로 - 지금 줄은 거르기 자리에 남는다
-      const next = action === "confirm" ? findNextOpen(listKeys, rowMap, row.key) : null;
+      const isSplit = leftovers.length > 0 && (await splitPairRow(row, leftovers));
+      // 다음 미확정 줄로 - 지금 줄은 거르기 자리에 남는다. 짝을 풀었으면 남은 문장의 줄이 다음이다
+      const next = action === "confirm" && !isSplit ? findNextOpen(listKeys, rowMap, row.key) : null;
       dropDraft(row.key);
+      if (isSplit) setSplitRow({ from: row.key, unit: leftovers[0] });
       if (next) selectRow(next);
       setUnitsKey((key) => key + 1);
       void loadBundle(bundleId);
@@ -483,12 +521,17 @@ export default function AssignPage() {
     await run(async () => {
       const rowGroup = await loadRowGroup(bundleId, sourceRow.unitIds);
       const extra = await Promise.all(targetIds.map((id) => getGroupByTarget(bundleId, id)));
-      const body = buildGroupSave(
-        { destination: { kind: "link", targetIds }, texts: {}, changeTypes: {}, linkChangeTypes: {}, reason: readHumanReason(sourceUnits[0]?.decision), moveCode: "" },
-        { units: sourceUnits.map((unit) => ({ id: unit.unit_id, kind: unit.kind, lang: unit.lang, text: unit.text, revision: unit.decision.revision })), group: mergeGroups([rowGroup, ...extra]), tables: new Map() },
-        "confirm",
-      );
+      const link: Destination = { kind: "link", targetIds };
+      const context = {
+        units: sourceUnits.map((unit) => ({ id: unit.unit_id, kind: unit.kind, lang: unit.lang, text: unit.text, revision: unit.decision.revision })),
+        group: mergeGroups([rowGroup, ...extra]),
+        tables: new Map(),
+      };
+      const body = buildGroupSave({ destination: link, texts: {}, changeTypes: {}, linkChangeTypes: {}, reason: readHumanReason(sourceUnits[0]?.decision), moveCode: "" }, context, "confirm");
+      const leftovers = listLinkLeftovers(link, context);
       await saveGroup(bundleId, body);
+      // 이 문장에 없는 언어의 Old 문장은 짝을 풀어 제 줄로 남긴다 - 출처 없는 New를 계속 보게 고른 줄은 옮기지 않는다
+      if (leftovers.length > 0) await splitPairRow(sourceRow, leftovers);
     }, t("match.linked"));
   }
 
@@ -775,10 +818,12 @@ export default function AssignPage() {
     for (const item of pickedRows) byLang.set(item.lang, (byLang.get(item.lang) ?? 0) + 1);
     const mergedWith = [...new Set(pickedRows.flatMap((item) => item.source_unit_ids).filter((id) => !row?.unitIds.includes(id)))].map((id) => unitMap.get(id)?.display_id ?? String(id));
     const auto = [...byLang.values()].some((count) => count > 1) ? "split" : mergedWith.length > 0 ? "merged" : null;
-    // 잇지 않는 언어의 짝 조각도 지금 그대로 함께 저장된다 - 줄이 아니라 함께 확정되는 쪽으로 보인다
+    // 잇지 않는 언어의 짝 조각은 판단이 있으면 지금 그대로 함께 저장된다 - 줄이 아니라 함께 확정되는 쪽으로 보인다.
+    // 판단이 없으면 저장에서 빠지고 확정 뒤 짝이 풀려 제 줄로 남는다(아래 알림)
     const linkedLangs = new Set(pickedRows.map((item) => item.lang));
     const savedRowIds = destination.kind === "link" ? rowUnits.filter((unit) => linkedLangs.has(unit.lang)).map((unit) => unit.unit_id) : (row?.unitIds ?? []);
-    const coConfirmed = saveGroupData ? listCoConfirmed(saveGroupData, savedRowIds, linkIds) : [];
+    const leftovers = pickedGroups.isLoading ? [] : listLinkLeftovers(destination, { units: saveUnits, group: saveGroupData });
+    const coConfirmed = saveGroupData ? listCoConfirmed(saveGroupData, [...savedRowIds, ...leftovers], linkIds) : [];
     const spansDocs = new Set(pickedRows.map((item) => item.target_doc_id)).size > 1;
     return (
       <div className="chosen-box" data-testid="assign-chosen">
@@ -808,6 +853,11 @@ export default function AssignPage() {
           </>
         )}
         {spansDocs && <p className="text-xs text-ink-2">{t("assign.duplicateReason")}</p>}
+        {leftovers.length > 0 && (
+          <p className="text-xs text-ink-2" data-testid="assign-link-leftover">
+            {t("assign.leftover.note", { ids: leftovers.map((id) => unitMap.get(id)?.display_id ?? String(id)).join(", ") })}
+          </p>
+        )}
         {coConfirmed.length > 0 && (
           <div className="grid gap-0.5" data-testid="assign-co-confirmed">
             <span className="text-[11px] font-semibold text-ink-3">{t("assign.coConfirmed")}</span>

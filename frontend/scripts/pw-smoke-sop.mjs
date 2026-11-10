@@ -615,6 +615,71 @@ await runStep("assign: written New document - identical, link by clicking, split
   check("an unsourced New sentence is marked new", true);
 });
 
+// 한 언어만 잇기(v0.11.1) - Old는 한/영 짝인데 쓴 New에는 한 언어만 있는 예외. 있는 언어만 이어 확정하면 짝이 풀리고
+// 남은 문장이 제 줄이 되어 사람이 삭제(사유)나 보류로 끝낸다
+await runStep("assign: a one-language link on a KO/EN pair row unpairs it and leaves the other sentence open", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}${path}`, { headers })).json();
+  // 둘 다 판단이 없는 한/영 짝 가운데 한 언어에만 New 후보가 있고, 그 New 문장에 다른 언어 짝이 없는 것
+  const written = new Map((await getJson("/written-sentences")).map((row) => [row.target_id, row]));
+  let found = null;
+  for (const doc of (await getJson("/documents")).filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await getJson(`/documents/${doc.id}/view`);
+    const unitOf = new Map(view.units.map((unit) => [unit.id, unit]));
+    for (const pair of view.pairs) {
+      const members = pair.unit_ids.map((id) => unitOf.get(id));
+      if (members.length !== 2 || members.some((unit) => !unit || unit.status !== "unassigned")) continue;
+      const candidates = [];
+      for (const unit of members) candidates.push((await getJson(`/units/${unit.id}/new-candidates`)).filter((item) => written.get(item.target_id)?.partner_target_id == null));
+      const linkedAt = candidates.findIndex((list) => list.length > 0);
+      if (linkedAt === -1 || candidates[1 - linkedAt].length > 0) continue;
+      found = { docId: doc.id, pairId: pair.id, linked: members[linkedAt], leftover: members[1 - linkedAt], targetId: candidates[linkedAt][0].target_id };
+      break;
+    }
+    if (found) break;
+  }
+  check("the synthetic bundle has a pair with a one-language New candidate", found !== null);
+  if (!found) return;
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-pick-prompt");
+  await selectRowById(page, found.linked.display_id);
+  check("the row holds both languages", (await rowIds(page)).includes(found.leftover.display_id), await rowIds(page));
+  const line = page.locator(`[data-testid="assign-new-${found.targetId}"]`);
+  await line.waitFor({ timeout: T });
+  await line.click();
+  await wait(page, "assign-link-leftover");
+  check("the chosen box names the sentence it leaves out", (await getText(page, "assign-link-leftover")).includes(found.leftover.display_id));
+  await takeShot("sop-assign-link-leftover.png");
+  const saved = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
+  const unpaired = page.waitForResponse((response) => response.request().method() === "DELETE" && response.url().includes("/pairs/"), { timeout: T });
+  await page.locator('[data-testid="assign-primary"]').click();
+  const savedResponse = await saved;
+  check("the one-language link saves", savedResponse.ok(), savedResponse.ok() ? "" : (await savedResponse.text()).slice(0, 300));
+  const unpairedResponse = await unpaired;
+  check("the pair is dissolved after the save", unpairedResponse.ok(), unpairedResponse.ok() ? "" : (await unpairedResponse.text()).slice(0, 300));
+  // 남은 문장이 제 줄로 골라진다 - 다음 줄로 넘어가지 않는다
+  await page.waitForFunction((id) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() === id, found.leftover.display_id, { timeout: T });
+  check("the leftover sentence is picked as its own open row", (await rowStatus(page)) === "Unassigned", await rowStatus(page));
+  await takeShot("sop-assign-link-leftover-row.png");
+  const readUnits = async () => new Map((await getJson("/units?limit=1000")).items.map((unit) => [unit.unit_id, unit]));
+  let units = await readUnits();
+  const stateOf = (unit) => `${units.get(unit.id)?.status}/${units.get(unit.id)?.pair_id}`;
+  check("the linked sentence is confirmed and the other stays open, both unpaired", stateOf(found.linked) === "confirmed/null" && stateOf(found.leftover) === "unassigned/null", `${stateOf(found.linked)} ${stateOf(found.leftover)}`);
+  const events = await getJson("/events?limit=5");
+  check("history records the unpair", events.some((event) => event.action === "pair.delete" && event.target_ids.includes(found.pairId)));
+  // 사람이 삭제(사유)로 끝낸다
+  if ((await page.locator('[data-testid="assign-pick-delete"]').count()) === 0) await page.locator('[data-testid="assign-acc-move"]').click();
+  await page.locator('[data-testid="assign-pick-delete"]').click();
+  await page.locator('[data-testid="assign-reason"]').fill("No counterpart in the new document");
+  const closed = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
+  await page.locator('[data-testid="assign-primary"]').click();
+  const closedResponse = await closed;
+  check("the leftover closes with Deleted and a reason", closedResponse.ok(), closedResponse.ok() ? "" : (await closedResponse.text()).slice(0, 300));
+  await page.waitForLoadState("networkidle");
+  units = await readUnits();
+  check("the leftover sentence is confirmed", units.get(found.leftover.id)?.status === "confirmed", units.get(found.leftover.id)?.status);
+});
+
 await runStep("outputs: A, B, C in both editions and Excel", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
   await wait(page, "output-c");

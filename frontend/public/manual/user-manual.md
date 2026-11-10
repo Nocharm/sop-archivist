@@ -228,7 +228,7 @@ Bundle은 함께 재구성할 문서 묶음입니다. Old SOP 여러 편과 새�
 ### 언어와 한/영 짝 {#split-pair}
 
 - **Language** 에서 Unit의 언어를 **KO** 또는 **EN** 으로 고칩니다.
-- **KO/EN pair** 는 같은 뜻의 한글·영어 문장을 묶은 것입니다. 짝은 배정할 때 함께 움직입니다.
+- **KO/EN pair** 는 같은 뜻의 한글·영어 문장을 묶은 것입니다. 짝은 배정할 때 함께 움직입니다(이미 쓴 New 문장이 한 언어뿐일 때는 [확정·고쳐 쓰기·보류](#assign-confirm) 참고).
 - 짝이 없으면(**No pair**) **Pair with...** 를 누르고 상대 문장을 고른 뒤 **Make pair** 를 누릅니다. 자동으로 잡힌 짝은 **Confirm pair** 로 확정하거나 **Unpair** 로 풉니다.
 
 ### 누락 의심 경고 {#split-warnings}
@@ -341,6 +341,7 @@ Old Unit마다 새 문서의 어디로 갈지 정하고 확정하는 단계입�
 - **Change type** 은 원문과 새 문장의 관계입니다: **As is**, **Tone**, **Rewritten**, **Merged**, **Split**, **Translated**, **Deleted**, **New**, **Table restructured**.
 - **Checks** 는 원문과 새 문장을 견준 결과입니다. **Numbers differ**, **Units differ**, **Negation differs** 가 뜨면 뜻이 바뀌지 않았는지 다시 봅니다.
 - 한/영 짝은 함께 확정됩니다(**Confirmed together**).
+- 이미 쓴 New 문장이 한 언어로만 있으면 그 언어의 Old 문장만 이어집니다. 잇지 않는 문장은 고른 곳 아래에 알려 주고, **Confirm** 을 누르면 짝이 풀려 그 문장이 따로 줄이 됩니다(**History** 에 **Removed a KO/EN pair**). 따로 남은 줄은 **Delete or move** 의 **Deleted**(**Reason** 필수)나 **Hold** 로 마무리합니다. 흔한 경우는 아닙니다 — 보통은 Old와 New 모두 한글·영어가 함께 있어 두 문장이 같이 이어집니다.
 - 고르기만 하고 확정하지 않은 채 떠나려 하면 먼저 묻습니다.
 
 ### 여럿을 한 번에 {#assign-bulk}

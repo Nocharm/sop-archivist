@@ -240,5 +240,14 @@
 
 이 작업 중 찾았지만 고치지 않은 것:
 
-- **한/영 짝 줄에서 한 언어만 New 문장에 이으면 저장이 거절된다(Assign, 이 브랜치 앞부터).** 한/영이 한 줄로 묶인 Old에서 New 후보 하나(예: 영어)를 눌렀는데 그 문장에 다른 언어 짝이 없으면(`partner_target_id` 없음) 화면은 그 언어만 잇고, 저장 요청에는 나머지 언어 Unit이 미배정인 채 같이 실린다. 서버(`decisions._check_dispositions`)는 확정 저장에 미배정이 섞였다고 422 `invalid_group` / `hold_required`로 거절한다. `rule.invalid_group.hold_required` 문구가 없어 사용자는 "The decision could not be saved. Reload and try again."만 본다. 고치는 길은 둘 — (가) 미배정으로 남는 다른 언어 Unit을 저장에서 빼거나 보류로 같이 보낸다(동작이 바뀌므로 결정이 필요), (나) 최소한 사유 문구를 en·ko로 더한다.
+- **한/영 짝 줄에서 한 언어만 New 문장에 이으면 저장이 거절된다(Assign, 이 브랜치 앞부터).** 한/영이 한 줄로 묶인 Old에서 New 후보 하나(예: 영어)를 눌렀는데 그 문장에 다른 언어 짝이 없으면(`partner_target_id` 없음) 화면은 그 언어만 잇고, 저장 요청에는 나머지 언어 Unit이 미배정인 채 같이 실린다. 서버(`decisions._check_dispositions`)는 확정 저장에 미배정이 섞였다고 422 `invalid_group` / `hold_required`로 거절한다. `rule.invalid_group.hold_required` 문구가 없어 사용자는 "The decision could not be saved. Reload and try again."만 본다. 고치는 길은 둘 — (가) 미배정으로 남는 다른 언어 Unit을 저장에서 빼거나 보류로 같이 보낸다(동작이 바뀌므로 결정이 필요), (나) 최소한 사유 문구를 en·ko로 더한다. → **2026-11-10 사용자가 "있는 언어만 잇고 짝을 풀어 따로 줄로"로 정해 고쳤다(6.8).**
 - **스모크의 줄 찾기가 실행 속도에 따라 다른 줄에 닿았다(고침).** `pw-smoke-sop.mjs`가 `j`로 줄을 넘기며 `networkidle`을 기다렸는데, 첫 로드 뒤로는 곧바로 풀려 후보 응답보다 먼저 다음 줄로 넘어갔다. 그래서 위 짝 줄에 닿은 실행만 실패했다. 줄마다 `/new-candidates` 요청이 끝나기를 기다리게 고쳤다(제품 코드는 아니다).
+
+### 6.8 한 언어만 잇는 짝 줄 (6.7에서 찾은 것, 2026-11-10 사용자 결정)
+
+정상 흐름은 Old·New 모두 한글·영어가 함께 있어 두 문장이 같이 이어지는 것이다(명세 §6.5). 이것은 New 문장이 한 언어로만 있을 때의 대응이다.
+
+- **동작**: 있는 언어만 이어 확정한다. 판단이 없던 다른 언어 Old 문장은 확정 저장에 싣지 않고, 확정 뒤 그 줄의 짝을 풀어 제 줄로 남긴다. 확정 전에 고른 곳 아래에 어느 문장이 남는지 알리고, 확정 뒤에는 남은 문장의 줄로 옮겨 **Deleted**(사유)나 **Hold**로 끝내라고 알린다. History에 `pair.delete`.
+- **바꾸지 않은 것**: 서버(기존 저장·짝 풀기 API 그대로), 보류 저장, 이미 판단이 있는 다른 언어 Unit(그대로 함께 싣고 짝도 둔다).
+- **실패할 때**: 짝 풀기가 실패해도 이음은 되돌리지 않는다. 오류 알림이 Split에서 손으로 풀라고 말한다.
+- **검증(합성 SOP·가짜 AI·dev 로그인)**: 모델 시험을 먼저 쓰고 실패를 본 뒤 구현(`classify-model.test.ts`), 서버 계약 시험(`test_one_language_link_leaves_the_pair_partner_open` — 판단 없는 짝을 실으면 422, 빼면 200, 짝 풀기 200). frontend tsc·lint·vitest 428·빌드 경고 0. `pw-smoke-sop.mjs`에 이 길을 더해 PASS 157 / FAIL 0(알림 → 확정 → 짝 풀림 → 남은 줄 선택 → History → Deleted로 마무리). 짝 풀기 실패 길은 409를 끼워 넣은 임시 탐침으로 한국어 화면에서 확인했다(이음 저장됨·짝 유지·오류 알림).

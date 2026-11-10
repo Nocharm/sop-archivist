@@ -12,12 +12,15 @@ import {
   findSystemHold,
   getRowStep,
   hasDraftChange,
+  listLinkLeftovers,
+  listUnpairedKeys,
   pickFirstFilter,
   readCheckKey,
   pickRowStatus,
   readDestination,
   readHumanReason,
 } from "./classify-model";
+import type { Destination } from "./classify-model";
 
 function makeViewUnit(id: number, lang: "ko" | "en", pos: number): ViewUnit {
   return {
@@ -51,6 +54,14 @@ describe("rows", () => {
     expect(rows.map((row) => row.unitIds)).toEqual([[10, 11], [12]]);
     expect(rows[0].status).toBe("unassigned");
     expect(rows[0].pairStatus).toBe("suggested");
+    expect(rows.map((row) => row.pairId)).toEqual([5, null]);
+  });
+
+  it("names the rows a pair row becomes once its pair is dissolved", () => {
+    const unitRows = new Map([[10, makeUnitRow(10, "unassigned")], [11, makeUnitRow(11, "unassigned")], [12, makeUnitRow(12, "unassigned")]]);
+    const [pairRow] = buildRows([VIEW], unitRows);
+    const loose = { ...VIEW, pairs: [] } as unknown as DocumentView;
+    expect(listUnpairedKeys(pairRow)).toEqual(buildRows([loose], unitRows).slice(0, 2).map((row) => row.key));
   });
 
   it("follows the less finished side", () => {
@@ -60,9 +71,9 @@ describe("rows", () => {
 
   it("moves on to the next open row, wrapping around", () => {
     const rows = new Map([
-      ["a", { key: "a", documentId: 1, unitIds: [1], status: "unassigned" as const, pairStatus: null }],
-      ["b", { key: "b", documentId: 1, unitIds: [2], status: "confirmed" as const, pairStatus: null }],
-      ["c", { key: "c", documentId: 1, unitIds: [3], status: "confirmed" as const, pairStatus: null }],
+      ["a", { key: "a", documentId: 1, unitIds: [1], status: "unassigned" as const, pairStatus: null, pairId: null }],
+      ["b", { key: "b", documentId: 1, unitIds: [2], status: "confirmed" as const, pairStatus: null, pairId: null }],
+      ["c", { key: "c", documentId: 1, unitIds: [3], status: "confirmed" as const, pairStatus: null, pairId: null }],
     ]);
     expect(findNextOpen(["a", "b", "c"], rows, "b")).toBe("a");
   });
@@ -466,5 +477,59 @@ describe("leaving a link and links next to other placements", () => {
       "confirm",
     );
     expect(body.targets).toContainEqual(expect.objectContaining({ id: 90, target_doc_id: 6, slot_key: "purpose", wi_step: null, wi_part: null, source_unit_ids: [11] }));
+  });
+});
+
+describe("a one-language link on a pair row leaves the other language open", () => {
+  const pairUnits = [ONE_UNIT[0], { id: 20, kind: "sentence", lang: "en" as const, text: "Source", revision: 2 }];
+  const english = makeTarget({ id: 75, origin: "new_doc", target_doc_id: 9, slot_key: null, lang: "en", status: "unassigned", change_type: null, source_unit_ids: [] });
+  const groupUnit = (id: number, lang: "ko" | "en", disposition: Decision["disposition"], status: Decision["status"]): Group["units"][number] => ({
+    unit_id: id, display_id: `OLD-1-0${id}`, document_id: 1, kind: "sentence", lang, text: `원문 ${id}`, group_id: null, cell_unit_ids: [],
+    decision: { disposition, move_target_code: "", reason: "", status, hold_reason: "", confirmed_by: null, confirmed_at: null, revision: 1 },
+  });
+  const contextOf = (korean: Group["units"][number]) => ({
+    units: pairUnits, group: { units: [korean, groupUnit(20, "en", "unassigned", "unassigned")], targets: [english] }, tables: new Map(),
+  });
+  const open = contextOf(groupUnit(10, "ko", "unassigned", "unassigned"));
+  const link: Destination = { kind: "link", targetIds: [75] };
+
+  it("leaves the undecided other-language unit out of a confirm save", () => {
+    const body = buildGroupSave(makeDraft({ destination: link }), open, "confirm");
+    expect(body.units.map((unit) => unit.unit_id)).toEqual([20]);
+    expect(body.targets).toEqual([expect.objectContaining({ id: 75, source_unit_ids: [20] })]);
+  });
+
+  it("still carries it in a hold save, which the server takes undecided", () => {
+    const body = buildGroupSave(makeDraft({ destination: link }), open, "hold", "나중에");
+    expect(body.units.map((unit) => [unit.unit_id, unit.disposition])).toEqual([[20, "assigned"], [10, "unassigned"]]);
+  });
+
+  it("lists the unit the link leaves behind", () => {
+    expect(listLinkLeftovers(link, open)).toEqual([10]);
+  });
+
+  it("leaves nothing behind while the picked sentence's group has not arrived", () => {
+    const unloaded = { units: pairUnits, group: { units: open.group.units, targets: [] } };
+    expect(listLinkLeftovers(link, unloaded)).toEqual([]);
+  });
+
+  it("counts a unit held without a destination as left behind", () => {
+    const held = contextOf(groupUnit(10, "ko", "unassigned", "on_hold"));
+    expect(listLinkLeftovers(link, held)).toEqual([10]);
+    expect(buildGroupSave(makeDraft({ destination: link }), held, "confirm").units.map((unit) => unit.unit_id)).toEqual([20]);
+  });
+
+  it("leaves nothing behind when the other language already has a decision", () => {
+    const decided = contextOf(groupUnit(10, "ko", "delete", "confirmed"));
+    expect(listLinkLeftovers(link, decided)).toEqual([]);
+    expect(buildGroupSave(makeDraft({ destination: link }), decided, "confirm").units.map((unit) => unit.unit_id)).toEqual([20, 10]);
+  });
+
+  it("leaves nothing behind for a slot or when both languages are linked", () => {
+    const korean = makeTarget({ id: 76, origin: "new_doc", target_doc_id: 9, slot_key: null, lang: "ko", status: "unassigned", change_type: null, source_unit_ids: [] });
+    const both = { ...open, group: { units: open.group.units, targets: [english, korean] } };
+    expect(listLinkLeftovers(SCOPE, open)).toEqual([]);
+    expect(listLinkLeftovers(null, open)).toEqual([]);
+    expect(listLinkLeftovers({ kind: "link", targetIds: [75, 76] }, both)).toEqual([]);
   });
 });

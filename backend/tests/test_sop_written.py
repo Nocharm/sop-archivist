@@ -98,6 +98,42 @@ def test_written_sentences_shows_sources_after_link(client: TestClient) -> None:
     assert (after["source_unit_ids"], after["status"]) == ([unit["id"]], "confirmed")
 
 
+def test_one_language_link_leaves_the_pair_partner_open(client: TestClient) -> None:
+    """Old는 한/영 짝인데 New에 한 언어만 있을 때 — 있는 언어만 이어 확정하고 짝을 풀면 남은 단위는 판단 없는 제 줄로 남는다.
+
+    Assign 화면이 보내는 요청 그대로다(남은 단위를 싣지 않는다). 판단 없는 단위를 함께 실으면 422 hold_required다.
+    """
+    korean_text, english_text = "합성 장비를 켠다.", "Turn on the synthetic unit."
+    bundle_id, old_view, _ = _setup(client, p(korean_text) + p(english_text), p(english_text))
+    korean, english = find_unit(old_view, korean_text), find_unit(old_view, english_text)
+    (pair,) = old_view["pairs"]
+    assert sorted(pair["unit_ids"]) == sorted([korean["id"], english["id"]])
+    (row,) = _list_written(client, bundle_id)
+    link = {"key": "t", "id": row["target_id"], "revision": row["revision"], "source_unit_ids": [english["id"]]}
+    linked_unit = {"unit_id": english["id"], "revision": 1, "disposition": "assigned"}
+    doc_url = f"/api/bundles/{bundle_id}/documents/{old_view['document']['id']}"
+
+    with_partner = save_group(client, bundle_id, {
+        "action": "confirm",
+        "units": [linked_unit, {"unit_id": korean["id"], "revision": 1, "disposition": "unassigned"}],
+        "targets": [link],
+    })
+    saved = save_group(client, bundle_id, {"action": "confirm", "units": [linked_unit], "targets": [link]})
+    unpaired = client.delete(
+        f"{doc_url}/pairs/{pair['id']}", params={"revision": old_view["document"]["revision"]}, headers=AUTHOR
+    )
+
+    assert with_partner.status_code == 422
+    assert with_partner.json()["detail"] == {"code": "invalid_group", "reason": "hold_required", "unit_ids": [korean["id"]]}
+    assert saved.status_code == 200, saved.text
+    assert unpaired.status_code == 200, unpaired.text
+    units = client.get(f"/api/bundles/{bundle_id}/units", params={"limit": 1000}, headers=AUTHOR).json()["items"]
+    assert {unit["unit_id"]: (unit["status"], unit["pair_id"]) for unit in units} == {
+        korean["id"]: ("unassigned", None),
+        english["id"]: ("confirmed", None),
+    }
+
+
 def test_new_candidates_same_language_only(client: TestClient) -> None:
     bundle_id, old_view, _ = _setup(
         client, p("합성 장비를 켠다."),

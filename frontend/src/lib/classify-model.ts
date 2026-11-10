@@ -27,6 +27,8 @@ export interface ClassifyRow {
   unitIds: number[];
   status: CoverStatus;
   pairStatus: "suggested" | "confirmed" | null;
+  /** 줄이 한/영 짝이면 그 짝 - 한 언어만 이으면 화면이 이 짝을 푼다 */
+  pairId: number | null;
 }
 
 // 덜 끝난 쪽이 줄 상태다 - 앞일수록 덜 끝났다
@@ -62,10 +64,16 @@ export function buildRows(views: DocumentView[], unitRows: Map<number, UnitRow>)
         unitIds: ids,
         status: pickRowStatus(ids.map((id) => unitRows.get(id)?.status ?? "unassigned")),
         pairStatus: pair?.status ?? null,
+        pairId: pair?.id ?? null,
       });
     }
   }
   return rows;
+}
+
+/** 짝을 풀면 줄 하나가 단위마다 한 줄이 된다 - 그 줄들의 키(buildRows가 단위 하나짜리 줄에 붙이는 키와 같다) */
+export function listUnpairedKeys(row: ClassifyRow): string[] {
+  return row.unitIds.map((id) => `u${id}`);
 }
 
 /**
@@ -213,6 +221,20 @@ export interface SaveContext {
   tables: Map<number, { rows: number; cols: number; cells: CellSource[] }>;
 }
 
+/**
+ * 이미 쓴 문장을 한 언어만 이을 때 줄에 남는 단위 - 이은 문장이 없는 언어이고 아직 판단이 없는(처분 unassigned) 줄 단위.
+ * 확정 저장은 판단 없는 단위를 받지 않아(서버 hold_required) 요청에서 빼고, 화면은 저장 뒤 짝을 풀어 따로 줄로 남긴다(명세 §6.5).
+ */
+export function listLinkLeftovers(destination: Destination | null, context: Pick<SaveContext, "units" | "group">): number[] {
+  if (destination?.kind !== "link") return [];
+  const picked = new Set(destination.targetIds);
+  const pickedLangs = new Set((context.group?.targets ?? []).filter((target) => picked.has(target.id)).map((target) => target.lang));
+  // 고른 문장의 묶음이 아직 오지 않았으면 어느 언어가 남는지 모른다
+  if (pickedLangs.size === 0) return [];
+  const undecided = new Set((context.group?.units ?? []).filter((unit) => unit.decision.disposition === "unassigned").map((unit) => unit.unit_id));
+  return context.units.filter((unit) => !pickedLangs.has(unit.lang) && undecided.has(unit.id)).map((unit) => unit.id);
+}
+
 /** 글자 비교로 사람이 고르는 변경 종류인가 - 나눔·합침·번역은 서버가 구조에서 정한다 */
 export function isTextChangeType(value: ChangeType | null | undefined): value is "tone" | "rewritten" {
   return value === "tone" || value === "rewritten";
@@ -338,7 +360,7 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
   if (!destination && action !== "hold") throw new Error("destination required");
   const existing = context.group?.targets ?? [];
   const picked = new Set(destination?.kind === "link" ? destination.targetIds : []);
-  // 이은 문장이 없는 언어의 줄 단위는 이번 저장의 줄이 아니다(설계 §5) - 묶음의 다른 단위처럼 지금 그대로 둔다
+  // 이은 문장이 없는 언어의 줄 단위는 이번 저장의 줄이 아니다(설계 §5) - 판단이 있으면 묶음의 다른 단위처럼 지금 그대로 싣고, 없으면 뺀다(아래)
   const pickedLangs = new Set(existing.filter((target) => picked.has(target.id)).map((target) => target.lang));
   const active = destination?.kind === "link" ? context.units.filter((unit) => pickedLangs.has(unit.lang)) : context.units;
   const rowIds = new Set(active.map((unit) => unit.id));
@@ -433,8 +455,10 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
   }
   // 묶음의 다른 단위(합쳐진 다른 출처, 이번에 잇지 않는 언어의 짝 단위 등)도 지금 판단 그대로 실어야 닫힌다. 표의 칸 단위는 표를 따른다
   const cellUnits = new Set((context.group?.units ?? []).flatMap((unit) => unit.cell_unit_ids));
+  // 판단 없이 남는 짝 단위는 다른 것과 이어진 데가 없어 빼도 닫혀 있다. 보류 저장은 판단 없는 단위도 받으므로 그대로 싣는다
+  const leftovers = new Set(action === "confirm" ? listLinkLeftovers(destination, context) : []);
   const others = (context.group?.units ?? [])
-    .filter((unit) => !rowIds.has(unit.unit_id) && !cellUnits.has(unit.unit_id))
+    .filter((unit) => !rowIds.has(unit.unit_id) && !cellUnits.has(unit.unit_id) && !leftovers.has(unit.unit_id))
     .map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision, disposition: unit.decision.disposition, move_target_code: unit.decision.move_target_code, reason: unit.decision.reason }));
   return { action, hold_reason: holdReason, units: [...units, ...others], targets, removed_target_ids: removed };
 }
