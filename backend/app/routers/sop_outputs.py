@@ -24,8 +24,8 @@ from app.sop.detach import ORIGIN_NEW_DOC, ORIGIN_TRANSLATION, load_source_targe
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
 from app.sop.excel_export import ExportMeta, build_export_file_name, build_workbook
-from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
 from app.sop.groups import select_in_chunks
+from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
 from app.sop.models import Bundle, TargetDoc, TargetSentence, TargetSource, UnitPairMember, WiStep
 from app.sop.outputs import (
     ARow,
