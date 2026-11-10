@@ -254,7 +254,7 @@ def test_pair_request_queues_one_job_for_the_document(
 
     response = request_pair(client, bundle.id, bundle.document_id)
 
-    assert response.json() == {"queued": 1, "skipped_total": 0, "skipped": []}
+    assert response.json() == {"queued": 1, "skipped_total": 0, "skipped": [], "skipped_by_reason": {}}
     (job,) = read_rows(AiJob)
     assert (job.kind, job.status, job.document_id, job.unit_ids, job.target_ids, job.payload) == (
         "pair", "queued", bundle.document_id, [], [], {},
@@ -273,7 +273,10 @@ def test_active_pair_job_reports_already_queued(
     again = request_pair(client, bundle.id, bundle.document_id).json()
     other_document = request_pair(client, other.id, other.document_id).json()
 
-    assert again == {"queued": 0, "skipped_total": 1, "skipped": [{"unit_id": 0, "reason": "already_queued"}]}
+    assert again == {
+        "queued": 0, "skipped_total": 1, "skipped": [{"unit_id": 0, "reason": "already_queued"}],
+        "skipped_by_reason": {"already_queued": 1},
+    }
     assert other_document["queued"] == 1  # 문서마다 하나다
     assert len(read_rows(AiJob)) == 2
 

@@ -23,7 +23,7 @@ from app.sop.ai.llm import AiStr, build_messages, call_llm, parse_reply
 from app.sop.ai.runner import AiCallFailed
 from app.sop.ai.schemas import SkippedOut, SkipReason
 from app.sop.groups import select_in_chunks
-from app.sop.models import AiJob, AiSuggestion, Unit, UnitDecision
+from app.sop.models import AiJob, AiSuggestion, Document, Unit, UnitDecision
 from app.sop.segment import has_visible_char, trim_blank_range
 from app.sop.units import UNIT_ACTIVE
 
@@ -111,6 +111,12 @@ async def _load_open_suggestions(
         )
     )
     return list(rows)
+
+
+async def load_open_split_suggestion_ids(session: AsyncSession, document: Document) -> dict[int, int]:
+    """문서의 단위 id → 열린 나누기 제안 id — 쪼개기 화면이 제안이 걸린 문장을 표시한다. 한 단위에 여럿이면 가장 새 것."""
+    suggestions = await _load_open_suggestions(session, document.bundle_id, [document.id])
+    return {suggestion.content["unit_id"]: suggestion.id for suggestion in sorted(suggestions, key=lambda item: item.id)}
 
 
 def _find_skip_reason(

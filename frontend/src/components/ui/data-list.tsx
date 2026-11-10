@@ -1,5 +1,5 @@
 // 목록 한 벌을 표와 밀도 높은 카드 두 보기로 그린다 - 열 정의 하나로 둘 다 만든다. 보기 전환은 ListViewToggle, 기억은 use-list-view.ts.
-// 카드 자리: title(첫 줄 왼쪽) · badge(첫 줄 오른쪽) · body(제목 아래 전체 폭) · meta(라벨 값, 기본) · actions(카드 아래 오른쪽, 호버로 드러남) · none(표만)
+// 카드 자리: title(첫 줄 왼쪽) · badge(첫 줄 오른쪽) · body(제목 아래 전체 폭) · meta(라벨 값, 기본) · actions(카드 아래 오른쪽, 호버로 드러남 - cardActions="row"면 맨 아래 한 줄) · none(표만)
 "use client";
 
 import { LayoutGrid, Rows3 } from "lucide-react";
@@ -57,6 +57,15 @@ interface DataListProps<T> {
   flush?: boolean;
   /** 패널 안 목록 - 표는 테두리 상자에 담고 카드는 둘레 여백 없이 둔다 */
   framed?: boolean;
+  /** 줄을 구역으로 나눈다 - 같은 구역 줄이 rows 안에서 붙어 있어야 한다. 구역이 시작하는 줄 앞에 머리(라벨·줄 수)를 그린다 */
+  getRowGroup?: (row: T) => RowGroup;
+  /** 카드의 동작 단추 자리 - 기본 overlay(오른쪽 아래에 겹쳐 뜸), row는 카드 맨 아래 한 줄을 차지하고 늘 보인다 */
+  cardActions?: "overlay" | "row";
+}
+
+export interface RowGroup {
+  key: string;
+  label: ReactNode;
 }
 
 const DEFAULT_SKELETON_WIDTH = 96;
@@ -78,13 +87,30 @@ function getRowHandlers<T>(onRowClick: ((row: T) => void) | undefined, hasRowLin
   return hasRowLink ? { onClick: () => onRowClick(row) } : getRowOpenProps(() => onRowClick(row));
 }
 
+// 이 줄에서 새 구역이 시작하면 그 구역과 줄 수를 준다
+function getGroupStart<T>(rows: readonly T[], index: number, getRowGroup: ((row: T) => RowGroup) | undefined): (RowGroup & { count: number }) | null {
+  if (!getRowGroup) return null;
+  const group = getRowGroup(rows[index]);
+  if (index > 0 && getRowGroup(rows[index - 1]).key === group.key) return null;
+  return { ...group, count: rows.filter((row) => getRowGroup(row).key === group.key).length };
+}
+
+function GroupHead({ label, count }: { label: ReactNode; count: number }) {
+  return (
+    <span className="dgroup-head">
+      {label}
+      <span className="dgroup-n">{count}</span>
+    </span>
+  );
+}
+
 function getCellClass<T>(column: DataColumn<T>): string {
   return [column.align === "end" ? "num" : "", column.nowrap ? "whitespace-nowrap" : "", column.grow ? "dl-grow" : "", column.className ?? ""]
     .filter(Boolean)
     .join(" ");
 }
 
-function Table<T>({ rows, columns, getRowKey, testId, rowTestId, getRowData, onRowClick, hasRowLink = false, isRowSelected, showSkeleton = false, skeletonRows = 3, more }: DataListProps<T>) {
+function Table<T>({ rows, columns, getRowKey, testId, rowTestId, getRowData, onRowClick, hasRowLink = false, isRowSelected, showSkeleton = false, skeletonRows = 3, more, getRowGroup }: DataListProps<T>) {
   return (
     <table className="dtable" data-testid={testId}>
       <thead>
@@ -108,7 +134,16 @@ function Table<T>({ rows, columns, getRowKey, testId, rowTestId, getRowData, onR
                 ))}
               </tr>
             ))
-          : rows.map((row) => (
+          : rows.flatMap((row, index) => {
+              const group = getGroupStart(rows, index, getRowGroup);
+              return [
+                group && (
+                  <tr key={`group-${group.key}`} className="dgroup" data-testid={`${testId}-group-${group.key}`}>
+                    <td colSpan={columns.length}>
+                      <GroupHead label={group.label} count={group.count} />
+                    </td>
+                  </tr>
+                ),
               <tr
                 key={getRowKey(row)}
                 className={isRowSelected?.(row) ? "bg-sel" : undefined}
@@ -123,15 +158,16 @@ function Table<T>({ rows, columns, getRowKey, testId, rowTestId, getRowData, onR
                     {column.cell(row)}
                   </td>
                 ))}
-              </tr>
-            ))}
+              </tr>,
+              ];
+            })}
         {rows !== null && more?.hasMore && <LoadMoreRows sentinelRef={more.sentinelRef} columns={columns.length} testId={more.testId} />}
       </tbody>
     </table>
   );
 }
 
-function CardGrid<T>({ rows, columns, getRowKey, testId, rowTestId, getRowData, onRowClick, hasRowLink = false, isRowSelected, showSkeleton = false, skeletonRows = 3, more, cardMinWidth = 300, flush = false, framed = false }: DataListProps<T>) {
+function CardGrid<T>({ rows, columns, getRowKey, testId, rowTestId, getRowData, onRowClick, hasRowLink = false, isRowSelected, showSkeleton = false, skeletonRows = 3, more, cardMinWidth = 300, flush = false, framed = false, getRowGroup, cardActions = "overlay" }: DataListProps<T>) {
   const slot = (column: DataColumn<T>): CardSlot => column.card ?? "meta";
   const pick = (name: CardSlot) => columns.filter((column) => slot(column) === name);
   const titles = pick("title");
@@ -146,10 +182,17 @@ function CardGrid<T>({ rows, columns, getRowKey, testId, rowTestId, getRowData, 
       {rows === null
         ? showSkeleton &&
           Array.from({ length: skeletonRows * 2 }, (_, index) => <CardSkeleton key={index} testId={`${testId}-skeleton`} />)
-        : rows.map((row) => (
+        : rows.flatMap((row, index) => {
+            const group = getGroupStart(rows, index, getRowGroup);
+            return [
+              group && (
+                <div key={`group-${group.key}`} className="dgroup" data-testid={`${testId}-group-${group.key}`}>
+                  <GroupHead label={group.label} count={group.count} />
+                </div>
+              ),
             <article
               key={getRowKey(row)}
-              className="dcard hover-row"
+              className={cardActions === "row" ? "dcard has-foot" : "dcard hover-row"}
               data-selected={isRowSelected?.(row) ? "" : undefined}
               {...getRowData?.(row)}
               data-testid={rowTestId(row)}
@@ -192,7 +235,7 @@ function CardGrid<T>({ rows, columns, getRowKey, testId, rowTestId, getRowData, 
                 </dl>
               )}
               {actions.length > 0 && (
-                <div className="dcard-actions row-actions">
+                <div className={cardActions === "row" ? "dcard-foot" : "dcard-actions row-actions"}>
                   {actions.map((column) => (
                     <span key={column.key} data-testid={column.cellTestId?.(row)}>
                       {column.cell(row)}
@@ -200,8 +243,9 @@ function CardGrid<T>({ rows, columns, getRowKey, testId, rowTestId, getRowData, 
                   ))}
                 </div>
               )}
-            </article>
-          ))}
+            </article>,
+            ];
+          })}
       {rows !== null &&
         more?.hasMore &&
         [0, 1].map((index) => (

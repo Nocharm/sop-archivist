@@ -875,12 +875,16 @@ def test_ai_text_cap_matches_the_target_text_cap(client: TestClient) -> None:
 
 
 def test_request_out_has_the_contract_shape(client: TestClient) -> None:
-    out = AiRequestOut(queued=1, skipped_total=1, skipped=[SkippedOut(unit_id=7, reason="not_unassigned")])
+    out = AiRequestOut(
+        queued=1, skipped_total=1, skipped=[SkippedOut(unit_id=7, reason="not_unassigned")],
+        skipped_by_reason={"not_unassigned": 1},
+    )
 
     assert out.model_dump() == {
         "queued": 1,
         "skipped_total": 1,
         "skipped": [{"unit_id": 7, "reason": "not_unassigned"}],
+        "skipped_by_reason": {"not_unassigned": 1},
     }
     with pytest.raises(ValidationError):
         SkippedOut(unit_id=7, reason="made_up")

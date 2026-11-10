@@ -7,7 +7,7 @@
 //   임베딩까지 쓰면 EMBED_ENABLED=true EMBED_BASE_URL=http://localhost:9999/v1 EMBED_API_TOKEN=fake EMBED_MODEL=fake
 //   (토큰이 비어도 ai_client는 "Bearer " 헤더를 보내 빈 토큰이면 요청 단계에서 실패하니 아무 값이나 넣는다)
 // SOP 작업은 사용자 메시지의 data 구간 task로 답한다 — classify=첫 칸 후보+원문 그대로, translate=`[도착 언어] 원문`, match=as_is, split=조각 하나(나누지 않음).
-// FAKE_AI_SPLIT=1이면 classify가 원문을 가운데 빈칸에서 두 문장으로 나눠 답한다 — 화면의 "AI 나눔 제안 확정" 경로를 스모크로 밟기 위한 것(기본은 끈다).
+// FAKE_AI_SPLIT=1이면 classify와 split이 원문을 가운데 빈칸에서 두 문장으로 나눠 답한다 — 화면의 "AI 나눔 제안 확정"·쪼개기 화면의 나누기 제안 경로를 스모크로 밟기 위한 것(기본은 끈다).
 // data 구간이 없는 호출에는 {"ok": true}를 답한다 — 관리 화면의 연결 점검(ping) 배선 확인용. 사용량 집계용 usage는 늘 싣는다.
 import { createHash } from "node:crypto";
 import http from "node:http";
@@ -49,7 +49,7 @@ const TASK_REPLIES = {
   },
   translate: (data) => ({ text: `[${data.to}] ${data.text}` }),
   match: () => ({ change_type: "as_is", reason: FAKE_REASON, rule_ids: FAKE_RULE_IDS }),
-  split: (data) => ({ parts: [data.text], reason: FAKE_REASON, rule_ids: FAKE_RULE_IDS }),
+  split: (data) => ({ parts: SPLIT_REWRITES ? splitInTwo(data.text) : [data.text], reason: FAKE_REASON, rule_ids: FAKE_RULE_IDS }),
 };
 
 function sendJson(res, status, body) {

@@ -75,7 +75,7 @@
 | `GET /suggestions/{id}` | | `SuggestionOut` |
 | `POST /suggestions/{id}/adoption` | `{adoption}` (`split`만) | `SuggestionOut` |
 
-- `AiRequestOut`: `{queued, skipped_total, skipped: [{unit_id, reason}]}`(`skipped`는 앞 200건). `reason`은 `not_unassigned`·`already_queued`·`bound_cell`·`not_assigned`·`other_language`·`has_pair`·`already_translated`·`too_short`·`limit_reached`·`already_suggested`·`not_splittable` 중 하나다. `POST /match`·`POST /pair`는 단위를 고르지 않는 요청이라 이미 돌고 있으면 `{unit_id: 0, reason: "already_queued"}`로 알린다. 화면은 `reason`을 읽는다.
+- `AiRequestOut`: `{queued, skipped_total, skipped: [{unit_id, reason}], skipped_by_reason: {reason: 수}}`(`skipped`는 앞 200건, `skipped_by_reason`은 건너뛴 전체의 사유별 수). `reason`은 `not_unassigned`·`already_queued`·`bound_cell`·`not_assigned`·`other_language`·`has_pair`·`already_translated`·`too_short`·`limit_reached`·`already_suggested`·`not_splittable` 중 하나다. `POST /match`·`POST /pair`는 단위를 고르지 않는 요청이라 이미 돌고 있으면 `{unit_id: 0, reason: "already_queued"}`로 알린다. 화면은 `reason`을 읽는다.
 - `AiStatusOut`: `{ai_enabled, embed_enabled, jobs: {queued, running, done, failed, stale, cancelled}, by_kind: {<kind>: 같은 모양}, failed_errors: {<코드>: 건수}, adoption: {<kind>: {applied, as_is, edited, rejected, pending, adoption_rate}}}`. 실패 코드: `timeout`·`server_error`·`connection`·`client_error`·`config`·`interrupted`·`no_candidates`·`internal`.
 - `SuggestionOut`: `{id, job_id, kind, document_id, result, content, warnings, guideline_versions, model, adoption, adopted_by, adopted_at, created_at}`. `result`는 `applied`·`stale`·`invalid`다. 유사도 점수는 어디에도 내지 않는다(§12).
 - `content`:

@@ -34,7 +34,7 @@ OLD_BODY = (
     p("1. 목적", "Heading1")
     + p("1. Purpose", "Heading1")
     + p("합성 장비를 5분간 예열한다. 합성 기록은 보관한다.")
-    + p("Warm up the synthetic unit for five minutes. Synthetic records are kept.")
+    + p("Warm up the synthetic unit for 5 minutes. Synthetic records are kept.")
     + p("합성 시료는 4 ℃에서 보관한다.")
     + tbl([["항목", "Item"], ["합성 값", "Synthetic value"]])
     + f"<w:p>{make_drawing_run('image1.png')}</w:p>"
@@ -667,6 +667,7 @@ def test_classify_skips_a_person_held_unit(client: TestClient, fake_ai: FakeAi) 
     assert response.status_code == 200, response.text
     assert response.json() == {
         "queued": 0, "skipped_total": 1, "skipped": [{"unit_id": unit["id"], "reason": "not_unassigned"}],
+        "skipped_by_reason": {"not_unassigned": 1},
     }
     assert fake_ai.requests == []
 

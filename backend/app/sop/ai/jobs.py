@@ -64,7 +64,12 @@ def ensure_units_found(requested: Collection[int], found: Collection[int]) -> No
 
 def build_request_out(queued: int, skipped: Sequence[SkippedOut]) -> AiRequestOut:
     """요청 응답 — 건너뛴 단위는 앞쪽만 싣고 전체 수는 따로 알린다."""
-    return AiRequestOut(queued=queued, skipped_total=len(skipped), skipped=list(skipped[:MAX_SKIPPED_REPORTED]))
+    return AiRequestOut(
+        queued=queued,
+        skipped_total=len(skipped),
+        skipped=list(skipped[:MAX_SKIPPED_REPORTED]),
+        skipped_by_reason=dict(Counter(item.reason for item in skipped)),
+    )
 
 
 def enqueue_jobs(

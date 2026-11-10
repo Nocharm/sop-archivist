@@ -201,6 +201,10 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   const units = page.locator('[data-testid^="split-paper-unit-"].su');
   await units.first().waitFor({ timeout: T });
   const before = await units.count();
+  // Unit마다 종이 조각 하나 - 확인하기 전부터 나뉘어 있고, 글 조각 사이에는 늘 합치기가 있다
+  const pieces = page.locator('[data-testid^="split-paper-piece-"].strip');
+  check("every unit is its own piece from the start", (await pieces.count()) > 10 && (await page.locator('[data-testid^="split-paper-mark-checked-"]').count()) === 0, String(await pieces.count()));
+  check("merge controls sit between text pieces", (await page.locator('.strip-gap [data-testid^="split-paper-merge-"]').count()) > 5);
   // 영어 문장 하나를 찾아 고른다 - 한 번 더 누르면 아무것도 안 하고, 두 번 누르기(더블클릭)가 나눌 선을 만든다
   const target = page.locator('[data-testid^="split-paper-unit-"].su[lang="en"]', { hasText: " " }).nth(2);
   const unitId = (await target.getAttribute("data-testid")).replace("split-paper-unit-", "");
@@ -227,6 +231,22 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   await page.keyboard.press("Control+z");
   await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-unit-"].su').length === n, before, { timeout: T });
   check("Ctrl+Z undoes the split", true);
+  // 나눈 뒤 사이의 합치기를 누르면 원래 한 조각으로 돌아온다. 나누기 팝업은 잠깐 뒤에 뜬다
+  const targetText = (await target.innerText()).trim();
+  await page.mouse.dblclick(box.x + Math.min(box.width / 2, 120), box.y + box.height / 2);
+  const cutRun = page.locator('[data-testid="split-cut-run"]');
+  await cutRun.waitFor({ timeout: T });
+  check("the cut can be dragged", (await page.locator('[data-testid="split-paper-cut-handle"]').count()) === 1);
+  await page.waitForTimeout(700);
+  const piecesBefore = await pieces.count();
+  await cutRun.click();
+  await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-piece-"].strip').length === n + 1, piecesBefore, { timeout: T });
+  check("a split unit becomes two pieces at once", true);
+  const selectedId = await page.locator('[data-testid^="split-paper-unit-"].su[data-sel]').first().getAttribute("data-testid");
+  const mergeBack = page.locator(`[data-testid^="split-paper-merge-${selectedId.replace("split-paper-unit-", "")}-"], [data-testid^="split-paper-merge-"][data-testid$="-${selectedId.replace("split-paper-unit-", "")}"]`).and(page.locator(':not([aria-disabled="true"])'));
+  await mergeBack.first().click();
+  await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-piece-"].strip').length === n, piecesBefore, { timeout: T });
+  check("merging the two pieces gives the unit back", (await page.locator('[data-testid^="split-paper-unit-"].su', { hasText: targetText }).count()) >= 1, targetText.slice(0, 30));
   const first = units.first();
   await first.click();
   const firstId = (await first.getAttribute("data-testid")).replace("split-paper-unit-", "");

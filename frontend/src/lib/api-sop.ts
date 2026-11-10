@@ -268,6 +268,24 @@ export interface ViewBlock {
   row_span: number;
   flags: string[];
   has_image: boolean;
+  /** 이 블록이 속한 부분 묶음(DocumentView.part_groups의 key) - 머리말·꼬리말은 부분 파일마다, 나머지는 part와 같다 */
+  part_group: string;
+}
+
+/** 머리말·꼬리말을 쓰는 구역(1부터)과 종류 */
+export interface PartRef {
+  section: number;
+  type: "default" | "first" | "even";
+}
+
+export interface ViewPartGroup {
+  key: string;
+  part: string;
+  /** 옛 추출·PDF는 빈 목록 */
+  refs: PartRef[];
+  block_count: number;
+  /** 같은 부분에서 내용이 같은 앞 묶음의 key(머리말·꼬리말만) */
+  same_as: string | null;
 }
 
 export interface ViewUnit {
@@ -287,6 +305,8 @@ export interface ViewUnit {
   block_id: number;
   /** 사람이 나누거나 합쳐 생긴 단위(되돌리지 않은 편집) */
   is_edited: boolean;
+  /** 사람이 아직 정하지 않은 AI 나누기 제안 */
+  split_suggestion_id: number | null;
 }
 
 export interface ViewPair {
@@ -301,6 +321,8 @@ export interface DocumentView {
   extraction: SopDocument["extraction"];
   tables: ViewTable[];
   blocks: ViewBlock[];
+  /** 처음 나온 순서 */
+  part_groups: ViewPartGroup[];
   units: ViewUnit[];
   pairs: ViewPair[];
   edits: { can_undo: boolean; can_redo: boolean };

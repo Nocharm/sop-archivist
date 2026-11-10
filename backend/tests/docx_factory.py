@@ -49,6 +49,24 @@ def p(text: str, style: str | None = None) -> str:
     return f"<w:p>{p_pr}{run}</w:p>"
 
 
+def numbered(text: str, num_id: int, level: int = 0, style: str | None = None) -> str:
+    """자동 번호가 걸린 문단 — 번호 글자는 문서에 없고 Word가 목록 정의(numbering)로 그린다."""
+    p_style = f'<w:pStyle w:val="{style}"/>' if style else ""
+    num_pr = f'<w:numPr><w:ilvl w:val="{level}"/><w:numId w:val="{num_id}"/></w:numPr>'
+    run = f'<w:r><w:t xml:space="preserve">{escape(text)}</w:t></w:r>' if text else ""
+    return f"<w:p><w:pPr>{p_style}{num_pr}</w:pPr>{run}</w:p>"
+
+
+def make_list(abstract_id: int, levels: Sequence[tuple[str, str]], num_ids: Sequence[int], extra: str = "") -> str:
+    """목록 정의 하나와 그것을 쓰는 num들 — levels는 수준 0부터 (numFmt, lvlText). extra는 abstractNum에 더 넣을 XML."""
+    level_xml = "".join(
+        f'<w:lvl w:ilvl="{index}"><w:start w:val="1"/><w:numFmt w:val="{fmt}"/><w:lvlText w:val="{escape(text)}"/></w:lvl>'
+        for index, (fmt, text) in enumerate(levels)
+    )
+    nums = "".join(f'<w:num w:numId="{n}"><w:abstractNumId w:val="{abstract_id}"/></w:num>' for n in num_ids)
+    return f'<w:abstractNum w:abstractNumId="{abstract_id}">{extra}{level_xml}</w:abstractNum>{nums}'
+
+
 def tbl(rows: list[list[str]]) -> str:
     """병합 없는 표 — 칸마다 글자 문단 하나, 열 수는 첫 행 기준."""
     grid = "".join('<w:gridCol w:w="2000"/>' for _ in rows[0])
@@ -106,8 +124,12 @@ def build_docx(
     endnotes: Sequence[str] = (),
     media: Mapping[str, bytes] = {},
     alt_chunks: Sequence[str] = (),
+    numbering: str = "",
 ) -> bytes:
-    """최소 DOCX 바이트 — 머리말·꼬리말은 구역에 걸고, 미디어 관계 id는 get_media_rel_id, altChunk는 rIdAltChunk{n}."""
+    """최소 DOCX 바이트 — 머리말·꼬리말은 구역에 걸고, 미디어 관계 id는 get_media_rel_id, altChunk는 rIdAltChunk{n}.
+
+    numbering은 w:numbering 안에 넣을 XML(abstractNum·num)이다 — 주면 번호 부분(word/numbering.xml)을 만든다.
+    """
     files: dict[str, bytes] = {"word/styles.xml": (XML_DECL + STYLES_XML).encode()}
     overrides = {"/word/document.xml": f"{CT}.document.main+xml", "/word/styles.xml": f"{CT}.styles+xml"}
     defaults = {"rels": "application/vnd.openxmlformats-package.relationships+xml", "xml": "application/xml"}
@@ -122,6 +144,10 @@ def build_docx(
             f'<w:{kind}Reference w:type="{ref_type}" r:id="rId{kind.title()}{n}"/>'
             for n, ref_type in enumerate(_SECTION_REF_TYPES[: len(contents)], start=1)
         ]
+    if numbering:
+        files["word/numbering.xml"] = f"{XML_DECL}<w:numbering {NAMESPACES}>{numbering}</w:numbering>".encode()
+        overrides["/word/numbering.xml"] = f"{CT}.numbering+xml"
+        rels.append(("rIdNumbering", f"{REL}/numbering", "numbering.xml"))
     for kind, contents in (("footnote", footnotes), ("endnote", endnotes)):
         if contents:
             files[f"word/{kind}s.xml"] = _build_notes(kind, contents).encode()

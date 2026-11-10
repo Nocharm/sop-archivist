@@ -188,9 +188,11 @@ export default function ToBePage() {
                   onChange={(next) => update(setNaSlot(draft, doc.key, slotKey, next))}
                   label={<span className={slot ? "text-ink-3" : ""}>{SLOT_LABELS[slotKey]}</span>}
                 />
-                {slot ? (
+                {/* 사유 칸 자리는 늘 잡아 둔다 - 입력을 그 안에 띄워(absolute) N/A를 켜고 꺼도 줄 높이와 표 열 폭이 변하지 않는다 */}
+                <span className="relative block h-7 min-w-0">
+                {slot && (
                   <input
-                    className={CELL_INPUT}
+                    className={`${CELL_INPUT} absolute inset-0`}
                     data-testid={`tobe-${doc.key}-na-${slotKey}-reason`}
                     placeholder={t("tobe.naReason")}
                     value={slot.reason}
@@ -203,9 +205,8 @@ export default function ToBePage() {
                       })
                     }
                   />
-                ) : (
-                  <span />
                 )}
+                </span>
               </div>
             );
           })}

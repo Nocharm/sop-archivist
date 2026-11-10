@@ -244,7 +244,10 @@ def test_unassigned_units_are_skipped(client: TestClient, fake_ai: FakeAi) -> No
     by_unit = request_translate(client, bundle.id, unit_ids=[unit_id]).json()
     by_document = request_translate(client, bundle.id, document_id=view["document"]["id"]).json()
 
-    expected = {"queued": 0, "skipped_total": 1, "skipped": [{"unit_id": unit_id, "reason": "not_assigned"}]}
+    expected = {
+        "queued": 0, "skipped_total": 1, "skipped": [{"unit_id": unit_id, "reason": "not_assigned"}],
+        "skipped_by_reason": {"not_assigned": 1},
+    }
     assert by_unit == expected and by_document == expected
     assert read_rows(AiJob) == []
 

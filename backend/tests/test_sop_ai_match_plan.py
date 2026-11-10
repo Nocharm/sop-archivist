@@ -134,7 +134,7 @@ def test_match_request_queues_one_plan_job_for_the_bundle(client: TestClient, fa
 
     response = request_match(client, bundle.id)
 
-    assert response.json() == {"queued": 1, "skipped_total": 0, "skipped": []}
+    assert response.json() == {"queued": 1, "skipped_total": 0, "skipped": [], "skipped_by_reason": {}}
     (job,) = read_rows(AiJob)
     assert (job.kind, job.status, job.unit_ids, job.target_ids) == ("match_plan", "queued", [], [])
     assert job.requested_by == AUTHOR["X-Dev-User"]
@@ -146,7 +146,10 @@ def test_active_plan_job_reports_already_queued(client: TestClient, fake_ai: Fak
 
     body = request_match(client, bundle.id).json()
 
-    assert body == {"queued": 0, "skipped_total": 1, "skipped": [{"unit_id": 0, "reason": "already_queued"}]}
+    assert body == {
+        "queued": 0, "skipped_total": 1, "skipped": [{"unit_id": 0, "reason": "already_queued"}],
+        "skipped_by_reason": {"already_queued": 1},
+    }
     assert len(read_jobs("match_plan")) == 1
 
 

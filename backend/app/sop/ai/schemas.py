@@ -89,6 +89,8 @@ class AiRequestOut(BaseModel):
     queued: int
     skipped_total: int
     skipped: list[SkippedOut]  # 앞쪽 MAX_SKIPPED_REPORTED건
+    # 건너뛴 단위 전체의 사유별 수(합 = skipped_total) — 화면이 "왜 0건인지"를 잘린 목록 없이 말한다
+    skipped_by_reason: dict[SkipReason, int]
 
 
 class AiJobCounts(BaseModel):

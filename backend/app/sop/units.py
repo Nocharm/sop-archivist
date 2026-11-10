@@ -32,6 +32,8 @@ UNIT_ACTIVE = "active"
 PAIR_SUGGESTED = "suggested"
 PAIR_SOURCE_CODE = "code"
 INTERLEAVED_LAYOUT = "ko_en_interleaved"
+# 블록 안 줄바꿈에서도 단위를 나누는 형식 — DOCX의 줄바꿈은 글쓴이가 넣은 것이고, PDF 블록의 줄바꿈은 폭에 따라 접힌 줄이다
+LINE_SPLIT_FORMAT = "docx"
 MAX_REPORTED_PROBLEMS = 5  # 커버리지 예외 메시지에 싣는 문제 수 — 나머지는 개수만
 
 
@@ -59,7 +61,8 @@ async def create_initial_units(session: AsyncSession, document: Document, extrac
     )
     # 200만 자 쪼개기는 수 초까지 걸린다 — 단일 워커 backend가 묶음 잠금을 쥔 채 이벤트 루프를 막지 않게 스레드에서 돈다
     drafts, unit_rows = await asyncio.to_thread(
-        _build_unit_rows, extraction.id, block_rows.all(), table_rows.all(), document.language_layout
+        _build_unit_rows, extraction.id, block_rows.all(), table_rows.all(), document.language_layout,
+        document.file_format == LINE_SPLIT_FORMAT,
     )
     if not drafts:
         return
@@ -86,11 +89,15 @@ async def create_initial_units(session: AsyncSession, document: Document, extrac
 
 
 def _build_unit_rows(
-    extraction_id: int, block_rows: Sequence[Sequence[object]], table_rows: Sequence[Sequence[object]], layout: str
+    extraction_id: int,
+    block_rows: Sequence[Sequence[object]],
+    table_rows: Sequence[Sequence[object]],
+    layout: str,
+    split_lines: bool,
 ) -> tuple[list[UnitDraft], list[dict[str, object]]]:
     """블록·표 행 → 단위 초안과 INSERT 행(local_no는 1부터) — DB를 쓰지 않는 순수 계산이라 스레드에서 돌린다."""
     blocks = [BlockView(*row) for row in block_rows]
-    drafts = build_unit_drafts(blocks, [TableView(*row) for row in table_rows], layout)
+    drafts = build_unit_drafts(blocks, [TableView(*row) for row in table_rows], layout, split_lines=split_lines)
     block_texts = {block.id: block.text for block in blocks}
     rows = [
         {
@@ -129,22 +136,22 @@ async def _create_code_pairs(session: AsyncSession, document_id: int, extraction
     표 앞뒤 문단과 섞이지 않는다. 그림·표 단위 같은 중립 단위는 짝을 맺지 않으므로 표 경계로 세지 않는다.
     """
     rows = await session.execute(
-        select(Unit.id, Unit.lang, Unit.table_id, SourceBlock.part, UnitPairMember.pair_id)
+        select(Unit.id, Unit.lang, Unit.text, Unit.table_id, SourceBlock.part, UnitPairMember.pair_id)
         # 단위 자리(pos_seq)의 블록이 그 단위의 부분이다
         .join(SourceBlock, (SourceBlock.extraction_id == Unit.extraction_id) & (SourceBlock.seq == Unit.pos_seq))
         .outerjoin(UnitPairMember, UnitPairMember.unit_id == Unit.id)
         .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.group_unit_id.is_(None))
         .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
     )
-    segments: list[list[tuple[int, str]]] = [[]]
+    segments: list[list[tuple[int, str, str]]] = [[]]
     previous_part = None
     previous_table: int | None = None
-    for unit_id, lang, table_id, part, pair_id in rows:
+    for unit_id, lang, text, table_id, part, pair_id in rows:
         is_table_change = lang != NEUTRAL and table_id != previous_table
         if (pair_id is not None or part != previous_part or is_table_change) and segments[-1]:
             segments.append([])
         if pair_id is None:
-            segments[-1].append((unit_id, lang))
+            segments[-1].append((unit_id, lang, text))
         previous_part = part
         if lang != NEUTRAL:
             previous_table = table_id

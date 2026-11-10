@@ -33,6 +33,7 @@ from app.sop.editing import (
 )
 from app.sop.ai.adoption import record_doc_meta_adoption
 from app.sop.ai.doc_meta_job import build_ai_meta, enqueue_doc_meta, load_open_doc_meta
+from app.sop.ai.split import load_open_split_suggestion_ids
 from app.sop.filename import parse_file_name
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
@@ -51,6 +52,7 @@ from app.sop.models import (
     UnitPair,
     UnitPairMember,
 )
+from app.sop.part_groups import build_part_groups, get_part_group_key
 from app.sop.pairs import (
     PairIn,
     PairResult,
@@ -202,6 +204,8 @@ class ViewBlockOut(BaseModel):
     flags: list[str]
     # 그림 이미지(figures/{block_id})를 받을 수 있는지 — 미디어 경로 자체는 내보내지 않는다
     has_image: bool
+    # 이 블록이 속한 부분 묶음(DocumentViewOut.part_groups의 key) — 머리말·꼬리말은 부분 파일마다("header2"), 나머지는 part와 같다
+    part_group: str
 
 
 class ViewUnitOut(BaseModel):
@@ -223,6 +227,25 @@ class ViewUnitOut(BaseModel):
     # 단위 자리의 블록 — 범위가 없는 표·행·캡션 없는 그림도 어느 블록(그림 이미지)인지 알 수 있게
     pos_seq: int
     block_id: int
+    # 이 단위에 걸린 열린 AI 나누기 제안(적용됐고 사람이 아직 채택·거절하지 않은 것) — 없으면 null
+    split_suggestion_id: int | None
+
+
+class ViewPartRefOut(BaseModel):
+    section: int  # 구역 번호(1부터, 문서 순서)
+    type: Literal["default", "first", "even"]
+
+
+class ViewPartGroupOut(BaseModel):
+    """부분 묶음 — 쪼개기 화면의 Body/Header/Footer 탭과 그 안의 묶음 제목이 읽는다."""
+
+    key: str
+    part: str
+    # 이 머리말·꼬리말을 쓰는 구역 — 본문 등 다른 부분, 옛 추출(구역 표시 없음), PDF는 빈 목록
+    refs: list[ViewPartRefOut]
+    block_count: int
+    # 같은 부분에서 내용(블록 종류·글)이 같은 앞 묶음의 key — 화면이 되풀이되는 머리말을 한 번만 보여 준다. 블록·단위는 그대로 있다
+    same_as: str | None
 
 
 class ViewPairOut(BaseModel):
@@ -242,6 +265,7 @@ class DocumentViewOut(BaseModel):
     extraction: ExtractionOut | None
     tables: list[ViewTableOut]
     blocks: list[ViewBlockOut]
+    part_groups: list[ViewPartGroupOut]
     units: list[ViewUnitOut]
     pairs: list[ViewPairOut]
     edits: ViewEditsOut
@@ -301,7 +325,8 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
     edits = ViewEditsOut(can_undo="applied" in edit_states, can_redo="undone" in edit_states)
     if extraction is None:  # 받지 않았거나 추출에 실패한 문서
         return DocumentViewOut(
-            document=document_out, extraction=None, tables=[], blocks=[], units=[], pairs=[], edits=edits
+            document=document_out, extraction=None, tables=[], blocks=[], part_groups=[], units=[], pairs=[],
+            edits=edits,
         )
     tables = await session.scalars(
         select(SourceTable).where(SourceTable.extraction_id == extraction.id).order_by(SourceTable.table_index)
@@ -316,7 +341,9 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
         .where(SourceBlock.extraction_id == extraction.id)
         .order_by(SourceBlock.seq)
     )
-    blocks = [ViewBlockOut.model_validate(row) for row in block_rows]
+    blocks = [
+        ViewBlockOut(**row._mapping, part_group=get_part_group_key(row.part, row.xml_path)) for row in block_rows
+    ]
     block_id_by_seq = {block.seq: block.id for block in blocks}
     units = await session.scalars(
         select(Unit)
@@ -335,11 +362,22 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
     )
     edited_ids = {unit_id for created in created_lists for unit_id in created}
     pair_by_unit = {unit_id: pair.id for pair in pairs for unit_id in pair.unit_ids}
+    split_suggestions = await load_open_split_suggestion_ids(session, document)
     return DocumentViewOut(
         document=document_out,
         extraction=extraction,
         tables=[ViewTableOut.model_validate(table) for table in tables],
         blocks=blocks,
+        part_groups=[
+            ViewPartGroupOut(
+                key=group.key,
+                part=group.part,
+                refs=[ViewPartRefOut(section=section, type=ref_type) for section, ref_type in group.refs],
+                block_count=group.block_count,
+                same_as=group.same_as,
+            )
+            for group in build_part_groups(blocks)
+        ],
         units=[
             ViewUnitOut(
                 id=unit.id,
@@ -357,6 +395,7 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 is_edited=unit.id in edited_ids,
                 pos_seq=unit.pos_seq,
                 block_id=unit.spans[0][0] if unit.spans else block_id_by_seq[unit.pos_seq],
+                split_suggestion_id=split_suggestions.get(unit.id),
             )
             for unit in units
         ],

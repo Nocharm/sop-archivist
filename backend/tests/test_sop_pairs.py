@@ -17,8 +17,9 @@ pytestmark = pytest.mark.usefixtures("clean_sop")
 
 OLD_NAME = "SYNTHETIC_OLD-1_Pairs.docx"
 KO_ON, EN_ON = "합성 장비를 켠다.", "Turn on the synthetic unit."
-KO_LOAD, KO_KEEP = "합성 시료를 넣는다.", "합성 기록을 남긴다."
-EN_BOTH = "Load the sample and keep the records."
+# 문장 수가 다른 덩어리는 숫자가 똑같을 때만 코드가 짝짓는다 — 그래서 양쪽에 같은 숫자를 둔다
+KO_LOAD, KO_KEEP = "합성 시료 2개를 넣는다.", "합성 기록을 남긴다."
+EN_BOTH = "Load 2 samples and keep the records."
 
 
 class Fixture(NamedTuple):

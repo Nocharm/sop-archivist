@@ -3,7 +3,8 @@
 from dataclasses import dataclass
 
 # 추출 규칙이 바뀌면 올린다 — 같은 파일의 예전 추출과 새 추출을 구별하는 근거(extractions.extractor_version)
-EXTRACTOR_VERSION = "1"
+# 2: Word 자동 번호를 글 앞에 써 넣고 머리말·꼬리말에 구역 표시(section_ref)를 남긴다 — 1로 뽑은 추출은 번호·표시가 없다
+EXTRACTOR_VERSION = "2"
 
 
 @dataclass(frozen=True)

@@ -14,7 +14,7 @@ from app.sop.coverage import find_coverage_problems
 from app.sop.models import Unit, UnitDecision, UnitPair
 from app.sop.units import verify_document_coverage
 from tests.access_helpers import run_in_session
-from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
+from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, make_list, numbered, p, tbl
 from tests.sop_helpers import AUTHOR, OUTSIDER, REVIEWER, create_bundle, find_unit, get_view, set_members, upload
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
@@ -269,6 +269,79 @@ def test_verify_document_coverage_raises_on_broken_units(client: TestClient) -> 
     assert "합성" not in str(raised.value)  # 버그 가드 메시지에도 원문 글자를 싣지 않는다
 
 
+def _edit(client: TestClient, bundle_id: int, doc_id: int, op: dict) -> dict:
+    revision = get_view(client, bundle_id, doc_id)["document"]["revision"]
+    response = client.post(
+        f"/api/bundles/{bundle_id}/documents/{doc_id}/edits",
+        json={"revision": revision, "confirm": False, "op": op}, headers=AUTHOR,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_docx_line_breaks_become_units_that_merge_back(client: TestClient) -> None:
+    # 줄바꿈(Shift+Enter)으로 한 문단에 쓴 두 줄 — 블록은 하나, 단위는 줄마다. 합치면 줄바꿈을 품은 한 단위다
+    soft = '<w:p><w:r><w:t>합성 장비를 켠다</w:t><w:br/><w:t>합성 문을 닫는다</w:t></w:r></w:p>'
+    bundle = create_bundle(client)
+    doc = _upload_ready(client, bundle["id"], build_docx(soft + p("합성 다음 문단.")), OLD_NAME)
+
+    view = get_view(client, bundle["id"], doc["id"])
+
+    assert [block["text"] for block in view["blocks"]] == ["합성 장비를 켠다\n합성 문을 닫는다", "합성 다음 문단."]
+    assert [(unit["text"], unit["lang"]) for unit in view["units"]] == [
+        ("합성 장비를 켠다", "ko"), ("합성 문을 닫는다", "ko"), ("합성 다음 문단.", "ko"),
+    ]
+    first, second, third = view["units"]
+    _edit(client, bundle["id"], doc["id"], {"type": "merge", "unit_ids": [first["id"], second["id"]]})
+    merged = get_view(client, bundle["id"], doc["id"])["units"][0]
+    assert (merged["text"], len(merged["spans"])) == ("합성 장비를 켠다\n합성 문을 닫는다", 1)
+    # 언어 바꾸기는 단위를 새로 만들지 않는다 — id가 그대로라 화면이 고른 자리를 지킬 수 있다
+    result = _edit(client, bundle["id"], doc["id"], {"type": "set_language", "unit_ids": [third["id"]], "lang": "en"})
+    assert (result["created_unit_ids"], result["retired_unit_ids"]) == ([], [])
+    assert find_unit(get_view(client, bundle["id"], doc["id"]), "합성 다음 문단.")["id"] == third["id"]
+    run_in_session(lambda session: verify_document_coverage(session, doc["id"]))
+
+
+def test_list_numbers_reach_the_unit_text(client: TestClient) -> None:
+    body = numbered("합성 장비를 켠다. 합성 문을 닫는다.", 1) + numbered("합성 기록을 남긴다.", 1)
+    bundle = create_bundle(client)
+    doc = _upload_ready(
+        client, bundle["id"], build_docx(body, numbering=make_list(0, [("ganada", "%1.")], [1])), OLD_NAME
+    )
+
+    view = get_view(client, bundle["id"], doc["id"])
+
+    assert [unit["text"] for unit in view["units"]] == ["가. 합성 장비를 켠다.", "합성 문을 닫는다.", "나. 합성 기록을 남긴다."]
+    assert doc["extraction"]["warnings"] == []
+
+
+def test_view_groups_header_and_footer_parts(client: TestClient) -> None:
+    # 구역마다 따로 저장된 같은 머리말 — 블록·단위는 둘 다 남고, 묶음이 같은 내용임을 알린다
+    first_section = '<w:p><w:pPr><w:sectPr><w:headerReference w:type="default" r:id="rIdHeader2"/></w:sectPr></w:pPr></w:p>'
+    data = build_docx(
+        p("합성 앞 구역.") + first_section + p("합성 뒤 구역."),
+        headers=[p("합성 제약 SOP"), p("합성 제약 SOP")], footers=[p("합성 대외비")],
+    )
+    bundle = create_bundle(client)
+    doc = _upload_ready(client, bundle["id"], data, OLD_NAME)
+
+    view = get_view(client, bundle["id"], doc["id"])
+
+    assert view["part_groups"] == [
+        {"key": "body", "part": "body", "refs": [], "block_count": 2, "same_as": None},
+        {"key": "header1", "part": "header", "refs": [{"section": 2, "type": "default"}], "block_count": 1, "same_as": None},
+        {
+            "key": "header2", "part": "header",
+            "refs": [{"section": 1, "type": "default"}, {"section": 2, "type": "first"}],
+            "block_count": 1, "same_as": "header1",
+        },
+        {"key": "footer1", "part": "footer", "refs": [{"section": 2, "type": "default"}], "block_count": 1, "same_as": None},
+    ]
+    assert [block["part_group"] for block in view["blocks"]] == ["body", "body", "header1", "header2", "footer1"]
+    assert len([unit for unit in view["units"] if unit["text"] == "합성 제약 SOP"]) == 2
+    assert all(unit["split_suggestion_id"] is None for unit in view["units"])
+
+
 def test_view_of_rejected_document_is_empty(client: TestClient) -> None:
     bundle = create_bundle(client)
     rejected = upload(client, bundle["id"], b"Synthetic plain text", "SYNTHETIC_OLD-2 notes.txt").json()
@@ -277,6 +350,7 @@ def test_view_of_rejected_document_is_empty(client: TestClient) -> None:
 
     assert view["extraction"] is None
     assert (view["tables"], view["blocks"], view["units"], view["pairs"]) == ([], [], [], [])
+    assert view["part_groups"] == []
 
 
 def test_view_query_count_does_not_grow_with_units(client: TestClient) -> None:

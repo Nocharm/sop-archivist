@@ -210,6 +210,7 @@ def test_document_scope_skips_short_and_decided_units(client: TestClient, fake_a
     assert {(item["unit_id"], item["reason"]) for item in body["skipped"]} == {
         (ids[BELOW_FLOOR], "too_short"), (ids[OTHER_COMPOUND], "not_unassigned"),
     }
+    assert body["skipped_by_reason"] == {"too_short": 1, "not_unassigned": 1}
     jobs = read_rows(AiJob)
     assert [job.unit_ids for job in jobs] == [[ids[COMPOUND]], [ids[EXACT_FLOOR]]]
     assert {(job.kind, job.document_id) for job in jobs} == {("split", view["document"]["id"])}
@@ -235,7 +236,7 @@ def test_explicit_units_ignore_the_length_floor(client: TestClient, fake_ai: Fak
 
     response = request_split(client, bundle.id, unit_ids=[unit["id"]])
 
-    assert response.json() == {"queued": 1, "skipped_total": 0, "skipped": []}
+    assert response.json() == {"queued": 1, "skipped_total": 0, "skipped": [], "skipped_by_reason": {}}
     (job,) = read_rows(AiJob)
     assert (job.kind, job.unit_ids, job.document_id) == ("split", [unit["id"]], view["document"]["id"])
 
@@ -279,10 +280,15 @@ def test_document_scope_skips_units_with_an_open_split_suggestion(client: TestCl
     queue_one(client, bundle.id, suggested["id"])
     run_jobs()
 
+    # 원문 대조 화면이 제안이 걸린 문장을 안다
+    open_ids = {unit["id"]: unit["split_suggestion_id"] for unit in get_view(client, bundle.id, document_id)["units"]}
+    assert open_ids == {suggested["id"]: read_single_suggestion().id, other["id"]: None}
+
     body = request_split(client, bundle.id, document_id=document_id).json()
 
     assert body["queued"] == 1
     assert body["skipped"] == [{"unit_id": suggested["id"], "reason": "already_suggested"}]
+    assert body["skipped_by_reason"] == {"already_suggested": 1}
     assert [job.unit_ids for job in read_rows(AiJob)][-1] == [other["id"]]
     again = request_split(client, bundle.id, unit_ids=[suggested["id"]])  # 단위를 고르면 다시 물을 수 있다
     assert again.json()["queued"] == 1 and again.json()["skipped_total"] == 0

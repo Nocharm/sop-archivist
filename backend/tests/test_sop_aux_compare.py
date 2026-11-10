@@ -20,7 +20,7 @@ from app.sop.extract.docx_reader import read_docx
 from app.sop.extract.pdf_reader import read_pdf
 from app.sop.extract.types import ExtractLimits
 from app.sop.segment import is_blank_char
-from tests.docx_factory import build_docx, p, tbl
+from tests.docx_factory import build_docx, make_list, numbered, p, tbl
 from tests.pdf_factory import build_text_pdf
 
 LIMITS = ExtractLimits(
@@ -49,6 +49,27 @@ def test_find_missing_text_flags_only_absent_pieces() -> None:
     markdown = "# 회전 속도를 확인한다.\n\n| Check the speed. | **숨은 글자 조각** |"
 
     assert find_missing_text(blocks, markdown) == [MissingText("**숨은 글자 조각**", 1)]
+
+
+def test_written_list_numbers_are_not_reported_as_missing() -> None:
+    # 메인 추출은 Word 자동 번호를 글에 써 넣고("1.1" "가." "a)" "•") MarkItDown은 마크다운 목록("1." "*")으로 쓴다 —
+    # 포함 검사라 메인 쪽에만 있는 번호는 누락이 아니다
+    markdown = convert_with_markitdown(
+        build_docx(
+            numbered("합성 장비의 목적을 적는다", 1) + numbered("합성 장비의 적용 범위를 적는다", 1, 1)
+            + numbered("가나다 번호가 붙은 문장이다", 1, 2) + numbered("글자 번호가 붙은 문장이다", 2)
+            + numbered("글머리표가 붙은 문장이다", 3),
+            numbering=make_list(0, [("decimal", "%1."), ("decimal", "%1.%2"), ("ganada", "%3.")], [1])
+            + make_list(1, [("lowerLetter", "%1)")], [2]) + make_list(2, [("bullet", "\uf0b7")], [3]),
+        ),
+        "docx",
+    )
+    blocks = [
+        "1. 합성 장비의 목적을 적는다", "1.1 합성 장비의 적용 범위를 적는다", "가. 가나다 번호가 붙은 문장이다",
+        "a) 글자 번호가 붙은 문장이다", "• 글머리표가 붙은 문장이다",
+    ]
+
+    assert find_missing_text(blocks, markdown) == []
 
 
 def test_normalize_ignores_spacing_and_markup() -> None:

@@ -12,6 +12,8 @@ import pytest
 from app.sop.extract.docx_reader import read_docx
 from app.sop.extract.types import ExtractedWarning, ExtractionRejected, ExtractLimits
 from tests.docx_factory import (
+    make_list,
+    numbered,
     NAMESPACES,
     TINY_PNG,
     build_docx,
@@ -516,6 +518,7 @@ def test_docx_style_chain_numbering_and_outline() -> None:
 
 
 def test_docx_auto_numbering_warning() -> None:
+    # 번호 부분(numbering.xml)이 없어 번호를 풀지 못한 문단만 표시·경고가 남는다
     body = (
         f"<w:p>{NUMBERED}<w:r><w:t>첫 항목</w:t></w:r></w:p>"
         f"<w:p>{NUMBERED}<w:r><w:t>둘째 항목</w:t></w:r></w:p>"
@@ -527,6 +530,175 @@ def test_docx_auto_numbering_warning() -> None:
 
     assert [b.flags for b in result.blocks] == [("auto_numbering",), ("auto_numbering",), (), ()]
     assert result.warnings == (ExtractedWarning(kind="auto_numbering", block_seq=None, detail={"count": "2"}),)
+
+
+DECIMAL_LEVELS = [("decimal", "%1."), ("decimal", "%1.%2"), ("lowerLetter", "%3)")]
+
+
+def test_docx_writes_list_numbers_into_the_text() -> None:
+    # 카운터는 문서 순서로 늘고, 위 수준이 나아가면 아래 수준은 처음부터 다시 센다
+    body = (
+        numbered("첫 항목", 1)
+        + numbered("아래 하나", 1, 1)
+        + numbered("아래 둘", 1, 1)
+        + numbered("더 아래", 1, 2)
+        + p("번호 없는 줄")
+        + numbered("둘째 항목", 1)
+        + numbered("다시 아래", 1, 1)
+    )
+
+    result = read_docx(build_docx(body, numbering=make_list(0, DECIMAL_LEVELS, [1])), LIMITS)
+
+    assert [b.text for b in result.blocks] == [
+        "1. 첫 항목", "1.1 아래 하나", "1.2 아래 둘", "a) 더 아래", "번호 없는 줄", "2. 둘째 항목", "2.1 다시 아래",
+    ]
+    assert all(b.flags == () for b in result.blocks)
+    assert result.warnings == ()
+
+
+@pytest.mark.parametrize(
+    ("fmt", "labels"),
+    [
+        ("decimal", ["1", "2", "3"]),
+        ("decimalZero", ["01", "02", "03"]),
+        ("lowerLetter", ["a", "b", "c"]),
+        ("upperLetter", ["A", "B", "C"]),
+        ("lowerRoman", ["i", "ii", "iii"]),
+        ("upperRoman", ["I", "II", "III"]),
+        ("ganada", ["가", "나", "다"]),
+        ("chosung", ["ㄱ", "ㄴ", "ㄷ"]),
+        ("decimalEnclosedCircle", ["①", "②", "③"]),
+        ("koreanCounting", ["1", "2", "3"]),
+    ],
+)
+def test_docx_number_formats(fmt: str, labels: list[str]) -> None:
+    body = "".join(numbered("항목", 1) for _ in labels)
+
+    blocks = _read(body, numbering=make_list(0, [(fmt, "%1.")], [1]))
+
+    assert [b.text for b in blocks] == [f"{label}. 항목" for label in labels]
+
+
+def test_docx_letter_and_roman_numbers_past_the_first_cycle() -> None:
+    body = "".join(numbered("x", 1) + numbered("y", 2) for _ in range(28))
+
+    blocks = _read(body, numbering=make_list(0, [("lowerLetter", "%1)")], [1]) + make_list(1, [("upperRoman", "%1.")], [2]))
+
+    assert [blocks[index].text for index in (50, 52, 54)] == ["z) x", "aa) x", "bb) x"]
+    assert [blocks[index].text for index in (7, 17, 55)] == ["IV. y", "IX. y", "XXVIII. y"]
+
+
+def test_docx_bullets_become_a_plain_mark() -> None:
+    # Symbol·Wingdings 글꼴의 사설 영역 글자와 글자 모양 표("o")는 "•"로, 뜻이 남는 기호는 그대로 쓴다
+    lists = (
+        make_list(0, [("bullet", "\uf0b7"), ("bullet", "o")], [1]) + make_list(1, [("bullet", "-")], [2])
+    )
+
+    blocks = _read(numbered("가", 1) + numbered("나", 1, 1) + numbered("다", 2), numbering=lists)
+
+    assert [b.text for b in blocks] == ["• 가", "• 나", "- 다"]
+
+
+def test_docx_numbers_headings_through_style_linked_lists() -> None:
+    # 제목 스타일이 목록에 묶인 문서 — 문단에는 numPr가 없고, 수준은 목록 정의의 pStyle이 정한다
+    styles = (
+        f"<w:styles {NAMESPACES}>"
+        '<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/>'
+        '<w:pPr><w:numPr><w:numId w:val="3"/></w:numPr><w:outlineLvl w:val="0"/></w:pPr></w:style>'
+        '<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/>'
+        '<w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="3"/></w:numPr><w:outlineLvl w:val="1"/></w:pPr></w:style>'
+        '<w:style w:type="paragraph" w:styleId="SopHeading2"><w:name w:val="SOP Heading 2"/>'
+        '<w:basedOn w:val="Heading2"/></w:style>'
+        "</w:styles>"
+    ).encode()
+    numbering = (
+        '<w:abstractNum w:abstractNumId="7">'
+        '<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:pStyle w:val="Heading1"/>'
+        '<w:lvlText w:val="%1."/></w:lvl>'
+        '<w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:pStyle w:val="Heading2"/>'
+        '<w:lvlText w:val="%1.%2"/></w:lvl>'
+        '</w:abstractNum><w:num w:numId="3"><w:abstractNumId w:val="7"/></w:num>'
+    )
+    body = (
+        p("목적", "Heading1") + p("본문 문장.") + p("범위", "Heading1") + p("적용 대상", "Heading2")
+        + p("예외", "SopHeading2") + p("책임", "Heading1")
+    )
+    data = _rewrite_zip(build_docx(body, numbering=numbering), {"word/styles.xml": styles})
+
+    result = read_docx(data, LIMITS)
+
+    assert [(b.text, b.heading_level, b.section_label) for b in result.blocks] == [
+        ("1. 목적", 1, "1"),
+        ("본문 문장.", None, "1"),
+        ("2. 범위", 1, "2"),
+        ("2.1 적용 대상", 2, "2.1"),
+        ("2.2 예외", 2, "2.2"),
+        ("3. 책임", 1, "3"),
+    ]
+    assert result.warnings == ()
+
+
+def test_docx_lists_sharing_a_definition_continue_and_overrides_restart() -> None:
+    numbering = (
+        make_list(0, [("decimal", "%1.")], [1, 2])
+        + '<w:num w:numId="3"><w:abstractNumId w:val="0"/><w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/>'
+        "</w:lvlOverride></w:num>"
+        + '<w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:start w:val="5"/><w:numFmt w:val="decimal"/>'
+        '<w:lvlText w:val="(%1)"/><w:suff w:val="nothing"/></w:lvl></w:abstractNum>'
+        '<w:num w:numId="4"><w:abstractNumId w:val="1"/></w:num>'
+    )
+    body = (
+        numbered("가", 1) + numbered("나", 2) + numbered("다", 3) + numbered("라", 3) + numbered("마", 4) + numbered("바", 4)
+    )
+
+    blocks = _read(body, numbering=numbering)
+
+    assert [b.text for b in blocks] == ["1. 가", "2. 나", "1. 다", "2. 라", "(5)마", "(6)바"]
+
+
+def test_docx_numbers_paragraphs_inside_table_cells() -> None:
+    cell = f"<w:tc>{numbered('칸 첫 줄', 1)}{numbered('칸 둘째 줄', 1)}</w:tc>"
+    body = numbered("표 앞", 1) + f"<w:tbl><w:tblGrid><w:gridCol/></w:tblGrid><w:tr>{cell}</w:tr></w:tbl>"
+
+    blocks = _read(body, numbering=make_list(0, [("decimal", "%1.")], [1]))
+
+    assert [(b.kind, b.text, b.flags) for b in blocks] == [
+        ("paragraph", "1. 표 앞", ()),
+        ("table_cell", "2. 칸 첫 줄\n3. 칸 둘째 줄", ()),
+    ]
+
+
+def test_docx_empty_numbered_paragraph_counts_without_a_block() -> None:
+    # Word는 빈 번호 문단에도 번호를 그린다 — 카운터는 나아가지만 번호만 있는 블록은 만들지 않는다
+    blocks = _read(numbered("가", 1) + numbered("", 1) + numbered("나", 1), numbering=make_list(0, [("decimal", "%1.")], [1]))
+
+    assert [b.text for b in blocks] == ["1. 가", "3. 나"]
+
+
+def test_docx_unresolved_numbering_keeps_the_flag() -> None:
+    # 목록 정의에 없는 numId·수준은 번호를 붙이지 못한다 — 그 문단만 표시가 남고 경고가 개수를 센다
+    body = numbered("풀림", 1) + numbered("모르는 목록", 9) + numbered("없는 수준", 1, 4)
+
+    result = read_docx(build_docx(body, numbering=make_list(0, [("decimal", "%1.")], [1])), LIMITS)
+
+    assert [(b.text, b.flags) for b in result.blocks] == [
+        ("1. 풀림", ()), ("모르는 목록", ("auto_numbering",)), ("없는 수준", ("auto_numbering",)),
+    ]
+    assert result.warnings == (ExtractedWarning(kind="auto_numbering", block_seq=None, detail={"count": "2"}),)
+
+
+def test_docx_header_parts_carry_their_section_references() -> None:
+    # 구역마다 다른 머리말 — 첫 구역은 문단의 sectPr, 마지막 구역은 본문 끝 sectPr가 건다(build_docx는 끝 구역에 건다)
+    first_section = '<w:p><w:pPr><w:sectPr><w:headerReference w:type="default" r:id="rIdHeader2"/></w:sectPr></w:pPr></w:p>'
+    body = p("앞 구역") + first_section + p("뒤 구역")
+
+    blocks = _read(body, headers=[p("표준 머리말"), p("표지 머리말")], footers=[p("꼬리말")])
+
+    assert [(b.part, b.xml_path.split("/")[0], b.flags) for b in blocks if b.part != "body"] == [
+        ("header", "header1", ("section_ref:2:default",)),
+        ("header", "header2", ("section_ref:1:default", "section_ref:2:first")),
+        ("footer", "footer1", ("section_ref:2:default",)),
+    ]
 
 
 OLE_BYTES = bytes.fromhex("d0cf11e0a1b11ae1") + b"\0" * 504

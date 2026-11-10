@@ -4,6 +4,7 @@ import pytest
 
 from app.sop.coverage import find_coverage_problems
 from app.sop.extract import docx_reader
+from app.sop.spans import join_close_spans
 from app.sop.segment import (
     CLAUSE_NUMBER_FLAG,
     BlockView,
@@ -42,19 +43,44 @@ def _para(block_id: int, seq: int, text: str, heading_level: int | None = None, 
         (" 5.1. 장비를 켠다.", ["5.1. 장비를 켠다."]),
         # 목록 번호는 블록 첫 토큰일 때만 — 문장 가운데 "Step 1."은 보통 문장 끝이다
         ("Go to Step 1. Then stop.", ["Go to Step 1.", "Then stop."]),
+        # 추출기가 써 넣는 글자·로마 숫자·가나다 번호도 문장 끝이 아니다
+        ("a. Press START. Wait.", ["a. Press START.", "Wait."]),
+        ("iv. Close the lid.", ["iv. Close the lid."]),
+        ("가. 장비를 켠다. 나. 문을 닫는다.", ["가. 장비를 켠다.", "나.", "문을 닫는다."]),
+        # 번호는 줄마다 첫 토큰을 본다 — 칸 안에 번호 문단이 이어진 글
+        ("1. 장비를 켠다\n2. 문을 닫는다.", ["1. 장비를 켠다\n2. 문을 닫는다."]),
     ],
     ids=[
         "korean", "e.g.", "Fig.", "decimal-and-No.", "closing-quote", "doc-code", "initial", "newline",
         "Rev.-and-Ver.", "dotted-initials", "U.S.", "list-number", "dotted-list-number", "number-not-first",
+        "letter-number", "roman-number", "ganada-number", "number-on-each-line",
     ],
 )
 def test_split_sentences(text: str, sentences: list[str]) -> None:
     assert [text[start:end] for start, end in split_sentences(text)] == sentences
 
 
+def test_split_sentences_can_split_at_line_breaks() -> None:
+    # DOCX의 줄바꿈(Shift+Enter)·칸 안 문단 — 줄마다 단위가 되고, 줄 안에서는 문장 규칙이 그대로다
+    text = "1. 장비를 켠다\n2. 문을 닫는다. 기록한다.\n\n Close the door "
+
+    assert [text[start:end] for start, end in split_sentences(text, split_lines=True)] == [
+        "1. 장비를 켠다", "2. 문을 닫는다.", "기록한다.", "Close the door",
+    ]
+    # 약어·소문자 뒤따름 예외는 줄을 넘지 않는다
+    assert [(start, end) for start, end in split_sentences("See Fig.\n3 tubes", split_lines=True)] == [(0, 8), (9, 16)]
+
+
 @pytest.mark.parametrize(
     ("text", "lang"),
-    [("원심분리기의 rpm을 확인한다.", "ko"), ("Press START (시작).", "en"), ("12.5 %", None)],
+    [
+        ("원심분리기의 rpm을 확인한다.", "ko"),
+        # 한글이 하나라도 있으면 ko — 영어 낱말이 더 많은 한글 문장
+        ("Press START (시작).", "ko"),
+        ("HPLC System Suitability Test 수행", "ko"),
+        ("Press START.", "en"),
+        ("12.5 %", None),
+    ],
 )
 def test_detect_language(text: str, lang: str | None) -> None:
     assert detect_language(text) == lang
@@ -150,24 +176,117 @@ def test_drafts_fill_unknown_language_from_neighbors() -> None:
     assert [draft.lang for draft in build_unit_drafts(blocks[:1], [], "ko_en_separate")] == ["ko"]
 
 
+def test_drafts_split_docx_blocks_at_line_breaks() -> None:
+    blocks = [
+        _para(1, 0, "1. 목적\nPurpose", heading_level=1),
+        _para(2, 1, "장비를 켠다.\nTurn on the unit."),
+        _cell(3, 2, "첫 줄\nSecond line", 7, 0),
+    ]
+
+    drafts = build_unit_drafts(blocks, [TableView(7, False)], "ko_en_interleaved", split_lines=True)
+
+    assert [(draft.kind, draft.spans, draft.lang) for draft in drafts] == [
+        ("heading", [(1, 0, 5)], "ko"),
+        ("heading", [(1, 6, 13)], "en"),
+        ("sentence", [(2, 0, 7)], "ko"),
+        ("sentence", [(2, 8, 25)], "en"),
+        ("table", [], "neutral"),
+        ("cell_sentence", [(3, 0, 3)], "ko"),
+        ("cell_sentence", [(3, 4, 15)], "en"),
+    ]
+    # 블록은 하나라 줄 단위들을 합치면 줄바꿈을 품은 한 범위로 돌아간다
+    texts = {block.id: block.text for block in blocks}
+    assert join_close_spans([*drafts[2].spans, *drafts[3].spans], texts) == [(2, 0, 25)]
+    assert build_unit_text([(2, 0, 25)], texts) == "장비를 켠다.\nTurn on the unit."
+    # 기본값(PDF)은 줄바꿈에서 나누지 않는다
+    assert [draft.spans for draft in build_unit_drafts(blocks[:1], [], "ko_en_interleaved")] == [[(1, 0, 13)]]
+
+
 def test_build_unit_text_joins_spans_by_block() -> None:
     texts = {1: "가나. 다라.", 2: "Synthetic"}
 
     assert build_unit_text([(1, 0, 3), (1, 4, 7), (2, 0, 9)], texts) == "가나. 다라.\nSynthetic"
 
 
-def test_suggest_interleaved_pairs() -> None:
-    units = [(1, "ko"), (2, "en"), (3, "ko"), (4, "ko"), (5, "en"), (6, "neutral"), (7, "en")]
+def _langs(*langs: str) -> list[tuple[int, str, str]]:
+    """가드에 걸리지 않는 짧은 글(번호·숫자 없음)로 언어 순서만 시험한다."""
+    return [(unit_id, lang, "합성" if lang == "ko" else "Synthetic") for unit_id, lang in enumerate(langs, start=1)]
 
-    assert suggest_interleaved_pairs(units) == [([1], [2]), ([3, 4], [5, 7])]
+
+def test_suggest_interleaved_pairs() -> None:
+    assert suggest_interleaved_pairs(_langs("ko", "en", "ko", "ko", "en", "neutral", "en")) == [([1], [2]), ([3, 4], [5, 7])]
     # 한쪽이 MAX_PAIR_SIDE(3)를 넘는 두 덩어리는 짝을 만들지 않고 다음 두 덩어리로 넘어간다
-    crowded = [(1, "ko"), (2, "ko"), (3, "ko"), (4, "ko"), (5, "en"), (6, "ko"), (7, "en")]
-    assert suggest_interleaved_pairs(crowded) == [([6], [7])]
+    assert suggest_interleaved_pairs(_langs("ko", "ko", "ko", "ko", "en", "ko", "en")) == [([6], [7])]
 
 
 def test_interleaved_pairs_start_at_korean() -> None:
     # 앞머리 영어 줄(회사명·제목) 하나가 짝 방향을 뒤집지 않는다 — 한글 덩어리 뒤의 영어 덩어리만 잇는다
-    assert suggest_interleaved_pairs([(1, "en"), (2, "ko"), (3, "en"), (4, "ko"), (5, "en")]) == [([2], [3]), ([4], [5])]
-    # 짝을 못 찾은 덩어리는 그것만 건너뛴다 — 끝의 한글, 한글 앞의 영어
-    assert suggest_interleaved_pairs([(1, "ko"), (2, "en"), (3, "en"), (4, "ko")]) == [([1], [2, 3])]
-    assert suggest_interleaved_pairs([(1, "en"), (2, "neutral"), (3, "ko")]) == []
+    assert suggest_interleaved_pairs(_langs("en", "ko", "en", "ko", "en")) == [([2], [3]), ([4], [5])]
+    assert suggest_interleaved_pairs(_langs("en", "neutral", "ko")) == []
+
+
+def _pair(*units: tuple[str, str]) -> list[tuple[list[int], list[int]]]:
+    return suggest_interleaved_pairs([(unit_id, lang, text) for unit_id, (lang, text) in enumerate(units, start=1)])
+
+
+def test_interleaved_pairs_link_translations() -> None:
+    assert _pair(
+        ("ko", "3. 책임"),
+        ("en", "3. Responsibilities"),
+        ("ko", "5.1 장비의 전원을 켜고 30분간 예열한다."),
+        ("en", "5.1 Turn on the equipment and warm it up for 30 minutes."),
+        ("ko", "QC 팀장은 일탈 발생 시 1,000 mL 이상의 시료를 2024년 1월 기준으로 재검토한다."),
+        ("en", "The QC lead reviews samples of 1000 mL or more against the January 2024 baseline when a deviation occurs."),
+        # 번호가 한쪽에만 있으면 번호는 견주지 않는다 — 영어 제목에 번호를 다시 쓰지 않는 문서
+        ("ko", "4. 정의"),
+        ("en", "Definitions"),
+    ) == [([1], [2]), ([3], [4]), ([5], [6]), ([7], [8])]
+
+
+def test_interleaved_pairs_skip_a_sentence_without_translation() -> None:
+    # 번역이 빠진 한글 문장이 끼면 덩어리 크기가 어긋난다 — 그 덩어리는 잇지 않고(사람이 잇는다) 다음 덩어리부터 다시 맞춘다
+    assert _pair(
+        ("ko", "작업 전 장갑을 착용한다."),
+        ("en", "Put on gloves before work."),
+        ("ko", "기록은 QA 부서가 보관한다."),
+        ("ko", "작업대를 소독한다."),
+        ("en", "Disinfect the workbench."),
+        ("ko", "뚜껑을 닫는다."),
+        ("en", "Close the lid."),
+    ) == [([1], [2]), ([6], [7])]
+
+
+def test_interleaved_pairs_link_uneven_runs_only_on_strong_evidence() -> None:
+    # 한 문장을 두 문장으로 옮긴 번역 — 머리 번호가 같거나 숫자 토큰이 완전히 같을 때만 잇는다
+    assert _pair(
+        ("ko", "5.3 원심분리기를 3000 rpm으로 설정한다."),
+        ("en", "5.3 Set the centrifuge to 3000 rpm."),
+        ("en", "Close the lid."),
+    ) == [([1], [2, 3])]
+    assert _pair(
+        ("ko", "시료를 2-8 °C에서 24시간 보관한다."),
+        ("en", "Store the samples at 2-8 °C."),
+        ("en", "Keep them for 24 hours."),
+    ) == [([1], [2, 3])]
+    assert _pair(("ko", "뚜껑을 닫고 결과를 기록한다."), ("en", "Close the lid."), ("en", "Record the result.")) == []
+
+
+@pytest.mark.parametrize(
+    ("korean", "english"),
+    [
+        # 머리 번호가 다르다 — 번역이 아니라 다음 항목
+        ("3. 책임", "4. Procedure"),
+        ("5.1 장비를 켠다.", "5.2 Close the door."),
+        # 숫자가 한쪽에만 있다
+        ("작업자는 장갑을 착용한다.", "Use form QA-001."),
+        ("시료를 30분간 방치한다.", "Leave the samples to stand."),
+        # 숫자가 서로 다르다
+        ("온도를 25 °C로 맞춘다.", "Set the speed to 3000 rpm."),
+        # 길이가 번역으로 보기에는 너무 다르다
+        ("작업자는 반드시 보호 장갑과 보안경을 착용하고 작업 전 점검표를 작성하여야 한다.", "Note"),
+        ("주의 사항을 확인한다.", "The operator shall confirm every precaution listed in the batch record before starting the work."),
+    ],
+    ids=["heading-labels", "clause-labels", "digits-en-only", "digits-ko-only", "digits-differ", "too-short", "too-long"],
+)
+def test_interleaved_pairs_reject_unlikely_translations(korean: str, english: str) -> None:
+    assert _pair(("ko", korean), ("en", english)) == []

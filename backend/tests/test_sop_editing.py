@@ -526,7 +526,13 @@ def test_retired_units_leave_pairs(client: TestClient) -> None:
     """은퇴한 단위는 한/영 짝에서 빠지고, 한쪽 언어가 비면 짝이 지워진다."""
     fx = _setup(client, p(f"{TWO_IN_ONE} {RECORD}") + p(ENGLISH))
     two, record, english = (find_unit(fx.view, text) for text in (TWO_IN_ONE, RECORD, ENGLISH))
-    (pair,) = fx.view["pairs"]
+    # 문장 수가 다른 덩어리는 코드가 짝짓지 않아 사람이 맺는다
+    created = client.post(
+        f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/pairs",
+        json={"revision": 1, "unit_ids": [two["id"], record["id"], english["id"]]}, headers=AUTHOR,
+    )
+    assert created.status_code == 201, created.text
+    pair = created.json()["pair"]
     assert pair["unit_ids"] == [two["id"], record["id"], english["id"]]
 
     _ok(_split(client, fx, two, len(FIRST)))

@@ -31,7 +31,7 @@ interface OldPaneProps {
   onZoom: (dir: "+" | "-") => void;
 }
 
-const NO_MERGE = () => undefined;
+const IS_CHECKED = () => true;
 
 export function OldPane(props: OldPaneProps) {
   const { t } = useI18n();
@@ -59,7 +59,7 @@ export function OldPane(props: OldPaneProps) {
             onUnitClick={(unitId, _at, event) => props.onUnitClick(unitId, { shiftKey: event.shiftKey })}
             figureSource={props.figureSource}
             contour
-            strips={{ isChecked: () => true, canMerge: false, onGapMerge: NO_MERGE, mergeLabel: "", hideChecked: true, statusOf: props.statusOf, renderNote: props.renderNote }}
+            strips={{ isChecked: IS_CHECKED, hideChecked: true, statusOf: props.statusOf, renderNote: props.renderNote }}
             testId="assign-paper"
           />
         ) : (

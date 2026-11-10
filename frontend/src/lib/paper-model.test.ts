@@ -1,26 +1,26 @@
 // 용지 모델 - 블록 조각이 글자를 빠짐없이 덮고, 단위·블록 위치 변환이 서버 규칙(이음 글자 한 칸)과 같은지 본다.
 import { describe, expect, it } from "vitest";
 
-import type { DocumentView, ViewBlock, ViewUnit } from "./api-sop";
-import { buildContourPath, buildPaperModel, canMergeAdjacent, canSplitAt, countUnchecked, getMarks, getTags, readWarningText, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
+import type { DocumentView, ViewBlock, ViewPartGroup, ViewUnit } from "./api-sop";
+import { buildContourPath, buildPaperModel, buildPaperTabs, buildRows, canSplitAt, clampSplitAt, getGapMerge, getMergeBlocker, resolveCutDrag, countUnchecked, getMarks, getTags, readWarningText, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
     id, seq, text, part: "body", kind: "paragraph", page: 1, page_basis: "estimated", section_label: "", heading_level: null,
-    table_id: null, row_index: null, col_index: null, grid_span: 1, row_span: 1, flags: [], has_image: false, ...extra,
+    table_id: null, row_index: null, col_index: null, grid_span: 1, row_span: 1, flags: [], has_image: false, part_group: extra.part ?? "body", ...extra,
   };
 }
 
 function makeUnit(id: number, spans: Array<[number, number, number]>, text: string, extra: Partial<ViewUnit> = {}): ViewUnit {
   return {
     id, display_id: `D-${id}`, kind: "sentence", spans, text, lang: "en", table_id: null, row_index: null, group_unit_id: null,
-    boundary_confirmed: false, status: "unassigned", pair_id: null, pos_seq: spans[0]?.[0] ?? 0, block_id: spans[0]?.[0] ?? 0, is_edited: false, ...extra,
+    boundary_confirmed: false, status: "unassigned", pair_id: null, pos_seq: spans[0]?.[0] ?? 0, block_id: spans[0]?.[0] ?? 0, is_edited: false, split_suggestion_id: null, ...extra,
   };
 }
 
-function makeView(blocks: ViewBlock[], units: ViewUnit[]): DocumentView {
+function makeView(blocks: ViewBlock[], units: ViewUnit[], partGroups: ViewPartGroup[] = []): DocumentView {
   return {
-    document: {} as DocumentView["document"], extraction: null, tables: [], blocks, units, pairs: [],
+    document: {} as DocumentView["document"], extraction: null, tables: [], blocks, units, pairs: [], part_groups: partGroups,
     edits: { can_undo: false, can_redo: false },
   };
 }
@@ -108,6 +108,7 @@ function makeSplitUnit(over: Partial<ViewUnit> = {}): ViewUnit {
     pos_seq: 1,
     block_id: 10,
     is_edited: false,
+    split_suggestion_id: null,
     ...over,
   };
 }
@@ -184,19 +185,188 @@ describe("countUnchecked", () => {
   });
 });
 
-describe("canMergeAdjacent", () => {
-  it("merges two body sentences", () => {
-    expect(canMergeAdjacent(makeSplitUnit({ id: 1 }), makeSplitUnit({ id: 2 }))).toBe(true);
+describe("getMergeBlocker", () => {
+  it("merges two body sentences and a heading with a sentence", () => {
+    expect(getMergeBlocker(makeSplitUnit({ id: 1 }), makeSplitUnit({ id: 2 }))).toBeNull();
+    expect(getMergeBlocker(makeSplitUnit({ id: 1, kind: "heading" }), makeSplitUnit({ id: 2 }))).toBeNull();
   });
 
-  it("refuses different languages and the same unit on both sides", () => {
-    expect(canMergeAdjacent(makeSplitUnit({ id: 1, lang: "ko" }), makeSplitUnit({ id: 2, lang: "en" }))).toBe(false);
-    expect(canMergeAdjacent(makeSplitUnit({ id: 3 }), makeSplitUnit({ id: 3 }))).toBe(false);
+  it("names the reason: language, kind, cell", () => {
+    expect(getMergeBlocker(makeSplitUnit({ id: 1, lang: "ko" }), makeSplitUnit({ id: 2, lang: "en" }))).toBe("mixed_language");
+    expect(getMergeBlocker(makeSplitUnit(), makeSplitUnit({ id: 2, kind: "figure" }))).toBe("not_text");
+    expect(getMergeBlocker(makeSplitUnit(), makeSplitUnit({ id: 2, kind: "cell_sentence", table_id: 3, group_unit_id: 7 }))).toBe("cell");
+    expect(getMergeBlocker(makeSplitUnit({ kind: "cell_sentence", group_unit_id: 7 }), makeSplitUnit({ id: 2, kind: "cell_sentence", group_unit_id: 8 }))).toBe("cell");
   });
 
-  it("refuses tables, figures and units in different cells", () => {
-    expect(canMergeAdjacent(makeSplitUnit(), makeSplitUnit({ id: 2, kind: "figure" }))).toBe(false);
-    expect(canMergeAdjacent(makeSplitUnit({ kind: "cell_sentence", table_id: 3, block_id: 10 }), makeSplitUnit({ id: 2, kind: "cell_sentence", table_id: 3, block_id: 11 }))).toBe(false);
-    expect(canMergeAdjacent(makeSplitUnit(), makeSplitUnit({ id: 2, kind: "cell_sentence", table_id: 3 }))).toBe(false);
+  it("lets cell sentences of the same table or row group merge", () => {
+    expect(getMergeBlocker(makeSplitUnit({ kind: "cell_sentence", group_unit_id: 7 }), makeSplitUnit({ id: 2, kind: "cell_sentence", group_unit_id: 7 }))).toBeNull();
+  });
+});
+
+describe("buildRows", () => {
+  it("gives every unit its own piece, even inside one paragraph, and swallows the blank between them", () => {
+    const view = makeView([makeBlock(1, 0, "One. Two."), makeBlock(2, 1, "Three.")], [makeUnit(10, [[1, 0, 4]], "One."), makeUnit(11, [[1, 5, 9]], "Two."), makeUnit(12, [[2, 0, 6]], "Three.")]);
+    const model = buildPaperModel(view);
+    const rows = buildRows(model.body, model.segments);
+    expect(rows.map((row) => (row.type === "piece" ? row.unitId : row.type))).toEqual([10, 11, 12]);
+    expect(rows.flatMap((row) => (row.type === "piece" ? row.parts.flatMap((part) => part.segments) : []))).toEqual([
+      { start: 0, end: 4, unitId: 10 },
+      { start: 5, end: 9, unitId: 11 },
+      { start: 0, end: 6, unitId: 12 },
+    ]);
+  });
+
+  it("keeps a unit that spans paragraphs, or two ranges of one paragraph, as one piece", () => {
+    const view = makeView(
+      [makeBlock(1, 0, "Line one"), makeBlock(2, 1, "line two"), makeBlock(3, 2, "A B")],
+      [makeUnit(10, [[1, 0, 8], [2, 0, 8]], "Line one\nline two"), makeUnit(11, [[3, 0, 1], [3, 2, 3]], "A B")],
+    );
+    const model = buildPaperModel(view);
+    const rows = buildRows(model.body, model.segments);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].type === "piece" && rows[0].parts.map((part) => part.block.id)).toEqual([1, 2]);
+    // 같은 단위의 두 범위 사이 빈 글자는 남긴다
+    expect(rows[1].type === "piece" && rows[1].parts[0].segments).toHaveLength(3);
+  });
+
+  it("keeps text no unit owns as its own piece and puts figures on their own row", () => {
+    const view = makeView([makeBlock(1, 0, "Loose text"), makeBlock(2, 1, "", { kind: "figure" })], [makeUnit(20, [[2, 0, 0]], "", { kind: "figure" })]);
+    const model = buildPaperModel(view);
+    const rows = buildRows(model.body, model.segments);
+    expect(rows.map((row) => row.type)).toEqual(["piece", "figure"]);
+    expect(rows[0].type === "piece" && rows[0].unitId).toBeNull();
+  });
+});
+
+describe("getGapMerge", () => {
+  function build(blocks: ViewBlock[], units: ViewUnit[]) {
+    const model = buildPaperModel(makeView(blocks, units));
+    return { model, rows: buildRows(model.body, model.segments) };
+  }
+
+  it("always offers a merge between two text pieces, with the reason when it cannot run", () => {
+    const { model, rows } = build(
+      [makeBlock(1, 0, "One. Two."), makeBlock(2, 1, "셋.")],
+      [makeUnit(10, [[1, 0, 4]], "One.", { boundary_confirmed: true }), makeUnit(11, [[1, 5, 9]], "Two."), makeUnit(12, [[2, 0, 2]], "셋.", { lang: "ko" })],
+    );
+    expect(getGapMerge(rows[0], rows[1], model.units)).toEqual({ firstId: 10, secondId: 11, blocker: null });
+    expect(getGapMerge(rows[1], rows[2], model.units)).toEqual({ firstId: 11, secondId: 12, blocker: "mixed_language" });
+  });
+
+  it("is off with a reason next to a figure and absent between two non-text rows", () => {
+    const { model, rows } = build(
+      [makeBlock(1, 0, "One."), makeBlock(2, 1, "", { kind: "figure" }), makeBlock(3, 2, "", { kind: "figure" })],
+      [makeUnit(10, [[1, 0, 4]], "One."), makeUnit(20, [[2, 0, 0]], "", { kind: "figure" }), makeUnit(21, [[3, 0, 0]], "", { kind: "figure" })],
+    );
+    expect(getGapMerge(rows[0], rows[1], model.units)).toEqual({ firstId: 10, secondId: 10, blocker: "not_text" });
+    expect(getGapMerge(rows[1], rows[2], model.units)).toBeNull();
+  });
+
+  it("has no merge across part groups", () => {
+    const blocks = [makeBlock(1, 0, "Head A", { part: "header", part_group: "header:1" }), makeBlock(2, 1, "Head B", { part: "header", part_group: "header:2" })];
+    const units = [makeUnit(10, [[1, 0, 6]], "Head A"), makeUnit(11, [[2, 0, 6]], "Head B")];
+    const model = buildPaperModel(makeView(blocks, units));
+    const rows = buildRows(model.header, model.segments);
+    expect(getGapMerge(rows[0], rows[1], model.units)).toBeNull();
+  });
+});
+
+describe("buildPaperTabs", () => {
+  function makeGroup(key: string, part: string, over: Partial<ViewPartGroup> = {}): ViewPartGroup {
+    return { key, part, refs: [], block_count: 1, same_as: null, ...over };
+  }
+
+  it("shows only the body tab for a body-only document", () => {
+    const view = makeView([makeBlock(1, 0, "One.")], [makeUnit(10, [[1, 0, 4]], "One.")], [makeGroup("body", "body")]);
+    const tabs = buildPaperTabs(view, buildPaperModel(view));
+    expect(tabs.tabs.map((tab) => tab.key)).toEqual(["body"]);
+    expect(tabs.order).toEqual([10]);
+  });
+
+  it("puts each header group on its own sheet, shows a repeated one once and keeps footnotes with the footer", () => {
+    const blocks = [
+      makeBlock(1, 0, "Head A", { part: "header", part_group: "h1" }),
+      makeBlock(2, 1, "Head B", { part: "header", part_group: "h2" }),
+      makeBlock(3, 2, "Head A", { part: "header", part_group: "h3" }),
+      makeBlock(4, 3, "Body."),
+      makeBlock(5, 4, "Foot", { part: "footer", part_group: "f1" }),
+      makeBlock(6, 5, "Note", { part: "footnote", part_group: "footnote" }),
+    ];
+    const units = [
+      makeUnit(10, [[1, 0, 6]], "Head A"),
+      makeUnit(11, [[2, 0, 6]], "Head B"),
+      makeUnit(12, [[3, 0, 6]], "Head A"),
+      makeUnit(13, [[4, 0, 5]], "Body."),
+      makeUnit(14, [[5, 0, 4]], "Foot"),
+      makeUnit(15, [[6, 0, 4]], "Note"),
+    ];
+    const groups = [
+      makeGroup("h1", "header", { refs: [{ section: 1, type: "default" }] }),
+      makeGroup("h2", "header", { refs: [{ section: 1, type: "first" }] }),
+      makeGroup("h3", "header", { refs: [{ section: 2, type: "default" }], same_as: "h1" }),
+      makeGroup("body", "body"),
+      makeGroup("f1", "footer"),
+      makeGroup("footnote", "footnote"),
+    ];
+    const view = makeView(blocks, units, groups);
+    const tabs = buildPaperTabs(view, buildPaperModel(view));
+    expect(tabs.tabs.map((tab) => tab.key)).toEqual(["body", "header", "footer"]);
+    const header = tabs.tabs[1];
+    expect(header.sheets.map((sheet) => sheet.key)).toEqual(["h1", "h2"]);
+    // 숨긴 묶음의 구역은 보이는 쪽에 모인다
+    expect(header.sheets[0].refs).toEqual([{ section: 1, type: "default" }, { section: 2, type: "default" }]);
+    expect(header.unitIds).toEqual([10, 11]);
+    expect(tabs.mirrors.get(10)).toEqual([12]);
+    expect(tabs.tabs[2].sheets.map((sheet) => sheet.key)).toEqual(["f1", "footnote"]);
+    expect(tabs.order).toEqual([13, 10, 11, 14, 15]);
+    expect(tabs.tabOf.get(12)).toBe("header");
+  });
+
+  it("keeps a repeated group visible when its units were cut differently", () => {
+    const blocks = [makeBlock(1, 0, "Head A. More.", { part: "header", part_group: "h1" }), makeBlock(2, 1, "Head A. More.", { part: "header", part_group: "h2" })];
+    const units = [makeUnit(10, [[1, 0, 13]], "Head A. More."), makeUnit(11, [[2, 0, 7]], "Head A."), makeUnit(12, [[2, 8, 13]], "More.")];
+    const view = makeView(blocks, units, [makeGroup("h1", "header"), makeGroup("h2", "header", { same_as: "h1" })]);
+    const tabs = buildPaperTabs(view, buildPaperModel(view));
+    expect(tabs.tabs[0].sheets.map((sheet) => sheet.key)).toEqual(["h1", "h2"]);
+    expect(tabs.mirrors.size).toBe(0);
+  });
+});
+
+describe("clampSplitAt and resolveCutDrag", () => {
+  const unit = makeUnit(10, [[1, 0, 5], [2, 0, 5]], "Hello\nWorld");
+
+  it("clamps to the first and last place that leaves text on both sides", () => {
+    expect(clampSplitAt(unit, -3)).toBe(1);
+    expect(clampSplitAt(unit, 99)).toBe(10);
+    expect(clampSplitAt(unit, 4)).toBe(4);
+    expect(clampSplitAt(makeUnit(11, [[1, 0, 1]], "A"), 0)).toBeNull();
+  });
+
+  it("skips leading and trailing blanks", () => {
+    const padded = makeUnit(12, [[1, 0, 6]], "  ab  ");
+    expect(clampSplitAt(padded, 0)).toBe(3);
+    expect(clampSplitAt(padded, 6)).toBe(3);
+  });
+
+  it("follows the pointer inside the unit and stops at its ends outside it", () => {
+    expect(resolveCutDrag(unit, { blockId: 1, offset: 3 })).toBe(3);
+    expect(resolveCutDrag(unit, { blockId: 2, offset: 2 })).toBe(8);
+    expect(resolveCutDrag(unit, "start")).toBe(1);
+    expect(resolveCutDrag(unit, "end")).toBe(10);
+    expect(resolveCutDrag(unit, { blockId: 9, offset: 0 })).toBeNull();
+  });
+
+  it("every place it returns is one the split accepts", () => {
+    for (let at = -2; at < 14; at += 1) {
+      const clamped = clampSplitAt(unit, at);
+      expect(clamped !== null && canSplitAt(unit, clamped) && toBlockOffset(unit.spans, clamped) !== null).toBe(true);
+    }
+  });
+});
+
+describe("suggest mark", () => {
+  it("marks a unit with an open AI split suggestion", () => {
+    expect(getMarks(makeSplitUnit({ split_suggestion_id: 4 }))).toContain("suggest");
+    expect(getMarks(makeSplitUnit())).not.toContain("suggest");
   });
 });

@@ -56,7 +56,7 @@ def detect_language_layout(blocks: Sequence[ExtractedBlock]) -> str:
         lang
         for block in blocks
         if block.part == "body" and block.kind == "paragraph" and block.table_index is None
-        if (lang := detect_language(block.text)) is not None
+        for lang in _list_line_languages(block.text)
     ]
     if not langs:
         return DEFAULT_LAYOUT
@@ -65,7 +65,7 @@ def detect_language_layout(blocks: Sequence[ExtractedBlock]) -> str:
         lang
         for block in blocks
         if block.part == "body" and block.kind == "table_cell"
-        if (lang := detect_language(block.text)) is not None
+        for lang in _list_line_languages(block.text)
     }
     if len(set(langs)) == 1 and cell_langs == {"ko", "en"}:
         return DEFAULT_LAYOUT
@@ -77,3 +77,17 @@ def detect_language_layout(blocks: Sequence[ExtractedBlock]) -> str:
     layout = "ko_en_interleaved" if changes / (len(langs) - 1) >= INTERLEAVED_CHANGE_RATIO else "ko_en_separate"
     assert layout in LANGUAGE_LAYOUTS
     return layout
+
+
+def _list_line_languages(text: str) -> list[str]:
+    """블록 글의 줄별 언어 — 이어진 같은 언어 줄은 하나로 센다.
+
+    한 문단에 줄바꿈으로 한글 줄과 영어 줄을 함께 쓴 문서는 블록 전체로 보면 늘 ko라(한글이 하나라도 있으면 ko) 줄로 본다.
+    같은 언어 줄을 하나로 묶는 것은 PDF의 접힌 줄이 개수를 불리지 않게 하려는 것이다.
+    """
+    langs: list[str] = []
+    for line in text.split("\n"):
+        lang = detect_language(line)
+        if lang is not None and (not langs or langs[-1] != lang):
+            langs.append(lang)
+    return langs

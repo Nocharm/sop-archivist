@@ -36,6 +36,10 @@ const SKELETON_ROWS = 4;
 
 const LIST_KEY = "documents";
 
+// 동작 칸이 미리 잡는 폭 - 아이콘 단추 셋(32px × 3 + 사이 2px × 2). 라벨은 이 자리 밖 왼쪽으로 겹쳐 펼쳐져(.mbtn-set) 다른 열이 움직이지 않는다.
+// 가장 긴 라벨이 다 펼쳐질 폭(약 200px)을 잡으면 표가 본문 폭(1280)을 넘어 제목 열이 줄어든다
+const ACTIONS_WIDTH = "w-[100px]";
+
 export default function DocumentsPage() {
   const { t } = useI18n();
   const bundleId = Number(useParams<{ id: string }>().id);
@@ -77,9 +81,13 @@ export default function DocumentsPage() {
     }
   }
 
+  // Old 구역 먼저, New 구역 다음 - 구역 안 순서는 서버가 준 그대로
+  const rows = data === null ? null : [...data.filter((document) => document.side === "old"), ...data.filter((document) => document.side !== "old")];
+
+  // 제목 칸만 여러 줄이라 나머지 칸은 줄 가운데에 맞춘다(align-middle)
   const columns: DataColumn<SopDocument>[] = [
-    // Old·New는 화면 언어와 상관없이 영어(도메인 용어)
-    { key: "side", header: t("documents.colSide"), nowrap: true, skeletonWidth: 32, cell: (document) => <span className={`side-tag ${document.side}`}>{document.side === "old" ? "Old" : "New"}</span> },
+    // Old·New는 화면 언어와 상관없이 영어(도메인 용어). 카드에서는 구역 머리가 대신한다
+    { key: "side", header: t("documents.colSide"), card: "none", className: "align-middle", nowrap: true, skeletonWidth: 32, cell: (document) => <span className={`side-tag ${document.side}`}>{document.side === "old" ? "Old" : "New"}</span> },
     {
       key: "code",
       header: t("documents.colCode"),
@@ -87,6 +95,7 @@ export default function DocumentsPage() {
       // SOP-CDO-111334(고정폭 14자)가 표·카드 어디서도 잘리지 않는 폭
       minWidth: 164,
       nowrap: true,
+      className: "align-middle",
       skeletonWidth: 120,
       // AI 제안은 칸을 가리지 않고 옆에 둔다 - 눌러 받거나, 칸에 다른 값을 적어 고친다(채택 edited)
       cell: (document) => (
@@ -110,6 +119,7 @@ export default function DocumentsPage() {
     {
       key: "version",
       header: t("documents.colVersion"),
+      className: "align-middle",
       skeletonWidth: 72,
       cell: (document) => (
         <span className="inline-flex items-center gap-1.5">
@@ -157,6 +167,7 @@ export default function DocumentsPage() {
     {
       key: "layout",
       header: t("documents.colLayout"),
+      className: "align-middle",
       skeletonWidth: 150,
       cell: (document) =>
         document.status === "ready" ? (
@@ -173,11 +184,12 @@ export default function DocumentsPage() {
           <span className="text-ink-4">–</span>
         ),
     },
-    { key: "status", header: t("documents.colExtraction"), card: "badge", skeletonWidth: 56, cell: (document) => <DocStatusPill status={document.status} testId={`documents-${document.id}-status`} /> },
-    { key: "aux", header: t("documents.colAux"), card: "badge", skeletonWidth: 64, cell: (document) => <AuxPill document={document} testId={`documents-${document.id}-aux`} /> },
+    { key: "status", header: t("documents.colExtraction"), card: "badge", className: "align-middle", skeletonWidth: 56, cell: (document) => <DocStatusPill status={document.status} testId={`documents-${document.id}-status`} /> },
+    { key: "aux", header: t("documents.colAux"), card: "badge", className: "align-middle", skeletonWidth: 64, cell: (document) => <AuxPill document={document} testId={`documents-${document.id}-aux`} /> },
     {
       key: "warnings",
       header: t("documents.colWarnings"),
+      className: "align-middle",
       skeletonWidth: 80,
       cell: (document) => <WarningChips warnings={document.extraction?.warnings ?? []} testId={`documents-${document.id}-warnings`} />,
     },
@@ -185,10 +197,10 @@ export default function DocumentsPage() {
       key: "actions",
       header: <span className="sr-only">{t("manage.rowActions")}</span>,
       card: "actions",
-      className: "w-[108px]",
+      className: "align-middle",
       skeletonWidth: 40,
       cell: (document) => (
-        <span className="inline-flex justify-end gap-0.5">
+        <span className={`mbtn-set ${ACTIONS_WIDTH}`}>
           {document.status === "ready" && (
             <MorphButton icon={Eye} label={t("documents.preview")} testId={`documents-${document.id}-preview`} onClick={() => setPreviewing(document)} />
           )}
@@ -239,14 +251,16 @@ export default function DocumentsPage() {
       ) : (
         <DataList
           view={view}
-          rows={data}
+          rows={rows}
           columns={columns}
+          getRowGroup={(document) => ({ key: document.side, label: document.side === "old" ? t("documents.sideOldLong") : t("documents.sideNewLong") })}
+          cardActions="row"
           getRowKey={(document) => document.id}
           testId="documents-list"
           rowTestId={(document) => `documents-${document.id}-row`}
           showSkeleton={showSkeleton}
           skeletonRows={SKELETON_ROWS}
-          cardMinWidth={360}
+          cardMinWidth={480}
         />
       )}
 

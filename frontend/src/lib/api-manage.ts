@@ -79,6 +79,8 @@ export interface AiRequestOut {
   queued: number;
   skipped_total: number;
   skipped: Array<{ unit_id: number; reason: string }>;
+  /** 건너뛴 까닭별 수 - 합이 skipped_total, 없으면 빈 객체 */
+  skipped_by_reason: Record<string, number>;
 }
 
 export interface AiScope {
