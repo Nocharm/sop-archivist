@@ -1,7 +1,7 @@
 // 상단 바 AI 작업 규칙 - 표시 상태 접기, 끝난 요청 골라내기(알림), 진행 수, 경과·오래 걸림, 묶음별 묶기, 화면 지문.
 import { describe, expect, it } from "vitest";
 
-import type { AiJobCounts, RecentAiJob, RecentAiJobs, RecentAiRequest } from "./api-sop";
+import type { AiJobCounts, RecentAiJobs, RecentAiRequest } from "./api-sop";
 import {
   AI_ACTIVE_POLL_MS,
   AI_IDLE_POLL_MS,
@@ -56,8 +56,8 @@ function makeRequest(id: string, counts: Partial<AiJobCounts>, extra: Partial<Re
   };
 }
 
-function makeData(requests: RecentAiRequest[], serverTime = T0, jobs: RecentAiJob[] = []): RecentAiJobs {
-  return { server_time: serverTime, jobs, jobs_total: jobs.length, requests, requests_total: requests.length };
+function makeData(requests: RecentAiRequest[], serverTime = T0): RecentAiJobs {
+  return { server_time: serverTime, requests, requests_total: requests.length };
 }
 
 describe("summarizeAiJobs", () => {
@@ -232,7 +232,7 @@ describe("grouping and screens", () => {
       makeRequest("d", { running: 1 }, { kind: "split", kinds: ["split"], document_id: 8 }),
     ];
     // 작업 목록이 비어 있어도(큰 요청이 100건을 채움) 요청 목록으로 안다
-    expect([...listReadingDocuments(makeData(requests, T0, []), 1)]).toEqual([5]);
+    expect([...listReadingDocuments(makeData(requests, T0), 1)]).toEqual([5]);
   });
 
   it("queues each finished request once while the tab is hidden, keeping the latest state", () => {

@@ -13,8 +13,6 @@ function makeData(isActive: boolean): RecentAiJobs {
   const jobs = { queued: isActive ? 1 : 0, running: 0, done: isActive ? 0 : 1, failed: 0, stale: 0, cancelled: 0 };
   return {
     server_time: "2026-11-10T10:00:00+09:00",
-    jobs: [],
-    jobs_total: 0,
     requests: [{ request_id: "r", bundle_id: 1, bundle_code: "BND-0001", bundle_title: "B", kind: "classify", kinds: ["classify"], requested_by_me: true, total: 1, jobs, error_counts: {}, created_at: "2026-11-10T10:00:00+09:00", started_at: null, running_started_at: null, finished_at: isActive ? null : "2026-11-10T10:00:05+09:00", document_id: null, document_title: "", document_file_name: "" }],
     requests_total: 1,
   };

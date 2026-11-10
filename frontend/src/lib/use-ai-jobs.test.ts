@@ -46,7 +46,7 @@ function makeRecent(byBundle: Record<number, Partial<AiJobCounts>>): RecentAiJob
       document_file_name: "",
     };
   });
-  return { server_time: "2026-11-10T10:00:00+09:00", jobs: [], jobs_total: 0, requests, requests_total: requests.length };
+  return { server_time: "2026-11-10T10:00:00+09:00", requests, requests_total: requests.length };
 }
 
 const box: { watch: () => void; status: AiStatus | null; error: unknown } = { watch: () => undefined, status: null, error: null };

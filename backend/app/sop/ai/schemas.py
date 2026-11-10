@@ -106,31 +106,8 @@ class AiJobCounts(BaseModel):
     cancelled: int = 0
 
 
-class RecentJobOut(BaseModel):
-    """최근 작업 한 줄 — 요청한 사람은 이름 없이 나인지만 싣는다."""
-
-    id: int
-    request_id: str
-    bundle_id: int
-    bundle_code: str
-    bundle_title: str
-    kind: str
-    status: str
-    error: str  # 실패 코드(빈 글자 = 없음)
-    document_id: int | None
-    document_title: str  # 문서가 없거나 지워졌으면 빈 글자
-    document_file_name: str
-    unit_count: int
-    target_count: int
-    attempts: int
-    requested_by_me: bool
-    created_at: KstDatetime
-    started_at: KstDatetime | None
-    finished_at: KstDatetime | None
-
-
 class RecentRequestOut(BaseModel):
-    """요청 한 번의 진행 — 작업 목록의 상한과 상관없이 그 요청의 모든 작업을 센다("n / N" = 끝난 수 / total)."""
+    """요청 한 번의 진행 — 범위와 상관없이 그 요청의 모든 작업을 센다("n / N" = 끝난 수 / total)."""
 
     request_id: str
     bundle_id: int
@@ -153,8 +130,6 @@ class RecentRequestOut(BaseModel):
 
 class RecentJobsOut(BaseModel):
     server_time: KstDatetime  # 화면이 "오래 도는 중"을 판단하는 기준 시각
-    jobs: list[RecentJobOut]  # 대기·실행 중 먼저, 그다음 최신 순 — 앞쪽 MAX_RECENT_JOBS건
-    jobs_total: int  # 범위 안 작업 전체 수
     requests: list[RecentRequestOut]  # 도는 요청 먼저, 그다음 최신 순 — 앞쪽 MAX_RECENT_REQUESTS건
     requests_total: int
 

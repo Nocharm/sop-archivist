@@ -1,6 +1,6 @@
-"""최근 AI 작업 목록 — 내가 멤버인 묶음의 대기·실행 중 작업과 하루 안에 끝난 작업, 요청별 진행 수. 상단 바 표시가 읽는다.
+"""최근 AI 요청 목록 — 내가 멤버인 묶음의 대기·실행 중 작업과 하루 안에 끝난 작업을 요청별로 센다. 상단 바 표시가 읽는다.
 
-작업·요청 모두 대기·실행 중인 것을 먼저 두고 그다음 최신 순으로 자른다 — 끝난 요청이 많아도 도는 요청이 상한 밖으로 밀려
+대기·실행 중인 요청을 먼저 두고 그다음 최신 순으로 자른다 — 끝난 요청이 많아도 도는 요청이 상한 밖으로 밀려
 상단 바 수·화면 다시 읽기·문서 정보 표시가 멈추지 않게 한다.
 """
 
@@ -13,9 +13,9 @@ from sqlalchemy import ColumnElement, CompoundSelect, Row, case, func, select, u
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
-from app.sop.ai.constants import MAX_RECENT_JOBS, MAX_RECENT_REQUESTS, RECENT_JOBS_WINDOW_HOURS
+from app.sop.ai.constants import MAX_RECENT_REQUESTS, RECENT_JOBS_WINDOW_HOURS
 from app.sop.ai.jobs import ACTIVE_JOB_STATUSES
-from app.sop.ai.schemas import AiJobCounts, RecentJobOut, RecentJobsOut, RecentRequestOut
+from app.sop.ai.schemas import AiJobCounts, RecentJobsOut, RecentRequestOut
 from app.sop.bundle_code import format_bundle_code
 from app.sop.models import AiJob, Bundle, BundleMember, Document
 
@@ -118,24 +118,9 @@ async def _load_requests(session: AsyncSession, window_ids: CompoundSelect) -> t
 
 
 async def list_recent_jobs(session: AsyncSession, login_id: str) -> RecentJobsOut:
-    """질의 여섯(작업 쪽·작업 수·요청 쪽·요청 수·요청 집계·묶음 제목), 모두 인덱스로 범위를 찾는다 — 원문·제안·payload는 읽지 않는다."""
+    """질의 다섯(요청 쪽·요청 수·요청 집계·묶음 제목·문서), 모두 인덱스로 범위를 찾는다 — 원문·제안·payload는 읽지 않는다."""
     current = now()
     window_ids = _build_window_ids(login_id, current - timedelta(hours=RECENT_JOBS_WINDOW_HOURS))
-    job_rows = (
-        await session.execute(
-            select(
-                AiJob.id, AiJob.request_id, AiJob.bundle_id, Bundle.title, AiJob.kind, AiJob.status, AiJob.error,
-                AiJob.document_id, Document.title, Document.file_name, AiJob.unit_ids, AiJob.target_ids,
-                AiJob.attempts, AiJob.requested_by, AiJob.created_at, AiJob.started_at, AiJob.finished_at,
-            )
-            .join(Bundle, Bundle.id == AiJob.bundle_id)
-            .outerjoin(Document, Document.id == AiJob.document_id)
-            .where(AiJob.id.in_(window_ids))
-            .order_by(_active_rank().desc(), AiJob.id.desc())
-            .limit(MAX_RECENT_JOBS)
-        )
-    ).all()
-    jobs_total = await session.scalar(select(func.count()).select_from(AiJob).where(AiJob.id.in_(window_ids))) or 0
     shown, requests_total, tallies = await _load_requests(session, window_ids)
     bundle_ids = {tallies[request_id].bundle_id for request_id in shown}
     titles = (
@@ -155,20 +140,6 @@ async def list_recent_jobs(session: AsyncSession, login_id: str) -> RecentJobsOu
     )
     return RecentJobsOut(
         server_time=current,
-        jobs=[
-            RecentJobOut(
-                id=job_id, request_id=request_id, bundle_id=bundle_id, bundle_code=format_bundle_code(bundle_id),
-                bundle_title=bundle_title, kind=kind, status=status, error=error, document_id=document_id,
-                document_title=document_title or "", document_file_name=file_name or "",
-                unit_count=len(unit_ids), target_count=len(target_ids), attempts=attempts,
-                requested_by_me=requested_by == login_id, created_at=created, started_at=started, finished_at=finished,
-            )
-            for (
-                job_id, request_id, bundle_id, bundle_title, kind, status, error, document_id, document_title,
-                file_name, unit_ids, target_ids, attempts, requested_by, created, started, finished,
-            ) in job_rows
-        ],
-        jobs_total=jobs_total,
         requests=[
             _build_request_out(request_id, tallies[request_id], titles, documents, login_id) for request_id in shown
         ],

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
 from app.dev_users import DEV_USERS
-from app.sop.ai.constants import MAX_RECENT_JOBS, MAX_RECENT_REQUESTS, RECENT_JOBS_WINDOW_HOURS
+from app.sop.ai.constants import MAX_RECENT_REQUESTS, RECENT_JOBS_WINDOW_HOURS
 from app.sop.ai.jobs import JobItem, enqueue_jobs
 from app.sop.models import AiJob
 from tests.access_helpers import run_in_session
@@ -48,6 +48,20 @@ def add_jobs(
     return run_in_session(_run)
 
 
+def find_request_ids(job_ids: list[int]) -> list[str]:
+    """작업 id마다 그 작업의 request_id(같은 순서)."""
+
+    async def _run(session: AsyncSession) -> list[str]:
+        by_id = dict((await session.execute(select(AiJob.id, AiJob.request_id).where(AiJob.id.in_(job_ids)))).all())
+        return [by_id[job_id] for job_id in job_ids]
+
+    return run_in_session(_run)
+
+
+def list_request_ids(body: dict) -> list[str]:
+    return [request["request_id"] for request in body["requests"]]
+
+
 def make_bundle(client: TestClient, title: str, headers: dict[str, str] = AUTHOR) -> int:
     return create_bundle(client, title=title, headers=headers)["id"]
 
@@ -56,29 +70,28 @@ def test_lists_only_jobs_of_bundles_i_am_a_member_of(client: TestClient) -> None
     mine = make_bundle(client, "Mine")
     assert set_members(client, mine, [("qa.member", "author"), ("qa.lead", "reviewer")]).status_code == 200
     theirs = make_bundle(client, "Theirs", headers=OUTSIDER)
-    (mine_job,) = add_jobs(mine)
-    (their_job,) = add_jobs(theirs, requested_by="prod.member")
+    mine_request, their_request = find_request_ids([add_jobs(mine)[0], add_jobs(theirs, requested_by="prod.member")[0]])
 
-    assert [job["id"] for job in get_recent(client)["jobs"]] == [mine_job]
-    assert [job["id"] for job in get_recent(client, OUTSIDER)["jobs"]] == [their_job]
+    assert list_request_ids(get_recent(client)) == [mine_request]
+    assert list_request_ids(get_recent(client, OUTSIDER)) == [their_request]
     # 역할과 상관없이 멤버면 보이고, 남이 요청한 작업은 나의 요청이 아니다
-    (seen,) = get_recent(client, REVIEWER)["jobs"]
-    assert (seen["id"], seen["requested_by_me"]) == (mine_job, False)
+    (seen,) = get_recent(client, REVIEWER)["requests"]
+    assert (seen["request_id"], seen["requested_by_me"]) == (mine_request, False)
 
 
-def test_job_row_carries_bundle_document_and_counts(client: TestClient) -> None:
+def test_request_row_carries_bundle_document_and_counts(client: TestClient) -> None:
     bundle = make_ai_bundle(client)
     (job_id,) = add_jobs(bundle.id)
     run_in_session(lambda session: _set_document(session, job_id, bundle.document_id))
 
     body = get_recent(client)
 
-    (job,) = body["jobs"]
-    assert job["bundle_code"] == f"BND-{bundle.id:04d}"
-    assert (job["document_id"], job["unit_count"], job["target_count"]) == (bundle.document_id, 2, 1)
-    assert job["document_file_name"].startswith("SYNTHETIC_")
-    assert (job["status"], job["error"], job["attempts"], job["requested_by_me"]) == ("queued", "", 0, True)
-    assert job["started_at"] is None and job["finished_at"] is None
+    (request,) = body["requests"]
+    assert request["bundle_code"] == f"BND-{bundle.id:04d}"
+    assert (request["document_id"], request["total"], request["jobs"]["queued"]) == (bundle.document_id, 1, 1)
+    assert request["document_file_name"].startswith("SYNTHETIC_")
+    assert (request["kind"], request["error_counts"], request["requested_by_me"]) == ("classify", {}, True)
+    assert request["started_at"] is None and request["finished_at"] is None
     assert body["server_time"]
 
 
@@ -96,23 +109,19 @@ def test_finished_jobs_stay_for_a_day_and_active_jobs_always(client: TestClient)
 
     body = get_recent(client)
 
-    # 도는 작업이 먼저다
-    assert [job["id"] for job in body["jobs"]] == [old_queued, recent_failed]
-    assert old_done not in {job["id"] for job in body["jobs"]}
-    assert body["jobs_total"] == 2
+    # 도는 요청이 먼저다
+    assert list_request_ids(body) == find_request_ids([old_queued, recent_failed])
+    assert find_request_ids([old_done])[0] not in list_request_ids(body)
+    assert body["requests_total"] == 2
 
 
-def test_jobs_are_newest_first_and_capped(client: TestClient) -> None:
+def test_request_counts_all_of_its_jobs(client: TestClient) -> None:
     bundle_id = make_bundle(client, "Many")
-    ids = add_jobs(bundle_id, MAX_RECENT_JOBS + 5)
+    add_jobs(bundle_id, MAX_RECENT_REQUESTS + 5)
 
-    body = get_recent(client)
-
-    assert [job["id"] for job in body["jobs"]] == sorted(ids, reverse=True)[:MAX_RECENT_JOBS]
-    assert body["jobs_total"] == MAX_RECENT_JOBS + 5
-    # 요청별 수는 작업 목록 상한과 상관없이 전부 센다
-    (request,) = body["requests"]
-    assert request["total"] == MAX_RECENT_JOBS + 5
+    # 요청별 수는 요청 상한과 상관없이 전부 센다
+    (request,) = get_recent(client)["requests"]
+    assert request["total"] == MAX_RECENT_REQUESTS + 5
 
 
 def test_requests_are_newest_first_and_capped(client: TestClient) -> None:
@@ -122,13 +131,12 @@ def test_requests_are_newest_first_and_capped(client: TestClient) -> None:
     body = get_recent(client)
 
     assert body["requests_total"] == MAX_RECENT_REQUESTS + 3
-    by_job = {job["id"]: job["request_id"] for job in body["jobs"]}
     newest = sorted(firsts, reverse=True)[:MAX_RECENT_REQUESTS]
-    assert [request["request_id"] for request in body["requests"]] == [by_job[job_id] for job_id in newest]
+    assert list_request_ids(body) == find_request_ids(newest)
 
 
 def test_an_older_running_request_stays_ahead_of_newer_finished_ones(client: TestClient) -> None:
-    # 끝난 새 요청이 상한보다 많아도 도는 오래된 요청은 목록·작업 목록 맨 앞에 있다(상단 바 수·화면 다시 읽기가 이것에 기댄다)
+    # 끝난 새 요청이 상한보다 많아도 도는 오래된 요청은 목록 맨 앞에 있다(상단 바 수·화면 다시 읽기가 이것에 기댄다)
     bundle = make_ai_bundle(client)
     started = now() - timedelta(minutes=10)
     running = add_jobs(bundle.id, 2, kind="doc_meta", status="running", started_at=started)
@@ -136,17 +144,16 @@ def test_an_older_running_request_stays_ahead_of_newer_finished_ones(client: Tes
     run_in_session(lambda session: _set_document(session, running[1], bundle.document_id))
     for _ in range(MAX_RECENT_REQUESTS + 2):
         add_jobs(bundle.id, status="done", finished_at=now())
-    add_jobs(bundle.id, MAX_RECENT_JOBS, status="done", finished_at=now())
 
     body = get_recent(client)
 
-    assert body["requests_total"] == MAX_RECENT_REQUESTS + 4
+    assert body["requests_total"] == MAX_RECENT_REQUESTS + 3
     assert len(body["requests"]) == MAX_RECENT_REQUESTS
     first = body["requests"][0]
     assert (first["kind"], first["jobs"]["running"], first["finished_at"]) == ("doc_meta", 2, None)
     assert first["running_started_at"] is not None
     assert (first["document_id"], first["document_file_name"].startswith("SYNTHETIC_")) == (bundle.document_id, True)
-    assert [job["id"] for job in body["jobs"][:2]] == sorted(running, reverse=True)
+    assert first["request_id"] == find_request_ids(running)[0]
     assert all(request["finished_at"] is not None for request in body["requests"][1:])
 
 
@@ -187,9 +194,8 @@ def test_requests_group_their_jobs_and_count_progress(client: TestClient) -> Non
     assert {key: older["jobs"][key] for key in ("queued", "done", "failed")} == {"queued": 1, "done": 1, "failed": 1}
     assert older["error_counts"] == {"timeout": 1}
     assert older["finished_at"] is None  # 아직 대기 중인 작업이 있다
-    by_id = {job["id"]: job["request_id"] for job in body["jobs"]}
-    assert {by_id[job_id] for job_id in first} == {older["request_id"]}
-    assert {by_id[job_id] for job_id in second} == {newer["request_id"]}
+    assert set(find_request_ids(first)) == {older["request_id"]}
+    assert set(find_request_ids(second)) == {newer["request_id"]}
     assert older["bundle_code"] == f"BND-{bundle_id:04d}" and older["bundle_title"] == "Progress"
 
 
@@ -212,7 +218,6 @@ def test_request_total_includes_jobs_that_left_the_window(client: TestClient) ->
 
     body = get_recent(client)
 
-    assert [job["id"] for job in body["jobs"]] == [ids[1]]
     (request,) = body["requests"]
     assert (request["total"], request["jobs"]["done"], request["jobs"]["queued"]) == (2, 1, 1)
 
