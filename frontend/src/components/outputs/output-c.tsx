@@ -210,6 +210,7 @@ export function OutputCView({ data, lang, onMove, onIndent, onMark, moving = fal
                       );
                       if (!onMove) return <Fragment key={item.target_id}>{line}</Fragment>;
                       const editable = isIndentable(doc.entrance, item);
+                      const markable = Boolean(onMark) && editable;
                       const indent =
                         onIndent && editable
                           ? {
@@ -223,8 +224,9 @@ export function OutputCView({ data, lang, onMove, onIndent, onMark, moving = fal
                           key={item.target_id}
                           // 줄을 눌러 고르면 Tab·Shift+Tab이 들이고 내어 쓴다. 탭 순서에는 넣지 않고(-1) Esc로 놓아 Tab이 페이지 이동을 빼앗지 않게 한다
                           tabIndex={indent ? -1 : undefined}
-                          // 오른쪽은 줄 끝 단추(번호 표시 셋 + 들여쓰기 둘 + 옮기기 둘)가 다 들어갈 폭 - 호버로 드러나도 글자를 덮지 않는다
-                          className="hover-row c-row relative pr-[184px]"
+                          // 오른쪽은 이 줄이 그리는 줄 끝 단추가 다 들어갈 폭 - 호버로 드러나도 글자를 덮지 않는다.
+                          // 표시 셋(+4px 사이)이 있으면 184px, 없으면(입구 2 문서·번역 줄) 들여쓰기 둘 + 옮기기 둘까지 들어가던 104px 그대로
+                          className={`hover-row c-row relative ${markable ? "pr-[184px]" : "pr-[104px]"}`}
                           data-testid={`output-c-row-${item.target_id}`}
                           onKeyDown={(event) => {
                             if (!indent || event.target !== event.currentTarget) return;

@@ -42,6 +42,13 @@ describe("getSectionDepths", () => {
     const items = [item(1, null, 0), item(2, null, 1, "note"), item(3, null, 2, "omitted"), item(4, null, 2)];
     expect(getSectionDepths({ number: null, items })).toEqual([0, 1, 1, 1]);
   });
+
+  it("draws a numbered-style line without a number at its clamped stored depth, and it counts for the next limit", () => {
+    // 번호 칸 안에서 번호 표시인데 서버 번호가 빈 줄(예전에는 늘 0) - 사람이 정한 깊이를 앞 번호 줄 + 1까지로 그리고,
+    // 번호 표시라 다음 줄의 상한에도 낀다. 저장값을 버리고 0으로 그리면 들여쓰기가 사라진다
+    const items = [item(1, "5.1"), item(2, null, 3), item(3, null, 5)];
+    expect(getSectionDepths({ number: "5", items })).toEqual([0, 1, 2]);
+  });
 });
 
 describe("isCounted", () => {

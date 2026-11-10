@@ -93,6 +93,9 @@ describe("OutputCView", () => {
     expect(onMark).toHaveBeenCalledTimes(1);
     // 번역 줄은 출처의 표시를 따라가므로 고르는 단추가 없다
     expect(host.querySelector('[data-testid="output-c-mark-4"]')).toBeNull();
+    // 오른쪽 예약 폭은 그 줄이 그리는 단추만큼 - 표시 단추가 없는 번역 줄은 옛 폭 그대로라 글이 괜히 좁아지지 않는다
+    expect(host.querySelector('[data-testid="output-c-row-3"]')?.className).toContain("pr-[184px]");
+    expect(host.querySelector('[data-testid="output-c-row-4"]')?.className).toContain("pr-[104px]");
     act(() => root.unmount());
   });
 });
