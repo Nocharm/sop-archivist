@@ -2422,6 +2422,41 @@ def test_moving_the_source_to_another_slot_resets_both_depths(client: TestClient
     assert (load_translation(unit["id"]).slot_key, load_translation(unit["id"]).indent_level) == (OTHER_SLOT, 0)
 
 
+def test_moving_the_source_to_another_step_resets_both_depths(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, source, target = make_wi_translation(client, fake_ai)
+    indented = put_order(
+        client, bundle.id, bundle.wi_id, [{"target_id": source["id"], "indent_level": 2}, {"target_id": target.id}]
+    )
+    assert indented.status_code == 200, indented.text
+    assert load_translation(unit["id"]).indent_level == 2
+
+    response = put_order(
+        client, bundle.id, bundle.wi_id,
+        [{"target_id": source["id"], "wi_step": 2}, {"target_id": target.id, "wi_step": 2}],
+    )
+
+    # 깊이를 보내지 않고 다른 단계로 옮기면 맨 바깥부터 — 함께 옮긴 AI 번역은 지워지지 않고 출처 깊이를 따른다
+    assert response.status_code == 200, response.text
+    assert {item["target_id"]: item["indent_level"] for item in response.json()["items"]} == {source["id"]: 0, target.id: 0}
+    moved = load_translation(unit["id"])
+    assert (moved.id, moved.status, moved.wi_step, moved.indent_level) == (target.id, "ai_suggested", 2, 0)
+
+
+def test_moving_only_the_source_resets_a_held_translation_depth(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, source, target = make_wi_translation(client, fake_ai)
+    assert save_translation(client, bundle.id, target).status_code == 200
+    indented = put_order(
+        client, bundle.id, bundle.wi_id, [{"target_id": source["id"], "indent_level": 1}, {"target_id": target.id}]
+    )
+    assert indented.status_code == 200, indented.text
+
+    response = put_order(client, bundle.id, bundle.wi_id, [{"target_id": source["id"], "wi_step": 2}, {"target_id": target.id}])
+
+    assert response.status_code == 200, response.text
+    assert_held(unit["id"])
+    assert (load_translation(unit["id"]).wi_step, load_translation(unit["id"]).indent_level) == (2, 0)
+
+
 def test_a_new_translation_starts_at_its_source_depth(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, unit = make_assigned_unit(client)
     source = get_target(client, bundle.id, unit["id"])

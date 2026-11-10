@@ -145,6 +145,28 @@ def test_indent_changes_numbers_in_outputs_a_and_c(client: TestClient) -> None:
     assert {row["dest_number"] for row in rows if row["dest_doc_code"] == "SOP-9"} == {""}
 
 
+def test_moving_a_line_to_another_step_resets_its_depth_unless_sent(client: TestClient) -> None:
+    fx = _setup(client)
+    wi = _get_output(client, fx.bundle_id, "outputs/c", "ko")["docs"][1]
+    (split_a,), (duplicate,), (split_b, figure), () = [section["items"] for section in wi["sections"]]
+    ids = [split_a["target_id"], duplicate["target_id"], split_b["target_id"], figure["target_id"]]
+
+    def put(changes: dict[int, dict]) -> dict[int, tuple[int | None, int]]:
+        revision = get_bundle(client, fx.bundle_id)["revision"]
+        items = [{"target_id": target_id, **changes.get(target_id, {})} for target_id in ids]
+        response = _put_order(client, fx.bundle_id, {"revision": revision, "target_doc_id": fx.wi_id, "items": items})
+        assert response.status_code == 200, response.text
+        return {item["target_id"]: (item["wi_step"], item["indent_level"]) for item in response.json()["items"]}
+
+    assert put({figure["target_id"]: {"indent_level": 1}})[figure["target_id"]] == (2, 1)
+    # 깊이를 보내지 않고 다른 단계로 옮기면 0 — 깊이는 그 칸 앞뒤 줄에 기댄 값이다
+    assert put({figure["target_id"]: {"wi_step": 1}})[figure["target_id"]] == (1, 0)
+    # 옮기면서 깊이를 함께 보내면 그 값을 지킨다
+    assert put({figure["target_id"]: {"wi_step": 2, "indent_level": 1}})[figure["target_id"]] == (2, 1)
+    # 단계가 그대로면(같은 단계를 보내도) 깊이는 그대로다
+    assert put({figure["target_id"]: {"wi_step": 2}})[figure["target_id"]] == (2, 1)
+
+
 def test_reorder_rejects_bad_indents(client: TestClient) -> None:
     fx = _setup(client)
     revision = get_bundle(client, fx.bundle_id)["revision"]

@@ -6,6 +6,7 @@
 import asyncio
 import logging
 from collections import Counter, defaultdict
+from collections.abc import Collection
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Response
@@ -156,18 +157,27 @@ async def get_export(
 
 
 async def _check_indents(
-    session: AsyncSession, doc: TargetDoc, tops: dict[int, TargetSentence], items: list[OrderItemIn]
+    session: AsyncSession,
+    doc: TargetDoc,
+    tops: dict[int, TargetSentence],
+    items: list[OrderItemIn],
+    moved_ids: Collection[int],
 ) -> dict[int, int]:
     """바뀌는 깊이(새 문장 → 깊이)를 돌려준다 — 깊이가 바뀌는 출처의 번역도 출처의 새 깊이로 싣는다. 쓰기 전에 검사만 한다.
+
+    다른 단계로 옮기는 줄(moved_ids)은 깊이를 보내지 않았으면 0으로 돌린다 — 깊이는 그 칸 앞뒤 줄에 기댄 값이라
+    저장 경로(decisions._apply_plan)와 같은 규칙이다. 번역은 여기서 0으로 돌리지 않고 출처를 따른다.
 
     입구 2 문서는 번호를 새로 매기지 않으므로 깊이를 받지 않는다(422 indent_not_allowed). 번역의 깊이는 출처를 따라 잠겨 있어
     출처의 바뀐 뒤 깊이와 다르게 보내면 422 translation_locked다(단계 잠금과 같은 규칙).
     """
-    indents = {
-        item.target_id: item.indent_level
+    requested = {
+        item.target_id: 0 if item.indent_level is None else item.indent_level
         for item in items
-        if item.indent_level is not None and item.indent_level != tops[item.target_id].indent_level
+        if item.indent_level is not None
+        or (item.target_id in moved_ids and tops[item.target_id].origin != ORIGIN_TRANSLATION)
     }
+    indents = {target_id: level for target_id, level in requested.items() if level != tops[target_id].indent_level}
     if indents and doc.entrance == "match":
         raise_rule(422, "indent_not_allowed", target_ids=sorted(indents))
     translation_ids = [target_id for target_id, row in tops.items() if row.origin == ORIGIN_TRANSLATION]
@@ -235,7 +245,7 @@ async def reorder_targets(
         undeclared = sorted(target_id for target_id, step in moves.items() if step is not None and step not in declared)
         if undeclared:
             raise_rule(422, "unknown_wi_step", target_ids=undeclared)
-    indents = await _check_indents(session, doc, tops, payload.items)
+    indents = await _check_indents(session, doc, tops, payload.items, moves.keys())
 
     cells: dict[int, list[TargetSentence]] = defaultdict(list)
     for row in rows:
