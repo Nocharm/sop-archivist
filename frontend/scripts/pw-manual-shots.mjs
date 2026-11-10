@@ -149,7 +149,7 @@ const SCENES = [
       // 고르면 누른 곳 옆에 확정 메뉴가 늦게 뜬다 - 다 뜬 뒤에 찍는다
       await page.locator(id("assign-link-menu-confirm")).waitFor({ state: "visible", timeout: T });
     },
-    marks: [id("assign-identical"), id("assign-new"), `${id("assign-new")} .new-line[data-state="picked"]`, id("assign-chosen"), id("assign-divider"), id("assign-new-zoom")],
+    marks: [id("assign-identical"), id("assign-new"), `${id("assign-new")} .new-line[data-state="picked"]`, id("assign-chosen"), id("assign-divider"), id("assign-new-zoom-value")],
   },
   {
     name: "assign-unsourced", user: "qa.member", path: "/bundles/2/assign",
@@ -316,7 +316,8 @@ for (const scene of SCENES) {
   page.on("pageerror", (err) => errors.push(String(err)));
   try {
     await page.goto(BASE + scene.path, { waitUntil: "networkidle" });
-    if (APP_MANUAL) await page.addStyleTag({ content: APP_HIDE_CSS });
+    // Next dev 표시(N)는 시스템 설명서 그림에도 찍히면 안 된다
+    await page.addStyleTag({ content: APP_MANUAL ? APP_HIDE_CSS : "nextjs-portal { display: none !important; }" });
     await page.waitForTimeout(600);
     if (scene.prep) {
       await scene.prep(page);
