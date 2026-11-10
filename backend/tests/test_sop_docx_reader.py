@@ -588,6 +588,16 @@ def test_docx_letter_and_roman_numbers_past_the_first_cycle() -> None:
     assert [blocks[index].text for index in (7, 17, 55)] == ["IV. y", "IX. y", "XXVIII. y"]
 
 
+@pytest.mark.parametrize("start", ["99999999", "9" * 5000])
+def test_docx_huge_number_start_cannot_blow_up_the_label(start: str) -> None:
+    # 조작한 시작 값: 글자 번호가 값에 비례해 길어지면 문단 하나가 메모리를 다 쓴다
+    numbering = make_list(0, [("lowerLetter", "%1)" + "%1" * 400)], [1]).replace('w:start w:val="1"', f'w:start w:val="{start}"')
+
+    blocks = _read(numbered("x", 1), numbering=numbering)
+
+    assert len(blocks[0].text) < 2000
+
+
 def test_docx_bullets_become_a_plain_mark() -> None:
     # Symbol·Wingdings 글꼴의 사설 영역 글자와 글자 모양 표("o")는 "•"로, 뜻이 남는 기호는 그대로 쓴다
     lists = (
@@ -685,6 +695,16 @@ def test_docx_unresolved_numbering_keeps_the_flag() -> None:
         ("1. 풀림", ()), ("모르는 목록", ("auto_numbering",)), ("없는 수준", ("auto_numbering",)),
     ]
     assert result.warnings == (ExtractedWarning(kind="auto_numbering", block_seq=None, detail={"count": "2"}),)
+
+
+def test_docx_section_references_per_part_are_capped() -> None:
+    # 구역이 아주 많은 문서: 구역 표시는 머리말 블록마다 실리므로 부분마다 상한까지만 남긴다
+    section = '<w:p><w:pPr><w:sectPr><w:headerReference w:type="default" r:id="rIdHeader1"/></w:sectPr></w:pPr></w:p>'
+
+    result = read_docx(build_docx(p("본문") + section * 100, headers=[p("머리말")]), LIMITS)
+
+    header = next(block for block in result.blocks if block.part == "header")
+    assert len([flag for flag in header.flags if flag.startswith("section_ref:")]) == 24
 
 
 def test_docx_header_parts_carry_their_section_references() -> None:

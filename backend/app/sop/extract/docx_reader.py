@@ -63,6 +63,10 @@ _CAPTION_TEXT_RE = re.compile(r"^(그림|Figure|Fig\.)\s*\d+")
 _LEVEL_REF_RE = re.compile(r"%([1-9])")  # lvlText 안의 수준 자리("%1.%2")
 MAX_NUMBER_LEVELS = 9  # Word 목록 수준 수(ilvl 0~8)
 PLAIN_BULLET = "•"
+MAX_NUMBER_START = 32767  # 번호 시작 값 상한(Word와 같다) — 조작한 큰 값이 글자 번호를 끝없이 늘리지 못하게
+MAX_LETTER_REPEAT = 8  # "aa…" 되풀이 상한(8이면 208번째까지) — 넘으면 숫자로 쓴다
+MAX_LEVEL_TEXT_CHARS = 255  # lvlText 길이 상한(Word가 받는 길이) — 문단마다 되풀이되는 글이라 넘는 것은 자른다
+MAX_SECTION_REFS = 24  # 부분 하나에 남기는 구역 표시 수 — 블록마다 실리므로 구역이 아주 많은 문서에서 곱으로 불지 않게
 # 구역이 머리말·꼬리말 부분을 어떻게 거는지 블록에 남기는 표시 — "section_ref:<구역 번호(1부터)>:<default|first|even>"
 FLAG_SECTION_REF_PREFIX = "section_ref:"
 _GANADA = "가나다라마바사아자차카타파하"
@@ -251,7 +255,7 @@ def _format_number(value: int, fmt: str) -> str:
     if fmt in ("none", "bullet"):
         return ""
     if value >= 1:
-        if fmt in ("lowerLetter", "upperLetter"):
+        if fmt in ("lowerLetter", "upperLetter") and (value - 1) // 26 < MAX_LETTER_REPEAT:
             # Word는 z 다음을 aa, bb…로 쓴다
             letters = chr(ord("a") + (value - 1) % 26) * ((value - 1) // 26 + 1)
             return letters if fmt == "lowerLetter" else letters.upper()
@@ -570,7 +574,9 @@ def _load_numbering(
             continue
         root = _parse_xml(content)
         abstracts = {element.get(W_ABSTRACT_NUM_ID, ""): element for element in root.findall(W_ABSTRACT_NUM)}
-        for num in root.findall(W_NUM):
+        nums = root.findall(W_NUM)
+        nums_by_id = {num.get(W_NUM_ID, ""): num for num in nums}
+        for num in nums:
             abstract_id = _read_abstract_id(num)
             abstract = abstracts.get(abstract_id)
             link = abstract.find(W_NUM_STYLE_LINK) if abstract is not None else None
@@ -578,7 +584,7 @@ def _load_numbering(
                 # 목록 스타일을 따르는 정의 — 수준은 그 스타일이 가리키는 목록 정의에 있다
                 style = styles.get(link.get(W_VAL, ""))
                 linked_id = style.num_ref.num_id if style is not None and style.num_ref is not None else None
-                linked_num = next((item for item in root.findall(W_NUM) if item.get(W_NUM_ID) == linked_id), None)
+                linked_num = nums_by_id.get(linked_id) if linked_id is not None else None
                 abstract_id = _read_abstract_id(linked_num) if linked_num is not None else abstract_id
                 abstract = abstracts.get(abstract_id)
             if abstract is None:
@@ -599,7 +605,7 @@ def _load_numbering(
                     restarts[level] = levels[level].start
                 start = override.find(W_START_OVERRIDE)
                 if start is not None:
-                    restarts[level] = _read_int(start, 1)
+                    restarts[level] = _read_number_start(start)
             instances[num.get(W_NUM_ID, "")] = _NumInstance(abstract_id, levels, restarts)
     return _Numbering(instances)
 
@@ -617,10 +623,10 @@ def _read_level_index(element: Element) -> int | None:
 def _read_level(level: Element) -> _NumLevel:
     fmt, text, suffix, style = level.find(W_NUM_FMT), level.find(W_LVL_TEXT), level.find(W_SUFF), level.find(W_PSTYLE)
     return _NumLevel(
-        start=_read_int(level.find(W_START), 1),
+        start=_read_number_start(level.find(W_START)),
         # numFmt가 없으면(새 형식을 mc:AlternateContent로 감싼 경우 포함) 숫자다
         fmt=fmt.get(W_VAL, "decimal") if fmt is not None else "decimal",
-        text=text.get(W_VAL, "") if text is not None else "",
+        text=text.get(W_VAL, "")[:MAX_LEVEL_TEXT_CHARS] if text is not None else "",
         suffix="" if suffix is not None and suffix.get(W_VAL) == "nothing" else " ",
         style_id=style.get(W_VAL) if style is not None else None,
     )
@@ -635,7 +641,9 @@ def _read_section_refs(document: _Part) -> dict[str, tuple[str, ...]]:
             label = labels.get(reference.get(R_ID, ""))
             if reference.tag in (W_HEADER_REFERENCE, W_FOOTER_REFERENCE) and label is not None:
                 flag = f"{FLAG_SECTION_REF_PREFIX}{section}:{reference.get(W_TYPE, 'default')}"
-                refs.setdefault(label, []).append(flag)
+                flags = refs.setdefault(label, [])
+                if len(flags) < MAX_SECTION_REFS:
+                    flags.append(flag)
     return {label: tuple(flags) for label, flags in refs.items()}
 
 
@@ -744,7 +752,12 @@ def _read_numbering(p_pr: Element | None) -> _NumRef | None:
 
 def _read_int(element: Element | None, default: int) -> int:
     value = element.get(W_VAL, "") if element is not None else ""
-    return int(value) if value.isdigit() else default
+    # 자릿수 상한: 아주 긴 숫자 글자는 int()가 거절한다(조작한 파일)
+    return int(value) if value.isdigit() and len(value) <= 9 else default
+
+
+def _read_number_start(element: Element | None) -> int:
+    return min(_read_int(element, 1), MAX_NUMBER_START)
 
 
 def _iter_style_chain(style_id: str | None, styles: dict[str, _Style]) -> Iterator[_Style]:
