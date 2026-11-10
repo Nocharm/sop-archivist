@@ -39,7 +39,11 @@ function makeRecent(byBundle: Record<number, Partial<AiJobCounts>>): RecentAiJob
       error_counts: {},
       created_at: "2026-11-10T10:00:00+09:00",
       started_at: null,
+      running_started_at: null,
       finished_at: jobs.queued + jobs.running > 0 ? null : "2026-11-10T10:00:05+09:00",
+      document_id: null,
+      document_title: "",
+      document_file_name: "",
     };
   });
   return { server_time: "2026-11-10T10:00:00+09:00", jobs: [], jobs_total: 0, requests, requests_total: requests.length };
@@ -79,7 +83,7 @@ afterEach(() => {
 async function mount(onFinished: () => void) {
   const root = createRoot(document.createElement("div"));
   await act(async () => {
-    stop = startAiJobsPolling();
+    stop = startAiJobsPolling("qa.member");
     root.render(createElement(Harness, { onFinished }));
   });
   return root;

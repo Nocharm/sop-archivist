@@ -15,7 +15,7 @@ function makeData(isActive: boolean): RecentAiJobs {
     server_time: "2026-11-10T10:00:00+09:00",
     jobs: [],
     jobs_total: 0,
-    requests: [{ request_id: "r", bundle_id: 1, bundle_code: "BND-0001", bundle_title: "B", kind: "classify", kinds: ["classify"], requested_by_me: true, total: 1, jobs, error_counts: {}, created_at: "2026-11-10T10:00:00+09:00", started_at: null, finished_at: isActive ? null : "2026-11-10T10:00:05+09:00" }],
+    requests: [{ request_id: "r", bundle_id: 1, bundle_code: "BND-0001", bundle_title: "B", kind: "classify", kinds: ["classify"], requested_by_me: true, total: 1, jobs, error_counts: {}, created_at: "2026-11-10T10:00:00+09:00", started_at: null, running_started_at: null, finished_at: isActive ? null : "2026-11-10T10:00:05+09:00", document_id: null, document_title: "", document_file_name: "" }],
     requests_total: 1,
   };
 }
@@ -45,7 +45,7 @@ afterEach(() => {
 describe("ai-jobs-store", () => {
   it("asks every 3 seconds while something runs and every 30 seconds when idle", async () => {
     getRecentAiJobs.mockResolvedValueOnce(makeData(true)).mockResolvedValue(makeData(false));
-    stop = store.startAiJobsPolling();
+    stop = store.startAiJobsPolling("qa.member");
     await tick(0);
     expect(getRecentAiJobs).toHaveBeenCalledTimes(1);
     await tick(AI_ACTIVE_POLL_MS);
@@ -58,7 +58,7 @@ describe("ai-jobs-store", () => {
 
   it("keeps asking with longer gaps after failures", async () => {
     getRecentAiJobs.mockResolvedValueOnce(makeData(true)).mockRejectedValueOnce(new Error("network")).mockRejectedValueOnce(new ApiError(500, "boom")).mockResolvedValue(makeData(false));
-    stop = store.startAiJobsPolling();
+    stop = store.startAiJobsPolling("qa.member");
     await tick(AI_ACTIVE_POLL_MS);
     expect(getRecentAiJobs).toHaveBeenCalledTimes(2);
     // 첫 실패 뒤 3초, 두 번째 실패 뒤 6초
@@ -72,7 +72,7 @@ describe("ai-jobs-store", () => {
 
   it("keeps the previous list while an ask fails and clears the error once it answers", async () => {
     getRecentAiJobs.mockResolvedValueOnce(makeData(true)).mockRejectedValueOnce(new ApiError(404, "gone")).mockResolvedValue(makeData(false));
-    stop = store.startAiJobsPolling();
+    stop = store.startAiJobsPolling("qa.member");
     await tick(AI_ACTIVE_POLL_MS);
     expect(store.readAiJobsSnapshot().error).toBeInstanceOf(ApiError);
     expect(store.readAiJobsSnapshot().data?.requests[0].finished_at).toBeNull();
@@ -84,7 +84,7 @@ describe("ai-jobs-store", () => {
 
   it("rests after a refusal until something pokes it", async () => {
     getRecentAiJobs.mockRejectedValueOnce(new ApiError(403, "inactive")).mockResolvedValue(makeData(false));
-    stop = store.startAiJobsPolling();
+    stop = store.startAiJobsPolling("qa.member");
     await tick(AI_IDLE_POLL_MS * 3);
     expect(getRecentAiJobs).toHaveBeenCalledTimes(1);
     store.pokeAiJobs();
@@ -95,7 +95,7 @@ describe("ai-jobs-store", () => {
   it("asks right away when poked and once more if poked during an ask", async () => {
     let resolveFirst: (value: RecentAiJobs) => void = () => undefined;
     getRecentAiJobs.mockImplementationOnce(() => new Promise((resolve) => (resolveFirst = resolve))).mockResolvedValue(makeData(false));
-    stop = store.startAiJobsPolling();
+    stop = store.startAiJobsPolling("qa.member");
     store.pokeAiJobs();
     expect(getRecentAiJobs).toHaveBeenCalledTimes(1);
     resolveFirst(makeData(false));
@@ -106,7 +106,7 @@ describe("ai-jobs-store", () => {
   it("drops an answer that arrives after the store was cleared", async () => {
     let resolveFirst: (value: RecentAiJobs) => void = () => undefined;
     getRecentAiJobs.mockImplementationOnce(() => new Promise((resolve) => (resolveFirst = resolve))).mockReturnValue(new Promise(() => undefined));
-    stop = store.startAiJobsPolling();
+    stop = store.startAiJobsPolling("qa.member");
     store.clearAiJobsStore();
     resolveFirst(makeData(true));
     await tick(0);
@@ -115,16 +115,25 @@ describe("ai-jobs-store", () => {
 
   it("stops asking when the last holder lets go", async () => {
     getRecentAiJobs.mockResolvedValue(makeData(true));
-    const release = store.startAiJobsPolling();
+    const release = store.startAiJobsPolling("qa.member");
     await tick(0);
     release();
     await tick(AI_IDLE_POLL_MS * 2);
     expect(getRecentAiJobs).toHaveBeenCalledTimes(1);
   });
 
-  it("remembers failures that were seen", () => {
+  it("remembers seen failures per user and forgets them on sign-out", () => {
+    getRecentAiJobs.mockReturnValue(new Promise(() => undefined));
+    stop = store.startAiJobsPolling("qa.member");
     store.markFailuresSeen(["a", "b"]);
-    expect(JSON.parse(window.localStorage.getItem("sopa.aiJobs.seenFailed") ?? "[]")).toEqual(["a", "b"]);
+    expect(JSON.parse(window.localStorage.getItem("sopa.aiJobs.seenFailed.qa.member") ?? "[]")).toEqual(["a", "b"]);
+    stop();
+    // 다른 사람이 같은 브라우저로 들어오면 앞 사람이 본 실패는 그 사람의 배지에서 빠지지 않는다
+    stop = store.startAiJobsPolling("qa.lead");
+    store.markFailuresSeen(["c"]);
+    expect(JSON.parse(window.localStorage.getItem("sopa.aiJobs.seenFailed.qa.lead") ?? "[]")).toEqual(["c"]);
+    store.clearAiJobsStore();
+    expect(window.localStorage.getItem("sopa.aiJobs.seenFailed.qa.lead")).toBeNull();
   });
 });
 

@@ -8,8 +8,8 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { AiJobsPopover } from "@/components/ai-jobs-popover";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
-import type { RecentAiJobs } from "@/lib/api-sop";
-import { findFinishedRequests, getRequestToast, summarizeAiJobs } from "@/lib/ai-jobs-model";
+import type { RecentAiJobs, RecentAiRequest } from "@/lib/api-sop";
+import { findFinishedRequests, getRequestToast, mergeToastQueue, summarizeAiJobs } from "@/lib/ai-jobs-model";
 import { startAiJobsPolling, useAiJobsSnapshot, useSeenFailures } from "@/lib/ai-jobs-store";
 import { useI18n } from "@/lib/i18n";
 import { useSession } from "@/lib/session";
@@ -23,11 +23,13 @@ export function AiJobsIndicator() {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const previousRef = useRef<RecentAiJobs | null>(null);
+  // 탭이 가려진 동안 끝난 요청 - 알림은 몇 초 뒤 사라지므로 돌아왔을 때 띄운다
+  const hiddenQueueRef = useRef<RecentAiRequest[]>([]);
 
-  useEffect(() => (loginId === null ? undefined : startAiJobsPolling()), [loginId]);
+  useEffect(() => (loginId === null ? undefined : startAiJobsPolling(loginId)), [loginId]);
 
-  const announce = useEffectEvent((previous: RecentAiJobs | null, next: RecentAiJobs) => {
-    for (const request of findFinishedRequests(previous, next)) {
+  const showFinished = useEffectEvent((requests: readonly RecentAiRequest[]) => {
+    for (const request of requests) {
       const toast = getRequestToast(request);
       const reasonKey = `ai.error.${toast.reason}`;
       const reason = t(reasonKey) === reasonKey ? toast.reason : t(reasonKey);
@@ -35,11 +37,30 @@ export function AiJobsIndicator() {
     }
   });
 
+  const announce = useEffectEvent((previous: RecentAiJobs | null, next: RecentAiJobs) => {
+    const finished = findFinishedRequests(previous, next);
+    if (finished.length === 0) return;
+    if (document.visibilityState === "visible") showFinished(finished);
+    else hiddenQueueRef.current = mergeToastQueue(hiddenQueueRef.current, finished);
+  });
+
+  useEffect(() => {
+    const flush = () => {
+      if (document.visibilityState !== "visible" || hiddenQueueRef.current.length === 0) return;
+      const queued = hiddenQueueRef.current;
+      hiddenQueueRef.current = [];
+      showFinished(queued);
+    };
+    document.addEventListener("visibilitychange", flush);
+    return () => document.removeEventListener("visibilitychange", flush);
+  }, []);
+
   // 새 답마다 한 번 - 앞 답과 견주어 이번에 끝난 내 요청을 알린다. 저장소를 비우면(사용자 전환) 처음부터 다시 잰다
   useEffect(() => {
     const { data } = snapshot;
     if (data === null) {
       previousRef.current = null;
+      hiddenQueueRef.current = [];
       return;
     }
     if (previousRef.current === data) return;

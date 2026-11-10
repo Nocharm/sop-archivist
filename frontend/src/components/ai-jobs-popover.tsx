@@ -9,11 +9,10 @@ import { createPortal } from "react-dom";
 
 import { isTopEscLayer, placeBelow, popEscLayer, pushEscLayer, type FloatingPos } from "@/components/ui/floating";
 import { BusyLabel, Truncate } from "@/components/ui/motion";
-import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { humanizeApiError } from "@/lib/api-errors";
 import { cancelAi, retryAi } from "@/lib/api-manage";
-import type { RecentAiJob, RecentAiRequest } from "@/lib/api-sop";
+import type { RecentAiRequest } from "@/lib/api-sop";
 import {
   formatElapsed,
   getKindStage,
@@ -34,6 +33,34 @@ import { getStageHref } from "@/lib/stages";
 
 // 경과 시간을 다시 그리는 간격(ms) - 목록이 열려 있을 때만 돈다
 const TICK_MS = 1000;
+// 목록 왼쪽에 알림을 둘 최소 폭(px) - 이보다 좁으면 목록 아래로 내린다
+const TOAST_MIN_WIDTH = 220;
+const TOAST_GAP = 8;
+const PAGE_EDGE = 16;
+const TOAST_VARS = ["--toast-right", "--toast-width", "--toast-top"] as const;
+
+/** 목록이 떠 있는 동안 알림(오른쪽 위, 목록보다 위층)이 목록을 덮지 않게 비켜 놓는다 - 왼쪽에 자리가 있으면 왼쪽, 없으면 아래 */
+function moveToastsAside(panel: DOMRect, pos: FloatingPos): void {
+  const style = document.documentElement.style;
+  const room = pos.left - TOAST_GAP - PAGE_EDGE;
+  if (room >= TOAST_MIN_WIDTH) {
+    style.setProperty("--toast-right", `${window.innerWidth - pos.left + TOAST_GAP}px`);
+    style.setProperty("--toast-width", `${Math.min(380, room)}px`);
+  } else {
+    style.setProperty("--toast-top", `${pos.top + panel.height + TOAST_GAP}px`);
+  }
+}
+
+function restoreToasts(): void {
+  for (const name of TOAST_VARS) document.documentElement.style.removeProperty(name);
+}
+
+/** 취소·다시 시도 결과 - 알림 대신 그 줄 안에 보인다(알림이 목록을 덮지 않게) */
+interface RowResult {
+  requestId: string;
+  tone: "ok" | "error";
+  text: string;
+}
 
 const OUTCOME_ICON: Record<RequestOutcome, ReactNode> = {
   running: <Loader2 size={14} strokeWidth={1.5} className="shrink-0 animate-spin text-accent" aria-hidden />,
@@ -56,6 +83,7 @@ export function AiJobsPopover({ anchorRef, snapshot, onClose }: AiJobsPopoverPro
   const [pos, setPos] = useState<FloatingPos | null>(null);
   const [clock, setClock] = useState(() => Date.now());
   const [working, setWorking] = useState<string | null>(null);
+  const [result, setResult] = useState<RowResult | null>(null);
   const requestClose = useEffectEvent(() => onClose());
   const { data } = snapshot;
 
@@ -67,7 +95,9 @@ export function AiJobsPopover({ anchorRef, snapshot, onClose }: AiJobsPopoverPro
     const frame = requestAnimationFrame(() => {
       if (!panel || !anchor) return;
       const rect = panel.getBoundingClientRect();
-      setPos(placeBelow(anchor.getBoundingClientRect(), { width: rect.width, height: rect.height }, "end"));
+      const next = placeBelow(anchor.getBoundingClientRect(), { width: rect.width, height: rect.height }, "end");
+      setPos(next);
+      moveToastsAside(rect, next);
       panel.focus({ preventScroll: true });
     });
     const handleMouseDown = (event: MouseEvent) => {
@@ -85,6 +115,7 @@ export function AiJobsPopover({ anchorRef, snapshot, onClose }: AiJobsPopoverPro
     document.addEventListener("keydown", handleKey);
     return () => {
       cancelAnimationFrame(frame);
+      restoreToasts();
       popEscLayer(layer);
       document.removeEventListener("mousedown", handleMouseDown);
       document.removeEventListener("keydown", handleKey);
@@ -106,7 +137,6 @@ export function AiJobsPopover({ anchorRef, snapshot, onClose }: AiJobsPopoverPro
   }, [data]);
 
   const serverNow = data ? getServerNow(data.server_time, snapshot.receivedAt, clock) : clock;
-  const jobs: readonly RecentAiJob[] = data?.jobs ?? [];
   const groups = groupRequestsByBundle(data?.requests ?? []);
 
   function translateError(code: string): string {
@@ -115,21 +145,24 @@ export function AiJobsPopover({ anchorRef, snapshot, onClose }: AiJobsPopoverPro
     return text === key ? code : text;
   }
 
-  // 취소·다시 시도는 묶음의 종류 단위다(요청 단위가 아니다) - 요청에 든 종류마다 보낸다
+  // 취소·다시 시도는 묶음의 종류 단위다(요청 단위가 아니다) - 요청에 든 종류마다 보낸다.
+  // 한 종류가 실패해도 앞 종류에서 된 수는 알리고, 바뀐 것이 보이게 목록을 바로 다시 묻는다
   async function run(request: RecentAiRequest, action: "cancel" | "retry") {
     setWorking(`${request.request_id}:${action}`);
+    setResult(null);
+    let count = 0;
     try {
-      let count = 0;
       for (const kind of request.kinds) {
         if (action === "cancel") count += (await cancelAi(request.bundle_id, kind)).cancelled;
         else count += (await retryAi(request.bundle_id, kind)).queued;
       }
-      showToast(action === "cancel" ? t("ai.cancelled", { n: count }) : t("ai.retried", { n: count }));
-      pokeAiJobs();
+      setResult({ requestId: request.request_id, tone: "ok", text: action === "cancel" ? t("ai.cancelled", { n: count }) : t("ai.retried", { n: count }) });
     } catch (err) {
-      showToast(humanizeApiError(err, t), "error");
+      const done = count > 0 ? `${action === "cancel" ? t("ai.cancelled", { n: count }) : t("ai.retried", { n: count })} · ` : "";
+      setResult({ requestId: request.request_id, tone: "error", text: done + humanizeApiError(err, t) });
     } finally {
       setWorking(null);
+      pokeAiJobs();
     }
   }
 
@@ -137,9 +170,10 @@ export function AiJobsPopover({ anchorRef, snapshot, onClose }: AiJobsPopoverPro
     const outcome = getRequestOutcome(request);
     const progress = getRequestProgress(request);
     const kindLabel = t(`ai.kind.${request.kind}`);
-    const documentName = getRequestDocument(request, jobs);
+    const documentName = getRequestDocument(request);
     const isActive = isRequestActive(request);
-    const isSlow = isRequestSlow(request, jobs, serverNow);
+    const isSlow = isRequestSlow(request, serverNow);
+    const rowResult = result?.requestId === request.request_id ? result : null;
     const time = isActive ? formatElapsed(getRequestElapsedMs(request, serverNow)) : formatKstShort(request.finished_at);
     const stage = getKindStage(request.kind);
     const testId = `ai-jobs-request-${request.request_id}`;
@@ -203,6 +237,11 @@ export function AiJobsPopover({ anchorRef, snapshot, onClose }: AiJobsPopoverPro
               </p>
             )}
           </div>
+        )}
+        {rowResult && (
+          <p className={`pl-[22px] text-[12px] ${rowResult.tone === "error" ? "text-danger" : "text-ink-2"}`} role="status" data-testid={`${testId}-result`}>
+            {rowResult.text}
+          </p>
         )}
       </li>
     );

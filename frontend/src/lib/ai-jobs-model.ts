@@ -1,6 +1,6 @@
 // 상단 바 AI 작업 표시의 규칙 - 요청 집계·진행 수·끝난 요청 골라내기(알림)·경과 시간·"오래 걸림"·묶음별 묶기. 화면 없이 시험한다.
 
-import type { AiJobCounts, AiJobKind, RecentAiJob, RecentAiJobs, RecentAiRequest } from "./api-sop";
+import type { AiJobCounts, AiJobKind, RecentAiJobs, RecentAiRequest } from "./api-sop";
 import type { StageKey } from "./stages";
 
 /** 무엇인가 대기·실행 중일 때 다시 묻는 간격(ms) - 짧으면 서버에 자주 묻고, 길면 끝난 작업이 늦게 보인다 */
@@ -83,14 +83,17 @@ export function getRetryMs(failures: number): number {
   return Math.min(AI_ACTIVE_POLL_MS * 2 ** Math.max(failures - 1, 0), AI_RETRY_MAX_MS);
 }
 
+/** 앞 답의 서버 시각보다 이만큼 먼저 생긴 요청도 "그 뒤에 생긴 것"으로 본다(ms) - 작업을 쌓은 시각과 커밋 사이에 앞 답이 지나가면 그 답에 없다 */
+export const AI_NEW_REQUEST_SLACK_MS = 10_000;
+
 /**
- * 알릴 요청 - 내가 한 요청 중 이번에 끝난 것. 앞 답에서 돌고 있었거나, 앞 답 뒤에 생겨 두 번 묻는 사이에 끝난 것.
+ * 알릴 요청 - 내가 한 요청 중 이번에 끝난 것. 앞 답에서 돌고 있었거나, 앞 답 무렵 뒤에 생겨 두 번 묻는 사이에 끝난 것.
  * 앞 답이 없으면(첫 답·사용자 전환 뒤) 아무것도 알리지 않는다 - 지난 일을 쏟아내지 않게.
  */
 export function findFinishedRequests(previous: RecentAiJobs | null, next: RecentAiJobs): RecentAiRequest[] {
   if (previous === null) return [];
   const before = new Map(previous.requests.map((request) => [request.request_id, request]));
-  const since = Date.parse(previous.server_time);
+  const since = Date.parse(previous.server_time) - AI_NEW_REQUEST_SLACK_MS;
   return next.requests.filter((request) => {
     if (!request.requested_by_me || isRequestActive(request)) return false;
     const earlier = before.get(request.request_id);
@@ -119,20 +122,18 @@ export function getRequestElapsedMs(request: RecentAiRequest, serverNow: number)
   return serverNow - Date.parse(from);
 }
 
-/** 이 요청의 실행 중 작업 하나라도 AI_SLOW_MS보다 오래 running이면 오래 걸림 - 작업 목록(최신 100건)에 든 것만 본다 */
-export function isRequestSlow(request: RecentAiRequest, jobs: readonly RecentAiJob[], serverNow: number): boolean {
-  if (request.jobs.running === 0) return false;
-  return jobs.some((job) => job.request_id === request.request_id && job.status === "running" && job.started_at !== null && serverNow - Date.parse(job.started_at) > AI_SLOW_MS);
+/**
+ * 지금 실행 중인 작업 하나라도 AI_SLOW_MS보다 오래 running이면 오래 걸림. 서버가 요청마다 실행 중 작업의 가장 이른 시작을 준다
+ * (작업 목록은 100건만 오고, 워커는 가장 오래된 작업부터 꺼내 큰 요청에서는 도는 작업이 목록 밖이다)
+ */
+export function isRequestSlow(request: RecentAiRequest, serverNow: number): boolean {
+  if (request.jobs.running === 0 || request.running_started_at === null) return false;
+  return serverNow - Date.parse(request.running_started_at) > AI_SLOW_MS;
 }
 
 /** 요청이 문서 하나에 걸려 있으면 그 문서 이름(제목, 없으면 파일 이름) - 여러 문서거나 문서가 없으면 "" */
-export function getRequestDocument(request: RecentAiRequest, jobs: readonly RecentAiJob[]): string {
-  const names = new Set<string>();
-  for (const job of jobs) {
-    if (job.request_id !== request.request_id || job.document_id === null) continue;
-    names.add(job.document_title || job.document_file_name);
-  }
-  return names.size === 1 ? [...names][0] : "";
+export function getRequestDocument(request: RecentAiRequest): string {
+  return request.document_id === null ? "" : request.document_title || request.document_file_name;
 }
 
 export interface BundleGroup {
@@ -142,10 +143,15 @@ export interface BundleGroup {
   requests: RecentAiRequest[];
 }
 
-/** 묶음별로 모은다 - 묶음 순서는 그 묶음의 가장 최신 요청 순(요청 목록이 이미 최신 순이다) */
+/** 도는 요청을 먼저 - 같은 쪽 안에서는 서버가 준 순서(최신 순)를 지킨다 */
+export function sortActiveFirst(requests: readonly RecentAiRequest[]): RecentAiRequest[] {
+  return [...requests.filter(isRequestActive), ...requests.filter((request) => !isRequestActive(request))];
+}
+
+/** 묶음별로 모은다 - 도는 요청이 있는 묶음이 먼저이고, 묶음 안에서도 도는 요청이 먼저다. 나머지는 최신 순 */
 export function groupRequestsByBundle(requests: readonly RecentAiRequest[]): BundleGroup[] {
   const groups = new Map<number, BundleGroup>();
-  for (const request of requests) {
+  for (const request of sortActiveFirst(requests)) {
     let group = groups.get(request.bundle_id);
     if (!group) {
       group = { bundleId: request.bundle_id, bundleCode: request.bundle_code, bundleTitle: request.bundle_title, requests: [] };
@@ -166,13 +172,20 @@ export function getBundleSignature(data: RecentAiJobs | null, bundleId: number):
   return `${sum.queued}:${sum.running}:${sum.done}:${sum.failed}:${sum.stale}:${sum.cancelled}`;
 }
 
-/** 문서마다 대기·실행 중인 문서 정보(doc_meta) 작업이 있는지 - 문서 화면이 "AI가 읽는 중"을 보인다 */
+/** 문서 정보(doc_meta)를 AI가 아직 읽는 문서 - 요청 목록(도는 요청은 상한에 걸리지 않는다)에서 고른다. 업로드마다 문서 하나에 요청 하나다 */
 export function listReadingDocuments(data: RecentAiJobs | null, bundleId: number): Set<number> {
   const ids = new Set<number>();
-  for (const job of data?.jobs ?? []) {
-    if (job.bundle_id === bundleId && job.kind === "doc_meta" && job.document_id !== null && (job.status === "queued" || job.status === "running")) ids.add(job.document_id);
+  for (const request of data?.requests ?? []) {
+    if (request.bundle_id === bundleId && request.kinds.includes("doc_meta") && request.document_id !== null && isRequestActive(request)) ids.add(request.document_id);
   }
   return ids;
+}
+
+/** 탭이 가려진 동안 끝난 요청을 모아 둔다 - 같은 요청은 한 번(나중 상태가 이긴다) */
+export function mergeToastQueue(queue: readonly RecentAiRequest[], finished: readonly RecentAiRequest[]): RecentAiRequest[] {
+  const byId = new Map(queue.map((request) => [request.request_id, request]));
+  for (const request of finished) byId.set(request.request_id, request);
+  return [...byId.values()];
 }
 
 export interface RequestToast {

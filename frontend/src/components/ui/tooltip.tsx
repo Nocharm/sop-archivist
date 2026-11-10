@@ -23,15 +23,16 @@ export function Tooltip({ label, children, align = "center", suppressed = false 
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<FloatingPos | null>(null);
 
+  // 끈 동안은 그려지지 않아 잴 것이 없다 - 다시 켜지면(열린 채로) 그때 잰다
   useEffect(() => {
-    if (!open) return;
+    if (!open || suppressed) return;
     const frame = requestAnimationFrame(() => {
       const host = hostRef.current;
       const tip = tipRef.current;
       if (host && tip) setPos(placeBelow(host.getBoundingClientRect(), tip.getBoundingClientRect(), align));
     });
     return () => cancelAnimationFrame(frame);
-  }, [open, align]);
+  }, [open, align, suppressed]);
 
   useEffect(() => () => {
     if (timerRef.current !== null) window.clearTimeout(timerRef.current);

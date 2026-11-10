@@ -191,11 +191,17 @@ export interface RecentAiRequest {
   error_counts: Record<string, number>;
   created_at: string;
   started_at: string | null;
+  /** 지금 실행 중인 작업의 가장 이른 시작 - 실행 중이 없으면 null. "오래 걸림"을 작업 목록 상한과 상관없이 잰다 */
+  running_started_at: string | null;
   /** 대기·실행 중이 하나라도 있으면 null */
   finished_at: string | null;
+  /** 모든 작업이 같은 한 문서일 때만 그 문서, 아니면 null(지워졌으면 제목·파일 이름이 "") */
+  document_id: number | null;
+  document_title: string;
+  document_file_name: string;
 }
 
-/** 내가 멤버인 묶음의 대기·실행 중 작업과 하루 안에 끝난 작업 - 각각 최신 100건 */
+/** 내가 멤버인 묶음의 대기·실행 중 작업과 하루 안에 끝난 작업 - 각각 도는 것 먼저, 그다음 최신 순으로 100건 */
 export interface RecentAiJobs {
   /** 서버 시각(KST ISO) - "오래 도는 중"은 클라이언트 시계 대신 이것으로 잰다 */
   server_time: string;

@@ -16,14 +16,16 @@ export interface AiJobsSnapshot {
   receivedAt: number;
 }
 
-// 실패를 이미 본(목록을 연) 요청 - 새로고침해도 배지가 되살아나지 않게 이 브라우저에 둔다
-const SEEN_KEY = "sopa.aiJobs.seenFailed";
+// 실패를 이미 본(목록을 연) 요청 - 새로고침해도 배지가 되살아나지 않게 이 브라우저에 사용자마다 둔다. 로그아웃·사용자 전환 때 지운다
+const SEEN_PREFIX = "sopa.aiJobs.seenFailed.";
 const SEEN_MAX = 200;
 
 const EMPTY: AiJobsSnapshot = { data: null, error: null, receivedAt: 0 };
 let snapshot: AiJobsSnapshot = EMPTY;
 let seen: ReadonlySet<string> = new Set();
 let seenLoaded = false;
+// 폴러를 켠 사용자 - 본 실패의 저장 자리를 정한다
+let owner: string | null = null;
 const listeners = new Set<() => void>();
 
 // 폴러 - 켜 둔 곳 수, 다음 묻기 타이머, 도는 요청, 실패 횟수, 세대(비운 뒤 늦게 온 답을 버린다)
@@ -90,7 +92,12 @@ function handleVisible(): void {
 }
 
 /** 폴러를 켠다(상단 바가 로그인한 동안 한 번) - 돌려준 함수로 끈다 */
-export function startAiJobsPolling(): () => void {
+export function startAiJobsPolling(loginId: string): () => void {
+  if (owner !== loginId) {
+    owner = loginId;
+    seen = new Set();
+    seenLoaded = false;
+  }
   holders += 1;
   if (holders === 1) {
     document.addEventListener("visibilitychange", handleVisible);
@@ -109,13 +116,23 @@ export function pokeAiJobs(): void {
   if (holders > 0) void poll();
 }
 
-/** 로그아웃·사용자 전환 때 - 앞 사용자의 작업 목록(묶음 제목 포함)을 잊고, 도는 요청의 답도 버린다 */
+/** 로그아웃·사용자 전환 때 - 앞 사용자의 작업 목록(묶음 제목 포함)과 본 실패 기록을 잊고, 도는 요청의 답도 버린다 */
 export function clearAiJobsStore(): void {
   generation += 1;
   inflight = false;
   again = false;
   failures = 0;
   snapshot = EMPTY;
+  if (owner !== null) {
+    try {
+      window.localStorage.removeItem(SEEN_PREFIX + owner);
+    } catch {
+      // 저장소를 못 쓰면 지울 것도 없다
+    }
+  }
+  seen = new Set();
+  seenLoaded = false;
+  owner = null;
   emit();
   if (holders > 0) void poll();
 }
@@ -135,10 +152,10 @@ export function useAiJobsSelect<T>(select: (snapshot: AiJobsSnapshot) => T, serv
 }
 
 function loadSeen(): void {
-  if (seenLoaded) return;
+  if (seenLoaded || owner === null) return;
   seenLoaded = true;
   try {
-    const raw = window.localStorage.getItem(SEEN_KEY);
+    const raw = window.localStorage.getItem(SEEN_PREFIX + owner);
     const parsed: unknown = raw ? JSON.parse(raw) : [];
     if (Array.isArray(parsed)) seen = new Set(parsed.filter((item): item is string => typeof item === "string"));
   } catch {
@@ -164,7 +181,7 @@ export function markFailuresSeen(requestIds: readonly string[]): void {
   if (fresh.length === 0) return;
   seen = new Set([...seen, ...fresh].slice(-SEEN_MAX));
   try {
-    window.localStorage.setItem(SEEN_KEY, JSON.stringify([...seen]));
+    if (owner !== null) window.localStorage.setItem(SEEN_PREFIX + owner, JSON.stringify([...seen]));
   } catch {
     // 저장 못 해도 이번 창에서는 본 것으로 둔다
   }

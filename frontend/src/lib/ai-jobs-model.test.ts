@@ -22,6 +22,8 @@ import {
   groupRequestsByBundle,
   isRequestSlow,
   listReadingDocuments,
+  mergeToastQueue,
+  sortActiveFirst,
   summarizeAiJobs,
 } from "./ai-jobs-model";
 
@@ -45,31 +47,11 @@ function makeRequest(id: string, counts: Partial<AiJobCounts>, extra: Partial<Re
     error_counts: {},
     created_at: T0,
     started_at: jobs.running > 0 ? T0 : null,
+    running_started_at: jobs.running > 0 ? T0 : null,
     finished_at: isActive ? null : at(60),
-    ...extra,
-  };
-}
-
-function makeJob(id: number, requestId: string, extra: Partial<RecentAiJob> = {}): RecentAiJob {
-  return {
-    id,
-    request_id: requestId,
-    bundle_id: 1,
-    bundle_code: "BND-0001",
-    bundle_title: "Bundle one",
-    kind: "classify",
-    status: "done",
-    error: "",
     document_id: null,
     document_title: "",
     document_file_name: "",
-    unit_count: 1,
-    target_count: 0,
-    attempts: 1,
-    requested_by_me: true,
-    created_at: T0,
-    started_at: T0,
-    finished_at: at(10),
     ...extra,
   };
 }
@@ -115,7 +97,9 @@ describe("findFinishedRequests", () => {
     const before = makeData([], at(30));
     const fast = makeRequest("fast", { done: 1 }, { created_at: at(31) });
     const old = makeRequest("old", { done: 1 }, { created_at: at(0) });
-    expect(findFinishedRequests(before, makeData([fast, old], at(33))).map((request) => request.request_id)).toEqual(["fast"]);
+    // 앞 답 바로 전에 쌓였지만 커밋이 늦어 앞 답에 없던 요청도 알린다
+    const late = makeRequest("late", { done: 1 }, { created_at: at(29) });
+    expect(findFinishedRequests(before, makeData([fast, late, old], at(33))).map((request) => request.request_id)).toEqual(["fast", "late"]);
   });
 
   it("does not announce someone else's request, one still running, or one already finished", () => {
@@ -171,13 +155,13 @@ describe("time", () => {
     expect(getRequestElapsedMs(makeRequest("a", { queued: 1 }), now)).toBe(90_000);
   });
 
-  it("flags a request whose running job passed the threshold", () => {
-    const request = makeRequest("a", { running: 1, done: 1 });
-    const jobs = [makeJob(1, "a", { status: "running", started_at: T0, finished_at: null }), makeJob(2, "a")];
-    expect(isRequestSlow(request, jobs, Date.parse(T0) + AI_SLOW_MS - 1000)).toBe(false);
-    expect(isRequestSlow(request, jobs, Date.parse(T0) + AI_SLOW_MS + 1000)).toBe(true);
+  it("flags a request whose running job passed the threshold, however many jobs it has", () => {
+    // 워커는 가장 오래된 작업부터 꺼내 큰 요청의 도는 작업은 작업 목록(100건) 밖이다 - 서버가 요청마다 실행 중 시작을 준다
+    const request = makeRequest("a", { running: 1, queued: 400, done: 99 }, { running_started_at: T0 });
+    expect(isRequestSlow(request, Date.parse(T0) + AI_SLOW_MS - 1000)).toBe(false);
+    expect(isRequestSlow(request, Date.parse(T0) + AI_SLOW_MS + 1000)).toBe(true);
     // 대기만 오래인 요청은 앞 작업을 기다리는 것이라 오래 걸림이 아니다
-    expect(isRequestSlow(makeRequest("b", { queued: 1 }), [makeJob(3, "b", { status: "queued", started_at: null })], Date.parse(T0) + AI_SLOW_MS * 2)).toBe(false);
+    expect(isRequestSlow(makeRequest("b", { queued: 1 }), Date.parse(T0) + AI_SLOW_MS * 2)).toBe(false);
   });
 });
 
@@ -194,6 +178,20 @@ describe("polling intervals", () => {
 });
 
 describe("grouping and screens", () => {
+  it("puts bundles and requests that are still running first, then keeps the newest-first order", () => {
+    const requests = [
+      makeRequest("new-done", { done: 1 }, { bundle_id: 2, bundle_code: "BND-0002" }),
+      makeRequest("b-done", { done: 1 }),
+      makeRequest("old-running", { running: 1 }),
+      makeRequest("older-done", { done: 1 }, { bundle_id: 2, bundle_code: "BND-0002" }),
+    ];
+    expect(sortActiveFirst(requests).map((request) => request.request_id)).toEqual(["old-running", "new-done", "b-done", "older-done"]);
+    expect(groupRequestsByBundle(requests).map((group) => [group.bundleCode, group.requests.map((request) => request.request_id)])).toEqual([
+      ["BND-0001", ["old-running", "b-done"]],
+      ["BND-0002", ["new-done", "older-done"]],
+    ]);
+  });
+
   it("groups by bundle in order of the newest request", () => {
     const requests = [makeRequest("a", { done: 1 }, { bundle_id: 2, bundle_code: "BND-0002" }), makeRequest("b", { done: 1 }), makeRequest("c", { done: 1 }, { bundle_id: 2, bundle_code: "BND-0002" })];
     const groups = groupRequestsByBundle(requests);
@@ -204,11 +202,9 @@ describe("grouping and screens", () => {
   });
 
   it("names the document only when the request is about one document", () => {
-    const request = makeRequest("a", { done: 2 });
-    expect(getRequestDocument(request, [makeJob(1, "a", { document_id: 5, document_title: "Cleaning SOP" }), makeJob(2, "a", { document_id: 5, document_title: "Cleaning SOP" })])).toBe("Cleaning SOP");
-    expect(getRequestDocument(request, [makeJob(1, "a", { document_id: 5, document_title: "", document_file_name: "SYNTHETIC_a.docx" })])).toBe("SYNTHETIC_a.docx");
-    expect(getRequestDocument(request, [makeJob(1, "a", { document_id: 5, document_title: "A" }), makeJob(2, "a", { document_id: 6, document_title: "B" })])).toBe("");
-    expect(getRequestDocument(request, [makeJob(1, "a")])).toBe("");
+    expect(getRequestDocument(makeRequest("a", { done: 2 }, { document_id: 5, document_title: "Cleaning SOP" }))).toBe("Cleaning SOP");
+    expect(getRequestDocument(makeRequest("a", { done: 1 }, { document_id: 5, document_file_name: "SYNTHETIC_a.docx" }))).toBe("SYNTHETIC_a.docx");
+    expect(getRequestDocument(makeRequest("a", { done: 2 }))).toBe("");
   });
 
   it("opens the screen where each kind's result shows", () => {
@@ -228,13 +224,21 @@ describe("grouping and screens", () => {
     expect(getBundleSignature(null, 1)).toBe(getBundleSignature(makeData([]), 1));
   });
 
-  it("lists documents whose number and version AI is still reading", () => {
-    const jobs = [
-      makeJob(1, "a", { kind: "doc_meta", status: "running", document_id: 5 }),
-      makeJob(2, "b", { kind: "doc_meta", status: "done", document_id: 6 }),
-      makeJob(3, "c", { kind: "doc_meta", status: "queued", document_id: 7, bundle_id: 2 }),
-      makeJob(4, "d", { kind: "split", status: "running", document_id: 8 }),
+  it("lists documents whose number and version AI is still reading, from the request list", () => {
+    const requests = [
+      makeRequest("a", { running: 1 }, { kind: "doc_meta", kinds: ["doc_meta"], document_id: 5 }),
+      makeRequest("b", { done: 1 }, { kind: "doc_meta", kinds: ["doc_meta"], document_id: 6 }),
+      makeRequest("c", { queued: 1 }, { kind: "doc_meta", kinds: ["doc_meta"], document_id: 7, bundle_id: 2 }),
+      makeRequest("d", { running: 1 }, { kind: "split", kinds: ["split"], document_id: 8 }),
     ];
-    expect([...listReadingDocuments(makeData([], T0, jobs), 1)]).toEqual([5]);
+    // 작업 목록이 비어 있어도(큰 요청이 100건을 채움) 요청 목록으로 안다
+    expect([...listReadingDocuments(makeData(requests, T0, []), 1)]).toEqual([5]);
+  });
+
+  it("queues each finished request once while the tab is hidden, keeping the latest state", () => {
+    const first = makeRequest("a", { done: 1 });
+    const later = makeRequest("a", { done: 1, failed: 1 });
+    const other = makeRequest("b", { done: 1 });
+    expect(mergeToastQueue(mergeToastQueue([], [first]), [later, other])).toEqual([later, other]);
   });
 });

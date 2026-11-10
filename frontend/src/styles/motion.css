@@ -88,12 +88,13 @@
   /* 알림 - 오른쪽 위(상단 막대 44px 아래). 들어올 때 위에서 내려오고, 빠질 때 오른쪽으로 밀려 나간 뒤 높이를 접어 아래 알림이 올라온다 */
   .toast-stack {
     position: fixed;
-    top: calc(44px + 8px);
-    right: max(16px, env(safe-area-inset-right, 0px));
+    /* 상단 바 AI 작업 목록이 떠 있으면 그 목록이 --toast-*로 알림을 왼쪽(또는 아래)으로 비켜 놓는다 - 목록을 덮지 않게 */
+    top: var(--toast-top, calc(44px + 8px));
+    right: var(--toast-right, max(16px, env(safe-area-inset-right, 0px)));
     z-index: 70;
     display: grid;
     justify-items: end;
-    width: min(380px, calc(100vw - 32px));
+    width: var(--toast-width, min(380px, calc(100vw - 32px)));
     pointer-events: none;
   }
   .toast-slot { display: grid; grid-template-rows: 1fr; width: 100%; transition: grid-template-rows var(--dur-slow) var(--ease-move) var(--dur-slow); }
