@@ -29,6 +29,8 @@ EQUIPMENT_SLOT_KEYS = ("procedures.electronic_record_control", "procedures.troub
 SEMANTIC_CHECK_KEYS = ("numbers", "conditions", "tables", "figures")
 SYSTEM_HOLD_RELATED_CHANGED = "system:related_unit_changed"  # 화면은 "관련 단위가 바뀜"으로 보인다
 MAX_PAIR_SIDE = 3  # 한/영 짝 한쪽 최대 단위 수(작은 다대다)
+# 새 문장 들여쓰기 최대 깊이 — 9면 칸 번호 아래로 열 단계(6.1.1 … 6.1.1.1.1.1.1.1.1.1)까지. 순서 바꾸기 입력의 상한이다
+MAX_INDENT_LEVEL = 9
 
 # --- AI 층(계획 2) ---
 AI_JOB_KINDS = ("classify", "translate", "match_plan", "match", "pair", "split", "doc_meta")

@@ -6,6 +6,7 @@
 """
 
 from collections import Counter, defaultdict
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -27,6 +28,7 @@ from app.sop.snapshot import (
 from app.sop.status import get_cover_status
 
 Lang = Literal["ko", "en"]
+NumberOf = Callable[[TargetInfo], str]  # 새 문장 → 그 판의 섹션 번호(없으면 빈 글)
 ORIGIN_NEW_DOC = "new_doc"
 # 나눔 문장 번호 — 스무 개를 넘으면 "(21)" 꼴로 이어 간다
 CIRCLED_NUMBERS = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
@@ -59,6 +61,8 @@ class ARow(BaseModel):
     dest_doc_code: str
     dest_doc_title: str
     dest_location: str
+    # 새 문서 안 섹션 번호(결과물 C와 같은 값) — 여러 새 문장이면 "① 6.1.1\n② 6.1.2", 번호가 없는 자리(입구 2 문서·단계 없는 WI)는 빈 글
+    dest_number: str
     confirmed_text: str
     ai_text: str
     change_type: str
@@ -98,6 +102,9 @@ class CItem(BaseModel):
     change_type: str | None
     status: str
     source_note: str
+    # 섹션 번호(칸 번호 + 들여쓰기 깊이, 예: 6.1.2.1) — 표 칸은 표의 번호, 입구 2 문서·단계 없는 WI는 None
+    number: str | None
+    indent_level: int  # 사람이 정한 깊이 그대로(번호는 눌러 읽은 깊이로 센다)
     cell_row: int | None
     cell_col: int | None
     children: list["CItem"]  # 표 새 문장의 칸 새 문장(행·열 순)
@@ -106,6 +113,7 @@ class CItem(BaseModel):
 class CSection(BaseModel):
     location_key: str  # SOP 칸 키 | step:<n>:<부분> | unstepped:<부분> | path:<절 경로>
     label: str
+    number: str | None  # SOP 칸 번호(5.1)·WI 단계 번호(3), 번호가 없는 칸은 None
     na_reason: str | None
     items: list[CItem]
 
@@ -177,6 +185,7 @@ class _Index:
 class _SectionPlan:
     key: str
     label: str
+    number: str | None  # 줄 번호의 머리 — 같은 번호의 칸(WI 한 단계의 Instruction·Why)은 줄 번호를 이어 센다
     na_reason: str | None
     targets: list[TargetInfo]  # 칸 새 문장이 아닌 새 문장(두 언어 모두), 칸 안 순서
     keep_empty: bool  # SOP 칸·선언 단계는 비어도 싣고, 단계 없음·절 경로 칸은 그 언어 새 문장이 있을 때만
@@ -302,7 +311,7 @@ def _plan_sections(index: _Index, doc: TargetDocInfo, labels: OutputLabels) -> l
         for target in tops:
             by_path.setdefault(target.section_path, []).append(target)
         return [
-            _SectionPlan(f"path:{path}", path or labels.no_section, None, targets, keep_empty=False)
+            _SectionPlan(f"path:{path}", path or labels.no_section, None, None, targets, keep_empty=False)
             for path, targets in by_path.items()
         ]
     if doc.doc_type == "sop":
@@ -310,7 +319,10 @@ def _plan_sections(index: _Index, doc: TargetDocInfo, labels: OutputLabels) -> l
         for target in tops:
             by_slot[target.slot_key].append(target)
         return [
-            _SectionPlan(key, labels.slots[key], _find_na_reason(doc, key), by_slot.get(key, []), keep_empty=True)
+            _SectionPlan(
+                key, labels.slots[key], SLOT_NUMBERS[key], _find_na_reason(doc, key), by_slot.get(key, []),
+                keep_empty=True,
+            )
             for key in SLOT_KEYS
         ]
     by_place: dict[tuple[int | None, str | None], list[TargetInfo]] = defaultdict(list)
@@ -321,20 +333,80 @@ def _plan_sections(index: _Index, doc: TargetDocInfo, labels: OutputLabels) -> l
     steps = sorted(declared | {target.wi_step for target in tops if target.wi_step is not None})
     plans = [
         _SectionPlan(
-            f"step:{step}:{part}", labels.wi_step_template.format(step=step, part=labels.wi_parts[part]), None,
-            by_place.get((step, part), []), keep_empty=step in declared,
+            f"step:{step}:{part}", labels.wi_step_template.format(step=step, part=labels.wi_parts[part]), str(step),
+            None, by_place.get((step, part), []), keep_empty=step in declared,
         )
         for step in steps
         for part in WI_PARTS
     ]
     plans += [
         _SectionPlan(
-            f"unstepped:{part}", labels.wi_unstepped_template.format(part=labels.wi_parts[part]), None,
+            f"unstepped:{part}", labels.wi_unstepped_template.format(part=labels.wi_parts[part]), None, None,
             by_place.get((None, part), []), keep_empty=False,
         )
         for part in WI_PARTS
     ]
     return plans
+
+
+# --- 섹션 번호 ---
+
+
+def _build_slot_numbers() -> dict[str, str]:
+    """SOP 칸 번호 — SLOT_KEYS의 고정 자리(도메인 문서 §2의 S1…S7, 하위 칸은 5.1)라 칸을 N/A로 바꿔도 다른 칸 번호가 그대로다."""
+    numbers: dict[str, str] = {}
+    tops = 0
+    children: Counter[str] = Counter()
+    for key in SLOT_KEYS:
+        parent, _, child = key.partition(".")
+        if child:
+            children[parent] += 1
+            numbers[key] = f"{numbers[parent]}.{children[parent]}"
+        else:
+            tops += 1
+            numbers[key] = str(tops)
+    return numbers
+
+
+SLOT_NUMBERS = _build_slot_numbers()
+
+
+def number_lines(base: str, depths: Sequence[int]) -> list[str]:
+    """칸 번호 base 아래 줄 번호 — 깊이 d 줄은 base 뒤에 d + 1 마디(5 → 5.1, 5.2, 5.2.1).
+
+    깊이는 앞줄 깊이 + 1을 넘지 못한다(첫 줄은 0) — 넘으면 그만큼으로 눌러 읽는다. 저장한 깊이는 바꾸지 않으므로 앞줄을 옮기거나
+    내어 쓰면 눌렸던 줄이 사람이 정한 깊이로 돌아온다.
+    """
+    counters: list[int] = []  # 깊이별 지금 번호 — 길이가 앞줄의 눌러 읽은 깊이 + 1이다
+    numbers = []
+    for depth in depths:
+        level = max(0, min(depth, len(counters)))
+        del counters[level + 1:]
+        if len(counters) == level:
+            counters.append(0)
+        counters[level] += 1
+        numbers.append(".".join([base, *map(str, counters)]))
+    return numbers
+
+
+def _number_targets(index: _Index, lang: Lang, labels: OutputLabels) -> dict[int, str]:
+    """그 언어판의 새 문장 → 섹션 번호. 줄은 그 판에 보이는 것(그 언어와 중립)만 센다 — 판마다 번호가 빈틈없이 이어진다.
+
+    번역 줄은 따로 세지 않는 규칙이 아니라 출처와 같은 깊이(detach._follow_source가 맞춘다)·같은 정렬 자리라서 두 판의 줄이 서로
+    짝을 이루면 출처와 같은 번호가 된다. 표 칸 새 문장은 표의 번호를 따른다. 입구 2 문서·단계 없는 WI 칸은 번호가 없다.
+    """
+    numbers: dict[int, str] = {}
+    for doc in index.doc_order:
+        runs: dict[str, list[TargetInfo]] = {}
+        for plan in _plan_sections(index, doc, labels):
+            if plan.number is not None:
+                runs.setdefault(plan.number, []).extend(target for target in plan.targets if _is_in_lang(target.lang, lang))
+        for base, targets in runs.items():
+            for target, number in zip(targets, number_lines(base, [target.indent_level for target in targets]), strict=True):
+                numbers[target.id] = number
+                for child in index.children.get(target.id, []):
+                    numbers[child.id] = number
+    return numbers
 
 
 def _group_dests(index: _Index, unit: UnitInfo) -> list[tuple[TargetDocInfo, list[TargetInfo], bool]]:
@@ -434,6 +506,7 @@ class _Dest:
     doc_code: str
     doc_title: str
     location: str
+    number: str
     confirmed_text: str
     ai_text: str
     change_type: str
@@ -448,34 +521,42 @@ def _locate_unit(index: _Index, unit: UnitInfo, labels: OutputLabels) -> Locatio
     )
 
 
-def _describe_dest(doc: TargetDocInfo, targets: list[TargetInfo], is_own: bool, labels: OutputLabels) -> _Dest:
+def _describe_dest(
+    doc: TargetDocInfo, targets: list[TargetInfo], is_own: bool, labels: OutputLabels, number_of: NumberOf
+) -> _Dest:
     locations = [_format_target_location(target, labels) for target in targets]
     location = locations[0] if len(set(locations)) == 1 else _number_lines(locations)
+    # 번호는 새 문장마다 다르므로 여러 새 문장이면 확정 문장 칸과 같은 ①② 순서로 적는다
+    number = _number_lines([number_of(target) for target in targets])
     if not is_own:
-        return _Dest(doc.doc_type, doc.code, doc.title, location, "", "", targets[0].change_type or "", [])
+        return _Dest(doc.doc_type, doc.code, doc.title, location, number, "", "", targets[0].change_type or "", [])
     change_types = {target.change_type or "" for target in targets}
     # 한 새 문서 안에서 여러 새 문장으로 간 것은 나눔이다(스펙 §6.9) — 합침과 섞이면 나눔으로 적는다
     change_type = change_types.pop() if len(change_types) == 1 else "split"
     return _Dest(
-        doc.doc_type, doc.code, doc.title, location,
+        doc.doc_type, doc.code, doc.title, location, number,
         _number_lines([target.confirmed_text for target in targets]),
         _number_lines([target.ai_text for target in targets]),
         change_type, [warning for target in targets for warning in target.warnings],
     )
 
 
-def _build_unit_rows(index: _Index, unit: UnitInfo, row_kind: Literal["unit", "table"], labels: OutputLabels) -> list[ARow]:
+def _build_unit_rows(
+    index: _Index, unit: UnitInfo, row_kind: Literal["unit", "table"], labels: OutputLabels, number_of: NumberOf
+) -> list[ARow]:
     """옛 단위 하나의 줄 — 보낸 새 문서마다 한 줄(중복 배정), 없으면 삭제·이동·미배정 한 줄."""
     snap = index.snap
     decision_unit_id = _get_decision_unit_id(unit)
     decision = snap.decisions[decision_unit_id]
     document = snap.documents[unit.document_id]
-    dests = [_describe_dest(doc, targets, is_own, labels) for doc, targets, is_own in _group_dests(index, unit)]
+    dests = [
+        _describe_dest(doc, targets, is_own, labels, number_of) for doc, targets, is_own in _group_dests(index, unit)
+    ]
     if not dests:
         dest_kind = DISPOSITION_NODES.get(decision.disposition, "")
         dests = [
             _Dest(
-                dest_kind, decision.move_target_code if dest_kind == "move_external" else "", "", "", "", "",
+                dest_kind, decision.move_target_code if dest_kind == "move_external" else "", "", "", "", "", "",
                 "deleted" if dest_kind == "delete" else "", [],
             )
         ]
@@ -485,7 +566,7 @@ def _build_unit_rows(index: _Index, unit: UnitInfo, row_kind: Literal["unit", "t
             old_doc_version=document.doc_version, location=_locate_unit(index, unit, labels),
             unit_id=unit.id, display_id=unit.display_id, source_text=_format_source_text(index, unit, labels),
             dest_kind=dest.kind, dest_doc_code=dest.doc_code, dest_doc_title=dest.doc_title,
-            dest_location=dest.location, confirmed_text=dest.confirmed_text, ai_text=dest.ai_text,
+            dest_location=dest.location, dest_number=dest.number, confirmed_text=dest.confirmed_text, ai_text=dest.ai_text,
             change_type=dest.change_type, group_id=index.unit_groups.get(decision_unit_id), reason=decision.reason,
             status=get_cover_status(unit, snap.decisions), confirmed_by=decision.confirmed_by,
             confirmed_at=decision.confirmed_at, warnings=dest.warnings,
@@ -494,7 +575,7 @@ def _build_unit_rows(index: _Index, unit: UnitInfo, row_kind: Literal["unit", "t
     ]
 
 
-def _build_translation_row(index: _Index, target: TargetInfo, labels: OutputLabels) -> ARow:
+def _build_translation_row(index: _Index, target: TargetInfo, labels: OutputLabels, number_of: NumberOf) -> ARow:
     """번역 줄(스펙 §7.13 규칙 2) — 옛 문장 칸은 비고 위치·표시 ID는 출처 단위의 것이다. 출처가 은퇴한 번역(보류)은 둘 다 비어 있다."""
     snap = index.snap
     doc = snap.target_docs[target.target_doc_id]
@@ -506,14 +587,15 @@ def _build_translation_row(index: _Index, target: TargetInfo, labels: OutputLabe
         location=_locate_unit(index, unit, labels) if unit else LocationOut(section="", place="", page=None, page_basis=""),
         unit_id=target.translation_source_unit_id, display_id=unit.display_id if unit else "", source_text="",
         dest_kind=doc.doc_type, dest_doc_code=doc.code, dest_doc_title=doc.title,
-        dest_location=_format_target_location(target, labels), confirmed_text=target.confirmed_text,
+        dest_location=_format_target_location(target, labels), dest_number=number_of(target),
+        confirmed_text=target.confirmed_text,
         ai_text=target.ai_text, change_type=target.change_type or "",
         group_id=index.target_groups.get(target.parent_target_id or target.id), reason="", status=target.status,
         confirmed_by=target.confirmed_by, confirmed_at=target.confirmed_at, warnings=list(target.warnings),
     )
 
 
-def _build_old_rows(index: _Index, lang: Lang, labels: OutputLabels) -> list[ARow]:
+def _build_old_rows(index: _Index, lang: Lang, labels: OutputLabels, number_of: NumberOf) -> list[ARow]:
     """옛 문서 줄 — 커버 단위(그 언어와 그림)와 표 줄, 단위 바로 뒤에 그 언어의 번역 줄.
 
     출처 단위는 다른 언어라 자기 줄이 없어도 그 자리를 잡는다. 표 줄은 그 언어 칸 문장이나 칸 번역이 있거나 칸이 아예 없을 때만.
@@ -523,29 +605,34 @@ def _build_old_rows(index: _Index, lang: Lang, labels: OutputLabels) -> list[ARo
         if unit.kind in TABLE_UNIT_KINDS:
             cells = index.cells.get(unit.id, [])
             if not cells or any(_is_in_lang(cell.lang, lang) or _list_translations(index, cell.id, lang) for cell in cells):
-                rows += _build_unit_rows(index, unit, "table", labels)
+                rows += _build_unit_rows(index, unit, "table", labels, number_of)
         elif _is_in_lang(unit.lang, lang):
-            rows += _build_unit_rows(index, unit, "unit", labels)
-        rows += [_build_translation_row(index, target, labels) for target in _list_translations(index, unit.id, lang)]
+            rows += _build_unit_rows(index, unit, "unit", labels, number_of)
+        rows += [
+            _build_translation_row(index, target, labels, number_of) for target in _list_translations(index, unit.id, lang)
+        ]
     return rows
 
 
-def _build_orphan_rows(index: _Index, lang: Lang, labels: OutputLabels) -> list[ARow]:
+def _build_orphan_rows(index: _Index, lang: Lang, labels: OutputLabels, number_of: NumberOf) -> list[ARow]:
     """출처 단위가 쪼개기 편집으로 은퇴한 번역 줄 — 줄 자리가 없어도 보류를 사람이 볼 수 있게 옛 문서 줄 끝에 둔다."""
     placed = {unit.id for unit in index.old_units}
     return [
-        _build_translation_row(index, target, labels)
+        _build_translation_row(index, target, labels, number_of)
         for unit_id in sorted(index.translations.keys() - placed)
         for target in _list_translations(index, unit_id, lang)
     ]
 
 
-def _build_new_row(index: _Index, doc: TargetDocInfo, target: TargetInfo, labels: OutputLabels) -> ARow:
+def _build_new_row(
+    index: _Index, doc: TargetDocInfo, target: TargetInfo, labels: OutputLabels, number_of: NumberOf
+) -> ARow:
     return ARow(
         row_kind="new", lang=target.lang, old_doc_code="", old_doc_version="",
         location=LocationOut(section="", place="", page=None, page_basis=""), unit_id=None, display_id="",
         source_text="", dest_kind=doc.doc_type, dest_doc_code=doc.code, dest_doc_title=doc.title,
-        dest_location=_format_target_location(target, labels), confirmed_text=target.confirmed_text,
+        dest_location=_format_target_location(target, labels), dest_number=number_of(target),
+        confirmed_text=target.confirmed_text,
         ai_text=target.ai_text, change_type=target.change_type or "",
         group_id=index.target_groups.get(target.parent_target_id or target.id), reason="", status=target.status,
         confirmed_by=target.confirmed_by, confirmed_at=target.confirmed_at, warnings=list(target.warnings),
@@ -556,8 +643,18 @@ def build_output_a(snap: BundleSnapshot, lang: Lang) -> list[ARow]:
     """결과물 A — 옛 문서 순서의 줄들(번역 줄 포함) 뒤에 입구 2 신규 줄을 새 문서별로 모은다."""
     labels = LABELS[lang]
     index = _build_index(snap)
-    new_rows = [_build_new_row(index, doc, target, labels) for doc, target in _list_new_targets(index, lang, labels)]
-    return _build_old_rows(index, lang, labels) + _build_orphan_rows(index, lang, labels) + new_rows
+    numbers = {"ko": _number_targets(index, "ko", labels), "en": _number_targets(index, "en", labels)}
+
+    def get_number(target: TargetInfo) -> str:
+        # 그 판에 보이지 않는 새 문장(다른 언어로 옮겨 쓴 것)은 자기 언어판의 번호다 — 결과물 C에서 그 새 문장이 보이는 번호
+        return numbers[lang].get(target.id) or numbers.get(target.lang, {}).get(target.id, "")
+
+    new_rows = [
+        _build_new_row(index, doc, target, labels, get_number) for doc, target in _list_new_targets(index, lang, labels)
+    ]
+    return (
+        _build_old_rows(index, lang, labels, get_number) + _build_orphan_rows(index, lang, labels, get_number) + new_rows
+    )
 
 
 # --- B ---
@@ -627,13 +724,14 @@ def _format_source_note(index: _Index, target: TargetInfo, labels: OutputLabels)
     return f"{note} {suffix}" if suffix else note
 
 
-def _build_item(index: _Index, target: TargetInfo, lang: Lang, labels: OutputLabels) -> CItem:
+def _build_item(index: _Index, target: TargetInfo, lang: Lang, labels: OutputLabels, numbers: dict[int, str]) -> CItem:
     return CItem(
         target_id=target.id, kind=target.kind, lang=target.lang, text=target.confirmed_text, ai_text=target.ai_text,
         change_type=target.change_type, status=target.status, source_note=_format_source_note(index, target, labels),
-        cell_row=target.cell_row, cell_col=target.cell_col,
+        number=numbers.get(target.id), indent_level=target.indent_level, cell_row=target.cell_row,
+        cell_col=target.cell_col,
         children=[
-            _build_item(index, child, lang, labels)
+            _build_item(index, child, lang, labels, numbers)
             for child in index.children.get(target.id, [])
             if _is_in_lang(child.lang, lang)
         ],
@@ -644,13 +742,22 @@ def build_output_c(snap: BundleSnapshot, lang: Lang) -> COutput:
     """결과물 C — 새 문서마다 칸별로 받은 새 문장(그 언어와 중립), 끝에 삭제·다른 문서로 이동."""
     labels = LABELS[lang]
     index = _build_index(snap)
+    numbers = _number_targets(index, lang, labels)
     docs = []
     for doc in index.doc_order:
         sections = []
         for plan in _plan_sections(index, doc, labels):
-            items = [_build_item(index, target, lang, labels) for target in plan.targets if _is_in_lang(target.lang, lang)]
+            items = [
+                _build_item(index, target, lang, labels, numbers)
+                for target in plan.targets if _is_in_lang(target.lang, lang)
+            ]
             if items or plan.keep_empty:
-                sections.append(CSection(location_key=plan.key, label=plan.label, na_reason=plan.na_reason, items=items))
+                sections.append(
+                    CSection(
+                        location_key=plan.key, label=plan.label, number=plan.number, na_reason=plan.na_reason,
+                        items=items,
+                    )
+                )
         parent = snap.target_docs.get(doc.parent_id) if doc.parent_id is not None else None
         docs.append(
             CDoc(
@@ -658,7 +765,7 @@ def build_output_c(snap: BundleSnapshot, lang: Lang) -> COutput:
                 parent_code=parent.code if parent is not None else None, entrance=doc.entrance, sections=sections,
             )
         )
-    rows = _build_old_rows(index, lang, labels)
+    rows = _build_old_rows(index, lang, labels, lambda target: numbers.get(target.id, ""))
     return COutput(
         docs=docs,
         deleted=[

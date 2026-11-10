@@ -24,6 +24,7 @@ from app.sop.detach import (
     ORIGIN_TRANSLATION,
     DetachReport,
     detach_units,
+    is_unassigned,
     load_source_target_ids,
     reset_target,
     sweep_translations,
@@ -40,6 +41,7 @@ from app.sop.groups import (
 )
 from app.sop.membership import ensure_editable, lock_bundle
 from app.sop.models import (
+    AiJob,
     Bundle,
     Document,
     Extraction,
@@ -149,6 +151,22 @@ class BulkDecisionIn(BaseModel):
 class ClearIn(BaseModel):
     unit_id: DbId
     revision: DbId
+
+
+class ResetIn(BaseModel):
+    revision: DbId  # 묶음 revision
+    document_id: DbId | None = None  # 없으면 묶음 전체
+    dry_run: bool = False  # true면 건수만 계산하고 아무것도 바꾸지 않는다
+
+
+class ResetOut(BaseModel):
+    """초기화가 (dry_run이면 하게 될) 바꾼 건수 — 확인 창이 이 건수를 그대로 보인다."""
+
+    dry_run: bool
+    unassigned_units: int  # 미배정으로 돌아간 단위
+    deleted_targets: int  # 지운 새 문장
+    held_units: int  # 같은 관계 묶음이라 보류로 간 단위(다른 문서 것 포함)
+    held_targets: int  # 보류로 간 새 문장
 
 
 class UnitDecisionRowOut(BaseModel):
@@ -868,6 +886,9 @@ def _apply_plan(
             target.order_index = next_orders[plan.doc.id] if is_appended else 0
             if is_appended:
                 next_orders[plan.doc.id] += 1
+        place = (plan.doc.id, plan.item.slot_key, plan.item.wi_step, plan.item.wi_part)
+        if place != (target.target_doc_id, target.slot_key, target.wi_step, target.wi_part):
+            target.indent_level = 0  # 깊이는 그 칸 앞뒤 줄에 기댄 값이라 다른 칸으로 가면 맨 바깥에서 다시 시작한다
         target.target_doc_id = plan.doc.id
         target.slot_key, target.wi_step, target.wi_part = plan.item.slot_key, plan.item.wi_step, plan.item.wi_part
         target.kind, target.lang, target.confirmed_text, target.grid = plan.item.kind, plan.lang, plan.text, plan.grid
@@ -1077,6 +1098,63 @@ async def clear_unit(session: AsyncSession, bundle: Bundle, payload: ClearIn, ac
         )
     await session.flush()
     return report
+
+
+async def reset_assignments(session: AsyncSession, bundle: Bundle, payload: ResetIn, actor: str) -> ResetOut:
+    """배정 초기화 — 문서(또는 묶음 전체)의 배정된 단위를 detach_units 한 번으로 미배정으로 돌린다.
+
+    dry_run은 같은 길을 끝까지 돌린 뒤 롤백해 건수를 얻는다 — 미리 보기와 실제 건수가 어긋날 수 없다. 커밋은 호출부가 하되
+    dry_run이면 이 함수가 이미 되돌렸다. 다른 문서와 묶인 문장은 detach_units 규칙대로 보류로 간다.
+    """
+    await lock_bundle(session, bundle)
+    ensure_editable(bundle)
+    check_revision("bundle", bundle.id, payload.revision, bundle.revision)
+    if payload.document_id is not None:
+        document = await session.get(Document, payload.document_id)
+        if document is None or document.bundle_id != bundle.id or document.side != "old":
+            raise_rule(404, "document_not_found")
+    active_jobs = await session.scalar(
+        select(func.count()).select_from(AiJob).where(AiJob.bundle_id == bundle.id, AiJob.status.in_(("queued", "running")))
+    )
+    if active_jobs:
+        raise_rule(409, "ai_job_active", jobs=active_jobs)
+    statement = (
+        select(UnitDecision)
+        .join(Unit, Unit.id == UnitDecision.unit_id)
+        .join(Extraction, Extraction.id == Unit.extraction_id)
+        .join(Document, Document.id == Extraction.document_id)
+        .where(
+            Document.bundle_id == bundle.id, Document.side == "old", Unit.status == UNIT_ACTIVE,
+            Unit.group_unit_id.is_(None),
+        )
+    )
+    if payload.document_id is not None:
+        statement = statement.where(Document.id == payload.document_id)
+    decisions = [row for row in (await session.scalars(statement)).all() if not is_unassigned(row)]
+    suggestion_ids = sorted({row.suggestion_id for row in decisions if row.suggestion_id is not None})
+    if suggestion_ids:  # 떼어 내기가 칸을 비우므로 먼저 남긴다
+        await reject_suggestions(session, suggestion_ids, actor)
+    report = DetachReport(reset_unit_ids=[], deleted_target_ids=[], held_unit_ids=[], held_target_ids=[])
+    if decisions:
+        report = await detach_units(
+            session, bundle_id=bundle.id, unit_ids=[row.unit_id for row in decisions], cause="cleared", actor=actor
+        )
+    out = ResetOut(
+        dry_run=payload.dry_run, unassigned_units=len(report.reset_unit_ids), deleted_targets=len(report.deleted_target_ids),
+        held_units=len(report.held_unit_ids), held_targets=len(report.held_target_ids),
+    )
+    if payload.dry_run:
+        await session.rollback()
+        return out
+    if decisions:
+        record_event(
+            session, bundle_id=bundle.id, actor=actor, action="decision.reset",
+            target_type="bundle" if payload.document_id is None else "document",
+            target_ids=[bundle.id if payload.document_id is None else payload.document_id],
+            detail=out.model_dump(exclude={"dry_run"}),
+        )
+    await session.flush()
+    return out
 
 
 def _join_unit_decisions(statement: Select[Any], group_decision: AliasedClass[UnitDecision]) -> Select[Any]:

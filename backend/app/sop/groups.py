@@ -141,6 +141,7 @@ class GroupTargetOut(BaseModel):
     wi_part: str | None
     section_path: str
     order_index: int
+    indent_level: int
     lang: str
     kind: str
     confirmed_text: str
@@ -297,8 +298,9 @@ async def build_group_out(
 def _build_target_out(target: TargetSentence, source_unit_ids: list[int], group_id: str | None) -> GroupTargetOut:
     return GroupTargetOut(
         id=target.id, target_doc_id=target.target_doc_id, slot_key=target.slot_key, wi_step=target.wi_step,
-        wi_part=target.wi_part, section_path=target.section_path, order_index=target.order_index, lang=target.lang,
-        kind=target.kind, confirmed_text=target.confirmed_text, ai_text=target.ai_text, change_type=target.change_type,
+        wi_part=target.wi_part, section_path=target.section_path, order_index=target.order_index,
+        indent_level=target.indent_level, lang=target.lang, kind=target.kind, confirmed_text=target.confirmed_text,
+        ai_text=target.ai_text, change_type=target.change_type,
         origin=target.origin, new_unit_id=target.new_unit_id,
         translation_source_unit_id=target.translation_source_unit_id, parent_target_id=target.parent_target_id,
         cell_row=target.cell_row, cell_col=target.cell_col, grid=target.grid, status=target.status,

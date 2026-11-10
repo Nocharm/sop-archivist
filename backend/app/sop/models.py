@@ -402,6 +402,8 @@ class TargetSentence(Base):
     wi_part: Mapped[str | None] = mapped_column(String(11), default=None)
     section_path: Mapped[str] = mapped_column(Text, default="")
     order_index: Mapped[int] = mapped_column(Integer, default=0)
+    # 칸 안 들여쓰기 깊이(0 = 맨 바깥) — 사람이 정한 값 그대로 두고, 결과물 번호를 셀 때 앞줄 깊이 + 1로 눌러 읽는다
+    indent_level: Mapped[int] = mapped_column(Integer, default=0)
     lang: Mapped[str] = mapped_column(String(7))
     kind: Mapped[str] = mapped_column(String(8))
     confirmed_text: Mapped[str] = mapped_column(Text, default="")

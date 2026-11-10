@@ -121,6 +121,7 @@ class TargetInfo:
     wi_part: str | None
     section_path: str
     order_index: int
+    indent_level: int  # 사람이 정한 깊이 그대로 — 번호를 셀 때 outputs가 앞줄 깊이 + 1로 눌러 읽는다
     lang: str
     kind: str
     confirmed_text: str
@@ -319,7 +320,7 @@ async def _load_targets(
         target.id: TargetInfo(
             id=target.id, target_doc_id=target.target_doc_id, slot_key=target.slot_key, wi_step=target.wi_step,
             wi_part=target.wi_part, section_path=target.section_path, order_index=target.order_index,
-            lang=target.lang, kind=target.kind,
+            indent_level=target.indent_level, lang=target.lang, kind=target.kind,
             confirmed_text=target.confirmed_text if include_text else "", ai_text=target.ai_text if include_text else "",
             change_type=target.change_type, origin=target.origin, new_unit_id=target.new_unit_id,
             translation_source_unit_id=target.translation_source_unit_id, parent_target_id=target.parent_target_id, cell_row=target.cell_row, cell_col=target.cell_col,
