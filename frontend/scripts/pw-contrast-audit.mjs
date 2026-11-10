@@ -88,11 +88,23 @@ for (const theme of ["light", "dark"]) {
   // Assign에서 New 원문 후보(점선)가 있는 조각까지 옮겨 하나를 고른 상태 - 연결 상자·New 원문 표시를 함께 본다
   async function pickCandidate(page) {
     const candidate = page.locator('[data-testid="assign-new"] .new-line[data-state="candidate"]');
+    // 줄마다 후보 요청이 끝나기를 기다린다 - networkidle은 AI 상태 폴링 때문에 곧바로 풀려, 응답이 늦은 줄에서 후보가 그려지는 중에 누르게 된다(pw-smoke-sop와 같은 방법)
+    let openRequests = 0;
+    const countRequest = (delta) => (request) => {
+      if (request.url().includes("/new-candidates")) openRequests += delta;
+    };
+    page.on("request", countRequest(1));
+    page.on("requestfinished", countRequest(-1));
+    page.on("requestfailed", countRequest(-1));
     for (let step = 0; step < 40 && (await candidate.count()) === 0; step += 1) {
       await page.keyboard.press("j");
-      await page.waitForLoadState("networkidle");
+      await page.waitForTimeout(150);
+      while (openRequests > 0) await page.waitForTimeout(50);
+      await page.waitForTimeout(100);
     }
-    await candidate.first().locator(".new-hit").click();
+    // 누른 뒤에는 후보가 아니라 고른 줄이 된다 - 같은 줄을 계속 가리키게 testid로 붙잡는다
+    const line = page.locator(`[data-testid="${await candidate.first().getAttribute("data-testid")}"]`);
+    await line.locator(".new-hit").click();
     // 그 자리 메뉴(확정·취소)까지 뜬 상태로 잰다 - 늦게 뜨므로 보일 때까지 기다린다
     await page.locator('[data-testid="assign-link-menu-confirm"]').waitFor({ state: "visible", timeout: T });
   }
