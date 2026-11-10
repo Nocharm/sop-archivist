@@ -4,6 +4,8 @@
 
 db-viewer 쪽 원본 런북(연결 방식·네트워크 정책·트러블슈팅 총괄)은 그 저장소의 `docs/connect-sources.md`다. 여기는 **이 스택에서 밟는 부분**만 적는다.
 
+> **운영 서버 연결 완료(2026-11-10).** `dbviewer_ro`를 발급하고 db-viewer에 소스를 등록했다. 조회 범위는 **SOP 원문 표까지 공개, `login_records`만 제외**로 정했다(사용자 결정 — §3).
+
 > **보안 원칙 — db-viewer는 읽기 전용 `dbviewer_ro` 계정으로만 붙는다.** 앱 계정(`POSTGRES_USER`)이나 DB 소유자 계정으로 등록하지 않는다. db-viewer에 저장되는 자격증명이 곧 DB 전체 쓰기 권한이 되고, 앱의 `POSTGRES_PASSWORD`가 다른 서비스로 새어 나간다. `POSTGRES_PASSWORD`는 강한 임의값으로 서버 `.env`에만 둔다([`setup-once.md`](setup-once.md) A4).
 
 ---
@@ -56,33 +58,35 @@ docker inspect -f '{{json .NetworkSettings.Networks}}' sop-archivist-db-1 | pyth
 
 ## 3. 읽기전용 계정 `dbviewer_ro`
 
+SQL은 **히어독으로 psql 표준 입력에 넣는다.** `psql -c "..."`는 `:'ro_pw'`·`:"DBNAME"` 같은 psql 변수를 바꾸지 않고 글자 그대로 서버에 보내 `syntax error at or near ":"`로 끝난다(실측 2026-11-10). 변수는 표준 입력이나 `-f`로 읽는 SQL에서만 바뀐다.
+
 ```bash
 # 컨테이너를 직접 지정한다 — compose exec는 -p·--env-file 조합이 어긋나면 자주 실패한다(bpm 실측).
 DB=sop-archivist-db-1
-docker exec -it $DB sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
-```
+# 비밀번호는 직접 생성(openssl rand -base64 24)해 붙여 넣고 Enter — 화면·히스토리에 남지 않는다. 저장소에는 두지 않는다(공개 저장소다)
+read -rs RO_PW
+docker exec -i -e RO_PW="$RO_PW" $DB sh -c 'psql -v ON_ERROR_STOP=1 -v ro_pw="$RO_PW" -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+CREATE ROLE dbviewer_ro LOGIN PASSWORD :'ro_pw';
 
-```sql
--- 비밀번호는 직접 생성: openssl rand -base64 24  (이 SQL은 저장소에 두지 않는다 — 공개 저장소다)
-CREATE ROLE dbviewer_ro LOGIN PASSWORD '<강력한 비밀번호>';
-
--- DB 이름이 기본값(sop_archivist)이 아니면 .env의 POSTGRES_DB로 바꾼다
-GRANT CONNECT ON DATABASE sop_archivist TO dbviewer_ro;
+-- :"DBNAME" = 지금 접속한 DB(.env의 POSTGRES_DB) — 이름을 손으로 바꿔 적지 않는다
+GRANT CONNECT ON DATABASE :"DBNAME" TO dbviewer_ro;
 GRANT USAGE ON SCHEMA public TO dbviewer_ro;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO dbviewer_ro;
 
 -- 앞으로 Alembic 마이그레이션이 만드는 새 테이블에도 자동 적용 — 없으면 릴리스마다 새 테이블이 안 보인다
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO dbviewer_ro;
 
--- 민감 테이블 제외(권장): 사용자별 접속 기록
+-- 제외는 이 표 하나: 사용자별 접속 기록
 REVOKE SELECT ON login_records FROM dbviewer_ro;
+SQL
+unset RO_PW
 ```
 
-이 앱의 테이블(10개와 `alembic_version`)은 전부 `public` 스키마라 다른 스키마 GRANT는 필요 없다. db-viewer의 허용 목록은 **스키마 단위**(`public` 통째)라 테이블 단위 차단은 이 REVOKE로만 걸린다.
+이 앱의 테이블(36개와 `alembic_version`)은 전부 `public` 스키마라 다른 스키마 GRANT는 필요 없다. db-viewer의 허용 목록은 **스키마 단위**(`public` 통째)라 테이블 단위 차단은 이 REVOKE로만 걸린다.
 
-- 직원 디렉터리(`employees`, `departments`)와 권한 변경 기록(`access_audit_events`), AI 사용량(`ai_usage_events`, 원문 없음)은 기본으로 조회를 허용했다. 조회 허용 범위가 과하다고 판단되면 같은 방식으로 `REVOKE SELECT ON <테이블> FROM dbviewer_ro`를 더한다.
+- **조회 범위 — SOP 원문 표까지 공개하고 `login_records`만 뺀다(사용자 결정, 2026-11-10).** 원문과 고쳐 쓴 문장이 담긴 표(`source_blocks`·`units`·`target_sentences`·`target_text_history`·`ai_suggestions`·`embedding_cache`), 원본 파일(`document_files`), 직원 디렉터리(`employees`·`departments`), 권한 변경 기록(`access_audit_events`), AI 사용량(`ai_usage_events`)이 모두 열린다. db-viewer에서 이 소스의 미리보기를 여는 사람은 SOP 원문(대외비)을 본다는 뜻이다. 범위를 좁히려면 같은 방식으로 `REVOKE SELECT ON <테이블> FROM dbviewer_ro`를 더한다.
 - **새 테이블을 만드는 마이그레이션을 배포할 때마다 민감 여부를 본다.** `ALTER DEFAULT PRIVILEGES`가 새 테이블에 SELECT를 자동으로 주므로, 막아야 할 테이블이면 배포 직후 REVOKE를 더한다.
-- 비밀번호를 바꿀 때는 `ALTER ROLE dbviewer_ro PASSWORD '<새 비밀번호>';` 후 db-viewer의 소스 비밀번호를 갱신한다.
+- 비밀번호를 바꿀 때는 같은 히어독 방식으로 `ALTER ROLE dbviewer_ro PASSWORD :'ro_pw';`를 실행한 뒤 db-viewer의 소스 비밀번호를 갱신한다.
 
 ✅ 통과 기준 — 별도 세션에서(컨테이너 안 소켓 접속이라 비밀번호는 묻지 않는다. 비밀번호 검증은 §4의 연결 테스트가 한다):
 
@@ -94,14 +98,18 @@ docker exec -i $DB sh -c 'psql -U dbviewer_ro -d "$POSTGRES_DB" -tAc "SELECT cou
 
 ## 4. db-viewer `/admin` 등록
 
+**먼저 화면 위쪽의 잠금 바를 연다** — db-viewer 관리 비밀번호(`PREVIEW_ADMIN_PASSWORD`)를 넣고 [잠금 해제]. 잠겨 있으면 폼을 다 채워도 **등록 단추가 꺼져 있다**(실측 2026-11-10). 아래 4번의 허용 스키마 편집도 같은 잠금 바를 쓴다.
+
 1. **등록** — 이름 `SOP Archivist`, 엔진 `postgres`, host **`sop-archivist-db`**, port `5432`, database `sop_archivist`(= `POSTGRES_DB`), username **`dbviewer_ro`**, password(§3). 저장 후 목록에 `has_password: true`. 폼이 아예 안 뜨면 db-viewer의 `SOURCE_SECRET_KEY` 미설정이다.
 2. **[연결 테스트]** — 응답의 `database`가 **`sop_archivist`**, `version`이 PostgreSQL 16인지 **눈으로 대조**한다. 초록인데 DB 이름이 다르면 별칭이 다른 서비스와 겹친 것이다 — host를 고친다.
 3. **[카탈로그 수집]** — 진행 패널에서 스냅샷이 `ready`로 끝나는지.
-4. **미리보기 허용 스키마**에 이 소스의 `public` 등록(db-viewer의 `PREVIEW_ADMIN_PASSWORD` 필요). 등록 전에는 값이 전혀 안 열린다(기본 전부 차단).
+4. **미리보기 허용 스키마**에 이 소스의 `public` 등록(잠금 바가 열려 있어야 한다). 등록 전에는 값이 전혀 안 열린다(기본 전부 차단).
 
-> 등록 폼에는 비밀번호 칸이 두 군데다. 위쪽은 db-viewer의 `PREVIEW_ADMIN_PASSWORD`, 폼 안쪽이 `dbviewer_ro`의 비밀번호다.
+> 비밀번호를 넣는 곳이 두 군데다. 잠금 바는 db-viewer의 `PREVIEW_ADMIN_PASSWORD`, 등록 폼 안쪽은 `dbviewer_ro`의 비밀번호다(§3).
 
 ✅ 통과 기준: 소스를 고른 뒤 `employees` 미리보기에 행이 보이고, `login_records`는 권한 오류로 안 열린다(REVOKE 반영).
+
+⚠️ **`document_files`는 미리보기를 열지 않는다.** `content` 칸(bytea)에 업로드한 원본 파일이 통째로 들어 있어, 미리보기가 파일 전체를 내려받는다(실측 2026-11-10). 권한으로 막은 것이 아니라 운영 규칙이다. 파일 이름·크기·해시는 `documents`(`file_name`·`size_bytes`·`sha256`)에서 본다.
 
 ## 5. 되돌리기 · 트러블슈팅
 
