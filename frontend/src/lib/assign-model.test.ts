@@ -259,14 +259,20 @@ describe("findLinkPartners and pickDrawnLinks", () => {
 
 describe("listLinkMenuItems", () => {
   it("offers confirm after picking, unlink on a confirmed link, link otherwise", () => {
-    expect(listLinkMenuItems({ picked: true, linked: true, confirmed: true, canEdit: true })).toEqual(["confirm", "cancel"]);
-    expect(listLinkMenuItems({ picked: false, linked: true, confirmed: true, canEdit: true })).toEqual(["unlink", "close"]);
-    expect(listLinkMenuItems({ picked: false, linked: true, confirmed: false, canEdit: true })).toEqual(["confirm", "unlink", "close"]);
-    expect(listLinkMenuItems({ picked: false, linked: false, confirmed: false, canEdit: true })).toEqual(["link", "close"]);
+    expect(listLinkMenuItems({ picked: true, linked: true, confirmed: true, hasTarget: true, canEdit: true })).toEqual(["confirm", "cancel"]);
+    expect(listLinkMenuItems({ picked: false, linked: true, confirmed: true, hasTarget: true, canEdit: true })).toEqual(["unlink", "close"]);
+    expect(listLinkMenuItems({ picked: false, linked: true, confirmed: false, hasTarget: true, canEdit: true })).toEqual(["confirm", "unlink", "close"]);
+    expect(listLinkMenuItems({ picked: false, linked: false, confirmed: false, hasTarget: true, canEdit: true })).toEqual(["link", "close"]);
   });
 
   it("shows nothing when the bundle cannot be edited", () => {
-    expect(listLinkMenuItems({ picked: true, linked: false, confirmed: false, canEdit: false })).toEqual([]);
+    expect(listLinkMenuItems({ picked: true, linked: false, confirmed: false, hasTarget: true, canEdit: false })).toEqual([]);
+  });
+
+  it("shows nothing when nothing is picked and no sentence is known (a recommendation menu after saving)", () => {
+    expect(listLinkMenuItems({ picked: false, linked: false, confirmed: true, hasTarget: false, canEdit: true })).toEqual([]);
+    // 고른 채로면 문장을 몰라도 확정할 수 있다(추천 카드에서 연 메뉴)
+    expect(listLinkMenuItems({ picked: true, linked: false, confirmed: false, hasTarget: false, canEdit: true })).toEqual(["confirm", "cancel"]);
   });
 });
 

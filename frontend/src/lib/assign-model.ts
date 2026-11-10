@@ -145,14 +145,14 @@ export function pickDrawnLinks(pairs: LinkPair[], focusUnits: ReadonlySet<number
 export type LinkMenuItem = "confirm" | "cancel" | "link" | "unlink" | "close";
 
 /**
- * 그 자리 메뉴의 항목 - 고른 뒤(저장 전)는 확정·취소, 이미 이어진 것은 끊기(AI가 이어 둔 것은 확정도), 그 밖의 후보는 잇기.
- * 고칠 수 없는 묶음이면 메뉴를 띄우지 않는다.
+ * 그 자리 메뉴의 항목 - 고른 뒤(저장 전)는 확정·취소, 이미 이어진 것은 끊기(AI가 이어 둔 것은 확정도), 그 밖의 후보 문장은 잇기.
+ * 고칠 수 없는 묶음이거나, 고름이 없고 가리키는 문장도 없으면(추천에서 연 메뉴가 저장된 뒤) 메뉴를 띄우지 않는다 - 누를 수 없는 Link를 보이지 않게.
  */
-export function listLinkMenuItems(state: { picked: boolean; linked: boolean; confirmed: boolean; canEdit: boolean }): LinkMenuItem[] {
+export function listLinkMenuItems(state: { picked: boolean; linked: boolean; confirmed: boolean; hasTarget: boolean; canEdit: boolean }): LinkMenuItem[] {
   if (!state.canEdit) return [];
   if (state.picked) return ["confirm", "cancel"];
   if (state.linked) return state.confirmed ? ["unlink", "close"] : ["confirm", "unlink", "close"];
-  return ["link", "close"];
+  return state.hasTarget ? ["link", "close"] : [];
 }
 
 /** 끊은 뒤 남는 고름 - 끊는 문장과 그 한/영 짝 문장을 함께 뺀다(짝 한쪽만 남기면 다음 고름이 짝을 다시 붙인다) */

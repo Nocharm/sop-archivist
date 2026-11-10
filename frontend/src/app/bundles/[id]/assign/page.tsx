@@ -286,6 +286,8 @@ export default function AssignPage() {
     setMenu({ seq: menuSeq.current, anchor, offset: readMenuOffset(anchor, event), rowKey, targetId });
   }
   const [jump, setJump] = useState<{ side: "old" | "new"; id: number; targetId: number; rowKey: string } | null>(null);
+  // 고른 줄이 어떤 길로든 바뀌면(↑↓·저장 뒤 다음 줄·짝 풀림·문서 바꾸기) 메뉴를 닫는다 - 다른 줄에서 낡은 메뉴가 되살아나지 않게(렌더 중 상태 맞추기)
+  if (menu !== null && menu.rowKey !== activeKey) setMenu(null);
   const focusNew = mode === "unsourced" ? (unsourced.find((item) => item.target_id === selNew)?.target_id ?? unsourced[0]?.target_id ?? null) : null;
 
   // --- 고른 줄의 관계 묶음·후보와 초안 ---
@@ -514,6 +516,8 @@ export default function AssignPage() {
       const body = buildGroupSave({ ...draft, destination, reason, moveCode }, context, action, action === "hold" ? reason.trim() : "");
       const leftovers = action === "confirm" ? listLinkLeftovers(destination, context) : [];
       await saveGroup(bundleId, body);
+      // 저장했으면 메뉴의 고름은 끝났다 - 다음 줄이 없거나 같은 줄에 남아도 닫는다
+      setMenu(null);
       showToast(action === "hold" ? t("classify.held") : t("classify.confirmed"));
       const isSplit = leftovers.length > 0 && (await splitPairRow(row, leftovers));
       // 다음 미확정 줄로 - 지금 줄은 거르기 자리에 남는다. 짝을 풀었으면 남은 문장의 줄이 다음이다
@@ -538,6 +542,7 @@ export default function AssignPage() {
     setBusy(true);
     try {
       await clearDecisions(bundleId, decided.map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision })));
+      setMenu(null);
       showToast(t("classify.cleared"));
       dropDraft(row.key);
       setUnitsKey((key) => key + 1);
@@ -1230,6 +1235,7 @@ export default function AssignPage() {
           picked: draft.destination !== null && (menu.targetId === null || linkIds.includes(menu.targetId)),
           linked: menu.targetId !== null && savedDestination?.kind === "link" && savedDestination.targetIds.includes(menu.targetId),
           confirmed: row.status === "confirmed",
+          hasTarget: menu.targetId !== null,
           canEdit,
         })
       : [];
