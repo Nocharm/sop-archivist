@@ -914,6 +914,35 @@ await runStep("assign: AI suggestions come first and confirm one by one", {}, as
   check("figure image loads on the paper", true);
 });
 
+await runStep("assign: reset a document, then the whole bundle, after a dry-run count", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-reset");
+  const before = await progressDone(page);
+  await page.locator('[data-testid="assign-reset"]').click();
+  await page.locator('[data-testid="assign-reset-document"]').click();
+  // 확인 창이 먼저 dry_run으로 센 건수를 보이고, 그때까지 확정 단추를 막는다
+  await wait(page, "assign-reset-counts");
+  const counts = await getText(page, "assign-reset-count-unassigned");
+  check("the document reset shows the dry-run count first", /\d/.test(counts), counts);
+  await takeShot("sop-assign-reset.png");
+  await page.locator('[data-testid="assign-reset-modal-confirm"]').click();
+  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
+  await page.waitForFunction((done) => Number(document.querySelector('[data-testid="assign-progress"]')?.textContent?.split("/")[0]) < done, before, { timeout: T });
+  check("resetting the document lowers the progress", true);
+  await page.locator('[data-testid="assign-reset"]').click();
+  await page.locator('[data-testid="assign-reset-bundle"]').click();
+  await wait(page, "assign-reset-counts");
+  await page.locator('[data-testid="assign-reset-modal-confirm"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-progress"]')?.textContent?.trim().startsWith("0"), null, { timeout: T });
+  check("resetting the whole bundle leaves nothing confirmed", true);
+  // 다시 열면 지울 것이 없다고 말하고 확정 단추를 막는다
+  await page.locator('[data-testid="assign-reset"]').click();
+  await page.locator('[data-testid="assign-reset-bundle"]').click();
+  await wait(page, "assign-reset-nothing");
+  check("nothing left to reset disables the confirm button", await page.locator('[data-testid="assign-reset-modal-confirm"]').isDisabled());
+  await page.locator('[data-testid="assign-reset-modal-cancel"]').click();
+});
+
 await runStep("dark theme from the layout menu, before first paint next time", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
   await wait(page, "assign-bar");

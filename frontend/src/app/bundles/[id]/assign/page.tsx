@@ -18,6 +18,8 @@ import { LinkMenu } from "@/components/assign/link-menu";
 import { NewPane } from "@/components/assign/new-pane";
 import { OldPane } from "@/components/assign/old-pane";
 import { PaneDivider } from "@/components/assign/pane-divider";
+import { ResetMenu } from "@/components/assign/reset-menu";
+import { ResetModal, type ResetScope } from "@/components/assign/reset-modal";
 import { AiAskMenu, type AiAskItem } from "@/components/manage/ai-ask-menu";
 import { Modal } from "@/components/modal";
 import { ReadOnlyNote } from "@/components/read-only-note";
@@ -411,6 +413,7 @@ export default function AssignPage() {
   const [busy, setBusy] = useState(false);
   const [bulk, setBulk] = useState<"delete" | "move" | null>(null);
   const [confirmingIdentical, setConfirmingIdentical] = useState(false);
+  const [resetScope, setResetScope] = useState<ResetScope | null>(null);
   const [openAcc, setOpenAcc] = useState<{ key: string; open: Set<string> }>({ key: "", open: new Set(["rec"]) });
   const accOpen = openAcc.key === toggleKey ? openAcc.open : new Set(["rec"]);
   function toggleAcc(section: string) {
@@ -1341,6 +1344,7 @@ export default function AssignPage() {
           {t("assign.identical", { n: identical.data?.length ?? 0 })}
         </button>
       )}
+      {canEdit && <ResetMenu document={oldView ? { id: oldView.document.id, label: oldView.document.doc_code || oldView.document.file_name } : null} disabled={busy} onPick={setResetScope} />}
       {aiOn && canEdit && <AiAskMenu items={aiMenuItems} label={t("ai.more")} testId="assign-ai-menu" disabled={busy} />}
       {bundle?.is_synthetic && <span className="tag">Synthetic data</span>}
       <SourceFontMenu />
@@ -1458,6 +1462,23 @@ export default function AssignPage() {
           testId="assign-identical-modal"
           onConfirm={() => void confirmIdenticalAll()}
           onClose={() => setConfirmingIdentical(false)}
+        />
+      )}
+      {resetScope && bundle && (
+        <ResetModal
+          bundleId={bundleId}
+          scope={resetScope}
+          revision={bundle.revision}
+          onDone={() => {
+            // 지운 범위의 저장 전 초안은 낡은 판단 위의 고름이라 버린다
+            const scope = resetScope;
+            setDrafts((prev) => Object.fromEntries(Object.entries(prev).filter(([key]) => scope.kind === "document" && rowMap.get(key)?.documentId !== scope.documentId)));
+            setResetScope(null);
+            setMenu(null);
+            setUnitsKey((key) => key + 1);
+            void loadBundle(bundleId);
+          }}
+          onClose={() => setResetScope(null)}
         />
       )}
       {leaveTo !== null && (

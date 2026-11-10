@@ -640,6 +640,20 @@ export async function clearDecisions(bundleId: number, units: Array<{ unit_id: n
   }
 }
 
+/** 배정 초기화 건수 - dry_run이면 하게 될 건수(같은 길을 돌고 되돌려 실제와 같다) */
+export interface ResetReport {
+  dry_run: boolean;
+  unassigned_units: number;
+  deleted_targets: number;
+  held_units: number;
+  held_targets: number;
+}
+
+/** Old 문서 하나(document_id) 또는 묶음 전체의 배정을 한 번에 지운다 - revision은 묶음 revision이고 초기화는 올리지 않는다 */
+export function resetAssignments(bundleId: number, body: { revision: number; document_id?: number; dry_run?: boolean }): Promise<ResetReport> {
+  return apiFetch<ResetReport>(`/bundles/${bundleId}/decisions/reset`, { method: "POST", body: JSON.stringify(body) });
+}
+
 // --- 입구 2 짝 맞추기 ---
 
 export interface IdenticalCandidate {

@@ -16,12 +16,14 @@ interface ConfirmModalProps {
   /** 확정 단추 앞 아이콘 - 지우기는 Trash2처럼 동작을 드러낸다 */
   confirmIcon?: LucideIcon;
   busy?: boolean;
+  /** 확정할 것이 없거나 아직 모를 때(미리 세는 중) 확정 단추만 막는다 - busy와 달리 창은 닫을 수 있다 */
+  confirmDisabled?: boolean;
   testId: string;
   onConfirm: () => void;
   onClose: () => void;
 }
 
-export function ConfirmModal({ title, target, summary, confirmLabel, danger = false, confirmIcon: ConfirmIcon, busy = false, testId, onConfirm, onClose }: ConfirmModalProps) {
+export function ConfirmModal({ title, target, summary, confirmLabel, danger = false, confirmIcon: ConfirmIcon, busy = false, confirmDisabled = false, testId, onConfirm, onClose }: ConfirmModalProps) {
   const { t } = useI18n();
   return (
     <Modal
@@ -36,7 +38,7 @@ export function ConfirmModal({ title, target, summary, confirmLabel, danger = fa
             <X size={16} strokeWidth={1.5} aria-hidden />
             {t("common.cancel")}
           </button>
-          <button type="button" className={`btn ${danger ? "danger" : "pri"}`} data-testid={`${testId}-confirm`} disabled={busy} onClick={onConfirm}>
+          <button type="button" className={`btn ${danger ? "danger" : "pri"}`} data-testid={`${testId}-confirm`} disabled={busy || confirmDisabled} onClick={onConfirm}>
             {ConfirmIcon && <ConfirmIcon size={16} strokeWidth={1.5} aria-hidden />}
             {confirmLabel}
           </button>
