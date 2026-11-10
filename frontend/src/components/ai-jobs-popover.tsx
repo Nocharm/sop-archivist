@@ -103,6 +103,8 @@ export function AiJobsPopover({ anchorRef, snapshot, onClose }: AiJobsPopoverPro
     const handleMouseDown = (event: MouseEvent) => {
       const target = event.target as Node;
       if (panel?.contains(target) || anchor?.contains(target)) return;
+      // 알림(z가 목록보다 위)을 닫는 클릭은 목록을 닫지 않는다
+      if (target instanceof Element && target.closest(".toast-stack")) return;
       requestClose();
     };
     const handleKey = (event: KeyboardEvent) => {
