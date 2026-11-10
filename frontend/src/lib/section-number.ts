@@ -35,6 +35,19 @@ export function canIndent(depths: readonly number[], index: number, dir: IndentD
   return index > 0 && depth <= depths[index - 1];
 }
 
+/**
+ * 고른 줄에서 누른 글쇠가 들이기·내어쓰기인가 - 지금 그 방향으로 바꿀 수 있을 때만 방향을 돌려준다.
+ * null이면 화면은 기본 동작(포커스 이동)을 막지 않는다 - 바꿀 수 없는 Tab까지 삼키면 키보드가 그 줄에 갇힌다(WCAG 2.1.2).
+ */
+export function readIndentKey(
+  event: { key: string; shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean },
+  state: { canOut: boolean; canIn: boolean; busy: boolean },
+): IndentDir | null {
+  if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey || state.busy) return null;
+  if (event.shiftKey) return state.canOut ? -1 : null;
+  return state.canIn ? 1 : null;
+}
+
 /** 깊이를 바꿀 수 있는 줄인가 - 입구 2 문서는 서버가 422, 번역 줄은 출처를 따라가므로 단추를 두지 않는다 */
 export function isIndentable(entrance: string, item: Pick<OutputCItem, "change_type">): boolean {
   return entrance !== "match" && item.change_type !== "translated";

@@ -93,14 +93,23 @@ for (const theme of ["light", "dark"]) {
     const countRequest = (delta) => (request) => {
       if (request.url().includes("/new-candidates")) openRequests += delta;
     };
-    page.on("request", countRequest(1));
-    page.on("requestfinished", countRequest(-1));
-    page.on("requestfailed", countRequest(-1));
-    for (let step = 0; step < 40 && (await candidate.count()) === 0; step += 1) {
-      await page.keyboard.press("j");
-      await page.waitForTimeout(150);
-      while (openRequests > 0) await page.waitForTimeout(50);
-      await page.waitForTimeout(100);
+    const listeners = [["request", countRequest(1)], ["requestfinished", countRequest(-1)], ["requestfailed", countRequest(-1)]];
+    for (const [name, listener] of listeners) page.on(name, listener);
+    try {
+      for (let step = 0; step < 40 && (await candidate.count()) === 0; step += 1) {
+        await page.keyboard.press("j");
+        await page.waitForTimeout(150);
+        // 끝나지 않는 요청에 묶이지 않게 상한(T)을 둔다
+        const deadline = Date.now() + T;
+        while (openRequests > 0) {
+          if (Date.now() > deadline) throw new Error(`new-candidates requests still open after ${T}ms`);
+          await page.waitForTimeout(50);
+        }
+        await page.waitForTimeout(100);
+      }
+    } finally {
+      // 같은 page가 다음 화면을 감사한다 - 세기는 여기서 끝낸다
+      for (const [name, listener] of listeners) page.off(name, listener);
     }
     // 누른 뒤에는 후보가 아니라 고른 줄이 된다 - 같은 줄을 계속 가리키게 testid로 붙잡는다
     const line = page.locator(`[data-testid="${await candidate.first().getAttribute("data-testid")}"]`);

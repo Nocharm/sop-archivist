@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { OutputCItem, UnitRow } from "./api-sop";
-import { canIndent, clampDepths, findPartnerTarget, getSectionDepths, isIndentable } from "./section-number";
+import { canIndent, clampDepths, findPartnerTarget, getSectionDepths, isIndentable, readIndentKey } from "./section-number";
 
 function item(id: number, number: string | null, indent = 0): OutputCItem {
   return { target_id: id, kind: "sentence", lang: "ko", text: "", ai_text: "", change_type: null, status: "confirmed", source_note: "", number, indent_level: indent, cell_row: null, cell_col: null, children: [] };
@@ -48,6 +48,25 @@ describe("canIndent", () => {
     expect(canIndent(depths, 0, -1)).toBe(false);
     expect(canIndent(depths, 1, -1)).toBe(true);
     expect(canIndent(depths, 9, -1)).toBe(false);
+  });
+});
+
+describe("readIndentKey", () => {
+  const key = (extra: Partial<{ key: string; shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }> = {}) => ({ key: "Tab", shiftKey: false, altKey: false, ctrlKey: false, metaKey: false, ...extra });
+  const both = { canOut: true, canIn: true, busy: false };
+
+  it("takes Tab and Shift+Tab only when that direction is allowed", () => {
+    expect(readIndentKey(key(), both)).toBe(1);
+    expect(readIndentKey(key({ shiftKey: true }), both)).toBe(-1);
+    expect(readIndentKey(key(), { ...both, canIn: false })).toBeNull();
+    expect(readIndentKey(key({ shiftKey: true }), { ...both, canOut: false })).toBeNull();
+  });
+
+  it("lets Tab move focus while saving, with modifiers, or for other keys", () => {
+    expect(readIndentKey(key(), { ...both, busy: true })).toBeNull();
+    expect(readIndentKey(key({ ctrlKey: true }), both)).toBeNull();
+    expect(readIndentKey(key({ altKey: true }), both)).toBeNull();
+    expect(readIndentKey(key({ key: "Enter" }), both)).toBeNull();
   });
 });
 

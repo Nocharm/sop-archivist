@@ -9,7 +9,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { OutputC, OutputCItem, OutputLang } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
-import { canIndent, getSectionDepths, isIndentable, type IndentDir } from "@/lib/section-number";
+import { canIndent, getSectionDepths, isIndentable, readIndentKey, type IndentDir } from "@/lib/section-number";
 import { canMoveTarget, type MoveDir } from "@/lib/target-order";
 
 /** 순서 바꾸기 - 결과물 화면에서 작성자에게만 넘긴다. 검토 화면은 넘기지 않아 단추가 없다 */
@@ -60,7 +60,8 @@ function RowButtons({ items, item, busy, onMove, indent }: RowButtonsProps) {
     <span className="row-actions absolute right-0 top-0 flex gap-0.5 bg-paper" style={{ fontFamily: "var(--font-ui)" }}>
       {indent &&
         ([-1, 1] as const).map((dir) => (
-          <Tooltip key={`i${dir}`} label={t(dir < 0 ? "outputs.outdent" : "outputs.indent")} align="end">
+          // 단추는 탭 순서에 있고, 툴팁이 줄을 고른 뒤 쓰는 글쇠도 알려 준다
+          <Tooltip key={`i${dir}`} label={t(dir < 0 ? "outputs.outdentTip" : "outputs.indentTip")} align="end">
             <button
               type="button"
               className="btn ghost icon h-6 w-6"
@@ -183,10 +184,11 @@ export function OutputCView({ data, lang, onMove, onIndent, moving = false, tobe
                           onKeyDown={(event) => {
                             if (!indent || event.target !== event.currentTarget) return;
                             if (event.key === "Escape") event.currentTarget.blur();
-                            if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
+                            // 바꿀 수 있을 때만 Tab을 가로챈다 - 아니면 포커스가 평소대로 다음 요소로 간다
+                            const dir = readIndentKey(event, { canOut: indent.canOut, canIn: indent.canIn, busy: moving });
+                            if (dir === null) return;
                             event.preventDefault();
-                            const dir: IndentDir = event.shiftKey ? -1 : 1;
-                            if (!moving && (dir < 0 ? indent.canOut : indent.canIn)) indent.onIndent(dir);
+                            indent.onIndent(dir);
                           }}
                         >
                           {line}

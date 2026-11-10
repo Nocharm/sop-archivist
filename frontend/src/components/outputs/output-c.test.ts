@@ -46,10 +46,19 @@ describe("OutputCView", () => {
     expect(host.querySelector<HTMLButtonElement>('[data-testid="output-c-indent-1"]')?.disabled).toBe(true);
     const first = host.querySelector<HTMLElement>('[data-testid="output-c-row-1"]');
     const second = host.querySelector<HTMLElement>('[data-testid="output-c-row-2"]');
-    act(() => first?.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true })));
+    // 들일 수 없는 Tab은 막지 않는다 - 포커스가 다음 요소로 가야 키보드가 줄에 갇히지 않는다
+    const blocked = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+    act(() => first?.dispatchEvent(blocked));
     expect(onIndent).not.toHaveBeenCalled();
-    act(() => second?.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true })));
+    expect(blocked.defaultPrevented).toBe(false);
+    const taken = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+    act(() => second?.dispatchEvent(taken));
     expect(onIndent).toHaveBeenCalledWith(1, 2, 1);
+    expect(taken.defaultPrevented).toBe(true);
+    // Shift+Tab은 깊이 0이라 내어 쓸 수 없다 - 그대로 지나간다
+    const back = new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true });
+    act(() => second?.dispatchEvent(back));
+    expect(back.defaultPrevented).toBe(false);
     act(() => root.unmount());
   });
 });
