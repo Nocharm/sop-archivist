@@ -2,14 +2,15 @@
 // 새 것이 위에 쌓이고 오래된 것부터 빠지며, 빠진 자리는 높이를 접어 남은 알림이 매끄럽게 메운다. AppShell이 ToastHost를 한 번 둔다.
 "use client";
 
-import { CircleAlert, CircleCheck, X } from "lucide-react";
+import { CircleAlert, CircleCheck, Info, X } from "lucide-react";
 import { useSyncExternalStore } from "react";
 
 import { useI18n } from "@/lib/i18n";
 import { genId } from "@/lib/id";
 import { Tooltip } from "@/components/ui/tooltip";
 
-type ToastTone = "ok" | "error";
+// info - 실패는 아니지만 기대와 다르게 끝난 일(AI 결과가 버려짐·취소됨)
+type ToastTone = "ok" | "error" | "info";
 
 export interface Toast {
   id: string;
@@ -20,7 +21,7 @@ export interface Toast {
 }
 
 // 실패는 읽을 시간을 더 준다
-const TOAST_MS: Record<ToastTone, number> = { ok: 3000, error: 7000 };
+const TOAST_MS: Record<ToastTone, number> = { ok: 3000, error: 7000, info: 6000 };
 // 빠지는 전환 길이 - motion.css의 .toast-slot 전환(--dur-slow 두 번: 밀려 나가기 → 높이 접기)과 맞춘다
 const LEAVE_MS = 480;
 const MAX_TOASTS = 4;
@@ -70,9 +71,9 @@ export function ToastHost() {
         <div key={toast.id} className="toast-slot" data-leaving={toast.leaving ? "" : undefined}>
           <div className="toast-clip">
             <div role={toast.tone === "error" ? "alert" : "status"} className={`toast ${toast.tone}`} data-testid={`toast-${toast.tone}`}>
-              {toast.tone === "error" ? (
-                <CircleAlert size={16} strokeWidth={1.5} className="shrink-0 text-danger" aria-hidden />
-              ) : (
+              {toast.tone === "error" && <CircleAlert size={16} strokeWidth={1.5} className="shrink-0 text-danger" aria-hidden />}
+              {toast.tone === "info" && <Info size={16} strokeWidth={1.5} className="shrink-0 text-ink-3" aria-hidden />}
+              {toast.tone === "ok" && (
                 <CircleCheck size={16} strokeWidth={1.5} className="shrink-0 text-accent" aria-hidden />
               )}
               <span className="min-w-0">{toast.text}</span>

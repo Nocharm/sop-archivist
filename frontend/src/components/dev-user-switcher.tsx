@@ -5,6 +5,7 @@ import { UserRound } from "lucide-react";
 
 import { Select } from "@/components/ui/select";
 
+import { clearAiJobsStore } from "@/lib/ai-jobs-store";
 import { clearBundleStore } from "@/lib/bundle-store";
 import { clearDirectoryCache } from "@/lib/directory-cache";
 import { useI18n } from "@/lib/i18n";
@@ -21,6 +22,7 @@ export function DevUserSwitcher() {
   const handleChange = (loginId: string) => {
     storeDevUser(loginId);
     clearBundleStore();
+    clearAiJobsStore();
     clearDirectoryCache();
     reloadMe();
   };

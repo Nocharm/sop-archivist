@@ -148,6 +148,67 @@ export function getAiStatus(bundleId: number): Promise<AiStatus> {
   return apiFetch<AiStatus>(`/bundles/${bundleId}/ai/status`);
 }
 
+export type AiJobKind = "classify" | "translate" | "match_plan" | "match" | "pair" | "split" | "doc_meta";
+export type AiJobStatus = keyof AiJobCounts;
+
+/** 최근 AI 작업 한 건 - 직원 이름은 싣지 않고 내가 요청했는지만 온다 */
+export interface RecentAiJob {
+  id: number;
+  request_id: string;
+  bundle_id: number;
+  bundle_code: string;
+  bundle_title: string;
+  kind: AiJobKind;
+  status: AiJobStatus;
+  /** 실패 코드(timeout·server_error·connection·client_error·config·interrupted·no_candidates·internal), 없으면 "" */
+  error: string;
+  document_id: number | null;
+  /** 문서가 없거나 지워졌으면 "" */
+  document_title: string;
+  document_file_name: string;
+  unit_count: number;
+  target_count: number;
+  attempts: number;
+  requested_by_me: boolean;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+/** 요청 한 번(같은 request_id)의 집계 - total은 목록 상한·24시간 범위와 상관없이 센다. 짝 맞추기는 도중에 total이 는다 */
+export interface RecentAiRequest {
+  request_id: string;
+  bundle_id: number;
+  bundle_code: string;
+  bundle_title: string;
+  /** 요청의 첫 작업 종류(짝 맞추기는 match_plan) */
+  kind: AiJobKind;
+  kinds: AiJobKind[];
+  requested_by_me: boolean;
+  total: number;
+  jobs: AiJobCounts;
+  /** 실패 코드별 건수(failed만) */
+  error_counts: Record<string, number>;
+  created_at: string;
+  started_at: string | null;
+  /** 대기·실행 중이 하나라도 있으면 null */
+  finished_at: string | null;
+}
+
+/** 내가 멤버인 묶음의 대기·실행 중 작업과 하루 안에 끝난 작업 - 각각 최신 100건 */
+export interface RecentAiJobs {
+  /** 서버 시각(KST ISO) - "오래 도는 중"은 클라이언트 시계 대신 이것으로 잰다 */
+  server_time: string;
+  jobs: RecentAiJob[];
+  jobs_total: number;
+  requests: RecentAiRequest[];
+  requests_total: number;
+}
+
+export function getRecentAiJobs(): Promise<RecentAiJobs> {
+  return apiFetch<RecentAiJobs>("/ai/jobs/recent");
+}
+
 export function requestReview(bundleId: number, revision: number): Promise<Bundle> {
   return apiFetch<Bundle>(`/bundles/${bundleId}/review/request`, { method: "POST", body: JSON.stringify({ revision }) });
 }

@@ -1,7 +1,7 @@
 // 묶음 관리·AI 요청·관리자 묶음·AI 지침 API - 백엔드에는 있었지만 화면이 없던 엔드포인트의 프런트 계약.
 // 모양은 backend routers/sop_bundles.py·sop_ai.py·sop_admin.py·sop_guidelines.py와 계획 2 문서 "API 계약"을 따른다.
 import { apiFetch, apiFetchBlob } from "./api";
-import type { AiSuggestion, Bundle, BundleMember, BundleProgress, BundleStatus, MemberRole } from "./api-sop";
+import type { AiJobKind, AiSuggestion, Bundle, BundleMember, BundleProgress, BundleStatus, MemberRole } from "./api-sop";
 
 // ---- 묶음 관리 -------------------------------------------------------------
 
@@ -77,6 +77,8 @@ export type AiKind = "classify" | "translate" | "match" | "pair" | "split";
 
 export interface AiRequestOut {
   queued: number;
+  /** 이번 요청이 쌓은 작업들의 묶음 값(상단 바 작업 목록의 한 줄) - queued가 0이면 null */
+  request_id: string | null;
   skipped_total: number;
   skipped: Array<{ unit_id: number; reason: string }>;
   /** 건너뛴 까닭별 수 - 합이 skipped_total, 없으면 빈 객체 */
@@ -92,11 +94,11 @@ export function requestAi(bundleId: number, kind: AiKind, body: AiScope & { dire
   return apiFetch<AiRequestOut>(`/bundles/${bundleId}/ai/${kind}`, { method: "POST", body: JSON.stringify(body) });
 }
 
-export function cancelAi(bundleId: number, kind?: AiKind): Promise<{ cancelled: number }> {
+export function cancelAi(bundleId: number, kind?: AiJobKind): Promise<{ cancelled: number }> {
   return apiFetch(`/bundles/${bundleId}/ai/cancel`, { method: "POST", body: JSON.stringify(kind ? { kind } : {}) });
 }
 
-export function retryAi(bundleId: number, kind?: AiKind): Promise<{ queued: number }> {
+export function retryAi(bundleId: number, kind?: AiJobKind): Promise<{ queued: number }> {
   return apiFetch(`/bundles/${bundleId}/ai/retry`, { method: "POST", body: JSON.stringify(kind ? { kind } : {}) });
 }
 

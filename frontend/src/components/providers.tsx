@@ -18,6 +18,7 @@ import {
   setAutoLoginSkip,
   tryConsumeAuthRetry,
 } from "@/lib/auth-return";
+import { clearAiJobsStore } from "@/lib/ai-jobs-store";
 import { clearBundleStore } from "@/lib/bundle-store";
 import { clearDirectoryCache } from "@/lib/directory-cache";
 import { getStoredDevUser, storeDevUser } from "@/lib/dev-auth";
@@ -112,6 +113,7 @@ function AuthGate({ children }: { children: ReactNode }) {
     }
     await auth.removeUser();
     clearBundleStore();
+    clearAiJobsStore();
     clearDirectoryCache();
     router.replace(LOGIN_PATH);
   };
@@ -151,6 +153,7 @@ function DevGate({ children }: { children: ReactNode }) {
   const signOut = () => {
     storeDevUser(null);
     clearBundleStore();
+    clearAiJobsStore();
     clearDirectoryCache();
     router.replace(LOGIN_PATH);
   };

@@ -1,10 +1,11 @@
-// 상단 막대 44px - 워드마크·버전, 묶음 안이면 묶음 제목과 합성 표시, 오른쪽에 설명서 단추·사용자 메뉴(계정·관리·레이아웃·로그아웃)와 언어 스위치. app-shell이 로그인한 모든 화면에 한 번 둔다.
+// 상단 막대 44px - 워드마크·버전, 묶음 안이면 묶음 제목과 합성 표시, 오른쪽에 AI 작업 표시·설명서 단추·사용자 메뉴(계정·관리·레이아웃·로그아웃)와 언어 스위치. app-shell이 로그인한 모든 화면에 한 번 둔다.
 "use client";
 
 import { BookOpen, FlaskConical, LogOut } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { AiJobsIndicator } from "@/components/ai-jobs-indicator";
 import { BrandMark } from "@/components/brand-mark";
 import { DevUserSwitcher } from "@/components/dev-user-switcher";
 import { LangToggle } from "@/components/lang-toggle";
@@ -53,6 +54,7 @@ export function TopBar() {
         </>
       )}
       <span className="flex-1" />
+      <AiJobsIndicator />
       {/* 지금 화면을 설명하는 조각에서 열린다. 하던 일을 덮지 않게 새 탭으로 */}
       {pathname !== MANUAL_PATH && (
         <Tooltip label={t("nav.manual")}>

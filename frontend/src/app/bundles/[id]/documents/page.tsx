@@ -1,7 +1,7 @@
 // 문서 - Bundle에 올린 Old SOP와 New 문서. 번호·버전·제목은 칸에서 바로 고치고(제목을 누르면 그 문서의 Split), 언어 배치를 고르고, 추출 상태와 경고를 본다.
 "use client";
 
-import { Download, Eye, FileText, Trash2, Upload } from "lucide-react";
+import { Download, Eye, FileText, Loader2, Trash2, Upload } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 
@@ -20,7 +20,10 @@ import { MorphButton } from "@/components/ui/morph-button";
 import { Truncate } from "@/components/ui/motion";
 import { Select } from "@/components/ui/select";
 import { showToast } from "@/components/ui/toast";
+import { Tooltip } from "@/components/ui/tooltip";
 import { VersionInput } from "@/components/ui/version-input";
+import { listReadingDocuments } from "@/lib/ai-jobs-model";
+import { useAiJobsSelect } from "@/lib/ai-jobs-store";
 import { humanizeApiError } from "@/lib/api-errors";
 import { downloadDocumentFile } from "@/lib/api-manage";
 import { LANGUAGE_LAYOUTS, listDocuments, updateDocument, type DocumentUpdateInput, type SopDocument } from "@/lib/api-sop";
@@ -59,6 +62,9 @@ export default function DocumentsPage() {
   const isTrailWrapped = view === "table" && hostWidth !== null && hostWidth < TRAIL_WRAP_BELOW;
   // 업로드 뒤 AI가 비운 번호·버전을 묻는 작업이 끝나면 목록을 다시 읽어 제안이 바로 보이게 한다
   const aiJobs = useAiJobs(bundleId, reload);
+  // 문서 정보(번호·버전)를 AI가 읽는 중인 문서 - 공용 작업 목록에서 고른다(문자열 키라 같은 값이면 다시 그리지 않는다)
+  const readingKey = useAiJobsSelect((snapshot) => [...listReadingDocuments(snapshot.data, bundleId)].sort((a, b) => a - b).join(","), "");
+  const reading = new Set(readingKey === "" ? [] : readingKey.split(",").map(Number));
 
   async function handleDownload(document: SopDocument) {
     try {
@@ -170,6 +176,13 @@ export default function DocumentsPage() {
         />
         {canEdit && !document.doc_code && document.ai_meta?.doc_code && (
           <AiSuggestChip value={document.ai_meta.doc_code} testId={`documents-${document.id}-code-ai`} onAccept={() => void saveField(document, { doc_code: document.ai_meta?.doc_code ?? "" }).catch(() => undefined)} />
+        )}
+        {reading.has(document.id) && (
+          <Tooltip label={t("documents.aiReading")}>
+            <span className="inline-flex text-st-ai" tabIndex={0} role="img" aria-label={t("documents.aiReading")} data-testid={`documents-${document.id}-ai-reading`}>
+              <Loader2 size={14} strokeWidth={1.5} className="animate-spin" aria-hidden />
+            </span>
+          </Tooltip>
         )}
         </span>
       ),

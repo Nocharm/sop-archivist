@@ -14,7 +14,7 @@ import { loadBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
 import { useAiJobs } from "@/lib/use-ai-jobs";
 
-const KINDS = ["classify", "translate", "match", "pair", "split"] as const;
+const KINDS = ["classify", "translate", "match", "pair", "split", "doc_meta"] as const;
 
 function hasAny(counts: AiJobCounts | undefined): boolean {
   if (!counts) return false;
