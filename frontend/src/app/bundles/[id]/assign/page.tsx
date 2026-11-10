@@ -3,7 +3,7 @@
 // 오른쪽은 고른 곳·확정·우선순위 아코디언이다(설계 docs/superpowers/specs/2026-11-09-assign-unified-design.md).
 "use client";
 
-import { Check, ExternalLink, FilePen, FileText, FileUp, Inbox, Link2, ListChecks, RefreshCw, Sparkles, Trash2, X } from "lucide-react";
+import { Check, Circle, CircleCheck, CircleDashed, CirclePause, ExternalLink, FilePen, FileText, FileUp, Inbox, Link2, ListChecks, ListFilter, RefreshCw, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
@@ -24,6 +24,7 @@ import { UnitStatusPill } from "@/components/status";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LoadError } from "@/components/ui/load-error";
+import { Truncate } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
 import { listAppliedSuggestions, requestAi, type AiKind, type AiScope } from "@/lib/api-manage";
@@ -96,6 +97,14 @@ import { Select } from "@/components/ui/select";
 
 type Filter = ClassifyFilter;
 const FILTERS: Filter[] = ["unassigned", "ai_suggested", "on_hold", "confirmed", "all"];
+// 필터 필의 아이콘·색 - 상태 색은 status.tsx UNIT_STATUS와 같은 뜻(색 토큰은 components.css .fpill)
+const FILTER_LOOK: Record<Filter, { tone: string; Icon: typeof Circle }> = {
+  unassigned: { tone: "none", Icon: Circle },
+  ai_suggested: { tone: "ai", Icon: CircleDashed },
+  on_hold: { tone: "hold", Icon: CirclePause },
+  confirmed: { tone: "ok", Icon: CircleCheck },
+  all: { tone: "all", Icon: ListFilter },
+};
 type Mode = "old" | "unsourced";
 
 // backend constants.SYSTEM_HOLD_* - 모르는 코드는 "시스템 보류"로 보인다
@@ -894,7 +903,7 @@ export default function AssignPage() {
         </span>
       </button>
       {/* 세 등분하면 긴 라벨(Edit and confirm)이 단추 밖으로 넘친다 - 글자 길이만큼 잡고 남는 폭을 나눈다 */}
-      <div className="flex gap-1.5">
+      <div className="flex flex-wrap gap-1.5">
         <button type="button" className="btn h-8 flex-auto gap-1 px-1 text-xs font-normal" data-testid="assign-edit" disabled={!canEdit || !isPlace || editing || busy} onClick={startEdit}>
           <FilePen size={13} strokeWidth={1.5} aria-hidden />
           {t("classify.editConfirm")} <kbd>E</kbd>
@@ -1035,18 +1044,19 @@ export default function AssignPage() {
       <aside className="assign-side" data-testid="assign-inspector">
         <div className="assign-side-head">
           <div className="flex items-center gap-2">
-            <span className="min-w-0 truncate font-mono text-sm font-semibold" data-testid="assign-row-id">
-              {rowUnits.map((unit) => unit.display_id).join(" · ") || "–"}
+            <Truncate className="min-w-0 flex-1 font-mono text-sm font-semibold" text={rowUnits.map((unit) => unit.display_id).join(" · ") || "–"} testId="assign-row-id" />
+            <span className="flex-none">
+              <UnitStatusPill status={row.status} testId="assign-row-status" />
             </span>
-            <UnitStatusPill status={row.status} testId="assign-row-status" />
             {(units.error ?? suggestions.error) !== null && (
               <button type="button" className="btn h-6 gap-1 px-1.5 text-xs font-normal text-st-hold" data-testid="assign-refresh-error" onClick={() => setUnitsKey((key) => key + 1)}>
                 <RefreshCw size={12} strokeWidth={1.5} aria-hidden />
                 {t("classify.refreshFailed")}
               </button>
             )}
-            <span className="flex-1" />
-            <LegendButton />
+            <span className="flex-none">
+              <LegendButton />
+            </span>
           </div>
           {rowSuggestion && row.status === "ai_suggested" && aiWhy && (
             <p className="flex items-start gap-1.5 text-xs text-st-ai" data-testid="assign-ai-reason">
@@ -1055,7 +1065,7 @@ export default function AssignPage() {
             </p>
           )}
         </div>
-        <div className="grid min-h-0 content-start gap-3 overflow-y-auto p-[var(--pad)]">
+        <div className="grid min-h-0 grid-cols-[minmax(0,1fr)] content-start gap-3 overflow-y-auto p-[var(--pad)]">
           {renderChosen()}
           {actions}
           {details}
@@ -1083,32 +1093,39 @@ export default function AssignPage() {
   const done = countDone(rows);
   const bar = (
     <div className="assign-bar" data-testid="assign-bar">
-      <div className="flex flex-wrap gap-0.5" role="tablist" data-testid="assign-filters">
-        {FILTERS.filter((item) => item !== "ai_suggested" || counts.ai_suggested > 0).map((item) => (
-          <button
-            key={item}
-            type="button"
-            role="tab"
-            aria-selected={mode === "old" && filter === item}
-            className={`inline-flex h-[26px] items-center gap-1.5 rounded-md px-2 text-xs transition-colors hover:bg-hover ${mode === "old" && filter === item ? "bg-accent-tint text-ink" : "text-ink-2"}`}
-            data-testid={`assign-filter-${item}`}
-            onClick={() => applyFilter(item)}
-          >
-            {item === "all" ? t("assign.acc.all") : t(`status.unit.${item}`)}
-            <span className="tabular-nums text-ink-3">{counts[item]}</span>
-          </button>
-        ))}
+      <div className="flex flex-wrap gap-1" role="tablist" data-testid="assign-filters">
+        {FILTERS.filter((item) => item !== "ai_suggested" || counts.ai_suggested > 0).map((item) => {
+          const { tone, Icon } = FILTER_LOOK[item];
+          return (
+            <button
+              key={item}
+              type="button"
+              role="tab"
+              aria-selected={mode === "old" && filter === item}
+              className="fpill"
+              data-tone={tone}
+              data-testid={`assign-filter-${item}`}
+              onClick={() => applyFilter(item)}
+            >
+              <Icon size={13} strokeWidth={1.5} aria-hidden />
+              {item === "all" ? t("assign.acc.all") : t(`status.unit.${item}`)}
+              <span className="fpill-n">{counts[item]}</span>
+            </button>
+          );
+        })}
         {written.length > 0 && (
           <button
             type="button"
             role="tab"
             aria-selected={mode === "unsourced"}
-            className={`inline-flex h-[26px] items-center gap-1.5 rounded-md px-2 text-xs transition-colors hover:bg-hover ${mode === "unsourced" ? "bg-accent-tint text-ink" : "text-ink-2"}`}
+            className="fpill"
+            data-tone="danger"
             data-testid="assign-filter-unsourced"
             onClick={() => setMode("unsourced")}
           >
+            <TriangleAlert size={13} strokeWidth={1.5} aria-hidden />
             {t("assign.filterUnsourced")}
-            <span className={`tabular-nums ${unsourced.length > 0 ? "font-semibold text-danger" : "text-ink-3"}`}>{unsourced.length}</span>
+            <span className="fpill-n">{unsourced.length}</span>
           </button>
         )}
       </div>
@@ -1164,7 +1181,7 @@ export default function AssignPage() {
 
   return (
     <>
-      <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_380px]" data-testid="assign">
+      <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_320px]" data-testid="assign">
         <div className="assign-desk">
           {bar}
           {rows.length === 0 ? (
