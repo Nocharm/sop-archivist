@@ -309,14 +309,37 @@ def build_unit_text(spans: Sequence[Sequence[int]], block_texts: Mapping[int, st
     return "".join(pieces)
 
 
-def suggest_interleaved_pairs(units: Sequence[tuple[int, str, str]]) -> list[tuple[list[int], list[int]]]:
+PairDirection = Literal["ko_en", "en_ko"]
+_PairRun = tuple[str, list[int], list[str]]
+
+
+def suggest_interleaved_pairs(
+    units: Sequence[tuple[int, str, str]], preferred: PairDirection | None = None
+) -> list[tuple[list[int], list[int]]]:
     """(단위 id, 언어, 글) 순서 목록 → 코드 짝 제안 [(한글 단위들, 영어 단위들)]. 중립을 건너뛰고 같은 언어가 이어진 덩어리를 만든다.
 
-    한/영 연달아는 한글이 먼저다 — 왼쪽부터 한글 덩어리 바로 뒤에 영어 덩어리가 오고 둘이 번역 짝으로 보이면(_is_likely_pair)
-    둘을 잇고 그 뒤로 넘어가고, 아니면 그 덩어리 하나만 건너뛴다(앞머리의 영어 회사명·제목 줄 하나가 문서 전체 짝을 한 칸씩 밀지 않게).
+    한글 먼저·영어 먼저 두 방향으로 각각 짝을 만들어 번역 짝으로 보이는(_is_likely_pair) 짝이 더 많은 쪽을 채택한다.
+    동점이면 preferred(문서 전체의 우세 순서, 부르는 쪽이 모은다), 그것도 없으면 한글 먼저다.
+    한 방향 안에서는 왼쪽부터 첫 언어 덩어리 바로 뒤에 다음 언어 덩어리가 오고 둘이 번역 짝으로 보이면 둘을 잇고 그 뒤로 넘어가고,
+    아니면 그 덩어리 하나만 건너뛴다(앞머리의 외톨이 회사명·제목 줄 하나가 문서 전체 짝을 한 칸씩 밀지 않게).
     어느 쪽이든 MAX_PAIR_SIDE를 넘으면 그 두 덩어리는 짝 없이 넘어간다. 머리말·본문처럼 부분이 다른 단위는 부르는 쪽이 나눠 넘긴다.
     """
-    runs: list[tuple[str, list[int], list[str]]] = []
+    runs = _build_language_runs(units)
+    ko_en = _pair_runs(runs, "ko_en")
+    en_ko = _pair_runs(runs, "en_ko")
+    if len(ko_en) == len(en_ko):
+        return en_ko if preferred == "en_ko" else ko_en
+    return ko_en if len(ko_en) > len(en_ko) else en_ko
+
+
+def count_pair_directions(units: Sequence[tuple[int, str, str]]) -> tuple[int, int]:
+    """(한글 먼저로 잡히는 짝 수, 영어 먼저로 잡히는 짝 수) — 문서 전체의 우세 순서를 정할 때 구간마다 모은다."""
+    runs = _build_language_runs(units)
+    return len(_pair_runs(runs, "ko_en")), len(_pair_runs(runs, "en_ko"))
+
+
+def _build_language_runs(units: Sequence[tuple[int, str, str]]) -> list[_PairRun]:
+    runs: list[_PairRun] = []
     for unit_id, lang, text in units:
         if lang == NEUTRAL:
             continue
@@ -325,17 +348,22 @@ def suggest_interleaved_pairs(units: Sequence[tuple[int, str, str]]) -> list[tup
             runs[-1][2].append(text)
         else:
             runs.append((lang, [unit_id], [text]))
+    return runs
+
+
+def _pair_runs(runs: Sequence[_PairRun], direction: PairDirection) -> list[tuple[list[int], list[int]]]:
+    first_lang, second_lang = ("ko", "en") if direction == "ko_en" else ("en", "ko")
     pairs = []
     index = 0
     while index < len(runs):
-        lang, korean, korean_texts = runs[index]
-        if lang == "ko" and index + 1 < len(runs) and runs[index + 1][0] == "en":
-            _, english, english_texts = runs[index + 1]
-            if len(korean) > MAX_PAIR_SIDE or len(english) > MAX_PAIR_SIDE:
+        if runs[index][0] == first_lang and index + 1 < len(runs) and runs[index + 1][0] == second_lang:
+            first, second = runs[index], runs[index + 1]
+            korean, english = (first, second) if direction == "ko_en" else (second, first)
+            if len(korean[1]) > MAX_PAIR_SIDE or len(english[1]) > MAX_PAIR_SIDE:
                 index += 2
                 continue
-            if _is_likely_pair(korean_texts, english_texts):
-                pairs.append((korean, english))
+            if _is_likely_pair(korean[2], english[2]):
+                pairs.append((korean[1], english[1]))
                 index += 2
                 continue
         index += 1
