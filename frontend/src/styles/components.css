@@ -1031,10 +1031,10 @@
   .cell-gap .strip-merge { left: 0; min-width: 44px; height: 9px; padding: 0 8px; }
   .cell-marks { position: absolute; right: 0; top: 4px; display: flex; gap: 3px; align-items: center; }
 
-  /* 글 앞 왼쪽 칸 - 번호는 왼쪽, 태그는 글 바로 앞(오른쪽 맞춤). 첫 글줄과 같은 높이 */
-  .strip-lead { position: absolute; left: var(--pg-pad-l); top: 6px; width: calc(var(--lead-w) - 6px); height: 26px; display: flex; align-items: center; gap: 6px; }
-  .strip-num { margin-right: auto; color: var(--ink-2); font: 500 10px / 1 var(--font-mono); white-space: nowrap; }
-  .strip-tags { margin-left: auto; display: flex; }
+  /* 글 앞 왼쪽 칸 - 번호와 태그가 한 덩어리로 글 바로 앞에 오른쪽 맞춤(빈 곳은 왼쪽 가장자리). 첫 글줄과 같은 높이 */
+  .strip-lead { position: absolute; left: var(--pg-pad-l); top: 6px; width: calc(var(--lead-w) - 6px); height: 26px; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+  .strip-num { color: var(--ink-2); font: 500 10px / 1 var(--font-mono); white-space: nowrap; }
+  .strip-tags { display: flex; }
   .strip-lead .ptag { height: 15px; min-width: 22px; font-size: 9px; }
   .strip-lead .ptag.duo > span { height: 15px; }
   /* 오른쪽 칸 - Assign의 연결 배지 자리. 비면 폭을 차지하지 않는다 */
