@@ -211,6 +211,73 @@ const AUDIT_ENTRIES = [
     expect: (value) => value >= 200,
     note: "focusing a guideline memo shows its full 200 characters in a tooltip",
   },
+  // ---- Task 4: Split ----
+  {
+    id: "A2", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}/split?doc=${ids.docs.tables}`,
+    measure: (page) => page.locator(".ptbl").first().evaluate((table) => {
+      const widths = [...table.querySelectorAll("td")].map((td) => td.getBoundingClientRect().width);
+      const wide = [...document.querySelectorAll(".ptbl")].sort((a, b) => b.rows[0].cells.length - a.rows[0].cells.length)[0];
+      const wideWidths = [...wide.querySelectorAll("td")].map((td) => td.getBoundingClientRect().width);
+      const overlaps = [...document.querySelectorAll(".cell-piece")].some((piece) => {
+        const marks = piece.querySelector(".cell-marks");
+        const text = piece.querySelector(":scope > p");
+        if (!marks || !text || marks.children.length === 0) return false;
+        const m = marks.getBoundingClientRect();
+        const range = document.createRange();
+        range.selectNodeContents(text);
+        return [...range.getClientRects()].some((r) => r.right > m.left + 0.5 && r.left < m.right && r.bottom > m.top && r.top < m.bottom);
+      });
+      return { minCell: Math.round(Math.min(...widths, ...wideWidths)), overlaps };
+    }),
+    expect: (value) => value.minCell >= 100 && value.overlaps === false,
+    note: "narrowest table cell >= 100px and cell marks do not overlap cell text",
+  },
+  {
+    id: "A3", ds: "worst", user: MEMBER, views: [1920],
+    path: (ids) => `/bundles/${ids.w[1]}/split?doc=${ids.docs.big}`,
+    measure: (page) => page.evaluate(() => {
+      const inspector = document.querySelector('[data-testid="split-inspector"]').getBoundingClientRect().left;
+      const rights = [...document.querySelectorAll(".pg")].map((pg) => pg.getBoundingClientRect().right);
+      return { maxRight: Math.round(Math.max(...rights)), inspector: Math.round(inspector) };
+    }),
+    expect: (value) => value.maxRight <= value.inspector,
+    note: "every .pg right edge <= split-inspector left edge",
+  },
+  {
+    id: "C2", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}/split`,
+    measure: (page) => page.evaluate(() => {
+      const disabled = document.querySelectorAll('[data-testid="split-inspector"] :disabled').length;
+      const scroller = document.querySelector('[data-testid="split-docs"] > div');
+      const frame = scroller.getBoundingClientRect();
+      let visible = 0;
+      for (const button of scroller.querySelectorAll('[data-testid^="split-doc-"]')) {
+        const box = button.getBoundingClientRect();
+        visible += Math.max(0, Math.min(box.bottom, frame.bottom) - Math.max(box.top, frame.top)) / box.height;
+      }
+      return { disabled, docs: Math.round(visible * 10) / 10 };
+    }),
+    expect: (value) => value.disabled === 0 && value.docs >= 12,
+    note: "idle inspector has 0 disabled buttons; >= 12 document buttons visible in split-docs",
+  },
+  {
+    id: "C2", ds: "mid", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.mid[2]}/split`,
+    measure: (page) => page.locator('[data-testid="split-inspector"] :disabled').count(),
+    expect: (value) => value === 0,
+    note: "idle inspector has 0 disabled buttons",
+  },
+  {
+    id: "R8", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}/split?doc=${ids.docs.big}`,
+    measure: (page) => page.evaluate(() => {
+      const long = [...document.querySelectorAll(".strip > p")].find((p) => (p.textContent ?? "").length >= 1790);
+      return long ? Math.round(long.getBoundingClientRect().width) : 0;
+    }),
+    expect: (value) => value >= 340,
+    note: "1,800-character paragraph text box >= 340px wide at 1120",
+  },
 ];
 
 // ---------- ids 지도 ----------

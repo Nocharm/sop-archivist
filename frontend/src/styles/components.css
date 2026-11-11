@@ -546,7 +546,7 @@
 
 /* ---- 원문 용지: 용지에는 추출한 글자만 둔다(앱 글자 금지). 원문 글꼴은 사람마다 설정(data-src-*) ---- */
 @layer components {
-  .desk { overflow-y: auto; scrollbar-gutter: stable; padding: 18px 20px; min-width: 0; min-height: 0; background: var(--bg); }
+  .desk { overflow-y: auto; overflow-x: clip; scrollbar-gutter: stable; padding: 18px 20px; min-width: 0; min-height: 0; background: var(--bg); }
   .sheet {
     width: 100%;
     max-width: 600px;
@@ -560,6 +560,7 @@
   .pg {
     padding: 22px 30px 18px;
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 10px;
     font-family: var(--font-source);
     font-size: var(--fs-read);
@@ -567,6 +568,8 @@
   }
   .pg :lang(en) { font-family: var(--font-source-en); }
   .pg p { margin: 0; white-space: pre-wrap; }
+  /* 공백 없는 긴 토큰이 칸을 밀어 오른쪽 패널 밑으로 들어가지 않게 */
+  .pg p, .pg .su { overflow-wrap: anywhere; }
   .pg p:lang(ko), .pg .su:lang(ko) { line-height: 27px; }
   .pg p.h { font-weight: 600; margin-top: 4px; }
   /* 머리말·꼬리말은 라벨 없이 흐린 글자로만 구분한다 */
@@ -594,8 +597,9 @@
   .su .cut-b { background: var(--split-b); box-shadow: inset 2px 0 0 var(--ink); }
   .su[data-cut] { background-image: none; }
   .su[data-done] { color: color-mix(in oklab, var(--paper-ink) 62%, var(--paper)); }
-  .ptbl { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 22px; }
-  .ptbl td { border: 1px solid var(--line-2); padding: 3px 8px; text-align: left; vertical-align: top; }
+  .ptbl { width: auto; min-width: 100%; border-collapse: collapse; font-size: 14px; line-height: 22px; }
+  /* 칸마다 16ch는 지켜 열이 많은 표가 글자 한 줄 폭으로 찌그러지지 않게 한다. max-content는 쓰지 않는다(긴 칸이 표를 3,000px 넘게 민다) - 넘치면 표를 감싼 조각이 가로로 스크롤한다 */
+  .ptbl td { min-width: 16ch; border: 1px solid var(--line-2); padding: 3px 8px; text-align: left; vertical-align: top; }
   .ptbl-cap {
     display: flex;
     align-items: center;
@@ -1039,7 +1043,7 @@
   .strip-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) > svg, .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) > svg, .strip-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) .strip-merge-label, .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) .strip-merge-label { transition-delay: var(--morph-delay); }
 
   /* 표 칸 안의 조각 - 칸 문장마다 점선으로 나누고 같은 칸의 이웃 사이에 합치기 */
-  .cell-piece { position: relative; padding-right: 18px; border-radius: 2px; }
+  .cell-piece { position: relative; padding-right: 38px; border-radius: 2px; }
   .cell-piece > p { margin: 0; }
   .cell-gap { position: relative; height: 11px; }
   .cell-gap::after { content: ""; position: absolute; inset-inline: 0; top: 50%; border-top: 1px dashed var(--line-2); }
@@ -1048,6 +1052,8 @@
   .cell-marks { position: absolute; right: 0; top: 4px; display: flex; gap: 3px; align-items: center; }
 
   /* 왼쪽 탭 - 줄의 왼쪽 밖에 맞닿아 붙는다(맞닿는 쪽 모서리 직각, 바깥 모서리 둥글게). 바탕 = 언어 색, 보류는 그 위에 사선 줄무늬. 번호는 절의 첫 블록에만, 번호 없는 탭은 옅게 해 번호를 따라가는 눈을 덜 방해하고 올리면 진해진다. 탭에 올리면 번호가 사라지고 언어 글자가 뜬다. 첫 글줄 높이(27px)에 번호를 맞춘다 */
+  /* 1280 미만에서는 3단 이상의 절 번호 탭을 46px에서 멈춘다 - 깊은 번호가 글 상자를 좁히지 않게(긴 번호는 탭 안에서 잘린다) */
+  @media (max-width: 1279px) { .strip-tab, .strip-tab-gap { max-width: 46px; } }
   .strip-tab { position: relative; flex: none; align-self: stretch; display: flex; flex-direction: column; align-items: center; padding-top: 6px; border: 1px solid var(--line-2); border-right: 0; border-radius: var(--r-1) 0 0 var(--r-1); background-color: var(--tab-none); color: var(--tab-ink); box-sizing: border-box; overflow: hidden; transition: opacity var(--dur-base); }
   .strip-tab[data-lang="ko"] { background-color: var(--tab-ko); }
   .strip-tab[data-lang="en"] { background-color: var(--tab-en); }
