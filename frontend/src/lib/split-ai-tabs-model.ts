@@ -6,16 +6,18 @@ export interface PendingSplit {
   label: string;
   /** 문서 순서에서의 위치 */
   position: number;
-  /** 문서 전체 요청에서 나온 제안(문장 하나만 보낸 요청이 아니다) */
-  batch: boolean;
+  /** 요청 출처 - 이 화면에서 보낸 것만 안다(새로고침 뒤·다른 사람의 요청은 unknown) */
+  origin: AiOrigin;
 }
+
+export type AiOrigin = "single" | "batch" | "unknown";
 
 export interface AiTab {
   unitId: number;
   label: string;
   /** 아직 열어 보지 않았다 */
   unseen: boolean;
-  batch: boolean;
+  origin: AiOrigin;
 }
 
 export function buildAiTabs(suggestions: readonly PendingSplit[], seen: ReadonlySet<number>): AiTab[] {
@@ -23,10 +25,13 @@ export function buildAiTabs(suggestions: readonly PendingSplit[], seen: Readonly
   for (const item of suggestions) if (!byUnit.has(item.unitId)) byUnit.set(item.unitId, item);
   return [...byUnit.values()]
     .sort((a, b) => a.position - b.position)
-    .map((item) => ({ unitId: item.unitId, label: item.label, unseen: !seen.has(item.unitId), batch: item.batch }));
+    .map((item) => ({ unitId: item.unitId, label: item.label, unseen: !seen.has(item.unitId), origin: item.origin }));
 }
 
-/** 일괄 요청에서 나온, 아직 정하지 않은 탭 수 - 탭 줄 머리 "Whole document · N left" */
-export function countBatchLeft(tabs: readonly AiTab[]): number {
-  return tabs.filter((tab) => tab.batch).length;
+/** 탭 줄 머리의 남은 수 - 일괄 출처가 있으면 "Whole document · N left", 출처를 모르는 탭만 있으면 이름 없이 "N left" */
+export function getAiTabsHead(tabs: readonly AiTab[]): { kind: "batch" | "plain"; n: number } | null {
+  const batch = tabs.filter((tab) => tab.origin === "batch").length;
+  if (batch > 0) return { kind: "batch", n: batch };
+  const unknown = tabs.filter((tab) => tab.origin === "unknown").length;
+  return unknown > 0 ? { kind: "plain", n: unknown } : null;
 }

@@ -5,7 +5,7 @@ import { Check, Layers, WandSparkles, X } from "lucide-react";
 
 import { BusyLabel } from "@/components/ui/motion";
 import type { AiSuggestion, ViewUnit } from "@/lib/api-sop";
-import { countBatchLeft, type AiTab } from "@/lib/split-ai-tabs-model";
+import { getAiTabsHead, type AiTab } from "@/lib/split-ai-tabs-model";
 import { useI18n } from "@/lib/i18n";
 import { readSplitOffsets, type SplitAi } from "@/lib/use-split-ai";
 
@@ -84,36 +84,35 @@ interface SplitAiTabsProps {
 export function SplitAiTabs({ ai, tabs, selected, suggestion, canEdit, busy, onPick, onNext }: SplitAiTabsProps) {
   const { t } = useI18n();
   if (!ai.isOn || tabs.length === 0) return null;
-  const batchLeft = countBatchLeft(tabs);
+  const head = getAiTabsHead(tabs);
   return (
     <section className="grid min-w-0 gap-2" data-testid="split-ai-tabs">
       <h2 className="flex flex-wrap items-center gap-x-2 text-xs font-semibold text-ink-3">
         {t("ai.suggestionsTitle")}
-        {batchLeft > 0 && (
-          <span className="inline-flex items-center gap-1 font-normal text-st-ai" data-testid="split-ai-batch-head">
-            <Layers size={12} strokeWidth={1.5} aria-hidden />
-            {t("ai.batchLeft", { n: batchLeft })}
+        {head && (
+          <span className="inline-flex items-center gap-1 font-normal text-st-ai" data-testid="split-ai-batch-head" data-kind={head.kind}>
+            {head.kind === "batch" && <Layers size={12} strokeWidth={1.5} aria-hidden />}
+            {head.kind === "batch" ? t("ai.batchLeft", { n: head.n }) : `· ${t("ai.leftCount", { n: head.n })}`}
           </span>
         )}
       </h2>
       {/* 탭이 많으면 옆으로 민다 */}
-      <div className="flex gap-1 overflow-x-auto pb-1" role="tablist" data-testid="split-ai-tablist">
+      <div className="flex gap-1 overflow-x-auto pb-1" data-testid="split-ai-tablist">
         {tabs.map((tab) => {
           const isActive = selected?.id === tab.unitId;
           return (
             <button
               key={tab.unitId}
               type="button"
-              role="tab"
-              aria-selected={isActive}
+              aria-pressed={isActive}
               className={`pill ai h-7 flex-none cursor-pointer whitespace-nowrap ${isActive ? "font-semibold" : ""}`}
               style={isActive ? { outline: "1.5px solid var(--st-ai-line)" } : undefined}
               data-testid={`split-ai-tab-${tab.unitId}`}
               data-unseen={tab.unseen ? "true" : undefined}
-              data-batch={tab.batch ? "true" : undefined}
+              data-batch={tab.origin === "batch" ? "true" : undefined}
               onClick={() => onPick(tab.unitId)}
             >
-              {tab.batch && <Layers size={11} strokeWidth={1.5} aria-hidden />}
+              {tab.origin === "batch" && <Layers size={11} strokeWidth={1.5} aria-hidden />}
               {tab.label}
               {tab.unseen && <span className="h-1.5 w-1.5 rounded-full bg-st-ai" aria-label={t("ai.unseen")} />}
             </button>

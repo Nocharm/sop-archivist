@@ -24,6 +24,10 @@ export interface SplitMenuContext {
   isChecked?: (unit: ViewUnit) => boolean;
   /** 우클릭한 문장에 나눌 선이 놓여 있다 */
   hasCut?: boolean;
+  /** 우클릭한 문장에 아직 정하지 않은 AI 나누기 제안이 있다 */
+  hasSuggestion?: boolean;
+  /** 우클릭한 문장의 AI 나누기 요청이 대기·실행 중이다 */
+  isAiWaiting?: boolean;
   /** 우클릭한 문장이 이미 판단을 받았다(보류는 판단 전 단위만) */
   isDecided?: boolean;
 }
@@ -36,6 +40,14 @@ function why(reason: string): string {
 
 function build(action: SplitMenuAction, reasonKey: string | null): SplitMenuItem {
   return reasonKey === null ? { action, enabled: true } : { action, enabled: false, reasonKey };
+}
+
+/** AI 나누기를 못 쓰는 까닭의 문구 키 - 오른쪽 칸 단추와 우클릭 메뉴가 같은 규칙을 쓴다. 쓸 수 있으면 null */
+export function getAiSplitReason(input: { aiEnabled: boolean; isText: boolean; hasSuggestion?: boolean; isWaiting?: boolean }): string | null {
+  if (!input.aiEnabled) return why("aiOff");
+  if (!input.isText) return why("notText");
+  if (input.isWaiting) return why("aiWaiting");
+  return input.hasSuggestion ? why("hasSuggestion") : null;
 }
 
 function isLangUnit(unit: ViewUnit): boolean {
@@ -71,7 +83,7 @@ function buildSingle(ctx: SplitMenuContext): SplitMenuItem[] {
   return [
     build("check", guard(null)),
     build("split", guard(ctx.hasCut ? null : why("noCut"))),
-    build("ai_split", guard(!ctx.aiEnabled ? why("aiOff") : !isText ? why("notText") : null)),
+    build("ai_split", guard(getAiSplitReason({ aiEnabled: ctx.aiEnabled, isText, hasSuggestion: ctx.hasSuggestion, isWaiting: ctx.isAiWaiting }))),
     build("hold", guard(ctx.isDecided ? why("decided") : null)),
     build("lang_ko", guard(langReason("ko"))),
     build("lang_en", guard(langReason("en"))),

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ViewUnit } from "./api-sop";
-import { buildSplitMenu, type SplitMenuAction, type SplitMenuContext } from "./split-menu-model";
+import { buildSplitMenu, getAiSplitReason, type SplitMenuAction, type SplitMenuContext } from "./split-menu-model";
 
 function makeUnit(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
   return {
@@ -102,6 +102,15 @@ describe("buildSplitMenu single sentence", () => {
   it("gates AI split on aiEnabled", () => {
     expect(find(buildSplitMenu(single({ aiEnabled: false })), "ai_split")).toMatchObject({ enabled: false, reasonKey: "split.menu.why.aiOff" });
     expect(find(buildSplitMenu(single()), "ai_split").enabled).toBe(true);
+  });
+
+  it("gives AI split the same reasons as the right-panel button", () => {
+    expect(find(buildSplitMenu(single({ hasSuggestion: true })), "ai_split")).toMatchObject({ enabled: false, reasonKey: "split.menu.why.hasSuggestion" });
+    expect(find(buildSplitMenu(single({ isAiWaiting: true })), "ai_split")).toMatchObject({ enabled: false, reasonKey: "split.menu.why.aiWaiting" });
+    const base = { aiEnabled: true, isText: true };
+    expect(getAiSplitReason(base)).toBeNull();
+    expect(getAiSplitReason({ ...base, aiEnabled: false, hasSuggestion: true })).toBe("split.menu.why.aiOff");
+    expect(getAiSplitReason({ ...base, isWaiting: true, hasSuggestion: true })).toBe("split.menu.why.aiWaiting");
   });
 
   it("only lets pair-less sentences skip unpair, and hides already-set language", () => {

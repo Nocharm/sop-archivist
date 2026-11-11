@@ -21,9 +21,8 @@ import { LoadError } from "@/components/ui/load-error";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { getStageHref } from "@/lib/stages";
 import { InfoTip } from "@/components/ui/info-tip";
-import { Truncate } from "@/components/ui/motion";
+import { BusyLabel, Truncate } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
-import { BusyLabel } from "@/components/ui/motion";
 import { Tooltip } from "@/components/ui/tooltip";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ApiError } from "@/lib/api";
@@ -53,7 +52,7 @@ import { buildGroupSave } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
 import { buildPaperModel, buildPaperTabs, canSplitAt, countUnchecked, readWarningText, resolveCutDrag, shouldRecenter, toBlockOffset, toUnitOffset, type PaperSheet, type PaperTabKey } from "@/lib/paper-model";
 import { getSplitKeyAction } from "@/lib/split-keys";
-import { buildSplitMenu, isUnitDecided, type SplitMenuAction } from "@/lib/split-menu-model";
+import { buildSplitMenu, getAiSplitReason, isUnitDecided, type SplitMenuAction } from "@/lib/split-menu-model";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 import { buildAiTabs } from "@/lib/split-ai-tabs-model";
@@ -152,10 +151,11 @@ export default function SplitPage() {
   // AI 제안 탭 - 연 적 있는 문장은 점을 뗀다(지금 고른 문장은 열어 본 것으로 친다)
   const [seenAi, setSeenAi] = useState<ReadonlySet<number>>(new Set());
   const aiTabs = buildAiTabs(
-    suggestedIds.map((id, position) => ({ unitId: id, label: model?.units.get(id)?.display_id ?? String(id), position, batch: ai.isBatch(id) })),
+    suggestedIds.map((id, position) => ({ unitId: id, label: model?.units.get(id)?.display_id ?? String(id), position, origin: ai.getOrigin(id) })),
     selectedId === null ? seenAi : new Set(seenAi).add(selectedId),
   );
-  const aiUnitReason = !ai.isOn ? t("split.menu.why.aiOff") : suggestion ? t("ai.unitHasSuggestion") : null;
+  const aiUnitKey = selected ? getAiSplitReason({ aiEnabled: ai.isOn, isText: true, hasSuggestion: suggestion !== null, isWaiting: ai.isWaiting(selected.id) }) : null;
+  const aiUnitReason = aiUnitKey === null ? null : t(aiUnitKey);
   const sentenceCount = (data?.units ?? []).filter((unit) => unit.kind === "sentence" && unit.split_suggestion_id === null).length;
 
   function selectDoc(nextId: number) {
@@ -381,6 +381,8 @@ export default function SplitPage() {
       aiEnabled: ai.isOn,
       isChecked,
       hasCut: cutAt?.unitId === menuTarget.id,
+      hasSuggestion: menuTarget.split_suggestion_id !== null,
+      isAiWaiting: ai.isWaiting(menuTarget.id),
       isDecided: isUnitDecided(menuTarget, model.units),
     });
   })();

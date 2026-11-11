@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { buildAiTabs, countBatchLeft, type PendingSplit } from "@/lib/split-ai-tabs-model";
+import { buildAiTabs, getAiTabsHead, type AiOrigin, type PendingSplit } from "@/lib/split-ai-tabs-model";
 
-const item = (unitId: number, position: number, batch = false): PendingSplit => ({ unitId, label: `U${unitId}`, position, batch });
+const item = (unitId: number, position: number, origin: AiOrigin = "single"): PendingSplit => ({ unitId, label: `U${unitId}`, position, origin });
 
 describe("buildAiTabs", () => {
   it("keeps one tab per unit even when it has several suggestions", () => {
@@ -20,10 +20,15 @@ describe("buildAiTabs", () => {
     expect(tabs.map((tab) => tab.unitId)).toEqual([3, 4, 9]);
   });
 
-  it("tells batch results from single requests and counts the batch ones", () => {
-    const tabs = buildAiTabs([item(1, 0, true), item(2, 1), item(3, 2, true)], new Set());
-    expect(tabs.map((tab) => tab.batch)).toEqual([true, false, true]);
-    expect(countBatchLeft(tabs)).toBe(2);
+  it("keeps the request origin and heads batch results with their count", () => {
+    const tabs = buildAiTabs([item(1, 0, "batch"), item(2, 1), item(3, 2, "batch")], new Set());
+    expect(tabs.map((tab) => tab.origin)).toEqual(["batch", "single", "batch"]);
+    expect(getAiTabsHead(tabs)).toEqual({ kind: "batch", n: 2 });
+  });
+
+  it("uses a neutral head when the origin is unknown and none is batch", () => {
+    expect(getAiTabsHead(buildAiTabs([item(1, 0, "unknown"), item(2, 1, "unknown"), item(3, 2)], new Set()))).toEqual({ kind: "plain", n: 2 });
+    expect(getAiTabsHead(buildAiTabs([item(1, 0)], new Set()))).toBeNull();
   });
 
   it("returns nothing for no suggestions", () => {

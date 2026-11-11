@@ -10,6 +10,7 @@ import { humanizeApiError } from "./api-errors";
 import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, type AiRequestOut } from "./api-manage";
 import { editUnits, type AiSuggestion, type EditResult, type ViewUnit } from "./api-sop";
 import { useI18n } from "./i18n";
+import type { AiOrigin } from "./split-ai-tabs-model";
 import { useAiJobs } from "./use-ai-jobs";
 import { useLoaded } from "./use-loaded";
 
@@ -35,8 +36,10 @@ export interface SplitAi {
   ask: (kind: Extract<AiKind, "split" | "pair">) => Promise<void>;
   /** 문장 하나만 AI 나누기를 요청한다(오른쪽 칸 단추·우클릭 메뉴가 같은 길) */
   askUnit: (unitId: number) => Promise<void>;
-  /** 이 문장의 제안이 문서 전체 요청에서 왔다 - 이 화면에서 문장 하나로 보낸 것만 단일로 안다 */
-  isBatch: (unitId: number) => boolean;
+  /** 제안의 요청 출처 - 이 화면(이 세션)에서 보낸 요청만 안다 */
+  getOrigin: (unitId: number) => AiOrigin;
+  /** 이 문장의 문장 단위 요청이 아직 대기·실행 중이다 */
+  isWaiting: (unitId: number) => boolean;
   apply: (unit: ViewUnit, suggestion: AiSuggestion) => Promise<void>;
   reject: (suggestion: AiSuggestion) => Promise<void>;
 }
@@ -52,7 +55,14 @@ export function useSplitAi(bundleId: number, docId: number | null, revision: num
   const [round, setRound] = useState(0);
   const [working, setWorking] = useState<SplitAiWork | null>(null);
   const [lastRequest, setLastRequest] = useState<SplitAiRequestResult | null>(null);
+  // 이 세션에서 문장 하나로 보낸 요청(제안이 정해지면 뗀다)과 문서 전체 요청을 보냈는지
   const [singleIds, setSingleIds] = useState<ReadonlySet<number>>(new Set());
+  const [waitingIds, setWaitingIds] = useState<ReadonlySet<number>>(new Set());
+  const [hasBatch, setHasBatch] = useState(false);
+  const dropUnit = (unitId: number) => {
+    setSingleIds((prev) => new Set([...prev].filter((id) => id !== unitId)));
+    setWaitingIds((prev) => new Set([...prev].filter((id) => id !== unitId)));
+  };
   const jobs = useAiJobs(bundleId, () => {
     setRound((value) => value + 1);
     onChanged(null);
@@ -70,6 +80,7 @@ export function useSplitAi(bundleId: number, docId: number | null, revision: num
     setWorking(kind);
     try {
       const out = await requestAi(bundleId, kind, { document_id: docId });
+      if (kind === "split") setHasBatch(true);
       setLastRequest({ kind, docId, out });
       jobs.watch();
     } catch (err) {
@@ -85,6 +96,7 @@ export function useSplitAi(bundleId: number, docId: number | null, revision: num
     try {
       const out = await requestAi(bundleId, "split", { unit_ids: [unitId] });
       setSingleIds((prev) => new Set(prev).add(unitId));
+      if (out.queued > 0) setWaitingIds((prev) => new Set(prev).add(unitId));
       setLastRequest({ kind: "split", docId, out });
       jobs.watch();
     } catch (err) {
@@ -108,6 +120,7 @@ export function useSplitAi(bundleId: number, docId: number | null, revision: num
         unitId = last.created_unit_ids[0] ?? unitId;
       }
       await setSuggestionAdoption(bundleId, suggestion.id, "as_is");
+      dropUnit(unit.id);
       setRound((value) => value + 1);
       onChanged(last);
     } catch (err) {
@@ -122,6 +135,7 @@ export function useSplitAi(bundleId: number, docId: number | null, revision: num
     setWorking("reject");
     try {
       await setSuggestionAdoption(bundleId, suggestion.id, "rejected");
+      if (typeof suggestion.content.unit_id === "number") dropUnit(suggestion.content.unit_id);
       setRound((value) => value + 1);
       // 용지의 제안 표시는 문서 보기에서 온다
       onChanged(null);
@@ -142,7 +156,9 @@ export function useSplitAi(bundleId: number, docId: number | null, revision: num
     findSuggestion: (unit) => (unit ? (suggestions.data ?? []).filter((item) => item.content.unit_id === unit.id && item.adoption === null).at(-1) ?? null : null),
     ask,
     askUnit,
-    isBatch: (unitId) => !singleIds.has(unitId),
+    getOrigin: (unitId) => (singleIds.has(unitId) ? "single" : hasBatch ? "batch" : "unknown"),
+    // 문장 단위 작업은 나누기 작업이 하나라도 도는 동안만 기다리는 것으로 본다(작업 수는 묶음 단위로만 알린다)
+    isWaiting: (unitId) => waitingIds.has(unitId) && running > 0,
     apply,
     reject,
   };
