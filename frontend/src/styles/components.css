@@ -1060,6 +1060,11 @@
 
   /* 종이 오른쪽 끝 아이콘 표시 */
   .strip-marks { position: absolute; right: 9px; top: 11px; display: flex; gap: 5px; align-items: center; }
+  /* 쪼개기 오른쪽 칸: 섹션 머리 한 모양(작은 라벨 + 선)과 언어 경고 */
+  .insp-h { display: flex; align-items: center; gap: 4px; font-size: var(--fs-micro); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }
+  .insp-h::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  .lang-warn { display: flex; gap: 6px; align-items: flex-start; font-size: 12px; line-height: 18px; color: var(--warn-ink); background: var(--warn-tint); border-radius: 6px; padding: 6px 8px; }
+  .lang-warn svg { flex: none; margin-top: 2px; }
   .pmark { flex: none; color: var(--ink-3); }
   .pmark.checked { color: var(--accent); }
   .pmark.pair { color: var(--st-ai-ink); }

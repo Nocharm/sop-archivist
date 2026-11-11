@@ -3,7 +3,7 @@
 // 합치기는 조각 사이의 단추 하나뿐이다. 끌어 고르면 새 단위로 만들 수 있다.
 "use client";
 
-import { ArrowDown, ArrowUp, Check, CheckCheck, Circle, CircleCheck, FileText, Link2, Redo2, Scissors, SquarePlus, Undo2, Unlink, Upload, WandSparkles, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, CheckCheck, Circle, CircleCheck, FileText, Link2, Redo2, Scissors, SquarePlus, TriangleAlert, Undo2, Unlink, Upload, WandSparkles, X } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useState, type ReactNode } from "react";
@@ -51,6 +51,7 @@ import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { buildGroupSave } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
 import { buildPaperModel, buildPaperTabs, canSplitAt, countUnchecked, readWarningText, resolveCutDrag, shouldRecenter, toBlockOffset, toUnitOffset, type PaperSheet, type PaperTabKey } from "@/lib/paper-model";
+import { findLangMismatch } from "@/lib/lang-mismatch-model";
 import { getSplitKeyAction } from "@/lib/split-keys";
 import { buildSplitMenu, getAiSplitReason, isUnitDecided, type SplitMenuAction } from "@/lib/split-menu-model";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
@@ -75,7 +76,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
 function Section({ title, info, children, testId }: { title: string; info?: string; children: ReactNode; testId?: string }) {
   return (
     <section className="grid min-w-0 gap-2" data-testid={testId}>
-      <h2 className="flex items-center gap-1 text-xs font-semibold text-ink-3">
+      <h2 className="insp-h">
         {title}
         {info && <InfoTip text={info} testId={`${testId ?? "split-section"}-info`} />}
       </h2>
@@ -457,12 +458,14 @@ export default function SplitPage() {
     return () => window.removeEventListener("keydown", handleKey);
   }, []);
 
+  const orderedUnits = (tabs?.order ?? []).map((id) => model?.units.get(id)).filter((unit): unit is ViewUnit => unit !== undefined);
+  const langMismatch = data && selected ? findLangMismatch(data.document.language_layout, selected, orderedUnits) : null;
   const pickedUnits = picked.map((id) => model?.units.get(id)).filter((unit): unit is ViewUnit => unit !== undefined);
   const document_ = data?.document;
   const page = selected ? data?.blocks.find((block) => block.id === selected.block_id) : null;
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-[232px_minmax(0,1fr)_320px]" data-testid="split">
+    <div className="grid h-full min-h-0 grid-cols-[232px_minmax(0,1fr)_clamp(320px,26vw,420px)]" data-testid="split">
       {/* 왼쪽: 문서 */}
       <nav className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] border-r border-line bg-surface" aria-label={t("split.documents")} data-testid="split-docs">
         <div className="grid content-start gap-0.5 overflow-y-auto p-2">
@@ -722,7 +725,7 @@ export default function SplitPage() {
           ) : (
             <>
               <Section title={t("split.text")}>
-                <p className="whitespace-pre-wrap rounded-md bg-sunken px-3 py-2 text-[13px] leading-5 text-ink" data-testid="split-unit-text">
+                <p className="whitespace-pre-wrap rounded-md bg-sunken px-3 py-2 text-ink [font-size:var(--fs-read)] [line-height:var(--lh-read)]" data-testid="split-unit-text">
                   {selected.kind === "table" ? t("split.tableUnit") : selected.text}
                 </p>
                 {cut && <p className="text-xs text-ink-3">{t("split.cutHint")}</p>}
@@ -743,7 +746,7 @@ export default function SplitPage() {
 
               {canEdit && (selected.kind === "sentence" || selected.kind === "heading" || selected.kind === "cell_sentence") && (
                 <Section title={t("split.language")} testId="split-language">
-                  <div className="flex gap-1.5">
+                  <div className="grid grid-cols-2 gap-1.5">
                     {(["ko", "en"] as const).map((lang) => (
                       <button
                         key={lang}
@@ -759,6 +762,17 @@ export default function SplitPage() {
                       </button>
                     ))}
                   </div>
+                  {langMismatch && (
+                    <p className="lang-warn" role="note" data-testid="split-lang-mismatch">
+                      <TriangleAlert size={14} strokeWidth={1.5} aria-hidden />
+                      <span>
+                        {t(`split.lang.mismatch.${langMismatch.reason}`)}{" "}
+                        <Link href={getStageHref(bundleId, "documents")} className="underline" data-testid="split-lang-mismatch-link">
+                          {t("split.lang.mismatch.fix")}
+                        </Link>
+                      </span>
+                    </p>
+                  )}
                 </Section>
               )}
 
@@ -791,7 +805,7 @@ export default function SplitPage() {
                           )}
                       </ul>
                       {canEdit && (
-                        <div className="flex gap-1.5">
+                        <div className="grid grid-flow-col auto-cols-fr gap-1.5">
                           {pair.status === "suggested" && (
                             <button
                               type="button"
