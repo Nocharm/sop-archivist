@@ -165,6 +165,7 @@ docker-compose.yml
 
 - [`docs/lessons/react-ts-patterns.md`](docs/lessons/react-ts-patterns.md) — useCallback deps TDZ → ref 미러, `useEffectEvent`(§7)·`<Activity>`(§8), 이펙트 안 setState 린트, Tailwind display 클래스 이중 지정 금지.
 - [`docs/lessons/browser-verification.md`](docs/lessons/browser-verification.md) — Playwright + 시스템 Chrome 검증, **dev DB 오염 함정**("0 events"·"목록이 비어 있음"은 코드가 아니라 오염일 수 있다), node 스크립트 cwd, 워크트리 세션 Bash 제약, 평문 HTTP는 localhost에서 재현되지 않는다, 헤드리스 blob 내려받기 이름, 그려진 글자 대비 감사.
+- [`docs/lessons/ui-review.md`](docs/lessons/ui-review.md) — 화면 검토·배치 수정: **극단 자료에서만 무너지는 표가 있다**, 처방은 실행 중인 화면에 주입해 잰 뒤 적는다, grid 자식 `minmax(0, 1fr)`, 줄 수 제한은 `td`가 아니라 감싼 요소에, 줄 끝 단추는 숨기지 않고 흐리게.
 - [`docs/lessons/git-operations.md`](docs/lessons/git-operations.md) — 히스토리 재작성·강제 푸시 전에: **같은 폴더의 다른 세션부터 확인하고 lease에 예상 해시를 명시한다**, zsh는 변수를 단어로 나누지 않으니 여러 인자는 배열로.
 - [`docs/lessons/remote-sessions.md`](docs/lessons/remote-sessions.md) — 클라우드 세션이 연결된 PC 폴더를 다룰 때: **파일 전송은 비동기라 체크섬을 확인하고 쓴다**, 다른 경로로 마운트된 워크트리를 prune하지 않는다, git 쓰기에는 삭제 권한, VM에서는 맥 `node_modules`가 돌지 않는다.
 
