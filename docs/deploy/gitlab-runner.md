@@ -19,8 +19,8 @@ GitHub Nocharm/sop-archivist (개발 원본)
    └─ sop-archivist-deploy  : 배포 Job (Protected, 도커 소켓 + 배포 폴더)
                                  │ ci/deploy.sh
                                  ▼
-              배포 폴더 /data/deployments/sop-archivist      (.env, backups/는 사람·사이드카 것)
-              배포 폴더 /data/deployments/sop-archivist-dev  (.env만 사람 것)
+              배포 폴더 /data/home_<계정>/deployments/sop-archivist      (.env, backups/는 사람·사이드카 것)
+              배포 폴더 /data/home_<계정>/deployments/sop-archivist-dev  (.env만 사람 것)
                                  │ docker compose -p <프로젝트> up -d --build (서버 Docker 데몬)
                                  ▼
               sop-archivist 스택 :7777  /  sop-archivist-dev 스택 :4444
@@ -52,7 +52,7 @@ GitHub Nocharm/sop-archivist (개발 원본)
 4. **Settings → CI/CD → General pipelines**에서 둘 다 켠다:
    - **Prevent outdated deployment jobs** — 더 새 배포가 끝난 뒤 옛 배포 Job이 늦게 돌아 덮어쓰지 않게.
    - **Allow job retries for rollback deployments** — 옛 파이프라인의 `deploy-production` Retry로 되돌리기(7절). 이것이 꺼져 있으면 위 설정이 옛 Job 재실행을 막는다.
-5. **CI/CD 변수(선택)**: 배포 폴더가 기본값(운영 `/data/deployments/sop-archivist`, 개발 `/data/deployments/sop-archivist-dev`)이 아니면 운영은 `SOP_DEPLOY_DIR`, 개발은 `SOP_DEV_DEPLOY_DIR`만 둔다(스택마다 변수가 달라 프로젝트 변수 하나가 두 Job에 함께 걸려도 개발이 운영 폴더로 가지 않는다). `SOP_DEPLOY_ENV`는 Job이 정하니 변수로 두지 않는다. 비밀값은 CI 변수에 넣지 않는다(`.env`는 배포 폴더에만). **다른 CI 변수는 compose에 닿지 않는다** — 배포 스크립트가 모든 `docker` 호출을 빈 환경(`env -i`)에서 하므로, 프로젝트·그룹·인스턴스 변수에 `AUTH_MODE`·`POSTGRES_*`·`COMPOSE_*`·`DOCKER_HOST`가 있어도 `.env` 값을 덮지 못한다.
+5. **CI/CD 변수(필수)**: 배포 폴더가 계정 홈 아래라(`/data/deployments`는 root `0700`이라 쓰지 않는다) 스크립트 기본값(`ci/deploy.sh` — 운영 `/data/deployments/sop-archivist`, 개발 `/data/deployments/sop-archivist-dev`)과 다르다. 운영은 `SOP_DEPLOY_DIR=/data/home_<계정>/deployments/sop-archivist`, 개발은 `SOP_DEV_DEPLOY_DIR=/data/home_<계정>/deployments/sop-archivist-dev`를 둔다. 빠뜨리면 Job이 기본값 폴더를 찾다가 "deploy folder does not exist inside the job"으로 멈춘다. 변수는 이 둘만 둔다(스택마다 변수가 달라 프로젝트 변수 하나가 두 Job에 함께 걸려도 개발이 운영 폴더로 가지 않는다). `SOP_DEPLOY_ENV`는 Job이 정하니 변수로 두지 않는다. 비밀값은 CI 변수에 넣지 않는다(`.env`는 배포 폴더에만). **다른 CI 변수는 compose에 닿지 않는다** — 배포 스크립트가 모든 `docker` 호출을 빈 환경(`env -i`)에서 하므로, 프로젝트·그룹·인스턴스 변수에 `AUTH_MODE`·`POSTGRES_*`·`COMPOSE_*`·`DOCKER_HOST`가 있어도 `.env` 값을 덮지 못한다.
 6. **Settings → CI/CD → Runners → New project runner**를 두 번 만든다. 화면에서 정하고 `glrt-`로 시작하는 토큰을 받는다(토큰은 한 번만 보인다 — 바로 2절 등록에 쓴다).
 
    | 항목 | 테스트 러너 | 배포 러너 |
@@ -110,7 +110,7 @@ docker run -d --name gitlab-runner-sop-archivist --restart unless-stopped \
 
 ```bash
 GITLAB_URL='<gitlab-url>'
-DEPLOY_DIR=/data/deployments/sop-archivist          # 바꾸면 GitLab CI 변수 SOP_DEPLOY_DIR도 같은 값으로
+DEPLOY_DIR=/data/home_<계정>/deployments/sop-archivist   # GitLab CI 변수 SOP_DEPLOY_DIR와 같은 값
 COMMON="--non-interactive --url $GITLAB_URL --executor docker \
   --docker-pull-policy never \
   --docker-helper-image gitlab/gitlab-runner-helper:x86_64-v19.0.0 \
@@ -161,23 +161,22 @@ GitLab 화면(Settings → CI/CD → Runners)에서 두 러너가 **Online**인�
 배포 Job이 checkout을 복사해 넣고 compose를 돌리는 곳이다. **사람이 두는 것은 `.env` 하나**이고, `backups/`는 백업 사이드카가 만든다. **그 밖의 파일은 배포 때마다 지워진다** — tar 보관 같은 다른 용도로 쓰지 않는다.
 
 ```bash
-sudo mkdir -p /data/deployments/sop-archivist
-sudo chown "$USER": /data/deployments/sop-archivist
-chmod 750 /data/deployments/sop-archivist
+mkdir -p /data/home_<계정>/deployments/sop-archivist   # 계정 홈 아래라 sudo가 필요 없다
+chmod 750 /data/home_<계정>/deployments/sop-archivist
 ```
 
 `.env`는 PC에서 `.env.example`을 복사해 채운 뒤(항목·값: [`setup-once.md`](setup-once.md) A4) scp로 넣는다(scp는 bash·PowerShell 동일):
 
 ```bash
-scp .env <계정>@<server-ip>:/data/deployments/sop-archivist/.env
+scp .env <계정>@<server-ip>:/data/home_<계정>/deployments/sop-archivist/.env
 # 서버
-chmod 600 /data/deployments/sop-archivist/.env
+chmod 600 /data/home_<계정>/deployments/sop-archivist/.env
 ```
 
 - `.env`는 git·CI 변수에 넣지 않는다. 배포 Job은 읽기만 하고 값을 출력하지 않는다(가드는 키 이름과 판정만 쓴다).
 - 배포 Job은 컨테이너 root로 돌아 **복사된 파일은 root 소유가 된다**(정상). `.env`는 건드리지 않아 내 소유 그대로다.
 - `backups/`는 사이드카가 root `0700`으로 만든다([`backup.md`](backup.md)).
-- 배포 폴더에 `.git`은 없다. 무엇이 배포됐는지는 `cat /data/deployments/sop-archivist/.deployed`(커밋·파이프라인·Job·버전·시각, 비밀 없음).
+- 배포 폴더에 `.git`은 없다. 무엇이 배포됐는지는 `cat /data/home_<계정>/deployments/sop-archivist/.deployed`(커밋·파이프라인·Job·버전·시각, 비밀 없음).
 
 배포 스크립트가 거절하는 운영 `.env` 값: `AUTH_MODE`가 `keycloak`이 아님(없음 포함), `APP_PORT`가 비어 있지도 7777도 아님, `DBV_DB_ALIAS`가 비어 있지도 `sop-archivist-db`도 아님(개발 스택 `.env`를 잘못 넣은 경우), `BACKUP_DIR`이 `./backups`가 아닌 배포 폴더 안 경로(동기화가 지운다). `BACKUP_DIR`은 비우거나 `./backups`, 또는 배포 폴더 밖 절대 경로(NAS 등)만 된다.
 
@@ -201,7 +200,7 @@ chmod 600 /data/deployments/sop-archivist/.env
 
 예: `FORWARDED_ALLOW_IPS`, `HR_SYNC_INTERVAL_HOURS`, `APP_SYSADMINS`, AI 설정.
 
-1. 서버 배포 폴더의 `.env`를 고친다(`/data/deployments/sop-archivist/.env`).
+1. 서버 배포 폴더의 `.env`를 고친다(`/data/home_<계정>/deployments/sop-archivist/.env`).
 2. GitLab **Build → Pipelines → Run pipeline**, 브랜치 `main` → test가 끝나면 `deploy-production` ▶.
 
 손으로 `docker compose up`을 치지 않는다. 코드가 같아 이미지는 캐시로 빌드되고, compose가 바뀐 env의 backend만 다시 만들며, 스크립트가 proxy를 재시작한다(옛 backend 주소로 502가 나지 않게).
@@ -215,7 +214,7 @@ chmod 600 /data/deployments/sop-archivist/.env
 | `image ... not present locally` / `pull_policy ([never])` | `pull_policy = never`라 서버에 없는 이미지는 받지 않는다. 그 이미지를 amd64 tar로 반입한다([`deploy.md`](deploy.md) §0). helper 이미지도 같다(러너 버전과 helper 태그가 같아야 한다, 2-2) |
 | `backend-test`의 pip, `frontend-test`의 npm이 접속 실패 | 테스트 Job 컨테이너가 PyPI·npm 레지스트리에 닿지 않는다. 같은 서버에서 이미지 빌드(`pip install`·`npm ci`)가 되는지와 2-1의 네트워크 설정(`network_mode`·`dns`)을 본다 |
 | `[deploy] FAILED: deploy folder does not exist inside the job` | 배포 러너의 `--docker-volumes "$DEPLOY_DIR:$DEPLOY_DIR:rw"`가 빠졌거나 경로가 `SOP_DEPLOY_DIR`과 다르다(2-4) |
-| `... must be an absolute path` / `is '/'` / `two levels deep` / `must not contain` | `SOP_DEPLOY_DIR` CI 변수 값이 잘못됐다. `/data/deployments/sop-archivist` 같은 전용 절대 경로로 |
+| `... must be an absolute path` / `is '/'` / `two levels deep` / `must not contain` | `SOP_DEPLOY_DIR` CI 변수 값이 잘못됐다. `/data/home_<계정>/deployments/sop-archivist` 같은 전용 절대 경로로 |
 | `... is the job checkout or inside it` / `job checkout is inside the deploy folder` | `SOP_DEPLOY_DIR`이 `/builds` 쪽을 가리킨다. 마운트한 배포 폴더로 바꾼다 |
 | `no .env in the deploy folder` | 3절대로 `.env`를 넣는다 |
 | `.env AUTH_MODE is not 'keycloak'` | `.env`에 `AUTH_MODE=keycloak`을 적는다. 서버에서 dev로 띄웠던 적이 있으면 [`setup-once.md`](setup-once.md) C절 |
@@ -246,7 +245,7 @@ chmod 600 /data/deployments/sop-archivist/.env
 배포 폴더에 원하는 코드가 이미 있다면(마지막 파이프라인이 넣은 것, `.deployed`로 확인) 같은 compose 명령을 친다. **호스트 compose(v2.27)로 돌아 파이프라인(이미지 안 compose)과 버전이 다르다.**
 
 ```bash
-cd /data/deployments/sop-archivist
+cd /data/home_<계정>/deployments/sop-archivist
 docker compose up -d --build
 docker compose restart proxy
 docker compose up -d --force-recreate db-backup     # scripts/db-backup.sh가 바뀐 경우만
@@ -264,7 +263,7 @@ curl -s http://localhost:7777/api/health            # {"status":"ok"} — 나머
 | 브랜치·Job | `main` · `deploy-production`(▶) | `dev` · `deploy-dev`(자동) |
 | 포트 | 7777 | 4444 |
 | compose 프로젝트 | `sop-archivist` | `sop-archivist-dev`(DB 볼륨 `sop-archivist-dev_pgdata`) |
-| 배포 폴더 | `/data/deployments/sop-archivist` | `/data/deployments/sop-archivist-dev` |
+| 배포 폴더 | `/data/home_<계정>/deployments/sop-archivist` | `/data/home_<계정>/deployments/sop-archivist-dev` |
 | 로그인 | Keycloak | `AUTH_MODE=dev` — 비밀번호 없이 로컬 계정이나 직원 디렉터리에서 사람을 골라 들어간다. 권한은 그 사람 것(`DEV_ENFORCE_PERMISSIONS=true` 필수). Keycloak도 된다 |
 | 백업 사이드카 | 있음 | 없음(버려도 되는 자료) |
 
@@ -276,9 +275,8 @@ curl -s http://localhost:7777/api/health            # {"status":"ok"} — 나머
 2. **배포 폴더**:
 
    ```bash
-   sudo mkdir -p /data/deployments/sop-archivist-dev
-   sudo chown "$USER": /data/deployments/sop-archivist-dev
-   chmod 750 /data/deployments/sop-archivist-dev
+   mkdir -p /data/home_<계정>/deployments/sop-archivist-dev   # 운영 폴더 옆, sudo 불필요
+   chmod 750 /data/home_<계정>/deployments/sop-archivist-dev
    ```
 
 3. **배포 러너에 개발 폴더 마운트를 더한다.** 이미 등록된 배포 러너의 `config.toml`에서 `sop-archivist-deploy` 러너의 `volumes`에 개발 폴더를 **양쪽 같은 경로로** 더한다(2-4와 같은 이유). 토큰이 든 파일이라 통째로 출력하지 않는다:
@@ -286,7 +284,7 @@ curl -s http://localhost:7777/api/health            # {"status":"ok"} — 나머
    ```bash
    docker exec -it gitlab-runner-sop-archivist vi /etc/gitlab-runner/config.toml
    #   [[runners]] name = "sop-archivist-deploy" 의 [runners.docker] volumes 에 더한다:
-   #   "/data/deployments/sop-archivist-dev:/data/deployments/sop-archivist-dev:rw"
+   #   "/data/home_<계정>/deployments/sop-archivist-dev:/data/home_<계정>/deployments/sop-archivist-dev:rw"
    docker exec gitlab-runner-sop-archivist grep -n 'sop-archivist-dev' /etc/gitlab-runner/config.toml
    docker exec gitlab-runner-sop-archivist gitlab-runner verify
    ```
@@ -306,9 +304,9 @@ curl -s http://localhost:7777/api/health            # {"status":"ok"} — 나머
    HR 동기화(`N8N_HR_*`)를 채우면 실제 직원이 디렉터리에 들어와 로그인 화면에서 검색해 고를 수 있다. 비우면 dev 시드 5명만 있다. AI는 필요할 때만 켠다. `BACKUP_DIR`는 쓰지 않는다(사이드카를 띄우지 않는다).
 
    ```bash
-   scp .env <계정>@<server-ip>:/data/deployments/sop-archivist-dev/.env
+   scp .env <계정>@<server-ip>:/data/home_<계정>/deployments/sop-archivist-dev/.env
    # 서버
-   chmod 600 /data/deployments/sop-archivist-dev/.env
+   chmod 600 /data/home_<계정>/deployments/sop-archivist-dev/.env
    ```
 
 5. GitLab **Protected branches**에 `dev`를 더한다(1절 1).

@@ -3,7 +3,7 @@
 로컬에서 검증한 코드를 서버(사내 71번)에 올리는 절차. **배포는 사내 GitLab 파이프라인의 ▶로만 한다** — 서버에서 `git pull`·`docker compose up`을 손으로 치지 않는다(사내 정책). 러너·파이프라인 설정과 되돌리기, 비상 수동 경로는 [`gitlab-runner.md`](gitlab-runner.md). 이 문서는 **매 배포마다 반복하는 확인**과 운영 진단을 다룬다. 서버를 처음 세울 때 한 번만 하는 일(Keycloak 클라이언트, `.env` 작성, 첫 HR 동기화 등)은 [`setup-once.md`](setup-once.md), 백업·복구는 [`backup.md`](backup.md), db-viewer 연결은 [`db-viewer-readonly.md`](db-viewer-readonly.md).
 
 > 서버 명령은 모두 bash(리눅스) 기준이다. 로컬 PC 명령은 `README.md`·`CLAUDE.md` Commands에 bash와 PowerShell을 병기했다.
-> 이 문서의 `docker compose` 진단 명령은 **배포 폴더**(기본 `/data/deployments/sop-archivist`, [`gitlab-runner.md`](gitlab-runner.md) 3절)에서 실행한다 — compose 파일과 `.env`가 거기 있다. 서버에 저장소 clone은 없다.
+> 이 문서의 `docker compose` 진단 명령은 **배포 폴더**(`/data/home_<계정>/deployments/sop-archivist`, [`gitlab-runner.md`](gitlab-runner.md) 3절)에서 실행한다 — compose 파일과 `.env`가 거기 있다. 서버에 저장소 clone은 없다.
 
 ## 파이프라인
 

@@ -89,7 +89,7 @@ node frontend\scripts\fake-ai-server.mjs   # 나눔 모드: $env:FAKE_AI_SPLIT="
 # 서버 배포 = 사내 GitLab 파이프라인 (서버에서 직접 compose 하지 않는다) — 절차 전체: docs/deploy/gitlab-runner.md
 # 개발(작업은 dev 브랜치에서): git push gitlab dev → deploy-dev가 테스트를 기다리지 않고 바로 배포(테스트는 옆에서). 접속: http://<server-ip>:4444
 # 운영(dev를 main에 합친 뒤): git push gitlab main && git push gitlab vX.Y.Z → GitLab main 파이프라인 test 통과 → deploy-production ▶
-# 배포 Job(ci/deploy.sh)이 스택의 배포 폴더(운영 /data/deployments/sop-archivist, 개발 …-dev, .env는 거기에만)로 checkout을 맞추고 docker compose -p <프로젝트> up -d --build. 운영 접속: http://<server-ip>:7777
+# 배포 Job(ci/deploy.sh)이 스택의 배포 폴더(운영 /data/home_<계정>/deployments/sop-archivist, 개발 …-dev, .env는 거기에만)로 checkout을 맞추고 docker compose -p <프로젝트> up -d --build. 운영 접속: http://<server-ip>:7777
 sh ci/test-deploy.sh            # 배포 스크립트 검증(가짜 docker, 저장소 루트에서) — busybox·GNU 둘 다에서 돌아야 한다
 # 로컬 Docker로 컨테이너 검증할 때도 공유 브리지를 먼저 만든다: docker network create dbv-shared
 ```
