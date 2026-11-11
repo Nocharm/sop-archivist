@@ -36,7 +36,13 @@ export function AssignHelp() {
       keys={keys}
       marks={
         <>
-          <Row swatch={<span className="ptag ko">KO</span>}>{t("assign.legend.lang")}</Row>
+          <Row
+            swatch={
+              <span className="strip-tab swatch" data-lang="ko">
+                <span className="strip-tab-letters">KO</span>
+              </span>
+            }
+          >{t("assign.legend.lang")}</Row>
           <Row swatch={<CircleCheck size={14} strokeWidth={2} className="pmark classified" aria-hidden />}>{t("assign.legend.confirmed")}</Row>
           <Row swatch={<Sparkles size={14} strokeWidth={1.6} className="pmark ai" aria-hidden />}>{t("assign.legend.ai")}</Row>
           <Row swatch={<Link2 size={14} strokeWidth={1.6} className="pmark pair" aria-hidden />}>{t("assign.legend.pair")}</Row>

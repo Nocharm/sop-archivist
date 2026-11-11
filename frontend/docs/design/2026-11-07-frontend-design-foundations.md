@@ -57,7 +57,7 @@ SOP Archivist는 품질 조직의 SOP Restructuring T/F가 옛 GMP SOP를 새 SO
 | 강조 표시 | 형광 대신 밑줄 |
 | 전체 틀 | 왼쪽 레일(기본)과 상단 2단을 사용자가 선택 |
 | 분류 화면 | 원문 3단(기본)과 목록 + 상세를 사용자가 선택 |
-| 강조 글꼴 | Gmarket Sans 500, 700 |
+| 강조 글꼴 | Paperlogy 600 |
 | 본문 글꼴 | Pretendard 400, 600 |
 | 식별자 글꼴 | JetBrains Mono 400, 600 |
 | 원문 글꼴 | 사용자가 한글과 영어를 따로 선택. 기본 Pretendard + Arial |
@@ -78,7 +78,7 @@ SOP Archivist는 품질 조직의 SOP Restructuring T/F가 옛 GMP SOP를 새 SO
 
 | 역할 | 글꼴 | 쓰는 곳 | 쓰지 않는 곳 |
 |---|---|---|---|
-| 강조 | Gmarket Sans | 브랜드, 화면 제목, 단계 번호, 고정된 큰 숫자 | 표 안, 버튼, 원문, 바뀌는 숫자 |
+| 강조 | Paperlogy | 브랜드, 화면 제목, 단계 번호, 고정된 큰 숫자 | 표 안, 버튼, 원문, 바뀌는 숫자 |
 | 본문 | Pretendard | 버튼, 표, 안내, 설명 전부 | |
 | 식별자 | JetBrains Mono | 단위 ID, 문서 번호, 규칙 코드, 단축키 | 문장 |
 | 원문 | 사용자 설정 | 용지 위 원문, 새 문장 | 앱 글자 |
@@ -88,23 +88,20 @@ SOP Archivist는 품질 조직의 SOP Restructuring T/F가 옛 GMP SOP를 새 SO
 | 글꼴 | 파일 | 처리 |
 |---|---|---|
 | Pretendard | `frontend/src/app/fonts/PretendardVariable.woff2` | 원본 그대로 |
-| Gmarket Sans | `frontend/src/app/fonts/ArchivistAccent-{Medium,Bold}.woff2` | 아래 라이선스 처리대로 이름을 바꿨다 |
+| Paperlogy | `frontend/src/app/fonts/Paperlogy-SemiBold.woff2` | 배포처 미러(fonts-archive/Paperlogy)의 `Paperlogy-6SemiBold.woff2` 그대로 |
 | JetBrains Mono | `frontend/src/app/fonts/JetBrainsMono-{Regular,SemiBold}.woff2` | 정식 배포본 그대로(Nerd Font 패치본은 쓰지 않는다) |
 
 라이선스는 `frontend/src/app/fonts/licenses/`에 함께 둔다.
 
-**Gmarket Sans 라이선스.** 파일 안 표기는 SIL OFL 1.1이고 예약 글꼴 이름 `Gmarket Sans Font`가 있다. 글자를 줄이거나 형식을 바꾼 사본은 수정본이라 그 이름을 쓸 수 없다. 권장안은 글자를 줄이지 않고 이름을 `Archivist Accent`로 바꾼 woff2다(Medium 약 500KB, Bold 약 577KB). 묶음 제목에 어떤 한글이 올지 모르므로 글자는 11,172자 그대로 둔다. 원본 TTF를 그대로 넣어도 되지만 굵기당 2.4MB다.
+**Paperlogy 라이선스.** SIL OFL 1.1이고 글꼴 저작권 줄에 예약 글꼴 이름 선언이 없다(`Paperlogy-OFL.txt`, 글꼴 이름 표 13번 항목이 OFL을 가리킨다). 이주임(Lee Juim)의 페이퍼로지이고 배포처는 freesentation.blog/paperlogyfont, 파일은 그 GitHub 미러 fonts-archive/Paperlogy의 `Paperlogy-6SemiBold.woff2`(165KB)를 고치지 않고 넣었다. 묶음 제목에 어떤 한글이 올지 모르므로 한글 11,172자가 전부 들어 있는지 cmap으로 확인했다(영문 ASCII도 같은 파일). 세로 값은 hhea와 win이 같다(880/180, 1000 단위 900). 2026-11-11에 Gmarket Sans(이름을 바꿔 쓰던 `Archivist Accent`), IBM Plex Sans KR을 거쳐 바꿨다 — 사용자가 강조 글꼴 일괄 변경을 정했다.
 
-**강조 글꼴 제약.** 시안에서 재서 확인한 값이다.
+**강조 글꼴 제약.** Paperlogy 6 SemiBold(단일 굵기 600)의 글꼴 파일 값을 읽어 확인했다.
 
-| 항목 | 잰 값 | 처리 |
-|---|---|---|
-| 숫자 폭 | 0.45em에서 0.69em까지 제각각이고 `tnum`이 없다 | 확정하면 바뀌는 숫자는 본문 글꼴 `tabular-nums`로 둔다 |
-| 세로 위치 | 세로 값이 800/200, 800/350 두 벌이라 OS마다 달라질 수 있다 | `ascent-override: 82%`, `descent-override: 18%`, `line-gap-override: 0%`. `next/font/local`의 `declarations`로 준다 |
-| 기준선 | 글자가 기준선 아래로 약 0.08em 내려가 있다 | 본문 글꼴과 한 줄에 섞지 않고 칸을 나눈다 |
-| 라틴 크기 | 대문자 높이가 Pretendard의 1.13배다 | 기본 언어가 영어라 제목 크기는 영어 기준으로 맞춘다 |
-
-위 보정 값이면 글자 중심이 줄 중심에서 100px당 0.3px 안에 든다(Chrome 측정).
+| 항목 | 처리 |
+|---|---|
+| 숫자 폭 | 바뀌는 숫자는 본문 글꼴 `tabular-nums`로 둔다(그대로) |
+| 세로 위치 | hhea와 win 값이 880/180(UPM 900)으로 같아 OS 차이가 없어 보정 선언을 두지 않는다 |
+| 기준선, 라틴 크기 | 본문 글꼴과 한 줄에 섞지 않고 칸을 나눈다(그대로). 영어 제목 크기는 눈으로 맞춘다 |
 
 ## 7. 사용자 설정
 
@@ -257,7 +254,7 @@ bpm에서 가져온 규칙과 이 앱 때문에 더한 규칙이다. 시안 맨 
 **기타**
 
 - 아이콘 크기는 12, 14, 16, 28이고 선 굵기 1.5다.
-- 굵기는 400과 600이다. 강조 글꼴만 예외다. 줄 높이 1은 쓰지 않는다.
+- 굵기는 400과 600이다. 강조 글꼴(Paperlogy)도 600 한 벌뿐이다. 줄 높이 1은 쓰지 않는다.
 - 모든 인터랙티브 요소에 `data-testid`를 붙인다(`rules/frontend/identifiers.md`).
 - UI 문구에 긴 대시를 쓰지 않는다. en과 ko 문구는 함께 추가한다.
 - 시각 표시는 KST다(`lib/datetime`).
@@ -331,7 +328,7 @@ bpm에서 가져온 규칙과 이 앱 때문에 더한 규칙이다. 시안 맨 
 - 밑줄 강조를 제목뿐 아니라 지금 보는 문장까지 적용했다.
 - 주 버튼 파랑을 `#036EAE`에서 `#045797`로 어둡게 했다. AI 보라와의 색약 구분 때문이다.
 - 쪼개기 열을 원문 3단과 같게 맞췄다. 시안은 목록 + 상세일 때 196 / 가변 / 256이지만 하나로 통일하는 편이 낫다.
-- Gmarket Sans는 이름을 바꾼 경량본을 권장했다.
+- Gmarket Sans는 이름을 바꾼 경량본을 권장했다(이후 IBM Plex Sans KR을 거쳐 Paperlogy로 교체).
 - 묶음 목록이 `/`를 대체한다고 봤다.
 - 관리 탭을 1차 뒤로 미뤘다.
 - AI 범위를 안내 자리까지로 봤다. 1차 프롬프트의 "AI API 스키마가 main에 들어오면 합쳐서 붙인다"를 따른 것이다.

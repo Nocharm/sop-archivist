@@ -17,10 +17,12 @@ interface SplitAiBarProps {
   busy: boolean;
   /** 이 문서에서 아직 정하지 않은 나누기 제안 수 */
   pending: number;
+  /** 문서 전체 요청이 보낼 수 있는 문장 수(툴팁에 보인다) */
+  sentenceCount: number;
   onNext: () => void;
 }
 
-export function SplitAiBar({ ai, layout, canEdit, busy, pending, onNext }: SplitAiBarProps) {
+export function SplitAiBar({ ai, layout, canEdit, busy, pending, sentenceCount, onNext }: SplitAiBarProps) {
   const { t } = useI18n();
   if (!ai.isOn) return null;
   const isOff = busy || ai.working !== null;
@@ -45,7 +47,7 @@ export function SplitAiBar({ ai, layout, canEdit, busy, pending, onNext }: Split
         </Tooltip>
       )}
       {canEdit && (
-        <Tooltip label={t("ai.askSplit")}>
+        <Tooltip label={t("ai.askSplit", { n: sentenceCount })}>
           <button type="button" className="btn h-7 whitespace-nowrap" data-testid="split-ai-request" disabled={isOff} onClick={() => void ai.ask("split")}>
             <BusyLabel busy={ai.working === "split"} icon={<WandSparkles size={14} strokeWidth={1.5} aria-hidden />} label={t("ai.askSplitShort")} />
           </button>

@@ -2,9 +2,11 @@
 // 표·그림은 이번 화면에서 잇지 않아 회색 상자로만 보인다(설계 §2).
 "use client";
 
+import { FilePlus2 } from "lucide-react";
 import { Fragment, type MouseEvent } from "react";
 
 import { PaneZoom } from "@/components/assign/pane-zoom";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Select, type SelectOption } from "@/components/ui/select";
 import type { WrittenSentence } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
@@ -35,10 +37,35 @@ function readState(row: WrittenSentence, props: NewPaneProps): string | undefine
   return undefined;
 }
 
+/** 쓴 New 문서가 없을 때 오른쪽 칸 - 올리는 곳(To-Be)으로 데려간다 */
+export function NewPaneEmpty({ zoom, onGoToBe }: { zoom: number; onGoToBe: () => void }) {
+  const { t } = useI18n();
+  return (
+    <section className="assign-pane" style={{ "--z": zoom }} data-pane="new" data-testid="assign-new">
+      <div className="pane-head">
+        <span className="tag">{t("assign.writtenTag")}</span>
+      </div>
+      <div className="pane-body">
+        <EmptyState
+          icon={FilePlus2}
+          testId="assign-new-empty"
+          title={t("assign.newEmpty.title")}
+          body={t("assign.newEmpty.body")}
+          action={
+            <button type="button" className="btn" data-testid="assign-go-tobe" onClick={onGoToBe}>
+              {t("assign.newEmpty.go")}
+            </button>
+          }
+        />
+      </div>
+    </section>
+  );
+}
+
 export function NewPane(props: NewPaneProps) {
   const { t } = useI18n();
   return (
-    <section className="assign-pane" style={{ "--z": props.zoom }} data-pane="new" data-testid="assign-new">
+    <section className="assign-pane" style={{ "--z": props.zoom }} data-pane="new" data-doc={props.docId} data-testid="assign-new">
       <div className="pane-head">
         {props.docOptions.length > 1 ? (
           <Select testId="assign-new-doc" ariaLabel={t("assign.newDoc")} size="sm" mono value={props.docId} options={props.docOptions} onChange={props.onDocChange} />

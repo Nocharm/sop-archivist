@@ -111,4 +111,17 @@ describe("Select", () => {
     act(() => byTestId("s")?.click());
     expect(byTestId("s-list")).toBeNull();
   });
+
+  it("fixes the trigger width when width is given", () => {
+    render(createElement(Select<string>, { value: "apple", options: OPTIONS, onChange: vi.fn(), testId: "s", width: 150 }));
+    const trigger = byTestId("s");
+    expect(trigger?.style.width).toBe("150px");
+    expect(trigger?.hasAttribute("data-fixed")).toBe(true);
+  });
+
+  it("sizes to its label without width", () => {
+    render(createElement(Select<string>, { value: "apple", options: OPTIONS, onChange: vi.fn(), testId: "s" }));
+    expect(byTestId("s")?.style.width).toBe("");
+    expect(byTestId("s")?.hasAttribute("data-fixed")).toBe(false);
+  });
 });

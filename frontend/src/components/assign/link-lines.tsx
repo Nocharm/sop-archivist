@@ -6,6 +6,7 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { findLinkPartners, pickDrawnLinks, type LinkPair } from "@/lib/assign-model";
+import { getLinkDirection, type LinkAnchor } from "@/lib/link-direction-model";
 
 /** 두 문서를 담은 틀(.assign-panes) 안에 둔다 - 틀이 선의 좌표 기준이자 마우스를 듣는 곳이다 */
 interface LinkLinesProps {
@@ -57,6 +58,26 @@ function readAnchorY(rect: DOMRect): number {
   return rect.top + Math.min(rect.height / 2, FIRST_LINE_Y);
 }
 
+/** 연결 배지마다 이어진 New 문장이 오른쪽 칸 화면 안·위·아래·다른 문서 중 어디인지 data-dir로 단다 */
+function updateBadgeDirections(root: HTMLElement, newBody: HTMLElement) {
+  const currentDoc = Number(newBody.closest<HTMLElement>("[data-pane]")?.dataset.doc);
+  const frame = newBody.getBoundingClientRect();
+  const view = { docId: currentDoc, scrollTop: newBody.scrollTop, height: newBody.clientHeight };
+  for (const badge of root.querySelectorAll<HTMLElement>("[data-pane=\"old\"] [data-link-badge]")) {
+    const refs = (badge.dataset.targets ?? "").split(",").map((part) => part.split(":").map(Number));
+    const here = refs.find(([docId]) => docId === currentDoc);
+    let anchor: LinkAnchor | null = null;
+    if (here) {
+      const rect = findNewLine(root, here[1])?.getBoundingClientRect();
+      if (rect) anchor = { docId: currentDoc, top: rect.top - frame.top + view.scrollTop, bottom: rect.bottom - frame.top + view.scrollTop };
+    } else if (refs[0]) {
+      anchor = { docId: refs[0][0], top: 0, bottom: 0 };
+    }
+    const dir = getLinkDirection(anchor, view);
+    if (badge.dataset.dir !== dir) badge.dataset.dir = dir;
+  }
+}
+
 export function LinkLines({ pairs, focusUnits, focusTargets }: LinkLinesProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<Hover | null>(null);
@@ -82,6 +103,7 @@ export function LinkLines({ pairs, focusUnits, focusTargets }: LinkLinesProps) {
     // 선은 두 종이 사이 틈에만 - 종이 위 글자를 가로지르지 않는다
     const x1 = oldSheet.getBoundingClientRect().right - base.left;
     const x2 = newSheet.getBoundingClientRect().left - base.left;
+    updateBadgeDirections(root, newBody);
     const units = new Set(focusUnits);
     const targets = new Set(focusTargets);
     if (hover?.side === "old") units.add(hover.id);

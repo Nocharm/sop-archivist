@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState, type FocusEvent, type PointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
-import { placeBelow, type FloatingPos } from "@/components/ui/floating";
+import { placeAbove, placeBelow, placeBeside, type FloatingPos } from "@/components/ui/floating";
 
 const SHOW_DELAY_MS = 150;
 
@@ -38,7 +38,13 @@ export function useDelegatedTip(): DelegatedTip {
     const frame = requestAnimationFrame(() => {
       const host = hostRef.current;
       const tip = tipRef.current;
-      if (host && tip) setPos(placeBelow(host.getBoundingClientRect(), tip.getBoundingClientRect(), "center"));
+      if (host && tip) {
+        // data-tip-side="top" - 아래에 다른 창이 뜨는 자리(나눌 선)는 위로
+        // data-tip-side="right" - 목록 항목 옆(모자라면 왼쪽)
+        const rect = host.getBoundingClientRect();
+        const size = tip.getBoundingClientRect();
+        setPos(host.dataset.tipSide === "right" ? placeBeside(rect, size) : (host.dataset.tipSide === "top" ? placeAbove : placeBelow)(rect, size, "center"));
+      }
     });
     return () => cancelAnimationFrame(frame);
   }, [label]);

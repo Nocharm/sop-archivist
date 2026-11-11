@@ -8,19 +8,11 @@ export const fontUi = localFont({
   display: "swap",
 });
 
-// 강조 글꼴은 세로 값이 두 벌(800/200, 800/350)이라 OS마다 줄 안 위치가 달라진다 - 보정 값은 디자인 문서 6절에서 잰 것
+// 강조 글꼴 Paperlogy SemiBold - 세로 값이 hhea와 win이 같아(880/180, 1000 단위 900) OS마다 줄 안 위치가 달라지지 않으니 보정 선언이 없다
 export const fontAccent = localFont({
-  src: [
-    { path: "./fonts/ArchivistAccent-Medium.woff2", weight: "500" },
-    { path: "./fonts/ArchivistAccent-Bold.woff2", weight: "700" },
-  ],
-  variable: "--font-archivist-accent",
+  src: [{ path: "./fonts/Paperlogy-SemiBold.woff2", weight: "600" }],
+  variable: "--font-accent-face",
   display: "swap",
-  declarations: [
-    { prop: "ascent-override", value: "82%" },
-    { prop: "descent-override", value: "18%" },
-    { prop: "line-gap-override", value: "0%" },
-  ],
 });
 
 export const fontMono = localFont({
