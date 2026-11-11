@@ -95,12 +95,12 @@ SOP Archivist는 품질 조직의 SOP Restructuring T/F가 옛 GMP SOP를 새 SO
 
 **Paperlogy 라이선스.** SIL OFL 1.1이고 글꼴 저작권 줄에 예약 글꼴 이름 선언이 없다(`Paperlogy-OFL.txt`, 글꼴 이름 표 13번 항목이 OFL을 가리킨다). 이주임(Lee Juim)의 페이퍼로지이고 배포처는 freesentation.blog/paperlogyfont, 파일은 그 GitHub 미러 fonts-archive/Paperlogy의 `Paperlogy-6SemiBold.woff2`(165KB)를 고치지 않고 넣었다. 묶음 제목에 어떤 한글이 올지 모르므로 한글 11,172자가 전부 들어 있는지 cmap으로 확인했다(영문 ASCII도 같은 파일). 세로 값은 hhea와 win이 같다(880/180, 1000 단위 900). 2026-11-11에 Gmarket Sans(이름을 바꿔 쓰던 `Archivist Accent`), IBM Plex Sans KR을 거쳐 바꿨다 — 사용자가 강조 글꼴 일괄 변경을 정했다.
 
-**강조 글꼴 제약.** 시안에서 재서 확인한 값이다. Gmarket Sans 시절에 잰 값이라 새 글꼴로 다시 재지는 않았다.
+**강조 글꼴 제약.** Paperlogy 6 SemiBold(단일 굵기 600)의 글꼴 파일 값을 읽어 확인했다.
 
 | 항목 | 처리 |
 |---|---|
 | 숫자 폭 | 바뀌는 숫자는 본문 글꼴 `tabular-nums`로 둔다(그대로) |
-| 세로 위치 | hhea와 win 값이 1085/415로 같아 OS 차이가 없어 보정 선언을 두지 않는다 |
+| 세로 위치 | hhea와 win 값이 880/180(UPM 900)으로 같아 OS 차이가 없어 보정 선언을 두지 않는다 |
 | 기준선, 라틴 크기 | 본문 글꼴과 한 줄에 섞지 않고 칸을 나눈다(그대로). 영어 제목 크기는 눈으로 맞춘다 |
 
 ## 7. 사용자 설정
@@ -254,7 +254,7 @@ bpm에서 가져온 규칙과 이 앱 때문에 더한 규칙이다. 시안 맨 
 **기타**
 
 - 아이콘 크기는 12, 14, 16, 28이고 선 굵기 1.5다.
-- 굵기는 400과 600이다. 강조 글꼴만 예외다. 줄 높이 1은 쓰지 않는다.
+- 굵기는 400과 600이다. 강조 글꼴(Paperlogy)도 600 한 벌뿐이다. 줄 높이 1은 쓰지 않는다.
 - 모든 인터랙티브 요소에 `data-testid`를 붙인다(`rules/frontend/identifiers.md`).
 - UI 문구에 긴 대시를 쓰지 않는다. en과 ko 문구는 함께 추가한다.
 - 시각 표시는 KST다(`lib/datetime`).
