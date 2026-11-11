@@ -176,6 +176,27 @@ const AUDIT_ENTRIES = [
     note: "status pill vertical centre within 2px of row centre",
   },
   {
+    id: "A1", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => `/bundles/${ids.w[1]}/tobe`,
+    measure: (page) => page.locator('[data-testid="tobe-list"]').evaluate((table) => {
+      const code = table.querySelector("thead th:nth-child(2)").getBoundingClientRect().width;
+      return { fits: table.getBoundingClientRect().right <= window.innerWidth + 1 && document.documentElement.scrollWidth <= window.innerWidth + 1, code: Math.round(code) };
+    }),
+    expect: (value) => value.fits && value.code >= 160,
+    note: "tobe-list stays inside the frame and the doc-code column is >= 160px",
+  },
+  {
+    id: "C3", ds: "mid", user: MEMBER, views: [1920],
+    path: (ids) => `/bundles/${ids.mid[2]}/tobe`,
+    open: async (page) => {
+      await page.locator('[data-testid^="tobe-"][data-testid$="-toggle"]').first().click();
+      await page.waitForTimeout(500);
+    },
+    measure: (page) => page.locator('[data-testid^="tobe-"][data-testid$="-slots"]').first().evaluate((el) => Math.round(el.getBoundingClientRect().height)),
+    expect: (value) => value > 0 && value <= 280,
+    note: "one expanded SOP's N/A slots block <= 280px at 1920",
+  },
+  {
     id: "Focus2", ds: "worst", user: "dev.admin", views: [1120],
     path: () => "/admin?tab=guidelines",
     open: async (page) => {
