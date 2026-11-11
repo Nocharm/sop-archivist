@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getPairBrackets, getPillWidth, getSectionHeads, getSectionLevel, getSectionPill, PILL_WIDTH_BY_LEVEL } from "@/lib/strip-pill-model";
+import { getPairBrackets, getPillWidth, getSectionHeads, getSectionLevel, getSectionPill, getTabWidths, PILL_WIDTH_BY_LEVEL } from "@/lib/strip-pill-model";
 
 describe("getSectionPill", () => {
   it("returns numeric section numbers only", () => {
@@ -64,5 +64,42 @@ describe("getSectionLevel and pill width", () => {
     expect(getPillWidth(0)).toBe(getPillWidth(1));
     expect(getPillWidth(2)).toBe(PILL_WIDTH_BY_LEVEL[1]);
     expect(getPillWidth(99)).toBe(PILL_WIDTH_BY_LEVEL[PILL_WIDTH_BY_LEVEL.length - 1]);
+  });
+});
+
+describe("getTabWidths", () => {
+  const w = (level: number) => PILL_WIDTH_BY_LEVEL[level - 1];
+  it("keeps width by level for numbered rows", () => {
+    const widths = getTabWidths([
+      { key: "a", part: "body", sectionLabel: "1" },
+      { key: "b", part: "body", sectionLabel: "1.2" },
+      { key: "c", part: "body", sectionLabel: "1.2.3" },
+    ]);
+    expect([widths.get("a"), widths.get("b"), widths.get("c")]).toEqual([w(1), w(2), w(3)]);
+  });
+  it("lets unnumbered rows follow the previous width", () => {
+    const widths = getTabWidths([
+      { key: "a", part: "body", sectionLabel: "1.2.3" },
+      { key: "b", part: "body", sectionLabel: "" },
+      { key: "c", part: "body", sectionLabel: "Scope" },
+      { key: "d", part: "body", sectionLabel: "2" },
+    ]);
+    expect([widths.get("b"), widths.get("c"), widths.get("d")]).toEqual([w(3), w(3), w(1)]);
+  });
+  it("gives a part's unnumbered first row the level-1 width and resets on part change", () => {
+    const widths = getTabWidths([
+      { key: "a", part: "body", sectionLabel: "" },
+      { key: "b", part: "body", sectionLabel: "1.2.3" },
+      { key: "c", part: "footer", sectionLabel: "" },
+    ]);
+    expect([widths.get("a"), widths.get("c")]).toEqual([w(1), w(1)]);
+  });
+  it("makes a pair share its top row's width and passes it on", () => {
+    const widths = getTabWidths([
+      { key: "top", part: "body", sectionLabel: "1.2" },
+      { key: "bottom", part: "body", sectionLabel: "1.2.3.4", pairTopOf: "top" },
+      { key: "next", part: "body", sectionLabel: "" },
+    ]);
+    expect([widths.get("top"), widths.get("bottom"), widths.get("next")]).toEqual([w(2), w(2), w(2)]);
   });
 });
