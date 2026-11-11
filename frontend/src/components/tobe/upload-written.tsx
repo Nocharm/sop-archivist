@@ -33,7 +33,7 @@ export function UploadWritten({ bundleId, onClose, onUploaded }: UploadWrittenPr
     setBusy(true);
     try {
       const document = await uploadDocument(bundleId, { file, side: "new", docType, parentCode: docType === "wi" ? parentCode.trim() : "" });
-      // 읽기에 실패·거절된 파일도 문서로 남지만 목록 줄은 만들지 않는다 - 그때는 사유를 알리고 창을 둔다
+      // 읽기에 실패·거절된 파일도 문서로 남지만 목록 줄은 만들지 않는다 - 그때는 사유만 알리고 창은 닫는다
       if (document.status !== "ready") {
         showToast(getDocReason(document, t), "error");
       }

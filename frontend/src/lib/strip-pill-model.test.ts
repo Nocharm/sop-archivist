@@ -40,14 +40,13 @@ describe("getPairBrackets", () => {
     expect(result.get(3)).toBe("bottom");
     expect(result.has(1)).toBe(false);
   });
-  it("marks partners separated by another strip solo", () => {
+  it("leaves partners separated by another strip out", () => {
     const result = getPairBrackets([
       { unitId: 2, partnerId: 4 },
       { unitId: 3, partnerId: null },
       { unitId: 4, partnerId: 2 },
     ]);
-    expect(result.get(2)).toBe("solo");
-    expect(result.get(4)).toBe("solo");
+    expect(result.size).toBe(0);
   });
 });
 

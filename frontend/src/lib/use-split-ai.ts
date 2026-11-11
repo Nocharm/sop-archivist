@@ -58,7 +58,9 @@ export function useSplitAi(bundleId: number, docId: number | null, revision: num
   // 이 세션에서 문장 하나로 보낸 요청(제안이 정해지면 뗀다)과 문서 전체 요청을 보냈는지
   const [singleIds, setSingleIds] = useState<ReadonlySet<number>>(new Set());
   const [waitingIds, setWaitingIds] = useState<ReadonlySet<number>>(new Set());
-  const [hasBatch, setHasBatch] = useState(false);
+  // 문서 전체 요청은 보낸 문서에서만 센다 - 문서를 바꾸면 다른 문서의 제안 출처가 섞이지 않는다
+  const [batchDocId, setBatchDocId] = useState<number | null>(null);
+  const hasBatch = batchDocId !== null && batchDocId === docId;
   const dropUnit = (unitId: number) => {
     setSingleIds((prev) => new Set([...prev].filter((id) => id !== unitId)));
     setWaitingIds((prev) => new Set([...prev].filter((id) => id !== unitId)));
@@ -80,7 +82,7 @@ export function useSplitAi(bundleId: number, docId: number | null, revision: num
     setWorking(kind);
     try {
       const out = await requestAi(bundleId, kind, { document_id: docId });
-      if (kind === "split") setHasBatch(true);
+      if (kind === "split") setBatchDocId(docId);
       setLastRequest({ kind, docId, out });
       jobs.watch();
     } catch (err) {

@@ -33,6 +33,12 @@ export interface SplitMenuContext {
 }
 
 const EDITABLE_KINDS = new Set(["sentence", "heading", "cell_sentence"]);
+/** AI 나누기가 받는 종류 - 백엔드(split.py)는 문장·칸 문장만 쪼갠다. 오른쪽 칸 단추와 우클릭 메뉴가 같이 쓴다 */
+const AI_SPLIT_KINDS = new Set(["sentence", "cell_sentence"]);
+
+export function isAiSplitKind(kind: string): boolean {
+  return AI_SPLIT_KINDS.has(kind);
+}
 
 function why(reason: string): string {
   return `split.menu.why.${reason}`;
@@ -83,7 +89,7 @@ function buildSingle(ctx: SplitMenuContext): SplitMenuItem[] {
   return [
     build("check", guard(null)),
     build("split", guard(ctx.hasCut ? null : why("noCut"))),
-    build("ai_split", guard(getAiSplitReason({ aiEnabled: ctx.aiEnabled, isText, hasSuggestion: ctx.hasSuggestion, isWaiting: ctx.isAiWaiting }))),
+    build("ai_split", guard(getAiSplitReason({ aiEnabled: ctx.aiEnabled, isText: isAiSplitKind(target.kind), hasSuggestion: ctx.hasSuggestion, isWaiting: ctx.isAiWaiting }))),
     build("hold", guard(ctx.isDecided ? why("decided") : null)),
     build("lang_ko", guard(langReason("ko"))),
     build("lang_en", guard(langReason("en"))),

@@ -121,6 +121,12 @@ describe("buildSplitMenu single sentence", () => {
     expect(find(buildSplitMenu(single({ target: makeUnit(2, { pair_id: 3 }) })), "unpair").enabled).toBe(true);
   });
 
+  it("offers AI split for sentences and cell sentences but not headings", () => {
+    expect(find(buildSplitMenu(single({ target: makeUnit(2, { kind: "heading" }) })), "ai_split").reasonKey).toBe("split.menu.why.notText");
+    expect(find(buildSplitMenu(single({ target: makeUnit(2, { kind: "heading" }) })), "lang_en").enabled).toBe(true);
+    expect(find(buildSplitMenu(single({ target: makeUnit(2, { kind: "cell_sentence" }) })), "ai_split").enabled).toBe(true);
+  });
+
   it("blocks language and AI for non-text units, and hold for decided ones", () => {
     const table = buildSplitMenu(single({ target: makeUnit(2, { kind: "table", lang: "neutral" }) }));
     expect(find(table, "lang_en").reasonKey).toBe("split.menu.why.notText");

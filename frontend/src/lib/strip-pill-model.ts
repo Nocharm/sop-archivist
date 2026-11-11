@@ -1,6 +1,6 @@
 // 쪼개기·배정 용지 조각 앞 칸의 순수 모델 - 절 번호 표시 줄, 절 번호 글자, 이웃 짝 괄호.
 
-export type PairBracket = "top" | "bottom" | "solo";
+export type PairBracket = "top" | "bottom";
 
 const NUMERIC_LABEL = /^\d+(\.\d+)*\.?$/;
 
@@ -39,7 +39,7 @@ export function getSectionHeads(units: readonly { unitId: number; part: string; 
   return heads;
 }
 
-/** 짝이 바로 이웃한 줄이면 위·아래 괄호, 짝은 있는데 이웃하지 않으면 solo(괄호선만, 틈은 그대로). 짝 없는 줄은 맵에 없다 */
+/** 짝이 바로 이웃한 줄이면 위·아래 괄호. 짝이 없거나 이웃하지 않으면 맵에 없다 */
 export function getPairBrackets(strips: readonly { unitId: number; partnerId: number | null }[]): Map<number, PairBracket> {
   const result = new Map<number, PairBracket>();
   strips.forEach((strip, index) => {
@@ -48,8 +48,6 @@ export function getPairBrackets(strips: readonly { unitId: number; partnerId: nu
     if (next && next.unitId === strip.partnerId && next.partnerId === strip.unitId) {
       result.set(strip.unitId, "top");
       result.set(next.unitId, "bottom");
-    } else if (!result.has(strip.unitId)) {
-      result.set(strip.unitId, "solo");
     }
   });
   return result;

@@ -54,7 +54,7 @@ import { useI18n } from "@/lib/i18n";
 import { buildPaperModel, buildPaperTabs, canSplitAt, countUnchecked, readWarningText, resolveCutDrag, shouldRecenter, toBlockOffset, toUnitOffset, type PaperSheet, type PaperTabKey } from "@/lib/paper-model";
 import { findLangMismatch } from "@/lib/lang-mismatch-model";
 import { getSplitKeyAction } from "@/lib/split-keys";
-import { buildSplitMenu, getAiSplitReason, isUnitDecided, type SplitMenuAction } from "@/lib/split-menu-model";
+import { buildSplitMenu, getAiSplitReason, isAiSplitKind, isUnitDecided, type SplitMenuAction } from "@/lib/split-menu-model";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 import { buildAiTabs } from "@/lib/split-ai-tabs-model";
@@ -720,7 +720,7 @@ export default function SplitPage() {
                   {selected.kind === "table" ? t("split.tableUnit") : selected.text}
                 </p>
                 {cut && <p className="text-xs text-ink-3">{t("split.cutHint")}</p>}
-                {canEdit && (selected.kind === "sentence" || selected.kind === "cell_sentence") && (
+                {canEdit && isAiSplitKind(selected.kind) && (
                   <Tooltip label={aiUnitReason ?? t("ai.askUnit")} suppressed={aiUnitReason === null}>
                     <button
                       type="button"

@@ -26,7 +26,7 @@ export function LinkBadge({ unitId, targets, currentDocId, onJump }: LinkBadgePr
   const { t } = useI18n();
   const target = pickBadgeTarget(targets, currentDocId);
   if (!target) return null;
-  const isAi = targets.some((item) => item.status === "ai_suggested");
+  const isAi = target.status === "ai_suggested";
   const badge = (
     <button
       type="button"

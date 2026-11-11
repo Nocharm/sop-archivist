@@ -1,7 +1,7 @@
 // 원문 용지 - 블록을 원문 순서대로 그리고 단위마다 누를 수 있는 조각을 둔다. 용지 안에는 추출한 글자만 둔다(앱 라벨 금지).
 // 글자 조각마다 data-start(블록 안 위치)를 달아, 누른 자리·끌어 고른 범위를 블록 위치로 되돌린다.
-// strips(Split·Assign)에서는 단위 하나가 종이 한 조각이다 - 확인과 상관없이 처음부터 떨어져 있고, 조각 오른쪽 필 칸에 글자 태그(KO·EN·H)·절 번호 필, 오른쪽 끝에 아이콘 표시를 둔다.
-// 고른 단위는 글자 영역의 가장 바깥 윤곽 하나로 감싼다(contour). 태그는 앱 표시라 aria로 읽히지 않고, 아이콘 표시는 포인터·포커스 툴팁으로 뜻을 알린다.
+// strips(Split·Assign)에서는 단위 하나가 종이 한 조각이다 - 확인과 상관없이 처음부터 떨어져 있고, 조각 왼쪽 밖에 언어 색 탭(KO·EN, 보류는 줄무늬)을 붙여 절 번호를 보이고(짝은 이어 붙인 탭 하나), 오른쪽 끝에 아이콘 표시를 둔다.
+// 고른 단위는 글자 영역의 가장 바깥 윤곽 하나로 감싼다(contour). 탭은 앱 표시라 aria로 읽히지 않고, 아이콘 표시는 포인터·포커스 툴팁으로 뜻을 알린다.
 "use client";
 
 import { CircleCheck, FoldVertical, FolderCheck, ImageIcon, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles } from "lucide-react";
@@ -45,7 +45,8 @@ function readRowUnitId(row: PaperRow): number | null {
 function readRowSection(row: PaperRow): string {
   if (row.type === "piece") return row.parts[0]?.block.section_label ?? "";
   if (row.type === "figure") return row.block.section_label;
-  return "";
+  // 표는 칸 블록이 가진 절을 따른다 - 이웃 조각과 같은 들여쓰기로 맞춘다
+  return row.item.rows.flat().find((block) => block.section_label !== "")?.section_label ?? "";
 }
 
 export interface PaperCut {

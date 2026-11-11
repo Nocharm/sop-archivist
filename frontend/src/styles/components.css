@@ -982,7 +982,8 @@
   .sheet:has(> .pg[data-strips]) { background: none; border: 0; box-shadow: none; }
   /* 조각마다 왼쪽 밖에 언어 색 탭(.strip-tab)이 붙고 폭은 절 깊이로만 정해진다(strip-pill-model.ts PILL_WIDTH_BY_LEVEL) - 깊을수록 조각이 오른쪽에서 시작해 들여쓴 것처럼 읽힌다. 오른쪽은 끝 아이콘 자리(--pg-pad-r)만 두고, 배정 연결 배지(.strip-pills)가 있을 때만 그 폭을 더한다 */
   .pg[data-strips] { --pg-pad-l: 12px; --pg-pad-r: 68px; --pill-col: 72px; padding: 0; gap: 0; }
-  .pg[data-strips] .strip-row { display: flex; align-items: stretch; content-visibility: auto; contain-intrinsic-size: auto 46px; }
+  /* content-visibility는 칠 영역을 줄 안쪽으로 자르므로 조각 그림자(--shadow-1, 아래로 24px)가 잘리지 않게 자르는 선을 바깥으로 민다 */
+  .pg[data-strips] .strip-row { display: flex; align-items: stretch; content-visibility: auto; overflow-clip-margin: 32px; contain-intrinsic-size: auto 46px; }
   .pg[data-strips] .strip-row:has(.strip[data-sel], .cut-anchor, :focus-visible) { content-visibility: visible; }
   .pg[data-strips] .strip-row > .strip { flex: 1 1 0; min-width: 0; }
   /* 화면 밖 조각은 그리지 않는다(Unit 수천 개) - 고른 조각·나눌 선이 있는 조각은 팝업·윤곽이 잘리지 않게 뺀다 */
@@ -994,10 +995,8 @@
   .pg[data-strips] .strip > p { margin-block: 0; }
   .pg[data-strips] .pg-edge { display: grid; padding: 0; border: 0; }
   /* 짝 Unit - 이웃한 짝은 틈 1px로 붙이고 왼쪽 괄호선 하나로 묶는다. 바탕은 아주 옅게, 막대 쪽 모서리는 직각. 고른 단위의 짝(data-partner)은 선만 진하게 */
-  .pg[data-strips] .strip[data-bracket], .pg[data-strips] .strip[data-partner], .cell-piece[data-partner] { --pair-line: color-mix(in oklab, var(--accent) 70%, var(--line-2)); box-shadow: var(--shadow-1); }
   .pg[data-strips] .strip[data-bracket="top"], .pg[data-strips] .strip[data-bracket="bottom"], .pg[data-strips] .strip[data-partner]:not([data-bracket]), .cell-piece[data-partner] { background: color-mix(in oklab, var(--accent) 4%, var(--paper)); }
-  .pg[data-strips] .strip[data-bracket][data-partner], .pg[data-strips] .strip[data-partner]:not([data-bracket]), .cell-piece[data-partner] { --pair-line: var(--accent); }
-  .cell-piece[data-partner] { box-shadow: inset 2px 0 0 var(--pair-line); }
+  .cell-piece[data-partner] { box-shadow: inset 2px 0 0 var(--accent); }
 
   /* 조각 사이 틈 - 위아래 합치기가 늘 보인다(평소엔 낮고 넓은 알약, 올리면 라벨이 펼쳐진다) */
   /* 평소 4px, 고른 조각 곁·올린 틈 12px(전환은 모션 토큰 - reduced-motion이면 즉시), 짝 사이는 1px */
@@ -1041,11 +1040,11 @@
   .strip-tab[data-hold] { background-image: repeating-linear-gradient(135deg, var(--tab-hold) 0 3px, transparent 3px 7px); }
   .strip-tab[data-bracket="top"] { border-bottom: 0; border-bottom-left-radius: 0; }
   .strip-tab[data-bracket="bottom"] { border-top: 0; border-top-left-radius: 0; box-shadow: inset 0 1px 0 var(--paper); }
-  .strip-tab[data-dim] { opacity: .55; }
-  .strip-row:hover > .strip-tab, .strip-row:hover + .strip-gap[data-pair] + .strip-row > .strip-tab[data-bracket="bottom"] { opacity: 1; }
+  .strip-tab[data-dim]:not([data-hold]) { opacity: .55; }
+  .strip-row:hover > .strip-tab, .strip-row:hover + .strip-gap[data-pair] + .strip-row > .strip-tab[data-bracket="bottom"], .strip-row:has(+ .strip-gap[data-pair] + .strip-row:hover) > .strip-tab[data-bracket="top"] { opacity: 1; }
   .strip-row:has(> .strip[data-partner], > .strip[data-link-hover]) > .strip-tab { box-shadow: inset 0 0 0 2px var(--accent); }
   .strip-tab-gap { flex: none; }
-  .strip-tab-num { display: grid; place-items: center; height: 27px; font: 600 10px / 1 var(--font-mono); white-space: nowrap; transition: opacity var(--dur-base); }
+  .strip-tab-num { display: block; width: 100%; height: 27px; overflow: hidden; text-align: center; text-overflow: ellipsis; font: 600 10px / 27px var(--font-mono); white-space: nowrap; transition: opacity var(--dur-base); }
   .strip-tab-letters { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; font: 700 9px / 1.3 var(--font-mono); opacity: 0; transition: opacity var(--dur-base); }
   .strip-tab:hover > .strip-tab-letters { opacity: 1; }
   .strip-tab:hover > .strip-tab-num { opacity: 0; }
