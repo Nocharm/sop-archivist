@@ -42,6 +42,8 @@ cd frontend; $env:BACKEND_URL="http://localhost:8777"; npm run dev
 7. **헤드리스 Chrome은 blob 내려받기 이름을 `download`로 알린다**: 인증 헤더가 필요한 파일(Excel 등)은 `apiFetchBlob`으로 받아 `<a download="…">`로 저장하는데, 헤드리스에서 `download.suggestedFilename()`은 `download`가 나온다(앵커의 `download` 속성은 정확했다). 스모크는 내려받기가 시작됐는지만 보고, 파일 이름 규칙은 `lib/download-name.test.ts` 단위 테스트가 본다.
 8. **대비는 토큰 쌍이 아니라 그려진 글자로 잰다**: 토큰 표가 전부 통과해도 다른 값이 새어 들어오면 화면 글자가 안 보일 수 있다. `scripts/pw-contrast-audit.mjs`는 글자마다 배경을 아래에서부터 쌓아 실제 대비를 재고(oklch·color-mix는 1×1 캔버스로 sRGB 변환), 시작 전에 일부러 넣은 흐린 글자를 잡는지 확인한다. 감사가 아무것도 못 잡는 상태로 "전부 통과"하는 것을 막기 위해서다.
 
+9. **보통 자료만으로는 극단 자료에서만 무너지는 화면을 못 본다 — 극단 자료 시드와 배치 감사로 잰다**: 별도 sqlite 파일에 `reset_db → seed_sop_demo → seed_sop_worst`(`backend/`에서, `DATABASE_URL=sqlite+aiosqlite:///<경로>/worst.db AUTH_MODE=dev`, `DEV_ENFORCE_PERMISSIONS`는 켜지 않는다 — 켜면 bundle.create가 403)를 차례로 돌리고(시드는 약 2분 반, 같은 자료는 건너뛰어 다시 돌려도 된다), 그 파일로 backend를 `DEV_ENFORCE_PERMISSIONS=true`로 8787, frontend를 3787에 띄운다(`dev.db`·3777/8777과 섞이지 않게 — 실행 중인 DB 파일은 바꾸지 않는다, 함정 2). `frontend/`에서 `DS=worst|mid ONLY=<항목 id> BASE_URL=http://localhost:3787 node scripts/pw-layout-audit.mjs`. `mid`는 데모 묶음 1~4, `worst`는 `SYNTHETIC W1…W7`·`light NN` 묶음이다. 항목은 `AUDIT_ENTRIES`에 `{id, ds, user, path(ids), views, measure, expect}`로 더하고, 숫자 기준은 풀어 주지 않고 잰 값을 보고한다. 목록·ID는 묶음 목록 API에서 제목 접두로 찾으니 시드의 제목 접두를 바꾸면 감사도 함께 고친다.
+
 ## 기타
 - 스크린샷은 Read로 직접 볼 수 있다.
 - `element.offsetParent !== null`은 페인트/가시성이 아니다 → `getComputedStyle().visibility` / `document.elementFromPoint`로 실가시성 확인.
