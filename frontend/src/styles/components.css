@@ -937,15 +937,8 @@
   .preview-paper::after { content: ""; position: absolute; inset: auto 0 0; height: 56px; background: linear-gradient(transparent, var(--paper)); }
 }
 
-/* ---- 업로드 모달(2026-11-09): Old/New 카드, 결과 행, 출처 표 ---- */
+/* ---- 업로드 모달(2026-11-09): 결과 행, 출처 표 ---- */
 @layer components {
-  .side-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .side-card { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: start; gap: 10px; padding: 12px; border: 1.5px solid var(--line-2); border-radius: var(--r-3); background: var(--surface); text-align: left; cursor: pointer; transition: border-color var(--dur-fast), background var(--dur-fast); }
-  .side-card:hover { border-color: var(--accent-line); }
-  .side-card[aria-checked="true"] { border-color: var(--accent); background: var(--accent-tint); box-shadow: inset 0 0 0 1px var(--accent); }
-  .side-card:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-  .side-card-pic { display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--r-2); background: var(--sunken); border: 1px solid var(--line); color: var(--ink-2); }
-  .side-card[aria-checked="true"] .side-card-pic { color: var(--accent); }
 
   /* 결과 행 - 파일 줄 아래에 번호·버전·배치 세 칸 */
   .upload-results { display: grid; border: 1px solid var(--line); border-radius: var(--r-2); overflow: hidden; }

@@ -129,12 +129,13 @@ Bundle은 함께 재구성할 문서 묶음입니다. Old SOP 여러 편과 새�
 
 ### 올리기 {#upload}
 
-![Upload documents 창](img/upload.png "올릴 종류를 먼저 고르고 파일을 넣는다")
+![Upload documents 창](img/upload.png "파일을 골라 올린다")
 
 1. **Upload documents** 를 누릅니다.
-2. **Upload type** 에서 종류를 고릅니다. **Old SOP** 는 쪼개서 배정할 옛 문서, **New SOP · WI** 는 이미 써 둔 새 문서입니다. 새 문서는 **Type** 을 고르고, WI라면 **Parent SOP number (WI only)** 를 적습니다.
-3. **Choose files** 로 파일을 고릅니다. 여러 개를 한 번에 고를 수 있고, DOCX와 글자가 들어 있는 PDF를 받습니다.
-4. 올리기 단추를 누르면 파일마다 결과가 표시됩니다. 다 올렸으면 **Go to Split** 으로 넘어갑니다.
+2. **Choose files** 로 파일을 고릅니다. 여러 개를 한 번에 고를 수 있고, DOCX와 글자가 들어 있는 PDF를 받습니다.
+3. 올리기 단추를 누르면 파일마다 결과가 표시됩니다. 다 올렸으면 **Go to Split** 으로 넘어갑니다.
+
+여기서는 쪼개서 배정할 옛 문서(Old)만 올립니다. 이미 써 둔 새 문서는 [To-Be](#tobe-written)에서 올립니다.
 
 > [!TIP]
 > 파일 이름에 문서 번호와 버전이 들어 있으면 그대로 읽어 옵니다. 이름을 정리해 두고 올리면 고칠 일이 줄어듭니다.
@@ -283,6 +284,16 @@ Bundle은 함께 재구성할 문서 묶음입니다. Old SOP 여러 편과 새�
 | **Entrance** | **Assign** 은 아직 쓰지 않은 문서라 Old Unit을 칸에 보내 새 문장을 만든다. **Match** 는 이미 써서 올린 문서라 Old Unit을 그 문장에 잇는다 |
 | **Equipment SOP** | 장비 SOP면 켠다. 장비 SOP에 있어야 하는 절차 칸(전자 기록 관리·문제 해결·유지 보수)이 비어 있으면 **Overview** 에 알려 준다. 검토 요청을 막지는 않는다 |
 | **N/A or steps** | SOP는 쓰지 않는 칸의 수, WI는 단계의 수 |
+
+### 이미 쓴 문서 올리기 {#tobe-written}
+
+이미 써 둔 새 SOP·WI 파일은 **Upload written** 으로 올립니다. 먼저 옛 문서의 쪼개기를 끝내 두는 편이 좋습니다. 경계를 아직 확인하지 않은 Old Unit이 있으면 단추 곁에 안내가 보이지만, 올리는 것을 막지는 않습니다.
+
+1. **Upload written** 을 누릅니다. 고친 것이 있으면 먼저 저장하거나 버립니다.
+2. **Type** 을 고르고, WI라면 **Parent SOP number (WI only)** 에 이 목록에 있는 SOP의 번호를 적습니다.
+3. **Choose files** 로 파일 하나를 고르고 **Upload** 를 누릅니다.
+
+올린 문서는 **Documents** 에 **New** 로 나타나고, 이 목록에는 **Match** 줄이 생깁니다. 파일 이름의 문서 번호가 목록에 이미 있으면 올릴 수 없습니다.
 
 ### 칸과 단계 {#tobe-slots}
 

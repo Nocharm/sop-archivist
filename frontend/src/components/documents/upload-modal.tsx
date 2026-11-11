@@ -1,4 +1,4 @@
-// 문서 업로드 - Old SOP(입구 1) 또는 New 문서(입구 2)를 고르고 파일을 하나씩 차례로 올린다. 서버가 올릴 때 바로 추출하고
+// 문서 업로드 - Old SOP(입구 1) 파일을 하나씩 차례로 올린다. 이미 쓴 New 문서는 To-Be 화면에서 올린다. 서버가 올릴 때 바로 추출하고
 // 문서 번호·버전·언어 배치를 미리 채우므로, 파일마다 결과와 채운 값(출처 표)을 보이고 그 자리에서 고칠 수 있다.
 "use client";
 
@@ -9,17 +9,15 @@ import { useRef, useState } from "react";
 import { DocStatusPill, getDocReason } from "@/components/documents/doc-status";
 import { AiSuggestChip } from "@/components/documents/ai-suggest-chip";
 import { LayoutLabel } from "@/components/documents/layout-picto";
-import { SideChoice } from "@/components/documents/side-choice";
 import { InlineText } from "@/components/inline-text";
 import { Modal } from "@/components/modal";
 import { Select } from "@/components/ui/select";
 import { showToast } from "@/components/ui/toast";
 import { VersionInput } from "@/components/ui/version-input";
 import { humanizeApiError } from "@/lib/api-errors";
-import { LANGUAGE_LAYOUTS, updateDocument, uploadDocument, type DocSide, type DocumentUpdateInput, type SopDocument, type TargetDocType } from "@/lib/api-sop";
+import { LANGUAGE_LAYOUTS, updateDocument, uploadDocument, type DocumentUpdateInput, type SopDocument } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import { getStageHref } from "@/lib/stages";
-import { INPUT_FIELD } from "@/lib/ui-classes";
 
 interface UploadRow {
   name: string;
@@ -51,9 +49,6 @@ interface UploadModalProps {
 export function UploadModal({ bundleId, onClose, onUploaded, latest = [] }: UploadModalProps) {
   const { t } = useI18n();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [side, setSide] = useState<DocSide>("old");
-  const [docType, setDocType] = useState<TargetDocType>("sop");
-  const [parentCode, setParentCode] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [rows, setRows] = useState<UploadRow[] | null>(null);
   const running = rows?.some((row) => row.state === "waiting" || row.state === "uploading") ?? false;
@@ -85,7 +80,7 @@ export function UploadModal({ bundleId, onClose, onUploaded, latest = [] }: Uplo
     for (const [index, file] of files.entries()) {
       setRows((prev) => prev?.map((row, i) => (i === index ? { ...row, state: "uploading" } : row)) ?? null);
       try {
-        const document = await uploadDocument(bundleId, { file, side, docType, parentCode: parentCode.trim() });
+        const document = await uploadDocument(bundleId, { file, side: "old" });
         setRows((prev) => prev?.map((row, i) => (i === index ? { ...row, state: "done", document, sources: document.prefill_sources ?? {} } : row)) ?? null);
         onUploaded();
       } catch (error) {
@@ -125,29 +120,6 @@ export function UploadModal({ bundleId, onClose, onUploaded, latest = [] }: Uplo
     <Modal title={t("documents.upload")} onClose={onClose} isBusy={running} testId="upload" footer={footer} size="xl">
       {rows === null ? (
         <div className="space-y-3">
-          <SideChoice value={side} onChange={setSide} />
-          {side === "new" && (
-            <div className="grid grid-cols-2 gap-3">
-              <label className="space-y-1">
-                <span className="text-xs text-ink-2">{t("documents.docType")}</span>
-                <Select
-                  testId="upload-doc-type"
-                  ariaLabel={t("documents.docType")}
-                  className="w-full"
-                  value={docType}
-                  options={[
-                    { value: "sop", label: "SOP" },
-                    { value: "wi", label: "WI" },
-                  ]}
-                  onChange={setDocType}
-                />
-              </label>
-              <label className="space-y-1">
-                <span className="text-xs text-ink-2">{t("documents.parentCode")}</span>
-                <input data-testid="upload-parent-code" className={`${INPUT_FIELD} font-mono`} value={parentCode} maxLength={100} onChange={(event) => setParentCode(event.target.value)} />
-              </label>
-            </div>
-          )}
           <div className="space-y-1">
             <input
               ref={fileRef}
