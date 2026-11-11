@@ -57,7 +57,7 @@ SOP Archivist는 품질 조직의 SOP Restructuring T/F가 옛 GMP SOP를 새 SO
 | 강조 표시 | 형광 대신 밑줄 |
 | 전체 틀 | 왼쪽 레일(기본)과 상단 2단을 사용자가 선택 |
 | 분류 화면 | 원문 3단(기본)과 목록 + 상세를 사용자가 선택 |
-| 강조 글꼴 | IBM Plex Sans KR 500, 600 |
+| 강조 글꼴 | Paperlogy 600 |
 | 본문 글꼴 | Pretendard 400, 600 |
 | 식별자 글꼴 | JetBrains Mono 400, 600 |
 | 원문 글꼴 | 사용자가 한글과 영어를 따로 선택. 기본 Pretendard + Arial |
@@ -78,7 +78,7 @@ SOP Archivist는 품질 조직의 SOP Restructuring T/F가 옛 GMP SOP를 새 SO
 
 | 역할 | 글꼴 | 쓰는 곳 | 쓰지 않는 곳 |
 |---|---|---|---|
-| 강조 | IBM Plex Sans KR | 브랜드, 화면 제목, 단계 번호, 고정된 큰 숫자 | 표 안, 버튼, 원문, 바뀌는 숫자 |
+| 강조 | Paperlogy | 브랜드, 화면 제목, 단계 번호, 고정된 큰 숫자 | 표 안, 버튼, 원문, 바뀌는 숫자 |
 | 본문 | Pretendard | 버튼, 표, 안내, 설명 전부 | |
 | 식별자 | JetBrains Mono | 단위 ID, 문서 번호, 규칙 코드, 단축키 | 문장 |
 | 원문 | 사용자 설정 | 용지 위 원문, 새 문장 | 앱 글자 |
@@ -88,12 +88,12 @@ SOP Archivist는 품질 조직의 SOP Restructuring T/F가 옛 GMP SOP를 새 SO
 | 글꼴 | 파일 | 처리 |
 |---|---|---|
 | Pretendard | `frontend/src/app/fonts/PretendardVariable.woff2` | 원본 그대로 |
-| IBM Plex Sans KR | `frontend/src/app/fonts/IBMPlexSansKR-{Medium,SemiBold}.woff2` | `@fontsource/ibm-plex-sans-kr` 5.3.0의 `korean-500`·`korean-600` 그대로 |
+| Paperlogy | `frontend/src/app/fonts/Paperlogy-SemiBold.woff2` | 배포처 미러(fonts-archive/Paperlogy)의 `Paperlogy-6SemiBold.woff2` 그대로 |
 | JetBrains Mono | `frontend/src/app/fonts/JetBrainsMono-{Regular,SemiBold}.woff2` | 정식 배포본 그대로(Nerd Font 패치본은 쓰지 않는다) |
 
 라이선스는 `frontend/src/app/fonts/licenses/`에 함께 둔다.
 
-**IBM Plex Sans KR 라이선스.** SIL OFL 1.1이고 예약 글꼴 이름이 없다(`IBMPlexSansKR-OFL.txt`). 파일은 npm `@fontsource/ibm-plex-sans-kr` 5.3.0의 `korean-500`, `korean-600` woff2(약 560KB씩)를 고치지 않고 넣었다. 묶음 제목에 어떤 한글이 올지 모르므로 한글 11,172자가 전부 들어 있는지 cmap으로 확인했고 영문 인쇄 가능 ASCII도 같은 파일에 있어 조각(unicode-range) 파일은 필요 없다. 2026-11-11에 Gmarket Sans(이름을 바꿔 쓰던 `Archivist Accent`)에서 바꿨다. 낡아 보인다는 사용자 의견이다.
+**Paperlogy 라이선스.** SIL OFL 1.1이고 글꼴 저작권 줄에 예약 글꼴 이름 선언이 없다(`Paperlogy-OFL.txt`, 글꼴 이름 표 13번 항목이 OFL을 가리킨다). 이주임(Lee Juim)의 페이퍼로지이고 배포처는 freesentation.blog/paperlogyfont, 파일은 그 GitHub 미러 fonts-archive/Paperlogy의 `Paperlogy-6SemiBold.woff2`(165KB)를 고치지 않고 넣었다. 묶음 제목에 어떤 한글이 올지 모르므로 한글 11,172자가 전부 들어 있는지 cmap으로 확인했다(영문 ASCII도 같은 파일). 세로 값은 hhea와 win이 같다(880/180, 1000 단위 900). 2026-11-11에 Gmarket Sans(이름을 바꿔 쓰던 `Archivist Accent`), IBM Plex Sans KR을 거쳐 바꿨다 — 사용자가 강조 글꼴 일괄 변경을 정했다.
 
 **강조 글꼴 제약.** 시안에서 재서 확인한 값이다. Gmarket Sans 시절에 잰 값이라 새 글꼴로 다시 재지는 않았다.
 
@@ -328,7 +328,7 @@ bpm에서 가져온 규칙과 이 앱 때문에 더한 규칙이다. 시안 맨 
 - 밑줄 강조를 제목뿐 아니라 지금 보는 문장까지 적용했다.
 - 주 버튼 파랑을 `#036EAE`에서 `#045797`로 어둡게 했다. AI 보라와의 색약 구분 때문이다.
 - 쪼개기 열을 원문 3단과 같게 맞췄다. 시안은 목록 + 상세일 때 196 / 가변 / 256이지만 하나로 통일하는 편이 낫다.
-- Gmarket Sans는 이름을 바꾼 경량본을 권장했다(이후 IBM Plex Sans KR로 교체).
+- Gmarket Sans는 이름을 바꾼 경량본을 권장했다(이후 IBM Plex Sans KR을 거쳐 Paperlogy로 교체).
 - 묶음 목록이 `/`를 대체한다고 봤다.
 - 관리 탭을 1차 뒤로 미뤘다.
 - AI 범위를 안내 자리까지로 봤다. 1차 프롬프트의 "AI API 스키마가 main에 들어오면 합쳐서 붙인다"를 따른 것이다.

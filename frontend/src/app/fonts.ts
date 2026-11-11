@@ -8,12 +8,9 @@ export const fontUi = localFont({
   display: "swap",
 });
 
-// 강조 글꼴 IBM Plex Sans KR - 세로 값이 hhea와 win이 같아(1085/415) OS마다 줄 안 위치가 달라지지 않으니 보정 선언이 없다
+// 강조 글꼴 Paperlogy SemiBold - 세로 값이 hhea와 win이 같아(880/180, 1000 단위 900) OS마다 줄 안 위치가 달라지지 않으니 보정 선언이 없다
 export const fontAccent = localFont({
-  src: [
-    { path: "./fonts/IBMPlexSansKR-Medium.woff2", weight: "500" },
-    { path: "./fonts/IBMPlexSansKR-SemiBold.woff2", weight: "600" },
-  ],
+  src: [{ path: "./fonts/Paperlogy-SemiBold.woff2", weight: "600" }],
   variable: "--font-accent-face",
   display: "swap",
 });
