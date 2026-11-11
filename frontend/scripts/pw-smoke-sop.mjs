@@ -744,11 +744,9 @@ await runStep("assign: written New document - identical, link by clicking, split
   check("the link saves", savedResponse.ok(), savedResponse.ok() ? "" : (await savedResponse.text()).slice(0, 300));
   await page.waitForLoadState("networkidle");
   check("linking to a written sentence adds the Old source", (await readSources()) > sourcesBefore, String(sourcesBefore));
-  // 문서별 확대 - Old 위에서 Ctrl+휠, New는 그대로(다음 조각으로 넘어가 New 원문이 닫혔으면 연다)
-  // 다음 조각의 후보가 늦게 오면 New 원문이 저절로 열렸다 닫힌다 - 자리 잡을 때까지 기다렸다가 닫혀 있으면 연다
+  // 문서별 확대 - Old 위에서 Ctrl+휠, New는 그대로
   await page.waitForLoadState("networkidle");
   await page.waitForTimeout(400);
-  if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-toggle-new"]').click();
   await wait(page, "assign-new-zoom-value");
   const oldZoom = await getText(page, "assign-old-zoom-value");
   const newZoom = await getText(page, "assign-new-zoom-value");

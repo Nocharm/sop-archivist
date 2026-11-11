@@ -11,6 +11,7 @@ import { useEffect, useEffectEvent, useMemo, useState, type ReactNode } from "re
 import { SplitAiTabs } from "@/components/manage/split-ai";
 import { SplitAiBar } from "@/components/manage/split-ai-bar";
 import { SplitAiResult } from "@/components/manage/split-ai-result";
+import { PartTabs } from "@/components/paper/part-tabs";
 import { Paper, type CutDragPos, type PaperCut } from "@/components/paper/paper";
 import { SourceFontMenu } from "@/components/paper/source-font-menu";
 import { Modal } from "@/components/modal";
@@ -507,35 +508,25 @@ export default function SplitPage() {
         </div>
         {tabs && tabs.tabs.length > 1 && (
           <div className="flex flex-none items-center border-b border-line bg-surface px-[var(--pad)] py-1.5">
-            <div className="flex gap-0.5 rounded-md bg-sunken p-0.5" role="tablist" aria-label={t("split.tabs")} data-testid="split-tabs">
-              {tabs.tabs.map((tab) => {
-                const left = countTabLeft(tab.key);
-                const isOn = tab.key === activeTab?.key;
-                return (
-                  <button
-                    key={tab.key}
-                    type="button"
-                    role="tab"
-                    aria-selected={isOn}
-                    className={`flex h-[26px] items-center gap-1.5 whitespace-nowrap rounded-sm px-2.5 text-xs ${isOn ? "bg-surface font-semibold text-ink shadow-sm" : "text-ink-2"}`}
-                    data-testid={`split-tab-${tab.key}`}
-                    onClick={() => {
-                      setTabKey(tab.key);
-                      clearTransient();
-                    }}
-                  >
-                    {t(`split.tab.${tab.key}`)}
-                    {left > 0 ? (
-                      <span className="tab-left" aria-label={t("split.uncheckedLeft", { n: left })} data-testid={`split-tab-left-${tab.key}`}>
-                        {left}
-                      </span>
-                    ) : (
-                      <CircleCheck size={13} strokeWidth={2} className="pmark checked" aria-label={t("split.allChecked")} />
-                    )}
-                  </button>
+            <PartTabs
+              keys={tabs.tabs.map((tab) => tab.key)}
+              active={activeTab?.key ?? "body"}
+              testIdPrefix="split-tab"
+              onChange={(key) => {
+                setTabKey(key);
+                clearTransient();
+              }}
+              renderBadge={(key) => {
+                const left = countTabLeft(key);
+                return left > 0 ? (
+                  <span className="tab-left" aria-label={t("split.uncheckedLeft", { n: left })} data-testid={`split-tab-left-${key}`}>
+                    {left}
+                  </span>
+                ) : (
+                  <CircleCheck size={13} strokeWidth={2} className="pmark checked" aria-label={t("split.allChecked")} />
                 );
-              })}
-            </div>
+              }}
+            />
           </div>
         )}
         {ai.lastRequest && <SplitAiResult result={ai.lastRequest} onClose={ai.clearLastRequest} />}

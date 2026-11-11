@@ -93,6 +93,8 @@ interface PaperProps {
     statusOf?: (unitId: number) => ViewUnit["status"] | undefined;
     /** Assign - 조각 아래 한 줄(간 곳) */
     renderNote?: (unitIds: number[]) => ReactNode;
+    /** Assign - 조각 오른쪽 칸(연결 배지). 비면 폭을 차지하지 않는다 */
+    renderPills?: (unitId: number) => ReactNode;
   };
   /** 고른 단위를 밑줄 대신 바깥 윤곽으로 감싼다 */
   contour?: boolean;
@@ -610,7 +612,7 @@ export function Paper({
           data-strip-unit={unitId ?? undefined}
           data-testid={`${testId}-piece-${unitId ?? row.key}`}
         >
-          {row.type !== "table" && <span className="strip-pills" />}
+          {row.type !== "table" && <span className="strip-pills">{unit && strips?.renderPills?.(unit.id)}</span>}
           {row.type === "table"
             ? renderTable(row.item)
             : row.type === "figure"

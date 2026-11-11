@@ -3,7 +3,7 @@
 // 오른쪽은 고른 곳·확정·우선순위 아코디언이다(설계 docs/superpowers/specs/2026-11-09-assign-unified-design.md).
 "use client";
 
-import { Check, Circle, CircleCheck, CircleDashed, CirclePause, ExternalLink, FilePen, FileText, FileUp, Inbox, Link2, ListChecks, ListFilter, RefreshCw, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
+import { Check, Circle, CircleCheck, CircleDashed, CirclePause, ExternalLink, FilePen, FileUp, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, RefreshCw, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent } from "react";
@@ -15,7 +15,8 @@ import { DestinationTree } from "@/components/assign/destination-tree";
 import { LinkChoice } from "@/components/assign/link-choice";
 import { findNewLine, findOldStrip, LinkLines } from "@/components/assign/link-lines";
 import { LinkMenu } from "@/components/assign/link-menu";
-import { NewPane } from "@/components/assign/new-pane";
+import { LinkBadge } from "@/components/assign/link-badge";
+import { NewPane, NewPaneEmpty } from "@/components/assign/new-pane";
 import { OldPane } from "@/components/assign/old-pane";
 import { PaneDivider } from "@/components/assign/pane-divider";
 import { ResetMenu } from "@/components/assign/reset-menu";
@@ -106,7 +107,7 @@ import { useI18n } from "@/lib/i18n";
 import { useLeaveGuard } from "@/lib/leave-guard";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { navigate } from "@/lib/nav-buffer";
-import { buildPaperModel, shouldRecenter } from "@/lib/paper-model";
+import { buildPaperModel, buildPaperTabs, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
 import { SLOT_LABELS } from "@/lib/slot-labels";
 import { getStageHref } from "@/lib/stages";
 import { useAiJobs } from "@/lib/use-ai-jobs";
@@ -365,14 +366,23 @@ export default function AssignPage() {
   const [manualOldDoc, setManualOldDoc] = useState<number | null>(null);
   const oldView = viewOf(row?.documentId ?? manualOldDoc ?? oldDocIds[0]);
   const paperModel = useMemo(() => (oldView ? buildPaperModel(oldView) : null), [oldView]);
+  // 본문·머리말·꼬리말 탭 - 고른 조각이 다른 탭에 있으면 그 탭으로 가고, 사람이 고른 탭은 그 줄에서 그대로 둔다
+  const partKeys = useMemo(() => (paperModel ? (["body", "header", "footer"] as const).filter((key) => paperModel[key].length > 0) : []), [paperModel]);
+  const partOf = useMemo(() => (oldView && paperModel ? buildPaperTabs(oldView, paperModel).tabOf : null), [oldView, paperModel]);
+  // Old 조각 → 그 조각을 출처로 쓴 New 문장들(연결 배지)
+  const linkedTargets = useMemo(() => {
+    const map = new Map<number, WrittenSentence[]>();
+    for (const item of written) for (const unitId of item.source_unit_ids) map.set(unitId, [...(map.get(unitId) ?? []), item]);
+    return map;
+  }, [written]);
+  const [manualPart, setManualPart] = useState<{ key: string; part: PaperTabKey } | null>(null);
+  const wantedPart = (manualPart?.key === (activeKey ?? "") ? manualPart.part : null) ?? partOf?.get(row?.unitIds[0] ?? -1) ?? "body";
+  const activePart = partKeys.includes(wantedPart) ? wantedPart : (partKeys[0] ?? "body");
   const writtenDocs = [...new Map(written.map((item) => [item.target_doc_id, item.doc_code])).entries()];
-  // New 원문은 고른 곳·맨 위 후보가 이미 쓴 문서일 때 자동으로 열린다. 사람이 그 줄에서 열고 닫으면 그 값을 따른다
-  const [newToggle, setNewToggle] = useState<{ key: string; open: boolean } | null>(null);
+  // 오른쪽 칸은 항상 열려 있다 - 쓴 New 문서가 없으면 빈 안내
   const [manualNewDoc, setManualNewDoc] = useState<{ key: string; docId: number } | null>(null);
   const toggleKey = mode === "unsourced" ? "unsourced" : (activeKey ?? "");
   const topLink = recommendations.find((rec) => rec.destination.kind === "link")?.destination ?? null;
-  const autoNewOpen = mode === "unsourced" || destination?.kind === "link" || (!destination && topLink !== null);
-  const newOpen = writtenDocs.length > 0 && (newToggle?.key === toggleKey ? newToggle.open : autoNewOpen);
   const autoNewDoc = mode === "unsourced" ? (writtenMap.get(focusNew ?? -1)?.target_doc_id ?? null) : (findLinkDoc(destination, writtenMap) ?? findLinkDoc(topLink, writtenMap));
   const newDocId = (manualNewDoc?.key === toggleKey ? manualNewDoc.docId : null) ?? autoNewDoc ?? writtenDocs[0]?.[0] ?? null;
   const newRows = written.filter((item) => item.target_doc_id === newDocId);
@@ -661,7 +671,6 @@ export default function AssignPage() {
     setSelectedKey(key);
     setChecked(new Set());
     setMenu(null);
-    setNewToggle({ key, open: true });
     setManualNewDoc({ key, docId });
     setJump({ side: "new", id: targetId, targetId, rowKey: key });
   }
@@ -675,8 +684,7 @@ export default function AssignPage() {
     setSelectedKey(key);
     setChecked(new Set());
     setMenu(null);
-    // 지금 보던 New 문서를 그대로 열어 둔다 - 줄이 바뀌어도 이 문장 옆에서 이어 보게
-    setNewToggle({ key, open: true });
+    // 지금 보던 New 문서를 그대로 둔다 - 줄이 바뀌어도 이 문장 옆에서 이어 보게
     if (docId !== undefined) setManualNewDoc({ key, docId });
     setJump({ side: "old", id: unitId, targetId, rowKey: key });
   }
@@ -773,10 +781,10 @@ export default function AssignPage() {
   // New 원문은 고른 문장(없으면 후보)이 보이게 - 줄을 바꾸거나 고를 때
   const newFocusId = mode === "unsourced" ? focusNew : (linkIds[0] ?? [...candidateIds][0] ?? null);
   useEffect(() => {
-    if (newFocusId === null || !newOpen) return;
+    if (newFocusId === null || newDocId === null) return;
     const frame = requestAnimationFrame(() => document.querySelector(`[data-testid="assign-new-${newFocusId}"]`)?.scrollIntoView({ block: "nearest" }));
     return () => cancelAnimationFrame(frame);
-  }, [newFocusId, newOpen, newDocId]);
+  }, [newFocusId, newDocId]);
 
   // --- 그리기 ---
   const disposed = destination?.kind === "delete" || destination?.kind === "move";
@@ -798,14 +806,16 @@ export default function AssignPage() {
   function renderRecommendation(rec: Recommendation, index: number) {
     const pressed = isRecommendationPicked(draft.destination, rec.destination, rowLangs, writtenMap);
     const pending = pressed ? t("assign.unsaved") : undefined;
-    const sourceLabel = t(`assign.src.${rec.source}`);
-    const note = [sourceLabel, rec.why].filter(Boolean).join(" · ");
+    const chip = <span className="dest-chip" data-source={rec.source}>{t(`assign.src.${rec.source}`)}</span>;
+    const why = rec.why ? <span className="dest-card-why">{rec.why}</span> : null;
     if (rec.destination.kind === "link") {
       const targets = rec.destination.targetIds.map((id) => writtenMap.get(id)).filter((item): item is WrittenSentence => item !== undefined);
+      const langs = [...new Set(targets.map((item) => item.lang))];
+      const section = targets[0]?.section_path;
       return (
         <DestCard
           key={rec.key}
-          icon={FileText}
+          icon={Link2}
           tone="link"
           title={
             <>
@@ -813,7 +823,18 @@ export default function AssignPage() {
             </>
           }
           text={targets.map((item) => item.text).join(" / ")}
-          note={note}
+          foot={
+            <>
+              {langs.map((lang) => (
+                <span key={lang} className={`ptag ${lang}`}>
+                  {lang === "neutral" ? "–" : lang.toUpperCase()}
+                </span>
+              ))}
+              {section && <span className="dest-card-sec">§ {section}</span>}
+              {chip}
+              {why}
+            </>
+          }
           pressed={pressed}
           pending={pending}
           testId={`assign-rec-${index}`}
@@ -822,14 +843,20 @@ export default function AssignPage() {
       );
     }
     if (rec.destination.kind === "delete" || rec.destination.kind === "move") {
+      const isDelete = rec.destination.kind === "delete";
       return (
         <DestCard
           key={rec.key}
-          icon={Trash2}
+          icon={isDelete ? Trash2 : MoveRight}
           tone="danger"
           title={t("assign.acc.move")}
-          text={t(rec.destination.kind === "delete" ? "classify.deleted" : "classify.moved")}
-          note={note}
+          text={t(isDelete ? "classify.deleted" : "classify.moved")}
+          foot={
+            <>
+              {chip}
+              {why}
+            </>
+          }
           pressed={pressed}
           pending={pending}
           testId={`assign-rec-${index}`}
@@ -841,14 +868,19 @@ export default function AssignPage() {
     return (
       <DestCard
         key={rec.key}
-        icon={ListChecks}
+        icon={MapPin}
         title={
           <>
             <b>{label.title}</b> · {t("assign.chosen.place")}
           </>
         }
         text={label.text}
-        note={note}
+        foot={
+          <>
+            {chip}
+            {why}
+          </>
+        }
         pressed={pressed}
         pending={pending}
         testId={`assign-rec-${index}`}
@@ -857,42 +889,36 @@ export default function AssignPage() {
     );
   }
 
+  const nearAnchor = destination ?? recommendations[0]?.destination ?? null;
+  const nearLinks = nearAnchor?.kind === "link" ? pickNearby(written, nearAnchor.targetIds) : [];
+  const nearPlaces: DestinationOption[] = nearAnchor && nearAnchor.kind !== "link" ? listSiblingPlaces(options, nearAnchor) : [];
+
   function renderNearby() {
-    const anchor = destination ?? recommendations[0]?.destination ?? null;
-    if (!anchor) return <p className="text-xs text-ink-3">{t("assign.acc.none")}</p>;
-    if (anchor.kind === "link") {
-      const near = pickNearby(written, anchor.targetIds);
-      return near.length === 0 ? (
-        <p className="text-xs text-ink-3">{t("assign.acc.none")}</p>
-      ) : (
-        near.map((item) => (
-          <button key={item.target_id} type="button" className="tree-leaf" data-testid={`assign-near-${item.target_id}`} onClick={(event) => pickNewSentence(item.target_id, event.ctrlKey || event.metaKey)}>
-            <span className={`ptag ${item.lang}`}>{item.lang.toUpperCase()}</span>
-            {item.text}
-          </button>
-        ))
-      );
-    }
-    const siblings: DestinationOption[] = listSiblingPlaces(options, anchor);
-    return siblings.length === 0 ? (
-      <p className="text-xs text-ink-3">{t("assign.acc.none")}</p>
-    ) : (
-      siblings.map((option) => (
-        <button key={option.id} type="button" className="tree-leaf" disabled={option.disabled} data-testid={`assign-near-${option.id}`} onClick={() => pickDestination(option.destination)}>
-          <span className="mr-1.5 font-mono text-[11px] text-ink-3">{option.docCode}</span>
-          {option.label}
-          {option.disabled && " · N/A"}
+    if (nearLinks.length + nearPlaces.length === 0) return <p className="text-xs text-ink-3">{t("assign.acc.none")}</p>;
+    if (nearAnchor?.kind === "link") {
+      return nearLinks.map((item) => (
+        <button key={item.target_id} type="button" className="tree-leaf" data-testid={`assign-near-${item.target_id}`} onClick={(event) => pickNewSentence(item.target_id, event.ctrlKey || event.metaKey)}>
+          <span className={`ptag ${item.lang}`}>{item.lang.toUpperCase()}</span>
+          {item.text}
         </button>
-      ))
-    );
+      ));
+    }
+    return nearPlaces.map((option) => (
+      <button key={option.id} type="button" className="tree-leaf" disabled={option.disabled} data-testid={`assign-near-${option.id}`} onClick={() => pickDestination(option.destination)}>
+        <span className="mr-1.5 font-mono text-[11px] text-ink-3">{option.docCode}</span>
+        {option.label}
+        {option.disabled && " · N/A"}
+      </button>
+    ));
   }
 
   const accSections: AccordionSection[] = [
-    { key: "rec", title: t("assign.acc.rec"), count: recommendations.length, body: recommendations.length === 0 ? <p className="text-xs text-ink-3">{t("assign.acc.none")}</p> : recommendations.map(renderRecommendation) },
-    { key: "near", title: t("assign.acc.near"), body: renderNearby() },
-    { key: "all", title: t("assign.acc.all"), body: <DestinationTree written={written} options={options} tobeHref={getStageHref(bundleId, "tobe")} onPickLink={pickNewSentence} onPickPlace={pickDestination} /> },
+    { key: "rec", icon: Sparkles, title: t("assign.acc.rec"), count: recommendations.length, body: recommendations.length === 0 ? <p className="text-xs text-ink-3">{t("assign.acc.none")}</p> : recommendations.map(renderRecommendation) },
+    { key: "near", icon: Locate, title: t("assign.acc.near"), count: nearLinks.length + nearPlaces.length, body: renderNearby() },
+    { key: "all", icon: ListTree, title: t("assign.acc.all"), count: written.length + options.length, body: <DestinationTree written={written} options={options} tobeHref={getStageHref(bundleId, "tobe")} onPickLink={pickNewSentence} onPickPlace={pickDestination} /> },
     {
       key: "move",
+      icon: MoveRight,
       title: t("assign.acc.move"),
       body: (
         <>
@@ -1348,12 +1374,6 @@ export default function AssignPage() {
       {aiOn && canEdit && <AiAskMenu items={aiMenuItems} label={t("ai.more")} testId="assign-ai-menu" disabled={busy} />}
       {bundle?.is_synthetic && <span className="tag">Synthetic data</span>}
       <SourceFontMenu />
-      {writtenDocs.length > 0 && mode === "old" && (
-        <button type="button" className="btn h-7" data-testid="assign-toggle-new" onClick={() => setNewToggle({ key: toggleKey, open: !newOpen })}>
-          {newOpen ? <X size={14} strokeWidth={1.5} aria-hidden /> : <FileText size={14} strokeWidth={1.5} aria-hidden />}
-          {t(newOpen ? "assign.closeNew" : "assign.openNew")}
-        </button>
-      )}
     </div>
   );
 
@@ -1400,7 +1420,7 @@ export default function AssignPage() {
               }
             />
           ) : (
-            <div ref={panesRef} className="assign-panes" data-single={newOpen ? undefined : ""} style={{ "--split": `${view.split * 100}%` }}>
+            <div ref={panesRef} className="assign-panes" style={{ "--split": `${view.split * 100}%` }}>
               <OldPane
                 docOptions={oldDocOptions}
                 docId={String(oldView?.document.id ?? "")}
@@ -1416,14 +1436,23 @@ export default function AssignPage() {
                 pickedIds={pickedOld}
                 statusOf={(unitId) => unitMap.get(unitId)?.status}
                 renderNote={placeOf}
+                renderPills={(unitId) => {
+                  const targets = linkedTargets.get(unitId);
+                  return targets ? <LinkBadge unitId={unitId} targets={targets} currentDocId={newDocId} onJump={jumpToNew} /> : null;
+                }}
+                partKeys={partKeys}
+                activePart={activePart}
+                onPartChange={(part) => setManualPart({ key: activeKey ?? "", part })}
                 onUnitClick={handleOldClick}
                 figureSource={oldView ? { bundleId, docId: oldView.document.id } : undefined}
                 zoom={view.zoomOld}
                 onZoom={(dir) => zoomPane("old", dir)}
               />
-              {newOpen && newDocId !== null && (
+              <PaneDivider value={view.split} onCommit={(ratio) => changeView({ split: ratio })} />
+              {newDocId === null ? (
+                <NewPaneEmpty zoom={view.zoomNew} onGoToBe={() => navigate(getStageHref(bundleId, "tobe"))} />
+              ) : (
                 <>
-                  <PaneDivider value={view.split} onCommit={(ratio) => changeView({ split: ratio })} />
                   <NewPane
                     docOptions={newDocOptions}
                     docId={String(newDocId)}
