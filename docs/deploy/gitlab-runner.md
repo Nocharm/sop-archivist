@@ -52,7 +52,17 @@ GitHub Nocharm/sop-archivist (개발 원본)
 4. **Settings → CI/CD → General pipelines**에서 둘 다 켠다:
    - **Prevent outdated deployment jobs** — 더 새 배포가 끝난 뒤 옛 배포 Job이 늦게 돌아 덮어쓰지 않게.
    - **Allow job retries for rollback deployments** — 옛 파이프라인의 `deploy-production` Retry로 되돌리기(7절). 이것이 꺼져 있으면 위 설정이 옛 Job 재실행을 막는다.
-5. **CI/CD 변수(필수)**: 배포 폴더가 계정 홈 아래라(`/data/deployments`는 root `0700`이라 쓰지 않는다) 스크립트 기본값(`ci/deploy.sh` — 운영 `/data/deployments/sop-archivist`, 개발 `/data/deployments/sop-archivist-dev`)과 다르다. 운영은 `SOP_DEPLOY_DIR=/data/home_<계정>/deployments/sop-archivist`, 개발은 `SOP_DEV_DEPLOY_DIR=/data/home_<계정>/deployments/sop-archivist-dev`를 둔다. 빠뜨리면 Job이 기본값 폴더를 찾다가 "deploy folder does not exist inside the job"으로 멈춘다. 변수는 이 둘만 둔다(스택마다 변수가 달라 프로젝트 변수 하나가 두 Job에 함께 걸려도 개발이 운영 폴더로 가지 않는다). `SOP_DEPLOY_ENV`는 Job이 정하니 변수로 두지 않는다. 비밀값은 CI 변수에 넣지 않는다(`.env`는 배포 폴더에만). **다른 CI 변수는 compose에 닿지 않는다** — 배포 스크립트가 모든 `docker` 호출을 빈 환경(`env -i`)에서 하므로, 프로젝트·그룹·인스턴스 변수에 `AUTH_MODE`·`POSTGRES_*`·`COMPOSE_*`·`DOCKER_HOST`가 있어도 `.env` 값을 덮지 못한다.
+5. **CI/CD 변수(필수) — Settings → CI/CD → Variables → Add variable**을 스택마다 한 번씩 한다. 배포 폴더가 계정 홈 아래라(`/data/deployments`는 root `0700`이라 쓰지 않는다) 스크립트 기본값(`ci/deploy.sh` — 운영 `/data/deployments/sop-archivist`, 개발 `/data/deployments/sop-archivist-dev`)과 달라 변수가 있어야 한다.
+
+   | 항목 | 운영 | 개발 |
+   |---|---|---|
+   | Key | `SOP_DEPLOY_DIR` | `SOP_DEV_DEPLOY_DIR` |
+   | Value | `/data/home_<계정>/deployments/sop-archivist` | `/data/home_<계정>/deployments/sop-archivist-dev` |
+   | Type · Environment scope | Variable · All | Variable · All |
+   | Protect variable | 켬(`main`·`dev`가 보호된 브랜치라 둘 다 받는다) | 켬 |
+   | Mask · Expand variable reference | 끔(비밀이 아니다) | 끔 |
+
+   값은 2-4·9-1의 러너 마운트 경로와 글자까지 같아야 한다. 빠뜨리면 Job이 기본값 폴더를 찾다가 "deploy folder does not exist inside the job"으로 멈춘다. Protect를 켰는데 브랜치가 Protected branches에 없으면 변수가 Job에 오지 않아 같은 오류가 난다(1의 보호 설정을 먼저). 변수는 이 둘만 둔다(스택마다 변수가 달라 프로젝트 변수 하나가 두 Job에 함께 걸려도 개발이 운영 폴더로 가지 않는다). `SOP_DEPLOY_ENV`는 Job이 정하니 변수로 두지 않는다. 비밀값은 CI 변수에 넣지 않는다(`.env`는 배포 폴더에만). **다른 CI 변수는 compose에 닿지 않는다** — 배포 스크립트가 모든 `docker` 호출을 빈 환경(`env -i`)에서 하므로, 프로젝트·그룹·인스턴스 변수에 `AUTH_MODE`·`POSTGRES_*`·`COMPOSE_*`·`DOCKER_HOST`가 있어도 `.env` 값을 덮지 못한다.
 6. **Settings → CI/CD → Runners → New project runner**를 두 번 만든다. 화면에서 정하고 `glrt-`로 시작하는 토큰을 받는다(토큰은 한 번만 보인다 — 바로 2절 등록에 쓴다).
 
    | 항목 | 테스트 러너 | 배포 러너 |
@@ -94,9 +104,9 @@ docker image inspect gitlab/gitlab-runner-helper:x86_64-v19.0.0 docker:27-cli py
 ### 2-3. 러너 컨테이너
 
 ```bash
-sudo mkdir -p /data/gitlab-runners/sop-archivist     # sudo가 없으면 홈 아래 폴더(예: ~/gitlab-runners/sop-archivist)
+mkdir -p /data/home_<계정>/gitlab-runner/sop-archivist   # 러너 설정(config.toml) 폴더. 계정 홈 아래라 sudo가 필요 없다
 docker run -d --name gitlab-runner-sop-archivist --restart unless-stopped \
-  -v /data/gitlab-runners/sop-archivist:/etc/gitlab-runner \
+  -v /data/home_<계정>/gitlab-runner/sop-archivist:/etc/gitlab-runner \
   -v /var/run/docker.sock:/var/run/docker.sock \
   gitlab/gitlab-runner:alpine-v19.0.0
 # 2-1에서 기존 러너 컨테이너가 --network host·--add-host·--dns·CA 마운트를 썼다면 같은 옵션을 위에 더한다.
@@ -213,9 +223,9 @@ chmod 600 /data/home_<계정>/deployments/sop-archivist/.env
 | clone 단계 실패(`Could not resolve host`, `SSL certificate problem`) | Job 컨테이너에서 GitLab 주소가 안 풀리거나 CA를 모른다. 2-1의 `clone_url`·`network_mode`·`extra_hosts`·`dns`·`tls-ca-file`을 기존 러너와 맞춘다. 고친 뒤 `docker exec gitlab-runner-sop-archivist gitlab-runner verify` |
 | `image ... not present locally` / `pull_policy ([never])` | `pull_policy = never`라 서버에 없는 이미지는 받지 않는다. 그 이미지를 amd64 tar로 반입한다([`deploy.md`](deploy.md) §0). helper 이미지도 같다(러너 버전과 helper 태그가 같아야 한다, 2-2) |
 | `backend-test`의 pip, `frontend-test`의 npm이 접속 실패 | 테스트 Job 컨테이너가 PyPI·npm 레지스트리에 닿지 않는다. 같은 서버에서 이미지 빌드(`pip install`·`npm ci`)가 되는지와 2-1의 네트워크 설정(`network_mode`·`dns`)을 본다 |
-| `[deploy] FAILED: deploy folder does not exist inside the job` | 배포 러너의 `--docker-volumes "$DEPLOY_DIR:$DEPLOY_DIR:rw"`가 빠졌거나 경로가 `SOP_DEPLOY_DIR`과 다르다(2-4) |
-| `... must be an absolute path` / `is '/'` / `two levels deep` / `must not contain` | `SOP_DEPLOY_DIR` CI 변수 값이 잘못됐다. `/data/home_<계정>/deployments/sop-archivist` 같은 전용 절대 경로로 |
-| `... is the job checkout or inside it` / `job checkout is inside the deploy folder` | `SOP_DEPLOY_DIR`이 `/builds` 쪽을 가리킨다. 마운트한 배포 폴더로 바꾼다 |
+| `[deploy] FAILED: deploy folder does not exist inside the job` | 바로 위 줄 `[deploy] deploy folder: <경로>`부터 본다. **`/data/deployments/…`(스크립트 기본값)이면 CI 변수가 Job에 오지 않았다** — `SOP_DEPLOY_DIR`(개발은 `SOP_DEV_DEPLOY_DIR`)이 없거나 키 철자가 틀렸거나, Protect variable인데 브랜치가 보호되지 않았다(1절 1·5). 변수 경로가 찍혔으면 배포 러너에 그 경로의 `--docker-volumes "경로:경로:rw"` 마운트가 없거나 글자가 다르다(2-4, 개발은 9-1 3) |
+| `... must be an absolute path` / `is '/'` / `two levels deep` / `must not contain` | 메시지에 찍힌 CI 변수(`SOP_DEPLOY_DIR`·`SOP_DEV_DEPLOY_DIR`) 값이 잘못됐다. `/data/home_<계정>/deployments/sop-archivist` 같은 전용 절대 경로로 |
+| `... is the job checkout or inside it` / `job checkout is inside the deploy folder` | 배포 폴더 CI 변수가 `/builds` 쪽을 가리킨다. 마운트한 배포 폴더로 바꾼다 |
 | `no .env in the deploy folder` | 3절대로 `.env`를 넣는다 |
 | `.env AUTH_MODE is not 'keycloak'` | `.env`에 `AUTH_MODE=keycloak`을 적는다. 서버에서 dev로 띄웠던 적이 있으면 [`setup-once.md`](setup-once.md) C절 |
 | `.env BACKUP_DIR points inside ...` / `is a relative path other than ./backups` | `BACKUP_DIR`을 비우거나 `./backups`, 또는 배포 폴더 밖 절대 경로로 |
@@ -271,7 +281,7 @@ curl -s http://localhost:7777/api/health            # {"status":"ok"} — 나머
 
 ### 9-1. 서버 1회 준비
 
-1. **포트 4444가 비어 있는지** 본다: `sudo ss -ltnp | grep ':4444 '` (아무것도 안 나와야 한다).
+1. **포트 4444가 비어 있는지** 본다: `ss -ltn | grep ':4444 '` (아무것도 안 나와야 한다. 듣는 포트는 sudo 없이 보인다).
 2. **배포 폴더**:
 
    ```bash
@@ -290,7 +300,8 @@ curl -s http://localhost:7777/api/health            # {"status":"ok"} — 나머
    ```
 
    러너는 설정 파일 변경을 스스로 다시 읽는다. 빠뜨리면 첫 `deploy-dev`가 "deploy folder does not exist inside the job"으로 멈춘다.
-4. **`.env`** — 운영 `.env`를 복사하지 말고 `.env.example`에서 새로 채운다. 운영과 달라야 하는 값:
+4. **GitLab CI 변수 `SOP_DEV_DEPLOY_DIR`** — Settings → CI/CD → Variables → Add variable, Key `SOP_DEV_DEPLOY_DIR`, Value `/data/home_<계정>/deployments/sop-archivist-dev`(위 2·3과 같은 경로), Protect 켬·Mask 끔(1절 5 표). 운영 변수 `SOP_DEPLOY_DIR`는 개발 Job이 읽지 않으니 따로 둬야 한다. 빠뜨리면 Job이 기본값 `/data/deployments/sop-archivist-dev`를 찾다가 위와 같은 오류로 멈춘다.
+5. **`.env`** — 운영 `.env`를 복사하지 말고 `.env.example`에서 새로 채운다. 운영과 달라야 하는 값:
 
    ```dotenv
    APP_PORT=4444
@@ -309,8 +320,8 @@ curl -s http://localhost:7777/api/health            # {"status":"ok"} — 나머
    chmod 600 /data/home_<계정>/deployments/sop-archivist-dev/.env
    ```
 
-5. GitLab **Protected branches**에 `dev`를 더한다(1절 1).
-6. `AUTH_MODE=keycloak`으로 돌릴 때만: Keycloak 클라이언트 `sop-archivist-frontend`에 `http://<server-ip>:4444/*`(redirect·post logout)와 Web origin `http://<server-ip>:4444`를 더한다([`setup-once.md`](setup-once.md) A5).
+6. GitLab **Protected branches**에 `dev`를 더한다(1절 1). 4의 변수를 Protect로 두었으면 이것이 없을 때 변수가 Job에 오지 않는다.
+7. `AUTH_MODE=keycloak`으로 돌릴 때만: Keycloak 클라이언트 `sop-archivist-frontend`에 `http://<server-ip>:4444/*`(redirect·post logout)와 Web origin `http://<server-ip>:4444`를 더한다([`setup-once.md`](setup-once.md) A5).
 
 배포 스크립트가 거절하는 개발 `.env` 값: `AUTH_MODE`가 `dev`·`keycloak`이 아님, `AUTH_MODE=dev`인데 `DEV_ENFORCE_PERMISSIONS=true`가 아님, `APP_PORT`가 비었거나 7777, `DBV_DB_ALIAS`가 비었거나 `sop-archivist-db`(운영 `.env`를 잘못 넣은 경우). 헬스체크는 `.env`의 `AUTH_MODE`와 앱이 보고하는 모드가 같은지 본다.
 

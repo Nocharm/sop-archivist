@@ -20,10 +20,12 @@ PROD_DB_ALIAS="sop-archivist-db"
 case "$DEPLOY_ENV" in
   production)
     DEPLOY_DIR="${SOP_DEPLOY_DIR:-/data/deployments/sop-archivist}"
+    DEPLOY_DIR_VAR="SOP_DEPLOY_DIR"   # named in guard messages so they point at this stack's CI variable
     COMPOSE_PROJECT="sop-archivist"
     ;;
   dev)
     DEPLOY_DIR="${SOP_DEV_DEPLOY_DIR:-/data/deployments/sop-archivist-dev}"
+    DEPLOY_DIR_VAR="SOP_DEV_DEPLOY_DIR"
     COMPOSE_PROJECT="sop-archivist-dev"
     ;;
   *)
@@ -89,23 +91,23 @@ check_deploy_dir() {
     DEPLOY_DIR="${DEPLOY_DIR%/}"
   done
   case "$DEPLOY_DIR" in
-    /) fail "deploy folder is '/'. Set SOP_DEPLOY_DIR to a dedicated folder such as /data/deployments/sop-archivist." ;;
+    /) fail "deploy folder is '/'. Set $DEPLOY_DIR_VAR to a dedicated folder such as /data/home_<account>/deployments/$COMPOSE_PROJECT." ;;
     /*) ;;
-    *) fail "deploy folder must be an absolute path (SOP_DEPLOY_DIR is relative)." ;;
+    *) fail "deploy folder must be an absolute path ($DEPLOY_DIR_VAR is relative)." ;;
   esac
   case "$DEPLOY_DIR" in
     *//* | */./* | */../* | */. | */..) fail "deploy folder path must not contain '//', '.' or '..' parts." ;;
   esac
   case "${DEPLOY_DIR#/}" in
     */*) ;;
-    *) fail "deploy folder must be at least two levels deep (for example /data/deployments/sop-archivist)." ;;
+    *) fail "deploy folder must be at least two levels deep (for example /data/home_<account>/deployments/$COMPOSE_PROJECT)." ;;
   esac
-  [ -d "$DEPLOY_DIR" ] || fail "deploy folder does not exist inside the job. Check the runner's --docker-volumes mount (gitlab-runner.md 2)."
+  [ -d "$DEPLOY_DIR" ] || fail "deploy folder does not exist inside the job. Check the $DEPLOY_DIR_VAR CI variable and the runner's --docker-volumes mount (gitlab-runner.md 1, 2)."
 
   deploy_real="$(resolve_dir "$DEPLOY_DIR")"
   src_real="$(resolve_dir "$SRC_DIR")"
   if is_same_or_inside "$deploy_real" "$src_real"; then
-    fail "deploy folder is the job checkout or inside it. Point SOP_DEPLOY_DIR at the mounted deploy folder."
+    fail "deploy folder is the job checkout or inside it. Point $DEPLOY_DIR_VAR at the mounted deploy folder."
   fi
   if is_same_or_inside "$src_real" "$deploy_real"; then
     fail "job checkout is inside the deploy folder. Syncing would delete it."
