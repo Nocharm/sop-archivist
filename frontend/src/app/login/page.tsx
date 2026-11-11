@@ -1,4 +1,4 @@
-// 로그인 페이지 - keycloak 모드는 SSO 자동 시도(prompt=none) 뒤 로그인 버튼, dev 모드는 로컬 계정 목록. Keycloak 콜백도 이 주소로 돌아온다(처리는 providers.tsx).
+// 로그인 페이지 - keycloak 모드는 SSO 자동 시도(prompt=none) 뒤 로그인 버튼, dev 모드는 로컬 계정·직원 디렉터리에서 고르기. Keycloak 콜백도 이 주소로 돌아온다(처리는 providers.tsx).
 "use client";
 
 import { Lock, LogOut } from "lucide-react";
@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 
 import { AuthLoadingScreen } from "@/components/auth-loading";
 import { BrandMark } from "@/components/brand-mark";
+import { DevLoginPicker } from "@/components/dev-login-picker";
 import { LangToggle } from "@/components/lang-toggle";
 import { getCachedAuthMode, type AuthModeInfo } from "@/lib/auth-mode";
 import {
@@ -16,7 +17,7 @@ import {
   consumeSsoLogoutHint,
   setAutoLoginSkip,
 } from "@/lib/auth-return";
-import { LOCAL_USERS, storeDevUser } from "@/lib/dev-auth";
+import { storeDevUser } from "@/lib/dev-auth";
 import { useI18n } from "@/lib/i18n";
 import { signinRedirectFromLogin, signoutAllSessions } from "@/lib/keycloak-login";
 
@@ -54,7 +55,7 @@ function getSsoLogoutHint(): string | null {
 }
 
 export default function LoginPage() {
-  const { t, lang } = useI18n();
+  const { t } = useI18n();
   const router = useRouter();
   const [modeInfo, setModeInfo] = useState<AuthModeInfo | null>(null);
   const [autoSigning, setAutoSigning] = useState(false);
@@ -165,28 +166,7 @@ export default function LoginPage() {
             </div>
           )}
 
-          {modeInfo.mode === "dev" && (
-            <div className="space-y-2">
-              <p className="text-sm text-ink-2">{t("login.devHint")}</p>
-              <ul className="space-y-1">
-                {LOCAL_USERS.map((user) => (
-                  <li key={user.loginId}>
-                    <button
-                      type="button"
-                      data-testid={`login-dev-user-${user.loginId}`}
-                      className="flex w-full flex-col items-start rounded-md border border-line px-3 py-2 text-left hover:bg-sunken"
-                      onClick={() => handlePickDev(user.loginId)}
-                    >
-                      <span className="text-sm font-semibold text-ink">
-                        {lang === "ko" ? user.koreanName : user.name}
-                      </span>
-                      <span className="text-xs text-ink-3">{`${user.loginId} · ${user.department}`}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          {modeInfo.mode === "dev" && <DevLoginPicker onPick={handlePickDev} />}
         </div>
 
         {/* 로그아웃 직후 1회 노출 - SSO 세션은 아직 살아 있음을 알리고 전체 종료를 제공한다(keycloak 전용) */}

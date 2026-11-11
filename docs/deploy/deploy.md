@@ -67,7 +67,7 @@ GitLab **Build → Pipelines**에서 `main` 파이프라인의 test 3개가 통�
 
 손으로 치는 배포 명령은 러너를 고칠 수 없을 때의 **비상 수동 경로**뿐이다 → [`gitlab-runner.md`](gitlab-runner.md) 8절.
 
-- **배포 단위는 서비스 버전**(`vX.Y.Z` 태그, 최신 항목은 루트 `CHANGELOG.md`). 버전마다 배포 메모(사이드카 재생성 등)가 CHANGELOG에 있으니 배포 전에 읽는다. 규칙: `rules/common/git.md` "On Main Merge — 서비스 버전".
+- **배포 단위는 서비스 버전**(`vX.Y.Z` 태그, 최신 항목은 루트 `CHANGELOG.md`). 버전마다 배포 메모(사이드카 재생성 등)가 CHANGELOG에 있으니 배포 전에 읽는다. 규칙: `rules/common/git.md` "서비스 버전".
 - **DB 스키마는 backend가 기동할 때 Alembic으로 head까지 자동 적용한다.** 배포만으로 새 테이블·컬럼이 반영되고, 서버에서 손으로 마이그레이션하거나 리셋할 일은 없다. 모델을 바꾼 커밋에는 반드시 리비전 파일이 있어야 한다(없으면 `test_models_match_migrations`가 로컬에서 잡는다). backend는 **단일 워커**라서 마이그레이션이 경합하지 않는다 — Dockerfile에 `--workers`를 추가하지 않는다.
 - 마이그레이션이 실패하면 backend가 재시작을 반복하고 배포 Job은 헬스체크에서 실패한다. 배포 폴더에서: `docker compose logs --tail 120 backend`.
 - **`scripts/db-backup.sh`를 바꾼 배포는 사이드카를 다시 만들어야 한다.** 스크립트는 바인드 마운트라 `up -d --build`가 db-backup을 재생성하지 않아 옛 루프가 계속 돈다. 배포 스크립트가 해시를 비교해 `--force-recreate db-backup`을 한다.

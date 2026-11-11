@@ -110,7 +110,7 @@ chmod 600 /data/deployments/sop-archivist/.env   # 시크릿이 들어가니 소
 - **AI 제안의 품질과 유사도 임계값은 아직 합성 자료 기준이다.** 실제 모델로 시험한 적이 없으니, 첫 배포 뒤 실제 SOP로 제안을 보고 임계값(`backend/app/sop/ai/constants.py`)과 지침·프롬프트(`/api/admin/guidelines`의 버전, `guideline.manage` 권한)를 다시 정한다.
 - 값에 `$`가 들어가면 compose가 변수로 읽으니 `$$`로 쓴다.
 - **backend에는 `env_file:`이 없다.** `.env`의 키가 컨테이너에 닿으려면 `docker-compose.yml`의 backend `environment:`에 명시 매핑돼 있어야 한다. 새 env를 추가할 때는 `settings.py` + `.env.example` + compose 셋이 함께 움직인다(`rules/backend/config.md`).
-- **서버 DB에는 dev 모드를 쓰지 않는다.** `AUTH_MODE=dev`는 로컬 sqlite 전용이다 → C절.
+- **운영 DB에는 dev 모드를 쓰지 않는다.** `AUTH_MODE=dev`는 로컬 sqlite와 따로 둔 개발 스택(:4444, DB 볼륨이 다르다 — [`gitlab-runner.md`](gitlab-runner.md) 9절)에서만 쓴다 → C절.
 
 HR 웹훅 주소와 토큰이 맞는지 `up` 전에 직접 확인할 수 있다. 200과 `{"kind":"employees",...}`가 나오면 정답이다:
 

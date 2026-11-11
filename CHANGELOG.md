@@ -1,10 +1,10 @@
 # Changelog
 
-SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` `version`(SemVer)이고, `Nocharm/sop-archivist`의 `main`에 머지할 때마다 올리고 `vX.Y.Z` 태그를 단다(`rules/common/git.md` "On Main Merge"). 운영 서버 배포 여부와 날짜도 해당 항목에 적는다.
+SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` `version`(SemVer)이다. `dev`에 올릴 때마다 PATCH를 올려 아래 `Unreleased (dev)`에 적고, `dev`→`main` 정식 업데이트 때 MINOR를 올려 그 줄들을 릴리스 항목 하나로 모으고 `vX.Y.Z` 태그를 단다(`rules/common/git.md` "서비스 버전"). 운영 서버 배포 여부와 날짜도 해당 항목에 적는다.
 
-## Unreleased
+## Unreleased (dev)
 
-- (없음)
+- **v0.14.1 — 2026-11-11** — 개발 스택(`dev` 브랜치, :4444, push마다 테스트를 기다리지 않고 자동 배포)과 버전 규칙(dev PATCH·main MINOR) 도입. 개발 스택 로그인은 비밀번호 없이 로컬 계정이나 직원 디렉터리에서 골라 그 사람 권한으로 들어간다. backend 시험 병렬화(로컬 9분 43초 → 2분 38초), 워커 취소 시험의 러너 흔들림 수정. 서버 준비: `docs/deploy/gitlab-runner.md` 9-1(개발 폴더·러너 마운트·`.env`·Protected `dev`).
 
 ## v0.14.0 — 2026-11-11
 

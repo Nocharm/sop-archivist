@@ -8,9 +8,10 @@ SOP Archivist는 **사내 GitLab 파이프라인으로만 배포한다.** 서버
 
 ```
 GitHub Nocharm/sop-archivist (개발 원본)
-   │  Windows PC: git pull → git push gitlab main (+ 태그)
+   │  Windows PC: git pull → git push gitlab dev  /  git push gitlab main (+ 태그)
    ▼
 사내 GitLab 프로젝트 (CE, Private)
+   │  dev  파이프라인: deploy-dev 바로(테스트를 기다리지 않음) + test 3개 옆에서
    │  main 파이프라인: test 3개 자동 → deploy-production ▶ (수동)
    ▼
 서버 러너 컨테이너 gitlab-runner-sop-archivist
@@ -18,14 +19,15 @@ GitHub Nocharm/sop-archivist (개발 원본)
    └─ sop-archivist-deploy  : 배포 Job (Protected, 도커 소켓 + 배포 폴더)
                                  │ ci/deploy.sh
                                  ▼
-              배포 폴더 /data/deployments/sop-archivist  (.env, backups/는 사람·사이드카 것)
-                                 │ docker compose up -d --build (서버 Docker 데몬)
+              배포 폴더 /data/deployments/sop-archivist      (.env, backups/는 사람·사이드카 것)
+              배포 폴더 /data/deployments/sop-archivist-dev  (.env만 사람 것)
+                                 │ docker compose -p <프로젝트> up -d --build (서버 Docker 데몬)
                                  ▼
-                      sop-archivist 스택 :7777
+              sop-archivist 스택 :7777  /  sop-archivist-dev 스택 :4444
 ```
 
 - **파이프라인으로 옮긴 것은 배포뿐이다.** 운영·진단·비상 절차(`docker compose logs`·`ps`·`exec db psql`, 백업 복구, dev 행 정리, 서브넷 확인)는 지금처럼 **서버의 배포 폴더에서 사람이 손으로** 한다. 이런 일을 하는 수동 Job은 만들지 않았다.
-- **환경은 운영 하나**(7777). 개발·품질 환경은 없다.
+- **스택은 둘이다** — 운영(`main`, :7777, 수동 ▶, 테스트 통과가 전제)과 개발(`dev`, :4444, push마다 자동, 테스트를 기다리지 않는다). 같은 서버에 compose 프로젝트·DB·배포 폴더를 따로 둔다. 개발 스택은 9절.
 - **이미지 레지스트리·DinD를 쓰지 않는다.** 서버는 Docker Hub가 막혀 DinD가 베이스 이미지를 못 받는다. 배포 Job이 서버 Docker 소켓으로 서버 데몬에서 `docker compose up -d --build`를 돌린다(베이스 이미지는 서버에 tar로 반입해 둔 것). `docker-compose.yml`·Dockerfile은 그대로다.
 - **배포 Job 안의 compose는 호스트 compose가 아니다.** 파이프라인은 `docker:27-cli` 이미지 안의 compose·buildx 플러그인을 쓰고(호스트 Compose v2.27보다 새것), 공유하는 것은 서버 데몬(Docker 26.1.3)뿐이다. 비상 수동 경로(8절)는 호스트 compose로 돌아 버전이 다르다.
 - **배포할 수 있는 사람 = `main`에 merge할 수 있는 사람이다.** 배포 러너는 도커 소켓을 쓰므로 서버 root와 같고, CE에는 protected environments가 없다. 그래서 `main`의 push·merge를 Maintainer로 막는 것이 곧 배포 권한 관리다(1절).
@@ -34,8 +36,8 @@ GitHub Nocharm/sop-archivist (개발 원본)
 
 | 파일 | 역할 |
 |---|---|
-| `.gitlab-ci.yml` | `workflow`(MR·`main` push·웹 실행만), test 3개(`backend-test`·`frontend-test`·`deploy-script-test`), `deploy-production`(`main`에서만 ▶, 테스트 통과가 전제, `resource_group`로 한 번에 하나) |
-| `ci/deploy.sh` | 배포 Job 본체(POSIX sh, busybox). 가드 → 사전 점검 → 동기화 → `compose up -d --build` → proxy 재시작·db-backup 재생성 → 헬스체크 |
+| `.gitlab-ci.yml` | `workflow`(MR·`main`/`dev` push·웹 실행만, `dev`→`main` MR은 중복이라 뺀다), test 3개(`backend-test`·`frontend-test`·`deploy-script-test`), `deploy-dev`(`dev`에서 자동, `needs: []`라 테스트를 기다리지 않음), `deploy-production`(`main`에서만 ▶, 테스트 통과가 전제). 둘 다 `resource_group`로 스택마다 한 번에 하나 |
+| `ci/deploy.sh` | 배포 Job 본체(POSIX sh, busybox). 스택 고르기(`SOP_DEPLOY_ENV`) → 가드 → 사전 점검 → 동기화 → `compose -p <프로젝트> up -d --build` → proxy 재시작·db-backup 재생성(운영만) → 헬스체크 |
 | `ci/test-deploy.sh` | 가짜 `docker`로 `ci/deploy.sh`를 검증(`deploy-script-test` Job, 로컬에서도 `sh ci/test-deploy.sh`) |
 
 ---
@@ -44,13 +46,13 @@ GitHub Nocharm/sop-archivist (개발 원본)
 
 프로젝트는 개인 네임스페이스라 그룹에서 이어받는 멤버가 없다. 멤버를 늘릴 때 역할을 신중히 준다.
 
-1. **Settings → Repository → Protected branches**: `main` — Allowed to merge **Maintainers**, Allowed to push and merge **Maintainers**. 강제 푸시는 끈다.
+1. **Settings → Repository → Protected branches**: `main`과 `dev` 둘 다 — Allowed to merge **Maintainers**, Allowed to push and merge **Maintainers**. 강제 푸시는 끈다. 배포 러너가 Protected라 보호된 브랜치의 Job만 받는다(`dev`를 빼면 `deploy-dev`가 러너를 못 찾아 멈춘다).
 2. **Settings → General → Visibility**: 프로젝트 **Private**. **Settings → CI/CD → General pipelines**: **Public pipelines 끔**.
 3. **Auto DevOps가 켜져 있으면 끈다**(Settings → CI/CD → Auto DevOps). `.gitlab-ci.yml` 없이 이미 푸시돼 있어 켜져 있었을 수 있다.
 4. **Settings → CI/CD → General pipelines**에서 둘 다 켠다:
    - **Prevent outdated deployment jobs** — 더 새 배포가 끝난 뒤 옛 배포 Job이 늦게 돌아 덮어쓰지 않게.
    - **Allow job retries for rollback deployments** — 옛 파이프라인의 `deploy-production` Retry로 되돌리기(7절). 이것이 꺼져 있으면 위 설정이 옛 Job 재실행을 막는다.
-5. **CI/CD 변수(선택)**: 배포 폴더가 기본값(`/data/deployments/sop-archivist`)이 아니면 `SOP_DEPLOY_DIR`만 둔다. 비밀값은 CI 변수에 넣지 않는다(`.env`는 배포 폴더에만). **다른 CI 변수는 compose에 닿지 않는다** — 배포 스크립트가 모든 `docker` 호출을 빈 환경(`env -i`)에서 하므로, 프로젝트·그룹·인스턴스 변수에 `AUTH_MODE`·`POSTGRES_*`·`COMPOSE_*`·`DOCKER_HOST`가 있어도 `.env` 값을 덮지 못한다.
+5. **CI/CD 변수(선택)**: 배포 폴더가 기본값(운영 `/data/deployments/sop-archivist`, 개발 `/data/deployments/sop-archivist-dev`)이 아니면 운영은 `SOP_DEPLOY_DIR`, 개발은 `SOP_DEV_DEPLOY_DIR`만 둔다(스택마다 변수가 달라 프로젝트 변수 하나가 두 Job에 함께 걸려도 개발이 운영 폴더로 가지 않는다). `SOP_DEPLOY_ENV`는 Job이 정하니 변수로 두지 않는다. 비밀값은 CI 변수에 넣지 않는다(`.env`는 배포 폴더에만). **다른 CI 변수는 compose에 닿지 않는다** — 배포 스크립트가 모든 `docker` 호출을 빈 환경(`env -i`)에서 하므로, 프로젝트·그룹·인스턴스 변수에 `AUTH_MODE`·`POSTGRES_*`·`COMPOSE_*`·`DOCKER_HOST`가 있어도 `.env` 값을 덮지 못한다.
 6. **Settings → CI/CD → Runners → New project runner**를 두 번 만든다. 화면에서 정하고 `glrt-`로 시작하는 토큰을 받는다(토큰은 한 번만 보인다 — 바로 2절 등록에 쓴다).
 
    | 항목 | 테스트 러너 | 배포 러너 |
@@ -177,7 +179,7 @@ chmod 600 /data/deployments/sop-archivist/.env
 - `backups/`는 사이드카가 root `0700`으로 만든다([`backup.md`](backup.md)).
 - 배포 폴더에 `.git`은 없다. 무엇이 배포됐는지는 `cat /data/deployments/sop-archivist/.deployed`(커밋·파이프라인·Job·버전·시각, 비밀 없음).
 
-배포 스크립트가 거절하는 `.env` 값: `AUTH_MODE`가 `keycloak`이 아님(없음 포함), `BACKUP_DIR`이 `./backups`가 아닌 배포 폴더 안 경로(동기화가 지운다). `BACKUP_DIR`은 비우거나 `./backups`, 또는 배포 폴더 밖 절대 경로(NAS 등)만 된다.
+배포 스크립트가 거절하는 운영 `.env` 값: `AUTH_MODE`가 `keycloak`이 아님(없음 포함), `APP_PORT`가 비어 있지도 7777도 아님, `DBV_DB_ALIAS`가 비어 있지도 `sop-archivist-db`도 아님(개발 스택 `.env`를 잘못 넣은 경우), `BACKUP_DIR`이 `./backups`가 아닌 배포 폴더 안 경로(동기화가 지운다). `BACKUP_DIR`은 비우거나 `./backups`, 또는 배포 폴더 밖 절대 경로(NAS 등)만 된다.
 
 ## 4. 평소 흐름
 
@@ -253,7 +255,80 @@ curl -s http://localhost:7777/api/health            # {"status":"ok"} — 나머
 
 새 코드를 넣어야 한다면 PC에서 `git archive --format=tar.gz -o sop-archivist.tar.gz vX.Y.Z`로 묶어 scp한 뒤, 배포 폴더에서 `.env`·`backups/`를 남기고 풀어 위 명령을 친다. 러너를 고친 뒤에는 다음 배포를 파이프라인으로 해서 배포 폴더를 파이프라인 상태(`.deployed`)로 되돌린다.
 
+## 9. 개발 스택 (`dev`, :4444)
+
+빨리 올려 보고 확인하는 곳이다. `dev`에 push하면 테스트를 기다리지 않고 바로 배포되고, 테스트는 같은 파이프라인에서 옆으로 돌아 결과만 보인다(빨갛게 끝나도 배포는 이미 올라가 있다). 운영은 확인이 끝난 `dev`를 `main`에 합친 뒤 지금처럼 ▶로 올린다.
+
+| | 운영 | 개발 |
+|---|---|---|
+| 브랜치·Job | `main` · `deploy-production`(▶) | `dev` · `deploy-dev`(자동) |
+| 포트 | 7777 | 4444 |
+| compose 프로젝트 | `sop-archivist` | `sop-archivist-dev`(DB 볼륨 `sop-archivist-dev_pgdata`) |
+| 배포 폴더 | `/data/deployments/sop-archivist` | `/data/deployments/sop-archivist-dev` |
+| 로그인 | Keycloak | `AUTH_MODE=dev` — 비밀번호 없이 로컬 계정이나 직원 디렉터리에서 사람을 골라 들어간다. 권한은 그 사람 것(`DEV_ENFORCE_PERMISSIONS=true` 필수). Keycloak도 된다 |
+| 백업 사이드카 | 있음 | 없음(버려도 되는 자료) |
+
+**개발 스택 로그인은 비밀번호가 없다.** 서버 포트에 닿는 사람은 누구로든 들어갈 수 있다(헤더 `X-Dev-User`를 믿는다). 실제 SOP 원문을 개발 스택에 올리지 않는다. 운영 DB와는 볼륨이 달라 dev 시드(가짜 직원 5명·부서 7개)가 운영에 섞이지 않는다.
+
+### 9-1. 서버 1회 준비
+
+1. **포트 4444가 비어 있는지** 본다: `sudo ss -ltnp | grep ':4444 '` (아무것도 안 나와야 한다).
+2. **배포 폴더**:
+
+   ```bash
+   sudo mkdir -p /data/deployments/sop-archivist-dev
+   sudo chown "$USER": /data/deployments/sop-archivist-dev
+   chmod 750 /data/deployments/sop-archivist-dev
+   ```
+
+3. **배포 러너에 개발 폴더 마운트를 더한다.** 이미 등록된 배포 러너의 `config.toml`에서 `sop-archivist-deploy` 러너의 `volumes`에 개발 폴더를 **양쪽 같은 경로로** 더한다(2-4와 같은 이유). 토큰이 든 파일이라 통째로 출력하지 않는다:
+
+   ```bash
+   docker exec -it gitlab-runner-sop-archivist vi /etc/gitlab-runner/config.toml
+   #   [[runners]] name = "sop-archivist-deploy" 의 [runners.docker] volumes 에 더한다:
+   #   "/data/deployments/sop-archivist-dev:/data/deployments/sop-archivist-dev:rw"
+   docker exec gitlab-runner-sop-archivist grep -n 'sop-archivist-dev' /etc/gitlab-runner/config.toml
+   docker exec gitlab-runner-sop-archivist gitlab-runner verify
+   ```
+
+   러너는 설정 파일 변경을 스스로 다시 읽는다. 빠뜨리면 첫 `deploy-dev`가 "deploy folder does not exist inside the job"으로 멈춘다.
+4. **`.env`** — 운영 `.env`를 복사하지 말고 `.env.example`에서 새로 채운다. 운영과 달라야 하는 값:
+
+   ```dotenv
+   APP_PORT=4444
+   DBV_DB_ALIAS=sop-archivist-dev-db
+   AUTH_MODE=dev
+   DEV_ENFORCE_PERMISSIONS=true
+   APP_SYSADMINS=<관리자 로그인 ID>       # 비우면 아무도 관리 화면을 못 연다
+   POSTGRES_PASSWORD=<운영과 다른 값>
+   ```
+
+   HR 동기화(`N8N_HR_*`)를 채우면 실제 직원이 디렉터리에 들어와 로그인 화면에서 검색해 고를 수 있다. 비우면 dev 시드 5명만 있다. AI는 필요할 때만 켠다. `BACKUP_DIR`는 쓰지 않는다(사이드카를 띄우지 않는다).
+
+   ```bash
+   scp .env <계정>@<server-ip>:/data/deployments/sop-archivist-dev/.env
+   # 서버
+   chmod 600 /data/deployments/sop-archivist-dev/.env
+   ```
+
+5. GitLab **Protected branches**에 `dev`를 더한다(1절 1).
+6. `AUTH_MODE=keycloak`으로 돌릴 때만: Keycloak 클라이언트 `sop-archivist-frontend`에 `http://<server-ip>:4444/*`(redirect·post logout)와 Web origin `http://<server-ip>:4444`를 더한다([`setup-once.md`](setup-once.md) A5).
+
+배포 스크립트가 거절하는 개발 `.env` 값: `AUTH_MODE`가 `dev`·`keycloak`이 아님, `AUTH_MODE=dev`인데 `DEV_ENFORCE_PERMISSIONS=true`가 아님, `APP_PORT`가 비었거나 7777, `DBV_DB_ALIAS`가 비었거나 `sop-archivist-db`(운영 `.env`를 잘못 넣은 경우). 헬스체크는 `.env`의 `AUTH_MODE`와 앱이 보고하는 모드가 같은지 본다.
+
+### 9-2. 평소 흐름
+
+```bash
+git pull                 # GitHub dev를 받은 뒤
+git push gitlab dev
+```
+
+`deploy-dev`가 곧바로 돌고 로그 끝에 `[deploy] health: … auth mode dev, / 200`이 보이면 `http://<server-ip>:4444`에서 확인한다. 상단 바 버전은 `dev`에 올릴 때마다 PATCH가 오른 값이다(`rules/common/git.md`). 같은 파이프라인의 test가 빨가면 다음 push 전에 고친다 — 운영으로 가는 `main`은 테스트가 통과해야만 ▶가 열린다.
+
+운영·진단은 운영과 같다. 개발 폴더에서 `docker compose -p sop-archivist-dev …`로 한다(`-p`를 빼면 파일의 `name:`이 운영 프로젝트를 가리킨다).
+
 ## 확인 범위
 
 - 로컬에서 확인한 것: `ci/test-deploy.sh`(busybox `docker:27-cli`·GNU·macOS/dash), `.gitlab-ci.yml` 문법 파싱, CI가 돌릴 테스트 명령.
 - **GitLab·서버에서만 확인되는 것(미검증)**: 러너 등록과 `CI_SERVER_TOKEN` 전달, 실제 파이프라인 실행, helper 이미지에 `pull_policy = never`가 적용되는지, Prevent outdated/rollback Retry 동작, 실제 서버 데몬에서의 동기화·빌드·헬스체크. 첫 배포에서 이 문서의 절차를 고치면 함께 갱신한다.
+- **개발 스택(9절, 2026-11-11)**: 로컬은 `ci/test-deploy.sh`(macOS sh, 개발 스택 경우 포함)와 `.gitlab-ci.yml` 파싱까지. 러너 개발 폴더 마운트·첫 `deploy-dev`·:4444 접속은 미검증.
