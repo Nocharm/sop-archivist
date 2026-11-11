@@ -5,7 +5,7 @@
 "use client";
 
 import { CircleCheck, FoldVertical, FolderCheck, ImageIcon, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles } from "lucide-react";
-import { Fragment, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { FigureImage } from "@/components/paper/figure-image";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
@@ -273,10 +273,16 @@ export function Paper({
     const page = pageRef.current;
     const pop = page?.querySelector<HTMLElement>(".cut-pop");
     if (!page || !pop) return;
-    pop.style.setProperty("--pop-dx", "0px");
-    const edge = page.getBoundingClientRect().left + 4;
-    const left = pop.getBoundingClientRect().left;
-    if (left < edge) pop.style.setProperty("--pop-dx", `${edge - left}px`);
+    const nudge = () => {
+      pop.style.setProperty("--pop-dx", "0px");
+      const bounds = page.getBoundingClientRect();
+      const rect = pop.getBoundingClientRect();
+      const dx = rect.left < bounds.left + 4 ? bounds.left + 4 - rect.left : rect.right > bounds.right - 4 ? bounds.right - 4 - rect.right : 0;
+      if (dx !== 0) pop.style.setProperty("--pop-dx", `${dx}px`);
+    };
+    nudge();
+    window.addEventListener("resize", nudge);
+    return () => window.removeEventListener("resize", nudge);
   }, [cut, isDragging, selectedId, items]);
 
   // 나눌 선 끌기 - 선이 조각을 넘나들며 다시 그려져도 끊기지 않게 창에서 듣는다
@@ -456,16 +462,19 @@ export function Paper({
       const share = 100 / Math.max(segs.length, 1);
       const background = segs.length === 0 ? undefined : segs.length === 1 ? `var(--pill-${segs[0]})` : `linear-gradient(to right, ${segs.map((seg, at) => `var(--pill-${seg}) ${at * share}% ${(at + 1) * share}%`).join(", ")})`;
       return (
-        <span className="spill" style={{ background }} data-testid={`${testId}-pill-${unit.id}`} aria-hidden>
-          <span className="spill-num">{pillNumber}</span>
-          {segs.length > 0 && (
-            <span className="spill-lang">
-              {segs.map((seg) => (
-                <span key={seg}>{PILL_SEG_LABELS[seg]}</span>
-              ))}
-            </span>
-          )}
-        </span>
+        <>
+          <span className="sr-only">{pillNumber}</span>
+          <span className="spill" style={{ background, "--segs": Math.max(segs.length, 1) } as CSSProperties} data-testid={`${testId}-pill-${unit.id}`} aria-hidden>
+            <span className="spill-num">{pillNumber}</span>
+            {segs.length > 0 && (
+              <span className="spill-lang">
+                {segs.map((seg) => (
+                  <span key={seg}>{PILL_SEG_LABELS[seg]}</span>
+                ))}
+              </span>
+            )}
+          </span>
+        </>
       );
     }
     if (lang === null && !hold) return null;

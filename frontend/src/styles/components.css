@@ -978,8 +978,8 @@
 
   /* Unit 하나 = 종이 조각 하나(2026-11-10). 용지 바탕을 걷고 조각마다 종이를 그린다 - 확인 여부와 상관없이 처음부터 나뉘어 있다 */
   .sheet:has(> .pg[data-strips]) { background: none; border: 0; box-shadow: none; }
-  /* 글은 왼쪽 여백 없이 시작하고, 오른쪽에 필 칸(--pill-col)과 끝 아이콘 자리를 둔다. 필 칸 폭은 mono 10px "11.11.1.1.1."(5단계)이 안 잘리는 값 */
-  .pg[data-strips] { --pg-pad-l: 14px; --pg-pad-r: 68px; --pill-col: 92px; padding: 0; gap: 0; }
+  /* 글은 왼쪽 여백 없이 시작하고, 오른쪽에 필 칸(--pill-col)과 끝 아이콘 자리를 둔다. 필 칸 폭 72px = 보류까지 3분할 필의 최소 폭(24px×3). mono 10px "11.11.1.1.1."(5단계) 필은 실측 59.7px(안쪽 여백 포함)이라 그 안에 든다. 필은 내용 폭으로 오른쪽 맞춤 */
+  .pg[data-strips] { --pg-pad-l: 14px; --pg-pad-r: 68px; --pill-col: 72px; padding: 0; gap: 0; }
   /* 화면 밖 조각은 그리지 않는다(Unit 수천 개) - 고른 조각·나눌 선이 있는 조각은 팝업·윤곽이 잘리지 않게 뺀다 */
   .pg[data-strips] .strip { position: relative; min-width: 0; padding: 6px calc(var(--pg-pad-r) + var(--pill-col) + 10px) 6px var(--pg-pad-l); background: var(--paper); border: 1px solid var(--line-2); border-radius: var(--r-1); box-shadow: var(--shadow-1); content-visibility: auto; contain-intrinsic-size: auto 46px; }
   .pg[data-strips] .strip[data-sel], .pg[data-strips] .strip:has(.cut-anchor), .pg[data-strips] .strip:has(:focus-visible) { content-visibility: visible; }
@@ -988,8 +988,9 @@
   .pg[data-strips] .strip > p { margin-block: 0; }
   .pg[data-strips] .pg-edge { display: grid; padding: 0; border: 0; }
   /* 짝 Unit - 이웃한 짝은 틈 1px로 붙이고 왼쪽 괄호선 하나로 묶는다. 바탕은 아주 옅게, 막대 쪽 모서리는 직각. 고른 단위의 짝(data-partner)은 선만 진하게 */
-  .pg[data-strips] .strip[data-bracket], .cell-piece[data-partner] { --pair-line: color-mix(in oklab, var(--accent) 45%, var(--line-2)); background: color-mix(in oklab, var(--accent) 4%, var(--paper)); box-shadow: inset 2px 0 0 var(--pair-line), var(--shadow-1); border-top-left-radius: 0; border-bottom-left-radius: 0; }
-  .pg[data-strips] .strip[data-bracket][data-partner], .cell-piece[data-partner] { --pair-line: var(--accent); }
+  .pg[data-strips] .strip[data-bracket], .pg[data-strips] .strip[data-partner], .cell-piece[data-partner] { --pair-line: color-mix(in oklab, var(--accent) 70%, var(--line-2)); box-shadow: inset 2px 0 0 var(--pair-line), var(--shadow-1); }
+  .pg[data-strips] .strip[data-bracket="top"], .pg[data-strips] .strip[data-bracket="bottom"], .pg[data-strips] .strip[data-partner]:not([data-bracket]), .cell-piece[data-partner] { background: color-mix(in oklab, var(--accent) 4%, var(--paper)); border-top-left-radius: 0; border-bottom-left-radius: 0; }
+  .pg[data-strips] .strip[data-bracket][data-partner], .pg[data-strips] .strip[data-partner]:not([data-bracket]), .cell-piece[data-partner] { --pair-line: var(--accent); }
   .cell-piece[data-partner] { box-shadow: inset 2px 0 0 var(--pair-line); }
 
   /* 조각 사이 틈 - 위아래 합치기가 늘 보인다(평소엔 낮고 넓은 알약, 올리면 라벨이 펼쳐진다) */
@@ -1024,7 +1025,7 @@
   .strip-pills:empty { display: none; }
   .strip-tags { display: flex; flex-direction: column; gap: 3px; }
   /* 절 번호 필 - 바탕은 언어(짝이면 문서 순서 2칸, 보류까지 3칸) 색, 올리면 번호가 사라지고 같은 칸에 언어 글자 */
-  .spill { display: grid; width: 100%; height: 17px; overflow: hidden; border-radius: var(--r-1); background: var(--sunken); color: var(--pill-ink); font: 700 10px / 17px var(--font-mono); cursor: default; }
+  .spill { display: grid; width: fit-content; min-width: calc(var(--segs, 1) * 24px); max-width: 100%; margin-left: auto; height: 17px; overflow: hidden; border-radius: var(--r-1); background: var(--sunken); color: var(--pill-ink); font: 700 10px / 17px var(--font-mono); cursor: default; }
   .spill > * { grid-area: 1 / 1; min-width: 0; transition: opacity var(--dur-slow); }
   .spill-num { padding: 0 4px; overflow: hidden; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
   .spill-lang { display: flex; opacity: 0; }
