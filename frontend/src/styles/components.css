@@ -988,7 +988,7 @@
 
   /* Unit 하나 = 종이 조각 하나(2026-11-10). 용지 바탕을 걷고 조각마다 종이를 그린다 - 확인 여부와 상관없이 처음부터 나뉘어 있다 */
   .sheet:has(> .pg[data-strips]) { background: none; border: 0; box-shadow: none; }
-  /* 조각마다 왼쪽 밖에 언어 색 탭(.strip-tab)이 붙고 폭은 절 깊이로만 정해진다(strip-pill-model.ts PILL_WIDTH_BY_LEVEL) - 깊을수록 조각이 오른쪽에서 시작해 들여쓴 것처럼 읽힌다. 오른쪽은 끝 아이콘 자리(--pg-pad-r)만 두고, 배정 연결 배지(.strip-pills)는 줄 아래(.strip-foot) 오른쪽 모서리에 앉아 글을 덮지 않는다 */
+  /* 조각마다 왼쪽 밖에 언어 색 탭(.strip-tab)이 붙고 폭은 절 깊이로만 정해진다(strip-pill-model.ts PILL_WIDTH_BY_LEVEL) - 깊을수록 조각이 오른쪽에서 시작해 들여쓴 것처럼 읽힌다. 오른쪽은 끝 아이콘 자리(--pg-pad-r)만 두고, 배정 연결 배지(.lbadge)는 그 여백의 오른쪽 아래 모서리에 떠 글을 덮지 않는다 */
   .pg[data-strips] { --pg-pad-l: 12px; --pg-pad-r: 68px; padding: 0; gap: 0; }
   /* content-visibility는 칠 영역을 줄 안쪽으로 자르므로 조각 그림자(--shadow-1, 아래로 24px)가 잘리지 않게 자르는 선을 바깥으로 민다 */
   .pg[data-strips] .strip-row { display: flex; align-items: stretch; content-visibility: auto; overflow-clip-margin: 32px; contain-intrinsic-size: auto 46px; }
@@ -1047,7 +1047,8 @@
   .strip-tab { position: relative; flex: none; align-self: stretch; display: flex; flex-direction: column; align-items: center; padding-top: 6px; border: 1px solid var(--line-2); border-right: 0; border-radius: var(--r-1) 0 0 var(--r-1); background-color: var(--tab-none); color: var(--tab-ink); box-sizing: border-box; overflow: hidden; transition: opacity var(--dur-base); }
   .strip-tab[data-lang="ko"] { background-color: var(--tab-ko); }
   .strip-tab[data-lang="en"] { background-color: var(--tab-en); }
-  .strip-tab[data-hold] { background-image: repeating-linear-gradient(135deg, var(--tab-hold) 0 3px, transparent 3px 7px); }
+  /* 보류 빗금은 언어 색 위에 옅게(가는 줄·반 투명) - 탭 줄을 훑는 눈을 끌지 않게 */
+  .strip-tab[data-hold] { background-image: repeating-linear-gradient(135deg, color-mix(in oklab, var(--tab-hold) 50%, transparent) 0 2px, transparent 2px 7px); }
   .strip-tab[data-bracket="top"] { border-bottom: 0; border-bottom-left-radius: 0; }
   .strip-tab[data-bracket="bottom"] { border-top: 0; border-top-left-radius: 0; box-shadow: inset 0 1px 0 var(--paper); }
   .strip-tab[data-dim]:not([data-hold]) { opacity: .55; }
@@ -1060,16 +1061,23 @@
   .strip-tab:hover > .strip-tab-num { opacity: 0; }
   .strip-tab.swatch { display: inline-grid; place-items: center; width: 30px; height: 18px; padding: 0; border: 1px solid var(--line-2); border-radius: var(--r-1); }
   .strip-tab.swatch > .strip-tab-letters { position: static; opacity: 1; }
-  /* 조각 아래 줄 - 왼쪽 간 곳 글, 오른쪽 아래 모서리 연결 배지. 둘은 같은 줄이라 글과 배지가 겹치지 않는다(반전 판은 배지가 왼쪽) */
-  .strip-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px; }
+  /* 조각 아래 줄 - 간 곳 글 */
+  .strip-foot { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
   .strip-foot > .strip-note { min-width: 0; margin-top: 0; }
-  .strip-pills { display: flex; flex: none; max-width: 45%; margin-left: auto; }
-  .lbadge { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; padding: 0 5px; height: 18px; border-radius: var(--r-1); font: 600 10px / 1 var(--font-mono); white-space: nowrap; background: var(--st-ok-tint); color: var(--st-ok-ink); cursor: pointer; box-shadow: inset 0 0 0 1px transparent; }
-  .lbadge[data-ai] { background: var(--st-ai-tint); color: var(--st-ai-ink); outline: 1px dashed var(--st-ai-ink); outline-offset: -1px; }
-  .lbadge:hover { box-shadow: inset 0 0 0 1px var(--st-ok-ink); }
-  .lbadge-code { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .lbadge-dir { display: none; flex: none; box-sizing: content-box; padding-left: 4px; border-left: 1px solid color-mix(in oklab, currentColor 28%, transparent); }
-  .lbadge[data-dir="above"] .lbadge-dir[data-d="above"], .lbadge[data-dir="below"] .lbadge-dir[data-d="below"], .lbadge[data-dir="otherDoc"] .lbadge-dir[data-d="otherDoc"] { display: block; }
+  /* 연결 배지 - 조각 오른쪽 아래 모서리(4px 안쪽). 열린 New 문서와 이어지면 아이콘만(보임 = 연결 채움, 화면 밖 = 갈매기 테두리), 다른 문서면 옅은 문서 번호 글자만. data-dir은 LinkLines가 단다 */
+  .lbadge { position: absolute; right: 4px; bottom: 4px; z-index: 2; display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0; border-radius: var(--r-1); color: var(--st-ok-ink); cursor: pointer; font: 500 10px / 20px var(--font-mono); white-space: nowrap; }
+  .lbadge-dir { display: none; }
+  .lbadge[data-dir="visible"] .lbadge-dir[data-d="visible"], .lbadge[data-dir="above"] .lbadge-dir[data-d="above"], .lbadge[data-dir="below"] .lbadge-dir[data-d="below"], .lbadge[data-dir="otherDoc"] .lbadge-dir[data-d="otherDoc"] { display: block; }
+  .lbadge[data-dir="visible"] { background: var(--st-ok-tint); }
+  .lbadge[data-dir="above"], .lbadge[data-dir="below"] { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--st-ok-ink) 45%, transparent); }
+  .lbadge[data-dir="visible"]:hover, .lbadge[data-dir="above"]:hover, .lbadge[data-dir="below"]:hover { box-shadow: inset 0 0 0 1px var(--st-ok-ink); }
+  .lbadge[data-dir="otherDoc"] { max-width: calc(var(--pg-pad-r) - 8px); padding: 0 3px; color: var(--ink-3); }
+  .lbadge[data-dir="otherDoc"]:hover { color: var(--ink-2); text-decoration: underline; text-underline-offset: 2px; }
+  .lbadge-code { overflow: hidden; text-overflow: ellipsis; }
+  .lbadge[data-ai]:not([data-dir="otherDoc"]) { background: var(--st-ai-tint); color: var(--st-ai-ink); box-shadow: none; outline: 1px dashed var(--st-ai-ink); outline-offset: -1px; }
+  .lbadge[data-ai][data-dir="otherDoc"] { color: var(--st-ai-ink); }
+  /* 한 줄 조각에 끝 표시(오른쪽 위)와 배지가 함께면 겹치지 않게 높이를 둔다 */
+  .pg[data-strips] .strip:has(> .lbadge):has(> .strip-marks) { min-height: 56px; }
   .ptag { display: inline-grid; place-items: center; min-width: 24px; height: 17px; padding: 0 4px; border-radius: var(--r-1); font: 700 10px / 1 var(--font-mono); }
   .ptag.ko { background: color-mix(in oklab, var(--lang-ko) 16%, var(--paper)); color: var(--lang-ko); }
   .ptag.en { background: color-mix(in oklab, var(--lang-en) 18%, var(--paper)); color: var(--lang-en); }
@@ -1192,6 +1200,11 @@
   .assign-pane .pg { font-size: calc(var(--fs-read) * var(--z, 1)); line-height: calc(var(--lh-read) * var(--z, 1)); }
   .assign-pane .pg p:lang(ko), .assign-pane .pg .su:lang(ko) { line-height: calc(27px * var(--z, 1)); }
 
+  /* 문서 머리의 켜기·끄기 아이콘 단추(연결선) - 확대 단추와 같은 크기·흐림 */
+  .pane-toggle { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--line); border-radius: var(--r-1); background: var(--surface); color: var(--ink-3); cursor: pointer; opacity: 0.6; transition: opacity var(--dur-fast); }
+  .assign-pane:hover .pane-toggle, .pane-toggle:focus-visible { opacity: 1; }
+  .pane-toggle:hover { background: var(--hover); color: var(--ink); }
+  .pane-toggle[aria-pressed="true"] { color: var(--st-ok-ink); background: var(--st-ok-tint); }
   .pane-zoom { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: var(--r-1); background: var(--surface); opacity: 0.6; transition: opacity var(--dur-fast); }
   .assign-pane:hover .pane-zoom, .pane-zoom:focus-within { opacity: 1; }
   .pane-zoom button { display: grid; place-items: center; width: 22px; height: 22px; color: var(--ink-2); cursor: pointer; }
@@ -1222,7 +1235,7 @@
   @keyframes link-flash { 0%, 35% { outline: 2px solid var(--accent); outline-offset: 2px; } 100% { outline: 2px solid transparent; outline-offset: 2px; } }
   /* 두 문서 사이 이음 선 - 옅게, 고른 것·마우스를 올린 것만 진하게. 아직 저장 안 한 고름은 점선 */
   .link-lines { position: absolute; inset: 0; z-index: 3; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
-  .link-lines g { color: var(--accent); opacity: 0.22; }
+  .link-lines g { color: var(--link-line); opacity: 0.22; }
   .link-lines g[data-strong] { opacity: 0.85; }
   .link-lines path { fill: none; stroke: currentColor; stroke-width: 1.25; }
   .link-lines g[data-strong] path { stroke-width: 1.75; }
@@ -1237,25 +1250,19 @@
   .link-menu .link-menu-unlink { color: var(--danger-ink); }
   @keyframes cut-pop-in-fixed { from { opacity: 0; visibility: hidden; translate: 0 -5px; } }
 
-  /* New 원문 줄 - Old 종이 조각을 거울로 뒤집은 판(.pg[data-mirror]): 언어 탭은 오른쪽, 출처 칩(.new-srcs)은 왼쪽 아래라 두 칸 모두 가운데 선을 마주 본다. 점선 후보, 채움 고름, 위험색 출처 없음 */
+  /* New 원문 줄 - Old와 같은 종이 조각(왼쪽 탭 = 절 깊이 들여쓰기). 출처 칩(.new-srcs)은 본문 위 줄 - 연결선이 칩 사이(10px)·위 틈·칩 줄 아래 틈(6px)으로 들어와 칩 왼쪽에 닿는다(link-route-model). 점선 후보, 채움 고름, 위험색 출처 없음 */
   .new-sheet { gap: 0; }
   .pg .new-sec { margin: 10px 0 4px; font: 600 var(--fs-cap) / var(--lh-cap) var(--font-ui); color: var(--ink-3); }
   .new-gap { height: 4px; }
   .new-gap[data-pair] { height: 0; }
-  .pg[data-strips][data-mirror] .strip { padding: 6px var(--pg-pad-l); border: 1px solid var(--line-2); border-right: 0; border-radius: var(--r-1) 0 0 var(--r-1); }
-  .pg[data-strips][data-mirror] .strip[data-bracket="top"] { border-bottom: 0; border-bottom-left-radius: 0; }
-  .pg[data-strips][data-mirror] .strip[data-bracket="bottom"] { border-top: 0; border-top-left-radius: 0; }
-  .pg[data-mirror] .strip-tab { border: 1px solid var(--line-2); border-left: 0; border-radius: 0 var(--r-1) var(--r-1) 0; }
-  .pg[data-mirror] .strip-tab[data-bracket="top"] { border-bottom: 0; border-bottom-right-radius: 0; }
-  .pg[data-mirror] .strip-tab[data-bracket="bottom"] { border-top: 0; border-top-right-radius: 0; }
-  .pg[data-mirror] .strip-foot { justify-content: flex-start; }
+  .pg.new-sheet[data-strips] .strip { padding-right: var(--pg-pad-l); }
   /* 줄 = 고르는 단추(줄 전체를 덮는다) + 출처 칩 단추 - 단추 안에 단추를 넣지 않는다 */
   .new-hit { display: block; width: 100%; padding: 0; text-align: left; color: inherit; font: inherit; cursor: pointer; }
   .new-hit::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
   .new-hit:focus-visible { outline: none; }
   .new-line:has(> .new-hit:focus-visible) { outline: 2px solid var(--focus); outline-offset: 1px; }
   .new-line:hover { background: color-mix(in oklab, var(--accent) 5%, var(--paper)); }
-  .new-srcs { position: relative; z-index: 1; display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+  .new-srcs { position: relative; z-index: 1; display: flex; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 6px; }
   .pg[data-strips] .new-line[data-state="candidate"] { outline: 1.5px dashed var(--accent); outline-offset: -1.5px; }
   .pg[data-strips] .new-line[data-state="picked"] { background: var(--accent-tint); box-shadow: var(--shadow-1), inset 0 0 0 1.5px var(--accent); }
   .pg[data-strips] .new-line[data-state="unsourced"] { box-shadow: var(--shadow-1), inset 3px 0 0 var(--danger-fill); border-top-left-radius: 0; border-bottom-left-radius: 0; }
@@ -1264,6 +1271,7 @@
   button.new-src { cursor: pointer; box-shadow: inset 0 0 0 1px transparent; }
   button.new-src:hover { box-shadow: inset 0 0 0 1px var(--st-ok-ink); text-decoration: underline; text-underline-offset: 2px; }
   .new-src.is-new { background: var(--sunken); color: var(--ink-3); }
+  .new-src.is-more { background: none; color: var(--ink-3); box-shadow: inset 0 0 0 1px var(--line-2); }
   .pg .new-block { margin: 4px 0; padding: 6px 8px; border: 1px dashed var(--line-2); border-radius: var(--r-1); font: var(--fs-cap) / var(--lh-cap) var(--font-ui); color: var(--ink-3); }
 
   .assign-side { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-left: 1px solid var(--line); background: var(--surface); }
