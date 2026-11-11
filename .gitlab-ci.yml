@@ -33,7 +33,8 @@ backend-test:
     - python -m pip install -r requirements-dev.txt
     - ruff check app/ tests/
     # conftest pins AUTH/AI/HR settings to the baseline, so no CI variables are needed.
-    - python -m pytest tests/ -q
+    # Parallel workers, each with its own sqlite file (conftest). Capped so a busy runner keeps memory headroom.
+    - python -m pytest tests/ -q -n auto --maxprocesses=4
 
 frontend-test:
   stage: test

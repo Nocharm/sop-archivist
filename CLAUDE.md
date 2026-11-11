@@ -22,7 +22,7 @@ python3.11 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m scripts.reset_db      # 로컬 데모 DB 초기화(backend/dev.db): Alembic base→head + 지침·dev 디렉터리·데모 권한. 서버 실행 금지
 .venv/bin/python -m scripts.seed_sop_demo # 로컬 전용(운영 DB 금지): 합성 SOP 묶음 4개(쪼개기 직후·분류 절반·검토 대기·AI 제안)를 앱 API로 만든다(작성자 qa.member, 검토자 qa.lead). 묶음 2~4는 경계를 미리 모두 확인하고 "쪼개기 직후"만 미확인으로 남긴다(경계 확인이 검토 요청 조건이라서). AI 제안 단계는 프로세스 안의 가짜 전송으로 돌아 AI 설정이 필요 없고 실제 모델을 부르지 않는다. 같은 제목이 있으면 건너뛰어 다시 돌려도 된다. AUTH_MODE=dev에서만 돈다(dev 의존성 python-docx 필요, DEV_ENFORCE_PERMISSIONS=true면 bundle.create가 없어 403)
 AUTH_MODE=dev DEV_ENFORCE_PERMISSIONS=true APP_SYSADMINS=dev.admin .venv/bin/uvicorn app.main:app --reload --port 8777   # 개발 서버
-.venv/bin/python -m pytest tests/ -q      # 테스트 — conftest가 AUTH_MODE·AI·HR 등을 baseline으로 고정해 backend/.env가 있어도 안전
+.venv/bin/python -m pytest tests/ -q -n auto   # 테스트(병렬, 작업자마다 DB 파일이 따로) — conftest가 AUTH_MODE·AI·HR 등을 baseline으로 고정해 backend/.env가 있어도 안전. 한 파일만 볼 때는 -n 없이
 .venv/bin/ruff check app/ tests/          # 린트(target py311)
 .venv/bin/alembic revision --autogenerate --rev-id "<다음 번호>" -m "<설명>"   # 모델을 바꾼 뒤 리비전 생성 → 생성물을 직접 검토
 
@@ -58,7 +58,7 @@ py -3.11 -m venv .venv; .venv\Scripts\pip install -r requirements-dev.txt
 .venv\Scripts\python -m scripts.reset_db
 .venv\Scripts\python -m scripts.seed_sop_demo   # 로컬 전용(운영 DB 금지) — 설명은 bash 쪽과 같다
 $env:AUTH_MODE="dev"; $env:DEV_ENFORCE_PERMISSIONS="true"; $env:APP_SYSADMINS="dev.admin"; .venv\Scripts\uvicorn app.main:app --reload --port 8777
-.venv\Scripts\python -m pytest tests\ -q
+.venv\Scripts\python -m pytest tests\ -q -n auto
 .venv\Scripts\ruff check app\ tests\
 .venv\Scripts\alembic revision --autogenerate --rev-id "<다음 번호>" -m "<설명>"
 
