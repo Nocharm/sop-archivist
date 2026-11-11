@@ -1,6 +1,6 @@
 // Split 문장 우클릭 메뉴의 가능/불가 판정 - 화면은 이 결과대로 항목을 켜고 끄며 까닭을 툴팁으로 보인다.
 import type { ViewUnit } from "./api-sop";
-import { getMergeBlocker, type MergeBlocker } from "./paper-model";
+import { getMergeBlocker, MERGE_BLOCKER_KEYS } from "./paper-model";
 
 export type SplitMenuAction = "pair" | "unpair" | "merge" | "check_both" | "check" | "split" | "ai_split" | "hold" | "lang_ko" | "lang_en";
 
@@ -27,13 +27,6 @@ export interface SplitMenuContext {
   /** 우클릭한 문장이 이미 판단을 받았다(보류는 판단 전 단위만) */
   isDecided?: boolean;
 }
-
-/** 합칠 수 없는 까닭 → 기존 합치기 단추 툴팁과 같은 문구 */
-export const MERGE_BLOCKER_KEYS: Record<MergeBlocker, string> = {
-  mixed_language: "split.noMergeLanguage",
-  not_text: "split.noMergeKind",
-  cell: "split.noMergeCell",
-};
 
 const EDITABLE_KINDS = new Set(["sentence", "heading", "cell_sentence"]);
 
@@ -89,4 +82,9 @@ function buildSingle(ctx: SplitMenuContext): SplitMenuItem[] {
 /** 고른 문장이 있고 다른 문장을 눌렀으면 두 문장 동작, 아니면 오른쪽 칸과 같은 한 문장 동작 */
 export function buildSplitMenu(ctx: SplitMenuContext): SplitMenuItem[] {
   return ctx.selected !== null && ctx.selected.id !== ctx.target.id ? buildPair({ ...ctx, selected: ctx.selected }) : buildSingle(ctx);
+}
+
+/** 보류는 아직 판단이 없는 단위만 - 오른쪽 칸 H와 우클릭 메뉴가 같은 규칙을 쓴다(칸 문장은 묶인 표·행 단위를 본다) */
+export function isUnitDecided(unit: ViewUnit, units: ReadonlyMap<number, ViewUnit>): boolean {
+  return units.get(unit.group_unit_id ?? unit.id)?.status !== "unassigned";
 }

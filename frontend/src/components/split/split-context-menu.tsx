@@ -71,6 +71,7 @@ export function SplitContextMenu({ at, items, isTargetChecked, onPick, onClose }
                 aria-disabled={item.enabled ? undefined : "true"}
                 aria-label={reason ? `${label} - ${reason}` : undefined}
                 data-tip={reason ?? undefined}
+                data-tip-side="right"
                 data-testid={`split-menu-${item.action}`}
                 onClick={() => {
                   if (item.enabled) onPick(item.action);

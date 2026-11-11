@@ -498,7 +498,6 @@ await runStep("split: right-click menu shows reasons for blocked actions and run
   await units.nth(9).waitFor({ timeout: T });
   const first = units.nth(4);
   await first.click();
-  const firstId = (await getText(page, "split-unit-id")).trim();
   // 고른 채 먼 문장을 우클릭 - 두 문장 메뉴
   await units.nth(9).click({ button: "right" });
   await wait(page, "split-menu");
@@ -522,7 +521,29 @@ await runStep("split: right-click menu shows reasons for blocked actions and run
   const wasChecked = (await mark.count()) > 0;
   await page.locator('[data-testid="split-menu-check"]').click();
   await page.waitForFunction(([id, was]) => (document.querySelector(`[data-testid="split-paper-mark-checked-${id}"]`) !== null) !== was, [firstUnitId, wasChecked], { timeout: T });
-  check("the menu's boundary item toggles the sentence", firstId.length > 0, `was checked: ${wasChecked}`);
+  // 짝 풀기 → 짝 만들기: 짝이 있는 문장을 고르고 그 짝(다른 문장)을 우클릭한다
+  const toastOk = (text) => page.waitForFunction((word) => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((el) => el.textContent?.includes(word)), text, { timeout: T });
+  let partnerId = null;
+  for (let at = 0; at < 8 && partnerId === null; at += 1) {
+    await units.nth(at).click();
+    const partner = page.locator('[data-testid^="split-pair-unit-"]').first();
+    if (await partner.count()) partnerId = (await partner.getAttribute("data-testid")).replace("split-pair-unit-", "");
+  }
+  check("found a selected sentence with a pair", partnerId !== null);
+  const partnerUnit = page.locator(`[data-testid="split-paper-unit-${partnerId}"]`).first();
+  await partnerUnit.click({ button: "right" });
+  await wait(page, "split-menu-unpair");
+  check("pair is off for an existing pair, unpair is on", (await page.locator('[data-testid="split-menu-pair"]').getAttribute("aria-disabled")) === "true" && (await page.locator('[data-testid="split-menu-unpair"]').getAttribute("aria-disabled")) === null);
+  await page.locator('[data-testid="split-menu-unpair"]').click();
+  await toastOk("Pair removed");
+  await page.waitForFunction(() => document.querySelector('[data-testid="split-pair-status"]') === null, null, { timeout: T });
+  await partnerUnit.click({ button: "right" });
+  await wait(page, "split-menu-pair");
+  check("pair is on for an unpaired KO/EN couple", (await page.locator('[data-testid="split-menu-pair"]').getAttribute("aria-disabled")) === null);
+  await page.locator('[data-testid="split-menu-pair"]').click();
+  await toastOk("Pair confirmed");
+  await page.locator('[data-testid="split-pair-status"]').waitFor({ timeout: T });
+  check("Make pair confirms at once", (await getText(page, "split-pair-status")).trim() === "Confirmed", await getText(page, "split-pair-status"));
 });
 
 await runStep("assign: hold an unassigned unit without a destination", {}, async ({ page }) => {

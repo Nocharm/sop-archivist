@@ -11,9 +11,8 @@ import { FigureImage } from "@/components/paper/figure-image";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
-import { buildContourPath, buildRows, getGapMerge, getMarks, getTags, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
+import { buildContourPath, buildRows, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import { getPairBrackets, getPillFill, getSectionPill, type PairBracket, type PillSeg } from "@/lib/strip-pill-model";
-import { MERGE_BLOCKER_KEYS } from "@/lib/split-menu-model";
 
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
 type PaperMark = UnitMark | "warn";
@@ -652,6 +651,9 @@ export function Paper({
 
   function handleContextMenu(event: MouseEvent<HTMLDivElement>) {
     if (!onUnitContextMenu) return;
+    // 글자를 끌어 고른 채면 브라우저 메뉴(복사)를 그대로 둔다
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) return;
     const target = event.target as HTMLElement;
     const holder = target.closest<HTMLElement>("[data-strip-unit]") ?? target.closest<HTMLElement>(".su[data-unit]");
     const unitId = Number(holder?.dataset.stripUnit ?? holder?.dataset.unit);

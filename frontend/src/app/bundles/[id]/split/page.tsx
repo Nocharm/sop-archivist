@@ -52,10 +52,13 @@ import { buildGroupSave } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
 import { buildPaperModel, buildPaperTabs, canSplitAt, countUnchecked, readWarningText, resolveCutDrag, shouldRecenter, toBlockOffset, toUnitOffset, type PaperSheet, type PaperTabKey } from "@/lib/paper-model";
 import { getSplitKeyAction } from "@/lib/split-keys";
-import { buildSplitMenu, type SplitMenuAction } from "@/lib/split-menu-model";
+import { buildSplitMenu, isUnitDecided, type SplitMenuAction } from "@/lib/split-menu-model";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 import { useSplitAi } from "@/lib/use-split-ai";
+
+/** Paper의 testid 앞말 - 단위·조각 testid와 Shift+F10이 같은 값을 쓴다 */
+const PAPER_TEST_ID = "split-paper";
 
 interface PendingConfirm {
   count: number;
@@ -219,7 +222,7 @@ export default function SplitPage() {
   function startHold() {
     if (!selected || !model) return;
     const unitId = selected.group_unit_id ?? selected.id;
-    if (model.units.get(unitId)?.status !== "unassigned") {
+    if (isUnitDecided(selected, model.units)) {
       showToast(t("split.holdDecided"), "error");
       return;
     }
@@ -367,7 +370,7 @@ export default function SplitPage() {
       aiEnabled: ai.isOn,
       isChecked,
       hasCut: cutAt?.unitId === menuTarget.id,
-      isDecided: model.units.get(menuTarget.group_unit_id ?? menuTarget.id)?.status !== "unassigned",
+      isDecided: isUnitDecided(menuTarget, model.units),
     });
   })();
 
@@ -404,7 +407,7 @@ export default function SplitPage() {
     if (pending) return;
     // 메뉴 글쇠·Shift+F10 - 고른 문장 줄에서 메뉴를 연다
     if ((event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) && selected && !isTypingTarget(event.target) && document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]') === null) {
-      const strip = document.querySelector(`[data-testid="split-paper-piece-${selected.id}"]`);
+      const strip = document.querySelector(`[data-testid="${PAPER_TEST_ID}-piece-${selected.id}"]`);
       if (!strip) return;
       const box = strip.getBoundingClientRect();
       event.preventDefault();
@@ -545,7 +548,7 @@ export default function SplitPage() {
               onCutDrag={canEdit ? dragCut : undefined}
               onCutNudge={canEdit ? nudgeCut : undefined}
               figureSource={docId !== null ? { bundleId, docId } : undefined}
-              testId="split-paper"
+              testId={PAPER_TEST_ID}
               sheetTestId={`split-sheet-${sheet.key}`}
               contour
               strips={{

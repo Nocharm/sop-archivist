@@ -28,6 +28,17 @@ export function placeAbove(anchor: DOMRect, floating: { width: number; height: n
   return { top: top >= EDGE ? top : below.top, left: below.left };
 }
 
+/** 트리거 옆(오른쪽, 자리가 모자라면 왼쪽)에 놓는다 - 목록 항목의 설명이 다른 항목을 덮지 않게. 세로는 트리거 맞춤 */
+export function placeBeside(anchor: DOMRect, floating: { width: number; height: number }): FloatingPos {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  let left = anchor.right + GAP;
+  if (left + floating.width > vw - EDGE && anchor.left - GAP - floating.width >= EDGE) left = anchor.left - GAP - floating.width;
+  left = Math.min(Math.max(left, EDGE), vw - floating.width - EDGE);
+  const top = Math.min(Math.max(anchor.top + (anchor.height - floating.height) / 2, EDGE), vh - floating.height - EDGE);
+  return { top, left };
+}
+
 // Esc는 가장 위 층만 닫는다 - 열린 순서대로 쌓아 둔다
 const escStack: symbol[] = [];
 
