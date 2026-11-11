@@ -12,7 +12,7 @@ import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import { buildContourPath, buildRows, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
-import { getPairBrackets, getPillWidth, getSectionHeads, getSectionLevel, getSectionPill, type PairBracket } from "@/lib/strip-pill-model";
+import { getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, type PairBracket } from "@/lib/strip-pill-model";
 
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
 type PaperMark = UnitMark | "warn";
@@ -245,6 +245,18 @@ export function Paper({
       for (const unitId of getSectionHeads(units)) heads.add(unitId);
     }
     return heads;
+  }, [sections, brackets, partnerOf]);
+  // 줄마다 탭 폭 - 번호 없는 줄은 직전 줄 폭, 짝은 한 폭(부분마다 문서 순서로)
+  const tabWidths = useMemo(() => {
+    const rows = sections.flatMap((section) =>
+      section.rows.map((row) => {
+        const unitId = readRowUnitId(row);
+        const topId = unitId !== null && brackets.get(unitId) === "bottom" ? (partnerOf.get(unitId)?.id ?? null) : null;
+        const topRow = topId === null ? undefined : section.rows.find((candidate) => readRowUnitId(candidate) === topId);
+        return { key: row.key, part: section.edge ?? "body", sectionLabel: readRowSection(row), pairTopOf: topRow?.key ?? null };
+      }),
+    );
+    return getTabWidths(rows);
   }, [sections, brackets, partnerOf]);
   // 표 칸 안의 조각 줄 - 칸이 많은 표에서 고를 때마다 다시 펴지 않게
   const cellRows = useMemo(() => {
@@ -598,8 +610,17 @@ export function Paper({
     const unit = unitId === null ? undefined : model.units.get(unitId);
     const hasWarn = row.type === "piece" ? row.parts.some((part) => warnBlockIds?.has(part.block.id)) : row.type === "figure" && (warnBlockIds?.has(row.block.id) ?? false);
     const section = readRowSection(row);
-    const width = getPillWidth(getSectionLevel(section));
+    const width = tabWidths.get(row.key) ?? getPillWidth(getSectionLevel(section));
     const bracket = unitId === null ? undefined : brackets.get(unitId);
+    // 아래 줄 - 왼쪽에 간 곳 글, 오른쪽 아래 모서리에 연결 배지(글을 덮지 않게 같은 흐름 안에 둔다)
+    const note = unit ? strips?.renderNote?.([unit.id]) : null;
+    const pills = unit && row.type !== "table" ? strips?.renderPills?.(unit.id) : null;
+    const foot = note || pills ? (
+      <div className="strip-foot">
+        {note}
+        {pills && <span className="strip-pills">{pills}</span>}
+      </div>
+    ) : null;
     return (
       <div key={row.key} className="strip-row">
         {unit && renderTab(unit, section, width, bracket)}
@@ -613,7 +634,6 @@ export function Paper({
           data-strip-unit={unitId ?? undefined}
           data-testid={`${testId}-piece-${unitId ?? row.key}`}
         >
-          {row.type !== "table" && <span className="strip-pills">{unit && strips?.renderPills?.(unit.id)}</span>}
           {row.type === "table"
             ? renderTable(row.item)
             : row.type === "figure"
@@ -623,7 +643,7 @@ export function Paper({
                     {part.segments.map((segment, index) => renderSegment(part.block, segment, index))}
                   </p>
                 ))}
-          {unit && strips?.renderNote?.([unit.id])}
+          {foot}
           {renderMarks(unit, hasWarn, "strip-marks")}
         </div>
       </div>

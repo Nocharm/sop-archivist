@@ -577,7 +577,7 @@ export default function SplitPage() {
                       setBoundary(unit, true);
                     }}
                   >
-                    <kbd aria-hidden>↵</kbd>
+                    <span className="inline-check-arrow" aria-hidden>↵</span>
                     <span className="inline-check-label">{t("split.checkBoundary")}</span>
                   </button>
                 );

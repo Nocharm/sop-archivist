@@ -662,6 +662,8 @@
     opacity: 1;
   }
   .mbtn:not(:disabled):hover, .mbtn:focus-visible { border-color: var(--line-2); background: var(--surface); color: var(--ink); }
+  /* 포인터로 올렸을 때만 라벨 펼침을 늦춘다 - 색(위 줄)은 바로 바뀐다. 키보드 포커스는 바로 펼친다 */
+  .mbtn:not(:disabled):hover:not(:focus-visible) .mbtn-label { transition-delay: var(--morph-delay); }
   .mbtn:not(:disabled):active { transform: scale(var(--press)); }
   .mbtn:disabled { opacity: 0.5; cursor: not-allowed; }
   /* 줄 끝 단추 자리 - 쓰는 쪽이 라벨이 다 펼쳐질 폭(단추 하나를 펼친 폭 + 그 오른쪽 아이콘 단추들)을 고정해 두고 단추는 오른쪽에 붙는다.
@@ -672,13 +674,16 @@
     flex: none;
     max-width: 240px; /* 접힘 전환의 시작값 - 단추 하나가 펼친 최대 폭보다 크다 */
     /* 돌아올 때는 라벨이 접힌 뒤에 나타나게 늦춘다 */
-    transition: background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast), transform var(--dur-fast) var(--ease-move), opacity var(--dur-base) var(--dur-base), max-width var(--dur-slow) var(--ease-enter), padding var(--dur-slow) var(--ease-enter), margin-left var(--dur-slow) var(--ease-enter);
+    transition: background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast), transform var(--dur-fast) var(--ease-move), opacity var(--dur-base) var(--dur-base), max-width var(--dur-slow) var(--ease-enter), padding var(--dur-slow) var(--ease-enter), margin-left var(--dur-slow) var(--ease-enter), flex-grow var(--dur-slow) var(--ease-enter);
   }
   .mbtn-set .mbtn-label { transition: max-width calc(var(--dur-slow) * 1.5) var(--ease-enter), margin-left calc(var(--dur-slow) * 1.5) var(--ease-enter), opacity var(--dur-slow); }
   .mbtn-set > .mbtn:not(:disabled):hover .mbtn-label, .mbtn-set > .mbtn:focus-visible .mbtn-label { transition-timing-function: var(--ease-move); }
   /* 하나에 올리면 나머지는 폭 0으로 사라져 자리를 내주고, 올린 단추가 묶음 폭 전체를 차지한다 */
   .mbtn-set:has(> .mbtn:is(:hover:not(:disabled), :focus-visible)) > .mbtn:not(:hover, :focus-visible) { max-width: 0; margin-left: 0; padding: 0; border-width: 0; opacity: 0; pointer-events: none; transition-delay: 0s; }
   .mbtn-set > .mbtn:is(:hover:not(:disabled), :focus-visible) { flex: 1 1 auto; justify-content: center; }
+  /* 포인터로 올렸을 때 - 색이 먼저, 나머지가 접히고 올린 단추가 자라는 것은 --morph-delay 뒤(전환 속성 순서: 배경·테두리·글자·transform·opacity·max-width·padding·margin-left·flex-grow) */
+  .mbtn-set:has(> .mbtn:hover:not(:disabled):not(:focus-visible)) > .mbtn:not(:hover, :focus-visible) { transition-delay: 0s, 0s, 0s, 0s, var(--morph-delay), var(--morph-delay), var(--morph-delay), var(--morph-delay), 0s; }
+  .mbtn-set > .mbtn:hover:not(:disabled):not(:focus-visible) { transition-delay: 0s, 0s, 0s, 0s, 0s, 0s, 0s, 0s, var(--morph-delay); }
   .mbtn.reveal { border-color: var(--line-2); background: var(--surface); color: var(--ink); }
   .mbtn.danger:not(:disabled):hover, .mbtn.danger:focus-visible, .mbtn.danger.reveal {
     /* .btn.danger와 같은 짝 - 위험색 잉크 바탕에 표면색 글자라 두 테마 모두 대비가 선다 */
@@ -869,6 +874,9 @@
   .start-btn .start-ico { display: inline-flex; max-width: 0; margin-right: -6px; opacity: 0; overflow: hidden; transition: max-width var(--dur-slow) var(--ease-enter), margin-right var(--dur-slow) var(--ease-enter), opacity var(--dur-base); }
   .start-btn:hover, .start-btn:focus-visible { padding: 0 18px; }
   .start-btn:hover .start-ico, .start-btn:focus-visible .start-ico { max-width: 18px; margin-right: 0; opacity: 1; }
+  /* 색(배경)이 먼저, 넓어짐은 --morph-delay 뒤 - 키보드 포커스는 바로 */
+  .start-btn:hover:not(:focus-visible) { transition-delay: var(--morph-delay), 0s; }
+  .start-btn:hover:not(:focus-visible) .start-ico { transition-delay: var(--morph-delay); }
 
   /* 오른쪽 열 - 섹션마다 따로 상자 */
   .side-box { padding: 12px; border: 1px solid var(--line); border-radius: var(--r-3); background: var(--surface); min-width: 0; }
@@ -980,8 +988,8 @@
 
   /* Unit 하나 = 종이 조각 하나(2026-11-10). 용지 바탕을 걷고 조각마다 종이를 그린다 - 확인 여부와 상관없이 처음부터 나뉘어 있다 */
   .sheet:has(> .pg[data-strips]) { background: none; border: 0; box-shadow: none; }
-  /* 조각마다 왼쪽 밖에 언어 색 탭(.strip-tab)이 붙고 폭은 절 깊이로만 정해진다(strip-pill-model.ts PILL_WIDTH_BY_LEVEL) - 깊을수록 조각이 오른쪽에서 시작해 들여쓴 것처럼 읽힌다. 오른쪽은 끝 아이콘 자리(--pg-pad-r)만 두고, 배정 연결 배지(.strip-pills)가 있을 때만 그 폭을 더한다 */
-  .pg[data-strips] { --pg-pad-l: 12px; --pg-pad-r: 68px; --pill-col: 72px; padding: 0; gap: 0; }
+  /* 조각마다 왼쪽 밖에 언어 색 탭(.strip-tab)이 붙고 폭은 절 깊이로만 정해진다(strip-pill-model.ts PILL_WIDTH_BY_LEVEL) - 깊을수록 조각이 오른쪽에서 시작해 들여쓴 것처럼 읽힌다. 오른쪽은 끝 아이콘 자리(--pg-pad-r)만 두고, 배정 연결 배지(.strip-pills)는 줄 아래(.strip-foot) 오른쪽 모서리에 앉아 글을 덮지 않는다 */
+  .pg[data-strips] { --pg-pad-l: 12px; --pg-pad-r: 68px; padding: 0; gap: 0; }
   /* content-visibility는 칠 영역을 줄 안쪽으로 자르므로 조각 그림자(--shadow-1, 아래로 24px)가 잘리지 않게 자르는 선을 바깥으로 민다 */
   .pg[data-strips] .strip-row { display: flex; align-items: stretch; content-visibility: auto; overflow-clip-margin: 32px; contain-intrinsic-size: auto 46px; }
   .pg[data-strips] .strip-row:has(.strip[data-sel], .cut-anchor, :focus-visible) { content-visibility: visible; }
@@ -989,7 +997,6 @@
   /* 화면 밖 조각은 그리지 않는다(Unit 수천 개) - 고른 조각·나눌 선이 있는 조각은 팝업·윤곽이 잘리지 않게 뺀다 */
   .pg[data-strips] .strip { position: relative; min-width: 0; padding: 6px var(--pg-pad-r) 6px var(--pg-pad-l); background: var(--paper); border: 1px solid var(--line-2); border-left: 0; border-radius: 0 var(--r-1) var(--r-1) 0; box-shadow: var(--shadow-1); }
   .pg[data-strips] .strip-tab-gap + .strip { border-left: 1px solid var(--line-2); border-radius: var(--r-1); }
-  .pg[data-strips] .strip:has(> .strip-pills:not(:empty)) { padding-right: calc(var(--pg-pad-r) + var(--pill-col) + 10px); }
   .pg[data-strips] .strip[data-kind="table"] { padding-left: var(--pg-pad-l); padding-right: var(--pg-pad-r); overflow-x: auto; }
   .pg[data-strips] .strip[data-kind="figure"] { overflow-x: auto; }
   .pg[data-strips] .strip > p { margin-block: 0; }
@@ -1014,15 +1021,18 @@
   .pg[data-strips] .strip[data-bracket="bottom"] { border-top: 0; border-top-right-radius: 0; }
   .pg[data-strips] .strip[data-bracket="bottom"]::before { content: ""; position: absolute; inset: 0 0 auto 0; border-top: 1px solid var(--line); }
   .strip-gap::before { content: ""; position: absolute; inset: -5px 0; }
-  .strip-merge { position: absolute; left: 50%; top: 50%; translate: -50% -50%; z-index: 2; display: inline-flex; align-items: center; justify-content: center; gap: 0; min-width: 76px; height: 10px; padding: 0 10px; overflow: hidden; border: 1px solid var(--line-2); border-radius: 11px; background: var(--surface); color: var(--ink-3); font: 600 var(--fs-cap) / 1 var(--font-ui); white-space: nowrap; cursor: pointer; user-select: none; transition: opacity var(--dur-base), height var(--dur-base) var(--ease-enter), border-color var(--dur-fast), color var(--dur-fast); }
+  .strip-merge { position: absolute; left: 50%; top: 50%; translate: -50% -50%; z-index: 2; display: inline-flex; align-items: center; justify-content: center; gap: 0; min-width: 76px; height: 10px; padding: 0 10px; overflow: hidden; border: 1px solid var(--line-2); border-radius: 11px; background: var(--surface); color: var(--ink-3); font: 600 var(--fs-cap) / 1 var(--font-ui); white-space: nowrap; cursor: pointer; user-select: none; transition: opacity var(--dur-base), height var(--dur-base) var(--ease-enter), border-color var(--dur-fast), color var(--dur-fast), gap var(--dur-base); }
   .strip-merge > svg { flex: none; width: 8px; height: 8px; transition: width var(--dur-base), height var(--dur-base); }
-  .strip-merge-label { max-width: 0; opacity: 0; overflow: hidden; transition: opacity var(--dur-base); }
+  .strip-merge-label { max-width: 0; opacity: 0; overflow: hidden; transition: opacity var(--dur-base), max-width var(--dur-base) var(--ease-enter); }
   .strip-gap:hover .strip-merge:not([aria-disabled="true"]), .cell-gap:hover .strip-merge:not([aria-disabled="true"]), .strip-merge:not([aria-disabled="true"]):focus-visible { height: 22px; gap: 5px; border-color: var(--accent); color: var(--accent); box-shadow: var(--shadow-1); }
   .strip-gap:hover .strip-merge:not([aria-disabled="true"]) > svg, .cell-gap:hover .strip-merge:not([aria-disabled="true"]) > svg, .strip-merge:not([aria-disabled="true"]):focus-visible > svg { width: 12px; height: 12px; }
   .strip-gap:hover .strip-merge:not([aria-disabled="true"]) .strip-merge-label, .cell-gap:hover .strip-merge:not([aria-disabled="true"]) .strip-merge-label, .strip-merge:not([aria-disabled="true"]):focus-visible .strip-merge-label { max-width: 240px; opacity: 1; }
   .strip-merge[aria-disabled="true"] { border-style: dashed; background: none; color: var(--ink-3); cursor: not-allowed; }
   .strip-gap:hover .strip-merge[aria-disabled="true"], .cell-gap:hover .strip-merge[aria-disabled="true"], .strip-merge[aria-disabled="true"]:focus-visible { opacity: 0.7; }
   .strip-merge:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* 포인터로 틈을 올렸을 때 - 나타남과 색은 바로, 알약이 커지고 라벨이 펼쳐지는 것은 --morph-delay 뒤(전환 순서: opacity·height·border-color·color·gap). 키보드 포커스는 바로 */
+  .strip-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible), .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) { transition-delay: 0s, var(--morph-delay), 0s, 0s, var(--morph-delay); }
+  .strip-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) > svg, .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) > svg, .strip-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) .strip-merge-label, .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) .strip-merge-label { transition-delay: var(--morph-delay); }
 
   /* 표 칸 안의 조각 - 칸 문장마다 점선으로 나누고 같은 칸의 이웃 사이에 합치기 */
   .cell-piece { position: relative; padding-right: 18px; border-radius: 2px; }
@@ -1050,14 +1060,15 @@
   .strip-tab:hover > .strip-tab-num { opacity: 0; }
   .strip-tab.swatch { display: inline-grid; place-items: center; width: 30px; height: 18px; padding: 0; border: 1px solid var(--line-2); border-radius: var(--r-1); }
   .strip-tab.swatch > .strip-tab-letters { position: static; opacity: 1; }
-  /* 오른쪽 칸 - Assign의 연결 배지 자리. 비면 폭을 차지하지 않는다 */
-  .strip-pills { position: absolute; right: var(--pg-pad-r); top: 7px; width: var(--pill-col); display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
-  .strip-pills:empty { display: none; }
+  /* 조각 아래 줄 - 왼쪽 간 곳 글, 오른쪽 아래 모서리 연결 배지. 둘은 같은 줄이라 글과 배지가 겹치지 않는다(반전 판은 배지가 왼쪽) */
+  .strip-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px; }
+  .strip-foot > .strip-note { min-width: 0; margin-top: 0; }
+  .strip-pills { display: flex; flex: none; max-width: 45%; margin-left: auto; }
   .lbadge { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; padding: 0 5px; height: 18px; border-radius: var(--r-1); font: 600 10px / 1 var(--font-mono); white-space: nowrap; background: var(--st-ok-tint); color: var(--st-ok-ink); cursor: pointer; box-shadow: inset 0 0 0 1px transparent; }
   .lbadge[data-ai] { background: var(--st-ai-tint); color: var(--st-ai-ink); outline: 1px dashed var(--st-ai-ink); outline-offset: -1px; }
   .lbadge:hover { box-shadow: inset 0 0 0 1px var(--st-ok-ink); }
   .lbadge-code { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .lbadge-dir { display: none; flex: none; }
+  .lbadge-dir { display: none; flex: none; box-sizing: content-box; padding-left: 4px; border-left: 1px solid color-mix(in oklab, currentColor 28%, transparent); }
   .lbadge[data-dir="above"] .lbadge-dir[data-d="above"], .lbadge[data-dir="below"] .lbadge-dir[data-d="below"], .lbadge[data-dir="otherDoc"] .lbadge-dir[data-d="otherDoc"] { display: block; }
   .ptag { display: inline-grid; place-items: center; min-width: 24px; height: 17px; padding: 0 4px; border-radius: var(--r-1); font: 700 10px / 1 var(--font-mono); }
   .ptag.ko { background: color-mix(in oklab, var(--lang-ko) 16%, var(--paper)); color: var(--lang-ko); }
@@ -1082,11 +1093,15 @@
   .pmark-host:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
   /* 문장 끝 확인 단추 - 앱 단추 모양 그대로, 글자 높이에 맞춘 크기. 호버 때 라벨이 펼쳐진다 */
-  .inline-check { display: inline-flex; align-items: center; vertical-align: 1px; height: 19px; max-width: 27px; margin-left: 9px; padding: 0 4px; overflow: hidden; border: 1px solid var(--accent); border-radius: var(--r-1); background: var(--accent); color: var(--on-accent); font: 600 11px / 1 var(--font-ui); white-space: nowrap; cursor: pointer; user-select: none; position: relative; z-index: 2; transition: max-width var(--dur-slow) var(--ease-enter), padding var(--dur-slow) var(--ease-enter); animation: inline-check-in var(--dur-slow) var(--ease-enter); }
-  /* 오른쪽 칸 단추(.btn.pri kbd)와 같은 ↵ 글쇠 모양 */
-  .inline-check > kbd { flex: none; min-width: 15px; height: 15px; padding: 0; border-color: color-mix(in oklab, var(--on-accent) 45%, var(--accent)); background: transparent; color: var(--on-accent); font: 600 11px / 13px var(--font-mono); }
+  .inline-check { display: inline-flex; align-items: center; vertical-align: 1px; height: 19px; max-width: 22px; margin-left: 9px; padding: 0 4px; overflow: hidden; border: 1px solid var(--accent); border-radius: var(--r-1); background: var(--accent); color: var(--on-accent); font: 600 11px / 1 var(--font-ui); white-space: nowrap; cursor: pointer; user-select: none; position: relative; z-index: 2; transition: background var(--dur-fast), border-color var(--dur-fast), max-width var(--dur-slow) var(--ease-enter), padding var(--dur-slow) var(--ease-enter); animation: inline-check-in var(--dur-slow) var(--ease-enter); }
+  /* ↵ 화살표만 - 글쇠 네모는 두지 않는다(단추 자체가 네모) */
+  .inline-check-arrow { flex: none; width: 12px; text-align: center; font: 600 13px / 1 var(--font-mono); }
   .inline-check-label { margin-left: 4px; opacity: 0; transition: opacity var(--dur-base); }
   .inline-check:hover, .inline-check:focus-visible { max-width: 120px; padding: 0 7px 0 4px; }
+  /* 색이 먼저(바로), 폭은 --morph-delay 뒤 - 키보드 포커스는 바로. 전환 순서: background·border-color·max-width·padding */
+  .inline-check:not(:disabled):hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .inline-check:hover:not(:focus-visible) { transition-delay: 0s, 0s, var(--morph-delay), var(--morph-delay); }
+  .inline-check:hover:not(:focus-visible) .inline-check-label { transition-delay: var(--morph-delay); }
   .inline-check:hover .inline-check-label, .inline-check:focus-visible .inline-check-label { opacity: 1; }
   @keyframes inline-check-in { from { opacity: 0; scale: 0.6; } }
 
@@ -1192,14 +1207,16 @@
   .pane-divider:focus-visible { outline: none; }
 
   /* 확정한 조각의 간 곳 - 이어진 문장이면 단추(누르면 New 문서의 그 문장으로) */
-  .strip-note { display: block; margin-top: 2px; font: 600 var(--fs-micro) / 16px var(--font-mono); color: var(--st-ok-ink); text-align: left; }
+  .strip-note { display: flex; align-items: center; gap: 4px; margin-top: 2px; font: 600 var(--fs-micro) / 16px var(--font-mono); color: var(--st-ok-ink); text-align: left; }
   .strip-note.is-delete { color: var(--danger-ink); }
+  .strip-note > svg { flex: none; }
+  .strip-note > .strip-note-text { min-width: 0; overflow-wrap: anywhere; }
   button.strip-note { padding: 0 4px; margin-inline: -4px; border-radius: var(--r-1); cursor: pointer; }
   button.strip-note:hover { background: var(--st-ok-tint); text-decoration: underline; text-underline-offset: 2px; }
 
   /* 이어진 맞은편 강조(마우스를 올린 조각의 짝) - 왼쪽 막대 쪽 모서리는 직각. 종이 조각은 바탕만 옅게 하고 막대는 탭 테두리(.strip-tab)가 맡는다 */
   .pg[data-strips] .strip[data-link-hover] { background: var(--accent-tint); }
-  .cell-piece[data-link-hover], .new-line[data-link-hover] { background: var(--accent-tint); box-shadow: inset 3px 0 0 var(--accent); border-top-left-radius: 0; border-bottom-left-radius: 0; }
+  .cell-piece[data-link-hover] { background: var(--accent-tint); box-shadow: inset 3px 0 0 var(--accent); border-top-left-radius: 0; border-bottom-left-radius: 0; }
   /* 이동해 간 자리 - 잠깐 테두리가 번쩍인다 */
   [data-flash] { animation: link-flash 1.2s ease-out both; }
   @keyframes link-flash { 0%, 35% { outline: 2px solid var(--accent); outline-offset: 2px; } 100% { outline: 2px solid transparent; outline-offset: 2px; } }
@@ -1220,23 +1237,29 @@
   .link-menu .link-menu-unlink { color: var(--danger-ink); }
   @keyframes cut-pop-in-fixed { from { opacity: 0; visibility: hidden; translate: 0 -5px; } }
 
-  /* New 원문 줄 - 점선 후보, 채움 고름, 위험색 출처 없음 */
-  .new-sheet { gap: 2px; }
-  .pg .new-sec { margin: 10px 0 2px; font: 600 var(--fs-cap) / var(--lh-cap) var(--font-ui); color: var(--ink-3); }
+  /* New 원문 줄 - Old 종이 조각을 거울로 뒤집은 판(.pg[data-mirror]): 언어 탭은 오른쪽, 출처 칩(.new-srcs)은 왼쪽 아래라 두 칸 모두 가운데 선을 마주 본다. 점선 후보, 채움 고름, 위험색 출처 없음 */
+  .new-sheet { gap: 0; }
+  .pg .new-sec { margin: 10px 0 4px; font: 600 var(--fs-cap) / var(--lh-cap) var(--font-ui); color: var(--ink-3); }
+  .new-gap { height: 4px; }
+  .new-gap[data-pair] { height: 0; }
+  .pg[data-strips][data-mirror] .strip { padding: 6px var(--pg-pad-l); border: 1px solid var(--line-2); border-right: 0; border-radius: var(--r-1) 0 0 var(--r-1); }
+  .pg[data-strips][data-mirror] .strip[data-bracket="top"] { border-bottom: 0; border-bottom-left-radius: 0; }
+  .pg[data-strips][data-mirror] .strip[data-bracket="bottom"] { border-top: 0; border-top-left-radius: 0; }
+  .pg[data-mirror] .strip-tab { border: 1px solid var(--line-2); border-left: 0; border-radius: 0 var(--r-1) var(--r-1) 0; }
+  .pg[data-mirror] .strip-tab[data-bracket="top"] { border-bottom: 0; border-bottom-right-radius: 0; }
+  .pg[data-mirror] .strip-tab[data-bracket="bottom"] { border-top: 0; border-top-right-radius: 0; }
+  .pg[data-mirror] .strip-foot { justify-content: flex-start; }
   /* 줄 = 고르는 단추(줄 전체를 덮는다) + 출처 칩 단추 - 단추 안에 단추를 넣지 않는다 */
-  .new-line { position: relative; display: flex; align-items: baseline; gap: 6px; width: calc(100% + 16px); margin-inline: -8px; padding: 4px 8px; border-radius: var(--r-1); }
-  .new-line:hover { background: var(--hover); }
-  .new-hit { flex: 1 1 auto; min-width: 0; padding: 0; text-align: left; color: inherit; font: inherit; cursor: pointer; }
+  .new-hit { display: block; width: 100%; padding: 0; text-align: left; color: inherit; font: inherit; cursor: pointer; }
   .new-hit::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
   .new-hit:focus-visible { outline: none; }
   .new-line:has(> .new-hit:focus-visible) { outline: 2px solid var(--focus); outline-offset: 1px; }
-  .new-line .ptag { margin-right: 6px; vertical-align: 1px; }
-  .new-srcs { position: relative; z-index: 1; flex: none; display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; max-width: 45%; }
-  .new-line[data-state="candidate"] { outline: 1.5px dashed var(--accent); outline-offset: -1.5px; }
-  .new-line[data-state="picked"] { background: var(--accent-tint); box-shadow: inset 0 0 0 1.5px var(--accent); }
-  /* 왼쪽 막대 쪽 모서리는 둥글리지 않는다(둥근 막대는 손톱처럼 보인다 - 메뉴 호버와 같은 규칙) */
-  .new-line[data-state="unsourced"] { box-shadow: inset 2px 0 0 var(--danger-fill); border-radius: 0 var(--r-1) var(--r-1) 0; }
-  .new-line[data-state="focus"] { background: var(--danger-tint); box-shadow: inset 0 0 0 1.5px var(--danger-ink); }
+  .new-line:hover { background: color-mix(in oklab, var(--accent) 5%, var(--paper)); }
+  .new-srcs { position: relative; z-index: 1; display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+  .pg[data-strips] .new-line[data-state="candidate"] { outline: 1.5px dashed var(--accent); outline-offset: -1.5px; }
+  .pg[data-strips] .new-line[data-state="picked"] { background: var(--accent-tint); box-shadow: var(--shadow-1), inset 0 0 0 1.5px var(--accent); }
+  .pg[data-strips] .new-line[data-state="unsourced"] { box-shadow: var(--shadow-1), inset 3px 0 0 var(--danger-fill); border-top-left-radius: 0; border-bottom-left-radius: 0; }
+  .pg[data-strips] .new-line[data-state="focus"] { background: var(--danger-tint); box-shadow: var(--shadow-1), inset 0 0 0 1.5px var(--danger-ink); }
   .new-src { display: inline-block; padding: 0 4px; border-radius: var(--r-1); font: 600 10px / 16px var(--font-mono); white-space: nowrap; background: var(--st-ok-tint); color: var(--st-ok-ink); }
   button.new-src { cursor: pointer; box-shadow: inset 0 0 0 1px transparent; }
   button.new-src:hover { box-shadow: inset 0 0 0 1px var(--st-ok-ink); text-decoration: underline; text-underline-offset: 2px; }

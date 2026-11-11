@@ -718,13 +718,13 @@ await runStep("assign: written New document - identical, link by clicking, split
   }
   // 누르면 후보가 아니라 고른 문장이 된다 - 같은 줄을 계속 가리키게 testid로 붙잡는다
   const firstLine = page.locator(`[data-testid="${await candidate.first().getAttribute("data-testid")}"]`);
-  const lang = (await firstLine.locator(".ptag").innerText()).trim().toLowerCase();
+  const lang = (await firstLine.getAttribute("data-lang"));
   // 줄 가운데를 누르면 오른쪽 출처 칩에 닿을 수 있다 - 고르는 단추를 누른다
   await firstLine.locator(".new-hit").click();
   check("clicking a New sentence picks it", (await firstLine.getAttribute("data-state")) === "picked");
   // 맥에서 Ctrl+클릭은 오른쪽 클릭이다 - 화면은 ⌘도 같은 뜻으로 받는다
   const multi = process.platform === "darwin" ? "Meta" : "Control";
-  const sameLang = page.locator(`[data-testid="assign-new"] .new-line:has(.ptag.${lang}):not([data-state="picked"])`);
+  const sameLang = page.locator(`[data-testid="assign-new"] .new-line[data-lang="${lang}"]:not([data-state="picked"])`);
   const second = page.locator(`[data-testid="${await sameLang.first().getAttribute("data-testid")}"]`);
   await second.locator(".new-hit").click({ modifiers: [multi] });
   await page.locator('[data-testid^="assign-link-"]').nth(1).waitFor({ timeout: T });

@@ -1,8 +1,8 @@
-// Old 조각 오른쪽 칸의 연결 배지 - "→ 문서 코드". 이어진 New 문장이 오른쪽 칸 화면 밖이면 ↑/↓, 다른 New 문서면 문서 아이콘이 붙는다.
+// Old 조각 오른쪽 아래 모서리의 연결 배지 - "문서 코드". 이어진 New 문장이 오른쪽 칸 화면 밖이면 위·아래 갈매기, 다른 New 문서면 문서 아이콘이 오른쪽에 붙는다.
 // 방향은 오른쪽 칸 스크롤마다 바뀌므로 React 상태가 아니라 LinkLines가 data-dir 속성으로 단다(Old 조각이 수천 개여도 다시 그리지 않는다).
 "use client";
 
-import { ArrowUp, ArrowDown, FileText } from "lucide-react";
+import { ChevronDown, ChevronUp, FileText } from "lucide-react";
 
 import type { WrittenSentence } from "@/lib/api-sop";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -41,11 +41,10 @@ export function LinkBadge({ unitId, targets, currentDocId, onJump }: LinkBadgePr
         onJump(unitId, target.target_id);
       }}
     >
-      <span aria-hidden>→</span>
       <span className="lbadge-code">{target.doc_code}</span>
-      <ArrowUp size={11} strokeWidth={2} className="lbadge-dir" data-d="above" aria-hidden />
-      <ArrowDown size={11} strokeWidth={2} className="lbadge-dir" data-d="below" aria-hidden />
-      <FileText size={11} strokeWidth={2} className="lbadge-dir" data-d="otherDoc" aria-hidden />
+      <ChevronUp size={12} strokeWidth={2.5} className="lbadge-dir" data-d="above" aria-hidden />
+      <ChevronDown size={12} strokeWidth={2.5} className="lbadge-dir" data-d="below" aria-hidden />
+      <FileText size={12} strokeWidth={2} className="lbadge-dir" data-d="otherDoc" aria-hidden />
     </button>
   );
   return isAi ? <Tooltip label={t("assign.linkBadge.ai")}>{badge}</Tooltip> : badge;

@@ -24,6 +24,8 @@
   --dur-fast: 100ms;
   --dur-base: 160ms;
   --dur-slow: 240ms;
+  /* 모핑 단추 - 올리면 색이 먼저 바뀌고 이만큼 쉬었다가 폭이 펼쳐진다(올리자마자 커지면 지나가는 포인터에도 튀어 산만). 돌아갈 때와 키보드 포커스는 기다리지 않는다 */
+  --morph-delay: 180ms;
   --ease-enter: cubic-bezier(.16, 1, .3, 1);
   --ease-exit: cubic-bezier(.4, 0, 1, 1);
   --ease-move: cubic-bezier(.65, 0, .35, 1);
@@ -209,6 +211,7 @@
     --dur-fast: 0ms !important;
     --dur-base: 0ms !important;
     --dur-slow: 0ms !important;
+    --morph-delay: 0ms !important;
     --press: 1 !important;
     --rise: 0px !important;
   }
