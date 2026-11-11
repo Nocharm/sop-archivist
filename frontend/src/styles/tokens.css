@@ -111,11 +111,6 @@
   /* 언어 표시(언어 배치 그림·Split 태그) - 한국어는 accent, 영어는 초록 */
   --lang-ko: var(--accent);
   --lang-en: oklch(.45 .11 160);
-  /* Split 필 칸(절 번호 필) 바탕 - 언어 색을 옅게. 글자는 세 바탕 모두에서 4.5:1 */
-  --pill-ko: color-mix(in oklab, var(--lang-ko) 42%, var(--paper));
-  --pill-en: color-mix(in oklab, var(--lang-en) 42%, var(--paper));
-  --pill-hold: color-mix(in oklab, var(--st-hold-fill) 40%, var(--paper));
-  --pill-ink: var(--paper-ink);
 
   --tint: 11%;
   --tint2: 20%;
@@ -183,9 +178,6 @@
   --danger-ink: oklch(.77 .125 24);
   --danger-fill: oklch(.66 .165 25);
   --lang-en: oklch(.76 .12 160);
-  --pill-ko: color-mix(in oklab, var(--lang-ko) 44%, var(--paper));
-  --pill-en: color-mix(in oklab, var(--lang-en) 42%, var(--paper));
-  --pill-hold: color-mix(in oklab, var(--st-hold-fill) 32%, var(--paper));
 
   --tint: 16%;
   --tint2: 32%;

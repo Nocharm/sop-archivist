@@ -5,14 +5,14 @@
 "use client";
 
 import { CircleCheck, FoldVertical, FolderCheck, ImageIcon, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles } from "lucide-react";
-import { Fragment, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { FigureImage } from "@/components/paper/figure-image";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import { buildContourPath, buildRows, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
-import { getPairBrackets, getPillFill, getSectionPill, type PairBracket, type PillSeg } from "@/lib/strip-pill-model";
+import { getPairBrackets, getSectionHeads, getSectionPill, type PairBracket } from "@/lib/strip-pill-model";
 
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
 type PaperMark = UnitMark | "warn";
@@ -36,8 +36,6 @@ const MARK_LABELS: Record<PaperMark, string> = {
   warn: "split.markWarn",
   checked: "split.legendChecked",
 };
-
-const PILL_SEG_LABELS: Record<PillSeg, string> = { ko: "KO", en: "EN", hold: "H" };
 
 function readRowUnitId(row: PaperRow): number | null {
   return row.type === "table" ? row.item.unitId : row.unitId;
@@ -232,6 +230,19 @@ export function Paper({
     }
     return map;
   }, [sections, partnerOf]);
+  // 절 번호를 보일 첫 줄 - 부분(머리글·본문·바닥글)마다 문서 순서로
+  const sectionHeads = useMemo(() => {
+    const heads = new Set<number>();
+    for (const section of sections) {
+      const units = section.rows.flatMap((row) => {
+        const unitId = readRowUnitId(row);
+        if (row.type === "table" || unitId === null) return [];
+        return [{ unitId, part: section.edge ?? "body", sectionLabel: readRowSection(row), pairTopOf: brackets.get(unitId) === "bottom" ? (partnerOf.get(unitId)?.id ?? null) : null }];
+      });
+      for (const unitId of getSectionHeads(units)) heads.add(unitId);
+    }
+    return heads;
+  }, [sections, brackets, partnerOf]);
   // 표 칸 안의 조각 줄 - 칸이 많은 표에서 고를 때마다 다시 펴지 않게
   const cellRows = useMemo(() => {
     const map = new Map<number, PaperRow[]>();
@@ -446,48 +457,35 @@ export function Paper({
     );
   }
 
-  /** 오른쪽 필 칸 - 절 번호가 있으면 번호 필(바탕은 언어·보류 색, 올리면 언어 글자), 없으면 글자 태그 */
-  function renderTags(unit: ViewUnit | undefined, section: string): ReactNode {
+  /** 글 앞 왼쪽 칸 - 절 번호(그 절의 첫 줄에만, 글자뿐)와 오른쪽 끝에 붙는 KO/EN/H 태그 */
+  function renderLead(unit: ViewUnit | undefined, section: string): ReactNode {
     if (!unit) return null;
     const live = { ...unit, status: strips?.statusOf?.(unit.id) ?? unit.status };
     const { lang, hold } = getTags(live);
-    const pillNumber = getSectionPill(section);
-    if (pillNumber !== null) {
-      const own = lang === null ? null : (lang.toLowerCase() as "ko" | "en");
-      const partner = partnerOf.get(unit.id);
-      const order = partner ? [unit, partner].sort((x, y) => x.pos_seq - y.pos_seq).flatMap((u) => (u.lang === "ko" || u.lang === "en" ? [u.lang] : [])) : [];
-      const segs = getPillFill(own, order.length === 2 ? order : null, hold);
-      const share = 100 / Math.max(segs.length, 1);
-      const background = segs.length === 0 ? undefined : segs.length === 1 ? `var(--pill-${segs[0]})` : `linear-gradient(to right, ${segs.map((seg, at) => `var(--pill-${seg}) ${at * share}% ${(at + 1) * share}%`).join(", ")})`;
-      return (
-        <>
-          <span className="sr-only">{pillNumber}</span>
-          <span className="spill" style={{ background, "--segs": Math.max(segs.length, 1) } as CSSProperties} data-testid={`${testId}-pill-${unit.id}`} aria-hidden>
-            <span className="spill-num">{pillNumber}</span>
-            {segs.length > 0 && (
-              <span className="spill-lang">
-                {segs.map((seg) => (
-                  <span key={seg}>{PILL_SEG_LABELS[seg]}</span>
-                ))}
-              </span>
-            )}
-          </span>
-        </>
-      );
-    }
-    if (lang === null && !hold) return null;
+    const sectionNumber = sectionHeads.has(unit.id) ? getSectionPill(section) : null;
+    if (sectionNumber === null && lang === null && !hold) return null;
     return (
-      <span className="strip-tags" aria-hidden>
-        {lang !== null && hold ? (
-          <span className={`ptag duo ${lang.toLowerCase()}`}>
-            <span>{lang}</span>
-            <span>H</span>
-          </span>
-        ) : lang !== null ? (
-          <span className={`ptag ${lang.toLowerCase()}`}>{lang}</span>
-        ) : (
-          <span className="ptag hold">H</span>
+      <span className="strip-lead" data-testid={`${testId}-lead-${unit.id}`}>
+        {sectionNumber !== null && (
+          <>
+            <span className="sr-only">{sectionNumber}</span>
+            <span className="strip-num" aria-hidden data-testid={`${testId}-num-${unit.id}`}>
+              {sectionNumber}
+            </span>
+          </>
         )}
+        <span className="strip-tags" aria-hidden>
+          {lang !== null && hold ? (
+            <span className={`ptag duo ${lang.toLowerCase()}`}>
+              <span>{lang}</span>
+              <span>H</span>
+            </span>
+          ) : lang !== null ? (
+            <span className={`ptag ${lang.toLowerCase()}`}>{lang}</span>
+          ) : hold ? (
+            <span className="ptag hold">H</span>
+          ) : null}
+        </span>
       </span>
     );
   }
@@ -594,7 +592,8 @@ export function Paper({
         data-strip-unit={unitId ?? undefined}
         data-testid={`${testId}-piece-${unitId ?? row.key}`}
       >
-        {row.type !== "table" && <span className="strip-pills">{renderTags(unit, readRowSection(row))}</span>}
+        {row.type !== "table" && renderLead(unit, readRowSection(row))}
+        {row.type !== "table" && <span className="strip-pills" />}
         {row.type === "table"
           ? renderTable(row.item)
           : row.type === "figure"

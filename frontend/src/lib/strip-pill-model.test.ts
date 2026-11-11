@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getPairBrackets, getPillFill, getSectionPill } from "@/lib/strip-pill-model";
+import { getPairBrackets, getSectionHeads, getSectionPill } from "@/lib/strip-pill-model";
 
 describe("getSectionPill", () => {
   it("returns numeric section numbers only", () => {
@@ -13,14 +13,19 @@ describe("getSectionPill", () => {
   });
 });
 
-describe("getPillFill", () => {
-  it("follows the pair's document order and appends hold", () => {
-    expect(getPillFill("en", ["en", "ko"], false)).toEqual(["en", "ko"]);
-    expect(getPillFill("ko", ["en", "ko"], true)).toEqual(["en", "ko", "hold"]);
-    expect(getPillFill("ko", null, true)).toEqual(["ko", "hold"]);
-    expect(getPillFill("ko", null, false)).toEqual(["ko"]);
-    expect(getPillFill(null, null, false)).toEqual([]);
-    expect(getPillFill(null, null, true)).toEqual(["hold"]);
+describe("getSectionHeads", () => {
+  const unit = (unitId: number, sectionLabel: string, part = "body", pairTopOf: number | null = null) => ({ unitId, part, sectionLabel, pairTopOf });
+  it("shows the first unit of each section and hides repeats", () => {
+    expect([...getSectionHeads([unit(1, "5.1"), unit(2, "5.1"), unit(3, "5.2"), unit(4, "5.2"), unit(5, "5.1")])]).toEqual([1, 3, 5]);
+  });
+  it("resets when the part changes", () => {
+    expect([...getSectionHeads([unit(1, "5.1", "top"), unit(2, "5.1", "body"), unit(3, "5.1", "body")])]).toEqual([1, 2]);
+  });
+  it("never shows non-numeric labels", () => {
+    expect([...getSectionHeads([unit(1, "Scope"), unit(2, ""), unit(3, "5.1")])]).toEqual([3]);
+  });
+  it("never shows the bottom row of a pair", () => {
+    expect([...getSectionHeads([unit(1, "5.1"), unit(2, "5.1", "body", 1), unit(3, "5.2"), unit(4, "5.3", "body", 3)])]).toEqual([1, 3]);
   });
 });
 

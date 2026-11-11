@@ -980,12 +980,13 @@
 
   /* Unit 하나 = 종이 조각 하나(2026-11-10). 용지 바탕을 걷고 조각마다 종이를 그린다 - 확인 여부와 상관없이 처음부터 나뉘어 있다 */
   .sheet:has(> .pg[data-strips]) { background: none; border: 0; box-shadow: none; }
-  /* 글은 왼쪽 여백 없이 시작하고, 오른쪽에 필 칸(--pill-col)과 끝 아이콘 자리를 둔다. 필 칸 폭 72px = 보류까지 3분할 필의 최소 폭(24px×3). mono 10px "11.11.1.1.1."(5단계) 필은 실측 59.7px(안쪽 여백 포함)이라 그 안에 든다. 필은 내용 폭으로 오른쪽 맞춤 */
-  .pg[data-strips] { --pg-pad-l: 14px; --pg-pad-r: 68px; --pill-col: 72px; padding: 0; gap: 0; }
+  /* 글 앞 왼쪽 칸(--lead-w)에 절 번호와 언어 태그를 두어 모든 조각의 글이 같은 x에서 시작한다. 폭 108px = 번호 mono 10px "11.11.1.1.1." 실측 53px + 틈 6 + KO+H 겹침 태그 실측 40px = 99px에 칸 오른쪽 여백 6과 글과의 틈을 더한 값(번호와 태그는 한 줄에 다 든다). 오른쪽은 끝 아이콘 자리(--pg-pad-r)만 두고, 배정 연결 배지(.strip-pills)가 있을 때만 그 폭을 더한다 */
+  .pg[data-strips] { --pg-pad-l: 8px; --lead-w: 108px; --pg-pad-r: 68px; --pill-col: 72px; padding: 0; gap: 0; }
   /* 화면 밖 조각은 그리지 않는다(Unit 수천 개) - 고른 조각·나눌 선이 있는 조각은 팝업·윤곽이 잘리지 않게 뺀다 */
-  .pg[data-strips] .strip { position: relative; min-width: 0; padding: 6px calc(var(--pg-pad-r) + var(--pill-col) + 10px) 6px var(--pg-pad-l); background: var(--paper); border: 1px solid var(--line-2); border-radius: var(--r-1); box-shadow: var(--shadow-1); content-visibility: auto; contain-intrinsic-size: auto 46px; }
+  .pg[data-strips] .strip { position: relative; min-width: 0; padding: 6px var(--pg-pad-r) 6px calc(var(--pg-pad-l) + var(--lead-w)); background: var(--paper); border: 1px solid var(--line-2); border-radius: var(--r-1); box-shadow: var(--shadow-1); content-visibility: auto; contain-intrinsic-size: auto 46px; }
   .pg[data-strips] .strip[data-sel], .pg[data-strips] .strip:has(.cut-anchor), .pg[data-strips] .strip:has(:focus-visible) { content-visibility: visible; }
-  .pg[data-strips] .strip[data-kind="table"] { padding-right: var(--pg-pad-r); overflow-x: auto; }
+  .pg[data-strips] .strip:has(> .strip-pills:not(:empty)) { padding-right: calc(var(--pg-pad-r) + var(--pill-col) + 10px); }
+  .pg[data-strips] .strip[data-kind="table"] { padding-left: var(--pg-pad-l); padding-right: var(--pg-pad-r); overflow-x: auto; }
   .pg[data-strips] .strip[data-kind="figure"] { overflow-x: auto; }
   .pg[data-strips] .strip > p { margin-block: 0; }
   .pg[data-strips] .pg-edge { display: grid; padding: 0; border: 0; }
@@ -1011,7 +1012,7 @@
   .pg[data-strips] .strip[data-bracket="bottom"] { border-top: 0; border-top-right-radius: 0; }
   .pg[data-strips] .strip[data-bracket="bottom"]::before { content: ""; position: absolute; inset: 0 0 auto 0; border-top: 1px solid var(--line); }
   .strip-gap::before { content: ""; position: absolute; inset: -5px 0; }
-  .strip-merge { position: absolute; left: var(--pg-pad-l); top: 50%; translate: 0 -50%; z-index: 2; display: inline-flex; align-items: center; justify-content: center; gap: 0; min-width: 76px; height: 10px; padding: 0 10px; overflow: hidden; border: 1px solid var(--line-2); border-radius: 11px; background: var(--surface); color: var(--ink-3); font: 600 var(--fs-cap) / 1 var(--font-ui); white-space: nowrap; cursor: pointer; user-select: none; transition: opacity var(--dur-base), height var(--dur-base) var(--ease-enter), border-color var(--dur-fast), color var(--dur-fast); }
+  .strip-merge { position: absolute; left: calc(var(--pg-pad-l) + var(--lead-w)); top: 50%; translate: 0 -50%; z-index: 2; display: inline-flex; align-items: center; justify-content: center; gap: 0; min-width: 76px; height: 10px; padding: 0 10px; overflow: hidden; border: 1px solid var(--line-2); border-radius: 11px; background: var(--surface); color: var(--ink-3); font: 600 var(--fs-cap) / 1 var(--font-ui); white-space: nowrap; cursor: pointer; user-select: none; transition: opacity var(--dur-base), height var(--dur-base) var(--ease-enter), border-color var(--dur-fast), color var(--dur-fast); }
   .strip-merge > svg { flex: none; width: 8px; height: 8px; transition: width var(--dur-base), height var(--dur-base); }
   .strip-merge-label { max-width: 0; opacity: 0; overflow: hidden; transition: opacity var(--dur-base); }
   .strip-gap:hover .strip-merge:not([aria-disabled="true"]), .cell-gap:hover .strip-merge:not([aria-disabled="true"]), .strip-merge:not([aria-disabled="true"]):focus-visible { height: 22px; gap: 5px; border-color: var(--accent); color: var(--accent); box-shadow: var(--shadow-1); }
@@ -1030,19 +1031,15 @@
   .cell-gap .strip-merge { left: 0; min-width: 44px; height: 9px; padding: 0 8px; }
   .cell-marks { position: absolute; right: 0; top: 4px; display: flex; gap: 3px; align-items: center; }
 
-  /* 문단 앞 글자 태그 - 둘이면 사선으로 쪼갠 한 태그 */
-  /* 오른쪽 필 칸 - 글 시작을 가리지 않는다. 끝 아이콘 왼쪽에 고정 폭으로 두고, 배정의 연결 배지도 같은 칸을 쓴다 */
+  /* 글 앞 왼쪽 칸 - 번호는 왼쪽, 태그는 글 바로 앞(오른쪽 맞춤). 첫 글줄과 같은 높이 */
+  .strip-lead { position: absolute; left: var(--pg-pad-l); top: 6px; width: calc(var(--lead-w) - 6px); height: 26px; display: flex; align-items: center; gap: 6px; }
+  .strip-num { margin-right: auto; color: var(--ink-2); font: 500 10px / 1 var(--font-mono); white-space: nowrap; }
+  .strip-tags { margin-left: auto; display: flex; }
+  .strip-lead .ptag { height: 15px; min-width: 22px; font-size: 9px; }
+  .strip-lead .ptag.duo > span { height: 15px; }
+  /* 오른쪽 칸 - Assign의 연결 배지 자리. 비면 폭을 차지하지 않는다 */
   .strip-pills { position: absolute; right: var(--pg-pad-r); top: 7px; width: var(--pill-col); display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
   .strip-pills:empty { display: none; }
-  .strip-tags { display: flex; flex-direction: column; gap: 3px; }
-  /* 절 번호 필 - 바탕은 언어(짝이면 문서 순서 2칸, 보류까지 3칸) 색, 올리면 번호가 사라지고 같은 칸에 언어 글자 */
-  .spill { display: grid; width: fit-content; min-width: calc(var(--segs, 1) * 24px); max-width: 100%; margin-left: auto; height: 17px; overflow: hidden; border-radius: var(--r-1); background: var(--sunken); color: var(--pill-ink); font: 700 10px / 17px var(--font-mono); cursor: default; }
-  .spill > * { grid-area: 1 / 1; min-width: 0; transition: opacity var(--dur-slow); }
-  .spill-num { padding: 0 4px; overflow: hidden; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
-  .spill-lang { display: flex; opacity: 0; }
-  .spill-lang > span { flex: 1; text-align: center; }
-  .spill:hover .spill-num { opacity: 0; }
-  .spill:hover .spill-lang { opacity: 1; }
   .ptag { display: inline-grid; place-items: center; min-width: 24px; height: 17px; padding: 0 4px; border-radius: var(--r-1); font: 700 10px / 1 var(--font-mono); }
   .ptag.ko { background: color-mix(in oklab, var(--lang-ko) 16%, var(--paper)); color: var(--lang-ko); }
   .ptag.en { background: color-mix(in oklab, var(--lang-en) 18%, var(--paper)); color: var(--lang-en); }
