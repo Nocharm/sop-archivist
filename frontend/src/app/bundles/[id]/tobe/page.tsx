@@ -1,10 +1,11 @@
 // To-Be 목록 - 새 SOP·WI 표를 고치고 통째로 저장한다. SOP는 칸 N/A(사유), WI는 단계를 줄 아래에서 편다. Excel 템플릿 내려받기·가져오기(명세 §12-5).
 "use client";
 
-import { ChevronRight, Download, FileUp, ListTree, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ChevronRight, Download, FileUp, FilePlus, ListTree, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
+import { UploadWritten } from "@/components/tobe/upload-written";
 import { ReadOnlyNote } from "@/components/read-only-note";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { MorphButton } from "@/components/ui/morph-button";
@@ -14,7 +15,7 @@ import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
-import { downloadToBeTemplate, getToBe, importToBe, putToBe, SLOT_KEYS, type ToBe } from "@/lib/api-sop";
+import { downloadToBeTemplate, getToBe, importToBe, listDocuments, putToBe, SLOT_KEYS, type ToBe } from "@/lib/api-sop";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { buildDownloadName } from "@/lib/download-name";
 import { useI18n } from "@/lib/i18n";
@@ -44,6 +45,10 @@ export default function ToBePage() {
   const { bundle } = useBundle(bundleId);
   const canEdit = bundle?.my_role === "author" && bundle.status === "in_progress";
   const { data, error, isLoading, reload } = useLoaded(() => getToBe(bundleId), String(bundleId));
+  // 경계를 아직 확인하지 않은 Old 단위 - 있으면 작성 문서 올리기 곁에 쪼개기를 먼저 끝내라고 안내만 한다(막지 않는다)
+  const { data: docs } = useLoaded(() => listDocuments(bundleId), String(bundleId));
+  const uncheckedBoundaries = docs?.filter((doc) => doc.side === "old").reduce((sum, doc) => sum + doc.unchecked_boundaries, 0) ?? 0;
+  const [uploadOpen, setUploadOpen] = useState(false);
   const showSkeleton = useDelayedFlag(isLoading && data === null);
   // 초안은 불러온 목록에 묶인다 - 저장·다시 불러오기로 새 목록이 오면 저절로 버려진다
   const [edit, setEdit] = useState<{ base: ToBe; draft: ToBeDraft } | null>(null);
@@ -275,6 +280,15 @@ export default function ToBePage() {
                 {t("tobe.import")}
               </button>
             </Tooltip>
+            {uncheckedBoundaries > 0 && (
+              <span className="text-xs text-ink-3" data-testid="tobe-upload-written-hint">
+                {t("tobe.uploadWritten.splitFirst", { n: uncheckedBoundaries })}
+              </span>
+            )}
+            <button type="button" className="btn ghost" data-testid="tobe-upload-written" disabled={saving || dirty} onClick={() => setUploadOpen(true)}>
+              <FilePlus size={14} strokeWidth={1.5} aria-hidden />
+              {t("tobe.uploadWritten")}
+            </button>
             <button type="button" className="btn" data-testid="tobe-add" onClick={addDoc}>
               <Plus size={14} strokeWidth={1.5} aria-hidden />
               {t("tobe.addDoc")}
@@ -438,6 +452,7 @@ export default function ToBePage() {
           </tbody>
         </table>
       )}
+      {uploadOpen && <UploadWritten bundleId={bundleId} onClose={() => setUploadOpen(false)} onUploaded={() => { reload(); void loadBundle(bundleId); }} />}
       {leaveTo !== null && (
         <ConfirmModal
           title={t("tobe.leaveTitle")}

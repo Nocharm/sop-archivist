@@ -12,7 +12,7 @@ const CELLS: Record<LanguageLayout, { dir: "rows" | "cols"; cells: Array<"ko" | 
 export function LayoutPicto({ layout }: { layout: LanguageLayout }) {
   const { dir, cells } = CELLS[layout];
   return (
-    <span className="layout-picto" data-dir={dir} aria-hidden>
+    <span className="layout-picto" data-dir={dir} data-n={cells.length} aria-hidden>
       {cells.map((cell, index) => (
         <i key={index} className={cell} />
       ))}
@@ -22,9 +22,9 @@ export function LayoutPicto({ layout }: { layout: LanguageLayout }) {
 
 export function LayoutLabel({ layout, label }: { layout: LanguageLayout; label: string }) {
   return (
-    <span className="inline-flex items-center gap-2">
+    <span className="flex min-w-0 items-center gap-2">
       <LayoutPicto layout={layout} />
-      {label}
+      <span className="min-w-0 truncate">{label}</span>
     </span>
   );
 }

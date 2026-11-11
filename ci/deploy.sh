@@ -9,7 +9,30 @@
 # that cannot be pulled again (the server has no Docker Hub).
 set -eu
 
-DEPLOY_DIR="${SOP_DEPLOY_DIR:-/data/deployments/sop-archivist}"
+# Two stacks on the same server, chosen by the CI job (never by a project CI/CD variable):
+#   production  :7777  folder SOP_DEPLOY_DIR      compose project sop-archivist      (main, manual)
+#   dev         :4444  folder SOP_DEV_DEPLOY_DIR  compose project sop-archivist-dev  (dev, automatic)
+# Each stack has its own folder variable so a project-level SOP_DEPLOY_DIR can never point the
+# dev job at the production folder; the .env checks below also refuse the other stack's .env.
+DEPLOY_ENV="${SOP_DEPLOY_ENV:-production}"
+PROD_PORT="7777"
+PROD_DB_ALIAS="sop-archivist-db"
+case "$DEPLOY_ENV" in
+  production)
+    DEPLOY_DIR="${SOP_DEPLOY_DIR:-/data/deployments/sop-archivist}"
+    DEPLOY_DIR_VAR="SOP_DEPLOY_DIR"   # named in guard messages so they point at this stack's CI variable
+    COMPOSE_PROJECT="sop-archivist"
+    ;;
+  dev)
+    DEPLOY_DIR="${SOP_DEV_DEPLOY_DIR:-/data/deployments/sop-archivist-dev}"
+    DEPLOY_DIR_VAR="SOP_DEV_DEPLOY_DIR"
+    COMPOSE_PROJECT="sop-archivist-dev"
+    ;;
+  *)
+    printf '[deploy] FAILED: SOP_DEPLOY_ENV must be production or dev.\n' >&2
+    exit 1
+    ;;
+esac
 SRC_DIR="${CI_PROJECT_DIR:-$(pwd)}"
 # Health wait: first boot runs Alembic migrations, which can take minutes. Defaults = 5 min.
 HEALTH_TRIES="${SOP_HEALTH_TRIES:-60}"
@@ -32,6 +55,11 @@ fail() {
 # group-level DOCKER_HOST would also redirect compose itself. Compose reads .env on its own.
 run_docker() {
   env -i PATH="$PATH" HOME="${HOME:-/root}" DOCKER_HOST="$DOCKER_SOCKET" docker "$@"
+}
+
+# Compose always names the stack's project explicitly: the file's own `name:` is production's.
+run_compose() {
+  run_docker compose -p "$COMPOSE_PROJECT" "$@"
 }
 
 # Read KEY's value from the deploy folder's .env the way a plain dotenv line is written:
@@ -63,23 +91,23 @@ check_deploy_dir() {
     DEPLOY_DIR="${DEPLOY_DIR%/}"
   done
   case "$DEPLOY_DIR" in
-    /) fail "deploy folder is '/'. Set SOP_DEPLOY_DIR to a dedicated folder such as /data/deployments/sop-archivist." ;;
+    /) fail "deploy folder is '/'. Set $DEPLOY_DIR_VAR to a dedicated folder such as /data/home_<account>/deployments/$COMPOSE_PROJECT." ;;
     /*) ;;
-    *) fail "deploy folder must be an absolute path (SOP_DEPLOY_DIR is relative)." ;;
+    *) fail "deploy folder must be an absolute path ($DEPLOY_DIR_VAR is relative)." ;;
   esac
   case "$DEPLOY_DIR" in
     *//* | */./* | */../* | */. | */..) fail "deploy folder path must not contain '//', '.' or '..' parts." ;;
   esac
   case "${DEPLOY_DIR#/}" in
     */*) ;;
-    *) fail "deploy folder must be at least two levels deep (for example /data/deployments/sop-archivist)." ;;
+    *) fail "deploy folder must be at least two levels deep (for example /data/home_<account>/deployments/$COMPOSE_PROJECT)." ;;
   esac
-  [ -d "$DEPLOY_DIR" ] || fail "deploy folder does not exist inside the job. Check the runner's --docker-volumes mount (gitlab-runner.md 2)."
+  [ -d "$DEPLOY_DIR" ] || fail "deploy folder does not exist inside the job. Check the $DEPLOY_DIR_VAR CI variable and the runner's --docker-volumes mount (gitlab-runner.md 1, 2)."
 
   deploy_real="$(resolve_dir "$DEPLOY_DIR")"
   src_real="$(resolve_dir "$SRC_DIR")"
   if is_same_or_inside "$deploy_real" "$src_real"; then
-    fail "deploy folder is the job checkout or inside it. Point SOP_DEPLOY_DIR at the mounted deploy folder."
+    fail "deploy folder is the job checkout or inside it. Point $DEPLOY_DIR_VAR at the mounted deploy folder."
   fi
   if is_same_or_inside "$src_real" "$deploy_real"; then
     fail "job checkout is inside the deploy folder. Syncing would delete it."
@@ -90,9 +118,37 @@ check_env_file() {
   [ -f "$DEPLOY_DIR/.env" ] || fail "no .env in the deploy folder. Copy it there once by hand (gitlab-runner.md 3)."
 
   auth_mode="$(read_env_value AUTH_MODE)"
-  [ "$auth_mode" = "keycloak" ] \
-    || fail ".env AUTH_MODE is not 'keycloak'. dev mode trusts a header and seeds fake staff (setup-once.md C)."
-  log ".env AUTH_MODE: keycloak"
+  app_port="$(read_env_value APP_PORT)"
+  db_alias="$(read_env_value DBV_DB_ALIAS)"
+  if [ "$DEPLOY_ENV" = "production" ]; then
+    [ "$auth_mode" = "keycloak" ] \
+      || fail ".env AUTH_MODE is not 'keycloak'. dev mode trusts a header and seeds fake staff (setup-once.md C)."
+    case "$app_port" in
+      "" | "$PROD_PORT") ;;
+      *) fail ".env APP_PORT is not $PROD_PORT. Is this the dev stack's .env?" ;;
+    esac
+    case "$db_alias" in
+      "" | "$PROD_DB_ALIAS") ;;
+      *) fail ".env DBV_DB_ALIAS is not $PROD_DB_ALIAS. Is this the dev stack's .env?" ;;
+    esac
+  else
+    case "$auth_mode" in
+      keycloak) ;;
+      dev)
+        # Without enforcement every dev login is a sysadmin; the dev stack keeps permissions per user.
+        [ "$(read_env_value DEV_ENFORCE_PERMISSIONS)" = "true" ] \
+          || fail ".env AUTH_MODE=dev needs DEV_ENFORCE_PERMISSIONS=true on the dev stack."
+        ;;
+      *) fail ".env AUTH_MODE must be 'dev' or 'keycloak' on the dev stack." ;;
+    esac
+    case "$app_port" in
+      "" | "$PROD_PORT") fail ".env APP_PORT must be the dev stack's own port (4444), not empty or $PROD_PORT." ;;
+    esac
+    case "$db_alias" in
+      "" | "$PROD_DB_ALIAS") fail ".env DBV_DB_ALIAS must be the dev stack's own alias (sop-archivist-dev-db), not empty or $PROD_DB_ALIAS." ;;
+    esac
+  fi
+  log ".env AUTH_MODE: $auth_mode"
 
   backup_dir="$(read_env_value BACKUP_DIR)"
   case "$backup_dir" in
@@ -216,15 +272,15 @@ write_deploy_marker() {
 show_failure_and_exit() {
   printf '[deploy] FAILED: %s\n' "$1" >&2
   # Best-effort diagnostics: a failing ps must not hide the logs, and the job fails anyway.
-  run_docker compose ps || true
-  run_docker compose logs --tail 80 backend proxy || true
+  run_compose ps || true
+  run_compose logs --tail 80 backend proxy || true
   exit 1
 }
 
 # One HTTP GET through the proxy container (the job's localhost is not the server).
 # While backend/proxy restart, exec itself fails; callers treat that as "not ready yet".
 fetch_via_proxy() {
-  run_docker compose exec -T proxy wget -q -T 10 -O - "http://127.0.0.1$1" 2> /dev/null
+  run_compose exec -T proxy wget -q -T 10 -O - "http://127.0.0.1$1" 2> /dev/null
 }
 
 wait_until_healthy() {
@@ -234,15 +290,15 @@ wait_until_healthy() {
     if printf '%s' "$health" | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"'; then
       # The body also carries the Keycloak issuer and client ID from .env: judge, never print.
       mode_body="$(fetch_via_proxy /api/auth/mode || true)"
-      if printf '%s' "$mode_body" | grep -q '"mode"[[:space:]]*:[[:space:]]*"keycloak"'; then
+      if printf '%s' "$mode_body" | grep -q "\"mode\"[[:space:]]*:[[:space:]]*\"$auth_mode\""; then
         mode_ok=1
       elif printf '%s' "$mode_body" | grep -q '"mode"'; then
-        show_failure_and_exit "/api/auth/mode reports a mode other than keycloak."
+        show_failure_and_exit "/api/auth/mode reports a mode other than $auth_mode."
       else
         mode_ok=0
       fi
       if [ "$mode_ok" = 1 ] && fetch_via_proxy / > /dev/null; then
-        log "health: /api/health ok, auth mode keycloak, / 200"
+        log "health: /api/health ok, auth mode $auth_mode, / 200"
         return 0
       fi
     fi
@@ -254,6 +310,7 @@ wait_until_healthy() {
 }
 
 main() {
+  log "stack: $DEPLOY_ENV (compose project $COMPOSE_PROJECT)"
   log "deploy folder: $DEPLOY_DIR"
   check_deploy_dir
   check_env_file
@@ -269,19 +326,25 @@ main() {
   log "synced commit ${CI_COMMIT_SHA:-unknown} (version $(read_app_version))"
 
   cd "$DEPLOY_DIR"
-  run_docker compose config --quiet || fail "docker compose config rejected the deploy folder (output hidden: it expands secrets)."
-  run_docker compose up -d --build || show_failure_and_exit "docker compose up failed."
+  run_compose config --quiet || fail "docker compose config rejected the deploy folder (output hidden: it expands secrets)."
+  if [ "$DEPLOY_ENV" = "production" ]; then
+    run_compose up -d --build || show_failure_and_exit "docker compose up failed."
+  else
+    # The dev stack holds throwaway data: no backup sidecar.
+    run_compose up -d --build proxy frontend backend db || show_failure_and_exit "docker compose up failed."
+  fi
 
   # nginx resolves the backend name only at start; a recreated backend gets a new address.
-  run_docker compose restart proxy || show_failure_and_exit "proxy restart failed."
-  if [ "$is_first_deploy" = 1 ] || [ "$backup_script_before" != "$(checksum_of scripts/db-backup.sh)" ]; then
+  run_compose restart proxy || show_failure_and_exit "proxy restart failed."
+  if [ "$DEPLOY_ENV" = "production" ] \
+      && { [ "$is_first_deploy" = 1 ] || [ "$backup_script_before" != "$(checksum_of scripts/db-backup.sh)" ]; }; then
     # The script is a bind mount, so `up` keeps the old loop running unless recreated.
     log "db-backup.sh changed or first deploy: recreating db-backup"
-    run_docker compose up -d --force-recreate db-backup || show_failure_and_exit "db-backup recreate failed."
+    run_compose up -d --force-recreate db-backup || show_failure_and_exit "db-backup recreate failed."
   fi
 
   wait_until_healthy
-  run_docker compose ps
+  run_compose ps
   log "done"
 }
 

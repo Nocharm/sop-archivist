@@ -1,7 +1,7 @@
 // Assign 인스펙터 맨 아래 도움말 - 단축키와 표시(Old·New 줄 끝 표시, 이어진 곳 보기)의 뜻. 틀은 공통 `HelpPanel`이 맡는다.
 "use client";
 
-import { CircleCheck, Link2, Sparkles } from "lucide-react";
+import { CircleCheck, FileCheck2, Link2, Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { HelpPanel } from "@/components/ui/help-panel";
@@ -36,11 +36,23 @@ export function AssignHelp() {
       keys={keys}
       marks={
         <>
-          <Row swatch={<span className="ptag ko">KO</span>}>{t("assign.legend.lang")}</Row>
+          <Row
+            swatch={
+              <span className="strip-tab swatch" data-lang="ko">
+                <span className="strip-tab-letters">KO</span>
+              </span>
+            }
+          >{t("assign.legend.lang")}</Row>
           <Row swatch={<CircleCheck size={14} strokeWidth={2} className="pmark classified" aria-hidden />}>{t("assign.legend.confirmed")}</Row>
           <Row swatch={<Sparkles size={14} strokeWidth={1.6} className="pmark ai" aria-hidden />}>{t("assign.legend.ai")}</Row>
           <Row swatch={<Link2 size={14} strokeWidth={1.6} className="pmark pair" aria-hidden />}>{t("assign.legend.pair")}</Row>
-          <Row swatch={<span className="strip-note">→ 1.1</span>}>{t("assign.legend.goneTo")}</Row>
+          <Row
+            swatch={
+              <span className="strip-note">
+                <FileCheck2 size={11} strokeWidth={1.75} aria-hidden />1.1
+              </span>
+            }
+          >{t("assign.legend.goneTo")}</Row>
           <Row swatch={<span className="legend-box" data-state="candidate" />}>{t("assign.legend.candidate")}</Row>
           <Row swatch={<span className="legend-box" data-state="picked" />}>{t("assign.legend.picked")}</Row>
           <Row swatch={<span className="new-src">← 1-012</span>}>{t("assign.legend.source")}</Row>

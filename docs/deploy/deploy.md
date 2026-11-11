@@ -3,7 +3,7 @@
 로컬에서 검증한 코드를 서버(사내 71번)에 올리는 절차. **배포는 사내 GitLab 파이프라인의 ▶로만 한다** — 서버에서 `git pull`·`docker compose up`을 손으로 치지 않는다(사내 정책). 러너·파이프라인 설정과 되돌리기, 비상 수동 경로는 [`gitlab-runner.md`](gitlab-runner.md). 이 문서는 **매 배포마다 반복하는 확인**과 운영 진단을 다룬다. 서버를 처음 세울 때 한 번만 하는 일(Keycloak 클라이언트, `.env` 작성, 첫 HR 동기화 등)은 [`setup-once.md`](setup-once.md), 백업·복구는 [`backup.md`](backup.md), db-viewer 연결은 [`db-viewer-readonly.md`](db-viewer-readonly.md).
 
 > 서버 명령은 모두 bash(리눅스) 기준이다. 로컬 PC 명령은 `README.md`·`CLAUDE.md` Commands에 bash와 PowerShell을 병기했다.
-> 이 문서의 `docker compose` 진단 명령은 **배포 폴더**(기본 `/data/deployments/sop-archivist`, [`gitlab-runner.md`](gitlab-runner.md) 3절)에서 실행한다 — compose 파일과 `.env`가 거기 있다. 서버에 저장소 clone은 없다.
+> 이 문서의 `docker compose` 진단 명령은 **배포 폴더**(`/data/home_<계정>/deployments/sop-archivist`, [`gitlab-runner.md`](gitlab-runner.md) 3절)에서 실행한다 — compose 파일과 `.env`가 거기 있다. 서버에 저장소 clone은 없다.
 
 ## 파이프라인
 
@@ -67,7 +67,7 @@ GitLab **Build → Pipelines**에서 `main` 파이프라인의 test 3개가 통�
 
 손으로 치는 배포 명령은 러너를 고칠 수 없을 때의 **비상 수동 경로**뿐이다 → [`gitlab-runner.md`](gitlab-runner.md) 8절.
 
-- **배포 단위는 서비스 버전**(`vX.Y.Z` 태그, 최신 항목은 루트 `CHANGELOG.md`). 버전마다 배포 메모(사이드카 재생성 등)가 CHANGELOG에 있으니 배포 전에 읽는다. 규칙: `rules/common/git.md` "On Main Merge — 서비스 버전".
+- **배포 단위는 서비스 버전**(`vX.Y.Z` 태그, 최신 항목은 루트 `CHANGELOG.md`). 버전마다 배포 메모(사이드카 재생성 등)가 CHANGELOG에 있으니 배포 전에 읽는다. 규칙: `rules/common/git.md` "서비스 버전".
 - **DB 스키마는 backend가 기동할 때 Alembic으로 head까지 자동 적용한다.** 배포만으로 새 테이블·컬럼이 반영되고, 서버에서 손으로 마이그레이션하거나 리셋할 일은 없다. 모델을 바꾼 커밋에는 반드시 리비전 파일이 있어야 한다(없으면 `test_models_match_migrations`가 로컬에서 잡는다). backend는 **단일 워커**라서 마이그레이션이 경합하지 않는다 — Dockerfile에 `--workers`를 추가하지 않는다.
 - 마이그레이션이 실패하면 backend가 재시작을 반복하고 배포 Job은 헬스체크에서 실패한다. 배포 폴더에서: `docker compose logs --tail 120 backend`.
 - **`scripts/db-backup.sh`를 바꾼 배포는 사이드카를 다시 만들어야 한다.** 스크립트는 바인드 마운트라 `up -d --build`가 db-backup을 재생성하지 않아 옛 루프가 계속 돈다. 배포 스크립트가 해시를 비교해 `--force-recreate db-backup`을 한다.

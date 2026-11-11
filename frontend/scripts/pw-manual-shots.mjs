@@ -77,7 +77,7 @@ const SCENES = [
   {
     name: "upload", app: { clip: id("upload") }, user: "qa.member", path: "/bundles/1/documents",
     prep: (page) => click(page, id("documents-upload")),
-    marks: [id("upload-side-old"), id("upload-side-new"), id("upload-pick")],
+    marks: [id("upload-pick")],
   },
   {
     name: "split-unit", app: { name: "split", width: 1280 }, user: "qa.member", path: "/bundles/1/split",

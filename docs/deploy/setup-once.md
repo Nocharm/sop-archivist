@@ -2,7 +2,7 @@
 
 서버에 SOP Archivist를 **처음 세울 때 한 번만 하는 작업**을 순서대로 모은 문서. 매 배포마다 반복하는 절차(GitLab에 push → 파이프라인 ▶ → 헬스체크)는 1회성이 아니다 → [`deploy.md`](deploy.md). **배포는 GitLab 파이프라인으로만 한다** — 서버에서 `git clone`·`docker compose up`을 손으로 치지 않는다. 러너·배포 폴더·되돌리기는 [`gitlab-runner.md`](gitlab-runner.md). 백업·복구는 [`backup.md`](backup.md), db-viewer 연결은 [`db-viewer-readonly.md`](db-viewer-readonly.md).
 
-> 서버 명령은 모두 bash(리눅스) 기준이다. `docker compose` 명령은 **배포 폴더**(기본 `/data/deployments/sop-archivist`)에서 실행한다. 실 IP·사내 호스트명은 이 문서에 쓰지 않는다 — `<server-ip>`, `<keycloak-host>`, `<n8n-host>`, `<ai-host>`, `<embed-host>`를 실제 값으로 바꿔 읽는다. 실값과 시크릿은 서버의 `.env`에만 둔다.
+> 서버 명령은 모두 bash(리눅스) 기준이다. `docker compose` 명령은 **배포 폴더**(`/data/home_<계정>/deployments/sop-archivist`)에서 실행한다. 실 IP·사내 호스트명·사람 계정은 이 문서에 쓰지 않는다 — `<server-ip>`, `<keycloak-host>`, `<n8n-host>`, `<ai-host>`, `<embed-host>`, `<계정>`(서버 계정 — 배포 폴더가 그 계정의 `/data/home_<계정>` 아래다)을 실제 값으로 바꿔 읽는다. 실값과 시크릿은 서버의 `.env`에만 둔다.
 
 | 순서 | 할 일 | 절 |
 |---|---|---|
@@ -46,7 +46,7 @@ docker network create --subnet 10.203.0.0/24 dbv-shared      # 없을 때만
 
 1. 1절 — GitLab 프로젝트 설정(`main` 보호, Private, Auto DevOps 끔, 되돌리기 설정 두 개, 러너 두 개 만들기).
 2. 2절 — 서버에 러너 컨테이너 `gitlab-runner-sop-archivist`를 띄우고 `sop-archivist-test`·`sop-archivist-deploy`를 등록.
-3. 3절 — 배포 폴더 `/data/deployments/sop-archivist`를 만든다(`.env`는 A4).
+3. 3절 — 배포 폴더 `/data/home_<계정>/deployments/sop-archivist`를 만든다(`.env`는 A4).
 
 compose 프로젝트 이름이 `sop-archivist`로 고정돼 있어 `-p` 없이도 bpm 스택과 이름(컨테이너·네트워크·볼륨)이 겹치지 않는다. 이후 손으로 치는 `docker compose` 진단 명령은 배포 폴더에서 실행한다.
 
@@ -66,9 +66,9 @@ Copy-Item .env.example .env
 
 ```bash
 # PC → 서버 (scp는 bash·PowerShell 동일)
-scp .env <계정>@<server-ip>:/data/deployments/sop-archivist/.env
+scp .env <계정>@<server-ip>:/data/home_<계정>/deployments/sop-archivist/.env
 # 서버
-chmod 600 /data/deployments/sop-archivist/.env   # 시크릿이 들어가니 소유자만 읽게
+chmod 600 /data/home_<계정>/deployments/sop-archivist/.env   # 시크릿이 들어가니 소유자만 읽게
 ```
 
 `.env`는 **git·CI 변수에 넣지 않는다.** 배포 Job은 읽기만 하고, `AUTH_MODE`가 `keycloak`이 아니거나 `BACKUP_DIR`이 배포 폴더 안의 다른 상대 경로면 배포를 거절한다. PC의 사본은 아래 "사본 보관" 위치로 옮기고 작업 폴더에 두지 않는다(저장소 폴더 안의 `.env`는 `.gitignore` 대상이지만 실수 여지를 남기지 않는다). 서버 재구축에 필수인 자산이니 **git 밖 안전한 위치에 사본을 따로 보관**한다 — 백업 사이드카는 DB만 덤프한다([`backup.md`](backup.md)).
@@ -110,7 +110,7 @@ chmod 600 /data/deployments/sop-archivist/.env   # 시크릿이 들어가니 소
 - **AI 제안의 품질과 유사도 임계값은 아직 합성 자료 기준이다.** 실제 모델로 시험한 적이 없으니, 첫 배포 뒤 실제 SOP로 제안을 보고 임계값(`backend/app/sop/ai/constants.py`)과 지침·프롬프트(`/api/admin/guidelines`의 버전, `guideline.manage` 권한)를 다시 정한다.
 - 값에 `$`가 들어가면 compose가 변수로 읽으니 `$$`로 쓴다.
 - **backend에는 `env_file:`이 없다.** `.env`의 키가 컨테이너에 닿으려면 `docker-compose.yml`의 backend `environment:`에 명시 매핑돼 있어야 한다. 새 env를 추가할 때는 `settings.py` + `.env.example` + compose 셋이 함께 움직인다(`rules/backend/config.md`).
-- **서버 DB에는 dev 모드를 쓰지 않는다.** `AUTH_MODE=dev`는 로컬 sqlite 전용이다 → C절.
+- **운영 DB에는 dev 모드를 쓰지 않는다.** `AUTH_MODE=dev`는 로컬 sqlite와 따로 둔 개발 스택(:4444, DB 볼륨이 다르다 — [`gitlab-runner.md`](gitlab-runner.md) 9절)에서만 쓴다 → C절.
 
 HR 웹훅 주소와 토큰이 맞는지 `up` 전에 직접 확인할 수 있다. 200과 `{"kind":"employees",...}`가 나오면 정답이다:
 
@@ -149,7 +149,7 @@ realm `ai-portal`(다른 사내 앱과 공유)에 frontend용 **public 클라이
 첫 기동은 첫 파이프라인이다. PC에서 `git push gitlab main`(+ 태그) → GitLab `main` 파이프라인의 test 3개 통과 → `deploy-production` ▶ ([`gitlab-runner.md`](gitlab-runner.md) 4절). Job 로그 끝에 `[deploy] health: /api/health ok, auth mode keycloak, / 200`이 찍히면 기동된 것이다(첫 기동은 마이그레이션 때문에 몇 분 걸릴 수 있다). 서버에서 직접 보고 대역을 확인한다:
 
 ```bash
-cd /data/deployments/sop-archivist
+cd /data/home_<계정>/deployments/sop-archivist
 docker compose ps                                              # 5개 서비스 Up, db healthy
 curl -s http://localhost:7777/api/auth/mode; echo              # keycloakClientId=sop-archivist-frontend (Job 로그에는 본문을 찍지 않는다)
 docker network inspect sop-archivist_default -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}'   # 예: 172.18.0.0/16
@@ -229,7 +229,7 @@ docker compose logs --tail 5 db-backup    # "[db-backup] ... ok sop-archivist_..
 - **서버 볼륨에 dev 모드(`AUTH_MODE=dev`)를 쓰지 않는다.** dev는 `X-Dev-User` 헤더를 그대로 믿는 로컬 우회이고, 기동할 때 가짜 부서 7개·직원 5명(`dev.admin`·`qa.lead`·`qa.member`·`prod.member`·`ops.member`, `source='dev'`)을 DB에 넣는다. HR 동기화는 `source='hr'` 행만 다루므로 이 가짜 직원은 keycloak으로 바꿔도 **디렉터리 선택기에 남는다.** 코드가 자동으로 지우지 않는다(파괴적 동작이라 의도적으로 두지 않았다). 서버를 한 번이라도 dev로 띄웠다면 손으로 정리한다:
 
   ```bash
-  cd /data/deployments/sop-archivist
+  cd /data/home_<계정>/deployments/sop-archivist
   docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
   ```
 

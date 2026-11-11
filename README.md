@@ -65,11 +65,11 @@ AI 제안은 사내 채팅 모델(`AI_*`)과 별개의 사내 임베딩 모델(`
 
 ## 서버 배포
 
-서버(사내 71번)에는 **사내 GitLab 파이프라인으로만 배포한다**(접속 `http://<server-ip>:7777`). 서버에서 `git pull`·`docker compose up`을 손으로 치지 않는다. GitHub `main`을 PC에서 받아 사내 GitLab에 `git push gitlab main`(+ 태그) 하면 테스트가 자동으로 돌고, `deploy-production`의 ▶가 서버의 배포 러너로 docker compose 스택을 올린다(`.gitlab-ci.yml`, `ci/deploy.sh`). 처음 세울 때는 [`setup-once.md`](docs/deploy/setup-once.md)를 순서대로, 이후 배포는 [`deploy.md`](docs/deploy/deploy.md)를 따른다.
+서버(사내 71번)에는 **사내 GitLab 파이프라인으로만 배포한다**(접속 `http://<server-ip>:7777`). 서버에서 `git pull`·`docker compose up`을 손으로 치지 않는다. 작업은 `dev` 브랜치에서 하고, 사내 GitLab에 `git push gitlab dev` 하면 테스트를 기다리지 않고 개발 스택(`http://<server-ip>:4444`)에 바로 올라간다. 확인이 끝나 `dev`를 `main`에 합친 뒤 `git push gitlab main`(+ 태그) 하면 테스트가 자동으로 돌고, `deploy-production`의 ▶가 운영 스택을 올린다(`.gitlab-ci.yml`, `ci/deploy.sh`, 두 스택: [`gitlab-runner.md`](docs/deploy/gitlab-runner.md) 9절). 처음 세울 때는 [`setup-once.md`](docs/deploy/setup-once.md)를 순서대로, 이후 배포는 [`deploy.md`](docs/deploy/deploy.md)를 따른다.
 
 | 문서 | 내용 |
 |---|---|
-| [`docs/deploy/gitlab-runner.md`](docs/deploy/gitlab-runner.md) | GitLab 프로젝트 설정, 러너 두 개(테스트·배포) 등록, 배포 폴더, 평소 흐름, 되돌리기, 비상 수동 경로 |
+| [`docs/deploy/gitlab-runner.md`](docs/deploy/gitlab-runner.md) | GitLab 프로젝트 설정, 러너 두 개(테스트·배포) 등록, 배포 폴더, 평소 흐름, 되돌리기, 비상 수동 경로, 개발 스택(:4444) |
 | [`docs/deploy/setup-once.md`](docs/deploy/setup-once.md) | 최초 1회 셋업 — `.env`, Keycloak 클라이언트, 첫 기동, 첫 HR 동기화, 권한 위임 |
 | [`docs/deploy/deploy.md`](docs/deploy/deploy.md) | 매 배포 절차(파이프라인 ▶), 헬스체크, 트러블슈팅, 롤백 |
 | [`docs/deploy/backup.md`](docs/deploy/backup.md) | 일간 DB 백업 정책과 복구 |
@@ -85,7 +85,7 @@ scripts/    # db-backup.sh (백업 사이드카)
 ci/         # deploy.sh(GitLab 배포 Job 본체) · test-deploy.sh(가짜 docker로 배포 스크립트 검증)
 docs/       # 문서 인덱스 docs/README.md — deploy/(배포 런북), lessons/(시행착오), superpowers/(설계 명세·계획)
 docker-compose.yml   # proxy · frontend · backend · db · db-backup
-.gitlab-ci.yml       # 사내 GitLab: test 3개 자동, deploy-production 수동(main)
+.gitlab-ci.yml       # 사내 GitLab: test 3개 자동, deploy-dev 자동(dev, 테스트를 기다리지 않음), deploy-production 수동(main)
 ```
 
 ## 문서

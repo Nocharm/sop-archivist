@@ -5,10 +5,11 @@ import type { ReactNode } from "react";
 
 import { PaneZoom } from "@/components/assign/pane-zoom";
 import { Paper } from "@/components/paper/paper";
+import { PartTabs } from "@/components/paper/part-tabs";
 import { Select, type SelectOption } from "@/components/ui/select";
 import type { ViewUnit } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
-import type { PaperModel } from "@/lib/paper-model";
+import type { PaperModel, PaperTabKey } from "@/lib/paper-model";
 
 interface OldPaneProps {
   docOptions: SelectOption<string>[];
@@ -24,6 +25,12 @@ interface OldPaneProps {
   pickedIds: ReadonlySet<number>;
   statusOf: (unitId: number) => ViewUnit["status"] | undefined;
   renderNote: (unitIds: number[]) => ReactNode;
+  /** 조각 오른쪽 칸 - 연결 배지 */
+  renderPills: (unitId: number) => ReactNode;
+  /** 내용이 있는 본문·머리말·꼬리말 탭 - 둘 이상일 때만 탭 줄을 그린다 */
+  partKeys: readonly PaperTabKey[];
+  activePart: PaperTabKey;
+  onPartChange: (key: PaperTabKey) => void;
   /** Shift는 일괄 고르기 */
   onUnitClick: (unitId: number, keys: { shiftKey: boolean }) => void;
   figureSource?: { bundleId: number; docId: number };
@@ -49,17 +56,23 @@ export function OldPane(props: OldPaneProps) {
         <span className="flex-1" />
         <PaneZoom value={props.zoom} onStep={props.onZoom} testId="assign-old-zoom" />
       </div>
+      {props.partKeys.length > 1 && (
+        <div className="flex items-center">
+          <PartTabs keys={props.partKeys} active={props.activePart} onChange={props.onPartChange} testIdPrefix="assign-tab" />
+        </div>
+      )}
       <div className="pane-body">
         {model ? (
           <Paper
             model={model}
+            items={props.partKeys.length > 1 ? model[props.activePart] : undefined}
             selectedId={props.selectedId}
             highlightIds={props.highlightIds}
             pickedIds={props.pickedIds}
             onUnitClick={(unitId, _at, event) => props.onUnitClick(unitId, { shiftKey: event.shiftKey })}
             figureSource={props.figureSource}
             contour
-            strips={{ isChecked: IS_CHECKED, hideChecked: true, statusOf: props.statusOf, renderNote: props.renderNote }}
+            strips={{ isChecked: IS_CHECKED, hideChecked: true, statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills }}
             testId="assign-paper"
           />
         ) : (

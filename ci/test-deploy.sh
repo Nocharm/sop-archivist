@@ -46,6 +46,7 @@ case "$1" in
     [ -f "$src/${last#/probe/}" ]; exit $? ;;
   compose)
     shift
+    if [ "$1" = "-p" ]; then shift 2; fi
     case "$1" in
       version) echo "2.99.0-fake"; exit 0 ;;
       config | restart) exit 0 ;;
@@ -177,7 +178,7 @@ failed_run() { [ "$rc" != 0 ]; }
 has_no_secrets() {
   ! grep -qF -e SECRET-PG-VALUE -e SECRET-ISSUER-HOST -e SECRET-CLIENT-ID "$OUT"
 }
-did_not_deploy() { ! has_call "compose up"; }
+did_not_deploy() { ! grep -qE '^compose( -p [^ ]+)? up' "$CTL/calls.log"; }
 
 # A guard must fail with its own message, delete nothing and never reach compose.
 expect_guard_failure() {
@@ -208,8 +209,8 @@ check "sync skips .git" test ! -e "$DEPLOY/.git"
 check "marker records version" grep -qx "version=9.8.7" "$DEPLOY/.deployed"
 check "marker records commit" grep -qx "commit=abc123" "$DEPLOY/.deployed"
 check "probe file cleaned up" test -z "$(find "$DEPLOY" -name '.deploy-probe.*')"
-check "compose up --build ran" has_call "compose up -d --build"
-check "proxy restarted" has_call "compose restart proxy"
+check "compose up --build ran" has_call "compose -p sop-archivist up -d --build"
+check "proxy restarted" has_call "compose -p sop-archivist restart proxy"
 check "db-backup not recreated when unchanged" sh -c "! grep -qF -- '--force-recreate' '$CTL/calls.log'"
 expected_images="$(printf '%s\n' "image inspect nginx:1.27-alpine" "image inspect node:24.22.1-alpine" \
   "image inspect postgres:16-alpine" "image inspect python:3.11-slim")"
@@ -227,12 +228,12 @@ check "output has no secrets" has_no_secrets
 setup_case
 echo "echo backup v1" > "$DEPLOY/scripts/db-backup.sh"
 run_deploy
-check "changed db-backup.sh is recreated" sh -c "[ $rc = 0 ] && grep -qF 'compose up -d --force-recreate db-backup' '$CTL/calls.log'"
+check "changed db-backup.sh is recreated" sh -c "[ $rc = 0 ] && grep -qF 'compose -p sop-archivist up -d --force-recreate db-backup' '$CTL/calls.log'"
 
 setup_case
 rm "$DEPLOY/.deployed"
 run_deploy
-check "first deploy recreates db-backup" sh -c "[ $rc = 0 ] && grep -qF 'compose up -d --force-recreate db-backup' '$CTL/calls.log'"
+check "first deploy recreates db-backup" sh -c "[ $rc = 0 ] && grep -qF 'compose -p sop-archivist up -d --force-recreate db-backup' '$CTL/calls.log'"
 check "first deploy writes the marker" test -f "$DEPLOY/.deployed"
 
 # --- accepted .env variants -------------------------------------------------
@@ -310,20 +311,20 @@ for bad_dir in "/" "/usr"; do
   setup_case
   DEPLOY_ARG="$bad_dir"
   run_deploy
-  check "guard: deploy folder $bad_dir" sh -c "[ $rc != 0 ] && grep -qE \"is '/'|two levels\" '$OUT' && ! grep -qF 'compose up' '$CTL/calls.log'"
+  check "guard: deploy folder $bad_dir" sh -c "[ $rc != 0 ] && grep -qE \"is '/'|two levels\" '$OUT' && ! grep -qF ' up -d' '$CTL/calls.log'"
 done
 
 setup_case
 cp "$DEPLOY/.env" "$SRC/.env"
 DEPLOY_ARG="$SRC"
 run_deploy
-check "guard: deploy folder is the checkout" sh -c "[ $rc != 0 ] && grep -qF 'inside it' '$OUT' && [ -d '$SRC/.git' ] && ! grep -qF 'compose up' '$CTL/calls.log'"
+check "guard: deploy folder is the checkout" sh -c "[ $rc != 0 ] && grep -qF 'inside it' '$OUT' && [ -d '$SRC/.git' ] && ! grep -qF ' up -d' '$CTL/calls.log'"
 
 setup_case
 DEPLOY_ARG="$CASE/builds"
 cp "$DEPLOY/.env" "$CASE/builds/.env"
 run_deploy
-check "guard: checkout inside the deploy folder" sh -c "[ $rc != 0 ] && grep -qF 'checkout is inside' '$OUT' && [ -d '$SRC/.git' ] && ! grep -qF 'compose up' '$CTL/calls.log'"
+check "guard: checkout inside the deploy folder" sh -c "[ $rc != 0 ] && grep -qF 'checkout is inside' '$OUT' && [ -d '$SRC/.git' ] && ! grep -qF ' up -d' '$CTL/calls.log'"
 
 # --- health check ------------------------------------------------------------
 setup_case
@@ -349,6 +350,69 @@ setup_case
 touch "$CTL/up-fail"
 run_deploy
 check "compose up failure fails the job with logs" sh -c "[ $rc != 0 ] && grep -qF 'fake backend logs' '$OUT'"
+
+# --- production refuses the dev stack's .env ----------------------------------
+setup_case
+write_env "AUTH_MODE=keycloak" "BACKUP_DIR=./backups" "DBV_NETWORK=dbv-test" "APP_PORT=4444"
+expect_guard_failure "production with the dev port" "APP_PORT is not 7777"
+
+setup_case
+write_env "AUTH_MODE=keycloak" "BACKUP_DIR=./backups" "DBV_NETWORK=dbv-test" "DBV_DB_ALIAS=sop-archivist-dev-db"
+expect_guard_failure "production with the dev db alias" "DBV_DB_ALIAS is not sop-archivist-db"
+
+setup_case
+expect_guard_failure "unknown stack" "SOP_DEPLOY_ENV must be production or dev" SOP_DEPLOY_ENV=staging
+
+# --- dev stack ------------------------------------------------------------------
+# The dev job reads only SOP_DEV_DEPLOY_DIR: a project-level SOP_DEPLOY_DIR (run_deploy always
+# passes one) must not move it, so it points at a folder that does not exist.
+write_dev_env() {
+  write_env "BACKUP_DIR=./backups" "DBV_NETWORK=dbv-test" "APP_PORT=4444" "DBV_DB_ALIAS=sop-archivist-dev-db" "$@"
+}
+
+setup_case
+DEPLOY_ARG="$CASE/data/deployments/production-folder"
+write_dev_env "AUTH_MODE=dev" "DEV_ENFORCE_PERMISSIONS=true"
+echo dev > "$CTL/mode"
+rm "$DEPLOY/.deployed"
+run_deploy SOP_DEPLOY_ENV=dev SOP_DEV_DEPLOY_DIR="$DEPLOY"
+check "dev: deploy exits 0" succeeded
+check "dev: uses SOP_DEV_DEPLOY_DIR, not SOP_DEPLOY_DIR" test -f "$DEPLOY/new-file.txt"
+check "dev: own compose project without the backup sidecar" \
+  has_call "compose -p sop-archivist-dev up -d --build proxy frontend backend db"
+check "dev: first deploy does not recreate db-backup" sh -c "! grep -qF -- 'db-backup' '$CTL/calls.log'"
+check "dev: health accepts auth mode dev" has_output "auth mode dev"
+check "dev: output has no secrets" has_no_secrets
+
+setup_case
+write_dev_env "AUTH_MODE=keycloak"
+run_deploy SOP_DEPLOY_ENV=dev SOP_DEV_DEPLOY_DIR="$DEPLOY"
+check "dev: accepts keycloak" succeeded
+
+setup_case
+write_dev_env "AUTH_MODE=dev"
+expect_guard_failure "dev without DEV_ENFORCE_PERMISSIONS" "needs DEV_ENFORCE_PERMISSIONS=true" \
+  SOP_DEPLOY_ENV=dev SOP_DEV_DEPLOY_DIR="$DEPLOY"
+
+setup_case
+write_dev_env "AUTH_MODE=ldap"
+expect_guard_failure "dev with an unknown auth mode" "must be 'dev' or 'keycloak'" \
+  SOP_DEPLOY_ENV=dev SOP_DEV_DEPLOY_DIR="$DEPLOY"
+
+setup_case
+write_env "AUTH_MODE=keycloak" "BACKUP_DIR=./backups" "DBV_NETWORK=dbv-test"
+expect_guard_failure "dev with the production .env (port)" "APP_PORT must be the dev stack's own port" \
+  SOP_DEPLOY_ENV=dev SOP_DEV_DEPLOY_DIR="$DEPLOY"
+
+setup_case
+write_env "AUTH_MODE=keycloak" "BACKUP_DIR=./backups" "DBV_NETWORK=dbv-test" "APP_PORT=4444"
+expect_guard_failure "dev with the production db alias" "DBV_DB_ALIAS must be the dev stack's own alias" \
+  SOP_DEPLOY_ENV=dev SOP_DEV_DEPLOY_DIR="$DEPLOY"
+
+setup_case
+write_dev_env "AUTH_MODE=dev" "DEV_ENFORCE_PERMISSIONS=true"
+run_deploy SOP_DEPLOY_ENV=dev SOP_DEV_DEPLOY_DIR="$DEPLOY"
+check "dev: health fails when the app runs another auth mode" sh -c "[ $rc != 0 ] && grep -qF 'mode other than dev' '$OUT'"
 
 echo
 echo "passed: $passed, failed: $failed"

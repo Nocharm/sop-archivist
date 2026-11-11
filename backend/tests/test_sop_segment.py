@@ -11,6 +11,7 @@ from app.sop.segment import (
     TableView,
     build_unit_drafts,
     build_unit_text,
+    count_pair_directions,
     detect_language,
     split_sentences,
     suggest_interleaved_pairs,
@@ -222,11 +223,49 @@ def test_suggest_interleaved_pairs() -> None:
 def test_interleaved_pairs_start_at_korean() -> None:
     # 앞머리 영어 줄(회사명·제목) 하나가 짝 방향을 뒤집지 않는다 — 한글 덩어리 뒤의 영어 덩어리만 잇는다
     assert suggest_interleaved_pairs(_langs("en", "ko", "en", "ko", "en")) == [([2], [3]), ([4], [5])]
-    assert suggest_interleaved_pairs(_langs("en", "neutral", "ko")) == []
+    # 영어 뒤 한글도 이제 짝이다(영어 먼저 문서) — 중립은 건너뛴다
+    assert suggest_interleaved_pairs(_langs("en", "neutral", "ko")) == [([3], [1])]
 
 
 def _pair(*units: tuple[str, str]) -> list[tuple[list[int], list[int]]]:
     return suggest_interleaved_pairs([(unit_id, lang, text) for unit_id, (lang, text) in enumerate(units, start=1)])
+
+
+def test_interleaved_pairs_en_first() -> None:
+    assert _pair(
+        ("en", "1. Purpose"), ("ko", "1. 목적"),
+        ("en", "2. Scope"), ("ko", "2. 범위"),
+        ("en", "3. Responsibilities"), ("ko", "3. 책임"),
+    ) == [([2], [1]), ([4], [3]), ([6], [5])]
+
+
+def test_interleaved_pairs_ko_first_unchanged() -> None:
+    assert _pair(
+        ("ko", "1. 목적"), ("en", "1. Purpose"),
+        ("ko", "2. 범위"), ("en", "2. Scope"),
+        ("ko", "3. 책임"), ("en", "3. Responsibilities"),
+    ) == [([1], [2]), ([3], [4]), ([5], [6])]
+
+
+def test_interleaved_pairs_en_first_with_stray_leading_ko() -> None:
+    # 첫 줄 외톨이 한글 뒤로 영어→한글이 반복된다 — 외톨이는 짝 없이 두고 나머지를 맞춘다
+    assert _pair(
+        ("ko", "문서 관리 표준"),
+        ("en", "1. Purpose"), ("ko", "1. 목적"),
+        ("en", "2. Scope"), ("ko", "2. 범위"),
+        ("en", "3. Responsibilities"), ("ko", "3. 책임"),
+    ) == [([3], [2]), ([5], [4]), ([7], [6])]
+
+
+def test_interleaved_pairs_tie_uses_preferred_direction() -> None:
+    # 번호·숫자가 없는 구간은 두 방향이 같은 수로 통과한다 — 기본은 한글 먼저, 문서 우세 순서를 넘기면 그쪽
+    units = [
+        (1, "en", "Put on gloves."), (2, "ko", "장갑을 낀다."), (3, "en", "Close the lid."),
+        (4, "ko", "뚜껑을 닫는다."), (5, "en", "Wash hands."),
+    ]
+    assert suggest_interleaved_pairs(units) == [([2], [3]), ([4], [5])]
+    assert suggest_interleaved_pairs(units, preferred="en_ko") == [([2], [1]), ([4], [3])]
+    assert count_pair_directions(units) == (2, 2)
 
 
 def test_interleaved_pairs_link_translations() -> None:

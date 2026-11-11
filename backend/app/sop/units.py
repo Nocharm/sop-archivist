@@ -25,6 +25,7 @@ from app.sop.segment import (
     UnitDraft,
     build_unit_drafts,
     build_unit_text,
+    count_pair_directions,
     suggest_interleaved_pairs,
 )
 
@@ -155,7 +156,13 @@ async def _create_code_pairs(session: AsyncSession, document_id: int, extraction
         previous_part = part
         if lang != NEUTRAL:
             previous_table = table_id
-    await _insert_pairs(session, document_id, [pair for segment in segments for pair in suggest_interleaved_pairs(segment)])
+    # 번호·숫자가 없어 두 방향이 같은 수로 잡히는 구간은 문서 전체에서 더 많이 잡힌 순서를 따른다
+    totals = [count_pair_directions(segment) for segment in segments]
+    ko_en_total, en_ko_total = sum(t[0] for t in totals), sum(t[1] for t in totals)
+    preferred = "en_ko" if en_ko_total > ko_en_total else "ko_en"
+    await _insert_pairs(
+        session, document_id, [pair for segment in segments for pair in suggest_interleaved_pairs(segment, preferred)]
+    )
 
 
 async def _insert_pairs(

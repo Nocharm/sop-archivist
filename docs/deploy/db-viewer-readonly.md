@@ -1,6 +1,6 @@
 # db-viewer 읽기전용 조회 연결 (서버 수작업분)
 
-같은 71번 서버의 **db-viewer**(스키마 탐색·ERD·행 미리보기, `:6678`)가 이 앱의 PostgreSQL을 **읽기 전용**으로 조회하기 위한 절차. 앱 코드는 바뀌지 않는다. 저장소에 이미 반영된 것은 `docker-compose.yml`의 네트워크 항목 한 덩어리뿐이고, **나머지는 사람이 서버에서 한 번 실행해야 하는 작업**이라 이 문서에 모았다. 서버 명령은 모두 bash 기준이고, `docker compose` 명령은 배포 폴더(기본 `/data/deployments/sop-archivist`, [`gitlab-runner.md`](gitlab-runner.md) 3절)에서 실행한다.
+같은 71번 서버의 **db-viewer**(스키마 탐색·ERD·행 미리보기, `:6678`)가 이 앱의 PostgreSQL을 **읽기 전용**으로 조회하기 위한 절차. 앱 코드는 바뀌지 않는다. 저장소에 이미 반영된 것은 `docker-compose.yml`의 네트워크 항목 한 덩어리뿐이고, **나머지는 사람이 서버에서 한 번 실행해야 하는 작업**이라 이 문서에 모았다. 서버 명령은 모두 bash 기준이고, `docker compose` 명령은 배포 폴더(`/data/home_<계정>/deployments/sop-archivist`, [`gitlab-runner.md`](gitlab-runner.md) 3절)에서 실행한다.
 
 db-viewer 쪽 원본 런북(연결 방식·네트워크 정책·트러블슈팅 총괄)은 그 저장소의 `docs/connect-sources.md`다. 여기는 **이 스택에서 밟는 부분**만 적는다.
 

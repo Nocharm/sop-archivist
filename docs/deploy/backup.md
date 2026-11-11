@@ -1,6 +1,6 @@
 # DB 자동 백업 · 복구 런북
 
-운영 서버(사내 71번) Postgres의 자동 백업 정책과 복구 절차. 백업 주체는 compose의 `db-backup` 사이드카(`scripts/db-backup.sh`, `postgres:16-alpine` — db와 동일 이미지). 서버 명령은 모두 bash 기준이고, `docker compose` 명령은 **배포 폴더**(기본 `/data/deployments/sop-archivist`, [`gitlab-runner.md`](gitlab-runner.md) 3절)에서 실행한다. 복구는 파이프라인이 아니라 사람이 손으로 하는 절차다.
+운영 서버(사내 71번) Postgres의 자동 백업 정책과 복구 절차. 백업 주체는 compose의 `db-backup` 사이드카(`scripts/db-backup.sh`, `postgres:16-alpine` — db와 동일 이미지). 서버 명령은 모두 bash 기준이고, `docker compose` 명령은 **배포 폴더**(`/data/home_<계정>/deployments/sop-archivist`, [`gitlab-runner.md`](gitlab-runner.md) 3절)에서 실행한다. 복구는 파이프라인이 아니라 사람이 손으로 하는 절차다.
 
 > 최초 셋업(`BACKUP_DIR`·`BACKUP_RETENTION_DAYS` 결정, `.env` 사본 별도 보관)은 [`setup-once.md`](setup-once.md) A4·A11. 이 문서는 정책과 **복구 절차**를 다룬다.
 

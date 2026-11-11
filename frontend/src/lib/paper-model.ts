@@ -222,6 +222,13 @@ const TEXT_KINDS = new Set(["sentence", "heading", "cell_sentence"]);
 /** 틈의 합치기를 쓸 수 없는 까닭 - 언어가 다름, 글이 아닌 것(표·그림), 칸 문장 규칙 */
 export type MergeBlocker = "mixed_language" | "not_text" | "cell";
 
+/** 합칠 수 없는 까닭 → 문구 키 - 틈의 합치기 단추와 우클릭 메뉴가 같이 쓴다 */
+export const MERGE_BLOCKER_KEYS: Record<MergeBlocker, string> = {
+  mixed_language: "split.noMergeLanguage",
+  not_text: "split.noMergeKind",
+  cell: "split.noMergeCell",
+};
+
 /** 두 단위를 합칠 수 없는 까닭(서버 `_plan_merge`와 같은 기준) - 합칠 수 있으면 null */
 export function getMergeBlocker(a: ViewUnit, b: ViewUnit): MergeBlocker | null {
   if (!TEXT_KINDS.has(a.kind) || !TEXT_KINDS.has(b.kind)) return "not_text";

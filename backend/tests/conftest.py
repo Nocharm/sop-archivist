@@ -8,7 +8,9 @@ from typing import Any
 
 # app.settings import 전에 테스트 DB로 고정 — 개발용 dev.db를 건드리지 않는다.
 # cwd와 무관하게 backend/ 아래 같은 파일을 쓰고(.gitignore의 test_*.db), 세션마다 새로 시작한다.
-_TEST_DB = pathlib.Path(__file__).resolve().parent.parent / "test_sopa.db"
+# pytest-xdist 작업자(gw0, gw1 …)는 저마다 파일을 따로 써서 서로의 정리·시드를 밟지 않는다.
+_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "")
+_TEST_DB = pathlib.Path(__file__).resolve().parent.parent / (f"test_sopa_{_WORKER}.db" if _WORKER else "test_sopa.db")
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TEST_DB}"
 _TEST_DB.unlink(missing_ok=True)
 

@@ -220,7 +220,10 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   await page.mouse.click(box.x + Math.min(box.width / 2, 120), box.y + box.height / 2);
   await page.waitForTimeout(300);
   check("a second single click does not cut", (await page.locator(`[data-testid="split-paper-unit-${unitId}"][data-cut]`).count()) === 0);
-  await page.mouse.dblclick(box.x + Math.min(box.width / 2, 120), box.y + box.height / 2);
+  // 고른 조각 곁 틈이 늦게 벌어지며 조각이 밀리니, 벌어진 뒤 자리를 다시 잰다
+  await page.waitForTimeout(700);
+  const settled = await target.boundingBox();
+  await page.mouse.dblclick(settled.x + Math.min(settled.width / 2, 120), settled.y + settled.height / 2);
   await page.locator(`[data-testid="split-paper-unit-${unitId}"][data-cut]`).waitFor({ timeout: T });
   check("double-click draws the cut with the split popup", (await page.locator('[data-testid="split-cut-run"]').count()) === 1);
   await takeShot("sop-split-cut.png");
@@ -235,7 +238,9 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   check("Ctrl+Z undoes the split", true);
   // 나눈 뒤 사이의 합치기를 누르면 원래 한 조각으로 돌아온다. 나누기 팝업은 잠깐 뒤에 뜬다
   const targetText = (await target.innerText()).trim();
-  await page.mouse.dblclick(box.x + Math.min(box.width / 2, 120), box.y + box.height / 2);
+  await page.waitForTimeout(700);
+  const again = await target.boundingBox();
+  await page.mouse.dblclick(again.x + Math.min(again.width / 2, 120), again.y + again.height / 2);
   const cutRun = page.locator('[data-testid="split-cut-run"]');
   await cutRun.waitFor({ timeout: T });
   check("the cut can be dragged", (await page.locator('[data-testid="split-paper-cut-handle"]').count()) === 1);
@@ -284,6 +289,57 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   await wait(page, "overview-gate-boundaries");
   check("next action is checking boundaries", (await page.locator('[data-testid="overview-next"]').getAttribute("data-action")) === "check_boundaries");
   check("boundaries gate is open", (await page.locator('[data-testid="overview-gate-boundaries"]').getAttribute("data-ok")) === null);
+});
+
+await runStep("split: per-sentence AI split, whole-document request, tab stack", {}, async ({ page, takeShot }) => {
+  const status = await page.request.get(`${BASE}/api/bundles/1/ai/status`, { headers: { "X-Dev-User": "qa.member" } });
+  if (!status.ok() || !(await status.json()).ai_enabled) {
+    console.log("  (AI is off in this backend - skipped)");
+    return;
+  }
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  await page.goto(`${BASE}/bundles/${freshId}/split`);
+  const units = page.locator('[data-testid^="split-paper-unit-"].su');
+  await units.first().waitFor({ timeout: T });
+  check("the whole-document button says so", (await getText(page, "split-ai-request")).includes("whole document"));
+  const long = units.filter({ hasText: /\S{3,}.{40,}/ }).first();
+  const unitId = (await long.getAttribute("data-testid")).replace("split-paper-unit-", "");
+  await long.click();
+  await wait(page, "split-ai-unit");
+  check("the right panel offers AI split for this sentence", (await page.locator('[data-testid="split-ai-unit"]').isEnabled()));
+  await page.locator('[data-testid="split-ai-unit"]').click();
+  const tab = page.locator(`[data-testid="split-ai-tab-${unitId}"]`);
+  await tab.waitFor({ timeout: 30000 });
+  check("a tab for that sentence appears without a reload", true);
+  check("a single request is not marked as a whole-document result", (await tab.getAttribute("data-batch")) === null);
+  check("the selected sentence's tab is already seen", (await tab.getAttribute("data-unseen")) === null);
+  check("the button is off while the sentence has a suggestion", await page.locator('[data-testid="split-ai-unit"]').isDisabled());
+  // 일괄 요청 - 여러 탭이 쌓이고 머리에 일괄 표시가 붙는다
+  await page.locator('[data-testid="split-ai-request"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid^="split-ai-tab-"][data-batch="true"]').length >= 2, null, { timeout: 40000 });
+  check("whole-document results stack as batch tabs", true);
+  check("the header counts the whole-document results", /Whole document · \d+ left/.test(await getText(page, "split-ai-batch-head")));
+  const unseen = page.locator('[data-testid^="split-ai-tab-"][data-unseen="true"]').first();
+  const unseenId = (await unseen.getAttribute("data-testid")).replace("split-ai-tab-", "");
+  await unseen.click();
+  await page.locator(`[data-testid="split-paper-unit-${unseenId}"][data-sel]`).waitFor({ timeout: T });
+  check("a tab selects its sentence", true);
+  check("opening a tab clears its dot", (await page.locator(`[data-testid="split-ai-tab-${unseenId}"]`).getAttribute("data-unseen")) === null);
+  await wait(page, "split-ai-suggestion");
+  await takeShot("v014-task7-tabs.png");
+  // 단일 요청의 제안을 적용하면 탭이 빠지고 조각이 늘며, 되돌리면 돌아온다
+  await page.locator(`[data-testid="split-ai-tab-${unitId}"]`).click();
+  const before = await units.count();
+  await page.locator('[data-testid="split-ai-apply"]').click();
+  await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-unit-"].su').length > n, before, { timeout: T });
+  check("apply splits the sentence", true);
+  await page.locator(`[data-testid="split-ai-tab-${unitId}"]`).waitFor({ state: "detached", timeout: T });
+  check("the applied tab leaves the stack", true);
+  await page.keyboard.press("Control+z");
+  await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-unit-"].su').length === n, before, { timeout: T });
+  check("Ctrl+Z undoes the AI split", true);
 });
 
 // 일부러 거절당하는 저장이 있어 콘솔 오류를 허용한다
@@ -487,6 +543,60 @@ await runStep("split: H holds a unit without a destination", {}, async ({ page }
   check("a cleared reason stays empty", (await page.locator('[data-testid="assign-reason"]').inputValue()) === "");
 });
 
+await runStep("split: right-click menu shows reasons for blocked actions and runs an enabled one", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${freshBundleId}/split`);
+  const units = page.locator('[data-testid^="split-paper-unit-"]:not(.ptbl-cap)');
+  await units.nth(9).waitFor({ timeout: T });
+  const first = units.nth(4);
+  await first.click();
+  // 고른 채 먼 문장을 우클릭 - 두 문장 메뉴
+  await units.nth(9).click({ button: "right" });
+  await wait(page, "split-menu");
+  check("right-click opens the two-sentence menu", (await page.locator('[data-testid^="split-menu-"]').count()) === 4, String(await page.locator('[data-testid^="split-menu-"]').count()));
+  const merge = page.locator('[data-testid="split-menu-merge"]');
+  check("merge is disabled for non-neighbours", (await merge.getAttribute("aria-disabled")) === "true");
+  await merge.hover();
+  await page.locator('[data-testid="paper-tip"]').waitFor({ timeout: T });
+  check("hovering a disabled item shows why", ((await page.locator('[data-testid="paper-tip"]').innerText()) ?? "").length > 0, await page.locator('[data-testid="paper-tip"]').innerText());
+  await takeShot("sop-split-menu.png");
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="split-menu"]').waitFor({ state: "detached", timeout: T });
+  check("Esc closes the menu", true);
+  // 고른 문장 자신을 우클릭 - 한 문장 메뉴, 경계 확인이 바로 된다
+  await first.click({ button: "right" });
+  await wait(page, "split-menu-check");
+  check("right-click on the selected sentence lists the single actions", (await page.locator('[data-testid="split-menu-ai_split"]').count()) === 1);
+  // 앞 단계가 경계를 이미 확인해 두었을 수 있다 - 항목은 지금 상태를 뒤집는다(확인하면 다음 확인 안 된 문장으로 넘어가니 줄의 확인 표시로 본다)
+  const firstUnitId = (await first.getAttribute("data-testid")).replace("split-paper-unit-", "");
+  const mark = page.locator(`[data-testid="split-paper-mark-checked-${firstUnitId}"]`);
+  const wasChecked = (await mark.count()) > 0;
+  await page.locator('[data-testid="split-menu-check"]').click();
+  await page.waitForFunction(([id, was]) => (document.querySelector(`[data-testid="split-paper-mark-checked-${id}"]`) !== null) !== was, [firstUnitId, wasChecked], { timeout: T });
+  // 짝 풀기 → 짝 만들기: 짝이 있는 문장을 고르고 그 짝(다른 문장)을 우클릭한다
+  const toastOk = (text) => page.waitForFunction((word) => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((el) => el.textContent?.includes(word)), text, { timeout: T });
+  let partnerId = null;
+  for (let at = 0; at < 8 && partnerId === null; at += 1) {
+    await units.nth(at).click();
+    const partner = page.locator('[data-testid^="split-pair-unit-"]').first();
+    if (await partner.count()) partnerId = (await partner.getAttribute("data-testid")).replace("split-pair-unit-", "");
+  }
+  check("found a selected sentence with a pair", partnerId !== null);
+  const partnerUnit = page.locator(`[data-testid="split-paper-unit-${partnerId}"]`).first();
+  await partnerUnit.click({ button: "right" });
+  await wait(page, "split-menu-unpair");
+  check("pair is off for an existing pair, unpair is on", (await page.locator('[data-testid="split-menu-pair"]').getAttribute("aria-disabled")) === "true" && (await page.locator('[data-testid="split-menu-unpair"]').getAttribute("aria-disabled")) === null);
+  await page.locator('[data-testid="split-menu-unpair"]').click();
+  await toastOk("Pair removed");
+  await page.waitForFunction(() => document.querySelector('[data-testid="split-pair-status"]') === null, null, { timeout: T });
+  await partnerUnit.click({ button: "right" });
+  await wait(page, "split-menu-pair");
+  check("pair is on for an unpaired KO/EN couple", (await page.locator('[data-testid="split-menu-pair"]').getAttribute("aria-disabled")) === null);
+  await page.locator('[data-testid="split-menu-pair"]').click();
+  await toastOk("Pair confirmed");
+  await page.locator('[data-testid="split-pair-status"]').waitFor({ timeout: T });
+  check("Make pair confirms at once", (await getText(page, "split-pair-status")).trim() === "Confirmed", await getText(page, "split-pair-status"));
+});
+
 await runStep("assign: hold an unassigned unit without a destination", {}, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
   await wait(page, "assign-bar");
@@ -608,13 +718,13 @@ await runStep("assign: written New document - identical, link by clicking, split
   }
   // 누르면 후보가 아니라 고른 문장이 된다 - 같은 줄을 계속 가리키게 testid로 붙잡는다
   const firstLine = page.locator(`[data-testid="${await candidate.first().getAttribute("data-testid")}"]`);
-  const lang = (await firstLine.locator(".ptag").innerText()).trim().toLowerCase();
+  const lang = (await firstLine.getAttribute("data-lang"));
   // 줄 가운데를 누르면 오른쪽 출처 칩에 닿을 수 있다 - 고르는 단추를 누른다
   await firstLine.locator(".new-hit").click();
   check("clicking a New sentence picks it", (await firstLine.getAttribute("data-state")) === "picked");
   // 맥에서 Ctrl+클릭은 오른쪽 클릭이다 - 화면은 ⌘도 같은 뜻으로 받는다
   const multi = process.platform === "darwin" ? "Meta" : "Control";
-  const sameLang = page.locator(`[data-testid="assign-new"] .new-line:has(.ptag.${lang}):not([data-state="picked"])`);
+  const sameLang = page.locator(`[data-testid="assign-new"] .new-line[data-lang="${lang}"]:not([data-state="picked"])`);
   const second = page.locator(`[data-testid="${await sameLang.first().getAttribute("data-testid")}"]`);
   await second.locator(".new-hit").click({ modifiers: [multi] });
   await page.locator('[data-testid^="assign-link-"]').nth(1).waitFor({ timeout: T });
@@ -634,11 +744,9 @@ await runStep("assign: written New document - identical, link by clicking, split
   check("the link saves", savedResponse.ok(), savedResponse.ok() ? "" : (await savedResponse.text()).slice(0, 300));
   await page.waitForLoadState("networkidle");
   check("linking to a written sentence adds the Old source", (await readSources()) > sourcesBefore, String(sourcesBefore));
-  // 문서별 확대 - Old 위에서 Ctrl+휠, New는 그대로(다음 조각으로 넘어가 New 원문이 닫혔으면 연다)
-  // 다음 조각의 후보가 늦게 오면 New 원문이 저절로 열렸다 닫힌다 - 자리 잡을 때까지 기다렸다가 닫혀 있으면 연다
+  // 문서별 확대 - Old 위에서 Ctrl+휠, New는 그대로
   await page.waitForLoadState("networkidle");
   await page.waitForTimeout(400);
-  if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-toggle-new"]').click();
   await wait(page, "assign-new-zoom-value");
   const oldZoom = await getText(page, "assign-old-zoom-value");
   const newZoom = await getText(page, "assign-new-zoom-value");
