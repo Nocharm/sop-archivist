@@ -319,40 +319,54 @@ const AUDIT_ENTRIES = [
       await page.waitForTimeout(SETTLE_MS);
     },
     measure: async (page) => {
-      const widths = await page.locator('[data-testid^="output-c-row-"]').evaluateAll((rows) => rows.map((row) => {
-        const item = row.querySelector('[data-testid^="output-c-item-"]');
-        // 번호·들여쓰기는 줄의 일부다 - 줄 오른쪽 끝에 남겨 둔 여백만 잰다
-        return item ? row.getBoundingClientRect().right - item.getBoundingClientRect().right : 0;
-      }));
-      const worstGap = Math.round(Math.max(0, ...widths));
-      // 호버했을 때 단추 묶음 상자가 그 줄과 다음 줄의 글 상자와 겹치는 가장 큰 높이(px)
+      // 2줄 이상으로 접히는 글 줄의 오른쪽 남는 폭 - 번호·들여쓰기는 줄의 일부라 row 폭 대신 줄 오른쪽 끝 차이로 잰다
+      const worstGap = await page.locator('[data-testid^="output-c-row-"]').evaluateAll((rows) => {
+        let worst = 0;
+        for (const row of rows) {
+          const item = row.querySelector('[data-testid^="output-c-item-"]');
+          if (!item) continue;
+          const range = document.createRange();
+          range.selectNodeContents(item);
+          const lines = new Set([...range.getClientRects()].map((r) => Math.round(r.top)));
+          if (lines.size < 2) continue;
+          worst = Math.max(worst, row.getBoundingClientRect().right - item.getBoundingClientRect().right);
+        }
+        return Math.round(worst);
+      });
       const rows = page.locator('[data-testid^="output-c-row-"]');
+      const total = Math.min(await rows.count(), 16);
       let overlap = 0;
-      const total = Math.min(await rows.count(), 12);
+      let restOpacity = null;
+      let hoverOpacity = null;
+      const overlapOf = (row) => row.evaluate((el) => {
+        const actions = el.querySelector(".row-actions-quiet").getBoundingClientRect();
+        let worst = 0;
+        for (const box of document.querySelectorAll('[data-testid^="output-c-item-"]')) {
+          const b = box.getBoundingClientRect();
+          const h = Math.min(actions.bottom, b.bottom) - Math.max(actions.top, b.top);
+          const w = Math.min(actions.right, b.right) - Math.max(actions.left, b.left);
+          if (h > 0.5 && w > 0.5) worst = Math.max(worst, h);
+        }
+        return Math.round(worst);
+      });
+      const opacityOf = (row) => row.locator(".row-actions-quiet").evaluate((el) => Math.round(Number(getComputedStyle(el).opacity) * 100) / 100);
       for (let i = 0; i < total; i += 1) {
         const row = rows.nth(i);
-        if ((await row.locator(".row-actions").count()) === 0) continue;
+        if ((await row.locator(".row-actions-quiet").count()) === 0) continue;
         await row.scrollIntoViewIfNeeded();
+        await page.mouse.move(0, 0);
+        await page.waitForTimeout(300);
+        overlap = Math.max(overlap, await overlapOf(row));
+        restOpacity ??= await opacityOf(row);
         await row.hover({ position: { x: 8, y: 4 } });
-        await page.waitForTimeout(250);
-        const px = await row.evaluate((el) => {
-          const actions = el.querySelector(".row-actions").getBoundingClientRect();
-          const boxes = [el, el.nextElementSibling].filter(Boolean).map((r) => r.querySelector('[data-testid^="output-c-item-"]')).filter(Boolean);
-          let worst = 0;
-          for (const box of boxes) {
-            const b = box.getBoundingClientRect();
-            const h = Math.min(actions.bottom, b.bottom) - Math.max(actions.top, b.top);
-            const w = Math.min(actions.right, b.right) - Math.max(actions.left, b.left);
-            if (h > 0 && w > 0) worst = Math.max(worst, h);
-          }
-          return worst;
-        });
-        overlap = Math.max(overlap, Math.round(px));
+        await page.waitForTimeout(300);
+        overlap = Math.max(overlap, await overlapOf(row));
+        hoverOpacity ??= await opacityOf(row);
       }
-      return { worstGap, overlap };
+      return { worstGap, overlap, restOpacity, hoverOpacity };
     },
-    expect: (value) => value.worstGap <= 24 && value.overlap === 0,
-    note: "item right edge within 24px of row right edge (no reserved padding); hover action box overlaps neither this nor the next line's text box",
+    expect: (value) => value.worstGap <= 24 && value.overlap === 0 && value.restOpacity >= 0.4 && value.restOpacity <= 0.5 && value.hoverOpacity === 1,
+    note: "wrapped lines fill the row (right gap <= 24px); action group overlaps no text box at rest or hovered; opacity ~0.45 at rest, 1 on hover",
   },
   {
     id: "C9", ds: "worst", user: MEMBER, views: [1120],

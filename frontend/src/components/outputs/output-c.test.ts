@@ -93,10 +93,10 @@ describe("OutputCView", () => {
     expect(onMark).toHaveBeenCalledTimes(1);
     // 번역 줄은 출처의 표시를 따라가므로 고르는 단추가 없다
     expect(host.querySelector('[data-testid="output-c-mark-4"]')).toBeNull();
-    // 줄 끝 단추는 줄 아래에 겹쳐 그리므로 오른쪽 예약 여백이 없다(글 폭이 줄지 않는다)
+    // 줄 끝 단추는 글 흐름 안(늘 흐리게)이라 오른쪽 예약 여백이 없다(글 폭이 줄지 않는다)
     for (const id of [3, 4]) {
       expect(host.querySelector(`[data-testid="output-c-row-${id}"]`)?.className).not.toMatch(/\bpr-\[/);
-      expect(host.querySelector(`[data-testid="output-c-row-${id}"] .row-actions`)?.className).toContain("top-full");
+      expect(host.querySelector(`[data-testid="output-c-row-${id}"] .row-actions-quiet`)?.className).not.toContain("absolute");
     }
     act(() => root.unmount());
   });

@@ -1359,11 +1359,15 @@
 /* ---- 결과물 C 섹션 번호(2026-11-10): 줄 앞 번호와 깊이만큼 들여쓰기, 눌러 고른 줄(Tab으로 들이기) ---- */
 @layer components {
   .c-line { --c-indent: 1.5em; }
+  /* 줄은 글 + 줄 끝 단추 묶음의 감김 줄 - 글이 폭을 채우면 단추 묶음이 글 바로 아래 제 줄로 내려간다(높이는 호버로 변하지 않는다) */
+  .c-row { display: flex; flex-wrap: wrap; align-items: flex-start; }
+  .c-row > .c-line { flex: 1 1 auto; min-width: 0; }
+  .c-row > .row-actions-quiet { flex: none; margin-left: auto; }
   .c-line[data-numbered] { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; column-gap: 0.6em; }
   .c-no { font-family: var(--font-mono); font-size: 0.8em; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
   /* 줄 고르기는 마우스로만(tabIndex -1) - 전역 :focus-visible 테두리가 안 걸리므로 바탕과 왼쪽 막대로 고른 줄을 보인다 */
   .c-row:focus { outline: none; background: var(--accent-tint); box-shadow: inset 2px 0 0 var(--accent); }
-  .c-row:focus .row-actions { opacity: 1; background: transparent; }
+  .c-row:focus .row-actions-quiet { opacity: 1; }
   /* 번호 표시 세 칸 - 줄 끝 단추 높이(24px)에 맞춘 작은 눌림 단추 */
   .c-mark { gap: 1px; padding: 1px; }
   .c-mark button { width: 22px; height: 22px; }

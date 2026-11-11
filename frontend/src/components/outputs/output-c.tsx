@@ -74,7 +74,7 @@ interface RowButtonsProps {
 function RowButtons({ items, item, busy, onMove, indent, onMark }: RowButtonsProps) {
   const { t } = useI18n();
   return (
-    <span className="row-actions absolute right-0 top-full z-10 flex gap-0.5 bg-paper" style={{ fontFamily: "var(--font-ui)" }}>
+    <span className="row-actions-quiet flex gap-0.5" style={{ fontFamily: "var(--font-ui)" }}>
       {onMark && (
         // 세 칸 눌림 단추 - 떠 있는 메뉴를 쓰지 않아 옆 글자를 덮지 않는다. 아이콘만 있으니 툴팁이 뜻을 알려 준다
         <span className="view-toggle c-mark mr-1" role="group" aria-label={t("outputs.markGroup")} data-testid={`output-c-mark-${item.target_id}`}>
@@ -223,8 +223,8 @@ export function OutputCView({ data, lang, onMove, onIndent, onMark, moving = fal
                           key={item.target_id}
                           // 줄을 눌러 고르면 Tab·Shift+Tab이 들이고 내어 쓴다. 탭 순서에는 넣지 않고(-1) Esc로 놓아 Tab이 페이지 이동을 빼앗지 않게 한다
                           tabIndex={indent ? -1 : undefined}
-                          // 줄 끝 단추는 줄 아래(top-full)에 겹쳐 그린다 - 자리를 잡지 않으니 글 폭을 줄이지 않고 호버로 높이도 변하지 않는다
-                          className="hover-row c-row relative"
+                          // 줄 끝 단추는 글 뒤 같은 flex 줄에 둔다(.c-row) - 글이 폭을 채우면 아래로 감겨 겹치지 않고, 늘 흐리게 보여 호버로 높이가 변하지 않는다
+                          className="hover-row c-row"
                           data-testid={`output-c-row-${item.target_id}`}
                           onKeyDown={(event) => {
                             if (!indent || event.target !== event.currentTarget) return;

@@ -149,7 +149,7 @@ const mbtnScenes = [
   },
 }));
 
-// C 줄 끝 단추(번호 표시·들여쓰기·옮기기) - 줄 아래 홈에 겹쳐 그려지고 줄에 올리면 드러난다. 줄의 가로 범위를 벗어나지 않아야 하고, 아래(다음 줄)·옆 글자를 덮지 않아야 한다
+// C 줄 끝 단추(번호 표시·들여쓰기·옮기기) - 글 뒤 같은 줄(넘치면 글 바로 아래)에 늘 흐리게 있고 줄에 올리면 또렷해진다. 줄의 가로 범위를 벗어나지 않아야 하고, 어떤 글자도 덮지 않아야 한다
 const outputsScene = {
   name: "outputs-c-rows",
   user: "qa.member",
@@ -163,15 +163,20 @@ const outputsScene = {
     }
     let checked = 0;
     for (const row of (await rows.all()).slice(0, 8)) {
-      const actions = row.locator(".row-actions");
+      const actions = row.locator(".row-actions-quiet");
       if ((await actions.count()) === 0) continue;
       await row.scrollIntoViewIfNeeded();
+      // 가만히 있을 때(흐린 상태)와 올렸을 때(또렷한 상태) 둘 다 잰다
+      await page.mouse.move(0, 0);
+      await page.waitForTimeout(400);
+      const rest = await findCovered(actions);
+      if (rest.hits.length > 0) report(`${await row.getAttribute("data-testid")} buttons at rest (${rest.width}px)`, rest.hits.join(", "));
       await row.hover({ position: { x: 8, y: 8 } });
       await page.waitForTimeout(HOVER_SETTLE_MS);
       const { hits, width } = await findCovered(actions);
       if (hits.length > 0) report(`${await row.getAttribute("data-testid")} buttons (${width}px)`, hits.join(", "));
       const isOutside = await row.evaluate((el) => {
-        const box = el.querySelector(".row-actions").getBoundingClientRect();
+        const box = el.querySelector(".row-actions-quiet").getBoundingClientRect();
         const line = el.getBoundingClientRect();
         return box.left < line.left - 1 || box.right > line.right + 1;
       });
