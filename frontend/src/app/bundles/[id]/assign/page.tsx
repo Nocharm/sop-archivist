@@ -1496,8 +1496,10 @@ export default function AssignPage() {
                     onJumpSource={jumpToOld}
                     zoom={view.zoomNew}
                     onZoom={(dir) => zoomPane("new", dir)}
+                    linesOn={view.lines}
+                    onToggleLines={() => changeView({ lines: !view.lines })}
                   />
-                  <LinkLines pairs={linkPairs} focusUnits={highlightIds} focusTargets={pickedNew} />
+                  <LinkLines pairs={linkPairs} focusUnits={highlightIds} focusTargets={pickedNew} visible={view.lines} />
                 </>
               )}
             </div>
