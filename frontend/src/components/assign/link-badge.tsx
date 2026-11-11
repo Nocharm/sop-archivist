@@ -5,6 +5,7 @@
 import { ArrowUp, ArrowDown, FileText } from "lucide-react";
 
 import type { WrittenSentence } from "@/lib/api-sop";
+import { Tooltip } from "@/components/ui/tooltip";
 import { useI18n } from "@/lib/i18n";
 
 interface LinkBadgeProps {
@@ -25,11 +26,13 @@ export function LinkBadge({ unitId, targets, currentDocId, onJump }: LinkBadgePr
   const { t } = useI18n();
   const target = pickBadgeTarget(targets, currentDocId);
   if (!target) return null;
-  return (
+  const isAi = targets.some((item) => item.status === "ai_suggested");
+  const badge = (
     <button
       type="button"
       className="lbadge"
       aria-label={t("assign.jumpBadge", { id: target.doc_code })}
+      data-ai={isAi ? "" : undefined}
       data-link-badge={unitId}
       data-targets={targets.map((item) => `${item.target_doc_id}:${item.target_id}`).join(",")}
       data-testid={`assign-link-badge-${unitId}`}
@@ -45,4 +48,5 @@ export function LinkBadge({ unitId, targets, currentDocId, onJump }: LinkBadgePr
       <FileText size={11} strokeWidth={2} className="lbadge-dir" data-d="otherDoc" aria-hidden />
     </button>
   );
+  return isAi ? <Tooltip label={t("assign.linkBadge.ai")}>{badge}</Tooltip> : badge;
 }

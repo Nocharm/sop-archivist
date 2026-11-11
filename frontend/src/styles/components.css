@@ -1055,6 +1055,7 @@
   .strip-pills { position: absolute; right: var(--pg-pad-r); top: 7px; width: var(--pill-col); display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
   .strip-pills:empty { display: none; }
   .lbadge { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; padding: 0 5px; height: 18px; border-radius: var(--r-1); font: 600 10px / 1 var(--font-mono); white-space: nowrap; background: var(--st-ok-tint); color: var(--st-ok-ink); cursor: pointer; box-shadow: inset 0 0 0 1px transparent; }
+  .lbadge[data-ai] { background: var(--st-ai-tint); color: var(--st-ai-ink); outline: 1px dashed var(--st-ai-ink); outline-offset: -1px; }
   .lbadge:hover { box-shadow: inset 0 0 0 1px var(--st-ok-ink); }
   .lbadge-code { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .lbadge-dir { display: none; flex: none; }

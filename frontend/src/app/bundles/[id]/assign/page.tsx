@@ -288,7 +288,7 @@ export default function AssignPage() {
     menuSeq.current += 1;
     setMenu({ seq: menuSeq.current, anchor, offset: readMenuOffset(anchor, event), rowKey, targetId });
   }
-  const [jump, setJump] = useState<{ side: "old" | "new"; id: number; targetId: number; rowKey: string } | null>(null);
+  const [jump, setJump] = useState<{ side: "old" | "new"; id: number; targetId: number; rowKey: string; quiet?: boolean } | null>(null);
   // 고른 줄이 어떤 길로든 바뀌면(↑↓·저장 뒤 다음 줄·짝 풀림·문서 바꾸기) 메뉴를 닫는다 - 다른 줄에서 낡은 메뉴가 되살아나지 않게(렌더 중 상태 맞추기)
   if (menu !== null && menu.rowKey !== activeKey) setMenu(null);
   const focusNew = mode === "unsourced" ? (unsourced.find((item) => item.target_id === selNew)?.target_id ?? unsourced[0]?.target_id ?? null) : null;
@@ -675,6 +675,13 @@ export default function AssignPage() {
     setJump({ side: "new", id: targetId, targetId, rowKey: key });
   }
 
+  /** Old 조각의 연결 배지를 누름 - 고름·메뉴는 그대로 두고 오른쪽 칸을 그 문장으로 보내 번쩍이게만 한다 */
+  function showInNew(targetId: number) {
+    const docId = writtenMap.get(targetId)?.target_doc_id;
+    if (docId !== undefined) setManualNewDoc({ key: toggleKey, docId });
+    setJump({ side: "new", id: targetId, targetId, rowKey: "", quiet: true });
+  }
+
   /** New 문장의 "← 출처" 칩을 누름 - 그 출처 줄을 고르고(다른 Old 문서면 그 문서로) Old의 그 조각으로 간다 */
   function jumpToOld(unitId: number, targetId: number) {
     const key = rowOfUnit.get(unitId);
@@ -703,7 +710,7 @@ export default function AssignPage() {
       }
       revealElement(el);
       flashElement(el);
-      openMenu(el, null, jump.rowKey, jump.targetId);
+      if (!jump.quiet) openMenu(el, null, jump.rowKey, jump.targetId);
       setJump(null);
     });
     return () => cancelAnimationFrame(frame);
@@ -1438,7 +1445,7 @@ export default function AssignPage() {
                 renderNote={placeOf}
                 renderPills={(unitId) => {
                   const targets = linkedTargets.get(unitId);
-                  return targets ? <LinkBadge unitId={unitId} targets={targets} currentDocId={newDocId} onJump={jumpToNew} /> : null;
+                  return targets ? <LinkBadge unitId={unitId} targets={targets} currentDocId={newDocId} onJump={(_unitId, targetId) => showInNew(targetId)} /> : null;
                 }}
                 partKeys={partKeys}
                 activePart={activePart}
