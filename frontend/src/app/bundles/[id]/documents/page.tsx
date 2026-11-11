@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { useState } from "react";
 
 import { DeleteDocumentModal } from "@/components/documents/delete-document-modal";
-import { AuxPill, DocStatusPill, getDocReason, WarningChips, WarningChipsOneLine } from "@/components/documents/doc-status";
+import { AuxPill, DocStatusPill, getDocReason, WarningChips, WarningCountChip } from "@/components/documents/doc-status";
 import { LayoutLabel } from "@/components/documents/layout-picto";
 import { AiSuggestChip } from "@/components/documents/ai-suggest-chip";
 import { PreviewModal } from "@/components/documents/preview-popover";
@@ -47,8 +47,11 @@ const ACTIONS_WIDTH = "w-[156px]";
 // 표가 이 폭(본문 폭, px)에 다 들어가지 않으면 뒤쪽 네 열(추출·보조·경고·동작)을 한 열 두 줄로 접는다 - 한 줄 배치의 표 최소 폭(영어 약 1223, 한국어 약 1176)보다 조금 크게
 const TRAIL_WRAP_BELOW = 1230;
 
+// 언어 배치 드롭다운 고정 폭 - 그림 + 가장 긴 영어 라벨(KO/EN interleaved)이 거의 들어가고 더 길면 말줄임
+const LAYOUT_SELECT_WIDTH = 156;
+
 export default function DocumentsPage() {
-  const { t, lang } = useI18n();
+  const { t } = useI18n();
   const bundleId = Number(useParams<{ id: string }>().id);
   const { bundle } = useBundle(bundleId);
   const { data, error, isLoading, reload } = useLoaded(() => listDocuments(bundleId), String(bundleId));
@@ -122,27 +125,25 @@ export default function DocumentsPage() {
     skeletonWidth: 40,
     cell: renderActions,
   };
-  // 좁을 때 한 열 두 줄 - 윗줄은 알약(왼쪽)과 줄 단추(오른쪽), 아랫줄은 경고를 길게(없으면 아랫줄을 비운다). 라벨이 펼쳐지는 곳은 윗줄뿐이라 경고를 덮지 않는다
+  // 좁을 때 한 열 두 줄 - 윗줄은 추출·보조 검사 알약과 경고 개수 칩, 아랫줄은 동작 단추(왼쪽 정렬). 라벨이 펼쳐져도 아랫줄 안이라 알약을 덮지 않는다
   const trailColumn: DataColumn<SopDocument> = {
     key: "trail",
-    header: `${t("documents.colExtraction")} · ${t("documents.colAux")}`,
+    header: t("documents.col.trailWithWarnings"),
     card: "none",
     className: "align-middle",
-    minWidth: 340, // 알약 둘 + 동작 칸(ACTIONS_WIDTH) - 라벨이 펼쳐져도 알약을 덮지 않는다
+    minWidth: 220, // 알약 둘 + 경고 칩 - 동작 칸은 아랫줄이라 폭을 더 늘리지 않는다
     skeletonWidth: 200,
     cell: (document) => {
-      const hasWarnings = (document.extraction?.warnings ?? []).length > 0;
+      const warnings = document.extraction?.warnings ?? [];
       return (
-        // 줄 높이를 제목 칸(두 줄)에 맞춘다 - 윗줄 단추를 24px로 줄이고, 칸 위아래 여백만큼 음수 여백을 준다
-        <span className="-my-1 flex min-w-0 flex-col">
-          <span className="flex items-center justify-between gap-2 [&_.mbtn]:h-6">
-            <span className="flex items-center gap-1.5">
-              <DocStatusPill status={document.status} testId={`documents-${document.id}-status`} />
-              <AuxPill document={document} testId={`documents-${document.id}-aux`} />
-            </span>
-            {renderActions(document)}
+        // 줄 높이를 제목 칸(두 줄)에 맞춘다 - 단추를 24px로 줄이고, 칸 위아래 여백만큼 음수 여백을 준다
+        <span className="-my-1 flex min-w-0 flex-col items-start gap-0.5 [&_.mbtn-set]:justify-start [&_.mbtn]:h-6">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <DocStatusPill status={document.status} testId={`documents-${document.id}-status`} />
+            <AuxPill document={document} testId={`documents-${document.id}-aux`} />
+            {warnings.length > 0 && <WarningCountChip warnings={warnings} testId={`documents-${document.id}-warnings`} />}
           </span>
-          {hasWarnings && <WarningChipsOneLine key={`${lang}:${(document.extraction?.warnings ?? []).map((warning) => warning.kind).join()}`} warnings={document.extraction?.warnings ?? []} testId={`documents-${document.id}-warnings`} />}
+          {renderActions(document)}
         </span>
       );
     },
@@ -246,9 +247,10 @@ export default function DocumentsPage() {
             testId={`documents-${document.id}-layout`}
             ariaLabel={t("documents.colLayout")}
             size="sm"
+            width={LAYOUT_SELECT_WIDTH}
             value={document.language_layout}
             disabled={!canEdit}
-            options={LANGUAGE_LAYOUTS.map((layout) => ({ value: layout, label: <LayoutLabel layout={layout} label={t(`layoutKind.${layout}`)} /> }))}
+            options={LANGUAGE_LAYOUTS.map((layout) => ({ value: layout, label: <LayoutLabel layout={layout} label={t(`layoutKind.${layout}`)} />, tip: t(`layoutKind.${layout}`) }))}
             onChange={(next) => void saveField(document, { language_layout: next }).catch(() => undefined)}
           />
         ) : (

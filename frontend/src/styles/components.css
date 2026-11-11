@@ -503,6 +503,13 @@
   .select-trigger:not(:disabled):hover > .select-chevron,
   .select-trigger:focus-visible > .select-chevron,
   .select-trigger[aria-expanded="true"] > .select-chevron { translate: 0 -50%; }
+  /* 고정 폭(Select width) - 값은 왼쪽 정렬·말줄임, 화살표는 늘 보이고 호버 때 글자가 밀리지 않는다 */
+  .select-trigger[data-fixed] { flex: none; justify-content: flex-start; padding: 0 22px 0 8px; text-align: left; }
+  .select-trigger[data-fixed] > .select-value { flex: 1 1 0; }
+  .select-trigger[data-fixed] > .select-chevron { right: 6px; opacity: 1; translate: 0 -50%; }
+  .select-trigger[data-fixed]:not(:disabled):hover > .select-value,
+  .select-trigger[data-fixed]:focus-visible > .select-value,
+  .select-trigger[data-fixed][aria-expanded="true"] > .select-value { transform: none; }
   @media (prefers-reduced-motion: reduce) { .select-value, .select-trigger > .select-chevron { transition: none; } }
   /* 드롭다운 화살표는 호버·키보드 포커스·열림에서만 보인다. 자리는 늘 차지해 폭이 변하지 않는다(메뉴를 여는 다른 단추도 같은 클래스를 쓴다) */
   .select-chevron { flex: none; color: var(--ink-3); opacity: 0; transition: opacity var(--dur-fast), transform var(--dur-fast); }
@@ -657,15 +664,19 @@
   .mbtn:disabled { opacity: 0.5; cursor: not-allowed; }
   /* 줄 끝 단추 자리 - 쓰는 쪽이 라벨이 다 펼쳐질 폭(단추 하나를 펼친 폭 + 그 오른쪽 아이콘 단추들)을 고정해 두고 단추는 오른쪽에 붙는다.
      하나에 올리면 나머지는 흐려지고 라벨은 기본보다 천천히 펼쳐진다. 펼쳐져도 이 자리 안이라 옆 칸을 밀거나 덮지 않는다(폭이 모자라면 왼쪽으로 넘쳐 덮는다) */
-  .mbtn-set { display: inline-flex; justify-content: flex-end; gap: 2px; vertical-align: middle; }
+  .mbtn-set { display: inline-flex; justify-content: flex-end; vertical-align: middle; }
+  .mbtn-set > .mbtn + .mbtn { margin-left: 2px; }
   .mbtn-set > .mbtn {
     flex: none;
+    max-width: 240px; /* 접힘 전환의 시작값 - 단추 하나가 펼친 최대 폭보다 크다 */
     /* 돌아올 때는 라벨이 접힌 뒤에 나타나게 늦춘다 */
-    transition: background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast), transform var(--dur-fast) var(--ease-move), opacity var(--dur-base) var(--dur-base);
+    transition: background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast), transform var(--dur-fast) var(--ease-move), opacity var(--dur-base) var(--dur-base), max-width var(--dur-slow) var(--ease-enter), padding var(--dur-slow) var(--ease-enter), margin-left var(--dur-slow) var(--ease-enter);
   }
   .mbtn-set .mbtn-label { transition: max-width calc(var(--dur-slow) * 1.5) var(--ease-enter), margin-left calc(var(--dur-slow) * 1.5) var(--ease-enter), opacity var(--dur-slow); }
   .mbtn-set > .mbtn:not(:disabled):hover .mbtn-label, .mbtn-set > .mbtn:focus-visible .mbtn-label { transition-timing-function: var(--ease-move); }
-  .mbtn-set:has(> .mbtn:is(:hover:not(:disabled), :focus-visible)) > .mbtn:not(:hover, :focus-visible) { opacity: 0; pointer-events: none; transition-delay: 0s; }
+  /* 하나에 올리면 나머지는 폭 0으로 사라져 자리를 내주고, 올린 단추가 묶음 폭 전체를 차지한다 */
+  .mbtn-set:has(> .mbtn:is(:hover:not(:disabled), :focus-visible)) > .mbtn:not(:hover, :focus-visible) { max-width: 0; margin-left: 0; padding: 0; border-width: 0; opacity: 0; pointer-events: none; transition-delay: 0s; }
+  .mbtn-set > .mbtn:is(:hover:not(:disabled), :focus-visible) { flex: 1 1 auto; justify-content: center; }
   .mbtn.reveal { border-color: var(--line-2); background: var(--surface); color: var(--ink); }
   .mbtn.danger:not(:disabled):hover, .mbtn.danger:focus-visible, .mbtn.danger.reveal {
     /* .btn.danger와 같은 짝 - 위험색 잉크 바탕에 표면색 글자라 두 테마 모두 대비가 선다 */
@@ -922,6 +933,8 @@
 
   .layout-picto { display: inline-grid; gap: 2px; width: 22px; height: 16px; padding: 2px; flex: none; border: 1px solid var(--line-2); border-radius: 2px; }
   .layout-picto[data-dir="cols"] { grid-auto-flow: column; }
+  /* 번갈아(4줄)는 줄 높이를 2px로 고정하고 세로 가운데에 모은다 - 1px로 늘어나 상자 아래로 쏠리던 것 */
+  .layout-picto[data-n="4"] { grid-auto-rows: 2px; align-content: center; gap: 0; }
   .layout-picto i { display: block; border-radius: 1px; }
   .layout-picto i.ko { background: var(--lang-ko); }
   .layout-picto i.en { background: var(--lang-en); }
