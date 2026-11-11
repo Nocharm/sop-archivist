@@ -998,16 +998,25 @@
   .strip-gap { position: relative; height: 4px; transition: height var(--dur-base) var(--ease-enter); }
   /* 고른 직후 바로 벌어지면 두 번 누르기(나눌 자리)의 둘째 클릭이 밀린 자리에 떨어진다 - 더블클릭 간격만큼 늦춰 벌린다 */
   .strip-gap[data-near-selected] { height: 12px; transition-delay: 450ms; }
-  .strip-gap[data-pair] { height: 1px; }
-  .strip-gap:hover { height: 12px; }
+  .strip-gap:not([data-pair]):hover { height: 12px; }
+  /* 이웃한 짝 - 틈 0, 두 조각이 한 카드(안쪽 테두리·모서리를 없애고 가는 구분선만). 합치기 단추는 올릴 때만 보인다 */
+  .strip-gap[data-pair] { height: 0; }
+  /* 합치기 단추는 쉬는 동안 보이지 않는다(점선 알약이 줄마다 깔리면 산만) - 틈을 올리거나 키보드 포커스가 오면 나타난다 */
+  .strip-merge { opacity: 0; }
+  .strip-gap:hover .strip-merge, .cell-gap:hover .strip-merge, .strip-merge:focus-visible { opacity: 1; }
+  .strip-gap[data-pair]:hover .strip-merge:not([aria-disabled="true"]), .strip-gap[data-pair] .strip-merge:not([aria-disabled="true"]):focus-visible { height: 18px; }
+  .pg[data-strips] .strip[data-bracket="top"] { border-bottom: 0; border-bottom-right-radius: 0; }
+  .pg[data-strips] .strip[data-bracket="bottom"] { border-top: 0; border-top-right-radius: 0; }
+  .pg[data-strips] .strip[data-bracket="bottom"]::before { content: ""; position: absolute; inset: 0 0 auto 0; border-top: 1px solid var(--line); }
   .strip-gap::before { content: ""; position: absolute; inset: -5px 0; }
-  .strip-merge { position: absolute; left: var(--pg-pad-l); top: 50%; translate: 0 -50%; z-index: 2; display: inline-flex; align-items: center; justify-content: center; gap: 0; min-width: 76px; height: 10px; padding: 0 10px; overflow: hidden; border: 1px solid var(--line-2); border-radius: 11px; background: var(--surface); color: var(--ink-3); font: 600 var(--fs-cap) / 1 var(--font-ui); white-space: nowrap; cursor: pointer; user-select: none; transition: height var(--dur-base) var(--ease-enter), border-color var(--dur-fast), color var(--dur-fast); }
+  .strip-merge { position: absolute; left: var(--pg-pad-l); top: 50%; translate: 0 -50%; z-index: 2; display: inline-flex; align-items: center; justify-content: center; gap: 0; min-width: 76px; height: 10px; padding: 0 10px; overflow: hidden; border: 1px solid var(--line-2); border-radius: 11px; background: var(--surface); color: var(--ink-3); font: 600 var(--fs-cap) / 1 var(--font-ui); white-space: nowrap; cursor: pointer; user-select: none; transition: opacity var(--dur-base), height var(--dur-base) var(--ease-enter), border-color var(--dur-fast), color var(--dur-fast); }
   .strip-merge > svg { flex: none; width: 8px; height: 8px; transition: width var(--dur-base), height var(--dur-base); }
   .strip-merge-label { max-width: 0; opacity: 0; overflow: hidden; transition: opacity var(--dur-base); }
   .strip-gap:hover .strip-merge:not([aria-disabled="true"]), .cell-gap:hover .strip-merge:not([aria-disabled="true"]), .strip-merge:not([aria-disabled="true"]):focus-visible { height: 22px; gap: 5px; border-color: var(--accent); color: var(--accent); box-shadow: var(--shadow-1); }
   .strip-gap:hover .strip-merge:not([aria-disabled="true"]) > svg, .cell-gap:hover .strip-merge:not([aria-disabled="true"]) > svg, .strip-merge:not([aria-disabled="true"]):focus-visible > svg { width: 12px; height: 12px; }
   .strip-gap:hover .strip-merge:not([aria-disabled="true"]) .strip-merge-label, .cell-gap:hover .strip-merge:not([aria-disabled="true"]) .strip-merge-label, .strip-merge:not([aria-disabled="true"]):focus-visible .strip-merge-label { max-width: 240px; opacity: 1; }
-  .strip-merge[aria-disabled="true"] { border-style: dashed; background: none; color: var(--ink-3); opacity: 0.7; cursor: not-allowed; }
+  .strip-merge[aria-disabled="true"] { border-style: dashed; background: none; color: var(--ink-3); cursor: not-allowed; }
+  .strip-gap:hover .strip-merge[aria-disabled="true"], .cell-gap:hover .strip-merge[aria-disabled="true"], .strip-merge[aria-disabled="true"]:focus-visible { opacity: 0.7; }
   .strip-merge:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
   /* 표 칸 안의 조각 - 칸 문장마다 점선으로 나누고 같은 칸의 이웃 사이에 합치기 */
