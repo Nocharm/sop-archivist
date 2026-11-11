@@ -2,18 +2,18 @@
 // 표 안 값은 고른 판의 언어로 API가 채워 준다. Excel은 요청 중 → 파일 생성 / 실패 두 단계로 보인다(디자인 문서 10절).
 "use client";
 
-import { ArrowRight, Download, Table2, Workflow } from "lucide-react";
+import { Download, Table2, Workflow } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 
 import { EditionToggle } from "@/components/outputs/edition-toggle";
+import { OutputARowView } from "@/components/outputs/output-a-row";
+import { OutputBCard } from "@/components/outputs/output-b-card";
 import { OutputCView } from "@/components/outputs/output-c";
 import { ReadOnlyNote } from "@/components/read-only-note";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LoadError } from "@/components/ui/load-error";
-import { UnitStatusPill } from "@/components/status";
 import { LoadMoreRows } from "@/components/ui/load-more";
-import { Truncate } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
 import {
@@ -207,7 +207,15 @@ export default function OutputsPage() {
           ) : tab === "a" && outA.data?.length === 0 ? (
             <EmptyState icon={Table2} testId="output-a-empty" title={t("outputs.emptyTitle")} body={t("outputs.emptyA")} />
           ) : tab === "a" && outA.data ? (
-            <table className="dtable" data-testid="output-a">
+            <table className="dtable table-fixed" data-testid="output-a">
+              {/* 열 폭을 고정한다 - 글이 길어도 표가 틀을 넘지 않고, 긴 칸은 줄 수로만 커진다 */}
+              <colgroup>
+                <col style={{ width: 128 }} />
+                <col style={{ width: "27%" }} />
+                <col style={{ width: "20%" }} />
+                <col />
+                <col style={{ width: 128 }} />
+              </colgroup>
               <thead>
                 <tr>
                   <th>{t("outputs.colOldUnit")}</th>
@@ -219,38 +227,14 @@ export default function OutputsPage() {
               </thead>
               <tbody>
                 {rowsA.visible.map((row, index) => (
-                  <tr key={`${row.unit_id}-${index}`} data-testid={`output-a-row-${index}`}>
-                    <td className="whitespace-nowrap">
-                      <span className="font-mono text-xs">
-                        {row.old_doc_code} <span className="text-ink-3">{row.location.section}</span>
-                      </span>
-                      <span className="block font-mono text-[11px] text-ink-3">{row.display_id}</span>
-                    </td>
-                    <td style={{ fontFamily: "var(--font-source)" }}>{row.source_text || <span className="text-ink-4">–</span>}</td>
-                    <td className="whitespace-nowrap">
-                      <span className="font-mono text-xs">{row.dest_doc_code}</span>
-                      <span className="block text-xs text-ink-3">{row.dest_location || labelCode(t, "outputs.dest", row.dest_kind)}</span>
-                      {row.dest_number && (
-                        <span className="block whitespace-pre-line font-mono text-[11px] text-ink-2" data-testid={`output-a-number-${index}`}>
-                          {row.dest_number}
-                        </span>
-                      )}
-                    </td>
-                    <td style={{ fontFamily: "var(--font-source)" }}>
-                      {/* 보낸 새 문장이 모두 주석 줄이면 결과물 C처럼 기울여 보인다 */}
-                      {row.confirmed_text ? (
-                        <span className={row.dest_is_note ? "italic" : undefined} data-testid={row.dest_is_note ? `output-a-note-${index}` : undefined}>
-                          {row.confirmed_text}
-                        </span>
-                      ) : (
-                        <span className="text-ink-4">–</span>
-                      )}
-                      {row.change_type && <span className="block text-xs text-ink-3" style={{ fontFamily: "var(--font-ui)" }}>{labelCode(t, "change", row.change_type)}</span>}
-                    </td>
-                    <td>
-                      <UnitStatusPill status={toCoverStatus(row.status)} />
-                    </td>
-                  </tr>
+                  <OutputARowView
+                    key={`${row.unit_id}-${index}`}
+                    row={row}
+                    index={index}
+                    destLabel={row.dest_location || labelCode(t, "outputs.dest", row.dest_kind)}
+                    changeLabel={row.change_type ? labelCode(t, "change", row.change_type) : null}
+                    status={toCoverStatus(row.status)}
+                  />
                 ))}
                 {rowsA.hasMore && <LoadMoreRows sentinelRef={rowsA.sentinelRef} columns={5} testId="output-a-more" />}
               </tbody>
@@ -261,34 +245,9 @@ export default function OutputsPage() {
             <div className="grid gap-3 p-[var(--pad)]" data-testid="output-b">
               {outB.data.nodes
                 .filter((node) => node.kind === "old")
-                .map((node) => {
-                  const edges = outB.data?.edges.filter((edge) => edge.source === node.id) ?? [];
-                  const total = edges.reduce((acc, edge) => acc + edge.count, 0) || 1;
-                  return (
-                    <section key={node.id} className="grid grid-cols-[180px_minmax(0,1fr)] gap-4 rounded-lg border border-line bg-surface p-3">
-                      <div>
-                        <span className="font-mono text-[13px] font-semibold">{node.label}</span>
-                        <Truncate className="text-xs text-ink-3" text={node.title} />
-                        <span className="text-xs tabular-nums text-ink-2">{t("outputs.units", { n: node.count })}</span>
-                      </div>
-                      <ul className="grid gap-1">
-                        {edges.map((edge) => {
-                          const targetNode = outB.data?.nodes.find((item) => item.id === edge.target);
-                          return (
-                            <li key={edge.target} className="grid grid-cols-[16px_140px_minmax(0,1fr)_40px] items-center gap-2 text-[13px]">
-                              <ArrowRight size={14} strokeWidth={1.5} className="text-ink-3" aria-hidden />
-                              <Truncate className="font-mono text-xs" text={targetNode?.label ?? edge.target} />
-                              <span className="track">
-                                <i style={{ width: `${(edge.count / total) * 100}%`, background: targetNode?.kind === "delete" ? "var(--danger-fill)" : targetNode?.kind === "unassigned" ? "var(--st-none-fill)" : undefined }} />
-                              </span>
-                              <span className="text-right tabular-nums text-ink-2">{edge.count}</span>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </section>
-                  );
-                })}
+                .map((node) => (
+                  <OutputBCard key={node.id} node={node} nodes={outB.data?.nodes ?? []} edges={outB.data?.edges.filter((edge) => edge.source === node.id) ?? []} />
+                ))}
             </div>
           ) : tab === "c" && outC.data ? (
             <OutputCView

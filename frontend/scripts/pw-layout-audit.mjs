@@ -278,6 +278,101 @@ const AUDIT_ENTRIES = [
     expect: (value) => value >= 340,
     note: "1,800-character paragraph text box >= 340px wide at 1120",
   },
+  // ---- Task 5: 결과물 A·B·C ----
+  {
+    id: "A4", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => `/bundles/${ids.w[1]}/outputs`,
+    open: async (page) => {
+      await page.getByTestId("outputs-tab-a").click();
+      await page.locator('[data-testid="output-a"] tbody tr').first().waitFor({ timeout: T });
+      await page.waitForTimeout(SETTLE_MS);
+    },
+    measure: async (page) => {
+      const measureRows = () => page.locator('[data-testid^="output-a-row-"]').evaluateAll((rows) => rows.map((row) => Math.round(row.getBoundingClientRect().height)));
+      const frameOverflows = await page.locator('[data-testid="output-a"]').evaluate((table) => {
+        const frame = table.parentElement;
+        return frame.scrollWidth > frame.clientWidth + 1 || table.getBoundingClientRect().right > window.innerWidth + 1;
+      });
+      const before = await measureRows();
+      const maxRow = Math.max(...before);
+      const biggest = before.indexOf(maxRow);
+      // 가장 큰 줄의 펼치기를 눌러 그 줄만 커지는지 본다(없으면 expandOk=false)
+      const expand = page.locator('[data-testid^="output-a-row-"]').nth(biggest).locator('[data-testid$="-expand"]');
+      let expandOk = false;
+      if ((await expand.count()) > 0) {
+        await expand.first().click();
+        await page.waitForTimeout(400);
+        const after = await measureRows();
+        expandOk = after.every((height, i) => (i === biggest ? height > before[i] : height === before[i]));
+      }
+      return { frameOverflows, maxRow, expandOk };
+    },
+    expect: (value) => value.frameOverflows === false && value.maxRow <= 220 && value.expandOk === true,
+    note: "output-a inside its frame, largest row <= 220px, expand grows only that row",
+  },
+  {
+    id: "C8", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}/outputs`,
+    open: async (page) => {
+      await page.getByTestId("outputs-tab-c").click();
+      await page.locator('[data-testid^="output-c-item-"]').first().waitFor({ timeout: T });
+      await page.waitForTimeout(SETTLE_MS);
+    },
+    measure: async (page) => {
+      const widths = await page.locator('[data-testid^="output-c-row-"]').evaluateAll((rows) => rows.map((row) => {
+        const item = row.querySelector('[data-testid^="output-c-item-"]');
+        // 번호·들여쓰기는 줄의 일부다 - 줄 오른쪽 끝에 남겨 둔 여백만 잰다
+        return item ? row.getBoundingClientRect().right - item.getBoundingClientRect().right : 0;
+      }));
+      const worstGap = Math.round(Math.max(0, ...widths));
+      // 호버했을 때 단추 묶음 상자가 그 줄과 다음 줄의 글 상자와 겹치는 가장 큰 높이(px)
+      const rows = page.locator('[data-testid^="output-c-row-"]');
+      let overlap = 0;
+      const total = Math.min(await rows.count(), 12);
+      for (let i = 0; i < total; i += 1) {
+        const row = rows.nth(i);
+        if ((await row.locator(".row-actions").count()) === 0) continue;
+        await row.scrollIntoViewIfNeeded();
+        await row.hover({ position: { x: 8, y: 4 } });
+        await page.waitForTimeout(250);
+        const px = await row.evaluate((el) => {
+          const actions = el.querySelector(".row-actions").getBoundingClientRect();
+          const boxes = [el, el.nextElementSibling].filter(Boolean).map((r) => r.querySelector('[data-testid^="output-c-item-"]')).filter(Boolean);
+          let worst = 0;
+          for (const box of boxes) {
+            const b = box.getBoundingClientRect();
+            const h = Math.min(actions.bottom, b.bottom) - Math.max(actions.top, b.top);
+            const w = Math.min(actions.right, b.right) - Math.max(actions.left, b.left);
+            if (h > 0 && w > 0) worst = Math.max(worst, h);
+          }
+          return worst;
+        });
+        overlap = Math.max(overlap, Math.round(px));
+      }
+      return { worstGap, overlap };
+    },
+    expect: (value) => value.worstGap <= 24 && value.overlap === 0,
+    note: "item right edge within 24px of row right edge (no reserved padding); hover action box overlaps neither this nor the next line's text box",
+  },
+  {
+    id: "C9", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}/outputs`,
+    open: async (page) => {
+      await page.getByTestId("outputs-tab-b").click();
+      await page.locator('[data-testid="output-b"] section').first().waitFor({ timeout: T });
+      await page.waitForTimeout(SETTLE_MS);
+    },
+    measure: (page) => page.locator('[data-testid="output-b"] section').evaluateAll((cards) => {
+      let duplicates = 0;
+      for (const card of cards) {
+        const labels = [...card.querySelectorAll("li > span:nth-child(2)")].map((el) => el.textContent.trim());
+        duplicates += labels.length - new Set(labels).size;
+      }
+      return { duplicates, maxCard: Math.round(Math.max(0, ...cards.map((card) => card.getBoundingClientRect().height))) };
+    }),
+    expect: (value) => value.duplicates === 0 && value.maxCard <= 320,
+    note: "visible target labels distinct within a card; largest card <= 320px",
+  },
 ];
 
 // ---------- ids 지도 ----------

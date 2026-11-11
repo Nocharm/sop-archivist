@@ -149,7 +149,7 @@ const mbtnScenes = [
   },
 }));
 
-// C 줄 끝 단추(번호 표시·들여쓰기·옮기기) - 줄에 올리면 드러나고, 줄 오른쪽 예약 폭 안에 있어야 한다
+// C 줄 끝 단추(번호 표시·들여쓰기·옮기기) - 줄 아래 홈에 겹쳐 그려지고 줄에 올리면 드러난다. 줄의 가로 범위를 벗어나지 않아야 하고, 아래(다음 줄)·옆 글자를 덮지 않아야 한다
 const outputsScene = {
   name: "outputs-c-rows",
   user: "qa.member",
@@ -170,6 +170,12 @@ const outputsScene = {
       await page.waitForTimeout(HOVER_SETTLE_MS);
       const { hits, width } = await findCovered(actions);
       if (hits.length > 0) report(`${await row.getAttribute("data-testid")} buttons (${width}px)`, hits.join(", "));
+      const isOutside = await row.evaluate((el) => {
+        const box = el.querySelector(".row-actions").getBoundingClientRect();
+        const line = el.getBoundingClientRect();
+        return box.left < line.left - 1 || box.right > line.right + 1;
+      });
+      if (isOutside) report(`${await row.getAttribute("data-testid")} buttons`, "outside the row's horizontal extent");
       checked += 1;
     }
     if (checked === 0) report("no C row with buttons", "");

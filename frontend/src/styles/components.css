@@ -309,6 +309,7 @@
   .dtable td:not(.dl-title) { vertical-align: middle; }
   /* 두 줄 제한 - td가 아니라 칸 안을 감싼 요소에 건다(td를 직접 제한하면 줄 테두리가 깨진다) */
   .clamp-2 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+  .clamp-6 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; overflow: hidden; overflow-wrap: anywhere; }
   .dtable tbody tr { transition: background var(--dur-fast); }
   .dtable tbody tr[data-link]:hover td { background: var(--hover); cursor: pointer; }
   /* 키보드로 닿은 줄 - 테두리는 줄 안쪽으로(바깥으로 내면 옆 줄·틀에 잘린다) */

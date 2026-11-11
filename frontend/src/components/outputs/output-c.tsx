@@ -74,7 +74,7 @@ interface RowButtonsProps {
 function RowButtons({ items, item, busy, onMove, indent, onMark }: RowButtonsProps) {
   const { t } = useI18n();
   return (
-    <span className="row-actions absolute right-0 top-0 flex gap-0.5 bg-paper" style={{ fontFamily: "var(--font-ui)" }}>
+    <span className="row-actions absolute right-0 top-full z-10 flex gap-0.5 bg-paper" style={{ fontFamily: "var(--font-ui)" }}>
       {onMark && (
         // 세 칸 눌림 단추 - 떠 있는 메뉴를 쓰지 않아 옆 글자를 덮지 않는다. 아이콘만 있으니 툴팁이 뜻을 알려 준다
         <span className="view-toggle c-mark mr-1" role="group" aria-label={t("outputs.markGroup")} data-testid={`output-c-mark-${item.target_id}`}>
@@ -210,8 +210,7 @@ export function OutputCView({ data, lang, onMove, onIndent, onMark, moving = fal
                       );
                       if (!onMove) return <Fragment key={item.target_id}>{line}</Fragment>;
                       const editable = isIndentable(doc.entrance, item);
-                      const markable = Boolean(onMark) && editable;
-                      const indent =
+                                          const indent =
                         onIndent && editable
                           ? {
                               canOut: canIndent(depths, counted, index, -1),
@@ -224,9 +223,8 @@ export function OutputCView({ data, lang, onMove, onIndent, onMark, moving = fal
                           key={item.target_id}
                           // 줄을 눌러 고르면 Tab·Shift+Tab이 들이고 내어 쓴다. 탭 순서에는 넣지 않고(-1) Esc로 놓아 Tab이 페이지 이동을 빼앗지 않게 한다
                           tabIndex={indent ? -1 : undefined}
-                          // 오른쪽은 이 줄이 그리는 줄 끝 단추가 다 들어갈 폭 - 호버로 드러나도 글자를 덮지 않는다.
-                          // 표시 셋(+4px 사이)이 있으면 184px, 없으면(입구 2 문서·번역 줄) 들여쓰기 둘 + 옮기기 둘까지 들어가던 104px 그대로
-                          className={`hover-row c-row relative ${markable ? "pr-[184px]" : "pr-[104px]"}`}
+                          // 줄 끝 단추는 줄 아래(top-full)에 겹쳐 그린다 - 자리를 잡지 않으니 글 폭을 줄이지 않고 호버로 높이도 변하지 않는다
+                          className="hover-row c-row relative"
                           data-testid={`output-c-row-${item.target_id}`}
                           onKeyDown={(event) => {
                             if (!indent || event.target !== event.currentTarget) return;
