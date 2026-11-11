@@ -9,6 +9,19 @@ export function getSectionPill(label: string): string | null {
   return NUMERIC_LABEL.test(label) ? label : null;
 }
 
+/** 절 깊이 - 숫자 번호의 점으로 나뉜 마디 수("5"→1, "5.2."→2). 숫자 번호가 아니면 0 */
+export function getSectionLevel(label: string): number {
+  return NUMERIC_LABEL.test(label) ? label.replace(/\.$/, "").split(".").length : 0;
+}
+
+/** 깊이별 탭 폭(px), 인덱스 = 깊이 - 1. 10px mono 실측(글자당 약 4.4px, 끝 점 포함)으로 그 깊이에서 현실적으로 가장 긴 번호("11", "11.11", "11.11.1" …)가 좌우 여백 6씩을 두고 들어가는 값이다. 같은 깊이는 어디서나 같은 폭이라 들여쓰기가 깊이를 읽게 한다 */
+export const PILL_WIDTH_BY_LEVEL: readonly number[] = [24, 36, 46, 54, 62, 72, 80, 90];
+
+/** 깊이로 탭 폭 정하기 - 숫자 번호가 아닌 조각(깊이 0)은 1단 폭, 표에 없는 깊이는 마지막 폭 */
+export function getPillWidth(level: number): number {
+  return PILL_WIDTH_BY_LEVEL[Math.min(Math.max(level, 1), PILL_WIDTH_BY_LEVEL.length) - 1];
+}
+
 /** 절 번호를 보일 줄 - 같은 부분 안에서 문서 순서로 절 번호가 앞 줄과 달라진 첫 줄. 숫자가 아닌 번호는 보이지 않고, 짝의 아래 줄(pairTopOf가 있는 줄)은 위 줄이 대표라 보이지 않는다 */
 export function getSectionHeads(units: readonly { unitId: number; part: string; sectionLabel: string; pairTopOf?: number | null }[]): Set<number> {
   const heads = new Set<number>();

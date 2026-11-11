@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getPairBrackets, getSectionHeads, getSectionPill } from "@/lib/strip-pill-model";
+import { getPairBrackets, getPillWidth, getSectionHeads, getSectionLevel, getSectionPill, PILL_WIDTH_BY_LEVEL } from "@/lib/strip-pill-model";
 
 describe("getSectionPill", () => {
   it("returns numeric section numbers only", () => {
@@ -48,5 +48,22 @@ describe("getPairBrackets", () => {
     ]);
     expect(result.get(2)).toBe("solo");
     expect(result.get(4)).toBe("solo");
+  });
+});
+
+describe("getSectionLevel and pill width", () => {
+  it("counts the dot-separated parts of numeric labels only", () => {
+    expect(getSectionLevel("1")).toBe(1);
+    expect(getSectionLevel("1.2")).toBe(2);
+    expect(getSectionLevel("5.2.")).toBe(2);
+    expect(getSectionLevel("11.11.1.1.1")).toBe(5);
+    expect(getSectionLevel("Scope")).toBe(0);
+    expect(getSectionLevel("")).toBe(0);
+  });
+  it("gives deeper levels strictly wider pills and clamps the ends", () => {
+    for (let index = 1; index < PILL_WIDTH_BY_LEVEL.length; index++) expect(PILL_WIDTH_BY_LEVEL[index]).toBeGreaterThan(PILL_WIDTH_BY_LEVEL[index - 1]);
+    expect(getPillWidth(0)).toBe(getPillWidth(1));
+    expect(getPillWidth(2)).toBe(PILL_WIDTH_BY_LEVEL[1]);
+    expect(getPillWidth(99)).toBe(PILL_WIDTH_BY_LEVEL[PILL_WIDTH_BY_LEVEL.length - 1]);
   });
 });

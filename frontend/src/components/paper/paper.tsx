@@ -12,7 +12,7 @@ import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import { buildContourPath, buildRows, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
-import { getPairBrackets, getSectionHeads, getSectionPill, type PairBracket } from "@/lib/strip-pill-model";
+import { getPairBrackets, getPillWidth, getSectionHeads, getSectionLevel, getSectionPill, type PairBracket } from "@/lib/strip-pill-model";
 
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
 type PaperMark = UnitMark | "warn";
@@ -457,34 +457,47 @@ export function Paper({
     );
   }
 
-  /** 글 앞 왼쪽 칸 - 절 번호(그 절의 첫 줄에만, 글자뿐)와 오른쪽 끝에 붙는 KO/EN/H 태그 */
-  function renderLead(unit: ViewUnit | undefined, section: string): ReactNode {
-    if (!unit) return null;
+  /** 한 줄의 언어·보류를 읽어 줄 글 */
+  function describeTab(unit: ViewUnit): string {
     const live = { ...unit, status: strips?.statusOf?.(unit.id) ?? unit.status };
     const { lang, hold } = getTags(live);
-    const sectionNumber = sectionHeads.has(unit.id) ? getSectionPill(section) : null;
-    if (sectionNumber === null && lang === null && !hold) return null;
+    return [lang === "KO" ? t("split.tabKo") : lang === "EN" ? t("split.tabEn") : null, hold ? t("split.tabHold") : null].filter((part) => part !== null).join(", ");
+  }
+
+  /** 줄 왼쪽 밖에 붙는 탭 - 언어 색(보류는 사선 줄무늬), 깊이마다 정해진 폭, 절 번호는 절의 첫 블록에만. 짝 카드는 두 줄의 탭이 이어져 한 카드의 탭이 된다 */
+  function renderTab(unit: ViewUnit, section: string, width: number, bracket: PairBracket | undefined): ReactNode {
+    const live = { ...unit, status: strips?.statusOf?.(unit.id) ?? unit.status };
+    const { lang, hold } = getTags(live);
+    const partner = bracket === "top" || bracket === "bottom" ? partnerOf.get(unit.id) : undefined;
+    const top = bracket === "bottom" && partner ? partner : unit;
+    const isHead = sectionHeads.has(top.id);
+    const sectionNumber = isHead && bracket !== "bottom" ? getSectionPill(section) : null;
+    // 설명은 블록(카드)당 하나 - 짝의 아래 줄은 위 줄이 대신 읽는다
+    const description = bracket === "bottom" ? "" : [describeTab(unit), bracket === "top" && partner ? describeTab(partner) : ""].filter((part) => part !== "").join("; ");
+    const letters = [lang, hold ? "H" : null].filter((part) => part !== null);
     return (
-      <span className="strip-lead" data-testid={`${testId}-lead-${unit.id}`}>
+      <span
+        className="strip-tab"
+        style={{ width }}
+        data-lang={lang?.toLowerCase()}
+        data-hold={hold ? "" : undefined}
+        data-bracket={bracket}
+        data-dim={isHead ? undefined : ""}
+        data-testid={`${testId}-tab-${unit.id}`}
+      >
+        {description !== "" && <span className="sr-only">{description}</span>}
         {sectionNumber !== null && (
           <>
             <span className="sr-only">{sectionNumber}</span>
-            <span className="strip-num" aria-hidden data-testid={`${testId}-num-${unit.id}`}>
+            <span className="strip-tab-num" aria-hidden data-testid={`${testId}-num-${unit.id}`}>
               {sectionNumber}
             </span>
           </>
         )}
-        <span className="strip-tags" aria-hidden>
-          {lang !== null && hold ? (
-            <span className={`ptag duo ${lang.toLowerCase()}`}>
-              <span>{lang}</span>
-              <span>H</span>
-            </span>
-          ) : lang !== null ? (
-            <span className={`ptag ${lang.toLowerCase()}`}>{lang}</span>
-          ) : hold ? (
-            <span className="ptag hold">H</span>
-          ) : null}
+        <span className="strip-tab-letters" aria-hidden>
+          {letters.map((letter) => (
+            <span key={letter}>{letter}</span>
+          ))}
         </span>
       </span>
     );
@@ -581,30 +594,35 @@ export function Paper({
     const unitId = row.type === "table" ? row.item.unitId : row.unitId;
     const unit = unitId === null ? undefined : model.units.get(unitId);
     const hasWarn = row.type === "piece" ? row.parts.some((part) => warnBlockIds?.has(part.block.id)) : row.type === "figure" && (warnBlockIds?.has(row.block.id) ?? false);
+    const section = readRowSection(row);
+    const width = getPillWidth(getSectionLevel(section));
+    const bracket = unitId === null ? undefined : brackets.get(unitId);
     return (
-      <div
-        key={row.key}
-        className="strip"
-        data-kind={row.type}
-        data-sel={unit !== undefined && unit.id === selectedId ? "" : undefined}
-        data-partner={unit !== undefined && partnerIds?.has(unit.id) ? "" : undefined}
-        data-bracket={unitId === null ? undefined : brackets.get(unitId)}
-        data-strip-unit={unitId ?? undefined}
-        data-testid={`${testId}-piece-${unitId ?? row.key}`}
-      >
-        {row.type !== "table" && renderLead(unit, readRowSection(row))}
-        {row.type !== "table" && <span className="strip-pills" />}
-        {row.type === "table"
-          ? renderTable(row.item)
-          : row.type === "figure"
-            ? renderFigure(row.block)
-            : row.parts.map((part) => (
-                <p key={part.block.id} data-block={part.block.id} className={part.block.heading_level !== null ? "h" : undefined}>
-                  {part.segments.map((segment, index) => renderSegment(part.block, segment, index))}
-                </p>
-              ))}
-        {unit && strips?.renderNote?.([unit.id])}
-        {renderMarks(unit, hasWarn, "strip-marks")}
+      <div key={row.key} className="strip-row">
+        {unit && renderTab(unit, section, width, bracket)}
+        {!unit && <span className="strip-tab-gap" style={{ width }} />}
+        <div
+          className="strip"
+          data-kind={row.type}
+          data-sel={unit !== undefined && unit.id === selectedId ? "" : undefined}
+          data-partner={unit !== undefined && partnerIds?.has(unit.id) ? "" : undefined}
+          data-bracket={bracket}
+          data-strip-unit={unitId ?? undefined}
+          data-testid={`${testId}-piece-${unitId ?? row.key}`}
+        >
+          {row.type !== "table" && <span className="strip-pills" />}
+          {row.type === "table"
+            ? renderTable(row.item)
+            : row.type === "figure"
+              ? renderFigure(row.block)
+              : row.parts.map((part) => (
+                  <p key={part.block.id} data-block={part.block.id} className={part.block.heading_level !== null ? "h" : undefined}>
+                    {part.segments.map((segment, index) => renderSegment(part.block, segment, index))}
+                  </p>
+                ))}
+          {unit && strips?.renderNote?.([unit.id])}
+          {renderMarks(unit, hasWarn, "strip-marks")}
+        </div>
       </div>
     );
   }

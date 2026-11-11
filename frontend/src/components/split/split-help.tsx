@@ -25,9 +25,8 @@ export function SplitHelp() {
       marks={
         <>
           <span className="help-panel-row">
-            <span className="ptag duo ko">
-              <span>KO</span>
-              <span>H</span>
+            <span className="strip-tab swatch" data-lang="ko" data-hold="">
+              <span className="strip-tab-letters">KO</span>
             </span>
             {t("split.legendLangHold")}
           </span>
