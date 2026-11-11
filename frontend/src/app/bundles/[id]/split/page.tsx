@@ -3,12 +3,12 @@
 // 합치기는 조각 사이의 단추 하나뿐이다. 끌어 고르면 새 단위로 만들 수 있다.
 "use client";
 
-import { ArrowDown, ArrowUp, Check, CheckCheck, Circle, CircleCheck, FileText, Link2, Redo2, Scissors, SquarePlus, Undo2, Unlink, Upload, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, CheckCheck, Circle, CircleCheck, FileText, Link2, Redo2, Scissors, SquarePlus, Undo2, Unlink, Upload, WandSparkles, X } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useState, type ReactNode } from "react";
 
-import { SplitAiSection } from "@/components/manage/split-ai";
+import { SplitAiTabs } from "@/components/manage/split-ai";
 import { SplitAiBar } from "@/components/manage/split-ai-bar";
 import { SplitAiResult } from "@/components/manage/split-ai-result";
 import { Paper, type CutDragPos, type PaperCut } from "@/components/paper/paper";
@@ -23,6 +23,7 @@ import { getStageHref } from "@/lib/stages";
 import { InfoTip } from "@/components/ui/info-tip";
 import { Truncate } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
+import { BusyLabel } from "@/components/ui/motion";
 import { Tooltip } from "@/components/ui/tooltip";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ApiError } from "@/lib/api";
@@ -55,6 +56,7 @@ import { getSplitKeyAction } from "@/lib/split-keys";
 import { buildSplitMenu, isUnitDecided, type SplitMenuAction } from "@/lib/split-menu-model";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
+import { buildAiTabs } from "@/lib/split-ai-tabs-model";
 import { useSplitAi } from "@/lib/use-split-ai";
 
 /** Paper의 testid 앞말 - 단위·조각 testid와 Shift+F10이 같은 값을 쓴다 */
@@ -147,6 +149,14 @@ export default function SplitPage() {
   const ai = useSplitAi(bundleId, docId, data?.document.revision ?? null, (result) => (result ? handleChangeDone(result, t("split.didSplit")) : refresh()));
   const suggestion = ai.findSuggestion(selected);
   const suggestedIds = (tabs?.order ?? []).filter((id) => model?.units.get(id)?.split_suggestion_id != null);
+  // AI 제안 탭 - 연 적 있는 문장은 점을 뗀다(지금 고른 문장은 열어 본 것으로 친다)
+  const [seenAi, setSeenAi] = useState<ReadonlySet<number>>(new Set());
+  const aiTabs = buildAiTabs(
+    suggestedIds.map((id, position) => ({ unitId: id, label: model?.units.get(id)?.display_id ?? String(id), position, batch: ai.isBatch(id) })),
+    selectedId === null ? seenAi : new Set(seenAi).add(selectedId),
+  );
+  const aiUnitReason = !ai.isOn ? t("split.menu.why.aiOff") : suggestion ? t("ai.unitHasSuggestion") : null;
+  const sentenceCount = (data?.units ?? []).filter((unit) => unit.kind === "sentence" && unit.split_suggestion_id === null).length;
 
   function selectDoc(nextId: number) {
     setSelectedId(null);
@@ -172,6 +182,7 @@ export default function SplitPage() {
 
   function selectUnit(unitId: number | null, scroll = false) {
     setSelectedId(unitId);
+    if (unitId !== null) setSeenAi((prev) => new Set(prev).add(unitId));
     setCutAt(null);
     setRange(null);
     // 다른 탭의 단위(짝·다음 확인 안 된 단위)를 고르면 그 탭으로 간다
@@ -486,7 +497,7 @@ export default function SplitPage() {
               {page.page_basis === "estimated" ? "≈ " : ""}p.{page.page}
             </span>
           )}
-          {data && <SplitAiBar ai={ai} layout={data.document.language_layout} canEdit={canEdit} busy={busy} pending={suggestedIds.length} onNext={selectNextSuggestion} />}
+          {data && <SplitAiBar ai={ai} layout={data.document.language_layout} canEdit={canEdit} busy={busy} pending={suggestedIds.length} sentenceCount={sentenceCount} onNext={selectNextSuggestion} />}
           <SourceFontMenu />
         </div>
         {tabs && tabs.tabs.length > 1 && (
@@ -701,6 +712,7 @@ export default function SplitPage() {
         </div>
 
         <div className="grid content-start gap-4 overflow-y-auto p-[var(--pad)]">
+          <SplitAiTabs ai={ai} tabs={aiTabs} selected={selected} suggestion={suggestion} canEdit={canEdit} busy={busy} onPick={(id) => selectUnit(id, true)} onNext={selectNextSuggestion} />
           {!selected ? (
             <p className="text-ink-3" data-testid="split-hint">
               {t("split.hint")}
@@ -712,9 +724,20 @@ export default function SplitPage() {
                   {selected.kind === "table" ? t("split.tableUnit") : selected.text}
                 </p>
                 {cut && <p className="text-xs text-ink-3">{t("split.cutHint")}</p>}
+                {canEdit && (selected.kind === "sentence" || selected.kind === "cell_sentence") && (
+                  <Tooltip label={aiUnitReason ?? t("ai.askUnit")} suppressed={aiUnitReason === null}>
+                    <button
+                      type="button"
+                      className="btn h-7 w-full"
+                      data-testid="split-ai-unit"
+                      disabled={aiUnitReason !== null || busy || ai.working !== null}
+                      onClick={() => void ai.askUnit(selected.id)}
+                    >
+                      <BusyLabel busy={ai.working === "split"} icon={<WandSparkles size={14} strokeWidth={1.5} aria-hidden />} label={t("ai.askUnit")} />
+                    </button>
+                  </Tooltip>
+                )}
               </Section>
-
-              {suggestion && <SplitAiSection ai={ai} selected={selected} suggestion={suggestion} canEdit={canEdit} busy={busy} />}
 
               {canEdit && (selected.kind === "sentence" || selected.kind === "heading" || selected.kind === "cell_sentence") && (
                 <Section title={t("split.language")} testId="split-language">

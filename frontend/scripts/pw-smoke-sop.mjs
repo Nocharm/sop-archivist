@@ -291,6 +291,57 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   check("boundaries gate is open", (await page.locator('[data-testid="overview-gate-boundaries"]').getAttribute("data-ok")) === null);
 });
 
+await runStep("split: per-sentence AI split, whole-document request, tab stack", {}, async ({ page, takeShot }) => {
+  const status = await page.request.get(`${BASE}/api/bundles/1/ai/status`, { headers: { "X-Dev-User": "qa.member" } });
+  if (!status.ok() || !(await status.json()).ai_enabled) {
+    console.log("  (AI is off in this backend - skipped)");
+    return;
+  }
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  await page.goto(`${BASE}/bundles/${freshId}/split`);
+  const units = page.locator('[data-testid^="split-paper-unit-"].su');
+  await units.first().waitFor({ timeout: T });
+  check("the whole-document button says so", (await getText(page, "split-ai-request")).includes("whole document"));
+  const long = units.filter({ hasText: /\S{3,}.{40,}/ }).first();
+  const unitId = (await long.getAttribute("data-testid")).replace("split-paper-unit-", "");
+  await long.click();
+  await wait(page, "split-ai-unit");
+  check("the right panel offers AI split for this sentence", (await page.locator('[data-testid="split-ai-unit"]').isEnabled()));
+  await page.locator('[data-testid="split-ai-unit"]').click();
+  const tab = page.locator(`[data-testid="split-ai-tab-${unitId}"]`);
+  await tab.waitFor({ timeout: 30000 });
+  check("a tab for that sentence appears without a reload", true);
+  check("a single request is not marked as a whole-document result", (await tab.getAttribute("data-batch")) === null);
+  check("the selected sentence's tab is already seen", (await tab.getAttribute("data-unseen")) === null);
+  check("the button is off while the sentence has a suggestion", await page.locator('[data-testid="split-ai-unit"]').isDisabled());
+  // 일괄 요청 - 여러 탭이 쌓이고 머리에 일괄 표시가 붙는다
+  await page.locator('[data-testid="split-ai-request"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid^="split-ai-tab-"][data-batch="true"]').length >= 2, null, { timeout: 40000 });
+  check("whole-document results stack as batch tabs", true);
+  check("the header counts the whole-document results", /Whole document · \d+ left/.test(await getText(page, "split-ai-batch-head")));
+  const unseen = page.locator('[data-testid^="split-ai-tab-"][data-unseen="true"]').first();
+  const unseenId = (await unseen.getAttribute("data-testid")).replace("split-ai-tab-", "");
+  await unseen.click();
+  await page.locator(`[data-testid="split-paper-unit-${unseenId}"][data-sel]`).waitFor({ timeout: T });
+  check("a tab selects its sentence", true);
+  check("opening a tab clears its dot", (await page.locator(`[data-testid="split-ai-tab-${unseenId}"]`).getAttribute("data-unseen")) === null);
+  await wait(page, "split-ai-suggestion");
+  await takeShot("v014-task7-tabs.png");
+  // 단일 요청의 제안을 적용하면 탭이 빠지고 조각이 늘며, 되돌리면 돌아온다
+  await page.locator(`[data-testid="split-ai-tab-${unitId}"]`).click();
+  const before = await units.count();
+  await page.locator('[data-testid="split-ai-apply"]').click();
+  await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-unit-"].su').length > n, before, { timeout: T });
+  check("apply splits the sentence", true);
+  await page.locator(`[data-testid="split-ai-tab-${unitId}"]`).waitFor({ state: "detached", timeout: T });
+  check("the applied tab leaves the stack", true);
+  await page.keyboard.press("Control+z");
+  await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-unit-"].su').length === n, before, { timeout: T });
+  check("Ctrl+Z undoes the AI split", true);
+});
+
 // 일부러 거절당하는 저장이 있어 콘솔 오류를 허용한다
 await runStep("to-be: nested rows, N/A detail, edit and save", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/tobe`);
