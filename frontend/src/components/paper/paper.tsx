@@ -1,17 +1,18 @@
 // 원문 용지 - 블록을 원문 순서대로 그리고 단위마다 누를 수 있는 조각을 둔다. 용지 안에는 추출한 글자만 둔다(앱 라벨 금지).
 // 글자 조각마다 data-start(블록 안 위치)를 달아, 누른 자리·끌어 고른 범위를 블록 위치로 되돌린다.
-// strips(Split·Assign)에서는 단위 하나가 종이 한 조각이다 - 확인과 상관없이 처음부터 떨어져 있고, 조각 앞에 글자 태그(KO·EN·H), 오른쪽 끝에 아이콘 표시를 둔다.
+// strips(Split·Assign)에서는 단위 하나가 종이 한 조각이다 - 확인과 상관없이 처음부터 떨어져 있고, 조각 오른쪽 필 칸에 글자 태그(KO·EN·H)·절 번호 필, 오른쪽 끝에 아이콘 표시를 둔다.
 // 고른 단위는 글자 영역의 가장 바깥 윤곽 하나로 감싼다(contour). 태그는 앱 표시라 aria로 읽히지 않고, 아이콘 표시는 포인터·포커스 툴팁으로 뜻을 알린다.
 "use client";
 
 import { CircleCheck, FoldVertical, FolderCheck, ImageIcon, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles } from "lucide-react";
-import { Fragment, useEffect, useEffectEvent, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { FigureImage } from "@/components/paper/figure-image";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import { buildContourPath, buildRows, getGapMerge, getMarks, getTags, type MergeBlocker, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
+import { getPairBrackets, getPillFill, getSectionPill, type PairBracket, type PillSeg } from "@/lib/strip-pill-model";
 
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
 type PaperMark = UnitMark | "warn";
@@ -40,6 +41,19 @@ const BLOCKER_LABELS: Record<MergeBlocker, string> = {
   not_text: "split.noMergeKind",
   cell: "split.noMergeCell",
 };
+
+const PILL_SEG_LABELS: Record<PillSeg, string> = { ko: "KO", en: "EN", hold: "H" };
+
+function readRowUnitId(row: PaperRow): number | null {
+  return row.type === "table" ? row.item.unitId : row.unitId;
+}
+
+/** 줄이 놓인 첫 블록의 절 번호 - 표는 없다 */
+function readRowSection(row: PaperRow): string {
+  if (row.type === "piece") return row.parts[0]?.block.section_label ?? "";
+  if (row.type === "figure") return row.block.section_label;
+  return "";
+}
 
 export interface PaperCut {
   blockId: number;
@@ -192,6 +206,34 @@ export function Paper({
         ];
     return lists.filter((list) => list.items.length > 0).map((list) => ({ edge: list.edge, rows: buildRows(list.items, model.segments) }));
   }, [hasStrips, items, model]);
+  // 짝 - 단위 → 짝 단위, 이웃한 짝은 한 괄호로 묶는다(같은 쪽·같은 부분의 바로 이웃만)
+  const partnerOf = useMemo(() => {
+    const byPair = new Map<number, ViewUnit[]>();
+    for (const unit of model.units.values()) {
+      if (unit.pair_id === null) continue;
+      byPair.set(unit.pair_id, [...(byPair.get(unit.pair_id) ?? []), unit]);
+    }
+    const map = new Map<number, ViewUnit>();
+    for (const members of byPair.values()) {
+      members.sort((a, b) => a.pos_seq - b.pos_seq);
+      if (members.length === 2) {
+        map.set(members[0].id, members[1]);
+        map.set(members[1].id, members[0]);
+      }
+    }
+    return map;
+  }, [model]);
+  const brackets = useMemo(() => {
+    const map = new Map<number, PairBracket>();
+    for (const section of sections) {
+      const entries = section.rows.map((row) => {
+        const unitId = readRowUnitId(row);
+        return { unitId: unitId ?? -1, partnerId: unitId === null ? null : (partnerOf.get(unitId)?.id ?? null) };
+      });
+      for (const [unitId, bracket] of getPairBrackets(entries)) map.set(unitId, bracket);
+    }
+    return map;
+  }, [sections, partnerOf]);
   // 표 칸 안의 조각 줄 - 칸이 많은 표에서 고를 때마다 다시 펴지 않게
   const cellRows = useMemo(() => {
     const map = new Map<number, PaperRow[]>();
@@ -225,6 +267,17 @@ export function Paper({
       observer.disconnect();
     };
   }, [contour, selectedId, model, cut, items]);
+
+  // 나눌 선이 글 시작 가까이면 가운데 맞춤 팝업이 용지 왼쪽 밖으로 나가 옆 목록에 가려진다 - 용지 안으로 밀어 넣는다(화살표는 선에 남는다)
+  useLayoutEffect(() => {
+    const page = pageRef.current;
+    const pop = page?.querySelector<HTMLElement>(".cut-pop");
+    if (!page || !pop) return;
+    pop.style.setProperty("--pop-dx", "0px");
+    const edge = page.getBoundingClientRect().left + 4;
+    const left = pop.getBoundingClientRect().left;
+    if (left < edge) pop.style.setProperty("--pop-dx", `${edge - left}px`);
+  }, [cut, isDragging, selectedId, items]);
 
   // 나눌 선 끌기 - 선이 조각을 넘나들며 다시 그려져도 끊기지 않게 창에서 듣는다
   const handleDragMove = useEffectEvent((event: PointerEvent) => {
@@ -301,6 +354,7 @@ export function Paper({
                     aria-label={t("split.cutMove")}
                     aria-valuenow={cut.offset}
                     data-tip={isDragging ? undefined : t("split.cutMove")}
+                    data-tip-side="top"
                     data-testid={`${testId}-cut-handle`}
                     onPointerDown={handleHandleDown}
                     onKeyDown={handleHandleKey}
@@ -388,10 +442,32 @@ export function Paper({
     );
   }
 
-  function renderTags(unit: ViewUnit | undefined): ReactNode {
+  /** 오른쪽 필 칸 - 절 번호가 있으면 번호 필(바탕은 언어·보류 색, 올리면 언어 글자), 없으면 글자 태그 */
+  function renderTags(unit: ViewUnit | undefined, section: string): ReactNode {
     if (!unit) return null;
     const live = { ...unit, status: strips?.statusOf?.(unit.id) ?? unit.status };
     const { lang, hold } = getTags(live);
+    const pillNumber = getSectionPill(section);
+    if (pillNumber !== null) {
+      const own = lang === null ? null : (lang.toLowerCase() as "ko" | "en");
+      const partner = partnerOf.get(unit.id);
+      const order = partner ? [unit, partner].sort((x, y) => x.pos_seq - y.pos_seq).flatMap((u) => (u.lang === "ko" || u.lang === "en" ? [u.lang] : [])) : [];
+      const segs = getPillFill(own, order.length === 2 ? order : null, hold);
+      const share = 100 / Math.max(segs.length, 1);
+      const background = segs.length === 0 ? undefined : segs.length === 1 ? `var(--pill-${segs[0]})` : `linear-gradient(to right, ${segs.map((seg, at) => `var(--pill-${seg}) ${at * share}% ${(at + 1) * share}%`).join(", ")})`;
+      return (
+        <span className="spill" style={{ background }} data-testid={`${testId}-pill-${unit.id}`} aria-hidden>
+          <span className="spill-num">{pillNumber}</span>
+          {segs.length > 0 && (
+            <span className="spill-lang">
+              {segs.map((seg) => (
+                <span key={seg}>{PILL_SEG_LABELS[seg]}</span>
+              ))}
+            </span>
+          )}
+        </span>
+      );
+    }
     if (lang === null && !hold) return null;
     return (
       <span className="strip-tags" aria-hidden>
@@ -506,9 +582,10 @@ export function Paper({
         data-kind={row.type}
         data-sel={unit !== undefined && unit.id === selectedId ? "" : undefined}
         data-partner={unit !== undefined && partnerIds?.has(unit.id) ? "" : undefined}
+        data-bracket={unitId === null ? undefined : brackets.get(unitId)}
         data-testid={`${testId}-piece-${unitId ?? row.key}`}
       >
-        {row.type === "piece" && renderTags(unit)}
+        {row.type !== "table" && <span className="strip-pills">{renderTags(unit, readRowSection(row))}</span>}
         {row.type === "table"
           ? renderTable(row.item)
           : row.type === "figure"
@@ -528,7 +605,12 @@ export function Paper({
     return rows.map((row, index) => (
       <Fragment key={row.key}>
         {index > 0 && (
-          <div className="strip-gap" data-testid={`${testId}-gap-${row.key}`}>
+          <div
+            className="strip-gap"
+            data-pair={brackets.get(readRowUnitId(rows[index - 1]) ?? -1) === "top" && brackets.get(readRowUnitId(row) ?? -1) === "bottom" ? "" : undefined}
+            data-near-selected={selectedId !== null && (readRowUnitId(rows[index - 1]) === selectedId || readRowUnitId(row) === selectedId) ? "" : undefined}
+            data-testid={`${testId}-gap-${row.key}`}
+          >
             {renderMerge(rows[index - 1], row)}
           </div>
         )}

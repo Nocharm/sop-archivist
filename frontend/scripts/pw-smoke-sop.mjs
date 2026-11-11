@@ -220,7 +220,10 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   await page.mouse.click(box.x + Math.min(box.width / 2, 120), box.y + box.height / 2);
   await page.waitForTimeout(300);
   check("a second single click does not cut", (await page.locator(`[data-testid="split-paper-unit-${unitId}"][data-cut]`).count()) === 0);
-  await page.mouse.dblclick(box.x + Math.min(box.width / 2, 120), box.y + box.height / 2);
+  // 고른 조각 곁 틈이 늦게 벌어지며 조각이 밀리니, 벌어진 뒤 자리를 다시 잰다
+  await page.waitForTimeout(700);
+  const settled = await target.boundingBox();
+  await page.mouse.dblclick(settled.x + Math.min(settled.width / 2, 120), settled.y + settled.height / 2);
   await page.locator(`[data-testid="split-paper-unit-${unitId}"][data-cut]`).waitFor({ timeout: T });
   check("double-click draws the cut with the split popup", (await page.locator('[data-testid="split-cut-run"]').count()) === 1);
   await takeShot("sop-split-cut.png");
@@ -235,7 +238,9 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   check("Ctrl+Z undoes the split", true);
   // 나눈 뒤 사이의 합치기를 누르면 원래 한 조각으로 돌아온다. 나누기 팝업은 잠깐 뒤에 뜬다
   const targetText = (await target.innerText()).trim();
-  await page.mouse.dblclick(box.x + Math.min(box.width / 2, 120), box.y + box.height / 2);
+  await page.waitForTimeout(700);
+  const again = await target.boundingBox();
+  await page.mouse.dblclick(again.x + Math.min(again.width / 2, 120), again.y + again.height / 2);
   const cutRun = page.locator('[data-testid="split-cut-run"]');
   await cutRun.waitFor({ timeout: T });
   check("the cut can be dragged", (await page.locator('[data-testid="split-paper-cut-handle"]').count()) === 1);

@@ -21,6 +21,13 @@ export function placeBelow(anchor: DOMRect, floating: { width: number; height: n
   return { top, left };
 }
 
+/** 트리거 위(공간이 모자라면 아래)에 놓는다 - 아래에 다른 창이 뜨는 자리의 툴팁용 */
+export function placeAbove(anchor: DOMRect, floating: { width: number; height: number }, align: "start" | "end" | "center"): FloatingPos {
+  const below = placeBelow(anchor, floating, align);
+  const top = anchor.top - GAP - floating.height;
+  return { top: top >= EDGE ? top : below.top, left: below.left };
+}
+
 // Esc는 가장 위 층만 닫는다 - 열린 순서대로 쌓아 둔다
 const escStack: symbol[] = [];
 

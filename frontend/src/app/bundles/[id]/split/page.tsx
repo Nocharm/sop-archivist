@@ -505,7 +505,7 @@ export default function SplitPage() {
                       setBoundary(unit, true);
                     }}
                   >
-                    <Check size={11} strokeWidth={3} aria-hidden />
+                    <kbd aria-hidden>↵</kbd>
                     <span className="inline-check-label">{t("split.checkBoundary")}</span>
                   </button>
                 );
