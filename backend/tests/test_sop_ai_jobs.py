@@ -703,6 +703,8 @@ def test_worker_loop_stops_cleanly_on_cancel(
 ) -> None:
     job_id = _enqueue(_new_bundle(client))
     seen: list[str] = []
+    # 상한이 1이면 작업을 띄운 뒤 다음 꺼내기(DB 호출) 없이 대기에만 머문다 — 느린 러너에서 취소가 꺼내기 도중에 떨어지지 않게
+    monkeypatch.setattr(settings, "ai_max_concurrency", 1)
 
     async def _run() -> None:
         started = asyncio.Event()
