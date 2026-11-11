@@ -78,6 +78,7 @@ export function Select<V extends string>({
     setIsClipped([...nodes].some((node) => node.scrollWidth > node.clientWidth));
   }
 
+  // label이 노드(글자가 아닌 것)면 잘릴 때 보일 툴팁 글자를 옵션의 tip으로 줘야 한다
   const tipText = selected?.tip ?? (typeof selected?.label === "string" ? selected.label : "");
 
   const trigger = (

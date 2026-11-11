@@ -47,8 +47,8 @@ const ACTIONS_WIDTH = "w-[156px]";
 // 표가 이 폭(본문 폭, px)에 다 들어가지 않으면 뒤쪽 네 열(추출·보조·경고·동작)을 한 열 두 줄로 접는다 - 한 줄 배치의 표 최소 폭(영어 약 1223, 한국어 약 1176)보다 조금 크게
 const TRAIL_WRAP_BELOW = 1230;
 
-// 언어 배치 드롭다운 고정 폭 - 그림 + 가장 긴 영어 라벨(KO/EN interleaved)이 거의 들어가고 더 길면 말줄임
-const LAYOUT_SELECT_WIDTH = 156;
+// 언어 배치 드롭다운 고정 폭 - 기본 라벨은 영어·한국어 모두 말줄임 없이 들어가야 한다(가장 긴 "KO/EN interleaved" 글자 106px + 그림 22 + 간격 8 + 좌우 여백·화살표 30 + 테두리 2 = 168, 여유 2). 말줄임은 유난히 긴 내용 몫
+const LAYOUT_SELECT_WIDTH = 170;
 
 export default function DocumentsPage() {
   const { t } = useI18n();
