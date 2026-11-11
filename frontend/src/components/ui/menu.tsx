@@ -18,13 +18,14 @@ interface MenuProps {
   /** 목록 폭을 트리거 폭 이상으로 맞춘다(Select) */
   matchAnchorWidth?: boolean;
   id?: string;
+  label?: string;
   children: ReactNode;
 }
 
 const ITEM_SELECTOR = "[role=menuitem]:not(:disabled),[role=menuitemradio]:not(:disabled),[role=option]:not(:disabled)";
 const TYPEAHEAD_RESET_MS = 600; // 이 시간 안에 친 글자는 이어서 찾는다
 
-export function Menu({ anchorRef, onClose, testId, align = "start", role = "menu", matchAnchorWidth = false, id, children }: MenuProps) {
+export function Menu({ anchorRef, onClose, testId, align = "start", role = "menu", matchAnchorWidth = false, id, label, children }: MenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<FloatingPos | null>(null);
   const [minWidth, setMinWidth] = useState<number | undefined>(undefined);
@@ -116,6 +117,7 @@ export function Menu({ anchorRef, onClose, testId, align = "start", role = "menu
       ref={menuRef}
       id={id}
       role={role}
+      aria-label={label}
       data-testid={testId}
       className="menu"
       style={{ ...(pos ? { top: pos.top, left: pos.left } : { top: 0, left: 0, visibility: "hidden" }), minWidth }}

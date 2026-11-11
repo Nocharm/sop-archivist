@@ -460,7 +460,9 @@
     border-radius: 0 var(--r-1) var(--r-1) 0;
     outline: none;
   }
-  .menu-item:disabled { color: var(--ink-4); cursor: not-allowed; }
+  .menu-item:disabled, .menu-item[aria-disabled="true"] { color: var(--ink-4); cursor: not-allowed; }
+  /* 꺼진 항목은 포커스는 받되 호버 행 바탕은 입히지 않는다 */
+  .menu-item[aria-disabled="true"]:hover { background: none; box-shadow: none; }
   .menu-item .check { margin-left: auto; color: var(--accent); flex: none; }
   .menu-item[aria-selected="true"] { color: var(--accent); }
 

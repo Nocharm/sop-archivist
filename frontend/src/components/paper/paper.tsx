@@ -11,8 +11,9 @@ import { FigureImage } from "@/components/paper/figure-image";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
-import { buildContourPath, buildRows, getGapMerge, getMarks, getTags, type MergeBlocker, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
+import { buildContourPath, buildRows, getGapMerge, getMarks, getTags, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import { getPairBrackets, getPillFill, getSectionPill, type PairBracket, type PillSeg } from "@/lib/strip-pill-model";
+import { MERGE_BLOCKER_KEYS } from "@/lib/split-menu-model";
 
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
 type PaperMark = UnitMark | "warn";
@@ -35,11 +36,6 @@ const MARK_LABELS: Record<PaperMark, string> = {
   suggest: "split.markSuggest",
   warn: "split.markWarn",
   checked: "split.legendChecked",
-};
-const BLOCKER_LABELS: Record<MergeBlocker, string> = {
-  mixed_language: "split.noMergeLanguage",
-  not_text: "split.noMergeKind",
-  cell: "split.noMergeCell",
 };
 
 const PILL_SEG_LABELS: Record<PillSeg, string> = { ko: "KO", en: "EN", hold: "H" };
@@ -112,6 +108,8 @@ interface PaperProps {
   /** 손잡이에서 ← →로 한 자리씩 */
   onCutNudge?: (step: 1 | -1) => void;
   onUnitDoubleClick?: (unitId: number, at: { blockId: number; offset: number } | null) => void;
+  /** 문장 줄을 우클릭하거나 메뉴 글쇠를 눌렀다 - 주면 브라우저 메뉴 대신 이 콜백이 불린다(Split) */
+  onUnitContextMenu?: (unitId: number, at: { x: number; y: number }) => void;
 }
 
 /** 화면 좌표 → 블록 위치. 글자 조각 요소의 data-start에 글자 노드 안 위치를 더한다 */
@@ -186,6 +184,7 @@ export function Paper({
   onCutDrag,
   onCutNudge,
   onUnitDoubleClick,
+  onUnitContextMenu,
 }: PaperProps) {
   const { t } = useI18n();
   const pageRef = useRef<HTMLDivElement>(null);
@@ -425,7 +424,7 @@ export function Paper({
     const gap = merge ? getGapMerge(prev, next, model.units) : null;
     if (!merge || !gap) return null;
     const label = t("split.mergeAdjacent");
-    const reason = gap.blocker ? t(BLOCKER_LABELS[gap.blocker]) : null;
+    const reason = gap.blocker ? t(MERGE_BLOCKER_KEYS[gap.blocker]) : null;
     const isOff = reason !== null || merge.busy;
     return (
       <button
@@ -507,6 +506,7 @@ export function Paper({
           {index > 0 && <div className="cell-gap">{renderMerge(rows[index - 1], row)}</div>}
           <div
             className="cell-piece"
+            data-strip-unit={unit?.id}
             data-sel={unit !== undefined && unit.id === selectedId ? "" : undefined}
             data-partner={unit !== undefined && partnerIds?.has(unit.id) ? "" : undefined}
             data-testid={unit ? `${testId}-piece-${unit.id}` : undefined}
@@ -592,6 +592,7 @@ export function Paper({
         data-sel={unit !== undefined && unit.id === selectedId ? "" : undefined}
         data-partner={unit !== undefined && partnerIds?.has(unit.id) ? "" : undefined}
         data-bracket={unitId === null ? undefined : brackets.get(unitId)}
+        data-strip-unit={unitId ?? undefined}
         data-testid={`${testId}-piece-${unitId ?? row.key}`}
       >
         {row.type !== "table" && <span className="strip-pills">{renderTags(unit, readRowSection(row))}</span>}
@@ -649,6 +650,16 @@ export function Paper({
     onUnitDoubleClick(Number(target.dataset.unit), readCaret(event.clientX, event.clientY));
   }
 
+  function handleContextMenu(event: MouseEvent<HTMLDivElement>) {
+    if (!onUnitContextMenu) return;
+    const target = event.target as HTMLElement;
+    const holder = target.closest<HTMLElement>("[data-strip-unit]") ?? target.closest<HTMLElement>(".su[data-unit]");
+    const unitId = Number(holder?.dataset.stripUnit ?? holder?.dataset.unit);
+    if (!holder || !Number.isFinite(unitId)) return;
+    event.preventDefault();
+    onUnitContextMenu(unitId, { x: event.clientX, y: event.clientY });
+  }
+
   // 두 번 누를 때 브라우저가 낱말을 고르지 않게 - 나눌 자리를 정하는 동작이다
   function handleMouseDown(event: MouseEvent<HTMLDivElement>) {
     if (onUnitDoubleClick && event.detail > 1 && (event.target as HTMLElement).closest(".su[data-unit]")) event.preventDefault();
@@ -679,6 +690,7 @@ export function Paper({
         data-dragging={isDragging ? "" : undefined}
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
+        onContextMenu={handleContextMenu}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
         {...tip.handlers}

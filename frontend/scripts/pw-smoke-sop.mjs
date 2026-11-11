@@ -492,6 +492,39 @@ await runStep("split: H holds a unit without a destination", {}, async ({ page }
   check("a cleared reason stays empty", (await page.locator('[data-testid="assign-reason"]').inputValue()) === "");
 });
 
+await runStep("split: right-click menu shows reasons for blocked actions and runs an enabled one", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${freshBundleId}/split`);
+  const units = page.locator('[data-testid^="split-paper-unit-"]:not(.ptbl-cap)');
+  await units.nth(9).waitFor({ timeout: T });
+  const first = units.nth(4);
+  await first.click();
+  const firstId = (await getText(page, "split-unit-id")).trim();
+  // 고른 채 먼 문장을 우클릭 - 두 문장 메뉴
+  await units.nth(9).click({ button: "right" });
+  await wait(page, "split-menu");
+  check("right-click opens the two-sentence menu", (await page.locator('[data-testid^="split-menu-"]').count()) === 4, String(await page.locator('[data-testid^="split-menu-"]').count()));
+  const merge = page.locator('[data-testid="split-menu-merge"]');
+  check("merge is disabled for non-neighbours", (await merge.getAttribute("aria-disabled")) === "true");
+  await merge.hover();
+  await page.locator('[data-testid="paper-tip"]').waitFor({ timeout: T });
+  check("hovering a disabled item shows why", ((await page.locator('[data-testid="paper-tip"]').innerText()) ?? "").length > 0, await page.locator('[data-testid="paper-tip"]').innerText());
+  await takeShot("sop-split-menu.png");
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="split-menu"]').waitFor({ state: "detached", timeout: T });
+  check("Esc closes the menu", true);
+  // 고른 문장 자신을 우클릭 - 한 문장 메뉴, 경계 확인이 바로 된다
+  await first.click({ button: "right" });
+  await wait(page, "split-menu-check");
+  check("right-click on the selected sentence lists the single actions", (await page.locator('[data-testid="split-menu-ai_split"]').count()) === 1);
+  // 앞 단계가 경계를 이미 확인해 두었을 수 있다 - 항목은 지금 상태를 뒤집는다(확인하면 다음 확인 안 된 문장으로 넘어가니 줄의 확인 표시로 본다)
+  const firstUnitId = (await first.getAttribute("data-testid")).replace("split-paper-unit-", "");
+  const mark = page.locator(`[data-testid="split-paper-mark-checked-${firstUnitId}"]`);
+  const wasChecked = (await mark.count()) > 0;
+  await page.locator('[data-testid="split-menu-check"]').click();
+  await page.waitForFunction(([id, was]) => (document.querySelector(`[data-testid="split-paper-mark-checked-${id}"]`) !== null) !== was, [firstUnitId, wasChecked], { timeout: T });
+  check("the menu's boundary item toggles the sentence", firstId.length > 0, `was checked: ${wasChecked}`);
+});
+
 await runStep("assign: hold an unassigned unit without a destination", {}, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
   await wait(page, "assign-bar");

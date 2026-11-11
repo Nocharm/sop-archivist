@@ -33,6 +33,8 @@ export interface SplitAi {
   /** 이 단위에 걸린, 아직 정하지 않은 제안 */
   findSuggestion: (unit: ViewUnit | null) => AiSuggestion | null;
   ask: (kind: Extract<AiKind, "split" | "pair">) => Promise<void>;
+  /** 문장 하나만 AI 나누기를 요청한다(우클릭 메뉴) */
+  askUnit: (unitId: number) => Promise<void>;
   apply: (unit: ViewUnit, suggestion: AiSuggestion) => Promise<void>;
   reject: (suggestion: AiSuggestion) => Promise<void>;
 }
@@ -66,6 +68,20 @@ export function useSplitAi(bundleId: number, docId: number | null, revision: num
     try {
       const out = await requestAi(bundleId, kind, { document_id: docId });
       setLastRequest({ kind, docId, out });
+      jobs.watch();
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+    } finally {
+      setWorking(null);
+    }
+  }
+
+  async function askUnit(unitId: number) {
+    if (docId === null) return;
+    setWorking("split");
+    try {
+      const out = await requestAi(bundleId, "split", { unit_ids: [unitId] });
+      setLastRequest({ kind: "split", docId, out });
       jobs.watch();
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
@@ -121,6 +137,7 @@ export function useSplitAi(bundleId: number, docId: number | null, revision: num
     clearLastRequest: () => setLastRequest(null),
     findSuggestion: (unit) => (unit ? (suggestions.data ?? []).filter((item) => item.content.unit_id === unit.id && item.adoption === null).at(-1) ?? null : null),
     ask,
+    askUnit,
     apply,
     reject,
   };

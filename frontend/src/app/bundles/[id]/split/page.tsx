@@ -15,6 +15,7 @@ import { Paper, type CutDragPos, type PaperCut } from "@/components/paper/paper"
 import { SourceFontMenu } from "@/components/paper/source-font-menu";
 import { Modal } from "@/components/modal";
 import { ReadOnlyNote } from "@/components/read-only-note";
+import { SplitContextMenu } from "@/components/split/split-context-menu";
 import { SplitHelp } from "@/components/split/split-help";
 import { LoadError } from "@/components/ui/load-error";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
@@ -51,6 +52,7 @@ import { buildGroupSave } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
 import { buildPaperModel, buildPaperTabs, canSplitAt, countUnchecked, readWarningText, resolveCutDrag, shouldRecenter, toBlockOffset, toUnitOffset, type PaperSheet, type PaperTabKey } from "@/lib/paper-model";
 import { getSplitKeyAction } from "@/lib/split-keys";
+import { buildSplitMenu, type SplitMenuAction } from "@/lib/split-menu-model";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 import { useSplitAi } from "@/lib/use-split-ai";
@@ -126,6 +128,8 @@ export default function SplitPage() {
   const uncheckedLeft = countUnchecked(shownUnits, isChecked);
   const countTabLeft = (key: PaperTabKey) => countUnchecked(shownUnits.filter((unit) => tabs?.tabOf.get(unit.id) === key), isChecked);
   const [isCheckRestOpen, setIsCheckRestOpen] = useState(false);
+  // 우클릭 메뉴 - 뜬 자리와 누른 문장
+  const [menu, setMenu] = useState<{ x: number; y: number; targetId: number } | null>(null);
 
   const selected: ViewUnit | null = (selectedId !== null && model?.units.get(selectedId)) || null;
   const cut: PaperCut | null = (() => {
@@ -343,6 +347,54 @@ export default function SplitPage() {
     selectUnit(suggestedIds.find((id) => order.indexOf(id) > from) ?? suggestedIds[0], true);
   }
 
+  /** 문장 우클릭·메뉴 글쇠 - 고른 것이 없으면 그 문장을 먼저 고른다(한 문장 메뉴가 그 문장의 것이 되게) */
+  function openMenu(unitId: number, at: { x: number; y: number }) {
+    if (!model?.units.has(unitId) || isPairPicking) return;
+    if (selectedId === null) selectUnit(unitId);
+    setMenu({ ...at, targetId: unitId });
+  }
+
+  const menuTarget = menu ? model?.units.get(menu.targetId) ?? null : null;
+  const menuItems = (() => {
+    if (!menuTarget || !model || !tabs) return null;
+    const order = tabs.order;
+    const adjacent = selected !== null && Math.abs(order.indexOf(selected.id) - order.indexOf(menuTarget.id)) === 1;
+    return buildSplitMenu({
+      selected,
+      target: menuTarget,
+      adjacent,
+      readOnly: !canEdit,
+      aiEnabled: ai.isOn,
+      isChecked,
+      hasCut: cutAt?.unitId === menuTarget.id,
+      isDecided: model.units.get(menuTarget.group_unit_id ?? menuTarget.id)?.status !== "unassigned",
+    });
+  })();
+
+  function runMenuAction(action: SplitMenuAction) {
+    const target = menuTarget;
+    setMenu(null);
+    if (!target || !data || docId === null || !model || !tabs) return;
+    const revision = data.document.revision;
+    const isTwo = selected !== null && selected.id !== target.id;
+    const pairId = isTwo ? selected.pair_id : target.pair_id;
+    if (action === "pair" && selected) void runSimple(() => createPair(bundleId, docId, revision, [selected.id, target.id]), t("split.pairConfirmed"), clearTransient);
+    else if (action === "unpair" && pairId !== null) void runSimple(() => deletePair(bundleId, docId, pairId, revision), t("split.pairRemoved"));
+    else if (action === "merge" && selected) {
+      const [first, second] = tabs.order.indexOf(selected.id) < tabs.order.indexOf(target.id) ? [selected, target] : [target, selected];
+      runEdit({ type: "merge", unit_ids: [first.id, second.id] }, t("split.didMerge"));
+    } else if (action === "check_both" && selected) {
+      const ids = [selected, target].flatMap((unit) => [unit.id, ...(tabs.mirrors.get(unit.id) ?? [])]);
+      void runSimple(() => setBoundaryConfirmed(bundleId, docId, ids, true), null);
+    } else if (action === "check") setBoundary(target, !isChecked(target));
+    else if (action === "split") splitAtCut();
+    else if (action === "ai_split") void ai.askUnit(target.id);
+    else if (action === "hold") startHold();
+    else if (action === "lang_ko" || action === "lang_en") {
+      runEdit({ type: "set_language", unit_ids: [target.id], lang: action === "lang_ko" ? "ko" : "en" }, t("common.saved"), target.id);
+    }
+  }
+
   function describeSheet(sheet: PaperSheet, index: number): string {
     if (sheet.refs.length === 0) return t("split.sheetOrdinal", { name: t(`split.part.${sheet.part}`), n: index + 1 });
     return sheet.refs.map((ref: PartRef) => t("split.sheetRef", { n: ref.section, type: t(`split.refType.${ref.type}`) })).join(", ");
@@ -350,6 +402,15 @@ export default function SplitPage() {
 
   const handleKey = useEffectEvent((event: KeyboardEvent) => {
     if (pending) return;
+    // 메뉴 글쇠·Shift+F10 - 고른 문장 줄에서 메뉴를 연다
+    if ((event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) && selected && !isTypingTarget(event.target) && document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]') === null) {
+      const strip = document.querySelector(`[data-testid="split-paper-piece-${selected.id}"]`);
+      if (!strip) return;
+      const box = strip.getBoundingClientRect();
+      event.preventDefault();
+      openMenu(selected.id, { x: box.left + 40, y: box.top + Math.min(box.height, 40) / 2 });
+      return;
+    }
     const action = getSplitKeyAction(event, {
       typing: isTypingTarget(event.target),
       // 용지의 단위 손잡이(data-unit)는 단추여도 화면 단축키를 그대로 받는다
@@ -479,6 +540,7 @@ export default function SplitPage() {
               warnBlockIds={warnBlockIds}
               onUnitClick={handleUnitClick}
               onUnitDoubleClick={canEdit ? handleUnitDoubleClick : undefined}
+              onUnitContextMenu={openMenu}
               onRangeSelect={canEdit ? (next) => setRange(next) : undefined}
               onCutDrag={canEdit ? dragCut : undefined}
               onCutNudge={canEdit ? nudgeCut : undefined}
@@ -834,6 +896,9 @@ export default function SplitPage() {
         </div>
       </aside>
 
+      {menu && menuTarget && menuItems && (
+        <SplitContextMenu at={menu} items={menuItems} isTargetChecked={isChecked(menuTarget)} onPick={runMenuAction} onClose={() => setMenu(null)} />
+      )}
       {holdFor && (
         <Modal
           title={t("split.holdTitle")}
