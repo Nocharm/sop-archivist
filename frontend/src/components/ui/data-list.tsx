@@ -105,7 +105,7 @@ function GroupHead({ label, count }: { label: ReactNode; count: number }) {
 }
 
 function getCellClass<T>(column: DataColumn<T>): string {
-  return [column.align === "end" ? "num" : "", column.nowrap ? "whitespace-nowrap" : "", column.grow ? "dl-grow" : "", column.className ?? ""]
+  return [column.align === "end" ? "num" : "", column.nowrap ? "whitespace-nowrap" : "", column.grow ? "dl-grow" : "", column.card === "title" ? "dl-title" : "", column.className ?? ""]
     .filter(Boolean)
     .join(" ");
 }

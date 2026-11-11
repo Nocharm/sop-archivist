@@ -7,6 +7,7 @@ import { Check, FilePlus2, X } from "lucide-react";
 import { useState } from "react";
 
 import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { ClampText } from "@/components/ui/clamp-text";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { LoadError } from "@/components/ui/load-error";
 import { MarkdownView } from "@/components/ui/markdown-view";
@@ -92,15 +93,17 @@ export function GuidelinesPanel() {
       card: "body",
       grow: true,
       minWidth: 160,
-      cell: (version) => <span className="text-ink-2">{version.note || <span className="text-ink-4">–</span>}</span>,
+      cellTestId: (version) => `guideline-note-${version.version}`,
+      cell: (version) => (version.note ? <ClampText text={version.note} className="text-ink-2" /> : <span className="text-ink-4">–</span>),
     },
     {
       key: "createdBy",
       header: t("guidelines.createdBy"),
       nowrap: true,
       cell: (version) => (
-        <span className="text-ink-2">
-          <span className="font-mono text-xs">{version.created_by}</span> · <span className="tabular-nums">{formatKst(version.created_at)}</span>
+        <span className="block text-ink-2">
+          <span className="block font-mono text-xs">{version.created_by}</span>
+          <span className="block tabular-nums">{formatKst(version.created_at)}</span>
         </span>
       ),
     },

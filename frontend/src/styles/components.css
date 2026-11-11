@@ -305,6 +305,10 @@
   /* 일반 칸은 낱말 단위로만 접는다(break-word는 최소 폭을 줄이지 않아 짧은 열이 한 글자씩 세로로 접히지 않는다).
      공백 없는 긴 글이 들어오는 열은 DataList grow(.dl-grow)로 두어 그 칸 안에서 아무 데서나 접는다 */
   .dtable td { padding: var(--row-y) 10px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: break-word; }
+  /* 제목 칸만 위에 붙이고 나머지(상태 알약·진행률·시각)는 줄 가운데에 둔다 */
+  .dtable td:not(.dl-title) { vertical-align: middle; }
+  /* 두 줄 제한 - td가 아니라 칸 안을 감싼 요소에 건다(td를 직접 제한하면 줄 테두리가 깨진다) */
+  .clamp-2 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
   .dtable tbody tr { transition: background var(--dur-fast); }
   .dtable tbody tr[data-link]:hover td { background: var(--hover); cursor: pointer; }
   /* 키보드로 닿은 줄 - 테두리는 줄 안쪽으로(바깥으로 내면 옆 줄·틀에 잘린다) */

@@ -98,6 +98,98 @@ const AUDIT_ENTRIES = [
     expect: (value) => value === false,
     note: "document does not overflow horizontally on any scene",
   },
+  // ---- Task 2: 관리 목록·History 표 줄 높이 ----
+  {
+    id: "A5", ds: "worst", user: "dev.admin", views: [1120],
+    path: () => "/admin?tab=bundles",
+    measure: async (page) => {
+      const frameOverflows = await page.locator('[data-testid="admin-bundles-list"]').first().evaluate((table) => {
+        const frame = table.parentElement;
+        return frame.scrollWidth > frame.clientWidth + 1;
+      });
+      const button = page.locator('[data-testid^="admin-bundle-members-"]').first();
+      await button.locator("xpath=ancestor::tr").hover();
+      const inView = await button.evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        return box.left >= 0 && box.right <= window.innerWidth;
+      });
+      return { frameOverflows, inView };
+    },
+    expect: (value) => value.frameOverflows === false && value.inView === true,
+    note: "bundle table stays inside its frame; members button inside viewport on row hover",
+  },
+  {
+    id: "A6", ds: "worst", user: "dev.admin", views: [1120, 1920],
+    path: () => "/admin?tab=access",
+    open: async (page) => {
+      await page.getByTestId("access-sub-grants").click();
+      await page.waitForTimeout(SETTLE_MS);
+    },
+    measure: (page) => page.locator('[data-testid^="grant-row-"]').evaluateAll((rows) => {
+      const heights = rows.map((row) => row.getBoundingClientRect().height).sort((a, b) => a - b);
+      return Math.round(heights[Math.floor(heights.length / 2)] ?? 0);
+    }),
+    expect: (value) => value > 0 && value <= 56,
+    note: "grants-table row height median <= 56px",
+  },
+  {
+    id: "A7", ds: "worst", user: "dev.admin", views: [1120],
+    path: () => "/admin?tab=guidelines",
+    measure: (page) => maxRowHeight(page, "guideline-versions"),
+    expect: (value) => value > 0 && value <= 80,
+    note: "guideline-versions largest row <= 80px",
+  },
+  {
+    id: "A8", ds: "worst", user: "dev.admin", views: [1120],
+    path: () => "/admin?tab=access",
+    open: async (page) => {
+      await page.getByTestId("access-sub-audit").click();
+      await page.waitForTimeout(SETTLE_MS);
+    },
+    measure: (page) => maxRowHeight(page, "audit-table"),
+    expect: (value) => value > 0 && value <= 56,
+    note: "audit-table largest row <= 56px",
+  },
+  {
+    id: "A9", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}/history`,
+    measure: (page) => maxRowHeight(page, "history-list"),
+    expect: (value) => value > 0 && value <= 60,
+    note: "history-list largest row <= 60px",
+  },
+  {
+    id: "A11", ds: "worst", user: "dev.admin", views: [1120],
+    path: () => "/admin?tab=access",
+    measure: (page) => page.locator('[data-testid^="role-row-"]').evaluateAll((rows) => Math.round(Math.max(0, ...rows.map((row) => row.getBoundingClientRect().height)))),
+    expect: (value) => value > 0 && value <= 140,
+    note: "role-row-* largest <= 140px",
+  },
+  {
+    id: "C6", ds: "mid", user: MEMBER, views: [1440],
+    path: () => "/",
+    measure: (page) => page.locator('[data-testid^="bundles-row-"]').first().evaluate((row) => {
+      const pill = row.querySelector("td:nth-child(2) .pill").getBoundingClientRect();
+      const box = row.getBoundingClientRect();
+      return Math.round(Math.abs((pill.top + pill.bottom) / 2 - (box.top + box.bottom) / 2) * 10) / 10;
+    }),
+    expect: (value) => value <= 2,
+    note: "status pill vertical centre within 2px of row centre",
+  },
+  {
+    id: "Focus2", ds: "worst", user: "dev.admin", views: [1120],
+    path: () => "/admin?tab=guidelines",
+    open: async (page) => {
+      const memo = page.locator('[data-testid^="guideline-note-"] [tabindex="0"]').filter({ hasText: /^[\s\S]{200,}$/ }).first();
+      await memo.focus();
+      await page.waitForTimeout(500);
+    },
+    measure: async (page) => {
+      const tip = page.locator('[role="tooltip"]').first();
+      return (await tip.count()) === 0 ? 0 : (await tip.innerText()).length;
+    },
+    expect: (value) => value >= 200,
+    note: "focusing a guideline memo shows its full 200 characters in a tooltip",
+  },
 ];
 
 // ---------- ids 지도 ----------

@@ -517,7 +517,7 @@ Bundle에서 일어난 일을 시간순으로 보는 화면입니다.
 
 ![History 화면](img/history.png "종류로 거르고 줄을 눌러 자세히 본다")
 
-- 열은 **When**, **Kind**, **Change**, **Who** 입니다.
+- 열은 **When**, **Kind**, **Change**, **Who** 입니다. **Change** 는 두 줄까지만 보이니, 긴 사유는 줄을 열어 전체를 읽습니다.
 - 위쪽 단추로 종류를 거릅니다: **All**, **Bundle**, **Documents**, **Decisions**, **AI**, **Review**.
 - 줄을 누르거나 줄에 초점을 두고 <kbd>Enter</kbd>를 누르면 자세한 내용이 열립니다.
 - AI는 요청·취소·다시 시도만 기록됩니다. 제안을 확정한 것은 사람의 판단(**Decisions**)으로 남습니다.
