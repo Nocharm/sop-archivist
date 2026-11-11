@@ -22,6 +22,7 @@ export function getPillWidth(level: number): number {
   return PILL_WIDTH_BY_LEVEL[Math.min(Math.max(level, 1), PILL_WIDTH_BY_LEVEL.length) - 1];
 }
 
+// Split은 1280px 미만에서 깊이 3 이상 탭을 46px로 CSS가 더 줄인다(styles/components.css `.split-desk .strip-tab`) - 모델은 화면 폭을 몰라 아래 값은 그대로다
 /** 줄마다 탭 폭 - 숫자 번호가 있으면 깊이별 폭, 없는 줄(깊이 0)은 같은 부분 안의 직전 줄 폭을 따르고(부분의 첫 줄이면 1단 폭), 짝의 아래 줄(pairTopOf = 위 줄의 key)은 위 줄과 같은 폭이다. 위 줄을 따르는 까닭: 한 카드의 탭은 위 줄이 대표라 절 번호 글자도 위 줄만 보이기 때문이다 */
 export function getTabWidths(rows: readonly { key: string; part: string; sectionLabel: string; pairTopOf?: string | null }[]): Map<string, number> {
   const widths = new Map<string, number>();

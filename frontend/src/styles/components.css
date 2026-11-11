@@ -546,7 +546,9 @@
 
 /* ---- 원문 용지: 용지에는 추출한 글자만 둔다(앱 글자 금지). 원문 글꼴은 사람마다 설정(data-src-*) ---- */
 @layer components {
-  .desk { overflow-y: auto; overflow-x: clip; scrollbar-gutter: stable; padding: 18px 20px; min-width: 0; min-height: 0; background: var(--bg); }
+  .desk { overflow-y: auto; scrollbar-gutter: stable; padding: 18px 20px; min-width: 0; min-height: 0; background: var(--bg); }
+  /* 표를 감싼 조각만 가로로 스크롤하게 책상 쪽은 자른다 - 설명서 책상 등 다른 .desk에는 걸지 않는다 */
+  .split-desk { overflow-x: clip; }
   .sheet {
     width: 100%;
     max-width: 600px;
@@ -1052,8 +1054,8 @@
   .cell-marks { position: absolute; right: 0; top: 4px; display: flex; gap: 3px; align-items: center; }
 
   /* 왼쪽 탭 - 줄의 왼쪽 밖에 맞닿아 붙는다(맞닿는 쪽 모서리 직각, 바깥 모서리 둥글게). 바탕 = 언어 색, 보류는 그 위에 사선 줄무늬. 번호는 절의 첫 블록에만, 번호 없는 탭은 옅게 해 번호를 따라가는 눈을 덜 방해하고 올리면 진해진다. 탭에 올리면 번호가 사라지고 언어 글자가 뜬다. 첫 글줄 높이(27px)에 번호를 맞춘다 */
-  /* 1280 미만에서는 3단 이상의 절 번호 탭을 46px에서 멈춘다 - 깊은 번호가 글 상자를 좁히지 않게(긴 번호는 탭 안에서 잘린다) */
-  @media (max-width: 1279px) { .strip-tab, .strip-tab-gap { max-width: 46px; } }
+  /* 1280 미만 Split에서만 3단 이상의 절 번호 탭을 46px에서 멈춘다(Assign 탭은 그대로) - 깊은 번호가 글 상자를 좁히지 않게(긴 번호는 탭 안에서 잘린다) */
+  @media (max-width: 1279px) { .split-desk .strip-tab, .split-desk .strip-tab-gap { max-width: 46px; } }
   .strip-tab { position: relative; flex: none; align-self: stretch; display: flex; flex-direction: column; align-items: center; padding-top: 6px; border: 1px solid var(--line-2); border-right: 0; border-radius: var(--r-1) 0 0 var(--r-1); background-color: var(--tab-none); color: var(--tab-ink); box-sizing: border-box; overflow: hidden; transition: opacity var(--dur-base); }
   .strip-tab[data-lang="ko"] { background-color: var(--tab-ko); }
   .strip-tab[data-lang="en"] { background-color: var(--tab-en); }

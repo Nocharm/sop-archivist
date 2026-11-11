@@ -531,7 +531,7 @@ export default function SplitPage() {
           </div>
         )}
         {ai.lastRequest && <SplitAiResult result={ai.lastRequest} onClose={ai.clearLastRequest} />}
-        <div className="desk min-h-0 flex-1" data-testid="split-desk">
+        <div className="desk split-desk min-h-0 flex-1" data-testid="split-desk">
           {model && activeTab ? (
             <div className="sheets" data-testid="split-paper">
             {activeTab.sheets.map((sheet, sheetIndex) => (
