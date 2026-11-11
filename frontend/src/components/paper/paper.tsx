@@ -612,6 +612,15 @@ export function Paper({
     const section = readRowSection(row);
     const width = tabWidths.get(row.key) ?? getPillWidth(getSectionLevel(section));
     const bracket = unitId === null ? undefined : brackets.get(unitId);
+    // 아래 줄 - 왼쪽에 간 곳 글, 오른쪽 아래 모서리에 연결 배지(글을 덮지 않게 같은 흐름 안에 둔다)
+    const note = unit ? strips?.renderNote?.([unit.id]) : null;
+    const pills = unit && row.type !== "table" ? strips?.renderPills?.(unit.id) : null;
+    const foot = note || pills ? (
+      <div className="strip-foot">
+        {note}
+        {pills && <span className="strip-pills">{pills}</span>}
+      </div>
+    ) : null;
     return (
       <div key={row.key} className="strip-row">
         {unit && renderTab(unit, section, width, bracket)}
@@ -625,7 +634,6 @@ export function Paper({
           data-strip-unit={unitId ?? undefined}
           data-testid={`${testId}-piece-${unitId ?? row.key}`}
         >
-          {row.type !== "table" && <span className="strip-pills">{unit && strips?.renderPills?.(unit.id)}</span>}
           {row.type === "table"
             ? renderTable(row.item)
             : row.type === "figure"
@@ -635,7 +643,7 @@ export function Paper({
                     {part.segments.map((segment, index) => renderSegment(part.block, segment, index))}
                   </p>
                 ))}
-          {unit && strips?.renderNote?.([unit.id])}
+          {foot}
           {renderMarks(unit, hasWarn, "strip-marks")}
         </div>
       </div>

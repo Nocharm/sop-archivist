@@ -3,7 +3,7 @@
 // 오른쪽은 고른 곳·확정·우선순위 아코디언이다(설계 docs/superpowers/specs/2026-11-09-assign-unified-design.md).
 "use client";
 
-import { Check, Circle, CircleCheck, CircleDashed, CirclePause, ExternalLink, FilePen, FileUp, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, RefreshCw, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
+import { Check, Circle, CircleCheck, CircleDashed, CirclePause, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, RefreshCw, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent } from "react";
@@ -1392,8 +1392,23 @@ export default function AssignPage() {
   const placeOf = (unitIds: number[]) => {
     const decided = unitIds.map((id) => unitMap.get(id)).find((unit) => unit?.status === "confirmed");
     if (!decided) return null;
-    if (decided.decision.disposition === "delete") return <span className="strip-note is-delete">→ {t("classify.deleted")}</span>;
-    if (decided.decision.disposition === "move_external") return <span className="strip-note">→ {decided.decision.move_target_code}</span>;
+    // 글 앞 아이콘이 간 곳의 종류를 말한다 - 글이 함께 있어 아이콘은 장식이다
+    if (decided.decision.disposition === "delete") {
+      return (
+        <span className="strip-note is-delete">
+          <Trash2 size={11} strokeWidth={1.75} aria-hidden />
+          <span className="strip-note-text">{t("classify.deleted")}</span>
+        </span>
+      );
+    }
+    if (decided.decision.disposition === "move_external") {
+      return (
+        <span className="strip-note">
+          <FolderOutput size={11} strokeWidth={1.75} aria-hidden />
+          <span className="strip-note-text">{decided.decision.move_target_code}</span>
+        </span>
+      );
+    }
     const linked = written.filter((item) => item.source_unit_ids.some((id) => unitIds.includes(id)));
     if (linked.length > 0) {
       // 지금 열린 New 문서의 문장이 있으면 그리로 - 없으면 첫 문장의 문서를 연다
@@ -1401,11 +1416,19 @@ export default function AssignPage() {
       const sourceId = goal.source_unit_ids.find((id) => unitIds.includes(id)) ?? unitIds[0];
       return (
         <button type="button" className="strip-note" aria-label={`${t("assign.jumpNew")}: ${linked[0].doc_code}`} data-testid={`assign-note-${unitIds[0]}`} onClick={() => jumpToNew(sourceId, goal.target_id)}>
-          → {linked[0].doc_code} {linked.map((item) => item.section_path || item.order_index).join(" + ")}
+          <FileCheck2 size={11} strokeWidth={1.75} aria-hidden />
+          <span className="strip-note-text">
+            {linked[0].doc_code} {linked.map((item) => item.section_path || item.order_index).join(" + ")}
+          </span>
         </button>
       );
     }
-    return <span className="strip-note">→ {t("classify.assigned")}</span>;
+    return (
+      <span className="strip-note">
+        <Inbox size={11} strokeWidth={1.75} aria-hidden />
+        <span className="strip-note-text">{t("classify.assigned")}</span>
+      </span>
+    );
   };
 
   return (
