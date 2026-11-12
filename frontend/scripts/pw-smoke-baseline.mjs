@@ -419,22 +419,17 @@ await runStep("admin ops panels as ops.member", { devUser: "ops.member", allowCo
   check("access tab is hidden, the three ops tabs are shown", (await countById(page, "admin-tab-access")) === 0 && (await countById(page, "admin-tab-batch")) === 1 && (await countById(page, "admin-tab-ai")) === 1);
   check("first allowed tab is selected", await isSelected(page, "admin-tab-directory"));
 
-  await wait(page, "hr-sync-runs-error");
-  const runsError = await getText(page, "hr-sync-runs-error");
-  check("run history explains HR is not set up", runsError.includes("HR sync is not set up on this server."), runsError);
-  check("run history hides the status code", !runsError.includes("503"), runsError);
-
-  await findById(page, "hr-sync-run").click();
-  await wait(page, "hr-sync-error");
-  const runError = await getText(page, "hr-sync-error");
-  check("sync run explains HR is not set up", runError.includes("HR sync is not set up on this server."), runError);
-  check("sync run hides the status code", !runError.includes("503"), runError);
-  const previewResponse = page.waitForResponse((r) => r.url().includes("/api/admin/hr-sync/preview"), { timeout: T });
-  await findById(page, "hr-sync-preview").click();
-  await previewResponse;
-  await wait(page, "hr-sync-error");
-  const previewError = await getText(page, "hr-sync-error");
-  check("preview shows the same plain message", previewError.includes("HR sync is not set up on this server.") && !previewError.includes("503"), previewError);
+  // B6: 목록 503이면 안내 한 줄이 단추 줄 위에 서고 두 단추는 꺼지며 표·카드 토글은 없다(원문 503은 새지 않는다)
+  await wait(page, "hr-sync-not-configured");
+  const notice = await getText(page, "hr-sync-not-configured");
+  check("notice explains HR is not set up", notice.includes("HR sync is not set up on this server"), notice);
+  check("notice hides the status code", !notice.includes("503"), notice);
+  const noticeBox = await findById(page, "hr-sync-not-configured").boundingBox();
+  const runBox = await findById(page, "hr-sync-run").boundingBox();
+  check("notice sits above the buttons", noticeBox !== null && runBox !== null && noticeBox.y < runBox.y, JSON.stringify({ noticeBox, runBox }));
+  check("sync and preview buttons are disabled", (await findById(page, "hr-sync-run").isDisabled()) && (await findById(page, "hr-sync-preview").isDisabled()));
+  check("run history error notice is not duplicated", (await countById(page, "hr-sync-runs-error")) === 0);
+  check("view toggle is absent", (await countById(page, "hr-sync-runs-view")) === 0);
   await takeShot("baseline-admin-hr.png");
 
   await findById(page, "admin-tab-batch").click();
