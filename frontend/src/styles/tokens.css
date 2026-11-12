@@ -122,8 +122,6 @@
   --tab-en: color-mix(in oklab, var(--lang-en) 42%, var(--paper));
   --tab-none: color-mix(in oklab, var(--ink) 8%, var(--paper));
   --tab-hold: oklch(.73 .16 80);
-  /* Assign 연결선 - 강조 파랑(--accent)과 다른 옅은 청록 회색. 투명도는 components.css .link-lines */
-  --link-line: oklch(.56 .05 195);
   --tab-ink: var(--ink);
 
   --tint: 11%;
@@ -196,7 +194,6 @@
   --tab-ko: color-mix(in oklab, var(--lang-ko) 46%, var(--paper));
   --tab-en: color-mix(in oklab, var(--lang-en) 46%, var(--paper));
   --tab-hold: oklch(.36 .08 80);
-  --link-line: oklch(.74 .05 195);
 
   --tint: 16%;
   --tint2: 32%;

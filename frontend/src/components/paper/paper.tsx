@@ -233,6 +233,15 @@ export function Paper({
     }
     return map;
   }, [sections, partnerOf]);
+  // 고른 조각 곁 틈을 벌릴 조각 - 이웃한 짝은 한 카드라 고른 쪽이 위든 아래든 카드 위아래가 같이 벌어진다
+  const selectedBlock = useMemo(() => {
+    const ids = new Set<number>();
+    if (selectedId === null) return ids;
+    ids.add(selectedId);
+    const partner = partnerOf.get(selectedId);
+    if (partner && brackets.has(selectedId)) ids.add(partner.id);
+    return ids;
+  }, [selectedId, partnerOf, brackets]);
   // 절 번호를 보일 첫 줄 - 부분(머리글·본문·바닥글)마다 문서 순서로
   const sectionHeads = useMemo(() => {
     const heads = new Set<number>();
@@ -714,7 +723,7 @@ export function Paper({
           <div
             className="strip-gap"
             data-pair={brackets.get(readRowUnitId(rows[index - 1]) ?? -1) === "top" && brackets.get(readRowUnitId(row) ?? -1) === "bottom" ? "" : undefined}
-            data-near-selected={selectedId !== null && (readRowUnitId(rows[index - 1]) === selectedId || readRowUnitId(row) === selectedId) ? "" : undefined}
+            data-near-selected={selectedBlock.has(readRowUnitId(rows[index - 1]) ?? -1) || selectedBlock.has(readRowUnitId(row) ?? -1) ? "" : undefined}
             // 합치기 단추를 글 시작 x에 - 위아래 탭 중 넓은 쪽 뒤라 어느 탭에도 걸치지 않는다
             style={{ "--gap-tab": `${Math.max(readTabWidth(rows[index - 1]), readTabWidth(row))}px` }}
             data-testid={`${testId}-gap-${row.key}`}
