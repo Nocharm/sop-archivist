@@ -11,10 +11,10 @@ import { placeBelow, type FloatingPos } from "@/components/ui/floating";
 // 접힘 전환(--dur-slow 240ms)보다 조금 길게 기다린 뒤 내용을 뗀다
 const COLLAPSE_EXIT_MS = 260;
 
-/** 열릴 때 붙이고 다음 프레임에 펼치며, 닫힐 때 접은 뒤 뗀다 - 닫힌 내용은 DOM에 남지 않는다 */
-function usePresence(open: boolean): { mounted: boolean; shown: boolean } {
+/** 열릴 때 붙이고 다음 프레임에 펼치며, 닫힐 때 접은 뒤 뗀다 - 닫힌 내용은 DOM에 남지 않는다. appear면 열린 채 처음 붙어도 접힌 모양에서 펼친다 */
+function usePresence(open: boolean, appear = false): { mounted: boolean; shown: boolean } {
   const [mounted, setMounted] = useState(open);
-  const [shown, setShown] = useState(open);
+  const [shown, setShown] = useState(open && !appear);
   useEffect(() => {
     let frame = 0;
     let timer = 0;
@@ -35,13 +35,14 @@ function usePresence(open: boolean): { mounted: boolean; shown: boolean } {
   return { mounted: mounted || open, shown: shown && open };
 }
 
-/** 접기·펼치기 - 높이를 grid 0fr↔1fr로 전환한다(높이를 재지 않아 내용이 바뀌어도 튀지 않는다) */
-export function Collapse({ open, children, testId }: { open: boolean; children: ReactNode; testId?: string }) {
-  const { mounted, shown } = usePresence(open);
+/** 접기·펼치기 - 높이를 grid 0fr↔1fr로 전환한다(높이를 재지 않아 내용이 바뀌어도 튀지 않는다). children이 함수면 붙어 있는 동안만 그린다.
+ * appear면 열린 채 새로 붙어도 펼치며 나타난다. 접히는 동안 안쪽은 inert라 눌리거나 포커스를 받지 않는다 */
+export function Collapse({ open, children, testId, className, appear = false }: { open: boolean; children: ReactNode | (() => ReactNode); testId?: string; className?: string; appear?: boolean }) {
+  const { mounted, shown } = usePresence(open, appear);
   if (!mounted) return null;
   return (
-    <div className="fold" data-open={shown ? "" : undefined} data-testid={testId}>
-      <div className="fold-inner">{children}</div>
+    <div className={className ? `fold ${className}` : "fold"} data-open={shown ? "" : undefined} data-testid={testId} inert={!open || undefined}>
+      <div className="fold-inner">{typeof children === "function" ? children() : children}</div>
     </div>
   );
 }
