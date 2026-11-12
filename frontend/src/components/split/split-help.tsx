@@ -3,6 +3,8 @@
 
 import { CircleCheck, FolderCheck, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles } from "lucide-react";
 
+import { LangMark } from "@/components/lang-mark";
+import { UnitStatusChip } from "@/components/status";
 import { HelpPanel } from "@/components/ui/help-panel";
 import { useI18n } from "@/lib/i18n";
 
@@ -25,10 +27,20 @@ export function SplitHelp() {
       marks={
         <>
           <span className="help-panel-row">
-            <span className="strip-tab swatch" data-lang="ko" data-hold="">
-              <span className="strip-tab-letters">KO</span>
+            <LangMark lang="ko" testId="split-help-lang-ko" />
+            <LangMark lang="en" testId="split-help-lang-en" />
+            {t("split.legendLang")}
+          </span>
+          <span className="help-panel-row">
+            <UnitStatusChip status="on_hold" size="sm" testId="split-help-hold" />
+            {t("split.legendHoldChip")}
+          </span>
+          <span className="help-panel-row">
+            <span className="legend-pairbar" aria-hidden>
+              <span className="strip-lead-bar" data-lang="ko" />
+              <span className="strip-lead-bar" data-lang="en" />
             </span>
-            {t("split.legendLangHold")}
+            {t("split.legendPairBar")}
           </span>
           <span className="help-panel-row">
             <CircleCheck size={14} strokeWidth={2} className="pmark checked" aria-hidden />

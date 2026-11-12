@@ -1143,15 +1143,11 @@
   /* Split 3단 열: 문서 목록 232px, 1280 미만은 216px - 1,800자 문단 글 상자가 340px을 지키게(사용자 결정 2026-11-12). Assign과 무관 */
   .split-cols { grid-template-columns: 232px minmax(0, 1fr) clamp(280px, 26vw, 420px); }
   @media (max-width: 1279px) { .split-cols { grid-template-columns: 216px minmax(0, 1fr) clamp(280px, 26vw, 420px); } }
-  .strip-tab { position: relative; flex: none; align-self: stretch; display: flex; flex-direction: column; align-items: center; padding-top: 6px; border: 1px solid var(--line-2); border-right: 0; border-radius: var(--r-1) 0 0 var(--r-1); background-color: var(--tab-none); color: var(--tab-ink); box-sizing: border-box; overflow: hidden; transition: opacity var(--dur-base); }
-  .strip-tab[data-lang="ko"] { background-color: var(--tab-ko); }
-  .strip-tab[data-lang="en"] { background-color: var(--tab-en); }
-  /* 보류 빗금은 언어 색 위에 옅게(가는 줄·반 투명) - 탭 줄을 훑는 눈을 끌지 않게 */
-  .strip-tab[data-hold] { background-image: repeating-linear-gradient(135deg, color-mix(in oklab, var(--tab-hold) 50%, transparent) 0 2px, transparent 2px 7px); }
-  .strip-tab-letters { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; font: 700 9px / 1.3 var(--font-mono); opacity: 0; transition: opacity var(--dur-base); }
-  .strip-tab.swatch { display: inline-grid; place-items: center; width: 30px; height: 18px; padding: 0; border: 1px solid var(--line-2); border-radius: var(--r-1); }
-  .strip-tab.swatch > .strip-tab-letters { position: static; opacity: 1; }
-  /* 위 .strip-tab은 도움말 견본(split-help·assign-help)만 쓴다 - 견본을 옮기면 지운다 */
+  /* 도움말 견본 - 짝 카드의 두 줄 막대(KO 위, EN 아래)가 틈 없이 맞붙은 모양 */
+  .legend-pairbar { display: inline-flex; flex-direction: column; flex: none; height: 13px; }
+  .legend-pairbar > .strip-lead-bar { height: 6.5px; }
+  .legend-pairbar > .strip-lead-bar:first-child { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+  .legend-pairbar > .strip-lead-bar:last-child { border-top-left-radius: 0; border-top-right-radius: 0; }
 
   /* 앞머리 - 번호 칸(오른쪽 맞춤 mono, 절의 첫 블록에만) + 3px 언어 막대(줄 높이 전체, 둥근 끝) + 조각까지 틈 5px. 번호는 첫 글줄 높이(조각 위 여백 6 + 27px)에 맞춘다.
      짝 카드는 위 줄 막대의 아래 끝·아래 줄 막대의 위 끝을 직각으로 해 두 색이 틈 없이 맞붙는다. 1280 미만 Split의 46px 상한은 위 @media */
