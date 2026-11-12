@@ -6,6 +6,7 @@
 
 - **언어 축 (1)~(3) 구현 계획(브랜치 `feat/lang-axis`)** — 사용자 결정: 언어 축 작업은 한 브랜치에 모두 쌓고 끝에 `dev`에 한 번만 합친다. 계획 `docs/superpowers/plans/2026-11-13-language-axis.md` — 줄 기준 숫자·검토 조건(backend 둘 + 화면), 쪼개기 `Join`, 용지 언어 표시 삭제·1:N 짝 카드, 배정 저장(언어로 막지 않음·`settle_pairs`·Remark)과 화면, 마지막에 문서·검증·v0.16.6·머지. 결과물·번호 (4)는 열 구성과 미리보기를 정한 뒤 다음 작업.
 - **진행 숫자를 줄 기준 한 벌로(Task 1, backend)** — 묶음 목록·개요·관리의 `progress`가 `{ko,en}` 대신 `RowProgress` 하나: 배정 화면과 같은 줄(짝 하나·묶이지 않은 판단 단위 하나, 표는 한 줄·묶인 칸은 세지 않음), 줄 상태는 구성 단위 중 가장 덜 끝난 것(`status.ROW_STATUS_ORDER` = 프런트 `STATUS_RANK`). 보조 `single_language`는 두 언어 문서에서 짝도 다른 언어 새 문장도 없는 문장·제목 수. 질의 두 번. 프런트는 Task 3까지 옛 모양을 읽는다(이 사이 화면 숫자가 비는 것은 브랜치 안에서만).
+- **검토 요청 조건을 줄 기준으로(Task 2, backend)** — `units_*` 막는 이유가 줄 수(짝 하나·짝 없는 단위 하나, 상태는 가장 덜 끝난 구성 단위)이고 `lang` 키가 없다. `BundleSnapshot.pair_of`(질의 하나)로 `build_review_facts`가 진행 숫자와 같은 줄을 센다. `targets_*`는 새 문장마다 한 번. `PROGRESS_LANGS` 삭제.
 
 ## 2026-11-12
 

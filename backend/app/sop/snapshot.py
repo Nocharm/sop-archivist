@@ -36,7 +36,6 @@ from app.sop.models import (
 from app.sop.status import ROW_STATUS_ORDER
 from app.sop.units import UNIT_ACTIVE, compute_display_id
 
-PROGRESS_LANGS = ("ko", "en")
 NEUTRAL = "neutral"  # 그림 단위의 언어 — 두 언어 숫자에 모두 센다
 # 한 언어만 남은 글을 세는 단위 종류·문서 언어 배치 — 그림·표는 언어가 없고, 한 언어 문서는 짝이 날 수 없다
 SINGLE_LANGUAGE_KINDS = ("sentence", "heading")
@@ -173,6 +172,7 @@ class BundleSnapshot:
     blocks: dict[int, BlockInfo]
     units: dict[int, UnitInfo]
     decisions: dict[int, DecisionInfo]
+    pair_of: dict[int, int]  # 활성 단위 id → 짝 id — 짝이 없는 단위는 키가 없다(한 짝 = 한 줄)
     targets: dict[int, TargetInfo]
     target_docs: dict[int, TargetDocInfo]
 
@@ -263,6 +263,14 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
         for decision in await session.scalars(select(UnitDecision).where(UnitDecision.bundle_id == bundle_id))
         if decision.unit_id in units  # 은퇴한 단위의 판단은 이력이다
     }
+    pair_of = {
+        unit_id: pair_id
+        for pair_id, unit_id in await session.execute(
+            select(UnitPairMember.pair_id, UnitPairMember.unit_id)
+            .join(Unit, Unit.id == UnitPairMember.unit_id)
+            .where(Unit.extraction_id.in_(extraction_ids), Unit.status == UNIT_ACTIVE)
+        )
+    }
     old_document_ids = {document.id for document in documents if document.side == "old"}
     for unit in units.values():
         if unit.document_id in old_document_ids and unit.id not in decisions:
@@ -284,6 +292,7 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
         blocks=blocks,
         units=units,
         decisions=decisions,
+        pair_of=pair_of,
         targets=await _load_targets(session, bundle_id, units.keys(), include_text),
         target_docs=await load_target_docs(session, bundle_id),
     )

@@ -647,7 +647,7 @@ def test_held_unit_blocks_review_and_shows_in_output_a(client: TestClient) -> No
     rows = client.get(f"/api/bundles/{fx.bundle_id}/outputs/a", params={"lang": "ko"}, headers=AUTHOR).json()
     summary = client.get(f"/api/bundles/{fx.bundle_id}/summary", headers=AUTHOR).json()["ko"]
 
-    assert {"code": "units_on_hold", "lang": "ko", "count": 1} in readiness["blockers"]
+    assert {"code": "units_on_hold", "count": 1} in readiness["blockers"]
     row = next(row for row in rows if row["unit_id"] == unit["id"])
     assert (row["dest_kind"], row["dest_doc_code"], row["status"]) == ("", "", "on_hold")
     # 보낸 곳이 비어 있으니 요약은 미배정으로 센다 — 보류 전과 같은 숫자다
