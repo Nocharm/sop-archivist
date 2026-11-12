@@ -1033,7 +1033,6 @@
   /* 합치기 단추는 쉬는 동안 보이지 않는다(점선 알약이 줄마다 깔리면 산만) - 틈을 올리거나 키보드 포커스가 오면 나타난다 */
   .strip-merge { opacity: 0; }
   .strip-gap:hover .strip-merge, .cell-gap:hover .strip-merge, .strip-merge:focus-visible { opacity: 1; }
-  .strip-gap[data-pair]:hover .strip-merge:not([aria-disabled="true"]), .strip-gap[data-pair] .strip-merge:not([aria-disabled="true"]):focus-visible { height: 18px; }
   .pg[data-strips] .strip[data-bracket="top"] { border-bottom: 0; border-bottom-right-radius: 0; }
   .pg[data-strips] .strip[data-bracket="bottom"] { border-top: 0; border-top-right-radius: 0; }
   .pg[data-strips] .strip[data-bracket="bottom"]::before { content: ""; position: absolute; inset: 0 0 auto 0; border-top: 1px solid var(--line); }
@@ -1041,17 +1040,36 @@
   .strip-merge { position: absolute; left: calc(min(var(--gap-tab, 0px), var(--gap-tab-cap, 9999px)) + var(--pg-pad-l)); top: 50%; translate: 0 -50%; z-index: 2; display: inline-flex; align-items: center; justify-content: center; gap: 0; min-width: 76px; height: 10px; padding: 0 10px; overflow: hidden; border: 1px solid var(--line-2); border-radius: 11px; background: var(--surface); color: var(--ink-3); font: 600 var(--fs-cap) / 1 var(--font-ui); white-space: nowrap; cursor: pointer; user-select: none; transition: opacity var(--dur-base), height var(--dur-base) var(--ease-enter), border-color var(--dur-fast), color var(--dur-fast), gap var(--dur-base); }
   .strip-merge > svg { flex: none; width: 8px; height: 8px; transition: width var(--dur-base), height var(--dur-base); }
   .strip-merge-label { max-width: 0; opacity: 0; overflow: hidden; transition: opacity var(--dur-base), max-width var(--dur-base) var(--ease-enter); }
-  .strip-gap:hover .strip-merge:not([aria-disabled="true"]), .cell-gap:hover .strip-merge:not([aria-disabled="true"]), .strip-merge:not([aria-disabled="true"]):focus-visible { height: 22px; gap: 5px; border-color: var(--accent); color: var(--accent); box-shadow: var(--shadow-1); }
-  .strip-gap:hover .strip-merge:not([aria-disabled="true"]) > svg, .cell-gap:hover .strip-merge:not([aria-disabled="true"]) > svg, .strip-merge:not([aria-disabled="true"]):focus-visible > svg { width: 12px; height: 12px; }
-  .strip-gap:hover .strip-merge:not([aria-disabled="true"]) .strip-merge-label, .cell-gap:hover .strip-merge:not([aria-disabled="true"]) .strip-merge-label, .strip-merge:not([aria-disabled="true"]):focus-visible .strip-merge-label { max-width: 240px; opacity: 1; }
+  .cell-gap:hover .strip-merge:not([aria-disabled="true"]), .strip-merge:not([aria-disabled="true"]):focus-visible { height: 22px; gap: 5px; border-color: var(--accent); color: var(--accent); box-shadow: var(--shadow-1); }
+  .cell-gap:hover .strip-merge:not([aria-disabled="true"]) > svg, .strip-merge:not([aria-disabled="true"]):focus-visible > svg { width: 12px; height: 12px; }
+  .cell-gap:hover .strip-merge:not([aria-disabled="true"]) .strip-merge-label, .strip-merge:not([aria-disabled="true"]):focus-visible .strip-merge-label { max-width: 240px; opacity: 1; }
   .strip-merge[aria-disabled="true"] { border-style: dashed; background: none; color: var(--ink-3); cursor: not-allowed; }
   .strip-gap:hover .strip-merge[aria-disabled="true"], .cell-gap:hover .strip-merge[aria-disabled="true"], .strip-merge[aria-disabled="true"]:focus-visible { opacity: 0.7; }
   .strip-merge:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  /* 포인터로 틈을 올렸을 때 - 나타남과 색은 바로, 알약이 커지고 라벨이 펼쳐지는 것은 --morph-delay 뒤(전환 순서: opacity·height·border-color·color·gap). 키보드 포커스는 바로 */
-  .strip-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible), .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) { transition-delay: var(--gap-open-delay, 0s), max(var(--gap-open-delay, 0s), var(--morph-delay)), 0s, 0s, max(var(--gap-open-delay, 0s), var(--morph-delay)); }
-  .strip-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) > svg, .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) > svg, .strip-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) .strip-merge-label, .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) .strip-merge-label { transition-delay: max(var(--gap-open-delay, 0s), var(--morph-delay)); }
-  /* 꺼진 합치기도 틈이 벌어진 뒤에 보인다 */
-  .strip-gap:hover .strip-merge[aria-disabled="true"]:not(:focus-visible) { transition-delay: var(--gap-open-delay); }
+  /* 표 칸: 포인터로 올렸을 때 - 나타남과 색은 바로, 알약이 커지고 라벨이 펼쳐지는 것은 --morph-delay 뒤(전환 순서: opacity·height·border-color·color·gap). 키보드 포커스는 바로 */
+  .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) { transition-delay: 0s, var(--morph-delay), 0s, 0s, var(--morph-delay); }
+  .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) > svg, .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) .strip-merge-label { transition-delay: var(--morph-delay); }
+
+  /* 조각 사이 틈: 머문 뒤(--gap-open-delay) 틈이 벌어지며 가운데 점선이 느리게-빠르게-느리게 폭을 채우고, 선이 느려지기 시작할 때(--gap-pop-at) 단추가 튀어나온다. 떠나면 모두 바로 거둔다. 키보드 포커스는 기다리지 않는다
+     --gap-line-dur: 선이 다 차는 시간, --gap-pop-at: 단추가 나오기 시작하는 때(선 시간의 60% - 늦추면 선이 멈춘 뒤 빈 틈이 보이고 당기면 선과 단추가 겹쳐 산만). 움직임 줄이기면 두 시간이 0이라 머문 뒤 한 번에 보인다 */
+  .strip-gap { --gap-line-dur: var(--dur-slow); --gap-pop-at: calc(var(--gap-open-delay) + var(--gap-line-dur) * .6); }
+  .strip-gap::after { content: ""; position: absolute; inset-inline: 0; top: 50%; z-index: 1; border-top: 1px dashed var(--accent-line); clip-path: inset(0 50%); pointer-events: none; transition: clip-path var(--dur-fast) var(--ease-exit); }
+  .strip-gap:hover::after { clip-path: inset(0 0); transition: clip-path var(--gap-line-dur) var(--ease-move) var(--gap-open-delay); }
+  .strip-gap:has(> .strip-merge[aria-disabled="true"])::after { border-top-color: var(--line-2); }
+  /* 단추는 처음부터 다 펼친 크기로 숨어 있다가 작은 데서 커지며 나타난다(크기·라벨 모핑 없이 한 번에 튄다) */
+  .strip-gap .strip-merge { height: 22px; gap: 5px; scale: .55; transition: opacity var(--dur-fast), scale var(--dur-fast) var(--ease-exit); }
+  .strip-gap[data-pair] .strip-merge { height: 18px; }
+  .strip-gap .strip-merge > svg { width: 12px; height: 12px; }
+  .strip-gap .strip-merge-label { max-width: 240px; opacity: 1; }
+  .strip-gap .strip-merge:not([aria-disabled="true"]) { border-color: var(--accent); color: var(--accent); box-shadow: var(--shadow-1); }
+  /* 꺼진 단추도 점선 위에 뜨니 바탕을 깐다 */
+  .strip-gap .strip-merge[aria-disabled="true"] { background: var(--surface); }
+  .strip-gap:hover .strip-merge, .strip-gap .strip-merge:focus-visible { scale: 1; }
+  .strip-gap:hover .strip-merge:not(:focus-visible) { transition: opacity var(--dur-slow) var(--ease-enter) var(--gap-pop-at), scale var(--dur-slow) var(--ease-pop) var(--gap-pop-at); animation: merge-arm 1ms var(--gap-pop-at) both; }
+  /* 보이기 전에는 누를 수 없다 - 숨은 단추가 위아래 조각 글 첫머리에 걸쳐 있어, 글을 누르려다 보이지 않는 합치기를 누르지 않게. 나타날 때 눌리게 된다(pointer-events는 전환이 안 돼 애니메이션으로 켠다) */
+  .strip-gap .strip-merge { pointer-events: none; }
+  .strip-gap .strip-merge:focus-visible { pointer-events: auto; }
+  @keyframes merge-arm { from { pointer-events: none; } to { pointer-events: auto; } }
 
   /* 표 칸 안의 조각 - 칸 문장마다 점선으로 나누고 같은 칸의 이웃 사이에 합치기 */
   .cell-piece { position: relative; padding-right: 18px; border-radius: 2px; }

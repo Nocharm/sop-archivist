@@ -251,6 +251,9 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   check("a split unit becomes two pieces at once", true);
   const selectedId = await page.locator('[data-testid^="split-paper-unit-"].su[data-sel]').first().getAttribute("data-testid");
   const mergeBack = page.locator(`[data-testid^="split-paper-merge-${selectedId.replace("split-paper-unit-", "")}-"], [data-testid^="split-paper-merge-"][data-testid$="-${selectedId.replace("split-paper-unit-", "")}"]`).and(page.locator(':not([aria-disabled="true"])'));
+  // 틈의 합치기는 포인터가 틈에 머물러 단추가 나타난 뒤에야 눌린다(사람처럼 틈에 올렸다가 누른다)
+  await page.locator(".strip-gap", { has: mergeBack.first() }).hover({ position: { x: 300, y: 2 } });
+  await page.waitForFunction(() => [...document.querySelectorAll(".strip-gap:hover .strip-merge")].some((el) => getComputedStyle(el).pointerEvents === "auto"), null, { timeout: T });
   await mergeBack.first().click();
   await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-piece-"].strip').length === n, piecesBefore, { timeout: T });
   check("merging the two pieces gives the unit back", (await page.locator('[data-testid^="split-paper-unit-"].su', { hasText: targetText }).count()) >= 1, targetText.slice(0, 30));
