@@ -3,6 +3,7 @@
 
 import { ScrollText } from "lucide-react";
 import { InlineNotice } from "@/components/inline-notice";
+import { ClampText } from "@/components/ui/clamp-text";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PanelTitle } from "@/components/admin/panel-title";
@@ -26,8 +27,8 @@ export function AccessAudit() {
   const columns: DataColumn<AuditEvent>[] = [
     { key: "action", header: t("audit.column.action"), card: "title", nowrap: true, cell: (event) => translateOrRaw(t, `audit.action.${event.action}`, event.action) },
     { key: "time", header: t("audit.column.time"), card: "badge", nowrap: true, cell: (event) => <span className="tabular-nums font-normal text-ink-2">{formatKst(event.occurred_at)}</span> },
-    { key: "actor", header: t("audit.column.actor"), cell: (event) => event.actor },
-    { key: "summary", header: t("audit.column.summary"), card: "body", grow: true, minWidth: 220, cell: (event) => buildAuditSummary(event, t) },
+    { key: "actor", header: t("audit.column.actor"), nowrap: true, cell: (event) => event.actor },
+    { key: "summary", header: t("audit.column.summary"), card: "body", grow: true, minWidth: 220, cell: (event) => <ClampText text={buildAuditSummary(event, t)} /> },
   ];
 
   return (

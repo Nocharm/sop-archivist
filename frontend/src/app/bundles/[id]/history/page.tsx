@@ -119,9 +119,12 @@ export default function HistoryPage() {
                     </span>
                   </td>
                   <td className="text-ink-2 [overflow-wrap:anywhere]">
-                    {changes.length > 0
-                      ? changes.map((row) => `${row.field}: ${row.from} → ${row.to}`).join(" · ")
-                      : event.reason || (event.target_ids.length > 0 ? t("history.targets", { n: event.target_ids.length }) : "–")}
+                    {/* 전체 글은 줄을 눌러 여는 상세 창에 있다 */}
+                    <div className="clamp-2">
+                      {changes.length > 0
+                        ? changes.map((row) => `${row.field}: ${row.from} → ${row.to}`).join(" · ")
+                        : event.reason || (event.target_ids.length > 0 ? t("history.targets", { n: event.target_ids.length }) : "–")}
+                    </div>
                   </td>
                   <td className="font-mono text-[12px] text-ink-2">{event.actor}</td>
                 </tr>

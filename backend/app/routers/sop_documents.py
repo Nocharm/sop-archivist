@@ -224,6 +224,8 @@ class ViewUnitOut(BaseModel):
     pair_id: int | None
     # 사람이 나누거나 합쳐 생긴 단위(되돌리지 않은 편집이 만든 단위) — Split 종이의 "나눔·합침" 표시
     is_edited: bool
+    # 합치기로 생겨 그 뒤 바뀌지 않은 단위 — 합치기 전 단위들로 되돌릴 수 있다(편집 unmerge)
+    can_unmerge: bool
     # 단위 자리의 블록 — 범위가 없는 표·행·캡션 없는 그림도 어느 블록(그림 이미지)인지 알 수 있게
     pos_seq: int
     block_id: int
@@ -357,10 +359,16 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
         )
         decisions = {decision.unit_id: decision for decision in rows}
     pairs = await _load_view_pairs(session, document.id)
-    created_lists = await session.scalars(
-        select(UnitEdit.created_unit_ids).where(UnitEdit.document_id == document.id, UnitEdit.state == "applied")
-    )
-    edited_ids = {unit_id for created in created_lists for unit_id in created}
+    created_lists = (
+        await session.execute(
+            select(UnitEdit.op, UnitEdit.created_unit_ids).where(
+                UnitEdit.document_id == document.id, UnitEdit.state == "applied"
+            )
+        )
+    ).all()
+    # 합치기 해제가 되살린 단위는 원래 모습이라 "나눔·합침" 표시를 하지 않는다(그 전 편집이 만든 단위면 그 기록이 표시한다)
+    edited_ids = {unit_id for op, created in created_lists if op != "unmerge" for unit_id in created}
+    merged_ids = {created[0] for op, created in created_lists if op == "merge" and len(created) == 1}
     pair_by_unit = {unit_id: pair.id for pair in pairs for unit_id in pair.unit_ids}
     split_suggestions = await load_open_split_suggestion_ids(session, document)
     return DocumentViewOut(
@@ -393,6 +401,7 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 status=get_cover_status(unit, decisions) if document.side == "old" else None,
                 pair_id=pair_by_unit.get(unit.id),
                 is_edited=unit.id in edited_ids,
+                can_unmerge=unit.id in merged_ids,
                 pos_seq=unit.pos_seq,
                 block_id=unit.spans[0][0] if unit.spans else block_id_by_seq[unit.pos_seq],
                 split_suggestion_id=split_suggestions.get(unit.id),

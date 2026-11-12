@@ -32,6 +32,9 @@ import { useLoaded } from "@/lib/use-loaded";
 import { getBundleLabel } from "@/lib/bundle-label";
 
 
+/** 상위 칸 하나와 그 하위 칸들(slotKey가 "상위."로 시작) - 단 나눔에서 떨어지지 않게 묶는다 */
+const SLOT_GROUPS: (typeof SLOT_KEYS[number])[][] = SLOT_KEYS.filter((key) => !key.includes(".")).map((top) => SLOT_KEYS.filter((key) => key === top || key.startsWith(`${top}.`)));
+
 const CELL_INPUT = "h-7 w-full rounded-md border border-line-2 bg-surface px-1.5 text-[13px] text-ink focus:border-accent focus:outline-none disabled:border-transparent disabled:bg-transparent";
 
 /** 409 revision_conflict - 보낸 revision이 서버 것보다 낡았다 */
@@ -181,40 +184,44 @@ export default function ToBePage() {
       return (
         <div className="grid gap-1 py-1" data-testid={`tobe-${doc.key}-slots`}>
           <p className="text-xs text-ink-3">{t("tobe.naHint")}</p>
-          {SLOT_KEYS.map((slotKey) => {
-            const slot = draft.na_slots.find((item) => item.doc_key === doc.key && item.slot_key === slotKey);
-            const child = slotKey.includes(".");
-            return (
-              <div key={slotKey} className={`grid grid-cols-[220px_minmax(0,1fr)] items-center gap-3 ${child ? "pl-5" : ""}`}>
-                <Checkbox
-                  testId={`tobe-${doc.key}-na-${slotKey}`}
-                  checked={slot !== undefined}
-                  disabled={!canEdit}
-                  onChange={(next) => update(setNaSlot(draft, doc.key, slotKey, next))}
-                  label={<span className={slot ? "text-ink-3" : ""}>{SLOT_LABELS[slotKey]}</span>}
-                />
-                {/* 사유 칸 자리는 늘 잡아 둔다 - 입력을 그 안에 띄워(absolute) N/A를 켜고 꺼도 줄 높이와 표 열 폭이 변하지 않는다 */}
-                <span className="relative block h-7 min-w-0">
-                {slot && (
-                  <input
-                    className={`${CELL_INPUT} absolute inset-0`}
-                    data-testid={`tobe-${doc.key}-na-${slotKey}-reason`}
-                    placeholder={t("tobe.naReason")}
-                    value={slot.reason}
-                    maxLength={2000}
-                    disabled={!canEdit}
-                    onChange={(event) =>
-                      update({
-                        ...draft,
-                        na_slots: draft.na_slots.map((item) => (item === slot ? { ...item, reason: event.target.value } : item)),
-                      })
-                    }
-                  />
-                )}
-                </span>
+          {/* 상위 칸과 그 하위 칸을 한 묶음으로 감싸 단이 갈라질 때 함께 움직인다 - 사유 입력은 체크한 줄 바로 아래 */}
+          <div className="grid gap-x-6 gap-y-1 [grid-template-columns:repeat(auto-fill,minmax(360px,1fr))]">
+            {SLOT_GROUPS.map((group) => (
+              <div key={group[0]} className="grid content-start gap-1">
+                {group.map((slotKey) => {
+                  const slot = draft.na_slots.find((item) => item.doc_key === doc.key && item.slot_key === slotKey);
+                  const child = slotKey.includes(".");
+                  return (
+                    <div key={slotKey} className={`grid gap-1 ${child ? "pl-5" : ""}`}>
+                      <Checkbox
+                        testId={`tobe-${doc.key}-na-${slotKey}`}
+                        checked={slot !== undefined}
+                        disabled={!canEdit}
+                        onChange={(next) => update(setNaSlot(draft, doc.key, slotKey, next))}
+                        label={<span className={slot ? "text-ink-3" : ""}>{SLOT_LABELS[slotKey]}</span>}
+                      />
+                      {slot && (
+                        <input
+                          className={CELL_INPUT}
+                          data-testid={`tobe-${doc.key}-na-${slotKey}-reason`}
+                          placeholder={t("tobe.naReason")}
+                          value={slot.reason}
+                          maxLength={2000}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            update({
+                              ...draft,
+                              na_slots: draft.na_slots.map((item) => (item === slot ? { ...item, reason: event.target.value } : item)),
+                            })
+                          }
+                        />
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })}
+            ))}
+          </div>
         </div>
       );
     }
@@ -325,10 +332,10 @@ export default function ToBePage() {
           <thead>
             <tr>
               <th className="w-8" aria-label={t("tobe.details")} />
-              <th className="w-40">{t("tobe.colCode")}</th>
-              <th>{t("tobe.colTitle")}</th>
+              <th className="w-40 min-w-[160px]">{t("tobe.colCode")}</th>
+              <th className="min-w-[220px]">{t("tobe.colTitle")}</th>
               <th className="w-24">{t("tobe.colType")}</th>
-              <th className="w-40">{t("tobe.colParent")}</th>
+              <th className="w-[180px] min-w-[180px]">{t("tobe.colParent")}</th>
               <th className="w-24">{t("tobe.colEntrance")}</th>
               <th className="w-28">{t("tobe.colEquipment")}</th>
               <th className="w-32">{t("tobe.colDetail")}</th>
@@ -399,12 +406,12 @@ export default function ToBePage() {
                             ariaLabel={t("tobe.colParent")}
                             size="sm"
                             mono
-                            className="w-full"
+                            width={160}
                             value={doc.parent_key ?? ""}
                             disabled={!canEdit}
                             options={[
                               { value: "", label: t("tobe.noParent") },
-                              ...sops.map((sop) => ({ value: sop.key, label: sop.code.trim() || t("tobe.noCode") })),
+                              ...sops.map((sop) => ({ value: sop.key, label: sop.code.trim() || t("tobe.noCode"), tip: sop.code.trim() || t("tobe.noCode") })),
                             ]}
                             onChange={(next) => patchDoc(doc.key, { parent_key: next || null })}
                           />

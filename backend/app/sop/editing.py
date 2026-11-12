@@ -84,6 +84,13 @@ class MergeOp(BaseModel):
     unit_ids: list[DbId] = Field(min_length=2, max_length=MAX_EDIT_UNITS)
 
 
+class UnmergeOp(BaseModel):
+    """합친 단위를 합치기 전 단위들로 — 그 합치기가 만든 단위가 그 뒤로 바뀌지 않았을 때만(옛 ID 그대로 되살린다)."""
+
+    type: Literal["unmerge"]
+    unit_id: DbId
+
+
 class MoveBoundaryOp(BaseModel):
     type: Literal["move_boundary"]
     left_unit_id: DbId
@@ -123,8 +130,8 @@ class SetLayoutTableOp(BaseModel):
 
 
 EditOp = Annotated[
-    SplitOp | MergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp | SplitTableRowsOp | MergeTableRowsOp
-    | SetLayoutTableOp,
+    SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp | SplitTableRowsOp
+    | MergeTableRowsOp | SetLayoutTableOp,
     Field(discriminator="type"),
 ]
 
@@ -358,6 +365,44 @@ async def _plan_merge(session: AsyncSession, extraction_id: ExtractionId, op: Me
     return _build_replacement(units, [draft])
 
 
+async def find_merge_edit(session: AsyncSession, document_id: int, unit_id: int) -> UnitEdit | None:
+    """unit_id를 만든 적용 중인 합치기 기록 — 없으면 이 단위는 합쳐 생긴 단위가 아니거나 그 뒤로 다시 만들어졌다."""
+    edits = await session.scalars(
+        select(UnitEdit)
+        .where(UnitEdit.document_id == document_id, UnitEdit.op == "merge", UnitEdit.state == EDIT_APPLIED)
+        .order_by(UnitEdit.seq.desc())
+    )
+    return next((edit for edit in edits if list(edit.created_unit_ids) == [unit_id]), None)
+
+
+async def _plan_unmerge(session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: UnmergeOp) -> _Change:
+    """합친 단위를 은퇴시키고 합치기가 은퇴시킨 단위를 원래 ID로 되살린다 — 그 합치기만 골라 되돌리는 것.
+
+    합친 뒤 언어를 바꿨으면 되살린 단위도 지금 언어를 따른다. 짝·판단은 되살리지 않는다(되돌리기와 같다).
+    """
+    unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
+    edit = await find_merge_edit(session, document_id, unit.id)
+    if edit is None:
+        raise_rule(422, "cannot_unmerge", unit_id=unit.id)
+    originals = list(
+        await session.scalars(
+            select(Unit).where(Unit.id.in_(edit.retired_unit_ids), Unit.extraction_id == extraction_id)
+        )
+    )
+    if len(originals) != len(edit.retired_unit_ids) or any(original.status != UNIT_RETIRED for original in originals):
+        raise_rule(422, "cannot_unmerge", unit_id=unit.id)
+    return _Change(
+        retire=[unit.id],
+        revive=sorted(original.id for original in originals),
+        langs={original.id: (original.lang, unit.lang) for original in originals if original.lang != unit.lang},
+        # 합친 칸 문장이 그 뒤 다른 묶음(행 나누기 등)으로 옮겨졌으면 되살린 칸도 지금 묶음으로
+        regroup={
+            original.id: (original.group_unit_id, unit.group_unit_id)
+            for original in originals if original.group_unit_id != unit.group_unit_id
+        },
+    )
+
+
 async def _plan_move_boundary(session: AsyncSession, extraction_id: ExtractionId, op: MoveBoundaryOp) -> _Change:
     ensure_unique_units([op.left_unit_id, op.right_unit_id])
     units = await load_active_units(session, extraction_id, [op.left_unit_id, op.right_unit_id])
@@ -574,12 +619,14 @@ async def _plan_set_layout_table(session: AsyncSession, extraction_id: Extractio
     return change
 
 
-async def _plan(session: AsyncSession, extraction_id: ExtractionId, op: EditOp) -> _Change:
+async def _plan(session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: EditOp) -> _Change:
     match op:
         case SplitOp():
             return await _plan_split(session, extraction_id, op)
         case MergeOp():
             return await _plan_merge(session, extraction_id, op)
+        case UnmergeOp():
+            return await _plan_unmerge(session, document_id, extraction_id, op)
         case MoveBoundaryOp():
             return await _plan_move_boundary(session, extraction_id, op)
         case CarveOp():
@@ -793,8 +840,12 @@ async def _write_change(
     다시 묶이는 칸 문장도 확인 대상이다 — 옛 문서는 레이아웃 칸이 가진 자기 판단이 표에 묶이며 떼어지고, 새 문서는 미배정이
     아닌 칸·표 새 문장이 새 부모 아래로 옮겨지지 않게 먼저 미배정으로 돌린다(R32).
     """
-    if change.langs:
-        decided = await _find_decided_units(session, document, change.langs)
+    # 언어를 제자리에서 바꾸는 단위만 사람 결정과 어긋난다(R31) - 같은 변경에서 은퇴하거나 되살아나는 단위(합치기 풀기와
+    # 그 되돌리기)는 글 그대로의 언어를 따라가는 것이라 묻지 않는다(은퇴는 아래 확인 플래그가 묻는다)
+    moving = {*change.retire, *change.revive}
+    in_place = [unit_id for unit_id in change.langs if unit_id not in moving]
+    if in_place:
+        decided = await _find_decided_units(session, document, in_place)
         if decided:
             raise_rule(409, "unit_has_decision", unit_ids=decided)
     regrouped = change.list_regrouped_cells()
@@ -869,7 +920,7 @@ async def apply_edit(
     묻지 않고 revision·기록·다시 하기 기록도 그대로다.
     """
     extraction_id = await get_latest_extraction_id(session, document.id)
-    change = await _plan(session, extraction_id, op)
+    change = await _plan(session, document.id, extraction_id, op)
     if change.is_unchanged():
         return EditResult(document_revision=document.revision, created_unit_ids=[], retired_unit_ids=[], detach=None)
     result = await _write_change(session, document, extraction_id, change, confirm=confirm, actor=actor)

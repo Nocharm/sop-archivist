@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **SOP Archivist — SOP Restructuring T/F가 쓰는 사내 AI 에이전트 웹 서비스** (FastAPI + Next.js, 사내 서버에 docker compose로 배포). 제품은 옛 SOP 묶음을 새 SOP·WI 구조로 다시 짜는 일(문서 쪼개기 → 배정·고쳐 쓰기 → 결과물 A·B·C·Excel → 검토)을 돕는다. **제품 명세: [`docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`](docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md)**(판단 기준은 `docs/domain/`), 기반 명세: [`docs/superpowers/specs/2026-11-04-sop-archivist-baseline-design.md`](docs/superpowers/specs/2026-11-04-sop-archivist-baseline-design.md), 구현 계획: `docs/superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md`(계획 2 AI 층, 완료 — 살아 있는 것은 "API 계약" 블록. 계획 1·기반 계획은 끝나 지웠다), 프런트 디자인 기초: `frontend/docs/design/2026-11-07-frontend-design-foundations.md`, 진행 현황: `PROGRESS.md`.
 
-> 상태: **v0.15.0 결정적 코어 + AI 제안 층 + 프런트 화면(백엔드 기능 전부 연결, 이동·움직임 공통 층, 표·카드 목록·공통 드롭다운, 첫 실사용 피드백 개편 — 사용자 메뉴·바로 생성·History·문서 정보 탐지·Split 종이 조각·피커 순위, 3단계 Assign 통합 화면, 서비스 마크, 전체 검토 반영·사용 설명서 `/manual`·검토 요청 거두기·경계 확인 필수, 두 번째 실사용 피드백 — Split 조각 종이·부분 탭·합치기 한 길·자동 번호·줄 단위 쪼개기, Assign 3차 피드백 — 연결 보기·그 자리 메뉴·배정 초기화·섹션 번호(들여쓰기)·공통 도움말 패널, 상단 바 AI 작업 상태·섹션 번호 생략·노트) + GitLab Runner 배포 파이프라인 완료, 운영 서버 배포됨(첫 배포 2026-11-09 v0.8.0 — Keycloak 연결·HR 동기화 24시간 주기, 최근 2026-11-10 v0.10.1 — v0.11.0~v0.15.0은 아직 운영에 올리지 않았다), 실제 SOP·실제 모델 미검증** — v0.1.0 기반(사내 로그인 Keycloak·직원 디렉터리 HR 웹훅·사내 AI·표 기반 권한 체계) 위에 SOP 재구성의 결정적 코어(v0.2.0: 묶음·멤버십, 업로드·격리 추출(DOCX 메인, PDF·MarkItDown 보조), 규칙 쪼개기·편집·되돌리기, To-Be 목록, 배정·확정(두 입구), 결과물 A·B·C, Excel 내보내기, 검토 흐름)와 그 위의 AI 제안 층(v0.3.0: 분류·고쳐 쓰기·번역·입구 2 짝 맞추기·한/영 따로 짝·복합 문장 나누기 제안, 지침·프롬프트 버전, 채택률)을 얹었다. AI는 제안만 하고 사람이 줄마다 확정하며, AI가 꺼지거나 실패해도 사람 경로는 그대로 돈다. 프런트는 1차 화면(v0.4.0: 모든 단계 화면, G Graphite 라이트·다크, 설계 기초 `frontend/docs/design/2026-11-07-frontend-design-foundations.md`)이 붙었다. AI 층은 가짜 AI와 합성 SOP로만 검증했고 **유사도 임계값은 합성 자료로만 잡은 값**이다(실제 모델·SOP 시험 뒤 다시 정한다). 배포·운영 절차는 `docs/deploy/`(인덱스 `docs/README.md`), 배포는 사내 GitLab 파이프라인으로만 한다(`docs/deploy/gitlab-runner.md`).
+> 상태: **v0.16.0 결정적 코어 + AI 제안 층 + 프런트 화면(백엔드 기능 전부 연결, 이동·움직임 공통 층, 표·카드 목록·공통 드롭다운, 첫 실사용 피드백 개편 — 사용자 메뉴·바로 생성·History·문서 정보 탐지·Split 종이 조각·피커 순위, 3단계 Assign 통합 화면, 서비스 마크, 전체 검토 반영·사용 설명서 `/manual`·검토 요청 거두기·경계 확인 필수, 두 번째 실사용 피드백 — Split 조각 종이·부분 탭·합치기 한 길·자동 번호·줄 단위 쪼개기, Assign 3차 피드백 — 연결 보기·그 자리 메뉴·배정 초기화·섹션 번호(들여쓰기)·공통 도움말 패널, 상단 바 AI 작업 상태·섹션 번호 생략·노트, 화면 검토 반영 — 긴 글 표·극단 자료 시드·배치 감사, Split 틈 짝 짓기·조각 단추 줄·합치기 풀기) + GitLab Runner 배포 파이프라인 완료, 운영 서버 배포됨(첫 배포 2026-11-09 v0.8.0 — Keycloak 연결·HR 동기화 24시간 주기, 최근 2026-11-10 v0.10.1 — v0.11.0~v0.16.0은 아직 운영에 올리지 않았다), 실제 SOP·실제 모델 미검증** — v0.1.0 기반(사내 로그인 Keycloak·직원 디렉터리 HR 웹훅·사내 AI·표 기반 권한 체계) 위에 SOP 재구성의 결정적 코어(v0.2.0: 묶음·멤버십, 업로드·격리 추출(DOCX 메인, PDF·MarkItDown 보조), 규칙 쪼개기·편집·되돌리기, To-Be 목록, 배정·확정(두 입구), 결과물 A·B·C, Excel 내보내기, 검토 흐름)와 그 위의 AI 제안 층(v0.3.0: 분류·고쳐 쓰기·번역·입구 2 짝 맞추기·한/영 따로 짝·복합 문장 나누기 제안, 지침·프롬프트 버전, 채택률)을 얹었다. AI는 제안만 하고 사람이 줄마다 확정하며, AI가 꺼지거나 실패해도 사람 경로는 그대로 돈다. 프런트는 1차 화면(v0.4.0: 모든 단계 화면, G Graphite 라이트·다크, 설계 기초 `frontend/docs/design/2026-11-07-frontend-design-foundations.md`)이 붙었다. AI 층은 가짜 AI와 합성 SOP로만 검증했고 **유사도 임계값은 합성 자료로만 잡은 값**이다(실제 모델·SOP 시험 뒤 다시 정한다). 배포·운영 절차는 `docs/deploy/`(인덱스 `docs/README.md`), 배포는 사내 GitLab 파이프라인으로만 한다(`docs/deploy/gitlab-runner.md`).
 > **서비스 버전**: `frontend/package.json` `version`이 단일 소스(빌드 때 상단 바 서비스 이름 옆 표시), 기록은 루트 `CHANGELOG.md`. `dev`에 올릴 때마다 PATCH, `dev`→`main` 정식 업데이트마다 MINOR + `vX.Y.Z` 태그, MAJOR 1.0.0은 T/F 정식 사용 시작(`rules/common/git.md` "서비스 버전"). 커밋·푸시는 GitHub에만 하고 사내 GitLab push·배포는 사용자가 한다. 운영 배포 여부도 CHANGELOG에 적는다.
 > DB: 로컬 네이티브는 sqlite 파일(무설정, 연결마다 `PRAGMA foreign_keys=ON`이라 FK·cascade가 서버와 같다), 서버 compose는 postgres. 스키마는 **Alembic**(backend 기동 때 head까지 자동 적용). 로컬 데모 시드: `backend/scripts/reset_db.py`(서버 실행 금지), SOP 데모 묶음은 그 위에 `backend/scripts/seed_sop_demo.py`(아래 Commands).
 > **원칙**: AI 페이로드에 직원 실명을 싣지 않는다(역할·부서 등 비식별 정보만). 공개 저장소이므로 실서버 IP·사내 호스트명·시크릿은 추적 파일에 넣지 않는다(플레이스홀더 `<server-ip>` 등).
@@ -20,6 +20,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # backend (backend/ 에서, 로컬 네이티브) — 배포 런타임과 같은 Python 3.11로 venv를 만든다
 python3.11 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m scripts.reset_db      # 로컬 데모 DB 초기화(backend/dev.db): Alembic base→head + 지침·dev 디렉터리·데모 권한. 서버 실행 금지
+.venv/bin/python -m scripts.seed_sop_worst # 로컬 전용(운영 DB 금지): seed_sop_demo 위에 극단 자료(W1 극단 묶음·W2~W7 단계별·가벼운 36개·역할·부여·지침 버전)를 앱 API로 얹는다. 화면 배치 감사용 — 별도 sqlite 파일(DATABASE_URL)에 reset_db → seed_sop_demo → 이것 순서로, 같은 자료는 건너뛰어 다시 돌려도 된다(약 2분 반). 끝 줄 `worst seed done: 43 bundles`(W1~W7+light 36, 데모 4개 더하면 화면에 47개). DEV_ENFORCE_PERMISSIONS 없이 돌린다
 .venv/bin/python -m scripts.seed_sop_demo # 로컬 전용(운영 DB 금지): 합성 SOP 묶음 4개(쪼개기 직후·분류 절반·검토 대기·AI 제안)를 앱 API로 만든다(작성자 qa.member, 검토자 qa.lead). 묶음 2~4는 경계를 미리 모두 확인하고 "쪼개기 직후"만 미확인으로 남긴다(경계 확인이 검토 요청 조건이라서). AI 제안 단계는 프로세스 안의 가짜 전송으로 돌아 AI 설정이 필요 없고 실제 모델을 부르지 않는다. 같은 제목이 있으면 건너뛰어 다시 돌려도 된다. AUTH_MODE=dev에서만 돈다(dev 의존성 python-docx 필요, DEV_ENFORCE_PERMISSIONS=true면 bundle.create가 없어 403)
 AUTH_MODE=dev DEV_ENFORCE_PERMISSIONS=true APP_SYSADMINS=dev.admin .venv/bin/uvicorn app.main:app --reload --port 8777   # 개발 서버
 .venv/bin/python -m pytest tests/ -q -n auto   # 테스트(병렬, 작업자마다 DB 파일이 따로) — conftest가 AUTH_MODE·AI·HR 등을 baseline으로 고정해 backend/.env가 있어도 안전. 한 파일만 볼 때는 -n 없이
@@ -39,6 +40,7 @@ BASE_URL=http://localhost:3777 node scripts/pw-smoke-baseline.mjs   # 산출물�
 #   SOP 화면 스모크·글자 대비 감사는 reset_db → seed_sop_demo 직후 DB에서(dev.db 대신 DATABASE_URL로 별도 sqlite 파일을 쓰면 다시 돌리기 쉽다)
 BASE_URL=http://localhost:3777 node scripts/pw-smoke-sop.mjs        # AI 나눔 확정 단계는 backend가 가짜 AI(FAKE_AI_SPLIT=1)를 볼 때만 돈다
 BASE_URL=http://localhost:3777 node scripts/pw-contrast-audit.mjs   # 14화면 × 라이트·다크, 4.5:1
+DS=worst BASE_URL=http://localhost:3787 node scripts/pw-layout-audit.mjs   # 배치 감사(DB 불변): seed_sop_demo(DS=mid)·seed_sop_worst(DS=worst)를 얹은 DB의 backend 8787/frontend 3787에서. ONLY=항목 id·WIDTHS·LANGS·THEMES, 실패는 종료 코드 1과 ../.shots/layout-<id>-<width>.png (docs/lessons/browser-verification.md)
 BASE_URL=http://localhost:3777 node scripts/pw-overlap-audit.mjs    # 겹침 감사(seed 직후, DB 불변): 모핑 단추·C 줄 끝 단추·그 자리 메뉴·AI 작업 목록과 알림이 옆 글자를 덮는지, 1280·1920 × EN·KO. 긴 글은 LONG=1, 다크는 THEMES=light,dark
 BASE_URL=http://localhost:3777 node scripts/pw-manual-shots.mjs     # 시스템 설명서(docs/manual/) 화면 그림·번호 위치 다시 뽑기 — reset_db → seed_sop_demo 직후, 끝에 묶음 3을 검토 완료로 바꾼다
 MANUAL=app BASE_URL=http://localhost:3777 node scripts/pw-manual-shots.mjs   # 사용 설명서(/manual) 그림 17장을 frontend/public/manual/img/에 — 1120x720, 번호 표시 없음, DB를 바꾸지 않는다. 위 줄보다 먼저 돌린다(위 줄이 묶음 3을 바꾼다)
@@ -57,6 +59,7 @@ node frontend/scripts/fake-ai-server.mjs   # FAKE_AI_SPLIT=1이면 분류 답과
 py -3.11 -m venv .venv; .venv\Scripts\pip install -r requirements-dev.txt
 .venv\Scripts\python -m scripts.reset_db
 .venv\Scripts\python -m scripts.seed_sop_demo   # 로컬 전용(운영 DB 금지) — 설명은 bash 쪽과 같다
+.venv\Scripts\python -m scripts.seed_sop_worst  # 극단 자료 시드(로컬 전용) — 설명은 bash 쪽과 같다
 $env:AUTH_MODE="dev"; $env:DEV_ENFORCE_PERMISSIONS="true"; $env:APP_SYSADMINS="dev.admin"; .venv\Scripts\uvicorn app.main:app --reload --port 8777
 .venv\Scripts\python -m pytest tests\ -q -n auto
 .venv\Scripts\ruff check app\ tests\
@@ -74,6 +77,7 @@ $env:BASE_URL="http://localhost:3777"; $env:CHROME_PATH="C:\Program Files\Google
 node scripts\pw-smoke-sop.mjs        # seed_sop_demo 직후. 설명은 bash 쪽과 같다
 node scripts\pw-contrast-audit.mjs
 node scripts\pw-overlap-audit.mjs   # 겹침 감사. 설명은 bash 쪽과 같다
+$env:BASE_URL="http://localhost:3787"; $env:DS="worst"; node scripts\pw-layout-audit.mjs; Remove-Item Env:DS   # 배치 감사. 설명은 bash 쪽과 같다(변수를 지우지 않으면 다음 실행도 그 자료다)
 node scripts\pw-manual-shots.mjs     # 설명서 그림 다시 뽑기. 설명은 bash 쪽과 같다
 $env:MANUAL="app"; node scripts\pw-manual-shots.mjs; Remove-Item Env:MANUAL   # 사용 설명서(/manual) 그림. 설명은 bash 쪽과 같다(변수를 지우지 않으면 다음 실행도 app 모드다)
 
@@ -165,6 +169,7 @@ docker-compose.yml
 
 - [`docs/lessons/react-ts-patterns.md`](docs/lessons/react-ts-patterns.md) — useCallback deps TDZ → ref 미러, `useEffectEvent`(§7)·`<Activity>`(§8), 이펙트 안 setState 린트, Tailwind display 클래스 이중 지정 금지.
 - [`docs/lessons/browser-verification.md`](docs/lessons/browser-verification.md) — Playwright + 시스템 Chrome 검증, **dev DB 오염 함정**("0 events"·"목록이 비어 있음"은 코드가 아니라 오염일 수 있다), node 스크립트 cwd, 워크트리 세션 Bash 제약, 평문 HTTP는 localhost에서 재현되지 않는다, 헤드리스 blob 내려받기 이름, 그려진 글자 대비 감사.
+- [`docs/lessons/ui-review.md`](docs/lessons/ui-review.md) — 화면 검토·배치 수정: **극단 자료에서만 무너지는 표가 있다**, 처방은 실행 중인 화면에 주입해 잰 뒤 적는다, grid 자식 `minmax(0, 1fr)`, 줄 수 제한은 `td`가 아니라 감싼 요소에, 줄 끝 단추는 숨기지 않고 흐리게.
 - [`docs/lessons/git-operations.md`](docs/lessons/git-operations.md) — 히스토리 재작성·강제 푸시 전에: **같은 폴더의 다른 세션부터 확인하고 lease에 예상 해시를 명시한다**, zsh는 변수를 단어로 나누지 않으니 여러 인자는 배열로.
 - [`docs/lessons/remote-sessions.md`](docs/lessons/remote-sessions.md) — 클라우드 세션이 연결된 PC 폴더를 다룰 때: **파일 전송은 비동기라 체크섬을 확인하고 쓴다**, 다른 경로로 마운트된 워크트리를 prune하지 않는다, git 쓰기에는 삭제 권한, VM에서는 맥 `node_modules`가 돌지 않는다.
 

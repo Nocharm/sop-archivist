@@ -105,14 +105,14 @@ function GroupHead({ label, count }: { label: ReactNode; count: number }) {
 }
 
 function getCellClass<T>(column: DataColumn<T>): string {
-  return [column.align === "end" ? "num" : "", column.nowrap ? "whitespace-nowrap" : "", column.grow ? "dl-grow" : "", column.className ?? ""]
+  return [column.align === "end" ? "num" : "", column.nowrap ? "whitespace-nowrap" : "", column.grow ? "dl-grow" : "", column.card === "title" && !column.nowrap ? "dl-title" : "", column.className ?? ""]
     .filter(Boolean)
     .join(" ");
 }
 
 function Table<T>({ rows, columns, getRowKey, testId, rowTestId, getRowData, onRowClick, hasRowLink = false, isRowSelected, showSkeleton = false, skeletonRows = 3, more, getRowGroup }: DataListProps<T>) {
   return (
-    <table className="dtable" data-testid={testId}>
+    <table className="dtable dl-table" data-testid={testId}>
       <thead>
         <tr>
           {columns.map((column) => (

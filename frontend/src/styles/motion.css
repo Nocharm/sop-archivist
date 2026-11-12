@@ -77,6 +77,10 @@
   .row-actions { opacity: 0; transition: opacity var(--dur-fast); }
   tr:hover .row-actions, .hover-row:hover .row-actions, .row-actions:focus-within { opacity: 1; }
   @media (hover: none) { .row-actions { opacity: 1; } }
+  /* 늘 보이되 흐린 보조 동작 - 줄 호버·포커스에서 또렷해진다(자리·높이는 그대로) */
+  .row-actions-quiet { opacity: .45; transition: opacity var(--dur-fast); }
+  tr:hover .row-actions-quiet, .hover-row:hover .row-actions-quiet, .row-actions-quiet:focus-within { opacity: 1; }
+  @media (hover: none) { .row-actions-quiet { opacity: 1; } }
 
   /* 긴 글 툴팁 */
   .tip-wide { max-width: 480px; white-space: normal; }

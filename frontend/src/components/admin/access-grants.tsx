@@ -271,17 +271,19 @@ export function AccessGrants() {
       key: "subject",
       header: t("grants.column.subject"),
       card: "title",
+      nowrap: true,
       cell: (grant) => (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        // 아이콘 | 이름, 아래 ID - 두 열이 내용 폭만 차지해 긴 이름이 칸을 밀어도 줄이 늘지 않는다
+        <div className="grid items-center justify-start gap-x-2 [grid-template-columns:max-content_max-content]">
           <Tooltip label={t(`grants.subject.${grant.subject_type}`)}>
-            <span className="inline-flex items-center gap-1.5 text-ink-3" role="img" aria-label={t(`grants.subject.${grant.subject_type}`)}>
+            <span className="inline-flex items-center gap-1.5 self-start pt-0.5 text-ink-3 [grid-row:span_2]" role="img" aria-label={t(`grants.subject.${grant.subject_type}`)}>
               <SubjectTypeIcon type={grant.subject_type} />
             </span>
           </Tooltip>
           <span className="font-semibold text-ink">{getGrantSubjectLabel(grant)}</span>
-          {!grant.subject_missing && <span className="text-xs font-normal text-ink-3">{grant.subject_id}</span>}
+          {!grant.subject_missing && <span className="text-xs font-normal text-ink-3 [grid-column:2]">{grant.subject_id}</span>}
           {grant.subject_missing && (
-            <span data-testid={`grant-missing-${grant.id}`} className={`${CHIP} gap-1`}>
+            <span data-testid={`grant-missing-${grant.id}`} className={`${CHIP} gap-1 [grid-column:2]`}>
               <TriangleAlert size={16} strokeWidth={1.5} />
               {t(`grants.missing.${grant.subject_type}`)}
             </span>
@@ -294,6 +296,7 @@ export function AccessGrants() {
       header: t("grants.column.what"),
       card: "body",
       minWidth: 220,
+      className: "[overflow-wrap:anywhere]",
       cell: (grant) => (
         <div className="flex flex-wrap items-center gap-2">
           <span>{getGrantWhatLabel(grant, t)}</span>
@@ -301,7 +304,7 @@ export function AccessGrants() {
         </div>
       ),
     },
-    { key: "by", header: t("grants.column.by"), cell: (grant) => grant.created_by },
+    { key: "by", header: t("grants.column.by"), nowrap: true, cell: (grant) => grant.created_by },
     { key: "when", header: t("grants.column.when"), nowrap: true, cell: (grant) => <span className="tabular-nums">{formatKst(grant.created_at)}</span> },
     {
       key: "revoke",
