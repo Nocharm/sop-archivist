@@ -219,12 +219,11 @@ export function getMarks(unit: ViewUnit): UnitMark[] {
 
 const TEXT_KINDS = new Set(["sentence", "heading", "cell_sentence"]);
 
-/** 틈의 합치기를 쓸 수 없는 까닭 - 언어가 다름, 글이 아닌 것(표·그림), 칸 문장 규칙 */
-export type MergeBlocker = "mixed_language" | "not_text" | "cell";
+/** 틈의 합치기를 쓸 수 없는 까닭 - 글이 아닌 것(표·그림), 칸 문장 규칙. 언어는 보지 않는다(다른 언어끼리는 묶기가 짝을 고른다) */
+export type MergeBlocker = "not_text" | "cell";
 
 /** 합칠 수 없는 까닭 → 문구 키 - 틈의 합치기 단추와 우클릭 메뉴가 같이 쓴다 */
 export const MERGE_BLOCKER_KEYS: Record<MergeBlocker, string> = {
-  mixed_language: "split.noMergeLanguage",
   not_text: "split.noMergeKind",
   cell: "split.noMergeCell",
 };
@@ -234,7 +233,6 @@ export function getMergeBlocker(a: ViewUnit, b: ViewUnit): MergeBlocker | null {
   if (!TEXT_KINDS.has(a.kind) || !TEXT_KINDS.has(b.kind)) return "not_text";
   // 칸 문장은 같은 표·행 그룹(또는 모두 그룹 없음)끼리만
   if ((a.kind === "cell_sentence" || b.kind === "cell_sentence") && (a.kind !== b.kind || a.group_unit_id !== b.group_unit_id)) return "cell";
-  if (a.lang !== b.lang) return "mixed_language";
   return null;
 }
 

@@ -209,7 +209,7 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   // Unit마다 종이 조각 하나 - 확인하기 전부터 나뉘어 있고, 글 조각 사이에는 늘 합치기가 있다
   const pieces = page.locator('[data-testid^="split-paper-piece-"].strip');
   check("every unit is its own piece from the start", (await pieces.count()) > 10 && (await page.locator('[data-testid^="split-paper-mark-checked-"]').count()) === 0, String(await pieces.count()));
-  check("merge controls sit between text pieces", (await page.locator('.strip-gap [data-testid^="split-paper-merge-"]').count()) > 5);
+  check("join controls sit between text pieces", (await page.locator('.strip-gap [data-testid^="split-paper-join-"]').count()) > 5);
   // 절 번호는 앞머리 번호 칸에 한 번만 - 머리 줄 글 앞의 같은 번호는 그리지 않고(표시만) 첫 글자 조각의 data-start가 그만큼 밀린다
   const heads = await page.evaluate(() =>
     [...document.querySelectorAll('[data-testid^="split-paper-num-"]')].map((num) => {
@@ -266,7 +266,7 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-piece-"].strip').length === n + 1, piecesBefore, { timeout: T });
   check("a split unit becomes two pieces at once", true);
   const selectedId = await page.locator('[data-testid^="split-paper-unit-"].su[data-sel]').first().getAttribute("data-testid");
-  const mergeBack = page.locator(`[data-testid^="split-paper-merge-${selectedId.replace("split-paper-unit-", "")}-"], [data-testid^="split-paper-merge-"][data-testid$="-${selectedId.replace("split-paper-unit-", "")}"]`).and(page.locator(':not([aria-disabled="true"])'));
+  const mergeBack = page.locator(`[data-testid^="split-paper-join-${selectedId.replace("split-paper-unit-", "")}-"], [data-testid^="split-paper-join-"][data-testid$="-${selectedId.replace("split-paper-unit-", "")}"]`).and(page.locator(':not([aria-disabled="true"])'));
   // 나눈 뒤 고른 조각 아래 단추 줄이 펼쳐지며(Collapse appear) 바로 아래 틈을 33px 밀어 내린다 - 펼쳐지기 전에 올리면 틈이 포인터 밑에서 빠져나가
   // 머묾(--gap-open-delay)이 끊기므로, 다 펼쳐진 뒤에 올린다
   await page.waitForFunction(() => { const acts = document.querySelector(".strip-acts[data-open]"); return acts !== null && acts.getAnimations().length === 0; }, null, { timeout: T });
@@ -574,13 +574,17 @@ await runStep("split: right-click menu shows reasons for blocked actions and run
   await units.nth(9).waitFor({ timeout: T });
   const first = units.nth(4);
   await first.click();
-  // 고른 채 먼 문장을 우클릭 - 두 문장 메뉴
-  await units.nth(9).click({ button: "right" });
+  // 고른 채 같은 언어의 먼 문장을 우클릭 - 두 문장 메뉴. 같은 언어의 떨어진 문장은 묶지 않는다(다른 언어면 짝으로 묶여 켜진다)
+  const firstLang = await first.getAttribute("lang");
+  let far = null;
+  for (let at = 6; at < 16 && far === null; at += 1) if ((await units.nth(at).getAttribute("lang")) === firstLang) far = units.nth(at);
+  check("found a far sentence in the same language", far !== null, String(firstLang));
+  await far.click({ button: "right" });
   await wait(page, "split-menu");
-  check("right-click opens the two-sentence menu", (await page.locator('[data-testid^="split-menu-"]').count()) === 4, String(await page.locator('[data-testid^="split-menu-"]').count()));
-  const merge = page.locator('[data-testid="split-menu-merge"]');
-  check("merge is disabled for non-neighbours", (await merge.getAttribute("aria-disabled")) === "true");
-  await merge.hover();
+  check("right-click opens the two-sentence menu", (await page.locator('[data-testid^="split-menu-"]').count()) === 3, String(await page.locator('[data-testid^="split-menu-"]').count()));
+  const join = page.locator('[data-testid="split-menu-join"]');
+  check("join is disabled for far sentences in one language", (await join.getAttribute("aria-disabled")) === "true");
+  await join.hover();
   await page.locator('[data-testid="paper-tip"]').waitFor({ timeout: T });
   check("hovering a disabled item shows why", ((await page.locator('[data-testid="paper-tip"]').innerText()) ?? "").length > 0, await page.locator('[data-testid="paper-tip"]').innerText());
   await takeShot("sop-split-menu.png");
@@ -597,7 +601,7 @@ await runStep("split: right-click menu shows reasons for blocked actions and run
   const wasChecked = (await mark.count()) > 0;
   await page.locator('[data-testid="split-menu-check"]').click();
   await page.waitForFunction(([id, was]) => (document.querySelector(`[data-testid="split-paper-mark-checked-${id}"]`) !== null) !== was, [firstUnitId, wasChecked], { timeout: T });
-  // 짝 풀기 → 짝 만들기: 짝이 있는 문장을 고르고 그 짝(다른 문장)을 우클릭한다
+  // 따로 떼기 → 묶기: 짝이 있는 문장을 고르고 그 짝(다른 문장)을 우클릭한다
   const toastOk = (text) => page.waitForFunction((word) => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((el) => el.textContent?.includes(word)), text, { timeout: T });
   let partnerId = null;
   for (let at = 0; at < 8 && partnerId === null; at += 1) {
@@ -609,17 +613,17 @@ await runStep("split: right-click menu shows reasons for blocked actions and run
   const partnerUnit = page.locator(`[data-testid="split-paper-unit-${partnerId}"]`).first();
   await partnerUnit.click({ button: "right" });
   await wait(page, "split-menu-unpair");
-  check("pair is off for an existing pair, unpair is on", (await page.locator('[data-testid="split-menu-pair"]').getAttribute("aria-disabled")) === "true" && (await page.locator('[data-testid="split-menu-unpair"]').getAttribute("aria-disabled")) === null);
+  check("join is off for an existing pair, separate is on", (await page.locator('[data-testid="split-menu-join"]').getAttribute("aria-disabled")) === "true" && (await page.locator('[data-testid="split-menu-unpair"]').getAttribute("aria-disabled")) === null);
   await page.locator('[data-testid="split-menu-unpair"]').click();
-  await toastOk("Pair removed");
-  await page.waitForFunction(() => document.querySelector('[data-testid="split-pair-status"]') === null, null, { timeout: T });
+  await toastOk("Separated");
+  await page.waitForFunction(() => document.querySelector('[data-testid="split-pair-remove"]') === null, null, { timeout: T });
   await partnerUnit.click({ button: "right" });
-  await wait(page, "split-menu-pair");
-  check("pair is on for an unpaired KO/EN couple", (await page.locator('[data-testid="split-menu-pair"]').getAttribute("aria-disabled")) === null);
-  await page.locator('[data-testid="split-menu-pair"]').click();
-  await toastOk("Pair confirmed");
-  await page.locator('[data-testid="split-pair-status"]').waitFor({ timeout: T });
-  check("Make pair confirms at once", (await getText(page, "split-pair-status")).trim() === "Confirmed", await getText(page, "split-pair-status"));
+  await wait(page, "split-menu-join");
+  check("join is on for an unpaired KO/EN couple", (await page.locator('[data-testid="split-menu-join"]').getAttribute("aria-disabled")) === null);
+  await page.locator('[data-testid="split-menu-join"]').click();
+  await toastOk("Joined");
+  await page.locator('[data-testid="split-join-mode-pair"][aria-pressed="true"]').waitFor({ timeout: T });
+  check("Join pairs a KO/EN couple at once", true);
 });
 
 await runStep("assign: hold an unassigned unit without a destination", {}, async ({ page }) => {

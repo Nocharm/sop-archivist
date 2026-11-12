@@ -2,7 +2,7 @@
 // 꺼진 항목은 aria-disabled(포커스·호버를 받아야 까닭을 보인다)이고 까닭은 data-tip 툴팁이다.
 "use client";
 
-import { CheckCheck, FoldVertical, Languages, Link2, CirclePause, Scissors, Sparkles, Unlink, type LucideIcon } from "lucide-react";
+import { CheckCheck, Languages, Link2, CirclePause, Scissors, Sparkles, Unlink, type LucideIcon } from "lucide-react";
 import { useRef } from "react";
 
 import { Menu } from "@/components/ui/menu";
@@ -11,9 +11,8 @@ import { useI18n } from "@/lib/i18n";
 import type { SplitMenuAction, SplitMenuItem } from "@/lib/split-menu-model";
 
 const ICONS: Record<SplitMenuAction, LucideIcon> = {
-  pair: Link2,
+  join: Link2,
   unpair: Unlink,
-  merge: FoldVertical,
   check_both: CheckCheck,
   check: CheckCheck,
   split: Scissors,
@@ -24,9 +23,8 @@ const ICONS: Record<SplitMenuAction, LucideIcon> = {
 };
 
 const LABELS: Record<SplitMenuAction, string> = {
-  pair: "split.menu.pair",
+  join: "split.menu.join",
   unpair: "split.removePair",
-  merge: "split.menu.merge",
   check_both: "split.menu.checkBoth",
   check: "split.checkBoundary",
   split: "split.split",

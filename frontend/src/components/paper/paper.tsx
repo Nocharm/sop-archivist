@@ -17,6 +17,7 @@ import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildContourPath, buildRows, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
+import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
 import { getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
 
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
@@ -106,10 +107,8 @@ interface PaperProps {
   /** 단위마다 종이 조각으로, 앞에 태그, 끝에 표시. isChecked는 먼저 칠한 경계 확인까지 본다 */
   strips?: {
     isChecked: (unit: ViewUnit) => boolean;
-    /** Split - 조각 사이의 위아래 합치기. 없으면 틈만 둔다(Assign) */
-    merge?: { busy: boolean; onMerge: (firstId: number, secondId: number) => void };
-    /** Split - 언어가 달라 못 합치는 틈에서 두 문장을 한/영 짝으로(짝 지을 수 있을 때만 합치기 대신) */
-    pair?: { canPair: (firstId: number, secondId: number) => boolean; onPair: (firstId: number, secondId: number) => void };
+    /** Split - 조각 사이의 묶기(합치기냐 한/영 짝이냐는 plan이 고른다). 없으면 틈만 둔다(Assign) */
+    join?: { busy: boolean; plan: (firstId: number, secondId: number) => JoinPlan; onJoin: (firstId: number, secondId: number, kind: JoinKind) => void };
     /** Assign - 경계 확인 표시는 뺀다 */
     hideChecked?: boolean;
     /** Assign - 보기를 다시 부르지 않아도 지금 커버 상태로 표시한다 */
@@ -540,35 +539,17 @@ export function Paper({
     );
   }
 
-  /** 두 줄 사이의 위아래 합치기 - 못 합치는 자리는 꺼 두고 까닭을 툴팁으로. 언어가 달라 못 합치지만 짝을 지을 수 있으면 짝 짓기로 바꾼다 */
+  /** 두 줄 사이의 묶기 - 같은 언어면 합치기, 한글·영어면 짝(아이콘으로 구별). 못 묶는 자리는 꺼 두고 까닭을 툴팁으로 */
   function renderMerge(prev: PaperRow, next: PaperRow): ReactNode {
-    const merge = strips?.merge;
-    const gap = merge ? getGapMerge(prev, next, model.units) : null;
-    if (!merge || !gap) return null;
-    const pair = strips?.pair;
-    if (pair && gap.blocker === "mixed_language" && pair.canPair(gap.firstId, gap.secondId)) {
-      const pairLabel = t("split.pairAdjacent");
-      return (
-        <button
-          type="button"
-          className="strip-merge strip-pair"
-          aria-disabled={merge.busy ? "true" : undefined}
-          aria-label={pairLabel}
-          tabIndex={gap.firstId === selectedId || gap.secondId === selectedId ? 0 : -1}
-          data-testid={`${testId}-pair-${gap.firstId}-${gap.secondId}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            if (!merge.busy) pair.onPair(gap.firstId, gap.secondId);
-          }}
-        >
-          <Link2 size={12} strokeWidth={1.8} aria-hidden />
-          <span className="strip-merge-label">{pairLabel}</span>
-        </button>
-      );
-    }
-    const label = t("split.mergeAdjacent");
-    const reason = gap.blocker ? t(MERGE_BLOCKER_KEYS[gap.blocker]) : null;
-    const isOff = reason !== null || merge.busy;
+    const join = strips?.join;
+    const gap = join ? getGapMerge(prev, next, model.units) : null;
+    if (!join || !gap) return null;
+    // 한쪽이 표·그림인 틈은 두 id가 같다 - 묶을 짝이 없으니 plan에 묻지 않는다
+    const plan = gap.blocker === "not_text" ? { kind: null, reasonKey: MERGE_BLOCKER_KEYS.not_text } : join.plan(gap.firstId, gap.secondId);
+    const label = t("split.joinAdjacent");
+    const reason = plan.kind === null && plan.reasonKey ? t(plan.reasonKey) : null;
+    const isOff = plan.kind === null || join.busy;
+    const Icon = plan.kind === "pair" ? Link2 : FoldVertical;
     return (
       <button
         type="button"
@@ -578,13 +559,13 @@ export function Paper({
         aria-label={reason ? `${label} - ${reason}` : label}
         data-tip={reason ?? undefined}
         tabIndex={gap.firstId === selectedId || gap.secondId === selectedId ? 0 : -1}
-        data-testid={`${testId}-merge-${gap.firstId}-${gap.secondId}`}
+        data-testid={`${testId}-join-${gap.firstId}-${gap.secondId}`}
         onClick={(event) => {
           event.stopPropagation();
-          if (!isOff) merge.onMerge(gap.firstId, gap.secondId);
+          if (!isOff && plan.kind !== null) join.onJoin(gap.firstId, gap.secondId, plan.kind);
         }}
       >
-        <FoldVertical size={12} strokeWidth={1.8} aria-hidden />
+        <Icon size={12} strokeWidth={1.8} aria-hidden />
         <span className="strip-merge-label">{label}</span>
       </button>
     );

@@ -421,10 +421,6 @@ export function createPair(bundleId: number, docId: number, revision: number, un
   return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs`, { method: "POST", body: JSON.stringify({ revision, unit_ids: unitIds }) });
 }
 
-export function confirmPair(bundleId: number, docId: number, pairId: number, revision: number): Promise<PairResult> {
-  return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}/confirm`, { method: "POST", body: JSON.stringify({ revision }) });
-}
-
 export function deletePair(bundleId: number, docId: number, pairId: number, revision: number): Promise<PairResult> {
   return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}?revision=${revision}`, { method: "DELETE" });
 }

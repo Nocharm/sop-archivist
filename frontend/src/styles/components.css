@@ -1108,8 +1108,6 @@
   .strip-gap:has(> .strip-merge):hover::after { clip-path: inset(0 0); transition: clip-path var(--gap-line-dur) var(--ease-move) var(--gap-line-at); }
   /* 못 합치는 틈 - 꺼진 단추처럼 끊긴 선(회색) */
   .strip-gap:has(> .strip-merge[aria-disabled="true"])::after { background: repeating-linear-gradient(90deg, var(--ink-4) 0 6px, transparent 6px 10px); }
-  /* 언어가 달라 못 합치는 틈의 짝 짓기 - 합치기(강조색)와 구별되게 짝 색(보라) */
-  .strip-gap:has(> .strip-pair)::after { background: color-mix(in oklab, var(--st-ai-ink) 70%, var(--surface)); }
   /* 단추는 처음부터 다 펼친 크기로 숨어 있다가 작은 데서 커지며 나타난다(크기·라벨 모핑 없이 한 번에 튄다) */
   .strip-gap .strip-merge { height: 22px; gap: 5px; scale: .55; transition: opacity var(--dur-fast), scale var(--dur-fast) var(--ease-exit); }
   .strip-gap[data-pair] .strip-merge { height: 18px; }
@@ -1118,7 +1116,6 @@
   .strip-gap .strip-merge:not([aria-disabled="true"]) { border-color: var(--accent); color: var(--accent); box-shadow: var(--shadow-1); }
   /* 꺼진 단추도 점선 위에 뜨니 바탕을 깐다 */
   .strip-gap .strip-merge[aria-disabled="true"] { background: var(--surface); }
-  .strip-gap .strip-merge.strip-pair { border-color: var(--st-ai-ink); color: var(--st-ai-ink); }
   .strip-gap:hover .strip-merge, .strip-gap .strip-merge:focus-visible { scale: 1; }
   .strip-gap:hover .strip-merge:not(:focus-visible) { transition: opacity var(--dur-slow) var(--ease-enter) var(--gap-pop-at), scale var(--dur-slow) var(--ease-pop) var(--gap-pop-at); animation: merge-arm 1ms var(--gap-pop-at) both; }
   /* 보이기 전에는 누를 수 없다 - 숨은 단추가 위아래 조각 글 첫머리에 걸쳐 있어, 글을 누르려다 보이지 않는 합치기를 누르지 않게. 나타날 때 눌리게 된다(pointer-events는 전환이 안 돼 애니메이션으로 켠다) */
@@ -1195,11 +1192,9 @@
 
   /* 종이 오른쪽 끝 아이콘 표시 */
   .strip-marks { position: absolute; right: 9px; top: 11px; display: flex; gap: 5px; align-items: center; }
-  /* 쪼개기 오른쪽 칸: 섹션 머리 한 모양(작은 라벨 + 선)과 언어 경고 */
+  /* 쪼개기 오른쪽 칸: 섹션 머리 한 모양(작은 라벨 + 선) */
   .insp-h { display: flex; align-items: center; gap: 4px; font-size: var(--fs-micro); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }
   .insp-h::after { content: ""; flex: 1; height: 1px; background: var(--line); }
-  .lang-warn { display: flex; gap: 6px; align-items: flex-start; font-size: 12px; line-height: 18px; color: var(--warn-ink); background: var(--warn-tint); border-radius: 6px; padding: 6px 8px; }
-  .lang-warn svg { flex: none; margin-top: 2px; }
   .pmark { flex: none; color: var(--ink-3); }
   .pmark.checked { color: var(--accent); }
   .pmark.pair { color: var(--st-ai-ink); }

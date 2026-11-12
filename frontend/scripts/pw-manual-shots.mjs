@@ -82,7 +82,7 @@ const SCENES = [
   {
     name: "split-unit", app: { name: "split", width: 1280 }, user: "qa.member", path: "/bundles/1/split",
     prep: (page) => clickText(page, "로터를 장착하고 뚜껑을 닫은 후"),
-    marks: [id("split-docs"), `${id("split-paper")} >> text=로터를 장착하고 뚜껑을 닫은 후`, '[data-testid^="split-act-check-"]', id("split-unit-id"), id("split-primary"), id("split-split"), id("split-language"), id("split-pair"), id("split-help")],
+    marks: [id("split-docs"), `${id("split-paper")} >> text=로터를 장착하고 뚜껑을 닫은 후`, '[data-testid^="split-act-check-"]', id("split-unit-id"), id("split-primary"), id("split-split"), id("split-pair"), id("split-help")],
   },
   {
     name: "split-table", user: "qa.member", path: "/bundles/1/split",
