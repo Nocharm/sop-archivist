@@ -16,7 +16,7 @@ from app.settings import settings
 from app.sop.ai import jobs
 from app.sop.ai.translate import TranslateReply
 from app.sop.constants import SYSTEM_HOLD_RELATED_CHANGED
-from app.sop.models import AiJob, AiSuggestion, Bundle, TargetSentence
+from app.sop.models import AiJob, AiSuggestion, Bundle, TargetSentence, UnitPair, UnitPairMember
 from tests.access_helpers import run_in_session
 from tests.ai_fixtures import (
     AI_EN_1,
@@ -831,6 +831,80 @@ def test_pairing_holds_a_confirmed_translation(client: TestClient, fake_ai: Fake
     assert paired.status_code == 201, paired.text
     held = load_translation(ko["id"])
     assert (held.status, held.hold_reason) == ("on_hold", SYSTEM_HOLD_RELATED_CHANGED)
+
+
+def _suggest_pair(document_id: int, unit_ids: list[int]) -> int:
+    """번역이 생긴 뒤에 제안된 짝 — AI 짝 제안·이웃 제안이 번역 있는 단위를 묶은 경우를 흉내 낸다(번역 요청은 짝 단위를 건너뛴다)."""
+
+    async def _run(session: AsyncSession) -> int:
+        pair = UnitPair(document_id=document_id, status="suggested", source="code")
+        session.add(pair)
+        await session.flush()
+        session.add_all(UnitPairMember(pair_id=pair.id, unit_id=unit_id) for unit_id in unit_ids)
+        await session.commit()
+        return pair.id
+
+    return run_in_session(_run)
+
+
+def _confirm_pair_row(client: TestClient, bundle: AiBundle, ko: dict, en: dict, *extra: dict) -> httpx2.Response:
+    """짝 줄을 통째로 확정한다 — 한글의 기존 새 문장은 그대로 되보내고 영어는 같은 칸에 그대로 보낸다."""
+    group = get_group_by_unit(client, bundle.id, ko["id"])
+    (ko_target,) = group["targets"]
+    return save_group(client, bundle.id, {
+        "action": "confirm",
+        "units": [
+            {"unit_id": ko["id"], "revision": group["units"][0]["decision"]["revision"], "disposition": "assigned"},
+            {"unit_id": en["id"], "revision": 1, "disposition": "assigned"},
+        ],
+        "targets": [
+            {"key": "ko", "id": ko_target["id"], "revision": ko_target["revision"], "slot_key": SLOT,
+             "source_unit_ids": [ko["id"]]},
+            {"key": "en", "target_doc_id": bundle.sop_id, "slot_key": SLOT, "source_unit_ids": [en["id"]]},
+            *extra,
+        ],
+    })
+
+
+def test_confirming_a_suggested_pair_sweeps_the_ai_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    """제안 짝은 번역을 그대로 두고(풀면 다시 필요하다), 줄을 확정해 짝이 확정되는 순간 쓸어 낸다."""
+    bundle, document, ko, en = _make_translated_unit_with_mate(client, fake_ai)
+    pair_id = _suggest_pair(document["id"], [ko["id"], en["id"]])
+    assert len(load_translations(ko["id"])) == 1
+
+    saved = _confirm_pair_row(client, bundle, ko, en)
+
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["pairs_confirmed"] == [pair_id]
+    assert load_translations(ko["id"]) == []
+    assert [suggestion.result for suggestion in read_suggestions()] == ["stale"]
+
+
+def test_confirming_a_suggested_pair_holds_the_confirmed_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, document, ko, en = _make_translated_unit_with_mate(client, fake_ai)
+    assert save_translation(client, bundle.id, load_translation(ko["id"])).status_code == 200
+    _suggest_pair(document["id"], [ko["id"], en["id"]])
+
+    saved = _confirm_pair_row(client, bundle, ko, en)
+
+    assert saved.status_code == 200, saved.text
+    held = load_translation(ko["id"])
+    assert (held.status, held.hold_reason) == ("on_hold", SYSTEM_HOLD_RELATED_CHANGED)
+
+
+def test_confirming_a_pair_keeps_a_hand_written_other_language_sentence(client: TestClient, fake_ai: FakeAi) -> None:
+    """쓸리는 것은 기원이 번역인 행뿐이다 — 같은 저장에서 사람이 쓴 다른 언어 새 문장(기원 units)은 남는다."""
+    bundle, document, ko, en = _make_translated_unit_with_mate(client, fake_ai)
+    _suggest_pair(document["id"], [ko["id"], en["id"]])
+    hand = {"key": "hand", "target_doc_id": bundle.sop_id, "slot_key": SLOT, "source_unit_ids": [ko["id"]],
+            "lang": "en", "text": "The third synthetic sentence is tested by hand."}
+
+    saved = _confirm_pair_row(client, bundle, ko, en, hand)
+
+    assert saved.status_code == 200, saved.text
+    assert load_translations(ko["id"]) == []
+    written = [t for t in read_rows(TargetSentence) if t.confirmed_text == hand["text"]]
+    assert [(t.origin, t.lang, t.change_type, t.status) for t in written] == [("units", "en", "translated", "confirmed")]
 
 
 def test_translation_takes_no_source_link(client: TestClient, fake_ai: FakeAi) -> None:

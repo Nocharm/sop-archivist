@@ -596,14 +596,15 @@ def _resolve_lang(item: TargetIn, row: TargetSentence | None, state: _State, tex
     입구 2·번역 새 문장은 행의 언어로 잠겨 있어 보낸 값을 따르지 않는다. 그 밖에는 보낸 값, 비웠으면 기존 새 문장의 지금 값
     (TargetIn의 "비운 칸은 지금 값" — 출처 언어로 되돌리면 사람이 쓴 번역이 조용히 출처 언어가 된다), 새 새 문장은 출처가 한
     언어면 그 언어, 섞였으면 글자로 판정한다. 글자만 보지 않는 것은 영어 문장에 한글 낱말 하나만 있어도 KO로 판정되기 때문이다.
+    문장의 중립은 보내지 않은 것으로 본다 — 중립 문장은 번역이 될 수 없고 결과물의 두 언어 판에 모두 나간다.
     """
     if item.kind != "sentence":
         return NEUTRAL
     if row is not None and row.origin in (ORIGIN_NEW_DOC, ORIGIN_TRANSLATION):
         return row.lang
-    if item.lang is not None:
+    if item.lang not in (None, NEUTRAL):
         return item.lang
-    if row is not None:
+    if row is not None and row.lang != NEUTRAL:
         return row.lang
     langs = {state.units[unit_id].lang for unit_id in item.source_unit_ids}
     if len(langs) == 1:

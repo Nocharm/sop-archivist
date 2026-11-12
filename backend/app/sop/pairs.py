@@ -1,7 +1,7 @@
 """한/영 짝 — 사람이 짝을 만들고(확정) 제안 짝을 확정하거나 푼다 (스펙 §6.5). 묶음 잠금·문서 revision 검사·커밋은 라우터가 한다."""
 
 from collections import Counter, defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
@@ -15,7 +15,7 @@ from app.sop.detach import sweep_translations
 from app.sop.editing import PAIR_LANGS, TEXT_KINDS, ensure_unique_units, load_active_units
 from app.sop.errors import raise_rule
 from app.sop.events import record_event
-from app.sop.models import Document, TargetSentence, TargetSource, Unit, UnitPair, UnitPairMember
+from app.sop.models import Document, TargetSource, Unit, UnitPair, UnitPairMember
 from app.sop.units import PAIR_SUGGESTED, get_latest_extraction_id
 
 PAIR_CONFIRMED = "confirmed"
@@ -86,20 +86,16 @@ async def create_pair(session: AsyncSession, document: Document, unit_ids: Seque
     session.add_all(UnitPairMember(pair_id=pair.id, unit_id=unit_id) for unit_id in sorted(unit_ids))
     _record(session, document, "pair.create", pair.id, actor)
     await session.flush()
-    await _sweep_replaced_translations(session, document.bundle_id, unit_ids)
+    await _sweep_paired_translations(session, document.bundle_id, unit_ids)
     return pair
 
 
-async def _sweep_replaced_translations(session: AsyncSession, bundle_id: int, unit_ids: Sequence[int]) -> None:
-    """짝을 맺으면 짝의 다른 언어 단위가 번역을 대신하므로, 묶인 단위를 옮긴 번역을 출처가 바뀐 것처럼 쓸어 낸다(설계 §7).
+async def _sweep_paired_translations(session: AsyncSession, bundle_id: int, unit_ids: Collection[int]) -> None:
+    """짝이 확정되면 짝의 다른 언어 단위가 번역을 대신하므로, 묶인 단위를 출처로 둔 새 문장의 번역을 출처가 바뀐 것처럼 쓸어 낸다(설계 §7).
 
-    AI 번역은 지우고 확정 번역은 보류다(sweep_translations). 번역은 출처 새 문장으로 찾으므로 묶인 단위를 출처로 둔 새 문장을 넘긴다.
+    AI 번역은 지우고 확정 번역은 보류다(sweep_translations). 쓸리는 것은 기원이 번역(origin translation)인 행뿐이라 사람이 쓴
+    다른 언어 새 문장(기원 units, 변경 종류 translated)은 그대로다. 제안 짝은 쓸지 않는다 — 풀면(Separate) 번역이 다시 필요하다.
     """
-    translated = await session.scalar(
-        select(TargetSentence.id).where(TargetSentence.translation_source_unit_id.in_(unit_ids)).limit(1)
-    )
-    if translated is None:
-        return
     source_target_ids = await session.scalars(
         select(TargetSource.target_id).where(TargetSource.unit_id.in_(unit_ids)).distinct()
     )
@@ -144,12 +140,15 @@ async def mark_pair_confirmed(session: AsyncSession, document: Document, pair: U
     """제안 짝을 확정으로 바꾼다 — 사람의 확인(confirm_pair)과 줄 확정 뒤 서버(pair_settle)가 함께 쓴다.
 
     AI 제안 짝이면 그대로 채택으로 남긴다 — 짝은 글을 고칠 수 없어 확정이 곧 제안 그대로다(설계 §6.11).
+    확정되는 순간 묶인 단위의 번역을 쓸어 낸다(_sweep_paired_translations).
     """
     pair.status = PAIR_CONFIRMED
     if pair.suggestion_id is not None:
         await adopt_suggestions(session, [pair.suggestion_id], actor, now())
     _record(session, document, "pair.confirm", pair.id, actor)
     await session.flush()
+    unit_ids = await session.scalars(select(UnitPairMember.unit_id).where(UnitPairMember.pair_id == pair.id))
+    await _sweep_paired_translations(session, document.bundle_id, list(unit_ids))
 
 
 async def dissolve_pair(session: AsyncSession, document: Document, pair: UnitPair, actor: str) -> None:

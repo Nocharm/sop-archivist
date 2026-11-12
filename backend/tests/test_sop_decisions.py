@@ -399,6 +399,27 @@ def test_target_language_defaults_to_the_source_language(client: TestClient) -> 
     assert [(t["lang"], t["change_type"]) for t in kept.json()["targets"]] == [("ko", "translated")]
 
 
+def test_sentence_language_is_never_neutral(client: TestClient) -> None:
+    """문장에 중립을 보내거나 지금 값이 중립이면 보내지 않은 것으로 보고 출처 언어를 쓴다 — 중립 문장은 번역이 될 수 없다."""
+    fx = _setup(client)
+    unit = find_unit(fx.view, STORAGE)
+    target = _target("t", fx.sop_id, [unit], slot_key="purpose", lang="neutral")
+
+    sent = save_group(client, fx.bundle_id, _body([_unit_in(unit)], [target]))
+
+    assert sent.status_code == 200, sent.text
+    (saved,) = sent.json()["targets"]
+    assert (saved["lang"], saved["change_type"]) == ("ko", "as_is")
+    # 종류는 잠겨 있어(kind_locked) 표 행이 문장이 될 수는 없다 — 이 고침 전에 중립으로 저장된 문장 행을 흉내 낸다
+    update_row(TargetSentence, saved["id"], lang="neutral")
+    resaved = save_group(client, fx.bundle_id, _body(
+        [_unit_in(unit, 2)],
+        [{"key": "t", "id": saved["id"], "revision": saved["revision"], "slot_key": "purpose", "source_unit_ids": [unit["id"]]}],
+    ))
+    assert resaved.status_code == 200, resaved.text
+    assert [(t["lang"], t["change_type"]) for t in resaved.json()["targets"]] == [("ko", "as_is")]
+
+
 def test_entrance_two_target_keeps_its_own_language(client: TestClient) -> None:
     """한글 입구 2 새 문장에 영어 옛 단위를 이으면 언어는 새 문장 그대로, 변경 종류는 번역이다(전에는 lang_mismatch)."""
     fx = _setup(client)
