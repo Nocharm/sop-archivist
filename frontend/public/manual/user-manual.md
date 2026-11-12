@@ -121,7 +121,7 @@ Bundle은 함께 재구성할 문서 묶음입니다. Old SOP 여러 편과 새�
 - **Manage** 를 누르면 **Bundle members** 창이 열립니다. **Add member** 에서 사람을 찾아 넣고 **Role** 에서 **Author** 또는 **Reviewer** 를 고릅니다.
 - 사람은 이름·한글 이름·아이디로 찾습니다. 아무것도 입력하지 않으면 내 부서 사람이 먼저 나옵니다.
 - 작성자는 한 명 이상 있어야 하고, 검토를 요청하려면 활동 중인 검토자가 한 명 이상 있어야 합니다.
-- Bundle은 구성원에게만 보입니다. 구성원이 아닌 사람이 주소로 들어오면 **Bundle not available** 화면이 뜹니다.
+- Bundle은 구성원에게만 보입니다. 구성원이 아닌 사람이 주소로 들어오면 **Bundle not available** 화면이 뜹니다. 이때는 단계 이동 줄 없이 **Back to Bundles** 단추만 있습니다. 없는 주소로 들어와도 같은 단추가 있는 안내 화면이 뜹니다.
 
 ## Documents {#documents}
 

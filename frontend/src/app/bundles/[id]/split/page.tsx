@@ -18,7 +18,7 @@ import { Modal } from "@/components/modal";
 import { ReadOnlyNote } from "@/components/read-only-note";
 import { SplitContextMenu } from "@/components/split/split-context-menu";
 import { SplitHelp } from "@/components/split/split-help";
-import { LoadError } from "@/components/ui/load-error";
+import { BundleLoadError } from "@/components/bundle-load-error";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { getStageHref } from "@/lib/stages";
 import { InfoTip } from "@/components/ui/info-tip";
@@ -600,9 +600,9 @@ export default function SplitPage() {
             ))}
             </div>
           ) : view.error !== null ? (
-            <LoadError error={view.error} onRetry={view.reload} testId="split" />
+            <BundleLoadError error={view.error} onRetry={view.reload} testId="split" />
           ) : docs.error !== null && docs.data === null ? (
-            <LoadError error={docs.error} onRetry={docs.reload} testId="split-docs" />
+            <BundleLoadError error={docs.error} onRetry={docs.reload} testId="split" />
           ) : docs.data !== null && readyDocs.length === 0 ? (
             <EmptyState
               icon={FileText}

@@ -4,6 +4,8 @@
 
 ## 2026-11-12
 
+- **화면 검토 반영 8/14 없는 주소·못 여는 Bundle (`fix/screen-review`)** — `app/not-found.tsx`가 앱 틀 안에서 `EmptyState`+목록으로 가는 단추를 그린다(B1, 다크 body 배경 = `--bg`). Documents·Split·Assign·Outputs·History의 로드 실패를 `BundleLoadError`로 바꿔 403·404면 다시 시도 대신 목록으로 가는 길만 둔다(B2, Split은 문서 목록 실패 분기도 같은 `split` id). 못 연 Bundle에서는 상단 바 뒤로·구분선·제목과 단계 레일을 그리지 않는다(R6, 정상 Bundle은 그대로).
+
 - **화면 검토 반영 7/14 개요 (`fix/screen-review`)** — 장비 SOP 칸 안내가 2개 이상이면 `groupNotices`로 한 줄(`overview-notice-group`, 누르면 코드 목록)로 묶고 검토 요청 단추를 안내 위로 올렸다(A12). 문서 0개 Bundle은 조건 목록·Coverage 대신 중립 한 줄(B5), 되돌림 사유는 8줄 자름+안쪽 스크롤 대신 아래 흐림+더 보기(R4). `overview.noticesMore` 키는 쓸 곳이 없어 더하지 않았다.
 
 - **R8 사용자 결정 반영 (`fix/screen-review`)** — Split 문서 목록 열을 1280 미만에서만 232→216px로 좁혀(`.split-cols`, Assign 무관) 1120 긴 문단 글 상자를 326→340 이상으로 맞췄다(감사 R8 PASS, 임계값 그대로). 목록 제목 말줄임에 키보드 포커스 툴팁(`revealOnFocus`)을 더했고, 설명서 도구 줄 breakpoint를 1700→1750으로 바로잡았다.

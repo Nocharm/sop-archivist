@@ -12,7 +12,7 @@ import { OutputBCard } from "@/components/outputs/output-b-card";
 import { OutputCView } from "@/components/outputs/output-c";
 import { ReadOnlyNote } from "@/components/read-only-note";
 import { EmptyState } from "@/components/ui/empty-state";
-import { LoadError } from "@/components/ui/load-error";
+import { BundleLoadError } from "@/components/bundle-load-error";
 import { LoadMoreRows } from "@/components/ui/load-more";
 import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -201,7 +201,7 @@ export default function OutputsPage() {
         </div>
         <div className="min-h-0 overflow-auto">
           {current.error !== null && current.data === null ? (
-            <LoadError error={current.error} onRetry={current.reload} testId="outputs" />
+            <BundleLoadError error={current.error} onRetry={current.reload} testId="outputs" />
           ) : current.data === null ? (
             <div className="p-4">{showSkeleton && <span className="sk h-[420px] w-full" />}</div>
           ) : tab === "a" && outA.data?.length === 0 ? (

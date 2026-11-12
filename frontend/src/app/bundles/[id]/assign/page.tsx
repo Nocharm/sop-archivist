@@ -28,7 +28,7 @@ import { SourceFontMenu } from "@/components/paper/source-font-menu";
 import { UnitStatusPill } from "@/components/status";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
-import { LoadError } from "@/components/ui/load-error";
+import { BundleLoadError } from "@/components/bundle-load-error";
 import { Truncate } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -1332,7 +1332,7 @@ export default function AssignPage() {
   };
   if (!ready) {
     return error !== null ? (
-      <LoadError error={error} onRetry={reloadAll} testId="assign" />
+      <BundleLoadError error={error} onRetry={reloadAll} testId="assign" />
     ) : (
       <div className="p-4" data-testid="assign-loading">
         {showSkeleton && <span className="sk h-[480px] w-full" />}

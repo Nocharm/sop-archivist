@@ -10,6 +10,7 @@ import { StageNav } from "@/components/stage-nav";
 import { TopBar } from "@/components/top-bar";
 import { ToastHost } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
+import { useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
 import { useSession } from "@/lib/session";
 import { parseBundlePath, type StageKey } from "@/lib/stages";
@@ -22,6 +23,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { me, error, reloadMe } = useSession();
   const pathname = usePathname();
   const inBundle = parseBundlePath(pathname);
+  const { bundle, error: bundleError } = useBundle(inBundle?.bundleId ?? null);
+  // 못 여는 Bundle(없음·멤버 아님)이면 단계 레일을 그리지 않는다 - 갈 수 있는 단계가 없다
+  const isBundleOpen = inBundle !== null && !(bundleError !== null && bundle === null);
 
   let body: ReactNode;
   if (me) {
@@ -59,7 +63,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="app">
       {me && <NavHost />}
       <TopBar />
-      {inBundle && me ? (
+      {inBundle && me && isBundleOpen ? (
         <div className="frame min-h-0">
           <StageNav bundleId={inBundle.bundleId} current={inBundle.stage} />
           <main className="frame-view">{body}</main>

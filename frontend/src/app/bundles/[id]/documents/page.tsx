@@ -15,7 +15,7 @@ import { InlineText } from "@/components/inline-text";
 import { ReadOnlyNote } from "@/components/read-only-note";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { EmptyState } from "@/components/ui/empty-state";
-import { LoadError } from "@/components/ui/load-error";
+import { BundleLoadError } from "@/components/bundle-load-error";
 import { MorphButton } from "@/components/ui/morph-button";
 import { Truncate } from "@/components/ui/motion";
 import { Select } from "@/components/ui/select";
@@ -279,7 +279,7 @@ export default function DocumentsPage() {
       </div>
 
       {error !== null && data === null ? (
-        <LoadError error={error} onRetry={reload} testId="documents" />
+        <BundleLoadError error={error} onRetry={reload} testId="documents" />
       ) : data !== null && data.length === 0 ? (
         <EmptyState
           icon={FileText}
