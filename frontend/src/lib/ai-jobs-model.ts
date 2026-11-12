@@ -31,10 +31,10 @@ export function isRequestActive(request: RecentAiRequest): boolean {
   return request.finished_at === null;
 }
 
-/** 진행 "n / N" - 끝난 작업 수와 전체. 짝 맞추기는 도중에 전체가 는다 */
+/** 진행 "n / N" - 성공한 작업 수와 전체. 짝 맞추기는 도중에 전체가 는다 */
 export function getRequestProgress(request: RecentAiRequest): { done: number; total: number } {
-  // 실패는 끝난 수에서 뺀다 - "14 / 14 · 2 failed"가 아니라 "12 / 14"
-  return { done: request.total - request.jobs.queued - request.jobs.running - request.jobs.failed, total: request.total };
+  // 성공한 것만 센다 - 실패·버려짐·취소가 같이 있는데 "n / n"으로 읽히지 않게
+  return { done: request.jobs.done, total: request.total };
 }
 
 export type RequestOutcome = "running" | "queued" | "failed" | "stale" | "cancelled" | "done";

@@ -538,7 +538,8 @@
   .tip {
     position: fixed;
     z-index: 60;
-    max-width: 260px;
+    max-width: 360px;
+    white-space: pre-line;
     padding: 5px 8px;
     border-radius: var(--r-2);
     background: var(--ink);

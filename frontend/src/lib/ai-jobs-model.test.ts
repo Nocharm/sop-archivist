@@ -132,6 +132,7 @@ describe("request outcome and toast", () => {
 
   it("counts finished jobs out of a total that may grow", () => {
     expect(getRequestProgress(makeRequest("a", { queued: 2, running: 1, done: 3, failed: 1 }))).toEqual({ done: 3, total: 7 });
+    expect(getRequestProgress(makeRequest("a", { done: 3, stale: 2, cancelled: 1 }))).toEqual({ done: 3, total: 6 });
   });
 
   it("leaves failed jobs out of the done count so a failed request reads 12 / 14", () => {

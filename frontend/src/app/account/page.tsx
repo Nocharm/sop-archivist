@@ -3,8 +3,9 @@
 
 import { Bot, KeyRound, ShieldCheck } from "lucide-react";
 
-import { SourceLine } from "@/components/permission-source-line";
+import { formatSourceText } from "@/components/permission-source-line";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Tooltip } from "@/components/ui/tooltip";
 import { hasPermission, PERMISSIONS } from "@/lib/access";
 import { getDisplayName } from "@/lib/display-name";
 import { useI18n } from "@/lib/i18n";
@@ -39,23 +40,25 @@ export default function AccountPage() {
           <ul data-testid="account-permissions" className="divide-y divide-line border-y border-line">
             {granted.map((key) => {
               const sources = me.sources[key] ?? [];
+              const sourcesText = sources.map((source) => formatSourceText(t, source, true)).join("\n");
               return (
                 <li
                   key={key}
                   data-testid={`account-permission-${key}`}
-                  className="space-y-1 py-2"
+                  className="flex items-center justify-between gap-4 py-2"
                 >
-                  <div className="text-sm font-semibold text-ink">{t(`permission.${key}`)}</div>
+                  <div className="min-w-0 text-sm font-semibold text-ink">{t(`permission.${key}`)}</div>
                   {sources.length > 0 && (
-                    <ul data-testid={`account-permission-source-${key}`} className="space-y-1">
-                      {sources.map((source, index) => (
-                        <SourceLine
-                          key={`${source.kind}-${source.subject_id}-${source.role ?? "direct"}-${index}`}
-                          source={source}
-                          isSelf
-                        />
-                      ))}
-                    </ul>
+                    <Tooltip label={sourcesText} align="end">
+                      <span
+                        tabIndex={0}
+                        aria-label={`${t("account.sources", { n: sources.length })}: ${sourcesText.replace(/\n/g, "; ")}`}
+                        data-testid={`account-permission-source-${key}`}
+                        className="tag shrink-0 cursor-default"
+                      >
+                        {t("account.sources", { n: sources.length })}
+                      </span>
+                    </Tooltip>
                   )}
                 </li>
               );

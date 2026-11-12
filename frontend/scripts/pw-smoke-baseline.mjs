@@ -90,7 +90,7 @@ await runStep("account as qa.lead", { devUser: "qa.lead" }, async ({ page, takeS
   const perms = await getText(page, "account-permissions");
   check("account lists Manage permissions", perms.includes("Manage permissions"), perms);
   check("account hides ungranted permissions", !perms.includes("Manage AI") && !perms.includes("Run directory sync"), perms);
-  const manageSource = await getText(page, "account-permission-source-permission.manage");
+  const manageSource = (await page.locator('[data-testid="account-permission-source-permission.manage"]').getAttribute("aria-label")) ?? "";
   check("Manage permissions source names the department and role", manageSource.includes("Quality Division") && manageSource.includes("Permission Admin"), manageSource);
   check("account identity shows login id", (await getText(page, "account-identity")).includes("qa.lead"));
   check("AI status is shown", (await getText(page, "account-ai-status")).trim().length > 0, await getText(page, "account-ai-status"));
@@ -110,7 +110,7 @@ await runStep("switch dev users", { devUser: "qa.lead" }, async ({ page }) => {
   await page.waitForFunction(() => document.querySelector('[data-testid="top-bar-user"]')?.textContent?.includes("Production Member"), null, { timeout: T });
   const direct = await getText(page, "account-permissions");
   check("direct grant shows only View system status", direct.includes("View system status") && !direct.includes("Manage permissions"), direct);
-  const directSource = await getText(page, "account-permission-source-system.view");
+  const directSource = (await page.locator('[data-testid="account-permission-source-system.view"]').getAttribute("aria-label")) ?? "";
   check("direct grant source reads You and direct grant", directSource.includes("You") && directSource.includes("direct grant"), directSource);
 
   await pickOption(page, "dev-user-switcher", "qa.member");
