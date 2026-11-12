@@ -1,5 +1,5 @@
 // 검토 - 검토자는 결과물을 읽고 검토 완료 또는 이유를 적어 되돌린다. 작성자는 상태를 보고, 기다리는 요청을 거두거나 끝난 묶음을 이유를 적어 다시 연다(명세 §12-9).
-// 확정·완료는 일반 버튼이고 전자서명이 아니다. "Review complete"이지 "approved"가 아니다 - 정식 승인은 Veeva에서 한다.
+// 확정·완료는 일반 버튼이고 전자서명이 아니다. "Review complete"이지 "approved"가 아니다 - 정식 승인은 EQUIS에서 한다.
 "use client";
 
 import { CircleCheck, Gauge, RotateCcw, Undo2, X } from "lucide-react";
