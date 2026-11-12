@@ -208,6 +208,17 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   const pieces = page.locator('[data-testid^="split-paper-piece-"].strip');
   check("every unit is its own piece from the start", (await pieces.count()) > 10 && (await page.locator('[data-testid^="split-paper-mark-checked-"]').count()) === 0, String(await pieces.count()));
   check("merge controls sit between text pieces", (await page.locator('.strip-gap [data-testid^="split-paper-merge-"]').count()) > 5);
+  // 절 번호는 앞머리 번호 칸에 한 번만 - 머리 줄 글 앞의 같은 번호는 그리지 않고(표시만) 첫 글자 조각의 data-start가 그만큼 밀린다
+  const heads = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-testid^="split-paper-num-"]')].map((num) => {
+      const id = num.getAttribute("data-testid").replace("split-paper-num-", "");
+      const first = document.querySelector(`[data-testid="split-paper-piece-${id}"] .su [data-start]`);
+      return { number: num.textContent.trim(), text: first?.textContent.trim() ?? "", start: Number(first?.getAttribute("data-start") ?? 0) };
+    }),
+  );
+  const doubled = heads.filter((head) => head.text.startsWith(head.number));
+  check("head rows do not repeat their section number", heads.length > 0 && doubled.length === 0, doubled.map((head) => `${head.number}|${head.text.slice(0, 20)}`).join(", "));
+  check("a head row hides its leading number", heads.some((head) => head.start > 0), String(heads.length));
   // 영어 문장 하나를 찾아 고른다 - 한 번 더 누르면 아무것도 안 하고, 두 번 누르기(더블클릭)가 나눌 선을 만든다
   const target = page.locator('[data-testid^="split-paper-unit-"].su[lang="en"]', { hasText: " " }).nth(2);
   const unitId = (await target.getAttribute("data-testid")).replace("split-paper-unit-", "");
@@ -437,7 +448,8 @@ await runStep("to-be: removing a step keeps the other numbers, leaving asks firs
 });
 
 // Assign(v0.10.0) - Old 원문 조각이 곧 목록이다. 줄은 ↑↓·J/K로 옮기고, 지금 줄은 오른쪽 머리(assign-row-id·assign-row-status)로 읽는다
-const rowStatus = async (page) => (await getText(page, "assign-row-status")).trim();
+// 상태 칩은 대문자를 CSS(text-transform)로만 그린다 - innerText는 대문자가 되니 DOM 글자(textContent)로 읽는다
+const rowStatus = async (page) => ((await page.locator('[data-testid="assign-row-status"]').first().textContent()) ?? "").trim();
 const rowIds = async (page) => (await getText(page, "assign-row-id")).trim();
 async function selectRowById(page, id) {
   await page.locator('[data-testid="assign-filter-all"]').click();

@@ -1018,7 +1018,7 @@
 
   /* Unit 하나 = 종이 조각 하나(2026-11-10). 용지 바탕을 걷고 조각마다 종이를 그린다 - 확인 여부와 상관없이 처음부터 나뉘어 있다 */
   .sheet:has(> .pg[data-strips]) { background: none; border: 0; box-shadow: none; }
-  /* 조각마다 왼쪽 밖에 언어 색 탭(.strip-tab)이 붙고 폭은 절 깊이로만 정해진다(strip-pill-model.ts PILL_WIDTH_BY_LEVEL) - 깊을수록 조각이 오른쪽에서 시작해 들여쓴 것처럼 읽힌다. 오른쪽은 끝 아이콘 자리(--pg-pad-r)만 두고, 배정 연결 배지(.lbadge)는 그 여백의 오른쪽 아래 모서리에 떠 글을 덮지 않는다 */
+  /* 조각마다 왼쪽 밖에 앞머리(.strip-lead = 절 번호 칸 + 언어 막대)가 붙고 번호 칸 폭은 절 깊이로만 정해진다(strip-pill-model.ts PILL_WIDTH_BY_LEVEL) - 깊을수록 조각이 오른쪽에서 시작해 들여쓴 것처럼 읽힌다. Assign New 칸은 아직 옛 탭(.strip-tab)이다. 오른쪽은 끝 아이콘 자리(--pg-pad-r)만 두고, 배정 연결 배지(.lbadge)는 그 여백의 오른쪽 아래 모서리에 떠 글을 덮지 않는다 */
   .pg[data-strips] { --pg-pad-l: 12px; --pg-pad-r: 68px; padding: 0; gap: 0; }
   /* content-visibility는 칠 영역을 줄 안쪽으로 자르므로 조각 그림자(--shadow-1, 아래로 24px)가 잘리지 않게 자르는 선을 바깥으로 민다 */
   .pg[data-strips] .strip-row { display: flex; align-items: stretch; content-visibility: auto; overflow-clip-margin: 32px; contain-intrinsic-size: auto 46px; }
@@ -1026,16 +1026,16 @@
   .pg[data-strips] .strip-row > .strip { flex: 1 1 0; min-width: 0; }
   /* 화면 밖 조각은 그리지 않는다(Unit 수천 개) - 고른 조각·나눌 선이 있는 조각은 팝업·윤곽이 잘리지 않게 뺀다 */
   .pg[data-strips] .strip { position: relative; min-width: 0; padding: 6px var(--pg-pad-r) 6px var(--pg-pad-l); background: var(--paper); border: 1px solid var(--line-2); border-left: 0; border-radius: 0 var(--r-1) var(--r-1) 0; box-shadow: var(--shadow-1); }
-  .pg[data-strips] .strip-tab-gap + .strip { border-left: 1px solid var(--line-2); border-radius: var(--r-1); }
-  /* 조각 상자 전체가 누르는 자리 - 여백·탭에 올려도 그 문장이 올린 모양이 된다(표는 칸마다 따로라 표 전체는 칠하지 않는다) */
-  .pg[data-strips] .strip[data-strip-unit], .pg[data-strips] .strip-row:has(> .strip[data-strip-unit]) > .strip-tab, .cell-piece[data-strip-unit] { cursor: pointer; }
+  .pg[data-strips] .strip-tab-gap + .strip, .pg[data-strips] :is(.strip-lead, .strip-lead-gap) + .strip { border-left: 1px solid var(--line-2); border-radius: var(--r-1); }
+  /* 조각 상자 전체가 누르는 자리 - 여백·앞머리에 올려도 그 문장이 올린 모양이 된다(표는 칸마다 따로라 표 전체는 칠하지 않는다) */
+  .pg[data-strips] .strip[data-strip-unit], .pg[data-strips] .strip-row:has(> .strip[data-strip-unit]) > :is(.strip-tab, .strip-lead), .cell-piece[data-strip-unit] { cursor: pointer; }
   /* :where로 낮춘 우선순위 - 고른 문장 윤곽(배경 없음)·Ctrl로 고른 바탕(data-pick)이 이긴다 */
   :where(.pg[data-strips] .strip-row:hover > .strip[data-strip-unit]:not([data-kind="table"]), .cell-piece[data-strip-unit]:hover) .su { background-color: var(--hover); }
   .pg[data-strips] .strip[data-kind="table"] { padding-left: var(--pg-pad-l); padding-right: var(--pg-pad-r); overflow-x: auto; }
   .pg[data-strips] .strip[data-kind="figure"] { overflow-x: auto; }
   .pg[data-strips] .strip > p { margin-block: 0; }
   .pg[data-strips] .pg-edge { display: grid; padding: 0; border: 0; }
-  /* 짝 Unit - 이웃한 짝은 틈 1px로 붙이고 왼쪽 괄호선 하나로 묶는다. 바탕은 아주 옅게, 막대 쪽 모서리는 직각. 고른 단위의 짝(data-partner)은 선만 진하게 */
+  /* 짝 Unit - 이웃한 짝은 틈 없이 붙여 한 카드(안쪽은 점선 한 줄), 앞머리 막대 두 색이 이어진다. 바탕은 아주 옅게. 고른 단위의 짝(data-partner)·이어진 맞은편(data-link-hover)은 카드에 강조 테두리(아래 .strip::after) */
   .pg[data-strips] .strip[data-bracket="top"], .pg[data-strips] .strip[data-bracket="bottom"], .pg[data-strips] .strip[data-partner]:not([data-bracket]), .cell-piece[data-partner] { background: color-mix(in oklab, var(--accent) 4%, var(--paper)); }
   .cell-piece[data-partner] { box-shadow: inset 2px 0 0 var(--accent); }
 
@@ -1053,8 +1053,10 @@
   .strip-merge { opacity: 0; }
   .strip-gap:hover .strip-merge, .cell-gap:hover .strip-merge, .strip-merge:focus-visible { opacity: 1; }
   .pg[data-strips] .strip[data-bracket="top"] { border-bottom: 0; border-bottom-right-radius: 0; }
-  .pg[data-strips] .strip[data-bracket="bottom"] { border-top: 0; border-top-right-radius: 0; }
-  .pg[data-strips] .strip[data-bracket="bottom"]::before { content: ""; position: absolute; inset: 0 0 auto 0; border-top: 1px solid var(--line); }
+  .pg[data-strips] .strip[data-bracket="bottom"] { border-top: 1px dashed var(--line-2); border-top-right-radius: 0; }
+  /* 카드 강조 테두리(.strip::after)의 맞닿는 쪽을 연다 - 값은 아래 ::after 규칙이 읽는다 */
+  .pg[data-strips] .strip-lead + .strip[data-bracket="top"] { border-bottom-left-radius: 0; --ring-inset: -2px -2px 0; --ring-bw: 2px 2px 0; --ring-r: calc(var(--r-1) + 2px) calc(var(--r-1) + 2px) 0 0; }
+  .pg[data-strips] .strip-lead + .strip[data-bracket="bottom"] { border-top-left-radius: 0; --ring-inset: 0 -2px -2px; --ring-bw: 0 2px 2px; --ring-r: 0 0 calc(var(--r-1) + 2px) calc(var(--r-1) + 2px); }
   .strip-gap::before { content: ""; position: absolute; inset: -5px 0; }
   /* 합치기가 있는 틈은 위아래 조각 안쪽 10px까지 올림 자리로 잡는다(틈 4px + 20px). 틈을 조각 위로 올려야(z-index) 아래 조각에 덮이지 않는다 -
      10px는 조각 안 여백(6px)과 첫·끝 글줄 위아래 빈 줄간격 안이라 글자·끝 아이콘(위에서 11px)을 덮지 않는다. 늘리면 조각 가장자리를 눌러 고르기가 어려워진다 */
@@ -1118,7 +1120,7 @@
 
   /* 왼쪽 탭 - 줄의 왼쪽 밖에 맞닿아 붙는다(맞닿는 쪽 모서리 직각, 바깥 모서리 둥글게). 바탕 = 언어 색, 보류는 그 위에 사선 줄무늬. 번호는 절의 첫 블록에만, 번호 없는 탭은 옅게 해 번호를 따라가는 눈을 덜 방해하고 올리면 진해진다. 탭에 올리면 번호가 사라지고 언어 글자가 뜬다. 첫 글줄 높이(27px)에 번호를 맞춘다 */
   /* 1280 미만 Split에서만 3단 이상의 절 번호 탭을 46px에서 멈춘다(Assign 탭은 그대로) - 깊은 번호가 글 상자를 좁히지 않게(긴 번호는 탭 안에서 잘린다) */
-  @media (max-width: 1279px) { .split-desk .strip-tab, .split-desk .strip-tab-gap { max-width: 46px; } .split-desk .strip-gap { --gap-tab-cap: 46px; } }
+  @media (max-width: 1279px) { .split-desk .strip-lead-num { max-width: 46px; } .split-desk :is(.strip-lead, .strip-lead-gap) { max-width: 54px; } .split-desk .strip-gap { --gap-tab-cap: 54px; } }
   /* Split 3단 열: 문서 목록 232px, 1280 미만은 216px - 1,800자 문단 글 상자가 340px을 지키게(사용자 결정 2026-11-12). Assign과 무관 */
   .split-cols { grid-template-columns: 232px minmax(0, 1fr) clamp(280px, 26vw, 420px); }
   @media (max-width: 1279px) { .split-cols { grid-template-columns: 216px minmax(0, 1fr) clamp(280px, 26vw, 420px); } }
@@ -1139,6 +1141,24 @@
   .strip-tab:hover > .strip-tab-num { opacity: 0; }
   .strip-tab.swatch { display: inline-grid; place-items: center; width: 30px; height: 18px; padding: 0; border: 1px solid var(--line-2); border-radius: var(--r-1); }
   .strip-tab.swatch > .strip-tab-letters { position: static; opacity: 1; }
+  /* 위 .strip-tab은 Assign New 칸(new-pane.tsx)·도움말 견본이 아직 쓴다 - 그쪽을 옮기면 지운다 */
+
+  /* 앞머리 - 번호 칸(오른쪽 맞춤 mono, 절의 첫 블록에만) + 3px 언어 막대(줄 높이 전체, 둥근 끝) + 조각까지 틈 5px. 번호는 첫 글줄 높이(조각 위 여백 6 + 27px)에 맞춘다.
+     짝 카드는 위 줄 막대의 아래 끝·아래 줄 막대의 위 끝을 직각으로 해 두 색이 틈 없이 맞붙는다. 1280 미만 Split의 46px 상한은 위 @media */
+  .strip-lead { flex: none; align-self: stretch; display: flex; padding-right: 5px; box-sizing: border-box; }
+  .strip-lead-num { flex: 1 1 auto; min-width: 0; height: 33px; padding: 6px 5px 0 0; overflow: hidden; text-align: right; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); font: 500 11px / 27px var(--font-mono); box-sizing: border-box; }
+  .strip-lead-bar { flex: none; width: 3px; border-radius: 1.5px; background: color-mix(in oklab, var(--ink-4) 40%, transparent); }
+  .strip-lead-bar[data-lang="ko"] { background: var(--lang-ko); }
+  .strip-lead-bar[data-lang="en"] { background: var(--lang-en); }
+  .strip-lead[data-bracket="top"] > .strip-lead-bar { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+  .strip-lead[data-bracket="bottom"] > .strip-lead-bar { border-top-left-radius: 0; border-top-right-radius: 0; }
+  .strip-lead-gap { flex: none; }
+  /* 카드 강조 테두리 - 조각 바깥 2px. 짝 카드는 두 줄 모두 두르되 맞닿는 쪽은 열어 한 테두리로 읽힌다(두 줄에 그림자 고리를 각각 두면 가운데에 선이 생긴다) */
+  .pg[data-strips] .strip-lead + .strip:is([data-partner], [data-link-hover])::after,
+  .strip-row:has(> .strip[data-bracket="top"]:is([data-partner], [data-link-hover])) + .strip-gap[data-pair] + .strip-row > .strip-lead + .strip[data-bracket="bottom"]::after,
+  .strip-row:has(+ .strip-gap[data-pair] + .strip-row > .strip[data-bracket="bottom"]:is([data-partner], [data-link-hover])) > .strip-lead + .strip[data-bracket="top"]::after { content: ""; position: absolute; inset: var(--ring-inset, -2px); border: solid var(--accent); border-width: var(--ring-bw, 2px); border-radius: var(--ring-r, calc(var(--r-1) + 2px)); pointer-events: none; }
+  /* 보류 칩 - 글 첫머리, 글자와 같은 줄에 앉는다 */
+  .pg[data-strips] p > .schip:first-child { margin-right: 6px; vertical-align: 1px; }
   /* 조각 아래 줄 - 간 곳 글 */
   .strip-foot { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
   .strip-foot > .strip-note { min-width: 0; margin-top: 0; }
@@ -1271,7 +1291,7 @@
   .assign-desk { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 10px; min-width: 0; min-height: 0; padding: 10px 14px 14px; background: var(--bg); }
     /* 상태 칩 한 벌 - Unit 상태·Assign 필터·용지 보류. 각진 mono 대문자, 톤마다 --sc-ink/--sc-tint, 고른 필터는 --sc-ink 채움 */
   .schip { --sc-ink: var(--ink-2); --sc-tint: var(--sunken); display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 6px 0 5px; border: 0; border-radius: var(--r-1); background: var(--sc-tint); color: var(--sc-ink); font: 700 9.5px / 1 var(--font-mono); letter-spacing: .03em; text-transform: uppercase; white-space: nowrap; }
-  .schip[data-size="sm"] { height: 15px; gap: 3px; padding: 0 4px; font-size: 8.5px; }
+  .schip[data-size="sm"] { height: 15px; gap: 3px; padding: 0 4px; font-size: 9px; }
   .schip[data-tone="unassigned"] { --sc-ink: var(--st-none-ink); --sc-tint: var(--sunken); box-shadow: inset 0 0 0 1px var(--line-2); }
   .schip[data-tone="ai_suggested"] { --sc-ink: var(--st-ai-ink); --sc-tint: var(--st-ai-tint); }
   .schip[data-tone="on_hold"] { --sc-ink: var(--st-hold-ink); --sc-tint: var(--st-hold-tint); }
@@ -1332,7 +1352,7 @@
   button.strip-note { padding: 0 4px; margin-inline: -4px; border-radius: var(--r-1); cursor: pointer; }
   button.strip-note:hover { background: var(--st-ok-tint); text-decoration: underline; text-underline-offset: 2px; }
 
-  /* 이어진 맞은편 강조(마우스를 올린 조각의 짝) - 왼쪽 막대 쪽 모서리는 직각. 종이 조각은 바탕만 옅게 하고 막대는 탭 테두리(.strip-tab)가 맡는다 */
+  /* 이어진 맞은편 강조(마우스를 올린 조각의 짝) - 왼쪽 막대 쪽 모서리는 직각. 종이 조각은 바탕을 옅게 하고 테두리는 카드 강조(.strip::after, Old 용지)·탭 테두리(.strip-tab, New 칸)가 맡는다 */
   .pg[data-strips] .strip[data-link-hover] { background: var(--accent-tint); }
   .cell-piece[data-link-hover] { background: var(--accent-tint); box-shadow: inset 3px 0 0 var(--accent); border-top-left-radius: 0; border-bottom-left-radius: 0; }
   /* 이동해 간 자리 - 잠깐 테두리가 번쩍인다 */
