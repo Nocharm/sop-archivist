@@ -12,8 +12,8 @@ export interface HelpPrefs {
 }
 
 // split 키는 패널이 쪼개기에만 있던 때의 이름 그대로 - 이미 접어 둔 사용자의 기억을 잇는다
-// Assign는 인스펙터 아래 칸이라 처음엔 접어 둔다(펼치면 조작 칸이 눌린다). 쪼개기는 왼쪽 열 아래라 펼쳐 둔다
-const DEFAULT_OPEN: Record<HelpScreen, boolean> = { split: true, assign: false };
+// Assign는 인스펙터 아래 칸이라 처음엔 접어 둔다(펼치면 조작 칸이 눌린다). 쪼개기도 처음엔 접어 문서 목록에 자리를 준다(2026-11 화면 검토 - 보이는 문서가 8개 남짓이었다). 이미 펼침·접힘을 고른 사람은 저장값을 따른다
+const DEFAULT_OPEN: Record<HelpScreen, boolean> = { split: false, assign: false };
 const CHANGE_EVENT = "sopa:help";
 const memory = new Map<string, string>();
 

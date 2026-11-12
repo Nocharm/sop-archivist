@@ -8,6 +8,7 @@ import { useState } from "react";
 
 import { MembersModal } from "@/components/manage/members-modal";
 import { BundleStatusPill } from "@/components/status";
+import { ClampText } from "@/components/ui/clamp-text";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { Truncate } from "@/components/ui/motion";
 import { MorphButton } from "@/components/ui/morph-button";
@@ -65,10 +66,12 @@ export function BundlesPanel() {
       skeletonWidth: 220,
       cell: (bundle) => (
         <>
-          <Link href={`/bundles/${bundle.id}`} className="block font-semibold text-ink hover:underline" data-testid={`admin-bundle-link-${bundle.id}`}>
-            <span className="mr-2 font-mono text-[12px] text-ink-3">{bundle.code}</span>
-            {bundle.title.trim() !== "" && <Truncate text={bundle.title} />}
-          </Link>
+          <ClampText text={`${bundle.code} ${bundle.title}`.trim()} tabbable={false}>
+            <Link href={`/bundles/${bundle.id}`} className="font-semibold text-ink hover:underline" data-testid={`admin-bundle-link-${bundle.id}`}>
+              <span className="mr-2 font-mono text-[12px] text-ink-3">{bundle.code}</span>
+              {bundle.title}
+            </Link>
+          </ClampText>
           {!bundle.has_active_author && <span className="pill danger mt-1">{t("adminBundles.noAuthor")}</span>}
         </>
       ),
@@ -78,7 +81,8 @@ export function BundlesPanel() {
       key: "members",
       header: t("overview.members"),
       card: "body",
-      className: "max-w-[280px]",
+      // 좁은 창에서는 열을 감춘다 - 구성원은 줄 끝 단추의 창에서 본다
+      className: "max-w-[280px] max-[1279px]:hidden",
       skeletonWidth: 200,
       cell: (bundle) => (
         <Truncate

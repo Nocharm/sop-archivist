@@ -305,6 +305,11 @@
   /* 일반 칸은 낱말 단위로만 접는다(break-word는 최소 폭을 줄이지 않아 짧은 열이 한 글자씩 세로로 접히지 않는다).
      공백 없는 긴 글이 들어오는 열은 DataList grow(.dl-grow)로 두어 그 칸 안에서 아무 데서나 접는다 */
   .dtable td { padding: var(--row-y) 10px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: break-word; }
+  /* DataList 표만: 제목 칸은 위에 붙이고 나머지(상태 알약·진행률·시각)는 줄 가운데에 둔다 - 손으로 짠 dtable(Output A·To-Be·History)은 위 정렬 그대로 */
+  .dl-table td:not(.dl-title) { vertical-align: middle; }
+  /* 두 줄 제한 - td가 아니라 칸 안을 감싼 요소에 건다(td를 직접 제한하면 줄 테두리가 깨진다) */
+  .clamp-2 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+  .clamp-6 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; overflow: hidden; overflow-wrap: anywhere; }
   .dtable tbody tr { transition: background var(--dur-fast); }
   .dtable tbody tr[data-link]:hover td { background: var(--hover); cursor: pointer; }
   /* 키보드로 닿은 줄 - 테두리는 줄 안쪽으로(바깥으로 내면 옆 줄·틀에 잘린다) */
@@ -543,6 +548,8 @@
 /* ---- 원문 용지: 용지에는 추출한 글자만 둔다(앱 글자 금지). 원문 글꼴은 사람마다 설정(data-src-*) ---- */
 @layer components {
   .desk { overflow-y: auto; scrollbar-gutter: stable; padding: 18px 20px; min-width: 0; min-height: 0; background: var(--bg); }
+  /* 표를 감싼 조각만 가로로 스크롤하게 책상 쪽은 자른다 - 설명서 책상 등 다른 .desk에는 걸지 않는다 */
+  .split-desk { overflow-x: clip; }
   .sheet {
     width: 100%;
     max-width: 600px;
@@ -556,6 +563,7 @@
   .pg {
     padding: 22px 30px 18px;
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 10px;
     font-family: var(--font-source);
     font-size: var(--fs-read);
@@ -563,6 +571,8 @@
   }
   .pg :lang(en) { font-family: var(--font-source-en); }
   .pg p { margin: 0; white-space: pre-wrap; }
+  /* 공백 없는 긴 토큰이 칸을 밀어 오른쪽 패널 밑으로 들어가지 않게 */
+  .pg p, .pg .su { overflow-wrap: anywhere; }
   .pg p:lang(ko), .pg .su:lang(ko) { line-height: 27px; }
   .pg p.h { font-weight: 600; margin-top: 4px; }
   /* 머리말·꼬리말은 라벨 없이 흐린 글자로만 구분한다 */
@@ -591,6 +601,9 @@
   .su[data-cut] { background-image: none; }
   .su[data-done] { color: color-mix(in oklab, var(--paper-ink) 62%, var(--paper)); }
   .ptbl { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 22px; }
+  /* 칸마다 16ch는 지켜 열이 많은 표가 글자 한 줄 폭으로 찌그러지지 않게 한다. max-content는 쓰지 않는다(긴 칸이 표를 3,000px 넘게 민다) - 넘치면 표를 감싼 조각이 가로로 스크롤한다 */
+  .split-desk .ptbl { width: auto; min-width: 100%; }
+  .split-desk .ptbl td { min-width: 16ch; }
   .ptbl td { border: 1px solid var(--line-2); padding: 3px 8px; text-align: left; vertical-align: top; }
   .ptbl-cap {
     display: flex;
@@ -1036,6 +1049,7 @@
 
   /* 표 칸 안의 조각 - 칸 문장마다 점선으로 나누고 같은 칸의 이웃 사이에 합치기 */
   .cell-piece { position: relative; padding-right: 18px; border-radius: 2px; }
+  .split-desk .cell-piece { padding-right: 38px; }
   .cell-piece > p { margin: 0; }
   .cell-gap { position: relative; height: 11px; }
   .cell-gap::after { content: ""; position: absolute; inset-inline: 0; top: 50%; border-top: 1px dashed var(--line-2); }
@@ -1044,6 +1058,8 @@
   .cell-marks { position: absolute; right: 0; top: 4px; display: flex; gap: 3px; align-items: center; }
 
   /* 왼쪽 탭 - 줄의 왼쪽 밖에 맞닿아 붙는다(맞닿는 쪽 모서리 직각, 바깥 모서리 둥글게). 바탕 = 언어 색, 보류는 그 위에 사선 줄무늬. 번호는 절의 첫 블록에만, 번호 없는 탭은 옅게 해 번호를 따라가는 눈을 덜 방해하고 올리면 진해진다. 탭에 올리면 번호가 사라지고 언어 글자가 뜬다. 첫 글줄 높이(27px)에 번호를 맞춘다 */
+  /* 1280 미만 Split에서만 3단 이상의 절 번호 탭을 46px에서 멈춘다(Assign 탭은 그대로) - 깊은 번호가 글 상자를 좁히지 않게(긴 번호는 탭 안에서 잘린다) */
+  @media (max-width: 1279px) { .split-desk .strip-tab, .split-desk .strip-tab-gap { max-width: 46px; } }
   .strip-tab { position: relative; flex: none; align-self: stretch; display: flex; flex-direction: column; align-items: center; padding-top: 6px; border: 1px solid var(--line-2); border-right: 0; border-radius: var(--r-1) 0 0 var(--r-1); background-color: var(--tab-none); color: var(--tab-ink); box-sizing: border-box; overflow: hidden; transition: opacity var(--dur-base); }
   .strip-tab[data-lang="ko"] { background-color: var(--tab-ko); }
   .strip-tab[data-lang="en"] { background-color: var(--tab-en); }
@@ -1346,11 +1362,15 @@
 /* ---- 결과물 C 섹션 번호(2026-11-10): 줄 앞 번호와 깊이만큼 들여쓰기, 눌러 고른 줄(Tab으로 들이기) ---- */
 @layer components {
   .c-line { --c-indent: 1.5em; }
+  /* 줄은 글 + 줄 끝 단추 묶음의 감김 줄 - 글이 폭을 채우면 단추 묶음이 글 바로 아래 제 줄로 내려간다(높이는 호버로 변하지 않는다) */
+  .c-row { display: flex; flex-wrap: wrap; align-items: flex-start; }
+  .c-row > .c-line { flex: 1 1 auto; min-width: 0; }
+  .c-row > .row-actions-quiet { flex: none; margin-left: auto; }
   .c-line[data-numbered] { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; column-gap: 0.6em; }
   .c-no { font-family: var(--font-mono); font-size: 0.8em; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
   /* 줄 고르기는 마우스로만(tabIndex -1) - 전역 :focus-visible 테두리가 안 걸리므로 바탕과 왼쪽 막대로 고른 줄을 보인다 */
   .c-row:focus { outline: none; background: var(--accent-tint); box-shadow: inset 2px 0 0 var(--accent); }
-  .c-row:focus .row-actions { opacity: 1; background: transparent; }
+  .c-row:focus .row-actions-quiet { opacity: 1; }
   /* 번호 표시 세 칸 - 줄 끝 단추 높이(24px)에 맞춘 작은 눌림 단추 */
   .c-mark { gap: 1px; padding: 1px; }
   .c-mark button { width: 22px; height: 22px; }

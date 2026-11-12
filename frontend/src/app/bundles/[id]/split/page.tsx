@@ -133,6 +133,7 @@ export default function SplitPage() {
   // 지금 문서는 방금 누른 확인까지 센다 - 다른 문서는 목록이 준 수를 쓴다
   const uncheckedLeft = countUnchecked(shownUnits, isChecked);
   const countTabLeft = (key: PaperTabKey) => countUnchecked(shownUnits.filter((unit) => tabs?.tabOf.get(unit.id) === key), isChecked);
+  const checkableTotal = countUnchecked(shownUnits, () => false);
   const [isCheckRestOpen, setIsCheckRestOpen] = useState(false);
   // 우클릭 메뉴 - 뜬 자리와 누른 문장
   const [menu, setMenu] = useState<{ x: number; y: number; targetId: number } | null>(null);
@@ -466,7 +467,7 @@ export default function SplitPage() {
   const page = selected ? data?.blocks.find((block) => block.id === selected.block_id) : null;
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-[232px_minmax(0,1fr)_clamp(320px,26vw,420px)]" data-testid="split">
+    <div className="grid h-full min-h-0 grid-cols-[232px_minmax(0,1fr)_clamp(280px,26vw,420px)]" data-testid="split">
       {/* 왼쪽: 문서 */}
       <nav className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] border-r border-line bg-surface" aria-label={t("split.documents")} data-testid="split-docs">
         <div className="grid content-start gap-0.5 overflow-y-auto p-2">
@@ -530,7 +531,7 @@ export default function SplitPage() {
           </div>
         )}
         {ai.lastRequest && <SplitAiResult result={ai.lastRequest} onClose={ai.clearLastRequest} />}
-        <div className="desk min-h-0 flex-1" data-testid="split-desk">
+        <div className="desk split-desk min-h-0 flex-1" data-testid="split-desk">
           {model && activeTab ? (
             <div className="sheets" data-testid="split-paper">
             {activeTab.sheets.map((sheet, sheetIndex) => (
@@ -624,9 +625,11 @@ export default function SplitPage() {
       {/* 오른쪽: 고른 단위 */}
       <aside className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] border-l border-line bg-surface" data-testid="split-inspector">
         <div className="grid gap-2 border-b border-line p-[var(--pad)]">
+          {/* 고른 Unit이 없으면 눌러 볼 수 없는 단추 묶음 대신 진행 요약만 둔다 */}
+          {selected && (<>
           {/* ID와 확인 상태는 각각 한 줄 - 좁은 패널에서 접히지 않게 */}
           <div className="flex h-7 items-center gap-1">
-            <Truncate className="min-w-0 flex-1 font-mono text-sm font-semibold" text={selected?.display_id ?? "–"} testId="split-unit-id" />
+            <Truncate className="min-w-0 flex-1 font-mono text-sm font-semibold" text={selected.display_id} testId="split-unit-id" />
             <Tooltip label={t("split.prev")}>
               <button type="button" className="btn ghost icon h-7 w-7 flex-none" aria-label={t("split.prev")} data-testid="split-prev" onClick={() => moveSelection(-1)}>
                 <ArrowUp size={14} strokeWidth={1.5} aria-hidden />
@@ -638,7 +641,6 @@ export default function SplitPage() {
               </button>
             </Tooltip>
           </div>
-          {selected && (
             <div className="flex items-center gap-2 whitespace-nowrap" data-testid="split-unit-state">
               <span className="lg">{selected.lang === "neutral" ? "–" : selected.lang.toUpperCase()}</span>
               <span className={`check-chip ${isChecked(selected) ? "yes" : "no"}`} data-testid="split-boundary-state">
@@ -646,7 +648,6 @@ export default function SplitPage() {
                 {isChecked(selected) ? "Checked" : "Not checked"}
               </span>
             </div>
-          )}
           {/* 주 버튼 자리는 단위가 바뀌어도 같다 - 라벨만 같은 칸에서 바뀐다 */}
           <button
             type="button"
@@ -687,6 +688,7 @@ export default function SplitPage() {
               </Tooltip>
             </div>
           </div>
+          </>)}
           {/* 남은 경계 - 모두 확인해야 검토를 요청할 수 있다 */}
           {data && (
             <div className="flex min-h-7 items-center gap-1.5 text-xs leading-[18px] text-ink-2">
@@ -695,7 +697,9 @@ export default function SplitPage() {
               ) : (
                 <CircleCheck size={14} strokeWidth={2} className="pmark checked" aria-hidden />
               )}
-              <span data-testid="split-unchecked-count">{uncheckedLeft > 0 ? t("split.uncheckedLeft", { n: uncheckedLeft }) : t("split.allChecked")}</span>
+              <span data-testid="split-unchecked-count">
+                {uncheckedLeft === 0 ? t("split.allChecked") : selected ? t("split.uncheckedLeft", { n: uncheckedLeft }) : t("split.progress", { n: checkableTotal - uncheckedLeft, total: checkableTotal })}
+              </span>
               <span className="flex-1" />
               {canEdit && uncheckedLeft > 0 && (
                 <button type="button" className="btn ghost h-7" data-testid="split-check-rest" disabled={busy} onClick={() => setIsCheckRestOpen(true)}>

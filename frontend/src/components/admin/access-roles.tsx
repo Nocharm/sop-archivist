@@ -208,11 +208,11 @@ export function AccessRoles() {
           {roles.data.map((role) => (
             <li key={role.id} data-testid={`role-row-${role.id}`} className="flex items-start justify-between gap-4 px-3 py-3">
               <div className="min-w-0 space-y-1.5">
-                <div className="flex flex-wrap items-baseline gap-x-3">
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                   <span className="text-sm font-semibold text-ink">{role.name}</span>
                   <span className="text-xs text-ink-3">{t("roles.grantCount", { count: role.grant_count })}</span>
                 </div>
-                {role.description && <p className="text-sm text-ink-2">{role.description}</p>}
+                {role.description && <p className="clamp-2 text-sm text-ink-2">{role.description}</p>}
                 <div className="flex flex-wrap gap-1.5">
                   {role.permissions.length === 0 ? (
                     <span className="text-xs text-ink-3">{t("roles.noPermissions")}</span>
