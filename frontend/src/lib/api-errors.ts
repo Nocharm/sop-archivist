@@ -3,6 +3,11 @@
 import { PERMISSIONS } from "./access";
 import { ApiError } from "./api";
 
+/** Bundle을 못 여는 오류(없음·멤버 아님) - 셸·상단 바·BundleLoadError가 같은 기준으로 레일·뒤로 화살표·안내 화면을 정한다 */
+export function isBundleUnavailable(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 403 || error.status === 404);
+}
+
 export type TFunc = (key: string, vars?: Record<string, string | number>) => string;
 
 const STATUS_KEYS: Record<number, string> = {

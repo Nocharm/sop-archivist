@@ -364,6 +364,8 @@
   .dcard-foot { display: flex; justify-content: flex-end; gap: 2px; margin-top: auto; padding-top: 6px; border-top: 1px solid var(--line); }
   /* 표에서 호버로 드러나는 단추(.row-actions)도 카드 아랫줄에서는 늘 보인다 */
   .dcard-foot .row-actions { opacity: 1; }
+  /* meta가 남는 높이를 받으니(margin-top: auto) 바로 뒤따르는 아랫줄은 auto 여백을 쓰지 않는다 - 둘이 남는 높이를 반씩 나누면 짧은 카드에서 meta가 떠 보인다 */
+  .dcard-meta + .dcard-foot { margin-top: 0; }
   /* 구역 머리(getRowGroup) - 표에서는 줄 전체, 카드에서는 격자 한 줄 전체를 차지한다. 둘째 구역부터는 위를 더 띄운다 */
   .dgroup-head { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--ink-2); }
   .dgroup-n { padding: 0 6px; border: 1px solid var(--line-2); border-radius: var(--r-1); font: 600 var(--fs-micro) / 18px var(--font-mono); color: var(--ink-3); }

@@ -23,4 +23,22 @@ describe("placeLinkMenu", () => {
   it("누른 x가 없으면 줄 왼쪽에서 들여 놓는다", () => {
     expect(placeLinkMenu(row(200, 260), null, MENU, VIEW).left).toBe(124);
   });
+
+  it("줄이 화면보다 높아 위·아래 모두 안 맞으면 누른 y 근처에 놓고 화면 안으로 맞춘다", () => {
+    const view = { width: 1000, height: 900 };
+    const menu = { width: 180, height: 110 };
+    expect(placeLinkMenu(row(-200, 1000), 300, menu, view, 400).top).toBe(410);
+    expect(placeLinkMenu(row(-200, 1000), 300, menu, view, 890).top).toBe(782);
+    expect(placeLinkMenu(row(-200, 1000), 300, menu, view, -50).top).toBe(8);
+  });
+
+  it("누른 y가 없어도 메뉴는 화면 밖으로 나가지 않는다", () => {
+    const view = { width: 1000, height: 900 };
+    const menu = { width: 180, height: 110 };
+    for (const r of [row(-200, 1000), row(40, 1300), row(-900, -100)]) {
+      const { top } = placeLinkMenu(r, null, menu, view);
+      expect(top).toBeGreaterThanOrEqual(8);
+      expect(top + menu.height).toBeLessThanOrEqual(view.height - 8);
+    }
+  });
 });

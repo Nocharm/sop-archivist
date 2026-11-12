@@ -491,9 +491,13 @@ const AUDIT_ENTRIES = [
     open: async (page) => {
       await page.getByTestId("assign-bar").waitFor({ timeout: T });
     },
-    measure: (page) => page.getByTestId("assign-bar").evaluate((bar) => Math.round(bar.getBoundingClientRect().height)),
+    measure: async (page) => {
+      // AI 꺼진 backend에는 AI 메뉴가 없어 C11과 같은 값을 재게 되므로 통과로 세지 않고 건너뛴다
+      if ((await page.getByTestId("assign-ai-menu").count()) === 0) return { skip: "assign-ai-menu absent (AI-off backend)" };
+      return page.getByTestId("assign-bar").evaluate((bar) => Math.round(bar.getBoundingClientRect().height));
+    },
     expect: (value) => value <= 80,
-    note: "assign-bar height <= 80px at 1120 (run against an AI-on backend)",
+    note: "assign-bar height <= 80px at 1120 (needs an AI-on backend, SKIP otherwise)",
   },
   {
     // R1: 표 칸 글의 마지막 낱말이 줄 끝 아이콘 상자와 겹치지 않는다
@@ -625,9 +629,9 @@ const AUDIT_ENTRIES = [
     note: "not-found renders in the shell: body background equals --bg, not-found-back visible, no default English copy",
   },
   {
-    // B2·R6: 멤버가 아닌 Bundle(mid[1]은 prod.member가 아니다 - API 404) 다섯 주소에서 목록으로 돌아가는 길이 있고 다시 시도는 없으며, 단계 레일 링크와 상단 바 뒤로·구분선이 없다
+    // B2·R6: 멤버가 아닌 Bundle(mid[1]은 prod.member가 아니다 - API 404) 여섯 주소에서 목록으로 돌아가는 길이 있고 다시 시도는 없으며, 단계 레일 링크와 상단 바 뒤로·구분선이 없다
     id: "B2", ds: "mid", user: "prod.member", views: [1120],
-    path: (ids) => ["documents", "split", "assign", "outputs", "history"].map((s) => ({ url: `/bundles/${ids.mid[1]}/${s}`, user: "prod.member", stage: s })),
+    path: (ids) => ["documents", "split", "assign", "outputs", "history", "tobe"].map((s) => ({ url: `/bundles/${ids.mid[1]}/${s}`, user: "prod.member", stage: s })),
     open: async (page) => {
       await page.locator('[data-testid$="-missing"]').first().waitFor({ timeout: T });
     },
@@ -644,7 +648,7 @@ const AUDIT_ENTRIES = [
       }), stage);
     },
     expect: (value) => value.missing === 1 && value.back === 1 && value.retry === 0 && value.railLinks === 0 && value.rail === 0 && value.sep === 0 && value.topBack === 0,
-    note: "five stage URLs of a bundle prod.member cannot open: <id>-missing + <id>-back, no -retry, no stage rail, no top-bar divider or back arrow",
+    note: "six stage URLs of a bundle prod.member cannot open: <id>-missing + <id>-back, no -retry, no stage rail, no top-bar divider or back arrow",
   },
   {
     // B2b: 상단 바 뒤로 화살표는 묶음 밖 화면과 정상 Bundle에는 남는다(못 여는 Bundle에서만 숨긴다)
@@ -744,6 +748,84 @@ const AUDIT_ENTRIES = [
     note: "bundle cards: dcard-meta bottoms within 1px per grid row, synthetic chip left edge identical across cards",
   },
   {
+    // C5b: 문서 카드 보기(cardActions="row")에서 같은 줄 카드의 .dcard-meta 아래 끝이 같다 - meta와 아랫줄 사이 틈이 카드 키와 상관없이 같다(auto 여백 둘이 남는 높이를 나누지 않는다)
+    id: "C5b", ds: "mid", user: MEMBER, views: [1440],
+    path: (ids) => `/bundles/${ids.mid[2]}/documents`,
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "cards"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator(".dcard").first().waitFor({ timeout: T });
+      await page.waitForTimeout(800);
+    },
+    measure: (page) => page.evaluate(() => {
+      const cards = [...document.querySelectorAll('[data-testid="documents-list"] .dcard')];
+      const byTop = new Map();
+      for (const card of cards) {
+        const top = Math.round(card.getBoundingClientRect().top);
+        byTop.set(top, [...(byTop.get(top) ?? []), card]);
+      }
+      let metaSpread = 0;
+      let gapSpread = 0;
+      let multi = 0;
+      let unequal = 0;
+      for (const group of byTop.values()) {
+        if (group.length < 2) continue;
+        multi += 1;
+        const heights = group.map((card) => card.querySelector(".dcard-body, .dcard-meta").getBoundingClientRect().height);
+        const bottoms = group.map((card) => card.querySelector(".dcard-meta").getBoundingClientRect().bottom);
+        const gaps = group.map((card) => {
+          const foot = card.querySelector(".dcard-foot");
+          return foot ? foot.getBoundingClientRect().top - card.querySelector(".dcard-meta").getBoundingClientRect().bottom : 0;
+        });
+        if (Math.max(...heights) - Math.min(...heights) > 1) unequal += 1;
+        metaSpread = Math.max(metaSpread, Math.max(...bottoms) - Math.min(...bottoms));
+        gapSpread = Math.max(gapSpread, Math.max(...gaps) - Math.min(...gaps));
+      }
+      return { cards: cards.length, multi, unequal, metaSpread: Math.round(metaSpread * 10) / 10, gapSpread: Math.round(gapSpread * 10) / 10 };
+    }),
+    expect: (value) => value.multi > 0 && value.metaSpread <= 1 && value.gapSpread <= 1,
+    note: "document cards: dcard-meta bottoms within 1px per grid row and the meta-to-footer gap is the same in every card of the row",
+  },
+  {
+    // C5c: 문서 카드 보기(cardActions="row")에서 같은 줄 카드의 .dcard-meta 아래 끝이 같다 - meta와 아랫줄 사이 틈이 카드 키와 상관없이 같다(auto 여백 둘이 남는 높이를 나누지 않는다)
+    id: "C5c", ds: "worst", user: MEMBER, views: [1440],
+    path: (ids) => `/bundles/${ids.w[1]}/documents`,
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "cards"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator(".dcard").first().waitFor({ timeout: T });
+      await page.waitForTimeout(800);
+    },
+    measure: (page) => page.evaluate(() => {
+      const cards = [...document.querySelectorAll('[data-testid="documents-list"] .dcard')];
+      const byTop = new Map();
+      for (const card of cards) {
+        const top = Math.round(card.getBoundingClientRect().top);
+        byTop.set(top, [...(byTop.get(top) ?? []), card]);
+      }
+      let metaSpread = 0;
+      let gapSpread = 0;
+      let multi = 0;
+      let unequal = 0;
+      for (const group of byTop.values()) {
+        if (group.length < 2) continue;
+        multi += 1;
+        const heights = group.map((card) => card.querySelector(".dcard-body, .dcard-meta").getBoundingClientRect().height);
+        const bottoms = group.map((card) => card.querySelector(".dcard-meta").getBoundingClientRect().bottom);
+        const gaps = group.map((card) => {
+          const foot = card.querySelector(".dcard-foot");
+          return foot ? foot.getBoundingClientRect().top - card.querySelector(".dcard-meta").getBoundingClientRect().bottom : 0;
+        });
+        if (Math.max(...heights) - Math.min(...heights) > 1) unequal += 1;
+        metaSpread = Math.max(metaSpread, Math.max(...bottoms) - Math.min(...bottoms));
+        gapSpread = Math.max(gapSpread, Math.max(...gaps) - Math.min(...gaps));
+      }
+      return { cards: cards.length, multi, unequal, metaSpread: Math.round(metaSpread * 10) / 10, gapSpread: Math.round(gapSpread * 10) / 10 };
+    }),
+    expect: (value) => value.multi > 0 && value.metaSpread <= 1 && value.gapSpread <= 1,
+    note: "document cards: dcard-meta bottoms within 1px per grid row and the meta-to-footer gap is the same in every card of the row",
+  },
+  {
     // C7: 목록 화면은 1600, 개요·계정·설명서는 1280 (본문 폭)
     id: "C7", ds: "worst", user: MEMBER, views: [2560],
     path: (ids) => [
@@ -836,6 +918,7 @@ async function main() {
   };
   let problems = 0;
   let runs = 0;
+  let skips = 0;
   for (const entry of entries) {
     const raw = entry.path(ids);
     const items = (Array.isArray(raw) ? raw : [raw]).map((item) => (typeof item === "string" ? { url: item, user: entry.user } : item));
@@ -848,13 +931,15 @@ async function main() {
             const tag = `${entry.id} ${width} ${lang} ${theme} ${item.url}`;
             runs += 1;
             let failure = null;
+            let skipped = null;
             try {
               await page.goto(`${BASE}${item.url}`, { timeout: T });
               await page.waitForLoadState("networkidle", { timeout: T }).catch(() => {});
               await page.waitForTimeout(SETTLE_MS);
               if (entry.open) await entry.open(page);
               const value = await entry.measure(page);
-              if (!entry.expect(value)) failure = `measured ${JSON.stringify(value)} (${entry.note})`;
+              if (value !== null && typeof value === "object" && typeof value.skip === "string") skipped = value.skip;
+              else if (!entry.expect(value)) failure = `measured ${JSON.stringify(value)} (${entry.note})`;
             } catch (err) {
               failure = `error: ${String(err).split("\n")[0]}`;
             }
@@ -863,6 +948,9 @@ async function main() {
               console.log(`FAIL  ${tag} ${failure}`);
               const suffix = `${items.length > 1 ? `-${slug(item.url)}${item.user === entry.user ? "" : `-${item.user}`}` : ""}-${width}${lang === "ko" && theme === "light" ? "" : `-${lang}-${theme}`}`;
               await page.screenshot({ path: resolve(SHOTS, `layout-${entry.id}${suffix}.png`) }).catch(() => {});
+            } else if (skipped !== null) {
+              skips += 1;
+              console.log(`skip  ${tag} ${skipped}`);
             } else {
               console.log(`ok    ${tag}`);
             }
@@ -873,7 +961,7 @@ async function main() {
     }
   }
   await browser.close();
-  console.log(problems === 0 ? `\nALL PASS (${runs} runs)` : `\n${problems} problem(s) in ${runs} runs`);
+  console.log(problems === 0 ? `\nALL PASS (${runs - skips} runs${skips ? `, ${skips} skipped` : ""})` : `\n${problems} problem(s) in ${runs} runs`);
   process.exit(problems === 0 ? 0 : 1);
 }
 

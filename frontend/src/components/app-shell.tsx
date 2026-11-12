@@ -9,7 +9,7 @@ import { NavHost } from "@/components/nav-host";
 import { StageNav } from "@/components/stage-nav";
 import { TopBar } from "@/components/top-bar";
 import { ToastHost } from "@/components/ui/toast";
-import { humanizeApiError } from "@/lib/api-errors";
+import { humanizeApiError, isBundleUnavailable } from "@/lib/api-errors";
 import { useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
 import { useSession } from "@/lib/session";
@@ -23,7 +23,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const inBundle = parseBundlePath(pathname);
   const { bundle, error: bundleError } = useBundle(inBundle?.bundleId ?? null);
   // 못 여는 Bundle(없음·멤버 아님)이면 단계 레일을 그리지 않는다 - 갈 수 있는 단계가 없다
-  const isBundleOpen = inBundle !== null && !(bundleError !== null && bundle === null);
+  const isBundleOpen = inBundle !== null && !(isBundleUnavailable(bundleError) && bundle === null);
 
   let body: ReactNode;
   if (me) {

@@ -47,7 +47,7 @@ export function LinkMenu({ anchor, offset, items, isUnsaved, busy, onAction, onC
       return;
     }
     const box = menuEl.getBoundingClientRect();
-    const { top, left } = placeLinkMenu(rect, offset ? rect.left + offset.x : null, box, { width: window.innerWidth, height: window.innerHeight });
+    const { top, left } = placeLinkMenu(rect, offset ? rect.left + offset.x : null, box, { width: window.innerWidth, height: window.innerHeight }, offset ? rect.top + offset.y : null);
     setPos((prev) => (prev && prev.top === top && prev.left === left ? prev : { top, left }));
   });
 

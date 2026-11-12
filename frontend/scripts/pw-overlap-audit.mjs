@@ -187,6 +187,7 @@ const outputsScene = {
   },
 };
 
+// 반환 { hits, linked } - linked가 0이면 잴 줄이 없었다는 뜻이라 통과로 치지 않는다
 // 메뉴 상자가 잇고 있는 두 줄(누른 New 줄과 짝 Old 줄)의 글 상자를 덮는가 - 떠 있는 메뉴가 아래 다른 글을 가리는 것은 괜찮지만 이 두 줄은 안 된다
 async function findCoveringLinkedLines(page, menu) {
   const box = await menu.boundingBox();
@@ -200,7 +201,8 @@ async function findCoveringLinkedLines(page, menu) {
     for (const line of document.querySelectorAll('[data-testid="assign-old"] .su[data-sel]')) {
       if ([...line.getClientRects()].some(hit)) hits.push(`Old line "${line.textContent.trim().slice(0, 30)}"`);
     }
-    return hits;
+    const linked = document.querySelectorAll('[data-testid="assign-new"] .new-line[data-state="focus"], [data-testid="assign-new"] .new-line[data-state="picked"], [data-testid="assign-old"] .su[data-sel]').length;
+    return { hits, linked };
   }, box);
 }
 
@@ -228,7 +230,8 @@ const linkMenuScene = {
     const spill = await findSpill(menu);
     if (spill.length > 0) report("assign-link-menu", spill.join(", "));
     const covering = await findCoveringLinkedLines(page, menu);
-    if (covering.length > 0) report("assign-link-menu covers linked lines", covering.join(", "));
+    if (covering.linked === 0) report("assign-link-menu covers linked lines", "no linked lines were measured");
+    if (covering.hits.length > 0) report("assign-link-menu covers linked lines", covering.hits.join(", "));
     await page.keyboard.press("Escape");
   },
 };

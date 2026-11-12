@@ -11,16 +11,23 @@ interface RowBox {
   left: number;
 }
 
-/** 줄 아래에 놓고, 아래가 모자라면 줄 위로 뒤집는다. 가로는 누른 x(없으면 줄 왼쪽 + 들여쓰기)를 화면 안으로 맞춘다 */
+/** 줄 아래에 놓고, 아래가 모자라면 줄 위로 뒤집는다. 위·아래 모두 안 맞는 아주 높은 줄은 누른 y(없으면 줄 위쪽) 근처에 놓고 화면 안으로 맞춘다. 가로는 누른 x(없으면 줄 왼쪽 + 들여쓰기)를 화면 안으로 맞춘다 */
 export function placeLinkMenu(
   row: RowBox,
   clickX: number | null,
   menu: { width: number; height: number },
   viewport: { width: number; height: number },
+  clickY: number | null = null,
 ): { top: number; left: number } {
   const x = clickX !== null ? clickX - CLICK_LEAD : row.left + NAV_INDENT;
   const left = Math.min(Math.max(x, MENU_EDGE), viewport.width - menu.width - MENU_EDGE);
   let top = row.bottom + MENU_GAP;
-  if (top + menu.height > viewport.height - MENU_EDGE) top = row.top - MENU_GAP - menu.height;
-  return { top, left };
+  if (top + menu.height > viewport.height - MENU_EDGE) {
+    top = row.top - MENU_GAP - menu.height;
+    if (top < MENU_EDGE) {
+      const maxTop = viewport.height - MENU_EDGE - menu.height;
+      top = Math.min(Math.max((clickY ?? row.top) + MENU_GAP, MENU_EDGE), maxTop);
+    }
+  }
+  return { top: Math.min(Math.max(top, MENU_EDGE), Math.max(MENU_EDGE, viewport.height - MENU_EDGE - menu.height)), left };
 }

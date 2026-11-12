@@ -4,6 +4,8 @@
 
 ## 2026-11-12
 
+- **브랜치 전체 검토 반영 (`fix/screen-review`)** — 카드 `.dcard-meta + .dcard-foot { margin-top: 0 }`(auto 여백 둘이 짧은 카드에서 meta를 띄움, 감사 C5b·C5c), To-Be 로드 실패도 `BundleLoadError`로(감사 B2에 tobe), 못 여는 판정은 `isBundleUnavailable`(403·404) 하나를 셸·상단 바·안내 화면이 같이 쓴다(일시 500에는 레일 유지), `placeLinkMenu`는 위·아래 모두 안 맞으면 누른 y 근처로 놓고 화면 안으로 맞춘다. 감사 F1은 AI 메뉴가 없으면 SKIP, 겹침 감사는 잴 연결 줄이 0이면 문제로 센다.
+
 - **화면 검토 반영 10/14 Bundle 목록·목록 폭 (`fix/screen-review`)** — 제목 없는 줄에 흐린 `bundles.untitled`(`bundles-untitled-<id>`, 제목과 같은 block이라 줄 높이가 같다, B7), 카드를 세로 flex+`.dcard-meta` 아래 정렬·칩은 늘 제목 아래(C5), 경로→폭 판정을 순수 함수 `getPageWidth`(`lib/page-width.ts`, desk 포함)로 모아 목록 화면(Bundle 목록·Documents·To-Be·History·`/admin`)을 1600으로(C7, Documents 제목 열 204→420 이상).
 - **화면 검토 반영 9/14 검토 화면 되돌림 쪽지 (`fix/screen-review`)** — `ReviewReturnNote`에 `testId`(기본 `overview-return-note`, 안쪽 id는 접두를 따름)를 더해 검토 화면 1280 이상은 `[760px | 오른쪽 열]` 격자의 오른쪽 위, 미만은 용지 위에 놓았다(감사 B3·B3b). 제안 그림의 "N회차"는 집계 API가 없어 뺐다.
 - **화면 검토 반영 8/14 없는 주소·못 여는 Bundle (`fix/screen-review`)** — `app/not-found.tsx`가 앱 틀 안에서 `EmptyState`+목록으로 가는 단추를 그린다(B1, 다크 body 배경 = `--bg`). Documents·Split·Assign·Outputs·History의 로드 실패를 `BundleLoadError`로 바꿔 403·404면 다시 시도 대신 목록으로 가는 길만 둔다(B2, Split은 문서 목록 실패 분기도 같은 `split` id). 못 연 Bundle에서는 상단 바 뒤로·구분선·제목과 단계 레일을 그리지 않는다(R6, 정상 Bundle은 그대로).
