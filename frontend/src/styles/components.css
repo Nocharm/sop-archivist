@@ -1051,6 +1051,8 @@
   /* 표 칸 안의 조각 - 칸 문장마다 점선으로 나누고 같은 칸의 이웃 사이에 합치기 */
   .cell-piece { position: relative; padding-right: 18px; border-radius: 2px; }
   .split-desk .cell-piece { padding-right: 38px; }
+  /* Assign도 줄 끝 아이콘이 둘 이상 붙어도 글과 겹치지 않을 자리를 잡는다(Split과 같은 폭, 다른 화면으로 새지 않게 Assign 용지에만) */
+  .assign-pane .cell-piece { padding-right: 38px; }
   .cell-piece > p { margin: 0; }
   .cell-gap { position: relative; height: 11px; }
   .cell-gap::after { content: ""; position: absolute; inset-inline: 0; top: 50%; border-top: 1px dashed var(--line-2); }

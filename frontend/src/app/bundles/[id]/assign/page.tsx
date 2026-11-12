@@ -31,6 +31,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { LoadError } from "@/components/ui/load-error";
 import { Truncate } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
+import { Tooltip } from "@/components/ui/tooltip";
 import { humanizeApiError } from "@/lib/api-errors";
 import { listAppliedSuggestions, requestAi, type AiKind, type AiScope } from "@/lib/api-manage";
 import {
@@ -198,6 +199,8 @@ function revealElement(el: HTMLElement) {
 
 // 사유 칸 최대 높이 = 6줄(19px) + 위아래 안쪽 여백·테두리
 const REASON_MAX_HEIGHT = 6 * 19 + 12;
+// 도구 줄이 이보다 좁으면 오른쪽 단추는 아이콘만(라벨은 툴팁) - 1440 창에서 한 줄을 지킨다(한·영 모두 AI 메뉴가 있어도)
+const BAR_COMPACT_BELOW = 1200;
 
 export default function AssignPage() {
   const { t } = useI18n();
@@ -433,6 +436,14 @@ export default function AssignPage() {
   if (row) aiMenuItems.push({ key: "split", label: t("ai.splitRow"), run: () => askAiScope("split", { unit_ids: row.unitIds }) });
 
   const reasonRef = useRef<HTMLTextAreaElement>(null);
+  const [barEl, setBarEl] = useState<HTMLDivElement | null>(null);
+  const [isBarCompact, setIsBarCompact] = useState(false);
+  useEffect(() => {
+    if (!barEl) return;
+    const observer = new ResizeObserver(([entry]) => setIsBarCompact(entry.contentRect.width < BAR_COMPACT_BELOW));
+    observer.observe(barEl);
+    return () => observer.disconnect();
+  }, [barEl]);
   // 사유 칸은 글 길이만큼 자란다(최대 6줄) - 긴 사유를 한 줄 칸에서 가려 읽지 않게
   const firstTextRef = useRef<HTMLTextAreaElement>(null);
   const [busy, setBusy] = useState(false);
@@ -1330,8 +1341,9 @@ export default function AssignPage() {
   }
 
   const done = countDone(rows);
+  const identicalCount = identical.data?.length ?? 0;
   const bar = (
-    <div className="assign-bar" data-testid="assign-bar">
+    <div ref={setBarEl} className="assign-bar" data-testid="assign-bar">
       <div className="flex flex-wrap gap-1" role="tablist" data-testid="assign-filters">
         {FILTERS.filter((item) => item !== "ai_suggested" || counts.ai_suggested > 0).map((item) => {
           const { tone, Icon } = FILTER_LOOK[item];
@@ -1388,13 +1400,15 @@ export default function AssignPage() {
           </span>
         )}
         {canEdit && (identical.data?.length ?? 0) > 0 && (
-          <button type="button" className="btn h-7" data-testid="assign-identical" disabled={busy} onClick={() => setConfirmingIdentical(true)}>
-            <Link2 size={14} strokeWidth={1.5} aria-hidden />
-            {t("assign.identical", { n: identical.data?.length ?? 0 })}
-          </button>
+          <Tooltip label={t("assign.identical", { n: identicalCount })} suppressed={!isBarCompact}>
+            <button type="button" className="btn h-7" data-testid="assign-identical" aria-label={isBarCompact ? t("assign.identical", { n: identicalCount }) : undefined} disabled={busy} onClick={() => setConfirmingIdentical(true)}>
+              <Link2 size={14} strokeWidth={1.5} aria-hidden />
+              {isBarCompact ? identicalCount : t("assign.identical", { n: identicalCount })}
+            </button>
+          </Tooltip>
         )}
-        {canEdit && <ResetMenu document={oldView ? { id: oldView.document.id, label: oldView.document.doc_code || oldView.document.file_name } : null} disabled={busy} onPick={setResetScope} />}
-        {aiOn && canEdit && <AiAskMenu items={aiMenuItems} label={t("ai.more")} testId="assign-ai-menu" disabled={busy} />}
+        {canEdit && <ResetMenu compact={isBarCompact} document={oldView ? { id: oldView.document.id, label: oldView.document.doc_code || oldView.document.file_name } : null} disabled={busy} onPick={setResetScope} />}
+        {aiOn && canEdit && <AiAskMenu compact={isBarCompact} items={aiMenuItems} label={t("ai.more")} testId="assign-ai-menu" disabled={busy} />}
         <SourceFontMenu />
       </div>
     </div>

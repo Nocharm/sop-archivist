@@ -3,7 +3,7 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { placeBelow, type FloatingPos } from "@/components/ui/floating";
@@ -116,7 +116,7 @@ export function BusyLabel({ busy, label, busyLabel, icon }: { busy: boolean; lab
 const TIP_DELAY_MS = 150;
 
 /** 한 줄 말줄임. 실제로 잘렸을 때만 호버(150ms)로 전체 글을 띄운다 - 네이티브 title은 쓰지 않는다 */
-export function Truncate({ text, className = "", lang, testId }: { text: string; className?: string; lang?: string; testId?: string }) {
+export function Truncate({ text, className = "", lang, testId, revealOnFocus = false }: { text: string; className?: string; lang?: string; testId?: string; revealOnFocus?: boolean }) {
   const hostRef = useRef<HTMLSpanElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<number | null>(null);
@@ -136,6 +136,24 @@ export function Truncate({ text, className = "", lang, testId }: { text: string;
   useEffect(() => () => {
     if (timerRef.current !== null) window.clearTimeout(timerRef.current);
   }, []);
+
+  // 글이 단추 안에 있으면 포인터 대신 단추의 키보드 포커스가 전체 글을 띄운다(opt-in - 다른 곳의 호버 동작은 그대로)
+  const revealFocus = useEffectEvent(() => {
+    if (hostRef.current?.closest("button, a, [tabindex]")?.matches(":focus-visible")) show();
+  });
+  useEffect(() => {
+    if (!revealOnFocus) return;
+    const holder = hostRef.current?.closest<HTMLElement>("button, a, [tabindex]");
+    if (!holder) return;
+    const handleFocus = () => revealFocus();
+    const handleBlur = () => hide();
+    holder.addEventListener("focus", handleFocus);
+    holder.addEventListener("blur", handleBlur);
+    return () => {
+      holder.removeEventListener("focus", handleFocus);
+      holder.removeEventListener("blur", handleBlur);
+    };
+  }, [revealOnFocus]);
 
   function show() {
     const host = hostRef.current;

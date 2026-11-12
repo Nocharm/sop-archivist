@@ -6,6 +6,7 @@ import { useRef, useState } from "react";
 
 import { BusyLabel } from "@/components/ui/motion";
 import { Menu } from "@/components/ui/menu";
+import { Tooltip } from "@/components/ui/tooltip";
 
 export interface AiAskItem {
   key: string;
@@ -13,7 +14,8 @@ export interface AiAskItem {
   run: () => Promise<void>;
 }
 
-export function AiAskMenu({ items, label, testId, disabled = false }: { items: AiAskItem[]; label: string; testId: string; disabled?: boolean }) {
+/** compact: 라벨 없이 아이콘만(좁은 도구 줄) - 라벨은 툴팁과 aria-label로 */
+export function AiAskMenu({ items, label, testId, disabled = false, compact = false }: { items: AiAskItem[]; label: string; testId: string; disabled?: boolean; compact?: boolean }) {
   const anchorRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [running, setRunning] = useState<string | null>(null);
@@ -29,21 +31,32 @@ export function AiAskMenu({ items, label, testId, disabled = false }: { items: A
     }
   }
 
+  const trigger = (
+    <button
+      ref={anchorRef}
+      type="button"
+      className="btn h-7"
+      aria-label={compact ? label : undefined}
+      aria-haspopup="menu"
+      aria-expanded={open}
+      data-testid={testId}
+      disabled={disabled || running !== null}
+      onClick={() => setOpen((prev) => !prev)}
+    >
+      <BusyLabel busy={running !== null} icon={<Sparkles size={12} strokeWidth={1.5} className="text-st-ai" aria-hidden />} label={compact ? null : label} />
+      <ChevronDown size={12} strokeWidth={1.5} className="select-chevron" aria-hidden />
+    </button>
+  );
+
   return (
     <>
-      <button
-        ref={anchorRef}
-        type="button"
-        className="btn h-7"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        data-testid={testId}
-        disabled={disabled || running !== null}
-        onClick={() => setOpen((prev) => !prev)}
-      >
-        <BusyLabel busy={running !== null} icon={<Sparkles size={12} strokeWidth={1.5} className="text-st-ai" aria-hidden />} label={label} />
-        <ChevronDown size={12} strokeWidth={1.5} className="select-chevron" aria-hidden />
-      </button>
+      {compact ? (
+        <Tooltip label={label} suppressed={open}>
+          {trigger}
+        </Tooltip>
+      ) : (
+        trigger
+      )}
       {open && (
         <Menu anchorRef={anchorRef} onClose={() => setOpen(false)} testId={`${testId}-list`} align="end">
           {items.map((item) => (
