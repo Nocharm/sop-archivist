@@ -91,11 +91,11 @@ import {
   isTextChangeType,
   listLinkLeftovers,
   listUnpairedKeys,
-  pickFirstFilter,
   readCheckKey,
   readDestination,
   readHumanReason,
   readLinkDefault,
+  stepInList,
   type CellSource,
   type ClassifyFilter,
   type ClassifyRow,
@@ -108,6 +108,7 @@ import { useI18n } from "@/lib/i18n";
 import { useLeaveGuard } from "@/lib/leave-guard";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { navigate } from "@/lib/nav-buffer";
+import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
 import { SLOT_LABELS } from "@/lib/slot-labels";
 import { getStageHref } from "@/lib/stages";
@@ -253,24 +254,36 @@ export default function AssignPage() {
 
   // --- 거르기: 누를 때만 다시 줄 세운다(확정한 줄은 그 자리에 남는다). Old 원문은 그대로 두고 ↑↓가 이 순서만 밟는다 ---
   const [mode, setMode] = useState<Mode>("old");
-  const [filter, setFilter] = useState<Filter>("unassigned");
+  // 처음에는 All(용지 전부, 안 접힘) - 명세 2026-11-12 §4.4
+  const [filter, setFilter] = useState<Filter>("all");
   const [snapshot, setSnapshot] = useState<{ filter: Filter; keys: string[] } | null>(null);
   const counts: Record<Filter, number> = { unassigned: 0, ai_suggested: 0, on_hold: 0, confirmed: 0, all: rows.length };
   for (const row of rows) counts[row.status] += 1;
-  const listKeys = snapshot && snapshot.filter === filter ? snapshot.keys.filter((key) => rowMap.has(key)) : rows.filter((row) => filter === "all" || row.status === filter).map((row) => row.key);
+  const listKeys = useMemo(() => {
+    const keys = new Set(rows.map((row) => row.key));
+    return snapshot && snapshot.filter === filter ? snapshot.keys.filter((key) => keys.has(key)) : rows.filter((row) => filter === "all" || row.status === filter).map((row) => row.key);
+  }, [snapshot, filter, rows]);
 
   // 처음 불러온 순간의 목록을 붙잡는다 - 그래야 확정한 줄이 거르기에서 바로 빠지지 않는다(렌더 중 상태 맞추기)
   if (snapshot === null && rows.length > 0 && units.data !== null) {
-    const first = pickFirstFilter(counts);
-    setFilter(first);
-    setSnapshot({ filter: first, keys: rows.filter((item) => first === "all" || item.status === first).map((item) => item.key) });
+    setFilter("all");
+    setSnapshot({ filter: "all", keys: rows.map((item) => item.key) });
   }
 
+  // 필터 접기의 펼침 - 필터를 걸 때마다(같은 필터를 다시 눌러도) 모두 접힌다
+  const [foldOpen, setFoldOpen] = useState<FoldOpen>(EMPTY_FOLD_OPEN);
   function applyFilter(next: Filter) {
     setMode("old");
     setFilter(next);
     setSnapshot({ filter: next, keys: rows.filter((row) => next === "all" || row.status === next).map((row) => row.key) });
+    setFoldOpen(EMPTY_FOLD_OPEN);
   }
+  // 접을 때 맞는 Unit - 필터를 건 때의 목록(스냅숏)이라 확정·보류로 상태가 바뀌어도 그 자리에서 접히지 않는다. 출처 없는 New 모드는 Old를 넓게 훑으니 접지 않는다
+  const foldMatch = useMemo(() => {
+    if (mode !== "old" || filter === "all") return null;
+    const unitIdsOf = new Map(rows.map((row) => [row.key, row.unitIds]));
+    return new Set(listKeys.flatMap((key) => unitIdsOf.get(key) ?? []));
+  }, [mode, filter, listKeys, rows]);
 
   // 처음에는 아무 조각도 고르지 않는다 - 오른쪽 칸이 범례를 보인다
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -396,6 +409,31 @@ export default function AssignPage() {
   const [manualPart, setManualPart] = useState<{ key: string; part: PaperTabKey } | null>(null);
   const wantedPart = (manualPart?.key === (activeKey ?? "") ? manualPart.part : null) ?? partOf?.get(row?.unitIds[0] ?? -1) ?? "body";
   const activePart = partKeys.includes(wantedPart) ? wantedPart : (partKeys[0] ?? "body");
+  // 필터 접기 - 지금 문서·부분에 맞는(또는 고른) Unit이 없으면 용지 대신 빈 상태와 맞는 곳 바로 가기(저절로 옮기지 않는다)
+  const isInPart = (unitId: number) => partKeys.length <= 1 || partOf?.get(unitId) === activePart;
+  const isFoldEmpty = foldMatch !== null && oldView !== null && !oldView.units.some((unit) => isInPart(unit.id) && (foldMatch.has(unit.id) || (row?.unitIds.includes(unit.id) ?? false)));
+  const foldElsewhere = useMemo(() => {
+    if (!isFoldEmpty || !viewList) return [];
+    const tabOfDoc = new Map<number, Map<number, PaperTabKey>>();
+    const readTabOf = (docId: number) => {
+      if (!tabOfDoc.has(docId)) {
+        const view = viewList.find((item) => item.document.id === docId);
+        tabOfDoc.set(docId, view ? buildPaperTabs(view, buildPaperModel(view)).tabOf : new Map());
+      }
+      return tabOfDoc.get(docId) ?? new Map<number, PaperTabKey>();
+    };
+    const rowOf = new Map(rows.map((item) => [item.key, item]));
+    const places = new Map<string, { docId: number; part: PaperTabKey; count: number }>();
+    for (const key of listKeys) {
+      const item = rowOf.get(key);
+      if (!item) continue;
+      const part = readTabOf(item.documentId).get(item.unitIds[0]) ?? "body";
+      const place = places.get(`${item.documentId}-${part}`) ?? { docId: item.documentId, part, count: 0 };
+      place.count += 1;
+      places.set(`${item.documentId}-${part}`, place);
+    }
+    return [...places.values()];
+  }, [isFoldEmpty, viewList, listKeys, rows]);
   const writtenDocs = [...new Map(written.map((item) => [item.target_doc_id, item.doc_code])).entries()];
   // 오른쪽 칸은 항상 열려 있다 - 쓴 New 문서가 없으면 빈 안내
   const [manualNewDoc, setManualNewDoc] = useState<{ key: string; docId: number } | null>(null);
@@ -484,9 +522,8 @@ export default function AssignPage() {
   }
 
   function moveRow(step: 1 | -1) {
-    if (listKeys.length === 0) return;
-    const index = activeKey ? listKeys.indexOf(activeKey) : -1;
-    selectRow(listKeys[Math.min(Math.max(index + step, 0), listKeys.length - 1)]);
+    const next = stepInList(rows.map((item) => item.key), listKeys, activeKey, step);
+    if (next !== null) selectRow(next);
   }
 
   function buildTables(): Map<number, { rows: number; cols: number; cells: CellSource[] }> {
@@ -1480,6 +1517,17 @@ export default function AssignPage() {
                   setSelectedKey(null);
                 }}
                 model={paperModel}
+                fold={foldMatch ? { matchIds: foldMatch, open: foldOpen, onOpenChange: setFoldOpen } : undefined}
+                foldEmpty={
+                  isFoldEmpty
+                    ? foldElsewhere.map((place) => ({ ...place, label: `${oldDocOptions.find((option) => option.value === String(place.docId))?.label ?? place.docId} · ${t(`split.tab.${place.part}`)} · ${place.count}` }))
+                    : null
+                }
+                onFoldGo={(docId, part) => {
+                  setManualOldDoc(docId);
+                  setSelectedKey(null);
+                  setManualPart({ key: "", part });
+                }}
                 placeholder={<span className="sk h-[480px] w-full" />}
                 selectedId={mode === "old" ? (row?.unitIds[0] ?? null) : null}
                 highlightIds={mode === "old" ? highlightIds : NO_NUMBERS}

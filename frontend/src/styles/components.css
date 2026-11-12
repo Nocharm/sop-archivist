@@ -1039,6 +1039,25 @@
   .pg[data-strips] .strip[data-bracket="top"], .pg[data-strips] .strip[data-bracket="bottom"], .pg[data-strips] .strip[data-partner]:not([data-bracket]), .cell-piece[data-partner] { background: color-mix(in oklab, var(--accent) 4%, var(--paper)); }
   .cell-piece[data-partner] { box-shadow: inset 2px 0 0 var(--accent); }
 
+  /* 필터 접기(Assign Old) - 엿보기 조각은 필터 밖이라 바탕을 가라앉히고 점선, 그림자 없음. 곁은 한 줄 판(앞머리 옅게 + 말줄임 작은 글), 먼 구간은 점선 묶음 한 줄.
+     한 줄 판 글은 명세의 --ink-4가 라이트에서 4.2:1이라 4.5:1을 넘는 --ink-3(약 5.6:1) - 작은 글자·앞머리 옅음으로 충분히 물러난다 */
+  .pg[data-strips] .strip-row[data-peek] > .strip { background: var(--sunken); border-style: dashed; box-shadow: none; }
+  .fold-line { display: flex; align-items: stretch; width: 100%; min-width: 0; margin: 1px 0; padding: 0; border: 0; background: none; color: var(--ink-3); font: inherit; text-align: left; cursor: pointer; content-visibility: auto; contain-intrinsic-size: auto 22px; }
+  .fold-line > .strip-lead { opacity: .55; }
+  .fold-line .strip-lead-num { height: 22px; padding-top: 0; line-height: 22px; }
+  .fold-line-text { flex: 1 1 0; min-width: 0; padding: 3px var(--pg-pad-r) 3px var(--pg-pad-l); overflow: hidden; border-radius: var(--r-1); font-size: 11.5px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
+  .fold-line:hover .fold-line-text { background: var(--hover); color: var(--ink-2); }
+  .fold-run, .fold-head { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 10px; border-radius: var(--r-1); background: none; font: inherit; font-size: 11.5px; cursor: pointer; }
+  .fold-run { height: 22px; margin-block: 4px; border: 1px dashed var(--line-2); color: var(--ink-3); white-space: nowrap; }
+  .fold-run:hover { background: var(--hover); }
+  .fold-run-range { overflow: hidden; font-family: var(--font-mono); text-overflow: ellipsis; }
+  .fold-run-act { margin-left: auto; color: var(--accent); }
+  .fold-head { height: 18px; margin-block: 2px; padding-inline: 4px; border: 0; color: var(--ink-3); }
+  .fold-head:hover { color: var(--accent); }
+  .fold-elsewhere { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; }
+  .fold-elsewhere-label { width: 100%; color: var(--ink-3); font-size: var(--fs-micro); }
+  .fold-go { font-family: var(--font-mono); font-size: 12px; }
+
   /* 조각 사이 틈 - 위아래 합치기가 늘 보인다(평소엔 낮고 넓은 알약, 올리면 라벨이 펼쳐진다) */
   /* 평소 4px, 고른 조각 곁·올린 틈 12px(전환은 모션 토큰 - reduced-motion이면 즉시), 짝 사이는 1px */
   /* --gap-open-delay: 올린 틈이 벌어지기까지(ms). 문단 사이를 지나가는 포인터가 틈을 벌렸다 접으며 글을 흔들지 않게 - 늘리면 둔하고 줄이면 다시 흔들린다. 접힘은 바로.

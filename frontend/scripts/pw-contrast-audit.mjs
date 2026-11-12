@@ -138,7 +138,7 @@ for (const theme of ["light", "dark"]) {
     ["assign-unsourced", `/bundles/${id}/assign`, '[data-testid="assign-filter-unsourced"]', (page) => page.locator('[data-testid="assign-filter-unsourced"]').click()],
     ["outputs", `/bundles/${id}/outputs`, '[data-testid="output-c"]'],
     ["review", `/bundles/${id}/review`, '[data-testid="output-c"]'],
-    ["assign-ai", `/bundles/${aiId}/assign`, '[data-testid="assign-bar"]', async (page) => { await page.keyboard.press("j"); await page.locator('[data-testid="assign-rec-0"]').waitFor({ timeout: T }); }],
+    ["assign-ai", `/bundles/${aiId}/assign`, '[data-testid="assign-bar"]', async (page) => { await page.locator('[data-testid="assign-filter-ai_suggested"]').click(); await page.keyboard.press("j"); await page.locator('[data-testid="assign-rec-0"]').waitFor({ timeout: T }); }],
     ["outputs-ai", `/bundles/${aiId}/outputs`, '[data-testid="output-c"]'],
     // 상단 바 AI 작업 목록을 연 상태 - 시드의 AI 제안 단계가 남긴 끝난 요청이 보인다
     ["ai-jobs", `/bundles/${aiId}`, '[data-testid="top-bar-ai"]', async (page) => { await page.locator('[data-testid="top-bar-ai"]').click(); await page.locator('[data-testid^="ai-jobs-request-"]').first().waitFor({ timeout: T }); }],

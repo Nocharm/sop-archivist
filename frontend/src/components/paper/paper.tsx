@@ -2,9 +2,10 @@
 // 글자 조각마다 data-start(블록 안 위치)를 달아, 누른 자리·끌어 고른 범위를 블록 위치로 되돌린다.
 // strips(Split·Assign)에서는 단위 하나가 종이 한 조각이다 - 확인과 상관없이 처음부터 떨어져 있고, 조각 왼쪽 밖에 앞머리(절 번호 칸 + 언어 막대, StripLead - 짝은 두 막대가 이어진 한 카드)를, 보류는 글 첫머리에 상태 칩을, 오른쪽 끝에 아이콘 표시를 둔다. 절 첫 블록 글 앞의 절 번호는 번호 칸과 겹치니 그리지 않는다(표시만).
 // 고른 단위는 글자 영역의 가장 바깥 윤곽 하나로 감싼다(contour). 앞머리 막대·아이콘 표시는 포인터·포커스 툴팁으로 뜻을 알린다.
+// strips.fold(Assign 필터)가 있으면 맞는 조각만 제 모양, 곁은 한 줄 판, 먼 구간은 묶음 한 줄로 접는다(paper-fold-model.ts) - 한 줄 판·묶음은 단추라 눌러도 조각을 고르지 않는다.
 "use client";
 
-import { CircleCheck, FoldVertical, FolderCheck, ImageIcon, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles } from "lucide-react";
+import { ChevronsDownUp, CircleCheck, Ellipsis, FoldVertical, FolderCheck, ImageIcon, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles } from "lucide-react";
 import { Fragment, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { FigureImage } from "@/components/paper/figure-image";
@@ -14,6 +15,7 @@ import { Collapse } from "@/components/ui/motion";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
+import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildContourPath, buildRows, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import { getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
 
@@ -42,6 +44,29 @@ const MARK_LABELS: Record<PaperMark, string> = {
 
 function readRowUnitId(row: PaperRow): number | null {
   return row.type === "table" ? row.item.unitId : row.unitId;
+}
+
+/** 접기에서 줄이 맞는지 볼 단위 - 표는 표 단위와 칸 안 문장 단위 모두 */
+function listRowUnitIds(row: PaperRow, segments: ReadonlyMap<number, Segment[]>): number[] {
+  if (row.type !== "table") return row.unitId === null ? [] : [row.unitId];
+  const ids = new Set<number>();
+  if (row.item.unitId !== null) ids.add(row.item.unitId);
+  for (const cell of row.item.rows.flat()) for (const segment of segments.get(cell.id) ?? []) if (segment.unitId !== null) ids.add(segment.unitId);
+  return [...ids];
+}
+
+/** 접기 한 칸 - 이웃한 짝 카드의 두 줄은 한 칸 */
+interface FoldCell {
+  item: FoldItem;
+  rows: PaperRow[];
+}
+
+/** 펼친 묶음을 접을 때 지울 칸 - 맞음도 곁도 아닌, runKey에서 이어진 칸들(buildFoldPlan의 묶음과 같은 범위) */
+function listRunKeys(items: readonly FoldItem[], matchIds: ReadonlySet<number>, runKey: string): string[] {
+  const isMatch = items.map((item) => item.unitIds.some((id) => matchIds.has(id)));
+  const keys: string[] = [];
+  for (let at = items.findIndex((item) => item.key === runKey); at >= 0 && at < items.length && !isMatch[at] && !isMatch[at - 1] && !isMatch[at + 1]; at += 1) keys.push(items[at].key);
+  return keys;
 }
 
 /** 줄이 놓인 첫 블록의 절 번호 - 표는 없다 */
@@ -101,6 +126,8 @@ interface PaperProps {
     renderNote?: (unitIds: number[]) => ReactNode;
     /** Assign - 조각 오른쪽 칸(연결 배지). 비면 폭을 차지하지 않는다 */
     renderPills?: (unitId: number) => ReactNode;
+    /** Assign - 필터 접기. matchIds는 필터를 걸 때의 목록(스냅숏), 없으면 전부 그린다 */
+    fold?: { matchIds: ReadonlySet<number>; open: FoldOpen; onOpenChange: (next: FoldOpen) => void };
   };
   /** 고른 단위를 밑줄 대신 바깥 윤곽으로 감싼다 */
   contour?: boolean;
@@ -246,6 +273,32 @@ export function Paper({
     if (partner && brackets.has(selectedId)) ids.add(partner.id);
     return ids;
   }, [selectedId, partnerOf, brackets]);
+  // 접기 칸 - 부분마다 문서 순서로, 이웃한 짝 카드는 한 칸(위 줄 key)
+  const hasFold = strips?.fold !== undefined;
+  const foldCells = useMemo(() => {
+    if (!hasFold) return [];
+    return sections.map((section) => {
+      const cells: FoldCell[] = [];
+      for (let index = 0; index < section.rows.length; index += 1) {
+        const row = section.rows[index];
+        const next = section.rows[index + 1];
+        const isCard = next !== undefined && brackets.get(readRowUnitId(row) ?? -1) === "top" && brackets.get(readRowUnitId(next) ?? -1) === "bottom";
+        const rows = isCard ? [row, next] : [row];
+        if (isCard) index += 1;
+        cells.push({ item: { key: row.key, unitIds: rows.flatMap((one) => listRowUnitIds(one, model.segments)), section: readRowSection(row) }, rows });
+      }
+      return cells;
+    });
+  }, [hasFold, sections, brackets, model]);
+  // 접혀 있어도 늘 펼쳐 보일 단위 - 고른 단위와 그 짝(이웃하지 않은 짝도). 출처 칩 등으로 필터 밖 단위를 고르면 저절로 엿보기가 된다
+  const foldForced = useMemo(() => {
+    const ids = new Set<number>();
+    if (selectedId === null) return ids;
+    ids.add(selectedId);
+    const partner = partnerOf.get(selectedId);
+    if (partner) ids.add(partner.id);
+    return ids;
+  }, [selectedId, partnerOf]);
   // 절 번호를 보일 첫 줄 - 부분(머리글·본문·바닥글)마다 문서 순서로
   const sectionHeads = useMemo(() => {
     const heads = new Set<number>();
@@ -674,7 +727,7 @@ export function Paper({
   }
 
   /** 조각 한 줄 - 글 조각, 표, 그림 모두 같은 틀(앞 태그·끝 표시)에 담는다 */
-  function renderRow(row: PaperRow): ReactNode {
+  function renderRow(row: PaperRow, isPeek = false): ReactNode {
     const unitId = row.type === "table" ? row.item.unitId : row.unitId;
     const unit = unitId === null ? undefined : model.units.get(unitId);
     const hasWarn = row.type === "piece" ? row.parts.some((part) => warnBlockIds?.has(part.block.id)) : row.type === "figure" && (warnBlockIds?.has(row.block.id) ?? false);
@@ -687,7 +740,7 @@ export function Paper({
     const foot = note ? <div className="strip-foot">{note}</div> : null;
     const isHold = unit !== undefined && getTags({ ...unit, status: strips?.statusOf?.(unit.id) ?? unit.status }).hold;
     return (
-      <div key={row.key} className="strip-row">
+      <div key={row.key} className="strip-row" data-peek={isPeek ? "" : undefined}>
         {unit && renderLead(unit, section, width, bracket)}
         {!unit && <span className="strip-lead-gap" style={{ width: width + STRIP_LEAD_EXTRA }} />}
         <div
@@ -722,24 +775,131 @@ export function Paper({
     );
   }
 
+  /** 두 조각 사이 틈 */
+  function renderGap(prev: PaperRow, row: PaperRow): ReactNode {
+    return (
+      <div
+        className="strip-gap"
+        data-pair={brackets.get(readRowUnitId(prev) ?? -1) === "top" && brackets.get(readRowUnitId(row) ?? -1) === "bottom" ? "" : undefined}
+        data-near-selected={selectedBlock.has(readRowUnitId(prev) ?? -1) || selectedBlock.has(readRowUnitId(row) ?? -1) ? "" : undefined}
+        // 합치기 단추를 글 시작 x에 - 위아래 앞머리 중 넓은 쪽 뒤라 어느 앞머리에도 걸치지 않는다
+        style={{ "--gap-tab": `${Math.max(readTabWidth(prev), readTabWidth(row)) + STRIP_LEAD_EXTRA}px` }}
+        data-testid={`${testId}-gap-${row.key}`}
+      >
+        {renderMerge(prev, row)}
+      </div>
+    );
+  }
+
   function renderRows(rows: PaperRow[]): ReactNode {
     return rows.map((row, index) => (
       <Fragment key={row.key}>
-        {index > 0 && (
-          <div
-            className="strip-gap"
-            data-pair={brackets.get(readRowUnitId(rows[index - 1]) ?? -1) === "top" && brackets.get(readRowUnitId(row) ?? -1) === "bottom" ? "" : undefined}
-            data-near-selected={selectedBlock.has(readRowUnitId(rows[index - 1]) ?? -1) || selectedBlock.has(readRowUnitId(row) ?? -1) ? "" : undefined}
-            // 합치기 단추를 글 시작 x에 - 위아래 앞머리 중 넓은 쪽 뒤라 어느 앞머리에도 걸치지 않는다
-            style={{ "--gap-tab": `${Math.max(readTabWidth(rows[index - 1]), readTabWidth(row)) + STRIP_LEAD_EXTRA}px` }}
-            data-testid={`${testId}-gap-${row.key}`}
-          >
-            {renderMerge(rows[index - 1], row)}
-          </div>
-        )}
+        {index > 0 && renderGap(rows[index - 1], row)}
         {renderRow(row)}
       </Fragment>
     ));
+  }
+
+  /** 한 줄 판의 글 - 짝은 두 글을 " / "로, 표·그림은 이름만 */
+  function readLineText(rows: readonly PaperRow[]): string {
+    return rows
+      .map((row) => (row.type === "table" ? t("assign.newTable") : row.type === "figure" ? t("assign.newFigure") : row.parts.map((part) => part.segments.map((segment) => part.block.text.slice(segment.start, segment.end)).join("")).join(" ")))
+      .map((text) => text.replace(/\s+/g, " ").trim())
+      .join(" / ");
+  }
+
+  /** 필터 접기 - 맞음·엿보기는 제 조각, 곁은 한 줄 판, 먼 구간은 묶음 한 줄. 틈은 조각끼리 이웃할 때만 */
+  function renderFolded(cells: readonly FoldCell[], fold: NonNullable<NonNullable<PaperProps["strips"]>["fold"]>): ReactNode {
+    const items = cells.map((cell) => cell.item);
+    let matchIds = fold.matchIds;
+    let plan: FoldEntry[] = buildFoldPlan(items, matchIds, fold.open, foldForced);
+    // 이 부분에 맞음이 없는데 고른 조각(출처 칩으로 건너옴)이 있으면 그 조각을 엿보기로 두고 둘레를 접는다 - 고른 조각은 늘 보여야 한다
+    if (plan.length === 0 && items.some((item) => item.unitIds.some((id) => foldForced.has(id)))) {
+      matchIds = foldForced;
+      plan = buildFoldPlan(items, matchIds, fold.open).map((entry) => (entry.kind === "full" ? { kind: "peek", key: entry.key } : entry));
+    }
+    const cellOf = new Map(cells.map((cell) => [cell.item.key, cell]));
+    const leadWidth = (key: string): number => {
+      const first = cellOf.get(key)?.rows[0];
+      return (first ? readTabWidth(first) : 0) + STRIP_LEAD_EXTRA;
+    };
+    const { open, onOpenChange } = fold;
+    let prevRow: PaperRow | null = null;
+    return plan.map((entry) => {
+      if (entry.kind === "full" || entry.kind === "peek") {
+        const rows = cellOf.get(entry.key)?.rows ?? [];
+        const before = prevRow;
+        prevRow = rows[rows.length - 1] ?? null;
+        return (
+          <Fragment key={entry.key}>
+            {rows.map((row, index) => (
+              <Fragment key={row.key}>
+                {index === 0 ? before && renderGap(before, row) : renderGap(rows[index - 1], row)}
+                {renderRow(row, entry.kind === "peek")}
+              </Fragment>
+            ))}
+          </Fragment>
+        );
+      }
+      prevRow = null;
+      if (entry.kind === "line") {
+        const rows = cellOf.get(entry.key)?.rows ?? [];
+        const first = rows[0];
+        const unitId = first ? readRowUnitId(first) : null;
+        const unit = unitId === null ? undefined : model.units.get(unitId);
+        const width = first ? readTabWidth(first) : 0;
+        return (
+          <button
+            key={`line-${entry.key}`}
+            type="button"
+            className="fold-line"
+            data-testid={`${testId}-fold-line-${entry.key}`}
+            onClick={() => onOpenChange({ runs: open.runs, peeks: new Set([...open.peeks, entry.key]) })}
+          >
+            {unit ? (
+              <StripLead width={width} number={null} lang={getTags(unit).lang === "KO" ? "ko" : getTags(unit).lang === "EN" ? "en" : null} dim tip={describeTab(unit)} testId={`${testId}-fold`} id={unit.id} />
+            ) : (
+              <span className="strip-lead-gap" style={{ width: width + STRIP_LEAD_EXTRA }} />
+            )}
+            <span className="fold-line-text">{readLineText(rows)}</span>
+          </button>
+        );
+      }
+      if (entry.kind === "run") {
+        const range = entry.from === "" ? "" : entry.from === entry.to ? entry.from : `${entry.from}–${entry.to}`;
+        return (
+          <button
+            key={`run-${entry.runKey}`}
+            type="button"
+            className="fold-run"
+            style={{ marginLeft: leadWidth(entry.runKey) }}
+            aria-expanded={false}
+            data-testid={`${testId}-fold-run-${entry.runKey}`}
+            onClick={() => onOpenChange({ runs: new Set([...open.runs, entry.runKey]), peeks: open.peeks })}
+          >
+            <Ellipsis size={14} strokeWidth={1.75} aria-hidden />
+            <span>{t("paper.foldRun", { n: entry.count })}</span>
+            {range && <span className="fold-run-range">§ {range}</span>}
+            <span className="fold-run-act">{t("paper.foldExpand")}</span>
+          </button>
+        );
+      }
+      const members = new Set(listRunKeys(items, matchIds, entry.runKey));
+      return (
+        <button
+          key={`head-${entry.runKey}`}
+          type="button"
+          className="fold-head"
+          style={{ marginLeft: leadWidth(entry.runKey) }}
+          aria-expanded
+          data-testid={`${testId}-fold-head-${entry.runKey}`}
+          onClick={() => onOpenChange({ runs: new Set([...open.runs].filter((key) => key !== entry.runKey)), peeks: new Set([...open.peeks].filter((key) => !members.has(key))) })}
+        >
+          <ChevronsDownUp size={12} strokeWidth={1.75} aria-hidden />
+          {t("paper.foldCollapse")}
+        </button>
+      );
+    });
   }
 
   function handleClick(event: MouseEvent<HTMLDivElement>) {
@@ -835,15 +995,16 @@ export function Paper({
           </svg>
         )}
         {strips ? (
-          sections.map((section) =>
-            section.edge === null ? (
-              <Fragment key="body">{renderRows(section.rows)}</Fragment>
+          sections.map((section, index) => {
+            const content = strips.fold ? renderFolded(foldCells[index] ?? [], strips.fold) : renderRows(section.rows);
+            return section.edge === null ? (
+              <Fragment key="body">{content}</Fragment>
             ) : (
               <div key={section.edge} className={`pg-edge ${section.edge}`}>
-                {renderRows(section.rows)}
+                {content}
               </div>
-            ),
-          )
+            );
+          })
         ) : (
           <>
             {model.header.length > 0 && <div className="pg-edge top grid gap-1">{model.header.map(renderItem)}</div>}

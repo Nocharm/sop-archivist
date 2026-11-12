@@ -474,10 +474,19 @@ export function findNextOpen(keys: string[], rows: Map<string, ClassifyRow>, cur
 
 export type ClassifyFilter = "unassigned" | "ai_suggested" | "on_hold" | "confirmed" | "all";
 
-/** 처음 열 때의 필터 - AI 제안이 있으면 그것부터(명세 §12-6), 없으면 줄이 있는 첫 상태. 아무것도 없으면 미배정 */
-export function pickFirstFilter(counts: Record<ClassifyFilter, number>): ClassifyFilter {
-  const order: ClassifyFilter[] = ["ai_suggested", "unassigned", "on_hold", "confirmed"];
-  return order.find((filter) => counts[filter] > 0) ?? "unassigned";
+/** 다음·이전 줄 - 목록(필터 스냅숏)만 밟고 끝에서 멈춘다. 목록 밖 줄(엿보기)에서는 문서 순서로 그 자리 다음(이전)의 목록 줄로 */
+export function stepInList(allKeys: readonly string[], listKeys: readonly string[], activeKey: string | null, step: 1 | -1): string | null {
+  if (listKeys.length === 0) return null;
+  const clamp = (index: number): string => listKeys[Math.min(Math.max(index, 0), listKeys.length - 1)];
+  const index = activeKey === null ? -1 : listKeys.indexOf(activeKey);
+  if (index >= 0) return clamp(index + step);
+  const position = activeKey === null ? -1 : allKeys.indexOf(activeKey);
+  if (position < 0) return listKeys[0];
+  const order = new Map(allKeys.map((key, at) => [key, at]));
+  const after = listKeys.findIndex((key) => (order.get(key) ?? -1) > position);
+  // after는 그 자리 뒤 첫 목록 줄 - 앞으로 가면 그 줄, 뒤로 가면 바로 앞 줄(없으면 끝에서 멈춘다)
+  if (step === 1) return after < 0 ? listKeys[listKeys.length - 1] : listKeys[after];
+  return clamp((after < 0 ? listKeys.length : after) - 1);
 }
 
 // 화면 문구가 있는 검사 - 문장 검사(backend checks.py)와 AI 응답 검사(ai/classify.py·split.py의 build_warning)
