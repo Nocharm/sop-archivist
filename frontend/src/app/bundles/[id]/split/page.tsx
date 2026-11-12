@@ -467,7 +467,7 @@ export default function SplitPage() {
   const page = selected ? data?.blocks.find((block) => block.id === selected.block_id) : null;
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-[232px_minmax(0,1fr)_clamp(280px,26vw,420px)]" data-testid="split">
+    <div className="split-cols grid h-full min-h-0" data-testid="split">
       {/* 왼쪽: 문서 */}
       <nav className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] border-r border-line bg-surface" aria-label={t("split.documents")} data-testid="split-docs">
         <div className="grid content-start gap-0.5 overflow-y-auto p-2">
@@ -484,7 +484,7 @@ export default function SplitPage() {
               <b className="min-w-0 flex-1 font-mono text-xs font-semibold leading-[18px] [overflow-wrap:anywhere]">{doc.doc_code || doc.file_name}</b>
               <DocBoundaryMark docId={doc.id} left={doc.id === docId && data ? uncheckedLeft : doc.unchecked_boundaries} />
             </span>
-            <Truncate className="text-xs leading-[18px] text-ink-3" text={doc.title} />
+            <Truncate className="text-xs leading-[18px] text-ink-3" text={doc.title} revealOnFocus />
           </button>
         ))}
         </div>

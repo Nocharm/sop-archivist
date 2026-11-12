@@ -4,6 +4,8 @@
 
 ## 2026-11-12
 
+- **R8 사용자 결정 반영 (`fix/screen-review`)** — Split 문서 목록 열을 1280 미만에서만 232→216px로 좁혀(`.split-cols`, Assign 무관) 1120 긴 문단 글 상자를 326→340 이상으로 맞췄다(감사 R8 PASS, 임계값 그대로). 목록 제목 말줄임에 키보드 포커스 툴팁(`revealOnFocus`)을 더했고, 설명서 도구 줄 breakpoint를 1700→1750으로 바로잡았다.
+
 - **화면 검토 반영 6/14 Assign (`fix/screen-review`)** — 그 자리 메뉴 자리 계산을 순수 함수 `placeLinkMenu`(줄 상자 아래, 모자라면 위)로 빼 이은 줄을 덮지 않게 했고(overlap 감사가 두 줄의 상자까지 재도록 보강), 오른쪽 패널을 `clamp(280px,24vw,420px)`·Assign만 `--page-max-desk` 1920으로, 도구 줄 오른쪽 묶음을 `margin-left:auto` 한 요소로(Synthetic 칩 제거, 1440에서 한 줄이 되려면 줄 간격 4px까지 필요), 트리 노드 한 줄 말줄임, 사유 칸을 자라는 textarea로 바꿨다. 검토 보완: 트리 코드 말줄임은 키보드 포커스에도 전체 글(`Truncate revealOnFocus`), 도구 줄은 1200px 미만에서 오른쪽 단추를 아이콘만+툴팁으로 줄여 AI 켠 1440에서 한·영 모두 한 줄(30px), 표 칸 `padding-right: 38px`를 Assign 용지에도.
 
 - **화면 검토 반영 1~5/14 (브랜치 `fix/screen-review` → dev, v0.15.1)** — 극단 자료 시드(`seed_sop_worst.py`, W1~W7·light 36 = 43 묶음)와 배치 감사(`pw-layout-audit.mjs`)를 저장소에 넣고, 관리 목록·History(`.clamp-2`·`ClampText`, 감사 A8은 요약 칸까지 제한해야 56 이하), To-Be(상위 SOP 160px·N/A 칸 360px 단), Split(넓은 표는 조각만 가로 스크롤·빈 패널은 진행 요약·도움말 기본 접힘), 결과물 A·B·C(A 고정 배치·6줄+펼치기, B 가운데 말줄임·"N개 더", C 단추는 줄 사이 홈이 4px라 계획의 겹쳐 그리기가 불가능해 글 흐름 안에 늘 흐리게 `.row-actions-quiet`)를 고쳤다. 최종 검토에서 가운데 정렬과 Split 표 칸 폭이 다른 화면으로 새는 것을 `.dl-table`·`.split-desk`로 가뒀다. R8(Split 1120 긴 문단 글 폭)은 처방대로 해도 326px로 기준 340에 못 미쳐 임계값을 그대로 두고 사용자 결정을 기다린다. Task 6~14는 다음 세션.

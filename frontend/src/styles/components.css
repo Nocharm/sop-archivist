@@ -1063,6 +1063,9 @@
   /* 왼쪽 탭 - 줄의 왼쪽 밖에 맞닿아 붙는다(맞닿는 쪽 모서리 직각, 바깥 모서리 둥글게). 바탕 = 언어 색, 보류는 그 위에 사선 줄무늬. 번호는 절의 첫 블록에만, 번호 없는 탭은 옅게 해 번호를 따라가는 눈을 덜 방해하고 올리면 진해진다. 탭에 올리면 번호가 사라지고 언어 글자가 뜬다. 첫 글줄 높이(27px)에 번호를 맞춘다 */
   /* 1280 미만 Split에서만 3단 이상의 절 번호 탭을 46px에서 멈춘다(Assign 탭은 그대로) - 깊은 번호가 글 상자를 좁히지 않게(긴 번호는 탭 안에서 잘린다) */
   @media (max-width: 1279px) { .split-desk .strip-tab, .split-desk .strip-tab-gap { max-width: 46px; } }
+  /* Split 3단 열: 문서 목록 232px, 1280 미만은 216px - 1,800자 문단 글 상자가 340px을 지키게(사용자 결정 2026-11-12). Assign과 무관 */
+  .split-cols { grid-template-columns: 232px minmax(0, 1fr) clamp(280px, 26vw, 420px); }
+  @media (max-width: 1279px) { .split-cols { grid-template-columns: 216px minmax(0, 1fr) clamp(280px, 26vw, 420px); } }
   .strip-tab { position: relative; flex: none; align-self: stretch; display: flex; flex-direction: column; align-items: center; padding-top: 6px; border: 1px solid var(--line-2); border-right: 0; border-radius: var(--r-1) 0 0 var(--r-1); background-color: var(--tab-none); color: var(--tab-ink); box-sizing: border-box; overflow: hidden; transition: opacity var(--dur-base); }
   .strip-tab[data-lang="ko"] { background-color: var(--tab-ko); }
   .strip-tab[data-lang="en"] { background-color: var(--tab-en); }
