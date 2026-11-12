@@ -18,6 +18,7 @@
 - **배정 화면 잠금 해제·함께 잇기·Remark(Task 8, frontend)** — New 칸의 다른 언어 잠금(`data-blocked`·`assign.langMismatch`)을 걷고 New 문장을 고르면 New 짝도 늘 함께 고른다(줄에 없는 언어는 줄 단위 모두가 출처, 종류를 보내지 않아 서버가 `translated`). 짝 풀기는 화면이 따로 부르지 않고 `release_unit_ids`로 같은 저장에 싣고 응답 `pairs_dissolved`로 줄을 나눈다(정리·일괄 처분·한 번에 확정 뒤 원문 보기를 다시 받는다). 칸에 확정한 한 언어 줄의 `Write Korean|English`(AI와 무관), 사유 라벨 → Remark, 출처 없는 New의 Remark는 신규 확정을 묶음 저장으로 바꿔 싣는다. 함께 골라진 짝 문장은 Ctrl로 빼면 다시 붙지 않는다(내 판단 — 떼면 신규, 명세 §5.2).
 - **최종 검토 고침 — 짝을 맺는 길도 처분 하나·AI 번역 겹침(backend)** — 판단 뒤에 맺는 짝이 `settle_pairs`를 비껴가 한 줄에 처분 둘이 남던 틈(I3): 운명 판정을 `pair_settle.get_decided_fate`·`load_decided_fates`·`has_diverging_fates` 한 벌로 꺼내, 사람 짝 만들기는 409 `pair_fates_differ`로 거절(문구 en·ko)하고 AI 짝·코드 짝은 갈린 쌍을 제안하지 않으며, 세 길 모두 끝에 `settle_pairs`(같은 곳으로 확정된 제안 짝은 바로 확정·채택·번역 쓸기). `refresh_code_pairs`는 `actor`를 받는다. AI 번역은 도착 언어 새 문장을 이미 출처로 둔 단위를 `already_translated`로 건너뛴다(I1). 보류+AI 제안 짝 한 줄 시험.
 - **최종 검토 고침 — 배정 화면 다른 언어 단추·쪼개기 짝 전환·패널 단추(frontend)** — `Make/Write English·Korean`은 줄에 그 언어 문장(직접 쓴 것·쓰는 중인 칸·AI 번역)이 있으면 둘 다 숨기고(`hasRowLanguage`), 제목·묶이지 않은 칸 문장 줄에도 나온다(`isSentenceUnit`). 빈 칸으로 Esc를 누르면 칸을 걷는다. 중립 단위를 문장에 이으면 번역이 아니라 종류를 보낸다(`isTranslationOf`, 서버와 같은 규칙 — `change_type_required` 막다른 길). 원문 보기는 짝이 풀릴 때만 다시 받는다. 쪼개기 `KO/EN pair` 전환은 풀기 결과의 되살린 id를 쓴다. 오른쪽 패널의 세 단추는 1280·1440 EN에서 칸을 넘쳐(재어 봄) 칸 폭을 라벨 길이로, 340px 미만 컨테이너에서는 글쇠 표시를 뺐다.
+- **최종 검토 고침 — 남은 주석·스모크** — 언어 잠금·언어별 숫자를 설명하던 주석 넷을 지금 동작으로 고치고, 스모크의 "다른 언어 문장은 잠기지 않는다" 확인이 없어진 `data-blocked`를 읽던 것을 한 언어 줄에서 다른 언어 New 문장을 실제로 골라 보는 것으로 바꿨다.
 
 ## 2026-11-12
 

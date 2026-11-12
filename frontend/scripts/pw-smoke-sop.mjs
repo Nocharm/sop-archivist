@@ -742,7 +742,15 @@ await runStep("assign: written New document - identical, link by clicking, split
   page.on("request", countCandidateRequest(1));
   page.on("requestfinished", countCandidateRequest(-1));
   page.on("requestfailed", countCandidateRequest(-1));
-  for (let step = 0; step < 40 && (await candidate.count()) === 0; step += 1) {
+  // 고른 Old 줄의 언어들 - 줄에 없는 언어의 New 문장도 이을 수 있는지(언어 잠금 없음) 보려면 한 언어 줄이어야 한다
+  const readRowLangs = () => page.locator('[data-testid="assign-old"] [data-testid^="assign-paper-unit-"][data-sel]').evaluateAll((els) => [...new Set(els.map((el) => el.getAttribute("lang") ?? "neutral"))]);
+  const otherLangLines = async () => {
+    const langs = await readRowLangs();
+    if (langs.length !== 1 || langs[0] === "neutral") return null;
+    return page.locator(`[data-testid="assign-new"] .new-line:not([data-state="picked"]):not([data-lang="${langs[0]}"]):not([data-lang="neutral"])`);
+  };
+  const isReady = async () => (await candidate.count()) > 0 && (await (await otherLangLines())?.count() ?? 0) > 0;
+  for (let step = 0; step < 40 && !(await isReady()); step += 1) {
     await page.keyboard.press("j");
     // 요청이 나갈 틈(문장이 없는 줄은 요청이 없다) → 걸린 요청이 없을 때까지 → 응답을 그릴 틈
     await page.waitForTimeout(150);
@@ -756,13 +764,19 @@ await runStep("assign: written New document - identical, link by clicking, split
   check("clicking a New sentence picks it", (await firstLine.getAttribute("data-state")) === "picked");
   // 맥에서 Ctrl+클릭은 오른쪽 클릭이다 - 화면은 ⌘도 같은 뜻으로 받는다
   const multi = process.platform === "darwin" ? "Meta" : "Control";
-  // 둘째 줄은 언어와 상관없이 고른다 - 줄에 없는 언어의 문장도 이을 수 있다(번역)
-  const unpicked = page.locator('[data-testid="assign-new"] .new-line:not([data-state="picked"])');
+  // 둘째 줄은 줄에 없는 언어의 문장을 고른다 - 언어로 막지 않고 이을 수 있다(번역)
+  const rowLangs = await readRowLangs();
+  const unpicked = await otherLangLines();
   const second = page.locator(`[data-testid="${await unpicked.first().getAttribute("data-testid")}"]`);
+  const secondLang = await second.getAttribute("data-lang");
   await second.locator(".new-hit").click({ modifiers: [multi] });
   await page.locator('[data-testid^="assign-link-"]').nth(1).waitFor({ timeout: T });
   check("Ctrl+click adds a second sentence", (await page.locator('[data-testid^="assign-link-"]').count()) >= 2);
-  check("a sentence in another language is not locked", (await second.getAttribute("data-blocked")) === null);
+  check(
+    "a sentence in another language is not locked",
+    !rowLangs.includes(secondLang) && (await second.getAttribute("data-state")) === "picked",
+    `row ${rowLangs.join("+")}, picked ${secondLang}`,
+  );
   await takeShot("sop-assign-link.png");
   // 첫 줄만 다시 누르면 고름이 그 문장(과 New 짝)으로 돌아간다 - 둘째의 짝이 함께 붙었을 수 있어 Ctrl로 하나씩 빼지 않는다
   await firstLine.locator(".new-hit").click();

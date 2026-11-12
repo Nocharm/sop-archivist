@@ -36,7 +36,7 @@ from app.sop.models import (
 from app.sop.status import ROW_STATUS_ORDER
 from app.sop.units import UNIT_ACTIVE, compute_display_id
 
-NEUTRAL = "neutral"  # 그림 단위의 언어 — 두 언어 숫자에 모두 센다
+NEUTRAL = "neutral"  # 그림·표처럼 언어가 없는 단위·새 문장의 언어 — 다른 언어 새 문장으로 치지 않는다
 # 한 언어만 남은 글을 세는 단위 종류·문서 언어 배치 — 그림·표는 언어가 없고, 한 언어 문서는 짝이 날 수 없다
 SINGLE_LANGUAGE_KINDS = ("sentence", "heading")
 TWO_LANGUAGE_LAYOUTS = ("ko_en_interleaved", "ko_en_separate")

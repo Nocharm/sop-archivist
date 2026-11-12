@@ -713,7 +713,7 @@ class MatchHandler:
         candidates = await _load_candidates(session, job.bundle_id, job.unit_ids, job.target_ids)
         if candidates.olds.keys() != set(job.unit_ids) or candidates.news.keys() != set(job.target_ids):
             return None
-        # 계획 뒤에 언어를 고치면 짝이 언어를 넘게 된다 — revision이 그대로라 여기서 막지 않으면 확정이 lang_mismatch로 거절된다
+        # 계획은 같은 언어·종류끼리만 견줘 묶는다(matching) — 그 뒤에 언어를 고치면 revision이 그대로라도 견준 근거가 없어져 낡음이다
         if len({entry.item.lang for entry in (*candidates.olds.values(), *candidates.news.values())}) > 1:
             return None
         try:
