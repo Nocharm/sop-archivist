@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { PanelTitle } from "@/components/admin/panel-title";
 import { describeRunDetail, getAbortReasonKey } from "@/lib/admin-format";
 import { getHrSyncPreview, listHrSyncRuns, runHrSync, type HrSyncPreview, type HrSyncRun, type HrSyncSummary } from "@/lib/api";
+import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
@@ -146,6 +147,8 @@ export function HrSyncPanel() {
       ),
     },
   ];
+  // 목록 응답이 503이면 이 서버는 HR 연결이 없다 - 실행·미리보기를 막고 한 번만 안내한다
+  const isNotConfigured = runs.error instanceof ApiError && runs.error.status === 503;
   const [busy, setBusy] = useState<"run" | "preview" | null>(null);
   const [result, setResult] = useState<SyncResult | null>(null);
   const [actionError, setActionError] = useState<unknown>(null);
@@ -181,12 +184,18 @@ export function HrSyncPanel() {
     <section data-testid="hr-sync-panel" className="space-y-6">
       <PanelTitle title={t("admin.tab.directory")} info={t("hr.intro")} testId="hr-info" />
 
+      {isNotConfigured && (
+        <InlineNotice testId="hr-sync-not-configured" tone="info">
+          {t("hr.notConfigured")}
+        </InlineNotice>
+      )}
+
       <div className="flex flex-wrap gap-2">
-        <button type="button" data-testid="hr-sync-run" className={BUTTON_PRIMARY} disabled={busy !== null} onClick={() => void handleRun()}>
+        <button type="button" data-testid="hr-sync-run" className={BUTTON_PRIMARY} disabled={busy !== null || isNotConfigured} onClick={() => void handleRun()}>
           {busy === "run" ? <Loader2 size={16} strokeWidth={1.5} className="animate-spin" /> : <RefreshCw size={16} strokeWidth={1.5} />}
           {busy === "run" ? t("hr.running") : t("hr.run")}
         </button>
-        <button type="button" data-testid="hr-sync-preview" className={BUTTON_SECONDARY} disabled={busy !== null} onClick={() => void handlePreview()}>
+        <button type="button" data-testid="hr-sync-preview" className={BUTTON_SECONDARY} disabled={busy !== null || isNotConfigured} onClick={() => void handlePreview()}>
           {busy === "preview" ? <Loader2 size={16} strokeWidth={1.5} className="animate-spin" /> : <Eye size={16} strokeWidth={1.5} />}
           {busy === "preview" ? t("hr.previewing") : t("hr.preview")}
         </button>
@@ -203,9 +212,9 @@ export function HrSyncPanel() {
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-semibold text-ink">{t("hr.runs.title")}</h3>
-          <ListViewToggle listKey={LIST_KEY} view={view} testId="hr-sync-runs-view" />
+          {!isNotConfigured && <ListViewToggle listKey={LIST_KEY} view={view} testId="hr-sync-runs-view" />}
         </div>
-        {runs.error !== null && (
+        {runs.error !== null && !isNotConfigured && (
           <InlineNotice testId="hr-sync-runs-error" tone="error">
             {humanizeApiError(runs.error, t)}
           </InlineNotice>

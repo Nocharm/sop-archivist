@@ -632,10 +632,10 @@ AI는 제안만 합니다. 사람이 줄마다 확인해 확정하기 전에는 
 | 메뉴 | 하는 일 |
 |---|---|
 | **Access** | **Roles**(권한 묶음), **Grants**(사람·부서에 주기), **Audit log**(바꾼 기록), **Lookup**(한 사람의 실제 권한 보기) |
-| **Directory sync** | 직원·부서 정보 동기화 기록과 바로 실행 |
+| **Directory sync** | 직원·부서 정보 동기화 기록과 바로 실행. 이 서버에 직원 동기화가 설정되어 있지 않으면 단추 줄 위에 안내가 뜨고 두 단추는 꺼집니다 |
 | **Batch jobs** | 백업 같은 정기 작업의 결과 |
 | **AI** | **Test connection** 으로 연결을 시험하고 **Daily usage** 로 사용량을 본다 |
-| **Bundles** | 모든 Bundle의 목록과 관리 |
+| **Bundles** | 모든 Bundle의 목록과 관리. 구성원 단추는 카드에서 맨 아래 줄 오른쪽 끝에 있고, 누르면 창 머리가 "멤버 — 코드 제목"으로 열립니다(긴 제목은 두 줄까지, 초점을 두면 전체가 툴팁으로 보임) |
 | **AI guidelines** | AI에 주는 지침. **Edit as a new version** 으로 고쳐 **Save version** 으로 저장한다 |
 
 > [!WARNING]

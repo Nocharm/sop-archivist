@@ -854,6 +854,128 @@ const AUDIT_ENTRIES = [
     expect: (value) => value >= 420,
     note: "1920 Documents (W1): title column cell width >= 420px",
   },
+  // ---- Task 11: 관리 화면 나머지와 창 ----
+  {
+    // B6: HR 미설정(503)이면 안내가 단추 줄 위에 서고 두 단추는 꺼지며 표·카드 토글이 숨는다(로컬은 HR 미설정이라 mid에서 잰다)
+    id: "B6", ds: "mid", user: "dev.admin", views: [1440],
+    path: () => "/admin?tab=directory",
+    open: async (page) => { await page.getByTestId("hr-sync-run").waitFor({ timeout: T }); },
+    measure: (page) => page.evaluate(() => {
+      const run = document.querySelector('[data-testid="hr-sync-run"]');
+      const preview = document.querySelector('[data-testid="hr-sync-preview"]');
+      const notice = document.querySelector('[data-testid="hr-sync-not-configured"]');
+      return {
+        disabled: run.disabled && preview.disabled,
+        noticeAbove: notice !== null && notice.getBoundingClientRect().top < run.getBoundingClientRect().top,
+        toggles: document.querySelectorAll('[data-testid="hr-sync-runs-view"]').length,
+      };
+    }),
+    expect: (value) => value.disabled && value.noticeAbove && value.toggles === 0,
+    note: "HR not configured: notice above the buttons, both disabled, no table/card toggle",
+  },
+  {
+    // C12: 관리 Bundle 카드는 메타 줄 오른쪽 끝에 구성원 단추를 두어 한 줄을 더 쓰지 않는다
+    id: "C12", ds: "mid", user: "dev.admin", views: [1440],
+    path: () => "/admin?tab=bundles",
+    open: async (page) => {
+      await page.getByTestId("admin-bundles-view-cards").click();
+      await page.locator('[data-testid="admin-bundles-list"] article').first().waitFor({ timeout: T });
+      await page.waitForTimeout(SETTLE_MS);
+    },
+    measure: (page) => page.locator('[data-testid="admin-bundles-list"] article').evaluateAll((cards) => {
+      const mid = cards.filter((card) => /SYNTHETIC [1-4] /.test(card.textContent));
+      return Math.round(Math.max(0, ...mid.map((card) => card.getBoundingClientRect().height)));
+    }),
+    expect: (value) => value > 0 && value <= 116,
+    note: "1440 admin Bundle cards (mid bundles) <= 116px",
+  },
+  {
+    // D1: 하위 항목을 고르면 그 항목이 --sel-bg, 부모 "권한"은 투명
+    id: "D1", ds: "mid", user: "dev.admin", views: [1440],
+    path: () => "/admin?tab=access",
+    measure: async (page) => {
+      const selBg = await page.evaluate(() => {
+        const probe = document.createElement("div");
+        probe.style.background = "var(--sel-bg)";
+        document.body.appendChild(probe);
+        const color = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return color;
+      });
+      const result = {};
+      for (const sub of ["roles", "grants", "audit"]) {
+        await page.getByTestId(`access-sub-${sub}`).click();
+        await page.waitForTimeout(400);
+        result[sub] = await page.evaluate(({ expected, sub }) => {
+          const subBg = getComputedStyle(document.querySelector(`[data-testid="access-sub-${sub}"]`)).backgroundColor;
+          const parentBg = getComputedStyle(document.querySelector('[data-testid="admin-tab-access"]')).backgroundColor;
+          return { sub: subBg === expected, parent: parentBg === "rgba(0, 0, 0, 0)" };
+        }, { expected: selBg, sub });
+      }
+      return result;
+    },
+    expect: (value) => Object.values(value).every((one) => one.sub && one.parent),
+    note: "selected access sub-item has the --sel-bg background (roles, grants, audit) and the parent tab stays transparent",
+  },
+  {
+    // R5: 멤버 창 모든 줄의 역할 선택 칸은 왼쪽 끝과 폭이 같다(W1 묶음 = 제목 146자, 멤버 5명)
+    id: "R5", ds: "worst", user: "dev.admin", views: [1120],
+    path: () => "/admin?tab=bundles",
+    open: async (page) => {
+      await page.getByTestId("admin-bundles-search").fill("W1 worst");
+      await page.waitForTimeout(600);
+      await page.locator('[data-testid^="admin-bundle-members-"]').first().click();
+      await page.locator('[data-testid="admin-bundle-members-modal"] [data-testid*="-remove-"]').first().waitFor({ timeout: T });
+      await page.waitForTimeout(400);
+    },
+    measure: (page) => page.locator('[data-testid^="admin-bundle-members-modal-role-"]').evaluateAll((selects) => ({
+      rows: selects.length,
+      lefts: [...new Set(selects.map((el) => Math.round(el.getBoundingClientRect().left)))],
+      widths: [...new Set(selects.map((el) => Math.round(el.getBoundingClientRect().width)))],
+    })),
+    expect: (value) => value.rows >= 2 && value.lefts.length === 1 && value.widths.length === 1 && value.widths[0] === 140,
+    note: "members dialog: every role select has the same left edge and is 140px wide",
+  },
+  {
+    // A13: 긴 제목 창 머리는 2줄로 접히고 "멤버"로 시작한다
+    id: "A13", ds: "worst", user: "dev.admin", views: [1120],
+    path: () => "/admin?tab=bundles",
+    open: async (page) => {
+      await page.getByTestId("admin-bundles-search").fill("W1 worst");
+      await page.waitForTimeout(600);
+      await page.locator('[data-testid^="admin-bundle-members-"]').first().click();
+      await page.getByTestId("admin-bundle-members-modal").waitFor({ timeout: T });
+      await page.waitForTimeout(400);
+    },
+    measure: (page) => page.evaluate(() => {
+      const dialog = document.querySelector('[data-testid="admin-bundle-members-modal"]');
+      const head = dialog.querySelector("h2");
+      return { height: Math.round(head.parentElement.getBoundingClientRect().height), text: head.textContent.trim().slice(0, 4) };
+    }),
+    expect: (value) => value.height <= 72 && value.text.startsWith("멤버"),
+    note: "1120 members dialog header <= 72px and the title starts with 멤버",
+  },
+  {
+    // Focus 2: A13 창 머리에 키보드 포커스가 가면 툴팁이 146자 제목 전체를 보인다
+    id: "Focus2b", ds: "worst", user: "dev.admin", views: [1120],
+    path: () => "/admin?tab=bundles",
+    open: async (page) => {
+      await page.getByTestId("admin-bundles-search").fill("W1 worst");
+      await page.waitForTimeout(600);
+      await page.locator('[data-testid^="admin-bundle-members-"]').first().click();
+      await page.getByTestId("admin-bundle-members-modal").waitFor({ timeout: T });
+      await page.waitForTimeout(400);
+      await page.keyboard.press("Shift"); // 방금 마우스로 눌렀으니 키보드 사용으로 바꿔 :focus-visible이 맞게 한다
+      await page.locator('[data-testid="admin-bundle-members-modal"] h2[tabindex="0"]').focus();
+      await page.waitForTimeout(500);
+    },
+    measure: async (page) => {
+      const tip = page.locator('[role="tooltip"]').first();
+      return (await tip.count()) === 0 ? 0 : (await tip.innerText()).length;
+    },
+    expect: (value) => value >= 146,
+    note: "focusing the clamped members-dialog header shows the full 146+ character title in a tooltip",
+  },
 ];
 // B5는 새(문서 0개) Bundle이면 되므로 mid에서도 W7로 한 번 더 잰다(W7은 같은 DB에 있다)
 AUDIT_ENTRIES.push({ ...AUDIT_ENTRIES.find((entry) => entry.id === "B5"), ds: "mid" });

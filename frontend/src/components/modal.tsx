@@ -8,6 +8,7 @@ import { useEffect, useEffectEvent, useId, useRef, type KeyboardEvent as ReactKe
 import { isTopEscLayer, popEscLayer, pushEscLayer } from "@/components/ui/floating";
 import { useI18n } from "@/lib/i18n";
 import { BUTTON_ICON } from "@/lib/ui-classes";
+import { Truncate } from "@/components/ui/motion";
 import { Tooltip } from "@/components/ui/tooltip";
 
 // Tab이 닿는 요소 - 꺼진 것과 숨긴 네이티브 입력(tabindex=-1)은 뺀다
@@ -45,6 +46,7 @@ export function Modal({ title, onClose, testId, children, footer, isBusy = false
   const { t } = useI18n();
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
   // 최신 onClose를 읽되 리스너를 다시 걸지 않는다
   const handleEscape = useEffectEvent(() => {
     if (!isBusy) onClose();
@@ -54,6 +56,9 @@ export function Modal({ title, onClose, testId, children, footer, isBusy = false
     const layer = pushEscLayer();
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const panel = panelRef.current;
+    // 두 줄로 잘린 제목만 키보드로 닿게 한다(툴팁이 전체 글을 보인다) - 짧은 제목은 Tab 정류장을 늘리지 않는다
+    const heading = titleRef.current;
+    if (heading && heading.firstElementChild && heading.firstElementChild.scrollHeight > heading.firstElementChild.clientHeight) heading.tabIndex = 0;
     if (panel && !panel.contains(document.activeElement)) {
       // 본문의 첫 입력·단추가 먼저고(닫기 단추는 마지막 후보), 없으면 창 자체
       const body = panel.querySelector<HTMLElement>("[data-modal-body]");
@@ -111,9 +116,9 @@ export function Modal({ title, onClose, testId, children, footer, isBusy = false
         className={`w-full ${PANEL_WIDTH[size]} rounded-lg border border-line bg-raised shadow-lg outline-none`}
         onKeyDown={handleTab}
       >
-        <div className="flex items-center justify-between border-b border-line px-4 py-3">
-          <h2 id={titleId} className="text-base font-semibold text-ink">
-            {title}
+        <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
+          <h2 id={titleId} ref={titleRef} className="modal-title min-w-0 flex-1 text-base leading-[22px] font-semibold text-ink">
+            <Truncate text={title} revealOnFocus />
           </h2>
           <Tooltip label={t("common.close")} align="end">
             <button type="button" data-testid={`${testId}-close`} data-modal-close className={BUTTON_ICON} aria-label={t("common.close")} disabled={isBusy} onClick={onClose}>

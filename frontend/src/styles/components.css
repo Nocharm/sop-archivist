@@ -359,6 +359,9 @@
   .dcard-meta dd { min-width: 0; margin: 0; color: var(--ink); }
   /* 동작 단추는 줄을 차지하지 않고 오른쪽 아래에 겹쳐 뜬다(호버·포커스로 드러남) - 바탕을 깔아 밑 글자와 섞이지 않게 */
   .dcard-actions { position: absolute; right: 6px; bottom: 6px; display: flex; gap: 2px; padding: 2px; border-radius: var(--r-2); background: inherit; }
+  /* 동작 단추가 라벨까지 펼쳐지는 카드(.mbtn-set) - 메타 줄 오른쪽 끝에 단추가 앉고, 펼친 라벨 폭(100px + 여백)만큼 그 줄 오른쪽을 비워 메타 글을 덮지 않는다. 늘 보이되 흐린 단추(.row-actions-quiet)라 컨테이너는 숨기지 않는다 */
+  .dcard:has(> .dcard-actions .mbtn-set) .dcard-meta { padding-right: 108px; }
+  .dcard-actions.row-actions:has(.row-actions-quiet) { opacity: 1; }
   /* cardActions="row" - 동작 단추가 카드 맨 아래 한 줄을 차지한다(늘 보이고 본문을 가리지 않는다). 키가 다른 옆 카드와도 바닥이 맞는다 */
   .dcard.has-foot { display: flex; flex-direction: column; }
   .dcard-foot { display: flex; justify-content: flex-end; gap: 2px; margin-top: auto; padding-top: 6px; border-top: 1px solid var(--line); }
@@ -394,9 +397,9 @@
   .side-nav-item[aria-selected="true"] { background: var(--sel-bg); color: var(--ink); }
   .side-nav-item[aria-selected="true"]::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 2px; border-radius: 1px; background: var(--accent); }
   .side-nav-item.sub { height: 28px; padding-left: 34px; font-size: var(--fs-cap); }
-  /* 하위 항목이 있는 상위 항목은 묶음 제목 역할만 한다 - 고른 표시는 하위 항목 하나에만 */
-  .side-nav-item[aria-selected="true"]:has(~ .sub) { background: transparent; font-weight: 600; }
-  .side-nav-item[aria-selected="true"]:has(~ .sub)::before { display: none; }
+  /* 하위 항목이 있는 상위 항목은 묶음 제목 역할만 한다 - 고른 표시는 하위 항목 하나에만(.sub 자신은 뒤에 형제 .sub가 또 있어도 제외) */
+  .side-nav-item[aria-selected="true"]:not(.sub):has(~ .sub) { background: transparent; font-weight: 600; }
+  .side-nav-item[aria-selected="true"]:not(.sub):has(~ .sub)::before { display: none; }
 
   /* 표·카드 전환 - 두 칸짜리 눌림 단추 */
   .view-toggle { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-2); background: var(--sunken); }
@@ -642,6 +645,14 @@
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   white-space: normal;
+}
+/* 창 머리 제목은 두 줄까지 - Truncate의 truncate 유틸리티를 이겨야 해서 층 밖에 둔다. 잘리면 포커스·호버 툴팁이 전체 글을 보인다 */
+.modal-title .truncate {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 /* 칩은 늘 제목 아래 줄 - 제목 길이와 상관없이 칩 왼쪽 끝이 카드마다 같다 */
 .dcard .dl-title-row { flex-direction: column; align-items: flex-start; }
