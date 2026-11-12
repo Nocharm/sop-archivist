@@ -643,8 +643,17 @@ const AUDIT_ENTRIES = [
         sep: document.querySelectorAll(".tb-sep").length,
       }), stage);
     },
-    expect: (value) => value.missing === 1 && value.back === 1 && value.retry === 0 && value.railLinks === 0 && value.rail === 0 && value.sep === 0,
-    note: "five stage URLs of a bundle prod.member cannot open: <id>-missing + <id>-back, no -retry, no stage rail, no top-bar divider",
+    expect: (value) => value.missing === 1 && value.back === 1 && value.retry === 0 && value.railLinks === 0 && value.rail === 0 && value.sep === 0 && value.topBack === 0,
+    note: "five stage URLs of a bundle prod.member cannot open: <id>-missing + <id>-back, no -retry, no stage rail, no top-bar divider or back arrow",
+  },
+  {
+    // B2b: 상단 바 뒤로 화살표는 묶음 밖 화면과 정상 Bundle에는 남는다(못 여는 Bundle에서만 숨긴다)
+    id: "B2b", ds: "mid", user: MEMBER, views: [1120],
+    path: (ids) => ["/account", "/manual", "/no-such-page", `/bundles/${ids.mid[2]}/documents`],
+    open: async (page) => { await page.getByTestId("top-bar").waitFor({ timeout: T }); await page.waitForTimeout(600); },
+    measure: (page) => page.locator('[data-testid="top-bar-back"]').count(),
+    expect: (value) => value === 1,
+    note: "top-bar-back is present on /account, /manual, /no-such-page and a normally loading bundle",
   },
 ];
 // B5는 새(문서 0개) Bundle이면 되므로 mid에서도 W7로 한 번 더 잰다(W7은 같은 DB에 있다)

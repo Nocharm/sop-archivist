@@ -29,7 +29,8 @@ export function TopBar() {
   const inBundle = parseBundlePath(pathname);
   const { bundle, error: bundleError } = useBundle(inBundle?.bundleId ?? null);
   // 못 여는 Bundle이면 묶음 안 내비(뒤로·구분선·제목)를 그리지 않는다 - 화면의 목록으로 가기 단추가 길이다
-  const isBundleOpen = inBundle !== null && !(bundleError !== null && bundle === null);
+  const isBundleLoadFailed = inBundle !== null && bundleError !== null && bundle === null;
+  const isBundleOpen = inBundle !== null && !isBundleLoadFailed;
 
   return (
     <header className="tb" data-testid="top-bar">
@@ -40,7 +41,7 @@ export function TopBar() {
       <span data-testid="top-bar-version" className="tb-dim shrink-0 whitespace-nowrap font-mono text-[11px]">
         {`v${APP_VERSION}`}
       </span>
-      {isBundleOpen && <BackLink />}
+      {!isBundleLoadFailed && <BackLink />}
       {isBundleOpen && (
         <>
           <span className="tb-sep" aria-hidden />

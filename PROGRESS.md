@@ -5,6 +5,7 @@
 ## 2026-11-12
 
 - **화면 검토 반영 8/14 없는 주소·못 여는 Bundle (`fix/screen-review`)** — `app/not-found.tsx`가 앱 틀 안에서 `EmptyState`+목록으로 가는 단추를 그린다(B1, 다크 body 배경 = `--bg`). Documents·Split·Assign·Outputs·History의 로드 실패를 `BundleLoadError`로 바꿔 403·404면 다시 시도 대신 목록으로 가는 길만 둔다(B2, Split은 문서 목록 실패 분기도 같은 `split` id). 못 연 Bundle에서는 상단 바 뒤로·구분선·제목과 단계 레일을 그리지 않는다(R6, 정상 Bundle은 그대로).
+- **8/14 보정** — 상단 바 뒤로 화살표는 못 여는 Bundle에서만 숨기고 묶음 밖 화면(`/account`·`/manual`·없는 주소)에는 되돌렸다(감사 B2b).
 
 - **화면 검토 반영 7/14 개요 (`fix/screen-review`)** — 장비 SOP 칸 안내가 2개 이상이면 `groupNotices`로 한 줄(`overview-notice-group`, 누르면 코드 목록)로 묶고 검토 요청 단추를 안내 위로 올렸다(A12). 문서 0개 Bundle은 조건 목록·Coverage 대신 중립 한 줄(B5), 되돌림 사유는 8줄 자름+안쪽 스크롤 대신 아래 흐림+더 보기(R4). `overview.noticesMore` 키는 쓸 곳이 없어 더하지 않았다.
 
