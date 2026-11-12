@@ -351,12 +351,11 @@ export default function SplitPage() {
   /** 합친 한 문장 → 한/영 짝: 합치기를 풀고(판단이 걸렸으면 확인 창) 되살아난 단위들을 짝으로 맺는다. 둘째 단계부터 실패하면 어디까지 됐는지 알린다 */
   function switchToPair(unit: ViewUnit) {
     if (!data || docId === null) return;
-    const beforeIds = new Set(data.units.map((item) => item.id));
     const revision = data.document.revision;
     void runChange(async (confirm) => {
       const undone = await editUnits(bundleId, docId, revision, { type: "unmerge", unit_id: unit.id }, confirm);
       try {
-        const paired = await pairRestored(docId, beforeIds);
+        const paired = await pairRestored(docId, undone.created_unit_ids);
         // 전환 전체의 결과 - 되살아난 단위를 새 단위로 알려 첫째를 고른 채로 둔다(짝 칸이 바로 보이게)
         return { document_revision: paired.revision, created_unit_ids: paired.unitIds, retired_unit_ids: undone.retired_unit_ids };
       } catch (err) {
@@ -365,10 +364,10 @@ export default function SplitPage() {
     }, t("split.didJoin"));
   }
 
-  /** 합치기를 푼 뒤 - 보기를 다시 읽어 전에 없던 단위를 되살아난 단위로 보고 짝으로 맺는다. 언어가 같게(또는 없게) 잡혔으면 라틴 글자가 많은 쪽을 EN, 나머지를 KO로 바꾼다 */
-  async function pairRestored(viewDocId: number, beforeIds: ReadonlySet<number>): Promise<{ revision: number; unitIds: number[] }> {
+  /** 합치기를 푼 뒤 - 풀기 결과가 알려 준 되살아난 단위를 보기에서 읽어(언어·글) 짝으로 맺는다. 언어가 같게(또는 없게) 잡혔으면 라틴 글자가 많은 쪽을 EN, 나머지를 KO로 바꾼다 */
+  async function pairRestored(viewDocId: number, restoredIds: readonly number[]): Promise<{ revision: number; unitIds: number[] }> {
     const view = await getDocumentView(bundleId, viewDocId);
-    const restored = view.units.filter((item) => !beforeIds.has(item.id));
+    const restored = view.units.filter((item) => restoredIds.includes(item.id));
     if (restored.length < 2) throw new Error(`unmerge restored ${restored.length} unit(s)`);
     let revision = view.document.revision;
     if (planJoin(restored, false).kind !== "pair") {

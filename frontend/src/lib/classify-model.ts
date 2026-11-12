@@ -279,10 +279,32 @@ export interface SentenceSlot {
   isTranslated: boolean;
 }
 
-/** 칸 언어가 출처 단위들의 언어와 모두 다른가 - 중립은 번역이 될 수 없다(서버 _decide_change_type과 같다) */
+/** 새 문장 언어가 단위들의 언어와 모두 다른가 - 중립은 번역이 될 수 없다(서버 _decide_change_type과 같다) */
+export function isTranslationOf(lang: ViewUnit["lang"], unitLangs: readonly ViewUnit["lang"][]): boolean {
+  return lang !== "neutral" && unitLangs.length > 0 && unitLangs.every((source) => source !== "neutral" && source !== lang);
+}
+
+/** 칸 언어가 출처 단위들의 언어와 모두 다른가 - 출처 언어를 모르면 번역으로 보지 않는다 */
 function isTranslatedFrom(lang: ViewUnit["lang"], sourceIds: number[], langOf: Map<number, ViewUnit["lang"]>): boolean {
-  const langs = sourceIds.map((id) => langOf.get(id));
-  return lang !== "neutral" && langs.length > 0 && langs.every((source) => source !== undefined && source !== "neutral" && source !== lang);
+  const langs = sourceIds.flatMap((id) => {
+    const source = langOf.get(id);
+    return source === undefined ? [] : [source];
+  });
+  return langs.length === sourceIds.length && isTranslationOf(lang, langs);
+}
+
+/** 새 문장 칸이 되는 단위인가 - 표·행·그림이 아닌 글 단위(문장·제목·표에 묶이지 않은 칸 문장) */
+export function isSentenceUnit(kind: string): boolean {
+  return !TABLE_KINDS.includes(kind) && kind !== "figure";
+}
+
+/**
+ * 줄에 그 언어 새 문장이 이미 있는가 - 칸(사람이 쓴 것·쓰는 중인 빈 칸)이나 줄 단위의 번역 행(AI 제안 포함).
+ * 있으면 "만들기"·"쓰기"를 보이지 않는다 - 또 만들면 같은 언어 문장이 겹친다.
+ */
+export function hasRowLanguage(lang: ViewUnit["lang"], slots: SentenceSlot[], group: Group | null, unitIds: readonly number[]): boolean {
+  return slots.some((slot) => slot.lang === lang)
+    || (group?.targets ?? []).some((target) => target.origin === "translation" && target.lang === lang && target.translation_source_unit_id !== null && unitIds.includes(target.translation_source_unit_id));
 }
 
 /**
@@ -290,7 +312,7 @@ function isTranslatedFrom(lang: ViewUnit["lang"], sourceIds: number[], langOf: M
  * extra가 있으면 끝에 사람이 직접 쓸 다른 언어의 빈 칸을 하나 더한다(출처는 그 단위 - 저장하면 번역).
  */
 export function buildSentenceSlots(group: Group | null, units: SourceUnit[], extra: OtherLangSlot | null = null): SentenceSlot[] {
-  const sentenceUnits = units.filter((unit) => !TABLE_KINDS.includes(unit.kind) && unit.kind !== "figure");
+  const sentenceUnits = units.filter((unit) => isSentenceUnit(unit.kind));
   const unitIds = new Set(sentenceUnits.map((unit) => unit.id));
   const langOf = new Map(sentenceUnits.map((unit) => [unit.id, unit.lang]));
   const position = new Map(sentenceUnits.map((unit, index) => [unit.id, index]));
@@ -472,8 +494,9 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
     if (target.origin === "new_doc") {
       const others = target.source_unit_ids.filter((id) => !rowIds.has(id));
       const sameLang = active.filter((unit) => unit.lang === target.lang);
-      const isTranslation = sameLang.length === 0;
-      const added = picked.has(target.id) ? (isTranslation ? active : sameLang).map((unit) => unit.id) : [];
+      // 같은 언어 단위가 없으면 줄 전체가 출처다. 종류를 서버가 번역으로 정하는 것은 중립 단위가 끼지 않을 때뿐이라 그때만 종류를 빼고 보낸다
+      const isTranslation = isTranslationOf(target.lang, active.map((unit) => unit.lang));
+      const added = picked.has(target.id) ? (sameLang.length === 0 ? active : sameLang).map((unit) => unit.id) : [];
       const sources = [...others, ...added];
       if (sources.length === 0) {
         // 줄만 출처였던 문장은 서버가 미배정으로 되돌린다. 원래 출처가 없던 문장은 묶음에 따라온 것이라 그대로 되보낸다

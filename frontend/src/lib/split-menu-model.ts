@@ -106,7 +106,7 @@ export function getPairMergeReason(members: ViewUnit[], order: readonly number[]
   return null;
 }
 
-const HANGUL_SYLLABLE =/[\uAC00-\uD7A3]/;
+const HANGUL_SYLLABLE = /[\uAC00-\uD7A3]/;
 const LATIN_LETTER = /[A-Za-z]/;
 
 /** 글에 한글 음절과 라틴 글자가 모두 있다 - 합친 한 문장을 한/영 짝으로 되돌릴 수 있는지의 기준 */

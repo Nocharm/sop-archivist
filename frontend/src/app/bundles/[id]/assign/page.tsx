@@ -88,7 +88,10 @@ import {
   getDestinationId,
   getRowStep,
   hasDraftChange,
+  hasRowLanguage,
+  isSentenceUnit,
   isTextChangeType,
+  isTranslationOf,
   listLinkLeftovers,
   listUnpairedKeys,
   pickLinkUnits,
@@ -553,12 +556,12 @@ export default function AssignPage() {
 
   /**
    * 묶음 저장 응답의 짝 정리를 화면에 반영한다 - 짝은 서버가 같은 저장 안에서 확정하거나 푼다(설계 §5.2).
-   * 정리하면 문서 revision이 바뀌어 원문 보기를 다시 받는다(다음 짝·나누기 요청이 낡은 revision으로 거절되지 않게).
+   * 푼 짝이 있을 때만 원문 보기를 다시 받는다 - 줄은 보기의 짝에서 나온다. 확정만 됐으면 줄이 그대로이고 이 화면은 짝 상태도 문서 revision도 쓰지 않는다.
    * 이 줄의 짝이 풀렸으면 거르기 자리의 짝 줄을 풀린 줄들로 바꾸고 true - 남은 문장이 목록에서 사라지지 않게.
    */
   function applyPairSettle(savedRow: ClassifyRow, saved: Group, leftovers: number[]): boolean {
     const dissolved = saved.pairs_dissolved ?? [];
-    if (dissolved.length + (saved.pairs_confirmed ?? []).length > 0) views.reload();
+    if (dissolved.length > 0) views.reload();
     if (savedRow.pairId === null || !dissolved.includes(savedRow.pairId)) return false;
     setSnapshot((prev) => prev && { ...prev, keys: prev.keys.flatMap((key) => (key === savedRow.key ? listUnpairedKeys(savedRow) : [key])) });
     const ids = leftovers.map((id) => unitMap.get(id)?.display_id ?? String(id)).join(", ");
@@ -810,6 +813,13 @@ export default function AssignPage() {
     void runSave("confirm");
   }
 
+  /** 고쳐 쓰기를 닫는다 - 직접 쓰는 다른 언어 칸이 비어 있으면 그 칸도 걷어 "쓰기" 단추가 다시 나오게 한다 */
+  function closeEditing() {
+    const other = draft.otherLang ?? null;
+    const isOtherEmpty = other !== null && !(draft.texts[`x${other.unitId}`] ?? "").trim();
+    setDraft(isOtherEmpty ? { otherLang: null } : {}, false);
+  }
+
   function startEdit() {
     if (!destination || destination.kind !== "slot" && destination.kind !== "step") return;
     setDraft({}, true);
@@ -819,7 +829,7 @@ export default function AssignPage() {
   const handleKey = useEffectEvent((event: KeyboardEvent) => {
     // 그 자리 메뉴는 화면 단축키를 막지 않는다 - 메뉴가 떠 있어도 ↵가 확정이다(메뉴 안의 키는 메뉴가 먼저 받는다)
     if (bulk || isTypingTarget(event.target) || document.querySelector('[role="dialog"],[role="menu"]:not([data-link-menu]),[role="listbox"]')) {
-      if (event.key === "Escape" && editing) setDraft({}, false);
+      if (event.key === "Escape" && editing) closeEditing();
       // 고치는 중에는 Enter가 줄바꿈이라 Ctrl+Enter로 저장한다
       if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && editing && isTypingTarget(event.target)) {
         event.preventDefault();
@@ -862,9 +872,11 @@ export default function AssignPage() {
   const disposed = destination?.kind === "delete" || destination?.kind === "move";
   const isPlace = destination?.kind === "slot" || destination?.kind === "step";
   const primaryState = !destination ? "choose" : editing ? "save" : "confirm";
-  const otherLang = canMakeOtherLanguage(rowLangs, savedDestination, row?.status === "confirmed");
-  // 직접 쓰는 다른 언어 문장의 출처 - 줄의 문장 단위(표·그림은 칸 문장을 따로 쓰지 않는다)
-  const writeOtherUnit = rowUnits.find((unit) => unit.kind === "sentence")?.unit_id ?? null;
+  // 줄에 이미 그 언어 새 문장이 있으면(직접 쓴 것·쓰는 중인 칸·AI 번역) 만들기·쓰기를 보이지 않는다
+  const missingLang = canMakeOtherLanguage(rowLangs, savedDestination, row?.status === "confirmed");
+  const otherLang = missingLang !== null && !hasRowLanguage(missingLang, slots, groupData, row?.unitIds ?? []) ? missingLang : null;
+  // 직접 쓰는 다른 언어 문장의 출처 - 줄의 글 단위(문장·제목·묶이지 않은 칸 문장. 표·그림은 칸 문장을 따로 쓰지 않는다)
+  const writeOtherUnit = rowUnits.find((unit) => isSentenceUnit(unit.kind))?.unit_id ?? null;
 
   /** 다른 언어 직접 쓰기 - 고쳐 쓰기로 들어가 빈 칸 하나를 더하고 그 칸에 포커스 */
   function startWriteOther(lang: "ko" | "en", unitId: number) {
@@ -1082,7 +1094,7 @@ export default function AssignPage() {
     const isConfirmedView = row?.status === "confirmed" && draft.destination === null;
     const pickedRows = linkIds.map((id) => writtenMap.get(id)).filter((item): item is WrittenSentence => item !== undefined);
     // 줄에 없는 언어의 문장은 번역이다 - 종류를 고르지 않고, 나눔도 같은 언어 문장끼리만 센다(설계 §5.2)
-    const translatedIds = new Set(pickedRows.filter((item) => !rowLangs.includes(item.lang)).map((item) => item.target_id));
+    const translatedIds = new Set(pickedRows.filter((item) => isTranslationOf(item.lang, rowLangs)).map((item) => item.target_id));
     const byLang = new Map<string, number>();
     for (const item of pickedRows) if (!translatedIds.has(item.target_id)) byLang.set(item.lang, (byLang.get(item.lang) ?? 0) + 1);
     const mergedWith = [...new Set(pickedRows.flatMap((item) => item.source_unit_ids).filter((id) => !row?.unitIds.includes(id)))].map((id) => unitMap.get(id)?.display_id ?? String(id));
@@ -1146,8 +1158,8 @@ export default function AssignPage() {
                 {t(otherLang === "en" ? "assign.makeEn" : "assign.makeKo")}
               </button>
             )}
-            {/* AI가 꺼져 있어도 빠진 언어를 채울 수 있게 - 이미 그 언어 칸이 있으면(직접 쓰는 중이거나 저장됨) 보이지 않는다 */}
-            {writeOtherUnit !== null && !slots.some((slot) => slot.lang === otherLang) && (
+            {/* AI가 꺼져 있어도 빠진 언어를 채울 수 있게 */}
+            {writeOtherUnit !== null && (
               <button type="button" className="btn h-7" data-testid="assign-write-other" disabled={busy} onClick={() => startWriteOther(otherLang, writeOtherUnit)}>
                 <FilePen size={14} strokeWidth={1.5} aria-hidden />
                 {t(otherLang === "en" ? "assign.writeEn" : "assign.writeKo")}
@@ -1174,16 +1186,17 @@ export default function AssignPage() {
           </span>
         </span>
       </button>
-      <div className="grid grid-cols-3 gap-1.5">
+      {/* 칸 폭은 라벨 길이를 따르고(Hold가 좁다), 셋이 글쇠 표시까지 들어가지 않는 폭(영어 라벨 약 331px)에서는 글쇠 표시를 뺀다 - 단축키는 Help에 있다 */}
+      <div className="@container grid grid-cols-[auto_auto_auto] gap-1.5">
         <button type="button" className="btn h-8 min-w-0 gap-1 px-1 text-xs font-normal" data-testid="assign-edit" disabled={!canEdit || !isPlace || editing || busy} onClick={startEdit}>
           <FilePen size={13} strokeWidth={1.5} aria-hidden />
-          {t("classify.editConfirm")} <kbd>E</kbd>
+          {t("classify.editConfirm")} <kbd className="@max-[340px]:hidden">E</kbd>
         </button>
         <button type="button" className="btn h-8 min-w-0 gap-1 px-1 text-xs font-normal" data-testid="assign-hold" disabled={!canEdit || !row || busy} onClick={() => void runSave("hold")}>
-          {t("classify.hold")} <kbd>H</kbd>
+          {t("classify.hold")} <kbd className="@max-[340px]:hidden">H</kbd>
         </button>
         <button type="button" className="btn h-8 min-w-0 gap-1 px-1 text-xs font-normal" data-testid="assign-clear" disabled={!canEdit || !row || row.status === "unassigned" || busy} onClick={() => void runClear()}>
-          {t("classify.clear")} <kbd>U</kbd>
+          {t("classify.clear")} <kbd className="@max-[340px]:hidden">U</kbd>
         </button>
       </div>
     </div>
