@@ -93,7 +93,7 @@ async function auditHover(page, selector, report) {
 }
 
 const mbtnScenes = [
-  { name: "documents", user: "qa.member", url: `/bundles/${BUNDLE}/documents`, ready: '[data-testid$="-delete"]', buttons: ".mbtn-set > .mbtn:not(:disabled)" },
+  { name: "documents", user: "qa.member", url: `/bundles/${BUNDLE}/documents`, ready: '[data-testid$="-delete"]', buttons: '.row-actions-quiet button:not(:disabled)' },
   { name: "tobe", user: "qa.member", url: `/bundles/${BUNDLE}/tobe`, ready: '[data-testid="tobe-list"]', buttons: '[data-testid$="-remove"]:not(:disabled)', long: async (page) => {
     for (const input of await page.locator('input[data-testid$="-title"]').all()) await input.fill("SYNTHETIC very long document title that keeps going and going across the whole column width");
   } },
