@@ -91,7 +91,22 @@ export function planJoin(units: ViewUnit[], adjacent: boolean): JoinPlan {
   return refuse(why("noLanguage"));
 }
 
-const HANGUL_SYLLABLE = /[\uAC00-\uD7A3]/;
+/**
+ * 짝을 한 문장으로 합칠 수 없는 까닭(전환의 One sentence) - 합칠 수 있으면 null. order는 용지의 단위 순서.
+ * 구성 단위가 문서 순서로 끊김 없이 이어져야 한다(떨어진 조각의 합치기는 서버가 받지만 화면에서는 이웃한 조각만 합친다).
+ */
+export function getPairMergeReason(members: ViewUnit[], order: readonly number[]): string | null {
+  const placed = members.map((unit) => ({ unit, at: order.indexOf(unit.id) })).sort((a, b) => a.at - b.at);
+  const isRun = placed.every((item, index) => item.at >= 0 && (index === 0 || item.at === placed[index - 1].at + 1));
+  if (!isRun) return why("notAdjacent");
+  for (let index = 1; index < placed.length; index += 1) {
+    const blocker = getMergeBlocker(placed[index - 1].unit, placed[index].unit);
+    if (blocker) return MERGE_BLOCKER_KEYS[blocker];
+  }
+  return null;
+}
+
+const HANGUL_SYLLABLE =/[\uAC00-\uD7A3]/;
 const LATIN_LETTER = /[A-Za-z]/;
 
 /** 글에 한글 음절과 라틴 글자가 모두 있다 - 합친 한 문장을 한/영 짝으로 되돌릴 수 있는지의 기준 */

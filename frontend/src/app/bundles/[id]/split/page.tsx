@@ -54,7 +54,7 @@ import { buildGroupSave } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
 import { buildPaperModel, buildPaperTabs, canSplitAt, countUnchecked, readWarningText, resolveCutDrag, shouldRecenter, toBlockOffset, toUnitOffset, type PaperSheet, type PaperTabKey } from "@/lib/paper-model";
 import { getSplitKeyAction } from "@/lib/split-keys";
-import { buildSplitMenu, getAiSplitReason, hasBothScripts, isAiSplitKind, isUnitDecided, pickEnglishSide, planJoin, type JoinKind, type JoinPlan, type SplitMenuAction } from "@/lib/split-menu-model";
+import { buildSplitMenu, getAiSplitReason, getPairMergeReason, hasBothScripts, isAiSplitKind, isUnitDecided, pickEnglishSide, planJoin, type JoinKind, type JoinPlan, type SplitMenuAction } from "@/lib/split-menu-model";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 import { buildAiTabs } from "@/lib/split-ai-tabs-model";
@@ -537,6 +537,10 @@ export default function SplitPage() {
   const pickReason = pickPlan?.reasonKey ? t(pickPlan.reasonKey) : null;
   // 합친 한 문장을 짝으로 되돌리려면 한글과 라틴 글자가 모두 있어야 한다
   const pairModeReason = selected && !pair && !hasBothScripts(selected.text) ? t("split.menu.why.oneLanguage") : null;
+  // 짝을 한 문장으로 - 이웃한 짝만(떨어진 짝은 화면에서 합치지 않는다)
+  const pairMembers = (pair?.unit_ids ?? []).map((id) => model?.units.get(id)).filter((unit): unit is ViewUnit => unit !== undefined);
+  const oneModeKey = pair ? getPairMergeReason(pairMembers, tabs?.order ?? []) : null;
+  const oneModeReason = oneModeKey === null ? null : t(oneModeKey);
   const document_ = data?.document;
   const page = selected ? data?.blocks.find((block) => block.id === selected.block_id) : null;
 
@@ -843,9 +847,11 @@ export default function SplitPage() {
                         className={`btn h-7 ${pair ? "" : "pri"}`}
                         aria-pressed={pair === null}
                         // disabled를 쓰지 않는다 - 누른 단추가 꺼지면 포커스가 문서로 떨어진다
-                        aria-disabled={busy ? "true" : undefined}
+                        aria-disabled={busy || oneModeReason !== null ? "true" : undefined}
+                        aria-label={oneModeReason ? `${t("split.join.one")} - ${oneModeReason}` : undefined}
+                        data-tip={oneModeReason ?? undefined}
                         data-testid="split-join-mode-one"
-                        onClick={() => pair && !busy && joinUnits(pair.unit_ids, "merge")}
+                        onClick={() => pair && !busy && oneModeReason === null && joinUnits(pair.unit_ids, "merge")}
                       >
                         {t("split.join.one")}
                       </button>

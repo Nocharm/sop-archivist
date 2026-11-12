@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ViewUnit } from "./api-sop";
-import { buildSplitMenu, getAiSplitReason, hasBothScripts, pickEnglishSide, planJoin, type SplitMenuAction, type SplitMenuContext } from "./split-menu-model";
+import { buildSplitMenu, getAiSplitReason, getPairMergeReason, hasBothScripts, pickEnglishSide, planJoin, type SplitMenuAction, type SplitMenuContext } from "./split-menu-model";
 
 function makeUnit(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
   return {
@@ -53,6 +53,21 @@ describe("planJoin", () => {
     expect(planJoin([makeUnit(1), makeUnit(2, { lang: "neutral" })], true)).toEqual({ kind: null, reasonKey: "split.menu.why.noLanguage" });
     const cells = [makeUnit(1, { kind: "cell_sentence", group_unit_id: 5 }), makeUnit(2, { kind: "cell_sentence", group_unit_id: 6 })];
     expect(planJoin(cells, true)).toEqual({ kind: null, reasonKey: "split.noMergeCell" });
+  });
+});
+describe("getPairMergeReason", () => {
+  const order = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+  it("lets a pair whose members are neighbours become one sentence", () => {
+    expect(getPairMergeReason([makeUnit(3, { pair_id: 7 }), makeUnit(2, { lang: "en", pair_id: 7 })], order)).toBeNull();
+    expect(getPairMergeReason([makeUnit(4, { pair_id: 7 }), makeUnit(5, { lang: "en", pair_id: 7 }), makeUnit(6, { lang: "en", pair_id: 7 })], order)).toBeNull();
+  });
+  it("does not merge a pair whose members are far apart", () => {
+    expect(getPairMergeReason([makeUnit(1, { pair_id: 7 }), makeUnit(9, { lang: "en", pair_id: 7 })], order)).toBe("split.menu.why.notAdjacent");
+    expect(getPairMergeReason([makeUnit(1, { pair_id: 7 }), makeUnit(2, { lang: "en", pair_id: 7 }), makeUnit(4, { lang: "en", pair_id: 7 })], order)).toBe("split.menu.why.notAdjacent");
+  });
+  it("gives the merge rule's reason for neighbours that cannot merge", () => {
+    const cells = [makeUnit(1, { kind: "cell_sentence", group_unit_id: 5, pair_id: 7 }), makeUnit(2, { kind: "cell_sentence", lang: "en", group_unit_id: 6, pair_id: 7 })];
+    expect(getPairMergeReason(cells, order)).toBe("split.noMergeCell");
   });
 });
 describe("pickEnglishSide", () => {

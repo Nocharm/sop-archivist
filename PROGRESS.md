@@ -11,6 +11,7 @@
 - **목록·개요·관리 숫자를 줄 기준 한 벌로(Task 3, frontend)** — `RowProgress` 타입과 `progress-model.ts`(`countPending`·`getConfirmedPercent`), 목록·관리는 확정 열 하나, 개요 Coverage는 비율·막대·표 한 벌과 `single_language` 보조 문장. 사용 설명서·스모크 선택자 동기화. `LangMark` 부품은 Task 6에서 지운다.
 - **다른 언어끼리 합치기 허용(Task 4, backend)** — 합치기의 422 `mixed_language`를 없앴다. 섞이면 합친 단위 언어는 글자로 판정(한글이 있으면 ko), 섞어 합친 것을 풀면 각 단위가 제 언어로 돌아온다(같은 언어끼리 합친 경우의 "지금 언어를 따름"은 유지). 짝 멤버를 모두 합치면 기존 `_leave_pairs`가 짝을 지운다.
 - **쪼개기의 묶기를 `Join` 하나로(Task 5, frontend)** — 틈 단추·우클릭 메뉴·떨어진 조각 고르기가 `planJoin` 한 규칙(같은 언어=이웃만 합치기, 한/영=짝, 이미 짝이면 꺼짐). 옆 칸 `Joined with`에 `One sentence | KO/EN pair` 전환(짝→합치기, 합친 문장→풀고 다시 짝, 같은 언어로 잡혔으면 라틴 글자가 많은 쪽을 EN으로) — 두 단계 중 둘째가 실패하면 `split.join.partly`. `Language` 칸·배치 어긋남 경고·`Confirm pair` 삭제, 언어 직접 고치기는 우클릭 메뉴에만.
+- **떨어진 짝은 한 문장으로 합치지 않는다(Task 5 고침)** — 명세 §5.1 "화면에서는 이웃한 조각만 합친다"에 맞춰 `One sentence`는 짝 구성원이 문서 순서로 끊김 없이 이어질 때만 켜진다(`getPairMergeReason`, 합치기 규칙 위반이면 그 까닭도). 한/영 따로 문서의 짝은 흐리고 `notAdjacent`.
 
 ## 2026-11-12
 
