@@ -804,5 +804,6 @@ def test_creating_a_bundle_skips_the_readiness_computation(client: TestClient) -
 
     assert response.status_code == 201, response.text
     assert response.json()["next_action"] == "upload_documents"
-    snapshot_tables = ("FROM source_blocks", "FROM target_sentences", "FROM target_docs")  # 진행 숫자 집계는 읽지 않는 표
+    # 스냅숏만 읽는 표 — target_sentences는 진행 숫자(한 언어 글 세기)도 하위 질의로 보므로 기준에서 뺀다
+    snapshot_tables = ("FROM source_blocks", "FROM target_docs")
     assert not [statement for statement in statements if any(table in statement for table in snapshot_tables)]
