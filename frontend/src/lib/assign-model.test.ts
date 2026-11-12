@@ -244,26 +244,26 @@ describe("isRecommendationPicked", () => {
 });
 
 describe("buildLinkPairs", () => {
-  const rows = [makeWritten(71, { lang: "ko", source_unit_ids: [10] }), makeWritten(72, { lang: "en", source_unit_ids: [11, 99] }), makeWritten(73, { lang: "ko" })];
+  const rows = [makeWritten(71, { lang: "ko", source_unit_ids: [10] }), makeWritten(72, { lang: "en", source_unit_ids: [11, 99], status: "ai_suggested" }), makeWritten(73, { lang: "ko" })];
 
-  it("keeps only sources in the open Old document", () => {
+  it("keeps only sources in the open Old document and marks AI-suggested links", () => {
     expect(buildLinkPairs(rows, new Set([10, 11]), null)).toEqual([
-      { unitId: 10, targetId: 71, draft: false },
-      { unitId: 11, targetId: 72, draft: false },
+      { unitId: 10, targetId: 71, draft: false, ai: false },
+      { unitId: 11, targetId: 72, draft: false, ai: true },
     ]);
   });
 
   it("adds unsaved picks against same-language units only, once", () => {
     const pairs = buildLinkPairs(rows, new Set([10, 11, 12]), { units: [{ id: 10, lang: "ko" }, { id: 12, lang: "en" }], targetIds: [71, 73] });
-    expect(pairs.filter((pair) => pair.draft)).toEqual([{ unitId: 10, targetId: 73, draft: true }]);
+    expect(pairs.filter((pair) => pair.draft)).toEqual([{ unitId: 10, targetId: 73, draft: true, ai: false }]);
   });
 });
 
 describe("findLinkPartners and pickDrawnLinks", () => {
   const pairs = [
-    { unitId: 10, targetId: 71, draft: false },
-    { unitId: 10, targetId: 72, draft: false },
-    { unitId: 11, targetId: 72, draft: false },
+    { unitId: 10, targetId: 71, draft: false, ai: false },
+    { unitId: 10, targetId: 72, draft: false, ai: false },
+    { unitId: 11, targetId: 72, draft: false, ai: false },
   ];
 
   it("finds the other side", () => {
@@ -278,7 +278,7 @@ describe("findLinkPartners and pickDrawnLinks", () => {
   });
 
   it("draws only focused lines when there are many", () => {
-    expect(pickDrawnLinks(pairs, new Set(), new Set([71]), 2)).toEqual([{ unitId: 10, targetId: 71, draft: false, strong: true }]);
+    expect(pickDrawnLinks(pairs, new Set(), new Set([71]), 2)).toEqual([{ unitId: 10, targetId: 71, draft: false, ai: false, strong: true }]);
     expect(pickDrawnLinks(pairs, new Set(), new Set(), 2)).toEqual([]);
   });
 });
