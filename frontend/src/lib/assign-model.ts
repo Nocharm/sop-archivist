@@ -32,12 +32,12 @@ export function listCoConfirmed(group: Group, rowUnitIds: number[], picked: numb
   return [...units, ...targets];
 }
 
-/** 한 언어 문장을 고르면 그 New 짝 문장도 - 줄에 그 언어 Old 조각이 있을 때만(없으면 붙일 출처가 없다) */
-export function addPartnerTargets(picked: number[], rowLangs: UnitLang[], written: Map<number, WrittenSentence>): number[] {
+/** 한 언어 문장을 고르면 그 New 짝 문장도 늘 함께 - 줄에 그 언어 Old 조각이 없으면 줄의 조각이 출처가 되어 번역이 된다(설계 §5.2) */
+export function addPartnerTargets(picked: number[], written: Map<number, WrittenSentence>): number[] {
   const result = [...picked];
   for (const id of picked) {
     const partner = written.get(written.get(id)?.partner_target_id ?? -1);
-    if (partner && rowLangs.includes(partner.lang) && !result.includes(partner.target_id)) result.push(partner.target_id);
+    if (partner && !result.includes(partner.target_id)) result.push(partner.target_id);
   }
   return result;
 }
@@ -68,7 +68,7 @@ function keyOf(destination: Destination): string {
 
 /**
  * ① 추천 - AI 연결 → AI 칸·삭제 → 같은 글자 → 비슷한 문장, 같은 곳은 한 번만, 최대 5.
- * expandLink는 고를 때 더해질 문장(한/영 짝 줄이면 New 짝, addPartnerTargets)을 미리 더한다 - 짝의 두 문장이 카드 둘로 갈리지 않게.
+ * expandLink는 고를 때 더해질 문장(New 짝, addPartnerTargets)을 미리 더한다 - 짝의 두 문장이 카드 둘로 갈리지 않게.
  */
 export function buildRecommendations(input: RecommendInput, expandLink: (targetIds: number[]) => number[] = (ids) => ids): Recommendation[] {
   const link = (targetIds: number[]): Destination => ({ kind: "link", targetIds: expandLink(targetIds) });
@@ -84,12 +84,12 @@ export function buildRecommendations(input: RecommendInput, expandLink: (targetI
 
 /**
  * 추천 카드가 지금 고른 곳인가 - 문장 추천은 고를 때 New 짝 문장이 더해지므로(addPartnerTargets) 짝까지 넣은 묶음과 견준다.
- * 추천의 ID만 견주면 한/영 짝 줄에서 고른 표시가 영영 켜지지 않는다.
+ * 추천의 ID만 견주면 New 짝이 있는 문장에서 고른 표시가 영영 켜지지 않는다.
  */
-export function isRecommendationPicked(draft: Destination | null, rec: Destination, rowLangs: UnitLang[], written: Map<number, WrittenSentence>): boolean {
+export function isRecommendationPicked(draft: Destination | null, rec: Destination, written: Map<number, WrittenSentence>): boolean {
   if (draft === null) return false;
   if (rec.kind !== "link" || draft.kind !== "link") return getDestinationId(draft) === getDestinationId(rec);
-  const expected = new Set(addPartnerTargets(rec.targetIds, rowLangs, written));
+  const expected = new Set(addPartnerTargets(rec.targetIds, written));
   return draft.targetIds.length === expected.size && draft.targetIds.every((id) => expected.has(id));
 }
 
@@ -104,7 +104,7 @@ export interface LinkPair {
 
 /**
  * 두 문서 사이에 그릴 이음 - 지금 열린 New 문서의 문장 출처 중 지금 열린 Old 문서의 조각만, 그리고 고른 줄의 아직 저장 안 한 고름.
- * 고름은 같은 언어 Old 조각과 잇는다(짝 맞추기는 같은 언어끼리, 명세 §7.10).
+ * 고름은 같은 언어 Old 조각과 잇고, 줄에 그 언어 조각이 없으면 줄의 조각 모두와 잇는다(저장도 그 조각들이 출처인 번역이다, 설계 §5.2).
  */
 export function buildLinkPairs(
   newRows: WrittenSentence[],
@@ -125,8 +125,9 @@ export function buildLinkPairs(
   for (const targetId of draft.targetIds) {
     const lang = langOf.get(targetId);
     if (lang === undefined) continue;
-    for (const unit of draft.units) {
-      if (unit.lang !== lang || !oldUnitIds.has(unit.id) || seen.has(`${unit.id}:${targetId}`)) continue;
+    const same = draft.units.filter((unit) => unit.lang === lang);
+    for (const unit of same.length > 0 ? same : draft.units) {
+      if (!oldUnitIds.has(unit.id) || seen.has(`${unit.id}:${targetId}`)) continue;
       pairs.push({ unitId: unit.id, targetId, draft: true, ai: false });
     }
   }

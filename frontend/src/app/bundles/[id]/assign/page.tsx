@@ -38,7 +38,6 @@ import {
   bulkDecide,
   clearDecisions,
   confirmMatchesInBulk,
-  deletePair,
   getDocumentView,
   getGroupByTarget,
   getGroupByUnit,
@@ -54,6 +53,7 @@ import {
   type ChangeTypeInput,
   type DocumentView,
   type Group,
+  type GroupSaveInput,
   type NewCandidate,
   type UnitRow,
   type WrittenSentence,
@@ -91,10 +91,12 @@ import {
   isTextChangeType,
   listLinkLeftovers,
   listUnpairedKeys,
+  pickLinkUnits,
   readCheckKey,
   readDestination,
   readHumanReason,
   readLinkDefault,
+  readSlotKind,
   stepInList,
   type CellSource,
   type ClassifyFilter,
@@ -300,6 +302,8 @@ export default function AssignPage() {
   }
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [selNew, setSelNew] = useState<number | null>(null);
+  // 출처 없는 New 문장마다 적는 중인 Remark - 없으면 저장된 값을 보인다
+  const [newRemarks, setNewRemarks] = useState<Record<number, string>>({});
   // 그 자리 메뉴와 이동 - 이동은 고른 줄·열린 문서가 다시 그려진 뒤에 그 자리를 찾는다
   const [menu, setMenu] = useState<MenuState | null>(null);
   const menuSeq = useRef(0);
@@ -377,7 +381,7 @@ export default function AssignPage() {
         aiPlaces: isAiRow && savedDestination && savedDestination.kind !== "link" ? [{ destination: savedDestination, why: aiWhy }] : [],
         identical: (identical.data ?? []).filter((item) => row.unitIds.includes(item.unit_id)).map((item) => item.target_id),
         similar: similar.data ?? [],
-      }, (ids) => addPartnerTargets(ids, rowLangs, writtenMap))
+      }, (ids) => addPartnerTargets(ids, writtenMap))
     : [];
   const linkIds = destination?.kind === "link" ? destination.targetIds : [];
   // 고른 문장의 관계 묶음(합쳐진 다른 출처 등)은 고를 때 부른다 - 함께 확정되는 것을 미리 보이고 저장도 같은 묶음으로 한다
@@ -499,7 +503,7 @@ export default function AssignPage() {
 
   const saveUnits = rowUnits.map((unit) => ({ id: unit.unit_id, kind: unit.kind, lang: unit.lang, text: unit.text, revision: unit.decision.revision }));
   // 새 문장 칸 - AI가 나눈 문장은 칸 여럿, 합친 문장은 칸 하나다
-  const slots = buildSentenceSlots(groupData, saveUnits);
+  const slots = buildSentenceSlots(groupData, saveUnits, draft.otherLang ?? null);
 
   function scrollToUnit(unitId: number) {
     requestAnimationFrame(() => {
@@ -548,26 +552,17 @@ export default function AssignPage() {
   }
 
   /**
-   * 한 언어만 이어 확정한 짝 줄의 짝을 푼다 - 남은 언어 문장이 제 줄이 되어 사람이 따로 끝낸다(명세 §6.5).
-   * 이음은 이미 저장됐으니 여기서 실패해도 되돌리지 않고 따로 알린다(Split에서 손으로 풀 수 있다).
+   * 묶음 저장 응답의 짝 정리를 화면에 반영한다 - 짝은 서버가 같은 저장 안에서 확정하거나 푼다(설계 §5.2).
+   * 정리하면 문서 revision이 바뀌어 원문 보기를 다시 받는다(다음 짝·나누기 요청이 낡은 revision으로 거절되지 않게).
+   * 이 줄의 짝이 풀렸으면 거르기 자리의 짝 줄을 풀린 줄들로 바꾸고 true - 남은 문장이 목록에서 사라지지 않게.
    */
-  async function splitPairRow(pairRow: ClassifyRow, leftovers: number[]): Promise<boolean> {
-    if (pairRow.pairId === null) return false;
+  function applyPairSettle(savedRow: ClassifyRow, saved: Group, leftovers: number[]): boolean {
+    const dissolved = saved.pairs_dissolved ?? [];
+    if (dissolved.length + (saved.pairs_confirmed ?? []).length > 0) views.reload();
+    if (savedRow.pairId === null || !dissolved.includes(savedRow.pairId)) return false;
+    setSnapshot((prev) => prev && { ...prev, keys: prev.keys.flatMap((key) => (key === savedRow.key ? listUnpairedKeys(savedRow) : [key])) });
     const ids = leftovers.map((id) => unitMap.get(id)?.display_id ?? String(id)).join(", ");
-    try {
-      // 짝 풀기는 문서 revision을 본다 - 이 화면에 들어온 뒤 Split에서 고쳤을 수 있어 새로 읽는다
-      const fresh = (await listDocuments(bundleId)).find((doc) => doc.id === pairRow.documentId);
-      await deletePair(bundleId, pairRow.documentId, pairRow.pairId, fresh?.revision ?? 0);
-    } catch (err) {
-      showToast(`${t("assign.leftover.unpairFailed", { ids })} ${humanizeApiError(err, t)}`, "error");
-      // 다른 곳에서 이미 풀었을 수도 있다 - 지금 짝 모양을 다시 받는다
-      views.reload();
-      return false;
-    }
-    // 거르기 자리의 짝 줄을 풀린 줄들로 바꾼다 - 남은 문장이 목록에서 사라지지 않게
-    setSnapshot((prev) => prev && { ...prev, keys: prev.keys.flatMap((key) => (key === pairRow.key ? listUnpairedKeys(pairRow) : [key])) });
-    views.reload();
-    showToast(t("assign.leftover.split", { ids }));
+    showToast(leftovers.length > 0 ? t("assign.leftover.split", { ids }) : t("assign.pairDissolved"));
     return true;
   }
 
@@ -590,13 +585,13 @@ export default function AssignPage() {
       // 고친 칸만 글을 보낸다 - 손대지 않은 AI 제안은 글·종류를 비워 보내 제안 그대로 받는다
       const context = { units: saveUnits, group: saveGroupData, tables: buildTables() };
       const body = buildGroupSave({ ...draft, destination, reason, moveCode }, context, action, action === "hold" ? reason.trim() : "");
-      const leftovers = action === "confirm" ? listLinkLeftovers(destination, context) : [];
-      await saveGroup(bundleId, body);
+      const leftovers = body.release_unit_ids ?? [];
+      const saved = await saveGroup(bundleId, body);
       // 저장했으면 메뉴의 고름은 끝났다 - 다음 줄이 없거나 같은 줄에 남아도 닫는다
       setMenu(null);
       showToast(action === "hold" ? t("classify.held") : t("classify.confirmed"));
-      const isSplit = leftovers.length > 0 && (await splitPairRow(row, leftovers));
-      // 다음 미확정 줄로 - 지금 줄은 거르기 자리에 남는다. 짝을 풀었으면 남은 문장의 줄이 다음이다
+      const isSplit = applyPairSettle(row, saved, leftovers) && leftovers.length > 0;
+      // 다음 미확정 줄로 - 지금 줄은 거르기 자리에 남는다. 남는 쪽을 풀었으면 남은 문장의 줄이 다음이다
       const next = action === "confirm" && !isSplit ? findNextOpen(listKeys, rowMap, row.key) : null;
       dropDraft(row.key);
       if (isSplit) setSplitRow({ from: row.key, unit: leftovers[0] });
@@ -653,15 +648,26 @@ export default function AssignPage() {
     if (items.length > 0) {
       await run(async () => {
         for (const batch of buildIdenticalBatches(items)) await confirmMatchesInBulk(bundleId, batch);
+        // 한 번에 확정도 서버가 짝을 정리하지만 어느 짝인지 알려 주지 않는다 - 짝 모양·문서 revision을 다시 받는다
+        views.reload();
       }, t("match.identicalDone", { n: items.length }));
     }
     setConfirmingIdentical(false);
   }
 
+  /** 출처 없는 New 문장을 신규로 확정 - Remark를 같이 싣는다(단위 판단이 없어 새 문장이 글을 담는다, 설계 §5.2) */
   function markNew() {
     const target = writtenMap.get(focusNew ?? -1);
     if (!target) return;
-    void run(() => confirmMatchesInBulk(bundleId, { identical: [], new: [{ target_id: target.target_id, revision: target.revision }] }), t("match.newDone"));
+    const remark = (newRemarks[target.target_id] ?? target.remark).trim();
+    const body: GroupSaveInput = {
+      action: "confirm",
+      hold_reason: "",
+      units: [],
+      targets: [{ key: `t${target.target_id}`, id: target.target_id, revision: target.revision, source_unit_ids: [], remark }],
+      removed_target_ids: [],
+    };
+    void run(() => saveGroup(bundleId, body), t("match.newDone"));
   }
 
   /** 출처 없는 New 모드에서 Old 조각을 누르면 그 줄을 이 문장의 출처로 잇는다(그 줄의 다른 곳은 바꾸기로 뗀다) */
@@ -671,7 +677,7 @@ export default function AssignPage() {
     const target = writtenMap.get(focusNew ?? -1);
     if (!sourceRow || !target || busy || !canEdit) return;
     const sourceUnits = sourceRow.unitIds.map((id) => unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined);
-    const targetIds = addPartnerTargets([target.target_id], sourceUnits.map((unit) => unit.lang), writtenMap);
+    const targetIds = addPartnerTargets([target.target_id], writtenMap);
     await run(async () => {
       const rowGroup = await loadRowGroup(bundleId, sourceRow.unitIds);
       const extra = await Promise.all(targetIds.map((id) => getGroupByTarget(bundleId, id)));
@@ -682,10 +688,8 @@ export default function AssignPage() {
         tables: new Map(),
       };
       const body = buildGroupSave({ destination: link, texts: {}, changeTypes: {}, linkChangeTypes: {}, reason: readHumanReason(sourceUnits[0]?.decision), moveCode: "" }, context, "confirm");
-      const leftovers = listLinkLeftovers(link, context);
-      await saveGroup(bundleId, body);
-      // 이 문장에 없는 언어의 Old 문장은 짝을 풀어 제 줄로 남긴다 - 출처 없는 New를 계속 보게 고른 줄은 옮기지 않는다
-      if (leftovers.length > 0) await splitPairRow(sourceRow, leftovers);
+      // 이 문장에 없는 언어의 Old 문장은 서버가 짝을 풀어 제 줄로 남긴다 - 출처 없는 New를 계속 보게 고른 줄은 옮기지 않는다
+      applyPairSettle(sourceRow, await saveGroup(bundleId, body), body.release_unit_ids ?? []);
     }, t("match.linked"));
   }
 
@@ -693,7 +697,7 @@ export default function AssignPage() {
     const linkTypes: Record<number, ChangeTypeInput | null> = {};
     // AI가 이어 둔 문장을 다시 고르면 기본은 제안 그대로 받기
     if (next.kind === "link") for (const id of next.targetIds) if (writtenMap.get(id)?.status === "ai_suggested") linkTypes[id] = null;
-    setDraft({ destination: next.kind === "link" ? { kind: "link", targetIds: addPartnerTargets(next.targetIds, rowLangs, writtenMap) } : next, linkChangeTypes: linkTypes });
+    setDraft({ destination: next.kind === "link" ? { kind: "link", targetIds: addPartnerTargets(next.targetIds, writtenMap) } : next, linkChangeTypes: linkTypes });
   }
 
   /** New 문장 고르기 - 고른 곳이 바뀌었으면 true */
@@ -703,15 +707,13 @@ export default function AssignPage() {
       return false;
     }
     if (!row || !canEdit) return false;
-    // 짝 맞추기는 같은 언어끼리다(명세 §7.10) - 이 줄에 없는 언어의 New 문장은 이을 Old 조각이 없다
-    const lang = writtenMap.get(targetId)?.lang;
-    if (lang && !rowLangs.includes(lang)) {
-      showToast(t("assign.langMismatch", { lang: lang.toUpperCase() }), "error");
-      return false;
-    }
+    // 이 줄에 없는 언어의 New 문장도 잇는다 - 줄의 조각이 출처가 되어 번역이 된다(설계 §5.2)
     const current = destination?.kind === "link" ? destination.targetIds : [];
-    const next = additive ? (current.includes(targetId) ? current.filter((id) => id !== targetId) : [...current, targetId]) : [targetId];
+    const isRemoving = additive && current.includes(targetId);
+    const next = additive ? (isRemoving ? current.filter((id) => id !== targetId) : [...current, targetId]) : [targetId];
     if (next.length === 0) setDraft({ destination: null });
+    // 함께 골라진 짝 문장을 Ctrl로 빼면 다시 붙이지 않는다 - 뺀 문장은 출처 없이 남아 신규가 된다(설계 §5.2)
+    else if (isRemoving) setDraft({ destination: { kind: "link", targetIds: next } });
     else pickDestination({ kind: "link", targetIds: next });
     return next.length > 0;
   }
@@ -861,6 +863,14 @@ export default function AssignPage() {
   const isPlace = destination?.kind === "slot" || destination?.kind === "step";
   const primaryState = !destination ? "choose" : editing ? "save" : "confirm";
   const otherLang = canMakeOtherLanguage(rowLangs, savedDestination, row?.status === "confirmed");
+  // 직접 쓰는 다른 언어 문장의 출처 - 줄의 문장 단위(표·그림은 칸 문장을 따로 쓰지 않는다)
+  const writeOtherUnit = rowUnits.find((unit) => unit.kind === "sentence")?.unit_id ?? null;
+
+  /** 다른 언어 직접 쓰기 - 고쳐 쓰기로 들어가 빈 칸 하나를 더하고 그 칸에 포커스 */
+  function startWriteOther(lang: "ko" | "en", unitId: number) {
+    setDraft({ otherLang: { lang, unitId } }, true);
+    requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(`[data-testid="assign-text-x${unitId}"]`)?.focus());
+  }
 
   function renderPlaceLabel(dest: Destination): { title: string; text: string } {
     const option = options.find((item) => getDestinationId(item.destination) === getDestinationId(dest));
@@ -874,7 +884,7 @@ export default function AssignPage() {
   }
 
   function renderRecommendation(rec: Recommendation, index: number) {
-    const pressed = isRecommendationPicked(draft.destination, rec.destination, rowLangs, writtenMap);
+    const pressed = isRecommendationPicked(draft.destination, rec.destination, writtenMap);
     const pending = pressed ? t("assign.unsaved") : undefined;
     const chip = <span className="dest-chip" data-source={rec.source}>{t(`assign.src.${rec.source}`)}</span>;
     const why = rec.why ? <span className="dest-card-why">{rec.why}</span> : null;
@@ -1003,8 +1013,8 @@ export default function AssignPage() {
       ) : (
         slots.map((slot, index) => {
           const text = draft.texts[slot.key] ?? slot.text;
-          // 나눔·합침은 서버가 구조에서 정한다 - 글자 비교 종류는 출처 하나인 칸에서만 고른다
-          const structural = slot.target?.change_type === "split" || slot.target?.change_type === "merged" || slot.sourceIds.length > 1 || slots.filter((other) => other.sourceIds.includes(slot.sourceIds[0])).length > 1;
+          // 나눔·합침·번역은 서버가 구조에서 정한다 - 글자 비교 종류는 출처 하나인 같은 언어 칸에서만 고른다
+          const structural = readSlotKind(slot, slots);
           const changed = slot.sourceText !== null && text.trim() !== "" && text.trim() !== slot.sourceText.trim();
           const keptType = isTextChangeType(slot.target?.change_type) ? slot.target.change_type : null;
           return (
@@ -1028,8 +1038,8 @@ export default function AssignPage() {
               </div>
               {/* 고쳐 쓰는 동안은 변경 종류 줄의 자리를 미리 잡는다 - 글이 원문과 달라지는 순간 아래가 밀리지 않게(To-Be 사유 칸과 같은 방식) */}
               {structural ? (
-                <span className="text-xs text-ink-2">
-                  {t("classify.changeType")} · {t(slot.sourceIds.length > 1 ? "change.merged" : "change.split")}
+                <span className="text-xs text-ink-2" data-testid={`assign-slot-kind-${slot.key}`}>
+                  {t("classify.changeType")} · {t(`change.${structural}`)}
                 </span>
               ) : (
                 (changed || editing) && (
@@ -1071,14 +1081,16 @@ export default function AssignPage() {
     }
     const isConfirmedView = row?.status === "confirmed" && draft.destination === null;
     const pickedRows = linkIds.map((id) => writtenMap.get(id)).filter((item): item is WrittenSentence => item !== undefined);
+    // 줄에 없는 언어의 문장은 번역이다 - 종류를 고르지 않고, 나눔도 같은 언어 문장끼리만 센다(설계 §5.2)
+    const translatedIds = new Set(pickedRows.filter((item) => !rowLangs.includes(item.lang)).map((item) => item.target_id));
     const byLang = new Map<string, number>();
-    for (const item of pickedRows) byLang.set(item.lang, (byLang.get(item.lang) ?? 0) + 1);
+    for (const item of pickedRows) if (!translatedIds.has(item.target_id)) byLang.set(item.lang, (byLang.get(item.lang) ?? 0) + 1);
     const mergedWith = [...new Set(pickedRows.flatMap((item) => item.source_unit_ids).filter((id) => !row?.unitIds.includes(id)))].map((id) => unitMap.get(id)?.display_id ?? String(id));
     const auto = [...byLang.values()].some((count) => count > 1) ? "split" : mergedWith.length > 0 ? "merged" : null;
     // 잇지 않는 언어의 짝 조각은 판단이 있으면 지금 그대로 함께 저장된다 - 줄이 아니라 함께 확정되는 쪽으로 보인다.
-    // 판단이 없으면 저장에서 빠지고 확정 뒤 짝이 풀려 제 줄로 남는다(아래 알림)
+    // 판단이 없으면 저장에서 빠지고 서버가 같은 저장 안에서 짝을 풀어 제 줄로 남긴다(아래 알림)
     const linkedLangs = new Set(pickedRows.map((item) => item.lang));
-    const savedRowIds = destination.kind === "link" ? rowUnits.filter((unit) => linkedLangs.has(unit.lang)).map((unit) => unit.unit_id) : (row?.unitIds ?? []);
+    const savedRowIds = destination.kind === "link" ? pickLinkUnits(rowUnits, linkedLangs).map((unit) => unit.unit_id) : (row?.unitIds ?? []);
     const leftovers = pickedGroups.isLoading ? [] : listLinkLeftovers(destination, { units: saveUnits, group: saveGroupData });
     const coConfirmed = saveGroupData ? listCoConfirmed(saveGroupData, [...savedRowIds, ...leftovers], linkIds) : [];
     const spansDocs = new Set(pickedRows.map((item) => item.target_doc_id)).size > 1;
@@ -1094,6 +1106,7 @@ export default function AssignPage() {
             rows={pickedRows}
             changeTypes={draft.linkChangeTypes ?? {}}
             aiPending={aiPending}
+            translatedIds={translatedIds}
             defaults={Object.fromEntries(pickedRows.map((item) => [item.target_id, readLinkDefault({ lang: item.lang, confirmed_text: item.text, change_type: item.change_type, status: item.status }, rowUnits)]))}
             auto={auto}
             mergedWith={mergedWith}
@@ -1125,11 +1138,22 @@ export default function AssignPage() {
             ))}
           </div>
         )}
-        {otherLang && destination.kind !== "link" && aiOn && canEdit && (
-          <button type="button" className="btn h-7 justify-self-start" data-testid="assign-make-other" disabled={busy} onClick={() => row && void askAiScope("translate", { unit_ids: row.unitIds, direction: otherLang === "en" ? "ko_to_en" : "en_to_ko" })}>
-            <Sparkles size={14} strokeWidth={1.5} aria-hidden />
-            {t(otherLang === "en" ? "assign.makeEn" : "assign.makeKo")}
-          </button>
+        {otherLang && destination.kind !== "link" && canEdit && (
+          <div className="flex flex-wrap gap-1.5">
+            {aiOn && (
+              <button type="button" className="btn h-7" data-testid="assign-make-other" disabled={busy} onClick={() => row && void askAiScope("translate", { unit_ids: row.unitIds, direction: otherLang === "en" ? "ko_to_en" : "en_to_ko" })}>
+                <Sparkles size={14} strokeWidth={1.5} aria-hidden />
+                {t(otherLang === "en" ? "assign.makeEn" : "assign.makeKo")}
+              </button>
+            )}
+            {/* AI가 꺼져 있어도 빠진 언어를 채울 수 있게 - 이미 그 언어 칸이 있으면(직접 쓰는 중이거나 저장됨) 보이지 않는다 */}
+            {writeOtherUnit !== null && !slots.some((slot) => slot.lang === otherLang) && (
+              <button type="button" className="btn h-7" data-testid="assign-write-other" disabled={busy} onClick={() => startWriteOther(otherLang, writeOtherUnit)}>
+                <FilePen size={14} strokeWidth={1.5} aria-hidden />
+                {t(otherLang === "en" ? "assign.writeEn" : "assign.writeKo")}
+              </button>
+            )}
+          </div>
         )}
       </div>
     );
@@ -1265,6 +1289,20 @@ export default function AssignPage() {
               </div>
               <div className="grid gap-2 p-[var(--pad)]">
                 <p className="chosen-box is-empty">{t("assign.unsourced.body")}</p>
+                {canEdit ? (
+                  <textarea
+                    rows={2}
+                    className="block w-full resize-y rounded-md border border-line-2 bg-surface px-2 py-[5px] text-[13px] leading-[19px] text-ink focus:border-accent focus:outline-none"
+                    data-testid="assign-new-remark"
+                    aria-label={t("classify.reason")}
+                    placeholder={t("assign.newRemark")}
+                    value={newRemarks[target.target_id] ?? target.remark}
+                    maxLength={2000}
+                    onChange={(event) => setNewRemarks((prev) => ({ ...prev, [target.target_id]: event.target.value }))}
+                  />
+                ) : (
+                  target.remark && <p className="break-words text-[13px] text-ink-2">{target.remark}</p>
+                )}
                 <button type="button" className="btn pri" data-testid="assign-mark-new" disabled={!canEdit || busy} onClick={markNew}>
                   {t("assign.markNew")}
                 </button>
@@ -1552,7 +1590,6 @@ export default function AssignPage() {
                     candidateIds={candidateIds}
                     pickedIds={pickedNew}
                     focusId={focusNew}
-                    allowedLangs={mode === "old" && row && canEdit ? new Set(rowLangs) : null}
                     sourceLabel={(unitId) => (unitMap.get(unitId)?.display_id ?? String(unitId)).replace(/^OLD-/, "")}
                     onPick={handleNewPick}
                     onJumpSource={jumpToOld}
@@ -1637,6 +1674,8 @@ export default function AssignPage() {
               showToast(t("classify.bulkDone", { n: unitRows.length }));
               setBulk(null);
               setChecked(new Set());
+              // 한 번에 삭제·이동도 서버가 짝을 정리하지만 어느 짝인지 알려 주지 않는다 - 짝 모양·문서 revision을 다시 받는다
+              views.reload();
               setUnitsKey((key) => key + 1);
               void loadBundle(bundleId);
             } catch (err) {

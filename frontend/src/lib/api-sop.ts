@@ -581,6 +581,8 @@ export interface GroupTarget {
   grid: { rows: number; cols: number } | null;
   status: CoverStatus;
   hold_reason: string;
+  /** 사람이 적는 메모 - 출처 없는 새 문장에도 적을 수 있다 */
+  remark: string;
   warnings: Array<Record<string, string>>;
   source_unit_ids: number[];
   group_id: string | null;
@@ -591,6 +593,9 @@ export interface GroupTarget {
 export interface Group {
   units: GroupUnit[];
   targets: GroupTarget[];
+  /** 묶음 저장 응답에만 - 이 저장으로 확정된 짝·풀린 짝(서버가 판단을 보고 정한다) */
+  pairs_confirmed?: number[];
+  pairs_dissolved?: number[];
 }
 
 export interface TargetInput {
@@ -605,6 +610,8 @@ export interface TargetInput {
   lang?: UnitLang;
   text?: string;
   change_type?: ChangeTypeInput | null;
+  /** 비우면(undefined) 지금 값을 둔다 */
+  remark?: string;
   source_unit_ids: number[];
   parent_key?: string | null;
   cell_row?: number | null;
@@ -619,6 +626,8 @@ export interface GroupSaveInput {
   units: Array<{ unit_id: number; revision: number; disposition: Disposition; move_target_code: string; reason: string }>;
   targets: TargetInput[];
   removed_target_ids: number[];
+  /** 짝의 한쪽만 이을 때 남는 단위 - 서버가 같은 저장 안에서 그 짝을 풀어 따로 줄로 남긴다 */
+  release_unit_ids?: number[];
 }
 
 export async function listAllUnits(bundleId: number): Promise<UnitRow[]> {
@@ -723,6 +732,8 @@ export interface WrittenSentence {
   source_unit_ids: number[];
   /** 같은 New 문서의 한/영 짝 상대가 만든 문장 */
   partner_target_id: number | null;
+  /** 사람이 적는 메모(출처 없는 새 문장의 Remark) */
+  remark: string;
   revision: number;
 }
 

@@ -1,4 +1,4 @@
-// Assign 오른쪽 - 이미 쓴 New 문서의 원문. Old와 같은 종이 조각: 왼쪽 밖 앞머리(절 번호 칸 + 3px 언어 막대, 폭 = 절 깊이라 들여쓴 것처럼 읽힌다), 본문 위 줄에 출처 칩(연결선이 칩 왼쪽으로 들어온다). 점선 = 후보, 채움 = 고른 문장, 칩 = 붙은 Old 출처(누르면 Old의 그 조각으로), 위험색 = 출처 없음, 흐림 = 고른 Old 줄에 없는 언어(이을 수 없다).
+// Assign 오른쪽 - 이미 쓴 New 문서의 원문. Old와 같은 종이 조각: 왼쪽 밖 앞머리(절 번호 칸 + 3px 언어 막대, 폭 = 절 깊이라 들여쓴 것처럼 읽힌다), 본문 위 줄에 출처 칩(연결선이 칩 왼쪽으로 들어온다). 점선 = 후보, 채움 = 고른 문장, 칩 = 붙은 Old 출처(누르면 Old의 그 조각으로), 위험색 = 출처 없음.
 // 칩 오른쪽 갈매기는 그 Old 조각이 왼쪽 칸 화면 위·아래 밖에 있다는 표시 - 스크롤마다 바뀌어 LinkLines가 data-dir로 단다(Old 배지와 같은 방식).
 // 표·그림은 이번 화면에서 잇지 않아 회색 상자로만 보인다(설계 §2).
 "use client";
@@ -24,8 +24,6 @@ interface NewPaneProps {
   pickedIds: ReadonlySet<number>;
   /** 출처 없는 New 모드에서 고른 문장 */
   focusId: number | null;
-  /** 이을 수 있는 언어 - 고른 Old 줄의 언어. 다른 언어 문장은 누를 수 없다(같은 언어끼리만 잇는다, 명세 §7.10). null이면 제한 없음 */
-  allowedLangs: ReadonlySet<string> | null;
   sourceLabel: (unitId: number) => string;
   /** 줄을 누름 - anchor는 그 줄(그 자리 메뉴가 붙는다) */
   onPick: (targetId: number, additive: boolean, anchor: HTMLElement, event: MouseEvent) => void;
@@ -171,7 +169,6 @@ export function NewPane(props: NewPaneProps) {
               }
               const bracket = brackets.get(row.target_id);
               const number = isNumberInLead ? getSectionPill(readSectionNumber(row.section_path)) : null;
-              const isBlocked = props.allowedLangs !== null && !props.allowedLangs.has(row.lang);
               const previous = props.rows[index - 1];
               const gap = !head && previous?.kind === "sentence" ? <div className="new-gap" data-pair={cardTops.has(row.target_id) ? "" : undefined} /> : null;
               return (
@@ -188,13 +185,12 @@ export function NewPane(props: NewPaneProps) {
                       testId="assign-new"
                       id={row.target_id}
                     />
-                    <div className="strip new-line" data-bracket={bracket} data-lang={row.lang} data-state={readState(row, props)} data-blocked={isBlocked ? "" : undefined} data-target={row.target_id} data-testid={`assign-new-${row.target_id}`}>
+                    <div className="strip new-line" data-bracket={bracket} data-lang={row.lang} data-state={readState(row, props)} data-target={row.target_id} data-testid={`assign-new-${row.target_id}`}>
                       {(row.source_unit_ids.length > 0 || row.change_type === "new") && renderSources(row)}
                       <button
                         type="button"
                         className="new-hit"
                         aria-pressed={props.pickedIds.has(row.target_id)}
-                        disabled={isBlocked}
                         data-testid={`assign-new-pick-${row.target_id}`}
                         onClick={(event) => {
                           const line = event.currentTarget.parentElement;

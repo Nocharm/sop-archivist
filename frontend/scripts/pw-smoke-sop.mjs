@@ -730,7 +730,7 @@ await runStep("assign: written New document - identical, link by clicking, split
   await page.locator('[data-testid="assign-identical"]').waitFor({ state: "detached", timeout: T });
   check("identical matches confirm together", true);
   // 쓴 문서의 문장에 잇기 - 원문에서 직접 누른다
-  // 비슷한 New 문장 후보(점선)가 있는 Old 조각까지 옮긴다 - 후보는 같은 언어만 나온다(짝 맞추기는 같은 언어끼리)
+  // 비슷한 New 문장 후보(점선)가 있는 Old 조각까지 옮긴다
   await page.locator('[data-testid="assign-filter-unassigned"]').click();
   const candidate = page.locator('[data-testid="assign-new"] .new-line[data-state="candidate"]');
   // 줄을 옮길 때마다 그 줄의 후보 요청이 끝나기를 기다린다 - networkidle은 첫 로드 뒤로는 곧바로 풀려서,
@@ -751,19 +751,21 @@ await runStep("assign: written New document - identical, link by clicking, split
   }
   // 누르면 후보가 아니라 고른 문장이 된다 - 같은 줄을 계속 가리키게 testid로 붙잡는다
   const firstLine = page.locator(`[data-testid="${await candidate.first().getAttribute("data-testid")}"]`);
-  const lang = (await firstLine.getAttribute("data-lang"));
   // 줄 가운데를 누르면 오른쪽 출처 칩에 닿을 수 있다 - 고르는 단추를 누른다
   await firstLine.locator(".new-hit").click();
   check("clicking a New sentence picks it", (await firstLine.getAttribute("data-state")) === "picked");
   // 맥에서 Ctrl+클릭은 오른쪽 클릭이다 - 화면은 ⌘도 같은 뜻으로 받는다
   const multi = process.platform === "darwin" ? "Meta" : "Control";
-  const sameLang = page.locator(`[data-testid="assign-new"] .new-line[data-lang="${lang}"]:not([data-state="picked"])`);
-  const second = page.locator(`[data-testid="${await sameLang.first().getAttribute("data-testid")}"]`);
+  // 둘째 줄은 언어와 상관없이 고른다 - 줄에 없는 언어의 문장도 이을 수 있다(번역)
+  const unpicked = page.locator('[data-testid="assign-new"] .new-line:not([data-state="picked"])');
+  const second = page.locator(`[data-testid="${await unpicked.first().getAttribute("data-testid")}"]`);
   await second.locator(".new-hit").click({ modifiers: [multi] });
   await page.locator('[data-testid^="assign-link-"]').nth(1).waitFor({ timeout: T });
   check("Ctrl+click adds a second sentence", (await page.locator('[data-testid^="assign-link-"]').count()) >= 2);
+  check("a sentence in another language is not locked", (await second.getAttribute("data-blocked")) === null);
   await takeShot("sop-assign-link.png");
-  await second.locator(".new-hit").click({ modifiers: [multi] });
+  // 첫 줄만 다시 누르면 고름이 그 문장(과 New 짝)으로 돌아간다 - 둘째의 짝이 함께 붙었을 수 있어 Ctrl로 하나씩 빼지 않는다
+  await firstLine.locator(".new-hit").click();
   const linkedId = (await firstLine.getAttribute("data-testid")).replace("assign-new-", "");
   const readSources = async () => {
     const response = await page.request.get(`${BASE}/api/bundles/${halfBundleId}/written-sentences`, { headers: { "X-Dev-User": "qa.member" } });
@@ -801,8 +803,8 @@ await runStep("assign: written New document - identical, link by clicking, split
   check("an unsourced New sentence is marked new", true);
 });
 
-// 한 언어만 잇기(v0.11.1) - Old는 한/영 짝인데 쓴 New에는 한 언어만 있는 예외. 있는 언어만 이어 확정하면 짝이 풀리고
-// 남은 문장이 제 줄이 되어 사람이 삭제(사유)나 보류로 끝낸다
+// 한 언어만 잇기(v0.11.1) - Old는 한/영 짝인데 쓴 New에는 한 언어만 있는 예외. 있는 언어만 이어 확정하면 서버가 같은 저장 안에서
+// 짝을 풀고(release_unit_ids - 화면이 짝 풀기를 따로 부르지 않는다) 남은 문장이 제 줄이 되어 사람이 삭제(Remark)나 보류로 끝낸다
 await runStep("assign: a one-language link on a KO/EN pair row unpairs it and leaves the other sentence open", {}, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}${path}`, { headers })).json();
@@ -837,15 +839,21 @@ await runStep("assign: a one-language link on a KO/EN pair row unpairs it and le
   check("the chosen box names the sentence it leaves out", (await getText(page, "assign-link-leftover")).includes(found.leftover.display_id));
   await takeShot("sop-assign-link-leftover.png");
   const saved = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
-  const unpaired = page.waitForResponse((response) => response.request().method() === "DELETE" && response.url().includes("/pairs/"), { timeout: T });
+  const pairDeletes = [];
+  const countPairDelete = (request) => {
+    if (request.method() === "DELETE" && request.url().includes("/pairs/")) pairDeletes.push(request.url());
+  };
+  page.on("request", countPairDelete);
   await page.locator('[data-testid="assign-primary"]').click();
   const savedResponse = await saved;
   check("the one-language link saves", savedResponse.ok(), savedResponse.ok() ? "" : (await savedResponse.text()).slice(0, 300));
-  const unpairedResponse = await unpaired;
-  check("the pair is dissolved after the save", unpairedResponse.ok(), unpairedResponse.ok() ? "" : (await unpairedResponse.text()).slice(0, 300));
+  const savedBody = savedResponse.ok() ? await savedResponse.json() : {};
+  check("the save sends the leftover and the server dissolves the pair", JSON.parse(savedResponse.request().postData() ?? "{}").release_unit_ids?.includes(found.leftover.id) && (savedBody.pairs_dissolved ?? []).includes(found.pairId), JSON.stringify(savedBody.pairs_dissolved));
   // 남은 문장이 제 줄로 골라진다 - 다음 줄로 넘어가지 않는다
   await page.waitForFunction((id) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() === id, found.leftover.display_id, { timeout: T });
   check("the leftover sentence is picked as its own open row", (await rowStatus(page)) === "Unassigned", await rowStatus(page));
+  page.off("request", countPairDelete);
+  check("the screen sends no separate unpair request", pairDeletes.length === 0, pairDeletes.join(", "));
   await takeShot("sop-assign-link-leftover-row.png");
   const readUnits = async () => new Map((await getJson("/units?limit=1000")).items.map((unit) => [unit.unit_id, unit]));
   let units = await readUnits();
