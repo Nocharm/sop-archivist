@@ -8,6 +8,7 @@ import { CircleCheck, FoldVertical, FolderCheck, ImageIcon, Link2, Scissors, Spa
 import { Fragment, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { FigureImage } from "@/components/paper/figure-image";
+import { Collapse } from "@/components/ui/motion";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
@@ -88,6 +89,8 @@ interface PaperProps {
     isChecked: (unit: ViewUnit) => boolean;
     /** Split - 조각 사이의 위아래 합치기. 없으면 틈만 둔다(Assign) */
     merge?: { busy: boolean; onMerge: (firstId: number, secondId: number) => void };
+    /** Split - 언어가 달라 못 합치는 틈에서 두 문장을 한/영 짝으로(짝 지을 수 있을 때만 합치기 대신) */
+    pair?: { canPair: (firstId: number, secondId: number) => boolean; onPair: (firstId: number, secondId: number) => void };
     /** Assign - 경계 확인 표시는 뺀다 */
     hideChecked?: boolean;
     /** Assign - 보기를 다시 부르지 않아도 지금 커버 상태로 표시한다 */
@@ -99,8 +102,8 @@ interface PaperProps {
   };
   /** 고른 단위를 밑줄 대신 바깥 윤곽으로 감싼다 */
   contour?: boolean;
-  /** 고른 단위의 끝에 붙는 것(확인 단추) */
-  renderUnitEnd?: (unitId: number) => ReactNode;
+  /** strips에서 고른 조각의 글 바로 아래 줄(확인·짝 풀기 등 단추) - 조각 상자가 펼쳐지며 밀려 내려오고, 고름이 옮겨 가면 접힌다 */
+  renderUnitActions?: (unitId: number) => ReactNode;
   /** 나눌 선 자리에 붙는 것(나누기 팝업) - 선을 끄는 동안에는 그리지 않는다 */
   renderAtCut?: () => ReactNode;
   /** 나눌 선을 끌어 옮긴다 - 주면 선에 손잡이가 붙는다 */
@@ -156,12 +159,6 @@ function readDragPos(page: HTMLElement, unitId: number, x: number, y: number): C
   return null;
 }
 
-/** 단위의 마지막 조각인가 - 끝에 확인 단추를 붙일 자리 */
-function isUnitEnd(unit: ViewUnit | undefined, blockId: number, segmentEnd: number): boolean {
-  const last = unit?.spans[unit.spans.length - 1];
-  return last !== undefined && last[0] === blockId && last[2] === segmentEnd;
-}
-
 export function Paper({
   model,
   items,
@@ -179,7 +176,7 @@ export function Paper({
   sheetTestId,
   strips,
   contour = false,
-  renderUnitEnd,
+  renderUnitActions,
   renderAtCut,
   onCutDrag,
   onCutNudge,
@@ -192,6 +189,9 @@ export function Paper({
   const [isDragging, setIsDragging] = useState(false);
   const tip = useDelegatedTip();
   const hasStrips = strips !== undefined;
+  // 단추 줄을 그리는 조각 - 지금 고른 것과 바로 전에 고른 것(접히는 동안). 수천 조각마다 접기 부품을 두지 않는다
+  const [actionIds, setActionIds] = useState({ current: selectedId, previous: null as number | null });
+  if (actionIds.current !== selectedId) setActionIds({ current: selectedId, previous: actionIds.current });
 
   // 조각 줄 - 모델이 바뀔 때만 다시 편다(고르기·확인으로는 그대로)
   const sections = useMemo(() => {
@@ -283,12 +283,35 @@ export function Paper({
             );
       setContourPath(buildContourPath(rects.filter((rect) => rect.right - rect.left > 0.5)));
     };
-    const frame = requestAnimationFrame(measure);
+    let frame = requestAnimationFrame(measure);
     const observer = new ResizeObserver(() => requestAnimationFrame(measure));
     observer.observe(page);
+    // 단추 줄이 접히고 펼쳐지거나 틈이 벌어지는 동안 글이 움직인다 - 위아래가 상쇄돼 용지 높이가 그대로면 ResizeObserver가 울리지 않으니 전환 동안 프레임마다 잰다
+    let running = 0;
+    const tick = () => {
+      measure();
+      if (running > 0) frame = requestAnimationFrame(tick);
+    };
+    const isLayoutTransition = (event: TransitionEvent) => event.propertyName === "grid-template-rows" || event.propertyName === "height";
+    const handleRun = (event: TransitionEvent) => {
+      if (!isLayoutTransition(event)) return;
+      running += 1;
+      if (running === 1) frame = requestAnimationFrame(tick);
+    };
+    const handleEnd = (event: TransitionEvent) => {
+      if (!isLayoutTransition(event)) return;
+      running = Math.max(0, running - 1);
+      if (running === 0) measure();
+    };
+    page.addEventListener("transitionrun", handleRun);
+    page.addEventListener("transitionend", handleEnd);
+    page.addEventListener("transitioncancel", handleEnd);
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
+      page.removeEventListener("transitionrun", handleRun);
+      page.removeEventListener("transitionend", handleEnd);
+      page.removeEventListener("transitioncancel", handleEnd);
     };
   }, [contour, selectedId, model, cut, items]);
 
@@ -356,7 +379,6 @@ export function Paper({
     const unit = model.units.get(segment.unitId);
     // 여러 범위에 걸친 단위는 범위의 첫 자리도 나눌 자리다(>=)
     const isCutHere = cut && cut.blockId === block.id && cut.offset >= segment.start && cut.offset < segment.end && segment.unitId === selectedId;
-    const endExtra = segment.unitId === selectedId && renderUnitEnd && isUnitEnd(unit, block.id, segment.end) ? renderUnitEnd(segment.unitId) : null;
     return (
       <span key={index} className="contents">
         <span
@@ -400,13 +422,25 @@ export function Paper({
             <span data-start={segment.start}>{text}</span>
           )}
         </span>
-        {endExtra}
       </span>
     );
   }
 
   function renderBlockText(block: ViewBlock): ReactNode {
     return (model.segments.get(block.id) ?? []).map((segment, index) => renderSegment(block, segment, index));
+  }
+
+  /** 고른 조각의 글 아래 단추 줄 - 펼치며 상자를 늘리고, 고름이 떠나면 접은 뒤 뗀다 */
+  function renderActions(unitId: number | undefined): ReactNode {
+    if (!renderUnitActions || unitId === undefined || (unitId !== actionIds.current && unitId !== actionIds.previous)) return null;
+    // 그릴 단추가 없으면(읽기 전용·표) 빈 줄도 두지 않는다 - 빈 줄의 여백만큼 상자가 늘지 않게
+    const content = renderUnitActions(unitId);
+    if (content === null || content === undefined || content === false) return null;
+    return (
+      <Collapse key={`acts-${unitId}`} open={unitId === selectedId} className="strip-acts" appear>
+        {content}
+      </Collapse>
+    );
   }
 
   /** 조각 끝 아이콘 표시 - 고른 조각의 것만 Tab으로 닿는다(수천 개가 Tab 순서에 들지 않게) */
@@ -443,11 +477,32 @@ export function Paper({
     );
   }
 
-  /** 두 줄 사이의 위아래 합치기 - 못 합치는 자리는 꺼 두고 까닭을 툴팁으로 */
+  /** 두 줄 사이의 위아래 합치기 - 못 합치는 자리는 꺼 두고 까닭을 툴팁으로. 언어가 달라 못 합치지만 짝을 지을 수 있으면 짝 짓기로 바꾼다 */
   function renderMerge(prev: PaperRow, next: PaperRow): ReactNode {
     const merge = strips?.merge;
     const gap = merge ? getGapMerge(prev, next, model.units) : null;
     if (!merge || !gap) return null;
+    const pair = strips?.pair;
+    if (pair && gap.blocker === "mixed_language" && pair.canPair(gap.firstId, gap.secondId)) {
+      const pairLabel = t("split.pairAdjacent");
+      return (
+        <button
+          type="button"
+          className="strip-merge strip-pair"
+          aria-disabled={merge.busy ? "true" : undefined}
+          aria-label={pairLabel}
+          tabIndex={gap.firstId === selectedId || gap.secondId === selectedId ? 0 : -1}
+          data-testid={`${testId}-pair-${gap.firstId}-${gap.secondId}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (!merge.busy) pair.onPair(gap.firstId, gap.secondId);
+          }}
+        >
+          <Link2 size={12} strokeWidth={1.8} aria-hidden />
+          <span className="strip-merge-label">{pairLabel}</span>
+        </button>
+      );
+    }
     const label = t("split.mergeAdjacent");
     const reason = gap.blocker ? t(MERGE_BLOCKER_KEYS[gap.blocker]) : null;
     const isOff = reason !== null || merge.busy;
@@ -538,6 +593,7 @@ export function Paper({
           >
             {renderMarks(unit, false, "cell-marks")}
             <p data-block={cell.id}>{row.parts[0].segments.map((segment, at) => renderSegment(cell, segment, at))}</p>
+            {renderActions(unit?.id)}
           </div>
         </Fragment>
       );
@@ -642,6 +698,7 @@ export function Paper({
                     {part.segments.map((segment, index) => renderSegment(part.block, segment, index))}
                   </p>
                 ))}
+          {renderActions(unit?.id)}
           {foot}
           {pills}
           {renderMarks(unit, hasWarn, "strip-marks")}
@@ -688,6 +745,8 @@ export function Paper({
     const element = event.target as HTMLElement;
     if (element.closest("button, a, input, [role='slider']")) return;
     const holder = element.closest<HTMLElement>("[data-strip-unit]") ?? element.closest(".strip-tab")?.parentElement?.querySelector<HTMLElement>(":scope > .strip[data-strip-unit]");
+    // 표 안에서 칸 조각을 비껴 누른 것(칸 여백·칸 사이 틈)으로 표 전체를 고르지 않는다 - 표 전체는 표 위 손잡이·표 밖 여백으로
+    if (holder?.dataset.kind === "table" && element.closest("table")) return;
     if (holder) onUnitClick(Number(holder.dataset.stripUnit), null, event);
   }
 

@@ -17,6 +17,7 @@ import { SourceFontMenu } from "@/components/paper/source-font-menu";
 import { Modal } from "@/components/modal";
 import { ReadOnlyNote } from "@/components/read-only-note";
 import { SplitContextMenu } from "@/components/split/split-context-menu";
+import { SplitUnitActions } from "@/components/split/split-unit-actions";
 import { SplitHelp } from "@/components/split/split-help";
 import { LoadError } from "@/components/ui/load-error";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
@@ -54,7 +55,7 @@ import { useI18n } from "@/lib/i18n";
 import { buildPaperModel, buildPaperTabs, canSplitAt, countUnchecked, readWarningText, resolveCutDrag, shouldRecenter, toBlockOffset, toUnitOffset, type PaperSheet, type PaperTabKey } from "@/lib/paper-model";
 import { findLangMismatch } from "@/lib/lang-mismatch-model";
 import { getSplitKeyAction } from "@/lib/split-keys";
-import { buildSplitMenu, getAiSplitReason, isAiSplitKind, isUnitDecided, type SplitMenuAction } from "@/lib/split-menu-model";
+import { buildSplitMenu, canPair, getAiSplitReason, isAiSplitKind, isUnitDecided, type SplitMenuAction } from "@/lib/split-menu-model";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 import { buildAiTabs } from "@/lib/split-ai-tabs-model";
@@ -316,6 +317,19 @@ export default function SplitPage() {
     });
   }
 
+  /** 틈의 짝 짓기 - 우클릭 메뉴와 같은 규칙(canPair) */
+  function canPairIds(firstId: number, secondId: number): boolean {
+    const first = model?.units.get(firstId);
+    const second = model?.units.get(secondId);
+    return first !== undefined && second !== undefined && canPair(first, second);
+  }
+
+  function pairIds(firstId: number, secondId: number) {
+    if (!data || docId === null) return;
+    const revision = data.document.revision;
+    void runSimple(() => createPair(bundleId, docId, revision, [firstId, secondId]), t("split.pairConfirmed"), clearTransient);
+  }
+
   function splitAtCut() {
     if (!selected || !cutAt || cutAt.unitId !== selected.id) return;
     runEdit({ type: "split", unit_id: selected.id, at: cutAt.at }, t("split.didSplit"));
@@ -562,25 +576,26 @@ export default function SplitPage() {
               strips={{
                 isChecked,
                 merge: canEdit ? { busy, onMerge: (firstId, secondId) => runEdit({ type: "merge", unit_ids: [firstId, secondId] }, t("split.didMerge")) } : undefined,
+                pair: canEdit ? { canPair: canPairIds, onPair: pairIds } : undefined,
               }}
-              renderUnitEnd={(unitId) => {
+              renderUnitActions={(unitId) => {
                 const unit = model.units.get(unitId);
-                if (!canEdit || !unit || isChecked(unit) || cut) return null;
+                // 표·행처럼 글자 범위가 없는 단위는 경계를 세지 않는다 - 단추 줄이 없다
+                if (!canEdit || !unit || unit.spans.length === 0) return null;
+                const pairId = unit.pair_id;
                 return (
-                  <button
-                    type="button"
-                    className="inline-check"
-                    data-testid="split-inline-check"
-                    aria-label={t("split.checkBoundary")}
-                    disabled={busy}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setBoundary(unit, true);
-                    }}
-                  >
-                    <span className="inline-check-arrow" aria-hidden>↵</span>
-                    <span className="inline-check-label">{t("split.checkBoundary")}</span>
-                  </button>
+                  <SplitUnitActions
+                    key={unit.id}
+                    unitId={unit.id}
+                    isChecked={isChecked(unit)}
+                    canUnpair={pairId !== null}
+                    canUnmerge={unit.can_unmerge}
+                    busy={busy}
+                    onCheck={() => setBoundary(unit, true)}
+                    onUncheck={() => setBoundary(unit, false)}
+                    onUnpair={() => pairId !== null && docId !== null && data && void runSimple(() => deletePair(bundleId, docId, pairId, data.document.revision), t("split.pairRemoved"))}
+                    onUnmerge={() => runEdit({ type: "unmerge", unit_id: unit.id }, t("split.didUnmerge"))}
+                  />
                 );
               }}
               renderAtCut={() => (

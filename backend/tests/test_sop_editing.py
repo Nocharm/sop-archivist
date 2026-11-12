@@ -317,6 +317,83 @@ def test_merge_rejects_mixed_language(client: TestClient) -> None:
     assert get_view(client, fx.bundle_id, fx.doc["id"])["document"]["revision"] == 1
 
 
+# ── 합치기 풀기 ───────────────────────────────────────────────────────────────
+
+
+def _unmerge(client: TestClient, fx: Fixture, unit: dict) -> httpx2.Response:
+    return _edit(client, fx.bundle_id, fx.doc["id"], {"type": "unmerge", "unit_id": unit["id"]})
+
+
+def test_unmerge_revives_the_merged_units_and_undoes(client: TestClient) -> None:
+    fx = _setup(client)
+    record, check = find_unit(fx.view, RECORD), find_unit(fx.view, CHECK)
+    _ok(_merge(client, fx, record, check))
+    merged = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), f"{RECORD} {CHECK}")
+    assert merged["can_unmerge"] is True
+    assert not any(unit["can_unmerge"] for unit in fx.view["units"])
+
+    result = _ok(_unmerge(client, fx, merged))
+
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    assert (result["created_unit_ids"], result["retired_unit_ids"]) == ([record["id"], check["id"]], [merged["id"]])
+    for before in (record, check):
+        after = find_unit(view, before["text"])
+        # 원래 ID·표시 ID·범위 그대로, 되살린 것은 "나눔·합침" 표시가 아니다
+        assert (after["id"], after["display_id"], after["spans"], after["is_edited"], after["can_unmerge"]) == (
+            before["id"], before["display_id"], before["spans"], False, False,
+        )
+    assert _load_statuses(merged["id"]) == ["retired"]
+    assert _find_coverage_problems(view) == []
+    assert _load_edit_rows(fx.doc["id"]) == [(1, "merge", "applied"), (2, "unmerge", "applied")]
+
+    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
+
+    back = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), f"{RECORD} {CHECK}")
+    assert (back["id"], back["can_unmerge"]) == (merged["id"], True)
+
+
+def test_unmerge_follows_a_later_language_change(client: TestClient) -> None:
+    fx = _setup(client)
+    record, check = find_unit(fx.view, RECORD), find_unit(fx.view, CHECK)
+    _ok(_merge(client, fx, record, check))
+    merged = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), f"{RECORD} {CHECK}")
+    _ok(_set_language(client, fx.bundle_id, fx.doc["id"], [merged], "en"))
+
+    _ok(_unmerge(client, fx, merged))
+
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    assert [find_unit(view, text)["lang"] for text in (RECORD, CHECK)] == ["en", "en"]
+
+    # 되살린 단위에 판단이 생겨도 되돌리기는 언어 검사(R31)가 아니라 확인만 묻는다 - 그 단위는 은퇴하는 것이라
+    record_now = find_unit(view, RECORD)
+    assign_as_is(client, fx.bundle_id, record_now, fx.sop_id, slot_key="purpose")
+    refused = _step(client, fx.bundle_id, fx.doc["id"], "undo")
+    assert refused.json()["detail"] == {"code": "confirm_required", "unit_ids": [record_now["id"]]}
+    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo", confirm=True))
+    back = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), f"{RECORD} {CHECK}")
+    assert (back["id"], back["lang"]) == (merged["id"], "en")
+
+
+def test_unmerge_refuses_units_not_made_by_a_standing_merge(client: TestClient) -> None:
+    fx = _setup(client)
+    record, check = find_unit(fx.view, RECORD), find_unit(fx.view, CHECK)
+    original = _unmerge(client, fx, record)
+    _ok(_merge(client, fx, record, check))
+    merged = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), f"{RECORD} {CHECK}")
+    _ok(_split(client, fx, merged, len(RECORD) + 1))
+    piece = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), CHECK)
+    before = get_view(client, fx.bundle_id, fx.doc["id"])
+
+    after_split = _unmerge(client, fx, piece)
+    retired = _unmerge(client, fx, merged)
+
+    assert _code(original) == (422, "cannot_unmerge")
+    assert _code(after_split) == (422, "cannot_unmerge")
+    assert _code(retired) == (404, "unit_not_found")
+    assert not any(unit["can_unmerge"] for unit in before["units"])
+    assert get_view(client, fx.bundle_id, fx.doc["id"])["document"]["revision"] == before["document"]["revision"]
+
+
 # ── 경계 옮기기·골라 만들기 ───────────────────────────────────────────────────
 
 

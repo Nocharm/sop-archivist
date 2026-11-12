@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ViewUnit } from "./api-sop";
-import { buildSplitMenu, getAiSplitReason, type SplitMenuAction, type SplitMenuContext } from "./split-menu-model";
+import { buildSplitMenu, canPair, getAiSplitReason, type SplitMenuAction, type SplitMenuContext } from "./split-menu-model";
 
 function makeUnit(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
   return {
@@ -19,7 +19,7 @@ function makeUnit(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
     pair_id: null,
     pos_seq: id,
     block_id: 1,
-    is_edited: false,
+    is_edited: false, can_unmerge: false,
     split_suggestion_id: null,
     ...over,
   };
@@ -34,6 +34,17 @@ function find(items: ReturnType<typeof buildSplitMenu>, action: SplitMenuAction)
   if (!item) throw new Error(`missing ${action}`);
   return item;
 }
+
+describe("canPair", () => {
+  it("pairs two unpaired neighbours of different languages", () => {
+    expect(canPair(makeUnit(1), makeUnit(2, { lang: "en" }))).toBe(true);
+  });
+  it("refuses same language, a neutral unit, or an existing pair", () => {
+    expect(canPair(makeUnit(1), makeUnit(2))).toBe(false);
+    expect(canPair(makeUnit(1), makeUnit(2, { lang: "neutral" }))).toBe(false);
+    expect(canPair(makeUnit(1, { pair_id: 9 }), makeUnit(2, { lang: "en" }))).toBe(false);
+  });
+});
 
 describe("buildSplitMenu two sentences", () => {
   it("lists the four two-sentence actions", () => {

@@ -210,7 +210,7 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   const unitId = (await target.getAttribute("data-testid")).replace("split-paper-unit-", "");
   await target.click();
   check("first click selects", (await target.getAttribute("data-sel")) === "");
-  check("first click shows the inline confirm", (await page.locator('[data-testid="split-inline-check"]').count()) === 1);
+  check("first click shows the check under the unit", (await page.locator('[data-testid^="split-act-check-"]').count()) === 1);
   // 윤곽은 다음 프레임에 재서 그리므로 바로 세면 0일 수 있다 - 그려질 때까지 기다린다
   await page.locator(".sel-contour path").first().waitFor({ timeout: T });
   check("selection is drawn as one contour", (await page.locator(".sel-contour path").count()) === 1);
