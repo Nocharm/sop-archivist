@@ -98,6 +98,8 @@ export interface LinkPair {
   unitId: number;
   targetId: number;
   draft: boolean;
+  /** AI가 이어 두고 아직 확정하지 않은 이음 - 선을 AI 색(보라)으로 그린다 */
+  ai: boolean;
 }
 
 /**
@@ -115,7 +117,7 @@ export function buildLinkPairs(
     for (const unitId of row.source_unit_ids) {
       if (!oldUnitIds.has(unitId)) continue;
       seen.add(`${unitId}:${row.target_id}`);
-      pairs.push({ unitId, targetId: row.target_id, draft: false });
+      pairs.push({ unitId, targetId: row.target_id, draft: false, ai: row.status === "ai_suggested" });
     }
   }
   if (!draft) return pairs;
@@ -125,7 +127,7 @@ export function buildLinkPairs(
     if (lang === undefined) continue;
     for (const unit of draft.units) {
       if (unit.lang !== lang || !oldUnitIds.has(unit.id) || seen.has(`${unit.id}:${targetId}`)) continue;
-      pairs.push({ unitId: unit.id, targetId, draft: true });
+      pairs.push({ unitId: unit.id, targetId, draft: true, ai: false });
     }
   }
   return pairs;

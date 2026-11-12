@@ -1521,6 +1521,7 @@ export default function AssignPage() {
                     candidateIds={candidateIds}
                     pickedIds={pickedNew}
                     focusId={focusNew}
+                    allowedLangs={mode === "old" && row && canEdit ? new Set(rowLangs) : null}
                     sourceLabel={(unitId) => (unitMap.get(unitId)?.display_id ?? String(unitId)).replace(/^OLD-/, "")}
                     onPick={handleNewPick}
                     onJumpSource={jumpToOld}

@@ -3,19 +3,15 @@
   <rect width="32" height="32" rx="7" fill="#24272a" />
   <g transform="translate(3.2 3.2) scale(0.8)">
     <g fill="#92ddff">
-      <rect x="6.5" y="3.5" width="17" height="2.6" rx="0.6" />
-      <rect x="3" y="15.5" width="6.2" height="2.6" rx="0.6" />
-      <rect x="10.6" y="15.5" width="8.8" height="2.6" rx="0.6" />
-      <path d="M20.8 15.5H27.4L29.4 16.8L27.4 18.1H20.8Z" />
-      <rect x="4.6" y="23.5" width="18.9" height="2.6" rx="0.6" />
+      <rect x="6" y="4.4" width="16.5" height="3.6" rx="0.9" />
+      <rect x="3" y="16.4" width="9.4" height="3.6" rx="0.9" />
+      <path d="M14.4 16.4H26.6L29.6 18.2L26.6 20H14.4Z" />
     </g>
     <g fill="#f2f5fb">
-      <rect x="6.5" y="7.5" width="17" height="2.6" rx="0.6" />
-      <rect x="3" y="11.5" width="7.2" height="2.6" rx="0.6" />
-      <rect x="11.6" y="11.5" width="6.2" height="2.6" rx="0.6" />
-      <rect x="19.2" y="11.5" width="5" height="2.6" rx="0.6" />
-      <rect x="6.5" y="19.5" width="17" height="2.6" rx="0.6" />
+      <rect x="3" y="10.4" width="8.6" height="3.6" rx="0.9" />
+      <rect x="13.6" y="10.4" width="8.9" height="3.6" rx="0.9" />
+      <rect x="6" y="22.4" width="16.5" height="3.6" rx="0.9" />
     </g>
-    <path d="M24.2 4.8H24.7A1.5 1.5 0 0 1 26.2 6.3V13.6M26.2 20V26.1A1.5 1.5 0 0 1 24.7 27.6H7" fill="none" stroke="#f2f5fb" stroke-width="1.6" />
+    <path d="M24 3.6H24.5A1.8 1.8 0 0 1 26.3 5.4V14.4M26.3 22V26.6A1.8 1.8 0 0 1 24.5 28.4H7" fill="none" stroke="#f2f5fb" stroke-width="2" />
   </g>
 </svg>

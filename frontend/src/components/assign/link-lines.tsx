@@ -30,6 +30,7 @@ interface DrawnLine {
   d: string;
   strong: boolean;
   draft: boolean;
+  ai: boolean;
 }
 
 // 조각 첫 줄 가운데쯤에 선을 붙인다 - 긴 조각의 한가운데로 가면 어느 줄인지 흐려진다(px)
@@ -77,6 +78,16 @@ function updateBadgeDirections(root: HTMLElement, newBody: HTMLElement) {
   }
 }
 
+/** New 출처 칩마다 그 Old 조각이 왼쪽 칸 화면 안·위·아래 중 어디인지 data-dir로 단다 - 칩 오른쪽 갈매기. 조각이 그려져 있지 않으면(다른 Old 문서) none */
+function updateChipDirections(root: HTMLElement, oldBody: HTMLElement) {
+  const frame = oldBody.getBoundingClientRect();
+  for (const chip of root.querySelectorAll<HTMLElement>("[data-pane=\"new\"] [data-src-unit]")) {
+    const rect = findOldStrip(root, Number(chip.dataset.srcUnit))?.getBoundingClientRect();
+    const dir: LinkDirection = !rect ? "none" : rect.bottom < frame.top ? "above" : rect.top > frame.bottom ? "below" : "visible";
+    if (chip.dataset.dir !== dir) chip.dataset.dir = dir;
+  }
+}
+
 /** New 줄에서 그 Old 조각의 출처 칩 - 접혀 있으면 "+N" 칩 */
 function findSourceChip(newLine: HTMLElement, unitId: number): HTMLElement | null {
   const chip = newLine.querySelector<HTMLElement>(`[data-src-unit="${unitId}"]`);
@@ -103,6 +114,7 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
       return;
     }
     updateBadgeDirections(root, newBody);
+    updateChipDirections(root, oldBody);
     if (!visible) {
       setLines((prev) => (prev.length === 0 ? prev : []));
       return;
@@ -133,7 +145,7 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
       // 양쪽 끝이 다 보일 때만 - 한쪽이 스크롤 밖이면 선이 문서 머리나 화면 밖으로 뻗는다
       if (start.y < oldFrame.top || start.y > oldFrame.bottom || end.y < newFrame.top || end.y > newFrame.bottom) continue;
       const shift = (point: { x: number; y: number }) => ({ x: point.x - base.left, y: point.y - base.top });
-      next.push({ key: `${pair.unitId}:${pair.targetId}`, d: buildLinkPath(shift(start), shift(end)), strong: pair.strong, draft: pair.draft });
+      next.push({ key: `${pair.unitId}:${pair.targetId}`, d: buildLinkPath(shift(start), shift(end)), strong: pair.strong, draft: pair.draft, ai: pair.ai });
     }
     setLines((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
   });
@@ -186,14 +198,26 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
     const root = svgRef.current?.parentElement;
     if (!root) return;
     const marked = new Set<HTMLElement>();
+    // 진해진 선의 두 끝 표시(Old 연결 배지·New 출처 칩)도 올린 모양으로 - 어느 칩이 어느 배지와 이어졌는지 함께 읽힌다
+    const hot = new Set<HTMLElement>();
     if (hover) {
       for (const id of findLinkPartners(pairs, hover.side, hover.id)) {
-        const el = hover.side === "old" ? findNewLine(root, id) : findOldStrip(root, id);
+        const unitId = hover.side === "old" ? hover.id : id;
+        const targetId = hover.side === "old" ? id : hover.id;
+        const oldEl = findOldStrip(root, unitId);
+        const newEl = findNewLine(root, targetId);
+        const el = hover.side === "old" ? newEl : oldEl;
         if (el) marked.add(el);
+        const badge = oldEl?.querySelector<HTMLElement>("[data-link-badge]");
+        const chip = newEl ? findSourceChip(newEl, unitId) : null;
+        if (badge) hot.add(badge);
+        if (chip) hot.add(chip);
       }
     }
     for (const el of root.querySelectorAll<HTMLElement>("[data-link-hover]")) if (!marked.has(el)) delete el.dataset.linkHover;
     for (const el of marked) el.dataset.linkHover = "";
+    for (const el of root.querySelectorAll<HTMLElement>("[data-link-hot]")) if (!hot.has(el)) delete el.dataset.linkHot;
+    for (const el of hot) el.dataset.linkHot = "";
   });
 
   // 끝날 때 표시를 지운다 - New 문서를 닫아도 Old 조각에 강조가 남지 않게
@@ -201,13 +225,14 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
     const root = svgRef.current?.parentElement;
     return () => {
       for (const el of root?.querySelectorAll<HTMLElement>("[data-link-hover]") ?? []) delete el.dataset.linkHover;
+      for (const el of root?.querySelectorAll<HTMLElement>("[data-link-hot]") ?? []) delete el.dataset.linkHot;
     };
   }, []);
 
   return (
     <svg ref={svgRef} className="link-lines" aria-hidden data-testid="assign-link-lines">
       {lines.map((line) => (
-        <g key={line.key} data-strong={line.strong ? "" : undefined} data-draft={line.draft ? "" : undefined}>
+        <g key={line.key} data-strong={line.strong ? "" : undefined} data-draft={line.draft ? "" : undefined} data-ai={line.ai ? "" : undefined}>
           <path d={line.d} />
         </g>
       ))}

@@ -1,11 +1,11 @@
 // 맡겨 두는 툴팁 - 아이콘 표시처럼 수천 개가 될 수 있는 것에 `Tooltip`을 하나씩 두지 않고, 감싼 영역 하나가 `data-tip`을 가진 요소의 툴팁을 띄운다.
-// 모양·뜨는 시간은 `Tooltip`과 같다(150ms, `.tip`). 포인터를 올리거나 키보드 포커스가 가면 뜬다.
+// 모양·뜨는 시간·자리(위, 모자라면 아래)는 `Tooltip`과 같다(150ms, `.tip`). 포인터를 올리거나 키보드 포커스가 가면 뜬다.
 "use client";
 
 import { useEffect, useRef, useState, type FocusEvent, type PointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
-import { placeAbove, placeBelow, placeBeside, type FloatingPos } from "@/components/ui/floating";
+import { placeAbove, placeBeside, type FloatingPos } from "@/components/ui/floating";
 
 const SHOW_DELAY_MS = 150;
 
@@ -39,11 +39,10 @@ export function useDelegatedTip(): DelegatedTip {
       const host = hostRef.current;
       const tip = tipRef.current;
       if (host && tip) {
-        // data-tip-side="top" - 아래에 다른 창이 뜨는 자리(나눌 선)는 위로
-        // data-tip-side="right" - 목록 항목 옆(모자라면 왼쪽)
+        // 기본은 위 - 아래에 두면 마우스 포인터가 글을 가린다. data-tip-side="right" - 목록 항목 옆(모자라면 왼쪽)
         const rect = host.getBoundingClientRect();
         const size = tip.getBoundingClientRect();
-        setPos(host.dataset.tipSide === "right" ? placeBeside(rect, size) : (host.dataset.tipSide === "top" ? placeAbove : placeBelow)(rect, size, "center"));
+        setPos(host.dataset.tipSide === "right" ? placeBeside(rect, size) : placeAbove(rect, size, "center"));
       }
     });
     return () => cancelAnimationFrame(frame);
