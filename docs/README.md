@@ -10,6 +10,7 @@
 | [superpowers/specs/2026-11-09-assign-unified-design.md](superpowers/specs/2026-11-09-assign-unified-design.md) | 3단계 Assign 통합 화면(v0.10.0) 설계 — 분류·짝 맞추기를 Old 조각 한 줄씩 처리하는 한 화면으로, 두 문서 나란히·문서별 확대·우선순위 아코디언. 구현 계획과 목업은 main 머지 뒤 지웠다(git history) |
 | [superpowers/specs/2026-11-12-paper-marks-filter-fold-design.md](superpowers/specs/2026-11-12-paper-marks-filter-fold-design.md) | 용지 표시 정리 설계 — Split·Assign 왼쪽 번호 칸·언어 막대·보류 칩·짝 카드(P2), 문장 앞 번호 숨김, Unit 상태 칩 한 벌, Assign 필터 접기(F3), 첫 진입 All |
 | [superpowers/specs/2026-11-12-language-axis-design.md](superpowers/specs/2026-11-12-language-axis-design.md) | 언어 축 걷어 내기 명세 수정안(구현 전) — 묶기 하나, 언어로 막지 않는 배정·Remark, 숫자·검토 조건·결과물을 한 벌(줄 기준)로, 용지 언어 표시 삭제. 결과물(Excel·미리보기) 작업에 넘기는 합의 포함 |
+| [superpowers/plans/2026-11-13-language-axis.md](superpowers/plans/2026-11-13-language-axis.md) | 구현 계획: 언어 축 (1)~(3) — 줄 기준 숫자·검토 조건, 쪼개기 `Join`, 용지 언어 표시 삭제, 배정 잠금 해제·짝 정하기·Remark. 결과물·번호 (4)는 다음 작업 |
 | [../frontend/docs/design/2026-11-07-frontend-design-foundations.md](../frontend/docs/design/2026-11-07-frontend-design-foundations.md) | 프런트 디자인 기초 — 토큰(색 값의 단일 소스는 `frontend/src/styles/tokens.css`)·글꼴·화면 구조·상태 표현·동작 규칙·언어. 화면 코드 주석이 "디자인 문서 N절"로 절 번호를 참조한다 |
 | [domain/restructuring-rules.md](domain/restructuring-rules.md) | SOP 재구성 판단 기준(R01–R13, SOP 일곱 칸, WI Instruction/Why, 고쳐 쓰기 원칙) — AI 지침의 원문·테스트 정답의 근거 |
 | [domain/restructuring-cases.md](domain/restructuring-cases.md) | SOP 재구성 사례(QC Centrifuge 등)와 데이터를 쓰는 원칙 |
