@@ -16,6 +16,7 @@ from app.routers.admin import KstDatetime
 from app.sop.constants import COVER_KINDS, NUMBER_NOTE, NUMBERED, SLOT_KEYS, WI_PARTS
 from app.sop.groups import TABLE_UNIT_KINDS, build_group_ids, collapse_table_members
 from app.sop.output_labels import LABELS, OutputLabels
+from app.sop.output_rows import build_meaning_rows
 from app.sop.snapshot import (
     NEUTRAL,
     BundleSnapshot,
@@ -24,7 +25,7 @@ from app.sop.snapshot import (
     TargetInfo,
     UnitInfo,
 )
-from app.sop.status import get_cover_status, pick_row_status
+from app.sop.status import get_cover_status
 
 Lang = Literal["ko", "en"]
 NumberOf = Callable[[TargetInfo], str]  # 새 문장 → 그 판의 섹션 번호(없으면 빈 글)
@@ -847,10 +848,6 @@ class ReviewFacts:
 def build_review_facts(snap: BundleSnapshot) -> ReviewFacts:
     """검토 요청 조건이 읽는 단위 사실 — 요약·결과물과 같은 옛 단위 집합(_build_index)과 같은 보낸 곳 규칙(_group_dests)."""
     index = _build_index(snap)
-    row_statuses: dict[int, list[str]] = defaultdict(list)
-    for unit in index.old_units:
-        if unit.group_unit_id is None:  # 표 칸에 묶인 문장은 표·행 단위가 한 줄로 센다
-            row_statuses[snap.pair_of.get(unit.id, -unit.id)].append(get_cover_status(unit, snap.decisions))
-    counts = Counter(pick_row_status(statuses) for statuses in row_statuses.values())
+    counts = Counter(row.status for row in build_meaning_rows(snap))
     duplicates = {_get_decision_unit_id(unit) for unit in index.old_units if len(_group_dests(index, unit)) >= 2}
     return ReviewFacts(row_status_counts=counts, duplicate_unit_ids=sorted(duplicates))

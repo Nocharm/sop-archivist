@@ -65,6 +65,7 @@ class DocumentInfo:
     file_name: str
     status: str  # ready | rejected | failed — 검토 요청이 거절·실패 문서가 남았는지 가린다
     order: int  # 문서 순서(0부터) — 옛 문서 먼저, 같은 쪽 안에서는 id 순
+    language_layout: str  # ko_en_interleaved | ko_en_separate | ko_only | en_only
 
 
 @dataclass(frozen=True)
@@ -145,6 +146,7 @@ class TargetInfo:
     confirmed_by: str | None
     confirmed_at: datetime | None
     source_unit_ids: tuple[int, ...]  # 출처 순서(seq)
+    remark: str  # 사람이 적은 메모 — include_text=False면 빈 글
 
 
 @dataclass(frozen=True)
@@ -285,6 +287,7 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
             document.id: DocumentInfo(
                 id=document.id, side=document.side, doc_code=document.doc_code, doc_version=document.doc_version,
                 title=document.title, file_name=document.file_name, status=document.status, order=order,
+                language_layout=document.language_layout,
             )
             for order, document in enumerate(documents)
         },
@@ -330,7 +333,9 @@ async def _load_targets(
             sources[target_id].append(unit_id)
     target_statement = select(TargetSentence).where(TargetSentence.bundle_id == bundle_id)
     if not include_text:
-        target_statement = target_statement.options(defer(TargetSentence.confirmed_text), defer(TargetSentence.ai_text))
+        target_statement = target_statement.options(
+            defer(TargetSentence.confirmed_text), defer(TargetSentence.ai_text), defer(TargetSentence.remark)
+        )
     return {
         target.id: TargetInfo(
             id=target.id, target_doc_id=target.target_doc_id, slot_key=target.slot_key, wi_step=target.wi_step,
@@ -341,7 +346,7 @@ async def _load_targets(
             translation_source_unit_id=target.translation_source_unit_id, parent_target_id=target.parent_target_id, cell_row=target.cell_row, cell_col=target.cell_col,
             grid=target.grid, status=target.status, hold_reason=target.hold_reason, warnings=tuple(target.warnings),
             confirmed_by=target.confirmed_by, confirmed_at=target.confirmed_at,
-            source_unit_ids=tuple(sources.get(target.id, ())),
+            source_unit_ids=tuple(sources.get(target.id, ())), remark=target.remark if include_text else "",
         )
         for target in await session.scalars(target_statement)
     }

@@ -15,10 +15,10 @@ from app.main import app
 from app.routers import sop_outputs
 from app.sop import review, snapshot
 from app.sop.ingest import ingest_upload
-from app.sop.models import Bundle, Document, UnitDecision
+from app.sop.models import Bundle, Document, TargetSentence, UnitDecision
 from tests.access_helpers import run_in_session
 from tests.docx_factory import build_docx, p, tbl
-from tests.sop_helpers import AUTHOR, create_bundle, find_unit, get_view, upload
+from tests.sop_helpers import AUTHOR, create_bundle, find_unit, get_view, put_tobe, upload
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
 
@@ -188,3 +188,34 @@ def test_snapshot_takes_a_shared_lock_on_the_bundle_row(client: TestClient) -> N
     assert len(locks) == 1 and "FROM bundles" in locks[0], rendered
     # 첫 질의 뒤의 문서 목록 질의는 잠금이 걸린 뒤에 돈다
     assert rendered.index(locks[0]) < next(i for i, sql in enumerate(rendered) if f"FROM {Document.__tablename__}" in sql)
+
+
+def test_snapshot_reads_layout_and_remark(client: TestClient) -> None:
+    bundle_id, document_id = _create_bundle_with_document(client)
+    revision = get_view(client, bundle_id, document_id)["document"]["revision"]
+    response = client.patch(
+        f"/api/bundles/{bundle_id}/documents/{document_id}",
+        json={"revision": revision, "language_layout": "ko_en_separate"}, headers=AUTHOR,
+    )
+    assert response.status_code == 200, response.text
+    sop_id = put_tobe(
+        client, bundle_id, [{"code": "SOP-NEW", "title": "Synthetic SOP", "doc_type": "sop", "parent_code": None}]
+    ).json()["docs"][0]["id"]
+
+    async def _add_target(session: AsyncSession) -> None:
+        session.add(TargetSentence(
+            bundle_id=bundle_id, target_doc_id=sop_id, slot_key="purpose", lang="ko", kind="sentence",
+            confirmed_text="합성 새 문장", origin="new_doc", change_type="new", status="confirmed", remark="Synthetic remark",
+        ))
+        await session.commit()
+
+    run_in_session(_add_target)
+
+    async def _load(include_text: bool, session: AsyncSession) -> snapshot.BundleSnapshot:
+        return await snapshot.load_bundle_snapshot(session, bundle_id, include_text=include_text)
+
+    full = run_in_session(lambda session: _load(True, session))
+    assert full.documents[document_id].language_layout == "ko_en_separate"
+    assert [target.remark for target in full.targets.values()] == ["Synthetic remark"]
+    light = run_in_session(lambda session: _load(False, session))
+    assert [target.remark for target in light.targets.values()] == [""]
