@@ -1,10 +1,11 @@
 // 툴팁 - 150ms 뒤에 뜨고 네이티브 title을 쓰지 않는다. 비활성 버튼의 이유도 이것으로 보인다(감싼 span이 포인터를 받는다).
+// 기본은 위(자리가 모자라면 아래) - 아래에 두면 마우스 포인터가 글을 가린다.
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
-import { placeBelow, type FloatingPos } from "@/components/ui/floating";
+import { placeAbove, type FloatingPos } from "@/components/ui/floating";
 
 const SHOW_DELAY_MS = 150;
 
@@ -29,7 +30,7 @@ export function Tooltip({ label, children, align = "center", suppressed = false 
     const frame = requestAnimationFrame(() => {
       const host = hostRef.current;
       const tip = tipRef.current;
-      if (host && tip) setPos(placeBelow(host.getBoundingClientRect(), tip.getBoundingClientRect(), align));
+      if (host && tip) setPos(placeAbove(host.getBoundingClientRect(), tip.getBoundingClientRect(), align));
     });
     return () => cancelAnimationFrame(frame);
   }, [open, align, suppressed]);

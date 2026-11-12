@@ -185,6 +185,8 @@ export function Paper({
 }: PaperProps) {
   const { t } = useI18n();
   const pageRef = useRef<HTMLDivElement>(null);
+  // 첫 누름 때 누른 조각과 그 높이 - 고르자마자 곁 틈이 벌어져 글이 밀려도 두 번 누름(나눌 자리)을 처음 누른 글자로 되돌린다
+  const pressRef = useRef<{ el: HTMLElement; top: number } | null>(null);
   const [contourPath, setContourPath] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const tip = useDelegatedTip();
@@ -233,6 +235,15 @@ export function Paper({
     }
     return map;
   }, [sections, partnerOf]);
+  // 고른 조각 곁 틈을 벌릴 조각 - 이웃한 짝은 한 카드라 고른 쪽이 위든 아래든 카드 위아래가 같이 벌어진다
+  const selectedBlock = useMemo(() => {
+    const ids = new Set<number>();
+    if (selectedId === null) return ids;
+    ids.add(selectedId);
+    const partner = partnerOf.get(selectedId);
+    if (partner && brackets.has(selectedId)) ids.add(partner.id);
+    return ids;
+  }, [selectedId, partnerOf, brackets]);
   // 절 번호를 보일 첫 줄 - 부분(머리글·본문·바닥글)마다 문서 순서로
   const sectionHeads = useMemo(() => {
     const heads = new Set<number>();
@@ -406,7 +417,6 @@ export function Paper({
                     aria-label={t("split.cutMove")}
                     aria-valuenow={cut.offset}
                     data-tip={isDragging ? undefined : t("split.cutMove")}
-                    data-tip-side="top"
                     data-testid={`${testId}-cut-handle`}
                     onPointerDown={handleHandleDown}
                     onKeyDown={handleHandleKey}
@@ -714,7 +724,7 @@ export function Paper({
           <div
             className="strip-gap"
             data-pair={brackets.get(readRowUnitId(rows[index - 1]) ?? -1) === "top" && brackets.get(readRowUnitId(row) ?? -1) === "bottom" ? "" : undefined}
-            data-near-selected={selectedId !== null && (readRowUnitId(rows[index - 1]) === selectedId || readRowUnitId(row) === selectedId) ? "" : undefined}
+            data-near-selected={selectedBlock.has(readRowUnitId(rows[index - 1]) ?? -1) || selectedBlock.has(readRowUnitId(row) ?? -1) ? "" : undefined}
             // 합치기 단추를 글 시작 x에 - 위아래 탭 중 넓은 쪽 뒤라 어느 탭에도 걸치지 않는다
             style={{ "--gap-tab": `${Math.max(readTabWidth(rows[index - 1]), readTabWidth(row))}px` }}
             data-testid={`${testId}-gap-${row.key}`}
@@ -752,10 +762,14 @@ export function Paper({
 
   function handleDoubleClick(event: MouseEvent<HTMLDivElement>) {
     if (!onUnitDoubleClick) return;
-    const target = (event.target as HTMLElement).closest<HTMLElement>(".su[data-unit]");
+    const press = pressRef.current;
+    const dy = press?.el.isConnected ? press.el.getBoundingClientRect().top - press.top : 0;
+    const y = event.clientY + dy;
+    const hit = dy === 0 ? (event.target as HTMLElement) : document.elementFromPoint(event.clientX, y);
+    const target = hit?.closest<HTMLElement>(".su[data-unit]");
     if (!target) return;
     window.getSelection()?.removeAllRanges();
-    onUnitDoubleClick(Number(target.dataset.unit), readCaret(event.clientX, event.clientY));
+    onUnitDoubleClick(Number(target.dataset.unit), readCaret(event.clientX, y));
   }
 
   function handleContextMenu(event: MouseEvent<HTMLDivElement>) {
@@ -773,6 +787,10 @@ export function Paper({
 
   // 두 번 누를 때 브라우저가 낱말을 고르지 않게 - 나눌 자리를 정하는 동작이다
   function handleMouseDown(event: MouseEvent<HTMLDivElement>) {
+    if (event.detail === 1) {
+      const el = (event.target as HTMLElement).closest<HTMLElement>(".strip-row, .su[data-unit]");
+      pressRef.current = el ? { el, top: el.getBoundingClientRect().top } : null;
+    }
     if (onUnitDoubleClick && event.detail > 1 && (event.target as HTMLElement).closest(".su[data-unit]")) event.preventDefault();
     // 끌어 고르기가 없는 화면(Assign)에서 Shift+클릭은 여럿 고르기다 - 브라우저가 글자 선택을 늘려 클릭을 삼키지 않게
     if (!onRangeSelect && event.shiftKey && (event.target as HTMLElement).closest(".su[data-unit]")) event.preventDefault();
