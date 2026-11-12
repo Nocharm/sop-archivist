@@ -106,5 +106,7 @@
   /* 포커스 테두리를 그리지 않는 두 곳 - 책상의 포커스는 글쇠로 글을 내리려고 코드가 주는 것이고, 찾기 칸은 감싼 테두리(focus-within)가 포커스를 보인다 */
   .manual-desk:focus-visible,
   .manual-search-input:focus-visible { outline: none; }
-}
 
+  /* 설명서 그림은 라이트 화면으로 뽑혀 다크에서 눈부시다 - 밝기만 낮춘다(다크 블록은 data-theme 하나뿐) */
+  :root[data-theme="dark"] .manual .md-fig img { filter: brightness(.85); }
+}
