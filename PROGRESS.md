@@ -4,6 +4,8 @@
 
 ## 2026-11-12
 
+- **화면 검토 반영 6/14 Assign (`fix/screen-review`)** — 그 자리 메뉴 자리 계산을 순수 함수 `placeLinkMenu`(줄 상자 아래, 모자라면 위)로 빼 이은 줄을 덮지 않게 했고(overlap 감사가 두 줄의 상자까지 재도록 보강), 오른쪽 패널을 `clamp(280px,24vw,420px)`·Assign만 `--page-max-desk` 1920으로, 도구 줄 오른쪽 묶음을 `margin-left:auto` 한 요소로(Synthetic 칩 제거, 1440에서 한 줄이 되려면 줄 간격 4px까지 필요), 트리 노드 한 줄 말줄임, 사유 칸을 자라는 textarea로 바꿨다. R1은 Assign 보통 자료에서 고치기 전에도 겹침이 없어 CSS를 건드리지 않았다.
+
 - **화면 검토 반영 1~5/14 (브랜치 `fix/screen-review` → dev, v0.15.1)** — 극단 자료 시드(`seed_sop_worst.py`, W1~W7·light 36 = 43 묶음)와 배치 감사(`pw-layout-audit.mjs`)를 저장소에 넣고, 관리 목록·History(`.clamp-2`·`ClampText`, 감사 A8은 요약 칸까지 제한해야 56 이하), To-Be(상위 SOP 160px·N/A 칸 360px 단), Split(넓은 표는 조각만 가로 스크롤·빈 패널은 진행 요약·도움말 기본 접힘), 결과물 A·B·C(A 고정 배치·6줄+펼치기, B 가운데 말줄임·"N개 더", C 단추는 줄 사이 홈이 4px라 계획의 겹쳐 그리기가 불가능해 글 흐름 안에 늘 흐리게 `.row-actions-quiet`)를 고쳤다. 최종 검토에서 가운데 정렬과 Split 표 칸 폭이 다른 화면으로 새는 것을 `.dl-table`·`.split-desk`로 가뒀다. R8(Split 1120 긴 문단 글 폭)은 처방대로 해도 326px로 기준 340에 못 미쳐 임계값을 그대로 두고 사용자 결정을 기다린다. Task 6~14는 다음 세션.
 
 - **전 화면 검토와 반영 계획(문서만, 브랜치 `dev`)** — 사용자 요청으로 보통·극단 자료 두 벌(별도 sqlite)에서 201장면을 찍어 45건을 찾았다. 극단 자료에서만 무너지는 표 7곳의 원인은 하나(긴 글이 옆 칸 폭을 빼앗음)였고, 처방 20건을 화면에 주입해 재 보니 5건이 틀려 고쳤다. 사용자 결정: 전부 수용, Documents 줄 끝 단추는 호버 전용이 아니라 늘 흐리게·정상 상태 알약은 아이콘만. 내 판단: 목록 화면 1600·Assign 1920, 빈 Assign 패널은 접지 않음. 계획 `docs/superpowers/plans/2026-11-12-screen-review-fixes.md`(작업 14개, 구현 전), 교훈 `docs/lessons/ui-review.md`, 디자인 기초 §11·§15 갱신.

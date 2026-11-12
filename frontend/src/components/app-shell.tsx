@@ -14,8 +14,8 @@ import { useI18n } from "@/lib/i18n";
 import { useSession } from "@/lib/session";
 import { parseBundlePath, type StageKey } from "@/lib/stages";
 
-// 칸 셋으로 일하는 화면은 넓은 상한을 쓴다(tokens.css --page-max-wide). 나머지는 목록·읽기 상한
-const WIDE_STAGES: ReadonlySet<StageKey> = new Set(["split", "assign"]);
+// 칸 셋으로 일하는 화면은 넓은 상한을 쓴다(tokens.css --page-max-wide, Assign은 더 넓은 --page-max-desk). 나머지는 목록·읽기 상한
+const WIDE_STAGES: ReadonlySet<StageKey> = new Set(["split"]);
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { t } = useI18n();
@@ -31,7 +31,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div
         key={`${me.login_id}:${pathname}`}
         className="page-enter page-wrap"
-        data-width={inBundle?.stage && WIDE_STAGES.has(inBundle.stage) ? "wide" : "base"}
+        data-width={inBundle?.stage === "assign" ? "desk" : inBundle?.stage && WIDE_STAGES.has(inBundle.stage) ? "wide" : "base"}
       >
         {children}
       </div>

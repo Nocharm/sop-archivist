@@ -70,6 +70,7 @@
     box-shadow: -1px 0 0 var(--line), 1px 0 0 var(--line);
   }
   .page-wrap[data-width="wide"] { max-width: var(--page-max-wide); }
+  .page-wrap[data-width="desk"] { max-width: var(--page-max-desk); }
 
   .stages {
     display: flex;
@@ -1195,7 +1196,8 @@
   .fpill[data-tone="ok"] { --fp-ink: var(--accent); --fp-fill: var(--accent); --fp-tint: var(--accent-tint); --fp-line: var(--accent-line); --fp-on: var(--on-accent); }
   .fpill[data-tone="all"] { --fp-ink: var(--ink); --fp-fill: var(--ink); --fp-tint: var(--surface); }
   .fpill[data-tone="danger"] { --fp-ink: var(--danger-ink); --fp-fill: var(--danger-ink); --fp-tint: var(--danger-tint); --fp-line: color-mix(in oklab, var(--danger-fill) 45%, var(--surface)); }
-  .assign-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 30px; }
+  .assign-bar-end { display: flex; flex: none; flex-wrap: nowrap; align-items: center; gap: 4px; margin-left: auto; }
+  .assign-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 4px; min-height: 30px; }
   .assign-panes { position: relative; display: grid; grid-template-columns: minmax(0, var(--split, 50%)) 12px minmax(0, 1fr); min-height: 0; }
   .assign-pane { display: flex; flex-direction: column; gap: 6px; min-width: 0; min-height: 0; }
   .assign-pane > .pane-body { flex: 1 1 0; }
@@ -1334,14 +1336,14 @@
   .dest-acc-icon { color: var(--ink-3); flex: none; }
   .dest-card-pending { display: inline-flex; align-items: center; gap: 5px; margin-top: 4px; font-size: var(--fs-micro); font-weight: 600; color: var(--st-hold-ink); }
 
+  .dest-tree, .tree-kids { grid-template-columns: minmax(0, 1fr); }
   .dest-tree { display: grid; gap: 1px; }
   .tree-group { margin: 6px 0 2px; font-size: var(--fs-micro); font-weight: 700; color: var(--ink-3); }
-  .tree-node { display: flex; width: 100%; align-items: center; gap: 6px; padding: 5px 6px; border-radius: var(--r-1); font-size: 13px; text-align: left; cursor: pointer; }
+  .tree-node { display: flex; width: 100%; min-width: 0; align-items: center; gap: 6px; padding: 5px 6px; border-radius: var(--r-1); font-size: 13px; text-align: left; cursor: pointer; }
   .tree-node:hover { background: var(--hover); }
-  .tree-node b { font: 600 var(--fs-cap) var(--font-mono); }
-  .tree-chev { color: var(--ink-4); transition: rotate var(--dur-fast); }
+  .tree-chev { flex: none; color: var(--ink-4); transition: rotate var(--dur-fast); }
   .tree-node[aria-expanded="true"] .tree-chev { rotate: 90deg; }
-  .tree-sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-cap); color: var(--ink-3); }
+  .tree-sub { flex: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-cap); color: var(--ink-3); }
   .tree-kids { display: grid; gap: 1px; padding-left: 18px; }
   .tree-section { margin: 4px 0 0; font-size: var(--fs-micro); font-weight: 600; color: var(--ink-3); }
   .tree-leaf { display: block; width: 100%; padding: 4px 8px; border-radius: var(--r-1); font-size: var(--fs-cap); line-height: 17px; color: var(--ink-2); text-align: left; cursor: pointer; }

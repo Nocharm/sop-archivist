@@ -432,6 +432,123 @@ const AUDIT_ENTRIES = [
     expect: (value) => value.tables > 0 && value.worst <= 1,
     note: "no Assign .ptbl is wider than the strip that holds it (min-width 16ch stays in Split)",
   },
+  // ---- Task 6: Assign ----
+  {
+    // A10: 오른쪽 패널의 목적지 트리 - 노드 한 줄(<=32px), 개수 칸이 패널 안
+    id: "A10", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}/assign`,
+    open: async (page) => {
+      await page.getByTestId("assign-bar").waitFor({ timeout: T });
+      if ((await page.getByTestId("assign-acc-all").count()) === 0) await page.locator('[data-testid="assign-old"] .su[data-unit]').first().click();
+      await page.getByTestId("assign-acc-all").click();
+      // 안쪽 노드는 바깥을 펼쳐야 생긴다 - 더 펼칠 것이 없을 때까지
+      for (let round = 0; round < 4; round += 1) {
+        const closed = page.locator('.tree-node[aria-expanded="false"]');
+        const n = await closed.count();
+        if (n === 0) break;
+        for (let i = n - 1; i >= 0; i -= 1) await closed.nth(i).click();
+      }
+      await page.waitForTimeout(SETTLE_MS);
+    },
+    measure: (page) => page.evaluate(() => {
+      const nodes = [...document.querySelectorAll(".tree-node")];
+      const inspector = document.querySelector('[data-testid="assign-inspector"]').getBoundingClientRect();
+      const outside = nodes.flatMap((node) => [...node.children]).filter((el) => el.getBoundingClientRect().right > inspector.right + 0.5).length;
+      return { nodes: nodes.length, maxHeight: Math.round(Math.max(0, ...nodes.map((node) => node.getBoundingClientRect().height))), outside };
+    }),
+    expect: (value) => value.nodes > 0 && value.maxHeight <= 32 && value.outside === 0,
+    note: "assign tree-node one line (<= 32px), count cells inside the inspector",
+  },
+  {
+    // C1: 1120에서 문서 칸이 좁아지지 않고, 2560에서 작업면 폭이 1920
+    id: "C1", ds: "mid", user: MEMBER, views: [1120, 2560],
+    path: (ids) => `/bundles/${ids.mid[2]}/assign`,
+    open: async (page) => {
+      await page.getByTestId("assign-bar").waitFor({ timeout: T });
+    },
+    measure: (page) => page.evaluate(() => {
+      const w = (sel) => Math.round(document.querySelector(sel).getBoundingClientRect().width);
+      return { vw: window.innerWidth, wrap: w(".page-wrap"), old: w('[data-testid="assign-old"]'), inspector: w('[data-testid="assign-inspector"]') };
+    }),
+    expect: (value) => (value.vw <= 1200 ? value.old >= 350 : value.wrap === 1920),
+    note: "1120: Old pane >= 350px; 2560: page-wrap width = 1920",
+  },
+  {
+    // C11/F1: 도구 줄이 한 줄(1440 <= 44px), 좁은 창은 <= 80px
+    id: "C11", ds: "mid", user: MEMBER, views: [1440, 1120],
+    path: (ids) => `/bundles/${ids.mid[2]}/assign`,
+    open: async (page) => {
+      await page.getByTestId("assign-bar").waitFor({ timeout: T });
+    },
+    measure: (page) => page.getByTestId("assign-bar").evaluate((bar) => ({ vw: window.innerWidth, h: Math.round(bar.getBoundingClientRect().height) })),
+    expect: (value) => (value.vw >= 1440 ? value.h <= 44 : value.h <= 80),
+    note: "assign-bar height <= 44px at 1440, <= 80px at 1120",
+  },
+  {
+    // AI를 켠 backend에서 같은 도구 줄(AI 메뉴가 더해진다) - AI 꺼진 backend에서는 C11과 같은 값을 잰다
+    id: "F1", ds: "mid", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.mid[2]}/assign`,
+    open: async (page) => {
+      await page.getByTestId("assign-bar").waitFor({ timeout: T });
+    },
+    measure: (page) => page.getByTestId("assign-bar").evaluate((bar) => Math.round(bar.getBoundingClientRect().height)),
+    expect: (value) => value <= 80,
+    note: "assign-bar height <= 80px at 1120 (run against an AI-on backend)",
+  },
+  {
+    // R1: 표 칸 글의 마지막 낱말이 줄 끝 아이콘 상자와 겹치지 않는다
+    id: "R1", ds: "mid", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.mid[3]}/assign`,
+    open: async (page) => {
+      await page.getByTestId("assign-bar").waitFor({ timeout: T });
+    },
+    measure: (page) => page.evaluate(() => {
+      let checked = 0;
+      let overlaps = 0;
+      for (const piece of document.querySelectorAll('[data-pane] .cell-piece, [data-testid="assign-old"] .cell-piece')) {
+        const marks = [...piece.querySelectorAll(".pmark-host")];
+        const text = piece.querySelector(":scope > p");
+        if (marks.length === 0 || !text) continue;
+        const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
+        let last = null;
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) if (node.textContent.trim()) last = node;
+        if (!last) continue;
+        const body = last.textContent.replace(/\s+$/, "");
+        const start = Math.max(body.lastIndexOf(" ") + 1, 0);
+        const range = document.createRange();
+        range.setStart(last, start);
+        range.setEnd(last, body.length);
+        const word = range.getClientRects();
+        checked += 1;
+        if (marks.some((mark) => { const m = mark.getBoundingClientRect(); return [...word].some((r) => r.right > m.left + 0.5 && r.left < m.right && r.bottom > m.top + 0.5 && r.top < m.bottom - 0.5); })) overlaps += 1;
+      }
+      return { checked, overlaps };
+    }),
+    expect: (value) => value.checked > 0 && value.overlaps === 0,
+    note: "last word of a table-cell piece does not overlap its row-end icons",
+  },
+  {
+    // R2: 1,200자 사유가 든 Unit(OLD-91 보류)을 고르면 사유 칸이 3줄 이상 높이
+    id: "R2", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}/assign`,
+    open: async (page) => {
+      await page.getByTestId("assign-bar").waitFor({ timeout: T });
+      const found = await page.evaluate(async () => {
+        const id = location.pathname.split("/")[2];
+        const response = await fetch(`/api/bundles/${id}/units?limit=1000&offset=0`, { headers: { "X-Dev-User": localStorage.getItem("sopa.devUser") ?? "" } });
+        const unit = (await response.json()).items.find((item) => (item.decision.hold_reason ?? "").length >= 1000 || (item.decision.reason ?? "").length >= 1000);
+        return unit ? { unit: unit.unit_id, doc: unit.document_id } : null;
+      });
+      if (!found) throw new Error("no unit with a 1,200-char reason");
+      await page.getByTestId("assign-old-doc").click();
+      await page.getByTestId(`assign-old-doc-option-${found.doc}`).click();
+      await page.locator(`[data-testid="assign-old"] .su[data-unit="${found.unit}"]`).first().click();
+      await page.waitForTimeout(SETTLE_MS);
+    },
+    measure: (page) => page.getByTestId("assign-reason").evaluate((el) => ({ tag: el.tagName, h: Math.round(el.getBoundingClientRect().height), len: el.value.length })),
+    expect: (value) => value.len >= 1000 && value.h >= 3 * 19,
+    note: "reason field of a 1,200-char reason is >= 3 lines (57px) tall",
+  },
 ];
 
 // ---------- ids 지도 ----------

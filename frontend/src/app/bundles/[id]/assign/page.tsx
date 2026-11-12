@@ -196,6 +196,9 @@ function revealElement(el: HTMLElement) {
   if (shouldRecenter(box.top, box.bottom, frame.top, frame.bottom)) el.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
 }
 
+// 사유 칸 최대 높이 = 6줄(19px) + 위아래 안쪽 여백·테두리
+const REASON_MAX_HEIGHT = 6 * 19 + 12;
+
 export default function AssignPage() {
   const { t } = useI18n();
   const bundleId = Number(useParams<{ id: string }>().id);
@@ -318,6 +321,17 @@ export default function AssignPage() {
   const systemHold = rowUnits.map((unit) => findSystemHold(unit.decision)).find((code) => code !== null) ?? null;
   const reason = draft.reason ?? savedReason;
   const moveCode = draft.moveCode ?? firstDecision?.move_target_code ?? "";
+  useEffect(() => {
+    const fit = () => {
+      const el = reasonRef.current;
+      if (!el) return;
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight + 2, REASON_MAX_HEIGHT)}px`;
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [reason, rowKey]);
   const rowSuggestion = row ? (row.unitIds.map((id) => suggestionOf.get(id)).find(Boolean) ?? null) : null;
 
   function setDraft(patch: Partial<PageDraft>, nextEditing = editing) {
@@ -418,7 +432,8 @@ export default function AssignPage() {
   if (row && row.status !== "unassigned" && rowLangs.includes("en")) aiMenuItems.push({ key: "to-ko", label: t("ai.translateToKo"), run: () => askAiScope("translate", { unit_ids: row.unitIds, direction: "en_to_ko" }) });
   if (row) aiMenuItems.push({ key: "split", label: t("ai.splitRow"), run: () => askAiScope("split", { unit_ids: row.unitIds }) });
 
-  const reasonRef = useRef<HTMLInputElement>(null);
+  const reasonRef = useRef<HTMLTextAreaElement>(null);
+  // 사유 칸은 글 길이만큼 자란다(최대 6줄) - 긴 사유를 한 줄 칸에서 가려 읽지 않게
   const firstTextRef = useRef<HTMLTextAreaElement>(null);
   const [busy, setBusy] = useState(false);
   const [bulk, setBulk] = useState<"delete" | "move" | null>(null);
@@ -1095,16 +1110,15 @@ export default function AssignPage() {
           </span>
         </span>
       </button>
-      {/* 세 등분하면 긴 라벨(Edit and confirm)이 단추 밖으로 넘친다 - 글자 길이만큼 잡고 남는 폭을 나눈다 */}
-      <div className="flex flex-wrap gap-1.5">
-        <button type="button" className="btn h-8 flex-auto gap-1 px-1 text-xs font-normal" data-testid="assign-edit" disabled={!canEdit || !isPlace || editing || busy} onClick={startEdit}>
+      <div className="grid grid-cols-3 gap-1.5">
+        <button type="button" className="btn h-8 min-w-0 gap-1 px-1 text-xs font-normal" data-testid="assign-edit" disabled={!canEdit || !isPlace || editing || busy} onClick={startEdit}>
           <FilePen size={13} strokeWidth={1.5} aria-hidden />
           {t("classify.editConfirm")} <kbd>E</kbd>
         </button>
-        <button type="button" className="btn h-8 flex-auto gap-1 px-1 text-xs font-normal" data-testid="assign-hold" disabled={!canEdit || !row || busy} onClick={() => void runSave("hold")}>
+        <button type="button" className="btn h-8 min-w-0 gap-1 px-1 text-xs font-normal" data-testid="assign-hold" disabled={!canEdit || !row || busy} onClick={() => void runSave("hold")}>
           {t("classify.hold")} <kbd>H</kbd>
         </button>
-        <button type="button" className="btn h-8 flex-auto gap-1 px-1 text-xs font-normal" data-testid="assign-clear" disabled={!canEdit || !row || row.status === "unassigned" || busy} onClick={() => void runClear()}>
+        <button type="button" className="btn h-8 min-w-0 gap-1 px-1 text-xs font-normal" data-testid="assign-clear" disabled={!canEdit || !row || row.status === "unassigned" || busy} onClick={() => void runClear()}>
           {t("classify.clear")} <kbd>U</kbd>
         </button>
       </div>
@@ -1113,11 +1127,12 @@ export default function AssignPage() {
 
   const details = (
     <section className="grid grid-cols-[84px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-2">
-      <span className="text-xs text-ink-3">{t("classify.reason")}</span>
+      <span className="col-span-2 text-xs text-ink-3">{t("classify.reason")}</span>
       {canEdit ? (
-        <input
+        <textarea
           ref={reasonRef}
-          className="h-8 rounded-md border border-line-2 bg-surface px-2 text-[13px] text-ink focus:border-accent focus:outline-none"
+          rows={1}
+          className="col-span-2 block min-h-8 w-full resize-none overflow-y-auto rounded-md border border-line-2 bg-surface px-2 py-[5px] text-[13px] leading-[19px] text-ink focus:border-accent focus:outline-none"
           data-testid="assign-reason"
           placeholder={disposed ? t("classify.reasonRequired") : t("classify.reasonOptional")}
           value={reason}
@@ -1125,7 +1140,7 @@ export default function AssignPage() {
           onChange={(event) => setDraft({ reason: event.target.value })}
         />
       ) : (
-        <span>{reason || "–"}</span>
+        <span className="col-span-2 break-words">{reason || "–"}</span>
       )}
       {/* 이 줄의 자리는 어떤 목적지에서도 늘 잡아 둔다 - 자리·잇기에서 지우기·옮기기로 바꿔도 아래(확인·확정자)가 밀리지 않게(To-Be 사유 칸과 같은 방식). 옮기기일 때만 채운다 */}
       <span className="self-center text-xs text-ink-3">{destination?.kind === "move" ? t("classify.moveTo") : ""}</span>
@@ -1357,30 +1372,31 @@ export default function AssignPage() {
         {t("assign.progress", { done, total: rows.length })}
       </span>
       <ReadOnlyNote bundle={bundle} testId="assign" />
-      <span className="flex-1" />
-      {checked.size > 0 && canEdit && (
-        <span className="flex items-center gap-1.5 text-xs" data-testid="assign-bulk">
-          <span className="text-ink-2">{t("classify.pickedCount", { n: checked.size })}</span>
-          <button type="button" className="btn h-7" data-testid="assign-bulk-delete" onClick={() => setBulk("delete")}>
-            <Trash2 size={14} strokeWidth={1.5} aria-hidden />
-            {t("classify.deleted")}
+      {/* 오른쪽 묶음은 한 요소로 - 줄이 넘치면 통째로 다음 줄 오른쪽 끝으로 간다 */}
+      <div className="assign-bar-end" data-testid="assign-bar-end">
+        {checked.size > 0 && canEdit && (
+          <span className="flex items-center gap-1.5 text-xs" data-testid="assign-bulk">
+            <span className="text-ink-2">{t("classify.pickedCount", { n: checked.size })}</span>
+            <button type="button" className="btn h-7" data-testid="assign-bulk-delete" onClick={() => setBulk("delete")}>
+              <Trash2 size={14} strokeWidth={1.5} aria-hidden />
+              {t("classify.deleted")}
+            </button>
+            <button type="button" className="btn h-7" data-testid="assign-bulk-move" onClick={() => setBulk("move")}>
+              <ExternalLink size={14} strokeWidth={1.5} aria-hidden />
+              {t("classify.moved")}
+            </button>
+          </span>
+        )}
+        {canEdit && (identical.data?.length ?? 0) > 0 && (
+          <button type="button" className="btn h-7" data-testid="assign-identical" disabled={busy} onClick={() => setConfirmingIdentical(true)}>
+            <Link2 size={14} strokeWidth={1.5} aria-hidden />
+            {t("assign.identical", { n: identical.data?.length ?? 0 })}
           </button>
-          <button type="button" className="btn h-7" data-testid="assign-bulk-move" onClick={() => setBulk("move")}>
-            <ExternalLink size={14} strokeWidth={1.5} aria-hidden />
-            {t("classify.moved")}
-          </button>
-        </span>
-      )}
-      {canEdit && (identical.data?.length ?? 0) > 0 && (
-        <button type="button" className="btn h-7" data-testid="assign-identical" disabled={busy} onClick={() => setConfirmingIdentical(true)}>
-          <Link2 size={14} strokeWidth={1.5} aria-hidden />
-          {t("assign.identical", { n: identical.data?.length ?? 0 })}
-        </button>
-      )}
-      {canEdit && <ResetMenu document={oldView ? { id: oldView.document.id, label: oldView.document.doc_code || oldView.document.file_name } : null} disabled={busy} onPick={setResetScope} />}
-      {aiOn && canEdit && <AiAskMenu items={aiMenuItems} label={t("ai.more")} testId="assign-ai-menu" disabled={busy} />}
-      {bundle?.is_synthetic && <span className="tag">Synthetic data</span>}
-      <SourceFontMenu />
+        )}
+        {canEdit && <ResetMenu document={oldView ? { id: oldView.document.id, label: oldView.document.doc_code || oldView.document.file_name } : null} disabled={busy} onPick={setResetScope} />}
+        {aiOn && canEdit && <AiAskMenu items={aiMenuItems} label={t("ai.more")} testId="assign-ai-menu" disabled={busy} />}
+        <SourceFontMenu />
+      </div>
     </div>
   );
 
@@ -1433,7 +1449,7 @@ export default function AssignPage() {
 
   return (
     <>
-      <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_320px]" data-testid="assign">
+      <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_clamp(280px,24vw,420px)]" data-testid="assign">
         <div className="assign-desk">
           {bar}
           {rows.length === 0 ? (
