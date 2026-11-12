@@ -69,11 +69,13 @@ export function OutputARowView({ row, index, destLabel, changeLabel, status }: O
       </td>
       <td className="[overflow-wrap:anywhere]">
         {/* 100자 코드가 좁은 칸에서 열 줄로 접히지 않게 가운데를 줄이고, 전체는 툴팁으로(키보드 포커스로도) */}
-        <Tooltip label={row.dest_doc_code} suppressed={destCode === row.dest_doc_code} align="start">
-          <span className="block min-w-0 font-mono text-xs" tabIndex={destCode === row.dest_doc_code ? undefined : 0}>
-            {destCode}
-          </span>
-        </Tooltip>
+        {row.dest_doc_code !== "" && (
+          <Tooltip label={row.dest_doc_code} suppressed={destCode === row.dest_doc_code} align="start">
+            <span className="block min-w-0 font-mono text-xs" tabIndex={destCode === row.dest_doc_code ? undefined : 0}>
+              {destCode}
+            </span>
+          </Tooltip>
+        )}
         <span className="block text-xs text-ink-3">{destLabel}</span>
         {row.dest_number && (
           <span className="block whitespace-pre-line font-mono text-[11px] text-ink-2" data-testid={`output-a-number-${index}`}>

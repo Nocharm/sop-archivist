@@ -1,6 +1,6 @@
 // 배치 감사(Playwright + 시스템 Chrome) - 극단 자료·좁은/넓은 창에서 화면이 무너지는지 숫자로 잰다. 화면 검토 반영 작업의 회귀 가드.
 // 전제: reset_db → seed_sop_demo(= DS=mid) → seed_sop_worst(= DS=worst)를 같은 DB에 돌린 뒤 그 DB로 backend, frontend를 띄운다(보통 8787/3787).
-//   DB를 바꾸지 않는다(읽기만 한다). 극단 자료 만드는 법: docs/lessons/browser-verification.md "극단 자료와 배치 감사".
+//   DB를 바꾸지 않는다(읽기만 한다). 극단 자료 만드는 법: docs/lessons/browser-verification.md "⚠️ 함정" 9번.
 // 실행(frontend/ 에서): DS=worst|mid ONLY=X0,A1 WIDTHS=1120,1920 LANGS=ko,en THEMES=light,dark BASE_URL=http://localhost:3787 node scripts/pw-layout-audit.mjs
 //   실패가 하나라도 있으면 종료 코드 1, 실패 화면은 ../.shots/layout-<id>[-<경로 이름>]-<width>[-<lang>-<theme>].png (기본 ko·light는 접미 없음)
 // env: DS(기본 worst) · ONLY(항목 id, 쉼표) · WIDTHS(기본은 항목마다 views) · LANGS(기본 ko) · THEMES(기본 light) · BASE_URL(기본 3787) · CHROME_PATH
@@ -320,8 +320,9 @@ const AUDIT_ENTRIES = [
     },
     measure: async (page) => {
       // 2줄 이상으로 접히는 글 줄의 오른쪽 남는 폭 - 번호·들여쓰기는 줄의 일부라 row 폭 대신 줄 오른쪽 끝 차이로 잰다
-      const worstGap = await page.locator('[data-testid^="output-c-row-"]').evaluateAll((rows) => {
+      const { gap: worstGap, wrapped } = await page.locator('[data-testid^="output-c-row-"]').evaluateAll((rows) => {
         let worst = 0;
+        let wrapped = 0;
         for (const row of rows) {
           const item = row.querySelector('[data-testid^="output-c-item-"]');
           if (!item) continue;
@@ -329,9 +330,10 @@ const AUDIT_ENTRIES = [
           range.selectNodeContents(item);
           const lines = new Set([...range.getClientRects()].map((r) => Math.round(r.top)));
           if (lines.size < 2) continue;
+          wrapped += 1;
           worst = Math.max(worst, row.getBoundingClientRect().right - item.getBoundingClientRect().right);
         }
-        return Math.round(worst);
+        return { gap: Math.round(worst), wrapped };
       });
       const rows = page.locator('[data-testid^="output-c-row-"]');
       const total = Math.min(await rows.count(), 16);
@@ -363,9 +365,9 @@ const AUDIT_ENTRIES = [
         overlap = Math.max(overlap, await overlapOf(row));
         hoverOpacity ??= await opacityOf(row);
       }
-      return { worstGap, overlap, restOpacity, hoverOpacity };
+      return { worstGap, wrapped, overlap, restOpacity, hoverOpacity };
     },
-    expect: (value) => value.worstGap <= 24 && value.overlap === 0 && value.restOpacity >= 0.4 && value.restOpacity <= 0.5 && value.hoverOpacity === 1,
+    expect: (value) => value.wrapped > 0 && value.worstGap <= 24 && value.overlap === 0 && value.restOpacity >= 0.4 && value.restOpacity <= 0.5 && value.hoverOpacity === 1,
     note: "wrapped lines fill the row (right gap <= 24px); action group overlaps no text box at rest or hovered; opacity ~0.45 at rest, 1 on hover",
   },
   {
@@ -386,6 +388,49 @@ const AUDIT_ENTRIES = [
     }),
     expect: (value) => value.duplicates === 0 && value.maxCard <= 320,
     note: "visible target labels distinct within a card; largest card <= 320px",
+  },
+  {
+    id: "I1", ds: "mid", user: MEMBER, views: [1440],
+    path: (ids) => `/bundles/${ids.mid[2]}/outputs`,
+    open: async (page) => {
+      await page.getByTestId("outputs-tab-a").click();
+      await page.locator('[data-testid="output-a"] tbody tr').first().waitFor({ timeout: T });
+      await page.waitForTimeout(SETTLE_MS);
+    },
+    // 손으로 짠 dtable(Output A)의 칸 첫 줄이 모두 위에 붙어야 한다(DataList의 가운데 정렬이 새면 줄 높이만큼 어긋난다)
+    measure: (page) => page.locator('[data-testid="output-a"] tbody tr').evaluateAll((rows) => {
+      let spread = 0;
+      for (const row of rows) {
+        const tops = [...row.cells].map((td) => {
+          const walker = document.createTreeWalker(td, NodeFilter.SHOW_TEXT);
+          let node = walker.nextNode();
+          while (node && node.textContent.trim() === "") node = walker.nextNode();
+          if (!node) return null;
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          return range.getClientRects()[0].top - row.getBoundingClientRect().top;
+        }).filter((top) => top !== null);
+        if (tops.length > 1) spread = Math.max(spread, Math.max(...tops) - Math.min(...tops));
+      }
+      return Math.round(spread * 10) / 10;
+    }),
+    expect: (value) => value <= 2,
+    note: "output-a cells' first lines start at the same height within 2px (top-aligned)",
+  },
+  {
+    id: "I2", ds: "mid", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.mid[2]}/assign`,
+    measure: (page) => page.locator(".ptbl").evaluateAll((tables) => {
+      let worst = 0;
+      for (const table of tables) {
+        let strip = table.parentElement;
+        while (strip && !/(auto|scroll)/.test(getComputedStyle(strip).overflowX)) strip = strip.parentElement;
+        if (strip) worst = Math.max(worst, table.scrollWidth - strip.clientWidth);
+      }
+      return { tables: tables.length, worst: Math.round(worst) };
+    }),
+    expect: (value) => value.tables > 0 && value.worst <= 1,
+    note: "no Assign .ptbl is wider than the strip that holds it (min-width 16ch stays in Split)",
   },
 ];
 

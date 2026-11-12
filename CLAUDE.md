@@ -77,7 +77,7 @@ $env:BASE_URL="http://localhost:3777"; $env:CHROME_PATH="C:\Program Files\Google
 node scripts\pw-smoke-sop.mjs        # seed_sop_demo 직후. 설명은 bash 쪽과 같다
 node scripts\pw-contrast-audit.mjs
 node scripts\pw-overlap-audit.mjs   # 겹침 감사. 설명은 bash 쪽과 같다
-$env:DS="worst"; node scripts\pw-layout-audit.mjs; Remove-Item Env:DS   # 배치 감사. 설명은 bash 쪽과 같다(변수를 지우지 않으면 다음 실행도 그 자료다)
+$env:BASE_URL="http://localhost:3787"; $env:DS="worst"; node scripts\pw-layout-audit.mjs; Remove-Item Env:DS   # 배치 감사. 설명은 bash 쪽과 같다(변수를 지우지 않으면 다음 실행도 그 자료다)
 node scripts\pw-manual-shots.mjs     # 설명서 그림 다시 뽑기. 설명은 bash 쪽과 같다
 $env:MANUAL="app"; node scripts\pw-manual-shots.mjs; Remove-Item Env:MANUAL   # 사용 설명서(/manual) 그림. 설명은 bash 쪽과 같다(변수를 지우지 않으면 다음 실행도 app 모드다)
 

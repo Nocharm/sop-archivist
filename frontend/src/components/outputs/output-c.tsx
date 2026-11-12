@@ -210,7 +210,7 @@ export function OutputCView({ data, lang, onMove, onIndent, onMark, moving = fal
                       );
                       if (!onMove) return <Fragment key={item.target_id}>{line}</Fragment>;
                       const editable = isIndentable(doc.entrance, item);
-                                          const indent =
+                      const indent =
                         onIndent && editable
                           ? {
                               canOut: canIndent(depths, counted, index, -1),

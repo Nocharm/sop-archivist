@@ -305,8 +305,8 @@
   /* 일반 칸은 낱말 단위로만 접는다(break-word는 최소 폭을 줄이지 않아 짧은 열이 한 글자씩 세로로 접히지 않는다).
      공백 없는 긴 글이 들어오는 열은 DataList grow(.dl-grow)로 두어 그 칸 안에서 아무 데서나 접는다 */
   .dtable td { padding: var(--row-y) 10px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: break-word; }
-  /* 제목 칸만 위에 붙이고 나머지(상태 알약·진행률·시각)는 줄 가운데에 둔다 */
-  .dtable td:not(.dl-title) { vertical-align: middle; }
+  /* DataList 표만: 제목 칸은 위에 붙이고 나머지(상태 알약·진행률·시각)는 줄 가운데에 둔다 - 손으로 짠 dtable(Output A·To-Be·History)은 위 정렬 그대로 */
+  .dl-table td:not(.dl-title) { vertical-align: middle; }
   /* 두 줄 제한 - td가 아니라 칸 안을 감싼 요소에 건다(td를 직접 제한하면 줄 테두리가 깨진다) */
   .clamp-2 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
   .clamp-6 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; overflow: hidden; overflow-wrap: anywhere; }
@@ -600,9 +600,11 @@
   .su .cut-b { background: var(--split-b); box-shadow: inset 2px 0 0 var(--ink); }
   .su[data-cut] { background-image: none; }
   .su[data-done] { color: color-mix(in oklab, var(--paper-ink) 62%, var(--paper)); }
-  .ptbl { width: auto; min-width: 100%; border-collapse: collapse; font-size: 14px; line-height: 22px; }
+  .ptbl { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 22px; }
   /* 칸마다 16ch는 지켜 열이 많은 표가 글자 한 줄 폭으로 찌그러지지 않게 한다. max-content는 쓰지 않는다(긴 칸이 표를 3,000px 넘게 민다) - 넘치면 표를 감싼 조각이 가로로 스크롤한다 */
-  .ptbl td { min-width: 16ch; border: 1px solid var(--line-2); padding: 3px 8px; text-align: left; vertical-align: top; }
+  .split-desk .ptbl { width: auto; min-width: 100%; }
+  .split-desk .ptbl td { min-width: 16ch; }
+  .ptbl td { border: 1px solid var(--line-2); padding: 3px 8px; text-align: left; vertical-align: top; }
   .ptbl-cap {
     display: flex;
     align-items: center;
@@ -1046,7 +1048,8 @@
   .strip-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) > svg, .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) > svg, .strip-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) .strip-merge-label, .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) .strip-merge-label { transition-delay: var(--morph-delay); }
 
   /* 표 칸 안의 조각 - 칸 문장마다 점선으로 나누고 같은 칸의 이웃 사이에 합치기 */
-  .cell-piece { position: relative; padding-right: 38px; border-radius: 2px; }
+  .cell-piece { position: relative; padding-right: 18px; border-radius: 2px; }
+  .split-desk .cell-piece { padding-right: 38px; }
   .cell-piece > p { margin: 0; }
   .cell-gap { position: relative; height: 11px; }
   .cell-gap::after { content: ""; position: absolute; inset-inline: 0; top: 50%; border-top: 1px dashed var(--line-2); }
