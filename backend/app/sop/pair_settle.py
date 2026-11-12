@@ -1,7 +1,7 @@
 """짝의 운명 — 판단을 쓰는 길 끝에 서버가 한/영 짝을 풀거나 확정한다(설계 §5.2). 한 줄의 처분이 늘 하나이게 하는 규칙이다."""
 
 from collections import defaultdict
-from collections.abc import Collection
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -69,10 +69,10 @@ async def settle_pairs(
         pair, document = pairs[pair_id]
         group = members[pair_id]
         fates = {
-            _get_fate(member.decision, target_docs.get(member.unit_id, frozenset()))
-            for member in group if member.decision.disposition != UNASSIGNED
+            member.unit_id: fate for member in group
+            if (fate := get_decided_fate(member.decision, target_docs.get(member.unit_id, frozenset()))) is not None
         }
-        if any(member.unit_id in released for member in group) or len(fates) > 1:
+        if any(member.unit_id in released for member in group) or has_diverging_fates(fates, fates):
             await dissolve_pair(session, document, pair, actor)
             dissolved.append(pair_id)
         elif pair.status == PAIR_SUGGESTED and group and all(member.decision.status == CONFIRMED for member in group):
@@ -95,6 +95,29 @@ async def _load_target_docs(session: AsyncSession, unit_ids: Collection[int]) ->
     return {unit_id: frozenset(doc_ids) for unit_id, doc_ids in docs.items()}
 
 
-def _get_fate(decision: UnitDecision, target_doc_ids: frozenset[int]) -> Fate:
+def get_decided_fate(decision: UnitDecision, target_doc_ids: frozenset[int]) -> Fate | None:
+    """판단의 운명 — 미배정은 아직 정한 것이 없어 None이고 운명을 견줄 때 빠진다."""
+    if decision.disposition == UNASSIGNED:
+        return None
     move_target_code = decision.move_target_code if decision.disposition == "move_external" else ""
     return decision.disposition, move_target_code, target_doc_ids
+
+
+async def load_decided_fates(session: AsyncSession, unit_ids: Collection[int]) -> dict[int, Fate]:
+    """단위 → 운명, 미배정이 아닌 판단 단위만 — 짝을 맺는 길이 운명이 갈린 단위끼리 짝짓지 않게 미리 본다."""
+    decisions = [
+        row[0] for row in await select_in_chunks(
+            session, lambda chunk: select(UnitDecision).where(UnitDecision.unit_id.in_(chunk)), unit_ids
+        )
+    ]
+    target_docs = await _load_target_docs(session, [decision.unit_id for decision in decisions])
+    fates = {
+        decision.unit_id: get_decided_fate(decision, target_docs.get(decision.unit_id, frozenset()))
+        for decision in decisions
+    }
+    return {unit_id: fate for unit_id, fate in fates.items() if fate is not None}
+
+
+def has_diverging_fates(fates: Mapping[int, Fate], unit_ids: Iterable[int]) -> bool:
+    """짝이 될 단위들 가운데 정한 단위의 운명이 둘 이상인지 — settle_pairs가 짝을 푸는 조건(규칙 2)과 같다."""
+    return len({fates[unit_id] for unit_id in unit_ids if unit_id in fates}) > 1

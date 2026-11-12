@@ -281,6 +281,38 @@ def test_other_language_and_existing_translation_are_skipped(client: TestClient,
     assert len(load_translations(unit["id"])) == 1
 
 
+def test_unit_with_a_hand_written_sentence_in_the_target_language_is_skipped(
+    client: TestClient, fake_ai: FakeAi
+) -> None:
+    bundle, unit = make_assigned_unit(client)
+    group = get_group_by_unit(client, bundle.id, unit["id"])
+    (ko_target,) = group["targets"]
+    saved = save_group(client, bundle.id, {
+        "action": "confirm",
+        "units": [
+            {"unit_id": unit["id"], "revision": group["units"][0]["decision"]["revision"], "disposition": "assigned"}
+        ],
+        "targets": [
+            {
+                "key": "ko", "id": ko_target["id"], "revision": ko_target["revision"], "slot_key": SLOT,
+                "source_unit_ids": [unit["id"]],
+            },
+            {
+                "key": "en", "target_doc_id": bundle.sop_id, "slot_key": SLOT, "lang": "en",
+                "text": "Hand written English.", "source_unit_ids": [unit["id"]],
+            },
+        ],
+    })
+    assert saved.status_code == 200, saved.text
+
+    body = request_translate(client, bundle.id, unit_ids=[unit["id"]]).json()
+    use_translation(fake_ai)
+    run_jobs()
+
+    assert (body["queued"], body["skipped"]) == (0, [{"unit_id": unit["id"], "reason": "already_translated"}])
+    assert load_translations(unit["id"]) == []
+
+
 def test_document_scope_looks_only_at_the_source_language(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_ai_bundle(client)
     ko_ids = find_ids(client, bundle, AI_KO_1, AI_KO_2)

@@ -893,7 +893,7 @@ async def _write_change(
     if change.layouts:
         # 레이아웃 표의 칸 문장은 묶이지 않아 한/영 두 열이 이웃 짝으로 제안되고, 다시 데이터 표가 되면 그 제안이 빠진다
         await session.flush()
-        await refresh_code_pairs(session, document)
+        await refresh_code_pairs(session, document, actor)
     await session.flush()
     await verify_document_coverage(session, document.id)
     document.revision += 1

@@ -16,6 +16,7 @@ from app.sop.editing import PAIR_LANGS, TEXT_KINDS, ensure_unique_units, load_ac
 from app.sop.errors import raise_rule
 from app.sop.events import record_event
 from app.sop.models import Document, TargetSource, Unit, UnitPair, UnitPairMember
+from app.sop.pair_settle import has_diverging_fates, load_decided_fates, settle_pairs
 from app.sop.units import PAIR_SUGGESTED, get_latest_extraction_id
 
 PAIR_CONFIRMED = "confirmed"
@@ -48,7 +49,8 @@ class PairResult(BaseModel):
 async def create_pair(session: AsyncSession, document: Document, unit_ids: Sequence[int], actor: str) -> UnitPair:
     """같은 문서의 활성 글자 단위로 사람이 짝을 만든다 — 확정·출처 human. 제안 짝에 든 단위면 그 제안 짝을 먼저 지운다.
 
-    한글·영어가 모두 있고 한쪽 MAX_PAIR_SIDE 이하여야 한다. 다른 확정 짝에 든 단위가 있으면 409 unit_already_paired.
+    한글·영어가 모두 있고 한쪽 MAX_PAIR_SIDE 이하여야 한다. 다른 확정 짝에 든 단위가 있으면 409 unit_already_paired,
+    이미 서로 다른 곳으로 보낸 단위들이면(운명이 갈림, pair_settle) 409 pair_fates_differ — 한 줄의 처분은 늘 하나다(설계 §5.3).
     지우는 AI 제안 짝은 채택을 남긴다 — 사람이 같은 단위 집합으로 다시 만들면 그대로, 아니면 버림이다.
     """
     ensure_unique_units(unit_ids)
@@ -72,6 +74,9 @@ async def create_pair(session: AsyncSession, document: Document, unit_ids: Seque
     taken = sorted(unit_id for unit_id, _, status, _ in current if status != PAIR_SUGGESTED)
     if taken:
         raise_rule(409, "unit_already_paired", unit_ids=taken)
+    fates = await load_decided_fates(session, unit_ids)
+    if has_diverging_fates(fates, unit_ids):
+        raise_rule(409, "pair_fates_differ", unit_ids=sorted(fates))
     suggested = sorted({pair_id for _, pair_id, _, _ in current})
     if suggested:
         await _record_replaced_adoption(
@@ -87,6 +92,8 @@ async def create_pair(session: AsyncSession, document: Document, unit_ids: Seque
     _record(session, document, "pair.create", pair.id, actor)
     await session.flush()
     await _sweep_paired_translations(session, document.bundle_id, unit_ids)
+    # 확정 짝이라 settle_pairs가 다시 확정하거나 쓸지 않는다 — 운명은 위에서 막았다. 짝을 맺는 모든 길이 같은 끝을 지나게 부른다
+    await settle_pairs(session, document.bundle_id, unit_ids, actor)
     return pair
 
 

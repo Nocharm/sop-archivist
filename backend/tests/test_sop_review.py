@@ -289,6 +289,20 @@ def test_progress_and_readiness_count_the_same_rows(client: TestClient) -> None:
     assert (blockers["units_unassigned"], blockers["units_on_hold"]) == (progress["unassigned"], progress["on_hold"])
 
 
+def test_a_pair_of_held_and_ai_suggested_members_is_one_ai_suggested_row(client: TestClient) -> None:
+    """줄 상태 순서(미배정 < AI 제안 < 보류 < 확정)를 두 집계가 같이 쓴다 — 보류와 AI 제안이 섞인 짝은 AI 제안 한 줄이다."""
+    fx = _setup(client)
+    _pair_ko_1_with_en_1(client, fx)
+    update_row(UnitDecision, _unit_id(fx, KO_1), status="on_hold", hold_reason=HOLD_REASON)
+    update_row(UnitDecision, _unit_id(fx, EN_1), status="ai_suggested")
+
+    progress = get_bundle(client, fx.bundle_id)["progress"]
+    blockers = {item["code"]: item.get("count") for item in _get_readiness(client, fx.bundle_id)["blockers"]}
+
+    assert (progress["ai_suggested"], progress["on_hold"], progress["unassigned"], progress["total"]) == (1, 0, 1, 2)
+    assert (blockers["units_ai_suggested"], blockers.get("units_on_hold")) == (1, None)
+
+
 def test_reason_blockers(client: TestClient) -> None:
     """사유 없는 삭제와 사유 없는 중복 배정 — 저장 경로는 사유를 강제하므로 사유를 DB에서 비워 확인한다."""
     fx = _setup(client, docs=[SOP_DOC, WI_DOC])

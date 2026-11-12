@@ -100,21 +100,32 @@ async def _load_paired_units(session: AsyncSession, unit_ids: Collection[int], t
     return {row[0] for row in rows}
 
 
-async def _load_unit_targets(session: AsyncSession, unit_ids: Collection[int]) -> dict[int, dict[int, set[int]]]:
-    """단위 → {번역할 문장 새 문장: 그 새 문장의 출처 단위들} — 합친 새 문장은 어느 출처로 물어도 같은 번역이라 출처 전부가 필요하다."""
+async def _load_unit_targets(
+    session: AsyncSession, unit_ids: Collection[int], to_lang: str
+) -> tuple[dict[int, dict[int, set[int]]], set[int]]:
+    """(단위 → {번역할 문장 새 문장: 그 새 문장의 출처 단위들}, 도착 언어 새 문장을 이미 출처로 둔 단위들).
+
+    합친 새 문장은 어느 출처로 물어도 같은 번역이라 출처 전부가 필요하다. 언어 잠금이 없어 단위가 다른 언어 새 문장(사람이 쓴
+    Write English, 입구 2 짝)을 출처로 둘 수 있다 — 그 문장은 번역할 것이 아니라 이미 도착 언어로 쓰인 것이라 따로 돌려준다.
+    번역 행은 출처 연결이 없어 여기에 잡히지 않는다.
+    """
     mate = aliased(TargetSource)
     rows = await select_in_chunks(
         session,
-        lambda chunk: select(TargetSource.unit_id, TargetSource.target_id, mate.unit_id)
+        lambda chunk: select(TargetSource.unit_id, TargetSource.target_id, mate.unit_id, TargetSentence.lang)
         .join(mate, mate.target_id == TargetSource.target_id)
         .join(TargetSentence, TargetSentence.id == TargetSource.target_id)
         .where(TargetSource.unit_id.in_(chunk), TargetSentence.kind == "sentence"),
         unit_ids,
     )
     targets: dict[int, dict[int, set[int]]] = defaultdict(lambda: defaultdict(set))
-    for unit_id, target_id, source_unit_id in rows:
-        targets[unit_id][target_id].add(source_unit_id)
-    return targets
+    written: set[int] = set()
+    for unit_id, target_id, source_unit_id, lang in rows:
+        if lang == to_lang:
+            written.add(unit_id)
+        else:
+            targets[unit_id][target_id].add(source_unit_id)
+    return targets, written
 
 
 async def _load_settled(session: AsyncSession, bundle_id: int, to_lang: str) -> tuple[set[int], set[int]]:
@@ -144,10 +155,10 @@ def _find_skip_reason(
         return "other_language"
     if row.id in paired:
         return "has_pair"
-    if not source_units:
-        return "not_assigned"
     if is_settled:
         return "already_translated"
+    if not source_units:
+        return "not_assigned"
     if source_units & queued:
         return "already_queued"
     return None
@@ -169,7 +180,7 @@ async def select_translate_items(
     scope = rows if requested else [row for row in rows if row.lang == from_lang]
 
     ids = [row.id for row in scope]
-    unit_targets = await _load_unit_targets(session, ids)
+    unit_targets, written = await _load_unit_targets(session, ids, to_lang)
     source_units = {
         row.id: {unit_id for sources in unit_targets[row.id].values() for unit_id in sources} for row in scope
     }
@@ -181,7 +192,9 @@ async def select_translate_items(
     skipped: list[SkippedOut] = []
     seen: set[int] = set()
     for row in scope:
-        is_settled = bool(source_units[row.id] & settled_units or unit_targets[row.id].keys() & settled_targets)
+        is_settled = bool(
+            row.id in written or source_units[row.id] & settled_units or unit_targets[row.id].keys() & settled_targets
+        )
         reason = _find_skip_reason(
             row, from_lang, source_units[row.id], paired=paired, is_settled=is_settled, queued=queued
         )

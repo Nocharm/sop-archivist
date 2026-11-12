@@ -7,11 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.sop.pair_settle import PairSettleReport, settle_pairs
 from tests.access_helpers import run_in_session
 from tests.docx_factory import p
-from tests.sop_helpers import AUTHOR, create_bundle, find_unit, get_view, save_group
+from tests.sop_helpers import AUTHOR, create_bundle, find_unit, get_bundle, get_group_by_unit, get_view, save_group
 from tests.test_sop_decisions import Fixture, _body, _reason, _setup, _target, _unit_in
 from tests.test_sop_match import _bulk_confirm, _get_candidates, _identical_in
 from tests.test_sop_match import _setup as _setup_match
-from tests.test_sop_pairs import EN_ON, KO_ON, _load_pair_events
+from tests.test_sop_pairs import EN_ON, KO_ON, _code, _create, _delete, _load_pair_events
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
 
@@ -242,3 +242,87 @@ def test_bulk_match_dissolves_the_pair_when_the_mate_went_elsewhere(client: Test
     _confirm_identical(client, bundle_id, candidates, en)
 
     assert _pair_of(client, bundle_id, document_id, ko) is None
+
+
+# ── 짝을 맺는 길 ──────────────────────────────────────────────────────────────
+
+
+def _unit_decision(client: TestClient, bundle_id: int, unit: dict) -> tuple[str, str]:
+    """(상태, 처분)."""
+    response = client.get(f"/api/bundles/{bundle_id}/units", params={"limit": 1000}, headers=AUTHOR)
+    assert response.status_code == 200, response.text
+    (row,) = [row for row in response.json()["items"] if row["unit_id"] == unit["id"]]
+    return row["status"], row["decision"]["disposition"]
+
+
+def _setup_unpaired(client: TestClient) -> tuple[Fixture, dict, dict]:
+    """한/영 제목의 제안 짝을 사람이 풀어 둔 묶음 — 두 제목은 짝 없이 따로 줄이다."""
+    fx, ko, en, pair_id = _setup_pair(client)
+    assert _delete(client, fx, pair_id).status_code == 200
+    return fx, ko, en
+
+
+def _set_layout(client: TestClient, fx: Fixture, layout: str) -> None:
+    revision = get_view(client, fx.bundle_id, fx.doc["id"])["document"]["revision"]
+    response = client.patch(
+        f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}",
+        json={"revision": revision, "language_layout": layout}, headers=AUTHOR,
+    )
+    assert response.status_code == 200, response.text
+
+
+def test_pair_by_hand_is_refused_when_members_were_sent_to_different_places(client: TestClient) -> None:
+    """짝을 나중에 맺는 길도 한 줄의 처분이 하나인 규칙을 지킨다 — 한쪽은 SOP로, 다른 쪽은 삭제로 보낸 두 줄은 짝이 될 수 없다."""
+    fx, ko, en = _setup_unpaired(client)
+    save_group(client, fx.bundle_id, _body([_unit_in(ko)], [_target("ko", fx.sop_id, [ko], slot_key="purpose")]))
+    _dispose(client, fx.bundle_id, [en])
+
+    response = _create(client, fx, [ko, en])
+
+    assert _code(response) == (409, "pair_fates_differ")
+    assert response.json()["detail"]["unit_ids"] == [ko["id"], en["id"]]
+    assert _pair_of(client, fx.bundle_id, fx.doc["id"], ko) is None
+    assert _unit_decision(client, fx.bundle_id, ko) == ("confirmed", "assigned")
+    assert _unit_decision(client, fx.bundle_id, en) == ("confirmed", "delete")
+
+
+def test_pair_by_hand_over_one_fate_is_one_confirmed_row(client: TestClient) -> None:
+    fx, ko, en = _setup_unpaired(client)
+    for unit in (ko, en):
+        saved = save_group(client, fx.bundle_id, _body([_unit_in(unit)], [_target("t", fx.sop_id, [unit], slot_key="purpose")]))
+        assert saved.status_code == 200, saved.text
+    before = get_bundle(client, fx.bundle_id)["progress"]
+
+    response = _create(client, fx, [ko, en])
+
+    assert response.status_code == 201, response.text
+    assert response.json()["pair"]["status"] == "confirmed"
+    after = get_bundle(client, fx.bundle_id)["progress"]
+    assert (after["total"], after["confirmed"]) == (before["total"] - 1, before["confirmed"] - 1)
+    assert [action for action, _, _ in _load_pair_events(fx.bundle_id)] == ["pair.delete", "pair.create"]
+    assert {_unit_decision(client, fx.bundle_id, unit) for unit in (ko, en)} == {("confirmed", "assigned")}
+
+
+def test_code_pairs_follow_the_fates_of_judged_units(client: TestClient) -> None:
+    """배치를 바꿔 코드 짝을 다시 제안할 때 — 다른 곳으로 보낸 두 줄은 짝짓지 않고, 같은 곳으로 확정한 두 줄의 짝은 바로 확정이다."""
+    fx, ko, en = _setup_unpaired(client)
+    save_group(client, fx.bundle_id, _body([_unit_in(ko)], [_target("ko", fx.sop_id, [ko], slot_key="purpose")]))
+    save_group(client, fx.bundle_id, _body([_unit_in(en)], [_target("en", fx.wi_id, [en], wi_step=1, wi_part="instruction")]))
+
+    _set_layout(client, fx, "ko_en_separate")
+    _set_layout(client, fx, "ko_en_interleaved")
+
+    assert _pair_of(client, fx.bundle_id, fx.doc["id"], ko) is None
+    assert _pair_of(client, fx.bundle_id, fx.doc["id"], en) is None
+
+    (en_target,) = get_group_by_unit(client, fx.bundle_id, en["id"])["targets"]
+    moved = {"key": "en", "target_doc_id": fx.sop_id, "id": en_target["id"], "revision": en_target["revision"],
+             "slot_key": "purpose", "source_unit_ids": [en["id"]]}
+    assert save_group(client, fx.bundle_id, _body([_unit_in(en, 2)], [moved])).status_code == 200
+    _set_layout(client, fx, "ko_en_separate")
+    _set_layout(client, fx, "ko_en_interleaved")
+
+    pair = _pair_of(client, fx.bundle_id, fx.doc["id"], ko)
+    assert pair is not None and (pair["status"], pair["source"], pair["unit_ids"]) == (
+        "confirmed", "code", [ko["id"], en["id"]],
+    )
