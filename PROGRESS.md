@@ -9,6 +9,7 @@
 - **검토 요청 조건을 줄 기준으로(Task 2, backend)** — `units_*` 막는 이유가 줄 수(짝 하나·짝 없는 단위 하나, 상태는 가장 덜 끝난 구성 단위)이고 `lang` 키가 없다. `BundleSnapshot.pair_of`(질의 하나)로 `build_review_facts`가 진행 숫자와 같은 줄을 센다. `targets_*`는 새 문장마다 한 번. `PROGRESS_LANGS` 삭제.
 
 - **목록·개요·관리 숫자를 줄 기준 한 벌로(Task 3, frontend)** — `RowProgress` 타입과 `progress-model.ts`(`countPending`·`getConfirmedPercent`), 목록·관리는 확정 열 하나, 개요 Coverage는 비율·막대·표 한 벌과 `single_language` 보조 문장. 사용 설명서·스모크 선택자 동기화. `LangMark` 부품은 Task 6에서 지운다.
+- **다른 언어끼리 합치기 허용(Task 4, backend)** — 합치기의 422 `mixed_language`를 없앴다. 섞이면 합친 단위 언어는 글자로 판정(한글이 있으면 ko), 섞어 합친 것을 풀면 각 단위가 제 언어로 돌아온다(같은 언어끼리 합친 경우의 "지금 언어를 따름"은 유지). 짝 멤버를 모두 합치면 기존 `_leave_pairs`가 짝을 지운다.
 
 ## 2026-11-12
 

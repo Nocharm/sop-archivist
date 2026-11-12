@@ -300,21 +300,64 @@ def test_merge_far_apart_sentences(client: TestClient) -> None:
     assert whole["spans"] == [[record["block_id"], 0, len(f"{RECORD} {CHECK} {OFF}")]]
 
 
-def test_merge_rejects_mixed_language(client: TestClient) -> None:
+def test_merge_accepts_mixed_language(client: TestClient) -> None:
     fx = _setup(client)
     cell = find_unit(fx.view, "합성 값")
+    ko, en = find_unit(fx.view, OFF), find_unit(fx.view, ENGLISH)
 
-    mixed = _merge(client, fx, find_unit(fx.view, OFF), find_unit(fx.view, ENGLISH))
-    with_cell = _merge(client, fx, find_unit(fx.view, OFF), cell)
+    result = _ok(_merge(client, fx, ko, en))
+
+    merged = next(
+        unit for unit in get_view(client, fx.bundle_id, fx.doc["id"])["units"] if unit["id"] == result["created_unit_ids"][0]
+    )
+    assert (merged["lang"], OFF in merged["text"], ENGLISH in merged["text"]) == ("ko", True, True)
+    # 칸 문장·표 거절은 언어와 무관하게 그대로다
+    with_cell = _merge(client, fx, find_unit(fx.view, CHECK), cell)
     with_table = _merge(client, fx, cell, next(unit for unit in fx.view["units"] if unit["kind"] == "table"))
-    alone = _merge(client, fx, find_unit(fx.view, OFF))
-
-    assert _code(mixed) == (422, "mixed_language")
-    assert mixed.json()["detail"]["langs"] == ["en", "ko"]
+    alone = _merge(client, fx, find_unit(fx.view, CHECK))
     assert _code(with_cell) == (422, "cannot_merge")
     assert _code(with_table) == (422, "invalid_unit_kind")
     assert alone.status_code == 422  # 2개 이상 — 입력 형식 오류
-    assert get_view(client, fx.bundle_id, fx.doc["id"])["document"]["revision"] == 1
+    assert get_view(client, fx.bundle_id, fx.doc["id"])["document"]["revision"] == 2
+
+
+def test_merging_the_members_of_a_pair_removes_the_pair(client: TestClient) -> None:
+    fx = _setup(client, p(RECORD) + p(ENGLISH))
+    record, english = find_unit(fx.view, RECORD), find_unit(fx.view, ENGLISH)
+    (pair,) = fx.view["pairs"]
+    assert sorted(pair["unit_ids"]) == sorted([record["id"], english["id"]])
+
+    _ok(_merge(client, fx, record, english))
+
+    assert get_view(client, fx.bundle_id, fx.doc["id"])["pairs"] == []
+
+
+def test_merging_all_members_of_a_many_to_one_pair_removes_the_pair(client: TestClient) -> None:
+    fx = _setup(client, p(f"{TWO_IN_ONE} {RECORD}") + p(ENGLISH))
+    two, record, english = (find_unit(fx.view, text) for text in (TWO_IN_ONE, RECORD, ENGLISH))
+    created = client.post(
+        f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/pairs",
+        json={"revision": 1, "unit_ids": [two["id"], record["id"], english["id"]]}, headers=AUTHOR,
+    )
+    assert created.status_code == 201, created.text
+
+    _ok(_merge(client, fx, two, record, english))
+
+    assert get_view(client, fx.bundle_id, fx.doc["id"])["pairs"] == []
+
+
+def test_unmerge_of_a_mixed_merge_restores_each_language(client: TestClient) -> None:
+    fx = _setup(client)
+    ko, en = find_unit(fx.view, OFF), find_unit(fx.view, ENGLISH)
+    result = _ok(_merge(client, fx, ko, en))
+    merged = next(
+        unit for unit in get_view(client, fx.bundle_id, fx.doc["id"])["units"] if unit["id"] == result["created_unit_ids"][0]
+    )
+
+    _ok(_unmerge(client, fx, merged))
+
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    assert [find_unit(view, text)["lang"] for text in (OFF, ENGLISH)] == ["ko", "en"]
 
 
 # ── 합치기 풀기 ───────────────────────────────────────────────────────────────
@@ -801,7 +844,7 @@ TEXT_KINDS = ("sentence", "heading", "cell_sentence")
 # 난수 편집이 받을 수 있는 거절 — 그 밖의 응답(특히 500)은 실패다
 EXPECTED_REFUSALS = {
     (422, "invalid_offset"), (422, "empty_part"), (422, "not_adjacent"), (422, "cannot_merge"),
-    (422, "mixed_language"), (409, "nothing_to_undo"), (409, "nothing_to_redo"),
+    (409, "nothing_to_undo"), (409, "nothing_to_redo"),
 }
 
 
