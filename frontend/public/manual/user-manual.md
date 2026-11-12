@@ -64,7 +64,8 @@ SOP Archivist는 옛 SOP 여러 편(Old)을 새 SOP·WI 구조(New)로 옮기는
 ![Bundles 목록 화면](img/home.png "첫 화면. 내가 구성원인 Bundle만 보인다")
 
 - 첫 화면 **Bundles** 에는 내가 구성원(작성자·검토자)인 Bundle만 보입니다. 줄을 누르거나 줄에 초점을 두고 <kbd>Enter</kbd>를 누르면 열립니다.
-- **View** 에서 **Table** 과 **Cards** 를 바꿉니다. 고른 보기는 이 브라우저에 기억됩니다.
+- **View** 에서 **Table** 과 **Cards** 를 바꿉니다. 고른 보기는 이 브라우저에 기억됩니다. 카드 보기에서는 Synthetic data 표지가 늘 제목 아래 줄에 오고, 같은 줄의 카드는 아래 끝이 맞습니다.
+- 제목을 아직 쓰지 않은 Bundle은 제목 자리에 흐린 **Untitled**(한국어 화면은 '이름 없음')가 보입니다. 목록 화면(Bundles·Documents·To-Be·History·관리)은 큰 화면에서 본문이 더 넓게 펼쳐집니다.
 - **New bundle** 은 `bundle.create` 권한이 있을 때만 보입니다. 누르면 곧바로 새 Bundle이 만들어지고 **Overview** 가 열리니, 제목과 설명은 거기서 고칩니다.
 
 ### 화면 설정 {#settings}

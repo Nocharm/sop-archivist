@@ -689,6 +689,89 @@ const AUDIT_ENTRIES = [
     expect: (value) => value === 0,
     note: "in-review bundle (W2) has no return note on the review screen",
   },
+  // ---- Task 10: Bundle 목록·목록 폭 ----
+  {
+    // B7: 제목이 빈 Bundle 줄의 높이 = 제목 있는 줄의 높이(표), 빈 자리에는 흐린 "이름 없음"
+    id: "B7", ds: "worst", user: MEMBER, views: [1440, 1920],
+    path: () => "/",
+    open: async (page) => { await page.getByTestId("bundles-list").waitFor({ timeout: T }); await page.waitForTimeout(800); },
+    measure: (page) => page.evaluate(() => {
+      const rows = [...document.querySelectorAll('[data-testid^="bundles-row-"]')];
+      const empty = rows.filter((row) => row.querySelector('[data-testid^="bundles-untitled-"]'));
+      const noTitle = rows.filter((row) => !row.querySelector('[data-testid^="bundles-untitled-"]'));
+      const height = (row) => Math.round(row.getBoundingClientRect().height);
+      const emptyHeights = empty.map(height);
+      const titledHeights = noTitle.map(height);
+      return { empty: emptyHeights.length, emptyMax: Math.max(0, ...emptyHeights), titledMin: Math.min(...titledHeights) };
+    }),
+    expect: (value) => value.empty >= 2 && Math.abs(value.emptyMax - value.titledMin) <= 1,
+    note: "untitled bundles (W7 + empty-title ones) show bundles-untitled-<id> and their table row is as tall as the shortest titled row (a one-line row, +-1px)",
+  },
+  {
+    // C5: 카드 보기에서 같은 줄 카드의 .dcard-meta 아래 끝이 같고, 합성 칩의 왼쪽 끝이 카드마다 같다
+    id: "C5", ds: "worst", user: MEMBER, views: [1440, 1920],
+    path: () => "/",
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.bundles", "cards"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator(".dcard").first().waitFor({ timeout: T });
+      await page.waitForTimeout(800);
+    },
+    measure: (page) => page.evaluate(() => {
+      const cards = [...document.querySelectorAll('[data-testid^="bundles-row-"]')];
+      const byTop = new Map();
+      for (const card of cards) {
+        const top = Math.round(card.getBoundingClientRect().top);
+        byTop.set(top, [...(byTop.get(top) ?? []), card]);
+      }
+      let metaSpread = 0;
+      let chipSpread = 0;
+      let multi = 0;
+      for (const group of byTop.values()) {
+        if (group.length < 2) continue;
+        multi += 1;
+        const bottoms = group.map((card) => card.querySelector(".dcard-meta").getBoundingClientRect().bottom);
+        metaSpread = Math.max(metaSpread, Math.max(...bottoms) - Math.min(...bottoms));
+      }
+      const chipLefts = cards.map((card) => {
+        const chip = card.querySelector('[data-testid^="bundles-synthetic-"]');
+        return chip ? chip.getBoundingClientRect().left - card.getBoundingClientRect().left : null;
+      }).filter((v) => v !== null);
+      chipSpread = chipLefts.length ? Math.max(...chipLefts) - Math.min(...chipLefts) : 0;
+      return { multi, metaSpread: Math.round(metaSpread * 10) / 10, chips: chipLefts.length, chipSpread: Math.round(chipSpread * 10) / 10 };
+    }),
+    expect: (value) => value.multi > 0 && value.metaSpread <= 1 && value.chips > 0 && value.chipSpread <= 1,
+    note: "bundle cards: dcard-meta bottoms within 1px per grid row, synthetic chip left edge identical across cards",
+  },
+  {
+    // C7: 목록 화면은 1600, 개요·계정·설명서는 1280 (본문 폭)
+    id: "C7", ds: "worst", user: MEMBER, views: [2560],
+    path: (ids) => [
+      "/", `/bundles/${ids.w[1]}/documents`, `/bundles/${ids.w[1]}/tobe`, `/bundles/${ids.w[1]}/history`, `/bundles/${ids.w[1]}/split`,
+      `/bundles/${ids.w[1]}`, "/account", "/manual",
+    ],
+    open: async (page) => { await page.locator(".page-wrap").first().waitFor({ timeout: T }); await page.waitForTimeout(1000); },
+    measure: (page) => page.evaluate(() => {
+      const path = location.pathname;
+      const width = Math.round(document.querySelector(".page-wrap").getBoundingClientRect().width);
+      const wide = path === "/" || /\/(documents|tobe|history|split)$/.test(path);
+      return { path, width, want: wide ? 1600 : 1280 };
+    }),
+    expect: (value) => value.width === value.want,
+    note: "2560: bundle list, Documents, To-Be, History, Split body = 1600; overview, account, manual = 1280",
+  },
+  {
+    // C7b: 1920에서 Documents 제목 열(칸) 폭 >= 420px
+    id: "C7b", ds: "worst", user: MEMBER, views: [1920],
+    path: (ids) => `/bundles/${ids.w[1]}/documents`,
+    open: async (page) => { await page.locator('[data-testid^="documents-"][data-testid$="-title"]').first().waitFor({ timeout: T }); await page.waitForTimeout(1000); },
+    measure: (page) => page.evaluate(() => {
+      const cell = document.querySelector('[data-testid^="documents-"][data-testid$="-title"]').closest("td");
+      return Math.round(cell.getBoundingClientRect().width);
+    }),
+    expect: (value) => value >= 420,
+    note: "1920 Documents (W1): title column cell width >= 420px",
+  },
 ];
 // B5는 새(문서 0개) Bundle이면 되므로 mid에서도 W7로 한 번 더 잰다(W7은 같은 DB에 있다)
 AUDIT_ENTRIES.push({ ...AUDIT_ENTRIES.find((entry) => entry.id === "B5"), ds: "mid" });

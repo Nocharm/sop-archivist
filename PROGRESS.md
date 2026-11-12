@@ -4,6 +4,7 @@
 
 ## 2026-11-12
 
+- **화면 검토 반영 10/14 Bundle 목록·목록 폭 (`fix/screen-review`)** — 제목 없는 줄에 흐린 `bundles.untitled`(`bundles-untitled-<id>`, 제목과 같은 block이라 줄 높이가 같다, B7), 카드를 세로 flex+`.dcard-meta` 아래 정렬·칩은 늘 제목 아래(C5), 경로→폭 판정을 순수 함수 `getPageWidth`(`lib/page-width.ts`, desk 포함)로 모아 목록 화면(Bundle 목록·Documents·To-Be·History·`/admin`)을 1600으로(C7, Documents 제목 열 204→420 이상).
 - **화면 검토 반영 9/14 검토 화면 되돌림 쪽지 (`fix/screen-review`)** — `ReviewReturnNote`에 `testId`(기본 `overview-return-note`, 안쪽 id는 접두를 따름)를 더해 검토 화면 1280 이상은 `[760px | 오른쪽 열]` 격자의 오른쪽 위, 미만은 용지 위에 놓았다(감사 B3·B3b). 제안 그림의 "N회차"는 집계 API가 없어 뺐다.
 - **화면 검토 반영 8/14 없는 주소·못 여는 Bundle (`fix/screen-review`)** — `app/not-found.tsx`가 앱 틀 안에서 `EmptyState`+목록으로 가는 단추를 그린다(B1, 다크 body 배경 = `--bg`). Documents·Split·Assign·Outputs·History의 로드 실패를 `BundleLoadError`로 바꿔 403·404면 다시 시도 대신 목록으로 가는 길만 둔다(B2, Split은 문서 목록 실패 분기도 같은 `split` id). 못 연 Bundle에서는 상단 바 뒤로·구분선·제목과 단계 레일을 그리지 않는다(R6, 정상 Bundle은 그대로).
 - **8/14 보정** — 상단 바 뒤로 화살표는 못 여는 Bundle에서만 숨기고 묶음 밖 화면(`/account`·`/manual`·없는 주소)에는 되돌렸다(감사 B2b).

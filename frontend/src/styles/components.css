@@ -332,9 +332,8 @@
   .dlist-frame .dtable tbody tr:last-child td { border-bottom: 0; }
   .dcard {
     position: relative;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    align-content: start;
+    display: flex;
+    flex-direction: column;
     gap: 6px;
     min-width: 0;
     padding: 10px 12px;
@@ -353,7 +352,8 @@
   .dcard-title { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; min-width: 0; flex: 1; font-weight: 600; }
   .dcard-badges { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; flex: none; max-width: 50%; }
   .dcard-body { min-width: 0; color: var(--ink-2); }
-  .dcard-meta { display: flex; flex-wrap: wrap; gap: 2px 14px; min-width: 0; margin: 0; }
+  /* 키가 다른 옆 카드와도 meta 아래 끝이 맞는다 - 카드가 세로 flex라 남는 높이는 meta 위로 간다 */
+  .dcard-meta { display: flex; flex-wrap: wrap; gap: 2px 14px; min-width: 0; margin: auto 0 0; }
   .dcard-meta > div { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; max-width: 100%; }
   .dcard-meta dt { flex: none; font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-3); white-space: nowrap; }
   .dcard-meta dd { min-width: 0; margin: 0; color: var(--ink); }
@@ -641,7 +641,8 @@
   -webkit-line-clamp: 2;
   white-space: normal;
 }
-.dcard .dl-title-row { flex-wrap: wrap; }
+/* 칩은 늘 제목 아래 줄 - 제목 길이와 상관없이 칩 왼쪽 끝이 카드마다 같다 */
+.dcard .dl-title-row { flex-direction: column; align-items: flex-start; }
 
 /* ---- 공통 부품(2026-11-09 개편): 모핑 단추·체크박스·빈 화면·정보 아이콘. 값은 토큰만 쓴다 ---- */
 @layer components {
