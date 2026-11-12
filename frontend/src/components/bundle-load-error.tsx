@@ -6,7 +6,7 @@ import Link from "next/link";
 
 import { EmptyState } from "@/components/ui/empty-state";
 import { LoadError } from "@/components/ui/load-error";
-import { ApiError } from "@/lib/api";
+import { isBundleUnavailable } from "@/lib/api-errors";
 import { useI18n } from "@/lib/i18n";
 
 interface BundleLoadErrorProps {
@@ -18,7 +18,7 @@ interface BundleLoadErrorProps {
 
 export function BundleLoadError({ error, onRetry, testId }: BundleLoadErrorProps) {
   const { t } = useI18n();
-  if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
+  if (isBundleUnavailable(error)) {
     return (
       <EmptyState
         icon={FileQuestion}

@@ -5,6 +5,7 @@ import { ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
+import { Truncate } from "@/components/ui/motion";
 import type { WrittenSentence } from "@/lib/api-sop";
 import type { Destination, DestinationOption } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
@@ -33,7 +34,7 @@ export function DestinationTree({ written, options, tobeHref, onPickLink, onPick
     return (
       <button type="button" className="tree-node" aria-expanded={open.has(key)} data-testid={`assign-tree-${key}`} onClick={() => toggle(key)}>
         <ChevronRight size={13} strokeWidth={1.6} className="tree-chev" aria-hidden />
-        <b>{label}</b>
+        <Truncate className="min-w-0 flex-1 font-mono text-[length:var(--fs-cap)] font-semibold" text={label} revealOnFocus />
         <span className="tree-sub">{sub}</span>
       </button>
     );

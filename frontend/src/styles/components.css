@@ -70,6 +70,7 @@
     box-shadow: -1px 0 0 var(--line), 1px 0 0 var(--line);
   }
   .page-wrap[data-width="wide"] { max-width: var(--page-max-wide); }
+  .page-wrap[data-width="desk"] { max-width: var(--page-max-desk); }
 
   .stages {
     display: flex;
@@ -331,9 +332,8 @@
   .dlist-frame .dtable tbody tr:last-child td { border-bottom: 0; }
   .dcard {
     position: relative;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    align-content: start;
+    display: flex;
+    flex-direction: column;
     gap: 6px;
     min-width: 0;
     padding: 10px 12px;
@@ -352,7 +352,8 @@
   .dcard-title { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; min-width: 0; flex: 1; font-weight: 600; }
   .dcard-badges { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; flex: none; max-width: 50%; }
   .dcard-body { min-width: 0; color: var(--ink-2); }
-  .dcard-meta { display: flex; flex-wrap: wrap; gap: 2px 14px; min-width: 0; margin: 0; }
+  /* 키가 다른 옆 카드와도 meta 아래 끝이 맞는다 - 카드가 세로 flex라 남는 높이는 meta 위로 간다 */
+  .dcard-meta { display: flex; flex-wrap: wrap; gap: 2px 14px; min-width: 0; margin: auto 0 0; }
   .dcard-meta > div { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; max-width: 100%; }
   .dcard-meta dt { flex: none; font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-3); white-space: nowrap; }
   .dcard-meta dd { min-width: 0; margin: 0; color: var(--ink); }
@@ -363,6 +364,8 @@
   .dcard-foot { display: flex; justify-content: flex-end; gap: 2px; margin-top: auto; padding-top: 6px; border-top: 1px solid var(--line); }
   /* 표에서 호버로 드러나는 단추(.row-actions)도 카드 아랫줄에서는 늘 보인다 */
   .dcard-foot .row-actions { opacity: 1; }
+  /* meta가 남는 높이를 받으니(margin-top: auto) 바로 뒤따르는 아랫줄은 auto 여백을 쓰지 않는다 - 둘이 남는 높이를 반씩 나누면 짧은 카드에서 meta가 떠 보인다 */
+  .dcard-meta + .dcard-foot { margin-top: 0; }
   /* 구역 머리(getRowGroup) - 표에서는 줄 전체, 카드에서는 격자 한 줄 전체를 차지한다. 둘째 구역부터는 위를 더 띄운다 */
   .dgroup-head { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--ink-2); }
   .dgroup-n { padding: 0 6px; border: 1px solid var(--line-2); border-radius: var(--r-1); font: 600 var(--fs-micro) / 18px var(--font-mono); color: var(--ink-3); }
@@ -640,7 +643,8 @@
   -webkit-line-clamp: 2;
   white-space: normal;
 }
-.dcard .dl-title-row { flex-wrap: wrap; }
+/* 칩은 늘 제목 아래 줄 - 제목 길이와 상관없이 칩 왼쪽 끝이 카드마다 같다 */
+.dcard .dl-title-row { flex-direction: column; align-items: flex-start; }
 
 /* ---- 공통 부품(2026-11-09 개편): 모핑 단추·체크박스·빈 화면·정보 아이콘. 값은 토큰만 쓴다 ---- */
 @layer components {
@@ -1078,6 +1082,8 @@
   /* 표 칸 안의 조각 - 칸 문장마다 점선으로 나누고 같은 칸의 이웃 사이에 합치기 */
   .cell-piece { position: relative; padding-right: 18px; border-radius: 2px; }
   .split-desk .cell-piece { padding-right: 38px; }
+  /* Assign도 줄 끝 아이콘이 둘 이상 붙어도 글과 겹치지 않을 자리를 잡는다(Split과 같은 폭, 다른 화면으로 새지 않게 Assign 용지에만) */
+  .assign-pane .cell-piece { padding-right: 38px; }
   .cell-piece > p { margin: 0; }
   .cell-gap { position: relative; height: 11px; }
   .cell-gap::after { content: ""; position: absolute; inset-inline: 0; top: 50%; border-top: 1px dashed var(--line-2); }
@@ -1088,6 +1094,9 @@
   /* 왼쪽 탭 - 줄의 왼쪽 밖에 맞닿아 붙는다(맞닿는 쪽 모서리 직각, 바깥 모서리 둥글게). 바탕 = 언어 색, 보류는 그 위에 사선 줄무늬. 번호는 절의 첫 블록에만, 번호 없는 탭은 옅게 해 번호를 따라가는 눈을 덜 방해하고 올리면 진해진다. 탭에 올리면 번호가 사라지고 언어 글자가 뜬다. 첫 글줄 높이(27px)에 번호를 맞춘다 */
   /* 1280 미만 Split에서만 3단 이상의 절 번호 탭을 46px에서 멈춘다(Assign 탭은 그대로) - 깊은 번호가 글 상자를 좁히지 않게(긴 번호는 탭 안에서 잘린다) */
   @media (max-width: 1279px) { .split-desk .strip-tab, .split-desk .strip-tab-gap { max-width: 46px; } .split-desk .strip-gap { --gap-tab-cap: 46px; } }
+  /* Split 3단 열: 문서 목록 232px, 1280 미만은 216px - 1,800자 문단 글 상자가 340px을 지키게(사용자 결정 2026-11-12). Assign과 무관 */
+  .split-cols { grid-template-columns: 232px minmax(0, 1fr) clamp(280px, 26vw, 420px); }
+  @media (max-width: 1279px) { .split-cols { grid-template-columns: 216px minmax(0, 1fr) clamp(280px, 26vw, 420px); } }
   .strip-tab { position: relative; flex: none; align-self: stretch; display: flex; flex-direction: column; align-items: center; padding-top: 6px; border: 1px solid var(--line-2); border-right: 0; border-radius: var(--r-1) 0 0 var(--r-1); background-color: var(--tab-none); color: var(--tab-ink); box-sizing: border-box; overflow: hidden; transition: opacity var(--dur-base); }
   .strip-tab[data-lang="ko"] { background-color: var(--tab-ko); }
   .strip-tab[data-lang="en"] { background-color: var(--tab-en); }
@@ -1226,7 +1235,8 @@
   .fpill[data-tone="ok"] { --fp-ink: var(--accent); --fp-fill: var(--accent); --fp-tint: var(--accent-tint); --fp-line: var(--accent-line); --fp-on: var(--on-accent); }
   .fpill[data-tone="all"] { --fp-ink: var(--ink); --fp-fill: var(--ink); --fp-tint: var(--surface); }
   .fpill[data-tone="danger"] { --fp-ink: var(--danger-ink); --fp-fill: var(--danger-ink); --fp-tint: var(--danger-tint); --fp-line: color-mix(in oklab, var(--danger-fill) 45%, var(--surface)); }
-  .assign-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 30px; }
+  .assign-bar-end { display: flex; flex: none; flex-wrap: nowrap; align-items: center; gap: 4px; margin-left: auto; }
+  .assign-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 4px; min-height: 30px; }
   .assign-panes { position: relative; display: grid; grid-template-columns: minmax(0, var(--split, 50%)) 12px minmax(0, 1fr); min-height: 0; }
   .assign-pane { display: flex; flex-direction: column; gap: 6px; min-width: 0; min-height: 0; }
   .assign-pane > .pane-body { flex: 1 1 0; }
@@ -1365,14 +1375,14 @@
   .dest-acc-icon { color: var(--ink-3); flex: none; }
   .dest-card-pending { display: inline-flex; align-items: center; gap: 5px; margin-top: 4px; font-size: var(--fs-micro); font-weight: 600; color: var(--st-hold-ink); }
 
+  .dest-tree, .tree-kids { grid-template-columns: minmax(0, 1fr); }
   .dest-tree { display: grid; gap: 1px; }
   .tree-group { margin: 6px 0 2px; font-size: var(--fs-micro); font-weight: 700; color: var(--ink-3); }
-  .tree-node { display: flex; width: 100%; align-items: center; gap: 6px; padding: 5px 6px; border-radius: var(--r-1); font-size: 13px; text-align: left; cursor: pointer; }
+  .tree-node { display: flex; width: 100%; min-width: 0; align-items: center; gap: 6px; padding: 5px 6px; border-radius: var(--r-1); font-size: 13px; text-align: left; cursor: pointer; }
   .tree-node:hover { background: var(--hover); }
-  .tree-node b { font: 600 var(--fs-cap) var(--font-mono); }
-  .tree-chev { color: var(--ink-4); transition: rotate var(--dur-fast); }
+  .tree-chev { flex: none; color: var(--ink-4); transition: rotate var(--dur-fast); }
   .tree-node[aria-expanded="true"] .tree-chev { rotate: 90deg; }
-  .tree-sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-cap); color: var(--ink-3); }
+  .tree-sub { flex: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-cap); color: var(--ink-3); }
   .tree-kids { display: grid; gap: 1px; padding-left: 18px; }
   .tree-section { margin: 4px 0 0; font-size: var(--fs-micro); font-weight: 600; color: var(--ink-3); }
   .tree-leaf { display: block; width: 100%; padding: 4px 8px; border-radius: var(--r-1); font-size: var(--fs-cap); line-height: 17px; color: var(--ink-2); text-align: left; cursor: pointer; }

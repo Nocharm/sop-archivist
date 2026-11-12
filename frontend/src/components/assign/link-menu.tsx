@@ -9,6 +9,7 @@ import { createPortal } from "react-dom";
 import { isTopEscLayer, popEscLayer, pushEscLayer } from "@/components/ui/floating";
 import type { LinkMenuItem } from "@/lib/assign-model";
 import { useI18n } from "@/lib/i18n";
+import { placeLinkMenu } from "@/lib/link-menu-place";
 
 interface LinkMenuProps {
   anchor: HTMLElement;
@@ -22,9 +23,6 @@ interface LinkMenuProps {
   onClose: () => void;
 }
 
-const EDGE = 8; // 화면 가장자리와 띄울 최소 간격(px)
-const GAP = 10; // 누른 자리와 메뉴 사이(px)
-const NAV_INDENT = 24; // 이동해 온 조각에서 메뉴를 들여 놓는 폭(px) - 조각 앞 KO/EN 태그를 가리지 않게
 // CSS .link-menu 등장 지연(380ms)이 끝난 뒤 포커스를 옮긴다 - 숨은 동안은 포커스를 받을 수 없다
 const FOCUS_DELAY_MS = 400;
 const ITEM_SELECTOR = "[role=menuitem]:not(:disabled)";
@@ -49,11 +47,7 @@ export function LinkMenu({ anchor, offset, items, isUnsaved, busy, onAction, onC
       return;
     }
     const box = menuEl.getBoundingClientRect();
-    const x = offset ? rect.left + offset.x - 16 : rect.left + NAV_INDENT;
-    const y = offset ? rect.top + offset.y : rect.bottom;
-    const left = Math.min(Math.max(x, EDGE), window.innerWidth - box.width - EDGE);
-    let top = y + GAP;
-    if (top + box.height > window.innerHeight - EDGE) top = (offset ? rect.top + offset.y : rect.top) - GAP - box.height;
+    const { top, left } = placeLinkMenu(rect, offset ? rect.left + offset.x : null, box, { width: window.innerWidth, height: window.innerHeight }, offset ? rect.top + offset.y : null);
     setPos((prev) => (prev && prev.top === top && prev.left === left ? prev : { top, left }));
   });
 

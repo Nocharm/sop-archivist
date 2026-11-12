@@ -12,6 +12,7 @@ import { LangToggle } from "@/components/lang-toggle";
 import { BackLink, NavProgress } from "@/components/nav-host";
 import { Tooltip } from "@/components/ui/tooltip";
 import { UserMenu } from "@/components/user-menu";
+import { isBundleUnavailable } from "@/lib/api-errors";
 import { useBundle } from "@/lib/bundle-store";
 import { parseBundlePath } from "@/lib/stages";
 import { getBundleLabel } from "@/lib/bundle-label";
@@ -27,7 +28,10 @@ export function TopBar() {
   const { me, signOut } = useSession();
   const pathname = usePathname();
   const inBundle = parseBundlePath(pathname);
-  const { bundle } = useBundle(inBundle?.bundleId ?? null);
+  const { bundle, error: bundleError } = useBundle(inBundle?.bundleId ?? null);
+  // 못 여는 Bundle이면 묶음 안 내비(뒤로·구분선·제목)를 그리지 않는다 - 화면의 목록으로 가기 단추가 길이다
+  const isBundleLoadFailed = inBundle !== null && isBundleUnavailable(bundleError) && bundle === null;
+  const isBundleOpen = inBundle !== null && !isBundleLoadFailed;
 
   return (
     <header className="tb" data-testid="top-bar">
@@ -38,8 +42,8 @@ export function TopBar() {
       <span data-testid="top-bar-version" className="tb-dim shrink-0 whitespace-nowrap font-mono text-[11px]">
         {`v${APP_VERSION}`}
       </span>
-      <BackLink />
-      {inBundle && (
+      {!isBundleLoadFailed && <BackLink />}
+      {isBundleOpen && (
         <>
           <span className="tb-sep" aria-hidden />
           <span data-testid="top-bar-bundle-title" className="min-w-0 truncate">

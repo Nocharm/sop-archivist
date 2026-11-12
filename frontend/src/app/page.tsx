@@ -83,7 +83,13 @@ export default function BundleListPage() {
             <span className="mr-2 font-mono text-[12px] text-ink-3" data-testid={`bundles-code-${bundle.id}`}>
               {bundle.code}
             </span>
-            {bundle.title.trim() !== "" && <Truncate text={bundle.title} />}
+            {bundle.title.trim() !== "" ? (
+              <Truncate text={bundle.title} />
+            ) : (
+              <span className="block font-normal text-ink-3" data-testid={`bundles-untitled-${bundle.id}`}>
+                {t("bundles.untitled")}
+              </span>
+            )}
           </Link>
           {/* 합성 데이터는 목록에서도 합성으로 보인다 - 실제 묶음과 섞여 보이지 않게 */}
           {bundle.is_synthetic && (

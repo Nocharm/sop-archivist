@@ -432,7 +432,431 @@ const AUDIT_ENTRIES = [
     expect: (value) => value.tables > 0 && value.worst <= 1,
     note: "no Assign .ptbl is wider than the strip that holds it (min-width 16ch stays in Split)",
   },
+  // ---- Task 6: Assign ----
+  {
+    // A10: 오른쪽 패널의 목적지 트리 - 노드 한 줄(<=32px), 개수 칸이 패널 안
+    id: "A10", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}/assign`,
+    open: async (page) => {
+      await page.getByTestId("assign-bar").waitFor({ timeout: T });
+      if ((await page.getByTestId("assign-acc-all").count()) === 0) await page.locator('[data-testid="assign-old"] .su[data-unit]').first().click();
+      await page.getByTestId("assign-acc-all").click();
+      // 안쪽 노드는 바깥을 펼쳐야 생긴다 - 더 펼칠 것이 없을 때까지
+      for (let round = 0; round < 4; round += 1) {
+        const closed = page.locator('.tree-node[aria-expanded="false"]');
+        const n = await closed.count();
+        if (n === 0) break;
+        for (let i = n - 1; i >= 0; i -= 1) await closed.nth(i).click();
+      }
+      await page.waitForTimeout(SETTLE_MS);
+    },
+    measure: (page) => page.evaluate(() => {
+      const nodes = [...document.querySelectorAll(".tree-node")];
+      const inspector = document.querySelector('[data-testid="assign-inspector"]').getBoundingClientRect();
+      const outside = nodes.flatMap((node) => [...node.children]).filter((el) => el.getBoundingClientRect().right > inspector.right + 0.5).length;
+      return { nodes: nodes.length, maxHeight: Math.round(Math.max(0, ...nodes.map((node) => node.getBoundingClientRect().height))), outside };
+    }),
+    expect: (value) => value.nodes > 0 && value.maxHeight <= 32 && value.outside === 0,
+    note: "assign tree-node one line (<= 32px), count cells inside the inspector",
+  },
+  {
+    // C1: 1120에서 문서 칸이 좁아지지 않고, 2560에서 작업면 폭이 1920
+    id: "C1", ds: "mid", user: MEMBER, views: [1120, 2560],
+    path: (ids) => `/bundles/${ids.mid[2]}/assign`,
+    open: async (page) => {
+      await page.getByTestId("assign-bar").waitFor({ timeout: T });
+    },
+    measure: (page) => page.evaluate(() => {
+      const w = (sel) => Math.round(document.querySelector(sel).getBoundingClientRect().width);
+      return { vw: window.innerWidth, wrap: w(".page-wrap"), old: w('[data-testid="assign-old"]'), inspector: w('[data-testid="assign-inspector"]') };
+    }),
+    expect: (value) => (value.vw <= 1200 ? value.old >= 350 : value.wrap === 1920),
+    note: "1120: Old pane >= 350px; 2560: page-wrap width = 1920",
+  },
+  {
+    // C11/F1: 도구 줄이 한 줄(1440 <= 44px), 좁은 창은 <= 80px
+    id: "C11", ds: "mid", user: MEMBER, views: [1440, 1120],
+    path: (ids) => `/bundles/${ids.mid[2]}/assign`,
+    open: async (page) => {
+      await page.getByTestId("assign-bar").waitFor({ timeout: T });
+    },
+    measure: (page) => page.getByTestId("assign-bar").evaluate((bar) => ({ vw: window.innerWidth, h: Math.round(bar.getBoundingClientRect().height) })),
+    expect: (value) => (value.vw >= 1440 ? value.h <= 44 : value.h <= 80),
+    note: "assign-bar height <= 44px at 1440, <= 80px at 1120",
+  },
+  {
+    // AI를 켠 backend에서 같은 도구 줄(AI 메뉴가 더해진다) - AI 꺼진 backend에서는 C11과 같은 값을 잰다
+    id: "F1", ds: "mid", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.mid[2]}/assign`,
+    open: async (page) => {
+      await page.getByTestId("assign-bar").waitFor({ timeout: T });
+    },
+    measure: async (page) => {
+      // AI 꺼진 backend에는 AI 메뉴가 없어 C11과 같은 값을 재게 되므로 통과로 세지 않고 건너뛴다
+      if ((await page.getByTestId("assign-ai-menu").count()) === 0) return { skip: "assign-ai-menu absent (AI-off backend)" };
+      return page.getByTestId("assign-bar").evaluate((bar) => Math.round(bar.getBoundingClientRect().height));
+    },
+    expect: (value) => value <= 80,
+    note: "assign-bar height <= 80px at 1120 (needs an AI-on backend, SKIP otherwise)",
+  },
+  {
+    // R1: 표 칸 글의 마지막 낱말이 줄 끝 아이콘 상자와 겹치지 않는다
+    id: "R1", ds: "mid", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.mid[3]}/assign`,
+    open: async (page) => {
+      await page.getByTestId("assign-bar").waitFor({ timeout: T });
+    },
+    measure: (page) => page.evaluate(() => {
+      let checked = 0;
+      let overlaps = 0;
+      for (const piece of document.querySelectorAll('[data-pane] .cell-piece, [data-testid="assign-old"] .cell-piece')) {
+        const marks = [...piece.querySelectorAll(".pmark-host")];
+        const text = piece.querySelector(":scope > p");
+        if (marks.length === 0 || !text) continue;
+        const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
+        let last = null;
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) if (node.textContent.trim()) last = node;
+        if (!last) continue;
+        const body = last.textContent.replace(/\s+$/, "");
+        const start = Math.max(body.lastIndexOf(" ") + 1, 0);
+        const range = document.createRange();
+        range.setStart(last, start);
+        range.setEnd(last, body.length);
+        const word = range.getClientRects();
+        checked += 1;
+        if (marks.some((mark) => { const m = mark.getBoundingClientRect(); return [...word].some((r) => r.right > m.left + 0.5 && r.left < m.right && r.bottom > m.top + 0.5 && r.top < m.bottom - 0.5); })) overlaps += 1;
+      }
+      return { checked, overlaps };
+    }),
+    expect: (value) => value.checked > 0 && value.overlaps === 0,
+    note: "last word of a table-cell piece does not overlap its row-end icons",
+  },
+  {
+    // R2: 1,200자 사유가 든 Unit(OLD-91 보류)을 고르면 사유 칸이 3줄 이상 높이
+    id: "R2", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}/assign`,
+    open: async (page) => {
+      await page.getByTestId("assign-bar").waitFor({ timeout: T });
+      const found = await page.evaluate(async () => {
+        const id = location.pathname.split("/")[2];
+        const response = await fetch(`/api/bundles/${id}/units?limit=1000&offset=0`, { headers: { "X-Dev-User": localStorage.getItem("sopa.devUser") ?? "" } });
+        const unit = (await response.json()).items.find((item) => (item.decision.hold_reason ?? "").length >= 1000 || (item.decision.reason ?? "").length >= 1000);
+        return unit ? { unit: unit.unit_id, doc: unit.document_id } : null;
+      });
+      if (!found) throw new Error("no unit with a 1,200-char reason");
+      await page.getByTestId("assign-old-doc").click();
+      await page.getByTestId(`assign-old-doc-option-${found.doc}`).click();
+      await page.locator(`[data-testid="assign-old"] .su[data-unit="${found.unit}"]`).first().click();
+      await page.waitForTimeout(SETTLE_MS);
+    },
+    measure: (page) => page.getByTestId("assign-reason").evaluate((el) => ({ tag: el.tagName, h: Math.round(el.getBoundingClientRect().height), len: el.value.length })),
+    expect: (value) => value.len >= 1000 && value.h >= 3 * 19,
+    note: "reason field of a 1,200-char reason is >= 3 lines (57px) tall",
+  },
+  // ---- Task 7: 개요 ----
+  {
+    // A12: 극단 묶음 개요에서 검토 요청 단추가 첫 화면(y <= 800) 안
+    id: "A12", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}`,
+    open: async (page) => { await page.getByTestId("overview-request-review").waitFor({ timeout: T }); },
+    measure: (page) => page.getByTestId("overview-request-review").evaluate((el) => Math.round(el.getBoundingClientRect().bottom)),
+    expect: (value) => value > 0 && value <= 800,
+    note: "request-review button bottom edge is inside the first 800px at 1120",
+  },
+  {
+    // B5: 문서 0개 묶음 개요에 빨강 조건 묶음이 없고 본문이 낮다
+    id: "B5", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => `/bundles/${ids.w[7]}`,
+    open: async (page) => { await page.getByTestId("overview").waitFor({ timeout: T }); },
+    measure: (page) => page.evaluate(() => ({
+      fail: document.querySelectorAll(".gate-group.fail").length,
+      idle: document.querySelectorAll('[data-testid="overview-gate-idle"]').length,
+      h: Math.round(document.querySelector('[data-testid="overview"]').getBoundingClientRect().height),
+      body: (() => { const col = document.querySelector('[data-testid="overview"] > div'); return Math.round(col.lastElementChild.getBoundingClientRect().bottom - col.getBoundingClientRect().top); })(),
+    })),
+    expect: (value) => value.fail === 0 && value.idle === 1 && value.body <= 520,
+    note: "empty bundle overview: no .gate-group.fail, neutral idle line, content column <= 520px",
+  },
+  {
+    // R4: 되돌림 사유가 접힌 채 "더 보기" 단추가 보이고, 누르면 사유가 scrollHeight만큼 자라며 안쪽 스크롤이 없다
+    id: "R4", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[3]}`,
+    open: async (page) => { await page.getByTestId("overview-return-reason").waitFor({ timeout: T }); },
+    measure: async (page) => {
+      const reason = page.getByTestId("overview-return-reason");
+      const more = page.getByTestId("overview-return-more");
+      const visible = await more.isVisible();
+      if (!visible) return { visible };
+      const before = await reason.evaluate((el) => ({ h: el.getBoundingClientRect().height, sh: el.scrollHeight }));
+      await more.click();
+      await page.waitForTimeout(600);
+      const after = await reason.evaluate((el) => ({ h: el.getBoundingClientRect().height, sh: el.scrollHeight, ch: el.clientHeight }));
+      return { visible, before, after };
+    },
+    expect: (value) => value.visible && value.after.h > value.before.h && Math.abs(value.after.h - value.after.sh) <= 2 && value.after.sh <= value.after.ch + 1,
+    note: "collapsed reason shows a more button; expanding grows it to its scrollHeight with no inner scroll",
+  },
+  {
+    id: "Focus4", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}`,
+    open: async (page) => { await page.getByTestId("overview-request-review").waitFor({ timeout: T }); },
+    measure: (page) => page.getByTestId("overview-request-review").evaluate((el) => Math.round(el.getBoundingClientRect().height)),
+    expect: (value) => value > 0 && value <= 36,
+    note: "request-review button is one line (<= 36px) at 1120 in English (run with LANGS=en)",
+  },
+  // ---- Task 8: 없는 주소·못 여는 Bundle ----
+  {
+    // B1: 없는 주소가 앱 틀 안의 빈 화면 - 다크에서 body 배경이 --bg, 목록으로 돌아가는 단추, 한국어에 영어 기본 문구 없음
+    id: "B1", ds: "mid", user: MEMBER, views: [1120],
+    path: () => "/no-such-page",
+    open: async (page) => { await page.getByTestId("not-found").waitFor({ timeout: T }); },
+    measure: (page) => page.evaluate(() => {
+      const probe = document.createElement("i");
+      probe.style.background = "var(--bg)";
+      document.body.appendChild(probe);
+      const token = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      const back = document.querySelector('[data-testid="not-found-back"]');
+      const box = back?.getBoundingClientRect();
+      return {
+        bodyBg: getComputedStyle(document.body).backgroundColor,
+        token,
+        back: Boolean(box && box.width > 0 && box.height > 0),
+        english: document.body.innerText.includes("This page could not be found"),
+      };
+    }),
+    expect: (value) => value.bodyBg === value.token && value.back && !value.english,
+    note: "not-found renders in the shell: body background equals --bg, not-found-back visible, no default English copy",
+  },
+  {
+    // B2·R6: 멤버가 아닌 Bundle(mid[1]은 prod.member가 아니다 - API 404) 여섯 주소에서 목록으로 돌아가는 길이 있고 다시 시도는 없으며, 단계 레일 링크와 상단 바 뒤로·구분선이 없다
+    id: "B2", ds: "mid", user: "prod.member", views: [1120],
+    path: (ids) => ["documents", "split", "assign", "outputs", "history", "tobe"].map((s) => ({ url: `/bundles/${ids.mid[1]}/${s}`, user: "prod.member", stage: s })),
+    open: async (page) => {
+      await page.locator('[data-testid$="-missing"]').first().waitFor({ timeout: T });
+    },
+    measure: async (page) => {
+      const stage = new URL(page.url()).pathname.split("/").pop();
+      return page.evaluate((s) => ({
+        missing: document.querySelectorAll(`[data-testid="${s}-missing"]`).length,
+        back: document.querySelectorAll(`[data-testid="${s}-back"]`).length,
+        retry: document.querySelectorAll(`[data-testid="${s}-retry"]`).length,
+        railLinks: document.querySelectorAll('[data-testid="stage-nav"] a').length,
+        rail: document.querySelectorAll('[data-testid="stage-nav"]').length,
+        topBack: document.querySelectorAll('[data-testid="top-bar-back"]').length,
+        sep: document.querySelectorAll(".tb-sep").length,
+      }), stage);
+    },
+    expect: (value) => value.missing === 1 && value.back === 1 && value.retry === 0 && value.railLinks === 0 && value.rail === 0 && value.sep === 0 && value.topBack === 0,
+    note: "six stage URLs of a bundle prod.member cannot open: <id>-missing + <id>-back, no -retry, no stage rail, no top-bar divider or back arrow",
+  },
+  {
+    // B2b: 상단 바 뒤로 화살표는 묶음 밖 화면과 정상 Bundle에는 남는다(못 여는 Bundle에서만 숨긴다)
+    id: "B2b", ds: "mid", user: MEMBER, views: [1120],
+    path: (ids) => ["/account", "/manual", "/no-such-page", `/bundles/${ids.mid[2]}/documents`],
+    open: async (page) => { await page.getByTestId("top-bar").waitFor({ timeout: T }); await page.waitForTimeout(600); },
+    measure: (page) => page.locator('[data-testid="top-bar-back"]').count(),
+    expect: (value) => value === 1,
+    note: "top-bar-back is present on /account, /manual, /no-such-page and a normally loading bundle",
+  },
+  // ---- Task 9: 검토 화면 되돌림 쪽지 ----
+  {
+    // B3: 되돌린 Bundle(W3)의 검토 화면에 쪽지가 보이고 사유 첫 20자가 화면 안에 있다 - 작성자와 검토자 둘 다
+    id: "B3", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => [MEMBER, "qa.lead"].map((user) => ({ url: `/bundles/${ids.w[3]}/review`, user })),
+    open: async (page) => { await page.getByTestId("review-return-note").waitFor({ timeout: T }); await page.waitForTimeout(600); },
+    measure: (page) => page.evaluate(() => {
+      const note = document.querySelector('[data-testid="review-return-note"]');
+      const reason = document.querySelector('[data-testid="review-return-reason"]');
+      const noteBox = note.getBoundingClientRect();
+      const textNode = reason?.firstChild;
+      const range = document.createRange();
+      if (textNode) { range.setStart(textNode, 0); range.setEnd(textNode, Math.min(20, textNode.textContent.length)); }
+      const rects = textNode ? [...range.getClientRects()] : [];
+      const inView = (box) => box.width > 0 && box.height > 0 && box.top >= 0 && box.bottom <= window.innerHeight && box.left >= 0 && box.right <= window.innerWidth;
+      return {
+        note: inView(noteBox),
+        reason: rects.length > 0 && rects.every(inView),
+        noteLeft: Math.round(noteBox.left),
+        noteTop: Math.round(noteBox.top),
+      };
+    }),
+    expect: (value) => value.note && value.reason,
+    note: "returned bundle (W3) review screen shows review-return-note with the first 20 characters of the reason inside the viewport",
+  },
+  {
+    // B3b: 검토 중인 Bundle(W2)의 검토 화면에는 쪽지가 없다
+    id: "B3b", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => `/bundles/${ids.w[2]}/review`,
+    open: async (page) => { await page.getByTestId("review").waitFor({ timeout: T }); await page.waitForTimeout(1200); },
+    measure: (page) => page.locator('[data-testid="review-return-note"]').count(),
+    expect: (value) => value === 0,
+    note: "in-review bundle (W2) has no return note on the review screen",
+  },
+  // ---- Task 10: Bundle 목록·목록 폭 ----
+  {
+    // B7: 제목이 빈 Bundle 줄의 높이 = 제목 있는 줄의 높이(표), 빈 자리에는 흐린 "이름 없음"
+    id: "B7", ds: "worst", user: MEMBER, views: [1440, 1920],
+    path: () => "/",
+    open: async (page) => { await page.getByTestId("bundles-list").waitFor({ timeout: T }); await page.waitForTimeout(800); },
+    measure: (page) => page.evaluate(() => {
+      const rows = [...document.querySelectorAll('[data-testid^="bundles-row-"]')];
+      const empty = rows.filter((row) => row.querySelector('[data-testid^="bundles-untitled-"]'));
+      const noTitle = rows.filter((row) => !row.querySelector('[data-testid^="bundles-untitled-"]'));
+      const height = (row) => Math.round(row.getBoundingClientRect().height);
+      const emptyHeights = empty.map(height);
+      const titledHeights = noTitle.map(height);
+      return { empty: emptyHeights.length, emptyMax: Math.max(0, ...emptyHeights), titledMin: Math.min(...titledHeights) };
+    }),
+    expect: (value) => value.empty >= 2 && Math.abs(value.emptyMax - value.titledMin) <= 1,
+    note: "untitled bundles (W7 + empty-title ones) show bundles-untitled-<id> and their table row is as tall as the shortest titled row (a one-line row, +-1px)",
+  },
+  {
+    // C5: 카드 보기에서 같은 줄 카드의 .dcard-meta 아래 끝이 같고, 합성 칩의 왼쪽 끝이 카드마다 같다
+    id: "C5", ds: "worst", user: MEMBER, views: [1440, 1920],
+    path: () => "/",
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.bundles", "cards"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator(".dcard").first().waitFor({ timeout: T });
+      await page.waitForTimeout(800);
+    },
+    measure: (page) => page.evaluate(() => {
+      const cards = [...document.querySelectorAll('[data-testid^="bundles-row-"]')];
+      const byTop = new Map();
+      for (const card of cards) {
+        const top = Math.round(card.getBoundingClientRect().top);
+        byTop.set(top, [...(byTop.get(top) ?? []), card]);
+      }
+      let metaSpread = 0;
+      let chipSpread = 0;
+      let multi = 0;
+      for (const group of byTop.values()) {
+        if (group.length < 2) continue;
+        multi += 1;
+        const bottoms = group.map((card) => card.querySelector(".dcard-meta").getBoundingClientRect().bottom);
+        metaSpread = Math.max(metaSpread, Math.max(...bottoms) - Math.min(...bottoms));
+      }
+      const chipLefts = cards.map((card) => {
+        const chip = card.querySelector('[data-testid^="bundles-synthetic-"]');
+        return chip ? chip.getBoundingClientRect().left - card.getBoundingClientRect().left : null;
+      }).filter((v) => v !== null);
+      chipSpread = chipLefts.length ? Math.max(...chipLefts) - Math.min(...chipLefts) : 0;
+      return { multi, metaSpread: Math.round(metaSpread * 10) / 10, chips: chipLefts.length, chipSpread: Math.round(chipSpread * 10) / 10 };
+    }),
+    expect: (value) => value.multi > 0 && value.metaSpread <= 1 && value.chips > 0 && value.chipSpread <= 1,
+    note: "bundle cards: dcard-meta bottoms within 1px per grid row, synthetic chip left edge identical across cards",
+  },
+  {
+    // C5b: 문서 카드 보기(cardActions="row")에서 같은 줄 카드의 .dcard-meta 아래 끝이 같다 - meta와 아랫줄 사이 틈이 카드 키와 상관없이 같다(auto 여백 둘이 남는 높이를 나누지 않는다)
+    id: "C5b", ds: "mid", user: MEMBER, views: [1440],
+    path: (ids) => `/bundles/${ids.mid[2]}/documents`,
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "cards"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator(".dcard").first().waitFor({ timeout: T });
+      await page.waitForTimeout(800);
+    },
+    measure: (page) => page.evaluate(() => {
+      const cards = [...document.querySelectorAll('[data-testid="documents-list"] .dcard')];
+      const byTop = new Map();
+      for (const card of cards) {
+        const top = Math.round(card.getBoundingClientRect().top);
+        byTop.set(top, [...(byTop.get(top) ?? []), card]);
+      }
+      let metaSpread = 0;
+      let gapSpread = 0;
+      let multi = 0;
+      let unequal = 0;
+      for (const group of byTop.values()) {
+        if (group.length < 2) continue;
+        multi += 1;
+        const heights = group.map((card) => card.querySelector(".dcard-body, .dcard-meta").getBoundingClientRect().height);
+        const bottoms = group.map((card) => card.querySelector(".dcard-meta").getBoundingClientRect().bottom);
+        const gaps = group.map((card) => {
+          const foot = card.querySelector(".dcard-foot");
+          return foot ? foot.getBoundingClientRect().top - card.querySelector(".dcard-meta").getBoundingClientRect().bottom : 0;
+        });
+        if (Math.max(...heights) - Math.min(...heights) > 1) unequal += 1;
+        metaSpread = Math.max(metaSpread, Math.max(...bottoms) - Math.min(...bottoms));
+        gapSpread = Math.max(gapSpread, Math.max(...gaps) - Math.min(...gaps));
+      }
+      return { cards: cards.length, multi, unequal, metaSpread: Math.round(metaSpread * 10) / 10, gapSpread: Math.round(gapSpread * 10) / 10 };
+    }),
+    expect: (value) => value.multi > 0 && value.metaSpread <= 1 && value.gapSpread <= 1,
+    note: "document cards: dcard-meta bottoms within 1px per grid row and the meta-to-footer gap is the same in every card of the row",
+  },
+  {
+    // C5c: 문서 카드 보기(cardActions="row")에서 같은 줄 카드의 .dcard-meta 아래 끝이 같다 - meta와 아랫줄 사이 틈이 카드 키와 상관없이 같다(auto 여백 둘이 남는 높이를 나누지 않는다)
+    id: "C5c", ds: "worst", user: MEMBER, views: [1440],
+    path: (ids) => `/bundles/${ids.w[1]}/documents`,
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "cards"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator(".dcard").first().waitFor({ timeout: T });
+      await page.waitForTimeout(800);
+    },
+    measure: (page) => page.evaluate(() => {
+      const cards = [...document.querySelectorAll('[data-testid="documents-list"] .dcard')];
+      const byTop = new Map();
+      for (const card of cards) {
+        const top = Math.round(card.getBoundingClientRect().top);
+        byTop.set(top, [...(byTop.get(top) ?? []), card]);
+      }
+      let metaSpread = 0;
+      let gapSpread = 0;
+      let multi = 0;
+      let unequal = 0;
+      for (const group of byTop.values()) {
+        if (group.length < 2) continue;
+        multi += 1;
+        const heights = group.map((card) => card.querySelector(".dcard-body, .dcard-meta").getBoundingClientRect().height);
+        const bottoms = group.map((card) => card.querySelector(".dcard-meta").getBoundingClientRect().bottom);
+        const gaps = group.map((card) => {
+          const foot = card.querySelector(".dcard-foot");
+          return foot ? foot.getBoundingClientRect().top - card.querySelector(".dcard-meta").getBoundingClientRect().bottom : 0;
+        });
+        if (Math.max(...heights) - Math.min(...heights) > 1) unequal += 1;
+        metaSpread = Math.max(metaSpread, Math.max(...bottoms) - Math.min(...bottoms));
+        gapSpread = Math.max(gapSpread, Math.max(...gaps) - Math.min(...gaps));
+      }
+      return { cards: cards.length, multi, unequal, metaSpread: Math.round(metaSpread * 10) / 10, gapSpread: Math.round(gapSpread * 10) / 10 };
+    }),
+    expect: (value) => value.multi > 0 && value.metaSpread <= 1 && value.gapSpread <= 1,
+    note: "document cards: dcard-meta bottoms within 1px per grid row and the meta-to-footer gap is the same in every card of the row",
+  },
+  {
+    // C7: 목록 화면은 1600, 개요·계정·설명서는 1280 (본문 폭)
+    id: "C7", ds: "worst", user: MEMBER, views: [2560],
+    path: (ids) => [
+      "/", `/bundles/${ids.w[1]}/documents`, `/bundles/${ids.w[1]}/tobe`, `/bundles/${ids.w[1]}/history`, `/bundles/${ids.w[1]}/split`,
+      `/bundles/${ids.w[1]}`, "/account", "/manual",
+    ],
+    open: async (page) => { await page.locator(".page-wrap").first().waitFor({ timeout: T }); await page.waitForTimeout(1000); },
+    measure: (page) => page.evaluate(() => {
+      const path = location.pathname;
+      const width = Math.round(document.querySelector(".page-wrap").getBoundingClientRect().width);
+      const wide = path === "/" || /\/(documents|tobe|history|split)$/.test(path);
+      return { path, width, want: wide ? 1600 : 1280 };
+    }),
+    expect: (value) => value.width === value.want,
+    note: "2560: bundle list, Documents, To-Be, History, Split body = 1600; overview, account, manual = 1280",
+  },
+  {
+    // C7b: 1920에서 Documents 제목 열(칸) 폭 >= 420px
+    id: "C7b", ds: "worst", user: MEMBER, views: [1920],
+    path: (ids) => `/bundles/${ids.w[1]}/documents`,
+    open: async (page) => { await page.locator('[data-testid^="documents-"][data-testid$="-title"]').first().waitFor({ timeout: T }); await page.waitForTimeout(1000); },
+    measure: (page) => page.evaluate(() => {
+      const cell = document.querySelector('[data-testid^="documents-"][data-testid$="-title"]').closest("td");
+      return Math.round(cell.getBoundingClientRect().width);
+    }),
+    expect: (value) => value >= 420,
+    note: "1920 Documents (W1): title column cell width >= 420px",
+  },
 ];
+// B5는 새(문서 0개) Bundle이면 되므로 mid에서도 W7로 한 번 더 잰다(W7은 같은 DB에 있다)
+AUDIT_ENTRIES.push({ ...AUDIT_ENTRIES.find((entry) => entry.id === "B5"), ds: "mid" });
 
 // ---------- ids 지도 ----------
 
@@ -494,6 +918,7 @@ async function main() {
   };
   let problems = 0;
   let runs = 0;
+  let skips = 0;
   for (const entry of entries) {
     const raw = entry.path(ids);
     const items = (Array.isArray(raw) ? raw : [raw]).map((item) => (typeof item === "string" ? { url: item, user: entry.user } : item));
@@ -506,13 +931,15 @@ async function main() {
             const tag = `${entry.id} ${width} ${lang} ${theme} ${item.url}`;
             runs += 1;
             let failure = null;
+            let skipped = null;
             try {
               await page.goto(`${BASE}${item.url}`, { timeout: T });
               await page.waitForLoadState("networkidle", { timeout: T }).catch(() => {});
               await page.waitForTimeout(SETTLE_MS);
               if (entry.open) await entry.open(page);
               const value = await entry.measure(page);
-              if (!entry.expect(value)) failure = `measured ${JSON.stringify(value)} (${entry.note})`;
+              if (value !== null && typeof value === "object" && typeof value.skip === "string") skipped = value.skip;
+              else if (!entry.expect(value)) failure = `measured ${JSON.stringify(value)} (${entry.note})`;
             } catch (err) {
               failure = `error: ${String(err).split("\n")[0]}`;
             }
@@ -521,6 +948,9 @@ async function main() {
               console.log(`FAIL  ${tag} ${failure}`);
               const suffix = `${items.length > 1 ? `-${slug(item.url)}${item.user === entry.user ? "" : `-${item.user}`}` : ""}-${width}${lang === "ko" && theme === "light" ? "" : `-${lang}-${theme}`}`;
               await page.screenshot({ path: resolve(SHOTS, `layout-${entry.id}${suffix}.png`) }).catch(() => {});
+            } else if (skipped !== null) {
+              skips += 1;
+              console.log(`skip  ${tag} ${skipped}`);
             } else {
               console.log(`ok    ${tag}`);
             }
@@ -531,7 +961,7 @@ async function main() {
     }
   }
   await browser.close();
-  console.log(problems === 0 ? `\nALL PASS (${runs} runs)` : `\n${problems} problem(s) in ${runs} runs`);
+  console.log(problems === 0 ? `\nALL PASS (${runs - skips} runs${skips ? `, ${skips} skipped` : ""})` : `\n${problems} problem(s) in ${runs} runs`);
   process.exit(problems === 0 ? 0 : 1);
 }
 

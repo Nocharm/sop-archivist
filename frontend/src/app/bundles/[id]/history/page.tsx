@@ -8,6 +8,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { EventIcon, EventModal, getEventLabel, listEventChanges } from "@/components/manage/event-modal";
 import { EmptyState } from "@/components/ui/empty-state";
+import { BundleLoadError } from "@/components/bundle-load-error";
 import { LoadError } from "@/components/ui/load-error";
 import { LoadMoreRows } from "@/components/ui/load-more";
 import { listBundleEvents, type BundleEvent } from "@/lib/api-manage";
@@ -91,7 +92,7 @@ export default function HistoryPage() {
         </div>
       </div>
       {error !== null && events.length === 0 ? (
-        <LoadError error={error} onRetry={() => void loadMore()} testId="history" />
+        <BundleLoadError error={error} onRetry={() => void loadMore()} testId="history" />
       ) : !isFirstLoad && shown.length === 0 && !hasMore ? (
         <EmptyState icon={History} testId="history-empty" title={t("history.emptyTitle")} body={t("history.emptyBody")} />
       ) : (

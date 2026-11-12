@@ -187,6 +187,25 @@ const outputsScene = {
   },
 };
 
+// 반환 { hits, linked } - linked가 0이면 잴 줄이 없었다는 뜻이라 통과로 치지 않는다
+// 메뉴 상자가 잇고 있는 두 줄(누른 New 줄과 짝 Old 줄)의 글 상자를 덮는가 - 떠 있는 메뉴가 아래 다른 글을 가리는 것은 괜찮지만 이 두 줄은 안 된다
+async function findCoveringLinkedLines(page, menu) {
+  const box = await menu.boundingBox();
+  return page.evaluate((m) => {
+    const hit = (r) => r.width > 0 && r.height > 0 && Math.min(r.right, m.x + m.width) - Math.max(r.left, m.x) > 1 && Math.min(r.bottom, m.y + m.height) - Math.max(r.top, m.y) > 1;
+    const hits = [];
+    // New 줄은 줄 상자 전체(마지막 글줄이 짧아도 그 줄의 자리), Old 줄은 글줄마다
+    for (const line of document.querySelectorAll('[data-testid="assign-new"] .new-line[data-state="focus"], [data-testid="assign-new"] .new-line[data-state="picked"]')) {
+      if (hit(line.getBoundingClientRect())) hits.push(`New line "${line.textContent.trim().slice(0, 30)}"`);
+    }
+    for (const line of document.querySelectorAll('[data-testid="assign-old"] .su[data-sel]')) {
+      if ([...line.getClientRects()].some(hit)) hits.push(`Old line "${line.textContent.trim().slice(0, 30)}"`);
+    }
+    const linked = document.querySelectorAll('[data-testid="assign-new"] .new-line[data-state="focus"], [data-testid="assign-new"] .new-line[data-state="picked"], [data-testid="assign-old"] .su[data-sel]').length;
+    return { hits, linked };
+  }, box);
+}
+
 // Assign 그 자리 메뉴 - 떠 있는 메뉴라 아래 글을 가리는 것은 맞다. 대신 화면 안에 있고 라벨이 잘리지 않아야 한다.
 // 줄을 고르고 열어 둔 New 문서의 문장을 눌러 연다(고르기만 하고 저장하지 않으며 Esc로 닫는다)
 const linkMenuScene = {
@@ -210,6 +229,9 @@ const linkMenuScene = {
     await page.waitForTimeout(HOVER_SETTLE_MS);
     const spill = await findSpill(menu);
     if (spill.length > 0) report("assign-link-menu", spill.join(", "));
+    const covering = await findCoveringLinkedLines(page, menu);
+    if (covering.linked === 0) report("assign-link-menu covers linked lines", "no linked lines were measured");
+    if (covering.hits.length > 0) report("assign-link-menu covers linked lines", covering.hits.join(", "));
     await page.keyboard.press("Escape");
   },
 };
