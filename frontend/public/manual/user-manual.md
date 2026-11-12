@@ -507,7 +507,7 @@ Excel 내려받기 단추는 지금 고른 언어의 결과물 A·B·C와 Bundle
 1. **Overview** 에서 **Request review** 를 누릅니다. 작성자만 요청할 수 있습니다.
 2. Bundle이 **In review** 가 되고 모든 단계가 읽기 전용이 됩니다(**Read-only · In review**).
 3. 검토자가 끝내기 전에 고칠 것이 생기면 **Overview** 의 **Review request** 카드나 **Review** 에서 **Withdraw request** 를 누릅니다. 사유는 적지 않습니다. Bundle이 **In progress** 로 돌아오고 의미 확인 표시가 지워집니다. 거두기는 작성자만 합니다.
-4. 돌려받으면 **Overview** 에 **Returned by the reviewer** 와 사유가 보입니다. 고친 뒤 의미 확인을 다시 표시하고 다시 요청합니다.
+4. 돌려받으면 **Overview** 와 **Review** 화면에 **Returned by the reviewer** 와 사유가 보입니다(**Review** 에서는 1280px 이상이면 용지 오른쪽 위, 그보다 좁으면 용지 위). 고친 뒤 의미 확인을 다시 표시하고 다시 요청합니다.
 5. 검토가 끝난 Bundle을 고쳐야 하면 **Review** 에서 **Reopen** 을 누르고 사유를 적습니다. Bundle이 **In progress** 로 돌아옵니다. 다시 열기는 작성자만 합니다.
 
 ### 검토자가 하는 일 {#review-reviewer}

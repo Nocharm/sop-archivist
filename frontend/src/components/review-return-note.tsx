@@ -19,7 +19,7 @@ const NOTE_TITLE: Record<string, string> = {
 };
 
 /** 사유는 8줄까지만 보이고 아래가 흐려진다 - 잘렸을 때만 "더 보기"가 나타나고 펼치면 안쪽 스크롤 없이 전부 보인다 */
-function ReasonText({ text }: { text: string }) {
+function ReasonText({ text, prefix }: { text: string; prefix: string }) {
   const { t } = useI18n();
   const [isOpen, setIsOpen] = useState(false);
   const [isClipped, setIsClipped] = useState(false);
@@ -33,7 +33,7 @@ function ReasonText({ text }: { text: string }) {
         <p
           ref={measureClip}
           className={`whitespace-pre-wrap break-words text-ink ${isOpen ? "" : "max-h-40 overflow-hidden"}`}
-          data-testid="overview-return-reason"
+          data-testid={`${prefix}-reason`}
         >
           {text}
         </p>
@@ -42,7 +42,7 @@ function ReasonText({ text }: { text: string }) {
         )}
       </div>
       {(isClipped || isOpen) && (
-        <button type="button" className="text-link" aria-expanded={isOpen} data-testid="overview-return-more" onClick={() => setIsOpen((prev) => !prev)}>
+        <button type="button" className="text-link" aria-expanded={isOpen} data-testid={`${prefix}-more`} onClick={() => setIsOpen((prev) => !prev)}>
           {isOpen ? t("common.showLess") : t("common.showMore")}
         </button>
       )}
@@ -50,8 +50,15 @@ function ReasonText({ text }: { text: string }) {
   );
 }
 
-export function ReviewReturnNote({ bundle }: { bundle: Bundle }) {
+interface ReviewReturnNoteProps {
+  bundle: Bundle;
+  /** 안쪽 요소 id는 이 값에서 끝의 -note를 뗀 접두를 따른다(개요 기본값은 기존 스모크가 쓴다) */
+  testId?: string;
+}
+
+export function ReviewReturnNote({ bundle, testId = "overview-return-note" }: ReviewReturnNoteProps) {
   const { t } = useI18n();
+  const prefix = testId.replace(/-note$/, "");
   const isOpen = bundle.status === "in_progress";
   // 다시 검토를 요청하면 최근 검토 기록이 요청으로 바뀌어 쪽지가 사라진다
   const latest = useLoaded(() => (isOpen ? getLatestReviewEvent(bundle.id) : Promise.resolve(null)), `${bundle.id}:${bundle.status}`);
@@ -59,17 +66,17 @@ export function ReviewReturnNote({ bundle }: { bundle: Bundle }) {
   const titleKey = event ? NOTE_TITLE[event.action] : undefined;
   if (!isOpen || !event || !titleKey) return null;
   return (
-    <section className="return-note" data-testid="overview-return-note" data-action={event.action}>
+    <section className="return-note" data-testid={testId} data-action={event.action}>
       <CornerDownLeft size={16} strokeWidth={1.5} aria-hidden />
       <div className="grid min-w-0 gap-1">
         <h2 className="flex flex-wrap items-baseline gap-x-2 text-[13px] font-semibold leading-5 text-ink">
           {t(titleKey)}
           <span className="font-mono text-[11px] font-normal text-ink-3">{`${event.actor} · ${formatKstShort(event.occurred_at)}`}</span>
         </h2>
-        {event.reason && <ReasonText text={event.reason} />}
+        {event.reason && <ReasonText text={event.reason} prefix={prefix} />}
         <p className="text-ink-2">
           {t("overview.checksCleared")}{" "}
-          <Link href={getStageHref(bundle.id, "outputs")} className="text-link" data-testid="overview-return-outputs">
+          <Link href={getStageHref(bundle.id, "outputs")} className="text-link" data-testid={`${prefix}-outputs`}>
             {t("overview.openOutputs")}
           </Link>
         </p>

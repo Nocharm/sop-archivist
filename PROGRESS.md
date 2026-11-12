@@ -4,6 +4,7 @@
 
 ## 2026-11-12
 
+- **화면 검토 반영 9/14 검토 화면 되돌림 쪽지 (`fix/screen-review`)** — `ReviewReturnNote`에 `testId`(기본 `overview-return-note`, 안쪽 id는 접두를 따름)를 더해 검토 화면 1280 이상은 `[760px | 오른쪽 열]` 격자의 오른쪽 위, 미만은 용지 위에 놓았다(감사 B3·B3b). 제안 그림의 "N회차"는 집계 API가 없어 뺐다.
 - **화면 검토 반영 8/14 없는 주소·못 여는 Bundle (`fix/screen-review`)** — `app/not-found.tsx`가 앱 틀 안에서 `EmptyState`+목록으로 가는 단추를 그린다(B1, 다크 body 배경 = `--bg`). Documents·Split·Assign·Outputs·History의 로드 실패를 `BundleLoadError`로 바꿔 403·404면 다시 시도 대신 목록으로 가는 길만 둔다(B2, Split은 문서 목록 실패 분기도 같은 `split` id). 못 연 Bundle에서는 상단 바 뒤로·구분선·제목과 단계 레일을 그리지 않는다(R6, 정상 Bundle은 그대로).
 - **8/14 보정** — 상단 바 뒤로 화살표는 못 여는 Bundle에서만 숨기고 묶음 밖 화면(`/account`·`/manual`·없는 주소)에는 되돌렸다(감사 B2b).
 

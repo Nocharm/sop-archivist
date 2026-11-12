@@ -11,6 +11,7 @@ import { BundleLoadError } from "@/components/bundle-load-error";
 import { Modal } from "@/components/modal";
 import { EditionToggle } from "@/components/outputs/edition-toggle";
 import { OutputCView } from "@/components/outputs/output-c";
+import { ReviewReturnNote } from "@/components/review-return-note";
 import { BundleStatusPill } from "@/components/status";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { LoadError } from "@/components/ui/load-error";
@@ -100,7 +101,11 @@ export default function ReviewPage() {
           </button>
         )}
       </div>
-      <div className="min-h-0 overflow-y-auto bg-bg">
+      <div className="min-h-0 overflow-y-auto bg-bg min-[1280px]:grid min-[1280px]:grid-cols-[minmax(0,760px)_minmax(280px,1fr)] min-[1280px]:content-start">
+        {/* 1280 미만에서는 용지 위에 쌓이고, 이상에서는 오른쪽 열 위에 놓인다. 쪽지가 없으면 빈 칸이다 */}
+        <div className="order-first min-w-0 px-[var(--pad)] pt-[var(--pad)] empty:hidden min-[1280px]:order-none min-[1280px]:col-start-2 min-[1280px]:row-start-1 min-[1280px]:pl-0" data-testid="review-aside">
+          <ReviewReturnNote bundle={bundle} testId="review-return-note" />
+        </div>
         {output.data ? (
           <OutputCView data={output.data} lang={lang} />
         ) : output.error !== null ? (

@@ -655,6 +655,40 @@ const AUDIT_ENTRIES = [
     expect: (value) => value === 1,
     note: "top-bar-back is present on /account, /manual, /no-such-page and a normally loading bundle",
   },
+  // ---- Task 9: 검토 화면 되돌림 쪽지 ----
+  {
+    // B3: 되돌린 Bundle(W3)의 검토 화면에 쪽지가 보이고 사유 첫 20자가 화면 안에 있다 - 작성자와 검토자 둘 다
+    id: "B3", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => [MEMBER, "qa.lead"].map((user) => ({ url: `/bundles/${ids.w[3]}/review`, user })),
+    open: async (page) => { await page.getByTestId("review-return-note").waitFor({ timeout: T }); await page.waitForTimeout(600); },
+    measure: (page) => page.evaluate(() => {
+      const note = document.querySelector('[data-testid="review-return-note"]');
+      const reason = document.querySelector('[data-testid="review-return-reason"]');
+      const noteBox = note.getBoundingClientRect();
+      const textNode = reason?.firstChild;
+      const range = document.createRange();
+      if (textNode) { range.setStart(textNode, 0); range.setEnd(textNode, Math.min(20, textNode.textContent.length)); }
+      const rects = textNode ? [...range.getClientRects()] : [];
+      const inView = (box) => box.width > 0 && box.height > 0 && box.top >= 0 && box.bottom <= window.innerHeight && box.left >= 0 && box.right <= window.innerWidth;
+      return {
+        note: inView(noteBox),
+        reason: rects.length > 0 && rects.every(inView),
+        noteLeft: Math.round(noteBox.left),
+        noteTop: Math.round(noteBox.top),
+      };
+    }),
+    expect: (value) => value.note && value.reason,
+    note: "returned bundle (W3) review screen shows review-return-note with the first 20 characters of the reason inside the viewport",
+  },
+  {
+    // B3b: 검토 중인 Bundle(W2)의 검토 화면에는 쪽지가 없다
+    id: "B3b", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => `/bundles/${ids.w[2]}/review`,
+    open: async (page) => { await page.getByTestId("review").waitFor({ timeout: T }); await page.waitForTimeout(1200); },
+    measure: (page) => page.locator('[data-testid="review-return-note"]').count(),
+    expect: (value) => value === 0,
+    note: "in-review bundle (W2) has no return note on the review screen",
+  },
 ];
 // B5는 새(문서 0개) Bundle이면 되므로 mid에서도 W7로 한 번 더 잰다(W7은 같은 DB에 있다)
 AUDIT_ENTRIES.push({ ...AUDIT_ENTRIES.find((entry) => entry.id === "B5"), ds: "mid" });
