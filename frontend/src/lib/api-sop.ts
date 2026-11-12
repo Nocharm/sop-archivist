@@ -346,6 +346,8 @@ export interface ViewUnit {
   block_id: number;
   /** 사람이 나누거나 합쳐 생긴 단위(되돌리지 않은 편집) */
   is_edited: boolean;
+  /** 합치기로 생겨 그 뒤 바뀌지 않은 단위 - 합치기 전 단위들로 되돌릴 수 있다(편집 unmerge) */
+  can_unmerge: boolean;
   /** 사람이 아직 정하지 않은 AI 나누기 제안 */
   split_suggestion_id: number | null;
 }
@@ -372,6 +374,7 @@ export interface DocumentView {
 export type EditOp =
   | { type: "split"; unit_id: number; at: number }
   | { type: "merge"; unit_ids: number[] }
+  | { type: "unmerge"; unit_id: number }
   | { type: "move_boundary"; left_unit_id: number; right_unit_id: number; at: number }
   | { type: "carve"; block_id: number; start: number; end: number }
   | { type: "set_language"; unit_ids: number[]; lang: "ko" | "en" }

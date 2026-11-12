@@ -67,6 +67,11 @@ function getPairReason(selected: ViewUnit, target: ViewUnit): string | null {
   return null;
 }
 
+/** 두 문장을 한/영 짝으로 지을 수 있다 - 틈의 짝 짓기 단추와 우클릭 메뉴가 같은 규칙을 쓴다 */
+export function canPair(first: ViewUnit, second: ViewUnit): boolean {
+  return getPairReason(first, second) === null;
+}
+
 function buildPair(ctx: SplitMenuContext & { selected: ViewUnit }): SplitMenuItem[] {
   const { selected, target } = ctx;
   const isChecked = ctx.isChecked ?? ((unit: ViewUnit) => unit.boundary_confirmed);
