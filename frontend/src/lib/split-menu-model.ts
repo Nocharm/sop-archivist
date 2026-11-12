@@ -2,7 +2,7 @@
 import type { ViewUnit } from "./api-sop";
 import { getMergeBlocker, MERGE_BLOCKER_KEYS } from "./paper-model";
 
-export type SplitMenuAction = "pair" | "unpair" | "merge" | "check_both" | "check" | "split" | "ai_split" | "hold" | "lang_ko" | "lang_en";
+export type SplitMenuAction = "join" | "unpair" | "check_both" | "check" | "split" | "ai_split" | "hold" | "lang_ko" | "lang_en";
 
 export interface SplitMenuItem {
   action: SplitMenuAction;
@@ -56,32 +56,89 @@ export function getAiSplitReason(input: { aiEnabled: boolean; isText: boolean; h
   return input.hasSuggestion ? why("hasSuggestion") : null;
 }
 
-function isLangUnit(unit: ViewUnit): boolean {
-  return unit.lang === "ko" || unit.lang === "en";
+/** 묶기의 결과 - 언어가 모두 같으면 한 문장으로 합치기, 한글과 영어가 섞였으면 한/영 짝 */
+export type JoinKind = "merge" | "pair";
+
+export interface JoinPlan {
+  /** 묶을 수 없으면 null */
+  kind: JoinKind | null;
+  /** 꺼진 까닭의 문구 키 - 묶을 수 있으면 없다 */
+  reasonKey?: string;
 }
 
-function getPairReason(selected: ViewUnit, target: ViewUnit): string | null {
-  if (!isLangUnit(selected) || !isLangUnit(target)) return why("noLanguage");
-  if (selected.lang === target.lang) return why("sameLanguage");
-  if (selected.pair_id !== null || target.pair_id !== null) return why("alreadyPaired");
+function refuse(reasonKey: string): JoinPlan {
+  return { kind: null, reasonKey };
+}
+
+/**
+ * 조각들을 묶을 때 시스템이 고르는 결과 - 틈의 Join, 우클릭 메뉴, 떨어진 조각 고르기가 같은 규칙을 쓴다.
+ * adjacent는 조각들이 용지에서 이웃한가 - 같은 언어의 떨어진 조각은 화면에서 합치지 않는다.
+ */
+export function planJoin(units: ViewUnit[], adjacent: boolean): JoinPlan {
+  if (units.some((unit) => !EDITABLE_KINDS.has(unit.kind))) return refuse(why("notText"));
+  const langs = new Set(units.map((unit) => unit.lang));
+  if (langs.size === 1) {
+    if (!adjacent) return refuse(why("notAdjacent"));
+    for (let index = 1; index < units.length; index += 1) {
+      const blocker = getMergeBlocker(units[index - 1], units[index]);
+      if (blocker) return refuse(MERGE_BLOCKER_KEYS[blocker]);
+    }
+    return { kind: "merge" };
+  }
+  if (langs.size === 2 && langs.has("ko") && langs.has("en")) {
+    return units.some((unit) => unit.pair_id !== null) ? refuse(why("alreadyPaired")) : { kind: "pair" };
+  }
+  return refuse(why("noLanguage"));
+}
+
+/**
+ * 짝을 한 문장으로 합칠 수 없는 까닭(전환의 One sentence) - 합칠 수 있으면 null. order는 용지의 단위 순서.
+ * 구성 단위가 문서 순서로 끊김 없이 이어져야 한다(떨어진 조각의 합치기는 서버가 받지만 화면에서는 이웃한 조각만 합친다).
+ */
+export function getPairMergeReason(members: ViewUnit[], order: readonly number[]): string | null {
+  const placed = members.map((unit) => ({ unit, at: order.indexOf(unit.id) })).sort((a, b) => a.at - b.at);
+  const isRun = placed.every((item, index) => item.at >= 0 && (index === 0 || item.at === placed[index - 1].at + 1));
+  if (!isRun) return why("notAdjacent");
+  for (let index = 1; index < placed.length; index += 1) {
+    const blocker = getMergeBlocker(placed[index - 1].unit, placed[index].unit);
+    if (blocker) return MERGE_BLOCKER_KEYS[blocker];
+  }
   return null;
 }
 
-/** 두 문장을 한/영 짝으로 지을 수 있다 - 틈의 짝 짓기 단추와 우클릭 메뉴가 같은 규칙을 쓴다 */
-export function canPair(first: ViewUnit, second: ViewUnit): boolean {
-  return getPairReason(first, second) === null;
+const HANGUL_SYLLABLE = /[\uAC00-\uD7A3]/;
+const LATIN_LETTER = /[A-Za-z]/;
+
+/** 글에 한글 음절과 라틴 글자가 모두 있다 - 합친 한 문장을 한/영 짝으로 되돌릴 수 있는지의 기준 */
+export function hasBothScripts(text: string): boolean {
+  return HANGUL_SYLLABLE.test(text) && LATIN_LETTER.test(text);
+}
+
+/** 글자(모든 문자) 중 라틴 글자의 비율 - 글자가 없으면 0 */
+function readLatinRatio(text: string): number {
+  const letters = text.match(/\p{L}/gu)?.length ?? 0;
+  const latin = text.match(/[A-Za-z]/g)?.length ?? 0;
+  return letters === 0 ? 0 : latin / letters;
+}
+
+/** 같은 언어로 잡힌 단위들을 짝으로 맺을 때 EN으로 바꿀 쪽 - 라틴 글자 비율이 가장 높은 단위, 라틴 글자가 하나도 없으면 null */
+export function pickEnglishSide(units: Pick<ViewUnit, "id" | "text">[]): number | null {
+  let best: { id: number; ratio: number } | null = null;
+  for (const unit of units) {
+    const ratio = readLatinRatio(unit.text);
+    if (ratio > 0 && (best === null || ratio > best.ratio)) best = { id: unit.id, ratio };
+  }
+  return best?.id ?? null;
 }
 
 function buildPair(ctx: SplitMenuContext & { selected: ViewUnit }): SplitMenuItem[] {
   const { selected, target } = ctx;
   const isChecked = ctx.isChecked ?? ((unit: ViewUnit) => unit.boundary_confirmed);
-  const mergeBlocker = getMergeBlocker(selected, target);
   const isPaired = selected.pair_id !== null && selected.pair_id === target.pair_id;
   const guard = (reason: string | null) => (ctx.readOnly ? why("readOnly") : reason);
   return [
-    build("pair", guard(getPairReason(selected, target))),
+    build("join", guard(planJoin([selected, target], ctx.adjacent).reasonKey ?? null)),
     build("unpair", guard(isPaired ? null : why("notPaired"))),
-    build("merge", guard(!ctx.adjacent ? why("notAdjacent") : mergeBlocker ? MERGE_BLOCKER_KEYS[mergeBlocker] : null)),
     build("check_both", guard(isChecked(selected) && isChecked(target) ? why("allChecked") : null)),
   ];
 }

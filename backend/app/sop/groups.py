@@ -157,6 +157,7 @@ class GroupTargetOut(BaseModel):
     grid: dict[str, int] | None
     status: str
     hold_reason: str
+    remark: str
     warnings: list[dict[str, str]]
     # 출처 단위(출처 순서)
     source_unit_ids: list[int]
@@ -169,6 +170,9 @@ class GroupTargetOut(BaseModel):
 class GroupOut(BaseModel):
     units: list[GroupUnitOut]
     targets: list[GroupTargetOut]
+    # 이 저장 끝에 서버가 확정하거나 푼 한/영 짝(pair_settle) — 관계 묶음 저장 응답에서만 채운다
+    pairs_confirmed: list[int] = []
+    pairs_dissolved: list[int] = []
 
 
 # --- 연결 요소 ---
@@ -304,7 +308,7 @@ def _build_target_out(target: TargetSentence, source_unit_ids: list[int], group_
         origin=target.origin, new_unit_id=target.new_unit_id,
         translation_source_unit_id=target.translation_source_unit_id, parent_target_id=target.parent_target_id,
         cell_row=target.cell_row, cell_col=target.cell_col, grid=target.grid, status=target.status,
-        hold_reason=target.hold_reason, warnings=target.warnings, source_unit_ids=source_unit_ids, group_id=group_id,
+        hold_reason=target.hold_reason, remark=target.remark, warnings=target.warnings, source_unit_ids=source_unit_ids, group_id=group_id,
         revision=target.revision, suggestion_id=target.suggestion_id,
     )
 

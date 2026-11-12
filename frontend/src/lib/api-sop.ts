@@ -8,17 +8,15 @@ export const SEMANTIC_CHECK_KEYS = ["numbers", "conditions", "tables", "figures"
 export type BundleStatus = "in_progress" | "in_review" | "done";
 export type MemberRole = "author" | "reviewer";
 
-export interface LangProgress {
+/** 줄(한/영 짝 하나 또는 짝 없는 판단 단위 하나) 기준 진행 숫자 한 벌 */
+export interface RowProgress {
   total: number;
   unassigned: number;
   ai_suggested: number;
   confirmed: number;
   on_hold: number;
-}
-
-export interface BundleProgress {
-  ko: LangProgress;
-  en: LangProgress;
+  /** 한 언어만 있는 줄 - 보조 표시, 검토 요청 조건이 아니다 */
+  single_language: number;
 }
 
 export interface BundleListItem {
@@ -31,7 +29,7 @@ export interface BundleListItem {
   status: BundleStatus;
   my_role: MemberRole;
   updated_at: string;
-  progress: BundleProgress;
+  progress: RowProgress;
 }
 
 export interface BundleMember {
@@ -81,7 +79,7 @@ export interface Bundle {
   updated_at: string;
   my_role: MemberRole | null;
   members: BundleMember[];
-  progress: BundleProgress;
+  progress: RowProgress;
   next_action: NextAction;
   ai_jobs: AiJobCounts;
 }
@@ -89,7 +87,6 @@ export interface Bundle {
 /** 막는 이유·알림 한 건 - 코드마다 문맥 필드가 다르다(review.py) */
 export interface ReadinessIssue {
   code: string;
-  lang?: "ko" | "en";
   count?: number;
   missing?: string[];
   [key: string]: unknown;
@@ -424,10 +421,6 @@ export function createPair(bundleId: number, docId: number, revision: number, un
   return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs`, { method: "POST", body: JSON.stringify({ revision, unit_ids: unitIds }) });
 }
 
-export function confirmPair(bundleId: number, docId: number, pairId: number, revision: number): Promise<PairResult> {
-  return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}/confirm`, { method: "POST", body: JSON.stringify({ revision }) });
-}
-
 export function deletePair(bundleId: number, docId: number, pairId: number, revision: number): Promise<PairResult> {
   return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}?revision=${revision}`, { method: "DELETE" });
 }
@@ -588,6 +581,8 @@ export interface GroupTarget {
   grid: { rows: number; cols: number } | null;
   status: CoverStatus;
   hold_reason: string;
+  /** 사람이 적는 메모 - 출처 없는 새 문장에도 적을 수 있다 */
+  remark: string;
   warnings: Array<Record<string, string>>;
   source_unit_ids: number[];
   group_id: string | null;
@@ -598,6 +593,9 @@ export interface GroupTarget {
 export interface Group {
   units: GroupUnit[];
   targets: GroupTarget[];
+  /** 묶음 저장 응답에만 - 이 저장으로 확정된 짝·풀린 짝(서버가 판단을 보고 정한다) */
+  pairs_confirmed?: number[];
+  pairs_dissolved?: number[];
 }
 
 export interface TargetInput {
@@ -612,6 +610,8 @@ export interface TargetInput {
   lang?: UnitLang;
   text?: string;
   change_type?: ChangeTypeInput | null;
+  /** 비우면(undefined) 지금 값을 둔다 */
+  remark?: string;
   source_unit_ids: number[];
   parent_key?: string | null;
   cell_row?: number | null;
@@ -626,6 +626,8 @@ export interface GroupSaveInput {
   units: Array<{ unit_id: number; revision: number; disposition: Disposition; move_target_code: string; reason: string }>;
   targets: TargetInput[];
   removed_target_ids: number[];
+  /** 짝의 한쪽만 이을 때 남는 단위 - 서버가 같은 저장 안에서 그 짝을 풀어 따로 줄로 남긴다 */
+  release_unit_ids?: number[];
 }
 
 export async function listAllUnits(bundleId: number): Promise<UnitRow[]> {
@@ -730,6 +732,8 @@ export interface WrittenSentence {
   source_unit_ids: number[];
   /** 같은 New 문서의 한/영 짝 상대가 만든 문장 */
   partner_target_id: number | null;
+  /** 사람이 적는 메모(출처 없는 새 문장의 Remark) */
+  remark: string;
   revision: number;
 }
 

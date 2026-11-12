@@ -219,12 +219,11 @@ export function getMarks(unit: ViewUnit): UnitMark[] {
 
 const TEXT_KINDS = new Set(["sentence", "heading", "cell_sentence"]);
 
-/** 틈의 합치기를 쓸 수 없는 까닭 - 언어가 다름, 글이 아닌 것(표·그림), 칸 문장 규칙 */
-export type MergeBlocker = "mixed_language" | "not_text" | "cell";
+/** 틈의 합치기를 쓸 수 없는 까닭 - 글이 아닌 것(표·그림), 칸 문장 규칙. 언어는 보지 않는다(다른 언어끼리는 묶기가 짝을 고른다) */
+export type MergeBlocker = "not_text" | "cell";
 
 /** 합칠 수 없는 까닭 → 문구 키 - 틈의 합치기 단추와 우클릭 메뉴가 같이 쓴다 */
 export const MERGE_BLOCKER_KEYS: Record<MergeBlocker, string> = {
-  mixed_language: "split.noMergeLanguage",
   not_text: "split.noMergeKind",
   cell: "split.noMergeCell",
 };
@@ -234,7 +233,6 @@ export function getMergeBlocker(a: ViewUnit, b: ViewUnit): MergeBlocker | null {
   if (!TEXT_KINDS.has(a.kind) || !TEXT_KINDS.has(b.kind)) return "not_text";
   // 칸 문장은 같은 표·행 그룹(또는 모두 그룹 없음)끼리만
   if ((a.kind === "cell_sentence" || b.kind === "cell_sentence") && (a.kind !== b.kind || a.group_unit_id !== b.group_unit_id)) return "cell";
-  if (a.lang !== b.lang) return "mixed_language";
   return null;
 }
 
@@ -310,7 +308,7 @@ function readRowUnit(row: PaperRow, units: ReadonlyMap<number, ViewUnit>): ViewU
 
 /**
  * 이웃한 두 줄 사이의 "위아래 합치기". 글 조각 둘이면 늘 있고(못 합치면 까닭), 한쪽이 표·그림이면 까닭과 함께 꺼 두고,
- * 둘 다 글이 아니거나 부분 묶음이 다르면 없다(null).
+ * 둘 다 글이 아니거나 부분 묶음이 다르거나 같은 짝의 두 구성원이면 없다(null).
  */
 export function getGapMerge(prev: PaperRow, next: PaperRow, units: ReadonlyMap<number, ViewUnit>): GapMerge | null {
   const first = readRowUnit(prev, units);
@@ -322,6 +320,8 @@ export function getGapMerge(prev: PaperRow, next: PaperRow, units: ReadonlyMap<n
     return { firstId: unit.id, secondId: unit.id, blocker: "not_text" };
   }
   if (first.id === second.id) return null;
+  // 같은 짝의 두 구성원 사이(한 카드 안)에는 묶기 자리가 없다 - 한 문장으로 합치기는 옆 칸의 One sentence 전환이 맡는다
+  if (first.pair_id !== null && first.pair_id === second.pair_id) return null;
   return { firstId: first.id, secondId: second.id, blocker: getMergeBlocker(first, second) };
 }
 

@@ -57,8 +57,9 @@ from app.sop.models import (
     UnitPairMember,
     WiStep,
 )
+from app.sop.pair_settle import settle_pairs
 from app.sop.schemas import NO_NUL, NoNulStr
-from app.sop.segment import has_visible_char
+from app.sop.segment import detect_language, has_visible_char
 from app.sop.status import get_cover_status
 from app.sop.tobe import MAX_DB_INT, is_within_slot
 from app.sop.units import UNIT_ACTIVE, compute_display_id
@@ -109,6 +110,8 @@ class TargetIn(BaseModel):
     lang: Literal["ko", "en", "neutral"] | None = None
     text: Annotated[str, StringConstraints(max_length=20000), NO_NUL] | None = None
     change_type: Literal["as_is", "tone", "rewritten", "table_restructured"] | None = None
+    # 사람이 적는 메모 — None이면 지금 값을 둔다(출처 없는 새 문장에도 적을 수 있다)
+    remark: Annotated[str, StringConstraints(max_length=2000), NO_NUL] | None = None
     source_unit_ids: list[DbId] = Field(max_length=200)
     parent_key: str | None = Field(None, max_length=40)
     cell_row: CellIndex | None = None
@@ -128,6 +131,8 @@ class GroupSaveIn(BaseModel):
     units: list[UnitDecisionIn] = Field(max_length=500)
     targets: list[TargetIn] = Field(max_length=2000)
     removed_target_ids: list[DbId] = Field(default_factory=list, max_length=2000)
+    # 짝의 한쪽만 이을 때 남는 쪽을 따로 줄로 — 그 단위가 든 짝을 이 저장 안에서 푼다(pair_settle). 판단은 바꾸지 않는다
+    release_unit_ids: list[DbId] = Field(default_factory=list, max_length=500)
 
 
 class BulkUnitIn(BaseModel):
@@ -303,6 +308,11 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
     bound = sorted(unit_id for unit_id, (unit, _) in loaded.items() if unit.group_unit_id is not None)
     if bound:
         _reject("bound_cell_sentence", unit_ids=bound)
+    unknown_released = sorted(
+        set(payload.release_unit_ids) - set(await _load_old_units(session, bundle_id, payload.release_unit_ids))
+    )
+    if unknown_released:
+        _reject("unknown_unit", unit_ids=unknown_released)
     units = {unit_id: unit for unit_id, (unit, _) in loaded.items()}
     decisions = {unit_id: decision for unit_id, (_, decision) in loaded.items()}
 
@@ -580,19 +590,26 @@ def _check_source_kinds(item: TargetIn, state: _State) -> None:
         _reject(f"invalid_{item.kind}_target", keys=[item.key])
 
 
-def _resolve_lang(item: TargetIn, row: TargetSentence | None, state: _State) -> str:
-    """문장 새 문장의 언어는 모든 출처 단위의 언어(출처가 없는 번역은 행의 언어), 표·그림은 중립."""
+def _resolve_lang(item: TargetIn, row: TargetSentence | None, state: _State, text: str) -> str:
+    """새 문장의 언어 — 출처와 달라도 거절하지 않는다(다르면 변경 종류가 번역이 된다, 설계 §5.2). 표·그림은 중립.
+
+    입구 2·번역 새 문장은 행의 언어로 잠겨 있어 보낸 값을 따르지 않는다. 그 밖에는 보낸 값, 비웠으면 기존 새 문장의 지금 값
+    (TargetIn의 "비운 칸은 지금 값" — 출처 언어로 되돌리면 사람이 쓴 번역이 조용히 출처 언어가 된다), 새 새 문장은 출처가 한
+    언어면 그 언어, 섞였으면 글자로 판정한다. 글자만 보지 않는 것은 영어 문장에 한글 낱말 하나만 있어도 KO로 판정되기 때문이다.
+    문장의 중립은 보내지 않은 것으로 본다 — 중립 문장은 번역이 될 수 없고 결과물의 두 언어 판에 모두 나간다.
+    """
     if item.kind != "sentence":
-        expected = NEUTRAL
-    else:
-        langs = {state.units[unit_id].lang for unit_id in item.source_unit_ids}
-        if len(langs) > 1:
-            _reject("lang_mismatch", keys=[item.key])
-        expected = langs.pop() if langs else (row.lang if row is not None else NEUTRAL)
-    is_locked_mismatch = row is not None and row.origin == ORIGIN_NEW_DOC and row.lang != expected
-    if is_locked_mismatch or (item.lang is not None and item.lang != expected):
-        _reject("lang_mismatch", keys=[item.key])
-    return expected
+        return NEUTRAL
+    if row is not None and row.origin in (ORIGIN_NEW_DOC, ORIGIN_TRANSLATION):
+        return row.lang
+    if item.lang not in (None, NEUTRAL):
+        return item.lang
+    if row is not None and row.lang != NEUTRAL:
+        return row.lang
+    langs = {state.units[unit_id].lang for unit_id in item.source_unit_ids}
+    if len(langs) == 1:
+        return langs.pop()
+    return detect_language(text) or state.units[item.source_unit_ids[0]].lang
 
 
 def _resolve_text(item: TargetIn, row: TargetSentence | None, state: _State) -> str:
@@ -651,9 +668,10 @@ def _plan_target(item: TargetIn, state: _State) -> _Plan:
             _reject("sources_required", keys=keys)
         _check_location(item, doc, state)
     _check_source_kinds(item, state)
+    text = _resolve_text(item, row, state)
     return _Plan(
         item=item, row=row, doc=doc, origin=origin, sources=list(item.source_unit_ids),
-        lang=_resolve_lang(item, row, state), text=_resolve_text(item, row, state), grid=_resolve_grid(item, row),
+        lang=_resolve_lang(item, row, state, text), text=text, grid=_resolve_grid(item, row),
         cell_row=item.cell_row if item.cell_row is not None else (row.cell_row if row is not None else None),
         cell_col=item.cell_col if item.cell_col is not None else (row.cell_col if row is not None else None),
     )
@@ -699,7 +717,10 @@ def _link_cell_target(plan: _Plan, by_key: dict[str, _Plan], state: _State) -> N
 def _decide_change_type(
     plan: _Plan, spread: Counter[tuple[int, int]], reasons: dict[int, str], state: _State
 ) -> str:
-    """검사 9 — 구조에서 나오는 종류(번역·신규·합침·나눔)가 먼저, 그다음 사람이 고른 글자 비교 종류."""
+    """검사 9 — 구조에서 나오는 종류(번역 기원·신규·표·그림·합침·언어가 다름·나눔)가 먼저, 그다음 사람이 고른 글자 비교 종류.
+
+    언어가 다르면 번역이다 — 사람이 고르지 않는다(설계 §5.2). 나눔은 출처와 같은 언어의 새 문장만 센다(spread).
+    """
     keys = [plan.item.key]
     requested = plan.item.change_type
     if plan.origin == ORIGIN_TRANSLATION:
@@ -721,6 +742,9 @@ def _decide_change_type(
     if len(plan.sources) >= 2:
         return "merged"
     source_id = plan.sources[0]
+    source_lang = state.units[source_id].lang
+    if plan.lang != source_lang and NEUTRAL not in (plan.lang, source_lang):
+        return "translated"
     if not plan.is_cell and spread[(source_id, plan.doc.id)] >= 2:
         return "split"
     if plan.text == state.units[source_id].text:
@@ -895,6 +919,8 @@ def _apply_plan(
         target.cell_row, target.cell_col = (plan.cell_row, plan.cell_col) if plan.is_cell else (None, None)
         target.parent_target_id = plan.parent.row.id if plan.parent is not None and plan.parent.row else None
     target.change_type = plan.change_type
+    if plan.item.remark is not None:
+        target.remark = plan.item.remark.strip()
     check_texts = _list_check_texts(plan, state)
     target.warnings = check_sentence(check_texts, plan.text) if plan.item.kind == "sentence" and check_texts else []
     _set_human_status(target, action, hold_reason, actor, stamp)
@@ -1005,10 +1031,11 @@ async def save_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveIn
     for plan in plans:
         _link_cell_target(plan, by_key, state)
     reasons = {item.unit_id: item.reason.strip() for item in payload.units}
+    # 나눔은 한 단위가 같은 새 문서에 자기와 같은 언어의 새 문장 둘 이상을 낼 때다 — 다른 언어 문장은 번역이다(설계 §5.2)
     spread = Counter(
         (unit_id, plan.doc.id)
         for plan in plans if plan.item.kind == "sentence" and not plan.is_cell
-        for unit_id in plan.sources
+        for unit_id in plan.sources if state.units[unit_id].lang == plan.lang
     )
     for plan in plans:
         plan.change_type = _decide_change_type(plan, spread, reasons, state)
@@ -1019,7 +1046,11 @@ async def save_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveIn
     if payload.action == "hold" and not payload.hold_reason.strip():
         _reject("hold_reason_required")
     target_ids = await _write_group(session, bundle.id, payload, plans, state, actor)
-    return await build_group_out(session, unit_ids=[item.unit_id for item in payload.units], target_ids=target_ids)
+    unit_ids = [item.unit_id for item in payload.units]
+    settled = await settle_pairs(session, bundle.id, unit_ids, actor, release=payload.release_unit_ids)
+    out = await build_group_out(session, unit_ids=unit_ids, target_ids=target_ids)
+    out.pairs_confirmed, out.pairs_dissolved = settled.confirmed_pair_ids, settled.dissolved_pair_ids
+    return out
 
 
 async def _find_units_with_targets(session: AsyncSession, unit_ids: Collection[int]) -> list[int]:
@@ -1077,6 +1108,7 @@ async def dispose_units(
         session, bundle_id=bundle.id, actor=actor, action="decision.bulk", target_type="unit", target_ids=unit_ids,
         reason=payload.reason,
     )
+    await settle_pairs(session, bundle.id, unit_ids, actor)
     await session.flush()
     return [UnitDecisionRowOut(unit_id=unit_id, decision=DecisionOut.model_validate(loaded[unit_id][1])) for unit_id in unit_ids]
 

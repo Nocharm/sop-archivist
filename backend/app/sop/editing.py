@@ -344,7 +344,7 @@ async def _plan_split(session: AsyncSession, extraction_id: ExtractionId, op: Sp
 
 
 async def _plan_merge(session: AsyncSession, extraction_id: ExtractionId, op: MergeOp) -> _Change:
-    """결과 범위는 원문 순서로 모으고 같은 블록에서 사이가 빈 글자뿐이면 한 범위로 잇는다. 언어는 합친 단위들의 같은 언어."""
+    """결과 범위는 원문 순서로 모으고 같은 블록에서 사이가 빈 글자뿐이면 한 범위로 잇는다. 언어는 합친 단위들이 같으면 그 언어, 섞이면 글자로 판정한다."""
     ensure_unique_units(op.unit_ids)
     units = sorted((await load_active_units(session, extraction_id, op.unit_ids)).values(), key=_get_position)
     _ensure_text_kinds(units)
@@ -352,15 +352,14 @@ async def _plan_merge(session: AsyncSession, extraction_id: ExtractionId, op: Me
     # 칸 문장은 같은 표·행 그룹(또는 모두 그룹 없음)끼리만 — 다른 그룹과 합치면 처분을 따를 곳이 둘이 된다
     if "cell_sentence" in kinds and (kinds != {"cell_sentence"} or len({unit.group_unit_id for unit in units}) > 1):
         raise_rule(422, "cannot_merge", unit_ids=[unit.id for unit in units])
-    langs = sorted({unit.lang for unit in units})
-    if len(langs) > 1:
-        raise_rule(422, "mixed_language", langs=langs)
+    langs = {unit.lang for unit in units}
     blocks = await _load_unit_blocks(session, extraction_id, units)
     spans = sorted(
         (span for unit in units for span in to_spans(unit.spans)), key=lambda span: (blocks[span[0]].seq, span[1])
     )
     draft = _build_draft(
-        units[0], join_close_spans(spans, _get_texts(blocks)), blocks, kind=_decide_merged_kind(units), lang=langs[0]
+        units[0], join_close_spans(spans, _get_texts(blocks)), blocks, kind=_decide_merged_kind(units),
+        lang=next(iter(langs)) if len(langs) == 1 else None,  # 섞이면 글자로 판정(한글이 있으면 ko)
     )
     return _build_replacement(units, [draft])
 
@@ -378,7 +377,8 @@ async def find_merge_edit(session: AsyncSession, document_id: int, unit_id: int)
 async def _plan_unmerge(session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: UnmergeOp) -> _Change:
     """합친 단위를 은퇴시키고 합치기가 은퇴시킨 단위를 원래 ID로 되살린다 — 그 합치기만 골라 되돌리는 것.
 
-    합친 뒤 언어를 바꿨으면 되살린 단위도 지금 언어를 따른다. 짝·판단은 되살리지 않는다(되돌리기와 같다).
+    같은 언어끼리 합쳤고 그 뒤 언어를 바꿨으면 되살린 단위도 지금 언어를 따른다. 언어가 섞인 합치기는 각 단위가 제
+    언어로 돌아온다. 짝·판단은 되살리지 않는다(되돌리기와 같다).
     """
     unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
     edit = await find_merge_edit(session, document_id, unit.id)
@@ -391,10 +391,13 @@ async def _plan_unmerge(session: AsyncSession, document_id: int, extraction_id: 
     )
     if len(originals) != len(edit.retired_unit_ids) or any(original.status != UNIT_RETIRED for original in originals):
         raise_rule(422, "cannot_unmerge", unit_id=unit.id)
+    is_mixed = len({original.lang for original in originals}) > 1
     return _Change(
         retire=[unit.id],
         revive=sorted(original.id for original in originals),
-        langs={original.id: (original.lang, unit.lang) for original in originals if original.lang != unit.lang},
+        langs={}
+        if is_mixed
+        else {original.id: (original.lang, unit.lang) for original in originals if original.lang != unit.lang},
         # 합친 칸 문장이 그 뒤 다른 묶음(행 나누기 등)으로 옮겨졌으면 되살린 칸도 지금 묶음으로
         regroup={
             original.id: (original.group_unit_id, unit.group_unit_id)
@@ -890,7 +893,7 @@ async def _write_change(
     if change.layouts:
         # 레이아웃 표의 칸 문장은 묶이지 않아 한/영 두 열이 이웃 짝으로 제안되고, 다시 데이터 표가 되면 그 제안이 빠진다
         await session.flush()
-        await refresh_code_pairs(session, document)
+        await refresh_code_pairs(session, document, actor)
     await session.flush()
     await verify_document_coverage(session, document.id)
     document.revision += 1

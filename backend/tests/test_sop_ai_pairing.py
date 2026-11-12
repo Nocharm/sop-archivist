@@ -21,6 +21,7 @@ from app.sop.models import AiJob, AiSuggestion, Bundle, Unit, UnitPair, UnitPair
 from tests.access_helpers import run_in_session
 from tests.ai_fixtures import (
     AI_MEMBERS,
+    AI_SOP_DOC,
     clean_ai_jobs,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
     clean_embedding_cache,  # noqa: F401
     edit_document,
@@ -32,7 +33,17 @@ from tests.ai_fixtures import (
 from tests.ai_helpers import enable_embed
 from tests.docx_factory import build_docx, p, tbl
 from tests.fake_ai import FakeAi
-from tests.sop_helpers import AUTHOR, REVIEWER, create_bundle, find_unit, get_view, set_members, upload
+from tests.sop_helpers import (
+    AUTHOR,
+    REVIEWER,
+    assign_as_is,
+    create_bundle,
+    find_unit,
+    get_view,
+    put_tobe,
+    set_members,
+    upload,
+)
 
 pytestmark = pytest.mark.usefixtures("clean_sop", "clean_ai_jobs", "clean_embedding_cache")
 
@@ -400,6 +411,38 @@ def test_units_already_paired_are_left_alone(
     assert (human["id"], human["status"], human["source"], human["unit_ids"]) == (by_hand["id"], "confirmed", "human", [ko_0, en_0])
     assert (suggested["status"], suggested["source"], suggested["unit_ids"]) == ("suggested", "ai", [ko_1, en_1])
     assert [row.suggestion_id for row in read_rows(UnitPair) if row.id == human["id"]] == [None]
+
+
+def test_pairs_over_judged_units_follow_their_fates(
+    client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """이미 판단한 단위 — 같은 새 문서로 확정한 두 줄의 짝은 바로 확정(채택)이고, 서로 다른 곳으로 보낸 두 줄은 짝을 제안하지 않는다."""
+    bundle = make_separate_bundle(client)
+    response = put_tobe(client, bundle.id, [AI_SOP_DOC])
+    assert response.status_code == 200, response.text
+    sop_id = response.json()["docs"][0]["id"]
+    use_vectors(monkeypatch, fake_ai, AXES)
+    view = get_view(client, bundle.id, bundle.document_id)
+    for text in (KO[0], EN[0], KO[1]):
+        assign_as_is(client, bundle.id, find_unit(view, text), sop_id, slot_key="purpose")
+    deleted = client.post(
+        f"/api/bundles/{bundle.id}/decisions/bulk",
+        json={"action": "delete", "reason": "Synthetic: not needed",
+              "units": [{"unit_id": find_unit(view, EN[1])["id"], "revision": 1}]},
+        headers=AUTHOR,
+    )
+    assert deleted.status_code == 200, deleted.text
+
+    suggest_pairs(client, bundle)
+
+    ko_ids, en_ids = get_unit_ids(client, bundle, *KO), get_unit_ids(client, bundle, *EN)
+    assert [(pair["status"], pair["source"], pair["unit_ids"]) for pair in list_view_pairs(client, bundle)] == [
+        ("confirmed", "ai", [ko_ids[0], en_ids[0]]), ("suggested", "ai", [ko_ids[2], en_ids[2]]),
+    ]
+    suggestions = read_pair_suggestions()
+    assert sorted((s.content["ko_unit_id"], s.adoption) for s in suggestions.values()) == [
+        (ko_ids[0], "as_is"), (ko_ids[2], None),
+    ]
 
 
 def test_table_cell_sentences_are_not_candidates(

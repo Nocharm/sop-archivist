@@ -191,8 +191,11 @@ describe("getMergeBlocker", () => {
     expect(getMergeBlocker(makeSplitUnit({ id: 1, kind: "heading" }), makeSplitUnit({ id: 2 }))).toBeNull();
   });
 
-  it("names the reason: language, kind, cell", () => {
-    expect(getMergeBlocker(makeSplitUnit({ id: 1, lang: "ko" }), makeSplitUnit({ id: 2, lang: "en" }))).toBe("mixed_language");
+  it("does not look at language - a KO and an EN sentence can merge", () => {
+    expect(getMergeBlocker(makeSplitUnit({ id: 1, lang: "ko" }), makeSplitUnit({ id: 2, lang: "en" }))).toBeNull();
+  });
+
+  it("names the reason: kind, cell", () => {
     expect(getMergeBlocker(makeSplitUnit(), makeSplitUnit({ id: 2, kind: "figure" }))).toBe("not_text");
     expect(getMergeBlocker(makeSplitUnit(), makeSplitUnit({ id: 2, kind: "cell_sentence", table_id: 3, group_unit_id: 7 }))).toBe("cell");
     expect(getMergeBlocker(makeSplitUnit({ kind: "cell_sentence", group_unit_id: 7 }), makeSplitUnit({ id: 2, kind: "cell_sentence", group_unit_id: 8 }))).toBe("cell");
@@ -244,13 +247,13 @@ describe("getGapMerge", () => {
     return { model, rows: buildRows(model.body, model.segments) };
   }
 
-  it("always offers a merge between two text pieces, with the reason when it cannot run", () => {
+  it("always offers a merge between two text pieces, whatever their languages", () => {
     const { model, rows } = build(
       [makeBlock(1, 0, "One. Two."), makeBlock(2, 1, "셋.")],
       [makeUnit(10, [[1, 0, 4]], "One.", { boundary_confirmed: true }), makeUnit(11, [[1, 5, 9]], "Two."), makeUnit(12, [[2, 0, 2]], "셋.", { lang: "ko" })],
     );
     expect(getGapMerge(rows[0], rows[1], model.units)).toEqual({ firstId: 10, secondId: 11, blocker: null });
-    expect(getGapMerge(rows[1], rows[2], model.units)).toEqual({ firstId: 11, secondId: 12, blocker: "mixed_language" });
+    expect(getGapMerge(rows[1], rows[2], model.units)).toEqual({ firstId: 11, secondId: 12, blocker: null });
   });
 
   it("is off with a reason next to a figure and absent between two non-text rows", () => {
@@ -260,6 +263,15 @@ describe("getGapMerge", () => {
     );
     expect(getGapMerge(rows[0], rows[1], model.units)).toEqual({ firstId: 10, secondId: 10, blocker: "not_text" });
     expect(getGapMerge(rows[1], rows[2], model.units)).toBeNull();
+  });
+
+  it("has no control between two members of the same pair, but keeps one between different pairs", () => {
+    const { model, rows } = build(
+      [makeBlock(1, 0, "가. Alpha. 나.")],
+      [makeUnit(10, [[1, 0, 3]], "가.", { lang: "ko", pair_id: 5 }), makeUnit(11, [[1, 3, 10]], " Alpha.", { pair_id: 5 }), makeUnit(12, [[1, 10, 13]], " 나.", { lang: "ko", pair_id: 6 })],
+    );
+    expect(getGapMerge(rows[0], rows[1], model.units)).toBeNull();
+    expect(getGapMerge(rows[1], rows[2], model.units)).toEqual({ firstId: 11, secondId: 12, blocker: null });
   });
 
   it("has no merge across part groups", () => {

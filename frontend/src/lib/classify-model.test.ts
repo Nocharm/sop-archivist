@@ -12,12 +12,16 @@ import {
   findSystemHold,
   getRowStep,
   hasDraftChange,
+  hasRowLanguage,
+  isSentenceUnit,
+  isTranslationOf,
   listLinkLeftovers,
   listUnpairedKeys,
   readCheckKey,
   pickRowStatus,
   readDestination,
   readHumanReason,
+  readSlotKind,
   stepInList,
 } from "./classify-model";
 import type { Destination } from "./classify-model";
@@ -111,7 +115,7 @@ describe("save request", () => {
       {
         id: 90, target_doc_id: 6, slot_key: "scope", wi_step: null, wi_part: null, section_path: "", order_index: 0, lang: "ko", kind: "sentence",
         confirmed_text: "가", ai_text: "", change_type: "as_is", origin: "units", new_unit_id: null, translation_source_unit_id: null, parent_target_id: null, cell_row: null, cell_col: null,
-        grid: null, status: "confirmed", hold_reason: "", warnings: [], source_unit_ids: [10], group_id: null, revision: 4, indent_level: 0,
+        grid: null, status: "confirmed", hold_reason: "", remark: "", warnings: [], source_unit_ids: [10], group_id: null, revision: 4, indent_level: 0,
       },
     ],
   };
@@ -148,7 +152,7 @@ function makeTarget(extra: Partial<GroupTarget>): GroupTarget {
   return {
     id: 1, target_doc_id: 6, slot_key: "scope", wi_step: null, wi_part: null, section_path: "", order_index: 0, lang: "ko", kind: "sentence",
     confirmed_text: "", ai_text: "", change_type: "as_is", origin: "units", new_unit_id: null, translation_source_unit_id: null, parent_target_id: null, cell_row: null, cell_col: null,
-    grid: null, status: "ai_suggested", hold_reason: "", warnings: [], source_unit_ids: [10], group_id: null, revision: 1, indent_level: 0, ...extra,
+    grid: null, status: "ai_suggested", hold_reason: "", remark: "", warnings: [], source_unit_ids: [10], group_id: null, revision: 1, indent_level: 0, ...extra,
   };
 }
 
@@ -517,9 +521,15 @@ describe("a one-language link on a pair row leaves the other language open", () 
     expect(body.targets).toEqual([expect.objectContaining({ id: 75, source_unit_ids: [20] })]);
   });
 
+  it("releases the leftover unit in the same save", () => {
+    // 한/영 짝 줄을 영어 새 문장 하나에만 잇는다 - 서버가 같은 저장 안에서 짝을 푼다
+    expect(buildGroupSave(makeDraft({ destination: link }), open, "confirm").release_unit_ids).toEqual([10]);
+  });
+
   it("still carries it in a hold save, which the server takes undecided", () => {
     const body = buildGroupSave(makeDraft({ destination: link }), open, "hold", "나중에");
     expect(body.units.map((unit) => [unit.unit_id, unit.disposition])).toEqual([[20, "assigned"], [10, "unassigned"]]);
+    expect(body.release_unit_ids).toEqual([]);
   });
 
   it("lists the unit the link leaves behind", () => {
@@ -549,5 +559,128 @@ describe("a one-language link on a pair row leaves the other language open", () 
     expect(listLinkLeftovers(SCOPE, open)).toEqual([]);
     expect(listLinkLeftovers(null, open)).toEqual([]);
     expect(listLinkLeftovers({ kind: "link", targetIds: [75, 76] }, both)).toEqual([]);
+  });
+});
+
+describe("links across languages are translations", () => {
+  const english = [{ id: 20, kind: "sentence", lang: "en" as const, text: "Source", revision: 2 }];
+  const pair = [ONE_UNIT[0], english[0]];
+  const koTarget = makeTarget({ id: 71, origin: "new_doc", target_doc_id: 9, slot_key: null, lang: "ko", status: "unassigned", change_type: null, source_unit_ids: [] });
+  const enTarget = makeTarget({ id: 72, origin: "new_doc", target_doc_id: 9, slot_key: null, lang: "en", status: "unassigned", change_type: null, source_unit_ids: [] });
+  const contextOf = (units: typeof pair) => ({ units, group: { units: [], targets: [koTarget, enTarget] }, tables: new Map() });
+  const both: Destination = { kind: "link", targetIds: [71, 72] };
+
+  it("sources a linked sentence from the same-language unit when the row has one", () => {
+    const body = buildGroupSave(makeDraft({ destination: both }), contextOf(pair), "confirm");
+    expect(body.targets.map((target) => [target.id, target.source_unit_ids])).toEqual([[71, [10]], [72, [20]]]);
+  });
+
+  it("sources a linked sentence from every unit when the row lacks its language", () => {
+    // 영어 단위만 있는 줄을 한글·영어 새 문장 둘에 잇는다 - 한글 새 문장은 그 영어 단위가 출처이고 종류는 서버가 번역으로 정한다
+    const body = buildGroupSave(makeDraft({ destination: both }), contextOf(english), "confirm");
+    expect(body.units.map((unit) => unit.unit_id)).toEqual([20]);
+    const korean = body.targets.find((target) => target.id === 71);
+    expect(korean).toMatchObject({ source_unit_ids: [20] });
+    expect(korean).not.toHaveProperty("change_type");
+    expect(body.targets.find((target) => target.id === 72)).toMatchObject({ source_unit_ids: [20], change_type: "rewritten" });
+    expect(body.release_unit_ids).toEqual([]);
+  });
+
+  it("leaves nothing behind when a one-language row links only the other language", () => {
+    const korean: Destination = { kind: "link", targetIds: [71] };
+    expect(listLinkLeftovers(korean, contextOf(english))).toEqual([]);
+    const body = buildGroupSave(makeDraft({ destination: korean }), contextOf(english), "confirm");
+    expect(body.units.map((unit) => unit.unit_id)).toEqual([20]);
+    expect(body.targets.find((target) => target.id === 71)).toMatchObject({ source_unit_ids: [20] });
+  });
+});
+
+describe("hand-written other language", () => {
+  const enUnit = { id: 20, kind: "sentence", lang: "en" as const, text: "Source", revision: 2 };
+  const placed = makeTarget({ id: 90, lang: "en", confirmed_text: "Source", status: "confirmed", source_unit_ids: [20] });
+  const group: Group = { units: [], targets: [placed] };
+
+  it("adds an empty slot for a hand-written other language", () => {
+    const slots = buildSentenceSlots(group, [enUnit], { lang: "ko", unitId: enUnit.id });
+    expect(slots.at(-1)).toMatchObject({ key: `x${enUnit.id}`, target: null, lang: "ko", sourceIds: [enUnit.id], text: "", sourceText: null, isAiPending: false, isTranslated: true });
+    expect(slots[0]).toMatchObject({ key: "t90", isTranslated: false });
+  });
+
+  it("saves the written sentence in the same place with its language and no change type", () => {
+    const body = buildGroupSave(makeDraft({ otherLang: { lang: "ko", unitId: 20 }, texts: { x20: " 원문 번역 " } }), { units: [enUnit], group, tables: new Map() }, "confirm");
+    const written = body.targets.find((target) => target.key === "x20");
+    expect(written).toMatchObject({ target_doc_id: 6, slot_key: "scope", kind: "sentence", lang: "ko", text: "원문 번역", source_unit_ids: [20] });
+    expect(written).not.toHaveProperty("change_type");
+  });
+
+  it("does not send an empty hand-written slot", () => {
+    const body = buildGroupSave(makeDraft({ otherLang: { lang: "ko", unitId: 20 }, texts: { x20: "  " } }), { units: [enUnit], group, tables: new Map() }, "confirm");
+    expect(body.targets.map((target) => target.key)).toEqual(["t90"]);
+  });
+
+  it("does not call a translated slot a split", () => {
+    // 같은 영어 단위에서 나온 영어 칸 + 한글 칸 - 한글은 번역, 영어는 나눔이 아니다
+    const saved = makeTarget({ id: 91, lang: "ko", confirmed_text: "번역", status: "confirmed", change_type: "translated", source_unit_ids: [20] });
+    const slots = buildSentenceSlots({ units: [], targets: [placed, saved] }, [enUnit]);
+    expect(slots.map((slot) => [slot.key, readSlotKind(slot, slots)])).toEqual([["t90", null], ["t91", "translated"]]);
+  });
+
+  it("still calls two same-language slots from one unit a split", () => {
+    const second = makeTarget({ id: 92, lang: "en", confirmed_text: "Second", status: "confirmed", source_unit_ids: [20], order_index: 1 });
+    const slots = buildSentenceSlots({ units: [], targets: [placed, second] }, [enUnit]);
+    expect(slots.map((slot) => readSlotKind(slot, slots))).toEqual(["split", "split"]);
+  });
+});
+
+describe("other language offers", () => {
+  const koUnit = { id: 10, kind: "sentence", lang: "ko" as const, text: "원문", revision: 1 };
+  const placed = makeTarget({ id: 90, lang: "ko", confirmed_text: "원문", status: "confirmed", source_unit_ids: [10] });
+
+  it("treats headings and unbound cell sentences as text units, not tables or figures", () => {
+    expect(["sentence", "heading", "cell_sentence"].map(isSentenceUnit)).toEqual([true, true, true]);
+    expect(["table", "table_row", "figure"].map(isSentenceUnit)).toEqual([false, false, false]);
+  });
+
+  it("has the language once a hand-written sentence in it is placed", () => {
+    const written = makeTarget({ id: 91, lang: "en", confirmed_text: "Written", status: "confirmed", change_type: "translated", source_unit_ids: [10] });
+    const group: Group = { units: [], targets: [placed, written] };
+    expect(hasRowLanguage("en", buildSentenceSlots(group, [koUnit]), group, [10])).toBe(true);
+  });
+
+  it("has the language while its empty slot is open", () => {
+    const group: Group = { units: [], targets: [placed] };
+    expect(hasRowLanguage("en", buildSentenceSlots(group, [koUnit], { lang: "en", unitId: 10 }), group, [10])).toBe(true);
+  });
+
+  it("counts an AI translation of the row as having the language", () => {
+    const translation = makeTarget({ id: 92, lang: "en", origin: "translation", ai_text: "Translated", source_unit_ids: [], translation_source_unit_id: 10 });
+    const group: Group = { units: [], targets: [placed, translation] };
+    expect(hasRowLanguage("en", buildSentenceSlots(group, [koUnit]), group, [10])).toBe(true);
+    expect(hasRowLanguage("en", buildSentenceSlots(group, [koUnit]), group, [11])).toBe(false);
+  });
+
+  it("lacks the language when only the row's own language is placed", () => {
+    const group: Group = { units: [], targets: [placed] };
+    expect(hasRowLanguage("en", buildSentenceSlots(group, [koUnit]), group, [10])).toBe(false);
+  });
+});
+
+describe("a neutral row linked to a sentence", () => {
+  it("is not a translation - the server asks for a change type", () => {
+    expect(isTranslationOf("ko", ["neutral"])).toBe(false);
+    expect(isTranslationOf("neutral", ["ko"])).toBe(false);
+    expect(isTranslationOf("en", ["ko"])).toBe(true);
+    expect(isTranslationOf("ko", ["ko", "en"])).toBe(false);
+  });
+
+  it("sends a change type for a neutral unit linked to a Korean sentence", () => {
+    const digits = [{ id: 30, kind: "sentence", lang: "neutral" as const, text: "2.5", revision: 1 }];
+    const korean = makeTarget({ id: 71, origin: "new_doc", target_doc_id: 9, slot_key: null, lang: "ko", confirmed_text: "2.5", status: "unassigned", change_type: null, source_unit_ids: [] });
+    const body = buildGroupSave(
+      makeDraft({ destination: { kind: "link", targetIds: [71] } }),
+      { units: digits, group: { units: [], targets: [korean] }, tables: new Map() },
+      "confirm",
+    );
+    expect(body.targets.find((target) => target.id === 71)).toMatchObject({ source_unit_ids: [30], change_type: "rewritten" });
   });
 });

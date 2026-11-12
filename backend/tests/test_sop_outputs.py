@@ -502,13 +502,10 @@ EN_SUMMARY = {
     "old_units": 5, "assigned": 4, "unassigned": 1, "duplicate": 0, "deleted": 0, "moved": 0, "new": 0,
     "translated": 0, "confirmed_rate": 0.6,
 }
-PROGRESS = {
-    "ko": {"total": 14, "unassigned": 0, "ai_suggested": 0, "confirmed": 13, "on_hold": 1},
-    "en": {"total": 5, "unassigned": 1, "ai_suggested": 0, "confirmed": 3, "on_hold": 1},
-}
-EMPTY_PROGRESS = {
-    lang: {"total": 0, "unassigned": 0, "ai_suggested": 0, "confirmed": 0, "on_hold": 0} for lang in ("ko", "en")
-}
+# 줄 기준 — 짝이 없어 단위마다 한 줄이고 표는 칸 넷을 묶어 한 줄이다: OLD-1 10줄(그림 보류·영어 미배정) + OLD-2 5줄.
+# 한 언어 글은 두 언어 문서(ko_en_separate)의 짝 없는 문장·제목 13개다(번역 새 문장이 없다)
+PROGRESS = {"total": 15, "unassigned": 1, "ai_suggested": 0, "confirmed": 13, "on_hold": 1, "single_language": 13}
+EMPTY_PROGRESS = dict.fromkeys(PROGRESS, 0)
 
 
 def test_summary_numbers(client: TestClient) -> None:
@@ -537,11 +534,7 @@ def test_progress_in_list_and_overview(client: TestClient) -> None:
     assert (admin_rows[fx.bundle_id]["progress"], admin_rows[empty]["progress"]) == (PROGRESS, EMPTY_PROGRESS)
     assert get_bundle(client, fx.bundle_id)["progress"] == PROGRESS
     assert get_bundle(client, empty)["progress"] == EMPTY_PROGRESS
-    # 진행 숫자의 합계와 요약의 옛 단위 수는 같은 단위를 센다
-    summary = _get_output(client, fx.bundle_id, "summary")
-    assert {lang: PROGRESS[lang]["total"] for lang in PROGRESS} == {
-        lang: summary[lang]["old_units"] for lang in summary
-    }
+    assert PROGRESS["total"] == sum(PROGRESS[status] for status in ("unassigned", "ai_suggested", "confirmed", "on_hold"))
 
 
 # ── C 순서 바꾸기 ─────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-// Assign 오른쪽 - 이미 쓴 New 문서의 원문. Old와 같은 종이 조각: 왼쪽 밖 앞머리(절 번호 칸 + 3px 언어 막대, 폭 = 절 깊이라 들여쓴 것처럼 읽힌다), 본문 위 줄에 출처 칩(연결선이 칩 왼쪽으로 들어온다). 점선 = 후보, 채움 = 고른 문장, 칩 = 붙은 Old 출처(누르면 Old의 그 조각으로), 위험색 = 출처 없음, 흐림 = 고른 Old 줄에 없는 언어(이을 수 없다).
+// Assign 오른쪽 - 이미 쓴 New 문서의 원문. Old와 같은 종이 조각: 왼쪽 밖 앞머리(절 번호 칸, 폭 = 절 깊이라 들여쓴 것처럼 읽힌다), 본문 위 줄에 출처 칩(연결선이 칩 왼쪽으로 들어온다). 점선 = 후보, 채움 = 고른 문장, 칩 = 붙은 Old 출처(누르면 Old의 그 조각으로), 위험색 = 출처 없음.
 // 칩 오른쪽 갈매기는 그 Old 조각이 왼쪽 칸 화면 위·아래 밖에 있다는 표시 - 스크롤마다 바뀌어 LinkLines가 data-dir로 단다(Old 배지와 같은 방식).
 // 표·그림은 이번 화면에서 잇지 않아 회색 상자로만 보인다(설계 §2).
 "use client";
@@ -13,7 +13,7 @@ import { Select, type SelectOption } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { WrittenSentence } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
-import { getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionPill, getTabWidths } from "@/lib/strip-pill-model";
+import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionPill, getTabWidths } from "@/lib/strip-pill-model";
 
 interface NewPaneProps {
   docOptions: SelectOption<string>[];
@@ -24,8 +24,6 @@ interface NewPaneProps {
   pickedIds: ReadonlySet<number>;
   /** 출처 없는 New 모드에서 고른 문장 */
   focusId: number | null;
-  /** 이을 수 있는 언어 - 고른 Old 줄의 언어. 다른 언어 문장은 누를 수 없다(같은 언어끼리만 잇는다, 명세 §7.10). null이면 제한 없음 */
-  allowedLangs: ReadonlySet<string> | null;
   sourceLabel: (unitId: number) => string;
   /** 줄을 누름 - anchor는 그 줄(그 자리 메뉴가 붙는다) */
   onPick: (targetId: number, additive: boolean, anchor: HTMLElement, event: MouseEvent) => void;
@@ -82,16 +80,16 @@ const VISIBLE_SOURCES = 2;
 export function NewPane(props: NewPaneProps) {
   const { t } = useI18n();
   const [openSources, setOpenSources] = useState<ReadonlySet<number>>(new Set());
-  // 한/영 짝이 바로 이웃하면 한 카드(위·아래 괄호), 앞머리 번호 칸 폭은 절 깊이 - Old와 같은 규칙
-  const sentences = props.rows.filter((row) => row.kind === "sentence");
-  const brackets = getPairBrackets(sentences.map((row) => ({ unitId: row.target_id, partnerId: row.partner_target_id })));
+  // 짝 구성원이 바로 이웃하면 구성원 수와 상관없이 한 카드, 앞머리 번호 칸 폭은 절 깊이 - Old와 같은 규칙. 짝 묶음 번호는 짝의 작은 문장 id(서버는 둘짜리 짝만 서로를 가리킨다). 표·그림 줄은 카드를 끊는다
+  const brackets = getPairBrackets(props.rows.map((row) => ({ unitId: row.target_id, groupId: row.kind !== "sentence" || row.partner_target_id === null ? null : Math.min(row.target_id, row.partner_target_id) })));
+  const cardTops = getCardTops(props.rows.map((row) => row.target_id), brackets);
   const widths = getTabWidths(
-    sentences.map((row) => ({
-      key: String(row.target_id),
-      part: "",
-      sectionLabel: readSectionNumber(row.section_path),
-      pairTopOf: brackets.get(row.target_id) === "bottom" ? String(row.partner_target_id) : null,
-    })),
+    props.rows
+      .filter((row) => row.kind === "sentence")
+      .map((row) => {
+        const top = cardTops.get(row.target_id);
+        return { key: String(row.target_id), part: "", sectionLabel: readSectionNumber(row.section_path), pairTopOf: top === undefined ? null : String(top) };
+      }),
   );
   function renderSources(row: WrittenSentence) {
     const isOpen = openSources.has(row.target_id);
@@ -156,8 +154,8 @@ export function NewPane(props: NewPaneProps) {
             {props.rows.map((row, index) => {
               // 절이 바뀌는 첫 문장 앞에만 절 머리
               const isSectionStart = row.section_path !== "" && row.section_path !== props.rows[index - 1]?.section_path;
-              // 번호는 앞머리가 보일 때만 머리 글에서 뺀다 - 표·그림이나 짝 아래 줄이 절을 열면 앞머리에 번호가 없다
-              const isNumberInLead = isSectionStart && row.kind === "sentence" && brackets.get(row.target_id) !== "bottom";
+              // 번호는 앞머리가 보일 때만 머리 글에서 뺀다 - 표·그림이나 짝 카드의 둘째 줄부터가 절을 열면 앞머리에 번호가 없다
+              const isNumberInLead = isSectionStart && row.kind === "sentence" && !cardTops.has(row.target_id);
               const head = isSectionStart ? <p className="new-sec">{isNumberInLead ? row.section_path.slice(getHiddenPrefixLength(row.section_path, readSectionNumber(row.section_path))) : row.section_path}</p> : null;
               if (row.kind !== "sentence") {
                 return (
@@ -171,9 +169,8 @@ export function NewPane(props: NewPaneProps) {
               }
               const bracket = brackets.get(row.target_id);
               const number = isNumberInLead ? getSectionPill(readSectionNumber(row.section_path)) : null;
-              const isBlocked = props.allowedLangs !== null && !props.allowedLangs.has(row.lang);
               const previous = props.rows[index - 1];
-              const gap = !head && previous?.kind === "sentence" ? <div className="new-gap" data-pair={brackets.get(previous.target_id) === "top" && bracket === "bottom" ? "" : undefined} /> : null;
+              const gap = !head && previous?.kind === "sentence" ? <div className="new-gap" data-pair={cardTops.has(row.target_id) ? "" : undefined} /> : null;
               return (
                 <Fragment key={row.target_id}>
                   {head}
@@ -182,27 +179,24 @@ export function NewPane(props: NewPaneProps) {
                     <StripLead
                       width={widths.get(String(row.target_id)) ?? getPillWidth(1)}
                       number={number}
-                      lang={row.lang === "ko" || row.lang === "en" ? row.lang : null}
                       bracket={bracket}
                       dim={!isSectionStart}
-                      tip={row.lang === "ko" ? t("split.tabKo") : row.lang === "en" ? t("split.tabEn") : ""}
+                      tip=""
                       testId="assign-new"
                       id={row.target_id}
                     />
-                    <div className="strip new-line" data-bracket={bracket} data-lang={row.lang} data-state={readState(row, props)} data-blocked={isBlocked ? "" : undefined} data-target={row.target_id} data-testid={`assign-new-${row.target_id}`}>
+                    <div className="strip new-line" data-bracket={bracket} data-lang={row.lang} data-state={readState(row, props)} data-target={row.target_id} data-testid={`assign-new-${row.target_id}`}>
                       {(row.source_unit_ids.length > 0 || row.change_type === "new") && renderSources(row)}
                       <button
                         type="button"
                         className="new-hit"
                         aria-pressed={props.pickedIds.has(row.target_id)}
-                        disabled={isBlocked}
                         data-testid={`assign-new-pick-${row.target_id}`}
                         onClick={(event) => {
                           const line = event.currentTarget.parentElement;
                           if (line) props.onPick(row.target_id, event.ctrlKey || event.metaKey, line, event);
                         }}
                       >
-                        <span className="sr-only">{row.lang === "neutral" ? "–" : row.lang.toUpperCase()}</span>
                         <span lang={row.lang === "neutral" ? undefined : row.lang} className="new-text">
                           {row.text}
                         </span>

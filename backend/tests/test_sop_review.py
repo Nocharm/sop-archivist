@@ -35,6 +35,7 @@ from tests.sop_helpers import (
     set_members,
     upload,
 )
+from tests.test_sop_progress import _expected_rows
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
 
@@ -161,7 +162,7 @@ def test_request_review_blocked_by_one_unassigned_unit(client: TestClient) -> No
 
     blocked = _request(client, fx.bundle_id)
 
-    expected = [{"code": "units_unassigned", "lang": "ko", "count": 1}]
+    expected = [{"code": "units_unassigned", "count": 1}]
     assert blocked.status_code == 422
     assert blocked.json()["detail"] == {"code": "not_ready", "blockers": expected}
     assert get_bundle(client, fx.bundle_id)["status"] == "in_progress"
@@ -179,7 +180,7 @@ def test_request_review_blocked_by_one_unassigned_unit(client: TestClient) -> No
 
 def _hold_one_unit(client: TestClient, fx: Fixture) -> list[dict]:
     update_row(UnitDecision, _unit_id(fx, KO_2), status="on_hold", hold_reason=HOLD_REASON)
-    return [{"code": "units_on_hold", "lang": "ko", "count": 1}]
+    return [{"code": "units_on_hold", "count": 1}]
 
 
 def _add_unacked_warning(client: TestClient, fx: Fixture) -> list[dict]:
@@ -234,7 +235,7 @@ def test_blockers_cover_each_condition(client: TestClient, spoil: Callable[[Test
 
 
 def test_blockers_come_from_stored_state(client: TestClient) -> None:
-    """AI 제안 단위와 새 문장의 상태는 계획 1 API로 만들 수 없어 DB에 직접 써서 확인한다 — 언어별로 따로 센다."""
+    """AI 제안 단위와 새 문장의 상태는 계획 1 API로 만들 수 없어 DB에 직접 써서 확인한다 — 새 문장마다 한 번 센다."""
     fx = _make_ready(client)
     target_id = {
         text: get_group_by_unit(client, fx.bundle_id, _unit_id(fx, text))["targets"][0]["id"] for text in (KO_1, EN_1)
@@ -246,10 +247,60 @@ def test_blockers_come_from_stored_state(client: TestClient) -> None:
     blockers = _get_readiness(client, fx.bundle_id)["blockers"]
 
     assert blockers == [
-        {"code": "units_ai_suggested", "lang": "ko", "count": 1},
-        {"code": "targets_unassigned", "lang": "ko", "count": 1},
-        {"code": "targets_on_hold", "lang": "en", "count": 1},
+        {"code": "units_ai_suggested", "count": 1},
+        {"code": "targets_unassigned", "count": 1},
+        {"code": "targets_on_hold", "count": 1},
     ]
+
+
+def _pair_ko_1_with_en_1(client: TestClient, fx: Fixture) -> dict:
+    """KO_1·EN_1을 사람이 한 짝으로 맺고 짝이 반영된 문서 대조 데이터를 돌려준다."""
+    doc_id = fx.view["document"]["id"]
+    body = {"revision": fx.view["document"]["revision"], "unit_ids": [_unit_id(fx, KO_1), _unit_id(fx, EN_1)]}
+    response = client.post(f"/api/bundles/{fx.bundle_id}/documents/{doc_id}/pairs", json=body, headers=AUTHOR)
+    assert response.status_code in (200, 201), response.text
+    view = get_view(client, fx.bundle_id, doc_id)
+    assert len(view["pairs"]) == 1
+    return view
+
+
+def test_unit_blockers_count_rows_not_units(client: TestClient) -> None:
+    """짝의 두 문장이 모두 미배정이면 막는 줄은 하나다."""
+    fx = _setup(client)
+    view = _pair_ko_1_with_en_1(client, fx)
+
+    blockers = _get_readiness(client, fx.bundle_id)["blockers"]
+
+    units = next(item for item in blockers if item["code"] == "units_unassigned")
+    assert units == {"code": "units_unassigned", "count": _expected_rows(view)} and units["count"] == 2
+
+
+def test_progress_and_readiness_count_the_same_rows(client: TestClient) -> None:
+    """SQL 집계(진행 숫자)와 스냅숏 집계(검토 조건)가 같은 줄을 센다 — 짝의 상태는 가장 덜 끝난 구성 단위."""
+    fx = _setup(client)
+    _pair_ko_1_with_en_1(client, fx)
+    _confirm(client, fx, KO_1)  # 짝의 EN_1이 미배정이라 짝 줄은 미배정으로 남는다
+    update_row(UnitDecision, _unit_id(fx, KO_2), status="on_hold", hold_reason=HOLD_REASON)
+
+    progress = get_bundle(client, fx.bundle_id)["progress"]
+    blockers = {item["code"]: item.get("count") for item in _get_readiness(client, fx.bundle_id)["blockers"]}
+
+    assert (progress["unassigned"], progress["on_hold"], progress["total"]) == (1, 1, 2)
+    assert (blockers["units_unassigned"], blockers["units_on_hold"]) == (progress["unassigned"], progress["on_hold"])
+
+
+def test_a_pair_of_held_and_ai_suggested_members_is_one_ai_suggested_row(client: TestClient) -> None:
+    """줄 상태 순서(미배정 < AI 제안 < 보류 < 확정)를 두 집계가 같이 쓴다 — 보류와 AI 제안이 섞인 짝은 AI 제안 한 줄이다."""
+    fx = _setup(client)
+    _pair_ko_1_with_en_1(client, fx)
+    update_row(UnitDecision, _unit_id(fx, KO_1), status="on_hold", hold_reason=HOLD_REASON)
+    update_row(UnitDecision, _unit_id(fx, EN_1), status="ai_suggested")
+
+    progress = get_bundle(client, fx.bundle_id)["progress"]
+    blockers = {item["code"]: item.get("count") for item in _get_readiness(client, fx.bundle_id)["blockers"]}
+
+    assert (progress["ai_suggested"], progress["on_hold"], progress["unassigned"], progress["total"]) == (1, 0, 1, 2)
+    assert (blockers["units_ai_suggested"], blockers.get("units_on_hold")) == (1, None)
 
 
 def test_reason_blockers(client: TestClient) -> None:
@@ -760,7 +811,7 @@ def test_readiness_uses_bounded_queries(client: TestClient) -> None:
         response = client.get(f"/api/bundles/{bundle_id}/review/readiness", headers=AUTHOR)
 
     assert response.status_code == 200
-    assert {"code": "units_unassigned", "lang": "ko", "count": 1000} in response.json()["blockers"]
+    assert {"code": "units_unassigned", "count": 1000} in response.json()["blockers"]
     assert 0 < len(statements) <= MAX_READINESS_STATEMENTS, len(statements)
 
 
@@ -787,7 +838,7 @@ def test_readiness_does_not_read_document_text(client: TestClient) -> None:
         assert column in full_sql
         assert column not in bare_sql  # 글자 열은 DB에서 아예 읽지 않는다
     options = {"semantic_checks": ALL_CHECKED, "unacked_missing_text": 0, "unchecked_boundaries": {}, "reviewer_count": 1}
-    expected = [{"code": "units_on_hold", "lang": "ko", "count": 1}]
+    expected = [{"code": "units_on_hold", "count": 1}]
     assert evaluate_readiness(full, **options).blockers == expected
     assert evaluate_readiness(bare, **options) == evaluate_readiness(full, **options)
     with _count_queries() as statements:  # 엔드포인트와 개요도 글자 없는 스냅숏을 쓴다
@@ -804,5 +855,6 @@ def test_creating_a_bundle_skips_the_readiness_computation(client: TestClient) -
 
     assert response.status_code == 201, response.text
     assert response.json()["next_action"] == "upload_documents"
-    snapshot_tables = ("FROM source_blocks", "FROM target_sentences", "FROM target_docs")  # 진행 숫자 집계는 읽지 않는 표
+    # 스냅숏만 읽는 표 — target_sentences는 진행 숫자(한 언어 글 세기)도 하위 질의로 보므로 기준에서 뺀다
+    snapshot_tables = ("FROM source_blocks", "FROM target_docs")
     assert not [statement for statement in statements if any(table in statement for table in snapshot_tables)]

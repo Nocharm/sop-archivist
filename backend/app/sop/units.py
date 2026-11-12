@@ -86,7 +86,8 @@ async def create_initial_units(session: AsyncSession, document: Document, extrac
 
         await create_new_doc_targets(session, document)
     if document.language_layout == INTERLEAVED_LAYOUT:
-        await _create_code_pairs(session, document.id, extraction.id)
+        # 막 만든 단위는 모두 미배정이라 운명을 볼 것이 없다
+        await _insert_pairs(session, document.id, await _find_code_pairs(session, extraction.id))
 
 
 def _build_unit_rows(
@@ -112,8 +113,15 @@ def _build_unit_rows(
     return drafts, rows
 
 
-async def refresh_code_pairs(session: AsyncSession, document: Document) -> None:
-    """제안 상태의 코드 짝을 지우고 배치가 연달아면 다시 만든다 — 확정 짝(과 다른 출처의 짝)은 두고 그 단위는 다시 짝짓지 않는다."""
+async def refresh_code_pairs(session: AsyncSession, document: Document, actor: str) -> None:
+    """제안 상태의 코드 짝을 지우고 배치가 연달아면 다시 만든다 — 확정 짝(과 다른 출처의 짝)은 두고 그 단위는 다시 짝짓지 않는다.
+
+    이미 판단한 단위가 있으니 서로 다른 곳으로 보낸 단위끼리는 짝짓지 않고, 만든 짝은 settle_pairs에 넘겨 모두 같은 곳으로
+    확정된 짝은 바로 확정한다(한 줄의 처분은 하나다, pair_settle).
+    """
+    # pair_settle → units로 이어지는 순환 import라 여기서 부른다
+    from app.sop.pair_settle import has_diverging_fates, load_decided_fates, settle_pairs
+
     await session.execute(
         delete(UnitPair).where(
             UnitPair.document_id == document.id,
@@ -124,12 +132,19 @@ async def refresh_code_pairs(session: AsyncSession, document: Document) -> None:
     if document.language_layout != INTERLEAVED_LAYOUT:
         return
     extraction_id = await get_latest_extraction_id(session, document.id)
-    if extraction_id is not None:
-        await _create_code_pairs(session, document.id, extraction_id)
+    if extraction_id is None:
+        return
+    pairs = await _find_code_pairs(session, extraction_id)
+    unit_ids = [unit_id for left, right in pairs for unit_id in (*left, *right)]
+    fates = await load_decided_fates(session, unit_ids)
+    await _insert_pairs(
+        session, document.id, [(left, right) for left, right in pairs if not has_diverging_fates(fates, [*left, *right])]
+    )
+    await settle_pairs(session, document.bundle_id, unit_ids, actor)
 
 
-async def _create_code_pairs(session: AsyncSession, document_id: int, extraction_id: int) -> None:
-    """활성 단위 중 표·행에 묶이지 않은 것을 순서대로 이웃 짝짓는다.
+async def _find_code_pairs(session: AsyncSession, extraction_id: int) -> list[tuple[list[int], list[int]]]:
+    """활성 단위 중 표·행에 묶이지 않은 것을 순서대로 이웃 짝지을 쌍을 고른다 — 쓰기는 부르는 쪽이 한다.
 
     묶인 칸 문장은 표의 판단을 따르고, 넣으면 표 앞뒤 문단과 칸이 엇갈려 짝지어지므로 뺀다. 이미 짝이 있는 단위와 부분(본문·머리말·
     각주…)이 바뀌는 자리에서 순서를 끊는다 — 건너뛰면 그 너머의 단위끼리, 본문 끝 문장과 머리말이 짝지어진다.
@@ -160,9 +175,7 @@ async def _create_code_pairs(session: AsyncSession, document_id: int, extraction
     totals = [count_pair_directions(segment) for segment in segments]
     ko_en_total, en_ko_total = sum(t[0] for t in totals), sum(t[1] for t in totals)
     preferred = "en_ko" if en_ko_total > ko_en_total else "ko_en"
-    await _insert_pairs(
-        session, document_id, [pair for segment in segments for pair in suggest_interleaved_pairs(segment, preferred)]
-    )
+    return [pair for segment in segments for pair in suggest_interleaved_pairs(segment, preferred)]
 
 
 async def _insert_pairs(

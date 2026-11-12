@@ -18,14 +18,13 @@ from app.sop.groups import TABLE_UNIT_KINDS, build_group_ids, collapse_table_mem
 from app.sop.output_labels import LABELS, OutputLabels
 from app.sop.snapshot import (
     NEUTRAL,
-    PROGRESS_LANGS,
     BundleSnapshot,
     DocumentInfo,
     TargetDocInfo,
     TargetInfo,
     UnitInfo,
 )
-from app.sop.status import get_cover_status
+from app.sop.status import get_cover_status, pick_row_status
 
 Lang = Literal["ko", "en"]
 NumberOf = Callable[[TargetInfo], str]  # 새 문장 → 그 판의 섹션 번호(없으면 빈 글)
@@ -841,16 +840,17 @@ def build_summary(snap: BundleSnapshot, lang: Lang) -> Summary:
 
 @dataclass(frozen=True)
 class ReviewFacts:
-    cover_status_counts: dict[str, Counter[str]]  # 언어 → 커버 상태 → 옛 커버 단위 수 (진행 숫자와 같은 규칙)
+    row_status_counts: Counter[str]  # 줄 상태 → 줄 수 (진행 숫자와 같은 규칙 — 짝 하나·짝 없는 단위 하나가 한 줄)
     duplicate_unit_ids: list[int]  # 서로 다른 새 문서 둘 이상으로 간 판단 단위(칸 문장은 표·행 단위로 접는다), id 순
 
 
 def build_review_facts(snap: BundleSnapshot) -> ReviewFacts:
-    """검토 요청 조건이 읽는 단위 사실 — 요약·결과물과 같은 단위 집합(_list_cover_units)과 같은 보낸 곳 규칙(_group_dests)."""
+    """검토 요청 조건이 읽는 단위 사실 — 요약·결과물과 같은 옛 단위 집합(_build_index)과 같은 보낸 곳 규칙(_group_dests)."""
     index = _build_index(snap)
-    counts = {
-        lang: Counter(get_cover_status(unit, snap.decisions) for unit in _list_cover_units(index, lang))
-        for lang in PROGRESS_LANGS
-    }
+    row_statuses: dict[int, list[str]] = defaultdict(list)
+    for unit in index.old_units:
+        if unit.group_unit_id is None:  # 표 칸에 묶인 문장은 표·행 단위가 한 줄로 센다
+            row_statuses[snap.pair_of.get(unit.id, -unit.id)].append(get_cover_status(unit, snap.decisions))
+    counts = Counter(pick_row_status(statuses) for statuses in row_statuses.values())
     duplicates = {_get_decision_unit_id(unit) for unit in index.old_units if len(_group_dests(index, unit)) >= 2}
-    return ReviewFacts(cover_status_counts=counts, duplicate_unit_ids=sorted(duplicates))
+    return ReviewFacts(row_status_counts=counts, duplicate_unit_ids=sorted(duplicates))

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getPairBrackets, getPillWidth, getHiddenPrefixLength, getSectionHeads, getSectionLevel, getSectionPill, getTabWidths, getVisibleSkip, PILL_WIDTH_BY_LEVEL, sliceVisible } from "@/lib/strip-pill-model";
+import { getCardTops, getPairBrackets, getPillWidth, getHiddenPrefixLength, getSectionHeads, getSectionLevel, getSectionPill, getTabWidths, getVisibleSkip, PILL_WIDTH_BY_LEVEL, sliceVisible } from "@/lib/strip-pill-model";
 
 describe("getSectionPill", () => {
   it("returns numeric section numbers only", () => {
@@ -30,23 +30,21 @@ describe("getSectionHeads", () => {
 });
 
 describe("getPairBrackets", () => {
-  it("brackets adjacent partners top and bottom", () => {
-    const result = getPairBrackets([
-      { unitId: 1, partnerId: null },
-      { unitId: 2, partnerId: 3 },
-      { unitId: 3, partnerId: 2 },
-    ]);
-    expect(result.get(2)).toBe("top");
-    expect(result.get(3)).toBe("bottom");
-    expect(result.has(1)).toBe(false);
-  });
-  it("leaves partners separated by another strip out", () => {
-    const result = getPairBrackets([
-      { unitId: 2, partnerId: 4 },
-      { unitId: 3, partnerId: null },
-      { unitId: 4, partnerId: 2 },
-    ]);
-    expect(result.size).toBe(0);
+  it("joins two adjacent members", () =>
+    expect([...getPairBrackets([{ unitId: 1, groupId: 9 }, { unitId: 2, groupId: 9 }])]).toEqual([[1, "top"], [2, "bottom"]]));
+  it("joins three adjacent members with a middle", () =>
+    expect([...getPairBrackets([{ unitId: 1, groupId: 9 }, { unitId: 2, groupId: 9 }, { unitId: 3, groupId: 9 }])]).toEqual([[1, "top"], [2, "middle"], [3, "bottom"]]));
+  it("leaves a far-apart member alone", () =>
+    expect([...getPairBrackets([{ unitId: 1, groupId: 9 }, { unitId: 2, groupId: null }, { unitId: 3, groupId: 9 }])]).toEqual([]));
+  it("keeps two neighbouring pairs apart", () =>
+    expect([...getPairBrackets([{ unitId: 1, groupId: 9 }, { unitId: 2, groupId: 9 }, { unitId: 3, groupId: 8 }, { unitId: 4, groupId: 8 }])].map(([, bracket]) => bracket)).toEqual(["top", "bottom", "top", "bottom"]));
+});
+
+describe("getCardTops", () => {
+  it("points every later row of a card at its first row and leaves single rows out", () => {
+    const order = [1, 2, 3, 4, 5, 6];
+    const brackets = getPairBrackets([{ unitId: 1, groupId: null }, { unitId: 2, groupId: 9 }, { unitId: 3, groupId: 9 }, { unitId: 4, groupId: 9 }, { unitId: 5, groupId: 8 }, { unitId: 6, groupId: 8 }]);
+    expect([...getCardTops(order, brackets)]).toEqual([[3, 2], [4, 2], [6, 5]]);
   });
 });
 

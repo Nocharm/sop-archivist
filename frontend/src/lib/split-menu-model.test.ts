@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ViewUnit } from "./api-sop";
-import { buildSplitMenu, canPair, getAiSplitReason, type SplitMenuAction, type SplitMenuContext } from "./split-menu-model";
+import { buildSplitMenu, getAiSplitReason, getPairMergeReason, hasBothScripts, pickEnglishSide, planJoin, type SplitMenuAction, type SplitMenuContext } from "./split-menu-model";
 
 function makeUnit(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
   return {
@@ -35,35 +35,67 @@ function find(items: ReturnType<typeof buildSplitMenu>, action: SplitMenuAction)
   return item;
 }
 
-describe("canPair", () => {
-  it("pairs two unpaired neighbours of different languages", () => {
-    expect(canPair(makeUnit(1), makeUnit(2, { lang: "en" }))).toBe(true);
+describe("planJoin", () => {
+  it("merges adjacent units of one language", () =>
+    expect(planJoin([makeUnit(1), makeUnit(2)], true)).toEqual({ kind: "merge" }));
+  it("pairs units of different languages, adjacent or not", () => {
+    expect(planJoin([makeUnit(1), makeUnit(2, { lang: "en" })], true)).toEqual({ kind: "pair" });
+    expect(planJoin([makeUnit(1), makeUnit(9, { lang: "en" })], false)).toEqual({ kind: "pair" });
   });
-  it("refuses same language, a neutral unit, or an existing pair", () => {
-    expect(canPair(makeUnit(1), makeUnit(2))).toBe(false);
-    expect(canPair(makeUnit(1), makeUnit(2, { lang: "neutral" }))).toBe(false);
-    expect(canPair(makeUnit(1, { pair_id: 9 }), makeUnit(2, { lang: "en" }))).toBe(false);
+  it("does not merge far-apart units of one language", () =>
+    expect(planJoin([makeUnit(1), makeUnit(9)], false)).toEqual({ kind: null, reasonKey: "split.menu.why.notAdjacent" }));
+  it("does not join a unit that is already in another pair", () =>
+    expect(planJoin([makeUnit(1, { pair_id: 7 }), makeUnit(2, { lang: "en" })], true)).toEqual({ kind: null, reasonKey: "split.menu.why.alreadyPaired" }));
+  it("pairs one KO with two EN", () =>
+    expect(planJoin([makeUnit(1), makeUnit(2, { lang: "en" }), makeUnit(3, { lang: "en" })], true)).toEqual({ kind: "pair" }));
+  it("refuses non-text units, a neutral unit beside a KO one, and the merge rules", () => {
+    expect(planJoin([makeUnit(1), makeUnit(2, { kind: "table", lang: "neutral" })], true)).toEqual({ kind: null, reasonKey: "split.menu.why.notText" });
+    expect(planJoin([makeUnit(1), makeUnit(2, { lang: "neutral" })], true)).toEqual({ kind: null, reasonKey: "split.menu.why.noLanguage" });
+    const cells = [makeUnit(1, { kind: "cell_sentence", group_unit_id: 5 }), makeUnit(2, { kind: "cell_sentence", group_unit_id: 6 })];
+    expect(planJoin(cells, true)).toEqual({ kind: null, reasonKey: "split.noMergeCell" });
   });
+});
+describe("getPairMergeReason", () => {
+  const order = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+  it("lets a pair whose members are neighbours become one sentence", () => {
+    expect(getPairMergeReason([makeUnit(3, { pair_id: 7 }), makeUnit(2, { lang: "en", pair_id: 7 })], order)).toBeNull();
+    expect(getPairMergeReason([makeUnit(4, { pair_id: 7 }), makeUnit(5, { lang: "en", pair_id: 7 }), makeUnit(6, { lang: "en", pair_id: 7 })], order)).toBeNull();
+  });
+  it("does not merge a pair whose members are far apart", () => {
+    expect(getPairMergeReason([makeUnit(1, { pair_id: 7 }), makeUnit(9, { lang: "en", pair_id: 7 })], order)).toBe("split.menu.why.notAdjacent");
+    expect(getPairMergeReason([makeUnit(1, { pair_id: 7 }), makeUnit(2, { lang: "en", pair_id: 7 }), makeUnit(4, { lang: "en", pair_id: 7 })], order)).toBe("split.menu.why.notAdjacent");
+  });
+  it("gives the merge rule's reason for neighbours that cannot merge", () => {
+    const cells = [makeUnit(1, { kind: "cell_sentence", group_unit_id: 5, pair_id: 7 }), makeUnit(2, { kind: "cell_sentence", lang: "en", group_unit_id: 6, pair_id: 7 })];
+    expect(getPairMergeReason(cells, order)).toBe("split.noMergeCell");
+  });
+});
+describe("pickEnglishSide", () => {
+  it("picks the unit with the most Latin letters", () =>
+    expect(pickEnglishSide([{ id: 1, text: "로터를 닦는다" }, { id: 2, text: "Wipe the rotor 로터" }])).toBe(2));
+  it("returns null when no unit has Latin letters", () =>
+    expect(pickEnglishSide([{ id: 1, text: "가" }, { id: 2, text: "나" }])).toBeNull());
+});
+it("hasBothScripts", () => {
+  expect(hasBothScripts("로터 rotor")).toBe(true);
+  expect(hasBothScripts("rotor 70%")).toBe(false);
 });
 
 describe("buildSplitMenu two sentences", () => {
-  it("lists the four two-sentence actions", () => {
-    expect(buildSplitMenu(ctx()).map((item) => item.action)).toEqual(["pair", "unpair", "merge", "check_both"]);
+  it("lists the three two-sentence actions", () => {
+    expect(buildSplitMenu(ctx()).map((item) => item.action)).toEqual(["join", "unpair", "check_both"]);
   });
 
-  it("allows pairing two unpaired sentences of different languages", () => {
-    expect(find(buildSplitMenu(ctx()), "pair")).toEqual({ action: "pair", enabled: true });
+  it("joins a KO and an EN sentence, and merges two neighbours of one language", () => {
+    expect(find(buildSplitMenu(ctx()), "join")).toEqual({ action: "join", enabled: true });
+    expect(find(buildSplitMenu(ctx({ adjacent: false })), "join").enabled).toBe(true);
+    expect(find(buildSplitMenu(ctx({ target: makeUnit(2, { lang: "ko" }) })), "join").enabled).toBe(true);
   });
 
-  it("blocks pairing same-language sentences", () => {
-    const item = find(buildSplitMenu(ctx({ target: makeUnit(2, { lang: "ko" }) })), "pair");
-    expect(item).toMatchObject({ enabled: false, reasonKey: "split.menu.why.sameLanguage" });
-  });
-
-  it("blocks pairing when one is already paired, and enables unpair for a shared pair", () => {
+  it("blocks joining when one is already paired, and enables unpair for a shared pair", () => {
     const paired = ctx({ selected: makeUnit(1, { pair_id: 9 }), target: makeUnit(2, { lang: "en", pair_id: 9 }) });
     const items = buildSplitMenu(paired);
-    expect(find(items, "pair")).toMatchObject({ enabled: false, reasonKey: "split.menu.why.alreadyPaired" });
+    expect(find(items, "join")).toMatchObject({ enabled: false, reasonKey: "split.menu.why.alreadyPaired" });
     expect(find(items, "unpair").enabled).toBe(true);
   });
 
@@ -73,16 +105,14 @@ describe("buildSplitMenu two sentences", () => {
     expect(find(buildSplitMenu(other), "unpair").enabled).toBe(false);
   });
 
-  it("blocks merging non-neighbours", () => {
-    expect(find(buildSplitMenu(ctx({ adjacent: false })), "merge")).toMatchObject({ enabled: false, reasonKey: "split.menu.why.notAdjacent" });
+  it("blocks merging non-neighbours of one language", () => {
+    expect(find(buildSplitMenu(ctx({ adjacent: false, target: makeUnit(2) })), "join")).toMatchObject({ enabled: false, reasonKey: "split.menu.why.notAdjacent" });
   });
 
-  it("reuses the gap merge rules for neighbours", () => {
-    expect(find(buildSplitMenu(ctx()), "merge")).toMatchObject({ enabled: false, reasonKey: "split.noMergeLanguage" });
-    expect(find(buildSplitMenu(ctx({ target: makeUnit(2, { lang: "ko" }) })), "merge").enabled).toBe(true);
-    expect(find(buildSplitMenu(ctx({ target: makeUnit(2, { kind: "table", lang: "neutral" }) })), "merge").reasonKey).toBe("split.noMergeKind");
+  it("reuses the gap merge rules for neighbours of one language", () => {
+    expect(find(buildSplitMenu(ctx({ target: makeUnit(2, { kind: "table", lang: "neutral" }) })), "join").reasonKey).toBe("split.menu.why.notText");
     const cells = ctx({ selected: makeUnit(1, { kind: "cell_sentence", group_unit_id: 5 }), target: makeUnit(2, { kind: "cell_sentence", group_unit_id: 6 }) });
-    expect(find(buildSplitMenu(cells), "merge").reasonKey).toBe("split.noMergeCell");
+    expect(find(buildSplitMenu(cells), "join").reasonKey).toBe("split.noMergeCell");
   });
 
   it("disables check_both once both are checked", () => {

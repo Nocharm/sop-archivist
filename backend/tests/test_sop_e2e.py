@@ -16,7 +16,7 @@ from openpyxl import load_workbook
 from app.settings import settings
 from app.sop.constants import COVER_KINDS
 from app.sop.coverage import find_coverage_problems
-from scripts.sop_demo_driver import LANGS, TEXT_KINDS, SyntheticDriver, find_unit_by_text, iter_c_items
+from scripts.sop_demo_driver import LANGS, SyntheticDriver, find_unit_by_text, iter_c_items
 from scripts.synthetic_sop import FIXED_ZIP_TIME, SyntheticBundle, build_synthetic_bundle
 from tests.ai_fixtures import (
     clean_ai_jobs,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
@@ -155,15 +155,13 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
     # 4. 답 저장(누락 하나는 남긴다) — 입구 2는 같은 글자 후보로 한 번에 확정한 뒤 나머지를 관계 묶음으로
     run.save_answers(skip_omitted=True)
 
-    # 5. 의미 검토 4항목 표시 → 검토 요청은 그 언어의 미배정 1건으로 거절
+    # 5. 의미 검토 4항목 표시 → 검토 요청은 미배정 한 줄로 거절
     run.put_semantic_checks()
     run.refresh_views()
-    omitted = expected["omitted"]
-    omitted_unit = find_unit_by_text(run.views[omitted["doc"]], omitted["text"], omitted["occurrence"], TEXT_KINDS)
     status_code, body = run.request_review()
     assert status_code == 422, body
     assert body["detail"] == {
-        "code": "not_ready", "blockers": [{"code": "units_unassigned", "lang": omitted_unit["lang"], "count": 1}],
+        "code": "not_ready", "blockers": [{"code": "units_unassigned", "count": 1}],
     }
 
     # 6. 누락을 저장하면 검토 요청이 통과한다

@@ -21,8 +21,6 @@ from app.sop.membership import ensure_editable, lock_bundle
 from app.sop.models import Bundle, BundleMember
 from app.sop.outputs import build_review_facts
 from app.sop.snapshot import (
-    NEUTRAL,
-    PROGRESS_LANGS,
     BundleSnapshot,
     count_unacked_missing_text,
     count_unchecked_boundaries,
@@ -54,23 +52,14 @@ class Readiness(BaseModel):
 # --- 막는 이유와 알림 ---
 
 
-def _list_pending_blockers(subject: str, counts: Mapping[str, Counter[str]]) -> list[Issue]:
-    """확정 전 상태(미배정·AI 제안·보류)별·언어별 건수 — 코드는 {subject}_{상태}."""
-    return [
-        {"code": f"{subject}_{status}", "lang": lang, "count": counts[lang][status]}
-        for status in PENDING_STATUSES
-        for lang in PROGRESS_LANGS
-        if counts[lang][status]
-    ]
+def _list_pending_blockers(subject: str, counts: Mapping[str, int]) -> list[Issue]:
+    """확정 전 상태(미배정·AI 제안·보류)별 건수 — 코드는 {subject}_{상태}."""
+    return [{"code": f"{subject}_{status}", "count": counts[status]} for status in PENDING_STATUSES if counts[status]]
 
 
-def _count_target_statuses(snap: BundleSnapshot) -> dict[str, Counter[str]]:
-    """언어별 새 문장 상태 수 — 언어 중립(표·그림)은 두 언어에 모두 센다(옛 단위의 그림과 같은 규칙)."""
-    counts: dict[str, Counter[str]] = {lang: Counter() for lang in PROGRESS_LANGS}
-    for target in snap.targets.values():
-        for lang in PROGRESS_LANGS if target.lang == NEUTRAL else (target.lang,):
-            counts[lang][target.status] += 1
-    return counts
+def _count_target_statuses(snap: BundleSnapshot) -> Counter[str]:
+    """새 문장 상태 수 — 새 문장마다 한 번(언어를 가르지 않는다)."""
+    return Counter(target.status for target in snap.targets.values())
 
 
 def _find_units_missing_reason(snap: BundleSnapshot) -> list[int]:
@@ -147,7 +136,7 @@ def evaluate_readiness(
 ) -> Readiness:
     """스냅숏과 질의 몇 개로 읽은 숫자만으로 조건을 가린다 — 순수 함수라 큰 묶음도 스레드에서 돈다."""
     facts = build_review_facts(snap)
-    blockers = _list_pending_blockers("units", facts.cover_status_counts)
+    blockers = _list_pending_blockers("units", facts.row_status_counts)
     blockers += _list_pending_blockers("targets", _count_target_statuses(snap))
 
     # 중복 배정의 사유도 판단 단위에 적힌다 — 판단 행이 없으면 사유도 없는 것이다(조회 경로가 KeyError로 죽지 않게)

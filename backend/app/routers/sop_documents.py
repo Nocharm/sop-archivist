@@ -532,7 +532,7 @@ async def update_document(
         for name, value in changes.items():
             setattr(document, name, value)
         if "language_layout" in changes:  # 코드 짝은 연달아 배치에서만 제안한다
-            await refresh_code_pairs(session, document)
+            await refresh_code_pairs(session, document, ctx.login_id)
         document.revision += 1
         record_event(
             session, bundle_id=bundle.id, actor=ctx.login_id, action="document.update",

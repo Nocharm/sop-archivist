@@ -1,15 +1,16 @@
-// 고른 곳이 이미 쓴 문서의 문장일 때 - 문장마다 변경 종류(AI 제안 그대로·그대로·말투·고쳐 씀). 나눔·합침은 서버가 구조로 정해 자동 표시만.
+// 고른 곳이 이미 쓴 문서의 문장일 때 - 문장마다 변경 종류(AI 제안 그대로·그대로·말투·고쳐 씀). 나눔·합침·번역은 서버가 구조로 정해 글로만 보인다.
 "use client";
 
 import type { ChangeTypeInput, WrittenSentence } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
-import { LangMark } from "@/components/lang-mark";
 
 interface LinkChoiceProps {
   rows: WrittenSentence[];
   changeTypes: Record<number, ChangeTypeInput | null>;
   /** 아직 사람이 받지 않은 AI 연결 - 기본은 제안 그대로(null) */
   aiPending: ReadonlySet<number>;
+  /** 줄에 없는 언어의 문장 - 서버가 번역으로 정해 종류를 고르지 않는다 */
+  translatedIds: ReadonlySet<number>;
   /** 사람이 고르지 않았을 때 저장될 값(글이 같으면 그대로) - 눌린 칩으로 보인다 */
   defaults: Record<number, ChangeTypeInput>;
   auto: "split" | "merged" | null;
@@ -19,7 +20,7 @@ interface LinkChoiceProps {
 
 const KINDS: ChangeTypeInput[] = ["as_is", "tone", "rewritten"];
 
-export function LinkChoice({ rows, changeTypes, aiPending, defaults, auto, mergedWith, onChange }: LinkChoiceProps) {
+export function LinkChoice({ rows, changeTypes, aiPending, translatedIds, defaults, auto, mergedWith, onChange }: LinkChoiceProps) {
   const { t } = useI18n();
   return (
     <div className="grid gap-2">
@@ -28,11 +29,14 @@ export function LinkChoice({ rows, changeTypes, aiPending, defaults, auto, merge
         return (
           <div key={row.target_id} className="grid gap-1.5" data-testid={`assign-link-${row.target_id}`}>
             <p className="text-[13px] leading-5 text-ink" lang={row.lang === "neutral" ? undefined : row.lang}>
-              <span className="mr-1.5 inline-block align-middle"><LangMark lang={row.lang} /></span>
               <b className="mr-1 font-mono text-[11px]">{row.doc_code}</b>
               {row.text}
             </p>
-            {auto === null && (
+            {translatedIds.has(row.target_id) ? (
+              <span className="text-xs text-ink-2" data-testid={`assign-change-${row.target_id}-translated`}>
+                {t("classify.changeType")} · {t("change.translated")}
+              </span>
+            ) : auto === null && (
               <div className="flex flex-wrap items-center gap-1" role="group" aria-label={t("assign.changeType")}>
                 {aiPending.has(row.target_id) && (
                   <button type="button" className="mini-chip" aria-pressed={current === null} data-testid={`assign-change-${row.target_id}-ai`} onClick={() => onChange(row.target_id, null)}>
