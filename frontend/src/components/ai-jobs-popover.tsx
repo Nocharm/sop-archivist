@@ -210,7 +210,12 @@ export function AiJobsPopover({ anchorRef, snapshot, onClose }: AiJobsPopoverPro
             </span>
           </Tooltip>
           {/* 끝난 작업(실패 없음)은 상태·시각·열기를 첫 줄로 올려 한 줄로 끝낸다 */}
-          {isCompact && !request.requested_by_me && <span className="max-w-[96px] shrink truncate text-[12px] text-ink-3">{t("aiJobs.otherMember")}</span>}
+          {isCompact && !request.requested_by_me && (
+            // 잘리면 올리거나 포커스를 둘 때 전체 글이 뜬다(Retry가 없는 까닭을 읽을 길)
+            <span className="min-w-0 max-w-[96px] shrink" tabIndex={0} data-testid={`${testId}-other-member`}>
+              <Truncate text={t("aiJobs.otherMember")} className="text-[12px] text-ink-3" revealOnFocus />
+            </span>
+          )}
           {isCompact && statusLine}
           {isCompact && openLink}
         </div>

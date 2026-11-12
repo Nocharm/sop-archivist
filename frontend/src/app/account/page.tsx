@@ -52,6 +52,7 @@ export default function AccountPage() {
                     <Tooltip label={sourcesText} align="end">
                       <span
                         tabIndex={0}
+                        role="note"
                         aria-label={`${t("account.sources", { n: sources.length })}: ${sourcesText.replace(/\n/g, "; ")}`}
                         data-testid={`account-permission-source-${key}`}
                         className="tag shrink-0 cursor-default"

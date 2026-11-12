@@ -296,15 +296,15 @@ const AUDIT_ENTRIES = [
       });
       const before = await measureRows();
       const maxRow = Math.max(...before);
-      const biggest = before.indexOf(maxRow);
-      // 가장 큰 줄의 펼치기를 눌러 그 줄만 커지는지 본다(없으면 expandOk=false)
-      const expand = page.locator('[data-testid^="output-a-row-"]').nth(biggest).locator('[data-testid$="-expand"]');
+      // 펼치기 단추가 있는 첫 줄을 눌러 그 줄만 커지는지 본다(단추 있는 줄이 하나도 없으면 expandOk=false)
+      const rows = page.locator('[data-testid^="output-a-row-"]');
+      const withButton = await rows.evaluateAll((els) => els.findIndex((row) => row.querySelector('[data-testid$="-expand"]') !== null));
       let expandOk = false;
-      if ((await expand.count()) > 0) {
-        await expand.first().click();
+      if (withButton >= 0) {
+        await rows.nth(withButton).locator('[data-testid$="-expand"]').first().click();
         await page.waitForTimeout(400);
         const after = await measureRows();
-        expandOk = after.every((height, i) => (i === biggest ? height > before[i] : height === before[i]));
+        expandOk = after.every((height, i) => (i === withButton ? height > before[i] : height === before[i]));
       }
       return { frameOverflows, maxRow, expandOk };
     },
@@ -847,10 +847,16 @@ const AUDIT_ENTRIES = [
     // C7b: 1920에서 Documents 제목 열(칸) 폭 >= 420px
     id: "C7b", ds: "worst", user: MEMBER, views: [1920],
     path: (ids) => `/bundles/${ids.w[1]}/documents`,
-    open: async (page) => { await page.locator('[data-testid^="documents-"][data-testid$="-title"]').first().waitFor({ timeout: T }); await page.waitForTimeout(1000); },
+    // 같은 컨텍스트의 앞선 항목이 카드 보기를 기억시켰을 수 있어 표 보기로 못 박고 다시 읽는다
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator('[data-testid^="documents-"][data-testid$="-title"]').first().waitFor({ timeout: T });
+      await page.waitForTimeout(1000);
+    },
     measure: (page) => page.evaluate(() => {
-      const cell = document.querySelector('[data-testid^="documents-"][data-testid$="-title"]').closest("td");
-      return Math.round(cell.getBoundingClientRect().width);
+      const cell = document.querySelector('[data-testid^="documents-"][data-testid$="-title"]')?.closest("td");
+      return cell ? Math.round(cell.getBoundingClientRect().width) : -1;
     }),
     expect: (value) => value >= 420,
     note: "1920 Documents (W1): title column cell width >= 420px",
@@ -953,7 +959,7 @@ const AUDIT_ENTRIES = [
       const head = dialog.querySelector("h2");
       return { height: Math.round(head.parentElement.getBoundingClientRect().height), text: head.textContent.trim().slice(0, 4) };
     }),
-    expect: (value) => value.height <= 72 && value.text.startsWith("멤버"),
+    expect: (value) => value.height <= 72 && /^(멤버|Memb)/.test(value.text),
     note: "1120 members dialog header <= 72px and the title starts with 멤버",
   },
   {

@@ -10,8 +10,7 @@ import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-
 import { EmptyState } from "@/components/ui/empty-state";
 import { PanelTitle } from "@/components/admin/panel-title";
 import { describeRunDetail, getAbortReasonKey } from "@/lib/admin-format";
-import { getHrSyncPreview, listHrSyncRuns, runHrSync, type HrSyncPreview, type HrSyncRun, type HrSyncSummary } from "@/lib/api";
-import { ApiError } from "@/lib/api";
+import { ApiError, getHrSyncPreview, listHrSyncRuns, runHrSync, type HrSyncPreview, type HrSyncRun, type HrSyncSummary } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";

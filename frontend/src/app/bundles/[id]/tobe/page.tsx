@@ -328,7 +328,7 @@ export default function ToBePage() {
             <tr>
               <th className="w-8" aria-label={t("tobe.details")} />
               <th className="w-40 min-w-[160px]">{t("tobe.colCode")}</th>
-              <th className="min-w-[220px]">{t("tobe.colTitle")}</th>
+              <th className="min-w-[196px]">{t("tobe.colTitle")}</th>
               <th className="w-24">{t("tobe.colType")}</th>
               <th className="w-[180px] min-w-[180px]">{t("tobe.colParent")}</th>
               <th className="w-24">{t("tobe.colEntrance")}</th>
