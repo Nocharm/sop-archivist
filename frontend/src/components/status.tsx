@@ -34,11 +34,11 @@ export function RoleTag({ role, testId }: { role: MemberRole; testId?: string })
   );
 }
 
-const UNIT_STATUS: Record<CoverStatus, { tone: string; Icon: typeof Circle }> = {
-  unassigned: { tone: "none", Icon: Circle },
-  ai_suggested: { tone: "ai", Icon: CircleDashed },
-  confirmed: { tone: "ok", Icon: CircleCheck },
-  on_hold: { tone: "hold", Icon: CirclePause },
+const UNIT_STATUS: Record<CoverStatus, { Icon: typeof Circle }> = {
+  unassigned: { Icon: Circle },
+  ai_suggested: { Icon: CircleDashed },
+  confirmed: { Icon: CircleCheck },
+  on_hold: { Icon: CirclePause },
 };
 
 // 줄 머리 아이콘 색 - 확정은 주 버튼 색, 나머지는 의미 채움색

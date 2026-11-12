@@ -61,14 +61,6 @@ interface FoldCell {
   rows: PaperRow[];
 }
 
-/** 펼친 묶음을 접을 때 지울 칸 - 맞음도 곁도 아닌, runKey에서 이어진 칸들(buildFoldPlan의 묶음과 같은 범위) */
-function listRunKeys(items: readonly FoldItem[], matchIds: ReadonlySet<number>, runKey: string): string[] {
-  const isMatch = items.map((item) => item.unitIds.some((id) => matchIds.has(id)));
-  const keys: string[] = [];
-  for (let at = items.findIndex((item) => item.key === runKey); at >= 0 && at < items.length && !isMatch[at] && !isMatch[at - 1] && !isMatch[at + 1]; at += 1) keys.push(items[at].key);
-  return keys;
-}
-
 /** 줄이 놓인 첫 블록의 절 번호 - 표는 없다 */
 function readRowSection(row: PaperRow): string {
   if (row.type === "piece") return row.parts[0]?.block.section_label ?? "";
@@ -752,6 +744,12 @@ export function Paper({
           data-strip-unit={unitId ?? undefined}
           data-testid={`${testId}-piece-${unitId ?? row.key}`}
         >
+          {/* 표·그림의 보류 칩 - 표 위 제 줄(data-start 밖)이라 표를 덮지 않고, 눌러도 조각 상자를 누른 것으로 그 단위를 고른다 */}
+          {row.type !== "piece" && isHold && (
+            <div className="strip-hold">
+              <UnitStatusChip status="on_hold" size="sm" testId={`${testId}-hold-${unit?.id}`} />
+            </div>
+          )}
           {row.type === "table"
             ? renderTable(row.item)
             : row.type === "figure"
@@ -800,10 +798,21 @@ export function Paper({
     ));
   }
 
-  /** 한 줄 판의 글 - 짝은 두 글을 " / "로, 표·그림은 이름만 */
+  /** 한 줄 판의 글 - 짝은 두 글을 " / "로, 표·그림은 이름만. 절 머리면 앞머리에 보인 번호를 글에서 뺀다(제 모양 조각과 같이) */
+  function readPieceText(row: Extract<PaperRow, { type: "piece" }>): string {
+    const unit = row.unitId === null ? undefined : model.units.get(row.unitId);
+    const bracket = row.unitId === null ? undefined : brackets.get(row.unitId);
+    return row.parts
+      .map((part, partIndex) => {
+        const skip = partIndex === 0 ? readHiddenPrefix(part.block, unit, bracket) : 0;
+        return part.segments.map((segment) => part.block.text.slice(Math.max(segment.start, skip), segment.end)).join("");
+      })
+      .join(" ");
+  }
+
   function readLineText(rows: readonly PaperRow[]): string {
     return rows
-      .map((row) => (row.type === "table" ? t("assign.newTable") : row.type === "figure" ? t("assign.newFigure") : row.parts.map((part) => part.segments.map((segment) => part.block.text.slice(segment.start, segment.end)).join("")).join(" ")))
+      .map((row) => (row.type === "table" ? t("split.table") : row.type === "figure" ? t("assign.newFigure") : readPieceText(row)))
       .map((text) => text.replace(/\s+/g, " ").trim())
       .join(" / ");
   }
@@ -811,12 +820,10 @@ export function Paper({
   /** 필터 접기 - 맞음·엿보기는 제 조각, 곁은 한 줄 판, 먼 구간은 묶음 한 줄. 틈은 조각끼리 이웃할 때만 */
   function renderFolded(cells: readonly FoldCell[], fold: NonNullable<NonNullable<PaperProps["strips"]>["fold"]>): ReactNode {
     const items = cells.map((cell) => cell.item);
-    let matchIds = fold.matchIds;
-    let plan: FoldEntry[] = buildFoldPlan(items, matchIds, fold.open, foldForced);
+    let plan: FoldEntry[] = buildFoldPlan(items, fold.matchIds, fold.open, foldForced);
     // 이 부분에 맞음이 없는데 고른 조각(출처 칩으로 건너옴)이 있으면 그 조각을 엿보기로 두고 둘레를 접는다 - 고른 조각은 늘 보여야 한다
     if (plan.length === 0 && items.some((item) => item.unitIds.some((id) => foldForced.has(id)))) {
-      matchIds = foldForced;
-      plan = buildFoldPlan(items, matchIds, fold.open).map((entry) => (entry.kind === "full" ? { kind: "peek", key: entry.key } : entry));
+      plan = buildFoldPlan(items, foldForced, fold.open).map((entry) => (entry.kind === "full" ? { kind: "peek", key: entry.key } : entry));
     }
     const cellOf = new Map(cells.map((cell) => [cell.item.key, cell]));
     const leadWidth = (key: string): number => {
@@ -848,6 +855,8 @@ export function Paper({
         const unitId = first ? readRowUnitId(first) : null;
         const unit = unitId === null ? undefined : model.units.get(unitId);
         const width = first ? readTabWidth(first) : 0;
+        // 절 머리면 번호를 남긴다(옅은 막대는 .fold-line CSS가) - 짝 카드는 위 줄이 first다
+        const isHead = unit !== undefined && sectionHeads.has(unit.id);
         return (
           <button
             key={`line-${entry.key}`}
@@ -857,7 +866,7 @@ export function Paper({
             onClick={() => onOpenChange({ runs: open.runs, peeks: new Set([...open.peeks, entry.key]) })}
           >
             {unit ? (
-              <StripLead width={width} number={null} lang={getTags(unit).lang === "KO" ? "ko" : getTags(unit).lang === "EN" ? "en" : null} dim tip={describeTab(unit)} testId={`${testId}-fold`} id={unit.id} />
+              <StripLead width={width} number={isHead && first ? getSectionPill(readRowSection(first)) : null} lang={getTags(unit).lang === "KO" ? "ko" : getTags(unit).lang === "EN" ? "en" : null} dim={!isHead} tip={describeTab(unit)} testId={`${testId}-fold`} id={unit.id} />
             ) : (
               <span className="strip-lead-gap" style={{ width: width + STRIP_LEAD_EXTRA }} />
             )}
@@ -884,7 +893,7 @@ export function Paper({
           </button>
         );
       }
-      const members = new Set(listRunKeys(items, matchIds, entry.runKey));
+      const members = new Set(entry.memberKeys);
       return (
         <button
           key={`head-${entry.runKey}`}

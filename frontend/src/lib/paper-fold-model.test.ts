@@ -58,7 +58,7 @@ describe("buildFoldPlan", () => {
     const open = { runs: new Set(["a"]), peeks: new Set(["b"]) };
     const plan = buildFoldPlan(items, ids(items, "M"), open);
     expect(plan).toEqual([
-      { kind: "runHead", runKey: "a" },
+      { kind: "runHead", runKey: "a", memberKeys: ["a", "b", "c"] },
       { kind: "line", key: "a", runKey: "a" },
       { kind: "peek", key: "b" },
       { kind: "line", key: "c", runKey: "a" },
@@ -67,17 +67,61 @@ describe("buildFoldPlan", () => {
     ]);
   });
 
-  it("forceOpenIds: 묶음 안이면 묶음이 펼쳐지고 peek, 곁이면 peek", () => {
+  it("forceOpenIds: 2개 묶음의 첫 item이면 peek + line, 곁이면 peek", () => {
     const items = ["a", "b", "c", "M", "d"].map((k) => it_(k));
     const plan = buildFoldPlan(items, ids(items, "M"), EMPTY_FOLD_OPEN, ids(items, "a", "c"));
     expect(plan).toEqual([
-      { kind: "runHead", runKey: "a" },
       { kind: "peek", key: "a" },
-      { kind: "line", key: "b", runKey: "a" },
+      { kind: "line", key: "b", runKey: null },
       { kind: "peek", key: "c" },
       { kind: "full", key: "M" },
       { kind: "line", key: "d", runKey: null },
     ]);
+  });
+
+  it("forceOpenIds: 접힌 묶음 가운데면 run / peek / run(각 runKey는 제 첫 item)", () => {
+    const items = ["M", "x", "a", "b", "c", "d", "e", "y", "M2"].map((k) => it_(k));
+    const plan = buildFoldPlan(items, ids(items, "M", "M2"), EMPTY_FOLD_OPEN, ids(items, "c"));
+    expect(kinds(plan)).toEqual(["full:M", "line:x", "run:a", "peek:c", "run:d", "line:y", "full:M2"]);
+    expect(plan[2]).toMatchObject({ count: 2 });
+    expect(plan[4]).toMatchObject({ count: 2 });
+  });
+
+  it("forceOpenIds: 묶음 처음·끝이면 peek + run", () => {
+    const items = ["M", "x", "a", "b", "c", "y", "M2"].map((k) => it_(k));
+    const atStart = buildFoldPlan(items, ids(items, "M", "M2"), EMPTY_FOLD_OPEN, ids(items, "a"));
+    expect(kinds(atStart)).toEqual(["full:M", "line:x", "peek:a", "run:b", "line:y", "full:M2"]);
+    const atEnd = buildFoldPlan(items, ids(items, "M", "M2"), EMPTY_FOLD_OPEN, ids(items, "c"));
+    expect(kinds(atEnd)).toEqual(["full:M", "line:x", "run:a", "peek:c", "line:y", "full:M2"]);
+  });
+
+  it("forceOpenIds: 펼친 묶음이면 runHead + line들, 고른 item은 peek", () => {
+    const items = ["M", "x", "a", "b", "c", "y", "M2"].map((k) => it_(k));
+    const open = { runs: new Set(["a"]), peeks: new Set<string>() };
+    const plan = buildFoldPlan(items, ids(items, "M", "M2"), open, ids(items, "b"));
+    expect(plan.slice(2, 6)).toEqual([
+      { kind: "runHead", runKey: "a", memberKeys: ["a", "b", "c"] },
+      { kind: "line", key: "a", runKey: "a" },
+      { kind: "peek", key: "b" },
+      { kind: "line", key: "c", runKey: "a" },
+    ]);
+  });
+
+  it("고른 뒤 접기(runs·peeks 비움, 고른 item은 그대로) - runHead 없이 run / peek / run", () => {
+    const items = ["M", "x", "a", "b", "c", "d", "e", "y", "M2"].map((k) => it_(k));
+    const expanded = { runs: new Set(["a"]), peeks: new Set(["c"]) };
+    const forced = ids(items, "c");
+    expect(kinds(buildFoldPlan(items, ids(items, "M", "M2"), expanded, forced))).toContain("runHead:a");
+    const collapsed = buildFoldPlan(items, ids(items, "M", "M2"), EMPTY_FOLD_OPEN, forced);
+    expect(collapsed.some((e) => e.kind === "runHead")).toBe(false);
+    expect(kinds(collapsed)).toEqual(["full:M", "line:x", "run:a", "peek:c", "run:d", "line:y", "full:M2"]);
+  });
+
+  it("고른 item 뒤 묶음을 펼치면 그 조각만 runHead(runKey = 제 첫 item)", () => {
+    const items = ["M", "x", "a", "b", "c", "d", "e", "y", "M2"].map((k) => it_(k));
+    const open = { runs: new Set(["d"]), peeks: new Set<string>() };
+    const plan = buildFoldPlan(items, ids(items, "M", "M2"), open, ids(items, "c"));
+    expect(kinds(plan)).toEqual(["full:M", "line:x", "run:a", "peek:c", "runHead:d", "line:d", "line:e", "line:y", "full:M2"]);
   });
 
   it("맞음 0개면 빈 배열", () => {

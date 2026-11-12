@@ -156,7 +156,9 @@ export function NewPane(props: NewPaneProps) {
             {props.rows.map((row, index) => {
               // 절이 바뀌는 첫 문장 앞에만 절 머리
               const isSectionStart = row.section_path !== "" && row.section_path !== props.rows[index - 1]?.section_path;
-              const head = isSectionStart ? <p className="new-sec">{row.section_path.slice(getHiddenPrefixLength(row.section_path, readSectionNumber(row.section_path)))}</p> : null;
+              // 번호는 앞머리가 보일 때만 머리 글에서 뺀다 - 표·그림이나 짝 아래 줄이 절을 열면 앞머리에 번호가 없다
+              const isNumberInLead = isSectionStart && row.kind === "sentence" && brackets.get(row.target_id) !== "bottom";
+              const head = isSectionStart ? <p className="new-sec">{isNumberInLead ? row.section_path.slice(getHiddenPrefixLength(row.section_path, readSectionNumber(row.section_path))) : row.section_path}</p> : null;
               if (row.kind !== "sentence") {
                 return (
                   <Fragment key={row.target_id}>
@@ -168,7 +170,7 @@ export function NewPane(props: NewPaneProps) {
                 );
               }
               const bracket = brackets.get(row.target_id);
-              const number = isSectionStart && bracket !== "bottom" ? getSectionPill(readSectionNumber(row.section_path)) : null;
+              const number = isNumberInLead ? getSectionPill(readSectionNumber(row.section_path)) : null;
               const isBlocked = props.allowedLangs !== null && !props.allowedLangs.has(row.lang);
               const previous = props.rows[index - 1];
               const gap = !head && previous?.kind === "sentence" ? <div className="new-gap" data-pair={brackets.get(previous.target_id) === "top" && bracket === "bottom" ? "" : undefined} /> : null;

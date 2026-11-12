@@ -1173,6 +1173,8 @@ await runStep("assign: a status filter folds the Old paper", {}, async ({ page, 
       await page.locator(`${old} .strip-row, [data-testid="assign-fold-empty"]`).first().waitFor({ timeout: T });
       if ((await countOf('[data-testid="assign-fold-empty"]')) > 0) {
         if (!sawEmpty) await takeShot("sop-assign-fold-empty.png");
+        // 필터 수가 0보다 크니 맞는 곳이 어딘가에 있다 - 빈 상태마다 바로 가기가 있어야 한다
+        if (!sawEmpty) check("an empty part offers where the matches are", (await countOf('[data-testid^="assign-fold-go-"]')) > 0);
         sawEmpty = true;
         continue;
       }
@@ -1183,7 +1185,6 @@ await runStep("assign: a status filter folds the Old paper", {}, async ({ page, 
   // 맞는 것이 있는 곳으로 - 빈 상태면 바로 가기, 아니면 첫 문서
   const go = page.locator('[data-testid^="assign-fold-go-"]').first();
   if (sawEmpty && (await go.count()) > 0) {
-    check("an empty part offers where the matches are", true);
     await go.click();
   } else if (docValues[0]) {
     await docTrigger.click();

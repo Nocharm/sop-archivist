@@ -1043,7 +1043,8 @@
      한 줄 판 글은 명세의 --ink-4가 라이트에서 4.2:1이라 4.5:1을 넘는 --ink-3(약 5.6:1) - 작은 글자·앞머리 옅음으로 충분히 물러난다 */
   .pg[data-strips] .strip-row[data-peek] > .strip { background: var(--sunken); border-style: dashed; box-shadow: none; }
   .fold-line { display: flex; align-items: stretch; width: 100%; min-width: 0; margin: 1px 0; padding: 0; border: 0; background: none; color: var(--ink-3); font: inherit; text-align: left; cursor: pointer; content-visibility: auto; contain-intrinsic-size: auto 22px; }
-  .fold-line > .strip-lead { opacity: .55; }
+  /* 옅게는 막대만 - 절 머리 번호는 글자라 4.5:1 바닥(--ink-3)을 지킨다 */
+  .fold-line > .strip-lead > .strip-lead-bar { opacity: .55; }
   .fold-line .strip-lead-num { height: 22px; padding-top: 0; line-height: 22px; }
   .fold-line-text { flex: 1 1 0; min-width: 0; padding: 3px var(--pg-pad-r) 3px var(--pg-pad-l); overflow: hidden; border-radius: var(--r-1); font-size: 11.5px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
   .fold-line:hover .fold-line-text { background: var(--hover); color: var(--ink-2); }
@@ -1166,6 +1167,7 @@
   .strip-row:has(+ .strip-gap[data-pair] + .strip-row > .strip[data-bracket="bottom"]:is([data-partner], [data-link-hover])) > .strip-lead + .strip[data-bracket="top"]::after { content: ""; position: absolute; inset: var(--ring-inset, -2px); border: solid var(--accent); border-width: var(--ring-bw, 2px); border-radius: var(--ring-r, calc(var(--r-1) + 2px)); pointer-events: none; }
   /* 보류 칩 - 글 첫머리, 글자와 같은 줄에 앉는다 */
   .pg[data-strips] p > .schip:first-child { margin-right: 6px; vertical-align: 1px; }
+  .pg[data-strips] .strip-hold { display: flex; margin-bottom: 4px; }
   /* 조각 아래 줄 - 간 곳 글 */
   .strip-foot { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
   .strip-foot > .strip-note { min-width: 0; margin-top: 0; }
