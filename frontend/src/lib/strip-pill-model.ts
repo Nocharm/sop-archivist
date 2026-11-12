@@ -82,6 +82,13 @@ export function getHiddenPrefixLength(text: string, sectionLabel: string): numbe
   return match[0].length;
 }
 
+/** 실제로 숨길 앞 글자 수 - 블록 첫 조각이 번호뿐이면(끝이 숨길 자리 안) 숨기지 않아 그 조각이 사라지지 않게 하고, 나눌 선이 숨길 자리 안이면 원문을 드러내 선 자리를 보인다 */
+export function getVisibleSkip(hidden: number, firstSegmentEnd: number, cutOffset: number | null): number {
+  if (hidden === 0 || firstSegmentEnd <= hidden) return 0;
+  if (cutOffset !== null && cutOffset < hidden) return 0;
+  return hidden;
+}
+
 /** 숨긴 앞 글자(skip)만큼 조각 구간을 깎기 - 구간이 통째로 숨겨지면 null */
 export function sliceVisible(start: number, end: number, skip: number): { start: number; end: number } | null {
   if (skip >= end) return null;

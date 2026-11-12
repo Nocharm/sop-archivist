@@ -15,7 +15,7 @@ import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import { buildContourPath, buildRows, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
-import { getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
+import { getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
 
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
 type PaperMark = UnitMark | "warn";
@@ -663,13 +663,14 @@ export function Paper({
     return tabWidths.get(row.key) ?? getPillWidth(getSectionLevel(readRowSection(row)));
   }
 
-  /** 절 첫 블록 글 앞의 절 번호를 숨길 글자 수 - 그 블록이 이 단위로 시작할 때만(짝 카드의 아래 줄은 위 줄이 머리면 같이). 표시만이고 원문은 그대로다 */
+  /** 절 첫 블록 글 앞의 절 번호를 숨길 글자 수 - 그 블록이 이 단위로 시작할 때만(짝 카드의 아래 줄은 위 줄이 머리면 같이). 표시만이고 원문은 그대로다.
+   *  번호뿐인 단위는 숨기지 않고, 나눌 선이 번호 안으로 들어오면 그동안 번호를 드러낸다(getVisibleSkip) */
   function readHiddenPrefix(block: ViewBlock, unit: ViewUnit | undefined, bracket: PairBracket | undefined): number {
     if (!unit) return 0;
     const isHead = sectionHeads.has(unit.id) || (bracket === "bottom" && sectionHeads.has(partnerOf.get(unit.id)?.id ?? -1));
     const first = model.segments.get(block.id)?.[0];
     if (!isHead || first?.unitId !== unit.id || first.start !== 0) return 0;
-    return getHiddenPrefixLength(block.text, block.section_label);
+    return getVisibleSkip(getHiddenPrefixLength(block.text, block.section_label), first.end, cut?.blockId === block.id ? cut.offset : null);
   }
 
   /** 조각 한 줄 - 글 조각, 표, 그림 모두 같은 틀(앞 태그·끝 표시)에 담는다 */
