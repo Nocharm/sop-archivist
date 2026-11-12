@@ -1010,6 +1010,9 @@
   /* 화면 밖 조각은 그리지 않는다(Unit 수천 개) - 고른 조각·나눌 선이 있는 조각은 팝업·윤곽이 잘리지 않게 뺀다 */
   .pg[data-strips] .strip { position: relative; min-width: 0; padding: 6px var(--pg-pad-r) 6px var(--pg-pad-l); background: var(--paper); border: 1px solid var(--line-2); border-left: 0; border-radius: 0 var(--r-1) var(--r-1) 0; box-shadow: var(--shadow-1); }
   .pg[data-strips] .strip-tab-gap + .strip { border-left: 1px solid var(--line-2); border-radius: var(--r-1); }
+  /* 조각 상자 전체가 누르는 자리 - 여백·탭에 올려도 그 문장이 올린 모양이 된다(표는 칸마다 따로라 표 전체는 칠하지 않는다) */
+  .pg[data-strips] .strip[data-strip-unit], .pg[data-strips] .strip-row:has(> .strip[data-strip-unit]) > .strip-tab, .cell-piece[data-strip-unit] { cursor: pointer; }
+  .pg[data-strips] .strip-row:hover > .strip[data-strip-unit]:not([data-kind="table"]) .su, .cell-piece[data-strip-unit]:hover .su { background-color: var(--hover); }
   .pg[data-strips] .strip[data-kind="table"] { padding-left: var(--pg-pad-l); padding-right: var(--pg-pad-r); overflow-x: auto; }
   .pg[data-strips] .strip[data-kind="figure"] { overflow-x: auto; }
   .pg[data-strips] .strip > p { margin-block: 0; }
@@ -1020,10 +1023,11 @@
 
   /* 조각 사이 틈 - 위아래 합치기가 늘 보인다(평소엔 낮고 넓은 알약, 올리면 라벨이 펼쳐진다) */
   /* 평소 4px, 고른 조각 곁·올린 틈 12px(전환은 모션 토큰 - reduced-motion이면 즉시), 짝 사이는 1px */
-  .strip-gap { position: relative; height: 4px; transition: height var(--dur-base) var(--ease-enter); }
+  /* --gap-open-delay: 올린 틈이 벌어지기까지(ms). 문단 사이를 지나가는 포인터가 틈을 벌렸다 접으며 글을 흔들지 않게 - 늘리면 둔하고 줄이면 다시 흔들린다. 접힘은 바로 */
+  .strip-gap { --gap-open-delay: 160ms; position: relative; height: 4px; transition: height var(--dur-base) var(--ease-enter); }
   /* 고른 직후 바로 벌어지면 두 번 누르기(나눌 자리)의 둘째 클릭이 밀린 자리에 떨어진다 - 더블클릭 간격만큼 늦춰 벌린다 */
   .strip-gap[data-near-selected] { height: 12px; transition-delay: 450ms; }
-  .strip-gap:not([data-pair]):hover { height: 12px; }
+  .strip-gap:not([data-pair]):hover { height: 12px; transition-delay: var(--gap-open-delay); }
   /* 이웃한 짝 - 틈 0, 두 조각이 한 카드(안쪽 테두리·모서리를 없애고 가는 구분선만). 합치기 단추는 올릴 때만 보인다 */
   .strip-gap[data-pair] { height: 0; }
   /* 합치기 단추는 쉬는 동안 보이지 않는다(점선 알약이 줄마다 깔리면 산만) - 틈을 올리거나 키보드 포커스가 오면 나타난다 */
@@ -1034,7 +1038,7 @@
   .pg[data-strips] .strip[data-bracket="bottom"] { border-top: 0; border-top-right-radius: 0; }
   .pg[data-strips] .strip[data-bracket="bottom"]::before { content: ""; position: absolute; inset: 0 0 auto 0; border-top: 1px solid var(--line); }
   .strip-gap::before { content: ""; position: absolute; inset: -5px 0; }
-  .strip-merge { position: absolute; left: 50%; top: 50%; translate: -50% -50%; z-index: 2; display: inline-flex; align-items: center; justify-content: center; gap: 0; min-width: 76px; height: 10px; padding: 0 10px; overflow: hidden; border: 1px solid var(--line-2); border-radius: 11px; background: var(--surface); color: var(--ink-3); font: 600 var(--fs-cap) / 1 var(--font-ui); white-space: nowrap; cursor: pointer; user-select: none; transition: opacity var(--dur-base), height var(--dur-base) var(--ease-enter), border-color var(--dur-fast), color var(--dur-fast), gap var(--dur-base); }
+  .strip-merge { position: absolute; left: calc(min(var(--gap-tab, 0px), var(--gap-tab-cap, 9999px)) + var(--pg-pad-l)); top: 50%; translate: 0 -50%; z-index: 2; display: inline-flex; align-items: center; justify-content: center; gap: 0; min-width: 76px; height: 10px; padding: 0 10px; overflow: hidden; border: 1px solid var(--line-2); border-radius: 11px; background: var(--surface); color: var(--ink-3); font: 600 var(--fs-cap) / 1 var(--font-ui); white-space: nowrap; cursor: pointer; user-select: none; transition: opacity var(--dur-base), height var(--dur-base) var(--ease-enter), border-color var(--dur-fast), color var(--dur-fast), gap var(--dur-base); }
   .strip-merge > svg { flex: none; width: 8px; height: 8px; transition: width var(--dur-base), height var(--dur-base); }
   .strip-merge-label { max-width: 0; opacity: 0; overflow: hidden; transition: opacity var(--dur-base), max-width var(--dur-base) var(--ease-enter); }
   .strip-gap:hover .strip-merge:not([aria-disabled="true"]), .cell-gap:hover .strip-merge:not([aria-disabled="true"]), .strip-merge:not([aria-disabled="true"]):focus-visible { height: 22px; gap: 5px; border-color: var(--accent); color: var(--accent); box-shadow: var(--shadow-1); }
@@ -1044,8 +1048,10 @@
   .strip-gap:hover .strip-merge[aria-disabled="true"], .cell-gap:hover .strip-merge[aria-disabled="true"], .strip-merge[aria-disabled="true"]:focus-visible { opacity: 0.7; }
   .strip-merge:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   /* 포인터로 틈을 올렸을 때 - 나타남과 색은 바로, 알약이 커지고 라벨이 펼쳐지는 것은 --morph-delay 뒤(전환 순서: opacity·height·border-color·color·gap). 키보드 포커스는 바로 */
-  .strip-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible), .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) { transition-delay: 0s, var(--morph-delay), 0s, 0s, var(--morph-delay); }
-  .strip-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) > svg, .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) > svg, .strip-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) .strip-merge-label, .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) .strip-merge-label { transition-delay: var(--morph-delay); }
+  .strip-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible), .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) { transition-delay: var(--gap-open-delay, 0s), max(var(--gap-open-delay, 0s), var(--morph-delay)), 0s, 0s, max(var(--gap-open-delay, 0s), var(--morph-delay)); }
+  .strip-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) > svg, .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) > svg, .strip-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) .strip-merge-label, .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) .strip-merge-label { transition-delay: max(var(--gap-open-delay, 0s), var(--morph-delay)); }
+  /* 꺼진 합치기도 틈이 벌어진 뒤에 보인다 */
+  .strip-gap:hover .strip-merge[aria-disabled="true"]:not(:focus-visible) { transition-delay: var(--gap-open-delay); }
 
   /* 표 칸 안의 조각 - 칸 문장마다 점선으로 나누고 같은 칸의 이웃 사이에 합치기 */
   .cell-piece { position: relative; padding-right: 18px; border-radius: 2px; }
@@ -1059,7 +1065,7 @@
 
   /* 왼쪽 탭 - 줄의 왼쪽 밖에 맞닿아 붙는다(맞닿는 쪽 모서리 직각, 바깥 모서리 둥글게). 바탕 = 언어 색, 보류는 그 위에 사선 줄무늬. 번호는 절의 첫 블록에만, 번호 없는 탭은 옅게 해 번호를 따라가는 눈을 덜 방해하고 올리면 진해진다. 탭에 올리면 번호가 사라지고 언어 글자가 뜬다. 첫 글줄 높이(27px)에 번호를 맞춘다 */
   /* 1280 미만 Split에서만 3단 이상의 절 번호 탭을 46px에서 멈춘다(Assign 탭은 그대로) - 깊은 번호가 글 상자를 좁히지 않게(긴 번호는 탭 안에서 잘린다) */
-  @media (max-width: 1279px) { .split-desk .strip-tab, .split-desk .strip-tab-gap { max-width: 46px; } }
+  @media (max-width: 1279px) { .split-desk .strip-tab, .split-desk .strip-tab-gap { max-width: 46px; } .split-desk .strip-gap { --gap-tab-cap: 46px; } }
   .strip-tab { position: relative; flex: none; align-self: stretch; display: flex; flex-direction: column; align-items: center; padding-top: 6px; border: 1px solid var(--line-2); border-right: 0; border-radius: var(--r-1) 0 0 var(--r-1); background-color: var(--tab-none); color: var(--tab-ink); box-sizing: border-box; overflow: hidden; transition: opacity var(--dur-base); }
   .strip-tab[data-lang="ko"] { background-color: var(--tab-ko); }
   .strip-tab[data-lang="en"] { background-color: var(--tab-en); }

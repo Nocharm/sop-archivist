@@ -604,13 +604,17 @@ export function Paper({
     );
   }
 
+  function readTabWidth(row: PaperRow): number {
+    return tabWidths.get(row.key) ?? getPillWidth(getSectionLevel(readRowSection(row)));
+  }
+
   /** 조각 한 줄 - 글 조각, 표, 그림 모두 같은 틀(앞 태그·끝 표시)에 담는다 */
   function renderRow(row: PaperRow): ReactNode {
     const unitId = row.type === "table" ? row.item.unitId : row.unitId;
     const unit = unitId === null ? undefined : model.units.get(unitId);
     const hasWarn = row.type === "piece" ? row.parts.some((part) => warnBlockIds?.has(part.block.id)) : row.type === "figure" && (warnBlockIds?.has(row.block.id) ?? false);
     const section = readRowSection(row);
-    const width = tabWidths.get(row.key) ?? getPillWidth(getSectionLevel(section));
+    const width = readTabWidth(row);
     const bracket = unitId === null ? undefined : brackets.get(unitId);
     // 아래 줄에 간 곳 글, 연결 배지는 조각 오른쪽 아래 모서리에 떠 있다(오른쪽 여백 --pg-pad-r 안이라 글을 덮지 않는다)
     const note = unit ? strips?.renderNote?.([unit.id]) : null;
@@ -654,6 +658,8 @@ export function Paper({
             className="strip-gap"
             data-pair={brackets.get(readRowUnitId(rows[index - 1]) ?? -1) === "top" && brackets.get(readRowUnitId(row) ?? -1) === "bottom" ? "" : undefined}
             data-near-selected={selectedId !== null && (readRowUnitId(rows[index - 1]) === selectedId || readRowUnitId(row) === selectedId) ? "" : undefined}
+            // 합치기 단추를 글 시작 x에 - 위아래 탭 중 넓은 쪽 뒤라 어느 탭에도 걸치지 않는다
+            style={{ "--gap-tab": `${Math.max(readTabWidth(rows[index - 1]), readTabWidth(row))}px` }}
             data-testid={`${testId}-gap-${row.key}`}
           >
             {renderMerge(rows[index - 1], row)}
@@ -674,7 +680,15 @@ export function Paper({
     }
     // 조각 끝 아이콘을 눌러도 그 단위를 고른다
     const mark = (event.target as HTMLElement).closest<HTMLElement>("[data-mark-unit]");
-    if (mark) onUnitClick(Number(mark.dataset.markUnit), null, event);
+    if (mark) {
+      onUnitClick(Number(mark.dataset.markUnit), null, event);
+      return;
+    }
+    // 글자 밖 조각 상자(여백·왼쪽 탭)를 눌러도 그 단위를 고른다 - 상자 안 단추·손잡이는 제 동작을 한다
+    const element = event.target as HTMLElement;
+    if (element.closest("button, a, input, [role='slider']")) return;
+    const holder = element.closest<HTMLElement>("[data-strip-unit]") ?? element.closest(".strip-tab")?.parentElement?.querySelector<HTMLElement>(":scope > .strip[data-strip-unit]");
+    if (holder) onUnitClick(Number(holder.dataset.stripUnit), null, event);
   }
 
   function handleDoubleClick(event: MouseEvent<HTMLDivElement>) {
