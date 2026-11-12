@@ -117,7 +117,6 @@ import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 import { usePaneZoom, type PaneKey, type ZoomDir } from "@/lib/use-pane-zoom";
 import { Select } from "@/components/ui/select";
-import { LangMark } from "@/components/lang-mark";
 
 type Filter = ClassifyFilter;
 const FILTERS: Filter[] = ["unassigned", "ai_suggested", "on_hold", "confirmed", "all"];
@@ -881,7 +880,6 @@ export default function AssignPage() {
     const why = rec.why ? <span className="dest-card-why">{rec.why}</span> : null;
     if (rec.destination.kind === "link") {
       const targets = rec.destination.targetIds.map((id) => writtenMap.get(id)).filter((item): item is WrittenSentence => item !== undefined);
-      const langs = [...new Set(targets.map((item) => item.lang))];
       const section = targets[0]?.section_path;
       return (
         <DestCard
@@ -896,9 +894,6 @@ export default function AssignPage() {
           text={targets.map((item) => item.text).join(" / ")}
           foot={
             <>
-              {langs.map((lang) => (
-                <LangMark key={lang} lang={lang} />
-              ))}
               {section && <span className="dest-card-sec">§ {section}</span>}
               {chip}
               {why}
@@ -967,7 +962,6 @@ export default function AssignPage() {
     if (nearAnchor?.kind === "link") {
       return nearLinks.map((item) => (
         <button key={item.target_id} type="button" className="tree-leaf" data-testid={`assign-near-${item.target_id}`} onClick={(event) => pickNewSentence(item.target_id, event.ctrlKey || event.metaKey)}>
-          <LangMark lang={item.lang} />
           {item.text}
         </button>
       ));
@@ -1015,8 +1009,7 @@ export default function AssignPage() {
           const keptType = isTextChangeType(slot.target?.change_type) ? slot.target.change_type : null;
           return (
             <div key={slot.key} className="grid gap-1">
-              <div className={`grid min-h-[60px] grid-cols-[22px_minmax(0,1fr)] gap-2 rounded-md bg-surface px-2.5 py-2 ${editing ? "border border-focus" : "border border-dashed border-line-2"}`}>
-                <LangMark lang={slot.lang} />
+              <div className={`grid min-h-[60px] grid-cols-[minmax(0,1fr)] rounded-md bg-surface px-2.5 py-2 ${editing ? "border border-focus" : "border border-dashed border-line-2"}`}>
                 {editing ? (
                   <textarea
                     ref={index === 0 ? firstTextRef : undefined}

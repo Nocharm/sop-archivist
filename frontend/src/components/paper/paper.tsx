@@ -1,7 +1,7 @@
 // 원문 용지 - 블록을 원문 순서대로 그리고 단위마다 누를 수 있는 조각을 둔다. 용지 안에는 추출한 글자만 둔다(앱 라벨 금지).
 // 글자 조각마다 data-start(블록 안 위치)를 달아, 누른 자리·끌어 고른 범위를 블록 위치로 되돌린다.
-// strips(Split·Assign)에서는 단위 하나가 종이 한 조각이다 - 확인과 상관없이 처음부터 떨어져 있고, 조각 왼쪽 밖에 앞머리(절 번호 칸 + 언어 막대, StripLead - 짝은 두 막대가 이어진 한 카드)를, 보류는 글 첫머리에 상태 칩을, 오른쪽 끝에 아이콘 표시를 둔다. 절 첫 블록 글 앞의 절 번호는 번호 칸과 겹치니 그리지 않는다(표시만).
-// 고른 단위는 글자 영역의 가장 바깥 윤곽 하나로 감싼다(contour). 앞머리 막대·아이콘 표시는 포인터·포커스 툴팁으로 뜻을 알린다.
+// strips(Split·Assign)에서는 단위 하나가 종이 한 조각이다 - 확인과 상관없이 처음부터 떨어져 있고, 조각 왼쪽 밖에 앞머리(절 번호 칸, StripLead)를, 이웃한 짝은 구성원 수와 상관없이 한 카드(.strip-card)로, 보류는 글 첫머리에 상태 칩을, 오른쪽 끝에 아이콘 표시를 둔다. 절 첫 블록 글 앞의 절 번호는 번호 칸과 겹치니 그리지 않는다(표시만).
+// 고른 단위는 글자 영역의 가장 바깥 윤곽 하나로 감싼다(contour). 앞머리 번호 칸·아이콘 표시는 포인터·포커스 툴팁으로 뜻을 알린다.
 // strips.fold(Assign 필터)가 있으면 맞는 조각만 제 모양, 곁은 한 줄 판, 먼 구간은 묶음 한 줄로 접는다(paper-fold-model.ts) - 한 줄 판·묶음은 단추라 눌러도 조각을 고르지 않는다.
 "use client";
 
@@ -18,7 +18,7 @@ import { useI18n } from "@/lib/i18n";
 import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildContourPath, buildRows, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
-import { getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
+import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
 
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
 type PaperMark = UnitMark | "warn";
@@ -227,20 +227,18 @@ export function Paper({
         ];
     return lists.filter((list) => list.items.length > 0).map((list) => ({ edge: list.edge, rows: buildRows(list.items, model.segments) }));
   }, [hasStrips, items, model]);
-  // 짝 - 단위 → 짝 단위, 이웃한 짝은 한 괄호로 묶는다(같은 쪽·같은 부분의 바로 이웃만)
-  const partnerOf = useMemo(() => {
+  // 짝 - 단위 → 같은 짝의 다른 구성원(원문 순서, 떨어진 구성원 포함). 한 카드는 아래 brackets가 정한다(같은 쪽·같은 부분의 끊김 없는 줄만)
+  const matesOf = useMemo(() => {
     const byPair = new Map<number, ViewUnit[]>();
     for (const unit of model.units.values()) {
       if (unit.pair_id === null) continue;
       byPair.set(unit.pair_id, [...(byPair.get(unit.pair_id) ?? []), unit]);
     }
-    const map = new Map<number, ViewUnit>();
+    const map = new Map<number, ViewUnit[]>();
     for (const members of byPair.values()) {
+      if (members.length < 2) continue;
       members.sort((a, b) => a.pos_seq - b.pos_seq);
-      if (members.length === 2) {
-        map.set(members[0].id, members[1]);
-        map.set(members[1].id, members[0]);
-      }
+      for (const member of members) map.set(member.id, members.filter((other) => other.id !== member.id));
     }
     return map;
   }, [model]);
@@ -249,22 +247,29 @@ export function Paper({
     for (const section of sections) {
       const entries = section.rows.map((row) => {
         const unitId = readRowUnitId(row);
-        return { unitId: unitId ?? -1, partnerId: unitId === null ? null : (partnerOf.get(unitId)?.id ?? null) };
+        return { unitId: unitId ?? -1, groupId: unitId === null ? null : (model.units.get(unitId)?.pair_id ?? null) };
       });
       for (const [unitId, bracket] of getPairBrackets(entries)) map.set(unitId, bracket);
     }
     return map;
-  }, [sections, partnerOf]);
-  // 고른 조각 곁 틈을 벌릴 조각 - 이웃한 짝은 한 카드라 고른 쪽이 위든 아래든 카드 위아래가 같이 벌어진다
+  }, [sections, model]);
+  // 카드의 둘째 줄부터 → 첫 줄 단위 - 번호 칸 폭·절 머리·틈 판정의 기준
+  const cardTops = useMemo(() => {
+    const order = sections.flatMap((section) => section.rows.map((row) => readRowUnitId(row) ?? -1));
+    return getCardTops(order, brackets);
+  }, [sections, brackets]);
+  // 고른 조각 곁 틈을 벌릴 조각 - 이웃한 짝은 한 카드라 고른 줄이 카드 어디에 있든 카드 위아래가 같이 벌어진다
   const selectedBlock = useMemo(() => {
     const ids = new Set<number>();
     if (selectedId === null) return ids;
     ids.add(selectedId);
-    const partner = partnerOf.get(selectedId);
-    if (partner && brackets.has(selectedId)) ids.add(partner.id);
+    if (!brackets.has(selectedId)) return ids;
+    const top = cardTops.get(selectedId) ?? selectedId;
+    ids.add(top);
+    for (const [id, cardTop] of cardTops) if (cardTop === top) ids.add(id);
     return ids;
-  }, [selectedId, partnerOf, brackets]);
-  // 접기 칸 - 부분마다 문서 순서로, 이웃한 짝 카드는 한 칸(위 줄 key)
+  }, [selectedId, brackets, cardTops]);
+  // 접기 칸 - 부분마다 문서 순서로, 이웃한 짝 카드는 한 칸(첫 줄 key)
   const hasFold = strips?.fold !== undefined;
   const foldCells = useMemo(() => {
     if (!hasFold) return [];
@@ -272,24 +277,26 @@ export function Paper({
       const cells: FoldCell[] = [];
       for (let index = 0; index < section.rows.length; index += 1) {
         const row = section.rows[index];
-        const next = section.rows[index + 1];
-        const isCard = next !== undefined && brackets.get(readRowUnitId(row) ?? -1) === "top" && brackets.get(readRowUnitId(next) ?? -1) === "bottom";
-        const rows = isCard ? [row, next] : [row];
-        if (isCard) index += 1;
+        const rows = [row];
+        if (brackets.get(readRowUnitId(row) ?? -1) === "top") {
+          while (index + 1 < section.rows.length && cardTops.has(readRowUnitId(section.rows[index + 1]) ?? -1)) {
+            index += 1;
+            rows.push(section.rows[index]);
+          }
+        }
         cells.push({ item: { key: row.key, unitIds: rows.flatMap((one) => listRowUnitIds(one, model.segments)), section: readRowSection(row) }, rows });
       }
       return cells;
     });
-  }, [hasFold, sections, brackets, model]);
-  // 접혀 있어도 늘 펼쳐 보일 단위 - 고른 단위와 그 짝(이웃하지 않은 짝도). 출처 칩 등으로 필터 밖 단위를 고르면 저절로 엿보기가 된다
+  }, [hasFold, sections, brackets, cardTops, model]);
+  // 접혀 있어도 늘 펼쳐 보일 단위 - 고른 단위와 그 짝 구성원 모두(이웃하지 않은 구성원도). 출처 칩 등으로 필터 밖 단위를 고르면 저절로 엿보기가 된다
   const foldForced = useMemo(() => {
     const ids = new Set<number>();
     if (selectedId === null) return ids;
     ids.add(selectedId);
-    const partner = partnerOf.get(selectedId);
-    if (partner) ids.add(partner.id);
+    for (const mate of matesOf.get(selectedId) ?? []) ids.add(mate.id);
     return ids;
-  }, [selectedId, partnerOf]);
+  }, [selectedId, matesOf]);
   // 절 번호를 보일 첫 줄 - 부분(머리글·본문·바닥글)마다 문서 순서로
   const sectionHeads = useMemo(() => {
     const heads = new Set<number>();
@@ -297,24 +304,24 @@ export function Paper({
       const units = section.rows.flatMap((row) => {
         const unitId = readRowUnitId(row);
         if (row.type === "table" || unitId === null) return [];
-        return [{ unitId, part: section.edge ?? "body", sectionLabel: readRowSection(row), pairTopOf: brackets.get(unitId) === "bottom" ? (partnerOf.get(unitId)?.id ?? null) : null }];
+        return [{ unitId, part: section.edge ?? "body", sectionLabel: readRowSection(row), pairTopOf: cardTops.get(unitId) ?? null }];
       });
       for (const unitId of getSectionHeads(units)) heads.add(unitId);
     }
     return heads;
-  }, [sections, brackets, partnerOf]);
-  // 줄마다 번호 칸 폭 - 번호 없는 줄은 직전 줄 폭, 짝은 한 폭(부분마다 문서 순서로)
+  }, [sections, cardTops]);
+  // 줄마다 번호 칸 폭 - 번호 없는 줄은 직전 줄 폭, 짝 카드는 첫 줄 폭(부분마다 문서 순서로)
   const tabWidths = useMemo(() => {
     const rows = sections.flatMap((section) =>
       section.rows.map((row) => {
         const unitId = readRowUnitId(row);
-        const topId = unitId !== null && brackets.get(unitId) === "bottom" ? (partnerOf.get(unitId)?.id ?? null) : null;
-        const topRow = topId === null ? undefined : section.rows.find((candidate) => readRowUnitId(candidate) === topId);
+        const topId = unitId === null ? undefined : cardTops.get(unitId);
+        const topRow = topId === undefined ? undefined : section.rows.find((candidate) => readRowUnitId(candidate) === topId);
         return { key: row.key, part: section.edge ?? "body", sectionLabel: readRowSection(row), pairTopOf: topRow?.key ?? null };
       }),
     );
     return getTabWidths(rows);
-  }, [sections, brackets, partnerOf]);
+  }, [sections, cardTops]);
   // 표 칸 안의 조각 줄 - 칸이 많은 표에서 고를 때마다 다시 펴지 않게
   const cellRows = useMemo(() => {
     const map = new Map<number, PaperRow[]>();
@@ -571,24 +578,20 @@ export function Paper({
     );
   }
 
-  /** 한 줄의 언어·보류를 읽어 줄 글 */
+  /** 한 줄의 보류를 읽어 줄 글 - 보류가 아니면 빈 글 */
   function describeTab(unit: ViewUnit): string {
     const live = { ...unit, status: strips?.statusOf?.(unit.id) ?? unit.status };
-    const { lang, hold } = getTags(live);
-    return [lang === "KO" ? t("split.tabKo") : lang === "EN" ? t("split.tabEn") : null, hold ? t("split.tabHold") : null].filter((part) => part !== null).join(", ");
+    return getTags(live).hold ? t("split.tabHold") : "";
   }
 
-  /** 줄 왼쪽 밖 앞머리 - 절 번호 칸(절의 첫 블록에만, 깊이마다 정해진 폭) + 언어 막대. 짝 카드는 두 줄의 막대가 이어지고 번호는 위 줄만 */
+  /** 줄 왼쪽 밖 앞머리 - 절 번호 칸(절의 첫 블록에만, 깊이마다 정해진 폭). 짝 카드는 첫 줄만 번호를 보이고 둘째 줄부터는 첫 줄의 절 머리를 따른다 */
   function renderLead(unit: ViewUnit, section: string, width: number, bracket: PairBracket | undefined): ReactNode {
-    const { lang } = getTags(unit);
-    const partner = bracket === "top" || bracket === "bottom" ? partnerOf.get(unit.id) : undefined;
-    const top = bracket === "bottom" && partner ? partner : unit;
-    const isHead = sectionHeads.has(top.id);
+    const topId = cardTops.get(unit.id);
+    const isHead = sectionHeads.has(topId ?? unit.id);
     return (
       <StripLead
         width={width}
-        number={isHead && bracket !== "bottom" ? getSectionPill(section) : null}
-        lang={lang === "KO" ? "ko" : lang === "EN" ? "en" : null}
+        number={isHead && topId === undefined ? getSectionPill(section) : null}
         bracket={bracket}
         dim={!isHead}
         tip={describeTab(unit)}
@@ -689,11 +692,11 @@ export function Paper({
     return tabWidths.get(row.key) ?? getPillWidth(getSectionLevel(readRowSection(row)));
   }
 
-  /** 절 첫 블록 글 앞의 절 번호를 숨길 글자 수 - 그 블록이 이 단위로 시작할 때만(짝 카드의 아래 줄은 위 줄이 머리면 같이). 표시만이고 원문은 그대로다.
+  /** 절 첫 블록 글 앞의 절 번호를 숨길 글자 수 - 그 블록이 이 단위로 시작할 때만(짝 카드의 둘째 줄부터는 첫 줄이 머리면 같이). 표시만이고 원문은 그대로다.
    *  번호뿐인 단위는 숨기지 않고, 나눌 선이 번호 안으로 들어오면 그동안 번호를 드러낸다(getVisibleSkip) */
-  function readHiddenPrefix(block: ViewBlock, unit: ViewUnit | undefined, bracket: PairBracket | undefined): number {
+  function readHiddenPrefix(block: ViewBlock, unit: ViewUnit | undefined): number {
     if (!unit) return 0;
-    const isHead = sectionHeads.has(unit.id) || (bracket === "bottom" && sectionHeads.has(partnerOf.get(unit.id)?.id ?? -1));
+    const isHead = sectionHeads.has(cardTops.get(unit.id) ?? unit.id);
     const first = model.segments.get(block.id)?.[0];
     if (!isHead || first?.unitId !== unit.id || first.start !== 0) return 0;
     return getVisibleSkip(getHiddenPrefixLength(block.text, block.section_label), first.end, cut?.blockId === block.id ? cut.offset : null);
@@ -736,7 +739,7 @@ export function Paper({
             : row.type === "figure"
               ? renderFigure(row.block)
               : row.parts.map((part, partIndex) => {
-                  const skip = partIndex === 0 ? readHiddenPrefix(part.block, unit, bracket) : 0;
+                  const skip = partIndex === 0 ? readHiddenPrefix(part.block, unit) : 0;
                   return (
                     <p key={part.block.id} data-block={part.block.id} className={part.block.heading_level !== null ? "h" : undefined}>
                       {/* 보류 칩 - .su·data-start 밖이라 눌러도 글자 위치로 읽히지 않고 조각 상자를 누른 것으로 그 줄을 고른다 */}
@@ -759,7 +762,8 @@ export function Paper({
     return (
       <div
         className="strip-gap"
-        data-pair={brackets.get(readRowUnitId(prev) ?? -1) === "top" && brackets.get(readRowUnitId(row) ?? -1) === "bottom" ? "" : undefined}
+        // 카드 안 틈 - 둘째 줄부터의 바로 위는 늘 같은 카드다
+        data-pair={cardTops.has(readRowUnitId(row) ?? -1) ? "" : undefined}
         data-near-selected={selectedBlock.has(readRowUnitId(prev) ?? -1) || selectedBlock.has(readRowUnitId(row) ?? -1) ? "" : undefined}
         // 합치기 단추를 글 시작 x에 - 위아래 앞머리 중 넓은 쪽 뒤라 어느 앞머리에도 걸치지 않는다
         style={{ "--gap-tab": `${Math.max(readTabWidth(prev), readTabWidth(row)) + STRIP_LEAD_EXTRA}px` }}
@@ -770,22 +774,37 @@ export function Paper({
     );
   }
 
-  function renderRows(rows: PaperRow[]): ReactNode {
-    return rows.map((row, index) => (
+  /** 한 칸(외톨이 줄 하나 또는 짝 카드 한 장) - 카드는 .strip-card로 감싸 강조 테두리가 줄 수와 상관없이 카드 전체에 둘린다(감싼 요소는 display: contents라 배치는 그대로) */
+  function renderCard(rows: readonly PaperRow[], isPeek = false): ReactNode {
+    const content = rows.map((row, index) => (
       <Fragment key={row.key}>
         {index > 0 && renderGap(rows[index - 1], row)}
-        {renderRow(row)}
+        {renderRow(row, isPeek)}
+      </Fragment>
+    ));
+    return rows.length > 1 ? <div className="strip-card">{content}</div> : content;
+  }
+
+  function renderRows(rows: PaperRow[]): ReactNode {
+    const cards: PaperRow[][] = [];
+    for (const row of rows) {
+      if (cards.length > 0 && cardTops.has(readRowUnitId(row) ?? -1)) cards[cards.length - 1].push(row);
+      else cards.push([row]);
+    }
+    return cards.map((card, index) => (
+      <Fragment key={card[0].key}>
+        {index > 0 && renderGap(cards[index - 1][cards[index - 1].length - 1], card[0])}
+        {renderCard(card)}
       </Fragment>
     ));
   }
 
-  /** 한 줄 판의 글 - 짝은 두 글을 " / "로, 표·그림은 이름만. 절 머리면 앞머리에 보인 번호를 글에서 뺀다(제 모양 조각과 같이) */
+  /** 한 줄 판의 글 - 짝 카드는 줄마다 글을 " / "로, 표·그림은 이름만. 절 머리면 앞머리에 보인 번호를 글에서 뺀다(제 모양 조각과 같이) */
   function readPieceText(row: Extract<PaperRow, { type: "piece" }>): string {
     const unit = row.unitId === null ? undefined : model.units.get(row.unitId);
-    const bracket = row.unitId === null ? undefined : brackets.get(row.unitId);
     return row.parts
       .map((part, partIndex) => {
-        const skip = partIndex === 0 ? readHiddenPrefix(part.block, unit, bracket) : 0;
+        const skip = partIndex === 0 ? readHiddenPrefix(part.block, unit) : 0;
         return part.segments.map((segment) => part.block.text.slice(Math.max(segment.start, skip), segment.end)).join("");
       })
       .join(" ");
@@ -820,12 +839,8 @@ export function Paper({
         prevRow = rows[rows.length - 1] ?? null;
         return (
           <Fragment key={entry.key}>
-            {rows.map((row, index) => (
-              <Fragment key={row.key}>
-                {index === 0 ? before && renderGap(before, row) : renderGap(rows[index - 1], row)}
-                {renderRow(row, entry.kind === "peek")}
-              </Fragment>
-            ))}
+            {before && rows[0] && renderGap(before, rows[0])}
+            {renderCard(rows, entry.kind === "peek")}
           </Fragment>
         );
       }
@@ -836,7 +851,7 @@ export function Paper({
         const unitId = first ? readRowUnitId(first) : null;
         const unit = unitId === null ? undefined : model.units.get(unitId);
         const width = first ? readTabWidth(first) : 0;
-        // 절 머리면 번호를 남긴다(옅은 막대는 .fold-line CSS가) - 짝 카드는 위 줄이 first다
+        // 절 머리면 번호를 남긴다 - 짝 카드는 첫 줄이 first다
         const isHead = unit !== undefined && sectionHeads.has(unit.id);
         return (
           <button
@@ -847,7 +862,7 @@ export function Paper({
             onClick={() => onOpenChange({ runs: open.runs, peeks: new Set([...open.peeks, entry.key]) })}
           >
             {unit ? (
-              <StripLead width={width} number={isHead && first ? getSectionPill(readRowSection(first)) : null} lang={getTags(unit).lang === "KO" ? "ko" : getTags(unit).lang === "EN" ? "en" : null} dim={!isHead} tip={describeTab(unit)} testId={`${testId}-fold`} id={unit.id} />
+              <StripLead width={width} number={isHead && first ? getSectionPill(readRowSection(first)) : null} dim={!isHead} tip={describeTab(unit)} testId={`${testId}-fold`} id={unit.id} />
             ) : (
               <span className="strip-lead-gap" style={{ width: width + STRIP_LEAD_EXTRA }} />
             )}

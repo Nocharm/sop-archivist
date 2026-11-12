@@ -12,6 +12,7 @@
 - **다른 언어끼리 합치기 허용(Task 4, backend)** — 합치기의 422 `mixed_language`를 없앴다. 섞이면 합친 단위 언어는 글자로 판정(한글이 있으면 ko), 섞어 합친 것을 풀면 각 단위가 제 언어로 돌아온다(같은 언어끼리 합친 경우의 "지금 언어를 따름"은 유지). 짝 멤버를 모두 합치면 기존 `_leave_pairs`가 짝을 지운다.
 - **쪼개기의 묶기를 `Join` 하나로(Task 5, frontend)** — 틈 단추·우클릭 메뉴·떨어진 조각 고르기가 `planJoin` 한 규칙(같은 언어=이웃만 합치기, 한/영=짝, 이미 짝이면 꺼짐). 옆 칸 `Joined with`에 `One sentence | KO/EN pair` 전환(짝→합치기, 합친 문장→풀고 다시 짝, 같은 언어로 잡혔으면 라틴 글자가 많은 쪽을 EN으로) — 두 단계 중 둘째가 실패하면 `split.join.partly`. `Language` 칸·배치 어긋남 경고·`Confirm pair` 삭제, 언어 직접 고치기는 우클릭 메뉴에만.
 - **떨어진 짝은 한 문장으로 합치지 않는다(Task 5 고침)** — 명세 §5.1 "화면에서는 이웃한 조각만 합친다"에 맞춰 `One sentence`는 짝 구성원이 문서 순서로 끊김 없이 이어질 때만 켜진다(`getPairMergeReason`, 합치기 규칙 위반이면 그 까닭도). 한/영 따로 문서의 짝은 흐리고 `notAdjacent`.
+- **용지 언어 표시 삭제·1:N 짝 한 카드(Task 6, frontend)** — 명세 §5.5: 앞머리 언어 막대와 `LangMark`(배정 추천 카드·문장 칸·가까운 자리·목적지 나무·연결 고르기·도움말)를 걷고 `--lang-*` 토큰을 지웠다(언어 배치 그림은 중립 회색 두 단계). 짝은 `getPairBrackets`(top·middle·bottom)·`getCardTops`로 구성원 수와 상관없이 이웃하면 한 카드, 둘째 줄부터는 첫 줄의 번호 칸 폭·절 머리를 따른다. 강조 테두리를 줄 수와 무관하게 두르려고 Old 용지 카드를 `display: contents` 감싸개(`.strip-card`)로 묶었다. 같은 짝 안의 틈에는 `Join`을 두지 않는다(`getGapMerge`, 한 문장 합치기는 `One sentence`).
 
 ## 2026-11-12
 

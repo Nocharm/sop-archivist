@@ -4,7 +4,6 @@
 import { CircleCheck, FileCheck2, Link2, Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { LangMark } from "@/components/lang-mark";
 import { UnitStatusChip } from "@/components/status";
 import { HelpPanel } from "@/components/ui/help-panel";
 import { useI18n } from "@/lib/i18n";
@@ -38,23 +37,7 @@ export function AssignHelp() {
       keys={keys}
       marks={
         <>
-          <Row
-            swatch={
-              <>
-                <LangMark lang="ko" testId="assign-help-lang-ko" />
-                <LangMark lang="en" testId="assign-help-lang-en" />
-              </>
-            }
-          >{t("assign.legend.lang")}</Row>
           <Row swatch={<UnitStatusChip status="on_hold" size="sm" testId="assign-help-hold" />}>{t("assign.legend.holdChip")}</Row>
-          <Row
-            swatch={
-              <span className="legend-pairbar" aria-hidden>
-                <span className="strip-lead-bar" data-lang="ko" />
-                <span className="strip-lead-bar" data-lang="en" />
-              </span>
-            }
-          >{t("assign.legend.pairBar")}</Row>
           <span className="help-panel-row flex-wrap" data-testid="assign-help-chips">
             {(["unassigned", "ai_suggested", "confirmed", "on_hold"] as const).map((st) => (
               <UnitStatusChip key={st} status={st} testId={`assign-help-chip-${st}`} />
@@ -62,7 +45,17 @@ export function AssignHelp() {
           </span>
           <Row swatch={<CircleCheck size={14} strokeWidth={2} className="pmark classified" aria-hidden />}>{t("assign.legend.confirmed")}</Row>
           <Row swatch={<Sparkles size={14} strokeWidth={1.6} className="pmark ai" aria-hidden />}>{t("assign.legend.ai")}</Row>
-          <Row swatch={<Link2 size={14} strokeWidth={1.6} className="pmark pair" aria-hidden />}>{t("assign.legend.pair")}</Row>
+          <Row
+            swatch={
+              <>
+                <span className="legend-card" aria-hidden>
+                  <i />
+                  <i />
+                </span>
+                <Link2 size={14} strokeWidth={1.6} className="pmark pair" aria-hidden />
+              </>
+            }
+          >{t("assign.legend.pair")}</Row>
           <Row
             swatch={
               <span className="strip-note">

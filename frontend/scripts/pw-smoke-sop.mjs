@@ -262,11 +262,15 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   check("the cut can be dragged", (await page.locator('[data-testid="split-paper-cut-handle"]').count()) === 1);
   await page.waitForTimeout(700);
   const piecesBefore = await pieces.count();
+  const readPieceIds = () => page.locator('[data-testid^="split-paper-piece-"].strip[data-strip-unit]').evaluateAll((els) => els.map((el) => el.dataset.stripUnit));
+  const idsBeforeCut = new Set(await readPieceIds());
   await cutRun.click();
   await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-piece-"].strip').length === n + 1, piecesBefore, { timeout: T });
   check("a split unit becomes two pieces at once", true);
-  const selectedId = await page.locator('[data-testid^="split-paper-unit-"].su[data-sel]').first().getAttribute("data-testid");
-  const mergeBack = page.locator(`[data-testid^="split-paper-join-${selectedId.replace("split-paper-unit-", "")}-"], [data-testid^="split-paper-join-"][data-testid$="-${selectedId.replace("split-paper-unit-", "")}"]`).and(page.locator(':not([aria-disabled="true"])'));
+  // 두 반쪽 사이의 Join - 고른 반쪽의 위아래 틈 모두에 Join이 있을 수 있어(Join 하나가 합치기·짝을 고른다) 두 반쪽 id로 찾는다
+  const idsAfterCut = await readPieceIds();
+  const halves = idsAfterCut.filter((id) => !idsBeforeCut.has(id) || id === String(unitId));
+  const mergeBack = page.locator(`[data-testid="split-paper-join-${halves[0]}-${halves[1]}"]`).and(page.locator(':not([aria-disabled="true"])'));
   // 나눈 뒤 고른 조각 아래 단추 줄이 펼쳐지며(Collapse appear) 바로 아래 틈을 33px 밀어 내린다 - 펼쳐지기 전에 올리면 틈이 포인터 밑에서 빠져나가
   // 머묾(--gap-open-delay)이 끊기므로, 다 펼쳐진 뒤에 올린다
   await page.waitForFunction(() => { const acts = document.querySelector(".strip-acts[data-open]"); return acts !== null && acts.getAnimations().length === 0; }, null, { timeout: T });
@@ -1155,8 +1159,8 @@ await runStep("assign: a status filter folds the Old paper", {}, async ({ page, 
   const holdCount = Number(await page.locator('[data-testid="assign-filter-on_hold"] .schip-n').textContent());
   const filter = holdCount > 0 ? "on_hold" : "unassigned";
   const filterCount = Number(await page.locator(`[data-testid="assign-filter-${filter}"] .schip-n`).textContent());
-  // 맞는 줄 = 엿보기가 아닌 조각(이웃한 짝 카드의 아래 줄은 위 줄과 한 줄)
-  const fullCards = `${old} .strip-row:not([data-peek]) > .strip:not([data-bracket="bottom"])`;
+  // 맞는 줄 = 엿보기가 아닌 조각(이웃한 짝 카드의 둘째 줄부터는 첫 줄과 한 줄)
+  const fullCards = `${old} .strip-row:not([data-peek]) > .strip:not([data-bracket="middle"]):not([data-bracket="bottom"])`;
   await page.locator(`[data-testid="assign-filter-${filter}"]`).click();
   // 문서·부분마다 맞는 줄을 더하면 필터 수 - 맞는 것이 없는 곳은 빈 상태와 바로 가기
   const docTrigger = page.locator('[data-testid="assign-old-doc"]');

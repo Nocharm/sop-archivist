@@ -113,10 +113,6 @@
   --danger-ink: oklch(.49 .175 27);
   --danger-fill: oklch(.58 .19 27);
 
-  /* 언어 표시(언어 배치 그림·Split 태그) - 한국어는 accent, 영어는 초록 */
-  --lang-ko: var(--accent);
-  --lang-en: oklch(.45 .11 160);
-
   --tint: 11%;
   --tint2: 20%;
   --shadow-1: 0 1px 2px oklch(.25 .02 255 / .10), 0 6px 18px oklch(.25 .02 255 / .06);
@@ -182,7 +178,6 @@
   --warn-fill: oklch(.70 .14 55);
   --danger-ink: oklch(.77 .125 24);
   --danger-fill: oklch(.66 .165 25);
-  --lang-en: oklch(.76 .12 160);
 
   --tint: 16%;
   --tint2: 32%;

@@ -265,6 +265,15 @@ describe("getGapMerge", () => {
     expect(getGapMerge(rows[1], rows[2], model.units)).toBeNull();
   });
 
+  it("has no control between two members of the same pair, but keeps one between different pairs", () => {
+    const { model, rows } = build(
+      [makeBlock(1, 0, "가. Alpha. 나.")],
+      [makeUnit(10, [[1, 0, 3]], "가.", { lang: "ko", pair_id: 5 }), makeUnit(11, [[1, 3, 10]], " Alpha.", { pair_id: 5 }), makeUnit(12, [[1, 10, 13]], " 나.", { lang: "ko", pair_id: 6 })],
+    );
+    expect(getGapMerge(rows[0], rows[1], model.units)).toBeNull();
+    expect(getGapMerge(rows[1], rows[2], model.units)).toEqual({ firstId: 11, secondId: 12, blocker: null });
+  });
+
   it("has no merge across part groups", () => {
     const blocks = [makeBlock(1, 0, "Head A", { part: "header", part_group: "header:1" }), makeBlock(2, 1, "Head B", { part: "header", part_group: "header:2" })];
     const units = [makeUnit(10, [[1, 0, 6]], "Head A"), makeUnit(11, [[2, 0, 6]], "Head B")];

@@ -976,8 +976,9 @@
   /* 번갈아(4줄)는 줄 높이를 2px로 고정하고 세로 가운데에 모은다 - 1px로 늘어나 상자 아래로 쏠리던 것 */
   .layout-picto[data-n="4"] { grid-auto-rows: 2px; align-content: center; gap: 0; }
   .layout-picto i { display: block; border-radius: 1px; }
-  .layout-picto i.ko { background: var(--lang-ko); }
-  .layout-picto i.en { background: var(--lang-en); }
+  /* 언어 배치 그림의 두 언어 - 중립 회색 두 단계(언어에 색을 주지 않는다) */
+  .layout-picto i.ko { background: var(--ink-2); }
+  .layout-picto i.en { background: var(--ink-4); }
 
   .side-tag { display: inline-block; padding: 0 6px; border: 1px solid var(--line-2); border-radius: var(--r-1); font: 600 var(--fs-micro) / 18px var(--font-mono); color: var(--ink-2); }
   .side-tag.new { border-color: var(--accent-line); color: var(--accent); }
@@ -1018,7 +1019,7 @@
 
   /* Unit 하나 = 종이 조각 하나(2026-11-10). 용지 바탕을 걷고 조각마다 종이를 그린다 - 확인 여부와 상관없이 처음부터 나뉘어 있다 */
   .sheet:has(> .pg[data-strips]) { background: none; border: 0; box-shadow: none; }
-  /* 조각마다 왼쪽 밖에 앞머리(.strip-lead = 절 번호 칸 + 언어 막대)가 붙고 번호 칸 폭은 절 깊이로만 정해진다(strip-pill-model.ts PILL_WIDTH_BY_LEVEL) - 깊을수록 조각이 오른쪽에서 시작해 들여쓴 것처럼 읽힌다. 오른쪽은 끝 아이콘 자리(--pg-pad-r)만 두고, 배정 연결 배지(.lbadge)는 그 여백의 오른쪽 아래 모서리에 떠 글을 덮지 않는다 */
+  /* 조각마다 왼쪽 밖에 앞머리(.strip-lead = 절 번호 칸)가 붙고 번호 칸 폭은 절 깊이로만 정해진다(strip-pill-model.ts PILL_WIDTH_BY_LEVEL) - 깊을수록 조각이 오른쪽에서 시작해 들여쓴 것처럼 읽힌다. 오른쪽은 끝 아이콘 자리(--pg-pad-r)만 두고, 배정 연결 배지(.lbadge)는 그 여백의 오른쪽 아래 모서리에 떠 글을 덮지 않는다 */
   .pg[data-strips] { --pg-pad-l: 12px; --pg-pad-r: 68px; padding: 0; gap: 0; }
   /* content-visibility는 칠 영역을 줄 안쪽으로 자르므로 조각 그림자(--shadow-1, 아래로 24px)가 잘리지 않게 자르는 선을 바깥으로 민다 */
   .pg[data-strips] .strip-row { display: flex; align-items: stretch; content-visibility: auto; overflow-clip-margin: 32px; contain-intrinsic-size: auto 46px; }
@@ -1035,16 +1036,14 @@
   .pg[data-strips] .strip[data-kind="figure"] { overflow-x: auto; }
   .pg[data-strips] .strip > p { margin-block: 0; }
   .pg[data-strips] .pg-edge { display: grid; padding: 0; border: 0; }
-  /* 짝 Unit - 이웃한 짝은 틈 없이 붙여 한 카드(안쪽은 점선 한 줄), 앞머리 막대 두 색이 이어진다. 바탕은 아주 옅게. 고른 단위의 짝(data-partner)·이어진 맞은편(data-link-hover)은 카드에 강조 테두리(아래 .strip::after) */
-  .pg[data-strips] .strip[data-bracket="top"], .pg[data-strips] .strip[data-bracket="bottom"], .pg[data-strips] .strip[data-partner]:not([data-bracket]), .cell-piece[data-partner] { background: color-mix(in oklab, var(--accent) 4%, var(--paper)); }
+  /* 짝 Unit - 이웃한 짝은 구성원 수와 상관없이 틈 없이 붙여 한 카드(줄 사이는 점선 한 줄). 바탕은 아주 옅게. 고른 단위의 짝(data-partner)·이어진 맞은편(data-link-hover)은 카드에 강조 테두리(아래 .strip::after) */
+  .pg[data-strips] .strip[data-bracket], .pg[data-strips] .strip[data-partner]:not([data-bracket]), .cell-piece[data-partner] { background: color-mix(in oklab, var(--accent) 4%, var(--paper)); }
   .cell-piece[data-partner] { box-shadow: inset 2px 0 0 var(--accent); }
 
   /* 필터 접기(Assign Old) - 엿보기 조각은 필터 밖이라 바탕을 가라앉히고 점선, 그림자 없음. 곁은 한 줄 판(앞머리 옅게 + 말줄임 작은 글), 먼 구간은 점선 묶음 한 줄.
      한 줄 판 글은 명세의 --ink-4가 라이트에서 4.2:1이라 4.5:1을 넘는 --ink-3(약 5.6:1) - 작은 글자·앞머리 옅음으로 충분히 물러난다 */
   .pg[data-strips] .strip-row[data-peek] > .strip { background: var(--sunken); border-style: dashed; box-shadow: none; }
   .fold-line { display: flex; align-items: stretch; width: 100%; min-width: 0; margin: 1px 0; padding: 0; border: 0; background: none; color: var(--ink-3); font: inherit; text-align: left; cursor: pointer; content-visibility: auto; contain-intrinsic-size: auto 22px; }
-  /* 옅게는 막대만 - 절 머리 번호는 글자라 4.5:1 바닥(--ink-3)을 지킨다 */
-  .fold-line > .strip-lead > .strip-lead-bar { opacity: .55; }
   .fold-line .strip-lead-num { height: 22px; padding-top: 0; line-height: 22px; }
   .fold-line-text { flex: 1 1 0; min-width: 0; padding: 3px var(--pg-pad-r) 3px var(--pg-pad-l); overflow: hidden; border-radius: var(--r-1); font-size: 11.5px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
   .fold-line:hover .fold-line-text { background: var(--hover); color: var(--ink-2); }
@@ -1074,6 +1073,8 @@
   .strip-gap:hover .strip-merge, .cell-gap:hover .strip-merge, .strip-merge:focus-visible { opacity: 1; }
   .pg[data-strips] .strip[data-bracket="top"] { border-bottom: 0; border-bottom-right-radius: 0; }
   .pg[data-strips] .strip[data-bracket="bottom"] { border-top: 1px dashed var(--line-2); border-top-right-radius: 0; }
+  /* 카드 가운데 줄(1:2 이상) - 위는 점선, 아래는 다음 줄의 점선이 맡고, 모서리 없음. 강조 테두리는 좌우만 */
+  .pg[data-strips] .strip[data-bracket="middle"] { border-top: 1px dashed var(--line-2); border-bottom: 0; border-radius: 0; --ring-inset: 0 -2px; --ring-bw: 0 2px; --ring-r: 0; }
   /* 카드 강조 테두리(.strip::after)의 맞닿는 쪽을 연다 - 값은 아래 ::after 규칙이 읽는다 */
   .pg[data-strips] .strip-lead + .strip[data-bracket="top"] { border-bottom-left-radius: 0; --ring-inset: -2px -2px 0; --ring-bw: 2px 2px 0; --ring-r: calc(var(--r-1) + 2px) calc(var(--r-1) + 2px) 0 0; }
   .pg[data-strips] .strip-lead + .strip[data-bracket="bottom"] { border-top-left-radius: 0; --ring-inset: 0 -2px -2px; --ring-bw: 0 2px 2px; --ring-r: 0 0 calc(var(--r-1) + 2px) calc(var(--r-1) + 2px); }
@@ -1110,7 +1111,6 @@
   .strip-gap:has(> .strip-merge[aria-disabled="true"])::after { background: repeating-linear-gradient(90deg, var(--ink-4) 0 6px, transparent 6px 10px); }
   /* 단추는 처음부터 다 펼친 크기로 숨어 있다가 작은 데서 커지며 나타난다(크기·라벨 모핑 없이 한 번에 튄다) */
   .strip-gap .strip-merge { height: 22px; gap: 5px; scale: .55; transition: opacity var(--dur-fast), scale var(--dur-fast) var(--ease-exit); }
-  .strip-gap[data-pair] .strip-merge { height: 18px; }
   .strip-gap .strip-merge > svg { width: 12px; height: 12px; }
   .strip-gap .strip-merge-label { max-width: 240px; opacity: 1; }
   .strip-gap .strip-merge:not([aria-disabled="true"]) { border-color: var(--accent); color: var(--accent); box-shadow: var(--shadow-1); }
@@ -1137,31 +1137,23 @@
 
   /* 왼쪽 탭 - 줄의 왼쪽 밖에 맞닿아 붙는다(맞닿는 쪽 모서리 직각, 바깥 모서리 둥글게). 바탕 = 언어 색, 보류는 그 위에 사선 줄무늬. 번호는 절의 첫 블록에만, 번호 없는 탭은 옅게 해 번호를 따라가는 눈을 덜 방해하고 올리면 진해진다. 탭에 올리면 번호가 사라지고 언어 글자가 뜬다. 첫 글줄 높이(27px)에 번호를 맞춘다 */
   /* 1280 미만 Split에서만 3단 이상의 절 번호 탭을 46px에서 멈춘다(Assign 탭은 그대로) - 깊은 번호가 글 상자를 좁히지 않게(긴 번호는 탭 안에서 잘린다) */
-  /* 앞머리 전체(번호 칸 + 막대 3px + 틈 5px)를 옛 탭 상한과 같은 46px에서 멈춘다 - 번호 칸만 46px이면 1,800자 문단 글 폭이 333px로 줄어 감사 R8(340) 아래였다. 잘린 번호는 툴팁에 전체가 있다 */
-  @media (max-width: 1279px) { .split-desk .strip-lead-num { max-width: 38px; } .split-desk :is(.strip-lead, .strip-lead-gap) { max-width: 46px; } .split-desk .strip-gap { --gap-tab-cap: 46px; } }
+  /* 앞머리 전체(번호 칸 + 틈 5px)를 옛 탭 상한과 같은 46px에서 멈춘다 - 번호 칸만 46px이면 1,800자 문단 글 폭이 333px로 줄어 감사 R8(340) 아래였다. 잘린 번호는 툴팁에 전체가 있다 */
+  @media (max-width: 1279px) { .split-desk .strip-lead-num { max-width: 41px; } .split-desk :is(.strip-lead, .strip-lead-gap) { max-width: 46px; } .split-desk .strip-gap { --gap-tab-cap: 46px; } }
   /* Split 3단 열: 문서 목록 232px, 1280 미만은 216px - 1,800자 문단 글 상자가 340px을 지키게(사용자 결정 2026-11-12). Assign과 무관 */
   .split-cols { grid-template-columns: 232px minmax(0, 1fr) clamp(280px, 26vw, 420px); }
   @media (max-width: 1279px) { .split-cols { grid-template-columns: 216px minmax(0, 1fr) clamp(280px, 26vw, 420px); } }
-  /* 도움말 견본 - 짝 카드의 두 줄 막대(KO 위, EN 아래)가 틈 없이 맞붙은 모양 */
-  .legend-pairbar { display: inline-flex; flex-direction: column; flex: none; height: 13px; }
-  .legend-pairbar > .strip-lead-bar { height: 6.5px; }
-  .legend-pairbar > .strip-lead-bar:first-child { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
-  .legend-pairbar > .strip-lead-bar:last-child { border-top-left-radius: 0; border-top-right-radius: 0; }
+  /* 도움말 견본 - 짝 카드(두 줄이 틈 없이 붙고 사이는 점선, 옅은 바탕) */
+  .legend-card { display: inline-grid; grid-template-rows: 1fr 1fr; flex: none; width: 22px; height: 14px; border: 1px solid var(--line-2); border-radius: 2px; background: color-mix(in oklab, var(--accent) 4%, var(--paper)); }
+  .legend-card > i + i { border-top: 1px dashed var(--line-2); }
 
-  /* 앞머리 - 번호 칸(오른쪽 맞춤 mono, 절의 첫 블록에만) + 3px 언어 막대(줄 높이 전체, 둥근 끝) + 조각까지 틈 5px. 번호는 첫 글줄 높이(조각 위 여백 6 + 27px)에 맞춘다.
-     짝 카드는 위 줄 막대의 아래 끝·아래 줄 막대의 위 끝을 직각으로 해 두 색이 틈 없이 맞붙는다. 1280 미만 Split의 46px 상한은 위 @media */
+  /* 앞머리 - 번호 칸(오른쪽 맞춤 mono, 절의 첫 블록에만) + 조각까지 틈 5px. 번호는 첫 글줄 높이(조각 위 여백 6 + 27px)에 맞춘다. 1280 미만 Split의 46px 상한은 위 @media */
   .strip-lead { flex: none; align-self: stretch; display: flex; padding-right: 5px; box-sizing: border-box; }
   .strip-lead-num { flex: 1 1 auto; min-width: 0; height: 33px; padding: 6px 5px 0 0; overflow: hidden; text-align: right; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); font: 500 11px / 27px var(--font-mono); box-sizing: border-box; }
-  .strip-lead-bar { flex: none; width: 3px; border-radius: 1.5px; background: color-mix(in oklab, var(--ink-4) 40%, transparent); }
-  .strip-lead-bar[data-lang="ko"] { background: var(--lang-ko); }
-  .strip-lead-bar[data-lang="en"] { background: var(--lang-en); }
-  .strip-lead[data-bracket="top"] > .strip-lead-bar { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
-  .strip-lead[data-bracket="bottom"] > .strip-lead-bar { border-top-left-radius: 0; border-top-right-radius: 0; }
   .strip-lead-gap { flex: none; }
-  /* 카드 강조 테두리 - 조각 바깥 2px. 짝 카드는 두 줄 모두 두르되 맞닿는 쪽은 열어 한 테두리로 읽힌다(두 줄에 그림자 고리를 각각 두면 가운데에 선이 생긴다) */
+  /* 카드 강조 테두리 - 조각 바깥 2px. 짝 카드(.strip-card, 줄 수와 상관없이)는 한 줄이라도 강조면 모든 줄에 두르되 맞닿는 쪽은 열어 한 테두리로 읽힌다(줄마다 그림자 고리를 두면 사이에 선이 생긴다) */
+  .strip-card { display: contents; }
   .pg[data-strips] .strip-lead + .strip:is([data-partner], [data-link-hover])::after,
-  .strip-row:has(> .strip[data-bracket="top"]:is([data-partner], [data-link-hover])) + .strip-gap[data-pair] + .strip-row > .strip-lead + .strip[data-bracket="bottom"]::after,
-  .strip-row:has(+ .strip-gap[data-pair] + .strip-row > .strip[data-bracket="bottom"]:is([data-partner], [data-link-hover])) > .strip-lead + .strip[data-bracket="top"]::after { content: ""; position: absolute; inset: var(--ring-inset, -2px); border: solid var(--accent); border-width: var(--ring-bw, 2px); border-radius: var(--ring-r, calc(var(--r-1) + 2px)); pointer-events: none; }
+  .strip-card:has(> .strip-row > .strip:is([data-partner], [data-link-hover])) > .strip-row > .strip-lead + .strip::after { content: ""; position: absolute; inset: var(--ring-inset, -2px); border: solid var(--accent); border-width: var(--ring-bw, 2px); border-radius: var(--ring-r, calc(var(--r-1) + 2px)); pointer-events: none; }
   /* 보류 칩 - 글 첫머리, 글자와 같은 줄에 앉는다 */
   .pg[data-strips] p > .schip:first-child { margin-right: 6px; vertical-align: 1px; }
   .pg[data-strips] .strip-hold { display: flex; margin-bottom: 4px; }
@@ -1184,11 +1176,6 @@
   .lbadge[data-ai][data-dir="otherDoc"] { color: var(--st-ai-ink); }
   /* 한 줄 조각에 끝 표시(오른쪽 위)와 배지가 함께면 겹치지 않게 높이를 둔다 */
   .pg[data-strips] .strip:has(> .lbadge):has(> .strip-marks) { min-height: 56px; }
-  /* 글줄 안(묶음 목록 머리 등)에서는 기준선 맞춤이면 2.5px 떠 보여 가운데에 맞춘다 - flex 안에서는 무시된다 */
-  .lmark { display: inline-flex; align-items: center; gap: 4px; flex: none; vertical-align: middle; font: 700 10px / 1 var(--font-mono); color: var(--ink-2); }
-  .lmark::before { content: ""; width: 3px; height: 13px; background: var(--ink-4); }
-  .lmark[data-lang="ko"]::before { background: var(--lang-ko); }
-  .lmark[data-lang="en"]::before { background: var(--lang-en); }
 
   /* 종이 오른쪽 끝 아이콘 표시 */
   .strip-marks { position: absolute; right: 9px; top: 11px; display: flex; gap: 5px; align-items: center; }
@@ -1472,7 +1459,6 @@
   .tree-leaf { display: block; width: 100%; padding: 4px 8px; border-radius: var(--r-1); font-size: var(--fs-cap); line-height: 17px; color: var(--ink-2); text-align: left; cursor: pointer; }
   .tree-leaf:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
   .tree-leaf:disabled { color: var(--ink-4); cursor: not-allowed; }
-  .tree-leaf .lmark { margin-right: 5px; vertical-align: middle; }
 
   .mini-chip { height: 24px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: var(--r-1); font-size: var(--fs-micro); color: var(--ink-2); cursor: pointer; }
   .mini-chip:hover { background: var(--hover); color: var(--ink); }

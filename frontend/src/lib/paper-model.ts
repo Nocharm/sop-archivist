@@ -308,7 +308,7 @@ function readRowUnit(row: PaperRow, units: ReadonlyMap<number, ViewUnit>): ViewU
 
 /**
  * 이웃한 두 줄 사이의 "위아래 합치기". 글 조각 둘이면 늘 있고(못 합치면 까닭), 한쪽이 표·그림이면 까닭과 함께 꺼 두고,
- * 둘 다 글이 아니거나 부분 묶음이 다르면 없다(null).
+ * 둘 다 글이 아니거나 부분 묶음이 다르거나 같은 짝의 두 구성원이면 없다(null).
  */
 export function getGapMerge(prev: PaperRow, next: PaperRow, units: ReadonlyMap<number, ViewUnit>): GapMerge | null {
   const first = readRowUnit(prev, units);
@@ -320,6 +320,8 @@ export function getGapMerge(prev: PaperRow, next: PaperRow, units: ReadonlyMap<n
     return { firstId: unit.id, secondId: unit.id, blocker: "not_text" };
   }
   if (first.id === second.id) return null;
+  // 같은 짝의 두 구성원 사이(한 카드 안)에는 묶기 자리가 없다 - 한 문장으로 합치기는 옆 칸의 One sentence 전환이 맡는다
+  if (first.pair_id !== null && first.pair_id === second.pair_id) return null;
   return { firstId: first.id, secondId: second.id, blocker: getMergeBlocker(first, second) };
 }
 
