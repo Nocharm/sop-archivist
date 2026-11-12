@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- 작업 위치: 워크트리 `.claude/worktrees/paper-marks`, 브랜치 `feat/paper-marks`(origin/dev 98e0327 기준). 원본 체크아웃은 건드리지 않는다.
+- 작업 위치: 워크트리 `.claude/worktrees/paper-marks-impl`, 브랜치 `feat/paper-marks-impl`(`fix/screen-review` 146a320 = v0.16.4 기준). 원본 체크아웃은 건드리지 않는다. 계획의 줄 번호는 98e0327 기준이라 `components.css`·`tokens.css`는 몇 줄 밀렸을 수 있다 — 선택자 이름으로 찾는다.
 - 새 정보는 용지 **왼쪽에만**. 오른쪽 끝 아이콘(`.strip-marks`)·연결 배지(`.lbadge`) 자리는 그대로.
 - 원문·결과물 데이터 불변 — 번호 숨김은 표시만. backend 변경 없음.
 - 상태 칩 글자 = 기존 `status.unit.*` 문구(영어 고정), 대문자는 CSS `text-transform`만.
@@ -273,5 +273,5 @@ describe("sliceVisible", () => {
 - [ ] **Step 2: 겹침 감사** — `BASE_URL=http://localhost:3777 node scripts/pw-overlap-audit.mjs`, `LONG=1`, `THEMES=light,dark` ALL PASS(보류 칩이 글 첫머리를 덮지 않음, 번호 칸이 막대·조각과 겹치지 않음).
 - [ ] **Step 3: 대비 감사** — `node scripts/pw-contrast-audit.mjs` ALL PASS(칩 톤 6가지 + 고른 필터 칩, 번호 칸 `--ink-3`, 접힌 줄 `--ink-4`가 4.5:1에 못 미치면 `--ink-3`으로 올린다).
 - [ ] **Step 4: 설명서 그림** — `MANUAL=app BASE_URL=http://localhost:3777 node scripts/pw-manual-shots.mjs` 먼저, 그다음 `node scripts/pw-manual-shots.mjs`(reset_db → seed_sop_demo 직후). 설명서 글과 그림 대조.
-- [ ] **Step 5: 버전** — `cd frontend && npm version patch --no-git-tag-version`(푸시 시점 dev의 다음 PATCH — `fix/screen-review`가 먼저 0.16.4로 들어가면 0.16.5), `CHANGELOG.md` Unreleased에 한 줄, `PROGRESS.md` 정리.
+- [ ] **Step 5: 버전** — `cd frontend && npm version patch --no-git-tag-version`(0.16.4 → 0.16.5, 푸시 시점 dev가 더 앞서 있으면 그다음), `CHANGELOG.md` Unreleased에 한 줄, `PROGRESS.md` 정리.
 - [ ] **Step 6: Commit** `chore(release): vX.Y.Z — paper marks, status chips, filter fold on dev — 용지 표시·상태 칩·필터 접기를 dev에`
