@@ -8,17 +8,15 @@ export const SEMANTIC_CHECK_KEYS = ["numbers", "conditions", "tables", "figures"
 export type BundleStatus = "in_progress" | "in_review" | "done";
 export type MemberRole = "author" | "reviewer";
 
-export interface LangProgress {
+/** 줄(한/영 짝 하나 또는 짝 없는 판단 단위 하나) 기준 진행 숫자 한 벌 */
+export interface RowProgress {
   total: number;
   unassigned: number;
   ai_suggested: number;
   confirmed: number;
   on_hold: number;
-}
-
-export interface BundleProgress {
-  ko: LangProgress;
-  en: LangProgress;
+  /** 한 언어만 있는 줄 - 보조 표시, 검토 요청 조건이 아니다 */
+  single_language: number;
 }
 
 export interface BundleListItem {
@@ -31,7 +29,7 @@ export interface BundleListItem {
   status: BundleStatus;
   my_role: MemberRole;
   updated_at: string;
-  progress: BundleProgress;
+  progress: RowProgress;
 }
 
 export interface BundleMember {
@@ -81,7 +79,7 @@ export interface Bundle {
   updated_at: string;
   my_role: MemberRole | null;
   members: BundleMember[];
-  progress: BundleProgress;
+  progress: RowProgress;
   next_action: NextAction;
   ai_jobs: AiJobCounts;
 }
@@ -89,7 +87,6 @@ export interface Bundle {
 /** 막는 이유·알림 한 건 - 코드마다 문맥 필드가 다르다(review.py) */
 export interface ReadinessIssue {
   code: string;
-  lang?: "ko" | "en";
   count?: number;
   missing?: string[];
   [key: string]: unknown;

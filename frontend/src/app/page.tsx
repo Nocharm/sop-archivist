@@ -11,7 +11,8 @@ import { Truncate } from "@/components/ui/motion";
 import { BundleStatusPill, RoleTag } from "@/components/status";
 import { hasPermission } from "@/lib/access";
 import { humanizeApiError } from "@/lib/api-errors";
-import { createBundle, listBundles, type BundleListItem, type LangProgress } from "@/lib/api-sop";
+import { getConfirmedPercent } from "@/lib/progress-model";
+import { createBundle, listBundles, type BundleListItem, type RowProgress } from "@/lib/api-sop";
 import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
 import { navigate } from "@/lib/nav-buffer";
@@ -21,14 +22,13 @@ import { useListView } from "@/lib/use-list-view";
 import { useLoaded } from "@/lib/use-loaded";
 import { useProgressiveList } from "@/lib/use-progressive-list";
 import { showToast } from "@/components/ui/toast";
-import { LangMark } from "@/components/lang-mark";
 
 const SKELETON_ROWS = 3;
 const LIST_KEY = "bundles";
 
-function ProgressValue({ progress }: { progress: LangProgress }) {
+function ProgressValue({ progress }: { progress: RowProgress }) {
   if (progress.total === 0) return <span className="text-ink-4">–</span>;
-  const percent = Math.round((progress.confirmed / progress.total) * 100);
+  const percent = getConfirmedPercent(progress) ?? 0;
   return (
     <span className="inline-flex items-center justify-end gap-2">
       <span className="tabular-nums">
@@ -105,30 +105,13 @@ export default function BundleListPage() {
     { key: "status", header: t("bundles.colStatus"), card: "badge", nowrap: true, skeletonWidth: 84, cell: (bundle) => <BundleStatusPill status={bundle.status} /> },
     { key: "role", header: t("bundles.colRole"), card: "badge", nowrap: true, skeletonWidth: 56, cell: (bundle) => <RoleTag role={bundle.my_role} /> },
     {
-      key: "ko",
-      header: (
-        <>
-          <LangMark lang="ko" /> {t("bundles.colConfirmed")}
-        </>
-      ),
+      key: "confirmed",
+      header: t("bundles.colConfirmed"),
       align: "end",
       nowrap: true,
       skeletonWidth: 110,
-      cellTestId: (bundle) => `bundles-ko-${bundle.id}`,
-      cell: (bundle) => <ProgressValue progress={bundle.progress.ko} />,
-    },
-    {
-      key: "en",
-      header: (
-        <>
-          <LangMark lang="en" /> {t("bundles.colConfirmed")}
-        </>
-      ),
-      align: "end",
-      nowrap: true,
-      skeletonWidth: 110,
-      cellTestId: (bundle) => `bundles-en-${bundle.id}`,
-      cell: (bundle) => <ProgressValue progress={bundle.progress.en} />,
+      cellTestId: (bundle) => `bundles-confirmed-${bundle.id}`,
+      cell: (bundle) => <ProgressValue progress={bundle.progress} />,
     },
     {
       key: "updated",

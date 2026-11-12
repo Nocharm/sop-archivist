@@ -16,7 +16,7 @@ import { showToast } from "@/components/ui/toast";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LoadError } from "@/components/ui/load-error";
 import { listAdminBundles, putAdminMembers, type AdminBundle } from "@/lib/api-manage";
-import type { LangProgress } from "@/lib/api-sop";
+import type { RowProgress } from "@/lib/api-sop";
 import { formatKst } from "@/lib/datetime";
 import { getDisplayName } from "@/lib/display-name";
 import { useI18n } from "@/lib/i18n";
@@ -25,11 +25,10 @@ import { useListView } from "@/lib/use-list-view";
 import { useLoaded } from "@/lib/use-loaded";
 import { useProgressiveList } from "@/lib/use-progressive-list";
 import { getBundleLabel } from "@/lib/bundle-label";
-import { LangMark } from "@/components/lang-mark";
 
 const LIST_KEY = "admin-bundles";
 
-function ProgressText({ progress }: { progress: LangProgress }) {
+function ProgressText({ progress }: { progress: RowProgress }) {
   if (progress.total === 0) return <span className="text-ink-4">–</span>;
   return (
     <span className="tabular-nums">
@@ -92,8 +91,7 @@ export function BundlesPanel() {
         />
       ),
     },
-    { key: "ko", header: <LangMark lang="ko" />, cardLabel: <LangMark lang="ko" />, align: "end", nowrap: true, skeletonWidth: 60, cell: (bundle) => <ProgressText progress={bundle.progress.ko} /> },
-    { key: "en", header: <LangMark lang="en" />, cardLabel: <LangMark lang="en" />, align: "end", nowrap: true, skeletonWidth: 60, cell: (bundle) => <ProgressText progress={bundle.progress.en} /> },
+    { key: "confirmed", header: t("bundles.colConfirmed"), cardLabel: t("bundles.colConfirmed"), align: "end", nowrap: true, skeletonWidth: 60, cell: (bundle) => <ProgressText progress={bundle.progress} /> },
     {
       key: "created",
       header: t("adminBundles.created"),

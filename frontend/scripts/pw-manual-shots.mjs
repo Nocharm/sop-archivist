@@ -48,7 +48,7 @@ async function click(page, selector) {
 // app: 앱 안 사용 설명서에도 쓰는 장면 - name(그림 이름, 비우면 장면 이름), clip(이 요소만), clipTo(요소들을 감싼 상자), height(화면 위쪽 이만큼만),
 //      width(세 칸 화면처럼 1120에서는 답답한 장면의 화면 폭). appOnly는 앱 안 설명서에만 쓴다
 const SCENES = [
-  { name: "home", app: { height: 380 }, user: "qa.member", path: "/", marks: [id("bundles-row-2"), `${id("bundles-row-2")} .pill`, id("bundles-ko-2"), id("bundles-view")] },
+  { name: "home", app: { height: 380 }, user: "qa.member", path: "/", marks: [id("bundles-row-2"), `${id("bundles-row-2")} .pill`, id("bundles-confirmed-2"), id("bundles-view")] },
   {
     // 바로 생성(2026-11-09): 이름 없이 BND 코드로 만들어 개요로 들어가고, 문서가 없으면 Split~Review가 잠긴다
     name: "new-bundle", user: "dev.admin", path: "/",

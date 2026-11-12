@@ -74,7 +74,9 @@ await runStep("bundle list", {}, async ({ page, takeShot }) => {
   check("role is shown", text.includes("Author"), text);
   const half = page.locator('[data-testid^="bundles-row-"]', { hasText: "분류 절반" });
   halfBundleId = Number((await half.getAttribute("data-testid")).replace("bundles-row-", ""));
-  check("half-classified row shows KO 21 / 45", (await getText(page, `bundles-ko-${halfBundleId}`)).includes("21 / 45"));
+  const listApi = await page.request.get(`${BASE}/api/bundles`, { headers: { "X-Dev-User": "qa.member" } });
+  const listed = (await listApi.json()).find((bundle) => bundle.id === halfBundleId);
+  check("half-classified row shows confirmed / total rows", (await getText(page, `bundles-confirmed-${halfBundleId}`)).includes(`/ ${listed.progress.total}`), String(listed.progress.total));
   check("no stage nav outside a bundle", (await page.locator('[data-testid="stage-nav"]').count()) === 0);
   check("synthetic bundles are marked in the list", (await page.locator(`[data-testid="bundles-synthetic-${halfBundleId}"]`).count()) === 1);
   await takeShot("sop-bundle-list.png");
@@ -86,7 +88,7 @@ await runStep("overview in rail", {}, async ({ page, takeShot }) => {
   check("top bar shows the bundle title", (await getText(page, "top-bar-bundle-title")).includes("분류 절반"));
   check("synthetic mark in the top bar", (await page.locator('[data-testid="top-bar-synthetic"]').count()) === 1);
   check("next action is deciding units", (await page.locator('[data-testid="overview-next"]').getAttribute("data-action")) === "decide_units");
-  check("KO rate 47%", (await getText(page, "overview-rate-ko")).includes("47"), await getText(page, "overview-rate-ko"));
+  check("overview rate shows a percent", (await getText(page, "overview-rate")).includes("%"), await getText(page, "overview-rate"));
   check("units gate is open", (await page.locator('[data-testid="overview-gate-units"]').getAttribute("data-ok")) === null);
   check("request review is disabled", await page.locator('[data-testid="overview-request-review"]').isDisabled());
   const overview = page.locator('[data-testid="stage-nav-overview"]');

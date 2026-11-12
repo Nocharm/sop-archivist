@@ -41,19 +41,19 @@ import {
   requestReview,
   SEMANTIC_CHECK_KEYS,
   type Bundle,
-  type LangProgress,
+  type RowProgress,
   type NextAction,
   type Readiness,
   type ReadinessIssue,
 } from "@/lib/api-sop";
 import { loadBundle, putBundle, useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
+import { countPending, getConfirmedPercent } from "@/lib/progress-model";
 import { getStageHref, NEXT_ACTION_STAGE, STAGES } from "@/lib/stages";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { GATE_STAGE, groupNotices, isNoticeGroup, splitGates, type GateKey } from "@/lib/review-gates";
 import { useLoaded, type Loaded } from "@/lib/use-loaded";
 import { getBundleLabel } from "@/lib/bundle-label";
-import { LangMark } from "@/components/lang-mark";
 
 type TFunc = (key: string, vars?: Record<string, string | number>) => string;
 
@@ -64,8 +64,6 @@ const COVER_STATES = [
   { key: "on_hold", fill: "var(--st-hold-fill)" },
   { key: "unassigned", fill: "var(--st-none-fill)" },
 ] as const;
-
-const PROGRESS_LANGS = ["ko", "en"] as const;
 
 // 다음 할 일 종류별 아이콘 - 화면이 열릴 때 한 번 움직이고 멈춘다(.next-badge)
 const NEXT_ICONS: Record<NextAction, LucideIcon> = {
@@ -141,30 +139,20 @@ function buildGateLines(readiness: Readiness, semanticTotal: number, t: TFunc): 
   ];
 }
 
-function countPending(progress: Bundle["progress"]): number {
-  return PROGRESS_LANGS.reduce((total, lang) => {
-    const item = progress[lang];
-    return total + item.unassigned + item.ai_suggested + item.on_hold;
-  }, 0);
-}
-
-function CoverageBar({ progress, lang }: { progress: LangProgress; lang: "ko" | "en" }) {
+function CoverageBar({ progress }: { progress: RowProgress }) {
   return (
-    <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-3">
-      <LangMark lang={lang} />
-      <div className="flex h-2 min-w-0 gap-0.5" data-testid={`overview-bar-${lang}`}>
-        {progress.total === 0 ? (
-          <span className="block h-full flex-1 rounded bg-line" />
-        ) : (
-          COVER_STATES.filter((state) => progress[state.key] > 0).map((state) => (
-            <span
-              key={state.key}
-              className="block h-full min-w-0.5 first:rounded-l last:rounded-r"
-              style={{ flexGrow: progress[state.key], flexBasis: 0, background: state.fill }}
-            />
-          ))
-        )}
-      </div>
+    <div className="flex h-2 min-w-0 gap-0.5" data-testid="overview-bar">
+      {progress.total === 0 ? (
+        <span className="block h-full flex-1 rounded bg-line" />
+      ) : (
+        COVER_STATES.filter((state) => progress[state.key] > 0).map((state) => (
+          <span
+            key={state.key}
+            className="block h-full min-w-0.5 first:rounded-l last:rounded-r"
+            style={{ flexGrow: progress[state.key], flexBasis: 0, background: state.fill }}
+          />
+        ))
+      )}
     </div>
   );
 }
@@ -179,34 +167,23 @@ function Coverage({ bundle }: { bundle: Bundle }) {
       </section>
     );
   }
+  const { progress } = bundle;
+  const percent = getConfirmedPercent(progress);
   return (
     <section className="grid gap-2.5 rounded-lg border border-line bg-surface px-4 py-3.5" data-testid="overview-coverage">
       <h2 className="text-xs font-semibold text-ink-3">{t("overview.coverage")}</h2>
-      <div className="flex flex-wrap gap-x-12 gap-y-2">
-        {PROGRESS_LANGS.map((lang) => {
-          const item = bundle.progress[lang];
-          const percent = item.total === 0 ? null : Math.round((item.confirmed / item.total) * 100);
-          return (
-            <div key={lang} className="grid gap-0.5" data-testid={`overview-rate-${lang}`}>
-              <span className="flex items-center gap-1.5 text-xs text-ink-3">
-                <LangMark lang={lang} />
-                Confirmed
-              </span>
-              <span className="flex items-baseline gap-2 tabular-nums">
-                <span className="text-[30px] leading-[38px] text-ink">
-                  {percent ?? "–"}
-                  {percent !== null && <span className="text-xl">%</span>}
-                </span>
-                <span className="text-ink-3">{`${item.confirmed} / ${item.total}`}</span>
-              </span>
-            </div>
-          );
-        })}
+      <div className="grid gap-0.5" data-testid="overview-rate">
+        <span className="text-xs text-ink-3">Confirmed</span>
+        <span className="flex items-baseline gap-2 tabular-nums">
+          <span className="text-[30px] leading-[38px] text-ink">
+            {percent ?? "–"}
+            {percent !== null && <span className="text-xl">%</span>}
+          </span>
+          <span className="text-ink-3">{`${progress.confirmed} / ${progress.total}`}</span>
+        </span>
       </div>
-      <div className="grid gap-2 pt-1">
-        {PROGRESS_LANGS.map((lang) => (
-          <CoverageBar key={lang} progress={bundle.progress[lang]} lang={lang} />
-        ))}
+      <div className="pt-1">
+        <CoverageBar progress={progress} />
       </div>
       <table className="w-full border-collapse tabular-nums" data-testid="overview-counts">
         <thead>
@@ -224,21 +201,22 @@ function Coverage({ bundle }: { bundle: Bundle }) {
           </tr>
         </thead>
         <tbody>
-          {PROGRESS_LANGS.map((lang) => (
-            <tr key={lang} className="border-t border-line">
-              <td className="py-1">
-                <LangMark lang={lang} />
+          <tr className="border-t border-line">
+            <td className="py-1">{t("overview.rows")}</td>
+            {COVER_STATES.map((state) => (
+              <td key={state.key} className="py-1 pl-3 text-right">
+                {progress[state.key]}
               </td>
-              {COVER_STATES.map((state) => (
-                <td key={state.key} className="py-1 pl-3 text-right">
-                  {bundle.progress[lang][state.key]}
-                </td>
-              ))}
-              <td className="py-1 pl-3 text-right">{bundle.progress[lang].total}</td>
-            </tr>
-          ))}
+            ))}
+            <td className="py-1 pl-3 text-right">{progress.total}</td>
+          </tr>
         </tbody>
       </table>
+      {progress.single_language > 0 && (
+        <p className="text-xs text-ink-3" data-testid="overview-single-language">
+          {t("overview.singleLanguage", { n: progress.single_language })}
+        </p>
+      )}
     </section>
   );
 }
