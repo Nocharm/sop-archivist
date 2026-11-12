@@ -759,7 +759,6 @@ def test_hold_keeps_the_translation_with_the_reason(client: TestClient, fake_ai:
     [
         ({"slot_key": OTHER_SLOT}, "translation_locked"),
         ({"cell_row": 1, "cell_col": 1}, "translation_locked"),
-        ({"lang": "ko"}, "lang_mismatch"),
         ({"text": "   "}, "empty_text"),
     ],
 )
@@ -773,6 +772,65 @@ def test_translation_keeps_its_place_language_and_sourcelessness(
 
     assert refused.status_code == 422, refused.text
     assert refused.json()["detail"]["reason"] == reason
+
+
+def test_translation_language_ignores_the_sent_language(client: TestClient, fake_ai: FakeAi) -> None:
+    """번역 줄의 언어는 행의 언어로 잠겨 있다 — 다른 언어를 보내도 거절하지 않고 따르지도 않는다."""
+    bundle, unit = make_assigned_unit(client)
+    target = translate(client, fake_ai, bundle.id, unit["id"])
+
+    saved = save_translation(client, bundle.id, target, lang="ko")
+
+    assert saved.status_code == 200, saved.text
+    assert (load_translation(unit["id"]).lang, load_translation(unit["id"]).change_type) == ("en", "translated")
+
+
+def _pair_units(client: TestClient, bundle_id: int, document_id: int, unit_ids: list[int]) -> httpx2.Response:
+    revision = get_view(client, bundle_id, document_id)["document"]["revision"]
+    return client.post(
+        f"/api/bundles/{bundle_id}/documents/{document_id}/pairs", json={"revision": revision, "unit_ids": unit_ids},
+        headers=AUTHOR,
+    )
+
+
+def _make_translated_unit_with_mate(client: TestClient, fake_ai: FakeAi) -> tuple[AiBundle, dict, dict, dict]:
+    """짝 없는 한글 문장을 배정·번역해 두고, 같은 문서에 짝지을 영어 문장을 둔 묶음 — (묶음, 문서, 한글, 영어)."""
+    bundle = make_ai_bundle(client)
+    view = upload_second_document(client, bundle.id, p(LONE_KO) + p(LONE_EN))
+    document = view["document"]
+    for pair in view["pairs"]:  # 코드가 제안한 짝은 풀어 둔다 — 짝이 있는 단위는 번역 요청이 건너뛴다
+        revision = get_view(client, bundle.id, document["id"])["document"]["revision"]
+        response = client.delete(
+            f"/api/bundles/{bundle.id}/documents/{document['id']}/pairs/{pair['id']}", params={"revision": revision},
+            headers=AUTHOR,
+        )
+        assert response.status_code == 200, response.text
+    ko, en = find_unit(view, LONE_KO), find_unit(view, LONE_EN)
+    assign_as_is(client, bundle.id, ko, bundle.sop_id, slot_key=SLOT)
+    translate(client, fake_ai, bundle.id, ko["id"])
+    return bundle, document, ko, en
+
+
+def test_pairing_a_translated_unit_sweeps_the_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    """짝을 맺으면 짝의 영어가 번역을 대신한다 — AI 번역은 지우고 확정 번역은 보류로(설계 §7)."""
+    bundle, document, ko, en = _make_translated_unit_with_mate(client, fake_ai)
+
+    paired = _pair_units(client, bundle.id, document["id"], [ko["id"], en["id"]])
+
+    assert paired.status_code == 201, paired.text
+    assert load_translations(ko["id"]) == []
+    assert [suggestion.result for suggestion in read_suggestions()] == ["stale"]
+
+
+def test_pairing_holds_a_confirmed_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, document, ko, en = _make_translated_unit_with_mate(client, fake_ai)
+    assert save_translation(client, bundle.id, load_translation(ko["id"])).status_code == 200
+
+    paired = _pair_units(client, bundle.id, document["id"], [ko["id"], en["id"]])
+
+    assert paired.status_code == 201, paired.text
+    held = load_translation(ko["id"])
+    assert (held.status, held.hold_reason) == ("on_hold", SYSTEM_HOLD_RELATED_CHANGED)
 
 
 def test_translation_takes_no_source_link(client: TestClient, fake_ai: FakeAi) -> None:

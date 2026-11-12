@@ -435,6 +435,8 @@ class TargetSentence(Base):
     grid: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), default=None)
     status: Mapped[str] = mapped_column(String(12))
     hold_reason: Mapped[str] = mapped_column(Text, default="")
+    # 사람이 적는 메모(Remark) — 출처가 없는 새 문장(입구 2 신규)은 단위 판단이 없어 메모를 여기 담는다
+    remark: Mapped[str] = mapped_column(Text, default="")
     warnings: Mapped[list] = mapped_column(JSON, default=list)
     confirmed_by: Mapped[str | None] = mapped_column(String(100), default=None)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

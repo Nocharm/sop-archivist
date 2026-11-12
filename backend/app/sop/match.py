@@ -40,6 +40,7 @@ from app.sop.models import (
     Unit,
     UnitDecision,
 )
+from app.sop.pair_settle import settle_pairs
 from app.sop.units import UNIT_ACTIVE, get_latest_extraction_id
 
 # 머리말·꼬리말은 양식 반복이라 새 문장을 만들지 않고 절 경로에도 넣지 않는다(스펙 §6.7)
@@ -541,6 +542,7 @@ async def confirm_in_bulk(session: AsyncSession, bundle: Bundle, payload: BulkMa
     _check_bulk_revisions(payload, state)
     _check_bulk_items(payload, state)
     await _write_bulk(session, payload, state, actor)
+    await settle_pairs(session, bundle.id, unit_ids, actor)
     record_event(
         session, bundle_id=bundle.id, actor=actor, action="match.bulk_confirm", target_type="target",
         target_ids=target_ids,

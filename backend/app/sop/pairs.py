@@ -11,10 +11,11 @@ from app.clock import now
 from app.sop.ai.adoption import adopt_suggestions, reject_suggestions
 from app.sop.constants import MAX_PAIR_SIDE
 from app.sop.decisions import DbId
+from app.sop.detach import sweep_translations
 from app.sop.editing import PAIR_LANGS, TEXT_KINDS, ensure_unique_units, load_active_units
 from app.sop.errors import raise_rule
 from app.sop.events import record_event
-from app.sop.models import Document, Unit, UnitPair, UnitPairMember
+from app.sop.models import Document, TargetSentence, TargetSource, Unit, UnitPair, UnitPairMember
 from app.sop.units import PAIR_SUGGESTED, get_latest_extraction_id
 
 PAIR_CONFIRMED = "confirmed"
@@ -85,7 +86,24 @@ async def create_pair(session: AsyncSession, document: Document, unit_ids: Seque
     session.add_all(UnitPairMember(pair_id=pair.id, unit_id=unit_id) for unit_id in sorted(unit_ids))
     _record(session, document, "pair.create", pair.id, actor)
     await session.flush()
+    await _sweep_replaced_translations(session, document.bundle_id, unit_ids)
     return pair
+
+
+async def _sweep_replaced_translations(session: AsyncSession, bundle_id: int, unit_ids: Sequence[int]) -> None:
+    """짝을 맺으면 짝의 다른 언어 단위가 번역을 대신하므로, 묶인 단위를 옮긴 번역을 출처가 바뀐 것처럼 쓸어 낸다(설계 §7).
+
+    AI 번역은 지우고 확정 번역은 보류다(sweep_translations). 번역은 출처 새 문장으로 찾으므로 묶인 단위를 출처로 둔 새 문장을 넘긴다.
+    """
+    translated = await session.scalar(
+        select(TargetSentence.id).where(TargetSentence.translation_source_unit_id.in_(unit_ids)).limit(1)
+    )
+    if translated is None:
+        return
+    source_target_ids = await session.scalars(
+        select(TargetSource.target_id).where(TargetSource.unit_id.in_(unit_ids)).distinct()
+    )
+    await sweep_translations(session, bundle_id, list(source_target_ids))
 
 
 async def _record_replaced_adoption(
@@ -110,26 +128,36 @@ async def _record_replaced_adoption(
 
 
 async def confirm_pair(session: AsyncSession, document: Document, pair_id: int, actor: str) -> UnitPair:
-    """제안 짝(코드·AI)을 확정한다 — 출처는 그대로 둔다. 이미 확정이면 아무것도 쓰지 않는다(revision·기록 그대로).
-
-    AI 제안 짝이면 그대로 채택으로 남긴다 — 짝은 글을 고칠 수 없어 확정이 곧 제안 그대로다(설계 §6.11).
-    """
+    """제안 짝(코드·AI)을 확정한다 — 출처는 그대로 둔다. 이미 확정이면 아무것도 쓰지 않는다(revision·기록 그대로)."""
     pair = await _get_pair(session, document, pair_id)
     if pair.status != PAIR_CONFIRMED:
-        pair.status = PAIR_CONFIRMED
-        if pair.suggestion_id is not None:
-            await adopt_suggestions(session, [pair.suggestion_id], actor, now())
-        _record(session, document, "pair.confirm", pair.id, actor)
-        await session.flush()
+        await mark_pair_confirmed(session, document, pair, actor)
     return pair
 
 
 async def delete_pair(session: AsyncSession, document: Document, pair_id: int, actor: str) -> None:
-    """짝을 푼다(제안·확정 모두) — 단위는 짝 없이 남는다.
+    """짝을 푼다(제안·확정 모두) — 단위는 짝 없이 남는다."""
+    await dissolve_pair(session, document, await _get_pair(session, document, pair_id), actor)
+
+
+async def mark_pair_confirmed(session: AsyncSession, document: Document, pair: UnitPair, actor: str) -> None:
+    """제안 짝을 확정으로 바꾼다 — 사람의 확인(confirm_pair)과 줄 확정 뒤 서버(pair_settle)가 함께 쓴다.
+
+    AI 제안 짝이면 그대로 채택으로 남긴다 — 짝은 글을 고칠 수 없어 확정이 곧 제안 그대로다(설계 §6.11).
+    """
+    pair.status = PAIR_CONFIRMED
+    if pair.suggestion_id is not None:
+        await adopt_suggestions(session, [pair.suggestion_id], actor, now())
+    _record(session, document, "pair.confirm", pair.id, actor)
+    await session.flush()
+
+
+async def dissolve_pair(session: AsyncSession, document: Document, pair: UnitPair, actor: str) -> None:
+    """짝 행을 지운다 — 사람이 푸는 것(delete_pair)과 판단이 갈려 서버가 푸는 것(pair_settle)이 함께 쓴다.
 
     아직 채택이 없는 AI 제안 짝을 풀면 버림으로 남긴다. 짝 행이 지워지면 제안을 찾을 길이 없어 지우기 전에 쓴다(이미 채택된 제안은 그대로).
     """
-    pair = await _get_pair(session, document, pair_id)
+    pair_id = pair.id
     if pair.suggestion_id is not None:
         await reject_suggestions(session, [pair.suggestion_id], actor)
     await session.delete(pair)

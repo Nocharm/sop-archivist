@@ -322,13 +322,114 @@ def test_location_rules(client: TestClient, place: str, location: dict, reason: 
     assert response.json()["detail"]["keys"] == ["t"]
 
 
-def test_language_must_match_source(client: TestClient) -> None:
+def _upload_match_doc(client: TestClient, fx: Fixture, text: str) -> dict:
+    """입구 2 새 문서 하나를 올리고 그 문서의 새 문장(written-sentences 한 줄)을 돌려준다."""
+    _upload_ready(client, fx.bundle_id, build_docx(p(text)), "SYNTHETIC_SOP-M_Match.docx", side="new", doc_type="sop")
+    response = client.get(f"/api/bundles/{fx.bundle_id}/written-sentences", headers=AUTHOR)
+    assert response.status_code == 200, response.text
+    (written,) = [row for row in response.json() if row["text"] == text]
+    return written
+
+
+def test_a_target_in_another_language_is_translated(client: TestClient) -> None:
     fx = _setup(client)
     unit = find_unit(fx.view, STORAGE)
-    target = _target("t", fx.sop_id, [unit], slot_key="purpose", lang="en", text="Keep synthetic samples at 4 ℃.",
-                     change_type="rewritten")
+    target = _target("t", fx.sop_id, [unit], slot_key="purpose", lang="en", text="Keep synthetic samples at 4 ℃.")
 
-    assert _reason(save_group(client, fx.bundle_id, _body([_unit_in(unit)], [target]))) == "lang_mismatch"
+    response = save_group(client, fx.bundle_id, _body([_unit_in(unit)], [target]))
+
+    assert response.status_code == 200, response.text
+    assert [(t["lang"], t["change_type"]) for t in response.json()["targets"]] == [("en", "translated")]
+
+
+def test_one_unit_to_both_languages_is_not_a_split(client: TestClient) -> None:
+    """영어 옛 문장 하나 → 영어 새 문장(그대로) + 한글 새 문장(번역). 둘 다 나눔이 되면 안 된다."""
+    fx = _setup(client)
+    en = find_unit(fx.view, "1. Purpose")
+    targets = [
+        _target("en", fx.sop_id, [en], slot_key="purpose"),
+        _target("ko", fx.sop_id, [en], slot_key="purpose", lang="ko", text="목적"),
+    ]
+
+    response = save_group(client, fx.bundle_id, _body([_unit_in(en)], targets))
+
+    assert response.status_code == 200, response.text
+    group = response.json()
+    assert sorted((t["lang"], t["change_type"]) for t in group["targets"]) == [("en", "as_is"), ("ko", "translated")]
+
+
+def test_two_targets_in_the_source_language_are_still_a_split(client: TestClient) -> None:
+    fx = _setup(client)
+    unit = find_unit(fx.view, WARM_UP)
+    targets = [
+        _target("a", fx.sop_id, [unit], slot_key="purpose", text="합성 장비를 예열한다."),
+        _target("b", fx.sop_id, [unit], slot_key="purpose", text="예열 시간은 5분이다."),
+        _target("c", fx.sop_id, [unit], slot_key="purpose", lang="en", text="Warm up the synthetic unit."),
+    ]
+
+    response = save_group(client, fx.bundle_id, _body([_unit_in(unit)], targets))
+
+    assert response.status_code == 200, response.text
+    assert sorted((t["lang"], t["change_type"]) for t in response.json()["targets"]) == [
+        ("en", "translated"), ("ko", "split"), ("ko", "split"),
+    ]
+
+
+def test_target_language_defaults_to_the_source_language(client: TestClient) -> None:
+    fx = _setup(client)
+    en = find_unit(fx.view, "1. Purpose")
+    target = _target("t", fx.sop_id, [en], slot_key="purpose", text="Purpose of the procedure", change_type="rewritten")
+
+    response = save_group(client, fx.bundle_id, _body([_unit_in(en)], [target]))
+
+    assert response.status_code == 200, response.text
+    (saved,) = response.json()["targets"]
+    assert (saved["lang"], saved["change_type"]) == ("en", "rewritten")
+    # 다시 저장하며 언어를 비우면 지금 언어를 둔다 — 출처 언어로 되돌아가 번역이 사라지지 않게
+    translated = save_group(client, fx.bundle_id, _body(
+        [_unit_in(en, 2)], [{**target, "id": saved["id"], "revision": saved["revision"], "lang": "ko", "text": "목적"}]
+    ))
+    assert translated.status_code == 200, translated.text
+    (moved,) = translated.json()["targets"]
+    kept = save_group(client, fx.bundle_id, _body(
+        [_unit_in(en, 3)], [{"key": "t", "id": moved["id"], "revision": moved["revision"], "slot_key": "definitions",
+                             "source_unit_ids": [en["id"]]}]
+    ))
+    assert kept.status_code == 200, kept.text
+    assert [(t["lang"], t["change_type"]) for t in kept.json()["targets"]] == [("ko", "translated")]
+
+
+def test_entrance_two_target_keeps_its_own_language(client: TestClient) -> None:
+    """한글 입구 2 새 문장에 영어 옛 단위를 이으면 언어는 새 문장 그대로, 변경 종류는 번역이다(전에는 lang_mismatch)."""
+    fx = _setup(client)
+    written = _upload_match_doc(client, fx, STORAGE)
+    en = find_unit(fx.view, "1. Purpose")
+    link = {"key": "n", "id": written["target_id"], "revision": written["revision"], "source_unit_ids": [en["id"]]}
+
+    response = save_group(client, fx.bundle_id, _body([_unit_in(en)], [link]))
+
+    assert response.status_code == 200, response.text
+    (target,) = response.json()["targets"]
+    assert (target["origin"], target["lang"], target["change_type"]) == ("new_doc", "ko", "translated")
+
+
+def test_target_remark_round_trips(client: TestClient) -> None:
+    fx = _setup(client)
+    unit = find_unit(fx.view, STORAGE)
+    written = _upload_match_doc(client, fx, "합성 로그북을 새로 둔다.")
+    targets = [_target("t", fx.sop_id, [unit], slot_key="purpose", remark="  합성 메모  ")]
+    # 출처 없는 입구 2 새 문장(신규)에도 적는다 — 단위 판단이 없어 새 문장이 글을 담는다
+    added = {"key": "n", "id": written["target_id"], "revision": written["revision"], "source_unit_ids": [],
+             "remark": "신규 로그북"}
+
+    response = save_group(client, fx.bundle_id, _body([_unit_in(unit)], [*targets, added]))
+
+    assert response.status_code == 200, response.text
+    assert sorted((t["change_type"], t["remark"]) for t in response.json()["targets"]) == [
+        ("as_is", "합성 메모"), ("new", "신규 로그북"),
+    ]
+    listed = client.get(f"/api/bundles/{fx.bundle_id}/written-sentences", headers=AUTHOR).json()
+    assert [row["remark"] for row in listed if row["target_id"] == written["target_id"]] == ["신규 로그북"]
 
 
 def test_target_kind_follows_source_kind(client: TestClient) -> None:

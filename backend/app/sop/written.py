@@ -34,6 +34,7 @@ class WrittenSentenceOut(BaseModel):
     text: str
     status: str
     change_type: str | None
+    remark: str
     source_unit_ids: list[int]
     # 같은 New 문서의 한/영 짝 상대가 만든 문장 — Old 짝 조각에 함께 붙이는 데 쓴다
     partner_target_id: int | None
@@ -122,6 +123,7 @@ async def list_written_sentences(session: AsyncSession, bundle_id: int) -> list[
             text=target.confirmed_text,
             status=target.status,
             change_type=target.change_type,
+            remark=target.remark,
             source_unit_ids=sources.get(target.id, []),
             partner_target_id=partners.get(target.id),
             revision=target.revision,
