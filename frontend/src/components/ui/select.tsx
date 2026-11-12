@@ -14,6 +14,8 @@ export interface SelectOption<V extends string> {
   disabled?: boolean;
   /** 고정 폭 트리거에서 값이 잘릴 때 툴팁에 보일 글자(label이 노드일 때) */
   tip?: string;
+  /** 닫혀 있을 때 트리거에 보일 짧은 글(목록 항목은 긴 label 그대로) */
+  triggerLabel?: ReactNode;
 }
 
 interface SelectProps<V extends string> {
@@ -101,7 +103,7 @@ export function Select<V extends string>({
         onPointerEnter={width === undefined ? undefined : checkClipped}
         onFocus={width === undefined ? undefined : checkClipped}
       >
-        <span className="select-value">{selected?.label ?? value}</span>
+        <span className="select-value">{selected?.triggerLabel ?? selected?.label ?? value}</span>
         <ChevronDown size={14} strokeWidth={1.5} className="select-chevron" aria-hidden />
       </button>
   );

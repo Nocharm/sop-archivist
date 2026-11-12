@@ -93,7 +93,7 @@ async function auditHover(page, selector, report) {
 }
 
 const mbtnScenes = [
-  { name: "documents", user: "qa.member", url: `/bundles/${BUNDLE}/documents`, ready: '[data-testid$="-delete"]', buttons: ".mbtn-set > .mbtn:not(:disabled)" },
+  { name: "documents", user: "qa.member", url: `/bundles/${BUNDLE}/documents`, ready: '[data-testid$="-delete"]', buttons: '.row-actions-quiet button:not(:disabled)' },
   { name: "tobe", user: "qa.member", url: `/bundles/${BUNDLE}/tobe`, ready: '[data-testid="tobe-list"]', buttons: '[data-testid$="-remove"]:not(:disabled)', long: async (page) => {
     for (const input of await page.locator('input[data-testid$="-title"]').all()) await input.fill("SYNTHETIC very long document title that keeps going and going across the whole column width");
   } },
@@ -109,6 +109,14 @@ const mbtnScenes = [
     await page.locator('[data-testid^="overview-members-modal-row-"] .truncate').evaluateAll((els) => els.forEach((el) => { el.textContent = "Extremely Long Employee Display Name Example (QA Team Department)"; }));
   } },
   { name: "admin-bundles", user: "dev.admin", url: "/admin?tab=bundles", ready: '[data-testid^="admin-bundle-members-"]', buttons: '[data-testid^="admin-bundle-members-"]' },
+  // C12: 카드에서는 구성원 단추가 메타 줄 오른쪽 끝에 앉고, 펼친 라벨이 그 줄 글을 덮지 않아야 한다
+  { name: "admin-bundle-cards", user: "dev.admin", url: "/admin?tab=bundles", ready: '[data-testid="admin-bundles-view-cards"]', prepare: async (page) => {
+    await page.locator('[data-testid="admin-bundles-view-cards"]').click();
+    await page.locator('[data-testid="admin-bundles-list"] article [data-testid^="admin-bundle-members-"]').first().waitFor({ timeout: T });
+    await page.waitForTimeout(400);
+  }, buttons: '[data-testid="admin-bundles-list"] article [data-testid^="admin-bundle-members-"]', long: async (page) => {
+    await page.locator('[data-testid="admin-bundles-list"] .dcard-meta').evaluateAll((els) => els.slice(0, 6).forEach((el) => { el.insertAdjacentHTML("beforeend", "<div><dt>x</dt><dd>Extremely long meta value that keeps going across the card width</dd></div>"); }));
+  } },
   { name: "admin-bundle-members", user: "dev.admin", url: "/admin?tab=bundles", ready: '[data-testid^="admin-bundle-members-"]', prepare: async (page) => {
     await page.locator('[data-testid^="admin-bundle-members-"]').first().click();
     await page.locator('[role="dialog"] [data-testid*="-remove-"]').first().waitFor({ timeout: T });

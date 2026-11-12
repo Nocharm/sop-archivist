@@ -160,8 +160,11 @@ await runStep("documents list, inline edit and delete prompt", {}, async ({ page
   await page.locator('[data-testid$="-row"][data-testid^="documents-"]').first().waitFor({ timeout: T });
   check("documents is the current step", (await page.locator('[data-testid="stage-nav-documents"]').getAttribute("aria-current")) === "page");
   const list = await getText(page, "documents-list");
-  check("extraction status is English", list.includes("Ready"), list);
-  check("aux check label", list.includes("Checked") || list.includes("Aux check unavailable"), list);
+  // 정상 상태는 글자 없이 아이콘(aria-label "Ready"/"Checked", data-state="ok"), 예외만 글자 알약
+  const okStatus = page.locator('[data-testid^="documents-"][data-testid$="-status"][data-state="ok"]').first();
+  check("extraction status icon reads Ready", (await okStatus.getAttribute("aria-label")) === "Ready");
+  const okAux = page.locator('[data-testid^="documents-"][data-testid$="-aux"][data-state="ok"]');
+  check("aux check label", (await okAux.count()) > 0 ? (await okAux.first().getAttribute("aria-label")) === "Checked" : list.includes("Aux check unavailable"), list);
   const firstRow = page.locator('[data-testid$="-row"][data-testid^="documents-"]').first();
   const docId = (await firstRow.getAttribute("data-testid")).replace("documents-", "").replace("-row", "");
   // 버전 칸 - 숫자와 점만 받고, 위 단추는 소수점 아래가 0이면 앞자리를 올린다

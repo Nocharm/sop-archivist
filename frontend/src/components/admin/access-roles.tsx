@@ -2,7 +2,7 @@
 "use client";
 
 import { Pencil, Plus, Trash2, Users, X } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useLayoutEffect, useRef, useState, type FormEvent } from "react";
 
 import { InlineNotice } from "@/components/inline-notice";
 import { Modal } from "@/components/modal";
@@ -14,6 +14,7 @@ import { useI18n } from "@/lib/i18n";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, CHIP, INPUT_FIELD } from "@/lib/ui-classes";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MorphButton } from "@/components/ui/morph-button";
+import { Tooltip } from "@/components/ui/tooltip";
 import { showToast } from "@/components/ui/toast";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PanelTitle } from "@/components/admin/panel-title";
@@ -178,6 +179,91 @@ function DeleteRoleModal({ role, onClose, onDeleted }: DeleteRoleModalProps) {
   );
 }
 
+// 칩이 차지하는 줄 수 상한 - 이름·설명이 두 줄씩 차지하는 행도 140px 안에 들도록 한 줄이다. 넘으면 남은 권한은 "+N" 칩의 툴팁으로 읽는다
+const MAX_CHIP_LINES = 1;
+
+interface RoleChipsProps {
+  roleId: number;
+  permissions: string[];
+}
+
+/** 권한 칩을 한 줄까지만 보인다. 몇 개가 들어가는지는 그려 본 줄바꿈으로 잰다(글자 폭은 언어·글꼴마다 다르다). */
+function RoleChips({ roleId, permissions }: RoleChipsProps) {
+  const { t } = useI18n();
+  const hostRef = useRef<HTMLDivElement>(null);
+  const keys = orderPermissions(permissions);
+  const labels = keys.map((key) => translateOrRaw(t, `permission.${key}`, key));
+  const labelsKey = labels.join("|");
+  // null이면 전부 그려 본 상태(재는 중), 숫자면 앞에서 그만큼만 보이고 "+N" 칩이 붙는다
+  const [shown, setShown] = useState<number | null>(null);
+  const [width, setWidth] = useState(0);
+
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const observer = new ResizeObserver(() => {
+      const next = Math.round(host.getBoundingClientRect().width);
+      setWidth((prev) => (prev === next ? prev : next));
+    });
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
+
+  // 폭·글이 바뀌면 처음부터 다시 잰다
+  const [measuredFor, setMeasuredFor] = useState("");
+  const signature = `${width}:${labelsKey}`;
+  if (measuredFor !== signature) {
+    setMeasuredFor(signature);
+    setShown(null);
+  }
+
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (!host || keys.length === 0) return;
+    const items = Array.from(host.querySelectorAll<HTMLElement>("[data-chip]"));
+    const lineOf = (el: HTMLElement) => Math.round(el.getBoundingClientRect().top);
+    const tops = Array.from(new Set(items.map(lineOf))).sort((a, b) => a - b);
+    const lastTop = tops[MAX_CHIP_LINES - 1];
+    if (shown === null) {
+      if (tops.length <= MAX_CHIP_LINES) return;
+      const firstHidden = items.findIndex((el) => lineOf(el) > lastTop);
+      setShown(Math.max(firstHidden, 1));
+      return;
+    }
+    // "+N" 칩까지 넣어 한 줄을 넘으면 칩 하나를 더 접는다
+    const more = host.querySelector<HTMLElement>("[data-chip-more]");
+    if (more && lineOf(more) > lastTop && shown > 1) setShown(shown - 1);
+  }, [shown, keys.length, signature]);
+
+  if (keys.length === 0) return <span className="text-xs text-ink-3">{t("roles.noPermissions")}</span>;
+  const visible = shown === null ? keys.length : Math.min(shown, keys.length);
+  const hidden = labels.slice(visible);
+  const hiddenText = hidden.join(", ");
+  return (
+    <div ref={hostRef} className="flex flex-wrap gap-1.5" data-testid={`role-permissions-${roleId}`}>
+      {keys.slice(0, visible).map((key, index) => (
+        <span key={key} data-chip className={CHIP}>
+          {labels[index]}
+        </span>
+      ))}
+      {hidden.length > 0 && (
+        <Tooltip label={hiddenText} align="start">
+          <span
+            tabIndex={0}
+            role="note"
+            data-chip-more
+            aria-label={t("roles.moreAria", { count: hidden.length, list: hiddenText })}
+            data-testid={`role-permissions-more-${roleId}`}
+            className={`${CHIP} cursor-default`}
+          >
+            +{hidden.length}
+          </span>
+        </Tooltip>
+      )}
+    </div>
+  );
+}
+
 export function AccessRoles() {
   const { t } = useI18n();
   const roles = useLoaded(listRoles);
@@ -207,23 +293,13 @@ export function AccessRoles() {
         <ul data-testid="roles-list" className="divide-y divide-line rounded-md border border-line">
           {roles.data.map((role) => (
             <li key={role.id} data-testid={`role-row-${role.id}`} className="flex items-start justify-between gap-4 px-3 py-3">
-              <div className="min-w-0 space-y-1.5">
+              <div className="min-w-0 flex-1 space-y-1.5">
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                   <span className="text-sm font-semibold text-ink">{role.name}</span>
                   <span className="text-xs text-ink-3">{t("roles.grantCount", { count: role.grant_count })}</span>
                 </div>
                 {role.description && <p className="clamp-2 text-sm text-ink-2">{role.description}</p>}
-                <div className="flex flex-wrap gap-1.5">
-                  {role.permissions.length === 0 ? (
-                    <span className="text-xs text-ink-3">{t("roles.noPermissions")}</span>
-                  ) : (
-                    orderPermissions(role.permissions).map((key) => (
-                      <span key={key} className={CHIP}>
-                        {translateOrRaw(t, `permission.${key}`, key)}
-                      </span>
-                    ))
-                  )}
-                </div>
+                <RoleChips roleId={role.id} permissions={role.permissions} />
               </div>
               {/* 아이콘 단추 둘의 폭(32px × 2 + 사이 2px)을 고정해 라벨이 펼쳐져도 옆 권한 칩이 밀리지 않게 한다 */}
               <div className="mbtn-set w-[66px] shrink-0">

@@ -8,12 +8,23 @@ import { useI18n } from "@/lib/i18n";
 
 type TFunc = (key: string, vars?: Record<string, string | number>) => string;
 
+/** 정상 상태는 글 없이 아이콘만(열이 좁아진다) - 뜻은 툴팁과 aria-label이 읽어 준다 */
+function OkIcon({ label, testId }: { label: string; testId?: string }) {
+  return (
+    <Tooltip label={label}>
+      <span role="img" tabIndex={0} aria-label={label} className="inline-flex text-ink-3" data-testid={testId} data-state="ok">
+        <CircleCheck size={14} strokeWidth={1.5} aria-hidden />
+      </span>
+    </Tooltip>
+  );
+}
+
 export function DocStatusPill({ status, testId }: { status: DocStatus; testId?: string }) {
   const { t } = useI18n();
-  const ready = status === "ready";
+  if (status === "ready") return <OkIcon label={t("status.doc.ready")} testId={testId} />;
   return (
-    <span className={`pill ${ready ? "muted" : "fail"}`} data-testid={testId}>
-      {ready ? <CircleCheck size={12} strokeWidth={1.5} aria-hidden /> : <CircleX size={12} strokeWidth={1.5} aria-hidden />}
+    <span className="pill fail" data-testid={testId} data-state="exception">
+      <CircleX size={12} strokeWidth={1.5} aria-hidden />
       {t(`status.doc.${status}`)}
     </span>
   );
@@ -27,11 +38,11 @@ export function AuxPill({ document, testId }: { document: SopDocument; testId?: 
       </span>
     );
   }
-  const ok = document.extraction.aux_status === "ok";
+  if (document.extraction.aux_status === "ok") return <OkIcon label="Checked" testId={testId} />;
   return (
-    <span className={`pill ${ok ? "quiet" : "warn"}`} data-testid={testId}>
-      {ok ? <CircleCheck size={12} strokeWidth={1.5} aria-hidden /> : <CircleAlert size={12} strokeWidth={1.5} aria-hidden />}
-      {ok ? "Checked" : "Aux check unavailable"}
+    <span className="pill warn" data-testid={testId} data-state="exception">
+      <CircleAlert size={12} strokeWidth={1.5} aria-hidden />
+      Aux check unavailable
     </span>
   );
 }

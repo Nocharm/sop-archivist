@@ -108,7 +108,7 @@ export function BundlesPanel() {
       skeletonWidth: 32,
       cell: (bundle) => (
         // 라벨이 펼쳐질 자리를 고정해(.mbtn-set) 옆 열을 밀거나 덮지 않는다
-        <span className="row-actions mbtn-set w-[100px]">
+        <span className="row-actions-quiet mbtn-set w-[100px]">
           <MorphButton icon={Users} label={t("members.manage")} testId={`admin-bundle-members-${bundle.id}`} onClick={() => setEditing(bundle)} />
         </span>
       ),
@@ -148,15 +148,13 @@ export function BundlesPanel() {
           view={view}
           rows={data === null ? null : rows.visible}
           columns={columns}
-          // 카드에서 동작 단추가 맨 아래 한 줄을 차지한다 - 라벨이 펼쳐져도 메타 글자를 덮지 않는다
-          cardActions="row"
           getRowKey={(bundle) => bundle.id}
           testId="admin-bundles-list"
           rowTestId={(bundle) => `admin-bundle-${bundle.id}`}
           showSkeleton={showSkeleton}
           skeletonRows={5}
           more={{ hasMore: rows.hasMore, sentinelRef: rows.sentinelRef, testId: "admin-bundles-more" }}
-          cardMinWidth={340}
+          cardMinWidth={440}
           framed
         />
       )}

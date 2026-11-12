@@ -72,6 +72,7 @@ const ADMIN_TABS = ["access", "directory", "batch", "ai", "bundles", "guidelines
 // X0: 어느 화면에서도 문서가 가로로 넘치지 않는다(가로 스크롤이 생기지 않는다)
 const sceneUrls = (bundle) => ["", "/documents", "/split", "/tobe", "/assign", "/outputs", "/review", "/history"].map((tail) => `/bundles/${bundle}${tail}`);
 const PLAIN_SCENES = ["/", "/manual", "/account"];
+const BASELINE_C10E = 177; // 변경 전에 잰 값으로 채운다
 const AUDIT_ENTRIES = [
   {
     id: "X0", ds: "mid", user: MEMBER, views: [1120, 1920],
@@ -295,15 +296,15 @@ const AUDIT_ENTRIES = [
       });
       const before = await measureRows();
       const maxRow = Math.max(...before);
-      const biggest = before.indexOf(maxRow);
-      // 가장 큰 줄의 펼치기를 눌러 그 줄만 커지는지 본다(없으면 expandOk=false)
-      const expand = page.locator('[data-testid^="output-a-row-"]').nth(biggest).locator('[data-testid$="-expand"]');
+      // 펼치기 단추가 있는 첫 줄을 눌러 그 줄만 커지는지 본다(단추 있는 줄이 하나도 없으면 expandOk=false)
+      const rows = page.locator('[data-testid^="output-a-row-"]');
+      const withButton = await rows.evaluateAll((els) => els.findIndex((row) => row.querySelector('[data-testid$="-expand"]') !== null));
       let expandOk = false;
-      if ((await expand.count()) > 0) {
-        await expand.first().click();
+      if (withButton >= 0) {
+        await rows.nth(withButton).locator('[data-testid$="-expand"]').first().click();
         await page.waitForTimeout(400);
         const after = await measureRows();
-        expandOk = after.every((height, i) => (i === biggest ? height > before[i] : height === before[i]));
+        expandOk = after.every((height, i) => (i === withButton ? height > before[i] : height === before[i]));
       }
       return { frameOverflows, maxRow, expandOk };
     },
@@ -846,13 +847,399 @@ const AUDIT_ENTRIES = [
     // C7b: 1920에서 Documents 제목 열(칸) 폭 >= 420px
     id: "C7b", ds: "worst", user: MEMBER, views: [1920],
     path: (ids) => `/bundles/${ids.w[1]}/documents`,
-    open: async (page) => { await page.locator('[data-testid^="documents-"][data-testid$="-title"]').first().waitFor({ timeout: T }); await page.waitForTimeout(1000); },
+    // 같은 컨텍스트의 앞선 항목이 카드 보기를 기억시켰을 수 있어 표 보기로 못 박고 다시 읽는다
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator('[data-testid^="documents-"][data-testid$="-title"]').first().waitFor({ timeout: T });
+      await page.waitForTimeout(1000);
+    },
     measure: (page) => page.evaluate(() => {
-      const cell = document.querySelector('[data-testid^="documents-"][data-testid$="-title"]').closest("td");
-      return Math.round(cell.getBoundingClientRect().width);
+      const cell = document.querySelector('[data-testid^="documents-"][data-testid$="-title"]')?.closest("td");
+      return cell ? Math.round(cell.getBoundingClientRect().width) : -1;
     }),
     expect: (value) => value >= 420,
     note: "1920 Documents (W1): title column cell width >= 420px",
+  },
+  // ---- Task 11: 관리 화면 나머지와 창 ----
+  {
+    // B6: HR 미설정(503)이면 안내가 단추 줄 위에 서고 두 단추는 꺼지며 표·카드 토글이 숨는다(로컬은 HR 미설정이라 mid에서 잰다)
+    id: "B6", ds: "mid", user: "dev.admin", views: [1440],
+    path: () => "/admin?tab=directory",
+    open: async (page) => { await page.getByTestId("hr-sync-run").waitFor({ timeout: T }); },
+    measure: (page) => page.evaluate(() => {
+      const run = document.querySelector('[data-testid="hr-sync-run"]');
+      const preview = document.querySelector('[data-testid="hr-sync-preview"]');
+      const notice = document.querySelector('[data-testid="hr-sync-not-configured"]');
+      return {
+        disabled: run.disabled && preview.disabled,
+        noticeAbove: notice !== null && notice.getBoundingClientRect().top < run.getBoundingClientRect().top,
+        toggles: document.querySelectorAll('[data-testid="hr-sync-runs-view"]').length,
+      };
+    }),
+    expect: (value) => value.disabled && value.noticeAbove && value.toggles === 0,
+    note: "HR not configured: notice above the buttons, both disabled, no table/card toggle",
+  },
+  {
+    // C12: 관리 Bundle 카드는 메타 줄 오른쪽 끝에 구성원 단추를 두어 한 줄을 더 쓰지 않는다
+    id: "C12", ds: "mid", user: "dev.admin", views: [1440],
+    path: () => "/admin?tab=bundles",
+    open: async (page) => {
+      await page.getByTestId("admin-bundles-view-cards").click();
+      await page.locator('[data-testid="admin-bundles-list"] article').first().waitFor({ timeout: T });
+      await page.waitForTimeout(SETTLE_MS);
+    },
+    measure: (page) => page.locator('[data-testid="admin-bundles-list"] article').evaluateAll((cards) => {
+      const mid = cards.filter((card) => /SYNTHETIC [1-4] /.test(card.textContent));
+      return Math.round(Math.max(0, ...mid.map((card) => card.getBoundingClientRect().height)));
+    }),
+    expect: (value) => value > 0 && value <= 116,
+    note: "1440 admin Bundle cards (mid bundles) <= 116px",
+  },
+  {
+    // D1: 하위 항목을 고르면 그 항목이 --sel-bg, 부모 "권한"은 투명
+    id: "D1", ds: "mid", user: "dev.admin", views: [1440],
+    path: () => "/admin?tab=access",
+    measure: async (page) => {
+      const selBg = await page.evaluate(() => {
+        const probe = document.createElement("div");
+        probe.style.background = "var(--sel-bg)";
+        document.body.appendChild(probe);
+        const color = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return color;
+      });
+      const result = {};
+      for (const sub of ["roles", "grants", "audit"]) {
+        await page.getByTestId(`access-sub-${sub}`).click();
+        await page.waitForTimeout(400);
+        result[sub] = await page.evaluate(({ expected, sub }) => {
+          const subBg = getComputedStyle(document.querySelector(`[data-testid="access-sub-${sub}"]`)).backgroundColor;
+          const parentBg = getComputedStyle(document.querySelector('[data-testid="admin-tab-access"]')).backgroundColor;
+          return { sub: subBg === expected, parent: parentBg === "rgba(0, 0, 0, 0)" };
+        }, { expected: selBg, sub });
+      }
+      return result;
+    },
+    expect: (value) => Object.values(value).every((one) => one.sub && one.parent),
+    note: "selected access sub-item has the --sel-bg background (roles, grants, audit) and the parent tab stays transparent",
+  },
+  {
+    // R5: 멤버 창 모든 줄의 역할 선택 칸은 왼쪽 끝과 폭이 같다(W1 묶음 = 제목 146자, 멤버 5명)
+    id: "R5", ds: "worst", user: "dev.admin", views: [1120],
+    path: () => "/admin?tab=bundles",
+    open: async (page) => {
+      await page.getByTestId("admin-bundles-search").fill("W1 worst");
+      await page.waitForTimeout(600);
+      await page.locator('[data-testid^="admin-bundle-members-"]').first().click();
+      await page.locator('[data-testid="admin-bundle-members-modal"] [data-testid*="-remove-"]').first().waitFor({ timeout: T });
+      await page.waitForTimeout(400);
+    },
+    measure: (page) => page.locator('[data-testid^="admin-bundle-members-modal-role-"]').evaluateAll((selects) => ({
+      rows: selects.length,
+      lefts: [...new Set(selects.map((el) => Math.round(el.getBoundingClientRect().left)))],
+      widths: [...new Set(selects.map((el) => Math.round(el.getBoundingClientRect().width)))],
+    })),
+    expect: (value) => value.rows >= 2 && value.lefts.length === 1 && value.widths.length === 1 && value.widths[0] === 140,
+    note: "members dialog: every role select has the same left edge and is 140px wide",
+  },
+  {
+    // A13: 긴 제목 창 머리는 2줄로 접히고 "멤버"로 시작한다
+    id: "A13", ds: "worst", user: "dev.admin", views: [1120],
+    path: () => "/admin?tab=bundles",
+    open: async (page) => {
+      await page.getByTestId("admin-bundles-search").fill("W1 worst");
+      await page.waitForTimeout(600);
+      await page.locator('[data-testid^="admin-bundle-members-"]').first().click();
+      await page.getByTestId("admin-bundle-members-modal").waitFor({ timeout: T });
+      await page.waitForTimeout(400);
+    },
+    measure: (page) => page.evaluate(() => {
+      const dialog = document.querySelector('[data-testid="admin-bundle-members-modal"]');
+      const head = dialog.querySelector("h2");
+      return { height: Math.round(head.parentElement.getBoundingClientRect().height), text: head.textContent.trim().slice(0, 4) };
+    }),
+    expect: (value) => value.height <= 72 && /^(멤버|Memb)/.test(value.text),
+    note: "1120 members dialog header <= 72px and the title starts with 멤버",
+  },
+  {
+    // Focus 2: A13 창 머리에 키보드 포커스가 가면 툴팁이 146자 제목 전체를 보인다
+    id: "Focus2b", ds: "worst", user: "dev.admin", views: [1120],
+    path: () => "/admin?tab=bundles",
+    open: async (page) => {
+      await page.getByTestId("admin-bundles-search").fill("W1 worst");
+      await page.waitForTimeout(600);
+      await page.locator('[data-testid^="admin-bundle-members-"]').first().click();
+      await page.getByTestId("admin-bundle-members-modal").waitFor({ timeout: T });
+      await page.waitForTimeout(400);
+      await page.keyboard.press("Shift"); // 방금 마우스로 눌렀으니 키보드 사용으로 바꿔 :focus-visible이 맞게 한다
+      await page.locator('[data-testid="admin-bundle-members-modal"] h2[tabindex="0"]').focus();
+      await page.waitForTimeout(500);
+    },
+    measure: async (page) => {
+      const tip = page.locator('[role="tooltip"]').first();
+      return (await tip.count()) === 0 ? 0 : (await tip.innerText()).length;
+    },
+    expect: (value) => value >= 146,
+    note: "focusing the clamped members-dialog header shows the full 146+ character title in a tooltip",
+  },
+  {
+    // C4: 끝난 AI 작업(진행 중 아님·실패 0)은 한 줄, 실패가 있으면 진행 수는 "성공 / 전체"
+    // /api/ai/jobs/recent를 가짜 목록으로 바꾼다(AI가 꺼진 DB에서도 같은 값으로 잰다)
+    id: "C4", ds: "worst", user: MEMBER, views: [1120],
+    path: () => "/",
+    open: async (page) => {
+      const makeRequest = (id, kind, counts, total, now, finishedAt, title) => ({
+        request_id: id, bundle_id: 1, bundle_code: "BND-0001", bundle_title: "SYNTHETIC audit bundle", kind, kinds: [kind], requested_by_me: true, total,
+        jobs: { queued: 0, running: 0, done: 0, failed: 0, stale: 0, cancelled: 0, ...counts },
+        error_counts: counts.failed ? { timeout: counts.failed } : {}, created_at: now, started_at: now,
+        running_started_at: counts.running ? now : null, finished_at: finishedAt, document_id: null, document_title: title, document_file_name: title,
+      });
+      const now = new Date().toISOString();
+      const requests = [
+        makeRequest("c4-done", "classify", { done: 5 }, 5, now, now, "SYNTHETIC_a_very_long_document_file_name_for_the_one_line_check_of_finished_jobs.docx"),
+        makeRequest("c4-run", "translate", { running: 2, done: 1 }, 3, now, null, "SYNTHETIC_running.docx"),
+        makeRequest("c4-fail", "classify", { done: 12, failed: 2 }, 14, now, now, "SYNTHETIC_failed.docx"),
+        makeRequest("c4-done2", "translate", { done: 4 }, 4, now, now, "SYNTHETIC_last.docx"),
+      ];
+      await page.route("**/api/ai/jobs/recent", (route) => route.fulfill({ json: { server_time: now, requests, requests_total: requests.length } }));
+      await page.reload();
+      await page.waitForLoadState("networkidle", { timeout: T }).catch(() => {});
+      await page.locator('[data-testid="top-bar-ai"]').click();
+      await page.locator('[data-testid="ai-jobs-popover"]').waitFor({ timeout: T });
+      await page.waitForTimeout(500);
+    },
+    measure: (page) => page.evaluate(() => {
+      const body = document.querySelector('[data-testid="ai-jobs-popover"] .ai-pop-body');
+      body.scrollTop = body.scrollHeight;
+      const doneRows = [...document.querySelectorAll('[data-outcome="done"]')];
+      const rows = [...document.querySelectorAll(".ai-pop-req")];
+      const last = rows[rows.length - 1].getBoundingClientRect();
+      const bodyBox = body.getBoundingClientRect();
+      return {
+        doneMax: Math.round(Math.max(0, ...doneRows.map((row) => row.getBoundingClientRect().height))),
+        doneCount: doneRows.length,
+        lastCut: Math.round(last.bottom - bodyBox.bottom),
+        failedProgress: document.querySelector('[data-testid="ai-jobs-request-c4-fail-progress"]')?.textContent.trim(),
+      };
+    }),
+    expect: (value) => value.doneCount >= 2 && value.doneMax <= 36 && value.lastCut <= 0 && value.failedProgress === "12 / 14",
+    note: "finished AI job rows <= 36px, the last row is not clipped, a failed row reads 12 / 14",
+  },
+  {
+    // D2: 다크에서 창 뒤 가림막이 충분히 어둡다(알파 >= 0.6)
+    id: "D2", ds: "mid", user: "dev.admin", views: [1440],
+    path: () => "/admin?tab=bundles",
+    open: async (page) => {
+      await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+      await page.locator('[data-testid^="admin-bundle-members-"]').first().click();
+      await page.getByTestId("admin-bundle-members-modal").waitFor({ timeout: T });
+      await page.waitForTimeout(400);
+    },
+    measure: (page) => page.evaluate(() => {
+      const scrim = document.querySelector('[data-testid="admin-bundle-members-modal"]').closest(".fixed");
+      const match = getComputedStyle(scrim).backgroundColor.match(/[\d.]+/g).map(Number);
+      return { theme: document.documentElement.dataset.theme, alpha: match.length > 3 ? match[3] : 1 };
+    }),
+    expect: (value) => value.theme === "dark" && value.alpha >= 0.6,
+    note: "dark modal scrim background alpha >= 0.6",
+  },
+  {
+    // D4: 계정 화면 제목 밑줄은 글 폭 + 8px 이하, 권한 목록은 권한마다 44px 이하
+    id: "D4", ds: "mid", user: MEMBER, views: [1120],
+    path: () => "/account",
+    measure: (page) => page.evaluate(() => {
+      const h1 = document.querySelector('[data-testid="account-identity"] h1');
+      const range = document.createRange();
+      range.selectNodeContents(h1);
+      const list = document.querySelector('[data-testid="account-permissions"]');
+      const count = document.querySelectorAll('[data-testid^="account-permission-"]:not([data-testid^="account-permission-source-"]):not([data-testid="account-permissions"]):not([data-testid="account-permissions-empty"])').length;
+      return {
+        h1: Math.round(h1.getBoundingClientRect().width), text: Math.round(range.getBoundingClientRect().width),
+        listHeight: list ? Math.round(list.getBoundingClientRect().height) : 0, count,
+      };
+    }),
+    expect: (value) => value.h1 <= value.text + 8 && value.count > 0 && value.listHeight <= value.count * 44,
+    note: "account title width <= text width + 8px, permission list height <= count x 44px",
+  },
+  {
+    // R3: 도움말 패널 글의 왼쪽 끝이 패널 내용의 왼쪽 끝과 같다
+    id: "R3", ds: "mid", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.mid[2]}/assign`,
+    open: async (page) => {
+      const toggle = page.getByTestId("assign-help-toggle");
+      await toggle.waitFor({ timeout: T });
+      if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+      await page.waitForTimeout(400);
+    },
+    measure: async (page) => {
+      const result = {};
+      for (const tab of ["keys", "marks"]) {
+        await page.getByTestId(`assign-help-tab-${tab}`).click();
+        await page.waitForTimeout(300);
+        result[tab] = await page.evaluate(() => {
+          const panel = document.querySelector('[data-testid="assign-help"]');
+          const content = panel.getBoundingClientRect().left + parseFloat(getComputedStyle(panel).paddingLeft);
+          const body = panel.querySelector(".help-panel-body");
+          const first = body.querySelector("dt, .help-panel-row > :first-child") ?? body.firstElementChild;
+          const range = document.createRange();
+          range.selectNodeContents(first);
+          const bodyBox = body.getBoundingClientRect();
+          return { content: Math.round(content), text: Math.round(range.getBoundingClientRect().left), bodyLeft: Math.round(bodyBox.left), scrolls: body.scrollHeight > body.clientHeight };
+        });
+      }
+      return result;
+    },
+    expect: (value) => Object.values(value).every((one) => Math.abs(one.text - one.content) <= 1),
+    note: "help panel text left edge equals the panel content left edge (tab strip left)",
+  },
+  {
+    // R7: 개발 전환 칸은 로그인 ID와 DEV 표시만이라 좁다
+    id: "R7", ds: "mid", user: MEMBER, views: [1120],
+    path: () => "/",
+    measure: (page) => page.locator('[data-testid="dev-user-switcher"]').first().evaluate((el) => Math.round(el.getBoundingClientRect().width)),
+    expect: (value) => value <= 160,
+    note: "dev user switcher width <= 160px",
+  },
+  {
+    // R9: 공통 선택 칸의 화살표가 가만히 있을 때도 보인다
+    id: "R9", ds: "mid", user: MEMBER, views: [1120],
+    path: () => "/",
+    measure: (page) => page.locator('[data-testid="dev-user-switcher"] .select-chevron, .select-trigger .select-chevron').first().evaluate((el) => Number(getComputedStyle(el).opacity)),
+    expect: (value) => value > 0,
+    note: "select chevron opacity > 0 at rest",
+  },
+  // ---- Task 13: Documents 정상 상태 아이콘·늘 보이는 흐린 단추 (C10) ----
+  {
+    // C10a: 좁은 표(1120)에서 뒤쪽 칸이 한 줄이다 - 모든 줄에서 칸 높이 <= 40px, 단추 묶음 오른쪽 끝 x가 줄마다 같다(±1px), 경고 칩 숫자가 보인다
+    id: "C10a", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}/documents`,
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator('[data-testid^="documents-"][data-testid$="-title"]').first().waitFor({ timeout: T });
+      await page.waitForTimeout(1000);
+    },
+    measure: (page) => page.evaluate(() => {
+      const rows = [...document.querySelectorAll('[data-testid="documents-list"] tbody tr')].filter((row) => row.querySelector(".row-actions-quiet"));
+      // 칸 안 내용의 높이(td는 제목이 여러 줄이면 줄 높이를 따라 커진다)
+      const heights = rows.map((row) => row.querySelector(".row-actions-quiet").parentElement.getBoundingClientRect().height);
+      const rights = rows.map((row) => row.querySelector(".row-actions-quiet").getBoundingClientRect().right);
+      const chips = [...document.querySelectorAll('[data-testid^="documents-"][data-testid$="-warnings"]')].filter((el) => el.closest("td")?.querySelector(".row-actions-quiet"));
+      return {
+        rows: rows.length,
+        maxCell: Math.round(Math.max(0, ...heights)),
+        rightSpread: Math.round((Math.max(...rights) - Math.min(...rights)) * 10) / 10,
+        chips: chips.length,
+        chipsWithDigit: chips.filter((el) => /\d/.test(el.textContent ?? "")).length,
+      };
+    }),
+    expect: (value) => value.rows > 0 && value.maxCell <= 40 && value.rightSpread <= 1 && value.chips > 0 && value.chips === value.chipsWithDigit,
+    note: "1120 Documents (W1): trail cell height <= 40px in every row, action group right edge identical (+-1px), warning chip shows its count",
+  },
+  {
+    // C10b: 단추 묶음은 평소 opacity .45, 줄 호버 때 1, Tab으로 단추에 들어가도 1(보통 1440 표)
+    id: "C10b", ds: "mid", user: MEMBER, views: [1440],
+    path: (ids) => `/bundles/${ids.mid[2]}/documents`,
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator('[data-testid="documents-list"] tbody tr').first().waitFor({ timeout: T });
+      await page.waitForTimeout(800);
+    },
+    measure: async (page) => {
+      const row = page.locator('[data-testid="documents-list"] tbody tr', { has: page.locator(".row-actions-quiet") }).first();
+      const group = row.locator(".row-actions-quiet").first();
+      const opacity = () => group.evaluate((el) => Number(getComputedStyle(el).opacity));
+      await page.mouse.move(0, 0);
+      await page.waitForTimeout(400);
+      const rest = await opacity();
+      await row.hover();
+      await page.waitForTimeout(400);
+      const hover = await opacity();
+      await page.mouse.move(0, 0);
+      await group.locator("button").first().focus();
+      await page.waitForTimeout(400);
+      const focus = await opacity();
+      return { rest, hover, focus };
+    },
+    expect: (value) => Math.abs(value.rest - 0.45) < 0.02 && value.hover === 1 && value.focus === 1,
+    note: "Documents row actions: opacity .45 at rest, 1 on row hover, 1 when a button has focus",
+  },
+  {
+    // C10c: 거절된 줄의 읽기 전용 제목도 편집되는 제목과 같은 왼쪽 x와 굵기(W1)
+    id: "C10c", ds: "worst", user: MEMBER, views: [1440],
+    path: (ids) => `/bundles/${ids.w[1]}/documents`,
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator('[data-testid^="documents-"][data-testid$="-title"]').first().waitFor({ timeout: T });
+      await page.waitForTimeout(1000);
+    },
+    measure: async (page) => page.evaluate(() => {
+      const textLeft = (el) => {
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        let node = walker.nextNode();
+        while (node && !node.textContent.trim()) node = walker.nextNode();
+        if (!node) return null;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        return { left: Math.round(range.getBoundingClientRect().left * 10) / 10, weight: getComputedStyle(node.parentElement).fontWeight };
+      };
+      const reason = document.querySelector('[data-testid$="-reason"]');
+      const rejected = reason?.closest("tr")?.querySelector('[data-testid$="-title"]');
+      const normal = [...document.querySelectorAll('[data-testid^="documents-"][data-testid$="-title"]')].find((el) => !el.closest("tr")?.querySelector('[data-testid$="-reason"]') && (el.value ?? el.textContent));
+      if (!rejected || !normal) return { missing: true };
+      const readValue = (el) => (el.tagName === "INPUT" ? { left: el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft) + parseFloat(getComputedStyle(el).borderLeftWidth), weight: getComputedStyle(el).fontWeight } : textLeft(el));
+      return { rejected: readValue(rejected), normal: readValue(normal) };
+    }),
+    expect: (value) => !value.missing && Math.abs(value.rejected.left - value.normal.left) <= 1 && value.rejected.weight === value.normal.weight,
+    note: "rejected row title text left x equals normal row title text left x, same font-weight",
+  },
+  {
+    // C10d: 정상 상태 아이콘에 포커스하면 툴팁이 뜨고(Ready), aria-label이 비어 있지 않다. 글자 알약이 아니라 아이콘이다
+    id: "C10d", ds: "mid", user: MEMBER, views: [1440],
+    path: (ids) => `/bundles/${ids.mid[2]}/documents`,
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator('[data-testid$="-status"]').first().waitFor({ timeout: T });
+    },
+    measure: async (page) => {
+      const status = page.locator('[data-testid$="-status"][data-state="ok"]').first();
+      const aria = (await status.getAttribute("aria-label")) ?? "";
+      const text = ((await status.textContent()) ?? "").trim();
+      await status.focus();
+      await page.waitForTimeout(500);
+      const tip = ((await page.locator('[role="tooltip"]').first().textContent().catch(() => "")) ?? "").trim();
+      return { aria, text, tip };
+    },
+    expect: (value) => value.aria.length > 0 && value.text === "" && value.tip.includes("Ready"),
+    note: "normal status icon: non-empty aria-label, no text, focus shows 'Ready' tooltip",
+  },
+  {
+    // C10e: 보통 1440에서 상태 + 보조 검사 열 폭의 합(th)이 이전 기준보다 좁다. 기준은 변경 전에 잰 값(BASELINE)
+    id: "C10e", ds: "mid", user: MEMBER, views: [1440],
+    path: (ids) => `/bundles/${ids.mid[2]}/documents`,
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator('[data-testid="documents-list"] thead th').first().waitFor({ timeout: T });
+      await page.waitForTimeout(800);
+    },
+    measure: (page) => page.evaluate(() => {
+      const ths = [...document.querySelectorAll('[data-testid="documents-list"] thead th')];
+      const widths = ths.map((th) => th.getBoundingClientRect().width);
+      const cellsOf = (tid) => [...document.querySelector('[data-testid="documents-list"] tbody tr [data-testid$="-' + tid + '"]').closest("tr").children];
+      const rowCells = cellsOf("status");
+      const iStatus = rowCells.findIndex((td) => td.querySelector('[data-testid$="-status"]'));
+      const iAux = rowCells.findIndex((td) => td.querySelector('[data-testid$="-aux"]'));
+      const iTitle = rowCells.findIndex((td) => td.querySelector('[data-testid$="-title"]'));
+      const heads = ths.map((th) => th.textContent.trim());
+      return { sum: Math.round(widths[iStatus] + widths[iAux]), title: Math.round(widths[iTitle]), heads: heads.join("|") };
+    }),
+    expect: (value) => value.sum < BASELINE_C10E,
+    note: "1440 Documents (mid): extraction + aux column widths sum is narrower than the pre-change baseline",
   },
 ];
 // B5는 새(문서 0개) Bundle이면 되므로 mid에서도 W7로 한 번 더 잰다(W7은 같은 DB에 있다)
