@@ -1,4 +1,4 @@
-// Assign 두 문서 사이 이음 - 마우스를 올린 조각의 맞은편을 강조하고, 양쪽 끝이 다 보이는 이음만 옅은 선으로 그린다(Old 배지 → New 출처 칩 왼쪽, 길은 link-route-model).
+// Assign 두 문서 사이 이음 - 마우스를 올린 조각의 맞은편을 강조하고, 양쪽 끝이 다 보이는 이음만 옅은 선으로 그린다(Old 조각 오른쪽 바깥 배지 높이 → New 문단 상자 왼쪽 바깥 출처 칩 높이, 길은 link-route-model).
 // 강조 표시는 React 상태가 아니라 DOM 속성(data-link-hover)으로 단다 - Old 원문 조각이 수천 개일 때 올릴 때마다 용지 전체를 다시 그리지 않게.
 // 선은 스크롤·크기 변경·확대·세로선 끌기마다 다시 재되 한 프레임에 한 번으로 묶는다.
 "use client";
@@ -28,10 +28,6 @@ interface Hover {
 interface DrawnLine {
   key: string;
   d: string;
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
   strong: boolean;
   draft: boolean;
 }
@@ -124,30 +120,20 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
       const newEl = findNewLine(root, pair.targetId);
       const rowEl = newEl?.closest<HTMLElement>(".strip-row");
       if (!oldEl || !newEl || !rowEl) continue;
-      // 시작 - 배지(조각 오른쪽 아래)의 오른쪽 끝, 배지가 없으면(고르는 중인 이음) 조각 오른쪽 끝 첫 줄
+      // 두 끝 모두 상자 바깥 테두리 - 선이 배지·칩을 찌르지 않고 그 높이에서 상자에 닿는다
+      // 시작 - Old 조각 오른쪽 끝, 연결 배지(조각 오른쪽 아래) 높이. 배지가 없으면(고르는 중인 이음) 첫 줄 높이
       const badge = oldEl.querySelector<HTMLElement>("[data-link-badge]");
       const oldRect = oldEl.getBoundingClientRect();
       const badgeRect = badge?.getBoundingClientRect();
-      const start = badgeRect ? { x: badgeRect.right, y: badgeRect.top + badgeRect.height / 2 } : { x: oldRect.right, y: readAnchorY(oldRect) };
-      // 끝 - 출처 칩 왼쪽 가운데, 칩이 없으면(아직 출처가 아닌 후보) 줄 왼쪽 끝 첫 줄
-      const chip = findSourceChip(newEl, pair.unitId);
+      const start = { x: oldRect.right, y: badgeRect ? badgeRect.top + badgeRect.height / 2 : readAnchorY(oldRect) };
+      // 끝 - New 줄(탭 포함) 왼쪽 끝, 출처 칩 높이. 칩이 없으면(아직 출처가 아닌 후보) 첫 줄 높이
+      const chipRect = findSourceChip(newEl, pair.unitId)?.getBoundingClientRect();
       const rowRect = rowEl.getBoundingClientRect();
-      const chipRect = chip?.getBoundingClientRect();
-      const end = chipRect ? { x: chipRect.left, y: chipRect.top + chipRect.height / 2 } : { x: rowRect.left, y: readAnchorY(rowRect) };
+      const end = { x: rowRect.left, y: chipRect ? chipRect.top + chipRect.height / 2 : readAnchorY(rowRect) };
       // 양쪽 끝이 다 보일 때만 - 한쪽이 스크롤 밖이면 선이 문서 머리나 화면 밖으로 뻗는다
       if (start.y < oldFrame.top || start.y > oldFrame.bottom || end.y < newFrame.top || end.y > newFrame.bottom) continue;
       const shift = (point: { x: number; y: number }) => ({ x: point.x - base.left, y: point.y - base.top });
-      const a = shift(start);
-      const b = shift(end);
-      const d = buildLinkPath(a, {
-        end: b,
-        chipTop: (chipRect?.top ?? end.y) - base.top,
-        chipBottom: (chipRect?.bottom ?? end.y) - base.top,
-        rowLeft: rowRect.left - base.left,
-        rowTop: rowRect.top - base.top,
-        isFirst: !chip || chip.previousElementSibling === null,
-      });
-      next.push({ key: `${pair.unitId}:${pair.targetId}`, d, x1: a.x, y1: a.y, x2: b.x, y2: b.y, strong: pair.strong, draft: pair.draft });
+      next.push({ key: `${pair.unitId}:${pair.targetId}`, d: buildLinkPath(shift(start), shift(end)), strong: pair.strong, draft: pair.draft });
     }
     setLines((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
   });
@@ -223,8 +209,6 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
       {lines.map((line) => (
         <g key={line.key} data-strong={line.strong ? "" : undefined} data-draft={line.draft ? "" : undefined}>
           <path d={line.d} />
-          <circle cx={line.x1} cy={line.y1} r={2.5} />
-          <circle cx={line.x2} cy={line.y2} r={2.5} />
         </g>
       ))}
     </svg>

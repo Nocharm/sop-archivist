@@ -1302,14 +1302,14 @@
   /* 이동해 간 자리 - 잠깐 테두리가 번쩍인다 */
   [data-flash] { animation: link-flash 1.2s ease-out both; }
   @keyframes link-flash { 0%, 35% { outline: 2px solid var(--accent); outline-offset: 2px; } 100% { outline: 2px solid transparent; outline-offset: 2px; } }
-  /* 두 문서 사이 이음 선 - 옅게, 고른 것·마우스를 올린 것만 진하게. 아직 저장 안 한 고름은 점선 */
+  /* 두 문서 사이 이음 선 - 연결 배지·출처 칩·맞은편 강조와 같은 강조 파랑(시안 B, 2026-11-12). 쉴 때 옅게, 고른 것·마우스를 올린 것만 진하고 굵게. 아직 저장 안 한 고름은 점선.
+     끝 점 없이 두 상자 테두리에 맞닿는다(끝 모양 butt - round는 상자 안으로 반 굵기만큼 비어져 들어간다) */
   .link-lines { position: absolute; inset: 0; z-index: 3; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
-  .link-lines g { color: var(--link-line); opacity: 0.22; }
-  .link-lines g[data-strong] { opacity: 0.85; }
-  .link-lines path { fill: none; stroke: currentColor; stroke-width: 1.25; }
-  .link-lines g[data-strong] path { stroke-width: 1.75; }
+  .link-lines g { color: var(--accent); opacity: 0.38; }
+  .link-lines g[data-strong] { opacity: 1; }
+  .link-lines path { fill: none; stroke: currentColor; stroke-width: 1.5; }
+  .link-lines g[data-strong] path { stroke-width: 2.25; }
   .link-lines g[data-draft] path { stroke-dasharray: 4 3; }
-  .link-lines circle { fill: currentColor; }
 
   /* 그 자리 메뉴 - Split "Split here" 상자처럼 조금 늦게 뜬다 */
   .link-menu { position: fixed; z-index: 40; display: grid; gap: 6px; padding: 6px; border: 1px solid var(--line-2); border-radius: var(--r-3); background: var(--raised); box-shadow: var(--shadow-2); font-family: var(--font-ui); white-space: nowrap; animation: cut-pop-in-fixed 200ms cubic-bezier(.16, 1, .3, 1) 380ms both; }
