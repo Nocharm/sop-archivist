@@ -3,7 +3,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { UnitStatusPill } from "@/components/status";
+import { UnitStatusChip } from "@/components/status";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { CoverStatus, OutputARow } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
@@ -95,7 +95,7 @@ export function OutputARowView({ row, index, destLabel, changeLabel, status }: O
         {changeLabel && <span className="block text-xs text-ink-3" style={{ fontFamily: "var(--font-ui)" }}>{changeLabel}</span>}
       </td>
       <td>
-        <UnitStatusPill status={status} />
+        <UnitStatusChip status={status} />
       </td>
     </tr>
   );

@@ -3,7 +3,7 @@
 // 오른쪽은 고른 곳·확정·우선순위 아코디언이다(설계 docs/superpowers/specs/2026-11-09-assign-unified-design.md).
 "use client";
 
-import { Check, Circle, CircleCheck, CircleDashed, CirclePause, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, RefreshCw, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
+import { Check, Circle, CircleCheck, CircleDashed, CirclePause, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, RefreshCw, Sparkles, Trash2, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent } from "react";
@@ -25,7 +25,7 @@ import { AiAskMenu, type AiAskItem } from "@/components/manage/ai-ask-menu";
 import { Modal } from "@/components/modal";
 import { ReadOnlyNote } from "@/components/read-only-note";
 import { SourceFontMenu } from "@/components/paper/source-font-menu";
-import { UnitStatusPill } from "@/components/status";
+import { FilterChip, UnitStatusChip } from "@/components/status";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { BundleLoadError } from "@/components/bundle-load-error";
@@ -119,13 +119,13 @@ import { Select } from "@/components/ui/select";
 
 type Filter = ClassifyFilter;
 const FILTERS: Filter[] = ["unassigned", "ai_suggested", "on_hold", "confirmed", "all"];
-// 필터 필의 아이콘·색 - 상태 색은 status.tsx UNIT_STATUS와 같은 뜻(색 토큰은 components.css .fpill)
-const FILTER_LOOK: Record<Filter, { tone: string; Icon: typeof Circle }> = {
-  unassigned: { tone: "none", Icon: Circle },
-  ai_suggested: { tone: "ai", Icon: CircleDashed },
-  on_hold: { tone: "hold", Icon: CirclePause },
-  confirmed: { tone: "ok", Icon: CircleCheck },
-  all: { tone: "all", Icon: ListFilter },
+// 필터 칩의 아이콘 - 색은 칩 톤(components.css .schip)이 상태 이름으로 정한다
+const FILTER_ICON: Record<Filter, LucideIcon> = {
+  unassigned: Circle,
+  ai_suggested: CircleDashed,
+  on_hold: CirclePause,
+  confirmed: CircleCheck,
+  all: ListFilter,
 };
 type Mode = "old" | "unsourced";
 
@@ -1263,7 +1263,7 @@ export default function AssignPage() {
           <div className="flex items-center gap-2">
             <Truncate className="min-w-0 flex-1 font-mono text-sm font-semibold" text={rowUnits.map((unit) => unit.display_id).join(" · ") || "–"} testId="assign-row-id" />
             <span className="flex-none">
-              <UnitStatusPill status={row.status} testId="assign-row-status" />
+              <UnitStatusChip status={row.status} testId="assign-row-status" />
             </span>
             {(units.error ?? suggestions.error) !== null && (
               <button type="button" className="btn h-6 gap-1 px-1.5 text-xs font-normal text-st-hold" data-testid="assign-refresh-error" onClick={() => setUnitsKey((key) => key + 1)}>
@@ -1346,38 +1346,29 @@ export default function AssignPage() {
     <div ref={setBarEl} className="assign-bar" data-testid="assign-bar">
       <div className="flex flex-wrap gap-1" role="tablist" data-testid="assign-filters">
         {FILTERS.filter((item) => item !== "ai_suggested" || counts.ai_suggested > 0).map((item) => {
-          const { tone, Icon } = FILTER_LOOK[item];
           return (
-            <button
+            <FilterChip
               key={item}
-              type="button"
-              role="tab"
-              aria-selected={mode === "old" && filter === item}
-              className="fpill"
-              data-tone={tone}
-              data-testid={`assign-filter-${item}`}
+              tone={item}
+              label={item === "all" ? t("assign.acc.all") : t(`status.unit.${item}`)}
+              count={counts[item]}
+              selected={mode === "old" && filter === item}
               onClick={() => applyFilter(item)}
-            >
-              <Icon size={13} strokeWidth={1.5} aria-hidden />
-              {item === "all" ? t("assign.acc.all") : t(`status.unit.${item}`)}
-              <span className="fpill-n">{counts[item]}</span>
-            </button>
+              testId={`assign-filter-${item}`}
+              icon={FILTER_ICON[item]}
+            />
           );
         })}
         {written.length > 0 && (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === "unsourced"}
-            className="fpill"
-            data-tone="danger"
-            data-testid="assign-filter-unsourced"
+          <FilterChip
+            tone="danger"
+            label={t("assign.filterUnsourced")}
+            count={unsourced.length}
+            selected={mode === "unsourced"}
             onClick={() => setMode("unsourced")}
-          >
-            <TriangleAlert size={13} strokeWidth={1.5} aria-hidden />
-            {t("assign.filterUnsourced")}
-            <span className="fpill-n">{unsourced.length}</span>
-          </button>
+            testId="assign-filter-unsourced"
+            icon={TriangleAlert}
+          />
         )}
       </div>
       <span className="text-xs tabular-nums text-ink-3" data-testid="assign-progress">
