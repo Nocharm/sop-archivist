@@ -976,6 +976,132 @@ const AUDIT_ENTRIES = [
     expect: (value) => value >= 146,
     note: "focusing the clamped members-dialog header shows the full 146+ character title in a tooltip",
   },
+  {
+    // C4: 끝난 AI 작업(진행 중 아님·실패 0)은 한 줄, 실패가 있으면 진행 수는 "성공 / 전체"
+    // /api/ai/jobs/recent를 가짜 목록으로 바꾼다(AI가 꺼진 DB에서도 같은 값으로 잰다)
+    id: "C4", ds: "worst", user: MEMBER, views: [1120],
+    path: () => "/",
+    open: async (page) => {
+      const makeRequest = (id, kind, counts, total, now, finishedAt, title) => ({
+        request_id: id, bundle_id: 1, bundle_code: "BND-0001", bundle_title: "SYNTHETIC audit bundle", kind, kinds: [kind], requested_by_me: true, total,
+        jobs: { queued: 0, running: 0, done: 0, failed: 0, stale: 0, cancelled: 0, ...counts },
+        error_counts: counts.failed ? { timeout: counts.failed } : {}, created_at: now, started_at: now,
+        running_started_at: counts.running ? now : null, finished_at: finishedAt, document_id: null, document_title: title, document_file_name: title,
+      });
+      const now = new Date().toISOString();
+      const requests = [
+        makeRequest("c4-done", "classify", { done: 5 }, 5, now, now, "SYNTHETIC_a_very_long_document_file_name_for_the_one_line_check_of_finished_jobs.docx"),
+        makeRequest("c4-run", "translate", { running: 2, done: 1 }, 3, now, null, "SYNTHETIC_running.docx"),
+        makeRequest("c4-fail", "classify", { done: 12, failed: 2 }, 14, now, now, "SYNTHETIC_failed.docx"),
+        makeRequest("c4-done2", "translate", { done: 4 }, 4, now, now, "SYNTHETIC_last.docx"),
+      ];
+      await page.route("**/api/ai/jobs/recent", (route) => route.fulfill({ json: { server_time: now, requests, requests_total: requests.length } }));
+      await page.reload();
+      await page.waitForLoadState("networkidle", { timeout: T }).catch(() => {});
+      await page.locator('[data-testid="top-bar-ai"]').click();
+      await page.locator('[data-testid="ai-jobs-popover"]').waitFor({ timeout: T });
+      await page.waitForTimeout(500);
+    },
+    measure: (page) => page.evaluate(() => {
+      const body = document.querySelector('[data-testid="ai-jobs-popover"] .ai-pop-body');
+      body.scrollTop = body.scrollHeight;
+      const doneRows = [...document.querySelectorAll('[data-outcome="done"]')];
+      const rows = [...document.querySelectorAll(".ai-pop-req")];
+      const last = rows[rows.length - 1].getBoundingClientRect();
+      const bodyBox = body.getBoundingClientRect();
+      return {
+        doneMax: Math.round(Math.max(0, ...doneRows.map((row) => row.getBoundingClientRect().height))),
+        doneCount: doneRows.length,
+        lastCut: Math.round(last.bottom - bodyBox.bottom),
+        failedProgress: document.querySelector('[data-testid="ai-jobs-request-c4-fail-progress"]')?.textContent.trim(),
+      };
+    }),
+    expect: (value) => value.doneCount >= 2 && value.doneMax <= 36 && value.lastCut <= 0 && value.failedProgress === "12 / 14",
+    note: "finished AI job rows <= 36px, the last row is not clipped, a failed row reads 12 / 14",
+  },
+  {
+    // D2: 다크에서 창 뒤 가림막이 충분히 어둡다(알파 >= 0.6)
+    id: "D2", ds: "mid", user: "dev.admin", views: [1440],
+    path: () => "/admin?tab=bundles",
+    open: async (page) => {
+      await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+      await page.locator('[data-testid^="admin-bundle-members-"]').first().click();
+      await page.getByTestId("admin-bundle-members-modal").waitFor({ timeout: T });
+      await page.waitForTimeout(400);
+    },
+    measure: (page) => page.evaluate(() => {
+      const scrim = document.querySelector('[data-testid="admin-bundle-members-modal"]').closest(".fixed");
+      const match = getComputedStyle(scrim).backgroundColor.match(/[\d.]+/g).map(Number);
+      return { theme: document.documentElement.dataset.theme, alpha: match.length > 3 ? match[3] : 1 };
+    }),
+    expect: (value) => value.theme === "dark" && value.alpha >= 0.6,
+    note: "dark modal scrim background alpha >= 0.6",
+  },
+  {
+    // D4: 계정 화면 제목 밑줄은 글 폭 + 8px 이하, 권한 목록은 권한마다 44px 이하
+    id: "D4", ds: "mid", user: MEMBER, views: [1120],
+    path: () => "/account",
+    measure: (page) => page.evaluate(() => {
+      const h1 = document.querySelector('[data-testid="account-identity"] h1');
+      const range = document.createRange();
+      range.selectNodeContents(h1);
+      const list = document.querySelector('[data-testid="account-permissions"]');
+      const count = document.querySelectorAll('[data-testid^="account-permission-"]:not([data-testid^="account-permission-source-"]):not([data-testid="account-permissions"]):not([data-testid="account-permissions-empty"])').length;
+      return {
+        h1: Math.round(h1.getBoundingClientRect().width), text: Math.round(range.getBoundingClientRect().width),
+        listHeight: list ? Math.round(list.getBoundingClientRect().height) : 0, count,
+      };
+    }),
+    expect: (value) => value.h1 <= value.text + 8 && value.count > 0 && value.listHeight <= value.count * 44,
+    note: "account title width <= text width + 8px, permission list height <= count x 44px",
+  },
+  {
+    // R3: 도움말 패널 글의 왼쪽 끝이 패널 내용의 왼쪽 끝과 같다
+    id: "R3", ds: "mid", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.mid[2]}/assign`,
+    open: async (page) => {
+      const toggle = page.getByTestId("assign-help-toggle");
+      await toggle.waitFor({ timeout: T });
+      if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+      await page.waitForTimeout(400);
+    },
+    measure: async (page) => {
+      const result = {};
+      for (const tab of ["keys", "marks"]) {
+        await page.getByTestId(`assign-help-tab-${tab}`).click();
+        await page.waitForTimeout(300);
+        result[tab] = await page.evaluate(() => {
+          const panel = document.querySelector('[data-testid="assign-help"]');
+          const content = panel.getBoundingClientRect().left + parseFloat(getComputedStyle(panel).paddingLeft);
+          const body = panel.querySelector(".help-panel-body");
+          const first = body.querySelector("dt, .help-panel-row > :first-child") ?? body.firstElementChild;
+          const range = document.createRange();
+          range.selectNodeContents(first);
+          const bodyBox = body.getBoundingClientRect();
+          return { content: Math.round(content), text: Math.round(range.getBoundingClientRect().left), bodyLeft: Math.round(bodyBox.left), scrolls: body.scrollHeight > body.clientHeight };
+        });
+      }
+      return result;
+    },
+    expect: (value) => Object.values(value).every((one) => Math.abs(one.text - one.content) <= 1),
+    note: "help panel text left edge equals the panel content left edge (tab strip left)",
+  },
+  {
+    // R7: 개발 전환 칸은 로그인 ID와 DEV 표시만이라 좁다
+    id: "R7", ds: "mid", user: MEMBER, views: [1120],
+    path: () => "/",
+    measure: (page) => page.locator('[data-testid="dev-user-switcher"]').first().evaluate((el) => Math.round(el.getBoundingClientRect().width)),
+    expect: (value) => value <= 160,
+    note: "dev user switcher width <= 160px",
+  },
+  {
+    // R9: 공통 선택 칸의 화살표가 가만히 있을 때도 보인다
+    id: "R9", ds: "mid", user: MEMBER, views: [1120],
+    path: () => "/",
+    measure: (page) => page.locator('[data-testid="dev-user-switcher"] .select-chevron, .select-trigger .select-chevron').first().evaluate((el) => Number(getComputedStyle(el).opacity)),
+    expect: (value) => value > 0,
+    note: "select chevron opacity > 0 at rest",
+  },
 ];
 // B5는 새(문서 0개) Bundle이면 되므로 mid에서도 W7로 한 번 더 잰다(W7은 같은 DB에 있다)
 AUDIT_ENTRIES.push({ ...AUDIT_ENTRIES.find((entry) => entry.id === "B5"), ds: "mid" });

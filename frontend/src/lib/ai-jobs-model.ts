@@ -33,7 +33,8 @@ export function isRequestActive(request: RecentAiRequest): boolean {
 
 /** 진행 "n / N" - 끝난 작업 수와 전체. 짝 맞추기는 도중에 전체가 는다 */
 export function getRequestProgress(request: RecentAiRequest): { done: number; total: number } {
-  return { done: request.total - request.jobs.queued - request.jobs.running, total: request.total };
+  // 실패는 끝난 수에서 뺀다 - "14 / 14 · 2 failed"가 아니라 "12 / 14"
+  return { done: request.total - request.jobs.queued - request.jobs.running - request.jobs.failed, total: request.total };
 }
 
 export type RequestOutcome = "running" | "queued" | "failed" | "stale" | "cancelled" | "done";

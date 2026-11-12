@@ -524,8 +524,8 @@
   .select-trigger[data-fixed]:focus-visible > .select-value,
   .select-trigger[data-fixed][aria-expanded="true"] > .select-value { transform: none; }
   @media (prefers-reduced-motion: reduce) { .select-value, .select-trigger > .select-chevron { transition: none; } }
-  /* 드롭다운 화살표는 호버·키보드 포커스·열림에서만 보인다. 자리는 늘 차지해 폭이 변하지 않는다(메뉴를 여는 다른 단추도 같은 클래스를 쓴다) */
-  .select-chevron { flex: none; color: var(--ink-3); opacity: 0; transition: opacity var(--dur-fast), transform var(--dur-fast); }
+  /* 드롭다운 화살표는 평소 흐리게 보이고 호버·키보드 포커스·열림에서 진해진다. 자리는 늘 차지해 폭이 변하지 않는다(메뉴를 여는 다른 단추도 같은 클래스를 쓴다) */
+  .select-chevron { flex: none; color: var(--ink-3); opacity: 0.45; transition: opacity var(--dur-fast), transform var(--dur-fast); }
   :is(button, a):not(:disabled):hover > .select-chevron,
   :is(button, a):focus-visible > .select-chevron,
   [aria-expanded="true"] > .select-chevron { opacity: 1; }
@@ -850,6 +850,7 @@
   .ai-pop-bundle { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px 12px 2px; color: var(--ink); }
   .ai-pop-bundle:hover { text-decoration: underline; }
   .ai-pop-req { display: grid; gap: 2px; padding: 6px 12px; min-width: 0; }
+  .ai-pop-req[data-outcome="done"] { padding-block: 3px; }
   .ai-pop-req + .ai-pop-req { border-top: 1px dashed var(--line); }
 
   /* 네모난 두 칸 스위치 - 지금 언어 칸이 채워진다 */
@@ -1208,7 +1209,15 @@
 
   /* 왼쪽 아래 도움말 - 글쇠 | 표시 탭, 접을 수 있다 */
   .help-panel { display: grid; gap: 8px; padding: 8px 10px 10px; border-top: 1px solid var(--line); font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-2); min-width: 0; }
-  .help-panel-body { max-height: 38vh; overflow-y: auto; min-width: 0; }
+  /* 잘리는 쪽(위·아래)에만 그림자 - local 덮개가 맨 끝에서 가려 주므로 스크롤이 남은 쪽만 보인다 */
+  .help-panel-body {
+    max-height: 38vh; overflow-y: auto; min-width: 0;
+    background:
+      linear-gradient(var(--surface) 30%, transparent) top / 100% 16px local no-repeat,
+      linear-gradient(transparent, var(--surface) 70%) bottom / 100% 16px local no-repeat,
+      radial-gradient(farthest-side at 50% 0, color-mix(in oklab, var(--ink) 22%, transparent), transparent) top / 100% 6px scroll no-repeat,
+      radial-gradient(farthest-side at 50% 100%, color-mix(in oklab, var(--ink) 22%, transparent), transparent) bottom / 100% 6px scroll no-repeat;
+  }
   .help-panel-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .help-panel-partner { flex: none; width: 18px; height: 12px; border-radius: 0 2px 2px 0; background: color-mix(in oklab, var(--st-ai-fill) 13%, var(--paper)); box-shadow: inset 3px 0 0 var(--st-ai-ink), inset 0 0 0 1px var(--line-2); }
 
@@ -1350,7 +1359,7 @@
   .chosen-label { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-micro); font-weight: 700; letter-spacing: 0.04em; color: var(--ink-3); }
 
   /* 오른쪽 칸 - 도움말 표시 줄, 아코디언, 추천 카드, 전체 나무 */
-  .help-panel-swatch { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 2px; width: 58px; white-space: nowrap; }
+  .help-panel-swatch { flex: none; display: inline-flex; align-items: center; justify-content: flex-start; gap: 2px; width: 58px; white-space: nowrap; }
   .legend-box { width: 30px; height: 14px; border-radius: var(--r-1); }
   .legend-box[data-state="candidate"] { outline: 1.5px dashed var(--accent); outline-offset: -1.5px; }
   .legend-box[data-state="picked"] { background: var(--accent-tint); box-shadow: inset 0 0 0 1.5px var(--accent); }

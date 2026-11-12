@@ -202,6 +202,8 @@
   --tint2: 32%;
   --shadow-1: 0 1px 2px oklch(0 0 0 / .5), 0 8px 24px oklch(0 0 0 / .28);
   --shadow-2: 0 2px 6px oklch(0 0 0 / .5), 0 14px 40px oklch(0 0 0 / .5);
+  /* 어두운 바탕에서는 42%로 창이 안 떠 보인다 */
+  --scrim: color-mix(in oklab, black 62%, transparent);
 }
 
 /* Table screens: bundle list, documents, To-Be, outputs. */

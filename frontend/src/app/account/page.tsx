@@ -19,7 +19,7 @@ export default function AccountPage() {
   return (
     <div className="mx-auto w-full max-w-2xl space-y-8 px-4 py-10">
       <section data-testid="account-identity" className="space-y-1">
-        <h1 className="page-title ul">{getDisplayName(me, lang)}</h1>
+        <h1 className="page-title ul w-fit">{getDisplayName(me, lang)}</h1>
         <p className="text-sm text-ink-2">{me.login_id}</p>
         {me.dept_path ? (
           <p className="text-sm text-ink-2">{me.dept_path}</p>
@@ -36,14 +36,14 @@ export default function AccountPage() {
         {granted.length === 0 ? (
           <EmptyState icon={KeyRound} testId="account-permissions-empty" title={t("account.permissionsEmpty")} compact />
         ) : (
-          <ul data-testid="account-permissions" className="space-y-2">
+          <ul data-testid="account-permissions" className="divide-y divide-line border-y border-line">
             {granted.map((key) => {
               const sources = me.sources[key] ?? [];
               return (
                 <li
                   key={key}
                   data-testid={`account-permission-${key}`}
-                  className="space-y-1.5 rounded-md border border-line bg-sunken px-3 py-2"
+                  className="space-y-1 py-2"
                 >
                   <div className="text-sm font-semibold text-ink">{t(`permission.${key}`)}</div>
                   {sources.length > 0 && (
