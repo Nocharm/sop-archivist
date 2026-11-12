@@ -3,6 +3,7 @@
 
 import { CornerDownLeft } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
 
 import { getLatestReviewEvent } from "@/lib/api-manage";
 import type { Bundle } from "@/lib/api-sop";
@@ -16,6 +17,38 @@ const NOTE_TITLE: Record<string, string> = {
   "review.reopen": "overview.reopened",
   "review.withdraw": "overview.withdrawn",
 };
+
+/** 사유는 8줄까지만 보이고 아래가 흐려진다 - 잘렸을 때만 "더 보기"가 나타나고 펼치면 안쪽 스크롤 없이 전부 보인다 */
+function ReasonText({ text }: { text: string }) {
+  const { t } = useI18n();
+  const [isOpen, setIsOpen] = useState(false);
+  const [isClipped, setIsClipped] = useState(false);
+  // 접힌 상태에서만 잘림을 잰다(펼치면 값을 그대로 둬 단추가 접기 노릇을 한다)
+  function measureClip(element: HTMLElement | null) {
+    if (element && !isOpen) setIsClipped(element.scrollHeight > element.clientHeight + 1);
+  }
+  return (
+    <div className="grid justify-items-start gap-1">
+      <div className="relative w-full">
+        <p
+          ref={measureClip}
+          className={`whitespace-pre-wrap break-words text-ink ${isOpen ? "" : "max-h-40 overflow-hidden"}`}
+          data-testid="overview-return-reason"
+        >
+          {text}
+        </p>
+        {isClipped && !isOpen && (
+          <span className="pointer-events-none absolute inset-x-0 bottom-0 h-10" style={{ background: "linear-gradient(to top, var(--st-hold-tint), transparent)" }} aria-hidden />
+        )}
+      </div>
+      {(isClipped || isOpen) && (
+        <button type="button" className="text-link" aria-expanded={isOpen} data-testid="overview-return-more" onClick={() => setIsOpen((prev) => !prev)}>
+          {isOpen ? t("common.showLess") : t("common.showMore")}
+        </button>
+      )}
+    </div>
+  );
+}
 
 export function ReviewReturnNote({ bundle }: { bundle: Bundle }) {
   const { t } = useI18n();
@@ -33,11 +66,7 @@ export function ReviewReturnNote({ bundle }: { bundle: Bundle }) {
           {t(titleKey)}
           <span className="font-mono text-[11px] font-normal text-ink-3">{`${event.actor} · ${formatKstShort(event.occurred_at)}`}</span>
         </h2>
-        {event.reason && (
-          <p className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-ink" data-testid="overview-return-reason">
-            {event.reason}
-          </p>
-        )}
+        {event.reason && <ReasonText text={event.reason} />}
         <p className="text-ink-2">
           {t("overview.checksCleared")}{" "}
           <Link href={getStageHref(bundle.id, "outputs")} className="text-link" data-testid="overview-return-outputs">

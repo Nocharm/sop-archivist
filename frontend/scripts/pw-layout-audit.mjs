@@ -549,7 +549,60 @@ const AUDIT_ENTRIES = [
     expect: (value) => value.len >= 1000 && value.h >= 3 * 19,
     note: "reason field of a 1,200-char reason is >= 3 lines (57px) tall",
   },
+  // ---- Task 7: 개요 ----
+  {
+    // A12: 극단 묶음 개요에서 검토 요청 단추가 첫 화면(y <= 800) 안
+    id: "A12", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}`,
+    open: async (page) => { await page.getByTestId("overview-request-review").waitFor({ timeout: T }); },
+    measure: (page) => page.getByTestId("overview-request-review").evaluate((el) => Math.round(el.getBoundingClientRect().bottom)),
+    expect: (value) => value > 0 && value <= 800,
+    note: "request-review button bottom edge is inside the first 800px at 1120",
+  },
+  {
+    // B5: 문서 0개 묶음 개요에 빨강 조건 묶음이 없고 본문이 낮다
+    id: "B5", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => `/bundles/${ids.w[7]}`,
+    open: async (page) => { await page.getByTestId("overview").waitFor({ timeout: T }); },
+    measure: (page) => page.evaluate(() => ({
+      fail: document.querySelectorAll(".gate-group.fail").length,
+      idle: document.querySelectorAll('[data-testid="overview-gate-idle"]').length,
+      h: Math.round(document.querySelector('[data-testid="overview"]').getBoundingClientRect().height),
+      body: (() => { const col = document.querySelector('[data-testid="overview"] > div'); return Math.round(col.lastElementChild.getBoundingClientRect().bottom - col.getBoundingClientRect().top); })(),
+    })),
+    expect: (value) => value.fail === 0 && value.idle === 1 && value.body <= 520,
+    note: "empty bundle overview: no .gate-group.fail, neutral idle line, content column <= 520px",
+  },
+  {
+    // R4: 되돌림 사유가 접힌 채 "더 보기" 단추가 보이고, 누르면 사유가 scrollHeight만큼 자라며 안쪽 스크롤이 없다
+    id: "R4", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[3]}`,
+    open: async (page) => { await page.getByTestId("overview-return-reason").waitFor({ timeout: T }); },
+    measure: async (page) => {
+      const reason = page.getByTestId("overview-return-reason");
+      const more = page.getByTestId("overview-return-more");
+      const visible = await more.isVisible();
+      if (!visible) return { visible };
+      const before = await reason.evaluate((el) => ({ h: el.getBoundingClientRect().height, sh: el.scrollHeight }));
+      await more.click();
+      await page.waitForTimeout(600);
+      const after = await reason.evaluate((el) => ({ h: el.getBoundingClientRect().height, sh: el.scrollHeight, ch: el.clientHeight }));
+      return { visible, before, after };
+    },
+    expect: (value) => value.visible && value.after.h > value.before.h && Math.abs(value.after.h - value.after.sh) <= 2 && value.after.sh <= value.after.ch + 1,
+    note: "collapsed reason shows a more button; expanding grows it to its scrollHeight with no inner scroll",
+  },
+  {
+    id: "Focus4", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}`,
+    open: async (page) => { await page.getByTestId("overview-request-review").waitFor({ timeout: T }); },
+    measure: (page) => page.getByTestId("overview-request-review").evaluate((el) => Math.round(el.getBoundingClientRect().height)),
+    expect: (value) => value > 0 && value <= 36,
+    note: "request-review button is one line (<= 36px) at 1120 in English (run with LANGS=en)",
+  },
 ];
+// B5는 새(문서 0개) Bundle이면 되므로 mid에서도 W7로 한 번 더 잰다(W7은 같은 DB에 있다)
+AUDIT_ENTRIES.push({ ...AUDIT_ENTRIES.find((entry) => entry.id === "B5"), ds: "mid" });
 
 // ---------- ids 지도 ----------
 

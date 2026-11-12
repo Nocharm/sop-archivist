@@ -106,6 +106,10 @@ Bundle은 함께 재구성할 문서 묶음입니다. Old SOP 여러 편과 새�
 | **Members** | 구성원과 역할. **Manage** 에서 추가·역할 변경·제외 |
 | **Activity** | 최근 작업 기록. **View all** 은 **History** 로 간다 |
 
+- 검토 요청 단추(**Request review**)는 조건 목록 바로 아래, 안내 위에 있습니다. 장비 SOP 칸이 빈 문서가 둘 이상이면 안내가 한 줄로 묶이고, 그 줄을 누르면 문서 코드가 펼쳐집니다.
+- 문서가 아직 없는 Bundle은 조건 목록 대신 **Not started — add documents first** 한 줄만 보입니다.
+- 검토자가 되돌린 사유가 길면 아래가 흐려지고 **Show more** 가 나타납니다. 누르면 전체가 펼쳐지고 **Show less** 로 다시 접습니다.
+
 ### 제목·설명·삭제 {#bundle-edit}
 
 - 제목이나 설명에 마우스를 올리면 나오는 연필 단추를 눌러 그 자리에서 고칩니다. 제목은 <kbd>Enter</kbd>, 여러 줄인 설명은 <kbd>Ctrl</kbd>+<kbd>Enter</kbd>로 저장하고 <kbd>Esc</kbd>로 취소합니다.

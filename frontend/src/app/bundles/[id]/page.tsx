@@ -50,7 +50,7 @@ import { loadBundle, putBundle, useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
 import { getStageHref, NEXT_ACTION_STAGE, STAGES } from "@/lib/stages";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
-import { GATE_STAGE, splitGates, type GateKey } from "@/lib/review-gates";
+import { GATE_STAGE, groupNotices, isNoticeGroup, splitGates, type GateKey } from "@/lib/review-gates";
 import { useLoaded, type Loaded } from "@/lib/use-loaded";
 import { getBundleLabel } from "@/lib/bundle-label";
 
@@ -170,6 +170,14 @@ function CoverageBar({ progress, lang }: { progress: LangProgress; lang: string 
 
 function Coverage({ bundle }: { bundle: Bundle }) {
   const { t } = useI18n();
+  // 문서가 없으면 0% 막대와 빈 표 대신 흐린 한 줄 - 아직 시작 전이라는 말만 한다
+  if (bundle.document_count === 0) {
+    return (
+      <section className="rounded-lg border border-line px-4 py-2.5 text-ink-3" data-testid="overview-coverage" data-idle="">
+        {t("overview.notStarted")}
+      </section>
+    );
+  }
   return (
     <section className="grid gap-2.5 rounded-lg border border-line bg-surface px-4 py-3.5" data-testid="overview-coverage">
       <h2 className="text-xs font-semibold text-ink-3">{t("overview.coverage")}</h2>
@@ -291,6 +299,36 @@ function NextActionCard({ bundle, onRequestReview, onAddReviewer }: { bundle: Bu
   );
 }
 
+/** 같은 안내가 여러 문서에 걸치면 한 줄로 접고, 누르면 문서 코드가 펼쳐진다 */
+function NoticeGroupLine({ docs }: { docs: string[] }) {
+  const { t } = useI18n();
+  const [isOpen, setIsOpen] = useState(false);
+  return (
+    <div className="grid gap-1.5" data-testid="overview-notice-group-box">
+      <button
+        type="button"
+        className="grid grid-cols-[16px_minmax(0,1fr)_14px] gap-2 text-left text-ink-2"
+        aria-expanded={isOpen}
+        data-testid="overview-notice-group"
+        onClick={() => setIsOpen((prev) => !prev)}
+      >
+        <Info size={16} strokeWidth={1.5} className="mt-[3px] text-ink-3" aria-hidden />
+        <span>{t("notice.equipmentSlotsGroup", { n: docs.length })}</span>
+        <ChevronRight size={14} strokeWidth={1.5} className={`mt-[3px] text-ink-3 transition-transform ${isOpen ? "rotate-90" : ""}`} aria-hidden />
+      </button>
+      {isOpen && (
+        <ul className="m-0 grid list-none gap-0.5 pl-6 font-mono text-[11px] text-ink-3" data-testid="overview-notice-group-docs">
+          {docs.map((doc, index) => (
+            <li key={`${doc}-${index}`} className="break-all">
+              {doc}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 interface ReviewGateProps {
   bundle: Bundle;
   readiness: Loaded<Readiness>;
@@ -308,16 +346,18 @@ function ReviewGate({ bundle, readiness, onRequestReview, onAddReviewer }: Revie
   const isAuthor = bundle.my_role === "author";
   const canRequest = data?.ready === true && isAuthor && bundle.status === "in_progress";
   const [showAll, setShowAll] = useState(false);
+  const isIdle = bundle.document_count === 0;
   const lines = data === null ? [] : buildGateLines(data, semanticTotal, t);
   const split = splitGates(lines, showAll ? Infinity : GATES_PREVIEW);
   const hidden = split.failHidden + split.passHidden;
   const passed = lines.filter((line) => line.ok).length;
+  const groupedNotices = groupNotices(data?.notices ?? []);
 
   return (
     <section className="side-box grid gap-2.5" data-testid="overview-gate">
       <h2 className="side-box-title">
         {t("overview.reviewRequest")}
-        {data !== null && <span className="font-mono text-[11px] font-normal text-ink-3">{`${passed} / ${lines.length}`}</span>}
+        {data !== null && !isIdle && <span className="font-mono text-[11px] font-normal text-ink-3">{`${passed} / ${lines.length}`}</span>}
       </h2>
       {error !== null && data === null ? (
         <div className="flex items-center gap-2 text-ink-2" data-testid="overview-gate-error">
@@ -328,6 +368,11 @@ function ReviewGate({ bundle, readiness, onRequestReview, onAddReviewer }: Revie
             </button>
           </Tooltip>
         </div>
+      ) : isIdle && data !== null ? (
+        // 문서가 없으면 조건 여덟 줄이 전부 빨개 보인다 - 중립 한 줄로 대신한다
+        <p className="text-ink-3" data-testid="overview-gate-idle">
+          {t("overview.notStarted")}
+        </p>
       ) : (
         <div className="grid gap-2" data-testid="overview-gate-list" {...tip.handlers}>
           {data === null ? (
@@ -391,14 +436,6 @@ function ReviewGate({ bundle, readiness, onRequestReview, onAddReviewer }: Revie
           {tip.node}
         </div>
       )}
-      {data?.notices.map((notice, index) => (
-        <p key={`${notice.code}-${index}`} className="grid grid-cols-[16px_minmax(0,1fr)] gap-2 text-ink-2" data-testid={`overview-notice-${notice.code}`}>
-          <Info size={16} strokeWidth={1.5} className="mt-[3px] text-ink-3" aria-hidden />
-          {notice.code === "equipment_sop_empty_slots"
-            ? t("notice.equipmentSlots", { doc: String(notice.doc_code ?? "") })
-            : t("notice.sentenceWarnings", { n: notice.count ?? 0 })}
-        </p>
-      ))}
       {bundle.status === "in_progress" && (
         <>
           <button type="button" className="btn wide" data-testid="overview-request-review" disabled={!canRequest} onClick={onRequestReview}>
@@ -414,6 +451,18 @@ function ReviewGate({ bundle, readiness, onRequestReview, onAddReviewer }: Revie
       )}
       {/* 요청한 자리에서 물린다 - 검토자가 보기 전에 고칠 것이 생긴 작성자의 길 */}
       {bundle.status === "in_review" && isAuthor && <WithdrawReviewButton bundle={bundle} className="btn wide" testId="overview-withdraw-review" />}
+      {groupedNotices.map((notice) =>
+        isNoticeGroup(notice) ? (
+          <NoticeGroupLine key={notice.code} docs={notice.docs} />
+        ) : (
+          <p key={`${notice.code}-${notice.doc_code ?? ""}`} className="grid grid-cols-[16px_minmax(0,1fr)] gap-2 text-ink-2" data-testid={`overview-notice-${notice.code}`}>
+            <Info size={16} strokeWidth={1.5} className="mt-[3px] text-ink-3" aria-hidden />
+            {notice.code === "equipment_sop_empty_slots"
+              ? t("notice.equipmentSlots", { doc: String(notice.doc_code ?? "") })
+              : t("notice.sentenceWarnings", { n: notice.count ?? 0 })}
+          </p>
+        ),
+      )}
     </section>
   );
 }
