@@ -116,6 +116,7 @@ import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 import { usePaneZoom, type PaneKey, type ZoomDir } from "@/lib/use-pane-zoom";
 import { Select } from "@/components/ui/select";
+import { LangMark } from "@/components/lang-mark";
 
 type Filter = ClassifyFilter;
 const FILTERS: Filter[] = ["unassigned", "ai_suggested", "on_hold", "confirmed", "all"];
@@ -859,9 +860,7 @@ export default function AssignPage() {
           foot={
             <>
               {langs.map((lang) => (
-                <span key={lang} className={`ptag ${lang}`}>
-                  {lang === "neutral" ? "–" : lang.toUpperCase()}
-                </span>
+                <LangMark key={lang} lang={lang} />
               ))}
               {section && <span className="dest-card-sec">§ {section}</span>}
               {chip}
@@ -931,7 +930,7 @@ export default function AssignPage() {
     if (nearAnchor?.kind === "link") {
       return nearLinks.map((item) => (
         <button key={item.target_id} type="button" className="tree-leaf" data-testid={`assign-near-${item.target_id}`} onClick={(event) => pickNewSentence(item.target_id, event.ctrlKey || event.metaKey)}>
-          <span className={`ptag ${item.lang}`}>{item.lang.toUpperCase()}</span>
+          <LangMark lang={item.lang} />
           {item.text}
         </button>
       ));
@@ -980,7 +979,7 @@ export default function AssignPage() {
           return (
             <div key={slot.key} className="grid gap-1">
               <div className={`grid min-h-[60px] grid-cols-[22px_minmax(0,1fr)] gap-2 rounded-md bg-surface px-2.5 py-2 ${editing ? "border border-focus" : "border border-dashed border-line-2"}`}>
-                <span className="lg">{slot.lang === "neutral" ? "–" : slot.lang.toUpperCase()}</span>
+                <LangMark lang={slot.lang} />
                 {editing ? (
                   <textarea
                     ref={index === 0 ? firstTextRef : undefined}

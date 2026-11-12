@@ -21,6 +21,7 @@ import { useListView } from "@/lib/use-list-view";
 import { useLoaded } from "@/lib/use-loaded";
 import { useProgressiveList } from "@/lib/use-progressive-list";
 import { showToast } from "@/components/ui/toast";
+import { LangMark } from "@/components/lang-mark";
 
 const SKELETON_ROWS = 3;
 const LIST_KEY = "bundles";
@@ -107,7 +108,7 @@ export default function BundleListPage() {
       key: "ko",
       header: (
         <>
-          <span className="lg">KO</span> {t("bundles.colConfirmed")}
+          <LangMark lang="ko" /> {t("bundles.colConfirmed")}
         </>
       ),
       align: "end",
@@ -120,7 +121,7 @@ export default function BundleListPage() {
       key: "en",
       header: (
         <>
-          <span className="lg">EN</span> {t("bundles.colConfirmed")}
+          <LangMark lang="en" /> {t("bundles.colConfirmed")}
         </>
       ),
       align: "end",

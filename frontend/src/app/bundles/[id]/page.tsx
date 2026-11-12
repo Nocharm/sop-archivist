@@ -53,6 +53,7 @@ import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { GATE_STAGE, groupNotices, isNoticeGroup, splitGates, type GateKey } from "@/lib/review-gates";
 import { useLoaded, type Loaded } from "@/lib/use-loaded";
 import { getBundleLabel } from "@/lib/bundle-label";
+import { LangMark } from "@/components/lang-mark";
 
 type TFunc = (key: string, vars?: Record<string, string | number>) => string;
 
@@ -147,10 +148,10 @@ function countPending(progress: Bundle["progress"]): number {
   }, 0);
 }
 
-function CoverageBar({ progress, lang }: { progress: LangProgress; lang: string }) {
+function CoverageBar({ progress, lang }: { progress: LangProgress; lang: "ko" | "en" }) {
   return (
     <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-3">
-      <span className="lg">{lang.toUpperCase()}</span>
+      <LangMark lang={lang} />
       <div className="flex h-2 min-w-0 gap-0.5" data-testid={`overview-bar-${lang}`}>
         {progress.total === 0 ? (
           <span className="block h-full flex-1 rounded bg-line" />
@@ -188,7 +189,7 @@ function Coverage({ bundle }: { bundle: Bundle }) {
           return (
             <div key={lang} className="grid gap-0.5" data-testid={`overview-rate-${lang}`}>
               <span className="flex items-center gap-1.5 text-xs text-ink-3">
-                <span className="lg">{lang.toUpperCase()}</span>
+                <LangMark lang={lang} />
                 Confirmed
               </span>
               <span className="flex items-baseline gap-2 tabular-nums">
@@ -226,7 +227,7 @@ function Coverage({ bundle }: { bundle: Bundle }) {
           {PROGRESS_LANGS.map((lang) => (
             <tr key={lang} className="border-t border-line">
               <td className="py-1">
-                <span className="lg">{lang.toUpperCase()}</span>
+                <LangMark lang={lang} />
               </td>
               {COVER_STATES.map((state) => (
                 <td key={state.key} className="py-1 pl-3 text-right">

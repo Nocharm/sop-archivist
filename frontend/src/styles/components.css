@@ -1158,9 +1158,10 @@
   .lbadge[data-ai][data-dir="otherDoc"] { color: var(--st-ai-ink); }
   /* 한 줄 조각에 끝 표시(오른쪽 위)와 배지가 함께면 겹치지 않게 높이를 둔다 */
   .pg[data-strips] .strip:has(> .lbadge):has(> .strip-marks) { min-height: 56px; }
-  .ptag { display: inline-grid; place-items: center; min-width: 24px; height: 17px; padding: 0 4px; border-radius: var(--r-1); font: 700 10px / 1 var(--font-mono); }
-  .ptag.ko { background: color-mix(in oklab, var(--lang-ko) 16%, var(--paper)); color: var(--lang-ko); }
-  .ptag.en { background: color-mix(in oklab, var(--lang-en) 18%, var(--paper)); color: var(--lang-en); }
+  .lmark { display: inline-flex; align-items: center; gap: 4px; flex: none; font: 700 10px / 1 var(--font-mono); color: var(--ink-2); }
+  .lmark::before { content: ""; width: 3px; height: 13px; background: var(--ink-4); }
+  .lmark[data-lang="ko"]::before { background: var(--lang-ko); }
+  .lmark[data-lang="en"]::before { background: var(--lang-en); }
 
   /* 종이 오른쪽 끝 아이콘 표시 */
   .strip-marks { position: absolute; right: 9px; top: 11px; display: flex; gap: 5px; align-items: center; }
@@ -1444,9 +1445,9 @@
   .tree-kids { display: grid; gap: 1px; padding-left: 18px; }
   .tree-section { margin: 4px 0 0; font-size: var(--fs-micro); font-weight: 600; color: var(--ink-3); }
   .tree-leaf { display: block; width: 100%; padding: 4px 8px; border-radius: var(--r-1); font-size: var(--fs-cap); line-height: 17px; color: var(--ink-2); text-align: left; cursor: pointer; }
-  .tree-leaf .ptag { margin-right: 5px; }
   .tree-leaf:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
   .tree-leaf:disabled { color: var(--ink-4); cursor: not-allowed; }
+  .tree-leaf .lmark { margin-right: 5px; vertical-align: middle; }
 
   .mini-chip { height: 24px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: var(--r-1); font-size: var(--fs-micro); color: var(--ink-2); cursor: pointer; }
   .mini-chip:hover { background: var(--hover); color: var(--ink); }

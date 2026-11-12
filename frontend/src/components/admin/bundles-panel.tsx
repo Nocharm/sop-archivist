@@ -25,6 +25,7 @@ import { useListView } from "@/lib/use-list-view";
 import { useLoaded } from "@/lib/use-loaded";
 import { useProgressiveList } from "@/lib/use-progressive-list";
 import { getBundleLabel } from "@/lib/bundle-label";
+import { LangMark } from "@/components/lang-mark";
 
 const LIST_KEY = "admin-bundles";
 
@@ -91,8 +92,8 @@ export function BundlesPanel() {
         />
       ),
     },
-    { key: "ko", header: <span className="lg">KO</span>, cardLabel: <span className="lg">KO</span>, align: "end", nowrap: true, skeletonWidth: 60, cell: (bundle) => <ProgressText progress={bundle.progress.ko} /> },
-    { key: "en", header: <span className="lg">EN</span>, cardLabel: <span className="lg">EN</span>, align: "end", nowrap: true, skeletonWidth: 60, cell: (bundle) => <ProgressText progress={bundle.progress.en} /> },
+    { key: "ko", header: <LangMark lang="ko" />, cardLabel: <LangMark lang="ko" />, align: "end", nowrap: true, skeletonWidth: 60, cell: (bundle) => <ProgressText progress={bundle.progress.ko} /> },
+    { key: "en", header: <LangMark lang="en" />, cardLabel: <LangMark lang="en" />, align: "end", nowrap: true, skeletonWidth: 60, cell: (bundle) => <ProgressText progress={bundle.progress.en} /> },
     {
       key: "created",
       header: t("adminBundles.created"),
