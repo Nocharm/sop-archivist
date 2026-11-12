@@ -23,10 +23,13 @@ export interface StripLeadProps {
 
 export function StripLead({ width, number, lang, bracket, dim, tip, testId, id, onClick }: StripLeadProps) {
   const tipAttr = tip === "" ? undefined : tip;
+  // 좁은 창에서 번호 칸이 말줄임되면 전체 번호를 볼 길이 툴팁뿐이다(글 앞 번호도 숨겼으므로)
+  const shownNumber = !dim && number ? `§ ${number}` : null;
+  const numTip = [shownNumber, tipAttr].filter(Boolean).join(" · ") || undefined;
   return (
     <span className="strip-lead" style={{ width: width + STRIP_LEAD_EXTRA }} data-bracket={bracket} data-dim={dim ? "" : undefined} data-testid={`${testId}-lead-${id}`} onClick={onClick}>
       {tipAttr && <span className="sr-only">{tipAttr}</span>}
-      <span className="strip-lead-num" data-tip={tipAttr} data-testid={number !== null ? `${testId}-num-${id}` : undefined}>
+      <span className="strip-lead-num" data-tip={numTip} data-testid={number !== null ? `${testId}-num-${id}` : undefined}>
         {!dim && number}
       </span>
       <span className="strip-lead-bar" data-lang={lang ?? undefined} data-tip={tipAttr} aria-hidden />
