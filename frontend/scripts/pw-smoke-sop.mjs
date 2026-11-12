@@ -688,9 +688,13 @@ await runStep("assign: an AI split keeps both sentences when confirmed", {}, asy
   }
   await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
   await wait(page, "assign-bar");
-  await page.keyboard.press("j");
-  await page.keyboard.press("j");
-  await page.locator('[data-testid="assign-ai-request"]').click();
+  // 앞 단계가 첫 줄들을 보류로 둔다(H 보류·Assign 보류, AI 나눔을 되돌린 문장은 짝이 풀려 제 줄) - 요청 단추가 있는 미배정 줄까지 내려간다
+  const aiRequest = page.locator('[data-testid="assign-ai-request"]');
+  for (let step = 0; step < 10 && (await aiRequest.count()) === 0; step += 1) {
+    await page.keyboard.press("j");
+    await page.waitForTimeout(200);
+  }
+  await aiRequest.click();
   // 상단 바 표시가 대기·실행 중을 보인다(워커가 2초마다 꺼내므로 요청 직후에는 대기 중이다)
   await page.locator('[data-testid="top-bar-ai"][data-state="active"]').waitFor({ timeout: T });
   check("the top bar shows the AI job in progress", (await getText(page, "top-bar-ai-active")).trim() === "1");
