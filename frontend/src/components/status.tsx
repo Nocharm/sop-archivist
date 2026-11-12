@@ -1,7 +1,7 @@
 // 상태 표시 - 라벨은 화면 언어와 상관없이 영어(디자인 문서 10절). 아이콘·선 모양·라벨을 함께 써서 색만으로 구분하지 않는다.
 "use client";
 
-import { Circle, CircleCheck, CircleDashed, CirclePause, CircleX, Clock } from "lucide-react";
+import { Circle, CircleCheck, CircleDashed, CirclePause, CircleX, Clock, type LucideIcon } from "lucide-react";
 
 import type { BundleStatus, CoverStatus, MemberRole } from "@/lib/api-sop";
 import { translateOrRaw } from "@/lib/admin-format";
@@ -34,11 +34,11 @@ export function RoleTag({ role, testId }: { role: MemberRole; testId?: string })
   );
 }
 
-const UNIT_STATUS: Record<CoverStatus, { tone: string; Icon: typeof Circle }> = {
-  unassigned: { tone: "none", Icon: Circle },
-  ai_suggested: { tone: "ai", Icon: CircleDashed },
-  confirmed: { tone: "ok", Icon: CircleCheck },
-  on_hold: { tone: "hold", Icon: CirclePause },
+const UNIT_STATUS: Record<CoverStatus, { Icon: typeof Circle }> = {
+  unassigned: { Icon: Circle },
+  ai_suggested: { Icon: CircleDashed },
+  confirmed: { Icon: CircleCheck },
+  on_hold: { Icon: CirclePause },
 };
 
 // 줄 머리 아이콘 색 - 확정은 주 버튼 색, 나머지는 의미 채움색
@@ -49,14 +49,28 @@ const UNIT_ICON_COLOR: Record<CoverStatus, string> = {
   on_hold: "var(--st-hold-fill)",
 };
 
-export function UnitStatusPill({ status, testId }: { status: CoverStatus; testId?: string }) {
+// Unit 상태 칩 - 줄 상태·결과물 A·용지 보류·Assign 필터가 한 벌(.schip). 글자는 영어 상태 이름 그대로, 대문자는 CSS만
+export type ChipTone = CoverStatus | "all" | "danger";
+
+export function UnitStatusChip({ status, size = "md", testId }: { status: CoverStatus; size?: "md" | "sm"; testId?: string }) {
   const { t } = useI18n();
-  const { tone, Icon } = UNIT_STATUS[status];
+  const { Icon } = UNIT_STATUS[status];
   return (
-    <span className={`pill ${tone}`} data-testid={testId}>
-      <Icon size={12} strokeWidth={1.5} aria-hidden />
+    <span className="schip" data-tone={status} data-size={size} data-testid={testId}>
+      <Icon size={size === "sm" ? 10 : 12} strokeWidth={1.75} aria-hidden />
       {t(`status.unit.${status}`)}
     </span>
+  );
+}
+
+// 필터 단추 - 누르는 칩(26px), 고르면 꽉 찬 색. 수는 뒤에 옅게
+export function FilterChip({ tone, label, count, selected, onClick, testId, icon: Icon }: { tone: ChipTone; label: string; count: number; selected: boolean; onClick: () => void; testId: string; icon: LucideIcon }) {
+  return (
+    <button type="button" role="tab" aria-selected={selected} className="schip schip-btn" data-tone={tone} data-testid={testId} onClick={onClick}>
+      <Icon size={13} strokeWidth={1.75} aria-hidden />
+      {label}
+      <span className="schip-n">{count}</span>
+    </button>
   );
 }
 

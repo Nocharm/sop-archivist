@@ -208,6 +208,17 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   const pieces = page.locator('[data-testid^="split-paper-piece-"].strip');
   check("every unit is its own piece from the start", (await pieces.count()) > 10 && (await page.locator('[data-testid^="split-paper-mark-checked-"]').count()) === 0, String(await pieces.count()));
   check("merge controls sit between text pieces", (await page.locator('.strip-gap [data-testid^="split-paper-merge-"]').count()) > 5);
+  // 절 번호는 앞머리 번호 칸에 한 번만 - 머리 줄 글 앞의 같은 번호는 그리지 않고(표시만) 첫 글자 조각의 data-start가 그만큼 밀린다
+  const heads = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-testid^="split-paper-num-"]')].map((num) => {
+      const id = num.getAttribute("data-testid").replace("split-paper-num-", "");
+      const first = document.querySelector(`[data-testid="split-paper-piece-${id}"] .su [data-start]`);
+      return { number: num.textContent.trim(), text: first?.textContent.trim() ?? "", start: Number(first?.getAttribute("data-start") ?? 0) };
+    }),
+  );
+  const doubled = heads.filter((head) => head.text.startsWith(head.number));
+  check("head rows do not repeat their section number", heads.length > 0 && doubled.length === 0, doubled.map((head) => `${head.number}|${head.text.slice(0, 20)}`).join(", "));
+  check("a head row hides its leading number", heads.some((head) => head.start > 0), String(heads.length));
   // 영어 문장 하나를 찾아 고른다 - 한 번 더 누르면 아무것도 안 하고, 두 번 누르기(더블클릭)가 나눌 선을 만든다
   const target = page.locator('[data-testid^="split-paper-unit-"].su[lang="en"]', { hasText: " " }).nth(2);
   const unitId = (await target.getAttribute("data-testid")).replace("split-paper-unit-", "");
@@ -437,7 +448,8 @@ await runStep("to-be: removing a step keeps the other numbers, leaving asks firs
 });
 
 // Assign(v0.10.0) - Old 원문 조각이 곧 목록이다. 줄은 ↑↓·J/K로 옮기고, 지금 줄은 오른쪽 머리(assign-row-id·assign-row-status)로 읽는다
-const rowStatus = async (page) => (await getText(page, "assign-row-status")).trim();
+// 상태 칩은 대문자를 CSS(text-transform)로만 그린다 - innerText는 대문자가 되니 DOM 글자(textContent)로 읽는다
+const rowStatus = async (page) => ((await page.locator('[data-testid="assign-row-status"]').first().textContent()) ?? "").trim();
 const rowIds = async (page) => (await getText(page, "assign-row-id")).trim();
 async function selectRowById(page, id) {
   await page.locator('[data-testid="assign-filter-all"]').click();
@@ -475,7 +487,9 @@ await runStep("assign: legend first, place, delete with reason, edit, clear, bul
   await page.reload();
   await wait(page, "assign-pick-prompt");
   check("help open state and tab are remembered", (await page.locator('[data-testid="assign-help-toggle"]').getAttribute("aria-expanded")) === "true" && (await page.locator('[data-testid="assign-help-tab-marks"]').getAttribute("aria-selected")) === "true");
-  check("unassigned filter first", (await page.locator('[data-testid="assign-filter-unassigned"]').getAttribute("aria-selected")) === "true");
+  // 첫 진입은 All - 용지 전부, 접힘 없음(2026-11-12)
+  check("All filter first, nothing folded", (await page.locator('[data-testid="assign-filter-all"]').getAttribute("aria-selected")) === "true" && (await page.locator('[data-testid^="assign-paper-fold-run-"]').count()) === 0);
+  await page.locator('[data-testid="assign-filter-unassigned"]').click();
   await page.keyboard.press("j");
   await wait(page, "assign-row-id");
   check("J picks the first open unit", (await rowStatus(page)) === "Unassigned", await rowStatus(page));
@@ -511,8 +525,8 @@ await runStep("assign: legend first, place, delete with reason, edit, clear, bul
   await page.keyboard.press("u");
   await page.waitForFunction(() => document.querySelector('[data-testid="assign-row-status"]')?.textContent?.includes("Unassigned"), null, { timeout: T });
   check("U clears the unit", true);
-  // 일괄 - Shift+클릭으로 여럿
-  await page.locator('[data-testid="assign-filter-unassigned"]').click();
+  // 일괄 - Shift+클릭으로 여럿(All이라 용지 전부 - 필터를 걸면 맞지 않는 조각은 접힌다)
+  await page.locator('[data-testid="assign-filter-all"]').click();
   const units = page.locator('[data-testid^="assign-paper-unit-"]');
   await units.nth(4).click({ modifiers: ["Shift"] });
   await units.nth(6).click({ modifiers: ["Shift"] });
@@ -1105,7 +1119,10 @@ await runStep("assign: AI suggestions come first and confirm one by one", {}, as
   const aiId = Number((await aiRow.getAttribute("data-testid")).replace("bundles-row-", ""));
   await page.goto(`${BASE}/bundles/${aiId}/assign`);
   await wait(page, "assign-bar");
-  check("AI suggested filter opens first", (await page.locator('[data-testid="assign-filter-ai_suggested"]').getAttribute("aria-selected")) === "true");
+  check("opens on All", (await page.locator('[data-testid="assign-filter-all"]').getAttribute("aria-selected")) === "true");
+  await page.locator('[data-testid="assign-filter-ai_suggested"]').click();
+  // 필터 단추에 포커스가 남으면 아래 Enter가 필터를 다시 누른다
+  await page.locator('[data-testid="assign-filter-ai_suggested"]').blur();
   await page.keyboard.press("j");
   await wait(page, "assign-rec-0");
   check("the AI suggestion is the first card", (await getText(page, "assign-rec-0")).includes("AI"));
@@ -1117,6 +1134,123 @@ await runStep("assign: AI suggestions come first and confirm one by one", {}, as
   await page.goto(`${BASE}/bundles/${halfBundleId}/split`);
   await page.locator('[data-testid^="figure-"]').first().waitFor({ timeout: T });
   check("figure image loads on the paper", true);
+});
+
+// 필터 접기(2026-11-12) - 필터를 걸면 맞는 문장만 제 모양, 앞뒤 한 줄, 나머지는 묶음 한 줄. 목록은 걸 때의 스냅숏이라 확정해도 접히지 않는다
+await runStep("assign: a status filter folds the Old paper", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/`);
+  await page.locator('[data-testid^="bundles-row-"]').first().waitFor({ timeout: T });
+  const aiRow = page.locator('[data-testid^="bundles-row-"]', { hasText: "AI 제안" });
+  const bundleId = (await aiRow.count()) > 0 ? Number((await aiRow.getAttribute("data-testid")).replace("bundles-row-", "")) : halfBundleId;
+  await page.goto(`${BASE}/bundles/${bundleId}/assign`);
+  await wait(page, "assign-bar");
+  const old = '[data-testid="assign-old"]';
+  const countOf = (selector) => page.locator(selector).count();
+  const holdCount = Number(await page.locator('[data-testid="assign-filter-on_hold"] .schip-n').textContent());
+  const filter = holdCount > 0 ? "on_hold" : "unassigned";
+  const filterCount = Number(await page.locator(`[data-testid="assign-filter-${filter}"] .schip-n`).textContent());
+  // 맞는 줄 = 엿보기가 아닌 조각(이웃한 짝 카드의 아래 줄은 위 줄과 한 줄)
+  const fullCards = `${old} .strip-row:not([data-peek]) > .strip:not([data-bracket="bottom"])`;
+  await page.locator(`[data-testid="assign-filter-${filter}"]`).click();
+  // 문서·부분마다 맞는 줄을 더하면 필터 수 - 맞는 것이 없는 곳은 빈 상태와 바로 가기
+  const docTrigger = page.locator('[data-testid="assign-old-doc"]');
+  const docValues = (await docTrigger.count()) > 0 ? await (async () => {
+    await docTrigger.click();
+    const values = await page.locator('[data-testid^="assign-old-doc-option-"]').evaluateAll((els) => els.map((el) => el.dataset.testid));
+    await page.keyboard.press("Escape");
+    return values;
+  })() : [null];
+  let drawn = 0;
+  let sawEmpty = false;
+  for (const value of docValues) {
+    if (value) {
+      await docTrigger.click();
+      await page.locator(`[data-testid="${value}"]`).click();
+    }
+    const tabs = await page.locator('[data-testid^="assign-tab-"]:not([data-testid="assign-tabs"])').evaluateAll((els) => els.map((el) => el.dataset.testid));
+    for (const tab of tabs.length > 0 ? tabs : [null]) {
+      if (tab) await page.locator(`[data-testid="${tab}"]`).click();
+      await page.locator(`${old} .strip-row, [data-testid="assign-fold-empty"]`).first().waitFor({ timeout: T });
+      if ((await countOf('[data-testid="assign-fold-empty"]')) > 0) {
+        if (!sawEmpty) await takeShot("sop-assign-fold-empty.png");
+        // 필터 수가 0보다 크니 맞는 곳이 어딘가에 있다 - 빈 상태마다 바로 가기가 있어야 한다
+        if (!sawEmpty) check("an empty part offers where the matches are", (await countOf('[data-testid^="assign-fold-go-"]')) > 0);
+        sawEmpty = true;
+        continue;
+      }
+      drawn += await countOf(fullCards);
+    }
+  }
+  check("matched rows over all documents and parts equal the filter count", drawn === filterCount, `${drawn} / ${filterCount}`);
+  // 맞는 것이 있는 곳으로 - 빈 상태면 바로 가기, 아니면 첫 문서
+  const go = page.locator('[data-testid^="assign-fold-go-"]').first();
+  if (sawEmpty && (await go.count()) > 0) {
+    await go.click();
+  } else if (docValues[0]) {
+    await docTrigger.click();
+    await page.locator(`[data-testid="${docValues[0]}"]`).click();
+  }
+  await page.locator(fullCards).first().waitFor({ timeout: T });
+  check("the filter folds the rest into runs", (await countOf('[data-testid^="assign-paper-fold-run-"]')) >= 1 || (await countOf('[data-testid^="assign-paper-fold-line-"]')) >= 1);
+  await takeShot("sop-assign-fold.png");
+  // 묶음 한 줄 - 키보드로 펼치면 한 줄 판들과 접기 손잡이
+  const run = page.locator('[data-testid^="assign-paper-fold-run-"]').first();
+  if ((await run.count()) > 0) {
+    const linesBefore = await countOf('[data-testid^="assign-paper-fold-line-"]');
+    const runKey = ((await run.getAttribute("data-testid")) ?? "").replace("assign-paper-fold-run-", "");
+    await run.focus();
+    await page.keyboard.press("Enter");
+    await wait(page, `assign-paper-fold-head-${runKey}`);
+    check("Enter on a run opens its lines under a collapse handle", (await countOf('[data-testid^="assign-paper-fold-line-"]')) > linesBefore);
+  }
+  // 한 줄 판을 누르면 엿보기 - 고르지는 않는다
+  await page.locator('[data-testid^="assign-paper-fold-line-"]').first().click();
+  await page.locator(`${old} .strip-row[data-peek]`).first().waitFor({ timeout: T });
+  check("a line opens as a peek without picking it", (await countOf('[data-testid="assign-row-id"]')) === 0);
+  await page.locator(`${old} .strip-row[data-peek]`).first().scrollIntoViewIfNeeded();
+  await takeShot("sop-assign-fold-peek.png");
+  // 같은 필터를 다시 누르면 모두 접힌다
+  await page.locator(`[data-testid="assign-filter-${filter}"]`).click();
+  await page.locator(`${old} .strip-row[data-peek]`).first().waitFor({ state: "detached", timeout: T });
+  check("clicking the same filter folds everything again", (await countOf('[data-testid^="assign-paper-fold-head-"]')) === 0);
+  // 맞는 줄을 확정해도 그 자리에 제 모양으로 남는다(스냅숏)
+  await page.keyboard.press("j");
+  await wait(page, "assign-row-id");
+  const pickedId = await page.locator(`${old} .strip[data-sel]`).first().getAttribute("data-strip-unit");
+  await pickFirstPlace(page);
+  const saved = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
+  await page.locator('[data-testid="assign-primary"]').click();
+  check("the matched row confirms", (await saved).ok());
+  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
+  // 확정하면 다음 미확정 줄(다른 문서일 수 있다)로 간다 - K로 돌아오면 목록에 그대로 있고 제 모양이다
+  await page.waitForFunction((id) => document.querySelector('[data-pane="old"] .strip[data-sel]')?.getAttribute("data-strip-unit") !== id, pickedId, { timeout: T });
+  await page.keyboard.press("k");
+  await page.locator(`${old} .strip[data-sel][data-strip-unit="${pickedId}"]`).waitFor({ timeout: T });
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-row-status"]')?.textContent?.includes("Confirmed"), null, { timeout: T });
+  check("a confirmed matched row stays in the list in full, not folded", (await countOf(`${old} .strip-row:not([data-peek]) > .strip[data-sel][data-strip-unit="${pickedId}"]`)) === 1);
+  // New 출처 칩으로 필터 밖(접힌) Unit에 가면 저절로 엿보기로 펼쳐 보인다 - 고른 줄을 따라 New 문서가 바뀌므로 다 받은 뒤에 칩을 찾는다
+  await page.waitForLoadState("networkidle");
+  await page.waitForTimeout(500);
+  const chips = await page.locator('[data-testid^="assign-new-src-"]').evaluateAll((els) => els.map((el) => el.dataset.testid));
+  let target = null;
+  for (const chip of chips) {
+    const unitId = chip.split("-").pop();
+    if ((await countOf(`${old} [data-unit="${unitId}"]`)) === 0) {
+      target = { chip, unitId };
+      break;
+    }
+  }
+  check("a New source chip points at a folded Old unit", target !== null);
+  if (target) {
+    await page.locator(`[data-testid="${target.chip}"]`).click();
+    await page.locator(`${old} [data-flash] [data-unit="${target.unitId}"]`).waitFor({ timeout: T });
+    check("the folded source opens as a peek and flashes", (await countOf(`${old} .strip-row[data-peek] [data-unit="${target.unitId}"]`)) >= 1);
+    await page.keyboard.press("Escape");
+    await page.locator('[data-testid="assign-link-menu"]').waitFor({ state: "detached", timeout: T });
+    await page.keyboard.press("j");
+    await page.waitForFunction((id) => document.querySelector('[data-pane="old"] .strip[data-sel]')?.getAttribute("data-strip-unit") !== id, target.unitId, { timeout: T });
+    check("J from a peek goes to a matched row", (await countOf(`${old} .strip-row:not([data-peek]) > .strip[data-sel]`)) === 1);
+  }
 });
 
 await runStep("assign: reset a document, then the whole bundle, after a dry-run count", {}, async ({ page, takeShot }) => {

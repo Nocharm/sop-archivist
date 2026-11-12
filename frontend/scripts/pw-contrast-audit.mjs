@@ -136,9 +136,20 @@ for (const theme of ["light", "dark"]) {
     ["assign-help-marks", `/bundles/${id}/assign`, '[data-testid="assign-help"]', async (page) => { const toggle = page.locator('[data-testid="assign-help-toggle"]'); if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click(); await page.locator('[data-testid="assign-help-tab-marks"]').click(); }],
     ["assign-link", `/bundles/${id}/assign`, '[data-testid="assign-bar"]', pickCandidate],
     ["assign-unsourced", `/bundles/${id}/assign`, '[data-testid="assign-filter-unsourced"]', (page) => page.locator('[data-testid="assign-filter-unsourced"]').click()],
+    // 필터를 걸어 접힌 줄·묶음 한 줄과 고른 필터 칩(확정·보류)을 본다 - 묶음 하나를 펼쳐 접기 단추도 함께
+    ["assign-fold", `/bundles/${id}/assign`, '[data-testid="assign-filter-confirmed"]', async (page) => {
+      await page.locator('[data-testid="assign-filter-confirmed"]').click();
+      await page.locator('[data-testid^="assign-paper-fold-line-"]').first().waitFor({ timeout: T });
+      await page.locator('[data-testid^="assign-paper-fold-run-"]').first().waitFor({ timeout: T });
+    }],
+    ["assign-fold-hold", `/bundles/${aiId}/assign`, '[data-testid="assign-filter-on_hold"]', async (page) => {
+      await page.locator('[data-testid="assign-filter-on_hold"]').click();
+      await page.locator('[data-testid^="assign-paper-fold-run-"]').first().click();
+      await page.locator('[data-testid^="assign-paper-fold-head-"]').first().waitFor({ timeout: T });
+    }],
     ["outputs", `/bundles/${id}/outputs`, '[data-testid="output-c"]'],
     ["review", `/bundles/${id}/review`, '[data-testid="output-c"]'],
-    ["assign-ai", `/bundles/${aiId}/assign`, '[data-testid="assign-bar"]', async (page) => { await page.keyboard.press("j"); await page.locator('[data-testid="assign-rec-0"]').waitFor({ timeout: T }); }],
+    ["assign-ai", `/bundles/${aiId}/assign`, '[data-testid="assign-bar"]', async (page) => { await page.locator('[data-testid="assign-filter-ai_suggested"]').click(); await page.keyboard.press("j"); await page.locator('[data-testid="assign-rec-0"]').waitFor({ timeout: T }); }],
     ["outputs-ai", `/bundles/${aiId}/outputs`, '[data-testid="output-c"]'],
     // 상단 바 AI 작업 목록을 연 상태 - 시드의 AI 제안 단계가 남긴 끝난 요청이 보인다
     ["ai-jobs", `/bundles/${aiId}`, '[data-testid="top-bar-ai"]', async (page) => { await page.locator('[data-testid="top-bar-ai"]').click(); await page.locator('[data-testid^="ai-jobs-request-"]').first().waitFor({ timeout: T }); }],

@@ -22,7 +22,7 @@ export function getPillWidth(level: number): number {
   return PILL_WIDTH_BY_LEVEL[Math.min(Math.max(level, 1), PILL_WIDTH_BY_LEVEL.length) - 1];
 }
 
-// Split은 1280px 미만에서 깊이 3 이상 탭을 46px로 CSS가 더 줄인다(styles/components.css `.split-desk .strip-tab`) - 모델은 화면 폭을 몰라 아래 값은 그대로다
+// Split은 1280px 미만에서 깊이 3 이상 탭을 46px로 CSS가 더 줄인다(styles/components.css `.split-desk .strip-lead-num`) - 모델은 화면 폭을 몰라 아래 값은 그대로다
 /** 줄마다 탭 폭 - 숫자 번호가 있으면 깊이별 폭, 없는 줄(깊이 0)은 같은 부분 안의 직전 줄 폭을 따르고(부분의 첫 줄이면 1단 폭), 짝의 아래 줄(pairTopOf = 위 줄의 key)은 위 줄과 같은 폭이다. 위 줄을 따르는 까닭: 한 카드의 탭은 위 줄이 대표라 절 번호 글자도 위 줄만 보이기 때문이다 */
 export function getTabWidths(rows: readonly { key: string; part: string; sectionLabel: string; pairTopOf?: string | null }[]): Map<string, number> {
   const widths = new Map<string, number>();
@@ -71,4 +71,26 @@ export function getPairBrackets(strips: readonly { unitId: number; partnerId: nu
     }
   });
   return result;
+}
+
+/** 문장 앞 절 번호(과 뒤따르는 공백)의 글자 수 - 숫자 번호가 맨 앞에 정확히 그 번호로 있을 때만. 번호 뒤 점은 숫자가 이어지지 않을 때만 번호의 일부다("5"는 "5.1 제목"을 숨기지 않는다). 숨기면 빈 글이 되면 0. 표시 전용이라 원문은 그대로다 */
+export function getHiddenPrefixLength(text: string, sectionLabel: string): number {
+  if (getSectionPill(sectionLabel) === null) return 0;
+  const number = sectionLabel.replace(/\.$/, "").replace(/\./g, "\\.");
+  const match = new RegExp(`^\\s*${number}(?!\\.?\\d)\\.?\\s*`).exec(text);
+  if (!match || match[0].length >= text.length) return 0;
+  return match[0].length;
+}
+
+/** 실제로 숨길 앞 글자 수 - 블록 첫 조각이 번호뿐이면(끝이 숨길 자리 안) 숨기지 않아 그 조각이 사라지지 않게 하고, 나눌 선이 숨길 자리 안이면 원문을 드러내 선 자리를 보인다 */
+export function getVisibleSkip(hidden: number, firstSegmentEnd: number, cutOffset: number | null): number {
+  if (hidden === 0 || firstSegmentEnd <= hidden) return 0;
+  if (cutOffset !== null && cutOffset < hidden) return 0;
+  return hidden;
+}
+
+/** 숨긴 앞 글자(skip)만큼 조각 구간을 깎기 - 구간이 통째로 숨겨지면 null */
+export function sliceVisible(start: number, end: number, skip: number): { start: number; end: number } | null {
+  if (skip >= end) return null;
+  return { start: Math.max(start, skip), end };
 }

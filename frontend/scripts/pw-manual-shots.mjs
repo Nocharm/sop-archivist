@@ -119,8 +119,12 @@ const SCENES = [
   {
     name: "assign-place", app: { name: "assign" }, user: "qa.member", path: "/bundles/2/assign",
     prep: async (page) => {
-      await page.keyboard.press("j");
-      await page.waitForLoadState("networkidle");
+      // 처음은 All(접지 않음) - 아직 정하지 않은 줄까지 J로 옮긴다
+      for (let step = 0; step < 40; step += 1) {
+        await page.keyboard.press("j");
+        await page.waitForLoadState("networkidle");
+        if ((await page.locator(id("assign-row-status")).first().textContent())?.includes("Unassigned")) break;
+      }
       await click(page, id("assign-acc-all"));
       await page.locator('[data-testid^="assign-tree-p"]').first().click();
       await page.locator('[data-testid^="assign-tree-place-"]:not([disabled])').first().click();
@@ -162,6 +166,7 @@ const SCENES = [
   {
     name: "assign-ai", app: {}, user: "qa.member", path: "/bundles/4/assign",
     prep: async (page) => {
+      await click(page, id("assign-filter-ai_suggested"));
       await page.keyboard.press("j");
       await page.locator(id("assign-rec-0")).waitFor({ timeout: T });
     },

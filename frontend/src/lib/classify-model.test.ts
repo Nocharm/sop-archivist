@@ -14,11 +14,11 @@ import {
   hasDraftChange,
   listLinkLeftovers,
   listUnpairedKeys,
-  pickFirstFilter,
   readCheckKey,
   pickRowStatus,
   readDestination,
   readHumanReason,
+  stepInList,
 } from "./classify-model";
 import type { Destination } from "./classify-model";
 
@@ -303,10 +303,28 @@ describe("checks and filters", () => {
     expect(readCheckKey({ kind: "something_new" })).toBe("check.other");
   });
 
-  it("opens on the first filter that has rows", () => {
-    expect(pickFirstFilter({ unassigned: 0, ai_suggested: 0, on_hold: 3, confirmed: 5, all: 8 })).toBe("on_hold");
-    expect(pickFirstFilter({ unassigned: 2, ai_suggested: 1, on_hold: 0, confirmed: 0, all: 3 })).toBe("ai_suggested");
-    expect(pickFirstFilter({ unassigned: 0, ai_suggested: 0, on_hold: 0, confirmed: 0, all: 0 })).toBe("unassigned");
+});
+
+describe("stepInList", () => {
+  const all = ["a", "b", "c", "d", "e"];
+  const list = ["b", "d"];
+
+  it("steps from a row outside the list to the nearest listed row in document order", () => {
+    expect(stepInList(all, list, "c", 1)).toBe("d");
+    expect(stepInList(all, list, "c", -1)).toBe("b");
+  });
+
+  it("stays on the last listed row past the end", () => {
+    expect(stepInList(all, list, "e", 1)).toBe("d");
+  });
+
+  it("steps within the list and starts at the first row without an active one", () => {
+    expect(stepInList(all, list, "b", 1)).toBe("d");
+    expect(stepInList(all, list, null, 1)).toBe("b");
+  });
+
+  it("returns null for an empty list", () => {
+    expect(stepInList(all, [], "c", 1)).toBeNull();
   });
 });
 

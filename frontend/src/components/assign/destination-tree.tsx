@@ -9,6 +9,7 @@ import { Truncate } from "@/components/ui/motion";
 import type { WrittenSentence } from "@/lib/api-sop";
 import type { Destination, DestinationOption } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
+import { LangMark } from "@/components/lang-mark";
 
 interface DestinationTreeProps {
   written: WrittenSentence[];
@@ -68,7 +69,7 @@ export function DestinationTree({ written, options, tobeHref, onPickLink, onPick
                   {section && <p className="tree-section">{section}</p>}
                   {items.map((row) => (
                     <button key={row.target_id} type="button" className="tree-leaf" data-testid={`assign-tree-sentence-${row.target_id}`} onClick={(event) => onPickLink(row.target_id, event.ctrlKey || event.metaKey)}>
-                      <span className={`ptag ${row.lang}`}>{row.lang.toUpperCase()}</span>
+                      <LangMark lang={row.lang} />
                       {row.text}
                     </button>
                   ))}

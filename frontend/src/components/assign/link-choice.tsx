@@ -3,6 +3,7 @@
 
 import type { ChangeTypeInput, WrittenSentence } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
+import { LangMark } from "@/components/lang-mark";
 
 interface LinkChoiceProps {
   rows: WrittenSentence[];
@@ -27,7 +28,7 @@ export function LinkChoice({ rows, changeTypes, aiPending, defaults, auto, merge
         return (
           <div key={row.target_id} className="grid gap-1.5" data-testid={`assign-link-${row.target_id}`}>
             <p className="text-[13px] leading-5 text-ink" lang={row.lang === "neutral" ? undefined : row.lang}>
-              <span className={`ptag ${row.lang} mr-1.5`}>{row.lang.toUpperCase()}</span>
+              <span className="mr-1.5 inline-block align-middle"><LangMark lang={row.lang} /></span>
               <b className="mr-1 font-mono text-[11px]">{row.doc_code}</b>
               {row.text}
             </p>

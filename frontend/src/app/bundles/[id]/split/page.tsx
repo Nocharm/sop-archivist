@@ -60,6 +60,7 @@ import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 import { buildAiTabs } from "@/lib/split-ai-tabs-model";
 import { useSplitAi } from "@/lib/use-split-ai";
+import { LangMark } from "@/components/lang-mark";
 
 /** Paper의 testid 앞말 - 단위·조각 testid와 Shift+F10이 같은 값을 쓴다 */
 const PAPER_TEST_ID = "split-paper";
@@ -657,7 +658,7 @@ export default function SplitPage() {
             </Tooltip>
           </div>
             <div className="flex items-center gap-2 whitespace-nowrap" data-testid="split-unit-state">
-              <span className="lg">{selected.lang === "neutral" ? "–" : selected.lang.toUpperCase()}</span>
+              <LangMark lang={selected.lang} />
               <span className={`check-chip ${isChecked(selected) ? "yes" : "no"}`} data-testid="split-boundary-state">
                 {isChecked(selected) ? <Check size={12} strokeWidth={2.6} aria-hidden /> : <Circle size={11} strokeWidth={2.2} aria-hidden />}
                 {isChecked(selected) ? "Checked" : "Not checked"}
@@ -805,7 +806,7 @@ export default function SplitPage() {
                                 <li key={unit.id}>
                                   <button type="button" className="grid w-full gap-0.5 rounded-md border border-line px-2 py-1.5 text-left hover:bg-hover" data-testid={`split-pair-unit-${unit.id}`} onClick={() => selectUnit(unit.id, true)}>
                                     <span className="flex items-center gap-1.5 font-mono text-[11px] text-ink-3">
-                                      <span className="lg">{unit.lang.toUpperCase()}</span>
+                                      <LangMark lang={unit.lang} />
                                       {unit.display_id}
                                     </span>
                                     <span className="line-clamp-2 text-[13px] leading-5">{unit.text}</span>
