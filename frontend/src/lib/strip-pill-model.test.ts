@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getPairBrackets, getPillWidth, getSectionHeads, getSectionLevel, getSectionPill, getTabWidths, PILL_WIDTH_BY_LEVEL } from "@/lib/strip-pill-model";
+import { getPairBrackets, getPillWidth, getHiddenPrefixLength, getSectionHeads, getSectionLevel, getSectionPill, getTabWidths, PILL_WIDTH_BY_LEVEL, sliceVisible } from "@/lib/strip-pill-model";
 
 describe("getSectionPill", () => {
   it("returns numeric section numbers only", () => {
@@ -101,5 +101,33 @@ describe("getTabWidths", () => {
       { key: "next", part: "body", sectionLabel: "" },
     ]);
     expect([widths.get("top"), widths.get("bottom"), widths.get("next")]).toEqual([w(2), w(2), w(2)]);
+  });
+});
+
+describe("getHiddenPrefixLength", () => {
+  it("hides the section number and the space after it", () => {
+    expect(getHiddenPrefixLength("5.1 장비 점검", "5.1")).toBe(4);
+    expect(getHiddenPrefixLength("5.1. 장비 점검", "5.1.")).toBe(5);
+    expect(getHiddenPrefixLength("5.1. 장비 점검", "5.1")).toBe(5);
+    expect(getHiddenPrefixLength("5. 시험 절차", "5.")).toBe(3);
+    expect(getHiddenPrefixLength("5.1장비", "5.1")).toBe(3);
+    expect(getHiddenPrefixLength("  5.1\t장비", "5.1")).toBe(6);
+  });
+  it("keeps text that does not start with exactly that number", () => {
+    expect(getHiddenPrefixLength("5.10 제목", "5.1")).toBe(0);
+    expect(getHiddenPrefixLength("5.1 제목", "5")).toBe(0);
+    expect(getHiddenPrefixLength("시험 절차", "5")).toBe(0);
+    expect(getHiddenPrefixLength("가. 범위", "가.")).toBe(0);
+    expect(getHiddenPrefixLength("5.1", "5.1")).toBe(0); // 숨기면 빈 글
+    expect(getHiddenPrefixLength("5.1 ", "5.1")).toBe(0);
+  });
+});
+
+describe("sliceVisible", () => {
+  it("trims a segment by the hidden prefix", () => {
+    expect(sliceVisible(0, 10, 4)).toEqual({ start: 4, end: 10 });
+    expect(sliceVisible(0, 3, 4)).toBeNull();
+    expect(sliceVisible(6, 12, 4)).toEqual({ start: 6, end: 12 });
+    expect(sliceVisible(0, 10, 0)).toEqual({ start: 0, end: 10 });
   });
 });

@@ -72,3 +72,18 @@ export function getPairBrackets(strips: readonly { unitId: number; partnerId: nu
   });
   return result;
 }
+
+/** 문장 앞 절 번호(과 뒤따르는 공백)의 글자 수 - 숫자 번호가 맨 앞에 정확히 그 번호로 있을 때만. 번호 뒤 점은 숫자가 이어지지 않을 때만 번호의 일부다("5"는 "5.1 제목"을 숨기지 않는다). 숨기면 빈 글이 되면 0. 표시 전용이라 원문은 그대로다 */
+export function getHiddenPrefixLength(text: string, sectionLabel: string): number {
+  if (getSectionPill(sectionLabel) === null) return 0;
+  const number = sectionLabel.replace(/\.$/, "").replace(/\./g, "\\.");
+  const match = new RegExp(`^\\s*${number}(?!\\.?\\d)\\.?\\s*`).exec(text);
+  if (!match || match[0].length >= text.length) return 0;
+  return match[0].length;
+}
+
+/** 숨긴 앞 글자(skip)만큼 조각 구간을 깎기 - 구간이 통째로 숨겨지면 null */
+export function sliceVisible(start: number, end: number, skip: number): { start: number; end: number } | null {
+  if (skip >= end) return null;
+  return { start: Math.max(start, skip), end };
+}
