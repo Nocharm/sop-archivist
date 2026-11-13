@@ -32,6 +32,7 @@ from tests.sop_helpers import (
     get_view,
     put_tobe,
     save_group,
+    set_doc_version,
     set_members,
     upload,
 )
@@ -62,6 +63,7 @@ class Fixture(NamedTuple):
     docs: dict[str, int]  # To-Be 문서 번호 → id
     extraction_id: int
     view: dict
+    doc: dict | None = None  # 올린 옛 문서 응답(revision 포함)
 
 
 def _post(client: TestClient, bundle_id: int, path: str, headers: dict[str, str], **fields: object) -> httpx2.Response:
@@ -93,8 +95,10 @@ def _list_events(client: TestClient, bundle_id: int) -> list[dict]:
     return response.json()
 
 
-def _setup(client: TestClient, *, docs: list[dict] | None = None, na_slots: list[dict] | None = None) -> Fixture:
-    """멤버(작성자·검토자)와 To-Be, 옛 문서(한국어 둘·영어 하나)를 갖추고 경계도 모두 확인했지만 판단은 하나도 안 한 묶음."""
+def _setup(
+    client: TestClient, *, docs: list[dict] | None = None, na_slots: list[dict] | None = None, fill_versions: bool = True
+) -> Fixture:
+    """멤버(작성자·검토자)와 To-Be, 옛 문서(한국어 둘·영어 하나)를 갖추고 경계도 모두 확인했지만 판단은 하나도 안 한 묶음(버전은 기본으로 채움)."""
     bundle_id = create_bundle(client, is_synthetic=True)["id"]
     assert set_members(client, bundle_id, WITH_REVIEWER).status_code == 200
     tobe = docs or [SOP_DOC]
@@ -104,8 +108,13 @@ def _setup(client: TestClient, *, docs: list[dict] | None = None, na_slots: list
     uploaded = upload(client, bundle_id, build_docx(p(KO_1) + p(KO_2) + p(EN_1)), OLD_NAME)
     assert uploaded.status_code == 201 and uploaded.json()["status"] == "ready", uploaded.text
     doc = uploaded.json()
+    if fill_versions:
+        set_doc_version(client, bundle_id, doc)
     assert confirm_boundaries(client, bundle_id, doc["id"]) == 3
-    return Fixture(bundle_id, ids[tobe[0]["code"]], ids, doc["extraction"]["id"], get_view(client, bundle_id, doc["id"]))
+    fixture = Fixture(
+        bundle_id, ids[tobe[0]["code"]], ids, doc["extraction"]["id"], get_view(client, bundle_id, doc["id"])
+    )
+    return fixture._replace(doc=doc)
 
 
 def _confirm(client: TestClient, fx: Fixture, text: str, slot_key: str = "purpose") -> None:
@@ -113,7 +122,7 @@ def _confirm(client: TestClient, fx: Fixture, text: str, slot_key: str = "purpos
 
 
 def _make_ready(client: TestClient, **kwargs: object) -> Fixture:
-    """모든 단위를 확정하고 의미 검토 4항목을 표시해 검토 요청이 통과하는 묶음."""
+    """모든 단위를 확정하고 의미 검토 4항목을 표시해 검토 요청이 통과하는 묶음(fill_versions=False면 옛 문서 버전만 비움)."""
     fx = _setup(client, **kwargs)
     for text in (KO_1, KO_2, EN_1):
         _confirm(client, fx, text)
@@ -425,6 +434,48 @@ def test_empty_bundle_blockers_are_listed_in_order(client: TestClient) -> None:
         {"code": "no_documents"},
     ]
     assert (readiness["ready"], readiness["notices"], readiness["next_action"]) == (False, [], "upload_documents")
+
+
+def test_old_document_without_version_blocks_review(client: TestClient) -> None:
+    fx = _make_ready(client, fill_versions=False)
+    doc = fx.doc
+
+    readiness = _get_readiness(client, fx.bundle_id)
+
+    assert {"code": "missing_doc_versions", "count": 1, "document_ids": [doc["id"]]} in readiness["blockers"]
+    assert (readiness["ready"], readiness["next_action"]) == (False, "fill_doc_versions")
+    assert _request(client, fx.bundle_id).status_code == 422
+    set_doc_version(client, fx.bundle_id, doc)
+    assert _get_readiness(client, fx.bundle_id)["ready"] is True
+    assert _request(client, fx.bundle_id).status_code == 200
+
+
+def test_whitespace_version_still_blocks_review(client: TestClient) -> None:
+    fx = _make_ready(client, fill_versions=False)
+    doc = fx.doc
+    update_row_version = client.patch(
+        f"/api/bundles/{fx.bundle_id}/documents/{doc['id']}",
+        json={"revision": doc["revision"], "doc_version": "   "},
+        headers=AUTHOR,
+    )
+    assert update_row_version.status_code == 200
+
+    codes = [blocker["code"] for blocker in _get_readiness(client, fx.bundle_id)["blockers"]]
+
+    assert "missing_doc_versions" in codes
+
+
+def test_next_action_puts_versions_after_documents_and_before_boundaries(client: TestClient) -> None:
+    bundle_id = create_bundle(client)["id"]
+    assert set_members(client, bundle_id, WITH_REVIEWER).status_code == 200
+    uploaded = upload(client, bundle_id, build_docx(p(KO_1) + p(EN_1)), OLD_NAME)
+    assert uploaded.status_code == 201, uploaded.text
+
+    readiness = _get_readiness(client, bundle_id)
+    assert readiness["next_action"] == "fill_doc_versions"  # 경계도 안 봤지만 버전이 먼저
+
+    set_doc_version(client, bundle_id, uploaded.json())
+    assert _get_readiness(client, bundle_id)["next_action"] == "check_boundaries"
 
 
 # --- 알림 ---
@@ -747,6 +798,8 @@ def test_next_action_sequence(client: TestClient) -> None:
 
     uploaded = upload(client, bundle_id, build_docx(p(KO_1) + p(EN_1)), OLD_NAME)
     assert uploaded.status_code == 201, uploaded.text
+    assert get_bundle(client, bundle_id)["next_action"] == "fill_doc_versions"
+    set_doc_version(client, bundle_id, uploaded.json())
     assert get_bundle(client, bundle_id)["next_action"] == "check_boundaries"
     assert confirm_boundaries(client, bundle_id, uploaded.json()["id"]) == 2
     assert get_bundle(client, bundle_id)["next_action"] == "fill_tobe"

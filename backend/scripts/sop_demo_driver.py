@@ -18,6 +18,7 @@ from tests.sop_helpers import (
     get_view,
     put_tobe,
     save_group,
+    set_doc_version,
     set_members,
     upload,
 )
@@ -80,9 +81,12 @@ class SyntheticDriver:
             )
             assert response.status_code == 201, response.text
             uploaded = response.json()
-            self.uploads[uploaded["doc_code"]] = uploaded
             if document.layout != DEFAULT_LAYOUT:
                 self._patch_layout(uploaded, document.layout)
+                uploaded = self._get_document(uploaded["id"])
+            if document.side == "old" and not uploaded["doc_version"]:  # 검토 요청 조건 — 파일 이름에 버전이 없으면 1.0
+                uploaded = set_doc_version(self.client, self.bundle_id, uploaded, headers=self.headers)
+            self.uploads[uploaded["doc_code"]] = uploaded
         self.tobe_ids = {doc["code"]: doc["id"] for doc in self.get("/tobe")["docs"]}
         for edit in self.expected["edits"]:
             self._apply_edit(edit)
@@ -122,6 +126,9 @@ class SyntheticDriver:
             headers=self.headers,
         )
         assert response.status_code == 200, response.text
+
+    def _get_document(self, doc_id: int) -> dict:
+        return next(doc for doc in self.get("/documents") if doc["id"] == doc_id)
 
     def _patch_layout(self, uploaded: dict, layout: str) -> None:
         body = {"revision": uploaded["revision"], "language_layout": layout}

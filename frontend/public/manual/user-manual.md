@@ -102,7 +102,7 @@ Bundle은 함께 재구성할 문서 묶음입니다. Old SOP 여러 편과 새�
 |---|---|
 | **Next action** | 지금 할 일 한 가지. **Start** 를 누르면 그 일을 하는 화면으로 간다 |
 | **Coverage** | 한/영 짝을 한 줄로 센 숫자 한 벌 — 확정 비율과 상태별 줄 수. 한 언어만 있는 줄이 있으면 표 아래에 그 수를 따로 적는다(검토 요청 조건은 아니다) |
-| **Review request** | 검토 요청 조건 여덟 가지. 빨간 줄을 누르면 고칠 화면으로 간다 |
+| **Review request** | 검토 요청 조건 아홉 가지. 빨간 줄을 누르면 고칠 화면으로 간다 |
 | **AI job** | 진행 중인 AI 작업. **Cancel jobs** 로 멈추고 **Retry failed** 로 실패한 것만 다시 돌린다 |
 | **Members** | 구성원과 역할. **Manage** 에서 추가·역할 변경·제외 |
 | **Activity** | 최근 작업 기록. **View all** 은 **History** 로 간다 |
@@ -526,11 +526,12 @@ Excel 내려받기 단추는 지금 고른 언어의 결과물 A·B·C와 Bundle
 
 ### 요청 조건 {#review-gates}
 
-**Overview** 의 **Review request** 카드에 조건 여덟 가지가 보입니다. 모두 통과해야 **Request review** 가 켜집니다.
+**Overview** 의 **Review request** 카드에 조건 아홉 가지가 보입니다. 모두 통과해야 **Request review** 가 켜집니다.
 
 | 조건 | 통과하려면 |
 |---|---|
 | **Documents loaded** | 문서가 한 편 이상 있고 **Rejected**·**Failed** 인 문서가 없다 |
+| **All versions filled** | **Documents** 에서 읽은 Old 문서마다 버전을 적었다. 적은 그대로 Excel에 나간다 |
 | **All boundaries checked** | **Split** 에서 모든 문서의 Unit 경계를 확인했다. 쪼개거나 합쳐 새로 생긴 Unit도 포함한다 |
 | **All rows decided** | 모든 줄이 **Confirmed** 다. 미배정·AI 제안·보류가 남아 있지 않다 |
 | **All new sentences decided** | 모든 새 문장이 확정됐다. 출처 없는 새 문장이 남아 있지 않다 |

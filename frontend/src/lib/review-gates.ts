@@ -2,11 +2,12 @@
 import type { ReadinessIssue } from "@/lib/api-sop";
 import type { StageKey } from "@/lib/stages";
 
-export type GateKey = "documents" | "boundaries" | "units" | "targets" | "warnings" | "reasons" | "semantic" | "reviewer";
+export type GateKey = "documents" | "versions" | "boundaries" | "units" | "targets" | "warnings" | "reasons" | "semantic" | "reviewer";
 
 /** 막힌 조건을 푸는 화면 - Fail 카드를 누르면 여기로 간다. 검토자 조건은 화면이 아니라 멤버 창이라 null */
 export const GATE_STAGE: Record<GateKey, StageKey | null> = {
   documents: "documents",
+  versions: "documents",
   boundaries: "split",
   units: "assign",
   targets: "assign",

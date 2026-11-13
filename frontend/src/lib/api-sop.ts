@@ -43,6 +43,7 @@ export interface BundleMember {
 export type NextAction =
   | "upload_documents"
   | "resolve_documents"
+  | "fill_doc_versions"
   | "check_boundaries"
   | "fill_tobe"
   | "decide_units"
