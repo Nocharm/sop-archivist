@@ -16,7 +16,7 @@ from openpyxl import load_workbook
 from app.settings import settings
 from app.sop.constants import COVER_KINDS
 from app.sop.coverage import find_coverage_problems
-from scripts.sop_demo_driver import LANGS, SyntheticDriver, find_unit_by_text, iter_c_items
+from scripts.sop_demo_driver import SyntheticDriver, find_unit_by_text, iter_c_items
 from scripts.synthetic_sop import FIXED_ZIP_TIME, SyntheticBundle, build_synthetic_bundle
 from tests.ai_fixtures import (
     clean_ai_jobs,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
@@ -189,19 +189,16 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
     assert len(outputs["c"]["deleted"]) == summary["deleted"]
     assert {moved["move_target_code"] for moved in outputs["c"]["moved"]} == {"SOP-QC-99999"}
 
-    # 8. Excel 두 언어 — 시트 4개, 수식 칸 없음, A 시트 데이터 줄 = A JSON 줄(한 벌이라 두 파일 모두 같은 줄 수)
-    for lang in LANGS:
-        response = client.get(f"/api/bundles/{run.bundle_id}/export.xlsx", params={"lang": lang}, headers=AUTHOR)
-        assert response.status_code == 200, response.text
-        workbook = load_workbook(BytesIO(response.content))
-        assert len(workbook.sheetnames) == 4
-        cells = [cell for sheet in workbook for row in sheet.iter_rows() for cell in row]
-        assert [cell.coordinate for cell in cells if cell.data_type == "f"] == []
-        sheet_a = workbook[workbook.sheetnames[0]]  # 1행 상태, 2행 머리, 3행부터 데이터
-        data_rows = [
-            row for row in sheet_a.iter_rows(min_row=3, values_only=True) if any(value is not None for value in row)
-        ]
-        assert len(data_rows) == len(outputs["a"]), lang
+    # 8. Excel 한 벌 — 시트 4개, 수식 칸 없음, A 시트 데이터 줄 = A JSON 줄(이어짐 줄이 없는 자료)
+    response = client.get(f"/api/bundles/{run.bundle_id}/export.xlsx", headers=AUTHOR)
+    assert response.status_code == 200, response.text
+    workbook = load_workbook(BytesIO(response.content))
+    assert workbook.sheetnames == ["A Comparison", "B Flow", "C New documents", "Info"]
+    cells = [cell for sheet in workbook for row in sheet.iter_rows() for cell in row]
+    assert [cell.coordinate for cell in cells if cell.data_type == "f"] == []
+    sheet_a = workbook["A Comparison"]  # 1행 상태, 2행 머리, 3행부터 데이터
+    data_rows = [row for row in sheet_a.iter_rows(min_row=3, values_only=True) if any(value is not None for value in row)]
+    assert len(data_rows) == len(outputs["a"])
 
     # 9. 검토자 완료 → 완료 뒤 저장은 409
     completed = run.post("/review/complete", {"revision": run.bundle_revision()}, headers=REVIEWER)

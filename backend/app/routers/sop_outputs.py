@@ -1,13 +1,13 @@
-"""결과물 API — 결과물 A·B·C·요약 숫자 읽기와 Excel 내보내기(멤버, 모든 상태), 결과물 C 순서 바꾸기(작성자·작업 중).
+"""결과물 API — 결과물 A·B·C·요약 숫자 읽기와 Excel 내보내기·미리보기(멤버, 모든 상태), 결과물 C 순서 바꾸기(작성자·작업 중).
 
-계산은 app/sop/outputs.py의 순수 함수, 재료는 app/sop/snapshot.py가 표마다 질의 한 번으로 읽는다.
+계산은 app/sop/outputs.py의 순수 함수(Excel·미리보기는 그 위의 sheet_model), 재료는 app/sop/snapshot.py가 표마다 질의 한 번으로 읽는다.
 """
 
 import asyncio
 import logging
 from collections import Counter, defaultdict
 from collections.abc import Collection
-from typing import Annotated, Literal
+from typing import Annotated, Literal, NoReturn
 
 from fastapi import APIRouter, Depends, Path, Query, Response
 from pydantic import BaseModel, Field
@@ -17,13 +17,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.clock import now
 from app.db import get_session
 from app.routers.sop_documents import build_content_disposition
+from app.sop import sheet_model
 from app.sop.ai.guidelines import get_rules_version_label
 from app.sop.constants import MAX_INDENT_LEVEL, MEMBER_ROLES, SLOT_HEADING, NumberStyle
 from app.sop.decisions import DbId
 from app.sop.detach import ORIGIN_NEW_DOC, ORIGIN_TRANSLATION, load_source_target_ids, sweep_translations
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
-from app.sop.excel_export import ExportMeta, build_export_file_name, build_workbook
+from app.sop.excel_export import ExportMeta, build_workbook
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
 from app.sop.models import Bundle, TargetDoc, TargetSentence, WiStep
 from app.sop.outputs import (
@@ -38,6 +39,7 @@ from app.sop.outputs import (
     build_output_c,
     build_summary,
 )
+from app.sop.sheet_model import WorkbookModel, build_workbook_model, limit_preview
 from app.sop.snapshot import BundleSnapshot, list_confirmer_ids, load_bundle_snapshot, load_people_names
 from app.sop.tobe import MAX_DB_INT
 
@@ -150,32 +152,59 @@ async def get_summary(
     return await asyncio.to_thread(build_summary, snap)
 
 
+async def _load_export_inputs(
+    session: AsyncSession, ctx: BundleContext
+) -> tuple[BundleSnapshot, ExportMeta, dict[str, str]]:
+    """Excel·미리보기 재료(지침 버전·스냅숏·확정한 사람 이름)를 읽고 트랜잭션을 끝낸다 — 스레드 계산 동안 묶음 행 잠금을 쥐지 않게.
+
+    파일 이름의 시각도 여기서 정한다(now()) — 미리보기와 받기가 같은 분이면 같은 이름이다.
+    """
+    guideline_version = await get_rules_version_label(session)
+    snap = await load_bundle_snapshot(session, ctx.bundle.id)
+    people = await load_people_names(session, list_confirmer_ids(snap))
+    await session.commit()
+    meta = ExportMeta(exported_by=ctx.login_id, exported_at=now(), guideline_version=guideline_version)
+    return snap, meta, people
+
+
+def _raise_export_failed(bundle_id: int, error: Exception) -> NoReturn:
+    """파일 생성 실패는 저장 실패와 다른 오류로 알린다(스펙 §7.14). 예외 메시지에 원문이 실릴 수 있어 클래스 이름만 남긴다."""
+    logger.error("export failed: bundle=%d error=%s", bundle_id, type(error).__name__)
+    raise_rule(500, "export_failed")
+
+
 @router.get("/{bundle_id}/export.xlsx")
 async def get_export(
-    lang: Literal["ko", "en"] = Query(),
-    ctx: BundleContext = Depends(_require_member),
-    session: AsyncSession = Depends(get_session),
+    ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
 ) -> Response:
-    """언어별 Excel 파일 — 작업 중·검토 중·완료 어느 상태에서나 받고, 받은 사실은 작업 기록에 남는다."""
+    """Excel 파일 한 벌 — 작업 중·검토 중·완료 어느 상태에서나 받고, 받은 사실은 작업 기록에 남는다. 이름은 시트 모델의 file_name."""
     bundle = ctx.bundle
-    # 스냅숏 읽기가 트랜잭션을 끝내므로 지침 버전 질의는 그보다 먼저 해야 스레드 계산 동안 트랜잭션이 열려 있지 않다
-    guideline_version = await get_rules_version_label(session)
-    snap = await _load_snapshot_for_read(session, bundle.id)
-    meta = ExportMeta(exported_by=ctx.login_id, exported_at=now(), guideline_version=guideline_version)
+    snap, meta, people = await _load_export_inputs(session, ctx)
     try:
-        content = await asyncio.to_thread(build_workbook, snap, lang, meta)
+        model = await asyncio.to_thread(build_workbook_model, snap, meta, people)
+        content = await asyncio.to_thread(build_workbook, model)
     except Exception as error:
-        # 파일 생성 실패는 저장 실패와 다른 오류로 알린다(스펙 §7.14). 예외 메시지에 원문이 실릴 수 있어 클래스 이름만 남긴다
-        logger.error("export failed: bundle=%d lang=%s error=%s", bundle.id, lang, type(error).__name__)
-        raise_rule(500, "export_failed")
-    file_name = build_export_file_name(bundle.title, lang, meta.exported_at)
+        _raise_export_failed(bundle.id, error)
     record_event(
-        session, bundle_id=bundle.id, actor=ctx.login_id, action="export", target_type="bundle",
-        target_ids=[bundle.id], reason=lang,
+        session, bundle_id=bundle.id, actor=ctx.login_id, action="export", target_type="bundle", target_ids=[bundle.id],
     )
     await session.commit()
-    headers = {"Content-Disposition": build_content_disposition(file_name)}
+    headers = {"Content-Disposition": build_content_disposition(model.file_name)}
     return Response(content=content, media_type=XLSX_MEDIA_TYPE, headers=headers)
+
+
+@router.get("/{bundle_id}/export/preview", response_model=WorkbookModel)
+async def get_export_preview(
+    ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
+) -> WorkbookModel:
+    """Excel 미리보기 — 받을 파일과 같은 시트 모델(시트마다 MAX_PREVIEW_ROWS줄까지)과 파일 이름. 작업 기록은 남기지 않는다."""
+    snap, meta, people = await _load_export_inputs(session, ctx)
+    try:
+        model = await asyncio.to_thread(build_workbook_model, snap, meta, people)
+    except Exception as error:
+        _raise_export_failed(ctx.bundle.id, error)
+    # 상한은 부를 때 읽는다 — 시험이 모듈 값을 바꿔 자르기를 본다
+    return limit_preview(model, sheet_model.MAX_PREVIEW_ROWS)
 
 
 async def _check_indents(

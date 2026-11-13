@@ -1208,7 +1208,7 @@ def _count_queries() -> Iterator[list[str]]:
 
 
 def test_outputs_use_bounded_queries(client: TestClient) -> None:
-    """문단 2,000개 문서에서 절반을 일괄 삭제한 묶음 — 결과물 A와 단위 목록이 단위 수에 비례하는 질의를 내지 않는다."""
+    """문단 2,000개 문서에서 절반을 일괄 삭제한 묶음 — 결과물 A·Excel 미리보기와 단위 목록이 단위 수에 비례하는 질의를 내지 않는다."""
     bundle_id = create_bundle(client, is_synthetic=True)["id"]
     body = "".join(p(f"합성 문장 {n}번을 확인한다.") for n in range(2000))
     _upload_ready(client, bundle_id, build_docx(body), OLD1_NAME)
@@ -1217,11 +1217,15 @@ def test_outputs_use_bounded_queries(client: TestClient) -> None:
 
     with _count_queries() as output_statements:
         rows = _get_output(client, bundle_id, "outputs/a", "ko")
+    with _count_queries() as preview_statements:
+        preview = _get_output(client, bundle_id, "export/preview")
     with _count_queries() as list_statements:
         listed = client.get(f"/api/bundles/{bundle_id}/units", params={"limit": 1000}, headers=AUTHOR)
 
     assert len(rows) == 2000
     assert sum(row["dest_kind"] == "delete" for row in rows) == 1000
+    assert preview["sheets"][0]["total_rows"] == 2 + 2000  # 상태·머리 줄 + 결과물 A 줄
     assert listed.status_code == 200 and len(listed.json()["items"]) == 1000
     assert 0 < len(output_statements) <= 30, len(output_statements)
+    assert 0 < len(preview_statements) <= 30, len(preview_statements)
     assert 0 < len(list_statements) <= 30, len(list_statements)

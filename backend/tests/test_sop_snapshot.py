@@ -127,11 +127,12 @@ def test_snapshot_reads_a_missing_cover_decision_as_unassigned(client: TestClien
         ("outputs/b", {"lang": "ko"}, sop_outputs, "build_output_b"),
         ("outputs/c", {"lang": "ko"}, sop_outputs, "build_output_c"),
         ("summary", {}, sop_outputs, "build_summary"),
-        ("export.xlsx", {"lang": "ko"}, sop_outputs, "build_workbook"),
+        ("export.xlsx", {}, sop_outputs, "build_workbook_model"),
+        ("export/preview", {}, sop_outputs, "build_workbook_model"),
         ("review/readiness", {}, review, "evaluate_readiness"),
         ("", {}, review, "evaluate_readiness"),
     ],
-    ids=["output_a", "output_b", "output_c", "summary", "export", "readiness", "overview"],
+    ids=["output_a", "output_b", "output_c", "summary", "export", "export_preview", "readiness", "overview"],
 )
 def test_read_paths_end_the_transaction_before_the_pure_build(
     client: TestClient,

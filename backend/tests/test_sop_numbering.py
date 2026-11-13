@@ -334,12 +334,12 @@ def test_excel_leaves_unnumbered_cells_empty_and_italicizes_notes(client: TestCl
     ids = [split_a["target_id"], duplicate["target_id"], split_b["target_id"], figure["target_id"]]
     _put_styles(client, fx.bundle_id, fx.wi_id, ids, {duplicate["target_id"]: "note", split_b["target_id"]: "omitted"})
 
-    response = client.get(f"/api/bundles/{fx.bundle_id}/export.xlsx", params={"lang": "ko"}, headers=AUTHOR)
+    response = client.get(f"/api/bundles/{fx.bundle_id}/export.xlsx", headers=AUTHOR)
     assert response.status_code == 200, response.text
     workbook = load_workbook(BytesIO(response.content))
 
-    sheet_c = workbook["C 새 문서"]
-    number_col, item_col = _find_header(sheet_c, "번호"), _find_header(sheet_c, "항목")
+    sheet_c = workbook["C New documents"]
+    number_col, item_col = _find_header(sheet_c, "No."), _find_header(sheet_c, "Item")
     rows = {row[item_col - 1].value: row for row in sheet_c.iter_rows(min_row=3) if row[item_col - 1].value}
     assert (rows[SPLIT_A][number_col - 1].value, rows[SPLIT_A][item_col - 1].font.i) == ("1.1", False)
     # 주석 줄 — 번호 칸이 비고 항목 글이 기울어 있다
@@ -348,9 +348,9 @@ def test_excel_leaves_unnumbered_cells_empty_and_italicizes_notes(client: TestCl
     # 생략 줄 — 번호 칸만 비고 기울이지 않는다
     assert (rows[SPLIT_B][number_col - 1].value, rows[SPLIT_B][item_col - 1].font.i) == (None, False)
 
-    sheet_a = workbook["A 비교표"]
-    dest_code_col, confirmed_col = _find_header(sheet_a, "새 문서 번호"), _find_header(sheet_a, "확정 문장")
-    a_number_col = _find_header(sheet_a, "새 문서 안 번호")
+    sheet_a = workbook["A Comparison"]
+    dest_code_col, confirmed_col = _find_header(sheet_a, "New doc"), _find_header(sheet_a, "New text")
+    a_number_col = _find_header(sheet_a, "No.")
     duplicate_rows = [
         (row[dest_code_col - 1].value, row[a_number_col - 1].value, row[confirmed_col - 1].font.i)
         for row in sheet_a.iter_rows(min_row=3) if row[confirmed_col - 1].value == DUPLICATE
