@@ -398,7 +398,8 @@ export default function OutputsPage() {
             <table className="dtable out-a table-fixed" data-testid="output-a">
               {/* 열 폭을 고정한다 - 글이 길어도 표가 틀을 넘지 않고, 긴 칸은 줄 수로만 커진다. 원문·새 문장 열이 남은 폭을 반씩 나눈다 */}
               <colgroup>
-                <col style={{ width: 44 }} />
+                {/* Row는 네 자리(옛 줄 1,000개 넘는 묶음)까지 한 줄 - 44px에서는 두 줄로 꺾였다 */}
+                <col style={{ width: 52 }} />
                 <col style={{ width: 112 }} />
                 <col />
                 <col style={{ width: "14%" }} />

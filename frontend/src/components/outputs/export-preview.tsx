@@ -68,6 +68,8 @@ export function ExportPreviewModal({ bundleId, onClose }: { bundleId: number; on
               <button
                 key={item.name}
                 type="button"
+                // view-toggle 단추는 아이콘 폭(26px)이라 시트 이름이 겹친다 - 글 폭으로 넓힌다
+                className="w-auto px-2.5 text-xs whitespace-nowrap"
                 data-testid={`export-preview-tab-${index}`}
                 aria-pressed={index === tabIndex}
                 onClick={() => setTabIndex(index)}

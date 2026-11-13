@@ -81,7 +81,8 @@ export function SheetView({ sheet }: { sheet: PreviewSheet }) {
     <div>
       <div
         data-testid="export-preview-sheet"
-        className="max-h-[min(66vh,720px)] overflow-auto rounded-sm border border-line"
+        // 창이 화면 안에 들도록 시트 높이에서 창의 나머지(위아래 여백 128 · 머리 · 두 줄 파일 이름 · 탭 · 잘림 안내 · 받기 줄 ≈ 420px)를 뺀다
+        className="max-h-[min(720px,calc(100vh-420px))] overflow-auto rounded-sm border border-line"
         style={{ background: "var(--sheet-paper)", color: "var(--sheet-ink)" }}
       >
         <table className="border-separate border-spacing-0" style={{ tableLayout: "fixed", width: totalWidth }}>
