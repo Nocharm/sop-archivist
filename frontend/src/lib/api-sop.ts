@@ -1,6 +1,7 @@
 // SOP 재구성 API 호출과 응답 타입 - 백엔드 routers/sop_*.py의 응답 모델을 옮긴 것. 공용 래퍼는 api.ts의 apiFetch.
 
 import { apiFetch, apiFetchBlob } from "./api";
+import { genId } from "./id";
 
 /** 의미 검토 항목 - 백엔드 constants.SEMANTIC_CHECK_KEYS와 같은 값 */
 export const SEMANTIC_CHECK_KEYS = ["numbers", "conditions", "tables", "figures"] as const;
@@ -403,8 +404,8 @@ export function getDocumentView(bundleId: number, docId: number): Promise<Docume
 
 const buildDocPath = (bundleId: number, docId: number) => `/bundles/${bundleId}/documents/${docId}`;
 
-export function editUnits(bundleId: number, docId: number, revision: number, op: EditOp, confirm = false): Promise<EditResult> {
-  return apiFetch<EditResult>(`${buildDocPath(bundleId, docId)}/edits`, { method: "POST", body: JSON.stringify({ revision, confirm, op }) });
+export function editUnits(bundleId: number, docId: number, revision: number, op: EditOp, confirm = false, undo?: UndoMeta): Promise<EditResult> {
+  return apiFetch<EditResult>(`${buildDocPath(bundleId, docId)}/edits`, { method: "POST", body: JSON.stringify({ revision, confirm, op, undo }) });
 }
 
 export function undoEdit(bundleId: number, docId: number, revision: number, confirm = false): Promise<EditStepResult> {
@@ -651,15 +652,47 @@ export function getGroupByUnit(bundleId: number, unitId: number): Promise<Group>
   return apiFetch<Group>(`/bundles/${bundleId}/groups/by-unit/${unitId}`);
 }
 
-export function saveGroup(bundleId: number, body: GroupSaveInput): Promise<Group> {
-  return apiFetch<Group>(`/bundles/${bundleId}/groups/save`, { method: "POST", body: JSON.stringify(body) });
+/** Assign 되돌리기 기록 메타 - 저장 본문의 undo. 한 사용자 동작의 요청들은 같은 step_key를 쓴다(서버가 한 단계로 합친다) */
+export type SaveOp = "confirm" | "hold" | "link" | "unlink" | "mark_new" | "link_source";
+
+export interface UndoMeta {
+  session: string;
+  op?: SaveOp;
+  focus_unit_id?: number;
+  focus_target_id?: number;
+  step_key?: string;
+  scope_label?: string;
+}
+
+/** 되돌리기·다시 하기 응답 - backend decision_steps */
+export interface DecisionStepResult {
+  op: string;
+  unit_ids: number[];
+  focus_unit_id: number | null;
+  focus_target_id: number | null;
+  scope_label: string | null;
+  can_undo: boolean;
+  can_redo: boolean;
+}
+
+export function undoDecision(bundleId: number, session: string): Promise<DecisionStepResult> {
+  return apiFetch<DecisionStepResult>(`/bundles/${bundleId}/decisions/undo`, { method: "POST", body: JSON.stringify({ session }) });
+}
+
+export function redoDecision(bundleId: number, session: string): Promise<DecisionStepResult> {
+  return apiFetch<DecisionStepResult>(`/bundles/${bundleId}/decisions/redo`, { method: "POST", body: JSON.stringify({ session }) });
+}
+
+export function saveGroup(bundleId: number, body: GroupSaveInput, undo?: UndoMeta): Promise<Group> {
+  return apiFetch<Group>(`/bundles/${bundleId}/groups/save`, { method: "POST", body: JSON.stringify({ ...body, undo }) });
 }
 
 export function bulkDecide(
   bundleId: number,
   body: { action: "delete" | "move_external"; reason: string; move_target_code: string; units: Array<{ unit_id: number; revision: number }> },
+  undo?: UndoMeta,
 ): Promise<Array<{ unit_id: number; decision: Decision }>> {
-  return apiFetch(`/bundles/${bundleId}/decisions/bulk`, { method: "POST", body: JSON.stringify(body) });
+  return apiFetch(`/bundles/${bundleId}/decisions/bulk`, { method: "POST", body: JSON.stringify({ ...body, undo }) });
 }
 
 /** 배정 지우기 결과 - backend detach.DetachReport */
@@ -670,15 +703,17 @@ export interface DetachReport {
   held_target_ids: number[];
 }
 
-export function clearDecision(bundleId: number, unitId: number, revision: number): Promise<DetachReport> {
-  return apiFetch<DetachReport>(`/bundles/${bundleId}/decisions/clear`, { method: "POST", body: JSON.stringify({ unit_id: unitId, revision }) });
+export function clearDecision(bundleId: number, unitId: number, revision: number, undo?: UndoMeta): Promise<DetachReport> {
+  return apiFetch<DetachReport>(`/bundles/${bundleId}/decisions/clear`, { method: "POST", body: JSON.stringify({ unit_id: unitId, revision, undo }) });
 }
 
 /**
  * 여러 단위를 차례로 지운다 - 앞 단위를 지우면 같은 관계 묶음의 나머지가 보류로 바뀌며 revision이 오르므로,
  * 그렇게 바뀐 단위는 지우기 전에 묶음을 다시 읽어 지금 revision을 쓴다(낡은 revision이면 409).
  */
-export async function clearDecisions(bundleId: number, units: Array<{ unit_id: number; revision: number }>): Promise<void> {
+export async function clearDecisions(bundleId: number, units: Array<{ unit_id: number; revision: number }>, undo?: UndoMeta): Promise<void> {
+  // 모든 단위 요청이 같은 step_key를 써 Ctrl+Z 한 번에 한꺼번에 되돌아간다
+  const stepUndo = undo ? { ...undo, step_key: undo.step_key ?? genId() } : undefined;
   const reset = new Set<number>();
   const changed = new Set<number>();
   for (const unit of units) {
@@ -688,7 +723,7 @@ export async function clearDecisions(bundleId: number, units: Array<{ unit_id: n
       const group = await getGroupByUnit(bundleId, unit.unit_id);
       revision = group.units.find((item) => item.unit_id === unit.unit_id)?.decision.revision ?? revision;
     }
-    const report = await clearDecision(bundleId, unit.unit_id, revision);
+    const report = await clearDecision(bundleId, unit.unit_id, revision, stepUndo);
     for (const id of report.reset_unit_ids) reset.add(id);
     for (const id of report.held_unit_ids) changed.add(id);
   }
@@ -704,8 +739,8 @@ export interface ResetReport {
 }
 
 /** Old 문서 하나(document_id) 또는 묶음 전체의 배정을 한 번에 지운다 - revision은 묶음 revision이고 초기화는 올리지 않는다 */
-export function resetAssignments(bundleId: number, body: { revision: number; document_id?: number; dry_run?: boolean }): Promise<ResetReport> {
-  return apiFetch<ResetReport>(`/bundles/${bundleId}/decisions/reset`, { method: "POST", body: JSON.stringify(body) });
+export function resetAssignments(bundleId: number, body: { revision: number; document_id?: number; dry_run?: boolean }, undo?: UndoMeta): Promise<ResetReport> {
+  return apiFetch<ResetReport>(`/bundles/${bundleId}/decisions/reset`, { method: "POST", body: JSON.stringify({ ...body, undo }) });
 }
 
 // --- 입구 2 짝 맞추기 ---
@@ -790,8 +825,8 @@ export function listIdenticalCandidates(bundleId: number): Promise<IdenticalCand
   return apiFetch<IdenticalCandidate[]>(`/bundles/${bundleId}/match/identical-candidates`);
 }
 
-export function confirmMatchesInBulk(bundleId: number, body: BulkMatchInput): Promise<Group> {
-  return apiFetch<Group>(`/bundles/${bundleId}/match/bulk-confirm`, { method: "POST", body: JSON.stringify(body) });
+export function confirmMatchesInBulk(bundleId: number, body: BulkMatchInput, undo?: UndoMeta): Promise<Group> {
+  return apiFetch<Group>(`/bundles/${bundleId}/match/bulk-confirm`, { method: "POST", body: JSON.stringify({ ...body, undo }) });
 }
 
 export function getGroupByTarget(bundleId: number, targetId: number): Promise<Group> {

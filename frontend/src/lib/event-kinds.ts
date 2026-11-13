@@ -51,6 +51,8 @@ const ICON_BY_ACTION: Record<string, LucideIcon> = {
   "unit.edit": Scissors,
   "unit.undo": Undo2,
   "unit.redo": Undo2,
+  "decision.undo": Undo2,
+  "decision.redo": Undo2,
   "unit.check_all": CheckCheck,
   "pair.create": Link2,
   "pair.confirm": Link2,
