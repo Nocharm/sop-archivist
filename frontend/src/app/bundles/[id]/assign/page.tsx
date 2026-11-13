@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent } from "react";
 
+import { AssignContextMenu } from "@/components/assign/assign-context-menu";
 import { AssignHelp } from "@/components/assign/assign-help";
 import { DestCard } from "@/components/assign/dest-card";
 import { DestinationAccordion, type AccordionSection } from "@/components/assign/destination-accordion";
@@ -16,28 +17,35 @@ import { LinkChoice } from "@/components/assign/link-choice";
 import { findNewLine, findOldStrip, LinkLines } from "@/components/assign/link-lines";
 import { LinkMenu } from "@/components/assign/link-menu";
 import { LinkBadge } from "@/components/assign/link-badge";
+import { MoveTargetField } from "@/components/assign/move-target-field";
 import { NewPane, NewPaneEmpty } from "@/components/assign/new-pane";
 import { OldPane } from "@/components/assign/old-pane";
 import { PaneDivider } from "@/components/assign/pane-divider";
+import { RecentRemarks, REMARK_MAX_LENGTH, RemarkModal } from "@/components/assign/remark-modal";
 import { ResetMenu } from "@/components/assign/reset-menu";
 import { ResetModal, type ResetScope } from "@/components/assign/reset-modal";
 import { AiAskMenu, type AiAskItem } from "@/components/manage/ai-ask-menu";
 import { Modal } from "@/components/modal";
 import { ReadOnlyNote } from "@/components/read-only-note";
+import { CutPop } from "@/components/paper/cut-pop";
 import { SourceFontMenu } from "@/components/paper/source-font-menu";
 import { FilterChip, UnitStatusChip } from "@/components/status";
+import { ClampText } from "@/components/ui/clamp-text";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { BundleLoadError } from "@/components/bundle-load-error";
 import { Truncate } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
+import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { listAppliedSuggestions, requestAi, type AiKind, type AiScope } from "@/lib/api-manage";
 import {
   bulkDecide,
+  editUnits,
   clearDecisions,
   confirmMatchesInBulk,
+  getComposedDoc,
   getDocumentView,
   getGroupByTarget,
   getGroupByUnit,
@@ -51,13 +59,16 @@ import {
   saveGroup,
   type AiSuggestion,
   type ChangeTypeInput,
+  type ComposedDoc,
   type DocumentView,
+  type EditOp,
   type Group,
   type GroupSaveInput,
   type NewCandidate,
   type UnitRow,
   type WrittenSentence,
 } from "@/lib/api-sop";
+import { applySavedTargets, buildComposedRows, isWrittenRow, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
 import {
   addPartnerTargets,
   buildLinkPairs,
@@ -75,6 +86,7 @@ import {
   type LinkMenuItem,
   type Recommendation,
 } from "@/lib/assign-model";
+import { buildAssignMenu, type AssignMenuAction } from "@/lib/assign-context-menu-model";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import {
@@ -117,14 +129,15 @@ import { useLeaveGuard } from "@/lib/leave-guard";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { navigate } from "@/lib/nav-buffer";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
-import { buildPaperModel, buildPaperTabs, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
+import { buildPaperModel, buildPaperTabs, findNearestCut, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
 import { SLOT_LABELS } from "@/lib/slot-labels";
 import { getStageHref } from "@/lib/stages";
 import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
+import { useCutLine } from "@/lib/use-cut-line";
 import { useLoaded } from "@/lib/use-loaded";
 import { usePaneZoom, type PaneKey, type ZoomDir } from "@/lib/use-pane-zoom";
-import { Select } from "@/components/ui/select";
+import { Select, type SelectOption } from "@/components/ui/select";
 
 type Filter = ClassifyFilter;
 const FILTERS: Filter[] = ["unassigned", "ai_suggested", "on_hold", "confirmed", "all"];
@@ -172,6 +185,9 @@ function findLinkDoc(destination: Destination | null, written: Map<number, Writt
   return destination?.kind === "link" ? (written.get(destination.targetIds[0])?.target_doc_id ?? null) : null;
 }
 
+/** Remark 창 - 고른 줄의 사유(저장이 사유를 요구해 열었으면 확인 뒤 그 저장을 잇는다) 또는 출처 없는 New 문장의 Remark */
+type RemarkEdit = { kind: "row"; need: "delete" | "move" | "hold" | "duplicate" | null; then: "confirm" | "hold" | null } | { kind: "new"; targetId: number };
+
 /** 그 자리 메뉴 - 붙을 요소, 누른 자리(요소 기준, 키보드·이동이면 null), 어느 줄의 어느 New 문장에 대한 메뉴인지 */
 interface MenuState {
   /** 열 때마다 새 값 - 메뉴를 새로 그려 늦게 뜨는 움직임과 포커스 옮기기를 다시 한다 */
@@ -206,13 +222,11 @@ function revealElement(el: HTMLElement) {
   if (shouldRecenter(box.top, box.bottom, frame.top, frame.bottom)) el.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
 }
 
-// 사유 칸 최대 높이 = 6줄(19px) + 위아래 안쪽 여백·테두리
-const REASON_MAX_HEIGHT = 6 * 19 + 12;
 // 도구 줄이 이보다 좁으면 오른쪽 단추는 아이콘만(라벨은 툴팁) - 1440 창에서 한 줄을 지킨다(한·영 모두 AI 메뉴가 있어도)
 const BAR_COMPACT_BELOW = 1200;
 
 export default function AssignPage() {
-  const { t } = useI18n();
+  const { t, lang: uiLang } = useI18n();
   const bundleId = Number(useParams<{ id: string }>().id);
   const { bundle } = useBundle(bundleId);
   const canEdit = bundle?.my_role === "author" && bundle.status === "in_progress";
@@ -320,6 +334,24 @@ export default function AssignPage() {
   const [jump, setJump] = useState<{ side: "old" | "new"; id: number; targetId: number; rowKey: string; quiet?: boolean } | null>(null);
   // 고른 줄이 어떤 길로든 바뀌면(↑↓·저장 뒤 다음 줄·짝 풀림·문서 바꾸기) 메뉴를 닫는다 - 다른 줄에서 낡은 메뉴가 되살아나지 않게(렌더 중 상태 맞추기)
   if (menu !== null && menu.rowKey !== activeKey) setMenu(null);
+  // Old 문장 우클릭 메뉴 - 누른 Unit, 그 줄 상자, 누른 자리와 글자 자리(키보드로 열었으면 없음). 고른 줄이 바뀌면 닫는다
+  const [ctxMenu, setCtxMenu] = useState<{ seq: number; unitId: number; rowKey: string; anchor: HTMLElement; click: { x: number; y: number } | null; caret: { blockId: number; offset: number } | null } | null>(null);
+  if (ctxMenu !== null && ctxMenu.rowKey !== activeKey) setCtxMenu(null);
+  // 나눌 선이 놓인 Unit - 고른 줄 안의 것만 산다(줄을 바꾸면 선이 사라진다)
+  const [cutUnitId, setCutUnitId] = useState<number | null>(null);
+  // 편집 뒤 고를 Unit - 원문 보기와 단위 목록을 둘 다 다시 받으면 그 줄을 고른다(stale…는 편집 전 것, 줄은 둘 다에서 나온다)
+  const [follow, setFollow] = useState<{ unitId: number; staleViews: DocumentView[] | null; staleUnits: UnitRow[] | null } | null>(null);
+  // 편집 뒤 - 원문 보기를 다시 받아 줄이 새로 생기면 편집한 문장의 줄을 고르고, 거르기 목록도 새 줄로 다시 잡는다(렌더 중 상태 맞추기)
+  if (follow !== null && viewList !== follow.staleViews && viewList !== null && units.data !== follow.staleUnits) {
+    const groupOf = viewList.flatMap((view) => view.units).find((unit) => unit.id === follow.unitId)?.group_unit_id ?? null;
+    const key = rowOfUnit.get(follow.unitId) ?? (groupOf !== null ? rowOfUnit.get(groupOf) : undefined);
+    setFollow(null);
+    setSnapshot((prev) => prev && { filter: prev.filter, keys: rows.filter((item) => prev.filter === "all" || item.status === prev.filter || item.key === key).map((item) => item.key) });
+    if (key) {
+      setSelectedKey(key);
+      scrollToUnit(follow.unitId);
+    }
+  }
   const focusNew = mode === "unsourced" ? (unsourced.find((item) => item.target_id === selNew)?.target_id ?? unsourced[0]?.target_id ?? null) : null;
 
   // --- 고른 줄의 관계 묶음·후보와 초안 ---
@@ -345,19 +377,8 @@ export default function AssignPage() {
   // system: 코드는 사람 사유가 아니다 - 사유 칸에 넣지 않고 아래에 사람 말로 보인다(넣으면 삭제가 실제 사유 없이 통과한다)
   const savedReason = rowUnits.map((unit) => readHumanReason(unit.decision)).find(Boolean) ?? "";
   const systemHold = rowUnits.map((unit) => findSystemHold(unit.decision)).find((code) => code !== null) ?? null;
-  const reason = draft.reason ?? savedReason;
+  const reasonNow = draft.reason ?? savedReason;
   const moveCode = draft.moveCode ?? firstDecision?.move_target_code ?? "";
-  useEffect(() => {
-    const fit = () => {
-      const el = reasonRef.current;
-      if (!el) return;
-      el.style.height = "auto";
-      el.style.height = `${Math.min(el.scrollHeight + 2, REASON_MAX_HEIGHT)}px`;
-    };
-    fit();
-    window.addEventListener("resize", fit);
-    return () => window.removeEventListener("resize", fit);
-  }, [reason, rowKey]);
   const rowSuggestion = row ? (row.unitIds.map((id) => suggestionOf.get(id)).find(Boolean) ?? null) : null;
 
   function setDraft(patch: Partial<PageDraft>, nextEditing = editing) {
@@ -408,7 +429,10 @@ export default function AssignPage() {
   const paperModel = useMemo(() => (oldView ? buildPaperModel(oldView) : null), [oldView]);
   // 본문·머리말·꼬리말 탭 - 고른 조각이 다른 탭에 있으면 그 탭으로 가고, 사람이 고른 탭은 그 줄에서 그대로 둔다
   const partKeys = useMemo(() => (paperModel ? (["body", "header", "footer"] as const).filter((key) => paperModel[key].length > 0) : []), [paperModel]);
-  const partOf = useMemo(() => (oldView && paperModel ? buildPaperTabs(oldView, paperModel).tabOf : null), [oldView, paperModel]);
+  const paperTabs = useMemo(() => (oldView && paperModel ? buildPaperTabs(oldView, paperModel) : null), [oldView, paperModel]);
+  const partOf = paperTabs?.tabOf ?? null;
+  const cutUnit = cutUnitId !== null && row?.unitIds.includes(cutUnitId) ? (paperModel?.units.get(cutUnitId) ?? null) : null;
+  const cutLine = useCutLine(cutUnit);
   // Old 조각 → 그 조각을 출처로 쓴 New 문장들(연결 배지)
   const linkedTargets = useMemo(() => {
     const map = new Map<number, WrittenSentence[]>();
@@ -445,15 +469,31 @@ export default function AssignPage() {
   }, [isFoldEmpty, viewList, listKeys, rows]);
   const writtenDocs = [...new Map(written.map((item) => [item.target_doc_id, item.doc_code])).entries()];
   // 오른쪽 칸은 항상 열려 있다 - 쓴 New 문서가 없으면 빈 안내
+  // 아직 쓰지 않은 문서(To-Be의 Assign 입구) - 오른쪽 칸에 지금까지의 배정으로 엮어 보인다(서버 결과물 C 규칙, 읽기 전용)
+  const composedDocs = (tobe.data?.docs ?? []).filter((doc) => doc.entrance === "assign");
   const [manualNewDoc, setManualNewDoc] = useState<{ key: string; docId: number } | null>(null);
+  // 방금 확정해 보낸 곳 - 확정 뒤 고른 줄(key)에 있는 동안만 오른쪽 칸을 그 문서에 두고 그 문장을 잇는 선을 진하게. 손으로 고른 문서가 먼저, 다른 줄로 옮기면 평소대로
+  const [liveNew, setLiveNew] = useState<{ key: string; docId: number; targetIds: number[]; seq: number } | null>(null);
   const toggleKey = mode === "unsourced" ? "unsourced" : (activeKey ?? "");
   const topLink = recommendations.find((rec) => rec.destination.kind === "link")?.destination ?? null;
-  const autoNewDoc = mode === "unsourced" ? (writtenMap.get(focusNew ?? -1)?.target_doc_id ?? null) : (findLinkDoc(destination, writtenMap) ?? findLinkDoc(topLink, writtenMap));
-  const newDocId = (manualNewDoc?.key === toggleKey ? manualNewDoc.docId : null) ?? autoNewDoc ?? writtenDocs[0]?.[0] ?? null;
-  const newRows = written.filter((item) => item.target_doc_id === newDocId);
+  // 칸에 확정한 줄은 그 문서를 연다 - 이어 둔 문서가 없을 때 추천보다 먼저
+  const savedPlaceDoc = savedDestination?.kind === "slot" || savedDestination?.kind === "step" ? savedDestination.docId : null;
+  const autoNewDoc = mode === "unsourced" ? (writtenMap.get(focusNew ?? -1)?.target_doc_id ?? null) : (findLinkDoc(destination, writtenMap) ?? savedPlaceDoc ?? findLinkDoc(topLink, writtenMap));
+  const liveDoc = liveNew?.key === toggleKey ? liveNew : null;
+  const newDocId = (manualNewDoc?.key === toggleKey ? manualNewDoc.docId : null) ?? liveDoc?.docId ?? autoNewDoc ?? writtenDocs[0]?.[0] ?? composedDocs[0]?.id ?? null;
+  const isComposedDoc = newDocId !== null && !writtenDocs.some(([docId]) => docId === newDocId);
+  const composed = useLoaded(
+    () => (isComposedDoc && newDocId !== null ? getComposedDoc(bundleId, newDocId, uiLang) : Promise.resolve(null)),
+    `${isComposedDoc ? newDocId : ""}:${dataKey}:${uiLang}`,
+  );
+  // 저장 응답으로 미리 고친 엮은 문서 - 그때 받아 둔 문서(base)가 그대로인 동안만, 다시 읽은 서버 값이 오면 그것
+  const [composedPatch, setComposedPatch] = useState<{ base: ComposedDoc; doc: ComposedDoc } | null>(null);
+  const composedData = composed.data?.target_doc_id === newDocId ? composed.data : null;
+  const composedDoc = composedData && composedPatch?.base === composedData ? composedPatch.doc : composedData;
+  const newRows: NewPaneRow[] = isComposedDoc ? (composedDoc ? buildComposedRows(composedDoc) : []) : written.filter((item) => item.target_doc_id === newDocId);
   // 두 문서 사이 이음 - 저장된 출처와 고른 줄의 저장 전 고름
   const oldUnitIds = useMemo(() => new Set(oldView?.units.map((unit) => unit.id) ?? []), [oldView]);
-  const linkPairs = buildLinkPairs(newRows, oldUnitIds, draft.destination?.kind === "link" ? { units: rowUnits.map((unit) => ({ id: unit.unit_id, lang: unit.lang })), targetIds: draft.destination.targetIds } : null);
+  const linkPairs = buildLinkPairs(newRows.filter(isWrittenRow), oldUnitIds, draft.destination?.kind === "link" ? { units: rowUnits.map((unit) => ({ id: unit.unit_id, lang: unit.lang })), targetIds: draft.destination.targetIds } : null);
 
   const [view, setView] = useState(readAssignView);
   function changeView(patch: Partial<typeof view>) {
@@ -483,7 +523,7 @@ export default function AssignPage() {
   if (row && row.status !== "unassigned" && rowLangs.includes("en")) aiMenuItems.push({ key: "to-ko", label: t("ai.translateToKo"), run: () => askAiScope("translate", { unit_ids: row.unitIds, direction: "en_to_ko" }) });
   if (row) aiMenuItems.push({ key: "split", label: t("ai.splitRow"), run: () => askAiScope("split", { unit_ids: row.unitIds }) });
 
-  const reasonRef = useRef<HTMLTextAreaElement>(null);
+  const [remarkEdit, setRemarkEdit] = useState<RemarkEdit | null>(null);
   const [barEl, setBarEl] = useState<HTMLDivElement | null>(null);
   const [isBarCompact, setIsBarCompact] = useState(false);
   useEffect(() => {
@@ -492,7 +532,6 @@ export default function AssignPage() {
     observer.observe(barEl);
     return () => observer.disconnect();
   }, [barEl]);
-  // 사유 칸은 글 길이만큼 자란다(최대 6줄) - 긴 사유를 한 줄 칸에서 가려 읽지 않게
   const firstTextRef = useRef<HTMLTextAreaElement>(null);
   const [busy, setBusy] = useState(false);
   const [bulk, setBulk] = useState<"delete" | "move" | null>(null);
@@ -526,6 +565,8 @@ export default function AssignPage() {
     setMode("old");
     setSelectedKey(key);
     setMenu(null);
+    setCtxMenu(null);
+    if (key !== activeKey) setCutUnitId(null);
     const first = rowMap.get(key)?.unitIds[0];
     if (scroll && first !== undefined) scrollToUnit(first);
   }
@@ -533,6 +574,115 @@ export default function AssignPage() {
   function moveRow(step: 1 | -1) {
     const next = stepInList(rows.map((item) => item.key), listKeys, activeKey, step);
     if (next !== null) selectRow(next);
+  }
+
+  // --- Old 문장 고치기(우클릭 메뉴·두 번 누르기) - Split의 편집을 그대로 부른다. 판단이 없는 문장만(모델이 막는다) ---
+  /** 단위(칸 문장이면 묶인 표·행)의 줄 키 */
+  function findRowKey(unitId: number): string | undefined {
+    const groupId = paperModel?.units.get(unitId)?.group_unit_id ?? null;
+    return rowOfUnit.get(unitId) ?? (groupId !== null ? rowOfUnit.get(groupId) : undefined);
+  }
+
+  function isUnitDecided(unit: { id: number; group_unit_id: number | null }): boolean {
+    const decided = unitMap.get(unit.group_unit_id ?? unit.id);
+    return decided !== undefined && (decided.status !== "unassigned" || decided.decision.disposition !== "unassigned");
+  }
+
+  function hasUnitDraft(unit: { id: number }): boolean {
+    const key = findRowKey(unit.id);
+    const pending = key ? drafts[key] : undefined;
+    return pending !== undefined && hasDraftChange(pending);
+  }
+
+  const ctxTarget = ctxMenu ? (paperModel?.units.get(ctxMenu.unitId) ?? null) : null;
+  const ctxGroups = (() => {
+    if (!ctxTarget || !paperTabs || !paperModel) return null;
+    const order = paperTabs.order;
+    const at = order.indexOf(ctxTarget.id);
+    const neighbor = (step: number) => (at < 0 ? null : (paperModel.units.get(order[at + step]) ?? null));
+    return buildAssignMenu({
+      target: ctxTarget,
+      prev: neighbor(-1),
+      next: neighbor(1),
+      readOnly: !canEdit,
+      rowStatus: row?.status ?? "unassigned",
+      hasDestination: destination !== null,
+      isConfirmedAsIs: row?.status === "confirmed" && !hasDraftChange(draft),
+      isDecided: isUnitDecided,
+      hasDraft: hasUnitDraft,
+      canSplit: findNearestCut(ctxTarget, Math.floor(ctxTarget.text.length / 2)) !== null,
+    });
+  })();
+  // 메뉴를 연 뒤 편집으로 그 문장이 사라졌으면 닫는다(렌더 중 상태 맞추기)
+  if (ctxMenu !== null && paperModel !== null && ctxTarget === null) setCtxMenu(null);
+
+  /** 우클릭(또는 메뉴 글쇠) - 그 문장의 줄을 고르고 줄 상자 옆에 메뉴를 연다 */
+  function openCtxMenu(unitId: number, click: { x: number; y: number } | null, caret: { blockId: number; offset: number } | null) {
+    if (mode !== "old") return;
+    const key = findRowKey(unitId);
+    const anchor = document.querySelector<HTMLElement>(`[data-testid="assign-paper-piece-${unitId}"]`) ?? document.querySelector<HTMLElement>(`[data-testid="assign-paper-unit-${unitId}"]`);
+    if (!key || !anchor) return;
+    if (key !== activeKey) selectRow(key, false);
+    setChecked(new Set());
+    setMenu(null);
+    menuSeq.current += 1;
+    setCtxMenu({ seq: menuSeq.current, unitId, rowKey: key, anchor, click, caret });
+  }
+
+  /** 편집 한 번 - 끝나면 원문 보기·단위를 다시 받고 followId(없으면 새로 생긴 첫 단위)의 줄을 고른다 */
+  async function runUnitEdit(op: EditOp, okText: string, followId: number | null) {
+    if (!oldView || busy) return;
+    setBusy(true);
+    try {
+      const result = await editUnits(bundleId, oldView.document.id, oldView.document.revision, op);
+      cutLine.clear();
+      setCutUnitId(null);
+      // 고친 줄의 Unit은 은퇴했을 수 있다 - 다시 받는 동안 그 Unit의 묶음·후보를 부르지 않게 고름을 비우고, 새 줄이 생기면 follow가 고른다
+      setSelectedKey(null);
+      showToast(okText);
+      const next = result.created_unit_ids[0] ?? followId;
+      if (next !== null && next !== undefined) setFollow({ unitId: next, staleViews: viewList, staleUnits: units.data });
+    } catch (err) {
+      // 판단이 걸린 단위(다른 문장의 출처 등)는 Split처럼 확인하고 떼어 내지 않는다 - 배정 화면에서는 먼저 배정을 취소하게 한다
+      const isLinked = err instanceof ApiError && err.rule?.code === "confirm_required";
+      showToast(isLinked ? t("assign.ctx.why.assigned") : humanizeApiError(err, t), "error");
+    } finally {
+      views.reload();
+      setUnitsKey((key) => key + 1);
+      void loadBundle(bundleId);
+      setBusy(false);
+    }
+  }
+
+  function splitAtCut() {
+    if (!cutUnit || cutLine.at === null) return;
+    void runUnitEdit({ type: "split", unit_id: cutUnit.id, at: cutLine.at }, t("split.didSplit"), null);
+  }
+
+  /** 두 번 누른 자리에 나눌 선 - 메뉴의 "Split here"를 쓸 수 있는 문장만 */
+  function handleOldDoubleClick(unitId: number, caret: { blockId: number; offset: number } | null) {
+    const unit = paperModel?.units.get(unitId);
+    if (!unit || !canEdit || mode !== "old" || isUnitDecided(unit) || hasUnitDraft(unit) || !["sentence", "heading", "cell_sentence"].includes(unit.kind)) return;
+    if (cutLine.placeAtCaret(unit, caret)) setCutUnitId(unit.id);
+  }
+
+  function runCtx(action: AssignMenuAction, lang?: "ko" | "en") {
+    const target = ctxTarget;
+    const caret = ctxMenu?.caret ?? null;
+    setCtxMenu(null);
+    if (!target) return;
+    if (action === "confirm") void runSave("confirm");
+    else if (action === "clear") void runClear();
+    else if (action === "split") {
+      // 이미 그 문장에 선이 있으면 바로 나누고, 없으면 누른 자리(키보드면 가운데) 가까이에 선을 놓는다 - 끌거나 ←→로 옮긴 뒤 Split here
+      if (cutUnit?.id === target.id && cutLine.at !== null) splitAtCut();
+      else if (cutLine.placeNear(target, caret)) setCutUnitId(target.id);
+    } else if ((action === "merge_prev" || action === "merge_next") && paperTabs) {
+      const order = paperTabs.order;
+      const other = order[order.indexOf(target.id) + (action === "merge_prev" ? -1 : 1)];
+      const ids = action === "merge_prev" ? [other, target.id] : [target.id, other];
+      void runUnitEdit({ type: "merge", unit_ids: ids }, t("split.didMerge"), null);
+    } else if (action === "lang" && lang) void runUnitEdit({ type: "set_language", unit_ids: [target.id], lang }, t("common.saved"), target.id);
   }
 
   function buildTables(): Map<number, { rows: number; cols: number; cells: CellSource[] }> {
@@ -572,18 +722,28 @@ export default function AssignPage() {
     return true;
   }
 
-  async function runSave(action: "confirm" | "hold") {
+  /** 이 저장에 사유가 꼭 있어야 하는 까닭 - 없으면 null */
+  function readReasonNeed(action: "confirm" | "hold"): "delete" | "move" | "hold" | "duplicate" | null {
+    if (action === "hold") return "hold";
+    if (destination?.kind === "delete" || destination?.kind === "move") return destination.kind;
+    return new Set(linkIds.map((id) => writtenMap.get(id)?.target_doc_id)).size > 1 ? "duplicate" : null;
+  }
+
+  /** reasonOverride는 Remark 창에서 방금 확인한 사유 - 초안 상태가 아직 반영되기 전이라 직접 넘긴다 */
+  async function runSave(action: "confirm" | "hold", reasonOverride?: string) {
     // 보낼 곳 없이는 보류만 된다(처분 unassigned + hold, 사유는 hold_reason)
     if (!row || busy || groupPending || pickedGroups.isLoading || (!destination && action !== "hold")) return;
-    const spansDocs = new Set(linkIds.map((id) => writtenMap.get(id)?.target_doc_id)).size > 1;
-    const needsReason = action === "hold" || destination?.kind === "delete" || destination?.kind === "move" || spansDocs;
-    if (needsReason && !reason.trim()) {
-      showToast(t(action === "hold" ? "classify.holdReasonNeeded" : "classify.reasonNeeded"), "error");
-      reasonRef.current?.focus();
-      return;
-    }
+    const reason = reasonOverride ?? reasonNow;
+    // 대상 문서를 먼저 본다 - 사유 창을 거친 뒤에 다시 막히지 않게
     if (destination?.kind === "move" && !moveCode.trim()) {
       showToast(t("classify.moveCodeNeeded"), "error");
+      document.querySelector<HTMLElement>('[data-testid="assign-move-code"]')?.focus();
+      return;
+    }
+    const need = readReasonNeed(action);
+    if (need !== null && !reason.trim()) {
+      // 알림만 띄우지 않고 사유 창을 연다 - 확인하면 이 저장을 잇는다
+      setRemarkEdit({ kind: "row", need, then: action });
       return;
     }
     setBusy(true);
@@ -599,6 +759,7 @@ export default function AssignPage() {
       const isSplit = applyPairSettle(row, saved, leftovers) && leftovers.length > 0;
       // 다음 미확정 줄로 - 지금 줄은 거르기 자리에 남는다. 남는 쪽을 풀었으면 남은 문장의 줄이 다음이다
       const next = action === "confirm" && !isSplit ? findNextOpen(listKeys, rowMap, row.key) : null;
+      if (action === "confirm") showSent(row, saved, next ?? row.key);
       dropDraft(row.key);
       if (isSplit) setSplitRow({ from: row.key, unit: leftovers[0] });
       if (next) selectRow(next);
@@ -612,6 +773,23 @@ export default function AssignPage() {
     }
   }
 
+  /**
+   * 확정한 곳을 오른쪽 칸에 바로 보인다 - 그 문서로 옮기고(다음 줄에서도, 손으로 고른 문서가 없을 때), 엮은 문서면 저장 응답으로 칸에 미리 넣는다.
+   * 그 문장이 그려지면 NewPane이 화면에 들이고, 잇는 선은 진하게 그린다
+   */
+  function showSent(savedRow: ClassifyRow, saved: Group, nextKey: string) {
+    const docId = destination?.kind === "slot" || destination?.kind === "step" ? destination.docId : destination?.kind === "link" ? (writtenMap.get(destination.targetIds[0])?.target_doc_id ?? null) : null;
+    if (docId === null || !destination) return;
+    const isMine = (target: Group["targets"][number]) => target.source_unit_ids.some((id) => savedRow.unitIds.includes(id)) || (target.translation_source_unit_id !== null && savedRow.unitIds.includes(target.translation_source_unit_id));
+    const targetIds = destination.kind === "link" ? destination.targetIds : saved.targets.filter((target) => target.target_doc_id === docId && target.parent_target_id === null && isMine(target)).map((target) => target.id);
+    setLiveNew((prev) => ({ key: nextKey, docId, targetIds, seq: (prev?.seq ?? 0) + 1 }));
+    if (composed.data?.target_doc_id === docId) {
+      const textOf = (unitIds: number[]) => unitIds.map((id) => unitMap.get(id)?.text ?? "").join(" ");
+      // 앞 저장의 미리 고침 위에 얹는다 - 다시 읽기가 오기 전에 연달아 확정해도 앞 문장이 빠지지 않게
+      setComposedPatch({ base: composed.data, doc: applySavedTargets(composedDoc ?? composed.data, saved.targets, textOf) });
+    }
+  }
+
   async function runClear() {
     if (!row || busy) return;
     const decided = rowUnits.filter((unit) => unit.decision.disposition !== "unassigned" || unit.status !== "unassigned");
@@ -619,6 +797,12 @@ export default function AssignPage() {
     setBusy(true);
     try {
       await clearDecisions(bundleId, decided.map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision })));
+      // 엮은 문서에서 그 문장을 바로 뺀다 - 오른쪽 칸은 그 문서에 머물러(배정이 없어져 저절로 다른 문서로 가지 않게) 접히며 사라지는 것이 보이고, 다시 읽은 값이 맞춘다
+      if (composed.data && isComposedDoc && newDocId !== null) {
+        const docId = newDocId;
+        setLiveNew((prev) => ({ key: toggleKey, docId, targetIds: [], seq: (prev?.seq ?? 0) + 1 }));
+        setComposedPatch({ base: composed.data, doc: removeClearedUnits(composedDoc ?? composed.data, new Set(row.unitIds)) });
+      }
       setMenu(null);
       showToast(t("classify.cleared"));
       dropDraft(row.key);
@@ -805,6 +989,7 @@ export default function AssignPage() {
       return;
     }
     setChecked(new Set());
+    setCtxMenu(null);
     selectRow(key, false);
   }
 
@@ -830,6 +1015,13 @@ export default function AssignPage() {
   }
 
   const handleKey = useEffectEvent((event: KeyboardEvent) => {
+    // 메뉴 글쇠·Shift+F10 - 고른 줄(나눌 선이 있으면 그 문장)에서 우클릭 메뉴를 연다
+    const isMenuKey = event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey);
+    if (isMenuKey && row && mode === "old" && !bulk && !isTypingTarget(event.target) && !document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]')) {
+      event.preventDefault();
+      openCtxMenu(cutUnit?.id ?? row.unitIds[0], null, null);
+      return;
+    }
     // 그 자리 메뉴는 화면 단축키를 막지 않는다 - 메뉴가 떠 있어도 ↵가 확정이다(메뉴 안의 키는 메뉴가 먼저 받는다)
     if (bulk || isTypingTarget(event.target) || document.querySelector('[role="dialog"],[role="menu"]:not([data-link-menu]),[role="listbox"]')) {
       if (event.key === "Escape" && editing) closeEditing();
@@ -848,8 +1040,12 @@ export default function AssignPage() {
     const key = event.key.toLowerCase();
     const step = getRowStep(key);
     if (step !== null) moveRow(step);
-    else if (key === "escape") setChecked(new Set());
-    else if (!canEdit || !row) return;
+    else if (key === "escape") {
+      // 나눌 선이 있으면 선부터 거둔다(Split과 같다)
+      if (cutLine.at !== null) cutLine.clear();
+      else setChecked(new Set());
+    } else if (!canEdit || !row) return;
+    else if (key === "s" && cutLine.at !== null) splitAtCut();
     else if (key === "enter") handlePrimary();
     else if (key === "e") startEdit();
     else if (key === "h") void runSave("hold");
@@ -864,7 +1060,9 @@ export default function AssignPage() {
   }, []);
 
   // New 원문은 고른 문장(없으면 후보)이 보이게 - 줄을 바꾸거나 고를 때
-  const newFocusId = mode === "unsourced" ? focusNew : (linkIds[0] ?? [...candidateIds][0] ?? null);
+  // 엮은 문서는 고른 줄이 들어간 문장(그 문서의 후보·이음은 없다)
+  const composedFocusId = isComposedDoc ? (newRows.filter(isWrittenRow).find((item) => item.source_unit_ids.some((id) => row?.unitIds.includes(id)))?.target_id ?? null) : null;
+  const newFocusId = mode === "unsourced" ? focusNew : isComposedDoc ? composedFocusId : (linkIds[0] ?? [...candidateIds][0] ?? null);
   useEffect(() => {
     if (newFocusId === null || newDocId === null) return;
     const frame = requestAnimationFrame(() => document.querySelector(`[data-testid="assign-new-${newFocusId}"]`)?.scrollIntoView({ block: "nearest" }));
@@ -890,6 +1088,14 @@ export default function AssignPage() {
   function renderPlaceLabel(dest: Destination): { title: string; text: string } {
     const option = options.find((item) => getDestinationId(item.destination) === getDestinationId(dest));
     return { title: option?.docCode ?? "", text: option?.label ?? "" };
+  }
+
+  /** 우클릭 메뉴 확정 항목 옆의 짧은 이름 - 잇기는 New 문서 번호, 자리는 To-Be 문서 번호, 지우기·옮기기는 그 이름(옮기기는 대상 문서) */
+  function readDestinationLabel(dest: Destination): string {
+    if (dest.kind === "link") return writtenMap.get(dest.targetIds[0])?.doc_code ?? "";
+    if (dest.kind === "delete") return t("classify.deleted");
+    if (dest.kind === "move") return moveCode.trim() || t("classify.moved");
+    return renderPlaceLabel(dest).title;
   }
 
   /** 추천을 누름 - 고른 뒤 그 카드 옆에 확정 메뉴를 띄운다(고른 상자가 카드보다 위라 화면 밖일 수 있다) */
@@ -1216,35 +1422,29 @@ export default function AssignPage() {
 
   const details = (
     <section className="grid grid-cols-[84px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-2">
-      <span className="col-span-2 text-xs text-ink-3">{t("classify.reason")}</span>
-      {canEdit ? (
-        <textarea
-          ref={reasonRef}
-          rows={1}
-          className="col-span-2 block min-h-8 w-full resize-none overflow-y-auto rounded-md border border-line-2 bg-surface px-2 py-[5px] text-[13px] leading-[19px] text-ink focus:border-accent focus:outline-none"
-          data-testid="assign-reason"
-          placeholder={disposed ? t("classify.reasonRequired") : t("classify.reasonOptional")}
-          value={reason}
-          maxLength={2000}
-          onChange={(event) => setDraft({ reason: event.target.value })}
-        />
+      {/* Remark는 창에서 쓴다 - 여기는 이름 줄의 쓰기 단추와 아래 두 줄 읽기 보기(좁은 패널에서도 글이 패널 폭을 쓴다). 삭제·이동에서 비어 있으면 필수라고 알린다 */}
+      <span className="col-span-2 flex min-h-7 items-center justify-between gap-2">
+        <span className="text-xs text-ink-3">{t("classify.reason")}</span>
+        {canEdit && (
+          <button type="button" className="btn h-7 flex-none gap-1 px-2 text-xs font-normal" data-testid="assign-reason-edit" disabled={!row} onClick={() => setRemarkEdit({ kind: "row", need: null, then: null })}>
+            <FilePen size={13} strokeWidth={1.5} aria-hidden />
+            {t(reasonNow ? "remark.edit" : "remark.write")}
+          </button>
+        )}
+      </span>
+      {reasonNow ? (
+        <span className="col-span-2 -mt-1 block min-w-0">
+          <ClampText text={reasonNow} className="text-[13px] leading-[19px] text-ink" testId="assign-reason" />
+        </span>
       ) : (
-        <span className="col-span-2 break-words">{reason || "–"}</span>
+        <span className={`col-span-2 -mt-1 text-xs leading-[19px] ${disposed ? "text-st-hold" : "text-ink-3"}`} data-testid="assign-reason">
+          {disposed ? t("classify.reasonRequired") : "–"}
+        </span>
       )}
       {/* 이 줄의 자리는 어떤 목적지에서도 늘 잡아 둔다 - 자리·잇기에서 지우기·옮기기로 바꿔도 아래(확인·확정자)가 밀리지 않게(To-Be 사유 칸과 같은 방식). 옮기기일 때만 채운다 */}
       <span className="self-center text-xs text-ink-3">{destination?.kind === "move" ? t("classify.moveTo") : ""}</span>
-      <span className="relative block h-8 min-w-0 self-center">
-        {destination?.kind === "move" && (
-          <input
-            className="absolute inset-0 h-8 w-full rounded-md border border-line-2 bg-surface px-2 font-mono text-[13px] text-ink focus:border-accent focus:outline-none"
-            data-testid="assign-move-code"
-            placeholder="SOP-XX-00000"
-            value={moveCode}
-            maxLength={100}
-            disabled={!canEdit}
-            onChange={(event) => setDraft({ moveCode: event.target.value })}
-          />
-        )}
+      <span className="block h-8 min-w-0 self-center">
+        {destination?.kind === "move" && <MoveTargetField key={activeKey ?? ""} bundleId={bundleId} value={moveCode} disabled={!canEdit} testId="assign-move-code" onChange={(code) => setDraft({ moveCode: code })} />}
       </span>
       {systemHold !== null && (
         <>
@@ -1314,20 +1514,23 @@ export default function AssignPage() {
               </div>
               <div className="grid gap-2 p-[var(--pad)]">
                 <p className="chosen-box is-empty">{t("assign.unsourced.body")}</p>
-                {canEdit ? (
-                  <textarea
-                    rows={2}
-                    className="block w-full resize-y rounded-md border border-line-2 bg-surface px-2 py-[5px] text-[13px] leading-[19px] text-ink focus:border-accent focus:outline-none"
-                    data-testid="assign-new-remark"
-                    aria-label={t("classify.reason")}
-                    placeholder={t("assign.newRemark")}
-                    value={newRemarks[target.target_id] ?? target.remark}
-                    maxLength={2000}
-                    onChange={(event) => setNewRemarks((prev) => ({ ...prev, [target.target_id]: event.target.value }))}
-                  />
-                ) : (
-                  target.remark && <p className="break-words text-[13px] text-ink-2">{target.remark}</p>
-                )}
+                <div className="flex min-w-0 items-start gap-2">
+                  {(newRemarks[target.target_id] ?? target.remark) ? (
+                    <span className="block min-w-0 flex-1">
+                      <ClampText text={newRemarks[target.target_id] ?? target.remark} className="text-[13px] leading-[19px] text-ink-2" testId="assign-new-remark" />
+                    </span>
+                  ) : (
+                    <span className="min-w-0 flex-1 text-xs leading-[19px] text-ink-3" data-testid="assign-new-remark">
+                      {t("assign.newRemark")}
+                    </span>
+                  )}
+                  {canEdit && (
+                    <button type="button" className="btn h-7 flex-none gap-1 px-2 text-xs font-normal" data-testid="assign-new-remark-edit" onClick={() => setRemarkEdit({ kind: "new", targetId: target.target_id })}>
+                      <FilePen size={13} strokeWidth={1.5} aria-hidden />
+                      {t((newRemarks[target.target_id] ?? target.remark) ? "remark.edit" : "remark.write")}
+                    </button>
+                  )}
+                </div>
                 <button type="button" className="btn pri" data-testid="assign-mark-new" disabled={!canEdit || busy} onClick={markNew}>
                   {t("assign.markNew")}
                 </button>
@@ -1498,7 +1701,19 @@ export default function AssignPage() {
   );
 
   const oldDocOptions = oldDocs.map((doc) => ({ value: String(doc.id), label: doc.doc_code || doc.file_name }));
-  const newDocOptions = writtenDocs.map(([docId, code]) => ({ value: String(docId), label: code }));
+  const newDocOptions: SelectOption<string>[] = [
+    ...writtenDocs.map(([docId, code]) => ({ value: String(docId), label: code })),
+    ...composedDocs.map((doc) => ({
+      value: String(doc.id),
+      label: (
+        <span>
+          {doc.code} <span className="text-ink-3">· {t("assign.composedOption")}</span>
+        </span>
+      ),
+      triggerLabel: doc.code,
+      tip: doc.code,
+    })),
+  ];
   const highlightIds = new Set(row?.unitIds ?? []);
   const pickedNew = new Set(linkIds);
   const pickedOld = new Set([...checked].flatMap((key) => rowMap.get(key)?.unitIds ?? []));
@@ -1585,7 +1800,7 @@ export default function AssignPage() {
                   setManualPart({ key: "", part });
                 }}
                 placeholder={<span className="sk h-[480px] w-full" />}
-                selectedId={mode === "old" ? (row?.unitIds[0] ?? null) : null}
+                selectedId={mode === "old" ? (cutUnit?.id ?? row?.unitIds[0] ?? null) : null}
                 highlightIds={mode === "old" ? highlightIds : NO_NUMBERS}
                 pickedIds={pickedOld}
                 statusOf={(unitId) => unitMap.get(unitId)?.status}
@@ -1598,6 +1813,12 @@ export default function AssignPage() {
                 activePart={activePart}
                 onPartChange={(part) => setManualPart({ key: activeKey ?? "", part })}
                 onUnitClick={handleOldClick}
+                onUnitContextMenu={(unitId, at, caret) => openCtxMenu(unitId, at, caret)}
+                onUnitDoubleClick={canEdit ? handleOldDoubleClick : undefined}
+                cut={cutLine.cut}
+                onCutDrag={canEdit ? cutLine.drag : undefined}
+                onCutNudge={canEdit ? cutLine.nudge : undefined}
+                renderAtCut={() => <CutPop busy={busy} onRun={splitAtCut} onCancel={cutLine.clear} testIdPrefix="assign" />}
                 figureSource={oldView ? { bundleId, docId: oldView.document.id } : undefined}
                 zoom={view.zoomOld}
                 onZoom={(dir) => zoomPane("old", dir)}
@@ -1612,6 +1833,14 @@ export default function AssignPage() {
                     docId={String(newDocId)}
                     onDocChange={(value) => setManualNewDoc({ key: toggleKey, docId: Number(value) })}
                     rows={newRows}
+                    rowsKey={isComposedDoc && !composedDoc ? `${newDocId}:loading` : String(newDocId)}
+                    tag={isComposedDoc ? t("assign.composedTag") : t("assign.writtenTag")}
+                    readOnly={isComposedDoc}
+                    live={liveDoc && liveDoc.docId === newDocId ? { seq: liveDoc.seq, targetIds: liveDoc.targetIds } : null}
+                    onReveal={(el, flash) => {
+                      revealElement(el);
+                      if (flash) flashElement(el);
+                    }}
                     candidateIds={candidateIds}
                     pickedIds={pickedNew}
                     focusId={focusNew}
@@ -1623,7 +1852,7 @@ export default function AssignPage() {
                     linesOn={view.lines}
                     onToggleLines={() => changeView({ lines: !view.lines })}
                   />
-                  <LinkLines pairs={linkPairs} focusUnits={highlightIds} focusTargets={pickedNew} visible={view.lines} />
+                  <LinkLines pairs={linkPairs} focusUnits={highlightIds} focusTargets={liveDoc ? new Set([...pickedNew, ...liveDoc.targetIds]) : pickedNew} visible={view.lines} />
                 </>
               )}
             </div>
@@ -1636,6 +1865,18 @@ export default function AssignPage() {
       </div>
       {menu && menuItems.length > 0 && (
         <LinkMenu key={menu.seq} anchor={menu.anchor} offset={menu.offset} items={menuItems} isUnsaved={menuItems.includes("cancel")} busy={busy} onAction={runMenu} onClose={() => setMenu(null)} />
+      )}
+      {ctxMenu && ctxGroups && (
+        <AssignContextMenu
+          key={ctxMenu.seq}
+          anchor={ctxMenu.anchor}
+          cover={(rowMap.get(ctxMenu.rowKey)?.unitIds ?? []).flatMap((id) => [...document.querySelectorAll<HTMLElement>(`[data-testid="assign-paper-piece-${id}"]`)])}
+          click={ctxMenu.click}
+          groups={ctxGroups}
+          destinationLabel={destination ? readDestinationLabel(destination) : ""}
+          onPick={runCtx}
+          onClose={() => setCtxMenu(null)}
+        />
       )}
       {confirmingIdentical && (
         <ConfirmModal
@@ -1666,6 +1907,39 @@ export default function AssignPage() {
           onClose={() => setResetScope(null)}
         />
       )}
+      {remarkEdit?.kind === "row" && row && (
+        <RemarkModal
+          key={row.key}
+          title={t("remark.title")}
+          initial={reasonNow}
+          requiredMessage={remarkEdit.need ? t(`remark.need.${remarkEdit.need}`) : null}
+          confirmLabel={t(remarkEdit.then === "hold" ? "remark.saveHold" : remarkEdit.then === "confirm" ? "remark.saveConfirm" : "common.save")}
+          testId="assign-remark-modal"
+          onClose={() => setRemarkEdit(null)}
+          onConfirm={(text) => {
+            const then = remarkEdit.then;
+            setRemarkEdit(null);
+            // 글을 바꾸지 않고 확인하면 초안을 만들지 않는다 - 저장 안 한 변경으로 잡혀 나가기 확인·고치기 막힘이 생기지 않게
+            if (text !== reasonNow) setDraft({ reason: text });
+            if (then) void runSave(then, text);
+          }}
+        />
+      )}
+      {remarkEdit?.kind === "new" && (
+        <RemarkModal
+          title={t("remark.title")}
+          initial={newRemarks[remarkEdit.targetId] ?? writtenMap.get(remarkEdit.targetId)?.remark ?? ""}
+          requiredMessage={null}
+          confirmLabel={t("common.save")}
+          testId="assign-remark-modal"
+          onClose={() => setRemarkEdit(null)}
+          onConfirm={(text) => {
+            const targetId = remarkEdit.targetId;
+            setRemarkEdit(null);
+            setNewRemarks((prev) => ({ ...prev, [targetId]: text }));
+          }}
+        />
+      )}
       {leaveTo !== null && (
         <ConfirmModal
           title={t("assign.leaveTitle")}
@@ -1684,6 +1958,7 @@ export default function AssignPage() {
       )}
       {bulk && (
         <BulkModal
+          bundleId={bundleId}
           action={bulk}
           count={pickedOld.size}
           onClose={() => setBulk(null)}
@@ -1720,7 +1995,15 @@ function countDone(rows: ClassifyRow[]): number {
   return rows.filter((row) => row.status === "confirmed").length;
 }
 
-function BulkModal({ action, count, onClose, onConfirm }: { action: "delete" | "move"; count: number; onClose: () => void; onConfirm: (reason: string, code: string) => Promise<void> }) {
+interface BulkModalProps {
+  bundleId: number;
+  action: "delete" | "move";
+  count: number;
+  onClose: () => void;
+  onConfirm: (reason: string, code: string) => Promise<void>;
+}
+
+function BulkModal({ bundleId, action, count, onClose, onConfirm }: BulkModalProps) {
   const { t } = useI18n();
   const [reason, setReason] = useState("");
   const [code, setCode] = useState("");
@@ -1756,15 +2039,25 @@ function BulkModal({ action, count, onClose, onConfirm }: { action: "delete" | "
       }
     >
       <div className="grid gap-1.5 rounded-md bg-sunken px-3 py-2.5 text-[13px] leading-5 text-ink-2">{t("classify.bulkBody", { n: count })}</div>
+      {/* 하나씩 저장할 때의 Remark 창과 같은 칸·최근 사유 - 이 창 안에서 바로 쓴다(창 위에 창을 열지 않는다) */}
       <label className="grid gap-1">
         <span className="text-xs text-ink-2">{t("classify.reason")}</span>
-        <input className="h-8 rounded-md border border-line-2 bg-surface px-2 text-[13px]" data-testid="assign-bulk-reason" value={reason} maxLength={2000} autoFocus onChange={(event) => setReason(event.target.value)} />
+        <textarea
+          rows={3}
+          className="block w-full resize-y rounded-md border border-line-2 bg-surface px-2 py-[5px] text-[13px] leading-[19px] text-ink focus:border-accent focus:outline-none"
+          data-testid="assign-bulk-reason"
+          value={reason}
+          maxLength={REMARK_MAX_LENGTH}
+          autoFocus
+          onChange={(event) => setReason(event.target.value)}
+        />
       </label>
+      <RecentRemarks testId="assign-bulk-recent" onPick={setReason} />
       {action === "move" && (
-        <label className="grid gap-1">
+        <div className="grid gap-1">
           <span className="text-xs text-ink-2">{t("classify.moveTo")}</span>
-          <input className="h-8 rounded-md border border-line-2 bg-surface px-2 font-mono text-[13px]" data-testid="assign-bulk-code" value={code} maxLength={100} onChange={(event) => setCode(event.target.value)} />
-        </label>
+          <MoveTargetField bundleId={bundleId} value={code} testId="assign-bulk-code" onChange={setCode} />
+        </div>
       )}
     </Modal>
   );

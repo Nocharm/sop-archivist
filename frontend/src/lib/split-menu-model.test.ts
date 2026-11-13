@@ -130,7 +130,7 @@ describe("buildSplitMenu single sentence", () => {
   const single = (over: Partial<SplitMenuContext> = {}) => ctx({ selected: null, target: makeUnit(2), ...over });
 
   it("lists the right-panel actions for the selected sentence itself or with nothing selected", () => {
-    const names = ["check", "split", "ai_split", "hold", "lang_ko", "lang_en", "unpair"];
+    const names = ["check", "split", "ai_split", "hold", "lang", "unpair"];
     expect(buildSplitMenu(single()).map((item) => item.action)).toEqual(names);
     expect(buildSplitMenu(ctx({ selected: makeUnit(2), target: makeUnit(2) })).map((item) => item.action)).toEqual(names);
   });
@@ -154,23 +154,23 @@ describe("buildSplitMenu single sentence", () => {
     expect(getAiSplitReason({ ...base, isWaiting: true, hasSuggestion: true })).toBe("split.menu.why.aiWaiting");
   });
 
-  it("only lets pair-less sentences skip unpair, and hides already-set language", () => {
+  it("only lets pair-less sentences skip unpair, and puts KO and EN on one row with the current language", () => {
     const items = buildSplitMenu(single());
     expect(find(items, "unpair")).toMatchObject({ enabled: false, reasonKey: "split.menu.why.notPaired" });
-    expect(find(items, "lang_ko")).toMatchObject({ enabled: false, reasonKey: "split.menu.why.alreadyLang" });
-    expect(find(items, "lang_en").enabled).toBe(true);
+    expect(find(items, "lang")).toEqual({ action: "lang", enabled: true, lang: "ko" });
+    expect(find(buildSplitMenu(single({ target: makeUnit(2, { lang: "en" }) })), "lang").lang).toBe("en");
     expect(find(buildSplitMenu(single({ target: makeUnit(2, { pair_id: 3 }) })), "unpair").enabled).toBe(true);
   });
 
   it("offers AI split for sentences and cell sentences but not headings", () => {
     expect(find(buildSplitMenu(single({ target: makeUnit(2, { kind: "heading" }) })), "ai_split").reasonKey).toBe("split.menu.why.notText");
-    expect(find(buildSplitMenu(single({ target: makeUnit(2, { kind: "heading" }) })), "lang_en").enabled).toBe(true);
+    expect(find(buildSplitMenu(single({ target: makeUnit(2, { kind: "heading" }) })), "lang").enabled).toBe(true);
     expect(find(buildSplitMenu(single({ target: makeUnit(2, { kind: "cell_sentence" }) })), "ai_split").enabled).toBe(true);
   });
 
   it("blocks language and AI for non-text units, and hold for decided ones", () => {
     const table = buildSplitMenu(single({ target: makeUnit(2, { kind: "table", lang: "neutral" }) }));
-    expect(find(table, "lang_en").reasonKey).toBe("split.menu.why.notText");
+    expect(find(table, "lang")).toMatchObject({ enabled: false, reasonKey: "split.menu.why.notText", lang: "neutral" });
     expect(find(table, "ai_split").reasonKey).toBe("split.menu.why.notText");
     expect(find(buildSplitMenu(single({ isDecided: true })), "hold")).toMatchObject({ enabled: false, reasonKey: "split.menu.why.decided" });
   });

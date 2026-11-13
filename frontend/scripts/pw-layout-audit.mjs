@@ -550,9 +550,10 @@ const AUDIT_ENTRIES = [
       await page.locator(`[data-testid="assign-old"] .su[data-unit="${found.unit}"]`).first().click();
       await page.waitForTimeout(SETTLE_MS);
     },
-    measure: (page) => page.getByTestId("assign-reason").evaluate((el) => ({ tag: el.tagName, h: Math.round(el.getBoundingClientRect().height), len: el.value.length })),
-    expect: (value) => value.len >= 1000 && value.h >= 3 * 19,
-    note: "reason field of a 1,200-char reason is >= 3 lines (57px) tall",
+    // Remark는 창에서 쓰고 옆 칸은 두 줄 읽기 보기다(전체 글은 툴팁·Edit remark 창)
+    measure: (page) => page.getByTestId("assign-reason").evaluate((el) => ({ tag: el.tagName, h: Math.round(el.getBoundingClientRect().height), len: (el.textContent ?? "").length })),
+    expect: (value) => value.len >= 1000 && value.h >= 2 * 19 - 1 && value.h <= 2 * 19 + 2,
+    note: "a 1,200-char reason reads as a two-line clamp (37-40px) beside the Edit remark button",
   },
   // ---- Task 7: 개요 ----
   {

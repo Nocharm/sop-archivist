@@ -1,6 +1,6 @@
 // Split 화면 단축키 판단 - 화면(page)은 이 결과대로 실행만 한다. ↑↓는 J/K와 같고, 입력 중·메뉴·모달이 열려 있으면 아무것도 하지 않는다.
 
-export type SplitKeyAction = "next" | "prev" | "check" | "uncheck" | "split" | "hold" | "escape" | "undo" | "redo";
+export type SplitKeyAction = "next" | "prev" | "check" | "uncheck" | "split" | "hold" | "escape" | "undo" | "redo" | "skip";
 
 export interface SplitKeyContext {
   /** 글 입력 칸에 포커스가 있다 */
@@ -14,6 +14,8 @@ export interface SplitKeyContext {
   /** 고른 단위의 경계를 이미 확인했다 */
   checked: boolean;
   canEdit: boolean;
+  /** 경계를 확인하고 바뀜이 끝나기를 기다렸다 다음 단위로 넘어가는 중이다 - Enter는 기다림만 건너뛴다(다음 단위를 확인하지 않는다) */
+  advancing?: boolean;
 }
 
 interface KeyLike {
@@ -29,6 +31,8 @@ export function getSplitKeyAction(event: KeyLike, ctx: SplitKeyContext): SplitKe
   const key = event.key.toLowerCase();
   if ((event.metaKey || event.ctrlKey) && key === "z") return ctx.canEdit ? (event.shiftKey ? "redo" : "undo") : null;
   if (event.metaKey || event.ctrlKey || event.altKey) return null;
+  // 포커스가 단추에 있어도 건너뛰기가 먼저다 - 그 단추가 방금 바뀐 Uncheck boundary여도 누르지 않게
+  if (ctx.advancing && key === "enter") return "skip";
   if (ctx.onControl && (key === "enter" || key === " ")) return null;
   if (key === "j" || key === "arrowdown") return "next";
   if (key === "k" || key === "arrowup") return "prev";

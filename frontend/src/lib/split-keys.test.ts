@@ -39,6 +39,13 @@ describe("getSplitKeyAction", () => {
     expect(getSplitKeyAction(press("Enter"), { ...ctx, canEdit: false })).toBeNull();
   });
 
+  it("only fast-forwards with Enter while moving on after a check", () => {
+    expect(getSplitKeyAction(press("Enter"), { ...ctx, advancing: true, checked: true })).toBe("skip");
+    expect(getSplitKeyAction(press("Enter"), { ...ctx, advancing: true, onControl: true })).toBe("skip");
+    expect(getSplitKeyAction(press("Enter"), { ...ctx, advancing: true, layerOpen: true })).toBeNull();
+    expect(getSplitKeyAction(press("j"), { ...ctx, advancing: true })).toBe("next");
+  });
+
   it("maps undo and redo with the modifier", () => {
     expect(getSplitKeyAction(press("z", { metaKey: true }), ctx)).toBe("undo");
     expect(getSplitKeyAction(press("z", { ctrlKey: true, shiftKey: true }), ctx)).toBe("redo");
