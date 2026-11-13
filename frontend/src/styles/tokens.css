@@ -112,6 +112,9 @@
   --warn-fill: oklch(.66 .16 50);
   --danger-ink: oklch(.49 .175 27);
   --danger-fill: oklch(.58 .19 27);
+  /* KO/EN language token (Split tab, Assign tab). KO follows the accent blue, EN is green, so the two read apart by colour too. Ink is text on the tinted token. */
+  --lang-ko-ink: var(--accent);
+  --lang-en-ink: oklch(.45 .11 160);
 
   --tint: 11%;
   --tint2: 20%;
@@ -136,6 +139,10 @@
   --danger-tint: color-mix(in oklab, var(--danger-fill) var(--tint), var(--surface));
   --st-ai-line: color-mix(in oklab, var(--st-ai-fill) 62%, var(--surface));
   --st-hold-line: color-mix(in oklab, var(--st-hold-fill) 55%, var(--surface));
+  --lang-ko-bg: color-mix(in oklab, var(--lang-ko-ink) var(--tint), var(--surface));
+  --lang-ko-line: color-mix(in oklab, var(--lang-ko-ink) 45%, var(--surface));
+  --lang-en-bg: color-mix(in oklab, var(--lang-en-ink) var(--tint), var(--surface));
+  --lang-en-line: color-mix(in oklab, var(--lang-en-ink) 45%, var(--surface));
   --split-a: color-mix(in oklab, oklch(.62 .13 250) var(--tint2), var(--paper));
   --split-b: color-mix(in oklab, oklch(.80 .13 85) var(--tint2), var(--paper));
   /* Modal backdrop. Stays dark in both themes (app-side addition; the mock used the same value inline). */
@@ -178,6 +185,8 @@
   --warn-fill: oklch(.70 .14 55);
   --danger-ink: oklch(.77 .125 24);
   --danger-fill: oklch(.66 .165 25);
+  --lang-ko-ink: var(--accent);
+  --lang-en-ink: oklch(.76 .12 160);
 
   --tint: 16%;
   --tint2: 32%;

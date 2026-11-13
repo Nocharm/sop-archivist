@@ -1177,9 +1177,6 @@
   .strip-lead { flex: none; align-self: stretch; display: flex; padding-right: 5px; box-sizing: border-box; }
   .strip-lead-num { flex: 1 1 auto; min-width: 0; height: 33px; padding: 6px 5px 0 0; overflow: hidden; text-align: right; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); font: 500 11px / 27px var(--font-mono); box-sizing: border-box; }
   .strip-lead-gap { flex: none; }
-  /* Assign 앞머리 맨 왼쪽 언어 칸(StripLead STRIP_LEAD_LANG) - 표시를 첫 글줄 가운데(조각 위 여백 6 + 27px 줄의 가운데 - 표시 높이 15의 반 = 12px)에. 필터 한 줄 판(22px)은 가운데 */
-  .strip-lead-lang { flex: none; display: flex; align-items: flex-start; width: 24px; padding-top: 12px; box-sizing: border-box; }
-  .fold-line .strip-lead-lang { padding-top: 3.5px; }
   /* 카드 강조 테두리 - 조각 바깥 2px. 짝 카드(.strip-card, 줄 수와 상관없이)는 한 줄이라도 강조면 모든 줄에 두르되 맞닿는 쪽은 열어 한 테두리로 읽힌다(줄마다 그림자 고리를 두면 사이에 선이 생긴다) */
   .strip-card { display: contents; }
   .pg[data-strips] .strip-lead + .strip:is([data-partner], [data-link-hover])::after,
@@ -1212,16 +1209,19 @@
   /* 조각 언어 칩(KO/EN) - 조각 위 테두리 오른쪽 끝에 걸친 탭(반은 위 틈에). 절대 위치라 조각 높이·글 배치를 바꾸지 않고, 끝 아이콘(위에서 11px)·글(위 여백 6px 아래)과 겹치지 않는다.
      위 틈의 합치기 단추는 글 시작 x(왼쪽)에 있어 닿지 않는다. 짝 카드 안에서는 점선 위에 앉고 윗줄의 아래 여백(6px)에 반이 걸친다.
      Assign은 윗줄 오른쪽 아래 모서리의 연결 배지(.lbadge, right 4px·폭 20px+)를 비켜 30px 안쪽에 둔다.
-     늘 그려 두고 줄을 올리거나 고를 때만 보인다 - 이웃한 짝 카드는 한 줄만 올리거나 골라도 카드 전체, 떨어진 짝은 고른 짝(data-partner)·올린 짝(data-mate-hover, Paper가 단다).
+     늘 그려 두고 줄을 올리거나 고를 때만 보인다 - 이웃한 짝 카드는 한 줄만 올리거나 골라도 카드 전체, 떨어진 짝은 고른 짝(data-partner)·올린 짝(data-mate-hover, Paper·Assign New 칸이 단다). Assign New 칸은 고른 줄·포커스(:focus-within)에도.
      z-index 2 - 고른 줄에서 위 틈(z-index 1)의 선보다 앞에 */
-  /* 언어 표시 한 벌(components/paper/lang-token.tsx) - Split 탭(.strip-lang)과 Assign 앞머리(.strip-lead-lang)가 같은 모양 */
+  /* 언어 표시 한 벌(components/paper/lang-token.tsx) - Split·Assign 같은 모양. KO 파랑·EN 초록으로 색으로도 갈린다(글자 KO/EN은 그대로) */
   .lang-token { display: inline-grid; place-items: center; height: 15px; padding: 0 3px; border: 1px solid var(--line-2); border-radius: 3px; background: var(--surface); color: var(--ink-2); font: 600 10px / 1 var(--font-mono); }
+  .lang-token[data-lang="ko"] { border-color: var(--lang-ko-line); background: var(--lang-ko-bg); color: var(--lang-ko-ink); }
+  .lang-token[data-lang="en"] { border-color: var(--lang-en-line); background: var(--lang-en-bg); color: var(--lang-en-ink); }
   .strip-lang { position: absolute; top: -8px; right: 9px; z-index: 2; visibility: hidden; opacity: 0; transition: opacity var(--dur-fast), visibility 0s var(--dur-fast); }
   .assign-pane .strip-lang { right: 30px; }
   .strip-lang:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .strip-row:hover > .strip > .strip-lang,
   .strip:is([data-sel], [data-partner], [data-mate-hover]) > .strip-lang,
-  .strip-card:has(> .strip-row:hover, > .strip-row > .strip[data-sel]) > .strip-row > .strip > .strip-lang { visibility: visible; opacity: 1; transition: opacity var(--dur-fast); }
+  .strip-card:has(> .strip-row:hover, > .strip-row > .strip[data-sel]) > .strip-row > .strip > .strip-lang,
+  .new-line:is([data-state="picked"], [data-state="focus"], :focus-within) > .strip-lang { visibility: visible; opacity: 1; transition: opacity var(--dur-fast); }
   /* 쪼개기 오른쪽 칸: 섹션 머리 한 모양(작은 라벨 + 선) */
   .insp-h { display: flex; align-items: center; gap: 4px; font-size: var(--fs-micro); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }
   .insp-h::after { content: ""; flex: 1; height: 1px; background: var(--line); }
@@ -1443,8 +1443,9 @@
   .new-srcs { position: relative; z-index: 1; display: flex; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 6px; }
   .pg[data-strips] .new-line[data-state="candidate"] { outline: 1.5px dashed var(--accent); outline-offset: -1.5px; }
   .pg[data-strips] .new-line[data-state="picked"] { background: var(--accent-tint); box-shadow: var(--shadow-1), inset 0 0 0 1.5px var(--accent); }
-  /* 출처 없음 - 상자 왼쪽 끝 가는 막대(테두리 전체를 칠하면 오류 상자처럼 읽힌다) */
-  .pg[data-strips] .new-line[data-state="unsourced"] { box-shadow: var(--shadow-1), inset 3px 0 0 var(--danger-fill); }
+  /* 출처 없음 - 상자 왼쪽 바깥의 따로 선 세로 막대(3px, 상자와 2px 틈, 모서리 거의 직각). 상자는 제 테두리·둥글기 그대로 - 테두리를 칠하면 오류 상자처럼 읽힌다.
+     앞머리 틈(STRIP_LEAD_EXTRA 5px) 안이라 번호와 겹치지 않고, 출처가 없으니 연결선이 이 자리에 닿지 않는다 */
+  .pg[data-strips] .new-line[data-state="unsourced"]::before { content: ""; position: absolute; top: -1px; bottom: -1px; left: -5px; width: 3px; border-radius: 1px; background: var(--danger-fill); pointer-events: none; }
   .pg[data-strips] .new-line[data-state="focus"] { background: var(--danger-tint); box-shadow: var(--shadow-1), inset 0 0 0 1.5px var(--danger-ink); }
   .new-src { display: inline-block; padding: 0 4px; border-radius: var(--r-1); font: 600 10px / 16px var(--font-mono); white-space: nowrap; background: var(--st-ok-tint); color: var(--st-ok-ink); }
   button.new-src { cursor: pointer; box-shadow: inset 0 0 0 1px transparent; }
@@ -1475,7 +1476,8 @@
   .legend-box[data-state="flash"] { outline: 2px solid var(--accent); outline-offset: -2px; }
   .legend-line { width: 30px; height: 0; border-top: 1.75px solid var(--accent); }
   .legend-line.is-dashed { border-top-style: dashed; }
-  .legend-box[data-state="unsourced"] { background: var(--paper); box-shadow: inset 3px 0 0 var(--danger-fill), inset 0 0 0 1px var(--line-2); }
+  .legend-box[data-state="unsourced"] { position: relative; width: 25px; margin-left: 5px; background: var(--paper); box-shadow: inset 0 0 0 1px var(--line-2); }
+  .legend-box[data-state="unsourced"]::before { content: ""; position: absolute; top: 0; bottom: 0; left: -5px; width: 3px; border-radius: 1px; background: var(--danger-fill); }
 
   .dest-acc-item { border-top: 1px solid var(--line); }
   .dest-acc-head { display: flex; width: 100%; align-items: center; gap: 8px; padding: 10px var(--pad); font-size: var(--fs-cap); font-weight: 700; color: var(--ink-2); text-align: left; cursor: pointer; }
