@@ -834,6 +834,31 @@ def test_b_counts_a_cross_document_pair_under_its_first_unit(client: TestClient)
     assert get_bundle(client, bundle_id)["progress"]["total"] == 1
 
 
+def test_b_follows_the_row_disposition_of_the_summary(client: TestClient) -> None:
+    """한쪽만 판단한 제안 짝은 갈 곳 없는 줄 — B에서도 미배정 노드 하나로 가고, 처분 노드 건수는 요약과 같다(설계 §5.1·§5.3)."""
+    fx = _setup_pair_edges(client)
+    ko, en = _units(fx, KO_ON, EN_ON)
+    assign_as_is(client, fx.bundle_id, ko, fx.sop_id, slot_key="purpose")
+    assert {pair["status"] for pair in get_view(client, fx.bundle_id, fx.doc_id)["pairs"]} == {"suggested"}
+    _bulk(client, fx.bundle_id, "delete", _units(fx, LONE), DELETE_REASON)
+    _bulk(client, fx.bundle_id, "move_external", [_unit_of_kind(fx.view, "figure")], MOVE_REASON, move_target_code=MOVE_CODE)
+
+    graph = _get_output(client, fx.bundle_id, "outputs/b")
+    summary = _get_output(client, fx.bundle_id, "summary")
+
+    # 줄: 한쪽만 판단한 짝·판단 없는 1:2 짝·표는 갈 곳 없음, 홀로 문장은 삭제, 그림은 이동 — 한글 새 문장이 있어도 새 문서로 잇지 않는다
+    old = f"old:{fx.doc_id}"
+    assert [(e["source"], e["target"], e["count"]) for e in graph["edges"]] == [
+        (old, "delete", 1), (old, "move_external", 1), (old, "unassigned", 3),
+    ]
+    counts = {n["id"]: n["count"] for n in graph["nodes"]}
+    assert f"target:{fx.sop_id}" not in counts
+    assert (counts["delete"], counts["move_external"], counts["unassigned"]) == (
+        summary["deleted"], summary["moved"], summary["no_destination"],
+    ) == (1, 1, 3)
+    assert counts[old] == summary["old_rows"] == get_bundle(client, fx.bundle_id)["progress"]["total"]
+
+
 # ── C 새 문서 ────────────────────────────────────────────────────────────────
 
 

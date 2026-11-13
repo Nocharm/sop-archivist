@@ -867,9 +867,10 @@ def build_output_a(snap: BundleSnapshot, lang: Lang, people: Mapping[str, str]) 
 
 
 def build_output_b(snap: BundleSnapshot, lang: Lang) -> FlowGraph:
-    """결과물 B 한 벌(설계 §5.1) — 옛 문서(줄 수) → 새 문서·삭제·이동·미배정, 줄마다 보낸 새 문서 집합에 한 번씩(나눔은 한 번,
-    중복 배정은 보낸 곳마다 한 번), 보낸 곳이 없으면 줄의 처분 노드 하나. lang은 노드 라벨 언어만 고른다.
+    """결과물 B 한 벌(설계 §5.1) — 옛 문서(줄 수) → 새 문서·삭제·이동·미배정. lang은 노드 라벨 언어만 고른다.
 
+    줄의 처분은 요약과 같은 _get_row_disposition이다: 배정 줄은 보낸 새 문서 집합에 한 번씩(나눔은 한 번, 중복 배정은 보낸 곳마다
+    한 번), 삭제·이동·갈 곳 없음(일부만 판단한 줄 포함, 설계 §5.3)은 그 처분 노드 하나 — 처분 노드 건수가 요약 숫자와 같다.
     짝의 두 단위가 서로 다른 옛 문서에 있으면(드묾) 줄의 첫 단위 문서로 센다.
     """
     labels = LABELS[lang]
@@ -879,9 +880,12 @@ def build_output_b(snap: BundleSnapshot, lang: Lang) -> FlowGraph:
     for meaning in build_meaning_rows(snap):
         document_id = snap.units[meaning.unit_ids[0]].document_id
         old_counts[document_id] += 1
-        dests = [f"target:{doc_id}" for doc_id in _list_row_dest_doc_ids(index, meaning)]
+        disposition = _get_row_disposition(snap, meaning)
+        dests = (
+            [f"target:{doc_id}" for doc_id in _list_row_dest_doc_ids(index, meaning)] if disposition == "assigned" else []
+        )
         if not dests:
-            dests = [DISPOSITION_NODES.get(_get_row_disposition(snap, meaning), "unassigned")]
+            dests = [DISPOSITION_NODES.get(disposition, "unassigned")]
         for dest in dests:
             edge_counts[(document_id, dest)] += 1
     dest_counts: Counter[str] = Counter()
