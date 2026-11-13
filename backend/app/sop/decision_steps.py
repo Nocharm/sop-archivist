@@ -1,21 +1,30 @@
 """Assign 되돌리기 스냅숏 엔진 — 묶음의 판단 상태 표를 덤프·비교·되쓴다 (설계: docs/superpowers/specs/2026-11-13-assign-undo-design.md §5.2·§5.3)."""
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import Annotated, Literal, TypeVar
 
-from sqlalchemy import ColumnElement, DateTime, Select, Table, and_, delete, insert, select, update
+from pydantic import BaseModel, Field, StringConstraints
+from sqlalchemy import ColumnElement, DateTime, Select, Table, and_, delete, func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.clock import now
+from app.sop.membership import lock_bundle
 from app.sop.models import (
     AiSuggestion,
+    Bundle,
+    DecisionStep,
     Document,
     TargetSentence,
     TargetSource,
     UnitDecision,
+    UnitEdit,
     UnitPair,
     UnitPairMember,
 )
+from app.sop.schemas import NO_NUL
+from app.sop.tobe import MAX_DB_INT
 
 # 표 이름 → 행 키 문자열 → 열 값(JSON에 담을 수 있는 값, 시각은 ISO 문자열)
 Snapshot = dict[str, dict[str, dict]]
@@ -232,3 +241,181 @@ def _order_parents_first(rows: list[dict]) -> list[dict]:
         for row in ready:
             ordered.append(pending.pop(row["id"]))
     return ordered
+
+
+# ── 저장마다 단계 기록 (설계 §5.1·§5.4·§4.4) ─────────────────────────────────
+
+# 세션 하나에 남기는 단계 수 — 넘치면 가장 오래된 단계부터 버린다
+MAX_STEPS_PER_SESSION = 100
+# 기록할 때 이보다 오래된 단계는 지운다
+STEP_TTL = timedelta(hours=24)
+STEP_APPLIED = "applied"
+STEP_UNDONE = "undone"
+
+T = TypeVar("T")
+
+# 화면이 이름을 주는 관계 묶음 저장의 동작 — save_group 하나가 모두 맡아 서버만으로는 가를 수 없다
+SaveOp = Literal["confirm", "hold", "link", "unlink", "mark_new", "link_source"]
+_StepToken = Annotated[str, StringConstraints(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")]
+_StepId = Annotated[int, Field(ge=1, le=MAX_DB_INT)]
+
+
+class UndoMetaIn(BaseModel):
+    """판단 저장 요청에 실리는 되돌리기 기록 정보 — 없으면 그 저장은 기록하지 않는다."""
+
+    session: _StepToken  # Assign 화면을 열 때마다 화면이 만드는 id
+    op: SaveOp | None = None
+    focus_unit_id: _StepId | None = None
+    focus_target_id: _StepId | None = None
+    step_key: _StepToken | None = None  # 여러 요청으로 나뉜 한 동작을 한 단계로 합치는 키
+    scope_label: Annotated[str, StringConstraints(max_length=200), NO_NUL] | None = None
+
+
+def _merge_diffs(old_before: Snapshot, old_after: Snapshot, new_before: Snapshot, new_after: Snapshot) -> tuple[
+    Snapshot, Snapshot
+]:
+    """한 단계에 이어 붙인 두 diff를 하나로 — before는 처음 값, after는 나중 값, 그대로 돌아온 행은 뺀다.
+
+    새 diff의 before에만 있는 행은 앞 단계가 건드리지 않은 행이라 그 값이 처음 값이다. 앞 단계가 만든 행(after에만 있던 것)은
+    처음에 없었으므로 before에 넣지 않는다 — 그 행을 이번에 지웠으면 양쪽 모두에서 사라진다.
+    """
+    before: Snapshot = {}
+    after: Snapshot = {}
+    for name in _SPECS:
+        old_b, old_a = old_before.get(name, {}), old_after.get(name, {})
+        new_b, new_a = new_before.get(name, {}), new_after.get(name, {})
+        merged_before = dict(old_b)
+        for key, row in new_b.items():
+            if key not in old_b and key not in old_a:
+                merged_before[key] = row
+        merged_after = {key: row for key, row in old_a.items() if key not in new_b or key in new_a}
+        merged_after.update(new_a)
+        unchanged = {key for key in merged_before.keys() & merged_after.keys() if merged_before[key] == merged_after[key]}
+        before[name] = {key: row for key, row in merged_before.items() if key not in unchanged}
+        after[name] = {key: row for key, row in merged_after.items() if key not in unchanged}
+    return before, after
+
+
+def _list_decision_unit_ids(after: Snapshot) -> list[int]:
+    return sorted(int(key) for key in after.get("unit_decisions", {}))
+
+
+async def _prune_steps(session: AsyncSession, bundle_id: int, actor: str, session_key: str) -> None:
+    """새 단계를 남기기 전 정리 — 그 세션의 되돌린 단계(선형), 같은 사람의 다른 세션 단계, 24시간 지난 단계."""
+    mine = and_(DecisionStep.bundle_id == bundle_id, DecisionStep.actor == actor)
+    await session.execute(
+        delete(DecisionStep).where(
+            mine, DecisionStep.session_key == session_key, DecisionStep.state == STEP_UNDONE
+        )
+    )
+    await session.execute(delete(DecisionStep).where(mine, DecisionStep.session_key != session_key))
+    await session.execute(
+        delete(DecisionStep).where(DecisionStep.bundle_id == bundle_id, DecisionStep.created_at < now() - STEP_TTL)
+    )
+
+
+async def _cap_steps(session: AsyncSession, bundle_id: int, actor: str, session_key: str) -> None:
+    """세션 단계가 상한을 넘으면 seq가 작은 것부터 버린다."""
+    in_session = and_(
+        DecisionStep.bundle_id == bundle_id, DecisionStep.actor == actor, DecisionStep.session_key == session_key
+    )
+    seqs = (await session.scalars(select(DecisionStep.seq).where(in_session).order_by(DecisionStep.seq.desc()))).all()
+    if len(seqs) > MAX_STEPS_PER_SESSION:
+        await session.execute(delete(DecisionStep).where(in_session, DecisionStep.seq <= seqs[MAX_STEPS_PER_SESSION]))
+
+
+async def _load_last_step(session: AsyncSession, bundle_id: int, actor: str, session_key: str) -> DecisionStep | None:
+    return await session.scalar(
+        select(DecisionStep)
+        .where(DecisionStep.bundle_id == bundle_id, DecisionStep.actor == actor, DecisionStep.session_key == session_key)
+        .order_by(DecisionStep.seq.desc())
+        .limit(1)
+    )
+
+
+async def _get_next_seq(session: AsyncSession, bundle_id: int, actor: str, session_key: str) -> int:
+    latest = await session.scalar(
+        select(func.max(DecisionStep.seq)).where(
+            DecisionStep.bundle_id == bundle_id, DecisionStep.actor == actor, DecisionStep.session_key == session_key
+        )
+    )
+    return (latest or 0) + 1
+
+
+async def record_snapshot_step(
+    session: AsyncSession,
+    bundle: Bundle,
+    actor: str,
+    meta: UndoMetaIn | None,
+    op: str,
+    run: Callable[[], Awaitable[T]],
+) -> T:
+    """판단 저장 하나(run)를 감싸 전후 바뀐 행을 한 단계로 남긴다 — meta가 없으면 run만. 커밋은 호출부가 한다.
+
+    같은 세션의 맨 끝 단계가 아직 applied이고 step_key가 같으면 그 단계에 이어 붙인다. 바뀐 것이 없으면 남기지 않는다.
+    """
+    if meta is None:
+        return await run()
+    # 덤프와 저장 사이에 다른 쓰기가 끼지 않게 먼저 잠근다(저장 함수가 다시 잠가도 같은 트랜잭션이다)
+    await lock_bundle(session, bundle)
+    before_state = await dump_bundle_state(session, bundle.id)
+    result = await run()
+    await session.flush()
+    before, after = diff_states(before_state, await dump_bundle_state(session, bundle.id))
+    if not any(before.values()) and not any(after.values()):
+        return result
+
+    await _prune_steps(session, bundle.id, actor, meta.session)
+    last = await _load_last_step(session, bundle.id, actor, meta.session)
+    focus = {"unit_id": meta.focus_unit_id, "target_id": meta.focus_target_id}
+    if (
+        last is not None
+        and meta.step_key is not None
+        and last.step_key == meta.step_key
+        and last.state == STEP_APPLIED
+        and last.kind == "snapshot"
+    ):
+        last.before, last.after = _merge_diffs(last.before, last.after, before, after)
+        last.focus = focus
+        last.unit_ids = [meta.focus_unit_id] if meta.focus_unit_id else _list_decision_unit_ids(last.after)
+    else:
+        session.add(
+            DecisionStep(
+                bundle_id=bundle.id, actor=actor, session_key=meta.session,
+                seq=await _get_next_seq(session, bundle.id, actor, meta.session), op=op, kind="snapshot",
+                state=STEP_APPLIED, step_key=meta.step_key, focus=focus,
+                unit_ids=[meta.focus_unit_id] if meta.focus_unit_id else _list_decision_unit_ids(after),
+                scope_label=meta.scope_label, before=before, after=after,
+            )
+        )
+        await session.flush()
+        await _cap_steps(session, bundle.id, actor, meta.session)
+    await session.flush()
+    return result
+
+
+async def record_unit_edit_step(
+    session: AsyncSession, bundle: Bundle, actor: str, meta: UndoMetaIn, document_id: int
+) -> None:
+    """Assign 안의 자르기를 한 단계로 — 내용은 찍지 않고 그 문서의 방금 만든 Split 편집 기록을 가리킨다(설계 §4.4)."""
+    edit = await session.scalar(
+        select(UnitEdit)
+        .where(UnitEdit.document_id == document_id, UnitEdit.state == "applied")  # editing.EDIT_APPLIED — editing이 이 모듈을 거쳐 들여와 직접 못 쓴다
+        .order_by(UnitEdit.seq.desc())
+        .limit(1)
+    )
+    if edit is None:
+        return
+    await _prune_steps(session, bundle.id, actor, meta.session)
+    session.add(
+        DecisionStep(
+            bundle_id=bundle.id, actor=actor, session_key=meta.session,
+            seq=await _get_next_seq(session, bundle.id, actor, meta.session), op="cut", kind="unit_edit",
+            state=STEP_APPLIED, step_key=meta.step_key,
+            focus={"unit_id": meta.focus_unit_id, "target_id": meta.focus_target_id},
+            unit_ids=[meta.focus_unit_id] if meta.focus_unit_id else list(edit.retired_unit_ids),
+            scope_label=meta.scope_label, document_id=document_id, unit_edit_id=edit.id,
+        )
+    )
+    await session.flush()
+    await _cap_steps(session, bundle.id, actor, meta.session)

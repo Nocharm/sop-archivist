@@ -17,6 +17,7 @@ from app.clock import now
 from app.db import get_session
 from app.routers.admin import KstDatetime
 from app.sop.constants import LANGUAGE_LAYOUTS, MEMBER_ROLES
+from app.sop.decision_steps import record_unit_edit_step
 from app.sop.detach import detach_units, find_units_needing_confirm
 from app.sop.editing import (
     BoundaryAllOut,
@@ -610,6 +611,9 @@ async def edit_units(
 ) -> EditResult:
     document = await _lock_editable_document(session, ctx, doc_id, body.revision)
     result = await apply_edit(session, document, body.op, confirm=body.confirm, actor=ctx.login_id)
+    # 바뀐 것이 없는 편집은 Split 기록도 남기지 않으니 Assign 단계도 남기지 않는다
+    if body.undo is not None and (result.created_unit_ids or result.retired_unit_ids):
+        await record_unit_edit_step(session, ctx.bundle, ctx.login_id, body.undo, document.id)
     await session.commit()
     return result
 

@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.sop.decision_steps import UndoMetaIn
 from app.sop.decisions import DbId
 from app.sop.detach import (
     ORIGIN_NEW_DOC,
@@ -143,6 +144,7 @@ class EditIn(BaseModel):
     # 판단이 걸린 단위를 은퇴시키는 편집의 명시적 확인 — 없으면 409 confirm_required로 화면이 먼저 묻는다
     confirm: bool = False
     op: EditOp
+    undo: UndoMetaIn | None = None  # Assign 안의 자르기만 실어 보낸다 — 그 화면의 되돌리기 기록에 한 단계로 남는다
 
 
 class EditStepIn(BaseModel):

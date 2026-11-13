@@ -16,6 +16,7 @@ from app.clock import now
 from app.sop.ai.adoption import record_group_adoption, record_unit_adoption, reject_suggestions
 from app.sop.checks import check_sentence
 from app.sop.constants import SLOT_KEYS
+from app.sop.decision_steps import UndoMetaIn
 from app.sop.detach import (
     AI_SUGGESTED,
     CONFIRMED,
@@ -133,6 +134,7 @@ class GroupSaveIn(BaseModel):
     removed_target_ids: list[DbId] = Field(default_factory=list, max_length=2000)
     # 짝의 한쪽만 이을 때 남는 쪽을 따로 줄로 — 그 단위가 든 짝을 이 저장 안에서 푼다(pair_settle). 판단은 바꾸지 않는다
     release_unit_ids: list[DbId] = Field(default_factory=list, max_length=500)
+    undo: UndoMetaIn | None = None
 
 
 class BulkUnitIn(BaseModel):
@@ -145,6 +147,7 @@ class BulkDecisionIn(BaseModel):
     reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000), NO_NUL]
     move_target_code: Annotated[str, StringConstraints(strip_whitespace=True, max_length=100), NO_NUL] = ""
     units: list[BulkUnitIn] = Field(min_length=1, max_length=MAX_BULK_UNITS)
+    undo: UndoMetaIn | None = None
 
     @model_validator(mode="after")
     def check_move_target(self) -> Self:
@@ -156,12 +159,14 @@ class BulkDecisionIn(BaseModel):
 class ClearIn(BaseModel):
     unit_id: DbId
     revision: DbId
+    undo: UndoMetaIn | None = None
 
 
 class ResetIn(BaseModel):
     revision: DbId  # 묶음 revision
     document_id: DbId | None = None  # 없으면 묶음 전체
     dry_run: bool = False  # true면 건수만 계산하고 아무것도 바꾸지 않는다
+    undo: UndoMetaIn | None = None
 
 
 class ResetOut(BaseModel):
