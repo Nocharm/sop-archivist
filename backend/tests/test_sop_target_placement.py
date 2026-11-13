@@ -1,4 +1,4 @@
-"""새로 놓이는 새 문장의 기본 번호 표시와 붙일 순서(설계 §6 기본값 O10·나중 번역) — DB 없는 순수 함수."""
+"""새로 놓이는 새 문장의 기본 번호 표시와 붙일 순서(제품 명세 §7.13 섹션 번호 기본값 O10·나중 번역) — DB 없는 순수 함수."""
 
 from app.sop.target_placement import NewTarget, arrange_new_targets
 

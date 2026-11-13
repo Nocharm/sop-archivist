@@ -1,4 +1,4 @@
-"""새 문장을 문서 안 순서에 끼워 넣는 자리 계산 — 새로 놓이는 짝·번역의 기본 번호 표시와 순서(설계 §6 O10), manual_order 문서에서 번역을 출처 바로 뒤에 둔다."""
+"""새 문장을 문서 안 순서에 끼워 넣는 자리 계산 — 새로 놓이는 짝·번역의 기본 번호 표시와 순서(제품 명세 §7.13 섹션 번호, O10), manual_order 문서에서 번역을 출처 바로 뒤에 둔다."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -36,7 +36,7 @@ class Arranged:
 
 
 def arrange_new_targets(items: Sequence[NewTarget]) -> list[Arranged]:
-    """새로 놓이는 새 문장의 기본 표시와 순서 — 돌려준 순서가 끝에 붙일 순서다(설계 §6 기본값·나중 번역).
+    """새로 놓이는 새 문장의 기본 표시와 순서 — 돌려준 순서가 끝에 붙일 순서다(제품 명세 §7.13 섹션 번호 기본값·나중 번역).
 
     자리별로 의미가 처음 나온 순서를 지키고, 한 의미 안에서는 번역 아닌 문장을 영어 먼저, 번역은 같은 출처 바로 뒤(없으면
     의미 끝)에 둔다. 결과물 C의 정렬 키(outputs._get_item_key)와 같은 순서라 manual_order 문서에서도 같은 모습이 된다.

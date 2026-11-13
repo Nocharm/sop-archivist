@@ -252,7 +252,7 @@ export interface SaveContext {
 
 /**
  * 잇기에서 이번 저장의 줄 단위 - 이은 문장의 언어인 단위. 그런 단위가 없으면(한 언어 줄을 다른 언어 문장에만 이음) 줄의 단위 모두가
- * 출처라 번역이 된다(설계 §5.2). 나머지는 이은 문장이 없는 언어의 짝 단위다.
+ * 출처라 번역이 된다(제품 명세 §7.7). 나머지는 이은 문장이 없는 언어의 짝 단위다.
  */
 export function pickLinkUnits<T extends { lang: ViewUnit["lang"] }>(units: T[], pickedLangs: ReadonlySet<string>): T[] {
   const same = units.filter((unit) => pickedLangs.has(unit.lang));
@@ -261,7 +261,7 @@ export function pickLinkUnits<T extends { lang: ViewUnit["lang"] }>(units: T[], 
 
 /**
  * 이미 쓴 문장을 한 언어만 이을 때 줄에 남는 단위 - 이은 문장이 없는 언어이고 아직 판단이 없는(처분 unassigned) 줄 단위.
- * 확정 저장은 판단 없는 단위를 받지 않아(서버 hold_required) 요청에서 빼고 release_unit_ids로 실어 서버가 같은 저장 안에서 짝을 푼다(설계 §5.2).
+ * 확정 저장은 판단 없는 단위를 받지 않아(서버 hold_required) 요청에서 빼고 release_unit_ids로 실어 서버가 같은 저장 안에서 짝을 푼다(제품 명세 §6.5).
  */
 export function listLinkLeftovers(destination: Destination | null, context: Pick<SaveContext, "units" | "group">): number[] {
   if (destination?.kind !== "link") return [];
@@ -372,7 +372,7 @@ export function buildSentenceSlots(group: Group | null, units: SourceUnit[], ext
 
 /**
  * 칸의 구조 종류 - 서버 순서(합침 → 언어가 다름(번역) → 나눔)와 같다. null이면 사람이 글자 비교 종류를 고른다.
- * 나눔은 한 단위가 자기와 같은 언어의 칸을 둘 이상 낼 때만이다 - 다른 언어 칸은 번역이라 세지 않는다(설계 §5.2).
+ * 나눔은 한 단위가 자기와 같은 언어의 칸을 둘 이상 낼 때만이다 - 다른 언어 칸은 번역이라 세지 않는다(제품 명세 §6.7).
  */
 export function readSlotKind(slot: SentenceSlot, slots: SentenceSlot[]): "merged" | "translated" | "split" | null {
   if (slot.target?.change_type === "merged" || slot.sourceIds.length > 1) return "merged";

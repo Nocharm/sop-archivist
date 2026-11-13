@@ -32,7 +32,7 @@ export function listCoConfirmed(group: Group, rowUnitIds: number[], picked: numb
   return [...units, ...targets];
 }
 
-/** 한 언어 문장을 고르면 그 New 짝 문장도 늘 함께 - 줄에 그 언어 Old 조각이 없으면 줄의 조각이 출처가 되어 번역이 된다(설계 §5.2) */
+/** 한 언어 문장을 고르면 그 New 짝 문장도 늘 함께 - 줄에 그 언어 Old 조각이 없으면 줄의 조각이 출처가 되어 번역이 된다(제품 명세 §7.7) */
 export function addPartnerTargets(picked: number[], written: Map<number, WrittenSentence>): number[] {
   const result = [...picked];
   for (const id of picked) {
@@ -105,7 +105,7 @@ export interface LinkPair {
 
 /**
  * 두 문서 사이에 그릴 이음 - 지금 열린 New 문서의 문장 출처 중 지금 열린 Old 문서의 조각만, 그리고 고른 줄의 아직 저장 안 한 고름.
- * 고름은 같은 언어 Old 조각과 잇고, 줄에 그 언어 조각이 없으면 줄의 조각 모두와 잇는다(저장도 그 조각들이 출처인 번역이다, 설계 §5.2).
+ * 고름은 같은 언어 Old 조각과 잇고, 줄에 그 언어 조각이 없으면 줄의 조각 모두와 잇는다(저장도 그 조각들이 출처인 번역이다, 제품 명세 §7.7).
  */
 export function buildLinkPairs(
   newRows: WrittenSentence[],

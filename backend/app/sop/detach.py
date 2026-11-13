@@ -61,7 +61,7 @@ def _hold(item: UnitDecision | TargetSentence) -> None:
 def apply_slot_heading_status(
     target: TargetSentence, decisions: Sequence[UnitDecision], *, preferred: Collection[int] = ()
 ) -> None:
-    """칸 제목의 상태 = 출처 단위 판단 중 가장 덜 끝난 것(pick_row_status) — 칸 제목은 따로 판단하지 않고 출처의 배정을 따른다(설계 §4.6).
+    """칸 제목의 상태 = 출처 단위 판단 중 가장 덜 끝난 것(pick_row_status) — 칸 제목은 따로 판단하지 않고 출처의 배정을 따른다(제품 명세 §7.13 칸 제목).
 
     저장(decisions._write_group)과 떼어 내기가 출처 연결이나 출처 판단을 바꾼 뒤 부른다. decisions는 남은 출처의 판단(seq 순, 비지 않음),
     preferred는 이 저장의 단위다. 보류면 사유는 보류한 출처의 것 — 이 저장이 보류한 출처, 지금 사유를 가진 출처, 출처 순 첫째 순.
@@ -112,7 +112,7 @@ def _should_hold(target: TargetSentence) -> bool:
 
     AI 번역도 뺀다. 출처가 바뀐 번역은 이미 지웠으니 여기 남은 것은 표 아래라 딸려 온, 자기 출처가 그대로인 제안이다. 보류하면 확정
     글이 빈 보류가 되어 결과물에 빈 줄로 나가고 다시 번역도 못 받는다. 표를 다시 저장할 때 닫힘이 함께 담아 사람이 정한다.
-    칸 제목도 뺀다 — 상태는 남은 출처의 판단에서 다시 정한다(_settle_slot_headings, 마지막 출처가 떠나면 지워진다, 설계 §4.6).
+    칸 제목도 뺀다 — 상태는 남은 출처의 판단에서 다시 정한다(_settle_slot_headings, 마지막 출처가 떠나면 지워진다, 제품 명세 §7.13 칸 제목).
     """
     if target.status == UNASSIGNED or target.kind == SLOT_HEADING:
         return False

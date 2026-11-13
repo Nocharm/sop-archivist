@@ -15,7 +15,7 @@ LANGS = ("ko", "en", "neutral")
 DISPOSITIONS = ("unassigned", "assigned", "delete", "move_external")
 STATUSES = ("unassigned", "ai_suggested", "confirmed", "on_hold")
 TARGET_KINDS = ("sentence", "table", "figure", "slot_heading")
-# 새 SOP 칸 제목에 이은 옛 제목(설계 §4.6) — 칸·언어마다 하나, 글은 칸 이름, 번호를 세지 않고 다른 문서의 같은 제목은 출처만 더한다
+# 새 SOP 칸 제목에 이은 옛 제목(제품 명세 §7.13 칸 제목) — 칸·언어마다 하나, 글은 칸 이름, 번호를 세지 않고 다른 문서의 같은 제목은 출처만 더한다
 SLOT_HEADING = "slot_heading"
 ORIGINS = ("units", "translation", "new_doc")
 CHANGE_TYPES = (

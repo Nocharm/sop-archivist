@@ -76,7 +76,7 @@ ORIGIN_UNITS = "units"
 NEUTRAL = "neutral"
 # 문장 새 문장의 출처가 될 수 있는 단위 — 그림은 그림 새 문장, 표·행은 표 새 문장으로만 간다(R28)
 SENTENCE_SOURCE_KINDS = ("sentence", "heading", "cell_sentence")
-# 칸 제목에 이을 수 있는 글 단위(설계 §4.6) — 칸 문장은 표·행의 처분을 따른다
+# 칸 제목에 이을 수 있는 글 단위(제품 명세 §7.13 칸 제목) — 칸 문장은 표·행의 처분을 따른다
 SLOT_HEADING_SOURCE_KINDS = ("heading", "sentence")
 TEXT_CHANGE_TYPES = ("tone", "rewritten")  # 글자가 출처와 다를 때 사람이 고르는 종류
 
@@ -102,7 +102,7 @@ class TargetIn(BaseModel):
     """새 문장 하나의 저장 뒤 모습. 기존 새 문장에서 비운(None) 문서·글자·언어·격자·칸 자리는 지금 값을 둔다.
 
     자리(칸 키·WI 단계·부분)는 None도 뜻이 있는 값(WI의 칸 없음, 단계 없음)이라 보낸 그대로 쓴다.
-    칸 제목(slot_heading)은 글·언어·변경 종류를 비워 보낸다 — 서버가 칸 이름·출처 언어·heading으로 채운다(설계 §4.6).
+    칸 제목(slot_heading)은 글·언어·변경 종류를 비워 보낸다 — 서버가 칸 이름·출처 언어·heading으로 채운다(제품 명세 §7.13 칸 제목).
     """
 
     key: str = Field(min_length=1, max_length=40)  # 요청 안 식별자 — 칸 새 문장이 parent_key로 표 새 문장을 가리킨다
@@ -637,7 +637,7 @@ def _check_source_kinds(item: TargetIn, state: _State) -> None:
 
 
 def _resolve_lang(item: TargetIn, row: TargetSentence | None, state: _State, text: str) -> str:
-    """새 문장의 언어 — 출처와 달라도 거절하지 않는다(다르면 변경 종류가 번역이 된다, 설계 §5.2). 표·그림은 중립.
+    """새 문장의 언어 — 출처와 달라도 거절하지 않는다(다르면 변경 종류가 번역이 된다, 제품 명세 §6.7). 표·그림은 중립.
 
     입구 2·번역 새 문장은 행의 언어로 잠겨 있어 보낸 값을 따르지 않는다. 그 밖에는 보낸 값, 비웠으면 기존 새 문장의 지금 값
     (TargetIn의 "비운 칸은 지금 값" — 출처 언어로 되돌리면 사람이 쓴 번역이 조용히 출처 언어가 된다), 새 새 문장은 출처가 한
@@ -777,8 +777,8 @@ def _decide_change_type(
 ) -> str:
     """검사 9 — 구조에서 나오는 종류(번역 기원·칸 제목·신규·표·그림·합침·언어가 다름·나눔)가 먼저, 그다음 사람이 고른 글자 비교 종류.
 
-    언어가 다르면 번역이다 — 사람이 고르지 않는다(설계 §5.2). 나눔은 출처와 같은 언어의 새 문장만 센다(spread).
-    칸 제목은 출처가 둘 이상이어도(다른 문서의 같은 제목) 합침이 아니라 heading이다(설계 §4.6).
+    언어가 다르면 번역이다 — 사람이 고르지 않는다(제품 명세 §6.7). 나눔은 출처와 같은 언어의 새 문장만 센다(spread).
+    칸 제목은 출처가 둘 이상이어도(다른 문서의 같은 제목) 합침이 아니라 heading이다(제품 명세 §7.13 칸 제목).
     """
     keys = [plan.item.key]
     requested = plan.item.change_type
@@ -887,7 +887,7 @@ SlotRelease = tuple[TargetSentence, list[int]]  # 이 저장의 출처를 떼어
 
 
 def _resolve_slot_headings(plans: list[_Plan], state: _State) -> tuple[list[_Plan], list[SlotRelease]]:
-    """칸 제목 계획을 (새 문서, 칸, 언어)마다 한 행으로 모은다 — 그 자리에 칸 제목이 있으면 그 행에, 없으면 새 행 하나에(설계 §4.6).
+    """칸 제목 계획을 (새 문서, 칸, 언어)마다 한 행으로 모은다 — 그 자리에 칸 제목이 있으면 그 행에, 없으면 새 행 하나에(제품 명세 §7.13 칸 제목).
 
     칸 제목은 출처마다 따로 이어진 끝 노드라(groups._find_neighbors) 이 저장이 다루는 것은 보낸 단위(member_unit_ids)의 연결뿐이고
     행의 다른 출처(다른 옛 문서의 같은 제목)는 그대로 둔다. 그래서 id로 보낸 행도 자리가 바뀌면 옮기지 않고 이 저장의 출처만 떼어
@@ -1035,13 +1035,13 @@ def _apply_plan(
 
 
 def _get_spot(plan: _Plan) -> Spot:
-    """저장 뒤 새 문서·칸 키·WI 단계·부분 — 새로 놓이는 짝·번역의 기본값이 "같은 칸"으로 보는 범위(설계 §6)."""
+    """저장 뒤 새 문서·칸 키·WI 단계·부분 — 새로 놓이는 짝·번역의 기본값이 "같은 칸"으로 보는 범위(제품 명세 §7.13 섹션 번호)."""
     place = _get_saved_place(plan)
     return (place.doc_id, place.slot_key, place.wi_step, place.wi_part)
 
 
 def _find_placed_sources(plans: list[_Plan]) -> dict[tuple[Spot, int], list[_Plan]]:
-    """(자리, 첫 출처 단위) → 저장 뒤 그 자리에 있는 번역 아닌 기존 새 문장 — 나중에 들어오는 번역이 그 바로 뒤로 간다(설계 §6).
+    """(자리, 첫 출처 단위) → 저장 뒤 그 자리에 있는 번역 아닌 기존 새 문장 — 나중에 들어오는 번역이 그 바로 뒤로 간다(제품 명세 §7.13 섹션 번호).
 
     번역의 출처 단위는 보낸 단위라 그 단위의 기존 새 문장은 닫힘 검사로 모두 이 저장에 들어 있다(지울 것은 빠진다). 출처는
     결과물 C의 정렬 키(outputs._get_base_unit_id)처럼 첫 출처로 본다.
@@ -1076,7 +1076,7 @@ async def _place_new_targets(
     """새로 만든 새 문장에 기본 표시를 쓰고, 순서를 사람이 정한 문서면 받은 순서대로 끝에 붙이거나 나중 번역을 기존 출처 바로 뒤에 끼운다.
 
     끼우면 출처 뒤 새 문장이 한 칸씩 밀려 그 문서의 최댓값도 하나 늘므로 다음 끝자리도 하나 민다. 한 출처 뒤에 번역이 둘 오면 앞
-    번역 뒤에 잇는다. 기존 새 문장을 다른 칸으로 옮기는 저장은 여기 오지 않는다 — 사람이 고른 표시를 덮지 않는다(설계 §6 O10).
+    번역 뒤에 잇는다. 기존 새 문장을 다른 칸으로 옮기는 저장은 여기 오지 않는다 — 사람이 고른 표시를 덮지 않는다(제품 명세 §7.13 섹션 번호, O10).
     """
     for item in arranged:
         new_plans[item.key].row.number_style = item.number_style
@@ -1185,7 +1185,7 @@ async def _write_group(
         decision.reason = item.reason.strip()
         _set_human_status(decision, payload.action, hold_reason, actor, stamp)
         decision.revision += 1
-    # 칸 제목의 상태는 출처 판단에서 나온다 — 판단을 쓴 뒤에, 출처를 더하거나 뗀 칸 제목마다 다시 정한다(설계 §4.6)
+    # 칸 제목의 상태는 출처 판단에서 나온다 — 판단을 쓴 뒤에, 출처를 더하거나 뗀 칸 제목마다 다시 정한다(제품 명세 §7.13 칸 제목)
     decided = {**state.slot_heading_decisions, **state.decisions}
     touched_headings = [
         (plan.row, plan.sources if plan.link_sources is None else plan.link_sources)
@@ -1232,7 +1232,7 @@ async def save_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveIn
         _link_cell_target(plan, by_key, state)
     plans, releases = _resolve_slot_headings(plans, state)
     reasons = {item.unit_id: item.reason.strip() for item in payload.units}
-    # 나눔은 한 단위가 같은 새 문서에 자기와 같은 언어의 새 문장 둘 이상을 낼 때다 — 다른 언어 문장은 번역이다(설계 §5.2)
+    # 나눔은 한 단위가 같은 새 문서에 자기와 같은 언어의 새 문장 둘 이상을 낼 때다 — 다른 언어 문장은 번역이다(제품 명세 §6.7)
     spread = Counter(
         (unit_id, plan.doc.id)
         for plan in plans if plan.item.kind == "sentence" and not plan.is_cell

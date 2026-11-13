@@ -591,7 +591,7 @@ def _upload_lone_pair_doc(client: TestClient, fx: PairFixture) -> tuple[dict, di
 
 
 def test_one_side_matched_new_pair_is_translated_added_line(client: TestClient) -> None:
-    """입구 2 새 문서의 한/영 짝 중 한쪽만 옛 단위와 맞추면 다른 쪽은 그 옛 줄 묶음 안의 Translated · Added 줄이다(설계 §4.5)."""
+    """입구 2 새 문서의 한/영 짝 중 한쪽만 옛 단위와 맞추면 다른 쪽은 그 옛 줄 묶음 안의 Translated · Added 줄이다(제품 명세 §7.13 줄 규칙 (4))."""
     fx = _setup_pair_edges(client)
     lone, linked, _added = _upload_lone_pair_doc(client, fx)
     _save(client, fx.bundle_id, [_unit_in(lone)], [
@@ -835,7 +835,7 @@ def test_b_counts_a_cross_document_pair_under_its_first_unit(client: TestClient)
 
 
 def test_b_follows_the_row_disposition_of_the_summary(client: TestClient) -> None:
-    """한쪽만 판단한 제안 짝은 갈 곳 없는 줄 — B에서도 미배정 노드 하나로 가고, 처분 노드 건수는 요약과 같다(설계 §5.1·§5.3)."""
+    """한쪽만 판단한 제안 짝은 갈 곳 없는 줄 — B에서도 미배정 노드 하나로 가고, 처분 노드 건수는 요약과 같다(제품 명세 §7.13 B·요약 숫자)."""
     fx = _setup_pair_edges(client)
     ko, en = _units(fx, KO_ON, EN_ON)
     assign_as_is(client, fx.bundle_id, ko, fx.sop_id, slot_key="purpose")
@@ -1051,7 +1051,7 @@ def test_summary_numbers(client: TestClient) -> None:
     assert summary["no_destination"] == sum(
         r["is_group_start"] and r["row_kind"] != "new" and r["dest_kind"] == "" for r in a
     )
-    assert summary["no_destination"] >= progress["unassigned"]  # 처분 기준 ⊇ 상태 기준(설계 §5.3)
+    assert summary["no_destination"] >= progress["unassigned"]  # 처분 기준 ⊇ 상태 기준(제품 명세 §7.13 요약 숫자)
 
 
 def test_human_translation_counts_in_summary(client: TestClient) -> None:
@@ -1070,7 +1070,7 @@ def test_human_translation_counts_in_summary(client: TestClient) -> None:
 
 
 def test_translated_added_counts_as_translated_and_new(client: TestClient) -> None:
-    """입구 2 한쪽만 맞춘 짝의 출처 없는 쪽(Translated · Added)은 번역과 신규 양쪽에 센다(설계 §4.5)."""
+    """입구 2 한쪽만 맞춘 짝의 출처 없는 쪽(Translated · Added)은 번역과 신규 양쪽에 센다(제품 명세 §7.13 줄 규칙 (4))."""
     fx = _setup_pair_edges(client)
     lone, linked, _added = _upload_lone_pair_doc(client, fx)
     _save(client, fx.bundle_id, [_unit_in(lone)], [

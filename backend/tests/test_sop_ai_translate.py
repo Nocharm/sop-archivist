@@ -845,7 +845,7 @@ def _make_translated_unit_with_mate(client: TestClient, fake_ai: FakeAi) -> tupl
 
 
 def test_pairing_a_translated_unit_sweeps_the_translation(client: TestClient, fake_ai: FakeAi) -> None:
-    """짝을 맺으면 짝의 영어가 번역을 대신한다 — AI 번역은 지우고 확정 번역은 보류로(설계 §7)."""
+    """짝을 맺으면 짝의 영어가 번역을 대신한다 — AI 번역은 지우고 확정 번역은 보류로(제품 명세 §7.9)."""
     bundle, document, ko, en = _make_translated_unit_with_mate(client, fake_ai)
 
     paired = _pair_units(client, bundle.id, document["id"], [ko["id"], en["id"]])

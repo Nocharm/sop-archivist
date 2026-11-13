@@ -1,4 +1,4 @@
-"""Excel 시트 모델 — 네 시트의 열 머리·폭과 줄마다 칸 글·줄 종류·흐림·기울임을 한 번 지어 xlsx와 미리보기 JSON이 함께 쓴다 (설계 §7.3).
+"""Excel 시트 모델 — 네 시트의 열 머리·폭과 줄마다 칸 글·줄 종류·흐림·기울임을 한 번 지어 xlsx와 미리보기 JSON이 함께 쓴다 (제품 명세 §7.14 시트 모델).
 
 계산은 app/sop/outputs.py가 끝냈고 여기서는 그 결과를 칸 글로 옮긴다. 시스템 표시 값은 영어 한 벌이다(Excel·미리보기는 늘 en).
 32,767자 나누기도 여기서 해 미리보기와 파일이 같은 줄이 된다. xlsx 쓰기는 excel_export.build_workbook.
@@ -36,7 +36,7 @@ A_HEADERS = (
     "Checks",
 )
 A_COLUMN_WIDTHS = (8, 12, 8, 26, 14, 50, 14, 14, 26, 28, 12, 50, 40, 18, 28, 12, 24, 18, 14, 40)
-A_SHARED_COLUMNS = (1, 7, 8, 9, 15)  # Row·Destination·New doc·New doc title·Remark (1부터) — 묶음이 함께 쓰는 칸(설계 §4.2)
+A_SHARED_COLUMNS = (1, 7, 8, 9, 15)  # Row·Destination·New doc·New doc title·Remark (1부터) — 묶음이 함께 쓰는 칸(제품 명세 §7.13 줄 규칙 (5))
 A_ROW_COLUMN = 1
 A_ID_COLUMN = 5  # Unit ID — 이어진 줄의 이어짐 표시가 들어가는 칸
 A_NOTE_COLUMNS = (12, 13)  # 보낸 새 문장이 주석 줄이면 기울여 쓰는 칸 — New text·AI suggestion
@@ -52,7 +52,7 @@ C_COLUMN_WIDTHS = (34, 30, 12, 50, 40, 12, 14, 40, 14, 10, 30, 18, 30)
 B_COLUMN_WIDTHS = (34, 12)  # 이름·건수, 그 뒤로 보낸 곳마다 B_DEST_WIDTH
 B_DEST_WIDTH = 18
 INFO_COLUMN_WIDTHS = (24, 60)
-# 시트마다 미리보기 줄 상한(§7.3) — 파일에는 전체를 싣는다. 2026-11-13 극단 시드 W1(A 1,558줄·C 2,304줄)에서 잰 값:
+# 시트마다 미리보기 줄 상한(제품 명세 §7.14 시트 모델) — 파일에는 전체를 싣는다. 2026-11-13 극단 시드 W1(A 1,558줄·C 2,304줄)에서 잰 값:
 # 500이면 응답 3.6MB(그중 B 흐름도 PNG 1.6MB는 상한과 무관)·서버 0.8초·창을 눌러 시트가 보일 때까지 1.9초.
 # 상한이 없으면 약 8.3MB, 300이면 2.9MB — 500줄이면 모양 확인에 넉넉하고 크기도 받을 만해 그대로 둔다
 MAX_PREVIEW_ROWS = 500
@@ -227,7 +227,7 @@ def _list_a_texts(row: ARow) -> list[str]:
 
 
 def _build_a_sheet(snap: BundleSnapshot, people: Mapping[str, str]) -> Sheet:
-    """ARow 하나가 한 줄(넘는 글은 이어진 줄) — 묶음 첫 줄 말고는 함께 쓰는 칸이 바로 윗줄과 같으면 흐리게(설계 §4.2, O6).
+    """ARow 하나가 한 줄(넘는 글은 이어진 줄) — 묶음 첫 줄 말고는 함께 쓰는 칸이 바로 윗줄과 같으면 흐리게(제품 명세 §7.14 되풀이 + 흐림, O6).
 
     흐림은 보이는 글(clean_cell_text를 거친 칸 글)끼리 견준다.
     """

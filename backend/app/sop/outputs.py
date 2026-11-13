@@ -37,7 +37,7 @@ Lang = Literal["ko", "en"]  # 라벨 언어
 NumberOf = Callable[[TargetInfo], str]  # 새 문장 → 섹션 번호(없으면 빈 글)
 ORIGIN_NEW_DOC = "new_doc"
 TRANSLATED = "translated"
-# 입구 2 한쪽만 맞춘 짝의 출처 없는 쪽(설계 §4.5) — 저장하지 않는 표시 전용 변경 종류
+# 입구 2 한쪽만 맞춘 짝의 출처 없는 쪽(제품 명세 §7.13 줄 규칙 (4)) — 저장하지 않는 표시 전용 변경 종류
 TRANSLATED_ADDED = "translated_added"
 # 나눔 문장 번호 — 스무 개를 넘으면 "(21)" 꼴로 이어 간다
 CIRCLED_NUMBERS = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
@@ -59,7 +59,7 @@ class ARow(BaseModel):
     """결과물 A 한 줄 — 옛 단위 한 줄(중복 배정은 보낸 곳마다), 표 줄·칸 문장 줄, 번역 줄, 입구 2 신규 줄.
 
     줄은 의미 묶음(짝 하나·짝 없는 판단 단위 하나, 고아 번역 하나, 입구 2 신규 짝 하나)으로 묶인다. 묶음이 함께 쓰는 값은
-    row_no·remark이고, 상태·변경 종류·위치는 줄마다 자기 값이다(설계 §4.2).
+    row_no·remark이고, 상태·변경 종류·위치는 줄마다 자기 값이다(제품 명세 §7.13 줄 규칙 (5)).
     """
 
     row_no: int  # 묶음 번호, 묶음마다 1부터 — 옛 문서 줄 → 고아 번역 → 신규
@@ -136,7 +136,7 @@ class CSection(BaseModel):
     label: str
     number: str | None  # SOP 칸 번호(5.1)·WI 단계 번호(3), 번호가 없는 칸은 None
     na_reason: str | None
-    # 칸 제목에 이은 옛 제목(두 언어) — "← OLD-1 §5, OLD-2 §5", 없으면 빈 글. 칸 제목은 items에 넣지 않는다(설계 §4.6)
+    # 칸 제목에 이은 옛 제목(두 언어) — "← OLD-1 §5, OLD-2 §5", 없으면 빈 글. 칸 제목은 items에 넣지 않는다(제품 명세 §7.13 칸 제목)
     heading_note: str
     items: list[CItem]
 
@@ -179,7 +179,7 @@ class COutput(BaseModel):
 
 
 class Summary(BaseModel):
-    """요약 숫자 한 벌(설계 §5.3) — 옛 쪽은 줄로 센다."""
+    """요약 숫자 한 벌(제품 명세 §7.13 요약 숫자) — 옛 쪽은 줄로 센다."""
 
     old_rows: int
     assigned: int  # 처분이 미배정이 아닌 줄(삭제·이동 포함)
@@ -272,8 +272,8 @@ def _build_index(snap: BundleSnapshot) -> _Index:
     for cell_targets in children.values():
         cell_targets.sort(key=lambda target: (target.cell_row or 0, target.cell_col or 0, target.id))
 
-    # 사람이 쓴 다른 언어 문장(translated)은 AI 번역처럼 번역 줄이라 관계 묶음(나눔·합침·중복 배정)에 넣지 않는다(설계 §4.1).
-    # 칸 제목도 넣지 않는다 — 다른 옛 문서의 같은 제목이 출처로 함께 있어도 합침이 아니다(설계 §4.6, groups._find_neighbors)
+    # 사람이 쓴 다른 언어 문장(translated)은 AI 번역처럼 번역 줄이라 관계 묶음(나눔·합침·중복 배정)에 넣지 않는다(제품 명세 §7.13 줄 규칙 (3)).
+    # 칸 제목도 넣지 않는다 — 다른 옛 문서의 같은 제목이 출처로 함께 있어도 합침이 아니다(제품 명세 §7.13 칸 제목, groups._find_neighbors)
     edges = [
         (target.id, unit_id)
         for target in snap.targets.values() if target.change_type != TRANSLATED and target.kind != SLOT_HEADING
@@ -332,7 +332,7 @@ def _get_base_unit_id(index: _Index, target: TargetInfo) -> int | None:
 
 
 def _get_item_key(index: _Index, doc: TargetDocInfo, target: TargetInfo) -> tuple[object, ...]:
-    """칸 안 순서 — 사람이 정한 문서는 order_index, 아니면 입구 2 새 문장은 새 문서의 자리, 나머지는 기댄 옛 단위의 의미 순(설계 §6).
+    """칸 안 순서 — 사람이 정한 문서는 order_index, 아니면 입구 2 새 문장은 새 문서의 자리, 나머지는 기댄 옛 단위의 의미 순(제품 명세 §7.13 섹션 번호).
 
     입구 2 새 문장의 자리는 새 문서 안의 실제 순서다(스펙 §6.7) — 짝지은 옛 단위 순서로 섞지 않는다. 그 밖은 같은 의미(짝)의
     문장끼리 붙이고, 그 안에서 영어 출처를 먼저, 번역(변경 종류 translated — AI 번역과 사람이 쓴 다른 언어 문장)은 출처 바로 뒤에 둔다.
@@ -467,11 +467,11 @@ def number_lines(base: str, depths: Sequence[int | None]) -> list[str | None]:
 
 
 def number_targets(index: _Index, labels: OutputLabels) -> dict[int, str]:
-    """새 문장 → 섹션 번호(설계 §6 세는 법). 한 칸(WI는 같은 단계의 Instruction·Why를 이어)의 칸 새 문장이 아닌 새 문장 전부를
+    """새 문장 → 섹션 번호(제품 명세 §7.13 섹션 번호 세는 법). 한 칸(WI는 같은 단계의 Instruction·Why를 이어)의 칸 새 문장이 아닌 새 문장 전부를
     언어를 가리지 않고 결과물 C 순서대로 한 줄로 센다.
 
     번호 생략·주석 줄은 번호가 없고 세지 않는다. 표 칸 새 문장은 표의 번호를 따른다(표가 번호가 없으면 칸도 없다).
-    입구 2 문서·단계 없는 WI 칸은 번호가 없다. 칸 제목은 세지 않고 칸 번호가 곧 그 번호다(설계 §4.6 — 결과물 A의 No.).
+    입구 2 문서·단계 없는 WI 칸은 번호가 없다. 칸 제목은 세지 않고 칸 번호가 곧 그 번호다(제품 명세 §7.13 칸 제목 — 결과물 A의 No.).
     """
     numbers: dict[int, str] = {}
     for doc in index.doc_order:
@@ -531,7 +531,7 @@ def _list_row_units(index: _Index, meaning: MeaningRow) -> list[UnitInfo]:
 
 
 def _get_row_disposition(snap: BundleSnapshot, meaning: MeaningRow) -> str:
-    """줄의 처분 — 구성 판단 단위의 처분이 모두 같으면 그 값, 아니면 미배정(일부만 판단한 줄은 갈 곳 없음, 설계 §5.3)."""
+    """줄의 처분 — 구성 판단 단위의 처분이 모두 같으면 그 값, 아니면 미배정(일부만 판단한 줄은 갈 곳 없음, 제품 명세 §7.13 요약 숫자)."""
     dispositions = {snap.decisions[unit_id].disposition for unit_id in meaning.unit_ids}
     return dispositions.pop() if len(dispositions) == 1 else "unassigned"
 
@@ -666,7 +666,7 @@ def _describe_dest(
 
 
 def format_confirmer(login_id: str | None, people: Mapping[str, str]) -> str | None:
-    """확정한 사람 — 디렉터리 이름이 있으면 "이름 (ID)", 없거나 퇴직이면 ID만(설계 §4.5)."""
+    """확정한 사람 — 디렉터리 이름이 있으면 "이름 (ID)", 없거나 퇴직이면 ID만(제품 명세 §7.13 줄 규칙 (7))."""
     if login_id is None:
         return None
     name = people.get(login_id)
@@ -712,7 +712,7 @@ def _build_unit_rows(
     decision_unit_id = _get_decision_unit_id(unit)
     decision = snap.decisions[decision_unit_id]
     document = snap.documents[unit.document_id]
-    # 칸 제목은 같은 새 문서의 문장과 ①②로 섞지 않고 따로 한 줄이다(변경 종류 Slot heading, 설계 §4.6)
+    # 칸 제목은 같은 새 문서의 문장과 ①②로 섞지 않고 따로 한 줄이다(변경 종류 Slot heading, 제품 명세 §7.13 칸 제목)
     dests = [
         _describe_dest(index, doc, part, is_own, ctx.labels, ctx.number_of)
         for doc, targets, is_own in _group_dests(index, unit)
@@ -784,7 +784,7 @@ def _build_after_rows(ctx: _AContext, unit: UnitInfo, slot: _GroupSlot) -> list[
 
 
 def _build_old_remark(index: _Index, added: Mapping[int, list[TargetInfo]], meaning: MeaningRow) -> str:
-    """옛 묶음의 Remark(설계 §4.4) — 판단 이유, 출처 있는 새 문장의 remark, Translated · Added 새 문장(added)의 remark 순.
+    """옛 묶음의 Remark(제품 명세 §7.13 줄 규칙 (6)) — 판단 이유, 출처 있는 새 문장의 remark, Translated · Added 새 문장(added)의 remark 순.
 
     출처 있는 새 문장은 구성 단위(칸 포함)를 출처로 둔 것이다. Translated · Added 새 문장은 출처가 없어 신규 묶음 대신
     이 묶음에 들므로 그 remark도 여기서 보인다. 결과물 C의 삭제·이동 줄 이유도 이 값이다.
@@ -825,7 +825,7 @@ def _index_translations(snap: BundleSnapshot) -> dict[int, list[TargetInfo]]:
 def _split_new_targets(
     snap: BundleSnapshot, new_targets: list[TargetInfo]
 ) -> tuple[dict[int, list[TargetInfo]], dict[int, list[TargetInfo]]]:
-    """입구 2 출처 없는 새 문장을 (옛 단위 → Translated · Added, 새 문서 쪽 짝 키 → 신규 묶음)으로 가른다(설계 §4.5·§7.2).
+    """입구 2 출처 없는 새 문장을 (옛 단위 → Translated · Added, 새 문서 쪽 짝 키 → 신규 묶음)으로 가른다(제품 명세 §7.13 줄 규칙 (4)).
 
     새 문서 짝(get_new_meaning_key)에 출처 있는 새 문장이 있으면 한쪽만 맞춘 짝이다 — 출처 없는 쪽은 맞춘 쪽 출처 중 원문에서
     가장 앞선 옛 단위 줄 뒤에 둔다. 나머지는 짝 키마다 한 신규 묶음(새 문서 순·C 칸 순).
@@ -878,7 +878,7 @@ def _build_a_groups(index: _Index, labels: OutputLabels, people: Mapping[str, st
 
 
 def build_output_a(snap: BundleSnapshot, lang: Lang, people: Mapping[str, str]) -> list[ARow]:
-    """결과물 A 한 벌(설계 §4.1) — lang은 위치 표기·변경 종류 같은 라벨 언어만, people(로그인 ID → 이름)은 확정한 사람 표시용."""
+    """결과물 A 한 벌(제품 명세 §7.13 A) — lang은 위치 표기·변경 종류 같은 라벨 언어만, people(로그인 ID → 이름)은 확정한 사람 표시용."""
     return [row for group in _build_a_groups(_build_index(snap), LABELS[lang], people) for row in group]
 
 
@@ -886,10 +886,10 @@ def build_output_a(snap: BundleSnapshot, lang: Lang, people: Mapping[str, str]) 
 
 
 def build_output_b(snap: BundleSnapshot, lang: Lang) -> FlowGraph:
-    """결과물 B 한 벌(설계 §5.1) — 옛 문서(줄 수) → 새 문서·삭제·이동·미배정. lang은 노드 라벨 언어만 고른다.
+    """결과물 B 한 벌(제품 명세 §7.13 B) — 옛 문서(줄 수) → 새 문서·삭제·이동·미배정. lang은 노드 라벨 언어만 고른다.
 
     줄의 처분은 요약과 같은 _get_row_disposition이다: 배정 줄은 보낸 새 문서 집합에 한 번씩(나눔은 한 번, 중복 배정은 보낸 곳마다
-    한 번), 삭제·이동·갈 곳 없음(일부만 판단한 줄 포함, 설계 §5.3)은 그 처분 노드 하나 — 처분 노드 건수가 요약 숫자와 같다.
+    한 번), 삭제·이동·갈 곳 없음(일부만 판단한 줄 포함, 제품 명세 §7.13 요약 숫자)은 그 처분 노드 하나 — 처분 노드 건수가 요약 숫자와 같다.
     짝의 두 단위가 서로 다른 옛 문서에 있으면(드묾) 줄의 첫 단위 문서로 센다.
     """
     labels = LABELS[lang]
@@ -962,7 +962,7 @@ def _format_source_note(index: _Index, target: TargetInfo, labels: OutputLabels)
 
 
 def _format_heading_note(snap: BundleSnapshot, headings: Iterable[TargetInfo]) -> str:
-    """칸 머리 줄의 칸 제목 출처 — 두 언어 칸 제목의 출처를 원문 순서로 모아 "← OLD-1 §5, OLD-2 §5"(설계 §4.6). 접미 없음."""
+    """칸 머리 줄의 칸 제목 출처 — 두 언어 칸 제목의 출처를 원문 순서로 모아 "← OLD-1 §5, OLD-2 §5"(제품 명세 §7.13 칸 제목). 접미 없음."""
     units = {unit_id for heading in headings for unit_id in heading.source_unit_ids}
     return _format_unit_refs(snap, sorted(units, key=lambda unit_id: snap.units[unit_id].order_key))
 
@@ -1061,7 +1061,7 @@ def build_output_c_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> 
 
 
 def build_output_c(snap: BundleSnapshot, lang: Lang) -> COutput:
-    """결과물 C 한 벌(설계 §5.2) — 새 문서마다 칸별로 받은 새 문장(두 언어와 중립이 한 목록, C 순서), 끝에 삭제·다른 문서로 이동(줄마다 한 번).
+    """결과물 C 한 벌(제품 명세 §7.13 C) — 새 문서마다 칸별로 받은 새 문장(두 언어와 중립이 한 목록, C 순서), 끝에 삭제·다른 문서로 이동(줄마다 한 번).
 
     lang은 칸 이름·출처 표기 같은 라벨 언어만 고른다.
     """
@@ -1160,7 +1160,7 @@ def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> 
 
 
 def build_summary(snap: BundleSnapshot) -> Summary:
-    """요약 숫자 한 벌(설계 §5.3) — 줄은 진행 숫자와 같은 의미 묶음, 줄의 처분은 구성 단위가 모두 같을 때 그 값(아니면 미배정).
+    """요약 숫자 한 벌(제품 명세 §7.13 요약 숫자) — 줄은 진행 숫자와 같은 의미 묶음, 줄의 처분은 구성 단위가 모두 같을 때 그 값(아니면 미배정).
 
     확정률은 줄 상태 기준(소수 넷째 자리, 줄이 없으면 0). 번역은 결과물 A 묶음 짓기를 그대로 센다.
     """

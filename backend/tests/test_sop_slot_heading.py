@@ -1,4 +1,4 @@
-"""칸 제목(Slot heading) — 옛 제목을 새 SOP 칸 제목에 잇는 저장·출처 더하기·떼어 내기와 결과물 A·C 표시 (설계 §4.6)."""
+"""칸 제목(Slot heading) — 옛 제목을 새 SOP 칸 제목에 잇는 저장·출처 더하기·떼어 내기와 결과물 A·C 표시 (제품 명세 §7.13 칸 제목)."""
 
 from io import BytesIO
 from typing import NamedTuple
@@ -73,7 +73,7 @@ def _setup(client: TestClient) -> Fixture:
 
 
 def _heading(key: str, doc_id: int, unit: dict, **fields: object) -> dict:
-    """화면이 보내는 칸 제목 새 문장 — 글·언어·변경 종류 없이 칸과 출처만(설계 §4.6, 서버가 칸 이름을 채운다)."""
+    """화면이 보내는 칸 제목 새 문장 — 글·언어·변경 종류 없이 칸과 출처만(제품 명세 §7.13 칸 제목, 서버가 칸 이름을 채운다)."""
     return {
         "key": key, "kind": "slot_heading", "target_doc_id": doc_id, "slot_key": SLOT, "source_unit_ids": [unit["id"]],
         **fields,
@@ -160,7 +160,7 @@ def test_heading_pair_goes_to_ko_and_en_slot_headings(client: TestClient) -> Non
         ("slot_heading", "en", SLOT, LABEL, "heading", "confirmed"),
         ("slot_heading", "ko", SLOT, LABEL, "heading", "confirmed"),
     ]
-    # 제목 짝은 한 줄 — 배정된 판단 단위로 센다(설계 §4.6)
+    # 제목 짝은 한 줄 — 배정된 판단 단위로 센다(제품 명세 §7.13 칸 제목)
     assert get_bundle(client, fx.bundle_id)["progress"]["confirmed"] == before + 1
     pair_id = find_unit(fx.old1, KO_HEAD)["pair_id"]
     assert group["pairs_confirmed"] == [pair_id]  # 한글·영어 칸 제목은 같은 새 문서 — 짝은 한 곳으로 간다
@@ -427,7 +427,7 @@ def test_clearing_the_holding_doc_confirms_the_shared_slot_heading(client: TestC
 
 
 def test_a_slot_with_only_a_slot_heading_is_still_an_empty_equipment_slot(client: TestClient) -> None:
-    """장비 SOP의 빈 Procedures 하위 칸 알림 — 칸 제목은 칸 항목이 아니라 칸을 채우지 않는다(설계 §4.6)."""
+    """장비 SOP의 빈 Procedures 하위 칸 알림 — 칸 제목은 칸 항목이 아니라 칸을 채우지 않는다(제품 명세 §7.13 칸 제목)."""
     bundle_id = create_bundle(client, is_synthetic=True)["id"]
     equipment = [{**TOBE_DOCS[0], "is_equipment_sop": True}]
     response = put_tobe(client, bundle_id, equipment)

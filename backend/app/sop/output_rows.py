@@ -72,6 +72,6 @@ def count_single_language(snap: BundleSnapshot) -> int:
 
 
 def get_new_meaning_key(snap: BundleSnapshot, target: TargetInfo) -> int:
-    """입구 2 새 문장이 놓일 의미 묶음 키(설계 §7.2) — 출처 단위의 짝, 짝이 없으면 -단위 id."""
+    """입구 2 새 문장이 놓일 의미 묶음 키(제품 명세 §7.13 줄 규칙 (4)) — 출처 단위의 짝, 짝이 없으면 -단위 id."""
     assert target.new_unit_id is not None
     return get_meaning_key(snap, target.new_unit_id)

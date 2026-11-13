@@ -1,5 +1,5 @@
-// Excel 시트 한 장을 그린다 - 서버 시트 모델(kind·wrap·head·faint·italic·bold·numeric)을 그대로 옮기고 모양을 다시 판정하지 않는다(설계 §7.3).
-// 종이 색은 테마와 무관한 --sheet-* 토큰이다(§9). 함께 쓰는 칸의 흐림·머리 칠·접힘은 모두 모델이 정한 값이다.
+// Excel 시트 한 장을 그린다 - 서버 시트 모델(kind·wrap·head·faint·italic·bold·numeric)을 그대로 옮기고 모양을 다시 판정하지 않는다(제품 명세 §7.14 시트 모델).
+// 종이 색은 테마와 무관한 --sheet-* 토큰이다(제품 명세 §7.14 Graphite 테마). 함께 쓰는 칸의 흐림·머리 칠·접힘은 모두 모델이 정한 값이다.
 "use client";
 
 import type { CSSProperties } from "react";

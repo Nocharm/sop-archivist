@@ -50,7 +50,7 @@ async def create_pair(session: AsyncSession, document: Document, unit_ids: Seque
     """같은 문서의 활성 글자 단위로 사람이 짝을 만든다 — 확정·출처 human. 제안 짝에 든 단위면 그 제안 짝을 먼저 지운다.
 
     한글·영어가 모두 있고 한쪽 MAX_PAIR_SIDE 이하여야 한다. 다른 확정 짝에 든 단위가 있으면 409 unit_already_paired,
-    이미 서로 다른 곳으로 보낸 단위들이면(운명이 갈림, pair_settle) 409 pair_fates_differ — 한 줄의 처분은 늘 하나다(설계 §5.3).
+    이미 서로 다른 곳으로 보낸 단위들이면(운명이 갈림, pair_settle) 409 pair_fates_differ — 한 줄의 처분은 늘 하나다(제품 명세 §6.5).
     지우는 AI 제안 짝은 채택을 남긴다 — 사람이 같은 단위 집합으로 다시 만들면 그대로, 아니면 버림이다.
     """
     ensure_unique_units(unit_ids)
@@ -98,7 +98,7 @@ async def create_pair(session: AsyncSession, document: Document, unit_ids: Seque
 
 
 async def _sweep_paired_translations(session: AsyncSession, bundle_id: int, unit_ids: Collection[int]) -> None:
-    """짝이 확정되면 짝의 다른 언어 단위가 번역을 대신하므로, 묶인 단위를 출처로 둔 새 문장의 번역을 출처가 바뀐 것처럼 쓸어 낸다(설계 §7).
+    """짝이 확정되면 짝의 다른 언어 단위가 번역을 대신하므로, 묶인 단위를 출처로 둔 새 문장의 번역을 출처가 바뀐 것처럼 쓸어 낸다(제품 명세 §7.9).
 
     AI 번역은 지우고 확정 번역은 보류다(sweep_translations). 쓸리는 것은 기원이 번역(origin translation)인 행뿐이라 사람이 쓴
     다른 언어 새 문장(기원 units, 변경 종류 translated)은 그대로다. 제안 짝은 쓸지 않는다 — 풀면(Separate) 번역이 다시 필요하다.

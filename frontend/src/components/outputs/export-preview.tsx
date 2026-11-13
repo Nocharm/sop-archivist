@@ -1,4 +1,4 @@
-// Excel 미리보기 창 - 서버가 지은 시트 모델 네 장을 탭으로 보이고, 받기는 응답 Content-Disposition 이름으로 저장한다(설계 §7.3·§9).
+// Excel 미리보기 창 - 서버가 지은 시트 모델 네 장을 탭으로 보이고, 받기는 응답 Content-Disposition 이름으로 저장한다(제품 명세 §7.14 미리보기 창·시트 모델).
 "use client";
 
 import { Download } from "lucide-react";

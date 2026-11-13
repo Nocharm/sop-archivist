@@ -148,7 +148,7 @@
   /* Modal backdrop. Stays dark in both themes (app-side addition; the mock used the same value inline). */
   --scrim: color-mix(in oklab, oklch(.18 .02 255) 42%, transparent);
 
-  /* Excel preview "paper" - the sheet looks like the file in both themes, so dark mode does not override these (spec §9). */
+  /* Excel preview "paper" - the sheet looks like the file in both themes, so dark mode does not override these (product spec §7.14 Graphite theme). */
   --sheet-paper: #FFFFFF;
   --sheet-ink: #202124;
   --sheet-head-bg: #2B2F36;

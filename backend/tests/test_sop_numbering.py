@@ -453,9 +453,9 @@ def test_composed_doc_numbers_one_sequence_like_c(client: TestClient) -> None:
 
 
 def test_omitted_and_note_lines_are_skipped_across_languages(client: TestClient) -> None:
-    """설계 §6 예 — 5.1 English / 한글(생략) / Note(주석) / 한글(생략) / 5.2 English / 한글(생략)."""
+    """제품 명세 §7.13 섹션 번호예 — 5.1 English / 한글(생략) / Note(주석) / 한글(생략) / 5.2 English / 한글(생략)."""
     bundle_id, sop_id, targets = _setup_pairs(client)
-    ids = [target_id for pair in targets for target_id in reversed(pair)]  # 영어 먼저 — 설계 §6 예의 순서
+    ids = [target_id for pair in targets for target_id in reversed(pair)]  # 영어 먼저 — 제품 명세 §7.13 섹션 번호예의 순서
     (_, en_second) = targets[1]
     _put_styles(client, bundle_id, sop_id, ids, {ko: "omitted" for ko, _ in targets} | {en_second: "note"})
 
@@ -492,7 +492,7 @@ def test_pair_lines_can_take_different_marks(client: TestClient) -> None:
     assert (styles[ko_first], styles[en_first]) == ("note", "omitted")
 
 
-# ── 새로 놓이는 짝·번역의 기본값(설계 §6 O10) ─────────────────────────────────
+# ── 새로 놓이는 짝·번역의 기본값(제품 명세 §7.13 섹션 번호O10) ─────────────────────────────────
 
 LEAD_EN = "Check the synthetic power."
 TAIL_EN = "Clean the synthetic bench."
@@ -570,7 +570,7 @@ def test_later_human_translation_lands_after_its_source_omitted(client: TestClie
                 "key": "s", "id": source["id"], "revision": source["revision"], "slot_key": PAIR_SLOT,
                 "source_unit_ids": [source_unit["id"]],
             },
-            # 사람이 쓴 다른 언어 문장 — 변경 종류가 번역이다(설계 §6 "번역"의 범위)
+            # 사람이 쓴 다른 언어 문장 — 변경 종류가 번역이다(제품 명세 §7.13 섹션 번호"번역"의 범위)
             {
                 "key": "t", "target_doc_id": sop_id, "slot_key": PAIR_SLOT, "lang": "ko", "text": ko,
                 "source_unit_ids": [source_unit["id"]],

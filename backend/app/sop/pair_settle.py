@@ -1,4 +1,4 @@
-"""짝의 운명 — 판단을 쓰는 길 끝에 서버가 한/영 짝을 풀거나 확정한다(설계 §5.2). 한 줄의 처분이 늘 하나이게 하는 규칙이다."""
+"""짝의 운명 — 판단을 쓰는 길 끝에 서버가 한/영 짝을 풀거나 확정한다(제품 명세 §6.5 "짝은 한 곳으로 간다"). 한 줄의 처분이 늘 하나이게 하는 규칙이다."""
 
 from collections import defaultdict
 from collections.abc import Collection, Iterable, Mapping

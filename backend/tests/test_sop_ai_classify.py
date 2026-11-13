@@ -667,7 +667,7 @@ def test_manual_order_document_appends_at_the_end(client: TestClient, fake_ai: F
 def test_pair_proposed_into_one_slot_numbers_english_and_omits_korean(
     client: TestClient, fake_ai: FakeAi, is_manual_order: bool
 ) -> None:
-    # 짝 하나는 작업 하나라 두 언어 새 문장이 한 번에 같은 칸에 놓인다 — 설계 §6 기본값(O10)이 사람 저장과 같다
+    # 짝 하나는 작업 하나라 두 언어 새 문장이 한 번에 같은 칸에 놓인다 — 제품 명세 §7.13 섹션 번호 기본값(O10)이 사람 저장과 같다
     bundle = make_ai_bundle(client)
     if is_manual_order:
         async def _set_manual_order(session: AsyncSession) -> None:

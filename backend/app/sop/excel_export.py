@@ -1,4 +1,4 @@
-"""Excel 내보내기 — 시트 모델(app/sop/sheet_model.py)을 Graphite 테마의 수식 없는 통합 문서 하나로 쓴다 (설계 §7.3·§9).
+"""Excel 내보내기 — 시트 모델(app/sop/sheet_model.py)을 Graphite 테마의 수식 없는 통합 문서 하나로 쓴다 (제품 명세 §7.14 시트 모델·Graphite 테마).
 
 칸 글·줄 종류·흐림·기울임은 시트 모델이 정했고 여기서는 칸에 옮겨 쓰고 모양만 입힌다. 글 칸은 모두 write_text_cell 하나로 써서
 XML에 못 쓰는 문자는 바꾸고 =·+·-·@로 시작하는 글도 수식이 되지 않게 한다(DB 원문은 바꾸지 않는다).
@@ -34,7 +34,7 @@ _FORMULA_LEADS = ("=", "+", "-", "@")
 _FILE_NAME_FORBIDDEN_RE = re.compile(r'[\\/:*?"<>|]')
 _WRAP_TOP = Alignment(wrap_text=True, vertical="top")
 
-# Graphite 테마(설계 §9, O7) — 머리 줄만 바탕이 있고, 묶음은 줄 위 테두리 굵기로 가른다. 그 밖의 바탕색·줄무늬는 없다.
+# Graphite 테마(제품 명세 §7.14 Graphite 테마, O7) — 머리 줄만 바탕이 있고, 묶음은 줄 위 테두리 굵기로 가른다. 그 밖의 바탕색·줄무늬는 없다.
 # 색은 ARGB 8자리로 적는다 — 6자리면 openpyxl이 투명(00)을 붙여 쓴다
 FAINT_COLOR = "FF9AA0A6"  # 흐린 글자 — 묶음 안 테두리와 같은 회색
 _HEADER_FILL = PatternFill("solid", fgColor="FF2B2F36")

@@ -312,7 +312,7 @@ def list_confirmer_ids(snap: BundleSnapshot) -> set[str]:
 async def load_people_names(session: AsyncSession, login_ids: Collection[str]) -> dict[str, str]:
     """로그인 ID → 표시 이름 — 활성 직원만, 이름이 비면 한글 이름, 둘 다 비면 뺀다(질의 한 번).
 
-    결과물 A·Excel의 "확정한 사람"용이다. 디렉터리에 없거나 퇴직한 사람은 빠져 결과물이 ID만 적는다(설계 §4.5).
+    결과물 A·Excel의 "확정한 사람"용이다. 디렉터리에 없거나 퇴직한 사람은 빠져 결과물이 ID만 적는다(제품 명세 §7.13 줄 규칙 (7)).
     AI 페이로드에는 쓰지 않는다 — 실명 금지 원칙은 그대로다.
     """
     if not login_ids:
