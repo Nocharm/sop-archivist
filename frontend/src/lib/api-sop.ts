@@ -513,7 +513,7 @@ export function downloadToBeTemplate(bundleId: number): Promise<Blob> {
 
 export type Disposition = "unassigned" | "assigned" | "delete" | "move_external";
 /** 새 문장의 변경 종류 - backend constants와 같은 값. 나눔·합침·번역·신규는 서버가 구조에서 정한다 */
-export type ChangeType = "as_is" | "tone" | "rewritten" | "table_restructured" | "split" | "merged" | "translated" | "new";
+export type ChangeType = "as_is" | "tone" | "rewritten" | "table_restructured" | "split" | "merged" | "translated" | "new" | "heading";
 /** 저장 요청에 보낼 수 있는 종류 - backend TargetIn.change_type */
 export type ChangeTypeInput = "as_is" | "tone" | "rewritten" | "table_restructured";
 export type WiPart = "instruction" | "why";
@@ -567,7 +567,7 @@ export interface GroupTarget {
   section_path: string;
   order_index: number;
   lang: UnitLang;
-  kind: "sentence" | "table" | "figure";
+  kind: "sentence" | "table" | "figure" | "slot_heading";
   confirmed_text: string;
   ai_text: string;
   change_type: ChangeType | null;
@@ -606,7 +606,7 @@ export interface TargetInput {
   slot_key?: string | null;
   wi_step?: number | null;
   wi_part?: WiPart | null;
-  kind?: "sentence" | "table" | "figure";
+  kind?: "sentence" | "table" | "figure" | "slot_heading";
   lang?: UnitLang;
   text?: string;
   change_type?: ChangeTypeInput | null;

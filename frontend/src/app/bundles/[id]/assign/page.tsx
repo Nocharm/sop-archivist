@@ -89,6 +89,7 @@ import {
   getRowStep,
   hasDraftChange,
   hasRowLanguage,
+  isHeadingSourceUnit,
   isSentenceUnit,
   isTextChangeType,
   isTranslationOf,
@@ -975,6 +976,9 @@ export default function AssignPage() {
     );
   }
 
+  // 칸 제목 자리는 줄 단위가 모두 제목·문장일 때만 보인다 - 표·그림은 칸 제목의 출처가 아니다
+  const canPickHeading = rowUnits.length > 0 && rowUnits.every((unit) => isHeadingSourceUnit(unit.kind));
+  const treeOptions = canPickHeading ? options : options.filter((option) => option.destination.kind !== "slot_heading");
   const nearAnchor = destination ?? recommendations[0]?.destination ?? null;
   const nearLinks = nearAnchor?.kind === "link" ? pickNearby(written, nearAnchor.targetIds) : [];
   const nearPlaces: DestinationOption[] = nearAnchor && nearAnchor.kind !== "link" ? listSiblingPlaces(options, nearAnchor) : [];
@@ -1000,7 +1004,7 @@ export default function AssignPage() {
   const accSections: AccordionSection[] = [
     { key: "rec", icon: Sparkles, title: t("assign.acc.rec"), count: recommendations.length, body: recommendations.length === 0 ? <p className="text-xs text-ink-3">{t("assign.acc.none")}</p> : recommendations.map(renderRecommendation) },
     { key: "near", icon: Locate, title: t("assign.acc.near"), count: nearLinks.length + nearPlaces.length, body: renderNearby() },
-    { key: "all", icon: ListTree, title: t("assign.acc.all"), count: written.length + options.length, body: <DestinationTree written={written} options={options} tobeHref={getStageHref(bundleId, "tobe")} onPickLink={pickNewSentence} onPickPlace={pickDestination} /> },
+    { key: "all", icon: ListTree, title: t("assign.acc.all"), count: written.length + options.length, body: <DestinationTree written={written} options={treeOptions} tobeHref={getStageHref(bundleId, "tobe")} onPickLink={pickNewSentence} onPickPlace={pickDestination} /> },
     {
       key: "move",
       icon: MoveRight,
@@ -1111,7 +1115,7 @@ export default function AssignPage() {
         <span className="chosen-label">
           {isConfirmedView && <Check size={13} strokeWidth={2} aria-hidden />}
           {isConfirmedView && `${t("assign.chosen.confirmed")} · `}
-          {destination.kind === "link" ? t("assign.chosen.link") : isPlace ? t("assign.chosen.place") : t(destination.kind === "delete" ? "classify.deleted" : "classify.moved")}
+          {destination.kind === "link" ? t("assign.chosen.link") : destination.kind === "slot_heading" ? t("assign.slotHeading") : isPlace ? t("assign.chosen.place") : t(destination.kind === "delete" ? "classify.deleted" : "classify.moved")}
         </span>
         {destination.kind === "link" && (
           <LinkChoice
@@ -1133,6 +1137,12 @@ export default function AssignPage() {
             </p>
             {newSentences}
           </>
+        )}
+        {destination.kind === "slot_heading" && (
+          <p className="text-[13px] text-ink" data-testid="assign-chosen-heading">
+            <b className="mr-1 font-mono text-[11px]">{renderPlaceLabel(destination).title}</b>
+            {renderPlaceLabel(destination).text}
+          </p>
         )}
         {spansDocs && <p className="text-xs text-ink-2">{t("assign.duplicateReason")}</p>}
         {leftovers.length > 0 && (

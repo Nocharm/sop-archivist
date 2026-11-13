@@ -62,6 +62,7 @@ const MAX_RECOMMENDATIONS = 5;
 function keyOf(destination: Destination): string {
   if (destination.kind === "link") return `link:${[...destination.targetIds].sort((a, b) => a - b).join(",")}`;
   if (destination.kind === "slot") return `slot:${destination.docId}:${destination.slotKey}`;
+  if (destination.kind === "slot_heading") return `heading:${destination.docId}:${destination.slotKey}`;
   if (destination.kind === "step") return `step:${destination.docId}:${destination.step ?? "none"}:${destination.part}`;
   return destination.kind;
 }

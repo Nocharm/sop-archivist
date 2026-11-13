@@ -93,6 +93,7 @@ export function DestinationTree({ written, options, tobeHref, onPickLink, onPick
                   data-testid={`assign-tree-place-${option.id}`}
                   onClick={() => onPickPlace(option.destination)}
                 >
+                  {option.destination.kind === "slot_heading" && <span className="tree-sub">{t("assign.slotHeading")} · </span>}
                   {option.label}
                   {option.disabled && <span className="tree-sub"> · N/A</span>}
                 </button>

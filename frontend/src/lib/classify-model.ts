@@ -88,6 +88,8 @@ export function buildViewsKey(oldDocIds: number[] | null): string {
 
 export type Destination =
   | { kind: "slot"; docId: number; slotKey: string }
+  /** 옛 제목을 새 SOP 칸의 칸 제목으로 - 글은 칸 이름이라 고르지 않는다 */
+  | { kind: "slot_heading"; docId: number; slotKey: string }
   /** step이 null이면 단계 없는 자리(단계를 선언하지 않은 WI) */
   | { kind: "step"; docId: number; step: number | null; part: WiPart }
   /** 이미 쓴 문서(입구 2)의 문장에 출처로 잇기 - 여럿이면 나눔 */
@@ -109,6 +111,8 @@ export function getDestinationId(destination: Destination): string {
   switch (destination.kind) {
     case "slot":
       return `slot:${destination.docId}:${destination.slotKey}`;
+    case "slot_heading":
+      return `heading:${destination.docId}:${destination.slotKey}`;
     case "step":
       return `step:${destination.docId}:${destination.step ?? "none"}:${destination.part}`;
     case "link":
@@ -127,6 +131,11 @@ export function buildDestinationOptions(tobe: ToBe, slotLabels: Record<string, s
     if (doc.entrance !== "assign") continue;
     if (doc.doc_type === "sop") {
       for (const slotKey of SLOT_KEYS) {
+        // N/A가 아닌 칸마다 칸 줄 바로 앞에 칸 제목 자리를 둔다
+        if (!isNa(doc, slotKey)) {
+          const heading: Destination = { kind: "slot_heading", docId: doc.id, slotKey };
+          options.push({ id: getDestinationId(heading), destination: heading, docCode: doc.code, label: slotLabels[slotKey] ?? slotKey, disabled: false, depth: slotKey.includes(".") ? 1 : 0 });
+        }
         const destination: Destination = { kind: "slot", docId: doc.id, slotKey };
         options.push({
           id: getDestinationId(destination),
@@ -168,6 +177,8 @@ export function readDestination(group: Group | null, unitIds: number[]): Destina
   // 이미 쓴 문서의 문장에 이어져 있으면 그것이 보낼 곳이다(칸 새 문장이 함께 남아 있어도)
   const linked = group.targets.filter((item) => item.origin === "new_doc" && item.parent_target_id === null && item.source_unit_ids.some((id) => unitIds.includes(id)));
   if (linked.length > 0) return { kind: "link", targetIds: linked.map((item) => item.id) };
+  const heading = group.targets.find((item) => item.kind === "slot_heading" && item.slot_key !== null && item.source_unit_ids.some((id) => unitIds.includes(id)));
+  if (heading && heading.slot_key !== null) return { kind: "slot_heading", docId: heading.target_doc_id, slotKey: heading.slot_key };
   const target = group.targets.find((item) => item.parent_target_id === null && item.origin === "units" && item.source_unit_ids.some((id) => unitIds.includes(id)));
   if (!target) return null;
   if (target.wi_part !== null) return { kind: "step", docId: target.target_doc_id, step: target.wi_step, part: target.wi_part };
@@ -291,6 +302,11 @@ function isTranslatedFrom(lang: ViewUnit["lang"], sourceIds: number[], langOf: M
     return source === undefined ? [] : [source];
   });
   return langs.length === sourceIds.length && isTranslationOf(lang, langs);
+}
+
+/** 칸 제목의 출처가 될 수 있는 단위인가 - 제목·문장만 */
+export function isHeadingSourceUnit(kind: string): boolean {
+  return kind === "heading" || kind === "sentence";
 }
 
 /** 새 문장 칸이 되는 단위인가 - 표·행·그림이 아닌 글 단위(문장·제목·표에 묶이지 않은 칸 문장) */
@@ -443,6 +459,15 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
   const targets: TargetInput[] = [];
   const kept = new Set<number>();
   const isPlace = destination?.kind === "slot" || destination?.kind === "step";
+  if (destination?.kind === "slot_heading") {
+    // 줄의 제목·문장 단위마다 칸 제목 하나 - 글은 서버가 칸 이름으로 채운다. 출처는 이 줄의 단위만 싣는다(다른 문서의 출처는 서버가 지킨다)
+    for (const unit of active) {
+      if (!isHeadingSourceUnit(unit.kind)) continue;
+      const own = existing.find((target) => target.kind === "slot_heading" && target.source_unit_ids.includes(unit.id));
+      if (own) kept.add(own.id);
+      targets.push({ key: `h${unit.id}`, ...(own ? { id: own.id, revision: own.revision } : {}), kind: "slot_heading", target_doc_id: destination.docId, slot_key: destination.slotKey, source_unit_ids: [unit.id] });
+    }
+  }
   if (isPlace) {
     const place = placeTarget(destination);
     for (const unit of active) {
