@@ -812,6 +812,76 @@ def build_output_c(snap: BundleSnapshot, lang: Lang) -> COutput:
     )
 
 
+# --- Assign New 칸의 쓰는 중 문서 ---
+
+
+class ComposedItem(BaseModel):
+    target_id: int
+    kind: str
+    lang: str
+    text: str  # 고쳐 쓴 글, 없으면 AI 글, 그것도 없으면(보류한 그림 등) 출처 원문
+    status: str
+    change_type: str | None
+    number: str | None  # 그 언어판의 줄 번호
+    # 출처 단위 — 번역은 번역 출처 단위(Old 쪽으로 잇는 선과 칩이 쓴다)
+    source_unit_ids: list[int]
+
+
+class ComposedSection(BaseModel):
+    location_key: str
+    label: str
+    number: str | None
+    na_reason: str | None
+    items: list[ComposedItem]
+
+
+class ComposedDoc(BaseModel):
+    target_doc_id: int
+    code: str
+    title: str
+    doc_type: str
+    entrance: str
+    sections: list[ComposedSection]
+
+
+def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> ComposedDoc | None:
+    """새 문서 하나를 지금까지의 배정으로 — 결과물 C와 같은 칸·순서(_plan_sections)에 두 언어 새 문장을 함께 싣는다.
+
+    Assign 화면의 New 칸이 아직 쓰지 않은 문서를 미리 보이는 데 쓴다. 칸 새 문장(표 칸)은 표 줄에 딸려 따로 싣지 않는다.
+    lang은 칸 이름의 언어다. 문서가 묶음에 없으면 None.
+    """
+    doc = snap.target_docs.get(target_doc_id)
+    if doc is None:
+        return None
+    labels = LABELS[lang]
+    index = _build_index(snap)
+    numbers = {code: _number_targets(index, code, labels) for code in ("ko", "en")}
+
+    def build_item(target: TargetInfo) -> ComposedItem:
+        sources = list(target.source_unit_ids)
+        if not sources and target.translation_source_unit_id in snap.units:
+            sources = [target.translation_source_unit_id]
+        text = target.confirmed_text or target.ai_text or " ".join(snap.units[uid].text for uid in sources if uid in snap.units)
+        return ComposedItem(
+            target_id=target.id, kind=target.kind, lang=target.lang, text=text, status=target.status,
+            change_type=target.change_type, number=numbers["en" if target.lang == "en" else "ko"].get(target.id),
+            source_unit_ids=sources,
+        )
+
+    sections = [
+        ComposedSection(
+            location_key=plan.key, label=plan.label, number=plan.number, na_reason=plan.na_reason,
+            items=[build_item(target) for target in plan.targets],
+        )
+        for plan in _plan_sections(index, doc, labels)
+        if plan.targets or plan.keep_empty
+    ]
+    return ComposedDoc(
+        target_doc_id=doc.id, code=doc.code, title=doc.title, doc_type=doc.doc_type, entrance=doc.entrance,
+        sections=sections,
+    )
+
+
 # --- 요약 ---
 
 

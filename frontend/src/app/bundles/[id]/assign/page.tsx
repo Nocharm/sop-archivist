@@ -45,6 +45,7 @@ import {
   editUnits,
   clearDecisions,
   confirmMatchesInBulk,
+  getComposedDoc,
   getDocumentView,
   getGroupByTarget,
   getGroupByUnit,
@@ -58,6 +59,7 @@ import {
   saveGroup,
   type AiSuggestion,
   type ChangeTypeInput,
+  type ComposedDoc,
   type DocumentView,
   type EditOp,
   type Group,
@@ -66,6 +68,7 @@ import {
   type UnitRow,
   type WrittenSentence,
 } from "@/lib/api-sop";
+import { applySavedTargets, buildComposedRows, isWrittenRow, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
 import {
   addPartnerTargets,
   buildLinkPairs,
@@ -131,7 +134,7 @@ import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useCutLine } from "@/lib/use-cut-line";
 import { useLoaded } from "@/lib/use-loaded";
 import { usePaneZoom, type PaneKey, type ZoomDir } from "@/lib/use-pane-zoom";
-import { Select } from "@/components/ui/select";
+import { Select, type SelectOption } from "@/components/ui/select";
 
 type Filter = ClassifyFilter;
 const FILTERS: Filter[] = ["unassigned", "ai_suggested", "on_hold", "confirmed", "all"];
@@ -220,7 +223,7 @@ function revealElement(el: HTMLElement) {
 const BAR_COMPACT_BELOW = 1200;
 
 export default function AssignPage() {
-  const { t } = useI18n();
+  const { t, lang: uiLang } = useI18n();
   const bundleId = Number(useParams<{ id: string }>().id);
   const { bundle } = useBundle(bundleId);
   const canEdit = bundle?.my_role === "author" && bundle.status === "in_progress";
@@ -463,15 +466,31 @@ export default function AssignPage() {
   }, [isFoldEmpty, viewList, listKeys, rows]);
   const writtenDocs = [...new Map(written.map((item) => [item.target_doc_id, item.doc_code])).entries()];
   // 오른쪽 칸은 항상 열려 있다 - 쓴 New 문서가 없으면 빈 안내
+  // 아직 쓰지 않은 문서(To-Be의 Assign 입구) - 오른쪽 칸에 지금까지의 배정으로 엮어 보인다(서버 결과물 C 규칙, 읽기 전용)
+  const composedDocs = (tobe.data?.docs ?? []).filter((doc) => doc.entrance === "assign");
   const [manualNewDoc, setManualNewDoc] = useState<{ key: string; docId: number } | null>(null);
+  // 방금 확정해 보낸 곳 - 확정 뒤 고른 줄(key)에 있는 동안만 오른쪽 칸을 그 문서에 두고 그 문장을 잇는 선을 진하게. 손으로 고른 문서가 먼저, 다른 줄로 옮기면 평소대로
+  const [liveNew, setLiveNew] = useState<{ key: string; docId: number; targetIds: number[]; seq: number } | null>(null);
   const toggleKey = mode === "unsourced" ? "unsourced" : (activeKey ?? "");
   const topLink = recommendations.find((rec) => rec.destination.kind === "link")?.destination ?? null;
-  const autoNewDoc = mode === "unsourced" ? (writtenMap.get(focusNew ?? -1)?.target_doc_id ?? null) : (findLinkDoc(destination, writtenMap) ?? findLinkDoc(topLink, writtenMap));
-  const newDocId = (manualNewDoc?.key === toggleKey ? manualNewDoc.docId : null) ?? autoNewDoc ?? writtenDocs[0]?.[0] ?? null;
-  const newRows = written.filter((item) => item.target_doc_id === newDocId);
+  // 칸에 확정한 줄은 그 문서를 연다 - 이어 둔 문서가 없을 때 추천보다 먼저
+  const savedPlaceDoc = savedDestination?.kind === "slot" || savedDestination?.kind === "step" ? savedDestination.docId : null;
+  const autoNewDoc = mode === "unsourced" ? (writtenMap.get(focusNew ?? -1)?.target_doc_id ?? null) : (findLinkDoc(destination, writtenMap) ?? savedPlaceDoc ?? findLinkDoc(topLink, writtenMap));
+  const liveDoc = liveNew?.key === toggleKey ? liveNew : null;
+  const newDocId = (manualNewDoc?.key === toggleKey ? manualNewDoc.docId : null) ?? liveDoc?.docId ?? autoNewDoc ?? writtenDocs[0]?.[0] ?? composedDocs[0]?.id ?? null;
+  const isComposedDoc = newDocId !== null && !writtenDocs.some(([docId]) => docId === newDocId);
+  const composed = useLoaded(
+    () => (isComposedDoc && newDocId !== null ? getComposedDoc(bundleId, newDocId, uiLang) : Promise.resolve(null)),
+    `${isComposedDoc ? newDocId : ""}:${dataKey}:${uiLang}`,
+  );
+  // 저장 응답으로 미리 고친 엮은 문서 - 그때 받아 둔 문서(base)가 그대로인 동안만, 다시 읽은 서버 값이 오면 그것
+  const [composedPatch, setComposedPatch] = useState<{ base: ComposedDoc; doc: ComposedDoc } | null>(null);
+  const composedData = composed.data?.target_doc_id === newDocId ? composed.data : null;
+  const composedDoc = composedData && composedPatch?.base === composedData ? composedPatch.doc : composedData;
+  const newRows: NewPaneRow[] = isComposedDoc ? (composedDoc ? buildComposedRows(composedDoc) : []) : written.filter((item) => item.target_doc_id === newDocId);
   // 두 문서 사이 이음 - 저장된 출처와 고른 줄의 저장 전 고름
   const oldUnitIds = useMemo(() => new Set(oldView?.units.map((unit) => unit.id) ?? []), [oldView]);
-  const linkPairs = buildLinkPairs(newRows, oldUnitIds, draft.destination?.kind === "link" ? { units: rowUnits.map((unit) => ({ id: unit.unit_id, lang: unit.lang })), targetIds: draft.destination.targetIds } : null);
+  const linkPairs = buildLinkPairs(newRows.filter(isWrittenRow), oldUnitIds, draft.destination?.kind === "link" ? { units: rowUnits.map((unit) => ({ id: unit.unit_id, lang: unit.lang })), targetIds: draft.destination.targetIds } : null);
 
   const [view, setView] = useState(readAssignView);
   function changeView(patch: Partial<typeof view>) {
@@ -737,6 +756,7 @@ export default function AssignPage() {
       const isSplit = applyPairSettle(row, saved, leftovers) && leftovers.length > 0;
       // 다음 미확정 줄로 - 지금 줄은 거르기 자리에 남는다. 남는 쪽을 풀었으면 남은 문장의 줄이 다음이다
       const next = action === "confirm" && !isSplit ? findNextOpen(listKeys, rowMap, row.key) : null;
+      if (action === "confirm") showSent(row, saved, next ?? row.key);
       dropDraft(row.key);
       if (isSplit) setSplitRow({ from: row.key, unit: leftovers[0] });
       if (next) selectRow(next);
@@ -750,6 +770,22 @@ export default function AssignPage() {
     }
   }
 
+  /**
+   * 확정한 곳을 오른쪽 칸에 바로 보인다 - 그 문서로 옮기고(다음 줄에서도, 손으로 고른 문서가 없을 때), 엮은 문서면 저장 응답으로 칸에 미리 넣는다.
+   * 그 문장이 그려지면 NewPane이 화면에 들이고, 잇는 선은 진하게 그린다
+   */
+  function showSent(savedRow: ClassifyRow, saved: Group, nextKey: string) {
+    const docId = destination?.kind === "slot" || destination?.kind === "step" ? destination.docId : destination?.kind === "link" ? (writtenMap.get(destination.targetIds[0])?.target_doc_id ?? null) : null;
+    if (docId === null || !destination) return;
+    const isMine = (target: Group["targets"][number]) => target.source_unit_ids.some((id) => savedRow.unitIds.includes(id)) || (target.translation_source_unit_id !== null && savedRow.unitIds.includes(target.translation_source_unit_id));
+    const targetIds = destination.kind === "link" ? destination.targetIds : saved.targets.filter((target) => target.target_doc_id === docId && target.parent_target_id === null && isMine(target)).map((target) => target.id);
+    setLiveNew((prev) => ({ key: nextKey, docId, targetIds, seq: (prev?.seq ?? 0) + 1 }));
+    if (composed.data?.target_doc_id === docId) {
+      const textOf = (unitIds: number[]) => unitIds.map((id) => unitMap.get(id)?.text ?? "").join(" ");
+      setComposedPatch({ base: composed.data, doc: applySavedTargets(composed.data, saved.targets, textOf) });
+    }
+  }
+
   async function runClear() {
     if (!row || busy) return;
     const decided = rowUnits.filter((unit) => unit.decision.disposition !== "unassigned" || unit.status !== "unassigned");
@@ -757,6 +793,12 @@ export default function AssignPage() {
     setBusy(true);
     try {
       await clearDecisions(bundleId, decided.map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision })));
+      // 엮은 문서에서 그 문장을 바로 뺀다 - 오른쪽 칸은 그 문서에 머물러(배정이 없어져 저절로 다른 문서로 가지 않게) 접히며 사라지는 것이 보이고, 다시 읽은 값이 맞춘다
+      if (composed.data && isComposedDoc && newDocId !== null) {
+        const docId = newDocId;
+        setLiveNew((prev) => ({ key: toggleKey, docId, targetIds: [], seq: (prev?.seq ?? 0) + 1 }));
+        setComposedPatch({ base: composed.data, doc: removeClearedUnits(composed.data, new Set(row.unitIds)) });
+      }
       setMenu(null);
       showToast(t("classify.cleared"));
       dropDraft(row.key);
@@ -1014,7 +1056,9 @@ export default function AssignPage() {
   }, []);
 
   // New 원문은 고른 문장(없으면 후보)이 보이게 - 줄을 바꾸거나 고를 때
-  const newFocusId = mode === "unsourced" ? focusNew : (linkIds[0] ?? [...candidateIds][0] ?? null);
+  // 엮은 문서는 고른 줄이 들어간 문장(그 문서의 후보·이음은 없다)
+  const composedFocusId = isComposedDoc ? (newRows.filter(isWrittenRow).find((item) => item.source_unit_ids.some((id) => row?.unitIds.includes(id)))?.target_id ?? null) : null;
+  const newFocusId = mode === "unsourced" ? focusNew : isComposedDoc ? composedFocusId : (linkIds[0] ?? [...candidateIds][0] ?? null);
   useEffect(() => {
     if (newFocusId === null || newDocId === null) return;
     const frame = requestAnimationFrame(() => document.querySelector(`[data-testid="assign-new-${newFocusId}"]`)?.scrollIntoView({ block: "nearest" }));
@@ -1644,7 +1688,19 @@ export default function AssignPage() {
   );
 
   const oldDocOptions = oldDocs.map((doc) => ({ value: String(doc.id), label: doc.doc_code || doc.file_name }));
-  const newDocOptions = writtenDocs.map(([docId, code]) => ({ value: String(docId), label: code }));
+  const newDocOptions: SelectOption<string>[] = [
+    ...writtenDocs.map(([docId, code]) => ({ value: String(docId), label: code })),
+    ...composedDocs.map((doc) => ({
+      value: String(doc.id),
+      label: (
+        <span>
+          {doc.code} <span className="text-ink-3">· {t("assign.composedOption")}</span>
+        </span>
+      ),
+      triggerLabel: doc.code,
+      tip: doc.code,
+    })),
+  ];
   const highlightIds = new Set(row?.unitIds ?? []);
   const pickedNew = new Set(linkIds);
   const pickedOld = new Set([...checked].flatMap((key) => rowMap.get(key)?.unitIds ?? []));
@@ -1764,6 +1820,14 @@ export default function AssignPage() {
                     docId={String(newDocId)}
                     onDocChange={(value) => setManualNewDoc({ key: toggleKey, docId: Number(value) })}
                     rows={newRows}
+                    rowsKey={isComposedDoc && !composedDoc ? `${newDocId}:loading` : String(newDocId)}
+                    tag={isComposedDoc ? t("assign.composedTag") : t("assign.writtenTag")}
+                    readOnly={isComposedDoc}
+                    live={liveDoc && liveDoc.docId === newDocId ? { seq: liveDoc.seq, targetIds: liveDoc.targetIds } : null}
+                    onReveal={(el, flash) => {
+                      revealElement(el);
+                      if (flash) flashElement(el);
+                    }}
                     candidateIds={candidateIds}
                     pickedIds={pickedNew}
                     focusId={focusNew}
@@ -1775,7 +1839,7 @@ export default function AssignPage() {
                     linesOn={view.lines}
                     onToggleLines={() => changeView({ lines: !view.lines })}
                   />
-                  <LinkLines pairs={linkPairs} focusUnits={highlightIds} focusTargets={pickedNew} visible={view.lines} />
+                  <LinkLines pairs={linkPairs} focusUnits={highlightIds} focusTargets={liveDoc ? new Set([...pickedNew, ...liveDoc.targetIds]) : pickedNew} visible={view.lines} />
                 </>
               )}
             </div>

@@ -1427,7 +1427,19 @@
   .new-hit::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
   .new-hit:focus-visible { outline: none; }
   .new-line:has(> .new-hit:focus-visible) { outline: 2px solid var(--focus); outline-offset: 1px; }
-  .new-line:hover { background: color-mix(in oklab, var(--accent) 5%, var(--paper)); }
+  .new-line:has(> button.new-hit):hover { background: color-mix(in oklab, var(--accent) 5%, var(--paper)); }
+  /* 엮은 문서(아직 쓰지 않은 문서)의 문장은 읽기 전용 미리 보기 - 눌러 고르지 않는다 */
+  .new-hit.is-static { cursor: default; }
+  /* 엮은 문서의 빈 칸 - 받을 자리만 옅게(앞머리 폭만큼 들여 문장 상자와 같은 x) */
+  .pg .new-slot-empty { flex: 1 1 0; min-width: 0; margin: 0; padding: 4px var(--pg-pad-l); border: 1px dashed var(--line); border-radius: var(--r-1); color: var(--ink-3); font: var(--fs-cap) / var(--lh-cap) var(--font-ui); }
+  /* New 칸 실시간 넣기 - 들어온 줄은 높이가 자라며 드러나고, 빠진 줄은 접히며 사라진다(높이는 grid 0fr↔1fr, 움직임 줄이기면 토큰이 0이라 바로) */
+  .new-item { display: grid; grid-template-rows: 1fr; }
+  .new-item-inner { min-height: 0; }
+  .new-item:is([data-enter], [data-leave]) > .new-item-inner { overflow: clip; }
+  .new-item[data-enter] { animation: new-item-in var(--dur-slow) var(--ease-enter) both; }
+  .new-item[data-leave] { animation: new-item-out var(--dur-slow) var(--ease-exit) both; pointer-events: none; }
+  @keyframes new-item-in { from { grid-template-rows: 0fr; opacity: 0; } }
+  @keyframes new-item-out { to { grid-template-rows: 0fr; opacity: 0; } }
   .new-srcs { position: relative; z-index: 1; display: flex; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 6px; }
   .pg[data-strips] .new-line[data-state="candidate"] { outline: 1.5px dashed var(--accent); outline-offset: -1.5px; }
   .pg[data-strips] .new-line[data-state="picked"] { background: var(--accent-tint); box-shadow: var(--shadow-1), inset 0 0 0 1.5px var(--accent); }

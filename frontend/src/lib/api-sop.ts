@@ -897,6 +897,42 @@ export function getOutputC(bundleId: number, lang: OutputLang): Promise<OutputC>
   return apiFetch<OutputC>(`/bundles/${bundleId}/outputs/c?lang=${lang}`);
 }
 
+/** Assign New 칸의 아직 쓰지 않은 문서 - 결과물 C와 같은 칸·순서에 두 언어 새 문장을 함께(서버 outputs.build_composed_doc) */
+export interface ComposedItem {
+  target_id: number;
+  kind: "sentence" | "table" | "figure";
+  lang: UnitLang;
+  /** 고쳐 쓴 글, 없으면 AI 글, 그것도 없으면 출처 원문 */
+  text: string;
+  status: CoverStatus;
+  change_type: ChangeType | null;
+  number: string | null;
+  /** 출처 Old 단위 - 번역은 번역 출처 단위 */
+  source_unit_ids: number[];
+}
+
+export interface ComposedSection {
+  location_key: string;
+  label: string;
+  number: string | null;
+  na_reason: string | null;
+  items: ComposedItem[];
+}
+
+export interface ComposedDoc {
+  target_doc_id: number;
+  code: string;
+  title: string;
+  doc_type: TargetDocType;
+  entrance: Entrance;
+  sections: ComposedSection[];
+}
+
+/** lang은 칸 이름의 언어(화면 언어) */
+export function getComposedDoc(bundleId: number, docId: number, lang: OutputLang): Promise<ComposedDoc> {
+  return apiFetch<ComposedDoc>(`/bundles/${bundleId}/outputs/c/docs/${docId}?lang=${lang}`);
+}
+
 export function getSummary(bundleId: number): Promise<Record<OutputLang, OutputSummary>> {
   return apiFetch(`/bundles/${bundleId}/summary`);
 }
