@@ -289,21 +289,30 @@ const AUDIT_ENTRIES = [
       await page.waitForTimeout(SETTLE_MS);
     },
     measure: async (page) => {
-      const measureRows = () => page.locator('[data-testid^="output-a-row-"]').evaluateAll((rows) => rows.map((row) => Math.round(row.getBoundingClientRect().height)));
+      // 줄(tr)만 - 줄 번호 칸(output-a-row-no-*)도 같은 접두라 빼야 펼친 줄 하나만 커지는지 볼 수 있다
+      const measureRows = () => page.locator('tr[data-testid^="output-a-row-"]').evaluateAll((rows) => rows.map((row) => Math.round(row.getBoundingClientRect().height)));
       const frameOverflows = await page.locator('[data-testid="output-a"]').evaluate((table) => {
         const frame = table.parentElement;
         return frame.scrollWidth > frame.clientWidth + 1 || table.getBoundingClientRect().right > window.innerWidth + 1;
       });
-      const before = await measureRows();
-      const maxRow = Math.max(...before);
+      const maxRow = Math.max(...(await measureRows()));
       // 펼치기 단추가 있는 첫 줄을 눌러 그 줄만 커지는지 본다(단추 있는 줄이 하나도 없으면 expandOk=false)
-      const rows = page.locator('[data-testid^="output-a-row-"]');
-      const withButton = await rows.evaluateAll((els) => els.findIndex((row) => row.querySelector('[data-testid$="-expand"]') !== null));
+      const rows = page.locator('tr[data-testid^="output-a-row-"]');
+      // 6줄에서 잘린 글이 있는 줄 - 확정한 사람만 더 보이는 줄은 다른 칸이 더 높으면 커지지 않는다. 넓은 창에서는 첫 묶음에 없을 수 있어 이어 그린다
+      const findClamped = () => rows.evaluateAll((els) => els.findIndex((row) => row.querySelector('[data-testid$="-expand"]') !== null && [...row.querySelectorAll(".clamp-6")].some((el) => el.scrollHeight > el.clientHeight + 1)));
+      let withButton = await findClamped();
+      for (let step = 0; step < 30 && withButton < 0 && (await page.locator('[data-testid="output-a-more"]').count()) > 0; step += 1) {
+        await page.locator('[data-testid="output-a-more"]').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(300);
+        withButton = await findClamped();
+      }
+      const before = await measureRows();
       let expandOk = false;
       if (withButton >= 0) {
         await rows.nth(withButton).locator('[data-testid$="-expand"]').first().click();
         await page.waitForTimeout(400);
-        const after = await measureRows();
+        // 높은 창에서는 그 사이에 이어 그린 줄이 뒤에 붙는다 - 처음 잰 줄까지만 견준다
+        const after = (await measureRows()).slice(0, before.length);
         expandOk = after.every((height, i) => (i === withButton ? height > before[i] : height === before[i]));
       }
       return { frameOverflows, maxRow, expandOk };
@@ -1241,6 +1250,217 @@ const AUDIT_ENTRIES = [
     }),
     expect: (value) => value.sum < BASELINE_C10E,
     note: "1440 Documents (mid): extraction + aux column widths sum is narrower than the pre-change baseline",
+  },
+  // ---- 결과물 한 벌: Excel 미리보기 창 · 칸 제목 · 긴 C의 끝 표지 · 개요 검토 조건 아홉 줄 ----
+  {
+    // P1: W1 미리보기 창이 화면 안(받기 단추까지)이고, 가로 스크롤은 시트 안에서만, 탭 넷이 잘리거나 겹치지 않고, 머리 줄이 붙박이며,
+    //     종이 색은 화면 테마와 무관하다(THEMES=light,dark로 돌려 같은 값인지 본다). 파일 이름으로 W1을 찍었는지 확인한다
+    id: "P1", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => `/bundles/${ids.w[1]}/outputs`,
+    open: async (page) => {
+      await page.getByTestId("outputs-export-open").click();
+      await page.locator('[data-testid="export-preview-sheet"] tbody tr').first().waitFor({ timeout: T });
+      await page.waitForTimeout(SETTLE_MS);
+    },
+    measure: (page) => page.evaluate(async () => {
+      const dialog = document.querySelector('[data-testid="export-preview"]');
+      const sheet = document.querySelector('[data-testid="export-preview-sheet"]');
+      const box = dialog.getBoundingClientRect();
+      const download = document.querySelector('[data-testid="export-preview-download"]').getBoundingClientRect();
+      const tabs = [...document.querySelectorAll('[data-testid^="export-preview-tab-"]')];
+      const tabBoxes = tabs.map((tab) => tab.getBoundingClientRect());
+      sheet.scrollTop = 600;
+      await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+      const headDrift = Math.round(sheet.querySelector("thead").getBoundingClientRect().top - sheet.getBoundingClientRect().top);
+      sheet.scrollTop = 0;
+      const head = getComputedStyle(sheet.querySelector("td[data-head]"));
+      return {
+        file: document.querySelector('[data-testid="export-preview-file-name"]').textContent.slice(0, 22),
+        inView: box.left >= 0 && box.top >= 0 && box.right <= innerWidth && box.bottom <= innerHeight && download.bottom <= innerHeight,
+        pageX: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+        dialogX: dialog.scrollWidth > dialog.clientWidth + 1,
+        sheetX: sheet.scrollWidth > sheet.clientWidth + 1,
+        tabs: tabs.length,
+        // 글 상자가 단추 밖으로 나가는가(넘친 글은 보이는 채로 옆 탭을 덮는다 - scrollWidth로는 안 잡힌다)
+        tabsClipped: tabs.some((tab) => {
+          const range = document.createRange();
+          range.selectNodeContents(tab);
+          const text = range.getBoundingClientRect();
+          const own = tab.getBoundingClientRect();
+          return text.left < own.left - 1 || text.right > own.right + 1 || text.top < own.top - 1 || text.bottom > own.bottom + 1;
+        }),
+        tabsOverlap: tabBoxes.some((b, i) => i > 0 && Math.abs(b.top - tabBoxes[i - 1].top) < 1 && b.left < tabBoxes[i - 1].right - 1),
+        headDrift,
+        colors: `${getComputedStyle(sheet).backgroundColor}|${head.backgroundColor}|${head.color}`,
+      };
+    }),
+    expect: (value) => /^BND-\d{4}_SYNTHETIC W1 /.test(value.file) && value.inView && !value.pageX && !value.dialogX && value.sheetX && value.tabs === 4 && !value.tabsClipped && !value.tabsOverlap
+      && Math.abs(value.headDrift) <= 2 && value.colors === "rgb(255, 255, 255)|rgb(43, 47, 54)|rgb(255, 255, 255)",
+    note: "W1 Excel preview: window and Download inside the viewport, horizontal scroll only inside the sheet, 4 tabs unclipped, sticky head, Graphite paper in every theme",
+  },
+  {
+    // T1: W1 Assign 나무의 칸 제목 자리(코드가 가장 긴 SOP) - 항목 글이 상자를 넘치지 않고 나무가 가로로 넘치지 않으며, 고른 칸 제목의 보낼 곳 카드가 넘치지 않는다
+    id: "T1", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => `/bundles/${ids.w[1]}/assign`,
+    open: async (page) => {
+      await page.locator('[data-testid="assign-bar"]').waitFor({ timeout: T });
+      // 첫 줄은 제목(칸 제목 자리가 보이는 줄)
+      await page.keyboard.press("j");
+      await page.locator('[data-testid="assign-row-id"]').waitFor({ timeout: T });
+      await page.getByTestId("assign-acc-all").click();
+      const bundleId = /bundles\/(\d+)/.exec(page.url())[1];
+      const tobe = await (await page.request.get(`${BASE}/api/bundles/${bundleId}/tobe`, { headers: { "X-Dev-User": MEMBER } })).json();
+      const longest = tobe.docs.filter((doc) => doc.doc_type === "sop" && doc.entrance === "assign").map((doc) => doc.code).sort((a, b) => b.length - a.length)[0];
+      await page.locator(`[data-testid="assign-tree-p${longest}"]`).click();
+      await page.locator('[data-testid^="assign-tree-place-heading:"]').first().waitFor({ timeout: T });
+    },
+    measure: async (page) => {
+      const tree = await page.evaluate(() => {
+        const root = document.querySelector(".dest-tree");
+        const leaves = [...root.querySelectorAll(".tree-leaf")];
+        const rootBox = root.getBoundingClientRect();
+        return {
+          title: document.querySelector('[data-testid="top-bar-bundle-title"]').textContent.slice(0, 12),
+          headings: root.querySelectorAll('[data-testid^="assign-tree-place-heading:"]').length,
+          leafSpill: leaves.filter((leaf) => leaf.scrollWidth > leaf.clientWidth + 1 || leaf.getBoundingClientRect().right > rootBox.right + 1).length,
+          treeX: root.scrollWidth > root.clientWidth + 1,
+        };
+      });
+      await page.locator('[data-testid^="assign-tree-place-heading:"]').first().click();
+      await page.locator('[data-testid="assign-primary"][data-state="confirm"]').waitFor({ timeout: T });
+      const chosen = await page.locator('[data-testid="assign-chosen"]').evaluate((el) => ({ text: el.textContent, spill: el.scrollWidth > el.clientWidth + 1 }));
+      return { ...tree, chosenSpill: chosen.spill, chosenIsHeading: /Slot heading|칸 제목/.test(chosen.text) };
+    },
+    expect: (value) => value.title === "SYNTHETIC W1" && value.headings > 0 && value.leafSpill === 0 && !value.treeX && !value.chosenSpill && value.chosenIsHeading,
+    note: "W1 Assign tree: slot heading items fit their box, tree does not overflow, chosen slot heading card reads 'Slot heading' and fits",
+  },
+  {
+    // C13: W1 결과물 C를 이어 그리는 끝 - 끝 표지(output-c-more) 앞 줄들의 줄 끝 단추가 글 상자·끝 표지를 덮지 않고, 이어 그린 뒤에도 그렇다
+    id: "C13", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => `/bundles/${ids.w[1]}/outputs`,
+    open: async (page) => {
+      await page.getByTestId("outputs-tab-c").click();
+      await page.locator('[data-testid="output-c-more"]').waitFor({ timeout: T });
+      await page.waitForTimeout(SETTLE_MS);
+    },
+    measure: async (page) => {
+      const measureEdge = () => page.evaluate(() => {
+        const hit = (a, b) => Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 0.5 && Math.min(a.right, b.right) - Math.max(a.left, b.left) > 0.5;
+        const more = document.querySelector('[data-testid="output-c-more"]')?.getBoundingClientRect() ?? null;
+        const items = [...document.querySelectorAll('[data-testid^="output-c-item-"]')].map((el) => el.getBoundingClientRect());
+        const rows = [...document.querySelectorAll('[data-testid^="output-c-row-"]')];
+        let overlap = 0;
+        for (const row of rows) {
+          const actions = row.querySelector(".row-actions-quiet")?.getBoundingClientRect();
+          if (actions && (items.some((box) => hit(actions, box)) || (more && hit(actions, more)))) overlap += 1;
+        }
+        const last = rows.at(-1)?.getBoundingClientRect();
+        return { rows: rows.length, overlap, lastAboveMore: !more || !last || last.bottom <= more.top + 0.5 };
+      });
+      const first = await measureEdge();
+      await page.locator('[data-testid="output-c-more"]').scrollIntoViewIfNeeded();
+      await page.waitForFunction((count) => document.querySelectorAll('[data-testid^="output-c-row-"]').length > count, first.rows, { timeout: T });
+      await page.waitForTimeout(400);
+      const second = await measureEdge();
+      const title = await page.locator('[data-testid="top-bar-bundle-title"]').evaluate((el) => el.textContent.slice(0, 12));
+      return { title, first, second };
+    },
+    expect: (value) => value.title === "SYNTHETIC W1" && value.second.rows > value.first.rows && value.first.overlap === 0 && value.second.overlap === 0 && value.first.lastAboveMore && value.second.lastAboveMore,
+    note: "W1 output C: row buttons cover no text box or the end marker before and after the next rows are drawn",
+  },
+  {
+    // N1: Assign New 칸의 엮은 문서 - 칸 머리의 칸 제목 출처가 길어도(여러 옛 문서) 칸 이름을 덮지 않고 한 줄에서 말줄임된다.
+    //     W1에는 칸 제목이 없어 엮은 문서 응답의 칸마다 긴 출처 글을 넣어 그린다(DB는 그대로)
+    id: "N1", ds: "worst", user: MEMBER, views: [1120, 1440],
+    path: (ids) => `/bundles/${ids.w[1]}/assign`,
+    open: async (page) => {
+      const note = `← ${Array.from({ length: 14 }, (_, i) => `OLD-${90 + i} §${i + 1}`).join(", ")}`;
+      await page.route("**/outputs/c/docs/**", async (route) => {
+        const response = await route.fetch();
+        const doc = await response.json();
+        for (const section of doc.sections ?? []) section.heading_note = note;
+        await route.fulfill({ response, json: doc });
+      });
+      await page.locator('[data-testid="assign-bar"]').waitFor({ timeout: T });
+      // 코드가 가장 긴 아직 안 쓴 SOP(칸 머리가 있는 문서) - 고르기 칸이 길어져도 칸 머리가 칸 안에 있어야 한다
+      const bundleId = /bundles\/(\d+)/.exec(page.url())[1];
+      const tobe = await (await page.request.get(`${BASE}/api/bundles/${bundleId}/tobe`, { headers: { "X-Dev-User": MEMBER } })).json();
+      const sop = tobe.docs.filter((doc) => doc.doc_type === "sop" && doc.entrance === "assign").sort((a, b) => b.code.length - a.code.length)[0];
+      await page.locator('[data-testid="assign-new-doc"]').click();
+      await page.locator(`[data-testid="assign-new-doc-option-${sop.id}"]`).click();
+      await page.locator('[data-testid^="assign-new-heading-note-"]').first().waitFor({ timeout: T });
+      await page.waitForTimeout(SETTLE_MS);
+    },
+    measure: (page) => page.evaluate(() => {
+      const pane = document.querySelector('[data-testid="assign-new"]');
+      const paneRight = pane.getBoundingClientRect().right;
+      const headSpill = [...pane.querySelector(".pane-head").children].filter((el) => el.getBoundingClientRect().right > paneRight + 1).length;
+      const notes = [...document.querySelectorAll('[data-testid^="assign-new-heading-note-"]')];
+      let covers = 0;
+      let spillOut = 0;
+      let multiLine = 0;
+      for (const note of notes) {
+        const head = note.closest(".new-sec");
+        const label = head.firstElementChild.getBoundingClientRect();
+        const box = note.getBoundingClientRect();
+        if (box.left < label.right - 0.5) covers += 1;
+        if (box.right > head.getBoundingClientRect().right + 0.5) spillOut += 1;
+        if (box.height > parseFloat(getComputedStyle(note).lineHeight) * 1.5) multiLine += 1;
+      }
+      return { notes: notes.length, covers, spillOut, multiLine, truncated: notes.filter((note) => note.scrollWidth > note.clientWidth + 1).length, headSpill };
+    }),
+    expect: (value) => value.notes > 0 && value.covers === 0 && value.spillOut === 0 && value.multiLine === 0 && value.truncated > 0 && value.headSpill === 0,
+    note: "composed New pane (longest SOP code): pane head stays inside the pane; long slot heading notes stay on one line after the slot name, truncated, never over the name",
+  },
+  {
+    // A4b: W1 결과물 A를 끝까지 이어 그려 네 자리 Row 번호(옛 줄 1,000개 넘음)가 한 줄인지 본다
+    id: "A4b", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}/outputs`,
+    open: async (page) => {
+      await page.getByTestId("outputs-tab-a").click();
+      await page.locator('tr[data-testid^="output-a-row-"]').first().waitFor({ timeout: T });
+      const more = page.locator('[data-testid="output-a-more"]');
+      for (let step = 0; step < 300 && (await more.count()) > 0; step += 1) {
+        await more.scrollIntoViewIfNeeded();
+        await page.waitForTimeout(100);
+      }
+    },
+    measure: (page) => page.evaluate(() => {
+      const cells = [...document.querySelectorAll('[data-testid^="output-a-row-no-"]')].filter((td) => /^\d{4,}$/.test(td.textContent.trim()));
+      const lineCount = (td) => {
+        const range = document.createRange();
+        range.selectNodeContents(td);
+        return new Set([...range.getClientRects()].map((rect) => Math.round(rect.top))).size;
+      };
+      return { title: document.querySelector('[data-testid="top-bar-bundle-title"]').textContent.slice(0, 12), fourDigit: cells.length, wrapped: cells.filter((td) => lineCount(td) > 1).length };
+    }),
+    expect: (value) => value.title === "SYNTHETIC W1" && value.fourDigit > 0 && value.wrapped === 0,
+    note: "W1 output A: four-digit Row numbers stay on one line",
+  },
+  {
+    // O1: 개요 검토 조건 아홉 줄(버전 채우기 포함) - 펼친 목록의 줄이 상자를 넘치지 않고 아홉 줄이다. W1(모자란 조건이 많음)·W6(요청 직전)
+    id: "O1", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => [`/bundles/${ids.w[1]}`, `/bundles/${ids.w[6]}`],
+    open: async (page) => {
+      await page.locator('[data-testid="overview-gate-list"]').waitFor({ timeout: T });
+      const more = page.locator('[data-testid="overview-gate-more"]');
+      if (await more.count()) await more.click();
+      await page.waitForTimeout(400);
+    },
+    measure: (page) => page.evaluate(() => {
+      const box = document.querySelector('[data-testid="overview-gate"]');
+      const cards = [...box.querySelectorAll(".gate-card")];
+      return {
+        title: document.querySelector('[data-testid="top-bar-bundle-title"]').textContent.slice(0, 12),
+        lines: cards.length,
+        spill: cards.filter((card) => card.scrollWidth > card.clientWidth + 1 || card.getBoundingClientRect().right > box.getBoundingClientRect().right + 1).length,
+        boxX: box.scrollWidth > box.clientWidth + 1,
+        maxLine: Math.round(Math.max(...cards.map((card) => card.getBoundingClientRect().height))),
+        canRequest: !document.querySelector('[data-testid="overview-request-review"]')?.disabled,
+      };
+    }),
+    expect: (value) => /^SYNTHETIC W[16]$/.test(value.title) && value.lines === 9 && value.spill === 0 && !value.boxX && value.maxLine <= 120 && (value.title !== "SYNTHETIC W6" || value.canRequest),
+    note: "overview gate list: nine lines when expanded, none spills its box (W1 and W6); W6 can still request review",
   },
 ];
 // B5는 새(문서 0개) Bundle이면 되므로 mid에서도 W7로 한 번 더 잰다(W7은 같은 DB에 있다)

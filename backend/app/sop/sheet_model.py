@@ -52,7 +52,10 @@ C_COLUMN_WIDTHS = (34, 30, 12, 50, 40, 12, 14, 40, 14, 10, 30, 18, 30)
 B_COLUMN_WIDTHS = (34, 12)  # 이름·건수, 그 뒤로 보낸 곳마다 B_DEST_WIDTH
 B_DEST_WIDTH = 18
 INFO_COLUMN_WIDTHS = (24, 60)
-MAX_PREVIEW_ROWS = 500  # 시트마다 미리보기 줄 상한 — W1에서 응답 크기를 재 정한다(§7.3). 파일에는 전체를 싣는다
+# 시트마다 미리보기 줄 상한(§7.3) — 파일에는 전체를 싣는다. 2026-11-13 극단 시드 W1(A 1,558줄·C 2,304줄)에서 잰 값:
+# 500이면 응답 3.6MB(그중 B 흐름도 PNG 1.6MB는 상한과 무관)·서버 0.8초·창을 눌러 시트가 보일 때까지 1.9초.
+# 상한이 없으면 약 8.3MB, 300이면 2.9MB — 500줄이면 모양 확인에 넉넉하고 크기도 받을 만해 그대로 둔다
+MAX_PREVIEW_ROWS = 500
 
 STATUS_LINE = "Status: {status}"
 BUNDLE_STATUSES = {"in_progress": "In progress", "in_review": "Awaiting review", "done": "Review complete"}

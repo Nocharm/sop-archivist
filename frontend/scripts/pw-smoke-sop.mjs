@@ -476,10 +476,11 @@ async function selectRowById(page, id) {
   }
   throw new Error(`row ${id} not reached`);
 }
+// 칸 줄을 고른다 - 나무는 칸마다 칸 제목 자리(assign-tree-place-heading:…)를 칸 줄 바로 앞에 두므로 그것은 건너뛴다(칸 제목은 고쳐 쓰기가 없다)
 async function pickFirstPlace(page) {
   await page.locator('[data-testid="assign-acc-all"]').click();
   await page.locator('[data-testid^="assign-tree-p"]').first().click();
-  await page.locator('[data-testid^="assign-tree-place-"]:not([disabled])').first().click();
+  await page.locator('[data-testid^="assign-tree-place-"]:not([data-testid^="assign-tree-place-heading:"]):not([disabled])').first().click();
   await page.locator('[data-testid="assign-primary"][data-state="confirm"]').waitFor({ timeout: T });
 }
 const progressDone = async (page) => Number((await getText(page, "assign-progress")).split("/")[0]);
@@ -1070,23 +1071,89 @@ await runStep("assign: KO/EN pair - recommendation shows picked, in-place menu c
   check("after reload the row is confirmed and its New sentences are shown as its place", true);
 });
 
-await runStep("outputs: A, B, C in both editions and Excel", {}, async ({ page, takeShot }) => {
+// 칸 제목(설계 §4.6) - 옛 제목 짝을 SOP 칸의 칸 제목 자리로 확정하면 결과물 C와 Assign의 엮은 문서 미리 보기에서 칸 머리 옆에 "← OLD-1 §1"로 보인다. 끝에 원래 처분(지우기)으로 되돌린다
+await runStep("assign: an old heading confirmed as a slot heading shows on C and on the composed New pane", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}${path}`, { headers })).json();
+  const sop = (await getJson("/tobe")).docs.find((doc) => doc.doc_type === "sop" && doc.entrance === "assign");
+  const headingRow = (await getJson("/units?limit=1000")).items.find((unit) => unit.kind === "heading" && unit.pair_id !== null);
+  check("the bundle has an SOP to write and an old heading pair", Boolean(sop && headingRow), `${sop?.code} ${headingRow?.display_id}`);
+  const before = headingRow.decision;
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await selectRowById(page, headingRow.display_id);
+  await page.locator('[data-testid="assign-acc-all"]').click();
+  await page.locator(`[data-testid="assign-tree-p${sop.code}"]`).click();
+  const headingPlace = page.locator(`[data-testid^="assign-tree-place-heading:${sop.id}:"]:not([disabled])`).first();
+  const slotKey = (await headingPlace.getAttribute("data-testid")).split(":").at(-1);
+  await headingPlace.click();
+  await page.locator('[data-testid="assign-primary"][data-state="confirm"]').waitFor({ timeout: T });
+  const chosen = await getText(page, "assign-chosen");
+  check("the chosen place reads as the slot heading of that SOP", chosen.includes("Slot heading") && chosen.includes(sop.code), chosen);
+  const saved = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
+  await page.locator('[data-testid="assign-primary"]').click();
+  check("the slot heading saves", (await saved).ok());
+  const c = await getJson("/outputs/c?lang=en");
+  const section = c.docs.find((doc) => doc.target_doc_id === sop.id)?.sections.find((item) => item.location_key === slotKey);
+  check("C carries the heading note for that slot", section?.heading_note.startsWith("←") && section.heading_note.includes("OLD-1"), section?.heading_note);
+  // 엮은 문서 미리 보기 - 문서 고르기에서 그 "not written" 문서를 연다
+  await page.locator('[data-testid="assign-new-doc"]').click();
+  await page.locator(`[data-testid="assign-new-doc-option-${sop.id}"]`).click();
+  const paneNote = page.locator(`[data-testid="assign-new-heading-note-${section.number}"]`);
+  await paneNote.waitFor({ timeout: T });
+  check("the composed New pane shows the same note after the slot name", ((await paneNote.textContent()) ?? "").trim() === section.heading_note, await paneNote.textContent());
+  await takeShot("sop-assign-slot-heading.png");
+  await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
+  await page.locator('[data-testid="outputs-tab-c"]').click();
+  const cNote = page.locator(`[data-testid="output-c-heading-note-${sop.id}-${slotKey}"]`);
+  await cNote.waitFor({ timeout: T });
+  check("C shows the note next to the slot head", ((await cNote.textContent()) ?? "").trim().startsWith("←"), await cNote.textContent());
+  await takeShot("sop-outputs-c-heading.png");
+  // 되돌린다 - 원래 지우기(사유가 남아 있지 않으면 Remark 창에 적는다)
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await selectRowById(page, headingRow.display_id);
+  if ((await page.locator('[data-testid="assign-pick-delete"]').count()) === 0) await page.locator('[data-testid="assign-acc-move"]').click();
+  await page.locator('[data-testid="assign-pick-delete"]').click();
+  const restored = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
+  await page.locator('[data-testid="assign-primary"]').click();
+  const modal = page.locator('[data-testid="assign-remark-modal"]');
+  if (await modal.waitFor({ timeout: 1500 }).then(() => true, () => false)) {
+    await page.locator('[data-testid="assign-remark-modal-text"]').fill(before.reason || "Structural heading");
+    await page.locator('[data-testid="assign-remark-modal-confirm"]').click();
+  }
+  check("the heading goes back to deleted", (await restored).ok());
+  const after = (await getJson("/units?limit=1000")).items.find((unit) => unit.unit_id === headingRow.unit_id);
+  check("its decision is deleted and confirmed again", after.decision.disposition === "delete" && after.decision.status === "confirmed", JSON.stringify(after.decision));
+});
+
+await runStep("outputs: A, B, C and the Excel preview", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
   await wait(page, "output-c");
   check("C shows the new documents", (await getText(page, "output-c")).includes("SOP-CF"));
+  check("no edition toggle on the outputs screen", (await page.locator('[data-testid^="outputs-lang"]').count()) === 0);
   await takeShot("sop-outputs-c.png");
   await page.locator('[data-testid="outputs-tab-a"]').click();
   await wait(page, "output-a");
   check("A lists unit rows", (await page.locator('[data-testid="output-a"] tbody tr').count()) > 10);
-  await page.locator('[data-testid="outputs-lang-en"]').click();
+  check("A's first Row cell is 1", (await getText(page, "output-a-row-no-0")).trim() === "1", await getText(page, "output-a-row-no-0"));
   await page.locator('[data-testid="outputs-tab-b"]').click();
   await wait(page, "output-b");
   check("B shows flows from old documents", (await getText(page, "output-b")).includes("OLD-1"));
+  // Export Excel은 미리보기 창을 먼저 연다 - 파일과 같은 시트 네 장, 받기는 창에서
+  await page.locator('[data-testid="outputs-export-open"]').click();
+  await wait(page, "export-preview");
+  await wait(page, "export-preview-sheet");
+  const tabs = await page.locator('[data-testid^="export-preview-tab-"]').allInnerTexts();
+  check("the preview has the four sheet tabs in file order", JSON.stringify(tabs.map((name) => name.trim())) === JSON.stringify(["A Comparison", "B Flow", "C New documents", "Info"]), JSON.stringify(tabs));
+  await takeShot("sop-outputs-preview.png");
   const download = page.waitForEvent("download", { timeout: T });
-  await page.locator('[data-testid="outputs-export-en"]').click();
-  // 헤드리스 Chrome은 blob 내려받기 이름을 "download"로 알린다 - 이름 규칙은 download-name 단위 테스트가 본다
+  await page.locator('[data-testid="export-preview-download"]').click();
+  // 헤드리스 Chrome은 blob 내려받기 이름을 "download"로 알린다 - 이름 규칙은 단위 테스트가 본다
   await download;
   check("Excel download starts", true);
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="export-preview"]').waitFor({ state: "detached", timeout: T });
   await page.locator('[data-testid="outputs-check-numbers"]').click();
   await page.waitForFunction(() => document.querySelector('[data-testid="outputs-check-numbers"]')?.checked === true, null, { timeout: T });
   check("meaning check saves", true);
@@ -1445,6 +1512,7 @@ await runStep("review: reviewer completes the bundle in review", { devUser: "qa.
   const reviewId = Number((await review.getAttribute("data-testid")).replace("bundles-row-", ""));
   await page.goto(`${BASE}/bundles/${reviewId}/review`);
   await wait(page, "output-c");
+  check("the review page has no edition toggle", (await page.locator('[data-testid^="review-lang"]').count()) === 0);
   await takeShot("sop-review.png");
   await page.locator('[data-testid="review-return"]').click();
   await wait(page, "review-reason");
