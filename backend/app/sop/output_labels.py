@@ -55,7 +55,7 @@ LABELS = {
         change_types={
             "as_is": "그대로", "tone": "말투", "rewritten": "고쳐 씀", "split": "나눔", "merged": "합침",
             "translated": "번역", "deleted": "삭제", "new": "신규", "table_restructured": "표 구성 변경",
-            "translated_added": "번역 · 추가",
+            "translated_added": "번역 · 추가", "heading": "칸 제목",
         },
         statuses={"unassigned": "미배정", "ai_suggested": "AI 제안", "confirmed": "확정", "on_hold": "보류"},
         dest_kinds={"sop": "새 SOP", "wi": "WI", "delete": "삭제", "move_external": "다른 문서로 이동"},
@@ -81,7 +81,7 @@ LABELS = {
         change_types={
             "as_is": "As is", "tone": "Tone", "rewritten": "Rewritten", "split": "Split", "merged": "Merged",
             "translated": "Translated", "deleted": "Deleted", "new": "New", "table_restructured": "Table restructured",
-            "translated_added": "Translated · Added",
+            "translated_added": "Translated · Added", "heading": "Slot heading",
         },
         statuses={"unassigned": "Unassigned", "ai_suggested": "AI suggested", "confirmed": "Confirmed", "on_hold": "On hold"},
         dest_kinds={"sop": "New SOP", "wi": "WI", "delete": "Deleted", "move_external": "Moved to another document"},

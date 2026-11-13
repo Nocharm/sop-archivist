@@ -172,6 +172,18 @@ def test_target_number_style_check_holds_in_migrated_db(tmp_path: pathlib.Path) 
         engine.dispose()
 
 
+def test_target_kind_fits_slot_heading_in_migrated_db(tmp_path: pathlib.Path) -> None:
+    # kind에는 CHECK가 없고 길이가 제약이다 — 8자면 Postgres가 slot_heading(12자)을 거절한다. 0014가 넓힌 길이를 본다
+    db_path = tmp_path / "slot_heading.db"
+    run_migrations(_async_url(db_path))
+    engine = create_engine(_sync_url(db_path))
+    try:
+        (kind,) = [column for column in inspect(engine).get_columns("target_sentences") if column["name"] == "kind"]
+        assert kind["type"].length == 12
+    finally:
+        engine.dispose()
+
+
 def test_downgrade_to_base_and_back(tmp_path: pathlib.Path) -> None:
     # scripts.reset_db가 base로 내렸다 head로 올린다 — 모든 리비전의 downgrade가 실제로 돌아야 한다.
     db_path = tmp_path / "roundtrip.db"

@@ -9,6 +9,7 @@ from sqlalchemy import Row, Select, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.routers.admin import KstDatetime
+from app.sop.constants import SLOT_HEADING
 from app.sop.errors import raise_rule
 from app.sop.models import Document, Extraction, TargetSentence, TargetSource, Unit, UnitDecision
 from app.sop.units import UNIT_ACTIVE, compute_display_id
@@ -181,7 +182,11 @@ class GroupOut(BaseModel):
 async def _find_neighbors(
     session: AsyncSession, unit_ids: Collection[int], target_ids: Collection[int]
 ) -> tuple[set[int], set[int]]:
-    """한 걸음 이웃 — 칸 문장↔그룹 단위, 칸 새 문장↔표 새 문장, 출처 연결(새 문장↔단위)."""
+    """한 걸음 이웃 — 칸 문장↔그룹 단위, 칸 새 문장↔표 새 문장, 출처 연결(새 문장↔단위).
+
+    칸 제목은 단위에서 들어가기만 하고 출처 쪽으로 나오지 않는 끝 노드다 — 출처마다 따로 이은 자리 표시라 다른 옛 문서의 같은
+    제목을 한 묶음으로 엮지 않는다(설계 §4.6). 그래서 한 출처를 저장·떼어 내도 다른 출처의 판단은 닫힘·보류에 걸리지 않는다.
+    """
     found_units: set[int] = set()
     found_targets: set[int] = set()
     unit_rows = await select_in_chunks(
@@ -211,7 +216,9 @@ async def _find_neighbors(
         ),
         *await select_in_chunks(
             session,
-            lambda chunk: select(TargetSource.target_id, TargetSource.unit_id).where(TargetSource.target_id.in_(chunk)),
+            lambda chunk: select(TargetSource.target_id, TargetSource.unit_id)
+            .join(TargetSentence, TargetSentence.id == TargetSource.target_id)
+            .where(TargetSource.target_id.in_(chunk), TargetSentence.kind != SLOT_HEADING),
             target_ids,
         ),
     ]
@@ -266,13 +273,19 @@ async def build_group_out(
     targets = sorted((row[0] for row in target_rows), key=lambda target: target.id)
     sources: dict[int, list[int]] = defaultdict(list)
     for target_id, unit_id, _seq in sorted(source_rows, key=lambda row: (row[0], row[2])):
-        sources[target_id].append(unit_id)
+        # 요소 밖 출처는 칸 제목의 다른 출처(다른 옛 문서의 같은 제목)뿐이다 — 이 묶음의 단위만 싣는다
+        if unit_id in component_units:
+            sources[target_id].append(unit_id)
 
     order_keys = {unit.id: build_unit_order_key(document, unit) for unit, document, _ in unit_rows}
     display_ids = {unit.id: compute_display_id(document, unit) for unit, document, _ in unit_rows}
     group_unit_by_cell = {unit.id: unit.group_unit_id for unit, _, _ in unit_rows if unit.group_unit_id is not None}
     parent_by_cell_target = {target.id: target.parent_target_id for target in targets if target.parent_target_id}
-    edges = [(target_id, unit_id) for target_id, members in sources.items() for unit_id in members]
+    # 칸 제목은 관계 묶음(나눔·합침·중복 배정)에 넣지 않는다 — 결과물 A의 묶음 ID(outputs._build_index)와 같은 규칙
+    heading_ids = {target.id for target in targets if target.kind == SLOT_HEADING}
+    edges = [
+        (target_id, unit_id) for target_id, members in sources.items() if target_id not in heading_ids for unit_id in members
+    ]
     unit_groups, target_groups = build_group_ids(
         collapse_table_members(edges, group_unit_by_cell, parent_by_cell_target), order_keys, display_ids
     )

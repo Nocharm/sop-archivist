@@ -18,7 +18,7 @@ from app.clock import now
 from app.db import get_session
 from app.routers.sop_documents import build_content_disposition
 from app.sop.ai.guidelines import get_rules_version_label
-from app.sop.constants import MAX_INDENT_LEVEL, MEMBER_ROLES, NumberStyle
+from app.sop.constants import MAX_INDENT_LEVEL, MEMBER_ROLES, SLOT_HEADING, NumberStyle
 from app.sop.decisions import DbId
 from app.sop.detach import ORIGIN_NEW_DOC, ORIGIN_TRANSLATION, load_source_target_ids, sweep_translations
 from app.sop.errors import check_revision, raise_rule
@@ -61,7 +61,7 @@ class OrderItemIn(BaseModel):
 class TargetOrderIn(BaseModel):
     revision: int = Field(ge=1)
     target_doc_id: DbId
-    # 그 새 문서의 칸 새 문장이 아닌 새 문장 전부를 한 번씩, 새 순서대로
+    # 그 새 문서의 칸 새 문장·칸 제목이 아닌 새 문장 전부를 한 번씩, 새 순서대로
     items: list[OrderItemIn] = Field(max_length=MAX_ORDER_ITEMS)
 
 
@@ -234,7 +234,8 @@ async def reorder_targets(
     if doc is None or doc.bundle_id != bundle.id:
         raise_rule(404, "target_doc_not_found", target_doc_id=payload.target_doc_id)
     rows = list(await session.scalars(select(TargetSentence).where(TargetSentence.target_doc_id == doc.id)))
-    tops = {row.id: row for row in rows if row.parent_target_id is None}
+    # 칸 제목은 결과물 C의 칸 항목이 아니라 순서가 없다 — 목록에서 뺀다(보내면 모르는 새 문장이다)
+    tops = {row.id: row for row in rows if row.parent_target_id is None and row.kind != SLOT_HEADING}
     sent = [item.target_id for item in payload.items]
     duplicates = sorted(target_id for target_id, count in Counter(sent).items() if count > 1)
     missing, unknown = sorted(tops.keys() - set(sent)), sorted(set(sent) - tops.keys())

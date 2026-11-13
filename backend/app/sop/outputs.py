@@ -14,7 +14,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from app.routers.admin import KstDatetime
-from app.sop.constants import COVER_KINDS, NUMBER_NOTE, NUMBERED, SLOT_KEYS, WI_PARTS
+from app.sop.constants import COVER_KINDS, NUMBER_NOTE, NUMBERED, SLOT_HEADING, SLOT_KEYS, WI_PARTS
 from app.sop.groups import TABLE_UNIT_KINDS, build_group_ids, collapse_table_members
 from app.sop.output_labels import LABELS, OutputLabels
 from app.sop.output_rows import (
@@ -136,6 +136,8 @@ class CSection(BaseModel):
     label: str
     number: str | None  # SOP 칸 번호(5.1)·WI 단계 번호(3), 번호가 없는 칸은 None
     na_reason: str | None
+    # 칸 제목에 이은 옛 제목(두 언어) — "← OLD-1 §5, OLD-2 §5", 없으면 빈 글. 칸 제목은 items에 넣지 않는다(설계 §4.6)
+    heading_note: str
     items: list[CItem]
 
 
@@ -219,8 +221,9 @@ class _SectionPlan:
     label: str
     number: str | None  # 줄 번호의 머리 — 같은 번호의 칸(WI 한 단계의 Instruction·Why)은 줄 번호를 이어 센다
     na_reason: str | None
-    targets: list[TargetInfo]  # 칸 새 문장이 아닌 새 문장(두 언어 모두), 칸 안 순서
+    targets: list[TargetInfo]  # 칸 새 문장이 아닌 새 문장(두 언어 모두), 칸 안 순서 — 칸 제목은 빠진다
     keep_empty: bool  # SOP 칸·선언 단계는 비어도 싣고, 단계 없음·절 경로 칸은 새 문장이 있을 때만
+    headings: tuple[TargetInfo, ...] = ()  # SOP 칸의 칸 제목(두 언어) — 번호를 세지 않고 칸 항목도 아니다
 
 
 def _order_target_docs(snap: BundleSnapshot) -> list[TargetDocInfo]:
@@ -269,10 +272,11 @@ def _build_index(snap: BundleSnapshot) -> _Index:
     for cell_targets in children.values():
         cell_targets.sort(key=lambda target: (target.cell_row or 0, target.cell_col or 0, target.id))
 
-    # 사람이 쓴 다른 언어 문장(translated)은 AI 번역처럼 번역 줄이라 관계 묶음(나눔·합침·중복 배정)에 넣지 않는다(설계 §4.1)
+    # 사람이 쓴 다른 언어 문장(translated)은 AI 번역처럼 번역 줄이라 관계 묶음(나눔·합침·중복 배정)에 넣지 않는다(설계 §4.1).
+    # 칸 제목도 넣지 않는다 — 다른 옛 문서의 같은 제목이 출처로 함께 있어도 합침이 아니다(설계 §4.6, groups._find_neighbors)
     edges = [
         (target.id, unit_id)
-        for target in snap.targets.values() if target.change_type != TRANSLATED
+        for target in snap.targets.values() if target.change_type != TRANSLATED and target.kind != SLOT_HEADING
         for unit_id in target.source_unit_ids
     ]
     group_unit_by_cell = {unit.id: unit.group_unit_id for unit in snap.units.values() if unit.group_unit_id is not None}
@@ -362,9 +366,13 @@ def _find_na_reason(doc: TargetDocInfo, slot_key: str) -> str | None:
 
 
 def _plan_sections(index: _Index, doc: TargetDocInfo, labels: OutputLabels) -> list[_SectionPlan]:
-    """새 문서의 칸 — 입구 2 문서는 절 경로가 처음 나온 순서, SOP는 SLOT_KEYS 순서, WI는 단계마다 Instruction·Why."""
+    """새 문서의 칸 — 입구 2 문서는 절 경로가 처음 나온 순서, SOP는 SLOT_KEYS 순서, WI는 단계마다 Instruction·Why.
+
+    칸 제목은 칸 항목이 아니라 SOP 칸의 headings로 따로 싣는다(저장이 SOP의 N/A 아닌 칸에만 둔다).
+    """
+    doc_targets = index.doc_targets.get(doc.id, [])
     tops = sorted(
-        (target for target in index.doc_targets.get(doc.id, []) if target.parent_target_id is None),
+        (target for target in doc_targets if target.parent_target_id is None and target.kind != SLOT_HEADING),
         key=lambda target: _get_item_key(index, doc, target),
     )
     if doc.entrance == "match":
@@ -379,10 +387,14 @@ def _plan_sections(index: _Index, doc: TargetDocInfo, labels: OutputLabels) -> l
         by_slot: dict[str | None, list[TargetInfo]] = defaultdict(list)
         for target in tops:
             by_slot[target.slot_key].append(target)
+        headings: dict[str | None, list[TargetInfo]] = defaultdict(list)
+        for target in doc_targets:
+            if target.kind == SLOT_HEADING:
+                headings[target.slot_key].append(target)
         return [
             _SectionPlan(
                 key, labels.slots[key], SLOT_NUMBERS[key], _find_na_reason(doc, key), by_slot.get(key, []),
-                keep_empty=True,
+                keep_empty=True, headings=tuple(headings.get(key, ())),
             )
             for key in SLOT_KEYS
         ]
@@ -459,7 +471,7 @@ def number_targets(index: _Index, labels: OutputLabels) -> dict[int, str]:
     언어를 가리지 않고 결과물 C 순서대로 한 줄로 센다.
 
     번호 생략·주석 줄은 번호가 없고 세지 않는다. 표 칸 새 문장은 표의 번호를 따른다(표가 번호가 없으면 칸도 없다).
-    입구 2 문서·단계 없는 WI 칸은 번호가 없다.
+    입구 2 문서·단계 없는 WI 칸은 번호가 없다. 칸 제목은 세지 않고 칸 번호가 곧 그 번호다(설계 §4.6 — 결과물 A의 No.).
     """
     numbers: dict[int, str] = {}
     for doc in index.doc_order:
@@ -467,6 +479,7 @@ def number_targets(index: _Index, labels: OutputLabels) -> dict[int, str]:
         for plan in _plan_sections(index, doc, labels):
             if plan.number is not None:
                 runs.setdefault(plan.number, []).extend(plan.targets)
+                numbers.update(dict.fromkeys((heading.id for heading in plan.headings), plan.number))
         for base, targets in runs.items():
             depths = [target.indent_level if target.number_style == NUMBERED else None for target in targets]
             for target, number in zip(targets, number_lines(base, depths), strict=True):
@@ -699,9 +712,15 @@ def _build_unit_rows(
     decision_unit_id = _get_decision_unit_id(unit)
     decision = snap.decisions[decision_unit_id]
     document = snap.documents[unit.document_id]
+    # 칸 제목은 같은 새 문서의 문장과 ①②로 섞지 않고 따로 한 줄이다(변경 종류 Slot heading, 설계 §4.6)
     dests = [
-        _describe_dest(index, doc, targets, is_own, ctx.labels, ctx.number_of)
+        _describe_dest(index, doc, part, is_own, ctx.labels, ctx.number_of)
         for doc, targets, is_own in _group_dests(index, unit)
+        for part in (
+            [target for target in targets if target.kind == SLOT_HEADING],
+            [target for target in targets if target.kind != SLOT_HEADING],
+        )
+        if part
     ]
     if not dests:
         dest_kind = DISPOSITION_NODES.get(decision.disposition, "")
@@ -920,23 +939,32 @@ def build_output_b(snap: BundleSnapshot, lang: Lang) -> FlowGraph:
 # --- C ---
 
 
-def _format_source_note(index: _Index, target: TargetInfo, labels: OutputLabels) -> str:
-    """받은 옛 단위 — "← OLD-1 §5.1, OLD-2 §5.1 (합침)". 같은 문서·절은 한 번, 절이 없으면 문서 번호만. 번역은 번역 출처 단위."""
-    snap = index.snap
-    unit_ids = target.source_unit_ids
-    if target.translation_source_unit_id in snap.units:
-        unit_ids = (target.translation_source_unit_id,)
-    if not unit_ids:
-        return ""
+def _format_unit_refs(snap: BundleSnapshot, unit_ids: Iterable[int]) -> str:
+    """옛 단위 위치 — "← OLD-1 §5.1, OLD-2 §5.1". 같은 문서·절은 한 번, 절이 없으면 문서 번호만, 단위가 없으면 빈 글."""
     refs = []
     for unit_id in unit_ids:
         unit = snap.units[unit_id]
         code = _format_doc_code(snap.documents[unit.document_id])
         section = snap.blocks[unit.block_id].section_label
         refs.append(f"{code} §{section}" if section else code)
-    note = "← " + ", ".join(dict.fromkeys(refs))
+    return "← " + ", ".join(dict.fromkeys(refs)) if refs else ""
+
+
+def _format_source_note(index: _Index, target: TargetInfo, labels: OutputLabels) -> str:
+    """받은 옛 단위 — "← OLD-1 §5.1, OLD-2 §5.1 (합침)". 번역은 번역 출처 단위."""
+    snap = index.snap
+    unit_ids = target.source_unit_ids
+    if target.translation_source_unit_id in snap.units:
+        unit_ids = (target.translation_source_unit_id,)
+    note = _format_unit_refs(snap, unit_ids)
     suffix = {"merged": labels.merged, "split": labels.split, "translated": labels.translated}.get(target.change_type or "")
-    return f"{note} {suffix}" if suffix else note
+    return f"{note} {suffix}" if note and suffix else note
+
+
+def _format_heading_note(snap: BundleSnapshot, headings: Iterable[TargetInfo]) -> str:
+    """칸 머리 줄의 칸 제목 출처 — 두 언어 칸 제목의 출처를 원문 순서로 모아 "← OLD-1 §5, OLD-2 §5"(설계 §4.6). 접미 없음."""
+    units = {unit_id for heading in headings for unit_id in heading.source_unit_ids}
+    return _format_unit_refs(snap, sorted(units, key=lambda unit_id: snap.units[unit_id].order_key))
 
 
 @dataclass(frozen=True)
@@ -1013,7 +1041,7 @@ def build_output_c(snap: BundleSnapshot, lang: Lang) -> COutput:
                 sections.append(
                     CSection(
                         location_key=plan.key, label=plan.label, number=plan.number, na_reason=plan.na_reason,
-                        items=items,
+                        heading_note=_format_heading_note(snap, plan.headings), items=items,
                     )
                 )
         parent = snap.target_docs.get(doc.parent_id) if doc.parent_id is not None else None
