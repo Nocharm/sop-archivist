@@ -13,6 +13,8 @@ import { placeLinkMenu } from "@/lib/link-menu-place";
 
 interface LinkMenuProps {
   anchor: HTMLElement;
+  /** 메뉴가 덮지 않을 상자들 - 함께 골라지는 New 짝 문장, 그 줄의 Old 조각. 비면 anchor 하나 */
+  cover?: HTMLElement[];
   /** 누른 자리(요소 기준). null이면 요소 아래 왼쪽 - 이동해 와서 포인터가 먼 곳에 있을 때 */
   offset: { x: number; y: number } | null;
   items: LinkMenuItem[];
@@ -27,7 +29,7 @@ interface LinkMenuProps {
 const FOCUS_DELAY_MS = 400;
 const ITEM_SELECTOR = "[role=menuitem]:not(:disabled)";
 
-export function LinkMenu({ anchor, offset, items, isUnsaved, busy, onAction, onClose }: LinkMenuProps) {
+export function LinkMenu({ anchor, cover = [], offset, items, isUnsaved, busy, onAction, onClose }: LinkMenuProps) {
   const { t } = useI18n();
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -47,7 +49,10 @@ export function LinkMenu({ anchor, offset, items, isUnsaved, busy, onAction, onC
       return;
     }
     const box = menuEl.getBoundingClientRect();
-    const { top, left } = placeLinkMenu(rect, offset ? rect.left + offset.x : null, box, { width: window.innerWidth, height: window.innerHeight }, offset ? rect.top + offset.y : null);
+    // 세로 자리는 덮지 않을 상자를 모두 합친 테두리 기준 - 함께 골라진 짝 문장을 가리지 않게(Old 우클릭 메뉴와 같은 방식)
+    const boxes = [rect, ...cover.filter((el) => el !== anchor && el.isConnected).map((el) => el.getBoundingClientRect())];
+    const row = { top: Math.min(...boxes.map((item) => item.top)), bottom: Math.max(...boxes.map((item) => item.bottom)), left: rect.left };
+    const { top, left } = placeLinkMenu(row, offset ? rect.left + offset.x : null, box, { width: window.innerWidth, height: window.innerHeight }, offset ? rect.top + offset.y : null);
     setPos((prev) => (prev && prev.top === top && prev.left === left ? prev : { top, left }));
   });
 

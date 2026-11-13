@@ -728,7 +728,8 @@ export default function SplitPage() {
                     canUnpair={pairId !== null}
                     canUnmerge={unit.can_unmerge}
                     busy={busy}
-                    isHeld={advancingId === unit.id}
+                    // 고름이 떠난 줄도 꺼진 채 - 저장 응답이 꺼짐보다 늦으면 넘어가는 순간 기다림이 풀려 접히는 옛 줄이 다시 켜졌다
+                    isHeld={advancingId === unit.id || unit.id !== selectedId}
                     onCheck={() => setBoundary(unit, true)}
                     onUncheck={() => setBoundary(unit, false)}
                     onUnpair={() => pairId !== null && docId !== null && data && void runSimple(() => deletePair(bundleId, docId, pairId, data.document.revision), t("split.pairRemoved"))}

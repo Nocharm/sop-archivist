@@ -213,6 +213,15 @@ function readMenuOffset(anchor: HTMLElement, event: MouseEvent | null): { x: num
   return { x: event.clientX - rect.left, y: event.clientY - rect.top };
 }
 
+/** 그 자리 메뉴가 덮지 않을 상자 - New 문장이면 함께 골라지는 짝 문장 전부, Old 조각이면 그 줄의 조각 전부 */
+function readMenuCover(anchor: HTMLElement, rowUnitIds: number[]): HTMLElement[] {
+  if (anchor.matches(".new-line")) {
+    const group = anchor.getAttribute("data-pair-group");
+    return group ? [...document.querySelectorAll<HTMLElement>(`.new-line[data-pair-group="${CSS.escape(group)}"]`)] : [anchor];
+  }
+  return rowUnitIds.flatMap((id) => [...document.querySelectorAll<HTMLElement>(`[data-testid="assign-paper-piece-${id}"]`)]);
+}
+
 /** 이동해 간 자리를 잠깐 번쩍인다 - 다시 이동하면 처음부터 */
 function flashElement(el: HTMLElement) {
   delete el.dataset.flash;
@@ -2100,7 +2109,7 @@ export default function AssignPage() {
         </aside>
       </div>
       {menu && menuItems.length > 0 && (
-        <LinkMenu key={menu.seq} anchor={menu.anchor} offset={menu.offset} items={menuItems} isUnsaved={menuItems.includes("cancel")} busy={busy} onAction={runMenu} onClose={() => setMenu(null)} />
+        <LinkMenu key={menu.seq} anchor={menu.anchor} cover={readMenuCover(menu.anchor, rowMap.get(menu.rowKey)?.unitIds ?? [])} offset={menu.offset} items={menuItems} isUnsaved={menuItems.includes("cancel")} busy={busy} onAction={runMenu} onClose={() => setMenu(null)} />
       )}
       {ctxMenu && ctxGroups && (
         <AssignContextMenu

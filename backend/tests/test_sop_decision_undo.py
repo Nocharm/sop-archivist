@@ -18,6 +18,7 @@ from tests.access_helpers import run_in_session, update_row
 from tests.ai_fixtures import (
     AI_EN_1,
     AI_KO_1,
+    AI_KO_2,
     clean_ai_jobs,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
     find_ids,
     make_ai_bundle,
@@ -43,12 +44,14 @@ from tests.sop_helpers import (
     set_members,
     upload,
 )
+from tests.test_sop_ai_translate import EDITED, load_translations, make_assigned_unit, translate
 from tests.test_sop_decisions import _body, _target, _unit_in
 from tests.test_sop_decisions import NA_SLOTS as DECISIONS_NA_SLOTS
 from tests.test_sop_decisions import TOBE_DOCS as DECISIONS_TOBE_DOCS
 from tests.test_sop_decisions import WI_STEPS as DECISIONS_WI_STEPS
 from tests.test_sop_decisions import _setup as _setup_decisions
-from tests.test_sop_pair_settle import EN_HEAD, KO_HEAD
+from tests.test_sop_pair_settle import EN_HEAD, KO_HEAD, _dispose, _setup_pair, _setup_unpaired
+from tests.test_sop_pairs import _create as _create_pair
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
 
@@ -943,3 +946,128 @@ def test_dependents_added_to_a_row_being_deleted_are_found() -> None:
 
     assert decision_steps._find_unrecorded_dependents(expected, restore, expected) is None
     assert decision_steps._find_unrecorded_dependents(expected, restore, current) == [2, 3]
+
+
+# ── 그 사이 단계 밖에서 생긴 짝·번역 ──────────────────────────────────────────
+
+
+def _assert_refused(response: httpx2.Response, bundle_id: int, before: Snapshot, unit_ids: list[int]) -> None:
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == {"code": "undo_conflict", "unit_ids": sorted(unit_ids)}
+    assert _dump(bundle_id) == before
+
+
+def test_undo_refused_when_a_pair_made_since_would_get_two_fates(client: TestClient) -> None:
+    """짝 없는 KO는 삭제·EN은 SOP 칸 → KO 비우기(기록) → 그 사이 KO·EN 짝(KO가 미배정이라 운명 검사를 지난다) → undo는 KO를 삭제로 되쓴다.
+
+    되쓰면 한 줄(짝)에 삭제와 SOP 칸 두 처분이 남으니 거절한다(제품 명세 §6.5 "짝은 한 곳으로 간다").
+    """
+    fx, ko, en = _setup_unpaired(client)
+    _dispose(client, fx.bundle_id, [ko])
+    _ok(save_group(client, fx.bundle_id, _body([_unit_in(en)], [_target("en", fx.sop_id, [en], slot_key="purpose")])))
+    _clear(client, fx.bundle_id, ko, 2, undo=UNDO)
+    assert _create_pair(client, fx, [ko, en]).status_code == 201
+    before = _dump(fx.bundle_id)
+
+    _assert_refused(_undo(client, fx.bundle_id), fx.bundle_id, before, [ko["id"], en["id"]])
+    _assert_refused(_undo(client, fx.bundle_id), fx.bundle_id, before, [ko["id"], en["id"]])  # 기록은 남는다
+
+
+def test_redo_refused_when_a_pair_made_since_would_get_two_fates(client: TestClient) -> None:
+    """EN은 SOP 칸 → KO 일괄 삭제(기록) → undo(KO 미배정) → 그 사이 KO·EN 짝 → redo는 KO를 삭제로 되쓴다 — 같은 이유로 거절."""
+    fx, ko, en = _setup_unpaired(client)
+    _ok(save_group(client, fx.bundle_id, _body([_unit_in(en)], [_target("en", fx.sop_id, [en], slot_key="purpose")])))
+    body = {"action": "delete", "reason": "합성 사유", "units": [{"unit_id": ko["id"], "revision": 1}], "undo": UNDO}
+    _ok(client.post(f"/api/bundles/{fx.bundle_id}/decisions/bulk", json=body, headers=AUTHOR))
+    _ok(_undo(client, fx.bundle_id))
+    assert _create_pair(client, fx, [ko, en]).status_code == 201
+    before = _dump(fx.bundle_id)
+
+    _assert_refused(_redo(client, fx.bundle_id), fx.bundle_id, before, [ko["id"], en["id"]])
+
+
+def test_undo_refused_when_the_released_mate_went_elsewhere(client: TestClient) -> None:
+    """KO·EN 짝을 SOP로 확정 → KO만 WI로(기록, 짝이 풀린다 — EN 판단은 단계에 없다) → 다른 작성자가 EN을 WI로 → undo.
+
+    되쓰면 같은 id의 짝이 돌아오는데 KO는 SOP, EN은 WI라 한 줄에 처분이 둘이다.
+    """
+    fx, ko, en, pair_id = _setup_pair(client)
+    assert set_members(client, fx.bundle_id, [("qa.member", "author"), ("qa.lead", "author")]).status_code == 200
+    together = [_target("ko", fx.sop_id, [ko], slot_key="purpose"), _target("en", fx.sop_id, [en], slot_key="purpose")]
+    saved = _ok(save_group(client, fx.bundle_id, _body([_unit_in(ko), _unit_in(en)], together)))
+    targets = {target["lang"]: target for target in saved["targets"]}
+
+    def _to_wi(unit: dict, target: dict) -> dict:
+        return {"key": "t", "target_doc_id": fx.wi_id, "id": target["id"], "revision": target["revision"],
+                "wi_step": 1, "wi_part": "instruction", "source_unit_ids": [unit["id"]]}
+
+    moved = _ok(save_group(client, fx.bundle_id, _body([_unit_in(ko, 2)], [_to_wi(ko, targets["ko"])], undo=UNDO)))
+    assert moved["pairs_dissolved"] == [pair_id]
+    (en_target,) = get_group_by_unit(client, fx.bundle_id, en["id"], headers=OTHER_AUTHOR)["targets"]
+    elsewhere = save_group(client, fx.bundle_id, _body([_unit_in(en, 2)], [_to_wi(en, en_target)]), headers=OTHER_AUTHOR)
+    assert elsewhere.status_code == 200, elsewhere.text
+    before = _dump(fx.bundle_id)
+
+    _assert_refused(_undo(client, fx.bundle_id), fx.bundle_id, before, [ko["id"], en["id"]])
+
+
+def _save_source_text(client: TestClient, bundle_id: int, unit_id: int, text: str, undo: dict | None = UNDO) -> None:
+    """단위의 새 문장 하나를 글만 바꿔 다시 확정한다 — 저장이 그 새 문장의 AI 번역을 쓸어 낸다."""
+    group = get_group_by_unit(client, bundle_id, unit_id)
+    (source,) = group["targets"]
+    body: dict = {
+        "action": "confirm",
+        "units": [{"unit_id": unit_id, "revision": group["units"][0]["decision"]["revision"], "disposition": "assigned"}],
+        "targets": [{
+            "key": "s", "id": source["id"], "revision": source["revision"], "slot_key": source["slot_key"],
+            "source_unit_ids": [unit_id], "text": text, "change_type": "rewritten",
+        }],
+    }
+    if undo is not None:
+        body["undo"] = undo
+    _ok(save_group(client, bundle_id, body))
+
+
+@pytest.mark.usefixtures("clean_ai_jobs")
+def test_undo_of_a_text_edit_brings_back_the_swept_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    """글 고치기가 쓸어 낸 AI 번역은 단계에 들어 있어 같은 id로 돌아온다 — 아래 거절이 이 길을 막지 않는다."""
+    bundle, unit = make_assigned_unit(client)
+    swept = translate(client, fake_ai, bundle.id, unit["id"])
+    s0 = _dump(bundle.id)
+    _save_source_text(client, bundle.id, unit["id"], EDITED)
+    assert load_translations(unit["id"]) == []
+
+    _ok(_undo(client, bundle.id))
+
+    assert [target.id for target in load_translations(unit["id"])] == [swept.id]
+    assert_same_state(_dump(bundle.id), s0)
+
+
+@pytest.mark.usefixtures("clean_ai_jobs")
+def test_undo_refused_when_the_edited_sentence_was_translated_again(client: TestClient, fake_ai: FakeAi) -> None:
+    """새 문장 글 고치기(기록, AI 번역 T2를 쓸어 냄) → 새 글을 다시 AI 번역(T3, 단계 밖) → undo는 옛 글과 T2를 되살린다.
+
+    T3는 이제 없는 글의 번역으로 남아(확정했으면 옛 글의 번역이 확정인 채 나간다) 같은 언어 번역이 둘이 되니 거절한다.
+    """
+    bundle, unit = make_assigned_unit(client)
+    translate(client, fake_ai, bundle.id, unit["id"])
+    # T2 뒤에 새 문장 하나를 더 둔다 — sqlite는 지운 맨 끝 id를 다시 써서 T3가 T2의 id를 받으면 다른 검사가 먼저 걸린다(Postgres는 다시 쓰지 않는다)
+    assign_as_is(client, bundle.id, find_unit(get_view(client, bundle.id, bundle.document_id), AI_KO_2), bundle.sop_id,
+                 slot_key="purpose")
+    _save_source_text(client, bundle.id, unit["id"], EDITED)
+    translate(client, fake_ai, bundle.id, unit["id"], text="The third synthetic sentence must be tested.")
+    before = _dump(bundle.id)
+
+    _assert_refused(_undo(client, bundle.id), bundle.id, before, [unit["id"]])
+
+
+@pytest.mark.usefixtures("clean_ai_jobs")
+def test_redo_refused_when_the_restored_sentence_was_translated(client: TestClient, fake_ai: FakeAi) -> None:
+    """글 고치기(기록) → undo(옛 글) → 옛 글을 AI 번역 → redo는 새 글로 되쓰는데 번역은 옛 글의 것이다 — 거절."""
+    bundle, unit = make_assigned_unit(client)
+    _save_source_text(client, bundle.id, unit["id"], EDITED)
+    _ok(_undo(client, bundle.id))
+    translate(client, fake_ai, bundle.id, unit["id"])
+    before = _dump(bundle.id)
+
+    _assert_refused(_redo(client, bundle.id), bundle.id, before, [unit["id"]])
