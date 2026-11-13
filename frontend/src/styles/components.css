@@ -1461,11 +1461,38 @@
   .pg .new-block { margin: 4px 0; padding: 6px 8px; border: 1px dashed var(--line-2); border-radius: var(--r-1); font: var(--fs-cap) / var(--lh-cap) var(--font-ui); color: var(--ink-3); }
 
   .assign-side { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-left: 1px solid var(--line); background: var(--surface); }
-  .assign-side-body { display: grid; grid-template-columns: minmax(0, 1fr); flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; grid-auto-rows: max-content; align-content: start; min-height: 0; overflow-y: auto; }
-  .assign-side-head { display: grid; gap: 6px; padding: 12px var(--pad); border-bottom: 1px solid var(--line); }
-  .chosen-box { display: grid; gap: 8px; padding: 10px 12px; border: 1.5px solid var(--accent); border-radius: var(--r-3); background: var(--accent-tint); }
+  /* 오른쪽 패널 - 위에서 아래로 일하는 순서: 머리(이 Unit·검사·확정한 사람) → ① 보낼 곳(이곳만 스크롤) → ② 결정 칸(아래에 붙음, 맨 끝 확정).
+     결정 칸은 패널 몸통의 52%까지만 크고 넘치면 고른 곳 상자 부분만 스크롤(Remark·확정은 늘 보인다) - 목록이 늘 몇 줄은 보이고 확정은 화면 밖으로 나가지 않는다.
+     패널이 아주 낮으면 몸통 전체가 스크롤된다(목록 최소 높이를 지키려고) */
+  .assign-side-body { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; overflow-wrap: anywhere; overflow-y: auto; }
+  .assign-side-head { flex: none; display: grid; gap: 6px; padding: 12px var(--pad) 10px; border-bottom: 1px solid var(--line); }
+  .assign-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; min-width: 0; font-size: var(--fs-cap); line-height: var(--lh-cap); }
+  .assign-meta-item { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; }
+  .assign-pick { flex: 1 1 0; min-height: 132px; overflow-y: auto; overscroll-behavior: contain; }
+  .assign-pick .dest-acc-item:first-of-type { border-top: 0; }
+  .assign-step { display: flex; align-items: center; gap: 6px; margin: 0; padding: 12px var(--pad) 6px; font: 700 var(--fs-micro) / 1 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
+  .assign-step-n { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--ink-3); color: var(--surface); font-size: 10px; letter-spacing: 0; }
+  .assign-decide { flex: 0 1 auto; display: flex; flex-direction: column; gap: 10px; min-height: 0; max-height: 52%; padding: 0 var(--pad) 12px; border-top: 1px solid var(--line-2); background: var(--surface); box-shadow: 0 -8px 16px -12px color-mix(in oklab, var(--ink) 30%, transparent); }
+  .assign-decide-body { flex: 0 1 auto; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 10px; min-height: 0; overflow-y: auto; margin-inline: calc(var(--pad) * -1); padding-inline: var(--pad); }
+  .assign-decide-body > .assign-step { padding: 10px 0 0; }
+  .assign-confirm { width: 100%; height: 40px; font-size: 14px; }
+  .assign-alt { height: 30px; min-width: 0; gap: 4px; padding: 0 6px; font-size: var(--fs-cap); font-weight: 400; width: 100%; }
+  .assign-alt > :not(svg, kbd) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .assign-remark { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 28px; }
+  .btn.is-warn { border-color: var(--st-hold-line); background: var(--st-hold-tint); color: var(--st-hold-ink); font-weight: 600; }
+  .btn.is-warn:not(:disabled):hover { border-color: var(--st-hold-ink); }
+  .chosen-box { display: grid; gap: 6px; padding: 8px 10px; border: 1.5px solid var(--accent); border-radius: var(--r-3); background: var(--accent-tint); }
   .chosen-box.is-empty { border-style: dashed; border-color: var(--line-2); background: transparent; color: var(--ink-3); font-size: 13px; line-height: 19px; }
-  .chosen-label { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-micro); font-weight: 700; letter-spacing: 0.04em; color: var(--ink-3); }
+  /* 고른 때 - 위 목록에서 누른 항목의 그림자(.pick-ghost, components/assign/pick-flight.ts)가 상자로 날아오고, 닿을 때 상자가 한 번 번쩍인다.
+     움직임 줄이기 설정이면 그림자 없이 번쩍임(색만 바뀐다)만 */
+  .chosen-box[data-landing] { animation: chosen-flash 700ms var(--ease-exit) both; }
+  .pick-ghost { position: fixed; z-index: 60; display: block; padding: 0 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; border: 1.5px solid var(--accent); border-radius: var(--r-3); background: var(--accent-tint); color: var(--ink); font: 600 var(--fs-cap) / 1 var(--font-ui); box-shadow: var(--shadow-1); pointer-events: none; will-change: transform, opacity; }
+  .tree-leaf[aria-pressed="true"] { background: var(--accent-tint); color: var(--ink); font-weight: 600; box-shadow: inset 0 0 0 1px var(--accent); }
+  @keyframes chosen-flash { from { box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent) 40%, transparent); background: color-mix(in oklab, var(--accent) 22%, var(--surface)); } }
+  .chosen-label { display: flex; align-items: center; gap: 4px; min-width: 0; font-size: var(--fs-micro); font-weight: 700; letter-spacing: 0.04em; color: var(--ink-3); }
+  .chosen-line { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 26px; }
+  /* 줄 끝 변경 종류 - 글이 한 줄에 더 들어가게 좁은 고르기 */
+  .chosen-line .select-trigger.sm { height: 24px; padding: 0 18px 0 10px; font-size: var(--fs-cap); }
 
   /* 오른쪽 칸 - 도움말 표시 줄, 아코디언, 추천 카드, 전체 나무 */
   .help-panel-swatch { flex: none; display: inline-flex; align-items: center; justify-content: flex-start; gap: 2px; width: 58px; white-space: nowrap; }
