@@ -4,6 +4,8 @@
 
 ## 2026-11-13
 
+- **Assign 연결선 꼬리·Split 확인 흐름·실행 취소(브랜치 `feat/link-lines`)** — 사용자 피드백: Old·New 끝이 위아래로 벌어지면 두 칸 사이 좁은 틈(약 30px)에 세로선이 다발로 겹쳐 지저분하다. 실제 화면에 세 안(가까운 것만 선·먼 것은 꼬리 / 레인 / 고른 것만)을 주입해 비교했고 사용자가 꼬리 안을 골랐다 — 높이 차 24px 넘는 이음은 평소 양 끝 12px 꼬리만, 고르거나 올리면 선 전체(`link-route-model` `isFarLink`·`buildLinkStubs`). 레인은 틈이 좁아 4px 간격밖에 안 나와 더 복잡했다. 꼬리가 둥근 끝에서 뚝 끊겨 보인다는 피드백으로 상자 쪽 진하게 → 끝 투명 그라디언트로 바꿨다. Split 틈 Join은 반투명 바탕을 올리자마자 채우고(벌어지기 기다림이 곧 버퍼) 벌어진 뒤 300ms 버퍼를 없애 단추가 약 0.75 → 0.45초에 나온다. Split 경계 확인 흐름도 다시 정함(사용자): 누르면 상태 칩 뒤집힘(확인·확인 취소 모두)과 단추 줄 꺼짐이 함께 시작해 칩이 조금 먼저 끝나고, 줄이 다 꺼지면(276ms) 새 줄(Uncheck)을 켜지 않고 넘어간다 — 넘어갈 곳이 없으면 그때 켠다(`isHeld`), 접히는 줄은 꺼진 채(`gone`, 접히는 동안 새 단추가 비쳤다). 경계 확인을 Ctrl+Z 기록에 넣음(사용자 결정): `UnitEdit` op `boundary`·`check_all`(바뀐 단위만, payload에 unit_ids·confirmed — 열 제약이 없어 리비전 불필요), 되돌리기 응답 `EditStepResult`에 `op`·`boundary_unit_ids`·`confirmed`를 실어 알림이 "Undone: Check boundary · Unit 번호"처럼 말하고 그 Unit으로 돌아간다.
+
 - **Assign 오른쪽 패널 재배치(브랜치 `fix/lang-tag`, v0.16.10)** — 사용자 승인 시안대로 목록(위·스크롤) → 결정 칸(아래 고정, 몸통 52% 상한, 고른 곳만 내부 스크롤)으로. 내 판단: 다른 길 셋(Edit·Hold·Clear)은 결정 칸 머리로 올려 고른 곳 → Remark → Confirm 사이에 끼지 않게(확정 위 Clear 오클릭 방지), Help는 맨 아래 그대로. 사용자 추가 요청으로 목록 클릭 → 결정 칸 그림자 비행(`pick-flight.ts`, transform·opacity만). 배치 감사 R2를 한 줄 Remark 기준으로 고침.
 
 - **언어 탭 색·Assign 탭 위치(브랜치 `fix/lang-tag`, v0.16.9)** — v0.16.8 뒤 사용자 피드백: KO/EN을 색으로도 가르고(KO 파랑 accent·EN 초록, v0.16.6 이전 `--lang-*` 값을 `--lang-{ko,en}-{ink,bg,line}`로 되살림), Assign은 늘 보이는 왼쪽 언어 칸(`langLead`) 대신 Split과 같은 위 테두리 탭(올림·고름·포커스, New 칸 짝은 `data-mate-hover`), 연결선은 토큰이 아니라 New 상자 왼쪽 테두리로, 출처 없음은 inset 대신 상자 바깥 2px 틈의 3px 세로선(`::before`). 탭이 연결 배지·끝 표시와 겹치지 않음을 Old/New 연결 문서에서 재어 확인했고, 대비 감사에 고른 Split 조각 장면을 더했다.

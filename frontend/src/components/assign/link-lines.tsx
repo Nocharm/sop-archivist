@@ -1,4 +1,4 @@
-// Assign 두 문서 사이 이음 - 마우스를 올린 조각의 맞은편을 강조하고, 양쪽 끝이 다 보이는 이음만 옅은 선으로 그린다(Old 조각 오른쪽 테두리 배지 높이 → New 문단 상자 왼쪽 테두리 출처 칩 높이, 길은 link-route-model).
+// Assign 두 문서 사이 이음 - 마우스를 올린 조각의 맞은편을 강조하고, 양쪽 끝이 다 보이는 이음만 옅은 선으로 그린다(높이 차가 크면 두 끝 꼬리만, Old 조각 오른쪽 테두리 배지 높이 → New 문단 상자 왼쪽 테두리 출처 칩 높이, 길은 link-route-model).
 // 강조 표시는 React 상태가 아니라 DOM 속성(data-link-hover)으로 단다 - Old 원문 조각이 수천 개일 때 올릴 때마다 용지 전체를 다시 그리지 않게.
 // 선은 스크롤·크기 변경·확대·세로선 끌기마다 다시 재되 한 프레임에 한 번으로 묶는다.
 "use client";
@@ -7,7 +7,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { findLinkPartners, pickDrawnLinks, type LinkPair } from "@/lib/assign-model";
 import { getLinkDirection, type LinkDirection } from "@/lib/link-direction-model";
-import { buildLinkPath } from "@/lib/link-route-model";
+import { buildLinkPath, buildLinkStubs, isFarLink, type LinkStub } from "@/lib/link-route-model";
 
 /** 두 문서를 담은 틀(.assign-panes) 안에 둔다 - 틀이 선의 좌표 기준이자 마우스를 듣는 곳이다 */
 interface LinkLinesProps {
@@ -31,6 +31,8 @@ interface DrawnLine {
   strong: boolean;
   draft: boolean;
   ai: boolean;
+  /** 먼 이음이면 선(d) 대신 두 끝 꼬리 */
+  stubs: LinkStub[] | null;
 }
 
 // 조각 첫 줄 가운데쯤에 선을 붙인다 - 긴 조각의 한가운데로 가면 어느 줄인지 흐려진다(px)
@@ -144,7 +146,10 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
       // 양쪽 끝이 다 보일 때만 - 한쪽이 스크롤 밖이면 선이 문서 머리나 화면 밖으로 뻗는다
       if (start.y < oldFrame.top || start.y > oldFrame.bottom || end.y < newFrame.top || end.y > newFrame.bottom) continue;
       const shift = (point: { x: number; y: number }) => ({ x: point.x - base.left, y: point.y - base.top });
-      next.push({ key: `${pair.unitId}:${pair.targetId}`, d: buildLinkPath(shift(start), shift(end)), strong: pair.strong, draft: pair.draft, ai: pair.ai });
+      // 먼 이음은 고르거나 올렸을 때(strong)만 선 전체 - 평소에는 두 끝 꼬리로 이음이 있다는 것만
+      const stubs = !pair.strong && isFarLink(start, end) ? buildLinkStubs(shift(start), shift(end)) : null;
+      const d = stubs ? "" : buildLinkPath(shift(start), shift(end));
+      next.push({ key: `${pair.unitId}:${pair.targetId}`, d, strong: pair.strong, draft: pair.draft, ai: pair.ai, stubs });
     }
     setLines((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
   });
@@ -231,8 +236,26 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
   return (
     <svg ref={svgRef} className="link-lines" aria-hidden data-testid="assign-link-lines">
       {lines.map((line) => (
-        <g key={line.key} data-strong={line.strong ? "" : undefined} data-draft={line.draft ? "" : undefined} data-ai={line.ai ? "" : undefined}>
-          <path d={line.d} />
+        <g key={line.key} data-strong={line.strong ? "" : undefined} data-draft={line.draft ? "" : undefined} data-ai={line.ai ? "" : undefined} data-stub={line.stubs ? "" : undefined}>
+          {line.stubs ? (
+            line.stubs.map((stub, index) => {
+              // 꼬리는 상자에서 멀어질수록 옅어진다 - 둥근 끝에서 뚝 끊기면 잘린 선처럼 보였다. 그라디언트는 g의 색(currentColor)을 따른다
+              const id = `link-stub-${line.key.replace(":", "-")}-${index}`;
+              return (
+                <g key={id}>
+                  <linearGradient id={id} gradientUnits="userSpaceOnUse" x1={stub.from.x} y1={stub.from.y} x2={stub.to.x} y2={stub.to.y}>
+                    <stop offset="0" stopColor="currentColor" />
+                    <stop offset="0.35" stopColor="currentColor" />
+                    <stop offset="1" stopColor="currentColor" stopOpacity="0" />
+                  </linearGradient>
+                  {/* .link-lines path의 stroke(currentColor)를 이기려고 인라인 스타일 */}
+                  <path d={stub.d} style={{ stroke: `url(#${id})` }} />
+                </g>
+              );
+            })
+          ) : (
+            <path d={line.d} />
+          )}
         </g>
       ))}
     </svg>
