@@ -14,7 +14,18 @@ from openpyxl.worksheet.worksheet import Worksheet
 from app.sop.constants import MAX_INDENT_LEVEL, SLOT_KEYS
 from app.sop.outputs import SLOT_NUMBERS, number_lines
 from tests.docx_factory import build_docx, p
-from tests.sop_helpers import AUTHOR, assign_as_is, create_bundle, find_unit, get_bundle, get_view, put_tobe, upload
+from tests.sop_helpers import (
+    AUTHOR,
+    assign_as_is,
+    create_bundle,
+    find_unit,
+    get_bundle,
+    get_group_by_unit,
+    get_view,
+    put_tobe,
+    save_group,
+    upload,
+)
 from tests.test_sop_outputs import (
     DUPLICATE,
     MERGED,
@@ -359,26 +370,35 @@ PAIRED = [
 PAIR_SLOT = "procedures.procedure"
 
 
-def _setup_pairs(client: TestClient) -> tuple[int, int, list[tuple[int, int]]]:
-    """한/영 연달아 옛 문서의 짝 셋을 사람이 잇고 각 원문을 SOP 한 칸에 그대로 보낸 묶음 — (묶음, SOP, [(한 새 문장, 영 새 문장)])."""
+def _create_sop_bundle(client: TestClient, body: str) -> tuple[int, int, int]:
+    """SOP 하나와 body로 만든 옛 문서 하나의 묶음 — (묶음, SOP, 옛 문서)."""
     bundle_id = create_bundle(client, is_synthetic=True)["id"]
     response = put_tobe(client, bundle_id, [{"code": "SOP-P", "title": "Synthetic SOP", "doc_type": "sop", "parent_code": None}])
     assert response.status_code == 200, response.text
-    sop_id = response.json()["docs"][0]["id"]
-    body = "".join(p(ko) + p(en) for ko, en in PAIRED)
     uploaded = upload(client, bundle_id, build_docx(body), "SYNTHETIC_OLD-P_Pairs.docx")
     assert uploaded.status_code == 201, uploaded.text
-    doc_id = uploaded.json()["id"]
+    return bundle_id, response.json()["docs"][0]["id"], uploaded.json()["id"]
+
+
+def _pair_units(client: TestClient, bundle_id: int, doc_id: int, ko: str, en: str) -> list[dict]:
+    """글이 ko·en인 두 단위를 사람이 짝으로 잇고 [한 단위, 영 단위]를 돌려준다."""
+    view = get_view(client, bundle_id, doc_id)
+    units = [find_unit(view, ko), find_unit(view, en)]
+    assert [unit["lang"] for unit in units] == ["ko", "en"]
+    paired = client.post(
+        f"/api/bundles/{bundle_id}/documents/{doc_id}/pairs",
+        json={"revision": view["document"]["revision"], "unit_ids": [unit["id"] for unit in units]}, headers=AUTHOR,
+    )
+    assert paired.status_code == 201, paired.text
+    return units
+
+
+def _setup_pairs(client: TestClient) -> tuple[int, int, list[tuple[int, int]]]:
+    """한/영 연달아 옛 문서의 짝 셋을 사람이 잇고 각 원문을 SOP 한 칸에 그대로 보낸 묶음 — (묶음, SOP, [(한 새 문장, 영 새 문장)])."""
+    bundle_id, sop_id, doc_id = _create_sop_bundle(client, "".join(p(ko) + p(en) for ko, en in PAIRED))
     targets = []
     for ko, en in PAIRED:
-        view = get_view(client, bundle_id, doc_id)
-        units = [find_unit(view, ko), find_unit(view, en)]
-        assert [unit["lang"] for unit in units] == ["ko", "en"]
-        paired = client.post(
-            f"/api/bundles/{bundle_id}/documents/{doc_id}/pairs",
-            json={"revision": view["document"]["revision"], "unit_ids": [unit["id"] for unit in units]}, headers=AUTHOR,
-        )
-        assert paired.status_code == 201, paired.text
+        units = _pair_units(client, bundle_id, doc_id, ko, en)
         ids = []
         for unit in units:
             (target,) = assign_as_is(client, bundle_id, unit, sop_id, slot_key=PAIR_SLOT)["targets"]
@@ -445,3 +465,117 @@ def test_pair_lines_can_take_different_marks(client: TestClient) -> None:
     styles = _put_styles(client, bundle_id, sop_id, ids, {ko_first: "note", en_first: "omitted"})
 
     assert (styles[ko_first], styles[en_first]) == ("note", "omitted")
+
+
+# ── 새로 놓이는 짝·번역의 기본값(설계 §6 O10) ─────────────────────────────────
+
+LEAD_EN = "Check the synthetic power."
+TAIL_EN = "Clean the synthetic bench."
+
+
+def _save_new_targets(client: TestClient, bundle_id: int, sop_id: int, units: list[dict]) -> dict:
+    """단위마다 원문 그대로의 새 문장을 짝 칸에 — 한 번의 저장으로, 보낸 순서대로."""
+    revisions = {
+        member["unit_id"]: member["decision"]["revision"]
+        for unit in units for member in get_group_by_unit(client, bundle_id, unit["id"])["units"]
+    }
+    response = save_group(client, bundle_id, {
+        "action": "confirm",
+        "units": [{"unit_id": unit["id"], "revision": revisions[unit["id"]], "disposition": "assigned"} for unit in units],
+        "targets": [
+            {"key": f"t{index}", "target_doc_id": sop_id, "slot_key": PAIR_SLOT, "source_unit_ids": [unit["id"]]}
+            for index, unit in enumerate(units)
+        ],
+    })
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _read_slot_lines(client: TestClient, bundle_id: int, slot_key: str = PAIR_SLOT) -> list[tuple[str, str | None, str]]:
+    """한 칸의 항목 — (글, 번호, 번호 표시), 결과물 C 순서."""
+    (sop,) = _get_output(client, bundle_id, "outputs/c")["docs"]
+    section = next(section for section in sop["sections"] if section["location_key"] == slot_key)
+    return [(item["text"], item["number"], item["number_style"]) for item in section["items"]]
+
+
+def test_saving_a_pair_into_one_slot_numbers_english_and_omits_korean(client: TestClient) -> None:
+    ko, en = PAIRED[0]
+    bundle_id, sop_id, doc_id = _create_sop_bundle(client, p(ko) + p(en))
+    units = _pair_units(client, bundle_id, doc_id, ko, en)
+
+    _save_new_targets(client, bundle_id, sop_id, units)  # 한글을 먼저 보내도
+
+    assert _read_pair_slot_items(client, bundle_id) == [("en", "6.1.1", "numbered"), ("ko", None, "omitted")]
+
+
+def test_manual_order_doc_appends_english_then_korean(client: TestClient) -> None:
+    ko, en = PAIRED[0]
+    bundle_id, sop_id, doc_id = _create_sop_bundle(client, p(LEAD_EN) + p(ko) + p(en))
+    (lead,) = assign_as_is(
+        client, bundle_id, find_unit(get_view(client, bundle_id, doc_id), LEAD_EN), sop_id, slot_key=PAIR_SLOT
+    )["targets"]
+    _put_styles(client, bundle_id, sop_id, [lead["id"]], {})  # 순서를 사람이 정한 문서로
+    units = _pair_units(client, bundle_id, doc_id, ko, en)
+
+    saved = _save_new_targets(client, bundle_id, sop_id, units)  # 한글을 먼저 보내도
+
+    assert sorted((target["order_index"], target["lang"]) for target in saved["targets"]) == [(1, "en"), (2, "ko")]
+    assert _read_slot_lines(client, bundle_id) == [
+        (LEAD_EN, "6.1.1", "numbered"), (en, "6.1.2", "numbered"), (ko, None, "omitted"),
+    ]
+
+
+def test_later_human_translation_lands_after_its_source_omitted(client: TestClient) -> None:
+    ko, source_en = PAIRED[1]
+    bundle_id, sop_id, doc_id = _create_sop_bundle(client, p(LEAD_EN) + p(source_en) + p(TAIL_EN))
+    view = get_view(client, bundle_id, doc_id)
+    units = [find_unit(view, text) for text in (LEAD_EN, source_en, TAIL_EN)]
+    ids = [assign_as_is(client, bundle_id, unit, sop_id, slot_key=PAIR_SLOT)["targets"][0]["id"] for unit in units]
+    _put_styles(client, bundle_id, sop_id, ids, {})  # [A, S, B] — 순서를 사람이 정한 문서로
+    source_unit = units[1]
+    group = get_group_by_unit(client, bundle_id, source_unit["id"])
+    (source,) = group["targets"]
+    (member,) = group["units"]
+
+    response = save_group(client, bundle_id, {
+        "action": "confirm",
+        "units": [{"unit_id": source_unit["id"], "revision": member["decision"]["revision"], "disposition": "assigned"}],
+        "targets": [
+            {
+                "key": "s", "id": source["id"], "revision": source["revision"], "slot_key": PAIR_SLOT,
+                "source_unit_ids": [source_unit["id"]],
+            },
+            # 사람이 쓴 다른 언어 문장 — 변경 종류가 번역이다(설계 §6 "번역"의 범위)
+            {
+                "key": "t", "target_doc_id": sop_id, "slot_key": PAIR_SLOT, "lang": "ko", "text": ko,
+                "source_unit_ids": [source_unit["id"]],
+            },
+        ],
+    })
+
+    assert response.status_code == 200, response.text
+    assert _read_slot_lines(client, bundle_id) == [
+        (LEAD_EN, "6.1.1", "numbered"), (source_en, "6.1.2", "numbered"), (ko, None, "omitted"),
+        (TAIL_EN, "6.1.3", "numbered"),
+    ]
+
+
+def test_moving_an_existing_target_keeps_its_mark(client: TestClient) -> None:
+    bundle_id, sop_id, doc_id = _create_sop_bundle(client, p(LEAD_EN))
+    unit = find_unit(get_view(client, bundle_id, doc_id), LEAD_EN)
+    (target,) = assign_as_is(client, bundle_id, unit, sop_id, slot_key=PAIR_SLOT)["targets"]
+    _put_styles(client, bundle_id, sop_id, [target["id"]], {target["id"]: "note"})
+    (member,) = get_group_by_unit(client, bundle_id, unit["id"])["units"]
+    (current,) = get_group_by_unit(client, bundle_id, unit["id"])["targets"]
+
+    response = save_group(client, bundle_id, {
+        "action": "confirm",
+        "units": [{"unit_id": unit["id"], "revision": member["decision"]["revision"], "disposition": "assigned"}],
+        "targets": [{
+            "key": "t", "id": current["id"], "revision": current["revision"], "slot_key": "scope",
+            "source_unit_ids": [unit["id"]],
+        }],
+    })
+
+    assert response.status_code == 200, response.text
+    assert _read_slot_lines(client, bundle_id, "scope") == [(LEAD_EN, None, "note")]

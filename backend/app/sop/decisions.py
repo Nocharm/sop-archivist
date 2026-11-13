@@ -61,6 +61,7 @@ from app.sop.pair_settle import settle_pairs
 from app.sop.schemas import NO_NUL, NoNulStr
 from app.sop.segment import detect_language, has_visible_char
 from app.sop.status import get_cover_status
+from app.sop.target_placement import Arranged, NewTarget, Spot, arrange_new_targets, insert_after
 from app.sop.tobe import MAX_DB_INT, is_within_slot
 from app.sop.units import UNIT_ACTIVE, compute_display_id
 
@@ -226,6 +227,7 @@ class _State:
     steps: dict[int, set[int]]
     table_shapes: dict[int, tuple[int, int]]  # 원문 표 id → (행 수, 열 수)
     cell_positions: dict[int, tuple[int, int]]  # 칸 문장 → 블록의 (행, 열)
+    pair_of: dict[int, int]  # 보낸 단위(와 칸 문장) → 한/영 짝 id — 짝 없는 단위는 키가 없다. 새로 놓이는 짝의 기본값이 본다
 
 
 class _Place(NamedTuple):
@@ -390,6 +392,16 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
         docs=docs, na_slots=na_slots, steps=steps,
         table_shapes=await load_table_shapes(session, [units[unit_id] for unit_id in table_unit_ids]),
         cell_positions=await load_cell_positions(session, [units[cell_id] for cell_id in group_of]),
+        pair_of={
+            unit_id: pair_id
+            for unit_id, pair_id in await select_in_chunks(
+                session,
+                lambda chunk: select(UnitPairMember.unit_id, UnitPairMember.pair_id).where(
+                    UnitPairMember.unit_id.in_(chunk)
+                ),
+                units,
+            )
+        },
     )
 
 
@@ -905,8 +917,8 @@ def _apply_plan(
         target.confirmed_text = plan.text
     elif plan.origin != ORIGIN_NEW_DOC:
         if target.target_doc_id != plan.doc.id:
-            # 순서를 사람이 정한 문서면 끝에, 아니면 결과물이 출처 위치로 정렬하므로 0
-            is_appended = plan.doc.manual_order and not plan.is_cell
+            # 순서를 사람이 정한 문서면 끝에, 아니면 결과물이 출처 위치로 정렬하므로 0. 새로 만드는 새 문장은 _place_new_targets가 놓는다
+            is_appended = plan.doc.manual_order and not plan.is_cell and plan.row is not None
             target.order_index = next_orders[plan.doc.id] if is_appended else 0
             if is_appended:
                 next_orders[plan.doc.id] += 1
@@ -927,6 +939,64 @@ def _apply_plan(
     target.revision += 1
     plan.row = target
     return target
+
+
+def _get_spot(plan: _Plan) -> Spot:
+    """저장 뒤 새 문서·칸 키·WI 단계·부분 — 새로 놓이는 짝·번역의 기본값이 "같은 칸"으로 보는 범위(설계 §6)."""
+    place = _get_saved_place(plan)
+    return (place.doc_id, place.slot_key, place.wi_step, place.wi_part)
+
+
+def _find_placed_sources(plans: list[_Plan]) -> dict[tuple[Spot, int], list[_Plan]]:
+    """(자리, 첫 출처 단위) → 저장 뒤 그 자리에 있는 번역 아닌 기존 새 문장 — 나중에 들어오는 번역이 그 바로 뒤로 간다(설계 §6).
+
+    번역의 출처 단위는 보낸 단위라 그 단위의 기존 새 문장은 닫힘 검사로 모두 이 저장에 들어 있다(지울 것은 빠진다). 출처는
+    결과물 C의 정렬 키(outputs._get_base_unit_id)처럼 첫 출처로 본다.
+    """
+    placed: dict[tuple[Spot, int], list[_Plan]] = defaultdict(list)
+    for plan in plans:
+        if plan.row is not None and not plan.is_cell and plan.sources and plan.change_type != "translated":
+            placed[(_get_spot(plan), plan.sources[0])].append(plan)
+    return placed
+
+
+def _build_new_target(plan: _Plan, placed: dict[tuple[Spot, int], list[_Plan]], state: _State) -> NewTarget:
+    source_unit_id = plan.sources[0]  # 새 새 문장은 출처가 있어야 저장된다(sources_required)
+    spot = _get_spot(plan)
+    return NewTarget(
+        key=plan.item.key, place=spot, meaning=state.pair_of.get(source_unit_id, -source_unit_id), lang=plan.lang,
+        source_unit_id=source_unit_id, is_translation=plan.change_type == "translated",
+        source_placed=(spot, source_unit_id) in placed,
+    )
+
+
+async def _place_new_targets(
+    session: AsyncSession,
+    arranged: list[Arranged],
+    new_plans: dict[str, _Plan],
+    placed: dict[tuple[Spot, int], list[_Plan]],
+    next_orders: dict[int, int],
+) -> None:
+    """새로 만든 새 문장에 기본 표시를 쓰고, 순서를 사람이 정한 문서면 받은 순서대로 끝에 붙이거나 나중 번역을 기존 출처 바로 뒤에 끼운다.
+
+    끼우면 출처 뒤 새 문장이 한 칸씩 밀려 그 문서의 최댓값도 하나 늘므로 다음 끝자리도 하나 민다. 한 출처 뒤에 번역이 둘 오면 앞
+    번역 뒤에 잇는다. 기존 새 문장을 다른 칸으로 옮기는 저장은 여기 오지 않는다 — 사람이 고른 표시를 덮지 않는다(설계 §6 O10).
+    """
+    for item in arranged:
+        new_plans[item.key].row.number_style = item.number_style
+    anchors: dict[tuple[Spot, int], TargetSentence] = {}
+    for item in arranged:
+        plan = new_plans[item.key]
+        if not plan.doc.manual_order:  # 순서는 결과물의 정렬 키가 정한다
+            continue
+        if item.after_existing_source:
+            key = (_get_spot(plan), plan.sources[0])
+            anchor = anchors.get(key) or max((source.row for source in placed[key]), key=lambda row: row.order_index)
+            plan.row.order_index = await insert_after(session, anchor)
+            anchors[key] = plan.row
+        else:
+            plan.row.order_index = next_orders[plan.doc.id]
+        next_orders[plan.doc.id] += 1
 
 
 async def _write_group(
@@ -965,6 +1035,9 @@ async def _write_group(
             session.expunge(target)
 
     next_orders = await _load_next_orders(session, plans)
+    placed = _find_placed_sources(plans)
+    new_plans = {plan.item.key: plan for plan in plans if plan.row is None and not plan.is_cell}
+    arranged = arrange_new_targets([_build_new_target(plan, placed, state) for plan in new_plans.values()])
     written: list[TargetSentence] = []
     for is_cell in (False, True):
         for plan in plans:
@@ -973,6 +1046,8 @@ async def _write_group(
                     session, plan, state, next_orders, bundle_id=bundle_id, action=payload.action,
                     hold_reason=hold_reason, actor=actor, stamp=stamp,
                 ))
+        if not is_cell:
+            await _place_new_targets(session, arranged, new_plans, placed, next_orders)
         await session.flush()  # 칸 새 문장이 부모 id를, 출처 연결이 새 문장 id를 알아야 한다
 
     rewritten = [plan.item.id for plan in plans if plan.item.id is not None]
