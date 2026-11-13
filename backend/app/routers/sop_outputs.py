@@ -24,9 +24,8 @@ from app.sop.detach import ORIGIN_NEW_DOC, ORIGIN_TRANSLATION, load_source_targe
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
 from app.sop.excel_export import ExportMeta, build_export_file_name, build_workbook
-from app.sop.groups import select_in_chunks
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
-from app.sop.models import Bundle, TargetDoc, TargetSentence, TargetSource, UnitPairMember, WiStep
+from app.sop.models import Bundle, TargetDoc, TargetSentence, WiStep
 from app.sop.outputs import (
     ARow,
     COutput,
@@ -55,7 +54,7 @@ class OrderItemIn(BaseModel):
     wi_step: DbId | None = None
     # 들여쓰기 깊이 — 보낸 경우에만 바꾼다(null도 바꾸지 않음). 앞줄보다 깊은 값도 받는다(결과물이 셀 때 눌러 읽는다)
     indent_level: int | None = Field(default=None, ge=0, le=MAX_INDENT_LEVEL)
-    # 번호 표시 — 보낸 경우에만 바꾼다(null도 바꾸지 않음). 한/영 짝 원문 줄의 상대와 번역 줄은 서버가 함께 바꾼다
+    # 번호 표시 — 보낸 경우에만 바꾼다(null도 바꾸지 않음). 이 줄만 바꾼다(짝 상대·번역은 따라 바뀌지 않는다)
     number_style: NumberStyle | None = None
 
 
@@ -204,57 +203,11 @@ async def _check_indents(
     return {**indents, **followers}
 
 
-async def _load_pair_partners(session: AsyncSession, tops: dict[int, TargetSentence]) -> dict[int, int]:
-    """한/영 짝 원문 줄의 상대 새 문장(같은 새 문서의 칸 새 문장이 아닌 줄) — 두 판이 같은 번호가 되게 표시를 함께 바꾼다.
+def _check_number_styles(doc: TargetDoc, tops: dict[int, TargetSentence], items: list[OrderItemIn]) -> dict[int, str]:
+    """바뀌는 번호 표시(새 문장 → 표시)를 돌려준다. 쓰기 전에 검사만 한다.
 
-    이 줄의 출처 단위가 하나이고 그 단위의 짝(제안·확정 모두, 단위 둘)의 다른 단위가 이 문서에 새 문장을 딱 하나 만들었을 때만
-    정한다(1:N이면 상대를 하나로 정할 수 없다). 프런트가 깊이를 함께 보낼 때 쓰는 상대(section-number.ts findPartnerTarget)와 같은 규칙이다.
-    """
-    candidates = [target_id for target_id, row in tops.items() if row.origin != ORIGIN_TRANSLATION]
-    links = await select_in_chunks(
-        session, lambda chunk: select(TargetSource.target_id, TargetSource.unit_id).where(TargetSource.target_id.in_(chunk)),
-        candidates,
-    )
-    unit_ids: dict[int, list[int]] = defaultdict(list)
-    targets_of_unit: dict[int, list[int]] = defaultdict(list)
-    for target_id, unit_id in links:
-        unit_ids[target_id].append(unit_id)
-        targets_of_unit[unit_id].append(target_id)
-    single = {target_id: units[0] for target_id, units in unit_ids.items() if len(units) == 1}
-    pair_of = dict(
-        (unit_id, pair_id) for unit_id, pair_id in await select_in_chunks(
-            session,
-            lambda chunk: select(UnitPairMember.unit_id, UnitPairMember.pair_id).where(UnitPairMember.unit_id.in_(chunk)),
-            set(single.values()),
-        )
-    )
-    members: dict[int, list[int]] = defaultdict(list)
-    for pair_id, unit_id in await select_in_chunks(
-        session,
-        lambda chunk: select(UnitPairMember.pair_id, UnitPairMember.unit_id).where(UnitPairMember.pair_id.in_(chunk)),
-        set(pair_of.values()),
-    ):
-        members[pair_id].append(unit_id)
-    partners: dict[int, int] = {}
-    for target_id, unit_id in single.items():
-        pair_units = members.get(pair_of.get(unit_id, -1), [])
-        if len(pair_units) != 2:
-            continue
-        other = next(member for member in pair_units if member != unit_id)
-        found = [candidate for candidate in targets_of_unit.get(other, []) if candidate != target_id]
-        if len(found) == 1:
-            partners[target_id] = found[0]
-    return partners
-
-
-async def _check_number_styles(
-    session: AsyncSession, doc: TargetDoc, tops: dict[int, TargetSentence], items: list[OrderItemIn]
-) -> dict[int, str]:
-    """바뀌는 번호 표시(새 문장 → 표시)를 돌려준다 — 한/영 짝 상대와 번역 줄도 함께 싣는다. 쓰기 전에 검사만 한다.
-
-    짝 상대는 서버가 따라 바꾼다(프런트가 한쪽만 보내도 두 판이 어긋나지 않게). 두 쪽을 서로 다른 값으로 바꾸려 하면
-    422 number_style_pair_mismatch다. 번역의 표시는 출처를 따라 잠겨 있어 출처의 바뀐 뒤 표시와 다르게 보내면 422 translation_locked,
-    출처만 보내면 번역이 보류 없이 따라간다(깊이와 같은 규칙). 입구 2 문서는 번호를 새로 매기지 않으므로 422 number_style_not_allowed다.
+    표시는 그 문장에만 속한다 — 한/영 짝 상대도 번역도 따라 바뀌지 않고, 번역도 출처와 다른 표시를 가질 수 있다.
+    입구 2 문서는 번호를 새로 매기지 않으므로 422 number_style_not_allowed다.
     다른 칸·단계로 옮겨도 표시는 그대로다 — 깊이와 달리 앞뒤 줄에 기대지 않는 그 줄 자체의 성격이다.
     """
     requested = {
@@ -262,36 +215,9 @@ async def _check_number_styles(
         for item in items
         if item.number_style is not None and item.number_style != tops[item.target_id].number_style
     }
-    if not requested:
-        return {}
-    if doc.entrance == "match":
+    if requested and doc.entrance == "match":
         raise_rule(422, "number_style_not_allowed", target_ids=sorted(requested))
-    partners = await _load_pair_partners(session, tops)
-    styles = dict(requested)
-    for target_id, style in requested.items():
-        partner = partners.get(target_id)
-        if partner is None:
-            continue
-        if partner in requested and requested[partner] != style:
-            raise_rule(422, "number_style_pair_mismatch", target_ids=sorted((target_id, partner)))
-        styles[partner] = style
-    translation_ids = [target_id for target_id, row in tops.items() if row.origin == ORIGIN_TRANSLATION]
-    if not translation_ids:
-        return styles
-    source_ids = await load_source_target_ids(session, translation_ids)
-
-    def get_final_style(target_id: int) -> str | None:
-        return styles.get(target_id, tops[target_id].number_style) if target_id in tops else None
-
-    astray = sorted(
-        target_id for target_id in requested
-        if target_id in source_ids and get_final_style(source_ids[target_id]) != requested[target_id]
-    )
-    if astray:
-        raise_rule(422, "translation_locked", target_ids=astray)
-    # 번역은 출처와 같은 표시다 — 표시만 바뀐 것은 글·자리가 그대로라 sweep_translations(보류·지우기)를 거치지 않고 따라간다
-    followers = {target_id: styles[source_id] for target_id, source_id in source_ids.items() if source_id in styles}
-    return {**styles, **followers}
+    return requested
 
 
 async def reorder_targets(
@@ -341,7 +267,7 @@ async def reorder_targets(
         if undeclared:
             raise_rule(422, "unknown_wi_step", target_ids=undeclared)
     indents = await _check_indents(session, doc, tops, payload.items, moves.keys())
-    number_styles = await _check_number_styles(session, doc, tops, payload.items)
+    number_styles = _check_number_styles(doc, tops, payload.items)
 
     cells: dict[int, list[TargetSentence]] = defaultdict(list)
     for row in rows:

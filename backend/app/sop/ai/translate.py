@@ -34,6 +34,7 @@ from app.sop.detach import (
     TRANSLATED_TARGET_ID,
     drop_translations,
 )
+from app.sop.constants import NUMBER_OMITTED
 from app.sop.groups import select_in_chunks
 from app.sop.models import (
     AiJob,
@@ -46,6 +47,7 @@ from app.sop.models import (
     UnitPairMember,
 )
 from app.sop.segment import has_visible_char
+from app.sop.target_placement import insert_after
 from app.sop.units import UNIT_ACTIVE
 
 TRANSLATE_KIND = "translate"
@@ -294,12 +296,14 @@ def _add_result(session: AsyncSession, job: AiJob, loaded: _Loaded, computed: _V
     )
 
 
-def _build_translation(job: AiJob, source: TargetSentence, computed: _Verdict, suggestion_id: int) -> TargetSentence:
-    """번역 새 문장 — 자리·칸 자리는 출처 새 문장과 같고(설계 §7.9) 확정 글은 비워 둔다. 순서도 같아 사람이 정한 순서의 문서에서도 출처 자리에 온다."""
+def _build_translation(
+    job: AiJob, source: TargetSentence, computed: _Verdict, suggestion_id: int, order_index: int
+) -> TargetSentence:
+    """번역 새 문장 — 자리·칸 자리는 출처 새 문장과 같고(설계 §7.9) 확정 글은 비워 둔다. 번호 표시는 생략으로 시작한다(출처 표시와 따로)."""
     return TargetSentence(
         bundle_id=job.bundle_id, target_doc_id=source.target_doc_id, slot_key=source.slot_key, wi_step=source.wi_step,
-        wi_part=source.wi_part, section_path=source.section_path, order_index=source.order_index,
-        indent_level=source.indent_level, number_style=source.number_style,
+        wi_part=source.wi_part, section_path=source.section_path, order_index=order_index,
+        indent_level=source.indent_level, number_style=NUMBER_OMITTED,
         lang=job.payload["to"], kind="sentence", confirmed_text="", ai_text=computed.text, change_type="translated",
         origin=ORIGIN_TRANSLATION, translation_source_unit_id=job.unit_ids[0], parent_target_id=source.parent_target_id,
         cell_row=source.cell_row, cell_col=source.cell_col, status=AI_SUGGESTED, warnings=list(computed.warnings),
@@ -357,7 +361,11 @@ class TranslateHandler:
         await drop_translations(session, previous)
         suggestion = _add_result(session, job, loaded, computed, "applied")
         await session.flush()  # 새 문장이 제안 id를 가리킨다
-        target = _build_translation(job, source, computed, suggestion.id)
+        doc = await session.get_one(TargetDoc, source.target_doc_id)
+        order_index = source.order_index
+        if doc.manual_order and source.parent_target_id is None:  # 사람이 정한 순서의 문서는 출처 바로 뒤에 끼운다
+            order_index = await insert_after(session, source)
+        target = _build_translation(job, source, computed, suggestion.id, order_index)
         session.add(target)
         await session.flush()
         suggestion.content = _build_content(job, computed.text, target.id)
