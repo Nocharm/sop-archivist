@@ -33,8 +33,6 @@ const MARK_ICONS: Record<PaperMark, typeof CircleCheck> = {
   checked: CircleCheck,
 };
 const MARK_ORDER: readonly PaperMark[] = ["edited", "pair", "classified", "ai", "suggest", "warn", "checked"];
-/** 끝 아이콘 하나가 차지하는 폭(px) - 아이콘 14 + 사이 5(.strip-marks gap). 언어 칩이 그만큼 왼쪽에 선다 */
-const MARK_STEP = 19;
 const MARK_LABELS: Record<PaperMark, string> = {
   edited: "split.legendEdited",
   pair: "split.legendPair",
@@ -516,25 +514,19 @@ export function Paper({
     );
   }
 
-  /** 조각 끝 아이콘 표시의 목록(그리는 순서) */
-  function listMarks(unit: ViewUnit | undefined, hasWarn: boolean): PaperMark[] {
-    if (!strips) return [];
+  /** 조각 끝 아이콘 표시 - 고른 조각의 것만 Tab으로 닿는다(수천 개가 Tab 순서에 들지 않게) */
+  function renderMarks(unit: ViewUnit | undefined, hasWarn: boolean, className: string): ReactNode {
+    if (!strips) return null;
     const marks = new Set<PaperMark>();
     if (unit) {
       for (const mark of getMarks({ ...unit, status: strips.statusOf?.(unit.id) ?? unit.status })) if (mark !== "checked") marks.add(mark);
       if (strips.isChecked(unit) && !strips.hideChecked) marks.add("checked");
     }
     if (hasWarn) marks.add("warn");
-    return MARK_ORDER.filter((mark) => marks.has(mark));
-  }
-
-  /** 조각 끝 아이콘 표시 - 고른 조각의 것만 Tab으로 닿는다(수천 개가 Tab 순서에 들지 않게) */
-  function renderMarks(unit: ViewUnit | undefined, hasWarn: boolean, className: string): ReactNode {
-    const marks = listMarks(unit, hasWarn);
-    if (marks.length === 0) return null;
+    if (marks.size === 0) return null;
     return (
       <span className={className}>
-        {marks.map((mark) => {
+        {MARK_ORDER.filter((mark) => marks.has(mark)).map((mark) => {
           const Icon = MARK_ICONS[mark];
           const label = t(MARK_LABELS[mark]);
           return (
@@ -557,8 +549,8 @@ export function Paper({
   }
 
   /** 조각 언어 칩(KO/EN) - 늘 그려 두고 조각을 올리거나 고를 때만 CSS가 드러낸다(조각마다 호버 상태를 두지 않는다). 짝이면 구성원 모두.
-   *  자리는 끝 아이콘 바로 왼쪽(오른쪽 여백 --pg-pad-r 안) - 아이콘이 셋 이상이면 여백이 모자라 글을 덮으니 아이콘 줄 아래로 내린다. 언어가 없는 단위(neutral)는 없다 */
-  function renderLang(unit: ViewUnit | undefined, markCount: number): ReactNode {
+   *  자리는 조각 위 테두리 오른쪽 끝에 걸친 작은 탭 - 글·끝 아이콘과 겹치지 않고 조각 높이를 바꾸지 않는다. 언어가 없는 단위(neutral)는 없다 */
+  function renderLang(unit: ViewUnit | undefined): ReactNode {
     if (!unit || unit.lang === "neutral") return null;
     const label = t(`paper.lang.${unit.lang}`);
     return (
@@ -567,8 +559,6 @@ export function Paper({
         role="img"
         aria-label={label}
         data-tip={label}
-        data-at={markCount >= 3 ? "below" : undefined}
-        style={{ "--marks-w": `${markCount * MARK_STEP}px` }}
         tabIndex={unit.id === selectedId ? 0 : -1}
         data-testid={`${testId}-lang-${unit.id}`}
       >
@@ -783,7 +773,7 @@ export function Paper({
           {foot}
           {pills}
           {renderMarks(unit, hasWarn, "strip-marks")}
-          {row.type === "piece" && renderLang(unit, listMarks(unit, hasWarn).length)}
+          {row.type === "piece" && renderLang(unit)}
         </div>
       </div>
     );
