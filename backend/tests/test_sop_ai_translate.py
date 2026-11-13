@@ -734,7 +734,8 @@ def test_translation_of_a_match_target_keeps_its_section(client: TestClient, fak
     confirmed = save_translation(client, bundle.id, target)
     assert confirmed.status_code == 200, confirmed.text
     (doc,) = [doc for doc in get_output_c(client, bundle.id, "en")["docs"] if doc["target_doc_id"] == source.target_doc_id]
-    assert [item["text"] for section in doc["sections"] for item in section["items"]] == [TRANSLATED]
+    # 한 벌 — 입구 2 새 문장 바로 뒤에 그 번역
+    assert [item["text"] for section in doc["sections"] for item in section["items"]] == [LONE_KO, TRANSLATED]
 
 
 # --- 사람 확정 ---
@@ -1325,8 +1326,11 @@ def test_translation_does_not_change_the_cover_counts(client: TestClient, fake_a
     translate(client, fake_ai, bundle.id, unit["id"])
 
     after = client.get(f"/api/bundles/{bundle.id}/summary", headers=AUTHOR).json()
-    assert after["en"] == {**before["en"], "translated": 1}
-    assert after["ko"] == before["ko"]
+    # 옛 줄 숫자는 그대로, 번역 묶음 하나가 는다(한 언어만 있는 줄은 번역으로 채워져 진행 숫자와 같이 움직인다)
+    assert after == {**before, "translated": 1, "single_language": after["single_language"]}
+    assert after["single_language"] == client.get(f"/api/bundles/{bundle.id}", headers=AUTHOR).json()["progress"][
+        "single_language"
+    ]
 
 
 # --- 출처가 바뀌면 번역을 다시 본다 ---
@@ -2450,13 +2454,14 @@ def test_output_c_and_summary_include_translations(client: TestClient, fake_ai: 
     bundle, unit = make_assigned_unit(client)
     target = translate(client, fake_ai, bundle.id, unit["id"])
 
-    (item,) = read_slot_items(get_output_c(client, bundle.id, "en"), "SOP-AI")
+    # 한 벌 — 출처 바로 뒤에 번역, 같은 묶음 키
+    (ko_item, item) = read_slot_items(get_output_c(client, bundle.id, "en"), "SOP-AI")
     summary = client.get(f"/api/bundles/{bundle.id}/summary", headers=AUTHOR).json()
 
     assert (item["target_id"], item["lang"], item["ai_text"], item["change_type"]) == (target.id, "en", TRANSLATED, "translated")
     assert item["source_note"].startswith("← ") and item["source_note"].endswith(" (translated)")
-    assert (summary["en"]["translated"], summary["ko"]["translated"]) == (1, 0)
-    (ko_item,) = read_slot_items(get_output_c(client, bundle.id, "ko"), "SOP-AI")
+    assert (item["origin"], item["meaning_key"]) == ("translation", ko_item["meaning_key"])
+    assert summary["translated"] == 1
     assert ko_item["text"] == LONE_KO
 
 
@@ -2466,9 +2471,9 @@ def test_output_c_note_in_korean_marks_a_translation(client: TestClient, fake_ai
     queue_translation(client, bundle.id, unit["id"], "en_to_ko")
     run_jobs()
 
-    items = read_slot_items(get_output_c(client, bundle.id, "ko"), "SOP-AI")
+    (source, translation) = read_slot_items(get_output_c(client, bundle.id, "ko"), "SOP-AI")
 
-    assert [item["source_note"].rsplit(" ", 1)[-1] for item in items] == ["(번역)"]
+    assert (source["text"], translation["source_note"].rsplit(" ", 1)[-1]) == (LONE_EN, "(번역)")
 
 
 def test_output_c_puts_a_cell_translation_under_its_table(client: TestClient, fake_ai: FakeAi) -> None:
@@ -2491,11 +2496,11 @@ def test_output_c_sorts_a_translation_by_its_source_unit(client: TestClient, fak
     english = get_view(client, bundle.id, later.json()["id"])["units"][0]
     assign_as_is(client, bundle.id, english, bundle.sop_id, slot_key=SLOT)
 
-    # 번역이 나중에 만들어졌어도 앞선 문서의 단위를 옮긴 것이라 뒤 문서의 영어 문장 앞에 온다
+    # 번역이 나중에 만들어졌어도 앞선 문서의 단위를 옮긴 것이라 출처 바로 뒤, 뒤 문서의 영어 문장 앞에 온다
     translate(client, fake_ai, bundle.id, unit["id"])
 
     items = read_slot_items(get_output_c(client, bundle.id, "en"), "SOP-AI")
-    assert [item["text"] or item["ai_text"] for item in items] == [TRANSLATED, LONE_EN]
+    assert [item["text"] or item["ai_text"] for item in items] == [LONE_KO, TRANSLATED, LONE_EN]
 
 
 def test_manual_order_keeps_a_translation_next_to_its_source(client: TestClient, fake_ai: FakeAi) -> None:
@@ -2520,7 +2525,7 @@ def test_manual_order_keeps_a_translation_next_to_its_source(client: TestClient,
 
     assert target.order_index == 0
     assert [item["target_id"] for item in read_slot_items(get_output_c(client, bundle.id, "en"), "SOP-AI")] == [
-        target.id, english["id"],
+        source["id"], target.id, english["id"],
     ]
 
 
@@ -2539,11 +2544,10 @@ def test_indenting_the_source_carries_a_confirmed_translation_without_a_hold(cli
     # 깊이는 번호만 바꾸는 표시라 확정 번역을 보류로 돌리지 않는다
     followed = load_translation(unit["id"])
     assert (followed.status, followed.indent_level, followed.revision) == ("confirmed", 2, translation.revision)
-    # 칸의 첫 줄은 앞줄이 없어 맨 바깥으로 눌러 읽는다 — 두 판 모두 같은 번호
-    (ko_item,) = read_slot_items(get_output_c(client, bundle.id, "ko"), "SOP-AI")
-    (en_item,) = read_slot_items(get_output_c(client, bundle.id, "en"), "SOP-AI")
+    # 한 칸을 한 줄로 센다 — 첫 줄은 앞줄이 없어 맨 바깥으로, 번역(아직 출처의 번호 표시를 따른다)은 앞줄 깊이 + 1로 눌러 읽는다
+    (ko_item, en_item) = read_slot_items(get_output_c(client, bundle.id, "ko"), "SOP-AI")
     assert (ko_item["number"], ko_item["indent_level"]) == ("1.1", 2)
-    assert (en_item["target_id"], en_item["number"], en_item["indent_level"]) == (translation.id, "1.1", 2)
+    assert (en_item["target_id"], en_item["number"], en_item["indent_level"]) == (translation.id, "1.1.1", 2)
 
 
 def test_indenting_the_source_keeps_an_ai_translation(client: TestClient, fake_ai: FakeAi) -> None:
@@ -2645,8 +2649,7 @@ def test_marking_the_source_carries_a_confirmed_translation_without_a_hold(clien
     # 표시는 번호만 바꾸므로 확정 번역을 보류로 돌리지 않고 revision도 그대로다
     followed = load_translation(unit["id"])
     assert (followed.status, followed.number_style, followed.revision) == ("confirmed", "note", translation.revision)
-    (ko_item,) = read_slot_items(get_output_c(client, bundle.id, "ko"), "SOP-AI")
-    (en_item,) = read_slot_items(get_output_c(client, bundle.id, "en"), "SOP-AI")
+    (ko_item, en_item) = read_slot_items(get_output_c(client, bundle.id, "ko"), "SOP-AI")
     assert (ko_item["number"], ko_item["number_style"]) == (None, "note")
     assert (en_item["target_id"], en_item["number"], en_item["number_style"]) == (translation.id, None, "note")
 
@@ -2685,8 +2688,9 @@ def test_moving_the_source_to_another_slot_keeps_both_marks(client: TestClient, 
     assert response.status_code == 200, response.text
     moved = load_translation(unit["id"])
     assert (moved.slot_key, moved.number_style) == (OTHER_SLOT, "note")
-    (ko_item,) = read_slot_items(get_output_c(client, bundle.id, "ko"), "SOP-AI", OTHER_SLOT)
+    (ko_item, en_item) = read_slot_items(get_output_c(client, bundle.id, "ko"), "SOP-AI", OTHER_SLOT)
     assert (ko_item["target_id"], ko_item["number"], ko_item["number_style"]) == (source["id"], None, "note")
+    assert (en_item["target_id"], en_item["number"], en_item["number_style"]) == (translation.id, None, "note")
 
 
 def test_a_new_translation_starts_with_its_source_mark(client: TestClient, fake_ai: FakeAi) -> None:
@@ -2729,8 +2733,8 @@ def test_held_translation_of_a_retired_unit_stays_visible(client: TestClient, fa
 
     assert (row["status"], row["confirmed_text"], row["display_id"], row["old_doc_code"]) == ("on_hold", TRANSLATED, "", "")
     assert (row["unit_id"], row["location"]["section"]) == (unit["id"], "")
-    assert (item["target_id"], item["source_note"]) == (target.id, "")
-    assert summary["en"]["translated"] == 1
+    assert (item["target_id"], item["source_note"], item["meaning_key"]) == (target.id, "", None)  # 고아 번역은 묶음 키가 없다
+    assert summary["translated"] == 1
     assert workbook.status_code == 200
 
 

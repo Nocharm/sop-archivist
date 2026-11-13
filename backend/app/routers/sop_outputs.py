@@ -49,11 +49,6 @@ XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.s
 MAX_ORDER_ITEMS = 20000  # 순서 바꾸기 한 번에 싣는 새 문장 수 — 새 문서 하나의 새 문장 전부가 들어가는 크기
 
 
-class SummaryOut(BaseModel):
-    ko: Summary
-    en: Summary
-
-
 class OrderItemIn(BaseModel):
     target_id: DbId
     # 보낸 경우에만 바꾼다 — null은 "단계 없음"으로 옮긴다는 뜻이라 생략과 다르다(model_fields_set으로 가린다)
@@ -109,31 +104,33 @@ async def get_output_a(
 
 @router.get("/{bundle_id}/outputs/b", response_model=FlowGraph)
 async def get_output_b(
-    lang: Literal["ko", "en"] = Query(),
+    lang: Literal["ko", "en"] = Query("en"),
     ctx: BundleContext = Depends(_require_member),
     session: AsyncSession = Depends(get_session),
 ) -> FlowGraph:
+    """결과물 B 한 벌 — lang은 노드 라벨 언어만(없으면 en)."""
     snap = await _load_snapshot_for_read(session, ctx.bundle.id)
     return await asyncio.to_thread(build_output_b, snap, lang)
 
 
 @router.get("/{bundle_id}/outputs/c", response_model=COutput)
 async def get_output_c(
-    lang: Literal["ko", "en"] = Query(),
+    lang: Literal["ko", "en"] = Query("en"),
     ctx: BundleContext = Depends(_require_member),
     session: AsyncSession = Depends(get_session),
 ) -> COutput:
+    """결과물 C 한 벌 — 칸마다 두 언어가 한 목록, lang은 라벨 언어만(없으면 en)."""
     snap = await _load_snapshot_for_read(session, ctx.bundle.id)
     return await asyncio.to_thread(build_output_c, snap, lang)
 
 
-@router.get("/{bundle_id}/summary", response_model=SummaryOut)
+@router.get("/{bundle_id}/summary", response_model=Summary)
 async def get_summary(
     ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
-) -> SummaryOut:
+) -> Summary:
+    """요약 숫자 한 벌 — 옛 쪽은 진행 숫자와 같은 줄로 센다."""
     snap = await _load_snapshot_for_read(session, ctx.bundle.id)
-    ko, en = await asyncio.to_thread(lambda: (build_summary(snap, "ko"), build_summary(snap, "en")))
-    return SummaryOut(ko=ko, en=en)
+    return await asyncio.to_thread(build_summary, snap)
 
 
 @router.get("/{bundle_id}/export.xlsx")

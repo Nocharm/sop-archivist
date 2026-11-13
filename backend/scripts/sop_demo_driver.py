@@ -160,11 +160,10 @@ class SyntheticDriver:
     def find_match_target(self, code: str, text: str) -> dict:
         """입구 2 새 문서의 새 문장(글자로 찾는다)과 그 지금 revision·자리."""
         if not self._match_targets:
-            for lang in LANGS:
-                for doc in self.get("/outputs/c", lang=lang)["docs"]:
-                    if doc["entrance"] == "match":
-                        for item in iter_c_items(doc):
-                            self._match_targets[(doc["code"], item["text"])] = item["target_id"]
+            for doc in self.get("/outputs/c")["docs"]:
+                if doc["entrance"] == "match":
+                    for item in iter_c_items(doc):
+                        self._match_targets[(doc["code"], item["text"])] = item["target_id"]
         target_id = self._match_targets[(code, text)]
         group = self.get(f"/groups/by-target/{target_id}")
         return next(target for target in group["targets"] if target["id"] == target_id)
@@ -408,11 +407,8 @@ class SyntheticDriver:
         return response.status_code, response.json()
 
     def load_outputs(self) -> dict[str, dict | list]:
-        """결과물 — A는 한 벌(`"a"`), B·C는 아직 언어별(`"ko"`·`"en"` 아래 `"b"`·`"c"`)."""
-        return {
-            "a": self.get("/outputs/a"),
-            **{lang: {name: self.get(f"/outputs/{name}", lang=lang) for name in ("b", "c")} for lang in LANGS},
-        }
+        """결과물 A·B·C 한 벌(`"a"`·`"b"`·`"c"`) — 라벨은 기본 언어(en)."""
+        return {name: self.get(f"/outputs/{name}") for name in ("a", "b", "c")}
 
 
 def find_unit_by_text(view: dict, text: str, occurrence: int, kinds: tuple[str, ...]) -> dict:

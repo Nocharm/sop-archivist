@@ -332,12 +332,13 @@ def _describe_node(node: FlowNode) -> str:
 
 def _write_sheet_b(sheet: Worksheet, snap: BundleSnapshot, lang: Lang, labels: ExcelLabels) -> None:
     """요약 숫자 표, 옛 문서 × 보낸 곳 건수 표, 그 아래에 흐름도 그림."""
-    graph, summary = build_output_b(snap, lang), build_summary(snap, lang)
+    graph, summary = build_output_b(snap, lang), build_summary(snap)
     _put_status_line(sheet, labels, snap)
     _put_text(sheet, 2, 1, labels.summary_title, wrap=False).font = _BOLD
     _put_header_row(sheet, 3, labels.summary_headers)
+    # 요약 한 벌의 값을 지금 이름 아홉 칸에 싣는다 — 이름(옛 줄·No destination)과 한 언어만 있는 줄은 Excel 개편 때 바꾼다
     values = (
-        summary.old_units, summary.assigned, summary.unassigned, summary.duplicate, summary.deleted, summary.moved,
+        summary.old_rows, summary.assigned, summary.no_destination, summary.duplicate, summary.deleted, summary.moved,
         summary.new, summary.translated, summary.confirmed_rate,
     )
     row = 4

@@ -185,13 +185,14 @@ def test_workbook_sheets_and_headers(client: TestClient) -> None:
     assert (dropped["보낸 곳 종류"], dropped["변경 종류"], dropped["이유"]) == ("삭제", "삭제", DROP_REASON)
     assert len(rows) == 4  # 결과물 A가 한 벌이라 영어 문장도 같은 시트에 있다
 
-    summary = client.get(f"/api/bundles/{fx.bundle_id}/summary", headers=AUTHOR).json()["ko"]
+    summary = client.get(f"/api/bundles/{fx.bundle_id}/summary", headers=AUTHOR).json()
     sheet_b = ko["B 흐름"]
     assert sheet_b["A1"].value == "상태: 작업 중"
     labels = {row[0].value: row[1].value for row in sheet_b.iter_rows(min_row=3, max_row=13) if row[0].value}
+    # 요약 한 벌의 값이 지금 이름 칸에 실린다(이름은 Excel 개편에서 바꾼다)
     assert [labels[name] for name in ("옛 단위", "배정", "미배정", "중복 배정", "삭제", "이동", "신규", "번역")] == [
         summary[key]
-        for key in ("old_units", "assigned", "unassigned", "duplicate", "deleted", "moved", "new", "translated")
+        for key in ("old_rows", "assigned", "no_destination", "duplicate", "deleted", "moved", "new", "translated")
     ]
     assert labels["확정률"] == pytest.approx(summary["confirmed_rate"])
     header_row = next(row for row in sheet_b.iter_rows() if row[0].value == "옛 문서")
@@ -199,8 +200,9 @@ def test_workbook_sheets_and_headers(client: TestClient) -> None:
     body = sheet_b.iter_rows(min_row=header_row[0].row + 1)
     flow = next(row for row in body if str(row[0].value).startswith("OLD-1"))
     counts = {header.value: cell.value for header, cell in zip(header_row[2:], flow[2:], strict=False) if header.value}
-    assert flow[1].value == 3
-    assert counts == {"SOP-NEW Synthetic SOP": 1, "삭제": 1, "미배정": 1}
+    # 흐름은 한 벌의 줄로 센다 — 영어 문장도 미배정 줄 하나
+    assert flow[1].value == 4
+    assert counts == {"SOP-NEW Synthetic SOP": 1, "삭제": 1, "미배정": 2}
 
     sheet_c = ko["C 새 문서"]
     assert sheet_c["A1"].value == "상태: 작업 중"

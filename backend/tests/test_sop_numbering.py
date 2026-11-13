@@ -10,9 +10,13 @@ import pytest
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
+from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.constants import MAX_INDENT_LEVEL, SLOT_KEYS
+from app.sop.models import TargetSentence
 from app.sop.outputs import SLOT_NUMBERS, number_lines
+from tests.access_helpers import run_in_session
 from tests.docx_factory import build_docx, p
 from tests.sop_helpers import AUTHOR, assign_as_is, create_bundle, find_unit, get_bundle, get_view, put_tobe, upload
 from tests.test_sop_outputs import (
@@ -78,24 +82,19 @@ def _read_numbers(doc: dict) -> list[tuple[str, str | None, list[tuple[str, str 
 def test_output_c_numbers_slots_steps_and_lines(client: TestClient) -> None:
     fx = _setup(client)
 
-    ko = _get_output(client, fx.bundle_id, "outputs/c", "ko")
-    en = _get_output(client, fx.bundle_id, "outputs/c", "en")
+    output = _get_output(client, fx.bundle_id, "outputs/c")
 
-    sop, wi, match = ko["docs"]
+    sop, wi, match = output["docs"]
     sop_numbers = {key: (number, items) for key, number, items in _read_numbers(sop)}
     # N/A 칸(scope·document_relationships)도 자기 번호를 지켜 다른 칸 번호가 밀리지 않는다
     assert {key: number for key, (number, _) in sop_numbers.items()} == SLOT_NUMBERS
     assert sop_numbers["responsibilities"][1] == [(DUPLICATE, "4.1")]
     assert sop_numbers["general_requirements"][1] == [("table", "5.1")]
-    assert sop_numbers["general_requirements.operation"][1] == [(MERGED, "5.2.1")]
-    # 표 칸은 표의 번호를 따른다
+    # 한 칸의 한글·영어 문장을 C 순서대로 한 줄로 센다
+    assert sop_numbers["general_requirements.operation"][1] == [(MERGED, "5.2.1"), (RECORDS_EN, "5.2.2")]
+    # 표 칸은 언어와 무관하게 표의 번호를 따른다
     (table,) = next(section["items"] for section in sop["sections"] if section["location_key"] == "general_requirements")
-    assert {cell["number"] for cell in table["children"]} == {"5.1"}
-    # 판마다 그 판에 보이는 줄만 센다 — 영어판의 첫 줄도 5.2.1
-    en_sop = {section["location_key"]: section for section in en["docs"][0]["sections"]}
-    assert [(item["text"], item["number"]) for item in en_sop["general_requirements.operation"]["items"]] == [
-        (RECORDS_EN, "5.2.1"),
-    ]
+    assert [cell["number"] for cell in table["children"]] == ["5.1"] * 4
     # WI는 단계 번호 아래로 Instruction·Why를 이어 센다
     assert _read_numbers(wi) == [
         ("step:1:instruction", "1", [(SPLIT_A, "1.1")]),
@@ -392,28 +391,67 @@ def _setup_pairs(client: TestClient) -> tuple[int, int, list[tuple[int, int]]]:
     return bundle_id, sop_id, targets
 
 
-def _read_pair_slot(client: TestClient, bundle_id: int, lang: str) -> list[tuple[str | None, str]]:
-    (sop,) = _get_output(client, bundle_id, "outputs/c", lang)["docs"]
+def _read_pair_slot_items(client: TestClient, bundle_id: int) -> list[tuple[str, str | None, str]]:
+    """짝 칸의 항목 — (언어, 번호, 번호 표시), 결과물 C 순서."""
+    (sop,) = _get_output(client, bundle_id, "outputs/c")["docs"]
     section = next(section for section in sop["sections"] if section["location_key"] == PAIR_SLOT)
-    return [(item["number"], item["number_style"]) for item in section["items"]]
+    return [(item["lang"], item["number"], item["number_style"]) for item in section["items"]]
+
+
+def _read_pair_slot(client: TestClient, bundle_id: int) -> list[tuple[str | None, str]]:
+    return [(number, style) for _, number, style in _read_pair_slot_items(client, bundle_id)]
+
+
+def _set_number_styles(styles: dict[int, str]) -> None:
+    """번호 표시를 DB에 바로 쓴다 — 순서 바꾸기가 아직 짝 상대에 표시를 옮겨서, 언어마다 다른 표시는 이 길로만 만든다."""
+
+    async def _write(session: AsyncSession) -> None:
+        for target_id, style in styles.items():
+            await session.execute(update(TargetSentence).where(TargetSentence.id == target_id).values(number_style=style))
+        await session.commit()
+
+    run_in_session(_write)
+
+
+def test_one_slot_counts_both_languages_in_one_sequence(client: TestClient) -> None:
+    bundle_id, _sop_id, _targets = _setup_pairs(client)  # 짝 셋, 단위마다 따로 저장(기본 번호)
+
+    items = _read_pair_slot_items(client, bundle_id)
+
+    assert [lang for lang, _, _ in items] == ["en", "ko"] * 3  # 같은 의미끼리, 영어 먼저
+    assert [number for _, number, _ in items] == ["6.1.1", "6.1.2", "6.1.3", "6.1.4", "6.1.5", "6.1.6"]
+
+
+def test_omitted_and_note_lines_are_skipped_across_languages(client: TestClient) -> None:
+    """설계 §6 예 — 5.1 English / 한글(생략) / Note(주석) / 한글(생략) / 5.2 English / 한글(생략)."""
+    bundle_id, _sop_id, targets = _setup_pairs(client)
+    (_, en_second) = targets[1]
+    _set_number_styles({ko: "omitted" for ko, _ in targets} | {en_second: "note"})
+
+    items = _read_pair_slot_items(client, bundle_id)
+
+    assert items == [
+        ("en", "6.1.1", "numbered"), ("ko", None, "omitted"), ("en", None, "note"), ("ko", None, "omitted"),
+        ("en", "6.1.2", "numbered"), ("ko", None, "omitted"),
+    ]
 
 
 def test_a_pair_counts_as_one_and_a_mark_on_one_member_reaches_its_partner(client: TestClient) -> None:
     bundle_id, sop_id, targets = _setup_pairs(client)
     ids = [target_id for pair in targets for target_id in pair]
-    # 두 판이 나란하면 짝의 두 원문 줄이 같은 번호다
-    numbered = [("6.1.1", "numbered"), ("6.1.2", "numbered"), ("6.1.3", "numbered")]
-    assert _read_pair_slot(client, bundle_id, "ko") == numbered
-    assert _read_pair_slot(client, bundle_id, "en") == numbered
+    # 한 칸의 두 언어를 한 줄로 센다
+    numbered = [(f"6.1.{n}", "numbered") for n in range(1, 7)]
+    assert _read_pair_slot(client, bundle_id) == numbered
 
     (ko_second, en_second) = targets[1]
     styles = _put_styles(client, bundle_id, sop_id, ids, {ko_second: "omitted"})
 
-    # 한쪽만 보내도 서버가 짝 상대에 같은 표시를 옮긴다 — 두 판이 함께 6.1.1, 생략, 6.1.2
+    # 한쪽만 보내도 서버가 짝 상대에 같은 표시를 옮긴다 — 순서를 보낸 대로(한글 먼저) 6.1.1, 6.1.2, 생략, 생략, 6.1.3, 6.1.4
     assert (styles[ko_second], styles[en_second]) == ("omitted", "omitted")
-    expected = [("6.1.1", "numbered"), (None, "omitted"), ("6.1.2", "numbered")]
-    assert _read_pair_slot(client, bundle_id, "ko") == expected
-    assert _read_pair_slot(client, bundle_id, "en") == expected
+    assert _read_pair_slot(client, bundle_id) == [
+        ("6.1.1", "numbered"), ("6.1.2", "numbered"), (None, "omitted"), (None, "omitted"), ("6.1.3", "numbered"),
+        ("6.1.4", "numbered"),
+    ]
 
     # 상대에 지금 값 그대로를 함께 보내도(프런트가 목록 전체를 실어 보내는 경우) 바꾼 쪽이 이긴다
     (ko_third, en_third) = targets[2]
@@ -434,4 +472,4 @@ def test_a_pair_cannot_be_marked_two_ways_at_once(client: TestClient) -> None:
     assert (response.status_code, response.json()["detail"]) == (
         422, {"code": "number_style_pair_mismatch", "target_ids": sorted((ko_first, en_first))},
     )
-    assert _read_pair_slot(client, bundle_id, "ko")[0] == ("6.1.1", "numbered")
+    assert _read_pair_slot(client, bundle_id)[0] == ("6.1.1", "numbered")

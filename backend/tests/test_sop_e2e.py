@@ -30,8 +30,10 @@ pytestmark = pytest.mark.usefixtures("clean_sop", "clean_ai_jobs", "clean_embedd
 
 SECOND_AUTHOR = {"X-Dev-User": "ops.member"}
 MISSING_TEXT_WARNINGS = ("missing_text", "missing_text_truncated")
-# 두 작성자의 결과물 비교에서 지우는 값 — 묶음마다 다른 DB id와 확정한 사람·시각
-VOLATILE_KEYS = frozenset({"unit_id", "display_id", "confirmed_by", "confirmed_at", "target_id", "target_doc_id"})
+# 두 작성자의 결과물 비교에서 지우는 값 — 묶음마다 다른 DB id(결과물 C 묶음 키는 단위·짝 id로 짓는다)와 확정한 사람·시각
+VOLATILE_KEYS = frozenset(
+    {"unit_id", "display_id", "confirmed_by", "confirmed_at", "target_id", "target_doc_id", "meaning_key"}
+)
 
 
 @pytest.fixture
@@ -48,18 +50,16 @@ def _get_location_key(spec: dict) -> str:
     return f"step:{spec['wi_step']}:{spec['wi_part']}"
 
 
-def _list_expected_c_items(expected: dict, lang: str) -> list[tuple]:
-    """결과물 C에 나올 새 문장 — 같은 key는 하나, 그 언어와 중립만, 입구 2 신규 포함."""
+def _list_expected_c_items(expected: dict) -> list[tuple]:
+    """결과물 C에 나올 새 문장 — 같은 key는 하나, 두 언어와 중립 모두(한 벌), 입구 2 신규 포함."""
     specs = {spec["key"]: spec for answer in expected["answers"] for spec in answer["targets"]}
     items = [
         (spec["code"], _get_location_key(spec), spec["kind"], spec.get("text", ""), spec["change_type"])
         for spec in specs.values()
-        if spec["lang"] in (lang, "neutral")
     ]
     items += [
         (spec["doc"], f"path:{spec['section_path']}", "sentence", spec["text"], "new")
         for spec in expected["match"]["new_texts"]
-        if spec["lang"] == lang
     ]
     return sorted(items)
 
@@ -170,17 +170,24 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
     assert status_code == 200, body
     assert body["status"] == "in_review"
 
-    # 7. 결과물 A(한 벌)·B·C·요약(두 언어)
+    # 7. 결과물 A·B·C·요약 — 한 벌, 줄 기준 숫자는 진행 숫자와 같은 줄에서 나온다
     summary = run.get("/summary")
     outputs = run.load_outputs()
-    assert {row["status"] for row in outputs["a"]} == {"confirmed"}
-    for lang in LANGS:
-        assert {key: summary[lang][key] for key in expected["summary"][lang]} == expected["summary"][lang], lang
-        assert summary[lang]["unassigned"] == 0 and summary[lang]["duplicate"] == 1
-        assert sum(edge["count"] for edge in outputs[lang]["b"]["edges"]) == expected["flow_edge_total"][lang]
-        assert _list_c_items(outputs[lang]["c"]) == _list_expected_c_items(expected, lang), lang
-        assert len(outputs[lang]["c"]["deleted"]) == expected["summary"][lang]["deleted"]
-        assert {moved["move_target_code"] for moved in outputs[lang]["c"]["moved"]} == {"SOP-QC-99999"}
+    a_rows = outputs["a"]
+    assert {row["status"] for row in a_rows} == {"confirmed"}
+    assert summary["old_rows"] == run.get("")["progress"]["total"]
+    assert (summary["no_destination"], summary["duplicate"]) == (0, 1)
+    # A 옛 문서 묶음(번호) → 그 묶음의 줄이 보낸 새 문서
+    old_groups: dict[int, set[str]] = {row["row_no"]: set() for row in a_rows if row["row_kind"] in ("unit", "table", "cell")}
+    for row in a_rows:
+        if row["row_no"] in old_groups and row["dest_kind"] in ("sop", "wi"):
+            old_groups[row["row_no"]].add(row["dest_doc_code"])
+    assert len(old_groups) == summary["old_rows"]
+    # B 간선 합 = A 옛 묶음마다 보낸 새 문서 수(없으면 처분 노드 하나)
+    assert sum(edge["count"] for edge in outputs["b"]["edges"]) == sum(max(1, len(docs)) for docs in old_groups.values())
+    assert _list_c_items(outputs["c"]) == _list_expected_c_items(expected)
+    assert len(outputs["c"]["deleted"]) == summary["deleted"]
+    assert {moved["move_target_code"] for moved in outputs["c"]["moved"]} == {"SOP-QC-99999"}
 
     # 8. Excel 두 언어 — 시트 4개, 수식 칸 없음, A 시트 데이터 줄 = A JSON 줄(한 벌이라 두 파일 모두 같은 줄 수)
     for lang in LANGS:
@@ -226,8 +233,7 @@ def test_two_authors_get_identical_output_format(client: TestClient, synthetic: 
         run.start()
         run.save_answers(skip_omitted=False)
         loaded = run.load_outputs()
-        for lang in LANGS:
-            loaded[lang]["b"] = _normalize_flow(loaded[lang]["b"])
+        loaded["b"] = _normalize_flow(loaded["b"])
         outputs.append(_strip_volatile(loaded))
 
     first, second = outputs
@@ -254,9 +260,7 @@ def test_end_to_end_with_fake_ai(
     run.put_semantic_checks()
     status_code, body = run.request_review()
     assert status_code == 200, body
-    for lang in LANGS:
-        output_c = run.get("/outputs/c", lang=lang)
-        assert _list_c_items(output_c) == _list_expected_c_items(synthetic.expected, lang)
+    assert _list_c_items(run.get("/outputs/c")) == _list_expected_c_items(synthetic.expected)
     adoption = run.get("/ai/status")["adoption"]
     assert adoption["classify"]["as_is"] > 0 and adoption["classify"]["pending"] == 0
     assert adoption["match"]["as_is"] > 0 and adoption["match"]["pending"] == 0
@@ -286,6 +290,4 @@ def test_ai_off_still_finishes_the_human_path(client: TestClient, synthetic: Syn
     status_code, body = run.request_review()
     assert status_code == 200, body
     assert body["status"] == "in_review"
-    for lang in LANGS:
-        output_c = run.get("/outputs/c", lang=lang)
-        assert _list_c_items(output_c) == _list_expected_c_items(synthetic.expected, lang)
+    assert _list_c_items(run.get("/outputs/c")) == _list_expected_c_items(synthetic.expected)

@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import engine
 from app.models import Employee
 from app.sop.constants import SLOT_KEYS
-from app.sop.models import TargetSentence, UnitDecision
+from app.sop.models import TargetSentence, UnitDecision, UnitPair, UnitPairMember
 from tests.access_helpers import run_in_session
 from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
 from tests.sop_helpers import (
@@ -745,9 +745,9 @@ def test_output_a_table_lines_for_rows_empty_tables_and_dropped_cells(client: Te
     assert _pick_row(en, d("Value two."))["location"]["place"] == "Table 2 · R 2 C 2"
     assert _pick_row(en, second_row["display_id"])["source_text"] == "[Table 2, 1×2]"
     assert {r["remark"] for r in rows if r["row_no"] == 3} == {"Synthetic: drop the English cell"}
-    # 표 줄은 요약 숫자에 세지 않는다 — 언어마다 그 언어 칸 문장 둘만
+    # 요약은 줄로 센다 — 빈 표 하나와 행 둘이 세 줄이고 칸 문장은 따로 세지 않는다
     summary = _get_output(client, bundle_id, "summary")
-    assert (summary["ko"]["old_units"], summary["en"]["old_units"]) == (2, 2)
+    assert summary["old_rows"] == get_bundle(client, bundle_id)["progress"]["total"] == 3
 
 
 def test_output_a_defaults_to_english_labels_and_needs_membership(client: TestClient) -> None:
@@ -770,32 +770,68 @@ def test_output_a_defaults_to_english_labels_and_needs_membership(client: TestCl
 # ── B 흐름 ───────────────────────────────────────────────────────────────────
 
 
-def test_output_b_counts(client: TestClient) -> None:
+def test_output_b_counts_rows(client: TestClient) -> None:
     fx = _setup(client)
     old1, old2 = f"old:{fx.old1['document']['id']}", f"old:{fx.old2['document']['id']}"
     sop, wi, match = f"target:{fx.sop_id}", f"target:{fx.wi_id}", f"target:{fx.match_id}"
 
+    graph = _get_output(client, fx.bundle_id, "outputs/b")
     ko = _get_output(client, fx.bundle_id, "outputs/b", "ko")
-    en = _get_output(client, fx.bundle_id, "outputs/b", "en")
 
-    # 나눔은 한 번, 중복 배정은 보낸 곳마다 한 번
-    assert [(e["source"], e["target"], e["count"]) for e in ko["edges"]] == [
-        (old1, sop, 4), (old1, wi, 3), (old1, "delete", 3), (old1, "move_external", 1),
-        (old2, sop, 1), (old2, match, 1), (old2, "delete", 2),
+    # 한 벌 — 줄(짝이 없어 판단 단위 하나, 표는 칸 넷을 묶어 한 줄)마다 한 번, 나눔은 한 번, 중복 배정은 보낸 곳마다 한 번
+    assert [(e["source"], e["target"], e["count"]) for e in graph["edges"]] == [
+        (old1, sop, 3), (old1, wi, 3), (old1, "delete", 3), (old1, "move_external", 1), (old1, "unassigned", 1),
+        (old2, sop, 2), (old2, match, 1), (old2, "delete", 2),
     ]
-    assert [(n["id"], n["kind"], n["label"], n["count"]) for n in ko["nodes"]] == [
-        (old1, "old", "OLD-1", 10), (old2, "old", "OLD-2", 4),
+    assert [(n["id"], n["kind"], n["label"], n["count"]) for n in graph["nodes"]] == [
+        (old1, "old", "OLD-1", 10), (old2, "old", "OLD-2", 5),
         (sop, "sop", "SOP-NEW", 5), (wi, "wi", "WI-01", 3), (match, "sop", "SOP-9", 1),
-        ("delete", "delete", "삭제", 5), ("move_external", "move_external", "다른 문서로 이동", 1),
+        ("delete", "delete", "Deleted", 5), ("move_external", "move_external", "Moved to another document", 1),
+        ("unassigned", "unassigned", "Unassigned", 1),
     ]
-    assert [(e["source"], e["target"], e["count"]) for e in en["edges"]] == [
-        (old1, sop, 2), (old1, wi, 1), (old1, "unassigned", 1), (old2, sop, 1),
+    # 옛 문서 노드 건수의 합은 진행 숫자의 줄 수다
+    assert sum(n["count"] for n in graph["nodes"] if n["kind"] == "old") == get_bundle(client, fx.bundle_id)["progress"]["total"]
+    # lang은 라벨만 바꾼다
+    assert [(n["id"], n["count"]) for n in ko["nodes"]] == [(n["id"], n["count"]) for n in graph["nodes"]]
+    assert {n["label"] for n in ko["nodes"] if n["kind"] in ("delete", "move_external", "unassigned")} == {
+        "삭제", "다른 문서로 이동", "미배정",
+    }
+
+
+def _add_cross_document_pair(unit_ids: list[int], document_id: int) -> None:
+    """두 옛 문서에 걸친 짝을 DB에 바로 넣는다 — API는 한 문서 안에서만 짝을 맺지만(드묾) 결과물은 그런 짝도 한 줄로 센다."""
+
+    async def _insert(session: AsyncSession) -> None:
+        pair = UnitPair(document_id=document_id, status="confirmed", source="human")
+        session.add(pair)
+        await session.flush()
+        session.add_all(UnitPairMember(pair_id=pair.id, unit_id=unit_id) for unit_id in unit_ids)
+        await session.commit()
+
+    run_in_session(_insert)
+
+
+def test_b_counts_a_cross_document_pair_under_its_first_unit(client: TestClient) -> None:
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    response = put_tobe(client, bundle_id, TOBE_DOCS)
+    assert response.status_code == 200, response.text
+    sop_id = response.json()["docs"][0]["id"]
+    ko_doc = _upload_ready(client, bundle_id, build_docx(p(KO_ON)), OLD1_NAME)
+    en_doc = _upload_ready(client, bundle_id, build_docx(p(EN_ON)), OLD2_NAME)
+    ko = find_unit(get_view(client, bundle_id, ko_doc["id"]), KO_ON)
+    en = find_unit(get_view(client, bundle_id, en_doc["id"]), EN_ON)
+    for unit in (ko, en):
+        assign_as_is(client, bundle_id, unit, sop_id, slot_key="purpose")
+    _add_cross_document_pair([ko["id"], en["id"]], ko_doc["id"])
+
+    graph = _get_output(client, bundle_id, "outputs/b")
+
+    # 짝 하나가 한 줄 — 묶음의 첫 단위(한글 문서)의 문서 노드에 1, 영어 문서 노드는 0이라 그리지 않는다
+    assert [(n["id"], n["count"]) for n in graph["nodes"]] == [(f"old:{ko_doc['id']}", 1), (f"target:{sop_id}", 1)]
+    assert [(e["source"], e["target"], e["count"]) for e in graph["edges"]] == [
+        (f"old:{ko_doc['id']}", f"target:{sop_id}", 1),
     ]
-    assert [(n["id"], n["count"]) for n in en["nodes"]] == [
-        (old1, 4), (old2, 1), (sop, 3), (wi, 1), ("unassigned", 1),
-    ]
-    (unassigned,) = [node for node in en["nodes"] if node["kind"] == "unassigned"]
-    assert (unassigned["label"], unassigned["count"]) == ("Unassigned", 1)
+    assert get_bundle(client, bundle_id)["progress"]["total"] == 1
 
 
 # ── C 새 문서 ────────────────────────────────────────────────────────────────
@@ -805,14 +841,14 @@ def _section_items(section: dict) -> list[tuple]:
     return [(item["text"], item["change_type"], item["status"], item["source_note"]) for item in section["items"]]
 
 
-def test_output_c_structure(client: TestClient) -> None:
+def test_output_c_one_list_per_slot(client: TestClient) -> None:
     fx = _setup(client)
     d1, d2 = partial(_display, fx.old1), partial(_display, fx.old2)
 
-    ko = _get_output(client, fx.bundle_id, "outputs/c", "ko")
+    output = _get_output(client, fx.bundle_id, "outputs/c")
 
-    sop, wi, match = ko["docs"]
-    assert [(doc["code"], doc["doc_type"], doc["parent_code"], doc["entrance"]) for doc in ko["docs"]] == [
+    sop, wi, match = output["docs"]
+    assert [(doc["code"], doc["doc_type"], doc["parent_code"], doc["entrance"]) for doc in output["docs"]] == [
         ("SOP-NEW", "sop", None, "assign"), ("WI-01", "wi", "SOP-NEW", "assign"), ("SOP-9", "sop", None, "match"),
     ]
     # SOP 칸은 SLOT_KEYS 순서로 빈 칸까지, N/A 상위 칸의 하위 칸도 N/A(R8)
@@ -826,28 +862,36 @@ def test_output_c_structure(client: TestClient) -> None:
     }
     assert sections["procedures.maintenance"]["label"] == "Procedures › Maintenance"
     assert _section_items(sections["responsibilities"]) == [(DUPLICATE, "as_is", "confirmed", "← OLD-1 §5.1")]
-    # 영어 새 문장(RECORDS_EN)은 한글판에 나오지 않는다
+    # 한 칸은 언어를 가리지 않는 한 목록 — 한글 합침 문장 뒤에 영어 문장(원문에서 앞선 출처 순)
+    operation = sections["general_requirements.operation"]["items"]
     assert _section_items(sections["general_requirements.operation"]) == [
-        (MERGED, "merged", "confirmed", "← OLD-1 §5.1, OLD-2 §5.1 (합침)"),
+        (MERGED, "merged", "confirmed", "← OLD-1 §5.1, OLD-2 §5.1 (merged)"),
+        (RECORDS_EN, "as_is", "confirmed", "← OLD-2 §5.1"),
     ]
+    assert [item["lang"] for item in operation] == ["ko", "en"]  # 글꼴용으로 남는다
+    # 굵은 선 묶음 키 — 옛 줄(짝이 없어 -단위 id)마다, 합침은 첫 출처의 줄
+    unit_id = {text: find_unit(view, text)["id"] for view, text in ((fx.old1, MERGE_1), (fx.old2, RECORDS_EN))}
+    assert [item["meaning_key"] for item in operation] == [f"old:-{unit_id[MERGE_1]}", f"old:-{unit_id[RECORDS_EN]}"]
     (table,) = sections["general_requirements"]["items"]
-    assert (table["kind"], table["lang"], table["change_type"], table["source_note"]) == (
-        "table", "neutral", "as_is", "← OLD-1 §5.1",
+    assert (table["kind"], table["lang"], table["change_type"], table["source_note"], table["origin"]) == (
+        "table", "neutral", "as_is", "← OLD-1 §5.1", "units",
     )
     assert [(cell["text"], cell["cell_row"], cell["cell_col"], cell["children"]) for cell in table["children"]] == [
-        ("항목", 0, 0, []), ("합성 값", 1, 0, []),
+        ("항목", 0, 0, []), ("Item", 0, 1, []), ("합성 값", 1, 0, []), ("Synthetic value", 1, 1, []),
     ]
-    assert sum(len(section["items"]) for section in sop["sections"]) == 3
+    table_unit = _unit_of_kind(fx.old1, "table")
+    assert {cell["meaning_key"] for cell in table["children"]} == {table["meaning_key"]} == {f"old:-{table_unit['id']}"}
+    assert sum(len(section["items"]) for section in sop["sections"]) == 4
 
     # WI는 선언 단계 순으로 단계마다 Instruction·Why, 단계 없는 칸은 없을 때 싣지 않는다
     assert [(s["location_key"], s["label"]) for s in wi["sections"]] == [
-        ("step:1:instruction", "1단계 · Instruction"), ("step:1:why", "1단계 · Why"),
-        ("step:2:instruction", "2단계 · Instruction"), ("step:2:why", "2단계 · Why"),
+        ("step:1:instruction", "Step 1 · Instruction"), ("step:1:why", "Step 1 · Why"),
+        ("step:2:instruction", "Step 2 · Instruction"), ("step:2:why", "Step 2 · Why"),
     ]
     assert [_section_items(section) for section in wi["sections"]] == [
-        [(SPLIT_A, "split", "confirmed", "← OLD-1 §5.1 (나눔)")],
+        [(SPLIT_A, "split", "confirmed", "← OLD-1 §5.1 (split)")],
         [(DUPLICATE, "as_is", "confirmed", "← OLD-1 §5.1")],
-        [(SPLIT_B, "split", "confirmed", "← OLD-1 §5.1 (나눔)"), ("", "as_is", "on_hold", "← OLD-1 §5.1")],
+        [(SPLIT_B, "split", "confirmed", "← OLD-1 §5.1 (split)"), ("", "as_is", "on_hold", "← OLD-1 §5.1")],
         [],
     ]
     # 입구 2 문서는 절 경로가 처음 나온 순서로 칸을 만든다
@@ -857,41 +901,60 @@ def test_output_c_structure(client: TestClient) -> None:
     assert _section_items(match["sections"][0]) == [
         (LABEL, "as_is", "confirmed", "← OLD-2 §5.1"), (NEW_SENTENCE, "new", "confirmed", ""),
     ]
+    linked, fresh = match["sections"][0]["items"]
+    assert (linked["origin"], linked["meaning_key"]) == ("new_doc", f"old:-{find_unit(fx.old2, LABEL)['id']}")
+    assert fresh["origin"] == "new_doc" and fresh["meaning_key"].startswith("new:")
 
-    assert [(d["display_id"], d["doc_code"], d["section"], d["source_text"], d["reason"]) for d in ko["deleted"]] == [
+    # 삭제·이동은 줄마다 한 번 — 짝이 없어 단위 하나씩
+    assert [(d["display_id"], d["doc_code"], d["section"], d["source_text"], d["reason"]) for d in output["deleted"]] == [
         (d1(OLD1_HEADINGS[0]), "OLD-1", "5", OLD1_HEADINGS[0], HEADING_REASON),
         (d1(OLD1_HEADINGS[1]), "OLD-1", "5.1", OLD1_HEADINGS[1], HEADING_REASON),
         (d1(DELETED), "OLD-1", "5.1", DELETED, DELETE_REASON),
         (d2(OLD2_HEADINGS[0]), "OLD-2", "5", OLD2_HEADINGS[0], HEADING_REASON),
         (d2(OLD2_HEADINGS[1]), "OLD-2", "5.1", OLD2_HEADINGS[1], HEADING_REASON),
     ]
-    assert ko["moved"] == [{
+    assert output["moved"] == [{
         "display_id": d1(MOVED), "doc_code": "OLD-1", "section": "5.1", "source_text": MOVED,
         "move_target_code": MOVE_CODE, "reason": MOVE_REASON,
     }]
+    # lang은 라벨만 바꾼다 — 같은 항목, 한글 라벨
+    ko = _get_output(client, fx.bundle_id, "outputs/c", "ko")
+    assert _section_items(ko["docs"][1]["sections"][0]) == [(SPLIT_A, "split", "confirmed", "← OLD-1 §5.1 (나눔)")]
+    assert (ko["deleted"], ko["moved"]) == (output["deleted"], output["moved"])
 
-    en = _get_output(client, fx.bundle_id, "outputs/c", "en")
-    en_sop = {section["location_key"]: section for section in en["docs"][0]["sections"]}
-    assert _section_items(en_sop["general_requirements.operation"]) == [
-        (RECORDS_EN, "as_is", "confirmed", "← OLD-2 §5.1"),
+
+def test_output_c_pair_lines_share_a_meaning_and_one_disposal_line(client: TestClient) -> None:
+    """짝의 두 문장은 한 칸에서 영어 먼저 이웃하고 같은 묶음 키다. 짝을 지우면 삭제 목록에 한 줄(구성 단위를 줄바꿈으로)."""
+    fx = _setup_pair_edges(client)
+    ko, en = _units(fx, KO_ON, EN_ON)
+    _save(client, fx.bundle_id, [_unit_in(ko), _unit_in(en)], [
+        _target("ko", fx.sop_id, [ko], slot_key="purpose"),
+        _target("en", fx.sop_id, [en], slot_key="purpose"),
+    ])
+    trio = _units(fx, KO_LOAD, KO_KEEP, EN_BOTH)
+    _bulk(client, fx.bundle_id, "delete", trio, DELETE_REASON)
+
+    output = _get_output(client, fx.bundle_id, "outputs/c")
+
+    purpose = next(s for s in output["docs"][0]["sections"] if s["location_key"] == "purpose")["items"]
+    assert [(item["text"], item["lang"], item["origin"]) for item in purpose] == [
+        (EN_ON, "en", "units"), (KO_ON, "ko", "units"),
     ]
-    assert [cell["text"] for cell in en_sop["general_requirements"]["items"][0]["children"]] == [
-        "Item", "Synthetic value",
-    ]
-    assert (en["deleted"], en["moved"]) == ([], [])
+    assert {item["meaning_key"] for item in purpose} == {f"old:{ko['pair_id']}"}
+    # 절 제목이 없는 문서라 절은 빈 글
+    assert output["deleted"] == [{
+        "display_id": "\n".join(unit["display_id"] for unit in trio), "doc_code": "OLD-7", "section": "",
+        "source_text": "\n".join((KO_LOAD, KO_KEEP, EN_BOTH)), "reason": DELETE_REASON,
+    }]
 
 
 # ── 요약 숫자·진행 숫자 ───────────────────────────────────────────────────────
 
 
-KO_SUMMARY = {
-    "old_units": 14, "assigned": 14, "unassigned": 0, "duplicate": 1, "deleted": 5, "moved": 1, "new": 1,
-    "translated": 0, "confirmed_rate": 0.9286,
-}
-EN_SUMMARY = {
-    "old_units": 5, "assigned": 4, "unassigned": 1, "duplicate": 0, "deleted": 0, "moved": 0, "new": 0,
-    "translated": 0, "confirmed_rate": 0.6,
-}
+SUMMARY_KEYS = (
+    "old_rows", "assigned", "no_destination", "duplicate", "deleted", "moved", "new", "translated", "confirmed_rate",
+    "single_language",
+)
 # 줄 기준 — 짝이 없어 단위마다 한 줄이고 표는 칸 넷을 묶어 한 줄이다: OLD-1 10줄(그림 보류·영어 미배정) + OLD-2 5줄.
 # 한 언어 글은 두 언어 문서(ko_en_separate)의 짝 없는 문장·제목 13개다(번역 새 문장이 없다)
 PROGRESS = {"total": 15, "unassigned": 1, "ai_suggested": 0, "confirmed": 13, "on_hold": 1, "single_language": 13}
@@ -902,12 +965,59 @@ def test_summary_numbers(client: TestClient) -> None:
     fx = _setup(client)
 
     summary = _get_output(client, fx.bundle_id, "summary")
+    progress = get_bundle(client, fx.bundle_id)["progress"]
 
-    # 한글: 옛 커버 단위 13 + 그림 1, 그림 보류라 13/14. 영어: 영어 4 + 그림 1, 미배정 1·그림 보류라 3/5
-    assert summary == {"ko": KO_SUMMARY, "en": EN_SUMMARY}
-    empty = create_bundle(client)["id"]
-    zero = {key: 0 for key in KO_SUMMARY} | {"confirmed_rate": 0.0}
-    assert _get_output(client, empty, "summary") == {"ko": zero, "en": zero}
+    # 한 벌 — 판 키가 없다. 줄 15(진행 숫자와 같은 줄), 확정 13(그림 보류·영어 미배정), 배정은 삭제·이동을 포함한다
+    assert summary == {
+        "old_rows": 15, "assigned": 14, "no_destination": 1, "duplicate": 1, "deleted": 5, "moved": 1, "new": 1,
+        "translated": 0, "confirmed_rate": 0.8667, "single_language": 13,
+    }
+    assert set(summary) == set(SUMMARY_KEYS)
+    assert summary["old_rows"] == progress["total"]
+    assert round(summary["confirmed_rate"] * summary["old_rows"]) == progress["confirmed"]
+    assert summary["single_language"] == progress["single_language"]
+    c, a = _get_output(client, fx.bundle_id, "outputs/c"), _get_output(client, fx.bundle_id, "outputs/a")
+    assert (summary["duplicate"], summary["moved"], summary["new"]) == (1, 1, 1)
+    assert summary["deleted"] == len(c["deleted"])  # 줄마다 한 번
+    assert summary["moved"] == len(c["moved"])
+    assert summary["no_destination"] == sum(
+        r["is_group_start"] and r["row_kind"] != "new" and r["dest_kind"] == "" for r in a
+    )
+    assert summary["no_destination"] >= progress["unassigned"]  # 처분 기준 ⊇ 상태 기준(설계 §5.3)
+
+
+def test_human_translation_counts_in_summary(client: TestClient) -> None:
+    """영어 옛 문장 하나 → 영어 + 한글 새 문장(한 저장). 사람이 쓴 한글은 번역 줄이라 번역 숫자에 든다."""
+    fx = _setup(client)
+    en = find_unit(fx.old1, UNASSIGNED_EN)
+    _save(client, fx.bundle_id, [_unit_in(en)], [
+        _target("en", fx.sop_id, [en], slot_key="purpose"),
+        _target("ko", fx.sop_id, [en], slot_key="purpose", lang="ko", text=SPLIT_SOURCE),
+    ])
+
+    summary = _get_output(client, fx.bundle_id, "summary")
+
+    assert (summary["translated"], summary["no_destination"], summary["duplicate"]) == (1, 0, 1)
+    assert summary["single_language"] == get_bundle(client, fx.bundle_id)["progress"]["single_language"] == 12
+
+
+def test_translated_added_counts_as_translated_and_new(client: TestClient) -> None:
+    """입구 2 한쪽만 맞춘 짝의 출처 없는 쪽(Translated · Added)은 번역과 신규 양쪽에 센다(설계 §4.5)."""
+    fx = _setup_pair_edges(client)
+    lone, linked, _added = _upload_lone_pair_doc(client, fx)
+    _save(client, fx.bundle_id, [_unit_in(lone)], [
+        {"key": "l", "id": linked["id"], "revision": linked["revision"], "source_unit_ids": [lone["id"]]},
+    ])
+
+    summary = _get_output(client, fx.bundle_id, "summary")
+
+    assert (summary["translated"], summary["new"]) == (1, 1)
+
+
+def test_summary_of_an_empty_bundle(client: TestClient) -> None:
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+
+    assert _get_output(client, bundle_id, "summary") == {key: 0 for key in SUMMARY_KEYS} | {"confirmed_rate": 0.0}
 
 
 def test_progress_in_list_and_overview(client: TestClient) -> None:
@@ -965,20 +1075,17 @@ def test_reorder_targets_sets_manual_order(client: TestClient) -> None:
     # 순서를 사람이 정한 문서에 새로 저장한 새 문장은 원문 순서와 무관하게 끝에 온다
     unassigned = find_unit(fx.old1, UNASSIGNED_EN)
     assign_as_is(client, fx.bundle_id, unassigned, fx.wi_id, wi_step=1, wi_part="instruction")
-    en_wi = _get_output(client, fx.bundle_id, "outputs/c", "en")["docs"][1]
-    assert [item["text"] for item in en_wi["sections"][0]["items"]] == ["", UNASSIGNED_EN]
+    wi = _get_output(client, fx.bundle_id, "outputs/c")["docs"][1]
+    assert [item["text"] for item in wi["sections"][0]["items"]] == ["", SPLIT_A, UNASSIGNED_EN]
 
     stale = _put_order(client, fx.bundle_id, {"revision": revision, "target_doc_id": fx.wi_id, "items": items})
     assert (stale.status_code, stale.json()["detail"]["code"]) == (409, "revision_conflict")
 
 
 def _list_top_target_ids(client: TestClient, bundle_id: int, doc_index: int) -> list[int]:
-    """결과물 C 한 문서의 칸 새 문장이 아닌 새 문장 id — 두 언어판을 합쳐(중립인 표·그림은 한 번) 순서대로."""
-    ids: dict[int, None] = {}
-    for lang in ("ko", "en"):
-        doc = _get_output(client, bundle_id, "outputs/c", lang)["docs"][doc_index]
-        ids.update(dict.fromkeys(item["target_id"] for section in doc["sections"] for item in section["items"]))
-    return list(ids)
+    """결과물 C 한 문서의 칸 새 문장이 아닌 새 문장 id — 한 벌이라 두 언어가 한 목록에, 순서대로."""
+    doc = _get_output(client, bundle_id, "outputs/c")["docs"][doc_index]
+    return [item["target_id"] for section in doc["sections"] for item in section["items"]]
 
 
 def test_reorder_targets_rejects(client: TestClient) -> None:

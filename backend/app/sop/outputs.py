@@ -1,8 +1,9 @@
-"""결과물 A(문장 비교표)·B(맵핑 흐름)·C(새 문서 기준 묶음)와 언어별 요약 숫자, 검토 요청 조건의 단위 재료 — 스냅숏만 받는 순수 함수 (스펙 §7.13·§7.15).
+"""결과물 A(문장 비교표)·B(맵핑 흐름)·C(새 문서 기준 묶음)와 요약 숫자, 검토 요청 조건의 단위 재료 — 스냅숏만 받는 순수 함수 (스펙 §7.13·§7.15).
 
 세 결과물은 같은 재료(옛 단위·보낸 곳·새 문장)를 다른 방향에서 본다. 그래서 단위의 보낸 곳(_group_dests)·칸 순서(_plan_sections)·
 신규 새 문장(_list_new_targets)을 한 벌만 두고 A·B·C·요약이 함께 쓴다. 번역 새 문장은 출처 연결이 없어 단위의 보낸 곳·관계 묶음에
-끼지 않고, A의 번역 줄과 C의 칸 항목, 요약의 번역 숫자로만 나온다. A는 판이 없는 한 벌이고 의미 묶음(output_rows)마다 문장 줄을 둔다.
+끼지 않고, A의 번역 줄과 C의 칸 항목, 요약의 번역 숫자로만 나온다. 모두 판(ko/en)이 없는 한 벌이고 lang은 라벨 언어만 고른다.
+줄은 의미 묶음(output_rows — 짝 하나·짝 없는 판단 단위 하나)이라 A의 묶음·B의 건수·C의 삭제·이동·요약이 진행 숫자와 같은 줄이다.
 """
 
 from collections import Counter, defaultdict
@@ -16,11 +17,15 @@ from app.routers.admin import KstDatetime
 from app.sop.constants import COVER_KINDS, NUMBER_NOTE, NUMBERED, SLOT_KEYS, WI_PARTS
 from app.sop.groups import TABLE_UNIT_KINDS, build_group_ids, collapse_table_members
 from app.sop.output_labels import LABELS, OutputLabels
-from app.sop.output_rows import MeaningRow, build_meaning_rows, get_new_meaning_key
+from app.sop.output_rows import (
+    MeaningRow,
+    build_meaning_rows,
+    count_single_language,
+    get_meaning_key,
+    get_new_meaning_key,
+)
 from app.sop.snapshot import (
-    NEUTRAL,
     BundleSnapshot,
-    DecisionInfo,
     DocumentInfo,
     TargetDocInfo,
     TargetInfo,
@@ -28,8 +33,8 @@ from app.sop.snapshot import (
 )
 from app.sop.status import get_cover_status
 
-Lang = Literal["ko", "en"]
-NumberOf = Callable[[TargetInfo], str]  # 새 문장 → 그 판의 섹션 번호(없으면 빈 글)
+Lang = Literal["ko", "en"]  # 라벨 언어
+NumberOf = Callable[[TargetInfo], str]  # 새 문장 → 섹션 번호(없으면 빈 글)
 ORIGIN_NEW_DOC = "new_doc"
 TRANSLATED = "translated"
 # 입구 2 한쪽만 맞춘 짝의 출처 없는 쪽(설계 §4.5) — 저장하지 않는 표시 전용 변경 종류
@@ -107,12 +112,15 @@ class FlowGraph(BaseModel):
 class CItem(BaseModel):
     target_id: int
     kind: str
-    lang: str
+    lang: str  # 글꼴용 — 한 칸에 두 언어가 섞여 나온다
     text: str
     ai_text: str
     change_type: str | None
     status: str
     source_note: str
+    origin: str  # units | translation | new_doc — 프런트가 번역 기원의 깊이 단추만 숨긴다
+    # 굵은 선 묶음 키(A와 같은 묶음) — "old:<옛 줄 키>" | "new:<새 문서 쪽 짝 키>" | None(출처가 은퇴한 번역)
+    meaning_key: str | None
     # 섹션 번호(칸 번호 + 들여쓰기 깊이, 예: 6.1.2.1) — 표 칸은 표의 번호, 입구 2 문서·단계 없는 WI·생략·주석 줄은 None
     number: str | None
     indent_level: int  # 사람이 정한 깊이 그대로(번호는 눌러 읽은 깊이로 센다)
@@ -142,6 +150,8 @@ class CDoc(BaseModel):
 
 
 class CDeleted(BaseModel):
+    """삭제한 옛 줄(의미 묶음) 하나 — 표시 ID·원문은 구성 단위 값을 줄바꿈으로, 문서·절은 첫 단위, 이유는 묶음 Remark."""
+
     display_id: str
     doc_code: str
     section: str
@@ -150,6 +160,8 @@ class CDeleted(BaseModel):
 
 
 class CMoved(BaseModel):
+    """다른 문서로 옮긴 옛 줄 하나 — 칸 모양은 CDeleted와 같다."""
+
     display_id: str
     doc_code: str
     section: str
@@ -165,15 +177,18 @@ class COutput(BaseModel):
 
 
 class Summary(BaseModel):
-    old_units: int
-    assigned: int
-    unassigned: int
+    """요약 숫자 한 벌(설계 §5.3) — 옛 쪽은 줄로 센다."""
+
+    old_rows: int
+    assigned: int  # 처분이 미배정이 아닌 줄(삭제·이동 포함)
+    no_destination: int  # 처분이 미배정인 줄 — 갈 곳 없는 보류·일부만 판단한 줄 포함, 진행 숫자의 Unassigned(상태 기준)와 다르다
     duplicate: int
     deleted: int
     moved: int
-    new: int
-    translated: int
+    new: int  # 출처 없는 입구 2 새 문장을 새 문서 쪽 짝으로 묶은 수
+    translated: int  # 번역 줄·Translated · Added 줄이 든 A 묶음 수
     confirmed_rate: float
+    single_language: int
 
 
 # --- 공용 색인 ---
@@ -192,6 +207,10 @@ class _Index:
     target_groups: dict[int, str]
     doc_order: list[TargetDocInfo]  # SOP(순서) 다음 그 SOP의 WI들, 부모 없는 WI는 끝
     doc_rank: dict[int, int]
+    # 단위 → 그 단위가 든 짝 구성원 중 가장 앞 order_key(짝 없으면 자기 order_key) — 칸 안에서 같은 의미의 문장끼리 붙인다
+    meaning_anchor: dict[int, tuple[int, ...]]
+    # (새 문서, 옛 단위) → 그 옛 단위를 출처로 둔 입구 2 새 문장의 자리(새 문서 단위 order_key) — 그 새 문장의 번역을 바로 뒤에 둔다
+    new_doc_places: dict[tuple[int, int], tuple[int, ...]]
 
 
 @dataclass(frozen=True)
@@ -201,7 +220,7 @@ class _SectionPlan:
     number: str | None  # 줄 번호의 머리 — 같은 번호의 칸(WI 한 단계의 Instruction·Why)은 줄 번호를 이어 센다
     na_reason: str | None
     targets: list[TargetInfo]  # 칸 새 문장이 아닌 새 문장(두 언어 모두), 칸 안 순서
-    keep_empty: bool  # SOP 칸·선언 단계는 비어도 싣고, 단계 없음·절 경로 칸은 그 언어 새 문장이 있을 때만
+    keep_empty: bool  # SOP 칸·선언 단계는 비어도 싣고, 단계 없음·절 경로 칸은 새 문장이 있을 때만
 
 
 def _order_target_docs(snap: BundleSnapshot) -> list[TargetDocInfo]:
@@ -266,16 +285,29 @@ def _build_index(snap: BundleSnapshot) -> _Index:
         {unit.id: unit.display_id for unit in snap.units.values()},
     )
     doc_order = _order_target_docs(snap)
+    pair_starts: dict[int, tuple[int, ...]] = {}
+    for unit in snap.units.values():
+        pair_id = snap.pair_of.get(unit.id)
+        if pair_id is not None and (pair_id not in pair_starts or unit.order_key < pair_starts[pair_id]):
+            pair_starts[pair_id] = unit.order_key
+    meaning_anchor = {
+        unit.id: pair_starts[snap.pair_of[unit.id]] if unit.id in snap.pair_of else unit.order_key
+        for unit in snap.units.values()
+    }
+    new_doc_places: dict[tuple[int, int], tuple[int, ...]] = {}
+    for target in snap.targets.values():
+        if target.origin == ORIGIN_NEW_DOC and target.new_unit_id in snap.units:
+            place = snap.units[target.new_unit_id].order_key
+            for unit_id in target.source_unit_ids:
+                key = (target.target_doc_id, unit_id)
+                if key not in new_doc_places or place < new_doc_places[key]:
+                    new_doc_places[key] = place
     return _Index(
         snap=snap, old_units=old_units, cells=cells, unit_targets=unit_targets, doc_targets=doc_targets,
         children=children, translations=translations, unit_groups=unit_groups, target_groups=target_groups, doc_order=doc_order,
-        doc_rank={doc.id: rank for rank, doc in enumerate(doc_order)},
+        doc_rank={doc.id: rank for rank, doc in enumerate(doc_order)}, meaning_anchor=meaning_anchor,
+        new_doc_places=new_doc_places,
     )
-
-
-def _is_in_lang(value: str, lang: Lang) -> bool:
-    """그 언어판에 나오는가 — 중립(그림·표)은 두 언어판 모두에 나온다."""
-    return value in (lang, NEUTRAL)
 
 
 def _get_decision_unit_id(unit: UnitInfo) -> int:
@@ -283,31 +315,42 @@ def _get_decision_unit_id(unit: UnitInfo) -> int:
     return unit.group_unit_id if unit.group_unit_id is not None else unit.id
 
 
-def _list_cover_units(index: _Index, lang: Lang) -> list[UnitInfo]:
-    """그 언어의 옛 커버 단위(그림 포함) — 요약 숫자·흐름도가 세는 단위다. 표·행 단위는 세지 않는다."""
-    return [unit for unit in index.old_units if unit.kind in COVER_KINDS and _is_in_lang(unit.lang, lang)]
-
-
 def _format_doc_code(document: DocumentInfo) -> str:
     """옛 문서 번호 — 비어 있으면 표시 ID와 같은 D{id}."""
     return document.doc_code or f"D{document.id}"
 
 
-def _get_item_key(index: _Index, doc: TargetDocInfo, target: TargetInfo) -> tuple[object, ...]:
-    """칸 안 순서 — 사람이 정한 문서는 order_index, 아니면 입구 2 새 문장은 새 문서의 자리, 번역은 번역 출처 단위, 나머지는 첫 출처의 정렬 키.
+def _get_base_unit_id(index: _Index, target: TargetInfo) -> int | None:
+    """새 문장이 기댄 옛 단위 — 번역은 번역 출처, 그 밖은 첫 출처. 출처가 없거나 번역 출처가 은퇴했고 출처도 없으면 None."""
+    if target.translation_source_unit_id in index.snap.units:
+        return target.translation_source_unit_id
+    return target.source_unit_ids[0] if target.source_unit_ids else None
 
-    입구 2 새 문장의 자리는 새 문서 안의 실제 순서다(스펙 §6.7) — 짝지은 옛 단위 순서로 섞지 않는다.
+
+def _get_item_key(index: _Index, doc: TargetDocInfo, target: TargetInfo) -> tuple[object, ...]:
+    """칸 안 순서 — 사람이 정한 문서는 order_index, 아니면 입구 2 새 문장은 새 문서의 자리, 나머지는 기댄 옛 단위의 의미 순(설계 §6).
+
+    입구 2 새 문장의 자리는 새 문서 안의 실제 순서다(스펙 §6.7) — 짝지은 옛 단위 순서로 섞지 않는다. 그 밖은 같은 의미(짝)의
+    문장끼리 붙이고, 그 안에서 영어 출처를 먼저, 번역(변경 종류 translated — AI 번역과 사람이 쓴 다른 언어 문장)은 출처 바로 뒤에 둔다.
+    입구 2 새 문장의 번역은 그 새 문장 자리 바로 뒤다(옛 단위 정렬 키로 재면 새 문서의 모든 문장보다 앞에 선다).
+    순서를 사람이 정한 적이 없는 문서의 계산 규칙이라 사람의 선택을 덮지 않는다.
     """
     if doc.manual_order:
         return (target.order_index, target.id)
     units = index.snap.units
     if target.origin == ORIGIN_NEW_DOC and target.new_unit_id in units:
-        return (units[target.new_unit_id].order_key, target.id)
-    if target.translation_source_unit_id in units:
-        return (units[target.translation_source_unit_id].order_key, target.id)
-    if target.source_unit_ids:
-        return (units[target.source_unit_ids[0]].order_key, target.id)
-    return ((2, target.order_index), target.id)
+        return (units[target.new_unit_id].order_key, 0, (), 0, target.id)
+    base_id = _get_base_unit_id(index, target)
+    if base_id is None:
+        return ((2, target.order_index), 0, (), 0, target.id)
+    place = index.new_doc_places.get((doc.id, base_id))
+    if place is not None:
+        return (place, 0, (), int(target.change_type == TRANSLATED), target.id)
+    base = units[base_id]
+    return (
+        index.meaning_anchor[base_id], 0 if base.lang == "en" else 1, base.order_key,
+        int(target.change_type == TRANSLATED), target.id,
+    )
 
 
 def _find_na_reason(doc: TargetDocInfo, slot_key: str) -> str | None:
@@ -411,20 +454,19 @@ def number_lines(base: str, depths: Sequence[int | None]) -> list[str | None]:
     return numbers
 
 
-def _number_targets(index: _Index, lang: Lang, labels: OutputLabels) -> dict[int, str]:
-    """그 언어판의 새 문장 → 섹션 번호. 줄은 그 판에 보이는 것(그 언어와 중립)만 센다 — 판마다 번호가 빈틈없이 이어진다.
+def number_targets(index: _Index, labels: OutputLabels) -> dict[int, str]:
+    """새 문장 → 섹션 번호(설계 §6 세는 법). 한 칸(WI는 같은 단계의 Instruction·Why를 이어)의 칸 새 문장이 아닌 새 문장 전부를
+    언어를 가리지 않고 결과물 C 순서대로 한 줄로 센다.
 
-    번역 줄은 따로 세지 않는 규칙이 아니라 출처와 같은 깊이·표시(detach._follow_source가 맞춘다)·같은 정렬 자리라서 두 판의 줄이
-    서로 짝을 이루면 출처와 같은 번호가 된다. 한/영 짝 원문 줄도 깊이·표시를 함께 정하므로(순서 바꾸기가 짝 상대에 표시를 옮긴다)
-    두 판이 나란하면 같은 번호다. 번호 생략·주석 줄은 번호가 없고 세지 않는다. 표 칸 새 문장은 표의 번호를 따른다(표가 번호가
-    없으면 칸도 없다). 입구 2 문서·단계 없는 WI 칸은 번호가 없다.
+    번호 생략·주석 줄은 번호가 없고 세지 않는다. 표 칸 새 문장은 표의 번호를 따른다(표가 번호가 없으면 칸도 없다).
+    입구 2 문서·단계 없는 WI 칸은 번호가 없다.
     """
     numbers: dict[int, str] = {}
     for doc in index.doc_order:
         runs: dict[str, list[TargetInfo]] = {}
         for plan in _plan_sections(index, doc, labels):
             if plan.number is not None:
-                runs.setdefault(plan.number, []).extend(target for target in plan.targets if _is_in_lang(target.lang, lang))
+                runs.setdefault(plan.number, []).extend(plan.targets)
         for base, targets in runs.items():
             depths = [target.indent_level if target.number_style == NUMBERED else None for target in targets]
             for target, number in zip(targets, number_lines(base, depths), strict=True):
@@ -469,6 +511,29 @@ def _list_new_targets(index: _Index, labels: OutputLabels) -> list[TargetInfo]:
     return found
 
 
+def _list_row_units(index: _Index, meaning: MeaningRow) -> list[UnitInfo]:
+    """줄의 단위 — 구성 판단 단위(원문 순), 그 뒤에 표·행 단위에 묶인 칸 문장."""
+    units = [index.snap.units[unit_id] for unit_id in meaning.unit_ids]
+    return units + [cell for unit_id in meaning.unit_ids for cell in index.cells.get(unit_id, [])]
+
+
+def _get_row_disposition(snap: BundleSnapshot, meaning: MeaningRow) -> str:
+    """줄의 처분 — 구성 판단 단위의 처분이 모두 같으면 그 값, 아니면 미배정(일부만 판단한 줄은 갈 곳 없음, 설계 §5.3)."""
+    dispositions = {snap.decisions[unit_id].disposition for unit_id in meaning.unit_ids}
+    return dispositions.pop() if len(dispositions) == 1 else "unassigned"
+
+
+def _list_row_dest_doc_ids(index: _Index, meaning: MeaningRow) -> list[int]:
+    """줄이 보낸 새 문서 — 구성 단위(칸 포함) 보낸 곳의 합집합, 결과물 C 문서 순."""
+    doc_ids = {doc.id for unit in _list_row_units(index, meaning) for doc, _, _ in _group_dests(index, unit)}
+    return sorted(doc_ids, key=index.doc_rank.__getitem__)
+
+
+def _is_duplicate_row(index: _Index, meaning: MeaningRow) -> bool:
+    """중복 배정 줄 — 구성 단위(칸 포함) 중 하나라도 새 문장이 서로 다른 새 문서 둘 이상에 있다(스펙 §6.9)."""
+    return any(len(_group_dests(index, unit)) >= 2 for unit in _list_row_units(index, meaning))
+
+
 # --- A ---
 
 
@@ -492,10 +557,6 @@ def _format_target_location(target: TargetInfo, labels: OutputLabels) -> str:
             return labels.wi_unstepped_template.format(part=part)
         return labels.wi_step_template.format(step=target.wi_step, part=part)
     return target.section_path
-
-
-def _list_translations(index: _Index, unit_id: int, lang: Lang) -> list[TargetInfo]:
-    return [target for target in index.translations.get(unit_id, []) if target.lang == lang]
 
 
 def _format_place(index: _Index, unit: UnitInfo, labels: OutputLabels) -> str:
@@ -703,24 +764,22 @@ def _build_after_rows(ctx: _AContext, unit: UnitInfo, slot: _GroupSlot) -> list[
     ]
 
 
-def _build_old_remark(ctx: _AContext, meaning: MeaningRow) -> str:
-    """옛 묶음의 Remark(설계 §4.4) — 판단 이유, 출처 있는 새 문장의 remark, Translated · Added 새 문장의 remark 순.
+def _build_old_remark(index: _Index, added: Mapping[int, list[TargetInfo]], meaning: MeaningRow) -> str:
+    """옛 묶음의 Remark(설계 §4.4) — 판단 이유, 출처 있는 새 문장의 remark, Translated · Added 새 문장(added)의 remark 순.
 
     출처 있는 새 문장은 구성 단위(칸 포함)를 출처로 둔 것이다. Translated · Added 새 문장은 출처가 없어 신규 묶음 대신
-    이 묶음에 들므로 그 remark도 여기서 보인다.
+    이 묶음에 들므로 그 remark도 여기서 보인다. 결과물 C의 삭제·이동 줄 이유도 이 값이다.
     """
-    index = ctx.index
-    units = [index.snap.units[unit_id] for unit_id in meaning.unit_ids]
-    units += [cell for unit_id in meaning.unit_ids for cell in index.cells.get(unit_id, [])]
+    units = _list_row_units(index, meaning)
     reasons = [index.snap.decisions[unit_id].reason for unit_id in meaning.unit_ids]
     sourced = [target.remark for unit in units for target in index.unit_targets.get(unit.id, [])]
-    added = [target.remark for unit in units for target in ctx.added.get(unit.id, [])]
-    return _join_remarks([*reasons, *sourced, *added])
+    added_remarks = [target.remark for unit in units for target in added.get(unit.id, [])]
+    return _join_remarks([*reasons, *sourced, *added_remarks])
 
 
 def _build_old_group(ctx: _AContext, meaning: MeaningRow, row_no: int) -> list[ARow]:
     """옛 문서 의미 묶음 — 구성 단위마다 단위 줄(표·행 단위는 표 줄 뒤에 칸 문장 줄), 각 줄 바로 뒤에 그 단위의 번역 줄."""
-    slot = _GroupSlot(row_no, _build_old_remark(ctx, meaning))
+    slot = _GroupSlot(row_no, _build_old_remark(ctx.index, ctx.added, meaning))
     rows: list[ARow] = []
     for unit_id in meaning.unit_ids:
         unit = ctx.index.snap.units[unit_id]
@@ -770,18 +829,13 @@ def _split_new_targets(
     return added, groups
 
 
-def build_output_a(snap: BundleSnapshot, lang: Lang, people: Mapping[str, str]) -> list[ARow]:
-    """결과물 A 한 벌(설계 §4.1) — 의미 묶음 순서(output_rows)의 옛 문서 줄, 그 뒤 고아 번역, 끝에 입구 2 신규 묶음.
-
-    lang은 위치 표기·변경 종류 같은 라벨 언어만 고른다. people(로그인 ID → 이름)은 확정한 사람 표시용이다.
-    번호는 아직 판별로 센 값이라 새 문장 자기 언어판의 번호를 쓴다(중립은 한글판).
-    """
-    labels = LABELS[lang]
-    index = _build_index(snap)
-    numbers = {edition: _number_targets(index, edition, labels) for edition in ("ko", "en")}
+def _build_a_groups(index: _Index, labels: OutputLabels, people: Mapping[str, str]) -> list[list[ARow]]:
+    """결과물 A의 묶음 — 의미 묶음 순서(output_rows)의 옛 문서 줄, 그 뒤 고아 번역, 끝에 입구 2 신규 묶음. 요약의 번역 숫자도 이것을 센다."""
+    snap = index.snap
+    numbers = number_targets(index, labels)
 
     def get_number(target: TargetInfo) -> str:
-        return numbers["en" if target.lang == "en" else "ko"].get(target.id, "")
+        return numbers.get(target.id, "")
 
     added, new_groups = _split_new_targets(snap, _list_new_targets(index, labels))
     ctx = _AContext(index, labels, get_number, people, _index_translations(snap), added)
@@ -801,25 +855,35 @@ def build_output_a(snap: BundleSnapshot, lang: Lang, people: Mapping[str, str]) 
         groups.append([_build_target_row(ctx, target, "new", None, target.change_type or "", slot) for target in targets])
     for group in groups:
         group[0].is_group_start = True
-    return [row for group in groups for row in group]
+    return groups
+
+
+def build_output_a(snap: BundleSnapshot, lang: Lang, people: Mapping[str, str]) -> list[ARow]:
+    """결과물 A 한 벌(설계 §4.1) — lang은 위치 표기·변경 종류 같은 라벨 언어만, people(로그인 ID → 이름)은 확정한 사람 표시용."""
+    return [row for group in _build_a_groups(_build_index(snap), LABELS[lang], people) for row in group]
 
 
 # --- B ---
 
 
 def build_output_b(snap: BundleSnapshot, lang: Lang) -> FlowGraph:
-    """결과물 B — 옛 문서(그 언어 커버 단위 수) → 새 문서·삭제·이동·미배정. 나눔은 한 번, 중복 배정은 보낸 곳마다 한 번."""
+    """결과물 B 한 벌(설계 §5.1) — 옛 문서(줄 수) → 새 문서·삭제·이동·미배정, 줄마다 보낸 새 문서 집합에 한 번씩(나눔은 한 번,
+    중복 배정은 보낸 곳마다 한 번), 보낸 곳이 없으면 줄의 처분 노드 하나. lang은 노드 라벨 언어만 고른다.
+
+    짝의 두 단위가 서로 다른 옛 문서에 있으면(드묾) 줄의 첫 단위 문서로 센다.
+    """
     labels = LABELS[lang]
     index = _build_index(snap)
     old_counts: Counter[int] = Counter()
     edge_counts: Counter[tuple[int, str]] = Counter()
-    for unit in _list_cover_units(index, lang):
-        old_counts[unit.document_id] += 1
-        dests = [f"target:{doc.id}" for doc, _, _ in _group_dests(index, unit)]
+    for meaning in build_meaning_rows(snap):
+        document_id = snap.units[meaning.unit_ids[0]].document_id
+        old_counts[document_id] += 1
+        dests = [f"target:{doc_id}" for doc_id in _list_row_dest_doc_ids(index, meaning)]
         if not dests:
-            dests = [DISPOSITION_NODES.get(snap.decisions[_get_decision_unit_id(unit)].disposition, "unassigned")]
+            dests = [DISPOSITION_NODES.get(_get_row_disposition(snap, meaning), "unassigned")]
         for dest in dests:
-            edge_counts[(unit.document_id, dest)] += 1
+            edge_counts[(document_id, dest)] += 1
     dest_counts: Counter[str] = Counter()
     for (_, dest), count in edge_counts.items():
         dest_counts[dest] += count
@@ -871,34 +935,76 @@ def _format_source_note(index: _Index, target: TargetInfo, labels: OutputLabels)
     return f"{note} {suffix}" if suffix else note
 
 
-def _build_item(index: _Index, target: TargetInfo, lang: Lang, labels: OutputLabels, numbers: dict[int, str]) -> CItem:
+@dataclass(frozen=True)
+class _CContext:
+    """결과물 C 한 번 계산의 재료."""
+
+    index: _Index
+    labels: OutputLabels
+    numbers: dict[int, str]
+    # Translated · Added 새 문장 → A에서 그 줄이 드는 옛 단위(맞춘 쪽 출처 중 원문에서 가장 앞)
+    added_anchor: dict[int, int]
+
+
+def _format_meaning_key(ctx: _CContext, target: TargetInfo) -> str | None:
+    """굵은 선 묶음 키 — A와 같은 묶음: 기댄 옛 단위의 줄(old:), 출처 없는 입구 2 새 문장은 새 문서 쪽 짝(new:), 고아 번역은 None.
+
+    Translated · Added 새 문장은 A처럼 맞춘 옛 줄의 묶음이다. 칸 문장 출처는 표·행 단위의 줄을 따른다.
+    """
+    snap = ctx.index.snap
+    unit_id = ctx.added_anchor.get(target.id)
+    if unit_id is None:
+        unit_id = _get_base_unit_id(ctx.index, target)
+    if unit_id is not None:
+        return f"old:{get_meaning_key(snap, _get_decision_unit_id(snap.units[unit_id]))}"
+    if target.origin == ORIGIN_NEW_DOC and target.new_unit_id is not None:
+        return f"new:{get_new_meaning_key(snap, target)}"
+    return None
+
+
+def _build_item(ctx: _CContext, target: TargetInfo) -> CItem:
+    index = ctx.index
     return CItem(
         target_id=target.id, kind=target.kind, lang=target.lang, text=target.confirmed_text, ai_text=target.ai_text,
-        change_type=target.change_type, status=target.status, source_note=_format_source_note(index, target, labels),
-        number=numbers.get(target.id), indent_level=target.indent_level,
+        change_type=target.change_type, status=target.status, source_note=_format_source_note(index, target, ctx.labels),
+        origin=target.origin, meaning_key=_format_meaning_key(ctx, target),
+        number=ctx.numbers.get(target.id), indent_level=target.indent_level,
         number_style=_get_number_style(index, target), cell_row=target.cell_row,
         cell_col=target.cell_col,
-        children=[
-            _build_item(index, child, lang, labels, numbers)
-            for child in index.children.get(target.id, [])
-            if _is_in_lang(child.lang, lang)
-        ],
+        children=[_build_item(ctx, child) for child in index.children.get(target.id, [])],
     )
 
 
+def _describe_disposed_row(index: _Index, meaning: MeaningRow, labels: OutputLabels, remark: str) -> dict[str, str]:
+    """삭제·이동 줄 칸 — 표시 ID·원문은 구성 단위 값을 줄바꿈으로, 문서 번호·절은 첫 단위, 이유는 묶음 Remark."""
+    snap = index.snap
+    units = [snap.units[unit_id] for unit_id in meaning.unit_ids]
+    return {
+        "display_id": "\n".join(unit.display_id for unit in units),
+        "doc_code": _format_doc_code(snap.documents[units[0].document_id]),
+        "section": snap.blocks[units[0].block_id].section_label,
+        "source_text": "\n".join(_format_source_text(index, unit, labels) for unit in units),
+        "reason": remark,
+    }
+
+
 def build_output_c(snap: BundleSnapshot, lang: Lang) -> COutput:
-    """결과물 C — 새 문서마다 칸별로 받은 새 문장(그 언어와 중립), 끝에 삭제·다른 문서로 이동."""
+    """결과물 C 한 벌(설계 §5.2) — 새 문서마다 칸별로 받은 새 문장(두 언어와 중립이 한 목록, C 순서), 끝에 삭제·다른 문서로 이동(줄마다 한 번).
+
+    lang은 칸 이름·출처 표기 같은 라벨 언어만 고른다.
+    """
     labels = LABELS[lang]
     index = _build_index(snap)
-    numbers = _number_targets(index, lang, labels)
+    added, _ = _split_new_targets(snap, _list_new_targets(index, labels))
+    ctx = _CContext(
+        index, labels, number_targets(index, labels),
+        {target.id: unit_id for unit_id, targets in added.items() for target in targets},
+    )
     docs = []
     for doc in index.doc_order:
         sections = []
         for plan in _plan_sections(index, doc, labels):
-            items = [
-                _build_item(index, target, lang, labels, numbers)
-                for target in plan.targets if _is_in_lang(target.lang, lang)
-            ]
+            items = [_build_item(ctx, target) for target in plan.targets]
             if items or plan.keep_empty:
                 sections.append(
                     CSection(
@@ -913,63 +1019,50 @@ def build_output_c(snap: BundleSnapshot, lang: Lang) -> COutput:
                 parent_code=parent.code if parent is not None else None, entrance=doc.entrance, sections=sections,
             )
         )
-    disposed = _list_edition_disposals(index, lang)
-    return COutput(
-        docs=docs,
-        deleted=[
-            CDeleted(
-                display_id=unit.display_id, doc_code=_format_doc_code(snap.documents[unit.document_id]),
-                section=snap.blocks[unit.block_id].section_label, source_text=_format_source_text(index, unit, labels),
-                reason=decision.reason,
-            )
-            for unit, decision in disposed if decision.disposition == "delete"
-        ],
-        moved=[
-            CMoved(
-                display_id=unit.display_id, doc_code=_format_doc_code(snap.documents[unit.document_id]),
-                section=snap.blocks[unit.block_id].section_label, source_text=_format_source_text(index, unit, labels),
-                move_target_code=decision.move_target_code, reason=decision.reason,
-            )
-            for unit, decision in disposed if decision.disposition == "move_external"
-        ],
-    )
-
-
-def _list_edition_disposals(index: _Index, lang: Lang) -> list[tuple[UnitInfo, DecisionInfo]]:
-    """결과물 C 끝의 삭제·이동 — 그 언어판의 옛 단위(그 언어와 그림, 그 언어 칸이 있는 표) 중 보낸 새 문서 없이 삭제·이동한 것, 원문 순서."""
-    found = []
-    for unit in index.old_units:
-        if unit.kind in TABLE_UNIT_KINDS:
-            cells = index.cells.get(unit.id, [])
-            shown = not cells or any(_is_in_lang(cell.lang, lang) or _list_translations(index, cell.id, lang) for cell in cells)
+    deleted: list[CDeleted] = []
+    moved: list[CMoved] = []
+    for meaning in build_meaning_rows(snap):
+        disposition = _get_row_disposition(snap, meaning)
+        if disposition not in DISPOSITION_NODES:
+            continue
+        # 삭제·이동은 새 문장이 없어(저장 검사) Translated · Added도 없지만, Remark는 A 묶음과 같은 함수로 짓는다
+        fields = _describe_disposed_row(index, meaning, labels, _build_old_remark(index, added, meaning))
+        if disposition == "delete":
+            deleted.append(CDeleted(**fields))
         else:
-            shown = _is_in_lang(unit.lang, lang)
-        decision = index.snap.decisions[_get_decision_unit_id(unit)]
-        if shown and decision.disposition in DISPOSITION_NODES and not _group_dests(index, unit):
-            found.append((unit, decision))
-    return found
+            move_target_code = snap.decisions[meaning.unit_ids[0]].move_target_code
+            moved.append(CMoved(**fields, move_target_code=move_target_code))
+    return COutput(docs=docs, deleted=deleted, moved=moved)
 
 
 # --- 요약 ---
 
 
-def build_summary(snap: BundleSnapshot, lang: Lang) -> Summary:
-    """언어별 요약 숫자 (스펙 §7.13) — 처분은 판단을 담는 단위의 것, 확정률은 커버 상태 기준(소수 넷째 자리)."""
+def build_summary(snap: BundleSnapshot) -> Summary:
+    """요약 숫자 한 벌(설계 §5.3) — 줄은 진행 숫자와 같은 의미 묶음, 줄의 처분은 구성 단위가 모두 같을 때 그 값(아니면 미배정).
+
+    확정률은 줄 상태 기준(소수 넷째 자리, 줄이 없으면 0). 번역은 결과물 A 묶음 짓기를 그대로 센다.
+    """
     index = _build_index(snap)
-    units = _list_cover_units(index, lang)
-    dispositions = Counter(snap.decisions[_get_decision_unit_id(unit)].disposition for unit in units)
-    confirmed = sum(get_cover_status(unit, snap.decisions) == "confirmed" for unit in units)
+    rows = build_meaning_rows(snap)
+    dispositions = Counter(_get_row_disposition(snap, meaning) for meaning in rows)
+    confirmed = sum(meaning.status == "confirmed" for meaning in rows)
+    labels = LABELS["en"]  # 숫자만 세므로 라벨 언어는 결과에 닿지 않는다
+    groups = _build_a_groups(index, labels, {})
     return Summary(
-        old_units=len(units),
-        assigned=len(units) - dispositions["unassigned"],
-        unassigned=dispositions["unassigned"],
-        # 중복 배정 — 새 문장이 서로 다른 새 문서 둘 이상에 있는 단위(스펙 §6.9)
-        duplicate=sum(len(_group_dests(index, unit)) >= 2 for unit in units),
+        old_rows=len(rows),
+        assigned=len(rows) - dispositions["unassigned"],
+        no_destination=dispositions["unassigned"],
+        duplicate=sum(_is_duplicate_row(index, meaning) for meaning in rows),
         deleted=dispositions["delete"],
         moved=dispositions["move_external"],
-        new=sum(_is_in_lang(target.lang, lang) for target in _list_new_targets(index, LABELS[lang])),
-        translated=sum(target.lang == lang for targets in index.translations.values() for target in targets),
-        confirmed_rate=round(confirmed / len(units), 4) if units else 0.0,
+        # 새 문서 쪽 짝 하나가 한 신규 — Translated · Added(맞춘 짝의 출처 없는 쪽)도 여기 든다
+        new=len({get_new_meaning_key(snap, target) for target in _list_new_targets(index, labels)}),
+        translated=sum(
+            any(row.row_kind == "translation" or row.change_type == TRANSLATED_ADDED for row in group) for group in groups
+        ),
+        confirmed_rate=round(confirmed / len(rows), 4) if rows else 0.0,
+        single_language=count_single_language(snap),
     )
 
 
