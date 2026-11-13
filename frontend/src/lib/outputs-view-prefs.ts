@@ -1,15 +1,12 @@
-// Outputs 보기 설정 - 마지막으로 본 탭(A·B·C)과 결과물 언어를 브라우저에 기억한다. 저장소가 막혀 있으면 기본값으로 그린다.
-import type { OutputLang } from "./api-sop";
-
+// Outputs 보기 설정 - 마지막으로 본 탭(A·B·C)을 브라우저에 기억한다. 결과물은 한 벌이라 판(언어)은 기억하지 않는다. 저장소가 막혀 있으면 기본값으로 그린다.
 export type OutputsTab = "a" | "b" | "c";
 
 export interface OutputsView {
   tab: OutputsTab;
-  lang: OutputLang;
 }
 
-const DEFAULTS: OutputsView = { tab: "c", lang: "ko" };
-const KEYS: Record<keyof OutputsView, string> = { tab: "sopa.outputs.tab", lang: "sopa.outputs.lang" };
+const DEFAULTS: OutputsView = { tab: "c" };
+const KEYS: Record<keyof OutputsView, string> = { tab: "sopa.outputs.tab" };
 
 function readValue(key: string): string | null {
   try {
@@ -22,11 +19,7 @@ function readValue(key: string): string | null {
 
 export function readOutputsView(): OutputsView {
   const tab = readValue(KEYS.tab);
-  const lang = readValue(KEYS.lang);
-  return {
-    tab: tab === "a" || tab === "b" || tab === "c" ? tab : DEFAULTS.tab,
-    lang: lang === "ko" || lang === "en" ? lang : DEFAULTS.lang,
-  };
+  return { tab: tab === "a" || tab === "b" || tab === "c" ? tab : DEFAULTS.tab };
 }
 
 export function writeOutputsView(patch: Partial<OutputsView>): void {

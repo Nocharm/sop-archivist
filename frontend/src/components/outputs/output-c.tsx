@@ -1,23 +1,30 @@
-// 결과물 C - 새 문서를 칸·단계 순서로 미리 본다. 결과물 화면과 검토 화면이 같이 쓴다. 확정 전 새 문장은 점선.
+// 결과물 C 한 벌 - 새 문서를 칸·단계 순서로 미리 본다. 칸마다 두 언어 문장이 C 순서대로 한 목록이고, 같은 의미에서 나온 이웃 문장은 굵은 선으로 묶인다.
+// 결과물 화면과 검토 화면이 같이 쓴다. 확정 전 새 문장은 점선.
 "use client";
 
 import { ArrowDown, ArrowUp, FileStack, IndentDecrease, IndentIncrease, Italic, List, ListOrdered, ListTree, type LucideIcon } from "lucide-react";
 import Link from "next/link";
-import { Fragment, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import { EmptyState } from "@/components/ui/empty-state";
 import { Tooltip } from "@/components/ui/tooltip";
-import type { NumberStyle, OutputC, OutputCItem, OutputLang } from "@/lib/api-sop";
+import type { NumberStyle, OutputC, OutputCItem } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
-import { canIndent, getSectionDepths, isCounted, isIndentable, NUMBER_STYLES, readIndentKey, type IndentDir } from "@/lib/section-number";
+import { listMeaningStarts } from "@/lib/output-groups";
+import { canChangeDepth, canChangeStyle, canIndent, getSectionDepths, isCounted, NUMBER_STYLES, readIndentKey, type IndentDir } from "@/lib/section-number";
 import { canMoveTarget, type MoveDir } from "@/lib/target-order";
 
 /** 순서 바꾸기 - 결과물 화면에서 작성자에게만 넘긴다. 검토 화면은 넘기지 않아 단추가 없다 */
 export type MoveTarget = (targetDocId: number, locationKey: string, targetId: number, dir: MoveDir) => void;
-/** 들여·내어쓰기 - 지금 보이는 깊이에서 한 단계. 검토 화면은 넘기지 않는다 */
+/** 들여·내어쓰기 - 지금 보이는 깊이에서 한 단계, 그 줄만. 검토 화면은 넘기지 않는다 */
 export type IndentTarget = (targetDocId: number, targetId: number, depth: number) => void;
-/** 번호 표시 바꾸기 - 이 줄만 보내면 한/영 짝 상대·번역 줄은 서버가 따라 바꾼다. 검토 화면은 넘기지 않는다 */
+/** 번호 표시 바꾸기 - 그 줄에만 붙는다(짝 상대·번역이 따라 바뀌지 않는다). 검토 화면은 넘기지 않는다 */
 export type MarkTarget = (targetDocId: number, targetId: number, style: NumberStyle) => void;
+
+/** 글꼴을 고르는 lang 속성 - 언어가 없는 단위(표 틀·그림)는 감싼 쪽을 따른다 */
+function readLangAttr(lang: string): string | undefined {
+  return lang === "ko" || lang === "en" ? lang : undefined;
+}
 
 const MARK_ICONS: Record<NumberStyle, LucideIcon> = { numbered: ListOrdered, omitted: List, note: Italic };
 const MARK_KEYS: Record<NumberStyle, { label: string; tip: string }> = {
@@ -39,7 +46,7 @@ function CItemView({ item }: { item: OutputCItem }) {
             <tr key={index}>
               {cells.sort((a, b) => (a.cell_col ?? 0) - (b.cell_col ?? 0)).map((cell) => (
                 // 확정 글이 없으면 AI 글 - 문장과 같은 규칙, 확정 전 칸은 점선
-                <td key={cell.target_id} className={cell.status === "confirmed" ? undefined : "border-dashed"}>
+                <td key={cell.target_id} className={cell.status === "confirmed" ? undefined : "border-dashed"} lang={readLangAttr(cell.lang)}>
                   {cell.text || cell.ai_text}
                 </td>
               ))}
@@ -52,6 +59,7 @@ function CItemView({ item }: { item: OutputCItem }) {
   return (
     <p
       className={`${item.status === "confirmed" ? "" : "rounded-sm border border-dashed border-line-2 px-1"} ${isNote ? "italic" : ""}`}
+      lang={readLangAttr(item.lang)}
       data-testid={`output-c-item-${item.target_id}`}
       data-number-style={item.number_style}
     >
@@ -65,9 +73,9 @@ interface RowButtonsProps {
   item: OutputCItem;
   busy: boolean;
   onMove: (dir: MoveDir) => void;
-  /** 깊이를 바꿀 수 없는 줄(입구 2 문서·번역 줄)이면 없다 */
+  /** 깊이를 바꿀 수 없는 줄(입구 2 문서·AI 번역 줄)이면 없다 */
   indent: { canOut: boolean; canIn: boolean; onIndent: (dir: IndentDir) => void } | null;
-  /** 번호 표시를 바꿀 수 없는 줄(입구 2 문서·번역 줄)이면 없다 */
+  /** 번호 표시를 바꿀 수 없는 줄(입구 2 문서)이면 없다 */
   onMark: ((style: NumberStyle) => void) | null;
 }
 
@@ -149,7 +157,6 @@ function NumberedLine({ item, depth, children }: { item: OutputCItem; depth: num
 
 interface OutputCViewProps {
   data: OutputC;
-  lang: OutputLang;
   onMove?: MoveTarget;
   onIndent?: IndentTarget;
   onMark?: MarkTarget;
@@ -158,7 +165,7 @@ interface OutputCViewProps {
   tobeHref?: string;
 }
 
-export function OutputCView({ data, lang, onMove, onIndent, onMark, moving = false, tobeHref }: OutputCViewProps) {
+export function OutputCView({ data, onMove, onIndent, onMark, moving = false, tobeHref }: OutputCViewProps) {
   const { t } = useI18n();
   if (data.docs.length === 0) {
     return (
@@ -182,7 +189,8 @@ export function OutputCView({ data, lang, onMove, onIndent, onMark, moving = fal
     <div className="grid gap-6 p-[var(--pad)]" data-testid="output-c">
       {data.docs.map((doc) => (
         <article key={doc.target_doc_id} className="sheet mx-0 max-w-[760px]">
-          <div className="pg" lang={lang}>
+          {/* 줄마다 자기 언어(lang)로 글꼴을 고른다 - 한 칸에 두 언어가 섞인다 */}
+          <div className="pg">
             <header className="flex items-baseline gap-2 border-b border-line pb-2" style={{ fontFamily: "var(--font-ui)" }}>
               <span className="font-mono text-[13px] font-semibold">{doc.code}</span>
               <span className="font-semibold">{doc.title}</span>
@@ -191,11 +199,18 @@ export function OutputCView({ data, lang, onMove, onIndent, onMark, moving = fal
             {doc.sections.map((section) => {
               const depths = getSectionDepths(section);
               const counted = section.items.map(isCounted);
+              const starts = listMeaningStarts(section.items);
               return (
                 <section key={section.location_key} className="grid gap-1">
                   <h3 className="text-[13px] font-semibold text-ink-2" style={{ fontFamily: "var(--font-ui)" }} data-testid={`output-c-section-${doc.target_doc_id}-${section.location_key}`}>
                     {section.number !== null && <span className="mr-1.5 font-mono">{section.number}</span>}
                     {section.label}
+                    {/* 칸 제목으로 간 옛 제목 - 칸 항목이 아니라 머리 옆에 흐리게. 길면 감긴다 */}
+                    {section.heading_note !== "" && (
+                      <span className="ml-2 font-normal text-ink-3 [overflow-wrap:anywhere]" data-testid={`output-c-heading-note-${doc.target_doc_id}-${section.location_key}`}>
+                        {section.heading_note}
+                      </span>
+                    )}
                   </h3>
                   {section.na_reason !== null ? (
                     <p className="text-ink-3">N/A · {section.na_reason}</p>
@@ -208,10 +223,17 @@ export function OutputCView({ data, lang, onMove, onIndent, onMark, moving = fal
                           <CItemView item={item} />
                         </NumberedLine>
                       );
-                      if (!onMove) return <Fragment key={item.target_id}>{line}</Fragment>;
-                      const editable = isIndentable(doc.entrance, item);
+                      // 의미 묶음의 첫 줄 위에 굵은 선 - 칸의 첫 줄은 칸 머리가 위에 있어 긋지 않는다
+                      const meaningStart = starts[index] && index > 0 ? "" : undefined;
+                      if (!onMove) {
+                        return (
+                          <div key={item.target_id} className="c-row" data-meaning-start={meaningStart} data-testid={`output-c-row-${item.target_id}`}>
+                            {line}
+                          </div>
+                        );
+                      }
                       const indent =
-                        onIndent && editable
+                        onIndent && canChangeDepth(doc.entrance, item)
                           ? {
                               canOut: canIndent(depths, counted, index, -1),
                               canIn: canIndent(depths, counted, index, 1),
@@ -225,6 +247,7 @@ export function OutputCView({ data, lang, onMove, onIndent, onMark, moving = fal
                           tabIndex={indent ? -1 : undefined}
                           // 줄 끝 단추는 글 뒤 같은 flex 줄에 둔다(.c-row) - 글이 폭을 채우면 아래로 감겨 겹치지 않고, 늘 흐리게 보여 호버로 높이가 변하지 않는다
                           className="hover-row c-row"
+                          data-meaning-start={meaningStart}
                           data-testid={`output-c-row-${item.target_id}`}
                           onKeyDown={(event) => {
                             if (!indent || event.target !== event.currentTarget) return;
@@ -242,7 +265,7 @@ export function OutputCView({ data, lang, onMove, onIndent, onMark, moving = fal
                             item={item}
                             busy={moving}
                             indent={indent}
-                            onMark={onMark && editable ? (style) => onMark(doc.target_doc_id, item.target_id, style) : null}
+                            onMark={onMark && canChangeStyle(doc.entrance) ? (style) => onMark(doc.target_doc_id, item.target_id, style) : null}
                             onMove={(dir) => onMove(doc.target_doc_id, section.location_key, item.target_id, dir)} />
                         </div>
                       );
@@ -257,20 +280,21 @@ export function OutputCView({ data, lang, onMove, onIndent, onMark, moving = fal
       {(data.deleted.length > 0 || data.moved.length > 0) && (
         <section className="grid max-w-[760px] gap-2">
           <h2 className="text-xs font-semibold text-ink-3">{t("outputs.deletedMoved")}</h2>
+          {/* 옛 줄마다 한 번 - 짝이면 표시 ID·원문이 줄바꿈으로 이어져 온다 */}
           <ul className="grid gap-1 text-[13px]">
-            {data.deleted.map((item) => (
-              <li key={`d${item.display_id}`} className="grid grid-cols-[120px_minmax(0,1fr)] gap-2">
-                <span className="font-mono text-[11px] text-ink-3">{item.display_id}</span>
-                <span>
-                  <span className="text-ink-3 line-through decoration-[var(--danger-ink)]">{item.source_text}</span>
-                  <span className="block text-xs text-ink-3">{item.reason}</span>
+            {data.deleted.map((item, index) => (
+              <li key={`d${index}`} className="grid grid-cols-[120px_minmax(0,1fr)] gap-2" data-testid={`output-c-deleted-${index}`}>
+                <span className="whitespace-pre-line font-mono text-[11px] text-ink-3 [overflow-wrap:anywhere]">{item.display_id}</span>
+                <span className="min-w-0 [overflow-wrap:anywhere]">
+                  <span className="whitespace-pre-line text-ink-3 line-through decoration-[var(--danger-ink)]">{item.source_text}</span>
+                  <span className="block whitespace-pre-line text-xs text-ink-3">{item.reason}</span>
                 </span>
               </li>
             ))}
-            {data.moved.map((item) => (
-              <li key={`m${item.display_id}`} className="grid grid-cols-[120px_minmax(0,1fr)] gap-2">
-                <span className="font-mono text-[11px] text-ink-3">{item.display_id}</span>
-                <span>
+            {data.moved.map((item, index) => (
+              <li key={`m${index}`} className="grid grid-cols-[120px_minmax(0,1fr)] gap-2" data-testid={`output-c-moved-${index}`}>
+                <span className="whitespace-pre-line font-mono text-[11px] text-ink-3 [overflow-wrap:anywhere]">{item.display_id}</span>
+                <span className="min-w-0 whitespace-pre-line [overflow-wrap:anywhere]">
                   {item.source_text}
                   <span className="block text-xs text-ink-3">
                     → <span className="font-mono">{item.move_target_code}</span> · {item.reason}

@@ -1,4 +1,4 @@
-// 결과물 C - AI가 제안한 표의 칸은 아직 확정 글이 없어 AI 글을 보인다(문장과 같은 규칙). 비어 보이면 검토자가 표를 못 본다.
+// 결과물 C 한 벌 - 칸마다 두 언어가 한 목록이고, 의미가 바뀌는 줄에 굵은 선, 칸 머리 옆에 칸 제목 출처, 줄마다 바꿀 수 있는 단추만 보인다.
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
@@ -10,36 +10,39 @@ import { OutputCView } from "./output-c";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+type Section = OutputC["docs"][number]["sections"][number];
+
 function makeItem(extra: Partial<OutputCItem>): OutputCItem {
-  return { target_id: 1, kind: "sentence", lang: "ko", text: "", ai_text: "", change_type: null, status: "ai_suggested", source_note: "", number: null, indent_level: 0, number_style: "numbered", cell_row: null, cell_col: null, children: [], ...extra };
+  return { target_id: 1, kind: "sentence", lang: "ko", text: "", ai_text: "", change_type: null, status: "ai_suggested", source_note: "", origin: "units", meaning_key: null, number: null, indent_level: 0, number_style: "numbered", cell_row: null, cell_col: null, children: [], ...extra };
+}
+
+function makeOutput(items: OutputCItem[], extra: Partial<Section> = {}): OutputC {
+  return {
+    docs: [{ target_doc_id: 1, code: "SOP-1", title: "T", doc_type: "sop", parent_code: null, entrance: "assign", sections: [{ location_key: "scope", label: "Scope", number: "2", na_reason: null, heading_note: "", items, ...extra }] }],
+    deleted: [],
+    moved: [],
+  };
+}
+
+function render(props: Parameters<typeof OutputCView>[0]) {
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  act(() => root.render(createElement(LangProvider, null, createElement(OutputCView, props))));
+  return { host, unmount: () => act(() => root.unmount()) };
 }
 
 describe("OutputCView", () => {
   it("shows the AI text in the cells of an AI-suggested table", () => {
     const table = makeItem({ target_id: 10, kind: "table", lang: "neutral", children: [makeItem({ target_id: 11, ai_text: "AI 칸 글", cell_row: 0, cell_col: 0 })] });
-    const data: OutputC = {
-      docs: [{ target_doc_id: 1, code: "SOP-1", title: "T", doc_type: "sop", parent_code: null, entrance: "assign", sections: [{ location_key: "scope", label: "Scope", number: "2", na_reason: null, items: [table] }] }],
-      deleted: [],
-      moved: [],
-    };
-    const host = document.createElement("div");
-    const root = createRoot(host);
-    act(() => root.render(createElement(LangProvider, null, createElement(OutputCView, { data, lang: "ko" }))));
+    const { host, unmount } = render({ data: makeOutput([table]) });
     expect(host.querySelector("td")?.textContent).toBe("AI 칸 글");
-    act(() => root.unmount());
+    unmount();
   });
 
   it("numbers lines and sections, and Tab on a picked row indents one level at most", () => {
-    const items = [makeItem({ target_id: 1, text: "가", status: "confirmed", number: "2.1" }), makeItem({ target_id: 2, text: "나", status: "confirmed", number: "2.2" })];
-    const data: OutputC = {
-      docs: [{ target_doc_id: 1, code: "SOP-1", title: "T", doc_type: "sop", parent_code: null, entrance: "assign", sections: [{ location_key: "scope", label: "Scope", number: "2", na_reason: null, items }] }],
-      deleted: [],
-      moved: [],
-    };
+    const items = [makeItem({ target_id: 1, lang: "en", text: "A", status: "confirmed", number: "2.1" }), makeItem({ target_id: 2, text: "나", status: "confirmed", number: "2.2" })];
     const onIndent = vi.fn();
-    const host = document.createElement("div");
-    const root = createRoot(host);
-    act(() => root.render(createElement(LangProvider, null, createElement(OutputCView, { data, lang: "ko", onMove: () => {}, onIndent }))));
+    const { host, unmount } = render({ data: makeOutput(items), onMove: () => {}, onIndent });
     expect(host.querySelector('[data-testid="output-c-number-2"]')?.textContent).toBe("2.2");
     expect(host.querySelector('[data-testid="output-c-section-1-scope"]')?.textContent).toBe("2Scope");
     // 첫 줄은 들일 수 없다(앞줄이 없다) - 단추도 막고 Tab도 무시한다
@@ -59,7 +62,7 @@ describe("OutputCView", () => {
     const back = new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true });
     act(() => second?.dispatchEvent(back));
     expect(back.defaultPrevented).toBe(false);
-    act(() => root.unmount());
+    unmount();
   });
 
   it("shows a note in italics without a number, indents it, and sends a mark change for that line only", () => {
@@ -67,17 +70,9 @@ describe("OutputCView", () => {
       makeItem({ target_id: 1, text: "가", status: "confirmed", number: "2.1" }),
       makeItem({ target_id: 2, text: "주석", status: "confirmed", number: null, number_style: "note", indent_level: 1 }),
       makeItem({ target_id: 3, text: "나", status: "confirmed", number: "2.2" }),
-      makeItem({ target_id: 4, text: "번역", status: "confirmed", number: "2.3", change_type: "translated" }),
     ];
-    const data: OutputC = {
-      docs: [{ target_doc_id: 1, code: "SOP-1", title: "T", doc_type: "sop", parent_code: null, entrance: "assign", sections: [{ location_key: "scope", label: "Scope", number: "2", na_reason: null, items }] }],
-      deleted: [],
-      moved: [],
-    };
     const onMark = vi.fn();
-    const host = document.createElement("div");
-    const root = createRoot(host);
-    act(() => root.render(createElement(LangProvider, null, createElement(OutputCView, { data, lang: "ko", onMove: () => {}, onIndent: () => {}, onMark }))));
+    const { host, unmount } = render({ data: makeOutput(items), onMove: () => {}, onIndent: () => {}, onMark });
     expect(host.querySelector('[data-testid="output-c-number-2"]')).toBeNull();
     expect(host.querySelector('[data-testid="output-c-item-2"]')?.className).toContain("italic");
     expect(host.querySelector('[data-testid="output-c-item-1"]')?.className).not.toContain("italic");
@@ -91,13 +86,54 @@ describe("OutputCView", () => {
     // 이미 고른 표시를 다시 눌러도 보내지 않는다
     act(() => host.querySelector<HTMLButtonElement>('[data-testid="output-c-mark-note-2"]')?.click());
     expect(onMark).toHaveBeenCalledTimes(1);
-    // 번역 줄은 출처의 표시를 따라가므로 고르는 단추가 없다
-    expect(host.querySelector('[data-testid="output-c-mark-4"]')).toBeNull();
     // 줄 끝 단추는 글 흐름 안(늘 흐리게)이라 오른쪽 예약 여백이 없다(글 폭이 줄지 않는다)
-    for (const id of [3, 4]) {
+    for (const id of [2, 3]) {
       expect(host.querySelector(`[data-testid="output-c-row-${id}"]`)?.className).not.toMatch(/\bpr-\[/);
       expect(host.querySelector(`[data-testid="output-c-row-${id}"] .row-actions-quiet`)?.className).not.toContain("absolute");
     }
-    act(() => root.unmount());
+    unmount();
+  });
+
+  it("locks the depth of an AI translation but lets its number style and a person's other-language sentence change", () => {
+    const items = [
+      makeItem({ target_id: 1, lang: "en", text: "Check", status: "confirmed", number: "2.1", meaning_key: "old:3" }),
+      makeItem({ target_id: 2, text: "확인", status: "confirmed", number_style: "omitted", change_type: "translated", origin: "translation", meaning_key: "old:3" }),
+      makeItem({ target_id: 3, lang: "en", text: "Written", status: "confirmed", number: "2.2", change_type: "translated", origin: "units", meaning_key: "old:4" }),
+    ];
+    const { host, unmount } = render({ data: makeOutput(items), onMove: () => {}, onIndent: () => {}, onMark: () => {} });
+    // AI 번역: 깊이 단추는 없고(출처를 따른다) 번호 표시는 고른다
+    expect(host.querySelector('[data-testid="output-c-indent-2"]')).toBeNull();
+    expect(host.querySelector('[data-testid="output-c-mark-2"]')).not.toBeNull();
+    // 사람이 쓴 다른 언어 문장은 일반 새 문장이다
+    expect(host.querySelector('[data-testid="output-c-indent-3"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="output-c-mark-3"]')).not.toBeNull();
+    unmount();
+  });
+
+  it("draws one list per section with a meaning border and each line in its own language", () => {
+    const items = [
+      makeItem({ target_id: 1, lang: "en", text: "Check", status: "confirmed", meaning_key: "old:3" }),
+      makeItem({ target_id: 2, text: "확인", status: "confirmed", meaning_key: "old:3" }),
+      makeItem({ target_id: 3, lang: "en", text: "Next", status: "confirmed", meaning_key: "old:4" }),
+      makeItem({ target_id: 4, text: "번역", status: "confirmed", meaning_key: null }),
+    ];
+    // 검토 화면처럼 조작 없이 그려도 같은 선이다
+    const { host, unmount } = render({ data: makeOutput(items, { heading_note: "← OLD-1 §5, OLD-2 §5" }) });
+    const starts = [1, 2, 3, 4].map((id) => host.querySelector(`[data-testid="output-c-row-${id}"]`)?.hasAttribute("data-meaning-start"));
+    // 칸의 첫 줄은 칸 머리가 위에 있어 선을 긋지 않는다
+    expect(starts).toEqual([false, false, true, true]);
+    expect(host.querySelector('[data-testid="output-c-item-1"]')?.getAttribute("lang")).toBe("en");
+    expect(host.querySelector('[data-testid="output-c-item-2"]')?.getAttribute("lang")).toBe("ko");
+    expect(host.querySelector('[data-testid="output-c-heading-note-1-scope"]')?.textContent).toBe("← OLD-1 §5, OLD-2 §5");
+    unmount();
+  });
+
+  it("lists a deleted pair once with both sentences", () => {
+    const data: OutputC = { ...makeOutput([]), deleted: [{ display_id: "OLD-1-1\nOLD-1-2", doc_code: "OLD-1", section: "5", source_text: "가\nA", reason: "중복" }] };
+    const { host, unmount } = render({ data });
+    const rows = host.querySelectorAll('[data-testid^="output-c-deleted-"]');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].textContent).toContain("가\nA");
+    unmount();
   });
 });

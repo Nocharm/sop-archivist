@@ -794,6 +794,7 @@ export function getGroupByTarget(bundleId: number, targetId: number): Promise<Gr
 
 // --- 결과물 ---
 
+/** 결과물 라벨 언어(위치 표기·칸 이름) - 화면 UI 언어를 보낸다. 내용은 한 벌이다 */
 export type OutputLang = "ko" | "en";
 
 export interface OutputLocation {
@@ -803,9 +804,12 @@ export interface OutputLocation {
   page_basis: string;
 }
 
+/** 결과물 A 한 줄 - 의미 묶음(짝 하나·짝 없는 판단 단위 하나·고아 번역·입구 2 신규 짝) 안에서 문장마다 한 줄 */
 export interface OutputARow {
-  row_kind: "unit" | "table" | "translation" | "new";
-  lang: string;
+  /** 묶음 번호(1부터) - 묶음의 모든 줄에 같은 값 */
+  row_no: number;
+  is_group_start: boolean;
+  row_kind: "unit" | "table" | "cell" | "translation" | "new";
   old_doc_code: string;
   old_doc_version: string;
   location: OutputLocation;
@@ -822,12 +826,16 @@ export interface OutputARow {
   dest_is_note: boolean;
   confirmed_text: string;
   ai_text: string;
+  /** 저장한 변경 종류, 그리고 표시 전용 translated_added·heading */
   change_type: string;
-  group_id: string | null;
-  reason: string;
+  /** 묶음의 Remark - 묶음의 모든 줄에 같은 값 */
+  remark: string;
+  /** 옛 단위 줄은 커버 상태, 번역·신규 줄은 새 문장 상태 - 줄마다 자기 값 */
   status: string;
+  /** "이름 (ID)", 디렉터리에 없으면 ID만 */
   confirmed_by: string | null;
   confirmed_at: string | null;
+  group_id: string | null;
   warnings: Array<Record<string, string>>;
 }
 
@@ -842,12 +850,17 @@ export type NumberStyle = "numbered" | "omitted" | "note";
 export interface OutputCItem {
   target_id: number;
   kind: string;
+  /** 글꼴용 - 한 칸에 두 언어가 섞여 나온다 */
   lang: string;
   text: string;
   ai_text: string;
   change_type: string | null;
   status: string;
   source_note: string;
+  /** units | translation | new_doc - AI 번역(translation)은 깊이가 출처를 따른다 */
+  origin: string;
+  /** 굵은 선 묶음 키(A와 같은 묶음) - "old:…" | "new:…", 출처가 은퇴한 번역은 null */
+  meaning_key: string | null;
   /** 섹션 번호(칸 번호 + 들여쓰기, 6.1.2) - 표 칸은 표의 번호, 입구 2 문서·단계 없는 WI는 null */
   number: string | null;
   /** 사람이 정한 깊이 그대로 - 번호는 서버가 앞 번호 줄 깊이 + 1까지로 눌러 읽어 센다 */
@@ -867,35 +880,41 @@ export interface OutputC {
     doc_type: string;
     parent_code: string | null;
     entrance: string;
-    /** number: SOP 칸 번호(5.1)·WI 단계 번호(3), 번호가 없는 칸은 null */
-    sections: Array<{ location_key: string; label: string; number: string | null; na_reason: string | null; items: OutputCItem[] }>;
+    /**
+     * number: SOP 칸 번호(5.1)·WI 단계 번호(3), 번호가 없는 칸은 null.
+     * heading_note: 칸 제목에 이은 옛 제목 "← OLD-1 §5", 없으면 빈 글 - 칸 제목은 items에 넣지 않는다
+     */
+    sections: Array<{ location_key: string; label: string; number: string | null; na_reason: string | null; heading_note: string; items: OutputCItem[] }>;
   }>;
+  /** 삭제·이동은 옛 줄마다 한 번 - 짝이면 표시 ID·원문이 줄바꿈으로 이어진다 */
   deleted: Array<{ display_id: string; doc_code: string; section: string; source_text: string; reason: string }>;
   moved: Array<{ display_id: string; doc_code: string; section: string; source_text: string; move_target_code: string; reason: string }>;
 }
 
+/** 요약 숫자 한 벌 - 옛 쪽은 줄로 센다. no_destination은 처분 기준이라 진행 숫자의 Unassigned(상태 기준)와 다르다 */
 export interface OutputSummary {
-  old_units: number;
+  old_rows: number;
   assigned: number;
-  unassigned: number;
+  no_destination: number;
   duplicate: number;
   deleted: number;
   moved: number;
   new: number;
   translated: number;
   confirmed_rate: number;
+  single_language: number;
 }
 
-export function getOutputA(bundleId: number, lang: OutputLang): Promise<OutputARow[]> {
-  return apiFetch<OutputARow[]>(`/bundles/${bundleId}/outputs/a?lang=${lang}`);
+export function getOutputA(bundleId: number, labelLang: OutputLang): Promise<OutputARow[]> {
+  return apiFetch<OutputARow[]>(`/bundles/${bundleId}/outputs/a?lang=${labelLang}`);
 }
 
-export function getOutputB(bundleId: number, lang: OutputLang): Promise<FlowGraph> {
-  return apiFetch<FlowGraph>(`/bundles/${bundleId}/outputs/b?lang=${lang}`);
+export function getOutputB(bundleId: number, labelLang: OutputLang): Promise<FlowGraph> {
+  return apiFetch<FlowGraph>(`/bundles/${bundleId}/outputs/b?lang=${labelLang}`);
 }
 
-export function getOutputC(bundleId: number, lang: OutputLang): Promise<OutputC> {
-  return apiFetch<OutputC>(`/bundles/${bundleId}/outputs/c?lang=${lang}`);
+export function getOutputC(bundleId: number, labelLang: OutputLang): Promise<OutputC> {
+  return apiFetch<OutputC>(`/bundles/${bundleId}/outputs/c?lang=${labelLang}`);
 }
 
 /** Assign New 칸의 아직 쓰지 않은 문서 - 결과물 C와 같은 칸·순서에 두 언어 새 문장을 함께(서버 outputs.build_composed_doc) */
@@ -936,15 +955,16 @@ export function getComposedDoc(bundleId: number, docId: number, lang: OutputLang
   return apiFetch<ComposedDoc>(`/bundles/${bundleId}/outputs/c/docs/${docId}?lang=${lang}`);
 }
 
-export function getSummary(bundleId: number): Promise<Record<OutputLang, OutputSummary>> {
-  return apiFetch(`/bundles/${bundleId}/summary`);
+export function getSummary(bundleId: number): Promise<OutputSummary> {
+  return apiFetch<OutputSummary>(`/bundles/${bundleId}/summary`);
 }
 
-export function downloadExport(bundleId: number, lang: OutputLang): Promise<Blob> {
-  return apiFetchBlob(`/bundles/${bundleId}/export.xlsx?lang=${lang}`);
+/** 묶음당 파일 하나 - 판(lang)이 없다 */
+export function downloadExport(bundleId: number): Promise<Blob> {
+  return apiFetchBlob(`/bundles/${bundleId}/export.xlsx`);
 }
 
-/** 순서 바꾸기 요청 한 줄 - 뺀 값은 그대로 둔다. number_style은 서버가 한/영 짝 상대와 번역 줄에 함께 옮긴다 */
+/** 순서 바꾸기 요청 한 줄 - 뺀 값은 그대로 둔다. 깊이·번호 표시는 그 줄에만 붙는다(짝 상대·번역이 따라 바뀌지 않는다) */
 export interface TargetOrderItem {
   target_id: number;
   wi_step?: number | null;

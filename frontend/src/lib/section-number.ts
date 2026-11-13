@@ -1,7 +1,7 @@
-// 결과물 C 섹션 번호(들여쓰기·번호 표시) - 줄마다 보이는 깊이, 들여/내어쓰기를 할 수 있는지, 보낼 깊이와 한/영 짝 상대를 정한다.
-// 번호 자체는 서버(outputs.number_lines)가 센다. 화면은 그 번호에서 깊이를 읽어 그리고, 서버와 같은 상한(앞 번호 줄 깊이 + 1)을 넘지 않게 막는다.
-// 번호 생략·주석 줄은 번호가 없고 세지 않는다 - 깊이 상한도 앞 "번호 줄"만 본다(서버와 같은 규칙).
-import type { NumberStyle, OutputC, OutputCItem, UnitRow } from "./api-sop";
+// 결과물 C 섹션 번호(들여쓰기·번호 표시) - 줄마다 보이는 깊이, 들여/내어쓰기를 할 수 있는지, 깊이·표시 단추를 둘 줄인지 정한다.
+// 번호 자체는 서버(outputs.number_lines)가 칸의 두 언어 문장을 한 줄로 세어 매긴다. 화면은 그 번호에서 깊이를 읽어 그리고, 서버와 같은 상한(앞 번호 줄 깊이 + 1)을 넘지 않게 막는다.
+// 번호 생략·주석 줄은 번호가 없고 세지 않는다 - 깊이 상한도 앞 "번호 줄"만 본다(서버와 같은 규칙). 깊이·표시는 바꾼 그 줄에만 붙는다(짝 상대에 옮기지 않는다).
+import type { NumberStyle, OutputC, OutputCItem } from "./api-sop";
 
 export type IndentDir = -1 | 1;
 
@@ -36,7 +36,7 @@ export function getSectionDepths(section: Pick<Section, "number" | "items">): nu
 /**
  * 한 단계 들이거나 내어 쓸 수 있는가. 들이기는 앞 번호 줄 깊이 + 1까지(counted가 false인 생략·주석 줄은 건너뛴다. 칸의 첫 번호 줄 앞은 0 -
  * WI의 Why 첫 줄처럼 앞 칸에 이어 세는 경우도 0으로 둔다),
- * 내어쓰기는 0보다 깊을 때만. 입구 2 문서(번호를 새로 매기지 않음)와 번역 줄(출처를 따라감)은 깊이를 따로 바꾸지 않는다.
+ * 내어쓰기는 0보다 깊을 때만. 입구 2 문서(번호를 새로 매기지 않음)와 AI 번역 줄(출처를 따라감)은 깊이를 따로 바꾸지 않는다(canChangeDepth).
  */
 /** backend app/sop/constants.py MAX_INDENT_LEVEL과 같은 값 - 넘기면 API가 422로 거절한다 */
 const MAX_INDENT_LEVEL = 9;
@@ -64,22 +64,15 @@ export function readIndentKey(
   return state.canIn ? 1 : null;
 }
 
-/** 깊이·번호 표시를 바꿀 수 있는 줄인가 - 입구 2 문서는 서버가 422, 번역 줄은 출처를 따라가므로 단추를 두지 않는다 */
-export function isIndentable(entrance: string, item: Pick<OutputCItem, "change_type">): boolean {
-  return entrance !== "match" && item.change_type !== "translated";
+/**
+ * 깊이를 바꿀 수 있는 줄인가 - 입구 2 문서는 서버가 422, AI 번역(기원 translation)은 깊이가 출처를 따라 잠겨 있다.
+ * 사람이 쓴 다른 언어 문장(기원 units, 종류 translated)은 일반 새 문장이라 바꾼다.
+ */
+export function canChangeDepth(entrance: string, item: Pick<OutputCItem, "origin">): boolean {
+  return entrance !== "match" && item.origin !== "translation";
 }
 
-/**
- * 한/영 짝 원문 줄의 상대 새 문장 - 두 판이 같은 번호가 되게 같은 깊이를 함께 보낸다.
- * 이 줄의 출처 Unit이 하나이고 그 Unit의 짝(2개)의 다른 Unit이 이 문서에 새 문장을 딱 하나 만들었을 때만 정한다(1:N이면 상대를 하나로 정할 수 없다).
- */
-export function findPartnerTarget(targetId: number, units: readonly UnitRow[], docTargetIds: ReadonlySet<number>): number | null {
-  const sources = units.filter((unit) => unit.target_ids.includes(targetId));
-  if (sources.length !== 1 || sources[0].pair_id === null) return null;
-  const pairId = sources[0].pair_id;
-  const members = units.filter((unit) => unit.pair_id === pairId);
-  if (members.length !== 2) return null;
-  const other = members.find((unit) => unit.unit_id !== sources[0].unit_id);
-  const targets = (other?.target_ids ?? []).filter((id) => id !== targetId && docTargetIds.has(id));
-  return targets.length === 1 ? targets[0] : null;
+/** 번호 표시를 바꿀 수 있는 줄인가 - 입구 2 문서만 막는다(번역도 출처와 다른 표시를 가진다: 영어 번호, 한글 생략) */
+export function canChangeStyle(entrance: string): boolean {
+  return entrance !== "match";
 }

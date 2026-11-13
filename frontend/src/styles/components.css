@@ -1543,4 +1543,10 @@
   .c-mark { gap: 1px; padding: 1px; }
   .c-mark button { width: 22px; height: 22px; }
   .c-mark button:disabled { cursor: default; opacity: 0.5; }
+  /* 의미 묶음(2026-11-13): 같은 의미에서 나온 이웃 줄을 묶는 굵은 선 - 묶음 첫 줄 위에 긋는다(칸의 첫 줄은 칸 머리가 위에 있어 긋지 않는다) */
+  .c-row[data-meaning-start] { border-top: 2px solid var(--line-2); padding-top: 4px; }
+  /* 결과물 A: 줄 사이는 가는 선, 묶음 첫 줄 위는 굵은 선 - 아래 테두리 대신 위 테두리로 그어 두 선이 겹쳐 두꺼워지지 않게 한다 */
+  .out-a td { border-bottom: 0; border-top: 1px solid var(--line); }
+  .out-a tbody tr[data-group-start] > td { border-top: 2px solid var(--line-2); }
+  .out-a tbody tr:first-child > td { border-top: 0; }
 }

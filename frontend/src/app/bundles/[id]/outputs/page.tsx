@@ -1,12 +1,11 @@
-// 결과물 - A(단위별 표)·B(흐름)·C(새 문서 미리 보기) × 한글판/영어판, 요약 숫자, 의미 검토 4항목, Excel 내보내기(명세 §12-8).
-// 표 안 값은 고른 판의 언어로 API가 채워 준다. Excel은 요청 중 → 파일 생성 / 실패 두 단계로 보인다(디자인 문서 10절).
+// 결과물 한 벌 - A(옛 줄과 새 문장 대조 7열)·B(흐름)·C(새 문서 미리 보기), 요약 숫자, 의미 검토 4항목, Excel 내보내기(명세 §12-8).
+// 판(한글판/영어판)이 없다 - 화면 UI 언어는 위치 표기·칸 이름 같은 라벨 언어로만 보낸다. Excel은 요청 중 → 파일 생성 / 실패 두 단계로 보인다(디자인 문서 10절).
 "use client";
 
 import { Download, Table2, Workflow } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
-import { EditionToggle } from "@/components/outputs/edition-toggle";
 import { OutputARowView } from "@/components/outputs/output-a-row";
 import { OutputBCard } from "@/components/outputs/output-b-card";
 import { OutputCView } from "@/components/outputs/output-c";
@@ -22,27 +21,26 @@ import {
   getOutputB,
   getOutputC,
   getSummary,
-  listAllUnits,
   putSemanticChecks,
   putTargetOrder,
   SEMANTIC_CHECK_KEYS,
   type CoverStatus,
   type NumberStyle,
-  type OutputLang,
 } from "@/lib/api-sop";
 import { loadBundle, putBundle, useBundle } from "@/lib/bundle-store";
-import { buildDownloadName } from "@/lib/download-name";
 import { useI18n } from "@/lib/i18n";
+import { buildAScreenLines } from "@/lib/output-groups";
 import { saveBlob } from "@/lib/save-file";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 import { readOutputsView, writeOutputsView, type OutputsTab } from "@/lib/outputs-view-prefs";
-import { findPartnerTarget } from "@/lib/section-number";
 import { buildPatchItems, buildTargetOrder, type MoveDir } from "@/lib/target-order";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useProgressiveList } from "@/lib/use-progressive-list";
-import { getBundleLabel } from "@/lib/bundle-label";
 import { getStageHref } from "@/lib/stages";
+
+/** 요약 숫자 순서 - 확정률은 따로 % 글로 */
+const SUMMARY_ITEMS = ["old_rows", "assigned", "no_destination", "duplicate", "deleted", "moved", "new", "translated", "single_language"] as const;
 
 // 삭제·바깥 문서 이동처럼 자리가 없는 보낸 곳과 변경 종류는 코드값 대신 화면 문구로 보인다(모르는 값은 그대로)
 function labelCode(t: (key: string) => string, prefix: string, code: string): string {
@@ -56,20 +54,17 @@ function toCoverStatus(status: string): CoverStatus {
 }
 
 export default function OutputsPage() {
-  const { t } = useI18n();
+  // 라벨 언어 - 위치 표기·칸 이름·흐름 노드 이름을 화면 언어로 받는다(내용은 한 벌)
+  const { t, lang } = useI18n();
   const bundleId = Number(useParams<{ id: string }>().id);
   const { bundle } = useBundle(bundleId);
   const canEdit = bundle?.my_role === "author" && bundle.status === "in_progress";
-  // 탭과 언어는 마지막으로 본 값에서 다시 연다 - 다른 단계에 다녀와도 처음(C·KO)으로 돌아가지 않는다
+  // 탭은 마지막으로 본 값에서 다시 연다 - 다른 단계에 다녀와도 처음(C)으로 돌아가지 않는다
   const [view, setView] = useState(readOutputsView);
-  const { tab, lang } = view;
+  const { tab } = view;
   function setTab(next: OutputsTab) {
     setView((prev) => ({ ...prev, tab: next }));
     writeOutputsView({ tab: next });
-  }
-  function setLang(next: OutputLang) {
-    setView((prev) => ({ ...prev, lang: next }));
-    writeOutputsView({ lang: next });
   }
   const key = `${bundleId}:${lang}:${bundle?.revision ?? 0}`;
   const outA = useLoaded(() => (tab === "a" ? getOutputA(bundleId, lang) : Promise.resolve(null)), `a:${tab}:${key}`);
@@ -77,21 +72,21 @@ export default function OutputsPage() {
   const outC = useLoaded(() => (tab === "c" ? getOutputC(bundleId, lang) : Promise.resolve(null)), `c:${tab}:${key}`);
   const summary = useLoaded(() => getSummary(bundleId), `${bundleId}:${bundle?.revision ?? 0}`);
   const current = tab === "a" ? outA : tab === "b" ? outB : outC;
-  // 결과물 A는 수천 행이 될 수 있어 묶음씩 그린다 - 판을 바꾸면 처음부터
-  const rowsA = useProgressiveList(outA.data ?? [], `a:${lang}:${key}`);
+  // 결과물 A는 수천 행이 될 수 있어 묶음씩 그린다. 함께 쓰는 칸은 전체 목록에서 정해 두어야 이어 그린 첫 줄이 윗줄과 비교된다
+  const linesA = useMemo(() => buildAScreenLines(outA.data ?? []), [outA.data]);
+  const rowsA = useProgressiveList(linesA, `a:${key}`);
   const showSkeleton = useDelayedFlag(current.data === null && current.error === null);
-  const [exporting, setExporting] = useState<OutputLang | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [savingChecks, setSavingChecks] = useState(false);
 
   const [moving, setMoving] = useState(false);
 
-  // 한 판에서 옮기면 다른 판을 함께 읽어 새 문서 전체 순서를 보낸다(서버는 그 문서의 새 문장 전부를 받는다)
+  // 칸 안에서 옮긴 새 문서 전체 순서를 보낸다(서버는 그 문서의 새 문장 전부를 받는다) - C가 한 벌이라 다른 판을 읽지 않는다
   async function moveTarget(targetDocId: number, locationKey: string, targetId: number, dir: MoveDir) {
     if (!outC.data || !bundle || moving) return;
     setMoving(true);
     try {
-      const other = await getOutputC(bundleId, lang === "ko" ? "en" : "ko");
-      const order = buildTargetOrder(outC.data, other, targetDocId, locationKey, targetId, dir);
+      const order = buildTargetOrder(outC.data, targetDocId, locationKey, targetId, dir);
       if (order) {
         await putTargetOrder(bundleId, { revision: bundle.revision, target_doc_id: targetDocId, items: order.map((id) => ({ target_id: id })) });
         await loadBundle(bundleId);
@@ -104,17 +99,12 @@ export default function OutputsPage() {
     }
   }
 
-  // 깊이 하나를 바꿔도 서버는 문서 전체 순서를 받는다. 한/영 짝 원문 줄의 상대에도 같은 깊이를 보내 두 판의 번호가 같게 한다
+  // 깊이 하나를 바꿔도 서버는 문서 전체 순서를 받는다. 깊이는 그 줄에만 붙는다(짝 상대에 옮기지 않는다)
   async function indentTarget(targetDocId: number, targetId: number, depth: number) {
     if (!outC.data || !bundle || moving) return;
     setMoving(true);
     try {
-      const [other, units] = await Promise.all([getOutputC(bundleId, lang === "ko" ? "en" : "ko"), listAllUnits(bundleId)]);
-      const docIds = new Set(buildPatchItems(outC.data, other, targetDocId, new Map())?.map((item) => item.target_id) ?? []);
-      const partner = findPartnerTarget(targetId, units, docIds);
-      const patches = new Map([[targetId, { indent_level: depth }]]);
-      if (partner !== null) patches.set(partner, { indent_level: depth });
-      const items = buildPatchItems(outC.data, other, targetDocId, patches);
+      const items = buildPatchItems(outC.data, targetDocId, new Map([[targetId, { indent_level: depth }]]));
       if (items) {
         await putTargetOrder(bundleId, { revision: bundle.revision, target_doc_id: targetDocId, items });
         await loadBundle(bundleId);
@@ -127,13 +117,12 @@ export default function OutputsPage() {
     }
   }
 
-  // 번호 표시는 이 줄만 보낸다 - 한/영 짝 상대와 번역 줄은 서버가 같은 값으로 따라 바꾼다
+  // 번호 표시는 이 줄만 보내고 이 줄에만 붙는다 - 짝 상대도 번역도 따라 바뀌지 않는다
   async function markTarget(targetDocId: number, targetId: number, style: NumberStyle) {
     if (!outC.data || !bundle || moving) return;
     setMoving(true);
     try {
-      const other = await getOutputC(bundleId, lang === "ko" ? "en" : "ko");
-      const items = buildPatchItems(outC.data, other, targetDocId, new Map([[targetId, { number_style: style }]]));
+      const items = buildPatchItems(outC.data, targetDocId, new Map([[targetId, { number_style: style }]]));
       if (items) {
         await putTargetOrder(bundleId, { revision: bundle.revision, target_doc_id: targetDocId, items });
         await loadBundle(bundleId);
@@ -146,16 +135,17 @@ export default function OutputsPage() {
     }
   }
 
-  async function handleExport(exportLang: OutputLang) {
-    setExporting(exportLang);
+  // 묶음당 파일 하나. 저장 이름은 서버가 짓는다(응답 Content-Disposition) - 그 이름을 읽기 전까지는 Bundle 코드로 둔다
+  async function handleExport() {
+    setExporting(true);
     try {
-      const blob = await downloadExport(bundleId, exportLang);
-      saveBlob(blob, buildDownloadName([bundle ? getBundleLabel(bundle) : undefined, exportLang.toUpperCase()], "xlsx"));
+      const blob = await downloadExport(bundleId);
+      saveBlob(blob, `${bundle?.code ?? "bundle"}.xlsx`);
       showToast(t("outputs.fileCreated"));
     } catch (err) {
       showToast(`${t("outputs.exportFailed")} ${humanizeApiError(err, t)}`, "error");
     } finally {
-      setExporting(null);
+      setExporting(false);
     }
   }
 
@@ -173,7 +163,7 @@ export default function OutputsPage() {
     }
   }
 
-  const sum = summary.data?.[lang];
+  const sum = summary.data;
 
   return (
     <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_300px]" data-testid="outputs">
@@ -196,8 +186,6 @@ export default function OutputsPage() {
               </button>
             ))}
           </div>
-          <span className="flex-1" />
-          <EditionToggle value={lang} onChange={setLang} testId="outputs-lang" />
         </div>
         <div className="min-h-0 overflow-auto">
           {current.error !== null && current.data === null ? (
@@ -207,36 +195,40 @@ export default function OutputsPage() {
           ) : tab === "a" && outA.data?.length === 0 ? (
             <EmptyState icon={Table2} testId="output-a-empty" title={t("outputs.emptyTitle")} body={t("outputs.emptyA")} />
           ) : tab === "a" && outA.data ? (
-            <table className="dtable table-fixed" data-testid="output-a">
-              {/* 열 폭을 고정한다 - 글이 길어도 표가 틀을 넘지 않고, 긴 칸은 줄 수로만 커진다 */}
+            <table className="dtable out-a table-fixed" data-testid="output-a">
+              {/* 열 폭을 고정한다 - 글이 길어도 표가 틀을 넘지 않고, 긴 칸은 줄 수로만 커진다. 원문·새 문장 열이 남은 폭을 반씩 나눈다 */}
               <colgroup>
-                <col style={{ width: 128 }} />
-                <col style={{ width: "27%" }} />
-                <col style={{ width: "20%" }} />
+                <col style={{ width: 44 }} />
+                <col style={{ width: 112 }} />
                 <col />
-                <col style={{ width: 128 }} />
+                <col style={{ width: "14%" }} />
+                <col />
+                <col style={{ width: "12%" }} />
+                <col style={{ width: 116 }} />
               </colgroup>
               <thead>
                 <tr>
+                  <th>{t("outputs.colRow")}</th>
                   <th>{t("outputs.colOldUnit")}</th>
                   <th>{t("outputs.colSource")}</th>
                   <th>{t("outputs.colDest")}</th>
-                  <th>{t("outputs.colNewChange")}</th>
+                  <th>{t("outputs.colNew")}</th>
+                  <th>{t("outputs.colRemark")}</th>
                   <th>{t("bundles.colStatus")}</th>
                 </tr>
               </thead>
               <tbody>
-                {rowsA.visible.map((row, index) => (
+                {rowsA.visible.map((line, index) => (
                   <OutputARowView
-                    key={`${row.unit_id}-${index}`}
-                    row={row}
+                    key={`${line.row.row_no}-${line.row.unit_id}-${index}`}
+                    line={line}
                     index={index}
-                    destLabel={row.dest_location || labelCode(t, "outputs.dest", row.dest_kind)}
-                    changeLabel={row.change_type ? labelCode(t, "change", row.change_type) : null}
-                    status={toCoverStatus(row.status)}
+                    destKindLabel={line.row.dest_kind ? labelCode(t, "outputs.dest", line.row.dest_kind) : ""}
+                    changeLabel={line.row.change_type ? labelCode(t, "change", line.row.change_type) : null}
+                    status={toCoverStatus(line.row.status)}
                   />
                 ))}
-                {rowsA.hasMore && <LoadMoreRows sentinelRef={rowsA.sentinelRef} columns={5} testId="output-a-more" />}
+                {rowsA.hasMore && <LoadMoreRows sentinelRef={rowsA.sentinelRef} columns={7} testId="output-a-more" />}
               </tbody>
             </table>
           ) : tab === "b" && outB.data && !outB.data.nodes.some((node) => node.kind === "old") ? (
@@ -252,7 +244,6 @@ export default function OutputsPage() {
           ) : tab === "c" && outC.data ? (
             <OutputCView
               data={outC.data}
-              lang={lang}
               onMove={canEdit ? (docId, sectionKey, targetId, dir) => void moveTarget(docId, sectionKey, targetId, dir) : undefined}
               onIndent={canEdit ? (docId, targetId, depth) => void indentTarget(docId, targetId, depth) : undefined}
               onMark={canEdit ? (docId, targetId, style) => void markTarget(docId, targetId, style) : undefined}
@@ -264,17 +255,18 @@ export default function OutputsPage() {
 
       <aside className="grid content-start gap-3 overflow-y-auto border-l border-line px-3 py-[18px]" data-testid="outputs-side">
         <section className="side-box grid gap-2" data-testid="outputs-summary">
-          <h2 className="side-box-title">{t("outputs.summary", { lang: lang.toUpperCase() })}</h2>
+          <h2 className="side-box-title">{t("outputs.summary")}</h2>
           {sum ? (
             <dl className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 tabular-nums">
-              {(["old_units", "assigned", "unassigned", "duplicate", "deleted", "moved", "new"] as const).map((item) => (
+              {SUMMARY_ITEMS.map((item) => (
                 <div key={item} className="contents">
                   <dt className="text-ink-2">{t(`outputs.sum.${item}`)}</dt>
-                  <dd className="text-right">{sum[item]}</dd>
+                  <dd className="text-right" data-testid={`outputs-sum-${item}`}>{sum[item]}</dd>
                 </div>
               ))}
               <dt className="text-ink-2">{t("outputs.sum.rate")}</dt>
-              <dd className="text-right">{Math.round(sum.confirmed_rate * 100)}%</dd>
+              {/* 서버·Excel과 같은 반올림(floor(rate*100 + 0.5)) */}
+              <dd className="text-right" data-testid="outputs-sum-rate">{Math.floor(sum.confirmed_rate * 100 + 0.5)}%</dd>
             </dl>
           ) : (
             <span className="sk h-32 w-full" />
@@ -295,15 +287,13 @@ export default function OutputsPage() {
         </section>
         <section className="side-box grid gap-2" data-testid="outputs-export">
           <h2 className="side-box-title">Excel</h2>
-          {(["ko", "en"] as const).map((item) => (
-            <button key={item} type="button" className="btn w-full justify-start" data-testid={`outputs-export-${item}`} disabled={exporting !== null} onClick={() => void handleExport(item)}>
-              <Download size={14} strokeWidth={1.5} aria-hidden />
-              <span className="stack">
-                <span data-on={exporting === item ? undefined : ""}>{t("outputs.export", { lang: item.toUpperCase() })}</span>
-                <span data-on={exporting === item ? "" : undefined}>{t("outputs.exporting")}</span>
-              </span>
-            </button>
-          ))}
+          <button type="button" className="btn w-full justify-start" data-testid="outputs-export-open" disabled={exporting} onClick={() => void handleExport()}>
+            <Download size={14} strokeWidth={1.5} aria-hidden />
+            <span className="stack">
+              <span data-on={exporting ? undefined : ""}>{t("outputs.export")}</span>
+              <span data-on={exporting ? "" : undefined}>{t("outputs.exporting")}</span>
+            </span>
+          </button>
         </section>
       </aside>
     </div>
