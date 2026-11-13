@@ -18,6 +18,7 @@ import { findNewLine, findOldStrip, LinkLines } from "@/components/assign/link-l
 import { LinkMenu } from "@/components/assign/link-menu";
 import { LinkBadge } from "@/components/assign/link-badge";
 import { MoveTargetField } from "@/components/assign/move-target-field";
+import { runPickFlight, type FlightSource } from "@/components/assign/pick-flight";
 import { NewPane, NewPaneEmpty } from "@/components/assign/new-pane";
 import { OldPane } from "@/components/assign/old-pane";
 import { PaneDivider } from "@/components/assign/pane-divider";
@@ -28,6 +29,7 @@ import { AiAskMenu, type AiAskItem } from "@/components/manage/ai-ask-menu";
 import { Modal } from "@/components/modal";
 import { ReadOnlyNote } from "@/components/read-only-note";
 import { CutPop } from "@/components/paper/cut-pop";
+import { LangToken } from "@/components/paper/lang-token";
 import { SourceFontMenu } from "@/components/paper/source-font-menu";
 import { FilterChip, UnitStatusChip } from "@/components/status";
 import { ClampText } from "@/components/ui/clamp-text";
@@ -521,6 +523,11 @@ export default function AssignPage() {
   if (row) aiMenuItems.push({ key: "split", label: t("ai.splitRow"), run: () => askAiScope("split", { unit_ids: row.unitIds }) });
 
   const [remarkEdit, setRemarkEdit] = useState<RemarkEdit | null>(null);
+  // 목록에서 고를 때마다 늘어 결정 칸의 고른 곳 상자를 다시 그린다(그때만 잠깐 번쩍여 눈이 따라가게 - 줄을 옮길 때는 그대로)
+  const [pickSeq, setPickSeq] = useState(0);
+  const flightRef = useRef<FlightSource | null>(null);
+  // Remark 창을 닫은 뒤 포커스를 둘 단추(testid) - 창이 여는 곳으로 되돌린 뒤에 옮겨 ↵가 바로 확정이 되게
+  const focusAfterRef = useRef<string | null>(null);
   const [barEl, setBarEl] = useState<HTMLDivElement | null>(null);
   const [isBarCompact, setIsBarCompact] = useState(false);
   useEffect(() => {
@@ -885,6 +892,7 @@ export default function AssignPage() {
     // AI가 이어 둔 문장을 다시 고르면 기본은 제안 그대로 받기
     if (next.kind === "link") for (const id of next.targetIds) if (writtenMap.get(id)?.status === "ai_suggested") linkTypes[id] = null;
     setDraft({ destination: next.kind === "link" ? { kind: "link", targetIds: addPartnerTargets(next.targetIds, writtenMap) } : next, linkChangeTypes: linkTypes });
+    setPickSeq((seq) => seq + 1);
   }
 
   /** New 문장 고르기 - 고른 곳이 바뀌었으면 true */
@@ -900,8 +908,10 @@ export default function AssignPage() {
     const next = additive ? (isRemoving ? current.filter((id) => id !== targetId) : [...current, targetId]) : [targetId];
     if (next.length === 0) setDraft({ destination: null });
     // 함께 골라진 짝 문장을 Ctrl로 빼면 다시 붙이지 않는다 - 뺀 문장은 출처 없이 남아 신규가 된다(설계 §5.2)
-    else if (isRemoving) setDraft({ destination: { kind: "link", targetIds: next } });
-    else pickDestination({ kind: "link", targetIds: next });
+    else if (isRemoving) {
+      setDraft({ destination: { kind: "link", targetIds: next } });
+      setPickSeq((seq) => seq + 1);
+    } else pickDestination({ kind: "link", targetIds: next });
     return next.length > 0;
   }
 
@@ -992,7 +1002,8 @@ export default function AssignPage() {
 
   function handlePrimary() {
     if (!destination) {
-      document.querySelector<HTMLElement>(".dest-card")?.focus();
+      // 고른 곳이 없으면 ↵는 바로 위 목록의 첫 후보(추천이 없으면 첫 묶음 제목)로 간다
+      (document.querySelector<HTMLElement>(".assign-pick .dest-card") ?? document.querySelector<HTMLElement>(".assign-pick .dest-acc-head"))?.focus();
       return;
     }
     void runSave("confirm");
@@ -1066,8 +1077,37 @@ export default function AssignPage() {
     return () => cancelAnimationFrame(frame);
   }, [newFocusId, newDocId]);
 
+  // 고르면 결정 칸의 고른 곳 상자가 보이게 한 뒤(결정 칸이 제 안에서 스크롤되어 있어도) 시선을 그리로 끈다 -
+  // 위 목록을 마우스로 눌렀으면 그 항목이 상자로 날아가고, 키보드·New 원문·메뉴로 골랐으면 상자 번쩍임만
+  useEffect(() => {
+    if (pickSeq === 0) return;
+    const source = flightRef.current;
+    flightRef.current = null;
+    const frame = requestAnimationFrame(() => {
+      const box = document.querySelector<HTMLElement>('[data-testid="assign-chosen"]');
+      if (!box) return;
+      box.scrollIntoView({ block: "nearest" });
+      runPickFlight(box, source);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [pickSeq]);
+
+  /** 위 목록의 마우스 클릭을 고름보다 먼저 잰다(캡처) - 날릴 그림자의 출발 자리. 키보드로 누른 클릭(detail 0)은 날리지 않는다 */
+  function handlePickClickCapture(event: MouseEvent<HTMLDivElement>) {
+    const item = event.target instanceof Element ? event.target.closest<HTMLElement>(".dest-card, .tree-leaf") : null;
+    flightRef.current = item && event.detail > 0 ? { rect: item.getBoundingClientRect(), text: item.innerText, at: performance.now() } : null;
+  }
+
+  // Remark 창이 닫히고(창을 거친 저장이면 저장이 끝난 뒤) 확정 단추로 포커스 - 꺼진 단추면 창이 되돌린 자리 그대로
+  useEffect(() => {
+    const testId = focusAfterRef.current;
+    if (testId === null || remarkEdit !== null || busy) return;
+    focusAfterRef.current = null;
+    const button = document.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`);
+    if (button && !button.disabled) button.focus({ preventScroll: true });
+  }, [remarkEdit, busy]);
+
   // --- 그리기 ---
-  const disposed = destination?.kind === "delete" || destination?.kind === "move";
   const isPlace = destination?.kind === "slot" || destination?.kind === "step";
   const primaryState = !destination ? "choose" : editing ? "save" : "confirm";
   // 줄에 이미 그 언어 새 문장이 있으면(직접 쓴 것·쓰는 중인 칸·AI 번역) 만들기·쓰기를 보이지 않는다
@@ -1213,10 +1253,10 @@ export default function AssignPage() {
       title: t("assign.acc.move"),
       body: (
         <>
-          <button type="button" className="tree-leaf" data-testid="assign-pick-delete" onClick={() => pickDestination({ kind: "delete" })}>
+          <button type="button" className="tree-leaf" aria-pressed={destination?.kind === "delete"} data-testid="assign-pick-delete" onClick={() => pickDestination({ kind: "delete" })}>
             {t("classify.deleted")}
           </button>
-          <button type="button" className="tree-leaf" data-testid="assign-pick-move" onClick={() => pickDestination({ kind: "move" })}>
+          <button type="button" className="tree-leaf" aria-pressed={destination?.kind === "move"} data-testid="assign-pick-move" onClick={() => pickDestination({ kind: "move" })}>
             {t("classify.moved")}
           </button>
         </>
@@ -1235,24 +1275,50 @@ export default function AssignPage() {
           const structural = readSlotKind(slot, slots);
           const changed = slot.sourceText !== null && text.trim() !== "" && text.trim() !== slot.sourceText.trim();
           const keptType = isTextChangeType(slot.target?.change_type) ? slot.target.change_type : null;
+          const changeSelect = (
+            <Select
+              testId={`assign-slot-change-${slot.key}`}
+              ariaLabel={t("classify.changeType")}
+              size="sm"
+              value={draft.changeTypes[slot.key] ?? keptType ?? "rewritten"}
+              disabled={!canEdit}
+              options={[
+                { value: "tone", label: t("change.tone") },
+                { value: "rewritten", label: t("change.rewritten") },
+              ]}
+              onChange={(next) => setDraft({ changeTypes: { ...draft.changeTypes, [slot.key]: next } })}
+            />
+          );
+          // 읽기 보기는 문장마다 한 줄(언어 · 글 · 끝에 변경 종류) - 결정 칸을 낮게 두어 위 목록이 늘 보이게. 전체 글은 올리면 툴팁, 고치기는 Edit and confirm
+          if (!editing) {
+            return (
+              <div key={slot.key} className="chosen-line">
+                <LangToken lang={slot.lang} />
+                <span className="min-w-0 flex-1 text-[13px] leading-5 text-ink" style={{ fontFamily: slot.lang === "en" ? "var(--font-source-en)" : "var(--font-source)" }}>
+                  <Truncate text={text || "_"} lang={slot.lang === "neutral" ? undefined : slot.lang} testId={`assign-text-${slot.key}`} />
+                </span>
+                {structural ? (
+                  <span className="flex-none text-xs text-ink-2" data-testid={`assign-slot-kind-${slot.key}`}>
+                    {t(`change.${structural}`)}
+                  </span>
+                ) : (
+                  changed && <span className="flex-none">{changeSelect}</span>
+                )}
+              </div>
+            );
+          }
           return (
             <div key={slot.key} className="grid gap-1">
-              <div className={`grid min-h-[60px] grid-cols-[minmax(0,1fr)] rounded-md bg-surface px-2.5 py-2 ${editing ? "border border-focus" : "border border-dashed border-line-2"}`}>
-                {editing ? (
-                  <textarea
-                    ref={index === 0 ? firstTextRef : undefined}
-                    lang={slot.lang === "neutral" ? undefined : slot.lang}
-                    className="min-h-[48px] w-full resize-y bg-transparent text-[14px] leading-[24px] outline-none focus-visible:outline-none"
-                    style={{ fontFamily: slot.lang === "en" ? "var(--font-source-en)" : "var(--font-source)" }}
-                    data-testid={`assign-text-${slot.key}`}
-                    value={text}
-                    onChange={(event) => setDraft({ texts: { ...draft.texts, [slot.key]: event.target.value } }, true)}
-                  />
-                ) : (
-                  <p lang={slot.lang === "neutral" ? undefined : slot.lang} className="whitespace-pre-wrap text-[14px] leading-[24px]" style={{ fontFamily: slot.lang === "en" ? "var(--font-source-en)" : "var(--font-source)" }} data-testid={`assign-text-${slot.key}`}>
-                    {text || "_"}
-                  </p>
-                )}
+              <div className="grid min-h-[60px] grid-cols-[minmax(0,1fr)] rounded-md border border-focus bg-surface px-2.5 py-2">
+                <textarea
+                  ref={index === 0 ? firstTextRef : undefined}
+                  lang={slot.lang === "neutral" ? undefined : slot.lang}
+                  className="min-h-[48px] w-full resize-y bg-transparent text-[14px] leading-[24px] outline-none focus-visible:outline-none"
+                  style={{ fontFamily: slot.lang === "en" ? "var(--font-source-en)" : "var(--font-source)" }}
+                  data-testid={`assign-text-${slot.key}`}
+                  value={text}
+                  onChange={(event) => setDraft({ texts: { ...draft.texts, [slot.key]: event.target.value } }, true)}
+                />
               </div>
               {/* 고쳐 쓰는 동안은 변경 종류 줄의 자리를 미리 잡는다 - 글이 원문과 달라지는 순간 아래가 밀리지 않게(To-Be 사유 칸과 같은 방식) */}
               {structural ? (
@@ -1260,27 +1326,14 @@ export default function AssignPage() {
                   {t("classify.changeType")} · {t(`change.${structural}`)}
                 </span>
               ) : (
-                (changed || editing) && (
-                  <span className="flex h-7 items-center gap-2 text-xs text-ink-2">
-                    {changed && (
-                      <>
-                        {t("classify.changeType")}
-                        <Select
-                          testId={`assign-slot-change-${slot.key}`}
-                          ariaLabel={t("classify.changeType")}
-                          size="sm"
-                          value={draft.changeTypes[slot.key] ?? keptType ?? "rewritten"}
-                          disabled={!canEdit}
-                          options={[
-                            { value: "tone", label: t("change.tone") },
-                            { value: "rewritten", label: t("change.rewritten") },
-                          ]}
-                          onChange={(next) => setDraft({ changeTypes: { ...draft.changeTypes, [slot.key]: next } })}
-                        />
-                      </>
-                    )}
-                  </span>
-                )
+                <span className="flex h-7 items-center gap-2 text-xs text-ink-2">
+                  {changed && (
+                    <>
+                      {t("classify.changeType")}
+                      {changeSelect}
+                    </>
+                  )}
+                </span>
               )}
             </div>
           );
@@ -1297,6 +1350,7 @@ export default function AssignPage() {
         </div>
       );
     }
+    const placeLabel = isPlace ? renderPlaceLabel(destination) : null;
     const isConfirmedView = row?.status === "confirmed" && draft.destination === null;
     const pickedRows = linkIds.map((id) => writtenMap.get(id)).filter((item): item is WrittenSentence => item !== undefined);
     // 줄에 없는 언어의 문장은 번역이다 - 종류를 고르지 않고, 나눔도 같은 언어 문장끼리만 센다(설계 §5.2)
@@ -1315,10 +1369,17 @@ export default function AssignPage() {
     return (
       <div className="chosen-box" data-testid="assign-chosen">
         <span className="chosen-label">
-          {isConfirmedView && <Check size={13} strokeWidth={2} aria-hidden />}
-          {isConfirmedView && `${t("assign.chosen.confirmed")} · `}
-          {destination.kind === "link" ? t("assign.chosen.link") : isPlace ? t("assign.chosen.place") : t(destination.kind === "delete" ? "classify.deleted" : "classify.moved")}
+          {isConfirmedView && <Check size={13} strokeWidth={2} className="flex-none" aria-hidden />}
+          <Truncate
+            text={`${isConfirmedView ? `${t("assign.chosen.confirmed")} · ` : ""}${destination.kind === "link" ? `${t("assign.chosen.link")} · ${[...new Set(pickedRows.map((item) => item.doc_code))].join(", ")}` : isPlace ? t("assign.chosen.place") : t("assign.acc.move")}`}
+          />
         </span>
+        {(destination.kind === "delete" || destination.kind === "move") && (
+          <span className="flex items-center gap-1.5 text-sm font-semibold text-ink">
+            {destination.kind === "delete" ? <Trash2 size={14} strokeWidth={1.75} className="flex-none text-danger" aria-hidden /> : <MoveRight size={14} strokeWidth={1.75} className="flex-none text-danger" aria-hidden />}
+            {t(destination.kind === "delete" ? "classify.deleted" : "classify.moved")}
+          </span>
+        )}
         {destination.kind === "link" && (
           <LinkChoice
             rows={pickedRows}
@@ -1331,12 +1392,12 @@ export default function AssignPage() {
             onChange={(targetId, value) => setDraft({ linkChangeTypes: { ...(draft.linkChangeTypes ?? {}), [targetId]: value } })}
           />
         )}
-        {isPlace && (
+        {placeLabel && (
           <>
-            <p className="text-[13px] text-ink">
-              <b className="mr-1 font-mono text-[11px]">{renderPlaceLabel(destination).title}</b>
-              {renderPlaceLabel(destination).text}
-            </p>
+            <span className="flex min-w-0 items-baseline gap-1.5 text-[13px] font-semibold text-ink">
+              <b className="flex-none font-mono text-[11px]">{placeLabel.title}</b>
+              <Truncate text={placeLabel.text} />
+            </span>
             {newSentences}
           </>
         )}
@@ -1377,14 +1438,12 @@ export default function AssignPage() {
     );
   }
 
-  const actions = (
-    <div className="grid gap-1.5">
-      <button type="button" className="btn pri h-[38px] w-full" data-testid="assign-primary" data-state={primaryState} disabled={!canEdit || !row || busy} onClick={handlePrimary}>
+  // 확정 단추 - 결정 칸 맨 아래 늘 같은 자리의 가장 큰 단추. 고른 곳이 없으면 흐리게 꺼지고 까닭은 툴팁(↵는 위 목록의 첫 후보로 간다)
+  const confirmButton = (
+    <Tooltip label={t("assign.why.pickFirst")} suppressed={destination !== null || !row}>
+      <button type="button" className="btn pri assign-confirm" data-testid="assign-primary" data-state={primaryState} disabled={!canEdit || !row || busy || !destination} onClick={handlePrimary}>
         <span className="stack">
-          <span data-on={primaryState === "choose" ? "" : undefined}>
-            {t("classify.chooseDestination")} <kbd>↵</kbd>
-          </span>
-          <span data-on={primaryState === "confirm" ? "" : undefined}>
+          <span data-on={primaryState !== "save" ? "" : undefined}>
             {t("classify.confirm")} <kbd>↵</kbd>
           </span>
           <span data-on={primaryState === "save" ? "" : undefined}>
@@ -1392,71 +1451,106 @@ export default function AssignPage() {
           </span>
         </span>
       </button>
-      {/* 칸 폭은 라벨 길이를 따르고(Hold가 좁다), 셋이 글쇠 표시까지 들어가지 않는 폭(영어 라벨 약 331px)에서는 글쇠 표시를 뺀다 - 단축키는 Help에 있다 */}
-      <div className="@container grid grid-cols-[auto_auto_auto] gap-1.5">
-        <button type="button" className="btn h-8 min-w-0 gap-1 px-1 text-xs font-normal" data-testid="assign-edit" disabled={!canEdit || !isPlace || editing || busy} onClick={startEdit}>
+    </Tooltip>
+  );
+
+  const canClear = row !== null && row.status !== "unassigned";
+  // 확정 말고 다른 길 셋 - 결정 칸 머리에 조용히 두어 고른 곳·Remark·확정 사이에 끼지 않게(확정 위에 Clear가 있으면 넘쳐 누르기 쉽다).
+  // 칸 폭은 Edit and confirm이 라벨만큼, 나머지 둘이 남은 폭을 나눈다. 셋이 글쇠 표시까지 들어가지 않는 폭에서는 글쇠 표시를 뺀다 - 단축키는 Help에 있다
+  const actions = (
+    <div className="@container grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)] gap-1.5" data-testid="assign-actions">
+      <Tooltip label={t("assign.why.editPlace")} suppressed={isPlace || !row}>
+        <button type="button" className="btn assign-alt" data-testid="assign-edit" disabled={!canEdit || !isPlace || editing || busy} onClick={startEdit}>
           <FilePen size={13} strokeWidth={1.5} aria-hidden />
-          {t("classify.editConfirm")} <kbd className="@max-[340px]:hidden">E</kbd>
+          {t("classify.editConfirm")} <kbd className="@max-[290px]:hidden">E</kbd>
         </button>
-        <button type="button" className="btn h-8 min-w-0 gap-1 px-1 text-xs font-normal" data-testid="assign-hold" disabled={!canEdit || !row || busy} onClick={() => void runSave("hold")}>
-          {t("classify.hold")} <kbd className="@max-[340px]:hidden">H</kbd>
+      </Tooltip>
+      <button type="button" className="btn assign-alt" data-testid="assign-hold" disabled={!canEdit || !row || busy} onClick={() => void runSave("hold")}>
+        {t("classify.hold")} <kbd className="@max-[290px]:hidden">H</kbd>
+      </button>
+      <Tooltip label={canClear ? t("classify.clear") : t("assign.why.nothingToClear")}>
+        <button type="button" className="btn assign-alt" aria-label={t("classify.clear")} data-testid="assign-clear" disabled={!canEdit || !canClear || busy} onClick={() => void runClear()}>
+          {t("assign.clearShort")} <kbd className="@max-[290px]:hidden">U</kbd>
         </button>
-        <button type="button" className="btn h-8 min-w-0 gap-1 px-1 text-xs font-normal" data-testid="assign-clear" disabled={!canEdit || !row || row.status === "unassigned" || busy} onClick={() => void runClear()}>
-          {t("classify.clear")} <kbd className="@max-[340px]:hidden">U</kbd>
-        </button>
-      </div>
+      </Tooltip>
     </div>
   );
 
-  const details = (
-    <section className="grid grid-cols-[84px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-2">
-      {/* Remark는 창에서 쓴다 - 여기는 이름 줄의 쓰기 단추와 아래 두 줄 읽기 보기(좁은 패널에서도 글이 패널 폭을 쓴다). 삭제·이동에서 비어 있으면 필수라고 알린다 */}
-      <span className="col-span-2 flex min-h-7 items-center justify-between gap-2">
-        <span className="text-xs text-ink-3">{t("classify.reason")}</span>
-        {canEdit && (
-          <button type="button" className="btn h-7 flex-none gap-1 px-2 text-xs font-normal" data-testid="assign-reason-edit" disabled={!row} onClick={() => setRemarkEdit({ kind: "row", need: null, then: null })}>
-            <FilePen size={13} strokeWidth={1.5} aria-hidden />
-            {t(reasonNow ? "remark.edit" : "remark.write")}
-          </button>
-        )}
-      </span>
-      {reasonNow ? (
-        <span className="col-span-2 -mt-1 block min-w-0">
-          <ClampText text={reasonNow} className="text-[13px] leading-[19px] text-ink" testId="assign-reason" />
+  // 지금 고른 곳에 꼭 필요한 Remark(지우기·옮기기·두 문서) - 비어 있으면 Remark 줄이 경고 색이 되고 쓰기 단추가 다음 할 일로 강조된다
+  const remarkNeed = row && destination ? readReasonNeed("confirm") : null;
+  const isRemarkMissing = remarkNeed !== null && !reasonNow.trim();
+  // Remark 한 줄 - 이름 · 지금 글(한 줄, 넘치면 올렸을 때 전체) · 쓰기 단추. 글은 창에서 쓴다.
+  // 꼭 필요한데 비었으면 이름 자리에 경고 아이콘과 "…에는 필수"(좁은 패널에서도 한 줄에 들어가게 이름은 뺀다 - 옆 단추가 Write remark)
+  const remarkRow = (
+    <div className="assign-remark" data-need={isRemarkMissing ? "" : undefined}>
+      {isRemarkMissing ? (
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs font-semibold text-st-hold" data-testid="assign-reason">
+          <TriangleAlert size={13} strokeWidth={1.75} className="flex-none" aria-hidden />
+          <Truncate text={t(`remark.need.${remarkNeed}`)} />
         </span>
       ) : (
-        <span className={`col-span-2 -mt-1 text-xs leading-[19px] ${disposed ? "text-st-hold" : "text-ink-3"}`} data-testid="assign-reason">
-          {disposed ? t("classify.reasonRequired") : "–"}
-        </span>
-      )}
-      {/* 이 줄의 자리는 어떤 목적지에서도 늘 잡아 둔다 - 자리·잇기에서 지우기·옮기기로 바꿔도 아래(확인·확정자)가 밀리지 않게(To-Be 사유 칸과 같은 방식). 옮기기일 때만 채운다 */}
-      <span className="self-center text-xs text-ink-3">{destination?.kind === "move" ? t("classify.moveTo") : ""}</span>
-      <span className="block h-8 min-w-0 self-center">
-        {destination?.kind === "move" && <MoveTargetField key={activeKey ?? ""} bundleId={bundleId} value={moveCode} disabled={!canEdit} testId="assign-move-code" onChange={(code) => setDraft({ moveCode: code })} />}
-      </span>
-      {systemHold !== null && (
         <>
-          <span className="text-xs text-ink-3">{t("classify.systemHold")}</span>
-          <span className="text-ink-2" data-testid="assign-system-hold">
-            <span className="pill warn">{t(SYSTEM_HOLDS.includes(systemHold) ? `hold.system.${systemHold}` : "hold.system.other")}</span>
+          <span className="flex-none text-xs text-ink-3">{t("classify.reason")}</span>
+          <span className="min-w-0 flex-1">
+            {reasonNow ? (
+              <Truncate text={reasonNow} className="text-[13px] leading-5 text-ink" testId="assign-reason" />
+            ) : (
+              <span className="block text-xs leading-5 text-ink-3" data-testid="assign-reason">
+                –
+              </span>
+            )}
           </span>
         </>
       )}
-      <span className="text-xs text-ink-3">{t("classify.checks")}</span>
-      <span className="text-ink-2" data-testid="assign-checks">
-        {(groupData?.targets.flatMap((target) => target.warnings) ?? []).map((warning, index) => (
-          <span key={index} className="pill warn mr-1">
-            {t(readCheckKey(warning))}
-          </span>
-        ))}
-        {(groupData?.targets.flatMap((target) => target.warnings).length ?? 0) === 0 && "–"}
-      </span>
-      <span className="text-xs text-ink-3">{t("classify.confirmedBy")}</span>
-      <span className="text-ink-2" data-testid="assign-confirmed-by">
-        {firstDecision?.confirmed_by ? `${firstDecision.confirmed_by} · ${formatKst(firstDecision.confirmed_at)}` : "–"}
-      </span>
-    </section>
+      {canEdit && (
+        <button type="button" className={`btn h-7 flex-none gap-1 px-2 text-xs ${isRemarkMissing ? "is-warn" : "font-normal"}`} data-testid="assign-reason-edit" disabled={!row} onClick={() => setRemarkEdit({ kind: "row", need: isRemarkMissing ? remarkNeed : null, then: null })}>
+          <FilePen size={13} strokeWidth={1.5} aria-hidden />
+          {t(reasonNow ? "remark.edit" : "remark.write")}
+        </button>
+      )}
+    </div>
   );
+
+  // 머리 아래 한 줄 - 결정 전에 볼 것(검사 결과·확정한 사람)
+  const checks = groupData?.targets.flatMap((target) => target.warnings) ?? [];
+  const meta = (
+    <div className="assign-meta">
+      <span className="assign-meta-item">
+        <span className="text-ink-3">{t("classify.checks")}</span>
+        <span className="flex flex-wrap gap-1 text-ink-2" data-testid="assign-checks">
+          {checks.map((warning, index) => (
+            <span key={index} className="pill warn">
+              {t(readCheckKey(warning))}
+            </span>
+          ))}
+          {checks.length === 0 && "–"}
+        </span>
+      </span>
+      <span className="assign-meta-item min-w-0">
+        <span className="flex-none text-ink-3">{t("classify.confirmedBy")}</span>
+        <Truncate className="text-ink-2" text={firstDecision?.confirmed_by ? `${firstDecision.confirmed_by} · ${formatKst(firstDecision.confirmed_at)}` : "–"} testId="assign-confirmed-by" />
+      </span>
+      {systemHold !== null && (
+        <span className="assign-meta-item">
+          <span className="text-ink-3">{t("classify.systemHold")}</span>
+          <span data-testid="assign-system-hold">
+            <span className="pill warn">{t(SYSTEM_HOLDS.includes(systemHold) ? `hold.system.${systemHold}` : "hold.system.other")}</span>
+          </span>
+        </span>
+      )}
+    </div>
+  );
+
+  function renderStep(n: number, label: string) {
+    return (
+      <h3 className="assign-step">
+        <span className="assign-step-n" aria-hidden>
+          {n}
+        </span>
+        {label}
+      </h3>
+    );
+  }
 
   const aiNote = (
     <section className="flex items-start gap-2 rounded-md border border-dashed px-3 py-2 text-xs text-ink-2" style={{ borderColor: "var(--st-ai-line)" }} data-testid="assign-ai">
@@ -1496,30 +1590,38 @@ export default function AssignPage() {
                   </span>
                   <span className="pill warn">{t("assign.unsourced.title")}</span>
                 </div>
-                <p className="text-[13px] leading-5 text-ink" lang={target.lang === "neutral" ? undefined : target.lang}>
-                  {target.text}
-                </p>
-              </div>
-              <div className="grid gap-2 p-[var(--pad)]">
-                <p className="chosen-box is-empty">{t("assign.unsourced.body")}</p>
-                <div className="flex min-w-0 items-start gap-2">
-                  {(newRemarks[target.target_id] ?? target.remark) ? (
-                    <span className="block min-w-0 flex-1">
-                      <ClampText text={newRemarks[target.target_id] ?? target.remark} className="text-[13px] leading-[19px] text-ink-2" testId="assign-new-remark" />
-                    </span>
-                  ) : (
-                    <span className="min-w-0 flex-1 text-xs leading-[19px] text-ink-3" data-testid="assign-new-remark">
-                      {t("assign.newRemark")}
-                    </span>
-                  )}
-                  {canEdit && (
-                    <button type="button" className="btn h-7 flex-none gap-1 px-2 text-xs font-normal" data-testid="assign-new-remark-edit" onClick={() => setRemarkEdit({ kind: "new", targetId: target.target_id })}>
-                      <FilePen size={13} strokeWidth={1.5} aria-hidden />
-                      {t((newRemarks[target.target_id] ?? target.remark) ? "remark.edit" : "remark.write")}
-                    </button>
-                  )}
+                <div lang={target.lang === "neutral" ? undefined : target.lang}>
+                  <ClampText text={target.text} className="text-[13px] leading-5 text-ink" tabbable={false} />
                 </div>
-                <button type="button" className="btn pri" data-testid="assign-mark-new" disabled={!canEdit || busy} onClick={markNew}>
+              </div>
+              {/* 출처 없는 New도 같은 순서 - 위는 출처를 고르는 길(왼쪽 Old 조각), 아래 붙은 결정 칸에 Remark와 신규 표시 */}
+              <div className="assign-pick" data-testid="assign-pick">
+                {renderStep(1, t("assign.step.source"))}
+                <p className="chosen-box is-empty mx-[var(--pad)] mb-[var(--pad)]">{t("assign.unsourced.body")}</p>
+              </div>
+              <div className="assign-decide" data-testid="assign-decide">
+                <div className="assign-decide-body">
+                  {renderStep(2, t("assign.step.decide"))}
+                  <div className="assign-remark">
+                    <span className="flex-none text-xs text-ink-3">{t("classify.reason")}</span>
+                    <span className="min-w-0 flex-1">
+                      {(newRemarks[target.target_id] ?? target.remark) ? (
+                        <Truncate text={newRemarks[target.target_id] ?? target.remark} className="text-[13px] leading-5 text-ink" testId="assign-new-remark" />
+                      ) : (
+                        <span className="block truncate text-xs leading-5 text-ink-3" data-testid="assign-new-remark">
+                          {t("assign.optional")}
+                        </span>
+                      )}
+                    </span>
+                    {canEdit && (
+                      <button type="button" className="btn h-7 flex-none gap-1 px-2 text-xs font-normal" data-testid="assign-new-remark-edit" onClick={() => setRemarkEdit({ kind: "new", targetId: target.target_id })}>
+                        <FilePen size={13} strokeWidth={1.5} aria-hidden />
+                        {t((newRemarks[target.target_id] ?? target.remark) ? "remark.edit" : "remark.write")}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <button type="button" className="btn pri assign-confirm" data-testid="assign-mark-new" disabled={!canEdit || busy} onClick={markNew}>
                   {t("assign.markNew")}
                 </button>
               </div>
@@ -1555,20 +1657,41 @@ export default function AssignPage() {
               </button>
             )}
           </div>
+          {meta}
+          {/* 머리는 스크롤되지 않으니 긴 AI 사유는 두 줄까지(전체는 올리거나 포커스하면 툴팁) */}
           {rowSuggestion && row.status === "ai_suggested" && aiWhy && (
-            <p className="flex items-start gap-1.5 text-xs text-st-ai" data-testid="assign-ai-reason">
+            <div className="flex items-start gap-1.5 text-xs text-st-ai" data-testid="assign-ai-reason">
               <Sparkles size={13} strokeWidth={1.5} className="mt-0.5 shrink-0" aria-hidden />
-              {aiWhy}
-            </p>
+              <span className="min-w-0 flex-1">
+                <ClampText text={aiWhy} />
+              </span>
+            </div>
           )}
         </div>
-        <div className="grid min-h-0 grid-cols-[minmax(0,1fr)] content-start gap-3 overflow-y-auto p-[var(--pad)]">
-          {renderChosen()}
-          {actions}
-          {details}
+        {/* ① 보낼 곳 - 패널에서 이곳만 스크롤된다. 바로 아래 결정 칸이 붙어 있어 고른 곳에서 확정까지 손이 짧다 */}
+        <div className="assign-pick" data-testid="assign-pick" onClickCapture={handlePickClickCapture}>
+          {renderStep(1, t("assign.step.pick"))}
+          <DestinationAccordion sections={accSections} open={accOpen} onToggle={toggleAcc} />
+          <div className="px-[var(--pad)] pb-[var(--pad)] pt-1">{aiNote}</div>
         </div>
-        <DestinationAccordion sections={accSections} open={accOpen} onToggle={toggleAcc} />
-        <div className="p-[var(--pad)]">{aiNote}</div>
+        {/* ② 결정 칸 - 패널 아래에 붙는다. 다른 길 셋 · 고른 곳(높이 상한 안에서 이 부분만 스크롤) · 대상 문서 · Remark · 맨 아래 확정 */}
+        <div className="assign-decide" data-testid="assign-decide">
+          <div className="assign-decide-body">
+            {renderStep(2, t("assign.step.decide"))}
+            {actions}
+            {renderChosen()}
+          </div>
+          {destination?.kind === "move" && (
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="flex-none text-xs text-ink-3">{t("classify.moveTo")}</span>
+              <span className="block h-8 min-w-0 flex-1">
+                <MoveTargetField key={activeKey ?? ""} bundleId={bundleId} value={moveCode} disabled={!canEdit} testId="assign-move-code" onChange={(code) => setDraft({ moveCode: code })} />
+              </span>
+            </div>
+          )}
+          {remarkRow}
+          {confirmButton}
+        </div>
       </div>
     );
   }
@@ -1903,9 +2026,13 @@ export default function AssignPage() {
           requiredMessage={remarkEdit.need ? t(`remark.need.${remarkEdit.need}`) : null}
           confirmLabel={t(remarkEdit.then === "hold" ? "remark.saveHold" : remarkEdit.then === "confirm" ? "remark.saveConfirm" : "common.save")}
           testId="assign-remark-modal"
-          onClose={() => setRemarkEdit(null)}
+          onClose={() => {
+            focusAfterRef.current = "assign-primary";
+            setRemarkEdit(null);
+          }}
           onConfirm={(text) => {
             const then = remarkEdit.then;
+            focusAfterRef.current = "assign-primary";
             setRemarkEdit(null);
             // 글을 바꾸지 않고 확인하면 초안을 만들지 않는다 - 저장 안 한 변경으로 잡혀 나가기 확인·고치기 막힘이 생기지 않게
             if (text !== reasonNow) setDraft({ reason: text });
@@ -1920,9 +2047,13 @@ export default function AssignPage() {
           requiredMessage={null}
           confirmLabel={t("common.save")}
           testId="assign-remark-modal"
-          onClose={() => setRemarkEdit(null)}
+          onClose={() => {
+            focusAfterRef.current = "assign-mark-new";
+            setRemarkEdit(null);
+          }}
           onConfirm={(text) => {
             const targetId = remarkEdit.targetId;
+            focusAfterRef.current = "assign-mark-new";
             setRemarkEdit(null);
             setNewRemarks((prev) => ({ ...prev, [targetId]: text }));
           }}

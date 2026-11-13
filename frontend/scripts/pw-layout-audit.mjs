@@ -533,7 +533,7 @@ const AUDIT_ENTRIES = [
     note: "last word of a table-cell piece does not overlap its row-end icons",
   },
   {
-    // R2: 1,200자 사유가 든 Unit(OLD-91 보류)을 고르면 사유 칸이 3줄 이상 높이
+    // R2: 1,200자 사유가 든 Unit(OLD-91 보류)을 고르면 사유 칸이 한 줄로 줄고 확정 단추가 화면 안
     id: "R2", ds: "worst", user: MEMBER, views: [1120],
     path: (ids) => `/bundles/${ids.w[1]}/assign`,
     open: async (page) => {
@@ -550,10 +550,14 @@ const AUDIT_ENTRIES = [
       await page.locator(`[data-testid="assign-old"] .su[data-unit="${found.unit}"]`).first().click();
       await page.waitForTimeout(SETTLE_MS);
     },
-    // Remark는 창에서 쓰고 옆 칸은 두 줄 읽기 보기다(전체 글은 툴팁·Edit remark 창)
-    measure: (page) => page.getByTestId("assign-reason").evaluate((el) => ({ tag: el.tagName, h: Math.round(el.getBoundingClientRect().height), len: (el.textContent ?? "").length })),
-    expect: (value) => value.len >= 1000 && value.h >= 2 * 19 - 1 && value.h <= 2 * 19 + 2,
-    note: "a 1,200-char reason reads as a two-line clamp (37-40px) beside the Edit remark button",
+    // Remark는 창에서 쓰고 결정 칸의 Remark 줄은 한 줄 읽기 보기다(전체 글은 툴팁·Edit remark 창) - 확정 단추가 화면 안에 남는지도 본다
+    measure: (page) => page.evaluate(() => {
+      const el = document.querySelector('[data-testid="assign-reason"]');
+      const confirm = document.querySelector('[data-testid="assign-primary"]')?.getBoundingClientRect();
+      return { tag: el?.tagName, h: Math.round(el?.getBoundingClientRect().height ?? 0), len: (el?.textContent ?? "").length, confirmBottom: Math.round(confirm?.bottom ?? 9999), vh: innerHeight };
+    }),
+    expect: (value) => value.len >= 1000 && value.h >= 19 && value.h <= 21 && value.confirmBottom <= value.vh,
+    note: "a 1,200-char reason reads as one truncated line (19-21px) in the Decide area and Confirm stays on screen",
   },
   // ---- Task 7: 개요 ----
   {
