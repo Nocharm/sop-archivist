@@ -991,7 +991,10 @@ def test_translation_does_not_turn_source_into_split_or_group(client: TestClient
     assert response.status_code == 200, response.text
     assert response.json()["targets"][0]["change_type"] == "as_is"
     rows = [row for row in get_output_a(client, bundle.id, "ko") if row["unit_id"] == unit["id"]]
-    assert [(row["row_kind"], row["group_id"], row["change_type"]) for row in rows] == [("unit", None, "as_is")]
+    # 원문 줄은 나눔·관계 묶음이 되지 않고, 번역은 같은 의미 묶음의 따로 된 줄이다
+    assert [(row["row_kind"], row["group_id"], row["change_type"]) for row in rows] == [
+        ("unit", None, "as_is"), ("translation", None, "translated"),
+    ]
 
 
 @pytest.mark.parametrize("link_translation", [True, False])
@@ -2395,25 +2398,26 @@ def test_output_a_places_translation_after_source_position(client: TestClient, f
 
     index = [row["row_kind"] for row in rows].index("translation")
     assert rows[index]["display_id"] == source_display_id and rows[index]["source_text"] == ""
-    assert [row["source_text"] for row in rows[:index]] == [AI_EN_1, AI_EN_2]
+    # 한 벌 — 원문 순서 그대로 두 언어 줄이 함께, 번역 줄은 출처 줄 바로 뒤
+    assert [row["source_text"] for row in rows[:index]] == [AI_KO_1, AI_EN_1, AI_KO_2, AI_EN_2, LONE_KO]
     assert [row["source_text"] for row in rows[index + 1:]] == [LONE_EN]
-    source_row = next(row for row in get_output_a(client, bundle.id, "ko") if row["unit_id"] == unit["id"])
-    row = rows[index]
+    source_row, row = rows[index - 1], rows[index]
+    assert (source_row["unit_id"], source_row["row_no"], row["is_group_start"]) == (unit["id"], row["row_no"], False)
     assert (row["location"], row["old_doc_code"], row["old_doc_version"], row["unit_id"]) == (
-        {**source_row["location"], "place": "Paragraph"}, source_row["old_doc_code"], source_row["old_doc_version"],
-        unit["id"],
+        source_row["location"], source_row["old_doc_code"], source_row["old_doc_version"], unit["id"],
     )
-    assert (row["lang"], row["dest_kind"], row["dest_doc_code"], row["dest_location"]) == ("en", "sop", "SOP-AI", "Purpose")
+    assert (row["dest_kind"], row["dest_doc_code"], row["dest_location"]) == ("sop", "SOP-AI", "Purpose")
     assert (row["ai_text"], row["confirmed_text"], row["change_type"], row["status"]) == (
         TRANSLATED, "", "translated", "ai_suggested",
     )
 
 
-def test_output_a_shows_the_translation_only_in_its_language(client: TestClient, fake_ai: FakeAi) -> None:
+def test_output_a_shows_the_translation_once_whatever_the_label_language(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, unit = make_assigned_unit(client)
     translate(client, fake_ai, bundle.id, unit["id"])
 
-    assert "translation" not in {row["row_kind"] for row in get_output_a(client, bundle.id, "ko")}
+    for lang in ("ko", "en"):
+        assert [row["row_kind"] for row in get_output_a(client, bundle.id, lang)].count("translation") == 1
 
 
 def test_output_a_row_shows_who_confirmed_the_translation(client: TestClient, fake_ai: FakeAi) -> None:
@@ -2423,18 +2427,23 @@ def test_output_a_row_shows_who_confirmed_the_translation(client: TestClient, fa
 
     (row,) = [row for row in get_output_a(client, bundle.id, "en") if row["row_kind"] == "translation"]
 
-    assert (row["confirmed_text"], row["status"], row["confirmed_by"]) == (TRANSLATED, "confirmed", "qa.member")
+    assert (row["confirmed_text"], row["status"]) == (TRANSLATED, "confirmed")
+    assert row["confirmed_by"].endswith(" (qa.member)")  # 디렉터리 이름과 로그인 ID
     assert row["confirmed_at"] is not None
 
 
 def test_output_a_shows_the_table_row_ahead_of_a_translated_cell(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, table, cell = make_assigned_table(client)
-    assert "table" not in {row["row_kind"] for row in get_output_a(client, bundle.id, "en")}
-
     translate(client, fake_ai, bundle.id, cell["id"], CELL_TRANSLATED)
 
-    kinds = [row["row_kind"] for row in get_output_a(client, bundle.id, "en")]
-    assert kinds.index("table") < kinds.index("translation")
+    rows = get_output_a(client, bundle.id, "en")
+
+    kinds = [row["row_kind"] for row in rows]
+    index = kinds.index("translation")
+    assert kinds.index("table") < index
+    # 칸 번역은 그 칸 문장 줄 바로 뒤, 표와 같은 묶음
+    assert (rows[index - 1]["row_kind"], rows[index - 1]["unit_id"]) == ("cell", cell["id"])
+    assert rows[index]["row_no"] == rows[kinds.index("table")]["row_no"]
 
 
 def test_output_c_and_summary_include_translations(client: TestClient, fake_ai: FakeAi) -> None:

@@ -175,14 +175,15 @@ def test_workbook_sheets_and_headers(client: TestClient) -> None:
     assert [cell.value for cell in sheet_a[2]] == KO_A_HEADERS
     rows = {row[_find_column(sheet_a, "단위 ID") - 1].value: row for row in sheet_a.iter_rows(min_row=3)}
     by_header = {header: rows[keep["display_id"]][index].value for index, header in enumerate(KO_A_HEADERS)}
-    assert (by_header["언어"], by_header["옛 문서 번호"], by_header["원문 문장"]) == ("KO", "OLD-1", KEEP)
+    # 첫 열은 결과물 A 한 벌의 묶음 번호다(머리 이름은 아직 옛 것)
+    assert (by_header["언어"], by_header["옛 문서 번호"], by_header["원문 문장"]) == ("1", "OLD-1", KEEP)
     assert (by_header["보낸 곳 종류"], by_header["새 문서 번호"], by_header["새 문서 안 위치"]) == (
         "새 SOP", "SOP-NEW", "Responsibilities",
     )
     assert (by_header["확정 문장"], by_header["변경 종류"], by_header["상태"]) == (KEEP, "그대로", "확정")
     dropped = {header: rows[drop["display_id"]][index].value for index, header in enumerate(KO_A_HEADERS)}
     assert (dropped["보낸 곳 종류"], dropped["변경 종류"], dropped["이유"]) == ("삭제", "삭제", DROP_REASON)
-    assert len(rows) == 3  # 영어 문장은 한글 파일에 없다
+    assert len(rows) == 4  # 결과물 A가 한 벌이라 영어 문장도 같은 시트에 있다
 
     summary = client.get(f"/api/bundles/{fx.bundle_id}/summary", headers=AUTHOR).json()["ko"]
     sheet_b = ko["B 흐름"]

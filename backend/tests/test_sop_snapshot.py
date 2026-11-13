@@ -112,7 +112,7 @@ def test_snapshot_reads_a_missing_cover_decision_as_unassigned(client: TestClien
     rows = client.get(f"/api/bundles/{bundle_id}/outputs/a", params={"lang": "ko"}, headers=AUTHOR)
     assert rows.status_code == 200, rows.text
     (row,) = [row for row in rows.json() if row["unit_id"] == unit_id]
-    assert (row["status"], row["dest_kind"], row["reason"]) == ("unassigned", "", "")
+    assert (row["status"], row["dest_kind"], row["remark"]) == ("unassigned", "", "")
     for path in ("summary", "review/readiness", "outputs/b?lang=ko", "outputs/c?lang=ko"):
         response = client.get(f"/api/bundles/{bundle_id}/{path}", headers=AUTHOR)
         assert response.status_code == 200, (path, response.text)

@@ -75,7 +75,6 @@ class ExcelLabels:
     bundle_statuses: dict[str, str]
     a_headers: tuple[str, ...]
     c_headers: tuple[str, ...]
-    both_langs: str  # 두 언어에 모두 나오는 단위(그림·표)의 언어 칸
     page: str  # {page}
     page_estimated: str  # {page}
     cell_position: str  # {row} {col}
@@ -108,7 +107,6 @@ EXCEL_LABELS: dict[str, ExcelLabels] = {
             "문서", "칸", "번호", "항목", "표 칸", "표 칸 위치", "단위 ID", "AI 제안 문장", "변경 종류", "상태", "옛 단위",
             "이동 대상", "이유",
         ),
-        both_langs="공통",
         page="{page}쪽",
         page_estimated="약 {page}쪽",
         cell_position="{row}행 {col}열",
@@ -143,7 +141,6 @@ EXCEL_LABELS: dict[str, ExcelLabels] = {
             "Document", "Slot", "No.", "Item", "Table cell", "Cell position", "Unit ID", "AI-suggested sentence",
             "Change type", "Status", "Old units", "Moved to", "Reason",
         ),
-        both_langs="Both",
         page="p. {page}",
         page_estimated="~p. {page}",
         cell_position="R {row} C {col}",
@@ -286,9 +283,9 @@ def _format_warnings(row: ARow) -> str:
 
 
 def _list_a_cells(row: ARow, labels: ExcelLabels, output: OutputLabels) -> list[str]:
-    """결과물 A 한 줄의 칸 글(스펙 §7.13 칸 순서) — 미배정은 보낸 곳 칸이 빈 채로 보인다."""
+    """결과물 A 한 줄의 칸 글(스펙 §7.13 칸 순서) — 미배정은 보낸 곳 칸이 빈 채로 보인다. 첫 칸은 묶음 번호다."""
     return [
-        row.lang.upper() if row.lang in ("ko", "en") else labels.both_langs,
+        str(row.row_no),
         row.old_doc_code,
         row.old_doc_version,
         _format_location(row, labels),
@@ -303,7 +300,7 @@ def _list_a_cells(row: ARow, labels: ExcelLabels, output: OutputLabels) -> list[
         row.ai_text,
         output.change_types.get(row.change_type, row.change_type),
         row.group_id or "",
-        row.reason,
+        row.remark,
         output.statuses.get(row.status, row.status),
         row.confirmed_by or "",
         _format_kst(row.confirmed_at) if row.confirmed_at is not None else "",
@@ -316,7 +313,7 @@ def _write_sheet_a(sheet: Worksheet, snap: BundleSnapshot, lang: Lang, labels: E
     _put_status_line(sheet, labels, snap)
     _put_header_row(sheet, 2, labels.a_headers)
     next_row = 3
-    for row in build_output_a(snap, lang):
+    for row in build_output_a(snap, lang, {}):  # 확정한 사람은 아직 ID만 적는다
         next_row = _put_chunked_row(
             sheet, next_row, _list_a_cells(row, labels, output), A_ID_COLUMN, output.continued,
             A_NOTE_COLUMNS if row.dest_is_note else (),

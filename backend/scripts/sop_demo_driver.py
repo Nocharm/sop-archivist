@@ -407,9 +407,11 @@ class SyntheticDriver:
         )
         return response.status_code, response.json()
 
-    def load_outputs(self) -> dict[str, dict]:
+    def load_outputs(self) -> dict[str, dict | list]:
+        """결과물 — A는 한 벌(`"a"`), B·C는 아직 언어별(`"ko"`·`"en"` 아래 `"b"`·`"c"`)."""
         return {
-            lang: {name: self.get(f"/outputs/{name}", lang=lang) for name in ("a", "b", "c")} for lang in LANGS
+            "a": self.get("/outputs/a"),
+            **{lang: {name: self.get(f"/outputs/{name}", lang=lang) for name in ("b", "c")} for lang in LANGS},
         }
 
 

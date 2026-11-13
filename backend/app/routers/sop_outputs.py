@@ -37,7 +37,7 @@ from app.sop.outputs import (
     build_output_c,
     build_summary,
 )
-from app.sop.snapshot import BundleSnapshot, load_bundle_snapshot
+from app.sop.snapshot import BundleSnapshot, list_confirmer_ids, load_bundle_snapshot, load_people_names
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/bundles", tags=["sop-outputs"])
@@ -94,13 +94,17 @@ async def _load_snapshot_for_read(session: AsyncSession, bundle_id: int) -> Bund
 
 @router.get("/{bundle_id}/outputs/a", response_model=list[ARow])
 async def get_output_a(
-    lang: Literal["ko", "en"] = Query(),
+    lang: Literal["ko", "en"] = Query("en"),
     ctx: BundleContext = Depends(_require_member),
     session: AsyncSession = Depends(get_session),
 ) -> list[ARow]:
-    snap = await _load_snapshot_for_read(session, ctx.bundle.id)
+    """결과물 A 한 벌 — lang은 라벨 언어만(없으면 en), 확정한 사람은 디렉터리 이름을 붙인다."""
+    snap = await load_bundle_snapshot(session, ctx.bundle.id)
+    people = await load_people_names(session, list_confirmer_ids(snap))
+    # 다 읽었으니 트랜잭션을 끝내 묶음 행 공유 잠금을 놓는다(스레드 계산 동안 쓰기를 막지 않게)
+    await session.commit()
     # 순수 계산이라 큰 묶음이 이벤트 루프를 막지 않게 스레드에서 돈다
-    return await asyncio.to_thread(build_output_a, snap, lang)
+    return await asyncio.to_thread(build_output_a, snap, lang, people)
 
 
 @router.get("/{bundle_id}/outputs/b", response_model=FlowGraph)

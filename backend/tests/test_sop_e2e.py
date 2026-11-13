@@ -170,19 +170,19 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
     assert status_code == 200, body
     assert body["status"] == "in_review"
 
-    # 7. 결과물 A·B·C·요약(두 언어)
+    # 7. 결과물 A(한 벌)·B·C·요약(두 언어)
     summary = run.get("/summary")
     outputs = run.load_outputs()
+    assert {row["status"] for row in outputs["a"]} == {"confirmed"}
     for lang in LANGS:
         assert {key: summary[lang][key] for key in expected["summary"][lang]} == expected["summary"][lang], lang
         assert summary[lang]["unassigned"] == 0 and summary[lang]["duplicate"] == 1
         assert sum(edge["count"] for edge in outputs[lang]["b"]["edges"]) == expected["flow_edge_total"][lang]
-        assert {row["status"] for row in outputs[lang]["a"]} == {"confirmed"}
         assert _list_c_items(outputs[lang]["c"]) == _list_expected_c_items(expected, lang), lang
         assert len(outputs[lang]["c"]["deleted"]) == expected["summary"][lang]["deleted"]
         assert {moved["move_target_code"] for moved in outputs[lang]["c"]["moved"]} == {"SOP-QC-99999"}
 
-    # 8. Excel 두 언어 — 시트 4개, 수식 칸 없음, A 시트 데이터 줄 = A JSON 줄
+    # 8. Excel 두 언어 — 시트 4개, 수식 칸 없음, A 시트 데이터 줄 = A JSON 줄(한 벌이라 두 파일 모두 같은 줄 수)
     for lang in LANGS:
         response = client.get(f"/api/bundles/{run.bundle_id}/export.xlsx", params={"lang": lang}, headers=AUTHOR)
         assert response.status_code == 200, response.text
@@ -194,7 +194,7 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
         data_rows = [
             row for row in sheet_a.iter_rows(min_row=3, values_only=True) if any(value is not None for value in row)
         ]
-        assert len(data_rows) == len(outputs[lang]["a"]), lang
+        assert len(data_rows) == len(outputs["a"]), lang
 
     # 9. 검토자 완료 → 완료 뒤 저장은 409
     completed = run.post("/review/complete", {"revision": run.bundle_revision()}, headers=REVIEWER)

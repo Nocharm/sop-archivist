@@ -1,5 +1,5 @@
 """결과물 스냅숏 — 묶음 하나의 문서·블록·단위·판단·새 문서·새 문장을 DB 표마다 질의 한 번으로 읽은 불변 값(결과물 A·B·C·요약의 입력)과,
-목록·개요에 싣는 줄 기준 진행 숫자(묶음 여럿을 질의 두 번으로).
+목록·개요에 싣는 줄 기준 진행 숫자(묶음 여럿을 질의 두 번으로), 결과물의 확정한 사람 이름.
 """
 
 from collections import defaultdict
@@ -13,6 +13,7 @@ from sqlalchemy import ColumnElement, Select, and_, case, exists, func, or_, sel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
+from app.models import Employee
 from app.sop.constants import COVER_KINDS
 from app.sop.detach import UNASSIGNED
 from app.sop.errors import raise_rule
@@ -299,6 +300,29 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
         targets=await _load_targets(session, bundle_id, units.keys(), include_text),
         target_docs=await load_target_docs(session, bundle_id),
     )
+
+
+def list_confirmer_ids(snap: BundleSnapshot) -> set[str]:
+    """스냅숏의 판단·새 문장을 확정한 사람의 로그인 ID — 결과물이 이름을 붙일 대상이다."""
+    login_ids = {decision.confirmed_by for decision in snap.decisions.values()}
+    login_ids |= {target.confirmed_by for target in snap.targets.values()}
+    return {login_id for login_id in login_ids if login_id}
+
+
+async def load_people_names(session: AsyncSession, login_ids: Collection[str]) -> dict[str, str]:
+    """로그인 ID → 표시 이름 — 활성 직원만, 이름이 비면 한글 이름, 둘 다 비면 뺀다(질의 한 번).
+
+    결과물 A·Excel의 "확정한 사람"용이다. 디렉터리에 없거나 퇴직한 사람은 빠져 결과물이 ID만 적는다(설계 §4.5).
+    AI 페이로드에는 쓰지 않는다 — 실명 금지 원칙은 그대로다.
+    """
+    if not login_ids:
+        return {}
+    rows = await session.execute(
+        select(Employee.login_id, Employee.name, Employee.korean_name).where(
+            Employee.login_id.in_(list(login_ids)), Employee.active.is_(True)
+        )
+    )
+    return {login_id: name or korean_name for login_id, name, korean_name in rows if name or korean_name}
 
 
 async def _load_documents(session: AsyncSession, bundle_id: int) -> tuple[list[Document], dict[int, Document]]:
