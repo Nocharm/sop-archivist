@@ -1011,8 +1011,29 @@ export interface TargetOrderItem {
   number_style?: NumberStyle;
 }
 
-export function putTargetOrder(bundleId: number, body: { revision: number; target_doc_id: number; items: TargetOrderItem[] }): Promise<unknown> {
-  return apiFetch(`/bundles/${bundleId}/targets/order`, { method: "PUT", body: JSON.stringify(body) });
+/** 결과물 C의 새 문서 하나 */
+export type OutputCDoc = OutputC["docs"][number];
+
+/** backend OrderItemOut - 저장 뒤 그 줄의 값 */
+export interface TargetOrderItemOut {
+  target_id: number;
+  order_index: number;
+  wi_step: number | null;
+  indent_level: number;
+  number_style: NumberStyle;
+}
+
+/** 순서 저장 응답 - doc은 저장 뒤 그 문서의 C 모양(같은 라벨 언어의 결과물 C에서 그 문서와 같은 값). 화면은 C 전체를 다시 받지 않는다 */
+export interface TargetOrderResult {
+  revision: number;
+  target_doc_id: number;
+  items: TargetOrderItemOut[];
+  doc: OutputCDoc;
+}
+
+/** labelLang은 응답 doc의 칸 이름·출처 표기 언어만 고른다 */
+export function putTargetOrder(bundleId: number, labelLang: OutputLang, body: { revision: number; target_doc_id: number; items: TargetOrderItem[] }): Promise<TargetOrderResult> {
+  return apiFetch<TargetOrderResult>(`/bundles/${bundleId}/targets/order?lang=${labelLang}`, { method: "PUT", body: JSON.stringify(body) });
 }
 
 // --- 검토 ---

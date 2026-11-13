@@ -8,7 +8,7 @@ import type { Bundle } from "./api-sop";
 const getBundle = vi.fn<(id: number) => Promise<Bundle>>();
 vi.mock("./api-sop", () => ({ getBundle: (id: number) => getBundle(id) }));
 
-const { clearBundleStore, loadBundle, putBundle, useBundle } = await import("./bundle-store");
+const { clearBundleStore, loadBundle, putBundle, setBundleRevision, useBundle } = await import("./bundle-store");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -84,6 +84,21 @@ describe("bundle store", () => {
       await older.promise;
     });
     expect(screen.bundle).toMatchObject({ status: "in_review", revision: 6 });
+    act(() => root.unmount());
+  });
+
+  it("moves only the revision of the cached bundle and drops a load started before", async () => {
+    getBundle.mockResolvedValueOnce(makeBundle(15, "in_progress", 3));
+    const root = await mountScreen(15);
+    const older = defer<Bundle>();
+    getBundle.mockReturnValueOnce(older.promise);
+    void loadBundle(15);
+    await act(async () => {
+      setBundleRevision(15, 4);
+      older.resolve(makeBundle(15, "in_review", 3));
+      await older.promise;
+    });
+    expect(screen.bundle).toMatchObject({ status: "in_progress", revision: 4 });
     act(() => root.unmount());
   });
 

@@ -77,6 +77,17 @@ export function putBundle(bundle: Bundle): void {
   setEntry(bundle.id, { bundle, error: null, loading: false });
 }
 
+/**
+ * 캐시된 묶음의 revision만 바꾼다 - 저장 응답이 묶음 전체가 아니라 revision만 줄 때(결과물 C 순서 저장). 그 전에 시작한 요청은 버린다(putBundle과 같은 순번).
+ * 캐시에 묶음이 없으면 아무것도 하지 않는다.
+ */
+export function setBundleRevision(bundleId: number, revision: number): void {
+  const entry = entries.get(bundleId);
+  if (!entry?.bundle) return;
+  latest.set(bundleId, ++sequence);
+  setEntry(bundleId, { bundle: { ...entry.bundle, revision }, error: null, loading: false });
+}
+
 export function useBundle(bundleId: number | null): Entry & { reload: () => void } {
   const entry = useSyncExternalStore(
     subscribe,

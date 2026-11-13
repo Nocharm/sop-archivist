@@ -1,5 +1,6 @@
 // 결과물 C 섹션 번호(들여쓰기·번호 표시) - 줄마다 보이는 깊이, 들여/내어쓰기를 할 수 있는지, 깊이·표시 단추를 둘 줄인지 정한다.
 // 번호 자체는 서버(outputs.number_lines)가 칸의 두 언어 문장을 한 줄로 세어 매긴다. 화면은 그 번호에서 깊이를 읽어 그리고, 서버와 같은 상한(앞 번호 줄 깊이 + 1)을 넘지 않게 막는다.
+// numberLines는 그 서버 함수의 사본이다 - 순서·깊이·표시를 바꾼 뒤 저장 응답이 오기 전에만 번호를 미리 센다(응답의 번호가 늘 이긴다). 서버 규칙을 바꾸면 함께 고친다.
 // 번호 생략·주석 줄은 번호가 없고 세지 않는다 - 깊이 상한도 앞 "번호 줄"만 본다(서버와 같은 규칙). 깊이·표시는 바꾼 그 줄에만 붙는다(짝 상대에 옮기지 않는다).
 import type { NumberStyle, OutputC, OutputCItem } from "./api-sop";
 
@@ -13,6 +14,23 @@ export const NUMBER_STYLES: readonly NumberStyle[] = ["numbered", "omitted", "no
 /** 번호를 세는 줄인가 - 생략·주석 줄은 세지 않고 다음 번호 줄이 이어 센다 */
 export function isCounted(item: Pick<OutputCItem, "number_style">): boolean {
   return item.number_style === "numbered";
+}
+
+/**
+ * 칸 번호 base 아래 줄 번호 - backend outputs.number_lines의 사본(저장 응답 전 미리 보기 전용). 깊이 d 줄은 base 뒤에 d + 1 마디이고,
+ * 앞 번호 줄의 눌러 읽은 깊이 + 1을 넘으면 그만큼으로 눌러 읽는다. null(생략·주석 줄)은 번호가 없고 세지 않는다.
+ */
+export function numberLines(base: string, depths: readonly (number | null)[]): (string | null)[] {
+  // 깊이별 지금 번호 - 길이가 앞 번호 줄의 눌러 읽은 깊이 + 1이다
+  const counters: number[] = [];
+  return depths.map((depth) => {
+    if (depth === null) return null;
+    const level = Math.max(0, Math.min(depth, counters.length));
+    counters.length = Math.min(counters.length, level + 1);
+    if (counters.length === level) counters.push(0);
+    counters[level] += 1;
+    return [base, ...counters].join(".");
+  });
 }
 
 /**

@@ -1,10 +1,12 @@
 // 결과물 C 한 벌 - 칸마다 두 언어가 한 목록이고, 의미가 바뀌는 줄에 굵은 선, 칸 머리 옆에 칸 제목 출처, 줄마다 바꿀 수 있는 단추만 보인다.
-import { act, createElement } from "react";
+import { act, createElement, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 
 import type { OutputC, OutputCItem } from "@/lib/api-sop";
+import { addEdit, startDraft } from "@/lib/c-edit-model";
 import { LangProvider } from "@/lib/i18n";
+import type { MoveDir } from "@/lib/target-order";
 
 import { OutputCView } from "./output-c";
 
@@ -126,6 +128,54 @@ describe("OutputCView", () => {
     expect(host.querySelector('[data-testid="output-c-item-2"]')?.getAttribute("lang")).toBe("ko");
     expect(host.querySelector('[data-testid="output-c-heading-note-1-scope"]')?.textContent).toBe("← OLD-1 §5, OLD-2 §5");
     unmount();
+  });
+
+  it("draws a long C in parts and shows the deleted list only after the last line", () => {
+    // jsdom에는 IntersectionObserver가 없다 - 끝 표지가 보이는 일은 일어나지 않는 것으로 둔다
+    vi.stubGlobal("IntersectionObserver", class { observe() {} disconnect() {} });
+    const items = Array.from({ length: 100 }, (_, index) => makeItem({ target_id: index + 1, text: `줄 ${index + 1}`, status: "confirmed" }));
+    const data: OutputC = { ...makeOutput(items), deleted: [{ display_id: "OLD-1-1", doc_code: "OLD-1", section: "5", source_text: "가", reason: "중복" }] };
+    const { host, unmount } = render({ data, onMove: () => {} });
+    // 80줄 = 문서 머리 + 칸 머리 + 문장 78줄
+    expect(host.querySelectorAll('[data-testid^="output-c-row-"]')).toHaveLength(78);
+    expect(host.querySelector('[data-testid="output-c-more"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid^="output-c-deleted-"]')).toBeNull();
+    expect(host.querySelector('[data-testid="output-c-row-5"]')?.getAttribute("data-flip-key")).toBe("5");
+    unmount();
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps focus on the pressed move button after the line moves, or the other one at the section edge", () => {
+    const items = [makeItem({ target_id: 1, text: "가", status: "confirmed" }), makeItem({ target_id: 2, text: "나", status: "confirmed" }), makeItem({ target_id: 3, text: "다", status: "confirmed" })];
+    function Harness() {
+      // 결과물 화면처럼 누르면 그 자리에서 문서를 바꾼다
+      const [data, setData] = useState(makeOutput(items));
+      const onMove = (_docId: number, locationKey: string, targetId: number, dir: MoveDir) => {
+        const draft = addEdit(startDraft(data.docs[0]), { kind: "move", locationKey, targetId, dir });
+        if (draft) setData({ ...data, docs: [draft.shown] });
+      };
+      return createElement(OutputCView, { data, onMove });
+    }
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => root.render(createElement(LangProvider, null, createElement(Harness))));
+    const press = (testId: string) => {
+      const button = host.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`);
+      button?.focus();
+      act(() => button?.click());
+    };
+    const order = () => [...host.querySelectorAll('[data-testid^="output-c-row-"]')].map((row) => row.getAttribute("data-flip-key"));
+
+    press("output-c-move-down-1");
+    expect(order()).toEqual(["2", "1", "3"]);
+    expect(document.activeElement?.getAttribute("data-testid")).toBe("output-c-move-down-1");
+    press("output-c-move-down-1");
+    expect(order()).toEqual(["2", "3", "1"]);
+    // 칸 끝에 닿아 아래 단추가 꺼졌다 - 포커스는 위 단추로
+    expect(document.activeElement?.getAttribute("data-testid")).toBe("output-c-move-up-1");
+    act(() => root.unmount());
+    host.remove();
   });
 
   it("lists a deleted pair once with both sentences", () => {

@@ -85,6 +85,11 @@
   /* 긴 글 툴팁 */
   .tip-wide { max-width: 480px; white-space: normal; }
 
+  /* 목록 자리 바꿈(useFlip) - 옮긴 줄은 미끄러지는 동안 이웃 위로 지나간다 */
+  .flip-lead { position: relative; z-index: 1; }
+  /* 용지 위의 줄은 바탕이 비어 지나가는 동안 두 줄 글이 겹쳐 보인다 - 용지 바탕과 얕은 그림자로 위에 얹는다 */
+  .sheet .flip-lead { background: var(--paper); box-shadow: var(--shadow-1); border-radius: var(--r-1); }
+
   /* 탭 패널이 바뀔 때 - 내용이 살짝 나타난다 */
   .fade-in { animation: fade-in var(--dur-base) var(--ease-enter); }
   @keyframes fade-in { from { opacity: 0; } }

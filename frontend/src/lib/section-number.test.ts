@@ -2,11 +2,38 @@
 import { describe, expect, it } from "vitest";
 
 import type { NumberStyle, OutputCItem } from "./api-sop";
-import { canChangeDepth, canChangeStyle, canIndent, getSectionDepths, isCounted, readIndentKey } from "./section-number";
+import { canChangeDepth, canChangeStyle, canIndent, getSectionDepths, isCounted, numberLines, readIndentKey } from "./section-number";
 
 function item(id: number, number: string | null, indent = 0, style: NumberStyle = "numbered"): OutputCItem {
   return { target_id: id, kind: "sentence", lang: "ko", text: "", ai_text: "", change_type: null, status: "confirmed", source_note: "", origin: "units", meaning_key: null, number, indent_level: indent, number_style: style, cell_row: null, cell_col: null, children: [] };
 }
+
+// backend tests/test_sop_numbering.py의 두 표 그대로 - 사본이 서버 outputs.number_lines와 같은 번호를 미리 센다
+describe("numberLines", () => {
+  it.each<[number[], string[]]>([
+    [[], []],
+    [[0, 0, 0], ["5.1", "5.2", "5.3"]],
+    [[0, 1, 1, 2, 0], ["5.1", "5.1.1", "5.1.2", "5.1.2.1", "5.2"]],
+    [[3], ["5.1"]],
+    [[0, 4, 4], ["5.1", "5.1.1", "5.1.1.1"]],
+    [[0, 1, 2, 3, 1, 0], ["5.1", "5.1.1", "5.1.1.1", "5.1.1.1.1", "5.1.2", "5.2"]],
+    [[0, 1, 2, 0, 2], ["5.1", "5.1.1", "5.1.1.1", "5.2", "5.2.1"]],
+  ])("numbers depths %j as the server does", (depths, expected) => {
+    expect(numberLines("5", depths)).toEqual(expected);
+  });
+
+  it.each<[(number | null)[], (string | null)[]]>([
+    [[0, null, 0], ["5.1", null, "5.2"]],
+    [[null, 0, 0], [null, "5.1", "5.2"]],
+    [[null, 3], [null, "5.1"]],
+    [[0, 1, null, 1], ["5.1", "5.1.1", null, "5.1.2"]],
+    [[0, null, 2], ["5.1", null, "5.1.1"]],
+    [[0, 1, null, 0, 1], ["5.1", "5.1.1", null, "5.2", "5.2.1"]],
+    [[null, null], [null, null]],
+  ])("skips unnumbered lines in %j as the server does", (depths, expected) => {
+    expect(numberLines("5", depths)).toEqual(expected);
+  });
+});
 
 describe("getSectionDepths", () => {
   it("reads the depth from the number under the section number", () => {
