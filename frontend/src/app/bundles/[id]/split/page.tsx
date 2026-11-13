@@ -12,7 +12,8 @@ import { SplitAiTabs } from "@/components/manage/split-ai";
 import { SplitAiBar } from "@/components/manage/split-ai-bar";
 import { SplitAiResult } from "@/components/manage/split-ai-result";
 import { PartTabs } from "@/components/paper/part-tabs";
-import { Paper, type CutDragPos, type PaperCut } from "@/components/paper/paper";
+import { CutPop } from "@/components/paper/cut-pop";
+import { Paper, type PaperCut } from "@/components/paper/paper";
 import { SourceFontMenu } from "@/components/paper/source-font-menu";
 import { Modal } from "@/components/modal";
 import { ReadOnlyNote } from "@/components/read-only-note";
@@ -52,10 +53,11 @@ import {
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { buildGroupSave } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
-import { buildPaperModel, buildPaperTabs, canSplitAt, countUnchecked, readWarningText, resolveCutDrag, shouldRecenter, toBlockOffset, toUnitOffset, type PaperSheet, type PaperTabKey } from "@/lib/paper-model";
+import { buildPaperModel, buildPaperTabs, countUnchecked, readWarningText, shouldRecenter, type PaperSheet, type PaperTabKey } from "@/lib/paper-model";
 import { getAdvanceDelay, getAdvanceWait, parseDurationMs } from "@/lib/split-advance";
 import { getSplitKeyAction } from "@/lib/split-keys";
 import { buildSplitMenu, getAiSplitReason, getPairMergeReason, hasBothScripts, isAiSplitKind, isUnitDecided, pickEnglishSide, planJoin, type JoinKind, type JoinPlan, type SplitMenuAction } from "@/lib/split-menu-model";
+import { useCutLine } from "@/lib/use-cut-line";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 import { buildAiTabs } from "@/lib/split-ai-tabs-model";
@@ -131,7 +133,6 @@ export default function SplitPage() {
   const activeTab = tabs?.tabs.find((tab) => tab.key === tabKey) ?? tabs?.tabs[0] ?? null;
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [cutAt, setCutAt] = useState<{ unitId: number; at: number } | null>(null);
   const [range, setRange] = useState<{ blockId: number; start: number; end: number } | null>(null);
   // 짝 맞추기 - 다른 언어 문장을 눌러 고르는 중
   const [isPairPicking, setIsPairPicking] = useState(false);
@@ -163,11 +164,9 @@ export default function SplitPage() {
   const joinTip = useDelegatedTip();
 
   const selected: ViewUnit | null = (selectedId !== null && model?.units.get(selectedId)) || null;
-  const cut: PaperCut | null = (() => {
-    if (!cutAt || !selected || cutAt.unitId !== selected.id) return null;
-    const pos = toBlockOffset(selected.spans, cutAt.at);
-    return pos ? { blockId: pos.blockId, offset: pos.offset } : null;
-  })();
+  // 나눌 선 - 고른 단위에만 산다(Assign과 같은 훅)
+  const cutLine = useCutLine(selected);
+  const cut: PaperCut | null = cutLine.cut;
   const warnings = data?.extraction?.warnings ?? [];
   const warnBlockIds = new Set(warnings.flatMap((w) => (w.block_id !== null && w.needs_ack && !w.acked_by ? [w.block_id] : [])));
   const pair = selected?.pair_id ? data?.pairs.find((item) => item.id === selected.pair_id) ?? null : null;
@@ -193,7 +192,7 @@ export default function SplitPage() {
   }
 
   function clearTransient() {
-    setCutAt(null);
+    cutLine.clear();
     setRange(null);
     setIsPairPicking(false);
     setPicked([]);
@@ -226,7 +225,7 @@ export default function SplitPage() {
     cancelAdvance();
     setSelectedId(unitId);
     if (unitId !== null) setSeenAi((prev) => new Set(prev).add(unitId));
-    setCutAt(null);
+    cutLine.clear();
     setRange(null);
     // 다른 탭의 단위(짝·다음 확인 안 된 단위)를 고르면 그 탭으로 간다
     const nextTab = unitId === null ? undefined : tabs?.tabOf.get(unitId);
@@ -437,8 +436,8 @@ export default function SplitPage() {
   }
 
   function splitAtCut() {
-    if (!selected || !cutAt || cutAt.unitId !== selected.id) return;
-    runEdit({ type: "split", unit_id: selected.id, at: cutAt.at }, t("split.didSplit"));
+    if (!selected || cutLine.at === null) return;
+    runEdit({ type: "split", unit_id: selected.id, at: cutLine.at }, t("split.didSplit"));
   }
 
   function handleUnitClick(unitId: number) {
@@ -456,25 +455,7 @@ export default function SplitPage() {
     const unit = model?.units.get(unitId);
     if (!unit || !at || !canEdit) return;
     if (unitId !== selectedId) selectUnit(unitId);
-    const unitOffset = toUnitOffset(unit.spans, at.blockId, at.offset);
-    if (unitOffset !== null && canSplitAt(unit, unitOffset)) setCutAt({ unitId, at: unitOffset });
-  }
-
-  /** 나눌 선을 끄는 동안 - 고른 단위 안의 나눌 수 있는 자리로만 옮긴다(밖으로 끌면 처음·끝에 멈춘다) */
-  function dragCut(pos: CutDragPos) {
-    if (!selected) return;
-    const at = resolveCutDrag(selected, pos);
-    if (at !== null && at !== cutAt?.at) setCutAt({ unitId: selected.id, at });
-  }
-
-  function nudgeCut(step: 1 | -1) {
-    if (!selected || !cutAt) return;
-    for (let at = cutAt.at + step; at > 0 && at < selected.text.length; at += step) {
-      if (canSplitAt(selected, at) && toBlockOffset(selected.spans, at) !== null) {
-        setCutAt({ unitId: selected.id, at });
-        return;
-      }
-    }
+    cutLine.placeAtCaret(unit, at);
   }
 
   function selectNextSuggestion() {
@@ -503,7 +484,7 @@ export default function SplitPage() {
       readOnly: !canEdit,
       aiEnabled: ai.isOn,
       isChecked,
-      hasCut: cutAt?.unitId === menuTarget.id,
+      hasCut: cutLine.at !== null && selected?.id === menuTarget.id,
       hasSuggestion: menuTarget.split_suggestion_id !== null,
       isAiWaiting: ai.isWaiting(menuTarget.id),
       isDecided: isUnitDecided(menuTarget, model.units),
@@ -686,8 +667,8 @@ export default function SplitPage() {
               onUnitDoubleClick={canEdit ? handleUnitDoubleClick : undefined}
               onUnitContextMenu={openMenu}
               onRangeSelect={canEdit ? (next) => setRange(next) : undefined}
-              onCutDrag={canEdit ? dragCut : undefined}
-              onCutNudge={canEdit ? nudgeCut : undefined}
+              onCutDrag={canEdit ? cutLine.drag : undefined}
+              onCutNudge={canEdit ? cutLine.nudge : undefined}
               figureSource={docId !== null ? { bundleId, docId } : undefined}
               testId={PAPER_TEST_ID}
               sheetTestId={`split-sheet-${sheet.key}`}
@@ -716,18 +697,7 @@ export default function SplitPage() {
                   />
                 );
               }}
-              renderAtCut={() => (
-                <span className="cut-pop" role="group" aria-label={t("split.split")} onClick={(event) => event.stopPropagation()}>
-                  <button type="button" className="btn pri h-7" data-testid="split-cut-run" disabled={busy} onClick={splitAtCut}>
-                    <Scissors size={14} strokeWidth={1.5} aria-hidden />
-                    {t("split.cutHere")} <kbd>S</kbd>
-                  </button>
-                  <button type="button" className="btn h-7" data-testid="split-cut-cancel" onClick={() => setCutAt(null)}>
-                    <X size={14} strokeWidth={1.5} aria-hidden />
-                    {t("common.cancel")} <kbd>Esc</kbd>
-                  </button>
-                </span>
-              )}
+              renderAtCut={() => <CutPop busy={busy} onRun={splitAtCut} onCancel={cutLine.clear} testIdPrefix="split" />}
             />
             </div>
             ))}

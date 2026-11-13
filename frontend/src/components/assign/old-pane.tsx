@@ -6,7 +6,7 @@ import { ListFilter } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { PaneZoom } from "@/components/assign/pane-zoom";
-import { Paper } from "@/components/paper/paper";
+import { Paper, type CutDragPos, type PaperCut } from "@/components/paper/paper";
 import { PartTabs } from "@/components/paper/part-tabs";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Select, type SelectOption } from "@/components/ui/select";
@@ -42,6 +42,15 @@ interface OldPaneProps {
   onPartChange: (key: PaperTabKey) => void;
   /** Shift는 일괄 고르기 */
   onUnitClick: (unitId: number, keys: { shiftKey: boolean }) => void;
+  /** 우클릭·메뉴 글쇠 - 누른 자리와 글자 자리 */
+  onUnitContextMenu?: (unitId: number, at: { x: number; y: number }, caret: { blockId: number; offset: number } | null) => void;
+  /** 두 번 누르기 - 나눌 선을 놓는다 */
+  onUnitDoubleClick?: (unitId: number, caret: { blockId: number; offset: number } | null) => void;
+  /** 나눌 선(Split과 같은 부품) - 고른 Unit(selectedId) 안에만 그린다 */
+  cut?: PaperCut | null;
+  onCutDrag?: (pos: CutDragPos) => void;
+  onCutNudge?: (step: 1 | -1) => void;
+  renderAtCut?: () => ReactNode;
   figureSource?: { bundleId: number; docId: number };
   zoom: number;
   onZoom: (dir: "+" | "-") => void;
@@ -97,6 +106,12 @@ export function OldPane(props: OldPaneProps) {
             highlightIds={props.highlightIds}
             pickedIds={props.pickedIds}
             onUnitClick={(unitId, _at, event) => props.onUnitClick(unitId, { shiftKey: event.shiftKey })}
+            onUnitContextMenu={props.onUnitContextMenu}
+            onUnitDoubleClick={props.onUnitDoubleClick}
+            cut={props.cut}
+            onCutDrag={props.onCutDrag}
+            onCutNudge={props.onCutNudge}
+            renderAtCut={props.cut ? props.renderAtCut : undefined}
             figureSource={props.figureSource}
             contour
             strips={{ isChecked: IS_CHECKED, hideChecked: true, statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold }}

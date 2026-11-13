@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent } from "react";
 
+import { AssignContextMenu } from "@/components/assign/assign-context-menu";
 import { AssignHelp } from "@/components/assign/assign-help";
 import { DestCard } from "@/components/assign/dest-card";
 import { DestinationAccordion, type AccordionSection } from "@/components/assign/destination-accordion";
@@ -26,6 +27,7 @@ import { ResetModal, type ResetScope } from "@/components/assign/reset-modal";
 import { AiAskMenu, type AiAskItem } from "@/components/manage/ai-ask-menu";
 import { Modal } from "@/components/modal";
 import { ReadOnlyNote } from "@/components/read-only-note";
+import { CutPop } from "@/components/paper/cut-pop";
 import { SourceFontMenu } from "@/components/paper/source-font-menu";
 import { FilterChip, UnitStatusChip } from "@/components/status";
 import { ClampText } from "@/components/ui/clamp-text";
@@ -35,10 +37,12 @@ import { BundleLoadError } from "@/components/bundle-load-error";
 import { Truncate } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
+import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { listAppliedSuggestions, requestAi, type AiKind, type AiScope } from "@/lib/api-manage";
 import {
   bulkDecide,
+  editUnits,
   clearDecisions,
   confirmMatchesInBulk,
   getDocumentView,
@@ -55,6 +59,7 @@ import {
   type AiSuggestion,
   type ChangeTypeInput,
   type DocumentView,
+  type EditOp,
   type Group,
   type GroupSaveInput,
   type NewCandidate,
@@ -78,6 +83,7 @@ import {
   type LinkMenuItem,
   type Recommendation,
 } from "@/lib/assign-model";
+import { buildAssignMenu, type AssignMenuAction } from "@/lib/assign-context-menu-model";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import {
@@ -117,11 +123,12 @@ import { useLeaveGuard } from "@/lib/leave-guard";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { navigate } from "@/lib/nav-buffer";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
-import { buildPaperModel, buildPaperTabs, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
+import { buildPaperModel, buildPaperTabs, findNearestCut, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
 import { SLOT_LABELS } from "@/lib/slot-labels";
 import { getStageHref } from "@/lib/stages";
 import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
+import { useCutLine } from "@/lib/use-cut-line";
 import { useLoaded } from "@/lib/use-loaded";
 import { usePaneZoom, type PaneKey, type ZoomDir } from "@/lib/use-pane-zoom";
 import { Select } from "@/components/ui/select";
@@ -321,6 +328,24 @@ export default function AssignPage() {
   const [jump, setJump] = useState<{ side: "old" | "new"; id: number; targetId: number; rowKey: string; quiet?: boolean } | null>(null);
   // 고른 줄이 어떤 길로든 바뀌면(↑↓·저장 뒤 다음 줄·짝 풀림·문서 바꾸기) 메뉴를 닫는다 - 다른 줄에서 낡은 메뉴가 되살아나지 않게(렌더 중 상태 맞추기)
   if (menu !== null && menu.rowKey !== activeKey) setMenu(null);
+  // Old 문장 우클릭 메뉴 - 누른 Unit, 그 줄 상자, 누른 자리와 글자 자리(키보드로 열었으면 없음). 고른 줄이 바뀌면 닫는다
+  const [ctxMenu, setCtxMenu] = useState<{ seq: number; unitId: number; rowKey: string; anchor: HTMLElement; click: { x: number; y: number } | null; caret: { blockId: number; offset: number } | null } | null>(null);
+  if (ctxMenu !== null && ctxMenu.rowKey !== activeKey) setCtxMenu(null);
+  // 나눌 선이 놓인 Unit - 고른 줄 안의 것만 산다(줄을 바꾸면 선이 사라진다)
+  const [cutUnitId, setCutUnitId] = useState<number | null>(null);
+  // 편집 뒤 고를 Unit - 원문 보기와 단위 목록을 둘 다 다시 받으면 그 줄을 고른다(stale…는 편집 전 것, 줄은 둘 다에서 나온다)
+  const [follow, setFollow] = useState<{ unitId: number; staleViews: DocumentView[] | null; staleUnits: UnitRow[] | null } | null>(null);
+  // 편집 뒤 - 원문 보기를 다시 받아 줄이 새로 생기면 편집한 문장의 줄을 고르고, 거르기 목록도 새 줄로 다시 잡는다(렌더 중 상태 맞추기)
+  if (follow !== null && viewList !== follow.staleViews && viewList !== null && units.data !== follow.staleUnits) {
+    const groupOf = viewList.flatMap((view) => view.units).find((unit) => unit.id === follow.unitId)?.group_unit_id ?? null;
+    const key = rowOfUnit.get(follow.unitId) ?? (groupOf !== null ? rowOfUnit.get(groupOf) : undefined);
+    setFollow(null);
+    setSnapshot((prev) => prev && { filter: prev.filter, keys: rows.filter((item) => prev.filter === "all" || item.status === prev.filter || item.key === key).map((item) => item.key) });
+    if (key) {
+      setSelectedKey(key);
+      scrollToUnit(follow.unitId);
+    }
+  }
   const focusNew = mode === "unsourced" ? (unsourced.find((item) => item.target_id === selNew)?.target_id ?? unsourced[0]?.target_id ?? null) : null;
 
   // --- 고른 줄의 관계 묶음·후보와 초안 ---
@@ -398,7 +423,10 @@ export default function AssignPage() {
   const paperModel = useMemo(() => (oldView ? buildPaperModel(oldView) : null), [oldView]);
   // 본문·머리말·꼬리말 탭 - 고른 조각이 다른 탭에 있으면 그 탭으로 가고, 사람이 고른 탭은 그 줄에서 그대로 둔다
   const partKeys = useMemo(() => (paperModel ? (["body", "header", "footer"] as const).filter((key) => paperModel[key].length > 0) : []), [paperModel]);
-  const partOf = useMemo(() => (oldView && paperModel ? buildPaperTabs(oldView, paperModel).tabOf : null), [oldView, paperModel]);
+  const paperTabs = useMemo(() => (oldView && paperModel ? buildPaperTabs(oldView, paperModel) : null), [oldView, paperModel]);
+  const partOf = paperTabs?.tabOf ?? null;
+  const cutUnit = cutUnitId !== null && row?.unitIds.includes(cutUnitId) ? (paperModel?.units.get(cutUnitId) ?? null) : null;
+  const cutLine = useCutLine(cutUnit);
   // Old 조각 → 그 조각을 출처로 쓴 New 문장들(연결 배지)
   const linkedTargets = useMemo(() => {
     const map = new Map<number, WrittenSentence[]>();
@@ -515,6 +543,8 @@ export default function AssignPage() {
     setMode("old");
     setSelectedKey(key);
     setMenu(null);
+    setCtxMenu(null);
+    if (key !== activeKey) setCutUnitId(null);
     const first = rowMap.get(key)?.unitIds[0];
     if (scroll && first !== undefined) scrollToUnit(first);
   }
@@ -522,6 +552,115 @@ export default function AssignPage() {
   function moveRow(step: 1 | -1) {
     const next = stepInList(rows.map((item) => item.key), listKeys, activeKey, step);
     if (next !== null) selectRow(next);
+  }
+
+  // --- Old 문장 고치기(우클릭 메뉴·두 번 누르기) - Split의 편집을 그대로 부른다. 판단이 없는 문장만(모델이 막는다) ---
+  /** 단위(칸 문장이면 묶인 표·행)의 줄 키 */
+  function findRowKey(unitId: number): string | undefined {
+    const groupId = paperModel?.units.get(unitId)?.group_unit_id ?? null;
+    return rowOfUnit.get(unitId) ?? (groupId !== null ? rowOfUnit.get(groupId) : undefined);
+  }
+
+  function isUnitDecided(unit: { id: number; group_unit_id: number | null }): boolean {
+    const decided = unitMap.get(unit.group_unit_id ?? unit.id);
+    return decided !== undefined && (decided.status !== "unassigned" || decided.decision.disposition !== "unassigned");
+  }
+
+  function hasUnitDraft(unit: { id: number }): boolean {
+    const key = findRowKey(unit.id);
+    const pending = key ? drafts[key] : undefined;
+    return pending !== undefined && hasDraftChange(pending);
+  }
+
+  const ctxTarget = ctxMenu ? (paperModel?.units.get(ctxMenu.unitId) ?? null) : null;
+  const ctxGroups = (() => {
+    if (!ctxTarget || !paperTabs || !paperModel) return null;
+    const order = paperTabs.order;
+    const at = order.indexOf(ctxTarget.id);
+    const neighbor = (step: number) => (at < 0 ? null : (paperModel.units.get(order[at + step]) ?? null));
+    return buildAssignMenu({
+      target: ctxTarget,
+      prev: neighbor(-1),
+      next: neighbor(1),
+      readOnly: !canEdit,
+      rowStatus: row?.status ?? "unassigned",
+      hasDestination: destination !== null,
+      isConfirmedAsIs: row?.status === "confirmed" && !hasDraftChange(draft),
+      isDecided: isUnitDecided,
+      hasDraft: hasUnitDraft,
+      canSplit: findNearestCut(ctxTarget, Math.floor(ctxTarget.text.length / 2)) !== null,
+    });
+  })();
+  // 메뉴를 연 뒤 편집으로 그 문장이 사라졌으면 닫는다(렌더 중 상태 맞추기)
+  if (ctxMenu !== null && paperModel !== null && ctxTarget === null) setCtxMenu(null);
+
+  /** 우클릭(또는 메뉴 글쇠) - 그 문장의 줄을 고르고 줄 상자 옆에 메뉴를 연다 */
+  function openCtxMenu(unitId: number, click: { x: number; y: number } | null, caret: { blockId: number; offset: number } | null) {
+    if (mode !== "old") return;
+    const key = findRowKey(unitId);
+    const anchor = document.querySelector<HTMLElement>(`[data-testid="assign-paper-piece-${unitId}"]`) ?? document.querySelector<HTMLElement>(`[data-testid="assign-paper-unit-${unitId}"]`);
+    if (!key || !anchor) return;
+    if (key !== activeKey) selectRow(key, false);
+    setChecked(new Set());
+    setMenu(null);
+    menuSeq.current += 1;
+    setCtxMenu({ seq: menuSeq.current, unitId, rowKey: key, anchor, click, caret });
+  }
+
+  /** 편집 한 번 - 끝나면 원문 보기·단위를 다시 받고 followId(없으면 새로 생긴 첫 단위)의 줄을 고른다 */
+  async function runUnitEdit(op: EditOp, okText: string, followId: number | null) {
+    if (!oldView || busy) return;
+    setBusy(true);
+    try {
+      const result = await editUnits(bundleId, oldView.document.id, oldView.document.revision, op);
+      cutLine.clear();
+      setCutUnitId(null);
+      // 고친 줄의 Unit은 은퇴했을 수 있다 - 다시 받는 동안 그 Unit의 묶음·후보를 부르지 않게 고름을 비우고, 새 줄이 생기면 follow가 고른다
+      setSelectedKey(null);
+      showToast(okText);
+      const next = result.created_unit_ids[0] ?? followId;
+      if (next !== null && next !== undefined) setFollow({ unitId: next, staleViews: viewList, staleUnits: units.data });
+    } catch (err) {
+      // 판단이 걸린 단위(다른 문장의 출처 등)는 Split처럼 확인하고 떼어 내지 않는다 - 배정 화면에서는 먼저 배정을 취소하게 한다
+      const isLinked = err instanceof ApiError && err.rule?.code === "confirm_required";
+      showToast(isLinked ? t("assign.ctx.why.assigned") : humanizeApiError(err, t), "error");
+    } finally {
+      views.reload();
+      setUnitsKey((key) => key + 1);
+      void loadBundle(bundleId);
+      setBusy(false);
+    }
+  }
+
+  function splitAtCut() {
+    if (!cutUnit || cutLine.at === null) return;
+    void runUnitEdit({ type: "split", unit_id: cutUnit.id, at: cutLine.at }, t("split.didSplit"), null);
+  }
+
+  /** 두 번 누른 자리에 나눌 선 - 메뉴의 "Split here"를 쓸 수 있는 문장만 */
+  function handleOldDoubleClick(unitId: number, caret: { blockId: number; offset: number } | null) {
+    const unit = paperModel?.units.get(unitId);
+    if (!unit || !canEdit || mode !== "old" || isUnitDecided(unit) || hasUnitDraft(unit) || !["sentence", "heading", "cell_sentence"].includes(unit.kind)) return;
+    if (cutLine.placeAtCaret(unit, caret)) setCutUnitId(unit.id);
+  }
+
+  function runCtx(action: AssignMenuAction, lang?: "ko" | "en") {
+    const target = ctxTarget;
+    const caret = ctxMenu?.caret ?? null;
+    setCtxMenu(null);
+    if (!target) return;
+    if (action === "confirm") void runSave("confirm");
+    else if (action === "clear") void runClear();
+    else if (action === "split") {
+      // 이미 그 문장에 선이 있으면 바로 나누고, 없으면 누른 자리(키보드면 가운데) 가까이에 선을 놓는다 - 끌거나 ←→로 옮긴 뒤 Split here
+      if (cutUnit?.id === target.id && cutLine.at !== null) splitAtCut();
+      else if (cutLine.placeNear(target, caret)) setCutUnitId(target.id);
+    } else if ((action === "merge_prev" || action === "merge_next") && paperTabs) {
+      const order = paperTabs.order;
+      const other = order[order.indexOf(target.id) + (action === "merge_prev" ? -1 : 1)];
+      const ids = action === "merge_prev" ? [other, target.id] : [target.id, other];
+      void runUnitEdit({ type: "merge", unit_ids: ids }, t("split.didMerge"), null);
+    } else if (action === "lang" && lang) void runUnitEdit({ type: "set_language", unit_ids: [target.id], lang }, t("common.saved"), target.id);
   }
 
   function buildTables(): Map<number, { rows: number; cols: number; cells: CellSource[] }> {
@@ -804,6 +943,7 @@ export default function AssignPage() {
       return;
     }
     setChecked(new Set());
+    setCtxMenu(null);
     selectRow(key, false);
   }
 
@@ -829,6 +969,13 @@ export default function AssignPage() {
   }
 
   const handleKey = useEffectEvent((event: KeyboardEvent) => {
+    // 메뉴 글쇠·Shift+F10 - 고른 줄(나눌 선이 있으면 그 문장)에서 우클릭 메뉴를 연다
+    const isMenuKey = event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey);
+    if (isMenuKey && row && mode === "old" && !bulk && !isTypingTarget(event.target) && !document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]')) {
+      event.preventDefault();
+      openCtxMenu(cutUnit?.id ?? row.unitIds[0], null, null);
+      return;
+    }
     // 그 자리 메뉴는 화면 단축키를 막지 않는다 - 메뉴가 떠 있어도 ↵가 확정이다(메뉴 안의 키는 메뉴가 먼저 받는다)
     if (bulk || isTypingTarget(event.target) || document.querySelector('[role="dialog"],[role="menu"]:not([data-link-menu]),[role="listbox"]')) {
       if (event.key === "Escape" && editing) closeEditing();
@@ -847,8 +994,12 @@ export default function AssignPage() {
     const key = event.key.toLowerCase();
     const step = getRowStep(key);
     if (step !== null) moveRow(step);
-    else if (key === "escape") setChecked(new Set());
-    else if (!canEdit || !row) return;
+    else if (key === "escape") {
+      // 나눌 선이 있으면 선부터 거둔다(Split과 같다)
+      if (cutLine.at !== null) cutLine.clear();
+      else setChecked(new Set());
+    } else if (!canEdit || !row) return;
+    else if (key === "s" && cutLine.at !== null) splitAtCut();
     else if (key === "enter") handlePrimary();
     else if (key === "e") startEdit();
     else if (key === "h") void runSave("hold");
@@ -889,6 +1040,14 @@ export default function AssignPage() {
   function renderPlaceLabel(dest: Destination): { title: string; text: string } {
     const option = options.find((item) => getDestinationId(item.destination) === getDestinationId(dest));
     return { title: option?.docCode ?? "", text: option?.label ?? "" };
+  }
+
+  /** 우클릭 메뉴 확정 항목 옆의 짧은 이름 - 잇기는 New 문서 번호, 자리는 To-Be 문서 번호, 지우기·옮기기는 그 이름(옮기기는 대상 문서) */
+  function readDestinationLabel(dest: Destination): string {
+    if (dest.kind === "link") return writtenMap.get(dest.targetIds[0])?.doc_code ?? "";
+    if (dest.kind === "delete") return t("classify.deleted");
+    if (dest.kind === "move") return moveCode.trim() || t("classify.moved");
+    return renderPlaceLabel(dest).title;
   }
 
   /** 추천을 누름 - 고른 뒤 그 카드 옆에 확정 메뉴를 띄운다(고른 상자가 카드보다 위라 화면 밖일 수 있다) */
@@ -1572,7 +1731,7 @@ export default function AssignPage() {
                   setManualPart({ key: "", part });
                 }}
                 placeholder={<span className="sk h-[480px] w-full" />}
-                selectedId={mode === "old" ? (row?.unitIds[0] ?? null) : null}
+                selectedId={mode === "old" ? (cutUnit?.id ?? row?.unitIds[0] ?? null) : null}
                 highlightIds={mode === "old" ? highlightIds : NO_NUMBERS}
                 pickedIds={pickedOld}
                 statusOf={(unitId) => unitMap.get(unitId)?.status}
@@ -1585,6 +1744,12 @@ export default function AssignPage() {
                 activePart={activePart}
                 onPartChange={(part) => setManualPart({ key: activeKey ?? "", part })}
                 onUnitClick={handleOldClick}
+                onUnitContextMenu={(unitId, at, caret) => openCtxMenu(unitId, at, caret)}
+                onUnitDoubleClick={canEdit ? handleOldDoubleClick : undefined}
+                cut={cutLine.cut}
+                onCutDrag={canEdit ? cutLine.drag : undefined}
+                onCutNudge={canEdit ? cutLine.nudge : undefined}
+                renderAtCut={() => <CutPop busy={busy} onRun={splitAtCut} onCancel={cutLine.clear} testIdPrefix="assign" />}
                 figureSource={oldView ? { bundleId, docId: oldView.document.id } : undefined}
                 zoom={view.zoomOld}
                 onZoom={(dir) => zoomPane("old", dir)}
@@ -1623,6 +1788,18 @@ export default function AssignPage() {
       </div>
       {menu && menuItems.length > 0 && (
         <LinkMenu key={menu.seq} anchor={menu.anchor} offset={menu.offset} items={menuItems} isUnsaved={menuItems.includes("cancel")} busy={busy} onAction={runMenu} onClose={() => setMenu(null)} />
+      )}
+      {ctxMenu && ctxGroups && (
+        <AssignContextMenu
+          key={ctxMenu.seq}
+          anchor={ctxMenu.anchor}
+          cover={(rowMap.get(ctxMenu.rowKey)?.unitIds ?? []).flatMap((id) => [...document.querySelectorAll<HTMLElement>(`[data-testid="assign-paper-piece-${id}"]`)])}
+          click={ctxMenu.click}
+          groups={ctxGroups}
+          destinationLabel={destination ? readDestinationLabel(destination) : ""}
+          onPick={runCtx}
+          onClose={() => setCtxMenu(null)}
+        />
       )}
       {confirmingIdentical && (
         <ConfirmModal

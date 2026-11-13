@@ -570,8 +570,8 @@ await runStep("split: H holds a unit without a destination", {}, async ({ page }
   // 저장된 사유를 창에서 지우면 빈 채로 남는다
   await page.locator('[data-testid="assign-reason-edit"]').click();
   await wait(page, "assign-remark-modal");
-  await page.waitForLoadState("networkidle");
-  check("the Remark window lists my recent remarks", (await page.locator('[data-testid^="assign-remark-modal-recent-"]').count()) > 0);
+  const listed = await page.locator('[data-testid="assign-remark-modal-recent-0"]').waitFor({ timeout: T }).then(() => true, () => false);
+  check("the Remark window lists my recent remarks", listed);
   await page.locator('[data-testid="assign-remark-modal-text"]').fill("");
   await page.locator('[data-testid="assign-remark-modal-confirm"]').click();
   check("a cleared reason stays empty", (await page.locator('[data-testid="assign-reason"]').textContent()) === "–");
@@ -644,7 +644,6 @@ await runStep("assign: hold an unassigned unit without a destination", {}, async
   // 사유 없이 보류하면 Remark 창이 열린다 - 최근 사유를 골라 확인하면 보류가 이어진다
   await page.locator('[data-testid="assign-hold"]').click();
   await wait(page, "assign-remark-modal");
-  await page.waitForLoadState("networkidle");
   await page.locator('[data-testid="assign-remark-modal-recent-0"]').click();
   check("a recent remark fills the field", (await page.locator('[data-testid="assign-remark-modal-text"]').inputValue()).length > 0);
   await page.locator('[data-testid="assign-remark-modal-confirm"]').click();
@@ -674,6 +673,44 @@ await runStep("assign: move picks its target doc from the dropdown", {}, async (
   const saved = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
   await page.locator('[data-testid="assign-remark-modal-confirm"]').click();
   check("move saves with the picked target", (await saved).ok());
+});
+
+// Old 문장 우클릭 메뉴(배정 + 문장 고치기) - 미배정 문장은 여기서 나누고 언어를 바꾸며, 배정된 문장의 고치기는 까닭과 함께 꺼져 있다
+await runStep("assign: right-click an Old sentence to split it or change its language", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${freshBundleId}${path}`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const rows = (await getJson("/units?limit=1000")).items;
+  const docId = rows[0].document_id;
+  const viewUnits = async () => (await getJson(`/documents/${docId}/view`)).units;
+  const target = (await viewUnits()).find((unit) => unit.kind === "sentence" && unit.text.length > 20 && rows.find((row) => row.unit_id === unit.id)?.status === "unassigned");
+  const openMenu = async (unitId) => {
+    const el = page.locator(`[data-testid="assign-paper-unit-${unitId}"]`).first();
+    await el.evaluate((node) => node.scrollIntoView({ block: "center" }));
+    const box = await el.boundingBox();
+    await page.mouse.click(box.x + Math.min(40, box.width / 2), box.y + Math.min(12, box.height / 2), { button: "right" });
+    await wait(page, "assign-ctx-menu");
+  };
+  await openMenu(target.id);
+  await takeShot("sop-assign-context-menu.png");
+  check("the menu has assign and edit groups", (await page.locator('[data-testid="assign-ctx-confirm"]').count()) === 1 && (await page.locator('[data-testid="assign-ctx-split"]').count()) === 1);
+  check("confirm is off with no destination", (await page.locator('[data-testid="assign-ctx-confirm"]').getAttribute("aria-disabled")) === "true");
+  // 언어 바꾸기
+  const other = target.lang === "en" ? "ko" : "en";
+  await page.locator(`[data-testid="assign-ctx-lang-${other}"]`).click();
+  await page.waitForFunction(async ([path, id, lang]) => (await (await fetch(path, { headers: { "X-Dev-User": "qa.member" } })).json()).units.find((unit) => unit.id === id)?.lang === lang, [`/api/bundles/${freshBundleId}/documents/${docId}/view`, target.id, other], { timeout: T });
+  check("Language changes the unit's language from Assign", true);
+  // 여기서 나누기 - 선을 놓고 Split here
+  const before = (await viewUnits()).length;
+  await openMenu(target.id);
+  await page.locator('[data-testid="assign-ctx-split"]').click();
+  await wait(page, "assign-cut-run");
+  await page.locator('[data-testid="assign-cut-run"]').click();
+  await page.waitForFunction(async ([path, count]) => (await (await fetch(path, { headers: { "X-Dev-User": "qa.member" } })).json()).units.length === count + 1, [`/api/bundles/${freshBundleId}/documents/${docId}/view`, before], { timeout: T });
+  check("Split here splits the sentence from Assign", true);
+  await wait(page, "assign-row-id");
+  check("the first piece's row is selected after the split", (await page.locator('[data-testid="assign-row-id"]').count()) === 1);
 });
 
 await runStep("assign: an edit survives looking at another unit", {}, async ({ page }) => {

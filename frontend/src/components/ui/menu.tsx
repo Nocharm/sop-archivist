@@ -19,18 +19,21 @@ interface MenuProps {
   matchAnchorWidth?: boolean;
   id?: string;
   label?: string;
+  /** 자리 계산을 바꾼다(기본은 트리거 아래, 모자라면 위) - 그 자리 메뉴가 줄 상자를 피해 놓을 때 */
+  place?: (anchor: DOMRect, menu: { width: number; height: number }) => FloatingPos;
   children: ReactNode;
 }
 
 const ITEM_SELECTOR = "[role=menuitem]:not(:disabled),[role=menuitemradio]:not(:disabled),[role=option]:not(:disabled)";
 const TYPEAHEAD_RESET_MS = 600; // 이 시간 안에 친 글자는 이어서 찾는다
 
-export function Menu({ anchorRef, onClose, testId, align = "start", role = "menu", matchAnchorWidth = false, id, label, children }: MenuProps) {
+export function Menu({ anchorRef, onClose, testId, align = "start", role = "menu", matchAnchorWidth = false, id, label, place, children }: MenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<FloatingPos | null>(null);
   const [minWidth, setMinWidth] = useState<number | undefined>(undefined);
   const typeahead = useRef({ text: "", at: 0 });
   const requestClose = useEffectEvent(() => onClose());
+  const placeMenu = useEffectEvent((anchorRect: DOMRect, size: { width: number; height: number }) => (place ?? ((rect, box) => placeBelow(rect, box, align)))(anchorRect, size));
 
   useEffect(() => {
     const layer = pushEscLayer();
@@ -43,7 +46,7 @@ export function Menu({ anchorRef, onClose, testId, align = "start", role = "menu
       const menuRect = menuEl.getBoundingClientRect();
       const width = matchAnchorWidth ? Math.max(menuRect.width, anchorRect.width) : menuRect.width;
       if (matchAnchorWidth) setMinWidth(anchorRect.width);
-      setPos(placeBelow(anchorRect, { width, height: menuRect.height }, align));
+      setPos(placeMenu(anchorRect, { width, height: menuRect.height }));
     });
     const handleMouseDown = (event: MouseEvent) => {
       const target = event.target as Node;

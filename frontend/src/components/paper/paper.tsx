@@ -132,7 +132,7 @@ interface PaperProps {
   onCutNudge?: (step: 1 | -1) => void;
   onUnitDoubleClick?: (unitId: number, at: { blockId: number; offset: number } | null) => void;
   /** 문장 줄을 우클릭하거나 메뉴 글쇠를 눌렀다 - 주면 브라우저 메뉴 대신 이 콜백이 불린다(Split) */
-  onUnitContextMenu?: (unitId: number, at: { x: number; y: number }) => void;
+  onUnitContextMenu?: (unitId: number, at: { x: number; y: number }, caret: { blockId: number; offset: number } | null) => void;
 }
 
 /** 화면 좌표 → 블록 위치. 글자 조각 요소의 data-start에 글자 노드 안 위치를 더한다 */
@@ -974,7 +974,8 @@ export function Paper({
     const unitId = Number(holder?.dataset.stripUnit ?? holder?.dataset.unit);
     if (!holder || !Number.isFinite(unitId)) return;
     event.preventDefault();
-    onUnitContextMenu(unitId, { x: event.clientX, y: event.clientY });
+    // 누른 글자 자리도 넘긴다 - Assign의 "Split here"가 그 자리에 나눌 선을 놓는다
+    onUnitContextMenu(unitId, { x: event.clientX, y: event.clientY }, readCaret(event.clientX, event.clientY));
   }
 
   // 두 번 누를 때 브라우저가 낱말을 고르지 않게 - 나눌 자리를 정하는 동작이다

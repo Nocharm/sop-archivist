@@ -499,6 +499,9 @@
   .menu.combo-list { min-width: 0; max-width: none; }
   .combo-option { cursor: pointer; flex-direction: column; align-items: stretch; gap: 0; }
   .combo-option[data-active] { background: var(--menu-hover); box-shadow: inset 2px 0 0 var(--accent); border-radius: 0 var(--r-1) var(--r-1) 0; }
+  /* Assign 우클릭 메뉴 - 확정 항목 오른쪽의 보낼 곳(흐리게, 길면 말줄임)과 글쇠 표시 */
+  .ctx-hint { flex: 0 1 auto; min-width: 0; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--fs-micro) / var(--lh-micro) var(--font-mono); color: var(--ink-3); }
+  .menu-item > kbd { flex: none; }
   /* Remark 창의 최근 사유 - 누르면 칸을 채우는 한 줄 단추(두 줄까지) */
   .remark-recent { display: block; width: 100%; padding: 5px 8px; border: 1px solid var(--line); border-radius: var(--r-1); background: var(--surface); color: var(--ink-2); font-size: 12px; line-height: 18px; text-align: left; cursor: pointer; }
   .remark-recent:hover { border-color: var(--line-2); background: var(--menu-hover); color: var(--ink); }
