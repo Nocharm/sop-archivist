@@ -787,11 +787,17 @@ def _build_old_remark(index: _Index, added: Mapping[int, list[TargetInfo]], mean
     """옛 묶음의 Remark(제품 명세 §7.13 줄 규칙 (6)) — 판단 이유, 출처 있는 새 문장의 remark, Translated · Added 새 문장(added)의 remark 순.
 
     출처 있는 새 문장은 구성 단위(칸 포함)를 출처로 둔 것이다. Translated · Added 새 문장은 출처가 없어 신규 묶음 대신
-    이 묶음에 들므로 그 remark도 여기서 보인다. 결과물 C의 삭제·이동 줄 이유도 이 값이다.
+    이 묶음에 들므로 그 remark도 여기서 보인다. 결과물 C의 삭제·이동 줄 이유도 이 값이다. 칸 제목은 여러 옛 문서가 함께
+    쓰는 한 줄이라 그 remark를 한 옛 묶음에 싣지 않는다(다른 옛 문서의 묶음으로 새지 않게).
     """
     units = _list_row_units(index, meaning)
     reasons = [index.snap.decisions[unit_id].reason for unit_id in meaning.unit_ids]
-    sourced = [target.remark for unit in units for target in index.unit_targets.get(unit.id, [])]
+    sourced = [
+        target.remark
+        for unit in units
+        for target in index.unit_targets.get(unit.id, [])
+        if target.kind != SLOT_HEADING
+    ]
     added_remarks = [target.remark for unit in units for target in added.get(unit.id, [])]
     return _join_remarks([*reasons, *sourced, *added_remarks])
 

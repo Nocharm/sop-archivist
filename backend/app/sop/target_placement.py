@@ -64,7 +64,8 @@ def _arrange_meaning(group: list[NewTarget]) -> list[Arranged]:
                 at = max(i for i, other in enumerate(ordered) if other.source_unit_id == item.source_unit_id) + 1
             ordered.insert(at, item)
     langs = {item.lang for item in group if not item.is_translation}
-    is_pair_together = ENGLISH in langs and bool(langs - {ENGLISH, NEUTRAL})
+    # 짝 id는 양수 — 짝 없는 단위(-단위 id)가 두 언어 문장의 출처여도 짝이 아니라서 번호
+    is_pair_together = group[0].meaning > 0 and ENGLISH in langs and bool(langs - {ENGLISH, NEUTRAL})
     arranged = []
     for index, item in enumerate(ordered):
         if is_pair_together:

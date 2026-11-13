@@ -67,7 +67,7 @@ def count_single_language(snap: BundleSnapshot) -> int:
         if unit.id not in snap.pair_of
         and unit.kind in SINGLE_LANGUAGE_KINDS
         and snap.documents[unit.document_id].language_layout in TWO_LANGUAGE_LAYOUTS
-        and not _has_other_language_target(unit,targets_of[unit.id])
+        and not _has_other_language_target(unit, targets_of[unit.id])
     )
 
 

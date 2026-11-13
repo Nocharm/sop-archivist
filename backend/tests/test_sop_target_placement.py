@@ -27,6 +27,12 @@ def test_unpaired_and_single_language_keep_numbered_in_given_order() -> None:
     assert [(a.key, a.number_style) for a in got] == [("a", "numbered"), ("b", "numbered")]
 
 
+def test_unpaired_meaning_in_both_languages_numbers_both() -> None:
+    # 짝 없는 단위 하나가 자기 언어 새 문장과 다른 언어 합침 문장(번역 아님)의 첫 출처로 한 칸에 함께 놓여도 짝이 아니라서 둘 다 번호
+    got = arrange_new_targets([_t("ko", -4, "ko", 4), _t("en", -4, "en", 4)])
+    assert {a.key: a.number_style for a in got} == {"ko": "numbered", "en": "numbered"}
+
+
 def test_translation_follows_its_source_omitted() -> None:
     got = arrange_new_targets([_t("en", -5, "en", 5), _t("ko", -5, "ko", 5, tr=True)])
     assert [(a.key, a.number_style, a.after_existing_source) for a in got] == [

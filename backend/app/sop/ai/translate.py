@@ -26,6 +26,7 @@ from app.sop.ai.llm import AiStr, build_messages, call_llm, parse_reply
 from app.sop.ai.runner import AiCallFailed
 from app.sop.ai.schemas import SkippedOut, SkipReason
 from app.sop.checks import check_sentence
+from app.sop.constants import NUMBER_OMITTED
 from app.sop.detach import (
     AI_SUGGESTED,
     CONFIRMED,
@@ -34,7 +35,6 @@ from app.sop.detach import (
     TRANSLATED_TARGET_ID,
     drop_translations,
 )
-from app.sop.constants import NUMBER_OMITTED
 from app.sop.groups import select_in_chunks
 from app.sop.models import (
     AiJob,

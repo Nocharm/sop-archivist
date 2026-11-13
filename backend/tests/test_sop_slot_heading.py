@@ -251,6 +251,25 @@ def test_slot_heading_is_not_numbered_and_shows_in_a_and_c(client: TestClient) -
     assert "Slot heading" in cells  # Excel A의 Change 칸은 변경 종류 heading의 표시 이름이다
 
 
+def test_shared_slot_heading_remark_stays_out_of_old_groups(client: TestClient) -> None:
+    """두 옛 문서가 함께 쓰는 칸 제목의 remark가 다른 옛 문서의 묶음 Remark로 새지 않는다."""
+    fx = _setup(client)
+    ko, en = find_unit(fx.old1, KO_HEAD), find_unit(fx.old1, EN_HEAD)
+    body = _body(
+        [_unit_in(ko), _unit_in(en)],
+        [_heading("ko", fx.sop_id, ko, remark="Synthetic heading remark"), _heading("en", fx.sop_id, en)],
+    )
+    assert save_group(client, fx.bundle_id, body).status_code == 200
+    _link_headings(client, fx, fx.old2)
+
+    rows = _get_output(client, fx.bundle_id, "outputs/a")
+
+    for view in (fx.old1, fx.old2):
+        for head in (KO_HEAD, EN_HEAD):
+            (row,) = [row for row in rows if row["unit_id"] == find_unit(view, head)["id"]]
+            assert "Synthetic heading remark" not in row["remark"]
+
+
 def test_composed_doc_shows_slot_headings_on_the_section(client: TestClient) -> None:
     """Assign New 칸의 엮은 문서도 결과물 C처럼 칸 제목 출처를 칸 머리에 싣고 칸 항목·번호로 세지 않는다."""
     fx = _shared_setup(client)
