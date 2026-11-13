@@ -7,9 +7,11 @@ import { useEffect, useRef, useState } from "react";
 import { UnitStatusChip } from "@/components/status";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { CoverStatus } from "@/lib/api-sop";
+import { readCheckKey } from "@/lib/classify-model";
 import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
 import type { AScreenLine } from "@/lib/output-groups";
+import { formatOutputLocation } from "@/lib/output-location";
 import { truncateMiddle } from "@/lib/truncate-middle";
 
 interface OutputARowViewProps {
@@ -44,6 +46,7 @@ export function OutputARowView({ line, index, destKindLabel, changeLabel, status
   }, [isOpen, row.source_text, row.confirmed_text, row.ai_text, row.remark, showShared]);
 
   const newText = row.confirmed_text || row.ai_text;
+  const location = formatOutputLocation(row.location);
   const hasDetails = row.confirmed_by !== null || row.confirmed_at !== null || row.group_id !== null || row.warnings.length > 0;
   const destCode = truncateMiddle(row.dest_doc_code, 12, 10);
   const expandId = `output-a-${index}-expand`;
@@ -54,11 +57,15 @@ export function OutputARowView({ line, index, destKindLabel, changeLabel, status
         {showShared ? row.row_no : ""}
       </td>
       <td className="[overflow-wrap:anywhere]">
+        {/* 옛 문서 · 위치(Excel Location과 같은 글) · Unit ID를 한 칸에, 조각마다 제 줄 - 칸 폭에서 감긴다 */}
         {row.old_doc_code || row.display_id ? (
           <>
-            <span className="font-mono text-xs">
-              {row.old_doc_code} <span className="text-ink-3">{row.location.section}</span>
-            </span>
+            <span className="block font-mono text-xs">{row.old_doc_code}</span>
+            {location && (
+              <span className="block text-[11px] text-ink-3" data-testid={`output-a-location-${index}`}>
+                {location}
+              </span>
+            )}
             <span className="block font-mono text-[11px] text-ink-3">{row.display_id}</span>
           </>
         ) : (
@@ -140,9 +147,11 @@ export function OutputARowView({ line, index, destKindLabel, changeLabel, status
               <>
                 <dt>{t("outputs.checksCol")}</dt>
                 <dd className="text-ink-2">
+                  {/* 검사 종류는 다른 화면과 같은 check.* 문구로, 견준 값은 뒤에 */}
                   {row.warnings.map((warning, at) => (
                     <span key={at} className="block">
-                      {warning.kind}: {warning.source} → {warning.target}
+                      {t(readCheckKey(warning))}
+                      {(warning.source || warning.target) && ` · ${warning.source ?? ""} → ${warning.target ?? ""}`}
                     </span>
                   ))}
                 </dd>
