@@ -274,8 +274,9 @@ export function NewPane(props: NewPaneProps) {
     const label = isNumberInLead ? row.section_path.slice(getHiddenPrefixLength(row.section_path, readSectionNumber(row.section_path))) : row.section_path;
     const note = props.headingNotes?.get(row.section_path);
     if (!note) return <p className="new-sec">{label}</p>;
+    // 출처 글은 칸 오른쪽 끝까지 가서, 첫 줄의 언어 탭(위 테두리에서 8px 위로 나온다)이 글에 닿지 않게 아래 여백을 4px 더 둔다
     return (
-      <p className="new-sec flex gap-1.5">
+      <p className="new-sec mb-2 flex gap-1.5">
         <span>{label}</span>
         <span className="min-w-[8ch] flex-1 font-normal text-ink-3">
           <Truncate text={note} testId={`assign-new-heading-note-${readSectionNumber(row.section_path)}`} />

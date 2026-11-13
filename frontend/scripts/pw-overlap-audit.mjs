@@ -370,6 +370,12 @@ const composedHeadingScene = {
     await notes.first().waitFor({ timeout: T });
     for (const item of (await notes.all()).slice(0, 6)) {
       await item.scrollIntoViewIfNeeded();
+      // 칸 첫 문장에 올려 언어 탭(위 테두리 위로 나온다)을 띄운 채 잰다 - 빈 칸이면 문장이 없다
+      const firstLine = item.locator("xpath=ancestor::p[contains(@class,'new-sec')]/following-sibling::div[contains(@class,'new-item')][1]//div[contains(@class,'new-line')]");
+      if ((await firstLine.count()) > 0) {
+        await firstLine.first().hover();
+        await page.waitForTimeout(250);
+      }
       const { hits, width } = await findCovered(item);
       if (hits.length > 0) report(`${await item.getAttribute("data-testid")} (${width}px)`, hits.join(", "));
     }
