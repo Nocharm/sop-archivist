@@ -10,6 +10,8 @@ from sqlalchemy import ColumnElement, DateTime, Select, Table, and_, delete, fun
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
+from app.sop.errors import raise_rule
+from app.sop.events import record_event
 from app.sop.membership import lock_bundle
 from app.sop.models import (
     AiSuggestion,
@@ -18,6 +20,8 @@ from app.sop.models import (
     Document,
     TargetSentence,
     TargetSource,
+    TargetTextHistory,
+    Unit,
     UnitDecision,
     UnitEdit,
     UnitPair,
@@ -25,6 +29,7 @@ from app.sop.models import (
 )
 from app.sop.schemas import NO_NUL
 from app.sop.tobe import MAX_DB_INT
+from app.sop.units import UNIT_ACTIVE
 
 # 표 이름 → 행 키 문자열 → 열 값(JSON에 담을 수 있는 값, 시각은 ISO 문자열)
 Snapshot = dict[str, dict[str, dict]]
@@ -419,3 +424,160 @@ async def record_unit_edit_step(
     )
     await session.flush()
     await _cap_steps(session, bundle.id, actor, meta.session)
+
+
+# ── 되돌리기·다시 하기 (설계 §5.3·§5.5) ─────────────────────────────────────
+
+
+class DecisionStepIn(BaseModel):
+    session: _StepToken
+
+
+class DecisionStepResult(BaseModel):
+    op: str
+    unit_ids: list[int]
+    focus_unit_id: int | None
+    focus_target_id: int | None
+    scope_label: str | None
+    can_undo: bool
+    can_redo: bool
+
+
+async def undo_step(session: AsyncSession, bundle: Bundle, actor: str, session_key: str) -> DecisionStepResult:
+    """그 세션의 마지막 applied 단계를 되돌린다 — 잠금·작업 중 검사·커밋은 호출부가 한다."""
+    return await _move_step(session, bundle, actor, session_key, backwards=True)
+
+
+async def redo_step(session: AsyncSession, bundle: Bundle, actor: str, session_key: str) -> DecisionStepResult:
+    """그 세션의 첫 undone 단계를 다시 한다 — 잠금·작업 중 검사·커밋은 호출부가 한다."""
+    return await _move_step(session, bundle, actor, session_key, backwards=False)
+
+
+async def _move_step(
+    session: AsyncSession, bundle: Bundle, actor: str, session_key: str, *, backwards: bool
+) -> DecisionStepResult:
+    mine = and_(DecisionStep.bundle_id == bundle.id, DecisionStep.actor == actor, DecisionStep.session_key == session_key)
+    if backwards:
+        query = select(DecisionStep).where(mine, DecisionStep.state == STEP_APPLIED).order_by(DecisionStep.seq.desc())
+    else:
+        query = select(DecisionStep).where(mine, DecisionStep.state == STEP_UNDONE).order_by(DecisionStep.seq)
+    step = await session.scalar(query.limit(1))
+    if step is None:
+        raise_rule(409, "nothing_to_undo" if backwards else "nothing_to_redo")
+
+    if step.kind == "unit_edit":
+        await _move_unit_edit(session, step, actor, backwards=backwards)
+    else:
+        await _move_snapshot(session, bundle.id, step, actor, backwards=backwards)
+    step.state = STEP_UNDONE if backwards else STEP_APPLIED
+    record_event(
+        session, bundle_id=bundle.id, actor=actor, action="decision.undo" if backwards else "decision.redo",
+        target_type="unit", target_ids=list(step.unit_ids), reason=step.op,
+    )
+    await session.flush()
+
+    states = set((await session.scalars(select(DecisionStep.state).where(mine))).all())
+    return DecisionStepResult(
+        op=step.op, unit_ids=list(step.unit_ids), focus_unit_id=(step.focus or {}).get("unit_id"),
+        focus_target_id=(step.focus or {}).get("target_id"), scope_label=step.scope_label,
+        can_undo=STEP_APPLIED in states, can_redo=STEP_UNDONE in states,
+    )
+
+
+async def _move_snapshot(
+    session: AsyncSession, bundle_id: int, step: DecisionStep, actor: str, *, backwards: bool
+) -> None:
+    """단계의 한쪽(expected)이 지금과 같을 때만 반대쪽(restore)으로 되쓴다 — 하나라도 어긋나면 아무것도 바꾸지 않고 409."""
+    expected, restore = (step.after, step.before) if backwards else (step.before, step.after)
+    current = await dump_bundle_state(session, bundle_id)
+    mismatched = find_mismatches(expected, current, other=restore)
+    if mismatched:
+        raise_rule(409, "undo_conflict", unit_ids=[unit_id for unit_id in mismatched if unit_id != UNKNOWN_UNIT_ID])
+    # 은퇴한 Unit을 가리키는 행을 되살리면 판단이 없는 Unit에 걸린다(사라진 Unit이면 FK 위반)
+    inactive = await _find_inactive_units(session, restore)
+    if inactive:
+        raise_rule(409, "undo_conflict", unit_ids=inactive)
+
+    pair_document_ids = _collect_pair_documents(expected, restore, current)
+    _record_text_history(session, restore, current, actor)
+    await write_state(session, bundle_id, restore, current, other=expected)
+    if pair_document_ids:
+        # 짝 모양이 바뀐 문서는 revision을 올린다(pairs._record와 같다) — 옛 짝 모양을 든 화면의 저장이 409가 되게
+        await session.execute(
+            update(Document).where(Document.id.in_(pair_document_ids)).values(revision=Document.revision + 1)
+        )
+
+    # 단계의 두 쪽을 실제 모습(지금 revision)으로 바꿔 둔다 — 다음에 같은 행을 다시 넣을 때 revision이 뒤로 가지 않게
+    fresh = await dump_bundle_state(session, bundle_id)
+    new_expected, new_restore = _pick_rows(current, expected), _pick_rows(fresh, restore)
+    if backwards:
+        step.after, step.before = new_expected, new_restore
+    else:
+        step.before, step.after = new_expected, new_restore
+
+
+async def _move_unit_edit(session: AsyncSession, step: DecisionStep, actor: str, *, backwards: bool) -> None:
+    """자르기 단계 — 가리키는 Split 편집이 그 문서의 마지막 applied(undo)·첫 undone(redo)일 때만 Split 되돌리기를 부른다.
+
+    조각에 판단이 걸렸으면 confirm 없이 불러 Split의 409 confirm_required가 그대로 올라간다(설계 §4.4).
+    """
+    # editing이 이 모듈(UndoMetaIn)을 들여와 위에서 들이면 순환한다
+    from app.sop.editing import EDIT_APPLIED, EDIT_UNDONE, redo_edit, undo_edit
+
+    document = await session.get(Document, step.document_id) if step.document_id is not None else None
+    if document is None or step.unit_edit_id is None:
+        raise_rule(409, "undo_conflict", unit_ids=list(step.unit_ids))
+    if backwards:
+        query = select(UnitEdit.id).where(UnitEdit.document_id == document.id, UnitEdit.state == EDIT_APPLIED)
+        query = query.order_by(UnitEdit.seq.desc())
+    else:
+        query = select(UnitEdit.id).where(UnitEdit.document_id == document.id, UnitEdit.state == EDIT_UNDONE)
+        query = query.order_by(UnitEdit.seq)
+    if await session.scalar(query.limit(1)) != step.unit_edit_id:
+        raise_rule(409, "undo_conflict", unit_ids=list(step.unit_ids))
+    if backwards:
+        await undo_edit(session, document, confirm=False, actor=actor)
+    else:
+        await redo_edit(session, document, confirm=False, actor=actor)
+
+
+async def _find_inactive_units(session: AsyncSession, restore: Snapshot) -> list[int]:
+    """되쓸 쪽 판단·출처·짝 멤버가 가리키는 Unit 중 지금 활성이 아닌(또는 없는) 것."""
+    unit_ids = {int(key) for key in restore.get("unit_decisions", {})}
+    for name in ("target_sources", "unit_pair_members"):
+        unit_ids.update(row["unit_id"] for row in restore.get(name, {}).values())
+    if not unit_ids:
+        return []
+    active = set(
+        (await session.scalars(select(Unit.id).where(Unit.id.in_(unit_ids), Unit.status == UNIT_ACTIVE))).all()
+    )
+    return sorted(unit_ids - active)
+
+
+def _collect_pair_documents(expected: Snapshot, restore: Snapshot, current: Snapshot) -> list[int]:
+    """단계가 건드린 짝(짝 행이나 멤버 행)이 속한 문서들."""
+    pair_ids: set[int] = set()
+    for side in (expected, restore):
+        pair_ids.update(int(key) for key in side.get("unit_pairs", {}))
+        pair_ids.update(row["pair_id"] for row in side.get("unit_pair_members", {}).values())
+    document_of: dict[int, int] = {}
+    for side in (current, expected, restore):
+        document_of.update({int(key): row["document_id"] for key, row in side.get("unit_pairs", {}).items()})
+    return sorted({document_of[pair_id] for pair_id in pair_ids if pair_id in document_of})
+
+
+def _record_text_history(session: AsyncSession, restore: Snapshot, current: Snapshot, actor: str) -> None:
+    """되쓰기로 확정 글이 바뀌는 새 문장은 바뀌기 직전 글을 남긴다(보통 저장과 같다)."""
+    now_rows = current.get("target_sentences", {})
+    for key, row in restore.get("target_sentences", {}).items():
+        now_row = now_rows.get(key)
+        if now_row is not None and now_row["confirmed_text"] and now_row["confirmed_text"] != row["confirmed_text"]:
+            session.add(TargetTextHistory(target_id=int(key), previous_text=now_row["confirmed_text"], changed_by=actor))
+
+
+def _pick_rows(state: Snapshot, keys_from: Snapshot) -> Snapshot:
+    """keys_from에 있는 행 키만 state에서 골라낸다(지금 없는 행은 뺀다)."""
+    return {
+        name: {key: state.get(name, {})[key] for key in rows if key in state.get(name, {})}
+        for name, rows in keys_from.items()
+    }

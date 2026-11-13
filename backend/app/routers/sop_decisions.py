@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_user
 from app.db import get_session
 from app.sop.constants import MEMBER_ROLES
-from app.sop.decision_steps import record_snapshot_step
+from app.sop.decision_steps import DecisionStepIn, DecisionStepResult, record_snapshot_step, redo_step, undo_step
 from app.sop.decisions import (
     DEFAULT_UNITS_PAGE,
     MAX_UNITS_PAGE,
@@ -32,7 +32,7 @@ from app.sop.decisions import (
 from app.sop.detach import DetachReport
 from app.sop.groups import GroupOut, load_group
 from app.sop.match import BulkMatchIn, IdenticalCandidate, confirm_in_bulk, list_identical_candidates
-from app.sop.membership import BundleContext, ensure_active_account, require_bundle_role
+from app.sop.membership import BundleContext, ensure_active_account, ensure_editable, lock_bundle, require_bundle_role
 from app.sop.remarks import (
     DEFAULT_MOVE_TARGETS,
     MAX_MOVE_TARGETS,
@@ -170,6 +170,30 @@ async def confirm_matches_in_bulk(
     )
     await session.commit()
     return group
+
+
+@router.post("/{bundle_id}/decisions/undo", response_model=DecisionStepResult)
+async def undo_decision_step(
+    body: DecisionStepIn, ctx: BundleContext = Depends(_require_author), session: AsyncSession = Depends(get_session)
+) -> DecisionStepResult:
+    """이 화면 세션의 마지막 판단 단계를 되돌린다 — 그 뒤 누가 그 줄을 바꿨으면 409 undo_conflict."""
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    result = await undo_step(session, ctx.bundle, ctx.login_id, body.session)
+    await session.commit()
+    return result
+
+
+@router.post("/{bundle_id}/decisions/redo", response_model=DecisionStepResult)
+async def redo_decision_step(
+    body: DecisionStepIn, ctx: BundleContext = Depends(_require_author), session: AsyncSession = Depends(get_session)
+) -> DecisionStepResult:
+    """이 화면 세션에서 되돌린 첫 단계를 다시 한다."""
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    result = await redo_step(session, ctx.bundle, ctx.login_id, body.session)
+    await session.commit()
+    return result
 
 
 @router.get("/{bundle_id}/move-targets", response_model=list[MoveTargetOut])
