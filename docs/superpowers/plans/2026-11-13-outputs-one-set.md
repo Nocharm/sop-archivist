@@ -10,9 +10,13 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-13-outputs-one-set-design.md`(아래 §는 이 문서). 위 문서 `docs/superpowers/specs/2026-11-12-language-axis-design.md`("수정안"), 제품 명세 `docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`("제품 명세") §6.4·§6.5·§7.13–§7.15·§12.
 
+**실행 순서 (2026-11-13 수정):** Task 1–7 끝 → **14** → 8 → 9 → 10 → 11 → **15** → 12 → 13.
+- Task 14(dev 합치기)와 Task 15(결과물 C 순서 바꾸기)는 실행 중에 사용자 요청으로 더했다. 요구는 설계 §4.6 끝·§5.6(O13)·§8·§11에 옮겼다.
+- 번호는 더한 순서이고, 문서 안 자리는 실행 순서다(Task 14는 Task 7 뒤, Task 15는 Task 11 뒤).
+
 ## Global Constraints
 
-- 작업 브랜치 `feat/outputs-one-set`(워크트리 `.claude/worktrees/outputs-one-set`). 원본 체크아웃(`/Users/hyeonjin/Documents/sop-archivist`)은 건드리지 않는다. 태스크마다 커밋하고, **버전 올리기·푸시는 Task 13에서 한 번**(dev에 PATCH 하나, `main`은 사용자가 정한다 — §11 릴리스).
+- 작업 브랜치 `feat/outputs-one-set`(워크트리 `.claude/worktrees/outputs-one-set`). 원본 체크아웃(`/Users/hyeonjin/Documents/sop-archivist`)은 건드리지 않는다. 태스크마다 커밋하고, **버전 올리기·푸시는 Task 13에서 한 번**(dev에 PATCH 하나, `main`은 사용자가 정한다 — §11 릴리스). Task 14의 dev 합치기는 dev의 버전·CHANGELOG 줄을 그대로 받고 올리지 않는다.
 - backend 명령은 워크트리 `backend/`에서 원본 venv로 돈다(워크트리에 `.venv`가 없다): `PY=/Users/hyeonjin/Documents/sop-archivist/backend/.venv/bin/python`. 한 파일 `$PY -m pytest tests/<file> -q`, 전체 `$PY -m pytest tests/ -q -n auto`, 린트 `/Users/hyeonjin/Documents/sop-archivist/backend/.venv/bin/ruff check app/ tests/ scripts/`. Alembic `$PY -m alembic revision --autogenerate --rev-id 0014 -m "<설명>"`.
 - frontend 명령은 워크트리 `frontend/`에서(`node_modules` 있음): `npx vitest run [file]`, `npx tsc --noEmit -p tsconfig.json`, `npm run lint`, `npm run build`(경고 0, `next dev`를 먼저 내린다).
 - 커밋 메시지 `type(scope): English summary — 한국어 요약` + 끝에
@@ -41,6 +45,8 @@
 3. **파일 이름에 못 쓰는 글자·NFD 한글·`=`로 시작하는 제목** — 받은 이름과 미리보기에 보인 이름이 다르면 사용자가 파일을 못 찾는다. 기대: 두 곳이 같은 정리 결과. → Task 9 `test_file_name_is_the_same_in_preview_and_download`.
 4. **칸 제목에 이은 옛 제목 하나를 떼어 낼 때** — 두 옛 문서가 한 칸 제목을 함께 쓰는데 하나를 미배정으로 돌리면 칸 제목이 통째로 사라지거나 남은 출처가 보류가 되면 안 된다. 기대: 남은 출처로 그대로, 마지막 출처가 떠나면 칸 제목도 없어진다. → Task 6 `test_detaching_one_source_of_a_slot_heading_keeps_it`.
 5. **극단 묶음(W1)의 미리보기 크기** — 수천 줄을 JSON으로 보내 창이 멈추는 것. 기대: 시트마다 상한까지만 싣고 `truncated`·`total_rows`로 "파일에는 전체"를 알린다. → Task 9 `test_preview_caps_rows_per_sheet`.
+6. **C를 연달아 바꾸는 중에 저장이 실패할 때** — 보낸 바뀜과 그 뒤에 누른 바뀜 중 일부만 되돌거나, 되돌린 뒤 다음 요청이 낡은 revision으로 나가 409가 이어지는 것. 기대: 그 문서는 마지막으로 저장된 모양으로 통째로 돌아가고, 다음 요청은 마지막 응답의 revision을 쓴다. → Task 15 `drops every unsaved edit when the save fails`·`sends one job at a time…`, 스모크의 실패 흉내.
+7. **칸 제목을 이은 직후의 엮은 문서 미리 보기** — 저장 응답의 `slot_heading` 새 문장이 New 칸에 문장 줄로 끼어 보이는 것. 기대: 칸 항목에 없고, 다시 읽으면 칸 머리 줄에 `←` 출처. → Task 14 `does not put a saved slot heading into the section items`·`test_composed_doc_shows_slot_headings_on_the_section`.
 
 ---
 
@@ -50,9 +56,9 @@
 |---|---|---|
 | Create `backend/app/sop/output_rows.py` | 의미 묶음 줄 목록(`MeaningRow`)·한 언어 글 수 — 스냅숏만 받는 순수 함수, 결과물·요약·검토 조건·B가 함께 쓴다 | 1 |
 | Modify `backend/app/sop/snapshot.py` | `DocumentInfo.language_layout`, `TargetInfo.remark`, 확정한 사람 이름 읽기 `load_people_names` | 1, 2 |
-| Modify `backend/app/sop/outputs.py` | A·B·C·요약 한 벌, 번호 한 줄 세기·정렬 키, 칸 제목 표시 | 2, 3, 6 |
+| Modify `backend/app/sop/outputs.py` | A·B·C·요약 한 벌, 번호 한 줄 세기·정렬 키, 칸 제목 표시, 엮은 문서(dev `build_composed_doc`) 한 벌, 문서 하나의 C(`build_output_c_doc`) | 2, 3, 6, 14, 15 |
 | Modify `backend/app/sop/output_labels.py` | 변경 종류 `heading`·`translated_added` 표시 | 2, 6 |
-| Modify `backend/app/routers/sop_outputs.py` | `?lang=` 기본 `en`, 요약 하나, 미리보기, 번호 표시 짝 옮기기·번역 잠금 삭제, 칸 제목 순서 제외 | 2, 3, 4, 6, 9 |
+| Modify `backend/app/routers/sop_outputs.py` | `?lang=` 기본 `en`, 요약 하나, 미리보기, 번호 표시 짝 옮기기·번역 잠금 삭제, 칸 제목 순서 제외, 엮은 문서 `lang` 기본 `en`, 순서 바꾸기 응답 `doc` | 2, 3, 4, 6, 9, 14, 15 |
 | Modify `backend/app/sop/detach.py`, `backend/app/sop/ai/translate.py` | 번역 표시를 출처로 덮지 않음, 새 AI 번역은 생략·출처 뒤 | 4 |
 | Create `backend/app/sop/target_placement.py` | 새 문장 기본 표시·순서(O10)와 출처 뒤 끼워 넣기 | 4, 5 |
 | Modify `backend/app/sop/decisions.py` | O10 적용, 칸 제목 저장·출처 더하기 | 5, 6 |
@@ -61,12 +67,16 @@
 | Create `backend/app/sop/sheet_model.py` | 네 시트 모델(칸 글·줄 종류·흐림·기울임·이어짐), 미리보기 상한 | 9 |
 | Modify `backend/app/sop/excel_export.py` | 시트 모델 → xlsx(Graphite), 파일 이름 | 2, 3(임시), 9 |
 | Modify `backend/scripts/synthetic_sop.py`, `sop_demo_driver.py`, `seed_sop_worst.py`, `backend/tests/sop_helpers.py` | 한 벌 결과물·버전 채우기 | 2, 3, 8 |
-| Create `frontend/src/lib/output-groups.ts` (+test) | 화면 A의 함께 쓰는 칸 보이기, C 의미 묶음 경계 | 10 |
-| Modify `frontend/src/lib/api-sop.ts`, `api.ts`, `section-number.ts`, `target-order.ts`, `outputs-view-prefs.ts`, `classify-model.ts`, `stages.ts`, `i18n-messages.ts` | 타입·호출·규칙·문구 | 4, 6, 7, 8, 10, 11 |
-| Modify `frontend/src/app/bundles/[id]/outputs/page.tsx`, `review/page.tsx`, `page.tsx`(개요), `components/outputs/*`, `components/assign/destination-tree.tsx`·`assign-help.tsx`, `components/modal.tsx`, `styles/tokens.css` | 화면 | 7, 8, 10, 11 |
+| Create `frontend/src/lib/output-groups.ts` (+test) | 화면 A의 함께 쓰는 칸 보이기, C 의미 묶음 경계, C 줄 펼치기(`buildCLines`) | 10, 15 |
+| Modify `frontend/src/lib/api-sop.ts`, `api.ts`, `section-number.ts`, `target-order.ts`, `outputs-view-prefs.ts`, `classify-model.ts`, `stages.ts`, `i18n-messages.ts` | 타입·호출·규칙·문구 (`section-number.ts` 번호 미리 세기 `numberLines`, `putTargetOrder` 응답 — 15) | 4, 6, 7, 8, 10, 11, 14, 15 |
+| Modify `frontend/src/lib/composed-model.ts`(+test), `frontend/src/components/assign/new-pane.tsx`, `frontend/src/app/bundles/[id]/assign/page.tsx` (dev v0.16.7) | 엮은 문서 미리 보기의 칸 제목 머리 줄, 저장 직후 칸 제목 빼기 | 14 |
+| Create `frontend/src/lib/c-edit-model.ts`, `c-save-queue.ts`, `flip.ts` (각 +test) | C 낙관적 편집·되돌림, 이 화면 쓰기 줄 세우기(마지막 상태가 이김), FLIP 거리 | 15 |
+| Modify `frontend/src/components/ui/motion.tsx`(`useFlip`), `styles/motion.css`, `lib/bundle-store.ts`(`setBundleRevision`), `frontend/CLAUDE.md` | 움직임 공통 층, revision만 고치기 | 15 |
+| Modify `frontend/src/app/bundles/[id]/outputs/page.tsx`, `review/page.tsx`, `page.tsx`(개요), `components/outputs/*`, `components/assign/destination-tree.tsx`·`assign-help.tsx`, `components/modal.tsx`, `styles/tokens.css` | 화면 | 7, 8, 10, 11, 15 |
 | Delete `frontend/src/components/outputs/edition-toggle.tsx` | 판 전환 걷기 | 10 |
 | Create `frontend/src/components/outputs/export-preview.tsx`, `sheet-view.tsx` | 미리보기 창 | 11 |
-| Modify `frontend/public/manual/user-manual.md`, `frontend/scripts/pw-smoke-sop.mjs`, `pw-manual-shots.mjs` | 설명서·스모크 | 7, 8, 10, 11, 12 |
+| Modify `frontend/public/manual/user-manual.md`, `frontend/scripts/pw-smoke-sop.mjs`, `pw-manual-shots.mjs` | 설명서·스모크 | 7, 8, 10, 11, 12, 14, 15 |
+| Merge `origin/dev` (충돌: `PROGRESS.md`, `backend/app/routers/sop_outputs.py`) | dev v0.16.7·v0.16.8 받기 | 14 (13에서 또 나아갔으면 다시) |
 | Modify `docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`, `backend/CLAUDE.md`, `docs/README.md`, Delete 두 설계 문서 | 흡수 | 13 |
 
 ---
@@ -596,6 +606,127 @@ git commit -m "feat(assign): pick a slot heading in the destination tree — 목
 
 ---
 
+### Task 14: dev 합치기 — v0.16.7·v0.16.8과 Assign New 칸 엮은 문서를 한 벌로 (Task 7 다음, Task 8 앞)
+
+`origin/dev`가 cf8c5ad(v0.16.6)에서 29a1199(v0.16.8)까지 나아갔다(실행 중 사용자 요청 2026-11-13). 결과물 화면(`outputs/page.tsx`·`components/outputs/*`)은 dev가 건드리지 않았다. 겹치는 것은 Assign New 칸이 아직 쓰지 않은 To-Be 문서를 미리 보이는 엮은 문서다(`build_composed_doc`·`GET …/outputs/c/docs/{target_doc_id}`·`getComposedDoc`·`composed-model`·`new-pane`). 설계 §4.6 끝·§8.
+
+**Files:**
+- Merge: `origin/dev` → `feat/outputs-one-set`. merge 커밋으로 하고 rebase는 하지 않는다.
+- 충돌 풀기(2026-11-13 `git merge-tree`로 잰 값, HEAD ff5b0d7 ↔ origin/dev 29a1199): `PROGRESS.md`, `backend/app/routers/sop_outputs.py`
+- 자동으로 합쳐지지만 맞춰야 하는 것:
+  - `backend/app/sop/outputs.py` — dev 끝 블록이 없어진 `_number_targets`를 부른다(ruff F821).
+  - `backend/tests/test_sop_outputs.py` — dev 엮은 문서 시험 2개.
+  - `frontend/src/lib/composed-model.ts` — `applySavedTargets`의 `kind`가 Task 7의 `"slot_heading"`과 부딪친다(tsc).
+  - 확인만 할 것: `frontend/src/lib/api-sop.ts`, `i18n-messages.ts`, `app/bundles/[id]/assign/page.tsx`, `public/manual/user-manual.md`.
+- 그대로 받기: `frontend/package.json`·`package-lock.json`(dev 값 0.16.8 — 여기서 올리지 않는다), `CHANGELOG.md`(dev 줄 그대로)
+- 기능 커밋: `backend/app/sop/outputs.py`(`ComposedSection.heading_note`), `frontend/src/lib/api-sop.ts`, `frontend/src/lib/composed-model.ts`(+`composed-model.test.ts`), `frontend/src/components/assign/new-pane.tsx`, `frontend/src/app/bundles/[id]/assign/page.tsx`, `frontend/public/manual/user-manual.md`
+- Test: `backend/tests/test_sop_outputs.py`, `backend/tests/test_sop_numbering.py`, `backend/tests/test_sop_slot_heading.py`, `frontend/src/lib/composed-model.test.ts`
+
+**Interfaces:**
+- Consumes:
+  - dev: `build_composed_doc(snap, target_doc_id, lang)`, `ComposedItem`·`ComposedSection`·`ComposedDoc`, `get_composed_doc`, `getComposedDoc(bundleId, docId, lang)`, `buildComposedRows`, `applySavedTargets`.
+  - 이 브랜치: `number_targets(index, labels)`, `_plan_sections`(`plan.targets`는 칸 제목을 빼고, `plan.headings`가 칸 제목), `_format_heading_note(snap, headings)`, `CSection.heading_note`.
+- Produces:
+  ```python
+  class ComposedItem(BaseModel):   # 필드는 그대로, number의 뜻만 바뀐다
+      number: str | None   # 그 문장 자기 번호(칸마다 한 줄 세기, 설계 §6) — 생략·주석·입구 2·단계 없는 칸은 None
+  class ComposedSection(BaseModel):
+      heading_note: str    # 결과물 C CSection.heading_note와 같은 함수(_format_heading_note) — "← OLD-1 §5", 없으면 ""
+  def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> ComposedDoc | None
+      # numbers = number_targets(index, labels) 한 벌 — 언어별 두 벌 사전 삭제. 칸 제목은 plan.targets에 없어 items에 들지 않는다
+  ```
+  `GET /{bundle_id}/outputs/c/docs/{target_doc_id}`: `lang: Literal["ko", "en"] = Query("en")`(라벨 언어만 — `get_output_a/b/c`와 같은 꼴, docstring도 "lang은 라벨 언어만(없으면 en)"). 멤버만, 없는 문서는 404 `target_doc_not_found` 그대로.
+  ```ts
+  export interface ComposedSection { location_key: string; label: string; number: string | null; na_reason: string | null; heading_note: string; items: ComposedItem[] }
+  /** 칸 머리 줄(번호. 칸 이름) → 칸 제목 출처 — 빈 출처는 뺀다. buildComposedRows의 section_path와 같은 열쇠 */
+  export function listHeadingNotes(doc: ComposedDoc): Map<string, string>
+  // applySavedTargets: kind === "slot_heading" 새 문장은 칸 항목으로 넣지 않는다(설계 §4.6 내 판단 — 머리 줄 출처는 다시 읽은 서버 값이 채운다)
+  ```
+  New 칸 칸 머리(`new-pane.tsx` `.new-sec`)는 칸 이름 뒤에 출처를 흐린 글로 붙인다(`text-ink-3`, 넘치면 `Truncate`). testid `assign-new-heading-note-<칸 번호>`. 받은 문장이 없는 칸(빈 칸 줄)의 머리에도 같다. 출처 글은 프런트가 짓지 않는다 — 응답 값 그대로.
+
+- [ ] **Step 1: 합치기 — 충돌 풀기와 컴파일 맞추기 (merge 커밋)**
+
+```bash
+git status --short                                       # 비어 있어야 한다
+git fetch origin
+git log --oneline HEAD..origin/dev | head -20            # 29a1199(v0.16.8) 또는 그 뒤
+git merge-tree --write-tree --name-only HEAD origin/dev  # 충돌 파일 목록 — 위 두 개보다 많으면 아래 규칙으로 함께
+git merge --no-ff --no-commit origin/dev
+```
+충돌 푸는 법:
+- `PROGRESS.md`: 두 쪽을 모두 남긴다. `## 2026-11-13` 아래에 이 브랜치의 1/13~7/13 항목, 그 아래 dev의 v0.16.7·v0.16.8 항목. 맨 위에 이 합치기 한 줄을 더한다(무엇을 받았고 엮은 문서를 한 벌 번호로 맞췄다는 것).
+- `backend/app/routers/sop_outputs.py`:
+  - import는 두 쪽을 다 둔다 — `from app.sop.snapshot import BundleSnapshot, list_confirmer_ids, load_bundle_snapshot, load_people_names`와 dev의 `from app.sop.tobe import MAX_DB_INT`. `Annotated`·`Path` import, `ComposedDoc`·`build_composed_doc` import는 dev 그대로.
+  - 엔드포인트 자리에는 dev의 `get_composed_doc`을 두고, 그 뒤에 이 브랜치의 `get_summary`를 둔다(`response_model=Summary` — dev 쪽 `SummaryOut`은 Task 3이 지웠다).
+  - `get_composed_doc`의 `lang`을 `Query("en")`으로 바꾼다.
+- `backend/app/sop/outputs.py` `build_composed_doc`:
+  - `numbers = {code: _number_targets(index, code, labels) for code in ("ko", "en")}` → `numbers = number_targets(index, labels)`
+  - `number=numbers["en" if …].get(target.id)` → `number=numbers.get(target.id)`
+  - `ComposedItem.number` 주석을 "그 문장 자기 번호(칸마다 한 줄, 생략·주석은 None)"로, docstring의 lang을 "라벨 언어"로 고친다.
+- `backend/tests/test_sop_outputs.py` `test_composed_doc_carries_both_languages_in_c_order`: 한 칸 안 순서를 손으로 적지 않고 같은 `lang`의 `GET outputs/c` 그 문서에서 가져와 비교한다 — 이 브랜치의 C 정렬 키(Task 3 `meaning_anchor`)가 순서를 정한다. 글·언어·출처 단언은 그대로 두고, `number`가 C 항목 `number`와 같다는 단언을 더한다. `test_composed_doc_rejects_other_bundles_and_outsiders`는 `params={"lang": "en"}`를 그대로 둬도 통과한다.
+- `frontend/src/lib/composed-model.ts` `applySavedTargets`: 루프에서 `target.kind === "slot_heading"`이면 건너뛴다. 타입 오류도 풀리고, 칸 제목이 문장 줄로 끼지 않는다. 시험은 Step 2.
+- `frontend/package.json`·`package-lock.json`·`CHANGELOG.md`는 dev 값 그대로다(자동 병합 — `git diff origin/dev -- frontend/package.json CHANGELOG.md`가 비어야 한다).
+
+관문:
+- `$PY -m pytest tests/ -q -n auto` → PASS(지켜야 하는 테스트 포함, dev의 `test_sop_remarks.py` 포함), ruff 0.
+- `cd ../frontend && npx vitest run`(`manual-content.test.ts`·`i18n-messages.test.ts` 포함), `npx tsc --noEmit -p tsconfig.json`, `npm run lint`, `npm run build`(경고 0) → 모두 통과.
+
+```bash
+git add PROGRESS.md backend/app/routers/sop_outputs.py backend/app/sop/outputs.py backend/tests/test_sop_outputs.py frontend/src/lib/composed-model.ts
+git commit   # 메시지: "Merge origin/dev (v0.16.8) into feat/outputs-one-set — dev 합치기, 엮은 문서 번호 한 벌" + 본문(왜) + Global Constraints 꼬리 두 줄
+```
+
+- [ ] **Step 2: Write the failing tests** (칸 제목 머리 줄·한 벌 번호)
+
+`tests/test_sop_numbering.py`:
+```python
+def test_composed_doc_numbers_one_sequence_like_c(client):
+    bundle_id, sop_id, _ = _setup_pairs(client)          # 짝 셋, 6.1.1–6.1.6
+    composed = _get_output(client, bundle_id, f"outputs/c/docs/{sop_id}")      # lang 없음 → en 라벨
+    c_doc = next(d for d in _get_output(client, bundle_id, "outputs/c")["docs"] if d["target_doc_id"] == sop_id)
+    def lines(doc): return [(i["target_id"], i["number"]) for s in doc["sections"] for i in s["items"]]
+    assert lines(composed) == lines(c_doc)               # 같은 순서·같은 번호(언어 섞인 한 줄)
+    assert [s["label"] for s in composed["sections"]] == [s["label"] for s in c_doc["sections"]]
+    # 한 줄을 생략으로 바꾸면 그 줄은 번호가 없고 다음 줄이 이어 센다(C와 같은 값)
+```
+`tests/test_sop_slot_heading.py`:
+```python
+def test_composed_doc_shows_slot_headings_on_the_section(client):
+    fx = _shared_setup(client)                           # test_slot_heading_is_not_numbered_and_shows_in_a_and_c와 같은 차림
+    assign_as_is(client, fx.bundle_id, find_unit(fx.old1, OLD1_KO), fx.sop_id, slot_key=SLOT)
+    doc = _get_output(client, fx.bundle_id, f"outputs/c/docs/{fx.sop_id}")
+    sections = {s["location_key"]: s for s in doc["sections"]}
+    assert sections[SLOT]["heading_note"] == "← OLD-1 §5, OLD-2 §5"
+    assert [(i["text"], i["number"]) for i in sections[SLOT]["items"]] == [(OLD1_KO, "6.1.1")]   # 칸 제목은 항목이 아니다
+    assert {s["heading_note"] for k, s in sections.items() if k != SLOT} == {""}
+```
+`frontend/src/lib/composed-model.test.ts`:
+```ts
+it("lists heading notes by the section path the rows use", () => {
+  expect(listHeadingNotes(doc([section("6.1", "Procedure", "← OLD-1 §5"), section("6.2", "Records", "")]))).toEqual(new Map([["6.1. Procedure", "← OLD-1 §5"]]));
+});
+it("does not put a saved slot heading into the section items", () => {
+  const next = applySavedTargets(DOC, [groupTarget({ kind: "slot_heading", slot_key: "procedures.procedure", target_doc_id: DOC.target_doc_id })], () => "");
+  expect(next.sections.flatMap((s) => s.items)).toEqual(DOC.sections.flatMap((s) => s.items));
+});
+```
+Run: `$PY -m pytest tests/test_sop_numbering.py::test_composed_doc_numbers_one_sequence_like_c tests/test_sop_slot_heading.py::test_composed_doc_shows_slot_headings_on_the_section -q` → FAIL(`KeyError: 'heading_note'`). `npx vitest run src/lib/composed-model.test.ts` → FAIL(`listHeadingNotes` 없음). 둘째 vitest는 Step 1에서 고쳐 이미 통과할 수 있다 — 통과하면 Step 1의 고침을 잠그는 시험으로 둔다.
+
+- [ ] **Step 3: Implement**
+  - `ComposedSection.heading_note=_format_heading_note(snap, plan.headings)`.
+  - 프런트 타입과 `listHeadingNotes`. assign 화면이 엮은 문서일 때 `listHeadingNotes(composedDoc)`를 `NewPane`에 넘기고, `.new-sec` 머리에 출처를 단다.
+  - 설명서 `#assign` 조각의 "오른쪽 칸의 문서 고르기에는 아직 쓰지 않은 To-Be 문서도" 문단에 한 문장: 칸 제목에 이은 옛 제목은 그 칸 이름 뒤에 `←`로 보인다. 칸 번호는 결과물 C와 같은 한 줄 세기다.
+  - `PROGRESS.md` 한 줄.
+- [ ] **Step 4: Run to verify pass + gates** — 위 시험 PASS, 전체 backend 스위트·ruff, `npx vitest run`, `npx tsc --noEmit -p tsconfig.json`, `npm run lint`, `npm run build`(경고 0).
+- [ ] **Step 5: Commit**
+
+```bash
+git add backend/app/sop/outputs.py backend/tests/test_sop_numbering.py backend/tests/test_sop_slot_heading.py frontend/src/lib/api-sop.ts frontend/src/lib/composed-model.ts frontend/src/lib/composed-model.test.ts frontend/src/components/assign/new-pane.tsx "frontend/src/app/bundles/[id]/assign/page.tsx" frontend/public/manual/user-manual.md PROGRESS.md
+git commit -m "feat(assign): composed New pane preview shows slot headings like output C — 엮은 문서 미리 보기에 칸 제목 출처"
+```
+
+---
+
 ### Task 8: 검토 요청 조건 — 옛 문서 버전 (§5.5)
 
 **Files:**
@@ -769,6 +900,10 @@ git commit -m "feat(export): one Graphite workbook and a preview from the same s
 - 화면 C: 칸마다 한 목록, `listMeaningStarts`로 의미 경계 굵은 선, 칸 머리 옆 `heading_note`, 번호 표시 단추는 `canChangeStyle`, 깊이 단추는 `canChangeDepth`, 표시·깊이는 그 줄만 보낸다(다른 판 불러오기 삭제). 삭제·이동 목록은 줄마다 한 번(짝이면 줄바꿈).
 - 요약(§5.3): `Summary` 상자(제목 `outputs.summary` en `"Summary"`, ko `"요약"` — `{lang}` 삭제), 항목 `outputs.sum.old_rows` `"Old rows"`/`"Old 줄"`, `assigned`, `outputs.sum.no_destination` `"No destination"`/`"갈 곳 없음"`, `duplicate`, `deleted`, `moved`, `new`, `translated`, `outputs.sum.single_language` `"One language only"`/`"한 언어만"`, 확정률 `{n}%`. `outputs.sum.old_units`·`outputs.sum.unassigned`·`outputs.edition` 삭제.
 - Excel 상자: 단추 하나 `outputs-export-open`(`"Export Excel"`) — 미리보기 창은 Task 11, 이 태스크에서는 단추가 지금 `downloadExport`를 그대로 부른다(`lang` 없이, 이름은 Task 11).
+- **Task 15와의 경계 (2026-11-13 더함):** 이 태스크는 한 벌로 바꾸는 일만 한다.
+  - 하는 것: `buildTargetOrder`·`buildPatchItems`를 한 `OutputC`로 바꾸고, `moveTarget`·`indentTarget`·`markTarget`에서 다른 판 받기(`getOutputC(… 다른 lang)`)·`listAllUnits`·`findPartnerTarget`을 걷는다.
+  - 그대로 두는 것: 세 함수의 기다리는 흐름(`moving`·`await loadBundle`)과 C를 한 번에 그리는 것.
+  - Task 15가 하는 것: 바로 반영·FLIP·요청 줄·이어 그리기 — 같은 함수를 두 번 다시 짜지 않게 여기서는 손대지 않는다.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -849,6 +984,226 @@ git commit -m "feat(outputs-ui): Excel preview window with the server-built file
 
 ---
 
+### Task 15: 결과물 C 순서 바꾸기 — 낙관적 반영·FLIP·이어 그리기 (Task 11 다음, Task 12 앞)
+
+설계 §5.6(O13, 사용자 결정 2026-11-13)·§8. 읽고 시작: `docs/lessons/react-ts-patterns.md`(§7 `useEffectEvent`, 이펙트 안 setState 린트), `docs/lessons/ui-review.md`, `docs/lessons/browser-verification.md`.
+
+지금 지연의 원인: Task 10 뒤에도 `moveTarget`·`indentTarget`·`markTarget`이 두 가지를 기다린다 — `putTargetOrder`, 그리고 `await loadBundle`이다. `loadBundle`이 revision을 바꾸면 화면 키(`${bundleId}:${lang}:${bundle.revision}`)가 바뀌어 C·요약을 다시 받는다. 그동안 `moving`이 모든 단추를 끄고, C는 모든 줄을 한 번에 그린다.
+
+**Files:**
+- Modify: `backend/app/sop/outputs.py` (`_build_c_context`·`_build_c_doc` 뽑기, `build_output_c_doc`), `backend/app/routers/sop_outputs.py` (`TargetOrderOut.doc`, `put_target_order`의 `lang`)
+- Test: `backend/tests/test_sop_outputs.py`, `backend/tests/test_sop_ai_translate.py`(`test_order_response_leaves_out_a_deleted_ai_translation`에 `doc` 단언 한 줄)
+- Create: `frontend/src/lib/c-edit-model.ts`, `frontend/src/lib/c-save-queue.ts`, `frontend/src/lib/flip.ts` (각 `*.test.ts`)
+- Modify:
+  - 순수 모델: `frontend/src/lib/section-number.ts`(+test — `numberLines`, 머리 주석), `frontend/src/lib/output-groups.ts`(+test — `buildCLines`), `frontend/src/lib/target-order.ts`(+test — 쓰지 않게 된 `buildTargetOrder`·`buildPatchItems`를 지우고 `canMoveTarget`은 남긴다)
+  - 저장소·호출: `frontend/src/lib/bundle-store.ts`(`setBundleRevision`), `frontend/src/lib/api-sop.ts`(`OutputCDoc`, `putTargetOrder` 응답·라벨 언어)
+  - 움직임 공통 층: `frontend/src/components/ui/motion.tsx`(`useFlip`), `frontend/src/styles/motion.css`(`.flip-lead`)
+  - 화면: `frontend/src/components/outputs/output-c.tsx`, `frontend/src/app/bundles/[id]/outputs/page.tsx`
+  - 문구·설명서: `frontend/src/lib/i18n-messages.ts`, `frontend/public/manual/user-manual.md`(`#outputs`)
+  - 스모크·안내: `frontend/scripts/pw-smoke-sop.mjs`, `frontend/CLAUDE.md`(이동·움직임 공통 층에 `useFlip`, C 번호 미리 세기 사본 한 줄)
+
+**Interfaces:**
+- Backend (내 판단 — 화면이 C 전체를 다시 받지 않고 그 문서만 서버 값으로 맞추려면 번호까지 든 문서가 응답에 있어야 한다. 순서·깊이·표시가 번호를 바꾸고, 단계를 옮기면 번역이 쓸려 나간다):
+  ```python
+  def _build_c_context(snap: BundleSnapshot, labels: OutputLabels) -> _CContext   # build_output_c 앞부분 그대로
+  def _build_c_doc(ctx: _CContext, doc: TargetDocInfo) -> CDoc                     # build_output_c의 문서 하나 — 두 길이 이것 하나를 쓴다
+  def build_output_c_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> CDoc | None
+  class TargetOrderOut(BaseModel):
+      revision: int; target_doc_id: int; items: list[OrderItemOut]
+      doc: CDoc   # 저장 뒤 그 문서의 C 모양 — 같은 lang의 GET …/outputs/c에서 그 문서와 같은 값(번호·쓸린 번역 반영)
+  ```
+  `PUT /{bundle_id}/targets/order?lang=ko|en`: `lang: Literal["ko", "en"] = Query("en")`(라벨 언어만). `reorder_targets`는 지금처럼 검사·쓰기·flush만 하고 `doc` 없는 값을 돌려준다(안쪽 결과 모양은 빌더 재량). 라우터의 차례:
+  1. `reorder_targets`
+  2. 같은 트랜잭션에서 `load_bundle_snapshot(session, bundle_id)` — 방금 쓴 순서를 본다. 스냅숏의 `FOR SHARE`는 이 트랜잭션이 이미 든 `FOR UPDATE`와 부딪치지 않는다.
+  3. `await session.commit()`
+  4. `asyncio.to_thread(build_output_c_doc, …)` — 계산 동안 잠금을 들지 않는다.
+  5. `TargetOrderOut(…, doc=…)`
+- Frontend:
+  ```ts
+  // api-sop.ts
+  export type OutputCDoc = OutputC["docs"][number];
+  export interface TargetOrderItemOut { target_id: number; order_index: number; wi_step: number | null; indent_level: number; number_style: NumberStyle }   // backend OrderItemOut
+  export interface TargetOrderResult { revision: number; target_doc_id: number; items: TargetOrderItemOut[]; doc: OutputCDoc }
+  export function putTargetOrder(bundleId: number, labelLang: OutputLang, body: { revision: number; target_doc_id: number; items: TargetOrderItem[] }): Promise<TargetOrderResult>
+  // section-number.ts — backend outputs.number_lines의 사본. 저장 응답 전 미리 보기 전용이고, 규칙을 바꾸면 함께 고친다
+  export function numberLines(base: string, depths: readonly (number | null)[]): (string | null)[]
+  // c-edit-model.ts — 문서 하나의 낙관적 편집
+  export type CEdit =
+    | { kind: "move"; locationKey: string; targetId: number; dir: MoveDir }
+    | { kind: "indent"; targetId: number; depth: number }
+    | { kind: "style"; targetId: number; style: NumberStyle };
+  export interface DocDraft { saved: OutputCDoc; shown: OutputCDoc; edits: readonly CEdit[]; sentCount: number }
+  export function startDraft(doc: OutputCDoc): DocDraft
+  export function numberDoc(doc: OutputCDoc): OutputCDoc      // 줄 번호만 다시 — 칸 번호가 같은 칸끼리 한 줄(WI의 Instruction·Why), 생략·주석은 null, 표 칸은 표 번호
+  export function addEdit(draft: DocDraft, edit: CEdit): DocDraft | null   // shown에 얹고 numberDoc. 칸 끝·없는 줄이면 null
+  export function sendDraft(draft: DocDraft): { draft: DocDraft; items: TargetOrderItem[] }
+      // items = shown의 칸 순서대로 모든 줄 한 번씩 + saved와 다른 indent_level·number_style만(같은 값은 빼서 서버가 그대로 둔다 —
+      //  출처를 따라 바뀐 번역 깊이를 낡은 값으로 되보내 422 translation_locked가 나지 않게). sentCount = edits.length
+  export function acceptSaved(draft: DocDraft, doc: OutputCDoc): DocDraft  // saved = doc, 보낸 편집을 떼고 남은 편집을 doc 위에 다시 얹는다(못 얹는 편집은 버림)
+  export function rejectSaved(draft: DocDraft): DocDraft                   // 편집을 모두 버린다 — shown = saved
+  // c-save-queue.ts — 이 화면에서 묶음 revision을 쓰는 요청의 줄(revision이 묶음에 하나라 한 번에 하나)
+  export type SaveJob = { kind: "doc"; docId: number } | { kind: "checks" };
+  export interface SaveQueue { pending: readonly SaveJob[]; inFlight: SaveJob | null }
+  export const EMPTY_QUEUE: SaveQueue;
+  export function enqueueJob(queue: SaveQueue, job: SaveJob): SaveQueue   // 같은 job이 기다리면 그대로 — 보낼 때 최신 상태를 싣는다(마지막 상태가 이긴다)
+  export function takeNextJob(queue: SaveQueue): { queue: SaveQueue; job: SaveJob } | null   // 날아가는 것이 없을 때만 앞에서 하나
+  export function finishJob(queue: SaveQueue): SaveQueue
+  export function getDataRevision(revision: number, own: ReadonlySet<number>): number  // own에 든 값이면 한 칸씩 내려가 바깥에서 바뀐 마지막 revision
+  // flip.ts
+  export function computeFlipOffsets(first: ReadonlyMap<string, number>, last: ReadonlyMap<string, number>): Map<string, number>  // 두 쪽에 다 있고 0이 아닌 거리(첫 − 끝)만
+  // motion.tsx
+  export function useFlip(containerRef: RefObject<HTMLElement | null>): { capture: (keys: readonly string[]) => void }
+      // capture: 그 키의 [data-flip-key] 요소 top을 잰다(긴 C에서 줄 전체를 재지 않게 키만). 다음 커밋의 layout effect가 다시 재
+      // translateY(첫 − 끝)를 걸고 다음 프레임에 transform var(--dur-slow) var(--ease-move)로 0. 끝나면(transitionend) 인라인 스타일을 지운다.
+      // matchMedia("(prefers-reduced-motion: reduce)")면 아무것도 하지 않는다
+  // bundle-store.ts
+  export function setBundleRevision(bundleId: number, revision: number): void   // 캐시된 묶음의 revision만 바꾸고, 그 전에 시작한 요청을 버린다(putBundle과 같은 순번)
+  // output-groups.ts — 이어 그리기 단위
+  export type CLine =
+    | { kind: "doc"; docIndex: number }
+    | { kind: "section"; docIndex: number; sectionIndex: number }
+    | { kind: "item"; docIndex: number; sectionIndex: number; itemIndex: number; targetId: number };
+  export function buildCLines(output: OutputC): CLine[]
+  ```
+- 화면 규칙 (`outputs/page.tsx`·`output-c.tsx`):
+  - **키**: A·B·C·요약의 키에 쓰는 revision은 `getDataRevision(bundle.revision, ownRevisions)`다. 이 화면의 저장 응답 revision은 `ownRevisions`(state)에 넣고, 순서 응답은 `setBundleRevision`, 의미 확인 응답은 `putBundle`로 묶음에 쓴다. 바깥에서 올린 revision이면 지금처럼 다시 받는다. C를 새로 받으면 초안·줄을 그 값으로 다시 시작하고, 그때 날던 요청의 응답은 세대 번호로 버린다.
+  - **보이는 C**: 문서마다 `draft.shown`, 초안이 없으면 받은 문서.
+  - **단추를 누르면**: `flip.capture([그 줄, 바꿀 이웃 줄])` → `addEdit` → `enqueueJob({ kind: "doc", docId })` → `pump()`. 이웃 줄이 아직 안 그린 구간이면 그 줄만 잰다.
+  - **의미 확인 체크(`toggleCheck`)도 같은 줄이다**: `{ kind: "checks" }`. 체크는 화면에서 먼저 바뀌고, 보낼 때 마지막으로 고른 값을 싣는다.
+  - **`pump`**: 눌림과 응답 처리에서 부른다. 이펙트 안에서 setState하지 않는다 — 큐는 ref, 화면에 필요한 값만 state. 보낼 때 revision은 줄이 기억하는 마지막 응답 revision이고, 첫 요청은 `bundle.revision`이다. 라벨 언어는 화면 언어.
+  - **성공**: `acceptSaved(draft, res.doc)`, revision 갱신, `finishJob` → `pump`.
+  - **실패**:
+    - 그 문서를 `rejectSaved`한다(의미 확인이면 체크를 묶음 값으로).
+    - ``showToast(`${t("outputs.c.rolledBack")} ${humanizeApiError(err, t)}`, "error")``.
+    - 409·422면 `loadBundle`로 다시 읽는다 — 바깥 revision이 되어 C를 새로 받는다. 네트워크 오류 등 그 밖이면 다시 읽지 않는다.
+    - 다른 문서의 기다리는 job은 이어 보낸다.
+  - **단추를 끄지 않는다**: `moving`을 지운다. 처음 C를 받는 동안(`outC.isLoading && !outC.data`)만 끈다. 깊이 단추·`readIndentKey`의 `busy`도 같다.
+  - **FLIP**:
+    - `data-flip-key={target_id}`는 `output-c-row-<id>`에 단다. 옮긴 줄은 미끄러지는 동안 `.flip-lead`(`position: relative; z-index: 1`)로 위에 둔다.
+    - 누른 단추에 포커스가 있었으면 바뀐 뒤 같은 단추(`output-c-move-<up|down>-<id>`)에 다시 둔다. React가 줄을 옮기며 포커스가 빠질 수 있다.
+    - 그 단추가 칸 끝에 닿아 꺼졌으면 반대 단추에 둔다.
+  - **이어 그리기**:
+    - ``useProgressiveList(buildCLines(보이는 C), `c:${bundleId}:${labelLang}:${dataRevision}`, { minVisible: follow + 2 })``. `follow`는 마지막으로 옮긴 줄의 줄 번호(없으면 0)다. 저장이 키를 바꾸지 않으니 그린 구간이 유지된다.
+    - 보이는 앞부분을 문서·칸으로 다시 묶어 지금 마크업(`article.sheet`·`section`, 굵은 의미 선·칸 머리·N/A)으로 그린다.
+    - 남은 줄이 있으면 끝 표지 `output-c-more`를 둔다. 삭제·이동 목록은 끝까지 그린 뒤에 보인다.
+    - 옮긴 줄이 화면 밖이면 `shouldRecenter`(`paper-model`)일 때 `scrollIntoView({ block: "center", behavior: 움직임 줄이기 ? "auto" : "smooth" })`.
+    - 검토 화면은 `OutputCView`를 편집 없이 쓰므로 이어 그리기만 받는다.
+  - **문구**: `outputs.c.rolledBack` en `"Not saved, so the change in C was undone."` / ko `"저장하지 못해 C의 바뀐 곳을 되돌렸습니다."`.
+  - **새 testid**: `output-c-more`. 나머지 단추 testid는 그대로다.
+
+- [ ] **Step 1: Write the failing tests**
+
+`backend/tests/test_sop_outputs.py`:
+```python
+def test_reorder_returns_the_doc_as_c_shows_it(client):
+    fx = _setup(client)
+    order = _list_top_target_ids(client, fx.bundle_id, 1)          # WI 문서
+    revision = get_bundle(client, fx.bundle_id)["revision"]
+    response = client.put(f"/api/bundles/{fx.bundle_id}/targets/order", params={"lang": "ko"}, headers=AUTHOR,
+                          json={"revision": revision, "target_doc_id": fx.wi_id, "items": [{"target_id": t} for t in reversed(order)]})
+    assert response.status_code == 200, response.text
+    assert response.json()["revision"] == revision + 1
+    assert response.json()["doc"] == _get_output(client, fx.bundle_id, "outputs/c", "ko")["docs"][1]   # 번호까지 같은 값
+
+def test_reorder_doc_labels_default_to_english(client):
+    # lang 없이 보낸 응답의 doc == GET outputs/c(lang 없음 = en)의 그 문서
+```
+`test_sop_ai_translate.py::test_order_response_leaves_out_a_deleted_ai_translation`에 한 줄: 응답 `doc`의 항목에도 지운 번역 id가 없다.
+
+`frontend/src/lib/section-number.test.ts`: `numberLines("5", depths)`를 backend `test_number_lines`·`test_number_lines_skips_unnumbered_lines`의 두 표 그대로(`None` → `null`) `it.each`로.
+
+`frontend/src/lib/c-edit-model.test.ts`:
+```ts
+it("swaps a line with its neighbour and renumbers the section", () => {
+  const draft = addEdit(startDraft(doc([section("5", [line(1, "5.1"), line(2, "5.2")])])), { kind: "move", locationKey: "s5", targetId: 2, dir: -1 });
+  expect(draft?.shown.sections[0].items.map((i) => [i.target_id, i.number])).toEqual([[2, "5.1"], [1, "5.2"]]);
+});
+it("returns null when the line is at the edge of its section", ...);
+it("numbers the Instruction and Why of one WI step as one run", ...);          // step 3 Instruction [3.1] + Why → 3.2
+it("sends the whole order and only the depth and style that differ from the saved doc", ...);
+it("keeps edits made after sending on top of the server doc when the save comes back", ...);
+it("drops every unsaved edit when the save fails", ...);                      // Review Focus 6
+```
+`frontend/src/lib/c-save-queue.test.ts`:
+```ts
+it("sends one job at a time and the next after the first finishes", ...);    // Review Focus 6
+it("sends a document queued many times once, with its latest state", ...);
+it("puts checks and documents on the same line", ...);
+it("walks down own revisions to the last outside change", () => {
+  expect(getDataRevision(12, new Set([11, 12]))).toBe(10);
+  expect(getDataRevision(13, new Set([11, 12]))).toBe(13);
+});
+```
+`frontend/src/lib/flip.test.ts`: `computeFlipOffsets(new Map([["1", 100], ["2", 140], ["3", 180]]), new Map([["1", 140], ["2", 100], ["3", 180]]))` → `Map { "1" => -40, "2" => 40 }`(움직이지 않은 줄·한쪽에만 있는 키는 뺀다).
+`frontend/src/lib/output-groups.test.ts`: `buildCLines`는 문서 → 칸 → 줄 순서이고, 비었거나 N/A인 칸도 칸 줄 하나를 갖는다.
+`frontend/src/lib/target-order.test.ts`: `buildTargetOrder`·`buildPatchItems` 시험을 지운다(옮긴 규칙은 `c-edit-model.test.ts`). `canMoveTarget` 시험은 남긴다.
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `$PY -m pytest tests/test_sop_outputs.py::test_reorder_returns_the_doc_as_c_shows_it tests/test_sop_outputs.py::test_reorder_doc_labels_default_to_english -q` → FAIL(`KeyError: 'doc'`). `npx vitest run src/lib/section-number.test.ts src/lib/c-edit-model.test.ts src/lib/c-save-queue.test.ts src/lib/flip.test.ts src/lib/output-groups.test.ts` → FAIL(없는 export).
+
+- [ ] **Step 3: Implement**
+  - backend는 위 계약대로 하고, `build_output_c`도 `_build_c_doc`을 쓴다.
+  - frontend는 모델 → 저장소·호출 → `useFlip` → `OutputCView`(이어 그리기·FLIP 키·포커스) → `outputs/page.tsx`(초안·줄·키) 차례.
+  - 설명서 `#outputs`의 **Move up** · **Move down** 문단:
+    - 누르면 바로 자리가 바뀌고 두 줄이 미끄러진다(움직임 줄이기 설정이면 바로). 저장은 뒤에서 한다.
+    - 저장하지 못하면 원래 자리로 돌아오고 오른쪽 위에 알림이 뜬다. 들여쓰기·번호 표시도 같다.
+    - 긴 C는 아래로 내리면 이어서 그린다.
+    - 굵은 라벨은 en 문구 그대로 — `manual-content.test.ts`.
+  - `frontend/CLAUDE.md` 이동·움직임 공통 층에 "목록 자리 바꿈은 `components/ui/motion.tsx` `useFlip`"과 "C 번호 미리 세기 `section-number.ts` `numberLines`는 `outputs.number_lines`의 사본(저장 응답이 이긴다)" 한 줄씩.
+  - `PROGRESS.md` 1–3줄.
+
+- [ ] **Step 4: 스모크** — `pw-smoke-sop.mjs`의 C 들여쓰기·표시 단계(`"outputs: indent a line on C …"`, `"outputs: mark a line as a note on C …"`)는 새로 고침 대신 `page.waitForResponse(/targets\/order/)`로 저장을 기다리게 고친다. 그 뒤에 단계 하나를 더한다.
+
+`"outputs: C reorder moves at once, saves one request at a time and rolls back a failed save"`:
+1. **바로 반영·한 번에 하나**
+   - 줄이 셋 이상인 칸을 고른다.
+   - `page.route("**/targets/order**")`로 응답을 600ms 늦추고, `request`·`requestfinished`로 동시에 날아가는 수를 잰다.
+   - `output-c-move-down-<id>`를 기다림 없이 3번 누른다. 첫 응답 전에 `output-c-row-*` 순서에서 그 줄이 3칸 내려가 있어야 한다.
+   - 기대: 동시에 날아간 PUT ≤ 1, 모든 PUT ≤ 2(첫 요청 + 기다리는 동안 합쳐진 하나). 그동안 `GET …/outputs/c`·`GET …/summary` 요청이 0번이다.
+   - 요청이 끝나면 새로 고친다. 순서가 같아야 한다.
+2. **키보드**: `output-c-move-up-<id>`에 `focus()` → Enter 2번. 포커스가 여전히 그 단추이고(`document.activeElement`의 testid), 줄이 2칸 올라가 있어야 한다.
+3. **실패 되돌림**
+   - `route.fulfill({ status: 500, contentType: "application/json", body: "{}" })`를 한 번 건다.
+   - 누른다 → 줄이 옮겨졌다가 원래 자리로 돌아온다. `toast-error`가 보인다. route를 푼다.
+4. 단계 그림을 `takeShot`으로 남긴다.
+
+- [ ] **Step 5: 극단 자료에서 직접 보기** (별도 sqlite — `backend/dev.db`는 쓰지 않는다)
+
+```bash
+cd backend
+export DATABASE_URL=sqlite+aiosqlite:///./outputs-one-set-worst.db AUTH_MODE=dev
+$PY -m scripts.reset_db && $PY -m scripts.seed_sop_demo && $PY -m scripts.seed_sop_worst   # 끝 줄 "worst seed done: 43 bundles", DEV_ENFORCE_PERMISSIONS 없이
+$PY -m uvicorn app.main:app --port 8787 &
+cd ../frontend && BACKEND_URL=http://localhost:8787 npx next dev --port 3787 &
+npm i --no-save playwright-core
+```
+`frontend/`에 임시 스크립트 `_c-reorder-check.mjs`를 두고(커밋하지 않는다, 끝나면 지운다) W1 극단 묶음의 결과물 C에서 본다. 묶음 id는 `pw-layout-audit.mjs`가 W1을 찾는 방법을 따른다(사용자 `qa.member`).
+- **이어 그리기**: 처음 `output-c-row-*` 수가 전체보다 적고 `output-c-more`가 있다. 끝까지 내리면 80줄씩 붙다가 `output-c-more`가 없어지고 삭제·이동 목록이 나온다.
+- **아직 안 그린 구간으로 옮기기**: 새로 고친 뒤 `output-c-more` 바로 위 줄의 `output-c-move-down-*`을 누른다. 그 줄이 그려진 채 화면 안에 있어야 한다(`boundingBox`가 뷰포트 안).
+- **연달아 누르기·키보드**: 한 줄을 10번 연달아 누르고, 다른 줄에서 Enter 5번. 요청이 끝난 뒤 새로 고쳐 보인 순서와 같은지 본다. `output-c-number-*` 번호가 저장 전후로 C 응답과 같은지(미리 센 번호 = 서버 번호)도 본다.
+- **저장 실패**: `page.route`로 500 → 되돌림과 `toast-error`.
+- **움직임 줄이기**: `page.emulateMedia({ reducedMotion: "reduce" })` 뒤 누른 다음 프레임에 줄의 `getComputedStyle(row).transform === "none"`.
+- **화면 그림**:
+  - 폭 1120·1440 × `sopa.theme` light·dark 네 장을 `../.shots/c-reorder-<폭>-<테마>.png`로 남긴다.
+  - 미끄러지는 중간 한 장을 더 남긴다 — 누른 뒤 80ms(`--dur-slow` 240ms 안).
+  - **Read로 직접 보고** 확인한다: 줄 끝 단추가 글을 덮지 않는다, 옮긴 줄이 이웃 위로 지나간다, 포커스 테두리가 보인다, 다크에서 글자가 읽힌다. 문제가 있으면 고치고(`ui-review.md` 2 — 실행 중 화면에 주입해 잰 뒤) 다시 찍는다.
+- **배치 감사**: `ONLY=C8 DS=worst WIDTHS=1120,1440 THEMES=light,dark BASE_URL=http://localhost:3787 node scripts/pw-layout-audit.mjs` → 통과. C8이 모든 줄을 전제로 재면 그린 줄만 재도록 고친다.
+- **정리**: 띄운 backend·frontend만 끈다. `_c-reorder-check.mjs`와 `backend/outputs-one-set-worst.db`를 지운다.
+
+- [ ] **Step 6: Run gates** — `$PY -m pytest tests/ -q -n auto`·ruff, `npx vitest run`, `npx tsc --noEmit -p tsconfig.json`, `npm run lint`, `npm run build`(next dev를 먼저 내린다, 경고 0). 스모크는 reset_db → seed_sop_demo 직후 DB에서 `BASE_URL=http://localhost:3777 node scripts/pw-smoke-sop.mjs`(Task 12 Step 2와 같은 차림, 별도 sqlite)로 C 단계가 통과.
+
+- [ ] **Step 7: Commit** (두 커밋)
+
+```bash
+git add backend/app/sop/outputs.py backend/app/routers/sop_outputs.py backend/tests/test_sop_outputs.py backend/tests/test_sop_ai_translate.py PROGRESS.md
+git commit -m "feat(outputs): the order save returns the document as output C shows it — 순서 저장 응답에 그 문서의 C"
+git add frontend/src/lib/c-edit-model.ts frontend/src/lib/c-edit-model.test.ts frontend/src/lib/c-save-queue.ts frontend/src/lib/c-save-queue.test.ts frontend/src/lib/flip.ts frontend/src/lib/flip.test.ts frontend/src/lib/section-number.ts frontend/src/lib/section-number.test.ts frontend/src/lib/output-groups.ts frontend/src/lib/output-groups.test.ts frontend/src/lib/target-order.ts frontend/src/lib/target-order.test.ts frontend/src/lib/bundle-store.ts frontend/src/lib/api-sop.ts frontend/src/components/ui/motion.tsx frontend/src/styles/motion.css frontend/src/components/outputs/output-c.tsx "frontend/src/app/bundles/[id]/outputs/page.tsx" frontend/src/lib/i18n-messages.ts frontend/public/manual/user-manual.md frontend/scripts/pw-smoke-sop.mjs frontend/CLAUDE.md PROGRESS.md
+git commit -m "feat(outputs-ui): output C reorder moves at once, slides and renders as you scroll — 결과물 C 순서 바꾸기 바로 반영·미끄러짐·이어 그리기"
+```
+
+---
+
 ### Task 12: 브라우저 확인 — 스모크·설명서 그림·극단 자료 감사
 
 **Files:**
@@ -857,7 +1212,7 @@ git commit -m "feat(outputs-ui): Excel preview window with the server-built file
 
 읽고 시작: `docs/lessons/browser-verification.md`, `docs/lessons/ui-review.md`.
 
-- [ ] **Step 1: 스모크를 한 벌로 고친다** — `"outputs: A, B, C in both editions and Excel"` 단계를 `"outputs: A, B, C and the Excel preview"`로: `outputs-lang-en` 클릭 삭제, A에서 `[data-testid="output-a"] tbody tr` > 10과 첫 줄 `Row` 칸 `"1"`, `outputs-export-open` → `export-preview` 보임 → 탭 네 개 이름 `["A Comparison","B Flow","C New documents","Info"]` → `export-preview-download` 클릭 → `download` 이벤트. 칸 제목 한 번(묶음의 옛 제목 하나를 트리 `assign-tree-place-heading:*`로 확정 → C 칸 머리에 `←`)과 검토 화면에 `review-lang`이 없음을 단언.
+- [ ] **Step 1: 스모크를 한 벌로 고친다** — `"outputs: A, B, C in both editions and Excel"` 단계를 `"outputs: A, B, C and the Excel preview"`로: `outputs-lang-en` 클릭 삭제, A에서 `[data-testid="output-a"] tbody tr` > 10과 첫 줄 `Row` 칸 `"1"`, `outputs-export-open` → `export-preview` 보임 → 탭 네 개 이름 `["A Comparison","B Flow","C New documents","Info"]` → `export-preview-download` 클릭 → `download` 이벤트. 칸 제목 한 번(묶음의 옛 제목 하나를 트리 `assign-tree-place-heading:*`로 확정 → C 칸 머리에 `←`)과 검토 화면에 `review-lang`이 없음을 단언. 같은 칸 제목이 Assign New 칸의 엮은 문서 미리 보기(문서 고르기에서 그 "not written" 문서)에도 칸 머리 `assign-new-heading-note-<칸 번호>`로 보이는지 단언한다(Task 14). Task 15가 더한 C 순서 바꾸기 단계(바로 반영·한 번에 하나·실패 되돌림)와 기존 들여쓰기·표시 단계가 함께 통과해야 한다.
 - [ ] **Step 2: 로컬 자료를 만들고 스모크를 돈다** (`docs/lessons/browser-verification.md` — 별도 sqlite)
 
 ```bash
@@ -875,7 +1230,7 @@ DS=worst BASE_URL=http://localhost:3787 node scripts/pw-layout-audit.mjs
 BASE_URL=http://localhost:3787 LONG=1 THEMES=light,dark node scripts/pw-overlap-audit.mjs
 BASE_URL=http://localhost:3787 node scripts/pw-contrast-audit.mjs
 ```
-결과물 A 7열의 긴 글(W1)·미리보기 창 1120·1920 폭(창이 화면 안, 표 가로 스크롤은 창 안에서만)·Assign 트리 칸 제목 항목을 장면에 넣는다. 실패는 고치고(처방은 실행 중 화면에 주입해 잰 뒤 — `ui-review.md` 2), 각 장면이 무엇을 찍었는지 Bundle 코드로 확인한다. W1 미리보기 응답 크기를 재 `MAX_PREVIEW_ROWS`를 정하고 그 값을 `sheet_model.py` 주석에 적는다.
+결과물 A 7열의 긴 글(W1)·미리보기 창 1120·1920 폭(창이 화면 안, 표 가로 스크롤은 창 안에서만)·Assign 트리 칸 제목 항목·이어 그리는 긴 C(W1, 끝 표지 `output-c-more` 앞뒤 줄 끝 단추)·Assign New 칸 엮은 문서의 칸 머리 출처(`assign-new-heading-note-*`, 긴 출처 글이 칸 이름을 덮지 않는지)를 장면에 넣는다. 실패는 고치고(처방은 실행 중 화면에 주입해 잰 뒤 — `ui-review.md` 2), 각 장면이 무엇을 찍었는지 Bundle 코드로 확인한다. W1 미리보기 응답 크기를 재 `MAX_PREVIEW_ROWS`를 정하고 그 값을 `sheet_model.py` 주석에 적는다.
 - [ ] **Step 5: Run gates** — backend 전체 스위트, `npx vitest run`, `npx tsc --noEmit -p tsconfig.json`, `npm run lint`, `npm run build` 통과.
 - [ ] **Step 6: Commit**
 
@@ -893,7 +1248,7 @@ git commit -m "test(smoke): one-set outputs, Excel preview and slot heading in b
 - Modify: `docs/README.md`, `docs/superpowers/plans/2026-11-13-language-axis.md`·`PROGRESS.md`·`CHANGELOG.md`의 링크(라벨 글로 강등), `backend/CLAUDE.md`(줄 기준 숫자의 "결과물 요약은 (4)까지 언어별" 문장 → `build_summary`가 같은 줄 목록, 번역 줄 잠금 문장 → 깊이·단계만 잠김·표시는 그 줄, 결과물 `output_rows`·`sheet_model` 한 줄), 필요하면 `frontend/CLAUDE.md`
 - Modify: `frontend/package.json`·`package-lock.json`(PATCH), `CHANGELOG.md`, `PROGRESS.md`
 
-- [ ] **Step 1: 흡수** — §7.13: "한글판과 영어판을 따로 만든다 [결정]" → 한 벌(사용자 결정 2026-11-12), A 칸 표(`언어` 삭제·`Row` 추가·`이유` → Remark, 20열 순서), 줄 규칙(설계 §4.1·§4.4·§4.5), 칸 제목(§4.6), 섹션 번호(설계 §6 — 문장마다 한 줄, O10, 짝 옮기기 없음, 번역 표시 풀림), 요약 한 벌(§5.3, No destination), 예시 표 갱신. §7.14: 파일 하나·이름·영어 시트·미리보기·Graphite·되풀이+흐림(설계 §9, O6), 시트 모델. §7.15: 검토 조건 버전(§5.5). §12 화면 2·4·8. 구현 중 정한 것은 "(내 판단 2026-11-13, 결과물 한 벌)"로 적는다(이 계획 Global Constraints의 내 판단 항목, Task 2 규칙 3, Task 6 출처 더하기·순서 바꾸기 제외, Task 9 이어짐 줄·C 선·기록 reason).
+- [ ] **Step 1: 흡수** — §7.13: "한글판과 영어판을 따로 만든다 [결정]" → 한 벌(사용자 결정 2026-11-12), A 칸 표(`언어` 삭제·`Row` 추가·`이유` → Remark, 20열 순서), 줄 규칙(설계 §4.1·§4.4·§4.5), 칸 제목(§4.6), 섹션 번호(설계 §6 — 문장마다 한 줄, O10, 짝 옮기기 없음, 번역 표시 풀림), 요약 한 벌(§5.3, No destination), 예시 표 갱신. §7.14: 파일 하나·이름·영어 시트·미리보기·Graphite·되풀이+흐림(설계 §9, O6), 시트 모델. §7.15: 검토 조건 버전(§5.5). §12 화면 2·4·8. 구현 중 정한 것은 "(내 판단 2026-11-13, 결과물 한 벌)"로 적는다(이 계획 Global Constraints의 내 판단 항목, Task 2 규칙 3, Task 6 출처 더하기·순서 바꾸기 제외, Task 9 이어짐 줄·C 선·기록 reason, Task 14 엮은 문서의 칸 제목 머리 줄, Task 15 순서 저장 응답 `doc`·번호 미리 세기 사본·이 화면 요청 줄·되돌림 범위). §7.13 C 절에 순서 바꾸기의 바로 반영·미끄러짐·이어 그리기(설계 §5.6, O13 사용자 결정 2026-11-13)를, §12 화면 4 Assign에 New 칸 엮은 문서 미리 보기의 한 벌 번호·칸 제목 머리 줄을 적는다.
 - [ ] **Step 2: 지우고 참조 고치기**
 
 ```bash
@@ -901,11 +1256,16 @@ git rm docs/superpowers/specs/2026-11-12-language-axis-design.md docs/superpower
 git grep -n "2026-11-12-language-axis-design\|2026-11-13-outputs-one-set-design"
 ```
 Expected: 남은 줄을 모두 라벨 글로 바꾼 뒤 출력 없음(코드 주석이 있으면 파일 이름만 남긴다 — `rules/common/documentation.md`).
-- [ ] **Step 3: 버전·기록** — `cd frontend && npm version patch --no-git-tag-version`(0.16.6 → 0.16.7), `CHANGELOG.md` `## Unreleased (dev)` 맨 위에 `- **v0.16.7 — <날짜>** — …`(결과물 한 벌·미리보기·Graphite·파일 이름·번호 문장마다·칸 제목·버전 검토 조건·Alembic 0014, **개발 스택에 남은 묶음은 번호가 한 줄로 다시 세어져 C에서 사람이 고친다**, 이제 `main`에 올릴 수 있다 — 사용자가 정한다). `PROGRESS.md`의 이 브랜치 항목을 하나로 압축(목적·결과·주요 결정).
+- [ ] **Step 3: dev 다시 합치기·버전·기록**
+  - dev를 다시 본다. `git fetch origin && git log --oneline HEAD..origin/dev`. 나온 커밋이 있으면(예: v0.16.9) Task 14 Step 1·2와 같은 방법으로 합친다 — `git merge-tree --write-tree --name-only HEAD origin/dev`로 충돌을 먼저 보고, merge 커밋을 만들고, rebase는 하지 않는다. 그 뒤 Step 4 관문을 다시 돈다.
+  - 버전은 **그때 dev 버전의 다음 PATCH**다. 지금 dev는 0.16.8이라 0.16.9다(0.16.7·0.16.8은 dev가 이미 썼다). `cd frontend && npm version patch --no-git-tag-version`(합친 뒤 `package.json`이 dev 값이니 patch 한 번이 곧 다음 값이다).
+  - `CHANGELOG.md`: `## Unreleased (dev)` 맨 위, dev 줄들 위에 `- **v0.16.9 — <날짜>** — …`를 더한다(번호는 위 값). 적을 것: 결과물 한 벌·미리보기·Graphite·파일 이름·번호 문장마다·칸 제목(Assign New 칸 미리 보기 포함)·버전 검토 조건·C 순서 바꾸기 바로 반영·미끄러짐·이어 그리기·Alembic 0014. **개발 스택에 남은 묶음은 번호가 한 줄로 다시 세어져 C에서 사람이 고친다**고 적는다. 이제 `main`에 올릴 수 있다 — 사용자가 정한다.
+  - `PROGRESS.md`의 이 브랜치 항목을 하나로 압축한다(목적·결과·주요 결정, Task 14·15 포함).
 - [ ] **Step 4: Run all gates** — backend 전체 스위트·ruff, `sh ci/test-deploy.sh`(저장소 루트, 배포 스크립트는 안 바뀌었어도 한 번), `npx vitest run`(설명서 `version`은 MINOR만 보므로 그대로 통과), `npx tsc --noEmit -p tsconfig.json`, `npm run lint`, `npm run build`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git commit -m "docs(spec): absorb the one-set outputs design and bump v0.16.7 — 결과물 한 벌 명세 흡수, v0.16.7"
+git commit -m "docs(spec): absorb the one-set outputs design and bump v0.16.9 — 결과물 한 벌 명세 흡수, v0.16.9"
 ```
+번호는 Step 3에서 정한 값으로 바꾼다(dev가 더 나아갔으면 그 다음 PATCH).
 푸시·`dev` 머지는 사용자 확인 뒤(GitHub `origin`에만).
