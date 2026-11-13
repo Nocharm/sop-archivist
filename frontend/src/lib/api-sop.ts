@@ -916,6 +916,8 @@ export interface ComposedSection {
   label: string;
   number: string | null;
   na_reason: string | null;
+  /** 칸 제목 출처 - 결과물 C 칸 머리와 같은 "← OLD-1 §5", 없으면 빈 글 */
+  heading_note: string;
   items: ComposedItem[];
 }
 
@@ -928,7 +930,7 @@ export interface ComposedDoc {
   sections: ComposedSection[];
 }
 
-/** lang은 칸 이름의 언어(화면 언어) */
+/** lang은 라벨 언어만(화면 언어) - 번호는 결과물 C와 같은 한 줄 세기 */
 export function getComposedDoc(bundleId: number, docId: number, lang: OutputLang): Promise<ComposedDoc> {
   return apiFetch<ComposedDoc>(`/bundles/${bundleId}/outputs/c/docs/${docId}?lang=${lang}`);
 }

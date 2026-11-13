@@ -427,6 +427,31 @@ def test_one_slot_counts_both_languages_in_one_sequence(client: TestClient) -> N
     assert [number for _, number, _ in items] == ["6.1.1", "6.1.2", "6.1.3", "6.1.4", "6.1.5", "6.1.6"]
 
 
+def test_composed_doc_numbers_one_sequence_like_c(client: TestClient) -> None:
+    """Assign New 칸의 엮은 문서는 결과물 C와 같은 순서·같은 번호다 — 언어 섞인 한 줄, 생략 줄은 번호 없이 건너뛴다."""
+    bundle_id, sop_id, targets = _setup_pairs(client)  # 짝 셋, 6.1.1–6.1.6
+
+    def read_lines(doc: dict) -> list[tuple[int, str | None]]:
+        return [(item["target_id"], item["number"]) for section in doc["sections"] for item in section["items"]]
+
+    def read_both() -> tuple[dict, dict]:
+        composed = _get_output(client, bundle_id, f"outputs/c/docs/{sop_id}")  # lang 없음 → en 라벨
+        (c_doc,) = [doc for doc in _get_output(client, bundle_id, "outputs/c")["docs"] if doc["target_doc_id"] == sop_id]
+        return composed, c_doc
+
+    composed, c_doc = read_both()
+    assert read_lines(composed) == read_lines(c_doc)
+    assert [number for _, number in read_lines(composed)] == ["6.1.1", "6.1.2", "6.1.3", "6.1.4", "6.1.5", "6.1.6"]
+    assert [section["label"] for section in composed["sections"]] == [section["label"] for section in c_doc["sections"]]
+
+    # 한 줄을 생략으로 바꾸면 그 줄은 번호가 없고 다음 줄이 이어 센다(C와 같은 값)
+    ids = [target_id for target_id, _ in read_lines(c_doc)]
+    _put_styles(client, bundle_id, sop_id, ids, {ids[1]: "omitted"})
+    composed, c_doc = read_both()
+    assert read_lines(composed) == read_lines(c_doc)
+    assert [number for _, number in read_lines(composed)] == ["6.1.1", None, "6.1.2", "6.1.3", "6.1.4", "6.1.5"]
+
+
 def test_omitted_and_note_lines_are_skipped_across_languages(client: TestClient) -> None:
     """설계 §6 예 — 5.1 English / 한글(생략) / Note(주석) / 한글(생략) / 5.2 English / 한글(생략)."""
     bundle_id, sop_id, targets = _setup_pairs(client)

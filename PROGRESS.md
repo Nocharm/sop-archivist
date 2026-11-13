@@ -4,6 +4,7 @@
 
 ## 2026-11-13
 
+- **결과물 한 벌 Task 14 — New 칸 엮은 문서에 칸 제목 출처** — 엮은 문서의 칸(`ComposedSection.heading_note`)도 결과물 C와 같은 `_format_heading_note`로 칸 제목 출처를 싣고, New 칸은 칸 머리(빈 칸 줄 포함) 칸 이름 뒤에 그 값을 흐리게·넘치면 말줄임으로 붙인다(프런트는 글을 짓지 않는다, 열쇠는 줄의 `section_path`). 엮은 문서 번호가 C와 같은 순서·값(생략 줄 건너뛰기 포함)임을 시험으로 잠갔다.
 - **결과물 한 벌 — dev 합치기(v0.16.7·v0.16.8)** — `origin/dev` 29a1199를 merge 커밋으로 받았다(충돌은 이 파일과 `routers/sop_outputs.py`뿐). dev의 Assign New 칸 엮은 문서(`build_composed_doc`·`GET …/outputs/c/docs/{id}`)를 한 벌 번호 `number_targets` 하나로 바꿔 `ComposedItem.number`가 결과물 C 그 문장 번호와 같고, `lang`은 다른 결과물처럼 라벨 언어만(없으면 `en`), 요약은 `Summary` 그대로. New 칸 미리 고침(`applySavedTargets`)은 칸 제목을 칸 항목으로 넣지 않는다.
 - **결과물 한 벌 계획 수정 — dev 합치기·결과물 C 순서 바꾸기** — 실행 중 사용자 요청 두 가지를 계획에 더했다.
   - Task 14: `origin/dev` v0.16.8을 합친다. Assign New 칸의 엮은 문서를 한 벌 번호와 칸 제목 머리 줄로 맞춘다.

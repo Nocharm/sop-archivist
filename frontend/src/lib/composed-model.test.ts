@@ -1,21 +1,25 @@
 import { describe, expect, it } from "vitest";
 
-import type { ComposedDoc, GroupTarget } from "@/lib/api-sop";
-import { applySavedTargets, buildComposedRows, diffRows, getNewRowKey, removeClearedUnits } from "@/lib/composed-model";
+import type { ComposedDoc, ComposedSection, GroupTarget } from "@/lib/api-sop";
+import { applySavedTargets, buildComposedRows, diffRows, getNewRowKey, listHeadingNotes, removeClearedUnits } from "@/lib/composed-model";
 
-function makeDoc(): ComposedDoc {
+function makeDoc(sections?: ComposedSection[]): ComposedDoc {
   return {
     target_doc_id: 7,
     code: "SOP-CF",
     title: "Synthetic",
     doc_type: "sop",
     entrance: "assign",
-    sections: [
-      { location_key: "purpose", label: "Purpose", number: "1", na_reason: null, items: [{ target_id: 1, kind: "sentence", lang: "ko", text: "목적", status: "confirmed", change_type: "as_is", number: "1.1", source_unit_ids: [10] }] },
-      { location_key: "scope", label: "Scope", number: "2", na_reason: "Synthetic", items: [] },
-      { location_key: "step:1:instruction", label: "Step 1 · Instruction", number: "1", na_reason: null, items: [] },
+    sections: sections ?? [
+      { location_key: "purpose", label: "Purpose", number: "1", na_reason: null, heading_note: "", items: [{ target_id: 1, kind: "sentence", lang: "ko", text: "목적", status: "confirmed", change_type: "as_is", number: "1.1", source_unit_ids: [10] }] },
+      { location_key: "scope", label: "Scope", number: "2", na_reason: "Synthetic", heading_note: "", items: [] },
+      { location_key: "step:1:instruction", label: "Step 1 · Instruction", number: "1", na_reason: null, heading_note: "", items: [] },
     ],
   };
+}
+
+function makeSection(number: string, label: string, headingNote: string): ComposedSection {
+  return { location_key: `slot:${number}`, label, number, na_reason: null, heading_note: headingNote, items: [] };
 }
 
 function makeTarget(fields: Partial<GroupTarget>): GroupTarget {
@@ -55,6 +59,22 @@ describe("applySavedTargets", () => {
 
     expect(next.sections[0].items).toEqual([]);
     expect(next.sections[2].items.map((item) => [item.target_id, item.text])).toEqual([[1, "Moved"]]);
+  });
+
+  it("does not put a saved slot heading into the section items", () => {
+    const doc = makeDoc();
+
+    const next = applySavedTargets(doc, [makeTarget({ kind: "slot_heading", slot_key: "purpose", change_type: "heading" })], () => "");
+
+    expect(next.sections.flatMap((section) => section.items)).toEqual(doc.sections.flatMap((section) => section.items));
+  });
+});
+
+describe("listHeadingNotes", () => {
+  it("lists heading notes by the section path the rows use", () => {
+    const doc = makeDoc([makeSection("6.1", "Procedure", "← OLD-1 §5"), makeSection("6.2", "Records", "")]);
+
+    expect(listHeadingNotes(doc)).toEqual(new Map([["6.1. Procedure", "← OLD-1 §5"]]));
   });
 });
 

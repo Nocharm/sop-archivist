@@ -68,7 +68,7 @@ import {
   type UnitRow,
   type WrittenSentence,
 } from "@/lib/api-sop";
-import { applySavedTargets, buildComposedRows, isWrittenRow, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
+import { applySavedTargets, buildComposedRows, isWrittenRow, listHeadingNotes, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
 import {
   addPartnerTargets,
   buildLinkPairs,
@@ -491,6 +491,8 @@ export default function AssignPage() {
   const composedData = composed.data?.target_doc_id === newDocId ? composed.data : null;
   const composedDoc = composedData && composedPatch?.base === composedData ? composedPatch.doc : composedData;
   const newRows: NewPaneRow[] = isComposedDoc ? (composedDoc ? buildComposedRows(composedDoc) : []) : written.filter((item) => item.target_doc_id === newDocId);
+  // 엮은 문서의 칸 머리 옆 칸 제목 출처 - 이미 쓴 문서에는 칸 제목이 없다
+  const headingNotes = isComposedDoc && composedDoc ? listHeadingNotes(composedDoc) : undefined;
   // 두 문서 사이 이음 - 저장된 출처와 고른 줄의 저장 전 고름
   const oldUnitIds = useMemo(() => new Set(oldView?.units.map((unit) => unit.id) ?? []), [oldView]);
   const linkPairs = buildLinkPairs(newRows.filter(isWrittenRow), oldUnitIds, draft.destination?.kind === "link" ? { units: rowUnits.map((unit) => ({ id: unit.unit_id, lang: unit.lang })), targetIds: draft.destination.targetIds } : null);
@@ -1833,6 +1835,7 @@ export default function AssignPage() {
                     docId={String(newDocId)}
                     onDocChange={(value) => setManualNewDoc({ key: toggleKey, docId: Number(value) })}
                     rows={newRows}
+                    headingNotes={headingNotes}
                     rowsKey={isComposedDoc && !composedDoc ? `${newDocId}:loading` : String(newDocId)}
                     tag={isComposedDoc ? t("assign.composedTag") : t("assign.writtenTag")}
                     readOnly={isComposedDoc}

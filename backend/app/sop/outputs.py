@@ -1087,6 +1087,7 @@ class ComposedSection(BaseModel):
     label: str
     number: str | None
     na_reason: str | None
+    heading_note: str  # 칸 제목 출처 — 결과물 C 칸 머리와 같은 "← OLD-1 §5", 없으면 빈 글
     items: list[ComposedItem]
 
 
@@ -1103,6 +1104,7 @@ def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> 
     """새 문서 하나를 지금까지의 배정으로 — 결과물 C와 같은 칸·순서(_plan_sections)에 두 언어 새 문장을 함께 싣는다.
 
     Assign 화면의 New 칸이 아직 쓰지 않은 문서를 미리 보이는 데 쓴다. 칸 새 문장(표 칸)은 표 줄에 딸려 따로 싣지 않는다.
+    번호는 결과물 C와 같은 한 줄 세기이고, 칸 제목은 항목이 아니라 C처럼 칸 머리의 출처(heading_note)로 싣는다.
     lang은 라벨 언어만 고른다. 문서가 묶음에 없으면 None.
     """
     doc = snap.target_docs.get(target_doc_id)
@@ -1126,7 +1128,7 @@ def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> 
     sections = [
         ComposedSection(
             location_key=plan.key, label=plan.label, number=plan.number, na_reason=plan.na_reason,
-            items=[build_item(target) for target in plan.targets],
+            heading_note=_format_heading_note(snap, plan.headings), items=[build_item(target) for target in plan.targets],
         )
         for plan in _plan_sections(index, doc, labels)
         if plan.targets or plan.keep_empty

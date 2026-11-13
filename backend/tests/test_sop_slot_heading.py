@@ -251,6 +251,19 @@ def test_slot_heading_is_not_numbered_and_shows_in_a_and_c(client: TestClient) -
     assert "Slot heading" in cells  # Excel A의 Change 칸은 변경 종류 heading의 표시 이름이다
 
 
+def test_composed_doc_shows_slot_headings_on_the_section(client: TestClient) -> None:
+    """Assign New 칸의 엮은 문서도 결과물 C처럼 칸 제목 출처를 칸 머리에 싣고 칸 항목·번호로 세지 않는다."""
+    fx = _shared_setup(client)
+    assign_as_is(client, fx.bundle_id, find_unit(fx.old1, OLD1_KO), fx.sop_id, slot_key=SLOT)
+
+    doc = _get_output(client, fx.bundle_id, f"outputs/c/docs/{fx.sop_id}")
+
+    sections = {section["location_key"]: section for section in doc["sections"]}
+    assert sections[SLOT]["heading_note"] == "← OLD-1 §5, OLD-2 §5"
+    assert [(item["text"], item["number"]) for item in sections[SLOT]["items"]] == [(OLD1_KO, "6.1.1")]  # 칸 제목은 항목이 아니다
+    assert {section["heading_note"] for key, section in sections.items() if key != SLOT} == {""}
+
+
 def test_reorder_ignores_slot_headings(client: TestClient) -> None:
     fx = _setup(client)
     _link_headings(client, fx, fx.old1)
