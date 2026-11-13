@@ -755,6 +755,30 @@ export function listNewCandidates(bundleId: number, unitId: number): Promise<New
   return apiFetch<NewCandidate[]>(`/bundles/${bundleId}/units/${unitId}/new-candidates`);
 }
 
+/** 내가 쓴 사유 - 최근 것부터, 모든 Bundle, 같은 글은 한 번(서버 상한 10) */
+export interface RecentRemark {
+  text: string;
+  used_at: string;
+}
+
+export function listRecentRemarks(limit = 10): Promise<RecentRemark[]> {
+  return apiFetch<RecentRemark[]>(`/sop/remarks/recent?limit=${limit}`);
+}
+
+/** 외부 이동 대상 후보 - 내가 멤버인 다른 Bundle의 To-Be 문서와 전에 쓴 이동 코드 */
+export interface MoveTarget {
+  code: string;
+  title: string;
+  /** 이 코드를 가진 To-Be 문서의 Bundle 코드 - 전에 쓴 코드뿐이면 null */
+  bundle_code: string | null;
+  /** bundle = 이 Bundle에서 쓴 코드, mine = 내가 다른 Bundle에서 쓴 코드 */
+  used: "bundle" | "mine" | null;
+}
+
+export function listMoveTargets(bundleId: number, query: string): Promise<MoveTarget[]> {
+  return apiFetch<MoveTarget[]>(`/bundles/${bundleId}/move-targets?${new URLSearchParams({ q: query })}`);
+}
+
 export function listIdenticalCandidates(bundleId: number): Promise<IdenticalCandidate[]> {
   return apiFetch<IdenticalCandidate[]>(`/bundles/${bundleId}/match/identical-candidates`);
 }
@@ -871,6 +895,42 @@ export function getOutputB(bundleId: number, lang: OutputLang): Promise<FlowGrap
 
 export function getOutputC(bundleId: number, lang: OutputLang): Promise<OutputC> {
   return apiFetch<OutputC>(`/bundles/${bundleId}/outputs/c?lang=${lang}`);
+}
+
+/** Assign New 칸의 아직 쓰지 않은 문서 - 결과물 C와 같은 칸·순서에 두 언어 새 문장을 함께(서버 outputs.build_composed_doc) */
+export interface ComposedItem {
+  target_id: number;
+  kind: "sentence" | "table" | "figure";
+  lang: UnitLang;
+  /** 고쳐 쓴 글, 없으면 AI 글, 그것도 없으면 출처 원문 */
+  text: string;
+  status: CoverStatus;
+  change_type: ChangeType | null;
+  number: string | null;
+  /** 출처 Old 단위 - 번역은 번역 출처 단위 */
+  source_unit_ids: number[];
+}
+
+export interface ComposedSection {
+  location_key: string;
+  label: string;
+  number: string | null;
+  na_reason: string | null;
+  items: ComposedItem[];
+}
+
+export interface ComposedDoc {
+  target_doc_id: number;
+  code: string;
+  title: string;
+  doc_type: TargetDocType;
+  entrance: Entrance;
+  sections: ComposedSection[];
+}
+
+/** lang은 칸 이름의 언어(화면 언어) */
+export function getComposedDoc(bundleId: number, docId: number, lang: OutputLang): Promise<ComposedDoc> {
+  return apiFetch<ComposedDoc>(`/bundles/${bundleId}/outputs/c/docs/${docId}?lang=${lang}`);
 }
 
 export function getSummary(bundleId: number): Promise<Record<OutputLang, OutputSummary>> {

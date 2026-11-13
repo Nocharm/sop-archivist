@@ -1,14 +1,16 @@
 // Split 문장 우클릭 메뉴의 가능/불가 판정 - 화면은 이 결과대로 항목을 켜고 끄며 까닭을 툴팁으로 보인다.
-import type { ViewUnit } from "./api-sop";
+import type { UnitLang, ViewUnit } from "./api-sop";
 import { getMergeBlocker, MERGE_BLOCKER_KEYS } from "./paper-model";
 
-export type SplitMenuAction = "join" | "unpair" | "check_both" | "check" | "split" | "ai_split" | "hold" | "lang_ko" | "lang_en";
+export type SplitMenuAction = "join" | "unpair" | "check_both" | "check" | "split" | "ai_split" | "hold" | "lang";
 
 export interface SplitMenuItem {
   action: SplitMenuAction;
   enabled: boolean;
   /** 꺼진 까닭의 문구 키 - 켜져 있으면 없다 */
   reasonKey?: string;
+  /** 언어 줄(lang)의 지금 언어 - 그 쪽은 고를 수 없고 다른 쪽만 누른다 */
+  lang?: UnitLang;
 }
 
 export interface SplitMenuContext {
@@ -147,14 +149,13 @@ function buildSingle(ctx: SplitMenuContext): SplitMenuItem[] {
   const { target } = ctx;
   const guard = (reason: string | null) => (ctx.readOnly ? why("readOnly") : reason);
   const isText = EDITABLE_KINDS.has(target.kind);
-  const langReason = (lang: "ko" | "en") => (!isText ? why("notText") : target.lang === lang ? why("alreadyLang") : null);
   return [
     build("check", guard(null)),
     build("split", guard(ctx.hasCut ? null : why("noCut"))),
     build("ai_split", guard(getAiSplitReason({ aiEnabled: ctx.aiEnabled, isText: isAiSplitKind(target.kind), hasSuggestion: ctx.hasSuggestion, isWaiting: ctx.isAiWaiting }))),
     build("hold", guard(ctx.isDecided ? why("decided") : null)),
-    build("lang_ko", guard(langReason("ko"))),
-    build("lang_en", guard(langReason("en"))),
+    // KO·EN은 한 줄(지금 언어는 고른 모양으로 꺼져 있다) - 줄 전체가 꺼지는 것은 글이 아닐 때와 읽기 전용뿐
+    { ...build("lang", guard(isText ? null : why("notText"))), lang: target.lang },
     build("unpair", guard(target.pair_id !== null ? null : why("notPaired"))),
   ];
 }

@@ -1,4 +1,4 @@
-// Assign 두 문서 사이 이음 - 마우스를 올린 조각의 맞은편을 강조하고, 양쪽 끝이 다 보이는 이음만 옅은 선으로 그린다(Old 조각 오른쪽 바깥 배지 높이 → New 문단 상자 왼쪽 바깥 출처 칩 높이, 길은 link-route-model).
+// Assign 두 문서 사이 이음 - 마우스를 올린 조각의 맞은편을 강조하고, 양쪽 끝이 다 보이는 이음만 옅은 선으로 그린다(Old 조각 오른쪽 테두리 배지 높이 → New 줄 앞머리의 KO/EN 표시 왼쪽, 길은 link-route-model).
 // 강조 표시는 React 상태가 아니라 DOM 속성(data-link-hover)으로 단다 - Old 원문 조각이 수천 개일 때 올릴 때마다 용지 전체를 다시 그리지 않게.
 // 선은 스크롤·크기 변경·확대·세로선 끌기마다 다시 재되 한 프레임에 한 번으로 묶는다.
 "use client";
@@ -138,10 +138,13 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
       const oldRect = oldEl.getBoundingClientRect();
       const badgeRect = badge?.getBoundingClientRect();
       const start = { x: oldRect.right, y: badgeRect ? badgeRect.top + badgeRect.height / 2 : readAnchorY(oldRect) };
-      // 끝 - New 줄(탭 포함) 왼쪽 끝, 출처 칩 높이. 칩이 없으면(아직 출처가 아닌 후보) 첫 줄 높이
+      // 끝 - New 줄 앞머리 맨 왼쪽의 언어 표시(KO/EN) 왼쪽 가운데. 앞머리는 줄 왼쪽 끝에서 시작해 표시의 x가 깊이와 상관없이 같으니 선이 한 줄로 모인다.
+      // 언어 표시가 없는 중립 문장은 상자 왼쪽 테두리, 출처 칩 높이(칩이 없으면 첫 줄 높이)
+      const tokenRect = rowEl.querySelector(".strip-lead-lang > .lang-token")?.getBoundingClientRect();
       const chipRect = findSourceChip(newEl, pair.unitId)?.getBoundingClientRect();
-      const rowRect = rowEl.getBoundingClientRect();
-      const end = { x: rowRect.left, y: chipRect ? chipRect.top + chipRect.height / 2 : readAnchorY(rowRect) };
+      const end = tokenRect
+        ? { x: tokenRect.left, y: tokenRect.top + tokenRect.height / 2 }
+        : { x: newEl.getBoundingClientRect().left, y: chipRect ? chipRect.top + chipRect.height / 2 : readAnchorY(newEl.getBoundingClientRect()) };
       // 양쪽 끝이 다 보일 때만 - 한쪽이 스크롤 밖이면 선이 문서 머리나 화면 밖으로 뻗는다
       if (start.y < oldFrame.top || start.y > oldFrame.bottom || end.y < newFrame.top || end.y > newFrame.bottom) continue;
       const shift = (point: { x: number; y: number }) => ({ x: point.x - base.left, y: point.y - base.top });

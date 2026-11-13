@@ -9,7 +9,8 @@ import { ChevronsDownUp, CircleCheck, Ellipsis, FoldVertical, FolderCheck, Image
 import { Fragment, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { FigureImage } from "@/components/paper/figure-image";
-import { StripLead, STRIP_LEAD_EXTRA } from "@/components/paper/strip-lead";
+import { LangToken } from "@/components/paper/lang-token";
+import { StripLead, STRIP_LEAD_EXTRA, STRIP_LEAD_LANG } from "@/components/paper/strip-lead";
 import { UnitStatusChip } from "@/components/status";
 import { Collapse } from "@/components/ui/motion";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
@@ -117,6 +118,8 @@ interface PaperProps {
     renderNote?: (unitIds: number[]) => ReactNode;
     /** Assign - 조각 오른쪽 칸(연결 배지). 비면 폭을 차지하지 않는다 */
     renderPills?: (unitId: number) => ReactNode;
+    /** Assign - 앞머리 맨 왼쪽에 언어 표시(KO/EN)를 늘 둔다. 조각 위 테두리의 올릴 때 탭(Split)은 그리지 않는다 */
+    langLead?: boolean;
     /** Assign - 필터 접기. matchIds는 필터를 걸 때의 목록(스냅숏), 없으면 전부 그린다 */
     fold?: { matchIds: ReadonlySet<number>; open: FoldOpen; onOpenChange: (next: FoldOpen) => void };
   };
@@ -132,7 +135,7 @@ interface PaperProps {
   onCutNudge?: (step: 1 | -1) => void;
   onUnitDoubleClick?: (unitId: number, at: { blockId: number; offset: number } | null) => void;
   /** 문장 줄을 우클릭하거나 메뉴 글쇠를 눌렀다 - 주면 브라우저 메뉴 대신 이 콜백이 불린다(Split) */
-  onUnitContextMenu?: (unitId: number, at: { x: number; y: number }) => void;
+  onUnitContextMenu?: (unitId: number, at: { x: number; y: number }, caret: { blockId: number; offset: number } | null) => void;
 }
 
 /** 화면 좌표 → 블록 위치. 글자 조각 요소의 data-start에 글자 노드 안 위치를 더한다 */
@@ -210,6 +213,8 @@ export function Paper({
   const [contourPath, setContourPath] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const tip = useDelegatedTip();
+  // 언어 칩을 함께 보이는 떨어진 짝 조각 - 지금 올린 단위와 표시를 단 요소(markHoverMates)
+  const mateHoverRef = useRef<{ unitId: number | null; els: HTMLElement[] }>({ unitId: null, els: [] });
   const hasStrips = strips !== undefined;
   // 단추 줄을 그리는 조각 - 지금 고른 것과 바로 전에 고른 것(접히는 동안). 수천 조각마다 접기 부품을 두지 않는다
   const [actionIds, setActionIds] = useState({ current: selectedId, previous: null as number | null });
@@ -310,6 +315,9 @@ export function Paper({
     }
     return heads;
   }, [sections, cardTops]);
+  const langLead = strips?.langLead ?? false;
+  // 앞머리에서 번호 칸 밖의 폭 - 조각까지 틈, Assign은 언어 칸도
+  const leadExtra = STRIP_LEAD_EXTRA + (langLead ? STRIP_LEAD_LANG : 0);
   // 줄마다 번호 칸 폭 - 번호 없는 줄은 직전 줄 폭, 짝 카드는 첫 줄 폭(부분마다 문서 순서로)
   const tabWidths = useMemo(() => {
     const rows = sections.flatMap((section) =>
@@ -546,6 +554,13 @@ export function Paper({
     );
   }
 
+  /** 조각 언어 칩(KO/EN) - 늘 그려 두고 조각을 올리거나 고를 때만 CSS가 드러낸다(조각마다 호버 상태를 두지 않는다). 짝이면 구성원 모두.
+   *  자리는 조각 위 테두리 오른쪽 끝에 걸친 작은 탭 - 글·끝 아이콘과 겹치지 않고 조각 높이를 바꾸지 않는다. 언어가 없는 단위(neutral)는 없다 */
+  function renderLang(unit: ViewUnit | undefined): ReactNode {
+    if (!unit || langLead) return null;
+    return <LangToken lang={unit.lang} className="strip-lang" tabIndex={unit.id === selectedId ? 0 : -1} testId={`${testId}-lang-${unit.id}`} />;
+  }
+
   /** 두 줄 사이의 묶기 - 같은 언어면 합치기, 한글·영어면 짝(아이콘으로 구별). 못 묶는 자리는 꺼 두고 까닭을 툴팁으로 */
   function renderMerge(prev: PaperRow, next: PaperRow): ReactNode {
     const join = strips?.join;
@@ -597,6 +612,7 @@ export function Paper({
         tip={describeTab(unit)}
         testId={testId}
         id={unit.id}
+        lang={langLead ? unit.lang : undefined}
       />
     );
   }
@@ -718,7 +734,7 @@ export function Paper({
     return (
       <div key={row.key} className="strip-row" data-peek={isPeek ? "" : undefined}>
         {unit && renderLead(unit, section, width, bracket)}
-        {!unit && <span className="strip-lead-gap" style={{ width: width + STRIP_LEAD_EXTRA }} />}
+        {!unit && <span className="strip-lead-gap" style={{ width: width + leadExtra }} />}
         <div
           className="strip"
           data-kind={row.type}
@@ -752,6 +768,7 @@ export function Paper({
           {foot}
           {pills}
           {renderMarks(unit, hasWarn, "strip-marks")}
+          {row.type === "piece" && renderLang(unit)}
         </div>
       </div>
     );
@@ -766,7 +783,7 @@ export function Paper({
         data-pair={cardTops.has(readRowUnitId(row) ?? -1) ? "" : undefined}
         data-near-selected={selectedBlock.has(readRowUnitId(prev) ?? -1) || selectedBlock.has(readRowUnitId(row) ?? -1) ? "" : undefined}
         // 합치기 단추를 글 시작 x에 - 위아래 앞머리 중 넓은 쪽 뒤라 어느 앞머리에도 걸치지 않는다
-        style={{ "--gap-tab": `${Math.max(readTabWidth(prev), readTabWidth(row)) + STRIP_LEAD_EXTRA}px` }}
+        style={{ "--gap-tab": `${Math.max(readTabWidth(prev), readTabWidth(row)) + leadExtra}px` }}
         data-testid={`${testId}-gap-${row.key}`}
       >
         {renderMerge(prev, row)}
@@ -828,7 +845,7 @@ export function Paper({
     const cellOf = new Map(cells.map((cell) => [cell.item.key, cell]));
     const leadWidth = (key: string): number => {
       const first = cellOf.get(key)?.rows[0];
-      return (first ? readTabWidth(first) : 0) + STRIP_LEAD_EXTRA;
+      return (first ? readTabWidth(first) : 0) + leadExtra;
     };
     const { open, onOpenChange } = fold;
     let prevRow: PaperRow | null = null;
@@ -862,9 +879,9 @@ export function Paper({
             onClick={() => onOpenChange({ runs: open.runs, peeks: new Set([...open.peeks, entry.key]) })}
           >
             {unit ? (
-              <StripLead width={width} number={isHead && first ? getSectionPill(readRowSection(first)) : null} dim={!isHead} tip={describeTab(unit)} testId={`${testId}-fold`} id={unit.id} />
+              <StripLead width={width} number={isHead && first ? getSectionPill(readRowSection(first)) : null} dim={!isHead} tip={describeTab(unit)} testId={`${testId}-fold`} id={unit.id} lang={langLead ? unit.lang : undefined} />
             ) : (
-              <span className="strip-lead-gap" style={{ width: width + STRIP_LEAD_EXTRA }} />
+              <span className="strip-lead-gap" style={{ width: width + leadExtra }} />
             )}
             <span className="fold-line-text">{readLineText(rows)}</span>
           </button>
@@ -952,7 +969,8 @@ export function Paper({
     const unitId = Number(holder?.dataset.stripUnit ?? holder?.dataset.unit);
     if (!holder || !Number.isFinite(unitId)) return;
     event.preventDefault();
-    onUnitContextMenu(unitId, { x: event.clientX, y: event.clientY });
+    // 누른 글자 자리도 넘긴다 - Assign의 "Split here"가 그 자리에 나눌 선을 놓는다
+    onUnitContextMenu(unitId, { x: event.clientX, y: event.clientY }, readCaret(event.clientX, event.clientY));
   }
 
   // 두 번 누를 때 브라우저가 낱말을 고르지 않게 - 나눌 자리를 정하는 동작이다
@@ -964,6 +982,33 @@ export function Paper({
     if (onUnitDoubleClick && event.detail > 1 && (event.target as HTMLElement).closest(".su[data-unit]")) event.preventDefault();
     // 끌어 고르기가 없는 화면(Assign)에서 Shift+클릭은 여럿 고르기다 - 브라우저가 글자 선택을 늘려 클릭을 삼키지 않게
     if (!onRangeSelect && event.shiftKey && (event.target as HTMLElement).closest(".su[data-unit]")) event.preventDefault();
+  }
+
+  /** 떨어진 짝 구성원도 언어 칩을 보이게 - 올린 줄의 짝 조각에 data-mate-hover를 직접 단다(이웃한 짝 카드는 CSS가 맡는다).
+   *  React 상태로 두면 큰 문서에서 포인터가 지날 때마다 용지 전체가 다시 그려진다 */
+  function markHoverMates(unitId: number | null) {
+    if (mateHoverRef.current.unitId === unitId) return;
+    for (const el of mateHoverRef.current.els) delete el.dataset.mateHover;
+    const els: HTMLElement[] = [];
+    for (const mate of unitId === null ? [] : (matesOf.get(unitId) ?? [])) {
+      const el = pageRef.current?.querySelector<HTMLElement>(`.strip[data-strip-unit="${mate.id}"]`);
+      if (!el) continue;
+      el.dataset.mateHover = "";
+      els.push(el);
+    }
+    mateHoverRef.current = { unitId, els };
+  }
+
+  function handlePointerOver(event: ReactPointerEvent<HTMLDivElement>) {
+    tip.handlers.onPointerOver(event);
+    if (!strips) return;
+    const strip = (event.target as HTMLElement).closest(".strip-row")?.querySelector<HTMLElement>(":scope > .strip[data-strip-unit]");
+    markHoverMates(strip ? Number(strip.dataset.stripUnit) : null);
+  }
+
+  function handlePointerOut(event: ReactPointerEvent<HTMLDivElement>) {
+    tip.handlers.onPointerOut(event);
+    if (!(event.relatedTarget instanceof Node) || !pageRef.current?.contains(event.relatedTarget)) markHoverMates(null);
   }
 
   function handleMouseUp() {
@@ -993,6 +1038,8 @@ export function Paper({
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
         {...tip.handlers}
+        onPointerOver={handlePointerOver}
+        onPointerOut={handlePointerOut}
       >
         {contour && contourPath && (
           <svg className="sel-contour" aria-hidden>

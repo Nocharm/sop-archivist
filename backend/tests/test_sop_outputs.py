@@ -491,6 +491,43 @@ def test_output_c_structure(client: TestClient) -> None:
     assert (en["deleted"], en["moved"]) == ([], [])
 
 
+def test_composed_doc_carries_both_languages_in_c_order(client: TestClient) -> None:
+    fx = _setup(client)
+    merged_sources = [find_unit(fx.old1, MERGE_1)["id"], find_unit(fx.old2, MERGE_2)["id"]]
+    figure_id = next(unit["id"] for unit in fx.old1["units"] if unit["kind"] == "figure")
+
+    sop = _get_output(client, fx.bundle_id, f"outputs/c/docs/{fx.sop_id}", "en")
+    wi = _get_output(client, fx.bundle_id, f"outputs/c/docs/{fx.wi_id}", "ko")
+
+    assert (sop["code"], sop["entrance"]) == ("SOP-NEW", "assign")
+    # 칸은 결과물 C와 같다 - 빈 칸까지 SLOT_KEYS 순서, N/A 사유 그대로
+    assert [section["location_key"] for section in sop["sections"]] == list(SLOT_KEYS)
+    sections = {section["location_key"]: section for section in sop["sections"]}
+    assert sections["scope"]["na_reason"] == SCOPE_REASON
+    assert sections["purpose"]["items"] == []
+    # 한 칸에 두 언어가 함께, 출처 단위가 실린다 - 칸 이름은 lang의 언어
+    assert [(item["text"], item["lang"], item["source_unit_ids"]) for item in sections["general_requirements.operation"]["items"]] == [
+        (MERGED, "ko", merged_sources), (RECORDS_EN, "en", [find_unit(fx.old2, RECORDS_EN)["id"]]),
+    ]
+    assert sections["general_requirements.operation"]["label"] == "General Requirements › Operation"
+    # 보류한 그림은 고친 글이 없어 출처 원문(캡션)을 보인다
+    (step2,) = [section for section in wi["sections"] if section["location_key"] == "step:2:instruction"]
+    assert [(item["text"], item["status"], item["source_unit_ids"]) for item in step2["items"]] == [
+        (SPLIT_B, "confirmed", [find_unit(fx.old1, SPLIT_SOURCE)["id"]]), (CAPTION, "on_hold", [figure_id]),
+    ]
+
+
+def test_composed_doc_rejects_other_bundles_and_outsiders(client: TestClient) -> None:
+    fx = _setup(client)
+    other = create_bundle(client)["id"]
+
+    foreign = client.get(f"/api/bundles/{other}/outputs/c/docs/{fx.sop_id}", params={"lang": "en"}, headers=AUTHOR)
+    outsider = client.get(f"/api/bundles/{fx.bundle_id}/outputs/c/docs/{fx.sop_id}", params={"lang": "en"}, headers=REVIEWER)
+
+    assert (foreign.status_code, foreign.json()["detail"]["code"]) == (404, "target_doc_not_found")
+    assert (outsider.status_code, outsider.json()["detail"]["code"]) == (404, "bundle_not_found")
+
+
 # ── 요약 숫자·진행 숫자 ───────────────────────────────────────────────────────
 
 

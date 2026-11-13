@@ -2,7 +2,7 @@
 
 /** 고른 조각의 글 아래 단추 줄 - 경계 확인, 확인 취소(두 번 눌러), 짝 풀기·합치기 풀기(할 수 있을 때만).
  * 단추 묶음이 바뀌면(확인 ↔ 확인 취소 등) 옛 묶음이 브라운관 TV가 꺼지듯 사라진 뒤 새 묶음이 거꾸로 켜진다 - 바로 바뀌면 바뀐 줄 모른다.
- * 확인 뒤 다음 조각으로 넘어가면 그 조각의 단추 줄이 옛 줄이 다 꺼진 뒤에 켜진다.
+ * 확인 뒤에는 옛 줄이 꺼졌다 새 줄(확인 취소)로 켜지는 것을 다 보인 뒤 다음 조각으로 넘어간다 - Enter로 건너뛰어 옛 줄이 아직 꺼지는 중이면 다음 조각의 줄은 그 뒤에 켜진다.
  * 확인 취소의 "한 번 더 눌러" 라벨은 폭을 모핑해 같은 단추가 바뀐 것으로 읽히게 한다. */
 import { Check, Undo2, UnfoldVertical, Unlink } from "lucide-react";
 import { useEffect, useState, type AnimationEvent, type MouseEvent, type ReactNode } from "react";
@@ -33,8 +33,9 @@ interface ActionSet {
 
 // 마지막으로 묶음이 꺼지기 시작한 때 - 곧이어 새로 붙는 단추 줄(다음 조각)은 옛 줄이 꺼진 뒤에 켜진다
 let lastTurnOffAt = 0;
-// 이 안에 붙은 단추 줄은 꺼짐에 이어 켜진다(ms) - 확인 요청이 돌아와 다음 조각으로 넘어가는 시간을 넉넉히 덮는다
-const CHAIN_WINDOW_MS = 1500;
+// 이 안에 붙은 단추 줄은 꺼짐에 이어 켜진다(ms) - 옛 줄이 아직 꺼지는 중일 때만(꺼짐 한 번 ≈ --dur-slow × 1.15 = 276ms).
+// 화면은 확인한 조각의 줄이 꺼졌다 다시 켜진 뒤에 넘어가니(split-advance) 보통은 바로 켜지고, 그 사이 Enter로 건너뛰었을 때만 이어 켜진다
+const CHAIN_WINDOW_MS = 300;
 
 function readSetKey(set: ActionSet): string {
   return `${set.isChecked}:${set.canUnpair}:${set.canUnmerge}`;

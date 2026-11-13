@@ -7,9 +7,9 @@ import asyncio
 import logging
 from collections import Counter, defaultdict
 from collections.abc import Collection
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Path, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,15 +29,18 @@ from app.sop.membership import BundleContext, ensure_editable, lock_bundle, requ
 from app.sop.models import Bundle, TargetDoc, TargetSentence, TargetSource, UnitPairMember, WiStep
 from app.sop.outputs import (
     ARow,
+    ComposedDoc,
     COutput,
     FlowGraph,
     Summary,
+    build_composed_doc,
     build_output_a,
     build_output_b,
     build_output_c,
     build_summary,
 )
 from app.sop.snapshot import BundleSnapshot, load_bundle_snapshot
+from app.sop.tobe import MAX_DB_INT
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/bundles", tags=["sop-outputs"])
@@ -121,6 +124,21 @@ async def get_output_c(
 ) -> COutput:
     snap = await _load_snapshot_for_read(session, ctx.bundle.id)
     return await asyncio.to_thread(build_output_c, snap, lang)
+
+
+@router.get("/{bundle_id}/outputs/c/docs/{target_doc_id}", response_model=ComposedDoc)
+async def get_composed_doc(
+    target_doc_id: Annotated[int, Path(ge=1, le=MAX_DB_INT)],
+    lang: Literal["ko", "en"] = Query(),
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> ComposedDoc:
+    """Assign New 칸 — 새 문서 하나를 지금까지의 배정으로(결과물 C와 같은 칸, 두 언어 함께). lang은 칸 이름의 언어."""
+    snap = await _load_snapshot_for_read(session, ctx.bundle.id)
+    doc = await asyncio.to_thread(build_composed_doc, snap, target_doc_id, lang)
+    if doc is None:
+        raise_rule(404, "target_doc_not_found", target_doc_id=target_doc_id)
+    return doc
 
 
 @router.get("/{bundle_id}/summary", response_model=SummaryOut)

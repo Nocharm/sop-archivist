@@ -135,6 +135,17 @@ export function canSplitAt(unit: ViewUnit, at: number): boolean {
   return unit.text.slice(0, at).trim().length > 0 && unit.text.slice(at).trim().length > 0;
 }
 
+/** at에서 가장 가까운 나눌 자리(같으면 앞쪽) - 없으면 null. 우클릭한 자리나 문장 가운데에 나눌 선을 놓을 때 쓴다 */
+export function findNearestCut(unit: ViewUnit, at: number): number | null {
+  const length = unit.text.length;
+  const start = Math.min(Math.max(at, 0), length);
+  for (let distance = 0; distance <= length; distance += 1) {
+    if (canSplitAt(unit, start - distance)) return start - distance;
+    if (canSplitAt(unit, start + distance)) return start + distance;
+  }
+  return null;
+}
+
 /** 추출 경고의 보일 글 - 누락 글 경고는 backend ingest가 원문 조각을 detail.snippet에 담는다. 다른 경고는 글이 없다 */
 export function readWarningText(detail: Record<string, unknown>): string {
   return typeof detail.snippet === "string" ? detail.snippet : "";
