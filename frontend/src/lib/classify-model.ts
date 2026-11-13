@@ -168,6 +168,11 @@ export function buildDestinationOptions(tobe: ToBe, slotLabels: Record<string, s
   return options;
 }
 
+/** 세는 보낼 곳인가 - 칸 제목 항목은 칸 줄에 딸린 것이라 개수에 넣지 않는다 */
+export function isPlaceOption(option: Pick<DestinationOption, "destination">): boolean {
+  return option.destination.kind !== "slot_heading";
+}
+
 /** 저장된 판단·새 문장에서 지금 보낼 곳을 읽는다. 여러 곳이면 첫 새 문장 기준 */
 export function readDestination(group: Group | null, unitIds: number[]): Destination | null {
   if (!group) return null;

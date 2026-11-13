@@ -13,6 +13,7 @@ import {
   getRowStep,
   hasDraftChange,
   hasRowLanguage,
+  isPlaceOption,
   isSentenceUnit,
   isTranslationOf,
   listLinkLeftovers,
@@ -730,6 +731,21 @@ describe("slot heading destination", () => {
     const group: Group = { units: [], targets: [makeTarget({ id: 70, kind: "slot_heading", slot_key: "procedures", source_unit_ids: [20] })] };
     const body = buildGroupSave(makeDraft(), { units: [HEADING_UNITS[0]], group, tables: new Map() }, "confirm");
     expect(body.removed_target_ids).toEqual([70]);
+  });
+
+  it("re-sends the saved slot heading id and revision with the new section, removing nothing", () => {
+    const group: Group = { units: [], targets: [makeTarget({ id: 70, kind: "slot_heading", slot_key: "procedures", lang: "ko", source_unit_ids: [20], revision: 5 })] };
+    const body = buildGroupSave(makeDraft({ destination: { kind: "slot_heading", docId: 6, slotKey: "purpose" } }), { units: [HEADING_UNITS[0]], group, tables: new Map() }, "confirm");
+    expect(body.targets).toHaveLength(1);
+    expect(body.targets[0]).toMatchObject({ id: 70, revision: 5, kind: "slot_heading", slot_key: "purpose", target_doc_id: 6, source_unit_ids: [20] });
+    expect(body.removed_target_ids).toEqual([]);
+  });
+
+  it("does not count slot heading items as places", () => {
+    const options = buildDestinationOptions(TOBE, {});
+    expect(options.some((option) => option.destination.kind === "slot_heading")).toBe(true);
+    const visible = options.filter((option) => option.destination.kind !== "slot_heading");
+    expect(options.filter(isPlaceOption)).toEqual(visible);
   });
 
   it("reads a group with slot heading targets back as the slot heading destination", () => {
