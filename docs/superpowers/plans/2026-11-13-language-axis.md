@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11 · FastAPI · SQLAlchemy(async) · Alembic · pytest / Next.js 16 · React 19 · TypeScript strict · vitest · Playwright 스크립트(`frontend/scripts/pw-*.mjs`).
 
-**Spec:** `docs/superpowers/specs/2026-11-12-language-axis-design.md` (절 번호 §는 이 문서 기준. "제품 명세"는 `docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`)
+**Spec:** 명세 수정안 "언어 축 걷어 내기"(2026-11-12 — v0.16.12에서 제품 명세에 흡수하고 지웠다, git history) (절 번호 §는 이 문서 기준. "제품 명세"는 `docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`)
 
 ## Global Constraints
 
@@ -636,7 +636,7 @@ it("does not call a translated slot a split", ...);  // 같은 단위에서 나�
 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md` (§6.4·§6.5·§6.7·§7.4·§7.5·§7.7·§7.9·§7.15 — 수정안 §10 표에서 (1)~(3)에 해당하는 줄)
-- Modify: `docs/superpowers/specs/2026-11-12-language-axis-design.md` (상태 줄: (1)~(3) 구현 끝, (4) 남음)
+- Modify: 명세 수정안 "언어 축 걷어 내기"(지금은 지움) (상태 줄: (1)~(3) 구현 끝, (4) 남음)
 - Modify: `backend/CLAUDE.md`, `frontend/CLAUDE.md`, 루트 `CLAUDE.md`(상태 줄의 버전), `docs/README.md`(이 계획 한 줄)
 - Modify: `frontend/public/manual/img/*.png`, `docs/manual/img/*`(다시 뽑기)
 - Modify: `frontend/package.json`·`package-lock.json`(버전), `CHANGELOG.md`, `PROGRESS.md`

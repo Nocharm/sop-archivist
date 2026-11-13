@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11 · FastAPI · SQLAlchemy(async) · Alembic · openpyxl · Pillow · pytest / Next.js 16 · React 19 · TypeScript strict · vitest · Playwright 스크립트(`frontend/scripts/pw-*.mjs`).
 
-**Spec:** `docs/superpowers/specs/2026-11-13-outputs-one-set-design.md`(아래 §는 이 문서). 위 문서 `docs/superpowers/specs/2026-11-12-language-axis-design.md`("수정안"), 제품 명세 `docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`("제품 명세") §6.4·§6.5·§7.13–§7.15·§12.
+**Spec:** 설계 "결과물 한 벌"(2026-11-13, 아래 §는 이 문서). 위 문서 명세 수정안 "언어 축 걷어 내기"(2026-11-12, "수정안") — 둘 다 Task 13에서 제품 명세에 흡수하고 지웠다(git history). 제품 명세 `docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`("제품 명세") §6.4·§6.5·§7.13–§7.15·§12.
 
 **실행 순서 (2026-11-13 수정):** Task 1–7 끝 → **14** → 8 → 9 → 10 → 11 → **15** → 12 → 13.
 - Task 14(dev 합치기)와 Task 15(결과물 C 순서 바꾸기)는 실행 중에 사용자 요청으로 더했다. 요구는 설계 §4.6 끝·§5.6(O13)·§8·§11에 옮겼다.
@@ -1244,7 +1244,7 @@ git commit -m "test(smoke): one-set outputs, Excel preview and slot heading in b
 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md` (§6.4·§6.5 남은 결과물 문장, §7.13, §7.14, §12 화면 2·4·8 — 설계 §10 표 그대로)
-- Delete: `docs/superpowers/specs/2026-11-12-language-axis-design.md`, `docs/superpowers/specs/2026-11-13-outputs-one-set-design.md`
+- Delete: 두 설계 문서(명세 수정안 "언어 축 걷어 내기", 설계 "결과물 한 벌")
 - Modify: `docs/README.md`, `docs/superpowers/plans/2026-11-13-language-axis.md`·`PROGRESS.md`·`CHANGELOG.md`의 링크(라벨 글로 강등), `backend/CLAUDE.md`(줄 기준 숫자의 "결과물 요약은 (4)까지 언어별" 문장 → `build_summary`가 같은 줄 목록, 번역 줄 잠금 문장 → 깊이·단계만 잠김·표시는 그 줄, 결과물 `output_rows`·`sheet_model` 한 줄), 필요하면 `frontend/CLAUDE.md`
 - Modify: `frontend/package.json`·`package-lock.json`(PATCH), `CHANGELOG.md`, `PROGRESS.md`
 
@@ -1252,8 +1252,8 @@ git commit -m "test(smoke): one-set outputs, Excel preview and slot heading in b
 - [ ] **Step 2: 지우고 참조 고치기**
 
 ```bash
-git rm docs/superpowers/specs/2026-11-12-language-axis-design.md docs/superpowers/specs/2026-11-13-outputs-one-set-design.md
-git grep -n "2026-11-12-language-axis-design\|2026-11-13-outputs-one-set-design"
+git rm <두 설계 문서>
+git grep -n "<두 설계 문서의 파일 이름>"
 ```
 Expected: 남은 줄을 모두 라벨 글로 바꾼 뒤 출력 없음(코드 주석이 있으면 파일 이름만 남긴다 — `rules/common/documentation.md`).
 - [ ] **Step 3: dev 다시 합치기·버전·기록**
