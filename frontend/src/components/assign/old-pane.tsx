@@ -114,7 +114,7 @@ export function OldPane(props: OldPaneProps) {
             renderAtCut={props.cut ? props.renderAtCut : undefined}
             figureSource={props.figureSource}
             contour
-            strips={{ isChecked: IS_CHECKED, hideChecked: true, statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold }}
+            strips={{ isChecked: IS_CHECKED, hideChecked: true, langLead: true, statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold }}
             testId="assign-paper"
           />
         ) : (

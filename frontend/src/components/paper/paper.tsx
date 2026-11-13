@@ -9,7 +9,8 @@ import { ChevronsDownUp, CircleCheck, Ellipsis, FoldVertical, FolderCheck, Image
 import { Fragment, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { FigureImage } from "@/components/paper/figure-image";
-import { StripLead, STRIP_LEAD_EXTRA } from "@/components/paper/strip-lead";
+import { LangToken } from "@/components/paper/lang-token";
+import { StripLead, STRIP_LEAD_EXTRA, STRIP_LEAD_LANG } from "@/components/paper/strip-lead";
 import { UnitStatusChip } from "@/components/status";
 import { Collapse } from "@/components/ui/motion";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
@@ -117,6 +118,8 @@ interface PaperProps {
     renderNote?: (unitIds: number[]) => ReactNode;
     /** Assign - 조각 오른쪽 칸(연결 배지). 비면 폭을 차지하지 않는다 */
     renderPills?: (unitId: number) => ReactNode;
+    /** Assign - 앞머리 맨 왼쪽에 언어 표시(KO/EN)를 늘 둔다. 조각 위 테두리의 올릴 때 탭(Split)은 그리지 않는다 */
+    langLead?: boolean;
     /** Assign - 필터 접기. matchIds는 필터를 걸 때의 목록(스냅숏), 없으면 전부 그린다 */
     fold?: { matchIds: ReadonlySet<number>; open: FoldOpen; onOpenChange: (next: FoldOpen) => void };
   };
@@ -312,6 +315,9 @@ export function Paper({
     }
     return heads;
   }, [sections, cardTops]);
+  const langLead = strips?.langLead ?? false;
+  // 앞머리에서 번호 칸 밖의 폭 - 조각까지 틈, Assign은 언어 칸도
+  const leadExtra = STRIP_LEAD_EXTRA + (langLead ? STRIP_LEAD_LANG : 0);
   // 줄마다 번호 칸 폭 - 번호 없는 줄은 직전 줄 폭, 짝 카드는 첫 줄 폭(부분마다 문서 순서로)
   const tabWidths = useMemo(() => {
     const rows = sections.flatMap((section) =>
@@ -551,20 +557,8 @@ export function Paper({
   /** 조각 언어 칩(KO/EN) - 늘 그려 두고 조각을 올리거나 고를 때만 CSS가 드러낸다(조각마다 호버 상태를 두지 않는다). 짝이면 구성원 모두.
    *  자리는 조각 위 테두리 오른쪽 끝에 걸친 작은 탭 - 글·끝 아이콘과 겹치지 않고 조각 높이를 바꾸지 않는다. 언어가 없는 단위(neutral)는 없다 */
   function renderLang(unit: ViewUnit | undefined): ReactNode {
-    if (!unit || unit.lang === "neutral") return null;
-    const label = t(`paper.lang.${unit.lang}`);
-    return (
-      <span
-        className="strip-lang"
-        role="img"
-        aria-label={label}
-        data-tip={label}
-        tabIndex={unit.id === selectedId ? 0 : -1}
-        data-testid={`${testId}-lang-${unit.id}`}
-      >
-        {unit.lang.toUpperCase()}
-      </span>
-    );
+    if (!unit || langLead) return null;
+    return <LangToken lang={unit.lang} className="strip-lang" tabIndex={unit.id === selectedId ? 0 : -1} testId={`${testId}-lang-${unit.id}`} />;
   }
 
   /** 두 줄 사이의 묶기 - 같은 언어면 합치기, 한글·영어면 짝(아이콘으로 구별). 못 묶는 자리는 꺼 두고 까닭을 툴팁으로 */
@@ -618,6 +612,7 @@ export function Paper({
         tip={describeTab(unit)}
         testId={testId}
         id={unit.id}
+        lang={langLead ? unit.lang : undefined}
       />
     );
   }
@@ -739,7 +734,7 @@ export function Paper({
     return (
       <div key={row.key} className="strip-row" data-peek={isPeek ? "" : undefined}>
         {unit && renderLead(unit, section, width, bracket)}
-        {!unit && <span className="strip-lead-gap" style={{ width: width + STRIP_LEAD_EXTRA }} />}
+        {!unit && <span className="strip-lead-gap" style={{ width: width + leadExtra }} />}
         <div
           className="strip"
           data-kind={row.type}
@@ -788,7 +783,7 @@ export function Paper({
         data-pair={cardTops.has(readRowUnitId(row) ?? -1) ? "" : undefined}
         data-near-selected={selectedBlock.has(readRowUnitId(prev) ?? -1) || selectedBlock.has(readRowUnitId(row) ?? -1) ? "" : undefined}
         // 합치기 단추를 글 시작 x에 - 위아래 앞머리 중 넓은 쪽 뒤라 어느 앞머리에도 걸치지 않는다
-        style={{ "--gap-tab": `${Math.max(readTabWidth(prev), readTabWidth(row)) + STRIP_LEAD_EXTRA}px` }}
+        style={{ "--gap-tab": `${Math.max(readTabWidth(prev), readTabWidth(row)) + leadExtra}px` }}
         data-testid={`${testId}-gap-${row.key}`}
       >
         {renderMerge(prev, row)}
@@ -850,7 +845,7 @@ export function Paper({
     const cellOf = new Map(cells.map((cell) => [cell.item.key, cell]));
     const leadWidth = (key: string): number => {
       const first = cellOf.get(key)?.rows[0];
-      return (first ? readTabWidth(first) : 0) + STRIP_LEAD_EXTRA;
+      return (first ? readTabWidth(first) : 0) + leadExtra;
     };
     const { open, onOpenChange } = fold;
     let prevRow: PaperRow | null = null;
@@ -884,9 +879,9 @@ export function Paper({
             onClick={() => onOpenChange({ runs: open.runs, peeks: new Set([...open.peeks, entry.key]) })}
           >
             {unit ? (
-              <StripLead width={width} number={isHead && first ? getSectionPill(readRowSection(first)) : null} dim={!isHead} tip={describeTab(unit)} testId={`${testId}-fold`} id={unit.id} />
+              <StripLead width={width} number={isHead && first ? getSectionPill(readRowSection(first)) : null} dim={!isHead} tip={describeTab(unit)} testId={`${testId}-fold`} id={unit.id} lang={langLead ? unit.lang : undefined} />
             ) : (
-              <span className="strip-lead-gap" style={{ width: width + STRIP_LEAD_EXTRA }} />
+              <span className="strip-lead-gap" style={{ width: width + leadExtra }} />
             )}
             <span className="fold-line-text">{readLineText(rows)}</span>
           </button>
