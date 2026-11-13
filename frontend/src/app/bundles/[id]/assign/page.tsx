@@ -1906,7 +1906,8 @@ export default function AssignPage() {
           onConfirm={(text) => {
             const then = remarkEdit.then;
             setRemarkEdit(null);
-            setDraft({ reason: text });
+            // 글을 바꾸지 않고 확인하면 초안을 만들지 않는다 - 저장 안 한 변경으로 잡혀 나가기 확인·고치기 막힘이 생기지 않게
+            if (text !== reasonNow) setDraft({ reason: text });
             if (then) void runSave(then, text);
           }}
         />
