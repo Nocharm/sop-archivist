@@ -6,7 +6,7 @@
 import { ArrowDown, ArrowUp, Check, CheckCheck, Circle, CircleCheck, FileText, Link2, Redo2, Scissors, SquarePlus, Undo2, Unlink, Upload, WandSparkles, X } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useEffectEvent, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { SplitAiTabs } from "@/components/manage/split-ai";
 import { SplitAiBar } from "@/components/manage/split-ai-bar";
@@ -53,6 +53,7 @@ import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { buildGroupSave } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
 import { buildPaperModel, buildPaperTabs, canSplitAt, countUnchecked, readWarningText, resolveCutDrag, shouldRecenter, toBlockOffset, toUnitOffset, type PaperSheet, type PaperTabKey } from "@/lib/paper-model";
+import { getAdvanceDelay, getAdvanceWait, parseDurationMs } from "@/lib/split-advance";
 import { getSplitKeyAction } from "@/lib/split-keys";
 import { buildSplitMenu, getAiSplitReason, getPairMergeReason, hasBothScripts, isAiSplitKind, isUnitDecided, pickEnglishSide, planJoin, type JoinKind, type JoinPlan, type SplitMenuAction } from "@/lib/split-menu-model";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
@@ -68,6 +69,16 @@ interface PendingConfirm {
   run: () => Promise<EditResult>;
   /** 새 단위가 없는 편집(언어 바꾸기) 뒤에도 고른 채로 둘 단위 */
   keepId?: number;
+}
+
+/** 경계 확인 뒤 기다리는 넘어가기 - delay는 누른 때부터, timer·nextId는 저장 응답이 온 뒤에 정해진다 */
+interface PendingAdvance {
+  startedAt: number;
+  delay: number;
+  /** 기다리는 동안 Enter를 눌렀다 - 응답이 오는 대로(왔으면 바로) 넘어간다 */
+  isSkipped: boolean;
+  timer: number | null;
+  nextId: number | null;
 }
 
 /** 한 문장 → 한/영 짝 전환에서 합치기는 풀었지만 짝을 맺지 못함 - 확인 창으로 다시 묻지 않고(첫 단계가 이미 됐다) 어디까지 됐는지 알린다 */
@@ -132,6 +143,10 @@ export default function SplitPage() {
   // 경계 확인은 바로 보이게 먼저 칠한다 - 지금 보기 데이터에 묶여 있어 새 데이터가 오면 저절로 버려진다
   const [localChecks, setLocalChecks] = useState<{ base: DocumentView | null; values: Record<number, boolean> }>({ base: null, values: {} });
   const checkOverrides = localChecks.base === data ? localChecks.values : {};
+  // 확인 뒤 넘어가기 - 확인한 조각의 바뀜을 다 보인 뒤 다음 단위를 고른다(split-advance). 렌더와 상관없는 타이머라 ref다
+  const advanceRef = useRef<PendingAdvance | null>(null);
+  // 방금 확인한 단위 - 오른쪽 칸 상태 칩이 그 단위에서만 뒤집히며 바뀐다(다른 단위를 고를 때는 그냥 바뀐다)
+  const [flipId, setFlipId] = useState<number | null>(null);
   // 보이는 단위는 숨긴 같은 내용 단위까지 모두 확인돼야 확인된 것이다
   const isChecked = (unit: ViewUnit) =>
     checkOverrides[unit.id] ?? (unit.boundary_confirmed && (tabs?.mirrors.get(unit.id) ?? []).every((id) => model?.units.get(id)?.boundary_confirmed !== false));
@@ -192,7 +207,23 @@ export default function SplitPage() {
     void loadBundle(bundleId);
   }
 
+  function cancelAdvance() {
+    const pending = advanceRef.current;
+    if (pending?.timer != null) window.clearTimeout(pending.timer);
+    advanceRef.current = null;
+  }
+
+  /** 넘어가기를 기다리는 중 Enter - 저장이 끝났으면 바로 넘어가고, 아직이면 응답이 오는 대로 넘어간다 */
+  function skipAdvanceWait() {
+    const pending = advanceRef.current;
+    if (!pending) return;
+    pending.isSkipped = true;
+    if (pending.timer !== null && pending.nextId !== null) selectUnit(pending.nextId, true);
+  }
+
   function selectUnit(unitId: number | null, scroll = false) {
+    // 기다리던 넘어가기는 다른 고름(사람이 고른 것 포함)이 오면 거둔다
+    cancelAdvance();
     setSelectedId(unitId);
     if (unitId !== null) setSeenAi((prev) => new Set(prev).add(unitId));
     setCutAt(null);
@@ -315,17 +346,36 @@ export default function SplitPage() {
   function setBoundary(unit: ViewUnit, confirmed: boolean) {
     // 다른 요청이 도는 중이면 보내지 않으니 먼저 칠하지도 않는다
     if (docId === null || busy) return;
+    cancelAdvance();
     setLocalChecks({ base: data, values: { ...checkOverrides, [unit.id]: confirmed } });
+    setFlipId(confirmed ? unit.id : null);
+    // 저장은 바로 보내고, 넘어가기는 바뀜(단추 줄 꺼짐·켜짐)이 끝날 때까지 기다린다 - 움직임 줄이기면 기다리지 않는다
+    const pending: PendingAdvance | null = confirmed
+      ? {
+          startedAt: performance.now(),
+          delay: getAdvanceDelay(parseDurationMs(getComputedStyle(document.documentElement).getPropertyValue("--dur-slow")), matchMedia("(prefers-reduced-motion: reduce)").matches),
+          isSkipped: false,
+          timer: null,
+          nextId: null,
+        }
+      : null;
+    advanceRef.current = pending;
     void runSimple(() => setBoundaryConfirmed(bundleId, docId, [unit.id, ...(tabs?.mirrors.get(unit.id) ?? [])], confirmed), null, () => {
       // Enter는 확인하고 다음 확인 안 된 단위로 간다 - 탭이 끝나면 다음 탭으로 넘어간다
-      if (confirmed && model && tabs) {
-        const index = tabs.order.indexOf(unit.id);
-        const next = tabs.order.slice(index + 1).find((id) => {
-          const candidate = model.units.get(id);
-          return candidate !== undefined && !isChecked(candidate);
-        });
-        if (next !== undefined) selectUnit(next, true);
-      }
+      if (!pending || advanceRef.current !== pending || !model || !tabs) return;
+      const index = tabs.order.indexOf(unit.id);
+      const next = tabs.order.slice(index + 1).find((id) => {
+        const candidate = model.units.get(id);
+        return candidate !== undefined && !isChecked(candidate);
+      });
+      if (next === undefined) return;
+      const wait = getAdvanceWait(pending.delay, performance.now() - pending.startedAt, pending.isSkipped);
+      pending.nextId = next;
+      if (wait === 0) selectUnit(next, true);
+      else pending.timer = window.setTimeout(() => selectUnit(next, true), wait);
+    }).then(() => {
+      // 저장이 실패했거나 갈 단위가 없으면 기다림을 거둔다 - 다음 Enter가 건너뛰기로 읽히지 않게
+      if (pending && advanceRef.current === pending && pending.timer === null) advanceRef.current = null;
     });
   }
 
@@ -508,8 +558,14 @@ export default function SplitPage() {
       hasCut: cut !== null,
       checked: selected !== null && isChecked(selected),
       canEdit,
+      advancing: advanceRef.current !== null,
     });
     if (action === null) return;
+    if (action === "skip") {
+      event.preventDefault();
+      skipAdvanceWait();
+      return;
+    }
     if (action === "undo" || action === "redo") {
       event.preventDefault();
       if (action === "redo" ? data?.edits.can_redo : data?.edits.can_undo) runStep(action);
@@ -719,7 +775,13 @@ export default function SplitPage() {
             </Tooltip>
           </div>
             <div className="flex items-center gap-2 whitespace-nowrap" data-testid="split-unit-state">
-              <span className={`check-chip ${isChecked(selected) ? "yes" : "no"}`} data-testid="split-boundary-state">
+              {/* 방금 확인한 단위에서는 칩이 뒤집히며 바뀐다 - 넘어가기는 이 뒤집힘과 단추 줄 바뀜이 끝난 뒤다(split-advance) */}
+              <span
+                key={`${selected.id}:${isChecked(selected)}`}
+                className={`check-chip ${isChecked(selected) ? "yes" : "no"}`}
+                data-flip={flipId === selected.id && isChecked(selected) ? "" : undefined}
+                data-testid="split-boundary-state"
+              >
                 {isChecked(selected) ? <Check size={12} strokeWidth={2.6} aria-hidden /> : <Circle size={11} strokeWidth={2.2} aria-hidden />}
                 {isChecked(selected) ? "Checked" : "Not checked"}
               </span>

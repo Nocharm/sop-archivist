@@ -1235,6 +1235,9 @@
   .check-chip { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 11px; font-size: var(--fs-cap); font-weight: 600; }
   .check-chip.no { background: var(--st-hold-tint); color: var(--st-hold-ink); box-shadow: inset 0 0 0 1px var(--st-hold-line); }
   .check-chip.yes { background: var(--accent); color: var(--on-accent); }
+  /* 방금 확인한 단위의 칩 - 가로축으로 뒤집히며 Checked로 바뀐다(Split이 이 바뀜과 단추 줄 전환이 끝난 뒤 다음 단위로 넘어간다). 움직임 줄이기면 --dur-slow가 0이라 바로 */
+  .check-chip[data-flip] { animation: chip-flip var(--dur-slow) var(--ease-enter) both; }
+  @keyframes chip-flip { from { transform: perspective(80px) rotateX(90deg); opacity: .4; } }
 
   /* 종이 묶음 - 탭 하나에 용지 하나(본문) 또는 구역 묶음마다 하나(머리말·꼬리말). 넓은 창에서는 폭을 더 쓰되 줄 길이는 묶는다 */
   .sheets { display: grid; gap: 22px; width: 100%; max-width: 860px; margin-inline: auto; }
