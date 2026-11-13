@@ -44,6 +44,9 @@ from tests.sop_helpers import (
     upload,
 )
 from tests.test_sop_decisions import _body, _target, _unit_in
+from tests.test_sop_decisions import NA_SLOTS as DECISIONS_NA_SLOTS
+from tests.test_sop_decisions import TOBE_DOCS as DECISIONS_TOBE_DOCS
+from tests.test_sop_decisions import WI_STEPS as DECISIONS_WI_STEPS
 from tests.test_sop_decisions import _setup as _setup_decisions
 from tests.test_sop_pair_settle import EN_HEAD, KO_HEAD
 
@@ -792,3 +795,100 @@ def test_every_decision_route_is_recorded() -> None:
     }
 
     assert paths == DECISION_ROUTES
+
+
+# ── 되살릴 새 문장의 자리·딸린 행 ─────────────────────────────────────────────
+
+EXTRA_DOC = {"code": "SOP-X", "title": "Synthetic extra SOP", "doc_type": "sop", "parent_code": None}
+
+
+def _confirm_clear_then(client: TestClient, bundle_id: int, unit: dict, target: dict) -> None:
+    """unit을 target 자리로 확정 → 비우기, 둘 다 기록한다."""
+    body = {"action": "confirm", "units": [_unit_in(unit)], "targets": [target], "undo": UNDO}
+    _ok(save_group(client, bundle_id, body))
+    _clear(client, bundle_id, unit, 2, undo=UNDO)
+
+
+def _assert_stuck_cleanly(client: TestClient, bundle_id: int, unit_ids: list[int]) -> None:
+    before = _dump(bundle_id)
+    for _ in range(2):  # 다시 눌러도 같은 이유로 거절되고 500이 나지 않는다
+        response = _undo(client, bundle_id)
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"] == {"code": "undo_conflict", "unit_ids": unit_ids}
+        assert _dump(bundle_id) == before
+
+
+def test_undo_refused_when_target_doc_was_deleted(client: TestClient) -> None:
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    response = put_tobe(client, bundle_id, [*TOBE_DOCS, EXTRA_DOC])
+    assert response.status_code == 200, response.text
+    docs = {doc["code"]: doc["id"] for doc in response.json()["docs"]}
+    uploaded = upload(client, bundle_id, build_docx(OLD_BODY), OLD_NAME)
+    unit = find_unit(get_view(client, bundle_id, uploaded.json()["id"]), STORAGE)
+    _confirm_clear_then(client, bundle_id, unit, _target("t", docs["SOP-X"], [unit], slot_key="purpose"))
+    removed = put_tobe(client, bundle_id, TOBE_DOCS)
+    assert removed.status_code == 200, removed.text
+
+    _assert_stuck_cleanly(client, bundle_id, [unit["id"]])
+
+
+def test_undo_refused_when_wi_step_was_removed(client: TestClient) -> None:
+    fx = _setup_decisions(client)
+    unit = find_unit(fx.view, STORAGE)
+    target = _target("t", fx.wi_id, [unit], wi_step=1, wi_part="instruction")
+    _confirm_clear_then(client, fx.bundle_id, unit, target)
+    removed = put_tobe(client, fx.bundle_id, DECISIONS_TOBE_DOCS, na_slots=DECISIONS_NA_SLOTS)
+    assert removed.status_code == 200, removed.text
+
+    _assert_stuck_cleanly(client, fx.bundle_id, [unit["id"]])
+
+
+def test_undo_refused_when_slot_became_na(client: TestClient) -> None:
+    fx = _setup_decisions(client)
+    unit = find_unit(fx.view, STORAGE)
+    _confirm_clear_then(client, fx.bundle_id, unit, _target("t", fx.sop_id, [unit], slot_key="purpose"))
+    na = [*DECISIONS_NA_SLOTS, {"code": "SOP-NEW", "slot_key": "purpose", "reason": "Synthetic: not needed"}]
+    marked = put_tobe(client, fx.bundle_id, DECISIONS_TOBE_DOCS, na_slots=na, wi_steps=DECISIONS_WI_STEPS)
+    assert marked.status_code == 200, marked.text
+
+    _assert_stuck_cleanly(client, fx.bundle_id, [unit["id"]])
+
+
+def test_undo_refused_when_another_author_linked_to_my_new_sentence(client: TestClient) -> None:
+    fx = _setup_rich(client)
+    assert set_members(client, fx.bundle_id, [("qa.member", "author"), ("qa.lead", "author")]).status_code == 200
+    _confirm_unit(client, fx, fx.a, undo=UNDO)
+    (target,) = get_group_by_unit(client, fx.bundle_id, fx.a["id"], headers=OTHER_AUTHOR)["targets"]
+    linked = save_group(client, fx.bundle_id, {
+        "action": "confirm",
+        "units": [_unit_in(fx.a, 2), _unit_in(fx.b)],
+        "targets": [{"key": "t", "id": target["id"], "revision": target["revision"], "slot_key": target["slot_key"],
+                     "source_unit_ids": [fx.a["id"], fx.b["id"]], "text": f"{TEXT_A} {TEXT_B}", "change_type": "as_is"}],
+    }, headers=OTHER_AUTHOR)
+    assert linked.status_code == 200, linked.text
+    before = _dump(fx.bundle_id)
+
+    response = _undo(client, fx.bundle_id)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "undo_conflict"
+    assert _dump(fx.bundle_id) == before
+
+
+def test_dependents_added_to_a_row_being_deleted_are_found() -> None:
+    """남이 지울 새 문장에 출처를 붙였거나 지울 짝에 멤버를 넣었으면 그 Unit을 댄다 — 단계에 든 행은 세지 않는다."""
+    expected: Snapshot = {
+        "target_sentences": {"10": {"id": 10, "parent_target_id": None}},
+        "target_sources": {"10,1": {"target_id": 10, "unit_id": 1}},
+        "unit_pairs": {"5": {"id": 5, "document_id": 1}},
+        "unit_pair_members": {"5,1": {"pair_id": 5, "unit_id": 1}},
+    }
+    restore: Snapshot = {"target_sentences": {}, "target_sources": {}, "unit_pairs": {}, "unit_pair_members": {}}
+    current: Snapshot = {
+        **expected,
+        "target_sources": {**expected["target_sources"], "10,2": {"target_id": 10, "unit_id": 2}},
+        "unit_pair_members": {**expected["unit_pair_members"], "5,3": {"pair_id": 5, "unit_id": 3}},
+    }
+
+    assert decision_steps._find_unrecorded_dependents(expected, restore, expected) is None
+    assert decision_steps._find_unrecorded_dependents(expected, restore, current) == [2, 3]

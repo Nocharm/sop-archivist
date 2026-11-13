@@ -18,6 +18,8 @@ from app.sop.models import (
     Bundle,
     DecisionStep,
     Document,
+    TargetDoc,
+    TargetDocNaSlot,
     TargetSentence,
     TargetSource,
     TargetTextHistory,
@@ -26,9 +28,10 @@ from app.sop.models import (
     UnitEdit,
     UnitPair,
     UnitPairMember,
+    WiStep,
 )
 from app.sop.schemas import NO_NUL
-from app.sop.tobe import MAX_DB_INT
+from app.sop.tobe import MAX_DB_INT, is_within_slot
 from app.sop.units import UNIT_ACTIVE
 
 # 표 이름 → 행 키 문자열 → 열 값(JSON에 담을 수 있는 값, 시각은 ISO 문자열)
@@ -497,6 +500,14 @@ async def _move_snapshot(
     inactive = await _find_inactive_units(session, restore)
     if inactive:
         raise_rule(409, "undo_conflict", unit_ids=inactive)
+    # 지울 새 문장·짝에 그 뒤 남이 붙인 행(출처·칸 문장·짝 멤버)이 있으면 같이 사라지므로 거절한다
+    dependents = _find_unrecorded_dependents(expected, restore, current)
+    if dependents is not None:
+        raise_rule(409, "undo_conflict", unit_ids=dependents)
+    # 되살릴 새 문장의 자리가 그 뒤 To-Be에서 사라졌으면(문서 삭제·칸 N/A·WI 단계 삭제) 되쓰지 않는다
+    misplaced = await _find_misplaced_targets(session, bundle_id, restore)
+    if misplaced is not None:
+        raise_rule(409, "undo_conflict", unit_ids=misplaced)
 
     pair_document_ids = _collect_pair_documents(expected, restore, current)
     _record_text_history(session, restore, current, actor)
@@ -552,6 +563,65 @@ async def _find_inactive_units(session: AsyncSession, restore: Snapshot) -> list
         (await session.scalars(select(Unit.id).where(Unit.id.in_(unit_ids), Unit.status == UNIT_ACTIVE))).all()
     )
     return sorted(unit_ids - active)
+
+
+def _find_unrecorded_dependents(expected: Snapshot, restore: Snapshot, current: Snapshot) -> list[int] | None:
+    """지울 새 문장·짝(expected에만 있는 행)에 딸린 지금 행 중 단계에 없는 것의 unit_id — cascade로 말없이 사라질 남의 일.
+
+    없으면 None. 있는데 unit_id를 못 대면(출처 없는 칸 문장) 빈 목록이다.
+    """
+    gone_targets = {int(key) for key in expected.get("target_sentences", {}) if key not in restore.get("target_sentences", {})}
+    gone_pairs = {int(key) for key in expected.get("unit_pairs", {}) if key not in restore.get("unit_pairs", {})}
+    unit_ids: set[int] = set()
+    for key, row in current.get("target_sources", {}).items():
+        if row["target_id"] in gone_targets and key not in expected.get("target_sources", {}):
+            unit_ids.add(row["unit_id"])
+    for key, row in current.get("unit_pair_members", {}).items():
+        if row["pair_id"] in gone_pairs and key not in expected.get("unit_pair_members", {}):
+            unit_ids.add(row["unit_id"])
+    for key, row in current.get("target_sentences", {}).items():
+        if row["parent_target_id"] in gone_targets and key not in expected.get("target_sentences", {}):
+            unit_ids.update(_list_source_units(current, int(key)) or [UNKNOWN_UNIT_ID])
+    return sorted(unit_ids - {UNKNOWN_UNIT_ID}) if unit_ids else None
+
+
+async def _find_misplaced_targets(session: AsyncSession, bundle_id: int, restore: Snapshot) -> list[int] | None:
+    """되쓸 새 문장 중 자리가 지금 To-Be에 없는 것의 출처 unit_id들 — 모두 제자리면 None.
+
+    문서가 있어야 하고, SOP 칸은 N/A가 아니어야 하며(상위 칸 N/A는 하위 칸도 덮는다), WI 단계는 선언되어 있어야 한다.
+    문서 종류가 바뀌어 칸·단계가 맞지 않는 경우도 걸린다.
+    """
+    rows = restore.get("target_sentences", {})
+    if not rows:
+        return None
+    docs = {doc.id: doc for doc in await session.scalars(select(TargetDoc).where(TargetDoc.bundle_id == bundle_id))}
+    na_slots: dict[int, list[str]] = {}
+    for doc_id, slot_key in await session.execute(
+        select(TargetDocNaSlot.target_doc_id, TargetDocNaSlot.slot_key).where(TargetDocNaSlot.target_doc_id.in_(docs))
+    ):
+        na_slots.setdefault(doc_id, []).append(slot_key)
+    steps = set(
+        (await session.execute(select(WiStep.target_doc_id, WiStep.step_no).where(WiStep.target_doc_id.in_(docs)))).all()
+    )
+    misplaced: list[int] = []
+    for key, row in rows.items():
+        doc = docs.get(row["target_doc_id"])
+        slot_key, wi_step = row["slot_key"], row["wi_step"]
+        is_placed = doc is not None and (
+            (slot_key is None or (doc.doc_type == "sop" and not any(
+                is_within_slot(slot_key, na_slot) for na_slot in na_slots.get(doc.id, ())
+            )))
+            and (wi_step is None or (doc.doc_type == "wi" and (doc.id, wi_step) in steps))
+        )
+        if not is_placed:
+            misplaced.append(int(key))
+    if not misplaced:
+        return None
+    return sorted({unit_id for target_id in misplaced for unit_id in _list_source_units(restore, target_id)})
+
+
+def _list_source_units(state: Snapshot, target_id: int) -> list[int]:
+    return [row["unit_id"] for row in state.get("target_sources", {}).values() if row["target_id"] == target_id]
 
 
 def _collect_pair_documents(expected: Snapshot, restore: Snapshot, current: Snapshot) -> list[int]:
