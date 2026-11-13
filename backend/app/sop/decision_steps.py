@@ -1,6 +1,7 @@
 """Assign 되돌리기 스냅숏 엔진 — 묶음의 판단 상태 표를 덤프·비교·되쓴다 (설계: docs/superpowers/specs/2026-11-13-assign-undo-design.md §5.2·§5.3)."""
 
-from collections.abc import Awaitable, Callable
+from collections import defaultdict
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Annotated, Literal, TypeVar
@@ -11,8 +12,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
+from app.sop.detach import ORIGIN_TRANSLATION, load_source_target_ids
 from app.sop.errors import raise_rule
 from app.sop.events import record_event
+from app.sop.groups import select_in_chunks
 from app.sop.membership import lock_bundle
 from app.sop.models import (
     AiSuggestion,
@@ -31,6 +34,7 @@ from app.sop.models import (
     UnitPairMember,
     WiStep,
 )
+from app.sop.pair_settle import has_diverging_fates, load_decided_fates
 from app.sop.schemas import NO_NUL
 from app.sop.tobe import MAX_DB_INT, is_within_slot
 from app.sop.units import UNIT_ACTIVE
@@ -517,6 +521,10 @@ async def _move_snapshot(
     misplaced = await _find_misplaced_targets(session, bundle_id, restore)
     if misplaced is not None:
         raise_rule(409, "undo_conflict", unit_ids=misplaced)
+    # 글·자리를 되쓸 새 문장을 그 뒤 단계 밖에서 번역했으면 이제 없는 글의 번역이 남으므로 쓸지 않고 거절한다
+    retranslated = await _find_unrecorded_translations(session, expected, restore, current)
+    if retranslated is not None:
+        raise_rule(409, "undo_conflict", unit_ids=retranslated)
 
     pair_document_ids = _collect_pair_documents(expected, restore, current)
     try:
@@ -524,6 +532,10 @@ async def _move_snapshot(
         async with session.begin_nested():
             _record_text_history(session, restore, current, actor)
             await write_state(session, bundle_id, restore, current, other=expected)
+            # 짝의 운명은 단계 밖 짝 상대·짝 행에도 달려 행 비교로는 못 본다 — 되쓴 결과에서 재고, 갈리면 savepoint째 물린다
+            split = await _find_split_pairs(session, _collect_restored_units(expected, restore))
+            if split:
+                raise_rule(409, "undo_conflict", unit_ids=split)
     except IntegrityError:
         raise_rule(409, "undo_conflict", unit_ids=list(step.unit_ids))
     if pair_document_ids:
@@ -647,6 +659,81 @@ async def _find_misplaced_targets(session: AsyncSession, bundle_id: int, restore
 
 def _list_source_units(state: Snapshot, target_id: int) -> list[int]:
     return [row["unit_id"] for row in state.get("target_sources", {}).values() if row["target_id"] == target_id]
+
+
+def _collect_restored_units(expected: Snapshot, restore: Snapshot) -> set[int]:
+    """되쓰기가 판단·짝 멤버·출처를 바꾸는 Unit — 운명이 바뀔 수 있는 짝은 이 Unit이 든 짝뿐이다."""
+    unit_ids: set[int] = set()
+    for side in (expected, restore):
+        unit_ids.update(int(key) for key in side.get("unit_decisions", {}))
+        for name in ("unit_pair_members", "target_sources"):
+            unit_ids.update(row["unit_id"] for row in side.get(name, {}).values())
+    return unit_ids
+
+
+async def _find_split_pairs(session: AsyncSession, unit_ids: Collection[int]) -> list[int]:
+    """unit_ids가 든 짝 중 지금 운명이 둘 이상으로 갈린 짝의 멤버 unit_id — 판정은 settle_pairs와 같은 pair_settle 한 벌이다."""
+    pair_ids = {
+        row[0] for row in await select_in_chunks(
+            session, lambda chunk: select(UnitPairMember.pair_id).where(UnitPairMember.unit_id.in_(chunk)), unit_ids
+        )
+    }
+    members: dict[int, list[int]] = defaultdict(list)
+    for pair_id, unit_id in await select_in_chunks(
+        session,
+        lambda chunk: select(UnitPairMember.pair_id, UnitPairMember.unit_id).where(UnitPairMember.pair_id.in_(chunk)),
+        pair_ids,
+    ):
+        members[pair_id].append(unit_id)
+    fates = await load_decided_fates(session, [unit_id for group in members.values() for unit_id in group])
+    return sorted({unit_id for group in members.values() if has_diverging_fates(fates, group) for unit_id in group})
+
+
+# 번역이 옮긴 출처 새 문장의 자리 — decisions._Place와 같은 열이다(절 경로는 저장이 바꾸지 않고 sweep_translations가 따라 옮기기만 한다)
+_TRANSLATED_PLACE_COLUMNS = ("target_doc_id", "slot_key", "wi_step", "wi_part", "cell_row", "cell_col", "parent_target_id")
+
+
+def _read_translated_shape(row: dict) -> tuple:
+    """번역이 옮긴 출처의 모습 — 글(확정 글, 없으면 AI 글)과 자리. decisions._is_source_changed와 같은 기준이다."""
+    return (row["confirmed_text"] or row["ai_text"], *(row[name] for name in _TRANSLATED_PLACE_COLUMNS))
+
+
+def _find_reshaped_targets(expected: Snapshot, restore: Snapshot) -> set[int]:
+    """되쓰기가 글·자리·출처 단위를 바꾸거나 지우는 새 문장 id — sweep_translations가 번역을 다시 보게 하는 경우와 같다."""
+    old_rows, new_rows = expected.get("target_sentences", {}), restore.get("target_sentences", {})
+    reshaped = {
+        int(key) for key, row in old_rows.items()
+        if key not in new_rows or _read_translated_shape(row) != _read_translated_shape(new_rows[key])
+    }
+    old_links, new_links = expected.get("target_sources", {}), restore.get("target_sources", {})
+    reshaped.update(row["target_id"] for key, row in old_links.items() if key not in new_links)
+    reshaped.update(row["target_id"] for key, row in new_links.items() if key not in old_links)
+    return reshaped
+
+
+async def _find_unrecorded_translations(
+    session: AsyncSession, expected: Snapshot, restore: Snapshot, current: Snapshot
+) -> list[int] | None:
+    """되쓰기가 글·자리를 바꾸거나 지우는 새 문장에 단계에 없는 번역이 지금 있으면 그 새 문장의 출처 unit_id들 — 없으면 None.
+
+    단계를 남긴 저장은 그 새 문장의 번역을 그때 모두 쓸었으니(sweep_translations — 지우거나 보류해 단계에 든다) 단계에 없는 번역은
+    그 뒤에 지금 글을 옮긴 것이다. 되쓰면 이제 없는 글의 번역이 남는다(확정이면 옛 글의 번역이 확정인 채 나간다).
+    """
+    reshaped = _find_reshaped_targets(expected, restore)
+    if not reshaped:
+        return None
+    recorded = expected.get("target_sentences", {}).keys() | restore.get("target_sentences", {}).keys()
+    others = [
+        int(key) for key, row in current.get("target_sentences", {}).items()
+        if row["origin"] == ORIGIN_TRANSLATION and key not in recorded
+    ]
+    stale = {source_id for source_id in (await load_source_target_ids(session, others)).values() if source_id in reshaped}
+    if not stale:
+        return None
+    return sorted({
+        row["unit_id"] for state in (current, restore) for row in state.get("target_sources", {}).values()
+        if row["target_id"] in stale
+    })
 
 
 def _collect_pair_documents(expected: Snapshot, restore: Snapshot, current: Snapshot) -> list[int]:
