@@ -82,7 +82,7 @@ Assign에서 문장을 자른 직후 Ctrl+Z를 누르면 사용자는 그 자르
 - **적용**: before 모습으로 되쓴다. after에만 있는 행은 지우고, before에만 있는 행은 **같은 id로** 다시 넣고, 둘 다 있는 행은 before 값으로 고친다. 단 revision 열은 before 값이 아니라 **지금 값 + 1**로 둔다. 화면에 남은 옛 revision으로 하는 저장은 409가 되어야 하기 때문이다. 단계에는 적용 뒤의 실제 모습을 새 after로 다시 저장해, 다시 하기·되돌리기가 계속 맞물리게 한다. 짝 행이 바뀌면 그 문서의 Document.revision을 올린다(`pairs._record`와 같다). 확정 글이 바뀌면 TargetTextHistory를 보통 저장처럼 남긴다.
 - 활동 기록에는 `decision.undo` / `decision.redo`(단계 이름, 건수)를 남긴다.
 - **응답 `DecisionStepResult`**(Split `EditStepResult`와 맞춘 모양): `op`(단계 이름), `unit_ids`(대상 Unit), `target_ids`(대상 New 문장), `focus`(`{unit_id}` 또는 `{target_id}`), `scope_label`(Reset의 문서 번호, 묶음 전체면 null), `can_undo`, `can_redo`.
-- 저장 응답들(groups/save, clear, bulk, reset, match/bulk-confirm)에도 `undo: {can_undo, can_redo}`를 실어 화면이 단추를 따로 묻지 않고 켠다. 화면을 처음 열 때는 새 세션이라 둘 다 꺼짐이다.
+- 저장 응답의 모양은 바꾸지 않는다. 일괄 처분 응답이 목록이라 필드를 더할 수 없어서다. 화면이 단추 상태를 스스로 정한다(계획 때 정한 내 판단). 기록이 실린 저장이 성공하면 Undo를 켜고 Redo를 끈다. undo·redo를 한 뒤에는 응답의 `can_undo`·`can_redo`를 따른다. `nothing_to_*` 거절을 받으면 그 방향 단추를 끈다. 화면을 처음 열 때는 새 세션이라 둘 다 꺼짐이다.
 
 ### 5.4 단계 이름(op)은 화면이 준다
 `save_group` 하나가 확정·보류·잇기·끊기·New 표시·출처로 잇기를 모두 맡기 때문에 서버만으로는 이름을 가를 수 없다. 저장 요청에 `undo_op`(정해진 값 목록, 경계에서 검증)를 실어 보내고 서버는 그대로 담는다. clear·bulk(delete/move)·reset·bulk-confirm은 서버가 이름을 안다. 대상 Unit·New 문장도 화면이 `undo_focus`로 준다. 알림의 "어느 Unit"은 사용자가 고른 줄이어야 하는데, 서버가 바꾼 행(보류로 번진 다른 줄 포함)으로는 그것을 알 수 없기 때문이다.
