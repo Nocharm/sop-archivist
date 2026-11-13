@@ -326,6 +326,37 @@ class UnitEdit(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class DecisionStep(Base):
+    """Assign 되돌리기 한 단계 — 판단 저장 전후의 바뀐 행 스냅숏(snapshot) 또는 Split 편집 기록 가리키기(unit_edit)."""
+
+    __tablename__ = "decision_steps"
+    __table_args__ = (Index("ix_decision_steps_session", "bundle_id", "actor", "session_key", "seq"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    bundle_id: Mapped[int] = mapped_column(ForeignKey("bundles.id", ondelete="CASCADE"))
+    actor: Mapped[str] = mapped_column(String(100))
+    # 화면 세션(탭)마다 기록이 따로다
+    session_key: Mapped[str] = mapped_column(String(64))
+    seq: Mapped[int] = mapped_column(Integer)
+    op: Mapped[str] = mapped_column(String(24))
+    kind: Mapped[str] = mapped_column(String(10))
+    state: Mapped[str] = mapped_column(String(8), default="applied")
+    # 여러 요청으로 나뉜 한 동작(같은 글자 일괄 확정)을 한 단계로 합치는 키
+    step_key: Mapped[str | None] = mapped_column(String(64), default=None)
+    focus: Mapped[dict] = mapped_column(JSON, default=dict)
+    unit_ids: Mapped[list] = mapped_column(JSON, default=list)
+    scope_label: Mapped[str | None] = mapped_column(String(200), default=None)
+    before: Mapped[dict] = mapped_column(JSON, default=dict)
+    after: Mapped[dict] = mapped_column(JSON, default=dict)
+    document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), index=True, default=None
+    )
+    unit_edit_id: Mapped[int | None] = mapped_column(
+        ForeignKey("unit_edits.id", ondelete="SET NULL"), index=True, default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class UnitPair(Base):
     """한/영 짝 — 같은 뜻의 두 언어 단위 묶음. 한쪽 최대 단위 수는 MAX_PAIR_SIDE."""
 
