@@ -1243,6 +1243,8 @@
   /* 단추 묶음이 바뀔 때(SplitUnitActions) - 옛 묶음은 브라운관 TV가 꺼지듯 세로로 눌려 가는 선이 된 뒤 가운데 점으로, 새 묶음은 거꾸로 켜진다. 줄 폭은 단추 묶음만큼이라 가운데가 단추들의 가운데다 */
   .strip-acts-bar[data-crt="off"] { animation: crt-off calc(var(--dur-slow) * 1.15) var(--ease-exit) both; pointer-events: none; }
   .strip-acts-bar[data-crt="on"] { animation: crt-on calc(var(--dur-slow) * 1.15) var(--ease-enter) both; }
+  /* 확인 뒤 넘어가기를 기다리는 동안 - 꺼진 모양 그대로(자리는 남겨 조각 높이가 튀지 않게) */
+  .strip-acts-bar[data-crt="gone"] { opacity: 0; transform: scale(0, 0.06); pointer-events: none; }
   .strip-acts-bar[data-crt="on-after"] { animation: crt-on calc(var(--dur-slow) * 1.15) var(--ease-enter) calc(var(--dur-slow) * 1.15) both; }
   @keyframes crt-off { 0% { transform: scale(1, 1); filter: brightness(1); } 55% { transform: scale(1, 0.06); filter: brightness(1.6); opacity: 1; } 100% { transform: scale(0, 0.06); filter: brightness(2.2); opacity: 0; } }
   @keyframes crt-on { 0% { transform: scale(0, 0.06); filter: brightness(2.2); opacity: 0; } 45% { transform: scale(1, 0.06); filter: brightness(1.6); opacity: 1; } 100% { transform: scale(1, 1); filter: brightness(1); } }

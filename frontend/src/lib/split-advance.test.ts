@@ -17,8 +17,8 @@ describe("parseDurationMs", () => {
 });
 
 describe("getAdvanceDelay", () => {
-  it("covers the action bar turning off and back on", () => {
-    expect(getAdvanceDelay(240, false)).toBe(552);
+  it("covers the action bar turning off once - the next bar does not turn on before moving", () => {
+    expect(getAdvanceDelay(240, false)).toBe(276);
   });
 
   it("does not wait with reduced motion", () => {

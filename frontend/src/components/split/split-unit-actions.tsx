@@ -2,7 +2,8 @@
 
 /** 고른 조각의 글 아래 단추 줄 - 경계 확인, 확인 취소(두 번 눌러), 짝 풀기·합치기 풀기(할 수 있을 때만).
  * 단추 묶음이 바뀌면(확인 ↔ 확인 취소 등) 옛 묶음이 브라운관 TV가 꺼지듯 사라진 뒤 새 묶음이 거꾸로 켜진다 - 바로 바뀌면 바뀐 줄 모른다.
- * 확인 뒤에는 옛 줄이 꺼졌다 새 줄(확인 취소)로 켜지는 것을 다 보인 뒤 다음 조각으로 넘어간다 - Enter로 건너뛰어 옛 줄이 아직 꺼지는 중이면 다음 조각의 줄은 그 뒤에 켜진다.
+ * 확인 뒤에는 옛 줄이 꺼진 채로 두고(새 줄을 켜지 않는다) 다음 조각으로 넘어간다 - 넘어갈 곳이 없거나 거둬지면(isHeld가 풀리면) 그때 새 줄이 켜진다.
+ * Enter로 건너뛰어 옛 줄이 아직 꺼지는 중이면 다음 조각의 줄은 그 뒤에 켜진다.
  * 확인 취소의 "한 번 더 눌러" 라벨은 폭을 모핑해 같은 단추가 바뀐 것으로 읽히게 한다. */
 import { Check, Undo2, UnfoldVertical, Unlink } from "lucide-react";
 import { useEffect, useState, type AnimationEvent, type MouseEvent, type ReactNode } from "react";
@@ -19,6 +20,8 @@ interface SplitUnitActionsProps {
   canUnpair: boolean;
   canUnmerge: boolean;
   busy: boolean;
+  /** 확인 뒤 다음 조각으로 넘어가기를 기다리는 중 - 꺼진 줄을 다시 켜지 않는다 */
+  isHeld: boolean;
   onCheck: () => void;
   onUncheck: () => void;
   onUnpair: () => void;
@@ -34,7 +37,7 @@ interface ActionSet {
 // 마지막으로 묶음이 꺼지기 시작한 때 - 곧이어 새로 붙는 단추 줄(다음 조각)은 옛 줄이 꺼진 뒤에 켜진다
 let lastTurnOffAt = 0;
 // 이 안에 붙은 단추 줄은 꺼짐에 이어 켜진다(ms) - 옛 줄이 아직 꺼지는 중일 때만(꺼짐 한 번 ≈ --dur-slow × 1.15 = 276ms).
-// 화면은 확인한 조각의 줄이 꺼졌다 다시 켜진 뒤에 넘어가니(split-advance) 보통은 바로 켜지고, 그 사이 Enter로 건너뛰었을 때만 이어 켜진다
+// 화면은 확인한 조각의 줄이 다 꺼진 뒤에 넘어가니(split-advance) 보통은 바로 켜지고, 그 사이 Enter로 건너뛰었을 때만 이어 켜진다
 const CHAIN_WINDOW_MS = 300;
 
 function readSetKey(set: ActionSet): string {
@@ -46,8 +49,8 @@ export function SplitUnitActions(props: SplitUnitActionsProps) {
   const [isArmed, setIsArmed] = useState(false);
   // 보이는 묶음 - 들어온 묶음과 다르면 꺼지는 동안 옛 묶음을 그린다
   const [shown, setShown] = useState<ActionSet>({ isChecked: props.isChecked, canUnpair: props.canUnpair, canUnmerge: props.canUnmerge });
-  // "after" - 다른 조각의 줄이 꺼지는 동안 기다렸다 켜진다
-  const [turnOn, setTurnOn] = useState<"now" | "after" | null>(() => (Date.now() - lastTurnOffAt < CHAIN_WINDOW_MS ? "after" : null));
+  // "after" - 다른 조각의 줄이 꺼지는 동안 기다렸다 켜진다, "held" - 꺼진 채 넘어가기를 기다리다 넘어가지 않으면 켜진다, "gone" - 접히는 줄이라 꺼진 채
+  const [turnOn, setTurnOn] = useState<"now" | "after" | "held" | "gone" | null>(() => (Date.now() - lastTurnOffAt < CHAIN_WINDOW_MS ? "after" : null));
   const isTurningOff = readSetKey(shown) !== readSetKey(props);
 
   useEffect(() => {
@@ -103,8 +106,8 @@ export function SplitUnitActions(props: SplitUnitActionsProps) {
     if (event.animationName === "crt-off") {
       setShown({ isChecked: props.isChecked, canUnpair: props.canUnpair, canUnmerge: props.canUnmerge });
       setIsArmed(false);
-      // 고름이 다른 조각으로 넘어가 접히는 줄(inert)은 꺼진 채로 둔다 - 다음 조각의 줄이 켜진다
-      setTurnOn(event.currentTarget.closest("[inert]") ? null : "now");
+      // 고름이 다른 조각으로 넘어가 접히는 줄(inert)은 꺼진 채로 둔다 - 다음 조각의 줄이 켜진다(그대로 두면 접히는 동안 새 단추가 비친다)
+      setTurnOn(event.currentTarget.closest("[inert]") ? "gone" : props.isHeld ? "held" : "now");
     } else if (event.animationName === "crt-on") {
       setTurnOn(null);
     }
@@ -116,7 +119,7 @@ export function SplitUnitActions(props: SplitUnitActionsProps) {
       className="strip-acts-bar"
       role="group"
       aria-label={t("split.unitActions")}
-      data-crt={isTurningOff ? "off" : turnOn === "now" ? "on" : turnOn === "after" ? "on-after" : undefined}
+      data-crt={isTurningOff ? "off" : turnOn === "gone" ? "gone" : turnOn === "held" ? (props.isHeld ? "gone" : "on") : turnOn === "now" ? "on" : turnOn === "after" ? "on-after" : undefined}
       onClick={(event) => event.stopPropagation()}
       onAnimationEnd={handleAnimationEnd}
     >

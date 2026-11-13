@@ -148,6 +148,8 @@ export default function SplitPage() {
   const advanceRef = useRef<PendingAdvance | null>(null);
   // 방금 확인한 단위 - 오른쪽 칸 상태 칩이 그 단위에서만 뒤집히며 바뀐다(다른 단위를 고를 때는 그냥 바뀐다)
   const [flipId, setFlipId] = useState<number | null>(null);
+  // 확인하고 다음 조각으로 넘어가기를 기다리는 단위 - 그 조각의 꺼진 단추 줄을 다시 켜지 않는다
+  const [advancingId, setAdvancingId] = useState<number | null>(null);
   // 보이는 단위는 숨긴 같은 내용 단위까지 모두 확인돼야 확인된 것이다
   const isChecked = (unit: ViewUnit) =>
     checkOverrides[unit.id] ?? (unit.boundary_confirmed && (tabs?.mirrors.get(unit.id) ?? []).every((id) => model?.units.get(id)?.boundary_confirmed !== false));
@@ -210,6 +212,7 @@ export default function SplitPage() {
     const pending = advanceRef.current;
     if (pending?.timer != null) window.clearTimeout(pending.timer);
     advanceRef.current = null;
+    setAdvancingId(null);
   }
 
   /** 넘어가기를 기다리는 중 Enter - 저장이 끝났으면 바로 넘어가고, 아직이면 응답이 오는 대로 넘어간다 */
@@ -223,6 +226,8 @@ export default function SplitPage() {
   function selectUnit(unitId: number | null, scroll = false) {
     // 기다리던 넘어가기는 다른 고름(사람이 고른 것 포함)이 오면 거둔다
     cancelAdvance();
+    // 칩 뒤집힘은 방금 바꾼 단위에서만 - 다른 단위를 고르면 그냥 바뀐다
+    setFlipId(null);
     setSelectedId(unitId);
     if (unitId !== null) setSeenAi((prev) => new Set(prev).add(unitId));
     cutLine.clear();
@@ -347,7 +352,8 @@ export default function SplitPage() {
     if (docId === null || busy) return;
     cancelAdvance();
     setLocalChecks({ base: data, values: { ...checkOverrides, [unit.id]: confirmed } });
-    setFlipId(confirmed ? unit.id : null);
+    // 칩은 확인·확인 취소 모두 뒤집히며 바뀐다
+    setFlipId(unit.id);
     // 저장은 바로 보내고, 넘어가기는 바뀜(단추 줄 꺼짐·켜짐)이 끝날 때까지 기다린다 - 움직임 줄이기면 기다리지 않는다
     const pending: PendingAdvance | null = confirmed
       ? {
@@ -359,6 +365,7 @@ export default function SplitPage() {
         }
       : null;
     advanceRef.current = pending;
+    setAdvancingId(pending ? unit.id : null);
     void runSimple(() => setBoundaryConfirmed(bundleId, docId, [unit.id, ...(tabs?.mirrors.get(unit.id) ?? [])], confirmed), null, () => {
       // Enter는 확인하고 다음 확인 안 된 단위로 간다 - 탭이 끝나면 다음 탭으로 넘어간다
       if (!pending || advanceRef.current !== pending || !model || !tabs) return;
@@ -374,7 +381,10 @@ export default function SplitPage() {
       else pending.timer = window.setTimeout(() => selectUnit(next, true), wait);
     }).then(() => {
       // 저장이 실패했거나 갈 단위가 없으면 기다림을 거둔다 - 다음 Enter가 건너뛰기로 읽히지 않게
-      if (pending && advanceRef.current === pending && pending.timer === null) advanceRef.current = null;
+      if (pending && advanceRef.current === pending && pending.timer === null) {
+        advanceRef.current = null;
+        setAdvancingId(null);
+      }
     });
   }
 
@@ -690,6 +700,7 @@ export default function SplitPage() {
                     canUnpair={pairId !== null}
                     canUnmerge={unit.can_unmerge}
                     busy={busy}
+                    isHeld={advancingId === unit.id}
                     onCheck={() => setBoundary(unit, true)}
                     onUncheck={() => setBoundary(unit, false)}
                     onUnpair={() => pairId !== null && docId !== null && data && void runSimple(() => deletePair(bundleId, docId, pairId, data.document.revision), t("split.pairRemoved"))}
@@ -745,11 +756,11 @@ export default function SplitPage() {
             </Tooltip>
           </div>
             <div className="flex items-center gap-2 whitespace-nowrap" data-testid="split-unit-state">
-              {/* 방금 확인한 단위에서는 칩이 뒤집히며 바뀐다 - 넘어가기는 이 뒤집힘과 단추 줄 바뀜이 끝난 뒤다(split-advance) */}
+              {/* 방금 확인하거나 확인을 푼 단위에서는 칩이 뒤집히며 바뀐다 - 넘어가기는 이 뒤집힘과 단추 줄 꺼짐이 끝난 뒤다(split-advance) */}
               <span
                 key={`${selected.id}:${isChecked(selected)}`}
                 className={`check-chip ${isChecked(selected) ? "yes" : "no"}`}
-                data-flip={flipId === selected.id && isChecked(selected) ? "" : undefined}
+                data-flip={flipId === selected.id ? "" : undefined}
                 data-testid="split-boundary-state"
               >
                 {isChecked(selected) ? <Check size={12} strokeWidth={2.6} aria-hidden /> : <Circle size={11} strokeWidth={2.2} aria-hidden />}
