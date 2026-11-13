@@ -510,7 +510,7 @@ export default function SplitPage() {
     });
   })();
 
-  function runMenuAction(action: SplitMenuAction) {
+  function runMenuAction(action: SplitMenuAction, lang?: "ko" | "en") {
     const target = menuTarget;
     setMenu(null);
     if (!target || !data || docId === null || !model || !tabs) return;
@@ -529,8 +529,8 @@ export default function SplitPage() {
     else if (action === "split") splitAtCut();
     else if (action === "ai_split") void ai.askUnit(target.id);
     else if (action === "hold") startHold();
-    else if (action === "lang_ko" || action === "lang_en") {
-      runEdit({ type: "set_language", unit_ids: [target.id], lang: action === "lang_ko" ? "ko" : "en" }, t("common.saved"), target.id);
+    else if (action === "lang" && lang) {
+      runEdit({ type: "set_language", unit_ids: [target.id], lang }, t("common.saved"), target.id);
     }
   }
 

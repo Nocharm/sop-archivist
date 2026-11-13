@@ -2,15 +2,16 @@
 // 꺼진 항목은 aria-disabled(포커스·호버를 받아야 까닭을 보인다)이고 까닭은 data-tip 툴팁이다.
 "use client";
 
-import { CheckCheck, Languages, Link2, CirclePause, Scissors, Sparkles, Unlink, type LucideIcon } from "lucide-react";
+import { CheckCheck, Link2, CirclePause, Scissors, Sparkles, Unlink, type LucideIcon } from "lucide-react";
 import { useRef } from "react";
 
 import { Menu } from "@/components/ui/menu";
+import { MenuLangRow } from "@/components/ui/menu-lang-row";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import { useI18n } from "@/lib/i18n";
 import type { SplitMenuAction, SplitMenuItem } from "@/lib/split-menu-model";
 
-const ICONS: Record<SplitMenuAction, LucideIcon> = {
+const ICONS: Record<Exclude<SplitMenuAction, "lang">, LucideIcon> = {
   join: Link2,
   unpair: Unlink,
   check_both: CheckCheck,
@@ -18,11 +19,9 @@ const ICONS: Record<SplitMenuAction, LucideIcon> = {
   split: Scissors,
   ai_split: Sparkles,
   hold: CirclePause,
-  lang_ko: Languages,
-  lang_en: Languages,
 };
 
-const LABELS: Record<SplitMenuAction, string> = {
+const LABELS: Record<Exclude<SplitMenuAction, "lang">, string> = {
   join: "split.menu.join",
   unpair: "split.removePair",
   check_both: "split.menu.checkBoth",
@@ -30,8 +29,6 @@ const LABELS: Record<SplitMenuAction, string> = {
   split: "split.split",
   ai_split: "split.menu.aiSplit",
   hold: "split.hold",
-  lang_ko: "split.menu.langKo",
-  lang_en: "split.menu.langEn",
 };
 
 interface SplitContextMenuProps {
@@ -40,7 +37,8 @@ interface SplitContextMenuProps {
   items: SplitMenuItem[];
   /** 한 문장 메뉴에서 경계 확인 항목이 "취소"로 바뀐다 */
   isTargetChecked: boolean;
-  onPick: (action: SplitMenuAction) => void;
+  /** lang은 고른 언어를 같이 준다 */
+  onPick: (action: SplitMenuAction, lang?: "ko" | "en") => void;
   onClose: () => void;
 }
 
@@ -57,6 +55,19 @@ export function SplitContextMenu({ at, items, isTargetChecked, onPick, onClose }
         {/* display: contents - 툴팁 핸들러만 얹고 항목 배치는 Menu 그대로 */}
         <div style={{ display: "contents" }} {...tip.handlers}>
           {items.map((item) => {
+            if (item.action === "lang") {
+              return (
+                <MenuLangRow
+                  key="lang"
+                  label={t("split.menu.lang")}
+                  current={item.lang}
+                  disabledReason={item.reasonKey ? t(item.reasonKey) : null}
+                  currentReason={t("split.menu.why.alreadyLang")}
+                  onPick={(lang) => onPick("lang", lang)}
+                  testId="split-menu-lang"
+                />
+              );
+            }
             const Icon = ICONS[item.action];
             const label = item.action === "check" && isTargetChecked ? t("split.uncheckBoundary") : t(LABELS[item.action]);
             const reason = item.reasonKey ? t(item.reasonKey) : null;

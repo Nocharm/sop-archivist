@@ -479,6 +479,14 @@
   .menu-item[aria-disabled="true"]:hover { background: none; box-shadow: none; }
   .menu-item .check { margin-left: auto; color: var(--accent); flex: none; }
   .menu-item[aria-selected="true"] { color: var(--accent); }
+  /* 메뉴 안 언어 한 줄(MenuLangRow) - 항목과 같은 높이·여백, 오른쪽에 KO | EN 두 칸(EN|KO 화면 말 전환과 같은 모양). 지금 언어 칸은 채워 고른 모양, 다른 칸은 올리면 메뉴 호버 바탕 */
+  .menu-lang-row { display: flex; align-items: center; gap: 8px; height: var(--ctl); padding: 0 4px 0 8px; color: var(--ink); }
+  .menu-lang-seg { display: inline-grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 2px; border: 1px solid var(--line-2); border-radius: var(--r-1); font: 600 var(--fs-micro) / 1 var(--font-mono); }
+  .menu-lang-seg button { min-width: 28px; padding: 4px 6px; border-radius: 2px; color: var(--ink-2); cursor: pointer; transition: background var(--dur-fast), color var(--dur-fast); }
+  .menu-lang-seg button:not([aria-disabled="true"]):hover { background: var(--menu-hover); color: var(--ink); }
+  .menu-lang-seg button[aria-checked="true"] { background: var(--ink); color: var(--surface); cursor: default; }
+  .menu-lang-seg button[aria-disabled="true"]:not([aria-checked="true"]) { color: var(--ink-4); cursor: not-allowed; }
+  .menu-lang-row:has(button[aria-disabled="true"]:not([aria-checked="true"])) { color: var(--ink-4); }
 
   /* 값 고르기 목록 - 긴 선택지는 자르지 않고 줄을 바꾸고, 항목이 많으면 목록 안에서 스크롤한다 */
   .menu[role="listbox"] { max-width: min(480px, calc(100vw - 16px)); max-height: min(320px, calc(100vh - 16px)); overflow-y: auto; }

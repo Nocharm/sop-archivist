@@ -44,10 +44,6 @@ export function Menu({ anchorRef, onClose, testId, align = "start", role = "menu
       const width = matchAnchorWidth ? Math.max(menuRect.width, anchorRect.width) : menuRect.width;
       if (matchAnchorWidth) setMinWidth(anchorRect.width);
       setPos(placeBelow(anchorRect, { width, height: menuRect.height }, align));
-      // 고른 항목이 있으면 거기서 시작한다 - 긴 목록에서도 지금 값이 보이게
-      const start = menuEl.querySelector<HTMLElement>("[aria-selected=true]:not(:disabled)") ?? menuEl.querySelector<HTMLElement>(ITEM_SELECTOR);
-      start?.focus({ preventScroll: true });
-      start?.scrollIntoView({ block: "nearest" });
     });
     const handleMouseDown = (event: MouseEvent) => {
       const target = event.target as Node;
@@ -73,6 +69,17 @@ export function Menu({ anchorRef, onClose, testId, align = "start", role = "menu
       }
     };
   }, [anchorRef, align, matchAnchorWidth]);
+
+  // 자리를 잡아 보인 뒤에 첫 항목으로 포커스를 옮긴다 - 재는 동안은 visibility: hidden이라 그때 부른 focus()는 무시된다(↑↓가 메뉴에 닿지 않았다)
+  const isPlaced = pos !== null;
+  useEffect(() => {
+    const menuEl = menuRef.current;
+    if (!isPlaced || !menuEl) return;
+    // 고른 항목이 있으면 거기서 시작한다 - 긴 목록에서도 지금 값이 보이게
+    const start = menuEl.querySelector<HTMLElement>("[aria-selected=true]:not(:disabled)") ?? menuEl.querySelector<HTMLElement>(ITEM_SELECTOR);
+    start?.focus({ preventScroll: true });
+    start?.scrollIntoView({ block: "nearest" });
+  }, [isPlaced]);
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>(ITEM_SELECTOR) ?? []);
