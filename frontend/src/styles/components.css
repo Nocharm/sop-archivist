@@ -1,5 +1,8 @@
 /* 공통 부품의 모양 - 시안(archivist-foundations)의 규칙을 옮겼다. 값은 tokens.css만 쓴다. 레이아웃 미세 조정은 화면에서 Tailwind로 한다. */
 
+/* 조각 사이 틈의 호버 바탕 짙기 - 등록해야 키프레임에서 색이 부드럽게 바뀐다(@property는 층 안에 둘 수 없다) */
+@property --gap-layer-a { syntax: "<percentage>"; inherits: false; initial-value: 14%; }
+
 @layer components {
   /* ---- 틀: 상단 막대 44px + 단계 이동(왼쪽 레일 72px 또는 상단 2단 38px) ---- */
   .app {
@@ -1096,14 +1099,15 @@
   .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) { transition-delay: 0s, var(--morph-delay), 0s, 0s, var(--morph-delay); }
   .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) > svg, .cell-gap:hover .strip-merge:not([aria-disabled="true"]):not(:focus-visible) .strip-merge-label { transition-delay: var(--morph-delay); }
 
-  /* 조각 사이 틈: 머문 뒤(--gap-open-delay) 틈이 벌어지고 쉬머가 한 번 훑은 뒤(--gap-line-at) 가운데 선이 느리게-빠르게-느리게 폭을 채우고, 선이 느려지기 시작할 때(--gap-pop-at) 단추가 튀어나온다. 떠나면 모두 바로 거둔다. 키보드 포커스는 기다리지 않는다
+  /* 조각 사이 틈: 머문 뒤(--gap-open-delay) 틈이 벌어지고 반투명 바탕이 차오른 뒤(--gap-line-at) 가운데 선이 느리게-빠르게-느리게 폭을 채우고, 선이 느려지기 시작할 때(--gap-pop-at) 단추가 튀어나온다. 떠나면 모두 바로 거둔다. 키보드 포커스는 기다리지 않는다
      --gap-line-dur: 선이 다 차는 시간, --gap-pop-at: 단추가 나오기 시작하는 때(선 시간의 60% - 늦추면 선이 멈춘 뒤 빈 틈이 보이고 당기면 선과 단추가 겹쳐 산만). 움직임 줄이기면 두 시간이 0이라 머문 뒤 한 번에 보인다 */
-  /* 틈이 벌어진 뒤 바로 단추를 내지 않고 --gap-buffer 동안 쉬머가 틈을 한 번 훑는다(올린 것이 보이는 버퍼, 2026-11-12) - 다 훑으면(--gap-line-at) 선이 그어진다.
-     버퍼를 늘리면 단추가 늦게, 줄이면 쉬머가 번쩍임처럼 짧아진다. 움직임 줄이기면 0이라 쉬머 없이 바로 */
+  /* 틈이 벌어진 뒤 바로 단추를 내지 않고 --gap-buffer 동안 반투명 호버 바탕이 가운데에서 퍼지며 짙어진다(올린 것이 보이는 버퍼 - 쉬머 훑기를 바꿈, 2026-11-13) - 다 차면(--gap-line-at) 선이 그어진다.
+     버퍼를 늘리면 단추가 늦게, 줄이면 바탕이 번쩍임처럼 짧아진다. 움직임 줄이기면 0이라 바로 */
   .strip-gap { --gap-buffer: calc(var(--dur-slow) * 1.25); --gap-line-at: calc(var(--gap-open-delay) + var(--gap-buffer)); --gap-line-dur: var(--dur-slow); --gap-pop-at: calc(var(--gap-line-at) + var(--gap-line-dur) * .6); }
-  /* 쉬머는 틈 자체의 바탕 - 무늬가 틈보다 넓어(220%) 시작·끝 위치(200%·-100%)에서는 틈 밖에 있어 보이지 않는다 */
-  .strip-gap:has(> .strip-merge):hover { background: linear-gradient(100deg, transparent 38%, color-mix(in oklab, var(--accent) 32%, transparent) 50%, transparent 62%) no-repeat 200% 0 / 220% 100%; animation: gap-buffer var(--gap-buffer) var(--ease-move) var(--gap-open-delay) both; }
-  @keyframes gap-buffer { from { background-position: 200% 0; } to { background-position: -100% 0; } }
+  /* 호버 바탕은 틈 자체의 배경(선 ::after와 단추 아래) - 짙기(--gap-layer-a, 끝 14%라 조각 테두리보다 옅다)와 폭(가운데 40% → 전부)만 움직인다.
+     틈 요소에 opacity·clip-path를 쓰면 안에 든 선·단추·올림 자리(::before)까지 흐려지고 잘린다. 머무는 동안(--gap-open-delay)은 시작 모양(투명)에 멈춰 있다 */
+  .strip-gap:has(> .strip-merge):hover { background: linear-gradient(color-mix(in oklab, var(--accent) var(--gap-layer-a), transparent) 0 0) no-repeat 50% 0 / 100% 100%; border-radius: 3px; animation: gap-layer var(--gap-buffer) var(--ease-enter) var(--gap-open-delay) both; }
+  @keyframes gap-layer { from { --gap-layer-a: 0%; background-size: 40% 100%; } to { --gap-layer-a: 14%; background-size: 100% 100%; } }
   /* 선은 2px 실선(1px 옅은 점선은 조각 테두리·그림자에 묻혀 거의 보이지 않았다, 2026-11-12) - 단추 테두리와 같은 색 계열을 조금 눅여 단추가 선보다 앞에 읽히게 */
   .strip-gap:has(> .strip-merge)::after { content: ""; position: absolute; inset-inline: 0; top: calc(50% - 1px); z-index: 1; height: 2px; border-radius: 1px; background: color-mix(in oklab, var(--accent) 70%, var(--surface)); clip-path: inset(0 50%); pointer-events: none; transition: clip-path var(--dur-fast) var(--ease-exit); }
   .strip-gap:has(> .strip-merge):hover::after { clip-path: inset(0 0); transition: clip-path var(--gap-line-dur) var(--ease-move) var(--gap-line-at); }
