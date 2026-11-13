@@ -33,6 +33,8 @@ const MARK_ICONS: Record<PaperMark, typeof CircleCheck> = {
   checked: CircleCheck,
 };
 const MARK_ORDER: readonly PaperMark[] = ["edited", "pair", "classified", "ai", "suggest", "warn", "checked"];
+/** 끝 아이콘 하나가 차지하는 폭(px) - 아이콘 14 + 사이 5(.strip-marks gap). 언어 칩이 그만큼 왼쪽에 선다 */
+const MARK_STEP = 19;
 const MARK_LABELS: Record<PaperMark, string> = {
   edited: "split.legendEdited",
   pair: "split.legendPair",
@@ -210,6 +212,8 @@ export function Paper({
   const [contourPath, setContourPath] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const tip = useDelegatedTip();
+  // 언어 칩을 함께 보이는 떨어진 짝 조각 - 지금 올린 단위와 표시를 단 요소(markHoverMates)
+  const mateHoverRef = useRef<{ unitId: number | null; els: HTMLElement[] }>({ unitId: null, els: [] });
   const hasStrips = strips !== undefined;
   // 단추 줄을 그리는 조각 - 지금 고른 것과 바로 전에 고른 것(접히는 동안). 수천 조각마다 접기 부품을 두지 않는다
   const [actionIds, setActionIds] = useState({ current: selectedId, previous: null as number | null });
@@ -512,19 +516,25 @@ export function Paper({
     );
   }
 
-  /** 조각 끝 아이콘 표시 - 고른 조각의 것만 Tab으로 닿는다(수천 개가 Tab 순서에 들지 않게) */
-  function renderMarks(unit: ViewUnit | undefined, hasWarn: boolean, className: string): ReactNode {
-    if (!strips) return null;
+  /** 조각 끝 아이콘 표시의 목록(그리는 순서) */
+  function listMarks(unit: ViewUnit | undefined, hasWarn: boolean): PaperMark[] {
+    if (!strips) return [];
     const marks = new Set<PaperMark>();
     if (unit) {
       for (const mark of getMarks({ ...unit, status: strips.statusOf?.(unit.id) ?? unit.status })) if (mark !== "checked") marks.add(mark);
       if (strips.isChecked(unit) && !strips.hideChecked) marks.add("checked");
     }
     if (hasWarn) marks.add("warn");
-    if (marks.size === 0) return null;
+    return MARK_ORDER.filter((mark) => marks.has(mark));
+  }
+
+  /** 조각 끝 아이콘 표시 - 고른 조각의 것만 Tab으로 닿는다(수천 개가 Tab 순서에 들지 않게) */
+  function renderMarks(unit: ViewUnit | undefined, hasWarn: boolean, className: string): ReactNode {
+    const marks = listMarks(unit, hasWarn);
+    if (marks.length === 0) return null;
     return (
       <span className={className}>
-        {MARK_ORDER.filter((mark) => marks.has(mark)).map((mark) => {
+        {marks.map((mark) => {
           const Icon = MARK_ICONS[mark];
           const label = t(MARK_LABELS[mark]);
           return (
@@ -542,6 +552,27 @@ export function Paper({
             </span>
           );
         })}
+      </span>
+    );
+  }
+
+  /** 조각 언어 칩(KO/EN) - 늘 그려 두고 조각을 올리거나 고를 때만 CSS가 드러낸다(조각마다 호버 상태를 두지 않는다). 짝이면 구성원 모두.
+   *  자리는 끝 아이콘 바로 왼쪽(오른쪽 여백 --pg-pad-r 안) - 아이콘이 셋 이상이면 여백이 모자라 글을 덮으니 아이콘 줄 아래로 내린다. 언어가 없는 단위(neutral)는 없다 */
+  function renderLang(unit: ViewUnit | undefined, markCount: number): ReactNode {
+    if (!unit || unit.lang === "neutral") return null;
+    const label = t(`paper.lang.${unit.lang}`);
+    return (
+      <span
+        className="strip-lang"
+        role="img"
+        aria-label={label}
+        data-tip={label}
+        data-at={markCount >= 3 ? "below" : undefined}
+        style={{ "--marks-w": `${markCount * MARK_STEP}px` }}
+        tabIndex={unit.id === selectedId ? 0 : -1}
+        data-testid={`${testId}-lang-${unit.id}`}
+      >
+        {unit.lang.toUpperCase()}
       </span>
     );
   }
@@ -752,6 +783,7 @@ export function Paper({
           {foot}
           {pills}
           {renderMarks(unit, hasWarn, "strip-marks")}
+          {row.type === "piece" && renderLang(unit, listMarks(unit, hasWarn).length)}
         </div>
       </div>
     );
@@ -966,6 +998,33 @@ export function Paper({
     if (!onRangeSelect && event.shiftKey && (event.target as HTMLElement).closest(".su[data-unit]")) event.preventDefault();
   }
 
+  /** 떨어진 짝 구성원도 언어 칩을 보이게 - 올린 줄의 짝 조각에 data-mate-hover를 직접 단다(이웃한 짝 카드는 CSS가 맡는다).
+   *  React 상태로 두면 큰 문서에서 포인터가 지날 때마다 용지 전체가 다시 그려진다 */
+  function markHoverMates(unitId: number | null) {
+    if (mateHoverRef.current.unitId === unitId) return;
+    for (const el of mateHoverRef.current.els) delete el.dataset.mateHover;
+    const els: HTMLElement[] = [];
+    for (const mate of unitId === null ? [] : (matesOf.get(unitId) ?? [])) {
+      const el = pageRef.current?.querySelector<HTMLElement>(`.strip[data-strip-unit="${mate.id}"]`);
+      if (!el) continue;
+      el.dataset.mateHover = "";
+      els.push(el);
+    }
+    mateHoverRef.current = { unitId, els };
+  }
+
+  function handlePointerOver(event: ReactPointerEvent<HTMLDivElement>) {
+    tip.handlers.onPointerOver(event);
+    if (!strips) return;
+    const strip = (event.target as HTMLElement).closest(".strip-row")?.querySelector<HTMLElement>(":scope > .strip[data-strip-unit]");
+    markHoverMates(strip ? Number(strip.dataset.stripUnit) : null);
+  }
+
+  function handlePointerOut(event: ReactPointerEvent<HTMLDivElement>) {
+    tip.handlers.onPointerOut(event);
+    if (!(event.relatedTarget instanceof Node) || !pageRef.current?.contains(event.relatedTarget)) markHoverMates(null);
+  }
+
   function handleMouseUp() {
     if (!onRangeSelect) return;
     const selection = window.getSelection();
@@ -993,6 +1052,8 @@ export function Paper({
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
         {...tip.handlers}
+        onPointerOver={handlePointerOver}
+        onPointerOut={handlePointerOut}
       >
         {contour && contourPath && (
           <svg className="sel-contour" aria-hidden>

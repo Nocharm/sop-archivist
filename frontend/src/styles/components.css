@@ -1183,6 +1183,18 @@
 
   /* 종이 오른쪽 끝 아이콘 표시 */
   .strip-marks { position: absolute; right: 9px; top: 11px; display: flex; gap: 5px; align-items: center; }
+  /* 조각 언어 칩(KO/EN) - 끝 아이콘 바로 왼쪽(--marks-w = 아이콘 수 × 19px, Paper가 준다, 아이콘과 3px). 오른쪽 여백(--pg-pad-r 68px) 안이라 글을 덮지 않는다(아이콘 둘이면 글 상자 끝과 약 2px - 칩 폭 약 20px).
+     아이콘이 셋 이상이면 여백이 모자라 아이콘 줄 아래(30px)에 서고, 한 줄 조각이 칩을 담도록 그런 조각만 늘 48px 높이를 잡아 둔다(올릴 때 글이 밀리지 않게 - 아래 .lbadge 높이와 같은 방식).
+     늘 그려 두고 줄을 올리거나 고를 때만 보인다 - 이웃한 짝 카드는 한 줄만 올리거나 골라도 카드 전체, 떨어진 짝은 고른 짝(data-partner)·올린 짝(data-mate-hover, Paper가 단다) */
+  .strip-lang { position: absolute; top: 11px; right: calc(7px + var(--marks-w, 0px)); display: inline-grid; place-items: center; height: 14px; padding: 0 2px; border: 1px solid var(--line-2); border-radius: 3px; background: var(--surface); color: var(--ink-2); font: 600 10px / 1 var(--font-mono); visibility: hidden; opacity: 0; transition: opacity var(--dur-fast), visibility 0s var(--dur-fast); }
+  .strip-lang[data-at="below"] { top: 30px; right: 9px; }
+  .pg[data-strips] .strip:has(> .strip-lang[data-at="below"]) { min-height: 48px; }
+  /* Assign 연결 배지(오른쪽 아래 모서리, 폭 20px+)와 나란히 - 배지 왼쪽에 선다 */
+  .strip:has(> .lbadge) > .strip-lang[data-at="below"] { right: 30px; }
+  .strip-lang:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .strip-row:hover > .strip > .strip-lang,
+  .strip:is([data-sel], [data-partner], [data-mate-hover]) > .strip-lang,
+  .strip-card:has(> .strip-row:hover, > .strip-row > .strip[data-sel]) > .strip-row > .strip > .strip-lang { visibility: visible; opacity: 1; transition: opacity var(--dur-fast); }
   /* 쪼개기 오른쪽 칸: 섹션 머리 한 모양(작은 라벨 + 선) */
   .insp-h { display: flex; align-items: center; gap: 4px; font-size: var(--fs-micro); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }
   .insp-h::after { content: ""; flex: 1; height: 1px; background: var(--line); }
