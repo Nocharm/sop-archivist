@@ -492,6 +492,18 @@
   .menu[role="listbox"] { max-width: min(480px, calc(100vw - 16px)); max-height: min(320px, calc(100vh - 16px)); overflow-y: auto; }
   .menu-item.opt { height: auto; min-height: var(--ctl); padding-block: 5px; overflow-wrap: anywhere; }
 
+  /* 글을 치면서 고르는 칸(Combobox) - 입력 칸은 다른 입력과 같은 테두리·높이, 목록은 입력 칸 폭. 활성 항목은 메뉴 호버 행과 같은 모양 */
+  .combo-input { display: block; width: 100%; height: 32px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--surface); color: var(--ink); font-size: 13px; }
+  .combo-input:focus { border-color: var(--accent); outline: none; }
+  .combo-input:disabled { color: var(--ink-3); cursor: not-allowed; }
+  .menu.combo-list { min-width: 0; max-width: none; }
+  .combo-option { cursor: pointer; flex-direction: column; align-items: stretch; gap: 0; }
+  .combo-option[data-active] { background: var(--menu-hover); box-shadow: inset 2px 0 0 var(--accent); border-radius: 0 var(--r-1) var(--r-1) 0; }
+  /* Remark 창의 최근 사유 - 누르면 칸을 채우는 한 줄 단추(두 줄까지) */
+  .remark-recent { display: block; width: 100%; padding: 5px 8px; border: 1px solid var(--line); border-radius: var(--r-1); background: var(--surface); color: var(--ink-2); font-size: 12px; line-height: 18px; text-align: left; cursor: pointer; }
+  .remark-recent:hover { border-color: var(--line-2); background: var(--menu-hover); color: var(--ink); }
+  .combo-hint { min-width: 0; font-size: var(--fs-micro); line-height: var(--lh-micro); color: var(--ink-3); overflow-wrap: anywhere; }
+
   /* 값 고르기 트리거 - 입력 칸과 같은 테두리·높이. 값이 길면 말줄임하고 화살표 자리는 늘 남긴다 */
   /* 라벨은 평소 가운데, 호버·포커스·열림 때 왼쪽으로 조금 밀리고 오른쪽에 쉐브론이 나타난다 */
   .select-trigger {

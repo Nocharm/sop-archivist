@@ -507,14 +507,14 @@ await runStep("assign: legend first, place, delete with reason, edit, clear, bul
   await page.locator('[data-testid="assign-primary"]').click();
   await page.waitForFunction((done) => Number(document.querySelector('[data-testid="assign-progress"]')?.textContent?.split("/")[0]) === done + 1, before, { timeout: T });
   check("Enter-path confirm moves on to the next unit", (await rowIds(page)) !== firstIds);
-  // 삭제는 사유가 있어야 한다
+  // 삭제는 사유가 있어야 한다 - 사유 없이 저장하면 Remark 창이 열리고, 확인하면 저장을 잇는다
   await page.locator('[data-testid="assign-acc-move"]').click();
   await page.locator('[data-testid="assign-pick-delete"]').click();
   await page.locator('[data-testid="assign-primary"]').click();
-  await page.locator('[data-testid="toast-error"]').first().waitFor({ timeout: T });
-  check("delete without a reason is refused", true);
-  await page.locator('[data-testid="assign-reason"]').fill("Structural heading");
-  await page.locator('[data-testid="assign-primary"]').click();
+  await wait(page, "assign-remark-modal");
+  check("delete without a reason opens the Remark window, confirm off", await page.locator('[data-testid="assign-remark-modal-confirm"]').isDisabled());
+  await page.locator('[data-testid="assign-remark-modal-text"]').fill("Structural heading");
+  await page.locator('[data-testid="assign-remark-modal-confirm"]').click();
   await page.waitForFunction((done) => Number(document.querySelector('[data-testid="assign-progress"]')?.textContent?.split("/")[0]) === done + 2, before, { timeout: T });
   check("delete with a reason confirms", true);
   // 고쳐 확정 - E로 새 문장을 고치면 변경 종류를 고른다
@@ -565,11 +565,16 @@ await runStep("split: H holds a unit without a destination", {}, async ({ page }
   await wait(page, "assign-bar");
   await selectRowById(page, heldId.trim());
   await page.waitForLoadState("networkidle");
-  check("held unit shows on Assign with its reason", (await page.locator('[data-testid="assign-reason"]').inputValue()) === "Smoke: not sure where it goes");
+  check("held unit shows on Assign with its reason", (await page.locator('[data-testid="assign-reason"]').textContent()) === "Smoke: not sure where it goes");
   check("it has no destination", (await page.locator('[data-testid="assign-chosen"].is-empty').count()) === 1);
-  // 저장된 사유를 지우면 빈 채로 남는다
-  await page.locator('[data-testid="assign-reason"]').fill("");
-  check("a cleared reason stays empty", (await page.locator('[data-testid="assign-reason"]').inputValue()) === "");
+  // 저장된 사유를 창에서 지우면 빈 채로 남는다
+  await page.locator('[data-testid="assign-reason-edit"]').click();
+  await wait(page, "assign-remark-modal");
+  await page.waitForLoadState("networkidle");
+  check("the Remark window lists my recent remarks", (await page.locator('[data-testid^="assign-remark-modal-recent-"]').count()) > 0);
+  await page.locator('[data-testid="assign-remark-modal-text"]').fill("");
+  await page.locator('[data-testid="assign-remark-modal-confirm"]').click();
+  check("a cleared reason stays empty", (await page.locator('[data-testid="assign-reason"]').textContent()) === "–");
 });
 
 await runStep("split: right-click menu shows reasons for blocked actions and runs an enabled one", {}, async ({ page, takeShot }) => {
@@ -636,10 +641,39 @@ await runStep("assign: hold an unassigned unit without a destination", {}, async
   await page.keyboard.press("j");
   await wait(page, "assign-row-id");
   check("hold is available with no destination", !(await page.locator('[data-testid="assign-hold"]').isDisabled()));
-  await page.locator('[data-testid="assign-reason"]').fill("Smoke: decide later");
+  // 사유 없이 보류하면 Remark 창이 열린다 - 최근 사유를 골라 확인하면 보류가 이어진다
   await page.locator('[data-testid="assign-hold"]').click();
+  await wait(page, "assign-remark-modal");
+  await page.waitForLoadState("networkidle");
+  await page.locator('[data-testid="assign-remark-modal-recent-0"]').click();
+  check("a recent remark fills the field", (await page.locator('[data-testid="assign-remark-modal-text"]').inputValue()).length > 0);
+  await page.locator('[data-testid="assign-remark-modal-confirm"]').click();
   await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
   check("the unit is on hold", true);
+});
+
+await runStep("assign: move picks its target doc from the dropdown", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+  await wait(page, "assign-bar");
+  for (let step = 0; step < 3; step += 1) await page.keyboard.press("j");
+  await wait(page, "assign-row-id");
+  if ((await page.locator('[data-testid="assign-pick-move"]').count()) === 0) await page.locator('[data-testid="assign-acc-move"]').click();
+  await page.locator('[data-testid="assign-pick-move"]').click();
+  // 다른 Bundle의 To-Be 문서가 추천으로 뜬다(데모 Bundle 넷 모두 qa.member가 멤버)
+  await page.locator('[data-testid="assign-move-code"]').click();
+  await page.locator('[data-testid="assign-move-code"]').fill("SOP");
+  const option = page.locator('[data-testid^="assign-move-code-option-"]:not([data-testid$="-typed"])').first();
+  await option.waitFor({ timeout: T });
+  const code = (await option.getAttribute("data-testid")).replace("assign-move-code-option-", "");
+  await takeShot("sop-assign-move-dropdown.png");
+  await option.click();
+  check("a suggested target doc fills the field", (await page.locator('[data-testid="assign-move-code"]').inputValue()) === code, code);
+  await page.locator('[data-testid="assign-primary"]').click();
+  await wait(page, "assign-remark-modal");
+  await page.locator('[data-testid="assign-remark-modal-text"]').fill("Smoke: belongs to another bundle");
+  const saved = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
+  await page.locator('[data-testid="assign-remark-modal-confirm"]').click();
+  check("move saves with the picked target", (await saved).ok());
 });
 
 await runStep("assign: an edit survives looking at another unit", {}, async ({ page }) => {
@@ -882,7 +916,9 @@ await runStep("assign: a one-language link on a KO/EN pair row unpairs it and le
   // 사람이 삭제(사유)로 끝낸다
   if ((await page.locator('[data-testid="assign-pick-delete"]').count()) === 0) await page.locator('[data-testid="assign-acc-move"]').click();
   await page.locator('[data-testid="assign-pick-delete"]').click();
-  await page.locator('[data-testid="assign-reason"]').fill("No counterpart in the new document");
+  await page.locator('[data-testid="assign-reason-edit"]').click();
+  await page.locator('[data-testid="assign-remark-modal-text"]').fill("No counterpart in the new document");
+  await page.locator('[data-testid="assign-remark-modal-confirm"]').click();
   const closed = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
   await page.locator('[data-testid="assign-primary"]').click();
   const closedResponse = await closed;

@@ -407,7 +407,9 @@ Old Unit마다 새 문서의 어디로 갈지 정하고 확정하는 단계입�
 | **Hold** | <kbd>H</kbd> | 사유를 적고 미루기 |
 | **Clear assignment** | <kbd>U</kbd> | 판단을 지우고 **Unassigned** 로 |
 
-- **Remark** 는 지우기·다른 문서로 옮기기·두 문서로 보내기에 꼭 적어야 합니다. 그 밖에는 메모로 적어 두어도 되고 비워 두어도 됩니다.
+- **Remark** 는 지우기·다른 문서로 옮기기·보류·두 문서로 보내기에 꼭 적어야 합니다. 그 밖에는 메모로 적어 두어도 되고 비워 두어도 됩니다. 오른쪽 칸에는 지금 사유가 두 줄까지 보이고(넘치면 올렸을 때 전체), 옆의 **Write remark**(이미 있으면 **Edit remark**)를 누르면 창에서 씁니다. 창 칸 아래 **My recent remarks** 에 내가 최근에 쓴 사유가 5개(모든 Bundle, 같은 글은 한 번) 보이고 더 보기로 10개까지 펼치며, 누르면 칸에 채워집니다. <kbd>Ctrl</kbd>+<kbd>↵</kbd>로 확인합니다.
+- 사유가 꼭 필요한 저장(지우기·옮기기·보류)을 사유 없이 누르면 이 창이 저절로 열리고 무엇에 필요한지 알려 줍니다. 쓰고 **Save and confirm**(보류는 **Save and hold**)을 누르면 저장이 이어집니다.
+- 다른 문서로 옮기기의 **Target doc** 은 치면서 고르는 칸입니다. 내가 멤버인 다른 Bundle의 To-Be 문서(번호·제목·Bundle 코드)가 추천으로 뜨고, 전에 옮길 곳으로 쓴 번호(이 Bundle에서 쓴 것 먼저)가 맨 위입니다. 목록에 없는 번호는 친 그대로 쓸 수 있습니다(목록 맨 위 "그대로 쓰기"). <kbd>↑</kbd> <kbd>↓</kbd>로 옮기고 <kbd>↵</kbd>로 고르며 <kbd>Esc</kbd>는 목록만 닫습니다.
 - **Change type** 은 원문과 새 문장의 관계입니다: **As is**, **Tone**, **Rewritten**, **Merged**, **Split**, **Translated**, **Deleted**, **New**, **Table restructured**.
 - **Checks** 는 원문과 새 문장을 견준 결과입니다. **Numbers differ**, **Units differ**, **Negation differs** 가 뜨면 뜻이 바뀌지 않았는지 다시 봅니다.
 - 한/영 짝은 함께 확정됩니다(**Confirmed together**).
@@ -418,7 +420,7 @@ Old Unit마다 새 문서의 어디로 갈지 정하고 확정하는 단계입�
 ### 여럿을 한 번에 {#assign-bulk}
 
 - **같은 글 일괄 확정**: 이미 쓴 New 문서에 글자가 똑같은 문장이 있는 Unit은 목록 위의 same-text pairs 단추로 한 번에 확정합니다. 누르면 **Confirm same-text pairs** 창에서 건수를 보여 주고 **Confirm all** 을 눌러야 진행됩니다.
-- **지우기·옮기기**: <kbd>Shift</kbd>를 누른 채 Old Unit을 눌러 여럿을 고르면 **Delete picked rows** 와 **Move picked rows to another document** 가 나옵니다. 여럿을 한 번에 할 수 있는 것은 지우기와 옮기기뿐입니다.
+- **지우기·옮기기**: <kbd>Shift</kbd>를 누른 채 Old Unit을 눌러 여럿을 고르면 **Delete picked rows** 와 **Move picked rows to another document** 가 나옵니다. 여럿을 한 번에 할 수 있는 것은 지우기와 옮기기뿐입니다. 창에서 바로 사유를 쓰고(아래에 **My recent remarks**), 옮기기의 **Target doc** 은 하나씩 할 때와 같은 추천 칸입니다.
 - **배정 초기화**: 목록 위 **Reset** 메뉴의 **Reset this document** 는 지금 연 Old 문서의 배정을, 선 아래 **Reset the whole bundle** 은 Bundle 안 모든 배정을 한 번에 지웁니다. 창이 먼저 몇 Unit이 **Unassigned** 로 돌아가는지, 함께 묶인 다른 문서의 Unit 몇 개가 **On hold** 로 가는지, 새로 쓴 문장 몇 개가 지워지는지 세어 보여 주고, **Reset** 을 눌러야 진행됩니다. AI 작업이 돌고 있으면 끝난 뒤에 할 수 있습니다. **History** 에 **Reset assignments** 로 남습니다.
 - **합치기와 나누기**: Unit 여럿을 새 문장 하나로 보내면 합침, Unit 하나를 새 문장 여럿으로 보내면 나눔입니다. New 문서에서 <kbd>Ctrl</kbd>을 누른 채 문장을 누르면 보낼 문장이 더해집니다.
 
@@ -426,7 +428,7 @@ Old Unit마다 새 문서의 어디로 갈지 정하고 확정하는 단계입�
 
 **New without source** 탭에는 이미 쓴 New 문서의 문장 가운데 Old 출처가 없는 것이 모입니다.
 
-- 정말 새로 쓴 문장이면 **Mark as new** 를 누릅니다. 그 위 칸에 **Remark** 를 적으면 함께 저장됩니다(선택).
+- 정말 새로 쓴 문장이면 **Mark as new** 를 누릅니다. 그 위의 **Write remark** 로 **Remark** 를 적어 두면 함께 저장됩니다(선택).
 - Old에 출처가 있으면 그 Old Unit을 골라 이 문장에 잇습니다.
 
 ### 번역 {#assign-translate}
@@ -439,7 +441,7 @@ AI가 꺼져 있어도 빠진 언어를 직접 채울 수 있습니다. 칸에 �
 
 - 마우스를 올린 문서에서 <kbd>Ctrl</kbd>+휠 또는 <kbd>Ctrl</kbd>+<kbd>+</kbd> <kbd>-</kbd>로 그 문서만 확대·축소합니다.
 - 두 문서 사이의 세로선을 끌어 폭을 바꿉니다. 확대와 폭은 이 브라우저에 기억됩니다.
-- 위쪽 도구 줄은 한 줄로 두고, 개수·**Reset**·보기 아이콘은 오른쪽 끝에 모입니다. 도구 줄이 좁으면(대략 창 폭 1750 이하) 개수·**Reset**·AI 메뉴는 아이콘만 보이고 마우스를 올리거나 키보드로 가면 이름이 뜹니다. 그래도 넘치면 그 묶음이 통째로 다음 줄 오른쪽으로 갑니다. 오른쪽 패널은 화면 폭에 따라 280~420px로 달라지고, 아주 넓은 화면에서는 작업면이 1920px까지 늘어납니다. 패널이 좁으면(대략 창 폭 1550 이하) **Edit and confirm**·**Hold**·**Clear assignment** 단추의 글쇠 표시가 빠집니다 — 단축키는 그대로 됩니다. 긴 보류·확정 사유는 **Remark** 칸이 글 길이만큼(최대 6줄) 자랍니다.
+- 위쪽 도구 줄은 한 줄로 두고, 개수·**Reset**·보기 아이콘은 오른쪽 끝에 모입니다. 도구 줄이 좁으면(대략 창 폭 1750 이하) 개수·**Reset**·AI 메뉴는 아이콘만 보이고 마우스를 올리거나 키보드로 가면 이름이 뜹니다. 그래도 넘치면 그 묶음이 통째로 다음 줄 오른쪽으로 갑니다. 오른쪽 패널은 화면 폭에 따라 280~420px로 달라지고, 아주 넓은 화면에서는 작업면이 1920px까지 늘어납니다. 패널이 좁으면(대략 창 폭 1550 이하) **Edit and confirm**·**Hold**·**Clear assignment** 단추의 글쇠 표시가 빠집니다 — 단축키는 그대로 됩니다. 긴 보류·확정 사유는 **Remark** 칸에 두 줄까지 보이고, 전체는 마우스를 올리거나 **Edit remark** 창에서 봅니다.
 - 오른쪽 칸 맨 아래의 **Help** 는 **Shortcuts** 와 **Marks** 두 탭으로 단축키와 표시의 뜻을 풀이합니다. 처음에는 접혀 있고, 펼침과 탭은 이 브라우저에 기억됩니다.
 
 ### 단축키 {#assign-keys}
