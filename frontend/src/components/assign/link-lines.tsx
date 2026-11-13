@@ -7,7 +7,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { findLinkPartners, pickDrawnLinks, type LinkPair } from "@/lib/assign-model";
 import { getLinkDirection, type LinkDirection } from "@/lib/link-direction-model";
-import { buildLinkPath, buildLinkStubs, isFarLink } from "@/lib/link-route-model";
+import { buildLinkPath, buildLinkStubs, isFarLink, type LinkStub } from "@/lib/link-route-model";
 
 /** 두 문서를 담은 틀(.assign-panes) 안에 둔다 - 틀이 선의 좌표 기준이자 마우스를 듣는 곳이다 */
 interface LinkLinesProps {
@@ -31,8 +31,8 @@ interface DrawnLine {
   strong: boolean;
   draft: boolean;
   ai: boolean;
-  /** 먼 이음의 두 끝 꼬리만 그렸다 */
-  stub: boolean;
+  /** 먼 이음이면 선(d) 대신 두 끝 꼬리 */
+  stubs: LinkStub[] | null;
 }
 
 // 조각 첫 줄 가운데쯤에 선을 붙인다 - 긴 조각의 한가운데로 가면 어느 줄인지 흐려진다(px)
@@ -147,9 +147,9 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
       if (start.y < oldFrame.top || start.y > oldFrame.bottom || end.y < newFrame.top || end.y > newFrame.bottom) continue;
       const shift = (point: { x: number; y: number }) => ({ x: point.x - base.left, y: point.y - base.top });
       // 먼 이음은 고르거나 올렸을 때(strong)만 선 전체 - 평소에는 두 끝 꼬리로 이음이 있다는 것만
-      const stub = !pair.strong && isFarLink(start, end);
-      const d = stub ? buildLinkStubs(shift(start), shift(end)) : buildLinkPath(shift(start), shift(end));
-      next.push({ key: `${pair.unitId}:${pair.targetId}`, d, strong: pair.strong, draft: pair.draft, ai: pair.ai, stub });
+      const stubs = !pair.strong && isFarLink(start, end) ? buildLinkStubs(shift(start), shift(end)) : null;
+      const d = stubs ? "" : buildLinkPath(shift(start), shift(end));
+      next.push({ key: `${pair.unitId}:${pair.targetId}`, d, strong: pair.strong, draft: pair.draft, ai: pair.ai, stubs });
     }
     setLines((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
   });
@@ -236,8 +236,26 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
   return (
     <svg ref={svgRef} className="link-lines" aria-hidden data-testid="assign-link-lines">
       {lines.map((line) => (
-        <g key={line.key} data-strong={line.strong ? "" : undefined} data-draft={line.draft ? "" : undefined} data-ai={line.ai ? "" : undefined} data-stub={line.stub ? "" : undefined}>
-          <path d={line.d} />
+        <g key={line.key} data-strong={line.strong ? "" : undefined} data-draft={line.draft ? "" : undefined} data-ai={line.ai ? "" : undefined} data-stub={line.stubs ? "" : undefined}>
+          {line.stubs ? (
+            line.stubs.map((stub, index) => {
+              // 꼬리는 상자에서 멀어질수록 옅어진다 - 둥근 끝에서 뚝 끊기면 잘린 선처럼 보였다. 그라디언트는 g의 색(currentColor)을 따른다
+              const id = `link-stub-${line.key.replace(":", "-")}-${index}`;
+              return (
+                <g key={id}>
+                  <linearGradient id={id} gradientUnits="userSpaceOnUse" x1={stub.from.x} y1={stub.from.y} x2={stub.to.x} y2={stub.to.y}>
+                    <stop offset="0" stopColor="currentColor" />
+                    <stop offset="0.35" stopColor="currentColor" />
+                    <stop offset="1" stopColor="currentColor" stopOpacity="0" />
+                  </linearGradient>
+                  {/* .link-lines path의 stroke(currentColor)를 이기려고 인라인 스타일 */}
+                  <path d={stub.d} style={{ stroke: `url(#${id})` }} />
+                </g>
+              );
+            })
+          ) : (
+            <path d={line.d} />
+          )}
         </g>
       ))}
     </svg>

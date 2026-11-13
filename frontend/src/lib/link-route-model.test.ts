@@ -46,21 +46,21 @@ describe("isFarLink", () => {
 
 describe("buildLinkStubs", () => {
   it("draws two short tails, one from each box edge, bending toward the other end", () => {
-    const d = buildLinkStubs({ x: 100, y: 50 }, { x: 140, y: 300 });
-    const parts = d.split("M").filter(Boolean).map((part) => readNumbers(part));
-    expect(parts).toHaveLength(2);
+    const [oldStub, newStub] = buildLinkStubs({ x: 100, y: 50 }, { x: 140, y: 300 });
     // Old 쪽 꼬리 - 시작점에서 오른쪽으로 나가 아래(끝 쪽)로 휜다
-    expect(parts[0].slice(0, 2)).toEqual([100, 50]);
-    expect(parts[0][parts[0].length - 2]).toBeGreaterThan(0);
-    expect(parts[0][parts[0].length - 1]).toBeGreaterThan(0);
+    expect(oldStub.d.startsWith("M100 50Q")).toBe(true);
+    expect(oldStub.from).toEqual({ x: 100, y: 50 });
+    expect(oldStub.to.x).toBeGreaterThan(100);
+    expect(oldStub.to.y).toBeGreaterThan(50);
     // New 쪽 꼬리 - 끝점에서 왼쪽으로 나가 위(시작 쪽)로 휜다
-    expect(parts[1].slice(0, 2)).toEqual([140, 300]);
-    expect(parts[1][parts[1].length - 2]).toBeLessThan(0);
-    expect(parts[1][parts[1].length - 1]).toBeLessThan(0);
+    expect(newStub.d.startsWith("M140 300Q")).toBe(true);
+    expect(newStub.to.x).toBeLessThan(140);
+    expect(newStub.to.y).toBeLessThan(300);
   });
 
   it("never reaches past the middle of a narrow gap", () => {
-    const parts = buildLinkStubs({ x: 100, y: 0 }, { x: 116, y: 200 }).split("M").filter(Boolean).map((part) => readNumbers(part));
-    expect(Math.abs(parts[0][parts[0].length - 2])).toBeLessThanOrEqual(8);
+    const [oldStub, newStub] = buildLinkStubs({ x: 100, y: 0 }, { x: 116, y: 200 });
+    expect(oldStub.to.x).toBeLessThanOrEqual(108);
+    expect(newStub.to.x).toBeGreaterThanOrEqual(108);
   });
 });

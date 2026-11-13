@@ -20,16 +20,28 @@ export function buildLinkPath(start: RoutePoint, end: RoutePoint): string {
 export const FAR_LINK_DY = 24;
 
 // 먼 이음의 꼬리 - 상자에서 가로로 나가는 길이, 진행 방향으로 휘는 높이(px)
-const STUB_LENGTH = 12;
+const STUB_LENGTH = 14;
 const STUB_BEND = 6;
 
 export function isFarLink(start: RoutePoint, end: RoutePoint): boolean {
   return Math.abs(end.y - start.y) > FAR_LINK_DY;
 }
 
+/** 꼬리 하나 - 상자 테두리(from)에서 끝(to)으로 갈수록 옅어진다(그리는 쪽이 from→to 그라디언트를 건다) */
+export interface LinkStub {
+  d: string;
+  from: RoutePoint;
+  to: RoutePoint;
+}
+
 /** 먼 이음은 선 대신 두 끝의 짧은 꼬리 - 상자에서 가로로 나가 맞은편이 있는 위·아래로 살짝 휜다. 틈의 가운데를 넘지 않는다 */
-export function buildLinkStubs(start: RoutePoint, end: RoutePoint): string {
+export function buildLinkStubs(start: RoutePoint, end: RoutePoint): [LinkStub, LinkStub] {
   const length = Math.min(STUB_LENGTH, Math.max(0, (end.x - start.x) / 2));
   const bend = Math.sign(end.y - start.y) * STUB_BEND;
-  return `M${start.x} ${start.y}q${length} 0 ${length} ${bend}M${end.x} ${end.y}q${-length} 0 ${-length} ${-bend}`;
+  const oldTip = { x: start.x + length, y: start.y + bend };
+  const newTip = { x: end.x - length, y: end.y - bend };
+  return [
+    { d: `M${start.x} ${start.y}Q${oldTip.x} ${start.y} ${oldTip.x} ${oldTip.y}`, from: start, to: oldTip },
+    { d: `M${end.x} ${end.y}Q${newTip.x} ${end.y} ${newTip.x} ${newTip.y}`, from: end, to: newTip },
+  ];
 }
