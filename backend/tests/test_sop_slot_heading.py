@@ -331,6 +331,107 @@ def test_deleting_one_doc_heading_leaves_the_shared_slot_heading(client: TestCli
     assert (ko["id"], ko["sources"], ko["status"], ko["revision"]) == (row["id"], [ko2["id"]], "confirmed", row["revision"])
 
 
+# ── 함께 쓰는 칸 제목의 상태 — 출처 판단 중 가장 덜 끝난 것 ──────────────────────
+
+
+def _readiness(client: TestClient, bundle_id: int) -> dict:
+    response = client.get(f"/api/bundles/{bundle_id}/review/readiness", headers=AUTHOR)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _resave_heading(client: TestClient, fx: Fixture, unit: dict, action: str, hold_reason: str = "") -> None:
+    """그 단위의 묶음에 든 칸 제목을 id와 함께 다시 보내 확정하거나 보류한다 — 화면의 다시 저장과 같은 모양."""
+    group = get_group_by_unit(client, fx.bundle_id, unit["id"])
+    (row,) = group["targets"]
+    body = _body(
+        [_unit_in(unit, revision=group["units"][0]["decision"]["revision"])],
+        [_heading("h", fx.sop_id, unit, id=row["id"], revision=row["revision"])],
+        action=action, hold_reason=hold_reason,
+    )
+    response = save_group(client, fx.bundle_id, body)
+    assert response.status_code == 200, response.text
+
+
+def test_attaching_with_hold_holds_the_shared_slot_heading(client: TestClient) -> None:
+    fx = _setup(client)
+    _link_headings(client, fx, fx.old1)
+    ko2, en2 = find_unit(fx.old2, KO_HEAD), find_unit(fx.old2, EN_HEAD)
+    body = _body(
+        [_unit_in(ko2), _unit_in(en2)], [_heading("ko", fx.sop_id, ko2), _heading("en", fx.sop_id, en2)],
+        action="hold", hold_reason="Synthetic: B holds",
+    )
+
+    response = save_group(client, fx.bundle_id, body)
+
+    assert response.status_code == 200, response.text
+    ko = _load_slot_headings(fx.sop_id)[(SLOT, "ko")]
+    assert (ko["status"], ko["hold_reason"]) == ("on_hold", "Synthetic: B holds")
+
+
+def test_shared_slot_heading_follows_the_least_finished_source(client: TestClient) -> None:
+    fx = _shared_setup(client)
+    ko1, ko2 = find_unit(fx.old1, KO_HEAD), find_unit(fx.old2, KO_HEAD)
+
+    _resave_heading(client, fx, ko1, "hold", "Synthetic: A holds")
+    held = _load_slot_headings(fx.sop_id)[(SLOT, "ko")]
+    _resave_heading(client, fx, ko2, "confirm")  # 다른 문서가 다시 확정해도 A의 보류는 그대로다
+    still = _load_slot_headings(fx.sop_id)[(SLOT, "ko")]
+    _resave_heading(client, fx, ko1, "confirm")
+    confirmed = _load_slot_headings(fx.sop_id)[(SLOT, "ko")]
+
+    assert (held["status"], held["hold_reason"]) == ("on_hold", "Synthetic: A holds")
+    assert (still["status"], still["hold_reason"]) == ("on_hold", "Synthetic: A holds")
+    assert (confirmed["status"], confirmed["hold_reason"]) == ("confirmed", "")
+
+
+def test_removing_the_holding_doc_confirms_the_shared_slot_heading(client: TestClient) -> None:
+    fx = _shared_setup(client)
+    ko1 = find_unit(fx.old1, KO_HEAD)
+    _resave_heading(client, fx, ko1, "hold", "Synthetic: A holds")
+    group = get_group_by_unit(client, fx.bundle_id, ko1["id"])
+    (row,) = group["targets"]
+    unit = _unit_in(ko1, revision=group["units"][0]["decision"]["revision"], disposition="delete", reason="Synthetic: x")
+
+    response = save_group(client, fx.bundle_id, _body([unit], [], removed_target_ids=[row["id"]]))
+
+    assert response.status_code == 200, response.text
+    ko = _load_slot_headings(fx.sop_id)[(SLOT, "ko")]
+    assert (ko["status"], ko["hold_reason"]) == ("confirmed", "")
+    # 어느 줄에도 보이지 않는 보류가 검토 요청을 막지 않는다
+    assert all(not blocker["code"].startswith("targets_") for blocker in _readiness(client, fx.bundle_id)["blockers"])
+
+
+def test_clearing_the_holding_doc_confirms_the_shared_slot_heading(client: TestClient) -> None:
+    fx = _shared_setup(client)
+    ko1 = find_unit(fx.old1, KO_HEAD)
+    _resave_heading(client, fx, ko1, "hold", "Synthetic: A holds")
+
+    _clear(client, fx.bundle_id, ko1)
+
+    ko = _load_slot_headings(fx.sop_id)[(SLOT, "ko")]
+    assert (ko["status"], ko["hold_reason"]) == ("confirmed", "")
+
+
+def test_a_slot_with_only_a_slot_heading_is_still_an_empty_equipment_slot(client: TestClient) -> None:
+    """장비 SOP의 빈 Procedures 하위 칸 알림 — 칸 제목은 칸 항목이 아니라 칸을 채우지 않는다(설계 §4.6)."""
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    equipment = [{**TOBE_DOCS[0], "is_equipment_sop": True}]
+    response = put_tobe(client, bundle_id, equipment)
+    assert response.status_code == 200, response.text
+    sop_id = response.json()["docs"][0]["id"]
+    old1 = _upload_view(client, bundle_id, p(KO_HEAD, "Heading1") + p(OLD1_KO), "SYNTHETIC_OLD-1_SlotHeading.docx")
+    ko = find_unit(old1, KO_HEAD)
+    heading = _heading("h", sop_id, ko, slot_key="procedures.maintenance")
+    assert save_group(client, bundle_id, _body([_unit_in(ko)], [heading])).status_code == 200
+
+    notices = [notice for notice in _readiness(client, bundle_id)["notices"] if notice["code"] == "equipment_sop_empty_slots"]
+
+    assert [notice["slot_keys"] for notice in notices] == [
+        ["procedures.electronic_record_control", "procedures.troubleshooting", "procedures.maintenance"],
+    ]
+
+
 def test_moving_to_another_slot_heading_leaves_the_shared_one(client: TestClient) -> None:
     """함께 쓰는 칸 제목을 id와 함께 다른 칸으로 보내도 그 행을 옮기지 않는다 — 이 문서 출처만 떼어 새 칸의 칸 제목에 잇는다."""
     fx = _shared_setup(client)

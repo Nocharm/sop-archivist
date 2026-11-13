@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Employee
 from app.sop.ai.jobs import cancel_active_jobs
-from app.sop.constants import EQUIPMENT_SLOT_KEYS, SEMANTIC_CHECK_KEYS
+from app.sop.constants import EQUIPMENT_SLOT_KEYS, SEMANTIC_CHECK_KEYS, SLOT_HEADING
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
 from app.sop.membership import ensure_editable, lock_bundle
@@ -81,7 +81,7 @@ def _list_equipment_notices(snap: BundleSnapshot) -> list[Issue]:
     """장비 SOP에서 새 문장도 N/A도 없는 Procedures 하위 칸 — 상위 칸 N/A는 하위 칸을 덮는다. 완료를 막지 않는다."""
     filled: dict[int, set[str]] = {}
     for target in snap.targets.values():
-        if target.slot_key is not None:
+        if target.slot_key is not None and target.kind != SLOT_HEADING:  # 칸 제목은 칸 항목이 아니라 칸을 채우지 않는다
             filled.setdefault(target.target_doc_id, set()).add(target.slot_key)
     notices: list[Issue] = []
     for doc in sorted(snap.target_docs.values(), key=lambda doc: (doc.order_index, doc.id)):

@@ -23,6 +23,7 @@ from app.sop.detach import (
     ORIGIN_NEW_DOC,
     ORIGIN_TRANSLATION,
     DetachReport,
+    apply_slot_heading_status,
     detach_units,
     is_unassigned,
     load_source_target_ids,
@@ -237,6 +238,7 @@ class _State:
     pair_of: dict[int, int]  # 보낸 단위(와 칸 문장) → 한/영 짝 id — 짝 없는 단위는 키가 없다. 새로 놓이는 짝의 기본값이 본다
     slot_headings: dict[_SlotKey, TargetSentence]  # 이 묶음의 칸 제목 전부 — (새 문서, 칸 키, 언어)마다 하나
     slot_heading_sources: dict[int, list[int]]  # 칸 제목 → 지금 출처 단위(seq 순)
+    slot_heading_decisions: dict[int, UnitDecision]  # 칸 제목 출처 단위 → 판단 — 칸 제목 상태를 다시 정할 때 다른 문서 출처도 본다
 
 
 class _Place(NamedTuple):
@@ -270,7 +272,7 @@ class _Plan:
     change_type: str | None = None
     # 칸 제목만 — 저장 뒤 출처 전부(다른 문서 출처 포함, seq 순). None이면 sources다(_resolve_slot_headings)
     link_sources: list[int] | None = None
-    # 칸 제목만 — 보낸 행이 아닌 기존 칸 제목에 출처만 더한다. 그 행의 글·상태·표시는 바꾸지 않는다
+    # 칸 제목만 — 보낸 행이 아닌 기존 칸 제목에 출처만 더한다. 글·표시는 그대로, 상태는 출처 판단에서 다시 정한다
     is_attach: bool = False
 
 
@@ -396,15 +398,18 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
         steps[doc_id].add(step_no)
     slot_headings: dict[_SlotKey, TargetSentence] = {}
     slot_heading_sources: dict[int, list[int]] = defaultdict(list)
-    for row, unit_id in await session.execute(
-        select(TargetSentence, TargetSource.unit_id)
+    slot_heading_decisions: dict[int, UnitDecision] = {}
+    for row, unit_id, decision in await session.execute(
+        select(TargetSentence, TargetSource.unit_id, UnitDecision)
         .outerjoin(TargetSource, TargetSource.target_id == TargetSentence.id)
+        .outerjoin(UnitDecision, UnitDecision.unit_id == TargetSource.unit_id)
         .where(TargetSentence.bundle_id == bundle_id, TargetSentence.kind == SLOT_HEADING)
         .order_by(TargetSentence.id, TargetSource.seq)
     ):
         slot_headings[(row.target_doc_id, row.slot_key, row.lang)] = row
         if unit_id is not None:
             slot_heading_sources[row.id].append(unit_id)
+            slot_heading_decisions[unit_id] = decision
     return _State(
         units=units, decisions=decisions, cells=cells, group_of=group_of, existing=existing,
         removed=set(payload.removed_target_ids), sources=sources,
@@ -427,6 +432,7 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
             )
         },
         slot_headings=slot_headings, slot_heading_sources=slot_heading_sources,
+        slot_heading_decisions=slot_heading_decisions,
     )
 
 
@@ -885,7 +891,8 @@ def _resolve_slot_headings(plans: list[_Plan], state: _State) -> tuple[list[_Pla
 
     칸 제목은 출처마다 따로 이어진 끝 노드라(groups._find_neighbors) 이 저장이 다루는 것은 보낸 단위(member_unit_ids)의 연결뿐이고
     행의 다른 출처(다른 옛 문서의 같은 제목)는 그대로 둔다. 그래서 id로 보낸 행도 자리가 바뀌면 옮기지 않고 이 저장의 출처만 떼어
-    새 자리의 칸 제목에 잇는다. 보낸 행이 아닌 기존 칸 제목에는 출처만 더한다(is_attach — 글·상태·표시는 그대로, 내 판단 2026-11-13).
+    새 자리의 칸 제목에 잇는다. 보낸 행이 아닌 기존 칸 제목에는 출처만 더한다(is_attach — 글·표시는 그대로, 내 판단 2026-11-13).
+    상태는 어느 경우든 쓰기 끝에서 출처 판단으로 다시 정한다(detach.apply_slot_heading_status).
     """
     members = state.member_unit_ids
     merged: dict[_SlotKey, _Plan] = {}
@@ -1178,6 +1185,14 @@ async def _write_group(
         decision.reason = item.reason.strip()
         _set_human_status(decision, payload.action, hold_reason, actor, stamp)
         decision.revision += 1
+    # 칸 제목의 상태는 출처 판단에서 나온다 — 판단을 쓴 뒤에, 출처를 더하거나 뗀 칸 제목마다 다시 정한다(설계 §4.6)
+    decided = {**state.slot_heading_decisions, **state.decisions}
+    touched_headings = [
+        (plan.row, plan.sources if plan.link_sources is None else plan.link_sources)
+        for plan in plans if plan.item.kind == SLOT_HEADING
+    ] + [(row, kept) for row, kept in releases if kept]
+    for row, unit_ids in touched_headings:
+        apply_slot_heading_status(row, [decided[unit_id] for unit_id in unit_ids], preferred=state.member_unit_ids)
     await record_group_adoption(
         session, plans=plans, payload=payload, decisions=state.decisions, actor=actor, stamp=stamp
     )
