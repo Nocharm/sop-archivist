@@ -7,6 +7,7 @@ from typing import Annotated, Literal, TypeVar
 
 from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import ColumnElement, DateTime, Select, Table, and_, delete, func, insert, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
@@ -405,7 +406,10 @@ async def record_snapshot_step(
 async def record_unit_edit_step(
     session: AsyncSession, bundle: Bundle, actor: str, meta: UndoMetaIn, document_id: int
 ) -> None:
-    """Assign 안의 자르기를 한 단계로 — 내용은 찍지 않고 그 문서의 방금 만든 Split 편집 기록을 가리킨다(설계 §4.4)."""
+    """Assign 안의 단위 편집(자르기·합치기·언어 바꾸기)을 한 단계로 — 내용은 찍지 않고 그 문서의 방금 만든 Split 편집 기록을 가리킨다(설계 §4.4).
+
+    단계 이름은 편집 종류를 따르되 split은 Assign에서 부르는 이름 cut이다.
+    """
     edit = await session.scalar(
         select(UnitEdit)
         .where(UnitEdit.document_id == document_id, UnitEdit.state == "applied")  # editing.EDIT_APPLIED — editing이 이 모듈을 거쳐 들여와 직접 못 쓴다
@@ -418,10 +422,11 @@ async def record_unit_edit_step(
     session.add(
         DecisionStep(
             bundle_id=bundle.id, actor=actor, session_key=meta.session,
-            seq=await _get_next_seq(session, bundle.id, actor, meta.session), op="cut", kind="unit_edit",
+            seq=await _get_next_seq(session, bundle.id, actor, meta.session),
+            op="cut" if edit.op == "split" else edit.op, kind="unit_edit",
             state=STEP_APPLIED, step_key=meta.step_key,
             focus={"unit_id": meta.focus_unit_id, "target_id": meta.focus_target_id},
-            unit_ids=[meta.focus_unit_id] if meta.focus_unit_id else list(edit.retired_unit_ids),
+            unit_ids=[meta.focus_unit_id] if meta.focus_unit_id else list(edit.retired_unit_ids) or [int(unit_id) for unit_id in edit.lang_changes],
             scope_label=meta.scope_label, document_id=document_id, unit_edit_id=edit.id,
         )
     )
@@ -504,14 +509,23 @@ async def _move_snapshot(
     dependents = _find_unrecorded_dependents(expected, restore, current)
     if dependents is not None:
         raise_rule(409, "undo_conflict", unit_ids=dependents)
+    # 되살릴 짝 멤버의 Unit이 그 뒤 다른 짝에 들어갔으면(Unit 하나는 짝 하나에만) 되쓰지 않는다
+    repaired = _find_repaired_units(expected, restore, current)
+    if repaired:
+        raise_rule(409, "undo_conflict", unit_ids=repaired)
     # 되살릴 새 문장의 자리가 그 뒤 To-Be에서 사라졌으면(문서 삭제·칸 N/A·WI 단계 삭제) 되쓰지 않는다
     misplaced = await _find_misplaced_targets(session, bundle_id, restore)
     if misplaced is not None:
         raise_rule(409, "undo_conflict", unit_ids=misplaced)
 
     pair_document_ids = _collect_pair_documents(expected, restore, current)
-    _record_text_history(session, restore, current, actor)
-    await write_state(session, bundle_id, restore, current, other=expected)
+    try:
+        # 위 검사가 못 본 제약 위반도 500이 아니라 409로 — 그 단계가 남아 매번 500이면 더 앞 단계도 못 되돌린다
+        async with session.begin_nested():
+            _record_text_history(session, restore, current, actor)
+            await write_state(session, bundle_id, restore, current, other=expected)
+    except IntegrityError:
+        raise_rule(409, "undo_conflict", unit_ids=list(step.unit_ids))
     if pair_document_ids:
         # 짝 모양이 바뀐 문서는 revision을 올린다(pairs._record와 같다) — 옛 짝 모양을 든 화면의 저장이 409가 되게
         await session.execute(
@@ -583,6 +597,17 @@ def _find_unrecorded_dependents(expected: Snapshot, restore: Snapshot, current: 
         if row["parent_target_id"] in gone_targets and key not in expected.get("target_sentences", {}):
             unit_ids.update(_list_source_units(current, int(key)) or [UNKNOWN_UNIT_ID])
     return sorted(unit_ids - {UNKNOWN_UNIT_ID}) if unit_ids else None
+
+
+def _find_repaired_units(expected: Snapshot, restore: Snapshot, current: Snapshot) -> list[int]:
+    """다시 넣을 짝 멤버의 unit_id 중 되쓰기 뒤에도 남는 다른 짝 멤버 행이 이미 가진 것."""
+    now_members = current.get("unit_pair_members", {})
+    restore_members = restore.get("unit_pair_members", {})
+    deleted = {key for key in expected.get("unit_pair_members", {}) if key not in restore_members}
+    taken = {row["unit_id"] for key, row in now_members.items() if key not in deleted}
+    return sorted(
+        {row["unit_id"] for key, row in restore_members.items() if key not in now_members and row["unit_id"] in taken}
+    )
 
 
 async def _find_misplaced_targets(session: AsyncSession, bundle_id: int, restore: Snapshot) -> list[int] | None:

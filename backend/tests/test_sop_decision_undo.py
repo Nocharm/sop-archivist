@@ -418,6 +418,25 @@ def test_assign_cut_records_unit_edit_step(client: TestClient) -> None:
     assert step.unit_ids == [fx.a["id"]]
 
 
+def test_assign_merge_records_merge_step_and_undo_reverts_it(client: TestClient) -> None:
+    fx = _setup_rich(client)
+    revision = get_view(client, fx.bundle_id, fx.old_doc_id)["document"]["revision"]
+    body = {
+        "revision": revision, "op": {"type": "merge", "unit_ids": [fx.a["id"], fx.b["id"]]},
+        "undo": {**UNDO, "focus_unit_id": fx.a["id"]},
+    }
+    merged = _ok(client.post(f"/api/bundles/{fx.bundle_id}/documents/{fx.old_doc_id}/edits", json=body, headers=AUTHOR))
+    (step,) = _load_steps(fx.bundle_id)
+    assert (step.kind, step.op) == ("unit_edit", "merge")
+
+    assert _ok(_undo(client, fx.bundle_id))["op"] == "merge"
+
+    view = get_view(client, fx.bundle_id, fx.old_doc_id)
+    assert find_unit(view, TEXT_A)["id"] == fx.a["id"]
+    assert find_unit(view, TEXT_B)["id"] == fx.b["id"]
+    assert merged["created_unit_ids"][0] not in {unit["id"] for unit in view["units"] if unit["status"] == "active"}
+
+
 # ── 되돌리기·다시 하기 ───────────────────────────────────────────────────────
 
 OTHER_AUTHOR = REVIEWER  # 아래 시험에서 작성자로 넣는다
@@ -674,6 +693,38 @@ def test_undo_restores_dissolved_pair(client: TestClient) -> None:
     view = get_view(client, fx.bundle_id, fx.doc["id"])
     assert [p for p in view["pairs"] if p["id"] == pair["id"]] == [pair]
     assert view["document"]["revision"] > revision + 1  # 풀기 +1, 되돌림 +1
+
+
+@pytest.mark.parametrize("has_precheck", [True, False], ids=["precheck", "savepoint"])
+def test_undo_refused_when_released_units_were_paired_again(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, has_precheck: bool
+) -> None:
+    """짝을 푼 저장 뒤 같은 Unit으로 짝을 다시 만들면 — 옛 짝 멤버를 되살리면 Unit 하나가 두 짝에 들어가니 500이 아니라 409.
+
+    미리 보는 검사를 끈 쪽은 되쓰기의 savepoint가 제약 위반을 409로 바꾸는지 본다.
+    """
+    if not has_precheck:
+        monkeypatch.setattr(decision_steps, "_find_repaired_units", lambda *_: [])
+    fx = _setup_decisions(client)
+    ko, en = find_unit(fx.view, KO_HEAD), find_unit(fx.view, EN_HEAD)
+    body = _body([_unit_in(ko)], [_target("ko", fx.sop_id, [ko], slot_key="purpose")],
+                 release_unit_ids=[en["id"]], undo=UNDO)
+    _ok(save_group(client, fx.bundle_id, body))
+    revision = get_view(client, fx.bundle_id, fx.doc["id"])["document"]["revision"]
+    repaired = client.post(
+        f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/pairs",
+        json={"revision": revision, "unit_ids": [ko["id"], en["id"]]}, headers=AUTHOR,
+    )
+    assert repaired.status_code == 201, repaired.text
+    before = _dump(fx.bundle_id)
+
+    response = _undo(client, fx.bundle_id)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "undo_conflict"
+    assert set(response.json()["detail"]["unit_ids"]) & {ko["id"], en["id"]}
+    assert _dump(fx.bundle_id) == before
+    assert _undo(client, fx.bundle_id).status_code == 409  # 기록은 남아 다시 눌러도 같은 이유
 
 
 def test_undo_refused_when_someone_changed_the_line(client: TestClient) -> None:

@@ -29,6 +29,10 @@ describe("describeDecisionStep", () => {
     expect(describeDecisionStep({ ...base, op: "reset", unit_ids: [1, 2], scope_label: "Doc A" }, "undo", () => "x", () => null).vars.target).toBe("Doc A");
     expect(describeDecisionStep({ ...base, op: "reset", unit_ids: [1, 2] }, "undo", () => "x", () => null).vars.target).toBe("assign.step.wholeBundle");
   });
+  it("names unit edits made from Assign", () => {
+    expect(describeDecisionStep({ ...base, op: "merge", unit_ids: [1, 2] }, "undo", () => "x", () => null).vars.action).toBe("assign.step.merge");
+    expect(describeDecisionStep({ ...base, op: "set_language", unit_ids: [3] }, "redo", () => "x", () => null).vars.action).toBe("assign.step.set_language");
+  });
 });
 
 describe("pickSaveOp", () => {

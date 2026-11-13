@@ -654,10 +654,10 @@ export default function AssignPage() {
     if (!oldView || busy) return;
     setBusy(true);
     try {
-      // 자르기만 Assign 기록에 넣는다(설계 §4.4) - 서버는 Split 편집 기록 번호만 가리킨다
-      const undo = op.type === "split" ? buildUndo({ focus_unit_id: op.unit_id }) : undefined;
+      // 자르기·합치기·언어 바꾸기 모두 Assign 기록에 넣는다(설계 §4.4) - 서버는 Split 편집 기록 번호만 가리킨다
+      const undo = buildUndo({ focus_unit_id: op.type === "split" ? op.unit_id : (followId ?? undefined) });
       const result = await editUnits(bundleId, oldView.document.id, oldView.document.revision, op, false, undo);
-      if (undo) markRecorded();
+      markRecorded();
       cutLine.clear();
       setCutUnitId(null);
       // 고친 줄의 Unit은 은퇴했을 수 있다 - 다시 받는 동안 그 Unit의 묶음·후보를 부르지 않게 고름을 비우고, 새 줄이 생기면 follow가 고른다
