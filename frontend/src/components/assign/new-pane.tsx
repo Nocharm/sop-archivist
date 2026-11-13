@@ -1,15 +1,16 @@
 // Assign 오른쪽 - New 문서. 이미 쓴 문서는 그 원문, 아직 쓰지 않은 문서는 지금까지의 배정으로 엮은 문서(서버 결과물 C 규칙, 읽기 전용 미리 보기).
-// Old와 같은 종이 조각: 왼쪽 밖 앞머리(맨 왼쪽 KO/EN 표시 + 절 번호 칸, 폭 = 절 깊이라 들여쓴 것처럼 읽힌다), 본문 위 줄에 출처 칩.
+// Old와 같은 종이 조각: 왼쪽 밖 앞머리(절 번호 칸, 폭 = 절 깊이라 들여쓴 것처럼 읽힌다), 본문 위 줄에 출처 칩, 위 테두리 오른쪽에 올리거나 고를 때만 KO/EN 탭(짝은 모두).
 // 점선 = 후보, 채움 = 고른 문장, 칩 = 붙은 Old 출처(누르면 Old의 그 조각으로), 왼쪽 끝 위험색 막대 = 출처 없음. 엮은 문서의 빈 칸은 옅은 자리 표시.
 // 칩 오른쪽 갈매기는 그 Old 조각이 왼쪽 칸 화면 위·아래 밖에 있다는 표시 - 스크롤마다 바뀌어 LinkLines가 data-dir로 단다(Old 배지와 같은 방식).
 // 줄이 새로 들어오면 펼치며 나타나고 빠지면 접히며 사라진다(확정이 곧 보이는 실시간 넣기). 표·그림은 이번 화면에서 잇지 않아 회색 상자로만 보인다(설계 §2).
 "use client";
 
 import { ChevronDown, ChevronUp, FilePlus2, Spline } from "lucide-react";
-import { Fragment, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type FocusEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { PaneZoom } from "@/components/assign/pane-zoom";
-import { StripLead, STRIP_LEAD_EXTRA, STRIP_LEAD_LANG } from "@/components/paper/strip-lead";
+import { LangToken } from "@/components/paper/lang-token";
+import { StripLead, STRIP_LEAD_EXTRA } from "@/components/paper/strip-lead";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Truncate } from "@/components/ui/motion";
 import { Select, type SelectOption } from "@/components/ui/select";
@@ -62,6 +63,11 @@ function readState(row: WrittenSentence, props: NewPaneProps): string | undefine
 /** 절 머리 글("5.2. Title")의 앞 번호 - 없으면 빈 글 */
 function readSectionNumber(path: string): string {
   return /^\s*(\d+(?:\.\d+)*)\.?/.exec(path)?.[1] ?? "";
+}
+
+/** 짝 묶음 번호 - 짝의 작은 문장 id(서버는 둘짜리 짝만 서로를 가리킨다), 짝이 아니면 null. 앞머리 괄호와 언어 탭이 같은 기준을 쓴다 */
+function readPairGroup(row: WrittenSentence): number | null {
+  return row.kind !== "sentence" || row.partner_target_id === null ? null : Math.min(row.target_id, row.partner_target_id);
 }
 
 /** 쓴 New 문서가 없을 때 오른쪽 칸 - 올리는 곳(To-Be)으로 데려간다 */
@@ -128,6 +134,7 @@ export function NewPane(props: NewPaneProps) {
   const { t } = useI18n();
   const [openSources, setOpenSources] = useState<ReadonlySet<number>>(new Set());
   const paneRef = useRef<HTMLElement>(null);
+  const matesRef = useRef<HTMLElement[]>([]);
   // 엮은 문서만 - 이미 쓴 문서의 문장은 원래 있던 줄이라 들어오는 움직임을 쓰지 않는다
   const enterKeys = props.readOnly && props.live ? props.live.targetIds.map((id) => `t:${id}`) : [];
   const presence = useRowPresence(props.rows, props.rowsKey, enterKeys);
@@ -141,7 +148,7 @@ export function NewPane(props: NewPaneProps) {
 
   const sentences = shown.map((item) => item.row).filter(isWrittenRow);
   // 짝 구성원이 바로 이웃하면 구성원 수와 상관없이 한 카드, 앞머리 번호 칸 폭은 절 깊이 - Old와 같은 규칙. 짝 묶음 번호는 짝의 작은 문장 id(서버는 둘짜리 짝만 서로를 가리킨다). 표·그림 줄은 카드를 끊는다
-  const brackets = getPairBrackets(sentences.map((row) => ({ unitId: row.target_id, groupId: row.kind !== "sentence" || row.partner_target_id === null ? null : Math.min(row.target_id, row.partner_target_id) })));
+  const brackets = getPairBrackets(sentences.map((row) => ({ unitId: row.target_id, groupId: readPairGroup(row) })));
   const cardTops = getCardTops(sentences.map((row) => row.target_id), brackets);
   const widths = getTabWidths(
     sentences
@@ -203,6 +210,17 @@ export function NewPane(props: NewPaneProps) {
     );
   }
 
+  /** 올리거나 포커스한 줄의 짝 구성원 모두에 언어 탭을 보이게 - data-mate-hover를 직접 단다(Old 용지와 같은 방식, 포인터가 지날 때마다 다시 그리지 않게) */
+  function markMates(target: EventTarget | null) {
+    const line = target instanceof Element ? target.closest<HTMLElement>(".new-line[data-pair-group]") : null;
+    const group = line?.dataset.pairGroup;
+    const els = group ? [...(paneRef.current?.querySelectorAll<HTMLElement>(`.new-line[data-pair-group="${group}"]`) ?? [])] : [];
+    if (els.length === matesRef.current.length && els.every((el, index) => el === matesRef.current[index])) return;
+    for (const el of matesRef.current) delete el.dataset.mateHover;
+    for (const el of els) el.dataset.mateHover = "";
+    matesRef.current = els;
+  }
+
   /** 문장 한 줄(앞 틈 포함) */
   function renderSentence(row: WrittenSentence, isSectionStart: boolean, previous: NewPaneRow | undefined): ReactNode {
     const bracket = brackets.get(row.target_id);
@@ -217,8 +235,16 @@ export function NewPane(props: NewPaneProps) {
       <>
         {!isSectionStart && previous?.kind === "sentence" && <div className="new-gap" data-pair={cardTops.has(row.target_id) ? "" : undefined} />}
         <div className="strip-row">
-          <StripLead width={widths.get(String(row.target_id)) ?? getPillWidth(1)} number={number} bracket={bracket} dim={!isSectionStart} tip="" testId="assign-new" id={row.target_id} lang={row.lang} />
-          <div className="strip new-line" data-bracket={bracket} data-lang={row.lang} data-state={readState(row, props)} data-target={row.target_id} data-testid={`assign-new-${row.target_id}`}>
+          <StripLead width={widths.get(String(row.target_id)) ?? getPillWidth(1)} number={number} bracket={bracket} dim={!isSectionStart} tip="" testId="assign-new" id={row.target_id} />
+          <div
+            className="strip new-line"
+            data-bracket={bracket}
+            data-lang={row.lang}
+            data-state={readState(row, props)}
+            data-target={row.target_id}
+            data-pair-group={readPairGroup(row) ?? undefined}
+            data-testid={`assign-new-${row.target_id}`}
+          >
             {(row.source_unit_ids.length > 0 || row.change_type === "new") && renderSources(row)}
             {props.readOnly ? (
               <span className="new-hit is-static">{text}</span>
@@ -236,6 +262,7 @@ export function NewPane(props: NewPaneProps) {
                 {text}
               </button>
             )}
+            <LangToken lang={row.lang} className="strip-lang" testId={`assign-new-lang-${row.target_id}`} />
           </div>
         </div>
       </>
@@ -261,7 +288,7 @@ export function NewPane(props: NewPaneProps) {
     if (row.kind === "empty") {
       return (
         <div className="strip-row">
-          <span className="strip-lead-gap" style={{ width: getPillWidth(1) + STRIP_LEAD_EXTRA + STRIP_LEAD_LANG }} />
+          <span className="strip-lead-gap" style={{ width: getPillWidth(1) + STRIP_LEAD_EXTRA }} />
           <p className="new-slot-empty" data-testid={`assign-new-slot-${row.key}`}>
             {row.na ? t("assign.slotNa") : t("assign.slotEmpty")}
           </p>
@@ -299,7 +326,15 @@ export function NewPane(props: NewPaneProps) {
       </div>
       <div className="pane-body">
         <div className="sheet">
-          <div className="pg new-sheet" data-strips="" data-read-only={props.readOnly ? "" : undefined}>
+          <div
+            className="pg new-sheet"
+            data-strips=""
+            data-read-only={props.readOnly ? "" : undefined}
+            onPointerOver={(event: ReactPointerEvent<HTMLDivElement>) => markMates(event.target)}
+            onPointerLeave={() => markMates(null)}
+            onFocus={(event: FocusEvent<HTMLDivElement>) => markMates(event.target)}
+            onBlur={() => markMates(null)}
+          >
             {shown.map(({ row, leaving }, index) => {
               const previous = shown[index - 1]?.row;
               const key = getNewRowKey(row);
