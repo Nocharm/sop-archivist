@@ -782,7 +782,8 @@ export default function AssignPage() {
     setLiveNew((prev) => ({ key: nextKey, docId, targetIds, seq: (prev?.seq ?? 0) + 1 }));
     if (composed.data?.target_doc_id === docId) {
       const textOf = (unitIds: number[]) => unitIds.map((id) => unitMap.get(id)?.text ?? "").join(" ");
-      setComposedPatch({ base: composed.data, doc: applySavedTargets(composed.data, saved.targets, textOf) });
+      // 앞 저장의 미리 고침 위에 얹는다 - 다시 읽기가 오기 전에 연달아 확정해도 앞 문장이 빠지지 않게
+      setComposedPatch({ base: composed.data, doc: applySavedTargets(composedDoc ?? composed.data, saved.targets, textOf) });
     }
   }
 
@@ -797,7 +798,7 @@ export default function AssignPage() {
       if (composed.data && isComposedDoc && newDocId !== null) {
         const docId = newDocId;
         setLiveNew((prev) => ({ key: toggleKey, docId, targetIds: [], seq: (prev?.seq ?? 0) + 1 }));
-        setComposedPatch({ base: composed.data, doc: removeClearedUnits(composed.data, new Set(row.unitIds)) });
+        setComposedPatch({ base: composed.data, doc: removeClearedUnits(composedDoc ?? composed.data, new Set(row.unitIds)) });
       }
       setMenu(null);
       showToast(t("classify.cleared"));
