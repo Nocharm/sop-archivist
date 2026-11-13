@@ -1882,12 +1882,12 @@ export default function AssignPage() {
         {canEdit && (
           <span className="flex items-center gap-1">
             <Tooltip label={t("assign.undo")}>
-              <button type="button" className="btn icon h-7" aria-label={t("assign.undo")} data-testid="assign-undo" disabled={busy || !undoState.canUndo} onClick={() => void runUndoStep("undo")}>
+              <button type="button" className="btn icon h-7 w-7" aria-label={t("assign.undo")} data-testid="assign-undo" disabled={busy || !undoState.canUndo} onClick={() => void runUndoStep("undo")}>
                 <Undo2 size={14} strokeWidth={1.5} aria-hidden />
               </button>
             </Tooltip>
             <Tooltip label={t("assign.redo")}>
-              <button type="button" className="btn icon h-7" aria-label={t("assign.redo")} data-testid="assign-redo" disabled={busy || !undoState.canRedo} onClick={() => void runUndoStep("redo")}>
+              <button type="button" className="btn icon h-7 w-7" aria-label={t("assign.redo")} data-testid="assign-redo" disabled={busy || !undoState.canRedo} onClick={() => void runUndoStep("redo")}>
                 <Redo2 size={14} strokeWidth={1.5} aria-hidden />
               </button>
             </Tooltip>
