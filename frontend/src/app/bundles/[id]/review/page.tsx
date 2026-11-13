@@ -9,7 +9,6 @@ import { useState } from "react";
 
 import { BundleLoadError } from "@/components/bundle-load-error";
 import { Modal } from "@/components/modal";
-import { EditionToggle } from "@/components/outputs/edition-toggle";
 import { OutputCView } from "@/components/outputs/output-c";
 import { ReviewReturnNote } from "@/components/review-return-note";
 import { BundleStatusPill } from "@/components/status";
@@ -18,7 +17,7 @@ import { LoadError } from "@/components/ui/load-error";
 import { showToast } from "@/components/ui/toast";
 import { WithdrawReviewButton } from "@/components/withdraw-review";
 import { humanizeApiError } from "@/lib/api-errors";
-import { completeReview, getOutputC, reopenReview, returnReview, type OutputLang } from "@/lib/api-sop";
+import { completeReview, getOutputC, reopenReview, returnReview } from "@/lib/api-sop";
 import { getBundleLabel } from "@/lib/bundle-label";
 import { loadBundle, putBundle, useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
@@ -29,10 +28,10 @@ import { useLoaded } from "@/lib/use-loaded";
 type ReasonAction = "return" | "reopen";
 
 export default function ReviewPage() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const bundleId = Number(useParams<{ id: string }>().id);
   const { bundle, error: bundleError, reload: reloadBundle } = useBundle(bundleId);
-  const [lang, setLang] = useState<OutputLang>("ko");
+  // 결과물 C 한 벌 - 화면 언어는 칸 이름 같은 라벨 언어로만 보낸다
   const output = useLoaded(() => getOutputC(bundleId, lang), `${bundleId}:${lang}:${bundle?.revision ?? 0}`);
   const showSkeleton = useDelayedFlag(output.data === null && output.error === null);
   const [reasonFor, setReasonFor] = useState<ReasonAction | null>(null);
@@ -74,7 +73,6 @@ export default function ReviewPage() {
           {bundle.status === "in_progress" ? t("review.hintProgress") : bundle.status === "in_review" ? (isReviewer ? t("review.hintReviewer") : t("review.hintWaiting")) : t("review.hintDone")}
         </span>
         <span className="flex-1" />
-        <EditionToggle value={lang} onChange={setLang} testId="review-lang" />
         {bundle.status === "in_progress" && isAuthor && (
           <Link href={getStageHref(bundleId, "overview")} className="btn" data-testid="review-go-overview">
             <Gauge size={16} strokeWidth={1.5} aria-hidden />
@@ -107,7 +105,7 @@ export default function ReviewPage() {
           <ReviewReturnNote bundle={bundle} testId="review-return-note" />
         </div>
         {output.data ? (
-          <OutputCView data={output.data} lang={lang} />
+          <OutputCView data={output.data} />
         ) : output.error !== null ? (
           <LoadError error={output.error} onRetry={output.reload} testId="review-outputs" />
         ) : (

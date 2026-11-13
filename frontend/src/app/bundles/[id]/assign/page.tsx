@@ -74,7 +74,7 @@ import {
   type UnitRow,
   type WrittenSentence,
 } from "@/lib/api-sop";
-import { applySavedTargets, buildComposedRows, isWrittenRow, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
+import { applySavedTargets, buildComposedRows, isWrittenRow, listHeadingNotes, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
 import {
   addPartnerTargets,
   buildLinkPairs,
@@ -108,6 +108,9 @@ import {
   getRowStep,
   hasDraftChange,
   hasRowLanguage,
+  isHeadingSourceUnit,
+  isPlaceOption,
+  listTreeOptions,
   isSentenceUnit,
   isTextChangeType,
   isTranslationOf,
@@ -496,6 +499,8 @@ export default function AssignPage() {
   const composedData = composed.data?.target_doc_id === newDocId ? composed.data : null;
   const composedDoc = composedData && composedPatch?.base === composedData ? composedPatch.doc : composedData;
   const newRows: NewPaneRow[] = isComposedDoc ? (composedDoc ? buildComposedRows(composedDoc) : []) : written.filter((item) => item.target_doc_id === newDocId);
+  // 엮은 문서의 칸 머리 옆 칸 제목 출처 - 이미 쓴 문서에는 칸 제목이 없다
+  const headingNotes = isComposedDoc && composedDoc ? listHeadingNotes(composedDoc) : undefined;
   // 두 문서 사이 이음 - 저장된 출처와 고른 줄의 저장 전 고름
   const oldUnitIds = useMemo(() => new Set(oldView?.units.map((unit) => unit.id) ?? []), [oldView]);
   const linkPairs = buildLinkPairs(newRows.filter(isWrittenRow), oldUnitIds, draft.destination?.kind === "link" ? { units: rowUnits.map((unit) => ({ id: unit.unit_id, lang: unit.lang })), targetIds: draft.destination.targetIds } : null);
@@ -731,7 +736,7 @@ export default function AssignPage() {
   }
 
   /**
-   * 묶음 저장 응답의 짝 정리를 화면에 반영한다 - 짝은 서버가 같은 저장 안에서 확정하거나 푼다(설계 §5.2).
+   * 묶음 저장 응답의 짝 정리를 화면에 반영한다 - 짝은 서버가 같은 저장 안에서 확정하거나 푼다(제품 명세 §6.5).
    * 푼 짝이 있을 때만 원문 보기를 다시 받는다 - 줄은 보기의 짝에서 나온다. 확정만 됐으면 줄이 그대로이고 이 화면은 짝 상태도 문서 revision도 쓰지 않는다.
    * 이 줄의 짝이 풀렸으면 거르기 자리의 짝 줄을 풀린 줄들로 바꾸고 true - 남은 문장이 목록에서 사라지지 않게.
    */
@@ -932,7 +937,7 @@ export default function AssignPage() {
     setConfirmingIdentical(false);
   }
 
-  /** 출처 없는 New 문장을 신규로 확정 - Remark를 같이 싣는다(단위 판단이 없어 새 문장이 글을 담는다, 설계 §5.2) */
+  /** 출처 없는 New 문장을 신규로 확정 - Remark를 같이 싣는다(단위 판단이 없어 새 문장이 글을 담는다, 제품 명세 §7.7) */
   function markNew() {
     const target = writtenMap.get(focusNew ?? -1);
     if (!target) return;
@@ -990,12 +995,12 @@ export default function AssignPage() {
       return false;
     }
     if (!row || !canEdit) return false;
-    // 이 줄에 없는 언어의 New 문장도 잇는다 - 줄의 조각이 출처가 되어 번역이 된다(설계 §5.2)
+    // 이 줄에 없는 언어의 New 문장도 잇는다 - 줄의 조각이 출처가 되어 번역이 된다(제품 명세 §7.7)
     const current = destination?.kind === "link" ? destination.targetIds : [];
     const isRemoving = additive && current.includes(targetId);
     const next = additive ? (isRemoving ? current.filter((id) => id !== targetId) : [...current, targetId]) : [targetId];
     if (next.length === 0) setDraft({ destination: null });
-    // 함께 골라진 짝 문장을 Ctrl로 빼면 다시 붙이지 않는다 - 뺀 문장은 출처 없이 남아 신규가 된다(설계 §5.2)
+    // 함께 골라진 짝 문장을 Ctrl로 빼면 다시 붙이지 않는다 - 뺀 문장은 출처 없이 남아 신규가 된다(제품 명세 §7.7)
     else if (isRemoving) {
       setDraft({ destination: { kind: "link", targetIds: next } });
       setPickSeq((seq) => seq + 1);
@@ -1316,6 +1321,9 @@ export default function AssignPage() {
     );
   }
 
+  // 칸 제목 자리는 줄 단위가 모두 제목·문장일 때만 보인다 - 표·그림은 칸 제목의 출처가 아니다
+  const canPickHeading = rowUnits.length > 0 && rowUnits.every((unit) => isHeadingSourceUnit(unit.kind));
+  const treeOptions = listTreeOptions(options, canPickHeading);
   const nearAnchor = destination ?? recommendations[0]?.destination ?? null;
   const nearLinks = nearAnchor?.kind === "link" ? pickNearby(written, nearAnchor.targetIds) : [];
   const nearPlaces: DestinationOption[] = nearAnchor && nearAnchor.kind !== "link" ? listSiblingPlaces(options, nearAnchor) : [];
@@ -1341,7 +1349,7 @@ export default function AssignPage() {
   const accSections: AccordionSection[] = [
     { key: "rec", icon: Sparkles, title: t("assign.acc.rec"), count: recommendations.length, body: recommendations.length === 0 ? <p className="text-xs text-ink-3">{t("assign.acc.none")}</p> : recommendations.map(renderRecommendation) },
     { key: "near", icon: Locate, title: t("assign.acc.near"), count: nearLinks.length + nearPlaces.length, body: renderNearby() },
-    { key: "all", icon: ListTree, title: t("assign.acc.all"), count: written.length + options.length, body: <DestinationTree written={written} options={options} tobeHref={getStageHref(bundleId, "tobe")} onPickLink={pickNewSentence} onPickPlace={pickDestination} /> },
+    { key: "all", icon: ListTree, title: t("assign.acc.all"), count: written.length + options.filter(isPlaceOption).length, body: <DestinationTree written={written} options={treeOptions} tobeHref={getStageHref(bundleId, "tobe")} onPickLink={pickNewSentence} onPickPlace={pickDestination} /> },
     {
       key: "move",
       icon: MoveRight,
@@ -1448,7 +1456,7 @@ export default function AssignPage() {
     const placeLabel = isPlace ? renderPlaceLabel(destination) : null;
     const isConfirmedView = row?.status === "confirmed" && draft.destination === null;
     const pickedRows = linkIds.map((id) => writtenMap.get(id)).filter((item): item is WrittenSentence => item !== undefined);
-    // 줄에 없는 언어의 문장은 번역이다 - 종류를 고르지 않고, 나눔도 같은 언어 문장끼리만 센다(설계 §5.2)
+    // 줄에 없는 언어의 문장은 번역이다 - 종류를 고르지 않고, 나눔도 같은 언어 문장끼리만 센다(제품 명세 §6.7)
     const translatedIds = new Set(pickedRows.filter((item) => isTranslationOf(item.lang, rowLangs)).map((item) => item.target_id));
     const byLang = new Map<string, number>();
     for (const item of pickedRows) if (!translatedIds.has(item.target_id)) byLang.set(item.lang, (byLang.get(item.lang) ?? 0) + 1);
@@ -1466,7 +1474,7 @@ export default function AssignPage() {
         <span className="chosen-label">
           {isConfirmedView && <Check size={13} strokeWidth={2} className="flex-none" aria-hidden />}
           <Truncate
-            text={`${isConfirmedView ? `${t("assign.chosen.confirmed")} · ` : ""}${destination.kind === "link" ? `${t("assign.chosen.link")} · ${[...new Set(pickedRows.map((item) => item.doc_code))].join(", ")}` : isPlace ? t("assign.chosen.place") : t("assign.acc.move")}`}
+            text={`${isConfirmedView ? `${t("assign.chosen.confirmed")} · ` : ""}${destination.kind === "link" ? `${t("assign.chosen.link")} · ${[...new Set(pickedRows.map((item) => item.doc_code))].join(", ")}` : destination.kind === "slot_heading" ? t("assign.slotHeading") : isPlace ? t("assign.chosen.place") : t("assign.acc.move")}`}
           />
         </span>
         {(destination.kind === "delete" || destination.kind === "move") && (
@@ -1495,6 +1503,12 @@ export default function AssignPage() {
             </span>
             {newSentences}
           </>
+        )}
+        {destination.kind === "slot_heading" && (
+          <p className="text-[13px] text-ink" data-testid="assign-chosen-heading">
+            <b className="mr-1 font-mono text-[11px]">{renderPlaceLabel(destination).title}</b>
+            {renderPlaceLabel(destination).text}
+          </p>
         )}
         {spansDocs && <p className="text-xs text-ink-2">{t("assign.duplicateReason")}</p>}
         {leftovers.length > 0 && (
@@ -2054,6 +2068,7 @@ export default function AssignPage() {
                     docId={String(newDocId)}
                     onDocChange={(value) => setManualNewDoc({ key: toggleKey, docId: Number(value) })}
                     rows={newRows}
+                    headingNotes={headingNotes}
                     rowsKey={isComposedDoc && !composedDoc ? `${newDocId}:loading` : String(newDocId)}
                     tag={isComposedDoc ? t("assign.composedTag") : t("assign.writtenTag")}
                     readOnly={isComposedDoc}

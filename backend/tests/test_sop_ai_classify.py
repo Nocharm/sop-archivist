@@ -28,6 +28,7 @@ from app.sop.models import (
     BundleEvent,
     GuidelineVersion,
     TargetDoc,
+    TargetSentence,
     Unit,
     UnitPair,
     UnitPairMember,
@@ -660,6 +661,32 @@ def test_manual_order_document_appends_at_the_end(client: TestClient, fake_ai: F
 
     orders = [get_target(client, bundle.id, unit_id)["order_index"] for unit_id in (ko, en)]
     assert sorted(orders) == [1, 2]  # 사람이 먼저 놓은 문장이 0이다
+
+
+@pytest.mark.parametrize("is_manual_order", [False, True])
+def test_pair_proposed_into_one_slot_numbers_english_and_omits_korean(
+    client: TestClient, fake_ai: FakeAi, is_manual_order: bool
+) -> None:
+    # 짝 하나는 작업 하나라 두 언어 새 문장이 한 번에 같은 칸에 놓인다 — 제품 명세 §7.13 섹션 번호 기본값(O10)이 사람 저장과 같다
+    bundle = make_ai_bundle(client)
+    if is_manual_order:
+        async def _set_manual_order(session: AsyncSession) -> None:
+            await session.execute(update(TargetDoc).where(TargetDoc.id == bundle.sop_id).values(manual_order=True))
+            await session.commit()
+
+        run_in_session(_set_manual_order)
+    ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)  # 원문은 한글이 먼저다
+    use_reply(fake_ai)
+    queue_units(client, bundle.id, [ko, en])
+
+    run_jobs()
+
+    rows = {row.lang: row for row in read_rows(TargetSentence)}
+    assert (rows["en"].number_style, rows["ko"].number_style) == ("numbered", "omitted")
+    if is_manual_order:
+        assert (rows["en"].order_index, rows["ko"].order_index) == (0, 1)
+    else:
+        assert (rows["en"].order_index, rows["ko"].order_index) == (0, 0)  # 순서는 결과물의 정렬 키가 정한다
 
 
 def test_number_difference_adds_warning(client: TestClient, fake_ai: FakeAi) -> None:

@@ -28,6 +28,8 @@ describe("splitGates", () => {
 describe("GATE_STAGE", () => {
   it("opens the same screen as the next action for the same blocker", () => {
     expect(GATE_STAGE.documents).toBe(NEXT_ACTION_STAGE.upload_documents);
+    expect(GATE_STAGE.versions).toBe(NEXT_ACTION_STAGE.fill_doc_versions);
+    expect(GATE_STAGE.versions).toBe("documents");
     expect(GATE_STAGE.boundaries).toBe(NEXT_ACTION_STAGE.check_boundaries);
     expect(GATE_STAGE.boundaries).toBe("split");
     expect(GATE_STAGE.units).toBe(NEXT_ACTION_STAGE.decide_units);

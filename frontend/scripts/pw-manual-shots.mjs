@@ -127,9 +127,10 @@ const SCENES = [
       }
       await click(page, id("assign-acc-all"));
       await page.locator('[data-testid^="assign-tree-p"]').first().click();
-      await page.locator('[data-testid^="assign-tree-place-"]:not([disabled])').first().click();
+      // 칸마다 칸 제목 자리(assign-tree-place-heading:…)가 칸 줄 앞에 있다 - 그림은 칸 줄을 고른 모습
+      await page.locator('[data-testid^="assign-tree-place-"]:not([data-testid^="assign-tree-place-heading:"]):not([disabled])').first().click();
     },
-    marks: [id("assign-chosen"), id("assign-primary"), id("assign-edit"), id("assign-hold"), `[data-testid^="assign-tree-place-"]`],
+    marks: [id("assign-chosen"), id("assign-primary"), id("assign-edit"), id("assign-hold"), '[data-testid^="assign-tree-place-"]:not([data-testid^="assign-tree-place-heading:"])'],
   },
   {
     name: "assign-confirmed", user: "qa.member", path: "/bundles/2/assign",
@@ -192,7 +193,15 @@ const SCENES = [
   {
     name: "outputs-a", app: {}, user: "qa.member", path: "/bundles/3/outputs",
     prep: (page) => click(page, id("outputs-tab-a")),
-    marks: [id("outputs-tab-a"), id("output-a"), id("outputs-lang-en"), id("outputs-summary"), id("outputs-checks"), id("outputs-export")],
+    marks: [id("outputs-tab-a"), id("output-a"), id("output-a-row-no-0"), id("outputs-summary"), id("outputs-checks"), id("outputs-export")],
+  },
+  {
+    // Export Excel은 미리보기 창을 먼저 연다 - 파일과 같은 시트 탭 넷, 받기는 창에서
+    name: "outputs-excel", appOnly: true, app: {}, user: "qa.member", path: "/bundles/3/outputs",
+    prep: async (page) => {
+      await click(page, id("outputs-export-open"));
+      await page.locator(`${id("export-preview-sheet")} tbody tr`).first().waitFor({ timeout: T });
+    },
   },
   { name: "outputs-b", app: {}, user: "qa.member", path: "/bundles/3/outputs", prep: (page) => click(page, id("outputs-tab-b")), marks: [id("output-b")] },
   { name: "outputs-c", app: {}, user: "qa.member", path: "/bundles/3/outputs", prep: (page) => click(page, id("outputs-tab-c")), marks: [id("output-c")] },

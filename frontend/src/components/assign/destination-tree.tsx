@@ -7,7 +7,7 @@ import { useState } from "react";
 
 import { Truncate } from "@/components/ui/motion";
 import type { WrittenSentence } from "@/lib/api-sop";
-import type { Destination, DestinationOption } from "@/lib/classify-model";
+import { isPlaceOption, type Destination, type DestinationOption } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
 
 interface DestinationTreeProps {
@@ -80,7 +80,7 @@ export function DestinationTree({ written, options, tobeHref, onPickLink, onPick
       {placeDocs.length > 0 && <p className="tree-group">{t("assign.tree.unwritten")}</p>}
       {placeDocs.map(([code, items]) => (
         <div key={code}>
-          {renderNode(`p${code}`, code, t("assign.tree.count", { n: items.length }))}
+          {renderNode(`p${code}`, code, t("assign.tree.count", { n: items.filter(isPlaceOption).length }))}
           {open.has(`p${code}`) && (
             <div className="tree-kids">
               {items.map((option) => (
@@ -93,6 +93,7 @@ export function DestinationTree({ written, options, tobeHref, onPickLink, onPick
                   data-testid={`assign-tree-place-${option.id}`}
                   onClick={() => onPickPlace(option.destination)}
                 >
+                  {option.destination.kind === "slot_heading" && <span className="tree-sub">{t("assign.slotHeading")} · </span>}
                   {option.label}
                   {option.disabled && <span className="tree-sub"> · N/A</span>}
                 </button>

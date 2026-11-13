@@ -1,7 +1,7 @@
 """Add decision_steps — per screen-session undo/redo steps for Assign (changed-row snapshots or a pointer to a Split edit).
 
-Revision ID: 0014
-Revises: 0013
+Revision ID: 0015
+Revises: 0014
 Create Date: 2026-11-13 16:53:14.547208
 
 """
@@ -11,8 +11,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = '0014'
-down_revision: str | Sequence[str] | None = '0013'
+revision: str = '0015'
+down_revision: str | Sequence[str] | None = '0014'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

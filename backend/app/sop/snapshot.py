@@ -1,5 +1,5 @@
 """결과물 스냅숏 — 묶음 하나의 문서·블록·단위·판단·새 문서·새 문장을 DB 표마다 질의 한 번으로 읽은 불변 값(결과물 A·B·C·요약의 입력)과,
-목록·개요에 싣는 줄 기준 진행 숫자(묶음 여럿을 질의 두 번으로).
+목록·개요에 싣는 줄 기준 진행 숫자(묶음 여럿을 질의 두 번으로), 결과물의 확정한 사람 이름.
 """
 
 from collections import defaultdict
@@ -13,6 +13,7 @@ from sqlalchemy import ColumnElement, Select, and_, case, exists, func, or_, sel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
+from app.models import Employee
 from app.sop.constants import COVER_KINDS
 from app.sop.detach import UNASSIGNED
 from app.sop.errors import raise_rule
@@ -65,6 +66,7 @@ class DocumentInfo:
     file_name: str
     status: str  # ready | rejected | failed — 검토 요청이 거절·실패 문서가 남았는지 가린다
     order: int  # 문서 순서(0부터) — 옛 문서 먼저, 같은 쪽 안에서는 id 순
+    language_layout: str  # ko_en_interleaved | ko_en_separate | ko_only | en_only
 
 
 @dataclass(frozen=True)
@@ -145,6 +147,7 @@ class TargetInfo:
     confirmed_by: str | None
     confirmed_at: datetime | None
     source_unit_ids: tuple[int, ...]  # 출처 순서(seq)
+    remark: str  # 사람이 적은 메모 — include_text=False면 빈 글
 
 
 @dataclass(frozen=True)
@@ -285,6 +288,7 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
             document.id: DocumentInfo(
                 id=document.id, side=document.side, doc_code=document.doc_code, doc_version=document.doc_version,
                 title=document.title, file_name=document.file_name, status=document.status, order=order,
+                language_layout=document.language_layout,
             )
             for order, document in enumerate(documents)
         },
@@ -296,6 +300,29 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
         targets=await _load_targets(session, bundle_id, units.keys(), include_text),
         target_docs=await load_target_docs(session, bundle_id),
     )
+
+
+def list_confirmer_ids(snap: BundleSnapshot) -> set[str]:
+    """스냅숏의 판단·새 문장을 확정한 사람의 로그인 ID — 결과물이 이름을 붙일 대상이다."""
+    login_ids = {decision.confirmed_by for decision in snap.decisions.values()}
+    login_ids |= {target.confirmed_by for target in snap.targets.values()}
+    return {login_id for login_id in login_ids if login_id}
+
+
+async def load_people_names(session: AsyncSession, login_ids: Collection[str]) -> dict[str, str]:
+    """로그인 ID → 표시 이름 — 활성 직원만, 이름이 비면 한글 이름, 둘 다 비면 뺀다(질의 한 번).
+
+    결과물 A·Excel의 "확정한 사람"용이다. 디렉터리에 없거나 퇴직한 사람은 빠져 결과물이 ID만 적는다(제품 명세 §7.13 줄 규칙 (7)).
+    AI 페이로드에는 쓰지 않는다 — 실명 금지 원칙은 그대로다.
+    """
+    if not login_ids:
+        return {}
+    rows = await session.execute(
+        select(Employee.login_id, Employee.name, Employee.korean_name).where(
+            Employee.login_id.in_(list(login_ids)), Employee.active.is_(True)
+        )
+    )
+    return {login_id: name or korean_name for login_id, name, korean_name in rows if name or korean_name}
 
 
 async def _load_documents(session: AsyncSession, bundle_id: int) -> tuple[list[Document], dict[int, Document]]:
@@ -330,7 +357,9 @@ async def _load_targets(
             sources[target_id].append(unit_id)
     target_statement = select(TargetSentence).where(TargetSentence.bundle_id == bundle_id)
     if not include_text:
-        target_statement = target_statement.options(defer(TargetSentence.confirmed_text), defer(TargetSentence.ai_text))
+        target_statement = target_statement.options(
+            defer(TargetSentence.confirmed_text), defer(TargetSentence.ai_text), defer(TargetSentence.remark)
+        )
     return {
         target.id: TargetInfo(
             id=target.id, target_doc_id=target.target_doc_id, slot_key=target.slot_key, wi_step=target.wi_step,
@@ -341,7 +370,7 @@ async def _load_targets(
             translation_source_unit_id=target.translation_source_unit_id, parent_target_id=target.parent_target_id, cell_row=target.cell_row, cell_col=target.cell_col,
             grid=target.grid, status=target.status, hold_reason=target.hold_reason, warnings=tuple(target.warnings),
             confirmed_by=target.confirmed_by, confirmed_at=target.confirmed_at,
-            source_unit_ids=tuple(sources.get(target.id, ())),
+            source_unit_ids=tuple(sources.get(target.id, ())), remark=target.remark if include_text else "",
         )
         for target in await session.scalars(target_statement)
     }

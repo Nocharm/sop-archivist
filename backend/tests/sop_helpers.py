@@ -71,6 +71,19 @@ def upload(
     )
 
 
+def set_doc_version(
+    client: TestClient, bundle_id: int, doc: dict, version: str = "1.0", headers: dict[str, str] = AUTHOR
+) -> dict:
+    """옛 문서의 버전을 적는다(검토 요청 조건) — doc은 revision을 담은 문서 응답이고, 바뀐 문서를 돌려준다."""
+    response = client.patch(
+        f"/api/bundles/{bundle_id}/documents/{doc['id']}",
+        json={"revision": doc["revision"], "doc_version": version},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 def get_view(client: TestClient, bundle_id: int, doc_id: int, headers: dict[str, str] = AUTHOR) -> dict:
     """문서의 원문 대조 데이터(블록·활성 단위·짝)."""
     response = client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/view", headers=headers)

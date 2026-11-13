@@ -55,6 +55,8 @@ async function auditPage(page) {
       const rect = el.getBoundingClientRect();
       if (rect.width === 0 || style.visibility === "hidden" || Number(style.opacity) === 0) continue;
       if (el.closest("[disabled],[aria-disabled='true'],:disabled,.sk,option,select")) continue;
+      // Excel 미리보기의 되풀이 값은 일부러 흐린 회색(--sheet-faint, 사용자 결정 O6·O7)이다 - 대비는 결과물 보고에 따로 적는다
+      if (el.closest('[data-testid="export-preview-sheet"] td')?.style.color === "var(--sheet-faint)") continue;
       if (Number(getComputedStyle(el.closest("*")).opacity) < 1 || el.closest("button:disabled")) continue;
       const fg = blend(toRgba(style.color), findBackground(el));
       const bg = findBackground(el);
@@ -154,6 +156,44 @@ for (const theme of ["light", "dark"]) {
       await page.locator('[data-testid^="assign-paper-fold-head-"]').first().waitFor({ timeout: T });
     }],
     ["outputs", `/bundles/${id}/outputs`, '[data-testid="output-c"]'],
+    ["outputs-a", `/bundles/${id}/outputs`, '[data-testid="outputs-tab-a"]', async (page) => { await page.locator('[data-testid="outputs-tab-a"]').click(); await page.locator('tr[data-testid^="output-a-row-"]').first().waitFor({ timeout: T }); }],
+    // 순서를 바꾼 직후(저장 전) - 저장은 붙잡았다가 실패로 돌려 DB를 바꾸지 않는다
+    ["outputs-c-moved", `/bundles/${id}/outputs`, '[data-testid="outputs-tab-c"]', async (page) => {
+      // 앞 장면이 A 탭을 골라 두어(브라우저가 기억) C로 돌아온다
+      await page.locator('[data-testid="outputs-tab-c"]').click();
+      await page.locator('[data-testid^="output-c-move-down-"]').first().waitFor({ timeout: T });
+      await page.route("**/targets/order**", async (route) => {
+        await new Promise((done) => setTimeout(done, 4000));
+        await route.fulfill({ status: 500, contentType: "application/json", body: "{}" }).catch(() => {});
+      }, { times: 1 });
+      await page.locator('[data-testid^="output-c-move-down-"]:not([disabled])').first().dispatchEvent("click");
+      await page.waitForTimeout(600);
+    }],
+    // Excel 미리보기 창 - 종이(--sheet-*)의 머리·본문 글자(일부러 흐린 되풀이 값은 뺀다)와 탭
+    ["export-preview", `/bundles/${id}/outputs`, '[data-testid="outputs-export-open"]', async (page) => { await page.locator('[data-testid="outputs-export-open"]').click(); await page.locator('[data-testid="export-preview-sheet"] tbody tr').first().waitFor({ timeout: T }); }],
+    // 나무의 칸 제목 자리("Slot heading · …")
+    ["assign-tree-heading", `/bundles/${id}/assign`, '[data-testid="assign-bar"]', async (page) => {
+      await page.keyboard.press("j");
+      await page.locator('[data-testid="assign-row-id"]').waitFor({ timeout: T });
+      await page.locator('[data-testid="assign-acc-all"]').click();
+      await page.locator('[data-testid="assign-tree-pSOP-CF"]').click();
+      await page.locator('[data-testid^="assign-tree-place-heading:"]').first().waitFor({ timeout: T });
+    }],
+    // 엮은 문서 미리 보기의 칸 머리 출처 - 시드에 칸 제목이 없어 응답에 넣어 그린다(DB는 그대로)
+    ["assign-composed", `/bundles/${id}/assign`, '[data-testid="assign-bar"]', async (page) => {
+      await page.route("**/outputs/c/docs/**", async (route) => {
+        const response = await route.fetch();
+        const doc = await response.json();
+        for (const section of doc.sections ?? []) section.heading_note = "← OLD-1 §1, OLD-2 §1";
+        await route.fulfill({ response, json: doc });
+      });
+      const tobe = await (await page.request.get(`${BASE}/api/bundles/${id}/tobe`, { headers: { "X-Dev-User": "qa.member" } })).json();
+      const sop = tobe.docs.find((doc) => doc.doc_type === "sop" && doc.entrance === "assign");
+      await page.locator('[data-testid="assign-new-doc"]').click();
+      await page.locator(`[data-testid="assign-new-doc-option-${sop.id}"]`).click();
+      await page.locator('[data-testid^="assign-new-heading-note-"]').first().waitFor({ timeout: T });
+      await page.unroute("**/outputs/c/docs/**");
+    }],
     ["review", `/bundles/${id}/review`, '[data-testid="output-c"]'],
     ["assign-ai", `/bundles/${aiId}/assign`, '[data-testid="assign-bar"]', async (page) => { await page.locator('[data-testid="assign-filter-ai_suggested"]').click(); await page.keyboard.press("j"); await page.locator('[data-testid="assign-rec-0"]').waitFor({ timeout: T }); }],
     ["outputs-ai", `/bundles/${aiId}/outputs`, '[data-testid="output-c"]'],

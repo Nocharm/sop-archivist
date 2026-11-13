@@ -12,6 +12,7 @@ import { PaneZoom } from "@/components/assign/pane-zoom";
 import { LangToken } from "@/components/paper/lang-token";
 import { StripLead, STRIP_LEAD_EXTRA } from "@/components/paper/strip-lead";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Truncate } from "@/components/ui/motion";
 import { Select, type SelectOption } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { WrittenSentence } from "@/lib/api-sop";
@@ -24,6 +25,8 @@ interface NewPaneProps {
   docId: string;
   onDocChange: (docId: string) => void;
   rows: NewPaneRow[];
+  /** 엮은 문서의 칸 머리(section_path) → 칸 제목 출처("← OLD-1 §5") - 서버 값 그대로 칸 이름 뒤에 흐리게 */
+  headingNotes?: ReadonlyMap<string, string>;
   /** 줄 들고 남의 기준 - 바뀌면(문서를 바꿈·처음 받음) 움직임 없이 새로 시작한다 */
   rowsKey: string;
   /** 머리 표지 - 이미 쓴 문서인지 배정으로 엮는 문서인지 */
@@ -266,6 +269,22 @@ export function NewPane(props: NewPaneProps) {
     );
   }
 
+  /** 칸 머리 - 칸 제목 출처가 있으면 칸 이름 뒤에 흐리게, 넘치면 말줄임(빈 칸 줄의 머리도 같다) */
+  function renderSectionHead(row: NewPaneRow, isNumberInLead: boolean): ReactNode {
+    const label = isNumberInLead ? row.section_path.slice(getHiddenPrefixLength(row.section_path, readSectionNumber(row.section_path))) : row.section_path;
+    const note = props.headingNotes?.get(row.section_path);
+    if (!note) return <p className="new-sec">{label}</p>;
+    // 출처 글은 칸 오른쪽 끝까지 가서, 첫 줄의 언어 탭(위 테두리에서 8px 위로 나온다)이 글에 닿지 않게 아래 여백을 4px 더 둔다
+    return (
+      <p className="new-sec mb-2 flex gap-1.5">
+        <span>{label}</span>
+        <span className="min-w-[8ch] flex-1 font-normal text-ink-3">
+          <Truncate text={note} testId={`assign-new-heading-note-${readSectionNumber(row.section_path)}`} />
+        </span>
+      </p>
+    );
+  }
+
   function renderRow(row: NewPaneRow, isSectionStart: boolean, previous: NewPaneRow | undefined): ReactNode {
     if (row.kind === "empty") {
       return (
@@ -326,9 +345,7 @@ export function NewPane(props: NewPaneProps) {
               const isNumberInLead = isSectionStart && row.kind === "sentence" && !cardTops.has(row.target_id);
               return (
                 <Fragment key={key}>
-                  {isSectionStart && (
-                    <p className="new-sec">{isNumberInLead ? row.section_path.slice(getHiddenPrefixLength(row.section_path, readSectionNumber(row.section_path))) : row.section_path}</p>
-                  )}
+                  {isSectionStart && renderSectionHead(row, isNumberInLead)}
                   <div className="new-item" data-enter={presence.added.has(key) ? "" : undefined} data-leave={leaving ? "" : undefined} inert={leaving || undefined}>
                     <div className="new-item-inner">{renderRow(row, isSectionStart, previous)}</div>
                   </div>

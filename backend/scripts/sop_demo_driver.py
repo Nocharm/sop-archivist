@@ -18,6 +18,7 @@ from tests.sop_helpers import (
     get_view,
     put_tobe,
     save_group,
+    set_doc_version,
     set_members,
     upload,
 )
@@ -27,7 +28,6 @@ TEXT_KINDS = ("sentence", "heading", "cell_sentence")  # kind 없는 답이 가�
 DEFAULT_LAYOUT = "ko_en_interleaved"
 # 요청에 실을 수 있는 변경 종류 — 나눔·합침·신규는 서버가 구조로 정한다
 REQUESTABLE_CHANGE_TYPES = ("as_is", "tone", "rewritten", "table_restructured")
-LANGS = ("ko", "en")
 
 
 class SyntheticDriver:
@@ -80,9 +80,12 @@ class SyntheticDriver:
             )
             assert response.status_code == 201, response.text
             uploaded = response.json()
-            self.uploads[uploaded["doc_code"]] = uploaded
             if document.layout != DEFAULT_LAYOUT:
                 self._patch_layout(uploaded, document.layout)
+                uploaded = self._get_document(uploaded["id"])
+            if document.side == "old" and not uploaded["doc_version"]:  # 검토 요청 조건 — 파일 이름에 버전이 없으면 1.0
+                uploaded = set_doc_version(self.client, self.bundle_id, uploaded, headers=self.headers)
+            self.uploads[uploaded["doc_code"]] = uploaded
         self.tobe_ids = {doc["code"]: doc["id"] for doc in self.get("/tobe")["docs"]}
         for edit in self.expected["edits"]:
             self._apply_edit(edit)
@@ -123,6 +126,9 @@ class SyntheticDriver:
         )
         assert response.status_code == 200, response.text
 
+    def _get_document(self, doc_id: int) -> dict:
+        return next(doc for doc in self.get("/documents") if doc["id"] == doc_id)
+
     def _patch_layout(self, uploaded: dict, layout: str) -> None:
         body = {"revision": uploaded["revision"], "language_layout": layout}
         response = self.client.patch(self._url(f"/documents/{uploaded['id']}"), json=body, headers=self.headers)
@@ -160,11 +166,10 @@ class SyntheticDriver:
     def find_match_target(self, code: str, text: str) -> dict:
         """입구 2 새 문서의 새 문장(글자로 찾는다)과 그 지금 revision·자리."""
         if not self._match_targets:
-            for lang in LANGS:
-                for doc in self.get("/outputs/c", lang=lang)["docs"]:
-                    if doc["entrance"] == "match":
-                        for item in iter_c_items(doc):
-                            self._match_targets[(doc["code"], item["text"])] = item["target_id"]
+            for doc in self.get("/outputs/c")["docs"]:
+                if doc["entrance"] == "match":
+                    for item in iter_c_items(doc):
+                        self._match_targets[(doc["code"], item["text"])] = item["target_id"]
         target_id = self._match_targets[(code, text)]
         group = self.get(f"/groups/by-target/{target_id}")
         return next(target for target in group["targets"] if target["id"] == target_id)
@@ -407,10 +412,9 @@ class SyntheticDriver:
         )
         return response.status_code, response.json()
 
-    def load_outputs(self) -> dict[str, dict]:
-        return {
-            lang: {name: self.get(f"/outputs/{name}", lang=lang) for name in ("a", "b", "c")} for lang in LANGS
-        }
+    def load_outputs(self) -> dict[str, dict | list]:
+        """결과물 A·B·C 한 벌(`"a"`·`"b"`·`"c"`) — 라벨은 기본 언어(en)."""
+        return {name: self.get(f"/outputs/{name}") for name in ("a", "b", "c")}
 
 
 def find_unit_by_text(view: dict, text: str, occurrence: int, kinds: tuple[str, ...]) -> dict:

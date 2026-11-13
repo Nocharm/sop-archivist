@@ -1,13 +1,13 @@
-"""결과물 API — 결과물 A·B·C·요약 숫자 읽기와 Excel 내보내기(멤버, 모든 상태), 결과물 C 순서 바꾸기(작성자·작업 중).
+"""결과물 API — 결과물 A·B·C·요약 숫자 읽기와 Excel 내보내기·미리보기(멤버, 모든 상태), 결과물 C 순서 바꾸기(작성자·작업 중).
 
-계산은 app/sop/outputs.py의 순수 함수, 재료는 app/sop/snapshot.py가 표마다 질의 한 번으로 읽는다.
+계산은 app/sop/outputs.py의 순수 함수(Excel·미리보기는 그 위의 sheet_model), 재료는 app/sop/snapshot.py가 표마다 질의 한 번으로 읽는다.
 """
 
 import asyncio
 import logging
 from collections import Counter, defaultdict
 from collections.abc import Collection
-from typing import Annotated, Literal
+from typing import Annotated, Literal, NoReturn
 
 from fastapi import APIRouter, Depends, Path, Query, Response
 from pydantic import BaseModel, Field
@@ -17,18 +17,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.clock import now
 from app.db import get_session
 from app.routers.sop_documents import build_content_disposition
+from app.sop import sheet_model
 from app.sop.ai.guidelines import get_rules_version_label
-from app.sop.constants import MAX_INDENT_LEVEL, MEMBER_ROLES, NumberStyle
+from app.sop.constants import MAX_INDENT_LEVEL, MEMBER_ROLES, SLOT_HEADING, NumberStyle
 from app.sop.decisions import DbId
 from app.sop.detach import ORIGIN_NEW_DOC, ORIGIN_TRANSLATION, load_source_target_ids, sweep_translations
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
-from app.sop.excel_export import ExportMeta, build_export_file_name, build_workbook
-from app.sop.groups import select_in_chunks
+from app.sop.excel_export import ExportMeta, build_workbook
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
-from app.sop.models import Bundle, TargetDoc, TargetSentence, TargetSource, UnitPairMember, WiStep
+from app.sop.models import Bundle, TargetDoc, TargetSentence, WiStep
 from app.sop.outputs import (
     ARow,
+    CDoc,
     ComposedDoc,
     COutput,
     FlowGraph,
@@ -37,9 +38,11 @@ from app.sop.outputs import (
     build_output_a,
     build_output_b,
     build_output_c,
+    build_output_c_doc,
     build_summary,
 )
-from app.sop.snapshot import BundleSnapshot, load_bundle_snapshot
+from app.sop.sheet_model import WorkbookModel, build_workbook_model, limit_preview
+from app.sop.snapshot import BundleSnapshot, list_confirmer_ids, load_bundle_snapshot, load_people_names
 from app.sop.tobe import MAX_DB_INT
 
 logger = logging.getLogger(__name__)
@@ -52,25 +55,20 @@ XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.s
 MAX_ORDER_ITEMS = 20000  # 순서 바꾸기 한 번에 싣는 새 문장 수 — 새 문서 하나의 새 문장 전부가 들어가는 크기
 
 
-class SummaryOut(BaseModel):
-    ko: Summary
-    en: Summary
-
-
 class OrderItemIn(BaseModel):
     target_id: DbId
     # 보낸 경우에만 바꾼다 — null은 "단계 없음"으로 옮긴다는 뜻이라 생략과 다르다(model_fields_set으로 가린다)
     wi_step: DbId | None = None
     # 들여쓰기 깊이 — 보낸 경우에만 바꾼다(null도 바꾸지 않음). 앞줄보다 깊은 값도 받는다(결과물이 셀 때 눌러 읽는다)
     indent_level: int | None = Field(default=None, ge=0, le=MAX_INDENT_LEVEL)
-    # 번호 표시 — 보낸 경우에만 바꾼다(null도 바꾸지 않음). 한/영 짝 원문 줄의 상대와 번역 줄은 서버가 함께 바꾼다
+    # 번호 표시 — 보낸 경우에만 바꾼다(null도 바꾸지 않음). 이 줄만 바꾼다(짝 상대·번역은 따라 바뀌지 않는다)
     number_style: NumberStyle | None = None
 
 
 class TargetOrderIn(BaseModel):
     revision: int = Field(ge=1)
     target_doc_id: DbId
-    # 그 새 문서의 칸 새 문장이 아닌 새 문장 전부를 한 번씩, 새 순서대로
+    # 그 새 문서의 칸 새 문장·칸 제목이 아닌 새 문장 전부를 한 번씩, 새 순서대로
     items: list[OrderItemIn] = Field(max_length=MAX_ORDER_ITEMS)
 
 
@@ -82,10 +80,17 @@ class OrderItemOut(BaseModel):
     number_style: str
 
 
-class TargetOrderOut(BaseModel):
+class TargetOrderSaved(BaseModel):
+    """순서 쓰기의 결과 — 쓴 뒤 묶음 revision과 남은 새 문장(쓸려 나간 번역은 빠진다)."""
+
     revision: int
     target_doc_id: int
     items: list[OrderItemOut]
+
+
+class TargetOrderOut(TargetOrderSaved):
+    # 저장 뒤 그 문서의 C 모양 — 같은 lang의 GET …/outputs/c에서 그 문서와 같은 값(번호·쓸린 번역 반영). 화면은 C 전체를 다시 받지 않는다
+    doc: CDoc
 
 
 async def _load_snapshot_for_read(session: AsyncSession, bundle_id: int) -> BundleSnapshot:
@@ -97,31 +102,37 @@ async def _load_snapshot_for_read(session: AsyncSession, bundle_id: int) -> Bund
 
 @router.get("/{bundle_id}/outputs/a", response_model=list[ARow])
 async def get_output_a(
-    lang: Literal["ko", "en"] = Query(),
+    lang: Literal["ko", "en"] = Query("en"),
     ctx: BundleContext = Depends(_require_member),
     session: AsyncSession = Depends(get_session),
 ) -> list[ARow]:
-    snap = await _load_snapshot_for_read(session, ctx.bundle.id)
+    """결과물 A 한 벌 — lang은 라벨 언어만(없으면 en), 확정한 사람은 디렉터리 이름을 붙인다."""
+    snap = await load_bundle_snapshot(session, ctx.bundle.id)
+    people = await load_people_names(session, list_confirmer_ids(snap))
+    # 다 읽었으니 트랜잭션을 끝내 묶음 행 공유 잠금을 놓는다(스레드 계산 동안 쓰기를 막지 않게)
+    await session.commit()
     # 순수 계산이라 큰 묶음이 이벤트 루프를 막지 않게 스레드에서 돈다
-    return await asyncio.to_thread(build_output_a, snap, lang)
+    return await asyncio.to_thread(build_output_a, snap, lang, people)
 
 
 @router.get("/{bundle_id}/outputs/b", response_model=FlowGraph)
 async def get_output_b(
-    lang: Literal["ko", "en"] = Query(),
+    lang: Literal["ko", "en"] = Query("en"),
     ctx: BundleContext = Depends(_require_member),
     session: AsyncSession = Depends(get_session),
 ) -> FlowGraph:
+    """결과물 B 한 벌 — lang은 노드 라벨 언어만(없으면 en)."""
     snap = await _load_snapshot_for_read(session, ctx.bundle.id)
     return await asyncio.to_thread(build_output_b, snap, lang)
 
 
 @router.get("/{bundle_id}/outputs/c", response_model=COutput)
 async def get_output_c(
-    lang: Literal["ko", "en"] = Query(),
+    lang: Literal["ko", "en"] = Query("en"),
     ctx: BundleContext = Depends(_require_member),
     session: AsyncSession = Depends(get_session),
 ) -> COutput:
+    """결과물 C 한 벌 — 칸마다 두 언어가 한 목록, lang은 라벨 언어만(없으면 en)."""
     snap = await _load_snapshot_for_read(session, ctx.bundle.id)
     return await asyncio.to_thread(build_output_c, snap, lang)
 
@@ -129,11 +140,11 @@ async def get_output_c(
 @router.get("/{bundle_id}/outputs/c/docs/{target_doc_id}", response_model=ComposedDoc)
 async def get_composed_doc(
     target_doc_id: Annotated[int, Path(ge=1, le=MAX_DB_INT)],
-    lang: Literal["ko", "en"] = Query(),
+    lang: Literal["ko", "en"] = Query("en"),
     ctx: BundleContext = Depends(_require_member),
     session: AsyncSession = Depends(get_session),
 ) -> ComposedDoc:
-    """Assign New 칸 — 새 문서 하나를 지금까지의 배정으로(결과물 C와 같은 칸, 두 언어 함께). lang은 칸 이름의 언어."""
+    """Assign New 칸 — 새 문서 하나를 지금까지의 배정으로(결과물 C와 같은 칸, 두 언어 함께). lang은 라벨 언어만(없으면 en)."""
     snap = await _load_snapshot_for_read(session, ctx.bundle.id)
     doc = await asyncio.to_thread(build_composed_doc, snap, target_doc_id, lang)
     if doc is None:
@@ -141,41 +152,68 @@ async def get_composed_doc(
     return doc
 
 
-@router.get("/{bundle_id}/summary", response_model=SummaryOut)
+@router.get("/{bundle_id}/summary", response_model=Summary)
 async def get_summary(
     ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
-) -> SummaryOut:
+) -> Summary:
+    """요약 숫자 한 벌 — 옛 쪽은 진행 숫자와 같은 줄로 센다."""
     snap = await _load_snapshot_for_read(session, ctx.bundle.id)
-    ko, en = await asyncio.to_thread(lambda: (build_summary(snap, "ko"), build_summary(snap, "en")))
-    return SummaryOut(ko=ko, en=en)
+    return await asyncio.to_thread(build_summary, snap)
+
+
+async def _load_export_inputs(
+    session: AsyncSession, ctx: BundleContext
+) -> tuple[BundleSnapshot, ExportMeta, dict[str, str]]:
+    """Excel·미리보기 재료(지침 버전·스냅숏·확정한 사람 이름)를 읽고 트랜잭션을 끝낸다 — 스레드 계산 동안 묶음 행 잠금을 쥐지 않게.
+
+    파일 이름의 시각도 여기서 정한다(now()) — 미리보기와 받기가 같은 분이면 같은 이름이다.
+    """
+    guideline_version = await get_rules_version_label(session)
+    snap = await load_bundle_snapshot(session, ctx.bundle.id)
+    people = await load_people_names(session, list_confirmer_ids(snap))
+    await session.commit()
+    meta = ExportMeta(exported_by=ctx.login_id, exported_at=now(), guideline_version=guideline_version)
+    return snap, meta, people
+
+
+def _raise_export_failed(bundle_id: int, error: Exception) -> NoReturn:
+    """파일 생성 실패는 저장 실패와 다른 오류로 알린다(스펙 §7.14). 예외 메시지에 원문이 실릴 수 있어 클래스 이름만 남긴다."""
+    logger.error("export failed: bundle=%d error=%s", bundle_id, type(error).__name__)
+    raise_rule(500, "export_failed")
 
 
 @router.get("/{bundle_id}/export.xlsx")
 async def get_export(
-    lang: Literal["ko", "en"] = Query(),
-    ctx: BundleContext = Depends(_require_member),
-    session: AsyncSession = Depends(get_session),
+    ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
 ) -> Response:
-    """언어별 Excel 파일 — 작업 중·검토 중·완료 어느 상태에서나 받고, 받은 사실은 작업 기록에 남는다."""
+    """Excel 파일 한 벌 — 작업 중·검토 중·완료 어느 상태에서나 받고, 받은 사실은 작업 기록에 남는다. 이름은 시트 모델의 file_name."""
     bundle = ctx.bundle
-    # 스냅숏 읽기가 트랜잭션을 끝내므로 지침 버전 질의는 그보다 먼저 해야 스레드 계산 동안 트랜잭션이 열려 있지 않다
-    guideline_version = await get_rules_version_label(session)
-    snap = await _load_snapshot_for_read(session, bundle.id)
-    meta = ExportMeta(exported_by=ctx.login_id, exported_at=now(), guideline_version=guideline_version)
+    snap, meta, people = await _load_export_inputs(session, ctx)
     try:
-        content = await asyncio.to_thread(build_workbook, snap, lang, meta)
+        model = await asyncio.to_thread(build_workbook_model, snap, meta, people)
+        content = await asyncio.to_thread(build_workbook, model)
     except Exception as error:
-        # 파일 생성 실패는 저장 실패와 다른 오류로 알린다(스펙 §7.14). 예외 메시지에 원문이 실릴 수 있어 클래스 이름만 남긴다
-        logger.error("export failed: bundle=%d lang=%s error=%s", bundle.id, lang, type(error).__name__)
-        raise_rule(500, "export_failed")
-    file_name = build_export_file_name(bundle.title, lang, meta.exported_at)
+        _raise_export_failed(bundle.id, error)
     record_event(
-        session, bundle_id=bundle.id, actor=ctx.login_id, action="export", target_type="bundle",
-        target_ids=[bundle.id], reason=lang,
+        session, bundle_id=bundle.id, actor=ctx.login_id, action="export", target_type="bundle", target_ids=[bundle.id],
     )
     await session.commit()
-    headers = {"Content-Disposition": build_content_disposition(file_name)}
+    headers = {"Content-Disposition": build_content_disposition(model.file_name)}
     return Response(content=content, media_type=XLSX_MEDIA_TYPE, headers=headers)
+
+
+@router.get("/{bundle_id}/export/preview", response_model=WorkbookModel)
+async def get_export_preview(
+    ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
+) -> WorkbookModel:
+    """Excel 미리보기 — 받을 파일과 같은 시트 모델(시트마다 MAX_PREVIEW_ROWS줄까지)과 파일 이름. 작업 기록은 남기지 않는다."""
+    snap, meta, people = await _load_export_inputs(session, ctx)
+    try:
+        model = await asyncio.to_thread(build_workbook_model, snap, meta, people)
+    except Exception as error:
+        _raise_export_failed(ctx.bundle.id, error)
+    # 상한은 부를 때 읽는다 — 시험이 모듈 값을 바꿔 자르기를 본다
+    return limit_preview(model, sheet_model.MAX_PREVIEW_ROWS)
 
 
 async def _check_indents(
@@ -221,57 +259,11 @@ async def _check_indents(
     return {**indents, **followers}
 
 
-async def _load_pair_partners(session: AsyncSession, tops: dict[int, TargetSentence]) -> dict[int, int]:
-    """한/영 짝 원문 줄의 상대 새 문장(같은 새 문서의 칸 새 문장이 아닌 줄) — 두 판이 같은 번호가 되게 표시를 함께 바꾼다.
+def _check_number_styles(doc: TargetDoc, tops: dict[int, TargetSentence], items: list[OrderItemIn]) -> dict[int, str]:
+    """바뀌는 번호 표시(새 문장 → 표시)를 돌려준다. 쓰기 전에 검사만 한다.
 
-    이 줄의 출처 단위가 하나이고 그 단위의 짝(제안·확정 모두, 단위 둘)의 다른 단위가 이 문서에 새 문장을 딱 하나 만들었을 때만
-    정한다(1:N이면 상대를 하나로 정할 수 없다). 프런트가 깊이를 함께 보낼 때 쓰는 상대(section-number.ts findPartnerTarget)와 같은 규칙이다.
-    """
-    candidates = [target_id for target_id, row in tops.items() if row.origin != ORIGIN_TRANSLATION]
-    links = await select_in_chunks(
-        session, lambda chunk: select(TargetSource.target_id, TargetSource.unit_id).where(TargetSource.target_id.in_(chunk)),
-        candidates,
-    )
-    unit_ids: dict[int, list[int]] = defaultdict(list)
-    targets_of_unit: dict[int, list[int]] = defaultdict(list)
-    for target_id, unit_id in links:
-        unit_ids[target_id].append(unit_id)
-        targets_of_unit[unit_id].append(target_id)
-    single = {target_id: units[0] for target_id, units in unit_ids.items() if len(units) == 1}
-    pair_of = dict(
-        (unit_id, pair_id) for unit_id, pair_id in await select_in_chunks(
-            session,
-            lambda chunk: select(UnitPairMember.unit_id, UnitPairMember.pair_id).where(UnitPairMember.unit_id.in_(chunk)),
-            set(single.values()),
-        )
-    )
-    members: dict[int, list[int]] = defaultdict(list)
-    for pair_id, unit_id in await select_in_chunks(
-        session,
-        lambda chunk: select(UnitPairMember.pair_id, UnitPairMember.unit_id).where(UnitPairMember.pair_id.in_(chunk)),
-        set(pair_of.values()),
-    ):
-        members[pair_id].append(unit_id)
-    partners: dict[int, int] = {}
-    for target_id, unit_id in single.items():
-        pair_units = members.get(pair_of.get(unit_id, -1), [])
-        if len(pair_units) != 2:
-            continue
-        other = next(member for member in pair_units if member != unit_id)
-        found = [candidate for candidate in targets_of_unit.get(other, []) if candidate != target_id]
-        if len(found) == 1:
-            partners[target_id] = found[0]
-    return partners
-
-
-async def _check_number_styles(
-    session: AsyncSession, doc: TargetDoc, tops: dict[int, TargetSentence], items: list[OrderItemIn]
-) -> dict[int, str]:
-    """바뀌는 번호 표시(새 문장 → 표시)를 돌려준다 — 한/영 짝 상대와 번역 줄도 함께 싣는다. 쓰기 전에 검사만 한다.
-
-    짝 상대는 서버가 따라 바꾼다(프런트가 한쪽만 보내도 두 판이 어긋나지 않게). 두 쪽을 서로 다른 값으로 바꾸려 하면
-    422 number_style_pair_mismatch다. 번역의 표시는 출처를 따라 잠겨 있어 출처의 바뀐 뒤 표시와 다르게 보내면 422 translation_locked,
-    출처만 보내면 번역이 보류 없이 따라간다(깊이와 같은 규칙). 입구 2 문서는 번호를 새로 매기지 않으므로 422 number_style_not_allowed다.
+    표시는 그 문장에만 속한다 — 한/영 짝 상대도 번역도 따라 바뀌지 않고, 번역도 출처와 다른 표시를 가질 수 있다.
+    입구 2 문서는 번호를 새로 매기지 않으므로 422 number_style_not_allowed다.
     다른 칸·단계로 옮겨도 표시는 그대로다 — 깊이와 달리 앞뒤 줄에 기대지 않는 그 줄 자체의 성격이다.
     """
     requested = {
@@ -279,41 +271,14 @@ async def _check_number_styles(
         for item in items
         if item.number_style is not None and item.number_style != tops[item.target_id].number_style
     }
-    if not requested:
-        return {}
-    if doc.entrance == "match":
+    if requested and doc.entrance == "match":
         raise_rule(422, "number_style_not_allowed", target_ids=sorted(requested))
-    partners = await _load_pair_partners(session, tops)
-    styles = dict(requested)
-    for target_id, style in requested.items():
-        partner = partners.get(target_id)
-        if partner is None:
-            continue
-        if partner in requested and requested[partner] != style:
-            raise_rule(422, "number_style_pair_mismatch", target_ids=sorted((target_id, partner)))
-        styles[partner] = style
-    translation_ids = [target_id for target_id, row in tops.items() if row.origin == ORIGIN_TRANSLATION]
-    if not translation_ids:
-        return styles
-    source_ids = await load_source_target_ids(session, translation_ids)
-
-    def get_final_style(target_id: int) -> str | None:
-        return styles.get(target_id, tops[target_id].number_style) if target_id in tops else None
-
-    astray = sorted(
-        target_id for target_id in requested
-        if target_id in source_ids and get_final_style(source_ids[target_id]) != requested[target_id]
-    )
-    if astray:
-        raise_rule(422, "translation_locked", target_ids=astray)
-    # 번역은 출처와 같은 표시다 — 표시만 바뀐 것은 글·자리가 그대로라 sweep_translations(보류·지우기)를 거치지 않고 따라간다
-    followers = {target_id: styles[source_id] for target_id, source_id in source_ids.items() if source_id in styles}
-    return {**styles, **followers}
+    return requested
 
 
 async def reorder_targets(
     session: AsyncSession, bundle: Bundle, payload: TargetOrderIn, actor: str
-) -> TargetOrderOut:
+) -> TargetOrderSaved:
     """새 문서 하나의 새 문장 순서(와 WI 단계·들여쓰기·번호 표시)를 사람이 정한다 — 이후 그 문서는 order_index 순이고 새로 들어오는 새 문장은 끝에 붙는다.
 
     목록은 칸 새 문장이 아닌 새 문장 전부를 한 번씩 담아야 한다(빠진 새 문장의 자리를 지어내지 않게). 검사를 모두 마친 뒤에 쓴다.
@@ -325,7 +290,8 @@ async def reorder_targets(
     if doc is None or doc.bundle_id != bundle.id:
         raise_rule(404, "target_doc_not_found", target_doc_id=payload.target_doc_id)
     rows = list(await session.scalars(select(TargetSentence).where(TargetSentence.target_doc_id == doc.id)))
-    tops = {row.id: row for row in rows if row.parent_target_id is None}
+    # 칸 제목은 결과물 C의 칸 항목이 아니라 순서가 없다 — 목록에서 뺀다(보내면 모르는 새 문장이다)
+    tops = {row.id: row for row in rows if row.parent_target_id is None and row.kind != SLOT_HEADING}
     sent = [item.target_id for item in payload.items]
     duplicates = sorted(target_id for target_id, count in Counter(sent).items() if count > 1)
     missing, unknown = sorted(tops.keys() - set(sent)), sorted(set(sent) - tops.keys())
@@ -358,7 +324,7 @@ async def reorder_targets(
         if undeclared:
             raise_rule(422, "unknown_wi_step", target_ids=undeclared)
     indents = await _check_indents(session, doc, tops, payload.items, moves.keys())
-    number_styles = await _check_number_styles(session, doc, tops, payload.items)
+    number_styles = _check_number_styles(doc, tops, payload.items)
 
     cells: dict[int, list[TargetSentence]] = defaultdict(list)
     for row in rows:
@@ -387,7 +353,7 @@ async def reorder_targets(
         target_ids=[doc.id],
     )
     await session.flush()
-    return TargetOrderOut(
+    return TargetOrderSaved(
         revision=bundle.revision,
         target_doc_id=doc.id,
         items=[
@@ -402,8 +368,18 @@ async def reorder_targets(
 
 @router.put("/{bundle_id}/targets/order", response_model=TargetOrderOut)
 async def put_target_order(
-    body: TargetOrderIn, ctx: BundleContext = Depends(_require_author), session: AsyncSession = Depends(get_session)
+    body: TargetOrderIn,
+    lang: Literal["ko", "en"] = Query("en"),
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
 ) -> TargetOrderOut:
+    """순서·깊이·번호 표시를 쓰고 그 문서의 C 모양을 함께 돌려준다 — lang은 라벨 언어만(없으면 en)."""
     result = await reorder_targets(session, ctx.bundle, body, ctx.login_id)
+    # 같은 트랜잭션에서 읽어 방금 쓴 순서를 본다 — 스냅숏의 FOR SHARE는 이 트랜잭션이 이미 든 FOR UPDATE와 부딪치지 않는다
+    snap = await load_bundle_snapshot(session, ctx.bundle.id)
     await session.commit()
-    return result
+    # 계산은 잠금을 놓은 뒤 스레드에서(읽기 결과물과 같은 까닭)
+    doc = await asyncio.to_thread(build_output_c_doc, snap, result.target_doc_id, lang)
+    if doc is None:  # reorder_targets가 같은 트랜잭션에서 문서를 확인했다 — 타입을 좁히는 자리
+        raise_rule(404, "target_doc_not_found", target_doc_id=result.target_doc_id)
+    return TargetOrderOut(revision=result.revision, target_doc_id=result.target_doc_id, items=result.items, doc=doc)
