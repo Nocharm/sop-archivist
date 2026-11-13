@@ -47,6 +47,7 @@ import {
   type DocumentView,
   type EditOp,
   type EditResult,
+  type EditStepResult,
   type PartRef,
   type ViewUnit,
 } from "@/lib/api-sop";
@@ -54,6 +55,7 @@ import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { buildGroupSave } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
 import { buildPaperModel, buildPaperTabs, countUnchecked, readWarningText, shouldRecenter, type PaperSheet, type PaperTabKey } from "@/lib/paper-model";
+import { describeEditStep } from "@/lib/edit-step-model";
 import { getAdvanceDelay, getAdvanceWait, parseDurationMs } from "@/lib/split-advance";
 import { getSplitKeyAction } from "@/lib/split-keys";
 import { buildSplitMenu, getAiSplitReason, getPairMergeReason, hasBothScripts, isAiSplitKind, isUnitDecided, pickEnglishSide, planJoin, type JoinKind, type JoinPlan, type SplitMenuAction } from "@/lib/split-menu-model";
@@ -66,9 +68,13 @@ import { useSplitAi } from "@/lib/use-split-ai";
 /** Paper의 testid 앞말 - 단위·조각 testid와 Shift+F10이 같은 값을 쓴다 */
 const PAPER_TEST_ID = "split-paper";
 
+/** 편집 뒤 알림 - 되돌리기·다시 하기는 응답을 보고 무엇을 했는지 말한다 */
+type OkText = string | ((result: EditResult) => string);
+
 interface PendingConfirm {
   count: number;
   run: () => Promise<EditResult>;
+  okText: OkText;
   /** 새 단위가 없는 편집(언어 바꾸기) 뒤에도 고른 채로 둘 단위 */
   keepId?: number;
 }
@@ -257,7 +263,7 @@ export default function SplitPage() {
   }
 
   // 편집 한 번 - 판단이 걸린 단위를 은퇴시키면 서버가 409로 먼저 묻는다
-  async function runChange(run: (confirm: boolean) => Promise<EditResult>, okText: string, keepId?: number) {
+  async function runChange(run: (confirm: boolean) => Promise<EditResult>, okText: OkText, keepId?: number) {
     if (busy) return;
     setBusy(true);
     try {
@@ -266,7 +272,7 @@ export default function SplitPage() {
     } catch (err) {
       const unitIds = err instanceof ApiError && err.rule?.code === "confirm_required" ? err.rule.unit_ids : null;
       if (Array.isArray(unitIds)) {
-        setPending({ count: unitIds.length, run: () => run(true), keepId });
+        setPending({ count: unitIds.length, run: () => run(true), okText, keepId });
       } else {
         showToast(describeChangeError(err), "error");
         refresh();
@@ -311,10 +317,11 @@ export default function SplitPage() {
     }
   }
 
-  function handleChangeDone(result: EditResult, okText: string, keepId?: number) {
+  function handleChangeDone(result: EditResult, okText: OkText, keepId?: number) {
     clearTransient();
     selectUnit(result.created_unit_ids[0] ?? keepId ?? null);
-    showToast(okText);
+    // 함수 알림은 고름을 바꿀 수 있어(경계 확인 되돌리기) 위 고름 뒤에 부른다
+    showToast(typeof okText === "function" ? okText(result) : okText);
     refresh();
   }
 
@@ -328,7 +335,28 @@ export default function SplitPage() {
     if (!data || docId === null) return;
     const revision = data.document.revision;
     const call = kind === "undo" ? undoEdit : redoEdit;
-    void runChange((confirm) => call(bundleId, docId, revision, confirm), t(kind === "undo" ? "split.undone" : "split.redone"));
+    void runChange(
+      (confirm) => call(bundleId, docId, revision, confirm),
+      (result) => {
+        // runChange는 편집 응답 공통 모양으로 넘긴다 - 여기 run은 undoEdit·redoEdit라 단계 응답이다
+        const step = result as EditStepResult;
+        // 경계 확인을 되돌리거나 다시 하면 그 조각으로 돌아간다 - 확인 뒤 넘어간 자리에서 Ctrl+Z
+        if (step.boundary_unit_ids.length > 0) {
+          const unitId = step.boundary_unit_ids.find((id) => model?.units.has(id)) ?? null;
+          if (unitId !== null) selectUnit(model?.units.get(unitId)?.group_unit_id ?? unitId, true);
+        }
+        return formatStep(step, kind);
+      },
+    );
+  }
+
+  /** 되돌리기·다시 하기 알림 - 무엇을(경계 확인이면 어느 Unit을) 거꾸로 했는지 */
+  function formatStep(result: EditStepResult, kind: "undo" | "redo"): string {
+    const message = describeEditStep(result, kind, (unitId) => model?.units.get(unitId)?.display_id ?? null);
+    const { action, target } = message.vars;
+    if (action === undefined) return t(message.key);
+    const suffix = target === "" ? "" : ` · ${typeof target === "number" ? t("split.step.units", { n: target }) : target}`;
+    return t(message.key, { action: t(String(action)), target: suffix });
   }
 
   async function runSimple(action: () => Promise<unknown>, okText: string | null, after?: () => void) {
@@ -1101,7 +1129,7 @@ export default function SplitPage() {
             setPending(null);
             setBusy(true);
             try {
-              handleChangeDone(await run(), t("common.saved"), pending.keepId);
+              handleChangeDone(await run(), pending.okText, pending.keepId);
             } catch (err) {
               showToast(describeChangeError(err), "error");
               refresh();

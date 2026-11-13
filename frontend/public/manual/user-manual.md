@@ -242,7 +242,7 @@ Bundle은 함께 재구성할 문서 묶음입니다. Old SOP 여러 편과 새�
 - **글자를 골라 새 Unit**: 글자를 끌어 고르면 **New unit from selection** 이 나옵니다. **Make unit** 을 누르면 고른 글자만 새 Unit이 됩니다.
 - **우클릭 메뉴**: 문장 줄을 오른쪽 단추로 누르면(키보드는 문장을 고른 채 <kbd>Shift</kbd>+<kbd>F10</kbd> 또는 메뉴 글쇠) 할 수 있는 동작이 뜹니다. 문장을 고른 채 **다른** 문장을 우클릭하면 두 문장 동작 — **Join**(틈의 단추와 같은 규칙. 짝이면 확인 없이 바로 확정, 같은 언어는 이웃한 두 문장만 합친다), **Separate**, **Check both boundaries** — 이 뜨고, 고른 문장 자신(또는 고른 것이 없을 때 아무 문장)을 우클릭하면 오른쪽 칸과 같은 동작(**Check boundary**, **Split**, **AI split this sentence**, **Hold**, **Language** 한 줄의 KO | EN, **Separate**)이 뜹니다. 지금 할 수 없는 항목은 흐리게 보이고, 마우스를 올리거나 포커스를 두면 까닭이 뜹니다. <kbd>Esc</kbd>로 닫습니다.
 - **표**: 표는 통째로 Unit 하나입니다. 행마다 다른 곳으로 보내야 하면 **Split into rows**, 되돌리려면 **Merge rows back** 을 누릅니다. 자리만 잡으려고 쓴 표는 **Treat as layout table** 로 바꿔 칸의 글을 보통 문장으로 다룹니다.
-- **Undo** 와 **Redo**: <kbd>Ctrl</kbd>+<kbd>Z</kbd>, 다시 하기는 <kbd>Shift</kbd>를 함께 누릅니다. 되돌리기 기록은 서버에 남아 화면을 다시 열어도 이어집니다.
+- **Undo** 와 **Redo**: <kbd>Ctrl</kbd>+<kbd>Z</kbd>, 다시 하기는 <kbd>Shift</kbd>를 함께 누릅니다. 나누기·합치기 같은 편집과 경계 확인·확인 취소(남은 경계 모두 확인 포함)가 한 줄 순서로 되돌려집니다 — 확인하고 다음 Unit으로 넘어간 뒤 <kbd>Ctrl</kbd>+<kbd>Z</kbd>를 누르면 그 확인이 풀리고 그 Unit으로 돌아갑니다. 무엇을 되돌렸는지는 알림에 "되돌렸습니다: 경계 확인 · Unit 번호"처럼 나옵니다. 되돌린 뒤 새로 편집하거나 확인하면 다시 하기 기록은 지워집니다. 되돌리기 기록은 서버에 남아 화면을 다시 열어도 이어집니다.
 
 > [!WARNING]
 > 이미 판단이 있는 Unit을 쪼개거나 합치면 그 판단이 풀립니다. **Decisions will be cleared** 창에서 **Edit anyway** 를 눌러야 진행됩니다.

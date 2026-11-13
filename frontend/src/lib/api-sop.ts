@@ -385,6 +385,13 @@ export interface EditResult {
   retired_unit_ids: number[];
 }
 
+/** 되돌리기·다시 하기 응답 - 무엇을 거꾸로(다시) 했는지. 경계 확인 기록이면 바뀐 단위와 바뀐 뒤 값 */
+export interface EditStepResult extends EditResult {
+  op: string;
+  boundary_unit_ids: number[];
+  confirmed: boolean | null;
+}
+
 export interface PairResult {
   document_revision: number;
   pair: ViewPair | null;
@@ -400,12 +407,12 @@ export function editUnits(bundleId: number, docId: number, revision: number, op:
   return apiFetch<EditResult>(`${buildDocPath(bundleId, docId)}/edits`, { method: "POST", body: JSON.stringify({ revision, confirm, op }) });
 }
 
-export function undoEdit(bundleId: number, docId: number, revision: number, confirm = false): Promise<EditResult> {
-  return apiFetch<EditResult>(`${buildDocPath(bundleId, docId)}/edits/undo`, { method: "POST", body: JSON.stringify({ revision, confirm }) });
+export function undoEdit(bundleId: number, docId: number, revision: number, confirm = false): Promise<EditStepResult> {
+  return apiFetch<EditStepResult>(`${buildDocPath(bundleId, docId)}/edits/undo`, { method: "POST", body: JSON.stringify({ revision, confirm }) });
 }
 
-export function redoEdit(bundleId: number, docId: number, revision: number, confirm = false): Promise<EditResult> {
-  return apiFetch<EditResult>(`${buildDocPath(bundleId, docId)}/edits/redo`, { method: "POST", body: JSON.stringify({ revision, confirm }) });
+export function redoEdit(bundleId: number, docId: number, revision: number, confirm = false): Promise<EditStepResult> {
+  return apiFetch<EditStepResult>(`${buildDocPath(bundleId, docId)}/edits/redo`, { method: "POST", body: JSON.stringify({ revision, confirm }) });
 }
 
 export function setBoundaryConfirmed(bundleId: number, docId: number, unitIds: number[], confirmed: boolean): Promise<{ unit_ids: number[]; confirmed: boolean }> {

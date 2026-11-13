@@ -24,6 +24,7 @@ from app.sop.editing import (
     BoundaryOut,
     EditIn,
     EditResult,
+    EditStepResult,
     EditStepIn,
     apply_edit,
     confirm_all_boundaries,
@@ -613,26 +614,26 @@ async def edit_units(
     return result
 
 
-@router.post("/{bundle_id}/documents/{doc_id}/edits/undo", response_model=EditResult)
+@router.post("/{bundle_id}/documents/{doc_id}/edits/undo", response_model=EditStepResult)
 async def undo_unit_edit(
     body: EditStepIn,
     doc_id: IdPath,
     ctx: BundleContext = Depends(_require_author),
     session: AsyncSession = Depends(get_session),
-) -> EditResult:
+) -> EditStepResult:
     document = await _lock_editable_document(session, ctx, doc_id, body.revision)
     result = await undo_edit(session, document, confirm=body.confirm, actor=ctx.login_id)
     await session.commit()
     return result
 
 
-@router.post("/{bundle_id}/documents/{doc_id}/edits/redo", response_model=EditResult)
+@router.post("/{bundle_id}/documents/{doc_id}/edits/redo", response_model=EditStepResult)
 async def redo_unit_edit(
     body: EditStepIn,
     doc_id: IdPath,
     ctx: BundleContext = Depends(_require_author),
     session: AsyncSession = Depends(get_session),
-) -> EditResult:
+) -> EditStepResult:
     document = await _lock_editable_document(session, ctx, doc_id, body.revision)
     result = await redo_edit(session, document, confirm=body.confirm, actor=ctx.login_id)
     await session.commit()
@@ -646,9 +647,9 @@ async def confirm_unit_boundaries(
     ctx: BundleContext = Depends(_require_author),
     session: AsyncSession = Depends(get_session),
 ) -> BoundaryOut:
-    # 경계 확인은 단위 집합을 바꾸지 않아 문서 revision을 싣지 않고 되돌리기 대상도 아니다
+    # 경계 확인은 단위 집합을 바꾸지 않아 문서 revision을 싣지 않는다 - 되돌리기 기록에는 들어간다
     document = await _lock_editable_document(session, ctx, doc_id, None)
-    unit_ids = await set_boundary_confirmed(session, document, body.unit_ids, body.confirmed)
+    unit_ids = await set_boundary_confirmed(session, document, body.unit_ids, body.confirmed, actor=ctx.login_id)
     await session.commit()
     return BoundaryOut(unit_ids=unit_ids, confirmed=body.confirmed)
 
