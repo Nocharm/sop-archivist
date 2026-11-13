@@ -91,6 +91,7 @@ import {
   hasRowLanguage,
   isHeadingSourceUnit,
   isPlaceOption,
+  listTreeOptions,
   isSentenceUnit,
   isTextChangeType,
   isTranslationOf,
@@ -979,7 +980,7 @@ export default function AssignPage() {
 
   // 칸 제목 자리는 줄 단위가 모두 제목·문장일 때만 보인다 - 표·그림은 칸 제목의 출처가 아니다
   const canPickHeading = rowUnits.length > 0 && rowUnits.every((unit) => isHeadingSourceUnit(unit.kind));
-  const treeOptions = canPickHeading ? options : options.filter((option) => option.destination.kind !== "slot_heading");
+  const treeOptions = listTreeOptions(options, canPickHeading);
   const nearAnchor = destination ?? recommendations[0]?.destination ?? null;
   const nearLinks = nearAnchor?.kind === "link" ? pickNearby(written, nearAnchor.targetIds) : [];
   const nearPlaces: DestinationOption[] = nearAnchor && nearAnchor.kind !== "link" ? listSiblingPlaces(options, nearAnchor) : [];

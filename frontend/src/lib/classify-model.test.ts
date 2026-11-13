@@ -14,6 +14,7 @@ import {
   hasDraftChange,
   hasRowLanguage,
   isPlaceOption,
+  listTreeOptions,
   isSentenceUnit,
   isTranslationOf,
   listLinkLeftovers,
@@ -741,11 +742,13 @@ describe("slot heading destination", () => {
     expect(body.removed_target_ids).toEqual([]);
   });
 
-  it("does not count slot heading items as places", () => {
+  it("counts the same places whether or not the row can pick a slot heading", () => {
     const options = buildDestinationOptions(TOBE, {});
-    expect(options.some((option) => option.destination.kind === "slot_heading")).toBe(true);
-    const visible = options.filter((option) => option.destination.kind !== "slot_heading");
-    expect(options.filter(isPlaceOption)).toEqual(visible);
+    const withHeadings = listTreeOptions(options, true);
+    const without = listTreeOptions(options, false);
+    expect(withHeadings.length).toBeGreaterThan(without.length);
+    expect(without.some((option) => option.destination.kind === "slot_heading")).toBe(false);
+    expect(withHeadings.filter(isPlaceOption).length).toBe(without.filter(isPlaceOption).length);
   });
 
   it("reads a group with slot heading targets back as the slot heading destination", () => {

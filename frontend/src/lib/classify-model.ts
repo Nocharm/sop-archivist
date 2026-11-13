@@ -173,6 +173,11 @@ export function isPlaceOption(option: Pick<DestinationOption, "destination">): b
   return option.destination.kind !== "slot_heading";
 }
 
+/** 나무에 보일 항목 - 칸 제목 자리는 줄이 칸 제목을 받을 수 있을 때만 */
+export function listTreeOptions(options: DestinationOption[], canPickHeading: boolean): DestinationOption[] {
+  return canPickHeading ? options : options.filter(isPlaceOption);
+}
+
 /** 저장된 판단·새 문장에서 지금 보낼 곳을 읽는다. 여러 곳이면 첫 새 문장 기준 */
 export function readDestination(group: Group | null, unitIds: number[]): Destination | null {
   if (!group) return null;
