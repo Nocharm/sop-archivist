@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { NumberStyle, OutputCDoc, OutputCItem } from "./api-sop";
-import { acceptSaved, addEdit, numberDoc, rejectSaved, sendDraft, startDraft } from "./c-edit-model";
+import { acceptSaved, addEdit, numberDoc, rebaseDraft, rejectSaved, sendDraft, startDraft } from "./c-edit-model";
 
 type Section = OutputCDoc["sections"][number];
 
@@ -101,6 +101,13 @@ describe("acceptSaved / rejectSaved", () => {
     expect(acceptSaved(later, swept)).toMatchObject({ shown: swept, edits: [] });
   });
 
+  it("drops every unsaved edit when the save fails, keeping the last saved doc", () => {
+    // 앞 저장의 응답 문서가 기준으로 남는다 - 다음 누름이 더 낡은 문서에서 시작하지 않게
+    const saved = acceptSaved(sendDraft(addEdit(start, { kind: "move", locationKey: "s5", targetId: 1, dir: 1 })!).draft, doc([section("5", [line(2, "5.1"), line(1, "5.2"), line(3, "5.3")])]));
+    const failed = rejectSaved(sendDraft(addEdit(saved, { kind: "move", locationKey: "s5", targetId: 1, dir: 1 })!).draft);
+    expect(failed.shown).toBe(saved.saved);
+  });
+
   it("drops every unsaved edit when the save fails", () => {
     const { draft: sent } = sendDraft(addEdit(start, { kind: "move", locationKey: "s5", targetId: 1, dir: 1 })!);
     const later = addEdit(sent, { kind: "style", targetId: 3, style: "note" })!;
@@ -110,5 +117,37 @@ describe("acceptSaved / rejectSaved", () => {
     expect(rejected.shown).toBe(start.saved);
     expect(rejected.edits).toEqual([]);
     expect(rejected.sentCount).toBe(0);
+  });
+});
+
+describe("rebaseDraft", () => {
+  const start = startDraft(doc([section("5", [line(1, "5.1"), line(2, "5.2"), line(3, "5.3")])]));
+  // 라벨 언어만 다른 같은 문서 - 칸 이름이 바뀌어도 순서·깊이·표시가 같다
+  const relabeled = doc([{ ...section("5", [line(1, "5.1"), line(2, "5.2"), line(3, "5.3")]), label: "다른 언어" }]);
+
+  it("keeps a draft whose save is in flight - the response settles that doc", () => {
+    const { draft: sent } = sendDraft(addEdit(start, { kind: "move", locationKey: "s5", targetId: 1, dir: 1 })!);
+    expect(rebaseDraft(sent, relabeled)).toEqual({ draft: sent, dropped: false });
+  });
+
+  it("puts waiting edits back on a fetched doc that only reflects this screen's saves", () => {
+    const waiting = addEdit(start, { kind: "move", locationKey: "s5", targetId: 3, dir: -1 })!;
+    const { draft, dropped } = rebaseDraft(waiting, relabeled);
+    expect(dropped).toBe(false);
+    expect(draft?.saved).toBe(relabeled);
+    expect(draft?.shown.sections[0].label).toBe("다른 언어");
+    expect(draft?.shown.sections[0].items.map((i) => [i.target_id, i.number])).toEqual([[1, "5.1"], [3, "5.2"], [2, "5.3"]]);
+  });
+
+  it("drops waiting edits and says so when the doc changed elsewhere", () => {
+    const waiting = addEdit(start, { kind: "indent", targetId: 2, depth: 1 })!;
+    const reordered = doc([section("5", [line(2, "5.1"), line(1, "5.2"), line(3, "5.3")])]);
+    expect(rebaseDraft(waiting, reordered)).toEqual({ draft: null, dropped: true });
+    expect(rebaseDraft(waiting, undefined)).toEqual({ draft: null, dropped: true });
+  });
+
+  it("lets the fetched doc show as is when nothing is waiting", () => {
+    const settled = acceptSaved(sendDraft(addEdit(start, { kind: "move", locationKey: "s5", targetId: 1, dir: 1 })!).draft, relabeled);
+    expect(rebaseDraft(settled, doc([section("5", [line(2, "5.1"), line(1, "5.2"), line(3, "5.3")])]))).toEqual({ draft: null, dropped: false });
   });
 });

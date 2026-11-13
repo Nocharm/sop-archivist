@@ -49,17 +49,22 @@ export function useFlip(containerRef: RefObject<HTMLElement | null>): { capture:
       element.style.transform = "";
     }
     const offsets = computeFlipOffsets(pending.first, measureTops(container, elements));
-    if (offsets.size === 0) return;
     const run = ++flipSequence;
     const moving: HTMLElement[] = [];
     for (const [key, element] of elements) {
       const offset = offsets.get(key);
-      if (offset === undefined) continue;
       flipRuns.set(element, run);
+      if (offset === undefined) {
+        // 움직이지 않은 줄 - 재려고 건 스타일을 지운다(앞선 움직임의 끝 알림도 이 순번 때문에 무시된다)
+        element.style.transition = "";
+        element.classList.remove("flip-lead");
+        continue;
+      }
       element.style.transform = `translateY(${offset}px)`;
       element.classList.toggle("flip-lead", key === pending.keys[0]);
       moving.push(element);
     }
+    if (moving.length === 0) return;
     // 거꾸로 옮긴 자리를 스타일에 올려 둔다 - 안 하면 다음 프레임의 바꿈과 합쳐져 전환이 일어나지 않는다
     void container.offsetHeight;
     requestAnimationFrame(() => {

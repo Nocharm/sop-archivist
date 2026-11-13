@@ -1265,6 +1265,130 @@ await runStep("outputs: C reorder moves at once, saves one request at a time and
   check("the line goes back to where it started", (await restored).ok() && (await readOrder()).indexOf(id) === startIndex);
 });
 
+// 저장과 다시 받기가 엇갈려도 저장된 바뀜이 사라지지 않고, 한 번의 409는 알림 하나이며, 떠났다 돌아와도 저장이 겹치지 않는다
+await runStep("outputs: C saves survive a slow refetch, one conflict toasts once, leaving does not race", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
+  await wait(page, "output-c");
+  // 문서마다 위·아래 단추가 있는 줄이 셋 이상인 첫 칸 - 그 칸의 첫 줄을 옮긴다
+  const findLines = () => page.evaluate(() => [...document.querySelectorAll('[data-testid="output-c"] article')].map((article) => {
+    for (const section of article.querySelectorAll("section")) {
+      const ids = [...section.querySelectorAll('[data-testid^="output-c-row-"]')].filter((row) => row.querySelector('[data-testid^="output-c-move-down-"]')).map((row) => row.getAttribute("data-flip-key"));
+      if (ids.length >= 3) return ids;
+    }
+    return null;
+  }).filter((ids) => ids !== null));
+  const sections = await findLines();
+  check("C has two documents with a section of three movable lines", sections.length >= 2, `${sections.length}`);
+  const [first, second] = sections;
+  const orderOf = (id) => page.evaluate((key) => {
+    const section = document.querySelector(`[data-testid="output-c-row-${key}"]`)?.closest("section");
+    return [...(section?.querySelectorAll('[data-testid^="output-c-row-"]') ?? [])].map((row) => row.getAttribute("data-flip-key"));
+  }, id);
+  const press = (dir, id) => page.locator(`[data-testid="output-c-move-${dir}-${id}"]`).dispatchEvent("click");
+  let inFlight = 0;
+  let maxInFlight = 0;
+  page.on("request", (request) => {
+    if (isOrderSave(request)) maxInFlight = Math.max(maxInFlight, (inFlight += 1));
+  });
+  const settle = (request) => {
+    if (isOrderSave(request)) inFlight -= 1;
+  };
+  page.on("requestfinished", settle);
+  page.on("requestfailed", settle);
+  const waitIdle = async () => {
+    for (let quiet = 0; quiet < 12; ) {
+      await page.waitForTimeout(100);
+      quiet = inFlight === 0 ? quiet + 1 : 0;
+    }
+  };
+  // 오류 알림이 몇 번 떴는지 - 알림은 몇 초 뒤 사라지므로 나타날 때마다 센다(새로 고치면 다시 건다)
+  const countErrorToasts = () => page.evaluate(() => {
+    window.__errorToasts = 0;
+    const isErrorToast = (node) => node instanceof Element && (node.matches('[data-testid="toast-error"]') || node.querySelector('[data-testid="toast-error"]') !== null);
+    new MutationObserver((records) => {
+      for (const record of records) for (const node of record.addedNodes) if (isErrorToast(node)) window.__errorToasts += 1;
+    }).observe(document.body, { childList: true, subtree: true });
+  });
+  await countErrorToasts();
+  const errorToasts = () => page.evaluate(() => window.__errorToasts);
+
+  // 1. 다시 받는 C가 저장보다 늦게 오면 - 서버는 바로 읽고(저장 전) 화면에는 1.5초 늦게 준다. 언어를 바꿔 C를 다시 받기 시작한 뒤 누른다
+  const firstIndex = (await orderOf(first[0])).indexOf(first[0]);
+  await page.route(/\/outputs\/c\?/, async (route) => {
+    const response = await route.fetch();
+    await new Promise((done) => setTimeout(done, 1500));
+    await route.fulfill({ response });
+  });
+  await page.locator('[data-testid="top-bar-lang-ko"]').click();
+  const savedFirst = waitOrderSave(page);
+  await press("down", first[0]);
+  check("the save during a refetch is answered", (await savedFirst).ok());
+  await page.waitForTimeout(3500);
+  check("a C read before the save does not undo the moved line", (await orderOf(first[0])).indexOf(first[0]) === firstIndex + 1, JSON.stringify(await orderOf(first[0])));
+  await page.unroute(/\/outputs\/c\?/);
+  await page.locator('[data-testid="top-bar-lang-en"]').click();
+  await page.waitForTimeout(800);
+  const backFirst = waitOrderSave(page);
+  await press("up", first[0]);
+  check("the line moves back", (await backFirst).ok() && (await orderOf(first[0])).indexOf(first[0]) === firstIndex);
+
+  // 2. 한 번의 409 - 날아가는 첫 문서 저장이 409, 두 번째 문서는 기다리다 다시 읽은 C 위에서 저장된다. 알림은 하나
+  await waitIdle();
+  const toastsBefore = await errorToasts();
+  let conflicted = false;
+  await page.route("**/targets/order**", async (route) => {
+    if (conflicted) return route.continue();
+    conflicted = true;
+    await new Promise((done) => setTimeout(done, 600));
+    await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ detail: { code: "revision_conflict", conflicts: [] } }) });
+  });
+  const secondIndex = (await orderOf(second[0])).indexOf(second[0]);
+  await press("down", first[0]);
+  await press("down", second[0]);
+  await page.waitForTimeout(3000);
+  await waitIdle();
+  check("one conflict shows one error", (await errorToasts()) - toastsBefore === 1, `${(await errorToasts()) - toastsBefore} errors`);
+  check("the conflicted line is put back", (await orderOf(first[0])).indexOf(first[0]) === firstIndex);
+  check("the other document's waiting move is saved after the reload", (await orderOf(second[0])).indexOf(second[0]) === secondIndex + 1);
+  await page.unroute("**/targets/order**");
+  await page.reload();
+  await wait(page, `output-c-row-${second[0]}`);
+  check("after reload the other document keeps its move", (await orderOf(second[0])).indexOf(second[0]) === secondIndex + 1);
+  const backSecond = waitOrderSave(page);
+  await press("up", second[0]);
+  check("the other line moves back", (await backSecond).ok());
+
+  // 3. 떠났다 금방 돌아오기 - 저장이 3초 걸리는 동안 개요로 갔다가 돌아와 또 누른다. 떠난 뒤 알림이 없고, 두 저장이 겹치지 않으며, 둘 다 남는다
+  await countErrorToasts();
+  maxInFlight = 0;
+  await page.route("**/targets/order**", async (route) => {
+    await new Promise((done) => setTimeout(done, 3000));
+    await route.continue();
+  });
+  await press("down", first[0]);
+  await page.locator('[data-testid="stage-nav-overview"]').click();
+  await wait(page, "overview-gate-units");
+  await page.locator('[data-testid="stage-nav-outputs"]').click();
+  await wait(page, `output-c-row-${first[0]}`);
+  check("after returning the line shows the first move", (await orderOf(first[0])).indexOf(first[0]) === firstIndex + 1, JSON.stringify(await orderOf(first[0])));
+  await press("down", first[0]);
+  await page.waitForTimeout(3500);
+  await waitIdle();
+  check("leaving and returning never sends two saves at once", maxInFlight <= 1, `max ${maxInFlight}`);
+  check("no error after leaving and returning", (await errorToasts()) === 0, `${await errorToasts()} errors`);
+  await page.unroute("**/targets/order**");
+  await page.reload();
+  await wait(page, `output-c-row-${first[0]}`);
+  check("both moves are kept", (await orderOf(first[0])).indexOf(first[0]) === firstIndex + 2, JSON.stringify(await orderOf(first[0])));
+  await takeShot("sop-outputs-c-races.png");
+  for (let n = 0; n < 2; n += 1) {
+    const back = waitOrderSave(page);
+    await press("up", first[0]);
+    await back;
+  }
+  check("the line goes back to where it started", (await orderOf(first[0])).indexOf(first[0]) === firstIndex);
+});
+
 // 작성자가 요청을 거둔 뒤 다시 요청해 둔다 - 아래 검토자 단계가 같은 Bundle을 검토 대기로 받는다
 await runStep("review: author withdraws the request and asks again", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);

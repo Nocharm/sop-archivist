@@ -122,3 +122,21 @@ export function acceptSaved(draft: DocDraft, doc: OutputCDoc): DocDraft {
 export function rejectSaved(draft: DocDraft): DocDraft {
   return { saved: draft.saved, shown: draft.saved, edits: [], sentCount: 0 };
 }
+
+/** 순서·깊이·표시의 모양 - 글·라벨 언어가 달라도 같으면 같은 값 */
+function readDocShape(doc: OutputCDoc): string {
+  return doc.sections.map((section) => `${section.location_key}:${section.items.map((item) => `${item.target_id}/${item.indent_level}/${item.number_style}`).join(",")}`).join("|");
+}
+
+/**
+ * C를 새로 받았을 때 그 문서의 초안 - 저장이 날아가는 중이면 그대로 둔다(받은 C가 그 저장 전에 읽혔을 수 있어, 응답이 그 문서를 맞춘다).
+ * 기다리는 편집이 없으면 null(받은 문서를 그대로 보인다). 받은 문서의 순서·깊이·표시가 초안의 서버 문서와 같으면(이 화면의 저장만 반영, 라벨 언어 바꿈)
+ * 기다리는 편집을 받은 문서 위에 다시 얹고, 다르면(다른 곳에서 바뀜, 문서가 사라짐) 버린다 - dropped면 화면이 알린다.
+ */
+export function rebaseDraft(draft: DocDraft, fetched: OutputCDoc | undefined): { draft: DocDraft | null; dropped: boolean } {
+  if (draft.sentCount > 0) return { draft, dropped: false };
+  if (draft.edits.length === 0) return { draft: null, dropped: false };
+  if (!fetched || readDocShape(fetched) !== readDocShape(draft.saved)) return { draft: null, dropped: true };
+  const rebased = acceptSaved(draft, fetched);
+  return { draft: rebased, dropped: rebased.edits.length < draft.edits.length };
+}

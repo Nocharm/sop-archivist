@@ -5,7 +5,7 @@
 
 import { Download, Table2, Workflow } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import { ExportPreviewModal } from "@/components/outputs/export-preview";
 import { OutputARowView } from "@/components/outputs/output-a-row";
@@ -29,11 +29,26 @@ import {
   type Bundle,
   type CoverStatus,
   type OutputC,
+  type OutputLang,
   type TargetOrderResult,
 } from "@/lib/api-sop";
-import { loadBundle, putBundle, setBundleRevision, useBundle } from "@/lib/bundle-store";
-import { acceptSaved, addEdit, rejectSaved, sendDraft, startDraft, type CEdit, type DocDraft } from "@/lib/c-edit-model";
-import { EMPTY_QUEUE, enqueueJob, finishJob, getDataRevision, takeNextJob, type SaveJob } from "@/lib/c-save-queue";
+import { loadBundle, putBundle, readBundleRevision, setBundleRevision, useBundle } from "@/lib/bundle-store";
+import { acceptSaved, addEdit, rebaseDraft, rejectSaved, sendDraft, startDraft, type CEdit, type DocDraft } from "@/lib/c-edit-model";
+import {
+  canSendJob,
+  EMPTY_QUEUE,
+  enqueueJob,
+  findOtherSave,
+  finishJob,
+  getDataRevision,
+  isOwnSave,
+  releaseHold,
+  takeNextJob,
+  trackBundleSave,
+  type CViewMark,
+  type SaveHold,
+  type SaveJob,
+} from "@/lib/c-save-queue";
 import { useI18n } from "@/lib/i18n";
 import { buildAScreenLines } from "@/lib/output-groups";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
@@ -59,6 +74,17 @@ function toCoverStatus(status: string): CoverStatus {
 
 const NO_DRAFTS: ReadonlyMap<number, DocDraft> = new Map();
 
+/** 받은 결과물 C - 어느 받기(requestKey)의 것이고 어느 라벨 언어인지(그 C 위에 얹는 저장 응답도 같은 언어로 받는다) */
+interface CState {
+  bundleId: number | null;
+  requestKey: string | null;
+  base: OutputC | null;
+  lang: OutputLang;
+  error: unknown;
+}
+
+const EMPTY_C: CState = { bundleId: null, requestKey: null, base: null, lang: "en", error: null };
+
 /** 다시 읽어야 바로잡히는 거절 - 다른 곳에서 바뀌었거나(409) 보낸 목록이 서버와 어긋났다(422). 네트워크 오류 등은 다시 읽지 않는다 */
 function isStaleRejection(err: unknown): boolean {
   return err instanceof ApiError && (err.status === 409 || err.status === 422);
@@ -83,59 +109,104 @@ export default function OutputsPage() {
   const key = `${bundleId}:${lang}:${dataRevision}`;
   const outA = useLoaded(() => (tab === "a" ? getOutputA(bundleId, lang) : Promise.resolve(null)), `a:${tab}:${key}`);
   const outB = useLoaded(() => (tab === "b" ? getOutputB(bundleId, lang) : Promise.resolve(null)), `b:${tab}:${key}`);
-  const outC = useLoaded(() => (tab === "c" ? getOutputC(bundleId, lang) : Promise.resolve(null)), `c:${tab}:${key}`);
   const summary = useLoaded(() => getSummary(bundleId), `${bundleId}:${dataRevision}`);
+
+  // C - 받은 C와 초안을 한 응답 처리 안에서 함께 맞추려고(adoptC) useLoaded 대신 직접 받는다. 다른 탭에 다녀와도 받은 C는 남아 새로 받는 동안 보인다
+  const [cReloads, setCReloads] = useState(0);
+  const cRequestKey = tab === "c" ? `${key}#${cReloads}` : null;
+  const [cState, setCState] = useState<CState>(EMPTY_C);
+  // 문서마다 저장 안 된 편집을 얹은 초안 - 보이는 C는 draft.shown, 없으면 받은 문서
+  const [drafts, setDraftsView] = useState<ReadonlyMap<number, DocDraft>>(NO_DRAFTS);
+  const baseC = cState.bundleId === bundleId ? cState.base : null;
+  const outC = { data: baseC, error: cState.requestKey === cRequestKey ? cState.error : null, reload: () => setCReloads((count) => count + 1) };
+  const shownC = useMemo(
+    () => (baseC && drafts.size > 0 ? { ...baseC, docs: baseC.docs.map((doc) => drafts.get(doc.target_doc_id)?.shown ?? doc) } : baseC),
+    [baseC, drafts],
+  );
   const current = tab === "a" ? outA : tab === "b" ? outB : outC;
   // 결과물 A는 수천 행이 될 수 있어 묶음씩 그린다. 함께 쓰는 칸은 전체 목록에서 정해 두어야 이어 그린 첫 줄이 윗줄과 비교된다
   const linesA = useMemo(() => buildAScreenLines(outA.data ?? []), [outA.data]);
   const rowsA = useProgressiveList(linesA, `a:${key}`);
   const showSkeleton = useDelayedFlag(current.data === null && current.error === null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
-
-  // 보이는 C - 문서마다 저장 안 된 편집을 얹은 초안(draft.shown), 없으면 받은 문서. 초안은 받은 C(base)에 묶여 C를 새로 받으면 버려진다
-  const [draftView, setDraftView] = useState<{ base: OutputC | null; byDoc: ReadonlyMap<number, DocDraft> }>({ base: null, byDoc: NO_DRAFTS });
-  const drafts = draftView.base !== null && draftView.base === outC.data ? draftView.byDoc : NO_DRAFTS;
-  const shownC = useMemo(
-    () => (outC.data && drafts.size > 0 ? { ...outC.data, docs: outC.data.docs.map((doc) => drafts.get(doc.target_doc_id)?.shown ?? doc) } : outC.data),
-    [outC.data, drafts],
-  );
   // 의미 확인 - 누르면 화면에서 먼저 바뀌고, 보낼 때 마지막으로 고른 값을 싣는다(null이면 묶음 값)
   const [shownChecks, setShownChecks] = useState<Record<string, boolean> | null>(null);
 
   // 저장 줄 - 묶음 revision을 쓰는 요청은 한 번에 하나(c-save-queue). 화면에 그리지 않는 값이라 ref에 둔다
   const queueRef = useRef(EMPTY_QUEUE);
   const draftsRef = useRef<ReadonlyMap<number, DocDraft>>(NO_DRAFTS);
-  const draftBaseRef = useRef<OutputC | null>(null);
   const checksRef = useRef<Record<string, boolean> | null>(null);
-  // 마지막 저장 응답의 revision - 다음 요청이 싣는다. 없으면 묶음 값
-  const revisionRef = useRef<number | null>(null);
-  // C를 새로 받을 때마다 하나씩 - 그 전에 날린 문서 저장의 응답은 초안에 얹지 않는다
-  const generationRef = useRef(0);
+  // 보이는 C와 받기 형편 - fetch는 받기 시작한 C의 수, fetching은 지금 받는 중(저장을 own으로 셀지 isOwnSave가 본다)
+  const cRef = useRef({ state: EMPTY_C, fetch: 0, fetching: false });
+  // 409·422 뒤 다시 읽을 때까지의 멈춤
+  const holdRef = useRef<SaveHold>("none");
+  // 화면을 떠나면 응답은 묶음 캐시만 맞추고 다음 저장을 보내지 않는다. owner는 묶음마다 날아가는 저장(trackBundleSave)에서 이 화면을 가린다
+  const mountedRef = useRef(false);
+  const ownerRef = useRef<object>({});
+  const laneWaitRef = useRef(false);
   // 응답 처리(비동기)가 읽는 최신 값
-  const latestRef = useRef({ bundle, lang, t });
+  const latestRef = useRef({ tab, t });
   useEffect(() => {
-    latestRef.current = { bundle, lang, t };
+    latestRef.current = { tab, t };
   });
-  // C를 새로 받으면(라벨 언어·바깥 revision) 초안과 기다리는 문서 저장을 그 값으로 다시 시작한다 - 의미 확인은 C와 무관해 남긴다.
-  // 다른 탭으로 가 C가 비는 것은 새로 받은 것이 아니다 - 기다리는 저장은 그대로 보낸다(돌아오면 C를 새로 받는다)
   useEffect(() => {
-    if (outC.data === null) return;
-    generationRef.current += 1;
-    draftBaseRef.current = outC.data;
-    draftsRef.current = NO_DRAFTS;
-    revisionRef.current = null;
-    queueRef.current = { ...queueRef.current, pending: queueRef.current.pending.filter((job) => job.kind === "checks") };
-  }, [outC.data]);
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  /**
+   * 받은 C를 보인다 - 초안마다 rebaseDraft로 맞추고(날아가는 저장은 그대로, 다른 곳에서 바뀌어 기다리던 편집을 버리면 알린다),
+   * 다시 읽은 뒤의 C면 멈춘 문서 저장을 다시 보낸다. 초안·C를 한 번에 바꿔 받은 C와 초안이 어긋난 화면이 그려지지 않는다.
+   */
+  function adoptC(requestKey: string, fetch: number, data: OutputC, labelLang: OutputLang) {
+    const c = cRef.current;
+    c.fetching = false;
+    const byDoc = new Map<number, DocDraft>();
+    let dropped = false;
+    if (c.state.bundleId === bundleId) {
+      for (const [docId, draft] of draftsRef.current) {
+        const rebased = rebaseDraft(draft, data.docs.find((doc) => doc.target_doc_id === docId));
+        if (rebased.draft) byDoc.set(docId, rebased.draft);
+        dropped = dropped || rebased.dropped;
+      }
+    }
+    draftsRef.current = byDoc;
+    c.state = { bundleId, requestKey, base: data, lang: labelLang, error: null };
+    setCState(c.state);
+    setDraftsView(byDoc);
+    if (dropped) showToast(latestRef.current.t("outputs.c.changedElsewhere"), "error");
+    holdRef.current = releaseHold(holdRef.current, fetch);
+    pump();
+  }
 
   function setDraft(docId: number, draft: DocDraft) {
     const byDoc = new Map(draftsRef.current).set(docId, draft);
     draftsRef.current = byDoc;
-    setDraftView({ base: draftBaseRef.current, byDoc });
+    setDraftsView(byDoc);
   }
 
-  /** 날아가는 요청이 없으면 줄 앞의 일을 보낸다 - 누를 때와 응답을 처리한 뒤에 부른다. 보낼 것이 없어진 일(되돌린 문서 등)은 건너뛴다 */
+  /** 지금의 C 받기 형편 - 받는 중이거나 C 탭이 아니면 그때 보이는 결과물이 저장 전 것일 수 있다 */
+  function readCMark(): CViewMark {
+    return { fetch: cRef.current.fetch, busy: cRef.current.fetching || latestRef.current.tab !== "c" };
+  }
+
+  /** 날아가는 요청이 없으면 줄 앞의 일을 보낸다 - 누를 때·응답 뒤·C를 받은 뒤에 부른다. 보낼 것이 없어진 일(되돌린 문서 등)은 건너뛴다 */
   function pump() {
-    for (let next = takeNextJob(queueRef.current); next !== null; next = takeNextJob(queueRef.current)) {
+    if (!mountedRef.current || laneWaitRef.current) return;
+    // 떠났다 돌아오기 전 화면의 저장이 아직 날아가면 그 뒤에 보낸다 - 같은 묶음에 두 저장이 겹치지 않게
+    const other = findOtherSave(bundleId, ownerRef.current);
+    if (other) {
+      laneWaitRef.current = true;
+      void other.then(() => {
+        laneWaitRef.current = false;
+        pump();
+      });
+      return;
+    }
+    const canTake = (job: SaveJob) => canSendJob(holdRef.current, job);
+    for (let next = takeNextJob(queueRef.current, canTake); next !== null; next = takeNextJob(queueRef.current, canTake)) {
       queueRef.current = next.queue;
       if (startJob(next.job)) return;
       queueRef.current = finishJob(queueRef.current);
@@ -143,57 +214,68 @@ export default function OutputsPage() {
   }
 
   function startJob(job: SaveJob): boolean {
-    const { bundle: latest, lang: labelLang } = latestRef.current;
-    if (!latest) return false;
-    const revision = revisionRef.current ?? latest.revision;
+    // 묶음 캐시의 지금 revision - 저장 응답마다 바로 고쳐 둔다(setBundleRevision·putBundle)
+    const revision = readBundleRevision(bundleId);
+    if (revision === null) return false;
     if (job.kind === "checks") {
       const checks = checksRef.current;
       if (!checks) return false;
-      putSemanticChecks(bundleId, revision, checks).then((saved) => handleChecksSaved(saved, checks), handleChecksFailed);
+      const request = putSemanticChecks(bundleId, revision, checks);
+      trackBundleSave(bundleId, ownerRef.current, request);
+      request.then((saved) => handleChecksSaved(saved, checks), handleChecksFailed);
       return true;
     }
     const draft = draftsRef.current.get(job.docId);
     if (!draft || draft.edits.length === 0) return false;
     const sent = sendDraft(draft);
     draftsRef.current = new Map(draftsRef.current).set(job.docId, sent.draft);
-    const generation = generationRef.current;
-    putTargetOrder(bundleId, labelLang, { revision, target_doc_id: job.docId, items: sent.items }).then(
-      (result) => handleDocSaved(job.docId, generation, result),
-      (err: unknown) => handleDocFailed(job.docId, generation, err),
+    const mark = readCMark();
+    // 응답 문서는 지금 보이는 C의 라벨 언어로 받는다 - 다른 언어의 C 위에 얹히지 않게
+    const request = putTargetOrder(bundleId, cRef.current.state.lang, { revision, target_doc_id: job.docId, items: sent.items });
+    trackBundleSave(bundleId, ownerRef.current, request);
+    request.then(
+      (result) => handleDocSaved(job.docId, mark, result),
+      (err: unknown) => handleDocFailed(job.docId, err),
     );
     return true;
   }
 
-  function handleDocSaved(docId: number, generation: number, result: TargetOrderResult) {
-    revisionRef.current = result.revision;
-    queueRef.current = finishJob(queueRef.current);
-    if (generation === generationRef.current) {
-      const draft = draftsRef.current.get(docId);
-      if (draft) setDraft(docId, acceptSaved(draft, result.doc));
-      setOwnRevisions((prev) => new Set(prev).add(result.revision));
+  function handleDocSaved(docId: number, sent: CViewMark, result: TargetOrderResult) {
+    // 화면을 떠난 뒤의 응답 - 묶음 캐시만 맞춘다(다음 화면이 낡은 revision으로 보내지 않게). 알림·다음 저장은 없다
+    if (!mountedRef.current) {
+      setBundleRevision(bundleId, result.revision);
+      return;
     }
-    // 그 전 C에서 보낸 저장이면 own에 넣지 않는다 - 새로 받은 C가 이 저장 전 것일 수 있어 한 번 더 받게 한다
+    queueRef.current = finishJob(queueRef.current);
+    const draft = draftsRef.current.get(docId);
+    if (draft) setDraft(docId, acceptSaved(draft, result.doc));
+    // 보내고 받는 사이에 C를 받았거나 받는 중이면 own이 아니다 - revision이 키를 바꿔 그 저장이 든 C를 다시 받는다
+    if (isOwnSave(sent, readCMark())) setOwnRevisions((prev) => new Set(prev).add(result.revision));
     setBundleRevision(bundleId, result.revision);
     pump();
   }
 
-  function handleDocFailed(docId: number, generation: number, err: unknown) {
-    const translate = latestRef.current.t;
+  function handleDocFailed(docId: number, err: unknown) {
+    if (!mountedRef.current) return;
     queueRef.current = finishJob(queueRef.current);
-    // 저장 안 된 바뀜 전부(보낸 것과 그 뒤에 누른 것)를 되돌린다 - 다른 문서의 기다리는 바뀜은 이어 보낸다
+    // 저장 안 된 바뀜 전부(보낸 것과 그 뒤에 누른 것)를 되돌린다 - 되돌린 것이 있을 때만 알린다
     const draft = draftsRef.current.get(docId);
-    if (generation === generationRef.current && draft) setDraft(docId, rejectSaved(draft));
-    showToast(`${translate("outputs.c.rolledBack")} ${humanizeApiError(err, translate)}`, "error");
-    if (isStaleRejection(err)) {
-      revisionRef.current = null;
-      void loadBundle(bundleId);
+    if (draft && draft.edits.length > 0) {
+      const translate = latestRef.current.t;
+      setDraft(docId, rejectSaved(draft));
+      showToast(`${translate("outputs.c.rolledBack")} ${humanizeApiError(err, translate)}`, "error");
     }
+    if (isStaleRejection(err)) holdForReload();
     pump();
   }
 
   function handleChecksSaved(saved: Bundle, sent: Record<string, boolean>) {
-    revisionRef.current = saved.revision;
+    if (!mountedRef.current) {
+      putBundle(saved);
+      return;
+    }
     queueRef.current = finishJob(queueRef.current);
+    // 의미 확인은 결과물·요약에 들지 않아 늘 이 화면 것이다
     setOwnRevisions((prev) => new Set(prev).add(saved.revision));
     putBundle(saved);
     // 보낸 뒤에 또 눌렀으면 그 값이 남아 다음 요청이 싣는다
@@ -205,20 +287,33 @@ export default function OutputsPage() {
   }
 
   function handleChecksFailed(err: unknown) {
+    if (!mountedRef.current) return;
     queueRef.current = finishJob(queueRef.current);
     checksRef.current = null;
     setShownChecks(null);
     showToast(humanizeApiError(err, latestRef.current.t), "error");
-    if (isStaleRejection(err)) {
-      revisionRef.current = null;
-      void loadBundle(bundleId);
-    }
+    if (isStaleRejection(err)) holdForReload();
     pump();
+  }
+
+  /**
+   * 409·422 - 묶음을 다시 읽을 때까지 모든 저장을, 그 뒤 새로 받은 C가 올 때까지 문서 저장을 멈춘다. 기다리던 문서 저장은 새 C 위에
+   * 다시 얹어(adoptC) 새 revision으로 보낸다 - 낡은 revision으로 줄줄이 보내 알림이 문서마다 뜨지 않게.
+   */
+  function holdForReload() {
+    if (holdRef.current === "bundle") return;
+    holdRef.current = "bundle";
+    void loadBundle(bundleId).then(() => {
+      if (!mountedRef.current) return;
+      holdRef.current = { docsFromFetch: cRef.current.fetch + 1 };
+      setCReloads((count) => count + 1);
+      pump();
+    });
   }
 
   // 위·아래·깊이·번호 표시 - 화면 문서에 먼저 얹고(번호는 미리 센다) 그 문서의 저장을 줄에 넣는다. 깊이·표시는 그 줄에만 붙는다
   function editC(docId: number, edit: CEdit) {
-    const doc = outC.data?.docs.find((item) => item.target_doc_id === docId);
+    const doc = baseC?.docs.find((item) => item.target_doc_id === docId);
     const next = doc && addEdit(draftsRef.current.get(docId) ?? startDraft(doc), edit);
     if (!next) return;
     setDraft(docId, next);
@@ -235,6 +330,37 @@ export default function OutputsPage() {
     queueRef.current = enqueueJob(queueRef.current, { kind: "checks" });
     pump();
   }
+
+  // C 받기 - 받기 번호를 매기고, 키가 바뀌어 버려진 받기의 결과는 쓰지 않는다(받은 C는 adoptC가 초안과 함께 맞춘다)
+  const startCFetch = useEffectEvent((requestKey: string, isAlive: () => boolean) => {
+    const fetch = ++cRef.current.fetch;
+    cRef.current.fetching = true;
+    const labelLang = lang;
+    // 떠났다 돌아오기 전 화면의 저장이 아직 날아가면 그 뒤에 받는다 - 그 저장 전에 읽힌 C 위에 누름이 얹혀 저장을 덮지 않게
+    const other = findOtherSave(bundleId, ownerRef.current) ?? Promise.resolve();
+    other.then(() => getOutputC(bundleId, labelLang)).then(
+      (data) => {
+        if (isAlive()) adoptC(requestKey, fetch, data, labelLang);
+      },
+      (error: unknown) => {
+        if (!isAlive()) return;
+        cRef.current.fetching = false;
+        // 받지 못하면 멈춘 문서 저장도 풀어 준다 - 기다리게만 두면 누른 것이 끝내 가지 않는다
+        holdRef.current = releaseHold(holdRef.current, fetch);
+        setCState((prev) => ({ ...prev, requestKey, error }));
+      },
+    );
+  });
+  useEffect(() => {
+    if (cRequestKey === null) return;
+    const c = cRef.current;
+    let alive = true;
+    startCFetch(cRequestKey, () => alive);
+    return () => {
+      alive = false;
+      c.fetching = false;
+    };
+  }, [cRequestKey]);
 
   const sum = summary.data;
   const checkValues: Record<string, unknown> | undefined = shownChecks ?? bundle?.semantic_checks;

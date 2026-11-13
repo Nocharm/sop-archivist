@@ -88,6 +88,11 @@ export function setBundleRevision(bundleId: number, revision: number): void {
   setEntry(bundleId, { bundle: { ...entry.bundle, revision }, error: null, loading: false });
 }
 
+/** 캐시된 묶음의 지금 revision - 저장 응답 처리가 렌더를 기다리지 않고 다음 요청에 싣는다. 없으면 null */
+export function readBundleRevision(bundleId: number): number | null {
+  return entries.get(bundleId)?.bundle?.revision ?? null;
+}
+
 export function useBundle(bundleId: number | null): Entry & { reload: () => void } {
   const entry = useSyncExternalStore(
     subscribe,

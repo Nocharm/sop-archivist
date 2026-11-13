@@ -8,7 +8,7 @@ import type { Bundle } from "./api-sop";
 const getBundle = vi.fn<(id: number) => Promise<Bundle>>();
 vi.mock("./api-sop", () => ({ getBundle: (id: number) => getBundle(id) }));
 
-const { clearBundleStore, loadBundle, putBundle, setBundleRevision, useBundle } = await import("./bundle-store");
+const { clearBundleStore, loadBundle, putBundle, readBundleRevision, setBundleRevision, useBundle } = await import("./bundle-store");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -99,6 +99,9 @@ describe("bundle store", () => {
       await older.promise;
     });
     expect(screen.bundle).toMatchObject({ status: "in_progress", revision: 4 });
+    // 응답 처리가 렌더를 기다리지 않고 지금 revision을 읽는다
+    expect(readBundleRevision(15)).toBe(4);
+    expect(readBundleRevision(999)).toBeNull();
     act(() => root.unmount());
   });
 
