@@ -64,6 +64,7 @@ describe("Modal width", () => {
     ["md", "max-w-md"],
     ["lg", "max-w-lg"],
     ["xl", "max-w-3xl"],
+    ["sheet", "max-w-[min(1280px,calc(100vw-32px))]"],
   ])("draws size %s as %s", (size, expected) => {
     // eslint-disable-next-line react/no-children-prop
     expect(renderPanel(createElement(Modal, { title: "T", testId: "m", onClose: vi.fn(), size, children: "body" }))).toEqual([expected]);

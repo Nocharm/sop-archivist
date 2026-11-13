@@ -762,19 +762,19 @@ def test_held_unit_can_be_bulk_disposed_by_a_person(client: TestClient) -> None:
 def test_held_unit_blocks_review_and_shows_in_output_a(client: TestClient) -> None:
     fx = _setup(client)
     unit = find_unit(fx.view, STORAGE)
-    before = client.get(f"/api/bundles/{fx.bundle_id}/summary", headers=AUTHOR).json()["ko"]
+    before = client.get(f"/api/bundles/{fx.bundle_id}/summary", headers=AUTHOR).json()
     assert _hold_without_destination(client, fx, unit).status_code == 200
 
     readiness = client.get(f"/api/bundles/{fx.bundle_id}/review/readiness", headers=AUTHOR).json()
     rows = client.get(f"/api/bundles/{fx.bundle_id}/outputs/a", params={"lang": "ko"}, headers=AUTHOR).json()
-    summary = client.get(f"/api/bundles/{fx.bundle_id}/summary", headers=AUTHOR).json()["ko"]
+    summary = client.get(f"/api/bundles/{fx.bundle_id}/summary", headers=AUTHOR).json()
 
     assert {"code": "units_on_hold", "count": 1} in readiness["blockers"]
     row = next(row for row in rows if row["unit_id"] == unit["id"])
     assert (row["dest_kind"], row["dest_doc_code"], row["status"]) == ("", "", "on_hold")
-    # 보낸 곳이 비어 있으니 요약은 미배정으로 센다 — 보류 전과 같은 숫자다
+    # 보낸 곳이 비어 있으니 요약은 갈 곳 없음(No destination)으로 센다 — 보류 전과 같은 숫자다
     assert before["assigned"] == 0
-    assert (summary["assigned"], summary["unassigned"]) == (before["assigned"], before["unassigned"])
+    assert (summary["assigned"], summary["no_destination"]) == (before["assigned"], before["no_destination"])
 
 
 def test_classify_skips_a_person_held_unit(client: TestClient, fake_ai: FakeAi) -> None:

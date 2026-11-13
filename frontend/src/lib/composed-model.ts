@@ -58,6 +58,15 @@ export function buildComposedRows(doc: ComposedDoc): NewPaneRow[] {
   return rows;
 }
 
+/** 칸 머리 줄(번호. 칸 이름) → 칸 제목 출처 - 빈 출처는 뺀다. buildComposedRows의 section_path와 같은 열쇠 */
+export function listHeadingNotes(doc: ComposedDoc): Map<string, string> {
+  const notes = new Map<string, string>();
+  for (const section of doc.sections) {
+    if (section.heading_note !== "") notes.set(formatSectionPath(section.number, section.label), section.heading_note);
+  }
+  return notes;
+}
+
 /** 저장한 새 문장이 놓일 칸 키 - 서버 _plan_sections의 키와 같은 모양 */
 function readSectionKey(target: GroupTarget): string | null {
   if (target.slot_key !== null) return target.slot_key;
@@ -74,6 +83,8 @@ export function applySavedTargets(doc: ComposedDoc, targets: readonly GroupTarge
   const placed = new Map<string, ComposedItem[]>();
   for (const target of targets) {
     if (target.target_doc_id !== doc.target_doc_id || target.parent_target_id !== null) continue;
+    // 칸 제목은 칸 항목이 아니다 - 머리 줄 출처는 곧 다시 읽는 서버 값이 채운다
+    if (target.kind === "slot_heading") continue;
     const key = readSectionKey(target);
     if (key === null) continue;
     const item: ComposedItem = {

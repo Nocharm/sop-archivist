@@ -1,16 +1,17 @@
 """떼어 내기 — 판단을 미배정으로, 출처 연결을 떼고, 같은 관계 묶음의 나머지와 그 단위의 번역을 정리한다(배정 지우기·쪼개기 편집·문서 삭제 공용, 새 문장 쪽은 칸 다시 묶기, 스펙 §7.5)."""
 
 from collections import defaultdict
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Sequence
 from typing import Literal
 
 from pydantic import BaseModel
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.sop.constants import SYSTEM_HOLD_RELATED_CHANGED
+from app.sop.constants import SLOT_HEADING, SYSTEM_HOLD_RELATED_CHANGED
 from app.sop.groups import collect_component, iter_chunks, select_in_chunks
 from app.sop.models import AiSuggestion, TargetSentence, TargetSource, Unit, UnitDecision, UnitDecisionHistory
+from app.sop.status import pick_row_status
 
 UNASSIGNED = "unassigned"
 AI_SUGGESTED = "ai_suggested"
@@ -57,13 +58,63 @@ def _hold(item: UnitDecision | TargetSentence) -> None:
     item.revision += 1
 
 
+def apply_slot_heading_status(
+    target: TargetSentence, decisions: Sequence[UnitDecision], *, preferred: Collection[int] = ()
+) -> None:
+    """칸 제목의 상태 = 출처 단위 판단 중 가장 덜 끝난 것(pick_row_status) — 칸 제목은 따로 판단하지 않고 출처의 배정을 따른다(제품 명세 §7.13 칸 제목).
+
+    저장(decisions._write_group)과 떼어 내기가 출처 연결이나 출처 판단을 바꾼 뒤 부른다. decisions는 남은 출처의 판단(seq 순, 비지 않음),
+    preferred는 이 저장의 단위다. 보류면 사유는 보류한 출처의 것 — 이 저장이 보류한 출처, 지금 사유를 가진 출처, 출처 순 첫째 순.
+    확정이면 이미 확정이던 행은 확정한 사람·시각을 두고, 새로 확정되면 이 저장의 출처(없으면 출처 순 첫째)의 것. 그 밖은 둘 다 비운다.
+    상태·사유가 바뀌면 revision을 올려 낡은 저장을 막는다.
+    """
+    before = (target.status, target.hold_reason)
+    status = pick_row_status(decision.status for decision in decisions)
+    if status == ON_HOLD:
+        held = [decision for decision in decisions if decision.status == ON_HOLD]
+        chosen = next((decision for decision in held if decision.unit_id in preferred), None) or next(
+            (decision for decision in held if before == (ON_HOLD, decision.hold_reason)), held[0]
+        )
+        target.hold_reason, target.confirmed_by, target.confirmed_at = chosen.hold_reason, None, None
+    elif status == CONFIRMED:
+        if target.status != CONFIRMED:
+            chosen = next((decision for decision in decisions if decision.unit_id in preferred), decisions[0])
+            target.confirmed_by, target.confirmed_at = chosen.confirmed_by, chosen.confirmed_at
+        target.hold_reason = ""
+    else:
+        target.hold_reason, target.confirmed_by, target.confirmed_at = "", None, None
+    target.status = status
+    if (target.status, target.hold_reason) != before:
+        target.revision += 1
+
+
+async def _settle_slot_headings(session: AsyncSession, targets: Iterable[TargetSentence]) -> None:
+    """남은 칸 제목의 상태를 남은 출처의 판단에서 다시 정한다 — 출처 연결을 떼고 보류를 쓴 뒤에 부른다. 칸 제목이 없으면 질의하지 않는다."""
+    headings = {target.id: target for target in targets if target.kind == SLOT_HEADING}
+    rows = await select_in_chunks(
+        session,
+        lambda chunk: select(TargetSource.target_id, UnitDecision)
+        .join(UnitDecision, UnitDecision.unit_id == TargetSource.unit_id)
+        .where(TargetSource.target_id.in_(chunk))
+        .order_by(TargetSource.target_id, TargetSource.seq),
+        headings,
+    )
+    decisions: dict[int, list[UnitDecision]] = defaultdict(list)
+    for target_id, decision in rows:
+        decisions[target_id].append(decision)
+    for target_id, target in headings.items():
+        if decisions[target_id]:  # 출처가 다 떠난 칸 제목은 떼어 내기가 이미 지웠다
+            apply_slot_heading_status(target, decisions[target_id])
+
+
 def _should_hold(target: TargetSentence) -> bool:
     """같은 관계 묶음의 나머지 중 보류할 새 문장 — 미배정은 뺀다.
 
     AI 번역도 뺀다. 출처가 바뀐 번역은 이미 지웠으니 여기 남은 것은 표 아래라 딸려 온, 자기 출처가 그대로인 제안이다. 보류하면 확정
     글이 빈 보류가 되어 결과물에 빈 줄로 나가고 다시 번역도 못 받는다. 표를 다시 저장할 때 닫힘이 함께 담아 사람이 정한다.
+    칸 제목도 뺀다 — 상태는 남은 출처의 판단에서 다시 정한다(_settle_slot_headings, 마지막 출처가 떠나면 지워진다, 제품 명세 §7.13 칸 제목).
     """
-    if target.status == UNASSIGNED:
+    if target.status == UNASSIGNED or target.kind == SLOT_HEADING:
         return False
     return not (target.origin == ORIGIN_TRANSLATION and target.status == AI_SUGGESTED)
 
@@ -120,7 +171,7 @@ def _follow_source(target: TargetSentence, source: TargetSentence) -> None:
     target.target_doc_id, target.slot_key = source.target_doc_id, source.slot_key
     target.wi_step, target.wi_part, target.section_path = source.wi_step, source.wi_part, source.section_path
     target.cell_row, target.cell_col, target.parent_target_id = source.cell_row, source.cell_col, source.parent_target_id
-    target.indent_level, target.number_style = source.indent_level, source.number_style
+    target.indent_level = source.indent_level  # 번호 표시는 따라가지 않는다 — 문장마다 자기 표시를 가진다
 
 
 async def sweep_translations(
@@ -305,6 +356,7 @@ async def detach_units(
         # 지운 행을 세션이 계속 붙잡고 있으면 뒤의 flush가 없는 행을 고치려 한다
         if target_id in targets:
             session.expunge(targets[target_id])
+    await _settle_slot_headings(session, (target for target_id, target in targets.items() if target_id not in deleted))
     return DetachReport(
         reset_unit_ids=reset_unit_ids, deleted_target_ids=sorted(deleted),
         held_unit_ids=held_unit_ids, held_target_ids=held_target_ids,
@@ -347,6 +399,7 @@ async def detach_targets(session: AsyncSession, *, bundle_id: int, target_ids: C
         _hold(decisions[unit_id])
     for target_id in held_target_ids:
         _hold(targets[target_id])
+    await _settle_slot_headings(session, (targets[target_id] for target_id in component_targets - given))
     return DetachReport(
         reset_unit_ids=[], deleted_target_ids=sorted(swept), held_unit_ids=held_unit_ids, held_target_ids=held_target_ids
     )

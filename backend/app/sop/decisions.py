@@ -15,7 +15,7 @@ from sqlalchemy.orm.util import AliasedClass
 from app.clock import now
 from app.sop.ai.adoption import record_group_adoption, record_unit_adoption, reject_suggestions
 from app.sop.checks import check_sentence
-from app.sop.constants import SLOT_KEYS
+from app.sop.constants import SLOT_HEADING, SLOT_KEYS
 from app.sop.detach import (
     AI_SUGGESTED,
     CONFIRMED,
@@ -23,6 +23,7 @@ from app.sop.detach import (
     ORIGIN_NEW_DOC,
     ORIGIN_TRANSLATION,
     DetachReport,
+    apply_slot_heading_status,
     detach_units,
     is_unassigned,
     load_source_target_ids,
@@ -40,6 +41,7 @@ from app.sop.groups import (
     select_in_chunks,
 )
 from app.sop.membership import ensure_editable, lock_bundle
+from app.sop.output_labels import SLOT_LABELS
 from app.sop.models import (
     AiJob,
     Bundle,
@@ -61,6 +63,7 @@ from app.sop.pair_settle import settle_pairs
 from app.sop.schemas import NO_NUL, NoNulStr
 from app.sop.segment import detect_language, has_visible_char
 from app.sop.status import get_cover_status
+from app.sop.target_placement import Arranged, NewTarget, Spot, arrange_new_targets, insert_after
 from app.sop.tobe import MAX_DB_INT, is_within_slot
 from app.sop.units import UNIT_ACTIVE, compute_display_id
 
@@ -73,6 +76,8 @@ ORIGIN_UNITS = "units"
 NEUTRAL = "neutral"
 # 문장 새 문장의 출처가 될 수 있는 단위 — 그림은 그림 새 문장, 표·행은 표 새 문장으로만 간다(R28)
 SENTENCE_SOURCE_KINDS = ("sentence", "heading", "cell_sentence")
+# 칸 제목에 이을 수 있는 글 단위(제품 명세 §7.13 칸 제목) — 칸 문장은 표·행의 처분을 따른다
+SLOT_HEADING_SOURCE_KINDS = ("heading", "sentence")
 TEXT_CHANGE_TYPES = ("tone", "rewritten")  # 글자가 출처와 다를 때 사람이 고르는 종류
 
 
@@ -97,6 +102,7 @@ class TargetIn(BaseModel):
     """새 문장 하나의 저장 뒤 모습. 기존 새 문장에서 비운(None) 문서·글자·언어·격자·칸 자리는 지금 값을 둔다.
 
     자리(칸 키·WI 단계·부분)는 None도 뜻이 있는 값(WI의 칸 없음, 단계 없음)이라 보낸 그대로 쓴다.
+    칸 제목(slot_heading)은 글·언어·변경 종류를 비워 보낸다 — 서버가 칸 이름·출처 언어·heading으로 채운다(제품 명세 §7.13 칸 제목).
     """
 
     key: str = Field(min_length=1, max_length=40)  # 요청 안 식별자 — 칸 새 문장이 parent_key로 표 새 문장을 가리킨다
@@ -106,7 +112,7 @@ class TargetIn(BaseModel):
     slot_key: str | None = Field(None, max_length=100)
     wi_step: DbId | None = None
     wi_part: Literal["instruction", "why"] | None = None
-    kind: Literal["sentence", "table", "figure"] = "sentence"
+    kind: Literal["sentence", "table", "figure", "slot_heading"] = "sentence"
     lang: Literal["ko", "en", "neutral"] | None = None
     text: Annotated[str, StringConstraints(max_length=20000), NO_NUL] | None = None
     change_type: Literal["as_is", "tone", "rewritten", "table_restructured"] | None = None
@@ -206,6 +212,9 @@ class UnitsPageOut(BaseModel):
 # --- 검사에 쓰는 지금 모습 ---
 
 
+_SlotKey = tuple[int, str, str]  # (새 문서, 칸 키, 언어) — 칸 제목이 하나뿐인 범위
+
+
 @dataclass
 class _State:
     units: dict[int, Unit]  # 보낸 단위와 그 칸 문장(U*)
@@ -226,6 +235,10 @@ class _State:
     steps: dict[int, set[int]]
     table_shapes: dict[int, tuple[int, int]]  # 원문 표 id → (행 수, 열 수)
     cell_positions: dict[int, tuple[int, int]]  # 칸 문장 → 블록의 (행, 열)
+    pair_of: dict[int, int]  # 보낸 단위(와 칸 문장) → 한/영 짝 id — 짝 없는 단위는 키가 없다. 새로 놓이는 짝의 기본값이 본다
+    slot_headings: dict[_SlotKey, TargetSentence]  # 이 묶음의 칸 제목 전부 — (새 문서, 칸 키, 언어)마다 하나
+    slot_heading_sources: dict[int, list[int]]  # 칸 제목 → 지금 출처 단위(seq 순)
+    slot_heading_decisions: dict[int, UnitDecision]  # 칸 제목 출처 단위 → 판단 — 칸 제목 상태를 다시 정할 때 다른 문서 출처도 본다
 
 
 class _Place(NamedTuple):
@@ -257,6 +270,10 @@ class _Plan:
     parent: "_Plan | None" = None
     is_cell: bool = False
     change_type: str | None = None
+    # 칸 제목만 — 저장 뒤 출처 전부(다른 문서 출처 포함, seq 순). None이면 sources다(_resolve_slot_headings)
+    link_sources: list[int] | None = None
+    # 칸 제목만 — 보낸 행이 아닌 기존 칸 제목에 출처만 더한다. 글·표시는 그대로, 상태는 출처 판단에서 다시 정한다
+    is_attach: bool = False
 
 
 def _reject(reason: str, **context: object) -> NoReturn:
@@ -379,6 +396,20 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
         .where(TargetDoc.bundle_id == bundle_id)
     ):
         steps[doc_id].add(step_no)
+    slot_headings: dict[_SlotKey, TargetSentence] = {}
+    slot_heading_sources: dict[int, list[int]] = defaultdict(list)
+    slot_heading_decisions: dict[int, UnitDecision] = {}
+    for row, unit_id, decision in await session.execute(
+        select(TargetSentence, TargetSource.unit_id, UnitDecision)
+        .outerjoin(TargetSource, TargetSource.target_id == TargetSentence.id)
+        .outerjoin(UnitDecision, UnitDecision.unit_id == TargetSource.unit_id)
+        .where(TargetSentence.bundle_id == bundle_id, TargetSentence.kind == SLOT_HEADING)
+        .order_by(TargetSentence.id, TargetSource.seq)
+    ):
+        slot_headings[(row.target_doc_id, row.slot_key, row.lang)] = row
+        if unit_id is not None:
+            slot_heading_sources[row.id].append(unit_id)
+            slot_heading_decisions[unit_id] = decision
     return _State(
         units=units, decisions=decisions, cells=cells, group_of=group_of, existing=existing,
         removed=set(payload.removed_target_ids), sources=sources,
@@ -390,6 +421,18 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
         docs=docs, na_slots=na_slots, steps=steps,
         table_shapes=await load_table_shapes(session, [units[unit_id] for unit_id in table_unit_ids]),
         cell_positions=await load_cell_positions(session, [units[cell_id] for cell_id in group_of]),
+        pair_of={
+            unit_id: pair_id
+            for unit_id, pair_id in await select_in_chunks(
+                session,
+                lambda chunk: select(UnitPairMember.unit_id, UnitPairMember.pair_id).where(
+                    UnitPairMember.unit_id.in_(chunk)
+                ),
+                units,
+            )
+        },
+        slot_headings=slot_headings, slot_heading_sources=slot_heading_sources,
+        slot_heading_decisions=slot_heading_decisions,
     )
 
 
@@ -505,8 +548,10 @@ def _check_dispositions(payload: GroupSaveIn, state: _State) -> None:
 
 
 def _check_location(item: TargetIn, doc: TargetDoc, state: _State) -> None:
-    """SOP는 N/A가 아닌 칸(상위 칸 N/A는 하위 칸도 덮는다, R8), WI는 부분과 선언된 단계(또는 단계 없음)."""
+    """SOP는 N/A가 아닌 칸(상위 칸 N/A는 하위 칸도 덮는다, R8), WI는 부분과 선언된 단계(또는 단계 없음). 칸 제목은 SOP에만 있다."""
     keys = [item.key]
+    if item.kind == SLOT_HEADING and doc.doc_type != "sop":
+        _reject("slot_heading_not_allowed", keys=keys)
     if doc.doc_type == "sop":
         if item.wi_step is not None or item.wi_part is not None:
             _reject("invalid_location", keys=keys)
@@ -579,10 +624,11 @@ def _settle_translation_place(plan: _Plan, by_row_id: dict[int, _Plan], state: _
 
 
 def _check_source_kinds(item: TargetIn, state: _State) -> None:
-    """문장은 문장·제목·칸 문장에서, 표는 표·행 단위 하나에서, 그림은 그림 단위 하나에서 온다(R28)."""
+    """문장은 문장·제목·칸 문장에서, 칸 제목은 제목·문장에서, 표는 표·행 단위 하나에서, 그림은 그림 단위 하나에서 온다(R28)."""
     kinds = [state.units[unit_id].kind for unit_id in item.source_unit_ids]
-    if item.kind == "sentence":
-        if any(kind not in SENTENCE_SOURCE_KINDS for kind in kinds):
+    text_kinds = {"sentence": SENTENCE_SOURCE_KINDS, SLOT_HEADING: SLOT_HEADING_SOURCE_KINDS}.get(item.kind)
+    if text_kinds is not None:
+        if any(kind not in text_kinds for kind in kinds):
             _reject("kind_mismatch", keys=[item.key])
         return
     allowed = TABLE_UNIT_KINDS if item.kind == "table" else ("figure",)
@@ -591,13 +637,19 @@ def _check_source_kinds(item: TargetIn, state: _State) -> None:
 
 
 def _resolve_lang(item: TargetIn, row: TargetSentence | None, state: _State, text: str) -> str:
-    """새 문장의 언어 — 출처와 달라도 거절하지 않는다(다르면 변경 종류가 번역이 된다, 설계 §5.2). 표·그림은 중립.
+    """새 문장의 언어 — 출처와 달라도 거절하지 않는다(다르면 변경 종류가 번역이 된다, 제품 명세 §6.7). 표·그림은 중립.
 
     입구 2·번역 새 문장은 행의 언어로 잠겨 있어 보낸 값을 따르지 않는다. 그 밖에는 보낸 값, 비웠으면 기존 새 문장의 지금 값
     (TargetIn의 "비운 칸은 지금 값" — 출처 언어로 되돌리면 사람이 쓴 번역이 조용히 출처 언어가 된다), 새 새 문장은 출처가 한
     언어면 그 언어, 섞였으면 글자로 판정한다. 글자만 보지 않는 것은 영어 문장에 한글 낱말 하나만 있어도 KO로 판정되기 때문이다.
     문장의 중립은 보내지 않은 것으로 본다 — 중립 문장은 번역이 될 수 없고 결과물의 두 언어 판에 모두 나간다.
+    칸 제목은 출처의 언어다 — 한글 제목은 한글 칸 제목에, 영어 제목은 영어 칸 제목에 붙으므로 출처 언어가 하나여야 한다.
     """
+    if item.kind == SLOT_HEADING:
+        langs = {state.units[unit_id].lang for unit_id in item.source_unit_ids}
+        if len(langs) != 1:
+            _reject("slot_heading_mixed_langs", keys=[item.key])
+        return langs.pop()
     if item.kind != "sentence":
         return NEUTRAL
     if row is not None and row.origin in (ORIGIN_NEW_DOC, ORIGIN_TRANSLATION):
@@ -616,8 +668,14 @@ def _resolve_text(item: TargetIn, row: TargetSentence | None, state: _State) -> 
     """확정 글자 — 비운 새 새 문장에 출처가 하나면 원문 그대로(그대로 보내기, 스펙 §7.7). 표·그림은 글자가 없다.
 
     비운 기존 새 문장은 지금 글을 두고, 아직 확정 글이 없는 AI 새 문장이면 제안 글로 확정한다.
+    칸 제목은 칸 이름이고 사람이 고치지 않는다 — 비우거나 칸 이름 그대로 보내야 한다(칸 키는 _check_location이 먼저 봤다).
     """
     keys = [item.key]
+    if item.kind == SLOT_HEADING:
+        label = SLOT_LABELS[item.slot_key]
+        if item.text and item.text != label:
+            _reject("slot_heading_text_locked", keys=keys)
+        return label
     if item.kind != "sentence":
         if item.text:
             _reject(f"invalid_{item.kind}_target", keys=keys)
@@ -717,14 +775,17 @@ def _link_cell_target(plan: _Plan, by_key: dict[str, _Plan], state: _State) -> N
 def _decide_change_type(
     plan: _Plan, spread: Counter[tuple[int, int]], reasons: dict[int, str], state: _State
 ) -> str:
-    """검사 9 — 구조에서 나오는 종류(번역 기원·신규·표·그림·합침·언어가 다름·나눔)가 먼저, 그다음 사람이 고른 글자 비교 종류.
+    """검사 9 — 구조에서 나오는 종류(번역 기원·칸 제목·신규·표·그림·합침·언어가 다름·나눔)가 먼저, 그다음 사람이 고른 글자 비교 종류.
 
-    언어가 다르면 번역이다 — 사람이 고르지 않는다(설계 §5.2). 나눔은 출처와 같은 언어의 새 문장만 센다(spread).
+    언어가 다르면 번역이다 — 사람이 고르지 않는다(제품 명세 §6.7). 나눔은 출처와 같은 언어의 새 문장만 센다(spread).
+    칸 제목은 출처가 둘 이상이어도(다른 문서의 같은 제목) 합침이 아니라 heading이다(제품 명세 §7.13 칸 제목).
     """
     keys = [plan.item.key]
     requested = plan.item.change_type
     if plan.origin == ORIGIN_TRANSLATION:
         return "translated"
+    if plan.item.kind == SLOT_HEADING:
+        return "heading"
     if not plan.sources:
         return "new"
     if plan.item.kind == "table":
@@ -822,6 +883,50 @@ def _check_duplicates(payload: GroupSaveIn, plans: list[_Plan], state: _State) -
         _reject("duplicate_without_reason", unit_ids=offenders)
 
 
+SlotRelease = tuple[TargetSentence, list[int]]  # 이 저장의 출처를 떼어 낼 칸 제목과 남는 출처(seq 순, 비면 행을 지운다)
+
+
+def _resolve_slot_headings(plans: list[_Plan], state: _State) -> tuple[list[_Plan], list[SlotRelease]]:
+    """칸 제목 계획을 (새 문서, 칸, 언어)마다 한 행으로 모은다 — 그 자리에 칸 제목이 있으면 그 행에, 없으면 새 행 하나에(제품 명세 §7.13 칸 제목).
+
+    칸 제목은 출처마다 따로 이어진 끝 노드라(groups._find_neighbors) 이 저장이 다루는 것은 보낸 단위(member_unit_ids)의 연결뿐이고
+    행의 다른 출처(다른 옛 문서의 같은 제목)는 그대로 둔다. 그래서 id로 보낸 행도 자리가 바뀌면 옮기지 않고 이 저장의 출처만 떼어
+    새 자리의 칸 제목에 잇는다. 보낸 행이 아닌 기존 칸 제목에는 출처만 더한다(is_attach — 글·표시는 그대로, 내 판단 2026-11-13).
+    상태는 어느 경우든 쓰기 끝에서 출처 판단으로 다시 정한다(detach.apply_slot_heading_status).
+    """
+    members = state.member_unit_ids
+    merged: dict[_SlotKey, _Plan] = {}
+    resolved: list[_Plan] = []
+    listed = {target_id: state.existing[target_id] for target_id in state.removed}
+    for plan in plans:
+        if plan.item.kind != SLOT_HEADING:
+            resolved.append(plan)
+            continue
+        if plan.row is not None:
+            listed[plan.row.id] = plan.row
+        lead = merged.setdefault((plan.doc.id, plan.item.slot_key, plan.lang), plan)
+        if lead is plan:
+            resolved.append(plan)
+        else:  # 같은 요청에 같은 자리 칸 제목이 둘이면 하나로
+            lead.sources += [unit_id for unit_id in plan.sources if unit_id not in lead.sources]
+    destinations: set[int] = set()
+    for key, plan in merged.items():
+        plan.row = state.slot_headings.get(key)
+        if plan.row is None:
+            continue
+        destinations.add(plan.row.id)
+        current = state.slot_heading_sources.get(plan.row.id, [])
+        plan.link_sources = [unit_id for unit_id in current if unit_id not in members or unit_id in plan.sources]
+        plan.link_sources += [unit_id for unit_id in plan.sources if unit_id not in current]
+        plan.is_attach = plan.row.id not in listed
+    releases = [
+        (row, [unit_id for unit_id in state.slot_heading_sources.get(row.id, []) if unit_id not in members])
+        for row in listed.values()
+        if row.kind == SLOT_HEADING and row.id not in destinations
+    ]
+    return resolved, releases
+
+
 # --- 쓰기 ---
 
 
@@ -905,8 +1010,8 @@ def _apply_plan(
         target.confirmed_text = plan.text
     elif plan.origin != ORIGIN_NEW_DOC:
         if target.target_doc_id != plan.doc.id:
-            # 순서를 사람이 정한 문서면 끝에, 아니면 결과물이 출처 위치로 정렬하므로 0
-            is_appended = plan.doc.manual_order and not plan.is_cell
+            # 순서를 사람이 정한 문서면 끝에, 아니면 결과물이 출처 위치로 정렬하므로 0. 새로 만드는 새 문장은 _place_new_targets가 놓는다
+            is_appended = plan.doc.manual_order and not plan.is_cell and plan.row is not None
             target.order_index = next_orders[plan.doc.id] if is_appended else 0
             if is_appended:
                 next_orders[plan.doc.id] += 1
@@ -929,10 +1034,80 @@ def _apply_plan(
     return target
 
 
+def _get_spot(plan: _Plan) -> Spot:
+    """저장 뒤 새 문서·칸 키·WI 단계·부분 — 새로 놓이는 짝·번역의 기본값이 "같은 칸"으로 보는 범위(제품 명세 §7.13 섹션 번호)."""
+    place = _get_saved_place(plan)
+    return (place.doc_id, place.slot_key, place.wi_step, place.wi_part)
+
+
+def _find_placed_sources(plans: list[_Plan]) -> dict[tuple[Spot, int], list[_Plan]]:
+    """(자리, 첫 출처 단위) → 저장 뒤 그 자리에 있는 번역 아닌 기존 새 문장 — 나중에 들어오는 번역이 그 바로 뒤로 간다(제품 명세 §7.13 섹션 번호).
+
+    번역의 출처 단위는 보낸 단위라 그 단위의 기존 새 문장은 닫힘 검사로 모두 이 저장에 들어 있다(지울 것은 빠진다). 출처는
+    결과물 C의 정렬 키(outputs._get_base_unit_id)처럼 첫 출처로 본다.
+    """
+    placed: dict[tuple[Spot, int], list[_Plan]] = defaultdict(list)
+    for plan in plans:
+        if (
+            plan.row is not None and not plan.is_cell and plan.sources
+            and plan.change_type not in ("translated", "heading")  # 칸 제목은 칸 항목이 아니다
+        ):
+            placed[(_get_spot(plan), plan.sources[0])].append(plan)
+    return placed
+
+
+def _build_new_target(plan: _Plan, placed: dict[tuple[Spot, int], list[_Plan]], state: _State) -> NewTarget:
+    source_unit_id = plan.sources[0]  # 새 새 문장은 출처가 있어야 저장된다(sources_required)
+    spot = _get_spot(plan)
+    return NewTarget(
+        key=plan.item.key, place=spot, meaning=state.pair_of.get(source_unit_id, -source_unit_id), lang=plan.lang,
+        source_unit_id=source_unit_id, is_translation=plan.change_type == "translated",
+        source_placed=(spot, source_unit_id) in placed,
+    )
+
+
+async def _place_new_targets(
+    session: AsyncSession,
+    arranged: list[Arranged],
+    new_plans: dict[str, _Plan],
+    placed: dict[tuple[Spot, int], list[_Plan]],
+    next_orders: dict[int, int],
+) -> None:
+    """새로 만든 새 문장에 기본 표시를 쓰고, 순서를 사람이 정한 문서면 받은 순서대로 끝에 붙이거나 나중 번역을 기존 출처 바로 뒤에 끼운다.
+
+    끼우면 출처 뒤 새 문장이 한 칸씩 밀려 그 문서의 최댓값도 하나 늘므로 다음 끝자리도 하나 민다. 한 출처 뒤에 번역이 둘 오면 앞
+    번역 뒤에 잇는다. 기존 새 문장을 다른 칸으로 옮기는 저장은 여기 오지 않는다 — 사람이 고른 표시를 덮지 않는다(제품 명세 §7.13 섹션 번호, O10).
+    """
+    for item in arranged:
+        new_plans[item.key].row.number_style = item.number_style
+    anchors: dict[tuple[Spot, int], TargetSentence] = {}
+    for item in arranged:
+        plan = new_plans[item.key]
+        if not plan.doc.manual_order:  # 순서는 결과물의 정렬 키가 정한다
+            continue
+        if item.after_existing_source:
+            key = (_get_spot(plan), plan.sources[0])
+            anchor = anchors.get(key) or max((source.row for source in placed[key]), key=lambda row: row.order_index)
+            plan.row.order_index = await insert_after(session, anchor)
+            anchors[key] = plan.row
+        else:
+            plan.row.order_index = next_orders[plan.doc.id]
+        next_orders[plan.doc.id] += 1
+
+
 async def _write_group(
-    session: AsyncSession, bundle_id: int, payload: GroupSaveIn, plans: list[_Plan], state: _State, actor: str
+    session: AsyncSession,
+    bundle_id: int,
+    payload: GroupSaveIn,
+    plans: list[_Plan],
+    releases: list[SlotRelease],
+    state: _State,
+    actor: str,
 ) -> list[int]:
-    """검사를 모두 통과한 묶음을 쓴다 — 지울 새 문장, 새 문장(표 먼저, 칸은 부모 id를 안 뒤), 출처, 판단, 글·자리가 바뀐 새 문장의 번역, 기록. 쓴 새 문장 id를 돌려준다."""
+    """검사를 모두 통과한 묶음을 쓴다 — 지울 새 문장, 새 문장(표 먼저, 칸은 부모 id를 안 뒤), 출처, 판단, 글·자리가 바뀐 새 문장의 번역, 기록. 쓴 새 문장 id를 돌려준다.
+
+    칸 제목 행은 지울 목록에 있어도 _resolve_slot_headings가 정한 대로 남는 출처가 없을 때만 지운다(releases).
+    """
     stamp = now()
     hold_reason = payload.hold_reason.strip() if payload.action == "hold" else ""
     changed = state.removed | {plan.row.id for plan in plans if _is_source_changed(plan, state)}
@@ -949,6 +1124,7 @@ async def _write_group(
         - {decision.suggestion_id for decision in state.decisions.values()} - {None},
         actor,
     )
+    removed = [target for target in removed if target.kind != SLOT_HEADING] + [row for row, kept in releases if not kept]
     if removed:
         await session.execute(delete(TargetSource).where(TargetSource.target_id.in_([t.id for t in removed])))
     dropped = [target for target in removed if target.origin != ORIGIN_NEW_DOC]
@@ -965,23 +1141,39 @@ async def _write_group(
             session.expunge(target)
 
     next_orders = await _load_next_orders(session, plans)
+    placed = _find_placed_sources(plans)
+    # 칸 제목은 번호를 세지 않고 칸 항목도 아니라 기본 표시·순서(O10)를 받지 않는다
+    new_plans = {
+        plan.item.key: plan for plan in plans if plan.row is None and not plan.is_cell and plan.item.kind != SLOT_HEADING
+    }
+    arranged = arrange_new_targets([_build_new_target(plan, placed, state) for plan in new_plans.values()])
+    # 출처 연결을 다시 쓸 기존 행 — 쓰기 전에 모은다(새로 만드는 행은 지울 연결이 없다)
+    rewritten = [plan.row.id for plan in plans if plan.row is not None] + [row.id for row, kept in releases if kept]
     written: list[TargetSentence] = []
     for is_cell in (False, True):
         for plan in plans:
-            if plan.is_cell == is_cell:
-                written.append(_apply_plan(
-                    session, plan, state, next_orders, bundle_id=bundle_id, action=payload.action,
-                    hold_reason=hold_reason, actor=actor, stamp=stamp,
-                ))
+            if plan.is_cell != is_cell:
+                continue
+            if plan.is_attach:  # 다른 문서가 이은 칸 제목에 출처만 더한다
+                written.append(plan.row)
+                continue
+            written.append(_apply_plan(
+                session, plan, state, next_orders, bundle_id=bundle_id, action=payload.action,
+                hold_reason=hold_reason, actor=actor, stamp=stamp,
+            ))
+        if not is_cell:
+            await _place_new_targets(session, arranged, new_plans, placed, next_orders)
         await session.flush()  # 칸 새 문장이 부모 id를, 출처 연결이 새 문장 id를 알아야 한다
 
-    rewritten = [plan.item.id for plan in plans if plan.item.id is not None]
     if rewritten:
         await session.execute(delete(TargetSource).where(TargetSource.target_id.in_(rewritten)))
     links = [
         {"target_id": plan.row.id, "unit_id": unit_id, "seq": seq}
         for plan in plans if plan.row is not None
-        for seq, unit_id in enumerate(plan.sources)
+        for seq, unit_id in enumerate(plan.sources if plan.link_sources is None else plan.link_sources)
+    ]
+    links += [
+        {"target_id": row.id, "unit_id": unit_id, "seq": seq} for row, kept in releases for seq, unit_id in enumerate(kept)
     ]
     if links:
         await session.execute(insert(TargetSource), links)
@@ -993,6 +1185,14 @@ async def _write_group(
         decision.reason = item.reason.strip()
         _set_human_status(decision, payload.action, hold_reason, actor, stamp)
         decision.revision += 1
+    # 칸 제목의 상태는 출처 판단에서 나온다 — 판단을 쓴 뒤에, 출처를 더하거나 뗀 칸 제목마다 다시 정한다(제품 명세 §7.13 칸 제목)
+    decided = {**state.slot_heading_decisions, **state.decisions}
+    touched_headings = [
+        (plan.row, plan.sources if plan.link_sources is None else plan.link_sources)
+        for plan in plans if plan.item.kind == SLOT_HEADING
+    ] + [(row, kept) for row, kept in releases if kept]
+    for row, unit_ids in touched_headings:
+        apply_slot_heading_status(row, [decided[unit_id] for unit_id in unit_ids], preferred=state.member_unit_ids)
     await record_group_adoption(
         session, plans=plans, payload=payload, decisions=state.decisions, actor=actor, stamp=stamp
     )
@@ -1030,8 +1230,9 @@ async def save_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveIn
             _settle_translation_place(plan, by_row_id, state)
     for plan in plans:
         _link_cell_target(plan, by_key, state)
+    plans, releases = _resolve_slot_headings(plans, state)
     reasons = {item.unit_id: item.reason.strip() for item in payload.units}
-    # 나눔은 한 단위가 같은 새 문서에 자기와 같은 언어의 새 문장 둘 이상을 낼 때다 — 다른 언어 문장은 번역이다(설계 §5.2)
+    # 나눔은 한 단위가 같은 새 문서에 자기와 같은 언어의 새 문장 둘 이상을 낼 때다 — 다른 언어 문장은 번역이다(제품 명세 §6.7)
     spread = Counter(
         (unit_id, plan.doc.id)
         for plan in plans if plan.item.kind == "sentence" and not plan.is_cell
@@ -1045,7 +1246,7 @@ async def save_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveIn
     _check_duplicates(payload, plans, state)
     if payload.action == "hold" and not payload.hold_reason.strip():
         _reject("hold_reason_required")
-    target_ids = await _write_group(session, bundle.id, payload, plans, state, actor)
+    target_ids = await _write_group(session, bundle.id, payload, plans, releases, state, actor)
     unit_ids = [item.unit_id for item in payload.units]
     settled = await settle_pairs(session, bundle.id, unit_ids, actor, release=payload.release_unit_ids)
     out = await build_group_out(session, unit_ids=unit_ids, target_ids=target_ids)

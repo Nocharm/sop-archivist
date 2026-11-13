@@ -70,6 +70,7 @@ export function AssignHelp() {
           <Row swatch={<span className="legend-box" data-state="hover" />}>{t("assign.help.markHover")}</Row>
           <Row swatch={<span className="legend-box" data-state="flash" />}>{t("assign.help.markJump")}</Row>
           <Row swatch={<span className="legend-box" data-state="picked" />}>{t("assign.help.markLand")}</Row>
+          <Row swatch={<span className="tree-sub">{t("assign.slotHeading")}</span>}>{t("assign.help.slotHeading")}</Row>
           <Row swatch={<span className="legend-line" aria-hidden />}>{t("assign.help.markLine")}</Row>
           <Row swatch={<span className="legend-line is-dashed" aria-hidden />}>{t("assign.help.markUnsaved")}</Row>
         </>

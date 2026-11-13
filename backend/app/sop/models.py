@@ -413,7 +413,7 @@ class TargetSentence(Base):
     # 번호 표시(NUMBER_STYLES) — 생략·주석 줄은 번호를 받지 않는다. 표 칸 새 문장은 이 값 대신 표의 값을 따른다
     number_style: Mapped[str] = mapped_column(String(8), default=NUMBERED)
     lang: Mapped[str] = mapped_column(String(7))
-    kind: Mapped[str] = mapped_column(String(8))
+    kind: Mapped[str] = mapped_column(String(12))  # TARGET_KINDS — 가장 긴 값 slot_heading(12자)
     confirmed_text: Mapped[str] = mapped_column(Text, default="")
     ai_text: Mapped[str] = mapped_column(Text, default="")
     change_type: Mapped[str | None] = mapped_column(String(20), default=None)

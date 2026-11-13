@@ -1,4 +1,5 @@
-// 결과물 B의 카드 한 장 - Old 문서 하나가 어느 새 문서로 몇 Unit 가는지. 보낼 곳이 많으면 처음 8개만 보이고 "N개 더"로 이어 연다.
+// 결과물 B의 카드 한 장 - Old 문서 하나가 어느 새 문서로 몇 줄(짝 하나·짝 없는 판단 단위 하나) 가는지. 보낼 곳이 많으면 처음 8개만 보이고 "N개 더"로 이어 연다.
+// 노드 이름(삭제·미배정 등)은 서버가 화면 UI 언어로 지어 보낸다.
 "use client";
 
 import { ArrowRight } from "lucide-react";
@@ -33,7 +34,7 @@ export function OutputBCard({ node, nodes, edges }: OutputBCardProps) {
       <div>
         <span className="font-mono text-[13px] font-semibold">{node.label}</span>
         <Truncate className="text-xs text-ink-3" text={node.title} />
-        <span className="text-xs tabular-nums text-ink-2">{t("outputs.units", { n: node.count })}</span>
+        <span className="text-xs tabular-nums text-ink-2">{t("outputs.rows", { n: node.count })}</span>
       </div>
       <ul className="grid gap-1">
         {shown.map((edge) => {

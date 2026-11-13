@@ -734,7 +734,8 @@ def test_translation_of_a_match_target_keeps_its_section(client: TestClient, fak
     confirmed = save_translation(client, bundle.id, target)
     assert confirmed.status_code == 200, confirmed.text
     (doc,) = [doc for doc in get_output_c(client, bundle.id, "en")["docs"] if doc["target_doc_id"] == source.target_doc_id]
-    assert [item["text"] for section in doc["sections"] for item in section["items"]] == [TRANSLATED]
+    # 한 벌 — 입구 2 새 문장 바로 뒤에 그 번역
+    assert [item["text"] for section in doc["sections"] for item in section["items"]] == [LONE_KO, TRANSLATED]
 
 
 # --- 사람 확정 ---
@@ -844,7 +845,7 @@ def _make_translated_unit_with_mate(client: TestClient, fake_ai: FakeAi) -> tupl
 
 
 def test_pairing_a_translated_unit_sweeps_the_translation(client: TestClient, fake_ai: FakeAi) -> None:
-    """짝을 맺으면 짝의 영어가 번역을 대신한다 — AI 번역은 지우고 확정 번역은 보류로(설계 §7)."""
+    """짝을 맺으면 짝의 영어가 번역을 대신한다 — AI 번역은 지우고 확정 번역은 보류로(제품 명세 §7.9)."""
     bundle, document, ko, en = _make_translated_unit_with_mate(client, fake_ai)
 
     paired = _pair_units(client, bundle.id, document["id"], [ko["id"], en["id"]])
@@ -991,7 +992,10 @@ def test_translation_does_not_turn_source_into_split_or_group(client: TestClient
     assert response.status_code == 200, response.text
     assert response.json()["targets"][0]["change_type"] == "as_is"
     rows = [row for row in get_output_a(client, bundle.id, "ko") if row["unit_id"] == unit["id"]]
-    assert [(row["row_kind"], row["group_id"], row["change_type"]) for row in rows] == [("unit", None, "as_is")]
+    # 원문 줄은 나눔·관계 묶음이 되지 않고, 번역은 같은 의미 묶음의 따로 된 줄이다
+    assert [(row["row_kind"], row["group_id"], row["change_type"]) for row in rows] == [
+        ("unit", None, "as_is"), ("translation", None, "translated"),
+    ]
 
 
 @pytest.mark.parametrize("link_translation", [True, False])
@@ -1322,8 +1326,11 @@ def test_translation_does_not_change_the_cover_counts(client: TestClient, fake_a
     translate(client, fake_ai, bundle.id, unit["id"])
 
     after = client.get(f"/api/bundles/{bundle.id}/summary", headers=AUTHOR).json()
-    assert after["en"] == {**before["en"], "translated": 1}
-    assert after["ko"] == before["ko"]
+    # 옛 줄 숫자는 그대로, 번역 묶음 하나가 는다(한 언어만 있는 줄은 번역으로 채워져 진행 숫자와 같이 움직인다)
+    assert after == {**before, "translated": 1, "single_language": after["single_language"]}
+    assert after["single_language"] == client.get(f"/api/bundles/{bundle.id}", headers=AUTHOR).json()["progress"][
+        "single_language"
+    ]
 
 
 # --- 출처가 바뀌면 번역을 다시 본다 ---
@@ -1897,6 +1904,7 @@ def test_order_response_leaves_out_a_deleted_ai_translation(client: TestClient, 
     response = put_order(client, bundle.id, bundle.wi_id, [{"target_id": source["id"], "wi_step": 2}, {"target_id": target.id}])
 
     assert [item["target_id"] for item in response.json()["items"]] == [source["id"]]
+    assert target.id not in {item["target_id"] for section in response.json()["doc"]["sections"] for item in section["items"]}
 
 
 # --- 이전 번역 찾기 ---
@@ -2395,25 +2403,26 @@ def test_output_a_places_translation_after_source_position(client: TestClient, f
 
     index = [row["row_kind"] for row in rows].index("translation")
     assert rows[index]["display_id"] == source_display_id and rows[index]["source_text"] == ""
-    assert [row["source_text"] for row in rows[:index]] == [AI_EN_1, AI_EN_2]
+    # 한 벌 — 원문 순서 그대로 두 언어 줄이 함께, 번역 줄은 출처 줄 바로 뒤
+    assert [row["source_text"] for row in rows[:index]] == [AI_KO_1, AI_EN_1, AI_KO_2, AI_EN_2, LONE_KO]
     assert [row["source_text"] for row in rows[index + 1:]] == [LONE_EN]
-    source_row = next(row for row in get_output_a(client, bundle.id, "ko") if row["unit_id"] == unit["id"])
-    row = rows[index]
+    source_row, row = rows[index - 1], rows[index]
+    assert (source_row["unit_id"], source_row["row_no"], row["is_group_start"]) == (unit["id"], row["row_no"], False)
     assert (row["location"], row["old_doc_code"], row["old_doc_version"], row["unit_id"]) == (
-        {**source_row["location"], "place": "Paragraph"}, source_row["old_doc_code"], source_row["old_doc_version"],
-        unit["id"],
+        source_row["location"], source_row["old_doc_code"], source_row["old_doc_version"], unit["id"],
     )
-    assert (row["lang"], row["dest_kind"], row["dest_doc_code"], row["dest_location"]) == ("en", "sop", "SOP-AI", "Purpose")
+    assert (row["dest_kind"], row["dest_doc_code"], row["dest_location"]) == ("sop", "SOP-AI", "Purpose")
     assert (row["ai_text"], row["confirmed_text"], row["change_type"], row["status"]) == (
         TRANSLATED, "", "translated", "ai_suggested",
     )
 
 
-def test_output_a_shows_the_translation_only_in_its_language(client: TestClient, fake_ai: FakeAi) -> None:
+def test_output_a_shows_the_translation_once_whatever_the_label_language(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, unit = make_assigned_unit(client)
     translate(client, fake_ai, bundle.id, unit["id"])
 
-    assert "translation" not in {row["row_kind"] for row in get_output_a(client, bundle.id, "ko")}
+    for lang in ("ko", "en"):
+        assert [row["row_kind"] for row in get_output_a(client, bundle.id, lang)].count("translation") == 1
 
 
 def test_output_a_row_shows_who_confirmed_the_translation(client: TestClient, fake_ai: FakeAi) -> None:
@@ -2423,31 +2432,37 @@ def test_output_a_row_shows_who_confirmed_the_translation(client: TestClient, fa
 
     (row,) = [row for row in get_output_a(client, bundle.id, "en") if row["row_kind"] == "translation"]
 
-    assert (row["confirmed_text"], row["status"], row["confirmed_by"]) == (TRANSLATED, "confirmed", "qa.member")
+    assert (row["confirmed_text"], row["status"]) == (TRANSLATED, "confirmed")
+    assert row["confirmed_by"].endswith(" (qa.member)")  # 디렉터리 이름과 로그인 ID
     assert row["confirmed_at"] is not None
 
 
 def test_output_a_shows_the_table_row_ahead_of_a_translated_cell(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, table, cell = make_assigned_table(client)
-    assert "table" not in {row["row_kind"] for row in get_output_a(client, bundle.id, "en")}
-
     translate(client, fake_ai, bundle.id, cell["id"], CELL_TRANSLATED)
 
-    kinds = [row["row_kind"] for row in get_output_a(client, bundle.id, "en")]
-    assert kinds.index("table") < kinds.index("translation")
+    rows = get_output_a(client, bundle.id, "en")
+
+    kinds = [row["row_kind"] for row in rows]
+    index = kinds.index("translation")
+    assert kinds.index("table") < index
+    # 칸 번역은 그 칸 문장 줄 바로 뒤, 표와 같은 묶음
+    assert (rows[index - 1]["row_kind"], rows[index - 1]["unit_id"]) == ("cell", cell["id"])
+    assert rows[index]["row_no"] == rows[kinds.index("table")]["row_no"]
 
 
 def test_output_c_and_summary_include_translations(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, unit = make_assigned_unit(client)
     target = translate(client, fake_ai, bundle.id, unit["id"])
 
-    (item,) = read_slot_items(get_output_c(client, bundle.id, "en"), "SOP-AI")
+    # 한 벌 — 출처 바로 뒤에 번역, 같은 묶음 키
+    (ko_item, item) = read_slot_items(get_output_c(client, bundle.id, "en"), "SOP-AI")
     summary = client.get(f"/api/bundles/{bundle.id}/summary", headers=AUTHOR).json()
 
     assert (item["target_id"], item["lang"], item["ai_text"], item["change_type"]) == (target.id, "en", TRANSLATED, "translated")
     assert item["source_note"].startswith("← ") and item["source_note"].endswith(" (translated)")
-    assert (summary["en"]["translated"], summary["ko"]["translated"]) == (1, 0)
-    (ko_item,) = read_slot_items(get_output_c(client, bundle.id, "ko"), "SOP-AI")
+    assert (item["origin"], item["meaning_key"]) == ("translation", ko_item["meaning_key"])
+    assert summary["translated"] == 1
     assert ko_item["text"] == LONE_KO
 
 
@@ -2457,9 +2472,9 @@ def test_output_c_note_in_korean_marks_a_translation(client: TestClient, fake_ai
     queue_translation(client, bundle.id, unit["id"], "en_to_ko")
     run_jobs()
 
-    items = read_slot_items(get_output_c(client, bundle.id, "ko"), "SOP-AI")
+    (source, translation) = read_slot_items(get_output_c(client, bundle.id, "ko"), "SOP-AI")
 
-    assert [item["source_note"].rsplit(" ", 1)[-1] for item in items] == ["(번역)"]
+    assert (source["text"], translation["source_note"].rsplit(" ", 1)[-1]) == (LONE_EN, "(번역)")
 
 
 def test_output_c_puts_a_cell_translation_under_its_table(client: TestClient, fake_ai: FakeAi) -> None:
@@ -2482,11 +2497,11 @@ def test_output_c_sorts_a_translation_by_its_source_unit(client: TestClient, fak
     english = get_view(client, bundle.id, later.json()["id"])["units"][0]
     assign_as_is(client, bundle.id, english, bundle.sop_id, slot_key=SLOT)
 
-    # 번역이 나중에 만들어졌어도 앞선 문서의 단위를 옮긴 것이라 뒤 문서의 영어 문장 앞에 온다
+    # 번역이 나중에 만들어졌어도 앞선 문서의 단위를 옮긴 것이라 출처 바로 뒤, 뒤 문서의 영어 문장 앞에 온다
     translate(client, fake_ai, bundle.id, unit["id"])
 
     items = read_slot_items(get_output_c(client, bundle.id, "en"), "SOP-AI")
-    assert [item["text"] or item["ai_text"] for item in items] == [TRANSLATED, LONE_EN]
+    assert [item["text"] or item["ai_text"] for item in items] == [LONE_KO, TRANSLATED, LONE_EN]
 
 
 def test_manual_order_keeps_a_translation_next_to_its_source(client: TestClient, fake_ai: FakeAi) -> None:
@@ -2509,9 +2524,9 @@ def test_manual_order_keeps_a_translation_next_to_its_source(client: TestClient,
 
     target = translate(client, fake_ai, bundle.id, unit["id"])
 
-    assert target.order_index == 0
+    assert target.order_index == 1
     assert [item["target_id"] for item in read_slot_items(get_output_c(client, bundle.id, "en"), "SOP-AI")] == [
-        target.id, english["id"],
+        source["id"], target.id, english["id"],
     ]
 
 
@@ -2530,11 +2545,10 @@ def test_indenting_the_source_carries_a_confirmed_translation_without_a_hold(cli
     # 깊이는 번호만 바꾸는 표시라 확정 번역을 보류로 돌리지 않는다
     followed = load_translation(unit["id"])
     assert (followed.status, followed.indent_level, followed.revision) == ("confirmed", 2, translation.revision)
-    # 칸의 첫 줄은 앞줄이 없어 맨 바깥으로 눌러 읽는다 — 두 판 모두 같은 번호
-    (ko_item,) = read_slot_items(get_output_c(client, bundle.id, "ko"), "SOP-AI")
-    (en_item,) = read_slot_items(get_output_c(client, bundle.id, "en"), "SOP-AI")
+    # 한 칸을 한 줄로 센다 — 첫 줄은 앞줄이 없어 맨 바깥으로, 번역은 생략으로 시작해 번호를 받지 않는다
+    (ko_item, en_item) = read_slot_items(get_output_c(client, bundle.id, "ko"), "SOP-AI")
     assert (ko_item["number"], ko_item["indent_level"]) == ("1.1", 2)
-    assert (en_item["target_id"], en_item["number"], en_item["indent_level"]) == (translation.id, "1.1", 2)
+    assert (en_item["target_id"], en_item["number"], en_item["indent_level"]) == (translation.id, None, 2)
 
 
 def test_indenting_the_source_keeps_an_ai_translation(client: TestClient, fake_ai: FakeAi) -> None:
@@ -2621,7 +2635,12 @@ def test_moving_only_the_source_resets_a_held_translation_depth(client: TestClie
     assert (load_translation(unit["id"]).wi_step, load_translation(unit["id"]).indent_level) == (2, 0)
 
 
-def test_marking_the_source_carries_a_confirmed_translation_without_a_hold(client: TestClient, fake_ai: FakeAi) -> None:
+def read_source_style(target_id: int) -> str:
+    (row,) = [row for row in read_rows(TargetSentence) if row.id == target_id]
+    return row.number_style
+
+
+def test_marking_the_source_leaves_the_translation_mark_alone(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, unit, translation = make_settled_translation(client, fake_ai)
     source = get_target(client, bundle.id, unit["id"])
 
@@ -2631,42 +2650,71 @@ def test_marking_the_source_carries_a_confirmed_translation_without_a_hold(clien
 
     assert response.status_code == 200, response.text
     assert {item["target_id"]: item["number_style"] for item in response.json()["items"]} == {
-        source["id"]: "note", translation.id: "note",
+        source["id"]: "note", translation.id: "omitted",
     }
-    # 표시는 번호만 바꾸므로 확정 번역을 보류로 돌리지 않고 revision도 그대로다
-    followed = load_translation(unit["id"])
-    assert (followed.status, followed.number_style, followed.revision) == ("confirmed", "note", translation.revision)
-    (ko_item,) = read_slot_items(get_output_c(client, bundle.id, "ko"), "SOP-AI")
-    (en_item,) = read_slot_items(get_output_c(client, bundle.id, "en"), "SOP-AI")
-    assert (ko_item["number"], ko_item["number_style"]) == (None, "note")
-    assert (en_item["target_id"], en_item["number"], en_item["number_style"]) == (translation.id, None, "note")
+    # 표시는 문장마다라 확정 번역을 보류로 돌리지 않고 revision도 그대로다
+    kept = load_translation(unit["id"])
+    assert (kept.status, kept.number_style, kept.revision) == ("confirmed", "omitted", translation.revision)
 
 
-def test_a_translation_cannot_be_marked_apart_from_its_source(client: TestClient, fake_ai: FakeAi) -> None:
+def test_translation_mark_can_differ_from_its_source(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, unit, translation = make_settled_translation(client, fake_ai)
     source = get_target(client, bundle.id, unit["id"])
 
-    alone = put_order(
+    response = put_order(
         client, bundle.id, bundle.sop_id,
-        [{"target_id": source["id"]}, {"target_id": translation.id, "number_style": "omitted"}],
-    )
-    together = put_order(
-        client, bundle.id, bundle.sop_id,
-        [{"target_id": source["id"], "number_style": "omitted"}, {"target_id": translation.id, "number_style": "omitted"}],
+        [{"target_id": source["id"]}, {"target_id": translation.id, "number_style": "numbered"}],
     )
 
-    assert (alone.status_code, alone.json()["detail"]) == (
-        422, {"code": "translation_locked", "target_ids": [translation.id]},
-    )
-    assert together.status_code == 200, together.text
-    assert load_translation(unit["id"]).number_style == "omitted"
+    assert response.status_code == 200, response.text
+    assert load_translation(unit["id"]).number_style == "numbered"
+    assert read_source_style(source["id"]) == "numbered"
+
+
+def test_source_change_does_not_overwrite_translation_mark(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, translation = make_settled_translation(client, fake_ai)
+    source = get_target(client, bundle.id, unit["id"])
+    assert put_order(
+        client, bundle.id, bundle.sop_id,
+        [{"target_id": source["id"], "indent_level": 2}, {"target_id": translation.id, "number_style": "note"}],
+    ).status_code == 200
+
+    response = save_source(client, bundle.id, unit["id"], text="합성 시료를 20분 동안 둔다.", change_type="rewritten")
+
+    assert response.status_code == 200, response.text
+    assert_held(unit["id"], TRANSLATED)
+    held = load_translation(unit["id"])
+    assert (held.number_style, held.indent_level) == ("note", get_target(client, bundle.id, unit["id"])["indent_level"])
+
+
+def test_ai_translation_lands_right_after_its_source_in_a_manual_order_doc(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit = make_assigned_unit(client)
+    ids = []
+    for text in (LONE_EN, "Synthetic trailing sentence."):
+        extra = upload(client, bundle.id, build_docx(p(text)), f"SYNTHETIC_OLD-{len(ids)}_Extra.docx")
+        assert extra.status_code == 201, extra.text
+        extra_unit = get_view(client, bundle.id, extra.json()["id"])["units"][0]
+        assign_as_is(client, bundle.id, extra_unit, bundle.sop_id, slot_key=SLOT)
+        ids.append(get_target(client, bundle.id, extra_unit["id"])["id"])
+    source = get_target(client, bundle.id, unit["id"])
+    before, after = ids
+    assert put_order(
+        client, bundle.id, bundle.sop_id,
+        [{"target_id": before}, {"target_id": source["id"]}, {"target_id": after}],
+    ).status_code == 200
+
+    target = translate(client, fake_ai, bundle.id, unit["id"])
+
+    placed = {row.id: row.order_index for row in read_rows(TargetSentence) if row.target_doc_id == bundle.sop_id}
+    assert sorted(placed, key=placed.__getitem__) == [before, source["id"], target.id, after]
 
 
 def test_moving_the_source_to_another_slot_keeps_both_marks(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, unit, translation = make_settled_translation(client, fake_ai)
     source = get_target(client, bundle.id, unit["id"])
     marked = put_order(
-        client, bundle.id, bundle.sop_id, [{"target_id": source["id"], "number_style": "note"}, {"target_id": translation.id}]
+        client, bundle.id, bundle.sop_id,
+        [{"target_id": source["id"], "number_style": "note"}, {"target_id": translation.id, "number_style": "note"}],
     )
     assert marked.status_code == 200, marked.text
 
@@ -2676,20 +2724,18 @@ def test_moving_the_source_to_another_slot_keeps_both_marks(client: TestClient, 
     assert response.status_code == 200, response.text
     moved = load_translation(unit["id"])
     assert (moved.slot_key, moved.number_style) == (OTHER_SLOT, "note")
-    (ko_item,) = read_slot_items(get_output_c(client, bundle.id, "ko"), "SOP-AI", OTHER_SLOT)
+    (ko_item, en_item) = read_slot_items(get_output_c(client, bundle.id, "ko"), "SOP-AI", OTHER_SLOT)
     assert (ko_item["target_id"], ko_item["number"], ko_item["number_style"]) == (source["id"], None, "note")
+    assert (en_item["target_id"], en_item["number"], en_item["number_style"]) == (translation.id, None, "note")
 
 
-def test_a_new_translation_starts_with_its_source_mark(client: TestClient, fake_ai: FakeAi) -> None:
+def test_new_ai_translation_is_omitted(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, unit = make_assigned_unit(client)
-    source = get_target(client, bundle.id, unit["id"])
-    assert put_order(
-        client, bundle.id, bundle.sop_id, [{"target_id": source["id"], "number_style": "omitted"}]
-    ).status_code == 200
 
     translation = translate(client, fake_ai, bundle.id, unit["id"])
 
     assert translation.number_style == "omitted"
+    assert read_source_style(get_target(client, bundle.id, unit["id"])["id"]) == "numbered"
 
 
 def test_a_new_translation_starts_at_its_source_depth(client: TestClient, fake_ai: FakeAi) -> None:
@@ -2720,8 +2766,8 @@ def test_held_translation_of_a_retired_unit_stays_visible(client: TestClient, fa
 
     assert (row["status"], row["confirmed_text"], row["display_id"], row["old_doc_code"]) == ("on_hold", TRANSLATED, "", "")
     assert (row["unit_id"], row["location"]["section"]) == (unit["id"], "")
-    assert (item["target_id"], item["source_note"]) == (target.id, "")
-    assert summary["en"]["translated"] == 1
+    assert (item["target_id"], item["source_note"], item["meaning_key"]) == (target.id, "", None)  # 고아 번역은 묶음 키가 없다
+    assert summary["translated"] == 1
     assert workbook.status_code == 200
 
 

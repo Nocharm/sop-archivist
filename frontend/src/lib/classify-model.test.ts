@@ -13,6 +13,8 @@ import {
   getRowStep,
   hasDraftChange,
   hasRowLanguage,
+  isPlaceOption,
+  listTreeOptions,
   isSentenceUnit,
   isTranslationOf,
   listLinkLeftovers,
@@ -682,5 +684,75 @@ describe("a neutral row linked to a sentence", () => {
       "confirm",
     );
     expect(body.targets.find((target) => target.id === 71)).toMatchObject({ source_unit_ids: [30], change_type: "rewritten" });
+  });
+});
+
+// --- 칸 제목 목적지 ---
+
+describe("slot heading destination", () => {
+  const HEADING_UNITS = [
+    { id: 20, kind: "heading", lang: "ko" as const, text: "목적", revision: 2 },
+    { id: 21, kind: "sentence", lang: "en" as const, text: "Purpose", revision: 3 },
+  ];
+  const HEADING: Destination = { kind: "slot_heading", docId: 6, slotKey: "procedures" };
+
+  it("offers a slot heading place right before each SOP section that is not N/A, none for WI", () => {
+    const tobe: ToBe = { ...TOBE, na_slots: [{ code: "SOP-CF", slot_key: "scope", reason: "x" }] };
+    const ids = buildDestinationOptions(tobe, {}).map((option) => option.id);
+    expect(ids).toContain("heading:6:procedures.procedure");
+    expect(ids.indexOf("heading:6:procedures.procedure")).toBe(ids.indexOf("slot:6:procedures.procedure") - 1);
+    expect(ids.some((id) => id.startsWith("heading:6:scope"))).toBe(false);
+    expect(ids.some((id) => id.startsWith("heading:7"))).toBe(false);
+  });
+
+  it("saves each heading unit of a pair row as its own slot heading with no text", () => {
+    const body = buildGroupSave(makeDraft({ destination: HEADING }), { units: HEADING_UNITS, group: null, tables: new Map() }, "confirm");
+    expect(body.targets.map((target) => [target.kind, target.target_doc_id, target.slot_key, target.source_unit_ids, target.text, target.lang, target.change_type])).toEqual([
+      ["slot_heading", 6, "procedures", [20], undefined, undefined, undefined],
+      ["slot_heading", 6, "procedures", [21], undefined, undefined, undefined],
+    ]);
+    expect(body.units.map((unit) => unit.disposition)).toEqual(["assigned", "assigned"]);
+  });
+
+  it("keeps the saved heading's id and revision, and removes a sentence the row had", () => {
+    const group: Group = {
+      units: [],
+      targets: [
+        makeTarget({ id: 70, kind: "slot_heading", slot_key: "procedures", lang: "ko", source_unit_ids: [20], revision: 5 }),
+        makeTarget({ id: 71, kind: "sentence", slot_key: "scope", lang: "en", source_unit_ids: [21] }),
+      ],
+    };
+    const body = buildGroupSave(makeDraft({ destination: HEADING }), { units: HEADING_UNITS, group, tables: new Map() }, "confirm");
+    expect(body.targets[0]).toMatchObject({ id: 70, revision: 5, kind: "slot_heading", source_unit_ids: [20] });
+    expect(body.targets[1]).not.toHaveProperty("id");
+    expect(body.removed_target_ids).toEqual([71]);
+  });
+
+  it("removes this row's slot heading link when the row goes to a slot", () => {
+    const group: Group = { units: [], targets: [makeTarget({ id: 70, kind: "slot_heading", slot_key: "procedures", source_unit_ids: [20] })] };
+    const body = buildGroupSave(makeDraft(), { units: [HEADING_UNITS[0]], group, tables: new Map() }, "confirm");
+    expect(body.removed_target_ids).toEqual([70]);
+  });
+
+  it("re-sends the saved slot heading id and revision with the new section, removing nothing", () => {
+    const group: Group = { units: [], targets: [makeTarget({ id: 70, kind: "slot_heading", slot_key: "procedures", lang: "ko", source_unit_ids: [20], revision: 5 })] };
+    const body = buildGroupSave(makeDraft({ destination: { kind: "slot_heading", docId: 6, slotKey: "purpose" } }), { units: [HEADING_UNITS[0]], group, tables: new Map() }, "confirm");
+    expect(body.targets).toHaveLength(1);
+    expect(body.targets[0]).toMatchObject({ id: 70, revision: 5, kind: "slot_heading", slot_key: "purpose", target_doc_id: 6, source_unit_ids: [20] });
+    expect(body.removed_target_ids).toEqual([]);
+  });
+
+  it("counts the same places whether or not the row can pick a slot heading", () => {
+    const options = buildDestinationOptions(TOBE, {});
+    const withHeadings = listTreeOptions(options, true);
+    const without = listTreeOptions(options, false);
+    expect(withHeadings.length).toBeGreaterThan(without.length);
+    expect(without.some((option) => option.destination.kind === "slot_heading")).toBe(false);
+    expect(withHeadings.filter(isPlaceOption).length).toBe(without.filter(isPlaceOption).length);
+  });
+
+  it("reads a group with slot heading targets back as the slot heading destination", () => {
+    const group: Group = { units: [], targets: [makeTarget({ id: 70, kind: "slot_heading", slot_key: "procedures", source_unit_ids: [20] })] };
+    expect(readDestination(group, [20, 21])).toEqual(HEADING);
   });
 });

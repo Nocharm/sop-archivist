@@ -1,5 +1,7 @@
 """묶음 진행 숫자 — 배정 화면과 같은 줄(짝 하나·짝 없는 판단 단위 하나) 기준 한 벌과, 두 언어 문서의 짝 없는 글 수."""
 
+import itertools
+from collections import Counter
 from typing import NamedTuple
 
 import pytest
@@ -7,6 +9,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.models import TargetSentence, TargetSource
+from app.sop.output_rows import build_meaning_rows, count_single_language
+from app.sop.snapshot import BundleSnapshot, load_bundle_snapshot
 from app.sop.status import pick_row_status
 from tests.access_helpers import run_in_session
 from tests.docx_factory import build_docx, p, tbl
@@ -143,3 +147,30 @@ def test_progress_is_the_same_in_list_overview_and_admin(client: TestClient) -> 
 def test_empty_bundle_progress_is_all_zero(client: TestClient) -> None:
     bundle_id = create_bundle(client, title="Empty")["id"]
     assert get_bundle(client, bundle_id)["progress"] == dict.fromkeys(PROGRESS_KEYS, 0)
+
+
+PAIR_TABLE_BODY = p(KO_ON) + p(EN_ON) + p(f"{KO_LOAD} {KO_KEEP}") + p(EN_BOTH) + p("합성 홀로 문장을 둔다.") + tbl([["가", "나"], ["다", "라"]])
+
+
+def _load_snapshot(bundle_id: int) -> BundleSnapshot:
+    async def _load(session: AsyncSession) -> BundleSnapshot:
+        return await load_bundle_snapshot(session, bundle_id)
+
+    return run_in_session(_load)
+
+
+def test_meaning_rows_match_progress(client: TestClient) -> None:
+    # 짝(1:1·1:2)·표·짝 없는 문장이 섞인 본문 — 진행 숫자와 스냅숏 줄 목록이 같은 줄이다
+    fx = _setup(client, PAIR_TABLE_BODY)
+    progress = get_bundle(client, fx.bundle_id)["progress"]
+    snap = _load_snapshot(fx.bundle_id)
+    rows = build_meaning_rows(snap)
+    assert len(rows) == progress["total"]
+    assert Counter(row.status for row in rows) == Counter(
+        {key: progress[key] for key in ("unassigned", "ai_suggested", "confirmed", "on_hold") if progress[key]}
+    )
+    assert count_single_language(snap) == progress["single_language"]
+    assert all(
+        snap.units[first].order_key < snap.units[second].order_key
+        for row in rows for first, second in itertools.pairwise(row.unit_ids)
+    )

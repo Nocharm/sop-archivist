@@ -7,6 +7,7 @@ import {
   CheckCheck,
   ChevronRight,
   FileUp,
+  FileClock,
   FileWarning,
   Hourglass,
   Info,
@@ -69,6 +70,7 @@ const COVER_STATES = [
 const NEXT_ICONS: Record<NextAction, LucideIcon> = {
   upload_documents: FileUp,
   resolve_documents: FileWarning,
+  fill_doc_versions: FileClock,
   check_boundaries: CheckCheck,
   fill_tobe: ListTree,
   decide_units: Split,
@@ -107,6 +109,7 @@ function buildGateLines(readiness: Readiness, semanticTotal: number, t: TFunc): 
   const targets = sumCounts(blockers, "targets_");
   const reasons = sumCounts(blockers, "duplicate_without_reason") + sumCounts(blockers, "missing_reason");
   const warnings = findIssue(blockers, "unacked_missing_text");
+  const versions = findIssue(blockers, "missing_doc_versions");
   const boundaries = findIssue(blockers, "unchecked_boundaries");
   const semantic = findIssue(blockers, "semantic_checks_incomplete");
   const semanticMissing = semantic?.missing?.length ?? 0;
@@ -116,6 +119,11 @@ function buildGateLines(readiness: Readiness, semanticTotal: number, t: TFunc): 
       key: "documents",
       ok: !noDocs && !unresolved,
       label: noDocs ? t("gate.noDocuments") : unresolved ? t("gate.unresolvedDocuments", { n: unresolvedCount }) : t("gate.documentsOk"),
+    },
+    {
+      key: "versions",
+      ok: !versions,
+      label: versions ? t("gate.docVersions", { n: versions.count ?? 0 }) : t("gate.docVersionsOk"),
     },
     {
       key: "boundaries",
@@ -348,7 +356,7 @@ function ReviewGate({ bundle, readiness, onRequestReview, onAddReviewer }: Revie
           </Tooltip>
         </div>
       ) : isIdle && data !== null ? (
-        // 문서가 없으면 조건 여덟 줄이 전부 빨개 보인다 - 중립 한 줄로 대신한다
+        // 문서가 없으면 조건 아홉 줄이 전부 빨개 보인다 - 중립 한 줄로 대신한다
         <p className="text-ink-3" data-testid="overview-gate-idle">
           {t("overview.notStarted")}
         </p>

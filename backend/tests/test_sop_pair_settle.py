@@ -1,4 +1,4 @@
-"""짝의 운명 — 판단을 쓰는 길(관계 묶음 저장·일괄 처분·입구 2 한 번에 확정) 끝에 서버가 한/영 짝을 확정하거나 푼다 (설계 §5.2, §7)."""
+"""짝의 운명 — 판단을 쓰는 길(관계 묶음 저장·일괄 처분·입구 2 한 번에 확정) 끝에 서버가 한/영 짝을 확정하거나 푼다 (제품 명세 §6.5)."""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -70,7 +70,7 @@ def test_confirming_the_whole_row_confirms_a_suggested_pair(client: TestClient) 
 
 
 def test_pair_stays_suggested_while_one_member_is_undecided(client: TestClient) -> None:
-    """한쪽만 저장하고 다른 쪽이 미배정이면 풀지 않는다 — 줄의 상태가 덜 끝난 쪽을 따른다(설계 §5.2 (1))."""
+    """한쪽만 저장하고 다른 쪽이 미배정이면 풀지 않는다 — 줄의 상태가 덜 끝난 쪽을 따른다(제품 명세 §6.5 "한 언어만 이을 때")."""
     fx, ko, _en, pair_id = _setup_pair(client)
 
     response = save_group(client, fx.bundle_id, _body([_unit_in(ko)], [_target("ko", fx.sop_id, [ko], slot_key="purpose")]))
@@ -142,7 +142,7 @@ def test_held_member_with_another_destination_dissolves_the_pair(client: TestCli
 
 
 def test_release_unit_ids_dissolves_the_pair_in_the_same_save(client: TestClient) -> None:
-    """한쪽만 잇고 다른 쪽을 따로 줄로 남긴다는 뜻을 저장에 실으면 그 저장 안에서 푼다(설계 §5.2 (1))."""
+    """한쪽만 잇고 다른 쪽을 따로 줄로 남긴다는 뜻을 저장에 실으면 그 저장 안에서 푼다(제품 명세 §6.5 "한 언어만 이을 때")."""
     fx, ko, en, pair_id = _setup_pair(client)
     body = _body([_unit_in(ko)], [_target("ko", fx.sop_id, [ko], slot_key="purpose")], release_unit_ids=[en["id"]])
 

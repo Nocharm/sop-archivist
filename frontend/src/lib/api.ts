@@ -85,6 +85,27 @@ export async function apiFetchBlob(path: string, init?: RequestInit): Promise<Bl
   return response.blob();
 }
 
+/** Content-Disposition에서 저장 이름 - filename*=UTF-8''…(퍼센트 인코딩)을 먼저, 없으면 filename="…", 둘 다 없으면 null */
+export function readDispositionFileName(header: string | null): string | null {
+  if (!header) return null;
+  const encoded = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(header);
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded[1].trim());
+    } catch {
+      // 깨진 인코딩 - 아래 ASCII 이름으로 넘어간다
+    }
+  }
+  const plain = /filename\s*=\s*"([^"]*)"/i.exec(header);
+  return plain ? plain[1] : null;
+}
+
+/** 파일과 서버가 지은 저장 이름을 함께 받는다 - 이름 헤더가 없으면 fileName은 null */
+export async function apiFetchBlobWithName(path: string): Promise<{ blob: Blob; fileName: string | null }> {
+  const response = await sendRequest(path);
+  return { blob: await response.blob(), fileName: readDispositionFileName(response.headers.get("Content-Disposition")) };
+}
+
 async function sendRequest(path: string, init?: RequestInit): Promise<Response> {
   const method = init?.method ?? "GET";
   const headers: Record<string, string> = {};
