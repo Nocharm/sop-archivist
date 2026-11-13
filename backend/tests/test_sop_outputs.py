@@ -344,6 +344,8 @@ def test_human_written_other_language_sentence_is_a_translation_line(client: Tes
     )
     assert (translation_line["confirmed_text"], translation_line["unit_id"]) == (SPLIT_SOURCE, en["id"])
     assert unit_line["row_no"] == translation_line["row_no"] and not translation_line["is_group_start"]
+    # 번역 줄은 AI 번역과 같은 종류다 — 관계 묶음(나눔·합침·중복 배정)이 아니다
+    assert (unit_line["group_id"], translation_line["group_id"]) == (None, None)
 
 
 # ── A 의미 묶음 모서리 — 한/영 연달아 옛 문서 ─────────────────────────────────
@@ -577,16 +579,21 @@ def test_mixed_language_unit_is_one_line(client: TestClient) -> None:
     assert "translation" not in {row["row_kind"] for row in rows}
 
 
-def test_one_side_matched_new_pair_is_translated_added_line(client: TestClient) -> None:
-    """입구 2 새 문서의 한/영 짝 중 한쪽만 옛 단위와 맞추면 다른 쪽은 그 옛 줄 묶음 안의 Translated · Added 줄이다(설계 §4.5)."""
-    fx = _setup_pair_edges(client)
+def _upload_lone_pair_doc(client: TestClient, fx: PairFixture) -> tuple[dict, dict, dict]:
+    """입구 2 새 문서(LONE·LONE_EN 한/영 짝)를 올린다 — (옛 LONE 단위, 새 문서 LONE 새 문장, 새 문서 LONE_EN 새 문장)."""
     (lone,) = _units(fx, LONE)
     new_doc = _upload_ready(
         client, fx.bundle_id, build_docx(p(LONE) + p(LONE_EN)), NEW_NAME, side="new", doc_type="sop",
     )
     assert len(get_view(client, fx.bundle_id, new_doc["id"])["pairs"]) == 1  # 새 문서 쪽 한/영 짝이어야 한다
     targets = {target["text"]: target for target in _load_targets(new_doc["target_doc_id"])}
-    linked = targets[LONE]
+    return lone, targets[LONE], targets[LONE_EN]
+
+
+def test_one_side_matched_new_pair_is_translated_added_line(client: TestClient) -> None:
+    """입구 2 새 문서의 한/영 짝 중 한쪽만 옛 단위와 맞추면 다른 쪽은 그 옛 줄 묶음 안의 Translated · Added 줄이다(설계 §4.5)."""
+    fx = _setup_pair_edges(client)
+    lone, linked, _added = _upload_lone_pair_doc(client, fx)
     _save(client, fx.bundle_id, [_unit_in(lone)], [
         {"key": "l", "id": linked["id"], "revision": linked["revision"], "source_unit_ids": [lone["id"]]},
     ])
@@ -602,6 +609,27 @@ def test_one_side_matched_new_pair_is_translated_added_line(client: TestClient) 
         "", None, "", "",
     )
     assert [row for row in rows if row["confirmed_text"] == LONE_EN] == [added_line]  # 끝 신규 묶음에는 없다
+
+
+def test_translated_added_remark_joins_the_old_group_remark(client: TestClient) -> None:
+    """출처 없는 Translated · Added 새 문장의 remark는 신규 묶음이 없으니 맞춘 옛 묶음의 Remark 끝에 붙는다."""
+    fx = _setup_pair_edges(client)
+    lone, linked, added = _upload_lone_pair_doc(client, fx)
+    _save(client, fx.bundle_id, [_unit_in(lone, reason="Synthetic: reason A")], [
+        {"key": "l", "id": linked["id"], "revision": linked["revision"], "source_unit_ids": [lone["id"]],
+         "remark": "Synthetic linked remark"},
+        {"key": "n", "id": added["id"], "revision": added["revision"], "source_unit_ids": [],
+         "remark": "Synthetic added remark"},
+    ])
+
+    rows = _get_output(client, fx.bundle_id, "outputs/a")
+
+    lines = _group_lines(rows, lone["display_id"])
+    assert [(line["row_kind"], line["change_type"]) for line in lines][1:] == [("new", "translated_added")]
+    assert {line["remark"] for line in lines} == {
+        "Synthetic: reason A\nSynthetic linked remark\nSynthetic added remark",
+    }
+    assert [row for row in rows if row["confirmed_text"] == LONE_EN] == [lines[1]]  # 신규 묶음으로 새지 않는다
 
 
 def test_remark_joins_reasons_and_target_remarks(client: TestClient) -> None:

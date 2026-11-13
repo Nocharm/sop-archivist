@@ -188,7 +188,7 @@ class _Index:
     doc_targets: dict[int, list[TargetInfo]]  # 새 문서 → 그 문서의 새 문장
     children: dict[int, list[TargetInfo]]  # 표 새 문장 → 칸 새 문장(행·열 순)
     translations: dict[int, list[TargetInfo]]  # 번역 출처 단위 → 그 단위의 번역 새 문장(두 언어 모두)
-    unit_groups: dict[int, str]  # 관계 묶음 ID — GET groups와 같은 접기·같은 ID
+    unit_groups: dict[int, str]  # 관계 묶음 ID — GET groups와 같은 접기·같은 ID, 단 번역(translated) 새 문장의 연결은 뺀다
     target_groups: dict[int, str]
     doc_order: list[TargetDocInfo]  # SOP(순서) 다음 그 SOP의 WI들, 부모 없는 WI는 끝
     doc_rank: dict[int, int]
@@ -250,7 +250,12 @@ def _build_index(snap: BundleSnapshot) -> _Index:
     for cell_targets in children.values():
         cell_targets.sort(key=lambda target: (target.cell_row or 0, target.cell_col or 0, target.id))
 
-    edges = [(target.id, unit_id) for target in snap.targets.values() for unit_id in target.source_unit_ids]
+    # 사람이 쓴 다른 언어 문장(translated)은 AI 번역처럼 번역 줄이라 관계 묶음(나눔·합침·중복 배정)에 넣지 않는다(설계 §4.1)
+    edges = [
+        (target.id, unit_id)
+        for target in snap.targets.values() if target.change_type != TRANSLATED
+        for unit_id in target.source_unit_ids
+    ]
     group_unit_by_cell = {unit.id: unit.group_unit_id for unit in snap.units.values() if unit.group_unit_id is not None}
     parent_by_cell_target = {
         target.id: target.parent_target_id for target in snap.targets.values() if target.parent_target_id is not None
@@ -698,17 +703,24 @@ def _build_after_rows(ctx: _AContext, unit: UnitInfo, slot: _GroupSlot) -> list[
     ]
 
 
-def _build_old_remark(index: _Index, meaning: MeaningRow) -> str:
-    """옛 묶음의 Remark(설계 §4.4) — 구성 단위 판단의 이유, 그 뒤에 구성 단위(칸 포함)를 출처로 둔 새 문장의 remark."""
+def _build_old_remark(ctx: _AContext, meaning: MeaningRow) -> str:
+    """옛 묶음의 Remark(설계 §4.4) — 판단 이유, 출처 있는 새 문장의 remark, Translated · Added 새 문장의 remark 순.
+
+    출처 있는 새 문장은 구성 단위(칸 포함)를 출처로 둔 것이다. Translated · Added 새 문장은 출처가 없어 신규 묶음 대신
+    이 묶음에 들므로 그 remark도 여기서 보인다.
+    """
+    index = ctx.index
     units = [index.snap.units[unit_id] for unit_id in meaning.unit_ids]
     units += [cell for unit_id in meaning.unit_ids for cell in index.cells.get(unit_id, [])]
     reasons = [index.snap.decisions[unit_id].reason for unit_id in meaning.unit_ids]
-    return _join_remarks([*reasons, *(target.remark for unit in units for target in index.unit_targets.get(unit.id, []))])
+    sourced = [target.remark for unit in units for target in index.unit_targets.get(unit.id, [])]
+    added = [target.remark for unit in units for target in ctx.added.get(unit.id, [])]
+    return _join_remarks([*reasons, *sourced, *added])
 
 
 def _build_old_group(ctx: _AContext, meaning: MeaningRow, row_no: int) -> list[ARow]:
     """옛 문서 의미 묶음 — 구성 단위마다 단위 줄(표·행 단위는 표 줄 뒤에 칸 문장 줄), 각 줄 바로 뒤에 그 단위의 번역 줄."""
-    slot = _GroupSlot(row_no, _build_old_remark(ctx.index, meaning))
+    slot = _GroupSlot(row_no, _build_old_remark(ctx, meaning))
     rows: list[ARow] = []
     for unit_id in meaning.unit_ids:
         unit = ctx.index.snap.units[unit_id]
