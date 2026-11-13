@@ -131,6 +131,12 @@ for (const theme of ["light", "dark"]) {
     ["overview", `/bundles/${id}`, '[data-testid="overview-gate-units"]'],
     ["documents", `/bundles/${id}/documents`, '[data-testid$="-row"][data-testid^="documents-"]'],
     ["split", `/bundles/${id}/split`, '[data-testid^="split-paper-unit-"]'],
+    // 고른 조각 - 올리거나 고를 때만 보이는 KO/EN 탭(짝이면 둘 다)의 글자 대비를 잰다. 탭이 다 드러난(opacity 1) 뒤에
+    ["split-selected", `/bundles/${id}/split`, '[data-testid^="split-paper-unit-"]', async (page) => {
+      await page.locator('[data-testid^="split-paper-unit-"]').first().click();
+      await page.locator(".strip[data-sel] > .strip-lang").first().waitFor({ state: "visible", timeout: T });
+      await page.waitForFunction(() => getComputedStyle(document.querySelector(".strip[data-sel] > .strip-lang")).opacity === "1", null, { timeout: T });
+    }],
     ["tobe", `/bundles/${id}/tobe`, '[data-testid$="-row"][data-testid^="tobe-"]'],
     ["assign", `/bundles/${id}/assign`, '[data-testid="assign-help"]'],
     ["assign-help-marks", `/bundles/${id}/assign`, '[data-testid="assign-help"]', async (page) => { const toggle = page.locator('[data-testid="assign-help-toggle"]'); if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click(); await page.locator('[data-testid="assign-help-tab-marks"]').click(); }],
