@@ -1,6 +1,6 @@
 // SOP 재구성 API 호출과 응답 타입 - 백엔드 routers/sop_*.py의 응답 모델을 옮긴 것. 공용 래퍼는 api.ts의 apiFetch.
 
-import { apiFetch, apiFetchBlob } from "./api";
+import { apiFetch, apiFetchBlob, apiFetchBlobWithName } from "./api";
 
 /** 의미 검토 항목 - 백엔드 constants.SEMANTIC_CHECK_KEYS와 같은 값 */
 export const SEMANTIC_CHECK_KEYS = ["numbers", "conditions", "tables", "figures"] as const;
@@ -959,9 +959,48 @@ export function getSummary(bundleId: number): Promise<OutputSummary> {
   return apiFetch<OutputSummary>(`/bundles/${bundleId}/summary`);
 }
 
-/** 묶음당 파일 하나 - 판(lang)이 없다 */
-export function downloadExport(bundleId: number): Promise<Blob> {
-  return apiFetchBlob(`/bundles/${bundleId}/export.xlsx`);
+/** 미리보기 칸 - 모양 판정은 서버 시트 모델이 끝냈다(그리기만 한다) */
+export interface PreviewCell {
+  text: string;
+  faint: boolean;
+  italic: boolean;
+  bold: boolean;
+  head: boolean;
+  numeric: boolean;
+}
+
+export type PreviewRowKind = "status" | "header" | "group_start" | "in_group" | "doc" | "section" | "plain";
+
+export interface PreviewRow {
+  kind: PreviewRowKind;
+  wrap: boolean;
+  cells: PreviewCell[];
+}
+
+export interface PreviewSheet {
+  name: string;
+  widths: number[];
+  rows: PreviewRow[];
+  freeze: string | null;
+  filter_columns: number;
+  image_png: string | null;
+  image_row: number | null;
+  total_rows: number;
+  truncated: boolean;
+}
+
+export interface WorkbookPreview {
+  file_name: string;
+  sheets: PreviewSheet[];
+}
+
+export function getExportPreview(bundleId: number): Promise<WorkbookPreview> {
+  return apiFetch<WorkbookPreview>(`/bundles/${bundleId}/export/preview`);
+}
+
+/** 묶음당 파일 하나 - 판(lang)이 없다. 저장 이름은 서버가 짓는다(Content-Disposition) */
+export function downloadExport(bundleId: number): Promise<{ blob: Blob; fileName: string | null }> {
+  return apiFetchBlobWithName(`/bundles/${bundleId}/export.xlsx`);
 }
 
 /** 순서 바꾸기 요청 한 줄 - 뺀 값은 그대로 둔다. 깊이·번호 표시는 그 줄에만 붙는다(짝 상대·번역이 따라 바뀌지 않는다) */

@@ -6,6 +6,7 @@ import { Download, Table2, Workflow } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useMemo, useState } from "react";
 
+import { ExportPreviewModal } from "@/components/outputs/export-preview";
 import { OutputARowView } from "@/components/outputs/output-a-row";
 import { OutputBCard } from "@/components/outputs/output-b-card";
 import { OutputCView } from "@/components/outputs/output-c";
@@ -16,7 +17,6 @@ import { LoadMoreRows } from "@/components/ui/load-more";
 import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
 import {
-  downloadExport,
   getOutputA,
   getOutputB,
   getOutputC,
@@ -30,7 +30,6 @@ import {
 import { loadBundle, putBundle, useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
 import { buildAScreenLines } from "@/lib/output-groups";
-import { saveBlob } from "@/lib/save-file";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 import { readOutputsView, writeOutputsView, type OutputsTab } from "@/lib/outputs-view-prefs";
@@ -76,7 +75,7 @@ export default function OutputsPage() {
   const linesA = useMemo(() => buildAScreenLines(outA.data ?? []), [outA.data]);
   const rowsA = useProgressiveList(linesA, `a:${key}`);
   const showSkeleton = useDelayedFlag(current.data === null && current.error === null);
-  const [exporting, setExporting] = useState(false);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [savingChecks, setSavingChecks] = useState(false);
 
   const [moving, setMoving] = useState(false);
@@ -132,20 +131,6 @@ export default function OutputsPage() {
       void loadBundle(bundleId);
     } finally {
       setMoving(false);
-    }
-  }
-
-  // 묶음당 파일 하나. 저장 이름은 서버가 짓는다(응답 Content-Disposition) - 그 이름을 읽기 전까지는 Bundle 코드로 둔다
-  async function handleExport() {
-    setExporting(true);
-    try {
-      const blob = await downloadExport(bundleId);
-      saveBlob(blob, `${bundle?.code ?? "bundle"}.xlsx`);
-      showToast(t("outputs.fileCreated"));
-    } catch (err) {
-      showToast(`${t("outputs.exportFailed")} ${humanizeApiError(err, t)}`, "error");
-    } finally {
-      setExporting(false);
     }
   }
 
@@ -287,15 +272,13 @@ export default function OutputsPage() {
         </section>
         <section className="side-box grid gap-2" data-testid="outputs-export">
           <h2 className="side-box-title">Excel</h2>
-          <button type="button" className="btn w-full justify-start" data-testid="outputs-export-open" disabled={exporting} onClick={() => void handleExport()}>
+          <button type="button" className="btn w-full justify-start" data-testid="outputs-export-open" onClick={() => setIsPreviewOpen(true)}>
             <Download size={14} strokeWidth={1.5} aria-hidden />
-            <span className="stack">
-              <span data-on={exporting ? undefined : ""}>{t("outputs.export")}</span>
-              <span data-on={exporting ? "" : undefined}>{t("outputs.exporting")}</span>
-            </span>
+            {t("outputs.export")}
           </button>
         </section>
       </aside>
+      {isPreviewOpen && <ExportPreviewModal bundleId={bundleId} onClose={() => setIsPreviewOpen(false)} />}
     </div>
   );
 }

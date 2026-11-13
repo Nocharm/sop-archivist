@@ -19,7 +19,7 @@ function findFocusable(root: HTMLElement): HTMLElement[] {
 }
 
 /** 창 폭 - 내용이 들어가는 가장 좁은 것을 고른다(시선이 좌우로 덜 움직인다) */
-export type ModalSize = "sm" | "md" | "lg" | "xl";
+export type ModalSize = "sm" | "md" | "lg" | "xl" | "sheet";
 
 // 폭은 여기 한 곳에서만 정한다 - 384·448·512·768px
 const PANEL_WIDTH: Record<ModalSize, string> = {
@@ -27,6 +27,7 @@ const PANEL_WIDTH: Record<ModalSize, string> = {
   md: "max-w-md", // 입력 칸·짧은 목록
   lg: "max-w-lg", // 이어 읽는 글(문서 미리 보기)
   xl: "max-w-3xl", // 칸이 여럿 나란한 표(업로드 결과 행)
+  sheet: "max-w-[min(1280px,calc(100vw-32px))]", // Excel 미리보기 - 1280px, 좁은 화면이면 화면 폭
 };
 
 interface ModalProps {

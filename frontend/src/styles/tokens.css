@@ -140,6 +140,16 @@
   --split-b: color-mix(in oklab, oklch(.80 .13 85) var(--tint2), var(--paper));
   /* Modal backdrop. Stays dark in both themes (app-side addition; the mock used the same value inline). */
   --scrim: color-mix(in oklab, oklch(.18 .02 255) 42%, transparent);
+
+  /* Excel preview "paper" - the sheet looks like the file in both themes, so dark mode does not override these (spec §9). */
+  --sheet-paper: #FFFFFF;
+  --sheet-ink: #202124;
+  --sheet-head-bg: #2B2F36;
+  --sheet-head-ink: #FFFFFF;
+  --sheet-line-thick: #202124;
+  --sheet-line-medium: #5F6368;
+  --sheet-line-thin: #9AA0A6;
+  --sheet-faint: #9AA0A6;
 }
 
 /* Tokens only change here. Screens never branch on the theme. Light gets reviewed first, and the toggle ships after it. */
