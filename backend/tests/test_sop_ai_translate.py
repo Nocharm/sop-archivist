@@ -1904,6 +1904,7 @@ def test_order_response_leaves_out_a_deleted_ai_translation(client: TestClient, 
     response = put_order(client, bundle.id, bundle.wi_id, [{"target_id": source["id"], "wi_step": 2}, {"target_id": target.id}])
 
     assert [item["target_id"] for item in response.json()["items"]] == [source["id"]]
+    assert target.id not in {item["target_id"] for section in response.json()["doc"]["sections"] for item in section["items"]}
 
 
 # --- 이전 번역 찾기 ---

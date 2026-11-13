@@ -974,6 +974,8 @@ class _CContext:
     index: _Index
     labels: OutputLabels
     numbers: dict[int, str]
+    # 옛 단위 → 그 줄에 드는 Translated · Added 새 문장(삭제·이동 줄 Remark가 A 묶음과 같은 함수로 짓는다)
+    added: dict[int, list[TargetInfo]]
     # Translated · Added 새 문장 → A에서 그 줄이 드는 옛 단위(맞춘 쪽 출처 중 원문에서 가장 앞)
     added_anchor: dict[int, int]
 
@@ -1020,37 +1022,52 @@ def _describe_disposed_row(index: _Index, meaning: MeaningRow, labels: OutputLab
     }
 
 
+def _build_c_context(snap: BundleSnapshot, labels: OutputLabels) -> _CContext:
+    """결과물 C 계산 재료 — 묶음 전체의 색인·번호·Translated · Added 자리. 문서 하나만 지어도 번호는 묶음 전체에서 센다."""
+    index = _build_index(snap)
+    added, _ = _split_new_targets(snap, _list_new_targets(index, labels))
+    return _CContext(
+        index=index, labels=labels, numbers=number_targets(index, labels), added=added,
+        added_anchor={target.id: unit_id for unit_id, targets in added.items() for target in targets},
+    )
+
+
+def _build_c_doc(ctx: _CContext, doc: TargetDocInfo) -> CDoc:
+    """결과물 C의 새 문서 하나 — 결과물 C 전체와 순서 저장 응답이 이것 하나로 짓는다(같은 값이어야 화면이 그 문서만 바꾼다)."""
+    snap = ctx.index.snap
+    sections = []
+    for plan in _plan_sections(ctx.index, doc, ctx.labels):
+        items = [_build_item(ctx, target) for target in plan.targets]
+        if items or plan.keep_empty:
+            sections.append(
+                CSection(
+                    location_key=plan.key, label=plan.label, number=plan.number, na_reason=plan.na_reason,
+                    heading_note=_format_heading_note(snap, plan.headings), items=items,
+                )
+            )
+    parent = snap.target_docs.get(doc.parent_id) if doc.parent_id is not None else None
+    return CDoc(
+        target_doc_id=doc.id, code=doc.code, title=doc.title, doc_type=doc.doc_type,
+        parent_code=parent.code if parent is not None else None, entrance=doc.entrance, sections=sections,
+    )
+
+
+def build_output_c_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> CDoc | None:
+    """결과물 C의 새 문서 하나 — 같은 lang의 build_output_c에서 그 문서와 같은 값(번호·쓸려 나간 번역 반영). 문서가 없으면 None."""
+    doc = snap.target_docs.get(target_doc_id)
+    if doc is None:
+        return None
+    return _build_c_doc(_build_c_context(snap, LABELS[lang]), doc)
+
+
 def build_output_c(snap: BundleSnapshot, lang: Lang) -> COutput:
     """결과물 C 한 벌(설계 §5.2) — 새 문서마다 칸별로 받은 새 문장(두 언어와 중립이 한 목록, C 순서), 끝에 삭제·다른 문서로 이동(줄마다 한 번).
 
     lang은 칸 이름·출처 표기 같은 라벨 언어만 고른다.
     """
-    labels = LABELS[lang]
-    index = _build_index(snap)
-    added, _ = _split_new_targets(snap, _list_new_targets(index, labels))
-    ctx = _CContext(
-        index, labels, number_targets(index, labels),
-        {target.id: unit_id for unit_id, targets in added.items() for target in targets},
-    )
-    docs = []
-    for doc in index.doc_order:
-        sections = []
-        for plan in _plan_sections(index, doc, labels):
-            items = [_build_item(ctx, target) for target in plan.targets]
-            if items or plan.keep_empty:
-                sections.append(
-                    CSection(
-                        location_key=plan.key, label=plan.label, number=plan.number, na_reason=plan.na_reason,
-                        heading_note=_format_heading_note(snap, plan.headings), items=items,
-                    )
-                )
-        parent = snap.target_docs.get(doc.parent_id) if doc.parent_id is not None else None
-        docs.append(
-            CDoc(
-                target_doc_id=doc.id, code=doc.code, title=doc.title, doc_type=doc.doc_type,
-                parent_code=parent.code if parent is not None else None, entrance=doc.entrance, sections=sections,
-            )
-        )
+    ctx = _build_c_context(snap, LABELS[lang])
+    index, labels = ctx.index, ctx.labels
+    docs = [_build_c_doc(ctx, doc) for doc in index.doc_order]
     deleted: list[CDeleted] = []
     moved: list[CMoved] = []
     for meaning in build_meaning_rows(snap):
@@ -1058,7 +1075,7 @@ def build_output_c(snap: BundleSnapshot, lang: Lang) -> COutput:
         if disposition not in DISPOSITION_NODES:
             continue
         # 삭제·이동은 새 문장이 없어(저장 검사) Translated · Added도 없지만, Remark는 A 묶음과 같은 함수로 짓는다
-        fields = _describe_disposed_row(index, meaning, labels, _build_old_remark(index, added, meaning))
+        fields = _describe_disposed_row(index, meaning, labels, _build_old_remark(index, ctx.added, meaning))
         if disposition == "delete":
             deleted.append(CDeleted(**fields))
         else:

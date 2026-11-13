@@ -29,6 +29,7 @@ from app.sop.membership import BundleContext, ensure_editable, lock_bundle, requ
 from app.sop.models import Bundle, TargetDoc, TargetSentence, WiStep
 from app.sop.outputs import (
     ARow,
+    CDoc,
     ComposedDoc,
     COutput,
     FlowGraph,
@@ -37,6 +38,7 @@ from app.sop.outputs import (
     build_output_a,
     build_output_b,
     build_output_c,
+    build_output_c_doc,
     build_summary,
 )
 from app.sop.sheet_model import WorkbookModel, build_workbook_model, limit_preview
@@ -78,10 +80,17 @@ class OrderItemOut(BaseModel):
     number_style: str
 
 
-class TargetOrderOut(BaseModel):
+class TargetOrderSaved(BaseModel):
+    """순서 쓰기의 결과 — 쓴 뒤 묶음 revision과 남은 새 문장(쓸려 나간 번역은 빠진다)."""
+
     revision: int
     target_doc_id: int
     items: list[OrderItemOut]
+
+
+class TargetOrderOut(TargetOrderSaved):
+    # 저장 뒤 그 문서의 C 모양 — 같은 lang의 GET …/outputs/c에서 그 문서와 같은 값(번호·쓸린 번역 반영). 화면은 C 전체를 다시 받지 않는다
+    doc: CDoc
 
 
 async def _load_snapshot_for_read(session: AsyncSession, bundle_id: int) -> BundleSnapshot:
@@ -269,7 +278,7 @@ def _check_number_styles(doc: TargetDoc, tops: dict[int, TargetSentence], items:
 
 async def reorder_targets(
     session: AsyncSession, bundle: Bundle, payload: TargetOrderIn, actor: str
-) -> TargetOrderOut:
+) -> TargetOrderSaved:
     """새 문서 하나의 새 문장 순서(와 WI 단계·들여쓰기·번호 표시)를 사람이 정한다 — 이후 그 문서는 order_index 순이고 새로 들어오는 새 문장은 끝에 붙는다.
 
     목록은 칸 새 문장이 아닌 새 문장 전부를 한 번씩 담아야 한다(빠진 새 문장의 자리를 지어내지 않게). 검사를 모두 마친 뒤에 쓴다.
@@ -344,7 +353,7 @@ async def reorder_targets(
         target_ids=[doc.id],
     )
     await session.flush()
-    return TargetOrderOut(
+    return TargetOrderSaved(
         revision=bundle.revision,
         target_doc_id=doc.id,
         items=[
@@ -359,8 +368,18 @@ async def reorder_targets(
 
 @router.put("/{bundle_id}/targets/order", response_model=TargetOrderOut)
 async def put_target_order(
-    body: TargetOrderIn, ctx: BundleContext = Depends(_require_author), session: AsyncSession = Depends(get_session)
+    body: TargetOrderIn,
+    lang: Literal["ko", "en"] = Query("en"),
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
 ) -> TargetOrderOut:
+    """순서·깊이·번호 표시를 쓰고 그 문서의 C 모양을 함께 돌려준다 — lang은 라벨 언어만(없으면 en)."""
     result = await reorder_targets(session, ctx.bundle, body, ctx.login_id)
+    # 같은 트랜잭션에서 읽어 방금 쓴 순서를 본다 — 스냅숏의 FOR SHARE는 이 트랜잭션이 이미 든 FOR UPDATE와 부딪치지 않는다
+    snap = await load_bundle_snapshot(session, ctx.bundle.id)
     await session.commit()
-    return result
+    # 계산은 잠금을 놓은 뒤 스레드에서(읽기 결과물과 같은 까닭)
+    doc = await asyncio.to_thread(build_output_c_doc, snap, result.target_doc_id, lang)
+    if doc is None:  # reorder_targets가 같은 트랜잭션에서 문서를 확인했다 — 타입을 좁히는 자리
+        raise_rule(404, "target_doc_not_found", target_doc_id=result.target_doc_id)
+    return TargetOrderOut(revision=result.revision, target_doc_id=result.target_doc_id, items=result.items, doc=doc)

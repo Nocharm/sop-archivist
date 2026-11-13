@@ -1156,6 +1156,37 @@ def _list_top_target_ids(client: TestClient, bundle_id: int, doc_index: int) -> 
     return [item["target_id"] for section in doc["sections"] for item in section["items"]]
 
 
+def test_reorder_returns_the_doc_as_c_shows_it(client: TestClient) -> None:
+    fx = _setup(client)
+    order = _list_top_target_ids(client, fx.bundle_id, 1)  # WI 문서
+    revision = get_bundle(client, fx.bundle_id)["revision"]
+
+    response = client.put(
+        f"/api/bundles/{fx.bundle_id}/targets/order", params={"lang": "ko"}, headers=AUTHOR,
+        json={"revision": revision, "target_doc_id": fx.wi_id, "items": [{"target_id": t} for t in reversed(order)]},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["revision"] == revision + 1
+    # 번호까지 같은 값 — 화면은 C 전체를 다시 받지 않고 이것으로 그 문서만 바꾼다
+    assert response.json()["doc"] == _get_output(client, fx.bundle_id, "outputs/c", "ko")["docs"][1]
+
+
+def test_reorder_doc_labels_default_to_english(client: TestClient) -> None:
+    fx = _setup(client)
+    order = _list_top_target_ids(client, fx.bundle_id, 1)
+    revision = get_bundle(client, fx.bundle_id)["revision"]
+
+    response = _put_order(client, fx.bundle_id, {
+        "revision": revision, "target_doc_id": fx.wi_id, "items": [{"target_id": t} for t in order],
+    })
+
+    assert response.status_code == 200, response.text
+    doc = response.json()["doc"]
+    assert doc == _get_output(client, fx.bundle_id, "outputs/c")["docs"][1]
+    assert doc != _get_output(client, fx.bundle_id, "outputs/c", "ko")["docs"][1]  # 칸 이름이 언어마다 다르다
+
+
 def test_reorder_targets_rejects(client: TestClient) -> None:
     fx = _setup(client)
     assert set_members(client, fx.bundle_id, [("qa.member", "author"), ("qa.lead", "reviewer")]).status_code == 200
