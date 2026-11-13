@@ -24,6 +24,7 @@ from tests.sop_helpers import (
     save_group,
     upload,
 )
+from tests.test_sop_decision_undo import _ok, _redo, _undo
 from tests.test_sop_decisions import _body, _reason, _unit_in
 from tests.test_sop_outputs import _get_output, _list_top_target_ids, _put_order
 
@@ -480,3 +481,60 @@ def test_moving_to_another_slot_heading_leaves_the_shared_one(client: TestClient
     heads = _load_slot_headings(fx.sop_id)
     assert (heads[(SLOT, "ko")]["id"], heads[(SLOT, "ko")]["sources"]) == (row["id"], [ko2["id"]])
     assert (heads[("purpose", "ko")]["sources"], heads[("purpose", "ko")]["text"]) == ([ko1["id"]], "Purpose")
+
+
+# ── 되돌리기 — Assign 되돌리기가 칸 제목 저장도 거꾸로 한다 ──────────────────────
+
+
+def _link_headings_recorded(client: TestClient, fx: Fixture, view: dict) -> None:
+    """_link_headings와 같은 저장을 되돌리기 기록(세션 s1)에 남기며 한다."""
+    ko, en = find_unit(view, KO_HEAD), find_unit(view, EN_HEAD)
+    body = _body([_unit_in(ko), _unit_in(en)], [_heading("ko", fx.sop_id, ko), _heading("en", fx.sop_id, en)])
+    response = save_group(client, fx.bundle_id, {**body, "undo": {"session": "s1"}})
+    assert response.status_code == 200, response.text
+
+
+def _read_heads(target_doc_id: int) -> dict[tuple[str, str], tuple[int, list[int], str]]:
+    """되돌리기 왕복에서 비교하는 칸 제목 모양 — revision은 되쓰기마다 오르니 뺀다."""
+    return {key: (row["id"], row["sources"], row["status"]) for key, row in _load_slot_headings(target_doc_id).items()}
+
+
+def test_undo_and_redo_a_slot_heading_save(client: TestClient) -> None:
+    fx = _setup(client)
+    _link_headings_recorded(client, fx, fx.old1)
+    linked = _read_heads(fx.sop_id)
+
+    _ok(_undo(client, fx.bundle_id))
+
+    assert _read_heads(fx.sop_id) == {}
+    rows = _list_unit_rows(client, fx.bundle_id)
+    assert {rows[find_unit(fx.old1, head)["id"]]["status"] for head in (KO_HEAD, EN_HEAD)} == {"unassigned"}
+
+    _ok(_redo(client, fx.bundle_id))
+
+    assert _read_heads(fx.sop_id) == linked  # 같은 id로 되살아난다
+
+
+def test_undo_of_a_second_doc_leaves_the_shared_slot_heading_to_the_first(client: TestClient) -> None:
+    fx = _setup(client)
+    _link_headings(client, fx, fx.old1)
+    first = _read_heads(fx.sop_id)
+    _link_headings_recorded(client, fx, fx.old2)
+
+    _ok(_undo(client, fx.bundle_id))
+
+    assert _read_heads(fx.sop_id) == first  # 칸 제목은 남고 OLD-2 출처만 빠진다
+
+
+def test_undo_refuses_to_drop_a_slot_heading_another_doc_now_uses(client: TestClient) -> None:
+    """내 단계가 만든 칸 제목에 그 뒤 다른 문서가 출처로 붙었으면 지우지 않는다 — 지우면 그 문서의 잇기까지 사라진다."""
+    fx = _setup(client)
+    _link_headings_recorded(client, fx, fx.old1)
+    _link_headings(client, fx, fx.old2)  # 기록 없는 저장 — 다른 사람·다른 창
+    before = _read_heads(fx.sop_id)
+
+    response = _undo(client, fx.bundle_id)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "undo_conflict"
+    assert _read_heads(fx.sop_id) == before

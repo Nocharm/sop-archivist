@@ -3,7 +3,7 @@
 // 오른쪽은 고른 곳·확정·우선순위 아코디언이다(설계 docs/superpowers/specs/2026-11-09-assign-unified-design.md).
 "use client";
 
-import { Check, Circle, CircleCheck, CircleDashed, CirclePause, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, RefreshCw, Sparkles, Trash2, TriangleAlert, X, type LucideIcon } from "lucide-react";
+import { Check, Circle, CircleCheck, CircleDashed, CirclePause, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, Redo2, RefreshCw, Sparkles, Trash2, TriangleAlert, Undo2, X, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent } from "react";
@@ -58,15 +58,19 @@ import {
   listNewCandidates,
   listSuggestions,
   listWrittenSentences,
+  redoDecision,
   saveGroup,
+  undoDecision,
   type AiSuggestion,
   type ChangeTypeInput,
   type ComposedDoc,
+  type DecisionStepResult,
   type DocumentView,
   type EditOp,
   type Group,
   type GroupSaveInput,
   type NewCandidate,
+  type UndoMeta,
   type UnitRow,
   type WrittenSentence,
 } from "@/lib/api-sop";
@@ -91,6 +95,7 @@ import {
 import { buildAssignMenu, type AssignMenuAction } from "@/lib/assign-context-menu-model";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
+import { describeDecisionStep, getAssignUndoKey, pickSaveOp } from "@/lib/decision-step-model";
 import {
   buildDestinationOptions,
   buildGroupSave,
@@ -127,6 +132,7 @@ import {
 } from "@/lib/classify-model";
 import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
+import { genId } from "@/lib/id";
 import { useLeaveGuard } from "@/lib/leave-guard";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { navigate } from "@/lib/nav-buffer";
@@ -543,6 +549,16 @@ export default function AssignPage() {
   }, [barEl]);
   const firstTextRef = useRef<HTMLTextAreaElement>(null);
   const [busy, setBusy] = useState(false);
+  // 되돌리기 기록은 이 화면을 연 동안만 - 세션 키가 서버 기록을 가른다(설계 docs/superpowers/specs/2026-11-13-assign-undo-design.md)
+  const undoSession = useRef(genId());
+  const [undoState, setUndoState] = useState({ canUndo: false, canRedo: false });
+  function buildUndo(extra: Omit<UndoMeta, "session"> = {}): UndoMeta {
+    return { session: undoSession.current, ...extra };
+  }
+  /** 기록된 저장이 끝남 - 새 단계가 생겼으니 다시 하기 줄은 버려진다 */
+  function markRecorded() {
+    setUndoState({ canUndo: true, canRedo: false });
+  }
   const [bulk, setBulk] = useState<"delete" | "move" | null>(null);
   const [confirmingIdentical, setConfirmingIdentical] = useState(false);
   const [resetScope, setResetScope] = useState<ResetScope | null>(null);
@@ -643,7 +659,10 @@ export default function AssignPage() {
     if (!oldView || busy) return;
     setBusy(true);
     try {
-      const result = await editUnits(bundleId, oldView.document.id, oldView.document.revision, op);
+      // 자르기·합치기·언어 바꾸기 모두 Assign 기록에 넣는다(설계 §4.4) - 서버는 Split 편집 기록 번호만 가리킨다
+      const undo = buildUndo({ focus_unit_id: op.type === "split" ? op.unit_id : (followId ?? undefined) });
+      const result = await editUnits(bundleId, oldView.document.id, oldView.document.revision, op, false, undo);
+      markRecorded();
       cutLine.clear();
       setCutUnitId(null);
       // 고친 줄의 Unit은 은퇴했을 수 있다 - 다시 받는 동안 그 Unit의 묶음·후보를 부르지 않게 고름을 비우고, 새 줄이 생기면 follow가 고른다
@@ -761,7 +780,9 @@ export default function AssignPage() {
       const context = { units: saveUnits, group: saveGroupData, tables: buildTables() };
       const body = buildGroupSave({ ...draft, destination, reason, moveCode }, context, action, action === "hold" ? reason.trim() : "");
       const leftovers = body.release_unit_ids ?? [];
-      const saved = await saveGroup(bundleId, body);
+      const op = pickSaveOp({ action, destinationKind: destination?.kind ?? null, savedLinkIds: savedDestination?.kind === "link" ? savedDestination.targetIds : [], nextLinkIds: linkIds });
+      const saved = await saveGroup(bundleId, body, buildUndo({ op, focus_unit_id: row.unitIds[0] }));
+      markRecorded();
       // 저장했으면 메뉴의 고름은 끝났다 - 다음 줄이 없거나 같은 줄에 남아도 닫는다
       setMenu(null);
       showToast(action === "hold" ? t("classify.held") : t("classify.confirmed"));
@@ -805,7 +826,8 @@ export default function AssignPage() {
     if (decided.length === 0) return;
     setBusy(true);
     try {
-      await clearDecisions(bundleId, decided.map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision })));
+      await clearDecisions(bundleId, decided.map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision })), buildUndo({ step_key: genId(), focus_unit_id: row.unitIds[0] }));
+      markRecorded();
       // 엮은 문서에서 그 문장을 바로 뺀다 - 오른쪽 칸은 그 문서에 머물러(배정이 없어져 저절로 다른 문서로 가지 않게) 접히며 사라지는 것이 보이고, 다시 읽은 값이 맞춘다
       if (composed.data && isComposedDoc && newDocId !== null) {
         const docId = newDocId;
@@ -841,12 +863,73 @@ export default function AssignPage() {
     }
   }
 
+  /** 되돌리기·다시 하기 - 다시 받은 뒤 그 단계의 줄(없으면 New 문장)을 고른다. 거절은 기록을 그대로 두고 이유만 알린다 */
+  async function runUndoStep(kind: "undo" | "redo") {
+    if (busy || !canEdit) return;
+    setBusy(true);
+    try {
+      const result = await (kind === "undo" ? undoDecision : redoDecision)(bundleId, undoSession.current);
+      setUndoState({ canUndo: result.can_undo, canRedo: result.can_redo });
+      setMenu(null);
+      setCtxMenu(null);
+      setChecked(new Set());
+      // 되돌린 줄의 초안은 바뀌기 전 판단 위의 고름이다
+      for (const key of new Set(result.unit_ids.map((id) => rowOfUnit.get(id)).filter((key) => key !== undefined))) dropDraft(key);
+      // 자르기를 거꾸로 하면 Unit이 은퇴할 수 있다 - 다시 받는 동안 그 줄의 묶음·후보를 부르지 않게 고름을 비운다
+      if (result.op === "cut") {
+        cutLine.clear();
+        setCutUnitId(null);
+        setSelectedKey(null);
+      }
+      if (mode === "unsourced" && result.focus_target_id !== null) setSelNew(result.focus_target_id);
+      else if (result.focus_unit_id !== null) setFollow({ unitId: result.focus_unit_id, staleViews: viewList, staleUnits: units.data });
+      else if (result.focus_target_id !== null) showInNew(result.focus_target_id);
+      showToast(formatDecisionStep(result, kind));
+    } catch (err) {
+      const code = err instanceof ApiError ? err.rule?.code : undefined;
+      if (code === "nothing_to_undo") setUndoState((prev) => ({ ...prev, canUndo: false }));
+      else if (code === "nothing_to_redo") setUndoState((prev) => ({ ...prev, canRedo: false }));
+      // 자르기를 거꾸로 할 조각에 그 사이 판단이 걸렸다 - 묻지 않고 거절한다(설계 §4.4)
+      showToast(code === "confirm_required" ? t("assign.ctx.why.assigned") : humanizeApiError(err, t), "error");
+    } finally {
+      // 거절도 그 사이 바뀐 것이 있다는 뜻이라 다시 받는다 - 짝 모양이 바뀌었을 수 있어 원문 보기도
+      views.reload();
+      setUnitsKey((key) => key + 1);
+      void loadBundle(bundleId);
+      setBusy(false);
+    }
+  }
+
+  /** 되돌리기·다시 하기 알림 - Split formatStep과 같은 꼴(무엇 · 대상) */
+  function formatDecisionStep(result: DecisionStepResult, kind: "undo" | "redo"): string {
+    const message = describeDecisionStep(
+      result,
+      kind,
+      (unitId) => unitMap.get(unitId)?.display_id ?? null,
+      (targetId) => {
+        const target = writtenMap.get(targetId);
+        return target ? `${target.doc_code} ${target.section_path || target.order_index}` : null;
+      },
+    );
+    const { action, target } = message.vars;
+    let label = "";
+    if (typeof target === "number") label = t("assign.step.lines", { n: target });
+    else if (target === "assign.step.wholeBundle") label = t(target);
+    else if (target !== undefined) label = String(target);
+    return t(message.key, { action: t(String(action)), target: label === "" ? "" : ` · ${label}` });
+  }
+
   async function confirmIdenticalAll() {
     const items = identical.data ?? [];
     // 서버 상한(1000)씩 차례로 - revision은 후보 목록에 실려 온다
     if (items.length > 0) {
+      // 나눠 보낸 요청 모두가 같은 step_key - Ctrl+Z 한 번에 한꺼번에 되돌아간다
+      const undo = buildUndo({ step_key: genId() });
       await run(async () => {
-        for (const batch of buildIdenticalBatches(items)) await confirmMatchesInBulk(bundleId, batch);
+        for (const batch of buildIdenticalBatches(items)) {
+          await confirmMatchesInBulk(bundleId, batch, undo);
+          markRecorded();
+        }
         // 한 번에 확정도 서버가 짝을 정리하지만 어느 짝인지 알려 주지 않는다 - 짝 모양·문서 revision을 다시 받는다
         views.reload();
       }, t("match.identicalDone", { n: items.length }));
@@ -866,7 +949,10 @@ export default function AssignPage() {
       targets: [{ key: `t${target.target_id}`, id: target.target_id, revision: target.revision, source_unit_ids: [], remark }],
       removed_target_ids: [],
     };
-    void run(() => saveGroup(bundleId, body), t("match.newDone"));
+    void run(async () => {
+      await saveGroup(bundleId, body, buildUndo({ op: "mark_new", focus_target_id: target.target_id }));
+      markRecorded();
+    }, t("match.newDone"));
   }
 
   /** 출처 없는 New 모드에서 Old 조각을 누르면 그 줄을 이 문장의 출처로 잇는다(그 줄의 다른 곳은 바꾸기로 뗀다) */
@@ -888,7 +974,9 @@ export default function AssignPage() {
       };
       const body = buildGroupSave({ destination: link, texts: {}, changeTypes: {}, linkChangeTypes: {}, reason: readHumanReason(sourceUnits[0]?.decision), moveCode: "" }, context, "confirm");
       // 이 문장에 없는 언어의 Old 문장은 서버가 짝을 풀어 제 줄로 남긴다 - 출처 없는 New를 계속 보게 고른 줄은 옮기지 않는다
-      applyPairSettle(sourceRow, await saveGroup(bundleId, body), body.release_unit_ids ?? []);
+      const saved = await saveGroup(bundleId, body, buildUndo({ op: "link_source", focus_unit_id: unitId, focus_target_id: target.target_id }));
+      markRecorded();
+      applyPairSettle(sourceRow, saved, body.release_unit_ids ?? []);
     }, t("match.linked"));
   }
 
@@ -1043,6 +1131,13 @@ export default function AssignPage() {
         event.preventDefault();
         void runSave("confirm");
       }
+      return;
+    }
+    // Ctrl/⌘+Z·+Shift - 글자 입력 중이거나 층이 열려 있으면 위에서 이미 돌아갔다(브라우저 글자 되돌리기)
+    const undoKind = getAssignUndoKey(event, { typing: isTypingTarget(event.target), layerOpen: document.querySelector('[role="dialog"],[role="menu"]:not([data-link-menu]),[role="listbox"]') !== null, canEdit });
+    if (undoKind !== null) {
+      event.preventDefault();
+      if (undoKind === "undo" ? undoState.canUndo : undoState.canRedo) void runUndoStep(undoKind);
       return;
     }
     if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -1797,6 +1892,21 @@ export default function AssignPage() {
       <ReadOnlyNote bundle={bundle} testId="assign" />
       {/* 오른쪽 묶음은 한 요소로 - 줄이 넘치면 통째로 다음 줄 오른쪽 끝으로 간다 */}
       <div className="assign-bar-end" data-testid="assign-bar-end">
+        {/* 맨 앞 - 오른쪽 묶음이 줄을 넘겨도 늘 같은 자리 */}
+        {canEdit && (
+          <span className="flex items-center gap-1">
+            <Tooltip label={t("assign.undo")}>
+              <button type="button" className="btn icon h-7 w-7" aria-label={t("assign.undo")} data-testid="assign-undo" disabled={busy || !undoState.canUndo} onClick={() => void runUndoStep("undo")}>
+                <Undo2 size={14} strokeWidth={1.5} aria-hidden />
+              </button>
+            </Tooltip>
+            <Tooltip label={t("assign.redo")}>
+              <button type="button" className="btn icon h-7 w-7" aria-label={t("assign.redo")} data-testid="assign-redo" disabled={busy || !undoState.canRedo} onClick={() => void runUndoStep("redo")}>
+                <Redo2 size={14} strokeWidth={1.5} aria-hidden />
+              </button>
+            </Tooltip>
+          </span>
+        )}
         {checked.size > 0 && canEdit && (
           <span className="flex items-center gap-1.5 text-xs" data-testid="assign-bulk">
             <span className="text-ink-2">{t("classify.pickedCount", { n: checked.size })}</span>
@@ -2021,7 +2131,9 @@ export default function AssignPage() {
           bundleId={bundleId}
           scope={resetScope}
           revision={bundle.revision}
+          undo={buildUndo(resetScope.kind === "document" ? { scope_label: resetScope.label } : {})}
           onDone={() => {
+            markRecorded();
             // 지운 범위의 저장 전 초안은 낡은 판단 위의 고름이라 버린다
             const scope = resetScope;
             setDrafts((prev) => Object.fromEntries(Object.entries(prev).filter(([key]) => scope.kind === "document" && rowMap.get(key)?.documentId !== scope.documentId)));
@@ -2104,7 +2216,8 @@ export default function AssignPage() {
                 reason: bulkReason,
                 move_target_code: code,
                 units: unitRows.map((unit) => ({ unit_id: unit.unit_id, revision: unit.decision.revision })),
-              });
+              }, buildUndo());
+              markRecorded();
               showToast(t("classify.bulkDone", { n: unitRows.length }));
               setBulk(null);
               setChecked(new Set());

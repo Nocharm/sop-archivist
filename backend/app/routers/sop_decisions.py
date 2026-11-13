@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_user
 from app.db import get_session
 from app.sop.constants import MEMBER_ROLES
+from app.sop.decision_steps import DecisionStepIn, DecisionStepResult, record_snapshot_step, redo_step, undo_step
 from app.sop.decisions import (
     DEFAULT_UNITS_PAGE,
     MAX_UNITS_PAGE,
@@ -31,7 +32,7 @@ from app.sop.decisions import (
 from app.sop.detach import DetachReport
 from app.sop.groups import GroupOut, load_group
 from app.sop.match import BulkMatchIn, IdenticalCandidate, confirm_in_bulk, list_identical_candidates
-from app.sop.membership import BundleContext, ensure_active_account, require_bundle_role
+from app.sop.membership import BundleContext, ensure_active_account, ensure_editable, lock_bundle, require_bundle_role
 from app.sop.remarks import (
     DEFAULT_MOVE_TARGETS,
     MAX_MOVE_TARGETS,
@@ -91,7 +92,10 @@ async def get_group_by_target(
 async def save_relation_group(
     body: GroupSaveIn, ctx: BundleContext = Depends(_require_author), session: AsyncSession = Depends(get_session)
 ) -> GroupOut:
-    group = await save_group(session, ctx.bundle, body, ctx.login_id)
+    group = await record_snapshot_step(
+        session, ctx.bundle, ctx.login_id, body.undo, body.undo.op if body.undo and body.undo.op else body.action,
+        lambda: save_group(session, ctx.bundle, body, ctx.login_id),
+    )
     await session.commit()
     return group
 
@@ -100,7 +104,10 @@ async def save_relation_group(
 async def dispose_units_in_bulk(
     body: BulkDecisionIn, ctx: BundleContext = Depends(_require_author), session: AsyncSession = Depends(get_session)
 ) -> list[UnitDecisionRowOut]:
-    rows = await dispose_units(session, ctx.bundle, body, ctx.login_id)
+    op = "move_out" if body.action == "move_external" else "delete"
+    rows = await record_snapshot_step(
+        session, ctx.bundle, ctx.login_id, body.undo, op, lambda: dispose_units(session, ctx.bundle, body, ctx.login_id)
+    )
     await session.commit()
     return rows
 
@@ -109,7 +116,9 @@ async def dispose_units_in_bulk(
 async def clear_unit_decision(
     body: ClearIn, ctx: BundleContext = Depends(_require_author), session: AsyncSession = Depends(get_session)
 ) -> DetachReport:
-    report = await clear_unit(session, ctx.bundle, body, ctx.login_id)
+    report = await record_snapshot_step(
+        session, ctx.bundle, ctx.login_id, body.undo, "clear", lambda: clear_unit(session, ctx.bundle, body, ctx.login_id)
+    )
     await session.commit()
     return report
 
@@ -119,7 +128,11 @@ async def reset_decisions(
     body: ResetIn, ctx: BundleContext = Depends(_require_author), session: AsyncSession = Depends(get_session)
 ) -> ResetOut:
     """문서 하나(document_id) 또는 묶음 전체의 배정 초기화. dry_run이면 건수만 돌려주고 바꾸지 않는다."""
-    out = await reset_assignments(session, ctx.bundle, body, ctx.login_id)
+    # 미리 보기(dry_run)는 바꾸지 않으니 기록하지 않는다
+    undo = None if body.dry_run else body.undo
+    out = await record_snapshot_step(
+        session, ctx.bundle, ctx.login_id, undo, "reset", lambda: reset_assignments(session, ctx.bundle, body, ctx.login_id)
+    )
     await session.commit()
     return out
 
@@ -151,9 +164,36 @@ async def get_identical_candidates(
 async def confirm_matches_in_bulk(
     body: BulkMatchIn, ctx: BundleContext = Depends(_require_author), session: AsyncSession = Depends(get_session)
 ) -> GroupOut:
-    group = await confirm_in_bulk(session, ctx.bundle, body, ctx.login_id)
+    group = await record_snapshot_step(
+        session, ctx.bundle, ctx.login_id, body.undo, "confirm_identical",
+        lambda: confirm_in_bulk(session, ctx.bundle, body, ctx.login_id),
+    )
     await session.commit()
     return group
+
+
+@router.post("/{bundle_id}/decisions/undo", response_model=DecisionStepResult)
+async def undo_decision_step(
+    body: DecisionStepIn, ctx: BundleContext = Depends(_require_author), session: AsyncSession = Depends(get_session)
+) -> DecisionStepResult:
+    """이 화면 세션의 마지막 판단 단계를 되돌린다 — 그 뒤 누가 그 줄을 바꿨으면 409 undo_conflict."""
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    result = await undo_step(session, ctx.bundle, ctx.login_id, body.session)
+    await session.commit()
+    return result
+
+
+@router.post("/{bundle_id}/decisions/redo", response_model=DecisionStepResult)
+async def redo_decision_step(
+    body: DecisionStepIn, ctx: BundleContext = Depends(_require_author), session: AsyncSession = Depends(get_session)
+) -> DecisionStepResult:
+    """이 화면 세션에서 되돌린 첫 단계를 다시 한다."""
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    result = await redo_step(session, ctx.bundle, ctx.login_id, body.session)
+    await session.commit()
+    return result
 
 
 @router.get("/{bundle_id}/move-targets", response_model=list[MoveTargetOut])

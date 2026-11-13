@@ -14,6 +14,7 @@ from sqlalchemy.orm import aliased
 from app.clock import now
 from app.sop.ai.adoption import adopt_suggestions
 from app.sop.checks import check_sentence
+from app.sop.decision_steps import UndoMetaIn
 from app.sop.decisions import NEUTRAL, SENTENCE_SOURCE_KINDS, DbId
 from app.sop.detach import (
     CONFIRMED,
@@ -79,6 +80,7 @@ class NewItemIn(BaseModel):
 class BulkMatchIn(BaseModel):
     identical: list[IdenticalItemIn] = Field(default_factory=list, max_length=MAX_BULK_MATCH)
     new: list[NewItemIn] = Field(default_factory=list, max_length=MAX_BULK_MATCH)
+    undo: UndoMetaIn | None = None
 
     @model_validator(mode="after")
     def check_size(self) -> Self:
