@@ -12,7 +12,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from app.sop.constants import NUMBER_NOTE
-from app.sop.excel_export import ExportMeta, build_export_file_name, format_kst, split_cell_text
+from app.sop.excel_export import ExportMeta, build_export_file_name, clean_cell_text, format_kst, split_cell_text
 from app.sop.flow_image import draw_flow_png
 from app.sop.output_labels import LABELS
 from app.sop.outputs import (
@@ -66,18 +66,25 @@ INFO_NAMES = (
 )
 _LABELS = LABELS["en"]
 _MARKERS = {"table": "[Table]", "figure": "[Figure]"}
+_NO_WRAP_KINDS = ("status", "plain")  # 상태 줄·제목·이름 칸은 옆 칸으로 넘쳐 보이게 접지 않는다
 
 
 class SheetCell(BaseModel):
-    text: str = ""
-    faint: bool = False  # 같은 묶음에서 바로 윗줄과 같은 함께 쓰는 칸 — 흐린 글자
+    """칸 하나 — 미리보기와 xlsx가 이 값만 보고 그린다(모양을 다시 판정하지 않는다)."""
+
+    text: str = ""  # 보이는 글 그대로 — XML에 못 쓰는 문자는 이미 U+FFFD(clean_cell_text), 32,767자 이하
+    head: bool = False  # 머리 칸(글이 있는 머리 줄 칸): 바탕 #2B2F36·흰 굵은 글자·아래 thick #202124. 머리 줄의 빈 채움 칸은 False
+    faint: bool = False  # 같은 묶음에서 바로 윗줄과 같은 함께 쓰는 칸 — 흐린 글자 #9AA0A6
     italic: bool = False  # 주석 줄의 글 칸
     bold: bool = False
     numeric: bool = False  # 글이 정수인 칸(Row·건수) — xlsx에는 숫자로 쓴다
 
 
 class SheetRow(BaseModel):
+    """줄 하나 — 위 테두리는 kind로 정한다: group_start는 medium #5F6368, in_group은 thin #9AA0A6, 그 밖은 없음."""
+
     kind: RowKind
+    wrap: bool  # 칸 글을 칸 폭 안에서 접는다(위 맞춤). False(상태 줄·plain 줄)면 접지 않아 옆 빈 칸으로 넘쳐 보인다
     cells: list[SheetCell]  # 늘 시트 열 수(widths)만큼 — 빈 칸도 싣는다
 
 
@@ -107,20 +114,22 @@ def _make_row(
     *,
     bold: Collection[int] = (),
     italic: Collection[int] = (),
-    faint: Collection[int] = (),
     numeric: Collection[int] = (),
 ) -> SheetRow:
-    """칸 글 목록으로 한 줄 — 모양 집합은 1부터 센 열 번호다."""
-    return SheetRow(
-        kind=kind,
-        cells=[
+    """칸 글 목록으로 한 줄 — 글은 여기서 한 번 clean_cell_text를 거친다. 모양 집합은 1부터 센 열 번호다.
+
+    머리 모양은 글이 있는 머리 줄 칸에만(B의 두 칸짜리 Item·Value 머리가 뒤 열까지 칠하지 않게), 상태·plain 줄은 접지 않는다.
+    """
+    cells = []
+    for column, raw in enumerate(texts, start=1):
+        text = clean_cell_text(raw)
+        cells.append(
             SheetCell(
-                text=text, bold=column in bold, italic=column in italic, faint=column in faint,
+                text=text, head=kind == "header" and bool(text), bold=column in bold, italic=column in italic,
                 numeric=column in numeric and bool(text),
             )
-            for column, text in enumerate(texts, start=1)
-        ],
-    )
+        )
+    return SheetRow(kind=kind, wrap=kind not in _NO_WRAP_KINDS, cells=cells)
 
 
 def _pad(texts: Sequence[str], width: int) -> list[str]:
@@ -215,19 +224,23 @@ def _list_a_texts(row: ARow) -> list[str]:
 
 
 def _build_a_sheet(snap: BundleSnapshot, people: Mapping[str, str]) -> Sheet:
-    """ARow 하나가 한 줄(넘는 글은 이어진 줄) — 묶음 첫 줄 말고는 함께 쓰는 칸이 바로 윗줄과 같으면 흐리게(설계 §4.2, O6)."""
+    """ARow 하나가 한 줄(넘는 글은 이어진 줄) — 묶음 첫 줄 말고는 함께 쓰는 칸이 바로 윗줄과 같으면 흐리게(설계 §4.2, O6).
+
+    흐림은 보이는 글(clean_cell_text를 거친 칸 글)끼리 견준다.
+    """
     rows = [_build_status_row(snap, len(A_HEADERS)), _make_row("header", A_HEADERS)]
-    above: list[str] = []
+    above: SheetRow | None = None
     for a_row in build_output_a(snap, "en", people):
         italic = A_NOTE_COLUMNS if a_row.dest_is_note else ()
         for offset, line in enumerate(_split_line(_list_a_texts(a_row), A_ID_COLUMN, A_SHARED_COLUMNS)):
             starts = a_row.is_group_start and offset == 0
-            faint = [] if starts or not above else [
-                column for column in A_SHARED_COLUMNS if line[column - 1] == above[column - 1]
-            ]
-            kind = "group_start" if starts else "in_group"
-            rows.append(_make_row(kind, line, italic=italic, faint=faint, numeric=(A_ROW_COLUMN,)))
-            above = line
+            row = _make_row("group_start" if starts else "in_group", line, italic=italic, numeric=(A_ROW_COLUMN,))
+            if not starts and above is not None:
+                for column in A_SHARED_COLUMNS:
+                    cell = row.cells[column - 1]
+                    cell.faint = cell.text == above.cells[column - 1].text
+            rows.append(row)
+            above = row
     return _make_sheet(SHEET_NAMES[0], A_COLUMN_WIDTHS, rows, freeze="A3", filter_columns=len(A_HEADERS))
 
 

@@ -28,7 +28,6 @@ TEXT_KINDS = ("sentence", "heading", "cell_sentence")  # kind 없는 답이 가�
 DEFAULT_LAYOUT = "ko_en_interleaved"
 # 요청에 실을 수 있는 변경 종류 — 나눔·합침·신규는 서버가 구조로 정한다
 REQUESTABLE_CHANGE_TYPES = ("as_is", "tone", "rewritten", "table_restructured")
-LANGS = ("ko", "en")
 
 
 class SyntheticDriver:

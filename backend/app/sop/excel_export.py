@@ -44,7 +44,6 @@ _ROW_BORDERS = {
     "group_start": Border(top=Side("medium", color="FF5F6368")),
     "in_group": Border(top=Side("thin", color=FAINT_COLOR)),
 }
-_NO_WRAP_KINDS = ("status", "plain")  # 상태 줄·제목·이름 칸은 옆 칸으로 넘쳐 보이게 접지 않는다
 
 
 @dataclass(frozen=True)
@@ -59,12 +58,18 @@ class ExportMeta:
 # --- 칸 쓰기 ---
 
 
+def clean_cell_text(value: str) -> str:
+    """XML에 못 쓰는 문자를 대체 문자로 바꾼다(같은 길이) — 시트 모델이 칸을 지을 때 써 미리보기와 파일이 같은 글을 보인다."""
+    return _UNWRITABLE_RE.sub(REPLACEMENT_CHAR, value)
+
+
 def write_text_cell(cell: Cell, value: str) -> None:
     """글 칸 하나를 쓴다 — 못 쓰는 문자는 대체 문자로 바꾸고 문자열 칸으로 고정한다(=로 시작해도 수식이 되지 않는다).
 
+    시트 모델의 글은 이미 clean_cell_text를 거쳤지만 모델 밖에서 부르는 길을 위해 여기서도 지킨다.
     openpyxl은 32,767자를 넘는 글을 말없이 자르므로 호출부가 split_cell_text로 나눈 글만 넣는다.
     """
-    text = _UNWRITABLE_RE.sub(REPLACEMENT_CHAR, value)
+    text = clean_cell_text(value)
     if len(text) > CELL_TEXT_LIMIT:
         raise ValueError(f"cell text longer than {CELL_TEXT_LIMIT}: {len(text)}")
     cell.value = text
@@ -130,10 +135,9 @@ def _get_font(cell: "SheetCell") -> Font | None:
 
 
 def _write_sheet(sheet: Worksheet, model: "Sheet") -> None:
-    """줄마다 칸 글과 모양 — 머리 줄은 글이 있는 칸만 머리 모양, 묶음 줄은 열 전체에 위 테두리, 숫자 칸은 숫자로 쓴다."""
+    """줄마다 칸 글과 모양을 모델 그대로 — 머리 모양은 칸의 head, 접기는 줄의 wrap, 묶음 줄은 줄 종류대로 열 전체에 위 테두리."""
     for row_no, row in enumerate(model.rows, start=1):
         border = _ROW_BORDERS.get(row.kind)
-        wrap = row.kind not in _NO_WRAP_KINDS
         for column, cell_model in enumerate(row.cells, start=1):
             if not cell_model.text and border is None:
                 continue
@@ -146,9 +150,9 @@ def _write_sheet(sheet: Worksheet, model: "Sheet") -> None:
                 cell.value = int(cell_model.text)
             else:
                 write_text_cell(cell, cell_model.text)
-            if wrap:
+            if row.wrap:
                 cell.alignment = _WRAP_TOP
-            if row.kind == "header":
+            if cell_model.head:
                 cell.font, cell.fill, cell.border = _HEADER_FONT, _HEADER_FILL, _HEADER_BORDER
             elif (font := _get_font(cell_model)) is not None:
                 cell.font = font

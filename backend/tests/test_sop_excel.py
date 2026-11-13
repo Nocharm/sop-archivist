@@ -411,14 +411,23 @@ def test_preview_matches_the_file(client: TestClient) -> None:
         file_texts = [[_read_text(cell.value) for cell in row] for row in ws.iter_rows(max_col=len(sheet["widths"]))]
         assert texts == file_texts[: len(sheet["rows"])], sheet["name"]
         assert not sheet["truncated"] and sheet["total_rows"] == len(sheet["rows"])
-        # 흐림·기울임도 같은 모델에서 나온다
+        # 흐림·기울임·머리 모양·접기도 모델 값 그대로 쓴다 — 쓰는 쪽이 따로 판정하지 않는다
         for row_no, row in enumerate(sheet["rows"], start=1):
             for col_no, cell in enumerate(row["cells"], start=1):
+                written = ws.cell(row_no, col_no)
+                assert (written.fill.fill_type == "solid") == cell["head"], (sheet["name"], row_no, col_no)
                 if cell["text"]:
-                    written = ws.cell(row_no, col_no)
                     assert (_is_faint(written), bool(written.font.i)) == (cell["faint"], cell["italic"])
+                    assert bool(written.alignment.wrap_text) == row["wrap"], (sheet["name"], row_no, col_no)
     (b,) = [sheet for sheet in preview["sheets"] if sheet["name"] == "B Flow"]
     assert b["image_png"] and b["image_row"] == len(b["rows"]) + 2
+    # B의 두 칸짜리 Item·Value 머리는 뒤 채움 칸에 머리 모양이 없고, 상태·plain 줄은 접지 않는다
+    (item_value,) = [row for row in b["rows"] if row["cells"][0]["text"] == "Item"]
+    assert len(b["widths"]) > 2
+    assert [cell["head"] for cell in item_value["cells"]] == [True, True] + [False] * (len(b["widths"]) - 2)
+    assert wb["B Flow"].cell(b["rows"].index(item_value) + 1, 3).fill.fill_type is None
+    assert {row["kind"]: row["wrap"] for row in b["rows"]} == {"status": False, "header": True, "plain": False}
+    assert not wb["B Flow"]["A1"].alignment.wrap_text
     assert {sheet["name"]: sheet["filter_columns"] for sheet in preview["sheets"]} == {
         "A Comparison": 20, "B Flow": 0, "C New documents": 0, "Info": 0,
     }
@@ -496,6 +505,15 @@ def test_export_survives_control_chars_and_formula_text(client: TestClient) -> N
     with zipfile.ZipFile(BytesIO(response.content)) as archive:
         assert not any(b"<f>" in archive.read(name) for name in archive.namelist() if name.startswith("xl/worksheets/"))
     assert _load_unit_text(unit["id"]) == "=SUM(A1)\x0b끝"  # DB 원문은 그대로
+
+    # 미리보기도 파일과 같은 글 — 제어 문자는 모델에서 이미 대체 문자다
+    preview_a = _get_preview(client, fx.bundle_id)["sheets"][0]
+    preview_hits = [
+        (row_no, col_no) for row_no, row in enumerate(preview_a["rows"], start=1)
+        for col_no, cell in enumerate(row["cells"], start=1) if cell["text"] == expected
+    ]
+    assert preview_hits == [(cell.row, cell.column) for cell in hits]
+    assert not any("\x0b" in cell["text"] for row in preview_a["rows"] for cell in row["cells"])
 
 
 def test_write_text_cell_never_makes_formulas() -> None:
