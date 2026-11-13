@@ -79,11 +79,11 @@ export function putBundle(bundle: Bundle): void {
 
 /**
  * 캐시된 묶음의 revision만 바꾼다 - 저장 응답이 묶음 전체가 아니라 revision만 줄 때(결과물 C 순서 저장). 그 전에 시작한 요청은 버린다(putBundle과 같은 순번).
- * 캐시에 묶음이 없으면 아무것도 하지 않는다.
+ * 캐시에 묶음이 없거나 바깥 다시 읽기가 같거나 더 새 revision을 이미 넣었으면 아무것도 하지 않는다(revision은 내려가지 않는다).
  */
 export function setBundleRevision(bundleId: number, revision: number): void {
   const entry = entries.get(bundleId);
-  if (!entry?.bundle) return;
+  if (!entry?.bundle || entry.bundle.revision >= revision) return;
   latest.set(bundleId, ++sequence);
   setEntry(bundleId, { bundle: { ...entry.bundle, revision }, error: null, loading: false });
 }

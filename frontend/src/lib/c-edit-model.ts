@@ -118,6 +118,11 @@ export function acceptSaved(draft: DocDraft, doc: OutputCDoc): DocDraft {
   return { saved: doc, shown, edits, sentCount: 0 };
 }
 
+/** 날아가는 요청에 실리지 않은 편집이 남았나 - 화면을 떠나면 이것은 보내지 못한다 */
+export function hasUnsentEdits(draft: DocDraft): boolean {
+  return draft.edits.length > draft.sentCount;
+}
+
 /** 저장 실패 - 저장 안 된 편집(보낸 것과 그 뒤에 누른 것)을 모두 버리고 서버 문서로 돌아간다 */
 export function rejectSaved(draft: DocDraft): DocDraft {
   return { saved: draft.saved, shown: draft.saved, edits: [], sentCount: 0 };

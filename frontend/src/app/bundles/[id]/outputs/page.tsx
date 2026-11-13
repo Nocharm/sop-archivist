@@ -3,7 +3,7 @@
 // C의 순서·깊이·표시와 의미 확인은 화면에 먼저 얹고 뒤에서 한 번에 하나씩 저장한다(제품 명세 §7.13 C 순서 바꾸기) - 저장 응답으로 그 문서만 맞추고 C 전체를 다시 받지 않는다.
 "use client";
 
-import { Download, Table2, Workflow } from "lucide-react";
+import { Download, RefreshCw, Table2, Workflow } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
@@ -12,6 +12,7 @@ import { OutputARowView } from "@/components/outputs/output-a-row";
 import { OutputBCard } from "@/components/outputs/output-b-card";
 import { OutputCView } from "@/components/outputs/output-c";
 import { ReadOnlyNote } from "@/components/read-only-note";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { BundleLoadError } from "@/components/bundle-load-error";
 import { LoadMoreRows } from "@/components/ui/load-more";
@@ -33,7 +34,7 @@ import {
   type TargetOrderResult,
 } from "@/lib/api-sop";
 import { loadBundle, putBundle, readBundleRevision, setBundleRevision, useBundle } from "@/lib/bundle-store";
-import { acceptSaved, addEdit, rebaseDraft, rejectSaved, sendDraft, startDraft, type CEdit, type DocDraft } from "@/lib/c-edit-model";
+import { acceptSaved, addEdit, hasUnsentEdits, rebaseDraft, rejectSaved, sendDraft, startDraft, type CEdit, type DocDraft } from "@/lib/c-edit-model";
 import {
   canSendJob,
   EMPTY_QUEUE,
@@ -41,15 +42,19 @@ import {
   findOtherSave,
   finishJob,
   getDataRevision,
+  getPendingSave,
   isOwnSave,
   releaseHold,
   takeNextJob,
   trackBundleSave,
   type CViewMark,
+  type PendingSave,
   type SaveHold,
   type SaveJob,
 } from "@/lib/c-save-queue";
 import { useI18n } from "@/lib/i18n";
+import { useLeaveGuard } from "@/lib/leave-guard";
+import { navigate } from "@/lib/nav-buffer";
 import { buildAScreenLines } from "@/lib/output-groups";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
@@ -88,6 +93,11 @@ const EMPTY_C: CState = { bundleId: null, requestKey: null, base: null, lang: "e
 /** 다시 읽어야 바로잡히는 거절 - 다른 곳에서 바뀌었거나(409) 보낸 목록이 서버와 어긋났다(422). 네트워크 오류 등은 다시 읽지 않는다 */
 function isStaleRejection(err: unknown): boolean {
   return err instanceof ApiError && (err.status === 409 || err.status === 422);
+}
+
+/** 서버 오류(5xx) - 순서 저장은 커밋 뒤에 응답 문서를 만들다 실패할 수 있어, 저장됐을 수 있다(묶음·C를 다시 읽어 서버 값을 보인다) */
+function isServerError(err: unknown): boolean {
+  return err instanceof ApiError && err.status >= 500;
 }
 
 export default function OutputsPage() {
@@ -138,23 +148,23 @@ export default function OutputsPage() {
   const checksRef = useRef<Record<string, boolean> | null>(null);
   // 보이는 C와 받기 형편 - fetch는 받기 시작한 C의 수, fetching은 지금 받는 중(저장을 own으로 셀지 isOwnSave가 본다)
   const cRef = useRef({ state: EMPTY_C, fetch: 0, fetching: false });
-  // 409·422 뒤 다시 읽을 때까지의 멈춤
+  // 409·422·5xx 뒤 다시 읽을 때까지의 멈춤
   const holdRef = useRef<SaveHold>("none");
   // 화면을 떠나면 응답은 묶음 캐시만 맞추고 다음 저장을 보내지 않는다. owner는 묶음마다 날아가는 저장(trackBundleSave)에서 이 화면을 가린다
   const mountedRef = useRef(false);
   const ownerRef = useRef<object>({});
   const laneWaitRef = useRef(false);
+  // 아직 보내지 않은 일(떠나면 사라진다) - 이탈 가드와 C 다시 받기 실패 안내가 본다. 줄을 움직일 때마다(pump) 맞춘다
+  const [pendingSave, setPendingSave] = useState<PendingSave>("none");
+  const [leaveTo, setLeaveTo] = useState<string | null>(null);
+  // 확인 창에서 버리고 나가기를 고르면 떠날 때 다시 알리지 않는다
+  const isDiscardConfirmedRef = useRef(false);
+  useLeaveGuard(pendingSave !== "none", setLeaveTo);
   // 응답 처리(비동기)가 읽는 최신 값
   const latestRef = useRef({ tab, t });
   useEffect(() => {
     latestRef.current = { tab, t };
   });
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
 
   /**
    * 받은 C를 보인다 - 초안마다 rebaseDraft로 맞추고(날아가는 저장은 그대로, 다른 곳에서 바뀌어 기다리던 편집을 버리면 알린다),
@@ -192,9 +202,35 @@ export default function OutputsPage() {
     return { fetch: cRef.current.fetch, busy: cRef.current.fetching || latestRef.current.tab !== "c" };
   }
 
-  /** 날아가는 요청이 없으면 줄 앞의 일을 보낸다 - 누를 때·응답 뒤·C를 받은 뒤에 부른다. 보낼 것이 없어진 일(되돌린 문서 등)은 건너뛴다 */
+  /** 날아가는 요청에 실리지 않은 바뀜이 남은 일 - 편집이 남은 문서, 아직 안 보낸 의미 확인 */
+  function readPendingSave(): PendingSave {
+    const waiting: SaveJob[] = [...draftsRef.current].filter(([, draft]) => hasUnsentEdits(draft)).map(([docId]) => ({ kind: "doc", docId }));
+    if (checksRef.current !== null && queueRef.current.pending.some((job) => job.kind === "checks")) waiting.push({ kind: "checks" });
+    return getPendingSave(holdRef.current, waiting);
+  }
+
+  // 떠날 때 보내지 못한 일이 남았으면 알린다 - 떠난 뒤에는 줄을 다시 돌리지 않는다(두 화면의 저장이 겹치지 않게)
+  const notifyUnsentOnLeave = useEffectEvent(() => {
+    if (readPendingSave() !== "none" && !isDiscardConfirmedRef.current) showToast(t("outputs.c.notSaved"), "error");
+  });
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      notifyUnsentOnLeave();
+    };
+  }, []);
+
+  /** 누를 때·응답 뒤·C를 받은 뒤에 부른다 - 보낼 수 있는 일을 보내고, 남은 일을 화면 상태(이탈 가드)에 옮긴다 */
   function pump() {
-    if (!mountedRef.current || laneWaitRef.current) return;
+    if (!mountedRef.current) return;
+    sendNextJob();
+    setPendingSave(readPendingSave());
+  }
+
+  /** 날아가는 요청이 없으면 줄 앞의 일을 보낸다. 보낼 것이 없어진 일(되돌린 문서 등)은 건너뛴다 */
+  function sendNextJob() {
+    if (laneWaitRef.current) return;
     // 떠났다 돌아오기 전 화면의 저장이 아직 날아가면 그 뒤에 보낸다 - 같은 묶음에 두 저장이 겹치지 않게
     const other = findOtherSave(bundleId, ownerRef.current);
     if (other) {
@@ -265,7 +301,8 @@ export default function OutputsPage() {
       setDraft(docId, rejectSaved(draft));
       showToast(`${translate("outputs.c.rolledBack")} ${humanizeApiError(err, translate)}`, "error");
     }
-    if (isStaleRejection(err)) holdForReload();
+    // 5xx는 서버가 저장했을 수 있다 - 409·422처럼 묶음과 C를 다시 읽어 서버 값을 보이고, 낡은 revision으로 다음 것을 보내지 않는다
+    if (isStaleRejection(err) || isServerError(err)) holdForReload();
     pump();
   }
 
@@ -291,14 +328,15 @@ export default function OutputsPage() {
     queueRef.current = finishJob(queueRef.current);
     checksRef.current = null;
     setShownChecks(null);
-    showToast(humanizeApiError(err, latestRef.current.t), "error");
+    const translate = latestRef.current.t;
+    showToast(`${translate("outputs.checks.rolledBack")} ${humanizeApiError(err, translate)}`, "error");
     if (isStaleRejection(err)) holdForReload();
     pump();
   }
 
   /**
-   * 409·422 - 묶음을 다시 읽을 때까지 모든 저장을, 그 뒤 새로 받은 C가 올 때까지 문서 저장을 멈춘다. 기다리던 문서 저장은 새 C 위에
-   * 다시 얹어(adoptC) 새 revision으로 보낸다 - 낡은 revision으로 줄줄이 보내 알림이 문서마다 뜨지 않게.
+   * 409·422(·문서 저장 5xx) - 묶음을 다시 읽을 때까지 모든 저장을, 그 뒤 새로 받은 C가 올 때까지 문서 저장을 멈춘다. 기다리던 문서 저장은 새 C 위에
+   * 다시 얹어(adoptC) 새 revision으로 보낸다 - 낡은 revision으로 줄줄이 보내 알림이 문서마다 뜨지 않게. C를 받지 못하면 다시 시도할 때까지 멈춘 채 둔다.
    */
   function holdForReload() {
     if (holdRef.current === "bundle") return;
@@ -345,8 +383,7 @@ export default function OutputsPage() {
       (error: unknown) => {
         if (!isAlive()) return;
         cRef.current.fetching = false;
-        // 받지 못하면 멈춘 문서 저장도 풀어 준다 - 기다리게만 두면 누른 것이 끝내 가지 않는다
-        holdRef.current = releaseHold(holdRef.current, fetch);
+        // 멈춘 문서 저장은 풀지 않는다 - 낡은 C 위의 편집을 다시 얹지 않고 보내면 다른 곳의 바뀜을 덮는다. 화면이 실패를 알리고 다시 시도를 준다
         setCState((prev) => ({ ...prev, requestKey, error }));
       },
     );
@@ -443,13 +480,31 @@ export default function OutputsPage() {
                 ))}
             </div>
           ) : tab === "c" && shownC ? (
-            <OutputCView
-              data={shownC}
-              resetKey={`c:${key}`}
-              onMove={canEdit ? (docId, locationKey, targetId, dir) => editC(docId, { kind: "move", locationKey, targetId, dir }) : undefined}
-              onIndent={canEdit ? (docId, targetId, depth) => editC(docId, { kind: "indent", targetId, depth }) : undefined}
-              onMark={canEdit ? (docId, targetId, style) => editC(docId, { kind: "style", targetId, style }) : undefined}
-              tobeHref={canEdit ? getStageHref(bundleId, "tobe") : undefined} />
+            <>
+              {/* 앞서 받은 C를 보이는 채 다시 받기가 실패했다 - 위에 붙어 스크롤해도 보이고, 멈춘 저장은 다시 시도로 받은 C 위에서 나간다 */}
+              {outC.error !== null && (
+                <p
+                  className="sticky top-0 z-[2] flex flex-wrap items-center gap-3 border-b border-line bg-surface px-[var(--pad)] py-2 text-[13px] text-ink-2"
+                  role="alert"
+                  data-testid="output-c-reload-error"
+                >
+                  <span>
+                    {`${t("outputs.c.reloadFailed")} ${humanizeApiError(outC.error, t)}${pendingSave === "held" ? ` ${t("outputs.c.waitingReload")}` : ""}`}
+                  </span>
+                  <button type="button" className="btn" data-testid="output-c-reload-retry" onClick={outC.reload}>
+                    <RefreshCw size={14} strokeWidth={1.5} aria-hidden />
+                    {t("common.retry")}
+                  </button>
+                </p>
+              )}
+              <OutputCView
+                data={shownC}
+                resetKey={`c:${key}`}
+                onMove={canEdit ? (docId, locationKey, targetId, dir) => editC(docId, { kind: "move", locationKey, targetId, dir }) : undefined}
+                onIndent={canEdit ? (docId, targetId, depth) => editC(docId, { kind: "indent", targetId, depth }) : undefined}
+                onMark={canEdit ? (docId, targetId, style) => editC(docId, { kind: "style", targetId, style }) : undefined}
+                tobeHref={canEdit ? getStageHref(bundleId, "tobe") : undefined} />
+            </>
           ) : null}
         </div>
       </div>
@@ -495,6 +550,22 @@ export default function OutputsPage() {
         </section>
       </aside>
       {isPreviewOpen && <ExportPreviewModal bundleId={bundleId} onClose={() => setIsPreviewOpen(false)} />}
+      {leaveTo !== null && (
+        <ConfirmModal
+          title={t("outputs.leaveTitle")}
+          summary={t("outputs.leaveBody")}
+          confirmLabel={t("outputs.leaveConfirm")}
+          danger
+          testId="outputs-leave"
+          onClose={() => setLeaveTo(null)}
+          onConfirm={() => {
+            const href = leaveTo;
+            isDiscardConfirmedRef.current = true;
+            setLeaveTo(null);
+            navigate(href, { immediate: true });
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -8,6 +8,7 @@ import {
   findOtherSave,
   finishJob,
   getDataRevision,
+  getPendingSave,
   isOwnSave,
   releaseHold,
   takeNextJob,
@@ -90,6 +91,21 @@ describe("hold after a stale rejection", () => {
     expect(releaseHold({ docsFromFetch: 5 }, 5)).toBe("none");
     expect(releaseHold("bundle", 9)).toBe("bundle");
     expect(releaseHold("none", 1)).toBe("none");
+  });
+});
+
+describe("pending saves", () => {
+  it("says nothing is lost on leaving when nothing waits to be sent", () => {
+    expect(getPendingSave("none", [])).toBe("none");
+    expect(getPendingSave({ docsFromFetch: 2 }, [])).toBe("none");
+  });
+
+  it("tells waiting work that still goes out from work a hold keeps back", () => {
+    expect(getPendingSave("none", [{ kind: "doc", docId: 1 }, { kind: "checks" }])).toBe("sending");
+    // 409·422 뒤 다시 받은 C를 기다리는 문서 저장 - C 받기가 실패하면 다시 시도해야 간다
+    expect(getPendingSave({ docsFromFetch: 2 }, [{ kind: "checks" }])).toBe("sending");
+    expect(getPendingSave({ docsFromFetch: 2 }, [{ kind: "checks" }, { kind: "doc", docId: 1 }])).toBe("held");
+    expect(getPendingSave("bundle", [{ kind: "checks" }])).toBe("held");
   });
 });
 

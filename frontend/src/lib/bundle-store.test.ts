@@ -105,6 +105,20 @@ describe("bundle store", () => {
     act(() => root.unmount());
   });
 
+  it("never lowers the revision when a reload already stored a newer one", async () => {
+    getBundle.mockResolvedValueOnce(makeBundle(16, "in_progress", 3));
+    const root = await mountScreen(16);
+    getBundle.mockResolvedValueOnce(makeBundle(16, "in_review", 7));
+    await act(async () => {
+      await loadBundle(16);
+      // 바깥 다시 읽기(7)보다 늦게 도착한 이 화면 저장 응답(5)
+      setBundleRevision(16, 5);
+    });
+    expect(screen.bundle).toMatchObject({ status: "in_review", revision: 7 });
+    expect(readBundleRevision(16)).toBe(7);
+    act(() => root.unmount());
+  });
+
   it("forgets every bundle on sign-out or user switch, including a load still in flight", async () => {
     const older = defer<Bundle>();
     getBundle.mockReturnValueOnce(older.promise);

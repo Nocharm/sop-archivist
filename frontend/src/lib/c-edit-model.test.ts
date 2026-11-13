@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { NumberStyle, OutputCDoc, OutputCItem } from "./api-sop";
-import { acceptSaved, addEdit, numberDoc, rebaseDraft, rejectSaved, sendDraft, startDraft } from "./c-edit-model";
+import { acceptSaved, addEdit, hasUnsentEdits, numberDoc, rebaseDraft, rejectSaved, sendDraft, startDraft } from "./c-edit-model";
 
 type Section = OutputCDoc["sections"][number];
 
@@ -117,6 +117,15 @@ describe("acceptSaved / rejectSaved", () => {
     expect(rejected.shown).toBe(start.saved);
     expect(rejected.edits).toEqual([]);
     expect(rejected.sentCount).toBe(0);
+  });
+
+  it("knows which edits leaving the page would lose - the ones not in the request in flight", () => {
+    const pressed = addEdit(start, { kind: "move", locationKey: "s5", targetId: 1, dir: 1 })!;
+    expect(hasUnsentEdits(start)).toBe(false);
+    expect(hasUnsentEdits(pressed)).toBe(true);
+    const { draft: sent } = sendDraft(pressed);
+    expect(hasUnsentEdits(sent)).toBe(false);
+    expect(hasUnsentEdits(addEdit(sent, { kind: "indent", targetId: 3, depth: 1 })!)).toBe(true);
   });
 });
 

@@ -1313,10 +1313,13 @@ await runStep("outputs: C reorder moves at once, saves one request at a time and
     await route.fulfill({ status: 500, contentType: "application/json", body: "{}" });
   }, { times: 1 });
   const failed = waitOrderSave(page);
+  // 5xx는 서버가 저장했을 수 있어 C를 다시 받아 서버 값을 보인다
+  const refetchedAfterError = page.waitForResponse((response) => response.request().method() === "GET" && /\/outputs\/c\?/.test(response.url()), { timeout: T });
   await down.dispatchEvent("click");
   check("the line moves at once even when the save will fail", (await readOrder()).indexOf(id) === startIndex + 2);
   await failed;
   await wait(page, "toast-error");
+  check("a server error reads C again", (await refetchedAfterError).ok());
   await page.waitForFunction(({ first, index }) => {
     const section = document.querySelector(`[data-testid="output-c-row-${first}"]`)?.closest("section");
     const ids = [...(section?.querySelectorAll('[data-testid^="output-c-row-"]') ?? [])].map((row) => row.getAttribute("data-testid").replace("output-c-row-", ""));
@@ -1381,16 +1384,25 @@ await runStep("outputs: C saves survive a slow refetch, one conflict toasts once
 
   // 1. 다시 받는 C가 저장보다 늦게 오면 - 서버는 바로 읽고(저장 전) 화면에는 1.5초 늦게 준다. 언어를 바꿔 C를 다시 받기 시작한 뒤 누른다
   const firstIndex = (await orderOf(first[0])).indexOf(first[0]);
+  let delayedC = 0;
+  let deliveredC = 0;
   await page.route(/\/outputs\/c\?/, async (route) => {
+    delayedC += 1;
     const response = await route.fetch();
     await new Promise((done) => setTimeout(done, 1500));
     await route.fulfill({ response });
+    delayedC -= 1;
+    deliveredC += 1;
   });
   await page.locator('[data-testid="top-bar-lang-ko"]').click();
   const savedFirst = waitOrderSave(page);
   await press("down", first[0]);
   check("the save during a refetch is answered", (await savedFirst).ok());
-  await page.waitForTimeout(3500);
+  // 저장 전에 읽은 C와 저장 뒤 다시 받는 C가 모두 도착할 때까지 - 시간만 기다리면 늦은 C가 오기 전에 보고 지나갈 수 있다
+  const deliveredBy = Date.now() + T;
+  while ((deliveredC === 0 || delayedC > 0) && Date.now() < deliveredBy) await page.waitForTimeout(50);
+  check("the delayed C reads arrive", deliveredC > 0 && delayedC === 0, `${deliveredC} delivered, ${delayedC} waiting`);
+  await page.waitForTimeout(300);
   check("a C read before the save does not undo the moved line", (await orderOf(first[0])).indexOf(first[0]) === firstIndex + 1, JSON.stringify(await orderOf(first[0])));
   await page.unroute(/\/outputs\/c\?/);
   await page.locator('[data-testid="top-bar-lang-en"]').click();
@@ -1454,6 +1466,59 @@ await runStep("outputs: C saves survive a slow refetch, one conflict toasts once
     await back;
   }
   check("the line goes back to where it started", (await orderOf(first[0])).indexOf(first[0]) === firstIndex);
+
+  // 4. 409 뒤 다시 받는 C가 실패하면 - 기다리는 저장은 낡은 C 위에서 나가지 않고 멈춘 채 알림과 다시 시도가 보이며, 떠나려 하면 묻는다
+  await waitIdle();
+  let conflictedAgain = false;
+  let heldPuts = 0;
+  const countHeldPut = (request) => {
+    if (isOrderSave(request)) heldPuts += 1;
+  };
+  page.on("request", countHeldPut);
+  await page.route("**/targets/order**", async (route) => {
+    if (conflictedAgain) return route.continue();
+    conflictedAgain = true;
+    await new Promise((done) => setTimeout(done, 600));
+    await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ detail: { code: "revision_conflict", conflicts: [] } }) });
+  });
+  await page.route(/\/outputs\/c\?/, (route) => route.fulfill({ status: 500, contentType: "application/json", body: "{}" }), { times: 1 });
+  await press("down", first[0]);
+  await press("down", second[0]);
+  await wait(page, "output-c-reload-error");
+  await page.waitForTimeout(800);
+  check("a failed C read after a conflict shows a notice with a retry", await page.locator('[data-testid="output-c-reload-retry"]').isVisible());
+  check("the waiting move stays on screen", (await orderOf(second[0])).indexOf(second[0]) === secondIndex + 1);
+  check("the held save is not sent on the old C", heldPuts === 1, `${heldPuts} PUT`);
+  await takeShot("sop-outputs-c-reload-error.png");
+  await page.locator('[data-testid="stage-nav-overview"]').click();
+  await wait(page, "outputs-leave");
+  check("leaving with a waiting save asks first", true);
+  await page.locator('[data-testid="outputs-leave-cancel"]').click();
+  const heldSaved = waitOrderSave(page);
+  await page.locator('[data-testid="output-c-reload-retry"]').click();
+  check("after retry the held move is saved on the fresh C", (await heldSaved).ok());
+  await waitIdle();
+  page.off("request", countHeldPut);
+  await page.unroute("**/targets/order**");
+  check("the conflicted line is back and the held move kept", (await orderOf(first[0])).indexOf(first[0]) === firstIndex && (await orderOf(second[0])).indexOf(second[0]) === secondIndex + 1);
+
+  // 5. 저장을 기다리는 바뀜이 남은 채 브라우저 뒤로 - 이탈 확인 창이 막지 못하는 길이라 떠난 뒤 알린다. 날아가던 저장만 남는다
+  await page.route("**/targets/order**", async (route) => {
+    await new Promise((done) => setTimeout(done, 2000));
+    await route.continue();
+  });
+  // 위(날아감) 다음 아래(기다림) - 그 줄은 칸의 첫 줄 바로 아래라 위로 두 번은 칸 끝에 걸린다
+  const leftSave = waitOrderSave(page);
+  await press("up", second[0]);
+  await press("down", second[0]);
+  await page.goBack();
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="toast-error"]')].some((toast) => toast.textContent?.includes("Some changes in C were not saved.")), null, { timeout: T });
+  check("leaving with an unsent change says so", true);
+  check("the save in flight when leaving still lands", (await leftSave).ok());
+  await page.unroute("**/targets/order**");
+  await page.locator('[data-testid="stage-nav-outputs"]').click();
+  await wait(page, `output-c-row-${second[0]}`);
+  check("only the save in flight when leaving is kept", (await orderOf(second[0])).indexOf(second[0]) === secondIndex, JSON.stringify(await orderOf(second[0])));
 });
 
 // 작성자가 요청을 거둔 뒤 다시 요청해 둔다 - 아래 검토자 단계가 같은 Bundle을 검토 대기로 받는다

@@ -73,6 +73,15 @@ export function releaseHold(hold: SaveHold, fetch: number): SaveHold {
   return typeof hold === "object" && fetch >= hold.docsFromFetch ? "none" : hold;
 }
 
+/** 화면을 떠나면 사라질 일 - none은 없음, held는 멈춤에 걸려 다시 받은 C(다시 시도)를 기다리는 일이 있음, sending은 차례대로 나가는 중 */
+export type PendingSave = "none" | "sending" | "held";
+
+/** waiting = 날아가는 요청에 실리지 않은 바뀜이 남은 일(편집이 남은 문서, 아직 안 보낸 의미 확인) */
+export function getPendingSave(hold: SaveHold, waiting: readonly SaveJob[]): PendingSave {
+  if (waiting.length === 0) return "none";
+  return waiting.some((job) => !canSendJob(hold, job)) ? "held" : "sending";
+}
+
 // 묶음마다 날아가는 저장 - 화면을 떠났다 금방 돌아와 새 화면 인스턴스가 생겨도 같은 묶음에 두 줄이 겹쳐 보내지 않게(모듈 상태, 화면과 무관)
 const lanes = new Map<number, { owner: object; done: Promise<void> }>();
 
