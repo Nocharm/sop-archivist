@@ -899,7 +899,9 @@ export default function AssignPage() {
       if (code === "nothing_to_undo") setUndoState((prev) => ({ ...prev, canUndo: false }));
       else if (code === "nothing_to_redo") setUndoState((prev) => ({ ...prev, canRedo: false }));
       // 자르기를 거꾸로 할 조각에 그 사이 판단이 걸렸다 - 묻지 않고 거절한다(설계 §4.4)
-      showToast(code === "confirm_required" ? t("assign.ctx.why.assigned") : humanizeApiError(err, t), "error");
+      if (code === "confirm_required") showToast(t("assign.ctx.why.assigned"), "error");
+      else if (code === "undo_conflict" && err instanceof ApiError) showToast(formatUndoRefusal(err.rule?.unit_ids, kind), "error");
+      else showToast(humanizeApiError(err, t), "error");
     } finally {
       // 거절도 그 사이 바뀐 것이 있다는 뜻이라 다시 받는다 - 짝 모양이 바뀌었을 수 있어 원문 보기도
       views.reload();
@@ -907,6 +909,14 @@ export default function AssignPage() {
       void loadBundle(bundleId);
       setBusy(false);
     }
+  }
+
+  /** 되돌리기 거절 알림 - 어느 줄이 걸렸는지 번호로(3개까지). 지금 목록에 없는 Unit(은퇴한 조각)은 빼고, 남는 것이 없으면 번호 없이 */
+  function formatUndoRefusal(unitIds: unknown, kind: "undo" | "redo"): string {
+    const ids = Array.isArray(unitIds) ? unitIds.filter((id): id is number => typeof id === "number") : [];
+    const labels = [...new Set(ids.map((id) => unitMap.get(id)?.display_id).filter((label): label is string => label !== undefined))];
+    const rows = labels.length === 0 ? "" : ` (${labels.slice(0, 3).join(", ")}${labels.length > 3 ? ` +${labels.length - 3}` : ""})`;
+    return t(kind === "undo" ? "assign.undoRefused" : "assign.redoRefused", { rows });
   }
 
   /** 되돌리기·다시 하기 알림 - Split formatStep과 같은 꼴(무엇 · 대상) */

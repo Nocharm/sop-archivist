@@ -1,6 +1,8 @@
 // Assign New 칸의 아직 쓰지 않은 문서 - 서버가 결과물 C 규칙으로 엮은 문서(ComposedDoc)를 New 칸 줄로 펴고,
 // 저장 응답으로 서버 다시 읽기 전에 미리 고친다(칸 끝에 넣기·지우기). 순서·번호는 다시 읽은 서버 값이 정한다.
+// 줄 앞머리에는 결과물 C와 같은 그 줄 자기 번호("5.1.1", 생략·주석은 없음)를 두고, 칸 번호는 칸 머리 줄에 남긴다.
 import type { ComposedDoc, ComposedItem, GroupTarget, WrittenSentence } from "@/lib/api-sop";
+import { getPillWidth, getSectionLevel } from "@/lib/strip-pill-model";
 
 /** 아무것도 받지 않은 칸 - 옅은 자리 표시. key는 칸 키라 칸이 차고 비어도 같은 줄로 읽힌다 */
 export interface EmptySlotRow {
@@ -11,7 +13,12 @@ export interface EmptySlotRow {
   na: boolean;
 }
 
-export type NewPaneRow = WrittenSentence | EmptySlotRow;
+/** 엮은 문서의 줄 - number는 결과물 C의 그 줄 자기 번호(서버 number_targets), 생략·주석 줄과 저장 직후 미리 넣은 줄은 null */
+export interface ComposedRow extends WrittenSentence {
+  number: string | null;
+}
+
+export type NewPaneRow = WrittenSentence | ComposedRow | EmptySlotRow;
 
 /** New 칸 줄의 키 - 문장은 target id, 빈 칸은 칸 키 */
 export function getNewRowKey(row: NewPaneRow): string {
@@ -22,14 +29,24 @@ export function isWrittenRow(row: NewPaneRow): row is WrittenSentence {
   return row.kind !== "empty";
 }
 
-/** 칸 머리 글 - 번호가 있으면 "5.1. 이름"(New 칸은 앞 번호를 앞머리에 옮겨 보인다) */
+/** 엮은 문서의 줄인가 - 이미 쓴 문서의 문장에는 자기 번호가 없다(앞머리는 절 번호) */
+export function isComposedRow(row: NewPaneRow): row is ComposedRow {
+  return row.kind !== "empty" && "number" in row;
+}
+
+/** 절 머리 글("5.2. Title")의 앞 번호 - 없으면 빈 글 */
+export function readSectionNumber(path: string): string {
+  return /^\s*(\d+(?:\.\d+)*)\.?/.exec(path)?.[1] ?? "";
+}
+
+/** 칸 머리 글 - 번호가 있으면 "5.1. 이름" */
 function formatSectionPath(number: string | null, label: string): string {
   return number ? `${number}. ${label}` : label;
 }
 
-/** 엮은 문서를 New 칸 줄로 - 칸 순서대로 받은 새 문장, 빈 칸은 자리 표시 한 줄. 쓰지 않은 문서라 Remark·짝 카드는 없다 */
-export function buildComposedRows(doc: ComposedDoc): NewPaneRow[] {
-  const rows: NewPaneRow[] = [];
+/** 엮은 문서를 New 칸 줄로 - 칸 순서대로 받은 새 문장(자기 번호를 싣는다), 빈 칸은 자리 표시 한 줄. 쓰지 않은 문서라 Remark·짝 카드는 없다 */
+export function buildComposedRows(doc: ComposedDoc): Array<ComposedRow | EmptySlotRow> {
+  const rows: Array<ComposedRow | EmptySlotRow> = [];
   for (const section of doc.sections) {
     const path = formatSectionPath(section.number, section.label);
     if (section.items.length === 0) {
@@ -52,10 +69,47 @@ export function buildComposedRows(doc: ComposedDoc): NewPaneRow[] {
         partner_target_id: null,
         remark: "",
         revision: 0,
+        number: item.number,
       });
     });
   }
   return rows;
+}
+
+// 앞머리 번호 한 글자 폭(px) - .strip-lead-num(500 11px JetBrains Mono) 실측 6.6px. 글꼴·크기를 바꾸면 함께 고친다
+const LEAD_CHAR_PX = 6.6;
+// 번호 칸 안 여백(px) - .strip-lead-num 오른쪽 padding 5px에 왼쪽 숨 1px
+const LEAD_PAD_PX = 6;
+
+/**
+ * 엮은 문서 줄마다 앞머리 번호 칸 폭(키 = target id 글자) - 자기 번호의 깊이별 폭(getPillWidth)이되, 그 깊이의 가장 긴 번호가 잘리지 않게
+ * 그 깊이 전체를 넓힌다(같은 깊이는 같은 폭이라 들여쓰기로 읽힌다). 번호 없는 줄(생략·주석·저장 직후)은 같은 칸 앞 줄의 폭,
+ * 칸의 첫 줄이면 그 칸 첫 깊이(칸 번호 한 마디 아래)의 폭, 번호 없는 칸이면 1단 폭
+ */
+export function getComposedLeadWidths(rows: readonly NewPaneRow[]): Map<string, number> {
+  const composed = rows.filter(isComposedRow);
+  const byLevel = new Map<number, number>();
+  for (const { number } of composed) {
+    if (number === null) continue;
+    const level = getSectionLevel(number);
+    byLevel.set(level, Math.max(byLevel.get(level) ?? getPillWidth(level), Math.ceil(number.length * LEAD_CHAR_PX) + LEAD_PAD_PX));
+  }
+  const getLevelWidth = (level: number) => byLevel.get(level) ?? getPillWidth(level);
+  const widths = new Map<string, number>();
+  let path: string | null = null;
+  let previous: number | null = null;
+  for (const row of composed) {
+    if (row.section_path !== path) {
+      path = row.section_path;
+      previous = null;
+    }
+    const slotLevel = getSectionLevel(readSectionNumber(row.section_path));
+    const opening = slotLevel > 0 ? getLevelWidth(slotLevel + 1) : getPillWidth(1);
+    const width: number = row.number !== null ? getLevelWidth(getSectionLevel(row.number)) : (previous ?? opening);
+    widths.set(String(row.target_id), width);
+    previous = width;
+  }
+  return widths;
 }
 
 /** 칸 머리 줄(번호. 칸 이름) → 칸 제목 출처 - 빈 출처는 뺀다. buildComposedRows의 section_path와 같은 열쇠 */
@@ -94,6 +148,7 @@ export function applySavedTargets(doc: ComposedDoc, targets: readonly GroupTarge
       text: target.confirmed_text || target.ai_text || textOf(target.source_unit_ids),
       status: target.status,
       change_type: target.change_type,
+      // 번호는 칸 안 자리·깊이·표시로 서버가 센다 - 짐작한 번호가 C와 어긋나 보이지 않게 다시 읽기 전까지 비워 둔다(남은 줄은 서버 번호 그대로)
       number: null,
       source_unit_ids: target.source_unit_ids,
     };

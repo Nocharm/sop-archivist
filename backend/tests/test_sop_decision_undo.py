@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.main import app
 from app.sop import decision_steps
+from app.sop.constants import SLOT_HEADING
 from app.sop.decision_steps import Snapshot, diff_states, dump_bundle_state, find_mismatches, write_state
 from app.sop.models import AiSuggestion, Bundle, BundleEvent, DecisionStep, TargetSentence, UnitEdit
 from tests.access_helpers import run_in_session, update_row
@@ -50,6 +51,7 @@ from tests.test_sop_decisions import NA_SLOTS as DECISIONS_NA_SLOTS
 from tests.test_sop_decisions import TOBE_DOCS as DECISIONS_TOBE_DOCS
 from tests.test_sop_decisions import WI_STEPS as DECISIONS_WI_STEPS
 from tests.test_sop_decisions import _setup as _setup_decisions
+from tests.test_sop_outputs import _put_order
 from tests.test_sop_pair_settle import EN_HEAD, KO_HEAD, _dispose, _setup_pair, _setup_unpaired
 from tests.test_sop_pairs import _create as _create_pair
 
@@ -1071,3 +1073,120 @@ def test_redo_refused_when_the_restored_sentence_was_translated(client: TestClie
     before = _dump(bundle.id)
 
     _assert_refused(_redo(client, bundle.id), bundle.id, before, [unit["id"]])
+
+
+# ── 그 사이 결과물 C에서 바꾼 순서 ────────────────────────────────────────────
+
+
+def _reorder_reversed(client: TestClient, bundle_id: int, doc_id: int) -> None:
+    """결과물 C에서 문서 하나의 맨 위 새 문장 순서를 거꾸로 바꾼다(칸 제목은 순서가 없어 보내지 않는다)."""
+    rows = [
+        row for row in _dump(bundle_id)["target_sentences"].values()
+        if row["target_doc_id"] == doc_id and row["parent_target_id"] is None and row["kind"] != SLOT_HEADING
+    ]
+    rows.sort(key=lambda row: (row["order_index"], row["id"]), reverse=True)
+    body = {
+        "revision": get_bundle(client, bundle_id)["revision"], "target_doc_id": doc_id,
+        "items": [{"target_id": row["id"]} for row in rows],
+    }
+    response = _put_order(client, bundle_id, body)
+    assert response.status_code == 200, response.text
+
+
+def _list_step_states(bundle_id: int) -> list[str]:
+    return [step.state for step in _load_steps(bundle_id)]
+
+
+def test_undo_refused_when_c_reordered_the_document_since(client: TestClient) -> None:
+    """B·C를 SOP 칸으로 → A 확정(기록) → A 비우기(기록) → 결과물 C에서 그 문서 순서를 바꿈 → undo는 A의 새 문장을 옛 순번으로 되살린다.
+
+    순서 바꾸기는 B·C(단계 밖 행)의 순번을 다시 매겨 행 비교로는 안 보인다 — 되살린 A가 칸 맨 앞에 끼어들어 첫 번호를 가져가니 거절한다
+    (사용자 결정 2026-11-14).
+    """
+    fx = _setup_rich(client)
+    _confirm_unit(client, fx, fx.b)
+    _confirm_unit(client, fx, fx.c)
+    _confirm_unit(client, fx, fx.a, undo=UNDO)
+    _clear(client, fx.bundle_id, fx.a, 2, undo=UNDO)
+    _reorder_reversed(client, fx.bundle_id, fx.sop_id)
+    before = _dump(fx.bundle_id)
+
+    _assert_refused(_undo(client, fx.bundle_id), fx.bundle_id, before, [fx.a["id"]])
+    _assert_refused(_undo(client, fx.bundle_id), fx.bundle_id, before, [fx.a["id"]])  # 단계는 그 자리에 남는다
+    assert _list_step_states(fx.bundle_id) == ["applied", "applied"]
+
+
+def test_redo_refused_when_c_reordered_the_document_since_undo(client: TestClient) -> None:
+    """B·C를 SOP 칸으로 → A 확정(기록) → undo(A의 새 문장이 사라진다) → 결과물 C에서 그 문서 순서를 바꿈 → redo — 같은 이유로 거절."""
+    fx = _setup_rich(client)
+    _confirm_unit(client, fx, fx.b)
+    _confirm_unit(client, fx, fx.c)
+    _confirm_unit(client, fx, fx.a, undo=UNDO)
+    _ok(_undo(client, fx.bundle_id))
+    _reorder_reversed(client, fx.bundle_id, fx.sop_id)
+    before = _dump(fx.bundle_id)
+
+    _assert_refused(_redo(client, fx.bundle_id), fx.bundle_id, before, [fx.a["id"]])
+    assert _list_step_states(fx.bundle_id) == ["undone"]
+
+
+def test_undo_not_refused_when_c_reordered_another_document(client: TestClient) -> None:
+    """그 사이 순서를 바꾼 문서가 되살릴 새 문장의 문서가 아니면(입구 2 새 문서) 되돌린다."""
+    fx = _setup_rich(client)
+    _confirm_unit(client, fx, fx.a, undo=UNDO)
+    _clear(client, fx.bundle_id, fx.a, 2, undo=UNDO)
+    (other_doc_id,) = {
+        row["target_doc_id"] for row in _dump(fx.bundle_id)["target_sentences"].values()
+        if row["target_doc_id"] != fx.sop_id
+    }
+    _reorder_reversed(client, fx.bundle_id, other_doc_id)
+
+    _ok(_undo(client, fx.bundle_id))
+
+    assert _dump(fx.bundle_id)["unit_decisions"][str(fx.a["id"])]["status"] == "confirmed"
+
+
+def test_undo_not_refused_when_c_reordered_before_the_step(client: TestClient) -> None:
+    """순서를 바꾼 뒤에 남긴 단계는 지금 순번 위에서 찍었으니 되돌린다."""
+    fx = _setup_rich(client)
+    _confirm_unit(client, fx, fx.b)
+    _confirm_unit(client, fx, fx.c)
+    _reorder_reversed(client, fx.bundle_id, fx.sop_id)
+    _confirm_unit(client, fx, fx.a, undo=UNDO)
+    _clear(client, fx.bundle_id, fx.a, 2, undo=UNDO)
+
+    assert _ok(_undo(client, fx.bundle_id))["op"] == "clear"
+
+    assert _dump(fx.bundle_id)["unit_decisions"][str(fx.a["id"])]["status"] == "confirmed"
+
+
+def test_redo_not_refused_when_c_reordered_before_the_undo(client: TestClient) -> None:
+    """A 확정(기록) → 그 문서 순서 바꾸기(맨 위 새 문장이 A 하나라 순번 그대로) → undo → redo.
+
+    redo가 되쓸 after는 undo 직전까지 참이었다 — 그 앞의 순서 바꾸기는 단계를 남긴 뒤라도 거절하지 않는다.
+    """
+    fx = _setup_rich(client)
+    _confirm_unit(client, fx, fx.a, undo=UNDO)
+    _reorder_reversed(client, fx.bundle_id, fx.sop_id)
+    _ok(_undo(client, fx.bundle_id))
+
+    _ok(_redo(client, fx.bundle_id))
+
+    assert _dump(fx.bundle_id)["unit_decisions"][str(fx.a["id"])]["status"] == "confirmed"
+
+
+def test_undo_after_redo_not_refused_when_c_reordered_before_the_redo(client: TestClient) -> None:
+    """A 확정 → A 비우기(기록) → undo → 그 문서 순서 바꾸기(A 하나라 순번 그대로) → redo → undo.
+
+    마지막 undo가 되쓸 before는 redo 직전까지 참이었다 — 단계를 처음 남긴 때가 아니라 마지막으로 움직인 때부터 본다.
+    """
+    fx = _setup_rich(client)
+    _confirm_unit(client, fx, fx.a)
+    _clear(client, fx.bundle_id, fx.a, 2, undo=UNDO)
+    _ok(_undo(client, fx.bundle_id))
+    _reorder_reversed(client, fx.bundle_id, fx.sop_id)
+    _ok(_redo(client, fx.bundle_id))
+
+    _ok(_undo(client, fx.bundle_id))
+
+    assert _dump(fx.bundle_id)["unit_decisions"][str(fx.a["id"])]["status"] == "confirmed"

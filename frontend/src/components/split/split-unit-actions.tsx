@@ -34,12 +34,6 @@ interface ActionSet {
   canUnmerge: boolean;
 }
 
-// 마지막으로 묶음이 꺼지기 시작한 때 - 곧이어 새로 붙는 단추 줄(다음 조각)은 옛 줄이 꺼진 뒤에 켜진다
-let lastTurnOffAt = 0;
-// 이 안에 붙은 단추 줄은 꺼짐에 이어 켜진다(ms) - 옛 줄이 아직 꺼지는 중일 때만(꺼짐 한 번 ≈ --dur-slow × 1.15 = 276ms).
-// 화면은 확인한 조각의 줄이 다 꺼진 뒤에 넘어가니(split-advance) 보통은 바로 켜지고, 그 사이 Enter로 건너뛰었을 때만 이어 켜진다
-const CHAIN_WINDOW_MS = 300;
-
 function readSetKey(set: ActionSet): string {
   return `${set.isChecked}:${set.canUnpair}:${set.canUnmerge}`;
 }
@@ -49,13 +43,10 @@ export function SplitUnitActions(props: SplitUnitActionsProps) {
   const [isArmed, setIsArmed] = useState(false);
   // 보이는 묶음 - 들어온 묶음과 다르면 꺼지는 동안 옛 묶음을 그린다
   const [shown, setShown] = useState<ActionSet>({ isChecked: props.isChecked, canUnpair: props.canUnpair, canUnmerge: props.canUnmerge });
-  // "after" - 다른 조각의 줄이 꺼지는 동안 기다렸다 켜진다, "held" - 꺼진 채 넘어가기를 기다리다 넘어가지 않으면 켜진다, "gone" - 접히는 줄이라 꺼진 채
-  const [turnOn, setTurnOn] = useState<"now" | "after" | "held" | "gone" | null>(() => (Date.now() - lastTurnOffAt < CHAIN_WINDOW_MS ? "after" : null));
+  // 새로 붙는 줄(넘어간 다음 조각)은 기다리지 않고 바로 보인다(사용자 결정 2026-11-14) - 꺼짐·켜짐은 같은 조각의 묶음이 바뀔 때만.
+  // "held" - 꺼진 채 넘어가기를 기다리다 넘어가지 않으면 켜진다, "gone" - 접히는 줄이라 꺼진 채
+  const [turnOn, setTurnOn] = useState<"now" | "held" | "gone" | null>(null);
   const isTurningOff = readSetKey(shown) !== readSetKey(props);
-
-  useEffect(() => {
-    if (isTurningOff) lastTurnOffAt = Date.now();
-  }, [isTurningOff]);
 
   useEffect(() => {
     if (!isArmed) return;
@@ -119,7 +110,7 @@ export function SplitUnitActions(props: SplitUnitActionsProps) {
       className="strip-acts-bar"
       role="group"
       aria-label={t("split.unitActions")}
-      data-crt={isTurningOff ? "off" : turnOn === "gone" ? "gone" : turnOn === "held" ? (props.isHeld ? "gone" : "on") : turnOn === "now" ? "on" : turnOn === "after" ? "on-after" : undefined}
+      data-crt={isTurningOff ? "off" : turnOn === "gone" ? "gone" : turnOn === "held" ? (props.isHeld ? "gone" : "on") : turnOn === "now" ? "on" : undefined}
       onClick={(event) => event.stopPropagation()}
       onAnimationEnd={handleAnimationEnd}
     >

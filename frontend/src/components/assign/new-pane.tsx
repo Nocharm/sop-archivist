@@ -1,5 +1,6 @@
 // Assign 오른쪽 - New 문서. 이미 쓴 문서는 그 원문, 아직 쓰지 않은 문서는 지금까지의 배정으로 엮은 문서(서버 결과물 C 규칙, 읽기 전용 미리 보기).
 // Old와 같은 종이 조각: 왼쪽 밖 앞머리(절 번호 칸, 폭 = 절 깊이라 들여쓴 것처럼 읽힌다), 본문 위 줄에 출처 칩, 위 테두리 오른쪽에 올리거나 고를 때만 KO/EN 탭(짝은 모두).
+// 엮은 문서의 앞머리는 결과물 C와 같은 줄마다 자기 번호(생략·주석은 없음)이고 칸 번호는 칸 머리 줄에 남는다.
 // 점선 = 후보, 채움 = 고른 문장, 칩 = 붙은 Old 출처(누르면 Old의 그 조각으로), 왼쪽 끝 위험색 막대 = 출처 없음. 엮은 문서의 빈 칸은 옅은 자리 표시.
 // 칩 오른쪽 갈매기는 그 Old 조각이 왼쪽 칸 화면 위·아래 밖에 있다는 표시 - 스크롤마다 바뀌어 LinkLines가 data-dir로 단다(Old 배지와 같은 방식).
 // 줄이 새로 들어오면 펼치며 나타나고 빠지면 접히며 사라진다(확정이 곧 보이는 실시간 넣기). 표·그림은 이번 화면에서 잇지 않아 회색 상자로만 보인다(설계 §2).
@@ -16,7 +17,7 @@ import { Truncate } from "@/components/ui/motion";
 import { Select, type SelectOption } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { WrittenSentence } from "@/lib/api-sop";
-import { diffRows, getNewRowKey, isWrittenRow, type NewPaneRow } from "@/lib/composed-model";
+import { diffRows, getComposedLeadWidths, getNewRowKey, isComposedRow, isWrittenRow, readSectionNumber, type NewPaneRow } from "@/lib/composed-model";
 import { useI18n } from "@/lib/i18n";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionPill, getTabWidths } from "@/lib/strip-pill-model";
 
@@ -58,11 +59,6 @@ function readState(row: WrittenSentence, props: NewPaneProps): string | undefine
   if (props.candidateIds.has(row.target_id)) return "candidate";
   if (!props.readOnly && row.kind === "sentence" && row.source_unit_ids.length === 0 && row.change_type !== "new") return "unsourced";
   return undefined;
-}
-
-/** 절 머리 글("5.2. Title")의 앞 번호 - 없으면 빈 글 */
-function readSectionNumber(path: string): string {
-  return /^\s*(\d+(?:\.\d+)*)\.?/.exec(path)?.[1] ?? "";
 }
 
 /** 짝 묶음 번호 - 짝의 작은 문장 id(서버는 둘짜리 짝만 서로를 가리킨다), 짝이 아니면 null. 앞머리 괄호와 언어 탭이 같은 기준을 쓴다 */
@@ -150,14 +146,17 @@ export function NewPane(props: NewPaneProps) {
   // 짝 구성원이 바로 이웃하면 구성원 수와 상관없이 한 카드, 앞머리 번호 칸 폭은 절 깊이 - Old와 같은 규칙. 짝 묶음 번호는 짝의 작은 문장 id(서버는 둘짜리 짝만 서로를 가리킨다). 표·그림 줄은 카드를 끊는다
   const brackets = getPairBrackets(sentences.map((row) => ({ unitId: row.target_id, groupId: readPairGroup(row) })));
   const cardTops = getCardTops(sentences.map((row) => row.target_id), brackets);
-  const widths = getTabWidths(
-    sentences
-      .filter((row) => row.kind === "sentence")
-      .map((row) => {
-        const top = cardTops.get(row.target_id);
-        return { key: String(row.target_id), part: "", sectionLabel: readSectionNumber(row.section_path), pairTopOf: top === undefined ? null : String(top) };
-      }),
-  );
+  // 엮은 문서는 줄마다 자기 번호라 번호 칸 폭도 그 번호의 깊이로(표·그림 포함), 이미 쓴 문서는 절 번호의 깊이로
+  const widths = sentences.some(isComposedRow)
+    ? getComposedLeadWidths(sentences)
+    : getTabWidths(
+        sentences
+          .filter((row) => row.kind === "sentence")
+          .map((row) => {
+            const top = cardTops.get(row.target_id);
+            return { key: String(row.target_id), part: "", sectionLabel: readSectionNumber(row.section_path), pairTopOf: top === undefined ? null : String(top) };
+          }),
+      );
 
   // 방금 보낸 문장을 화면에 들인다 - 엮은 문서는 다시 읽은 뒤에야 그 줄이 생기니 그려질 때까지 렌더마다 본다(seq마다 한 번)
   const revealedSeq = useRef<number | null>(null);
@@ -224,8 +223,9 @@ export function NewPane(props: NewPaneProps) {
   /** 문장 한 줄(앞 틈 포함) */
   function renderSentence(row: WrittenSentence, isSectionStart: boolean, previous: NewPaneRow | undefined): ReactNode {
     const bracket = brackets.get(row.target_id);
-    // 번호는 앞머리가 보일 때만 머리 글에서 뺀다 - 짝 카드의 둘째 줄부터가 절을 열면 앞머리에 번호가 없다
-    const number = isSectionStart && !cardTops.has(row.target_id) ? getSectionPill(readSectionNumber(row.section_path)) : null;
+    // 엮은 문서는 줄마다 결과물 C의 자기 번호(생략·주석은 없음). 이미 쓴 문서는 절을 여는 줄에만 절 번호 - 짝 카드의 둘째 줄부터가 절을 열면 앞머리에 번호가 없다
+    const isOwnNumber = isComposedRow(row);
+    const number = isOwnNumber ? row.number : isSectionStart && !cardTops.has(row.target_id) ? getSectionPill(readSectionNumber(row.section_path)) : null;
     const text = (
       <span lang={row.lang === "neutral" ? undefined : row.lang} className="new-text">
         {row.text}
@@ -235,7 +235,7 @@ export function NewPane(props: NewPaneProps) {
       <>
         {!isSectionStart && previous?.kind === "sentence" && <div className="new-gap" data-pair={cardTops.has(row.target_id) ? "" : undefined} />}
         <div className="strip-row">
-          <StripLead width={widths.get(String(row.target_id)) ?? getPillWidth(1)} number={number} bracket={bracket} dim={!isSectionStart} tip="" testId="assign-new" id={row.target_id} />
+          <StripLead width={widths.get(String(row.target_id)) ?? getPillWidth(1)} number={number} bracket={bracket} dim={isOwnNumber ? number === null : !isSectionStart} tip="" testId="assign-new" id={row.target_id} />
           <div
             className="strip new-line"
             data-bracket={bracket}
@@ -297,10 +297,18 @@ export function NewPane(props: NewPaneProps) {
       );
     }
     if (row.kind !== "sentence") {
-      return (
+      const block = (
         <p className="new-block" data-testid={`assign-new-${row.target_id}`}>
           {row.kind === "table" ? t("assign.newTable") : t("assign.newFigure")}
         </p>
+      );
+      if (!isComposedRow(row)) return block;
+      // 엮은 문서의 표·그림도 결과물 C처럼 번호를 센다 - 앞머리에 자기 번호를 두어 문장 번호가 건너뛴 까닭이 보이게
+      return (
+        <div className="strip-row">
+          <StripLead width={widths.get(String(row.target_id)) ?? getPillWidth(1)} number={row.number} dim={row.number === null} tip="" testId="assign-new" id={row.target_id} />
+          {block}
+        </div>
       );
     }
     return renderSentence(row, isSectionStart, previous);
@@ -341,8 +349,8 @@ export function NewPane(props: NewPaneProps) {
               const key = getNewRowKey(row);
               // 절이 바뀌는 첫 줄 앞에만 절 머리 - 접히며 빠지는 줄과 들어오는 줄이 같은 절이면 머리는 하나
               const isSectionStart = row.section_path !== "" && row.section_path !== previous?.section_path;
-              // 번호는 앞머리가 보일 때만 머리 글에서 뺀다 - 표·그림·빈 칸이나 짝 카드의 둘째 줄부터가 절을 열면 앞머리에 번호가 없다
-              const isNumberInLead = isSectionStart && row.kind === "sentence" && !cardTops.has(row.target_id);
+              // 번호는 앞머리가 보일 때만 머리 글에서 뺀다 - 표·그림·빈 칸이나 짝 카드의 둘째 줄부터가 절을 열면 앞머리에 번호가 없다. 엮은 문서는 앞머리가 줄 자기 번호라 칸 번호를 머리에 남긴다
+              const isNumberInLead = isSectionStart && row.kind === "sentence" && !cardTops.has(row.target_id) && !isComposedRow(row);
               return (
                 <Fragment key={key}>
                   {isSectionStart && renderSectionHead(row, isNumberInLead)}

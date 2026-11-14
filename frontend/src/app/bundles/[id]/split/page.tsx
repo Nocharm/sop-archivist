@@ -54,7 +54,7 @@ import {
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { buildGroupSave } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
-import { buildPaperModel, buildPaperTabs, countUnchecked, readWarningText, shouldRecenter, type PaperSheet, type PaperTabKey } from "@/lib/paper-model";
+import { buildPaperModel, buildPaperTabs, countUnchecked, readCountedCheck, readWarningText, shouldRecenter, type PaperSheet, type PaperTabKey } from "@/lib/paper-model";
 import { describeEditStep } from "@/lib/edit-step-model";
 import { getAdvanceDelay, getAdvanceWait, parseDurationMs } from "@/lib/split-advance";
 import { getSplitKeyAction } from "@/lib/split-keys";
@@ -159,12 +159,12 @@ export default function SplitPage() {
   // 보이는 단위는 숨긴 같은 내용 단위까지 모두 확인돼야 확인된 것이다
   const isChecked = (unit: ViewUnit) =>
     checkOverrides[unit.id] ?? (unit.boundary_confirmed && (tabs?.mirrors.get(unit.id) ?? []).every((id) => model?.units.get(id)?.boundary_confirmed !== false));
-  const hiddenIds = new Set([...(tabs?.mirrors.values() ?? [])].flat());
-  const shownUnits = (data?.units ?? []).filter((unit) => !hiddenIds.has(unit.id));
-  // 지금 문서는 방금 누른 확인까지 센다 - 다른 문서는 목록이 준 수를 쓴다
-  const uncheckedLeft = countUnchecked(shownUnits, isChecked);
-  const countTabLeft = (key: PaperTabKey) => countUnchecked(shownUnits.filter((unit) => tabs?.tabOf.get(unit.id) === key), isChecked);
-  const checkableTotal = countUnchecked(shownUnits, () => false);
+  // 남은 수는 문서 목록·검토 사유(서버)처럼 숨긴 같은 내용 단위도 하나씩 센다 - 지금 문서는 방금 누른 확인까지, 다른 문서는 목록이 준 수
+  const isCountedChecked = readCountedCheck(tabs?.mirrors ?? new Map(), checkOverrides);
+  const countedUnits = data?.units ?? [];
+  const uncheckedLeft = countUnchecked(countedUnits, isCountedChecked);
+  const countTabLeft = (key: PaperTabKey) => countUnchecked(countedUnits.filter((unit) => tabs?.tabOf.get(unit.id) === key), isCountedChecked);
+  const checkableTotal = countUnchecked(countedUnits, () => false);
   const [isCheckRestOpen, setIsCheckRestOpen] = useState(false);
   // 우클릭 메뉴 - 뜬 자리와 누른 문장
   const [menu, setMenu] = useState<{ x: number; y: number; targetId: number } | null>(null);

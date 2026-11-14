@@ -20,6 +20,7 @@ from app.sop.membership import lock_bundle
 from app.sop.models import (
     AiSuggestion,
     Bundle,
+    BundleEvent,
     DecisionStep,
     Document,
     TargetDoc,
@@ -482,9 +483,10 @@ async def _move_step(
     else:
         await _move_snapshot(session, bundle.id, step, actor, backwards=backwards)
     step.state = STEP_UNDONE if backwards else STEP_APPLIED
+    # 단계 id는 다음 움직임이 되쓸 쪽이 언제부터 참이었는지 찾는 데 쓴다(_load_restore_since)
     record_event(
         session, bundle_id=bundle.id, actor=actor, action="decision.undo" if backwards else "decision.redo",
-        target_type="unit", target_ids=list(step.unit_ids), reason=step.op,
+        target_type="unit", target_ids=list(step.unit_ids), reason=step.op, detail={"step_id": step.id},
     )
     await session.flush()
 
@@ -521,6 +523,10 @@ async def _move_snapshot(
     misplaced = await _find_misplaced_targets(session, bundle_id, restore)
     if misplaced is not None:
         raise_rule(409, "undo_conflict", unit_ids=misplaced)
+    # 다시 넣을 새 문장의 문서를 그 뒤 결과물 C에서 순서 바꿨으면 옛 순번으로 돌아와 칸 맨 앞에 끼어드니 되쓰지 않는다
+    reordered = await _find_reordered_targets(session, step, restore, current)
+    if reordered is not None:
+        raise_rule(409, "undo_conflict", unit_ids=reordered)
     # 글·자리를 되쓸 새 문장을 그 뒤 단계 밖에서 번역했으면 이제 없는 글의 번역이 남으므로 쓸지 않고 거절한다
     retranslated = await _find_unrecorded_translations(session, expected, restore, current)
     if retranslated is not None:
@@ -659,6 +665,57 @@ async def _find_misplaced_targets(session: AsyncSession, bundle_id: int, restore
 
 def _list_source_units(state: Snapshot, target_id: int) -> list[int]:
     return [row["unit_id"] for row in state.get("target_sources", {}).values() if row["target_id"] == target_id]
+
+
+# 결과물 C 순서 바꾸기의 작업 기록(routers/sop_outputs) — 그 문서의 맨 위 새 문장 전부에 순번을 다시 매긴다
+_REORDER_ACTION = "targets.reorder"
+_STEP_MOVE_ACTIONS = ("decision.undo", "decision.redo")
+
+
+async def _load_restore_since(session: AsyncSession, step: DecisionStep) -> datetime:
+    """되쓸 쪽이 마지막으로 참이던 때 — 단계가 마지막으로 움직인 때(그 단계 id를 실은 undo·redo 기록), 움직인 적 없으면 남긴 때.
+
+    DecisionStep은 남긴 때(created_at)만 있고 undo·redo 때 시각을 고치지 않아 움직임은 작업 기록에서 찾는다.
+    """
+    moves = await session.scalars(
+        select(BundleEvent)
+        .where(
+            BundleEvent.bundle_id == step.bundle_id, BundleEvent.actor == step.actor,
+            BundleEvent.action.in_(_STEP_MOVE_ACTIONS), BundleEvent.occurred_at >= step.created_at,
+        )
+        .order_by(BundleEvent.id.desc())
+    )
+    return next((event.occurred_at for event in moves if event.detail.get("step_id") == step.id), step.created_at)
+
+
+async def _find_reordered_targets(
+    session: AsyncSession, step: DecisionStep, restore: Snapshot, current: Snapshot
+) -> list[int] | None:
+    """다시 넣을 새 문장(restore에만 있고 지금 없는 행)의 문서를 그 뒤 결과물 C에서 순서 바꿨으면 그 새 문장의 출처 unit_id들 — 없으면 None.
+
+    순서 바꾸기는 단계 밖 행(같은 문서의 다른 새 문장)의 순번을 다시 매겨 행 비교로는 안 보인다. 지금 있는 행의 순번이 바뀐 것은
+    find_mismatches가 본다.
+    """
+    now_rows = current.get("target_sentences", {})
+    recreated = {key: row for key, row in restore.get("target_sentences", {}).items() if key not in now_rows}
+    if not recreated:
+        return None
+    # undo가 되쓸 before는 남기거나 마지막 redo 때까지, redo가 되쓸 after는 마지막 undo 때까지 참이었다 — 그 뒤의 순서 바꾸기만 본다
+    since = await _load_restore_since(session, step)
+    reordered_doc_ids = {
+        doc_id
+        for target_ids in await session.scalars(
+            select(BundleEvent.target_ids).where(
+                BundleEvent.bundle_id == step.bundle_id, BundleEvent.action == _REORDER_ACTION,
+                BundleEvent.occurred_at > since,
+            )
+        )
+        for doc_id in target_ids
+    }
+    hit = [int(key) for key, row in recreated.items() if row["target_doc_id"] in reordered_doc_ids]
+    if not hit:
+        return None
+    return sorted({unit_id for target_id in hit for unit_id in _list_source_units(restore, target_id)})
 
 
 def _collect_restored_units(expected: Snapshot, restore: Snapshot) -> set[int]:
