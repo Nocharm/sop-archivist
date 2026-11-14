@@ -8,7 +8,6 @@ describe("getPageWidth", () => {
     ["/bundles/1", "default"],
     ["/bundles/1/documents", "wide"],
     ["/bundles/1/split", "wide"],
-    ["/bundles/1/tobe", "wide"],
     ["/bundles/1/history", "wide"],
     ["/bundles/1/assign", "desk"],
     ["/bundles/1/outputs", "default"],

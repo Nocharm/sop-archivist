@@ -139,7 +139,7 @@ import { navigate } from "@/lib/nav-buffer";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
 import { SLOT_LABELS } from "@/lib/slot-labels";
-import { getStageHref } from "@/lib/stages";
+import { getNewDocumentsHref, getStageHref } from "@/lib/stages";
 import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useCutLine } from "@/lib/use-cut-line";
@@ -1368,7 +1368,7 @@ export default function AssignPage() {
   const accSections: AccordionSection[] = [
     { key: "rec", icon: Sparkles, title: t("assign.acc.rec"), count: recommendations.length, body: recommendations.length === 0 ? <p className="text-xs text-ink-3">{t("assign.acc.none")}</p> : recommendations.map(renderRecommendation) },
     { key: "near", icon: Locate, title: t("assign.acc.near"), count: nearLinks.length + nearPlaces.length, body: renderNearby() },
-    { key: "all", icon: ListTree, title: t("assign.acc.all"), count: written.length + options.filter(isPlaceOption).length, body: <DestinationTree written={written} options={treeOptions} tobeHref={getStageHref(bundleId, "tobe")} onPickLink={pickNewSentence} onPickPlace={pickDestination} /> },
+    { key: "all", icon: ListTree, title: t("assign.acc.all"), count: written.length + options.filter(isPlaceOption).length, body: <DestinationTree written={written} options={treeOptions} tobeHref={getNewDocumentsHref(bundleId)} onPickLink={pickNewSentence} onPickPlace={pickDestination} /> },
     {
       key: "move",
       icon: MoveRight,
@@ -2079,7 +2079,7 @@ export default function AssignPage() {
               />
               <PaneDivider value={view.split} onCommit={(ratio) => changeView({ split: ratio })} />
               {newDocId === null ? (
-                <NewPaneEmpty zoom={view.zoomNew} onGoToBe={() => navigate(getStageHref(bundleId, "tobe"))} />
+                <NewPaneEmpty zoom={view.zoomNew} onGoToBe={() => navigate(getNewDocumentsHref(bundleId))} />
               ) : (
                 <>
                   <NewPane

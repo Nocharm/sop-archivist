@@ -21,9 +21,8 @@ SOP Archivist는 옛 SOP 여러 편(Old)을 새 SOP·WI 구조(New)로 옮기는
 
 | 순서 | 화면 | 하는 일 | 다음으로 넘어가는 때 |
 |---|---|---|---|
-| 준비 | **Documents** | Old SOP와 이미 써 둔 New 문서를 올린다 | 올린 문서가 모두 **Ready** |
-| 1 | **Split** | 문서를 Unit으로 쪼개고 경계를 확인한다 | 모든 Unit의 경계와 누락 의심 경고를 확인했다 |
-| 2 | **To-Be** | 새 SOP·WI 목록과 그 안의 칸을 만든다 | Unit을 보낼 곳이 생겼다 |
+| 1 | **Documents** | Old SOP를 올리고, 같은 화면 아래 **To-Be** 목록에 새 SOP·WI와 그 안의 칸을 만든다. 이미 써 둔 New 문서도 여기서 올린다 | 올린 문서가 모두 **Ready** 이고 Unit을 보낼 곳이 생겼다 |
+| 2 | **Split** | 문서를 Unit으로 쪼개고 경계를 확인한다 | 모든 Unit의 경계와 누락 의심 경고를 확인했다 |
 | 3 | **Assign** | Unit마다 보낼 곳을 정하고 확정한다 | 모든 Unit과 새 문장이 **Confirmed** |
 | 4 | **Outputs** | 결과물 A·B·C와 Excel을 확인한다 | 의미 확인 네 가지를 마쳤다 |
 | 검토 | **Review** | 검토자가 읽고 완료하거나 돌려보낸다 | **Review complete** |
@@ -65,7 +64,7 @@ SOP Archivist는 옛 SOP 여러 편(Old)을 새 SOP·WI 구조(New)로 옮기는
 
 - 첫 화면 **Bundles** 에는 내가 구성원(작성자·검토자)인 Bundle만 보입니다. 줄을 누르거나 줄에 초점을 두고 <kbd>Enter</kbd>를 누르면 열립니다.
 - **View** 에서 **Table** 과 **Cards** 를 바꿉니다. 고른 보기는 이 브라우저에 기억됩니다. 카드 보기에서는 Synthetic data 표지가 늘 제목 아래 줄에 오고, 같은 줄의 카드는 아래 끝이 맞습니다.
-- 제목을 아직 쓰지 않은 Bundle은 제목 자리에 흐린 **Untitled**(한국어 화면은 '이름 없음')가 보입니다. 목록 화면(Bundles·Documents·To-Be·History·관리)은 큰 화면에서 본문이 더 넓게 펼쳐집니다.
+- 제목을 아직 쓰지 않은 Bundle은 제목 자리에 흐린 **Untitled**(한국어 화면은 '이름 없음')가 보입니다. 목록 화면(Bundles·Documents·History·관리)은 큰 화면에서 본문이 더 넓게 펼쳐집니다.
 - **New bundle** 은 `bundle.create` 권한이 있을 때만 보입니다. 누르면 곧바로 새 Bundle이 만들어지고 **Overview** 가 열리니, 제목과 설명은 거기서 고칩니다.
 
 ### 화면 설정 {#settings}
@@ -122,11 +121,11 @@ Bundle은 함께 재구성할 문서 묶음입니다. Old SOP 여러 편과 새�
 - **Manage** 를 누르면 **Bundle members** 창이 열립니다. **Add member** 에서 사람을 찾아 넣고 **Role** 에서 **Author** 또는 **Reviewer** 를 고릅니다.
 - 사람은 이름·한글 이름·아이디로 찾습니다. 아무것도 입력하지 않으면 내 부서 사람이 먼저 나옵니다.
 - 작성자는 한 명 이상 있어야 하고, 검토를 요청하려면 활동 중인 검토자가 한 명 이상 있어야 합니다.
-- Bundle은 구성원에게만 보입니다. 구성원이 아닌 사람이 주소로 들어오면(개요·Documents·Split·To-Be·Assign·Outputs·Review·History 어느 단계 주소든) **Bundle not available** 화면이 뜹니다. 이때는 단계 이동 줄 없이 **Back to Bundles** 단추만 있습니다. 없는 주소로 들어와도 같은 단추가 있는 안내 화면이 뜹니다.
+- Bundle은 구성원에게만 보입니다. 구성원이 아닌 사람이 주소로 들어오면(개요·Documents·Split·Assign·Outputs·Review·History 어느 단계 주소든) **Bundle not available** 화면이 뜹니다. 이때는 단계 이동 줄 없이 **Back to Bundles** 단추만 있습니다. 없는 주소로 들어와도 같은 단추가 있는 안내 화면이 뜹니다.
 
-## Documents {#documents}
+## 1단계 Documents {#documents}
 
-재구성할 원문을 올리는 화면입니다. 올린 파일은 바로 읽혀 글자와 표가 추출됩니다.
+재구성할 원문을 올리는 화면입니다. 올린 파일은 바로 읽혀 글자와 표가 추출됩니다. 올린 문서 목록 아래에는 새로 만들 SOP·WI를 적는 [To-Be 목록](#tobe)이 있습니다. 문서가 많아 그 목록이 화면 아래에 있으면 화면 제목 옆 **To-Be** 단추로 바로 내려갑니다.
 
 ![Documents 화면](img/documents.png "올린 문서 목록. 문서 번호·버전·언어 배치는 자동으로 채워진다")
 
@@ -140,7 +139,7 @@ Bundle은 함께 재구성할 문서 묶음입니다. Old SOP 여러 편과 새�
 2. **Choose files** 로 파일을 고릅니다. 여러 개를 한 번에 고를 수 있고, DOCX와 글자가 들어 있는 PDF를 받습니다.
 3. 올리기 단추를 누르면 파일마다 결과가 표시됩니다. 다 올렸으면 **Go to Split** 으로 넘어갑니다.
 
-여기서는 쪼개서 배정할 옛 문서(Old)만 올립니다. 이미 써 둔 새 문서는 [To-Be](#tobe-written)에서 올립니다.
+여기서는 쪼개서 배정할 옛 문서(Old)만 올립니다. 이미 써 둔 새 문서는 같은 화면 아래 [To-Be 목록](#tobe-written)에서 올립니다.
 
 > [!TIP]
 > 파일 이름에 문서 번호와 버전이 들어 있으면 그대로 읽어 옵니다. 이름을 정리해 두고 올리면 고칠 일이 줄어듭니다.
@@ -220,7 +219,57 @@ Bundle은 함께 재구성할 문서 묶음입니다. Old SOP 여러 편과 새�
 | **Large image** | 큰 그림이 있는 자리. 원문과 견주어 본다 |
 | **Check needed** | 그 밖에 사람이 한 번 봐야 하는 곳 |
 
-## 1단계 Split {#split}
+## To-Be 목록 {#tobe}
+
+새로 만들 SOP·WI의 목록입니다. **Documents** 화면(1단계)에서 올린 문서 목록 아래에 있습니다. 여기 적은 문서와 그 안의 칸이 **Assign** 에서 Unit을 보낼 곳이 됩니다.
+
+![To-Be 화면](img/tobe.png "새 문서 목록. 문서를 펼치면 칸과 단계가 보인다")
+
+### 문서 적기 {#tobe-docs}
+
+**Add document** 로 줄을 더하고 칸을 채웁니다.
+
+| 열 | 뜻 |
+|---|---|
+| **Doc no.** · **Title** | 새 문서의 번호와 제목 |
+| **Type** | SOP 또는 WI |
+| **Parent SOP** | WI가 속한 SOP의 번호 |
+| **Entrance** | **Assign** 은 아직 쓰지 않은 문서라 Old Unit을 칸에 보내 새 문장을 만든다. **Match** 는 이미 써서 올린 문서라 Old Unit을 그 문장에 잇는다 |
+| **Equipment SOP** | 장비 SOP면 켠다. 장비 SOP에 있어야 하는 절차 칸(전자 기록 관리·문제 해결·유지 보수)이 비어 있으면 **Overview** 에 알려 준다. 검토 요청을 막지는 않는다 |
+| **N/A or steps** | SOP는 쓰지 않는 칸의 수, WI는 단계의 수 |
+
+저장한 번호는 EQUIS에서 조회해 번호 칸 옆에 아이콘으로 결과를 보입니다. 아이콘에 올리면 뜻이 뜨고, 누르면 [Documents의 EQUIS 표시](#document-equis)와 같은 정보가 펼쳐집니다. 새 문서는 아직 EQUIS에 없는 것이 보통이라 **Not in EQUIS** 는 경고가 아닙니다. 폐기된 번호일 때만 **Check** 가 뜹니다. 번호가 EQUIS에 있으면 제목이 EQUIS의 정식 이름으로 맞춰지고 고칠 수 없습니다. 바꾸려면 EQUIS에서 바꾸고, 반영까지 하루가 걸릴 수 있습니다.
+
+### 이미 쓴 문서 올리기 {#tobe-written}
+
+이미 써 둔 새 SOP·WI 파일은 **Upload written** 으로 올립니다. 먼저 옛 문서의 쪼개기를 끝내 두는 편이 좋습니다. 경계를 아직 확인하지 않은 Old Unit이 있으면 단추 곁에 안내가 보이지만, 올리는 것을 막지는 않습니다.
+
+1. **Upload written** 을 누릅니다. 고친 것이 있으면 먼저 저장하거나 버립니다.
+2. **Type** 을 고르고, WI라면 **Parent SOP number (WI only)** 에 이 목록에 있는 SOP의 번호를 적습니다.
+3. **Choose files** 로 파일 하나를 고르고 **Upload** 를 누릅니다.
+
+올린 문서는 **Documents** 에 **New** 로 나타나고, 이 목록에는 **Match** 줄이 생깁니다. 파일 이름의 문서 번호가 목록에 이미 있으면 올릴 수 없습니다.
+
+### 칸과 단계 {#tobe-slots}
+
+- 문서를 펼치면 **Sections and steps** 가 나옵니다.
+- SOP는 칸이 정해져 있습니다. 이 SOP에 없는 칸은 N/A로 표시하고 **Reason** 을 적습니다.
+- WI는 **Add step** 으로 단계를 더하고 **Step title** 을 적습니다. **Remove step** 으로 뺍니다. 단계 번호는 자동으로 다시 매기지 않습니다.
+- 이미 문장을 배정한 문서·칸·단계는 뺄 수 없습니다. 먼저 **Assign** 에서 배정을 풉니다.
+- **Match** 로 들어온 줄은 올린 새 문서에 묶여 있습니다. 빼려면 **Documents** 에서 그 문서를 지웁니다.
+
+### 저장 {#tobe-save}
+
+- 고친 뒤 **Save** 를 누르거나 <kbd>Ctrl</kbd>+<kbd>S</kbd>를 누릅니다. 저장 전에는 **Unsaved changes** 가 보이고, **Discard** 로 고친 것을 버립니다.
+- 다른 사람이 먼저 저장했으면 **The To-Be list changed elsewhere** 창이 뜹니다. **Load the latest** 로 최신 목록을 받은 뒤 다시 고칩니다.
+
+### Excel로 가져오기 {#tobe-excel}
+
+1. **Excel template** 으로 양식을 내려받아 채웁니다.
+2. **Import Excel** 로 올립니다. 목록 전체가 파일 내용으로 바뀌므로, 목록이 비어 있지 않으면 **Replace the To-Be list?** 창에서 한 번 더 묻습니다.
+3. 이미 문장을 배정한 문서·칸·단계가 파일에 없으면 가져오기가 거절됩니다.
+
+## 2단계 Split {#split}
 
 문서를 Unit으로 쪼개는 단계입니다. Unit은 **한곳으로 보낼 수 있는 가장 작은 조각**입니다. 올릴 때 규칙이 먼저 쪼개 두므로, 여기서는 경계가 맞는지 확인하고 틀린 곳만 고칩니다.
 
@@ -302,56 +351,6 @@ Bundle은 함께 재구성할 문서 묶음입니다. Old SOP 여러 편과 새�
 | <kbd>U</kbd> | 경계 확인 취소 |
 | <kbd>H</kbd> | 사유를 적고 보류 |
 | <kbd>Ctrl</kbd>+<kbd>Z</kbd> | 되돌리기. <kbd>Shift</kbd>를 더하면 다시 하기 |
-
-## 2단계 To-Be {#tobe}
-
-새로 만들 SOP·WI의 목록을 적는 단계입니다. 여기 적은 문서와 그 안의 칸이 **Assign** 에서 Unit을 보낼 곳이 됩니다.
-
-![To-Be 화면](img/tobe.png "새 문서 목록. 문서를 펼치면 칸과 단계가 보인다")
-
-### 문서 적기 {#tobe-docs}
-
-**Add document** 로 줄을 더하고 칸을 채웁니다.
-
-| 열 | 뜻 |
-|---|---|
-| **Doc no.** · **Title** | 새 문서의 번호와 제목 |
-| **Type** | SOP 또는 WI |
-| **Parent SOP** | WI가 속한 SOP의 번호 |
-| **Entrance** | **Assign** 은 아직 쓰지 않은 문서라 Old Unit을 칸에 보내 새 문장을 만든다. **Match** 는 이미 써서 올린 문서라 Old Unit을 그 문장에 잇는다 |
-| **Equipment SOP** | 장비 SOP면 켠다. 장비 SOP에 있어야 하는 절차 칸(전자 기록 관리·문제 해결·유지 보수)이 비어 있으면 **Overview** 에 알려 준다. 검토 요청을 막지는 않는다 |
-| **N/A or steps** | SOP는 쓰지 않는 칸의 수, WI는 단계의 수 |
-
-저장한 번호는 EQUIS에서 조회해 번호 칸 옆에 아이콘으로 결과를 보입니다. 아이콘에 올리면 뜻이 뜨고, 누르면 [Documents의 EQUIS 표시](#document-equis)와 같은 정보가 펼쳐집니다. 새 문서는 아직 EQUIS에 없는 것이 보통이라 **Not in EQUIS** 는 경고가 아닙니다. 폐기된 번호일 때만 **Check** 가 뜹니다. 번호가 EQUIS에 있으면 제목이 EQUIS의 정식 이름으로 맞춰지고 고칠 수 없습니다. 바꾸려면 EQUIS에서 바꾸고, 반영까지 하루가 걸릴 수 있습니다.
-
-### 이미 쓴 문서 올리기 {#tobe-written}
-
-이미 써 둔 새 SOP·WI 파일은 **Upload written** 으로 올립니다. 먼저 옛 문서의 쪼개기를 끝내 두는 편이 좋습니다. 경계를 아직 확인하지 않은 Old Unit이 있으면 단추 곁에 안내가 보이지만, 올리는 것을 막지는 않습니다.
-
-1. **Upload written** 을 누릅니다. 고친 것이 있으면 먼저 저장하거나 버립니다.
-2. **Type** 을 고르고, WI라면 **Parent SOP number (WI only)** 에 이 목록에 있는 SOP의 번호를 적습니다.
-3. **Choose files** 로 파일 하나를 고르고 **Upload** 를 누릅니다.
-
-올린 문서는 **Documents** 에 **New** 로 나타나고, 이 목록에는 **Match** 줄이 생깁니다. 파일 이름의 문서 번호가 목록에 이미 있으면 올릴 수 없습니다.
-
-### 칸과 단계 {#tobe-slots}
-
-- 문서를 펼치면 **Sections and steps** 가 나옵니다.
-- SOP는 칸이 정해져 있습니다. 이 SOP에 없는 칸은 N/A로 표시하고 **Reason** 을 적습니다.
-- WI는 **Add step** 으로 단계를 더하고 **Step title** 을 적습니다. **Remove step** 으로 뺍니다. 단계 번호는 자동으로 다시 매기지 않습니다.
-- 이미 문장을 배정한 문서·칸·단계는 뺄 수 없습니다. 먼저 **Assign** 에서 배정을 풉니다.
-- **Match** 로 들어온 줄은 올린 새 문서에 묶여 있습니다. 빼려면 **Documents** 에서 그 문서를 지웁니다.
-
-### 저장 {#tobe-save}
-
-- 고친 뒤 **Save** 를 누르거나 <kbd>Ctrl</kbd>+<kbd>S</kbd>를 누릅니다. 저장 전에는 **Unsaved changes** 가 보이고, **Discard** 로 고친 것을 버립니다.
-- 다른 사람이 먼저 저장했으면 **The To-Be list changed elsewhere** 창이 뜹니다. **Load the latest** 로 최신 목록을 받은 뒤 다시 고칩니다.
-
-### Excel로 가져오기 {#tobe-excel}
-
-1. **Excel template** 으로 양식을 내려받아 채웁니다.
-2. **Import Excel** 로 올립니다. 목록 전체가 파일 내용으로 바뀌므로, 목록이 비어 있지 않으면 **Replace the To-Be list?** 창에서 한 번 더 묻습니다.
-3. 이미 문장을 배정한 문서·칸·단계가 파일에 없으면 가져오기가 거절됩니다.
 
 ## 3단계 Assign {#assign}
 

@@ -99,14 +99,15 @@ const SCENES = [
     prep: (page) => click(page, id("split-doc-5")),
     marks: [id("split-doc-5"), id("split-paper")],
   },
-  { name: "tobe", user: "qa.member", path: "/bundles/1/tobe", marks: [text("Excel template"), text("Import Excel"), id("tobe-add"), `[data-testid$="-toggle"]`, id("tobe-save")] },
+  { name: "tobe", user: "qa.member", path: "/bundles/1/documents", prep: (page) => page.locator(id("tobe-section")).scrollIntoViewIfNeeded(), marks: [text("Excel template"), text("Import Excel"), id("tobe-add"), `[data-testid$="-toggle"]`, id("tobe-save")] },
   {
-    name: "tobe-sop", app: { name: "tobe" }, user: "qa.member", path: "/bundles/1/tobe",
+    // To-Be 목록은 Documents 화면 아래쪽 영역이다 - 앱 설명서 그림은 그 영역만 잘라 찍는다
+    name: "tobe-sop", app: { name: "tobe", clip: id("tobe-section") }, user: "qa.member", path: "/bundles/1/documents",
     prep: (page) => click(page, `[data-testid$="-toggle"]`),
     marks: [`[data-testid$="-slots"]`, `[data-testid*="-na-"]`],
   },
   {
-    name: "tobe-wi", user: "qa.member", path: "/bundles/1/tobe",
+    name: "tobe-wi", user: "qa.member", path: "/bundles/1/documents",
     prep: async (page) => {
       await page.locator(`[data-testid$="-toggle"]`).nth(1).click();
     },

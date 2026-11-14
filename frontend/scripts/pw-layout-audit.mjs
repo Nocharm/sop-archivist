@@ -70,7 +70,7 @@ const MEMBER = "qa.member";
 const ADMIN_TABS = ["access", "directory", "batch", "ai", "bundles", "guidelines"];
 
 // X0: 어느 화면에서도 문서가 가로로 넘치지 않는다(가로 스크롤이 생기지 않는다)
-const sceneUrls = (bundle) => ["", "/documents", "/split", "/tobe", "/assign", "/outputs", "/review", "/history"].map((tail) => `/bundles/${bundle}${tail}`);
+const sceneUrls = (bundle) => ["", "/documents", "/split", "/assign", "/outputs", "/review", "/history"].map((tail) => `/bundles/${bundle}${tail}`);
 const PLAIN_SCENES = ["/", "/manual", "/account"];
 const BASELINE_C10E = 177; // 변경 전에 잰 값으로 채운다
 const AUDIT_ENTRIES = [
@@ -178,7 +178,7 @@ const AUDIT_ENTRIES = [
   },
   {
     id: "A1", ds: "worst", user: MEMBER, views: [1120, 1920],
-    path: (ids) => `/bundles/${ids.w[1]}/tobe`,
+    path: (ids) => `/bundles/${ids.w[1]}/documents`,
     measure: (page) => page.locator('[data-testid="tobe-list"]').evaluate((table) => {
       const code = table.querySelector("thead th:nth-child(2)").getBoundingClientRect().width;
       return { fits: table.getBoundingClientRect().right <= window.innerWidth + 1 && document.documentElement.scrollWidth <= window.innerWidth + 1, code: Math.round(code) };
@@ -188,7 +188,7 @@ const AUDIT_ENTRIES = [
   },
   {
     id: "C3", ds: "mid", user: MEMBER, views: [1920],
-    path: (ids) => `/bundles/${ids.mid[2]}/tobe`,
+    path: (ids) => `/bundles/${ids.mid[2]}/documents`,
     open: async (page) => {
       await page.locator('[data-testid^="tobe-"][data-testid$="-toggle"]').first().click();
       await page.waitForTimeout(500);
@@ -646,7 +646,7 @@ const AUDIT_ENTRIES = [
   {
     // B2·R6: 멤버가 아닌 Bundle(mid[1]은 prod.member가 아니다 - API 404) 여섯 주소에서 목록으로 돌아가는 길이 있고 다시 시도는 없으며, 단계 레일 링크와 상단 바 뒤로·구분선이 없다
     id: "B2", ds: "mid", user: "prod.member", views: [1120],
-    path: (ids) => ["documents", "split", "assign", "outputs", "history", "tobe"].map((s) => ({ url: `/bundles/${ids.mid[1]}/${s}`, user: "prod.member", stage: s })),
+    path: (ids) => ["documents", "split", "assign", "outputs", "history"].map((s) => ({ url: `/bundles/${ids.mid[1]}/${s}`, user: "prod.member", stage: s })),
     open: async (page) => {
       await page.locator('[data-testid$="-missing"]').first().waitFor({ timeout: T });
     },
@@ -844,7 +844,7 @@ const AUDIT_ENTRIES = [
     // C7: 목록 화면은 1600, 개요·계정·설명서는 1280 (본문 폭)
     id: "C7", ds: "worst", user: MEMBER, views: [2560],
     path: (ids) => [
-      "/", `/bundles/${ids.w[1]}/documents`, `/bundles/${ids.w[1]}/tobe`, `/bundles/${ids.w[1]}/history`, `/bundles/${ids.w[1]}/split`,
+      "/", `/bundles/${ids.w[1]}/documents`, `/bundles/${ids.w[1]}/history`, `/bundles/${ids.w[1]}/split`,
       `/bundles/${ids.w[1]}`, "/account", "/manual",
     ],
     open: async (page) => { await page.locator(".page-wrap").first().waitFor({ timeout: T }); await page.waitForTimeout(1000); },

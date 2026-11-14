@@ -2,7 +2,10 @@
 
 import type { NextAction } from "./api-sop";
 
-export type StageKey = "overview" | "documents" | "split" | "tobe" | "assign" | "outputs" | "review" | "history";
+export type StageKey = "overview" | "documents" | "split" | "assign" | "outputs" | "review" | "history";
+
+/** Documents 화면 안 New 문서 목록(옛 To-Be 화면)의 자리 - 옛 주소 /tobe도 여기로 넘긴다 */
+export const NEW_DOCUMENTS_ANCHOR = "new-documents";
 
 export interface Stage {
   key: StageKey;
@@ -16,9 +19,9 @@ export interface Stage {
 
 export const STAGES: readonly Stage[] = [
   { key: "overview", path: "", ready: true },
-  { key: "documents", path: "/documents", ready: true },
-  { key: "split", path: "/split", step: 1, ready: true },
-  { key: "tobe", path: "/tobe", step: 2, ready: true },
+  // 1단계 - Old 문서 목록과 그 아래 New 문서 목록(옛 To-Be 화면, 네 단계 워크플로우 B1). 옛 /tobe는 여기로 넘긴다
+  { key: "documents", path: "/documents", step: 1, ready: true },
+  { key: "split", path: "/split", step: 2, ready: true },
   // 배정의 두 입구(분류·짝 맞추기)를 Old 조각 한 줄씩 처리하는 한 화면 - 옛 /classify·/match는 여기로 넘긴다
   { key: "assign", path: "/assign", step: 3, ready: true },
   { key: "outputs", path: "/outputs", step: 4, ready: true },
@@ -27,7 +30,7 @@ export const STAGES: readonly Stage[] = [
   { key: "history", path: "/history", ready: true },
 ];
 
-// 문서가 하나도 없으면 들어가 봐야 할 일이 없는 단계. To-Be는 Excel로 문서보다 먼저 채울 수 있어 열어 둔다
+// 문서가 하나도 없으면 들어가 봐야 할 일이 없는 단계. New 문서 목록은 Excel로 문서보다 먼저 채울 수 있고, Documents 화면에 있어 늘 열린다
 const NEEDS_DOCUMENTS: ReadonlySet<StageKey> = new Set(["split", "assign", "outputs", "review"]);
 
 export function isStageLocked(key: StageKey, documentCount: number): boolean {
@@ -50,13 +53,18 @@ export function getStageHref(bundleId: number, key: StageKey): string {
   return `/bundles/${bundleId}${stage?.path ?? ""}`;
 }
 
+/** Documents 화면의 New 문서 목록으로 가는 주소 */
+export function getNewDocumentsHref(bundleId: number): string {
+  return `${getStageHref(bundleId, "documents")}#${NEW_DOCUMENTS_ANCHOR}`;
+}
+
 /** 다음 행동이 데려갈 화면. 없으면 개요 안에서 끝나는 일이다 */
 export const NEXT_ACTION_STAGE: Record<NextAction, StageKey | null> = {
   upload_documents: "documents",
   resolve_documents: "documents",
   fill_doc_versions: "documents",
   check_boundaries: "split",
-  fill_tobe: "tobe",
+  fill_tobe: "documents",
   decide_units: "assign",
   ack_warnings: "split",
   fill_reasons: "assign",
@@ -66,3 +74,10 @@ export const NEXT_ACTION_STAGE: Record<NextAction, StageKey | null> = {
   await_review: "review",
   done: null,
 };
+
+/** 다음 행동의 주소 - New 문서 목록을 채우는 일은 Documents 화면의 그 자리로 간다. 개요 안에서 끝나는 일이면 null */
+export function getNextActionHref(bundleId: number, action: NextAction): string | null {
+  const stage = NEXT_ACTION_STAGE[action];
+  if (stage === null) return null;
+  return action === "fill_tobe" ? getNewDocumentsHref(bundleId) : getStageHref(bundleId, stage);
+}
