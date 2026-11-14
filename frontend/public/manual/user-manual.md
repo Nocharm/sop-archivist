@@ -471,7 +471,7 @@ Old 문장을 오른쪽 단추로 누르면(키보드는 줄을 고른 채 <kbd>
 | | **Split into rows** · **Merge rows back** | 표(또는 표의 칸)에서 누르면 나온다. 통째인 표를 행마다 다른 곳으로 보낼 수 있게 행으로 나누고, 나눈 표는 다시 합친다 |
 | | **Treat as layout table** | 통째인 표에서만. 글을 줄 맞추려고 쓴 배치용 표를 표가 아닌 글로 다룬다 |
 
-문장 고치기는 **Split** 의 편집과 같아서 배정이 없는 문장에만 됩니다 — 배정된 문장은 먼저 **Clear assignment** 를 하고, 저장하지 않은 고름이 있는 줄은 먼저 확정하거나 고름을 되돌립니다. 고친 뒤에는 원문을 다시 읽고 고친 문장(나누면 앞쪽 조각)의 줄을 고릅니다. 여기서 자른 것은 바로 <kbd>Ctrl</kbd>+<kbd>Z</kbd>로 되돌릴 수 있습니다(아래 되돌리기). 짝 맺기·풀기는 되돌리기 기록에 들어가지 않습니다 — 같은 메뉴의 반대 항목으로 되돌립니다. 표 항목은 문장 고치기처럼 <kbd>Ctrl</kbd>+<kbd>Z</kbd>로 되돌립니다. 고른 범위로 Unit 만들기와 AI로 문서 전체 나누기는 위쪽 줄의 **Split tools** 로 쪼개기 화면에서 합니다.
+문장 고치기는 **Split** 의 편집과 같아서 배정이 없는 문장에만 됩니다 — 배정된 문장은 먼저 **Clear assignment** 를 하고, 저장하지 않은 고름이 있는 줄은 먼저 확정하거나 고름을 되돌립니다. 고친 뒤에는 원문을 다시 읽고 고친 문장(나누면 앞쪽 조각)의 줄을 고릅니다. 여기서 자른 것은 바로 <kbd>Ctrl</kbd>+<kbd>Z</kbd>로 되돌릴 수 있습니다(아래 되돌리기). 짝 맺기·풀기는 되돌리기 기록에 들어가지 않습니다 — 같은 메뉴의 반대 항목으로 되돌립니다. 표 항목은 문장 고치기처럼 <kbd>Ctrl</kbd>+<kbd>Z</kbd>로 되돌립니다. 고른 범위로 Unit 만들기는 위쪽 줄의 **Split tools** 로 쪼개기 화면에서 합니다.
 
 ### 여럿을 한 번에 {#assign-bulk}
 
@@ -690,15 +690,15 @@ AI는 제안만 합니다. 사람이 줄마다 확인해 확정하기 전에는 
 | **Classify** | Unit을 보낼 칸과 한·영 고쳐 쓴 문장 | **Assign** 의 **Ask AI**, **More AI** → **Classify the whole document** |
 | **Translate** | 한쪽 언어만 있는 새 문장의 번역 | **More AI** → **Translate to EN** · **Translate to KO** |
 | **Match** | Old Unit과 이미 쓴 New 문장의 짝과 변경 종류 | **More AI** → **Ask AI to match** |
-| **KO/EN pair** | 한글과 영어가 따로 있는 문서의 한/영 짝 | **Split** 의 **AI pair** |
-| **Split** | 여러 뜻이 섞인 문장을 나눌 자리 | **Split** 의 **AI split whole document**·**AI split this sentence**(30자보다 짧은 문장은 일괄로는 보내지 않는다), **Assign** 의 **Suggest a split for this row** |
+| **KO/EN pair** | 한글과 영어가 따로 있는 문서의 한/영 짝 | **Assign** 의 **More AI** 메뉴 또는 **Split** 의 **AI pair**(한글·영어가 따로 적힌 문서에서만 나온다) |
+| **Split** | 여러 뜻이 섞인 문장을 나눌 자리 | **Assign** 의 **More AI** 메뉴에 있는 **AI split whole document**(30자보다 짧은 문장은 일괄로는 보내지 않는다)와 **Suggest a split for this row**. **Split** 에도 같은 단추와 **AI split this sentence** 가 있다 |
 
 ### 요청하고 확인하기 {#ai-flow}
 
 1. 위 단추로 요청합니다. 요청은 쌓였다가 차례로 처리되므로 기다리지 않고 다른 일을 해도 됩니다.
 2. 진행 상황은 어느 화면에서든 상단 바의 AI 작업 표시에서 봅니다([진행 보기](#ai-progress)). Bundle 하나의 종류별 수는 **Overview** 의 **AI job** 카드에 있습니다.
 3. 제안이 오면 **Assign** 의 **AI suggested** 탭에 모입니다. 원문과 견주어 본 뒤 **Confirm**(그대로 확정)이나 **Edit and confirm**(고쳐서 확정)을 누릅니다.
-4. 나누기 제안은 **Apply split** 으로 적용하거나 **Dismiss** 로 버립니다. **Split** 에서는 제안이 붙은 조각을 골라 오른쪽에서 합니다([AI 나누기 제안](#split-ai)).
+4. 나누기 제안은 **Apply split** 으로 적용하거나 **Dismiss** 로 버립니다. **Assign** 에서는 위쪽 줄의 보라색 제안 수를 누르면 다음 제안이 붙은 줄로 가고, 오른쪽 칸 맨 위에 잘린 모습이 미리 보입니다 — 거기서 적용하거나 버리고, 적용한 것은 <kbd>Ctrl</kbd>+<kbd>Z</kbd>로 되돌립니다. 배정이 있는 문장은 먼저 **Clear assignment** 를 해야 적용할 수 있습니다. **Split** 에서는 제안이 붙은 조각을 골라 오른쪽에서 합니다([AI 나누기 제안](#split-ai)).
 
 > [!WARNING]
 > AI 제안은 한꺼번에 확정할 수 없습니다. 틀릴 수 있으므로 줄마다 원문과 견주어 봅니다. 마지막 판단은 사람의 몫입니다.

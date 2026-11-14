@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildAiTabs, getAiTabsHead, type AiOrigin, type PendingSplit } from "@/lib/split-ai-tabs-model";
+import { buildAiTabs, cutSplitPieces, getAiTabsHead, type AiOrigin, type PendingSplit } from "@/lib/split-ai-tabs-model";
 
 const item = (unitId: number, position: number, origin: AiOrigin = "single"): PendingSplit => ({ unitId, label: `U${unitId}`, position, origin });
 
@@ -33,5 +33,16 @@ describe("buildAiTabs", () => {
 
   it("returns nothing for no suggestions", () => {
     expect(buildAiTabs([], new Set())).toEqual([]);
+  });
+});
+
+describe("cutSplitPieces", () => {
+  it("cuts the text at the suggested places, in order", () => {
+    expect(cutSplitPieces("Wear gloves. Close the lid. Press START.", [27, 12])).toEqual(["Wear gloves.", "Close the lid.", "Press START."]);
+  });
+
+  it("ignores places outside the text and drops empty pieces", () => {
+    expect(cutSplitPieces("Close the lid.", [0, 14, 99])).toEqual(["Close the lid."]);
+    expect(cutSplitPieces("A.  B.", [2, 3])).toEqual(["A.", "B."]);
   });
 });
