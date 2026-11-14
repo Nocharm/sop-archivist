@@ -1,10 +1,10 @@
 // Assign Old 문장 우클릭 메뉴의 항목과 가능/불가 - 화면은 이 결과대로 항목을 켜고 끄며 까닭을 툴팁으로 보인다.
-// 두 묶음이다: 배정(지금 고른 곳으로 확정·배정 취소)과 문장 고치기(여기서 나누기·앞뒤 문장과 합치기·언어).
+// 두 묶음이다: 배정(지금 고른 곳으로 확정·배정 취소)과 문장 고치기(여기서 나누기·앞뒤 문장과 합치기 또는 한/영 짝 맺기·짝 풀기·언어).
 // 고치기는 Split의 편집을 그대로 부르므로 판단이 없는 단위만 받는다 - 배정된 문장은 먼저 배정을 취소한다(서버도 판단이 걸린 단위는 확인을 요구한다).
 import type { CoverStatus, ViewUnit } from "./api-sop";
 import { planJoin } from "./split-menu-model";
 
-export type AssignMenuAction = "confirm" | "clear" | "split" | "merge_prev" | "merge_next" | "lang";
+export type AssignMenuAction = "confirm" | "clear" | "split" | "merge_prev" | "merge_next" | "pair_prev" | "pair_next" | "unpair" | "lang";
 
 export interface AssignMenuItem {
   action: AssignMenuAction;
@@ -59,17 +59,23 @@ function getEditBlocker(ctx: AssignMenuContext, unit: ViewUnit): string | null {
   return ctx.hasDraft(unit) ? why("unsaved") : null;
 }
 
-function getMergeReason(ctx: AssignMenuContext, neighbor: ViewUnit | null): string | null {
+/** 한글 문장과 영어 문장인가 - 이런 이웃은 합치지 않고 한/영 짝으로 맺는다 */
+function isOtherLanguage(a: ViewUnit, b: ViewUnit): boolean {
+  return (a.lang === "ko" && b.lang === "en") || (a.lang === "en" && b.lang === "ko");
+}
+
+/** 앞(뒤) 문장과 묶는 항목 하나 - 같은 언어면 합치기, 한글·영어면 짝 맺기. 묶는 규칙은 Split과 같다(planJoin) */
+function buildJoin(ctx: AssignMenuContext, neighbor: ViewUnit | null, side: "prev" | "next"): AssignMenuItem {
+  const isPair = neighbor !== null && isOtherLanguage(ctx.target, neighbor);
+  const action: AssignMenuAction = isPair ? `pair_${side}` : `merge_${side}`;
   const own = getEditBlocker(ctx, ctx.target);
-  if (own !== null) return own;
-  if (neighbor === null) return why("noNeighbor");
-  if (!EDITABLE_KINDS.has(neighbor.kind)) return why("neighborNotText");
-  if (ctx.isDecided(neighbor)) return why("neighborAssigned");
-  if (ctx.hasDraft(neighbor)) return why("neighborUnsaved");
+  if (own !== null) return build(action, own);
+  if (neighbor === null) return build(action, why("noNeighbor"));
+  if (!EDITABLE_KINDS.has(neighbor.kind)) return build(action, why("neighborNotText"));
+  if (ctx.isDecided(neighbor)) return build(action, why("neighborAssigned"));
+  if (ctx.hasDraft(neighbor)) return build(action, why("neighborUnsaved"));
   const plan = planJoin([ctx.target, neighbor], true);
-  // 언어가 다른 두 문장은 합치지 않고 한/영 짝이 된다 - 짝 맺기는 Split에서 한다
-  if (plan.kind === "pair") return why("otherLanguage");
-  return plan.kind === "merge" ? null : (plan.reasonKey ?? why("cannotMerge"));
+  return build(action, plan.kind === (isPair ? "pair" : "merge") ? null : (plan.reasonKey ?? why("cannotMerge")));
 }
 
 export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
@@ -80,8 +86,10 @@ export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
     assign: [build("confirm", confirmReason), build("clear", clearReason)],
     edit: [
       build("split", editReason ?? (ctx.canSplit ? null : why("nothingToSplit"))),
-      build("merge_prev", getMergeReason(ctx, ctx.prev)),
-      build("merge_next", getMergeReason(ctx, ctx.next)),
+      buildJoin(ctx, ctx.prev, "prev"),
+      buildJoin(ctx, ctx.next, "next"),
+      // 짝 풀기는 짝인 문장에서만 보인다
+      ...(ctx.target.pair_id !== null ? [build("unpair", editReason)] : []),
       { ...build("lang", editReason), lang: ctx.target.lang },
     ],
   };

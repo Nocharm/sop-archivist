@@ -3,7 +3,7 @@
 // 자리는 그 자리 메뉴와 같은 규칙(placeLinkMenu) - 그 줄의 조각들(한/영 짝이면 둘 다) 아래(모자라면 위)에 놓아 다룰 문장을 가리지 않는다.
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, Check, Eraser, Scissors, type LucideIcon } from "lucide-react";
+import { ArrowDownToLine, ArrowUpToLine, Check, Eraser, Link2, Scissors, Unlink, type LucideIcon } from "lucide-react";
 import { useRef } from "react";
 
 import { Menu } from "@/components/ui/menu";
@@ -19,6 +19,10 @@ const ICONS: Record<Exclude<AssignMenuAction, "lang">, LucideIcon> = {
   split: Scissors,
   merge_prev: ArrowUpToLine,
   merge_next: ArrowDownToLine,
+  // 한글·영어 이웃은 합치지 않고 짝으로 맺는다 - 같은 자리에 합치기 대신 나온다
+  pair_prev: Link2,
+  pair_next: Link2,
+  unpair: Unlink,
 };
 
 const LABELS: Record<Exclude<AssignMenuAction, "lang">, string> = {
@@ -27,6 +31,9 @@ const LABELS: Record<Exclude<AssignMenuAction, "lang">, string> = {
   split: "split.cutHere",
   merge_prev: "assign.ctx.mergePrev",
   merge_next: "assign.ctx.mergeNext",
+  pair_prev: "assign.ctx.pairPrev",
+  pair_next: "assign.ctx.pairNext",
+  unpair: "assign.ctx.unpair",
 };
 
 const KEYS: Partial<Record<AssignMenuAction, string>> = { confirm: "↵", clear: "U" };

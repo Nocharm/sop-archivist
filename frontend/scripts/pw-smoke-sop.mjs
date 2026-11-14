@@ -1863,6 +1863,48 @@ await runStep("members picker keeps Add inside the panel and adds the person", {
 });
 
 // 바로 생성(2026-11-09): 이름 없이 BND 코드로 만들고, 문서가 없으면 Split~Review는 잠기고 To-Be는 열려 있다
+// 배정 화면에서 한/영 짝 풀고 다시 맺기 - 우클릭 메뉴(전에는 쪼개기 화면에서만 했다). 끝에는 다시 짝이다
+await runStep("assign: separate and pair KO/EN from the right-click menu", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${freshId}/documents`, { headers })).json();
+  const oldDoc = docs.find((doc) => doc.side === "old" && doc.status === "ready");
+  const readPairs = async (ids) => {
+    const view = await (await page.request.get(`${BASE}/api/bundles/${freshId}/documents/${oldDoc.id}/view`, { headers })).json();
+    return ids === undefined ? view.units : view.units.filter((unit) => ids.includes(unit.id)).map((unit) => unit.pair_id);
+  };
+  // 한글 문장 바로 뒤에 영어 짝이 오는 미배정 짝
+  const sentences = (await readPairs()).filter((unit) => unit.kind === "sentence");
+  const ko = sentences.find((unit, index) => unit.lang === "ko" && unit.pair_id !== null && unit.status === "unassigned" && sentences[index + 1]?.pair_id === unit.pair_id && sentences[index + 1].lang === "en");
+  check("the fresh bundle has an unassigned KO/EN pair", ko !== undefined);
+  const en = sentences[sentences.indexOf(ko) + 1];
+  await page.goto(`${BASE}/bundles/${freshId}/assign`);
+  await wait(page, "assign-bar");
+  const piece = page.locator(`[data-testid="assign-paper-piece-${ko.id}"], [data-testid="assign-paper-unit-${ko.id}"]`).first();
+  await piece.waitFor({ timeout: T });
+  await piece.scrollIntoViewIfNeeded();
+  await piece.click({ button: "right" });
+  await wait(page, "assign-ctx-unpair");
+  check("a paired sentence cannot be paired again", (await page.locator('[data-testid="assign-ctx-pair_next"]').getAttribute("aria-disabled")) === "true" || (await page.locator('[data-testid="assign-ctx-pair_next"]').isDisabled()));
+  const separated = page.waitForResponse((response) => response.request().method() === "DELETE" && /\/pairs\/\d+/.test(response.url()), { timeout: T });
+  await page.locator('[data-testid="assign-ctx-unpair"]').click();
+  check("Separate saves", (await separated).ok());
+  await page.waitForFunction((id) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() === id, ko.display_id, { timeout: T });
+  check("the two sentences are no longer a pair", (await readPairs([ko.id, en.id])).every((pairId) => pairId === null));
+  await piece.click({ button: "right" });
+  await wait(page, "assign-ctx-pair_next");
+  check("Separate leaves the menu once the pair is gone", (await page.locator('[data-testid="assign-ctx-unpair"]').count()) === 0);
+  await takeShot("sop-assign-pair-menu.png");
+  const joined = page.waitForResponse((response) => response.request().method() === "POST" && /\/pairs$/.test(response.url()), { timeout: T });
+  await page.locator('[data-testid="assign-ctx-pair_next"]').click();
+  check("Pair with next saves", (await joined).ok());
+  await page.waitForFunction((ids) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.includes(ids[1]), [ko.display_id, en.display_id], { timeout: T });
+  const again = await readPairs([ko.id, en.id]);
+  check("the two sentences are a pair again and share a row", again[0] !== null && again[0] === again[1]);
+});
+
 // 배정 화면에서 보낼 곳 더하고 지우기 - All 목록에서 SOP·WI·단계를 만들고(한 줄씩 바로 저장), 두 번 눌러 지운다. 끝에는 목록이 처음과 같다
 await runStep("assign: add and delete destinations from the All list", {}, async ({ page, takeShot }) => {
   const readTobe = async () => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/tobe`, { headers: { "X-Dev-User": "qa.member" } })).json();
