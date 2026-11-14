@@ -89,7 +89,6 @@ describe("buildAssignMenu", () => {
     expect(find(ctx({ hasDraft: (unit) => unit.id === 1 }), "merge_prev").reasonKey).toBe("assign.ctx.why.neighborUnsaved");
     expect(find(ctx({ next: makeUnit(3, { kind: "table" }) }), "merge_next").reasonKey).toBe("assign.ctx.why.neighborNotText");
     // 언어가 다르면 합치기가 아니라 짝이다 - 짝은 Split에서 맺는다
-    expect(find(ctx({ next: makeUnit(3, { lang: "en" }) }), "merge_next").reasonKey).toBe("assign.ctx.why.otherLanguage");
     expect(find(ctx({ next: makeUnit(3, { lang: "en" }) }), "merge_prev").enabled).toBe(true);
   });
 
@@ -116,5 +115,34 @@ describe("findNearestCut", () => {
 
   it("returns null when the text cannot be split", () => {
     expect(findNearestCut(makeUnit(2, { text: "a", spans: [[1, 0, 1]] }), 0)).toBeNull();
+  });
+});
+
+describe("KO/EN pairing from the Assign menu", () => {
+  it("offers pairing instead of merging when the neighbour is the other language", () => {
+    const groups = buildAssignMenu(ctx({ next: makeUnit(3, { lang: "en" }) }));
+
+    expect(groups.edit.map((item) => item.action)).toEqual(["split", "merge_prev", "pair_next", "lang"]);
+    expect(find(ctx({ next: makeUnit(3, { lang: "en" }) }), "pair_next").enabled).toBe(true);
+    expect(find(ctx({ target: makeUnit(2, { lang: "en" }), prev: makeUnit(1) }), "pair_prev").enabled).toBe(true);
+  });
+
+  it("says why a pair cannot be made", () => {
+    const paired = ctx({ next: makeUnit(3, { lang: "en", pair_id: 7 }) });
+    const assigned = ctx({ next: makeUnit(3, { lang: "en" }), isDecided: (unit) => unit.id === 3 });
+    const locked = ctx({ next: makeUnit(3, { lang: "en" }), readOnly: true });
+
+    expect(find(paired, "pair_next").reasonKey).toBe("split.menu.why.alreadyPaired");
+    expect(find(assigned, "pair_next").reasonKey).toBe("assign.ctx.why.neighborAssigned");
+    expect(find(locked, "pair_next").reasonKey).toBe("assign.ctx.why.readOnly");
+  });
+
+  it("offers Separate only on a paired sentence, with the same edit rules", () => {
+    const paired = ctx({ target: makeUnit(2, { pair_id: 7 }), next: makeUnit(3, { lang: "en", pair_id: 7 }) });
+
+    expect(buildAssignMenu(ctx()).edit.some((item) => item.action === "unpair")).toBe(false);
+    expect(buildAssignMenu(paired).edit.map((item) => item.action)).toEqual(["split", "merge_prev", "pair_next", "unpair", "lang"]);
+    expect(find(paired, "unpair").enabled).toBe(true);
+    expect(find({ ...paired, isDecided: (unit) => unit.id === 2 }, "unpair").reasonKey).toBe("assign.ctx.why.assigned");
   });
 });

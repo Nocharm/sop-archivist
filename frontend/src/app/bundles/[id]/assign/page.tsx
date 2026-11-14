@@ -48,6 +48,8 @@ import {
   addToBeDoc,
   addWiStep,
   bulkDecide,
+  createPair,
+  deletePair,
   editUnits,
   clearDecisions,
   confirmMatchesInBulk,
@@ -703,6 +705,27 @@ export default function AssignPage() {
     }
   }
 
+  /** 한/영 짝을 맺거나 푼다 - 편집 기록(되돌리기)에는 들어가지 않는다. 반대 동작이 같은 메뉴에 있다 */
+  async function runPairChange(write: (docId: number, revision: number) => Promise<unknown>, okText: string, followId: number) {
+    if (!oldView || busy) return;
+    setBusy(true);
+    try {
+      await write(oldView.document.id, oldView.document.revision);
+      // 짝이 바뀌면 줄이 다시 묶인다 - 다시 받는 동안 옛 줄을 부르지 않게 고름을 비우고, 받은 뒤 그 문장의 줄을 고른다
+      setSelectedKey(null);
+      showToast(okText);
+      setFollow({ unitId: followId, staleViews: viewList, staleUnits: units.data });
+    } catch (err) {
+      const isLinked = err instanceof ApiError && err.rule?.code === "confirm_required";
+      showToast(isLinked ? t("assign.ctx.why.assigned") : humanizeApiError(err, t), "error");
+    } finally {
+      views.reload();
+      setUnitsKey((key) => key + 1);
+      void loadBundle(bundleId);
+      setBusy(false);
+    }
+  }
+
   function splitAtCut() {
     if (!cutUnit || cutLine.at === null) return;
     void runUnitEdit({ type: "split", unit_id: cutUnit.id, at: cutLine.at }, t("split.didSplit"), null);
@@ -731,6 +754,13 @@ export default function AssignPage() {
       const other = order[order.indexOf(target.id) + (action === "merge_prev" ? -1 : 1)];
       const ids = action === "merge_prev" ? [other, target.id] : [target.id, other];
       void runUnitEdit({ type: "merge", unit_ids: ids }, t("split.didMerge"), null);
+    } else if ((action === "pair_prev" || action === "pair_next") && paperTabs) {
+      const order = paperTabs.order;
+      const other = order[order.indexOf(target.id) + (action === "pair_prev" ? -1 : 1)];
+      void runPairChange((docId, revision) => createPair(bundleId, docId, revision, [target.id, other]), t("split.didJoin"), target.id);
+    } else if (action === "unpair") {
+      const pairId = target.pair_id;
+      if (pairId !== null) void runPairChange((docId, revision) => deletePair(bundleId, docId, pairId, revision), t("split.pairRemoved"), target.id);
     } else if (action === "lang" && lang) void runUnitEdit({ type: "set_language", unit_ids: [target.id], lang }, t("common.saved"), target.id);
   }
 
