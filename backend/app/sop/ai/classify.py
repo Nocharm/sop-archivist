@@ -60,6 +60,7 @@ from app.sop.models import (
     UnitDecision,
     UnitPairMember,
 )
+from app.sop.refs import REF_LANG
 from app.sop.segment import has_visible_char
 from app.sop.snapshot import TargetDocInfo, load_target_docs
 from app.sop.target_placement import NewTarget, arrange_new_targets
@@ -333,7 +334,8 @@ def _build_payload(loaded: _Loaded, ranked: Sequence[Candidate]) -> dict[str, ob
 
 def _find_rewrite_problem(units: Iterable[Unit], reply: ClassifyReply) -> AiWarning | None:
     """문장 단위가 있는 언어마다 고쳐 쓴 문장이 있어야 한다 — 빈 문장은 사람이 그대로 확정할 수 없다."""
-    for lang in sorted({unit.lang for unit in units if unit.kind in SENTENCE_SOURCE_KINDS}):
+    # 참조 줄(REF)은 고쳐 쓰지 않는다 — 번호와 이름은 EQUIS에 맞춘다
+    for lang in sorted({unit.lang for unit in units if unit.kind in SENTENCE_SOURCE_KINDS and unit.lang != REF_LANG}):
         sentences = reply.rewrites.get(lang, [])
         if not sentences or not all(map(has_visible_char, sentences)):
             return build_warning("missing_rewrite", lang)

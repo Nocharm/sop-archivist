@@ -33,6 +33,7 @@ from app.sop.editing import (
     EditStepIn,
     apply_edit,
     confirm_all_boundaries,
+    load_active_units,
     redo_edit,
     set_boundary_confirmed,
     undo_edit,
@@ -58,6 +59,7 @@ from app.sop.models import (
     UnitEdit,
     UnitPair,
     UnitPairMember,
+    UnitRef,
 )
 from app.sop.part_groups import build_part_groups, get_part_group_key
 from app.sop.pairs import (
@@ -69,11 +71,12 @@ from app.sop.pairs import (
     create_pair,
     delete_pair,
 )
+from app.sop.refs import RefState, read_ref_state
 from app.sop.schemas import NO_NUL, NoNulStr
 from app.sop.snapshot import count_unchecked_boundaries
 from app.sop.status import get_cover_status
 from app.sop.tobe import MAX_DB_INT, remove_match_doc, rename_match_doc, temp_match_code
-from app.sop.units import UNIT_ACTIVE, compute_display_id, refresh_code_pairs
+from app.sop.units import UNIT_ACTIVE, compute_display_id, get_latest_extraction_id, refresh_code_pairs
 
 router = APIRouter(prefix="/api/bundles", tags=["sop-documents"])
 
@@ -217,6 +220,21 @@ class ViewBlockOut(BaseModel):
     part_group: str
 
 
+class ViewUnitRefOut(BaseModel):
+    """참조 줄 상태 — proposed는 앱의 제안(사람이 번호 영역을 확인하기 전), confirmed는 REF로 확정된 것."""
+
+    state: Literal["proposed", "confirmed"]
+    number: str
+
+
+class UnitRefDetailOut(BaseModel):
+    """고른 단위의 참조 상태와 그 번호의 EQUIS 표시 — 참조가 아니면 state가 null이다."""
+
+    state: Literal["proposed", "confirmed"] | None
+    number: str = ""
+    equis: EquisOut | None = None
+
+
 class ViewUnitOut(BaseModel):
     id: int
     display_id: str
@@ -240,6 +258,12 @@ class ViewUnitOut(BaseModel):
     block_id: int
     # 이 단위에 걸린 열린 AI 나누기 제안(적용됐고 사람이 아직 채택·거절하지 않은 것) — 없으면 null
     split_suggestion_id: int | None
+    # 참조 줄 제안·확정 — 참조가 아니면 null
+    ref: ViewUnitRefOut | None = None
+
+
+def _to_ref_out(state: RefState | None) -> ViewUnitRefOut | None:
+    return ViewUnitRefOut(state=state.state, number=state.number) if state else None
 
 
 class ViewPartRefOut(BaseModel):
@@ -394,6 +418,12 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
     merged_ids = {created[0] for op, created in created_lists if op == "merge" and len(created) == 1}
     pair_by_unit = {unit_id: pair.id for pair in pairs for unit_id in pair.unit_ids}
     split_suggestions = await load_open_split_suggestion_ids(session, document)
+    ref_marks = {
+        mark.unit_id: mark
+        for mark in await session.scalars(
+            select(UnitRef).join(Unit, Unit.id == UnitRef.unit_id).where(Unit.extraction_id == extraction.id)
+        )
+    }
     return DocumentViewOut(
         document=document_out,
         extraction=extraction,
@@ -429,6 +459,7 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 pos_seq=unit.pos_seq,
                 block_id=unit.spans[0][0] if unit.spans else block_id_by_seq[unit.pos_seq],
                 split_suggestion_id=split_suggestions.get(unit.id),
+                ref=_to_ref_out(read_ref_state(unit, ref_marks.get(unit.id))),
             )
             for unit in units
         ],
@@ -631,6 +662,28 @@ async def get_document_view(
 ) -> DocumentViewOut:
     document = await _get_document(session, ctx.bundle.id, doc_id)
     return await build_document_view(session, document)
+
+
+@router.get("/{bundle_id}/documents/{doc_id}/units/{unit_id}/ref", response_model=UnitRefDetailOut)
+async def get_unit_ref(
+    doc_id: IdPath,
+    unit_id: IdPath,
+    background_tasks: BackgroundTasks,
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> UnitRefDetailOut:
+    """고른 단위가 가리키는 문서 번호와 그 번호의 EQUIS 표시 — 번호는 단위의 글에서만 나온다(자유 검색이 아니다)."""
+    document = await _get_document(session, ctx.bundle.id, doc_id)
+    extraction_id = await get_latest_extraction_id(session, document.id)
+    unit = (await load_active_units(session, extraction_id, [unit_id]))[unit_id]
+    state = read_ref_state(unit, await session.get(UnitRef, unit.id))
+    if state is None or not state.number:
+        return UnitRefDetailOut(state=state.state if state else None)
+    lookups = await equis_service.load_lookups(session, [state.number])
+    # 참조 문서는 이 묶음의 옛·새 문서가 아니다 — 올린 판과 견줄 것이 없어 새 문서 쪽 판정(폐기만 본다)을 쓴다
+    equis = build_equis_out(state.number, "new", "", lookups, now())
+    await start_lookups(session, background_tasks, ctx.bundle, [state.number], sync_titles=False)
+    return UnitRefDetailOut(state=state.state, number=state.number, equis=equis)
 
 
 async def _lock_editable_document(

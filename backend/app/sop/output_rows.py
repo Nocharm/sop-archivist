@@ -3,6 +3,7 @@
 from collections import defaultdict
 from dataclasses import dataclass
 
+from app.sop.refs import REF_LANG
 from app.sop.snapshot import (
     NEUTRAL,
     SINGLE_LANGUAGE_KINDS,
@@ -66,6 +67,7 @@ def count_single_language(snap: BundleSnapshot) -> int:
         for unit in _list_judged_units(snap)
         if unit.id not in snap.pair_of
         and unit.kind in SINGLE_LANGUAGE_KINDS
+        and unit.lang != REF_LANG
         and snap.documents[unit.document_id].language_layout in TWO_LANGUAGE_LAYOUTS
         and not _has_other_language_target(unit, targets_of[unit.id])
     )

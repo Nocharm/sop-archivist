@@ -11,10 +11,11 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Annotated, Literal, TypeVar, assert_never
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import clock
 from app.sop.decision_steps import UndoMetaIn
 from app.sop.decisions import DbId
 from app.sop.detach import (
@@ -40,7 +41,10 @@ from app.sop.models import (
     UnitEdit,
     UnitPair,
     UnitPairMember,
+    UnitRef,
 )
+from app.sop.refs import REF_CONFIRMED, REF_LANG, REF_REJECTED, read_number_in_text
+from app.sop.schemas import NO_NUL
 from app.sop.segment import build_unit_text, detect_language, has_visible_char
 from app.sop.spans import (
     NEUTRAL,
@@ -132,9 +136,24 @@ class SetLayoutTableOp(BaseModel):
     is_layout: bool
 
 
+class SetRefOp(BaseModel):
+    """글 단위를 참조 줄(REF)로 — 번호는 그 단위의 글 안에 있어야 한다. 이미 REF면 번호만 고친다."""
+
+    type: Literal["set_ref"]
+    unit_id: DbId
+    number: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100), NO_NUL]
+
+
+class ClearRefOp(BaseModel):
+    """참조 아님 — REF면 그 전 언어로 돌리고, 제안뿐이었으면 다시 제안하지 않게 표시만 남긴다."""
+
+    type: Literal["clear_ref"]
+    unit_id: DbId
+
+
 EditOp = Annotated[
     SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp | SplitTableRowsOp
-    | MergeTableRowsOp | SetLayoutTableOp,
+    | MergeTableRowsOp | SetLayoutTableOp | SetRefOp | ClearRefOp,
     Field(discriminator="type"),
 ]
 
@@ -482,6 +501,43 @@ async def _plan_set_language(session: AsyncSession, extraction_id: ExtractionId,
     return _Change(langs=changes)
 
 
+async def _plan_set_ref(session: AsyncSession, extraction_id: ExtractionId, op: SetRefOp) -> _Change:
+    unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
+    _ensure_text_kinds([unit])
+    if read_number_in_text(unit.text, op.number) is None:
+        raise_rule(422, "ref_number_not_in_text", unit_ids=[unit.id])
+    return _Change(langs={} if unit.lang == REF_LANG else {unit.id: (unit.lang, REF_LANG)})
+
+
+async def _plan_clear_ref(session: AsyncSession, extraction_id: ExtractionId, op: ClearRefOp) -> _Change:
+    unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
+    _ensure_text_kinds([unit])
+    if unit.lang != REF_LANG:
+        return _Change()
+    mark = await session.get(UnitRef, unit.id)
+    # 표시 없이 REF가 된 단위는 없지만(set_ref만 REF를 만든다) 있더라도 글자로 언어를 정해 돌린다
+    lang = (mark.prev_lang if mark is not None else "") or detect_language(unit.text) or "en"
+    return _Change(langs={unit.id: (REF_LANG, lang)})
+
+
+async def _save_ref_mark(session: AsyncSession, op: SetRefOp | ClearRefOp, actor: str) -> None:
+    """사람의 뜻(참조다·아니다)과 번호를 남긴다 — 언어를 바꾸기 전에 불러 그 전 언어를 기억한다."""
+    unit = await session.get_one(Unit, op.unit_id)
+    mark = await session.get(UnitRef, op.unit_id)
+    if mark is None:
+        mark = UnitRef(unit_id=op.unit_id, state=REF_REJECTED, decided_by=actor)
+        session.add(mark)
+    if isinstance(op, SetRefOp):
+        mark.state = REF_CONFIRMED
+        mark.number = read_number_in_text(unit.text, op.number) or ""
+        if unit.lang != REF_LANG:
+            mark.prev_lang = unit.lang
+    else:
+        mark.state = REF_REJECTED
+    mark.decided_by = actor
+    mark.decided_at = clock.now()
+
+
 async def _load_table(session: AsyncSession, extraction_id: ExtractionId, table_id: int) -> SourceTable:
     table = await session.scalar(
         select(SourceTable).where(SourceTable.id == table_id, SourceTable.extraction_id == extraction_id)
@@ -655,6 +711,10 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_merge_table_rows(session, extraction_id, op)
         case SetLayoutTableOp():
             return await _plan_set_layout_table(session, extraction_id, op)
+        case SetRefOp():
+            return await _plan_set_ref(session, extraction_id, op)
+        case ClearRefOp():
+            return await _plan_clear_ref(session, extraction_id, op)
         case _:
             assert_never(op)
 
@@ -959,7 +1019,15 @@ async def apply_edit(
     """
     extraction_id = await get_latest_extraction_id(session, document.id)
     change = await _plan(session, document.id, extraction_id, op)
+    if isinstance(op, SetRefOp | ClearRefOp):
+        await _save_ref_mark(session, op, actor)
     if change.is_unchanged():
+        if isinstance(op, SetRefOp | ClearRefOp):
+            # 언어는 그대로여도(제안을 물리거나 번호만 고침) 사람이 한 일이라 작업 기록에는 남긴다
+            record_event(
+                session, bundle_id=document.bundle_id, actor=actor, action="unit.edit", target_type="unit",
+                target_ids=[op.unit_id], reason=op.type,
+            )
         return EditResult(document_revision=document.revision, created_unit_ids=[], retired_unit_ids=[], detach=None)
     result = await _write_change(session, document, extraction_id, change, confirm=confirm, actor=actor)
     session.add(
