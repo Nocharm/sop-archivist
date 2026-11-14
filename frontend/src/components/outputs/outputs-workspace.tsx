@@ -15,6 +15,8 @@ import { OutputARowView } from "@/components/outputs/output-a-row";
 import { OutputBCard } from "@/components/outputs/output-b-card";
 import { OutputCView } from "@/components/outputs/output-c";
 import { ReadOnlyNote } from "@/components/read-only-note";
+import { ReviewBar } from "@/components/review/review-bar";
+import { ReviewReturnNote } from "@/components/review-return-note";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { BundleLoadError } from "@/components/bundle-load-error";
@@ -445,7 +447,9 @@ export function OutputsWorkspace({ mode }: { mode: OutputsMode }) {
           ))}
         </aside>
       )}
-      <div className="dense grid min-h-0 grid-rows-[auto_minmax(0,1fr)] bg-surface">
+      <div className={`dense grid min-h-0 bg-surface ${isOrder ? "grid-rows-[auto_minmax(0,1fr)]" : "grid-rows-[auto_auto_minmax(0,1fr)]"}`}>
+        {/* 결과 화면은 검토를 여기서 한다 - 탭 위 띠에 상태와 요청·거두기·완료·되돌림 단추(옛 Review 화면) */}
+        {!isOrder && (bundle ? <ReviewBar bundle={bundle} /> : <div className="min-h-11 border-b border-line" />)}
         <div className="flex h-[52px] items-center gap-3 border-b border-line px-[var(--pad)]">
           <h1 className="page-title ul">{t(isOrder ? "order.title" : "stage.outputs")}</h1>
           <ReadOnlyNote bundle={bundle} testId={isOrder ? "order" : "outputs"} />
@@ -562,6 +566,8 @@ export function OutputsWorkspace({ mode }: { mode: OutputsMode }) {
 
       {!isOrder && (
       <aside className="grid content-start gap-3 overflow-y-auto border-l border-line px-3 py-[18px]" data-testid="outputs-side">
+        {/* 되돌림·다시 열기·요청 거둠의 사유 - 있을 때만 맨 위에 보인다 */}
+        {bundle && <ReviewReturnNote bundle={bundle} testId="review-return-note" />}
         <section className="side-box grid gap-2" data-testid="outputs-summary">
           <h2 className="side-box-title">{t("outputs.summary")}</h2>
           {sum ? (

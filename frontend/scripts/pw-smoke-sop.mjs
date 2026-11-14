@@ -171,6 +171,27 @@ await runStep("reviewer sees the bundle in review", { devUser: "qa.lead" }, asyn
   await wait(page, "overview-next");
   check("waiting for review", (await page.locator('[data-testid="overview-next"]').getAttribute("data-action")) === "await_review");
   check("role tag reads Reviewer", (await getText(page, "overview-role")).includes("Reviewer"));
+  // 검토는 결과 화면 위의 띠에서 한다 - 레일에 Review 칸이 없고 옛 주소는 결과 화면으로 넘어간다
+  check("the rail has no Review item", (await page.locator('[data-testid="stage-nav-review"]').count()) === 0);
+  const reviewUrl = page.url();
+  await page.goto(`${reviewUrl}/review`);
+  await page.waitForURL(/\/outputs$/, { timeout: T });
+  await wait(page, "review-complete");
+  check("the old Review address lands on Outputs with the review bar", (await getText(page, "review-status")).includes("In review"));
+  check("the reviewer gets Return and Complete review", (await page.locator('[data-testid="review-return"]').count()) === 1);
+  check("the reviewer cannot request or withdraw", (await page.locator('[data-testid="review-request"], [data-testid="review-withdraw"]').count()) === 0);
+});
+
+// 작성자는 결과 화면에서 검토를 요청한다 - 조건이 남아 있으면 단추가 꺼져 있고 남은 조건으로 가는 길이 옆에 있다
+await runStep("outputs: the review bar tells the author what is left", {}, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
+  await wait(page, "review-open-conditions");
+  check("Request review is off while conditions are open", await page.locator('[data-testid="review-request"]').isDisabled());
+  check("the bar shows the bundle status", (await getText(page, "review-status")).includes("In progress"));
+  await page.locator('[data-testid="review-open-conditions"]').click();
+  await page.waitForURL(new RegExp(`/bundles/${halfBundleId}$`), { timeout: T });
+  await wait(page, "overview-gate-units");
+  check("See what is left opens the conditions on Overview", true);
 });
 
 await runStep("documents list, inline edit and delete prompt", {}, async ({ page, takeShot }) => {
@@ -1563,7 +1584,7 @@ await runStep("review: author withdraws the request and asks again", {}, async (
   await page.goto(`${BASE}/`);
   const review = page.locator('[data-testid^="bundles-row-"]', { hasText: "검토 대기" });
   const reviewId = Number((await review.getAttribute("data-testid")).replace("bundles-row-", ""));
-  await page.goto(`${BASE}/bundles/${reviewId}/review`);
+  await page.goto(`${BASE}/bundles/${reviewId}/outputs`);
   await wait(page, "review-withdraw");
   check("the review page offers withdraw to the author", true);
   await page.goto(`${BASE}/bundles/${reviewId}`);
@@ -1600,7 +1621,7 @@ await runStep("review: reviewer does not see withdraw", { devUser: "qa.lead" }, 
   await page.goto(`${BASE}/`);
   const review = page.locator('[data-testid^="bundles-row-"]', { hasText: "검토 대기" });
   const reviewId = Number((await review.getAttribute("data-testid")).replace("bundles-row-", ""));
-  await page.goto(`${BASE}/bundles/${reviewId}/review`);
+  await page.goto(`${BASE}/bundles/${reviewId}/outputs`);
   await wait(page, "review-return");
   check("no withdraw on the review page", (await page.locator('[data-testid="review-withdraw"]').count()) === 0);
   await page.goto(`${BASE}/bundles/${reviewId}`);
@@ -1612,7 +1633,7 @@ await runStep("review: reviewer completes the bundle in review", { devUser: "qa.
   await page.goto(`${BASE}/`);
   const review = page.locator('[data-testid^="bundles-row-"]', { hasText: "검토 대기" });
   const reviewId = Number((await review.getAttribute("data-testid")).replace("bundles-row-", ""));
-  await page.goto(`${BASE}/bundles/${reviewId}/review`);
+  await page.goto(`${BASE}/bundles/${reviewId}/outputs`);
   await wait(page, "output-c");
   check("the review page has no edition toggle", (await page.locator('[data-testid^="review-lang"]').count()) === 0);
   await takeShot("sop-review.png");
@@ -1764,6 +1785,8 @@ await runStep("assign: a status filter folds the Old paper", {}, async ({ page, 
     await page.locator(`[data-testid="${target.chip}"]`).click();
     await page.locator(`${old} [data-flash] [data-unit="${target.unitId}"]`).waitFor({ timeout: T });
     check("the folded source opens as a peek and flashes", (await countOf(`${old} .strip-row[data-peek] [data-unit="${target.unitId}"]`)) >= 1);
+    // 잇기 메뉴는 누른 뒤 1초쯤 지나 뜬다 - 뜨기 전에 Esc를 누르면 닫을 것이 없고 뒤늦게 뜬 메뉴가 남는다
+    await page.locator('[data-testid="assign-link-menu"]').waitFor({ state: "visible", timeout: 3000 }).catch(() => {});
     await page.keyboard.press("Escape");
     await page.locator('[data-testid="assign-link-menu"]').waitFor({ state: "detached", timeout: T });
     await page.keyboard.press("j");

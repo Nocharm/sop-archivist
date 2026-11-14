@@ -220,9 +220,9 @@ const SCENES = [
     marks: [text("Operation of Eppendorf Centrifuge")],
   },
   { name: "overview-ready", user: "qa.member", path: "/bundles/3", marks: [id("overview-status"), id("overview-gate")] },
-  { name: "review-reviewer", app: { name: "review" }, user: "qa.lead", path: "/bundles/3/review", marks: [id("review-status"), id("review-complete"), id("review-return")] },
+  { name: "review-reviewer", app: { name: "review" }, user: "qa.lead", path: "/bundles/3/outputs", marks: [id("review-status"), id("review-complete"), id("review-return")] },
   {
-    name: "review-return", user: "qa.lead", path: "/bundles/3/review",
+    name: "review-return", user: "qa.lead", path: "/bundles/3/outputs",
     prep: (page) => click(page, id("review-return")),
     marks: [id("review-reason-text"), id("review-reason-confirm")],
   },
@@ -260,7 +260,7 @@ const SCENES = [
   { name: "admin-guidelines", user: "dev.admin", path: "/admin?tab=guidelines", marks: [id("guideline-key-rules"), id("guideline-versions"), id("guideline-detail")] },
   // 여기부터 묶음 3을 바꾼다 - 검토 완료 뒤 모습
   {
-    name: "review-done", user: "qa.lead", path: "/bundles/3/review", mutates: true,
+    name: "review-done", user: "qa.lead", path: "/bundles/3/outputs", mutates: true,
     prep: async (page) => {
       await click(page, id("review-complete"));
       await click(page, id("review-complete-modal-confirm"));
@@ -268,7 +268,7 @@ const SCENES = [
     },
     marks: [id("review-status")],
   },
-  { name: "review-reopen", user: "qa.member", path: "/bundles/3/review", mutates: true, marks: [id("review-status"), id("review-reopen")] },
+  { name: "review-reopen", user: "qa.member", path: "/bundles/3/outputs", mutates: true, marks: [id("review-status"), id("review-reopen")] },
   { name: "home-done", user: "qa.member", path: "/", mutates: true, marks: [`${id("bundles-row-3")} .pill`, `${id("bundles-row-2")} .pill`] },
 ];
 

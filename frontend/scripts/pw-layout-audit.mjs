@@ -70,7 +70,7 @@ const MEMBER = "qa.member";
 const ADMIN_TABS = ["access", "directory", "batch", "ai", "bundles", "guidelines"];
 
 // X0: 어느 화면에서도 문서가 가로로 넘치지 않는다(가로 스크롤이 생기지 않는다)
-const sceneUrls = (bundle) => ["", "/documents", "/split", "/assign", "/outputs", "/review", "/history"].map((tail) => `/bundles/${bundle}${tail}`);
+const sceneUrls = (bundle) => ["", "/documents", "/split", "/assign", "/order", "/outputs", "/history"].map((tail) => `/bundles/${bundle}${tail}`);
 const PLAIN_SCENES = ["/", "/manual", "/account"];
 const BASELINE_C10E = 177; // 변경 전에 잰 값으로 채운다
 const AUDIT_ENTRIES = [
@@ -678,7 +678,7 @@ const AUDIT_ENTRIES = [
   {
     // B3: 되돌린 Bundle(W3)의 검토 화면에 쪽지가 보이고 사유 첫 20자가 화면 안에 있다 - 작성자와 검토자 둘 다
     id: "B3", ds: "worst", user: MEMBER, views: [1120, 1920],
-    path: (ids) => [MEMBER, "qa.lead"].map((user) => ({ url: `/bundles/${ids.w[3]}/review`, user })),
+    path: (ids) => [MEMBER, "qa.lead"].map((user) => ({ url: `/bundles/${ids.w[3]}/outputs`, user })),
     open: async (page) => { await page.getByTestId("review-return-note").waitFor({ timeout: T }); await page.waitForTimeout(600); },
     measure: (page) => page.evaluate(() => {
       const note = document.querySelector('[data-testid="review-return-note"]');
@@ -702,7 +702,7 @@ const AUDIT_ENTRIES = [
   {
     // B3b: 검토 중인 Bundle(W2)의 검토 화면에는 쪽지가 없다
     id: "B3b", ds: "worst", user: MEMBER, views: [1120, 1920],
-    path: (ids) => `/bundles/${ids.w[2]}/review`,
+    path: (ids) => `/bundles/${ids.w[2]}/outputs`,
     open: async (page) => { await page.getByTestId("review").waitFor({ timeout: T }); await page.waitForTimeout(1200); },
     measure: (page) => page.locator('[data-testid="review-return-note"]').count(),
     expect: (value) => value === 0,
