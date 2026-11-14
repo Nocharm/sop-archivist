@@ -16,7 +16,7 @@ import { showToast } from "@/components/ui/toast";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LoadError } from "@/components/ui/load-error";
 import { listAdminBundles, putAdminMembers, type AdminBundle } from "@/lib/api-manage";
-import type { LangProgress } from "@/lib/api-sop";
+import type { RowProgress } from "@/lib/api-sop";
 import { formatKst } from "@/lib/datetime";
 import { getDisplayName } from "@/lib/display-name";
 import { useI18n } from "@/lib/i18n";
@@ -28,7 +28,7 @@ import { getBundleLabel } from "@/lib/bundle-label";
 
 const LIST_KEY = "admin-bundles";
 
-function ProgressText({ progress }: { progress: LangProgress }) {
+function ProgressText({ progress }: { progress: RowProgress }) {
   if (progress.total === 0) return <span className="text-ink-4">–</span>;
   return (
     <span className="tabular-nums">
@@ -91,8 +91,7 @@ export function BundlesPanel() {
         />
       ),
     },
-    { key: "ko", header: <span className="lg">KO</span>, cardLabel: <span className="lg">KO</span>, align: "end", nowrap: true, skeletonWidth: 60, cell: (bundle) => <ProgressText progress={bundle.progress.ko} /> },
-    { key: "en", header: <span className="lg">EN</span>, cardLabel: <span className="lg">EN</span>, align: "end", nowrap: true, skeletonWidth: 60, cell: (bundle) => <ProgressText progress={bundle.progress.en} /> },
+    { key: "confirmed", header: t("bundles.colConfirmed"), cardLabel: t("bundles.colConfirmed"), align: "end", nowrap: true, skeletonWidth: 60, cell: (bundle) => <ProgressText progress={bundle.progress} /> },
     {
       key: "created",
       header: t("adminBundles.created"),
@@ -108,7 +107,7 @@ export function BundlesPanel() {
       skeletonWidth: 32,
       cell: (bundle) => (
         // 라벨이 펼쳐질 자리를 고정해(.mbtn-set) 옆 열을 밀거나 덮지 않는다
-        <span className="row-actions mbtn-set w-[100px]">
+        <span className="row-actions-quiet mbtn-set w-[100px]">
           <MorphButton icon={Users} label={t("members.manage")} testId={`admin-bundle-members-${bundle.id}`} onClick={() => setEditing(bundle)} />
         </span>
       ),
@@ -148,15 +147,13 @@ export function BundlesPanel() {
           view={view}
           rows={data === null ? null : rows.visible}
           columns={columns}
-          // 카드에서 동작 단추가 맨 아래 한 줄을 차지한다 - 라벨이 펼쳐져도 메타 글자를 덮지 않는다
-          cardActions="row"
           getRowKey={(bundle) => bundle.id}
           testId="admin-bundles-list"
           rowTestId={(bundle) => `admin-bundle-${bundle.id}`}
           showSkeleton={showSkeleton}
           skeletonRows={5}
           more={{ hasMore: rows.hasMore, sentinelRef: rows.sentinelRef, testId: "admin-bundles-more" }}
-          cardMinWidth={340}
+          cardMinWidth={440}
           framed
         />
       )}

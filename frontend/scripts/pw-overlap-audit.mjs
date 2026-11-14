@@ -93,7 +93,7 @@ async function auditHover(page, selector, report) {
 }
 
 const mbtnScenes = [
-  { name: "documents", user: "qa.member", url: `/bundles/${BUNDLE}/documents`, ready: '[data-testid$="-delete"]', buttons: ".mbtn-set > .mbtn:not(:disabled)" },
+  { name: "documents", user: "qa.member", url: `/bundles/${BUNDLE}/documents`, ready: '[data-testid$="-delete"]', buttons: '.row-actions-quiet button:not(:disabled)' },
   { name: "tobe", user: "qa.member", url: `/bundles/${BUNDLE}/tobe`, ready: '[data-testid="tobe-list"]', buttons: '[data-testid$="-remove"]:not(:disabled)', long: async (page) => {
     for (const input of await page.locator('input[data-testid$="-title"]').all()) await input.fill("SYNTHETIC very long document title that keeps going and going across the whole column width");
   } },
@@ -109,6 +109,14 @@ const mbtnScenes = [
     await page.locator('[data-testid^="overview-members-modal-row-"] .truncate').evaluateAll((els) => els.forEach((el) => { el.textContent = "Extremely Long Employee Display Name Example (QA Team Department)"; }));
   } },
   { name: "admin-bundles", user: "dev.admin", url: "/admin?tab=bundles", ready: '[data-testid^="admin-bundle-members-"]', buttons: '[data-testid^="admin-bundle-members-"]' },
+  // C12: 카드에서는 구성원 단추가 메타 줄 오른쪽 끝에 앉고, 펼친 라벨이 그 줄 글을 덮지 않아야 한다
+  { name: "admin-bundle-cards", user: "dev.admin", url: "/admin?tab=bundles", ready: '[data-testid="admin-bundles-view-cards"]', prepare: async (page) => {
+    await page.locator('[data-testid="admin-bundles-view-cards"]').click();
+    await page.locator('[data-testid="admin-bundles-list"] article [data-testid^="admin-bundle-members-"]').first().waitFor({ timeout: T });
+    await page.waitForTimeout(400);
+  }, buttons: '[data-testid="admin-bundles-list"] article [data-testid^="admin-bundle-members-"]', long: async (page) => {
+    await page.locator('[data-testid="admin-bundles-list"] .dcard-meta').evaluateAll((els) => els.slice(0, 6).forEach((el) => { el.insertAdjacentHTML("beforeend", "<div><dt>x</dt><dd>Extremely long meta value that keeps going across the card width</dd></div>"); }));
+  } },
   { name: "admin-bundle-members", user: "dev.admin", url: "/admin?tab=bundles", ready: '[data-testid^="admin-bundle-members-"]', prepare: async (page) => {
     await page.locator('[data-testid^="admin-bundle-members-"]').first().click();
     await page.locator('[role="dialog"] [data-testid*="-remove-"]').first().waitFor({ timeout: T });
@@ -187,6 +195,25 @@ const outputsScene = {
   },
 };
 
+// 반환 { hits, linked } - linked가 0이면 잴 줄이 없었다는 뜻이라 통과로 치지 않는다
+// 메뉴 상자가 잇고 있는 두 줄(누른 New 줄과 짝 Old 줄)의 글 상자를 덮는가 - 떠 있는 메뉴가 아래 다른 글을 가리는 것은 괜찮지만 이 두 줄은 안 된다
+async function findCoveringLinkedLines(page, menu) {
+  const box = await menu.boundingBox();
+  return page.evaluate((m) => {
+    const hit = (r) => r.width > 0 && r.height > 0 && Math.min(r.right, m.x + m.width) - Math.max(r.left, m.x) > 1 && Math.min(r.bottom, m.y + m.height) - Math.max(r.top, m.y) > 1;
+    const hits = [];
+    // New 줄은 줄 상자 전체(마지막 글줄이 짧아도 그 줄의 자리), Old 줄은 글줄마다
+    for (const line of document.querySelectorAll('[data-testid="assign-new"] .new-line[data-state="focus"], [data-testid="assign-new"] .new-line[data-state="picked"]')) {
+      if (hit(line.getBoundingClientRect())) hits.push(`New line "${line.textContent.trim().slice(0, 30)}"`);
+    }
+    for (const line of document.querySelectorAll('[data-testid="assign-old"] .su[data-sel]')) {
+      if ([...line.getClientRects()].some(hit)) hits.push(`Old line "${line.textContent.trim().slice(0, 30)}"`);
+    }
+    const linked = document.querySelectorAll('[data-testid="assign-new"] .new-line[data-state="focus"], [data-testid="assign-new"] .new-line[data-state="picked"], [data-testid="assign-old"] .su[data-sel]').length;
+    return { hits, linked };
+  }, box);
+}
+
 // Assign 그 자리 메뉴 - 떠 있는 메뉴라 아래 글을 가리는 것은 맞다. 대신 화면 안에 있고 라벨이 잘리지 않아야 한다.
 // 줄을 고르고 열어 둔 New 문서의 문장을 눌러 연다(고르기만 하고 저장하지 않으며 Esc로 닫는다)
 const linkMenuScene = {
@@ -210,6 +237,9 @@ const linkMenuScene = {
     await page.waitForTimeout(HOVER_SETTLE_MS);
     const spill = await findSpill(menu);
     if (spill.length > 0) report("assign-link-menu", spill.join(", "));
+    const covering = await findCoveringLinkedLines(page, menu);
+    if (covering.linked === 0) report("assign-link-menu covers linked lines", "no linked lines were measured");
+    if (covering.hits.length > 0) report("assign-link-menu covers linked lines", covering.hits.join(", "));
     await page.keyboard.press("Escape");
   },
 };
@@ -263,7 +293,103 @@ const aiJobsScene = {
   },
 };
 
-const scenes = [...mbtnScenes, outputsScene, linkMenuScene, aiJobsScene].filter((scene) => !only || only.includes(scene.name));
+// C 순서 바꾸기 - 화면에 먼저 옮긴 줄의 끝 단추도 글을 덮지 않아야 한다. 저장(PUT)은 붙잡아 두었다가 실패로 돌려 DB를 바꾸지 않는다
+const outputsReorderScene = {
+  name: "outputs-c-reorder",
+  user: "qa.member",
+  run: async (page, report) => {
+    let release = null;
+    await page.route("**/targets/order**", async (route) => {
+      await new Promise((done) => { release = done; });
+      await route.fulfill({ status: 500, contentType: "application/json", body: "{}" });
+    });
+    await page.goto(`${BASE}/bundles/${BUNDLE}/outputs`);
+    await page.locator('[data-testid="output-c"]').waitFor({ timeout: T });
+    const down = page.locator('[data-testid^="output-c-move-down-"]:not([disabled])').first();
+    await down.waitFor({ timeout: T });
+    const id = (await down.getAttribute("data-testid")).replace("output-c-move-down-", "");
+    await down.dispatchEvent("click");
+    await page.waitForTimeout(HOVER_SETTLE_MS);
+    const row = page.locator(`[data-testid="output-c-row-${id}"]`);
+    const actions = row.locator(".row-actions-quiet");
+    const rest = await findCovered(actions);
+    if (rest.hits.length > 0) report(`moved row ${id} buttons at rest (${rest.width}px)`, rest.hits.join(", "));
+    await row.hover({ position: { x: 8, y: 8 } });
+    await page.waitForTimeout(HOVER_SETTLE_MS);
+    const hovered = await findCovered(actions);
+    if (hovered.hits.length > 0) report(`moved row ${id} buttons (${hovered.width}px)`, hovered.hits.join(", "));
+    release?.();
+    await page.locator('[data-testid="toast-error"]').first().waitFor({ timeout: T });
+    await page.unroute("**/targets/order**");
+  },
+};
+
+// Excel 미리보기 창 - 시트 탭 넷의 이름이 서로 덮지 않고 잘리지 않으며, 창이 화면 안에 있다
+const exportPreviewScene = {
+  name: "export-preview",
+  user: "qa.member",
+  run: async (page, report) => {
+    await page.goto(`${BASE}/bundles/${BUNDLE}/outputs`);
+    await page.locator('[data-testid="outputs-export-open"]').click();
+    await page.locator('[data-testid="export-preview-sheet"] tbody tr').first().waitFor({ timeout: T });
+    const tabs = await page.locator('[data-testid^="export-preview-tab-"]').all();
+    if (tabs.length !== 4) report("export-preview tabs", `${tabs.length} tabs`);
+    for (const tab of tabs) {
+      const { hits, width } = await findCovered(tab);
+      if (hits.length > 0) report(`${await tab.getAttribute("data-testid")} (${width}px)`, hits.join(", "));
+    }
+    const spill = await findSpill(page.locator('[data-testid="export-preview-tab-0"]').locator(".."));
+    if (spill.length > 0) report("export-preview tab group", spill.join(", "));
+    const outside = await page.locator('[data-testid="export-preview"]').evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      return box.left < 0 || box.top < 0 || box.right > innerWidth || box.bottom > innerHeight;
+    });
+    if (outside) report("export-preview", "outside the viewport");
+  },
+};
+
+// 엮은 문서 미리 보기(아직 안 쓴 SOP)의 칸 제목 출처 - 칸 이름 뒤에서 말줄임하고 칸 이름을 덮지 않는다. 출처 글은 응답에 넣어 길게 그린다(DB는 그대로)
+const composedHeadingScene = {
+  name: "assign-new-heading-note",
+  user: "qa.member",
+  run: async (page, report) => {
+    const note = `← ${Array.from({ length: 14 }, (_, i) => `OLD-${i + 1} §${i + 5}`).join(", ")}`;
+    await page.route("**/outputs/c/docs/**", async (route) => {
+      const response = await route.fetch();
+      const doc = await response.json();
+      for (const section of doc.sections ?? []) section.heading_note = note;
+      await route.fulfill({ response, json: doc });
+    });
+    const tobe = await (await page.request.get(`${BASE}/api/bundles/${BUNDLE}/tobe`, { headers: { "X-Dev-User": "qa.member" } })).json();
+    const sop = tobe.docs.find((doc) => doc.doc_type === "sop" && doc.entrance === "assign");
+    await page.goto(`${BASE}/bundles/${BUNDLE}/assign`);
+    await page.locator('[data-testid="assign-bar"]').waitFor({ timeout: T });
+    await page.locator('[data-testid="assign-new-doc"]').click();
+    await page.locator(`[data-testid="assign-new-doc-option-${sop.id}"]`).click();
+    const notes = page.locator('[data-testid^="assign-new-heading-note-"]');
+    await notes.first().waitFor({ timeout: T });
+    for (const item of (await notes.all()).slice(0, 6)) {
+      await item.scrollIntoViewIfNeeded();
+      // 칸 첫 문장에 올려 언어 탭(위 테두리 위로 나온다)을 띄운 채 잰다 - 빈 칸이면 문장이 없다
+      const firstLine = item.locator("xpath=ancestor::p[contains(@class,'new-sec')]/following-sibling::div[contains(@class,'new-item')][1]//div[contains(@class,'new-line')]");
+      if ((await firstLine.count()) > 0) {
+        await firstLine.first().hover();
+        await page.waitForTimeout(250);
+      }
+      const { hits, width } = await findCovered(item);
+      if (hits.length > 0) report(`${await item.getAttribute("data-testid")} (${width}px)`, hits.join(", "));
+    }
+    // 칸 머리(문서 고르기·표지·선·확대)는 칸 안에 - 고르기 값의 말줄임은 의도한 것이라 잘림으로 치지 않는다
+    const beyond = await page.locator('[data-testid="assign-new"]').evaluate((pane) => {
+      const right = pane.getBoundingClientRect().right;
+      return [...pane.querySelector(".pane-head").children].filter((el) => el.getBoundingClientRect().right > right + 1).map((el) => el.getAttribute("data-testid") ?? el.className.toString().slice(0, 20));
+    });
+    if (beyond.length > 0) report("assign-new pane head", `beyond the pane: ${beyond.join(", ")}`);
+    await page.unroute("**/outputs/c/docs/**");
+  },
+};
+
+const scenes = [...mbtnScenes, outputsScene, outputsReorderScene, exportPreviewScene, composedHeadingScene, linkMenuScene, aiJobsScene].filter((scene) => !only || only.includes(scene.name));
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 let problems = 0;
 let runs = 0;

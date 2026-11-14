@@ -135,6 +135,17 @@ export function canSplitAt(unit: ViewUnit, at: number): boolean {
   return unit.text.slice(0, at).trim().length > 0 && unit.text.slice(at).trim().length > 0;
 }
 
+/** at에서 가장 가까운 나눌 자리(같으면 앞쪽) - 없으면 null. 우클릭한 자리나 문장 가운데에 나눌 선을 놓을 때 쓴다 */
+export function findNearestCut(unit: ViewUnit, at: number): number | null {
+  const length = unit.text.length;
+  const start = Math.min(Math.max(at, 0), length);
+  for (let distance = 0; distance <= length; distance += 1) {
+    if (canSplitAt(unit, start - distance)) return start - distance;
+    if (canSplitAt(unit, start + distance)) return start + distance;
+  }
+  return null;
+}
+
 /** 추출 경고의 보일 글 - 누락 글 경고는 backend ingest가 원문 조각을 detail.snippet에 담는다. 다른 경고는 글이 없다 */
 export function readWarningText(detail: Record<string, unknown>): string {
   return typeof detail.snippet === "string" ? detail.snippet : "";
@@ -205,6 +216,15 @@ export function countUnchecked(units: readonly ViewUnit[], isChecked: (unit: Vie
   return units.filter((unit) => !SPANLESS_KINDS.has(unit.kind) && !isChecked(unit)).length;
 }
 
+/**
+ * 남은 수를 셀 때의 확인 여부 - 숨긴 같은 내용 단위도 서버처럼 하나씩 세고(사용자 결정 2026-11-14),
+ * 숨긴 단위는 보이는 단위(주인)에 방금 칠한 확인을 따른다(확인 요청이 주인과 숨긴 단위를 함께 보낸다)
+ */
+export function readCountedCheck(mirrors: ReadonlyMap<number, readonly number[]>, overrides: Readonly<Record<number, boolean>>): (unit: ViewUnit) => boolean {
+  const ownerOf = new Map([...mirrors].flatMap(([owner, ids]) => ids.map((id) => [id, owner] as const)));
+  return (unit) => overrides[ownerOf.get(unit.id) ?? unit.id] ?? unit.boundary_confirmed;
+}
+
 /** 종이 오른쪽 끝 아이콘 표시 - 순서가 늘 같아야 줄마다 같은 자리에 온다. suggest는 아직 정하지 않은 AI 나누기 제안 */
 export function getMarks(unit: ViewUnit): UnitMark[] {
   const marks: UnitMark[] = [];
@@ -219,12 +239,11 @@ export function getMarks(unit: ViewUnit): UnitMark[] {
 
 const TEXT_KINDS = new Set(["sentence", "heading", "cell_sentence"]);
 
-/** 틈의 합치기를 쓸 수 없는 까닭 - 언어가 다름, 글이 아닌 것(표·그림), 칸 문장 규칙 */
-export type MergeBlocker = "mixed_language" | "not_text" | "cell";
+/** 틈의 합치기를 쓸 수 없는 까닭 - 글이 아닌 것(표·그림), 칸 문장 규칙. 언어는 보지 않는다(다른 언어끼리는 묶기가 짝을 고른다) */
+export type MergeBlocker = "not_text" | "cell";
 
 /** 합칠 수 없는 까닭 → 문구 키 - 틈의 합치기 단추와 우클릭 메뉴가 같이 쓴다 */
 export const MERGE_BLOCKER_KEYS: Record<MergeBlocker, string> = {
-  mixed_language: "split.noMergeLanguage",
   not_text: "split.noMergeKind",
   cell: "split.noMergeCell",
 };
@@ -234,7 +253,6 @@ export function getMergeBlocker(a: ViewUnit, b: ViewUnit): MergeBlocker | null {
   if (!TEXT_KINDS.has(a.kind) || !TEXT_KINDS.has(b.kind)) return "not_text";
   // 칸 문장은 같은 표·행 그룹(또는 모두 그룹 없음)끼리만
   if ((a.kind === "cell_sentence" || b.kind === "cell_sentence") && (a.kind !== b.kind || a.group_unit_id !== b.group_unit_id)) return "cell";
-  if (a.lang !== b.lang) return "mixed_language";
   return null;
 }
 
@@ -310,7 +328,7 @@ function readRowUnit(row: PaperRow, units: ReadonlyMap<number, ViewUnit>): ViewU
 
 /**
  * 이웃한 두 줄 사이의 "위아래 합치기". 글 조각 둘이면 늘 있고(못 합치면 까닭), 한쪽이 표·그림이면 까닭과 함께 꺼 두고,
- * 둘 다 글이 아니거나 부분 묶음이 다르면 없다(null).
+ * 둘 다 글이 아니거나 부분 묶음이 다르거나 같은 짝의 두 구성원이면 없다(null).
  */
 export function getGapMerge(prev: PaperRow, next: PaperRow, units: ReadonlyMap<number, ViewUnit>): GapMerge | null {
   const first = readRowUnit(prev, units);
@@ -322,6 +340,8 @@ export function getGapMerge(prev: PaperRow, next: PaperRow, units: ReadonlyMap<n
     return { firstId: unit.id, secondId: unit.id, blocker: "not_text" };
   }
   if (first.id === second.id) return null;
+  // 같은 짝의 두 구성원 사이(한 카드 안)에는 묶기 자리가 없다 - 한 문장으로 합치기는 옆 칸의 One sentence 전환이 맡는다
+  if (first.pair_id !== null && first.pair_id === second.pair_id) return null;
   return { firstId: first.id, secondId: second.id, blocker: getMergeBlocker(first, second) };
 }
 

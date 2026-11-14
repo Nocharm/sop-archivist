@@ -1,4 +1,4 @@
-// Assign 두 문서 사이 이음 - 마우스를 올린 조각의 맞은편을 강조하고, 양쪽 끝이 다 보이는 이음만 옅은 선으로 그린다(Old 배지 → New 출처 칩 왼쪽, 길은 link-route-model).
+// Assign 두 문서 사이 이음 - 마우스를 올린 조각의 맞은편을 강조하고, 양쪽 끝이 다 보이는 이음만 옅은 선으로 그린다(높이 차가 크면 두 끝 꼬리만, Old 조각 오른쪽 테두리 배지 높이 → New 문단 상자 왼쪽 테두리 출처 칩 높이, 길은 link-route-model).
 // 강조 표시는 React 상태가 아니라 DOM 속성(data-link-hover)으로 단다 - Old 원문 조각이 수천 개일 때 올릴 때마다 용지 전체를 다시 그리지 않게.
 // 선은 스크롤·크기 변경·확대·세로선 끌기마다 다시 재되 한 프레임에 한 번으로 묶는다.
 "use client";
@@ -7,7 +7,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { findLinkPartners, pickDrawnLinks, type LinkPair } from "@/lib/assign-model";
 import { getLinkDirection, type LinkDirection } from "@/lib/link-direction-model";
-import { buildLinkPath } from "@/lib/link-route-model";
+import { buildLinkPath, buildLinkStubs, isFarLink, type LinkStub } from "@/lib/link-route-model";
 
 /** 두 문서를 담은 틀(.assign-panes) 안에 둔다 - 틀이 선의 좌표 기준이자 마우스를 듣는 곳이다 */
 interface LinkLinesProps {
@@ -28,12 +28,11 @@ interface Hover {
 interface DrawnLine {
   key: string;
   d: string;
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
   strong: boolean;
   draft: boolean;
+  ai: boolean;
+  /** 먼 이음이면 선(d) 대신 두 끝 꼬리 */
+  stubs: LinkStub[] | null;
 }
 
 // 조각 첫 줄 가운데쯤에 선을 붙인다 - 긴 조각의 한가운데로 가면 어느 줄인지 흐려진다(px)
@@ -81,6 +80,16 @@ function updateBadgeDirections(root: HTMLElement, newBody: HTMLElement) {
   }
 }
 
+/** New 출처 칩마다 그 Old 조각이 왼쪽 칸 화면 안·위·아래 중 어디인지 data-dir로 단다 - 칩 오른쪽 갈매기. 조각이 그려져 있지 않으면(다른 Old 문서) none */
+function updateChipDirections(root: HTMLElement, oldBody: HTMLElement) {
+  const frame = oldBody.getBoundingClientRect();
+  for (const chip of root.querySelectorAll<HTMLElement>("[data-pane=\"new\"] [data-src-unit]")) {
+    const rect = findOldStrip(root, Number(chip.dataset.srcUnit))?.getBoundingClientRect();
+    const dir: LinkDirection = !rect ? "none" : rect.bottom < frame.top ? "above" : rect.top > frame.bottom ? "below" : "visible";
+    if (chip.dataset.dir !== dir) chip.dataset.dir = dir;
+  }
+}
+
 /** New 줄에서 그 Old 조각의 출처 칩 - 접혀 있으면 "+N" 칩 */
 function findSourceChip(newLine: HTMLElement, unitId: number): HTMLElement | null {
   const chip = newLine.querySelector<HTMLElement>(`[data-src-unit="${unitId}"]`);
@@ -107,6 +116,7 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
       return;
     }
     updateBadgeDirections(root, newBody);
+    updateChipDirections(root, oldBody);
     if (!visible) {
       setLines((prev) => (prev.length === 0 ? prev : []));
       return;
@@ -122,32 +132,24 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
     for (const pair of pickDrawnLinks(pairs, units, targets)) {
       const oldEl = findOldStrip(root, pair.unitId);
       const newEl = findNewLine(root, pair.targetId);
-      const rowEl = newEl?.closest<HTMLElement>(".strip-row");
-      if (!oldEl || !newEl || !rowEl) continue;
-      // 시작 - 배지(조각 오른쪽 아래)의 오른쪽 끝, 배지가 없으면(고르는 중인 이음) 조각 오른쪽 끝 첫 줄
+      if (!oldEl || !newEl) continue;
+      // 두 끝 모두 상자 바깥 테두리 - 선이 배지·칩을 찌르지 않고 그 높이에서 상자에 닿는다
+      // 시작 - Old 조각 오른쪽 끝, 연결 배지(조각 오른쪽 아래) 높이. 배지가 없으면(고르는 중인 이음) 첫 줄 높이
       const badge = oldEl.querySelector<HTMLElement>("[data-link-badge]");
       const oldRect = oldEl.getBoundingClientRect();
       const badgeRect = badge?.getBoundingClientRect();
-      const start = badgeRect ? { x: badgeRect.right, y: badgeRect.top + badgeRect.height / 2 } : { x: oldRect.right, y: readAnchorY(oldRect) };
-      // 끝 - 출처 칩 왼쪽 가운데, 칩이 없으면(아직 출처가 아닌 후보) 줄 왼쪽 끝 첫 줄
-      const chip = findSourceChip(newEl, pair.unitId);
-      const rowRect = rowEl.getBoundingClientRect();
-      const chipRect = chip?.getBoundingClientRect();
-      const end = chipRect ? { x: chipRect.left, y: chipRect.top + chipRect.height / 2 } : { x: rowRect.left, y: readAnchorY(rowRect) };
+      const start = { x: oldRect.right, y: badgeRect ? badgeRect.top + badgeRect.height / 2 : readAnchorY(oldRect) };
+      // 끝 - New 문단 상자 왼쪽 테두리, 출처 칩 높이. 칩이 없으면(아직 출처가 아닌 후보) 첫 줄 높이
+      const newRect = newEl.getBoundingClientRect();
+      const chipRect = findSourceChip(newEl, pair.unitId)?.getBoundingClientRect();
+      const end = { x: newRect.left, y: chipRect ? chipRect.top + chipRect.height / 2 : readAnchorY(newRect) };
       // 양쪽 끝이 다 보일 때만 - 한쪽이 스크롤 밖이면 선이 문서 머리나 화면 밖으로 뻗는다
       if (start.y < oldFrame.top || start.y > oldFrame.bottom || end.y < newFrame.top || end.y > newFrame.bottom) continue;
       const shift = (point: { x: number; y: number }) => ({ x: point.x - base.left, y: point.y - base.top });
-      const a = shift(start);
-      const b = shift(end);
-      const d = buildLinkPath(a, {
-        end: b,
-        chipTop: (chipRect?.top ?? end.y) - base.top,
-        chipBottom: (chipRect?.bottom ?? end.y) - base.top,
-        rowLeft: rowRect.left - base.left,
-        rowTop: rowRect.top - base.top,
-        isFirst: !chip || chip.previousElementSibling === null,
-      });
-      next.push({ key: `${pair.unitId}:${pair.targetId}`, d, x1: a.x, y1: a.y, x2: b.x, y2: b.y, strong: pair.strong, draft: pair.draft });
+      // 먼 이음은 고르거나 올렸을 때(strong)만 선 전체 - 평소에는 두 끝 꼬리로 이음이 있다는 것만
+      const stubs = !pair.strong && isFarLink(start, end) ? buildLinkStubs(shift(start), shift(end)) : null;
+      const d = stubs ? "" : buildLinkPath(shift(start), shift(end));
+      next.push({ key: `${pair.unitId}:${pair.targetId}`, d, strong: pair.strong, draft: pair.draft, ai: pair.ai, stubs });
     }
     setLines((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
   });
@@ -200,14 +202,26 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
     const root = svgRef.current?.parentElement;
     if (!root) return;
     const marked = new Set<HTMLElement>();
+    // 진해진 선의 두 끝 표시(Old 연결 배지·New 출처 칩)도 올린 모양으로 - 어느 칩이 어느 배지와 이어졌는지 함께 읽힌다
+    const hot = new Set<HTMLElement>();
     if (hover) {
       for (const id of findLinkPartners(pairs, hover.side, hover.id)) {
-        const el = hover.side === "old" ? findNewLine(root, id) : findOldStrip(root, id);
+        const unitId = hover.side === "old" ? hover.id : id;
+        const targetId = hover.side === "old" ? id : hover.id;
+        const oldEl = findOldStrip(root, unitId);
+        const newEl = findNewLine(root, targetId);
+        const el = hover.side === "old" ? newEl : oldEl;
         if (el) marked.add(el);
+        const badge = oldEl?.querySelector<HTMLElement>("[data-link-badge]");
+        const chip = newEl ? findSourceChip(newEl, unitId) : null;
+        if (badge) hot.add(badge);
+        if (chip) hot.add(chip);
       }
     }
     for (const el of root.querySelectorAll<HTMLElement>("[data-link-hover]")) if (!marked.has(el)) delete el.dataset.linkHover;
     for (const el of marked) el.dataset.linkHover = "";
+    for (const el of root.querySelectorAll<HTMLElement>("[data-link-hot]")) if (!hot.has(el)) delete el.dataset.linkHot;
+    for (const el of hot) el.dataset.linkHot = "";
   });
 
   // 끝날 때 표시를 지운다 - New 문서를 닫아도 Old 조각에 강조가 남지 않게
@@ -215,16 +229,33 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
     const root = svgRef.current?.parentElement;
     return () => {
       for (const el of root?.querySelectorAll<HTMLElement>("[data-link-hover]") ?? []) delete el.dataset.linkHover;
+      for (const el of root?.querySelectorAll<HTMLElement>("[data-link-hot]") ?? []) delete el.dataset.linkHot;
     };
   }, []);
 
   return (
     <svg ref={svgRef} className="link-lines" aria-hidden data-testid="assign-link-lines">
       {lines.map((line) => (
-        <g key={line.key} data-strong={line.strong ? "" : undefined} data-draft={line.draft ? "" : undefined}>
-          <path d={line.d} />
-          <circle cx={line.x1} cy={line.y1} r={2.5} />
-          <circle cx={line.x2} cy={line.y2} r={2.5} />
+        <g key={line.key} data-strong={line.strong ? "" : undefined} data-draft={line.draft ? "" : undefined} data-ai={line.ai ? "" : undefined} data-stub={line.stubs ? "" : undefined}>
+          {line.stubs ? (
+            line.stubs.map((stub, index) => {
+              // 꼬리는 상자에서 멀어질수록 옅어진다 - 둥근 끝에서 뚝 끊기면 잘린 선처럼 보였다. 그라디언트는 g의 색(currentColor)을 따른다
+              const id = `link-stub-${line.key.replace(":", "-")}-${index}`;
+              return (
+                <g key={id}>
+                  <linearGradient id={id} gradientUnits="userSpaceOnUse" x1={stub.from.x} y1={stub.from.y} x2={stub.to.x} y2={stub.to.y}>
+                    <stop offset="0" stopColor="currentColor" />
+                    <stop offset="0.35" stopColor="currentColor" />
+                    <stop offset="1" stopColor="currentColor" stopOpacity="0" />
+                  </linearGradient>
+                  {/* .link-lines path의 stroke(currentColor)를 이기려고 인라인 스타일 */}
+                  <path d={stub.d} style={{ stroke: `url(#${id})` }} />
+                </g>
+              );
+            })
+          ) : (
+            <path d={line.d} />
+          )}
         </g>
       ))}
     </svg>

@@ -11,7 +11,8 @@ import { Truncate } from "@/components/ui/motion";
 import { BundleStatusPill, RoleTag } from "@/components/status";
 import { hasPermission } from "@/lib/access";
 import { humanizeApiError } from "@/lib/api-errors";
-import { createBundle, listBundles, type BundleListItem, type LangProgress } from "@/lib/api-sop";
+import { getConfirmedPercent } from "@/lib/progress-model";
+import { createBundle, listBundles, type BundleListItem, type RowProgress } from "@/lib/api-sop";
 import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
 import { navigate } from "@/lib/nav-buffer";
@@ -25,9 +26,9 @@ import { showToast } from "@/components/ui/toast";
 const SKELETON_ROWS = 3;
 const LIST_KEY = "bundles";
 
-function ProgressValue({ progress }: { progress: LangProgress }) {
+function ProgressValue({ progress }: { progress: RowProgress }) {
   if (progress.total === 0) return <span className="text-ink-4">–</span>;
-  const percent = Math.round((progress.confirmed / progress.total) * 100);
+  const percent = getConfirmedPercent(progress) ?? 0;
   return (
     <span className="inline-flex items-center justify-end gap-2">
       <span className="tabular-nums">
@@ -83,7 +84,13 @@ export default function BundleListPage() {
             <span className="mr-2 font-mono text-[12px] text-ink-3" data-testid={`bundles-code-${bundle.id}`}>
               {bundle.code}
             </span>
-            {bundle.title.trim() !== "" && <Truncate text={bundle.title} />}
+            {bundle.title.trim() !== "" ? (
+              <Truncate text={bundle.title} />
+            ) : (
+              <span className="block font-normal text-ink-3" data-testid={`bundles-untitled-${bundle.id}`}>
+                {t("bundles.untitled")}
+              </span>
+            )}
           </Link>
           {/* 합성 데이터는 목록에서도 합성으로 보인다 - 실제 묶음과 섞여 보이지 않게 */}
           {bundle.is_synthetic && (
@@ -98,30 +105,13 @@ export default function BundleListPage() {
     { key: "status", header: t("bundles.colStatus"), card: "badge", nowrap: true, skeletonWidth: 84, cell: (bundle) => <BundleStatusPill status={bundle.status} /> },
     { key: "role", header: t("bundles.colRole"), card: "badge", nowrap: true, skeletonWidth: 56, cell: (bundle) => <RoleTag role={bundle.my_role} /> },
     {
-      key: "ko",
-      header: (
-        <>
-          <span className="lg">KO</span> {t("bundles.colConfirmed")}
-        </>
-      ),
+      key: "confirmed",
+      header: t("bundles.colConfirmed"),
       align: "end",
       nowrap: true,
       skeletonWidth: 110,
-      cellTestId: (bundle) => `bundles-ko-${bundle.id}`,
-      cell: (bundle) => <ProgressValue progress={bundle.progress.ko} />,
-    },
-    {
-      key: "en",
-      header: (
-        <>
-          <span className="lg">EN</span> {t("bundles.colConfirmed")}
-        </>
-      ),
-      align: "end",
-      nowrap: true,
-      skeletonWidth: 110,
-      cellTestId: (bundle) => `bundles-en-${bundle.id}`,
-      cell: (bundle) => <ProgressValue progress={bundle.progress.en} />,
+      cellTestId: (bundle) => `bundles-confirmed-${bundle.id}`,
+      cell: (bundle) => <ProgressValue progress={bundle.progress} />,
     },
     {
       key: "updated",

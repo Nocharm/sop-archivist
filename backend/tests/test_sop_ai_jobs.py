@@ -49,6 +49,7 @@ from tests.sop_helpers import (
     create_bundle,
     get_bundle,
     get_view,
+    set_doc_version,
     set_members,
 )
 
@@ -194,6 +195,8 @@ def _list_events(client: TestClient, bundle_id: int) -> list[dict]:
 def _make_ready(client: TestClient) -> AiBundle:
     """모든 단위를 확정하고 의미 검토 4항목을 표시해 검토 요청이 통과하는 묶음."""
     bundle = make_ai_bundle(client)
+    docs = client.get(f"/api/bundles/{bundle.id}/documents", headers=AUTHOR).json()
+    set_doc_version(client, bundle.id, next(doc for doc in docs if doc["id"] == bundle.document_id))
     confirm_boundaries(client, bundle.id, bundle.document_id)
     for unit in get_view(client, bundle.id, bundle.document_id)["units"]:
         assign_as_is(client, bundle.id, unit, bundle.sop_id, slot_key="purpose")

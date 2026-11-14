@@ -1,7 +1,7 @@
 // 검토 요청 조건 카드 - Fail을 위, Pass를 아래로 나누고 각각 앞 몇 개만 보인 뒤 나머지 수를 센다.
 import { describe, expect, it } from "vitest";
 
-import { GATE_STAGE, splitGates } from "./review-gates";
+import { GATE_STAGE, groupNotices, splitGates } from "./review-gates";
 import { NEXT_ACTION_STAGE } from "./stages";
 
 const gate = (key: string, ok: boolean) => ({ key, ok });
@@ -28,6 +28,8 @@ describe("splitGates", () => {
 describe("GATE_STAGE", () => {
   it("opens the same screen as the next action for the same blocker", () => {
     expect(GATE_STAGE.documents).toBe(NEXT_ACTION_STAGE.upload_documents);
+    expect(GATE_STAGE.versions).toBe(NEXT_ACTION_STAGE.fill_doc_versions);
+    expect(GATE_STAGE.versions).toBe("documents");
     expect(GATE_STAGE.boundaries).toBe(NEXT_ACTION_STAGE.check_boundaries);
     expect(GATE_STAGE.boundaries).toBe("split");
     expect(GATE_STAGE.units).toBe(NEXT_ACTION_STAGE.decide_units);
@@ -38,5 +40,25 @@ describe("GATE_STAGE", () => {
 
   it("leaves the reviewer blocker to the members window", () => {
     expect(GATE_STAGE.reviewer).toBeNull();
+  });
+});
+
+describe("groupNotices", () => {
+  const slot = (doc: string) => ({ code: "equipment_sop_empty_slots", doc_code: doc });
+
+  it("returns an empty list for no notices", () => {
+    expect(groupNotices([])).toEqual([]);
+  });
+
+  it("keeps a single equipment notice as it is", () => {
+    const only = slot("OLD-1");
+
+    expect(groupNotices([only, { code: "unacked_missing_text", count: 2 }])).toEqual([only, { code: "unacked_missing_text", count: 2 }]);
+  });
+
+  it("folds three equipment notices into one group carrying the three doc codes", () => {
+    const grouped = groupNotices([slot("A"), { code: "unacked_missing_text", count: 2 }, slot("B"), slot("C")]);
+
+    expect(grouped).toEqual([{ code: "equipment_sop_empty_slots", docs: ["A", "B", "C"] }, { code: "unacked_missing_text", count: 2 }]);
   });
 });

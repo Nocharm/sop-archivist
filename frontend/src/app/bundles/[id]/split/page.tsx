@@ -3,36 +3,37 @@
 // 합치기는 조각 사이의 단추 하나뿐이다. 끌어 고르면 새 단위로 만들 수 있다.
 "use client";
 
-import { ArrowDown, ArrowUp, Check, CheckCheck, Circle, CircleCheck, FileText, Link2, Redo2, Scissors, SquarePlus, TriangleAlert, Undo2, Unlink, Upload, WandSparkles, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, CheckCheck, Circle, CircleCheck, FileText, Link2, Redo2, Scissors, SquarePlus, Undo2, Unlink, Upload, WandSparkles, X } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useEffectEvent, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { SplitAiTabs } from "@/components/manage/split-ai";
 import { SplitAiBar } from "@/components/manage/split-ai-bar";
 import { SplitAiResult } from "@/components/manage/split-ai-result";
 import { PartTabs } from "@/components/paper/part-tabs";
-import { Paper, type CutDragPos, type PaperCut } from "@/components/paper/paper";
+import { CutPop } from "@/components/paper/cut-pop";
+import { Paper, type PaperCut } from "@/components/paper/paper";
 import { SourceFontMenu } from "@/components/paper/source-font-menu";
 import { Modal } from "@/components/modal";
 import { ReadOnlyNote } from "@/components/read-only-note";
 import { SplitContextMenu } from "@/components/split/split-context-menu";
 import { SplitUnitActions } from "@/components/split/split-unit-actions";
 import { SplitHelp } from "@/components/split/split-help";
-import { LoadError } from "@/components/ui/load-error";
+import { BundleLoadError } from "@/components/bundle-load-error";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { getStageHref } from "@/lib/stages";
 import { InfoTip } from "@/components/ui/info-tip";
 import { BusyLabel, Truncate } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
+import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import {
   ackWarning,
   confirmAllBoundaries,
-  confirmPair,
   createPair,
   deletePair,
   editUnits,
@@ -46,16 +47,19 @@ import {
   type DocumentView,
   type EditOp,
   type EditResult,
+  type EditStepResult,
   type PartRef,
   type ViewUnit,
 } from "@/lib/api-sop";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { buildGroupSave } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
-import { buildPaperModel, buildPaperTabs, canSplitAt, countUnchecked, readWarningText, resolveCutDrag, shouldRecenter, toBlockOffset, toUnitOffset, type PaperSheet, type PaperTabKey } from "@/lib/paper-model";
-import { findLangMismatch } from "@/lib/lang-mismatch-model";
+import { buildPaperModel, buildPaperTabs, countUnchecked, readCountedCheck, readWarningText, shouldRecenter, type PaperSheet, type PaperTabKey } from "@/lib/paper-model";
+import { describeEditStep } from "@/lib/edit-step-model";
+import { getAdvanceDelay, getAdvanceWait, parseDurationMs } from "@/lib/split-advance";
 import { getSplitKeyAction } from "@/lib/split-keys";
-import { buildSplitMenu, canPair, getAiSplitReason, isAiSplitKind, isUnitDecided, type SplitMenuAction } from "@/lib/split-menu-model";
+import { buildSplitMenu, getAiSplitReason, getPairMergeReason, hasBothScripts, isAiSplitKind, isUnitDecided, pickEnglishSide, planJoin, type JoinKind, type JoinPlan, type SplitMenuAction } from "@/lib/split-menu-model";
+import { useCutLine } from "@/lib/use-cut-line";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useLoaded } from "@/lib/use-loaded";
 import { buildAiTabs } from "@/lib/split-ai-tabs-model";
@@ -64,11 +68,32 @@ import { useSplitAi } from "@/lib/use-split-ai";
 /** Paper의 testid 앞말 - 단위·조각 testid와 Shift+F10이 같은 값을 쓴다 */
 const PAPER_TEST_ID = "split-paper";
 
+/** 편집 뒤 알림 - 되돌리기·다시 하기는 응답을 보고 무엇을 했는지 말한다 */
+type OkText = string | ((result: EditResult) => string);
+
 interface PendingConfirm {
   count: number;
   run: () => Promise<EditResult>;
+  okText: OkText;
   /** 새 단위가 없는 편집(언어 바꾸기) 뒤에도 고른 채로 둘 단위 */
   keepId?: number;
+}
+
+/** 경계 확인 뒤 기다리는 넘어가기 - delay는 누른 때부터, timer·nextId는 저장 응답이 온 뒤에 정해진다 */
+interface PendingAdvance {
+  startedAt: number;
+  delay: number;
+  /** 기다리는 동안 Enter를 눌렀다 - 응답이 오는 대로(왔으면 바로) 넘어간다 */
+  isSkipped: boolean;
+  timer: number | null;
+  nextId: number | null;
+}
+
+/** 한 문장 → 한/영 짝 전환에서 합치기는 풀었지만 짝을 맺지 못함 - 확인 창으로 다시 묻지 않고(첫 단계가 이미 됐다) 어디까지 됐는지 알린다 */
+class JoinPartlyError extends Error {
+  constructor(cause: unknown) {
+    super("unmerged but could not pair the restored units", { cause });
+  }
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -114,7 +139,6 @@ export default function SplitPage() {
   const activeTab = tabs?.tabs.find((tab) => tab.key === tabKey) ?? tabs?.tabs[0] ?? null;
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [cutAt, setCutAt] = useState<{ unitId: number; at: number } | null>(null);
   const [range, setRange] = useState<{ blockId: number; start: number; end: number } | null>(null);
   // 짝 맞추기 - 다른 언어 문장을 눌러 고르는 중
   const [isPairPicking, setIsPairPicking] = useState(false);
@@ -126,25 +150,31 @@ export default function SplitPage() {
   // 경계 확인은 바로 보이게 먼저 칠한다 - 지금 보기 데이터에 묶여 있어 새 데이터가 오면 저절로 버려진다
   const [localChecks, setLocalChecks] = useState<{ base: DocumentView | null; values: Record<number, boolean> }>({ base: null, values: {} });
   const checkOverrides = localChecks.base === data ? localChecks.values : {};
+  // 확인 뒤 넘어가기 - 확인한 조각의 바뀜을 다 보인 뒤 다음 단위를 고른다(split-advance). 렌더와 상관없는 타이머라 ref다
+  const advanceRef = useRef<PendingAdvance | null>(null);
+  // 방금 확인한 단위 - 오른쪽 칸 상태 칩이 그 단위에서만 뒤집히며 바뀐다(다른 단위를 고를 때는 그냥 바뀐다)
+  const [flipId, setFlipId] = useState<number | null>(null);
+  // 확인하고 다음 조각으로 넘어가기를 기다리는 단위 - 그 조각의 꺼진 단추 줄을 다시 켜지 않는다
+  const [advancingId, setAdvancingId] = useState<number | null>(null);
   // 보이는 단위는 숨긴 같은 내용 단위까지 모두 확인돼야 확인된 것이다
   const isChecked = (unit: ViewUnit) =>
     checkOverrides[unit.id] ?? (unit.boundary_confirmed && (tabs?.mirrors.get(unit.id) ?? []).every((id) => model?.units.get(id)?.boundary_confirmed !== false));
-  const hiddenIds = new Set([...(tabs?.mirrors.values() ?? [])].flat());
-  const shownUnits = (data?.units ?? []).filter((unit) => !hiddenIds.has(unit.id));
-  // 지금 문서는 방금 누른 확인까지 센다 - 다른 문서는 목록이 준 수를 쓴다
-  const uncheckedLeft = countUnchecked(shownUnits, isChecked);
-  const countTabLeft = (key: PaperTabKey) => countUnchecked(shownUnits.filter((unit) => tabs?.tabOf.get(unit.id) === key), isChecked);
-  const checkableTotal = countUnchecked(shownUnits, () => false);
+  // 남은 수는 문서 목록·검토 사유(서버)처럼 숨긴 같은 내용 단위도 하나씩 센다 - 지금 문서는 방금 누른 확인까지, 다른 문서는 목록이 준 수
+  const isCountedChecked = readCountedCheck(tabs?.mirrors ?? new Map(), checkOverrides);
+  const countedUnits = data?.units ?? [];
+  const uncheckedLeft = countUnchecked(countedUnits, isCountedChecked);
+  const countTabLeft = (key: PaperTabKey) => countUnchecked(countedUnits.filter((unit) => tabs?.tabOf.get(unit.id) === key), isCountedChecked);
+  const checkableTotal = countUnchecked(countedUnits, () => false);
   const [isCheckRestOpen, setIsCheckRestOpen] = useState(false);
   // 우클릭 메뉴 - 뜬 자리와 누른 문장
   const [menu, setMenu] = useState<{ x: number; y: number; targetId: number } | null>(null);
+  // 묶기 전환의 꺼진 단추 까닭 - data-tip을 가진 단추의 툴팁
+  const joinTip = useDelegatedTip();
 
   const selected: ViewUnit | null = (selectedId !== null && model?.units.get(selectedId)) || null;
-  const cut: PaperCut | null = (() => {
-    if (!cutAt || !selected || cutAt.unitId !== selected.id) return null;
-    const pos = toBlockOffset(selected.spans, cutAt.at);
-    return pos ? { blockId: pos.blockId, offset: pos.offset } : null;
-  })();
+  // 나눌 선 - 고른 단위에만 산다(Assign과 같은 훅)
+  const cutLine = useCutLine(selected);
+  const cut: PaperCut | null = cutLine.cut;
   const warnings = data?.extraction?.warnings ?? [];
   const warnBlockIds = new Set(warnings.flatMap((w) => (w.block_id !== null && w.needs_ack && !w.acked_by ? [w.block_id] : [])));
   const pair = selected?.pair_id ? data?.pairs.find((item) => item.id === selected.pair_id) ?? null : null;
@@ -170,7 +200,7 @@ export default function SplitPage() {
   }
 
   function clearTransient() {
-    setCutAt(null);
+    cutLine.clear();
     setRange(null);
     setIsPairPicking(false);
     setPicked([]);
@@ -184,10 +214,29 @@ export default function SplitPage() {
     void loadBundle(bundleId);
   }
 
+  function cancelAdvance() {
+    const pending = advanceRef.current;
+    if (pending?.timer != null) window.clearTimeout(pending.timer);
+    advanceRef.current = null;
+    setAdvancingId(null);
+  }
+
+  /** 넘어가기를 기다리는 중 Enter - 저장이 끝났으면 바로 넘어가고, 아직이면 응답이 오는 대로 넘어간다 */
+  function skipAdvanceWait() {
+    const pending = advanceRef.current;
+    if (!pending) return;
+    pending.isSkipped = true;
+    if (pending.timer !== null && pending.nextId !== null) selectUnit(pending.nextId, true);
+  }
+
   function selectUnit(unitId: number | null, scroll = false) {
+    // 기다리던 넘어가기는 다른 고름(사람이 고른 것 포함)이 오면 거둔다
+    cancelAdvance();
+    // 칩 뒤집힘은 방금 바꾼 단위에서만 - 다른 단위를 고르면 그냥 바뀐다
+    setFlipId(null);
     setSelectedId(unitId);
     if (unitId !== null) setSeenAi((prev) => new Set(prev).add(unitId));
-    setCutAt(null);
+    cutLine.clear();
     setRange(null);
     // 다른 탭의 단위(짝·다음 확인 안 된 단위)를 고르면 그 탭으로 간다
     const nextTab = unitId === null ? undefined : tabs?.tabOf.get(unitId);
@@ -214,7 +263,7 @@ export default function SplitPage() {
   }
 
   // 편집 한 번 - 판단이 걸린 단위를 은퇴시키면 서버가 409로 먼저 묻는다
-  async function runChange(run: (confirm: boolean) => Promise<EditResult>, okText: string, keepId?: number) {
+  async function runChange(run: (confirm: boolean) => Promise<EditResult>, okText: OkText, keepId?: number) {
     if (busy) return;
     setBusy(true);
     try {
@@ -223,14 +272,18 @@ export default function SplitPage() {
     } catch (err) {
       const unitIds = err instanceof ApiError && err.rule?.code === "confirm_required" ? err.rule.unit_ids : null;
       if (Array.isArray(unitIds)) {
-        setPending({ count: unitIds.length, run: () => run(true), keepId });
+        setPending({ count: unitIds.length, run: () => run(true), okText, keepId });
       } else {
-        showToast(humanizeApiError(err, t), "error");
+        showToast(describeChangeError(err), "error");
         refresh();
       }
     } finally {
       setBusy(false);
     }
+  }
+
+  function describeChangeError(err: unknown): string {
+    return err instanceof JoinPartlyError ? t("split.join.partly") : humanizeApiError(err, t);
   }
 
   /** 고른 단위(칸 문장이면 묶인 표·행 단위)를 보낼 곳 없이 보류한다 - 아직 판단이 없는 단위만 */
@@ -264,10 +317,11 @@ export default function SplitPage() {
     }
   }
 
-  function handleChangeDone(result: EditResult, okText: string, keepId?: number) {
+  function handleChangeDone(result: EditResult, okText: OkText, keepId?: number) {
     clearTransient();
     selectUnit(result.created_unit_ids[0] ?? keepId ?? null);
-    showToast(okText);
+    // 함수 알림은 고름을 바꿀 수 있어(경계 확인 되돌리기) 위 고름 뒤에 부른다
+    showToast(typeof okText === "function" ? okText(result) : okText);
     refresh();
   }
 
@@ -281,7 +335,28 @@ export default function SplitPage() {
     if (!data || docId === null) return;
     const revision = data.document.revision;
     const call = kind === "undo" ? undoEdit : redoEdit;
-    void runChange((confirm) => call(bundleId, docId, revision, confirm), t(kind === "undo" ? "split.undone" : "split.redone"));
+    void runChange(
+      (confirm) => call(bundleId, docId, revision, confirm),
+      (result) => {
+        // runChange는 편집 응답 공통 모양으로 넘긴다 - 여기 run은 undoEdit·redoEdit라 단계 응답이다
+        const step = result as EditStepResult;
+        // 경계 확인을 되돌리거나 다시 하면 그 조각으로 돌아간다 - 확인 뒤 넘어간 자리에서 Ctrl+Z
+        if (step.boundary_unit_ids.length > 0) {
+          const unitId = step.boundary_unit_ids.find((id) => model?.units.has(id)) ?? null;
+          if (unitId !== null) selectUnit(model?.units.get(unitId)?.group_unit_id ?? unitId, true);
+        }
+        return formatStep(step, kind);
+      },
+    );
+  }
+
+  /** 되돌리기·다시 하기 알림 - 무엇을(경계 확인이면 어느 Unit을) 거꾸로 했는지 */
+  function formatStep(result: EditStepResult, kind: "undo" | "redo"): string {
+    const message = describeEditStep(result, kind, (unitId) => model?.units.get(unitId)?.display_id ?? null);
+    const { action, target } = message.vars;
+    if (action === undefined) return t(message.key);
+    const suffix = target === "" ? "" : ` · ${typeof target === "number" ? t("split.step.units", { n: target }) : target}`;
+    return t(message.key, { action: t(String(action)), target: suffix });
   }
 
   async function runSimple(action: () => Promise<unknown>, okText: string | null, after?: () => void) {
@@ -303,36 +378,104 @@ export default function SplitPage() {
   function setBoundary(unit: ViewUnit, confirmed: boolean) {
     // 다른 요청이 도는 중이면 보내지 않으니 먼저 칠하지도 않는다
     if (docId === null || busy) return;
+    cancelAdvance();
     setLocalChecks({ base: data, values: { ...checkOverrides, [unit.id]: confirmed } });
+    // 칩은 확인·확인 취소 모두 뒤집히며 바뀐다
+    setFlipId(unit.id);
+    // 저장은 바로 보내고, 넘어가기는 바뀜(단추 줄 꺼짐·켜짐)이 끝날 때까지 기다린다 - 움직임 줄이기면 기다리지 않는다
+    const pending: PendingAdvance | null = confirmed
+      ? {
+          startedAt: performance.now(),
+          delay: getAdvanceDelay(parseDurationMs(getComputedStyle(document.documentElement).getPropertyValue("--dur-slow")), matchMedia("(prefers-reduced-motion: reduce)").matches),
+          isSkipped: false,
+          timer: null,
+          nextId: null,
+        }
+      : null;
+    advanceRef.current = pending;
+    setAdvancingId(pending ? unit.id : null);
     void runSimple(() => setBoundaryConfirmed(bundleId, docId, [unit.id, ...(tabs?.mirrors.get(unit.id) ?? [])], confirmed), null, () => {
       // Enter는 확인하고 다음 확인 안 된 단위로 간다 - 탭이 끝나면 다음 탭으로 넘어간다
-      if (confirmed && model && tabs) {
-        const index = tabs.order.indexOf(unit.id);
-        const next = tabs.order.slice(index + 1).find((id) => {
-          const candidate = model.units.get(id);
-          return candidate !== undefined && !isChecked(candidate);
-        });
-        if (next !== undefined) selectUnit(next, true);
+      if (!pending || advanceRef.current !== pending || !model || !tabs) return;
+      const index = tabs.order.indexOf(unit.id);
+      const next = tabs.order.slice(index + 1).find((id) => {
+        const candidate = model.units.get(id);
+        return candidate !== undefined && !isChecked(candidate);
+      });
+      if (next === undefined) return;
+      const wait = getAdvanceWait(pending.delay, performance.now() - pending.startedAt, pending.isSkipped);
+      pending.nextId = next;
+      if (wait === 0) selectUnit(next, true);
+      else pending.timer = window.setTimeout(() => selectUnit(next, true), wait);
+    }).then(() => {
+      // 저장이 실패했거나 갈 단위가 없으면 기다림을 거둔다 - 다음 Enter가 건너뛰기로 읽히지 않게
+      if (pending && advanceRef.current === pending && pending.timer === null) {
+        advanceRef.current = null;
+        setAdvancingId(null);
       }
     });
   }
 
-  /** 틈의 짝 짓기 - 우클릭 메뉴와 같은 규칙(canPair) */
-  function canPairIds(firstId: number, secondId: number): boolean {
+  /** 틈의 묶기 - 우클릭 메뉴와 같은 규칙(planJoin) */
+  function planGapJoin(firstId: number, secondId: number): JoinPlan {
     const first = model?.units.get(firstId);
     const second = model?.units.get(secondId);
-    return first !== undefined && second !== undefined && canPair(first, second);
+    return first !== undefined && second !== undefined ? planJoin([first, second], true) : { kind: null };
   }
 
-  function pairIds(firstId: number, secondId: number) {
+  /** 묶기 - planJoin이 고른 결과대로 합치기(문서 순서로 보낸다) 또는 한/영 짝(바로 확정) */
+  function joinUnits(unitIds: number[], kind: JoinKind) {
+    if (!data || docId === null || !tabs) return;
+    if (kind === "merge") {
+      const ordered = [...unitIds].sort((a, b) => tabs.order.indexOf(a) - tabs.order.indexOf(b));
+      runEdit({ type: "merge", unit_ids: ordered }, t("split.didJoin"));
+      return;
+    }
+    const revision = data.document.revision;
+    void runSimple(() => createPair(bundleId, docId, revision, unitIds), t("split.didJoin"), clearTransient);
+  }
+
+  /** 합친 한 문장 → 한/영 짝: 합치기를 풀고(판단이 걸렸으면 확인 창) 되살아난 단위들을 짝으로 맺는다. 둘째 단계부터 실패하면 어디까지 됐는지 알린다 */
+  function switchToPair(unit: ViewUnit) {
     if (!data || docId === null) return;
     const revision = data.document.revision;
-    void runSimple(() => createPair(bundleId, docId, revision, [firstId, secondId]), t("split.pairConfirmed"), clearTransient);
+    void runChange(async (confirm) => {
+      const undone = await editUnits(bundleId, docId, revision, { type: "unmerge", unit_id: unit.id }, confirm);
+      try {
+        const paired = await pairRestored(docId, undone.created_unit_ids);
+        // 전환 전체의 결과 - 되살아난 단위를 새 단위로 알려 첫째를 고른 채로 둔다(짝 칸이 바로 보이게)
+        return { document_revision: paired.revision, created_unit_ids: paired.unitIds, retired_unit_ids: undone.retired_unit_ids };
+      } catch (err) {
+        throw new JoinPartlyError(err);
+      }
+    }, t("split.didJoin"));
+  }
+
+  /** 합치기를 푼 뒤 - 풀기 결과가 알려 준 되살아난 단위를 보기에서 읽어(언어·글) 짝으로 맺는다. 언어가 같게(또는 없게) 잡혔으면 라틴 글자가 많은 쪽을 EN, 나머지를 KO로 바꾼다 */
+  async function pairRestored(viewDocId: number, restoredIds: readonly number[]): Promise<{ revision: number; unitIds: number[] }> {
+    const view = await getDocumentView(bundleId, viewDocId);
+    const restored = view.units.filter((item) => restoredIds.includes(item.id));
+    if (restored.length < 2) throw new Error(`unmerge restored ${restored.length} unit(s)`);
+    let revision = view.document.revision;
+    if (planJoin(restored, false).kind !== "pair") {
+      const enId = pickEnglishSide(restored);
+      if (enId === null) throw new Error("no restored unit has Latin letters");
+      const changes = [
+        { lang: "en" as const, unitIds: restored.filter((item) => item.id === enId && item.lang !== "en").map((item) => item.id) },
+        { lang: "ko" as const, unitIds: restored.filter((item) => item.id !== enId && item.lang !== "ko").map((item) => item.id) },
+      ];
+      for (const change of changes) {
+        if (change.unitIds.length > 0) revision = (await editUnits(bundleId, viewDocId, revision, { type: "set_language", unit_ids: change.unitIds, lang: change.lang })).document_revision;
+      }
+    }
+    const unitIds = restored.map((item) => item.id);
+    const paired = await createPair(bundleId, viewDocId, revision, unitIds);
+    return { revision: paired.document_revision, unitIds };
   }
 
   function splitAtCut() {
-    if (!selected || !cutAt || cutAt.unitId !== selected.id) return;
-    runEdit({ type: "split", unit_id: selected.id, at: cutAt.at }, t("split.didSplit"));
+    if (!selected || cutLine.at === null) return;
+    runEdit({ type: "split", unit_id: selected.id, at: cutLine.at }, t("split.didSplit"));
   }
 
   function handleUnitClick(unitId: number) {
@@ -350,25 +493,7 @@ export default function SplitPage() {
     const unit = model?.units.get(unitId);
     if (!unit || !at || !canEdit) return;
     if (unitId !== selectedId) selectUnit(unitId);
-    const unitOffset = toUnitOffset(unit.spans, at.blockId, at.offset);
-    if (unitOffset !== null && canSplitAt(unit, unitOffset)) setCutAt({ unitId, at: unitOffset });
-  }
-
-  /** 나눌 선을 끄는 동안 - 고른 단위 안의 나눌 수 있는 자리로만 옮긴다(밖으로 끌면 처음·끝에 멈춘다) */
-  function dragCut(pos: CutDragPos) {
-    if (!selected) return;
-    const at = resolveCutDrag(selected, pos);
-    if (at !== null && at !== cutAt?.at) setCutAt({ unitId: selected.id, at });
-  }
-
-  function nudgeCut(step: 1 | -1) {
-    if (!selected || !cutAt) return;
-    for (let at = cutAt.at + step; at > 0 && at < selected.text.length; at += step) {
-      if (canSplitAt(selected, at) && toBlockOffset(selected.spans, at) !== null) {
-        setCutAt({ unitId: selected.id, at });
-        return;
-      }
-    }
+    cutLine.placeAtCaret(unit, at);
   }
 
   function selectNextSuggestion() {
@@ -397,34 +522,34 @@ export default function SplitPage() {
       readOnly: !canEdit,
       aiEnabled: ai.isOn,
       isChecked,
-      hasCut: cutAt?.unitId === menuTarget.id,
+      hasCut: cutLine.at !== null && selected?.id === menuTarget.id,
       hasSuggestion: menuTarget.split_suggestion_id !== null,
       isAiWaiting: ai.isWaiting(menuTarget.id),
       isDecided: isUnitDecided(menuTarget, model.units),
     });
   })();
 
-  function runMenuAction(action: SplitMenuAction) {
+  function runMenuAction(action: SplitMenuAction, lang?: "ko" | "en") {
     const target = menuTarget;
     setMenu(null);
     if (!target || !data || docId === null || !model || !tabs) return;
     const revision = data.document.revision;
     const isTwo = selected !== null && selected.id !== target.id;
     const pairId = isTwo ? selected.pair_id : target.pair_id;
-    if (action === "pair" && selected) void runSimple(() => createPair(bundleId, docId, revision, [selected.id, target.id]), t("split.pairConfirmed"), clearTransient);
-    else if (action === "unpair" && pairId !== null) void runSimple(() => deletePair(bundleId, docId, pairId, revision), t("split.pairRemoved"));
-    else if (action === "merge" && selected) {
-      const [first, second] = tabs.order.indexOf(selected.id) < tabs.order.indexOf(target.id) ? [selected, target] : [target, selected];
-      runEdit({ type: "merge", unit_ids: [first.id, second.id] }, t("split.didMerge"));
-    } else if (action === "check_both" && selected) {
+    if (action === "join" && selected) {
+      const adjacent = Math.abs(tabs.order.indexOf(selected.id) - tabs.order.indexOf(target.id)) === 1;
+      const { kind } = planJoin([selected, target], adjacent);
+      if (kind !== null) joinUnits([selected.id, target.id], kind);
+    } else if (action === "unpair" && pairId !== null) void runSimple(() => deletePair(bundleId, docId, pairId, revision), t("split.pairRemoved"));
+    else if (action === "check_both" && selected) {
       const ids = [selected, target].flatMap((unit) => [unit.id, ...(tabs.mirrors.get(unit.id) ?? [])]);
       void runSimple(() => setBoundaryConfirmed(bundleId, docId, ids, true), null);
     } else if (action === "check") setBoundary(target, !isChecked(target));
     else if (action === "split") splitAtCut();
     else if (action === "ai_split") void ai.askUnit(target.id);
     else if (action === "hold") startHold();
-    else if (action === "lang_ko" || action === "lang_en") {
-      runEdit({ type: "set_language", unit_ids: [target.id], lang: action === "lang_ko" ? "ko" : "en" }, t("common.saved"), target.id);
+    else if (action === "lang" && lang) {
+      runEdit({ type: "set_language", unit_ids: [target.id], lang }, t("common.saved"), target.id);
     }
   }
 
@@ -452,8 +577,14 @@ export default function SplitPage() {
       hasCut: cut !== null,
       checked: selected !== null && isChecked(selected),
       canEdit,
+      advancing: advanceRef.current !== null,
     });
     if (action === null) return;
+    if (action === "skip") {
+      event.preventDefault();
+      skipAdvanceWait();
+      return;
+    }
     if (action === "undo" || action === "redo") {
       event.preventDefault();
       if (action === "redo" ? data?.edits.can_redo : data?.edits.can_undo) runStep(action);
@@ -474,14 +605,21 @@ export default function SplitPage() {
     return () => window.removeEventListener("keydown", handleKey);
   }, []);
 
-  const orderedUnits = (tabs?.order ?? []).map((id) => model?.units.get(id)).filter((unit): unit is ViewUnit => unit !== undefined);
-  const langMismatch = data && selected ? findLangMismatch(data.document.language_layout, selected, orderedUnits) : null;
   const pickedUnits = picked.map((id) => model?.units.get(id)).filter((unit): unit is ViewUnit => unit !== undefined);
+  // 떨어진 조각 고르기는 짝만 맺는다 - 같은 언어의 떨어진 조각은 화면에서 합치지 않는다(planJoin의 notAdjacent)
+  const pickPlan = selected !== null && pickedUnits.length > 0 ? planJoin([selected, ...pickedUnits], false) : null;
+  const pickReason = pickPlan?.reasonKey ? t(pickPlan.reasonKey) : null;
+  // 합친 한 문장을 짝으로 되돌리려면 한글과 라틴 글자가 모두 있어야 한다
+  const pairModeReason = selected && !pair && !hasBothScripts(selected.text) ? t("split.menu.why.oneLanguage") : null;
+  // 짝을 한 문장으로 - 이웃한 짝만(떨어진 짝은 화면에서 합치지 않는다)
+  const pairMembers = (pair?.unit_ids ?? []).map((id) => model?.units.get(id)).filter((unit): unit is ViewUnit => unit !== undefined);
+  const oneModeKey = pair ? getPairMergeReason(pairMembers, tabs?.order ?? []) : null;
+  const oneModeReason = oneModeKey === null ? null : t(oneModeKey);
   const document_ = data?.document;
   const page = selected ? data?.blocks.find((block) => block.id === selected.block_id) : null;
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-[232px_minmax(0,1fr)_clamp(280px,26vw,420px)]" data-testid="split">
+    <div className="split-cols grid h-full min-h-0" data-testid="split">
       {/* 왼쪽: 문서 */}
       <nav className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] border-r border-line bg-surface" aria-label={t("split.documents")} data-testid="split-docs">
         <div className="grid content-start gap-0.5 overflow-y-auto p-2">
@@ -498,7 +636,7 @@ export default function SplitPage() {
               <b className="min-w-0 flex-1 font-mono text-xs font-semibold leading-[18px] [overflow-wrap:anywhere]">{doc.doc_code || doc.file_name}</b>
               <DocBoundaryMark docId={doc.id} left={doc.id === docId && data ? uncheckedLeft : doc.unchecked_boundaries} />
             </span>
-            <Truncate className="text-xs leading-[18px] text-ink-3" text={doc.title} />
+            <Truncate className="text-xs leading-[18px] text-ink-3" text={doc.title} revealOnFocus />
           </button>
         ))}
         </div>
@@ -567,16 +705,15 @@ export default function SplitPage() {
               onUnitDoubleClick={canEdit ? handleUnitDoubleClick : undefined}
               onUnitContextMenu={openMenu}
               onRangeSelect={canEdit ? (next) => setRange(next) : undefined}
-              onCutDrag={canEdit ? dragCut : undefined}
-              onCutNudge={canEdit ? nudgeCut : undefined}
+              onCutDrag={canEdit ? cutLine.drag : undefined}
+              onCutNudge={canEdit ? cutLine.nudge : undefined}
               figureSource={docId !== null ? { bundleId, docId } : undefined}
               testId={PAPER_TEST_ID}
               sheetTestId={`split-sheet-${sheet.key}`}
               contour
               strips={{
                 isChecked,
-                merge: canEdit ? { busy, onMerge: (firstId, secondId) => runEdit({ type: "merge", unit_ids: [firstId, secondId] }, t("split.didMerge")) } : undefined,
-                pair: canEdit ? { canPair: canPairIds, onPair: pairIds } : undefined,
+                join: canEdit ? { busy, plan: planGapJoin, onJoin: (firstId, secondId, kind) => joinUnits([firstId, secondId], kind) } : undefined,
               }}
               renderUnitActions={(unitId) => {
                 const unit = model.units.get(unitId);
@@ -591,6 +728,8 @@ export default function SplitPage() {
                     canUnpair={pairId !== null}
                     canUnmerge={unit.can_unmerge}
                     busy={busy}
+                    // 고름이 떠난 줄도 꺼진 채 - 저장 응답이 꺼짐보다 늦으면 넘어가는 순간 기다림이 풀려 접히는 옛 줄이 다시 켜졌다
+                    isHeld={advancingId === unit.id || unit.id !== selectedId}
                     onCheck={() => setBoundary(unit, true)}
                     onUncheck={() => setBoundary(unit, false)}
                     onUnpair={() => pairId !== null && docId !== null && data && void runSimple(() => deletePair(bundleId, docId, pairId, data.document.revision), t("split.pairRemoved"))}
@@ -598,26 +737,15 @@ export default function SplitPage() {
                   />
                 );
               }}
-              renderAtCut={() => (
-                <span className="cut-pop" role="group" aria-label={t("split.split")} onClick={(event) => event.stopPropagation()}>
-                  <button type="button" className="btn pri h-7" data-testid="split-cut-run" disabled={busy} onClick={splitAtCut}>
-                    <Scissors size={14} strokeWidth={1.5} aria-hidden />
-                    {t("split.cutHere")} <kbd>S</kbd>
-                  </button>
-                  <button type="button" className="btn h-7" data-testid="split-cut-cancel" onClick={() => setCutAt(null)}>
-                    <X size={14} strokeWidth={1.5} aria-hidden />
-                    {t("common.cancel")} <kbd>Esc</kbd>
-                  </button>
-                </span>
-              )}
+              renderAtCut={() => <CutPop busy={busy} onRun={splitAtCut} onCancel={cutLine.clear} testIdPrefix="split" />}
             />
             </div>
             ))}
             </div>
           ) : view.error !== null ? (
-            <LoadError error={view.error} onRetry={view.reload} testId="split" />
+            <BundleLoadError error={view.error} onRetry={view.reload} testId="split" />
           ) : docs.error !== null && docs.data === null ? (
-            <LoadError error={docs.error} onRetry={docs.reload} testId="split-docs" />
+            <BundleLoadError error={docs.error} onRetry={docs.reload} testId="split" />
           ) : docs.data !== null && readyDocs.length === 0 ? (
             <EmptyState
               icon={FileText}
@@ -657,8 +785,13 @@ export default function SplitPage() {
             </Tooltip>
           </div>
             <div className="flex items-center gap-2 whitespace-nowrap" data-testid="split-unit-state">
-              <span className="lg">{selected.lang === "neutral" ? "–" : selected.lang.toUpperCase()}</span>
-              <span className={`check-chip ${isChecked(selected) ? "yes" : "no"}`} data-testid="split-boundary-state">
+              {/* 방금 확인하거나 확인을 푼 단위에서는 칩이 뒤집히며 바뀐다 - 넘어가기는 이 뒤집힘과 단추 줄 꺼짐이 끝난 뒤다(split-advance) */}
+              <span
+                key={`${selected.id}:${isChecked(selected)}`}
+                className={`check-chip ${isChecked(selected) ? "yes" : "no"}`}
+                data-flip={flipId === selected.id ? "" : undefined}
+                data-testid="split-boundary-state"
+              >
                 {isChecked(selected) ? <Check size={12} strokeWidth={2.6} aria-hidden /> : <Circle size={11} strokeWidth={2.2} aria-hidden />}
                 {isChecked(selected) ? "Checked" : "Not checked"}
               </span>
@@ -754,95 +887,71 @@ export default function SplitPage() {
                 )}
               </Section>
 
-              {canEdit && (selected.kind === "sentence" || selected.kind === "heading" || selected.kind === "cell_sentence") && (
-                <Section title={t("split.language")} testId="split-language">
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {(["ko", "en"] as const).map((lang) => (
-                      <button
-                        key={lang}
-                        type="button"
-                        className={`btn h-7 ${selected.lang === lang ? "pri" : ""}`}
-                        aria-pressed={selected.lang === lang}
-                        data-testid={`split-lang-${lang}`}
-                        // disabled를 쓰지 않는다 - 누른 단추가 꺼지면 포커스가 문서로 떨어져 이어서 글쇠를 쓸 수 없다
-                        aria-disabled={busy ? "true" : undefined}
-                        onClick={() => selected.lang !== lang && runEdit({ type: "set_language", unit_ids: [selected.id], lang }, t("common.saved"), selected.id)}
-                      >
-                        {lang.toUpperCase()}
-                      </button>
-                    ))}
-                  </div>
-                  {langMismatch && (
-                    <p className="lang-warn" role="note" data-testid="split-lang-mismatch">
-                      <TriangleAlert size={14} strokeWidth={1.5} aria-hidden />
-                      <span>
-                        {t(`split.lang.mismatch.${langMismatch.reason}`)}{" "}
-                        <Link href={getStageHref(bundleId, "documents")} className="underline" data-testid="split-lang-mismatch-link">
-                          {t("split.lang.mismatch.fix")}
-                        </Link>
-                      </span>
-                    </p>
-                  )}
-                </Section>
-              )}
-
               {selected.lang !== "neutral" && (
-                <Section title={t("split.pair")} info={t("split.pairInfo")} testId="split-pair">
+                <Section title={t("split.joined")} testId="split-pair">
                   {pair ? (
-                    <>
-                      <span className="flex items-center gap-2">
-                        <span className={`pill ${pair.status === "confirmed" ? "ok" : "dash"}`} data-testid="split-pair-status">
-                          {t(pair.status === "confirmed" ? "status.pair.confirmed" : "status.pair.suggested")}
-                        </span>
-                      </span>
-                      <ul className="grid gap-1">
-                        {pair.unit_ids
-                          .filter((id) => id !== selected.id)
-                          .map((id) => model?.units.get(id))
-                          .map(
-                            (unit) =>
-                              unit && (
-                                <li key={unit.id}>
-                                  <button type="button" className="grid w-full gap-0.5 rounded-md border border-line px-2 py-1.5 text-left hover:bg-hover" data-testid={`split-pair-unit-${unit.id}`} onClick={() => selectUnit(unit.id, true)}>
-                                    <span className="flex items-center gap-1.5 font-mono text-[11px] text-ink-3">
-                                      <span className="lg">{unit.lang.toUpperCase()}</span>
-                                      {unit.display_id}
-                                    </span>
-                                    <span className="line-clamp-2 text-[13px] leading-5">{unit.text}</span>
-                                  </button>
-                                </li>
-                              ),
-                          )}
-                      </ul>
-                      {canEdit && (
-                        <div className="grid grid-flow-col auto-cols-fr gap-1.5">
-                          {pair.status === "suggested" && (
-                            <button
-                              type="button"
-                              className="btn h-7"
-                              data-testid="split-pair-confirm"
-                              disabled={busy}
-                              onClick={() => docId !== null && data && void runSimple(() => confirmPair(bundleId, docId, pair.id, data.document.revision), t("split.pairConfirmed"))}
-                            >
-                              <Link2 size={14} strokeWidth={1.5} aria-hidden />
-                              {t("split.confirmPair")}
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            className="btn ghost h-7"
-                            data-testid="split-pair-remove"
-                            disabled={busy}
-                            onClick={() => docId !== null && data && void runSimple(() => deletePair(bundleId, docId, pair.id, data.document.revision), t("split.pairRemoved"))}
-                          >
-                            <Unlink size={14} strokeWidth={1.5} aria-hidden />
-                            {t("split.removePair")}
-                          </button>
-                        </div>
-                      )}
-                    </>
+                    <ul className="grid gap-1">
+                      {pair.unit_ids
+                        .filter((id) => id !== selected.id)
+                        .map((id) => model?.units.get(id))
+                        .map(
+                          (unit) =>
+                            unit && (
+                              <li key={unit.id}>
+                                <button type="button" className="grid w-full gap-0.5 rounded-md border border-line px-2 py-1.5 text-left hover:bg-hover" data-testid={`split-pair-unit-${unit.id}`} onClick={() => selectUnit(unit.id, true)}>
+                                  <span className="font-mono text-[11px] text-ink-3">{unit.display_id}</span>
+                                  <span className="line-clamp-2 text-[13px] leading-5">{unit.text}</span>
+                                </button>
+                              </li>
+                            ),
+                        )}
+                    </ul>
                   ) : (
-                    <p className="text-ink-3">{t("split.noPair")}</p>
+                    // 합친 한 문장은 아래 전환이 지금 상태(One sentence)를 보인다
+                    !(canEdit && selected.can_unmerge) && <p className="text-ink-3">{t("split.noPair")}</p>
+                  )}
+                  {/* 묶인 결과를 사람이 바꾸는 길 - 짝이면 한 문장으로 합치고, 합친 한 문장이면 풀어서 짝으로. 언어 판정이 틀렸을 때 고치는 길이다 */}
+                  {canEdit && (pair !== null || selected.can_unmerge) && (
+                    <div className="grid grid-cols-2 gap-1.5" role="group" aria-label={t("split.joined")} data-testid="split-join-mode" {...joinTip.handlers}>
+                      <button
+                        type="button"
+                        className={`btn h-7 ${pair ? "" : "pri"}`}
+                        aria-pressed={pair === null}
+                        // disabled를 쓰지 않는다 - 누른 단추가 꺼지면 포커스가 문서로 떨어진다
+                        aria-disabled={busy || oneModeReason !== null ? "true" : undefined}
+                        aria-label={oneModeReason ? `${t("split.join.one")} - ${oneModeReason}` : undefined}
+                        data-tip={oneModeReason ?? undefined}
+                        data-testid="split-join-mode-one"
+                        onClick={() => pair && !busy && oneModeReason === null && joinUnits(pair.unit_ids, "merge")}
+                      >
+                        {t("split.join.one")}
+                      </button>
+                      <button
+                        type="button"
+                        className={`btn h-7 ${pair ? "pri" : ""}`}
+                        aria-pressed={pair !== null}
+                        aria-disabled={busy || pairModeReason !== null ? "true" : undefined}
+                        aria-label={pairModeReason ? `${t("split.join.pair")} - ${pairModeReason}` : undefined}
+                        data-tip={pairModeReason ?? undefined}
+                        data-testid="split-join-mode-pair"
+                        onClick={() => !pair && !busy && pairModeReason === null && switchToPair(selected)}
+                      >
+                        {t("split.join.pair")}
+                      </button>
+                      {joinTip.node}
+                    </div>
+                  )}
+                  {canEdit && pair && (
+                    <button
+                      type="button"
+                      className="btn ghost h-7 justify-self-start"
+                      data-testid="split-pair-remove"
+                      disabled={busy}
+                      onClick={() => docId !== null && data && void runSimple(() => deletePair(bundleId, docId, pair.id, data.document.revision), t("split.pairRemoved"))}
+                    >
+                      <Unlink size={14} strokeWidth={1.5} aria-hidden />
+                      {t("split.removePair")}
+                    </button>
                   )}
                   {canEdit && !pair && (
                     <button
@@ -873,18 +982,18 @@ export default function SplitPage() {
                         </ol>
                       )}
                       <div className="flex gap-1.5">
-                        <button
-                          type="button"
-                          className="btn h-7"
-                          data-testid="split-pair-create"
-                          disabled={busy || picked.length === 0}
-                          onClick={() =>
-                            docId !== null && data && void runSimple(() => createPair(bundleId, docId, data.document.revision, [selected.id, ...picked]), t("split.pairConfirmed"), clearTransient)
-                          }
-                        >
-                          <Link2 size={14} strokeWidth={1.5} aria-hidden />
-                          {t("split.makePair")}
-                        </button>
+                        <Tooltip label={pickReason ?? ""} suppressed={pickReason === null}>
+                          <button
+                            type="button"
+                            className="btn h-7"
+                            data-testid="split-pair-create"
+                            disabled={busy || pickPlan?.kind !== "pair"}
+                            onClick={() => joinUnits([selected.id, ...picked], "pair")}
+                          >
+                            <Link2 size={14} strokeWidth={1.5} aria-hidden />
+                            {t("split.makePair")}
+                          </button>
+                        </Tooltip>
                         <button type="button" className="btn ghost h-7" data-testid="split-pick-clear" onClick={clearTransient}>
                           {t("common.cancel")} <kbd>Esc</kbd>
                         </button>
@@ -1021,9 +1130,9 @@ export default function SplitPage() {
             setPending(null);
             setBusy(true);
             try {
-              handleChangeDone(await run(), t("common.saved"), pending.keepId);
+              handleChangeDone(await run(), pending.okText, pending.keepId);
             } catch (err) {
-              showToast(humanizeApiError(err, t), "error");
+              showToast(describeChangeError(err), "error");
               refresh();
             } finally {
               setBusy(false);

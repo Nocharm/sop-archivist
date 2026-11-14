@@ -15,7 +15,7 @@ from app.routers.sop_bundles import MemberOut, MembersUpdateIn, load_members, re
 from app.sop.errors import raise_rule
 from app.sop.membership import BundleIdPath
 from app.sop.models import Bundle
-from app.sop.snapshot import BundleProgress, load_bundle_progress
+from app.sop.snapshot import RowProgress, load_bundle_progress
 
 router = APIRouter(prefix="/api/admin/bundles", tags=["sop-admin"])
 
@@ -35,11 +35,11 @@ class AdminBundleOut(BaseModel):
     # 활성 작성자가 한 명도 없으면 false — 정리가 필요한 묶음
     has_active_author: bool
     created_at: KstDatetime
-    # 언어별 진행 숫자 — 글자 없이 건수만이라 메타 정보다(스펙 §9)
-    progress: BundleProgress
+    # 줄 기준 진행 숫자 — 글자 없이 건수만이라 메타 정보다(스펙 §9)
+    progress: RowProgress
 
 
-def build_admin_item(bundle: Bundle, members: list[MemberOut], progress: BundleProgress) -> AdminBundleOut:
+def build_admin_item(bundle: Bundle, members: list[MemberOut], progress: RowProgress) -> AdminBundleOut:
     return AdminBundleOut(
         id=bundle.id,
         code=bundle.code,

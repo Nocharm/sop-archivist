@@ -7,6 +7,13 @@ import type { EffectiveSource } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { CHIP } from "@/lib/ui-classes";
 
+/** 출처 한 줄을 글로 - 계정 화면의 출처 툴팁·aria-label이 SourceLine과 같은 내용을 읽게 한다 */
+export function formatSourceText(t: (key: string, vars?: Record<string, string | number>) => string, source: EffectiveSource, isSelf = false): string {
+  const subject = isSelf && source.kind === "user" ? t("account.sourceYou") : source.subject_name || source.subject_id;
+  const how = source.role === null ? t("effective.sourceDirect") : t("effective.sourceRole", { role: source.role });
+  return `${t(`effective.source.${source.kind}`)} · ${subject} · ${how}`;
+}
+
 export function SourceLine({ source, isSelf = false }: { source: EffectiveSource; isSelf?: boolean }) {
   const { t } = useI18n();
   const Icon = source.kind === "dept" ? Building2 : UserRound;

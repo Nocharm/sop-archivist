@@ -1,46 +1,66 @@
-// Assign 연결선 경로 - 맨 왼쪽 칩은 옆에서, 나머지는 위 틈이나 칩 줄 아래로 들어와 칩 왼쪽에서 끝난다.
+// Assign 연결선 경로 - 두 상자 바깥 테두리 사이의 S자, 두 끝에서 가로로 나고 들어간다.
 import { describe, expect, it } from "vitest";
 
-import { buildLinkPath, type RouteTarget } from "./link-route-model";
+import { buildLinkPath, buildLinkStubs, FAR_LINK_DY, isFarLink } from "./link-route-model";
 
-const target = (patch: Partial<RouteTarget>): RouteTarget => ({
-  end: { x: 300, y: 108 },
-  chipTop: 100,
-  chipBottom: 116,
-  rowLeft: 220,
-  rowTop: 94,
-  isFirst: false,
-  ...patch,
-});
-
-/** 경로에서 직선(L) 점만 뽑는다 */
-function readLinePoints(d: string): Array<[number, number]> {
-  return [...d.matchAll(/L(-?[\d.]+) (-?[\d.]+)/g)].map((m) => [Number(m[1]), Number(m[2])]);
+/** "M x y C c1x c1y c2x c2y x y"를 숫자 여덟 개로 */
+function readNumbers(d: string): number[] {
+  return [...d.matchAll(/-?[\d.]+/g)].map((m) => Number(m[0]));
 }
 
 describe("buildLinkPath", () => {
-  it("enters the first chip straight from the side at the chip's height", () => {
-    const d = buildLinkPath({ x: 100, y: 300 }, target({ isFirst: true }));
+  it("starts at the Old box edge and ends at the New box edge", () => {
+    const d = buildLinkPath({ x: 100, y: 300 }, { x: 160, y: 108 });
+    const n = readNumbers(d);
     expect(d.startsWith("M100 300C")).toBe(true);
-    // 띠(줄 왼쪽 4px 앞)에서 칩 높이로 맞춘 뒤 칩 왼쪽까지 가로로
-    expect(d).toContain(" 216 108L300 108");
+    expect(n.slice(-2)).toEqual([160, 108]);
   });
 
-  it("comes through the gap above the paragraph when the Old badge is higher", () => {
-    const d = buildLinkPath({ x: 100, y: 20 }, target({}));
-    const points = readLinePoints(d);
-    // 위 틈 y = 줄 위 끝 - 2, 칩 왼쪽 5px 앞에서 아래로 꺾고 칩 왼쪽에서 끝난다
-    expect(points[0]).toEqual([292, 92]);
-    expect(points.at(-1)).toEqual([300, 108]);
-    expect(d).toContain("Q295 92 295 95");
+  it("leaves and arrives horizontally, bending only between the two boxes", () => {
+    const n = readNumbers(buildLinkPath({ x: 100, y: 300 }, { x: 160, y: 108 }));
+    // 첫 조절점은 시작 높이, 둘째는 끝 높이 - 두 끝에서 가로
+    expect(n[3]).toBe(300);
+    expect(n[5]).toBe(108);
+    // 조절점이 두 상자 사이(100~160)에 있다
+    expect(n[2]).toBe(130);
+    expect(n[4]).toBe(130);
   });
 
-  it("comes between the chip row and the sentence when the Old badge is lower", () => {
-    const d = buildLinkPath({ x: 100, y: 500 }, target({}));
-    const points = readLinePoints(d);
-    // 칩 줄 아래 y = 칩 아래 끝 + 3, 위로 꺾는다
-    expect(points[0]).toEqual([292, 119]);
-    expect(d).toContain("Q295 119 295 116");
-    expect(points.at(-1)).toEqual([300, 108]);
+  it("keeps a short horizontal lead when the boxes are very close", () => {
+    const n = readNumbers(buildLinkPath({ x: 100, y: 0 }, { x: 104, y: 50 }));
+    expect(n[2]).toBe(110);
+    expect(n[4]).toBe(94);
+  });
+});
+
+describe("isFarLink", () => {
+  it("treats ends at nearly the same height as near", () => {
+    expect(isFarLink({ x: 0, y: 100 }, { x: 30, y: 100 + FAR_LINK_DY })).toBe(false);
+  });
+
+  it("treats a long vertical run as far, either direction", () => {
+    expect(isFarLink({ x: 0, y: 100 }, { x: 30, y: 101 + FAR_LINK_DY })).toBe(true);
+    expect(isFarLink({ x: 0, y: 400 }, { x: 30, y: 100 })).toBe(true);
+  });
+});
+
+describe("buildLinkStubs", () => {
+  it("draws two short tails, one from each box edge, bending toward the other end", () => {
+    const [oldStub, newStub] = buildLinkStubs({ x: 100, y: 50 }, { x: 140, y: 300 });
+    // Old 쪽 꼬리 - 시작점에서 오른쪽으로 나가 아래(끝 쪽)로 휜다
+    expect(oldStub.d.startsWith("M100 50Q")).toBe(true);
+    expect(oldStub.from).toEqual({ x: 100, y: 50 });
+    expect(oldStub.to.x).toBeGreaterThan(100);
+    expect(oldStub.to.y).toBeGreaterThan(50);
+    // New 쪽 꼬리 - 끝점에서 왼쪽으로 나가 위(시작 쪽)로 휜다
+    expect(newStub.d.startsWith("M140 300Q")).toBe(true);
+    expect(newStub.to.x).toBeLessThan(140);
+    expect(newStub.to.y).toBeLessThan(300);
+  });
+
+  it("never reaches past the middle of a narrow gap", () => {
+    const [oldStub, newStub] = buildLinkStubs({ x: 100, y: 0 }, { x: 116, y: 200 });
+    expect(oldStub.to.x).toBeLessThanOrEqual(108);
+    expect(newStub.to.x).toBeGreaterThanOrEqual(108);
   });
 });

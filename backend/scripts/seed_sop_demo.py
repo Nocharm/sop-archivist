@@ -29,12 +29,12 @@ from app.main import app
 from app.settings import settings
 from app.sop.ai.runner import run_jobs_until_idle
 from scripts.reset_db import count_hr_rows, should_refuse_reset
-from scripts.sop_demo_driver import LANGS, SyntheticDriver
+from scripts.sop_demo_driver import SyntheticDriver
 from scripts.synthetic_sop import SyntheticBundle, build_synthetic_bundle
 from tests.fake_ai import SyntheticAnswers, fake_ai_session
 from tests.sop_helpers import AUTHOR
 
-PROGRESS_KEYS = ("total", "confirmed", "ai_suggested", "on_hold", "unassigned")  # 출력하는 진행 숫자
+PROGRESS_KEYS = ("total", "confirmed", "ai_suggested", "on_hold", "unassigned", "single_language")  # 출력하는 진행 숫자
 
 
 @dataclass(frozen=True)
@@ -112,9 +112,7 @@ def _print_summary(client: TestClient, outcomes: dict[str, str]) -> None:
     by_title = {bundle["title"]: bundle for bundle in _list_bundles(client)}
     for stage in DEMO_STAGES:
         bundle = by_title[stage.title]
-        progress = "  ".join(
-            f"{lang} " + " ".join(f"{key}={bundle['progress'][lang][key]}" for key in PROGRESS_KEYS) for lang in LANGS
-        )
+        progress = "rows " + " ".join(f"{key}={bundle['progress'][key]}" for key in PROGRESS_KEYS)
         print(f"{stage.title}  {outcomes[stage.title]}  {bundle['status']}  {progress}")
 
 

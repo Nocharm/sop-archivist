@@ -41,7 +41,7 @@ from app.sop.review import (
     withdraw_review,
 )
 from app.sop.schemas import NO_NUL, NoNulStr
-from app.sop.snapshot import BundleProgress, load_bundle_progress
+from app.sop.snapshot import RowProgress, load_bundle_progress
 
 router = APIRouter(prefix="/api/bundles", tags=["sop-bundles"])
 
@@ -150,8 +150,8 @@ class BundleOut(BundleBase):
     # 멤버 바꾸기 응답에서만 None이 될 수 있다 — 호출한 작성자가 스스로 빠진 경우
     my_role: str | None
     members: list[MemberOut]
-    # 개요의 언어별 진행 숫자(커버 상태별 옛 단위 수)
-    progress: BundleProgress
+    # 개요의 진행 숫자(배정 화면 줄 기준, 상태별 줄 수)
+    progress: RowProgress
     # 사람이 다음에 할 일 하나(검토 요청 조건을 해야 하는 순서로 훑은 것)
     next_action: NextAction
     # AI 작업 상태별 건수
@@ -167,7 +167,7 @@ class BundleListItem(BaseModel):
     status: str
     my_role: str
     updated_at: KstDatetime
-    progress: BundleProgress
+    progress: RowProgress
     is_synthetic: bool
 
 

@@ -184,6 +184,19 @@ export function AiJobsPopover({ anchorRef, snapshot, onClose }: AiJobsPopoverPro
       .filter(([, n]) => n > 0)
       .map(([code, n]) => (n > 1 ? `${translateError(code)} ×${n}` : translateError(code)))
       .join(", ");
+    const isCompact = outcome === "done";
+    const statusLine = (
+      <span className="shrink-0 text-[12px] tabular-nums text-ink-3" data-testid={`${testId}-status`}>
+        {t(`status.job.${outcome}`)} · {time}
+      </span>
+    );
+    const openLink = (
+      <Tooltip label={t("aiJobs.openTip", { screen: t(`stage.${stage}`) })} align="end">
+        <Link href={getStageHref(request.bundle_id, stage)} className="btn ghost icon h-7 w-7 shrink-0" aria-label={t("aiJobs.openTip", { screen: t(`stage.${stage}`) })} data-testid={`${testId}-open`} onClick={onClose}>
+          <ArrowUpRight size={14} strokeWidth={1.5} aria-hidden />
+        </Link>
+      </Tooltip>
+    );
     return (
       <li key={request.request_id} className="ai-pop-req" data-testid={testId} data-outcome={outcome}>
         <div className="flex min-w-0 items-center gap-2">
@@ -196,34 +209,39 @@ export function AiJobsPopover({ anchorRef, snapshot, onClose }: AiJobsPopoverPro
               {progress.done} / {progress.total}
             </span>
           </Tooltip>
+          {/* 끝난 작업(실패 없음)은 상태·시각·열기를 첫 줄로 올려 한 줄로 끝낸다 */}
+          {isCompact && !request.requested_by_me && (
+            // 잘리면 올리거나 포커스를 둘 때 전체 글이 뜬다(Retry가 없는 까닭을 읽을 길)
+            <span className="min-w-0 max-w-[96px] shrink" tabIndex={0} data-testid={`${testId}-other-member`}>
+              <Truncate text={t("aiJobs.otherMember")} className="text-[12px] text-ink-3" revealOnFocus />
+            </span>
+          )}
+          {isCompact && statusLine}
+          {isCompact && openLink}
         </div>
-        <div className="flex min-w-0 items-center gap-x-2 pl-[22px] text-[12px] text-ink-3">
-          <span className="shrink-0 tabular-nums" data-testid={`${testId}-status`}>
-            {t(`status.job.${outcome}`)} · {time}
-          </span>
-          {!request.requested_by_me && <span className="min-w-0 truncate">{t("aiJobs.otherMember")}</span>}
-          <div className="ml-auto flex shrink-0 items-center gap-1.5">
-            {request.requested_by_me && isActive && (
-              <Tooltip label={t("aiJobs.cancelTip", { kind: kindLabel })} align="end">
-                <button type="button" className="btn h-7" disabled={working !== null} data-testid={`${testId}-cancel`} onClick={() => void run(request, "cancel")}>
-                  <BusyLabel busy={busy && working?.endsWith(":cancel") === true} icon={<Square size={12} strokeWidth={1.5} aria-hidden />} label={t("aiJobs.cancel")} />
-                </button>
-              </Tooltip>
-            )}
-            {request.requested_by_me && !isActive && request.jobs.failed > 0 && (
-              <Tooltip label={t("aiJobs.retryTip", { kind: kindLabel })} align="end">
-                <button type="button" className="btn h-7" disabled={working !== null} data-testid={`${testId}-retry`} onClick={() => void run(request, "retry")}>
-                  <BusyLabel busy={busy && working?.endsWith(":retry") === true} icon={<RotateCcw size={12} strokeWidth={1.5} aria-hidden />} label={t("aiJobs.retry")} />
-                </button>
-              </Tooltip>
-            )}
-            <Tooltip label={t("aiJobs.openTip", { screen: t(`stage.${stage}`) })} align="end">
-              <Link href={getStageHref(request.bundle_id, stage)} className="btn ghost icon h-7 w-7" aria-label={t("aiJobs.openTip", { screen: t(`stage.${stage}`) })} data-testid={`${testId}-open`} onClick={onClose}>
-                <ArrowUpRight size={14} strokeWidth={1.5} aria-hidden />
-              </Link>
-            </Tooltip>
+        {!isCompact && (
+          <div className="flex min-w-0 items-center gap-x-2 pl-[22px] text-[12px] text-ink-3">
+            {statusLine}
+            {!request.requested_by_me && <span className="min-w-0 truncate">{t("aiJobs.otherMember")}</span>}
+            <div className="ml-auto flex shrink-0 items-center gap-1.5">
+              {request.requested_by_me && isActive && (
+                <Tooltip label={t("aiJobs.cancelTip", { kind: kindLabel })} align="end">
+                  <button type="button" className="btn h-7" disabled={working !== null} data-testid={`${testId}-cancel`} onClick={() => void run(request, "cancel")}>
+                    <BusyLabel busy={busy && working?.endsWith(":cancel") === true} icon={<Square size={12} strokeWidth={1.5} aria-hidden />} label={t("aiJobs.cancel")} />
+                  </button>
+                </Tooltip>
+              )}
+              {request.requested_by_me && !isActive && request.jobs.failed > 0 && (
+                <Tooltip label={t("aiJobs.retryTip", { kind: kindLabel })} align="end">
+                  <button type="button" className="btn h-7" disabled={working !== null} data-testid={`${testId}-retry`} onClick={() => void run(request, "retry")}>
+                    <BusyLabel busy={busy && working?.endsWith(":retry") === true} icon={<RotateCcw size={12} strokeWidth={1.5} aria-hidden />} label={t("aiJobs.retry")} />
+                  </button>
+                </Tooltip>
+              )}
+              {openLink}
+            </div>
           </div>
-        </div>
+        )}
         {(request.jobs.failed > 0 || (!isActive && (request.jobs.stale > 0 || request.jobs.cancelled > 0)) || isSlow) && (
           <div className="grid gap-0.5 pl-[22px] text-[12px]">
             {request.jobs.failed > 0 && (

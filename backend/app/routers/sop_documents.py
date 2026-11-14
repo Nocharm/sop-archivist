@@ -17,6 +17,7 @@ from app.clock import now
 from app.db import get_session
 from app.routers.admin import KstDatetime
 from app.sop.constants import LANGUAGE_LAYOUTS, MEMBER_ROLES
+from app.sop.decision_steps import record_unit_edit_step
 from app.sop.detach import detach_units, find_units_needing_confirm
 from app.sop.editing import (
     BoundaryAllOut,
@@ -24,6 +25,7 @@ from app.sop.editing import (
     BoundaryOut,
     EditIn,
     EditResult,
+    EditStepResult,
     EditStepIn,
     apply_edit,
     confirm_all_boundaries,
@@ -532,7 +534,7 @@ async def update_document(
         for name, value in changes.items():
             setattr(document, name, value)
         if "language_layout" in changes:  # 코드 짝은 연달아 배치에서만 제안한다
-            await refresh_code_pairs(session, document)
+            await refresh_code_pairs(session, document, ctx.login_id)
         document.revision += 1
         record_event(
             session, bundle_id=bundle.id, actor=ctx.login_id, action="document.update",
@@ -608,31 +610,35 @@ async def edit_units(
     session: AsyncSession = Depends(get_session),
 ) -> EditResult:
     document = await _lock_editable_document(session, ctx, doc_id, body.revision)
+    revision = document.revision
     result = await apply_edit(session, document, body.op, confirm=body.confirm, actor=ctx.login_id)
+    # 바뀐 것이 없는 편집은 Split 기록도 revision도 그대로라 Assign 단계도 남기지 않는다(언어 바꾸기는 단위를 만들지 않는다)
+    if body.undo is not None and result.document_revision != revision:
+        await record_unit_edit_step(session, ctx.bundle, ctx.login_id, body.undo, document.id)
     await session.commit()
     return result
 
 
-@router.post("/{bundle_id}/documents/{doc_id}/edits/undo", response_model=EditResult)
+@router.post("/{bundle_id}/documents/{doc_id}/edits/undo", response_model=EditStepResult)
 async def undo_unit_edit(
     body: EditStepIn,
     doc_id: IdPath,
     ctx: BundleContext = Depends(_require_author),
     session: AsyncSession = Depends(get_session),
-) -> EditResult:
+) -> EditStepResult:
     document = await _lock_editable_document(session, ctx, doc_id, body.revision)
     result = await undo_edit(session, document, confirm=body.confirm, actor=ctx.login_id)
     await session.commit()
     return result
 
 
-@router.post("/{bundle_id}/documents/{doc_id}/edits/redo", response_model=EditResult)
+@router.post("/{bundle_id}/documents/{doc_id}/edits/redo", response_model=EditStepResult)
 async def redo_unit_edit(
     body: EditStepIn,
     doc_id: IdPath,
     ctx: BundleContext = Depends(_require_author),
     session: AsyncSession = Depends(get_session),
-) -> EditResult:
+) -> EditStepResult:
     document = await _lock_editable_document(session, ctx, doc_id, body.revision)
     result = await redo_edit(session, document, confirm=body.confirm, actor=ctx.login_id)
     await session.commit()
@@ -646,9 +652,9 @@ async def confirm_unit_boundaries(
     ctx: BundleContext = Depends(_require_author),
     session: AsyncSession = Depends(get_session),
 ) -> BoundaryOut:
-    # 경계 확인은 단위 집합을 바꾸지 않아 문서 revision을 싣지 않고 되돌리기 대상도 아니다
+    # 경계 확인은 단위 집합을 바꾸지 않아 문서 revision을 싣지 않는다 - 되돌리기 기록에는 들어간다
     document = await _lock_editable_document(session, ctx, doc_id, None)
-    unit_ids = await set_boundary_confirmed(session, document, body.unit_ids, body.confirmed)
+    unit_ids = await set_boundary_confirmed(session, document, body.unit_ids, body.confirmed, actor=ctx.login_id)
     await session.commit()
     return BoundaryOut(unit_ids=unit_ids, confirmed=body.confirmed)
 

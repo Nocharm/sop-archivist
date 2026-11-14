@@ -48,7 +48,7 @@ async function click(page, selector) {
 // app: 앱 안 사용 설명서에도 쓰는 장면 - name(그림 이름, 비우면 장면 이름), clip(이 요소만), clipTo(요소들을 감싼 상자), height(화면 위쪽 이만큼만),
 //      width(세 칸 화면처럼 1120에서는 답답한 장면의 화면 폭). appOnly는 앱 안 설명서에만 쓴다
 const SCENES = [
-  { name: "home", app: { height: 380 }, user: "qa.member", path: "/", marks: [id("bundles-row-2"), `${id("bundles-row-2")} .pill`, id("bundles-ko-2"), id("bundles-view")] },
+  { name: "home", app: { height: 380 }, user: "qa.member", path: "/", marks: [id("bundles-row-2"), `${id("bundles-row-2")} .pill`, id("bundles-confirmed-2"), id("bundles-view")] },
   {
     // 바로 생성(2026-11-09): 이름 없이 BND 코드로 만들어 개요로 들어가고, 문서가 없으면 Split~Review가 잠긴다
     name: "new-bundle", user: "dev.admin", path: "/",
@@ -82,7 +82,7 @@ const SCENES = [
   {
     name: "split-unit", app: { name: "split", width: 1280 }, user: "qa.member", path: "/bundles/1/split",
     prep: (page) => clickText(page, "로터를 장착하고 뚜껑을 닫은 후"),
-    marks: [id("split-docs"), `${id("split-paper")} >> text=로터를 장착하고 뚜껑을 닫은 후`, '[data-testid^="split-act-check-"]', id("split-unit-id"), id("split-primary"), id("split-split"), id("split-language"), id("split-pair"), id("split-help")],
+    marks: [id("split-docs"), `${id("split-paper")} >> text=로터를 장착하고 뚜껑을 닫은 후`, '[data-testid^="split-act-check-"]', id("split-unit-id"), id("split-primary"), id("split-split"), id("split-pair"), id("split-help")],
   },
   {
     name: "split-table", user: "qa.member", path: "/bundles/1/split",
@@ -119,13 +119,18 @@ const SCENES = [
   {
     name: "assign-place", app: { name: "assign" }, user: "qa.member", path: "/bundles/2/assign",
     prep: async (page) => {
-      await page.keyboard.press("j");
-      await page.waitForLoadState("networkidle");
+      // 처음은 All(접지 않음) - 아직 정하지 않은 줄까지 J로 옮긴다
+      for (let step = 0; step < 40; step += 1) {
+        await page.keyboard.press("j");
+        await page.waitForLoadState("networkidle");
+        if ((await page.locator(id("assign-row-status")).first().textContent())?.includes("Unassigned")) break;
+      }
       await click(page, id("assign-acc-all"));
       await page.locator('[data-testid^="assign-tree-p"]').first().click();
-      await page.locator('[data-testid^="assign-tree-place-"]:not([disabled])').first().click();
+      // 칸마다 칸 제목 자리(assign-tree-place-heading:…)가 칸 줄 앞에 있다 - 그림은 칸 줄을 고른 모습
+      await page.locator('[data-testid^="assign-tree-place-"]:not([data-testid^="assign-tree-place-heading:"]):not([disabled])').first().click();
     },
-    marks: [id("assign-chosen"), id("assign-primary"), id("assign-edit"), id("assign-hold"), `[data-testid^="assign-tree-place-"]`],
+    marks: [id("assign-chosen"), id("assign-primary"), id("assign-edit"), id("assign-hold"), '[data-testid^="assign-tree-place-"]:not([data-testid^="assign-tree-place-heading:"])'],
   },
   {
     name: "assign-confirmed", user: "qa.member", path: "/bundles/2/assign",
@@ -162,6 +167,7 @@ const SCENES = [
   {
     name: "assign-ai", app: {}, user: "qa.member", path: "/bundles/4/assign",
     prep: async (page) => {
+      await click(page, id("assign-filter-ai_suggested"));
       await page.keyboard.press("j");
       await page.locator(id("assign-rec-0")).waitFor({ timeout: T });
     },
@@ -187,7 +193,15 @@ const SCENES = [
   {
     name: "outputs-a", app: {}, user: "qa.member", path: "/bundles/3/outputs",
     prep: (page) => click(page, id("outputs-tab-a")),
-    marks: [id("outputs-tab-a"), id("output-a"), id("outputs-lang-en"), id("outputs-summary"), id("outputs-checks"), id("outputs-export")],
+    marks: [id("outputs-tab-a"), id("output-a"), id("output-a-row-no-0"), id("outputs-summary"), id("outputs-checks"), id("outputs-export")],
+  },
+  {
+    // Export Excel은 미리보기 창을 먼저 연다 - 파일과 같은 시트 탭 넷, 받기는 창에서
+    name: "outputs-excel", appOnly: true, app: {}, user: "qa.member", path: "/bundles/3/outputs",
+    prep: async (page) => {
+      await click(page, id("outputs-export-open"));
+      await page.locator(`${id("export-preview-sheet")} tbody tr`).first().waitFor({ timeout: T });
+    },
   },
   { name: "outputs-b", app: {}, user: "qa.member", path: "/bundles/3/outputs", prep: (page) => click(page, id("outputs-tab-b")), marks: [id("output-b")] },
   { name: "outputs-c", app: {}, user: "qa.member", path: "/bundles/3/outputs", prep: (page) => click(page, id("outputs-tab-c")), marks: [id("output-c")] },

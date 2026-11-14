@@ -9,9 +9,12 @@ import { createPortal } from "react-dom";
 import { isTopEscLayer, popEscLayer, pushEscLayer } from "@/components/ui/floating";
 import type { LinkMenuItem } from "@/lib/assign-model";
 import { useI18n } from "@/lib/i18n";
+import { placeLinkMenu } from "@/lib/link-menu-place";
 
 interface LinkMenuProps {
   anchor: HTMLElement;
+  /** 메뉴가 덮지 않을 상자들 - 함께 골라지는 New 짝 문장, 그 줄의 Old 조각. 비면 anchor 하나 */
+  cover?: HTMLElement[];
   /** 누른 자리(요소 기준). null이면 요소 아래 왼쪽 - 이동해 와서 포인터가 먼 곳에 있을 때 */
   offset: { x: number; y: number } | null;
   items: LinkMenuItem[];
@@ -22,14 +25,11 @@ interface LinkMenuProps {
   onClose: () => void;
 }
 
-const EDGE = 8; // 화면 가장자리와 띄울 최소 간격(px)
-const GAP = 10; // 누른 자리와 메뉴 사이(px)
-const NAV_INDENT = 24; // 이동해 온 조각에서 메뉴를 들여 놓는 폭(px) - 조각 앞 KO/EN 태그를 가리지 않게
 // CSS .link-menu 등장 지연(380ms)이 끝난 뒤 포커스를 옮긴다 - 숨은 동안은 포커스를 받을 수 없다
 const FOCUS_DELAY_MS = 400;
 const ITEM_SELECTOR = "[role=menuitem]:not(:disabled)";
 
-export function LinkMenu({ anchor, offset, items, isUnsaved, busy, onAction, onClose }: LinkMenuProps) {
+export function LinkMenu({ anchor, cover = [], offset, items, isUnsaved, busy, onAction, onClose }: LinkMenuProps) {
   const { t } = useI18n();
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -49,11 +49,10 @@ export function LinkMenu({ anchor, offset, items, isUnsaved, busy, onAction, onC
       return;
     }
     const box = menuEl.getBoundingClientRect();
-    const x = offset ? rect.left + offset.x - 16 : rect.left + NAV_INDENT;
-    const y = offset ? rect.top + offset.y : rect.bottom;
-    const left = Math.min(Math.max(x, EDGE), window.innerWidth - box.width - EDGE);
-    let top = y + GAP;
-    if (top + box.height > window.innerHeight - EDGE) top = (offset ? rect.top + offset.y : rect.top) - GAP - box.height;
+    // 세로 자리는 덮지 않을 상자를 모두 합친 테두리 기준 - 함께 골라진 짝 문장을 가리지 않게(Old 우클릭 메뉴와 같은 방식)
+    const boxes = [rect, ...cover.filter((el) => el !== anchor && el.isConnected).map((el) => el.getBoundingClientRect())];
+    const row = { top: Math.min(...boxes.map((item) => item.top)), bottom: Math.max(...boxes.map((item) => item.bottom)), left: rect.left };
+    const { top, left } = placeLinkMenu(row, offset ? rect.left + offset.x : null, box, { width: window.innerWidth, height: window.innerHeight }, offset ? rect.top + offset.y : null);
     setPos((prev) => (prev && prev.top === top && prev.left === left ? prev : { top, left }));
   });
 

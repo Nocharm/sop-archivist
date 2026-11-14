@@ -1,23 +1,39 @@
-// Assign 오른쪽 - 이미 쓴 New 문서의 원문. Old와 같은 종이 조각: 왼쪽 밖 언어 탭(폭 = 절 깊이라 들여쓴 것처럼 읽힌다), 본문 위 줄에 출처 칩(연결선이 칩 왼쪽으로 들어온다). 점선 = 후보, 채움 = 고른 문장, 칩 = 붙은 Old 출처(누르면 Old의 그 조각으로), 위험색 = 출처 없음.
-// 표·그림은 이번 화면에서 잇지 않아 회색 상자로만 보인다(설계 §2).
+// Assign 오른쪽 - New 문서. 이미 쓴 문서는 그 원문, 아직 쓰지 않은 문서는 지금까지의 배정으로 엮은 문서(서버 결과물 C 규칙, 읽기 전용 미리 보기).
+// Old와 같은 종이 조각: 왼쪽 밖 앞머리(절 번호 칸, 폭 = 절 깊이라 들여쓴 것처럼 읽힌다), 본문 위 줄에 출처 칩, 위 테두리 오른쪽에 올리거나 고를 때만 KO/EN 탭(짝은 모두).
+// 엮은 문서의 앞머리는 결과물 C와 같은 줄마다 자기 번호(생략·주석은 없음)이고 칸 번호는 칸 머리 줄에 남는다.
+// 점선 = 후보, 채움 = 고른 문장, 칩 = 붙은 Old 출처(누르면 Old의 그 조각으로), 왼쪽 끝 위험색 막대 = 출처 없음. 엮은 문서의 빈 칸은 옅은 자리 표시.
+// 칩 오른쪽 갈매기는 그 Old 조각이 왼쪽 칸 화면 위·아래 밖에 있다는 표시 - 스크롤마다 바뀌어 LinkLines가 data-dir로 단다(Old 배지와 같은 방식).
+// 줄이 새로 들어오면 펼치며 나타나고 빠지면 접히며 사라진다(확정이 곧 보이는 실시간 넣기). 표·그림은 이번 화면에서 잇지 않아 회색 상자로만 보인다(설계 §2).
 "use client";
 
-import { FilePlus2, Spline } from "lucide-react";
-import { Fragment, useState, type MouseEvent } from "react";
+import { ChevronDown, ChevronUp, FilePlus2, Spline } from "lucide-react";
+import { Fragment, useEffect, useRef, useState, type FocusEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { PaneZoom } from "@/components/assign/pane-zoom";
+import { LangToken } from "@/components/paper/lang-token";
+import { StripLead, STRIP_LEAD_EXTRA } from "@/components/paper/strip-lead";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Truncate } from "@/components/ui/motion";
 import { Select, type SelectOption } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { WrittenSentence } from "@/lib/api-sop";
+import { diffRows, getComposedLeadWidths, getNewRowKey, isComposedRow, isWrittenRow, readSectionNumber, type NewPaneRow } from "@/lib/composed-model";
 import { useI18n } from "@/lib/i18n";
-import { getPairBrackets, getPillWidth, getSectionPill, getTabWidths } from "@/lib/strip-pill-model";
+import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionPill, getTabWidths } from "@/lib/strip-pill-model";
 
 interface NewPaneProps {
   docOptions: SelectOption<string>[];
   docId: string;
   onDocChange: (docId: string) => void;
-  rows: WrittenSentence[];
+  rows: NewPaneRow[];
+  /** 엮은 문서의 칸 머리(section_path) → 칸 제목 출처("← OLD-1 §5") - 서버 값 그대로 칸 이름 뒤에 흐리게 */
+  headingNotes?: ReadonlyMap<string, string>;
+  /** 줄 들고 남의 기준 - 바뀌면(문서를 바꿈·처음 받음) 움직임 없이 새로 시작한다 */
+  rowsKey: string;
+  /** 머리 표지 - 이미 쓴 문서인지 배정으로 엮는 문서인지 */
+  tag: string;
+  /** 엮은 문서 - 문장을 눌러 고르지 않는다(잇는 대상은 이미 쓴 문서 문장뿐) */
+  readOnly: boolean;
   candidateIds: ReadonlySet<number>;
   pickedIds: ReadonlySet<number>;
   /** 출처 없는 New 모드에서 고른 문장 */
@@ -27,6 +43,9 @@ interface NewPaneProps {
   onPick: (targetId: number, additive: boolean, anchor: HTMLElement, event: MouseEvent) => void;
   /** 출처 칩을 누름 - Old의 그 조각으로 간다 */
   onJumpSource: (unitId: number, targetId: number) => void;
+  /** 방금 확정해 보낸 문장 - seq가 바뀌면 한 번, 그 문장이 그려지는 대로 화면에 들인다(새로 들어온 줄이 아니면 번쩍임도) */
+  live: { seq: number; targetIds: number[] } | null;
+  onReveal: (el: HTMLElement, flash: boolean) => void;
   zoom: number;
   onZoom: (dir: "+" | "-") => void;
   /** 두 문서 사이 연결선 켜기·끄기 */
@@ -38,13 +57,13 @@ function readState(row: WrittenSentence, props: NewPaneProps): string | undefine
   if (row.target_id === props.focusId) return "focus";
   if (props.pickedIds.has(row.target_id)) return "picked";
   if (props.candidateIds.has(row.target_id)) return "candidate";
-  if (row.kind === "sentence" && row.source_unit_ids.length === 0 && row.change_type !== "new") return "unsourced";
+  if (!props.readOnly && row.kind === "sentence" && row.source_unit_ids.length === 0 && row.change_type !== "new") return "unsourced";
   return undefined;
 }
 
-/** 절 머리 글("5.2. Title")의 앞 번호 - 없으면 빈 글 */
-function readSectionNumber(path: string): string {
-  return /^\s*(\d+(?:\.\d+)*)\.?/.exec(path)?.[1] ?? "";
+/** 짝 묶음 번호 - 짝의 작은 문장 id(서버는 둘짜리 짝만 서로를 가리킨다), 짝이 아니면 null. 앞머리 괄호와 언어 탭이 같은 기준을 쓴다 */
+function readPairGroup(row: WrittenSentence): number | null {
+  return row.kind !== "sentence" || row.partner_target_id === null ? null : Math.min(row.target_id, row.partner_target_id);
 }
 
 /** 쓴 New 문서가 없을 때 오른쪽 칸 - 올리는 곳(To-Be)으로 데려간다 */
@@ -74,39 +93,103 @@ export function NewPaneEmpty({ zoom, onGoToBe }: { zoom: number; onGoToBe: () =>
 
 // 칩 줄에 먼저 보이는 출처 수 - 넘치면 "+N"을 눌러 펼친다(연결선은 접힌 출처를 "+N"에 잇는다)
 const VISIBLE_SOURCES = 2;
+// 빠진 줄을 접는 동안 더 그리는 시간(ms) - 접힘(--dur-slow 240ms)보다 조금 길게. 들어온 줄 표시도 이때 걷는다
+const ROW_EXIT_MS = 300;
+
+interface Presence {
+  key: string;
+  sig: string;
+  rows: NewPaneRow[];
+  added: Set<string>;
+  leaving: Map<string, NewPaneRow[]>;
+}
+
+/**
+ * 같은 문서 안에서 줄이 들고 난 차이 - 기준(key)이 바뀌면 움직임 없이 새로 시작하되, enterKeys(방금 보낸 문장 - 확정하며 문서가 바뀐 경우)는 들어온 줄로 친다.
+ * 렌더 중 상태 맞추기, 줄 키가 바뀔 때만
+ */
+function useRowPresence(rows: NewPaneRow[], key: string, enterKeys: readonly string[]): Presence {
+  const sig = rows.map(getNewRowKey).join(",");
+  const [state, setState] = useState<Presence>({ key, sig, rows, added: new Set(), leaving: new Map() });
+  if (state.key !== key) {
+    const present = new Set(sig.split(","));
+    setState({ key, sig, rows, added: new Set(enterKeys.filter((item) => present.has(item))), leaving: new Map() });
+  } else if (state.sig !== sig) {
+    const { added, leaving } = diffRows(state.rows, rows, getNewRowKey);
+    setState({ key, sig, rows, added, leaving });
+  }
+  useEffect(() => {
+    if (state.added.size === 0 && state.leaving.size === 0) return;
+    const timer = window.setTimeout(() => setState((prev) => (prev.sig === state.sig ? { ...prev, added: new Set(), leaving: new Map() } : prev)), ROW_EXIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [state]);
+  return state;
+}
 
 export function NewPane(props: NewPaneProps) {
   const { t } = useI18n();
   const [openSources, setOpenSources] = useState<ReadonlySet<number>>(new Set());
-  // 한/영 짝이 바로 이웃하면 한 카드(위·아래 괄호), 탭 폭은 절 깊이 - Old와 같은 규칙
-  const sentences = props.rows.filter((row) => row.kind === "sentence");
-  const brackets = getPairBrackets(sentences.map((row) => ({ unitId: row.target_id, partnerId: row.partner_target_id })));
-  const widths = getTabWidths(
-    sentences.map((row) => ({
-      key: String(row.target_id),
-      part: "",
-      sectionLabel: readSectionNumber(row.section_path),
-      pairTopOf: brackets.get(row.target_id) === "bottom" ? String(row.partner_target_id) : null,
-    })),
-  );
+  const paneRef = useRef<HTMLElement>(null);
+  const matesRef = useRef<HTMLElement[]>([]);
+  // 엮은 문서만 - 이미 쓴 문서의 문장은 원래 있던 줄이라 들어오는 움직임을 쓰지 않는다
+  const enterKeys = props.readOnly && props.live ? props.live.targetIds.map((id) => `t:${id}`) : [];
+  const presence = useRowPresence(props.rows, props.rowsKey, enterKeys);
+  // 그릴 줄 - 지금 줄 사이사이에 빠지는 줄을 제자리(바로 뒤에 남은 줄 앞)에 끼운다
+  const shown: Array<{ row: NewPaneRow; leaving: boolean }> = [];
+  for (const row of props.rows) {
+    for (const gone of presence.leaving.get(getNewRowKey(row)) ?? []) shown.push({ row: gone, leaving: true });
+    shown.push({ row, leaving: false });
+  }
+  for (const gone of presence.leaving.get("") ?? []) shown.push({ row: gone, leaving: true });
+
+  const sentences = shown.map((item) => item.row).filter(isWrittenRow);
+  // 짝 구성원이 바로 이웃하면 구성원 수와 상관없이 한 카드, 앞머리 번호 칸 폭은 절 깊이 - Old와 같은 규칙. 짝 묶음 번호는 짝의 작은 문장 id(서버는 둘짜리 짝만 서로를 가리킨다). 표·그림 줄은 카드를 끊는다
+  const brackets = getPairBrackets(sentences.map((row) => ({ unitId: row.target_id, groupId: readPairGroup(row) })));
+  const cardTops = getCardTops(sentences.map((row) => row.target_id), brackets);
+  // 엮은 문서는 줄마다 자기 번호라 번호 칸 폭도 그 번호의 깊이로(표·그림 포함), 이미 쓴 문서는 절 번호의 깊이로
+  const widths = sentences.some(isComposedRow)
+    ? getComposedLeadWidths(sentences)
+    : getTabWidths(
+        sentences
+          .filter((row) => row.kind === "sentence")
+          .map((row) => {
+            const top = cardTops.get(row.target_id);
+            return { key: String(row.target_id), part: "", sectionLabel: readSectionNumber(row.section_path), pairTopOf: top === undefined ? null : String(top) };
+          }),
+      );
+
+  // 방금 보낸 문장을 화면에 들인다 - 엮은 문서는 다시 읽은 뒤에야 그 줄이 생기니 그려질 때까지 렌더마다 본다(seq마다 한 번)
+  const revealedSeq = useRef<number | null>(null);
+  const { live, onReveal } = props;
+  useEffect(() => {
+    if (!live || revealedSeq.current === live.seq) return;
+    const el = live.targetIds.map((id) => paneRef.current?.querySelector<HTMLElement>(`.new-line[data-target="${id}"]`)).find((item) => item);
+    if (!el) return;
+    revealedSeq.current = live.seq;
+    onReveal(el, !el.closest("[data-enter]"));
+  });
+
   function renderSources(row: WrittenSentence) {
     const isOpen = openSources.has(row.target_id);
     const ids = row.source_unit_ids;
-    const shown = isOpen || ids.length <= VISIBLE_SOURCES + 1 ? ids : ids.slice(0, VISIBLE_SOURCES);
-    const hidden = ids.slice(shown.length);
+    const visible = isOpen || ids.length <= VISIBLE_SOURCES + 1 ? ids : ids.slice(0, VISIBLE_SOURCES);
+    const hidden = ids.slice(visible.length);
     return (
       <span className="new-srcs">
-        {shown.map((unitId) => (
+        {visible.map((unitId) => (
           <button
             key={unitId}
             type="button"
             className="new-src"
             aria-label={t("assign.jumpOld", { id: props.sourceLabel(unitId) })}
             data-src-unit={unitId}
+            data-ai={row.status === "ai_suggested" ? "" : undefined}
             data-testid={`assign-new-src-${row.target_id}-${unitId}`}
             onClick={() => props.onJumpSource(unitId, row.target_id)}
           >
             {props.sourceLabel(unitId)}
+            <ChevronUp size={11} strokeWidth={2.5} className="new-src-dir" data-d="above" aria-hidden />
+            <ChevronDown size={11} strokeWidth={2.5} className="new-src-dir" data-d="below" aria-hidden />
           </button>
         ))}
         {hidden.length > 0 && (
@@ -126,15 +209,122 @@ export function NewPane(props: NewPaneProps) {
     );
   }
 
+  /** 올리거나 포커스한 줄의 짝 구성원 모두에 언어 탭을 보이게 - data-mate-hover를 직접 단다(Old 용지와 같은 방식, 포인터가 지날 때마다 다시 그리지 않게) */
+  function markMates(target: EventTarget | null) {
+    const line = target instanceof Element ? target.closest<HTMLElement>(".new-line[data-pair-group]") : null;
+    const group = line?.dataset.pairGroup;
+    const els = group ? [...(paneRef.current?.querySelectorAll<HTMLElement>(`.new-line[data-pair-group="${group}"]`) ?? [])] : [];
+    if (els.length === matesRef.current.length && els.every((el, index) => el === matesRef.current[index])) return;
+    for (const el of matesRef.current) delete el.dataset.mateHover;
+    for (const el of els) el.dataset.mateHover = "";
+    matesRef.current = els;
+  }
+
+  /** 문장 한 줄(앞 틈 포함) */
+  function renderSentence(row: WrittenSentence, isSectionStart: boolean, previous: NewPaneRow | undefined): ReactNode {
+    const bracket = brackets.get(row.target_id);
+    // 엮은 문서는 줄마다 결과물 C의 자기 번호(생략·주석은 없음). 이미 쓴 문서는 절을 여는 줄에만 절 번호 - 짝 카드의 둘째 줄부터가 절을 열면 앞머리에 번호가 없다
+    const isOwnNumber = isComposedRow(row);
+    const number = isOwnNumber ? row.number : isSectionStart && !cardTops.has(row.target_id) ? getSectionPill(readSectionNumber(row.section_path)) : null;
+    const text = (
+      <span lang={row.lang === "neutral" ? undefined : row.lang} className="new-text">
+        {row.text}
+      </span>
+    );
+    return (
+      <>
+        {!isSectionStart && previous?.kind === "sentence" && <div className="new-gap" data-pair={cardTops.has(row.target_id) ? "" : undefined} />}
+        <div className="strip-row">
+          <StripLead width={widths.get(String(row.target_id)) ?? getPillWidth(1)} number={number} bracket={bracket} dim={isOwnNumber ? number === null : !isSectionStart} tip="" testId="assign-new" id={row.target_id} />
+          <div
+            className="strip new-line"
+            data-bracket={bracket}
+            data-lang={row.lang}
+            data-state={readState(row, props)}
+            data-target={row.target_id}
+            data-pair-group={readPairGroup(row) ?? undefined}
+            data-testid={`assign-new-${row.target_id}`}
+          >
+            {(row.source_unit_ids.length > 0 || row.change_type === "new") && renderSources(row)}
+            {props.readOnly ? (
+              <span className="new-hit is-static">{text}</span>
+            ) : (
+              <button
+                type="button"
+                className="new-hit"
+                aria-pressed={props.pickedIds.has(row.target_id)}
+                data-testid={`assign-new-pick-${row.target_id}`}
+                onClick={(event) => {
+                  const line = event.currentTarget.parentElement;
+                  if (line) props.onPick(row.target_id, event.ctrlKey || event.metaKey, line, event);
+                }}
+              >
+                {text}
+              </button>
+            )}
+            <LangToken lang={row.lang} className="strip-lang" testId={`assign-new-lang-${row.target_id}`} />
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  /** 칸 머리 - 칸 제목 출처가 있으면 칸 이름 뒤에 흐리게, 넘치면 말줄임(빈 칸 줄의 머리도 같다) */
+  function renderSectionHead(row: NewPaneRow, isNumberInLead: boolean): ReactNode {
+    const label = isNumberInLead ? row.section_path.slice(getHiddenPrefixLength(row.section_path, readSectionNumber(row.section_path))) : row.section_path;
+    const note = props.headingNotes?.get(row.section_path);
+    if (!note) return <p className="new-sec">{label}</p>;
+    // 출처 글은 칸 오른쪽 끝까지 가서, 첫 줄의 언어 탭(위 테두리에서 8px 위로 나온다)이 글에 닿지 않게 아래 여백을 4px 더 둔다
+    return (
+      <p className="new-sec mb-2 flex gap-1.5">
+        <span>{label}</span>
+        <span className="min-w-[8ch] flex-1 font-normal text-ink-3">
+          <Truncate text={note} testId={`assign-new-heading-note-${readSectionNumber(row.section_path)}`} />
+        </span>
+      </p>
+    );
+  }
+
+  function renderRow(row: NewPaneRow, isSectionStart: boolean, previous: NewPaneRow | undefined): ReactNode {
+    if (row.kind === "empty") {
+      return (
+        <div className="strip-row">
+          <span className="strip-lead-gap" style={{ width: getPillWidth(1) + STRIP_LEAD_EXTRA }} />
+          <p className="new-slot-empty" data-testid={`assign-new-slot-${row.key}`}>
+            {row.na ? t("assign.slotNa") : t("assign.slotEmpty")}
+          </p>
+        </div>
+      );
+    }
+    if (row.kind !== "sentence") {
+      const block = (
+        <p className="new-block" data-testid={`assign-new-${row.target_id}`}>
+          {row.kind === "table" ? t("assign.newTable") : t("assign.newFigure")}
+        </p>
+      );
+      if (!isComposedRow(row)) return block;
+      // 엮은 문서의 표·그림도 결과물 C처럼 번호를 센다 - 앞머리에 자기 번호를 두어 문장 번호가 건너뛴 까닭이 보이게
+      return (
+        <div className="strip-row">
+          <StripLead width={widths.get(String(row.target_id)) ?? getPillWidth(1)} number={row.number} dim={row.number === null} tip="" testId="assign-new" id={row.target_id} />
+          {block}
+        </div>
+      );
+    }
+    return renderSentence(row, isSectionStart, previous);
+  }
+
   return (
-    <section className="assign-pane" style={{ "--z": props.zoom }} data-pane="new" data-doc={props.docId} data-testid="assign-new">
+    <section ref={paneRef} className="assign-pane" style={{ "--z": props.zoom }} data-pane="new" data-doc={props.docId} data-testid="assign-new">
       <div className="pane-head">
         {props.docOptions.length > 1 ? (
           <Select testId="assign-new-doc" ariaLabel={t("assign.newDoc")} size="sm" mono value={props.docId} options={props.docOptions} onChange={props.onDocChange} />
         ) : (
           <span className="pane-title">{props.docOptions[0]?.label}</span>
         )}
-        <span className="tag">{t("assign.writtenTag")}</span>
+        <span className="tag" data-testid="assign-new-tag">
+          {props.tag}
+        </span>
         <span className="flex-1" />
         <Tooltip label={props.linesOn ? t("assign.linesOn") : t("assign.linesOff")}>
           <button type="button" className="pane-toggle" aria-pressed={props.linesOn} aria-label={props.linesOn ? t("assign.linesOn") : t("assign.linesOff")} data-testid="assign-lines-toggle" onClick={props.onToggleLines}>
@@ -145,58 +335,27 @@ export function NewPane(props: NewPaneProps) {
       </div>
       <div className="pane-body">
         <div className="sheet">
-          <div className="pg new-sheet" data-strips="">
-            {props.rows.map((row, index) => {
-              // 절이 바뀌는 첫 문장 앞에만 절 머리
-              const isSectionStart = row.section_path !== "" && row.section_path !== props.rows[index - 1]?.section_path;
-              const head = isSectionStart ? <p className="new-sec">{row.section_path}</p> : null;
-              if (row.kind !== "sentence") {
-                return (
-                  <Fragment key={row.target_id}>
-                    {head}
-                    <p className="new-block" data-testid={`assign-new-${row.target_id}`}>
-                      {row.kind === "table" ? t("assign.newTable") : t("assign.newFigure")}
-                    </p>
-                  </Fragment>
-                );
-              }
-              const bracket = brackets.get(row.target_id);
-              const number = isSectionStart && bracket !== "bottom" ? getSectionPill(readSectionNumber(row.section_path)) : null;
-              const previous = props.rows[index - 1];
-              const gap = !head && previous?.kind === "sentence" ? <div className="new-gap" data-pair={brackets.get(previous.target_id) === "top" && bracket === "bottom" ? "" : undefined} /> : null;
+          <div
+            className="pg new-sheet"
+            data-strips=""
+            data-read-only={props.readOnly ? "" : undefined}
+            onPointerOver={(event: ReactPointerEvent<HTMLDivElement>) => markMates(event.target)}
+            onPointerLeave={() => markMates(null)}
+            onFocus={(event: FocusEvent<HTMLDivElement>) => markMates(event.target)}
+            onBlur={() => markMates(null)}
+          >
+            {shown.map(({ row, leaving }, index) => {
+              const previous = shown[index - 1]?.row;
+              const key = getNewRowKey(row);
+              // 절이 바뀌는 첫 줄 앞에만 절 머리 - 접히며 빠지는 줄과 들어오는 줄이 같은 절이면 머리는 하나
+              const isSectionStart = row.section_path !== "" && row.section_path !== previous?.section_path;
+              // 번호는 앞머리가 보일 때만 머리 글에서 뺀다 - 표·그림·빈 칸이나 짝 카드의 둘째 줄부터가 절을 열면 앞머리에 번호가 없다. 엮은 문서는 앞머리가 줄 자기 번호라 칸 번호를 머리에 남긴다
+              const isNumberInLead = isSectionStart && row.kind === "sentence" && !cardTops.has(row.target_id) && !isComposedRow(row);
               return (
-                <Fragment key={row.target_id}>
-                  {head}
-                  {gap}
-                  <div className="strip-row">
-                    <span className="strip-tab" style={{ width: widths.get(String(row.target_id)) ?? getPillWidth(1) }} data-lang={row.lang === "neutral" ? undefined : row.lang} data-bracket={bracket} data-dim={isSectionStart ? undefined : ""} data-testid={`assign-new-tab-${row.target_id}`}>
-                      {number !== null && (
-                        <span className="strip-tab-num" aria-hidden>
-                          {number}
-                        </span>
-                      )}
-                      <span className="strip-tab-letters" aria-hidden>
-                        {row.lang !== "neutral" && <span>{row.lang.toUpperCase()}</span>}
-                      </span>
-                    </span>
-                    <div className="strip new-line" data-bracket={bracket} data-lang={row.lang} data-state={readState(row, props)} data-target={row.target_id} data-testid={`assign-new-${row.target_id}`}>
-                      {(row.source_unit_ids.length > 0 || row.change_type === "new") && renderSources(row)}
-                      <button
-                        type="button"
-                        className="new-hit"
-                        aria-pressed={props.pickedIds.has(row.target_id)}
-                        data-testid={`assign-new-pick-${row.target_id}`}
-                        onClick={(event) => {
-                          const line = event.currentTarget.parentElement;
-                          if (line) props.onPick(row.target_id, event.ctrlKey || event.metaKey, line, event);
-                        }}
-                      >
-                        <span className="sr-only">{row.lang === "neutral" ? "–" : row.lang.toUpperCase()}</span>
-                        <span lang={row.lang === "neutral" ? undefined : row.lang} className="new-text">
-                          {row.text}
-                        </span>
-                      </button>
-                    </div>
+                <Fragment key={key}>
+                  {isSectionStart && renderSectionHead(row, isNumberInLead)}
+                  <div className="new-item" data-enter={presence.added.has(key) ? "" : undefined} data-leave={leaving ? "" : undefined} inert={leaving || undefined}>
+                    <div className="new-item-inner">{renderRow(row, isSectionStart, previous)}</div>
                   </div>
                 </Fragment>
               );

@@ -25,6 +25,7 @@ from app.sop.ai.similarity import cosine_matrix
 from app.sop.editing import PAIR_LANGS, TEXT_KINDS
 from app.sop.errors import raise_rule
 from app.sop.models import AiJob, Document, SourceBlock, Unit, UnitPair, UnitPairMember
+from app.sop.pair_settle import has_diverging_fates, load_decided_fates, settle_pairs
 from app.sop.pairs import PAIR_SOURCE_AI
 from app.sop.segment import has_visible_char
 from app.sop.units import PAIR_SUGGESTED, UNIT_ACTIVE, get_latest_extraction_id
@@ -171,7 +172,9 @@ class PairHandler:
     async def apply(self, session: AsyncSession, job: AiJob, loaded: _Loaded, computed: list[tuple[int, int]]) -> str:
         """묶음 잠금 안에서 단위를 다시 읽어, 읽을 때와 같고 아직 짝이 없는 단위끼리의 쌍만 쓴다 — 그사이 짝이 생기거나 은퇴한 단위는 current에 없고 언어가 바뀐 단위는 달라진다.
 
+        이미 서로 다른 곳으로 보낸 두 단위는 짝짓지 않는다(운명이 갈림, pair_settle — 한 줄의 처분은 하나다).
         짝을 쓴다고 문서 revision을 올리지 않는다. 사람의 짝 편집이 아니라 제안이라, 열어 둔 화면의 저장을 막지 않는다.
+        다만 두 단위가 이미 같은 곳으로 확정돼 있으면 settle_pairs가 그 짝을 바로 확정하고, 확정은 revision을 올린다.
         """
         document = await _load_document(session, job)
         if document is None:
@@ -181,6 +184,8 @@ class PairHandler:
             (ko_id, en_id) for ko_id, en_id in computed
             if current.get(ko_id) == loaded.items[ko_id] and current.get(en_id) == loaded.items[en_id]
         ]
+        fates = await load_decided_fates(session, [unit_id for pair in fresh for unit_id in pair])
+        fresh = [pair for pair in fresh if not has_diverging_fates(fates, pair)]
         pairs = [UnitPair(document_id=document.id, status=PAIR_SUGGESTED, source=PAIR_SOURCE_AI) for _ in fresh]
         session.add_all(pairs)
         await session.flush()  # 짝 id가 제안 내용에 든다
@@ -197,6 +202,7 @@ class PairHandler:
         await session.flush()  # 짝이 제안 id를 가리킨다
         for pair, suggestion in zip(pairs, suggestions, strict=True):
             pair.suggestion_id = suggestion.id
+        await settle_pairs(session, document.bundle_id, [unit_id for pair in fresh for unit_id in pair], job.requested_by)
         return "done"
 
 

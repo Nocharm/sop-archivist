@@ -326,6 +326,37 @@ class UnitEdit(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class DecisionStep(Base):
+    """Assign 되돌리기 한 단계 — 판단 저장 전후의 바뀐 행 스냅숏(snapshot) 또는 Split 편집 기록 가리키기(unit_edit)."""
+
+    __tablename__ = "decision_steps"
+    __table_args__ = (Index("ix_decision_steps_session", "bundle_id", "actor", "session_key", "seq"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    bundle_id: Mapped[int] = mapped_column(ForeignKey("bundles.id", ondelete="CASCADE"))
+    actor: Mapped[str] = mapped_column(String(100))
+    # 화면 세션(탭)마다 기록이 따로다
+    session_key: Mapped[str] = mapped_column(String(64))
+    seq: Mapped[int] = mapped_column(Integer)
+    op: Mapped[str] = mapped_column(String(24))
+    kind: Mapped[str] = mapped_column(String(10))
+    state: Mapped[str] = mapped_column(String(8), default="applied")
+    # 여러 요청으로 나뉜 한 동작(같은 글자 일괄 확정)을 한 단계로 합치는 키
+    step_key: Mapped[str | None] = mapped_column(String(64), default=None)
+    focus: Mapped[dict] = mapped_column(JSON, default=dict)
+    unit_ids: Mapped[list] = mapped_column(JSON, default=list)
+    scope_label: Mapped[str | None] = mapped_column(String(200), default=None)
+    before: Mapped[dict] = mapped_column(JSON, default=dict)
+    after: Mapped[dict] = mapped_column(JSON, default=dict)
+    document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), index=True, default=None
+    )
+    unit_edit_id: Mapped[int | None] = mapped_column(
+        ForeignKey("unit_edits.id", ondelete="SET NULL"), index=True, default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class UnitPair(Base):
     """한/영 짝 — 같은 뜻의 두 언어 단위 묶음. 한쪽 최대 단위 수는 MAX_PAIR_SIDE."""
 
@@ -413,7 +444,7 @@ class TargetSentence(Base):
     # 번호 표시(NUMBER_STYLES) — 생략·주석 줄은 번호를 받지 않는다. 표 칸 새 문장은 이 값 대신 표의 값을 따른다
     number_style: Mapped[str] = mapped_column(String(8), default=NUMBERED)
     lang: Mapped[str] = mapped_column(String(7))
-    kind: Mapped[str] = mapped_column(String(8))
+    kind: Mapped[str] = mapped_column(String(12))  # TARGET_KINDS — 가장 긴 값 slot_heading(12자)
     confirmed_text: Mapped[str] = mapped_column(Text, default="")
     ai_text: Mapped[str] = mapped_column(Text, default="")
     change_type: Mapped[str | None] = mapped_column(String(20), default=None)
@@ -435,6 +466,8 @@ class TargetSentence(Base):
     grid: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), default=None)
     status: Mapped[str] = mapped_column(String(12))
     hold_reason: Mapped[str] = mapped_column(Text, default="")
+    # 사람이 적는 메모(Remark) — 출처가 없는 새 문장(입구 2 신규)은 단위 판단이 없어 메모를 여기 담는다
+    remark: Mapped[str] = mapped_column(Text, default="")
     warnings: Mapped[list] = mapped_column(JSON, default=list)
     confirmed_by: Mapped[str | None] = mapped_column(String(100), default=None)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

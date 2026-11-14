@@ -1,8 +1,6 @@
 // dev 모드 전용 사용자 전환기 - 로컬 계정 5명 중 하나로 바꿔 권한 차등을 바로 본다. 상단 바에서만 쓰며 keycloak 모드에선 렌더하지 않는다.
 "use client";
 
-import { UserRound } from "lucide-react";
-
 import { Select } from "@/components/ui/select";
 
 import { clearAiJobsStore } from "@/lib/ai-jobs-store";
@@ -33,17 +31,19 @@ export function DevUserSwitcher() {
 
   return (
     <span className="inline-flex items-center gap-1.5 text-chrome-ink-2">
-      <UserRound size={16} strokeWidth={1.5} aria-hidden />
+      <span className="rounded-sm border border-chrome-line px-1 font-mono text-[10px] font-bold leading-4 tracking-wide" aria-hidden>
+        DEV
+      </span>
       <Select
         testId="dev-user-switcher"
         ariaLabel={t("nav.devUser")}
         value={current}
         size="sm"
         tone="chrome"
-        className="max-w-[240px]"
+        className="max-w-[160px]"
         options={[
-          ...(current !== "" && !isListed ? [{ value: current, label: current }] : []),
-          ...LOCAL_USERS.map((user) => ({ value: user.loginId, label: `${user.name} (${user.loginId})` })),
+          ...(current !== "" && !isListed ? [{ value: current, label: current, triggerLabel: current }] : []),
+          ...LOCAL_USERS.map((user) => ({ value: user.loginId, label: `${user.name} (${user.loginId})`, triggerLabel: user.loginId })),
         ]}
         onChange={handleChange}
       />

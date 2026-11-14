@@ -40,7 +40,6 @@ export function LinkBadge({ unitId, targets, currentDocId, onJump }: LinkBadgePr
       className="lbadge"
       aria-label={label}
       data-tip={isAi ? `${label} · ${t("assign.linkBadge.ai")}` : label}
-      data-tip-side="top"
       data-ai={isAi ? "" : undefined}
       data-link-badge={unitId}
       data-targets={targets.map((item) => `${item.target_doc_id}:${item.target_id}`).join(",")}

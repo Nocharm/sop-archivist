@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.sop.decision_steps import UndoMetaIn
 from app.sop.decisions import DbId
 from app.sop.detach import (
     ORIGIN_NEW_DOC,
@@ -59,6 +60,8 @@ from app.sop.units import UNIT_ACTIVE, get_latest_extraction_id, refresh_code_pa
 UNIT_RETIRED = "retired"
 EDIT_APPLIED = "applied"
 EDIT_UNDONE = "undone"
+# 경계 확인 표시만 바꾼 기록 - 단위 집합은 그대로라 되돌릴 때 표시만 거꾸로 돌린다(payload: unit_ids·confirmed)
+BOUNDARY_OPS = ("boundary", "check_all")
 # 글자 범위를 고칠 수 있는 단위 — 그림·표·행은 범위를 나누거나 잇지 않는다
 TEXT_KINDS = ("sentence", "heading", "cell_sentence")
 PAIR_LANGS = {"ko", "en"}  # 짝의 두 쪽 — 한쪽이 비면 짝을 지운다
@@ -141,6 +144,7 @@ class EditIn(BaseModel):
     # 판단이 걸린 단위를 은퇴시키는 편집의 명시적 확인 — 없으면 409 confirm_required로 화면이 먼저 묻는다
     confirm: bool = False
     op: EditOp
+    undo: UndoMetaIn | None = None  # Assign 안의 자르기만 실어 보낸다 — 그 화면의 되돌리기 기록에 한 단계로 남는다
 
 
 class EditStepIn(BaseModel):
@@ -171,6 +175,15 @@ class EditResult(BaseModel):
     retired_unit_ids: list[int]
     # 옛 문서는 은퇴하거나 다시 묶인 단위의 떼어 내기, 새 문서는 새 문장 다시 맞추기 결과 — 둘 다 없는 옛 문서 편집은 None
     detach: DetachReport | None
+
+
+class EditStepResult(EditResult):
+    """되돌리기·다시 하기 응답 - 무엇을 거꾸로(또는 다시) 했는지 화면이 알리고 그 자리로 갈 수 있게."""
+
+    op: str
+    # 경계 확인 기록이면 표시가 바뀐 단위와 바뀐 뒤 값, 아니면 빈 목록과 None
+    boundary_unit_ids: list[int]
+    confirmed: bool | None
 
 
 # --- 계획 ---
@@ -344,7 +357,7 @@ async def _plan_split(session: AsyncSession, extraction_id: ExtractionId, op: Sp
 
 
 async def _plan_merge(session: AsyncSession, extraction_id: ExtractionId, op: MergeOp) -> _Change:
-    """결과 범위는 원문 순서로 모으고 같은 블록에서 사이가 빈 글자뿐이면 한 범위로 잇는다. 언어는 합친 단위들의 같은 언어."""
+    """결과 범위는 원문 순서로 모으고 같은 블록에서 사이가 빈 글자뿐이면 한 범위로 잇는다. 언어는 합친 단위들이 같으면 그 언어, 섞이면 글자로 판정한다."""
     ensure_unique_units(op.unit_ids)
     units = sorted((await load_active_units(session, extraction_id, op.unit_ids)).values(), key=_get_position)
     _ensure_text_kinds(units)
@@ -352,15 +365,14 @@ async def _plan_merge(session: AsyncSession, extraction_id: ExtractionId, op: Me
     # 칸 문장은 같은 표·행 그룹(또는 모두 그룹 없음)끼리만 — 다른 그룹과 합치면 처분을 따를 곳이 둘이 된다
     if "cell_sentence" in kinds and (kinds != {"cell_sentence"} or len({unit.group_unit_id for unit in units}) > 1):
         raise_rule(422, "cannot_merge", unit_ids=[unit.id for unit in units])
-    langs = sorted({unit.lang for unit in units})
-    if len(langs) > 1:
-        raise_rule(422, "mixed_language", langs=langs)
+    langs = {unit.lang for unit in units}
     blocks = await _load_unit_blocks(session, extraction_id, units)
     spans = sorted(
         (span for unit in units for span in to_spans(unit.spans)), key=lambda span: (blocks[span[0]].seq, span[1])
     )
     draft = _build_draft(
-        units[0], join_close_spans(spans, _get_texts(blocks)), blocks, kind=_decide_merged_kind(units), lang=langs[0]
+        units[0], join_close_spans(spans, _get_texts(blocks)), blocks, kind=_decide_merged_kind(units),
+        lang=next(iter(langs)) if len(langs) == 1 else None,  # 섞이면 글자로 판정(한글이 있으면 ko)
     )
     return _build_replacement(units, [draft])
 
@@ -378,7 +390,8 @@ async def find_merge_edit(session: AsyncSession, document_id: int, unit_id: int)
 async def _plan_unmerge(session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: UnmergeOp) -> _Change:
     """합친 단위를 은퇴시키고 합치기가 은퇴시킨 단위를 원래 ID로 되살린다 — 그 합치기만 골라 되돌리는 것.
 
-    합친 뒤 언어를 바꿨으면 되살린 단위도 지금 언어를 따른다. 짝·판단은 되살리지 않는다(되돌리기와 같다).
+    같은 언어끼리 합쳤고 그 뒤 언어를 바꿨으면 되살린 단위도 지금 언어를 따른다. 언어가 섞인 합치기는 각 단위가 제
+    언어로 돌아온다. 짝·판단은 되살리지 않는다(되돌리기와 같다).
     """
     unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
     edit = await find_merge_edit(session, document_id, unit.id)
@@ -391,10 +404,13 @@ async def _plan_unmerge(session: AsyncSession, document_id: int, extraction_id: 
     )
     if len(originals) != len(edit.retired_unit_ids) or any(original.status != UNIT_RETIRED for original in originals):
         raise_rule(422, "cannot_unmerge", unit_id=unit.id)
+    is_mixed = len({original.lang for original in originals}) > 1
     return _Change(
         retire=[unit.id],
         revive=sorted(original.id for original in originals),
-        langs={original.id: (original.lang, unit.lang) for original in originals if original.lang != unit.lang},
+        langs={}
+        if is_mixed
+        else {original.id: (original.lang, unit.lang) for original in originals if original.lang != unit.lang},
         # 합친 칸 문장이 그 뒤 다른 묶음(행 나누기 등)으로 옮겨졌으면 되살린 칸도 지금 묶음으로
         regroup={
             original.id: (original.group_unit_id, unit.group_unit_id)
@@ -890,7 +906,7 @@ async def _write_change(
     if change.layouts:
         # 레이아웃 표의 칸 문장은 묶이지 않아 한/영 두 열이 이웃 짝으로 제안되고, 다시 데이터 표가 되면 그 제안이 빠진다
         await session.flush()
-        await refresh_code_pairs(session, document)
+        await refresh_code_pairs(session, document, actor)
     await session.flush()
     await verify_document_coverage(session, document.id)
     document.revision += 1
@@ -911,6 +927,28 @@ def _record(
     )
 
 
+async def _start_new_edit(session: AsyncSession, document: Document) -> int:
+    """새 기록을 붙일 준비 - 다시 하기 기록(undone)을 지우고 다음 순번을 돌려준다."""
+    await session.execute(
+        delete(UnitEdit).where(UnitEdit.document_id == document.id, UnitEdit.state == EDIT_UNDONE)
+    )
+    last_seq = await session.scalar(select(func.max(UnitEdit.seq)).where(UnitEdit.document_id == document.id))
+    return (last_seq or 0) + 1
+
+
+async def _add_boundary_edit(
+    session: AsyncSession, document: Document, op: str, unit_ids: list[int], confirmed: bool, actor: str
+) -> None:
+    """경계 확인 표시를 바꾼 기록 - 되돌리기·다시 하기가 편집과 한 줄 순서로 돈다(사용자 결정 2026-11-13)."""
+    session.add(
+        UnitEdit(
+            document_id=document.id, seq=await _start_new_edit(session, document), op=op,
+            payload={"unit_ids": unit_ids, "confirmed": confirmed}, created_unit_ids=[], retired_unit_ids=[],
+            regrouped={}, lang_changes={}, layout_changes={}, actor=actor,
+        )
+    )
+
+
 async def apply_edit(
     session: AsyncSession, document: Document, op: EditOp, *, confirm: bool, actor: str
 ) -> EditResult:
@@ -924,13 +962,9 @@ async def apply_edit(
     if change.is_unchanged():
         return EditResult(document_revision=document.revision, created_unit_ids=[], retired_unit_ids=[], detach=None)
     result = await _write_change(session, document, extraction_id, change, confirm=confirm, actor=actor)
-    await session.execute(
-        delete(UnitEdit).where(UnitEdit.document_id == document.id, UnitEdit.state == EDIT_UNDONE)
-    )
-    last_seq = await session.scalar(select(func.max(UnitEdit.seq)).where(UnitEdit.document_id == document.id))
     session.add(
         UnitEdit(
-            document_id=document.id, seq=(last_seq or 0) + 1, op=op.type, payload=op.model_dump(),
+            document_id=document.id, seq=await _start_new_edit(session, document), op=op.type, payload=op.model_dump(),
             created_unit_ids=result.created_unit_ids, retired_unit_ids=result.retired_unit_ids,
             regrouped={str(cell_id): list(move) for cell_id, move in change.regroup.items()},
             lang_changes={str(unit_id): list(langs) for unit_id, langs in change.langs.items()},
@@ -962,7 +996,34 @@ def _replay(edit: UnitEdit, *, backwards: bool) -> _Change:
     )
 
 
-async def undo_edit(session: AsyncSession, document: Document, *, confirm: bool, actor: str) -> EditResult:
+async def _step_edit(
+    session: AsyncSession, document: Document, edit: UnitEdit, *, backwards: bool, confirm: bool, actor: str
+) -> EditStepResult:
+    """기록 하나를 거꾸로(되돌리기) 또는 다시 적용하고 작업 기록을 남긴다."""
+    action = "unit.undo" if backwards else "unit.redo"
+    if edit.op in BOUNDARY_OPS:
+        confirmed = edit.payload["confirmed"] != backwards
+        units = await load_active_units(session, await get_latest_extraction_id(session, document.id), edit.payload["unit_ids"])
+        for unit in units.values():
+            unit.boundary_confirmed = confirmed
+        unit_ids = sorted(units)
+        record_event(
+            session, bundle_id=document.bundle_id, actor=actor, action=action, target_type="unit", target_ids=unit_ids,
+            reason=edit.op,
+        )
+        return EditStepResult(
+            document_revision=document.revision, created_unit_ids=[], retired_unit_ids=[], detach=None, op=edit.op,
+            boundary_unit_ids=unit_ids, confirmed=confirmed,
+        )
+    change = _replay(edit, backwards=backwards)
+    result = await _write_change(
+        session, document, await get_latest_extraction_id(session, document.id), change, confirm=confirm, actor=actor
+    )
+    _record(session, document, action, edit.op, result, change, actor)
+    return EditStepResult(**result.model_dump(), op=edit.op, boundary_unit_ids=[], confirmed=None)
+
+
+async def undo_edit(session: AsyncSession, document: Document, *, confirm: bool, actor: str) -> EditStepResult:
     """마지막 적용 편집을 거꾸로 — 만든 단위를 은퇴시키고 은퇴시킨 단위를 원래 ID로 되살린다(되살린 단위의 판단은 미배정).
     칸 묶음과 레이아웃 표 표시도 편집 전으로 돌린다."""
     edit = await session.scalar(
@@ -973,17 +1034,13 @@ async def undo_edit(session: AsyncSession, document: Document, *, confirm: bool,
     )
     if edit is None:
         raise_rule(409, "nothing_to_undo")
-    change = _replay(edit, backwards=True)
-    result = await _write_change(
-        session, document, await get_latest_extraction_id(session, document.id), change, confirm=confirm, actor=actor
-    )
+    result = await _step_edit(session, document, edit, backwards=True, confirm=confirm, actor=actor)
     edit.state = EDIT_UNDONE
-    _record(session, document, "unit.undo", edit.op, result, change, actor)
     await session.flush()
     return result
 
 
-async def redo_edit(session: AsyncSession, document: Document, *, confirm: bool, actor: str) -> EditResult:
+async def redo_edit(session: AsyncSession, document: Document, *, confirm: bool, actor: str) -> EditStepResult:
     """가장 최근에 되돌린 편집을 같은 단위 ID로 다시 적용한다."""
     edit = await session.scalar(
         select(UnitEdit)
@@ -993,24 +1050,23 @@ async def redo_edit(session: AsyncSession, document: Document, *, confirm: bool,
     )
     if edit is None:
         raise_rule(409, "nothing_to_redo")
-    change = _replay(edit, backwards=False)
-    result = await _write_change(
-        session, document, await get_latest_extraction_id(session, document.id), change, confirm=confirm, actor=actor
-    )
+    result = await _step_edit(session, document, edit, backwards=False, confirm=confirm, actor=actor)
     edit.state = EDIT_APPLIED
-    _record(session, document, "unit.redo", edit.op, result, change, actor)
     await session.flush()
     return result
 
 
 async def set_boundary_confirmed(
-    session: AsyncSession, document: Document, unit_ids: Sequence[int], confirmed: bool
+    session: AsyncSession, document: Document, unit_ids: Sequence[int], confirmed: bool, *, actor: str
 ) -> list[int]:
-    """경계 확인 표시를 켜거나 끈다 — 단위 집합은 그대로라 문서 revision·편집 기록과 무관하다."""
+    """경계 확인 표시를 켜거나 끈다 — 단위 집합은 그대로라 문서 revision은 그대로고, 바뀐 단위만 되돌리기 기록에 넣는다."""
     ensure_unique_units(unit_ids)
     units = await load_active_units(session, await get_latest_extraction_id(session, document.id), unit_ids)
+    changed = sorted(unit.id for unit in units.values() if unit.boundary_confirmed != confirmed)
     for unit in units.values():
         unit.boundary_confirmed = confirmed
+    if changed:
+        await _add_boundary_edit(session, document, "boundary", changed, confirmed, actor)
     await session.flush()
     return sorted(units)
 
@@ -1026,10 +1082,13 @@ async def confirm_all_boundaries(session: AsyncSession, document: Document, *, a
         update(Unit)
         .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.boundary_confirmed.is_(False))
         .values(boundary_confirmed=True)
+        .returning(Unit.id)
     )
-    if result.rowcount:
+    changed = sorted(result.scalars())
+    if changed:
+        await _add_boundary_edit(session, document, "check_all", changed, True, actor)
         record_event(
             session, bundle_id=document.bundle_id, actor=actor, action="unit.check_all", target_type="document",
-            target_ids=[document.id], detail={"count": result.rowcount},
+            target_ids=[document.id], detail={"count": len(changed)},
         )
-    return result.rowcount
+    return len(changed)

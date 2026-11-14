@@ -72,6 +72,7 @@ const ADMIN_TABS = ["access", "directory", "batch", "ai", "bundles", "guidelines
 // X0: 어느 화면에서도 문서가 가로로 넘치지 않는다(가로 스크롤이 생기지 않는다)
 const sceneUrls = (bundle) => ["", "/documents", "/split", "/tobe", "/assign", "/outputs", "/review", "/history"].map((tail) => `/bundles/${bundle}${tail}`);
 const PLAIN_SCENES = ["/", "/manual", "/account"];
+const BASELINE_C10E = 177; // 변경 전에 잰 값으로 채운다
 const AUDIT_ENTRIES = [
   {
     id: "X0", ds: "mid", user: MEMBER, views: [1120, 1920],
@@ -288,22 +289,31 @@ const AUDIT_ENTRIES = [
       await page.waitForTimeout(SETTLE_MS);
     },
     measure: async (page) => {
-      const measureRows = () => page.locator('[data-testid^="output-a-row-"]').evaluateAll((rows) => rows.map((row) => Math.round(row.getBoundingClientRect().height)));
+      // 줄(tr)만 - 줄 번호 칸(output-a-row-no-*)도 같은 접두라 빼야 펼친 줄 하나만 커지는지 볼 수 있다
+      const measureRows = () => page.locator('tr[data-testid^="output-a-row-"]').evaluateAll((rows) => rows.map((row) => Math.round(row.getBoundingClientRect().height)));
       const frameOverflows = await page.locator('[data-testid="output-a"]').evaluate((table) => {
         const frame = table.parentElement;
         return frame.scrollWidth > frame.clientWidth + 1 || table.getBoundingClientRect().right > window.innerWidth + 1;
       });
+      const maxRow = Math.max(...(await measureRows()));
+      // 펼치기 단추가 있는 첫 줄을 눌러 그 줄만 커지는지 본다(단추 있는 줄이 하나도 없으면 expandOk=false)
+      const rows = page.locator('tr[data-testid^="output-a-row-"]');
+      // 6줄에서 잘린 글이 있는 줄 - 확정한 사람만 더 보이는 줄은 다른 칸이 더 높으면 커지지 않는다. 넓은 창에서는 첫 묶음에 없을 수 있어 이어 그린다
+      const findClamped = () => rows.evaluateAll((els) => els.findIndex((row) => row.querySelector('[data-testid$="-expand"]') !== null && [...row.querySelectorAll(".clamp-6")].some((el) => el.scrollHeight > el.clientHeight + 1)));
+      let withButton = await findClamped();
+      for (let step = 0; step < 30 && withButton < 0 && (await page.locator('[data-testid="output-a-more"]').count()) > 0; step += 1) {
+        await page.locator('[data-testid="output-a-more"]').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(300);
+        withButton = await findClamped();
+      }
       const before = await measureRows();
-      const maxRow = Math.max(...before);
-      const biggest = before.indexOf(maxRow);
-      // 가장 큰 줄의 펼치기를 눌러 그 줄만 커지는지 본다(없으면 expandOk=false)
-      const expand = page.locator('[data-testid^="output-a-row-"]').nth(biggest).locator('[data-testid$="-expand"]');
       let expandOk = false;
-      if ((await expand.count()) > 0) {
-        await expand.first().click();
+      if (withButton >= 0) {
+        await rows.nth(withButton).locator('[data-testid$="-expand"]').first().click();
         await page.waitForTimeout(400);
-        const after = await measureRows();
-        expandOk = after.every((height, i) => (i === biggest ? height > before[i] : height === before[i]));
+        // 높은 창에서는 그 사이에 이어 그린 줄이 뒤에 붙는다 - 처음 잰 줄까지만 견준다
+        const after = (await measureRows()).slice(0, before.length);
+        expandOk = after.every((height, i) => (i === withButton ? height > before[i] : height === before[i]));
       }
       return { frameOverflows, maxRow, expandOk };
     },
@@ -432,7 +442,1033 @@ const AUDIT_ENTRIES = [
     expect: (value) => value.tables > 0 && value.worst <= 1,
     note: "no Assign .ptbl is wider than the strip that holds it (min-width 16ch stays in Split)",
   },
+  // ---- Task 6: Assign ----
+  {
+    // A10: 오른쪽 패널의 목적지 트리 - 노드 한 줄(<=32px), 개수 칸이 패널 안
+    id: "A10", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}/assign`,
+    open: async (page) => {
+      await page.getByTestId("assign-bar").waitFor({ timeout: T });
+      if ((await page.getByTestId("assign-acc-all").count()) === 0) await page.locator('[data-testid="assign-old"] .su[data-unit]').first().click();
+      await page.getByTestId("assign-acc-all").click();
+      // 안쪽 노드는 바깥을 펼쳐야 생긴다 - 더 펼칠 것이 없을 때까지
+      for (let round = 0; round < 4; round += 1) {
+        const closed = page.locator('.tree-node[aria-expanded="false"]');
+        const n = await closed.count();
+        if (n === 0) break;
+        for (let i = n - 1; i >= 0; i -= 1) await closed.nth(i).click();
+      }
+      await page.waitForTimeout(SETTLE_MS);
+    },
+    measure: (page) => page.evaluate(() => {
+      const nodes = [...document.querySelectorAll(".tree-node")];
+      const inspector = document.querySelector('[data-testid="assign-inspector"]').getBoundingClientRect();
+      const outside = nodes.flatMap((node) => [...node.children]).filter((el) => el.getBoundingClientRect().right > inspector.right + 0.5).length;
+      return { nodes: nodes.length, maxHeight: Math.round(Math.max(0, ...nodes.map((node) => node.getBoundingClientRect().height))), outside };
+    }),
+    expect: (value) => value.nodes > 0 && value.maxHeight <= 32 && value.outside === 0,
+    note: "assign tree-node one line (<= 32px), count cells inside the inspector",
+  },
+  {
+    // C1: 1120에서 문서 칸이 좁아지지 않고, 2560에서 작업면 폭이 1920
+    id: "C1", ds: "mid", user: MEMBER, views: [1120, 2560],
+    path: (ids) => `/bundles/${ids.mid[2]}/assign`,
+    open: async (page) => {
+      await page.getByTestId("assign-bar").waitFor({ timeout: T });
+    },
+    measure: (page) => page.evaluate(() => {
+      const w = (sel) => Math.round(document.querySelector(sel).getBoundingClientRect().width);
+      return { vw: window.innerWidth, wrap: w(".page-wrap"), old: w('[data-testid="assign-old"]'), inspector: w('[data-testid="assign-inspector"]') };
+    }),
+    expect: (value) => (value.vw <= 1200 ? value.old >= 350 : value.wrap === 1920),
+    note: "1120: Old pane >= 350px; 2560: page-wrap width = 1920",
+  },
+  {
+    // C11/F1: 도구 줄이 한 줄(1440 <= 44px), 좁은 창은 <= 80px
+    id: "C11", ds: "mid", user: MEMBER, views: [1440, 1120],
+    path: (ids) => `/bundles/${ids.mid[2]}/assign`,
+    open: async (page) => {
+      await page.getByTestId("assign-bar").waitFor({ timeout: T });
+    },
+    measure: (page) => page.getByTestId("assign-bar").evaluate((bar) => ({ vw: window.innerWidth, h: Math.round(bar.getBoundingClientRect().height) })),
+    expect: (value) => (value.vw >= 1440 ? value.h <= 44 : value.h <= 80),
+    note: "assign-bar height <= 44px at 1440, <= 80px at 1120",
+  },
+  {
+    // AI를 켠 backend에서 같은 도구 줄(AI 메뉴가 더해진다) - AI 꺼진 backend에서는 C11과 같은 값을 잰다
+    id: "F1", ds: "mid", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.mid[2]}/assign`,
+    open: async (page) => {
+      await page.getByTestId("assign-bar").waitFor({ timeout: T });
+    },
+    measure: async (page) => {
+      // AI 꺼진 backend에는 AI 메뉴가 없어 C11과 같은 값을 재게 되므로 통과로 세지 않고 건너뛴다
+      if ((await page.getByTestId("assign-ai-menu").count()) === 0) return { skip: "assign-ai-menu absent (AI-off backend)" };
+      return page.getByTestId("assign-bar").evaluate((bar) => Math.round(bar.getBoundingClientRect().height));
+    },
+    expect: (value) => value <= 80,
+    note: "assign-bar height <= 80px at 1120 (needs an AI-on backend, SKIP otherwise)",
+  },
+  {
+    // R1: 표 칸 글의 마지막 낱말이 줄 끝 아이콘 상자와 겹치지 않는다
+    id: "R1", ds: "mid", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.mid[3]}/assign`,
+    open: async (page) => {
+      await page.getByTestId("assign-bar").waitFor({ timeout: T });
+    },
+    measure: (page) => page.evaluate(() => {
+      let checked = 0;
+      let overlaps = 0;
+      for (const piece of document.querySelectorAll('[data-pane] .cell-piece, [data-testid="assign-old"] .cell-piece')) {
+        const marks = [...piece.querySelectorAll(".pmark-host")];
+        const text = piece.querySelector(":scope > p");
+        if (marks.length === 0 || !text) continue;
+        const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
+        let last = null;
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) if (node.textContent.trim()) last = node;
+        if (!last) continue;
+        const body = last.textContent.replace(/\s+$/, "");
+        const start = Math.max(body.lastIndexOf(" ") + 1, 0);
+        const range = document.createRange();
+        range.setStart(last, start);
+        range.setEnd(last, body.length);
+        const word = range.getClientRects();
+        checked += 1;
+        if (marks.some((mark) => { const m = mark.getBoundingClientRect(); return [...word].some((r) => r.right > m.left + 0.5 && r.left < m.right && r.bottom > m.top + 0.5 && r.top < m.bottom - 0.5); })) overlaps += 1;
+      }
+      return { checked, overlaps };
+    }),
+    expect: (value) => value.checked > 0 && value.overlaps === 0,
+    note: "last word of a table-cell piece does not overlap its row-end icons",
+  },
+  {
+    // R2: 1,200자 사유가 든 Unit(OLD-91 보류)을 고르면 사유 칸이 한 줄로 줄고 확정 단추가 화면 안
+    id: "R2", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}/assign`,
+    open: async (page) => {
+      await page.getByTestId("assign-bar").waitFor({ timeout: T });
+      const found = await page.evaluate(async () => {
+        const id = location.pathname.split("/")[2];
+        const response = await fetch(`/api/bundles/${id}/units?limit=1000&offset=0`, { headers: { "X-Dev-User": localStorage.getItem("sopa.devUser") ?? "" } });
+        const unit = (await response.json()).items.find((item) => (item.decision.hold_reason ?? "").length >= 1000 || (item.decision.reason ?? "").length >= 1000);
+        return unit ? { unit: unit.unit_id, doc: unit.document_id } : null;
+      });
+      if (!found) throw new Error("no unit with a 1,200-char reason");
+      await page.getByTestId("assign-old-doc").click();
+      await page.getByTestId(`assign-old-doc-option-${found.doc}`).click();
+      await page.locator(`[data-testid="assign-old"] .su[data-unit="${found.unit}"]`).first().click();
+      await page.waitForTimeout(SETTLE_MS);
+    },
+    // Remark는 창에서 쓰고 결정 칸의 Remark 줄은 한 줄 읽기 보기다(전체 글은 툴팁·Edit remark 창) - 확정 단추가 화면 안에 남는지도 본다
+    measure: (page) => page.evaluate(() => {
+      const el = document.querySelector('[data-testid="assign-reason"]');
+      const confirm = document.querySelector('[data-testid="assign-primary"]')?.getBoundingClientRect();
+      return { tag: el?.tagName, h: Math.round(el?.getBoundingClientRect().height ?? 0), len: (el?.textContent ?? "").length, confirmBottom: Math.round(confirm?.bottom ?? 9999), vh: innerHeight };
+    }),
+    expect: (value) => value.len >= 1000 && value.h >= 19 && value.h <= 21 && value.confirmBottom <= value.vh,
+    note: "a 1,200-char reason reads as one truncated line (19-21px) in the Decide area and Confirm stays on screen",
+  },
+  // ---- Task 7: 개요 ----
+  {
+    // A12: 극단 묶음 개요에서 검토 요청 단추가 첫 화면(y <= 800) 안
+    id: "A12", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}`,
+    open: async (page) => { await page.getByTestId("overview-request-review").waitFor({ timeout: T }); },
+    measure: (page) => page.getByTestId("overview-request-review").evaluate((el) => Math.round(el.getBoundingClientRect().bottom)),
+    expect: (value) => value > 0 && value <= 800,
+    note: "request-review button bottom edge is inside the first 800px at 1120",
+  },
+  {
+    // B5: 문서 0개 묶음 개요에 빨강 조건 묶음이 없고 본문이 낮다
+    id: "B5", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => `/bundles/${ids.w[7]}`,
+    open: async (page) => { await page.getByTestId("overview").waitFor({ timeout: T }); },
+    measure: (page) => page.evaluate(() => ({
+      fail: document.querySelectorAll(".gate-group.fail").length,
+      idle: document.querySelectorAll('[data-testid="overview-gate-idle"]').length,
+      h: Math.round(document.querySelector('[data-testid="overview"]').getBoundingClientRect().height),
+      body: (() => { const col = document.querySelector('[data-testid="overview"] > div'); return Math.round(col.lastElementChild.getBoundingClientRect().bottom - col.getBoundingClientRect().top); })(),
+    })),
+    expect: (value) => value.fail === 0 && value.idle === 1 && value.body <= 520,
+    note: "empty bundle overview: no .gate-group.fail, neutral idle line, content column <= 520px",
+  },
+  {
+    // R4: 되돌림 사유가 접힌 채 "더 보기" 단추가 보이고, 누르면 사유가 scrollHeight만큼 자라며 안쪽 스크롤이 없다
+    id: "R4", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[3]}`,
+    open: async (page) => { await page.getByTestId("overview-return-reason").waitFor({ timeout: T }); },
+    measure: async (page) => {
+      const reason = page.getByTestId("overview-return-reason");
+      const more = page.getByTestId("overview-return-more");
+      const visible = await more.isVisible();
+      if (!visible) return { visible };
+      const before = await reason.evaluate((el) => ({ h: el.getBoundingClientRect().height, sh: el.scrollHeight }));
+      await more.click();
+      await page.waitForTimeout(600);
+      const after = await reason.evaluate((el) => ({ h: el.getBoundingClientRect().height, sh: el.scrollHeight, ch: el.clientHeight }));
+      return { visible, before, after };
+    },
+    expect: (value) => value.visible && value.after.h > value.before.h && Math.abs(value.after.h - value.after.sh) <= 2 && value.after.sh <= value.after.ch + 1,
+    note: "collapsed reason shows a more button; expanding grows it to its scrollHeight with no inner scroll",
+  },
+  {
+    id: "Focus4", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}`,
+    open: async (page) => { await page.getByTestId("overview-request-review").waitFor({ timeout: T }); },
+    measure: (page) => page.getByTestId("overview-request-review").evaluate((el) => Math.round(el.getBoundingClientRect().height)),
+    expect: (value) => value > 0 && value <= 36,
+    note: "request-review button is one line (<= 36px) at 1120 in English (run with LANGS=en)",
+  },
+  // ---- Task 8: 없는 주소·못 여는 Bundle ----
+  {
+    // B1: 없는 주소가 앱 틀 안의 빈 화면 - 다크에서 body 배경이 --bg, 목록으로 돌아가는 단추, 한국어에 영어 기본 문구 없음
+    id: "B1", ds: "mid", user: MEMBER, views: [1120],
+    path: () => "/no-such-page",
+    open: async (page) => { await page.getByTestId("not-found").waitFor({ timeout: T }); },
+    measure: (page) => page.evaluate(() => {
+      const probe = document.createElement("i");
+      probe.style.background = "var(--bg)";
+      document.body.appendChild(probe);
+      const token = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      const back = document.querySelector('[data-testid="not-found-back"]');
+      const box = back?.getBoundingClientRect();
+      return {
+        bodyBg: getComputedStyle(document.body).backgroundColor,
+        token,
+        back: Boolean(box && box.width > 0 && box.height > 0),
+        english: document.body.innerText.includes("This page could not be found"),
+      };
+    }),
+    expect: (value) => value.bodyBg === value.token && value.back && !value.english,
+    note: "not-found renders in the shell: body background equals --bg, not-found-back visible, no default English copy",
+  },
+  {
+    // B2·R6: 멤버가 아닌 Bundle(mid[1]은 prod.member가 아니다 - API 404) 여섯 주소에서 목록으로 돌아가는 길이 있고 다시 시도는 없으며, 단계 레일 링크와 상단 바 뒤로·구분선이 없다
+    id: "B2", ds: "mid", user: "prod.member", views: [1120],
+    path: (ids) => ["documents", "split", "assign", "outputs", "history", "tobe"].map((s) => ({ url: `/bundles/${ids.mid[1]}/${s}`, user: "prod.member", stage: s })),
+    open: async (page) => {
+      await page.locator('[data-testid$="-missing"]').first().waitFor({ timeout: T });
+    },
+    measure: async (page) => {
+      const stage = new URL(page.url()).pathname.split("/").pop();
+      return page.evaluate((s) => ({
+        missing: document.querySelectorAll(`[data-testid="${s}-missing"]`).length,
+        back: document.querySelectorAll(`[data-testid="${s}-back"]`).length,
+        retry: document.querySelectorAll(`[data-testid="${s}-retry"]`).length,
+        railLinks: document.querySelectorAll('[data-testid="stage-nav"] a').length,
+        rail: document.querySelectorAll('[data-testid="stage-nav"]').length,
+        topBack: document.querySelectorAll('[data-testid="top-bar-back"]').length,
+        sep: document.querySelectorAll(".tb-sep").length,
+      }), stage);
+    },
+    expect: (value) => value.missing === 1 && value.back === 1 && value.retry === 0 && value.railLinks === 0 && value.rail === 0 && value.sep === 0 && value.topBack === 0,
+    note: "six stage URLs of a bundle prod.member cannot open: <id>-missing + <id>-back, no -retry, no stage rail, no top-bar divider or back arrow",
+  },
+  {
+    // B2b: 상단 바 뒤로 화살표는 묶음 밖 화면과 정상 Bundle에는 남는다(못 여는 Bundle에서만 숨긴다)
+    id: "B2b", ds: "mid", user: MEMBER, views: [1120],
+    path: (ids) => ["/account", "/manual", "/no-such-page", `/bundles/${ids.mid[2]}/documents`],
+    open: async (page) => { await page.getByTestId("top-bar").waitFor({ timeout: T }); await page.waitForTimeout(600); },
+    measure: (page) => page.locator('[data-testid="top-bar-back"]').count(),
+    expect: (value) => value === 1,
+    note: "top-bar-back is present on /account, /manual, /no-such-page and a normally loading bundle",
+  },
+  // ---- Task 9: 검토 화면 되돌림 쪽지 ----
+  {
+    // B3: 되돌린 Bundle(W3)의 검토 화면에 쪽지가 보이고 사유 첫 20자가 화면 안에 있다 - 작성자와 검토자 둘 다
+    id: "B3", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => [MEMBER, "qa.lead"].map((user) => ({ url: `/bundles/${ids.w[3]}/review`, user })),
+    open: async (page) => { await page.getByTestId("review-return-note").waitFor({ timeout: T }); await page.waitForTimeout(600); },
+    measure: (page) => page.evaluate(() => {
+      const note = document.querySelector('[data-testid="review-return-note"]');
+      const reason = document.querySelector('[data-testid="review-return-reason"]');
+      const noteBox = note.getBoundingClientRect();
+      const textNode = reason?.firstChild;
+      const range = document.createRange();
+      if (textNode) { range.setStart(textNode, 0); range.setEnd(textNode, Math.min(20, textNode.textContent.length)); }
+      const rects = textNode ? [...range.getClientRects()] : [];
+      const inView = (box) => box.width > 0 && box.height > 0 && box.top >= 0 && box.bottom <= window.innerHeight && box.left >= 0 && box.right <= window.innerWidth;
+      return {
+        note: inView(noteBox),
+        reason: rects.length > 0 && rects.every(inView),
+        noteLeft: Math.round(noteBox.left),
+        noteTop: Math.round(noteBox.top),
+      };
+    }),
+    expect: (value) => value.note && value.reason,
+    note: "returned bundle (W3) review screen shows review-return-note with the first 20 characters of the reason inside the viewport",
+  },
+  {
+    // B3b: 검토 중인 Bundle(W2)의 검토 화면에는 쪽지가 없다
+    id: "B3b", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => `/bundles/${ids.w[2]}/review`,
+    open: async (page) => { await page.getByTestId("review").waitFor({ timeout: T }); await page.waitForTimeout(1200); },
+    measure: (page) => page.locator('[data-testid="review-return-note"]').count(),
+    expect: (value) => value === 0,
+    note: "in-review bundle (W2) has no return note on the review screen",
+  },
+  // ---- Task 10: Bundle 목록·목록 폭 ----
+  {
+    // B7: 제목이 빈 Bundle 줄의 높이 = 제목 있는 줄의 높이(표), 빈 자리에는 흐린 "이름 없음"
+    id: "B7", ds: "worst", user: MEMBER, views: [1440, 1920],
+    path: () => "/",
+    open: async (page) => { await page.getByTestId("bundles-list").waitFor({ timeout: T }); await page.waitForTimeout(800); },
+    measure: (page) => page.evaluate(() => {
+      const rows = [...document.querySelectorAll('[data-testid^="bundles-row-"]')];
+      const empty = rows.filter((row) => row.querySelector('[data-testid^="bundles-untitled-"]'));
+      const noTitle = rows.filter((row) => !row.querySelector('[data-testid^="bundles-untitled-"]'));
+      const height = (row) => Math.round(row.getBoundingClientRect().height);
+      const emptyHeights = empty.map(height);
+      const titledHeights = noTitle.map(height);
+      return { empty: emptyHeights.length, emptyMax: Math.max(0, ...emptyHeights), titledMin: Math.min(...titledHeights) };
+    }),
+    expect: (value) => value.empty >= 2 && Math.abs(value.emptyMax - value.titledMin) <= 1,
+    note: "untitled bundles (W7 + empty-title ones) show bundles-untitled-<id> and their table row is as tall as the shortest titled row (a one-line row, +-1px)",
+  },
+  {
+    // C5: 카드 보기에서 같은 줄 카드의 .dcard-meta 아래 끝이 같고, 합성 칩의 왼쪽 끝이 카드마다 같다
+    id: "C5", ds: "worst", user: MEMBER, views: [1440, 1920],
+    path: () => "/",
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.bundles", "cards"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator(".dcard").first().waitFor({ timeout: T });
+      await page.waitForTimeout(800);
+    },
+    measure: (page) => page.evaluate(() => {
+      const cards = [...document.querySelectorAll('[data-testid^="bundles-row-"]')];
+      const byTop = new Map();
+      for (const card of cards) {
+        const top = Math.round(card.getBoundingClientRect().top);
+        byTop.set(top, [...(byTop.get(top) ?? []), card]);
+      }
+      let metaSpread = 0;
+      let chipSpread = 0;
+      let multi = 0;
+      for (const group of byTop.values()) {
+        if (group.length < 2) continue;
+        multi += 1;
+        const bottoms = group.map((card) => card.querySelector(".dcard-meta").getBoundingClientRect().bottom);
+        metaSpread = Math.max(metaSpread, Math.max(...bottoms) - Math.min(...bottoms));
+      }
+      const chipLefts = cards.map((card) => {
+        const chip = card.querySelector('[data-testid^="bundles-synthetic-"]');
+        return chip ? chip.getBoundingClientRect().left - card.getBoundingClientRect().left : null;
+      }).filter((v) => v !== null);
+      chipSpread = chipLefts.length ? Math.max(...chipLefts) - Math.min(...chipLefts) : 0;
+      return { multi, metaSpread: Math.round(metaSpread * 10) / 10, chips: chipLefts.length, chipSpread: Math.round(chipSpread * 10) / 10 };
+    }),
+    expect: (value) => value.multi > 0 && value.metaSpread <= 1 && value.chips > 0 && value.chipSpread <= 1,
+    note: "bundle cards: dcard-meta bottoms within 1px per grid row, synthetic chip left edge identical across cards",
+  },
+  {
+    // C5b: 문서 카드 보기(cardActions="row")에서 같은 줄 카드의 .dcard-meta 아래 끝이 같다 - meta와 아랫줄 사이 틈이 카드 키와 상관없이 같다(auto 여백 둘이 남는 높이를 나누지 않는다)
+    id: "C5b", ds: "mid", user: MEMBER, views: [1440],
+    path: (ids) => `/bundles/${ids.mid[2]}/documents`,
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "cards"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator(".dcard").first().waitFor({ timeout: T });
+      await page.waitForTimeout(800);
+    },
+    measure: (page) => page.evaluate(() => {
+      const cards = [...document.querySelectorAll('[data-testid="documents-list"] .dcard')];
+      const byTop = new Map();
+      for (const card of cards) {
+        const top = Math.round(card.getBoundingClientRect().top);
+        byTop.set(top, [...(byTop.get(top) ?? []), card]);
+      }
+      let metaSpread = 0;
+      let gapSpread = 0;
+      let multi = 0;
+      let unequal = 0;
+      for (const group of byTop.values()) {
+        if (group.length < 2) continue;
+        multi += 1;
+        const heights = group.map((card) => card.querySelector(".dcard-body, .dcard-meta").getBoundingClientRect().height);
+        const bottoms = group.map((card) => card.querySelector(".dcard-meta").getBoundingClientRect().bottom);
+        const gaps = group.map((card) => {
+          const foot = card.querySelector(".dcard-foot");
+          return foot ? foot.getBoundingClientRect().top - card.querySelector(".dcard-meta").getBoundingClientRect().bottom : 0;
+        });
+        if (Math.max(...heights) - Math.min(...heights) > 1) unequal += 1;
+        metaSpread = Math.max(metaSpread, Math.max(...bottoms) - Math.min(...bottoms));
+        gapSpread = Math.max(gapSpread, Math.max(...gaps) - Math.min(...gaps));
+      }
+      return { cards: cards.length, multi, unequal, metaSpread: Math.round(metaSpread * 10) / 10, gapSpread: Math.round(gapSpread * 10) / 10 };
+    }),
+    expect: (value) => value.multi > 0 && value.metaSpread <= 1 && value.gapSpread <= 1,
+    note: "document cards: dcard-meta bottoms within 1px per grid row and the meta-to-footer gap is the same in every card of the row",
+  },
+  {
+    // C5c: 문서 카드 보기(cardActions="row")에서 같은 줄 카드의 .dcard-meta 아래 끝이 같다 - meta와 아랫줄 사이 틈이 카드 키와 상관없이 같다(auto 여백 둘이 남는 높이를 나누지 않는다)
+    id: "C5c", ds: "worst", user: MEMBER, views: [1440],
+    path: (ids) => `/bundles/${ids.w[1]}/documents`,
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "cards"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator(".dcard").first().waitFor({ timeout: T });
+      await page.waitForTimeout(800);
+    },
+    measure: (page) => page.evaluate(() => {
+      const cards = [...document.querySelectorAll('[data-testid="documents-list"] .dcard')];
+      const byTop = new Map();
+      for (const card of cards) {
+        const top = Math.round(card.getBoundingClientRect().top);
+        byTop.set(top, [...(byTop.get(top) ?? []), card]);
+      }
+      let metaSpread = 0;
+      let gapSpread = 0;
+      let multi = 0;
+      let unequal = 0;
+      for (const group of byTop.values()) {
+        if (group.length < 2) continue;
+        multi += 1;
+        const heights = group.map((card) => card.querySelector(".dcard-body, .dcard-meta").getBoundingClientRect().height);
+        const bottoms = group.map((card) => card.querySelector(".dcard-meta").getBoundingClientRect().bottom);
+        const gaps = group.map((card) => {
+          const foot = card.querySelector(".dcard-foot");
+          return foot ? foot.getBoundingClientRect().top - card.querySelector(".dcard-meta").getBoundingClientRect().bottom : 0;
+        });
+        if (Math.max(...heights) - Math.min(...heights) > 1) unequal += 1;
+        metaSpread = Math.max(metaSpread, Math.max(...bottoms) - Math.min(...bottoms));
+        gapSpread = Math.max(gapSpread, Math.max(...gaps) - Math.min(...gaps));
+      }
+      return { cards: cards.length, multi, unequal, metaSpread: Math.round(metaSpread * 10) / 10, gapSpread: Math.round(gapSpread * 10) / 10 };
+    }),
+    expect: (value) => value.multi > 0 && value.metaSpread <= 1 && value.gapSpread <= 1,
+    note: "document cards: dcard-meta bottoms within 1px per grid row and the meta-to-footer gap is the same in every card of the row",
+  },
+  {
+    // C7: 목록 화면은 1600, 개요·계정·설명서는 1280 (본문 폭)
+    id: "C7", ds: "worst", user: MEMBER, views: [2560],
+    path: (ids) => [
+      "/", `/bundles/${ids.w[1]}/documents`, `/bundles/${ids.w[1]}/tobe`, `/bundles/${ids.w[1]}/history`, `/bundles/${ids.w[1]}/split`,
+      `/bundles/${ids.w[1]}`, "/account", "/manual",
+    ],
+    open: async (page) => { await page.locator(".page-wrap").first().waitFor({ timeout: T }); await page.waitForTimeout(1000); },
+    measure: (page) => page.evaluate(() => {
+      const path = location.pathname;
+      const width = Math.round(document.querySelector(".page-wrap").getBoundingClientRect().width);
+      const wide = path === "/" || /\/(documents|tobe|history|split)$/.test(path);
+      return { path, width, want: wide ? 1600 : 1280 };
+    }),
+    expect: (value) => value.width === value.want,
+    note: "2560: bundle list, Documents, To-Be, History, Split body = 1600; overview, account, manual = 1280",
+  },
+  {
+    // C7b: 1920에서 Documents 제목 열(칸) 폭 >= 420px
+    id: "C7b", ds: "worst", user: MEMBER, views: [1920],
+    path: (ids) => `/bundles/${ids.w[1]}/documents`,
+    // 같은 컨텍스트의 앞선 항목이 카드 보기를 기억시켰을 수 있어 표 보기로 못 박고 다시 읽는다
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator('[data-testid^="documents-"][data-testid$="-title"]').first().waitFor({ timeout: T });
+      await page.waitForTimeout(1000);
+    },
+    measure: (page) => page.evaluate(() => {
+      const cell = document.querySelector('[data-testid^="documents-"][data-testid$="-title"]')?.closest("td");
+      return cell ? Math.round(cell.getBoundingClientRect().width) : -1;
+    }),
+    expect: (value) => value >= 420,
+    note: "1920 Documents (W1): title column cell width >= 420px",
+  },
+  // ---- Task 11: 관리 화면 나머지와 창 ----
+  {
+    // B6: HR 미설정(503)이면 안내가 단추 줄 위에 서고 두 단추는 꺼지며 표·카드 토글이 숨는다(로컬은 HR 미설정이라 mid에서 잰다)
+    id: "B6", ds: "mid", user: "dev.admin", views: [1440],
+    path: () => "/admin?tab=directory",
+    open: async (page) => { await page.getByTestId("hr-sync-run").waitFor({ timeout: T }); },
+    measure: (page) => page.evaluate(() => {
+      const run = document.querySelector('[data-testid="hr-sync-run"]');
+      const preview = document.querySelector('[data-testid="hr-sync-preview"]');
+      const notice = document.querySelector('[data-testid="hr-sync-not-configured"]');
+      return {
+        disabled: run.disabled && preview.disabled,
+        noticeAbove: notice !== null && notice.getBoundingClientRect().top < run.getBoundingClientRect().top,
+        toggles: document.querySelectorAll('[data-testid="hr-sync-runs-view"]').length,
+      };
+    }),
+    expect: (value) => value.disabled && value.noticeAbove && value.toggles === 0,
+    note: "HR not configured: notice above the buttons, both disabled, no table/card toggle",
+  },
+  {
+    // C12: 관리 Bundle 카드는 메타 줄 오른쪽 끝에 구성원 단추를 두어 한 줄을 더 쓰지 않는다
+    id: "C12", ds: "mid", user: "dev.admin", views: [1440],
+    path: () => "/admin?tab=bundles",
+    open: async (page) => {
+      await page.getByTestId("admin-bundles-view-cards").click();
+      await page.locator('[data-testid="admin-bundles-list"] article').first().waitFor({ timeout: T });
+      await page.waitForTimeout(SETTLE_MS);
+    },
+    measure: (page) => page.locator('[data-testid="admin-bundles-list"] article').evaluateAll((cards) => {
+      const mid = cards.filter((card) => /SYNTHETIC [1-4] /.test(card.textContent));
+      return Math.round(Math.max(0, ...mid.map((card) => card.getBoundingClientRect().height)));
+    }),
+    expect: (value) => value > 0 && value <= 116,
+    note: "1440 admin Bundle cards (mid bundles) <= 116px",
+  },
+  {
+    // D1: 하위 항목을 고르면 그 항목이 --sel-bg, 부모 "권한"은 투명
+    id: "D1", ds: "mid", user: "dev.admin", views: [1440],
+    path: () => "/admin?tab=access",
+    measure: async (page) => {
+      const selBg = await page.evaluate(() => {
+        const probe = document.createElement("div");
+        probe.style.background = "var(--sel-bg)";
+        document.body.appendChild(probe);
+        const color = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return color;
+      });
+      const result = {};
+      for (const sub of ["roles", "grants", "audit"]) {
+        await page.getByTestId(`access-sub-${sub}`).click();
+        await page.waitForTimeout(400);
+        result[sub] = await page.evaluate(({ expected, sub }) => {
+          const subBg = getComputedStyle(document.querySelector(`[data-testid="access-sub-${sub}"]`)).backgroundColor;
+          const parentBg = getComputedStyle(document.querySelector('[data-testid="admin-tab-access"]')).backgroundColor;
+          return { sub: subBg === expected, parent: parentBg === "rgba(0, 0, 0, 0)" };
+        }, { expected: selBg, sub });
+      }
+      return result;
+    },
+    expect: (value) => Object.values(value).every((one) => one.sub && one.parent),
+    note: "selected access sub-item has the --sel-bg background (roles, grants, audit) and the parent tab stays transparent",
+  },
+  {
+    // R5: 멤버 창 모든 줄의 역할 선택 칸은 왼쪽 끝과 폭이 같다(W1 묶음 = 제목 146자, 멤버 5명)
+    id: "R5", ds: "worst", user: "dev.admin", views: [1120],
+    path: () => "/admin?tab=bundles",
+    open: async (page) => {
+      await page.getByTestId("admin-bundles-search").fill("W1 worst");
+      await page.waitForTimeout(600);
+      await page.locator('[data-testid^="admin-bundle-members-"]').first().click();
+      await page.locator('[data-testid="admin-bundle-members-modal"] [data-testid*="-remove-"]').first().waitFor({ timeout: T });
+      await page.waitForTimeout(400);
+    },
+    measure: (page) => page.locator('[data-testid^="admin-bundle-members-modal-role-"]').evaluateAll((selects) => ({
+      rows: selects.length,
+      lefts: [...new Set(selects.map((el) => Math.round(el.getBoundingClientRect().left)))],
+      widths: [...new Set(selects.map((el) => Math.round(el.getBoundingClientRect().width)))],
+    })),
+    expect: (value) => value.rows >= 2 && value.lefts.length === 1 && value.widths.length === 1 && value.widths[0] === 140,
+    note: "members dialog: every role select has the same left edge and is 140px wide",
+  },
+  {
+    // A13: 긴 제목 창 머리는 2줄로 접히고 "멤버"로 시작한다
+    id: "A13", ds: "worst", user: "dev.admin", views: [1120],
+    path: () => "/admin?tab=bundles",
+    open: async (page) => {
+      await page.getByTestId("admin-bundles-search").fill("W1 worst");
+      await page.waitForTimeout(600);
+      await page.locator('[data-testid^="admin-bundle-members-"]').first().click();
+      await page.getByTestId("admin-bundle-members-modal").waitFor({ timeout: T });
+      await page.waitForTimeout(400);
+    },
+    measure: (page) => page.evaluate(() => {
+      const dialog = document.querySelector('[data-testid="admin-bundle-members-modal"]');
+      const head = dialog.querySelector("h2");
+      return { height: Math.round(head.parentElement.getBoundingClientRect().height), text: head.textContent.trim().slice(0, 4) };
+    }),
+    expect: (value) => value.height <= 72 && /^(멤버|Memb)/.test(value.text),
+    note: "1120 members dialog header <= 72px and the title starts with 멤버",
+  },
+  {
+    // Focus 2: A13 창 머리에 키보드 포커스가 가면 툴팁이 146자 제목 전체를 보인다
+    id: "Focus2b", ds: "worst", user: "dev.admin", views: [1120],
+    path: () => "/admin?tab=bundles",
+    open: async (page) => {
+      await page.getByTestId("admin-bundles-search").fill("W1 worst");
+      await page.waitForTimeout(600);
+      await page.locator('[data-testid^="admin-bundle-members-"]').first().click();
+      await page.getByTestId("admin-bundle-members-modal").waitFor({ timeout: T });
+      await page.waitForTimeout(400);
+      await page.keyboard.press("Shift"); // 방금 마우스로 눌렀으니 키보드 사용으로 바꿔 :focus-visible이 맞게 한다
+      await page.locator('[data-testid="admin-bundle-members-modal"] h2[tabindex="0"]').focus();
+      await page.waitForTimeout(500);
+    },
+    measure: async (page) => {
+      const tip = page.locator('[role="tooltip"]').first();
+      return (await tip.count()) === 0 ? 0 : (await tip.innerText()).length;
+    },
+    expect: (value) => value >= 146,
+    note: "focusing the clamped members-dialog header shows the full 146+ character title in a tooltip",
+  },
+  {
+    // C4: 끝난 AI 작업(진행 중 아님·실패 0)은 한 줄, 실패가 있으면 진행 수는 "성공 / 전체"
+    // /api/ai/jobs/recent를 가짜 목록으로 바꾼다(AI가 꺼진 DB에서도 같은 값으로 잰다)
+    id: "C4", ds: "worst", user: MEMBER, views: [1120],
+    path: () => "/",
+    open: async (page) => {
+      const makeRequest = (id, kind, counts, total, now, finishedAt, title) => ({
+        request_id: id, bundle_id: 1, bundle_code: "BND-0001", bundle_title: "SYNTHETIC audit bundle", kind, kinds: [kind], requested_by_me: true, total,
+        jobs: { queued: 0, running: 0, done: 0, failed: 0, stale: 0, cancelled: 0, ...counts },
+        error_counts: counts.failed ? { timeout: counts.failed } : {}, created_at: now, started_at: now,
+        running_started_at: counts.running ? now : null, finished_at: finishedAt, document_id: null, document_title: title, document_file_name: title,
+      });
+      const now = new Date().toISOString();
+      const requests = [
+        makeRequest("c4-done", "classify", { done: 5 }, 5, now, now, "SYNTHETIC_a_very_long_document_file_name_for_the_one_line_check_of_finished_jobs.docx"),
+        makeRequest("c4-run", "translate", { running: 2, done: 1 }, 3, now, null, "SYNTHETIC_running.docx"),
+        makeRequest("c4-fail", "classify", { done: 12, failed: 2 }, 14, now, now, "SYNTHETIC_failed.docx"),
+        makeRequest("c4-done2", "translate", { done: 4 }, 4, now, now, "SYNTHETIC_last.docx"),
+      ];
+      await page.route("**/api/ai/jobs/recent", (route) => route.fulfill({ json: { server_time: now, requests, requests_total: requests.length } }));
+      await page.reload();
+      await page.waitForLoadState("networkidle", { timeout: T }).catch(() => {});
+      await page.locator('[data-testid="top-bar-ai"]').click();
+      await page.locator('[data-testid="ai-jobs-popover"]').waitFor({ timeout: T });
+      await page.waitForTimeout(500);
+    },
+    measure: (page) => page.evaluate(() => {
+      const body = document.querySelector('[data-testid="ai-jobs-popover"] .ai-pop-body');
+      body.scrollTop = body.scrollHeight;
+      const doneRows = [...document.querySelectorAll('[data-outcome="done"]')];
+      const rows = [...document.querySelectorAll(".ai-pop-req")];
+      const last = rows[rows.length - 1].getBoundingClientRect();
+      const bodyBox = body.getBoundingClientRect();
+      return {
+        doneMax: Math.round(Math.max(0, ...doneRows.map((row) => row.getBoundingClientRect().height))),
+        doneCount: doneRows.length,
+        lastCut: Math.round(last.bottom - bodyBox.bottom),
+        failedProgress: document.querySelector('[data-testid="ai-jobs-request-c4-fail-progress"]')?.textContent.trim(),
+      };
+    }),
+    expect: (value) => value.doneCount >= 2 && value.doneMax <= 36 && value.lastCut <= 0 && value.failedProgress === "12 / 14",
+    note: "finished AI job rows <= 36px, the last row is not clipped, a failed row reads 12 / 14",
+  },
+  {
+    // D2: 다크에서 창 뒤 가림막이 충분히 어둡다(알파 >= 0.6)
+    id: "D2", ds: "mid", user: "dev.admin", views: [1440],
+    path: () => "/admin?tab=bundles",
+    open: async (page) => {
+      await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+      await page.locator('[data-testid^="admin-bundle-members-"]').first().click();
+      await page.getByTestId("admin-bundle-members-modal").waitFor({ timeout: T });
+      await page.waitForTimeout(400);
+    },
+    measure: (page) => page.evaluate(() => {
+      const scrim = document.querySelector('[data-testid="admin-bundle-members-modal"]').closest(".fixed");
+      const match = getComputedStyle(scrim).backgroundColor.match(/[\d.]+/g).map(Number);
+      return { theme: document.documentElement.dataset.theme, alpha: match.length > 3 ? match[3] : 1 };
+    }),
+    expect: (value) => value.theme === "dark" && value.alpha >= 0.6,
+    note: "dark modal scrim background alpha >= 0.6",
+  },
+  {
+    // D4: 계정 화면 제목 밑줄은 글 폭 + 8px 이하, 권한 목록은 권한마다 44px 이하
+    id: "D4", ds: "mid", user: MEMBER, views: [1120],
+    path: () => "/account",
+    measure: (page) => page.evaluate(() => {
+      const h1 = document.querySelector('[data-testid="account-identity"] h1');
+      const range = document.createRange();
+      range.selectNodeContents(h1);
+      const list = document.querySelector('[data-testid="account-permissions"]');
+      const count = document.querySelectorAll('[data-testid^="account-permission-"]:not([data-testid^="account-permission-source-"]):not([data-testid="account-permissions"]):not([data-testid="account-permissions-empty"])').length;
+      return {
+        h1: Math.round(h1.getBoundingClientRect().width), text: Math.round(range.getBoundingClientRect().width),
+        listHeight: list ? Math.round(list.getBoundingClientRect().height) : 0, count,
+      };
+    }),
+    expect: (value) => value.h1 <= value.text + 8 && value.count > 0 && value.listHeight <= value.count * 44,
+    note: "account title width <= text width + 8px, permission list height <= count x 44px",
+  },
+  {
+    // R3: 도움말 패널 글의 왼쪽 끝이 패널 내용의 왼쪽 끝과 같다
+    id: "R3", ds: "mid", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.mid[2]}/assign`,
+    open: async (page) => {
+      const toggle = page.getByTestId("assign-help-toggle");
+      await toggle.waitFor({ timeout: T });
+      if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+      await page.waitForTimeout(400);
+    },
+    measure: async (page) => {
+      const result = {};
+      for (const tab of ["keys", "marks"]) {
+        await page.getByTestId(`assign-help-tab-${tab}`).click();
+        await page.waitForTimeout(300);
+        result[tab] = await page.evaluate(() => {
+          const panel = document.querySelector('[data-testid="assign-help"]');
+          const content = panel.getBoundingClientRect().left + parseFloat(getComputedStyle(panel).paddingLeft);
+          const body = panel.querySelector(".help-panel-body");
+          const first = body.querySelector("dt, .help-panel-row > :first-child") ?? body.firstElementChild;
+          const range = document.createRange();
+          range.selectNodeContents(first);
+          const bodyBox = body.getBoundingClientRect();
+          return { content: Math.round(content), text: Math.round(range.getBoundingClientRect().left), bodyLeft: Math.round(bodyBox.left), scrolls: body.scrollHeight > body.clientHeight };
+        });
+      }
+      return result;
+    },
+    expect: (value) => Object.values(value).every((one) => Math.abs(one.text - one.content) <= 1),
+    note: "help panel text left edge equals the panel content left edge (tab strip left)",
+  },
+  {
+    // R7: 개발 전환 칸은 로그인 ID와 DEV 표시만이라 좁다
+    id: "R7", ds: "mid", user: MEMBER, views: [1120],
+    path: () => "/",
+    measure: (page) => page.locator('[data-testid="dev-user-switcher"]').first().evaluate((el) => Math.round(el.getBoundingClientRect().width)),
+    expect: (value) => value <= 160,
+    note: "dev user switcher width <= 160px",
+  },
+  {
+    // R9: 공통 선택 칸의 화살표가 가만히 있을 때도 보인다
+    id: "R9", ds: "mid", user: MEMBER, views: [1120],
+    path: () => "/",
+    measure: (page) => page.locator('[data-testid="dev-user-switcher"] .select-chevron, .select-trigger .select-chevron').first().evaluate((el) => Number(getComputedStyle(el).opacity)),
+    expect: (value) => value > 0,
+    note: "select chevron opacity > 0 at rest",
+  },
+  // ---- Task 13: Documents 정상 상태 아이콘·늘 보이는 흐린 단추 (C10) ----
+  {
+    // C10a: 좁은 표(1120)에서 뒤쪽 칸이 한 줄이다 - 모든 줄에서 칸 높이 <= 40px, 단추 묶음 오른쪽 끝 x가 줄마다 같다(±1px), 경고 칩 숫자가 보인다
+    id: "C10a", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}/documents`,
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator('[data-testid^="documents-"][data-testid$="-title"]').first().waitFor({ timeout: T });
+      await page.waitForTimeout(1000);
+    },
+    measure: (page) => page.evaluate(() => {
+      const rows = [...document.querySelectorAll('[data-testid="documents-list"] tbody tr')].filter((row) => row.querySelector(".row-actions-quiet"));
+      // 칸 안 내용의 높이(td는 제목이 여러 줄이면 줄 높이를 따라 커진다)
+      const heights = rows.map((row) => row.querySelector(".row-actions-quiet").parentElement.getBoundingClientRect().height);
+      const rights = rows.map((row) => row.querySelector(".row-actions-quiet").getBoundingClientRect().right);
+      const chips = [...document.querySelectorAll('[data-testid^="documents-"][data-testid$="-warnings"]')].filter((el) => el.closest("td")?.querySelector(".row-actions-quiet"));
+      return {
+        rows: rows.length,
+        maxCell: Math.round(Math.max(0, ...heights)),
+        rightSpread: Math.round((Math.max(...rights) - Math.min(...rights)) * 10) / 10,
+        chips: chips.length,
+        chipsWithDigit: chips.filter((el) => /\d/.test(el.textContent ?? "")).length,
+      };
+    }),
+    expect: (value) => value.rows > 0 && value.maxCell <= 40 && value.rightSpread <= 1 && value.chips > 0 && value.chips === value.chipsWithDigit,
+    note: "1120 Documents (W1): trail cell height <= 40px in every row, action group right edge identical (+-1px), warning chip shows its count",
+  },
+  {
+    // C10b: 단추 묶음은 평소 opacity .45, 줄 호버 때 1, Tab으로 단추에 들어가도 1(보통 1440 표)
+    id: "C10b", ds: "mid", user: MEMBER, views: [1440],
+    path: (ids) => `/bundles/${ids.mid[2]}/documents`,
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator('[data-testid="documents-list"] tbody tr').first().waitFor({ timeout: T });
+      await page.waitForTimeout(800);
+    },
+    measure: async (page) => {
+      const row = page.locator('[data-testid="documents-list"] tbody tr', { has: page.locator(".row-actions-quiet") }).first();
+      const group = row.locator(".row-actions-quiet").first();
+      const opacity = () => group.evaluate((el) => Number(getComputedStyle(el).opacity));
+      await page.mouse.move(0, 0);
+      await page.waitForTimeout(400);
+      const rest = await opacity();
+      await row.hover();
+      await page.waitForTimeout(400);
+      const hover = await opacity();
+      await page.mouse.move(0, 0);
+      await group.locator("button").first().focus();
+      await page.waitForTimeout(400);
+      const focus = await opacity();
+      return { rest, hover, focus };
+    },
+    expect: (value) => Math.abs(value.rest - 0.45) < 0.02 && value.hover === 1 && value.focus === 1,
+    note: "Documents row actions: opacity .45 at rest, 1 on row hover, 1 when a button has focus",
+  },
+  {
+    // C10c: 거절된 줄의 읽기 전용 제목도 편집되는 제목과 같은 왼쪽 x와 굵기(W1)
+    id: "C10c", ds: "worst", user: MEMBER, views: [1440],
+    path: (ids) => `/bundles/${ids.w[1]}/documents`,
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator('[data-testid^="documents-"][data-testid$="-title"]').first().waitFor({ timeout: T });
+      await page.waitForTimeout(1000);
+    },
+    measure: async (page) => page.evaluate(() => {
+      const textLeft = (el) => {
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        let node = walker.nextNode();
+        while (node && !node.textContent.trim()) node = walker.nextNode();
+        if (!node) return null;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        return { left: Math.round(range.getBoundingClientRect().left * 10) / 10, weight: getComputedStyle(node.parentElement).fontWeight };
+      };
+      const reason = document.querySelector('[data-testid$="-reason"]');
+      const rejected = reason?.closest("tr")?.querySelector('[data-testid$="-title"]');
+      const normal = [...document.querySelectorAll('[data-testid^="documents-"][data-testid$="-title"]')].find((el) => !el.closest("tr")?.querySelector('[data-testid$="-reason"]') && (el.value ?? el.textContent));
+      if (!rejected || !normal) return { missing: true };
+      const readValue = (el) => (el.tagName === "INPUT" ? { left: el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft) + parseFloat(getComputedStyle(el).borderLeftWidth), weight: getComputedStyle(el).fontWeight } : textLeft(el));
+      return { rejected: readValue(rejected), normal: readValue(normal) };
+    }),
+    expect: (value) => !value.missing && Math.abs(value.rejected.left - value.normal.left) <= 1 && value.rejected.weight === value.normal.weight,
+    note: "rejected row title text left x equals normal row title text left x, same font-weight",
+  },
+  {
+    // C10d: 정상 상태 아이콘에 포커스하면 툴팁이 뜨고(Ready), aria-label이 비어 있지 않다. 글자 알약이 아니라 아이콘이다
+    id: "C10d", ds: "mid", user: MEMBER, views: [1440],
+    path: (ids) => `/bundles/${ids.mid[2]}/documents`,
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator('[data-testid$="-status"]').first().waitFor({ timeout: T });
+    },
+    measure: async (page) => {
+      const status = page.locator('[data-testid$="-status"][data-state="ok"]').first();
+      const aria = (await status.getAttribute("aria-label")) ?? "";
+      const text = ((await status.textContent()) ?? "").trim();
+      await status.focus();
+      await page.waitForTimeout(500);
+      const tip = ((await page.locator('[role="tooltip"]').first().textContent().catch(() => "")) ?? "").trim();
+      return { aria, text, tip };
+    },
+    expect: (value) => value.aria.length > 0 && value.text === "" && value.tip.includes("Ready"),
+    note: "normal status icon: non-empty aria-label, no text, focus shows 'Ready' tooltip",
+  },
+  {
+    // C10e: 보통 1440에서 상태 + 보조 검사 열 폭의 합(th)이 이전 기준보다 좁다. 기준은 변경 전에 잰 값(BASELINE)
+    id: "C10e", ds: "mid", user: MEMBER, views: [1440],
+    path: (ids) => `/bundles/${ids.mid[2]}/documents`,
+    open: async (page) => {
+      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
+      await page.reload({ waitUntil: "networkidle" });
+      await page.locator('[data-testid="documents-list"] thead th').first().waitFor({ timeout: T });
+      await page.waitForTimeout(800);
+    },
+    measure: (page) => page.evaluate(() => {
+      const ths = [...document.querySelectorAll('[data-testid="documents-list"] thead th')];
+      const widths = ths.map((th) => th.getBoundingClientRect().width);
+      const cellsOf = (tid) => [...document.querySelector('[data-testid="documents-list"] tbody tr [data-testid$="-' + tid + '"]').closest("tr").children];
+      const rowCells = cellsOf("status");
+      const iStatus = rowCells.findIndex((td) => td.querySelector('[data-testid$="-status"]'));
+      const iAux = rowCells.findIndex((td) => td.querySelector('[data-testid$="-aux"]'));
+      const iTitle = rowCells.findIndex((td) => td.querySelector('[data-testid$="-title"]'));
+      const heads = ths.map((th) => th.textContent.trim());
+      return { sum: Math.round(widths[iStatus] + widths[iAux]), title: Math.round(widths[iTitle]), heads: heads.join("|") };
+    }),
+    expect: (value) => value.sum < BASELINE_C10E,
+    note: "1440 Documents (mid): extraction + aux column widths sum is narrower than the pre-change baseline",
+  },
+  // ---- 결과물 한 벌: Excel 미리보기 창 · 칸 제목 · 긴 C의 끝 표지 · 개요 검토 조건 아홉 줄 ----
+  {
+    // P1: W1 미리보기 창이 화면 안(받기 단추까지)이고, 가로 스크롤은 시트 안에서만, 탭 넷이 잘리거나 겹치지 않고, 머리 줄이 붙박이며,
+    //     종이 색은 화면 테마와 무관하다(THEMES=light,dark로 돌려 같은 값인지 본다). 파일 이름으로 W1을 찍었는지 확인한다
+    id: "P1", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => `/bundles/${ids.w[1]}/outputs`,
+    open: async (page) => {
+      await page.getByTestId("outputs-export-open").click();
+      await page.locator('[data-testid="export-preview-sheet"] tbody tr').first().waitFor({ timeout: T });
+      await page.waitForTimeout(SETTLE_MS);
+    },
+    measure: (page) => page.evaluate(async () => {
+      const dialog = document.querySelector('[data-testid="export-preview"]');
+      const sheet = document.querySelector('[data-testid="export-preview-sheet"]');
+      const box = dialog.getBoundingClientRect();
+      const download = document.querySelector('[data-testid="export-preview-download"]').getBoundingClientRect();
+      const tabs = [...document.querySelectorAll('[data-testid^="export-preview-tab-"]')];
+      const tabBoxes = tabs.map((tab) => tab.getBoundingClientRect());
+      sheet.scrollTop = 600;
+      await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+      const headDrift = Math.round(sheet.querySelector("thead").getBoundingClientRect().top - sheet.getBoundingClientRect().top);
+      sheet.scrollTop = 0;
+      const head = getComputedStyle(sheet.querySelector("td[data-head]"));
+      return {
+        file: document.querySelector('[data-testid="export-preview-file-name"]').textContent.slice(0, 22),
+        inView: box.left >= 0 && box.top >= 0 && box.right <= innerWidth && box.bottom <= innerHeight && download.bottom <= innerHeight,
+        pageX: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+        dialogX: dialog.scrollWidth > dialog.clientWidth + 1,
+        sheetX: sheet.scrollWidth > sheet.clientWidth + 1,
+        tabs: tabs.length,
+        // 글 상자가 단추 밖으로 나가는가(넘친 글은 보이는 채로 옆 탭을 덮는다 - scrollWidth로는 안 잡힌다)
+        tabsClipped: tabs.some((tab) => {
+          const range = document.createRange();
+          range.selectNodeContents(tab);
+          const text = range.getBoundingClientRect();
+          const own = tab.getBoundingClientRect();
+          return text.left < own.left - 1 || text.right > own.right + 1 || text.top < own.top - 1 || text.bottom > own.bottom + 1;
+        }),
+        tabsOverlap: tabBoxes.some((b, i) => i > 0 && Math.abs(b.top - tabBoxes[i - 1].top) < 1 && b.left < tabBoxes[i - 1].right - 1),
+        headDrift,
+        colors: `${getComputedStyle(sheet).backgroundColor}|${head.backgroundColor}|${head.color}`,
+      };
+    }),
+    expect: (value) => /^BND-\d{4}_SYNTHETIC W1 /.test(value.file) && value.inView && !value.pageX && !value.dialogX && value.sheetX && value.tabs === 4 && !value.tabsClipped && !value.tabsOverlap
+      && Math.abs(value.headDrift) <= 2 && value.colors === "rgb(255, 255, 255)|rgb(43, 47, 54)|rgb(255, 255, 255)",
+    note: "W1 Excel preview: window and Download inside the viewport, horizontal scroll only inside the sheet, 4 tabs unclipped, sticky head, Graphite paper in every theme",
+  },
+  {
+    // T1: W1 Assign 나무의 칸 제목 자리(코드가 가장 긴 SOP) - 항목 글이 상자를 넘치지 않고 나무가 가로로 넘치지 않으며, 고른 칸 제목의 보낼 곳 카드가 넘치지 않는다
+    id: "T1", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => `/bundles/${ids.w[1]}/assign`,
+    open: async (page) => {
+      await page.locator('[data-testid="assign-bar"]').waitFor({ timeout: T });
+      // 첫 줄은 제목(칸 제목 자리가 보이는 줄)
+      await page.keyboard.press("j");
+      await page.locator('[data-testid="assign-row-id"]').waitFor({ timeout: T });
+      await page.getByTestId("assign-acc-all").click();
+      const bundleId = /bundles\/(\d+)/.exec(page.url())[1];
+      const tobe = await (await page.request.get(`${BASE}/api/bundles/${bundleId}/tobe`, { headers: { "X-Dev-User": MEMBER } })).json();
+      const longest = tobe.docs.filter((doc) => doc.doc_type === "sop" && doc.entrance === "assign").map((doc) => doc.code).sort((a, b) => b.length - a.length)[0];
+      await page.locator(`[data-testid="assign-tree-p${longest}"]`).click();
+      await page.locator('[data-testid^="assign-tree-place-heading:"]').first().waitFor({ timeout: T });
+    },
+    measure: async (page) => {
+      const tree = await page.evaluate(() => {
+        const root = document.querySelector(".dest-tree");
+        const leaves = [...root.querySelectorAll(".tree-leaf")];
+        const rootBox = root.getBoundingClientRect();
+        return {
+          title: document.querySelector('[data-testid="top-bar-bundle-title"]').textContent.slice(0, 12),
+          headings: root.querySelectorAll('[data-testid^="assign-tree-place-heading:"]').length,
+          leafSpill: leaves.filter((leaf) => leaf.scrollWidth > leaf.clientWidth + 1 || leaf.getBoundingClientRect().right > rootBox.right + 1).length,
+          treeX: root.scrollWidth > root.clientWidth + 1,
+        };
+      });
+      await page.locator('[data-testid^="assign-tree-place-heading:"]').first().click();
+      await page.locator('[data-testid="assign-primary"][data-state="confirm"]').waitFor({ timeout: T });
+      const chosen = await page.locator('[data-testid="assign-chosen"]').evaluate((el) => ({ text: el.textContent, spill: el.scrollWidth > el.clientWidth + 1 }));
+      return { ...tree, chosenSpill: chosen.spill, chosenIsHeading: /Slot heading|칸 제목/.test(chosen.text) };
+    },
+    expect: (value) => value.title === "SYNTHETIC W1" && value.headings > 0 && value.leafSpill === 0 && !value.treeX && !value.chosenSpill && value.chosenIsHeading,
+    note: "W1 Assign tree: slot heading items fit their box, tree does not overflow, chosen slot heading card reads 'Slot heading' and fits",
+  },
+  {
+    // C13: W1 결과물 C를 이어 그리는 끝 - 끝 표지(output-c-more) 앞 줄들의 줄 끝 단추가 글 상자·끝 표지를 덮지 않고, 이어 그린 뒤에도 그렇다
+    id: "C13", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => `/bundles/${ids.w[1]}/outputs`,
+    open: async (page) => {
+      await page.getByTestId("outputs-tab-c").click();
+      await page.locator('[data-testid="output-c-more"]').waitFor({ timeout: T });
+      await page.waitForTimeout(SETTLE_MS);
+    },
+    measure: async (page) => {
+      const measureEdge = () => page.evaluate(() => {
+        const hit = (a, b) => Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 0.5 && Math.min(a.right, b.right) - Math.max(a.left, b.left) > 0.5;
+        const more = document.querySelector('[data-testid="output-c-more"]')?.getBoundingClientRect() ?? null;
+        const items = [...document.querySelectorAll('[data-testid^="output-c-item-"]')].map((el) => el.getBoundingClientRect());
+        const rows = [...document.querySelectorAll('[data-testid^="output-c-row-"]')];
+        let overlap = 0;
+        for (const row of rows) {
+          const actions = row.querySelector(".row-actions-quiet")?.getBoundingClientRect();
+          if (actions && (items.some((box) => hit(actions, box)) || (more && hit(actions, more)))) overlap += 1;
+        }
+        const last = rows.at(-1)?.getBoundingClientRect();
+        return { rows: rows.length, overlap, lastAboveMore: !more || !last || last.bottom <= more.top + 0.5 };
+      });
+      const first = await measureEdge();
+      await page.locator('[data-testid="output-c-more"]').scrollIntoViewIfNeeded();
+      await page.waitForFunction((count) => document.querySelectorAll('[data-testid^="output-c-row-"]').length > count, first.rows, { timeout: T });
+      await page.waitForTimeout(400);
+      const second = await measureEdge();
+      const title = await page.locator('[data-testid="top-bar-bundle-title"]').evaluate((el) => el.textContent.slice(0, 12));
+      return { title, first, second };
+    },
+    expect: (value) => value.title === "SYNTHETIC W1" && value.second.rows > value.first.rows && value.first.overlap === 0 && value.second.overlap === 0 && value.first.lastAboveMore && value.second.lastAboveMore,
+    note: "W1 output C: row buttons cover no text box or the end marker before and after the next rows are drawn",
+  },
+  {
+    // N1: Assign New 칸의 엮은 문서 - 칸 머리의 칸 제목 출처가 길어도(여러 옛 문서) 칸 이름을 덮지 않고 한 줄에서 말줄임된다.
+    //     W1에는 칸 제목이 없어 엮은 문서 응답의 칸마다 긴 출처 글을 넣어 그린다(DB는 그대로)
+    id: "N1", ds: "worst", user: MEMBER, views: [1120, 1440],
+    path: (ids) => `/bundles/${ids.w[1]}/assign`,
+    open: async (page) => {
+      const note = `← ${Array.from({ length: 14 }, (_, i) => `OLD-${90 + i} §${i + 1}`).join(", ")}`;
+      await page.route("**/outputs/c/docs/**", async (route) => {
+        const response = await route.fetch();
+        const doc = await response.json();
+        for (const section of doc.sections ?? []) section.heading_note = note;
+        await route.fulfill({ response, json: doc });
+      });
+      await page.locator('[data-testid="assign-bar"]').waitFor({ timeout: T });
+      // 코드가 가장 긴 아직 안 쓴 SOP(칸 머리가 있는 문서) - 고르기 칸이 길어져도 칸 머리가 칸 안에 있어야 한다
+      const bundleId = /bundles\/(\d+)/.exec(page.url())[1];
+      const tobe = await (await page.request.get(`${BASE}/api/bundles/${bundleId}/tobe`, { headers: { "X-Dev-User": MEMBER } })).json();
+      const sop = tobe.docs.filter((doc) => doc.doc_type === "sop" && doc.entrance === "assign").sort((a, b) => b.code.length - a.code.length)[0];
+      await page.locator('[data-testid="assign-new-doc"]').click();
+      await page.locator(`[data-testid="assign-new-doc-option-${sop.id}"]`).click();
+      await page.locator('[data-testid^="assign-new-heading-note-"]').first().waitFor({ timeout: T });
+      await page.waitForTimeout(SETTLE_MS);
+    },
+    measure: (page) => page.evaluate(() => {
+      const pane = document.querySelector('[data-testid="assign-new"]');
+      const paneRight = pane.getBoundingClientRect().right;
+      const headSpill = [...pane.querySelector(".pane-head").children].filter((el) => el.getBoundingClientRect().right > paneRight + 1).length;
+      const notes = [...document.querySelectorAll('[data-testid^="assign-new-heading-note-"]')];
+      let covers = 0;
+      let spillOut = 0;
+      let multiLine = 0;
+      for (const note of notes) {
+        const head = note.closest(".new-sec");
+        const label = head.firstElementChild.getBoundingClientRect();
+        const box = note.getBoundingClientRect();
+        if (box.left < label.right - 0.5) covers += 1;
+        if (box.right > head.getBoundingClientRect().right + 0.5) spillOut += 1;
+        if (box.height > parseFloat(getComputedStyle(note).lineHeight) * 1.5) multiLine += 1;
+      }
+      return { notes: notes.length, covers, spillOut, multiLine, truncated: notes.filter((note) => note.scrollWidth > note.clientWidth + 1).length, headSpill };
+    }),
+    expect: (value) => value.notes > 0 && value.covers === 0 && value.spillOut === 0 && value.multiLine === 0 && value.truncated > 0 && value.headSpill === 0,
+    note: "composed New pane (longest SOP code): pane head stays inside the pane; long slot heading notes stay on one line after the slot name, truncated, never over the name",
+  },
+  {
+    // A4b: W1 결과물 A를 끝까지 이어 그려 네 자리 Row 번호(옛 줄 1,000개 넘음)가 한 줄인지 본다
+    id: "A4b", ds: "worst", user: MEMBER, views: [1120],
+    path: (ids) => `/bundles/${ids.w[1]}/outputs`,
+    open: async (page) => {
+      await page.getByTestId("outputs-tab-a").click();
+      await page.locator('tr[data-testid^="output-a-row-"]').first().waitFor({ timeout: T });
+      const more = page.locator('[data-testid="output-a-more"]');
+      for (let step = 0; step < 300 && (await more.count()) > 0; step += 1) {
+        await more.scrollIntoViewIfNeeded();
+        await page.waitForTimeout(100);
+      }
+    },
+    measure: (page) => page.evaluate(() => {
+      const cells = [...document.querySelectorAll('[data-testid^="output-a-row-no-"]')].filter((td) => /^\d{4,}$/.test(td.textContent.trim()));
+      const lineCount = (td) => {
+        const range = document.createRange();
+        range.selectNodeContents(td);
+        return new Set([...range.getClientRects()].map((rect) => Math.round(rect.top))).size;
+      };
+      return { title: document.querySelector('[data-testid="top-bar-bundle-title"]').textContent.slice(0, 12), fourDigit: cells.length, wrapped: cells.filter((td) => lineCount(td) > 1).length };
+    }),
+    expect: (value) => value.title === "SYNTHETIC W1" && value.fourDigit > 0 && value.wrapped === 0,
+    note: "W1 output A: four-digit Row numbers stay on one line",
+  },
+  {
+    // O1: 개요 검토 조건 아홉 줄(버전 채우기 포함) - 펼친 목록의 줄이 상자를 넘치지 않고 아홉 줄이다. W1(모자란 조건이 많음)·W6(요청 직전)
+    id: "O1", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => [`/bundles/${ids.w[1]}`, `/bundles/${ids.w[6]}`],
+    open: async (page) => {
+      await page.locator('[data-testid="overview-gate-list"]').waitFor({ timeout: T });
+      const more = page.locator('[data-testid="overview-gate-more"]');
+      if (await more.count()) await more.click();
+      await page.waitForTimeout(400);
+    },
+    measure: (page) => page.evaluate(() => {
+      const box = document.querySelector('[data-testid="overview-gate"]');
+      const cards = [...box.querySelectorAll(".gate-card")];
+      return {
+        title: document.querySelector('[data-testid="top-bar-bundle-title"]').textContent.slice(0, 12),
+        lines: cards.length,
+        spill: cards.filter((card) => card.scrollWidth > card.clientWidth + 1 || card.getBoundingClientRect().right > box.getBoundingClientRect().right + 1).length,
+        boxX: box.scrollWidth > box.clientWidth + 1,
+        maxLine: Math.round(Math.max(...cards.map((card) => card.getBoundingClientRect().height))),
+        canRequest: !document.querySelector('[data-testid="overview-request-review"]')?.disabled,
+      };
+    }),
+    expect: (value) => /^SYNTHETIC W[16]$/.test(value.title) && value.lines === 9 && value.spill === 0 && !value.boxX && value.maxLine <= 120 && (value.title !== "SYNTHETIC W6" || value.canRequest),
+    note: "overview gate list: nine lines when expanded, none spills its box (W1 and W6); W6 can still request review",
+  },
 ];
+// B5는 새(문서 0개) Bundle이면 되므로 mid에서도 W7로 한 번 더 잰다(W7은 같은 DB에 있다)
+AUDIT_ENTRIES.push({ ...AUDIT_ENTRIES.find((entry) => entry.id === "B5"), ds: "mid" });
 
 // ---------- ids 지도 ----------
 
@@ -494,6 +1530,7 @@ async function main() {
   };
   let problems = 0;
   let runs = 0;
+  let skips = 0;
   for (const entry of entries) {
     const raw = entry.path(ids);
     const items = (Array.isArray(raw) ? raw : [raw]).map((item) => (typeof item === "string" ? { url: item, user: entry.user } : item));
@@ -506,13 +1543,15 @@ async function main() {
             const tag = `${entry.id} ${width} ${lang} ${theme} ${item.url}`;
             runs += 1;
             let failure = null;
+            let skipped = null;
             try {
               await page.goto(`${BASE}${item.url}`, { timeout: T });
               await page.waitForLoadState("networkidle", { timeout: T }).catch(() => {});
               await page.waitForTimeout(SETTLE_MS);
               if (entry.open) await entry.open(page);
               const value = await entry.measure(page);
-              if (!entry.expect(value)) failure = `measured ${JSON.stringify(value)} (${entry.note})`;
+              if (value !== null && typeof value === "object" && typeof value.skip === "string") skipped = value.skip;
+              else if (!entry.expect(value)) failure = `measured ${JSON.stringify(value)} (${entry.note})`;
             } catch (err) {
               failure = `error: ${String(err).split("\n")[0]}`;
             }
@@ -521,6 +1560,9 @@ async function main() {
               console.log(`FAIL  ${tag} ${failure}`);
               const suffix = `${items.length > 1 ? `-${slug(item.url)}${item.user === entry.user ? "" : `-${item.user}`}` : ""}-${width}${lang === "ko" && theme === "light" ? "" : `-${lang}-${theme}`}`;
               await page.screenshot({ path: resolve(SHOTS, `layout-${entry.id}${suffix}.png`) }).catch(() => {});
+            } else if (skipped !== null) {
+              skips += 1;
+              console.log(`skip  ${tag} ${skipped}`);
             } else {
               console.log(`ok    ${tag}`);
             }
@@ -531,7 +1573,7 @@ async function main() {
     }
   }
   await browser.close();
-  console.log(problems === 0 ? `\nALL PASS (${runs} runs)` : `\n${problems} problem(s) in ${runs} runs`);
+  console.log(problems === 0 ? `\nALL PASS (${runs - skips} runs${skips ? `, ${skips} skipped` : ""})` : `\n${problems} problem(s) in ${runs} runs`);
   process.exit(problems === 0 ? 0 : 1);
 }
 

@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { UploadWritten } from "@/components/tobe/upload-written";
+import { BundleLoadError } from "@/components/bundle-load-error";
 import { ReadOnlyNote } from "@/components/read-only-note";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { MorphButton } from "@/components/ui/morph-button";
@@ -320,20 +321,14 @@ export default function ToBePage() {
       )}
 
       {error !== null && data === null ? (
-        <div className="flex items-center gap-3 border-t border-line px-[var(--pad)] py-6 text-ink-2" data-testid="tobe-error">
-          {humanizeApiError(error, t)}
-          <button type="button" className="btn" data-testid="tobe-retry" onClick={reload}>
-            <RefreshCw size={14} strokeWidth={1.5} aria-hidden />
-            {t("common.retry")}
-          </button>
-        </div>
+        <BundleLoadError error={error} onRetry={reload} testId="tobe" />
       ) : (
         <table className="dtable border-t border-line" data-testid="tobe-list">
           <thead>
             <tr>
               <th className="w-8" aria-label={t("tobe.details")} />
               <th className="w-40 min-w-[160px]">{t("tobe.colCode")}</th>
-              <th className="min-w-[220px]">{t("tobe.colTitle")}</th>
+              <th className="min-w-[196px]">{t("tobe.colTitle")}</th>
               <th className="w-24">{t("tobe.colType")}</th>
               <th className="w-[180px] min-w-[180px]">{t("tobe.colParent")}</th>
               <th className="w-24">{t("tobe.colEntrance")}</th>

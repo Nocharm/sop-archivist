@@ -14,15 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Employee
 from app.sop.ai.jobs import cancel_active_jobs
-from app.sop.constants import EQUIPMENT_SLOT_KEYS, SEMANTIC_CHECK_KEYS
+from app.sop.constants import EQUIPMENT_SLOT_KEYS, SEMANTIC_CHECK_KEYS, SLOT_HEADING
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
 from app.sop.membership import ensure_editable, lock_bundle
 from app.sop.models import Bundle, BundleMember
 from app.sop.outputs import build_review_facts
 from app.sop.snapshot import (
-    NEUTRAL,
-    PROGRESS_LANGS,
     BundleSnapshot,
     count_unacked_missing_text,
     count_unchecked_boundaries,
@@ -31,7 +29,7 @@ from app.sop.snapshot import (
 from app.sop.tobe import is_within_slot
 
 NextAction = Literal[
-    "upload_documents", "resolve_documents", "check_boundaries", "fill_tobe", "decide_units", "ack_warnings",
+    "upload_documents", "resolve_documents", "fill_doc_versions", "check_boundaries", "fill_tobe", "decide_units", "ack_warnings",
     "fill_reasons", "semantic_checks", "add_reviewer", "request_review", "await_review", "done",
 ]
 Issue = dict[str, object]
@@ -54,23 +52,14 @@ class Readiness(BaseModel):
 # --- 막는 이유와 알림 ---
 
 
-def _list_pending_blockers(subject: str, counts: Mapping[str, Counter[str]]) -> list[Issue]:
-    """확정 전 상태(미배정·AI 제안·보류)별·언어별 건수 — 코드는 {subject}_{상태}."""
-    return [
-        {"code": f"{subject}_{status}", "lang": lang, "count": counts[lang][status]}
-        for status in PENDING_STATUSES
-        for lang in PROGRESS_LANGS
-        if counts[lang][status]
-    ]
+def _list_pending_blockers(subject: str, counts: Mapping[str, int]) -> list[Issue]:
+    """확정 전 상태(미배정·AI 제안·보류)별 건수 — 코드는 {subject}_{상태}."""
+    return [{"code": f"{subject}_{status}", "count": counts[status]} for status in PENDING_STATUSES if counts[status]]
 
 
-def _count_target_statuses(snap: BundleSnapshot) -> dict[str, Counter[str]]:
-    """언어별 새 문장 상태 수 — 언어 중립(표·그림)은 두 언어에 모두 센다(옛 단위의 그림과 같은 규칙)."""
-    counts: dict[str, Counter[str]] = {lang: Counter() for lang in PROGRESS_LANGS}
-    for target in snap.targets.values():
-        for lang in PROGRESS_LANGS if target.lang == NEUTRAL else (target.lang,):
-            counts[lang][target.status] += 1
-    return counts
+def _count_target_statuses(snap: BundleSnapshot) -> Counter[str]:
+    """새 문장 상태 수 — 새 문장마다 한 번(언어를 가르지 않는다)."""
+    return Counter(target.status for target in snap.targets.values())
 
 
 def _find_units_missing_reason(snap: BundleSnapshot) -> list[int]:
@@ -92,7 +81,7 @@ def _list_equipment_notices(snap: BundleSnapshot) -> list[Issue]:
     """장비 SOP에서 새 문장도 N/A도 없는 Procedures 하위 칸 — 상위 칸 N/A는 하위 칸을 덮는다. 완료를 막지 않는다."""
     filled: dict[int, set[str]] = {}
     for target in snap.targets.values():
-        if target.slot_key is not None:
+        if target.slot_key is not None and target.kind != SLOT_HEADING:  # 칸 제목은 칸 항목이 아니라 칸을 채우지 않는다
             filled.setdefault(target.target_doc_id, set()).add(target.slot_key)
     notices: list[Issue] = []
     for doc in sorted(snap.target_docs.values(), key=lambda doc: (doc.order_index, doc.id)):
@@ -119,6 +108,9 @@ def _pick_next_action(snap: BundleSnapshot, codes: set[str]) -> NextAction:
         return "upload_documents"
     if "unresolved_documents" in codes:
         return "resolve_documents"
+    # 버전은 Excel·결과물 머리에 그대로 나가는 값이라 경계보다 먼저(문서 단계에서 한 번에) 채운다
+    if "missing_doc_versions" in codes:
+        return "fill_doc_versions"
     # 판단한 단위를 다시 자르면 판단이 떨어지므로 경계부터 굳힌다(단계 순서도 쪼개기가 To-Be·배정보다 앞)
     if "unchecked_boundaries" in codes:
         return "check_boundaries"
@@ -147,7 +139,8 @@ def evaluate_readiness(
 ) -> Readiness:
     """스냅숏과 질의 몇 개로 읽은 숫자만으로 조건을 가린다 — 순수 함수라 큰 묶음도 스레드에서 돈다."""
     facts = build_review_facts(snap)
-    blockers = _list_pending_blockers("units", facts.cover_status_counts)
+    documents = snap.documents.values()
+    blockers = _list_pending_blockers("units", facts.row_status_counts)
     blockers += _list_pending_blockers("targets", _count_target_statuses(snap))
 
     # 중복 배정의 사유도 판단 단위에 적힌다 — 판단 행이 없으면 사유도 없는 것이다(조회 경로가 KeyError로 죽지 않게)
@@ -163,6 +156,14 @@ def evaluate_readiness(
         blockers.append({"code": "missing_reason", "count": len(missing_reason), "unit_ids": missing_reason})
     if unacked_missing_text:
         blockers.append({"code": "unacked_missing_text", "count": unacked_missing_text})
+    # 옛 문서 버전은 Excel에 그대로 나간다 — 빈 채로 두면 검토에서 어느 판인지 알 수 없다
+    unversioned = sorted(
+        document.id
+        for document in documents
+        if document.side == "old" and document.status == "ready" and not document.doc_version.strip()
+    )
+    if unversioned:
+        blockers.append({"code": "missing_doc_versions", "count": len(unversioned), "document_ids": unversioned})
     # 결과물·Excel이 이 단위 경계대로 나오므로, 사람이 경계를 다 본 뒤에만 검토로 넘긴다
     if unchecked_boundaries:
         blockers.append(
@@ -177,7 +178,6 @@ def evaluate_readiness(
         blockers.append({"code": "semantic_checks_incomplete", "missing": unchecked})
     if not reviewer_count:
         blockers.append({"code": "no_reviewer"})
-    documents = snap.documents.values()
     if not any(document.side == "old" and document.status == "ready" for document in documents):
         blockers.append({"code": "no_documents"})
     # 거절·실패 문서가 남으면 결과물이 그 문서를 조용히 빠뜨린다 — 지우거나 다시 올려야 한다

@@ -8,7 +8,7 @@ import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { showToast } from "@/components/ui/toast";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
-import { resetAssignments } from "@/lib/api-sop";
+import { resetAssignments, type UndoMeta } from "@/lib/api-sop";
 import { loadBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
 import { useLoaded } from "@/lib/use-loaded";
@@ -21,11 +21,13 @@ interface ResetModalProps {
   scope: ResetScope;
   /** 묶음 revision - 초기화는 올리지 않으므로 미리 세기와 실제 실행에 같은 값을 쓴다 */
   revision: number;
+  /** 되돌리기 기록 메타 - 실제 실행에만 싣는다(미리 세기는 기록하지 않는다) */
+  undo?: UndoMeta;
   onDone: () => void;
   onClose: () => void;
 }
 
-export function ResetModal({ bundleId, scope, revision, onDone, onClose }: ResetModalProps) {
+export function ResetModal({ bundleId, scope, revision, undo, onDone, onClose }: ResetModalProps) {
   const { t } = useI18n();
   const documentId = scope.kind === "document" ? scope.documentId : undefined;
   const preview = useLoaded(() => resetAssignments(bundleId, { revision, document_id: documentId, dry_run: true }), `${bundleId}:${documentId ?? "all"}:${revision}`);
@@ -41,7 +43,7 @@ export function ResetModal({ bundleId, scope, revision, onDone, onClose }: Reset
   async function runReset() {
     setBusy(true);
     try {
-      const result = await resetAssignments(bundleId, { revision, document_id: documentId });
+      const result = await resetAssignments(bundleId, { revision, document_id: documentId }, undo);
       showToast(t("assign.reset.done", { n: result.unassigned_units }));
       onDone();
     } catch (err) {

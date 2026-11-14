@@ -1,7 +1,7 @@
 // 묶음 관리·AI 요청·관리자 묶음·AI 지침 API - 백엔드에는 있었지만 화면이 없던 엔드포인트의 프런트 계약.
 // 모양은 backend routers/sop_bundles.py·sop_ai.py·sop_admin.py·sop_guidelines.py와 계획 2 문서 "API 계약"을 따른다.
 import { apiFetch, apiFetchBlob } from "./api";
-import type { AiJobKind, AiSuggestion, Bundle, BundleMember, BundleProgress, BundleStatus, MemberRole } from "./api-sop";
+import type { AiJobKind, AiSuggestion, Bundle, BundleMember, BundleStatus, MemberRole, RowProgress } from "./api-sop";
 
 // ---- 묶음 관리 -------------------------------------------------------------
 
@@ -129,7 +129,7 @@ export interface AdminBundle {
   members: BundleMember[];
   has_active_author: boolean;
   created_at: string;
-  progress: BundleProgress;
+  progress: RowProgress;
 }
 
 export function listAdminBundles(): Promise<AdminBundle[]> {

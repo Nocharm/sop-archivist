@@ -594,7 +594,7 @@ RANDOM_BODY = (
 )
 # 난수 편집이 받을 수 있는 거절 — 그 밖의 응답(특히 500)은 실패다
 EXPECTED_REFUSALS = {
-    (422, "cannot_merge"), (422, "mixed_language"), (422, "cell_spans_rows"), (422, "table_not_split"),
+    (422, "cannot_merge"), (422, "cell_spans_rows"), (422, "table_not_split"),
     (422, "invalid_offset"), (409, "nothing_to_undo"), (409, "nothing_to_redo"),
 }
 

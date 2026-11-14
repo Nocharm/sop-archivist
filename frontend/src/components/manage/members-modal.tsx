@@ -9,7 +9,7 @@ import { Modal } from "@/components/modal";
 import { SubjectPicker, type PickedSubject } from "@/components/subject-picker";
 import { BusyLabel, Collapse } from "@/components/ui/motion";
 import { Select } from "@/components/ui/select";
-import { MorphButton } from "@/components/ui/morph-button";
+import { Tooltip } from "@/components/ui/tooltip";
 import { humanizeApiError } from "@/lib/api-errors";
 import type { MemberInput } from "@/lib/api-manage";
 import type { BundleMember, MemberRole } from "@/lib/api-sop";
@@ -91,7 +91,7 @@ export function MembersModal({ title, members, testId, onSave, onClose }: Member
     >
       <ul className="grid gap-1" data-testid={`${testId}-list`}>
         {rows.map((row) => (
-          <li key={row.login_id} className="hover-row grid grid-cols-[minmax(0,1fr)_auto_88px] items-center gap-2 rounded-md px-2 py-1.5 hover:bg-hover" data-testid={`${testId}-row-${row.login_id}`}>
+          <li key={row.login_id} className="hover-row grid grid-cols-[minmax(0,1fr)_140px_32px] items-center gap-2 rounded-md px-2 py-1.5 hover:bg-hover" data-testid={`${testId}-row-${row.login_id}`}>
             <span className="min-w-0">
               <span className="block truncate">{row.label}</span>
               <small className="flex items-center gap-1.5 font-mono text-[11px] leading-4 text-ink-3">
@@ -107,10 +107,12 @@ export function MembersModal({ title, members, testId, onSave, onClose }: Member
               options={roleOptions}
               onChange={(role) => setRows((prev) => prev.map((item) => (item.login_id === row.login_id ? { ...item, role } : item)))}
             />
-            {/* 마지막 칸(88px)은 빼기 단추가 라벨까지 펼쳐질 폭 - 펼쳐져도 이름·역할을 덮지 않는다 */}
-            <span className="row-actions mbtn-set justify-self-end">
-              <MorphButton icon={Trash2} tone="danger" label={t("members.remove")} testId={`${testId}-remove-${row.login_id}`} onClick={() => setRows((prev) => prev.filter((item) => item.login_id !== row.login_id))} />
-            </span>
+            {/* 마지막 칸(32px)은 아이콘만 - 라벨이 펼쳐지면 옆 역할 칸을 덮으므로 펼치지 않고 툴팁으로 설명한다 */}
+            <Tooltip label={t("members.remove")} align="end">
+              <button type="button" className="mbtn danger" aria-label={t("members.remove")} data-testid={`${testId}-remove-${row.login_id}`} onClick={() => setRows((prev) => prev.filter((item) => item.login_id !== row.login_id))}>
+                <Trash2 size={16} strokeWidth={1.5} aria-hidden />
+              </button>
+            </Tooltip>
           </li>
         ))}
       </ul>

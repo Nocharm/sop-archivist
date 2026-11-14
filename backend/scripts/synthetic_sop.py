@@ -30,8 +30,9 @@ expected.json 형식:
     표 답과 같은 문서)를 갖는다.
 - `match`: 입구 2. `identical_count`(같은 글자 후보 수), `new_texts`([{doc, text, lang, section_path}] — 짝 없는 새 문장, 신규).
 - `omitted`: {doc, text, occurrence} — 일부러 남기는 누락. answers에도 들어 있고(혼자인 group) 검토 요청 거절을 본 뒤 저장한다.
-- `summary`: 언어별 기대 요약 숫자 {old_units, unassigned, duplicate, deleted, moved, new}(선택 키, answers에서 센다).
-- `flow_edge_total`: 언어별 결과물 B 간선 수 합(선택 키 — 옛 커버 단위마다 보낸 새 문서 수, 없으면 1).
+
+요약 숫자·결과물 B의 기대값은 싣지 않는다 — 줄(짝 하나·짝 없는 단위 하나)로 세는데 짝은 서버가 업로드 때 맺어 생성기가 미리
+셀 수 없다. E2E는 그 값을 진행 숫자·결과물 A의 줄과 맞춰 본다.
 """
 
 import itertools
@@ -216,32 +217,6 @@ class _AnswerSheet:
         return self.add(
             doc, text, lang, disposition="move_external", reason=MOVE_REASON, move_target_code=MOVE_TARGET_CODE
         )
-
-
-def _summarize(answers: list[dict], new_texts: list[dict]) -> tuple[dict, dict]:
-    """언어별 기대 요약 숫자와 결과물 B 간선 합 — 서버와 같은 규칙(중립은 두 언어 모두, 칸 문장은 표의 처분)으로 센다."""
-    stats = {lang: Counter() for lang in ("ko", "en")}
-    disposition_keys = {"delete": "deleted", "move_external": "moved", "assigned": "assigned"}
-    for answer in answers:
-        if answer.get("kind") == "table":
-            counted = [(cell["lang"], {cell["code"]}) for cell in answer["targets"] if "parent_key" in cell]
-        else:
-            counted = [(answer["lang"], {target["code"] for target in answer["targets"]})]
-        for lang, codes in counted:
-            for each in ("ko", "en") if lang == "neutral" else (lang,):
-                stats[each]["old_units"] += 1
-                stats[each][disposition_keys[answer["disposition"]]] += 1
-                stats[each]["duplicate"] += len(codes) >= 2
-                stats[each]["edges"] += max(1, len(codes))
-    summary = {
-        lang: {
-            "old_units": counts["old_units"], "unassigned": 0, "duplicate": counts["duplicate"],
-            "deleted": counts["deleted"], "moved": counts["moved"],
-            "new": sum(item["lang"] == lang for item in new_texts),
-        }
-        for lang, counts in stats.items()
-    }
-    return summary, {lang: counts["edges"] for lang, counts in stats.items()}
 
 
 # --- 파일 만들기 공용 ---
@@ -707,7 +682,6 @@ def build_synthetic_bundle(out_dir: Path) -> SyntheticBundle:
     tobe_file = out_dir / TOBE_FILE
     tobe_file.write_bytes(_build_tobe())
 
-    summary, flow_edge_total = _summarize(sheet.answers, new_texts)
     identical_count = sum(bool(answer.get("identical")) for answer in sheet.answers)
     expected = {
         "bundle_title": BUNDLE_TITLE,
@@ -716,8 +690,6 @@ def build_synthetic_bundle(out_dir: Path) -> SyntheticBundle:
         "answers": sheet.answers,
         "match": {"identical_count": identical_count, "new_texts": new_texts},
         "omitted": omitted,
-        "summary": summary,
-        "flow_edge_total": flow_edge_total,
     }
     (out_dir / EXPECTED_FILE).write_text(json.dumps(expected, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return SyntheticBundle(directory=out_dir, documents=documents, tobe_file=tobe_file, expected=expected)

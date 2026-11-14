@@ -1,7 +1,7 @@
 // api 단위 테스트 - apiFetch의 인증 헤더 선택·오류 detail 추출·204/네트워크 처리를 fetch 스텁으로 확인한다.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, apiFetch, setAuthToken } from "./api";
+import { ApiError, apiFetch, apiFetchBlobWithName, readDispositionFileName, setAuthToken } from "./api";
 
 function stubFetch(response: Response) {
   const fetchMock = vi.fn<typeof fetch>(async () => response);
@@ -130,5 +130,24 @@ describe("apiFetch errors", () => {
     const abort = new DOMException("aborted", "AbortError");
     stubFetchRejecting(abort);
     await expect(apiFetch("/me")).rejects.toBe(abort);
+  });
+});
+
+describe("readDispositionFileName", () => {
+  it("reads the UTF-8 file name from Content-Disposition", () => {
+    expect(readDispositionFileName(`attachment; filename="BND-0004____20261113-0905.xlsx"; filename*=UTF-8''BND-0004_%EC%A0%9C%EB%AA%A9_20261113-0905.xlsx`)).toBe("BND-0004_제목_20261113-0905.xlsx");
+    expect(readDispositionFileName(`attachment; filename="a.xlsx"`)).toBe("a.xlsx");
+    expect(readDispositionFileName(null)).toBeNull();
+  });
+});
+
+describe("apiFetchBlobWithName", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("returns the blob with the name the server built", async () => {
+    stubFetch(new Response("x", { headers: { "Content-Disposition": `attachment; filename="a.xlsx"` } }));
+    const result = await apiFetchBlobWithName("/bundles/1/export.xlsx");
+    expect(result.fileName).toBe("a.xlsx");
+    expect(await result.blob.text()).toBe("x");
   });
 });

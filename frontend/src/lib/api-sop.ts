@@ -1,6 +1,7 @@
 // SOP 재구성 API 호출과 응답 타입 - 백엔드 routers/sop_*.py의 응답 모델을 옮긴 것. 공용 래퍼는 api.ts의 apiFetch.
 
-import { apiFetch, apiFetchBlob } from "./api";
+import { apiFetch, apiFetchBlob, apiFetchBlobWithName } from "./api";
+import { genId } from "./id";
 
 /** 의미 검토 항목 - 백엔드 constants.SEMANTIC_CHECK_KEYS와 같은 값 */
 export const SEMANTIC_CHECK_KEYS = ["numbers", "conditions", "tables", "figures"] as const;
@@ -8,17 +9,15 @@ export const SEMANTIC_CHECK_KEYS = ["numbers", "conditions", "tables", "figures"
 export type BundleStatus = "in_progress" | "in_review" | "done";
 export type MemberRole = "author" | "reviewer";
 
-export interface LangProgress {
+/** 줄(한/영 짝 하나 또는 짝 없는 판단 단위 하나) 기준 진행 숫자 한 벌 */
+export interface RowProgress {
   total: number;
   unassigned: number;
   ai_suggested: number;
   confirmed: number;
   on_hold: number;
-}
-
-export interface BundleProgress {
-  ko: LangProgress;
-  en: LangProgress;
+  /** 한 언어만 있는 줄 - 보조 표시, 검토 요청 조건이 아니다 */
+  single_language: number;
 }
 
 export interface BundleListItem {
@@ -31,7 +30,7 @@ export interface BundleListItem {
   status: BundleStatus;
   my_role: MemberRole;
   updated_at: string;
-  progress: BundleProgress;
+  progress: RowProgress;
 }
 
 export interface BundleMember {
@@ -45,6 +44,7 @@ export interface BundleMember {
 export type NextAction =
   | "upload_documents"
   | "resolve_documents"
+  | "fill_doc_versions"
   | "check_boundaries"
   | "fill_tobe"
   | "decide_units"
@@ -81,7 +81,7 @@ export interface Bundle {
   updated_at: string;
   my_role: MemberRole | null;
   members: BundleMember[];
-  progress: BundleProgress;
+  progress: RowProgress;
   next_action: NextAction;
   ai_jobs: AiJobCounts;
 }
@@ -89,7 +89,6 @@ export interface Bundle {
 /** 막는 이유·알림 한 건 - 코드마다 문맥 필드가 다르다(review.py) */
 export interface ReadinessIssue {
   code: string;
-  lang?: "ko" | "en";
   count?: number;
   missing?: string[];
   [key: string]: unknown;
@@ -388,6 +387,13 @@ export interface EditResult {
   retired_unit_ids: number[];
 }
 
+/** 되돌리기·다시 하기 응답 - 무엇을 거꾸로(다시) 했는지. 경계 확인 기록이면 바뀐 단위와 바뀐 뒤 값 */
+export interface EditStepResult extends EditResult {
+  op: string;
+  boundary_unit_ids: number[];
+  confirmed: boolean | null;
+}
+
 export interface PairResult {
   document_revision: number;
   pair: ViewPair | null;
@@ -399,16 +405,16 @@ export function getDocumentView(bundleId: number, docId: number): Promise<Docume
 
 const buildDocPath = (bundleId: number, docId: number) => `/bundles/${bundleId}/documents/${docId}`;
 
-export function editUnits(bundleId: number, docId: number, revision: number, op: EditOp, confirm = false): Promise<EditResult> {
-  return apiFetch<EditResult>(`${buildDocPath(bundleId, docId)}/edits`, { method: "POST", body: JSON.stringify({ revision, confirm, op }) });
+export function editUnits(bundleId: number, docId: number, revision: number, op: EditOp, confirm = false, undo?: UndoMeta): Promise<EditResult> {
+  return apiFetch<EditResult>(`${buildDocPath(bundleId, docId)}/edits`, { method: "POST", body: JSON.stringify({ revision, confirm, op, undo }) });
 }
 
-export function undoEdit(bundleId: number, docId: number, revision: number, confirm = false): Promise<EditResult> {
-  return apiFetch<EditResult>(`${buildDocPath(bundleId, docId)}/edits/undo`, { method: "POST", body: JSON.stringify({ revision, confirm }) });
+export function undoEdit(bundleId: number, docId: number, revision: number, confirm = false): Promise<EditStepResult> {
+  return apiFetch<EditStepResult>(`${buildDocPath(bundleId, docId)}/edits/undo`, { method: "POST", body: JSON.stringify({ revision, confirm }) });
 }
 
-export function redoEdit(bundleId: number, docId: number, revision: number, confirm = false): Promise<EditResult> {
-  return apiFetch<EditResult>(`${buildDocPath(bundleId, docId)}/edits/redo`, { method: "POST", body: JSON.stringify({ revision, confirm }) });
+export function redoEdit(bundleId: number, docId: number, revision: number, confirm = false): Promise<EditStepResult> {
+  return apiFetch<EditStepResult>(`${buildDocPath(bundleId, docId)}/edits/redo`, { method: "POST", body: JSON.stringify({ revision, confirm }) });
 }
 
 export function setBoundaryConfirmed(bundleId: number, docId: number, unitIds: number[], confirmed: boolean): Promise<{ unit_ids: number[]; confirmed: boolean }> {
@@ -422,10 +428,6 @@ export function confirmAllBoundaries(bundleId: number, docId: number): Promise<{
 
 export function createPair(bundleId: number, docId: number, revision: number, unitIds: number[]): Promise<PairResult> {
   return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs`, { method: "POST", body: JSON.stringify({ revision, unit_ids: unitIds }) });
-}
-
-export function confirmPair(bundleId: number, docId: number, pairId: number, revision: number): Promise<PairResult> {
-  return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}/confirm`, { method: "POST", body: JSON.stringify({ revision }) });
 }
 
 export function deletePair(bundleId: number, docId: number, pairId: number, revision: number): Promise<PairResult> {
@@ -520,7 +522,7 @@ export function downloadToBeTemplate(bundleId: number): Promise<Blob> {
 
 export type Disposition = "unassigned" | "assigned" | "delete" | "move_external";
 /** 새 문장의 변경 종류 - backend constants와 같은 값. 나눔·합침·번역·신규는 서버가 구조에서 정한다 */
-export type ChangeType = "as_is" | "tone" | "rewritten" | "table_restructured" | "split" | "merged" | "translated" | "new";
+export type ChangeType = "as_is" | "tone" | "rewritten" | "table_restructured" | "split" | "merged" | "translated" | "new" | "heading";
 /** 저장 요청에 보낼 수 있는 종류 - backend TargetIn.change_type */
 export type ChangeTypeInput = "as_is" | "tone" | "rewritten" | "table_restructured";
 export type WiPart = "instruction" | "why";
@@ -574,7 +576,7 @@ export interface GroupTarget {
   section_path: string;
   order_index: number;
   lang: UnitLang;
-  kind: "sentence" | "table" | "figure";
+  kind: "sentence" | "table" | "figure" | "slot_heading";
   confirmed_text: string;
   ai_text: string;
   change_type: ChangeType | null;
@@ -588,6 +590,8 @@ export interface GroupTarget {
   grid: { rows: number; cols: number } | null;
   status: CoverStatus;
   hold_reason: string;
+  /** 사람이 적는 메모 - 출처 없는 새 문장에도 적을 수 있다 */
+  remark: string;
   warnings: Array<Record<string, string>>;
   source_unit_ids: number[];
   group_id: string | null;
@@ -598,6 +602,9 @@ export interface GroupTarget {
 export interface Group {
   units: GroupUnit[];
   targets: GroupTarget[];
+  /** 묶음 저장 응답에만 - 이 저장으로 확정된 짝·풀린 짝(서버가 판단을 보고 정한다) */
+  pairs_confirmed?: number[];
+  pairs_dissolved?: number[];
 }
 
 export interface TargetInput {
@@ -608,10 +615,12 @@ export interface TargetInput {
   slot_key?: string | null;
   wi_step?: number | null;
   wi_part?: WiPart | null;
-  kind?: "sentence" | "table" | "figure";
+  kind?: "sentence" | "table" | "figure" | "slot_heading";
   lang?: UnitLang;
   text?: string;
   change_type?: ChangeTypeInput | null;
+  /** 비우면(undefined) 지금 값을 둔다 */
+  remark?: string;
   source_unit_ids: number[];
   parent_key?: string | null;
   cell_row?: number | null;
@@ -626,6 +635,8 @@ export interface GroupSaveInput {
   units: Array<{ unit_id: number; revision: number; disposition: Disposition; move_target_code: string; reason: string }>;
   targets: TargetInput[];
   removed_target_ids: number[];
+  /** 짝의 한쪽만 이을 때 남는 단위 - 서버가 같은 저장 안에서 그 짝을 풀어 따로 줄로 남긴다 */
+  release_unit_ids?: number[];
 }
 
 export async function listAllUnits(bundleId: number): Promise<UnitRow[]> {
@@ -642,15 +653,47 @@ export function getGroupByUnit(bundleId: number, unitId: number): Promise<Group>
   return apiFetch<Group>(`/bundles/${bundleId}/groups/by-unit/${unitId}`);
 }
 
-export function saveGroup(bundleId: number, body: GroupSaveInput): Promise<Group> {
-  return apiFetch<Group>(`/bundles/${bundleId}/groups/save`, { method: "POST", body: JSON.stringify(body) });
+/** Assign 되돌리기 기록 메타 - 저장 본문의 undo. 한 사용자 동작의 요청들은 같은 step_key를 쓴다(서버가 한 단계로 합친다) */
+export type SaveOp = "confirm" | "hold" | "link" | "unlink" | "mark_new" | "link_source";
+
+export interface UndoMeta {
+  session: string;
+  op?: SaveOp;
+  focus_unit_id?: number;
+  focus_target_id?: number;
+  step_key?: string;
+  scope_label?: string;
+}
+
+/** 되돌리기·다시 하기 응답 - backend decision_steps */
+export interface DecisionStepResult {
+  op: string;
+  unit_ids: number[];
+  focus_unit_id: number | null;
+  focus_target_id: number | null;
+  scope_label: string | null;
+  can_undo: boolean;
+  can_redo: boolean;
+}
+
+export function undoDecision(bundleId: number, session: string): Promise<DecisionStepResult> {
+  return apiFetch<DecisionStepResult>(`/bundles/${bundleId}/decisions/undo`, { method: "POST", body: JSON.stringify({ session }) });
+}
+
+export function redoDecision(bundleId: number, session: string): Promise<DecisionStepResult> {
+  return apiFetch<DecisionStepResult>(`/bundles/${bundleId}/decisions/redo`, { method: "POST", body: JSON.stringify({ session }) });
+}
+
+export function saveGroup(bundleId: number, body: GroupSaveInput, undo?: UndoMeta): Promise<Group> {
+  return apiFetch<Group>(`/bundles/${bundleId}/groups/save`, { method: "POST", body: JSON.stringify({ ...body, undo }) });
 }
 
 export function bulkDecide(
   bundleId: number,
   body: { action: "delete" | "move_external"; reason: string; move_target_code: string; units: Array<{ unit_id: number; revision: number }> },
+  undo?: UndoMeta,
 ): Promise<Array<{ unit_id: number; decision: Decision }>> {
-  return apiFetch(`/bundles/${bundleId}/decisions/bulk`, { method: "POST", body: JSON.stringify(body) });
+  return apiFetch(`/bundles/${bundleId}/decisions/bulk`, { method: "POST", body: JSON.stringify({ ...body, undo }) });
 }
 
 /** 배정 지우기 결과 - backend detach.DetachReport */
@@ -661,15 +704,17 @@ export interface DetachReport {
   held_target_ids: number[];
 }
 
-export function clearDecision(bundleId: number, unitId: number, revision: number): Promise<DetachReport> {
-  return apiFetch<DetachReport>(`/bundles/${bundleId}/decisions/clear`, { method: "POST", body: JSON.stringify({ unit_id: unitId, revision }) });
+export function clearDecision(bundleId: number, unitId: number, revision: number, undo?: UndoMeta): Promise<DetachReport> {
+  return apiFetch<DetachReport>(`/bundles/${bundleId}/decisions/clear`, { method: "POST", body: JSON.stringify({ unit_id: unitId, revision, undo }) });
 }
 
 /**
  * 여러 단위를 차례로 지운다 - 앞 단위를 지우면 같은 관계 묶음의 나머지가 보류로 바뀌며 revision이 오르므로,
  * 그렇게 바뀐 단위는 지우기 전에 묶음을 다시 읽어 지금 revision을 쓴다(낡은 revision이면 409).
  */
-export async function clearDecisions(bundleId: number, units: Array<{ unit_id: number; revision: number }>): Promise<void> {
+export async function clearDecisions(bundleId: number, units: Array<{ unit_id: number; revision: number }>, undo?: UndoMeta): Promise<void> {
+  // 모든 단위 요청이 같은 step_key를 써 Ctrl+Z 한 번에 한꺼번에 되돌아간다
+  const stepUndo = undo ? { ...undo, step_key: undo.step_key ?? genId() } : undefined;
   const reset = new Set<number>();
   const changed = new Set<number>();
   for (const unit of units) {
@@ -679,7 +724,7 @@ export async function clearDecisions(bundleId: number, units: Array<{ unit_id: n
       const group = await getGroupByUnit(bundleId, unit.unit_id);
       revision = group.units.find((item) => item.unit_id === unit.unit_id)?.decision.revision ?? revision;
     }
-    const report = await clearDecision(bundleId, unit.unit_id, revision);
+    const report = await clearDecision(bundleId, unit.unit_id, revision, stepUndo);
     for (const id of report.reset_unit_ids) reset.add(id);
     for (const id of report.held_unit_ids) changed.add(id);
   }
@@ -695,8 +740,8 @@ export interface ResetReport {
 }
 
 /** Old 문서 하나(document_id) 또는 묶음 전체의 배정을 한 번에 지운다 - revision은 묶음 revision이고 초기화는 올리지 않는다 */
-export function resetAssignments(bundleId: number, body: { revision: number; document_id?: number; dry_run?: boolean }): Promise<ResetReport> {
-  return apiFetch<ResetReport>(`/bundles/${bundleId}/decisions/reset`, { method: "POST", body: JSON.stringify(body) });
+export function resetAssignments(bundleId: number, body: { revision: number; document_id?: number; dry_run?: boolean }, undo?: UndoMeta): Promise<ResetReport> {
+  return apiFetch<ResetReport>(`/bundles/${bundleId}/decisions/reset`, { method: "POST", body: JSON.stringify({ ...body, undo }) });
 }
 
 // --- 입구 2 짝 맞추기 ---
@@ -730,6 +775,8 @@ export interface WrittenSentence {
   source_unit_ids: number[];
   /** 같은 New 문서의 한/영 짝 상대가 만든 문장 */
   partner_target_id: number | null;
+  /** 사람이 적는 메모(출처 없는 새 문장의 Remark) */
+  remark: string;
   revision: number;
 }
 
@@ -751,12 +798,36 @@ export function listNewCandidates(bundleId: number, unitId: number): Promise<New
   return apiFetch<NewCandidate[]>(`/bundles/${bundleId}/units/${unitId}/new-candidates`);
 }
 
+/** 내가 쓴 사유 - 최근 것부터, 모든 Bundle, 같은 글은 한 번(서버 상한 10) */
+export interface RecentRemark {
+  text: string;
+  used_at: string;
+}
+
+export function listRecentRemarks(limit = 10): Promise<RecentRemark[]> {
+  return apiFetch<RecentRemark[]>(`/sop/remarks/recent?limit=${limit}`);
+}
+
+/** 외부 이동 대상 후보 - 내가 멤버인 다른 Bundle의 To-Be 문서와 전에 쓴 이동 코드 */
+export interface MoveTarget {
+  code: string;
+  title: string;
+  /** 이 코드를 가진 To-Be 문서의 Bundle 코드 - 전에 쓴 코드뿐이면 null */
+  bundle_code: string | null;
+  /** bundle = 이 Bundle에서 쓴 코드, mine = 내가 다른 Bundle에서 쓴 코드 */
+  used: "bundle" | "mine" | null;
+}
+
+export function listMoveTargets(bundleId: number, query: string): Promise<MoveTarget[]> {
+  return apiFetch<MoveTarget[]>(`/bundles/${bundleId}/move-targets?${new URLSearchParams({ q: query })}`);
+}
+
 export function listIdenticalCandidates(bundleId: number): Promise<IdenticalCandidate[]> {
   return apiFetch<IdenticalCandidate[]>(`/bundles/${bundleId}/match/identical-candidates`);
 }
 
-export function confirmMatchesInBulk(bundleId: number, body: BulkMatchInput): Promise<Group> {
-  return apiFetch<Group>(`/bundles/${bundleId}/match/bulk-confirm`, { method: "POST", body: JSON.stringify(body) });
+export function confirmMatchesInBulk(bundleId: number, body: BulkMatchInput, undo?: UndoMeta): Promise<Group> {
+  return apiFetch<Group>(`/bundles/${bundleId}/match/bulk-confirm`, { method: "POST", body: JSON.stringify({ ...body, undo }) });
 }
 
 export function getGroupByTarget(bundleId: number, targetId: number): Promise<Group> {
@@ -765,6 +836,7 @@ export function getGroupByTarget(bundleId: number, targetId: number): Promise<Gr
 
 // --- 결과물 ---
 
+/** 결과물 라벨 언어(위치 표기·칸 이름) - 화면 UI 언어를 보낸다. 내용은 한 벌이다 */
 export type OutputLang = "ko" | "en";
 
 export interface OutputLocation {
@@ -774,9 +846,12 @@ export interface OutputLocation {
   page_basis: string;
 }
 
+/** 결과물 A 한 줄 - 의미 묶음(짝 하나·짝 없는 판단 단위 하나·고아 번역·입구 2 신규 짝) 안에서 문장마다 한 줄 */
 export interface OutputARow {
-  row_kind: "unit" | "table" | "translation" | "new";
-  lang: string;
+  /** 묶음 번호(1부터) - 묶음의 모든 줄에 같은 값 */
+  row_no: number;
+  is_group_start: boolean;
+  row_kind: "unit" | "table" | "cell" | "translation" | "new";
   old_doc_code: string;
   old_doc_version: string;
   location: OutputLocation;
@@ -793,12 +868,16 @@ export interface OutputARow {
   dest_is_note: boolean;
   confirmed_text: string;
   ai_text: string;
+  /** 저장한 변경 종류, 그리고 표시 전용 translated_added·heading */
   change_type: string;
-  group_id: string | null;
-  reason: string;
+  /** 묶음의 Remark - 묶음의 모든 줄에 같은 값 */
+  remark: string;
+  /** 옛 단위 줄은 커버 상태, 번역·신규 줄은 새 문장 상태 - 줄마다 자기 값 */
   status: string;
+  /** "이름 (ID)", 디렉터리에 없으면 ID만 */
   confirmed_by: string | null;
   confirmed_at: string | null;
+  group_id: string | null;
   warnings: Array<Record<string, string>>;
 }
 
@@ -813,12 +892,17 @@ export type NumberStyle = "numbered" | "omitted" | "note";
 export interface OutputCItem {
   target_id: number;
   kind: string;
+  /** 글꼴용 - 한 칸에 두 언어가 섞여 나온다 */
   lang: string;
   text: string;
   ai_text: string;
   change_type: string | null;
   status: string;
   source_note: string;
+  /** units | translation | new_doc - AI 번역(translation)은 깊이가 출처를 따른다 */
+  origin: string;
+  /** 굵은 선 묶음 키(A와 같은 묶음) - "old:…" | "new:…", 출처가 은퇴한 번역은 null */
+  meaning_key: string | null;
   /** 섹션 번호(칸 번호 + 들여쓰기, 6.1.2) - 표 칸은 표의 번호, 입구 2 문서·단계 없는 WI는 null */
   number: string | null;
   /** 사람이 정한 깊이 그대로 - 번호는 서버가 앞 번호 줄 깊이 + 1까지로 눌러 읽어 센다 */
@@ -838,46 +922,130 @@ export interface OutputC {
     doc_type: string;
     parent_code: string | null;
     entrance: string;
-    /** number: SOP 칸 번호(5.1)·WI 단계 번호(3), 번호가 없는 칸은 null */
-    sections: Array<{ location_key: string; label: string; number: string | null; na_reason: string | null; items: OutputCItem[] }>;
+    /**
+     * number: SOP 칸 번호(5.1)·WI 단계 번호(3), 번호가 없는 칸은 null.
+     * heading_note: 칸 제목에 이은 옛 제목 "← OLD-1 §5", 없으면 빈 글 - 칸 제목은 items에 넣지 않는다
+     */
+    sections: Array<{ location_key: string; label: string; number: string | null; na_reason: string | null; heading_note: string; items: OutputCItem[] }>;
   }>;
+  /** 삭제·이동은 옛 줄마다 한 번 - 짝이면 표시 ID·원문이 줄바꿈으로 이어진다 */
   deleted: Array<{ display_id: string; doc_code: string; section: string; source_text: string; reason: string }>;
   moved: Array<{ display_id: string; doc_code: string; section: string; source_text: string; move_target_code: string; reason: string }>;
 }
 
+/** 요약 숫자 한 벌 - 옛 쪽은 줄로 센다. no_destination은 처분 기준이라 진행 숫자의 Unassigned(상태 기준)와 다르다 */
 export interface OutputSummary {
-  old_units: number;
+  old_rows: number;
   assigned: number;
-  unassigned: number;
+  no_destination: number;
   duplicate: number;
   deleted: number;
   moved: number;
   new: number;
   translated: number;
   confirmed_rate: number;
+  single_language: number;
 }
 
-export function getOutputA(bundleId: number, lang: OutputLang): Promise<OutputARow[]> {
-  return apiFetch<OutputARow[]>(`/bundles/${bundleId}/outputs/a?lang=${lang}`);
+export function getOutputA(bundleId: number, labelLang: OutputLang): Promise<OutputARow[]> {
+  return apiFetch<OutputARow[]>(`/bundles/${bundleId}/outputs/a?lang=${labelLang}`);
 }
 
-export function getOutputB(bundleId: number, lang: OutputLang): Promise<FlowGraph> {
-  return apiFetch<FlowGraph>(`/bundles/${bundleId}/outputs/b?lang=${lang}`);
+export function getOutputB(bundleId: number, labelLang: OutputLang): Promise<FlowGraph> {
+  return apiFetch<FlowGraph>(`/bundles/${bundleId}/outputs/b?lang=${labelLang}`);
 }
 
-export function getOutputC(bundleId: number, lang: OutputLang): Promise<OutputC> {
-  return apiFetch<OutputC>(`/bundles/${bundleId}/outputs/c?lang=${lang}`);
+export function getOutputC(bundleId: number, labelLang: OutputLang): Promise<OutputC> {
+  return apiFetch<OutputC>(`/bundles/${bundleId}/outputs/c?lang=${labelLang}`);
 }
 
-export function getSummary(bundleId: number): Promise<Record<OutputLang, OutputSummary>> {
-  return apiFetch(`/bundles/${bundleId}/summary`);
+/** Assign New 칸의 아직 쓰지 않은 문서 - 결과물 C와 같은 칸·순서에 두 언어 새 문장을 함께(서버 outputs.build_composed_doc) */
+export interface ComposedItem {
+  target_id: number;
+  kind: "sentence" | "table" | "figure";
+  lang: UnitLang;
+  /** 고쳐 쓴 글, 없으면 AI 글, 그것도 없으면 출처 원문 */
+  text: string;
+  status: CoverStatus;
+  change_type: ChangeType | null;
+  number: string | null;
+  /** 출처 Old 단위 - 번역은 번역 출처 단위 */
+  source_unit_ids: number[];
 }
 
-export function downloadExport(bundleId: number, lang: OutputLang): Promise<Blob> {
-  return apiFetchBlob(`/bundles/${bundleId}/export.xlsx?lang=${lang}`);
+export interface ComposedSection {
+  location_key: string;
+  label: string;
+  number: string | null;
+  na_reason: string | null;
+  /** 칸 제목 출처 - 결과물 C 칸 머리와 같은 "← OLD-1 §5", 없으면 빈 글 */
+  heading_note: string;
+  items: ComposedItem[];
 }
 
-/** 순서 바꾸기 요청 한 줄 - 뺀 값은 그대로 둔다. number_style은 서버가 한/영 짝 상대와 번역 줄에 함께 옮긴다 */
+export interface ComposedDoc {
+  target_doc_id: number;
+  code: string;
+  title: string;
+  doc_type: TargetDocType;
+  entrance: Entrance;
+  sections: ComposedSection[];
+}
+
+/** lang은 라벨 언어만(화면 언어) - 번호는 결과물 C와 같은 한 줄 세기 */
+export function getComposedDoc(bundleId: number, docId: number, lang: OutputLang): Promise<ComposedDoc> {
+  return apiFetch<ComposedDoc>(`/bundles/${bundleId}/outputs/c/docs/${docId}?lang=${lang}`);
+}
+
+export function getSummary(bundleId: number): Promise<OutputSummary> {
+  return apiFetch<OutputSummary>(`/bundles/${bundleId}/summary`);
+}
+
+/** 미리보기 칸 - 모양 판정은 서버 시트 모델이 끝냈다(그리기만 한다) */
+export interface PreviewCell {
+  text: string;
+  faint: boolean;
+  italic: boolean;
+  bold: boolean;
+  head: boolean;
+  numeric: boolean;
+}
+
+export type PreviewRowKind = "status" | "header" | "group_start" | "in_group" | "doc" | "section" | "plain";
+
+export interface PreviewRow {
+  kind: PreviewRowKind;
+  wrap: boolean;
+  cells: PreviewCell[];
+}
+
+export interface PreviewSheet {
+  name: string;
+  widths: number[];
+  rows: PreviewRow[];
+  freeze: string | null;
+  filter_columns: number;
+  image_png: string | null;
+  image_row: number | null;
+  total_rows: number;
+  truncated: boolean;
+}
+
+export interface WorkbookPreview {
+  file_name: string;
+  sheets: PreviewSheet[];
+}
+
+export function getExportPreview(bundleId: number): Promise<WorkbookPreview> {
+  return apiFetch<WorkbookPreview>(`/bundles/${bundleId}/export/preview`);
+}
+
+/** 묶음당 파일 하나 - 판(lang)이 없다. 저장 이름은 서버가 짓는다(Content-Disposition) */
+export function downloadExport(bundleId: number): Promise<{ blob: Blob; fileName: string | null }> {
+  return apiFetchBlobWithName(`/bundles/${bundleId}/export.xlsx`);
+}
+
+/** 순서 바꾸기 요청 한 줄 - 뺀 값은 그대로 둔다. 깊이·번호 표시는 그 줄에만 붙는다(짝 상대·번역이 따라 바뀌지 않는다) */
 export interface TargetOrderItem {
   target_id: number;
   wi_step?: number | null;
@@ -885,8 +1053,29 @@ export interface TargetOrderItem {
   number_style?: NumberStyle;
 }
 
-export function putTargetOrder(bundleId: number, body: { revision: number; target_doc_id: number; items: TargetOrderItem[] }): Promise<unknown> {
-  return apiFetch(`/bundles/${bundleId}/targets/order`, { method: "PUT", body: JSON.stringify(body) });
+/** 결과물 C의 새 문서 하나 */
+export type OutputCDoc = OutputC["docs"][number];
+
+/** backend OrderItemOut - 저장 뒤 그 줄의 값 */
+export interface TargetOrderItemOut {
+  target_id: number;
+  order_index: number;
+  wi_step: number | null;
+  indent_level: number;
+  number_style: NumberStyle;
+}
+
+/** 순서 저장 응답 - doc은 저장 뒤 그 문서의 C 모양(같은 라벨 언어의 결과물 C에서 그 문서와 같은 값). 화면은 C 전체를 다시 받지 않는다 */
+export interface TargetOrderResult {
+  revision: number;
+  target_doc_id: number;
+  items: TargetOrderItemOut[];
+  doc: OutputCDoc;
+}
+
+/** labelLang은 응답 doc의 칸 이름·출처 표기 언어만 고른다 */
+export function putTargetOrder(bundleId: number, labelLang: OutputLang, body: { revision: number; target_doc_id: number; items: TargetOrderItem[] }): Promise<TargetOrderResult> {
+  return apiFetch<TargetOrderResult>(`/bundles/${bundleId}/targets/order?lang=${labelLang}`, { method: "PUT", body: JSON.stringify(body) });
 }
 
 // --- 검토 ---

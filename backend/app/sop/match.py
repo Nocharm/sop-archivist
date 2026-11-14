@@ -14,6 +14,7 @@ from sqlalchemy.orm import aliased
 from app.clock import now
 from app.sop.ai.adoption import adopt_suggestions
 from app.sop.checks import check_sentence
+from app.sop.decision_steps import UndoMetaIn
 from app.sop.decisions import NEUTRAL, SENTENCE_SOURCE_KINDS, DbId
 from app.sop.detach import (
     CONFIRMED,
@@ -40,6 +41,7 @@ from app.sop.models import (
     Unit,
     UnitDecision,
 )
+from app.sop.pair_settle import settle_pairs
 from app.sop.units import UNIT_ACTIVE, get_latest_extraction_id
 
 # 머리말·꼬리말은 양식 반복이라 새 문장을 만들지 않고 절 경로에도 넣지 않는다(스펙 §6.7)
@@ -78,6 +80,7 @@ class NewItemIn(BaseModel):
 class BulkMatchIn(BaseModel):
     identical: list[IdenticalItemIn] = Field(default_factory=list, max_length=MAX_BULK_MATCH)
     new: list[NewItemIn] = Field(default_factory=list, max_length=MAX_BULK_MATCH)
+    undo: UndoMetaIn | None = None
 
     @model_validator(mode="after")
     def check_size(self) -> Self:
@@ -541,6 +544,7 @@ async def confirm_in_bulk(session: AsyncSession, bundle: Bundle, payload: BulkMa
     _check_bulk_revisions(payload, state)
     _check_bulk_items(payload, state)
     await _write_bulk(session, payload, state, actor)
+    await settle_pairs(session, bundle.id, unit_ids, actor)
     record_event(
         session, bundle_id=bundle.id, actor=actor, action="match.bulk_confirm", target_type="target",
         target_ids=target_ids,

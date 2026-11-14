@@ -5,8 +5,9 @@ import { ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
+import { Truncate } from "@/components/ui/motion";
 import type { WrittenSentence } from "@/lib/api-sop";
-import type { Destination, DestinationOption } from "@/lib/classify-model";
+import { isPlaceOption, type Destination, type DestinationOption } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
 
 interface DestinationTreeProps {
@@ -33,7 +34,7 @@ export function DestinationTree({ written, options, tobeHref, onPickLink, onPick
     return (
       <button type="button" className="tree-node" aria-expanded={open.has(key)} data-testid={`assign-tree-${key}`} onClick={() => toggle(key)}>
         <ChevronRight size={13} strokeWidth={1.6} className="tree-chev" aria-hidden />
-        <b>{label}</b>
+        <Truncate className="min-w-0 flex-1 font-mono text-[length:var(--fs-cap)] font-semibold" text={label} revealOnFocus />
         <span className="tree-sub">{sub}</span>
       </button>
     );
@@ -67,7 +68,6 @@ export function DestinationTree({ written, options, tobeHref, onPickLink, onPick
                   {section && <p className="tree-section">{section}</p>}
                   {items.map((row) => (
                     <button key={row.target_id} type="button" className="tree-leaf" data-testid={`assign-tree-sentence-${row.target_id}`} onClick={(event) => onPickLink(row.target_id, event.ctrlKey || event.metaKey)}>
-                      <span className={`ptag ${row.lang}`}>{row.lang.toUpperCase()}</span>
                       {row.text}
                     </button>
                   ))}
@@ -80,7 +80,7 @@ export function DestinationTree({ written, options, tobeHref, onPickLink, onPick
       {placeDocs.length > 0 && <p className="tree-group">{t("assign.tree.unwritten")}</p>}
       {placeDocs.map(([code, items]) => (
         <div key={code}>
-          {renderNode(`p${code}`, code, t("assign.tree.count", { n: items.length }))}
+          {renderNode(`p${code}`, code, t("assign.tree.count", { n: items.filter(isPlaceOption).length }))}
           {open.has(`p${code}`) && (
             <div className="tree-kids">
               {items.map((option) => (
@@ -93,6 +93,7 @@ export function DestinationTree({ written, options, tobeHref, onPickLink, onPick
                   data-testid={`assign-tree-place-${option.id}`}
                   onClick={() => onPickPlace(option.destination)}
                 >
+                  {option.destination.kind === "slot_heading" && <span className="tree-sub">{t("assign.slotHeading")} · </span>}
                   {option.label}
                   {option.disabled && <span className="tree-sub"> · N/A</span>}
                 </button>

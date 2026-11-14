@@ -71,6 +71,19 @@ def upload(
     )
 
 
+def set_doc_version(
+    client: TestClient, bundle_id: int, doc: dict, version: str = "1.0", headers: dict[str, str] = AUTHOR
+) -> dict:
+    """옛 문서의 버전을 적는다(검토 요청 조건) — doc은 revision을 담은 문서 응답이고, 바뀐 문서를 돌려준다."""
+    response = client.patch(
+        f"/api/bundles/{bundle_id}/documents/{doc['id']}",
+        json={"revision": doc["revision"], "doc_version": version},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 def get_view(client: TestClient, bundle_id: int, doc_id: int, headers: dict[str, str] = AUTHOR) -> dict:
     """문서의 원문 대조 데이터(블록·활성 단위·짝)."""
     response = client.get(f"/api/bundles/{bundle_id}/documents/{doc_id}/view", headers=headers)
@@ -106,7 +119,14 @@ def get_group_by_unit(client: TestClient, bundle_id: int, unit_id: int, headers:
 
 
 def assign_as_is(
-    client: TestClient, bundle_id: int, unit: dict, target_doc_id: int, *, hold_reason: str = "", **location: object
+    client: TestClient,
+    bundle_id: int,
+    unit: dict,
+    target_doc_id: int,
+    *,
+    hold_reason: str = "",
+    undo: dict | None = None,
+    **location: object,
 ) -> dict:
     """view 단위 하나를 원문 그대로 보내 확정(hold_reason을 주면 보류)하고 GroupOut을 돌려준다.
 
@@ -140,6 +160,8 @@ def assign_as_is(
         "units": [{"unit_id": unit["id"], "revision": entry["decision"]["revision"], "disposition": "assigned"}],
         "targets": targets,
     }
+    if undo is not None:
+        body["undo"] = undo
     response = save_group(client, bundle_id, body)
     assert response.status_code == 200, response.text
     return response.json()

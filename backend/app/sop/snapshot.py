@@ -1,5 +1,5 @@
 """결과물 스냅숏 — 묶음 하나의 문서·블록·단위·판단·새 문서·새 문장을 DB 표마다 질의 한 번으로 읽은 불변 값(결과물 A·B·C·요약의 입력)과,
-목록·개요에 싣는 언어별 진행 숫자(묶음 여럿을 질의 한 번으로).
+목록·개요에 싣는 줄 기준 진행 숫자(묶음 여럿을 질의 두 번으로), 결과물의 확정한 사람 이름.
 """
 
 from collections import defaultdict
@@ -9,10 +9,11 @@ from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel
-from sqlalchemy import ColumnElement, Select, func, select
+from sqlalchemy import ColumnElement, Select, and_, case, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased, defer
+from sqlalchemy.orm import defer
 
+from app.models import Employee
 from app.sop.constants import COVER_KINDS
 from app.sop.detach import UNASSIGNED
 from app.sop.errors import raise_rule
@@ -30,12 +31,16 @@ from app.sop.models import (
     TargetSource,
     Unit,
     UnitDecision,
+    UnitPairMember,
     WiStep,
 )
+from app.sop.status import ROW_STATUS_ORDER
 from app.sop.units import UNIT_ACTIVE, compute_display_id
 
-PROGRESS_LANGS = ("ko", "en")
-NEUTRAL = "neutral"  # 그림 단위의 언어 — 두 언어 숫자에 모두 센다
+NEUTRAL = "neutral"  # 그림·표처럼 언어가 없는 단위·새 문장의 언어 — 다른 언어 새 문장으로 치지 않는다
+# 한 언어만 남은 글을 세는 단위 종류·문서 언어 배치 — 그림·표는 언어가 없고, 한 언어 문서는 짝이 날 수 없다
+SINGLE_LANGUAGE_KINDS = ("sentence", "heading")
+TWO_LANGUAGE_LAYOUTS = ("ko_en_interleaved", "ko_en_separate")
 
 
 # --- 스냅숏 ---
@@ -61,6 +66,7 @@ class DocumentInfo:
     file_name: str
     status: str  # ready | rejected | failed — 검토 요청이 거절·실패 문서가 남았는지 가린다
     order: int  # 문서 순서(0부터) — 옛 문서 먼저, 같은 쪽 안에서는 id 순
+    language_layout: str  # ko_en_interleaved | ko_en_separate | ko_only | en_only
 
 
 @dataclass(frozen=True)
@@ -141,6 +147,7 @@ class TargetInfo:
     confirmed_by: str | None
     confirmed_at: datetime | None
     source_unit_ids: tuple[int, ...]  # 출처 순서(seq)
+    remark: str  # 사람이 적은 메모 — include_text=False면 빈 글
 
 
 @dataclass(frozen=True)
@@ -168,6 +175,7 @@ class BundleSnapshot:
     blocks: dict[int, BlockInfo]
     units: dict[int, UnitInfo]
     decisions: dict[int, DecisionInfo]
+    pair_of: dict[int, int]  # 활성 단위 id → 짝 id — 짝이 없는 단위는 키가 없다(한 짝 = 한 줄)
     targets: dict[int, TargetInfo]
     target_docs: dict[int, TargetDocInfo]
 
@@ -258,6 +266,14 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
         for decision in await session.scalars(select(UnitDecision).where(UnitDecision.bundle_id == bundle_id))
         if decision.unit_id in units  # 은퇴한 단위의 판단은 이력이다
     }
+    pair_of = {
+        unit_id: pair_id
+        for pair_id, unit_id in await session.execute(
+            select(UnitPairMember.pair_id, UnitPairMember.unit_id)
+            .join(Unit, Unit.id == UnitPairMember.unit_id)
+            .where(Unit.extraction_id.in_(extraction_ids), Unit.status == UNIT_ACTIVE)
+        )
+    }
     old_document_ids = {document.id for document in documents if document.side == "old"}
     for unit in units.values():
         if unit.document_id in old_document_ids and unit.id not in decisions:
@@ -272,6 +288,7 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
             document.id: DocumentInfo(
                 id=document.id, side=document.side, doc_code=document.doc_code, doc_version=document.doc_version,
                 title=document.title, file_name=document.file_name, status=document.status, order=order,
+                language_layout=document.language_layout,
             )
             for order, document in enumerate(documents)
         },
@@ -279,9 +296,33 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
         blocks=blocks,
         units=units,
         decisions=decisions,
+        pair_of=pair_of,
         targets=await _load_targets(session, bundle_id, units.keys(), include_text),
         target_docs=await load_target_docs(session, bundle_id),
     )
+
+
+def list_confirmer_ids(snap: BundleSnapshot) -> set[str]:
+    """스냅숏의 판단·새 문장을 확정한 사람의 로그인 ID — 결과물이 이름을 붙일 대상이다."""
+    login_ids = {decision.confirmed_by for decision in snap.decisions.values()}
+    login_ids |= {target.confirmed_by for target in snap.targets.values()}
+    return {login_id for login_id in login_ids if login_id}
+
+
+async def load_people_names(session: AsyncSession, login_ids: Collection[str]) -> dict[str, str]:
+    """로그인 ID → 표시 이름 — 활성 직원만, 이름이 비면 한글 이름, 둘 다 비면 뺀다(질의 한 번).
+
+    결과물 A·Excel의 "확정한 사람"용이다. 디렉터리에 없거나 퇴직한 사람은 빠져 결과물이 ID만 적는다(제품 명세 §7.13 줄 규칙 (7)).
+    AI 페이로드에는 쓰지 않는다 — 실명 금지 원칙은 그대로다.
+    """
+    if not login_ids:
+        return {}
+    rows = await session.execute(
+        select(Employee.login_id, Employee.name, Employee.korean_name).where(
+            Employee.login_id.in_(list(login_ids)), Employee.active.is_(True)
+        )
+    )
+    return {login_id: name or korean_name for login_id, name, korean_name in rows if name or korean_name}
 
 
 async def _load_documents(session: AsyncSession, bundle_id: int) -> tuple[list[Document], dict[int, Document]]:
@@ -316,7 +357,9 @@ async def _load_targets(
             sources[target_id].append(unit_id)
     target_statement = select(TargetSentence).where(TargetSentence.bundle_id == bundle_id)
     if not include_text:
-        target_statement = target_statement.options(defer(TargetSentence.confirmed_text), defer(TargetSentence.ai_text))
+        target_statement = target_statement.options(
+            defer(TargetSentence.confirmed_text), defer(TargetSentence.ai_text), defer(TargetSentence.remark)
+        )
     return {
         target.id: TargetInfo(
             id=target.id, target_doc_id=target.target_doc_id, slot_key=target.slot_key, wi_step=target.wi_step,
@@ -327,7 +370,7 @@ async def _load_targets(
             translation_source_unit_id=target.translation_source_unit_id, parent_target_id=target.parent_target_id, cell_row=target.cell_row, cell_col=target.cell_col,
             grid=target.grid, status=target.status, hold_reason=target.hold_reason, warnings=tuple(target.warnings),
             confirmed_by=target.confirmed_by, confirmed_at=target.confirmed_at,
-            source_unit_ids=tuple(sources.get(target.id, ())),
+            source_unit_ids=tuple(sources.get(target.id, ())), remark=target.remark if include_text else "",
         )
         for target in await session.scalars(target_statement)
     }
@@ -363,48 +406,79 @@ async def load_target_docs(session: AsyncSession, bundle_id: int) -> dict[int, T
 # --- 진행 숫자 ---
 
 
-class LangProgress(BaseModel):
-    """한 언어 옛 커버 단위의 커버 상태별 수(get_cover_status와 같은 규칙) — 그림은 두 언어 모두에 센다."""
+class RowProgress(BaseModel):
+    """줄(짝 하나·짝 없는 판단 단위 하나) 상태별 수 — 배정 화면의 줄과 같은 규칙. 묶인 칸 문장은 표·행 줄에 들어 세지 않는다.
+
+    single_language는 줄이 아니라 단위 수다 — 두 언어 문서에서 짝도 다른 언어 새 문장도 없는 글(문장·제목).
+    """
 
     total: int = 0
     unassigned: int = 0
     ai_suggested: int = 0
     confirmed: int = 0
     on_hold: int = 0
+    single_language: int = 0
 
 
-class BundleProgress(BaseModel):
-    ko: LangProgress
-    en: LangProgress
-
-
-async def load_bundle_progress(session: AsyncSession, bundle_ids: Collection[int]) -> dict[int, BundleProgress]:
-    """묶음별 언어별 진행 숫자 — 묶음 수와 무관하게 질의 한 번(묶음 목록·개요·관리 목록이 함께 쓴다)."""
-    progress = {bundle_id: BundleProgress(ko=LangProgress(), en=LangProgress()) for bundle_id in bundle_ids}
-    if not bundle_ids:
-        return progress
-    group_decision = aliased(UnitDecision)
-    # 칸 문장은 묶인 표·행 단위의 판단을 따른다 — get_cover_status와 같은 규칙(단위 목록의 상태 거르기와도 같다)
-    cover_status = func.coalesce(group_decision.status, UnitDecision.status)
+def _select_judged_units(bundle_ids: Collection[int], *columns: Any) -> Select[Any]:
+    """묶음들의 판단 단위(옛 문서·활성·최신 추출·묶이지 않은 단위, 판단 행 있음)에 짝 구성원을 바깥 조인한 질의."""
     in_bundles = Document.bundle_id.in_(list(bundle_ids))
-    rows = await session.execute(
-        select(Document.bundle_id, Unit.lang, cover_status, func.count())
+    return (
+        select(*columns)
         .select_from(Unit)
         .join(Extraction, Extraction.id == Unit.extraction_id)
         .join(Document, Document.id == Extraction.document_id)
         .join(UnitDecision, UnitDecision.unit_id == Unit.id)
-        .outerjoin(group_decision, group_decision.unit_id == Unit.group_unit_id)
+        .outerjoin(UnitPairMember, UnitPairMember.unit_id == Unit.id)
         .where(
-            in_bundles, Document.side == "old", Unit.status == UNIT_ACTIVE, Unit.kind.in_(COVER_KINDS),
+            in_bundles, Document.side == "old", Unit.status == UNIT_ACTIVE, Unit.group_unit_id.is_(None),
             Unit.extraction_id.in_(_select_latest_extractions(in_bundles)),
         )
-        .group_by(Document.bundle_id, Unit.lang, cover_status)
     )
-    for bundle_id, lang, status, count in rows:
-        for counted_lang in PROGRESS_LANGS if lang == NEUTRAL else (lang,):
-            lang_progress: LangProgress = getattr(progress[bundle_id], counted_lang)
-            lang_progress.total += count
-            setattr(lang_progress, status, getattr(lang_progress, status) + count)
+
+
+def _is_other_language(target_lang: ColumnElement[str]) -> ColumnElement[bool]:
+    """새 문장이 단위와 다른 언어로 쓰였는지 — 그림·표 같은 neutral 새 문장은 다른 언어로 치지 않는다."""
+    return and_(target_lang != Unit.lang, target_lang != NEUTRAL)
+
+
+async def load_bundle_progress(session: AsyncSession, bundle_ids: Collection[int]) -> dict[int, RowProgress]:
+    """묶음별 줄 진행 숫자 — 묶음 수와 무관하게 질의 두 번(묶음 목록·개요·관리 목록이 함께 쓴다)."""
+    progress = {bundle_id: RowProgress() for bundle_id in bundle_ids}
+    if not bundle_ids:
+        return progress
+    # 줄의 상태는 구성 단위 중 가장 덜 끝난 것(pick_row_status와 같은 규칙) — 상태 순번의 최솟값으로 고른다
+    status_rank = case({status: rank for rank, status in enumerate(ROW_STATUS_ORDER)}, value=UnitDecision.status)
+    # 짝이 있으면 짝 하나가 한 줄, 없으면 단위 하나가 한 줄 — 단위 id에 음수를 붙여 짝 id와 겹치지 않게 한다
+    row_key = func.coalesce(UnitPairMember.pair_id, -Unit.id)
+    row_ranks = (
+        _select_judged_units(bundle_ids, Document.bundle_id, func.min(status_rank).label("rank"))
+        .group_by(Document.bundle_id, row_key)
+        .subquery()
+    )
+    for bundle_id, rank, count in await session.execute(
+        select(row_ranks.c.bundle_id, row_ranks.c.rank, func.count()).group_by(row_ranks.c.bundle_id, row_ranks.c.rank)
+    ):
+        row_progress = progress[bundle_id]
+        row_progress.total += count
+        status = ROW_STATUS_ORDER[rank]
+        setattr(row_progress, status, getattr(row_progress, status) + count)
+
+    has_other_language_target = or_(
+        exists().where(TargetSentence.translation_source_unit_id == Unit.id, _is_other_language(TargetSentence.lang)),
+        exists()
+        .where(TargetSource.unit_id == Unit.id, TargetSentence.id == TargetSource.target_id)
+        .where(_is_other_language(TargetSentence.lang)),
+    )
+    for bundle_id, count in await session.execute(
+        _select_judged_units(bundle_ids, Document.bundle_id, func.count())
+        .where(
+            UnitPairMember.pair_id.is_(None), Unit.kind.in_(SINGLE_LANGUAGE_KINDS),
+            Document.language_layout.in_(TWO_LANGUAGE_LAYOUTS), ~has_other_language_target,
+        )
+        .group_by(Document.bundle_id)
+    ):
+        progress[bundle_id].single_language = count
     return progress
 
 

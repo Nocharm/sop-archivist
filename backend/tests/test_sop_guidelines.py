@@ -401,10 +401,10 @@ def test_guideline_api_requires_permission(client: TestClient) -> None:
 # --- Excel 정보 시트 ---
 
 
-def _read_info(client: TestClient, bundle_id: int, lang: str) -> dict:
-    response = client.get(f"/api/bundles/{bundle_id}/export.xlsx", params={"lang": lang}, headers=AUTHOR)
+def _read_info(client: TestClient, bundle_id: int) -> dict:
+    response = client.get(f"/api/bundles/{bundle_id}/export.xlsx", headers=AUTHOR)
     assert response.status_code == 200, response.text
-    sheet = load_workbook(BytesIO(response.content))["정보" if lang == "ko" else "Info"]
+    sheet = load_workbook(BytesIO(response.content))["Info"]
     return {row[0].value: row[1].value for row in sheet.iter_rows()}
 
 
@@ -412,10 +412,9 @@ def _read_info(client: TestClient, bundle_id: int, lang: str) -> dict:
 def test_excel_info_sheet_shows_the_rules_version(client: TestClient) -> None:
     bundle = create_bundle(client, title="Guideline Bundle")
 
-    assert _read_info(client, bundle["id"], "ko")["지침 버전"] == "rules v1"
+    assert _read_info(client, bundle["id"])["Guideline version"] == "rules v1"
 
     assert _post_version(client, "rules", VALID_RULES).json()["version"] == 2
     assert _activate(client, "rules", 2).status_code == 200
 
-    assert _read_info(client, bundle["id"], "ko")["지침 버전"] == "rules v2"
-    assert _read_info(client, bundle["id"], "en")["Guideline version"] == "rules v2"
+    assert _read_info(client, bundle["id"])["Guideline version"] == "rules v2"

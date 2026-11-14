@@ -300,21 +300,64 @@ def test_merge_far_apart_sentences(client: TestClient) -> None:
     assert whole["spans"] == [[record["block_id"], 0, len(f"{RECORD} {CHECK} {OFF}")]]
 
 
-def test_merge_rejects_mixed_language(client: TestClient) -> None:
+def test_merge_accepts_mixed_language(client: TestClient) -> None:
     fx = _setup(client)
     cell = find_unit(fx.view, "합성 값")
+    ko, en = find_unit(fx.view, OFF), find_unit(fx.view, ENGLISH)
 
-    mixed = _merge(client, fx, find_unit(fx.view, OFF), find_unit(fx.view, ENGLISH))
-    with_cell = _merge(client, fx, find_unit(fx.view, OFF), cell)
+    result = _ok(_merge(client, fx, ko, en))
+
+    merged = next(
+        unit for unit in get_view(client, fx.bundle_id, fx.doc["id"])["units"] if unit["id"] == result["created_unit_ids"][0]
+    )
+    assert (merged["lang"], OFF in merged["text"], ENGLISH in merged["text"]) == ("ko", True, True)
+    # 칸 문장·표 거절은 언어와 무관하게 그대로다
+    with_cell = _merge(client, fx, find_unit(fx.view, CHECK), cell)
     with_table = _merge(client, fx, cell, next(unit for unit in fx.view["units"] if unit["kind"] == "table"))
-    alone = _merge(client, fx, find_unit(fx.view, OFF))
-
-    assert _code(mixed) == (422, "mixed_language")
-    assert mixed.json()["detail"]["langs"] == ["en", "ko"]
+    alone = _merge(client, fx, find_unit(fx.view, CHECK))
     assert _code(with_cell) == (422, "cannot_merge")
     assert _code(with_table) == (422, "invalid_unit_kind")
     assert alone.status_code == 422  # 2개 이상 — 입력 형식 오류
-    assert get_view(client, fx.bundle_id, fx.doc["id"])["document"]["revision"] == 1
+    assert get_view(client, fx.bundle_id, fx.doc["id"])["document"]["revision"] == 2
+
+
+def test_merging_the_members_of_a_pair_removes_the_pair(client: TestClient) -> None:
+    fx = _setup(client, p(RECORD) + p(ENGLISH))
+    record, english = find_unit(fx.view, RECORD), find_unit(fx.view, ENGLISH)
+    (pair,) = fx.view["pairs"]
+    assert sorted(pair["unit_ids"]) == sorted([record["id"], english["id"]])
+
+    _ok(_merge(client, fx, record, english))
+
+    assert get_view(client, fx.bundle_id, fx.doc["id"])["pairs"] == []
+
+
+def test_merging_all_members_of_a_many_to_one_pair_removes_the_pair(client: TestClient) -> None:
+    fx = _setup(client, p(f"{TWO_IN_ONE} {RECORD}") + p(ENGLISH))
+    two, record, english = (find_unit(fx.view, text) for text in (TWO_IN_ONE, RECORD, ENGLISH))
+    created = client.post(
+        f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/pairs",
+        json={"revision": 1, "unit_ids": [two["id"], record["id"], english["id"]]}, headers=AUTHOR,
+    )
+    assert created.status_code == 201, created.text
+
+    _ok(_merge(client, fx, two, record, english))
+
+    assert get_view(client, fx.bundle_id, fx.doc["id"])["pairs"] == []
+
+
+def test_unmerge_of_a_mixed_merge_restores_each_language(client: TestClient) -> None:
+    fx = _setup(client)
+    ko, en = find_unit(fx.view, OFF), find_unit(fx.view, ENGLISH)
+    result = _ok(_merge(client, fx, ko, en))
+    merged = next(
+        unit for unit in get_view(client, fx.bundle_id, fx.doc["id"])["units"] if unit["id"] == result["created_unit_ids"][0]
+    )
+
+    _ok(_unmerge(client, fx, merged))
+
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    assert [find_unit(view, text)["lang"] for text in (OFF, ENGLISH)] == ["ko", "en"]
 
 
 # ── 합치기 풀기 ───────────────────────────────────────────────────────────────
@@ -507,6 +550,7 @@ def test_undo_revives_original_ids_and_redo_reapplies(client: TestClient) -> Non
     revived = find_unit(view, TWO_IN_ONE)
     assert undone == {
         "document_revision": 3, "created_unit_ids": [unit["id"]], "retired_unit_ids": created, "detach": EMPTY_DETACH,
+        "op": "split", "boundary_unit_ids": [], "confirmed": None,
     }
     assert (revived["id"], revived["display_id"], revived["spans"], revived["status"]) == (
         unit["id"], unit["display_id"], unit["spans"], "unassigned",
@@ -714,8 +758,8 @@ def test_boundary_confirm_flag(client: TestClient) -> None:
     assert marked.status_code == cleared.status_code == 200, (marked.text, cleared.text)
     view = get_view(client, fx.bundle_id, fx.doc["id"])
     assert [find_unit(view, text)["boundary_confirmed"] for text in (TWO_IN_ONE, RECORD)] == [False, True]
-    # 되돌리기 대상이 아니고 문서 revision도 올리지 않는다
-    assert (view["document"]["revision"], view["edits"]) == (1, {"can_undo": False, "can_redo": False})
+    # 문서 revision은 올리지 않지만 되돌리기 기록에는 들어간다(사용자 결정 2026-11-13)
+    assert (view["document"]["revision"], view["edits"]) == (1, {"can_undo": True, "can_redo": False})
     _ok(_split(client, fx, two, len(FIRST)))
     retired = client.post(url, json={"unit_ids": [two["id"]], "confirmed": True}, headers=AUTHOR)
     assert retired.status_code == 404
@@ -738,12 +782,69 @@ def test_confirm_all_boundaries_marks_the_rest(client: TestClient) -> None:
     rest = len(view["units"]) - 1
     assert all(unit["boundary_confirmed"] for unit in view["units"])
     assert (first.json(), again.json()) == ({"confirmed_count": rest}, {"confirmed_count": 0})
-    assert (view["document"]["revision"], view["edits"]) == (1, {"can_undo": False, "can_redo": False})
+    assert (view["document"]["revision"], view["edits"]) == (1, {"can_undo": True, "can_redo": False})
     # 누가 한꺼번에 확인했는지는 기록 한 줄로 남고, 바뀐 것이 없으면 남기지 않는다
     events = client.get(f"/api/bundles/{fx.bundle_id}/events?action_prefix=unit.", headers=AUTHOR).json()
     assert [(event["action"], event["actor"], event["target_type"], event["target_ids"], event["detail"]) for event in events] == [
         ("unit.check_all", "qa.member", "document", [fx.doc["id"]], {"count": rest})
     ]
+
+
+def test_boundary_checks_undo_and_redo_in_edit_order(client: TestClient) -> None:
+    fx = _setup(client)
+    two, record = find_unit(fx.view, TWO_IN_ONE), find_unit(fx.view, RECORD)
+    url = f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/units/boundary"
+    assert client.post(url, json={"unit_ids": [record["id"]], "confirmed": True}, headers=AUTHOR).status_code == 200
+    # 이미 확인된 단위는 바뀐 것이 없어 기록에 넣지 않는다 - 되돌리면 이 단위만 풀린다
+    assert client.post(url, json={"unit_ids": [two["id"], record["id"]], "confirmed": True}, headers=AUTHOR).status_code == 200
+
+    undone = _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
+
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    assert undone == {
+        "document_revision": 1, "created_unit_ids": [], "retired_unit_ids": [], "detach": None,
+        "op": "boundary", "boundary_unit_ids": [two["id"]], "confirmed": False,
+    }
+    assert [find_unit(view, text)["boundary_confirmed"] for text in (TWO_IN_ONE, RECORD)] == [False, True]
+    assert view["edits"] == {"can_undo": True, "can_redo": True}
+
+    redone = _ok(_step(client, fx.bundle_id, fx.doc["id"], "redo"))
+
+    assert (redone["op"], redone["boundary_unit_ids"], redone["confirmed"]) == ("boundary", [two["id"]], True)
+    assert find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), TWO_IN_ONE)["boundary_confirmed"] is True
+    # 되돌리기는 확인·편집을 한 줄 순서로 - 쪼개기 뒤의 확인을 먼저, 그다음 쪼개기를 되돌린다
+    _ok(_split(client, fx, find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), TWO_IN_ONE), len(FIRST)))
+    first = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), FIRST)
+    assert client.post(url, json={"unit_ids": [first["id"]], "confirmed": True}, headers=AUTHOR).status_code == 200
+    steps = [_ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))["op"] for _ in range(3)]
+    assert steps == ["boundary", "split", "boundary"]
+
+
+def test_boundary_check_clears_the_redo_tail(client: TestClient) -> None:
+    fx = _setup(client)
+    two = find_unit(fx.view, TWO_IN_ONE)
+    _ok(_split(client, fx, two, len(FIRST)))
+    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
+    url = f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/units/boundary"
+
+    marked = client.post(url, json={"unit_ids": [two["id"]], "confirmed": True}, headers=AUTHOR)
+
+    assert marked.status_code == 200, marked.text
+    assert get_view(client, fx.bundle_id, fx.doc["id"])["edits"] == {"can_undo": True, "can_redo": False}
+
+
+def test_confirm_all_undoes_as_one_step(client: TestClient) -> None:
+    fx = _setup(client)
+    two = find_unit(fx.view, TWO_IN_ONE)
+    url = f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/units/boundary"
+    assert client.post(url, json={"unit_ids": [two["id"]], "confirmed": True}, headers=AUTHOR).status_code == 200
+    assert client.post(f"{url}/all", headers=AUTHOR).status_code == 200
+
+    undone = _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
+
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    assert (undone["op"], undone["confirmed"], len(undone["boundary_unit_ids"])) == ("check_all", False, len(view["units"]) - 1)
+    assert [unit["id"] for unit in view["units"] if unit["boundary_confirmed"]] == [two["id"]]
 
 
 def test_document_list_counts_unchecked_boundaries(client: TestClient) -> None:
@@ -801,7 +902,7 @@ TEXT_KINDS = ("sentence", "heading", "cell_sentence")
 # 난수 편집이 받을 수 있는 거절 — 그 밖의 응답(특히 500)은 실패다
 EXPECTED_REFUSALS = {
     (422, "invalid_offset"), (422, "empty_part"), (422, "not_adjacent"), (422, "cannot_merge"),
-    (422, "mixed_language"), (409, "nothing_to_undo"), (409, "nothing_to_redo"),
+    (409, "nothing_to_undo"), (409, "nothing_to_redo"),
 }
 
 

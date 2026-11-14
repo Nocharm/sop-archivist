@@ -5,7 +5,7 @@ AI는 제안만 한다: 새 문장의 `confirmed_text`를 쓰지 않고, 응답�
 
 import hashlib
 from collections import defaultdict
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import count, repeat
 from typing import Any, Literal
@@ -62,6 +62,7 @@ from app.sop.models import (
 )
 from app.sop.segment import has_visible_char
 from app.sop.snapshot import TargetDocInfo, load_target_docs
+from app.sop.target_placement import NewTarget, arrange_new_targets
 from app.sop.units import UNIT_ACTIVE
 
 CLASSIFY_KIND = "classify"
@@ -460,6 +461,31 @@ async def _add_cell_targets(
     return placed
 
 
+async def _arrange_sentences(
+    session: AsyncSession,
+    sentences: Sequence[tuple[TargetSentence, list[Unit]]],
+    candidate: Candidate,
+    orders: Iterator[int],
+) -> None:
+    """문장 새 문장의 기본 번호 표시와 순서 — 짝 하나는 작업 하나라 두 언어가 한 번에 같은 칸에 놓인다(제품 명세 §7.13 섹션 번호 기본값 O10, 사람 저장과 같은 규칙).
+
+    분류는 출처 언어로만 쓰므로 번역이 없고, 새 제안이라 같은 출처의 기존 새 문장도 없다(이전 제안은 apply가 먼저 걷었다).
+    """
+    if not sentences:
+        return
+    pair_ids = await _load_pair_ids(session, [sources[0].id for _, sources in sentences])
+    arranged = arrange_new_targets([
+        NewTarget(
+            key=str(index), place=_get_place(candidate), meaning=pair_ids.get(sources[0].id, -sources[0].id),
+            lang=target.lang, source_unit_id=sources[0].id, is_translation=False, source_placed=False,
+        )
+        for index, (target, sources) in enumerate(sentences)
+    ])
+    for item in arranged:  # 돌려받은 순서가 순서를 정한 문서에 붙일 순서다(영어 먼저)
+        target = sentences[int(item.key)][0]
+        target.number_style, target.order_index = item.number_style, next(orders)
+
+
 def _add_result(session: AsyncSession, job: AiJob, loaded: _Loaded, verdict: _Verdict, result: str) -> AiSuggestion:
     return add_suggestion(
         session, job, content=_build_content(job, verdict), warnings=verdict.warnings, result=result,
@@ -495,9 +521,10 @@ async def _write_targets(
             change_type = decide_ai_change_type(sources, text, requested_change_type, sentence_count=len(sentences))
             target = _build_target(
                 job, candidate, suggestion_id, kind="sentence", lang=lang, ai_text=text, change_type=change_type,
-                order_index=next(orders), warnings=[*check_sentence(source_texts, text), *warnings],
+                warnings=[*check_sentence(source_texts, text), *warnings],
             )
             placed.append((target, sources))
+    await _arrange_sentences(session, placed, candidate, orders)
 
     table_units = [unit for unit in units if unit.kind in TABLE_UNIT_KINDS]
     shapes = await load_table_shapes(session, table_units)

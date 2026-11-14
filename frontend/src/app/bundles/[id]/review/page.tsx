@@ -1,5 +1,5 @@
 // 검토 - 검토자는 결과물을 읽고 검토 완료 또는 이유를 적어 되돌린다. 작성자는 상태를 보고, 기다리는 요청을 거두거나 끝난 묶음을 이유를 적어 다시 연다(명세 §12-9).
-// 확정·완료는 일반 버튼이고 전자서명이 아니다. "Review complete"이지 "approved"가 아니다 - 정식 승인은 Veeva에서 한다.
+// 확정·완료는 일반 버튼이고 전자서명이 아니다. "Review complete"이지 "approved"가 아니다 - 정식 승인은 EQUIS에서 한다.
 "use client";
 
 import { CircleCheck, Gauge, RotateCcw, Undo2, X } from "lucide-react";
@@ -9,15 +9,15 @@ import { useState } from "react";
 
 import { BundleLoadError } from "@/components/bundle-load-error";
 import { Modal } from "@/components/modal";
-import { EditionToggle } from "@/components/outputs/edition-toggle";
 import { OutputCView } from "@/components/outputs/output-c";
+import { ReviewReturnNote } from "@/components/review-return-note";
 import { BundleStatusPill } from "@/components/status";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { LoadError } from "@/components/ui/load-error";
 import { showToast } from "@/components/ui/toast";
 import { WithdrawReviewButton } from "@/components/withdraw-review";
 import { humanizeApiError } from "@/lib/api-errors";
-import { completeReview, getOutputC, reopenReview, returnReview, type OutputLang } from "@/lib/api-sop";
+import { completeReview, getOutputC, reopenReview, returnReview } from "@/lib/api-sop";
 import { getBundleLabel } from "@/lib/bundle-label";
 import { loadBundle, putBundle, useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
@@ -28,10 +28,10 @@ import { useLoaded } from "@/lib/use-loaded";
 type ReasonAction = "return" | "reopen";
 
 export default function ReviewPage() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const bundleId = Number(useParams<{ id: string }>().id);
   const { bundle, error: bundleError, reload: reloadBundle } = useBundle(bundleId);
-  const [lang, setLang] = useState<OutputLang>("ko");
+  // 결과물 C 한 벌 - 화면 언어는 칸 이름 같은 라벨 언어로만 보낸다
   const output = useLoaded(() => getOutputC(bundleId, lang), `${bundleId}:${lang}:${bundle?.revision ?? 0}`);
   const showSkeleton = useDelayedFlag(output.data === null && output.error === null);
   const [reasonFor, setReasonFor] = useState<ReasonAction | null>(null);
@@ -73,7 +73,6 @@ export default function ReviewPage() {
           {bundle.status === "in_progress" ? t("review.hintProgress") : bundle.status === "in_review" ? (isReviewer ? t("review.hintReviewer") : t("review.hintWaiting")) : t("review.hintDone")}
         </span>
         <span className="flex-1" />
-        <EditionToggle value={lang} onChange={setLang} testId="review-lang" />
         {bundle.status === "in_progress" && isAuthor && (
           <Link href={getStageHref(bundleId, "overview")} className="btn" data-testid="review-go-overview">
             <Gauge size={16} strokeWidth={1.5} aria-hidden />
@@ -100,9 +99,13 @@ export default function ReviewPage() {
           </button>
         )}
       </div>
-      <div className="min-h-0 overflow-y-auto bg-bg">
+      <div className="min-h-0 overflow-y-auto bg-bg min-[1280px]:grid min-[1280px]:grid-cols-[minmax(0,760px)_minmax(280px,1fr)] min-[1280px]:content-start">
+        {/* 1280 미만에서는 용지 위에 쌓이고, 이상에서는 오른쪽 열 위에 놓인다. 쪽지가 없으면 빈 칸이다 */}
+        <div className="order-first min-w-0 px-[var(--pad)] pt-[var(--pad)] empty:hidden min-[1280px]:order-none min-[1280px]:col-start-2 min-[1280px]:row-start-1 min-[1280px]:pl-0" data-testid="review-aside">
+          <ReviewReturnNote bundle={bundle} testId="review-return-note" />
+        </div>
         {output.data ? (
-          <OutputCView data={output.data} lang={lang} />
+          <OutputCView data={output.data} />
         ) : output.error !== null ? (
           <LoadError error={output.error} onRetry={output.reload} testId="review-outputs" />
         ) : (

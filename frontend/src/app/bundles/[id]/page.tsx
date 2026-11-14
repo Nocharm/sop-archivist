@@ -1,4 +1,4 @@
-// 묶음 개요 - 왼쪽은 제목·상태, 지금 할 일 하나, 언어별 배정 현황. 오른쪽 340px은 검토 요청 조건, AI 작업, 멤버(디자인 문서 8절).
+// 묶음 개요 - 왼쪽은 제목·상태, 지금 할 일 하나, 배정 현황(줄 기준 한 벌과 한 언어만 남은 글 수). 오른쪽 340px은 검토 요청 조건, AI 작업, 멤버(디자인 문서 8절).
 "use client";
 
 import {
@@ -7,6 +7,7 @@ import {
   CheckCheck,
   ChevronRight,
   FileUp,
+  FileClock,
   FileWarning,
   Hourglass,
   Info,
@@ -41,16 +42,17 @@ import {
   requestReview,
   SEMANTIC_CHECK_KEYS,
   type Bundle,
-  type LangProgress,
+  type RowProgress,
   type NextAction,
   type Readiness,
   type ReadinessIssue,
 } from "@/lib/api-sop";
 import { loadBundle, putBundle, useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
+import { countPending, getConfirmedPercent } from "@/lib/progress-model";
 import { getStageHref, NEXT_ACTION_STAGE, STAGES } from "@/lib/stages";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
-import { GATE_STAGE, splitGates, type GateKey } from "@/lib/review-gates";
+import { GATE_STAGE, groupNotices, isNoticeGroup, splitGates, type GateKey } from "@/lib/review-gates";
 import { useLoaded, type Loaded } from "@/lib/use-loaded";
 import { getBundleLabel } from "@/lib/bundle-label";
 
@@ -64,12 +66,11 @@ const COVER_STATES = [
   { key: "unassigned", fill: "var(--st-none-fill)" },
 ] as const;
 
-const PROGRESS_LANGS = ["ko", "en"] as const;
-
 // 다음 할 일 종류별 아이콘 - 화면이 열릴 때 한 번 움직이고 멈춘다(.next-badge)
 const NEXT_ICONS: Record<NextAction, LucideIcon> = {
   upload_documents: FileUp,
   resolve_documents: FileWarning,
+  fill_doc_versions: FileClock,
   check_boundaries: CheckCheck,
   fill_tobe: ListTree,
   decide_units: Split,
@@ -108,6 +109,7 @@ function buildGateLines(readiness: Readiness, semanticTotal: number, t: TFunc): 
   const targets = sumCounts(blockers, "targets_");
   const reasons = sumCounts(blockers, "duplicate_without_reason") + sumCounts(blockers, "missing_reason");
   const warnings = findIssue(blockers, "unacked_missing_text");
+  const versions = findIssue(blockers, "missing_doc_versions");
   const boundaries = findIssue(blockers, "unchecked_boundaries");
   const semantic = findIssue(blockers, "semantic_checks_incomplete");
   const semanticMissing = semantic?.missing?.length ?? 0;
@@ -117,6 +119,11 @@ function buildGateLines(readiness: Readiness, semanticTotal: number, t: TFunc): 
       key: "documents",
       ok: !noDocs && !unresolved,
       label: noDocs ? t("gate.noDocuments") : unresolved ? t("gate.unresolvedDocuments", { n: unresolvedCount }) : t("gate.documentsOk"),
+    },
+    {
+      key: "versions",
+      ok: !versions,
+      label: versions ? t("gate.docVersions", { n: versions.count ?? 0 }) : t("gate.docVersionsOk"),
     },
     {
       key: "boundaries",
@@ -140,64 +147,51 @@ function buildGateLines(readiness: Readiness, semanticTotal: number, t: TFunc): 
   ];
 }
 
-function countPending(progress: Bundle["progress"]): number {
-  return PROGRESS_LANGS.reduce((total, lang) => {
-    const item = progress[lang];
-    return total + item.unassigned + item.ai_suggested + item.on_hold;
-  }, 0);
-}
-
-function CoverageBar({ progress, lang }: { progress: LangProgress; lang: string }) {
+function CoverageBar({ progress }: { progress: RowProgress }) {
   return (
-    <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-3">
-      <span className="lg">{lang.toUpperCase()}</span>
-      <div className="flex h-2 min-w-0 gap-0.5" data-testid={`overview-bar-${lang}`}>
-        {progress.total === 0 ? (
-          <span className="block h-full flex-1 rounded bg-line" />
-        ) : (
-          COVER_STATES.filter((state) => progress[state.key] > 0).map((state) => (
-            <span
-              key={state.key}
-              className="block h-full min-w-0.5 first:rounded-l last:rounded-r"
-              style={{ flexGrow: progress[state.key], flexBasis: 0, background: state.fill }}
-            />
-          ))
-        )}
-      </div>
+    <div className="flex h-2 min-w-0 gap-0.5" data-testid="overview-bar">
+      {progress.total === 0 ? (
+        <span className="block h-full flex-1 rounded bg-line" />
+      ) : (
+        COVER_STATES.filter((state) => progress[state.key] > 0).map((state) => (
+          <span
+            key={state.key}
+            className="block h-full min-w-0.5 first:rounded-l last:rounded-r"
+            style={{ flexGrow: progress[state.key], flexBasis: 0, background: state.fill }}
+          />
+        ))
+      )}
     </div>
   );
 }
 
 function Coverage({ bundle }: { bundle: Bundle }) {
   const { t } = useI18n();
+  // 문서가 없으면 0% 막대와 빈 표 대신 흐린 한 줄 - 아직 시작 전이라는 말만 한다
+  if (bundle.document_count === 0) {
+    return (
+      <section className="rounded-lg border border-line px-4 py-2.5 text-ink-3" data-testid="overview-coverage" data-idle="">
+        {t("overview.notStarted")}
+      </section>
+    );
+  }
+  const { progress } = bundle;
+  const percent = getConfirmedPercent(progress);
   return (
     <section className="grid gap-2.5 rounded-lg border border-line bg-surface px-4 py-3.5" data-testid="overview-coverage">
       <h2 className="text-xs font-semibold text-ink-3">{t("overview.coverage")}</h2>
-      <div className="flex flex-wrap gap-x-12 gap-y-2">
-        {PROGRESS_LANGS.map((lang) => {
-          const item = bundle.progress[lang];
-          const percent = item.total === 0 ? null : Math.round((item.confirmed / item.total) * 100);
-          return (
-            <div key={lang} className="grid gap-0.5" data-testid={`overview-rate-${lang}`}>
-              <span className="flex items-center gap-1.5 text-xs text-ink-3">
-                <span className="lg">{lang.toUpperCase()}</span>
-                Confirmed
-              </span>
-              <span className="flex items-baseline gap-2 tabular-nums">
-                <span className="text-[30px] leading-[38px] text-ink">
-                  {percent ?? "–"}
-                  {percent !== null && <span className="text-xl">%</span>}
-                </span>
-                <span className="text-ink-3">{`${item.confirmed} / ${item.total}`}</span>
-              </span>
-            </div>
-          );
-        })}
+      <div className="grid gap-0.5" data-testid="overview-rate">
+        <span className="text-xs text-ink-3">Confirmed</span>
+        <span className="flex items-baseline gap-2 tabular-nums">
+          <span className="text-[30px] leading-[38px] text-ink">
+            {percent ?? "–"}
+            {percent !== null && <span className="text-xl">%</span>}
+          </span>
+          <span className="text-ink-3">{`${progress.confirmed} / ${progress.total}`}</span>
+        </span>
       </div>
-      <div className="grid gap-2 pt-1">
-        {PROGRESS_LANGS.map((lang) => (
-          <CoverageBar key={lang} progress={bundle.progress[lang]} lang={lang} />
-        ))}
+      <div className="pt-1">
+        <CoverageBar progress={progress} />
       </div>
       <table className="w-full border-collapse tabular-nums" data-testid="overview-counts">
         <thead>
@@ -215,21 +209,22 @@ function Coverage({ bundle }: { bundle: Bundle }) {
           </tr>
         </thead>
         <tbody>
-          {PROGRESS_LANGS.map((lang) => (
-            <tr key={lang} className="border-t border-line">
-              <td className="py-1">
-                <span className="lg">{lang.toUpperCase()}</span>
+          <tr className="border-t border-line">
+            <td className="py-1">{t("overview.rows")}</td>
+            {COVER_STATES.map((state) => (
+              <td key={state.key} className="py-1 pl-3 text-right">
+                {progress[state.key]}
               </td>
-              {COVER_STATES.map((state) => (
-                <td key={state.key} className="py-1 pl-3 text-right">
-                  {bundle.progress[lang][state.key]}
-                </td>
-              ))}
-              <td className="py-1 pl-3 text-right">{bundle.progress[lang].total}</td>
-            </tr>
-          ))}
+            ))}
+            <td className="py-1 pl-3 text-right">{progress.total}</td>
+          </tr>
         </tbody>
       </table>
+      {progress.single_language > 0 && (
+        <p className="text-xs text-ink-3" data-testid="overview-single-language">
+          {t("overview.singleLanguage", { n: progress.single_language })}
+        </p>
+      )}
     </section>
   );
 }
@@ -291,6 +286,36 @@ function NextActionCard({ bundle, onRequestReview, onAddReviewer }: { bundle: Bu
   );
 }
 
+/** 같은 안내가 여러 문서에 걸치면 한 줄로 접고, 누르면 문서 코드가 펼쳐진다 */
+function NoticeGroupLine({ docs }: { docs: string[] }) {
+  const { t } = useI18n();
+  const [isOpen, setIsOpen] = useState(false);
+  return (
+    <div className="grid gap-1.5" data-testid="overview-notice-group-box">
+      <button
+        type="button"
+        className="grid grid-cols-[16px_minmax(0,1fr)_14px] gap-2 text-left text-ink-2"
+        aria-expanded={isOpen}
+        data-testid="overview-notice-group"
+        onClick={() => setIsOpen((prev) => !prev)}
+      >
+        <Info size={16} strokeWidth={1.5} className="mt-[3px] text-ink-3" aria-hidden />
+        <span>{t("notice.equipmentSlotsGroup", { n: docs.length })}</span>
+        <ChevronRight size={14} strokeWidth={1.5} className={`mt-[3px] text-ink-3 transition-transform ${isOpen ? "rotate-90" : ""}`} aria-hidden />
+      </button>
+      {isOpen && (
+        <ul className="m-0 grid list-none gap-0.5 pl-6 font-mono text-[11px] text-ink-3" data-testid="overview-notice-group-docs">
+          {docs.map((doc, index) => (
+            <li key={`${doc}-${index}`} className="break-all">
+              {doc}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 interface ReviewGateProps {
   bundle: Bundle;
   readiness: Loaded<Readiness>;
@@ -308,16 +333,18 @@ function ReviewGate({ bundle, readiness, onRequestReview, onAddReviewer }: Revie
   const isAuthor = bundle.my_role === "author";
   const canRequest = data?.ready === true && isAuthor && bundle.status === "in_progress";
   const [showAll, setShowAll] = useState(false);
+  const isIdle = bundle.document_count === 0;
   const lines = data === null ? [] : buildGateLines(data, semanticTotal, t);
   const split = splitGates(lines, showAll ? Infinity : GATES_PREVIEW);
   const hidden = split.failHidden + split.passHidden;
   const passed = lines.filter((line) => line.ok).length;
+  const groupedNotices = groupNotices(data?.notices ?? []);
 
   return (
     <section className="side-box grid gap-2.5" data-testid="overview-gate">
       <h2 className="side-box-title">
         {t("overview.reviewRequest")}
-        {data !== null && <span className="font-mono text-[11px] font-normal text-ink-3">{`${passed} / ${lines.length}`}</span>}
+        {data !== null && !isIdle && <span className="font-mono text-[11px] font-normal text-ink-3">{`${passed} / ${lines.length}`}</span>}
       </h2>
       {error !== null && data === null ? (
         <div className="flex items-center gap-2 text-ink-2" data-testid="overview-gate-error">
@@ -328,6 +355,11 @@ function ReviewGate({ bundle, readiness, onRequestReview, onAddReviewer }: Revie
             </button>
           </Tooltip>
         </div>
+      ) : isIdle && data !== null ? (
+        // 문서가 없으면 조건 아홉 줄이 전부 빨개 보인다 - 중립 한 줄로 대신한다
+        <p className="text-ink-3" data-testid="overview-gate-idle">
+          {t("overview.notStarted")}
+        </p>
       ) : (
         <div className="grid gap-2" data-testid="overview-gate-list" {...tip.handlers}>
           {data === null ? (
@@ -391,14 +423,6 @@ function ReviewGate({ bundle, readiness, onRequestReview, onAddReviewer }: Revie
           {tip.node}
         </div>
       )}
-      {data?.notices.map((notice, index) => (
-        <p key={`${notice.code}-${index}`} className="grid grid-cols-[16px_minmax(0,1fr)] gap-2 text-ink-2" data-testid={`overview-notice-${notice.code}`}>
-          <Info size={16} strokeWidth={1.5} className="mt-[3px] text-ink-3" aria-hidden />
-          {notice.code === "equipment_sop_empty_slots"
-            ? t("notice.equipmentSlots", { doc: String(notice.doc_code ?? "") })
-            : t("notice.sentenceWarnings", { n: notice.count ?? 0 })}
-        </p>
-      ))}
       {bundle.status === "in_progress" && (
         <>
           <button type="button" className="btn wide" data-testid="overview-request-review" disabled={!canRequest} onClick={onRequestReview}>
@@ -414,6 +438,18 @@ function ReviewGate({ bundle, readiness, onRequestReview, onAddReviewer }: Revie
       )}
       {/* 요청한 자리에서 물린다 - 검토자가 보기 전에 고칠 것이 생긴 작성자의 길 */}
       {bundle.status === "in_review" && isAuthor && <WithdrawReviewButton bundle={bundle} className="btn wide" testId="overview-withdraw-review" />}
+      {groupedNotices.map((notice) =>
+        isNoticeGroup(notice) ? (
+          <NoticeGroupLine key={notice.code} docs={notice.docs} />
+        ) : (
+          <p key={`${notice.code}-${notice.doc_code ?? ""}`} className="grid grid-cols-[16px_minmax(0,1fr)] gap-2 text-ink-2" data-testid={`overview-notice-${notice.code}`}>
+            <Info size={16} strokeWidth={1.5} className="mt-[3px] text-ink-3" aria-hidden />
+            {notice.code === "equipment_sop_empty_slots"
+              ? t("notice.equipmentSlots", { doc: String(notice.doc_code ?? "") })
+              : t("notice.sentenceWarnings", { n: notice.count ?? 0 })}
+          </p>
+        ),
+      )}
     </section>
   );
 }

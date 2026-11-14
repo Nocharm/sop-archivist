@@ -35,14 +35,14 @@ function makeTarget(id: number, extra: Partial<GroupTarget> = {}): GroupTarget {
   return {
     id, target_doc_id: 9, slot_key: null, wi_step: null, wi_part: null, section_path: "", order_index: 0, lang: "ko", kind: "sentence",
     confirmed_text: `문장 ${id}`, ai_text: "", change_type: null, origin: "new_doc", new_unit_id: null, translation_source_unit_id: null, parent_target_id: null, cell_row: null, cell_col: null,
-    grid: null, status: "ai_suggested", hold_reason: "", warnings: [], source_unit_ids: [], group_id: null, revision: 1, indent_level: 0, ...extra,
+    grid: null, status: "ai_suggested", hold_reason: "", remark: "", warnings: [], source_unit_ids: [], group_id: null, revision: 1, indent_level: 0, ...extra,
   };
 }
 
 function makeWritten(id: number, extra: Partial<WrittenSentence> = {}): WrittenSentence {
   return {
     target_id: id, target_doc_id: 9, doc_code: "WI-04", section_path: "1. 준비", order_index: id, lang: "ko", kind: "sentence", text: `문장 ${id}`,
-    status: "unassigned", change_type: null, source_unit_ids: [], partner_target_id: null, revision: 1, ...extra,
+    status: "unassigned", change_type: null, source_unit_ids: [], partner_target_id: null, remark: "", revision: 1, ...extra,
   };
 }
 
@@ -77,14 +77,14 @@ describe("addPartnerTargets", () => {
     [73, makeWritten(73)],
   ]);
 
-  it("adds the other-language sentence when the row has that language", () => {
-    expect(addPartnerTargets([72], ["ko", "en"], written)).toEqual([72, 82]);
+  it("always picks the New partner too, whatever languages the row has", () => {
+    expect(addPartnerTargets([72], written)).toEqual([72, 82]);
+    expect(addPartnerTargets([82], written)).toEqual([82, 72]);
   });
 
-  it("adds nothing when the row has one language or the sentence has no partner", () => {
-    expect(addPartnerTargets([72], ["ko"], written)).toEqual([72]);
-    expect(addPartnerTargets([73], ["ko", "en"], written)).toEqual([73]);
-    expect(addPartnerTargets([72, 82], ["ko", "en"], written)).toEqual([72, 82]);
+  it("adds nothing when the sentence has no partner or the partner is already picked", () => {
+    expect(addPartnerTargets([73], written)).toEqual([73]);
+    expect(addPartnerTargets([72, 82], written)).toEqual([72, 82]);
   });
 });
 
@@ -121,7 +121,7 @@ describe("buildRecommendations", () => {
     ]);
     const recs = buildRecommendations(
       { aiLinks: [], aiPlaces: [], identical: [], similar: [similar(72), similar(82), similar(73)] },
-      (ids) => addPartnerTargets(ids, ["ko", "en"], written),
+      (ids) => addPartnerTargets(ids, written),
     );
     expect(recs.map((rec) => rec.destination)).toEqual([
       { kind: "link", targetIds: [72, 82] },
@@ -129,13 +129,13 @@ describe("buildRecommendations", () => {
     ]);
   });
 
-  it("keeps one card per sentence when the row has one language", () => {
+  it("shows the pair as one card on a one-language row too - the partner is linked as a translation", () => {
     const written = new Map([
       [72, makeWritten(72, { partner_target_id: 82 })],
       [82, makeWritten(82, { lang: "en", partner_target_id: 72 })],
     ]);
-    const recs = buildRecommendations({ aiLinks: [], aiPlaces: [], identical: [], similar: [similar(72)] }, (ids) => addPartnerTargets(ids, ["ko"], written));
-    expect(recs.map((rec) => rec.destination)).toEqual([{ kind: "link", targetIds: [72] }]);
+    const recs = buildRecommendations({ aiLinks: [], aiPlaces: [], identical: [], similar: [similar(72)] }, (ids) => addPartnerTargets(ids, written));
+    expect(recs.map((rec) => rec.destination)).toEqual([{ kind: "link", targetIds: [72, 82] }]);
   });
 });
 
@@ -222,48 +222,57 @@ describe("isRecommendationPicked", () => {
 
   it("is on for a KO/EN pair row after picking adds the partner sentence", () => {
     // pickDestination이 짝을 더한 초안
-    const draft = { kind: "link" as const, targetIds: addPartnerTargets([71], ["ko", "en"], written) };
+    const draft = { kind: "link" as const, targetIds: addPartnerTargets([71], written) };
     expect(draft.targetIds).toEqual([71, 72]);
-    expect(isRecommendationPicked(draft, { kind: "link", targetIds: [71] }, ["ko", "en"], written)).toBe(true);
+    expect(isRecommendationPicked(draft, { kind: "link", targetIds: [71] }, written)).toBe(true);
   });
 
-  it("is on for a one-language row where no partner is added", () => {
-    expect(isRecommendationPicked({ kind: "link", targetIds: [71] }, { kind: "link", targetIds: [71] }, ["ko"], written)).toBe(true);
+  it("is on for a sentence with no partner", () => {
+    expect(isRecommendationPicked({ kind: "link", targetIds: [73] }, { kind: "link", targetIds: [73] }, written)).toBe(true);
+  });
+
+  it("is off for a draft that lacks the partner the pick would add", () => {
+    expect(isRecommendationPicked({ kind: "link", targetIds: [71] }, { kind: "link", targetIds: [71] }, written)).toBe(false);
   });
 
   it("is off when the draft holds another sentence or an extra one", () => {
-    expect(isRecommendationPicked({ kind: "link", targetIds: [73] }, { kind: "link", targetIds: [71] }, ["ko", "en"], written)).toBe(false);
-    expect(isRecommendationPicked({ kind: "link", targetIds: [71, 72, 73] }, { kind: "link", targetIds: [71] }, ["ko", "en"], written)).toBe(false);
+    expect(isRecommendationPicked({ kind: "link", targetIds: [73] }, { kind: "link", targetIds: [71] }, written)).toBe(false);
+    expect(isRecommendationPicked({ kind: "link", targetIds: [71, 72, 73] }, { kind: "link", targetIds: [71] }, written)).toBe(false);
   });
 
   it("is off with no draft and compares places by id", () => {
-    expect(isRecommendationPicked(null, { kind: "link", targetIds: [71] }, ["ko"], written)).toBe(false);
-    expect(isRecommendationPicked({ kind: "slot", docId: 3, slotKey: "purpose" }, { kind: "slot", docId: 3, slotKey: "purpose" }, ["ko"], written)).toBe(true);
-    expect(isRecommendationPicked({ kind: "delete" }, { kind: "slot", docId: 3, slotKey: "purpose" }, ["ko"], written)).toBe(false);
+    expect(isRecommendationPicked(null, { kind: "link", targetIds: [71] }, written)).toBe(false);
+    expect(isRecommendationPicked({ kind: "slot", docId: 3, slotKey: "purpose" }, { kind: "slot", docId: 3, slotKey: "purpose" }, written)).toBe(true);
+    expect(isRecommendationPicked({ kind: "delete" }, { kind: "slot", docId: 3, slotKey: "purpose" }, written)).toBe(false);
   });
 });
 
 describe("buildLinkPairs", () => {
-  const rows = [makeWritten(71, { lang: "ko", source_unit_ids: [10] }), makeWritten(72, { lang: "en", source_unit_ids: [11, 99] }), makeWritten(73, { lang: "ko" })];
+  const rows = [makeWritten(71, { lang: "ko", source_unit_ids: [10] }), makeWritten(72, { lang: "en", source_unit_ids: [11, 99], status: "ai_suggested" }), makeWritten(73, { lang: "ko" })];
 
-  it("keeps only sources in the open Old document", () => {
+  it("keeps only sources in the open Old document and marks AI-suggested links", () => {
     expect(buildLinkPairs(rows, new Set([10, 11]), null)).toEqual([
-      { unitId: 10, targetId: 71, draft: false },
-      { unitId: 11, targetId: 72, draft: false },
+      { unitId: 10, targetId: 71, draft: false, ai: false },
+      { unitId: 11, targetId: 72, draft: false, ai: true },
     ]);
   });
 
   it("adds unsaved picks against same-language units only, once", () => {
     const pairs = buildLinkPairs(rows, new Set([10, 11, 12]), { units: [{ id: 10, lang: "ko" }, { id: 12, lang: "en" }], targetIds: [71, 73] });
-    expect(pairs.filter((pair) => pair.draft)).toEqual([{ unitId: 10, targetId: 73, draft: true }]);
+    expect(pairs.filter((pair) => pair.draft)).toEqual([{ unitId: 10, targetId: 73, draft: true, ai: false }]);
+  });
+
+  it("draws a line to a New sentence the row has no language for, from every unit of the row", () => {
+    // 영어 단위 하나, 한글 새 문장 하나 → 선 하나(번역으로 이어진다)
+    expect(buildLinkPairs(rows, new Set([5]), { units: [{ id: 5, lang: "en" }], targetIds: [71] })).toEqual([{ unitId: 5, targetId: 71, draft: true, ai: false }]);
   });
 });
 
 describe("findLinkPartners and pickDrawnLinks", () => {
   const pairs = [
-    { unitId: 10, targetId: 71, draft: false },
-    { unitId: 10, targetId: 72, draft: false },
-    { unitId: 11, targetId: 72, draft: false },
+    { unitId: 10, targetId: 71, draft: false, ai: false },
+    { unitId: 10, targetId: 72, draft: false, ai: false },
+    { unitId: 11, targetId: 72, draft: false, ai: false },
   ];
 
   it("finds the other side", () => {
@@ -278,7 +287,7 @@ describe("findLinkPartners and pickDrawnLinks", () => {
   });
 
   it("draws only focused lines when there are many", () => {
-    expect(pickDrawnLinks(pairs, new Set(), new Set([71]), 2)).toEqual([{ unitId: 10, targetId: 71, draft: false, strong: true }]);
+    expect(pickDrawnLinks(pairs, new Set(), new Set([71]), 2)).toEqual([{ unitId: 10, targetId: 71, draft: false, ai: false, strong: true }]);
     expect(pickDrawnLinks(pairs, new Set(), new Set(), 2)).toEqual([]);
   });
 });

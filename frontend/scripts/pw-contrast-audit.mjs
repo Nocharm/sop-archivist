@@ -55,6 +55,8 @@ async function auditPage(page) {
       const rect = el.getBoundingClientRect();
       if (rect.width === 0 || style.visibility === "hidden" || Number(style.opacity) === 0) continue;
       if (el.closest("[disabled],[aria-disabled='true'],:disabled,.sk,option,select")) continue;
+      // Excel 미리보기의 되풀이 값은 일부러 흐린 회색(--sheet-faint, 사용자 결정 O6·O7)이다 - 대비는 결과물 보고에 따로 적는다
+      if (el.closest('[data-testid="export-preview-sheet"] td')?.style.color === "var(--sheet-faint)") continue;
       if (Number(getComputedStyle(el.closest("*")).opacity) < 1 || el.closest("button:disabled")) continue;
       const fg = blend(toRgba(style.color), findBackground(el));
       const bg = findBackground(el);
@@ -131,14 +133,69 @@ for (const theme of ["light", "dark"]) {
     ["overview", `/bundles/${id}`, '[data-testid="overview-gate-units"]'],
     ["documents", `/bundles/${id}/documents`, '[data-testid$="-row"][data-testid^="documents-"]'],
     ["split", `/bundles/${id}/split`, '[data-testid^="split-paper-unit-"]'],
+    // 고른 조각 - 올리거나 고를 때만 보이는 KO/EN 탭(짝이면 둘 다)의 글자 대비를 잰다. 탭이 다 드러난(opacity 1) 뒤에
+    ["split-selected", `/bundles/${id}/split`, '[data-testid^="split-paper-unit-"]', async (page) => {
+      await page.locator('[data-testid^="split-paper-unit-"]').first().click();
+      await page.locator(".strip[data-sel] > .strip-lang").first().waitFor({ state: "visible", timeout: T });
+      await page.waitForFunction(() => getComputedStyle(document.querySelector(".strip[data-sel] > .strip-lang")).opacity === "1", null, { timeout: T });
+    }],
     ["tobe", `/bundles/${id}/tobe`, '[data-testid$="-row"][data-testid^="tobe-"]'],
     ["assign", `/bundles/${id}/assign`, '[data-testid="assign-help"]'],
     ["assign-help-marks", `/bundles/${id}/assign`, '[data-testid="assign-help"]', async (page) => { const toggle = page.locator('[data-testid="assign-help-toggle"]'); if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click(); await page.locator('[data-testid="assign-help-tab-marks"]').click(); }],
     ["assign-link", `/bundles/${id}/assign`, '[data-testid="assign-bar"]', pickCandidate],
     ["assign-unsourced", `/bundles/${id}/assign`, '[data-testid="assign-filter-unsourced"]', (page) => page.locator('[data-testid="assign-filter-unsourced"]').click()],
+    // 필터를 걸어 접힌 줄·묶음 한 줄과 고른 필터 칩(확정·보류)을 본다 - 묶음 하나를 펼쳐 접기 단추도 함께
+    ["assign-fold", `/bundles/${id}/assign`, '[data-testid="assign-filter-confirmed"]', async (page) => {
+      await page.locator('[data-testid="assign-filter-confirmed"]').click();
+      await page.locator('[data-testid^="assign-paper-fold-line-"]').first().waitFor({ timeout: T });
+      await page.locator('[data-testid^="assign-paper-fold-run-"]').first().waitFor({ timeout: T });
+    }],
+    ["assign-fold-hold", `/bundles/${aiId}/assign`, '[data-testid="assign-filter-on_hold"]', async (page) => {
+      await page.locator('[data-testid="assign-filter-on_hold"]').click();
+      await page.locator('[data-testid^="assign-paper-fold-run-"]').first().click();
+      await page.locator('[data-testid^="assign-paper-fold-head-"]').first().waitFor({ timeout: T });
+    }],
     ["outputs", `/bundles/${id}/outputs`, '[data-testid="output-c"]'],
+    ["outputs-a", `/bundles/${id}/outputs`, '[data-testid="outputs-tab-a"]', async (page) => { await page.locator('[data-testid="outputs-tab-a"]').click(); await page.locator('tr[data-testid^="output-a-row-"]').first().waitFor({ timeout: T }); }],
+    // 순서를 바꾼 직후(저장 전) - 저장은 붙잡았다가 실패로 돌려 DB를 바꾸지 않는다
+    ["outputs-c-moved", `/bundles/${id}/outputs`, '[data-testid="outputs-tab-c"]', async (page) => {
+      // 앞 장면이 A 탭을 골라 두어(브라우저가 기억) C로 돌아온다
+      await page.locator('[data-testid="outputs-tab-c"]').click();
+      await page.locator('[data-testid^="output-c-move-down-"]').first().waitFor({ timeout: T });
+      await page.route("**/targets/order**", async (route) => {
+        await new Promise((done) => setTimeout(done, 4000));
+        await route.fulfill({ status: 500, contentType: "application/json", body: "{}" }).catch(() => {});
+      }, { times: 1 });
+      await page.locator('[data-testid^="output-c-move-down-"]:not([disabled])').first().dispatchEvent("click");
+      await page.waitForTimeout(600);
+    }],
+    // Excel 미리보기 창 - 종이(--sheet-*)의 머리·본문 글자(일부러 흐린 되풀이 값은 뺀다)와 탭
+    ["export-preview", `/bundles/${id}/outputs`, '[data-testid="outputs-export-open"]', async (page) => { await page.locator('[data-testid="outputs-export-open"]').click(); await page.locator('[data-testid="export-preview-sheet"] tbody tr').first().waitFor({ timeout: T }); }],
+    // 나무의 칸 제목 자리("Slot heading · …")
+    ["assign-tree-heading", `/bundles/${id}/assign`, '[data-testid="assign-bar"]', async (page) => {
+      await page.keyboard.press("j");
+      await page.locator('[data-testid="assign-row-id"]').waitFor({ timeout: T });
+      await page.locator('[data-testid="assign-acc-all"]').click();
+      await page.locator('[data-testid="assign-tree-pSOP-CF"]').click();
+      await page.locator('[data-testid^="assign-tree-place-heading:"]').first().waitFor({ timeout: T });
+    }],
+    // 엮은 문서 미리 보기의 칸 머리 출처 - 시드에 칸 제목이 없어 응답에 넣어 그린다(DB는 그대로)
+    ["assign-composed", `/bundles/${id}/assign`, '[data-testid="assign-bar"]', async (page) => {
+      await page.route("**/outputs/c/docs/**", async (route) => {
+        const response = await route.fetch();
+        const doc = await response.json();
+        for (const section of doc.sections ?? []) section.heading_note = "← OLD-1 §1, OLD-2 §1";
+        await route.fulfill({ response, json: doc });
+      });
+      const tobe = await (await page.request.get(`${BASE}/api/bundles/${id}/tobe`, { headers: { "X-Dev-User": "qa.member" } })).json();
+      const sop = tobe.docs.find((doc) => doc.doc_type === "sop" && doc.entrance === "assign");
+      await page.locator('[data-testid="assign-new-doc"]').click();
+      await page.locator(`[data-testid="assign-new-doc-option-${sop.id}"]`).click();
+      await page.locator('[data-testid^="assign-new-heading-note-"]').first().waitFor({ timeout: T });
+      await page.unroute("**/outputs/c/docs/**");
+    }],
     ["review", `/bundles/${id}/review`, '[data-testid="output-c"]'],
-    ["assign-ai", `/bundles/${aiId}/assign`, '[data-testid="assign-bar"]', async (page) => { await page.keyboard.press("j"); await page.locator('[data-testid="assign-rec-0"]').waitFor({ timeout: T }); }],
+    ["assign-ai", `/bundles/${aiId}/assign`, '[data-testid="assign-bar"]', async (page) => { await page.locator('[data-testid="assign-filter-ai_suggested"]').click(); await page.keyboard.press("j"); await page.locator('[data-testid="assign-rec-0"]').waitFor({ timeout: T }); }],
     ["outputs-ai", `/bundles/${aiId}/outputs`, '[data-testid="output-c"]'],
     // 상단 바 AI 작업 목록을 연 상태 - 시드의 AI 제안 단계가 남긴 끝난 요청이 보인다
     ["ai-jobs", `/bundles/${aiId}`, '[data-testid="top-bar-ai"]', async (page) => { await page.locator('[data-testid="top-bar-ai"]').click(); await page.locator('[data-testid^="ai-jobs-request-"]').first().waitFor({ timeout: T }); }],

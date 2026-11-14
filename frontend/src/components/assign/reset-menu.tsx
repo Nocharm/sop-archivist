@@ -6,16 +6,19 @@ import { useRef, useState } from "react";
 
 import type { ResetScope } from "@/components/assign/reset-modal";
 import { Menu } from "@/components/ui/menu";
+import { Tooltip } from "@/components/ui/tooltip";
 import { useI18n } from "@/lib/i18n";
 
 interface ResetMenuProps {
   /** 지금 연 Old 문서 - 없으면 문서 항목을 막는다 */
   document: { id: number; label: string } | null;
   disabled?: boolean;
+  /** 도구 줄이 좁으면 라벨 없이 아이콘만(라벨은 툴팁) */
+  compact?: boolean;
   onPick: (scope: ResetScope) => void;
 }
 
-export function ResetMenu({ document, disabled = false, onPick }: ResetMenuProps) {
+export function ResetMenu({ document, disabled = false, compact = false, onPick }: ResetMenuProps) {
   const { t } = useI18n();
   const anchorRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -25,13 +28,23 @@ export function ResetMenu({ document, disabled = false, onPick }: ResetMenuProps
     onPick(scope);
   }
 
+  const trigger = (
+    <button ref={anchorRef} type="button" className="btn h-7" aria-haspopup="menu" aria-expanded={open} data-testid="assign-reset" aria-label={compact ? t("assign.reset.menu") : undefined} disabled={disabled} onClick={() => setOpen((prev) => !prev)}>
+      <RotateCcw size={12} strokeWidth={1.5} aria-hidden />
+      {!compact && t("assign.reset.menu")}
+      <ChevronDown size={12} strokeWidth={1.5} className="select-chevron" aria-hidden />
+    </button>
+  );
+
   return (
     <>
-      <button ref={anchorRef} type="button" className="btn h-7" aria-haspopup="menu" aria-expanded={open} data-testid="assign-reset" disabled={disabled} onClick={() => setOpen((prev) => !prev)}>
-        <RotateCcw size={12} strokeWidth={1.5} aria-hidden />
-        {t("assign.reset.menu")}
-        <ChevronDown size={12} strokeWidth={1.5} className="select-chevron" aria-hidden />
-      </button>
+      {compact ? (
+        <Tooltip label={t("assign.reset.menu")} suppressed={open}>
+          {trigger}
+        </Tooltip>
+      ) : (
+        trigger
+      )}
       {open && (
         <Menu anchorRef={anchorRef} onClose={() => setOpen(false)} testId="assign-reset-list" align="start">
           <button

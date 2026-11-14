@@ -15,8 +15,7 @@ import { InlineText } from "@/components/inline-text";
 import { ReadOnlyNote } from "@/components/read-only-note";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { EmptyState } from "@/components/ui/empty-state";
-import { LoadError } from "@/components/ui/load-error";
-import { MorphButton } from "@/components/ui/morph-button";
+import { BundleLoadError } from "@/components/bundle-load-error";
 import { Truncate } from "@/components/ui/motion";
 import { Select } from "@/components/ui/select";
 import { showToast } from "@/components/ui/toast";
@@ -40,9 +39,8 @@ const SKELETON_ROWS = 4;
 
 const LIST_KEY = "documents";
 
-// 동작 칸이 미리 잡는 폭 - 단추 하나를 펼치면 그 단추 라벨 + 오른쪽 단추들(흐려져도 자리는 남는다)이 이 안에 들어가 옆 칸 글자를 덮지 않는다.
-// 가장 넓은 경우는 맨 왼쪽 Preview(영어 약 86px + 34px × 2). 라벨은 짧게 둔다(Download) - 늘린 폭만큼 제목 열 최소 폭을 줄여 표 최소 폭은 그대로다
-const ACTIONS_WIDTH = "w-[156px]";
+// 동작 칸 폭 - 아이콘 단추 셋(24px × 3 + 간격 2px × 2 = 76px). 단추가 모자란 줄(거절된 줄)도 오른쪽 끝에 붙는다
+const ACTIONS_WIDTH = "w-[80px]";
 
 // 표가 이 폭(본문 폭, px)에 다 들어가지 않으면 뒤쪽 네 열(추출·보조·경고·동작)을 한 열 두 줄로 접는다 - 한 줄 배치의 표 최소 폭(영어 약 1223, 한국어 약 1176)보다 조금 크게
 const TRAIL_WRAP_BELOW = 1230;
@@ -100,17 +98,29 @@ export default function DocumentsPage() {
   // Old 구역 먼저, New 구역 다음 - 구역 안 순서는 서버가 준 그대로
   const rows = data === null ? null : [...data.filter((document) => document.side === "old"), ...data.filter((document) => document.side !== "old")];
 
-  const renderActions = (document: SopDocument) => (
-    <span className={`mbtn-set ${ACTIONS_WIDTH}`}>
-      {document.status === "ready" && (
-        <MorphButton icon={Eye} label={t("documents.preview")} testId={`documents-${document.id}-preview`} onClick={() => setPreviewing(document)} />
-      )}
-      {document.status === "ready" && (
-        <MorphButton icon={Download} label={t("documents.download")} testId={`documents-${document.id}-download`} onClick={() => void handleDownload(document)} />
-      )}
-      {canEdit && <MorphButton icon={Trash2} tone="danger" label={t("documents.deleteShort")} testId={`documents-${document.id}-delete`} onClick={() => setDeleting(document)} />}
-    </span>
-  );
+  // 늘 보이되 흐린 아이콘 단추(.row-actions-quiet) - 펼치는 라벨 대신 툴팁이라 왼쪽 알약을 덮지 않는다. 자리는 오른쪽 끝 고정 폭이라 줄마다 오른쪽 끝이 같다
+  const renderActions = (document: SopDocument) => {
+    const items = [
+      ...(document.status === "ready"
+        ? [
+            { key: "preview", icon: Eye, label: t("documents.preview"), danger: false, run: () => setPreviewing(document) },
+            { key: "download", icon: Download, label: t("documents.download"), danger: false, run: () => void handleDownload(document) },
+          ]
+        : []),
+      ...(canEdit ? [{ key: "delete", icon: Trash2, label: t("documents.deleteShort"), danger: true, run: () => setDeleting(document) }] : []),
+    ];
+    return (
+      <span className={`row-actions-quiet flex justify-end gap-0.5 ${ACTIONS_WIDTH}`}>
+        {items.map(({ key, icon: Icon, label, danger, run }) => (
+          <Tooltip key={key} label={label} align="end">
+            <button type="button" className={`btn ghost icon h-6 w-6 ${danger ? "text-danger" : ""}`} aria-label={label} data-testid={`documents-${document.id}-${key}`} onClick={run}>
+              <Icon size={16} strokeWidth={1.5} aria-hidden />
+            </button>
+          </Tooltip>
+        ))}
+      </span>
+    );
+  };
   const renderWarnings = (document: SopDocument) => <WarningChips warnings={document.extraction?.warnings ?? []} testId={`documents-${document.id}-warnings`} />;
 
   // 뒤쪽 네 열 - 한 줄 배치(넓을 때와 카드). 카드는 status·aux가 배지, actions가 아랫줄 단추 자리다
@@ -125,19 +135,18 @@ export default function DocumentsPage() {
     skeletonWidth: 40,
     cell: renderActions,
   };
-  // 좁을 때 한 열 두 줄 - 윗줄은 추출·보조 검사 알약과 경고 개수 칩, 아랫줄은 동작 단추(왼쪽 정렬). 라벨이 펼쳐져도 아랫줄 안이라 알약을 덮지 않는다
+  // 좁을 때 한 열 한 줄 - 왼쪽에 추출·보조 검사 아이콘(또는 알약)과 경고 개수 칩, 오른쪽 끝에 아이콘 단추
   const trailColumn: DataColumn<SopDocument> = {
     key: "trail",
     header: t("documents.col.trailWithWarnings"),
     card: "none",
     className: "align-middle",
-    minWidth: 220, // 알약 둘 + 경고 칩 - 동작 칸은 아랫줄이라 폭을 더 늘리지 않는다
-    skeletonWidth: 200,
+    minWidth: 200, // 상태 아이콘 둘 + 경고 칩 + 단추 셋
+    skeletonWidth: 180,
     cell: (document) => {
       const warnings = document.extraction?.warnings ?? [];
       return (
-        // 줄 높이를 제목 칸(두 줄)에 맞춘다 - 단추를 24px로 줄이고, 칸 위아래 여백만큼 음수 여백을 준다
-        <span className="-my-1 flex min-w-0 flex-col items-start gap-0.5 [&_.mbtn-set]:justify-start [&_.mbtn]:h-6">
+        <span className="flex min-w-0 items-center justify-between gap-2">
           <span className="flex min-w-0 items-center gap-1.5">
             <DocStatusPill status={document.status} testId={`documents-${document.id}-status`} />
             <AuxPill document={document} testId={`documents-${document.id}-aux`} />
@@ -216,17 +225,24 @@ export default function DocumentsPage() {
       skeletonWidth: 320,
       cell: (document) => (
         <>
-          <InlineText
-            value={document.title}
-            placeholder={t("documents.colTitle")}
-            editable={canEdit && document.status === "ready"}
-            width="fill"
-            maxLength={500}
-            href={document.status === "ready" ? `/bundles/${bundleId}/split?doc=${document.id}` : undefined}
-            editLabel={t("common.edit")}
-            testId={`documents-${document.id}-title`}
-            onSave={(title) => saveField(document, { title })}
-          />
+          {document.status === "ready" ? (
+            <InlineText
+              value={document.title}
+              placeholder={t("documents.colTitle")}
+              editable={canEdit}
+              width="fill"
+              maxLength={500}
+              href={`/bundles/${bundleId}/split?doc=${document.id}`}
+              editLabel={t("common.edit")}
+              testId={`documents-${document.id}-title`}
+              onSave={(title) => saveField(document, { title })}
+            />
+          ) : (
+            // 읽기 전용 제목도 링크 제목(.inline-link)과 같은 안쪽 여백·굵기 - 거절된 줄 글이 옆 줄과 어긋나지 않는다
+            <span className="block max-w-full px-1.5 text-[13px] font-semibold leading-6" data-testid={`documents-${document.id}-title`}>
+              {document.title ? <Truncate text={document.title} className="one-line" /> : <span className="text-ink-4">–</span>}
+            </span>
+          )}
           <Truncate text={document.file_name} className="px-[7px] font-mono text-[11px] font-normal leading-4 text-ink-3" />
           {document.status !== "ready" && (
             <span className="block px-[7px] text-xs font-normal text-danger" data-testid={`documents-${document.id}-reason`}>
@@ -279,7 +295,7 @@ export default function DocumentsPage() {
       </div>
 
       {error !== null && data === null ? (
-        <LoadError error={error} onRetry={reload} testId="documents" />
+        <BundleLoadError error={error} onRetry={reload} testId="documents" />
       ) : data !== null && data.length === 0 ? (
         <EmptyState
           icon={FileText}

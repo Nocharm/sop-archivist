@@ -1,19 +1,25 @@
 // 원문 용지 - 블록을 원문 순서대로 그리고 단위마다 누를 수 있는 조각을 둔다. 용지 안에는 추출한 글자만 둔다(앱 라벨 금지).
 // 글자 조각마다 data-start(블록 안 위치)를 달아, 누른 자리·끌어 고른 범위를 블록 위치로 되돌린다.
-// strips(Split·Assign)에서는 단위 하나가 종이 한 조각이다 - 확인과 상관없이 처음부터 떨어져 있고, 조각 왼쪽 밖에 언어 색 탭(KO·EN, 보류는 줄무늬)을 붙여 절 번호를 보이고(짝은 이어 붙인 탭 하나), 오른쪽 끝에 아이콘 표시를 둔다.
-// 고른 단위는 글자 영역의 가장 바깥 윤곽 하나로 감싼다(contour). 탭은 앱 표시라 aria로 읽히지 않고, 아이콘 표시는 포인터·포커스 툴팁으로 뜻을 알린다.
+// strips(Split·Assign)에서는 단위 하나가 종이 한 조각이다 - 확인과 상관없이 처음부터 떨어져 있고, 조각 왼쪽 밖에 앞머리(절 번호 칸, StripLead)를, 이웃한 짝은 구성원 수와 상관없이 한 카드(.strip-card)로, 보류는 글 첫머리에 상태 칩을, 오른쪽 끝에 아이콘 표시를 둔다. 절 첫 블록 글 앞의 절 번호는 번호 칸과 겹치니 그리지 않는다(표시만).
+// 고른 단위는 글자 영역의 가장 바깥 윤곽 하나로 감싼다(contour). 앞머리 번호 칸·아이콘 표시는 포인터·포커스 툴팁으로 뜻을 알린다.
+// strips.fold(Assign 필터)가 있으면 맞는 조각만 제 모양, 곁은 한 줄 판, 먼 구간은 묶음 한 줄로 접는다(paper-fold-model.ts) - 한 줄 판·묶음은 단추라 눌러도 조각을 고르지 않는다.
 "use client";
 
-import { CircleCheck, FoldVertical, FolderCheck, ImageIcon, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles } from "lucide-react";
+import { ChevronsDownUp, CircleCheck, Ellipsis, FoldVertical, FolderCheck, ImageIcon, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles } from "lucide-react";
 import { Fragment, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { FigureImage } from "@/components/paper/figure-image";
+import { LangToken } from "@/components/paper/lang-token";
+import { StripLead, STRIP_LEAD_EXTRA } from "@/components/paper/strip-lead";
+import { UnitStatusChip } from "@/components/status";
 import { Collapse } from "@/components/ui/motion";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
+import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildContourPath, buildRows, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
-import { getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, type PairBracket } from "@/lib/strip-pill-model";
+import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
+import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
 
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
 type PaperMark = UnitMark | "warn";
@@ -40,6 +46,21 @@ const MARK_LABELS: Record<PaperMark, string> = {
 
 function readRowUnitId(row: PaperRow): number | null {
   return row.type === "table" ? row.item.unitId : row.unitId;
+}
+
+/** 접기에서 줄이 맞는지 볼 단위 - 표는 표 단위와 칸 안 문장 단위 모두 */
+function listRowUnitIds(row: PaperRow, segments: ReadonlyMap<number, Segment[]>): number[] {
+  if (row.type !== "table") return row.unitId === null ? [] : [row.unitId];
+  const ids = new Set<number>();
+  if (row.item.unitId !== null) ids.add(row.item.unitId);
+  for (const cell of row.item.rows.flat()) for (const segment of segments.get(cell.id) ?? []) if (segment.unitId !== null) ids.add(segment.unitId);
+  return [...ids];
+}
+
+/** 접기 한 칸 - 이웃한 짝 카드의 두 줄은 한 칸 */
+interface FoldCell {
+  item: FoldItem;
+  rows: PaperRow[];
 }
 
 /** 줄이 놓인 첫 블록의 절 번호 - 표는 없다 */
@@ -87,10 +108,8 @@ interface PaperProps {
   /** 단위마다 종이 조각으로, 앞에 태그, 끝에 표시. isChecked는 먼저 칠한 경계 확인까지 본다 */
   strips?: {
     isChecked: (unit: ViewUnit) => boolean;
-    /** Split - 조각 사이의 위아래 합치기. 없으면 틈만 둔다(Assign) */
-    merge?: { busy: boolean; onMerge: (firstId: number, secondId: number) => void };
-    /** Split - 언어가 달라 못 합치는 틈에서 두 문장을 한/영 짝으로(짝 지을 수 있을 때만 합치기 대신) */
-    pair?: { canPair: (firstId: number, secondId: number) => boolean; onPair: (firstId: number, secondId: number) => void };
+    /** Split - 조각 사이의 묶기(합치기냐 한/영 짝이냐는 plan이 고른다). 없으면 틈만 둔다(Assign) */
+    join?: { busy: boolean; plan: (firstId: number, secondId: number) => JoinPlan; onJoin: (firstId: number, secondId: number, kind: JoinKind) => void };
     /** Assign - 경계 확인 표시는 뺀다 */
     hideChecked?: boolean;
     /** Assign - 보기를 다시 부르지 않아도 지금 커버 상태로 표시한다 */
@@ -99,6 +118,8 @@ interface PaperProps {
     renderNote?: (unitIds: number[]) => ReactNode;
     /** Assign - 조각 오른쪽 칸(연결 배지). 비면 폭을 차지하지 않는다 */
     renderPills?: (unitId: number) => ReactNode;
+    /** Assign - 필터 접기. matchIds는 필터를 걸 때의 목록(스냅숏), 없으면 전부 그린다 */
+    fold?: { matchIds: ReadonlySet<number>; open: FoldOpen; onOpenChange: (next: FoldOpen) => void };
   };
   /** 고른 단위를 밑줄 대신 바깥 윤곽으로 감싼다 */
   contour?: boolean;
@@ -112,7 +133,7 @@ interface PaperProps {
   onCutNudge?: (step: 1 | -1) => void;
   onUnitDoubleClick?: (unitId: number, at: { blockId: number; offset: number } | null) => void;
   /** 문장 줄을 우클릭하거나 메뉴 글쇠를 눌렀다 - 주면 브라우저 메뉴 대신 이 콜백이 불린다(Split) */
-  onUnitContextMenu?: (unitId: number, at: { x: number; y: number }) => void;
+  onUnitContextMenu?: (unitId: number, at: { x: number; y: number }, caret: { blockId: number; offset: number } | null) => void;
 }
 
 /** 화면 좌표 → 블록 위치. 글자 조각 요소의 data-start에 글자 노드 안 위치를 더한다 */
@@ -185,9 +206,13 @@ export function Paper({
 }: PaperProps) {
   const { t } = useI18n();
   const pageRef = useRef<HTMLDivElement>(null);
+  // 첫 누름 때 누른 조각과 그 높이 - 고르자마자 곁 틈이 벌어져 글이 밀려도 두 번 누름(나눌 자리)을 처음 누른 글자로 되돌린다
+  const pressRef = useRef<{ el: HTMLElement; top: number } | null>(null);
   const [contourPath, setContourPath] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const tip = useDelegatedTip();
+  // 언어 칩을 함께 보이는 떨어진 짝 조각 - 지금 올린 단위와 표시를 단 요소(markHoverMates)
+  const mateHoverRef = useRef<{ unitId: number | null; els: HTMLElement[] }>({ unitId: null, els: [] });
   const hasStrips = strips !== undefined;
   // 단추 줄을 그리는 조각 - 지금 고른 것과 바로 전에 고른 것(접히는 동안). 수천 조각마다 접기 부품을 두지 않는다
   const [actionIds, setActionIds] = useState({ current: selectedId, previous: null as number | null });
@@ -205,20 +230,18 @@ export function Paper({
         ];
     return lists.filter((list) => list.items.length > 0).map((list) => ({ edge: list.edge, rows: buildRows(list.items, model.segments) }));
   }, [hasStrips, items, model]);
-  // 짝 - 단위 → 짝 단위, 이웃한 짝은 한 괄호로 묶는다(같은 쪽·같은 부분의 바로 이웃만)
-  const partnerOf = useMemo(() => {
+  // 짝 - 단위 → 같은 짝의 다른 구성원(원문 순서, 떨어진 구성원 포함). 한 카드는 아래 brackets가 정한다(같은 쪽·같은 부분의 끊김 없는 줄만)
+  const matesOf = useMemo(() => {
     const byPair = new Map<number, ViewUnit[]>();
     for (const unit of model.units.values()) {
       if (unit.pair_id === null) continue;
       byPair.set(unit.pair_id, [...(byPair.get(unit.pair_id) ?? []), unit]);
     }
-    const map = new Map<number, ViewUnit>();
+    const map = new Map<number, ViewUnit[]>();
     for (const members of byPair.values()) {
+      if (members.length < 2) continue;
       members.sort((a, b) => a.pos_seq - b.pos_seq);
-      if (members.length === 2) {
-        map.set(members[0].id, members[1]);
-        map.set(members[1].id, members[0]);
-      }
+      for (const member of members) map.set(member.id, members.filter((other) => other.id !== member.id));
     }
     return map;
   }, [model]);
@@ -227,12 +250,56 @@ export function Paper({
     for (const section of sections) {
       const entries = section.rows.map((row) => {
         const unitId = readRowUnitId(row);
-        return { unitId: unitId ?? -1, partnerId: unitId === null ? null : (partnerOf.get(unitId)?.id ?? null) };
+        return { unitId: unitId ?? -1, groupId: unitId === null ? null : (model.units.get(unitId)?.pair_id ?? null) };
       });
       for (const [unitId, bracket] of getPairBrackets(entries)) map.set(unitId, bracket);
     }
     return map;
-  }, [sections, partnerOf]);
+  }, [sections, model]);
+  // 카드의 둘째 줄부터 → 첫 줄 단위 - 번호 칸 폭·절 머리·틈 판정의 기준
+  const cardTops = useMemo(() => {
+    const order = sections.flatMap((section) => section.rows.map((row) => readRowUnitId(row) ?? -1));
+    return getCardTops(order, brackets);
+  }, [sections, brackets]);
+  // 고른 조각 곁 틈을 벌릴 조각 - 이웃한 짝은 한 카드라 고른 줄이 카드 어디에 있든 카드 위아래가 같이 벌어진다
+  const selectedBlock = useMemo(() => {
+    const ids = new Set<number>();
+    if (selectedId === null) return ids;
+    ids.add(selectedId);
+    if (!brackets.has(selectedId)) return ids;
+    const top = cardTops.get(selectedId) ?? selectedId;
+    ids.add(top);
+    for (const [id, cardTop] of cardTops) if (cardTop === top) ids.add(id);
+    return ids;
+  }, [selectedId, brackets, cardTops]);
+  // 접기 칸 - 부분마다 문서 순서로, 이웃한 짝 카드는 한 칸(첫 줄 key)
+  const hasFold = strips?.fold !== undefined;
+  const foldCells = useMemo(() => {
+    if (!hasFold) return [];
+    return sections.map((section) => {
+      const cells: FoldCell[] = [];
+      for (let index = 0; index < section.rows.length; index += 1) {
+        const row = section.rows[index];
+        const rows = [row];
+        if (brackets.get(readRowUnitId(row) ?? -1) === "top") {
+          while (index + 1 < section.rows.length && cardTops.has(readRowUnitId(section.rows[index + 1]) ?? -1)) {
+            index += 1;
+            rows.push(section.rows[index]);
+          }
+        }
+        cells.push({ item: { key: row.key, unitIds: rows.flatMap((one) => listRowUnitIds(one, model.segments)), section: readRowSection(row) }, rows });
+      }
+      return cells;
+    });
+  }, [hasFold, sections, brackets, cardTops, model]);
+  // 접혀 있어도 늘 펼쳐 보일 단위 - 고른 단위와 그 짝 구성원 모두(이웃하지 않은 구성원도). 출처 칩 등으로 필터 밖 단위를 고르면 저절로 엿보기가 된다
+  const foldForced = useMemo(() => {
+    const ids = new Set<number>();
+    if (selectedId === null) return ids;
+    ids.add(selectedId);
+    for (const mate of matesOf.get(selectedId) ?? []) ids.add(mate.id);
+    return ids;
+  }, [selectedId, matesOf]);
   // 절 번호를 보일 첫 줄 - 부분(머리글·본문·바닥글)마다 문서 순서로
   const sectionHeads = useMemo(() => {
     const heads = new Set<number>();
@@ -240,24 +307,24 @@ export function Paper({
       const units = section.rows.flatMap((row) => {
         const unitId = readRowUnitId(row);
         if (row.type === "table" || unitId === null) return [];
-        return [{ unitId, part: section.edge ?? "body", sectionLabel: readRowSection(row), pairTopOf: brackets.get(unitId) === "bottom" ? (partnerOf.get(unitId)?.id ?? null) : null }];
+        return [{ unitId, part: section.edge ?? "body", sectionLabel: readRowSection(row), pairTopOf: cardTops.get(unitId) ?? null }];
       });
       for (const unitId of getSectionHeads(units)) heads.add(unitId);
     }
     return heads;
-  }, [sections, brackets, partnerOf]);
-  // 줄마다 탭 폭 - 번호 없는 줄은 직전 줄 폭, 짝은 한 폭(부분마다 문서 순서로)
+  }, [sections, cardTops]);
+  // 줄마다 번호 칸 폭 - 번호 없는 줄은 직전 줄 폭, 짝 카드는 첫 줄 폭(부분마다 문서 순서로)
   const tabWidths = useMemo(() => {
     const rows = sections.flatMap((section) =>
       section.rows.map((row) => {
         const unitId = readRowUnitId(row);
-        const topId = unitId !== null && brackets.get(unitId) === "bottom" ? (partnerOf.get(unitId)?.id ?? null) : null;
-        const topRow = topId === null ? undefined : section.rows.find((candidate) => readRowUnitId(candidate) === topId);
+        const topId = unitId === null ? undefined : cardTops.get(unitId);
+        const topRow = topId === undefined ? undefined : section.rows.find((candidate) => readRowUnitId(candidate) === topId);
         return { key: row.key, part: section.edge ?? "body", sectionLabel: readRowSection(row), pairTopOf: topRow?.key ?? null };
       }),
     );
     return getTabWidths(rows);
-  }, [sections, brackets, partnerOf]);
+  }, [sections, cardTops]);
   // 표 칸 안의 조각 줄 - 칸이 많은 표에서 고를 때마다 다시 펴지 않게
   const cellRows = useMemo(() => {
     const map = new Map<number, PaperRow[]>();
@@ -367,7 +434,11 @@ export function Paper({
     onCutNudge?.(event.key === "ArrowRight" ? 1 : -1);
   }
 
-  function renderSegment(block: ViewBlock, segment: Segment, index: number): ReactNode {
+  /** 글자 조각 하나. skip = 블록 앞에서 숨길 글자 수(절 첫 블록의 앞 번호 - 표시만, data-start는 숨긴 만큼 밀린 원문 위치) */
+  function renderSegment(block: ViewBlock, original: Segment, index: number, skip = 0): ReactNode {
+    const visible = sliceVisible(original.start, original.end, skip);
+    if (visible === null) return null;
+    const segment = { ...original, ...visible };
     const text = block.text.slice(segment.start, segment.end);
     if (segment.unitId === null) {
       return (
@@ -377,8 +448,8 @@ export function Paper({
       );
     }
     const unit = model.units.get(segment.unitId);
-    // 여러 범위에 걸친 단위는 범위의 첫 자리도 나눌 자리다(>=)
-    const isCutHere = cut && cut.blockId === block.id && cut.offset >= segment.start && cut.offset < segment.end && segment.unitId === selectedId;
+    // 여러 범위에 걸친 단위는 범위의 첫 자리도 나눌 자리다(>=). 숨긴 앞머리 안의 자리는 앞 조각을 그리지 않는다(cut-a가 빈 글)
+    const isCutHere = cut && cut.blockId === block.id && cut.offset >= original.start && cut.offset < segment.end && segment.unitId === selectedId;
     return (
       <span key={index} className="contents">
         <span
@@ -394,9 +465,11 @@ export function Paper({
         >
           {isCutHere ? (
             <>
-              <span className="cut-a" data-start={segment.start}>
-                {block.text.slice(segment.start, cut.offset)}
-              </span>
+              {cut.offset > segment.start && (
+                <span className="cut-a" data-start={segment.start}>
+                  {block.text.slice(segment.start, cut.offset)}
+                </span>
+              )}
               <span className="cut-anchor">
                 {onCutDrag && (
                   <span
@@ -406,7 +479,6 @@ export function Paper({
                     aria-label={t("split.cutMove")}
                     aria-valuenow={cut.offset}
                     data-tip={isDragging ? undefined : t("split.cutMove")}
-                    data-tip-side="top"
                     data-testid={`${testId}-cut-handle`}
                     onPointerDown={handleHandleDown}
                     onKeyDown={handleHandleKey}
@@ -414,8 +486,8 @@ export function Paper({
                 )}
                 {renderAtCut && !isDragging && <Fragment key={cut.offset}>{renderAtCut()}</Fragment>}
               </span>
-              <span className="cut-b" data-start={cut.offset}>
-                {block.text.slice(cut.offset, segment.end)}
+              <span className="cut-b" data-start={Math.max(cut.offset, segment.start)}>
+                {block.text.slice(Math.max(cut.offset, segment.start), segment.end)}
               </span>
             </>
           ) : (
@@ -477,35 +549,24 @@ export function Paper({
     );
   }
 
-  /** 두 줄 사이의 위아래 합치기 - 못 합치는 자리는 꺼 두고 까닭을 툴팁으로. 언어가 달라 못 합치지만 짝을 지을 수 있으면 짝 짓기로 바꾼다 */
+  /** 조각 언어 칩(KO/EN) - 늘 그려 두고 조각을 올리거나 고를 때만 CSS가 드러낸다(조각마다 호버 상태를 두지 않는다). 짝이면 구성원 모두.
+   *  자리는 조각 위 테두리 오른쪽 끝에 걸친 작은 탭 - 글·끝 아이콘과 겹치지 않고 조각 높이를 바꾸지 않는다. 언어가 없는 단위(neutral)는 없다 */
+  function renderLang(unit: ViewUnit | undefined): ReactNode {
+    if (!unit) return null;
+    return <LangToken lang={unit.lang} className="strip-lang" tabIndex={unit.id === selectedId ? 0 : -1} testId={`${testId}-lang-${unit.id}`} />;
+  }
+
+  /** 두 줄 사이의 묶기 - 같은 언어면 합치기, 한글·영어면 짝(아이콘으로 구별). 못 묶는 자리는 꺼 두고 까닭을 툴팁으로 */
   function renderMerge(prev: PaperRow, next: PaperRow): ReactNode {
-    const merge = strips?.merge;
-    const gap = merge ? getGapMerge(prev, next, model.units) : null;
-    if (!merge || !gap) return null;
-    const pair = strips?.pair;
-    if (pair && gap.blocker === "mixed_language" && pair.canPair(gap.firstId, gap.secondId)) {
-      const pairLabel = t("split.pairAdjacent");
-      return (
-        <button
-          type="button"
-          className="strip-merge strip-pair"
-          aria-disabled={merge.busy ? "true" : undefined}
-          aria-label={pairLabel}
-          tabIndex={gap.firstId === selectedId || gap.secondId === selectedId ? 0 : -1}
-          data-testid={`${testId}-pair-${gap.firstId}-${gap.secondId}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            if (!merge.busy) pair.onPair(gap.firstId, gap.secondId);
-          }}
-        >
-          <Link2 size={12} strokeWidth={1.8} aria-hidden />
-          <span className="strip-merge-label">{pairLabel}</span>
-        </button>
-      );
-    }
-    const label = t("split.mergeAdjacent");
-    const reason = gap.blocker ? t(MERGE_BLOCKER_KEYS[gap.blocker]) : null;
-    const isOff = reason !== null || merge.busy;
+    const join = strips?.join;
+    const gap = join ? getGapMerge(prev, next, model.units) : null;
+    if (!join || !gap) return null;
+    // 한쪽이 표·그림인 틈은 두 id가 같다 - 묶을 짝이 없으니 plan에 묻지 않는다
+    const plan = gap.blocker === "not_text" ? { kind: null, reasonKey: MERGE_BLOCKER_KEYS.not_text } : join.plan(gap.firstId, gap.secondId);
+    const label = t("split.joinAdjacent");
+    const reason = plan.kind === null && plan.reasonKey ? t(plan.reasonKey) : null;
+    const isOff = plan.kind === null || join.busy;
+    const Icon = plan.kind === "pair" ? Link2 : FoldVertical;
     return (
       <button
         type="button"
@@ -515,61 +576,38 @@ export function Paper({
         aria-label={reason ? `${label} - ${reason}` : label}
         data-tip={reason ?? undefined}
         tabIndex={gap.firstId === selectedId || gap.secondId === selectedId ? 0 : -1}
-        data-testid={`${testId}-merge-${gap.firstId}-${gap.secondId}`}
+        data-testid={`${testId}-join-${gap.firstId}-${gap.secondId}`}
         onClick={(event) => {
           event.stopPropagation();
-          if (!isOff) merge.onMerge(gap.firstId, gap.secondId);
+          if (!isOff && plan.kind !== null) join.onJoin(gap.firstId, gap.secondId, plan.kind);
         }}
       >
-        <FoldVertical size={12} strokeWidth={1.8} aria-hidden />
+        <Icon size={12} strokeWidth={1.8} aria-hidden />
         <span className="strip-merge-label">{label}</span>
       </button>
     );
   }
 
-  /** 한 줄의 언어·보류를 읽어 줄 글 */
+  /** 한 줄의 보류를 읽어 줄 글 - 보류가 아니면 빈 글 */
   function describeTab(unit: ViewUnit): string {
     const live = { ...unit, status: strips?.statusOf?.(unit.id) ?? unit.status };
-    const { lang, hold } = getTags(live);
-    return [lang === "KO" ? t("split.tabKo") : lang === "EN" ? t("split.tabEn") : null, hold ? t("split.tabHold") : null].filter((part) => part !== null).join(", ");
+    return getTags(live).hold ? t("split.tabHold") : "";
   }
 
-  /** 줄 왼쪽 밖에 붙는 탭 - 언어 색(보류는 사선 줄무늬), 깊이마다 정해진 폭, 절 번호는 절의 첫 블록에만. 짝 카드는 두 줄의 탭이 이어져 한 카드의 탭이 된다 */
-  function renderTab(unit: ViewUnit, section: string, width: number, bracket: PairBracket | undefined): ReactNode {
-    const live = { ...unit, status: strips?.statusOf?.(unit.id) ?? unit.status };
-    const { lang, hold } = getTags(live);
-    const partner = bracket === "top" || bracket === "bottom" ? partnerOf.get(unit.id) : undefined;
-    const top = bracket === "bottom" && partner ? partner : unit;
-    const isHead = sectionHeads.has(top.id);
-    const sectionNumber = isHead && bracket !== "bottom" ? getSectionPill(section) : null;
-    // 설명은 블록(카드)당 하나 - 짝의 아래 줄은 위 줄이 대신 읽는다
-    const description = bracket === "bottom" ? "" : [describeTab(unit), bracket === "top" && partner ? describeTab(partner) : ""].filter((part) => part !== "").join("; ");
-    const letters = [lang, hold ? "H" : null].filter((part) => part !== null);
+  /** 줄 왼쪽 밖 앞머리 - 절 번호 칸(절의 첫 블록에만, 깊이마다 정해진 폭). 짝 카드는 첫 줄만 번호를 보이고 둘째 줄부터는 첫 줄의 절 머리를 따른다 */
+  function renderLead(unit: ViewUnit, section: string, width: number, bracket: PairBracket | undefined): ReactNode {
+    const topId = cardTops.get(unit.id);
+    const isHead = sectionHeads.has(topId ?? unit.id);
     return (
-      <span
-        className="strip-tab"
-        style={{ width }}
-        data-lang={lang?.toLowerCase()}
-        data-hold={hold ? "" : undefined}
-        data-bracket={bracket}
-        data-dim={isHead ? undefined : ""}
-        data-testid={`${testId}-tab-${unit.id}`}
-      >
-        {description !== "" && <span className="sr-only">{description}</span>}
-        {sectionNumber !== null && (
-          <>
-            <span className="sr-only">{sectionNumber}</span>
-            <span className="strip-tab-num" aria-hidden data-testid={`${testId}-num-${unit.id}`}>
-              {sectionNumber}
-            </span>
-          </>
-        )}
-        <span className="strip-tab-letters" aria-hidden>
-          {letters.map((letter) => (
-            <span key={letter}>{letter}</span>
-          ))}
-        </span>
-      </span>
+      <StripLead
+        width={width}
+        number={isHead && topId === undefined ? getSectionPill(section) : null}
+        bracket={bracket}
+        dim={!isHead}
+        tip={describeTab(unit)}
+        testId={testId}
+        id={unit.id}
+      />
     );
   }
 
@@ -664,8 +702,18 @@ export function Paper({
     return tabWidths.get(row.key) ?? getPillWidth(getSectionLevel(readRowSection(row)));
   }
 
+  /** 절 첫 블록 글 앞의 절 번호를 숨길 글자 수 - 그 블록이 이 단위로 시작할 때만(짝 카드의 둘째 줄부터는 첫 줄이 머리면 같이). 표시만이고 원문은 그대로다.
+   *  번호뿐인 단위는 숨기지 않고, 나눌 선이 번호 안으로 들어오면 그동안 번호를 드러낸다(getVisibleSkip) */
+  function readHiddenPrefix(block: ViewBlock, unit: ViewUnit | undefined): number {
+    if (!unit) return 0;
+    const isHead = sectionHeads.has(cardTops.get(unit.id) ?? unit.id);
+    const first = model.segments.get(block.id)?.[0];
+    if (!isHead || first?.unitId !== unit.id || first.start !== 0) return 0;
+    return getVisibleSkip(getHiddenPrefixLength(block.text, block.section_label), first.end, cut?.blockId === block.id ? cut.offset : null);
+  }
+
   /** 조각 한 줄 - 글 조각, 표, 그림 모두 같은 틀(앞 태그·끝 표시)에 담는다 */
-  function renderRow(row: PaperRow): ReactNode {
+  function renderRow(row: PaperRow, isPeek = false): ReactNode {
     const unitId = row.type === "table" ? row.item.unitId : row.unitId;
     const unit = unitId === null ? undefined : model.units.get(unitId);
     const hasWarn = row.type === "piece" ? row.parts.some((part) => warnBlockIds?.has(part.block.id)) : row.type === "figure" && (warnBlockIds?.has(row.block.id) ?? false);
@@ -676,10 +724,11 @@ export function Paper({
     const note = unit ? strips?.renderNote?.([unit.id]) : null;
     const pills = unit && row.type !== "table" ? strips?.renderPills?.(unit.id) : null;
     const foot = note ? <div className="strip-foot">{note}</div> : null;
+    const isHold = unit !== undefined && getTags({ ...unit, status: strips?.statusOf?.(unit.id) ?? unit.status }).hold;
     return (
-      <div key={row.key} className="strip-row">
-        {unit && renderTab(unit, section, width, bracket)}
-        {!unit && <span className="strip-tab-gap" style={{ width }} />}
+      <div key={row.key} className="strip-row" data-peek={isPeek ? "" : undefined}>
+        {unit && renderLead(unit, section, width, bracket)}
+        {!unit && <span className="strip-lead-gap" style={{ width: width + STRIP_LEAD_EXTRA }} />}
         <div
           className="strip"
           data-kind={row.type}
@@ -689,42 +738,184 @@ export function Paper({
           data-strip-unit={unitId ?? undefined}
           data-testid={`${testId}-piece-${unitId ?? row.key}`}
         >
+          {/* 표·그림의 보류 칩 - 표 위 제 줄(data-start 밖)이라 표를 덮지 않고, 눌러도 조각 상자를 누른 것으로 그 단위를 고른다 */}
+          {row.type !== "piece" && isHold && (
+            <div className="strip-hold">
+              <UnitStatusChip status="on_hold" size="sm" testId={`${testId}-hold-${unit?.id}`} />
+            </div>
+          )}
           {row.type === "table"
             ? renderTable(row.item)
             : row.type === "figure"
               ? renderFigure(row.block)
-              : row.parts.map((part) => (
-                  <p key={part.block.id} data-block={part.block.id} className={part.block.heading_level !== null ? "h" : undefined}>
-                    {part.segments.map((segment, index) => renderSegment(part.block, segment, index))}
-                  </p>
-                ))}
+              : row.parts.map((part, partIndex) => {
+                  const skip = partIndex === 0 ? readHiddenPrefix(part.block, unit) : 0;
+                  return (
+                    <p key={part.block.id} data-block={part.block.id} className={part.block.heading_level !== null ? "h" : undefined}>
+                      {/* 보류 칩 - .su·data-start 밖이라 눌러도 글자 위치로 읽히지 않고 조각 상자를 누른 것으로 그 줄을 고른다 */}
+                      {partIndex === 0 && isHold && <UnitStatusChip status="on_hold" size="sm" testId={`${testId}-hold-${unit?.id}`} />}
+                      {part.segments.map((segment, index) => renderSegment(part.block, segment, index, skip))}
+                    </p>
+                  );
+                })}
           {renderActions(unit?.id)}
           {foot}
           {pills}
           {renderMarks(unit, hasWarn, "strip-marks")}
+          {row.type === "piece" && renderLang(unit)}
         </div>
       </div>
     );
   }
 
-  function renderRows(rows: PaperRow[]): ReactNode {
-    return rows.map((row, index) => (
+  /** 두 조각 사이 틈 */
+  function renderGap(prev: PaperRow, row: PaperRow): ReactNode {
+    return (
+      <div
+        className="strip-gap"
+        // 카드 안 틈 - 둘째 줄부터의 바로 위는 늘 같은 카드다
+        data-pair={cardTops.has(readRowUnitId(row) ?? -1) ? "" : undefined}
+        data-near-selected={selectedBlock.has(readRowUnitId(prev) ?? -1) || selectedBlock.has(readRowUnitId(row) ?? -1) ? "" : undefined}
+        // 합치기 단추를 글 시작 x에 - 위아래 앞머리 중 넓은 쪽 뒤라 어느 앞머리에도 걸치지 않는다
+        style={{ "--gap-tab": `${Math.max(readTabWidth(prev), readTabWidth(row)) + STRIP_LEAD_EXTRA}px` }}
+        data-testid={`${testId}-gap-${row.key}`}
+      >
+        {renderMerge(prev, row)}
+      </div>
+    );
+  }
+
+  /** 한 칸(외톨이 줄 하나 또는 짝 카드 한 장) - 카드는 .strip-card로 감싸 강조 테두리가 줄 수와 상관없이 카드 전체에 둘린다(감싼 요소는 display: contents라 배치는 그대로) */
+  function renderCard(rows: readonly PaperRow[], isPeek = false): ReactNode {
+    const content = rows.map((row, index) => (
       <Fragment key={row.key}>
-        {index > 0 && (
-          <div
-            className="strip-gap"
-            data-pair={brackets.get(readRowUnitId(rows[index - 1]) ?? -1) === "top" && brackets.get(readRowUnitId(row) ?? -1) === "bottom" ? "" : undefined}
-            data-near-selected={selectedId !== null && (readRowUnitId(rows[index - 1]) === selectedId || readRowUnitId(row) === selectedId) ? "" : undefined}
-            // 합치기 단추를 글 시작 x에 - 위아래 탭 중 넓은 쪽 뒤라 어느 탭에도 걸치지 않는다
-            style={{ "--gap-tab": `${Math.max(readTabWidth(rows[index - 1]), readTabWidth(row))}px` }}
-            data-testid={`${testId}-gap-${row.key}`}
-          >
-            {renderMerge(rows[index - 1], row)}
-          </div>
-        )}
-        {renderRow(row)}
+        {index > 0 && renderGap(rows[index - 1], row)}
+        {renderRow(row, isPeek)}
       </Fragment>
     ));
+    return rows.length > 1 ? <div className="strip-card">{content}</div> : content;
+  }
+
+  function renderRows(rows: PaperRow[]): ReactNode {
+    const cards: PaperRow[][] = [];
+    for (const row of rows) {
+      if (cards.length > 0 && cardTops.has(readRowUnitId(row) ?? -1)) cards[cards.length - 1].push(row);
+      else cards.push([row]);
+    }
+    return cards.map((card, index) => (
+      <Fragment key={card[0].key}>
+        {index > 0 && renderGap(cards[index - 1][cards[index - 1].length - 1], card[0])}
+        {renderCard(card)}
+      </Fragment>
+    ));
+  }
+
+  /** 한 줄 판의 글 - 짝 카드는 줄마다 글을 " / "로, 표·그림은 이름만. 절 머리면 앞머리에 보인 번호를 글에서 뺀다(제 모양 조각과 같이) */
+  function readPieceText(row: Extract<PaperRow, { type: "piece" }>): string {
+    const unit = row.unitId === null ? undefined : model.units.get(row.unitId);
+    return row.parts
+      .map((part, partIndex) => {
+        const skip = partIndex === 0 ? readHiddenPrefix(part.block, unit) : 0;
+        return part.segments.map((segment) => part.block.text.slice(Math.max(segment.start, skip), segment.end)).join("");
+      })
+      .join(" ");
+  }
+
+  function readLineText(rows: readonly PaperRow[]): string {
+    return rows
+      .map((row) => (row.type === "table" ? t("split.table") : row.type === "figure" ? t("assign.newFigure") : readPieceText(row)))
+      .map((text) => text.replace(/\s+/g, " ").trim())
+      .join(" / ");
+  }
+
+  /** 필터 접기 - 맞음·엿보기는 제 조각, 곁은 한 줄 판, 먼 구간은 묶음 한 줄. 틈은 조각끼리 이웃할 때만 */
+  function renderFolded(cells: readonly FoldCell[], fold: NonNullable<NonNullable<PaperProps["strips"]>["fold"]>): ReactNode {
+    const items = cells.map((cell) => cell.item);
+    let plan: FoldEntry[] = buildFoldPlan(items, fold.matchIds, fold.open, foldForced);
+    // 이 부분에 맞음이 없는데 고른 조각(출처 칩으로 건너옴)이 있으면 그 조각을 엿보기로 두고 둘레를 접는다 - 고른 조각은 늘 보여야 한다
+    if (plan.length === 0 && items.some((item) => item.unitIds.some((id) => foldForced.has(id)))) {
+      plan = buildFoldPlan(items, foldForced, fold.open).map((entry) => (entry.kind === "full" ? { kind: "peek", key: entry.key } : entry));
+    }
+    const cellOf = new Map(cells.map((cell) => [cell.item.key, cell]));
+    const leadWidth = (key: string): number => {
+      const first = cellOf.get(key)?.rows[0];
+      return (first ? readTabWidth(first) : 0) + STRIP_LEAD_EXTRA;
+    };
+    const { open, onOpenChange } = fold;
+    let prevRow: PaperRow | null = null;
+    return plan.map((entry) => {
+      if (entry.kind === "full" || entry.kind === "peek") {
+        const rows = cellOf.get(entry.key)?.rows ?? [];
+        const before = prevRow;
+        prevRow = rows[rows.length - 1] ?? null;
+        return (
+          <Fragment key={entry.key}>
+            {before && rows[0] && renderGap(before, rows[0])}
+            {renderCard(rows, entry.kind === "peek")}
+          </Fragment>
+        );
+      }
+      prevRow = null;
+      if (entry.kind === "line") {
+        const rows = cellOf.get(entry.key)?.rows ?? [];
+        const first = rows[0];
+        const unitId = first ? readRowUnitId(first) : null;
+        const unit = unitId === null ? undefined : model.units.get(unitId);
+        const width = first ? readTabWidth(first) : 0;
+        // 절 머리면 번호를 남긴다 - 짝 카드는 첫 줄이 first다
+        const isHead = unit !== undefined && sectionHeads.has(unit.id);
+        return (
+          <button
+            key={`line-${entry.key}`}
+            type="button"
+            className="fold-line"
+            data-testid={`${testId}-fold-line-${entry.key}`}
+            onClick={() => onOpenChange({ runs: open.runs, peeks: new Set([...open.peeks, entry.key]) })}
+          >
+            {unit ? (
+              <StripLead width={width} number={isHead && first ? getSectionPill(readRowSection(first)) : null} dim={!isHead} tip={describeTab(unit)} testId={`${testId}-fold`} id={unit.id} />
+            ) : (
+              <span className="strip-lead-gap" style={{ width: width + STRIP_LEAD_EXTRA }} />
+            )}
+            <span className="fold-line-text">{readLineText(rows)}</span>
+          </button>
+        );
+      }
+      if (entry.kind === "run") {
+        const range = entry.from === "" ? "" : entry.from === entry.to ? entry.from : `${entry.from}–${entry.to}`;
+        return (
+          <button
+            key={`run-${entry.runKey}`}
+            type="button"
+            className="fold-run"
+            style={{ marginLeft: leadWidth(entry.runKey) }}
+            aria-expanded={false}
+            data-testid={`${testId}-fold-run-${entry.runKey}`}
+            onClick={() => onOpenChange({ runs: new Set([...open.runs, entry.runKey]), peeks: open.peeks })}
+          >
+            <Ellipsis size={14} strokeWidth={1.75} aria-hidden />
+            <span>{t("paper.foldRun", { n: entry.count })}</span>
+            {range && <span className="fold-run-range">§ {range}</span>}
+            <span className="fold-run-act">{t("paper.foldExpand")}</span>
+          </button>
+        );
+      }
+      const members = new Set(entry.memberKeys);
+      return (
+        <button
+          key={`head-${entry.runKey}`}
+          type="button"
+          className="fold-head"
+          style={{ marginLeft: leadWidth(entry.runKey) }}
+          aria-expanded
+          data-testid={`${testId}-fold-head-${entry.runKey}`}
+          onClick={() => onOpenChange({ runs: new Set([...open.runs].filter((key) => key !== entry.runKey)), peeks: new Set([...open.peeks].filter((key) => !members.has(key))) })}
+        >
+          <ChevronsDownUp size={12} strokeWidth={1.75} aria-hidden />
+          {t("paper.foldCollapse")}
+        </button>
+      );
+    });
   }
 
   function handleClick(event: MouseEvent<HTMLDivElement>) {
@@ -741,10 +932,10 @@ export function Paper({
       onUnitClick(Number(mark.dataset.markUnit), null, event);
       return;
     }
-    // 글자 밖 조각 상자(여백·왼쪽 탭)를 눌러도 그 단위를 고른다 - 상자 안 단추·손잡이는 제 동작을 한다
+    // 글자 밖 조각 상자(여백·보류 칩·왼쪽 앞머리)를 눌러도 그 단위를 고른다 - 상자 안 단추·손잡이는 제 동작을 한다
     const element = event.target as HTMLElement;
     if (element.closest("button, a, input, [role='slider']")) return;
-    const holder = element.closest<HTMLElement>("[data-strip-unit]") ?? element.closest(".strip-tab")?.parentElement?.querySelector<HTMLElement>(":scope > .strip[data-strip-unit]");
+    const holder = element.closest<HTMLElement>("[data-strip-unit]") ?? element.closest(".strip-lead")?.parentElement?.querySelector<HTMLElement>(":scope > .strip[data-strip-unit]");
     // 표 안에서 칸 조각을 비껴 누른 것(칸 여백·칸 사이 틈)으로 표 전체를 고르지 않는다 - 표 전체는 표 위 손잡이·표 밖 여백으로
     if (holder?.dataset.kind === "table" && element.closest("table")) return;
     if (holder) onUnitClick(Number(holder.dataset.stripUnit), null, event);
@@ -752,10 +943,14 @@ export function Paper({
 
   function handleDoubleClick(event: MouseEvent<HTMLDivElement>) {
     if (!onUnitDoubleClick) return;
-    const target = (event.target as HTMLElement).closest<HTMLElement>(".su[data-unit]");
+    const press = pressRef.current;
+    const dy = press?.el.isConnected ? press.el.getBoundingClientRect().top - press.top : 0;
+    const y = event.clientY + dy;
+    const hit = dy === 0 ? (event.target as HTMLElement) : document.elementFromPoint(event.clientX, y);
+    const target = hit?.closest<HTMLElement>(".su[data-unit]");
     if (!target) return;
     window.getSelection()?.removeAllRanges();
-    onUnitDoubleClick(Number(target.dataset.unit), readCaret(event.clientX, event.clientY));
+    onUnitDoubleClick(Number(target.dataset.unit), readCaret(event.clientX, y));
   }
 
   function handleContextMenu(event: MouseEvent<HTMLDivElement>) {
@@ -768,14 +963,46 @@ export function Paper({
     const unitId = Number(holder?.dataset.stripUnit ?? holder?.dataset.unit);
     if (!holder || !Number.isFinite(unitId)) return;
     event.preventDefault();
-    onUnitContextMenu(unitId, { x: event.clientX, y: event.clientY });
+    // 누른 글자 자리도 넘긴다 - Assign의 "Split here"가 그 자리에 나눌 선을 놓는다
+    onUnitContextMenu(unitId, { x: event.clientX, y: event.clientY }, readCaret(event.clientX, event.clientY));
   }
 
   // 두 번 누를 때 브라우저가 낱말을 고르지 않게 - 나눌 자리를 정하는 동작이다
   function handleMouseDown(event: MouseEvent<HTMLDivElement>) {
+    if (event.detail === 1) {
+      const el = (event.target as HTMLElement).closest<HTMLElement>(".strip-row, .su[data-unit]");
+      pressRef.current = el ? { el, top: el.getBoundingClientRect().top } : null;
+    }
     if (onUnitDoubleClick && event.detail > 1 && (event.target as HTMLElement).closest(".su[data-unit]")) event.preventDefault();
     // 끌어 고르기가 없는 화면(Assign)에서 Shift+클릭은 여럿 고르기다 - 브라우저가 글자 선택을 늘려 클릭을 삼키지 않게
     if (!onRangeSelect && event.shiftKey && (event.target as HTMLElement).closest(".su[data-unit]")) event.preventDefault();
+  }
+
+  /** 떨어진 짝 구성원도 언어 칩을 보이게 - 올린 줄의 짝 조각에 data-mate-hover를 직접 단다(이웃한 짝 카드는 CSS가 맡는다).
+   *  React 상태로 두면 큰 문서에서 포인터가 지날 때마다 용지 전체가 다시 그려진다 */
+  function markHoverMates(unitId: number | null) {
+    if (mateHoverRef.current.unitId === unitId) return;
+    for (const el of mateHoverRef.current.els) delete el.dataset.mateHover;
+    const els: HTMLElement[] = [];
+    for (const mate of unitId === null ? [] : (matesOf.get(unitId) ?? [])) {
+      const el = pageRef.current?.querySelector<HTMLElement>(`.strip[data-strip-unit="${mate.id}"]`);
+      if (!el) continue;
+      el.dataset.mateHover = "";
+      els.push(el);
+    }
+    mateHoverRef.current = { unitId, els };
+  }
+
+  function handlePointerOver(event: ReactPointerEvent<HTMLDivElement>) {
+    tip.handlers.onPointerOver(event);
+    if (!strips) return;
+    const strip = (event.target as HTMLElement).closest(".strip-row")?.querySelector<HTMLElement>(":scope > .strip[data-strip-unit]");
+    markHoverMates(strip ? Number(strip.dataset.stripUnit) : null);
+  }
+
+  function handlePointerOut(event: ReactPointerEvent<HTMLDivElement>) {
+    tip.handlers.onPointerOut(event);
+    if (!(event.relatedTarget instanceof Node) || !pageRef.current?.contains(event.relatedTarget)) markHoverMates(null);
   }
 
   function handleMouseUp() {
@@ -805,6 +1032,8 @@ export function Paper({
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
         {...tip.handlers}
+        onPointerOver={handlePointerOver}
+        onPointerOut={handlePointerOut}
       >
         {contour && contourPath && (
           <svg className="sel-contour" aria-hidden>
@@ -812,15 +1041,16 @@ export function Paper({
           </svg>
         )}
         {strips ? (
-          sections.map((section) =>
-            section.edge === null ? (
-              <Fragment key="body">{renderRows(section.rows)}</Fragment>
+          sections.map((section, index) => {
+            const content = strips.fold ? renderFolded(foldCells[index] ?? [], strips.fold) : renderRows(section.rows);
+            return section.edge === null ? (
+              <Fragment key="body">{content}</Fragment>
             ) : (
               <div key={section.edge} className={`pg-edge ${section.edge}`}>
-                {renderRows(section.rows)}
+                {content}
               </div>
-            ),
-          )
+            );
+          })
         ) : (
           <>
             {model.header.length > 0 && <div className="pg-edge top grid gap-1">{model.header.map(renderItem)}</div>}

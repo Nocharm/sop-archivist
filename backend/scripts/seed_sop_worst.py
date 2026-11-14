@@ -37,7 +37,17 @@ from scripts.sop_demo_driver import SyntheticDriver
 from scripts.synthetic_sop import SyntheticBundle, build_synthetic_bundle
 from tests.fake_ai import SyntheticAnswers, fake_ai_session
 from tests.pdf_factory import build_text_pdf
-from tests.sop_helpers import ADMIN, AUTHOR, REVIEWER, assign_as_is, get_bundle, get_view, save_group, upload
+from tests.sop_helpers import (
+    ADMIN,
+    AUTHOR,
+    REVIEWER,
+    assign_as_is,
+    get_bundle,
+    get_view,
+    save_group,
+    set_doc_version,
+    upload,
+)
 
 KO_WORDS = "합성문서검증절차기록장비세척점검승인교육일탈변경관리시험원료자재보관출하온도습도압력시간"
 LONG_KO_NOSPACE = "합성극단값공백없는아주긴한국어제목검증용" * 20
@@ -247,7 +257,12 @@ class WorstSeeder:
     def upload_extra(self, bundle_id: int, name: str, data: bytes) -> dict | None:
         response = upload(self.client, bundle_id, data, name, side="old", headers=AUTHOR)
         print(f"upload {name[:60]} -> {response.status_code}", flush=True)
-        return response.json() if response.status_code == 201 else None
+        if response.status_code != 201:
+            return None
+        body = response.json()
+        if body["status"] == "ready" and not body["doc_version"]:  # 검토 요청 조건 — 읽은 옛 문서는 버전이 있어야 한다
+            body = set_doc_version(self.client, bundle_id, body)
+        return body
 
     def upload_w1_documents(self, bundle_id: int) -> dict[str, dict]:
         extras: dict[str, dict] = {}

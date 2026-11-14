@@ -1,4 +1,4 @@
-// 서비스 마크 - 쌓인 문장 조각과 오른쪽 종이 테두리, 가운데 줄 끝이 테두리를 뚫고 나가는 화살(조각을 새 자리로 보낸다).
+// 서비스 마크 - 네 줄로 쌓인 문장 조각(둘째 줄은 쪼갠 조각)과 오른쪽 종이 테두리, 셋째 줄 끝이 테두리를 뚫고 나가는 화살(조각을 새 자리로 보낸다). 22px 상단 바에서 뭉개지지 않게 줄 수를 줄이고 굵게 그린다.
 // 색은 놓이는 바탕이 정한다: --mark-base(조각·테두리)와 --mark-pop(옮긴 조각). 파비콘 app/icon.svg가 같은 모양을 그린다.
 
 interface BrandMarkProps {
@@ -12,19 +12,15 @@ const POP = { fill: "var(--mark-pop)" };
 export function BrandMark({ size, className }: BrandMarkProps) {
   return (
     <svg viewBox="0 0 32 32" width={size} height={size} className={className} aria-hidden focusable="false">
-      <rect x="6.5" y="3.5" width="17" height="2.6" rx="0.6" style={POP} />
-      <rect x="6.5" y="7.5" width="17" height="2.6" rx="0.6" style={BASE} />
-      <rect x="3" y="11.5" width="7.2" height="2.6" rx="0.6" style={BASE} />
-      <rect x="11.6" y="11.5" width="6.2" height="2.6" rx="0.6" style={BASE} />
-      <rect x="19.2" y="11.5" width="5" height="2.6" rx="0.6" style={BASE} />
-      <rect x="3" y="15.5" width="6.2" height="2.6" rx="0.6" style={POP} />
-      <rect x="10.6" y="15.5" width="8.8" height="2.6" rx="0.6" style={POP} />
-      <path d="M20.8 15.5H27.4L29.4 16.8L27.4 18.1H20.8Z" style={POP} />
-      <rect x="6.5" y="19.5" width="17" height="2.6" rx="0.6" style={BASE} />
-      <rect x="4.6" y="23.5" width="18.9" height="2.6" rx="0.6" style={POP} />
+      <rect x="6" y="4.4" width="16.5" height="3.6" rx="0.9" style={POP} />
+      <rect x="3" y="10.4" width="8.6" height="3.6" rx="0.9" style={BASE} />
+      <rect x="13.6" y="10.4" width="8.9" height="3.6" rx="0.9" style={BASE} />
+      <rect x="3" y="16.4" width="9.4" height="3.6" rx="0.9" style={POP} />
+      <path d="M14.4 16.4H26.6L29.6 18.2L26.6 20H14.4Z" style={POP} />
+      <rect x="6" y="22.4" width="16.5" height="3.6" rx="0.9" style={BASE} />
       <path
-        d="M24.2 4.8H24.7A1.5 1.5 0 0 1 26.2 6.3V13.6M26.2 20V26.1A1.5 1.5 0 0 1 24.7 27.6H7"
-        style={{ fill: "none", stroke: "var(--mark-base)", strokeWidth: 1.6 }}
+        d="M24 3.6H24.5A1.8 1.8 0 0 1 26.3 5.4V14.4M26.3 22V26.6A1.8 1.8 0 0 1 24.5 28.4H7"
+        style={{ fill: "none", stroke: "var(--mark-base)", strokeWidth: 2 }}
       />
     </svg>
   );

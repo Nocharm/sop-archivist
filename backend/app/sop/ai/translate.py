@@ -26,6 +26,7 @@ from app.sop.ai.llm import AiStr, build_messages, call_llm, parse_reply
 from app.sop.ai.runner import AiCallFailed
 from app.sop.ai.schemas import SkippedOut, SkipReason
 from app.sop.checks import check_sentence
+from app.sop.constants import NUMBER_OMITTED
 from app.sop.detach import (
     AI_SUGGESTED,
     CONFIRMED,
@@ -46,6 +47,7 @@ from app.sop.models import (
     UnitPairMember,
 )
 from app.sop.segment import has_visible_char
+from app.sop.target_placement import insert_after
 from app.sop.units import UNIT_ACTIVE
 
 TRANSLATE_KIND = "translate"
@@ -100,21 +102,32 @@ async def _load_paired_units(session: AsyncSession, unit_ids: Collection[int], t
     return {row[0] for row in rows}
 
 
-async def _load_unit_targets(session: AsyncSession, unit_ids: Collection[int]) -> dict[int, dict[int, set[int]]]:
-    """단위 → {번역할 문장 새 문장: 그 새 문장의 출처 단위들} — 합친 새 문장은 어느 출처로 물어도 같은 번역이라 출처 전부가 필요하다."""
+async def _load_unit_targets(
+    session: AsyncSession, unit_ids: Collection[int], to_lang: str
+) -> tuple[dict[int, dict[int, set[int]]], set[int]]:
+    """(단위 → {번역할 문장 새 문장: 그 새 문장의 출처 단위들}, 도착 언어 새 문장을 이미 출처로 둔 단위들).
+
+    합친 새 문장은 어느 출처로 물어도 같은 번역이라 출처 전부가 필요하다. 언어 잠금이 없어 단위가 다른 언어 새 문장(사람이 쓴
+    Write English, 입구 2 짝)을 출처로 둘 수 있다 — 그 문장은 번역할 것이 아니라 이미 도착 언어로 쓰인 것이라 따로 돌려준다.
+    번역 행은 출처 연결이 없어 여기에 잡히지 않는다.
+    """
     mate = aliased(TargetSource)
     rows = await select_in_chunks(
         session,
-        lambda chunk: select(TargetSource.unit_id, TargetSource.target_id, mate.unit_id)
+        lambda chunk: select(TargetSource.unit_id, TargetSource.target_id, mate.unit_id, TargetSentence.lang)
         .join(mate, mate.target_id == TargetSource.target_id)
         .join(TargetSentence, TargetSentence.id == TargetSource.target_id)
         .where(TargetSource.unit_id.in_(chunk), TargetSentence.kind == "sentence"),
         unit_ids,
     )
     targets: dict[int, dict[int, set[int]]] = defaultdict(lambda: defaultdict(set))
-    for unit_id, target_id, source_unit_id in rows:
-        targets[unit_id][target_id].add(source_unit_id)
-    return targets
+    written: set[int] = set()
+    for unit_id, target_id, source_unit_id, lang in rows:
+        if lang == to_lang:
+            written.add(unit_id)
+        else:
+            targets[unit_id][target_id].add(source_unit_id)
+    return targets, written
 
 
 async def _load_settled(session: AsyncSession, bundle_id: int, to_lang: str) -> tuple[set[int], set[int]]:
@@ -144,10 +157,10 @@ def _find_skip_reason(
         return "other_language"
     if row.id in paired:
         return "has_pair"
-    if not source_units:
-        return "not_assigned"
     if is_settled:
         return "already_translated"
+    if not source_units:
+        return "not_assigned"
     if source_units & queued:
         return "already_queued"
     return None
@@ -169,7 +182,7 @@ async def select_translate_items(
     scope = rows if requested else [row for row in rows if row.lang == from_lang]
 
     ids = [row.id for row in scope]
-    unit_targets = await _load_unit_targets(session, ids)
+    unit_targets, written = await _load_unit_targets(session, ids, to_lang)
     source_units = {
         row.id: {unit_id for sources in unit_targets[row.id].values() for unit_id in sources} for row in scope
     }
@@ -181,7 +194,9 @@ async def select_translate_items(
     skipped: list[SkippedOut] = []
     seen: set[int] = set()
     for row in scope:
-        is_settled = bool(source_units[row.id] & settled_units or unit_targets[row.id].keys() & settled_targets)
+        is_settled = bool(
+            row.id in written or source_units[row.id] & settled_units or unit_targets[row.id].keys() & settled_targets
+        )
         reason = _find_skip_reason(
             row, from_lang, source_units[row.id], paired=paired, is_settled=is_settled, queued=queued
         )
@@ -281,12 +296,14 @@ def _add_result(session: AsyncSession, job: AiJob, loaded: _Loaded, computed: _V
     )
 
 
-def _build_translation(job: AiJob, source: TargetSentence, computed: _Verdict, suggestion_id: int) -> TargetSentence:
-    """번역 새 문장 — 자리·칸 자리는 출처 새 문장과 같고(설계 §7.9) 확정 글은 비워 둔다. 순서도 같아 사람이 정한 순서의 문서에서도 출처 자리에 온다."""
+def _build_translation(
+    job: AiJob, source: TargetSentence, computed: _Verdict, suggestion_id: int, order_index: int
+) -> TargetSentence:
+    """번역 새 문장 — 자리·칸 자리는 출처 새 문장과 같고(설계 §7.9) 확정 글은 비워 둔다. 번호 표시는 생략으로 시작한다(출처 표시와 따로)."""
     return TargetSentence(
         bundle_id=job.bundle_id, target_doc_id=source.target_doc_id, slot_key=source.slot_key, wi_step=source.wi_step,
-        wi_part=source.wi_part, section_path=source.section_path, order_index=source.order_index,
-        indent_level=source.indent_level, number_style=source.number_style,
+        wi_part=source.wi_part, section_path=source.section_path, order_index=order_index,
+        indent_level=source.indent_level, number_style=NUMBER_OMITTED,
         lang=job.payload["to"], kind="sentence", confirmed_text="", ai_text=computed.text, change_type="translated",
         origin=ORIGIN_TRANSLATION, translation_source_unit_id=job.unit_ids[0], parent_target_id=source.parent_target_id,
         cell_row=source.cell_row, cell_col=source.cell_col, status=AI_SUGGESTED, warnings=list(computed.warnings),
@@ -344,7 +361,11 @@ class TranslateHandler:
         await drop_translations(session, previous)
         suggestion = _add_result(session, job, loaded, computed, "applied")
         await session.flush()  # 새 문장이 제안 id를 가리킨다
-        target = _build_translation(job, source, computed, suggestion.id)
+        doc = await session.get_one(TargetDoc, source.target_doc_id)
+        order_index = source.order_index
+        if doc.manual_order and source.parent_target_id is None:  # 사람이 정한 순서의 문서는 출처 바로 뒤에 끼운다
+            order_index = await insert_after(session, source)
+        target = _build_translation(job, source, computed, suggestion.id, order_index)
         session.add(target)
         await session.flush()
         suggestion.content = _build_content(job, computed.text, target.id)
