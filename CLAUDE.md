@@ -4,174 +4,93 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-**SOP Archivist — SOP Restructuring T/F가 쓰는 사내 AI 에이전트 웹 서비스** (FastAPI + Next.js, 사내 서버에 docker compose로 배포). 제품은 옛 SOP 묶음을 새 SOP·WI 구조로 다시 짜는 일(문서 쪼개기 → 배정·고쳐 쓰기 → 결과물 A·B·C·Excel → 검토)을 돕는다. **제품 명세: [`docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`](docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md)**(판단 기준은 `docs/domain/`), 기반 명세: [`docs/superpowers/specs/2026-11-04-sop-archivist-baseline-design.md`](docs/superpowers/specs/2026-11-04-sop-archivist-baseline-design.md), 구현 계획: `docs/superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md`(계획 2 AI 층, 완료 — 살아 있는 것은 "API 계약" 블록. 계획 1·기반 계획은 끝나 지웠다), 프런트 디자인 기초: `frontend/docs/design/2026-11-07-frontend-design-foundations.md`, 진행 현황: `PROGRESS.md`.
+**SOP Archivist — SOP Restructuring T/F가 쓰는 사내 AI 에이전트 웹 서비스** (FastAPI + Next.js, 사내 서버에 docker compose로 배포). 옛 SOP 묶음을 새 SOP·WI 구조로 다시 짜는 일(문서 쪼개기 → 배정·고쳐 쓰기 → 결과물 A·B·C·Excel → 검토)을 돕는다. **제품 명세: [`docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`](docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md)**(판단 기준 `docs/domain/`), 기반 명세 `docs/superpowers/specs/2026-11-04-sop-archivist-baseline-design.md`, 프런트와 맞춘 API 계약은 `docs/superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md`의 "API 계약" 블록, 프런트 디자인 기초 `frontend/docs/design/2026-11-07-frontend-design-foundations.md`.
 
-> 상태: **v1.0.0 결정적 코어 + AI 제안 층 + 프런트 화면(백엔드 기능 전부 연결, 이동·움직임 공통 층, 표·카드 목록·공통 드롭다운, 첫 실사용 피드백 개편 — 사용자 메뉴·바로 생성·History·문서 정보 탐지·Split 종이 조각·피커 순위, 3단계 Assign 통합 화면, 서비스 마크, 전체 검토 반영·사용 설명서 `/manual`·검토 요청 거두기·경계 확인 필수, 두 번째 실사용 피드백 — Split 조각 종이·부분 탭·합치기 한 길·자동 번호·줄 단위 쪼개기, Assign 3차 피드백 — 연결 보기·그 자리 메뉴·배정 초기화·섹션 번호(들여쓰기)·공통 도움말 패널, 상단 바 AI 작업 상태·섹션 번호 생략·노트, 화면 검토 반영 — 긴 글 표·극단 자료 시드·배치 감사, Split 틈 짝 짓기·조각 단추 줄·합치기 풀기, 언어 축 걷어 내기 — 줄 기준 숫자 한 벌·Split `Join` 하나·언어로 막지 않는 배정·Remark·올림/고름 때 KO·EN 탭, 결과물 한 벌 — 의미 묶음 A·Excel 미리보기·문장마다 번호·칸 제목, Assign 연결선 꼬리·오른쪽 패널 재배치·되돌리기/다시 하기) + GitLab Runner 배포 파이프라인 완료, 운영 서버 배포됨(첫 배포 2026-11-09 v0.8.0 — Keycloak 연결·HR 동기화 24시간 주기, 최근 2026-11-14 v1.0.0), 실제 SOP·실제 모델 미검증** — v0.1.0 기반(사내 로그인 Keycloak·직원 디렉터리 HR 웹훅·사내 AI·표 기반 권한 체계) 위에 SOP 재구성의 결정적 코어(v0.2.0: 묶음·멤버십, 업로드·격리 추출(DOCX 메인, PDF·MarkItDown 보조), 규칙 쪼개기·편집·되돌리기, To-Be 목록, 배정·확정(두 입구), 결과물 A·B·C, Excel 내보내기, 검토 흐름)와 그 위의 AI 제안 층(v0.3.0: 분류·고쳐 쓰기·번역·입구 2 짝 맞추기·한/영 따로 짝·복합 문장 나누기 제안, 지침·프롬프트 버전, 채택률)을 얹었다. AI는 제안만 하고 사람이 줄마다 확정하며, AI가 꺼지거나 실패해도 사람 경로는 그대로 돈다. 프런트는 1차 화면(v0.4.0: 모든 단계 화면, G Graphite 라이트·다크, 설계 기초 `frontend/docs/design/2026-11-07-frontend-design-foundations.md`)이 붙었다. AI 층은 가짜 AI와 합성 SOP로만 검증했고 **유사도 임계값은 합성 자료로만 잡은 값**이다(실제 모델·SOP 시험 뒤 다시 정한다). 배포·운영 절차는 `docs/deploy/`(인덱스 `docs/README.md`), 배포는 사내 GitLab 파이프라인으로만 한다(`docs/deploy/gitlab-runner.md`).
-> **서비스 버전**: `frontend/package.json` `version`이 단일 소스(빌드 때 상단 바 서비스 이름 옆 표시), 기록은 루트 `CHANGELOG.md`. `dev`에 올릴 때마다 PATCH, `dev`→`main` 정식 업데이트마다 MINOR + `vX.Y.Z` 태그, MAJOR 1.0.0은 T/F 정식 사용 시작(`rules/common/git.md` "서비스 버전"). 커밋·푸시는 GitHub에만 하고 사내 GitLab push·배포는 사용자가 한다. 운영 배포 여부도 CHANGELOG에 적는다.
-> DB: 로컬 네이티브는 sqlite 파일(무설정, 연결마다 `PRAGMA foreign_keys=ON`이라 FK·cascade가 서버와 같다), 서버 compose는 postgres. 스키마는 **Alembic**(backend 기동 때 head까지 자동 적용). 로컬 데모 시드: `backend/scripts/reset_db.py`(서버 실행 금지), SOP 데모 묶음은 그 위에 `backend/scripts/seed_sop_demo.py`(아래 Commands).
-> **원칙**: AI 페이로드에 직원 실명을 싣지 않는다(역할·부서 등 비식별 정보만). 공개 저장소이므로 실서버 IP·사내 호스트명·시크릿은 추적 파일에 넣지 않는다(플레이스홀더 `<server-ip>` 등).
+> 상태: **v1.0.0 — 운영 배포 2026-11-14**(운영 :7777, 개발 스택 :4444). 기능 이력은 `CHANGELOG.md`, 지금 진행은 `PROGRESS.md`. **실제 SOP·실제 모델 미검증** — AI 층은 합성 SOP·가짜 AI로만 검증했고 유사도 임계값은 합성 자료로 잡은 값이다(실제 시험 뒤 다시 정한다).
+> **서비스 버전**: 단일 소스 `frontend/package.json` `version`(상단 바에 표시). `dev`에 올릴 때마다 PATCH, `dev`→`main` 정식 업데이트마다 MINOR + `vX.Y.Z` 태그(`rules/common/git.md`). 커밋·푸시는 GitHub에만, 사내 GitLab push·배포는 사용자. 운영 배포일은 CHANGELOG에 적는다.
+> **DB**: 로컬은 sqlite 파일(연결마다 `PRAGMA foreign_keys=ON`), 서버는 postgres. 스키마는 **Alembic**(backend 기동 때 head까지 자동 적용).
+> **원칙**: AI는 제안만 하고 사람이 줄마다 확정한다 — AI가 꺼지거나 실패해도 사람 경로는 돈다. AI 페이로드에 직원 실명을 싣지 않는다(역할·부서만). 공개 저장소라 실서버 IP·사내 호스트명·시크릿은 추적 파일에 넣지 않는다(`<server-ip>` 등).
 
 ## Commands
 
-실행 명령은 **bash(macOS/Linux)와 PowerShell(Windows)을 병기**한다 — 로컬 검증이 Windows PC에서 이뤄지기 때문 (`rules/common/documentation.md`). 서버(리눅스) 명령은 bash만.
+자주 쓰는 것만 bash로. PowerShell 병기·스크립트마다의 전제(DB·포트·env)·감사 옵션·배포 스크립트 검증은 [`docs/qa/verification-commands.md`](docs/qa/verification-commands.md).
 
 ```bash
-# === bash (macOS/Linux) ===
-# backend (backend/ 에서, 로컬 네이티브) — 배포 런타임과 같은 Python 3.11로 venv를 만든다
+# backend/ — 배포 런타임과 같은 Python 3.11 venv
 python3.11 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/python -m scripts.reset_db      # 로컬 데모 DB 초기화(backend/dev.db): Alembic base→head + 지침·dev 디렉터리·데모 권한. 서버 실행 금지
-.venv/bin/python -m scripts.seed_sop_worst # 로컬 전용(운영 DB 금지): seed_sop_demo 위에 극단 자료(W1 극단 묶음·W2~W7 단계별·가벼운 36개·역할·부여·지침 버전)를 앱 API로 얹는다. 화면 배치 감사용 — 별도 sqlite 파일(DATABASE_URL)에 reset_db → seed_sop_demo → 이것 순서로, 같은 자료는 건너뛰어 다시 돌려도 된다(약 2분 반). 끝 줄 `worst seed done: 43 bundles`(W1~W7+light 36, 데모 4개 더하면 화면에 47개). DEV_ENFORCE_PERMISSIONS 없이 돌린다
-.venv/bin/python -m scripts.seed_sop_demo # 로컬 전용(운영 DB 금지): 합성 SOP 묶음 4개(쪼개기 직후·분류 절반·검토 대기·AI 제안)를 앱 API로 만든다(작성자 qa.member, 검토자 qa.lead). 묶음 2~4는 경계를 미리 모두 확인하고 "쪼개기 직후"만 미확인으로 남긴다(경계 확인이 검토 요청 조건이라서). AI 제안 단계는 프로세스 안의 가짜 전송으로 돌아 AI 설정이 필요 없고 실제 모델을 부르지 않는다. 같은 제목이 있으면 건너뛰어 다시 돌려도 된다. AUTH_MODE=dev에서만 돈다(dev 의존성 python-docx 필요, DEV_ENFORCE_PERMISSIONS=true면 bundle.create가 없어 403)
-AUTH_MODE=dev DEV_ENFORCE_PERMISSIONS=true APP_SYSADMINS=dev.admin .venv/bin/uvicorn app.main:app --reload --port 8777   # 개발 서버
-.venv/bin/python -m pytest tests/ -q -n auto   # 테스트(병렬, 작업자마다 DB 파일이 따로) — conftest가 AUTH_MODE·AI·HR 등을 baseline으로 고정해 backend/.env가 있어도 안전. 한 파일만 볼 때는 -n 없이
-.venv/bin/ruff check app/ tests/          # 린트(target py311)
-.venv/bin/alembic revision --autogenerate --rev-id "<다음 번호>" -m "<설명>"   # 모델을 바꾼 뒤 리비전 생성 → 생성물을 직접 검토
-
-# frontend (frontend/ 에서)
-npm install
-npm run dev                               # 개발 서버 :3777 — /api는 BACKEND_URL(기본 localhost:8777)로 프록시
-npm run build                             # 프로덕션 빌드(standalone) — 경고 0이어야 한다. next dev를 먼저 내린다
-npm run lint
-npx tsc --noEmit -p tsconfig.json         # 타입 게이트
-npx vitest run                            # 단위 테스트 — 커밋 전 필수
-# 브라우저 스모크(Playwright + 시스템 Chrome): reset_db 직후 + 위 uvicorn(DEV_ENFORCE_PERMISSIONS=true) + npm run dev 상태에서
-npm i --no-save playwright-core           # package.json 불변
-BASE_URL=http://localhost:3777 node scripts/pw-smoke-baseline.mjs   # 산출물은 저장소 루트 .shots/(gitignore). Chrome 경로는 CHROME_PATH
-#   SOP 화면 스모크·글자 대비 감사는 reset_db → seed_sop_demo 직후 DB에서(dev.db 대신 DATABASE_URL로 별도 sqlite 파일을 쓰면 다시 돌리기 쉽다)
-BASE_URL=http://localhost:3777 node scripts/pw-smoke-sop.mjs        # AI 나눔 확정 단계는 backend가 가짜 AI(FAKE_AI_SPLIT=1)를 볼 때만 돈다
-BASE_URL=http://localhost:3777 node scripts/pw-contrast-audit.mjs   # 14화면 × 라이트·다크, 4.5:1
-DS=worst BASE_URL=http://localhost:3787 node scripts/pw-layout-audit.mjs   # 배치 감사(DB 불변): seed_sop_demo(DS=mid)·seed_sop_worst(DS=worst)를 얹은 DB의 backend 8787/frontend 3787에서. ONLY=항목 id·WIDTHS·LANGS·THEMES, 실패는 종료 코드 1과 ../.shots/layout-<id>-<width>.png (docs/lessons/browser-verification.md)
-BASE_URL=http://localhost:3777 node scripts/pw-overlap-audit.mjs    # 겹침 감사(seed 직후, DB 불변): 모핑 단추·C 줄 끝 단추·그 자리 메뉴·AI 작업 목록과 알림이 옆 글자를 덮는지, 1280·1920 × EN·KO. 긴 글은 LONG=1, 다크는 THEMES=light,dark
-BASE_URL=http://localhost:3777 node scripts/pw-manual-shots.mjs     # 시스템 설명서(docs/manual/) 화면 그림·번호 위치 다시 뽑기 — reset_db → seed_sop_demo 직후, 끝에 묶음 3을 검토 완료로 바꾼다
-MANUAL=app BASE_URL=http://localhost:3777 node scripts/pw-manual-shots.mjs   # 사용 설명서(/manual) 그림 17장을 frontend/public/manual/img/에 — 1120x720, 번호 표시 없음, DB를 바꾸지 않는다. 위 줄보다 먼저 돌린다(위 줄이 묶음 3을 바꾼다)
-
-# 가짜 AI — 고정 응답, 배선 확인용 (저장소 루트에서, 포트 9999). 합성 응답이라 프롬프트 품질·정확도의 근거가 아니다
-node frontend/scripts/fake-ai-server.mjs   # FAKE_AI_SPLIT=1이면 분류 답과 나누기 제안 답이 문장을 둘로 나눈다(AI 나눔 확정·AI 나누기 제안 경로 스모크용)
-#   backend를 AI_ENABLED=true AI_BASE_URL=http://localhost:9999/v1 AI_MODEL=fake AI_API_TOKEN=fake AI_ENDPOINTS="" 로 띄운다.
-#   임베딩까지 쓰면 EMBED_ENABLED=true EMBED_BASE_URL=http://localhost:9999/v1 EMBED_API_TOKEN=fake EMBED_MODEL=fake 를 더한다(벡터가 글자 해시라 입구 2 짝은 안 생겨 신규로 간다).
-#   토큰이 비면 ai_client가 "Bearer " 헤더를 보내 호출이 실패하므로 가짜 서버에도 아무 값이나 넣는다.
-# dev 인증 = localStorage `sopa.devUser` / 헤더 `X-Dev-User`. 권한 차등은 DEV_ENFORCE_PERMISSIONS=true로 본다(dev.admin이 sysadmin).
-```
-
-```powershell
-# === PowerShell (Windows) ===
-# backend (backend\ 에서, 로컬 네이티브)
-py -3.11 -m venv .venv; .venv\Scripts\pip install -r requirements-dev.txt
-.venv\Scripts\python -m scripts.reset_db
-.venv\Scripts\python -m scripts.seed_sop_demo   # 로컬 전용(운영 DB 금지) — 설명은 bash 쪽과 같다
-.venv\Scripts\python -m scripts.seed_sop_worst  # 극단 자료 시드(로컬 전용) — 설명은 bash 쪽과 같다
-$env:AUTH_MODE="dev"; $env:DEV_ENFORCE_PERMISSIONS="true"; $env:APP_SYSADMINS="dev.admin"; .venv\Scripts\uvicorn app.main:app --reload --port 8777
-.venv\Scripts\python -m pytest tests\ -q -n auto
-.venv\Scripts\ruff check app\ tests\
-.venv\Scripts\alembic revision --autogenerate --rev-id "<다음 번호>" -m "<설명>"
-
-# frontend (frontend\ 에서) — npm/npx 명령은 bash와 동일
-npm install
-npm run dev
-npm run build
-npm run lint
-npx tsc --noEmit -p tsconfig.json
-npx vitest run
-npm i --no-save playwright-core
-$env:BASE_URL="http://localhost:3777"; $env:CHROME_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"; node scripts\pw-smoke-baseline.mjs
-node scripts\pw-smoke-sop.mjs        # seed_sop_demo 직후. 설명은 bash 쪽과 같다
-node scripts\pw-contrast-audit.mjs
-node scripts\pw-overlap-audit.mjs   # 겹침 감사. 설명은 bash 쪽과 같다
-$env:BASE_URL="http://localhost:3787"; $env:DS="worst"; node scripts\pw-layout-audit.mjs; Remove-Item Env:DS   # 배치 감사. 설명은 bash 쪽과 같다(변수를 지우지 않으면 다음 실행도 그 자료다)
-node scripts\pw-manual-shots.mjs     # 설명서 그림 다시 뽑기. 설명은 bash 쪽과 같다
-$env:MANUAL="app"; node scripts\pw-manual-shots.mjs; Remove-Item Env:MANUAL   # 사용 설명서(/manual) 그림. 설명은 bash 쪽과 같다(변수를 지우지 않으면 다음 실행도 app 모드다)
-
-# 가짜 AI (저장소 루트에서)
-node frontend\scripts\fake-ai-server.mjs   # 나눔 모드: $env:FAKE_AI_SPLIT="1"
-
-# 배포 스크립트 검증은 POSIX sh가 필요하다 — Git Bash에서 sh ci/test-deploy.sh, 아니면 GitLab의 deploy-script-test Job 결과를 본다
-# backend: $env:AI_ENABLED="true"; $env:AI_BASE_URL="http://localhost:9999/v1"; $env:AI_MODEL="fake"; $env:AI_API_TOKEN="fake"; $env:AI_ENDPOINTS=""
-# 임베딩까지: $env:EMBED_ENABLED="true"; $env:EMBED_BASE_URL="http://localhost:9999/v1"; $env:EMBED_API_TOKEN="fake"; $env:EMBED_MODEL="fake"
-```
-
-```bash
-# 서버 배포 = 사내 GitLab 파이프라인 (서버에서 직접 compose 하지 않는다) — 절차 전체: docs/deploy/gitlab-runner.md
-# 개발(작업은 dev 브랜치에서): git push gitlab dev → deploy-dev가 테스트를 기다리지 않고 바로 배포(테스트는 옆에서). 접속: http://<server-ip>:4444
-# 운영(dev를 main에 합친 뒤): git push gitlab main && git push gitlab vX.Y.Z → GitLab main 파이프라인 test 통과 → deploy-production ▶
-# 배포 Job(ci/deploy.sh)이 스택의 배포 폴더(운영 /data/home_<계정>/deployments/sop-archivist, 개발 …-dev, .env는 거기에만)로 checkout을 맞추고 docker compose -p <프로젝트> up -d --build. 운영 접속: http://<server-ip>:7777
-sh ci/test-deploy.sh            # 배포 스크립트 검증(가짜 docker, 저장소 루트에서) — busybox·GNU 둘 다에서 돌아야 한다
-# 로컬 Docker로 컨테이너 검증할 때도 공유 브리지를 먼저 만든다: docker network create dbv-shared
+.venv/bin/python -m scripts.reset_db        # 로컬 데모 DB(backend/dev.db). 서버 실행 금지
+.venv/bin/python -m scripts.seed_sop_demo   # 합성 SOP 묶음 4개(로컬 전용, AUTH_MODE=dev). 극단 자료는 seed_sop_worst
+AUTH_MODE=dev DEV_ENFORCE_PERMISSIONS=true APP_SYSADMINS=dev.admin .venv/bin/uvicorn app.main:app --reload --port 8777
+.venv/bin/python -m pytest tests/ -q -n auto   # 작업자마다 DB 파일이 따로. 한 파일만 볼 때는 -n 없이
+.venv/bin/ruff check app/ tests/
+.venv/bin/alembic revision --autogenerate --rev-id "<다음 번호>" -m "<설명>"   # 생성물을 직접 검토
+# frontend/
+npm install && npm run dev                  # :3777, /api는 BACKEND_URL(기본 :8777)로 프록시
+npm run build                               # 경고 0이어야 한다. next dev를 먼저 내린다
+npm run lint && npx tsc --noEmit -p tsconfig.json && npx vitest run   # 커밋 전 필수
+# 브라우저 검증(npm i --no-save playwright-core, 시스템 Chrome): scripts/pw-smoke-sop.mjs · pw-layout-audit.mjs(DS=worst) · pw-overlap-audit.mjs · pw-contrast-audit.mjs · pw-manual-shots.mjs
+node frontend/scripts/fake-ai-server.mjs    # 가짜 AI :9999(저장소 루트에서, FAKE_AI_SPLIT=1이면 나눔). 배선 확인용, 정확도 근거 아님
+# dev 인증 = localStorage `sopa.devUser` / 헤더 `X-Dev-User`. 권한 차등은 DEV_ENFORCE_PERMISSIONS=true(dev.admin이 sysadmin)
 ```
 
 ## Architecture
 
-모노레포. 5개 서비스(앱 4 + 백업 사이드카)를 docker compose로 묶어 nginx 리버스 프록시 뒤에 둔다. compose 프로젝트 이름은 `sop-archivist`.
+모노레포, 서비스 5개(앱 4 + 백업 사이드카)를 docker compose 프로젝트 `sop-archivist`로 묶어 nginx 뒤에 둔다.
 
 | 레이어 | 스택 | 역할 |
 |--------|------|------|
-| **proxy** | nginx 1.27 | `/api` → backend, 나머지 → frontend. **서버 노출 포트 7777**(`APP_PORT`). X-Frame-Options·frame-ancestors를 붙이지 않는다(Keycloak silent 갱신이 `/login`을 iframe으로 불러온다) |
-| **frontend** | Next.js 16 (TypeScript, React 19, Tailwind 4) + `oidc-client-ts` | 로그인 게이트·앱 틀(상단 막대 + 단계 레일/탭)·묶음 목록(`/`)·SOP 단계 화면(문서·쪼개기·To-Be·Assign(분류+짝 맞추기)·결과물·검토)·내 신원·권한(`/account`)·관리 화면(권한 관리·직원 동기화·배치 작업·AI). UI 영어 기본 + 한국어 전환, 라이트·다크 |
-| **backend** | Python 3.11 — FastAPI + SQLAlchemy(async) + Alembic + Pydantic | 인증(Keycloak RS256·dev)·`/api/me`·직원/부서 디렉터리(HR 웹훅 동기화)·권한 체계·관리 운영 API·사내 AI 연결·사용량 기록, **SOP 재구성 코어 API**(`app/sop/` + `routers/sop_*` — 묶음·문서 업로드/추출·쪼개기·배정·결과물·Excel·검토)와 그 위의 **AI 제안 층**(`app/sop/ai/` — 작업 실행기·임베딩·분류/번역/짝/나누기 제안) |
-| **db** | PostgreSQL 16 | 영속 저장. `dbv-shared` 네트워크에 별칭 `sop-archivist-db`로 합류(db-viewer 읽기 전용 조회) |
-| **db-backup** | `postgres:16-alpine` 사이드카 | 일간 04:00 KST `pg_dump -Fc`, 14일 보존, `batch_job_runs`에 결과 기록 (`docs/deploy/backup.md`) |
+| **proxy** | nginx 1.27 | `/api` → backend, 나머지 → frontend. 노출 포트 `APP_PORT`(운영 7777). X-Frame-Options·frame-ancestors를 붙이지 않는다(Keycloak silent 갱신이 `/login`을 iframe으로 부른다) |
+| **frontend** | Next.js 16 · React 19 · TS · Tailwind 4 · `oidc-client-ts` | 로그인 게이트, 묶음 목록, SOP 단계 화면(문서·쪼개기·To-Be·Assign·결과물·검토), 계정·관리 화면, 사용 설명서 `/manual`. UI 영어 기본 + 한국어, 라이트·다크 |
+| **backend** | Python 3.11 · FastAPI · SQLAlchemy(async) · Alembic · Pydantic | 인증(Keycloak RS256·dev), 직원 디렉터리(HR 웹훅), 권한, 관리 API, 사내 AI 연결, SOP 재구성 코어(`app/sop/`, `routers/sop_*`), AI 제안 층(`app/sop/ai/`) |
+| **db** | PostgreSQL 16 | `dbv-shared` 네트워크 별칭 `sop-archivist-db`(db-viewer 읽기 전용) |
+| **db-backup** | `postgres:16-alpine` | 일간 04:00 KST `pg_dump -Fc`, 14일 보존, `batch_job_runs`에 기록(`docs/deploy/backup.md`) |
 
-**경계:** 브라우저 → `:7777`(앱 nginx) → (Next.js | FastAPI) → PostgreSQL. frontend↔backend는 nginx 경유 HTTP, 로컬에서는 Next rewrites가 `/api`를 `BACKEND_URL`로 넘긴다. 입력 검증은 backend API 경계에서 한다(`rules/common/security.md`). 인증은 같은 서버의 Keycloak realm `ai-portal`(공유)의 public 클라이언트 `sop-archivist-frontend`이고, 주소는 `.env` 경유다(`docs/deploy/setup-once.md` A5).
+**경계:** 브라우저 → `:7777` nginx → (Next.js | FastAPI) → PostgreSQL. 로컬은 Next rewrites가 `/api`를 `BACKEND_URL`로 넘긴다. 입력 검증은 backend API 경계(`rules/common/security.md`). 인증은 Keycloak realm `ai-portal`의 public 클라이언트 `sop-archivist-frontend`, 주소는 `.env`(`docs/deploy/setup-once.md` A5).
 
-**디렉터리 구조:**
-```
-backend/    # FastAPI 앱(app/, SOP 기능은 app/sop/), Alembic(alembic/), 로컬 시드(scripts/reset_db.py·seed_sop_demo.py), 합성 SOP 생성기(scripts/synthetic_sop.py), tests/
-frontend/   # Next.js 앱(src/app 라우트, src/components, src/lib), scripts/ = 스모크·가짜 AI
-nginx/      # 리버스 프록시 설정
-scripts/    # db-backup.sh (사이드카가 마운트)
-ci/         # deploy.sh(GitLab 배포 Job 본체, POSIX sh) · test-deploy.sh(가짜 docker로 검증) — .gitlab-ci.yml이 부른다
-docs/       # 인덱스 docs/README.md — deploy/(런북·gitlab-runner.md) · manual/(시스템 설명서·화면 그림) · lessons/(시행착오) · superpowers/(명세·계획)
-docker-compose.yml
-.gitlab-ci.yml  # 사내 GitLab: test 3개(MR·main 자동) · deploy-production(main 수동 ▶)
-```
+**디렉터리:** `backend/`(앱·Alembic·시드 `scripts/`·tests) · `frontend/`(src/app·components·lib, `scripts/` 스모크·가짜 AI) · `nginx/` · `scripts/db-backup.sh` · `ci/`(`deploy.sh`·`test-deploy.sh`, `.gitlab-ci.yml`이 부름) · `docs/`(인덱스 `docs/README.md`).
 
-**세부 구조는 폴더별 CLAUDE.md에 있다**(세션마다 깔리는 양을 줄이려고 2026-11-10에 나눴다 — 내용은 그대로 옮겼다). 그 폴더의 파일을 읽을 때 함께 실리고, 실리지 않은 채 그 폴더를 고치게 되면 먼저 직접 읽는다.
-- [`backend/CLAUDE.md`](backend/CLAUDE.md) — backend 핵심 모듈(`app/main.py`·`app/auth.py`·`app/access/`·`app/hr/`·`app/sop/`·`app/sop/ai/`·떼어 내기·AI 호출)과 backend 체크리스트(admin 엔드포인트·Alembic 리비전·AI 호출·AI 제안 층 불변식·SOP 규칙 이중 사용 지점·데모/E2E 몰이).
-- [`frontend/CLAUDE.md`](frontend/CLAUDE.md) — frontend 핵심(API 호출·순수 모델·Assign 화면·이동/움직임 공통 층·공통 부품·사용 설명서 `/manual`·포커스 테두리)과 frontend 체크리스트(프런트 텍스트·사용 설명서 동기화).
-
-언어 규칙은 backend → `rules/languages/python.md`, frontend → `rules/languages/typescript.md`. 컨테이너/설정 규칙은 `rules/backend/` 참고.
+**세부 구조는 폴더별 CLAUDE.md에** — 그 폴더의 파일을 읽을 때 함께 실리고, 실리지 않은 채 그 폴더를 고치게 되면 먼저 직접 읽는다. [`backend/CLAUDE.md`](backend/CLAUDE.md)(핵심 모듈·AI 제안 층 불변식·SOP 규칙 이중 사용 지점, Python·설정 규칙을 불러옴) · [`frontend/CLAUDE.md`](frontend/CLAUDE.md)(핵심 구조·공통 부품·사용 설명서, TypeScript·식별자 규칙을 불러옴).
 
 ## 체크리스트 — 같이 움직여야 하는 곳
 
-양쪽에 걸친 것만 여기에 둔다. backend에만 걸리는 항목은 `backend/CLAUDE.md`, frontend에만 걸리는 항목은 `frontend/CLAUDE.md`의 같은 이름 절에 있다.
+양쪽에 걸친 것만. 한쪽에만 걸리는 항목은 폴더 CLAUDE.md의 같은 이름 절.
 
-- **새 권한(permission) 추가 — 3곳을 한 커밋에서:** backend `app/access/catalog.py` `PERMISSIONS` ↔ frontend `src/lib/access.ts` `PERMISSIONS`(같은 값·같은 순서, 표시 순서의 기준) ↔ i18n `permission.<key>`(en·ko, `src/lib/i18n-messages.ts`). 권한 키 자체가 `permission.`으로 시작하면(`permission.manage`) 메시지 키가 `permission.permission.manage`가 된다. 라우트는 `Depends(require_permission("<key>"))`로 막고 — 모르는 키는 import 때 `ValueError`다. 카탈로그에서 키를 빼면 저장된 역할·부여의 그 키는 판정에서 조용히 버려진다(행은 남음).
-- **새 env:** backend `app/settings.py` · `.env.example` · `docker-compose.yml` backend `environment:`(`VAR: ${VAR:-}`) **3곳**. backend에 `env_file`이 없어 compose에 빠지면 서버에서만 조용히 기본값이다. 빈 문자열이 기동을 죽이는 int/bool 필드는 Settings 기본값과 같은 값을 폴백으로 둔다. 시크릿 값은 어디에도 쓰지 않는다(이름만).
-- **새 업무 규칙 거절 코드(`raise_rule`) = 프런트 문구:** 화면에서 닿을 수 있는 코드면 `rule.<code>` en·ko 문구를 같이 더한다(없으면 `humanizeApiError`가 상태 코드 문구로 떨어져 사용자가 이유를 못 본다). 세부 사유가 있는 거절은 `rule.<code>.<reason>`.
-- **화면·동작·라벨을 바꾸면 사용 설명서도 같은 커밋에서:** `frontend/public/manual/user-manual.md`의 해당 조각을 고친다. backend만 고쳐 동작이 달라질 때도 같다 — 세부(굵은 라벨 대조·그림 다시 뽑기·`version`)는 `frontend/CLAUDE.md`.
+- **새 권한(permission) — 3곳을 한 커밋에서:** backend `app/access/catalog.py` `PERMISSIONS` ↔ frontend `src/lib/access.ts` `PERMISSIONS`(같은 값·순서) ↔ i18n `permission.<key>`(en·ko). 키가 `permission.`으로 시작하면 메시지 키는 `permission.permission.manage`. 라우트는 `Depends(require_permission("<key>"))`(모르는 키는 import 때 `ValueError`). 카탈로그에서 뺀 키는 저장된 역할·부여에서 조용히 버려진다.
+- **새 env — 3곳:** `app/settings.py` · `.env.example` · `docker-compose.yml` backend `environment:`(`VAR: ${VAR:-}`). backend에 `env_file`이 없어 compose에 빠지면 서버에서만 조용히 기본값이다. 빈 문자열이 기동을 죽이는 int/bool은 Settings 기본값과 같은 폴백. 시크릿 값은 어디에도 쓰지 않는다.
+- **새 업무 규칙 거절 코드(`raise_rule`) = 프런트 문구:** 화면에서 닿는 코드면 `rule.<code>` en·ko(세부 사유는 `rule.<code>.<reason>`). 없으면 상태 코드 문구로 떨어진다.
+- **화면·동작·라벨을 바꾸면 사용 설명서도 같은 커밋에서:** `frontend/public/manual/user-manual.md` 해당 조각. backend만 고쳐 동작이 달라질 때도 같다(세부는 `frontend/CLAUDE.md`).
 
 ## Operations / Deployment
 
-로컬 개발(네이티브)과 서버 배포(docker compose)가 다른 환경이라, 아래 제약을 어기면 로컬은 초록인데 서버에서 깨진다.
+로컬(네이티브)과 서버(docker compose)가 달라, 아래를 어기면 로컬은 초록인데 서버에서 깨진다.
 
-| 제약 | 이유 | 반영 |
-|---|---|---|
-| **배포는 GitLab Runner — 서버에서 직접 compose 하지 않는다** | 사내 정책(사용자 결정, 2026-11-09). GitHub가 개발 원본, 사용자가 PC에서 사내 GitLab(CE, 미러 없음)으로 push | `.gitlab-ci.yml`(test 자동·deploy 수동 ▶, `main`만) → 배포 러너(Protected, 도커 소켓 + 배포 폴더를 **양쪽 같은 경로로** 마운트)가 `ci/deploy.sh`로 서버 데몬에서 `compose up -d --build`. 레지스트리·DinD 없음, 러너는 `pull_policy = never`. `.env`는 서버 배포 폴더에만(가드: `AUTH_MODE=keycloak`·`BACKUP_DIR`). 배포 스크립트의 docker 호출은 빈 환경(`env -i`) — CI 변수가 `.env`를 덮지 못하게. `set -x`·`.env`/`compose config` 출력·`down`·`prune`·`--remove-orphans` 금지. 운영·진단·복구는 배포 폴더에서 손으로(`docs/deploy/gitlab-runner.md`) |
-| 서버 71번, bpm 옆 | 사용자 결정 | 별도 compose 스택·별도 postgres(내 판단). 앱 nginx 노출 포트 운영 **7777**·개발 **4444**(사용자 결정, 9900·9901·9910은 bpm 사용 중) |
-| 개발 스택(`dev` 브랜치, :4444) | 빨리 올려 보고 확인(사용자 결정, 2026-11-11) | `deploy-dev`는 `needs: []`로 테스트를 기다리지 않고 push마다 자동, 운영(`main`)만 테스트 통과가 전제. compose 프로젝트 `sop-archivist-dev`·DB·배포 폴더·db-viewer 별칭이 따로이고 백업 사이드카는 없다. `ci/deploy.sh`가 스택마다 `.env`(포트·별칭)를 대조해 다른 스택의 `.env`를 거절한다 (`docs/deploy/gitlab-runner.md` 9절) |
-| 서버는 Docker Hub 차단 | 베이스 이미지는 연결된 PC에서 amd64 tar로 반입 | bpm과 **같은 태그만** 쓴다: `python:3.11-slim`, `node:24.22.1-alpine`, `nginx:1.27-alpine`, `postgres:16-alpine`(이미 서버에 있음 → 새 tar 반입 불필요). Dockerfile에 `# syntax=` 금지 |
-| 배포 런타임 Python 3.11 | 로컬 3.12 문법으로 서버 기동 불능 사고(bpm 2026-08-31) | `backend/ruff.toml` `target-version = "py311"` |
-| backend 서비스에 `env_file` 없음 | `.env`에만 넣은 값이 컨테이너에 안 들어간 사고(bpm `CSV_MANUAL_URL`) | 모든 backend env를 compose `environment:`에 `VAR: ${VAR:-}`로 매핑. `.env.example`·Settings·compose 3곳 동시 갱신 |
-| 서버는 평문 HTTP 원격 IP | secure context 아님 → `crypto.randomUUID`·`crypto.subtle`·Clipboard API 불가 | `genId`, `copyText` 폴백. Keycloak 클라이언트는 PKCE를 **필수로 걸지 않는다**(선택) — 앱이 `crypto.subtle`이 있으면(HTTPS·localhost) PKCE를 켜고 평문 HTTP에서는 자동으로 끈다(`lib/keycloak-login.ts`). 검증은 localhost가 아닌 LAN IP로 |
-| 로그인 콜백은 `<origin>/login` | 앱이 `redirect_uri`를 `window.location.origin`으로 만든다 | Keycloak 클라이언트 Valid redirect URIs·post logout URIs에 `http://<server-ip>:7777/*`, Web origins에 `http://<server-ip>:7777` (`docs/deploy/setup-once.md` A5). 포트·도메인마다 따로 등록 |
-| 운영 DB에 dev 모드 금지 | dev 모드는 헤더를 신뢰하고 가짜 직원 5명·부서 7개를 DB에 넣는다(keycloak으로 바꿔도 남음) | 운영 `.env`에 `AUTH_MODE=keycloak` 명시(compose 기본값도 keycloak, 배포 스크립트가 거절). 개발 스택만 `AUTH_MODE=dev`를 쓰고 그때 `DEV_ENFORCE_PERMISSIONS=true`가 필수다(로그인 화면에서 직원을 골라 그 사람 권한으로 — 비밀번호가 없어 실제 SOP 원문은 올리지 않는다). `scripts.reset_db`도 서버 실행 금지 — 가드는 HR 직원이 있을 때뿐 (`docs/deploy/setup-once.md` C절) |
-| 스키마는 Alembic, 단일 워커 | 기동 때 lifespan이 `upgrade head`를 돌려 워커가 둘이면 경합 | Dockerfile에 `--workers` 추가 금지. 모델을 바꾸면 리비전 필수(위 체크리스트) |
-| backend 메모리 상한 2G | 업로드 파싱 자식 프로세스(메인 추출 + MarkItDown)가 최악 문서(칸 10만 표)에서 ~660MiB를 더 쓴다(`docs/qa/2026-11-sop-parse-dependencies.md`). 자식 `RLIMIT_AS`는 `MALLOC_ARENA_MAX=2`와 함께일 때만 충분하다 | compose backend `memory: 2G`·`MALLOC_ARENA_MAX`·`SOP_PARSE_MEMORY_MB`(2048)를 낮추지 않는다. 동시 파싱은 업로드당 한 자리, 최대 2개(`MAX_PARALLEL_PARSES`) |
-| 서버 빌드 때 외부 다운로드 금지 | 서버는 Docker Hub가 막혀 있고 PyPI·npm만 닿는다 | 흐름도 글꼴 NanumGothic(OFL)은 저장소 `backend/app/sop/assets/fonts/`에, 프런트 글꼴(Pretendard·Paperlogy·JetBrains Mono, OFL)은 `frontend/src/app/fonts/`에 넣어 `next/font/local`로 읽는다(`.gitattributes` `*.ttf`·`*.woff2 binary`). 새 backend 의존성은 PyPI 패키지만, Python 3.11 linux x86_64 휠이 있는지 먼저 확인한다(`pip download --platform manylinux2014_x86_64 …`, QA 문서 참고). `numpy`(임베딩 코사인)는 MarkItDown의 `onnxruntime`이 이미 들여오는 버전으로 고정(`requirements.txt`)해 새 휠을 더하지 않았다 — 올리려면 `onnxruntime` 호환부터 본다 |
-| 백업 디렉터리는 root 전용 `0700` | 덤프에 직원 디렉터리 전 행과 SOP 원문·원본 파일(대외비)이 들어 있다 | 목록·복사·복원은 `sudo`, 오프서버 사본도 사적으로 (`docs/deploy/backup.md`). db-viewer는 `dbviewer_ro` 계정으로만 붙는다 — 운영 연결 2026-11-10, SOP 원문 표까지 조회 공개·`login_records`만 제외(사용자 결정), `document_files`는 미리보기 금지 (`docs/deploy/db-viewer-readonly.md`) |
-| 줄바꿈 | Windows PC 경유 CRLF 오염 | `.gitattributes` `* text=auto eol=lf`(ps1/bat/cmd만 CRLF) |
-| 로컬 검증 PC는 Windows, Docker 없음 | 운영 파이프라인 | 로컬 명령은 bash·PowerShell 병기. 로컬 DB는 sqlite 파일 |
-| 로컬 포트 3000/8000은 db-viewer가 점유 | 맥 개발 환경 | 로컬 dev 포트 frontend **3777**, backend **8777**(내 판단) |
-| 공개 저장소 | `Nocharm/sop-archivist`는 public(사용자 결정) | 실서버 IP·사내 호스트명은 플레이스홀더(`<server-ip>` 등). 회사명·사설 대역은 유지(bpm 정책과 동일). 시크릿·`.env`·실제 SOP 원문은 절대 추적하지 않는다(저장소의 테스트·데모 문서는 합성이고 파일 이름이 `SYNTHETIC_`로 시작한다) |
+| 제약 | 반영 |
+|---|---|
+| **배포는 사내 GitLab 파이프라인만**(사용자 결정 2026-11-09) | 서버에서 직접 compose 하지 않는다. `.gitlab-ci.yml`(test 자동, `deploy-dev` dev push마다 자동·테스트를 기다리지 않음, `deploy-production` main 수동 ▶) → 배포 러너가 `ci/deploy.sh`로 `compose up -d --build`. `.env`는 서버 배포 폴더에만(가드 `AUTH_MODE=keycloak`·`BACKUP_DIR`, 스택마다 포트·별칭 대조). docker 호출은 빈 환경(`env -i`). `set -x`·`.env`/`compose config` 출력·`down`·`prune`·`--remove-orphans` 금지. 절차·복구 `docs/deploy/gitlab-runner.md` |
+| 서버 71번, bpm 옆 | 별도 compose 스택·postgres. 포트 운영 **7777**·개발 **4444**(9900·9901·9910은 bpm). 개발 스택은 프로젝트 `sop-archivist-dev`, DB·배포 폴더·별칭이 따로, 백업 사이드카 없음 |
+| 서버는 Docker Hub 차단 | 베이스 이미지는 bpm과 **같은 태그만**(`python:3.11-slim`·`node:24.22.1-alpine`·`nginx:1.27-alpine`·`postgres:16-alpine`), 바꾸면 amd64 tar 반입. Dockerfile에 `# syntax=` 금지. Docker 규칙 `rules/backend/docker.md`(Dockerfile·compose를 고치기 전에 읽는다) |
+| 서버 빌드 때 외부 다운로드 금지(PyPI·npm만) | 글꼴은 저장소에(backend `app/sop/assets/fonts/`, frontend `src/app/fonts/` `next/font/local`). 새 backend 의존성은 Python 3.11 linux x86_64 휠 확인 후. `numpy`는 `onnxruntime`이 들여오는 버전에 고정 |
+| 배포 런타임 Python 3.11 | `backend/ruff.toml` `target-version = "py311"`(로컬 3.12 문법 사고, bpm) |
+| backend에 `env_file` 없음 | 모든 backend env를 compose `environment:`에 매핑(위 체크리스트) |
+| 서버는 평문 HTTP 원격 IP | `crypto.randomUUID`·`crypto.subtle`·Clipboard 불가 → `genId`·`copyText` 폴백. Keycloak PKCE는 선택(앱이 `crypto.subtle`이 있을 때만 켠다). 검증은 localhost가 아닌 LAN IP로 |
+| 로그인 콜백 `<origin>/login` | Keycloak Valid redirect·post logout URIs `http://<server-ip>:7777/*`, Web origins `http://<server-ip>:7777` — 포트·도메인마다 등록 |
+| 운영 DB에 dev 모드 금지(헤더를 믿고 가짜 직원·부서를 DB에 넣어 keycloak으로 바꿔도 남는다) | 운영 `.env` `AUTH_MODE=keycloak`(배포 스크립트가 거절). 개발 스택만 dev + `DEV_ENFORCE_PERMISSIONS=true`(실제 SOP 원문을 올리지 않는다). `scripts.reset_db`도 서버 금지(`docs/deploy/setup-once.md` C절) |
+| Alembic, 단일 워커 | 기동 때 `upgrade head` — Dockerfile에 `--workers` 금지. 모델을 바꾸면 리비전 필수 |
+| backend 메모리 2G | 업로드 파싱 자식이 최악 문서에서 ~660MiB를 더 쓴다. `memory: 2G`·`MALLOC_ARENA_MAX`·`SOP_PARSE_MEMORY_MB`(2048)를 낮추지 않는다(자식 `RLIMIT_AS`는 `MALLOC_ARENA_MAX=2`와 함께일 때만 충분). 동시 파싱 최대 2(`docs/qa/2026-11-sop-parse-dependencies.md`) |
+| 백업은 root 전용 `0700` | 덤프에 직원 전 행·SOP 원문(대외비). 목록·복사·복원은 `sudo`. 오프서버 사본도 사적으로. db-viewer는 `dbviewer_ro`로만 — SOP 원문 표까지 조회 공개(사용자 결정), `login_records` 제외·`document_files` 미리보기 금지(`docs/deploy/db-viewer-readonly.md`) |
+| 줄바꿈 | `.gitattributes` `* text=auto eol=lf`(ps1/bat/cmd만 CRLF) |
+| 로컬 검증 PC는 Windows·Docker 없음, 맥은 3000/8000을 db-viewer가 점유 | 로컬 명령은 bash·PowerShell 병기(문서), 로컬 DB는 sqlite, dev 포트 frontend **3777**·backend **8777** |
+| 공개 저장소 `Nocharm/sop-archivist` | 실서버 IP·사내 호스트명은 플레이스홀더(회사명·사설 대역은 유지, bpm과 같음), 시크릿·`.env`·실제 SOP 원문은 추적 금지(테스트·데모 문서는 합성, 파일 이름 `SYNTHETIC_`) |
 
 ## Lessons — 시행착오 방지
 
-형제 프로젝트 bpm을 6개월 운영하며 실측으로 얻은 교훈 중 이 프로젝트에도 유효한 것과 이 프로젝트에서 직접 겪은 것을 `docs/lessons/`에 둔다(인덱스 [`docs/lessons/README.md`](docs/lessons/README.md)). **프런트 화면이나 검증 스크립트를 건드리기 전에 해당 문서를 먼저 읽을 것.**
+`docs/lessons/`(인덱스 [`docs/lessons/README.md`](docs/lessons/README.md)). **프런트 화면이나 검증 스크립트를 건드리기 전에 해당 문서를 먼저 읽는다.**
 
-- [`docs/lessons/react-ts-patterns.md`](docs/lessons/react-ts-patterns.md) — useCallback deps TDZ → ref 미러, `useEffectEvent`(§7)·`<Activity>`(§8), 이펙트 안 setState 린트, Tailwind display 클래스 이중 지정 금지.
-- [`docs/lessons/browser-verification.md`](docs/lessons/browser-verification.md) — Playwright + 시스템 Chrome 검증, **dev DB 오염 함정**("0 events"·"목록이 비어 있음"은 코드가 아니라 오염일 수 있다), node 스크립트 cwd, 워크트리 세션 Bash 제약, 평문 HTTP는 localhost에서 재현되지 않는다, 헤드리스 blob 내려받기 이름, 그려진 글자 대비 감사.
-- [`docs/lessons/ui-review.md`](docs/lessons/ui-review.md) — 화면 검토·배치 수정: **극단 자료에서만 무너지는 표가 있다**, 처방은 실행 중인 화면에 주입해 잰 뒤 적는다, grid 자식 `minmax(0, 1fr)`, 줄 수 제한은 `td`가 아니라 감싼 요소에, 줄 끝 단추는 숨기지 않고 흐리게.
-- [`docs/lessons/git-operations.md`](docs/lessons/git-operations.md) — 히스토리 재작성·강제 푸시 전에: **같은 폴더의 다른 세션부터 확인하고 lease에 예상 해시를 명시한다**, zsh는 변수를 단어로 나누지 않으니 여러 인자는 배열로.
-- [`docs/lessons/remote-sessions.md`](docs/lessons/remote-sessions.md) — 클라우드 세션이 연결된 PC 폴더를 다룰 때: **파일 전송은 비동기라 체크섬을 확인하고 쓴다**, 다른 경로로 마운트된 워크트리를 prune하지 않는다, git 쓰기에는 삭제 권한, VM에서는 맥 `node_modules`가 돌지 않는다.
+- [`react-ts-patterns.md`](docs/lessons/react-ts-patterns.md) — useCallback deps TDZ, `useEffectEvent`(§7)·`<Activity>`(§8), 이펙트 안 setState, Tailwind display 이중 지정.
+- [`browser-verification.md`](docs/lessons/browser-verification.md) — Playwright + 시스템 Chrome, **dev DB 오염 함정**, 폴더마다 `next dev` 하나, 평문 HTTP는 localhost에서 재현 안 됨, 글자 대비 감사.
+- [`ui-review.md`](docs/lessons/ui-review.md) — **극단 자료에서만 무너지는 표**, 처방은 화면에 주입해 잰 뒤, grid `minmax(0, 1fr)`, 줄 끝 단추는 흐리게.
+- [`git-operations.md`](docs/lessons/git-operations.md) — 강제 푸시 전에 **같은 폴더의 다른 세션부터 확인, lease에 예상 해시**, zsh는 변수를 단어로 나누지 않는다.
+- [`remote-sessions.md`](docs/lessons/remote-sessions.md) — 클라우드 세션 파일 전송은 비동기(체크섬), 다른 경로로 마운트된 워크트리를 prune하지 않는다.
 
 ---
 
@@ -194,17 +113,6 @@ docker-compose.yml
 @rules/common/documentation.md
 @rules/common/testing.md
 
-## Rules — 백엔드/Docker
+## Rules — 필요할 때 읽는 것
 
-@rules/backend/config.md
-@rules/backend/docker.md
-@rules/backend/sync-checklist.md
-
-## Rules — 프론트엔드
-
-@rules/frontend/identifiers.md
-
-## Language-Specific Rules
-
-@rules/languages/python.md
-@rules/languages/typescript.md
+세션마다 싣지 않는다(2026-11-14 문맥 정리). 언어·폴더 규칙은 폴더 CLAUDE.md가 불러온다 — `rules/languages/python.md`·`rules/backend/config.md`는 `backend/CLAUDE.md`, `rules/languages/typescript.md`·`rules/frontend/identifiers.md`는 `frontend/CLAUDE.md`. Docker는 `rules/backend/docker.md`(Dockerfile·compose를 고치기 전에), 동기화 점검은 `rules/backend/sync-checklist.md`(`/sync`·`/sync-all` 때).

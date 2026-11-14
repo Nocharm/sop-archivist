@@ -10,3 +10,10 @@ frontend(Next.js) 세부 구조와 frontend에만 걸리는 체크리스트. 루
 
 - **프런트 텍스트:** en·ko 메시지를 한 쌍으로 추가한다(`i18n-messages.test.ts`가 키 집합을 가드). 인터랙티브 요소에는 `data-testid`(`rules/frontend/identifiers.md`).
 - **화면·동작·라벨을 바꾸면 사용 설명서도 같은 커밋에서:** `frontend/public/manual/user-manual.md`의 해당 조각을 고치고, 화면 모양이 달라졌으면 그림을 다시 뽑는다(`MANUAL=app node scripts/pw-manual-shots.mjs`, 위 Commands). 설명서는 화면 라벨을 영어 화면 글자 그대로 **굵게** 적는다 — `manual-content.test.ts`가 굵은 영어 글자를 en 문구 사전과 대조하고(라벨을 바꾸면 여기서 걸린다), 권한 키 전부·그림 빠짐과 남음·도움말이 여는 조각·바깥 주소와 IP 없음을 본다. 새 단계나 화면을 더하면 `lib/manual.ts`의 `MANUAL_STAGE_SECTION`·`MANUAL_PAGE_SECTION`에 조각을 잇는다. 머리의 `version`은 서비스 `MAJOR.MINOR`와 같아야 한다(같은 테스트) — MINOR를 올리는 릴리스에서 설명서를 다시 읽고 `version`·`updated`를 함께 올린다. 글과 그림은 로그인 밖에서도 열리는 정적 파일이니 실제 SOP 글자·직원 이름·서버 주소를 넣지 않는다(그림은 합성 데모 DB에서만 찍는다).
+
+## 규칙 — frontend에서 불러오는 것
+
+아래 규칙은 루트에서 세션마다 싣지 않고 이 폴더를 다룰 때만 실린다(2026-11-14 문맥 정리).
+
+@../rules/languages/typescript.md
+@../rules/frontend/identifiers.md

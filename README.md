@@ -2,7 +2,7 @@
 
 SOP Restructuring T/F가 쓰는 사내 AI 에이전트 웹 서비스 (FastAPI + Next.js, 사내 서버에 docker compose로 배포). 사용자는 전 부서의 SOP 담당자다.
 
-현재(v0.8.0, 2026-11-09 운영 배포)는 기반 세팅(**사내 로그인(Keycloak)·직원 디렉터리(HR 웹훅 동기화)·사내 AI 연결·표 기반 권한 체계·관리 화면·DB 자동 백업**) 위에 **SOP 재구성의 결정적 코어**와 그 위의 **AI 제안 층**을 얹은 단계다. 옛 SOP·WI를 묶음으로 올리면(DOCX 기본, 텍스트 PDF 보조) 별도 프로세스에서 원문을 빠짐없이 추출하고 규칙으로 문장 단위로 쪼갠다. 작성자는 단위마다 새 SOP·WI의 칸에 배정·확정하거나(입구 1), 이미 쓴 새 문서와 문장 짝을 맞춘다(입구 2). 확정 결과로 문장 비교표(A)·맵핑 흐름도(B)·새 문서 기준 묶음(C)을 코드가 계산해 한글판·영어판 Excel로 내보내고, 검토자에게 검토를 요청한다. AI는 작성자가 요청할 때 제안만 한다: 단위를 보낼 칸과 한·영 고쳐 쓴 문장(입구 1), 번역, 옛·새 문장 짝과 변경 종류(입구 2), 한/영 따로 문서의 한글·영어 짝, 복합 문장 나누기 위치. 사람이 줄마다 확정하고, AI가 꺼지거나 실패해도 사람 경로는 그대로 돈다. 화면은 1차 모양으로 모든 단계가 열려 있다(묶음 목록·개요, 문서, 쪼개기, To-Be, 분류, 짝 맞추기, 결과물, 검토 — 라이트·다크 테마). v0.5.0에서 v0.4.0 전체 검토의 치명·중요 문제를 고쳤다(짝 맞추기의 입구 2 표·그림은 다음 버전). AI 층은 합성 SOP와 가짜 AI로만 검증했고 실제 사내 모델로는 시험하지 않았다. 사용법은 앱 안의 사용 설명서(`/manual`, 글은 [`frontend/public/manual/user-manual.md`](frontend/public/manual/user-manual.md))에 있다. 설계: [`docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`](docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md).
+현재 **v1.0.0**(2026-11-14 운영 배포, 버전별 변경은 [`CHANGELOG.md`](CHANGELOG.md)). 기반 세팅(**사내 로그인(Keycloak)·직원 디렉터리(HR 웹훅 동기화)·사내 AI 연결·표 기반 권한 체계·관리 화면·DB 자동 백업**) 위에 SOP 재구성의 결정적 코어와 AI 제안 층을 얹었다. 옛 SOP·WI를 묶음으로 올리면(DOCX 기본, 텍스트 PDF 보조) 원문을 빠짐없이 추출해 문장 단위로 쪼개고(Split), 작성자가 Unit마다 새 SOP·WI의 칸이나 이미 쓴 새 문서의 문장으로 보내 확정한다(Assign, 되돌리기·다시 하기 포함). 확정 결과로 결과물 A(문장 비교)·B(맵핑 흐름)·C(새 문서 기준 묶음)를 코드가 한 벌로 계산해 Excel(미리보기 포함)로 내보내고 검토를 요청한다. AI는 작성자가 요청할 때 제안만 하고(칸·고쳐 쓰기·번역·짝·나누기) 사람이 줄마다 확정하며, AI가 꺼지거나 실패해도 사람 경로는 그대로 돈다. AI 층은 합성 SOP와 가짜 AI로만 검증했고 실제 사내 모델·실제 SOP로는 아직 시험하지 않았다. 사용법은 앱 안의 사용 설명서(`/manual`, 글은 [`frontend/public/manual/user-manual.md`](frontend/public/manual/user-manual.md))에 있다. 설계: [`docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`](docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md).
 
 ## 로컬 실행 (Docker 없이)
 
@@ -32,7 +32,7 @@ npm install
 npm run dev
 ```
 
-브라우저에서 `http://localhost:3777`을 열면 dev 모드 로그인 화면에서 데모 사용자를 고를 수 있다(`dev.admin`은 시스템 관리자). 권한 차등은 사용자를 바꿔 가며 본다. 검증 명령(테스트·린트·빌드·브라우저 스모크)과 가짜 AI 서버는 [`CLAUDE.md`](CLAUDE.md) Commands에 있다.
+브라우저에서 `http://localhost:3777`을 열면 dev 모드 로그인 화면에서 데모 사용자를 고를 수 있다(`dev.admin`은 시스템 관리자). 권한 차등은 사용자를 바꿔 가며 본다. 검증 명령(테스트·린트·빌드·브라우저 스모크·감사)과 가짜 AI 서버는 [`docs/qa/verification-commands.md`](docs/qa/verification-commands.md)에 있다(bash·PowerShell).
 
 > `reset_db`는 모든 테이블을 지우고 다시 만드는 **로컬 전용** 스크립트다. 서버에서 실행하지 않는다.
 
@@ -61,7 +61,7 @@ AI 제안은 사내 채팅 모델(`AI_*`)과 별개의 사내 임베딩 모델(`
 | `AI_ENABLED` / `AI_BASE_URL` / `AI_API_TOKEN` / `AI_MODEL` | 채팅 모델. 분류·고쳐 쓰기·번역·입구 2 변경 종류·나누기 제안이 쓴다 |
 | `EMBED_ENABLED` / `EMBED_BASE_URL` / `EMBED_API_TOKEN` / `EMBED_MODEL` | 임베딩 모델. 후보 칸 추리기·입구 2 짝·한/영 따로 짝 제안이 쓴다. 꺼져 있으면 후보는 전체 칸이나 글자 유사도로 줄이고, 한/영 따로 짝 요청은 409 `embedding_disabled`다 |
 
-로컬에서 배선만 확인할 때는 가짜 AI 서버(`frontend/scripts/fake-ai-server.mjs`)를 쓴다. 명령은 [`CLAUDE.md`](CLAUDE.md) Commands에 있고, 응답이 고정이라 정확도의 근거가 아니다.
+로컬에서 배선만 확인할 때는 가짜 AI 서버(`frontend/scripts/fake-ai-server.mjs`)를 쓴다. 명령은 [`docs/qa/verification-commands.md`](docs/qa/verification-commands.md)에 있고, 응답이 고정이라 정확도의 근거가 아니다.
 
 ## 서버 배포
 
@@ -83,7 +83,7 @@ frontend/   # Next.js 앱(src/app 라우트, src/components, src/lib), scripts/ 
 nginx/      # 앱 리버스 프록시 설정
 scripts/    # db-backup.sh (백업 사이드카)
 ci/         # deploy.sh(GitLab 배포 Job 본체) · test-deploy.sh(가짜 docker로 배포 스크립트 검증)
-docs/       # 문서 인덱스 docs/README.md — deploy/(배포 런북), lessons/(시행착오), superpowers/(설계 명세·계획)
+docs/       # 문서 인덱스 docs/README.md — deploy/(배포 런북), qa/(검증 명령·감사), lessons/(시행착오), superpowers/(설계 명세·계획), history/(지난 PROGRESS·CHANGELOG)
 docker-compose.yml   # proxy · frontend · backend · db · db-backup
 .gitlab-ci.yml       # 사내 GitLab: test 3개 자동, deploy-dev 자동(dev, 테스트를 기다리지 않음), deploy-production 수동(main)
 ```
