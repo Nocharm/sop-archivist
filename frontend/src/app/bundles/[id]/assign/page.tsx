@@ -3,7 +3,7 @@
 // 오른쪽은 고른 곳·확정·우선순위 아코디언이다(설계 docs/superpowers/specs/2026-11-09-assign-unified-design.md).
 "use client";
 
-import { Check, Circle, CircleCheck, CircleDashed, CirclePause, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, Redo2, RefreshCw, Scissors, Sparkles, Trash2, TriangleAlert, Undo2, WandSparkles, X, type LucideIcon } from "lucide-react";
+import { Check, Circle, CircleCheck, CircleDashed, CirclePause, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, Redo2, RefreshCw, Scissors, Sparkles, SquarePlus, Trash2, TriangleAlert, Undo2, WandSparkles, X, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent } from "react";
@@ -185,7 +185,7 @@ const EMPTY_DRAFT: PageDraft = { destination: null, texts: {}, changeTypes: {}, 
 const NO_NUMBERS: ReadonlySet<number> = new Set();
 
 /** 되돌리면 단위가 은퇴할 수 있는 편집 - 그 줄을 고른 채 다시 받으면 없는 단위의 묶음을 부르게 된다 */
-const RETIRING_OPS: ReadonlySet<string> = new Set(["cut", "split_table_rows", "merge_table_rows", "set_layout_table"]);
+const RETIRING_OPS: ReadonlySet<string> = new Set(["cut", "carve", "split_table_rows", "merge_table_rows", "set_layout_table"]);
 
 function isTypingTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
@@ -632,8 +632,18 @@ export default function AssignPage() {
     });
   }
 
+  // 용지에서 끌어 고른 글자 범위 - 그 범위로 새 Unit을 만든다(전에는 쪼개기 화면에서만). 고른 문서에 묶여, 문서를 바꾸면 버려진다
+  const [carvePick, setCarvePick] = useState<{ docId: number; blockId: number; start: number; end: number } | null>(null);
+  const carve = carvePick !== null && carvePick.docId === oldView?.document.id ? carvePick : null;
+  const carveText = carve ? (oldView?.blocks.find((block) => block.id === carve.blockId)?.text.slice(carve.start, carve.end) ?? "") : "";
+  function clearCarve() {
+    setCarvePick(null);
+    window.getSelection()?.removeAllRanges();
+  }
+
   function selectRow(key: string, scroll = true) {
     setMode("old");
+    setCarvePick(null);
     setSelectedKey(key);
     setMenu(null);
     setCtxMenu(null);
@@ -2309,6 +2319,32 @@ export default function AssignPage() {
                 onUnitClick={handleOldClick}
                 onUnitContextMenu={(unitId, at, caret) => openCtxMenu(unitId, at, caret)}
                 onUnitDoubleClick={canEdit ? handleOldDoubleClick : undefined}
+                onRangeSelect={canEdit && mode === "old" && oldView ? (range) => setCarvePick({ docId: oldView.document.id, ...range }) : undefined}
+                banner={
+                  carve && (
+                    <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-carve">
+                      <span className="flex-none font-semibold text-ink">{t("split.carve")}</span>
+                      <Truncate className="min-w-0 flex-1 text-ink-2" text={carveText} testId="assign-carve-text" />
+                      <button
+                        type="button"
+                        className="btn h-7 flex-none"
+                        data-testid="assign-carve-run"
+                        disabled={busy}
+                        onClick={() => {
+                          const op: EditOp = { type: "carve", block_id: carve.blockId, start: carve.start, end: carve.end };
+                          clearCarve();
+                          void runUnitEdit(op, t("split.didCarve"), null);
+                        }}
+                      >
+                        <SquarePlus size={14} strokeWidth={1.5} aria-hidden />
+                        {t("split.carveRun")}
+                      </button>
+                      <button type="button" className="btn ghost icon h-7 w-7 flex-none" aria-label={t("common.cancel")} data-testid="assign-carve-cancel" onClick={clearCarve}>
+                        <X size={14} strokeWidth={1.5} aria-hidden />
+                      </button>
+                    </div>
+                  )
+                }
                 cut={cutLine.cut}
                 onCutDrag={canEdit ? cutLine.drag : undefined}
                 onCutNudge={canEdit ? cutLine.nudge : undefined}
