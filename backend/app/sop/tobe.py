@@ -166,6 +166,26 @@ async def _count_targets_by(
     return {(doc_id, key): count for doc_id, key, count in rows}
 
 
+class PlaceCountOut(BaseModel):
+    target_doc_id: int
+    # 단계가 없는 자리(SOP의 칸, 단계를 적지 않은 WI)는 None
+    wi_step: int | None
+    count: int
+
+
+async def count_targets_by_step(session: AsyncSession, target_doc_ids: Collection[int]) -> list[PlaceCountOut]:
+    """(새 문서, WI 단계)별 새 문장 수 — 화면이 지울 수 없는 문서·단계의 지우기 단추를 미리 잠근다. 문장이 있는 자리만 담긴다."""
+    if not target_doc_ids:
+        return []
+    rows = await session.execute(
+        select(TargetSentence.target_doc_id, TargetSentence.wi_step, func.count())
+        .where(TargetSentence.target_doc_id.in_(target_doc_ids))
+        .group_by(TargetSentence.target_doc_id, TargetSentence.wi_step)
+    )
+    counts = [PlaceCountOut(target_doc_id=doc_id, wi_step=step, count=count) for doc_id, step, count in rows]
+    return sorted(counts, key=lambda row: (row.target_doc_id, row.wi_step or 0))
+
+
 # --- 검사하며 저장하기 ---
 
 
@@ -429,6 +449,99 @@ async def apply_tobe(
         session, bundle_id=bundle.id, actor=actor, action="tobe.update" if source == "api" else "tobe.import",
         target_type="target_doc", target_ids=sorted(changed),
     )
+
+
+# --- 한 줄 추가·삭제 — 배정 화면에서 보낼 곳을 바로 만들고 지운다 ---
+# 지금 목록에 한 줄을 더하거나 뺀 전체를 apply_tobe에 넘긴다. 그래서 검사·기록·revision이 통째 쓰기와 같고,
+# 화면이 든 revision을 묻지 않는다(묶음 잠금 안에서 DB의 지금 목록을 읽어 만든다 — 배정 중 revision이 자주 오른다).
+
+
+class NewDocIn(BaseModel):
+    """번호·종류·부모만 받는다 — 제목과 장비 SOP 여부는 Documents 화면의 To-Be 목록에서 채운다."""
+
+    code: DocCode
+    doc_type: str
+    parent_code: Annotated[DocCode | None, BeforeValidator(_blank_to_none)] = None
+
+
+class NewStepIn(BaseModel):
+    title: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500), NO_NUL] = ""
+
+
+async def _read_list(session: AsyncSession, bundle: Bundle) -> ToBeIn:
+    """지금 목록을 통째 쓰기의 입력 모양으로 읽는다."""
+    current = await build_tobe_out(session, bundle)
+    docs = [
+        TargetDocIn(
+            code=doc.code, title=doc.title, doc_type=doc.doc_type, parent_code=doc.parent_code,
+            is_equipment_sop=doc.is_equipment_sop, order_index=doc.order_index,
+        )
+        for doc in current.docs
+    ]
+    # 저장돼 있던 목록이라 다시 검증하지 않는다(줄 수 상한은 더하는 쪽이 본다)
+    return ToBeIn.model_construct(
+        revision=bundle.revision, docs=docs, na_slots=list(current.na_slots), wi_steps=list(current.wi_steps)
+    )
+
+
+def _ensure_room(rows: Collection[object]) -> None:
+    if len(rows) >= MAX_TOBE_ROWS:
+        raise_rule(422, "tobe_list_full", limit=MAX_TOBE_ROWS)
+
+
+async def _get_target_doc(session: AsyncSession, bundle_id: int, target_doc_id: int) -> TargetDoc:
+    doc = await session.scalar(
+        select(TargetDoc).where(TargetDoc.id == target_doc_id, TargetDoc.bundle_id == bundle_id)
+    )
+    if doc is None:
+        raise_rule(404, "target_doc_not_found", target_doc_id=target_doc_id)
+    return doc
+
+
+async def add_tobe_doc(session: AsyncSession, bundle: Bundle, item: NewDocIn, *, actor: str) -> None:
+    """목록 끝에 문서 한 줄을 더한다."""
+    payload = await _read_list(session, bundle)
+    _ensure_room(payload.docs)
+    order_index = max((doc.order_index for doc in payload.docs), default=-1) + 1
+    payload.docs.append(
+        TargetDocIn(code=item.code, doc_type=item.doc_type, parent_code=item.parent_code, order_index=order_index)
+    )
+    await apply_tobe(session, bundle, payload, actor=actor, source="api")
+
+
+async def add_wi_step(session: AsyncSession, bundle: Bundle, target_doc_id: int, title: str, *, actor: str) -> None:
+    """WI에 단계 한 줄을 더한다. 번호는 가장 큰 번호 다음이다 — 지운 번호를 다시 쓰지 않는다."""
+    doc = await _get_target_doc(session, bundle.id, target_doc_id)
+    payload = await _read_list(session, bundle)
+    _ensure_room(payload.wi_steps)
+    step_no = max((row.step_no for row in payload.wi_steps if row.code == doc.code), default=0) + 1
+    payload.wi_steps.append(WiStepIn(code=doc.code, step_no=step_no, title=title))
+    await apply_tobe(session, bundle, payload, actor=actor, source="api")
+
+
+async def remove_tobe_doc(session: AsyncSession, bundle: Bundle, target_doc_id: int, *, actor: str) -> None:
+    """문서 한 줄을 지운다. 문장이 든 문서와 아래 WI가 남은 SOP는 apply_tobe가 거절하고, 올린 파일의 문서는 여기서 거절한다."""
+    doc = await _get_target_doc(session, bundle.id, target_doc_id)
+    if doc.entrance != "assign":
+        raise_rule(409, "match_doc_locked", codes=[doc.code])
+    payload = await _read_list(session, bundle)
+    payload.docs = [item for item in payload.docs if item.code != doc.code]
+    payload.na_slots = [row for row in payload.na_slots if row.code != doc.code]
+    payload.wi_steps = [row for row in payload.wi_steps if row.code != doc.code]
+    await apply_tobe(session, bundle, payload, actor=actor, source="api")
+
+
+async def remove_wi_step(
+    session: AsyncSession, bundle: Bundle, target_doc_id: int, step_no: int, *, actor: str
+) -> None:
+    """WI 단계 한 줄을 지운다. 문장이 든 단계는 apply_tobe가 거절한다."""
+    doc = await _get_target_doc(session, bundle.id, target_doc_id)
+    payload = await _read_list(session, bundle)
+    kept = [row for row in payload.wi_steps if (row.code, row.step_no) != (doc.code, step_no)]
+    if len(kept) == len(payload.wi_steps):
+        raise_rule(404, "wi_step_not_found", doc_code=doc.code, step_no=step_no)
+    payload.wi_steps = kept
+    await apply_tobe(session, bundle, payload, actor=actor, source="api")
 
 
 # --- 입구 2(match) 새 문서 — 올린 새 문서(side=new)가 목록에 들어오고 나가는 길 ---

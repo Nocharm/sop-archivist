@@ -5,6 +5,7 @@ import zipfile
 from datetime import datetime
 from io import BytesIO
 
+import httpx2
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -173,7 +174,9 @@ def test_put_and_get_tobe_roundtrip(client: TestClient) -> None:
 def test_new_bundle_has_an_empty_tobe_list(client: TestClient) -> None:
     bundle = create_bundle(client)
 
-    assert _get_tobe(client, bundle["id"]) == {"revision": 1, "docs": [], "na_slots": [], "wi_steps": []}
+    assert _get_tobe(client, bundle["id"]) == {
+        "revision": 1, "docs": [], "na_slots": [], "wi_steps": [], "sentence_counts": [],
+    }
 
 
 def test_tobe_keeps_ids_when_merging_by_code(client: TestClient) -> None:
@@ -301,7 +304,9 @@ def test_tobe_rejects_bad_lists(client: TestClient, expected_code: str, docs, na
     assert response.status_code == 422, response.text
     assert response.json()["detail"]["code"] == expected_code
     # 거절된 요청은 아무것도 남기지 않는다
-    assert _get_tobe(client, bundle["id"]) == {"revision": 1, "docs": [], "na_slots": [], "wi_steps": []}
+    assert _get_tobe(client, bundle["id"]) == {
+        "revision": 1, "docs": [], "na_slots": [], "wi_steps": [], "sentence_counts": [],
+    }
 
 
 @pytest.mark.parametrize(
@@ -947,3 +952,168 @@ def test_parse_limits_rows_and_uncompressed_size(monkeypatch: pytest.MonkeyPatch
     with pytest.raises(HTTPException) as over_size:
         parse_tobe_workbook(_build_xlsx([["D-1", "", "SOP", None, None]]))
     assert over_size.value.detail == {"code": "tobe_file_too_large"}
+
+
+# ── 한 줄 추가·삭제 — 배정 화면에서 보낼 곳을 바로 만들고 지운다(revision을 묻지 않는다) ───────────
+
+
+def _add_doc(
+    client: TestClient, bundle_id: int, code: str, doc_type: str = "sop", parent: str | None = None,
+    headers: dict[str, str] = AUTHOR,
+) -> httpx2.Response:
+    body = {"code": code, "doc_type": doc_type, "parent_code": parent}
+    return client.post(f"/api/bundles/{bundle_id}/tobe/docs", json=body, headers=headers)
+
+
+def _rows(tobe: dict) -> list[dict]:
+    """EQUIS 표시를 뺀 문서 줄 — 조회 상태는 요청 사이에 바뀔 수 있다."""
+    return [{key: value for key, value in doc.items() if key != "equis"} for doc in tobe["docs"]]
+
+
+def test_adding_one_doc_appends_it_and_leaves_the_rest_alone(client: TestClient) -> None:
+    bundle = create_bundle(client, is_synthetic=True)
+    docs, na_slots, wi_steps = _sample_list()
+    assert put_tobe(client, bundle["id"], docs, na_slots=na_slots, wi_steps=wi_steps).status_code == 200
+    before = _get_tobe(client, bundle["id"])
+
+    response = _add_doc(client, bundle["id"], " WI-03 ", "wi", "SOP-NEW")
+
+    assert response.status_code == 201, response.text
+    after = response.json()
+    added = _rows(after)[-1]
+    assert {key: added[key] for key in ("code", "doc_type", "parent_code", "entrance", "title", "order_index")} == {
+        "code": "WI-03", "doc_type": "wi", "parent_code": "SOP-NEW", "entrance": "assign", "title": "", "order_index": 3,
+    }
+    assert _rows(after)[:-1] == _rows(before)
+    assert (after["na_slots"], after["wi_steps"]) == (before["na_slots"], before["wi_steps"])
+    assert after["revision"] == before["revision"] + 1
+    events = client.get(f"/api/bundles/{bundle['id']}/events", headers=AUTHOR).json()
+    assert [event["target_ids"] for event in events if event["action"] == "tobe.update"][0] == [added["id"]]
+
+
+def test_adding_one_doc_follows_the_list_rules(client: TestClient) -> None:
+    bundle = create_bundle(client, is_synthetic=True)
+    assert put_tobe(client, bundle["id"], [_doc("SOP-A"), _doc("WI-A", "wi", parent="SOP-A")]).status_code == 200
+    before = _get_tobe(client, bundle["id"])
+
+    cases = [
+        (_add_doc(client, bundle["id"], "SOP-A"), "duplicate_code"),
+        (_add_doc(client, bundle["id"], "WI-X", "wi"), "invalid_parent"),
+        (_add_doc(client, bundle["id"], "WI-X", "wi", "WI-A"), "invalid_parent"),
+        (_add_doc(client, bundle["id"], "SOP-X", "sop", "SOP-A"), "invalid_parent"),
+        (_add_doc(client, bundle["id"], "X-1", "memo"), "invalid_doc_type"),
+    ]
+
+    for response, code in cases:
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"]["code"] == code
+    assert _add_doc(client, bundle["id"], "  ").status_code == 422
+    assert _get_tobe(client, bundle["id"]) == before
+
+
+def test_adding_and_removing_one_step(client: TestClient) -> None:
+    bundle = create_bundle(client, is_synthetic=True)
+    docs = [_doc("SOP-A"), _doc("WI-A", "wi", parent="SOP-A", order=1)]
+    assert put_tobe(client, bundle["id"], docs, wi_steps=[_step("WI-A", 1, "Prepare")]).status_code == 200
+    ids = {doc["code"]: doc["id"] for doc in _get_tobe(client, bundle["id"])["docs"]}
+    steps_url = f"/api/bundles/{bundle['id']}/tobe/docs/{ids['WI-A']}/steps"
+
+    second = client.post(steps_url, json={"title": " Run "}, headers=AUTHOR)
+    third = client.post(steps_url, json={}, headers=AUTHOR)
+    removed = client.delete(f"{steps_url}/2", headers=AUTHOR)
+    fourth = client.post(steps_url, json={}, headers=AUTHOR)
+
+    assert [r.status_code for r in (second, third, removed, fourth)] == [201, 201, 200, 201]
+    assert second.json()["wi_steps"] == [_step("WI-A", 1, "Prepare"), _step("WI-A", 2, "Run")]
+    # 번호는 가장 큰 번호 다음 — 지운 번호를 다시 쓰지 않는다(이미 든 문장의 단계 번호와 헷갈리지 않게)
+    assert fourth.json()["wi_steps"] == [_step("WI-A", 1, "Prepare"), _step("WI-A", 3), _step("WI-A", 4)]
+    on_sop = client.post(f"/api/bundles/{bundle['id']}/tobe/docs/{ids['SOP-A']}/steps", json={}, headers=AUTHOR)
+    assert (on_sop.status_code, on_sop.json()["detail"]["code"]) == (422, "steps_on_sop")
+    unknown_doc = client.post(f"/api/bundles/{bundle['id']}/tobe/docs/999999/steps", json={}, headers=AUTHOR)
+    assert (unknown_doc.status_code, unknown_doc.json()["detail"]["code"]) == (404, "target_doc_not_found")
+    missing_step = client.delete(f"{steps_url}/2", headers=AUTHOR)
+    assert (missing_step.status_code, missing_step.json()["detail"]) == (
+        404, {"code": "wi_step_not_found", "doc_code": "WI-A", "step_no": 2},
+    )
+
+
+def test_removing_one_doc_or_step_is_refused_while_sentences_sit_there(client: TestClient) -> None:
+    bundle = create_bundle(client, is_synthetic=True)
+    docs = [_doc("SOP-A"), _doc("WI-A", "wi", parent="SOP-A", order=1), _doc("SOP-B", order=2), _doc("SOP-C", order=3)]
+    na_slots = [_na("SOP-C", "purpose")]
+    assert put_tobe(
+        client, bundle["id"], docs, na_slots=na_slots, wi_steps=[_step("WI-A", 1), _step("WI-A", 2)]
+    ).status_code == 200
+    ids = {doc["code"]: doc["id"] for doc in _get_tobe(client, bundle["id"])["docs"]}
+    uploaded = upload(
+        client, bundle["id"], build_docx(p("합성 첫 문장이다.") + p("합성 둘째 문장이다.")), "SYNTHETIC_OLD-1_Row.docx"
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    view = get_view(client, bundle["id"], uploaded.json()["id"])
+    assign_as_is(client, bundle["id"], find_unit(view, "합성 첫 문장이다."), ids["WI-A"], wi_step=1, wi_part="instruction")
+    assign_as_is(client, bundle["id"], find_unit(view, "합성 둘째 문장이다."), ids["SOP-B"], slot_key="purpose")
+    base = f"/api/bundles/{bundle['id']}/tobe/docs"
+    counted = _get_tobe(client, bundle["id"])["sentence_counts"]
+
+    refused = [
+        (client.delete(f"{base}/{ids['SOP-B']}", headers=AUTHOR), 409, {"code": "doc_has_targets", "codes": ["SOP-B"]}),
+        (
+            client.delete(f"{base}/{ids['WI-A']}/steps/1", headers=AUTHOR), 409,
+            {"code": "step_has_targets", "steps": [{"doc_code": "WI-A", "step_no": 1}]},
+        ),
+        # 부모 SOP는 그 아래 WI가 남아 있는 동안 지우지 못한다
+        (
+            client.delete(f"{base}/{ids['SOP-A']}", headers=AUTHOR), 422,
+            {"code": "invalid_parent", "doc_code": "WI-A", "parent_code": "SOP-A"},
+        ),
+    ]
+    empty_step = client.delete(f"{base}/{ids['WI-A']}/steps/2", headers=AUTHOR)
+    empty_doc = client.delete(f"{base}/{ids['SOP-C']}", headers=AUTHOR)
+
+    for response, status, detail in refused:
+        assert (response.status_code, response.json()["detail"]) == (status, detail)
+    # 화면은 이 수로 지우기 단추를 미리 잠근다 — 문장이 든 자리만 실린다
+    assert counted == [
+        {"target_doc_id": ids["WI-A"], "wi_step": 1, "count": 1},
+        {"target_doc_id": ids["SOP-B"], "wi_step": None, "count": 1},
+    ]
+    assert (empty_step.status_code, empty_doc.status_code) == (200, 200)
+    after = empty_doc.json()
+    assert [doc["code"] for doc in after["docs"]] == ["SOP-A", "WI-A", "SOP-B"]
+    assert (after["na_slots"], after["wi_steps"]) == ([], [_step("WI-A", 1)])
+
+
+def test_an_uploaded_new_doc_cannot_be_removed_from_the_list(client: TestClient) -> None:
+    bundle = create_bundle(client, is_synthetic=True)
+    match_id = _seed_match_doc(bundle["id"], "SOP-UP", "sop", with_file=True)
+
+    response = client.delete(f"/api/bundles/{bundle['id']}/tobe/docs/{match_id}", headers=AUTHOR)
+
+    assert (response.status_code, response.json()["detail"]) == (409, {"code": "match_doc_locked", "codes": ["SOP-UP"]})
+    assert [doc["code"] for doc in _get_tobe(client, bundle["id"])["docs"]] == ["SOP-UP"]
+
+
+def test_one_row_tobe_writes_need_the_author_and_an_open_bundle(client: TestClient) -> None:
+    bundle = create_bundle(client)
+    set_members(client, bundle["id"], [("qa.member", "author"), ("qa.lead", "reviewer")])
+    assert _add_doc(client, bundle["id"], "WI-KEEP", "sop").status_code == 201
+    doc_id = _get_tobe(client, bundle["id"])["docs"][0]["id"]
+    base = f"/api/bundles/{bundle['id']}/tobe/docs"
+
+    def call_all(headers: dict[str, str]) -> list[httpx2.Response]:
+        return [
+            _add_doc(client, bundle["id"], "SOP-Z", headers=headers),
+            client.post(f"{base}/{doc_id}/steps", json={}, headers=headers),
+            client.delete(f"{base}/{doc_id}", headers=headers),
+            client.delete(f"{base}/{doc_id}/steps/1", headers=headers),
+        ]
+
+    by_reviewer = call_all(REVIEWER)
+    by_outsider = call_all(OUTSIDER)
+    update_row(Bundle, bundle["id"], status="in_review")
+    after_request = call_all(AUTHOR)
+
+    assert [(r.status_code, r.json()["detail"]["code"]) for r in by_reviewer] == [(403, "role_required")] * 4
+    assert [(r.status_code, r.json()["detail"]["code"]) for r in by_outsider] == [(404, "bundle_not_found")] * 4
+    assert [(r.status_code, r.json()["detail"]["code"]) for r in after_request] == [(409, "bundle_not_editable")] * 4
+    assert [doc["code"] for doc in _get_tobe(client, bundle["id"])["docs"]] == ["WI-KEEP"]
