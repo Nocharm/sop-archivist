@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { getSplitKeyAction, type SplitKeyContext } from "./split-keys";
 
-const ctx: SplitKeyContext = { typing: false, onControl: false, layerOpen: false, hasCut: false, checked: false, canEdit: true };
+const ctx: SplitKeyContext = { typing: false, onControl: false, layerOpen: false, hasCut: false, canEdit: true };
 
 function press(key: string, extra: Partial<{ metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }> = {}) {
   return { key, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...extra };
@@ -19,7 +19,6 @@ describe("getSplitKeyAction", () => {
 
   it("leaves Enter to a focused button but keeps the other keys", () => {
     expect(getSplitKeyAction(press("Enter"), { ...ctx, onControl: true })).toBeNull();
-    expect(getSplitKeyAction(press("Enter"), ctx)).toBe("check");
     expect(getSplitKeyAction(press("j"), { ...ctx, onControl: true })).toBe("next");
     expect(getSplitKeyAction(press("h"), { ...ctx, onControl: true })).toBe("hold");
   });
@@ -29,21 +28,14 @@ describe("getSplitKeyAction", () => {
     expect(getSplitKeyAction(press("ArrowDown"), { ...ctx, layerOpen: true })).toBeNull();
   });
 
-  it("checks, unchecks, splits and holds only when they apply", () => {
-    expect(getSplitKeyAction(press("Enter"), ctx)).toBe("check");
-    expect(getSplitKeyAction(press("Enter"), { ...ctx, checked: true })).toBeNull();
-    expect(getSplitKeyAction(press("u"), { ...ctx, checked: true })).toBe("uncheck");
+  it("splits and holds only when they apply, and has no boundary keys any more", () => {
+    // 경계 확인(↵)과 확인 취소(U)는 없다 - 배정을 확정하면 확인된 것으로 친다
+    expect(getSplitKeyAction(press("Enter"), ctx)).toBeNull();
+    expect(getSplitKeyAction(press("u"), ctx)).toBeNull();
     expect(getSplitKeyAction(press("s"), ctx)).toBeNull();
     expect(getSplitKeyAction(press("s"), { ...ctx, hasCut: true })).toBe("split");
     expect(getSplitKeyAction(press("h"), ctx)).toBe("hold");
-    expect(getSplitKeyAction(press("Enter"), { ...ctx, canEdit: false })).toBeNull();
-  });
-
-  it("only fast-forwards with Enter while moving on after a check", () => {
-    expect(getSplitKeyAction(press("Enter"), { ...ctx, advancing: true, checked: true })).toBe("skip");
-    expect(getSplitKeyAction(press("Enter"), { ...ctx, advancing: true, onControl: true })).toBe("skip");
-    expect(getSplitKeyAction(press("Enter"), { ...ctx, advancing: true, layerOpen: true })).toBeNull();
-    expect(getSplitKeyAction(press("j"), { ...ctx, advancing: true })).toBe("next");
+    expect(getSplitKeyAction(press("h"), { ...ctx, canEdit: false })).toBeNull();
   });
 
   it("maps undo and redo with the modifier", () => {

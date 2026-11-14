@@ -841,7 +841,7 @@ const AUDIT_ENTRIES = [
     note: "document cards: dcard-meta bottoms within 1px per grid row and the meta-to-footer gap is the same in every card of the row",
   },
   {
-    // C7: 목록 화면은 1600, 개요·계정·설명서는 1280 (본문 폭)
+    // C7: 목록 화면은 1600, 개요·계정·설명서는 1280, 배정 화면 안의 원문 고치기는 배정과 같은 1920 (본문 폭)
     id: "C7", ds: "worst", user: MEMBER, views: [2560],
     path: (ids) => [
       "/", `/bundles/${ids.w[1]}/documents`, `/bundles/${ids.w[1]}/history`, `/bundles/${ids.w[1]}/assign?edit=first`,
@@ -851,11 +851,13 @@ const AUDIT_ENTRIES = [
     measure: (page) => page.evaluate(() => {
       const path = location.pathname;
       const width = Math.round(document.querySelector(".page-wrap").getBoundingClientRect().width);
-      const wide = path === "/" || /\/(documents|tobe|history|split)$/.test(path);
-      return { path, width, want: wide ? 1600 : 1280 };
+      const wide = path === "/" || /\/(documents|tobe|history)$/.test(path);
+      // 원문 고치기는 배정 화면 자리에 열려 같은 틀을 쓴다 - 오갈 때 폭이 바뀌지 않는다
+      const desk = /\/assign$/.test(path);
+      return { path, width, want: desk ? 1920 : wide ? 1600 : 1280 };
     }),
     expect: (value) => value.width === value.want,
-    note: "2560: bundle list, Documents, To-Be, History, Split body = 1600; overview, account, manual = 1280",
+    note: "2560: bundle list, Documents, History = 1600; Edit original (inside Assign) = 1920; overview, account, manual = 1280",
   },
   {
     // C7b: 1920에서 Documents 제목 열(칸) 폭 >= 420px

@@ -1,12 +1,12 @@
-// Split(원문 대조) - 왼쪽 문서 목록과 도움말(단축키·표시), 가운데 용지(본문·머리말·꼬리말 탭), 오른쪽 고른 단위 정보와 편집(명세 §12-4, 2026-11-10 개편).
-// 단위 하나가 종이 한 조각이다. 누르면 고르고 끝에 확인 단추가 나온다. 두 번 누르면 그 자리에 나눌 선이 놓이고 끌어 옮길 수 있다(S로 나눈다).
+// 원문 고치기(옛 Split 화면, 배정 화면 안에서 열린다) - 왼쪽 문서 목록과 도움말(단축키·표시), 가운데 용지(본문·머리말·꼬리말 탭), 오른쪽 고른 단위 정보와 편집(명세 §12-4).
+// 단위 하나가 종이 한 조각이다. 누르면 고른다. 두 번 누르면 그 자리에 나눌 선이 놓이고 끌어 옮길 수 있다(S로 나눈다).
 // 합치기는 조각 사이의 단추 하나뿐이다. 끌어 고르면 새 단위로 만들 수 있다.
 "use client";
 
-import { ArrowDown, ArrowLeft, ArrowUp, Check, CheckCheck, Circle, CircleCheck, FileText, Link2, Redo2, Scissors, SquarePlus, Undo2, Unlink, Upload, WandSparkles, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, FileText, Link2, Redo2, Scissors, SquarePlus, Undo2, Unlink, Upload, WandSparkles, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useMemo, useState, type ReactNode } from "react";
 
 import { SplitAiTabs } from "@/components/manage/split-ai";
 import { SplitAiBar } from "@/components/manage/split-ai-bar";
@@ -33,7 +33,6 @@ import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import {
   ackWarning,
-  confirmAllBoundaries,
   createPair,
   deletePair,
   editUnits,
@@ -42,7 +41,6 @@ import {
   listDocuments,
   redoEdit,
   saveGroup,
-  setBoundaryConfirmed,
   undoEdit,
   type DocumentView,
   type EditOp,
@@ -54,9 +52,8 @@ import {
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { buildGroupSave } from "@/lib/classify-model";
 import { useI18n } from "@/lib/i18n";
-import { buildPaperModel, buildPaperTabs, countUnchecked, readCountedCheck, readWarningText, shouldRecenter, type PaperSheet, type PaperTabKey } from "@/lib/paper-model";
+import { buildPaperModel, buildPaperTabs, readWarningText, shouldRecenter, type PaperSheet, type PaperTabKey } from "@/lib/paper-model";
 import { describeEditStep } from "@/lib/edit-step-model";
-import { getAdvanceDelay, getAdvanceWait, parseDurationMs } from "@/lib/split-advance";
 import { getSplitKeyAction } from "@/lib/split-keys";
 import { buildSplitMenu, getAiSplitReason, getPairMergeReason, hasBothScripts, isAiSplitKind, isUnitDecided, pickEnglishSide, planJoin, type JoinKind, type JoinPlan, type SplitMenuAction } from "@/lib/split-menu-model";
 import { useCutLine } from "@/lib/use-cut-line";
@@ -77,16 +74,6 @@ interface PendingConfirm {
   okText: OkText;
   /** 새 단위가 없는 편집(언어 바꾸기) 뒤에도 고른 채로 둘 단위 */
   keepId?: number;
-}
-
-/** 경계 확인 뒤 기다리는 넘어가기 - delay는 누른 때부터, timer·nextId는 저장 응답이 온 뒤에 정해진다 */
-interface PendingAdvance {
-  startedAt: number;
-  delay: number;
-  /** 기다리는 동안 Enter를 눌렀다 - 응답이 오는 대로(왔으면 바로) 넘어간다 */
-  isSkipped: boolean;
-  timer: number | null;
-  nextId: number | null;
 }
 
 /** 한 문장 → 한/영 짝 전환에서 합치기는 풀었지만 짝을 맺지 못함 - 확인 창으로 다시 묻지 않고(첫 단계가 이미 됐다) 어디까지 됐는지 알린다 */
@@ -155,25 +142,6 @@ export function SplitWorkspace({ bundleId, docParam, onClose }: SplitWorkspacePr
   const [pending, setPending] = useState<PendingConfirm | null>(null);
   // 보낼 곳 없는 보류(명세 §6.8) - 판단을 받는 단위 id와 사유
   const [holdFor, setHoldFor] = useState<{ unitId: number; reason: string } | null>(null);
-  // 경계 확인은 바로 보이게 먼저 칠한다 - 지금 보기 데이터에 묶여 있어 새 데이터가 오면 저절로 버려진다
-  const [localChecks, setLocalChecks] = useState<{ base: DocumentView | null; values: Record<number, boolean> }>({ base: null, values: {} });
-  const checkOverrides = localChecks.base === data ? localChecks.values : {};
-  // 확인 뒤 넘어가기 - 확인한 조각의 바뀜을 다 보인 뒤 다음 단위를 고른다(split-advance). 렌더와 상관없는 타이머라 ref다
-  const advanceRef = useRef<PendingAdvance | null>(null);
-  // 방금 확인한 단위 - 오른쪽 칸 상태 칩이 그 단위에서만 뒤집히며 바뀐다(다른 단위를 고를 때는 그냥 바뀐다)
-  const [flipId, setFlipId] = useState<number | null>(null);
-  // 확인하고 다음 조각으로 넘어가기를 기다리는 단위 - 그 조각의 꺼진 단추 줄을 다시 켜지 않는다
-  const [advancingId, setAdvancingId] = useState<number | null>(null);
-  // 보이는 단위는 숨긴 같은 내용 단위까지 모두 확인돼야 확인된 것이다
-  const isChecked = (unit: ViewUnit) =>
-    checkOverrides[unit.id] ?? (unit.boundary_confirmed && (tabs?.mirrors.get(unit.id) ?? []).every((id) => model?.units.get(id)?.boundary_confirmed !== false));
-  // 남은 수는 문서 목록·검토 사유(서버)처럼 숨긴 같은 내용 단위도 하나씩 센다 - 지금 문서는 방금 누른 확인까지, 다른 문서는 목록이 준 수
-  const isCountedChecked = readCountedCheck(tabs?.mirrors ?? new Map(), checkOverrides);
-  const countedUnits = data?.units ?? [];
-  const uncheckedLeft = countUnchecked(countedUnits, isCountedChecked);
-  const countTabLeft = (key: PaperTabKey) => countUnchecked(countedUnits.filter((unit) => tabs?.tabOf.get(unit.id) === key), isCountedChecked);
-  const checkableTotal = countUnchecked(countedUnits, () => false);
-  const [isCheckRestOpen, setIsCheckRestOpen] = useState(false);
   // 우클릭 메뉴 - 뜬 자리와 누른 문장
   const [menu, setMenu] = useState<{ x: number; y: number; targetId: number } | null>(null);
   // 묶기 전환의 꺼진 단추 까닭 - data-tip을 가진 단추의 툴팁
@@ -217,36 +185,16 @@ export function SplitWorkspace({ bundleId, docParam, onClose }: SplitWorkspacePr
 
   function refresh() {
     setViewKey((key) => key + 1);
-    // 문서 목록의 남은 경계 수도 같이 맞춘다
     docs.reload();
     void loadBundle(bundleId);
   }
 
-  function cancelAdvance() {
-    const pending = advanceRef.current;
-    if (pending?.timer != null) window.clearTimeout(pending.timer);
-    advanceRef.current = null;
-    setAdvancingId(null);
-  }
-
-  /** 넘어가기를 기다리는 중 Enter - 저장이 끝났으면 바로 넘어가고, 아직이면 응답이 오는 대로 넘어간다 */
-  function skipAdvanceWait() {
-    const pending = advanceRef.current;
-    if (!pending) return;
-    pending.isSkipped = true;
-    if (pending.timer !== null && pending.nextId !== null) selectUnit(pending.nextId, true);
-  }
-
   function selectUnit(unitId: number | null, scroll = false) {
-    // 기다리던 넘어가기는 다른 고름(사람이 고른 것 포함)이 오면 거둔다
-    cancelAdvance();
-    // 칩 뒤집힘은 방금 바꾼 단위에서만 - 다른 단위를 고르면 그냥 바뀐다
-    setFlipId(null);
     setSelectedId(unitId);
     if (unitId !== null) setSeenAi((prev) => new Set(prev).add(unitId));
     cutLine.clear();
     setRange(null);
-    // 다른 탭의 단위(짝·다음 확인 안 된 단위)를 고르면 그 탭으로 간다
+    // 다른 탭의 단위(짝·다음 제안)를 고르면 그 탭으로 간다
     const nextTab = unitId === null ? undefined : tabs?.tabOf.get(unitId);
     if (nextTab !== undefined) setTabKey(nextTab);
     if (scroll && unitId !== null) {
@@ -383,47 +331,6 @@ export function SplitWorkspace({ bundleId, docParam, onClose }: SplitWorkspacePr
     }
   }
 
-  function setBoundary(unit: ViewUnit, confirmed: boolean) {
-    // 다른 요청이 도는 중이면 보내지 않으니 먼저 칠하지도 않는다
-    if (docId === null || busy) return;
-    cancelAdvance();
-    setLocalChecks({ base: data, values: { ...checkOverrides, [unit.id]: confirmed } });
-    // 칩은 확인·확인 취소 모두 뒤집히며 바뀐다
-    setFlipId(unit.id);
-    // 저장은 바로 보내고, 넘어가기는 바뀜(단추 줄 꺼짐·켜짐)이 끝날 때까지 기다린다 - 움직임 줄이기면 기다리지 않는다
-    const pending: PendingAdvance | null = confirmed
-      ? {
-          startedAt: performance.now(),
-          delay: getAdvanceDelay(parseDurationMs(getComputedStyle(document.documentElement).getPropertyValue("--dur-slow")), matchMedia("(prefers-reduced-motion: reduce)").matches),
-          isSkipped: false,
-          timer: null,
-          nextId: null,
-        }
-      : null;
-    advanceRef.current = pending;
-    setAdvancingId(pending ? unit.id : null);
-    void runSimple(() => setBoundaryConfirmed(bundleId, docId, [unit.id, ...(tabs?.mirrors.get(unit.id) ?? [])], confirmed), null, () => {
-      // Enter는 확인하고 다음 확인 안 된 단위로 간다 - 탭이 끝나면 다음 탭으로 넘어간다
-      if (!pending || advanceRef.current !== pending || !model || !tabs) return;
-      const index = tabs.order.indexOf(unit.id);
-      const next = tabs.order.slice(index + 1).find((id) => {
-        const candidate = model.units.get(id);
-        return candidate !== undefined && !isChecked(candidate);
-      });
-      if (next === undefined) return;
-      const wait = getAdvanceWait(pending.delay, performance.now() - pending.startedAt, pending.isSkipped);
-      pending.nextId = next;
-      if (wait === 0) selectUnit(next, true);
-      else pending.timer = window.setTimeout(() => selectUnit(next, true), wait);
-    }).then(() => {
-      // 저장이 실패했거나 갈 단위가 없으면 기다림을 거둔다 - 다음 Enter가 건너뛰기로 읽히지 않게
-      if (pending && advanceRef.current === pending && pending.timer === null) {
-        advanceRef.current = null;
-        setAdvancingId(null);
-      }
-    });
-  }
-
   /** 틈의 묶기 - 우클릭 메뉴와 같은 규칙(planJoin) */
   function planGapJoin(firstId: number, secondId: number): JoinPlan {
     const first = model?.units.get(firstId);
@@ -529,7 +436,6 @@ export function SplitWorkspace({ bundleId, docParam, onClose }: SplitWorkspacePr
       adjacent,
       readOnly: !canEdit,
       aiEnabled: ai.isOn,
-      isChecked,
       hasCut: cutLine.at !== null && selected?.id === menuTarget.id,
       hasSuggestion: menuTarget.split_suggestion_id !== null,
       isAiWaiting: ai.isWaiting(menuTarget.id),
@@ -549,10 +455,6 @@ export function SplitWorkspace({ bundleId, docParam, onClose }: SplitWorkspacePr
       const { kind } = planJoin([selected, target], adjacent);
       if (kind !== null) joinUnits([selected.id, target.id], kind);
     } else if (action === "unpair" && pairId !== null) void runSimple(() => deletePair(bundleId, docId, pairId, revision), t("split.pairRemoved"));
-    else if (action === "check_both" && selected) {
-      const ids = [selected, target].flatMap((unit) => [unit.id, ...(tabs.mirrors.get(unit.id) ?? [])]);
-      void runSimple(() => setBoundaryConfirmed(bundleId, docId, ids, true), null);
-    } else if (action === "check") setBoundary(target, !isChecked(target));
     else if (action === "split") splitAtCut();
     else if (action === "ai_split") void ai.askUnit(target.id);
     else if (action === "hold") startHold();
@@ -583,16 +485,9 @@ export function SplitWorkspace({ bundleId, docParam, onClose }: SplitWorkspacePr
       onControl: event.target instanceof HTMLElement && event.target.closest("button, a, [role='option']") !== null && event.target.closest("[data-unit]") === null,
       layerOpen: document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]') !== null,
       hasCut: cut !== null,
-      checked: selected !== null && isChecked(selected),
       canEdit,
-      advancing: advanceRef.current !== null,
     });
     if (action === null) return;
-    if (action === "skip") {
-      event.preventDefault();
-      skipAdvanceWait();
-      return;
-    }
     if (action === "undo" || action === "redo") {
       event.preventDefault();
       if (action === "redo" ? data?.edits.can_redo : data?.edits.can_undo) runStep(action);
@@ -601,8 +496,6 @@ export function SplitWorkspace({ bundleId, docParam, onClose }: SplitWorkspacePr
     if (action === "next" || action === "prev") moveSelection(action === "next" ? 1 : -1);
     else if (action === "escape") clearTransient();
     else if (!selected) return;
-    else if (action === "check") setBoundary(selected, true);
-    else if (action === "uncheck") setBoundary(selected, false);
     else if (action === "split") splitAtCut();
     else if (action === "hold") startHold();
     event.preventDefault();
@@ -640,10 +533,7 @@ export function SplitWorkspace({ bundleId, docParam, onClose }: SplitWorkspacePr
             data-testid={`split-doc-${doc.id}`}
             onClick={() => selectDoc(doc.id)}
           >
-            <span className="flex items-start gap-1.5">
-              <b className="min-w-0 flex-1 font-mono text-xs font-semibold leading-[18px] [overflow-wrap:anywhere]">{doc.doc_code || doc.file_name}</b>
-              <DocBoundaryMark docId={doc.id} left={doc.id === docId && data ? uncheckedLeft : doc.unchecked_boundaries} />
-            </span>
+            <b className="min-w-0 font-mono text-xs font-semibold leading-[18px] [overflow-wrap:anywhere]">{doc.doc_code || doc.file_name}</b>
             <Truncate className="text-xs leading-[18px] text-ink-3" text={doc.title} revealOnFocus />
           </button>
         ))}
@@ -682,16 +572,6 @@ export function SplitWorkspace({ bundleId, docParam, onClose }: SplitWorkspacePr
                 setTabKey(key);
                 clearTransient();
               }}
-              renderBadge={(key) => {
-                const left = countTabLeft(key);
-                return left > 0 ? (
-                  <span className="tab-left" aria-label={t("split.uncheckedLeft", { n: left })} data-testid={`split-tab-left-${key}`}>
-                    {left}
-                  </span>
-                ) : (
-                  <CircleCheck size={13} strokeWidth={2} className="pmark checked" aria-label={t("split.allChecked")} />
-                );
-              }}
             />
           </div>
         )}
@@ -725,26 +605,20 @@ export function SplitWorkspace({ bundleId, docParam, onClose }: SplitWorkspacePr
               sheetTestId={`split-sheet-${sheet.key}`}
               contour
               strips={{
-                isChecked,
                 join: canEdit ? { busy, plan: planGapJoin, onJoin: (firstId, secondId, kind) => joinUnits([firstId, secondId], kind) } : undefined,
               }}
               renderUnitActions={(unitId) => {
                 const unit = model.units.get(unitId);
-                // 표·행처럼 글자 범위가 없는 단위는 경계를 세지 않는다 - 단추 줄이 없다
-                if (!canEdit || !unit || unit.spans.length === 0) return null;
+                // 풀 것(짝·합치기)이 있는 글 단위에만 단추 줄이 붙는다
+                if (!canEdit || !unit || unit.spans.length === 0 || (unit.pair_id === null && !unit.can_unmerge)) return null;
                 const pairId = unit.pair_id;
                 return (
                   <SplitUnitActions
                     key={unit.id}
                     unitId={unit.id}
-                    isChecked={isChecked(unit)}
                     canUnpair={pairId !== null}
                     canUnmerge={unit.can_unmerge}
                     busy={busy}
-                    // 고름이 떠난 줄도 꺼진 채 - 저장 응답이 꺼짐보다 늦으면 넘어가는 순간 기다림이 풀려 접히는 옛 줄이 다시 켜졌다
-                    isHeld={advancingId === unit.id || unit.id !== selectedId}
-                    onCheck={() => setBoundary(unit, true)}
-                    onUncheck={() => setBoundary(unit, false)}
                     onUnpair={() => pairId !== null && docId !== null && data && void runSimple(() => deletePair(bundleId, docId, pairId, data.document.revision), t("split.pairRemoved"))}
                     onUnmerge={() => runEdit({ type: "unmerge", unit_id: unit.id }, t("split.didUnmerge"))}
                   />
@@ -797,35 +671,6 @@ export function SplitWorkspace({ bundleId, docParam, onClose }: SplitWorkspacePr
               </button>
             </Tooltip>
           </div>
-            <div className="flex items-center gap-2 whitespace-nowrap" data-testid="split-unit-state">
-              {/* 방금 확인하거나 확인을 푼 단위에서는 칩이 뒤집히며 바뀐다 - 넘어가기는 이 뒤집힘과 단추 줄 꺼짐이 끝난 뒤다(split-advance) */}
-              <span
-                key={`${selected.id}:${isChecked(selected)}`}
-                className={`check-chip ${isChecked(selected) ? "yes" : "no"}`}
-                data-flip={flipId === selected.id ? "" : undefined}
-                data-testid="split-boundary-state"
-              >
-                {isChecked(selected) ? <Check size={12} strokeWidth={2.6} aria-hidden /> : <Circle size={11} strokeWidth={2.2} aria-hidden />}
-                {isChecked(selected) ? "Checked" : "Not checked"}
-              </span>
-            </div>
-          {/* 주 버튼 자리는 단위가 바뀌어도 같다 - 라벨만 같은 칸에서 바뀐다 */}
-          <button
-            type="button"
-            className="btn pri wide h-[38px]"
-            data-testid="split-primary"
-            disabled={!canEdit || !selected || busy}
-            onClick={() => selected && setBoundary(selected, !isChecked(selected))}
-          >
-            <span className="stack">
-              <span data-on={(selected !== null && isChecked(selected)) ? undefined : ""}>
-                {t("split.checkBoundary")} <kbd>↵</kbd>
-              </span>
-              <span data-on={(selected !== null && isChecked(selected)) ? "" : undefined}>
-                {t("split.uncheckBoundary")} <kbd>U</kbd>
-              </span>
-            </span>
-          </button>
           <div className="grid grid-cols-3 gap-1.5">
             <button type="button" className="btn" data-testid="split-split" disabled={!canEdit || !cut || busy} onClick={splitAtCut}>
               <Scissors size={14} strokeWidth={1.5} aria-hidden />
@@ -850,26 +695,6 @@ export function SplitWorkspace({ bundleId, docParam, onClose }: SplitWorkspacePr
             </div>
           </div>
           </>)}
-          {/* 남은 경계 - 모두 확인해야 검토를 요청할 수 있다 */}
-          {data && (
-            <div className="flex min-h-7 items-center gap-1.5 text-xs leading-[18px] text-ink-2">
-              {uncheckedLeft > 0 ? (
-                <Circle size={13} strokeWidth={2} className="pmark" aria-hidden />
-              ) : (
-                <CircleCheck size={14} strokeWidth={2} className="pmark checked" aria-hidden />
-              )}
-              <span data-testid="split-unchecked-count">
-                {uncheckedLeft === 0 ? t("split.allChecked") : selected ? t("split.uncheckedLeft", { n: uncheckedLeft }) : t("split.progress", { n: checkableTotal - uncheckedLeft, total: checkableTotal })}
-              </span>
-              <span className="flex-1" />
-              {canEdit && uncheckedLeft > 0 && (
-                <button type="button" className="btn ghost h-7" data-testid="split-check-rest" disabled={busy} onClick={() => setIsCheckRestOpen(true)}>
-                  <CheckCheck size={14} strokeWidth={1.5} aria-hidden />
-                  {t("split.checkRest")}
-                </button>
-              )}
-            </div>
-          )}
         </div>
 
         <div className="grid content-start gap-4 overflow-y-auto p-[var(--pad)]">
@@ -1071,7 +896,7 @@ export function SplitWorkspace({ bundleId, docParam, onClose }: SplitWorkspacePr
       </aside>
 
       {menu && menuTarget && menuItems && (
-        <SplitContextMenu at={menu} items={menuItems} isTargetChecked={isChecked(menuTarget)} onPick={runMenuAction} onClose={() => setMenu(null)} />
+        <SplitContextMenu at={menu} items={menuItems} onPick={runMenuAction} onClose={() => setMenu(null)} />
       )}
       {holdFor && (
         <Modal
@@ -1112,24 +937,6 @@ export function SplitWorkspace({ bundleId, docParam, onClose }: SplitWorkspacePr
           </form>
         </Modal>
       )}
-      {isCheckRestOpen && docId !== null && (
-        <ConfirmModal
-          title={t("split.checkRestTitle")}
-          summary={<span>{t("split.checkRestBody", { n: uncheckedLeft })}</span>}
-          confirmLabel={t("split.checkRestRun", { n: uncheckedLeft })}
-          confirmIcon={CheckCheck}
-          busy={busy}
-          testId="split-check-rest-modal"
-          onClose={() => setIsCheckRestOpen(false)}
-          onConfirm={() => {
-            setIsCheckRestOpen(false);
-            void runSimple(async () => {
-              const result = await confirmAllBoundaries(bundleId, docId);
-              showToast(t("split.checkedRest", { n: result.confirmed_count }));
-            }, null);
-          }}
-        />
-      )}
       {pending && (
         <ConfirmModal
           title={t("split.confirmTitle")}
@@ -1154,25 +961,5 @@ export function SplitWorkspace({ bundleId, docParam, onClose }: SplitWorkspacePr
         />
       )}
     </div>
-  );
-}
-
-/** 문서 목록 한 줄의 경계 표시 - 남았으면 수, 다 했으면 확인 표시 */
-function DocBoundaryMark({ docId, left }: { docId: number; left: number }) {
-  const { t } = useI18n();
-  const label = left > 0 ? t("split.uncheckedLeft", { n: left }) : t("split.allChecked");
-  return (
-    <Tooltip label={label}>
-      <span className="flex h-[18px] flex-none items-center gap-1 font-mono text-[11px] font-semibold text-ink-3" aria-label={label} data-testid={`split-doc-left-${docId}`}>
-        {left > 0 ? (
-          <>
-            <Circle size={11} strokeWidth={2.2} aria-hidden />
-            {left}
-          </>
-        ) : (
-          <CircleCheck size={13} strokeWidth={2} className="pmark checked" aria-hidden />
-        )}
-      </span>
-    </Tooltip>
   );
 }

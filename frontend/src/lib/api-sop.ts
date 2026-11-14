@@ -460,15 +460,6 @@ export function redoEdit(bundleId: number, docId: number, revision: number, conf
   return apiFetch<EditStepResult>(`${buildDocPath(bundleId, docId)}/edits/redo`, { method: "POST", body: JSON.stringify({ revision, confirm }) });
 }
 
-export function setBoundaryConfirmed(bundleId: number, docId: number, unitIds: number[], confirmed: boolean): Promise<{ unit_ids: number[]; confirmed: boolean }> {
-  return apiFetch(`${buildDocPath(bundleId, docId)}/units/boundary`, { method: "POST", body: JSON.stringify({ unit_ids: unitIds, confirmed }) });
-}
-
-/** 문서에 남은 단위의 경계를 한 번에 확인한다 - 하나씩 확인하는 길은 요청당 단위 수 상한이 있다 */
-export function confirmAllBoundaries(bundleId: number, docId: number): Promise<{ confirmed_count: number }> {
-  return apiFetch(`${buildDocPath(bundleId, docId)}/units/boundary/all`, { method: "POST" });
-}
-
 export function createPair(bundleId: number, docId: number, revision: number, unitIds: number[]): Promise<PairResult> {
   return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs`, { method: "POST", body: JSON.stringify({ revision, unit_ids: unitIds }) });
 }
