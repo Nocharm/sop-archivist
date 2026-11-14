@@ -29,7 +29,7 @@ import { useState } from "react";
 import { ActivitySection, BundleHeading, MembersSection } from "@/components/manage/bundle-manage";
 import { AiJobPanel } from "@/components/manage/ai-job-panel";
 import { BundleLoadError } from "@/components/bundle-load-error";
-import { Modal } from "@/components/modal";
+import { RequestReviewModal } from "@/components/review/request-review-modal";
 import { ReviewReturnNote } from "@/components/review-return-note";
 import { BundleStatusPill, RoleTag } from "@/components/status";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
@@ -38,7 +38,6 @@ import { WithdrawReviewButton } from "@/components/withdraw-review";
 import { humanizeApiError } from "@/lib/api-errors";
 import {
   getReadiness,
-  requestReview,
   SEMANTIC_CHECK_KEYS,
   type Bundle,
   type RowProgress,
@@ -46,14 +45,13 @@ import {
   type Readiness,
   type ReadinessIssue,
 } from "@/lib/api-sop";
-import { loadBundle, putBundle, useBundle } from "@/lib/bundle-store";
+import { useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
 import { countPending, getConfirmedPercent } from "@/lib/progress-model";
 import { getNextActionHref, getStageHref, NEXT_ACTION_STAGE, STAGES } from "@/lib/stages";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { GATE_STAGE, groupNotices, isNoticeGroup, splitGates, type GateKey } from "@/lib/review-gates";
 import { useLoaded, type Loaded } from "@/lib/use-loaded";
-import { getBundleLabel } from "@/lib/bundle-label";
 
 type TFunc = (key: string, vars?: Record<string, string | number>) => string;
 
@@ -443,59 +441,6 @@ function ReviewGate({ bundle, readiness, onRequestReview, onAddReviewer }: Revie
         ),
       )}
     </section>
-  );
-}
-
-function RequestReviewModal({ bundle, onClose }: { bundle: Bundle; onClose: () => void }) {
-  const { t } = useI18n();
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<unknown>(null);
-
-  async function handleConfirm() {
-    setSaving(true);
-    setError(null);
-    try {
-      putBundle(await requestReview(bundle.id, bundle.revision));
-      onClose();
-    } catch (err) {
-      setError(err);
-      setSaving(false);
-      // revision·상태가 바뀌어 409일 수 있다 - 새 묶음으로 다시 시도할 수 있게 불러온다
-      void loadBundle(bundle.id);
-    }
-  }
-
-  const reviewers = bundle.members.filter((member) => member.role === "reviewer").map((member) => member.login_id);
-  return (
-    <Modal
-      title={t("overview.requestReviewTitle")}
-      onClose={onClose}
-      isBusy={saving}
-      size="sm"
-      testId="request-review"
-      footer={
-        <>
-          <button type="button" className="btn" data-testid="request-review-cancel" onClick={onClose}>
-            <X size={16} strokeWidth={1.5} aria-hidden />
-            {t("common.cancel")}
-          </button>
-          <button type="button" className="btn pri" data-testid="request-review-confirm" disabled={saving} onClick={handleConfirm}>
-            {t("overview.requestReview")}
-          </button>
-        </>
-      }
-    >
-      <p className="text-ink-2">{t("overview.requestReviewBody")}</p>
-      <div className="grid gap-1.5 rounded-md bg-sunken px-3 py-2.5 text-ink-2">
-        <span className="font-semibold text-ink">{getBundleLabel(bundle)}</span>
-        <span>{t("overview.reviewers", { names: reviewers.join(", ") })}</span>
-      </div>
-      {error !== null && (
-        <p className="text-danger" data-testid="request-review-error">
-          {humanizeApiError(error, t)}
-        </p>
-      )}
-    </Modal>
   );
 }
 

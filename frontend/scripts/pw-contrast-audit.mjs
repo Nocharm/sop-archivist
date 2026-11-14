@@ -193,7 +193,8 @@ for (const theme of ["light", "dark"]) {
       await page.locator('[data-testid^="assign-new-heading-note-"]').first().waitFor({ timeout: T });
       await page.unroute("**/outputs/c/docs/**");
     }],
-    ["review", `/bundles/${id}/review`, '[data-testid="output-c"]'],
+    // 검토는 결과 화면 위의 검토 띠다 - 앞의 outputs-a 장면이 A 탭을 골라 두어 C로 돌아온다
+    ["review", `/bundles/${id}/outputs`, '[data-testid="review"]', async (page) => { await page.locator('[data-testid="outputs-tab-c"]').click(); await page.locator('[data-testid="output-c"]').waitFor({ timeout: T }); }],
     ["assign-ai", `/bundles/${aiId}/assign`, '[data-testid="assign-bar"]', async (page) => { await page.locator('[data-testid="assign-filter-ai_suggested"]').click(); await page.keyboard.press("j"); await page.locator('[data-testid="assign-rec-0"]').waitFor({ timeout: T }); }],
     // 앞의 outputs-a 장면이 A 탭을 골라 두어(브라우저가 기억) C로 돌아온다
     ["outputs-ai", `/bundles/${aiId}/outputs`, '[data-testid="outputs-tab-c"]', async (page) => { await page.locator('[data-testid="outputs-tab-c"]').click(); await page.locator('[data-testid="output-c"]').waitFor({ timeout: T }); }],

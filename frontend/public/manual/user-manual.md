@@ -25,10 +25,10 @@ SOP Archivist는 옛 SOP 여러 편(Old)을 새 SOP·WI 구조(New)로 옮기는
 | 2 | **Assign** | Unit마다 보낼 곳을 정하고 확정한다. 확정하면 그 Unit이 잘린 자리도 확인한 것으로 친다. 잘린 자리가 틀렸으면 **Split tools** 로 건너가 고친다 | 모든 Unit과 새 문장이 **Confirmed** 이고 누락 의심 경고를 확인했다 |
 | 3 | **Order** | 새 문서마다 문장 순서·들여쓰기·문단번호를 정한다 | 새 문서가 읽는 순서대로 놓였다 |
 | 4 | **Outputs** | 결과물 A·B·C와 Excel을 확인한다 | 의미 확인 네 가지를 마쳤다 |
-| 검토 | **Review** | 검토자가 읽고 완료하거나 돌려보낸다 | **Review complete** |
+| 검토 | **Outputs** 의 검토 띠 | 작성자가 검토를 요청하고, 검토자가 읽고 완료하거나 돌려보낸다([Review](#review)) | **Review complete** |
 | 기록 | **History** | 누가 언제 무엇을 했는지 본다 | 언제든 |
 
-문서를 하나도 올리지 않은 Bundle에서는 **Assign**·**Order**·**Outputs**·**Review** 가 잠겨 있습니다. **Documents** 에서 문서를 올리면 열립니다.
+문서를 하나도 올리지 않은 Bundle에서는 **Assign**·**Order**·**Outputs** 가 잠겨 있습니다. **Documents** 에서 문서를 올리면 열립니다.
 
 ### 상태 읽는 법 {#status}
 
@@ -608,9 +608,16 @@ AI가 꺼져 있어도 빠진 언어를 직접 채울 수 있습니다. 칸에 �
 
 ## Review {#review}
 
-작성자가 검토를 요청하면 Bundle이 잠기고 검토자가 읽습니다.
+작성자가 검토를 요청하면 Bundle이 잠기고 검토자가 읽습니다. 검토는 따로 화면이 없고 **Outputs**(4단계) 맨 위의 검토 띠에서 합니다 — 결과물을 읽는 자리에서 요청하고, 읽고, 끝냅니다. 띠에는 지금 상태와 한 줄 안내가 보이고, 오른쪽 끝의 단추가 사람과 상태에 따라 바뀝니다.
 
-![Review 화면](img/review.png "검토자가 새 문서를 읽고 완료하거나 돌려보내는 화면")
+| 누가 · 언제 | 띠의 단추 |
+|---|---|
+| 작성자 · **In progress** | **Request review**. 조건이 남아 있으면 꺼져 있고 옆의 **See what is left** 가 **Overview** 의 조건 카드로 갑니다 |
+| 작성자 · **In review** | **Withdraw request** |
+| 검토자 · **In review** | **Return**, **Complete review** |
+| 작성자 · **Review complete** | **Reopen** |
+
+![검토 띠가 있는 Outputs 화면](img/review.png "검토자가 결과물을 읽고 맨 위 띠에서 완료하거나 돌려보낸다")
 
 ### 요청 조건 {#review-gates}
 
@@ -629,16 +636,16 @@ AI가 꺼져 있어도 빠진 언어를 직접 채울 수 있습니다. 칸에 �
 
 ### 작성자가 하는 일 {#review-author}
 
-1. **Overview** 에서 **Request review** 를 누릅니다. 작성자만 요청할 수 있습니다.
+1. **Outputs** 의 검토 띠나 **Overview** 에서 **Request review** 를 누릅니다. 작성자만 요청할 수 있습니다.
 2. Bundle이 **In review** 가 되고 모든 단계가 읽기 전용이 됩니다(**Read-only · In review**).
-3. 검토자가 끝내기 전에 고칠 것이 생기면 **Overview** 의 **Review request** 카드나 **Review** 에서 **Withdraw request** 를 누릅니다. 사유는 적지 않습니다. Bundle이 **In progress** 로 돌아오고 의미 확인 표시가 지워집니다. 거두기는 작성자만 합니다.
-4. 돌려받으면 **Overview** 와 **Review** 화면에 **Returned by the reviewer** 와 사유가 보입니다(**Review** 에서는 1280px 이상이면 용지 오른쪽 위, 그보다 좁으면 용지 위). 고친 뒤 의미 확인을 다시 표시하고 다시 요청합니다.
-5. 검토가 끝난 Bundle을 고쳐야 하면 **Review** 에서 **Reopen** 을 누르고 사유를 적습니다. Bundle이 **In progress** 로 돌아옵니다. 다시 열기는 작성자만 합니다.
+3. 검토자가 끝내기 전에 고칠 것이 생기면 **Overview** 의 **Review request** 카드나 **Outputs** 의 검토 띠에서 **Withdraw request** 를 누릅니다. 사유는 적지 않습니다. Bundle이 **In progress** 로 돌아오고 의미 확인 표시가 지워집니다. 거두기는 작성자만 합니다.
+4. 돌려받으면 **Overview** 와 **Outputs** 의 오른쪽 칸 맨 위에 **Returned by the reviewer** 와 사유가 보입니다. 고친 뒤 의미 확인을 다시 표시하고 다시 요청합니다.
+5. 검토가 끝난 Bundle을 고쳐야 하면 **Outputs** 의 검토 띠에서 **Reopen** 을 누르고 사유를 적습니다. Bundle이 **In progress** 로 돌아옵니다. 다시 열기는 작성자만 합니다.
 
 ### 검토자가 하는 일 {#review-reviewer}
 
-1. Bundle 목록에서 **In review** 인 Bundle을 열어 **Review** 로 갑니다.
-2. 새 문서와 결과물을 읽습니다. 검토자는 내용을 고칠 수 없습니다(**Read-only · Reviewer**).
+1. Bundle 목록에서 **In review** 인 Bundle을 열어 **Outputs**(4단계)로 갑니다. **Overview** 의 다음 할 일이 그곳으로 데려갑니다.
+2. 결과물 세 탭을 읽습니다. 어떤 Old 문장이 어디로 갔는지는 **Assign**(2단계)에서 문장을 눌러 봅니다 — 보낸 곳, 변경 종류, 사유, 확정한 사람이 오른쪽에 보입니다. 검토자는 내용을 고칠 수 없습니다(**Read-only · Reviewer**).
 3. 문제가 없으면 **Complete review** 를 누릅니다. Bundle이 **Review complete** 가 됩니다.
 4. 고칠 것이 있으면 **Return** 을 누르고 사유를 적습니다. Bundle이 **In progress** 로 돌아가 작성자가 고칩니다.
 

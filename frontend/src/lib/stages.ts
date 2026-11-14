@@ -2,7 +2,7 @@
 
 import type { NextAction } from "./api-sop";
 
-export type StageKey = "overview" | "documents" | "assign" | "split" | "order" | "outputs" | "review" | "history";
+export type StageKey = "overview" | "documents" | "assign" | "split" | "order" | "outputs" | "history";
 
 /** Documents 화면 안 New 문서 목록(옛 To-Be 화면)의 자리 - 옛 주소 /tobe도 여기로 넘긴다 */
 export const NEW_DOCUMENTS_ANCHOR = "new-documents";
@@ -30,14 +30,14 @@ export const STAGES: readonly Stage[] = [
   { key: "split", path: "/split", step: 2, under: "assign", ready: true },
   // 3단계 - New 문서별 문장 순서와 문단번호
   { key: "order", path: "/order", step: 3, ready: true },
+  // 4단계 - 결과물과 검토. 검토 요청·완료·되돌림은 이 화면 위의 검토 띠에 있다(옛 /review는 여기로 넘긴다, B4)
   { key: "outputs", path: "/outputs", step: 4, ready: true },
-  { key: "review", path: "/review", ready: true },
   // 레일 맨 아래 - 작업 기록 전체(개요 Activity의 "모두 보기")
   { key: "history", path: "/history", ready: true },
 ];
 
 // 문서가 하나도 없으면 들어가 봐야 할 일이 없는 단계. New 문서 목록은 Excel로 문서보다 먼저 채울 수 있고, Documents 화면에 있어 늘 열린다
-const NEEDS_DOCUMENTS: ReadonlySet<StageKey> = new Set(["split", "assign", "order", "outputs", "review"]);
+const NEEDS_DOCUMENTS: ReadonlySet<StageKey> = new Set(["split", "assign", "order", "outputs"]);
 
 export function isStageLocked(key: StageKey, documentCount: number): boolean {
   return documentCount === 0 && NEEDS_DOCUMENTS.has(key);
@@ -82,7 +82,7 @@ export const NEXT_ACTION_STAGE: Record<NextAction, StageKey | null> = {
   semantic_checks: "outputs",
   add_reviewer: null,
   request_review: null,
-  await_review: "review",
+  await_review: "outputs",
   done: null,
 };
 

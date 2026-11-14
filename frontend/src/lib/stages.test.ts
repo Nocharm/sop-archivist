@@ -45,11 +45,17 @@ describe("NEXT_ACTION_STAGE", () => {
   it("sends the meaning checks to Outputs, where the checkboxes are", () => {
     expect(NEXT_ACTION_STAGE.semantic_checks).toBe("outputs");
   });
+
+  it("sends waiting for review to Outputs, where the review bar is", () => {
+    expect(NEXT_ACTION_STAGE.await_review).toBe("outputs");
+    // 옛 검토 주소는 단계가 아니다 - 결과 화면으로 넘어간다
+    expect(parseBundlePath("/bundles/12/review")).toEqual({ bundleId: 12, stage: null });
+  });
 });
 
 describe("isStageLocked", () => {
   it("locks the document-dependent stages while there are no documents", () => {
-    for (const key of ["split", "assign", "order", "outputs", "review"] as const) {
+    for (const key of ["split", "assign", "order", "outputs"] as const) {
       expect(isStageLocked(key, 0)).toBe(true);
     }
   });
