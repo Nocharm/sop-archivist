@@ -46,6 +46,11 @@ describe("NEXT_ACTION_STAGE", () => {
     expect(NEXT_ACTION_STAGE.semantic_checks).toBe("outputs");
   });
 
+  it("sends missing-text warnings to Assign, where they are checked", () => {
+    expect(NEXT_ACTION_STAGE.ack_warnings).toBe("assign");
+    expect(getNextActionHref(4, "ack_warnings")).toBe("/bundles/4/assign");
+  });
+
   it("sends waiting for review to Outputs, where the review bar is", () => {
     expect(NEXT_ACTION_STAGE.await_review).toBe("outputs");
     // 옛 검토 주소는 단계가 아니다 - 결과 화면으로 넘어간다

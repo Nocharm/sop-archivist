@@ -13,6 +13,7 @@ import { AssignHelp } from "@/components/assign/assign-help";
 import { DestCard } from "@/components/assign/dest-card";
 import { DestinationAccordion, type AccordionSection } from "@/components/assign/destination-accordion";
 import { DestinationTree, type DestinationManage } from "@/components/assign/destination-tree";
+import { MissingWarnings } from "@/components/assign/missing-warnings";
 import { LinkChoice } from "@/components/assign/link-choice";
 import { findNewLine, findOldStrip, LinkLines } from "@/components/assign/link-lines";
 import { LinkMenu } from "@/components/assign/link-menu";
@@ -2006,6 +2007,29 @@ export default function AssignPage() {
         )}
         {canEdit && <ResetMenu compact={isBarCompact} document={oldView ? { id: oldView.document.id, label: oldView.document.doc_code || oldView.document.file_name } : null} disabled={busy} onPick={setResetScope} />}
         {aiOn && canEdit && <AiAskMenu compact={isBarCompact} items={aiMenuItems} label={t("ai.more")} testId="assign-ai-menu" disabled={busy} />}
+        {/* 누락 의심 경고 - 확인이 남아 있을 때만 보인다(검토 요청 조건). 원문 자리를 보거나 그 자리에서 확인한다 */}
+        <MissingWarnings
+          bundleId={bundleId}
+          docs={docs.data ?? []}
+          canEdit={canEdit}
+          compact={isBarCompact}
+          onShow={(item) => {
+            const unit = item.warning.block_id === null ? undefined : viewOf(item.docId)?.units.find((candidate) => candidate.block_id === item.warning.block_id);
+            const key = unit ? rowOfUnit.get(unit.id) : undefined;
+            if (key === undefined) {
+              // 그 자리에 단위가 없으면(통째로 빠진 글) 문서만 연다
+              if (!oldDocIds.includes(item.docId)) return false;
+              setManualOldDoc(item.docId);
+              return true;
+            }
+            selectRow(key);
+            return true;
+          }}
+          onChanged={() => {
+            docs.reload();
+            void loadBundle(bundleId);
+          }}
+        />
         {/* 쪼개기 화면은 레일에 없다 - KO/EN 짝·표 행·다시 자르기는 지금 보는 Old 문서로 바로 건너가서 한다 */}
         {canEdit && (
           <Tooltip label={t("assign.openSplitTip")}>
