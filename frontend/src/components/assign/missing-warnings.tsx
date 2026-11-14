@@ -14,7 +14,7 @@ import { ackWarning, type SopDocument } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import { countPendingWarnings, listAckWarnings, type AckWarning } from "@/lib/missing-warnings-model";
 import { readWarningText } from "@/lib/paper-model";
-import { getStageHref } from "@/lib/stages";
+import { getEditOriginalHref } from "@/lib/stages";
 
 interface MissingWarningsProps {
   bundleId: number;
@@ -80,7 +80,7 @@ export function MissingWarnings({ bundleId, docs, canEdit, compact, onShow, onCh
                     <span className="font-mono text-xs font-semibold">{item.docLabel}</span>
                     <span className={`pill ${isChecked ? "quiet" : "warn"}`}>{isChecked ? t("status.warning.checked") : t(`warn.${warning.kind}`)}</span>
                     <span className="flex-1" />
-                    {/* 그 자리를 이 화면에서 보이면 창을 닫고, 못 보이면(New 문서 등) 쪼개기 화면에서 연다 */}
+                    {/* 그 자리를 이 화면에서 보이면 창을 닫고, 못 보이면(New 문서 등) 그 문서의 원문 고치기를 연다 */}
                     {item.side === "old" ? (
                       <button
                         type="button"
@@ -94,7 +94,7 @@ export function MissingWarnings({ bundleId, docs, canEdit, compact, onShow, onCh
                         {t("assign.warnings.show")}
                       </button>
                     ) : (
-                      <Link href={`${getStageHref(bundleId, "split")}?doc=${item.docId}`} className="btn ghost h-7" data-testid={`assign-warning-split-${warning.id}`}>
+                      <Link href={getEditOriginalHref(bundleId, item.docId)} className="btn ghost h-7" data-testid={`assign-warning-split-${warning.id}`} onClick={() => setIsOpen(false)}>
                         <Scissors size={14} strokeWidth={1.5} aria-hidden />
                         {t("assign.warnings.openSplit")}
                       </Link>

@@ -7,7 +7,8 @@ describe("getPageWidth", () => {
     ["/", "wide"],
     ["/bundles/1", "default"],
     ["/bundles/1/documents", "wide"],
-    ["/bundles/1/split", "wide"],
+    // 옛 쪼개기 주소는 배정 화면으로 넘어간다 - 단계가 아니라 기본 폭
+    ["/bundles/1/split", "default"],
     ["/bundles/1/history", "wide"],
     ["/bundles/1/assign", "desk"],
     ["/bundles/1/outputs", "default"],

@@ -5,7 +5,7 @@
 
 import { Check, Circle, CircleCheck, CircleDashed, CirclePause, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, Redo2, RefreshCw, Scissors, Sparkles, SquarePlus, Trash2, TriangleAlert, Undo2, WandSparkles, X, type LucideIcon } from "lucide-react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent } from "react";
 
 import { AssignContextMenu } from "@/components/assign/assign-context-menu";
@@ -15,6 +15,7 @@ import { DestinationAccordion, type AccordionSection } from "@/components/assign
 import { DestinationTree, type DestinationManage } from "@/components/assign/destination-tree";
 import { MissingWarnings } from "@/components/assign/missing-warnings";
 import { SplitSuggestionCard } from "@/components/assign/split-suggestion";
+import { SplitWorkspace } from "@/components/split/split-workspace";
 import { LinkChoice } from "@/components/assign/link-choice";
 import { findNewLine, findOldStrip, LinkLines } from "@/components/assign/link-lines";
 import { LinkMenu } from "@/components/assign/link-menu";
@@ -152,7 +153,7 @@ import { navigate } from "@/lib/nav-buffer";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
 import { SLOT_LABELS } from "@/lib/slot-labels";
-import { getNewDocumentsHref, getStageHref } from "@/lib/stages";
+import { EDIT_ORIGINAL_PARAM, getEditOriginalHref, getNewDocumentsHref, getStageHref } from "@/lib/stages";
 import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useCutLine } from "@/lib/use-cut-line";
@@ -263,6 +264,10 @@ export default function AssignPage() {
   const bundleId = Number(useParams<{ id: string }>().id);
   const { bundle } = useBundle(bundleId);
   const canEdit = bundle?.my_role === "author" && bundle.status === "in_progress";
+  // 원문 고치기(옛 쪼개기 화면) - 주소의 edit 값이 있으면 이 화면 자리에 그 문서의 도구 한 벌이 열린다. 배정 화면은 그대로 살아 있어 고르던 줄이 남는다
+  const editParam = useSearchParams().get(EDIT_ORIGINAL_PARAM);
+  const isEditingOriginal = editParam !== null;
+  const [wasEditingOriginal, setWasEditingOriginal] = useState(isEditingOriginal);
 
   // --- 데이터 ---
   const docs = useLoaded(() => listDocuments(bundleId), String(bundleId));
@@ -534,6 +539,8 @@ export default function AssignPage() {
   const liveDoc = liveNew?.key === toggleKey ? liveNew : null;
   const newDocId = (manualNewDoc?.key === toggleKey ? manualNewDoc.docId : null) ?? liveDoc?.docId ?? autoNewDoc ?? writtenDocs[0]?.[0] ?? composedDocs[0]?.id ?? null;
   const isComposedDoc = newDocId !== null && !writtenDocs.some(([docId]) => docId === newDocId);
+  // 이미 쓴 New 문서의 올린 파일(문서) id - 원문 고치기를 그 문서로 연다
+  const newFileId = (tobeData?.docs ?? []).find((doc) => doc.id === newDocId)?.document_id ?? null;
   const composed = useLoaded(
     () => (isComposedDoc && newDocId !== null ? getComposedDoc(bundleId, newDocId, uiLang) : Promise.resolve(null)),
     `${isComposedDoc ? newDocId : ""}:${dataKey}:${uiLang}`,
@@ -1350,6 +1357,8 @@ export default function AssignPage() {
   }
 
   const handleKey = useEffectEvent((event: KeyboardEvent) => {
+    // 원문 고치기가 열려 있으면 그 화면의 단축키만 듣는다
+    if (isEditingOriginal) return;
     // 짝 고르는 중의 Esc는 그것부터 거둔다
     if (event.key === "Escape" && pairSource && !isTypingTarget(event.target) && !document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]')) {
       event.preventDefault();
@@ -2098,6 +2107,21 @@ export default function AssignPage() {
   const reloadAll = () => {
     for (const source of [docs, views, units, tobe, writtenList]) if (source.error !== null) source.reload();
   };
+  // 원문 고치기에서 돌아오면 단위·원문·문서 목록을 다시 받는다 - 거기서 나누고 묶은 것이 줄에 반영된다(렌더 중 상태 맞추기)
+  if (wasEditingOriginal !== isEditingOriginal) {
+    setWasEditingOriginal(isEditingOriginal);
+    if (!isEditingOriginal) {
+      // 고르던 줄은 다시 받은 뒤에 다시 고른다 - 그 Unit이 거기서 잘리거나 묶여 사라졌으면 고름 없이 둔다(없는 Unit의 묶음을 부르지 않게)
+      if (row) setFollow({ unitId: row.unitIds[0], staleViews: viewList, staleUnits: units.data });
+      setSelectedKey(null);
+      docs.reload();
+      views.reload();
+      setUnitsKey((key) => key + 1);
+    }
+  }
+  if (isEditingOriginal) {
+    return <SplitWorkspace bundleId={bundleId} docParam={editParam} onClose={() => navigate(getStageHref(bundleId, "assign"))} />;
+  }
   if (!ready) {
     return error !== null ? (
       <BundleLoadError error={error} onRetry={reloadAll} testId="assign" />
@@ -2215,11 +2239,11 @@ export default function AssignPage() {
             void loadBundle(bundleId);
           }}
         />
-        {/* 쪼개기 화면은 레일에 없다 - KO/EN 짝·표 행·다시 자르기는 지금 보는 Old 문서로 바로 건너가서 한다 */}
-        {canEdit && (
+        {/* 원문 고치기 - 지금 보는 Old 문서를 문서 하나만 넓게 보는 도구 화면으로 연다(같은 도구, 긴 표·AI 제안을 훑을 때) */}
+        {canEdit && oldView && (
           <Tooltip label={t("assign.openSplitTip")}>
             <Link
-              href={`${getStageHref(bundleId, "split")}${oldView ? `?doc=${oldView.document.id}` : ""}`}
+              href={getEditOriginalHref(bundleId, oldView.document.id)}
               className="btn h-7"
               aria-label={isBarCompact ? t("assign.openSplit") : undefined}
               data-testid="assign-open-split"
@@ -2404,6 +2428,7 @@ export default function AssignPage() {
                     headingNotes={headingNotes}
                     rowsKey={isComposedDoc && !composedDoc ? `${newDocId}:loading` : String(newDocId)}
                     tag={isComposedDoc ? t("assign.composedTag") : t("assign.writtenTag")}
+                    editOriginalHref={canEdit && !isComposedDoc && newFileId !== null ? getEditOriginalHref(bundleId, newFileId) : undefined}
                     readOnly={isComposedDoc}
                     live={liveDoc && liveDoc.docId === newDocId ? { seq: liveDoc.seq, targetIds: liveDoc.targetIds } : null}
                     onReveal={(el, flash) => {

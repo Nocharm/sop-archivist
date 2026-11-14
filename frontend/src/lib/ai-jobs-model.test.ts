@@ -215,8 +215,9 @@ describe("grouping and screens", () => {
   it("opens the screen where each kind's result shows", () => {
     expect(getKindStage("classify")).toBe("assign");
     expect(getKindStage("match_plan")).toBe("assign");
-    expect(getKindStage("split")).toBe("split");
-    expect(getKindStage("pair")).toBe("split");
+    // 나누기·짝 제안은 배정 화면에서 받고 적용한다
+    expect(getKindStage("split")).toBe("assign");
+    expect(getKindStage("pair")).toBe("assign");
     expect(getKindStage("doc_meta")).toBe("documents");
   });
 

@@ -8,6 +8,7 @@ import { humanizeApiError } from "@/lib/api-errors";
 import { getDocumentView, type SopDocument } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import { useLoaded } from "@/lib/use-loaded";
+import { getEditOriginalHref } from "@/lib/stages";
 
 // 보여 줄 앞부분 블록 수
 const PREVIEW_BLOCKS = 20;
@@ -25,7 +26,7 @@ export function PreviewModal({ bundleId, document, onClose }: { bundleId: number
       footer={
         <>
           <span className="mr-auto text-xs text-ink-3">{t("documents.previewScope", { n: PREVIEW_BLOCKS })}</span>
-          <Link href={`/bundles/${bundleId}/split?doc=${document.id}`} className="btn" data-testid="documents-preview-split" onClick={onClose}>
+          <Link href={getEditOriginalHref(bundleId, document.id)} className="btn" data-testid="documents-preview-split" onClick={onClose}>
             {t("documents.openSplit")}
           </Link>
           <button type="button" className="btn" data-testid="documents-preview-close" onClick={onClose}>
