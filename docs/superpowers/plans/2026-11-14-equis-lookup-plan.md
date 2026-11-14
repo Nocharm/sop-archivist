@@ -121,12 +121,12 @@
 
 **Interfaces — Consumes:** `EquisOut`. **Produces:** `formatEquisLabel(equis, t) -> { tone, icon, text }`(순수), `<EquisStatus>`, `<EquisPopover>`, `<EquisLink>`.
 
-- [ ] `equis-model.test.ts`: 명세 §4.1의 표시 열 가지.
-- [ ] 조각과 두 화면에 꽂기. 사용성 기준은 명세 §9.
-- [ ] 가짜 웹훅으로 브라우저에서 확인. `lint` · `tsc` · `vitest` · `build`.
+- [x] `equis-model.test.ts`: 명세 §4.1의 표시 열 가지.
+- [x] 조각과 두 화면에 꽂기. 사용성 기준은 명세 §9.
+- [x] 가짜 웹훅으로 브라우저에서 확인. `lint` · `tsc` · `vitest` · `build`.
 
 ### Task 7: 문서와 릴리스
 
 **Files:** Modify `docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md` §6.2, `docs/README.md`, `CHANGELOG.md`, `PROGRESS.md`, `frontend/package.json`
 
-- [ ] 명세 §11의 문서를 고친다. 버전 PATCH.
+- [x] 명세 §11의 문서를 고친다. 버전 PATCH.
