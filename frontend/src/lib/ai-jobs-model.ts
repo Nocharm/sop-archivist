@@ -18,8 +18,9 @@ const KIND_STAGE: Record<AiJobKind, StageKey> = {
   translate: "assign",
   match_plan: "assign",
   match: "assign",
-  pair: "split",
-  split: "split",
+  // 나누기·짝 제안은 배정 화면에서 받고 적용한다(옛 쪼개기 화면)
+  pair: "assign",
+  split: "assign",
   doc_meta: "documents",
 };
 

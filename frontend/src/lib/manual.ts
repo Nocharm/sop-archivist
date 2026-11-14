@@ -152,7 +152,6 @@ export function findSections(sections: readonly ManualSection[], query: string):
 export const MANUAL_STAGE_SECTION: Record<StageKey, string> = {
   overview: "bundle",
   documents: "documents",
-  split: "split",
   assign: "assign",
   order: "order",
   outputs: "outputs",

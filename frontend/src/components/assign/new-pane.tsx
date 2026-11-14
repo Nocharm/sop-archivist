@@ -6,7 +6,8 @@
 // 줄이 새로 들어오면 펼치며 나타나고 빠지면 접히며 사라진다(확정이 곧 보이는 실시간 넣기). 표·그림은 이번 화면에서 잇지 않아 회색 상자로만 보인다(설계 §2).
 "use client";
 
-import { ChevronDown, ChevronUp, FilePlus2, Spline } from "lucide-react";
+import { ChevronDown, ChevronUp, FilePlus2, Scissors, Spline } from "lucide-react";
+import Link from "next/link";
 import { Fragment, useEffect, useRef, useState, type FocusEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { PaneZoom } from "@/components/assign/pane-zoom";
@@ -48,6 +49,8 @@ interface NewPaneProps {
   onReveal: (el: HTMLElement, flash: boolean) => void;
   zoom: number;
   onZoom: (dir: "+" | "-") => void;
+  /** 이미 쓴 문서의 원문 고치기 주소 - 엮은 문서나 읽기 전용이면 없다 */
+  editOriginalHref?: string;
   /** 두 문서 사이 연결선 켜기·끄기 */
   linesOn: boolean;
   onToggleLines: () => void;
@@ -326,6 +329,13 @@ export function NewPane(props: NewPaneProps) {
           {props.tag}
         </span>
         <span className="flex-1" />
+        {props.editOriginalHref && (
+          <Tooltip label={t("assign.openSplitTip")}>
+            <Link href={props.editOriginalHref} className="pane-toggle" aria-label={t("assign.openSplit")} data-testid="assign-new-edit-original">
+              <Scissors size={14} strokeWidth={1.5} aria-hidden />
+            </Link>
+          </Tooltip>
+        )}
         <Tooltip label={props.linesOn ? t("assign.linesOn") : t("assign.linesOff")}>
           <button type="button" className="pane-toggle" aria-pressed={props.linesOn} aria-label={props.linesOn ? t("assign.linesOn") : t("assign.linesOff")} data-testid="assign-lines-toggle" onClick={props.onToggleLines}>
             <Spline size={13} strokeWidth={1.8} aria-hidden />

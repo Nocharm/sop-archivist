@@ -42,10 +42,15 @@ async function runStep(name, { devUser = "qa.member", storage = {}, allowConsole
   );
   const page = await ctx.newPage();
   const consoleErrors = [];
+  // 개발 서버 전용 잡음 - 옛 주소를 넘기는 서버 컴포넌트(redirect)의 실행 시간을 React 개발 도구가 재다가 가끔 음수 시각으로 실패한다.
+  // 빌드한 앱에는 없는 측정이라 화면 오류로 세지 않는다
+  const isDevTimingNoise = (text) => text.includes("Failed to execute 'measure' on 'Performance'");
   page.on("console", (msg) => {
-    if (msg.type() === "error") consoleErrors.push(msg.text());
+    if (msg.type() === "error" && !isDevTimingNoise(msg.text())) consoleErrors.push(msg.text());
   });
-  page.on("pageerror", (err) => consoleErrors.push(String(err)));
+  page.on("pageerror", (err) => {
+    if (!isDevTimingNoise(String(err))) consoleErrors.push(String(err));
+  });
   try {
     await run({ page, takeShot: (file) => page.screenshot({ path: resolve(SHOT_DIR, file) }) });
     if (!allowConsoleErrors) check(`${name}: no console errors`, consoleErrors.length === 0, consoleErrors.join(" | "));
@@ -239,7 +244,7 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   await page.goto(`${BASE}/`);
   const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
   const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
-  await page.goto(`${BASE}/bundles/${freshId}/split`);
+  await page.goto(`${BASE}/bundles/${freshId}/assign?edit=first`);
   const units = page.locator('[data-testid^="split-paper-unit-"].su');
   await units.first().waitFor({ timeout: T });
   const before = await units.count();
@@ -364,7 +369,7 @@ await runStep("split: per-sentence AI split, whole-document request, tab stack",
   await page.goto(`${BASE}/`);
   const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
   const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
-  await page.goto(`${BASE}/bundles/${freshId}/split`);
+  await page.goto(`${BASE}/bundles/${freshId}/assign?edit=first`);
   const units = page.locator('[data-testid^="split-paper-unit-"].su');
   await units.first().waitFor({ timeout: T });
   check("the whole-document button says so", (await getText(page, "split-ai-request")).includes("whole document"));
@@ -588,7 +593,7 @@ await runStep("split: H holds a unit without a destination", {}, async ({ page }
   await page.goto(`${BASE}/`);
   const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
   freshBundleId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
-  await page.goto(`${BASE}/bundles/${freshBundleId}/split`);
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign?edit=first`);
   const unit = page.locator('[data-testid^="split-paper-unit-"]:not(.ptbl-cap)').nth(2);
   await unit.waitFor({ timeout: T });
   await unit.click();
@@ -617,7 +622,7 @@ await runStep("split: H holds a unit without a destination", {}, async ({ page }
 });
 
 await runStep("split: right-click menu shows reasons for blocked actions and runs an enabled one", {}, async ({ page, takeShot }) => {
-  await page.goto(`${BASE}/bundles/${freshBundleId}/split`);
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign?edit=first`);
   const units = page.locator('[data-testid^="split-paper-unit-"]:not(.ptbl-cap)');
   await units.nth(9).waitFor({ timeout: T });
   const first = units.nth(4);
@@ -830,7 +835,7 @@ await runStep("assign: table rows from the right-click menu, then undo", {}, asy
 });
 
 await runStep("split rows of a table, then assign a row as a table", { allowConsoleErrors: true }, async ({ page }) => {
-  await page.goto(`${BASE}/bundles/${freshBundleId}/split`);
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign?edit=first`);
   const cap = page.locator('button.ptbl-cap[data-testid^="split-paper-unit-"]').first();
   await cap.waitFor({ timeout: T });
   await cap.click();
@@ -1731,7 +1736,7 @@ await runStep("assign: AI suggestions come first and confirm one by one", {}, as
   await page.keyboard.press("Enter");
   await page.waitForFunction((done) => Number(document.querySelector('[data-testid="assign-progress"]')?.textContent?.split("/")[0]) === done + 1, before, { timeout: T });
   check("Enter confirms the AI suggestion", true);
-  await page.goto(`${BASE}/bundles/${halfBundleId}/split`);
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign?edit=first`);
   await page.locator('[data-testid^="figure-"]').first().waitFor({ timeout: T });
   check("figure image loads on the paper", true);
 });
@@ -2131,8 +2136,8 @@ await runStep("assign: add and delete destinations from the All list", {}, async
   check("a document holding sentences keeps its delete locked", (await page.locator('[data-testid^="assign-tree-remove-doc-"][aria-disabled="true"]').count()) > 0);
 });
 
-// 네 단계 워크플로우 - 레일은 Documents·Assign·Order·Outputs, 쪼개기 화면은 2단계 아래에서 오간다. C는 Order에서만 고친다
-await runStep("four steps: rail, Split tools round trip, Order edits C and Outputs reads it", {}, async ({ page, takeShot }) => {
+// 네 단계 워크플로우 - 레일은 Documents·Assign·Order·Outputs, 원문 고치기(옛 쪼개기 화면)는 배정 화면 안에서 열린다. C는 Order에서만 고친다
+await runStep("four steps: rail, Edit original round trip, Order edits C and Outputs reads it", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}`);
   await wait(page, "stage-nav");
   const rail = await page.locator('[data-testid="stage-nav"] .stg-n').evaluateAll((els) => els.map((el) => `${el.textContent}:${el.parentElement.dataset.stage}`));
@@ -2140,13 +2145,19 @@ await runStep("four steps: rail, Split tools round trip, Order edits C and Outpu
   await page.locator('[data-testid="stage-nav-assign"]').click();
   await wait(page, "assign-open-split");
   await page.locator('[data-testid="assign-open-split"]').click();
-  await page.waitForURL(/\/split\?doc=\d+$/, { timeout: T });
+  await page.waitForURL(/\/assign\?edit=\d+$/, { timeout: T });
   await wait(page, "split-back-assign");
-  check("Split keeps step 2 current on the rail", (await page.locator('[data-testid="stage-nav"] [aria-current="page"]').getAttribute("data-stage")) === "assign");
+  check("editing an original stays inside step 2", (await page.locator('[data-testid="stage-nav"] [aria-current="page"]').getAttribute("data-stage")) === "assign" && (await page.locator('[data-testid="assign-bar"]').count()) === 0);
   await takeShot("sop-split-under-assign.png");
   await page.locator('[data-testid="split-back-assign"]').click();
   await page.waitForURL(/\/assign$/, { timeout: T });
   check("Back to Assign returns", true);
+  // 옛 쪼개기 주소는 배정 화면 안의 원문 고치기로 넘어간다
+  await page.goto(`${BASE}/bundles/${halfBundleId}/split`);
+  await page.waitForURL(/\/assign\?edit=first$/, { timeout: T });
+  await wait(page, "split-back-assign");
+  check("the old Split address opens Edit original inside Assign", (await page.locator('[data-testid="stage-nav-split"]').count()) === 0);
+  await page.goBack();
   await page.locator('[data-testid="stage-nav-order"]').click();
   await wait(page, "order-docs");
   await wait(page, "output-c");

@@ -70,7 +70,7 @@ const MEMBER = "qa.member";
 const ADMIN_TABS = ["access", "directory", "batch", "ai", "bundles", "guidelines"];
 
 // X0: 어느 화면에서도 문서가 가로로 넘치지 않는다(가로 스크롤이 생기지 않는다)
-const sceneUrls = (bundle) => ["", "/documents", "/split", "/assign", "/order", "/outputs", "/history"].map((tail) => `/bundles/${bundle}${tail}`);
+const sceneUrls = (bundle) => ["", "/documents", "/assign?edit=first", "/assign", "/order", "/outputs", "/history"].map((tail) => `/bundles/${bundle}${tail}`);
 const PLAIN_SCENES = ["/", "/manual", "/account"];
 const BASELINE_C10E = 177; // 변경 전에 잰 값으로 채운다
 const AUDIT_ENTRIES = [
@@ -215,7 +215,7 @@ const AUDIT_ENTRIES = [
   // ---- Task 4: Split ----
   {
     id: "A2", ds: "worst", user: MEMBER, views: [1120],
-    path: (ids) => `/bundles/${ids.w[1]}/split?doc=${ids.docs.tables}`,
+    path: (ids) => `/bundles/${ids.w[1]}/assign?edit=${ids.docs.tables}`,
     measure: (page) => page.locator(".ptbl").first().evaluate((table) => {
       const widths = [...table.querySelectorAll("td")].map((td) => td.getBoundingClientRect().width);
       const wide = [...document.querySelectorAll(".ptbl")].sort((a, b) => b.rows[0].cells.length - a.rows[0].cells.length)[0];
@@ -236,7 +236,7 @@ const AUDIT_ENTRIES = [
   },
   {
     id: "A3", ds: "worst", user: MEMBER, views: [1920],
-    path: (ids) => `/bundles/${ids.w[1]}/split?doc=${ids.docs.big}`,
+    path: (ids) => `/bundles/${ids.w[1]}/assign?edit=${ids.docs.big}`,
     measure: (page) => page.evaluate(() => {
       const inspector = document.querySelector('[data-testid="split-inspector"]').getBoundingClientRect().left;
       const rights = [...document.querySelectorAll(".pg")].map((pg) => pg.getBoundingClientRect().right);
@@ -247,7 +247,7 @@ const AUDIT_ENTRIES = [
   },
   {
     id: "C2", ds: "worst", user: MEMBER, views: [1120],
-    path: (ids) => `/bundles/${ids.w[1]}/split`,
+    path: (ids) => `/bundles/${ids.w[1]}/assign?edit=first`,
     measure: (page) => page.evaluate(() => {
       const disabled = document.querySelectorAll('[data-testid="split-inspector"] :disabled').length;
       const scroller = document.querySelector('[data-testid="split-docs"] > div');
@@ -264,14 +264,14 @@ const AUDIT_ENTRIES = [
   },
   {
     id: "C2", ds: "mid", user: MEMBER, views: [1120],
-    path: (ids) => `/bundles/${ids.mid[2]}/split`,
+    path: (ids) => `/bundles/${ids.mid[2]}/assign?edit=first`,
     measure: (page) => page.locator('[data-testid="split-inspector"] :disabled').count(),
     expect: (value) => value === 0,
     note: "idle inspector has 0 disabled buttons",
   },
   {
     id: "R8", ds: "worst", user: MEMBER, views: [1120],
-    path: (ids) => `/bundles/${ids.w[1]}/split?doc=${ids.docs.big}`,
+    path: (ids) => `/bundles/${ids.w[1]}/assign?edit=${ids.docs.big}`,
     measure: (page) => page.evaluate(() => {
       const long = [...document.querySelectorAll(".strip > p")].find((p) => (p.textContent ?? "").length >= 1790);
       return long ? Math.round(long.getBoundingClientRect().width) : 0;
@@ -844,7 +844,7 @@ const AUDIT_ENTRIES = [
     // C7: 목록 화면은 1600, 개요·계정·설명서는 1280 (본문 폭)
     id: "C7", ds: "worst", user: MEMBER, views: [2560],
     path: (ids) => [
-      "/", `/bundles/${ids.w[1]}/documents`, `/bundles/${ids.w[1]}/history`, `/bundles/${ids.w[1]}/split`,
+      "/", `/bundles/${ids.w[1]}/documents`, `/bundles/${ids.w[1]}/history`, `/bundles/${ids.w[1]}/assign?edit=first`,
       `/bundles/${ids.w[1]}`, "/account", "/manual",
     ],
     open: async (page) => { await page.locator(".page-wrap").first().waitFor({ timeout: T }); await page.waitForTimeout(1000); },

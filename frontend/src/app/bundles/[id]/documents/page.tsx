@@ -33,7 +33,7 @@ import { LANGUAGE_LAYOUTS, listDocuments, refreshEquis, updateDocument, type Doc
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { hasRefreshingEquis } from "@/lib/equis-model";
 import { useI18n } from "@/lib/i18n";
-import { NEW_DOCUMENTS_ANCHOR } from "@/lib/stages";
+import { getEditOriginalHref, NEW_DOCUMENTS_ANCHOR } from "@/lib/stages";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useEquisPolling } from "@/lib/use-equis-polling";
 import { saveBlob } from "@/lib/save-file";
@@ -252,7 +252,7 @@ export default function DocumentsPage() {
             editable={canEdit && !equis?.title_locked}
             width="fill"
             maxLength={500}
-            href={`/bundles/${bundleId}/split?doc=${document.id}`}
+            href={getEditOriginalHref(bundleId, document.id)}
             editLabel={t("common.edit")}
             testId={`documents-${document.id}-title`}
             onSave={(next) => saveField(document, { title: next })}

@@ -1,7 +1,7 @@
 // 묶음 주소 읽기 - 단계 경로와 묶음 밖 주소를 가른다.
 import { describe, expect, it } from "vitest";
 
-import { getNewDocumentsHref, getNextActionHref, getRailStage, getStageHref, isStageLocked, NEXT_ACTION_STAGE, parseBundlePath, STAGES } from "./stages";
+import { getEditOriginalHref, getNewDocumentsHref, getNextActionHref, getStageHref, isStageLocked, NEXT_ACTION_STAGE, parseBundlePath, STAGES } from "./stages";
 
 describe("parseBundlePath", () => {
   it("reads the overview and a stage", () => {
@@ -60,7 +60,7 @@ describe("NEXT_ACTION_STAGE", () => {
 
 describe("isStageLocked", () => {
   it("locks the document-dependent stages while there are no documents", () => {
-    for (const key of ["split", "assign", "order", "outputs"] as const) {
+    for (const key of ["assign", "order", "outputs"] as const) {
       expect(isStageLocked(key, 0)).toBe(true);
     }
   });
@@ -72,7 +72,7 @@ describe("isStageLocked", () => {
   });
 
   it("unlocks everything once a document exists", () => {
-    expect(isStageLocked("split", 1)).toBe(false);
+    expect(isStageLocked("assign", 1)).toBe(false);
   });
 
   it("reads the history page path", () => {
@@ -82,18 +82,15 @@ describe("isStageLocked", () => {
 
 describe("STAGES", () => {
   it("numbers four rail steps: Documents, Assign, Order, Outputs", () => {
-    expect(STAGES.filter((stage) => stage.step !== undefined && !stage.under).map((stage) => [stage.step, stage.key])).toEqual([
+    expect(STAGES.filter((stage) => stage.step !== undefined).map((stage) => [stage.step, stage.key])).toEqual([
       [1, "documents"], [2, "assign"], [3, "order"], [4, "outputs"],
     ]);
   });
 
-  it("keeps Split as a screen under step 2, off the rail", () => {
-    const split = STAGES.find((stage) => stage.key === "split");
-    expect(split).toMatchObject({ path: "/split", step: 2, under: "assign" });
-    expect(parseBundlePath("/bundles/3/split")).toEqual({ bundleId: 3, stage: "split" });
-    expect(getRailStage("split")).toBe("assign");
-    expect(getRailStage("order")).toBe("order");
-    expect(getRailStage(null)).toBeNull();
+  it("has no Split stage - the old address is not a stage and editing an original opens inside Assign", () => {
+    expect(STAGES.some((stage) => stage.path === "/split")).toBe(false);
+    expect(parseBundlePath("/bundles/3/split")).toEqual({ bundleId: 3, stage: null });
+    expect(getEditOriginalHref(3, 12)).toBe("/bundles/3/assign?edit=12");
   });
 
   it("reads the Order page path", () => {
