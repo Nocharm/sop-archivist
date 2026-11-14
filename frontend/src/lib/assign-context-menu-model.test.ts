@@ -55,7 +55,7 @@ describe("buildAssignMenu", () => {
   it("groups assign actions before edit actions", () => {
     const groups = buildAssignMenu(ctx());
     expect(groups.assign.map((item) => item.action)).toEqual(["confirm", "clear"]);
-    expect(groups.edit.map((item) => item.action)).toEqual(["split", "merge_prev", "merge_next", "lang"]);
+    expect(groups.edit.map((item) => item.action)).toEqual(["split", "merge_prev", "merge_next", "pair_pick", "lang"]);
   });
 
   it("enables every edit on an unassigned sentence with same-language neighbours", () => {
@@ -123,7 +123,7 @@ describe("KO/EN pairing from the Assign menu", () => {
   it("offers pairing instead of merging when the neighbour is the other language", () => {
     const groups = buildAssignMenu(ctx({ next: makeUnit(3, { lang: "en" }) }));
 
-    expect(groups.edit.map((item) => item.action)).toEqual(["split", "merge_prev", "pair_next", "lang"]);
+    expect(groups.edit.map((item) => item.action)).toEqual(["split", "merge_prev", "pair_next", "pair_pick", "lang"]);
     expect(find(ctx({ next: makeUnit(3, { lang: "en" }) }), "pair_next").enabled).toBe(true);
     expect(find(ctx({ target: makeUnit(2, { lang: "en" }), prev: makeUnit(1) }), "pair_prev").enabled).toBe(true);
   });
@@ -136,6 +136,13 @@ describe("KO/EN pairing from the Assign menu", () => {
     expect(find(paired, "pair_next").reasonKey).toBe("split.menu.why.alreadyPaired");
     expect(find(assigned, "pair_next").reasonKey).toBe("assign.ctx.why.neighborAssigned");
     expect(find(locked, "pair_next").reasonKey).toBe("assign.ctx.why.readOnly");
+  });
+
+  it("offers picking a far-away partner only on an unpaired KO or EN sentence", () => {
+    expect(find(ctx(), "pair_pick").enabled).toBe(true);
+    expect(find(ctx({ isDecided: (unit) => unit.id === 2 }), "pair_pick").reasonKey).toBe("assign.ctx.why.assigned");
+    expect(buildAssignMenu(ctx({ target: makeUnit(2, { pair_id: 7 }) })).edit.some((item) => item.action === "pair_pick")).toBe(false);
+    expect(buildAssignMenu(ctx({ target: makeUnit(2, { lang: "none" as ViewUnit["lang"] }) })).edit.some((item) => item.action === "pair_pick")).toBe(false);
   });
 
   it("offers Separate only on a paired sentence, with the same edit rules", () => {
@@ -161,7 +168,7 @@ describe("table rows from the Assign menu", () => {
   it("adds them after the sentence items on a cell sentence", () => {
     const cell = makeUnit(12, { kind: "cell_sentence", group_unit_id: 10 });
 
-    expect(buildAssignMenu(ctx({ target: cell, table })).edit.map((item) => item.action)).toEqual(["split", "merge_prev", "merge_next", "lang", "table_rows", "table_layout"]);
+    expect(buildAssignMenu(ctx({ target: cell, table })).edit.map((item) => item.action)).toEqual(["split", "merge_prev", "merge_next", "pair_pick", "lang", "table_rows", "table_layout"]);
   });
 
   it("locks them while the table is assigned, has an unsaved pick, or the bundle is read-only", () => {

@@ -44,6 +44,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { findLastStep } from "@/lib/destination-manage-model";
+import { planJoin } from "@/lib/split-menu-model";
 import { readSplitOffsets } from "@/lib/use-split-ai";
 import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, type AiScope } from "@/lib/api-manage";
 import {
@@ -640,6 +641,9 @@ export default function AssignPage() {
     setCarvePick(null);
     window.getSelection()?.removeAllRanges();
   }
+  // 떨어진 문장과 한/영 짝 맺기 - 메뉴에서 시작하면 다음에 누르는 문장이 짝이 된다(Esc로 거둔다). 문서를 바꾸면 버려진다
+  const [pairFrom, setPairFrom] = useState<{ docId: number; unitId: number } | null>(null);
+  const pairSource = pairFrom !== null && pairFrom.docId === oldView?.document.id ? (paperModel?.units.get(pairFrom.unitId) ?? null) : null;
 
   function selectRow(key: string, scroll = true) {
     setMode("old");
@@ -858,6 +862,10 @@ export default function AssignPage() {
       const order = paperTabs.order;
       const other = order[order.indexOf(target.id) + (action === "pair_prev" ? -1 : 1)];
       void runPairChange((docId, revision) => createPair(bundleId, docId, revision, [target.id, other]), t("split.didJoin"), target.id);
+    } else if (action === "pair_pick") {
+      if (!oldView) return;
+      clearCarve();
+      setPairFrom({ docId: oldView.document.id, unitId: target.id });
     } else if (action === "unpair") {
       const pairId = target.pair_id;
       if (pairId !== null) void runPairChange((docId, revision) => deletePair(bundleId, docId, pairId, revision), t("split.pairRemoved"), target.id);
@@ -1286,6 +1294,22 @@ export default function AssignPage() {
       void linkAsSource(unitId);
       return;
     }
+    if (pairSource) {
+      const other = paperModel?.units.get(unitId);
+      if (!other || other.id === pairSource.id) return;
+      // 묶을 수 있는지는 Split과 같은 규칙 - 한글·영어 한 쌍이고 둘 다 짝이 없어야 한다. 누른 문장에 판단·저장 전 고름이 있어도 못 맺는다
+      const plan = planJoin([pairSource, other], false);
+      // 같은 언어를 누르면 합치기 규칙의 까닭("이웃한 문장만") 대신 짝에 맞는 까닭을 말한다
+      const blocker = other.lang === pairSource.lang ? "assign.pairPickSameLang" : plan.kind !== "pair" ? (plan.reasonKey ?? "assign.ctx.why.cannotMerge") : isUnitDecided(other) ? "assign.ctx.why.neighborAssigned" : hasUnitDraft(other) ? "assign.ctx.why.neighborUnsaved" : null;
+      if (blocker !== null) {
+        showToast(t(blocker), "error");
+        return;
+      }
+      const from = pairSource;
+      setPairFrom(null);
+      void runPairChange((docId, revision) => createPair(bundleId, docId, revision, [from.id, other.id]), t("split.didJoin"), from.id);
+      return;
+    }
     const key = rowOfUnit.get(unitId);
     if (!key) return;
     if (keys.shiftKey && canEdit) {
@@ -1326,6 +1350,12 @@ export default function AssignPage() {
   }
 
   const handleKey = useEffectEvent((event: KeyboardEvent) => {
+    // 짝 고르는 중의 Esc는 그것부터 거둔다
+    if (event.key === "Escape" && pairSource && !isTypingTarget(event.target) && !document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]')) {
+      event.preventDefault();
+      setPairFrom(null);
+      return;
+    }
     // 메뉴 글쇠·Shift+F10 - 고른 줄(나눌 선이 있으면 그 문장)에서 우클릭 메뉴를 연다
     const isMenuKey = event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey);
     if (isMenuKey && row && mode === "old" && !bulk && !isTypingTarget(event.target) && !document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]')) {
@@ -2321,7 +2351,15 @@ export default function AssignPage() {
                 onUnitDoubleClick={canEdit ? handleOldDoubleClick : undefined}
                 onRangeSelect={canEdit && mode === "old" && oldView ? (range) => setCarvePick({ docId: oldView.document.id, ...range }) : undefined}
                 banner={
-                  carve && (
+                  pairSource ? (
+                    <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-pair-pick">
+                      <Link2 size={14} strokeWidth={1.5} className="flex-none text-ink-2" aria-hidden />
+                      <span className="min-w-0 flex-1 text-ink">{t("assign.pairPick", { id: pairSource.display_id })}</span>
+                      <button type="button" className="btn ghost h-7 flex-none" data-testid="assign-pair-pick-cancel" onClick={() => setPairFrom(null)}>
+                        {t("common.cancel")} <kbd>Esc</kbd>
+                      </button>
+                    </div>
+                  ) : carve && (
                     <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-carve">
                       <span className="flex-none font-semibold text-ink">{t("split.carve")}</span>
                       <Truncate className="min-w-0 flex-1 text-ink-2" text={carveText} testId="assign-carve-text" />
