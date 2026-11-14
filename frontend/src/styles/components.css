@@ -1552,13 +1552,28 @@
   .tree-leaf { display: block; width: 100%; padding: 4px 8px; border-radius: var(--r-1); font-size: var(--fs-cap); line-height: 17px; color: var(--ink-2); text-align: left; cursor: pointer; }
   .tree-leaf:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
   .tree-leaf:disabled { color: var(--ink-4); cursor: not-allowed; }
+  /* 보낼 곳 더하기·지우기(작성자) - 지우기 단추는 줄 끝에 늘 제자리로 흐리게 있고, 줄에 올리거나 포커스하면 또렷해진다(줄 폭이 변하지 않는다) */
+  .tree-row { display: flex; min-width: 0; align-items: center; gap: 2px; }
+  .tree-row > .tree-node, .tree-row > .tree-leaf { flex: 1; min-width: 0; width: auto; }
+  .tree-act { display: grid; flex: none; place-items: center; width: 24px; height: 24px; border-radius: var(--r-1); color: var(--ink-3); opacity: 0.45; cursor: pointer; transition: opacity var(--dur-fast); }
+  .tree-row:hover .tree-act, .tree-act:focus-visible, .tree-act[data-armed] { opacity: 1; }
+  .tree-act:hover:not([aria-disabled="true"]) { background: var(--hover); color: var(--ink); }
+  /* 지울 수 없는 줄 - 흐린 채로 두고 이유는 툴팁이 말한다 */
+  .tree-act[aria-disabled="true"], .tree-row:hover .tree-act[aria-disabled="true"] { opacity: 0.3; cursor: not-allowed; }
+  .tree-act[aria-disabled="true"]:focus-visible { opacity: 0.6; }
+  /* 한 번 누른 지우기 - 다시 누르면 지운다 */
+  .tree-act[data-armed], .tree-act[data-armed]:hover { background: var(--danger-tint); color: var(--danger-ink); }
+  .tree-add { display: flex; width: 100%; align-items: center; gap: 6px; padding: 5px 6px; border-radius: var(--r-1); font-size: var(--fs-cap); color: var(--ink-3); text-align: left; cursor: pointer; }
+  .tree-add:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+  .tree-add:disabled { cursor: default; opacity: 0.5; }
+  .tree-form { display: grid; gap: 6px; margin: 2px 0; padding: 6px; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--sunken); }
 
   .mini-chip { height: 24px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: var(--r-1); font-size: var(--fs-micro); color: var(--ink-2); cursor: pointer; }
   .mini-chip:hover { background: var(--hover); color: var(--ink); }
   .mini-chip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-tint); color: var(--ink); font-weight: 600; }
 
   @media (prefers-reduced-motion: reduce) {
-    .pane-zoom, .pane-divider::before, .dest-acc-chev, .tree-chev, .dest-card { transition: none; }
+    .pane-zoom, .pane-divider::before, .dest-acc-chev, .tree-chev, .tree-act, .dest-card { transition: none; }
     .link-menu { animation: cut-pop-wait 1ms linear 380ms both; }
   }
 }

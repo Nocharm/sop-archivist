@@ -1840,6 +1840,62 @@ await runStep("members picker keeps Add inside the panel and adds the person", {
 });
 
 // 바로 생성(2026-11-09): 이름 없이 BND 코드로 만들고, 문서가 없으면 Split~Review는 잠기고 To-Be는 열려 있다
+// 배정 화면에서 보낼 곳 더하고 지우기 - All 목록에서 SOP·WI·단계를 만들고(한 줄씩 바로 저장), 두 번 눌러 지운다. 끝에는 목록이 처음과 같다
+await runStep("assign: add and delete destinations from the All list", {}, async ({ page, takeShot }) => {
+  const readTobe = async () => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/tobe`, { headers: { "X-Dev-User": "qa.member" } })).json();
+  const before = (await readTobe()).docs.map((doc) => doc.code);
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.locator('[data-testid="assign-filter-unassigned"]').click();
+  await page.keyboard.press("j");
+  await wait(page, "assign-row-id");
+  await page.locator('[data-testid="assign-acc-all"]').click();
+  await wait(page, "assign-tree-add-doc");
+  await page.locator('[data-testid="assign-tree-add-doc"]').click();
+  await wait(page, "assign-tree-doc-code");
+  check("the number box takes the focus", (await page.evaluate(() => document.activeElement?.getAttribute("data-testid"))) === "assign-tree-doc-code");
+  await page.keyboard.type(before[0]);
+  check("a number already in the list cannot be added", await page.locator('[data-testid="assign-tree-doc-add"]').isDisabled());
+  await page.locator('[data-testid="assign-tree-doc-code"]').fill("SOP-SMOKE");
+  await page.keyboard.press("Enter");
+  await wait(page, "assign-tree-pSOP-SMOKE");
+  check("the new SOP opens in the list", (await page.locator('[data-testid="assign-tree-pSOP-SMOKE"]').getAttribute("aria-expanded")) === "true");
+  await page.locator('[data-testid="assign-tree-add-doc"]').click();
+  await page.locator('[data-testid="assign-tree-doc-type-wi"]').click();
+  await page.locator('[data-testid="assign-tree-doc-parent"]').click();
+  await page.locator('[role="option"]', { hasText: "SOP-SMOKE" }).click();
+  await page.locator('[data-testid="assign-tree-doc-code"]').fill("WI-SMOKE");
+  await page.locator('[data-testid="assign-tree-doc-add"]').click();
+  await wait(page, "assign-tree-pWI-SMOKE");
+  const added = await readTobe();
+  const sop = added.docs.find((doc) => doc.code === "SOP-SMOKE");
+  const wi = added.docs.find((doc) => doc.code === "WI-SMOKE");
+  check("the WI is saved under its parent SOP", wi?.parent_code === "SOP-SMOKE" && wi.doc_type === "wi", JSON.stringify(wi));
+  check("an SOP with a WI under it cannot be deleted", (await page.locator(`[data-testid="assign-tree-remove-doc-${sop.id}"]`).getAttribute("aria-disabled")) === "true");
+  await page.locator(`[data-testid="assign-tree-add-step-${wi.id}"]`).click();
+  await page.locator('[data-testid="assign-tree-step-title"]').fill("Smoke step");
+  await page.keyboard.press("Enter");
+  await wait(page, `assign-tree-remove-step-${wi.id}-1`);
+  check("the new step becomes the chosen place", (await getText(page, "assign-chosen")).includes("Smoke step"), await getText(page, "assign-chosen"));
+  check("Confirm is ready for it", (await page.locator('[data-testid="assign-primary"]').getAttribute("data-state")) === "confirm");
+  await takeShot("sop-assign-add-place.png");
+  const removeStep = page.locator(`[data-testid="assign-tree-remove-step-${wi.id}-1"]`);
+  await removeStep.click();
+  check("the first press only arms the delete", (await removeStep.getAttribute("data-armed")) === "" && (await readTobe()).wi_steps.some((step) => step.code === "WI-SMOKE"));
+  await removeStep.click();
+  await removeStep.waitFor({ state: "detached", timeout: T });
+  check("deleting the chosen step drops the pick", await page.locator('[data-testid="assign-primary"]').isDisabled());
+  for (const doc of [wi, sop]) {
+    const remove = page.locator(`[data-testid="assign-tree-remove-doc-${doc.id}"]`);
+    await remove.click();
+    await remove.click();
+    await remove.waitFor({ state: "detached", timeout: T });
+  }
+  const after = (await readTobe()).docs.map((doc) => doc.code);
+  check("the list is back to where it started", JSON.stringify(after) === JSON.stringify(before), after.join(","));
+  check("a document holding sentences keeps its delete locked", (await page.locator('[data-testid^="assign-tree-remove-doc-"][aria-disabled="true"]').count()) > 0);
+});
+
 // 네 단계 워크플로우 - 레일은 Documents·Assign·Order·Outputs, 쪼개기 화면은 2단계 아래에서 오간다. C는 Order에서만 고친다
 await runStep("four steps: rail, Split tools round trip, Order edits C and Outputs reads it", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}`);

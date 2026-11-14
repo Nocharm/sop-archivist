@@ -511,11 +511,20 @@ export interface WiStep {
   title: string;
 }
 
+/** 문장이 든 자리 - 단계가 없는 자리(SOP의 칸, 단계를 적지 않은 WI)는 wi_step이 null */
+export interface PlaceCount {
+  target_doc_id: number;
+  wi_step: number | null;
+  count: number;
+}
+
 export interface ToBe {
   revision: number;
   docs: TargetDoc[];
   na_slots: NaSlot[];
   wi_steps: WiStep[];
+  /** 문장이 든 자리만 실린다 - 배정 화면이 지울 수 없는 문서·단계의 지우기 단추를 잠근다 */
+  sentence_counts?: PlaceCount[];
 }
 
 export interface ToBeInput {
@@ -550,6 +559,29 @@ export function getToBe(bundleId: number): Promise<ToBe> {
 
 export function putToBe(bundleId: number, body: ToBeInput): Promise<ToBe> {
   return apiFetch<ToBe>(`/bundles/${bundleId}/tobe`, { method: "PUT", body: JSON.stringify(body) });
+}
+
+// 한 줄 추가·삭제(배정 화면) - revision을 보내지 않는다. 서버가 지금 목록에 한 줄을 더하거나 빼고 새 목록을 돌려준다
+export interface NewToBeDoc {
+  code: string;
+  doc_type: TargetDocType;
+  parent_code: string | null;
+}
+
+export function addToBeDoc(bundleId: number, body: NewToBeDoc): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export function removeToBeDoc(bundleId: number, targetDocId: number): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}`, { method: "DELETE" });
+}
+
+export function addWiStep(bundleId: number, targetDocId: number, title: string): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/steps`, { method: "POST", body: JSON.stringify({ title }) });
+}
+
+export function removeWiStep(bundleId: number, targetDocId: number, stepNo: number): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/steps/${stepNo}`, { method: "DELETE" });
 }
 
 export function importToBe(bundleId: number, file: File, revision: number): Promise<ToBe> {

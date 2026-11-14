@@ -12,7 +12,7 @@ import { AssignContextMenu } from "@/components/assign/assign-context-menu";
 import { AssignHelp } from "@/components/assign/assign-help";
 import { DestCard } from "@/components/assign/dest-card";
 import { DestinationAccordion, type AccordionSection } from "@/components/assign/destination-accordion";
-import { DestinationTree } from "@/components/assign/destination-tree";
+import { DestinationTree, type DestinationManage } from "@/components/assign/destination-tree";
 import { LinkChoice } from "@/components/assign/link-choice";
 import { findNewLine, findOldStrip, LinkLines } from "@/components/assign/link-lines";
 import { LinkMenu } from "@/components/assign/link-menu";
@@ -41,8 +41,11 @@ import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
+import { findLastStep } from "@/lib/destination-manage-model";
 import { listAppliedSuggestions, requestAi, type AiKind, type AiScope } from "@/lib/api-manage";
 import {
+  addToBeDoc,
+  addWiStep,
   bulkDecide,
   editUnits,
   clearDecisions,
@@ -59,6 +62,8 @@ import {
   listSuggestions,
   listWrittenSentences,
   redoDecision,
+  removeToBeDoc,
+  removeWiStep,
   saveGroup,
   undoDecision,
   type AiSuggestion,
@@ -70,6 +75,7 @@ import {
   type Group,
   type GroupSaveInput,
   type NewCandidate,
+  type ToBe,
   type UndoMeta,
   type UnitRow,
   type WrittenSentence,
@@ -259,7 +265,12 @@ export default function AssignPage() {
   const [unitsKey, setUnitsKey] = useState(0);
   const dataKey = `${bundleId}:${unitsKey}`;
   const units = useLoaded(() => listAllUnits(bundleId), dataKey);
-  const tobe = useLoaded(() => getToBe(bundleId), String(bundleId));
+  // 저장할 때마다 다시 받는다 - 문장이 든 자리 수(sentence_counts)가 보낼 곳 지우기 단추를 잠근다
+  const tobe = useLoaded(() => getToBe(bundleId), dataKey);
+  // 이 화면에서 보낼 곳을 더하거나 지운 응답 - 그 뒤에 다시 받은 목록이 올 때까지 이쪽이 더 새롭다
+  const [tobeFresh, setTobeFresh] = useState<{ key: string; data: ToBe } | null>(null);
+  const tobeData = tobeFresh !== null && (tobeFresh.key === dataKey || tobe.isLoading) ? tobeFresh.data : tobe.data;
+  const [isPlaceBusy, setIsPlaceBusy] = useState(false);
   const writtenList = useLoaded(() => listWrittenSentences(bundleId), dataKey);
   const identical = useLoaded(() => listIdenticalCandidates(bundleId), dataKey);
   // AI 작업이 끝나면 단위·제안·New 문장을 다시 불러온다 - 제안이 보이고 다음 저장이 낡은 revision으로 409가 나지 않는다
@@ -285,8 +296,8 @@ export default function AssignPage() {
   const rows = useMemo(() => (viewList ? buildRows(viewList, unitMap) : []), [viewList, unitMap]);
   const rowMap = new Map(rows.map((row) => [row.key, row]));
   const rowOfUnit = new Map(rows.flatMap((row) => row.unitIds.map((id) => [id, row.key] as const)));
-  const options = useMemo(() => (tobe.data ? buildDestinationOptions(tobe.data, SLOT_LABELS) : []), [tobe.data]);
-  const ready = viewList !== null && units.data !== null && tobe.data !== null && writtenList.data !== null;
+  const options = useMemo(() => (tobeData ? buildDestinationOptions(tobeData, SLOT_LABELS) : []), [tobeData]);
+  const ready = viewList !== null && units.data !== null && tobeData !== null && writtenList.data !== null;
   const showSkeleton = useDelayedFlag(!ready && docs.error === null);
   const unsourced = listUnsourced(written);
 
@@ -487,7 +498,7 @@ export default function AssignPage() {
   const writtenDocs = [...new Map(written.map((item) => [item.target_doc_id, item.doc_code])).entries()];
   // 오른쪽 칸은 항상 열려 있다 - 쓴 New 문서가 없으면 빈 안내
   // 아직 쓰지 않은 문서(To-Be의 Assign 입구) - 오른쪽 칸에 지금까지의 배정으로 엮어 보인다(서버 결과물 C 규칙, 읽기 전용)
-  const composedDocs = (tobe.data?.docs ?? []).filter((doc) => doc.entrance === "assign");
+  const composedDocs = (tobeData?.docs ?? []).filter((doc) => doc.entrance === "assign");
   const [manualNewDoc, setManualNewDoc] = useState<{ key: string; docId: number } | null>(null);
   // 방금 확정해 보낸 곳 - 확정 뒤 고른 줄(key)에 있는 동안만 오른쪽 칸을 그 문서에 두고 그 문장을 잇는 선을 진하게. 손으로 고른 문서가 먼저, 다른 줄로 옮기면 평소대로
   const [liveNew, setLiveNew] = useState<{ key: string; docId: number; targetIds: number[]; seq: number } | null>(null);
@@ -999,6 +1010,52 @@ export default function AssignPage() {
     }, t("match.linked"));
   }
 
+  /** 보낼 곳 한 줄을 더하거나 지운다 - 응답의 새 목록을 바로 쓰고, 묶음 revision이 올랐으니 묶음도 다시 읽는다 */
+  async function writePlace(write: () => Promise<ToBe>, okText: string): Promise<ToBe | null> {
+    if (isPlaceBusy) return null;
+    setIsPlaceBusy(true);
+    try {
+      const next = await write();
+      setTobeFresh({ key: dataKey, data: next });
+      void loadBundle(bundleId);
+      showToast(okText);
+      return next;
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+      return null;
+    } finally {
+      setIsPlaceBusy(false);
+    }
+  }
+
+  const placeManage: DestinationManage | undefined =
+    canEdit && tobeData
+      ? {
+          tobe: tobeData,
+          busy: isPlaceBusy,
+          onAddDoc: async (draft) =>
+            (await writePlace(() => addToBeDoc(bundleId, { code: draft.code, doc_type: draft.docType, parent_code: draft.parentCode }), t("assign.tree.added", { name: draft.code }))) !== null,
+          onAddStep: async (doc, title) => {
+            const next = await writePlace(() => addWiStep(bundleId, doc.id, title), t("assign.tree.added", { name: doc.code }));
+            return next ? findLastStep(next, doc.code) : null;
+          },
+          onRemoveDoc: async (doc) => {
+            if ((await writePlace(() => removeToBeDoc(bundleId, doc.id), t("assign.tree.removed", { name: doc.code }))) === null) return false;
+            // 오른쪽 칸에 열어 둔 문서였거나 아직 저장하지 않은 고름이 그 문서였으면 놓는다 - 없어진 곳으로 확정하지 않게
+            setManualNewDoc((prev) => (prev?.docId === doc.id ? null : prev));
+            setLiveNew((prev) => (prev?.docId === doc.id ? null : prev));
+            if (destination !== null && "docId" in destination && destination.docId === doc.id) setDraft({ destination: null });
+            return true;
+          },
+          onRemoveStep: async (doc, stepNo) => {
+            const name = `${doc.code} · ${t("assign.tree.stepName", { n: stepNo })}`;
+            if ((await writePlace(() => removeWiStep(bundleId, doc.id, stepNo), t("assign.tree.removed", { name }))) === null) return false;
+            if (destination?.kind === "step" && destination.docId === doc.id && destination.step === stepNo) setDraft({ destination: null });
+            return true;
+          },
+        }
+      : undefined;
+
   function pickDestination(next: Destination) {
     const linkTypes: Record<number, ChangeTypeInput | null> = {};
     // AI가 이어 둔 문장을 다시 고르면 기본은 제안 그대로 받기
@@ -1368,7 +1425,7 @@ export default function AssignPage() {
   const accSections: AccordionSection[] = [
     { key: "rec", icon: Sparkles, title: t("assign.acc.rec"), count: recommendations.length, body: recommendations.length === 0 ? <p className="text-xs text-ink-3">{t("assign.acc.none")}</p> : recommendations.map(renderRecommendation) },
     { key: "near", icon: Locate, title: t("assign.acc.near"), count: nearLinks.length + nearPlaces.length, body: renderNearby() },
-    { key: "all", icon: ListTree, title: t("assign.acc.all"), count: written.length + options.filter(isPlaceOption).length, body: <DestinationTree written={written} options={treeOptions} tobeHref={getNewDocumentsHref(bundleId)} onPickLink={pickNewSentence} onPickPlace={pickDestination} /> },
+    { key: "all", icon: ListTree, title: t("assign.acc.all"), count: written.length + options.filter(isPlaceOption).length, body: <DestinationTree written={written} options={treeOptions} tobeHref={getNewDocumentsHref(bundleId)} onPickLink={pickNewSentence} onPickPlace={pickDestination} manage={placeManage} /> },
     {
       key: "move",
       icon: MoveRight,

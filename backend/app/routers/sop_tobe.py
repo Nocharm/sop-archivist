@@ -1,4 +1,4 @@
-"""To-Be 목록 API — 읽기·통째 쓰기·Excel 템플릿 내려받기와 가져오기. 쓰기는 작성자가 작업 중일 때만 한다."""
+"""To-Be 목록 API — 읽기·통째 쓰기·한 줄 추가·삭제·Excel 템플릿 내려받기와 가져오기. 쓰기는 작성자가 작업 중일 때만 한다."""
 
 import asyncio
 from typing import Literal
@@ -16,7 +16,21 @@ from app.sop.constants import MEMBER_ROLES
 from app.sop.errors import check_revision
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
 from app.sop.models import Bundle
-from app.sop.tobe import TargetDocOut, ToBeIn, ToBeOut, apply_tobe, build_tobe_out
+from app.sop.tobe import (
+    NewDocIn,
+    NewStepIn,
+    PlaceCountOut,
+    TargetDocOut,
+    ToBeIn,
+    ToBeOut,
+    add_tobe_doc,
+    add_wi_step,
+    apply_tobe,
+    build_tobe_out,
+    count_targets_by_step,
+    remove_tobe_doc,
+    remove_wi_step,
+)
 
 router = APIRouter(prefix="/api/bundles", tags=["sop-tobe"])
 
@@ -34,6 +48,8 @@ class ToBeDocOut(TargetDocOut):
 
 class ToBeViewOut(ToBeOut):
     docs: list[ToBeDocOut]  # type: ignore[assignment] -- 같은 줄에 EQUIS 표시만 더한 모양
+    # 문장이 든 자리 — 배정 화면이 지울 수 없는 문서·단계를 미리 잠근다(서버는 지울 때 다시 검사한다)
+    sentence_counts: list[PlaceCountOut] = []
 
 
 async def _build_tobe_view(
@@ -48,7 +64,11 @@ async def _build_tobe_view(
     docs = [
         ToBeDocOut(**doc.model_dump(), equis=build_equis_out(doc.code, "new", "", lookups, now)) for doc in tobe.docs
     ]
-    return ToBeViewOut(revision=tobe.revision, docs=docs, na_slots=tobe.na_slots, wi_steps=tobe.wi_steps)
+    sentence_counts = await count_targets_by_step(session, [doc.id for doc in tobe.docs])
+    return ToBeViewOut(
+        revision=tobe.revision, docs=docs, na_slots=tobe.na_slots, wi_steps=tobe.wi_steps,
+        sentence_counts=sentence_counts,
+    )
 
 
 async def _write_tobe(
@@ -90,6 +110,69 @@ async def put_tobe(
     session: AsyncSession = Depends(get_session),
 ) -> ToBeViewOut:
     return await _write_tobe(session, background_tasks, ctx, body, revision=body.revision, source="api")
+
+
+# --- 한 줄 추가·삭제(배정 화면) — revision을 묻지 않는다: 묶음을 잠근 뒤 DB의 지금 목록에 한 줄을 더하거나 뺀다 ---
+
+
+async def _open_row_write(session: AsyncSession, ctx: BundleContext) -> Bundle:
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    return ctx.bundle
+
+
+@router.post("/{bundle_id}/tobe/docs", response_model=ToBeViewOut, status_code=201)
+async def post_tobe_doc(
+    body: NewDocIn,
+    background_tasks: BackgroundTasks,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> ToBeViewOut:
+    bundle = await _open_row_write(session, ctx)
+    await add_tobe_doc(session, bundle, body, actor=ctx.login_id)
+    await session.commit()
+    return await _build_tobe_view(session, background_tasks, bundle, sync_titles=True)
+
+
+@router.delete("/{bundle_id}/tobe/docs/{target_doc_id}", response_model=ToBeViewOut)
+async def delete_tobe_doc(
+    target_doc_id: int,
+    background_tasks: BackgroundTasks,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> ToBeViewOut:
+    bundle = await _open_row_write(session, ctx)
+    await remove_tobe_doc(session, bundle, target_doc_id, actor=ctx.login_id)
+    await session.commit()
+    return await _build_tobe_view(session, background_tasks, bundle, sync_titles=False)
+
+
+@router.post("/{bundle_id}/tobe/docs/{target_doc_id}/steps", response_model=ToBeViewOut, status_code=201)
+async def post_wi_step(
+    target_doc_id: int,
+    body: NewStepIn,
+    background_tasks: BackgroundTasks,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> ToBeViewOut:
+    bundle = await _open_row_write(session, ctx)
+    await add_wi_step(session, bundle, target_doc_id, body.title, actor=ctx.login_id)
+    await session.commit()
+    return await _build_tobe_view(session, background_tasks, bundle, sync_titles=False)
+
+
+@router.delete("/{bundle_id}/tobe/docs/{target_doc_id}/steps/{step_no}", response_model=ToBeViewOut)
+async def delete_wi_step(
+    target_doc_id: int,
+    step_no: int,
+    background_tasks: BackgroundTasks,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> ToBeViewOut:
+    bundle = await _open_row_write(session, ctx)
+    await remove_wi_step(session, bundle, target_doc_id, step_no, actor=ctx.login_id)
+    await session.commit()
+    return await _build_tobe_view(session, background_tasks, bundle, sync_titles=False)
 
 
 @router.get("/{bundle_id}/tobe/template.xlsx")
