@@ -153,7 +153,7 @@ Bundle은 함께 재구성할 문서 묶음입니다. Old SOP 여러 편과 새�
 | **Language layout** | **KO/EN interleaved**(한 줄씩 번갈아), **KO/EN separate**(한글 뒤 영어가 따로), **English only**, **Korean only** |
 | **Extraction** | **Ready**(읽기 끝), **Rejected**(받을 수 없는 파일), **Failed**(읽다가 실패) |
 | **Aux check** | 다른 방법으로 한 번 더 읽어 빠진 글이 없는지 견준 결과 |
-| **Warnings** | 읽으면서 생긴 경고 수. **Split** 에서 확인한다 |
+| **Warnings** | 읽으면서 생긴 경고 수. **Assign** 위쪽 줄의 경고 표시에서 확인한다 |
 
 정상이면 글자 없이 체크 아이콘만 보입니다(**Ready**, **Checked**). 아이콘에 올리거나 Tab으로 가면 뜻이 툴팁으로 뜹니다. 거절·실패·보조 검사 불가처럼 살펴야 할 때만 글자가 있는 알약이 나타납니다.
 
@@ -212,7 +212,7 @@ Bundle은 함께 재구성할 문서 묶음입니다. Old SOP 여러 편과 새�
 
 | 경고 | 뜻 |
 |---|---|
-| **Missing text** | 다시 읽은 결과와 견주니 빠진 글이 있을 수 있다. **Split** 에서 원문과 대조해 확인해야 검토를 요청할 수 있다 |
+| **Missing text** | 다시 읽은 결과와 견주니 빠진 글이 있을 수 있다. **Assign** 의 경고 표시에서 원문과 대조해 확인해야 검토를 요청할 수 있다([누락 의심 경고](#assign-warnings)) |
 | **Reading order may differ** | PDF라서 읽는 순서가 원문과 다를 수 있다 |
 | **Auto numbering** · **Clause numbers** | 자동 번호나 절 번호가 원문과 다르게 읽혔을 수 있다 |
 | **Merged cells** · **Table position** | 병합된 칸이나 표의 자리가 원문과 다를 수 있다 |
@@ -339,7 +339,7 @@ Bundle은 함께 재구성할 문서 묶음입니다. Old SOP 여러 편과 새�
 
 ### 누락 의심 경고 {#split-warnings}
 
-문서에 **Missing-text warnings** 가 있으면 경고마다 원문과 견주어 본 뒤 **Mark checked** 를 누릅니다. 확인하지 않은 경고가 남아 있으면 검토를 요청할 수 없습니다.
+문서에 **Missing-text warnings** 가 있으면 경고마다 원문과 견주어 본 뒤 **Mark checked** 를 누릅니다. 확인하지 않은 경고가 남아 있으면 검토를 요청할 수 없습니다. 같은 확인을 **Assign** 에서도 합니다([누락 의심 경고](#assign-warnings)) — 이 화면에 오지 않아도 됩니다.
 
 ### 단축키 {#split-keys}
 
@@ -475,6 +475,16 @@ Old 문장을 오른쪽 단추로 누르면(키보드는 줄을 고른 채 <kbd>
 - **지우기·옮기기**: <kbd>Shift</kbd>를 누른 채 Old Unit을 눌러 여럿을 고르면 **Delete picked rows** 와 **Move picked rows to another document** 가 나옵니다. 여럿을 한 번에 할 수 있는 것은 지우기와 옮기기뿐입니다. 창에서 바로 사유를 쓰고(아래에 **My recent remarks**), 옮기기의 **Target doc** 은 하나씩 할 때와 같은 추천 칸입니다.
 - **배정 초기화**: 목록 위 **Reset** 메뉴의 **Reset this document** 는 지금 연 Old 문서의 배정을, 선 아래 **Reset the whole bundle** 은 Bundle 안 모든 배정을 한 번에 지웁니다. 창이 먼저 몇 Unit이 **Unassigned** 로 돌아가는지, 함께 묶인 다른 문서의 Unit 몇 개가 **On hold** 로 가는지, 새로 쓴 문장 몇 개가 지워지는지 세어 보여 주고, **Reset** 을 눌러야 진행됩니다. AI 작업이 돌고 있으면 끝난 뒤에 할 수 있습니다. **History** 에 **Reset assignments** 로 남습니다.
 - **합치기와 나누기**: Unit 여럿을 새 문장 하나로 보내면 합침, Unit 하나를 새 문장 여럿으로 보내면 나눔입니다. New 문서에서 <kbd>Ctrl</kbd>을 누른 채 문장을 누르면 보낼 문장이 더해집니다.
+
+### 누락 의심 경고 {#assign-warnings}
+
+파일을 읽을 때 보조 읽기가 찾았지만 본문에는 빠졌을 수 있는 글이 있으면, 위쪽 줄에 주황색 경고 표시(삼각형과 남은 수)가 뜹니다. 확인이 남아 있는 동안만 보이고, 모두 확인하면 사라집니다. **확인하지 않은 경고가 남아 있으면 검토를 요청할 수 없습니다**(**Missing-text warnings closed**).
+
+1. 경고 표시를 누르면 Bundle의 모든 문서에서 모은 **Missing-text warnings** 목록이 열립니다. 줄마다 문서 번호와 빠졌을 수 있는 글이 그대로 보입니다.
+2. **Show** 를 누르면 목록이 닫히고 Old 원문의 그 자리로 갑니다(그 자리에 Unit이 없으면 문서만 엽니다). 이미 쓴 New 문서의 경고는 **Open in Split** 으로 쪼개기 화면에서 엽니다.
+3. 원본 파일과 견주어 본 뒤 **Mark checked** 를 누릅니다. 줄의 표시가 **Checked** 로 바뀝니다. 확인은 작성자만 합니다.
+
+**Overview** 의 조건 카드와 다음 할 일도 이 화면으로 데려옵니다.
 
 ### 되돌리기 {#assign-undo}
 
@@ -629,7 +639,7 @@ AI가 꺼져 있어도 빠진 언어를 직접 채울 수 있습니다. 칸에 �
 | **All versions filled** | **Documents** 에서 읽은 Old 문서마다 버전을 적었다. 적은 그대로 Excel에 나간다 |
 | **All rows decided** | 모든 줄이 **Confirmed** 다. 미배정·AI 제안·보류가 남아 있지 않다 |
 | **All new sentences decided** | 모든 새 문장이 확정됐다. 출처 없는 새 문장이 남아 있지 않다 |
-| **Missing-text warnings closed** | **Split** 에서 누락 의심 경고를 모두 확인했다 |
+| **Missing-text warnings closed** | **Assign** 의 경고 표시에서 누락 의심 경고를 모두 확인했다 |
 | **Reasons filled** | 지우기·옮기기·두 문서로 보내기에 사유를 적었다 |
 | **Meaning checks done** | **Outputs** 의 의미 확인 네 가지를 표시했다 |
 | **Reviewer assigned** | 활동 중인 검토자가 한 명 이상 있다 |

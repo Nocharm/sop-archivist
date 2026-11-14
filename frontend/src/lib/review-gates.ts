@@ -10,7 +10,7 @@ export const GATE_STAGE: Record<GateKey, StageKey | null> = {
   versions: "documents",
   units: "assign",
   targets: "assign",
-  warnings: "split",
+  warnings: "assign",
   reasons: "assign",
   semantic: "outputs",
   reviewer: null,

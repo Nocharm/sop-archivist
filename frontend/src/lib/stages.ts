@@ -77,7 +77,8 @@ export const NEXT_ACTION_STAGE: Record<NextAction, StageKey | null> = {
   fill_doc_versions: "documents",
   fill_tobe: "documents",
   decide_units: "assign",
-  ack_warnings: "split",
+  // 누락 의심 경고는 배정 화면 위쪽 줄의 경고 표시에서 확인한다(전에는 쪼개기 화면)
+  ack_warnings: "assign",
   fill_reasons: "assign",
   semantic_checks: "outputs",
   add_reviewer: null,
