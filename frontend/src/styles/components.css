@@ -1464,6 +1464,8 @@
   .new-src[data-dir="above"] .new-src-dir[data-d="above"], .new-src[data-dir="below"] .new-src-dir[data-d="below"] { display: inline-block; margin: 0 -2px 0 1px; vertical-align: -2px; }
   .new-src.is-new { background: var(--sunken); color: var(--ink-3); }
   .new-src.is-more { background: none; color: var(--ink-3); box-shadow: inset 0 0 0 1px var(--line-2); }
+  /* 엮은 문서의 표·그림 - 앞머리(자기 번호) 오른쪽 남은 폭을 채워 문장 상자와 같은 x에서 시작한다 */
+  .pg .strip-row > .new-block { flex: 1 1 0; min-width: 0; }
   .pg .new-block { margin: 4px 0; padding: 6px 8px; border: 1px dashed var(--line-2); border-radius: var(--r-1); font: var(--fs-cap) / var(--lh-cap) var(--font-ui); color: var(--ink-3); }
 
   .assign-side { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-left: 1px solid var(--line); background: var(--surface); }
