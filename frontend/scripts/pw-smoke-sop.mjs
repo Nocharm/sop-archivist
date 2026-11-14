@@ -240,7 +240,7 @@ await runStep("documents list, inline edit and delete prompt", {}, async ({ page
   check("delete prompt closes with Esc", true);
 });
 
-await runStep("split: select, cut, split, undo, check boundary", {}, async ({ page, takeShot }) => {
+await runStep("edit original: select, cut, split, undo, move", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);
   const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
   const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
@@ -248,9 +248,9 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   const units = page.locator('[data-testid^="split-paper-unit-"].su');
   await units.first().waitFor({ timeout: T });
   const before = await units.count();
-  // Unit마다 종이 조각 하나 - 확인하기 전부터 나뉘어 있고, 글 조각 사이에는 늘 합치기가 있다
+  // Unit마다 종이 조각 하나 - 처음부터 나뉘어 있고, 글 조각 사이에는 늘 합치기가 있다
   const pieces = page.locator('[data-testid^="split-paper-piece-"].strip');
-  check("every unit is its own piece from the start", (await pieces.count()) > 10 && (await page.locator('[data-testid^="split-paper-mark-checked-"]').count()) === 0, String(await pieces.count()));
+  check("every unit is its own piece from the start", (await pieces.count()) > 10, String(await pieces.count()));
   check("join controls sit between text pieces", (await page.locator('.strip-gap [data-testid^="split-paper-join-"]').count()) > 5);
   // 절 번호는 앞머리 번호 칸에 한 번만 - 머리 줄 글 앞의 같은 번호는 그리지 않고(표시만) 첫 글자 조각의 data-start가 그만큼 밀린다
   const heads = await page.evaluate(() =>
@@ -268,12 +268,13 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   const unitId = (await target.getAttribute("data-testid")).replace("split-paper-unit-", "");
   await target.click();
   check("first click selects", (await target.getAttribute("data-sel")) === "");
-  check("first click shows the check under the unit", (await page.locator('[data-testid^="split-act-check-"]').count()) === 1);
+  // 경계 확인 단추는 없다 - 배정을 확정하면 확인된 것으로 친다
+  check("there is no boundary check button", (await page.locator('[data-testid^="split-act-check-"], [data-testid="split-primary"], [data-testid="split-boundary-state"]').count()) === 0);
   // 윤곽은 다음 프레임에 재서 그리므로 바로 세면 0일 수 있다 - 그려질 때까지 기다린다
   await page.locator(".sel-contour path").first().waitFor({ timeout: T });
   check("selection is drawn as one contour", (await page.locator(".sel-contour path").count()) === 1);
-  const primary = page.locator('[data-testid="split-primary"]');
-  const primaryBox = await primary.boundingBox();
+  const splitButton = page.locator('[data-testid="split-split"]');
+  const splitButtonBox = await splitButton.boundingBox();
   const box = await target.boundingBox();
   await page.mouse.click(box.x + Math.min(box.width / 2, 120), box.y + box.height / 2);
   await page.waitForTimeout(300);
@@ -289,8 +290,8 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
   await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-unit-"].su').length === n + 1, before, { timeout: T });
   check("S splits into two units", true);
-  const after = await primary.boundingBox();
-  check("primary button stays in place", Math.abs(after.y - primaryBox.y) < 1 && Math.abs(after.width - primaryBox.width) < 1);
+  const after = await splitButton.boundingBox();
+  check("the Split button stays in place", Math.abs(after.y - splitButtonBox.y) < 1 && Math.abs(after.width - splitButtonBox.width) < 1);
   await page.keyboard.press("Control+z");
   await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-unit-"].su').length === n, before, { timeout: T });
   check("Ctrl+Z undoes the split", true);
@@ -313,9 +314,9 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   const idsAfterCut = await readPieceIds();
   const halves = idsAfterCut.filter((id) => !idsBeforeCut.has(id) || id === String(unitId));
   const mergeBack = page.locator(`[data-testid="split-paper-join-${halves[0]}-${halves[1]}"]`).and(page.locator(':not([aria-disabled="true"])'));
-  // 나눈 뒤 고른 조각 아래 단추 줄이 펼쳐지며(Collapse appear) 바로 아래 틈을 33px 밀어 내린다 - 펼쳐지기 전에 올리면 틈이 포인터 밑에서 빠져나가
+  // 고른 조각 아래 단추 줄(짝 풀기·합치기 풀기가 있을 때만)이 펼쳐지는 중이면 바로 아래 틈을 밀어 내린다 - 펼쳐지기 전에 올리면 틈이 포인터 밑에서 빠져나가
   // 머묾(--gap-open-delay)이 끊기므로, 다 펼쳐진 뒤에 올린다
-  await page.waitForFunction(() => { const acts = document.querySelector(".strip-acts[data-open]"); return acts !== null && acts.getAnimations().length === 0; }, null, { timeout: T });
+  await page.waitForFunction(() => { const acts = document.querySelector(".strip-acts[data-open]"); return acts === null || acts.getAnimations().length === 0; }, null, { timeout: T });
   // 틈의 합치기는 포인터가 틈에 머물러 단추가 나타난 뒤에야 눌린다(사람처럼 틈에 올렸다가 누른다)
   await page.locator(".strip-gap", { has: mergeBack.first() }).hover({ position: { x: 300, y: 2 } });
   await page.waitForFunction(() => [...document.querySelectorAll(".strip-gap:hover .strip-merge")].some((el) => getComputedStyle(el).pointerEvents === "auto"), null, { timeout: T });
@@ -325,33 +326,18 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   const first = units.first();
   await first.click();
   const firstId = (await first.getAttribute("data-testid")).replace("split-paper-unit-", "");
-  await page.keyboard.press("Enter");
+  await page.keyboard.press("j");
   await page.waitForFunction((id) => document.querySelector('[data-testid="split-unit-id"]')?.textContent && !document.querySelector(`[data-testid="split-paper-unit-${id}"][data-sel]`), firstId, { timeout: T });
-  check("Enter checks and moves to the next unit", true);
+  check("J moves to the next unit", true);
   await page.keyboard.press("k");
   await page.locator(`[data-testid="split-paper-unit-${firstId}"][data-sel]`).waitFor({ timeout: T });
-  check("K goes back", (await getText(page, "split-boundary-state")).includes("Checked"), await getText(page, "split-boundary-state"));
+  check("K goes back", true);
+  // ↵와 U는 더 이상 이 화면의 단축키가 아니다
+  await page.keyboard.press("Enter");
   await page.keyboard.press("u");
-  await page.waitForFunction(() => document.querySelector('[data-testid="split-boundary-state"]')?.textContent?.includes("Not checked"), null, { timeout: T });
-  check("U unchecks", true);
+  await page.waitForTimeout(400);
+  check("Enter and U leave the selection alone", (await page.locator(`[data-testid="split-paper-unit-${firstId}"][data-sel]`).count()) === 1);
   await takeShot("sop-split.png");
-  // 남은 경계 - 문서마다 수가 보이고, Check the rest가 지금 문서의 나머지를 한 번에 확인한다
-  const left = await getText(page, "split-unchecked-count");
-  check("the remaining boundaries are counted", /^\d+ left to check$/.test(left.trim()), left);
-  const docLeft = page.locator('[data-testid^="split-doc-left-"]');
-  check("every document shows what is left", (await docLeft.count()) >= 1 && /\d/.test(await docLeft.first().innerText()), String(await docLeft.count()));
-  await page.locator('[data-testid="split-check-rest"]').click();
-  await wait(page, "split-check-rest-modal");
-  const modalBox = await page.locator('[data-testid="split-check-rest-modal"]').boundingBox();
-  check("confirm windows are narrow", modalBox.width <= 384, String(modalBox.width));
-  await takeShot("sop-split-check-rest.png");
-  await page.locator('[data-testid="split-check-rest-modal-confirm"]').click();
-  await page.waitForFunction(() => document.querySelector('[data-testid="split-unchecked-count"]')?.textContent?.includes("All boundaries checked"), null, { timeout: T });
-  check("Check the rest checks every remaining boundary", true);
-  check("the button leaves when nothing is left", (await page.locator('[data-testid="split-check-rest"]').count()) === 0);
-  await page.goto(`${BASE}/bundles/${freshId}/history`);
-  await page.waitForFunction(() => document.body.textContent?.includes("Checked all remaining boundaries"), null, { timeout: T });
-  check("history records the bulk check", true);
   // 다른 문서의 경계가 남아 있어도 경계 확인은 다음 할 일도 검토 요청 조건도 아니다(확정하면 확인한 것으로 친다)
   await page.goto(`${BASE}/bundles/${freshId}`);
   await wait(page, "overview-gate-units");
@@ -634,7 +620,7 @@ await runStep("split: right-click menu shows reasons for blocked actions and run
   check("found a far sentence in the same language", far !== null, String(firstLang));
   await far.click({ button: "right" });
   await wait(page, "split-menu");
-  check("right-click opens the two-sentence menu", (await page.locator('[data-testid^="split-menu-"]').count()) === 3, String(await page.locator('[data-testid^="split-menu-"]').count()));
+  check("right-click opens the two-sentence menu", (await page.locator('[data-testid^="split-menu-"]').count()) === 2, String(await page.locator('[data-testid^="split-menu-"]').count()));
   const join = page.locator('[data-testid="split-menu-join"]');
   check("join is disabled for far sentences in one language", (await join.getAttribute("aria-disabled")) === "true");
   await join.hover();
@@ -644,16 +630,12 @@ await runStep("split: right-click menu shows reasons for blocked actions and run
   await page.keyboard.press("Escape");
   await page.locator('[data-testid="split-menu"]').waitFor({ state: "detached", timeout: T });
   check("Esc closes the menu", true);
-  // 고른 문장 자신을 우클릭 - 한 문장 메뉴, 경계 확인이 바로 된다
+  // 고른 문장 자신을 우클릭 - 한 문장 메뉴(경계 확인 항목은 없다)
   await first.click({ button: "right" });
-  await wait(page, "split-menu-check");
-  check("right-click on the selected sentence lists the single actions", (await page.locator('[data-testid="split-menu-ai_split"]').count()) === 1);
-  // 앞 단계가 경계를 이미 확인해 두었을 수 있다 - 항목은 지금 상태를 뒤집는다(확인하면 다음 확인 안 된 문장으로 넘어가니 줄의 확인 표시로 본다)
-  const firstUnitId = (await first.getAttribute("data-testid")).replace("split-paper-unit-", "");
-  const mark = page.locator(`[data-testid="split-paper-mark-checked-${firstUnitId}"]`);
-  const wasChecked = (await mark.count()) > 0;
-  await page.locator('[data-testid="split-menu-check"]').click();
-  await page.waitForFunction(([id, was]) => (document.querySelector(`[data-testid="split-paper-mark-checked-${id}"]`) !== null) !== was, [firstUnitId, wasChecked], { timeout: T });
+  await wait(page, "split-menu-split");
+  check("right-click on the selected sentence lists the single actions", (await page.locator('[data-testid="split-menu-ai_split"]').count()) === 1 && (await page.locator('[data-testid="split-menu-check"]').count()) === 0);
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="split-menu"]').waitFor({ state: "detached", timeout: T });
   // 따로 떼기 → 묶기: 짝이 있는 문장을 고르고 그 짝(다른 문장)을 우클릭한다
   const toastOk = (text) => page.waitForFunction((word) => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((el) => el.textContent?.includes(word)), text, { timeout: T });
   let partnerId = null;

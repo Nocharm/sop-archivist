@@ -5,7 +5,7 @@
 // strips.fold(Assign 필터)가 있으면 맞는 조각만 제 모양, 곁은 한 줄 판, 먼 구간은 묶음 한 줄로 접는다(paper-fold-model.ts) - 한 줄 판·묶음은 단추라 눌러도 조각을 고르지 않는다.
 "use client";
 
-import { ChevronsDownUp, CircleCheck, Ellipsis, FoldVertical, FolderCheck, ImageIcon, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles } from "lucide-react";
+import { ChevronsDownUp, Ellipsis, FoldVertical, FolderCheck, ImageIcon, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles, type LucideIcon } from "lucide-react";
 import { Fragment, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { FigureImage } from "@/components/paper/figure-image";
@@ -24,16 +24,15 @@ import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getS
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
 type PaperMark = UnitMark | "warn";
 
-const MARK_ICONS: Record<PaperMark, typeof CircleCheck> = {
+const MARK_ICONS: Record<PaperMark, LucideIcon> = {
   edited: Scissors,
   pair: Link2,
   classified: FolderCheck,
   ai: Sparkles,
   suggest: WandSparkles,
   warn: TriangleAlert,
-  checked: CircleCheck,
 };
-const MARK_ORDER: readonly PaperMark[] = ["edited", "pair", "classified", "ai", "suggest", "warn", "checked"];
+const MARK_ORDER: readonly PaperMark[] = ["edited", "pair", "classified", "ai", "suggest", "warn"];
 const MARK_LABELS: Record<PaperMark, string> = {
   edited: "split.legendEdited",
   pair: "split.legendPair",
@@ -41,7 +40,6 @@ const MARK_LABELS: Record<PaperMark, string> = {
   ai: "split.legendAi",
   suggest: "split.markSuggest",
   warn: "split.markWarn",
-  checked: "split.legendChecked",
 };
 
 function readRowUnitId(row: PaperRow): number | null {
@@ -107,13 +105,10 @@ interface PaperProps {
   testId: string;
   /** 용지 자체의 testid - 한 화면에 용지가 여럿일 때(없으면 testId) */
   sheetTestId?: string;
-  /** 단위마다 종이 조각으로, 앞에 태그, 끝에 표시. isChecked는 먼저 칠한 경계 확인까지 본다 */
+  /** 단위마다 종이 조각으로, 앞에 태그, 끝에 표시 */
   strips?: {
-    isChecked: (unit: ViewUnit) => boolean;
     /** Split - 조각 사이의 묶기(합치기냐 한/영 짝이냐는 plan이 고른다). 없으면 틈만 둔다(Assign) */
     join?: { busy: boolean; plan: (firstId: number, secondId: number) => JoinPlan; onJoin: (firstId: number, secondId: number, kind: JoinKind) => void };
-    /** Assign - 경계 확인 표시는 뺀다 */
-    hideChecked?: boolean;
     /** Assign - 보기를 다시 부르지 않아도 지금 커버 상태로 표시한다 */
     statusOf?: (unitId: number) => ViewUnit["status"] | undefined;
     /** Assign - 조각 아래 한 줄(간 곳) */
@@ -523,8 +518,7 @@ export function Paper({
     if (!strips) return null;
     const marks = new Set<PaperMark>();
     if (unit) {
-      for (const mark of getMarks({ ...unit, status: strips.statusOf?.(unit.id) ?? unit.status })) if (mark !== "checked") marks.add(mark);
-      if (strips.isChecked(unit) && !strips.hideChecked) marks.add("checked");
+      for (const mark of getMarks({ ...unit, status: strips.statusOf?.(unit.id) ?? unit.status })) marks.add(mark);
     }
     if (hasWarn) marks.add("warn");
     if (marks.size === 0) return null;
@@ -544,7 +538,7 @@ export function Paper({
               tabIndex={unit !== undefined && unit.id === selectedId ? 0 : -1}
               data-testid={`${testId}-mark-${mark}-${unit?.id ?? "x"}`}
             >
-              <Icon size={14} strokeWidth={mark === "checked" ? 2 : 1.6} className={`pmark ${mark}`} aria-hidden />
+              <Icon size={14} strokeWidth={1.6} className={`pmark ${mark}`} aria-hidden />
             </span>
           );
         })}

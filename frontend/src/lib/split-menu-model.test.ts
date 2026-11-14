@@ -83,7 +83,7 @@ it("hasBothScripts", () => {
 
 describe("buildSplitMenu two sentences", () => {
   it("lists the three two-sentence actions", () => {
-    expect(buildSplitMenu(ctx()).map((item) => item.action)).toEqual(["join", "unpair", "check_both"]);
+    expect(buildSplitMenu(ctx()).map((item) => item.action)).toEqual(["join", "unpair"]);
   });
 
   it("joins a KO and an EN sentence, and merges two neighbours of one language", () => {
@@ -115,12 +115,6 @@ describe("buildSplitMenu two sentences", () => {
     expect(find(buildSplitMenu(cells), "join").reasonKey).toBe("split.noMergeCell");
   });
 
-  it("disables check_both once both are checked", () => {
-    const done = ctx({ selected: makeUnit(1, { boundary_confirmed: true }), target: makeUnit(2, { boundary_confirmed: true }) });
-    expect(find(buildSplitMenu(done), "check_both")).toMatchObject({ enabled: false, reasonKey: "split.menu.why.allChecked" });
-    expect(find(buildSplitMenu(ctx()), "check_both").enabled).toBe(true);
-  });
-
   it("disables every change when read-only", () => {
     for (const item of buildSplitMenu(ctx({ readOnly: true }))) expect(item).toMatchObject({ enabled: false, reasonKey: "split.menu.why.readOnly" });
   });
@@ -130,7 +124,7 @@ describe("buildSplitMenu single sentence", () => {
   const single = (over: Partial<SplitMenuContext> = {}) => ctx({ selected: null, target: makeUnit(2), ...over });
 
   it("lists the right-panel actions for the selected sentence itself or with nothing selected", () => {
-    const names = ["check", "split", "ai_split", "hold", "lang", "unpair"];
+    const names = ["split", "ai_split", "hold", "lang", "unpair"];
     expect(buildSplitMenu(single()).map((item) => item.action)).toEqual(names);
     expect(buildSplitMenu(ctx({ selected: makeUnit(2), target: makeUnit(2) })).map((item) => item.action)).toEqual(names);
   });

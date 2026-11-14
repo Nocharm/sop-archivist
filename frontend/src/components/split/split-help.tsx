@@ -1,7 +1,7 @@
 // 쪼개기 화면 왼쪽 아래 도움말 - 내용만 정하고 틀은 공통 `HelpPanel`이 맡는다.
 "use client";
 
-import { CircleCheck, FolderCheck, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles } from "lucide-react";
+import { FolderCheck, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles } from "lucide-react";
 
 import { UnitStatusChip } from "@/components/status";
 import { HelpPanel } from "@/components/ui/help-panel";
@@ -10,12 +10,10 @@ import { useI18n } from "@/lib/i18n";
 export function SplitHelp() {
   const { t } = useI18n();
   const keys: readonly (readonly [string, string])[] = [
-    [t("split.keyCheck"), "↵"],
     [t("split.keyMove"), "↑ ↓ · J K"],
     [t("split.keyCut"), t("split.doubleClick")],
     [t("split.keyCutMove"), t("split.drag")],
     [t("split.keySplit"), "S"],
-    [t("split.keyUncheck"), "U"],
     [t("split.keyHold"), "H"],
     [t("split.keyUndo"), "Ctrl Z"],
   ];
@@ -28,10 +26,6 @@ export function SplitHelp() {
           <span className="help-panel-row">
             <UnitStatusChip status="on_hold" size="sm" testId="split-help-hold" />
             {t("split.legendHoldChip")}
-          </span>
-          <span className="help-panel-row">
-            <CircleCheck size={14} strokeWidth={2} className="pmark checked" aria-hidden />
-            {t("split.legendChecked")}
           </span>
           <span className="help-panel-row">
             <span className="legend-card" aria-hidden>

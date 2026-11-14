@@ -60,8 +60,6 @@ interface OldPaneProps {
   onZoom: (dir: "+" | "-") => void;
 }
 
-const IS_CHECKED = () => true;
-
 export function OldPane(props: OldPaneProps) {
   const { t } = useI18n();
   const { model } = props;
@@ -121,7 +119,7 @@ export function OldPane(props: OldPaneProps) {
             renderAtCut={props.cut ? props.renderAtCut : undefined}
             figureSource={props.figureSource}
             contour
-            strips={{ isChecked: IS_CHECKED, hideChecked: true, statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold }}
+            strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold }}
             testId="assign-paper"
           />
         ) : (

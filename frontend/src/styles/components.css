@@ -1226,7 +1226,6 @@
   .insp-h { display: flex; align-items: center; gap: 4px; font-size: var(--fs-micro); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }
   .insp-h::after { content: ""; flex: 1; height: 1px; background: var(--line); }
   .pmark { flex: none; color: var(--ink-3); }
-  .pmark.checked { color: var(--accent); }
   .pmark.pair { color: var(--st-ai-ink); }
   .pmark.classified { color: var(--accent); }
   .pmark.ai { color: var(--st-ai-ink); }
@@ -1240,13 +1239,6 @@
   /* 접기 안쪽은 넘침을 자른다 - 단추의 포커스 테두리(2px)가 잘리지 않게 줄 안쪽에 여유를 둔다(바깥 여백이면 접힌 뒤에도 그만큼 남는다) */
   .strip-acts > .fold-inner { margin: 0 -3px; }
   .strip-acts-bar { display: flex; flex-wrap: wrap; gap: 6px; width: fit-content; padding: 6px 3px 3px; }
-  /* 단추 묶음이 바뀔 때(SplitUnitActions) - 옛 묶음은 브라운관 TV가 꺼지듯 세로로 눌려 가는 선이 된 뒤 가운데 점으로, 새 묶음은 거꾸로 켜진다. 줄 폭은 단추 묶음만큼이라 가운데가 단추들의 가운데다 */
-  .strip-acts-bar[data-crt="off"] { animation: crt-off calc(var(--dur-slow) * 1.15) var(--ease-exit) both; pointer-events: none; }
-  .strip-acts-bar[data-crt="on"] { animation: crt-on calc(var(--dur-slow) * 1.15) var(--ease-enter) both; }
-  /* 확인 뒤 넘어가기를 기다리는 동안 - 꺼진 모양 그대로(자리는 남겨 조각 높이가 튀지 않게) */
-  .strip-acts-bar[data-crt="gone"] { opacity: 0; transform: scale(0, 0.06); pointer-events: none; }
-  @keyframes crt-off { 0% { transform: scale(1, 1); filter: brightness(1); } 55% { transform: scale(1, 0.06); filter: brightness(1.6); opacity: 1; } 100% { transform: scale(0, 0.06); filter: brightness(2.2); opacity: 0; } }
-  @keyframes crt-on { 0% { transform: scale(0, 0.06); filter: brightness(2.2); opacity: 0; } 45% { transform: scale(1, 0.06); filter: brightness(1.6); opacity: 1; } 100% { transform: scale(1, 1); filter: brightness(1); } }
   .strip-act { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--surface); color: var(--ink-2); font: 600 var(--fs-cap) / 1 var(--font-ui); white-space: nowrap; cursor: pointer; user-select: none; transition: background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast); }
   .strip-act > svg { flex: none; }
   /* 확인 취소 ↔ 한 번 더 눌러 취소 - 폭은 MorphWidth가 늘리고 새 라벨은 스며 나온다 */
@@ -1275,20 +1267,12 @@
   @keyframes cut-pop-in { from { opacity: 0; visibility: hidden; translate: calc(-50% + var(--pop-dx, 0px)) -5px; } }
   @keyframes cut-pop-wait { from { opacity: 0; visibility: hidden; } }
 
-  /* 경계 확인 상태 칩 - 확인 전은 노란 테두리, 확인함은 파란 채움 */
-  .check-chip { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 11px; font-size: var(--fs-cap); font-weight: 600; }
-  .check-chip.no { background: var(--st-hold-tint); color: var(--st-hold-ink); box-shadow: inset 0 0 0 1px var(--st-hold-line); }
-  .check-chip.yes { background: var(--accent); color: var(--on-accent); }
-  /* 방금 확인한 단위의 칩 - 가로축으로 뒤집히며 Checked로 바뀐다(Split이 이 바뀜과 단추 줄 전환이 끝난 뒤 다음 단위로 넘어간다). 움직임 줄이기면 --dur-slow가 0이라 바로 */
-  .check-chip[data-flip] { animation: chip-flip var(--dur-slow) var(--ease-enter) both; }
-  @keyframes chip-flip { from { transform: perspective(80px) rotateX(90deg); opacity: .4; } }
 
   /* 종이 묶음 - 탭 하나에 용지 하나(본문) 또는 구역 묶음마다 하나(머리말·꼬리말). 넓은 창에서는 폭을 더 쓰되 줄 길이는 묶는다 */
   .sheets { display: grid; gap: 22px; width: 100%; max-width: 860px; margin-inline: auto; }
   .sheets .sheet { max-width: none; }
   .sheet-set { display: grid; gap: 6px; min-width: 0; }
   .sheet-cap { margin: 0; padding-inline: 2px; font-size: var(--fs-cap); line-height: var(--lh-cap); font-weight: 600; color: var(--ink-2); overflow-wrap: anywhere; }
-  .tab-left { display: inline-grid; place-items: center; min-width: 18px; height: 16px; padding: 0 5px; border-radius: 8px; background: var(--st-hold-tint); color: var(--st-hold-ink); box-shadow: inset 0 0 0 1px var(--st-hold-line); font: 600 10px / 1 var(--font-mono); font-variant-numeric: tabular-nums; }
 
   /* 왼쪽 아래 도움말 - 글쇠 | 표시 탭, 접을 수 있다 */
   .help-panel { display: grid; gap: 8px; padding: 8px 10px 10px; border-top: 1px solid var(--line); font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-2); min-width: 0; }
@@ -1308,8 +1292,6 @@
 
   @media (prefers-reduced-motion: reduce) {
     .strip-act, .strip-merge, .strip-merge > svg, .strip-merge-label { transition: none; animation: none; }
-    /* 묶음 바꿈은 animationend로 넘어간다 - 0이 아닌 아주 짧은 시간으로 두어 끝 이벤트가 반드시 오게 */
-    .strip-acts-bar[data-crt] { animation-duration: 1ms; }
     /* 팝업은 움직임 없이 늦게만 뜬다 */
     .cut-pop { animation: cut-pop-wait 1ms linear 380ms both; }
   }

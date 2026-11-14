@@ -209,21 +209,7 @@ export function getTags(unit: ViewUnit): { lang: "KO" | "EN" | null; hold: boole
   return { lang, hold: unit.status === "on_hold" };
 }
 
-export type UnitMark = "edited" | "pair" | "classified" | "ai" | "suggest" | "checked";
-
-/** 경계 확인이 남은 단위 수 - 글자 범위가 있는 단위만 센다(표·행 묶음은 칸 문장이 대신한다). 서버 `count_unchecked_boundaries`와 같은 기준 */
-export function countUnchecked(units: readonly ViewUnit[], isChecked: (unit: ViewUnit) => boolean): number {
-  return units.filter((unit) => !SPANLESS_KINDS.has(unit.kind) && !isChecked(unit)).length;
-}
-
-/**
- * 남은 수를 셀 때의 확인 여부 - 숨긴 같은 내용 단위도 서버처럼 하나씩 세고(사용자 결정 2026-11-14),
- * 숨긴 단위는 보이는 단위(주인)에 방금 칠한 확인을 따른다(확인 요청이 주인과 숨긴 단위를 함께 보낸다)
- */
-export function readCountedCheck(mirrors: ReadonlyMap<number, readonly number[]>, overrides: Readonly<Record<number, boolean>>): (unit: ViewUnit) => boolean {
-  const ownerOf = new Map([...mirrors].flatMap(([owner, ids]) => ids.map((id) => [id, owner] as const)));
-  return (unit) => overrides[ownerOf.get(unit.id) ?? unit.id] ?? unit.boundary_confirmed;
-}
+export type UnitMark = "edited" | "pair" | "classified" | "ai" | "suggest";
 
 /** 종이 오른쪽 끝 아이콘 표시 - 순서가 늘 같아야 줄마다 같은 자리에 온다. suggest는 아직 정하지 않은 AI 나누기 제안 */
 export function getMarks(unit: ViewUnit): UnitMark[] {
@@ -233,7 +219,6 @@ export function getMarks(unit: ViewUnit): UnitMark[] {
   if (unit.status === "confirmed") marks.push("classified");
   if (unit.status === "ai_suggested") marks.push("ai");
   if (unit.split_suggestion_id !== null) marks.push("suggest");
-  if (unit.boundary_confirmed) marks.push("checked");
   return marks;
 }
 

@@ -2,7 +2,7 @@
 import type { UnitLang, ViewUnit } from "./api-sop";
 import { getMergeBlocker, MERGE_BLOCKER_KEYS } from "./paper-model";
 
-export type SplitMenuAction = "join" | "unpair" | "check_both" | "check" | "split" | "ai_split" | "hold" | "lang";
+export type SplitMenuAction = "join" | "unpair" | "split" | "ai_split" | "hold" | "lang";
 
 export interface SplitMenuItem {
   action: SplitMenuAction;
@@ -22,8 +22,6 @@ export interface SplitMenuContext {
   adjacent: boolean;
   readOnly: boolean;
   aiEnabled: boolean;
-  /** 경계 확인 여부(화면이 먼저 칠한 것까지) - 없으면 서버 값 */
-  isChecked?: (unit: ViewUnit) => boolean;
   /** 우클릭한 문장에 나눌 선이 놓여 있다 */
   hasCut?: boolean;
   /** 우클릭한 문장에 아직 정하지 않은 AI 나누기 제안이 있다 */
@@ -135,13 +133,11 @@ export function pickEnglishSide(units: Pick<ViewUnit, "id" | "text">[]): number 
 
 function buildPair(ctx: SplitMenuContext & { selected: ViewUnit }): SplitMenuItem[] {
   const { selected, target } = ctx;
-  const isChecked = ctx.isChecked ?? ((unit: ViewUnit) => unit.boundary_confirmed);
   const isPaired = selected.pair_id !== null && selected.pair_id === target.pair_id;
   const guard = (reason: string | null) => (ctx.readOnly ? why("readOnly") : reason);
   return [
     build("join", guard(planJoin([selected, target], ctx.adjacent).reasonKey ?? null)),
     build("unpair", guard(isPaired ? null : why("notPaired"))),
-    build("check_both", guard(isChecked(selected) && isChecked(target) ? why("allChecked") : null)),
   ];
 }
 
@@ -150,7 +146,6 @@ function buildSingle(ctx: SplitMenuContext): SplitMenuItem[] {
   const guard = (reason: string | null) => (ctx.readOnly ? why("readOnly") : reason);
   const isText = EDITABLE_KINDS.has(target.kind);
   return [
-    build("check", guard(null)),
     build("split", guard(ctx.hasCut ? null : why("noCut"))),
     build("ai_split", guard(getAiSplitReason({ aiEnabled: ctx.aiEnabled, isText: isAiSplitKind(target.kind), hasSuggestion: ctx.hasSuggestion, isWaiting: ctx.isAiWaiting }))),
     build("hold", guard(ctx.isDecided ? why("decided") : null)),

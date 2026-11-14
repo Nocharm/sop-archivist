@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewPartGroup, ViewUnit } from "./api-sop";
-import { buildContourPath, buildPaperModel, buildPaperTabs, buildRows, canSplitAt, clampSplitAt, getGapMerge, getMergeBlocker, resolveCutDrag, countUnchecked, readCountedCheck, getMarks, getTags, readWarningText, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
+import { buildContourPath, buildPaperModel, buildPaperTabs, buildRows, canSplitAt, clampSplitAt, getGapMerge, getMergeBlocker, resolveCutDrag, getMarks, getTags, readWarningText, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -159,44 +159,8 @@ describe("getTags and getMarks", () => {
 
   it("lists icon marks in a stable order", () => {
     const unit = makeSplitUnit({ boundary_confirmed: true, pair_id: 4, is_edited: true, status: "confirmed" });
-    expect(getMarks(unit)).toEqual(["edited", "pair", "classified", "checked"]);
+    expect(getMarks(unit)).toEqual(["edited", "pair", "classified"]);
     expect(getMarks(makeSplitUnit({ status: "ai_suggested" }))).toEqual(["ai"]);
-  });
-});
-
-describe("countUnchecked", () => {
-  const units = [
-    makeSplitUnit({ id: 1 }),
-    makeSplitUnit({ id: 2, boundary_confirmed: true }),
-    makeSplitUnit({ id: 3, kind: "heading" }),
-    makeSplitUnit({ id: 4, kind: "figure" }),
-    makeSplitUnit({ id: 5, kind: "cell_sentence" }),
-    makeSplitUnit({ id: 6, kind: "table", spans: [] }),
-    makeSplitUnit({ id: 7, kind: "table_row", spans: [] }),
-  ];
-
-  it("counts text units still to check and leaves table groups to their cells", () => {
-    expect(countUnchecked(units, (unit) => unit.boundary_confirmed)).toBe(4);
-  });
-
-  it("follows what the screen already painted as checked", () => {
-    expect(countUnchecked(units, (unit) => unit.boundary_confirmed || unit.id === 1)).toBe(3);
-    expect(countUnchecked(units, () => true)).toBe(0);
-  });
-});
-
-describe("readCountedCheck", () => {
-  // 같은 머리말 셋 - 10이 보이고 11·12는 숨는다
-  const mirrors = new Map([[10, [11, 12]]]);
-  const header = [makeSplitUnit({ id: 10 }), makeSplitUnit({ id: 11 }), makeSplitUnit({ id: 12, boundary_confirmed: true })];
-
-  it("counts hidden same-content units one by one like the server", () => {
-    expect(countUnchecked(header, readCountedCheck(mirrors, {}))).toBe(2);
-  });
-
-  it("lets hidden units follow the check just painted on the shown one", () => {
-    expect(countUnchecked(header, readCountedCheck(mirrors, { 10: true }))).toBe(0);
-    expect(countUnchecked(header, readCountedCheck(mirrors, { 10: false }))).toBe(3);
   });
 });
 

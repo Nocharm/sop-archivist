@@ -2,7 +2,7 @@
 // 꺼진 항목은 aria-disabled(포커스·호버를 받아야 까닭을 보인다)이고 까닭은 data-tip 툴팁이다.
 "use client";
 
-import { CheckCheck, Link2, CirclePause, Scissors, Sparkles, Unlink, type LucideIcon } from "lucide-react";
+import { Link2, CirclePause, Scissors, Sparkles, Unlink, type LucideIcon } from "lucide-react";
 import { useRef } from "react";
 
 import { Menu } from "@/components/ui/menu";
@@ -14,8 +14,6 @@ import type { SplitMenuAction, SplitMenuItem } from "@/lib/split-menu-model";
 const ICONS: Record<Exclude<SplitMenuAction, "lang">, LucideIcon> = {
   join: Link2,
   unpair: Unlink,
-  check_both: CheckCheck,
-  check: CheckCheck,
   split: Scissors,
   ai_split: Sparkles,
   hold: CirclePause,
@@ -24,8 +22,6 @@ const ICONS: Record<Exclude<SplitMenuAction, "lang">, LucideIcon> = {
 const LABELS: Record<Exclude<SplitMenuAction, "lang">, string> = {
   join: "split.menu.join",
   unpair: "split.removePair",
-  check_both: "split.menu.checkBoth",
-  check: "split.checkBoundary",
   split: "split.split",
   ai_split: "split.menu.aiSplit",
   hold: "split.hold",
@@ -35,14 +31,12 @@ interface SplitContextMenuProps {
   /** 뜨는 자리(화면 좌표) - 포인터 또는 고른 문장 줄 */
   at: { x: number; y: number };
   items: SplitMenuItem[];
-  /** 한 문장 메뉴에서 경계 확인 항목이 "취소"로 바뀐다 */
-  isTargetChecked: boolean;
   /** lang은 고른 언어를 같이 준다 */
   onPick: (action: SplitMenuAction, lang?: "ko" | "en") => void;
   onClose: () => void;
 }
 
-export function SplitContextMenu({ at, items, isTargetChecked, onPick, onClose }: SplitContextMenuProps) {
+export function SplitContextMenu({ at, items, onPick, onClose }: SplitContextMenuProps) {
   const { t } = useI18n();
   const anchorRef = useRef<HTMLSpanElement>(null);
   const tip = useDelegatedTip();
@@ -69,7 +63,7 @@ export function SplitContextMenu({ at, items, isTargetChecked, onPick, onClose }
               );
             }
             const Icon = ICONS[item.action];
-            const label = item.action === "check" && isTargetChecked ? t("split.uncheckBoundary") : t(LABELS[item.action]);
+            const label = t(LABELS[item.action]);
             const reason = item.reasonKey ? t(item.reasonKey) : null;
             return (
               <button
