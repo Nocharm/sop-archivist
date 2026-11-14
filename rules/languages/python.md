@@ -1,6 +1,6 @@
 # Python Rules
 
-Rules for Python projects. Imported by the main CLAUDE.md.
+Rules for Python projects. Imported by `backend/CLAUDE.md` (loaded when working in backend/).
 
 ---
 

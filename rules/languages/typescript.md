@@ -1,6 +1,6 @@
 # TypeScript Rules
 
-Rules for TypeScript/JavaScript projects. Imported by the main CLAUDE.md.
+Rules for TypeScript/JavaScript projects. Imported by `frontend/CLAUDE.md` (loaded when working in frontend/).
 
 ---
 
