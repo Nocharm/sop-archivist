@@ -615,3 +615,23 @@ class EmbeddingCache(Base):
     dim: Mapped[int] = mapped_column(Integer)
     vector: Mapped[bytes] = mapped_column(LargeBinary)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+# --- EQUIS 조회 ---
+
+
+class EquisLookup(Base):
+    """EQUIS 조회 결과 — 다듬은 문서 번호마다 한 행이고 묶음들이 함께 쓴다.
+
+    facts는 문서의 사실만 담는다. 판정은 줄의 쪽과 올린 판에 따라 달라 읽을 때 계산한다(설계 §8.1).
+    state는 마지막으로 끝난 조회의 결과다. 다시 묻는 중인지는 requested_at이 fetched_at보다 새로운지로 안다.
+    """
+
+    __tablename__ = "equis_lookups"
+
+    doc_number: Mapped[str] = mapped_column(String(100), primary_key=True)
+    state: Mapped[str] = mapped_column(String(11))  # pending | found | not_found | unavailable
+    # {"doc": DocFacts | None, "trail": [번호…], "ambiguous": [번호…]} — 조회가 실패해도 지우지 않는다
+    facts: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), default=None)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

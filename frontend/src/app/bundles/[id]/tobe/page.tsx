@@ -5,6 +5,8 @@ import { ChevronRight, Download, FileUp, FilePlus, ListTree, Plus, RefreshCw, Tr
 import { useParams } from "next/navigation";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
+import { EquisStatus } from "@/components/equis/equis-status";
+import { TitleLock } from "@/components/equis/title-lock";
 import { UploadWritten } from "@/components/tobe/upload-written";
 import { BundleLoadError } from "@/components/bundle-load-error";
 import { ReadOnlyNote } from "@/components/read-only-note";
@@ -16,9 +18,10 @@ import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
-import { downloadToBeTemplate, getToBe, importToBe, listDocuments, putToBe, SLOT_KEYS, type ToBe } from "@/lib/api-sop";
+import { downloadToBeTemplate, getToBe, importToBe, listDocuments, putToBe, refreshEquis, SLOT_KEYS, type ToBe } from "@/lib/api-sop";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { buildDownloadName } from "@/lib/download-name";
+import { hasRefreshingEquis, normalizeDocNumber } from "@/lib/equis-model";
 import { useI18n } from "@/lib/i18n";
 import { genId } from "@/lib/id";
 import { useLeaveGuard } from "@/lib/leave-guard";
@@ -27,6 +30,7 @@ import { saveBlob } from "@/lib/save-file";
 import { SLOT_LABELS } from "@/lib/slot-labels";
 import { addStep, buildToBeInput, changeDocType, createDraft, findDraftProblem, isDraftDirty, isSameToBe, orderDocs, removeDoc, removeStep, renameDoc, setNaSlot, type DraftDoc, type ToBeDraft } from "@/lib/tobe-draft";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
+import { useEquisPolling } from "@/lib/use-equis-polling";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useLoaded } from "@/lib/use-loaded";
@@ -71,6 +75,20 @@ export default function ToBePage() {
   const rows = draft ? orderDocs(draft.docs) : [];
   useLeaveGuard(dirty, setLeaveTo);
   const sops = draft ? draft.docs.filter((doc) => doc.doc_type === "sop") : [];
+  // 줄 번호의 EQUIS 표시 - 저장된 번호로 찾는다. 초안에서 번호를 고친 줄은 아직 묻지 않아 표시가 없다
+  const equisByCode = new Map((data?.docs ?? []).map((doc) => [normalizeDocNumber(doc.code), doc.equis ?? null]));
+  // 조회는 저장 응답 뒤에 끝난다 - 조회 중인 줄이 있으면 조금 뒤 다시 읽는다. 저장하지 않은 초안이 있을 때는 읽지 않는다(초안이 버려진다)
+  useEquisPolling(!dirty && hasRefreshingEquis(data?.docs), reload);
+
+  async function handleEquisRefresh(code: string) {
+    try {
+      const { requested } = await refreshEquis(bundleId, code);
+      showToast(t(requested ? "equis.refreshed" : "equis.refreshSkipped"));
+      if (!dirty) reload();
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+    }
+  }
 
   function update(next: ToBeDraft) {
     if (data) setEdit({ base: data, draft: next });
@@ -356,6 +374,23 @@ export default function ToBePage() {
                   const naCount = draft.na_slots.filter((slot) => slot.doc_key === doc.key).length;
                   const stepCount = draft.wi_steps.filter((step) => step.doc_key === doc.key).length;
                   const prefix = `tobe-${doc.key}`;
+                  const equis = equisByCode.get(normalizeDocNumber(doc.code)) ?? null;
+                  // EQUIS에 있는 번호의 제목은 EQUIS가 정한다 - 다른 값을 보내도 서버가 EQUIS 이름으로 되돌린다
+                  const isTitleLocked = equis?.title_locked === true;
+                  const codeInput = (
+                    <input
+                      className={`${CELL_INPUT} min-w-0 font-mono`}
+                      data-testid={`${prefix}-code`}
+                      value={doc.code}
+                      maxLength={100}
+                      placeholder={t("tobe.codePlaceholder")}
+                      disabled={!canEdit || isMatch}
+                      onChange={(event) => update(renameDoc(draft, doc.key, event.target.value))}
+                    />
+                  );
+                  const titleInput = (
+                    <input className={`${CELL_INPUT} min-w-0 text-ellipsis`} data-testid={`${prefix}-title`} value={doc.title} maxLength={500} disabled={!canEdit || isTitleLocked} onChange={(event) => patchDoc(doc.key, { title: event.target.value })} />
+                  );
                   const row = (
                     <tr key={doc.key} data-testid={`${prefix}-row`}>
                       <td>
@@ -366,18 +401,25 @@ export default function ToBePage() {
                         </Tooltip>
                       </td>
                       <td className={depth === 1 ? "pl-6" : undefined}>
-                        <input
-                          className={`${CELL_INPUT} font-mono`}
-                          data-testid={`${prefix}-code`}
-                          value={doc.code}
-                          maxLength={100}
-                          placeholder={t("tobe.codePlaceholder")}
-                          disabled={!canEdit || isMatch}
-                          onChange={(event) => update(renameDoc(draft, doc.key, event.target.value))}
-                        />
+                        {equis ? (
+                          // 좁은 칸이라 아이콘만 둔다 - 글은 툴팁과 펼친 정보에 있다
+                          <span className="flex items-center gap-1">
+                            {codeInput}
+                            <EquisStatus equis={equis} testId={`${prefix}-equis`} compact canEdit={canEdit} onRefresh={() => void handleEquisRefresh(doc.code)} />
+                          </span>
+                        ) : (
+                          codeInput
+                        )}
                       </td>
                       <td>
-                        <input className={CELL_INPUT} data-testid={`${prefix}-title`} value={doc.title} maxLength={500} disabled={!canEdit} onChange={(event) => patchDoc(doc.key, { title: event.target.value })} />
+                        {isTitleLocked ? (
+                          <span className="flex items-center gap-1">
+                            {titleInput}
+                            <TitleLock testId={`${prefix}-title-lock`} />
+                          </span>
+                        ) : (
+                          titleInput
+                        )}
                       </td>
                       <td>
                         <Select

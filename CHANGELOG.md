@@ -4,6 +4,8 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
 
 ## Unreleased (dev)
 
+- **v1.0.1 — 2026-11-14** — **EQUIS 문서 번호 조회(1단계)**: 문서 번호가 있으면 사내 EDW의 EQUIS 문서 표에서 조회해 **Documents** 의 파일 이름 줄 오른쪽 끝과 **To-Be** 의 번호 칸 옆에 표시를 붙인다 — **Current**(올린 판이 지금 판), **Check**(지금 판이 아님·다음 판 Authorized·폐기·옛 번호), **In EQUIS**, **Not in EQUIS**, **Looking up**, **Lookup failed**(+ **Retry**). 표시를 누르면 정식 이름·지금 판과 시행일·진행 중인 판·소유 부서·Plant·Area·옛 번호·조회 시각이 펼쳐지고 **Open in EQUIS** · **Look up again** · **Use current number** 가 있다. 표시는 안내일 뿐 어떤 저장도 막지 않는다. **EQUIS에 있는 문서의 제목은 가장 높은 승인 판의 이름으로 맞춰지고 고칠 수 없다**(연필 자리에 자물쇠, 409 `title_locked`) — 옛 문서·올린 새 문서·To-Be 줄 모두, 작업 중인 Bundle만. 옛 번호(Legacy)는 지금 문서까지 다섯 번 따라간다. 조회는 저장 응답 뒤에 돌고, 받은 값은 번호별로 담아 하루 뒤 다시 조회한다. 사람 이름 칸은 받는 자리에서 버린다. **배포 메모**: Alembic `0016`(`equis_lookups` 표, 자동 적용). 새 env 셋 `N8N_QUERY_URL` · `EQUIS_EDW_TABLE` · `EQUIS_DOC_URL_BASE`(`docs/deploy/setup-once.md`) — 하나라도 비면 꺼져 있고 화면이 v1.0.0과 같다. 조회 창구는 db-viewer가 쓰는 n8n `dbv-query` 웹훅이라 그 워크플로가 바뀌면 조회가 실패로 보인다. **검증**: backend pytest 2318·ruff, frontend tsc·lint·vitest 794·빌드 경고 0, 가짜 웹훅으로 브라우저 확인(1366·1120, 라이트·다크, 영어·한국어, 키보드로 펼치고 닫기). **실제 웹훅·실제 EDW 값은 미검증**(합성 응답만). 설계 `docs/superpowers/specs/2026-11-13-equis-lookup-design.md`.
+
 ## v1.0.0 — 2026-11-14
 
 - **범위**: v0.16.0 뒤 dev 업데이트 v0.16.1~v0.16.15 — 화면 검토 반영 6~14/14, 용지 표시 정리, 언어 축 걷어 내기 (1)~(4)(결과물 한 벌), 작은 화면 개선, 언어 탭·Assign 오른쪽 패널, 연결선 꼬리·Split 확인 흐름, Assign 되돌리기, dev 정리 검토의 고침과 결정 반영. 사용자 결정으로 첫 정식 버전(MAJOR 1.0.0)으로 올렸다.

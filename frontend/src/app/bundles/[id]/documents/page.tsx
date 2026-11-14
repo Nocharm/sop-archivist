@@ -11,6 +11,9 @@ import { LayoutLabel } from "@/components/documents/layout-picto";
 import { AiSuggestChip } from "@/components/documents/ai-suggest-chip";
 import { PreviewModal } from "@/components/documents/preview-popover";
 import { UploadModal } from "@/components/documents/upload-modal";
+import { EquisLink } from "@/components/equis/equis-link";
+import { EquisStatus } from "@/components/equis/equis-status";
+import { TitleLock } from "@/components/equis/title-lock";
 import { InlineText } from "@/components/inline-text";
 import { ReadOnlyNote } from "@/components/read-only-note";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
@@ -25,10 +28,12 @@ import { listReadingDocuments } from "@/lib/ai-jobs-model";
 import { useAiJobsSelect } from "@/lib/ai-jobs-store";
 import { humanizeApiError } from "@/lib/api-errors";
 import { downloadDocumentFile } from "@/lib/api-manage";
-import { LANGUAGE_LAYOUTS, listDocuments, updateDocument, type DocumentUpdateInput, type SopDocument } from "@/lib/api-sop";
+import { LANGUAGE_LAYOUTS, listDocuments, refreshEquis, updateDocument, type DocumentUpdateInput, type SopDocument } from "@/lib/api-sop";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
+import { hasRefreshingEquis } from "@/lib/equis-model";
 import { useI18n } from "@/lib/i18n";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
+import { useEquisPolling } from "@/lib/use-equis-polling";
 import { saveBlob } from "@/lib/save-file";
 import { useListView } from "@/lib/use-list-view";
 import { useAiJobs } from "@/lib/use-ai-jobs";
@@ -66,6 +71,8 @@ export default function DocumentsPage() {
   // 문서 정보(번호·버전)를 AI가 읽는 중인 문서 - 공용 작업 목록에서 고른다(문자열 키라 같은 값이면 다시 그리지 않는다)
   const readingKey = useAiJobsSelect((snapshot) => [...listReadingDocuments(snapshot.data, bundleId)].sort((a, b) => a - b).join(","), "");
   const reading = new Set(readingKey === "" ? [] : readingKey.split(",").map(Number));
+  // EQUIS 조회는 업로드·저장 응답 뒤에 끝난다 - 조회 중인 줄이 있는 동안만 목록을 다시 읽어 표시와 제목이 따라오게 한다
+  useEquisPolling(hasRefreshingEquis(data), reload);
 
   async function handleDownload(document: SopDocument) {
     try {
@@ -92,6 +99,16 @@ export default function DocumentsPage() {
       // 다른 사람이 먼저 고쳤으면 최신으로 맞춘다
       reload();
       throw err;
+    }
+  }
+
+  async function handleEquisRefresh(document: SopDocument) {
+    try {
+      const { requested } = await refreshEquis(bundleId, document.doc_code);
+      showToast(t(requested ? "equis.refreshed" : "equis.refreshSkipped"));
+      reload();
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
     }
   }
 
@@ -223,34 +240,62 @@ export default function DocumentsPage() {
       grow: true,
       minWidth: 164,
       skeletonWidth: 320,
-      cell: (document) => (
+      cell: (document) => {
+        const { equis } = document;
+        // EQUIS에 있는 문서의 제목은 EQUIS가 정한다 - 연필 대신 자물쇠가 같은 자리에 서고, 옆 아이콘이 EQUIS 원본을 연다
+        const title = (
+          <InlineText
+            value={document.title}
+            placeholder={t("documents.colTitle")}
+            editable={canEdit && !equis?.title_locked}
+            width="fill"
+            maxLength={500}
+            href={`/bundles/${bundleId}/split?doc=${document.id}`}
+            editLabel={t("common.edit")}
+            testId={`documents-${document.id}-title`}
+            onSave={(next) => saveField(document, { title: next })}
+          />
+        );
+        const fileName = <Truncate text={document.file_name} className="px-[7px] font-mono text-[11px] font-normal leading-4 text-ink-3" />;
+        return (
         <>
-          {document.status === "ready" ? (
-            <InlineText
-              value={document.title}
-              placeholder={t("documents.colTitle")}
-              editable={canEdit}
-              width="fill"
-              maxLength={500}
-              href={`/bundles/${bundleId}/split?doc=${document.id}`}
-              editLabel={t("common.edit")}
-              testId={`documents-${document.id}-title`}
-              onSave={(title) => saveField(document, { title })}
-            />
-          ) : (
+          {document.status !== "ready" ? (
             // 읽기 전용 제목도 링크 제목(.inline-link)과 같은 안쪽 여백·굵기 - 거절된 줄 글이 옆 줄과 어긋나지 않는다
             <span className="block max-w-full px-1.5 text-[13px] font-semibold leading-6" data-testid={`documents-${document.id}-title`}>
               {document.title ? <Truncate text={document.title} className="one-line" /> : <span className="text-ink-4">–</span>}
             </span>
+          ) : equis ? (
+            <span className="flex min-w-0 items-center gap-0.5">
+              <span className="min-w-0">{title}</span>
+              {equis.title_locked && <TitleLock testId={`documents-${document.id}-title-lock`} />}
+              {equis.doc_url && <EquisLink href={equis.doc_url} testId={`documents-${document.id}-equis-link`} />}
+            </span>
+          ) : (
+            title
           )}
-          <Truncate text={document.file_name} className="px-[7px] font-mono text-[11px] font-normal leading-4 text-ink-3" />
+          {equis ? (
+            // 표시는 파일 이름 줄의 오른쪽 끝 - 열도 줄 높이도 늘지 않는다. 좁으면 파일 이름이 먼저 줄고(최소 96px), 그다음 표시가 말줄임된다
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="min-w-[96px] flex-1">{fileName}</span>
+              <EquisStatus
+                equis={equis}
+                testId={`documents-${document.id}-equis`}
+                canEdit={canEdit}
+                onRefresh={() => void handleEquisRefresh(document)}
+                onUseCurrentNumber={() => void saveField(document, { doc_code: equis.number }).catch(() => undefined)}
+              />
+            </span>
+          ) : (
+            fileName
+          )}
           {document.status !== "ready" && (
             <span className="block px-[7px] text-xs font-normal text-danger" data-testid={`documents-${document.id}-reason`}>
               {getDocReason(document, t)}
             </span>
           )}
         </>
-      ),
+        );
+      },
     },
     {
       key: "layout",

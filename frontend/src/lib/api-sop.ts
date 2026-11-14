@@ -234,6 +234,45 @@ export interface SopDocument {
   prefill_sources?: Partial<Record<"doc_code" | "doc_version" | "language_layout", "file_name" | "content">>;
   /** 비어 있는 번호·버전에 대한 AI 제안(문서에 쓰지 않은 값). 누르면 사람이 저장한다 */
   ai_meta?: { doc_code: string | null; doc_version: string | null; suggestion_id: number } | null;
+  /** 문서 번호의 EQUIS 표시 - 기능이 꺼졌거나 묻지 않는 번호(빈 칸·임시 번호)면 null */
+  equis?: EquisInfo | null;
+}
+
+export interface EquisVersion {
+  version: string;
+  status: string;
+  /** KST 날짜(YYYY-MM-DD) 또는 빈 글 */
+  effective_date: string;
+  retired_date: string;
+}
+
+/** 문서나 To-Be 줄 하나의 EQUIS 조회 결과 - backend app/equis/view.py EquisOut과 같은 모양 */
+export interface EquisInfo {
+  state: "pending" | "found" | "not_found" | "unavailable";
+  /** 조회가 도는 중 - 화면이 조금 뒤 다시 읽는다 */
+  refreshing: boolean;
+  verdict: "ok" | "attention" | "in_equis" | null;
+  /** old_number · retired · version_mismatch · newer_authorized · no_current */
+  reasons: string[];
+  /** 경고는 아니지만 알릴 진행 중인 판(In Review · In Approval) */
+  notes: EquisVersion[];
+  current: EquisVersion | null;
+  in_progress: EquisVersion[];
+  retired: EquisVersion | null;
+  /** 지금 문서의 번호 - 물은 번호가 옛 번호면 다르다 */
+  number: string;
+  trail: string[];
+  ambiguous: string[];
+  name: string;
+  subtype: string;
+  owning_department: string;
+  plant: string;
+  area: string;
+  legacy_numbers: string[];
+  equipment_tag: string;
+  doc_url: string | null;
+  title_locked: boolean;
+  fetched_at: string | null;
 }
 
 export interface DocumentUpdateInput {
@@ -266,6 +305,11 @@ export function uploadDocument(bundleId: number, { file, side, docType, parentCo
 
 export function updateDocument(bundleId: number, docId: number, body: DocumentUpdateInput): Promise<SopDocument> {
   return apiFetch<SopDocument>(`/bundles/${bundleId}/documents/${docId}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+/** 이 Bundle에 있는 번호 하나를 EQUIS에 다시 묻는다 - requested가 false면 방금 조회했거나 조회 중이다 */
+export function refreshEquis(bundleId: number, documentNumber: string): Promise<{ requested: boolean }> {
+  return apiFetch<{ requested: boolean }>(`/bundles/${bundleId}/equis/refresh`, { method: "POST", body: JSON.stringify({ document_number: documentNumber }) });
 }
 
 export function deleteDocument(bundleId: number, docId: number, revision: number, confirm = false): Promise<void> {
@@ -452,6 +496,8 @@ export interface TargetDoc {
   is_equipment_sop: boolean;
   order_index: number;
   document_id: number | null;
+  /** 줄 번호의 EQUIS 표시 - 기능이 꺼졌거나 묻지 않는 번호(임시 번호)면 null */
+  equis?: EquisInfo | null;
 }
 
 export interface NaSlot {

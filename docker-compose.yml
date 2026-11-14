@@ -80,6 +80,10 @@ services:
       N8N_HR_TOKEN: ${N8N_HR_TOKEN:-}
       HR_SYNC_INTERVAL_HOURS: ${HR_SYNC_INTERVAL_HOURS:-24}
       HR_SYNC_DELETE_CAP_PCT: ${HR_SYNC_DELETE_CAP_PCT:-20}
+      # EQUIS 문서 조회 — 셋 중 하나라도 비면 비활성(화면이 그대로다)
+      N8N_QUERY_URL: ${N8N_QUERY_URL:-}
+      EQUIS_EDW_TABLE: ${EQUIS_EDW_TABLE:-}
+      EQUIS_DOC_URL_BASE: ${EQUIS_DOC_URL_BASE:-}
       # SOP 문서 업로드·파싱 상한 — 폴백은 Settings 기본값과 같다(.env.example 참고)
       SOP_MAX_FILE_MB: ${SOP_MAX_FILE_MB:-25}
       SOP_MAX_DOCX_UNZIPPED_MB: ${SOP_MAX_DOCX_UNZIPPED_MB:-200}
