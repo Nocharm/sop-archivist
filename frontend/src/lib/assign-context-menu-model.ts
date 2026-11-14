@@ -4,7 +4,10 @@
 import type { CoverStatus, ViewUnit } from "./api-sop";
 import { planJoin } from "./split-menu-model";
 
-export type AssignMenuAction = "confirm" | "clear" | "split" | "merge_prev" | "merge_next" | "pair_prev" | "pair_next" | "unpair" | "lang";
+export type AssignMenuAction =
+  | "confirm" | "clear"
+  | "split" | "merge_prev" | "merge_next" | "pair_prev" | "pair_next" | "unpair" | "lang"
+  | "table_rows" | "table_merge" | "table_layout";
 
 export interface AssignMenuItem {
   action: AssignMenuAction;
@@ -39,6 +42,10 @@ export interface AssignMenuContext {
   hasDraft: (unit: ViewUnit) => boolean;
   /** 글 안에 나눌 수 있는 자리가 있다 */
   canSplit: boolean;
+  /** 우클릭한 것이 든 표(또는 행) 단위 - 표·행 단위를 직접 눌렀으면 그 단위, 표 밖이면 null */
+  table: ViewUnit | null;
+  /** 그 표의 행 단위 전부(행으로 나눈 표일 때) - 다시 합치려면 모든 행에 판단이 없어야 한다 */
+  tableRows?: readonly ViewUnit[];
 }
 
 const EDITABLE_KINDS = new Set(["sentence", "heading", "cell_sentence"]);
@@ -78,19 +85,33 @@ function buildJoin(ctx: AssignMenuContext, neighbor: ViewUnit | null, side: "pre
   return build(action, plan.kind === (isPair ? "pair" : "merge") ? null : (plan.reasonKey ?? why("cannotMerge")));
 }
 
+/** 표 항목 - 통째인 표는 행으로 나누거나 레이아웃 표로 바꾸고, 행으로 나눈 표는 다시 합친다. 판단이나 저장 전 고름이 있으면 잠근다 */
+function buildTableItems(ctx: AssignMenuContext): AssignMenuItem[] {
+  const { table } = ctx;
+  if (table === null) return [];
+  const blocker = ctx.readOnly ? why("readOnly") : ctx.isDecided(table) ? why("assigned") : ctx.hasDraft(table) ? why("unsaved") : null;
+  if (table.kind === "table") return [build("table_rows", blocker), build("table_layout", blocker)];
+  // 행을 다시 합치면 모든 행이 한 단위가 된다 - 다른 행에 판단이나 저장 전 고름이 있어도 못 합친다(서버도 거절한다)
+  const others = (ctx.tableRows ?? []).filter((row) => row.id !== table.id);
+  const rowBlocker = others.some((row) => ctx.isDecided(row)) ? why("rowAssigned") : others.some((row) => ctx.hasDraft(row)) ? why("rowUnsaved") : null;
+  return [build("table_merge", blocker ?? rowBlocker)];
+}
+
 export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
   const confirmReason = ctx.readOnly ? why("readOnly") : !ctx.hasDestination ? why("noDestination") : ctx.isConfirmedAsIs ? why("alreadyConfirmed") : null;
   const clearReason = ctx.readOnly ? why("readOnly") : ctx.rowStatus === "unassigned" && !ctx.isDecided(ctx.target) ? why("notAssigned") : null;
   const editReason = getEditBlocker(ctx, ctx.target);
   return {
     assign: [build("confirm", confirmReason), build("clear", clearReason)],
-    edit: [
+    // 표·행 단위에는 문장 항목이 뜻이 없어 표 항목만 둔다
+    edit: ctx.target.kind === "table" || ctx.target.kind === "table_row" ? buildTableItems(ctx) : [
       build("split", editReason ?? (ctx.canSplit ? null : why("nothingToSplit"))),
       buildJoin(ctx, ctx.prev, "prev"),
       buildJoin(ctx, ctx.next, "next"),
       // 짝 풀기는 짝인 문장에서만 보인다
       ...(ctx.target.pair_id !== null ? [build("unpair", editReason)] : []),
       { ...build("lang", editReason), lang: ctx.target.lang },
+      ...buildTableItems(ctx),
     ],
   };
 }

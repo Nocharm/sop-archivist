@@ -181,6 +181,9 @@ interface PageDraft extends Omit<RowDraft, "reason" | "moveCode"> {
 const EMPTY_DRAFT: PageDraft = { destination: null, texts: {}, changeTypes: {}, linkChangeTypes: {}, reason: null, moveCode: null, editing: false };
 const NO_NUMBERS: ReadonlySet<number> = new Set();
 
+/** 되돌리면 단위가 은퇴할 수 있는 편집 - 그 줄을 고른 채 다시 받으면 없는 단위의 묶음을 부르게 된다 */
+const RETIRING_OPS: ReadonlySet<string> = new Set(["cut", "split_table_rows", "merge_table_rows", "set_layout_table"]);
+
 function isTypingTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 }
@@ -643,6 +646,12 @@ export default function AssignPage() {
   }
 
   const ctxTarget = ctxMenu ? (paperModel?.units.get(ctxMenu.unitId) ?? null) : null;
+  // 우클릭한 것이 든 표(또는 행) 단위 - 칸 문장이면 묶인 표·행, 표·행을 직접 눌렀으면 그 단위
+  const ctxTable = (() => {
+    if (!ctxTarget || !paperModel) return null;
+    const holder = ctxTarget.kind === "table" || ctxTarget.kind === "table_row" ? ctxTarget : ctxTarget.group_unit_id !== null ? (paperModel.units.get(ctxTarget.group_unit_id) ?? null) : null;
+    return holder !== null && (holder.kind === "table" || holder.kind === "table_row") ? holder : null;
+  })();
   const ctxGroups = (() => {
     if (!ctxTarget || !paperTabs || !paperModel) return null;
     const order = paperTabs.order;
@@ -659,6 +668,8 @@ export default function AssignPage() {
       isDecided: isUnitDecided,
       hasDraft: hasUnitDraft,
       canSplit: findNearestCut(ctxTarget, Math.floor(ctxTarget.text.length / 2)) !== null,
+      table: ctxTable,
+      tableRows: ctxTable?.kind === "table_row" ? [...paperModel.units.values()].filter((unit) => unit.kind === "table_row" && unit.table_id === ctxTable.table_id) : [],
     });
   })();
   // 메뉴를 연 뒤 편집으로 그 문장이 사라졌으면 닫는다(렌더 중 상태 맞추기)
@@ -740,6 +751,7 @@ export default function AssignPage() {
 
   function runCtx(action: AssignMenuAction, lang?: "ko" | "en") {
     const target = ctxTarget;
+    const table = ctxTable;
     const caret = ctxMenu?.caret ?? null;
     setCtxMenu(null);
     if (!target) return;
@@ -761,7 +773,10 @@ export default function AssignPage() {
     } else if (action === "unpair") {
       const pairId = target.pair_id;
       if (pairId !== null) void runPairChange((docId, revision) => deletePair(bundleId, docId, pairId, revision), t("split.pairRemoved"), target.id);
-    } else if (action === "lang" && lang) void runUnitEdit({ type: "set_language", unit_ids: [target.id], lang }, t("common.saved"), target.id);
+    } else if (action === "table_rows" && table) void runUnitEdit({ type: "split_table_rows", table_unit_id: table.id }, t("split.didSplit"), null);
+    else if (action === "table_merge" && table && table.table_id !== null) void runUnitEdit({ type: "merge_table_rows", table_id: table.table_id }, t("split.didMerge"), null);
+    else if (action === "table_layout" && table && table.table_id !== null) void runUnitEdit({ type: "set_layout_table", table_id: table.table_id, is_layout: true }, t("common.saved"), null);
+    else if (action === "lang" && lang) void runUnitEdit({ type: "set_language", unit_ids: [target.id], lang }, t("common.saved"), target.id);
   }
 
   function buildTables(): Map<number, { rows: number; cols: number; cells: CellSource[] }> {
@@ -926,8 +941,8 @@ export default function AssignPage() {
       setChecked(new Set());
       // 되돌린 줄의 초안은 바뀌기 전 판단 위의 고름이다
       for (const key of new Set(result.unit_ids.map((id) => rowOfUnit.get(id)).filter((key) => key !== undefined))) dropDraft(key);
-      // 자르기를 거꾸로 하면 Unit이 은퇴할 수 있다 - 다시 받는 동안 그 줄의 묶음·후보를 부르지 않게 고름을 비운다
-      if (result.op === "cut") {
+      // 자르기·표 행 나누기(합치기)를 거꾸로 하면 Unit이 은퇴할 수 있다 - 다시 받는 동안 그 줄의 묶음·후보를 부르지 않게 고름을 비운다
+      if (RETIRING_OPS.has(result.op)) {
         cutLine.clear();
         setCutUnitId(null);
         setSelectedKey(null);

@@ -39,6 +39,7 @@ function ctx(over: Partial<AssignMenuContext> = {}): AssignMenuContext {
     isDecided: () => false,
     hasDraft: () => false,
     canSplit: true,
+    table: null,
     ...over,
   };
 }
@@ -144,5 +145,37 @@ describe("KO/EN pairing from the Assign menu", () => {
     expect(buildAssignMenu(paired).edit.map((item) => item.action)).toEqual(["split", "merge_prev", "pair_next", "unpair", "lang"]);
     expect(find(paired, "unpair").enabled).toBe(true);
     expect(find({ ...paired, isDecided: (unit) => unit.id === 2 }, "unpair").reasonKey).toBe("assign.ctx.why.assigned");
+  });
+});
+
+describe("table rows from the Assign menu", () => {
+  const table = makeUnit(10, { kind: "table", table_id: 4, lang: "none" as ViewUnit["lang"] });
+  const row = makeUnit(11, { kind: "table_row", table_id: 4, row_index: 0, lang: "none" as ViewUnit["lang"] });
+
+  it("shows only table items on a table or a row", () => {
+    expect(buildAssignMenu(ctx({ target: table, table })).edit.map((item) => item.action)).toEqual(["table_rows", "table_layout"]);
+    expect(buildAssignMenu(ctx({ target: row, table: row })).edit.map((item) => item.action)).toEqual(["table_merge"]);
+    expect(find(ctx({ target: table, table }), "table_rows").enabled).toBe(true);
+  });
+
+  it("adds them after the sentence items on a cell sentence", () => {
+    const cell = makeUnit(12, { kind: "cell_sentence", group_unit_id: 10 });
+
+    expect(buildAssignMenu(ctx({ target: cell, table })).edit.map((item) => item.action)).toEqual(["split", "merge_prev", "merge_next", "lang", "table_rows", "table_layout"]);
+  });
+
+  it("locks them while the table is assigned, has an unsaved pick, or the bundle is read-only", () => {
+    expect(find(ctx({ target: table, table, isDecided: (unit) => unit.id === 10 }), "table_rows").reasonKey).toBe("assign.ctx.why.assigned");
+    expect(find(ctx({ target: row, table: row, hasDraft: (unit) => unit.id === 11 }), "table_merge").reasonKey).toBe("assign.ctx.why.unsaved");
+    expect(find(ctx({ target: table, table, readOnly: true }), "table_layout").reasonKey).toBe("assign.ctx.why.readOnly");
+  });
+
+  it("will not merge rows back while another row of the table is assigned or has an unsaved pick", () => {
+    const other = makeUnit(13, { kind: "table_row", table_id: 4, row_index: 1, lang: "none" as ViewUnit["lang"] });
+    const base = { target: row, table: row, tableRows: [row, other] };
+
+    expect(find(ctx(base), "table_merge").enabled).toBe(true);
+    expect(find(ctx({ ...base, isDecided: (unit) => unit.id === 13 }), "table_merge").reasonKey).toBe("assign.ctx.why.rowAssigned");
+    expect(find(ctx({ ...base, hasDraft: (unit) => unit.id === 13 }), "table_merge").reasonKey).toBe("assign.ctx.why.rowUnsaved");
   });
 });
