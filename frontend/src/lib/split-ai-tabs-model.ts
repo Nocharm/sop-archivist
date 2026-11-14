@@ -35,3 +35,16 @@ export function getAiTabsHead(tabs: readonly AiTab[]): { kind: "batch" | "plain"
   const unknown = tabs.filter((tab) => tab.origin === "unknown").length;
   return unknown > 0 ? { kind: "plain", n: unknown } : null;
 }
+
+/** 원문을 제안 위치에서 자른 조각들(미리보기) - 글 밖의 위치는 버리고, 빈 조각은 뺀다. 쪼개기와 배정 화면이 함께 쓴다 */
+export function cutSplitPieces(text: string, offsets: readonly number[]): string[] {
+  const points = [...offsets].filter((at) => at > 0 && at < text.length).sort((a, b) => a - b);
+  const pieces: string[] = [];
+  let start = 0;
+  for (const at of points) {
+    pieces.push(text.slice(start, at));
+    start = at;
+  }
+  pieces.push(text.slice(start));
+  return pieces.map((piece) => piece.trim()).filter(Boolean);
+}

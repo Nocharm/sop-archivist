@@ -1920,6 +1920,57 @@ await runStep("members picker keeps Add inside the panel and adds the person", {
 });
 
 // 바로 생성(2026-11-09): 이름 없이 BND 코드로 만들고, 문서가 없으면 Split~Review는 잠기고 To-Be는 열려 있다
+// 배정 화면에서 AI 나누기 제안 받기·적용·되돌리기(전에는 요청만 되고 적용은 쪼개기 화면에서 했다). AI가 꺼져 있으면 건너뛴다
+await runStep("assign: AI split suggestions - ask for the whole document, apply one, undo", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const status = await page.request.get(`${BASE}/api/bundles/1/ai/status`, { headers });
+  if (!status.ok() || !(await status.json()).ai_enabled) {
+    console.log("  (AI is off in this backend - skipped)");
+    return;
+  }
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  await page.goto(`${BASE}/bundles/${freshId}/assign`);
+  await wait(page, "assign-bar");
+  await page.locator('[data-testid="assign-ai-menu"]').click();
+  const wholeDoc = page.locator('[role="menuitem"]', { hasText: "AI split whole document" });
+  check("the AI menu offers the whole-document split", (await wholeDoc.count()) === 1);
+  await wholeDoc.click();
+  // 앞 시나리오가 남긴 제안이 있으면 바로, 없으면 방금 보낸 작업이 끝난 뒤 뜬다
+  const pill = page.locator('[data-testid="assign-split-pending"]');
+  await pill.waitFor({ timeout: 90000 });
+  await pill.click();
+  await wait(page, "assign-split-suggestion");
+  const pieces = await page.locator('[data-testid^="assign-split-piece-"]').count();
+  check("the card previews the pieces", pieces >= 2, String(pieces));
+  await takeShot("sop-assign-ai-split.png");
+  const applyButton = page.locator('[data-testid="assign-split-apply"]');
+  // 앞 시나리오가 배정해 둔 문장은 적용이 잠긴다(다른 문장 고치기와 같은 규칙) - 적용할 수 있는 제안이 나올 때까지 다음으로 넘긴다
+  let sawLocked = false;
+  for (let step = 0; step < 40 && (await applyButton.getAttribute("aria-disabled")) === "true"; step += 1) {
+    sawLocked = true;
+    const next = page.locator('[data-testid="assign-split-next"]');
+    if ((await next.count()) === 0) break;
+    const row = (await getText(page, "assign-row-id")).trim();
+    await next.click();
+    await page.waitForFunction((before) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() !== before, row, { timeout: T });
+    await wait(page, "assign-split-suggestion");
+  }
+  if (sawLocked) check("an assigned sentence keeps Apply split locked", true);
+  if ((await applyButton.getAttribute("aria-disabled")) === "true") {
+    console.log("  (every suggested sentence is assigned - apply and undo not exercised)");
+    return;
+  }
+  const rowBefore = (await getText(page, "assign-row-id")).trim();
+  await applyButton.click();
+  await page.waitForFunction((before) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() !== before && document.querySelector('[data-testid="assign-undo"]')?.disabled === false, rowBefore, { timeout: T });
+  check("Apply split cuts the sentence and moves to the new piece", true);
+  await page.locator('[data-testid="assign-undo"]').click();
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((toast) => toast.textContent?.includes("Cut")), null, { timeout: T });
+  check("Undo takes the cut back", true);
+});
+
 // 배정 화면에서 한/영 짝 풀고 다시 맺기 - 우클릭 메뉴(전에는 쪼개기 화면에서만 했다). 끝에는 다시 짝이다
 await runStep("assign: separate and pair KO/EN from the right-click menu", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);

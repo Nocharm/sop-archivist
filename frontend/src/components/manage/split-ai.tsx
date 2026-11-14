@@ -5,7 +5,7 @@ import { Check, Layers, WandSparkles, X } from "lucide-react";
 
 import { BusyLabel } from "@/components/ui/motion";
 import type { AiSuggestion, ViewUnit } from "@/lib/api-sop";
-import { getAiTabsHead, type AiTab } from "@/lib/split-ai-tabs-model";
+import { cutSplitPieces, getAiTabsHead, type AiTab } from "@/lib/split-ai-tabs-model";
 import { useI18n } from "@/lib/i18n";
 import { readSplitOffsets, type SplitAi } from "@/lib/use-split-ai";
 
@@ -20,22 +20,9 @@ interface SplitAiProps {
   onNext: () => void;
 }
 
-/** 원문을 제안 위치에서 자른 조각들 */
-function cutPieces(text: string, offsets: readonly number[]): string[] {
-  const points = [...offsets].filter((at) => at > 0 && at < text.length).sort((a, b) => a - b);
-  const pieces: string[] = [];
-  let start = 0;
-  for (const at of points) {
-    pieces.push(text.slice(start, at));
-    start = at;
-  }
-  pieces.push(text.slice(start));
-  return pieces.map((piece) => piece.trim()).filter(Boolean);
-}
-
 function SplitAiSection({ ai, selected, suggestion, canEdit, busy, left, onNext }: SplitAiProps) {
   const { t } = useI18n();
-  const pieces = cutPieces(selected.text, readSplitOffsets(suggestion.content.offsets));
+  const pieces = cutSplitPieces(selected.text, readSplitOffsets(suggestion.content.offsets));
   const isOff = busy || ai.working !== null;
   return (
     <section className="grid gap-1.5 rounded-md border border-dashed bg-st-ai-tint p-2.5 text-[13px]" style={{ borderColor: "var(--st-ai-line)" }} data-testid="split-ai-suggestion">

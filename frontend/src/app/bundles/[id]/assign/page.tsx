@@ -3,7 +3,7 @@
 // 오른쪽은 고른 곳·확정·우선순위 아코디언이다(설계 docs/superpowers/specs/2026-11-09-assign-unified-design.md).
 "use client";
 
-import { Check, Circle, CircleCheck, CircleDashed, CirclePause, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, Redo2, RefreshCw, Scissors, Sparkles, Trash2, TriangleAlert, Undo2, X, type LucideIcon } from "lucide-react";
+import { Check, Circle, CircleCheck, CircleDashed, CirclePause, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, Redo2, RefreshCw, Scissors, Sparkles, Trash2, TriangleAlert, Undo2, WandSparkles, X, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent } from "react";
@@ -14,6 +14,7 @@ import { DestCard } from "@/components/assign/dest-card";
 import { DestinationAccordion, type AccordionSection } from "@/components/assign/destination-accordion";
 import { DestinationTree, type DestinationManage } from "@/components/assign/destination-tree";
 import { MissingWarnings } from "@/components/assign/missing-warnings";
+import { SplitSuggestionCard } from "@/components/assign/split-suggestion";
 import { LinkChoice } from "@/components/assign/link-choice";
 import { findNewLine, findOldStrip, LinkLines } from "@/components/assign/link-lines";
 import { LinkMenu } from "@/components/assign/link-menu";
@@ -43,7 +44,8 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { findLastStep } from "@/lib/destination-manage-model";
-import { listAppliedSuggestions, requestAi, type AiKind, type AiScope } from "@/lib/api-manage";
+import { readSplitOffsets } from "@/lib/use-split-ai";
+import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, type AiScope } from "@/lib/api-manage";
 import {
   addToBeDoc,
   addWiStep,
@@ -81,6 +83,7 @@ import {
   type ToBe,
   type UndoMeta,
   type UnitRow,
+  type ViewUnit,
   type WrittenSentence,
 } from "@/lib/api-sop";
 import { applySavedTargets, buildComposedRows, isWrittenRow, listHeadingNotes, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
@@ -279,8 +282,10 @@ export default function AssignPage() {
   const [isPlaceBusy, setIsPlaceBusy] = useState(false);
   const writtenList = useLoaded(() => listWrittenSentences(bundleId), dataKey);
   const identical = useLoaded(() => listIdenticalCandidates(bundleId), dataKey);
-  // AI 작업이 끝나면 단위·제안·New 문장을 다시 불러온다 - 제안이 보이고 다음 저장이 낡은 revision으로 409가 나지 않는다
+  // AI 작업이 끝나면 단위·제안·New 문장을 다시 불러온다 - 제안이 보이고 다음 저장이 낡은 revision으로 409가 나지 않는다.
+  // 원문 보기도 다시 받는다 - 나누기 제안 표시(split_suggestion_id)와 AI가 제안한 한/영 짝이 거기 실려 온다
   const aiJobs = useAiJobs(bundleId, () => {
+    views.reload();
     setUnitsKey((key) => key + 1);
     void loadBundle(bundleId);
   });
@@ -464,6 +469,18 @@ export default function AssignPage() {
   // 본문·머리말·꼬리말 탭 - 고른 조각이 다른 탭에 있으면 그 탭으로 가고, 사람이 고른 탭은 그 줄에서 그대로 둔다
   const partKeys = useMemo(() => (paperModel ? (["body", "header", "footer"] as const).filter((key) => paperModel[key].length > 0) : []), [paperModel]);
   const paperTabs = useMemo(() => (oldView && paperModel ? buildPaperTabs(oldView, paperModel) : null), [oldView, paperModel]);
+  // AI 나누기 제안 - 보는 Old 문서의 아직 정하지 않은 것. 문장마다 가장 새 제안 하나(전에는 쪼개기 화면에서만 적용·거절했다)
+  const oldDocId = oldView?.document.id ?? null;
+  const splitSuggestions = useLoaded(() => (aiOn && oldDocId !== null ? listAppliedSuggestions(bundleId, "split", oldDocId) : Promise.resolve([])), `${aiOn}:${oldDocId}:${dataKey}`);
+  const splitByUnit = useMemo(() => {
+    const map = new Map<number, AiSuggestion>();
+    for (const item of splitSuggestions.data ?? []) {
+      const unitId = item.content.unit_id;
+      // 용지의 그 문장이 아직 이 제안을 달고 있을 때만(이미 잘렸거나 다른 문서의 것은 뺀다)
+      if (typeof unitId === "number" && item.adoption === null && paperModel?.units.get(unitId)?.split_suggestion_id === item.id) map.set(unitId, item);
+    }
+    return map;
+  }, [splitSuggestions.data, paperModel]);
   const partOf = paperTabs?.tabOf ?? null;
   const cutUnit = cutUnitId !== null && row?.unitIds.includes(cutUnitId) ? (paperModel?.units.get(cutUnitId) ?? null) : null;
   const cutLine = useCutLine(cutUnit);
@@ -558,6 +575,9 @@ export default function AssignPage() {
   if (row && row.status !== "unassigned" && rowLangs.includes("ko")) aiMenuItems.push({ key: "to-en", label: t("ai.translateToEn"), run: () => askAiScope("translate", { unit_ids: row.unitIds, direction: "ko_to_en" }) });
   if (row && row.status !== "unassigned" && rowLangs.includes("en")) aiMenuItems.push({ key: "to-ko", label: t("ai.translateToKo"), run: () => askAiScope("translate", { unit_ids: row.unitIds, direction: "en_to_ko" }) });
   if (row) aiMenuItems.push({ key: "split", label: t("ai.splitRow"), run: () => askAiScope("split", { unit_ids: row.unitIds }) });
+  // 문서 전체 요청 두 가지 - 전에는 쪼개기 화면 용지 위 막대에만 있었다. 짝 제안은 한글·영어가 따로 적힌 문서에서만
+  if (oldView) aiMenuItems.push({ key: "split-document", label: t("ai.askSplitShort"), run: () => askAiScope("split", { document_id: oldView.document.id }) });
+  if (oldView?.document.language_layout === "ko_en_separate") aiMenuItems.push({ key: "pair-document", label: t("ai.askPairShort"), run: () => askAiScope("pair", { document_id: oldView.document.id }) });
 
   const [remarkEdit, setRemarkEdit] = useState<RemarkEdit | null>(null);
   // 목록에서 고를 때마다 늘어 결정 칸의 고른 곳 상자를 다시 그린다(그때만 잠깐 번쩍여 눈이 따라가게 - 줄을 옮길 때는 그대로)
@@ -672,6 +692,10 @@ export default function AssignPage() {
       tableRows: ctxTable?.kind === "table_row" ? [...paperModel.units.values()].filter((unit) => unit.kind === "table_row" && unit.table_id === ctxTable.table_id) : [],
     });
   })();
+  // 고른 줄의 문장에 걸린 AI 나누기 제안 - 배정이 있거나 저장 전 고름이 있으면 다른 문장 고치기처럼 적용을 잠근다
+  const rowSplitUnit: ViewUnit | null = (row?.unitIds ?? []).map((id) => paperModel?.units.get(id)).find((unit): unit is ViewUnit => unit !== undefined && splitByUnit.has(unit.id)) ?? null;
+  const rowSplit = rowSplitUnit ? (splitByUnit.get(rowSplitUnit.id) ?? null) : null;
+  const splitBlocked = rowSplitUnit === null ? null : isUnitDecided(rowSplitUnit) ? t("assign.ctx.why.assigned") : hasUnitDraft(rowSplitUnit) ? t("assign.ctx.why.unsaved") : null;
   // 메뉴를 연 뒤 편집으로 그 문장이 사라졌으면 닫는다(렌더 중 상태 맞추기)
   if (ctxMenu !== null && paperModel !== null && ctxTarget === null) setCtxMenu(null);
 
@@ -735,6 +759,60 @@ export default function AssignPage() {
       void loadBundle(bundleId);
       setBusy(false);
     }
+  }
+
+  /** AI 나누기 제안 적용 - 뒤쪽 위치부터 자르면 앞 조각의 위치가 바뀌지 않는다. 자를 때마다 되돌리기 기록에 한 단계씩 남는다 */
+  async function applySplitSuggestion(unit: ViewUnit, suggestion: AiSuggestion) {
+    if (!oldView || busy) return;
+    setBusy(true);
+    try {
+      let unitId = unit.id;
+      let revision = oldView.document.revision;
+      for (const at of readSplitOffsets(suggestion.content.offsets).sort((a, b) => b - a)) {
+        const result = await editUnits(bundleId, oldView.document.id, revision, { type: "split", unit_id: unitId, at }, false, buildUndo({ focus_unit_id: unitId }));
+        revision = result.document_revision;
+        unitId = result.created_unit_ids[0] ?? unitId;
+      }
+      await setSuggestionAdoption(bundleId, suggestion.id, "as_is");
+      markRecorded();
+      cutLine.clear();
+      setCutUnitId(null);
+      setSelectedKey(null);
+      showToast(t("split.didSplit"));
+      setFollow({ unitId, staleViews: viewList, staleUnits: units.data });
+    } catch (err) {
+      const isLinked = err instanceof ApiError && err.rule?.code === "confirm_required";
+      showToast(isLinked ? t("assign.ctx.why.assigned") : humanizeApiError(err, t), "error");
+    } finally {
+      views.reload();
+      setUnitsKey((key) => key + 1);
+      void loadBundle(bundleId);
+      setBusy(false);
+    }
+  }
+
+  async function dismissSplitSuggestion(suggestion: AiSuggestion) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await setSuggestionAdoption(bundleId, suggestion.id, "rejected");
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+    } finally {
+      // 용지의 제안 표시는 문서 보기에서 온다
+      views.reload();
+      setUnitsKey((key) => key + 1);
+      setBusy(false);
+    }
+  }
+
+  /** 다음 나누기 제안이 붙은 줄로 - 용지 순서로 지금 줄 다음, 끝이면 처음으로 돈다 */
+  function selectNextSplit() {
+    const ids = (paperTabs?.order ?? []).filter((id) => splitByUnit.has(id) && rowOfUnit.has(id));
+    if (ids.length === 0) return;
+    const current = ids.findIndex((id) => rowOfUnit.get(id) === activeKey);
+    const key = rowOfUnit.get(ids[(current + 1) % ids.length]);
+    if (key !== undefined) selectRow(key);
   }
 
   function splitAtCut() {
@@ -1901,6 +1979,19 @@ export default function AssignPage() {
         </div>
         {/* ① 보낼 곳 - 패널에서 이곳만 스크롤된다. 바로 아래 결정 칸이 붙어 있어 고른 곳에서 확정까지 손이 짧다 */}
         <div className="assign-pick" data-testid="assign-pick" onClickCapture={handlePickClickCapture}>
+          {rowSplitUnit && rowSplit && (
+            <SplitSuggestionCard
+              unit={rowSplitUnit}
+              suggestion={rowSplit}
+              canEdit={canEdit}
+              busy={busy}
+              blockedReason={splitBlocked}
+              left={splitByUnit.size}
+              onApply={() => void applySplitSuggestion(rowSplitUnit, rowSplit)}
+              onDismiss={() => void dismissSplitSuggestion(rowSplit)}
+              onNext={selectNextSplit}
+            />
+          )}
           {renderStep(1, t("assign.step.pick"))}
           <DestinationAccordion sections={accSections} open={accOpen} onToggle={toggleAcc} />
           <div className="px-[var(--pad)] pb-[var(--pad)] pt-1">{aiNote}</div>
@@ -2052,6 +2143,15 @@ export default function AssignPage() {
         )}
         {canEdit && <ResetMenu compact={isBarCompact} document={oldView ? { id: oldView.document.id, label: oldView.document.doc_code || oldView.document.file_name } : null} disabled={busy} onPick={setResetScope} />}
         {aiOn && canEdit && <AiAskMenu compact={isBarCompact} items={aiMenuItems} label={t("ai.more")} testId="assign-ai-menu" disabled={busy} />}
+        {/* 정하지 않은 AI 나누기 제안 수 - 누르면 다음 제안이 붙은 줄로 간다(오른쪽 칸에서 적용·거절) */}
+        {aiOn && splitByUnit.size > 0 && (
+          <Tooltip label={t("ai.nextSuggestion")}>
+            <button type="button" className="pill ai h-7 cursor-pointer whitespace-nowrap" aria-label={isBarCompact ? t("ai.pendingCount", { n: splitByUnit.size }) : undefined} data-testid="assign-split-pending" onClick={selectNextSplit}>
+              <WandSparkles size={13} strokeWidth={1.6} aria-hidden />
+              {isBarCompact ? splitByUnit.size : t("ai.pendingCount", { n: splitByUnit.size })}
+            </button>
+          </Tooltip>
+        )}
         {/* 누락 의심 경고 - 확인이 남아 있을 때만 보인다(검토 요청 조건). 원문 자리를 보거나 그 자리에서 확인한다 */}
         <MissingWarnings
           bundleId={bundleId}
