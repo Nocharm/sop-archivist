@@ -321,10 +321,10 @@ const AUDIT_ENTRIES = [
     note: "output-a inside its frame, largest row <= 220px, expand grows only that row",
   },
   {
+    // 줄 끝 단추는 3단계(Order) 화면에만 있다 - 결과 화면의 C는 읽기 전용
     id: "C8", ds: "worst", user: MEMBER, views: [1120],
-    path: (ids) => `/bundles/${ids.w[1]}/outputs`,
+    path: (ids) => `/bundles/${ids.w[1]}/order`,
     open: async (page) => {
-      await page.getByTestId("outputs-tab-c").click();
       await page.locator('[data-testid^="output-c-item-"]').first().waitFor({ timeout: T });
       await page.waitForTimeout(SETTLE_MS);
     },
@@ -1463,8 +1463,8 @@ const AUDIT_ENTRIES = [
         canRequest: !document.querySelector('[data-testid="overview-request-review"]')?.disabled,
       };
     }),
-    expect: (value) => /^SYNTHETIC W[16]$/.test(value.title) && value.lines === 9 && value.spill === 0 && !value.boxX && value.maxLine <= 120 && (value.title !== "SYNTHETIC W6" || value.canRequest),
-    note: "overview gate list: nine lines when expanded, none spills its box (W1 and W6); W6 can still request review",
+    expect: (value) => /^SYNTHETIC W[16]$/.test(value.title) && value.lines === 8 && value.spill === 0 && !value.boxX && value.maxLine <= 120 && (value.title !== "SYNTHETIC W6" || value.canRequest),
+    note: "overview gate list: eight lines when expanded (boundary checks are no longer a condition), none spills its box (W1 and W6); W6 can still request review",
   },
 ];
 // B5는 새(문서 0개) Bundle이면 되므로 mid에서도 W7로 한 번 더 잰다(W7은 같은 DB에 있다)
