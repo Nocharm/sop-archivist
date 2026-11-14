@@ -3,7 +3,7 @@
 // 합치기는 조각 사이의 단추 하나뿐이다. 끌어 고르면 새 단위로 만들 수 있다.
 "use client";
 
-import { ArrowDown, ArrowUp, Check, CheckCheck, Circle, CircleCheck, FileText, Link2, Redo2, Scissors, SquarePlus, Undo2, Unlink, Upload, WandSparkles, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, Check, CheckCheck, Circle, CircleCheck, FileText, Link2, Redo2, Scissors, SquarePlus, Undo2, Unlink, Upload, WandSparkles, X } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
@@ -647,6 +647,11 @@ export default function SplitPage() {
       {/* 열을 minmax(0,1fr)로 못 박는다 - 암묵 열(auto)은 위 줄의 한 줄 글자만큼 넓어져, 1280보다 좁은 창에서 용지가 오른쪽 패널 밑으로 들어갔다 */}
       <div className="flex min-h-0 min-w-0 flex-col">
         <div className="flex h-11 flex-none items-center gap-2.5 border-b border-line bg-surface px-[var(--pad)]">
+          {/* 이 화면은 2단계(배정) 아래에 있다 - 레일에 자기 자리가 없으니 돌아갈 길을 문서 이름 앞에 둔다 */}
+          <Link href={getStageHref(bundleId, "assign")} className="btn ghost h-7 flex-none" data-testid="split-back-assign">
+            <ArrowLeft size={14} strokeWidth={1.5} aria-hidden />
+            {t("split.backToAssign")}
+          </Link>
           <span className="whitespace-nowrap font-mono text-[13px] font-semibold">{document_?.doc_code ?? ""}</span>
           <span className="min-w-0 flex-1 truncate text-ink-2">{document_?.title ?? ""}</span>
           {bundle?.is_synthetic && <span className="tag">Synthetic data</span>}

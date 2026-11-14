@@ -213,11 +213,6 @@ def _set_boundary(client: TestClient, fx: Fixture, unit_ids: list[int], confirme
     assert response.status_code == 200, response.text
 
 
-def _uncheck_one_boundary(client: TestClient, fx: Fixture) -> list[dict]:
-    _set_boundary(client, fx, [_unit_id(fx, KO_2)], False)
-    return [{"code": "unchecked_boundaries", "count": 1, "document_ids": [fx.view["document"]["id"]]}]
-
-
 def _upload_rejected(client: TestClient, fx: Fixture) -> list[dict]:
     rejected = upload(client, fx.bundle_id, b"Synthetic notes", "SYNTHETIC notes.txt")
     assert rejected.status_code == 201 and rejected.json()["status"] == "rejected", rejected.text
@@ -226,8 +221,8 @@ def _upload_rejected(client: TestClient, fx: Fixture) -> list[dict]:
 
 @pytest.mark.parametrize(
     "spoil",
-    [_hold_one_unit, _add_unacked_warning, _uncheck_one_boundary, _uncheck_numbers, _drop_reviewer, _upload_rejected],
-    ids=["on_hold", "unacked_missing_text", "unchecked_boundary", "semantic_check", "no_reviewer", "rejected_document"],
+    [_hold_one_unit, _add_unacked_warning, _uncheck_numbers, _drop_reviewer, _upload_rejected],
+    ids=["on_hold", "unacked_missing_text", "semantic_check", "no_reviewer", "rejected_document"],
 )
 def test_blockers_cover_each_condition(client: TestClient, spoil: Callable[[TestClient, Fixture], list[dict]]) -> None:
     fx = _make_ready(client)
@@ -386,14 +381,12 @@ def test_boundaries_count_only_text_units_of_every_document(client: TestClient) 
     _set_boundary(client, fx, [_unit_id(fx, KO_1)], True)
     cleared = _get_readiness(client, fx.bundle_id)
 
-    assert {"code": "unchecked_boundaries", "count": 4, "document_ids": [doc_id]} in blocked["blockers"]
-    assert {"code": "unchecked_boundaries", "count": 5, "document_ids": sorted([fx.view["document"]["id"], doc_id])} in both[
-        "blockers"
-    ]
-    assert "unchecked_boundaries" not in {blocker["code"] for blocker in cleared["blockers"]}
+    # 경계 확인은 검토 조건이 아니다(네 단계 워크플로우 §5) — 남은 수는 문서 목록이 보여 줄 뿐이다
+    for readiness in (blocked, both, cleared):
+        assert "unchecked_boundaries" not in {blocker["code"] for blocker in readiness["blockers"]}
 
 
-def test_edited_units_need_their_boundaries_checked_again(client: TestClient) -> None:
+def test_edited_units_count_as_unchecked_but_do_not_block_review(client: TestClient) -> None:
     fx = _setup(client)
     doc_id = fx.view["document"]["id"]
     unit = find_unit(fx.view, KO_2)
@@ -402,10 +395,10 @@ def test_edited_units_need_their_boundaries_checked_again(client: TestClient) ->
     split = client.post(f"/api/bundles/{fx.bundle_id}/documents/{doc_id}/edits", json=edit, headers=AUTHOR)
 
     assert split.status_code == 200, split.text
-    assert {"code": "unchecked_boundaries", "count": 2, "document_ids": [doc_id]} in _get_readiness(client, fx.bundle_id)[
-        "blockers"
-    ]
-    assert get_bundle(client, fx.bundle_id)["next_action"] == "check_boundaries"
+    # 새로 생긴 두 Unit은 판단도 경계 확인도 없다 — 문서 목록의 남은 수에는 잡히지만 검토 조건으로는 "판단 안 됨"으로만 막힌다
+    documents = client.get(f"/api/bundles/{fx.bundle_id}/documents", headers=AUTHOR).json()
+    assert [doc["unchecked_boundaries"] for doc in documents if doc["id"] == doc_id] == [2]
+    assert "unchecked_boundaries" not in {blocker["code"] for blocker in _get_readiness(client, fx.bundle_id)["blockers"]}
 
 
 def test_acking_the_warning_clears_the_blocker(client: TestClient) -> None:
@@ -475,7 +468,7 @@ def test_next_action_puts_versions_after_documents_and_before_boundaries(client:
     assert readiness["next_action"] == "fill_doc_versions"  # 경계도 안 봤지만 버전이 먼저
 
     set_doc_version(client, bundle_id, uploaded.json())
-    assert _get_readiness(client, bundle_id)["next_action"] == "check_boundaries"
+    assert _get_readiness(client, bundle_id)["next_action"] == "fill_tobe"  # 경계 확인은 따로 돌지 않는다
 
 
 # --- 알림 ---
@@ -800,8 +793,6 @@ def test_next_action_sequence(client: TestClient) -> None:
     assert uploaded.status_code == 201, uploaded.text
     assert get_bundle(client, bundle_id)["next_action"] == "fill_doc_versions"
     set_doc_version(client, bundle_id, uploaded.json())
-    assert get_bundle(client, bundle_id)["next_action"] == "check_boundaries"
-    assert confirm_boundaries(client, bundle_id, uploaded.json()["id"]) == 2
     assert get_bundle(client, bundle_id)["next_action"] == "fill_tobe"
 
     tobe = put_tobe(client, bundle_id, [SOP_DOC])
@@ -835,7 +826,7 @@ def test_next_action_follows_the_first_unmet_condition(client: TestClient) -> No
     update_row(UnitDecision, _unit_id(fx, EN_1), status="on_hold", hold_reason=HOLD_REASON)
     assert get_bundle(client, fx.bundle_id)["next_action"] == "decide_units"
     _set_boundary(client, fx, [_unit_id(fx, KO_1)], False)
-    assert get_bundle(client, fx.bundle_id)["next_action"] == "check_boundaries"
+    assert get_bundle(client, fx.bundle_id)["next_action"] == "decide_units"  # 경계 표시를 풀어도 다음 할 일은 그대로다
     rejected = upload(client, fx.bundle_id, b"Synthetic notes", "SYNTHETIC notes.txt")
     assert rejected.json()["status"] == "rejected"
     assert get_bundle(client, fx.bundle_id)["next_action"] == "resolve_documents"
@@ -890,7 +881,7 @@ def test_readiness_does_not_read_document_text(client: TestClient) -> None:
     for column in ("units.text", "target_sentences.confirmed_text", "target_sentences.ai_text"):
         assert column in full_sql
         assert column not in bare_sql  # 글자 열은 DB에서 아예 읽지 않는다
-    options = {"semantic_checks": ALL_CHECKED, "unacked_missing_text": 0, "unchecked_boundaries": {}, "reviewer_count": 1}
+    options = {"semantic_checks": ALL_CHECKED, "unacked_missing_text": 0, "reviewer_count": 1}
     expected = [{"code": "units_on_hold", "count": 1}]
     assert evaluate_readiness(full, **options).blockers == expected
     assert evaluate_readiness(bare, **options) == evaluate_readiness(full, **options)
@@ -911,3 +902,18 @@ def test_creating_a_bundle_skips_the_readiness_computation(client: TestClient) -
     # 스냅숏만 읽는 표 — target_sentences는 진행 숫자(한 언어 글 세기)도 하위 질의로 보므로 기준에서 뺀다
     snapshot_tables = ("FROM source_blocks", "FROM target_docs")
     assert not [statement for statement in statements if any(table in statement for table in snapshot_tables)]
+
+
+def test_confirmed_units_count_as_boundary_checked(client: TestClient) -> None:
+    """배정을 확정한 Unit은 경계도 확인된 것이다 — 경계 표시를 풀어도 남은 수에 잡히지 않고 검토 요청도 그대로 된다."""
+    fx = _make_ready(client)
+    doc_id = fx.view["document"]["id"]
+
+    _set_boundary(client, fx, [_unit_id(fx, KO_1)], False)
+
+    documents = client.get(f"/api/bundles/{fx.bundle_id}/documents", headers=AUTHOR).json()
+    unit = find_unit(get_view(client, fx.bundle_id, doc_id), KO_1)
+    readiness = _get_readiness(client, fx.bundle_id)
+    assert [doc["unchecked_boundaries"] for doc in documents if doc["id"] == doc_id] == [0]
+    assert unit["boundary_confirmed"] is True
+    assert readiness["ready"] is True and readiness["blockers"] == []

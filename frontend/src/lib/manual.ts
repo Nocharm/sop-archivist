@@ -154,6 +154,7 @@ export const MANUAL_STAGE_SECTION: Record<StageKey, string> = {
   documents: "documents",
   split: "split",
   assign: "assign",
+  order: "order",
   outputs: "outputs",
   review: "review",
   history: "history",

@@ -52,6 +52,7 @@ from app.sop.models import (
     ExtractionWarning,
     SourceBlock,
     SourceTable,
+    TargetSentence,
     Unit,
     UnitDecision,
     UnitEdit,
@@ -371,6 +372,15 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
             select(UnitDecision).join(Unit, Unit.id == UnitDecision.unit_id).where(Unit.extraction_id == extraction.id)
         )
         decisions = {decision.unit_id: decision for decision in rows}
+        settled = {unit_id for unit_id, decision in decisions.items() if decision.status == "confirmed"}
+    else:
+        settled = set(
+            await session.scalars(
+                select(TargetSentence.new_unit_id)
+                .join(Unit, Unit.id == TargetSentence.new_unit_id)
+                .where(Unit.extraction_id == extraction.id, TargetSentence.status == "confirmed")
+            )
+        )
     pairs = await _load_view_pairs(session, document.id)
     created_lists = (
         await session.execute(
@@ -410,7 +420,8 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 table_id=unit.table_id,
                 row_index=unit.row_index,
                 group_unit_id=unit.group_unit_id,
-                boundary_confirmed=unit.boundary_confirmed,
+                # 배정을 확정한 단위는 경계도 확인된 것으로 보인다(문서 목록의 남은 수와 같은 기준)
+                boundary_confirmed=unit.boundary_confirmed or unit.id in settled,
                 status=get_cover_status(unit, decisions) if document.side == "old" else None,
                 pair_id=pair_by_unit.get(unit.id),
                 is_edited=unit.id in edited_ids,

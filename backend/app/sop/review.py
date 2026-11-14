@@ -23,13 +23,12 @@ from app.sop.outputs import build_review_facts
 from app.sop.snapshot import (
     BundleSnapshot,
     count_unacked_missing_text,
-    count_unchecked_boundaries,
     load_bundle_snapshot,
 )
 from app.sop.tobe import is_within_slot
 
 NextAction = Literal[
-    "upload_documents", "resolve_documents", "fill_doc_versions", "check_boundaries", "fill_tobe", "decide_units", "ack_warnings",
+    "upload_documents", "resolve_documents", "fill_doc_versions", "fill_tobe", "decide_units", "ack_warnings",
     "fill_reasons", "semantic_checks", "add_reviewer", "request_review", "await_review", "done",
 ]
 Issue = dict[str, object]
@@ -111,9 +110,6 @@ def _pick_next_action(snap: BundleSnapshot, codes: set[str]) -> NextAction:
     # 버전은 Excel·결과물 머리에 그대로 나가는 값이라 경계보다 먼저(문서 단계에서 한 번에) 채운다
     if "missing_doc_versions" in codes:
         return "fill_doc_versions"
-    # 판단한 단위를 다시 자르면 판단이 떨어지므로 경계부터 굳힌다(단계 순서도 쪼개기가 To-Be·배정보다 앞)
-    if "unchecked_boundaries" in codes:
-        return "check_boundaries"
     if not snap.target_docs:
         return "fill_tobe"
     if any(code.startswith(("units_", "targets_")) for code in codes):
@@ -134,7 +130,6 @@ def evaluate_readiness(
     *,
     semantic_checks: Mapping[str, object],
     unacked_missing_text: int,
-    unchecked_boundaries: Mapping[int, int],
     reviewer_count: int,
 ) -> Readiness:
     """스냅숏과 질의 몇 개로 읽은 숫자만으로 조건을 가린다 — 순수 함수라 큰 묶음도 스레드에서 돈다."""
@@ -164,15 +159,8 @@ def evaluate_readiness(
     )
     if unversioned:
         blockers.append({"code": "missing_doc_versions", "count": len(unversioned), "document_ids": unversioned})
-    # 결과물·Excel이 이 단위 경계대로 나오므로, 사람이 경계를 다 본 뒤에만 검토로 넘긴다
-    if unchecked_boundaries:
-        blockers.append(
-            {
-                "code": "unchecked_boundaries",
-                "count": sum(unchecked_boundaries.values()),
-                "document_ids": sorted(unchecked_boundaries),
-            }
-        )
+    # 경계 확인은 조건이 아니다 — 배정을 확정하는 것이 그 단위의 경계를 확인하는 일이고(네 단계 워크플로우 §5),
+    # 위의 units_*·targets_* 조건이 모든 단위의 확정을 요구한다
     unchecked = [key for key in SEMANTIC_CHECK_KEYS if semantic_checks.get(key) is not True]
     if unchecked:
         blockers.append({"code": "semantic_checks_incomplete", "missing": unchecked})
@@ -216,7 +204,6 @@ async def compute_readiness(session: AsyncSession, bundle: Bundle, *, end_transa
     """
     snap = await load_bundle_snapshot(session, bundle.id, include_text=False)
     unacked = await count_unacked_missing_text(session, bundle.id)
-    unchecked_boundaries = await count_unchecked_boundaries(session, bundle.id)
     reviewers = await _count_active_reviewers(session, bundle.id)
     semantic_checks = dict(bundle.semantic_checks)
     if end_transaction:
@@ -226,7 +213,6 @@ async def compute_readiness(session: AsyncSession, bundle: Bundle, *, end_transa
         snap,
         semantic_checks=semantic_checks,
         unacked_missing_text=unacked,
-        unchecked_boundaries=unchecked_boundaries,
         reviewer_count=reviewers,
     )
 

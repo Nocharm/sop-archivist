@@ -108,9 +108,9 @@ export function UploadModal({ bundleId, onClose, onUploaded, latest = [] }: Uplo
         </button>
         {/* 읽힌 문서가 있으면 다음 단계로 바로 간다 - 닫고 레일에서 Split을 다시 찾지 않게 */}
         {hasReady && !running && (
-          <Link href={getStageHref(bundleId, "split")} className="btn pri" data-testid="upload-go-split" onClick={onClose}>
+          <Link href={getStageHref(bundleId, "assign")} className="btn pri" data-testid="upload-go-assign" onClick={onClose}>
             <Scissors size={16} strokeWidth={1.5} aria-hidden />
-            {t("upload.goSplit")}
+            {t("upload.goAssign")}
           </Link>
         )}
       </>
