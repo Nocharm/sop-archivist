@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     hr_sync_interval_hours: int = 24  # 내장 스케줄러 주기(시간). 0 = off
     hr_sync_delete_cap_pct: int = 20  # 전체 동기화 삭제 상한(% of 배치 관리 행). 0 = 가드 off
 
+    # EQUIS 문서 조회 — db-viewer가 쓰는 n8n 질의 웹훅을 함께 쓴다(인증 헤더 없음). 셋 중 하나라도 비면 비활성.
+    n8n_query_url: str = ""  # 예: http://<n8n-host>:5678/webhook/dbv-query
+    equis_edw_table: str = ""  # 스키마를 포함한 EDW 표 이름. 예: <schema>.EQUIS_DOCUMENT
+    equis_doc_url_base: str = ""  # EQUIS 문서 링크 앞부분. 예: https://<equis-host>
+
     # SOP 문서 업로드·파싱 상한(Tuning) — 부하 검증 전 추천값(설계 §7.1). 넘는 파일은 사유를 남기고 거절한다.
     sop_max_file_mb: int = 25  # 파일 하나(MiB)
     sop_max_docx_unzipped_mb: int = 200  # DOCX 압축 해제 합계(MiB)
@@ -84,6 +89,11 @@ class Settings(BaseSettings):
     def hr_enabled(self) -> bool:
         """HR 웹훅 동기화 활성 여부 — URL·토큰이 모두 설정된 경우만."""
         return bool(self.n8n_hr_url and self.n8n_hr_token)
+
+    @property
+    def equis_enabled(self) -> bool:
+        """EQUIS 조회 활성 여부 — 웹훅 주소·EDW 표 이름·링크 앞부분이 모두 설정된 경우만."""
+        return bool(self.n8n_query_url and self.equis_edw_table and self.equis_doc_url_base)
 
     def sysadmin_login_ids(self) -> set[str]:
         return {x.strip() for x in self.app_sysadmins.split(",") if x.strip()}

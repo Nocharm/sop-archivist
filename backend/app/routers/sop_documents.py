@@ -8,14 +8,18 @@ from io import BytesIO
 from typing import Annotated, Literal, Self
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, Path, Query, Response, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Path, Query, Response, UploadFile
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
 from app.db import get_session
+from app.equis import service as equis_service
+from app.equis.rules import normalize_number
+from app.equis.view import EquisOut, build_equis_out
 from app.routers.admin import KstDatetime
+from app.routers.sop_equis import start_lookups
 from app.sop.constants import LANGUAGE_LAYOUTS, MEMBER_ROLES
 from app.sop.decision_steps import record_unit_edit_step
 from app.sop.detach import detach_units, find_units_needing_confirm
@@ -153,6 +157,8 @@ class DocumentOut(DocumentBase):
     ai_meta: AiMetaOut | None = None
     # 경계를 아직 확인하지 않은 단위 수 — 0이 아니면 검토 요청을 막는다(쪼개기 문서 목록의 남은 수)
     unchecked_boundaries: int = 0
+    # 문서 번호의 EQUIS 표시 — 기능이 꺼졌거나 묻지 않는 번호(빈 칸·임시 번호)면 None
+    equis: EquisOut | None = None
 
 
 class DocumentUpdateIn(BaseModel):
@@ -296,6 +302,8 @@ async def build_documents_out(session: AsyncSession, documents: Sequence[Documen
             warnings[warning.extraction_id].append(WarningOut.model_validate(warning))
     ai_suggestions = await load_open_doc_meta(session, doc_ids)
     unchecked = await count_unchecked_boundaries(session, documents[0].bundle_id) if documents else {}
+    lookups = await equis_service.load_lookups(session, [document.doc_code for document in documents])
+    read_at = now()
     out = []
     for document in documents:
         extraction = extraction_by_doc.get(document.id)
@@ -308,6 +316,9 @@ async def build_documents_out(session: AsyncSession, documents: Sequence[Documen
                 ),
                 ai_meta=None if ai_meta is None else AiMetaOut.model_validate(ai_meta),
                 unchecked_boundaries=unchecked.get(document.id, 0),
+                equis=build_equis_out(
+                    document.doc_code, "old" if document.side == "old" else "new", document.doc_version, lookups, read_at
+                ),
             )
         )
     return out
@@ -450,6 +461,7 @@ def _read_zip_entry(content: bytes, name: str) -> bytes | None:
 
 @router.post("/{bundle_id}/documents", response_model=DocumentOut, status_code=201)
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(),
     side: Literal["old", "new"] = Form(),
     # 새 문서(side=new)일 때만 쓴다 — 옛 문서에서는 무시한다
@@ -476,6 +488,8 @@ async def upload_document(
     # 규칙이 비운 번호·버전이 있으면 AI에게 묻는다(켜져 있을 때만) — 제안은 문서 목록에 따로 보인다
     if enqueue_doc_meta(session, document, ctx.login_id):
         await session.commit()
+    # 번호가 채워졌으면 EQUIS에 묻는다(켜져 있을 때만) — 응답 뒤에 돌아 업로드를 늦추지 않는다
+    await start_lookups(session, background_tasks, ctx.bundle, [document.doc_code])
     out = (await build_documents_out(session, [document]))[0]
     out.prefill_sources = _find_prefill_sources(file.filename or "", document)
     return out
@@ -496,18 +510,27 @@ def _find_prefill_sources(file_name: str, document: Document) -> dict[PrefillFie
 
 @router.get("/{bundle_id}/documents", response_model=list[DocumentOut])
 async def list_documents(
-    ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
+    background_tasks: BackgroundTasks,
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
 ) -> list[DocumentOut]:
-    documents = await session.scalars(
-        select(Document).where(Document.bundle_id == ctx.bundle.id).order_by(Document.id)  # 올린 순서
+    documents = list(
+        await session.scalars(
+            select(Document).where(Document.bundle_id == ctx.bundle.id).order_by(Document.id)  # 올린 순서
+        )
     )
-    return await build_documents_out(session, list(documents))
+    # 아직 묻지 않았거나 하루가 지난 번호는 응답 뒤에 다시 조회한다 — 있던 값은 그대로 보여 준다
+    await start_lookups(
+        session, background_tasks, ctx.bundle, [document.doc_code for document in documents], sync_titles=False
+    )
+    return await build_documents_out(session, documents)
 
 
 @router.patch("/{bundle_id}/documents/{doc_id}", response_model=DocumentOut)
 async def update_document(
     body: DocumentUpdateIn,
     doc_id: IdPath,
+    background_tasks: BackgroundTasks,
     ctx: BundleContext = Depends(_require_author),
     session: AsyncSession = Depends(get_session),
 ) -> DocumentOut:
@@ -521,6 +544,12 @@ async def update_document(
         for name, value in body.model_dump(exclude={"revision"}, exclude_none=True).items()
         if getattr(document, name) != value
     }
+    if "title" in changes:
+        # EQUIS에 있는 문서의 제목은 EQUIS가 정한다 — 번호를 함께 바꾸는 요청은 새 번호로 본다
+        number = normalize_number(changes.get("doc_code", document.doc_code))
+        lookup = (await equis_service.load_lookups(session, [number])).get(number)
+        if equis_service.is_title_locked(lookup, now()):
+            raise_rule(409, "title_locked", document_id=document.id)
     if changes:  # 바뀐 게 없으면 revision을 올리지 않고 기록도 남기지 않는다
         # 비어 있던 칸을 AI 제안이 있는 채로 채우면 채택을 남긴다(같은 값 as_is, 다른 값 edited) — 처음 정한 판정이 남는다
         empty_before = [name for name in ("doc_code", "doc_version") if not getattr(document, name)]
@@ -541,6 +570,9 @@ async def update_document(
             target_type="document", target_ids=[document.id],
         )
         await session.commit()
+        if "doc_code" in changes:
+            # 새 번호를 EQUIS에 묻는다. 이미 받아 둔 번호면 제목을 바로 맞춘다
+            await start_lookups(session, background_tasks, bundle, [document.doc_code])
     return (await build_documents_out(session, [document]))[0]
 
 

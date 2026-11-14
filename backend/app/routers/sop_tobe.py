@@ -3,15 +3,20 @@
 import asyncio
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import clock
 from app.db import get_session
+from app.equis import service as equis_service
+from app.equis.view import EquisOut, build_equis_out
+from app.routers.sop_equis import start_lookups
 from app.sop import tobe_excel
 from app.sop.constants import MEMBER_ROLES
 from app.sop.errors import check_revision
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
-from app.sop.tobe import ToBeIn, ToBeOut, apply_tobe, build_tobe_out
+from app.sop.models import Bundle
+from app.sop.tobe import TargetDocOut, ToBeIn, ToBeOut, apply_tobe, build_tobe_out
 
 router = APIRouter(prefix="/api/bundles", tags=["sop-tobe"])
 
@@ -22,38 +27,69 @@ XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.s
 TEMPLATE_FILE_NAME = "tobe-template.xlsx"
 
 
+class ToBeDocOut(TargetDocOut):
+    # 줄 번호의 EQUIS 표시 — 기능이 꺼졌거나 묻지 않는 번호(임시 번호)면 None
+    equis: EquisOut | None = None
+
+
+class ToBeViewOut(ToBeOut):
+    docs: list[ToBeDocOut]  # type: ignore[assignment] -- 같은 줄에 EQUIS 표시만 더한 모양
+
+
+async def _build_tobe_view(
+    session: AsyncSession, background_tasks: BackgroundTasks, bundle: Bundle, *, sync_titles: bool
+) -> ToBeViewOut:
+    """To-Be 목록에 EQUIS 표시를 붙인다. 물을 번호는 응답 뒤에 조회하고, 쓰기 뒤에는 받아 둔 이름으로 제목을 맞춘다."""
+    codes = [doc.code for doc in (await build_tobe_out(session, bundle)).docs]
+    await start_lookups(session, background_tasks, bundle, codes, sync_titles=sync_titles)
+    tobe = await build_tobe_out(session, bundle)
+    lookups = await equis_service.load_lookups(session, codes)
+    now = clock.now()
+    docs = [
+        ToBeDocOut(**doc.model_dump(), equis=build_equis_out(doc.code, "new", "", lookups, now)) for doc in tobe.docs
+    ]
+    return ToBeViewOut(revision=tobe.revision, docs=docs, na_slots=tobe.na_slots, wi_steps=tobe.wi_steps)
+
+
 async def _write_tobe(
     session: AsyncSession,
+    background_tasks: BackgroundTasks,
     ctx: BundleContext,
     payload: ToBeIn | tobe_excel.ParsedWorkbook,
     *,
     revision: int,
     source: Literal["api", "excel"],
-) -> ToBeOut:
-    """PUT과 가져오기가 함께 쓰는 쓰기 — 묶음 행을 잠그고 revision·상태를 확인한 뒤 저장·커밋하고 새 목록을 돌려준다."""
+) -> ToBeViewOut:
+    """PUT과 가져오기가 함께 쓰는 쓰기 — 묶음 행을 잠그고 revision·상태를 확인한 뒤 저장·커밋하고 새 목록을 돌려준다.
+
+    EQUIS에 있는 번호의 제목은 사람이 다른 값을 보내도 EQUIS 이름으로 돌아간다(거절하지 않는다 — 초안에 옛 제목이 남아 있을 수 있다).
+    """
     bundle = ctx.bundle
     await lock_bundle(session, bundle)
     check_revision("bundle", bundle.id, revision, bundle.revision)
     ensure_editable(bundle)
     await apply_tobe(session, bundle, payload, actor=ctx.login_id, source=source)
     await session.commit()
-    return await build_tobe_out(session, bundle)
+    return await _build_tobe_view(session, background_tasks, bundle, sync_titles=True)
 
 
-@router.get("/{bundle_id}/tobe", response_model=ToBeOut)
+@router.get("/{bundle_id}/tobe", response_model=ToBeViewOut)
 async def get_tobe(
-    ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
-) -> ToBeOut:
-    return await build_tobe_out(session, ctx.bundle)
+    background_tasks: BackgroundTasks,
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> ToBeViewOut:
+    return await _build_tobe_view(session, background_tasks, ctx.bundle, sync_titles=False)
 
 
-@router.put("/{bundle_id}/tobe", response_model=ToBeOut)
+@router.put("/{bundle_id}/tobe", response_model=ToBeViewOut)
 async def put_tobe(
     body: ToBeIn,
+    background_tasks: BackgroundTasks,
     ctx: BundleContext = Depends(_require_author),
     session: AsyncSession = Depends(get_session),
-) -> ToBeOut:
-    return await _write_tobe(session, ctx, body, revision=body.revision, source="api")
+) -> ToBeViewOut:
+    return await _write_tobe(session, background_tasks, ctx, body, revision=body.revision, source="api")
 
 
 @router.get("/{bundle_id}/tobe/template.xlsx")
@@ -69,15 +105,16 @@ async def download_tobe_template(
     )
 
 
-@router.post("/{bundle_id}/tobe/import", response_model=ToBeOut)
+@router.post("/{bundle_id}/tobe/import", response_model=ToBeViewOut)
 async def import_tobe(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(),
     revision: int = Form(ge=1),
     ctx: BundleContext = Depends(_require_author),
     session: AsyncSession = Depends(get_session),
-) -> ToBeOut:
+) -> ToBeViewOut:
     # 상한보다 1바이트 더 읽어 넘었는지만 알린다 — 큰 파일을 통째로 메모리에 올리지 않는다
     data = await file.read(tobe_excel.MAX_FILE_BYTES + 1)
     # 파싱은 CPU를 쓰므로 이벤트 루프 밖에서 돌린다(묶음 잠금도 파싱이 끝난 뒤에 잡는다)
     parsed = await asyncio.to_thread(tobe_excel.parse_tobe_workbook, data)
-    return await _write_tobe(session, ctx, parsed, revision=revision, source="excel")
+    return await _write_tobe(session, background_tasks, ctx, parsed, revision=revision, source="excel")
