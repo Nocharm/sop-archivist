@@ -1971,6 +1971,42 @@ await runStep("assign: AI split suggestions - ask for the whole document, apply 
   check("Undo takes the cut back", true);
 });
 
+// 배정 화면에서 고른 글자로 새 Unit 만들기(전에는 쪼개기 화면에서만 했다) - 끌어 고르면 용지 위에 줄이 뜨고, 만들고, 되돌린다
+await runStep("assign: make a unit from a dragged selection, then undo", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${freshId}/documents`, { headers })).json();
+  const oldDoc = docs.find((doc) => doc.side === "old" && doc.status === "ready");
+  const readUnits = async () => (await (await page.request.get(`${BASE}/api/bundles/${freshId}/documents/${oldDoc.id}/view`, { headers })).json()).units;
+  const before = await readUnits();
+  const unit = before.find((item) => item.kind === "sentence" && item.lang === "en" && item.status === "unassigned" && item.text.length > 40);
+  check("the fresh bundle has a long unassigned sentence", unit !== undefined);
+  await page.goto(`${BASE}/bundles/${freshId}/assign`);
+  await wait(page, "assign-bar");
+  const span = page.locator(`[data-testid="assign-paper-unit-${unit.id}"]`).first();
+  await span.waitFor({ timeout: T });
+  await span.scrollIntoViewIfNeeded();
+  const box = await span.boundingBox();
+  await page.mouse.move(box.x + 2, box.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 150, box.y + 10, { steps: 10 });
+  await page.mouse.up();
+  await wait(page, "assign-carve");
+  const picked = (await getText(page, "assign-carve-text")).trim();
+  check("the bar above the paper shows the picked text", picked.length > 0 && unit.text.startsWith(picked), picked);
+  await takeShot("sop-assign-carve.png");
+  await page.locator('[data-testid="assign-carve-run"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-undo"]')?.disabled === false, null, { timeout: T });
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-carve"]') === null, null, { timeout: T });
+  const after = await readUnits();
+  check("the picked text becomes its own unit", after.length === before.length + 1 && after.some((item) => item.text.trim() === picked), `${before.length} -> ${after.length}`);
+  await page.locator('[data-testid="assign-undo"]').click();
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((toast) => toast.textContent?.includes("New unit from selection")), null, { timeout: T });
+  check("Undo puts the sentence back", (await readUnits()).length === before.length);
+});
+
 // 배정 화면에서 한/영 짝 풀고 다시 맺기 - 우클릭 메뉴(전에는 쪼개기 화면에서만 했다). 끝에는 다시 짝이다
 await runStep("assign: separate and pair KO/EN from the right-click menu", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);

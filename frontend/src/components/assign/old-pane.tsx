@@ -46,6 +46,10 @@ interface OldPaneProps {
   onUnitContextMenu?: (unitId: number, at: { x: number; y: number }, caret: { blockId: number; offset: number } | null) => void;
   /** 두 번 누르기 - 나눌 선을 놓는다 */
   onUnitDoubleClick?: (unitId: number, caret: { blockId: number; offset: number } | null) => void;
+  /** 한 문단 안에서 글자를 끌어 고름 - 고른 범위로 새 Unit을 만든다(작성자만) */
+  onRangeSelect?: (range: { blockId: number; start: number; end: number }) => void;
+  /** 용지 위 한 줄 - 고른 범위로 Unit 만들기 같은, 용지에 대한 잠깐의 동작 */
+  banner?: ReactNode;
   /** 나눌 선(Split과 같은 부품) - 고른 Unit(selectedId) 안에만 그린다 */
   cut?: PaperCut | null;
   onCutDrag?: (pos: CutDragPos) => void;
@@ -79,6 +83,7 @@ export function OldPane(props: OldPaneProps) {
           <PartTabs keys={props.partKeys} active={props.activePart} onChange={props.onPartChange} testIdPrefix="assign-tab" />
         </div>
       )}
+      {props.banner}
       <div className="pane-body">
         {model && props.foldEmpty !== null ? (
           <EmptyState
@@ -108,6 +113,8 @@ export function OldPane(props: OldPaneProps) {
             onUnitClick={(unitId, _at, event) => props.onUnitClick(unitId, { shiftKey: event.shiftKey })}
             onUnitContextMenu={props.onUnitContextMenu}
             onUnitDoubleClick={props.onUnitDoubleClick}
+            onRangeSelect={props.onRangeSelect}
+            shiftClickPicks
             cut={props.cut}
             onCutDrag={props.onCutDrag}
             onCutNudge={props.onCutNudge}

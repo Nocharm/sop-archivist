@@ -99,6 +99,8 @@ interface PaperProps {
   isDone?: (unitId: number) => boolean;
   onUnitClick: (unitId: number, at: { blockId: number; offset: number } | null, event: MouseEvent) => void;
   onRangeSelect?: (range: { blockId: number; start: number; end: number }) => void;
+  /** Shift+클릭이 여럿 고르기인 화면(Assign) - 끌어 고르기(onRangeSelect)를 함께 써도 Shift+클릭이 글자 선택을 늘리지 않게 한다 */
+  shiftClickPicks?: boolean;
   /** 그림을 받을 묶음·문서 - 없으면 그림 자리 상자만 */
   figureSource?: { bundleId: number; docId: number };
   /** 단위·조각·표시 testid의 앞말 */
@@ -192,6 +194,7 @@ export function Paper({
   isDone,
   onUnitClick,
   onRangeSelect,
+  shiftClickPicks = false,
   figureSource,
   testId,
   sheetTestId,
@@ -974,8 +977,8 @@ export function Paper({
       pressRef.current = el ? { el, top: el.getBoundingClientRect().top } : null;
     }
     if (onUnitDoubleClick && event.detail > 1 && (event.target as HTMLElement).closest(".su[data-unit]")) event.preventDefault();
-    // 끌어 고르기가 없는 화면(Assign)에서 Shift+클릭은 여럿 고르기다 - 브라우저가 글자 선택을 늘려 클릭을 삼키지 않게
-    if (!onRangeSelect && event.shiftKey && (event.target as HTMLElement).closest(".su[data-unit]")) event.preventDefault();
+    // Shift+클릭이 여럿 고르기인 화면(Assign, 또는 끌어 고르기가 없는 화면)에서는 브라우저가 글자 선택을 늘려 클릭을 삼키지 않게
+    if ((shiftClickPicks || !onRangeSelect) && event.shiftKey && (event.target as HTMLElement).closest(".su[data-unit]")) event.preventDefault();
   }
 
   /** 떨어진 짝 구성원도 언어 칩을 보이게 - 올린 줄의 짝 조각에 data-mate-hover를 직접 단다(이웃한 짝 카드는 CSS가 맡는다).
