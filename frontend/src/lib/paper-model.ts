@@ -216,6 +216,15 @@ export function countUnchecked(units: readonly ViewUnit[], isChecked: (unit: Vie
   return units.filter((unit) => !SPANLESS_KINDS.has(unit.kind) && !isChecked(unit)).length;
 }
 
+/**
+ * 남은 수를 셀 때의 확인 여부 - 숨긴 같은 내용 단위도 서버처럼 하나씩 세고(사용자 결정 2026-11-14),
+ * 숨긴 단위는 보이는 단위(주인)에 방금 칠한 확인을 따른다(확인 요청이 주인과 숨긴 단위를 함께 보낸다)
+ */
+export function readCountedCheck(mirrors: ReadonlyMap<number, readonly number[]>, overrides: Readonly<Record<number, boolean>>): (unit: ViewUnit) => boolean {
+  const ownerOf = new Map([...mirrors].flatMap(([owner, ids]) => ids.map((id) => [id, owner] as const)));
+  return (unit) => overrides[ownerOf.get(unit.id) ?? unit.id] ?? unit.boundary_confirmed;
+}
+
 /** 종이 오른쪽 끝 아이콘 표시 - 순서가 늘 같아야 줄마다 같은 자리에 온다. suggest는 아직 정하지 않은 AI 나누기 제안 */
 export function getMarks(unit: ViewUnit): UnitMark[] {
   const marks: UnitMark[] = [];

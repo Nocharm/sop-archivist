@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewPartGroup, ViewUnit } from "./api-sop";
-import { buildContourPath, buildPaperModel, buildPaperTabs, buildRows, canSplitAt, clampSplitAt, getGapMerge, getMergeBlocker, resolveCutDrag, countUnchecked, getMarks, getTags, readWarningText, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
+import { buildContourPath, buildPaperModel, buildPaperTabs, buildRows, canSplitAt, clampSplitAt, getGapMerge, getMergeBlocker, resolveCutDrag, countUnchecked, readCountedCheck, getMarks, getTags, readWarningText, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -182,6 +182,21 @@ describe("countUnchecked", () => {
   it("follows what the screen already painted as checked", () => {
     expect(countUnchecked(units, (unit) => unit.boundary_confirmed || unit.id === 1)).toBe(3);
     expect(countUnchecked(units, () => true)).toBe(0);
+  });
+});
+
+describe("readCountedCheck", () => {
+  // 같은 머리말 셋 - 10이 보이고 11·12는 숨는다
+  const mirrors = new Map([[10, [11, 12]]]);
+  const header = [makeSplitUnit({ id: 10 }), makeSplitUnit({ id: 11 }), makeSplitUnit({ id: 12, boundary_confirmed: true })];
+
+  it("counts hidden same-content units one by one like the server", () => {
+    expect(countUnchecked(header, readCountedCheck(mirrors, {}))).toBe(2);
+  });
+
+  it("lets hidden units follow the check just painted on the shown one", () => {
+    expect(countUnchecked(header, readCountedCheck(mirrors, { 10: true }))).toBe(0);
+    expect(countUnchecked(header, readCountedCheck(mirrors, { 10: false }))).toBe(3);
   });
 });
 
