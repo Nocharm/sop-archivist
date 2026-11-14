@@ -740,6 +740,9 @@ await runStep("assign: right-click an Old sentence to split it or change its lan
   await page.locator(`[data-testid="assign-ctx-lang-${other}"]`).click();
   await page.waitForFunction(async ([path, id, lang]) => (await (await fetch(path, { headers: { "X-Dev-User": "qa.member" } })).json()).units.find((unit) => unit.id === id)?.lang === lang, [`/api/bundles/${freshBundleId}/documents/${docId}/view`, target.id, other], { timeout: T });
   check("Language changes the unit's language from Assign", true);
+  // 고친 뒤 화면이 원문을 다시 받아 그 줄을 다시 고른다 - 그 전에 메뉴를 열면 줄을 다시 고를 때 메뉴가 닫힌다
+  await page.waitForLoadState("networkidle");
+  await wait(page, "assign-row-id");
   // 여기서 나누기 - 선을 놓고 Split here
   const before = (await viewUnits()).length;
   await openMenu(target.id);
@@ -2047,6 +2050,29 @@ await runStep("assign: separate and pair KO/EN from the right-click menu", {}, a
   await page.waitForFunction((ids) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.includes(ids[1]), [ko.display_id, en.display_id], { timeout: T });
   const again = await readPairs([ko.id, en.id]);
   check("the two sentences are a pair again and share a row", again[0] !== null && again[0] === again[1]);
+  // 떨어진 문장과 짝 맺기 - 다시 풀고, 메뉴에서 시작해 영어 문장을 눌러 맺는다. 같은 문장·같은 언어는 맺지 않는다
+  await piece.click({ button: "right" });
+  await wait(page, "assign-ctx-unpair");
+  const separatedAgain = page.waitForResponse((response) => response.request().method() === "DELETE" && /\/pairs\/\d+/.test(response.url()), { timeout: T });
+  await page.locator('[data-testid="assign-ctx-unpair"]').click();
+  await separatedAgain;
+  await page.waitForFunction((id) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() === id, ko.display_id, { timeout: T });
+  await piece.click({ button: "right" });
+  await wait(page, "assign-ctx-pair_pick");
+  await page.locator('[data-testid="assign-ctx-pair_pick"]').click();
+  await wait(page, "assign-pair-pick");
+  check("the bar above the paper says which sentence is waiting for a partner", (await getText(page, "assign-pair-pick")).includes(ko.display_id));
+  await page.keyboard.press("Escape");
+  check("Esc leaves the pick", (await page.locator('[data-testid="assign-pair-pick"]').count()) === 0);
+  await piece.click({ button: "right" });
+  await page.locator('[data-testid="assign-ctx-pair_pick"]').click();
+  await wait(page, "assign-pair-pick");
+  const picked = page.waitForResponse((response) => response.request().method() === "POST" && /\/pairs$/.test(response.url()), { timeout: T });
+  await page.locator(`[data-testid="assign-paper-unit-${en.id}"]`).first().click();
+  check("clicking the other sentence pairs them", (await picked).ok());
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-pair-pick"]') === null, null, { timeout: T });
+  const pickedPair = await readPairs([ko.id, en.id]);
+  check("the picked sentences are a pair", pickedPair[0] !== null && pickedPair[0] === pickedPair[1]);
 });
 
 // 배정 화면에서 보낼 곳 더하고 지우기 - All 목록에서 SOP·WI·단계를 만들고(한 줄씩 바로 저장), 두 번 눌러 지운다. 끝에는 목록이 처음과 같다

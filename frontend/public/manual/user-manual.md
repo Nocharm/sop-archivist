@@ -466,6 +466,7 @@ Old 문장을 오른쪽 단추로 누르면(키보드는 줄을 고른 채 <kbd>
 | **Edit sentence** | **Split here** | 누른 자리 가까이에 나눌 선을 놓는다. 선을 끌거나 <kbd>←</kbd> <kbd>→</kbd>로 옮긴 뒤 선 옆 **Split here**(<kbd>S</kbd>)로 나누고, **Cancel**(<kbd>Esc</kbd>)로 거둔다. 문장을 두 번 눌러도 선이 놓인다 |
 | | **Merge with previous** · **Merge with next** | 바로 앞·뒤 문장과 한 문장으로 합친다(같은 언어끼리) |
 | | **Pair with previous (KO/EN)** · **Pair with next (KO/EN)** | 앞·뒤 문장이 다른 언어(한글 ↔ 영어)면 합치기 대신 이 항목이 나온다. 두 문장을 한/영 짝으로 맺어 한 줄로 다룬다. 이미 짝이 있는 문장과는 맺을 수 없다 |
+| | **Pair with another sentence…** | 짝이 없는 한글·영어 문장에서 보인다. 누르면 용지 위에 안내 줄이 뜨고, 이어서 누르는 문장(떨어져 있어도 된다)과 짝이 된다. 같은 언어를 누르면 까닭을 알려 주고 계속 기다린다. <kbd>Esc</kbd>나 **Cancel** 로 거둔다 |
 | | **Separate the KO/EN pair** | 짝인 문장에서만 보인다. 짝을 풀어 두 문장을 따로 다룬다 |
 | | **Language** | KO·EN 중 하나로 바꾼다 |
 | | **Split into rows** · **Merge rows back** | 표(또는 표의 칸)에서 누르면 나온다. 통째인 표를 행마다 다른 곳으로 보낼 수 있게 행으로 나누고, 나눈 표는 다시 합친다 |

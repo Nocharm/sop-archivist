@@ -6,7 +6,7 @@ import { planJoin } from "./split-menu-model";
 
 export type AssignMenuAction =
   | "confirm" | "clear"
-  | "split" | "merge_prev" | "merge_next" | "pair_prev" | "pair_next" | "unpair" | "lang"
+  | "split" | "merge_prev" | "merge_next" | "pair_prev" | "pair_next" | "pair_pick" | "unpair" | "lang"
   | "table_rows" | "table_merge" | "table_layout";
 
 export interface AssignMenuItem {
@@ -108,6 +108,8 @@ export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
       build("split", editReason ?? (ctx.canSplit ? null : why("nothingToSplit"))),
       buildJoin(ctx, ctx.prev, "prev"),
       buildJoin(ctx, ctx.next, "next"),
+      // 떨어져 있는 문장과 짝 맺기 - 짝이 없는 한글·영어 문장에서만. 누르면 다른 문장을 하나 고른다
+      ...(ctx.target.pair_id === null && (ctx.target.lang === "ko" || ctx.target.lang === "en") ? [build("pair_pick", editReason)] : []),
       // 짝 풀기는 짝인 문장에서만 보인다
       ...(ctx.target.pair_id !== null ? [build("unpair", editReason)] : []),
       { ...build("lang", editReason), lang: ctx.target.lang },
