@@ -139,7 +139,7 @@ for (const theme of ["light", "dark"]) {
       await page.locator(".strip[data-sel] > .strip-lang").first().waitFor({ state: "visible", timeout: T });
       await page.waitForFunction(() => getComputedStyle(document.querySelector(".strip[data-sel] > .strip-lang")).opacity === "1", null, { timeout: T });
     }],
-    ["tobe", `/bundles/${id}/tobe`, '[data-testid$="-row"][data-testid^="tobe-"]'],
+    ["tobe", `/bundles/${id}/documents`, '[data-testid$="-row"][data-testid^="tobe-"]'],
     ["assign", `/bundles/${id}/assign`, '[data-testid="assign-help"]'],
     ["assign-help-marks", `/bundles/${id}/assign`, '[data-testid="assign-help"]', async (page) => { const toggle = page.locator('[data-testid="assign-help-toggle"]'); if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click(); await page.locator('[data-testid="assign-help-tab-marks"]').click(); }],
     ["assign-link", `/bundles/${id}/assign`, '[data-testid="assign-bar"]', pickCandidate],

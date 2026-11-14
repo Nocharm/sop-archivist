@@ -1,7 +1,7 @@
 // 문서 - Bundle에 올린 Old SOP와 New 문서. 번호·버전·제목은 칸에서 바로 고치고(제목을 누르면 그 문서의 Split), 언어 배치를 고르고, 추출 상태와 경고를 본다.
 "use client";
 
-import { Download, Eye, FileText, Loader2, Trash2, Upload } from "lucide-react";
+import { ArrowDown, Download, Eye, FileText, Loader2, Trash2, Upload } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 
@@ -16,6 +16,7 @@ import { EquisStatus } from "@/components/equis/equis-status";
 import { TitleLock } from "@/components/equis/title-lock";
 import { InlineText } from "@/components/inline-text";
 import { ReadOnlyNote } from "@/components/read-only-note";
+import { ToBeSection } from "@/components/tobe/tobe-section";
 import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
 import { EmptyState } from "@/components/ui/empty-state";
 import { BundleLoadError } from "@/components/bundle-load-error";
@@ -32,6 +33,7 @@ import { LANGUAGE_LAYOUTS, listDocuments, refreshEquis, updateDocument, type Doc
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { hasRefreshingEquis } from "@/lib/equis-model";
 import { useI18n } from "@/lib/i18n";
+import { NEW_DOCUMENTS_ANCHOR } from "@/lib/stages";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useEquisPolling } from "@/lib/use-equis-polling";
 import { saveBlob } from "@/lib/save-file";
@@ -327,6 +329,13 @@ export default function DocumentsPage() {
         <div className="flex min-w-0 items-center gap-3">
           <h1 className="page-title ul">{t("documents.title")}</h1>
           <ReadOnlyNote bundle={bundle} testId="documents" />
+          {/* 문서가 많으면 To-Be 목록이 화면 아래로 내려간다 - 제목 옆에서 한 번에 닿게 한다 */}
+          <Tooltip label={t("documents.jumpTobe")}>
+            <a href={`#${NEW_DOCUMENTS_ANCHOR}`} className="btn ghost h-7" data-testid="documents-jump-tobe">
+              {t("documents.tobeTitle")}
+              <ArrowDown size={14} strokeWidth={1.5} aria-hidden />
+            </a>
+          </Tooltip>
         </div>
         <div className="flex items-center gap-2">
           <ListViewToggle listKey={LIST_KEY} view={view} testId="documents-view" />
@@ -373,6 +382,9 @@ export default function DocumentsPage() {
         />
         </div>
       )}
+
+      {/* New 문서 목록(옛 To-Be 화면) - 올린 문서 목록과 한 화면, 한 스크롤이다. 문서를 못 읽었어도 이 목록은 따로 읽는다 */}
+      <ToBeSection bundleId={bundleId} documents={data} onDocumentsChanged={refreshAll} />
 
       {uploading && (
         <UploadModal

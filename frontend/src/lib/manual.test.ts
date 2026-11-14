@@ -149,7 +149,7 @@ describe("getManualHref", () => {
 
 describe("getSectionStage", () => {
   it("maps a stage section back to its stage", () => {
-    expect(getSectionStage("tobe")).toBe("tobe");
+    expect(getSectionStage("tobe")).toBeNull(); // 단계가 아니라 Documents 화면 안의 영역이 되었다
     expect(getSectionStage("bundle")).toBe("overview");
     expect(getSectionStage("faq")).toBeNull();
   });

@@ -373,7 +373,7 @@ await runStep("split: per-sentence AI split, whole-document request, tab stack",
 
 // 일부러 거절당하는 저장이 있어 콘솔 오류를 허용한다
 await runStep("to-be: nested rows, N/A detail, edit and save", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
-  await page.goto(`${BASE}/bundles/${halfBundleId}/tobe`);
+  await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
   await page.locator('[data-testid$="-row"][data-testid^="tobe-"]').first().waitFor({ timeout: T });
   const codes = await page.locator('[data-testid$="-code"][data-testid^="tobe-"]').evaluateAll((els) => els.map((el) => el.value));
   check("SOP first, its WIs under it", codes[0] === "SOP-CF" && codes.slice(1).every((code) => code.startsWith("WI-")), codes.join(","));
@@ -411,7 +411,7 @@ await runStep("to-be: nested rows, N/A detail, edit and save", { allowConsoleErr
 
 // 검토 v0.4.0: 앞 단계를 지워도 뒤 단계 번호가 그대로여야 한다(분류한 문장이 단계 번호를 가리킨다), 저장 안 한 편집은 나갈 때 묻는다
 await runStep("to-be: removing a step keeps the other numbers, leaving asks first", {}, async ({ page }) => {
-  await page.goto(`${BASE}/bundles/${halfBundleId}/tobe`);
+  await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
   await page.locator('[data-testid$="-row"][data-testid^="tobe-"]').first().waitFor({ timeout: T });
   const wiRow = page.locator('[data-testid$="-row"][data-testid^="tobe-"]').nth(1);
   const wiKey = (await wiRow.getAttribute("data-testid")).replace("tobe-", "").replace("-row", "");
@@ -439,7 +439,7 @@ await runStep("to-be: removing a step keeps the other numbers, leaving asks firs
   await page.locator(`[data-testid="tobe-${wiKey}-step-${top + 2}"]`).fill("Smoke step B (unsaved)");
   await page.locator('[data-testid="stage-nav-assign"]').click();
   await wait(page, "tobe-leave");
-  check("leaving with unsaved edits asks first", page.url().endsWith("/tobe"));
+  check("leaving with unsaved edits asks first", page.url().includes("/documents"));
   await page.locator('[data-testid="tobe-leave-cancel"]').click();
   check("cancel stays on To-Be with the edit", (await page.locator(`[data-testid="tobe-${wiKey}-step-${top + 2}"]`).inputValue()) === "Smoke step B (unsaved)");
   await page.locator('[data-testid="stage-nav-assign"]').click();
@@ -448,7 +448,7 @@ await runStep("to-be: removing a step keeps the other numbers, leaving asks firs
   check("confirm discards and leaves", true);
 
   // 되돌리기
-  await page.goto(`${BASE}/bundles/${halfBundleId}/tobe`);
+  await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
   await page.locator(`[data-testid="tobe-${wiKey}-toggle"]`).click();
   await page.locator(`[data-testid="tobe-${wiKey}-remove-step-${top + 2}"]`).click();
   await page.locator('[data-testid="tobe-save"]').click();
@@ -1810,7 +1810,8 @@ await runStep("new bundle in one click, locked stages, empty assign", { devUser:
   const code = (await getText(page, "overview-code")).trim();
   check("new bundle shows its BND code", /^BND-\d{4,}$/.test(code), code);
   check("Split is locked without documents", (await page.locator('[data-testid="stage-nav-split"][aria-disabled="true"]').count()) === 1);
-  check("To-Be stays open without documents", (await page.locator('a[data-testid="stage-nav-tobe"]').count()) === 1);
+  // To-Be 목록은 Documents 화면 안에 있다 - 문서가 없어도 Documents는 열려 있다
+  check("Documents (with the To-Be list) stays open without documents", (await page.locator('a[data-testid="stage-nav-documents"]').count()) === 1);
   await page.locator('[data-testid="overview-menu"]').click();
   await page.locator('[data-testid="overview-menu-synthetic"]').click();
   await page.locator('[data-testid="top-bar-synthetic"]').waitFor({ timeout: T });

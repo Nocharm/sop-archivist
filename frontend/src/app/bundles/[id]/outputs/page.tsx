@@ -61,7 +61,7 @@ import { useLoaded } from "@/lib/use-loaded";
 import { readOutputsView, writeOutputsView, type OutputsTab } from "@/lib/outputs-view-prefs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useProgressiveList } from "@/lib/use-progressive-list";
-import { getStageHref } from "@/lib/stages";
+import { getNewDocumentsHref } from "@/lib/stages";
 
 /** 요약 숫자 순서 - 확정률은 따로 % 글로 */
 const SUMMARY_ITEMS = ["old_rows", "assigned", "no_destination", "duplicate", "deleted", "moved", "new", "translated", "single_language"] as const;
@@ -503,7 +503,7 @@ export default function OutputsPage() {
                 onMove={canEdit ? (docId, locationKey, targetId, dir) => editC(docId, { kind: "move", locationKey, targetId, dir }) : undefined}
                 onIndent={canEdit ? (docId, targetId, depth) => editC(docId, { kind: "indent", targetId, depth }) : undefined}
                 onMark={canEdit ? (docId, targetId, style) => editC(docId, { kind: "style", targetId, style }) : undefined}
-                tobeHref={canEdit ? getStageHref(bundleId, "tobe") : undefined} />
+                tobeHref={canEdit ? getNewDocumentsHref(bundleId) : undefined} />
             </>
           ) : null}
         </div>

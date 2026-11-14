@@ -94,10 +94,10 @@ async function auditHover(page, selector, report) {
 
 const mbtnScenes = [
   { name: "documents", user: "qa.member", url: `/bundles/${BUNDLE}/documents`, ready: '[data-testid$="-delete"]', buttons: '.row-actions-quiet button:not(:disabled)' },
-  { name: "tobe", user: "qa.member", url: `/bundles/${BUNDLE}/tobe`, ready: '[data-testid="tobe-list"]', buttons: '[data-testid$="-remove"]:not(:disabled)', long: async (page) => {
+  { name: "tobe", user: "qa.member", url: `/bundles/${BUNDLE}/documents`, ready: '[data-testid="tobe-list"]', buttons: '[data-testid$="-remove"]:not(:disabled)', long: async (page) => {
     for (const input of await page.locator('input[data-testid$="-title"]').all()) await input.fill("SYNTHETIC very long document title that keeps going and going across the whole column width");
   } },
-  { name: "tobe-steps", user: "qa.member", url: `/bundles/${BUNDLE}/tobe`, ready: '[data-testid="tobe-list"]', prepare: async (page) => {
+  { name: "tobe-steps", user: "qa.member", url: `/bundles/${BUNDLE}/documents`, ready: '[data-testid="tobe-list"]', prepare: async (page) => {
     for (const toggle of await page.locator('[data-testid^="tobe-"][data-testid$="-toggle"]').all()) await toggle.click();
     await page.locator('[data-testid*="-remove-step-"]').first().waitFor({ timeout: T });
     await page.waitForTimeout(800);

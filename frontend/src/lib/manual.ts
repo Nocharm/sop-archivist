@@ -153,7 +153,6 @@ export const MANUAL_STAGE_SECTION: Record<StageKey, string> = {
   overview: "bundle",
   documents: "documents",
   split: "split",
-  tobe: "tobe",
   assign: "assign",
   outputs: "outputs",
   review: "review",

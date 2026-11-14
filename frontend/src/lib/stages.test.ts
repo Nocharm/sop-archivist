@@ -1,13 +1,18 @@
 // 묶음 주소 읽기 - 단계 경로와 묶음 밖 주소를 가른다.
 import { describe, expect, it } from "vitest";
 
-import { getStageHref, isStageLocked, NEXT_ACTION_STAGE, parseBundlePath, STAGES } from "./stages";
+import { getNewDocumentsHref, getNextActionHref, getStageHref, isStageLocked, NEXT_ACTION_STAGE, parseBundlePath, STAGES } from "./stages";
 
 describe("parseBundlePath", () => {
   it("reads the overview and a stage", () => {
     expect(parseBundlePath("/bundles/12")).toEqual({ bundleId: 12, stage: "overview" });
     expect(parseBundlePath("/bundles/12/assign")).toEqual({ bundleId: 12, stage: "assign" });
-    expect(parseBundlePath("/bundles/12/tobe/")).toEqual({ bundleId: 12, stage: "tobe" });
+    expect(parseBundlePath("/bundles/12/documents/")).toEqual({ bundleId: 12, stage: "documents" });
+  });
+
+  it("no longer treats the old To-Be address as a stage", () => {
+    // 그 주소는 Documents의 New 문서 목록으로 넘어간다
+    expect(parseBundlePath("/bundles/12/tobe")).toEqual({ bundleId: 12, stage: null });
   });
 
   it("returns null outside a bundle and an unknown stage for a stray path", () => {
@@ -27,7 +32,14 @@ describe("NEXT_ACTION_STAGE", () => {
   it("sends unit decisions and reasons to Assign", () => {
     expect(NEXT_ACTION_STAGE.decide_units).toBe("assign");
     expect(NEXT_ACTION_STAGE.fill_reasons).toBe("assign");
-    expect(NEXT_ACTION_STAGE.fill_tobe).toBe("tobe");
+  });
+
+  it("sends filling the new-document list to its place on Documents", () => {
+    expect(NEXT_ACTION_STAGE.fill_tobe).toBe("documents");
+    expect(getNextActionHref(4, "fill_tobe")).toBe("/bundles/4/documents#new-documents");
+    expect(getNewDocumentsHref(4)).toBe("/bundles/4/documents#new-documents");
+    expect(getNextActionHref(4, "decide_units")).toBe("/bundles/4/assign");
+    expect(getNextActionHref(4, "request_review")).toBeNull();
   });
 
   it("sends the meaning checks to Outputs, where the checkboxes are", () => {
@@ -42,8 +54,8 @@ describe("isStageLocked", () => {
     }
   });
 
-  it("keeps overview, documents, To-Be and history open", () => {
-    for (const key of ["overview", "documents", "tobe", "history"] as const) {
+  it("keeps overview, documents and history open", () => {
+    for (const key of ["overview", "documents", "history"] as const) {
       expect(isStageLocked(key, 0)).toBe(false);
     }
   });
@@ -60,5 +72,11 @@ describe("isStageLocked", () => {
 describe("STAGES", () => {
   it("has one step-3 stage, Assign", () => {
     expect(STAGES.filter((stage) => stage.step === 3).map((stage) => stage.key)).toEqual(["assign"]);
+  });
+
+  it("numbers four steps starting at Documents", () => {
+    expect(STAGES.filter((stage) => stage.step !== undefined).map((stage) => [stage.step, stage.key])).toEqual([
+      [1, "documents"], [2, "split"], [3, "assign"], [4, "outputs"],
+    ]);
   });
 });

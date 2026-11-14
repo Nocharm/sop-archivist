@@ -50,7 +50,7 @@ import {
 import { loadBundle, putBundle, useBundle } from "@/lib/bundle-store";
 import { useI18n } from "@/lib/i18n";
 import { countPending, getConfirmedPercent } from "@/lib/progress-model";
-import { getStageHref, NEXT_ACTION_STAGE, STAGES } from "@/lib/stages";
+import { getNextActionHref, getStageHref, NEXT_ACTION_STAGE, STAGES } from "@/lib/stages";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { GATE_STAGE, groupNotices, isNoticeGroup, splitGates, type GateKey } from "@/lib/review-gates";
 import { useLoaded, type Loaded } from "@/lib/use-loaded";
@@ -252,7 +252,7 @@ function NextActionCard({ bundle, onRequestReview, onAddReviewer }: { bundle: Bu
     );
   } else if (stage) {
     button = stage.ready ? (
-      <Link href={getStageHref(bundle.id, stage.key)} className="btn pri start-btn" data-testid="overview-next-go">
+      <Link href={getNextActionHref(bundle.id, action) ?? getStageHref(bundle.id, stage.key)} className="btn pri start-btn" data-testid="overview-next-go">
         <span className="start-ico" aria-hidden>
           <Play size={15} strokeWidth={1.8} />
         </span>
