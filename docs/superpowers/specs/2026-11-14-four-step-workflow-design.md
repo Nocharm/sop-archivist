@@ -114,6 +114,8 @@ Assign 화면이 바탕이다. 배치(레일 | 막대 | Old 원문 ‖ New 원�
 - 검토 요청 조건에서 "All boundaries checked" 줄과 다음 할 일 `check_boundaries`를 없앤다. 모든 글자 Unit이 확정 판단을 가져야 검토를 요청할 수 있다는 기존 조건이 같은 일을 한다.
 - 결과물과 Excel이 자른 자리를 그대로 따른다는 사실은 변하지 않는다. 그래서 확정 순간에 사람이 보는 것이 그 문단의 경계라는 점을 화면이 보장해야 한다. 고른 문단의 윤곽(지금 표시)이 자른 범위 그대로여야 하고, 확정 대상이 화면 밖에 있으면 확정 전에 가운데로 스크롤한다.
 
+**v1.0.3에서 한 만큼.** 조건을 걷어냈다 — 검토 요청 조건의 "All boundaries checked"와 다음 할 일 `check_boundaries`가 없다. "확인됨"은 저장하지 않고 읽을 때 계산한다: `boundary_confirmed` 표시가 있거나, 사람이 확정한 판단(Old Unit의 `UnitDecision`, 이미 쓴 New Unit의 `TargetSentence`)이 있으면 확인된 것이다. 그래서 비우면 저절로 풀리고(표시를 따로 올렸으면 남는다), 확정·되돌리기 저장 경로와 스냅숏은 손대지 않았다. 경계만 따로 확인하는 동작(`↵`·`U`·**Check the rest**)과 남은 수 표시는 Split 화면과 함께 아직 남아 있다 — 배정 전에 미리 훑어 두는 표시일 뿐 무엇도 막지 않는다. Split 도구를 Assign으로 다 옮길 때(B3 가) 함께 없앤다.
+
 ## 6. 검토자 (사용자 결정 2026-11-14: 배정 읽기 전용과 결과물)
 
 - 검토자에게 레일의 2와 4가 열린다. 1과 3은 흐리게 두고 누를 수 없다(내 판단 — 검토 대상이 아니다).
@@ -173,8 +175,8 @@ Assign 화면이 바탕이다. 배치(레일 | 막대 | Old 원문 ‖ New 원�
 
 ## 8. 서버 변경
 
-- **확정이 경계를 올린다.** 판단을 사람 확정으로 바꾸는 저장 경로(`decisions`의 groups save, bulk-confirm, 일괄 삭제·이동, 신규 표시)가 그 Unit의 `boundary_confirmed`를 함께 올린다. 비우기와 Reset은 내린다. 되돌리기 스냅숏에 이 칸을 넣는다.
-- **조건 걷어내기.** `review.py`에서 `unchecked_boundaries`와 `check_boundaries`를 없앤다. 문서 목록 응답의 `unchecked_boundaries`, `POST …/units/boundary`·`…/units/boundary/all`도 없앤다. `boundary_confirmed` 열은 남긴다(리비전 없음, 내 판단 — AI 나눔 등 안쪽 논리가 읽는다).
+- **확정이 곧 확인이다.** 처음에는 확정 저장 경로마다 `boundary_confirmed`를 함께 올리려 했다. 구현하면서 바꿨다(v1.0.3, 내 판단): 저장하지 않고 읽을 때 "표시 또는 사람 확정 판단"으로 계산한다(`snapshot.count_unchecked_boundaries`, 문서 보기 응답의 `boundary_confirmed`). 저장 경로가 여럿이라 하나라도 빠뜨리면 어긋나고, 되돌리기 스냅숏에 칸을 더해야 했기 때문이다. 계산이면 비우기·Reset·되돌리기가 저절로 맞는다.
+- **조건 걷어내기.** `review.py`에서 `unchecked_boundaries`와 `check_boundaries`를 없앴다(v1.0.3). 문서 목록 응답의 `unchecked_boundaries`, `POST …/units/boundary`·`…/units/boundary/all`은 Split 화면이 쓰는 동안 남기고, 화면을 걷을 때(B3 가) 함께 없앤다. `boundary_confirmed` 열은 남긴다(리비전 없음, 내 판단 — AI 나눔 등 안쪽 논리가 읽는다).
 - **보낼 곳 한 줄 추가·삭제.** `POST /api/bundles/{id}/tobe/docs`(번호·종류·부모), `POST …/tobe/docs/{doc_id}/steps`, `DELETE …/tobe/docs/{doc_id}`, `DELETE …/tobe/docs/{doc_id}/steps/{step_no}`. 검사는 지금 `PUT /tobe`가 쓰는 함수(`ensure_code_free` 등)를 그대로 부르고 묶음 revision을 올린다. 작성자·작업 중만.
 - 그 밖의 API, 표, 결과물 계산은 그대로다.
 - 다른 사람이 1단계에서 New 표 초안을 고치는 동안 2단계에서 줄이 추가되면, 1단계 저장은 지금처럼 `revision_conflict`로 거절되고 다시 불러오라고 안내한다.
@@ -212,6 +214,8 @@ Assign 화면이 바탕이다. 배치(레일 | 막대 | Old 원문 ‖ New 원�
 처음 초안은 화면은 그대로 두고 레일과 주소만 먼저 묶는 단계를 맨 앞에 뒀다. 구현 전에 코드를 보니 그럴 수 없었다(2026-11-14). 화면이 합쳐지기 전에 `/tobe`와 `/split`을 넘기면 그 화면에 갈 길이 없어지고, 넘기지 않고 묶으려면 한 칸 안에서 화면을 바꾸는 임시 탭을 만들었다가 다시 걷어야 한다. 그래서 화면을 합칠 때마다 그 주소를 넘긴다.
 
 **합치는 동안의 레일 번호.** B1(v1.0.2)에서 Documents 1 · Split 2 · Assign 3 · Outputs 4로 올렸다. 번호 넷이 빈 데 없이 이어지고, 레일에서 To-Be 칸이 없어졌다. 마지막 모양(Split & Assign 2 · Order & Numbering 3)으로 가려면 번호가 한 번 더 바뀐다. B2와 B3를 같은 업데이트로 올려 그 한 번으로 끝낸다(내 판단 — §13).
+
+**v1.0.3에서 그 한 번을 했다.** 레일은 Documents 1 · Assign 2 · Order 3 · Outputs 4다(레일이 좁아 이름은 짧게, 화면 제목은 **Order & numbering**). B2는 다 했다: `/order`가 New 문서를 하나씩 열어 C의 단추로 고치고, Outputs의 C는 읽기 전용에 **Edit order** 링크가 붙는다. B3는 (나) 확정 = 경계만 했다(§5·§8). Split 화면은 아직 걷지 않았다 — `/split`은 레일에 없는 2단계 아래 화면으로 남고(`stages.ts`의 `under`), Assign 위쪽 줄의 **Split tools** 로 보던 Old 문서를 열고 **Back to Assign** 으로 돌아온다. 임시 탭을 만들지 않고도 갈 길이 남아서 이 순서가 됐다. 남은 것: B3 (가) Split에만 있는 도구(한/영 짝 맺기·풀기, 표를 행으로, 고른 범위로 새 Unit, AI 문서 전체 나눔, 빠진 글 경고 확인)를 Assign으로 옮기고 `/split`을 넘기기, (다) 보낼 곳 추가·삭제, 그리고 B4.
 
 EQUIS 1단계와 동시에 간다. 문서 화면과 New 표의 배치는 이 명세가 정하고, EQUIS 쪽은 그 안에 꽂는 조각만 만든다. 먼저 `dev`에 올라간 쪽 위에 나중 쪽이 올린다.
 

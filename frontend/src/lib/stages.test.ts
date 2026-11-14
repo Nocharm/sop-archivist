@@ -1,7 +1,7 @@
 // 묶음 주소 읽기 - 단계 경로와 묶음 밖 주소를 가른다.
 import { describe, expect, it } from "vitest";
 
-import { getNewDocumentsHref, getNextActionHref, getStageHref, isStageLocked, NEXT_ACTION_STAGE, parseBundlePath, STAGES } from "./stages";
+import { getNewDocumentsHref, getNextActionHref, getRailStage, getStageHref, isStageLocked, NEXT_ACTION_STAGE, parseBundlePath, STAGES } from "./stages";
 
 describe("parseBundlePath", () => {
   it("reads the overview and a stage", () => {
@@ -49,7 +49,7 @@ describe("NEXT_ACTION_STAGE", () => {
 
 describe("isStageLocked", () => {
   it("locks the document-dependent stages while there are no documents", () => {
-    for (const key of ["split", "assign", "outputs", "review"] as const) {
+    for (const key of ["split", "assign", "order", "outputs", "review"] as const) {
       expect(isStageLocked(key, 0)).toBe(true);
     }
   });
@@ -70,13 +70,23 @@ describe("isStageLocked", () => {
 });
 
 describe("STAGES", () => {
-  it("has one step-3 stage, Assign", () => {
-    expect(STAGES.filter((stage) => stage.step === 3).map((stage) => stage.key)).toEqual(["assign"]);
+  it("numbers four rail steps: Documents, Assign, Order, Outputs", () => {
+    expect(STAGES.filter((stage) => stage.step !== undefined && !stage.under).map((stage) => [stage.step, stage.key])).toEqual([
+      [1, "documents"], [2, "assign"], [3, "order"], [4, "outputs"],
+    ]);
   });
 
-  it("numbers four steps starting at Documents", () => {
-    expect(STAGES.filter((stage) => stage.step !== undefined).map((stage) => [stage.step, stage.key])).toEqual([
-      [1, "documents"], [2, "split"], [3, "assign"], [4, "outputs"],
-    ]);
+  it("keeps Split as a screen under step 2, off the rail", () => {
+    const split = STAGES.find((stage) => stage.key === "split");
+    expect(split).toMatchObject({ path: "/split", step: 2, under: "assign" });
+    expect(parseBundlePath("/bundles/3/split")).toEqual({ bundleId: 3, stage: "split" });
+    expect(getRailStage("split")).toBe("assign");
+    expect(getRailStage("order")).toBe("order");
+    expect(getRailStage(null)).toBeNull();
+  });
+
+  it("reads the Order page path", () => {
+    expect(parseBundlePath("/bundles/3/order")).toEqual({ bundleId: 3, stage: "order" });
+    expect(getStageHref(3, "order")).toBe("/bundles/3/order");
   });
 });

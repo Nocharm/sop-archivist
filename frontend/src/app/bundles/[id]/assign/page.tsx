@@ -3,7 +3,7 @@
 // 오른쪽은 고른 곳·확정·우선순위 아코디언이다(설계 docs/superpowers/specs/2026-11-09-assign-unified-design.md).
 "use client";
 
-import { Check, Circle, CircleCheck, CircleDashed, CirclePause, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, Redo2, RefreshCw, Sparkles, Trash2, TriangleAlert, Undo2, X, type LucideIcon } from "lucide-react";
+import { Check, Circle, CircleCheck, CircleDashed, CirclePause, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, Redo2, RefreshCw, Scissors, Sparkles, Trash2, TriangleAlert, Undo2, X, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent } from "react";
@@ -1949,6 +1949,20 @@ export default function AssignPage() {
         )}
         {canEdit && <ResetMenu compact={isBarCompact} document={oldView ? { id: oldView.document.id, label: oldView.document.doc_code || oldView.document.file_name } : null} disabled={busy} onPick={setResetScope} />}
         {aiOn && canEdit && <AiAskMenu compact={isBarCompact} items={aiMenuItems} label={t("ai.more")} testId="assign-ai-menu" disabled={busy} />}
+        {/* 쪼개기 화면은 레일에 없다 - KO/EN 짝·표 행·다시 자르기는 지금 보는 Old 문서로 바로 건너가서 한다 */}
+        {canEdit && (
+          <Tooltip label={t("assign.openSplitTip")}>
+            <Link
+              href={`${getStageHref(bundleId, "split")}${oldView ? `?doc=${oldView.document.id}` : ""}`}
+              className="btn h-7"
+              aria-label={isBarCompact ? t("assign.openSplit") : undefined}
+              data-testid="assign-open-split"
+            >
+              <Scissors size={14} strokeWidth={1.5} aria-hidden />
+              {!isBarCompact && t("assign.openSplit")}
+            </Link>
+          </Tooltip>
+        )}
         <SourceFontMenu />
       </div>
     </div>

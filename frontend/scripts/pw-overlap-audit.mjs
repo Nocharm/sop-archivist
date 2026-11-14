@@ -162,7 +162,8 @@ const outputsScene = {
   name: "outputs-c-rows",
   user: "qa.member",
   run: async (page, report) => {
-    await page.goto(`${BASE}/bundles/${BUNDLE}/outputs`);
+    // 줄 끝 단추는 3단계(Order) 화면에만 있다 - 결과 화면의 C는 읽기 전용
+    await page.goto(`${BASE}/bundles/${BUNDLE}/order`);
     await page.locator('[data-testid="output-c"]').waitFor({ timeout: T });
     const rows = page.locator('[data-testid^="output-c-row-"]');
     await rows.first().waitFor({ timeout: T });
@@ -303,7 +304,8 @@ const outputsReorderScene = {
       await new Promise((done) => { release = done; });
       await route.fulfill({ status: 500, contentType: "application/json", body: "{}" });
     });
-    await page.goto(`${BASE}/bundles/${BUNDLE}/outputs`);
+    // 줄 끝 단추는 3단계(Order) 화면에만 있다 - 결과 화면의 C는 읽기 전용
+    await page.goto(`${BASE}/bundles/${BUNDLE}/order`);
     await page.locator('[data-testid="output-c"]').waitFor({ timeout: T });
     const down = page.locator('[data-testid^="output-c-move-down-"]:not([disabled])').first();
     await down.waitFor({ timeout: T });

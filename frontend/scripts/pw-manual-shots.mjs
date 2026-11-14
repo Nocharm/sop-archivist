@@ -56,7 +56,7 @@ const SCENES = [
       await click(page, id("bundles-new"));
       await page.locator(id("overview-code")).waitFor({ timeout: 15000 });
     },
-    marks: [id("overview-code"), id("overview-menu"), id("overview-next"), id("stage-nav-split"), id("stage-nav-history")],
+    marks: [id("overview-code"), id("overview-menu"), id("overview-next"), id("stage-nav-assign"), id("stage-nav-history")],
   },
   {
     // 하위 메뉴는 마우스가 떠나면 닫힌다 - 올려 둔 채로 찍는다(keepMouse)
@@ -190,6 +190,11 @@ const SCENES = [
       await page.waitForLoadState("networkidle");
     },
     marks: [id("assign-filter-on_hold"), id("assign-system-hold")],
+  },
+  {
+    // 3단계 - New 문서를 하나씩 열어 순서·들여쓰기·번호를 고친다(작업 중인 묶음이라 줄 끝 단추가 보인다)
+    name: "order", appOnly: true, app: {}, user: "qa.member", path: "/bundles/2/order",
+    prep: (page) => page.locator('[data-testid^="output-c-move-"]').first().waitFor({ state: "attached", timeout: T }),
   },
   {
     name: "outputs-a", app: {}, user: "qa.member", path: "/bundles/3/outputs",

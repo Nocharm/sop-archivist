@@ -4,7 +4,6 @@
 import {
   BadgeCheck,
   Check,
-  CheckCheck,
   ChevronRight,
   FileUp,
   FileClock,
@@ -71,7 +70,6 @@ const NEXT_ICONS: Record<NextAction, LucideIcon> = {
   upload_documents: FileUp,
   resolve_documents: FileWarning,
   fill_doc_versions: FileClock,
-  check_boundaries: CheckCheck,
   fill_tobe: ListTree,
   decide_units: Split,
   ack_warnings: TriangleAlert,
@@ -110,7 +108,6 @@ function buildGateLines(readiness: Readiness, semanticTotal: number, t: TFunc): 
   const reasons = sumCounts(blockers, "duplicate_without_reason") + sumCounts(blockers, "missing_reason");
   const warnings = findIssue(blockers, "unacked_missing_text");
   const versions = findIssue(blockers, "missing_doc_versions");
-  const boundaries = findIssue(blockers, "unchecked_boundaries");
   const semantic = findIssue(blockers, "semantic_checks_incomplete");
   const semanticMissing = semantic?.missing?.length ?? 0;
   const unresolvedCount = Array.isArray(unresolved?.document_ids) ? unresolved.document_ids.length : 0;
@@ -124,11 +121,6 @@ function buildGateLines(readiness: Readiness, semanticTotal: number, t: TFunc): 
       key: "versions",
       ok: !versions,
       label: versions ? t("gate.docVersions", { n: versions.count ?? 0 }) : t("gate.docVersionsOk"),
-    },
-    {
-      key: "boundaries",
-      ok: !boundaries,
-      label: boundaries ? t("gate.boundaries", { n: boundaries.count ?? 0 }) : t("gate.boundariesOk"),
     },
     { key: "units", ok: units === 0, label: units ? t("gate.units", { n: units }) : t("gate.unitsOk") },
     { key: "targets", ok: targets === 0, label: targets ? t("gate.targets", { n: targets }) : t("gate.targetsOk") },

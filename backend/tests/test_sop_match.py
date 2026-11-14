@@ -329,6 +329,28 @@ def test_bulk_confirm_identical_and_new(client: TestClient) -> None:
     assert sorted(target_ids) == sorted([c["target_id"] for c in candidates] + [fresh["id"]])
 
 
+def test_confirmed_new_sentences_count_as_boundary_checked(client: TestClient) -> None:
+    """이미 쓴 New 문서의 문장을 확정하면 그 Unit의 경계도 확인된 것이다 — 확정하지 않은 문장만 남은 수에 남는다."""
+    fx = _setup(client, p("합성 장비를 켠다."), p("합성 장비를 켠다.") + p("합성 라벨을 붙인다."))
+    new_id = fx.new_doc["id"]
+
+    def read_left() -> int:
+        documents = client.get(f"/api/bundles/{fx.bundle_id}/documents", headers=AUTHOR).json()
+        return next(doc["unchecked_boundaries"] for doc in documents if doc["id"] == new_id)
+
+    left_before = read_left()
+    candidates = _get_candidates(client, fx.bundle_id)
+
+    response = _bulk_confirm(client, fx.bundle_id, {"identical": [_identical_in(candidate) for candidate in candidates], "new": []})
+
+    assert response.status_code == 200, response.text
+    view = get_view(client, fx.bundle_id, new_id)
+    checked = {text: find_unit(view, text)["boundary_confirmed"] for text in ("합성 장비를 켠다.", "합성 라벨을 붙인다.")}
+    assert find_unit(fx.new_view, "합성 장비를 켠다.")["boundary_confirmed"] is False
+    assert checked == {"합성 장비를 켠다.": True, "합성 라벨을 붙인다.": False}
+    assert read_left() == left_before - 1
+
+
 def _count_sources(bundle_id: int) -> int:
     async def _count(session: AsyncSession) -> int:
         return await session.scalar(

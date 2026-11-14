@@ -2,7 +2,7 @@
 
 import type { NextAction } from "./api-sop";
 
-export type StageKey = "overview" | "documents" | "split" | "assign" | "outputs" | "review" | "history";
+export type StageKey = "overview" | "documents" | "assign" | "split" | "order" | "outputs" | "review" | "history";
 
 /** Documents 화면 안 New 문서 목록(옛 To-Be 화면)의 자리 - 옛 주소 /tobe도 여기로 넘긴다 */
 export const NEW_DOCUMENTS_ANCHOR = "new-documents";
@@ -13,6 +13,8 @@ export interface Stage {
   path: string;
   /** 단계 번호 칸에 쓰는 숫자. 없으면 아이콘 */
   step?: number;
+  /** 레일에 따로 나오지 않고 이 단계 아래에 속하는 화면 - 레일은 그 단계를 현재로 표시한다 */
+  under?: StageKey;
   /** 화면이 아직 없으면 레일에서 비활성으로 둔다 */
   ready: boolean;
 }
@@ -21,9 +23,13 @@ export const STAGES: readonly Stage[] = [
   { key: "overview", path: "", ready: true },
   // 1단계 - Old 문서 목록과 그 아래 New 문서 목록(옛 To-Be 화면, 네 단계 워크플로우 B1). 옛 /tobe는 여기로 넘긴다
   { key: "documents", path: "/documents", step: 1, ready: true },
-  { key: "split", path: "/split", step: 2, ready: true },
-  // 배정의 두 입구(분류·짝 맞추기)를 Old 조각 한 줄씩 처리하는 한 화면 - 옛 /classify·/match는 여기로 넘긴다
-  { key: "assign", path: "/assign", step: 3, ready: true },
+  // 2단계 - 쪼개기와 배정을 한 걸음으로 센다. 배정을 확정하면 그 조각의 경계도 확인된 것으로 본다(네 단계 워크플로우 B2).
+  // 옛 /classify·/match는 여기로 넘긴다
+  { key: "assign", path: "/assign", step: 2, ready: true },
+  // 쪼개기 도구(KO/EN 짝·표 행·AI 쪼개기)가 아직 여기에만 있어 화면은 남기고, 레일에서는 2단계 아래에 둔다
+  { key: "split", path: "/split", step: 2, under: "assign", ready: true },
+  // 3단계 - New 문서별 문장 순서와 문단번호
+  { key: "order", path: "/order", step: 3, ready: true },
   { key: "outputs", path: "/outputs", step: 4, ready: true },
   { key: "review", path: "/review", ready: true },
   // 레일 맨 아래 - 작업 기록 전체(개요 Activity의 "모두 보기")
@@ -31,7 +37,7 @@ export const STAGES: readonly Stage[] = [
 ];
 
 // 문서가 하나도 없으면 들어가 봐야 할 일이 없는 단계. New 문서 목록은 Excel로 문서보다 먼저 채울 수 있고, Documents 화면에 있어 늘 열린다
-const NEEDS_DOCUMENTS: ReadonlySet<StageKey> = new Set(["split", "assign", "outputs", "review"]);
+const NEEDS_DOCUMENTS: ReadonlySet<StageKey> = new Set(["split", "assign", "order", "outputs", "review"]);
 
 export function isStageLocked(key: StageKey, documentCount: number): boolean {
   return documentCount === 0 && NEEDS_DOCUMENTS.has(key);
@@ -46,6 +52,12 @@ export function parseBundlePath(pathname: string): { bundleId: number; stage: St
   const sub = match[2] ?? "";
   const stage = STAGES.find((item) => item.path === sub)?.key ?? null;
   return { bundleId: Number(match[1]), stage };
+}
+
+/** 레일에서 현재로 표시할 단계 - 아래에 속한 화면이면 그 위 단계 */
+export function getRailStage(key: StageKey | null): StageKey | null {
+  if (key === null) return null;
+  return STAGES.find((item) => item.key === key)?.under ?? key;
 }
 
 export function getStageHref(bundleId: number, key: StageKey): string {
@@ -63,7 +75,6 @@ export const NEXT_ACTION_STAGE: Record<NextAction, StageKey | null> = {
   upload_documents: "documents",
   resolve_documents: "documents",
   fill_doc_versions: "documents",
-  check_boundaries: "split",
   fill_tobe: "documents",
   decide_units: "assign",
   ack_warnings: "split",

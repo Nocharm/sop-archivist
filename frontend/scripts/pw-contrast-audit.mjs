@@ -158,9 +158,8 @@ for (const theme of ["light", "dark"]) {
     ["outputs", `/bundles/${id}/outputs`, '[data-testid="output-c"]'],
     ["outputs-a", `/bundles/${id}/outputs`, '[data-testid="outputs-tab-a"]', async (page) => { await page.locator('[data-testid="outputs-tab-a"]').click(); await page.locator('tr[data-testid^="output-a-row-"]').first().waitFor({ timeout: T }); }],
     // 순서를 바꾼 직후(저장 전) - 저장은 붙잡았다가 실패로 돌려 DB를 바꾸지 않는다
-    ["outputs-c-moved", `/bundles/${id}/outputs`, '[data-testid="outputs-tab-c"]', async (page) => {
-      // 앞 장면이 A 탭을 골라 두어(브라우저가 기억) C로 돌아온다
-      await page.locator('[data-testid="outputs-tab-c"]').click();
+    ["order-moved", `/bundles/${id}/order`, '[data-testid="order-docs"]', async (page) => {
+      // 순서는 3단계(Order) 화면에서 바꾼다 - 결과 화면의 C는 읽기 전용
       await page.locator('[data-testid^="output-c-move-down-"]').first().waitFor({ timeout: T });
       await page.route("**/targets/order**", async (route) => {
         await new Promise((done) => setTimeout(done, 4000));
@@ -196,7 +195,8 @@ for (const theme of ["light", "dark"]) {
     }],
     ["review", `/bundles/${id}/review`, '[data-testid="output-c"]'],
     ["assign-ai", `/bundles/${aiId}/assign`, '[data-testid="assign-bar"]', async (page) => { await page.locator('[data-testid="assign-filter-ai_suggested"]').click(); await page.keyboard.press("j"); await page.locator('[data-testid="assign-rec-0"]').waitFor({ timeout: T }); }],
-    ["outputs-ai", `/bundles/${aiId}/outputs`, '[data-testid="output-c"]'],
+    // 앞의 outputs-a 장면이 A 탭을 골라 두어(브라우저가 기억) C로 돌아온다
+    ["outputs-ai", `/bundles/${aiId}/outputs`, '[data-testid="outputs-tab-c"]', async (page) => { await page.locator('[data-testid="outputs-tab-c"]').click(); await page.locator('[data-testid="output-c"]').waitFor({ timeout: T }); }],
     // 상단 바 AI 작업 목록을 연 상태 - 시드의 AI 제안 단계가 남긴 끝난 요청이 보인다
     ["ai-jobs", `/bundles/${aiId}`, '[data-testid="top-bar-ai"]', async (page) => { await page.locator('[data-testid="top-bar-ai"]').click(); await page.locator('[data-testid^="ai-jobs-request-"]').first().waitFor({ timeout: T }); }],
     ["manual", "/manual", '[data-testid^="manual-unit-"]'],

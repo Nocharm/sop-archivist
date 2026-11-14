@@ -62,6 +62,19 @@ const getBox = (page, testId) => page.locator(`[data-testid="${testId}"]`).first
 // 결과물 C의 순서·깊이·표시 저장 - 화면은 먼저 바뀌고 저장은 뒤에서 하므로 응답을 기다린 뒤에 저장된 값을 본다
 const isOrderSave = (request) => request.method() === "PUT" && /\/targets\/order/.test(request.url());
 const waitOrderSave = (page) => page.waitForResponse((response) => isOrderSave(response.request()), { timeout: T });
+// 순서·문단번호 화면은 New 문서를 하나씩 연다 - 문서를 차례로 열어 probe가 값을 돌려주는 문서를 모은다([문서 id, 값]). limit만큼 찾으면 멈춘다
+async function findOrderDocs(page, probe, limit = 1) {
+  await page.locator('[data-testid^="order-doc-"]').first().waitFor({ timeout: T });
+  const docIds = await page.locator('[data-testid^="order-doc-"]').evaluateAll((els) => els.map((el) => el.getAttribute("data-testid").replace("order-doc-", "")));
+  const found = [];
+  for (const docId of docIds) {
+    await page.locator(`[data-testid="order-doc-${docId}"]`).click();
+    const value = await page.evaluate(probe);
+    if (value !== null) found.push([docId, value]);
+    if (found.length >= limit) break;
+  }
+  return found;
+}
 
 // --- 시나리오 ---
 
@@ -313,11 +326,12 @@ await runStep("split: select, cut, split, undo, check boundary", {}, async ({ pa
   await page.goto(`${BASE}/bundles/${freshId}/history`);
   await page.waitForFunction(() => document.body.textContent?.includes("Checked all remaining boundaries"), null, { timeout: T });
   check("history records the bulk check", true);
-  // 다른 문서의 경계가 남아 있어 다음 할 일은 여전히 경계 확인이고 검토 요청 조건도 열려 있다
+  // 다른 문서의 경계가 남아 있어도 경계 확인은 다음 할 일도 검토 요청 조건도 아니다(확정하면 확인한 것으로 친다)
   await page.goto(`${BASE}/bundles/${freshId}`);
-  await wait(page, "overview-gate-boundaries");
-  check("next action is checking boundaries", (await page.locator('[data-testid="overview-next"]').getAttribute("data-action")) === "check_boundaries");
-  check("boundaries gate is open", (await page.locator('[data-testid="overview-gate-boundaries"]').getAttribute("data-ok")) === null);
+  await wait(page, "overview-gate-units");
+  const nextAfterSplit = await page.locator('[data-testid="overview-next"]').getAttribute("data-action");
+  check("unchecked boundaries are not the next action", nextAfterSplit === "fill_tobe" || nextAfterSplit === "decide_units", nextAfterSplit);
+  check("there is no boundaries gate", (await page.locator('[data-testid="overview-gate-boundaries"]').count()) === 0);
 });
 
 await runStep("split: per-sentence AI split, whole-document request, tab stack", {}, async ({ page, takeShot }) => {
@@ -1044,9 +1058,18 @@ await runStep("assign: KO/EN pair - recommendation shows picked, in-place menu c
   // Old 조각 아래 "→ 간 곳"을 누르면 New의 그 문장으로 가고 끊기 메뉴가 뜬다
   const note = page.locator(`[data-testid="assign-note-${found.unit.id}"]`);
   await note.waitFor({ timeout: T });
+  // 번쩍임은 1.3초 뒤 꺼지고 메뉴는 1초쯤 뒤에 뜬다 - 메뉴를 기다린 뒤에 찾으면 놓칠 수 있어 누르기 전부터 지켜본다
+  await page.evaluate(() => {
+    window.__flashedTarget = null;
+    new MutationObserver((records) => {
+      for (const record of records) {
+        if (record.target.hasAttribute("data-flash") && record.target.closest('[data-pane="new"]')) window.__flashedTarget = record.target.getAttribute("data-target");
+      }
+    }).observe(document.body, { attributes: true, subtree: true, attributeFilter: ["data-flash"] });
+  });
   await note.click();
   await page.locator('[data-testid="assign-link-menu-unlink"]').waitFor({ state: "visible", timeout: T });
-  check("the jump lands on the linked New sentence", (await page.locator(`[data-pane="new"] [data-flash]`).getAttribute("data-target")) !== null);
+  check("the jump lands on the linked New sentence", (await page.evaluate(() => window.__flashedTarget)) !== null);
   check("lines are drawn between the two documents", (await page.locator('[data-testid="assign-link-lines"] g').count()) > 0);
   await takeShot("sop-assign-jump-new.png");
   await page.keyboard.press("Escape");
@@ -1161,8 +1184,8 @@ await runStep("outputs: A, B, C and the Excel preview", {}, async ({ page, takeS
   await page.waitForFunction(() => document.querySelector('[data-testid="outputs-check-numbers"]')?.checked === false, null, { timeout: T });
 });
 
-await runStep("outputs: indent a line on C and its section number changes", {}, async ({ page, takeShot }) => {
-  await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
+await runStep("order: indent a line on C and its section number changes", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   // 들일 수 있는 첫 줄(앞줄이 있고 번호가 있는 줄)
   const button = page.locator('[data-testid^="output-c-indent-"]:not([disabled])').first();
@@ -1184,8 +1207,8 @@ await runStep("outputs: indent a line on C and its section number changes", {}, 
   check("Shift+Tab on the picked row outdents it back", (await number.innerText()).trim() === before);
 });
 
-await runStep("outputs: mark a line as a note on C, the count continues and the note is italic", {}, async ({ page, takeShot }) => {
-  await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
+await runStep("order: mark a line as a note on C, the count continues and the note is italic", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   // 같은 칸에서 같은 깊이로 이어지는 번호 줄 둘(X, Y) - X를 주석으로 바꾸면 Y가 X의 번호를 이어 받는다
   const pair = await page.evaluate(() => {
@@ -1223,11 +1246,11 @@ await runStep("outputs: mark a line as a note on C, the count continues and the 
 });
 
 // 순서 바꾸기는 화면에서 먼저 자리를 바꾸고 저장은 뒤에서 한 번에 하나씩 보낸다(제품 명세 §7.13 C 순서 바꾸기). 실패하면 되돌리고 알림을 띄운다
-await runStep("outputs: C reorder moves at once, saves one request at a time and rolls back a failed save", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
-  await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
+await runStep("order: C reorder moves at once, saves one request at a time and rolls back a failed save", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   // 위·아래 단추가 있는 줄이 넷 이상인 칸 - 첫 줄을 세 번 내릴 수 있다
-  const sectionRows = await page.evaluate(() => {
+  const [reorderHit] = await findOrderDocs(page, () => {
     for (const section of document.querySelectorAll('[data-testid="output-c"] section')) {
       const ids = [...section.querySelectorAll('[data-testid^="output-c-row-"]')]
         .filter((row) => row.querySelector('[data-testid^="output-c-move-down-"]'))
@@ -1236,7 +1259,8 @@ await runStep("outputs: C reorder moves at once, saves one request at a time and
     }
     return null;
   });
-  check("C has a section with four movable lines", sectionRows !== null);
+  check("a New document has a section with four movable lines", reorderHit !== undefined);
+  const [reorderDoc, sectionRows] = reorderHit;
   const readOrder = () => page.evaluate((first) => {
     const section = document.querySelector(`[data-testid="output-c-row-${first}"]`)?.closest("section");
     return [...(section?.querySelectorAll('[data-testid^="output-c-row-"]') ?? [])].map((row) => row.getAttribute("data-testid").replace("output-c-row-", ""));
@@ -1293,6 +1317,8 @@ await runStep("outputs: C reorder moves at once, saves one request at a time and
   check("the presses merge into at most two saves", puts >= 1 && puts <= 2, `${puts} PUT`);
   check("reordering refetches neither C nor the summary", refetches === 0, `${refetches} GET`);
   await page.reload();
+  // 새로 고치면 첫 문서부터 열린다 - 옮긴 문서를 다시 연다
+  await page.locator(`[data-testid="order-doc-${reorderDoc}"]`).click();
   await wait(page, `output-c-row-${id}`);
   check("after reload the order is the saved one", JSON.stringify(await readOrder()) === JSON.stringify(moved));
 
@@ -1336,25 +1362,32 @@ await runStep("outputs: C reorder moves at once, saves one request at a time and
 });
 
 // 저장과 다시 받기가 엇갈려도 저장된 바뀜이 사라지지 않고, 한 번의 409는 알림 하나이며, 떠났다 돌아와도 저장이 겹치지 않는다
-await runStep("outputs: C saves survive a slow refetch, one conflict toasts once, leaving does not race", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
-  await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
+await runStep("order: C saves survive a slow refetch, one conflict toasts once, leaving does not race", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   // 문서마다 위·아래 단추가 있는 줄이 셋 이상인 첫 칸 - 그 칸의 첫 줄을 옮긴다
-  const findLines = () => page.evaluate(() => [...document.querySelectorAll('[data-testid="output-c"] article')].map((article) => {
-    for (const section of article.querySelectorAll("section")) {
+  const raceDocs = await findOrderDocs(page, () => {
+    for (const section of document.querySelectorAll('[data-testid="output-c"] section')) {
       const ids = [...section.querySelectorAll('[data-testid^="output-c-row-"]')].filter((row) => row.querySelector('[data-testid^="output-c-move-down-"]')).map((row) => row.getAttribute("data-flip-key"));
       if (ids.length >= 3) return ids;
     }
     return null;
-  }).filter((ids) => ids !== null));
-  const sections = await findLines();
-  check("C has two documents with a section of three movable lines", sections.length >= 2, `${sections.length}`);
-  const [first, second] = sections;
-  const orderOf = (id) => page.evaluate((key) => {
-    const section = document.querySelector(`[data-testid="output-c-row-${key}"]`)?.closest("section");
-    return [...(section?.querySelectorAll('[data-testid^="output-c-row-"]') ?? [])].map((row) => row.getAttribute("data-flip-key"));
-  }, id);
-  const press = (dir, id) => page.locator(`[data-testid="output-c-move-${dir}-${id}"]`).dispatchEvent("click");
+  }, 2);
+  check("two New documents have a section of three movable lines", raceDocs.length >= 2, `${raceDocs.length}`);
+  const [[firstDoc, first], [secondDoc, second]] = raceDocs;
+  // 줄이 든 문서를 먼저 연다 - 화면에는 한 문서만 있다. 문서를 바꿔도 저장을 기다리는 바뀜은 남는다
+  const openDocOf = (id) => page.locator(`[data-testid="order-doc-${first.includes(id) ? firstDoc : secondDoc}"]`).click();
+  const orderOf = async (id) => {
+    await openDocOf(id);
+    return page.evaluate((key) => {
+      const section = document.querySelector(`[data-testid="output-c-row-${key}"]`)?.closest("section");
+      return [...(section?.querySelectorAll('[data-testid^="output-c-row-"]') ?? [])].map((row) => row.getAttribute("data-flip-key"));
+    }, id);
+  };
+  const press = async (dir, id) => {
+    await openDocOf(id);
+    await page.locator(`[data-testid="output-c-move-${dir}-${id}"]`).dispatchEvent("click");
+  };
   let inFlight = 0;
   let maxInFlight = 0;
   page.on("request", (request) => {
@@ -1431,6 +1464,7 @@ await runStep("outputs: C saves survive a slow refetch, one conflict toasts once
   check("the other document's waiting move is saved after the reload", (await orderOf(second[0])).indexOf(second[0]) === secondIndex + 1);
   await page.unroute("**/targets/order**");
   await page.reload();
+  await openDocOf(second[0]);
   await wait(page, `output-c-row-${second[0]}`);
   check("after reload the other document keeps its move", (await orderOf(second[0])).indexOf(second[0]) === secondIndex + 1);
   const backSecond = waitOrderSave(page);
@@ -1447,7 +1481,8 @@ await runStep("outputs: C saves survive a slow refetch, one conflict toasts once
   await press("down", first[0]);
   await page.locator('[data-testid="stage-nav-overview"]').click();
   await wait(page, "overview-gate-units");
-  await page.locator('[data-testid="stage-nav-outputs"]').click();
+  await page.locator('[data-testid="stage-nav-order"]').click();
+  await openDocOf(first[0]);
   await wait(page, `output-c-row-${first[0]}`);
   check("after returning the line shows the first move", (await orderOf(first[0])).indexOf(first[0]) === firstIndex + 1, JSON.stringify(await orderOf(first[0])));
   await press("down", first[0]);
@@ -1457,6 +1492,7 @@ await runStep("outputs: C saves survive a slow refetch, one conflict toasts once
   check("no error after leaving and returning", (await errorToasts()) === 0, `${await errorToasts()} errors`);
   await page.unroute("**/targets/order**");
   await page.reload();
+  await openDocOf(first[0]);
   await wait(page, `output-c-row-${first[0]}`);
   check("both moves are kept", (await orderOf(first[0])).indexOf(first[0]) === firstIndex + 2, JSON.stringify(await orderOf(first[0])));
   await takeShot("sop-outputs-c-races.png");
@@ -1516,7 +1552,8 @@ await runStep("outputs: C saves survive a slow refetch, one conflict toasts once
   check("leaving with an unsent change says so", true);
   check("the save in flight when leaving still lands", (await leftSave).ok());
   await page.unroute("**/targets/order**");
-  await page.locator('[data-testid="stage-nav-outputs"]').click();
+  await page.locator('[data-testid="stage-nav-order"]').click();
+  await openDocOf(second[0]);
   await wait(page, `output-c-row-${second[0]}`);
   check("only the save in flight when leaving is kept", (await orderOf(second[0])).indexOf(second[0]) === secondIndex, JSON.stringify(await orderOf(second[0])));
 });
@@ -1803,13 +1840,52 @@ await runStep("members picker keeps Add inside the panel and adds the person", {
 });
 
 // 바로 생성(2026-11-09): 이름 없이 BND 코드로 만들고, 문서가 없으면 Split~Review는 잠기고 To-Be는 열려 있다
+// 네 단계 워크플로우 - 레일은 Documents·Assign·Order·Outputs, 쪼개기 화면은 2단계 아래에서 오간다. C는 Order에서만 고친다
+await runStep("four steps: rail, Split tools round trip, Order edits C and Outputs reads it", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}`);
+  await wait(page, "stage-nav");
+  const rail = await page.locator('[data-testid="stage-nav"] .stg-n').evaluateAll((els) => els.map((el) => `${el.textContent}:${el.parentElement.dataset.stage}`));
+  check("the rail numbers Documents, Assign, Order, Outputs", rail.join(" ") === "1:documents 2:assign 3:order 4:outputs", rail.join(" "));
+  await page.locator('[data-testid="stage-nav-assign"]').click();
+  await wait(page, "assign-open-split");
+  await page.locator('[data-testid="assign-open-split"]').click();
+  await page.waitForURL(/\/split\?doc=\d+$/, { timeout: T });
+  await wait(page, "split-back-assign");
+  check("Split keeps step 2 current on the rail", (await page.locator('[data-testid="stage-nav"] [aria-current="page"]').getAttribute("data-stage")) === "assign");
+  await takeShot("sop-split-under-assign.png");
+  await page.locator('[data-testid="split-back-assign"]').click();
+  await page.waitForURL(/\/assign$/, { timeout: T });
+  check("Back to Assign returns", true);
+  await page.locator('[data-testid="stage-nav-order"]').click();
+  await wait(page, "order-docs");
+  await wait(page, "output-c");
+  check("Order opens one New document", (await page.locator('[data-testid="output-c"] article').count()) === 1);
+  check("Order leaves out the deleted and moved lists", (await page.locator('[data-testid^="output-c-deleted-"], [data-testid^="output-c-moved-"]').count()) === 0);
+  // 앞 시나리오들이 배정을 바꿔 두므로 문장이 든 문서를 찾아 연다(첫 문서가 비어 있을 수 있다)
+  const [movable] = await findOrderDocs(page, () => (document.querySelector('[data-testid^="output-c-move-"]') ? true : null));
+  check("Order lets the author move lines", movable !== undefined);
+  const picked = `order-doc-${movable?.[0]}`;
+  check("picking a document opens it", (await page.locator(`[data-testid="${picked}"]`).getAttribute("aria-current")) === "true");
+  await takeShot("sop-order.png");
+  await page.locator('[data-testid="stage-nav-outputs"]').click();
+  await page.locator('[data-testid="outputs-tab-c"]').click();
+  await wait(page, "output-c");
+  check("Outputs shows every New document on C", (await page.locator('[data-testid="output-c"] article').count()) > 1);
+  check("C is read-only on Outputs", (await page.locator('[data-testid^="output-c-move-"], [data-testid^="output-c-indent-"]').count()) === 0);
+  await page.locator('[data-testid="outputs-edit-order"]').click();
+  await page.waitForURL(/\/order$/, { timeout: T });
+  await wait(page, "order-docs");
+  check("Edit order returns to the document last opened", (await page.locator('[data-testid^="order-doc-"][aria-current="true"]').getAttribute("data-testid")) === picked);
+});
+
 await runStep("new bundle in one click, locked stages, empty assign", { devUser: "dev.admin" }, async ({ page }) => {
   await page.goto(`${BASE}/`);
   await page.locator('[data-testid="bundles-new"]').click();
   await page.waitForURL(/\/bundles\/\d+$/, { timeout: T });
   const code = (await getText(page, "overview-code")).trim();
   check("new bundle shows its BND code", /^BND-\d{4,}$/.test(code), code);
-  check("Split is locked without documents", (await page.locator('[data-testid="stage-nav-split"][aria-disabled="true"]').count()) === 1);
+  check("Assign and Order are locked without documents", (await page.locator('[data-testid="stage-nav-assign"][aria-disabled="true"], [data-testid="stage-nav-order"][aria-disabled="true"]').count()) === 2);
+  check("Split is not on the rail", (await page.locator('[data-testid="stage-nav-split"]').count()) === 0);
   // To-Be 목록은 Documents 화면 안에 있다 - 문서가 없어도 Documents는 열려 있다
   check("Documents (with the To-Be list) stays open without documents", (await page.locator('a[data-testid="stage-nav-documents"]').count()) === 1);
   await page.locator('[data-testid="overview-menu"]').click();

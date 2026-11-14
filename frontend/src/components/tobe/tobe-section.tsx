@@ -60,8 +60,6 @@ export function ToBeSection({ bundleId, documents, onDocumentsChanged }: ToBeSec
   const { bundle } = useBundle(bundleId);
   const canEdit = bundle?.my_role === "author" && bundle.status === "in_progress";
   const { data, error, isLoading, reload } = useLoaded(() => getToBe(bundleId), String(bundleId));
-  // 경계를 아직 확인하지 않은 Old 단위 - 있으면 작성 문서 올리기 곁에 쪼개기를 먼저 끝내라고 안내만 한다(막지 않는다)
-  const uncheckedBoundaries = documents?.filter((doc) => doc.side === "old").reduce((sum, doc) => sum + doc.unchecked_boundaries, 0) ?? 0;
   const [uploadOpen, setUploadOpen] = useState(false);
   const showSkeleton = useDelayedFlag(isLoading && data === null);
   // 초안은 불러온 목록에 묶인다 - 저장·다시 불러오기로 새 목록이 오면 저절로 버려진다
@@ -358,12 +356,6 @@ export function ToBeSection({ bundleId, documents, onDocumentsChanged }: ToBeSec
         )}
         </div>
       </div>
-      {/* 안내는 단추 줄 밖에 둔다 - 단추 사이에 끼면 길이에 따라 주 버튼이 다음 줄로 밀린다 */}
-      {canEdit && uncheckedBoundaries > 0 && (
-        <div className="border-b border-line px-[var(--pad)] py-1 text-xs text-ink-3" data-testid="tobe-upload-written-hint">
-          {t("tobe.uploadWritten.splitFirst", { n: uncheckedBoundaries })}
-        </div>
-      )}
       {dirty && (
         <div className="flex h-8 items-center gap-2 border-t border-line bg-st-hold-tint px-[var(--pad)] text-[13px] text-st-hold" data-testid="tobe-dirty">
           {t("tobe.unsaved")}
