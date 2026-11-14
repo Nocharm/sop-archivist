@@ -769,6 +769,63 @@ await runStep("assign: an edit survives looking at another unit", {}, async ({ p
   check("the edit is still there", (await textarea.inputValue()) === "Smoke: edit kept across units");
 });
 
+// 배정 화면에서 표를 행으로 나누거나 다시 합치고 되돌리기 - 우클릭 메뉴(전에는 쪼개기 화면에서만 했다). Ctrl+Z로 처음 모양으로 돌아온다
+await runStep("assign: table rows from the right-click menu, then undo", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${freshId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${freshId}/documents/${docId}/view`, { headers })).json();
+  // 배정이 없는 표 - 통째면 행으로 나누고, 앞 시나리오가 이미 나눠 두었으면 다시 합친다
+  let doc = null;
+  let holder = null;
+  let cell = null;
+  for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await readView(candidate.id);
+    const found = view.units.find((unit) => (unit.kind === "table" || unit.kind === "table_row") && unit.status === "unassigned");
+    if (!found) continue;
+    doc = candidate;
+    holder = found;
+    cell = view.units.find((unit) => unit.kind === "cell_sentence" && unit.group_unit_id === found.id) ?? null;
+    break;
+  }
+  check("the fresh bundle has an unassigned table", holder !== null);
+  const action = holder.kind === "table" ? "table_rows" : "table_merge";
+  const countKinds = async () => {
+    const view = await readView(doc.id);
+    return `${view.units.filter((unit) => unit.kind === "table").length} tables, ${view.units.filter((unit) => unit.kind === "table_row").length} rows`;
+  };
+  const before = await countKinds();
+  await page.goto(`${BASE}/bundles/${freshId}/assign`);
+  await wait(page, "assign-bar");
+  // 표·행 단위는 제 조각이 없을 수 있다 - 그러면 그 표의 칸 문장을 누른다(그 문장의 줄이 골라지며 문서도 그리로 넘어간다)
+  const pieceOf = (unitId) => page.locator(`[data-testid="assign-paper-piece-${unitId}"], [data-testid="assign-paper-unit-${unitId}"]`).first();
+  if ((await pieceOf(holder.id).count()) === 0 && (cell === null || (await pieceOf(cell.id).count()) === 0)) {
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
+  }
+  const target = (await pieceOf(holder.id).count()) > 0 || cell === null ? pieceOf(holder.id) : pieceOf(cell.id);
+  await target.waitFor({ timeout: T });
+  await target.scrollIntoViewIfNeeded();
+  await target.click({ button: "right" });
+  await wait(page, `assign-ctx-${action}`);
+  check("the menu offers one direction only", (await page.locator(`[data-testid="assign-ctx-${action === "table_rows" ? "table_merge" : "table_rows"}"]`).count()) === 0);
+  await takeShot("sop-assign-table-menu.png");
+  if ((await page.locator(`[data-testid="assign-ctx-${action}"]`).getAttribute("aria-disabled")) === "true") {
+    // 다른 행에 배정이 있는 표는 다시 합치지 못한다 - 항목이 잠기고 까닭이 붙는다
+    check("a table with an assigned row keeps Merge rows back locked, with the reason", ((await page.locator(`[data-testid="assign-ctx-${action}"]`).getAttribute("data-tip")) ?? "").includes("row"));
+    return;
+  }
+  await page.locator(`[data-testid="assign-ctx-${action}"]`).click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-undo"]')?.disabled === false, null, { timeout: T });
+  const changed = await countKinds();
+  check(action === "table_rows" ? "the table becomes rows" : "the rows become one table again", changed !== before, `${before} -> ${changed}`);
+  await page.locator('[data-testid="assign-undo"]').click();
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((toast) => /table rows/i.test(toast.textContent ?? "")), null, { timeout: T });
+  check("Undo puts the table back as it was", (await countKinds()) === before, await countKinds());
+});
+
 await runStep("split rows of a table, then assign a row as a table", { allowConsoleErrors: true }, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${freshBundleId}/split`);
   const cap = page.locator('button.ptbl-cap[data-testid^="split-paper-unit-"]').first();
