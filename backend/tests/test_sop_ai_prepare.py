@@ -7,6 +7,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.constants import AI_PRIORITY_PLAN, AI_PRIORITY_PRE_CLASSIFY
+from app.settings import settings
 from app.sop.models import AiJob, AiSuggestion, Bundle, BundleEvent
 from tests.access_helpers import run_in_session
 from tests.ai_fixtures import (
@@ -164,6 +165,19 @@ def test_prepare_returns_zero_when_the_setting_is_off(client: TestClient, fake_a
     out = post_prepare(client, bundle.id).json()
 
     assert (out["queued"], out["skipped_total"], out["request_id"]) == (0, 0, None)
+    assert read_rows(AiJob) == []
+
+
+def test_prepare_refuses_with_503_when_ai_is_off(
+    client: TestClient, auto_prepare: FakeAi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 화면은 503을 말없이 넘긴다(use-ai-prepare) — AI가 꺼져도 배정 화면의 사람 경로는 그대로다
+    bundle = make_ai_bundle(client)
+    monkeypatch.setattr(settings, "ai_enabled", False)
+
+    refused = post_prepare(client, bundle.id)
+
+    assert (refused.status_code, refused.json()["detail"]["code"]) == (503, "ai_disabled")
     assert read_rows(AiJob) == []
 
 

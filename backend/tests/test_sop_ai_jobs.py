@@ -37,6 +37,7 @@ from app.sop.constants import (
     AI_JOB_STATUSES,
     AI_PRIORITY_PLAN,
     AI_PRIORITY_PRE_CLASSIFY,
+    AI_PRIORITY_PRE_REFINE,
     AI_PRIORITY_USER,
     SEMANTIC_CHECK_KEYS,
 )
@@ -380,6 +381,18 @@ def test_claim_takes_the_lower_priority_number_first(client: TestClient) -> None
     claimed = [asyncio.run(claim_next_job()), asyncio.run(claim_next_job())]
 
     assert claimed == [plan_job, user_job]
+
+
+def test_claim_takes_a_user_job_before_earlier_background_jobs(client: TestClient) -> None:
+    # 설계 §2 목표 3 — 먼저 줄 선 미리 돌리기(분류·다듬기)가 있어도 나중에 누른 사람 요청이 먼저 꺼내진다
+    bundle_id = _new_bundle(client)
+    refine = _enqueue(bundle_id, "match", priority=AI_PRIORITY_PRE_REFINE, background=True)
+    classify = _enqueue(bundle_id, "classify", priority=AI_PRIORITY_PRE_CLASSIFY, background=True)
+    user_job = _enqueue(bundle_id, "translate", priority=AI_PRIORITY_USER)
+
+    claimed = [asyncio.run(claim_next_job()) for _ in range(3)]
+
+    assert claimed == [user_job, classify, refine]
 
 
 def test_claim_keeps_id_order_within_a_priority(client: TestClient) -> None:
