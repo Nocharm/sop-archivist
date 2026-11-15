@@ -2774,6 +2774,60 @@ await runStep("documents: one upload window takes Old and New files", { devUser:
   await page.request.delete(`${BASE}/api/bundles/${created.id}?revision=${bundle.revision}`, { headers });
 });
 
+// AI로 목록 읽기(v1.0.34) - 템플릿에 맞지 않는 글을 붙여 넣으면 AI가 줄을 제안하고, 사람이 보고 고친 뒤 목록에 더한다.
+// 글에 없는 번호는 서버가 버린다(가짜 AI가 일부러 하나를 지어낸다). AI가 꺼진 백엔드에서는 메뉴에 항목이 없는 것만 본다.
+await runStep("documents: AI reads a free-form list into New rows", { devUser: "dev.admin" }, async ({ page }) => {
+  const headers = { "X-Dev-User": "dev.admin", "Content-Type": "application/json" };
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC list reading", is_synthetic: true } })).json();
+  await page.request.put(`${BASE}/api/bundles/${created.id}/tobe`, { headers, data: { revision: created.revision, docs: [{ code: "SOP-01", doc_type: "sop", title: "Synthetic SOP" }], na_slots: [], wi_steps: [] } });
+  const readTobe = async () => (await page.request.get(`${BASE}/api/bundles/${created.id}/tobe`, { headers })).json();
+  const removeBundle = async () => {
+    const bundle = await (await page.request.get(`${BASE}/api/bundles/${created.id}`, { headers })).json();
+    await page.request.delete(`${BASE}/api/bundles/${created.id}?revision=${bundle.revision}`, { headers });
+  };
+  const status = await page.request.get(`${BASE}/api/bundles/${created.id}/ai/status`, { headers });
+  const isAiOn = status.ok() && (await status.json()).ai_enabled;
+  await page.goto(`${BASE}/bundles/${created.id}/documents`);
+  await wait(page, "tobe-add-code");
+  await page.waitForLoadState("networkidle");
+  await page.locator('[data-testid="tobe-more"]').click();
+  await wait(page, "tobe-more-menu");
+  if (!isAiOn) {
+    check("without AI the menu has no list reading", (await page.locator('[data-testid="tobe-read-open"]').count()) === 0);
+    console.log("  (AI is off in this backend - the rest is skipped)");
+    await removeBundle();
+    return;
+  }
+  await page.locator('[data-testid="tobe-read-open"]').click();
+  await wait(page, "tobe-read-ask");
+  check("nothing can be sent before a file or text is given", await page.locator('[data-testid="tobe-read-submit"]').isDisabled());
+  await page.locator('[data-testid="tobe-read-text"]').fill("Synthetic restructuring plan\nSOP-QC-0300 | Synthetic cold storage\nWI-QC-0301 | Synthetic storage operation\nQC-0400 | Synthetic checklist");
+  await page.locator('[data-testid="tobe-read-submit"]').click();
+  await page.locator('[data-testid="tobe-read-preview"]').waitFor({ timeout: 60000 });
+  const codes = await page.locator('[data-testid="tobe-read-list"] tbody tr').evaluateAll((rows) => rows.map((row) => row.dataset.testid));
+  check("the preview lists the numbers found in the text", ["SOP-QC-0300", "WI-QC-0301", "QC-0400"].every((code) => codes.includes(`tobe-read-${code}-row`)), codes.join(","));
+  check("a number that is not in the text is dropped", !codes.some((id) => id.includes("INVENTED")));
+  check("a row without a kind blocks adding and says why", (await page.locator('[data-testid="tobe-read-add"]').isDisabled()) && (await getText(page, "tobe-read-problem")).includes("QC-0400"));
+  check("nothing is written before the person adds", (await readTobe()).docs.length === 1);
+  await page.locator('[data-testid="tobe-read-QC-0400-type"]').click();
+  await page.locator('[data-testid="tobe-read-QC-0400-type-option-sop"]').click();
+  await page.locator('[data-testid="tobe-read-problem"]').waitFor({ state: "detached", timeout: T });
+  await page.locator('[data-testid="tobe-read-add"]').click();
+  await page.locator('[data-testid="tobe-read"]').waitFor({ state: "detached", timeout: 30000 });
+  await page.waitForLoadState("networkidle");
+  const after = await readTobe();
+  const byCode = Object.fromEntries(after.docs.map((doc) => [doc.code, doc]));
+  check("the picked rows are on the New list with kind, parent and title", after.docs.length === 4 && byCode["WI-QC-0301"]?.parent_code === "SOP-QC-0300" && byCode["QC-0400"]?.doc_type === "sop" && byCode["SOP-QC-0300"]?.title === "Synthetic cold storage", JSON.stringify(after.docs.map((doc) => [doc.code, doc.doc_type, doc.parent_code])));
+  check("the WI's steps came with it", after.wi_steps.filter((item) => item.code === "WI-QC-0301").length > 0);
+  // 목록은 창이 닫힌 뒤 다시 받는다 - 넷째 줄이 그려질 때까지 기다린다
+  await page.locator('[data-testid^="tobe-id-"][data-testid$="-code"]').nth(3).waitFor({ timeout: T });
+  const shownCodes = await page.locator('[data-testid^="tobe-id-"][data-testid$="-code"]').evaluateAll((cells) => cells.map((cell) => cell.value ?? cell.textContent));
+  check("the new rows show on the list without a reload", ["SOP-QC-0300", "WI-QC-0301", "QC-0400"].every((code) => shownCodes.includes(code)), shownCodes.join(","));
+  const left = await (await page.request.get(`${BASE}/api/bundles/${created.id}/tobe/read`, { headers })).json();
+  check("the proposal is closed once it is used", left === null && (await page.locator('[data-testid="tobe-proposal"]').count()) === 0);
+  await removeBundle();
+});
+
 await browser.close();
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} check(s) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

@@ -22,6 +22,7 @@ const KIND_STAGE: Record<AiJobKind, StageKey> = {
   pair: "assign",
   split: "assign",
   doc_meta: "documents",
+  tobe_list: "documents",
 };
 
 export function getKindStage(kind: AiJobKind): StageKey {
