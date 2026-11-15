@@ -34,6 +34,7 @@ class JobBreakdown(NamedTuple):
     jobs: AiJobCounts
     by_kind: dict[str, AiJobCounts]
     failed_errors: dict[str, int]
+    user_active: int  # queued·running 가운데 사람 순위(priority <= AI_PRIORITY_USER)인 수 — 승격된 미리 돌리기 작업도 센다
 
 
 def _build_job_filter(bundle_id: int, kind: str | None) -> list[ColumnElement[bool]]:
@@ -185,7 +186,7 @@ async def load_job_counts(session: AsyncSession, bundle_id: int) -> AiJobCounts:
 
 
 async def load_job_breakdown(session: AsyncSession, bundle_id: int) -> JobBreakdown:
-    """전체·종류별 상태 수와 실패 코드별 수를 질의 한 번으로 읽는다."""
+    """전체·종류별 상태 수와 실패 코드별 수를 질의 한 번으로, 사람 순위로 도는 작업 수를 한 번 더 읽는다."""
     rows = await session.execute(
         select(AiJob.kind, AiJob.status, AiJob.error, func.count())
         .where(AiJob.bundle_id == bundle_id)
@@ -199,8 +200,18 @@ async def load_job_breakdown(session: AsyncSession, bundle_id: int) -> JobBreakd
         by_kind.setdefault(kind, Counter())[status] += count
         if status == "failed":
             failed_errors[error] += count
+    user_active = await session.scalar(
+        select(func.count())
+        .select_from(AiJob)
+        .where(
+            AiJob.bundle_id == bundle_id,
+            AiJob.status.in_(("queued", "running")),
+            AiJob.priority <= AI_PRIORITY_USER,
+        )
+    )
     return JobBreakdown(
         jobs=AiJobCounts.model_validate(totals),
         by_kind={kind: AiJobCounts.model_validate(counts) for kind, counts in by_kind.items()},
         failed_errors=dict(failed_errors),
+        user_active=user_active or 0,
     )

@@ -156,6 +156,7 @@ class AiStatusOut(BaseModel):
     jobs: AiJobCounts
     by_kind: dict[str, AiJobCounts]
     failed_errors: dict[str, int]  # 실패 코드 → 건수
+    user_active: int  # queued·running 가운데 사람 순위(priority <= 1)인 수 — 화면이 다시 받는 간격을 정한다
     adoption: dict[str, AdoptionStats]
 
 

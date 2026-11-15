@@ -344,6 +344,34 @@ def _finish(job_id: int, status: str) -> None:
     run_in_session(_set)
 
 
+def test_status_counts_active_jobs_at_user_priority(client: TestClient) -> None:
+    bundle_id = _new_bundle(client)
+    _enqueue(bundle_id, priority=AI_PRIORITY_USER)  # 줄 섬
+    _enqueue(bundle_id, priority=AI_PRIORITY_USER, status="running")
+    for _ in range(3):
+        _enqueue(bundle_id, priority=AI_PRIORITY_PRE_CLASSIFY, background=True)
+    _enqueue(bundle_id, priority=AI_PRIORITY_USER, status="done")
+
+    status = _get_status(client, bundle_id)
+
+    assert status["user_active"] == 2
+
+
+def test_promoted_jobs_count_as_user_active(client: TestClient) -> None:
+    bundle_id = _new_bundle(client)
+    _enqueue(bundle_id, priority=AI_PRIORITY_PRE_CLASSIFY, background=True)
+    assert _get_status(client, bundle_id)["user_active"] == 0
+
+    async def _promote(session: AsyncSession) -> None:
+        await jobs.promote_queued_jobs(session, bundle_id, "classify")
+        await session.commit()
+
+    run_in_session(_promote)
+
+    status = _get_status(client, bundle_id)
+    assert status["user_active"] == 1
+
+
 def test_claim_takes_the_lower_priority_number_first(client: TestClient) -> None:
     bundle_id = _new_bundle(client)
     user_job = _enqueue(bundle_id, "translate", priority=AI_PRIORITY_USER)  # 사람 요청을 먼저 쌓는다
@@ -603,6 +631,7 @@ def test_status_reports_counts_by_kind_and_failed_codes(client: TestClient) -> N
             "pair": {**NO_JOBS, "failed": 1, "done": 1},
         },
         "failed_errors": {"timeout": 2, "internal": 1},
+        "user_active": 2,
         "adoption": {},
     }
 

@@ -10,7 +10,7 @@ const getRecentAiJobs = vi.fn<() => Promise<RecentAiJobs>>();
 vi.mock("./api-sop", () => ({ getAiStatus: (id: number) => getAiStatus(id), getRecentAiJobs: () => getRecentAiJobs() }));
 
 const { ApiError } = await import("./api");
-const { AI_ACTIVE_POLL_MS, AI_IDLE_POLL_MS } = await import("./ai-jobs-model");
+const { AI_ACTIVE_POLL_MS, AI_BACKGROUND_RELOAD_MS, AI_IDLE_POLL_MS } = await import("./ai-jobs-model");
 const { startAiJobsPolling } = await import("./ai-jobs-store");
 const { useAiJobs } = await import("./use-ai-jobs");
 
@@ -18,8 +18,8 @@ const { useAiJobs } = await import("./use-ai-jobs");
 
 const ZERO: AiJobCounts = { queued: 0, running: 0, done: 0, failed: 0, stale: 0, cancelled: 0 };
 
-function makeStatus(counts: Partial<AiJobCounts>): AiStatus {
-  return { ai_enabled: true, embed_enabled: false, jobs: { ...ZERO, ...counts }, by_kind: {}, failed_errors: {}, adoption: {} };
+function makeStatus(counts: Partial<AiJobCounts>, userActive = 0): AiStatus {
+  return { ai_enabled: true, embed_enabled: false, jobs: { ...ZERO, ...counts }, by_kind: {}, failed_errors: {}, user_active: userActive, adoption: {} };
 }
 
 /** 공용 목록 - 묶음마다 요청 하나 */
@@ -52,8 +52,8 @@ function makeRecent(byBundle: Record<number, Partial<AiJobCounts>>): RecentAiJob
 
 const box: { watch: () => void; status: AiStatus | null; error: unknown } = { watch: () => undefined, status: null, error: null };
 
-function Harness({ onFinished }: { onFinished: () => void }) {
-  const { status, error, watch } = useAiJobs(1, onFinished);
+function Harness({ onFinished, bundleId = 1 }: { onFinished: () => void; bundleId?: number }) {
+  const { status, error, watch } = useAiJobs(bundleId, onFinished);
   useEffect(() => {
     box.watch = watch;
     box.status = status;
@@ -152,5 +152,99 @@ describe("useAiJobs", () => {
     expect(getAiStatus).toHaveBeenCalledTimes(1);
     expect(box.error).toBeInstanceOf(ApiError);
     act(() => root.unmount());
+  });
+
+  describe("while only background jobs finish", () => {
+    /** 서버 상태를 한 값으로 두고 두 답(묶음 상태·공용 목록)이 같이 따라가게 한다 */
+    function serve(world: { counts: Partial<AiJobCounts>; userActive: number }) {
+      getAiStatus.mockImplementation(async () => makeStatus(world.counts, world.userActive));
+      getRecentAiJobs.mockImplementation(async () => makeRecent({ 1: world.counts }));
+    }
+
+    /** 8건이 줄 선 채 들어와 첫 끝남(1건)을 바로 받은 상태 - 마지막으로 다시 받은 때가 지금이다 */
+    async function mountAfterFirstReload(onFinished: () => void) {
+      const world = { counts: { queued: 8 } as Partial<AiJobCounts>, userActive: 0 };
+      serve(world);
+      const root = await mount(onFinished);
+      world.counts = { queued: 7, done: 1 };
+      await act(async () => box.watch());
+      expect(onFinished).toHaveBeenCalledTimes(1);
+      return { world, root };
+    }
+
+    it("reloads once after the gap when only background jobs finish", async () => {
+      const finished = vi.fn();
+      const { world, root } = await mountAfterFirstReload(finished);
+
+      world.counts = { queued: 6, done: 2 };
+      await tick(AI_ACTIVE_POLL_MS);
+      world.counts = { queued: 5, done: 3 };
+      await tick(AI_ACTIVE_POLL_MS);
+      world.counts = { queued: 4, done: 4 };
+      await tick(AI_ACTIVE_POLL_MS);
+      expect(finished).toHaveBeenCalledTimes(1);
+
+      await tick(AI_BACKGROUND_RELOAD_MS - 3 * AI_ACTIVE_POLL_MS - 1000);
+      expect(finished).toHaveBeenCalledTimes(1);
+      await tick(1000);
+      expect(finished).toHaveBeenCalledTimes(2);
+
+      await tick(AI_IDLE_POLL_MS);
+      expect(finished).toHaveBeenCalledTimes(2);
+      act(() => root.unmount());
+    });
+
+    it("flushes a waiting reload when the bundle goes idle", async () => {
+      const finished = vi.fn();
+      const { world, root } = await mountAfterFirstReload(finished);
+
+      world.counts = { queued: 6, done: 2 };
+      await tick(AI_ACTIVE_POLL_MS);
+      expect(finished).toHaveBeenCalledTimes(1);
+      world.counts = { done: 8 };
+      await tick(AI_ACTIVE_POLL_MS);
+      expect(finished).toHaveBeenCalledTimes(2);
+
+      await tick(AI_BACKGROUND_RELOAD_MS * 2);
+      expect(finished).toHaveBeenCalledTimes(2);
+      act(() => root.unmount());
+    });
+
+    it("reports at once when a person's job finishes", async () => {
+      const finished = vi.fn();
+      const { world, root } = await mountAfterFirstReload(finished);
+
+      world.counts = { queued: 5, done: 3 };
+      world.userActive = 1;
+      await tick(AI_ACTIVE_POLL_MS);
+
+      expect(finished).toHaveBeenCalledTimes(2);
+      act(() => root.unmount());
+    });
+
+    it("clears the waiting reload on unmount", async () => {
+      const finished = vi.fn();
+      const { world, root } = await mountAfterFirstReload(finished);
+      world.counts = { queued: 6, done: 2 };
+      await tick(AI_ACTIVE_POLL_MS);
+
+      act(() => root.unmount());
+      await tick(AI_BACKGROUND_RELOAD_MS * 2);
+
+      expect(finished).toHaveBeenCalledTimes(1);
+    });
+
+    it("clears the waiting reload when the bundle changes", async () => {
+      const finished = vi.fn();
+      const { world, root } = await mountAfterFirstReload(finished);
+      world.counts = { queued: 6, done: 2 };
+      await tick(AI_ACTIVE_POLL_MS);
+
+      await act(async () => root.render(createElement(Harness, { onFinished: finished, bundleId: 2 })));
+      await tick(AI_BACKGROUND_RELOAD_MS * 2);
+
+      expect(finished).toHaveBeenCalledTimes(1);
+      act(() => root.unmount());
+    });
   });
 });

@@ -191,6 +191,7 @@ async def get_ai_status(
         jobs=breakdown.jobs,
         by_kind=breakdown.by_kind,
         failed_errors=breakdown.failed_errors,
+        user_active=breakdown.user_active,
         adoption=await load_adoption_stats(session, ctx.bundle.id),
     )
 
