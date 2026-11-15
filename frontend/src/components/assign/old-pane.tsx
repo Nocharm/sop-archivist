@@ -22,6 +22,8 @@ interface OldPaneProps {
   onDocChange: (docId: string) => void;
   /** 고른 문서의 제목 - 좁으면 말줄임 */
   docTitle: string;
+  /** 문서 이름 옆의 꼬리표 - 한 단으로 연 New 문서면 그 이름 */
+  docTag: string;
   model: PaperModel | null;
   /** 필터 접기 - 없으면(All·출처 없는 New 모드) 용지 전부 */
   fold?: { matchIds: ReadonlySet<number>; open: FoldOpen; onOpenChange: (next: FoldOpen) => void };
@@ -78,7 +80,7 @@ export function OldPane(props: OldPaneProps) {
         ) : (
           <span className="pane-title">{props.docOptions[0]?.label}</span>
         )}
-        <span className="tag">Old</span>
+        <span className="tag" data-testid="assign-old-tag">{props.docTag}</span>
         <span className="pane-sub">{props.docTitle}</span>
         <span className="flex-1" />
         <PaneZoom value={props.zoom} onStep={props.onZoom} testId="assign-old-zoom" />

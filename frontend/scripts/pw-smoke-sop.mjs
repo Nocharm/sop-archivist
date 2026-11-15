@@ -2080,6 +2080,74 @@ await runStep("assign: the inspector walks Shape, Where it goes, Decide", {}, as
   check("the head's arrows move to the next row and back", true);
 });
 
+// 이미 쓴 New 문서의 원문 다듬기(v1.0.27) - 전에는 원문 고치기 화면에서만 했다. New 칸 머리의 가위 단추가 그 문서를 한 단으로 열고, Old 문서와 같은 도구로 자르고 되돌린다
+await runStep("assign: a written New document opens on its own with the same tools", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${freshId}/documents`, { headers })).json();
+  const newDoc = docs.find((doc) => doc.side === "new" && doc.status === "ready");
+  check("the fresh bundle has a written New document", newDoc !== undefined);
+  if (newDoc === undefined) return;
+  const readUnits = async () => (await (await page.request.get(`${BASE}/api/bundles/${freshId}/documents/${newDoc.id}/view`, { headers })).json()).units;
+  const waitCount = async (expected) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      if ((await readUnits()).length === expected) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  const before = await readUnits();
+  await page.goto(`${BASE}/bundles/${freshId}/assign`);
+  await wait(page, "assign-bar");
+  await page.waitForLoadState("networkidle");
+  await page.locator('[data-testid="assign-new-edit-original"]').click();
+  await wait(page, "assign-solo");
+  check("the scissors button opens the New document alone, in the one-document view", (await page.locator(".assign-panes").getAttribute("data-single")) !== null && (await getText(page, "assign-old-tag")).includes("New"));
+  check("nothing is picked yet, and the panel says what to do", (await page.locator('[data-testid^="assign-shape-line-"]').count()) === 0 && (await getText(page, "assign-solo-note")).length > 0);
+  const unit = before.find((item) => item.kind === "sentence" && item.pair_id === null && item.text.trim().split(" ").length >= 6);
+  check("the New document has a sentence long enough to cut", unit !== undefined);
+  if (unit === undefined) return;
+  const piece = page.locator(`[data-testid="assign-paper-piece-${unit.id}"], [data-testid="assign-paper-unit-${unit.id}"]`).first();
+  await piece.waitFor({ timeout: T });
+  await piece.click();
+  await page.waitForFunction((id) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() === id, unit.display_id, { timeout: T });
+  check("clicking a sentence picks it and offers its Shape line only", (await page.locator(`[data-testid="assign-shape-line-${unit.id}"]`).count()) === 1 && (await page.locator('[data-testid="assign-decide"]').count()) === 0);
+  await takeShot("sop-assign-solo.png");
+  // 우클릭 메뉴에는 고치기 항목만 있다(보낼 곳이 없는 문서다)
+  await piece.click({ button: "right" });
+  await wait(page, "assign-ctx-split");
+  check("the right-click menu has no assignment items", (await page.locator('[data-testid="assign-ctx-confirm"], [data-testid="assign-ctx-clear"]').count()) === 0);
+  await page.locator('[data-testid="assign-ctx-split"]').click();
+  await wait(page, "assign-cut-run");
+  await page.locator('[data-testid="assign-cut-run"]').click();
+  // 옛 문서의 문장이 이어져 있으면 한 번 묻는다
+  const confirmEdit = page.locator('[data-testid="assign-edit-confirm-confirm"]');
+  if (await confirmEdit.waitFor({ timeout: 2000 }).then(() => true, () => false)) await confirmEdit.click();
+  check("Split here cuts the New sentence in two", await waitCount(before.length + 1));
+  await page.waitForFunction((id) => { const now = document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim(); return now !== undefined && now !== "" && now !== id; }, unit.display_id, { timeout: T });
+  check("the screen follows to the new piece", true);
+  await page.waitForLoadState("networkidle");
+  await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+  check("Undo puts the sentence back", await waitCount(before.length));
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid^="assign-paper-piece-"]').length > 0 && document.querySelector('[data-testid="assign-solo"]') !== null, null, { timeout: T });
+  await page.waitForLoadState("networkidle");
+  // 문서 고르기 한 칸에 옛 문서와 이미 쓴 New 문서가 함께 있다
+  const oldDoc = docs.find((doc) => doc.side === "old" && doc.status === "ready");
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${oldDoc.id}"]`).click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-old-tag"]')?.textContent === "Old", null, { timeout: T });
+  check("picking an Old document in the same list goes back to assigning", (await page.locator('[data-testid="assign-solo"]').count()) === 0 && (await page.locator(".assign-panes").getAttribute("data-single")) !== null);
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${newDoc.id}"]`).click();
+  await wait(page, "assign-solo");
+  check("the one-document list also offers the written New document", true);
+  await page.locator('[data-testid="assign-view-two"]').click();
+  await wait(page, "assign-new");
+  check("two documents closes it - the left side is an Old document again", (await page.locator('[data-testid="assign-solo"]').count()) === 0 && (await getText(page, "assign-old-tag")) === "Old");
+});
+
 // 한 문장 ↔ 한/영 짝 바꾸기(v1.0.24) - 전에는 원문 고치기 화면에만 있었다. 짝인 줄을 한 문장으로 합치고, 합친 문장을 다시 짝으로 돌린다(풀기 + 짝 맺기를 한 번에)
 await runStep("assign: switch a KO/EN pair to one sentence and back", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);
