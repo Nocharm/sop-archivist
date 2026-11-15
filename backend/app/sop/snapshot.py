@@ -14,8 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
 from app.models import Employee
-from app.sop.constants import COVER_KINDS
-from app.sop.detach import CONFIRMED, UNASSIGNED
+from app.sop.detach import UNASSIGNED
 from app.sop.errors import raise_rule
 from app.sop.groups import build_unit_order_key
 from app.sop.models import (
@@ -496,27 +495,3 @@ async def count_unacked_missing_text(session: AsyncSession, bundle_id: int) -> i
         )
     )
     return count or 0
-
-
-async def count_unchecked_boundaries(session: AsyncSession, bundle_id: int) -> dict[int, int]:
-    """경계를 아직 확인하지 않은 단위 수(문서 id → 건수, 0인 문서는 뺀다) — 문서 목록과 쪼개기 화면의 남은 수.
-
-    글자 범위가 있는 단위(COVER_KINDS)만 센다. 표·행 묶음 단위는 범위가 없고 그 칸 문장이 대신한다.
-    배정을 확정한 단위는 경계도 확인된 것으로 친다(네 단계 워크플로우 §5) — 옛 문서는 확정된 판단, 올린 새 문서는 확정된 새 문장.
-    검토 요청 조건에서는 빠졌다. 모든 단위가 확정돼야 한다는 조건이 같은 일을 한다.
-    """
-    rows = await session.execute(
-        select(Extraction.document_id, func.count())
-        .select_from(Unit)
-        .join(Extraction, Extraction.id == Unit.extraction_id)
-        .where(
-            Unit.extraction_id.in_(_select_latest_extractions(Document.bundle_id == bundle_id)),
-            Unit.status == UNIT_ACTIVE,
-            Unit.kind.in_(COVER_KINDS),
-            Unit.boundary_confirmed.is_(False),
-            ~exists().where(UnitDecision.unit_id == Unit.id, UnitDecision.status == CONFIRMED),
-            ~exists().where(TargetSentence.new_unit_id == Unit.id, TargetSentence.status == CONFIRMED),
-        )
-        .group_by(Extraction.document_id)
-    )
-    return {document_id: count for document_id, count in rows}

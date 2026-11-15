@@ -1,4 +1,4 @@
-"""쪼개기 편집 — 나누기·합치기·경계 옮기기·골라 만들기·언어 바꾸기·경계 확인과 서버 쪽 되돌리기·다시 하기, 판단 떼어 내기와 새 문서 새 문장 다시 맞추기."""
+"""쪼개기 편집 — 나누기·합치기·경계 옮기기·골라 만들기·언어 바꾸기와 서버 쪽 되돌리기·다시 하기(옛 경계 확인 기록 포함), 판단 떼어 내기와 새 문서 새 문장 다시 맞추기."""
 
 import random
 from typing import NamedTuple
@@ -220,9 +220,7 @@ def test_split_retires_and_creates(client: TestClient) -> None:
     assert unit["id"] not in {member["id"] for member in view["units"]}
     assert _load_statuses(unit["id"], first["id"], second["id"]) == ["retired", "active", "active"]
     assert [first["display_id"], second["display_id"]] == _next_display_ids(fx.view, 2)
-    assert (first["kind"], first["lang"], first["status"], first["boundary_confirmed"]) == (
-        "sentence", "ko", "unassigned", False,
-    )
+    assert (first["kind"], first["lang"], first["status"]) == ("sentence", "ko", "unassigned")
     assert second["spans"] == [[unit["block_id"], len(FIRST), len(TWO_IN_ONE)]]
     assert view["document"]["revision"] == 2
     assert view["edits"] == {"can_undo": True, "can_redo": False}
@@ -744,123 +742,60 @@ def test_set_language_refused_when_decided(client: TestClient) -> None:
     assert new_refused.json()["detail"] == {"code": "unit_has_decision", "unit_ids": [new_unit["id"]]}
 
 
-# ── 경계 확인 표시 ────────────────────────────────────────────────────────────
+# ── 옛 경계 확인 기록 ─────────────────────────────────────────────────────────
 
 
-def test_boundary_confirm_flag(client: TestClient) -> None:
+def _add_legacy_boundary_edit(doc_id: int, op: str, unit_ids: list[int]) -> None:
+    """확인 동작이 있던 때(v1.0.17까지) 쌓인 기록 한 줄 — 표시를 켠 기록이라 단위의 표시도 함께 켠다."""
+
+    async def _run(session: AsyncSession) -> None:
+        last_seq = await session.scalar(select(func.max(UnitEdit.seq)).where(UnitEdit.document_id == doc_id))
+        session.add(
+            UnitEdit(
+                document_id=doc_id, seq=(last_seq or 0) + 1, op=op, payload={"unit_ids": unit_ids, "confirmed": True},
+                actor="qa.member",
+            )
+        )
+        for unit_id in unit_ids:
+            (await session.get_one(Unit, unit_id)).boundary_confirmed = True
+        await session.commit()
+
+    run_in_session(_run)
+
+
+def _load_boundary_flags(*unit_ids: int) -> list[bool]:
+    async def _run(session: AsyncSession) -> list[bool]:
+        return [(await session.get_one(Unit, unit_id)).boundary_confirmed for unit_id in unit_ids]
+
+    return run_in_session(_run)
+
+
+def test_legacy_boundary_records_still_undo_and_redo(client: TestClient) -> None:
+    # 확인 동작은 없어졌지만 운영 DB의 되돌리기 줄에는 옛 기록이 편집과 섞여 남아 있다 — 줄이 거기서 막히면 안 된다
     fx = _setup(client)
     two, record = find_unit(fx.view, TWO_IN_ONE), find_unit(fx.view, RECORD)
-    url = f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/units/boundary"
-
-    marked = client.post(url, json={"unit_ids": [two["id"], record["id"]], "confirmed": True}, headers=AUTHOR)
-    cleared = client.post(url, json={"unit_ids": [two["id"]], "confirmed": False}, headers=AUTHOR)
-
-    assert marked.status_code == cleared.status_code == 200, (marked.text, cleared.text)
-    view = get_view(client, fx.bundle_id, fx.doc["id"])
-    assert [find_unit(view, text)["boundary_confirmed"] for text in (TWO_IN_ONE, RECORD)] == [False, True]
-    # 문서 revision은 올리지 않지만 되돌리기 기록에는 들어간다(사용자 결정 2026-11-13)
-    assert (view["document"]["revision"], view["edits"]) == (1, {"can_undo": True, "can_redo": False})
+    _add_legacy_boundary_edit(fx.doc["id"], "boundary", [record["id"]])
     _ok(_split(client, fx, two, len(FIRST)))
-    retired = client.post(url, json={"unit_ids": [two["id"]], "confirmed": True}, headers=AUTHOR)
-    assert retired.status_code == 404
-    assert retired.json()["detail"] == {"code": "unit_not_found", "unit_ids": [two["id"]]}
-    # 새 단위는 확인되지 않은 채로 시작한다
-    assert find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), FIRST)["boundary_confirmed"] is False
-
-
-def test_confirm_all_boundaries_marks_the_rest(client: TestClient) -> None:
-    fx = _setup(client)
-    two = find_unit(fx.view, TWO_IN_ONE)
-    url = f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/units/boundary"
-    assert client.post(url, json={"unit_ids": [two["id"]], "confirmed": True}, headers=AUTHOR).status_code == 200
-
-    first = client.post(f"{url}/all", headers=AUTHOR)
-    again = client.post(f"{url}/all", headers=AUTHOR)
-
-    assert first.status_code == again.status_code == 200, (first.text, again.text)
     view = get_view(client, fx.bundle_id, fx.doc["id"])
-    rest = len(view["units"]) - 1
-    assert all(unit["boundary_confirmed"] for unit in view["units"])
-    assert (first.json(), again.json()) == ({"confirmed_count": rest}, {"confirmed_count": 0})
-    assert (view["document"]["revision"], view["edits"]) == (1, {"can_undo": True, "can_redo": False})
-    # 누가 한꺼번에 확인했는지는 기록 한 줄로 남고, 바뀐 것이 없으면 남기지 않는다
-    events = client.get(f"/api/bundles/{fx.bundle_id}/events?action_prefix=unit.", headers=AUTHOR).json()
-    assert [(event["action"], event["actor"], event["target_type"], event["target_ids"], event["detail"]) for event in events] == [
-        ("unit.check_all", "qa.member", "document", [fx.doc["id"]], {"count": rest})
-    ]
-
-
-def test_boundary_checks_undo_and_redo_in_edit_order(client: TestClient) -> None:
-    fx = _setup(client)
-    two, record = find_unit(fx.view, TWO_IN_ONE), find_unit(fx.view, RECORD)
-    url = f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/units/boundary"
-    assert client.post(url, json={"unit_ids": [record["id"]], "confirmed": True}, headers=AUTHOR).status_code == 200
-    # 이미 확인된 단위는 바뀐 것이 없어 기록에 넣지 않는다 - 되돌리면 이 단위만 풀린다
-    assert client.post(url, json={"unit_ids": [two["id"], record["id"]], "confirmed": True}, headers=AUTHOR).status_code == 200
+    halves = sorted(find_unit(view, text)["id"] for text in (FIRST, SECOND))
+    _add_legacy_boundary_edit(fx.doc["id"], "check_all", halves)
 
     undone = _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
 
-    view = get_view(client, fx.bundle_id, fx.doc["id"])
     assert undone == {
-        "document_revision": 1, "created_unit_ids": [], "retired_unit_ids": [], "detach": None,
-        "op": "boundary", "boundary_unit_ids": [two["id"]], "confirmed": False,
+        "document_revision": 2, "created_unit_ids": [], "retired_unit_ids": [], "detach": None,
+        "op": "check_all", "boundary_unit_ids": halves, "confirmed": False,
     }
-    assert [find_unit(view, text)["boundary_confirmed"] for text in (TWO_IN_ONE, RECORD)] == [False, True]
-    assert view["edits"] == {"can_undo": True, "can_redo": True}
+    assert _load_boundary_flags(*halves, record["id"]) == [False, False, True]
+    steps = [_ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))["op"] for _ in range(2)]
+    assert steps == ["split", "boundary"]
+    assert _load_boundary_flags(record["id"]) == [False]
+    assert get_view(client, fx.bundle_id, fx.doc["id"])["edits"] == {"can_undo": False, "can_redo": True}
 
     redone = _ok(_step(client, fx.bundle_id, fx.doc["id"], "redo"))
 
-    assert (redone["op"], redone["boundary_unit_ids"], redone["confirmed"]) == ("boundary", [two["id"]], True)
-    assert find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), TWO_IN_ONE)["boundary_confirmed"] is True
-    # 되돌리기는 확인·편집을 한 줄 순서로 - 쪼개기 뒤의 확인을 먼저, 그다음 쪼개기를 되돌린다
-    _ok(_split(client, fx, find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), TWO_IN_ONE), len(FIRST)))
-    first = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), FIRST)
-    assert client.post(url, json={"unit_ids": [first["id"]], "confirmed": True}, headers=AUTHOR).status_code == 200
-    steps = [_ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))["op"] for _ in range(3)]
-    assert steps == ["boundary", "split", "boundary"]
-
-
-def test_boundary_check_clears_the_redo_tail(client: TestClient) -> None:
-    fx = _setup(client)
-    two = find_unit(fx.view, TWO_IN_ONE)
-    _ok(_split(client, fx, two, len(FIRST)))
-    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
-    url = f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/units/boundary"
-
-    marked = client.post(url, json={"unit_ids": [two["id"]], "confirmed": True}, headers=AUTHOR)
-
-    assert marked.status_code == 200, marked.text
-    assert get_view(client, fx.bundle_id, fx.doc["id"])["edits"] == {"can_undo": True, "can_redo": False}
-
-
-def test_confirm_all_undoes_as_one_step(client: TestClient) -> None:
-    fx = _setup(client)
-    two = find_unit(fx.view, TWO_IN_ONE)
-    url = f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}/units/boundary"
-    assert client.post(url, json={"unit_ids": [two["id"]], "confirmed": True}, headers=AUTHOR).status_code == 200
-    assert client.post(f"{url}/all", headers=AUTHOR).status_code == 200
-
-    undone = _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
-
-    view = get_view(client, fx.bundle_id, fx.doc["id"])
-    assert (undone["op"], undone["confirmed"], len(undone["boundary_unit_ids"])) == ("check_all", False, len(view["units"]) - 1)
-    assert [unit["id"] for unit in view["units"] if unit["boundary_confirmed"]] == [two["id"]]
-
-
-def test_document_list_counts_unchecked_boundaries(client: TestClient) -> None:
-    fx = _setup(client)
-    url = f"/api/bundles/{fx.bundle_id}/documents"
-    total = sum(unit["kind"] in COVER_KINDS for unit in fx.view["units"])
-    two = find_unit(fx.view, TWO_IN_ONE)
-
-    before = client.get(url, headers=AUTHOR).json()
-    marked = client.post(f"{url}/{fx.doc['id']}/units/boundary", json={"unit_ids": [two["id"]], "confirmed": True}, headers=AUTHOR)
-    after = client.get(url, headers=AUTHOR).json()
-
-    assert marked.status_code == 200, marked.text
-    assert total > 1 and fx.doc["unchecked_boundaries"] == total  # 올린 직후 응답에도 실린다
-    assert [doc["unchecked_boundaries"] for doc in before] == [total]
-    assert [doc["unchecked_boundaries"] for doc in after] == [total - 1]
+    assert (redone["op"], redone["boundary_unit_ids"], redone["confirmed"]) == ("boundary", [record["id"]], True)
+    assert _load_boundary_flags(record["id"]) == [True]
 
 
 def test_edits_are_for_authors_while_in_progress(client: TestClient) -> None:
@@ -869,15 +804,12 @@ def test_edits_are_for_authors_while_in_progress(client: TestClient) -> None:
     unit = find_unit(fx.view, TWO_IN_ONE)
     base = f"/api/bundles/{fx.bundle_id}/documents/{fx.doc['id']}"
     edit = {"revision": 1, "op": {"type": "split", "unit_id": unit["id"], "at": len(FIRST)}}
-    boundary = {"unit_ids": [unit["id"]], "confirmed": True}
 
     def _send_all(headers: dict[str, str]) -> set[tuple[int, str]]:
         responses = [
             client.post(f"{base}/edits", json=edit, headers=headers),
             client.post(f"{base}/edits/undo", json={"revision": 1}, headers=headers),
             client.post(f"{base}/edits/redo", json={"revision": 1}, headers=headers),
-            client.post(f"{base}/units/boundary", json=boundary, headers=headers),
-            client.post(f"{base}/units/boundary/all", headers=headers),
         ]
         return {_code(response) for response in responses}
 

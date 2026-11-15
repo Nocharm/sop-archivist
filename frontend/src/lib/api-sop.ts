@@ -227,8 +227,6 @@ export interface SopDocument {
   uploaded_by: string;
   uploaded_at: string;
   extraction: { id: number; aux_status: "ok" | "failed"; warnings: ExtractionWarning[] } | null;
-  /** 경계를 아직 확인하지 않은 단위 수 - 쪼개기 화면의 표시일 뿐 검토 요청을 막지 않는다(확정하면 확인된 것으로 센다) */
-  unchecked_boundaries: number;
   /** 업로드 응답에서만 - 서버가 미리 채운 칸이 어디서 왔는지(파일 이름·본문 첫 장). 목록 조회에서는 빈 객체 */
   prefill_sources?: Partial<Record<"doc_code" | "doc_version" | "language_layout", "file_name" | "content">>;
   /** 비어 있는 번호·버전에 대한 AI 제안(문서에 쓰지 않은 값). 누르면 사람이 저장한다 */
@@ -388,7 +386,6 @@ export interface ViewUnit {
   table_id: number | null;
   row_index: number | null;
   group_unit_id: number | null;
-  boundary_confirmed: boolean;
   status: CoverStatus | null;
   pair_id: number | null;
   pos_seq: number;
@@ -421,7 +418,7 @@ export interface ViewPair {
 }
 
 export interface DocumentView {
-  document: Omit<SopDocument, "extraction" | "unchecked_boundaries">;
+  document: Omit<SopDocument, "extraction">;
   extraction: SopDocument["extraction"];
   tables: ViewTable[];
   blocks: ViewBlock[];

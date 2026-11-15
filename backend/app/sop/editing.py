@@ -64,12 +64,13 @@ from app.sop.units import UNIT_ACTIVE, get_latest_extraction_id, refresh_code_pa
 UNIT_RETIRED = "retired"
 EDIT_APPLIED = "applied"
 EDIT_UNDONE = "undone"
-# 경계 확인 표시만 바꾼 기록 - 단위 집합은 그대로라 되돌릴 때 표시만 거꾸로 돌린다(payload: unit_ids·confirmed)
+# 경계 확인 표시만 바꾼 옛 기록 - 확인 동작은 없어졌지만(v1.0.18) 이미 쌓인 기록은 되돌리기 줄에 남아 있어 계속 돌린다.
+# 단위 집합은 그대로라 되돌릴 때 표시만 거꾸로 돌린다(payload: unit_ids·confirmed)
 BOUNDARY_OPS = ("boundary", "check_all")
 # 글자 범위를 고칠 수 있는 단위 — 그림·표·행은 범위를 나누거나 잇지 않는다
 TEXT_KINDS = ("sentence", "heading", "cell_sentence")
 PAIR_LANGS = {"ko", "en"}  # 짝의 두 쪽 — 한쪽이 비면 짝을 지운다
-MAX_EDIT_UNITS = 2000  # 합치기·언어 바꾸기·경계 확인이 한 번에 고르는 단위 수 상한
+MAX_EDIT_UNITS = 2000  # 합치기·언어 바꾸기가 한 번에 고르는 단위 수 상한
 
 Offset = Annotated[int, Field(ge=0, le=MAX_DB_INT)]
 T = TypeVar("T")
@@ -173,20 +174,6 @@ class EditStepIn(BaseModel):
     confirm: bool = False
 
 
-class BoundaryIn(BaseModel):
-    unit_ids: list[DbId] = Field(min_length=1, max_length=MAX_EDIT_UNITS)
-    confirmed: bool
-
-
-class BoundaryOut(BaseModel):
-    unit_ids: list[int]
-    confirmed: bool
-
-
-class BoundaryAllOut(BaseModel):
-    confirmed_count: int
-
-
 class EditResult(BaseModel):
     document_revision: int
     # 이 요청으로 활성이 된 단위(되살린 것은 id 순, 새로 만든 것은 원문 순)와 은퇴한 단위(id 순)
@@ -200,7 +187,7 @@ class EditStepResult(EditResult):
     """되돌리기·다시 하기 응답 - 무엇을 거꾸로(또는 다시) 했는지 화면이 알리고 그 자리로 갈 수 있게."""
 
     op: str
-    # 경계 확인 기록이면 표시가 바뀐 단위와 바뀐 뒤 값, 아니면 빈 목록과 None
+    # 옛 경계 확인 기록(BOUNDARY_OPS)이면 표시가 바뀐 단위와 바뀐 뒤 값, 아니면 빈 목록과 None
     boundary_unit_ids: list[int]
     confirmed: bool | None
 
@@ -996,19 +983,6 @@ async def _start_new_edit(session: AsyncSession, document: Document) -> int:
     return (last_seq or 0) + 1
 
 
-async def _add_boundary_edit(
-    session: AsyncSession, document: Document, op: str, unit_ids: list[int], confirmed: bool, actor: str
-) -> None:
-    """경계 확인 표시를 바꾼 기록 - 되돌리기·다시 하기가 편집과 한 줄 순서로 돈다(사용자 결정 2026-11-13)."""
-    session.add(
-        UnitEdit(
-            document_id=document.id, seq=await _start_new_edit(session, document), op=op,
-            payload={"unit_ids": unit_ids, "confirmed": confirmed}, created_unit_ids=[], retired_unit_ids=[],
-            regrouped={}, lang_changes={}, layout_changes={}, actor=actor,
-        )
-    )
-
-
 async def apply_edit(
     session: AsyncSession, document: Document, op: EditOp, *, confirm: bool, actor: str
 ) -> EditResult:
@@ -1122,41 +1096,3 @@ async def redo_edit(session: AsyncSession, document: Document, *, confirm: bool,
     edit.state = EDIT_APPLIED
     await session.flush()
     return result
-
-
-async def set_boundary_confirmed(
-    session: AsyncSession, document: Document, unit_ids: Sequence[int], confirmed: bool, *, actor: str
-) -> list[int]:
-    """경계 확인 표시를 켜거나 끈다 — 단위 집합은 그대로라 문서 revision은 그대로고, 바뀐 단위만 되돌리기 기록에 넣는다."""
-    ensure_unique_units(unit_ids)
-    units = await load_active_units(session, await get_latest_extraction_id(session, document.id), unit_ids)
-    changed = sorted(unit.id for unit in units.values() if unit.boundary_confirmed != confirmed)
-    for unit in units.values():
-        unit.boundary_confirmed = confirmed
-    if changed:
-        await _add_boundary_edit(session, document, "boundary", changed, confirmed, actor)
-    await session.flush()
-    return sorted(units)
-
-
-async def confirm_all_boundaries(session: AsyncSession, document: Document, *, actor: str) -> int:
-    """문서에 남은 활성 단위의 경계를 한 번에 확인으로 돌리고 바뀐 건수를 돌려준다.
-
-    하나씩 확인하는 길(`set_boundary_confirmed`)은 요청당 단위 수 상한이 있어 큰 표 문서를 한 번에 못 끝낸다.
-    검토 요청 조건을 한꺼번에 채우는 동작이라 누가 했는지 작업 기록 한 줄을 남긴다(바뀐 것이 없으면 남기지 않는다).
-    """
-    extraction_id = await get_latest_extraction_id(session, document.id)
-    result = await session.execute(
-        update(Unit)
-        .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.boundary_confirmed.is_(False))
-        .values(boundary_confirmed=True)
-        .returning(Unit.id)
-    )
-    changed = sorted(result.scalars())
-    if changed:
-        await _add_boundary_edit(session, document, "check_all", changed, True, actor)
-        record_event(
-            session, bundle_id=document.bundle_id, actor=actor, action="unit.check_all", target_type="document",
-            target_ids=[document.id], detail={"count": len(changed)},
-        )
-    return len(changed)

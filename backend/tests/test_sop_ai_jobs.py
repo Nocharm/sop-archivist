@@ -45,7 +45,6 @@ from tests.sop_helpers import (
     OUTSIDER,
     REVIEWER,
     assign_as_is,
-    confirm_boundaries,
     create_bundle,
     get_bundle,
     get_view,
@@ -197,7 +196,6 @@ def _make_ready(client: TestClient) -> AiBundle:
     bundle = make_ai_bundle(client)
     docs = client.get(f"/api/bundles/{bundle.id}/documents", headers=AUTHOR).json()
     set_doc_version(client, bundle.id, next(doc for doc in docs if doc["id"] == bundle.document_id))
-    confirm_boundaries(client, bundle.id, bundle.document_id)
     for unit in get_view(client, bundle.id, bundle.document_id)["units"]:
         assign_as_is(client, bundle.id, unit, bundle.sop_id, slot_key="purpose")
     body = {"revision": get_bundle(client, bundle.id)["revision"], "checks": dict.fromkeys(SEMANTIC_CHECK_KEYS, True)}

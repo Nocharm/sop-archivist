@@ -6,7 +6,7 @@ import { guessRefNumber, isRefPending, pickRefUnit, readRefAdvice } from "./ref-
 function makeUnit(id: number, ref: ViewUnit["ref"]): ViewUnit {
   return {
     id, display_id: `OLD-1-00${id}`, kind: "sentence", spans: [[id, 0, 4]], text: "text", lang: ref?.state === "confirmed" ? "ref" : "en", table_id: null, row_index: null,
-    group_unit_id: null, boundary_confirmed: false, status: "unassigned", pair_id: null, pos_seq: id, block_id: id, is_edited: false, can_unmerge: false, split_suggestion_id: null, ref,
+    group_unit_id: null, status: "unassigned", pair_id: null, pos_seq: id, block_id: id, is_edited: false, can_unmerge: false, split_suggestion_id: null, ref,
   };
 }
 

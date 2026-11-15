@@ -12,7 +12,7 @@ function makeDoc(id: number, warnings: ExtractionWarning[] | null, patch: Partia
   return {
     id, side: "old", file_name: `SYNTHETIC_${id}.docx`, file_format: "docx", size_bytes: 1, doc_code: `OLD-${id}`, doc_version: "1", title: "", language_layout: "mixed" as SopDocument["language_layout"],
     status: "ready", status_reason: "", revision: 1, target_doc_id: null, uploaded_by: "qa.member", uploaded_at: "2026-11-15T00:00:00Z",
-    extraction: warnings === null ? null : { id, aux_status: "ok", warnings }, unchecked_boundaries: 0, ...patch,
+    extraction: warnings === null ? null : { id, aux_status: "ok", warnings }, ...patch,
   };
 }
 
