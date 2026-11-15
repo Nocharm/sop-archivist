@@ -1117,3 +1117,95 @@ def test_one_row_tobe_writes_need_the_author_and_an_open_bundle(client: TestClie
     assert [(r.status_code, r.json()["detail"]["code"]) for r in by_outsider] == [(404, "bundle_not_found")] * 4
     assert [(r.status_code, r.json()["detail"]["code"]) for r in after_request] == [(409, "bundle_not_editable")] * 4
     assert [doc["code"] for doc in _get_tobe(client, bundle["id"])["docs"]] == ["WI-KEEP"]
+
+
+# ── 줄 하나 고치기 — Documents 화면이 칸마다 바로 저장한다 ─────────────────────────
+
+
+def _row_setup(client: TestClient) -> tuple[int, dict[str, int], str]:
+    bundle = create_bundle(client, is_synthetic=True)
+    docs = [_doc("SOP-A"), _doc("WI-A", "wi", parent="SOP-A", order=1), _doc("SOP-B", order=2)]
+    assert put_tobe(client, bundle["id"], docs, wi_steps=[_step("WI-A", 1)]).status_code == 200
+    ids = {doc["code"]: doc["id"] for doc in _get_tobe(client, bundle["id"])["docs"]}
+    return bundle["id"], ids, f"/api/bundles/{bundle['id']}/tobe/docs"
+
+
+def test_patching_one_row_changes_only_what_was_sent(client: TestClient) -> None:
+    bundle_id, ids, base = _row_setup(client)
+
+    titled = client.patch(f"{base}/{ids['SOP-B']}", json={"title": "  Synthetic title  "}, headers=AUTHOR)
+    flagged = client.patch(f"{base}/{ids['SOP-B']}", json={"is_equipment_sop": True}, headers=AUTHOR)
+    moved = client.patch(f"{base}/{ids['WI-A']}", json={"parent_code": "SOP-B"}, headers=AUTHOR)
+
+    assert (titled.status_code, flagged.status_code, moved.status_code) == (200, 200, 200), moved.text
+    rows = {doc["code"]: doc for doc in moved.json()["docs"]}
+    assert (rows["SOP-B"]["title"], rows["SOP-B"]["is_equipment_sop"]) == ("Synthetic title", True)
+    assert rows["WI-A"]["parent_code"] == "SOP-B"
+    # 보내지 않은 것은 그대로다 — 다른 줄, 그 줄의 단계
+    assert rows["SOP-A"]["title"] == "" and moved.json()["wi_steps"] == [{"code": "WI-A", "step_no": 1, "title": ""}]
+
+
+def test_renaming_a_row_keeps_its_id_and_what_hangs_on_it(client: TestClient) -> None:
+    """번호를 바꿔도 줄 id가 그대로라 아래 WI·단계·배정한 문장이 따라온다 — 통째 쓰기는 지우고 새로 만들어 거절됐다."""
+    bundle_id, ids, base = _row_setup(client)
+    uploaded = upload(client, bundle_id, build_docx(p("합성 첫 문장이다.")), "SYNTHETIC_OLD-1_Row.docx")
+    view = get_view(client, bundle_id, uploaded.json()["id"])
+    assign_as_is(client, bundle_id, find_unit(view, "합성 첫 문장이다."), ids["SOP-A"], slot_key="purpose")
+
+    renamed = client.patch(f"{base}/{ids['SOP-A']}", json={"code": "SOP-A2"}, headers=AUTHOR)
+    taken = client.patch(f"{base}/{ids['SOP-A']}", json={"code": "SOP-B"}, headers=AUTHOR)
+
+    assert renamed.status_code == 200, renamed.text
+    rows = {doc["code"]: doc for doc in renamed.json()["docs"]}
+    assert rows["SOP-A2"]["id"] == ids["SOP-A"]
+    assert rows["WI-A"]["parent_code"] == "SOP-A2"
+    assert renamed.json()["sentence_counts"] == [{"target_doc_id": ids["SOP-A"], "wi_step": None, "count": 1}]
+    assert (taken.status_code, taken.json()["detail"]) == (409, {"code": "duplicate_code", "doc_code": "SOP-B"})
+
+
+def test_changing_a_row_type_clears_its_steps_and_follows_the_list_rules(client: TestClient) -> None:
+    bundle_id, ids, base = _row_setup(client)
+
+    to_sop = client.patch(f"{base}/{ids['WI-A']}", json={"doc_type": "sop"}, headers=AUTHOR)
+    # 아래에 WI가 없는 SOP만 WI가 될 수 있고, WI는 상위 SOP가 있어야 한다
+    orphan = client.patch(f"{base}/{ids['SOP-B']}", json={"doc_type": "wi"}, headers=AUTHOR)
+    to_wi = client.patch(f"{base}/{ids['SOP-B']}", json={"doc_type": "wi", "parent_code": "SOP-A"}, headers=AUTHOR)
+
+    assert to_sop.status_code == 200, to_sop.text
+    assert {doc["code"]: (doc["doc_type"], doc["parent_code"]) for doc in to_sop.json()["docs"]}["WI-A"] == ("sop", None)
+    assert to_sop.json()["wi_steps"] == []
+    assert (orphan.status_code, orphan.json()["detail"]["code"]) == (422, "invalid_parent")
+    assert to_wi.status_code == 200, to_wi.text
+
+
+def test_na_slot_and_step_title_save_one_at_a_time(client: TestClient) -> None:
+    bundle_id, ids, base = _row_setup(client)
+
+    marked = client.put(f"{base}/{ids['SOP-B']}/na/scope", json={"reason": "Synthetic: not needed"}, headers=AUTHOR)
+    reworded = client.put(f"{base}/{ids['SOP-B']}/na/scope", json={"reason": "Synthetic: covered elsewhere"}, headers=AUTHOR)
+    blank = client.put(f"{base}/{ids['SOP-B']}/na/purpose", json={"reason": "  "}, headers=AUTHOR)
+    titled = client.patch(f"{base}/{ids['WI-A']}/steps/1", json={"title": "Prepare"}, headers=AUTHOR)
+    missing = client.patch(f"{base}/{ids['WI-A']}/steps/9", json={"title": "Nope"}, headers=AUTHOR)
+    cleared = client.delete(f"{base}/{ids['SOP-B']}/na/scope", headers=AUTHOR)
+
+    assert marked.status_code == 200, marked.text
+    assert reworded.json()["na_slots"] == [{"code": "SOP-B", "slot_key": "scope", "reason": "Synthetic: covered elsewhere"}]
+    assert blank.status_code == 422
+    assert titled.json()["wi_steps"] == [{"code": "WI-A", "step_no": 1, "title": "Prepare"}]
+    assert (missing.status_code, missing.json()["detail"]["code"]) == (404, "wi_step_not_found")
+    assert cleared.status_code == 200 and cleared.json()["na_slots"] == []
+
+
+def test_row_writes_need_the_author_and_refuse_a_row_with_a_file(client: TestClient) -> None:
+    bundle_id, ids, base = _row_setup(client)
+    written = upload(client, bundle_id, build_docx(p("합성 새 문서의 문장이다.")), "SYNTHETIC_WI-77.docx", side="new", doc_type="wi", parent_code="SOP-A")
+    assert written.status_code == 201, written.text
+
+    as_reviewer = client.patch(f"{base}/{ids['SOP-B']}", json={"title": "x"}, headers=REVIEWER)
+    renamed = client.patch(f"{base}/{written.json()['target_doc_id']}", json={"code": "WI-78"}, headers=AUTHOR)
+    retitled = client.patch(f"{base}/{written.json()['target_doc_id']}", json={"title": "Synthetic written WI"}, headers=AUTHOR)
+
+    assert as_reviewer.status_code in (403, 404)
+    assert (renamed.status_code, renamed.json()["detail"]) == (409, {"code": "match_doc_locked", "codes": ["WI-77"]})
+    assert retitled.status_code == 200, retitled.text
+

@@ -1036,6 +1036,9 @@
   .upload-row.head > :first-child { display: none; }
   .src-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .src-badge { flex: none; padding: 0 5px; border-radius: var(--r-1); font-size: 10px; line-height: 16px; font-weight: 600; background: var(--accent-tint); color: var(--accent); }
+  /* EQUIS가 아는 값으로 채우자는 제안 - 눌러야 들어간다 */
+  .equis-hint { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 1px 6px 1px 2px; border: 1px dashed var(--accent-line); border-radius: var(--r-1); font-size: var(--fs-micro); line-height: 18px; color: var(--ink-2); cursor: pointer; }
+  .equis-hint:hover { border-style: solid; background: var(--accent-tint); color: var(--ink); }
   .src-badge.ai { background: var(--st-ai-tint); color: var(--st-ai-ink); }
 }
 @layer components {

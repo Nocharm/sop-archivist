@@ -600,6 +600,33 @@ export function removeWiStep(bundleId: number, targetDocId: number, stepNo: numb
   return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/steps/${stepNo}`, { method: "DELETE" });
 }
 
+// 줄 하나 고치기(Documents 화면) - 칸마다 바로 저장한다. 보낸 칸만 바뀌고 새 목록이 돌아온다(revision을 보내지 않는다)
+export interface ToBeDocPatch {
+  code?: string;
+  title?: string;
+  doc_type?: TargetDocType;
+  /** null은 "상위 SOP 없음" */
+  parent_code?: string | null;
+  is_equipment_sop?: boolean;
+}
+
+export function updateToBeDoc(bundleId: number, targetDocId: number, patch: ToBeDocPatch): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+/** SOP의 칸 하나를 N/A로(사유와 함께) - 이미 N/A면 사유를 바꾼다 */
+export function setNaSlot(bundleId: number, targetDocId: number, slotKey: string, reason: string): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/na/${encodeURIComponent(slotKey)}`, { method: "PUT", body: JSON.stringify({ reason }) });
+}
+
+export function clearNaSlot(bundleId: number, targetDocId: number, slotKey: string): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/na/${encodeURIComponent(slotKey)}`, { method: "DELETE" });
+}
+
+export function renameWiStep(bundleId: number, targetDocId: number, stepNo: number, title: string): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/steps/${stepNo}`, { method: "PATCH", body: JSON.stringify({ title }) });
+}
+
 export function importToBe(bundleId: number, file: File, revision: number): Promise<ToBe> {
   const form = new FormData();
   form.append("file", file);
