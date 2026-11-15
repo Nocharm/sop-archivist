@@ -58,7 +58,7 @@ node frontend/scripts/fake-ai-server.mjs    # 가짜 AI :9999(저장소 루트�
 - **새 권한(permission) — 3곳을 한 커밋에서:** backend `app/access/catalog.py` `PERMISSIONS` ↔ frontend `src/lib/access.ts` `PERMISSIONS`(같은 값·순서) ↔ i18n `permission.<key>`(en·ko). 키가 `permission.`으로 시작하면 메시지 키는 `permission.permission.manage`. 라우트는 `Depends(require_permission("<key>"))`(모르는 키는 import 때 `ValueError`). 카탈로그에서 뺀 키는 저장된 역할·부여에서 조용히 버려진다.
 - **새 env — 3곳:** `app/settings.py` · `.env.example` · `docker-compose.yml` backend `environment:`(`VAR: ${VAR:-}`). backend에 `env_file`이 없어 compose에 빠지면 서버에서만 조용히 기본값이다. 빈 문자열이 기동을 죽이는 int/bool은 Settings 기본값과 같은 폴백. 시크릿 값은 어디에도 쓰지 않는다.
 - **새 업무 규칙 거절 코드(`raise_rule`) = 프런트 문구:** 화면에서 닿는 코드면 `rule.<code>` en·ko(세부 사유는 `rule.<code>.<reason>`). 없으면 상태 코드 문구로 떨어진다.
-- **화면·동작·라벨을 바꾸면 사용 설명서도 같은 커밋에서:** `frontend/public/manual/user-manual.md` 해당 조각. backend만 고쳐 동작이 달라질 때도 같다(세부는 `frontend/CLAUDE.md`).
+- **화면·동작·라벨을 바꾸면 사용 설명서의 글도 같은 커밋에서, 그림은 정식 업데이트 때(사용자 결정 2026-11-15):** `frontend/public/manual/user-manual.md` 해당 조각의 글은 바꿀 때마다 고친다(나중에 몰아서 검사하기 어렵다). backend만 고쳐 동작이 달라질 때도 같다. 화면 그림(`frontend/public/manual/img`)은 오래 걸리니 `dev`에 올리는 PATCH에서는 다시 뽑지 않고, `dev`→`main` 정식 업데이트(MINOR) 때 한 번에 뽑는다(세부는 `frontend/CLAUDE.md`).
 
 ## Operations / Deployment
 
