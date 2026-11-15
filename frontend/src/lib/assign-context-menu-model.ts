@@ -2,7 +2,7 @@
 // 두 묶음이다: 배정(지금 고른 곳으로 확정·배정 취소)과 문장 고치기(여기서 나누기·앞뒤 문장과 합치기 또는 한/영 짝 맺기·짝 풀기·언어).
 // 고치기는 Split의 편집을 그대로 부르므로 판단이 없는 단위만 받는다 - 배정된 문장은 먼저 배정을 취소한다(서버도 판단이 걸린 단위는 확인을 요구한다).
 import type { CoverStatus, ViewUnit } from "./api-sop";
-import { planJoin } from "./split-menu-model";
+import { planJoin, type JoinPlan } from "./split-menu-model";
 
 export type AssignMenuAction =
   | "confirm" | "clear"
@@ -138,4 +138,16 @@ export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
       ...buildTableItems(ctx),
     ],
   };
+}
+
+/**
+ * 조각 사이 붙이기 단추의 계획 - 묶는 규칙은 원문 고치기와 같고(planJoin) Assign의 막는 까닭을 더한다:
+ * 저장 전 고름이 있는 문장은 막고, 한/영 짝은 배정이 있으면 막는다(합치기는 서버가 묻고 배정을 풀어 준다).
+ */
+export function planAssignJoin(first: ViewUnit | undefined, second: ViewUnit | undefined, state: Pick<AssignMenuContext, "isDecided" | "hasDraft">): JoinPlan {
+  if (first === undefined || second === undefined) return { kind: null };
+  if (state.hasDraft(first) || state.hasDraft(second)) return { kind: null, reasonKey: why("unsaved") };
+  const plan = planJoin([first, second], true);
+  if (plan.kind === "pair" && (state.isDecided(first) || state.isDecided(second))) return { kind: null, reasonKey: why("assigned") };
+  return plan;
 }

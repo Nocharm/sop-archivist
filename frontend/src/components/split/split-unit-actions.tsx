@@ -13,6 +13,8 @@ interface SplitUnitActionsProps {
   busy: boolean;
   onUnpair: () => void;
   onUnmerge: () => void;
+  /** 단추 testid의 앞머리 - 원문 고치기는 split, Assign의 Old 칸은 assign */
+  testIdPrefix?: string;
 }
 
 export function SplitUnitActions(props: SplitUnitActionsProps) {
@@ -24,7 +26,7 @@ export function SplitUnitActions(props: SplitUnitActionsProps) {
         type="button"
         className="strip-act"
         data-tone={tone}
-        data-testid={`split-act-${key}-${props.unitId}`}
+        data-testid={`${props.testIdPrefix ?? "split"}-act-${key}-${props.unitId}`}
         disabled={props.busy}
         onClick={(event: MouseEvent) => {
           event.stopPropagation();
