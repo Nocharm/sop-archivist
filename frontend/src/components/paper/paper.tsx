@@ -5,7 +5,7 @@
 // strips.fold(Assign 필터)가 있으면 맞는 조각만 제 모양, 곁은 한 줄 판, 먼 구간은 묶음 한 줄로 접는다(paper-fold-model.ts) - 한 줄 판·묶음은 단추라 눌러도 조각을 고르지 않는다.
 "use client";
 
-import { ChevronsDownUp, Ellipsis, FoldVertical, FolderCheck, ImageIcon, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles, type LucideIcon } from "lucide-react";
+import { BookMarked, ChevronsDownUp, Ellipsis, FoldVertical, FolderCheck, ImageIcon, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles, type LucideIcon } from "lucide-react";
 import { Fragment, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { FigureImage } from "@/components/paper/figure-image";
@@ -30,15 +30,17 @@ const MARK_ICONS: Record<PaperMark, LucideIcon> = {
   classified: FolderCheck,
   ai: Sparkles,
   suggest: WandSparkles,
+  ref: BookMarked,
   warn: TriangleAlert,
 };
-const MARK_ORDER: readonly PaperMark[] = ["edited", "pair", "classified", "ai", "suggest", "warn"];
+const MARK_ORDER: readonly PaperMark[] = ["edited", "pair", "classified", "ai", "suggest", "ref", "warn"];
 const MARK_LABELS: Record<PaperMark, string> = {
   edited: "split.legendEdited",
   pair: "split.legendPair",
   classified: "split.legendClassified",
   ai: "split.legendAi",
   suggest: "split.markSuggest",
+  ref: "split.markRef",
   warn: "split.markWarn",
 };
 
@@ -550,7 +552,7 @@ export function Paper({
    *  자리는 조각 위 테두리 오른쪽 끝에 걸친 작은 탭 - 글·끝 아이콘과 겹치지 않고 조각 높이를 바꾸지 않는다. 언어가 없는 단위(neutral)는 없다 */
   function renderLang(unit: ViewUnit | undefined): ReactNode {
     if (!unit) return null;
-    return <LangToken lang={unit.lang} className="strip-lang" tabIndex={unit.id === selectedId ? 0 : -1} testId={`${testId}-lang-${unit.id}`} />;
+    return <LangToken lang={unit.lang} isRefProposed={unit.ref?.state === "proposed"} className="strip-lang" tabIndex={unit.id === selectedId ? 0 : -1} testId={`${testId}-lang-${unit.id}`} />;
   }
 
   /** 두 줄 사이의 묶기 - 같은 언어면 합치기, 한글·영어면 짝(아이콘으로 구별). 못 묶는 자리는 꺼 두고 까닭을 툴팁으로 */

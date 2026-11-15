@@ -3,7 +3,7 @@
 // 자리는 그 자리 메뉴와 같은 규칙(placeLinkMenu) - 그 줄의 조각들(한/영 짝이면 둘 다) 아래(모자라면 위)에 놓아 다룰 문장을 가리지 않는다.
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, Check, Eraser, LayoutList, Link2, MousePointerClick, Rows3, Scissors, Table2, Unlink, type LucideIcon } from "lucide-react";
+import { ArrowDownToLine, ArrowUpToLine, BookMarked, BookX, Check, Eraser, LayoutList, Link2, MousePointerClick, Rows3, Scissors, Table2, Unlink, type LucideIcon } from "lucide-react";
 import { useRef } from "react";
 
 import { Menu } from "@/components/ui/menu";
@@ -24,6 +24,8 @@ const ICONS: Record<Exclude<AssignMenuAction, "lang">, LucideIcon> = {
   pair_next: Link2,
   pair_pick: MousePointerClick,
   unpair: Unlink,
+  ref_mark: BookMarked,
+  ref_clear: BookX,
   table_rows: Rows3,
   table_merge: Table2,
   table_layout: LayoutList,
@@ -39,6 +41,8 @@ const LABELS: Record<Exclude<AssignMenuAction, "lang">, string> = {
   pair_next: "assign.ctx.pairNext",
   pair_pick: "assign.ctx.pairPick",
   unpair: "assign.ctx.unpair",
+  ref_mark: "assign.ctx.refMark",
+  ref_clear: "assign.ref.reject",
   // 표 항목은 쪼개기 화면의 단추와 같은 이름을 쓴다
   table_rows: "split.splitRows",
   table_merge: "split.mergeRows",

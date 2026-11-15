@@ -201,6 +201,8 @@ describe("canMakeOtherLanguage", () => {
 
   it("offers the missing language for a confirmed one-language row in a slot", () => {
     expect(canMakeOtherLanguage(["ko"], slot, true)).toBe("en");
+    // 참조 줄은 한 줄뿐이라 다른 언어 문장을 만들지 않는다
+    expect(canMakeOtherLanguage(["ref"], slot, true)).toBeNull();
     expect(canMakeOtherLanguage(["en"], slot, true)).toBe("ko");
   });
 

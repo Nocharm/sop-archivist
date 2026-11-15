@@ -115,6 +115,8 @@
   /* KO/EN language token (Split tab, Assign tab). KO follows the accent blue, EN is green, so the two read apart by colour too. Ink is text on the tinted token. */
   --lang-ko-ink: var(--accent);
   --lang-en-ink: oklch(.45 .11 160);
+  /* REF (reference line) reads apart from KO blue, EN green, AI violet and hold amber */
+  --lang-ref-ink: oklch(.47 .14 350);
 
   --tint: 11%;
   --tint2: 20%;
@@ -143,6 +145,8 @@
   --lang-ko-line: color-mix(in oklab, var(--lang-ko-ink) 45%, var(--surface));
   --lang-en-bg: color-mix(in oklab, var(--lang-en-ink) var(--tint), var(--surface));
   --lang-en-line: color-mix(in oklab, var(--lang-en-ink) 45%, var(--surface));
+  --lang-ref-bg: color-mix(in oklab, var(--lang-ref-ink) var(--tint), var(--surface));
+  --lang-ref-line: color-mix(in oklab, var(--lang-ref-ink) 45%, var(--surface));
   --split-a: color-mix(in oklab, oklch(.62 .13 250) var(--tint2), var(--paper));
   --split-b: color-mix(in oklab, oklch(.80 .13 85) var(--tint2), var(--paper));
   /* Modal backdrop. Stays dark in both themes (app-side addition; the mock used the same value inline). */
@@ -197,6 +201,7 @@
   --danger-fill: oklch(.66 .165 25);
   --lang-ko-ink: var(--accent);
   --lang-en-ink: oklch(.76 .12 160);
+  --lang-ref-ink: oklch(.79 .11 350);
 
   --tint: 16%;
   --tint2: 32%;

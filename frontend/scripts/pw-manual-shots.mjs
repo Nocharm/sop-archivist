@@ -175,6 +175,17 @@ const SCENES = [
     marks: [id("assign-filter-ai_suggested"), id("assign-ai-reason"), id("assign-rec-0"), id("assign-chosen"), id("assign-primary")],
   },
   {
+    // 참조 줄 - 위쪽 줄의 남은 수를 눌러 제안이 붙은 줄로 가면 오른쪽 칸 맨 위에 번호 확인 카드가 뜬다(앱 안 설명서만)
+    name: "assign-ref", appOnly: true, app: {}, user: "qa.member", path: "/bundles/1/assign",
+    prep: async (page) => {
+      await click(page, id("assign-ref-pending"));
+      await page.locator(id("assign-ref")).waitFor({ state: "visible", timeout: T });
+      // 문서의 마지막 줄이라 낮은 창에서는 아래로 밀린다 - 고른 줄이 그림에 들어오게 한다
+      await page.locator(".strip-lang[data-proposed]").scrollIntoViewIfNeeded();
+      await page.waitForTimeout(300);
+    },
+  },
+  {
     // 상단 바 AI 작업 목록 - seed가 묶음 4에 쌓은 요청(하루 안)이 보인다
     name: "ai-jobs", appOnly: true, app: { clip: id("ai-jobs-popover") }, user: "qa.member", path: "/bundles/4",
     prep: async (page) => {

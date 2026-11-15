@@ -319,7 +319,14 @@ export function deleteDocument(bundleId: number, docId: number, revision: number
 // --- 원문 보기와 쪼개기 편집 ---
 
 export type UnitKind = "sentence" | "heading" | "figure" | "table" | "table_row" | "cell_sentence";
-export type UnitLang = "ko" | "en" | "neutral";
+/** ref는 참조 줄(다른 문서를 번호로 가리키는 글) - 한/영 짝이 없다 */
+export type UnitLang = "ko" | "en" | "ref" | "neutral";
+/** 참조 줄 상태 - proposed는 앱의 제안(사람이 번호를 확인하기 전), confirmed는 REF로 확정된 것 */
+export interface UnitRefMark {
+  state: "proposed" | "confirmed";
+  /** 다듬은 문서 번호(대문자) - 그 단위의 글 안에 있는 글자 */
+  number: string;
+}
 export type CoverStatus = "unassigned" | "ai_suggested" | "confirmed" | "on_hold";
 /** (블록 id, 시작, 끝) - 끝은 포함하지 않는다 */
 export type UnitSpan = [number, number, number];
@@ -392,6 +399,16 @@ export interface ViewUnit {
   can_unmerge: boolean;
   /** 사람이 아직 정하지 않은 AI 나누기 제안 */
   split_suggestion_id: number | null;
+  /** 참조 줄 제안·확정 - 참조가 아니면 null */
+  ref: UnitRefMark | null;
+}
+
+/** 고른 단위의 참조 상태와 그 번호의 EQUIS 표시 - 참조가 아니면 state가 null */
+export interface UnitRefDetail {
+  state: UnitRefMark["state"] | null;
+  number: string;
+  /** EQUIS가 꺼져 있으면 null */
+  equis: EquisInfo | null;
 }
 
 export interface ViewPair {
@@ -422,7 +439,11 @@ export type EditOp =
   | { type: "set_language"; unit_ids: number[]; lang: "ko" | "en" }
   | { type: "split_table_rows"; table_unit_id: number }
   | { type: "merge_table_rows"; table_id: number }
-  | { type: "set_layout_table"; table_id: number; is_layout: boolean };
+  | { type: "set_layout_table"; table_id: number; is_layout: boolean }
+  /** 참조 줄로 - 번호는 그 단위의 글 안에 있어야 한다. 이미 참조 줄이면 번호만 고친다 */
+  | { type: "set_ref"; unit_id: number; number: string }
+  /** 참조 아님 - 참조 줄이면 그 전 언어로 돌리고, 제안뿐이었으면 다시 제안하지 않는다 */
+  | { type: "clear_ref"; unit_id: number };
 
 export interface EditResult {
   document_revision: number;
@@ -447,6 +468,11 @@ export function getDocumentView(bundleId: number, docId: number): Promise<Docume
 }
 
 const buildDocPath = (bundleId: number, docId: number) => `/bundles/${bundleId}/documents/${docId}`;
+
+/** 단위가 가리키는 문서 번호와 그 번호의 EQUIS 표시 - 번호는 서버가 단위의 글에서 읽는다 */
+export function getUnitRef(bundleId: number, docId: number, unitId: number): Promise<UnitRefDetail> {
+  return apiFetch<UnitRefDetail>(`${buildDocPath(bundleId, docId)}/units/${unitId}/ref`);
+}
 
 export function editUnits(bundleId: number, docId: number, revision: number, op: EditOp, confirm = false, undo?: UndoMeta): Promise<EditResult> {
   return apiFetch<EditResult>(`${buildDocPath(bundleId, docId)}/edits`, { method: "POST", body: JSON.stringify({ revision, confirm, op, undo }) });

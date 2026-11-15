@@ -216,6 +216,7 @@ export function listSiblingPlaces(options: DestinationOption[], destination: Des
 export function canMakeOtherLanguage(rowLangs: UnitLang[], destination: Destination | null, confirmed: boolean): "ko" | "en" | null {
   if (!confirmed || !destination || (destination.kind !== "slot" && destination.kind !== "step")) return null;
   const langs = new Set(rowLangs.filter((lang) => lang !== "neutral"));
-  if (langs.size !== 1) return null;
+  // 참조 줄(REF)은 한 줄뿐인 글이라 다른 언어 문장을 만들지 않는다
+  if (langs.size !== 1 || langs.has("ref")) return null;
   return langs.has("ko") ? "en" : "ko";
 }

@@ -209,7 +209,7 @@ export function getTags(unit: ViewUnit): { lang: "KO" | "EN" | null; hold: boole
   return { lang, hold: unit.status === "on_hold" };
 }
 
-export type UnitMark = "edited" | "pair" | "classified" | "ai" | "suggest";
+export type UnitMark = "edited" | "pair" | "classified" | "ai" | "suggest" | "ref";
 
 /** 종이 오른쪽 끝 아이콘 표시 - 순서가 늘 같아야 줄마다 같은 자리에 온다. suggest는 아직 정하지 않은 AI 나누기 제안 */
 export function getMarks(unit: ViewUnit): UnitMark[] {
@@ -219,6 +219,8 @@ export function getMarks(unit: ViewUnit): UnitMark[] {
   if (unit.status === "confirmed") marks.push("classified");
   if (unit.status === "ai_suggested") marks.push("ai");
   if (unit.split_suggestion_id !== null) marks.push("suggest");
+  // 참조 줄 제안 - 사람이 번호를 확인하기 전까지 줄 끝에 남는다
+  if (unit.ref?.state === "proposed") marks.push("ref");
   return marks;
 }
 

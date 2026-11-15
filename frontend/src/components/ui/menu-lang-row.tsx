@@ -8,7 +8,7 @@ import type { KeyboardEvent } from "react";
 
 import type { UnitLang } from "@/lib/api-sop";
 
-type PickLang = Exclude<UnitLang, "neutral">;
+type PickLang = Exclude<UnitLang, "neutral" | "ref">;
 
 const OPTIONS: readonly PickLang[] = ["ko", "en"];
 

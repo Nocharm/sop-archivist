@@ -3,7 +3,7 @@
 // 오른쪽은 고른 곳·확정·우선순위 아코디언이다(설계 docs/superpowers/specs/2026-11-09-assign-unified-design.md).
 "use client";
 
-import { Check, Circle, CircleCheck, CircleDashed, CirclePause, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, Redo2, RefreshCw, Scissors, Sparkles, SquarePlus, Trash2, TriangleAlert, Undo2, WandSparkles, X, type LucideIcon } from "lucide-react";
+import { BookMarked, Check, Circle, CircleCheck, CircleDashed, CirclePause, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, Redo2, RefreshCw, Scissors, Sparkles, SquarePlus, Trash2, TriangleAlert, Undo2, WandSparkles, X, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent } from "react";
@@ -14,6 +14,7 @@ import { DestCard } from "@/components/assign/dest-card";
 import { DestinationAccordion, type AccordionSection } from "@/components/assign/destination-accordion";
 import { DestinationTree, type DestinationManage } from "@/components/assign/destination-tree";
 import { MissingWarnings } from "@/components/assign/missing-warnings";
+import { RefCard } from "@/components/assign/ref-card";
 import { SplitSuggestionCard } from "@/components/assign/split-suggestion";
 import { SplitWorkspace } from "@/components/split/split-workspace";
 import { LinkChoice } from "@/components/assign/link-choice";
@@ -157,6 +158,7 @@ import { EDIT_ORIGINAL_PARAM, getEditOriginalHref, getNewDocumentsHref, getStage
 import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useCutLine } from "@/lib/use-cut-line";
+import { isRefPending, pickRefUnit } from "@/lib/ref-model";
 import { useLoaded } from "@/lib/use-loaded";
 import { usePaneZoom, type PaneKey, type ZoomDir } from "@/lib/use-pane-zoom";
 import { Select, type SelectOption } from "@/components/ui/select";
@@ -650,6 +652,8 @@ export default function AssignPage() {
   }
   // 떨어진 문장과 한/영 짝 맺기 - 메뉴에서 시작하면 다음에 누르는 문장이 짝이 된다(Esc로 거둔다). 문서를 바꾸면 버려진다
   const [pairFrom, setPairFrom] = useState<{ docId: number; unitId: number } | null>(null);
+  // 메뉴의 "참조 줄로 표시"로 번호 칸을 연 문장 - 제안도 확정도 없는 문장에 참조 카드를 띄운다
+  const [refEntryId, setRefEntryId] = useState<number | null>(null);
   const pairSource = pairFrom !== null && pairFrom.docId === oldView?.document.id ? (paperModel?.units.get(pairFrom.unitId) ?? null) : null;
 
   function selectRow(key: string, scroll = true) {
@@ -658,7 +662,10 @@ export default function AssignPage() {
     setSelectedKey(key);
     setMenu(null);
     setCtxMenu(null);
-    if (key !== activeKey) setCutUnitId(null);
+    if (key !== activeKey) {
+      setCutUnitId(null);
+      setRefEntryId(null);
+    }
     const first = rowMap.get(key)?.unitIds[0];
     if (scroll && first !== undefined) scrollToUnit(first);
   }
@@ -717,6 +724,13 @@ export default function AssignPage() {
   const rowSplitUnit: ViewUnit | null = (row?.unitIds ?? []).map((id) => paperModel?.units.get(id)).find((unit): unit is ViewUnit => unit !== undefined && splitByUnit.has(unit.id)) ?? null;
   const rowSplit = rowSplitUnit ? (splitByUnit.get(rowSplitUnit.id) ?? null) : null;
   const splitBlocked = rowSplitUnit === null ? null : isUnitDecided(rowSplitUnit) ? t("assign.ctx.why.assigned") : hasUnitDraft(rowSplitUnit) ? t("assign.ctx.why.unsaved") : null;
+  // 고른 줄의 참조 줄(REF) - 확인이 남은 제안이 먼저다. 제안이 남은 줄은 번호를 확인하거나 물려야 Confirm이 켜진다(이미 확정한 줄은 막지 않는다)
+  const rowViewUnits = (row?.unitIds ?? []).map((id) => paperModel?.units.get(id)).filter((unit): unit is ViewUnit => unit !== undefined);
+  const rowRefUnit = pickRefUnit(rowViewUnits) ?? rowViewUnits.find((unit) => unit.id === refEntryId) ?? null;
+  // 저장 전 고름이 있어도 번호 확인은 된다 - 보낼 곳을 먼저 고른 사람이 확인 때문에 고름을 버리지 않게(단위가 바뀌지 않는 편집이다)
+  const refBlocked = rowRefUnit !== null && isUnitDecided(rowRefUnit) ? t("assign.ctx.why.assigned") : null;
+  const isRefGate = row !== null && row.status !== "confirmed" && rowViewUnits.some(isRefPending);
+  const refPendingIds = (paperTabs?.order ?? []).filter((id) => isRefPending(paperModel?.units.get(id)) && rowOfUnit.has(id));
   // 메뉴를 연 뒤 편집으로 그 문장이 사라졌으면 닫는다(렌더 중 상태 맞추기)
   if (ctxMenu !== null && paperModel !== null && ctxTarget === null) setCtxMenu(null);
 
@@ -741,7 +755,9 @@ export default function AssignPage() {
       // 자르기·합치기·언어 바꾸기 모두 Assign 기록에 넣는다(설계 §4.4) - 서버는 Split 편집 기록 번호만 가리킨다
       const undo = buildUndo({ focus_unit_id: op.type === "split" ? op.unit_id : (followId ?? undefined) });
       const result = await editUnits(bundleId, oldView.document.id, oldView.document.revision, op, false, undo);
-      markRecorded();
+      // 문서가 바뀌지 않은 편집(참조 제안 물리기)은 서버도 단계를 남기지 않는다
+      if (result.document_revision !== oldView.document.revision) markRecorded();
+      setRefEntryId(null);
       cutLine.clear();
       setCutUnitId(null);
       // 고친 줄의 Unit은 은퇴했을 수 있다 - 다시 받는 동안 그 Unit의 묶음·후보를 부르지 않게 고름을 비우고, 새 줄이 생기면 follow가 고른다
@@ -836,6 +852,14 @@ export default function AssignPage() {
     if (key !== undefined) selectRow(key);
   }
 
+  /** 확인이 남은 다음 참조 줄로 - 용지 순서로 지금 줄 다음, 끝이면 처음으로 돈다 */
+  function selectNextRef() {
+    if (refPendingIds.length === 0) return;
+    const current = refPendingIds.findIndex((id) => rowOfUnit.get(id) === activeKey);
+    const key = rowOfUnit.get(refPendingIds[(current + 1) % refPendingIds.length]);
+    if (key !== undefined) selectRow(key);
+  }
+
   function splitAtCut() {
     if (!cutUnit || cutLine.at === null) return;
     void runUnitEdit({ type: "split", unit_id: cutUnit.id, at: cutLine.at }, t("split.didSplit"), null);
@@ -854,8 +878,10 @@ export default function AssignPage() {
     const caret = ctxMenu?.caret ?? null;
     setCtxMenu(null);
     if (!target) return;
-    if (action === "confirm") void runSave("confirm");
+    if (action === "confirm") handlePrimary();
     else if (action === "clear") void runClear();
+    else if (action === "ref_mark") setRefEntryId(target.id);
+    else if (action === "ref_clear") void runUnitEdit({ type: "clear_ref", unit_id: target.id }, t("assign.ref.didReject"), target.id);
     else if (action === "split") {
       // 이미 그 문장에 선이 있으면 바로 나누고, 없으면 누른 자리(키보드면 가운데) 가까이에 선을 놓는다 - 끌거나 ←→로 옮긴 뒤 Split here
       if (cutUnit?.id === target.id && cutLine.at !== null) splitAtCut();
@@ -930,6 +956,11 @@ export default function AssignPage() {
   async function runSave(action: "confirm" | "hold", reasonOverride?: string) {
     // 보낼 곳 없이는 보류만 된다(처분 unassigned + hold, 사유는 hold_reason)
     if (!row || busy || groupPending || pickedGroups.isLoading || (!destination && action !== "hold")) return;
+    if (action === "confirm" && isRefGate) {
+      // 참조 줄 제안이 남았다 - 결정 전에 번호만 확인한다(오른쪽 칸 맨 위 카드). ↵·메뉴·사유 창 뒤 확정이 모두 여기를 지난다
+      showToast(t("assign.ref.checkFirst"), "error");
+      return;
+    }
     const reason = reasonOverride ?? reasonNow;
     // 대상 문서를 먼저 본다 - 사유 창을 거친 뒤에 다시 막히지 않게
     if (destination?.kind === "move" && !moveCode.trim()) {
@@ -1140,6 +1171,12 @@ export default function AssignPage() {
     const sourceRow = key ? rowMap.get(key) : undefined;
     const target = writtenMap.get(focusNew ?? -1);
     if (!sourceRow || !target || busy || !canEdit) return;
+    if (sourceRow.status !== "confirmed" && sourceRow.unitIds.some((id) => isRefPending(paperModel?.units.get(id)))) {
+      // 눌러서 출처로 잇는 것도 그 줄의 결정이다 - 참조 줄 제안이 남았으면 먼저 그 줄에서 번호를 확인한다
+      showToast(t("assign.ref.checkFirst"), "error");
+      selectRow(sourceRow.key);
+      return;
+    }
     const sourceUnits = sourceRow.unitIds.map((id) => unitMap.get(id)).filter((unit): unit is UnitRow => unit !== undefined);
     const targetIds = addPartnerTargets([target.target_id], writtenMap);
     await run(async () => {
@@ -1798,8 +1835,8 @@ export default function AssignPage() {
 
   // 확정 단추 - 결정 칸 맨 아래 늘 같은 자리의 가장 큰 단추. 고른 곳이 없으면 흐리게 꺼지고 까닭은 툴팁(↵는 위 목록의 첫 후보로 간다)
   const confirmButton = (
-    <Tooltip label={t("assign.why.pickFirst")} suppressed={destination !== null || !row}>
-      <button type="button" className="btn pri assign-confirm" data-testid="assign-primary" data-state={primaryState} disabled={!canEdit || !row || busy || !destination} onClick={handlePrimary}>
+    <Tooltip label={t(destination !== null && isRefGate ? "assign.ref.checkFirst" : "assign.why.pickFirst")} suppressed={(destination !== null && !isRefGate) || !row}>
+      <button type="button" className="btn pri assign-confirm" data-testid="assign-primary" data-state={primaryState} disabled={!canEdit || !row || busy || !destination || isRefGate} onClick={handlePrimary}>
         <span className="stack">
           <span data-on={primaryState !== "save" ? "" : undefined}>
             {t("classify.confirm")} <kbd>↵</kbd>
@@ -2028,6 +2065,22 @@ export default function AssignPage() {
         </div>
         {/* ① 보낼 곳 - 패널에서 이곳만 스크롤된다. 바로 아래 결정 칸이 붙어 있어 고른 곳에서 확정까지 손이 짧다 */}
         <div className="assign-pick" data-testid="assign-pick" onClickCapture={handlePickClickCapture}>
+          {rowRefUnit && oldView && (
+            <RefCard
+              key={`${rowRefUnit.id}:${rowRefUnit.ref?.state ?? "new"}:${rowRefUnit.ref?.number ?? ""}`}
+              bundleId={bundleId}
+              docId={oldView.document.id}
+              unit={rowRefUnit}
+              canEdit={canEdit}
+              busy={busy}
+              blockedReason={refBlocked}
+              left={refPendingIds.length}
+              onConfirm={(number) => void runUnitEdit({ type: "set_ref", unit_id: rowRefUnit.id, number }, t("assign.ref.didConfirm"), rowRefUnit.id)}
+              onReject={() => void runUnitEdit({ type: "clear_ref", unit_id: rowRefUnit.id }, t("assign.ref.didReject"), rowRefUnit.id)}
+              onClose={() => setRefEntryId(null)}
+              onNext={selectNextRef}
+            />
+          )}
           {rowSplitUnit && rowSplit && (
             <SplitSuggestionCard
               unit={rowSplitUnit}
@@ -2213,6 +2266,15 @@ export default function AssignPage() {
             <button type="button" className="pill ai h-7 cursor-pointer whitespace-nowrap" aria-label={isBarCompact ? t("ai.pendingCount", { n: splitByUnit.size }) : undefined} data-testid="assign-split-pending" onClick={selectNextSplit}>
               <WandSparkles size={13} strokeWidth={1.6} aria-hidden />
               {isBarCompact ? splitByUnit.size : t("ai.pendingCount", { n: splitByUnit.size })}
+            </button>
+          </Tooltip>
+        )}
+        {/* 확인이 남은 참조 줄 수 - 누르면 다음 줄로 간다(오른쪽 칸 카드에서 번호를 확인하거나 물린다) */}
+        {canEdit && refPendingIds.length > 0 && (
+          <Tooltip label={t("assign.ref.next")}>
+            <button type="button" className="pill ref h-7 cursor-pointer whitespace-nowrap" aria-label={isBarCompact ? t("assign.ref.pendingCount", { n: refPendingIds.length }) : undefined} data-testid="assign-ref-pending" onClick={selectNextRef}>
+              <BookMarked size={13} strokeWidth={1.6} aria-hidden />
+              {isBarCompact ? refPendingIds.length : t("assign.ref.pendingCount", { n: refPendingIds.length })}
             </button>
           </Tooltip>
         )}
