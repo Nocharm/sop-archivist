@@ -1,5 +1,6 @@
 """입구 2 짝 계획 — 요청, 후보 고르기, 임베딩·글자 점수, 문장 그룹 작업, 표·그림·남은 항목의 제안, 다시 돌리기, 낡은 항목 (설계 §6.7, §7.7, §7.10, §8.4, §12)."""
 
+import asyncio
 import json
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -17,9 +18,13 @@ from app.sop.ai import embeddings
 from app.sop.ai.constants import AI_CALL_ATTEMPTS
 from app.sop.ai.jobs import JobItem, enqueue_jobs
 from app.sop.constants import AI_PRIORITY_PLAN, AI_PRIORITY_PRE_REFINE, AI_PRIORITY_USER
-from app.sop.models import AiJob, AiSuggestion, Bundle, TargetSentence, UnitDecision
+from app.sop.ai.runner import claim_next_job
+from app.sop.models import AiJob, AiSuggestion, Bundle, BundleEvent, TargetSentence, UnitDecision
 from tests.access_helpers import run_in_session
 from tests.ai_fixtures import (
+    AI_MEMBERS,
+    AI_NEW_NAME,
+    AI_OLD_NAME,
     AI_SOP_DOC,
     axis,
     clean_ai_jobs,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
@@ -47,11 +52,13 @@ from tests.sop_helpers import (
     AUTHOR,
     REVIEWER,
     assign_as_is,
+    create_bundle,
     find_unit,
     get_group_by_unit,
     get_view,
     put_tobe,
     save_group,
+    set_members,
     upload,
 )
 
@@ -1263,3 +1270,96 @@ def test_retired_unit_during_plan_is_left_alone(
     assert job.unit_ids == [kept]
     # 은퇴한 단위에 삭제 후보를 쓰지 않는다 — 남은 짝의 문장 묶음 제안 하나뿐이다
     assert [row.content["unit_ids"] for row in read_rows(AiSuggestion)] == [[kept]]
+
+
+# --- 파일 읽기가 끝난 직후 ---
+
+
+def start_old_only_bundle(client: TestClient, old_body: str) -> int:
+    """옛 문서만 올린 묶음 — 이미 쓴 새 문서가 없어 계획이 설 수 없다."""
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    assert set_members(client, bundle_id, AI_MEMBERS).status_code == 200
+    uploaded = upload(client, bundle_id, build_docx(old_body), AI_OLD_NAME)
+    assert uploaded.status_code == 201 and uploaded.json()["status"] == "ready", uploaded.text
+    return bundle_id
+
+
+def upload_written_new(client: TestClient, bundle_id: int, body: str, file_name: str = AI_NEW_NAME) -> None:
+    uploaded = upload(client, bundle_id, build_docx(body, headers=[p(file_name)]), file_name, side="new", doc_type="sop")
+    assert uploaded.status_code == 201 and uploaded.json()["status"] == "ready", uploaded.text
+
+
+def read_event_actions(bundle_id: int) -> list[str]:
+    return [row.action for row in read_rows(BundleEvent) if row.bundle_id == bundle_id]
+
+
+def test_upload_queues_a_plan_when_old_and_written_new_are_ready(client: TestClient, auto_prepare: FakeAi) -> None:
+    bundle_id = start_old_only_bundle(client, p(OLD_1))
+    assert read_jobs("match_plan") == []
+
+    upload_written_new(client, bundle_id, p(NEW_1))
+
+    (job,) = read_jobs("match_plan")
+    assert (job.kind, job.priority, job.background, job.payload) == ("match_plan", AI_PRIORITY_PLAN, False, {"origin": "upload"})
+    assert (job.status, job.requested_by) == ("queued", AUTHOR["X-Dev-User"])
+    assert "ai.request" not in read_event_actions(bundle_id)
+
+
+def test_upload_does_not_stack_plans_while_one_is_queued(client: TestClient, auto_prepare: FakeAi) -> None:
+    bundle_id = start_old_only_bundle(client, p(OLD_1) + p(OLD_2))
+    upload_written_new(client, bundle_id, p(NEW_1))
+
+    upload_written_new(client, bundle_id, p(NEW_2), SECOND_NEW_FILE)
+
+    (job,) = read_jobs("match_plan")
+    assert job.status == "queued"
+
+
+def test_upload_queues_one_more_while_a_plan_runs(client: TestClient, auto_prepare: FakeAi) -> None:
+    bundle_id = start_old_only_bundle(client, p(OLD_1) + p(OLD_2))
+    upload_written_new(client, bundle_id, p(NEW_1))
+    assert asyncio.run(claim_next_job()) is not None  # 계획이 돌고 있다
+
+    upload_written_new(client, bundle_id, p(NEW_2), SECOND_NEW_FILE)
+
+    assert sorted(job.status for job in read_jobs("match_plan")) == ["queued", "running"]
+
+
+@pytest.mark.parametrize("switch", ["ai_auto_prepare", "ai_enabled"])
+def test_upload_queues_nothing_when_the_setting_or_ai_is_off(
+    client: TestClient, auto_prepare: FakeAi, monkeypatch: pytest.MonkeyPatch, switch: str
+) -> None:
+    monkeypatch.setattr(settings, switch, False)
+    bundle_id = start_old_only_bundle(client, p(OLD_1))
+
+    upload_written_new(client, bundle_id, p(NEW_1))
+
+    assert read_rows(AiJob) == []
+
+
+def test_upload_queues_nothing_without_a_written_new_document(client: TestClient, auto_prepare: FakeAi) -> None:
+    bundle_id = start_old_only_bundle(client, p(OLD_1))
+
+    second = upload(client, bundle_id, build_docx(p(OLD_2)), "SYNTHETIC_OLD-2.docx")
+
+    assert second.status_code == 201
+    assert read_rows(AiJob) == []
+
+
+def test_uploading_files_in_a_row_ends_with_every_pair_suggested(
+    client: TestClient, auto_prepare: FakeAi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    use_vectors(monkeypatch, auto_prepare, {OLD_1: 0, NEW_1: 0, OLD_2: 1, NEW_2: 1})
+    use_refine_reply(auto_prepare)
+    bundle_id = start_old_only_bundle(client, p(OLD_1) + p(OLD_2))
+    upload_written_new(client, bundle_id, p(NEW_1))
+    run_jobs()
+    first_id = read_target(NEW_1).suggestion_id
+    assert first_id is not None
+
+    upload_written_new(client, bundle_id, p(NEW_2), SECOND_NEW_FILE)
+    run_jobs()
+
+    assert read_target(NEW_1).suggestion_id == first_id
+    first, second = read_target(NEW_1), read_target(NEW_2)
+    assert (first.status, second.status) == ("ai_suggested", "ai_suggested")

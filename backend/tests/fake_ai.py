@@ -12,6 +12,7 @@ from contextlib import contextmanager
 import httpx2
 import pytest
 
+from app.settings import settings
 from app.sop.ai.candidates import list_candidates
 from app.sop.snapshot import TargetDocInfo
 from scripts.synthetic_sop import TOBE_DOCS, TOBE_STEPS
@@ -89,12 +90,15 @@ def _skip_doc_meta(*_args: object, **_kwargs: object) -> bool:
 
 
 def install_fake_ai(
-    monkeypatch: pytest.MonkeyPatch, *, chat: Chat, embed: Embed | None = None, doc_meta: bool = False
+    monkeypatch: pytest.MonkeyPatch, *, chat: Chat, embed: Embed | None = None, doc_meta: bool = False,
+    auto_prepare: bool = False,
 ) -> FakeAi:
     """AI를 켜고 전송을 가짜로 바꾼다 — embed를 주면 임베딩도 켠다. 망은 타지 않는다.
 
     업로드마다 자동으로 쌓이는 문서 정보 작업(doc_meta)은 doc_meta=True인 시험만 켠다 — 다른 AI 시험의 작업·제안 수를 바꾸지 않게.
+    저절로 서는 계획도 auto_prepare=True인 시험만 켠다 — 같은 까닭이고, 시드가 쓰는 fake_ai_session도 꺼진 채다.
     """
+    monkeypatch.setattr(settings, "ai_auto_prepare", auto_prepare)
     if not doc_meta:
         from app.routers import sop_documents
 

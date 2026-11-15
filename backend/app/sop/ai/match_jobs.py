@@ -46,7 +46,8 @@ from app.sop.ai.runner import AiCallFailed
 from app.sop.ai.schemas import SkippedOut
 from app.sop.ai.similarity import cosine_matrix
 from app.sop.checks import check_sentence
-from app.sop.constants import AI_PRIORITY_PRE_REFINE, AI_PRIORITY_USER
+from app.settings import settings
+from app.sop.constants import AI_PRIORITY_PLAN, AI_PRIORITY_PRE_REFINE, AI_PRIORITY_USER
 from app.sop.decisions import load_cell_positions, load_table_shapes
 from app.sop.detach import ORIGIN_NEW_DOC, UNASSIGNED
 from app.sop.errors import raise_rule
@@ -133,6 +134,32 @@ async def select_match_items(session: AsyncSession, bundle_id: int) -> tuple[lis
     if active is not None:
         return [], [SkippedOut(unit_id=_WHOLE_BUNDLE, reason="already_queued")]
     return [JobItem(payload={"origin": PLAN_ORIGIN_USER})], []
+
+
+async def _has_ready_document(session: AsyncSession, bundle_id: int, side: str) -> bool:
+    """읽기가 끝난 문서가 있는지 — 새 문서는 입구 2(이미 쓴 문서)에 속한 것만 센다."""
+    statement = select(Document.id).where(Document.bundle_id == bundle_id, Document.side == side, Document.status == "ready")
+    if side == "new":
+        statement = statement.join(TargetDoc, TargetDoc.id == Document.target_doc_id).where(TargetDoc.entrance == "match")
+    return await session.scalar(statement.limit(1)) is not None
+
+
+async def enqueue_auto_plan(session: AsyncSession, bundle_id: int, actor: str, *, origin: str) -> AiJob | None:
+    """저절로 서는 계획 — 설정·AI가 켜져 있고 읽힌 옛 문서와 이미 쓴 새 문서가 있고 줄 선 계획이 없을 때만 하나 쌓는다. 돌고 있는 계획이나 변경 종류 작업은 막지 않는다. 커밋은 호출부가 한다."""
+    if not (settings.ai_auto_prepare and settings.ai_enabled):
+        return None
+    queued = await session.scalar(
+        select(AiJob.id).where(AiJob.bundle_id == bundle_id, AiJob.kind == MATCH_PLAN_KIND, AiJob.status == "queued").limit(1)
+    )
+    if queued is not None:
+        return None
+    if not (await _has_ready_document(session, bundle_id, "old") and await _has_ready_document(session, bundle_id, "new")):
+        return None
+    (job,) = enqueue_jobs(
+        session, bundle_id=bundle_id, kind=MATCH_PLAN_KIND, requested_by=actor,
+        items=[JobItem(payload={"origin": origin})], priority=AI_PRIORITY_PLAN,
+    )
+    return job
 
 
 # --- load ---
