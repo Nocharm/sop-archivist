@@ -7,6 +7,8 @@ import type { AiRequestOut } from "./api-manage";
 
 const prepareAi = vi.fn<(bundleId: number, documentId?: number) => Promise<AiRequestOut>>();
 vi.mock("./api-manage", () => ({ prepareAi: (bundleId: number, documentId?: number) => prepareAi(bundleId, documentId) }));
+const pokeAiJobs = vi.fn<() => void>();
+vi.mock("./ai-jobs-store", () => ({ pokeAiJobs: () => pokeAiJobs() }));
 
 const { ApiError } = await import("./api");
 const { useAiPrepare } = await import("./use-ai-prepare");
@@ -31,6 +33,7 @@ function Harness({ bundleId, enabled, documentId, onQueued }: HarnessProps) {
 }
 
 let root: Root;
+let warn: ReturnType<typeof vi.spyOn>;
 
 async function render(props: HarnessProps) {
   await act(async () => {
@@ -40,11 +43,14 @@ async function render(props: HarnessProps) {
 
 beforeEach(() => {
   prepareAi.mockReset();
+  pokeAiJobs.mockReset();
+  warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   root = createRoot(document.createElement("div"));
 });
 
 afterEach(() => {
   act(() => root.unmount());
+  warn.mockRestore();
 });
 
 describe("useAiPrepare", () => {
@@ -97,5 +103,30 @@ describe("useAiPrepare", () => {
 
     expect(prepareAi).toHaveBeenCalledTimes(1);
     expect(onQueued).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    expect(pokeAiJobs).not.toHaveBeenCalled();
+  });
+
+  it("leaves a console trace for an unexpected failure without telling the person", async () => {
+    prepareAi.mockRejectedValue(new ApiError(500, "server bug"));
+    const onQueued = vi.fn();
+
+    await render({ bundleId: 1, enabled: true, documentId: 5, onQueued });
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(onQueued).not.toHaveBeenCalled();
+  });
+
+  it("wakes the jobs poller after every successful prepare, even when only a plan was queued", async () => {
+    prepareAi.mockResolvedValueOnce(makeOut(0)).mockResolvedValueOnce(makeOut(2));
+    const onQueued = vi.fn();
+
+    await render({ bundleId: 1, enabled: true, documentId: 5, onQueued });
+    expect(pokeAiJobs).toHaveBeenCalledTimes(1);
+    expect(onQueued).not.toHaveBeenCalled(); // onQueued는 그대로 queued > 0일 때만
+
+    await render({ bundleId: 2, enabled: true, documentId: 7, onQueued });
+    expect(pokeAiJobs).toHaveBeenCalledTimes(2);
+    expect(onQueued.mock.calls).toEqual([[2]]);
   });
 });
