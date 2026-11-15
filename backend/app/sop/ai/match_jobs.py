@@ -1010,19 +1010,20 @@ class MatchHandler:
         decisions = await _load_decisions(session, job.unit_ids)
         targets = await _load_targets(session, job.target_ids)
         is_fresh = fresh_olds == loaded.candidates.olds.keys() and fresh_news == loaded.candidates.news.keys()
-        if not is_fresh or await _find_group_suggestion(session, job, decisions, targets) is None:
+        previous = await _find_group_suggestion(session, job, decisions, targets) if is_fresh else None
+        if previous is None:
             _add_pair_result(session, job, loaded, computed, "stale")
             return "stale"
         if not computed.change_types:  # 묶기는 코드가 한 것이라 계획의 제안을 그대로 두고 무효는 기록에만 남긴다
             _add_pair_result(session, job, loaded, computed, "invalid")
             return "done"
 
-        await clear_previous_suggestion(session, decisions.values(), targets.values())
+        # 묶음이 그대로라 제자리에서 다듬는다 — 걷고 다시 쓰면 출처를 떼었다 붙여 그 새 문장에 사람이 청한 AI 번역이 쓸려 간다
+        if previous.adoption is None:  # 채택이 남은 제안은 applied 그대로다(clear_previous_suggestion과 같은 경계)
+            previous.result = "stale"
         suggestion = _add_pair_result(session, job, loaded, computed, "applied")
         await session.flush()  # 판단·새 문장이 제안 id를 가리킨다
-        write = _plan_pair(job, loaded, computed, targets)
-        _apply_write(write, suggestion.id, decisions)
-        await _insert_links(session, (write,))
+        _apply_write(_plan_pair(job, loaded, computed, targets), suggestion.id, decisions)  # revision을 올려 낡은 화면의 저장을 막는다
         return "done"
 
 

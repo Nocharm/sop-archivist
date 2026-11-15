@@ -15,7 +15,9 @@ from app.sop.ai import llm
 from app.sop.ai.adoption import SavedShape, SuggestedShape, TargetShape, decide_adoption
 from app.sop.ai.guidelines import SEEDS_DIR
 from app.sop.ai.llm import parse_reply
+from app.sop.ai.jobs import JobItem, enqueue_jobs
 from app.sop.ai.match_jobs import MatchReply
+from app.sop.constants import AI_PRIORITY_PLAN
 from app.sop.models import AiJob, AiSuggestion, GuidelineVersion, TargetSentence, TargetSource
 from tests.access_helpers import run_in_session
 from tests.ai_fixtures import (
@@ -455,6 +457,52 @@ def test_refine_replaces_the_provisional_suggestion(client: TestClient, fake_ai:
     assert old_suggestion.result == "stale"
 
 
+def queue_background_plan(bundle_id: int) -> None:
+    """배정 화면 첫 진입이 세운 계획 — 다듬기가 미리 돌리기 순위로 쌓여 사람이 청한 작업보다 늦게 돈다."""
+
+    async def _enqueue(session: AsyncSession) -> None:
+        enqueue_jobs(
+            session, bundle_id=bundle_id, kind="match_plan", requested_by=AUTHOR["X-Dev-User"],
+            items=[JobItem(payload={"origin": "prepare"})], priority=AI_PRIORITY_PLAN,
+        )
+        await session.commit()
+
+    run_in_session(_enqueue)
+
+
+def read_link_rows() -> set[tuple[int, int, int]]:
+    return {(row.target_id, row.unit_id, row.seq) for row in read_rows(TargetSource)}
+
+
+def test_refine_keeps_a_translation_requested_on_the_provisional_row(client: TestClient, fake_ai: FakeAi) -> None:
+    # 계획 → 잠정 줄에 사람이 번역을 청한다(순위 1) → 미리 돌리기 다듬기(순위 3)가 나중에 묶음을 다듬는다
+    bundle = make_match_bundle(client, p(OLD), p(ORIGINAL_NEW_TEXT))
+    (unit_id,) = read_old_ids(client, bundle, OLD)
+    fake_ai.chat = lambda data: json.dumps({"text": TRANSLATION}) if data["task"] == "translate" else build_match_reply()
+    queue_background_plan(bundle.id)
+    run_plan()
+    target_id = read_target(ORIGINAL_NEW_TEXT).id
+    links_before = read_link_rows()
+    translate = client.post(
+        f"/api/bundles/{bundle.id}/ai/translate", json={"direction": "ko_to_en", "unit_ids": [unit_id]}, headers=AUTHOR,
+    )
+    assert translate.json()["queued"] == 1, translate.text
+
+    run_jobs()
+
+    assert [job.status for job in read_jobs()] == ["done"]  # 다듬기가 번역 뒤에 돌았다
+    (translation,) = [row for row in read_rows(TargetSentence) if row.origin == "translation"]
+    translated = next(row for row in read_rows(AiSuggestion) if row.id == translation.suggestion_id)
+    assert (translated.kind, translated.result) == ("translate", "applied")
+    target = read_target(ORIGINAL_NEW_TEXT)
+    assert (target.id, target.status, target.change_type) == (target_id, "ai_suggested", "tone")
+    refined = next(row for row in read_rows(AiSuggestion) if row.id == target.suggestion_id)
+    assert (refined.content["provisional"], refined.result) == (False, "applied")
+    assert read_decision(unit_id).suggestion_id == refined.id
+    assert read_link_rows() == links_before
+    assert read_plan_suggestion().result == "stale"
+
+
 def test_invalid_reply_keeps_the_plan_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
     # 묶기는 코드가 한 것이라 LLM 답과 상관없이 남는다 — 무효는 제안 기록에만 남는다(설계 §4)
     bundle = make_match_bundle(client, p(OLD), p(ORIGINAL_NEW_TEXT))
@@ -761,7 +809,8 @@ def queue_again(job: AiJob) -> None:
     run_in_session(_queue)
 
 
-def test_replacing_a_pair_sweeps_its_ai_translation(client: TestClient, fake_ai: FakeAi) -> None:
+def test_refining_a_pair_again_keeps_its_ai_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    # 다듬기는 묶음이 그대로일 때만 쓰고 제자리에서 쓴다 — 출처가 그대로라 AI 번역은 남는다(번역은 출처 새 문장을 따른다)
     bundle = make_match_bundle(client, p(OLD), p(ORIGINAL_NEW_TEXT))
     (unit_id,) = read_old_ids(client, bundle, OLD)
     fake_ai.chat = lambda data: json.dumps({"text": TRANSLATION}) if data["task"] == "translate" else build_match_reply()
@@ -778,9 +827,9 @@ def test_replacing_a_pair_sweeps_its_ai_translation(client: TestClient, fake_ai:
 
     run_jobs()
 
-    assert all(row.origin == "new_doc" for row in read_rows(TargetSentence))  # 출처가 다시 쓰인 AI 번역은 지운다
+    assert [row.id for row in read_rows(TargetSentence) if row.origin == "translation"] == [translation.id]
     translated = next(row for row in read_rows(AiSuggestion) if row.id == translation.suggestion_id)
-    assert (translated.kind, translated.result) == ("translate", "stale")
+    assert (translated.kind, translated.result) == ("translate", "applied")
     replaced = next(row for row in read_rows(AiSuggestion) if row.id == first.id)
     assert replaced.result == "stale"
     target = read_target(ORIGINAL_NEW_TEXT)

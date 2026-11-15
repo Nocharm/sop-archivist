@@ -933,6 +933,39 @@ def test_rerun_keeps_an_unchanged_table_and_its_ai_translation(client: TestClien
     assert (read_target(CELLS[0][0]).id, cell) in read_links()
 
 
+def test_replan_of_a_changed_table_sweeps_its_ai_translation(
+    client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """다시 세운 계획이 표 묶음을 바꾸면 걷고 다시 쓴다 — 출처를 잃은 칸 새 문장의 AI 번역은 쓸린다."""
+    unrelated = [["전혀 다른 머리 칸", "무관한 칸"], ["엉뚱한 줄 이름", "관계없는 값"]]
+    bundle = make_match_bundle(client, tbl(CELLS), tbl(unrelated))
+    view = get_view(client, bundle.id, bundle.old_document_id)
+    table, cell = find_kind(view, "table")["id"], find_unit(view, CELLS[0][0])["id"]
+    enable_embed(monkeypatch)
+    fake_ai.embed = lambda text: axis(0)  # 임베딩으로는 두 표가 짝이다
+    plan(client, bundle.id)
+    table_suggestion = read_suggestion("table").id
+    fake_ai.chat = lambda data: json.dumps({"text": "Synthetic item"})
+    translate = client.post(
+        f"/api/bundles/{bundle.id}/ai/translate", json={"direction": "ko_to_en", "unit_ids": [cell]}, headers=AUTHOR,
+    )
+    assert translate.json()["queued"] == 1, translate.text
+    run_jobs()
+    (translation,) = [row for row in read_rows(TargetSentence) if row.origin == "translation"]
+
+    monkeypatch.setattr(settings, "embed_enabled", False)  # 글자 유사도로는 짝이 아니다 — 표 묶음이 바뀐다
+    plan(client, bundle.id)
+
+    assert [row for row in read_rows(TargetSentence) if row.origin == "translation"] == []
+    rows = {row.id: row for row in read_rows(AiSuggestion)}
+    assert (rows[translation.suggestion_id].kind, rows[translation.suggestion_id].result) == ("translate", "stale")
+    assert rows[table_suggestion].result == "stale"
+    (new_table,) = read_kind("table")
+    assert (new_table.status, new_table.change_type) == ("ai_suggested", "new")
+    assert read_decision(table).disposition == "delete"
+    assert read_links() == set()
+
+
 def test_new_target_with_a_previous_suggestion_is_reset_not_deleted(
     client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
 ) -> None:
