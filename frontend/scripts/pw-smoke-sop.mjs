@@ -2148,6 +2148,43 @@ await runStep("assign: a written New document opens on its own with the same too
   check("two documents closes it - the left side is an Old document again", (await page.locator('[data-testid="assign-solo"]').count()) === 0 && (await getText(page, "assign-old-tag")) === "Old");
 });
 
+// 머리말·꼬리말 탭의 설명 줄(v1.0.28) - 전에는 원문 고치기 화면에만 있었다. 장마다 어느 구역의 머리말인지 적힌다
+await runStep("assign: header and footer sheets say where they are used", {}, async ({ page }) => {
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  await page.goto(`${BASE}/bundles/${freshId}/assign`);
+  await wait(page, "assign-bar");
+  // 머리말이 있는 문서가 나올 때까지 Old 문서를 넘긴다
+  const options = await (async () => {
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    const ids = await page.locator('[data-testid^="assign-old-doc-option-"]').evaluateAll((els) => els.map((el) => el.dataset.testid));
+    await page.keyboard.press("Escape");
+    return ids;
+  })();
+  let hasHeader = false;
+  for (const option of options) {
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="${option}"]`).click();
+    await page.waitForTimeout(400);
+    if ((await page.locator('[data-testid="assign-tab-header"]').count()) > 0) {
+      hasHeader = true;
+      break;
+    }
+  }
+  check("an Old document of the fresh bundle has a header", hasHeader);
+  if (!hasHeader) return;
+  check("the body has no caption", (await page.locator('[data-testid^="assign-sheet-cap-"]').count()) === 0);
+  await page.locator('[data-testid="assign-tab-header"]').click();
+  await page.locator('[data-testid^="assign-sheet-cap-"]').first().waitFor({ timeout: T });
+  const caption = (await page.locator('[data-testid^="assign-sheet-cap-"]').first().innerText()).trim();
+  check("each header sheet says which section uses it", /^(Section \d+ · |Header \d+)/.test(caption), caption);
+  // 설명 줄이 붙어도 그 장의 문장은 전처럼 골라진다
+  await page.locator('[data-testid="assign-old"] [data-testid^="assign-paper-unit-"]').first().click();
+  await wait(page, "assign-row-id");
+  check("a sentence on the header sheet is still picked as a row", (await getText(page, "assign-row-id")).trim().length > 0);
+});
+
 // 한 문장 ↔ 한/영 짝 바꾸기(v1.0.24) - 전에는 원문 고치기 화면에만 있었다. 짝인 줄을 한 문장으로 합치고, 합친 문장을 다시 짝으로 돌린다(풀기 + 짝 맺기를 한 번에)
 await runStep("assign: switch a KO/EN pair to one sentence and back", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);
