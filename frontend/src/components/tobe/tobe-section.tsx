@@ -3,13 +3,14 @@
 // EQUIS가 아는 값(종류·장비 번호)은 줄에 작은 제안으로 뜨고 사람이 눌러 넣는다 - 자동으로 바꾸지 않는다.
 "use client";
 
-import { ChevronRight, Download, Eye, FileUp, ListTree, MoreHorizontal, Plus, Trash2 } from "lucide-react";
+import { ChevronRight, Download, Eye, FileUp, ListTree, MoreHorizontal, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState, type ClipboardEvent } from "react";
 
 import { EquisStatus } from "@/components/equis/equis-status";
 import { TitleLock } from "@/components/equis/title-lock";
 import { BundleLoadError } from "@/components/bundle-load-error";
 import { LayoutLabel } from "@/components/documents/layout-picto";
+import { ListReader } from "@/components/tobe/list-reader";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CommitInput } from "@/components/ui/commit-input";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
@@ -29,6 +30,7 @@ import {
   clearNaSlot,
   downloadToBeTemplate,
   getToBe,
+  getToBeRead,
   importToBe,
   LANGUAGE_LAYOUTS,
   refreshEquis,
@@ -53,6 +55,7 @@ import { SLOT_LABELS } from "@/lib/slot-labels";
 import { NEW_DOCUMENTS_ANCHOR } from "@/lib/stages";
 import { listEquisHints, planAddRows, readCodes } from "@/lib/tobe-add-model";
 import { createDraft, orderDocs, type DraftDoc } from "@/lib/tobe-draft";
+import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useEquisPolling } from "@/lib/use-equis-polling";
 import { useLoaded } from "@/lib/use-loaded";
@@ -104,6 +107,13 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
   // 가져오기 전에 한 번 묻는다 - 목록이 비어 있지 않으면 파일이 통째로 바꾼다
   const [pendingImport, setPendingImport] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // 새 문서 목록 AI 읽기 - 아직 정하지 않은 제안이 있으면 목록 머리에 표시가 뜬다. AI 작업이 끝나면 다시 받는다. AI가 꺼져 있으면 길이 없다
+  const proposal = useLoaded(() => getToBeRead(bundleId), String(bundleId));
+  const aiJobs = useAiJobs(bundleId, proposal.reload);
+  const aiOn = aiJobs.status?.ai_enabled ?? false;
+  const readJobs = aiJobs.status?.by_kind.tobe_list;
+  const stoppedReadJobs = readJobs ? readJobs.failed + readJobs.stale + readJobs.cancelled : 0;
+  const [isReading, setIsReading] = useState(false);
 
   const list = tobe ? createDraft(tobe) : null;
   const rows = list ? orderDocs(list.docs) : [];
@@ -376,6 +386,13 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
         <span className="text-xs text-ink-3" aria-live="polite" data-testid="tobe-saving">
           {saving ? t("common.saving") : ""}
         </span>
+        {/* AI가 읽어 둔 제안 - 사람이 보고 정하기를 기다린다(검토자에게는 보이지 않는다) */}
+        {canEdit && proposal.data !== null && (
+          <button type="button" className="btn h-7 text-st-ai" data-testid="tobe-proposal" onClick={() => setIsReading(true)}>
+            <Sparkles size={14} strokeWidth={1.5} aria-hidden />
+            {t("tobe.read.pending", { n: proposal.data.docs.length })}
+          </button>
+        )}
         {canEdit && <input ref={fileRef} type="file" accept=".xlsx" className="sr-only" data-testid="tobe-import-file" onChange={(event) => event.target.files?.[0] && pickImportFile(event.target.files[0])} />}
         {/* Excel 템플릿·가져오기는 가끔 쓰는 일이라 메뉴에 둔다 */}
         <Tooltip label={t("tobe.more")} suppressed={menuOpen}>
@@ -414,6 +431,25 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
                 <span className="grid">
                   {t("tobe.import")}
                   <span className="text-[11px] text-ink-3">{t("tobe.importHint")}</span>
+                </span>
+              </button>
+            )}
+            {/* 템플릿에 맞지 않는 파일이나 글 - AI가 켜져 있을 때만 */}
+            {canEdit && aiOn && (
+              <button
+                type="button"
+                role="menuitem"
+                className="menu-item"
+                data-testid="tobe-read-open"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setIsReading(true);
+                }}
+              >
+                <Sparkles size={14} strokeWidth={1.5} aria-hidden />
+                <span className="grid">
+                  {t("tobe.read.menu")}
+                  <span className="text-[11px] text-ink-3">{t("tobe.read.menuHint")}</span>
                 </span>
               </button>
             )}
@@ -662,7 +698,8 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
                     }}
                   >
                     <input
-                      className={`${CELL_INPUT} w-[152px] font-mono`}
+                      // 줄의 번호 칸과 같은 폭 - 칸이 표 끝까지 늘어나지 않게
+                      className={`${CELL_INPUT} max-w-[152px] flex-none font-mono`}
                       data-testid="tobe-add-code"
                       value={adding}
                       maxLength={100}
@@ -695,6 +732,21 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
           testId="tobe-import-modal"
           onConfirm={() => void handleImport(pendingImport)}
           onClose={cancelImport}
+        />
+      )}
+      {isReading && tobe !== null && (
+        <ListReader
+          bundleId={bundleId}
+          tobe={tobe}
+          proposal={proposal.data}
+          stoppedJobs={stoppedReadJobs}
+          onClose={() => setIsReading(false)}
+          onListChanged={() => {
+            reload();
+            void loadBundle(bundleId);
+          }}
+          onProposalChanged={proposal.reload}
+          onRequested={aiJobs.watch}
         />
       )}
       {list !== null && rows.length === 0 && (

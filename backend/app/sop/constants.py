@@ -43,9 +43,11 @@ NUMBER_STYLES: tuple[NumberStyle, ...] = get_args(NumberStyle)
 NUMBERED, NUMBER_OMITTED, NUMBER_NOTE = NUMBER_STYLES
 
 # --- AI 층(계획 2) ---
-AI_JOB_KINDS = ("classify", "translate", "match_plan", "match", "pair", "split", "doc_meta")
+AI_JOB_KINDS = ("classify", "translate", "match_plan", "match", "pair", "split", "doc_meta", "tobe_list")
 AI_JOB_STATUSES = ("queued", "running", "done", "failed", "stale", "cancelled")
 AI_SUGGESTION_RESULTS = ("applied", "stale", "invalid")  # 적용됨 | 낡아서 안 씀 | 응답이 규칙 위반
 AI_ADOPTIONS = ("as_is", "edited", "rejected")  # 사람의 결과: 그대로 채택 | 고쳐서 채택 | 버림
-GUIDELINE_KEYS = ("rules", "prompt.classify", "prompt.translate", "prompt.match", "prompt.split", "prompt.doc_meta")
+GUIDELINE_KEYS = (
+    "rules", "prompt.classify", "prompt.translate", "prompt.match", "prompt.split", "prompt.doc_meta", "prompt.tobe_list",
+)
 SYSTEM_HOLD_AI_INVALID = "system:ai_invalid_response"  # AI 응답이 규칙을 어겨 보류된 행 — 화면은 "AI 응답 무효"로 보인다
