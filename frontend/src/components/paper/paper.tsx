@@ -15,6 +15,7 @@ import { UnitStatusChip } from "@/components/status";
 import { Collapse } from "@/components/ui/motion";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
+import { readCaretPoint } from "@/lib/caret-point";
 import { useI18n } from "@/lib/i18n";
 import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildContourPath, buildRows, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
@@ -137,19 +138,8 @@ interface PaperProps {
 
 /** 화면 좌표 → 블록 위치. 글자 조각 요소의 data-start에 글자 노드 안 위치를 더한다 */
 function readCaret(x: number, y: number): { blockId: number; offset: number } | null {
-  let node: Node | null = null;
-  let nodeOffset = 0;
-  if ("caretPositionFromPoint" in document) {
-    const pos = document.caretPositionFromPoint(x, y);
-    node = pos?.offsetNode ?? null;
-    nodeOffset = pos?.offset ?? 0;
-  } else if ("caretRangeFromPoint" in document) {
-    // Safari 등 구형 API
-    const range = (document as Document & { caretRangeFromPoint: (x: number, y: number) => Range | null }).caretRangeFromPoint(x, y);
-    node = range?.startContainer ?? null;
-    nodeOffset = range?.startOffset ?? 0;
-  }
-  return node ? readNodeOffset(node, nodeOffset) : null;
+  const caret = readCaretPoint(x, y);
+  return caret ? readNodeOffset(caret.node, caret.offset) : null;
 }
 
 function readNodeOffset(node: Node, nodeOffset: number): { blockId: number; offset: number } | null {

@@ -5,7 +5,7 @@
 import { useState } from "react";
 
 import type { ViewUnit } from "./api-sop";
-import { canSplitAt, findNearestCut, resolveCutDrag, toBlockOffset, toUnitOffset } from "./paper-model";
+import { canSplitAt, clampSplitAt, findNearestCut, resolveCutDrag, toBlockOffset, toUnitOffset } from "./paper-model";
 
 export interface CutLine {
   /** 고른 단위 안의 선 자리(단위 글자 위치) - 없으면 null */
@@ -17,6 +17,8 @@ export interface CutLine {
   /** 누른 자리 가까이(없으면 문장 가운데 가까이) 나눌 수 있는 자리에 선을 놓는다 - 놓았으면 true */
   placeNear: (unit: ViewUnit, caret: { blockId: number; offset: number } | null) => boolean;
   drag: (pos: { blockId: number; offset: number } | "start" | "end") => void;
+  /** 단위 글자 위치로 바로 끈다 - 줄의 글이 곧 단위의 글인 자리(New 칸)에서 쓴다 */
+  dragTo: (pos: number | "start" | "end") => void;
   nudge: (step: 1 | -1) => void;
   clear: () => void;
 }
@@ -48,6 +50,12 @@ export function useCutLine(unit: ViewUnit | null): CutLine {
     if (next !== null && next !== at) setCutAt({ unitId: unit.id, at: next });
   }
 
+  function dragTo(pos: number | "start" | "end") {
+    if (!unit) return;
+    const next = clampSplitAt(unit, pos === "start" ? 0 : pos === "end" ? unit.text.length : pos);
+    if (next !== null && next !== at) setCutAt({ unitId: unit.id, at: next });
+  }
+
   function nudge(step: 1 | -1) {
     if (!unit || at === null) return;
     for (let next = at + step; next > 0 && next < unit.text.length; next += step) {
@@ -58,5 +66,5 @@ export function useCutLine(unit: ViewUnit | null): CutLine {
     }
   }
 
-  return { at, cut, placeAtCaret, placeNear, drag, nudge, clear: () => setCutAt(null) };
+  return { at, cut, placeAtCaret, placeNear, drag, dragTo, nudge, clear: () => setCutAt(null) };
 }

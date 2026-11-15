@@ -1469,6 +1469,11 @@
   /* 그 줄의 글 안에 놓인 나눌 선과 바로 아래의 나누기·취소 - 용지의 선과 같은 모양(끌지는 못하고 ←→로 옮긴다) */
   .new-cut { position: relative; display: inline-block; width: 0; height: 1.2em; margin-inline: 1px; border-left: 2px solid var(--ink); vertical-align: text-bottom; }
   .new-cut::before { content: ""; position: absolute; left: -5px; top: -5px; width: 8px; height: 8px; border-radius: 50%; background: var(--ink); }
+  /* 끌 수 있는 선 - 손잡이가 제 점을 그린다(올리면 강조색). 선의 가운데에 맞춘다 */
+  .new-cut:has(> .cut-handle)::before { display: none; }
+  .new-cut > .cut-handle { left: -8px; }
+  /* 끄는 동안에는 줄을 덮은 누름 자리(::after)를 비켜 둔다 - 덮여 있으면 끄는 자리의 글자를 읽지 못해 선이 끝으로만 간다 */
+  .pg[data-dragging] .new-hit::after { pointer-events: none; }
   .new-cut-pop { display: flex; padding-top: 6px; }
   .new-cut-pop .cut-pop { position: static; translate: none; animation: none; }
   .new-cut-pop .cut-pop::before { display: none; }
