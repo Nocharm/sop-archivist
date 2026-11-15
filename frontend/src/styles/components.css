@@ -1496,6 +1496,12 @@
   .shape-lang { flex: none; cursor: pointer; }
   .shape-lang[aria-disabled="true"] { cursor: not-allowed; }
   .shape-lang:not([aria-disabled="true"]):hover { box-shadow: 0 0 0 1px currentColor; }
+  /* 한 문장 ↔ 한/영 짝 - 눌린 쪽이 지금 모양 */
+  .shape-mode { display: inline-flex; justify-self: start; gap: 2px; margin-top: 4px; padding: 2px; border-radius: var(--r-2); background: var(--sunken); }
+  .shape-mode button { height: 22px; padding: 0 8px; border-radius: var(--r-1); font-size: var(--fs-cap); color: var(--ink-3); cursor: pointer; transition: background var(--dur-fast), color var(--dur-fast); }
+  .shape-mode button:not([aria-disabled="true"], [aria-pressed="true"]):hover { background: var(--menu-hover); color: var(--ink); }
+  .shape-mode button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--line-2); cursor: default; }
+  .shape-mode button[aria-disabled="true"] { color: var(--ink-4); cursor: not-allowed; }
   .assign-confirm { width: 100%; height: 40px; font-size: 14px; }
   .assign-alt { height: 30px; min-width: 0; gap: 4px; padding: 0 6px; font-size: var(--fs-cap); font-weight: 400; width: 100%; }
   .assign-alt > :not(svg, kbd) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }

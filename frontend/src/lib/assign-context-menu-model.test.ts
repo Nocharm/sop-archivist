@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ViewUnit } from "./api-sop";
-import { buildAssignMenu, planAssignJoin, type AssignMenuAction, type AssignMenuContext } from "./assign-context-menu-model";
+import { buildAssignMenu, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuContext } from "./assign-context-menu-model";
 import { findNearestCut } from "./paper-model";
 
 function makeUnit(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
@@ -237,5 +237,35 @@ describe("planAssignJoin (the button between two pieces)", () => {
   it("waits for an unsaved choice on either sentence", () => {
     const pending = { isDecided: () => false, hasDraft: (unit: ViewUnit) => unit.id === 2 };
     expect(planAssignJoin(ko, koNext, pending)).toEqual({ kind: null, reasonKey: "assign.ctx.why.unsaved" });
+  });
+});
+
+describe("planShapeMode (One sentence | KO/EN pair in the Shape step)", () => {
+  const noDraft = () => false;
+
+  it("offers nothing for a plain sentence or a table", () => {
+    expect(planShapeMode([makeUnit(1)], [1], noDraft)).toBeNull();
+    expect(planShapeMode([makeUnit(1, { kind: "table", can_unmerge: false })], [1], noDraft)).toBeNull();
+    expect(planShapeMode([], [], noDraft)).toBeNull();
+  });
+
+  it("lets a neighbouring KO/EN pair become one sentence", () => {
+    const pair = [makeUnit(1, { pair_id: 7 }), makeUnit(2, { lang: "en", pair_id: 7 })];
+    expect(planShapeMode(pair, [1, 2], noDraft)).toEqual({ current: "pair", reasonKey: null });
+  });
+
+  it("will not merge a pair whose sentences are apart", () => {
+    const pair = [makeUnit(1, { pair_id: 7 }), makeUnit(3, { lang: "en", pair_id: 7 })];
+    expect(planShapeMode(pair, [1, 2, 3], noDraft)).toEqual({ current: "pair", reasonKey: "split.menu.why.notAdjacent" });
+  });
+
+  it("lets a merged sentence with both scripts go back to a pair", () => {
+    expect(planShapeMode([makeUnit(1, { can_unmerge: true, text: "로터를 닦는다 Wipe the rotor" })], [1], noDraft)).toEqual({ current: "one", reasonKey: null });
+    expect(planShapeMode([makeUnit(1, { can_unmerge: true, text: "로터를 닦는다" })], [1], noDraft)).toEqual({ current: "one", reasonKey: "split.menu.why.oneLanguage" });
+  });
+
+  it("waits for an unsaved choice on the line", () => {
+    const pair = [makeUnit(1, { pair_id: 7 }), makeUnit(2, { lang: "en", pair_id: 7 })];
+    expect(planShapeMode(pair, [1, 2], (unit) => unit.id === 2)).toEqual({ current: "pair", reasonKey: "assign.ctx.why.unsaved" });
   });
 });
