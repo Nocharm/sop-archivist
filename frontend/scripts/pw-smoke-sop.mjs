@@ -87,6 +87,8 @@ async function findOrderDocs(page, probe, limit = 1) {
 // --- 시나리오 ---
 
 let halfBundleId = null;
+// 방금 올린 합성 묶음("쪼개기 직후") - 옛 주소 단계가 찾아 두고 뒤 단계들이 쓴다
+let freshBundleId = null;
 
 await runStep("bundle list", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);
@@ -243,162 +245,48 @@ await runStep("documents list, inline edit and delete prompt", {}, async ({ page
   check("delete prompt closes with Esc", true);
 });
 
-await runStep("edit original: select, cut, split, undo, move", {}, async ({ page, takeShot }) => {
+await runStep("old Edit original addresses open the document in the one-document view", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);
   const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
-  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
-  await page.goto(`${BASE}/bundles/${freshId}/assign?edit=first`);
-  const units = page.locator('[data-testid^="split-paper-unit-"].su');
-  await units.first().waitFor({ timeout: T });
-  const before = await units.count();
-  // Unit마다 종이 조각 하나 - 처음부터 나뉘어 있고, 글 조각 사이에는 늘 합치기가 있다
-  const pieces = page.locator('[data-testid^="split-paper-piece-"].strip');
-  check("every unit is its own piece from the start", (await pieces.count()) > 10, String(await pieces.count()));
-  check("join controls sit between text pieces", (await page.locator('.strip-gap [data-testid^="split-paper-join-"]').count()) > 5);
-  // 절 번호는 앞머리 번호 칸에 한 번만 - 머리 줄 글 앞의 같은 번호는 그리지 않고(표시만) 첫 글자 조각의 data-start가 그만큼 밀린다
-  const heads = await page.evaluate(() =>
-    [...document.querySelectorAll('[data-testid^="split-paper-num-"]')].map((num) => {
-      const id = num.getAttribute("data-testid").replace("split-paper-num-", "");
-      const first = document.querySelector(`[data-testid="split-paper-piece-${id}"] .su [data-start]`);
-      return { number: num.textContent.trim(), text: first?.textContent.trim() ?? "", start: Number(first?.getAttribute("data-start") ?? 0) };
-    }),
-  );
-  const doubled = heads.filter((head) => head.text.startsWith(head.number));
-  check("head rows do not repeat their section number", heads.length > 0 && doubled.length === 0, doubled.map((head) => `${head.number}|${head.text.slice(0, 20)}`).join(", "));
-  check("a head row hides its leading number", heads.some((head) => head.start > 0), String(heads.length));
-  // 영어 문장 하나를 찾아 고른다 - 한 번 더 누르면 아무것도 안 하고, 두 번 누르기(더블클릭)가 나눌 선을 만든다
-  const target = page.locator('[data-testid^="split-paper-unit-"].su[lang="en"]', { hasText: " " }).nth(2);
-  const unitId = (await target.getAttribute("data-testid")).replace("split-paper-unit-", "");
-  await target.click();
-  check("first click selects", (await target.getAttribute("data-sel")) === "");
-  // 경계 확인 단추는 없다 - 배정을 확정하면 확인된 것으로 친다
-  check("there is no boundary check button", (await page.locator('[data-testid^="split-act-check-"], [data-testid="split-primary"], [data-testid="split-boundary-state"]').count()) === 0);
-  // 윤곽은 다음 프레임에 재서 그리므로 바로 세면 0일 수 있다 - 그려질 때까지 기다린다
-  await page.locator(".sel-contour path").first().waitFor({ timeout: T });
-  check("selection is drawn as one contour", (await page.locator(".sel-contour path").count()) === 1);
-  const splitButton = page.locator('[data-testid="split-split"]');
-  const splitButtonBox = await splitButton.boundingBox();
-  const box = await target.boundingBox();
-  await page.mouse.click(box.x + Math.min(box.width / 2, 120), box.y + box.height / 2);
-  await page.waitForTimeout(300);
-  check("a second single click does not cut", (await page.locator(`[data-testid="split-paper-unit-${unitId}"][data-cut]`).count()) === 0);
-  // 고른 조각 곁 틈이 늦게 벌어지며 조각이 밀리니, 벌어진 뒤 자리를 다시 잰다
-  await page.waitForTimeout(700);
-  const settled = await target.boundingBox();
-  await page.mouse.dblclick(settled.x + Math.min(settled.width / 2, 120), settled.y + settled.height / 2);
-  await page.locator(`[data-testid="split-paper-unit-${unitId}"][data-cut]`).waitFor({ timeout: T });
-  check("double-click draws the cut with the split popup", (await page.locator('[data-testid="split-cut-run"]').count()) === 1);
-  await takeShot("sop-split-cut.png");
-  await page.keyboard.press("s");
-  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
-  await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-unit-"].su').length === n + 1, before, { timeout: T });
-  check("S splits into two units", true);
-  const after = await splitButton.boundingBox();
-  check("the Split button stays in place", Math.abs(after.y - splitButtonBox.y) < 1 && Math.abs(after.width - splitButtonBox.width) < 1);
-  await page.keyboard.press("Control+z");
-  await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-unit-"].su').length === n, before, { timeout: T });
-  check("Ctrl+Z undoes the split", true);
-  // 나눈 뒤 사이의 합치기를 누르면 원래 한 조각으로 돌아온다. 나누기 팝업은 잠깐 뒤에 뜬다
-  const targetText = (await target.innerText()).trim();
-  await page.waitForTimeout(700);
-  const again = await target.boundingBox();
-  await page.mouse.dblclick(again.x + Math.min(again.width / 2, 120), again.y + again.height / 2);
-  const cutRun = page.locator('[data-testid="split-cut-run"]');
-  await cutRun.waitFor({ timeout: T });
-  check("the cut can be dragged", (await page.locator('[data-testid="split-paper-cut-handle"]').count()) === 1);
-  await page.waitForTimeout(700);
-  const piecesBefore = await pieces.count();
-  const readPieceIds = () => page.locator('[data-testid^="split-paper-piece-"].strip[data-strip-unit]').evaluateAll((els) => els.map((el) => el.dataset.stripUnit));
-  const idsBeforeCut = new Set(await readPieceIds());
-  await cutRun.click();
-  await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-piece-"].strip').length === n + 1, piecesBefore, { timeout: T });
-  check("a split unit becomes two pieces at once", true);
-  // 두 반쪽 사이의 Join - 고른 반쪽의 위아래 틈 모두에 Join이 있을 수 있어(Join 하나가 합치기·짝을 고른다) 두 반쪽 id로 찾는다
-  const idsAfterCut = await readPieceIds();
-  const halves = idsAfterCut.filter((id) => !idsBeforeCut.has(id) || id === String(unitId));
-  const mergeBack = page.locator(`[data-testid="split-paper-join-${halves[0]}-${halves[1]}"]`).and(page.locator(':not([aria-disabled="true"])'));
-  // 고른 조각 아래 단추 줄(짝 풀기·합치기 풀기가 있을 때만)이 펼쳐지는 중이면 바로 아래 틈을 밀어 내린다 - 펼쳐지기 전에 올리면 틈이 포인터 밑에서 빠져나가
-  // 머묾(--gap-open-delay)이 끊기므로, 다 펼쳐진 뒤에 올린다
-  await page.waitForFunction(() => { const acts = document.querySelector(".strip-acts[data-open]"); return acts === null || acts.getAnimations().length === 0; }, null, { timeout: T });
-  // 틈의 합치기는 포인터가 틈에 머물러 단추가 나타난 뒤에야 눌린다(사람처럼 틈에 올렸다가 누른다)
-  await page.locator(".strip-gap", { has: mergeBack.first() }).hover({ position: { x: 300, y: 2 } });
-  await page.waitForFunction(() => [...document.querySelectorAll(".strip-gap:hover .strip-merge")].some((el) => getComputedStyle(el).pointerEvents === "auto"), null, { timeout: T });
-  await mergeBack.first().click();
-  await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-piece-"].strip').length === n, piecesBefore, { timeout: T });
-  check("merging the two pieces gives the unit back", (await page.locator('[data-testid^="split-paper-unit-"].su', { hasText: targetText }).count()) >= 1, targetText.slice(0, 30));
-  const first = units.first();
-  await first.click();
-  const firstId = (await first.getAttribute("data-testid")).replace("split-paper-unit-", "");
-  await page.keyboard.press("j");
-  await page.waitForFunction((id) => document.querySelector('[data-testid="split-unit-id"]')?.textContent && !document.querySelector(`[data-testid="split-paper-unit-${id}"][data-sel]`), firstId, { timeout: T });
-  check("J moves to the next unit", true);
-  await page.keyboard.press("k");
-  await page.locator(`[data-testid="split-paper-unit-${firstId}"][data-sel]`).waitFor({ timeout: T });
-  check("K goes back", true);
-  // ↵와 U는 더 이상 이 화면의 단축키가 아니다
-  await page.keyboard.press("Enter");
-  await page.keyboard.press("u");
-  await page.waitForTimeout(400);
-  check("Enter and U leave the selection alone", (await page.locator(`[data-testid="split-paper-unit-${firstId}"][data-sel]`).count()) === 1);
-  await takeShot("sop-split.png");
-  // 다른 문서의 경계가 남아 있어도 경계 확인은 다음 할 일도 검토 요청 조건도 아니다(확정하면 확인한 것으로 친다)
-  await page.goto(`${BASE}/bundles/${freshId}`);
-  await wait(page, "overview-gate-units");
-  const nextAfterSplit = await page.locator('[data-testid="overview-next"]').getAttribute("data-action");
-  check("unchecked boundaries are not the next action", nextAfterSplit === "fill_tobe" || nextAfterSplit === "decide_units", nextAfterSplit);
-  check("there is no boundaries gate", (await page.locator('[data-testid="overview-gate-boundaries"]').count()) === 0);
+  freshBundleId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${freshBundleId}/documents`, { headers: { "X-Dev-User": "qa.member" } })).json();
+  const oldDocs = docs.filter((doc) => doc.side === "old" && doc.status === "ready");
+  const newDoc = docs.find((doc) => doc.side === "new" && doc.status === "ready");
+  // 옛 쪼개기 주소(/split) → 원문 고치기 주소(?edit=first) → 첫 Old 문서가 한 단으로, 주소에서는 값이 떨어진다
+  await page.goto(`${BASE}/bundles/${freshBundleId}/split`);
+  await wait(page, "assign-bar");
+  await page.waitForURL(/\/assign$/, { timeout: T });
+  await page.waitForFunction(() => document.querySelector(".assign-panes")?.hasAttribute("data-single"), null, { timeout: T });
+  check("the old Split address lands on Assign with one document wide", (await getText(page, "assign-old-tag")) === "Old" && (await page.locator('[data-testid="assign-new"]').count()) === 0);
+  check("no separate tool screen is left", (await page.locator('[data-testid="split-back-assign"], [data-testid="assign-open-split"]').count()) === 0);
+  // 문서를 가리키면 그 문서가 열린다 - 둘째 Old 문서
+  const second = oldDocs[1] ?? oldDocs[0];
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign?edit=${second.id}`);
+  await page.waitForURL(/\/assign$/, { timeout: T });
+  await page.waitForFunction((label) => document.querySelector('[data-testid="assign-old"] .pane-head')?.textContent?.includes(label), second.doc_code || second.file_name, { timeout: T });
+  check("an address that names an Old document opens that document", true);
+  // 이미 쓴 New 문서를 가리키면 그 원문이 한 단으로 열린다
+  if (newDoc) {
+    await page.goto(`${BASE}/bundles/${freshBundleId}/assign?edit=${newDoc.id}`);
+    await wait(page, "assign-solo");
+    await page.waitForURL(/\/assign$/, { timeout: T });
+    check("an address that names a written New document opens its original", (await getText(page, "assign-old-tag")).includes("New"));
+    await takeShot("sop-assign-from-edit-address.png");
+  }
+  // Documents의 미리 보기에서도 같은 곳으로 온다
+  await page.goto(`${BASE}/bundles/${freshBundleId}/documents`);
+  await page.locator(`[data-testid="documents-${oldDocs[0].id}-preview"]`).click();
+  await wait(page, "documents-preview-split");
+  check("the preview's button says where it goes", (await getText(page, "documents-preview-split")).trim() === "Open in Assign");
+  await page.locator('[data-testid="documents-preview-split"]').click();
+  await wait(page, "assign-bar");
+  await page.waitForFunction(() => document.querySelector(".assign-panes")?.hasAttribute("data-single"), null, { timeout: T });
+  check("Open in Assign opens the document wide", true);
+  // 뒤 단계들은 양 단에서 시작한다
+  await page.locator('[data-testid="assign-view-two"]').click();
+  await wait(page, "assign-new");
 });
 
-await runStep("split: per-sentence AI split, whole-document request, tab stack", {}, async ({ page, takeShot }) => {
-  const status = await page.request.get(`${BASE}/api/bundles/1/ai/status`, { headers: { "X-Dev-User": "qa.member" } });
-  if (!status.ok() || !(await status.json()).ai_enabled) {
-    console.log("  (AI is off in this backend - skipped)");
-    return;
-  }
-  await page.goto(`${BASE}/`);
-  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
-  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
-  await page.goto(`${BASE}/bundles/${freshId}/assign?edit=first`);
-  const units = page.locator('[data-testid^="split-paper-unit-"].su');
-  await units.first().waitFor({ timeout: T });
-  check("the whole-document button says so", (await getText(page, "split-ai-request")).includes("whole document"));
-  const long = units.filter({ hasText: /\S{3,}.{40,}/ }).first();
-  const unitId = (await long.getAttribute("data-testid")).replace("split-paper-unit-", "");
-  await long.click();
-  await wait(page, "split-ai-unit");
-  check("the right panel offers AI split for this sentence", (await page.locator('[data-testid="split-ai-unit"]').isEnabled()));
-  await page.locator('[data-testid="split-ai-unit"]').click();
-  const tab = page.locator(`[data-testid="split-ai-tab-${unitId}"]`);
-  await tab.waitFor({ timeout: 30000 });
-  check("a tab for that sentence appears without a reload", true);
-  check("a single request is not marked as a whole-document result", (await tab.getAttribute("data-batch")) === null);
-  check("the selected sentence's tab is already seen", (await tab.getAttribute("data-unseen")) === null);
-  check("the button is off while the sentence has a suggestion", await page.locator('[data-testid="split-ai-unit"]').isDisabled());
-  // 일괄 요청 - 여러 탭이 쌓이고 머리에 일괄 표시가 붙는다
-  await page.locator('[data-testid="split-ai-request"]').click();
-  await page.waitForFunction(() => document.querySelectorAll('[data-testid^="split-ai-tab-"][data-batch="true"]').length >= 2, null, { timeout: 40000 });
-  check("whole-document results stack as batch tabs", true);
-  check("the header counts the whole-document results", /Whole document · \d+ left/.test(await getText(page, "split-ai-batch-head")));
-  const unseen = page.locator('[data-testid^="split-ai-tab-"][data-unseen="true"]').first();
-  const unseenId = (await unseen.getAttribute("data-testid")).replace("split-ai-tab-", "");
-  await unseen.click();
-  await page.locator(`[data-testid="split-paper-unit-${unseenId}"][data-sel]`).waitFor({ timeout: T });
-  check("a tab selects its sentence", true);
-  check("opening a tab clears its dot", (await page.locator(`[data-testid="split-ai-tab-${unseenId}"]`).getAttribute("data-unseen")) === null);
-  await wait(page, "split-ai-suggestion");
-  await takeShot("v014-task7-tabs.png");
-  // 단일 요청의 제안을 적용하면 탭이 빠지고 조각이 늘며, 되돌리면 돌아온다
-  await page.locator(`[data-testid="split-ai-tab-${unitId}"]`).click();
-  const before = await units.count();
-  await page.locator('[data-testid="split-ai-apply"]').click();
-  await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-unit-"].su').length > n, before, { timeout: T });
-  check("apply splits the sentence", true);
-  await page.locator(`[data-testid="split-ai-tab-${unitId}"]`).waitFor({ state: "detached", timeout: T });
-  check("the applied tab leaves the stack", true);
-  await page.keyboard.press("Control+z");
-  await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-unit-"].su').length === n, before, { timeout: T });
-  check("Ctrl+Z undoes the AI split", true);
-});
 
 // 일부러 거절당하는 저장이 있어 콘솔 오류를 허용한다
 await runStep("to-be: nested rows, N/A detail, edit and save", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
@@ -513,7 +401,6 @@ async function pickFirstPlace(page) {
   await page.locator('[data-testid="assign-primary"][data-state="confirm"]').waitFor({ timeout: T });
 }
 const progressDone = async (page) => Number((await getText(page, "assign-progress")).split("/")[0]);
-let freshBundleId = null;
 
 await runStep("assign: legend first, place, delete with reason, edit, clear, bulk", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
@@ -583,25 +470,25 @@ await runStep("assign: legend first, place, delete with reason, edit, clear, bul
   await takeShot("sop-assign.png");
 });
 
-await runStep("split: H holds a unit without a destination", {}, async ({ page }) => {
-  await page.goto(`${BASE}/`);
-  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
-  freshBundleId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
-  await page.goto(`${BASE}/bundles/${freshBundleId}/assign?edit=first`);
-  const unit = page.locator('[data-testid^="split-paper-unit-"]:not(.ptbl-cap)').nth(2);
+await runStep("assign: H holds a unit without a destination, with a reason typed in", {}, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const unit = page.locator('[data-testid="assign-old"] [data-testid^="assign-paper-unit-"]:not(.ptbl-cap)').nth(2);
   await unit.waitFor({ timeout: T });
   await unit.click();
-  const heldId = await getText(page, "split-unit-id");
+  await wait(page, "assign-row-id");
+  // 짝 줄이면 번호가 둘이다 - 첫 번호로 다시 찾는다
+  const heldId = (await getText(page, "assign-row-id")).trim().split(" · ")[0];
+  await page.waitForLoadState("networkidle");
   await page.keyboard.press("h");
-  await wait(page, "split-hold-modal");
-  check("hold needs a reason", await page.locator('[data-testid="split-hold-modal-confirm"]').isDisabled());
-  await page.locator('[data-testid="split-hold-reason"]').fill("Smoke: not sure where it goes");
-  await page.locator('[data-testid="split-hold-modal-confirm"]').click();
-  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((el) => el.textContent?.includes("Held")), null, { timeout: T });
+  await wait(page, "assign-remark-modal");
+  await page.locator('[data-testid="assign-remark-modal-text"]').fill("Smoke: not sure where it goes");
+  await page.locator('[data-testid="assign-remark-modal-confirm"]').click();
+  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
   check("H holds the unit", true);
   await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
   await wait(page, "assign-bar");
-  await selectRowById(page, heldId.trim());
+  await selectRowById(page, heldId);
   await page.waitForLoadState("networkidle");
   check("held unit shows on Assign with its reason", (await page.locator('[data-testid="assign-reason"]').textContent()) === "Smoke: not sure where it goes");
   check("it has no destination", (await page.locator('[data-testid="assign-chosen"].is-empty').count()) === 1);
@@ -615,59 +502,6 @@ await runStep("split: H holds a unit without a destination", {}, async ({ page }
   check("a cleared reason stays empty", (await page.locator('[data-testid="assign-reason"]').textContent()) === "–");
 });
 
-await runStep("split: right-click menu shows reasons for blocked actions and runs an enabled one", {}, async ({ page, takeShot }) => {
-  await page.goto(`${BASE}/bundles/${freshBundleId}/assign?edit=first`);
-  const units = page.locator('[data-testid^="split-paper-unit-"]:not(.ptbl-cap)');
-  await units.nth(9).waitFor({ timeout: T });
-  const first = units.nth(4);
-  await first.click();
-  // 고른 채 같은 언어의 먼 문장을 우클릭 - 두 문장 메뉴. 같은 언어의 떨어진 문장은 묶지 않는다(다른 언어면 짝으로 묶여 켜진다)
-  const firstLang = await first.getAttribute("lang");
-  let far = null;
-  for (let at = 6; at < 16 && far === null; at += 1) if ((await units.nth(at).getAttribute("lang")) === firstLang) far = units.nth(at);
-  check("found a far sentence in the same language", far !== null, String(firstLang));
-  await far.click({ button: "right" });
-  await wait(page, "split-menu");
-  check("right-click opens the two-sentence menu", (await page.locator('[data-testid^="split-menu-"]').count()) === 2, String(await page.locator('[data-testid^="split-menu-"]').count()));
-  const join = page.locator('[data-testid="split-menu-join"]');
-  check("join is disabled for far sentences in one language", (await join.getAttribute("aria-disabled")) === "true");
-  await join.hover();
-  await page.locator('[data-testid="paper-tip"]').waitFor({ timeout: T });
-  check("hovering a disabled item shows why", ((await page.locator('[data-testid="paper-tip"]').innerText()) ?? "").length > 0, await page.locator('[data-testid="paper-tip"]').innerText());
-  await takeShot("sop-split-menu.png");
-  await page.keyboard.press("Escape");
-  await page.locator('[data-testid="split-menu"]').waitFor({ state: "detached", timeout: T });
-  check("Esc closes the menu", true);
-  // 고른 문장 자신을 우클릭 - 한 문장 메뉴(경계 확인 항목은 없다)
-  await first.click({ button: "right" });
-  await wait(page, "split-menu-split");
-  check("right-click on the selected sentence lists the single actions", (await page.locator('[data-testid="split-menu-ai_split"]').count()) === 1 && (await page.locator('[data-testid="split-menu-check"]').count()) === 0);
-  await page.keyboard.press("Escape");
-  await page.locator('[data-testid="split-menu"]').waitFor({ state: "detached", timeout: T });
-  // 따로 떼기 → 묶기: 짝이 있는 문장을 고르고 그 짝(다른 문장)을 우클릭한다
-  const toastOk = (text) => page.waitForFunction((word) => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((el) => el.textContent?.includes(word)), text, { timeout: T });
-  let partnerId = null;
-  for (let at = 0; at < 8 && partnerId === null; at += 1) {
-    await units.nth(at).click();
-    const partner = page.locator('[data-testid^="split-pair-unit-"]').first();
-    if (await partner.count()) partnerId = (await partner.getAttribute("data-testid")).replace("split-pair-unit-", "");
-  }
-  check("found a selected sentence with a pair", partnerId !== null);
-  const partnerUnit = page.locator(`[data-testid="split-paper-unit-${partnerId}"]`).first();
-  await partnerUnit.click({ button: "right" });
-  await wait(page, "split-menu-unpair");
-  check("join is off for an existing pair, separate is on", (await page.locator('[data-testid="split-menu-join"]').getAttribute("aria-disabled")) === "true" && (await page.locator('[data-testid="split-menu-unpair"]').getAttribute("aria-disabled")) === null);
-  await page.locator('[data-testid="split-menu-unpair"]').click();
-  await toastOk("Separated");
-  await page.waitForFunction(() => document.querySelector('[data-testid="split-pair-remove"]') === null, null, { timeout: T });
-  await partnerUnit.click({ button: "right" });
-  await wait(page, "split-menu-join");
-  check("join is on for an unpaired KO/EN couple", (await page.locator('[data-testid="split-menu-join"]').getAttribute("aria-disabled")) === null);
-  await page.locator('[data-testid="split-menu-join"]').click();
-  await toastOk("Joined");
-  await page.locator('[data-testid="split-join-mode-pair"][aria-pressed="true"]').waitFor({ timeout: T });
-  check("Join pairs a KO/EN couple at once", true);
-});
 
 await runStep("assign: hold an unassigned unit without a destination", {}, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
@@ -855,20 +689,47 @@ await runStep("assign: table rows from the right-click menu, then undo", {}, asy
 });
 
 await runStep("split rows of a table, then assign a row as a table", { allowConsoleErrors: true }, async ({ page }) => {
-  await page.goto(`${BASE}/bundles/${freshBundleId}/assign?edit=first`);
-  const cap = page.locator('button.ptbl-cap[data-testid^="split-paper-unit-"]').first();
-  await cap.waitFor({ timeout: T });
-  await cap.click();
-  await page.locator('[data-testid="split-table-rows"]').click();
-  // 판단이 걸린 단위가 있으면 서버가 먼저 묻는다
-  const confirm = page.locator('[data-testid="split-confirm-confirm"]');
-  if (await confirm.isVisible().catch(() => false)) await confirm.click();
-  await page.locator('[data-testid="split-table-merge"]').waitFor({ timeout: T });
-  const rowId = await getText(page, "split-unit-id");
-  check("rows are split", rowId.length > 0, rowId);
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${freshBundleId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${freshBundleId}/documents/${docId}/view`, { headers })).json();
+  // 통째인 표가 있는 Old 문서 - 그 표의 칸 문장을 우클릭해 행으로 나눈다
+  let doc = null;
+  let table = null;
+  let cell = null;
+  for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await readView(candidate.id);
+    const found = view.units.find((unit) => unit.kind === "table");
+    if (!found) continue;
+    doc = candidate;
+    table = found;
+    cell = view.units.find((unit) => unit.kind === "cell_sentence" && unit.group_unit_id === found.id) ?? null;
+    break;
+  }
+  check("the fresh bundle has a whole table", table !== null);
+  if (table === null) return;
   await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
   await wait(page, "assign-bar");
-  await selectRowById(page, rowId.trim());
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
+  const pieceOf = (unitId) => page.locator(`[data-testid="assign-paper-piece-${unitId}"], [data-testid="assign-paper-unit-${unitId}"]`).first();
+  const target = (await pieceOf(table.id).count()) > 0 || cell === null ? pieceOf(table.id) : pieceOf(cell.id);
+  await target.waitFor({ timeout: T });
+  await target.scrollIntoViewIfNeeded();
+  await target.click({ button: "right" });
+  await wait(page, "assign-ctx-table_rows");
+  await page.locator('[data-testid="assign-ctx-table_rows"]').click();
+  // 판단이 걸린 표면 서버가 먼저 묻는다
+  const confirm = page.locator('[data-testid="assign-edit-confirm-confirm"]');
+  if (await confirm.waitFor({ timeout: 2000 }).then(() => true, () => false)) await confirm.click();
+  let row = null;
+  for (let tries = 0; tries < 60 && row === null; tries += 1) {
+    row = (await readView(doc.id)).units.find((unit) => unit.kind === "table_row" && unit.table_id === table.table_id) ?? null;
+    if (row === null) await page.waitForTimeout(250);
+  }
+  check("rows are split", row !== null, row?.display_id);
+  if (row === null) return;
+  await page.waitForLoadState("networkidle");
+  await selectRowById(page, row.display_id);
   await pickFirstPlace(page);
   await page.locator('[data-testid="assign-primary"]').click();
   await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
@@ -2639,27 +2500,14 @@ await runStep("assign: add and delete destinations from the All list", {}, async
 });
 
 // 네 단계 워크플로우 - 레일은 Documents·Assign·Order·Outputs, 원문 고치기(옛 쪼개기 화면)는 배정 화면 안에서 열린다. C는 Order에서만 고친다
-await runStep("four steps: rail, Edit original round trip, Order edits C and Outputs reads it", {}, async ({ page, takeShot }) => {
+await runStep("four steps: rail, Order edits C and Outputs reads it", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}`);
   await wait(page, "stage-nav");
   const rail = await page.locator('[data-testid="stage-nav"] .stg-n').evaluateAll((els) => els.map((el) => `${el.textContent}:${el.parentElement.dataset.stage}`));
   check("the rail numbers Documents, Assign, Order, Outputs", rail.join(" ") === "1:documents 2:assign 3:order 4:outputs", rail.join(" "));
   await page.locator('[data-testid="stage-nav-assign"]').click();
-  await wait(page, "assign-open-split");
-  await page.locator('[data-testid="assign-open-split"]').click();
-  await page.waitForURL(/\/assign\?edit=\d+$/, { timeout: T });
-  await wait(page, "split-back-assign");
-  check("editing an original stays inside step 2", (await page.locator('[data-testid="stage-nav"] [aria-current="page"]').getAttribute("data-stage")) === "assign" && (await page.locator('[data-testid="assign-bar"]').count()) === 0);
-  await takeShot("sop-split-under-assign.png");
-  await page.locator('[data-testid="split-back-assign"]').click();
-  await page.waitForURL(/\/assign$/, { timeout: T });
-  check("Back to Assign returns", true);
-  // 옛 쪼개기 주소는 배정 화면 안의 원문 고치기로 넘어간다
-  await page.goto(`${BASE}/bundles/${halfBundleId}/split`);
-  await page.waitForURL(/\/assign\?edit=first$/, { timeout: T });
-  await wait(page, "split-back-assign");
-  check("the old Split address opens Edit original inside Assign", (await page.locator('[data-testid="stage-nav-split"]').count()) === 0);
-  await page.goBack();
+  await wait(page, "assign-bar");
+  check("the rail has no Split step and Assign has no separate tool screen", (await page.locator('[data-testid="stage-nav-split"]').count()) === 0 && (await page.locator('[data-testid="assign-open-split"]').count()) === 0);
   await page.locator('[data-testid="stage-nav-order"]').click();
   await wait(page, "order-docs");
   await wait(page, "output-c");

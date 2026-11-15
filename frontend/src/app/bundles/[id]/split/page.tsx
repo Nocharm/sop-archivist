@@ -1,4 +1,4 @@
-// 옛 주소 - 쪼개기 화면은 배정 화면(2단계) 안의 "원문 고치기"가 되었다(네 단계 워크플로우 B3). 즐겨찾기·설명서 링크를 그 자리로 넘긴다.
+// 옛 주소 - 쪼개기 화면은 배정 화면(2단계)에 합쳐졌다. 즐겨찾기·옛 링크를 배정 화면으로 넘기고, 그 화면이 문서를 한 단으로 연다.
 import { redirect } from "next/navigation";
 
 export default async function LegacySplitPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ doc?: string | string[] }> }) {
