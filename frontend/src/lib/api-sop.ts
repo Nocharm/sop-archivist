@@ -874,6 +874,8 @@ export interface WrittenSentence {
   /** 사람이 적는 메모(출처 없는 새 문장의 Remark) */
   remark: string;
   revision: number;
+  /** 출처가 참조 줄(REF)인데 이 문장의 번호(number)나 이름(title)이 EQUIS와 다르다 - 작은 주의. 견줄 것이 없으면 null */
+  ref_issue?: "number" | "title" | null;
 }
 
 /** Old 단위 하나에 가까운 이미 쓴 문서 문장 - 유사도는 확률로 보이지 않는다 */

@@ -300,9 +300,10 @@ export interface SentenceSlot {
   isTranslated: boolean;
 }
 
-/** 새 문장 언어가 단위들의 언어와 모두 다른가 - 중립은 번역이 될 수 없다(서버 _decide_change_type과 같다) */
+/** 새 문장 언어가 단위들의 언어와 모두 다른가 - 중립과 참조 줄(REF)은 번역이 될 수 없다(서버 _decide_change_type과 같다) */
 export function isTranslationOf(lang: ViewUnit["lang"], unitLangs: readonly ViewUnit["lang"][]): boolean {
-  return lang !== "neutral" && unitLangs.length > 0 && unitLangs.every((source) => source !== "neutral" && source !== lang);
+  const isLanguage = (value: ViewUnit["lang"]) => value !== "neutral" && value !== "ref";
+  return isLanguage(lang) && unitLangs.length > 0 && unitLangs.every((source) => isLanguage(source) && source !== lang);
 }
 
 /** 칸 언어가 출처 단위들의 언어와 모두 다른가 - 출처 언어를 모르면 번역으로 보지 않는다 */

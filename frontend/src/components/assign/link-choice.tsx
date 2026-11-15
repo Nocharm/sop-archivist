@@ -2,6 +2,8 @@
 // 한 줄로 줄여 결정 칸을 낮게 둔다 - 전체 글은 올리면 툴팁, New 원문에서도 고른 문장이 강조된다.
 "use client";
 
+import { Fragment, type ReactNode } from "react";
+
 import { LangToken } from "@/components/paper/lang-token";
 import { Select } from "@/components/ui/select";
 import { Truncate } from "@/components/ui/motion";
@@ -20,13 +22,15 @@ interface LinkChoiceProps {
   auto: "split" | "merged" | null;
   mergedWith: string[];
   onChange: (targetId: number, value: ChangeTypeInput | null) => void;
+  /** 문장 줄 바로 아래의 알림(참조 줄이 EQUIS와 다를 때) - 없으면 그리지 않는다 */
+  renderNote?: (row: WrittenSentence) => ReactNode;
 }
 
 const KINDS: ChangeTypeInput[] = ["as_is", "tone", "rewritten"];
 /** AI 제안 그대로 받기(null)의 고르기 값 */
 const AI_VALUE = "ai";
 
-export function LinkChoice({ rows, changeTypes, aiPending, translatedIds, defaults, auto, mergedWith, onChange }: LinkChoiceProps) {
+export function LinkChoice({ rows, changeTypes, aiPending, translatedIds, defaults, auto, mergedWith, onChange, renderNote }: LinkChoiceProps) {
   const { t } = useI18n();
   return (
     <div className="grid gap-1.5">
@@ -37,30 +41,33 @@ export function LinkChoice({ rows, changeTypes, aiPending, translatedIds, defaul
           ...KINDS.map((kind) => ({ value: kind, label: t(`change.${kind}`) })),
         ];
         return (
-          <div key={row.target_id} className="chosen-line" data-testid={`assign-link-${row.target_id}`}>
-            <LangToken lang={row.lang} />
-            <span className="min-w-0 flex-1 text-[13px] leading-5 text-ink">
-              <Truncate text={row.text} lang={row.lang === "neutral" ? undefined : row.lang} />
-            </span>
-            {translatedIds.has(row.target_id) ? (
-              <span className="flex-none text-xs text-ink-2" data-testid={`assign-change-${row.target_id}-translated`}>
-                {t("change.translated")}
+          <Fragment key={row.target_id}>
+            <div className="chosen-line" data-testid={`assign-link-${row.target_id}`}>
+              <LangToken lang={row.lang} />
+              <span className="min-w-0 flex-1 text-[13px] leading-5 text-ink">
+                <Truncate text={row.text} lang={row.lang === "neutral" ? undefined : row.lang} />
               </span>
-            ) : (
-              auto === null && (
-                <span className="flex-none">
-                  <Select
-                    testId={`assign-change-${row.target_id}`}
-                    ariaLabel={t("assign.changeType")}
-                    size="sm"
-                    value={current ?? AI_VALUE}
-                    options={options}
-                    onChange={(next) => onChange(row.target_id, next === AI_VALUE ? null : (KINDS.find((kind) => kind === next) ?? null))}
-                  />
+              {translatedIds.has(row.target_id) ? (
+                <span className="flex-none text-xs text-ink-2" data-testid={`assign-change-${row.target_id}-translated`}>
+                  {t("change.translated")}
                 </span>
-              )
-            )}
-          </div>
+              ) : (
+                auto === null && (
+                  <span className="flex-none">
+                    <Select
+                      testId={`assign-change-${row.target_id}`}
+                      ariaLabel={t("assign.changeType")}
+                      size="sm"
+                      value={current ?? AI_VALUE}
+                      options={options}
+                      onChange={(next) => onChange(row.target_id, next === AI_VALUE ? null : (KINDS.find((kind) => kind === next) ?? null))}
+                    />
+                  </span>
+                )
+              )}
+            </div>
+            {renderNote?.(row)}
+          </Fragment>
         );
       })}
       {auto && <p className="text-xs font-semibold text-accent">{t(auto === "split" ? "assign.autoSplit" : "assign.autoMerged")}</p>}

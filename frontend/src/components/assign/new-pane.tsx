@@ -6,7 +6,7 @@
 // 줄이 새로 들어오면 펼치며 나타나고 빠지면 접히며 사라진다(확정이 곧 보이는 실시간 넣기). 표·그림은 이번 화면에서 잇지 않아 회색 상자로만 보인다(설계 §2).
 "use client";
 
-import { ChevronDown, ChevronUp, FilePlus2, Scissors, Spline } from "lucide-react";
+import { ChevronDown, ChevronUp, FilePlus2, Scissors, Spline, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { Fragment, useEffect, useRef, useState, type FocusEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
@@ -208,6 +208,13 @@ export function NewPane(props: NewPaneProps) {
           </button>
         )}
         {row.change_type === "new" && <span className="new-src is-new">{t("assign.markedNew")}</span>}
+        {/* 참조 줄을 이은 문장인데 번호나 이름이 EQUIS와 다르다 - 이 문서의 글은 여기서 고치지 않아 알리기만 한다 */}
+        {row.ref_issue && (
+          <span className="new-src is-warn" data-testid={`assign-new-ref-issue-${row.target_id}`}>
+            <TriangleAlert size={10} strokeWidth={2.25} className="mr-0.5 inline-block align-[-1px]" aria-hidden />
+            {t(row.ref_issue === "number" ? "assign.ref.adviceNumber" : "assign.ref.adviceTitle")}
+          </span>
+        )}
       </span>
     );
   }

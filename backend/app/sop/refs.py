@@ -74,6 +74,26 @@ def build_ref_text(text: str, number: str, current_number: str, name: str) -> st
     return None if suggestion == text else suggestion
 
 
+def _fold(text: str) -> str:
+    """대소문자와 빈칸 차이는 같은 글로 본다(사용자 확인 2026-11-14 — 제목 비교)."""
+    return " ".join(text.split()).upper()
+
+
+def check_ref_text(
+    text: str, source_text: str, number: str, current_number: str, name: str
+) -> Literal["number", "title"] | None:
+    """참조 줄의 새 문장이 EQUIS와 어긋나는지 — 번호가 지금 번호가 아니면 "number", 번호는 맞는데 이름이 다르면 "title".
+
+    견줄 글은 원문을 EQUIS에 맞춘 글이다(`build_ref_text`, 원문이 이미 맞으면 원문). 화면의 `readRefAdvice`와 같은 규칙이다.
+    """
+    if not current_number:
+        return None
+    expected = build_ref_text(source_text, number, current_number, name) or source_text
+    if _fold(text) == _fold(expected):
+        return None
+    return "title" if current_number.upper() in _fold(text) else "number"
+
+
 def read_ref_state(unit: Unit, mark: UnitRef | None) -> RefState | None:
     """단위의 참조 상태 — REF로 확정됐는지, 앱이 제안하는지, 아무것도 아닌지.
 

@@ -7,7 +7,7 @@ import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
-from app.sop.refs import build_ref_text, find_leading_number, read_number_in_text
+from app.sop.refs import build_ref_text, check_ref_text, find_leading_number, read_number_in_text
 from tests.docx_factory import build_docx, p
 from tests.sop_helpers import (
     AUTHOR,
@@ -310,3 +310,82 @@ def test_new_sentence_of_a_reference_keeps_the_type_and_skips_the_number_check(c
     assert response.status_code == 200, response.text
     target = response.json()["targets"][0]
     assert (target["lang"], target["warnings"]) == ("ref", [])
+
+
+# --- 이미 쓴 새 문서의 문장에 이은 참조 줄 ---
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (REF_LINE, "number"),
+        (f"{NUMBER} Operation of UV spectrophotometer", "title"),
+        (f"{NUMBER}  {NAME.lower()}", None),
+    ],
+)
+def test_check_ref_text(text: str, expected: str | None) -> None:
+    assert check_ref_text(text, REF_LINE, OLD_NUMBER, NUMBER, NAME) == expected
+
+
+def _link_to_written(client: TestClient, new_line: str) -> tuple[Setup, dict]:
+    """옛 문서의 참조 줄을 REF로 확정하고, 이미 쓴 새 문서의 한 줄에 출처로 잇는다 — (묶음, 저장 응답의 새 문장)."""
+    fx = Setup(client)
+    uploaded = upload(
+        client, fx.bundle_id, build_docx(p(new_line), headers=[p("합성 새 문서")]), "SYNTHETIC_SOP-W_Refs.docx",
+        side="new", doc_type="sop",
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    assert fx.set_ref(REF_LINE, OLD_NUMBER).status_code == 200
+    unit = fx.unit(REF_LINE)
+    written = next(row for row in _list_written(client, fx.bundle_id) if row["text"] == new_line)
+    entry = get_group_by_unit(client, fx.bundle_id, unit["id"])["units"][0]
+    body = {
+        "action": "confirm",
+        "hold_reason": "",
+        "units": [{"unit_id": unit["id"], "revision": entry["decision"]["revision"], "disposition": "assigned"}],
+        "targets": [{"key": "t", "id": written["target_id"], "revision": written["revision"], "source_unit_ids": [unit["id"]]}],
+    }
+    if new_line != REF_LINE:
+        # 글이 원문과 다르면 변경 종류를 사람이 고른다
+        body["targets"][0]["change_type"] = "rewritten"
+    response = save_group(client, fx.bundle_id, body)
+    assert response.status_code == 200, response.text
+    return fx, response.json()["targets"][0]
+
+
+def _list_written(client: TestClient, bundle_id: int) -> list[dict]:
+    response = client.get(f"/api/bundles/{bundle_id}/written-sentences", headers=AUTHOR)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_linking_a_reference_to_a_written_sentence_is_not_a_translation(client: TestClient) -> None:
+    _, target = _link_to_written(client, f"{NUMBER} {NAME}")
+
+    assert target["change_type"] == "rewritten"
+
+
+@pytest.mark.parametrize(
+    ("new_line", "expected"),
+    [
+        (REF_LINE, "number"),
+        (f"{NUMBER} Operation of UV spectrophotometer", "title"),
+        (f"{NUMBER} {NAME}", None),
+    ],
+)
+def test_written_sentence_of_a_reference_is_checked_against_equis(
+    client: TestClient, equis: FakeEquis, new_line: str, expected: str | None  # noqa: F811
+) -> None:
+    equis.rows = [make_row(NUMBER, legacy=OLD_NUMBER)]
+    fx, _ = _link_to_written(client, new_line)
+    fx.detail(REF_LINE)  # 그 번호를 조회한다(응답 뒤에 끝난다)
+
+    row = next(row for row in _list_written(client, fx.bundle_id) if row["text"] == new_line)
+
+    assert row["ref_issue"] == expected
+
+
+def test_written_sentence_is_not_checked_without_equis(client: TestClient) -> None:
+    fx, _ = _link_to_written(client, REF_LINE)
+
+    assert [row["ref_issue"] for row in _list_written(client, fx.bundle_id)] == [None]
