@@ -43,6 +43,8 @@ const ROWS = [
   makeRow("SOP-ABC-00120", "900120", "5.0", "Superseded", { DOC_DOCUMENT_NAME: "Cleaning of Laboratory Glassware", DOC_AREA: "Quality & Compliance" }),
   makeRow("SOP-ABC-00120", "900120", "6.0", "Effective", { DOC_DOCUMENT_NAME: "Cleaning of Laboratory Glassware", DOC_AREA: "Quality & Compliance", DOC_EFFECTIVE_DATE_KST: "2024-03-11T00:00:00.000Z" }),
   makeRow("SOP-ABC-00052", "900052", "3.0", "Obsolete", { DOC_DOCUMENT_NAME: "Operation of Vacuum System", DOC_OBSOLETE_DATE_KST: "2018-11-21T00:00:00.000Z" }),
+  // 장비 번호가 있는 줄 - New 목록의 EQUIS 제안(장비 SOP)을 화면에서 보려고 둔다
+  makeRow("SOP-ABC-00300", "900300", "2.0", "Effective", { DOC_DOCUMENT_NAME: "Operation of Benchtop Centrifuge", DOC_EQUIPMENT_TAG_NO: "EQ-SYN-0042", DOC_EFFECTIVE_DATE_KST: "2025-02-03T00:00:00.000Z" }),
 ];
 
 function pickRows(filters) {

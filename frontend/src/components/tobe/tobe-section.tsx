@@ -181,7 +181,8 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
     // WI는 상위 SOP가 있어야 한다 - 목록의 첫 SOP(자기 자신 말고) 아래로 두고, 사람이 옆 칸에서 바꾼다
     const parent = sops.find((sop) => sop.key !== doc.key);
     if (!parent) showToast(t("tobe.needSop"), "error");
-    else void saveDoc(doc, { doc_type: "wi", parent_code: parent.code });
+    // 장비 SOP 표시는 SOP에만 있다 - 켜진 채 WI로 바꾸면 서버가 거절하므로 함께 끈다
+    else void saveDoc(doc, { doc_type: "wi", parent_code: parent.code, ...(doc.is_equipment_sop ? { is_equipment_sop: false } : {}) });
   }
 
   async function handleEquisRefresh(code: string) {
@@ -464,7 +465,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
           <thead>
             <tr>
               <th className="w-8" aria-label={t("tobe.details")} />
-              <th className="w-40 min-w-[160px]">{t("tobe.colCode")}</th>
+              <th className="w-[164px] min-w-[164px] max-[1279px]:w-40 max-[1279px]:min-w-[160px]">{t("tobe.colCode")}</th>
               <th className="min-w-[196px] max-[1279px]:min-w-[156px]">{t("tobe.colTitle")}</th>
               <th className="w-24">{t("tobe.colType")}</th>
               <th className="w-[168px] min-w-[168px] max-[1279px]:w-[160px] max-[1279px]:min-w-[160px]">{t("tobe.colParent")}</th>
@@ -525,7 +526,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
                           </button>
                         </Tooltip>
                       </td>
-                      <td className={depth === 1 ? "pl-6" : undefined}>
+                      <td className={depth === 1 ? "pl-4" : undefined}>
                         {equis ? (
                           // 좁은 칸이라 아이콘만 둔다 - 글은 툴팁과 펼친 정보에 있다
                           <span className="flex items-center gap-1">

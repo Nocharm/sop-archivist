@@ -363,6 +363,23 @@ await runStep("new documents: nested rows, N/A detail, each cell saves as you le
   await page.locator('[data-testid="toast-error"]').last().waitFor({ timeout: T });
   await settleToBe(page);
   check("a refused change puts the saved number back", (await page.locator(`[data-testid="tobe-id-${added.id}-code"]`).inputValue()) === "WI-98");
+  // 장비 SOP로 표시한 줄을 WI로 바꾼다 - 표시가 함께 꺼져야 서버가 받는다(v1.0.36, 전에는 "Only an SOP can be an equipment SOP"로 거절됐다)
+  await page.locator('[data-testid="tobe-add-code"]').fill("SOP-97");
+  await page.keyboard.press("Enter");
+  await settleToBe(page);
+  const marked = (await readToBe(page, halfBundleId)).docs.find((doc) => doc.code === "SOP-97");
+  await page.locator(`[data-testid="tobe-id-${marked.id}-equipment"]`).click();
+  await settleToBe(page);
+  await page.locator(`[data-testid="tobe-id-${marked.id}-type"]`).click();
+  await page.locator(`[data-testid="tobe-id-${marked.id}-type-option-wi"]`).click();
+  await settleToBe(page);
+  const markedAfter = (await readToBe(page, halfBundleId)).docs.find((doc) => doc.id === marked.id);
+  check("an equipment SOP turns into a WI and the mark goes off with it", markedAfter.doc_type === "wi" && markedAfter.is_equipment_sop === false, JSON.stringify({ type: markedAfter.doc_type, equipment: markedAfter.is_equipment_sop }));
+  const removeMarked = page.locator(`[data-testid="tobe-id-${marked.id}-remove"]`);
+  await removeMarked.scrollIntoViewIfNeeded();
+  await removeMarked.hover();
+  await removeMarked.click();
+  await settleToBe(page);
   const remove = page.locator(`[data-testid="tobe-id-${added.id}-remove"]`);
   await remove.scrollIntoViewIfNeeded();
   await remove.hover();
