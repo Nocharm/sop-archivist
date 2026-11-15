@@ -336,3 +336,60 @@ def test_refresh_is_for_authors_of_an_editable_bundle(client: TestClient, equis:
 
     assert by_reviewer.status_code == 403 and by_reviewer.json()["detail"]["code"] == "role_required"
     assert while_in_review.status_code == 409 and while_in_review.json()["detail"]["code"] == "bundle_not_editable"
+
+
+# --- Excel 문서 목록 시트 ---
+
+
+def _read_documents_sheet(client: TestClient, bundle_id: int) -> list[list[str]]:
+    response = client.get(f"/api/bundles/{bundle_id}/export/preview", headers=AUTHOR)
+    assert response.status_code == 200, response.text
+    sheet = next(sheet for sheet in response.json()["sheets"] if sheet["name"] == "Documents")
+    return [[cell["text"] for cell in row["cells"]] for row in sheet["rows"]]
+
+
+def test_excel_lists_documents_with_their_equis_values(client: TestClient, equis: FakeEquis) -> None:
+    equis.rows = [
+        make_row(
+            version="14.0", status="Effective", DOC_OWNING_DEPARTMENT="Purification",
+            DOC_EFFECTIVE_DATE_KST="2025-09-17T00:00:00.000Z",
+        )
+    ]
+    bundle = create_bundle(client, is_synthetic=True)
+    assert put_tobe(client, bundle["id"], [{"code": "SOP-NEW-1", "title": "Synthetic", "doc_type": "sop", "parent_code": None}]).status_code == 200
+    upload_old(client, bundle["id"])
+
+    status, header, old, new = _read_documents_sheet(client, bundle["id"])
+
+    assert status[0] == "Status: In progress"
+    assert header == [
+        "Side", "Doc no.", "Title", "Uploaded ver.", "EQUIS", "Current no.", "Current ver.", "Effective date",
+        "Owning dept.", "EQUIS link",
+    ]
+    # 옛 문서 — 올린 판이 지금 판과 같다
+    assert old == [
+        "Old", NUMBER, NAME, "14", "Current", NUMBER, "14.0 Effective", "2025-09-17", "Purification",
+        "https://equis.test/ui/#doc_info/900001",
+    ]
+    # 새 문서 — EQUIS에 없는 번호
+    assert new == ["New", "SOP-NEW-1", "Synthetic", "", "Not in EQUIS", "", "", "", "", ""]
+
+
+def test_excel_says_what_to_check_for_an_old_number(client: TestClient, equis: FakeEquis) -> None:
+    equis.rows = [make_row(legacy="SOP-ABC-1016")]
+    bundle = create_bundle(client, is_synthetic=True)
+    upload_old(client, bundle["id"], "SOP-ABC-1016_v14_UV operation.docx")
+
+    rows = _read_documents_sheet(client, bundle["id"])
+
+    assert rows[2][:6] == ["Old", "SOP-ABC-1016", NAME, "14", "Check: Old number", NUMBER]
+
+
+def test_excel_documents_sheet_has_blank_equis_columns_when_the_feature_is_off(client: TestClient) -> None:
+    bundle = create_bundle(client, is_synthetic=True)
+    upload_old(client, bundle["id"])
+
+    rows = _read_documents_sheet(client, bundle["id"])
+
+    # 제목은 파일 이름에서 온 값 그대로다(EQUIS 이름으로 바뀌지 않는다)
+    assert rows[2][:4] == ["Old", NUMBER, "UV operation", "14"] and rows[2][4:] == [""] * 6

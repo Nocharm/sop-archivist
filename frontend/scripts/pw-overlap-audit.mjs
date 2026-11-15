@@ -335,7 +335,8 @@ const exportPreviewScene = {
     await page.locator('[data-testid="outputs-export-open"]').click();
     await page.locator('[data-testid="export-preview-sheet"] tbody tr').first().waitFor({ timeout: T });
     const tabs = await page.locator('[data-testid^="export-preview-tab-"]').all();
-    if (tabs.length !== 4) report("export-preview tabs", `${tabs.length} tabs`);
+    // 시트 다섯 장 - A·B·C·Info·Documents
+    if (tabs.length !== 5) report("export-preview tabs", `${tabs.length} tabs`);
     for (const tab of tabs) {
       const { hits, width } = await findCovered(tab);
       if (hits.length > 0) report(`${await tab.getAttribute("data-testid")} (${width}px)`, hits.join(", "));
