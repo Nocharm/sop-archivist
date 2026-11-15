@@ -1449,6 +1449,8 @@
   button.new-src:is(:hover, [data-link-hot]) { box-shadow: inset 0 0 0 1px var(--st-ok-ink); }
   /* AI가 이어 두고 아직 확정하지 않은 출처 - 연결선·배지와 같은 AI 색(보라) */
   .new-src[data-ai] { background: var(--st-ai-tint); color: var(--st-ai-ink); }
+  /* 참조 줄을 이은 문장이 EQUIS와 다르다는 작은 주의 - 출처 칩 줄 끝에 */
+  .new-src.is-warn { background: color-mix(in oklab, var(--warn-fill) var(--tint), var(--surface)); color: var(--warn-ink); font-family: var(--font-ui); }
   button.new-src[data-ai]:is(:hover, [data-link-hot]) { box-shadow: inset 0 0 0 1px var(--st-ai-ink); }
   /* 칩 오른쪽 갈매기 - 그 Old 조각이 왼쪽 칸 화면 위·아래 밖(LinkLines가 data-dir) */
   .new-src-dir { display: none; }

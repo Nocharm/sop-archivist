@@ -1686,6 +1686,22 @@ export default function AssignPage() {
     );
   }
 
+  /** 참조 줄을 이미 쓴 문서의 문장에 이을 때 - 그 문장이 EQUIS와 다르면 작은 주의와 맞춘 글. 이미 쓴 문서의 글은 여기서 고치지 않아 단추는 없다 */
+  function renderRefLinkAdvice(written: WrittenSentence): ReactNode {
+    if (rowRefUnit === null || rowRefUnit.lang !== "ref") return null;
+    const advice = readRefAdvice(written.text, rowRefUnit.text, refInfo);
+    if (advice === null) return null;
+    return (
+      <div className="ref-advice" data-testid={`assign-ref-link-advice-${written.target_id}`}>
+        <TriangleAlert size={12} strokeWidth={1.75} className="mt-0.5 flex-none" aria-hidden />
+        <span className="min-w-0 flex-1">
+          <span className="font-semibold">{t(advice.issue === "number" ? "assign.ref.adviceNumber" : "assign.ref.adviceTitle")}</span>
+          <span className="block break-words text-ink-2">{advice.text}</span>
+        </span>
+      </div>
+    );
+  }
+
   const newSentences = (
     <div className="grid gap-2" data-testid="assign-new-sentences">
       {rowUnits.some((unit) => unit.kind === "table" || unit.kind === "table_row" || unit.kind === "figure") ? (
@@ -1817,6 +1833,7 @@ export default function AssignPage() {
             auto={auto}
             mergedWith={mergedWith}
             onChange={(targetId, value) => setDraft({ linkChangeTypes: { ...(draft.linkChangeTypes ?? {}), [targetId]: value } })}
+            renderNote={renderRefLinkAdvice}
           />
         )}
         {placeLabel && (

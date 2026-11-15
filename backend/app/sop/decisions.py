@@ -810,7 +810,8 @@ def _decide_change_type(
         return "merged"
     source_id = plan.sources[0]
     source_lang = state.units[source_id].lang
-    if plan.lang != source_lang and NEUTRAL not in (plan.lang, source_lang):
+    # 참조 줄(REF)은 언어가 아니다 — 영어로 적힌 새 문서의 문장에 이어도 번역이 아니다
+    if plan.lang != source_lang and not {NEUTRAL, REF_LANG} & {plan.lang, source_lang}:
         return "translated"
     if not plan.is_cell and spread[(source_id, plan.doc.id)] >= 2:
         return "split"

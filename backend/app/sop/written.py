@@ -13,12 +13,15 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import clock
+from app.equis import service as equis_service
 from app.sop.ai.constants import CANDIDATE_MIN_EMBED, CANDIDATE_MIN_TEXT, CANDIDATE_LIMIT
 from app.sop.ai.embeddings import load_cached_vectors
 from app.sop.ai.similarity import build_text_bigrams, compare_bigrams
 from app.sop.errors import raise_rule
 from app.sop.groups import select_in_chunks
-from app.sop.models import Extraction, Document, TargetDoc, TargetSentence, TargetSource, Unit, UnitPairMember
+from app.sop.models import Extraction, Document, TargetDoc, TargetSentence, TargetSource, Unit, UnitPairMember, UnitRef
+from app.sop.refs import REF_LANG, check_ref_text
 
 Basis = Literal["embedding", "text"]
 
@@ -39,6 +42,8 @@ class WrittenSentenceOut(BaseModel):
     # 같은 New 문서의 한/영 짝 상대가 만든 문장 — Old 짝 조각에 함께 붙이는 데 쓴다
     partner_target_id: int | None
     revision: int
+    # 출처가 참조 줄(REF)인데 이 문장의 번호나 이름이 EQUIS와 다르다 — 작은 주의. 출처가 참조 줄이 아니거나 견줄 값이 없으면 null
+    ref_issue: Literal["number", "title"] | None = None
 
 
 class NewCandidateOut(BaseModel):
@@ -111,6 +116,7 @@ async def list_written_sentences(session: AsyncSession, bundle_id: int) -> list[
     for target_id, unit_id in source_rows:
         sources[target_id].append(unit_id)
     partners = await _find_partner_targets(session, {target.new_unit_id: target.id for target, _ in rows if target.new_unit_id})
+    ref_issues = await _find_ref_issues(session, {target.id: target.confirmed_text for target, _ in rows}, sources)
     return [
         WrittenSentenceOut(
             target_id=target.id,
@@ -127,9 +133,46 @@ async def list_written_sentences(session: AsyncSession, bundle_id: int) -> list[
             source_unit_ids=sources.get(target.id, []),
             partner_target_id=partners.get(target.id),
             revision=target.revision,
+            ref_issue=ref_issues.get(target.id),
         )
         for target, code in rows
     ]
+
+
+async def _find_ref_issues(
+    session: AsyncSession, texts: dict[int, str], sources: dict[int, list[int]]
+) -> dict[int, Literal["number", "title"]]:
+    """참조 줄(REF)을 출처로 가진 문장 가운데 번호·이름이 EQUIS와 다른 것 — 받아 둔 조회 결과만 읽는다(여기서 조회를 걸지 않는다).
+
+    EQUIS가 그 번호를 모르거나 폐기했으면 견주지 않는다. 출처가 여럿이면 첫 참조 줄로 본다.
+    """
+    unit_ids = {unit_id for ids in sources.values() for unit_id in ids}
+    ref_rows = await select_in_chunks(
+        session,
+        lambda chunk: select(Unit.id, Unit.text, UnitRef.number)
+        .join(UnitRef, UnitRef.unit_id == Unit.id)
+        .where(Unit.id.in_(chunk), Unit.lang == REF_LANG),
+        unit_ids,
+    )
+    refs = {unit_id: (text, number) for unit_id, text, number in ref_rows if number}
+    if not refs:
+        return {}
+    lookups = await equis_service.load_lookups(session, [number for _, number in refs.values()])
+    now = clock.now()
+    issues: dict[int, Literal["number", "title"]] = {}
+    for target_id, unit_ids_of_target in sources.items():
+        source = next((refs[unit_id] for unit_id in unit_ids_of_target if unit_id in refs), None)
+        if source is None:
+            continue
+        source_text, number = source
+        lookup = lookups.get(number)
+        facts = equis_service.read_facts(lookup)
+        if lookup is None or facts is None or facts.retired or equis_service.read_state(lookup, now) != "found":
+            continue
+        issue = check_ref_text(texts[target_id], source_text, number, facts.number, facts.name)
+        if issue is not None:
+            issues[target_id] = issue
+    return issues
 
 
 async def _find_partner_targets(session: AsyncSession, target_of_unit: dict[int, int]) -> dict[int, int]:
