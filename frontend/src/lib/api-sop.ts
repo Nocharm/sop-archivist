@@ -148,7 +148,7 @@ export function getAiStatus(bundleId: number): Promise<AiStatus> {
   return apiFetch<AiStatus>(`/bundles/${bundleId}/ai/status`);
 }
 
-export type AiJobKind = "classify" | "translate" | "match_plan" | "match" | "pair" | "split" | "doc_meta";
+export type AiJobKind = "classify" | "translate" | "match_plan" | "match" | "pair" | "split" | "doc_meta" | "tobe_list";
 export type AiJobStatus = keyof AiJobCounts;
 
 /** 요청 한 번(같은 request_id)의 집계 - total은 24시간 범위와 상관없이 센다. 짝 맞추기는 도중에 total이 는다 */
@@ -602,6 +602,73 @@ export function addWiStep(bundleId: number, targetDocId: number, title: string):
 
 export function removeWiStep(bundleId: number, targetDocId: number, stepNo: number): Promise<ToBe> {
   return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/steps/${stepNo}`, { method: "DELETE" });
+}
+
+// 줄 하나 고치기(Documents 화면) - 칸마다 바로 저장한다. 보낸 칸만 바뀌고 새 목록이 돌아온다(revision을 보내지 않는다)
+export interface ToBeDocPatch {
+  code?: string;
+  title?: string;
+  doc_type?: TargetDocType;
+  /** null은 "상위 SOP 없음" */
+  parent_code?: string | null;
+  is_equipment_sop?: boolean;
+}
+
+export function updateToBeDoc(bundleId: number, targetDocId: number, patch: ToBeDocPatch): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+/** SOP의 칸 하나를 N/A로(사유와 함께) - 이미 N/A면 사유를 바꾼다 */
+export function setNaSlot(bundleId: number, targetDocId: number, slotKey: string, reason: string): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/na/${encodeURIComponent(slotKey)}`, { method: "PUT", body: JSON.stringify({ reason }) });
+}
+
+export function clearNaSlot(bundleId: number, targetDocId: number, slotKey: string): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/na/${encodeURIComponent(slotKey)}`, { method: "DELETE" });
+}
+
+export function renameWiStep(bundleId: number, targetDocId: number, stepNo: number, title: string): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/steps/${stepNo}`, { method: "PATCH", body: JSON.stringify({ title }) });
+}
+
+// 새 문서 목록 AI 읽기 - 템플릿에 맞지 않는 계획 파일이나 붙여 넣은 글에서 AI가 목록을 읽어 제안한다. AI는 목록에 쓰지 않는다
+export interface ProposedDoc {
+  code: string;
+  title: string;
+  /** 글이 종류를 말하지 않으면 null - 사람이 고른다 */
+  doc_type: TargetDocType | null;
+  parent_code: string | null;
+  is_equipment_sop: boolean;
+  steps: string[];
+}
+
+export interface ToBeProposal {
+  suggestion_id: number;
+  docs: ProposedDoc[];
+  /** 이미 목록에 있는 번호 */
+  listed_codes: string[];
+  /** 글이 길어 앞부분만 읽었거나 제안이 많아 앞쪽만 남겼다 */
+  truncated: boolean;
+  /** 응답을 읽지 못했다 - 줄이 없다 */
+  invalid: boolean;
+}
+
+/** 목록 파일 하나(xlsx·docx·txt·csv·md) 또는 붙여 넣은 글을 보내 AI 작업을 쌓는다 - 파일은 저장되지 않는다 */
+export function requestToBeRead(bundleId: number, source: { file: File } | { text: string }): Promise<{ queued: number; request_id: string; truncated: boolean }> {
+  const form = new FormData();
+  if ("file" in source) form.append("file", source.file);
+  else form.append("text", source.text);
+  return apiFetch(`/bundles/${bundleId}/tobe/read`, { method: "POST", body: form });
+}
+
+/** 아직 정하지 않은 가장 새 제안 - 없으면 null */
+export function getToBeRead(bundleId: number): Promise<ToBeProposal | null> {
+  return apiFetch<ToBeProposal | null>(`/bundles/${bundleId}/tobe/read`);
+}
+
+/** 미리 보기를 닫는다 - 줄을 더했으면 as_is(그대로)·edited(고치거나 일부만), 버렸으면 rejected */
+export function closeToBeRead(bundleId: number, suggestionId: number, adoption: "as_is" | "edited" | "rejected"): Promise<void> {
+  return apiFetch<void>(`/bundles/${bundleId}/tobe/read/${suggestionId}/close`, { method: "POST", body: JSON.stringify({ adoption }) });
 }
 
 export function importToBe(bundleId: number, file: File, revision: number): Promise<ToBe> {

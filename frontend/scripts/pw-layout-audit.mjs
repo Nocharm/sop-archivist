@@ -238,36 +238,12 @@ const AUDIT_ENTRIES = [
     id: "A3", ds: "worst", user: MEMBER, views: [1920],
     path: (ids) => `/bundles/${ids.w[1]}/assign?edit=${ids.docs.big}`,
     measure: (page) => page.evaluate(() => {
-      const inspector = document.querySelector('[data-testid="split-inspector"]').getBoundingClientRect().left;
+      const inspector = document.querySelector('[data-testid="assign-inspector"]').getBoundingClientRect().left;
       const rights = [...document.querySelectorAll(".pg")].map((pg) => pg.getBoundingClientRect().right);
       return { maxRight: Math.round(Math.max(...rights)), inspector: Math.round(inspector) };
     }),
     expect: (value) => value.maxRight <= value.inspector,
-    note: "every .pg right edge <= split-inspector left edge",
-  },
-  {
-    id: "C2", ds: "worst", user: MEMBER, views: [1120],
-    path: (ids) => `/bundles/${ids.w[1]}/assign?edit=first`,
-    measure: (page) => page.evaluate(() => {
-      const disabled = document.querySelectorAll('[data-testid="split-inspector"] :disabled').length;
-      const scroller = document.querySelector('[data-testid="split-docs"] > div');
-      const frame = scroller.getBoundingClientRect();
-      let visible = 0;
-      for (const button of scroller.querySelectorAll('[data-testid^="split-doc-"]')) {
-        const box = button.getBoundingClientRect();
-        visible += Math.max(0, Math.min(box.bottom, frame.bottom) - Math.max(box.top, frame.top)) / box.height;
-      }
-      return { disabled, docs: Math.round(visible * 10) / 10 };
-    }),
-    expect: (value) => value.disabled === 0 && value.docs >= 12,
-    note: "idle inspector has 0 disabled buttons; >= 12 document buttons visible in split-docs",
-  },
-  {
-    id: "C2", ds: "mid", user: MEMBER, views: [1120],
-    path: (ids) => `/bundles/${ids.mid[2]}/assign?edit=first`,
-    measure: (page) => page.locator('[data-testid="split-inspector"] :disabled').count(),
-    expect: (value) => value === 0,
-    note: "idle inspector has 0 disabled buttons",
+    note: "every .pg right edge <= assign-inspector left edge (the old edit address opens the document wide, in the one-document view)",
   },
   {
     id: "R8", ds: "worst", user: MEMBER, views: [1120],
@@ -644,9 +620,9 @@ const AUDIT_ENTRIES = [
     note: "not-found renders in the shell: body background equals --bg, not-found-back visible, no default English copy",
   },
   {
-    // B2·R6: 멤버가 아닌 Bundle(mid[1]은 prod.member가 아니다 - API 404) 여섯 주소에서 목록으로 돌아가는 길이 있고 다시 시도는 없으며, 단계 레일 링크와 상단 바 뒤로·구분선이 없다
+    // B2·R6: 멤버가 아닌 Bundle(mid[1]은 prod.member가 아니다 - API 404) 네 주소에서 목록으로 돌아가는 길이 있고 다시 시도는 없으며, 단계 레일 링크와 상단 바 뒤로·구분선이 없다
     id: "B2", ds: "mid", user: "prod.member", views: [1120],
-    path: (ids) => ["documents", "split", "assign", "outputs", "history"].map((s) => ({ url: `/bundles/${ids.mid[1]}/${s}`, user: "prod.member", stage: s })),
+    path: (ids) => ["documents", "assign", "outputs", "history"].map((s) => ({ url: `/bundles/${ids.mid[1]}/${s}`, user: "prod.member", stage: s })),
     open: async (page) => {
       await page.locator('[data-testid$="-missing"]').first().waitFor({ timeout: T });
     },
@@ -663,7 +639,7 @@ const AUDIT_ENTRIES = [
       }), stage);
     },
     expect: (value) => value.missing === 1 && value.back === 1 && value.retry === 0 && value.railLinks === 0 && value.rail === 0 && value.sep === 0 && value.topBack === 0,
-    note: "six stage URLs of a bundle prod.member cannot open: <id>-missing + <id>-back, no -retry, no stage rail, no top-bar divider or back arrow",
+    note: "four stage URLs of a bundle prod.member cannot open: <id>-missing + <id>-back, no -retry, no stage rail, no top-bar divider or back arrow",
   },
   {
     // B2b: 상단 바 뒤로 화살표는 묶음 밖 화면과 정상 Bundle에는 남는다(못 여는 Bundle에서만 숨긴다)

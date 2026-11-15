@@ -94,6 +94,8 @@ async function findOrderDocs(page, probe, limit = 1) {
 // --- 시나리오 ---
 
 let halfBundleId = null;
+// 방금 올린 합성 묶음("쪼개기 직후") - 옛 주소 단계가 찾아 두고 뒤 단계들이 쓴다
+let freshBundleId = null;
 
 await runStep("bundle list", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);
@@ -250,206 +252,137 @@ await runStep("documents list, inline edit and delete prompt", {}, async ({ page
   check("delete prompt closes with Esc", true);
 });
 
-await runStep("edit original: select, cut, split, undo, move", {}, async ({ page, takeShot }) => {
+await runStep("old Edit original addresses open the document in the one-document view", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);
   const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
-  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
-  await page.goto(`${BASE}/bundles/${freshId}/assign?edit=first`);
-  const units = page.locator('[data-testid^="split-paper-unit-"].su');
-  await units.first().waitFor({ timeout: T });
-  const before = await units.count();
-  // Unit마다 종이 조각 하나 - 처음부터 나뉘어 있고, 글 조각 사이에는 늘 합치기가 있다
-  const pieces = page.locator('[data-testid^="split-paper-piece-"].strip');
-  check("every unit is its own piece from the start", (await pieces.count()) > 10, String(await pieces.count()));
-  check("join controls sit between text pieces", (await page.locator('.strip-gap [data-testid^="split-paper-join-"]').count()) > 5);
-  // 절 번호는 앞머리 번호 칸에 한 번만 - 머리 줄 글 앞의 같은 번호는 그리지 않고(표시만) 첫 글자 조각의 data-start가 그만큼 밀린다
-  const heads = await page.evaluate(() =>
-    [...document.querySelectorAll('[data-testid^="split-paper-num-"]')].map((num) => {
-      const id = num.getAttribute("data-testid").replace("split-paper-num-", "");
-      const first = document.querySelector(`[data-testid="split-paper-piece-${id}"] .su [data-start]`);
-      return { number: num.textContent.trim(), text: first?.textContent.trim() ?? "", start: Number(first?.getAttribute("data-start") ?? 0) };
-    }),
-  );
-  const doubled = heads.filter((head) => head.text.startsWith(head.number));
-  check("head rows do not repeat their section number", heads.length > 0 && doubled.length === 0, doubled.map((head) => `${head.number}|${head.text.slice(0, 20)}`).join(", "));
-  check("a head row hides its leading number", heads.some((head) => head.start > 0), String(heads.length));
-  // 영어 문장 하나를 찾아 고른다 - 한 번 더 누르면 아무것도 안 하고, 두 번 누르기(더블클릭)가 나눌 선을 만든다
-  const target = page.locator('[data-testid^="split-paper-unit-"].su[lang="en"]', { hasText: " " }).nth(2);
-  const unitId = (await target.getAttribute("data-testid")).replace("split-paper-unit-", "");
-  await target.click();
-  check("first click selects", (await target.getAttribute("data-sel")) === "");
-  // 경계 확인 단추는 없다 - 배정을 확정하면 확인된 것으로 친다
-  check("there is no boundary check button", (await page.locator('[data-testid^="split-act-check-"], [data-testid="split-primary"], [data-testid="split-boundary-state"]').count()) === 0);
-  // 윤곽은 다음 프레임에 재서 그리므로 바로 세면 0일 수 있다 - 그려질 때까지 기다린다
-  await page.locator(".sel-contour path").first().waitFor({ timeout: T });
-  check("selection is drawn as one contour", (await page.locator(".sel-contour path").count()) === 1);
-  const splitButton = page.locator('[data-testid="split-split"]');
-  const splitButtonBox = await splitButton.boundingBox();
-  const box = await target.boundingBox();
-  await page.mouse.click(box.x + Math.min(box.width / 2, 120), box.y + box.height / 2);
-  await page.waitForTimeout(300);
-  check("a second single click does not cut", (await page.locator(`[data-testid="split-paper-unit-${unitId}"][data-cut]`).count()) === 0);
-  // 고른 조각 곁 틈이 늦게 벌어지며 조각이 밀리니, 벌어진 뒤 자리를 다시 잰다
-  await page.waitForTimeout(700);
-  const settled = await target.boundingBox();
-  await page.mouse.dblclick(settled.x + Math.min(settled.width / 2, 120), settled.y + settled.height / 2);
-  await page.locator(`[data-testid="split-paper-unit-${unitId}"][data-cut]`).waitFor({ timeout: T });
-  check("double-click draws the cut with the split popup", (await page.locator('[data-testid="split-cut-run"]').count()) === 1);
-  await takeShot("sop-split-cut.png");
-  await page.keyboard.press("s");
-  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
-  await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-unit-"].su').length === n + 1, before, { timeout: T });
-  check("S splits into two units", true);
-  const after = await splitButton.boundingBox();
-  check("the Split button stays in place", Math.abs(after.y - splitButtonBox.y) < 1 && Math.abs(after.width - splitButtonBox.width) < 1);
-  await page.keyboard.press("Control+z");
-  await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-unit-"].su').length === n, before, { timeout: T });
-  check("Ctrl+Z undoes the split", true);
-  // 나눈 뒤 사이의 합치기를 누르면 원래 한 조각으로 돌아온다. 나누기 팝업은 잠깐 뒤에 뜬다
-  const targetText = (await target.innerText()).trim();
-  await page.waitForTimeout(700);
-  const again = await target.boundingBox();
-  await page.mouse.dblclick(again.x + Math.min(again.width / 2, 120), again.y + again.height / 2);
-  const cutRun = page.locator('[data-testid="split-cut-run"]');
-  await cutRun.waitFor({ timeout: T });
-  check("the cut can be dragged", (await page.locator('[data-testid="split-paper-cut-handle"]').count()) === 1);
-  await page.waitForTimeout(700);
-  const piecesBefore = await pieces.count();
-  const readPieceIds = () => page.locator('[data-testid^="split-paper-piece-"].strip[data-strip-unit]').evaluateAll((els) => els.map((el) => el.dataset.stripUnit));
-  const idsBeforeCut = new Set(await readPieceIds());
-  await cutRun.click();
-  await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-piece-"].strip').length === n + 1, piecesBefore, { timeout: T });
-  check("a split unit becomes two pieces at once", true);
-  // 두 반쪽 사이의 Join - 고른 반쪽의 위아래 틈 모두에 Join이 있을 수 있어(Join 하나가 합치기·짝을 고른다) 두 반쪽 id로 찾는다
-  const idsAfterCut = await readPieceIds();
-  const halves = idsAfterCut.filter((id) => !idsBeforeCut.has(id) || id === String(unitId));
-  const mergeBack = page.locator(`[data-testid="split-paper-join-${halves[0]}-${halves[1]}"]`).and(page.locator(':not([aria-disabled="true"])'));
-  // 고른 조각 아래 단추 줄(짝 풀기·합치기 풀기가 있을 때만)이 펼쳐지는 중이면 바로 아래 틈을 밀어 내린다 - 펼쳐지기 전에 올리면 틈이 포인터 밑에서 빠져나가
-  // 머묾(--gap-open-delay)이 끊기므로, 다 펼쳐진 뒤에 올린다
-  await page.waitForFunction(() => { const acts = document.querySelector(".strip-acts[data-open]"); return acts === null || acts.getAnimations().length === 0; }, null, { timeout: T });
-  // 틈의 합치기는 포인터가 틈에 머물러 단추가 나타난 뒤에야 눌린다(사람처럼 틈에 올렸다가 누른다)
-  await page.locator(".strip-gap", { has: mergeBack.first() }).hover({ position: { x: 300, y: 2 } });
-  await page.waitForFunction(() => [...document.querySelectorAll(".strip-gap:hover .strip-merge")].some((el) => getComputedStyle(el).pointerEvents === "auto"), null, { timeout: T });
-  await mergeBack.first().click();
-  await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-piece-"].strip').length === n, piecesBefore, { timeout: T });
-  check("merging the two pieces gives the unit back", (await page.locator('[data-testid^="split-paper-unit-"].su', { hasText: targetText }).count()) >= 1, targetText.slice(0, 30));
-  const first = units.first();
-  await first.click();
-  const firstId = (await first.getAttribute("data-testid")).replace("split-paper-unit-", "");
-  await page.keyboard.press("j");
-  await page.waitForFunction((id) => document.querySelector('[data-testid="split-unit-id"]')?.textContent && !document.querySelector(`[data-testid="split-paper-unit-${id}"][data-sel]`), firstId, { timeout: T });
-  check("J moves to the next unit", true);
-  await page.keyboard.press("k");
-  await page.locator(`[data-testid="split-paper-unit-${firstId}"][data-sel]`).waitFor({ timeout: T });
-  check("K goes back", true);
-  // ↵와 U는 더 이상 이 화면의 단축키가 아니다
-  await page.keyboard.press("Enter");
-  await page.keyboard.press("u");
-  await page.waitForTimeout(400);
-  check("Enter and U leave the selection alone", (await page.locator(`[data-testid="split-paper-unit-${firstId}"][data-sel]`).count()) === 1);
-  await takeShot("sop-split.png");
-  // 다른 문서의 경계가 남아 있어도 경계 확인은 다음 할 일도 검토 요청 조건도 아니다(확정하면 확인한 것으로 친다)
-  await page.goto(`${BASE}/bundles/${freshId}`);
-  await wait(page, "overview-gate-units");
-  const nextAfterSplit = await page.locator('[data-testid="overview-next"]').getAttribute("data-action");
-  check("unchecked boundaries are not the next action", nextAfterSplit === "fill_tobe" || nextAfterSplit === "decide_units", nextAfterSplit);
-  check("there is no boundaries gate", (await page.locator('[data-testid="overview-gate-boundaries"]').count()) === 0);
+  freshBundleId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${freshBundleId}/documents`, { headers: { "X-Dev-User": "qa.member" } })).json();
+  const oldDocs = docs.filter((doc) => doc.side === "old" && doc.status === "ready");
+  const newDoc = docs.find((doc) => doc.side === "new" && doc.status === "ready");
+  // 옛 쪼개기 주소(/split) → 원문 고치기 주소(?edit=first) → 첫 Old 문서가 한 단으로, 주소에서는 값이 떨어진다
+  await page.goto(`${BASE}/bundles/${freshBundleId}/split`);
+  await wait(page, "assign-bar");
+  await page.waitForURL(/\/assign$/, { timeout: T });
+  await page.waitForFunction(() => document.querySelector(".assign-panes")?.hasAttribute("data-single"), null, { timeout: T });
+  check("the old Split address lands on Assign with one document wide", (await getText(page, "assign-old-tag")) === "Old" && (await page.locator('[data-testid="assign-new"]').count()) === 0);
+  check("no separate tool screen is left", (await page.locator('[data-testid="split-back-assign"], [data-testid="assign-open-split"]').count()) === 0);
+  // 문서를 가리키면 그 문서가 열린다 - 둘째 Old 문서
+  const second = oldDocs[1] ?? oldDocs[0];
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign?edit=${second.id}`);
+  await page.waitForURL(/\/assign$/, { timeout: T });
+  await page.waitForFunction((label) => document.querySelector('[data-testid="assign-old"] .pane-head')?.textContent?.includes(label), second.doc_code || second.file_name, { timeout: T });
+  check("an address that names an Old document opens that document", true);
+  // 이미 쓴 New 문서를 가리키면 그 원문이 한 단으로 열린다
+  if (newDoc) {
+    await page.goto(`${BASE}/bundles/${freshBundleId}/assign?edit=${newDoc.id}`);
+    await wait(page, "assign-solo");
+    await page.waitForURL(/\/assign$/, { timeout: T });
+    check("an address that names a written New document opens its original", (await getText(page, "assign-old-tag")).includes("New"));
+    await takeShot("sop-assign-from-edit-address.png");
+  }
+  // Documents의 미리 보기에서도 같은 곳으로 온다
+  await page.goto(`${BASE}/bundles/${freshBundleId}/documents`);
+  await page.locator(`[data-testid="documents-${oldDocs[0].id}-preview"]`).click();
+  await wait(page, "documents-preview-split");
+  check("the preview's button says where it goes", (await getText(page, "documents-preview-split")).trim() === "Open in Assign");
+  await page.locator('[data-testid="documents-preview-split"]').click();
+  await wait(page, "assign-bar");
+  await page.waitForFunction(() => document.querySelector(".assign-panes")?.hasAttribute("data-single"), null, { timeout: T });
+  check("Open in Assign opens the document wide", true);
+  // 뒤 단계들은 양 단에서 시작한다
+  await page.locator('[data-testid="assign-view-two"]').click();
+  await wait(page, "assign-new");
 });
 
-await runStep("split: per-sentence AI split, whole-document request, tab stack", {}, async ({ page, takeShot }) => {
-  const status = await page.request.get(`${BASE}/api/bundles/1/ai/status`, { headers: { "X-Dev-User": "qa.member" } });
-  if (!status.ok() || !(await status.json()).ai_enabled) {
-    console.log("  (AI is off in this backend - skipped)");
-    return;
-  }
-  await page.goto(`${BASE}/`);
-  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
-  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
-  await page.goto(`${BASE}/bundles/${freshId}/assign?edit=first`);
-  const units = page.locator('[data-testid^="split-paper-unit-"].su');
-  await units.first().waitFor({ timeout: T });
-  check("the whole-document button says so", (await getText(page, "split-ai-request")).includes("whole document"));
-  const long = units.filter({ hasText: /\S{3,}.{40,}/ }).first();
-  const unitId = (await long.getAttribute("data-testid")).replace("split-paper-unit-", "");
-  await long.click();
-  await wait(page, "split-ai-unit");
-  check("the right panel offers AI split for this sentence", (await page.locator('[data-testid="split-ai-unit"]').isEnabled()));
-  await page.locator('[data-testid="split-ai-unit"]').click();
-  const tab = page.locator(`[data-testid="split-ai-tab-${unitId}"]`);
-  await tab.waitFor({ timeout: 30000 });
-  check("a tab for that sentence appears without a reload", true);
-  check("a single request is not marked as a whole-document result", (await tab.getAttribute("data-batch")) === null);
-  check("the selected sentence's tab is already seen", (await tab.getAttribute("data-unseen")) === null);
-  check("the button is off while the sentence has a suggestion", await page.locator('[data-testid="split-ai-unit"]').isDisabled());
-  // 일괄 요청 - 여러 탭이 쌓이고 머리에 일괄 표시가 붙는다
-  await page.locator('[data-testid="split-ai-request"]').click();
-  await page.waitForFunction(() => document.querySelectorAll('[data-testid^="split-ai-tab-"][data-batch="true"]').length >= 2, null, { timeout: 40000 });
-  check("whole-document results stack as batch tabs", true);
-  check("the header counts the whole-document results", /Whole document · \d+ left/.test(await getText(page, "split-ai-batch-head")));
-  const unseen = page.locator('[data-testid^="split-ai-tab-"][data-unseen="true"]').first();
-  const unseenId = (await unseen.getAttribute("data-testid")).replace("split-ai-tab-", "");
-  await unseen.click();
-  await page.locator(`[data-testid="split-paper-unit-${unseenId}"][data-sel]`).waitFor({ timeout: T });
-  check("a tab selects its sentence", true);
-  check("opening a tab clears its dot", (await page.locator(`[data-testid="split-ai-tab-${unseenId}"]`).getAttribute("data-unseen")) === null);
-  await wait(page, "split-ai-suggestion");
-  await takeShot("v014-task7-tabs.png");
-  // 단일 요청의 제안을 적용하면 탭이 빠지고 조각이 늘며, 되돌리면 돌아온다
-  await page.locator(`[data-testid="split-ai-tab-${unitId}"]`).click();
-  const before = await units.count();
-  await page.locator('[data-testid="split-ai-apply"]').click();
-  await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-unit-"].su').length > n, before, { timeout: T });
-  check("apply splits the sentence", true);
-  await page.locator(`[data-testid="split-ai-tab-${unitId}"]`).waitFor({ state: "detached", timeout: T });
-  check("the applied tab leaves the stack", true);
-  await page.keyboard.press("Control+z");
-  await page.waitForFunction((n) => document.querySelectorAll('[data-testid^="split-paper-unit-"].su').length === n, before, { timeout: T });
-  check("Ctrl+Z undoes the AI split", true);
-});
 
 // 일부러 거절당하는 저장이 있어 콘솔 오류를 허용한다
-await runStep("to-be: nested rows, N/A detail, edit and save", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+// New 문서 목록은 칸마다 바로 저장한다(v1.0.33) - Save 단추와 초안이 없다. 떠나거나 Enter를 누르면 그 칸이 저장된다
+const settleToBe = async (page) => {
+  await page.waitForFunction(() => document.querySelector('[data-testid="tobe-saving"]')?.textContent === "", null, { timeout: T });
+  await page.waitForLoadState("networkidle");
+};
+const readToBe = async (page, bundleId) => (await page.request.get(`${BASE}/api/bundles/${bundleId}/tobe`, { headers: { "X-Dev-User": "qa.member" } })).json();
+
+await runStep("new documents: nested rows, N/A detail, each cell saves as you leave it", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
-  await page.locator('[data-testid$="-row"][data-testid^="tobe-"]').first().waitFor({ timeout: T });
-  const codes = await page.locator('[data-testid$="-code"][data-testid^="tobe-"]').evaluateAll((els) => els.map((el) => el.value));
+  await page.locator('[data-testid$="-row"][data-testid^="tobe-id-"]').first().waitFor({ timeout: T });
+  const codes = await page.locator('[data-testid$="-code"][data-testid^="tobe-id-"]').evaluateAll((els) => els.map((el) => el.value));
   check("SOP first, its WIs under it", codes[0] === "SOP-CF" && codes.slice(1).every((code) => code.startsWith("WI-")), codes.join(","));
-  check("save is off until something changes", await page.locator('[data-testid="tobe-save"]').isDisabled());
-  const sopRow = page.locator('[data-testid$="-row"][data-testid^="tobe-"]').first();
+  check("there is no Save button and no draft bar", (await page.locator('[data-testid="tobe-save"], [data-testid="tobe-dirty"]').count()) === 0);
+  const sopRow = page.locator('[data-testid$="-row"][data-testid^="tobe-id-"]').first();
   const sopKey = (await sopRow.getAttribute("data-testid")).replace("tobe-", "").replace("-row", "");
   await page.locator(`[data-testid="tobe-${sopKey}-toggle"]`).click();
   check("troubleshooting is N/A with its reason", await page.locator(`[data-testid="tobe-${sopKey}-na-procedures.troubleshooting"]`).isChecked());
   await takeShot("sop-tobe.png");
   const title = page.locator(`[data-testid="tobe-${sopKey}-title"]`);
   const before = await title.inputValue();
+  const readTitle = async () => (await readToBe(page, halfBundleId)).docs.find((doc) => `id-${doc.id}` === sopKey).title;
   await title.fill(`${before} (edited)`);
-  await wait(page, "tobe-dirty");
-  await page.locator('[data-testid="tobe-save"]').click();
-  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
-  await page.locator('[data-testid="tobe-dirty"]').waitFor({ state: "detached", timeout: T });
-  check("saved and clean again", (await title.inputValue()) === `${before} (edited)`);
+  check("typing alone does not save", (await readTitle()) === before);
+  await page.keyboard.press("Enter");
+  await settleToBe(page);
+  check("Enter saves the cell", (await readTitle()) === `${before} (edited)`);
+  // Esc는 고치던 것을 버린다
+  await title.fill("thrown away");
+  await page.keyboard.press("Escape");
+  check("Esc puts the saved text back", (await title.inputValue()) === `${before} (edited)`);
   await title.fill(before);
-  await page.locator('[data-testid="tobe-save"]').click();
-  await page.locator('[data-testid="tobe-dirty"]').waitFor({ state: "detached", timeout: T });
-  // 잘못된 줄 - 부모 없는 WI는 서버가 거절하고 사람 말로 보인다
-  await page.locator('[data-testid="tobe-add"]').click();
-  const newCode = page.locator('[data-testid^="tobe-new-"][data-testid$="-code"]');
-  await newCode.fill("WI-99");
-  const newKey = (await newCode.getAttribute("data-testid")).replace("tobe-", "").replace("-code", "");
-  // 값 고르기는 기본 <select>가 아니다 - 트리거를 누르고 "없음" 항목을 누른다
-  await page.locator(`[data-testid="tobe-${newKey}-parent"]`).click();
-  await page.locator(`[data-testid="tobe-${newKey}-parent-option-none"]`).click();
-  await page.locator('[data-testid="tobe-save"]').click();
+  await page.keyboard.press("Tab");
+  await settleToBe(page);
+  check("leaving the cell saves it too", (await readTitle()) === before);
+  // N/A는 사유를 적어야 저장된다 - 체크만 하고 떠나면 거둔다
+  // 문장이 들지 않은 칸으로 한다(문장이 든 칸은 서버가 N/A를 거절한다)
+  const naBox = page.locator(`[data-testid="tobe-${sopKey}-na-document_relationships.appendices"]`);
+  const wasNa = await naBox.isChecked();
+  if (!wasNa) {
+    await naBox.click();
+    await wait(page, `tobe-${sopKey}-na-document_relationships.appendices-reason`);
+    const countNa = async () => (await readToBe(page, halfBundleId)).na_slots.filter((slot) => slot.slot_key === "document_relationships.appendices").length;
+    check("a checked N/A section is not saved before its reason", (await countNa()) === 0);
+    await page.locator(`[data-testid="tobe-${sopKey}-na-document_relationships.appendices-reason"]`).fill("Smoke: covered elsewhere");
+    await page.keyboard.press("Enter");
+    await settleToBe(page);
+    check("the reason saves the N/A section", (await countNa()) === 1);
+    await naBox.click();
+    await settleToBe(page);
+    check("unchecking removes it at once", (await countNa()) === 0);
+  }
+  // 번호로 더하기 - Enter면 줄이 저장된다. 종류와 상위 SOP는 앱이 고르고 사람이 고친다
+  const rowsBefore = (await readToBe(page, halfBundleId)).docs.length;
+  await page.locator('[data-testid="tobe-add-code"]').fill("WI-99");
+  await page.keyboard.press("Enter");
+  await settleToBe(page);
+  const added = (await readToBe(page, halfBundleId)).docs.find((doc) => doc.code === "WI-99");
+  check("a number and Enter add a saved row, as a WI under the SOP", added !== undefined && added.doc_type === "wi" && added.parent_code === "SOP-CF");
+  // 이미 있는 번호는 더하지 않고 알린다
+  await page.locator('[data-testid="tobe-add-code"]').fill("WI-99");
+  await page.keyboard.press("Enter");
   await page.locator('[data-testid="toast-error"]').first().waitFor({ timeout: T });
-  check("server rejection reads as a sentence", (await getText(page, "toast-error")).includes("WI-99"), await getText(page, "toast-error"));
-  await page.locator('[data-testid="tobe-discard"]').click();
-  await page.locator('[data-testid="tobe-dirty"]').waitFor({ state: "detached", timeout: T });
+  check("a number already on the list is refused in words", (await getText(page, "toast-error")).includes("Already on the list"));
+  // 번호를 고쳐도 같은 줄이다(줄 id가 그대로)
+  await page.locator(`[data-testid="tobe-id-${added.id}-code"]`).fill("WI-98");
+  await page.keyboard.press("Enter");
+  await settleToBe(page);
+  check("renaming keeps the same row", (await readToBe(page, halfBundleId)).docs.some((doc) => doc.id === added.id && doc.code === "WI-98"));
+  // 다른 줄의 번호로는 못 고친다 - 서버가 거절하고 칸이 저장된 번호로 돌아간다
+  await page.locator(`[data-testid="tobe-id-${added.id}-code"]`).fill("SOP-CF");
+  await page.keyboard.press("Enter");
+  await page.locator('[data-testid="toast-error"]').last().waitFor({ timeout: T });
+  await settleToBe(page);
+  check("a refused change puts the saved number back", (await page.locator(`[data-testid="tobe-id-${added.id}-code"]`).inputValue()) === "WI-98");
+  const remove = page.locator(`[data-testid="tobe-id-${added.id}-remove"]`);
+  await remove.scrollIntoViewIfNeeded();
+  await remove.hover();
+  await remove.click();
+  await settleToBe(page);
+  check("removing the row saves at once", (await readToBe(page, halfBundleId)).docs.length === rowsBefore);
 });
 
-// 검토 v0.4.0: 앞 단계를 지워도 뒤 단계 번호가 그대로여야 한다(분류한 문장이 단계 번호를 가리킨다), 저장 안 한 편집은 나갈 때 묻는다
-await runStep("to-be: removing a step keeps the other numbers, leaving asks first", {}, async ({ page }) => {
+// 검토 v0.4.0: 앞 단계를 지워도 뒤 단계 번호가 그대로여야 한다(분류한 문장이 단계 번호를 가리킨다)
+await runStep("new documents: removing a step keeps the other numbers", {}, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
-  await page.locator('[data-testid$="-row"][data-testid^="tobe-"]').first().waitFor({ timeout: T });
-  const wiRow = page.locator('[data-testid$="-row"][data-testid^="tobe-"]').nth(1);
+  await page.locator('[data-testid$="-row"][data-testid^="tobe-id-"]').first().waitFor({ timeout: T });
+  const wiRow = page.locator('[data-testid$="-row"][data-testid^="tobe-id-"]').nth(1);
   const wiKey = (await wiRow.getAttribute("data-testid")).replace("tobe-", "").replace("-row", "");
   await page.locator(`[data-testid="tobe-${wiKey}-toggle"]`).click();
   await wait(page, `tobe-${wiKey}-add-step`);
@@ -457,38 +390,34 @@ await runStep("to-be: removing a step keeps the other numbers, leaving asks firs
     (await page.locator(`[data-testid^="tobe-${wiKey}-step-"]`).evaluateAll((els) => els.map((el) => el.getAttribute("data-testid")))).map((id) => Number(id.split("-step-")[1]));
   const before = await readNumbers();
   const top = Math.max(0, ...before);
-  await page.locator(`[data-testid="tobe-${wiKey}-add-step"]`).click();
-  await page.locator(`[data-testid="tobe-${wiKey}-add-step"]`).click();
-  await page.locator(`[data-testid="tobe-${wiKey}-step-${top + 1}"]`).fill("Smoke step A");
-  await page.locator(`[data-testid="tobe-${wiKey}-step-${top + 2}"]`).fill("Smoke step B");
-  await page.locator('[data-testid="tobe-save"]').click();
-  await page.locator('[data-testid="tobe-dirty"]').waitFor({ state: "detached", timeout: T });
-  await page.locator(`[data-testid="tobe-${wiKey}-remove-step-${top + 1}"]`).click();
-  await page.locator('[data-testid="tobe-save"]').click();
-  await page.locator('[data-testid="tobe-dirty"]').waitFor({ state: "detached", timeout: T });
+  for (const [offset, text] of [[1, "Smoke step A"], [2, "Smoke step B"]]) {
+    await page.locator(`[data-testid="tobe-${wiKey}-add-step"]`).click();
+    await wait(page, `tobe-${wiKey}-step-${top + offset}`);
+    await settleToBe(page);
+    await page.locator(`[data-testid="tobe-${wiKey}-step-${top + offset}"]`).fill(text);
+    await page.keyboard.press("Enter");
+    await settleToBe(page);
+  }
+  const removeFirst = page.locator(`[data-testid="tobe-${wiKey}-remove-step-${top + 1}"]`);
+  await removeFirst.hover();
+  await removeFirst.click();
+  await settleToBe(page);
   const after = await readNumbers();
   check("the later step keeps its number after an earlier one is removed", after.includes(top + 2) && !after.includes(top + 1), after.join(","));
   check("its title stays with its number", (await page.locator(`[data-testid="tobe-${wiKey}-step-${top + 2}"]`).inputValue()) === "Smoke step B");
   check("the steps that were there are untouched", before.every((no) => after.includes(no)), `${before} -> ${after}`);
-
-  // 저장 안 한 편집 - 단계 링크를 누르면 먼저 묻는다
-  await page.locator(`[data-testid="tobe-${wiKey}-step-${top + 2}"]`).fill("Smoke step B (unsaved)");
+  // 저장이 끝난 목록이라 떠날 때 묻지 않는다
   await page.locator('[data-testid="stage-nav-assign"]').click();
-  await wait(page, "tobe-leave");
-  check("leaving with unsaved edits asks first", page.url().includes("/documents"));
-  await page.locator('[data-testid="tobe-leave-cancel"]').click();
-  check("cancel stays on To-Be with the edit", (await page.locator(`[data-testid="tobe-${wiKey}-step-${top + 2}"]`).inputValue()) === "Smoke step B (unsaved)");
-  await page.locator('[data-testid="stage-nav-assign"]').click();
-  await page.locator('[data-testid="tobe-leave-confirm"]').click();
   await page.waitForURL(/\/assign$/, { timeout: T });
-  check("confirm discards and leaves", true);
-
+  check("leaving does not ask - nothing is left unsaved", (await page.locator('[data-testid="tobe-leave"]').count()) === 0);
   // 되돌리기
   await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
   await page.locator(`[data-testid="tobe-${wiKey}-toggle"]`).click();
-  await page.locator(`[data-testid="tobe-${wiKey}-remove-step-${top + 2}"]`).click();
-  await page.locator('[data-testid="tobe-save"]').click();
-  await page.locator('[data-testid="tobe-dirty"]').waitFor({ state: "detached", timeout: T });
+  const removeSecond = page.locator(`[data-testid="tobe-${wiKey}-remove-step-${top + 2}"]`);
+  await removeSecond.waitFor({ timeout: T });
+  await removeSecond.hover();
+  await removeSecond.click();
+  await settleToBe(page);
   check("restored the step list", (await readNumbers()).join(",") === before.join(","));
 });
 
@@ -520,7 +449,6 @@ async function pickFirstPlace(page) {
   await page.locator('[data-testid="assign-primary"][data-state="confirm"]').waitFor({ timeout: T });
 }
 const progressDone = async (page) => Number((await getText(page, "assign-progress")).split("/")[0]);
-let freshBundleId = null;
 
 await runStep("assign: legend first, place, delete with reason, edit, clear, bulk", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
@@ -590,25 +518,25 @@ await runStep("assign: legend first, place, delete with reason, edit, clear, bul
   await takeShot("sop-assign.png");
 });
 
-await runStep("split: H holds a unit without a destination", {}, async ({ page }) => {
-  await page.goto(`${BASE}/`);
-  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
-  freshBundleId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
-  await page.goto(`${BASE}/bundles/${freshBundleId}/assign?edit=first`);
-  const unit = page.locator('[data-testid^="split-paper-unit-"]:not(.ptbl-cap)').nth(2);
+await runStep("assign: H holds a unit without a destination, with a reason typed in", {}, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const unit = page.locator('[data-testid="assign-old"] [data-testid^="assign-paper-unit-"]:not(.ptbl-cap)').nth(2);
   await unit.waitFor({ timeout: T });
   await unit.click();
-  const heldId = await getText(page, "split-unit-id");
+  await wait(page, "assign-row-id");
+  // 짝 줄이면 번호가 둘이다 - 첫 번호로 다시 찾는다
+  const heldId = (await getText(page, "assign-row-id")).trim().split(" · ")[0];
+  await page.waitForLoadState("networkidle");
   await page.keyboard.press("h");
-  await wait(page, "split-hold-modal");
-  check("hold needs a reason", await page.locator('[data-testid="split-hold-modal-confirm"]').isDisabled());
-  await page.locator('[data-testid="split-hold-reason"]').fill("Smoke: not sure where it goes");
-  await page.locator('[data-testid="split-hold-modal-confirm"]').click();
-  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((el) => el.textContent?.includes("Held")), null, { timeout: T });
+  await wait(page, "assign-remark-modal");
+  await page.locator('[data-testid="assign-remark-modal-text"]').fill("Smoke: not sure where it goes");
+  await page.locator('[data-testid="assign-remark-modal-confirm"]').click();
+  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
   check("H holds the unit", true);
   await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
   await wait(page, "assign-bar");
-  await selectRowById(page, heldId.trim());
+  await selectRowById(page, heldId);
   await page.waitForLoadState("networkidle");
   check("held unit shows on Assign with its reason", (await page.locator('[data-testid="assign-reason"]').textContent()) === "Smoke: not sure where it goes");
   check("it has no destination", (await page.locator('[data-testid="assign-chosen"].is-empty').count()) === 1);
@@ -622,59 +550,6 @@ await runStep("split: H holds a unit without a destination", {}, async ({ page }
   check("a cleared reason stays empty", (await page.locator('[data-testid="assign-reason"]').textContent()) === "–");
 });
 
-await runStep("split: right-click menu shows reasons for blocked actions and runs an enabled one", {}, async ({ page, takeShot }) => {
-  await page.goto(`${BASE}/bundles/${freshBundleId}/assign?edit=first`);
-  const units = page.locator('[data-testid^="split-paper-unit-"]:not(.ptbl-cap)');
-  await units.nth(9).waitFor({ timeout: T });
-  const first = units.nth(4);
-  await first.click();
-  // 고른 채 같은 언어의 먼 문장을 우클릭 - 두 문장 메뉴. 같은 언어의 떨어진 문장은 묶지 않는다(다른 언어면 짝으로 묶여 켜진다)
-  const firstLang = await first.getAttribute("lang");
-  let far = null;
-  for (let at = 6; at < 16 && far === null; at += 1) if ((await units.nth(at).getAttribute("lang")) === firstLang) far = units.nth(at);
-  check("found a far sentence in the same language", far !== null, String(firstLang));
-  await far.click({ button: "right" });
-  await wait(page, "split-menu");
-  check("right-click opens the two-sentence menu", (await page.locator('[data-testid^="split-menu-"]').count()) === 2, String(await page.locator('[data-testid^="split-menu-"]').count()));
-  const join = page.locator('[data-testid="split-menu-join"]');
-  check("join is disabled for far sentences in one language", (await join.getAttribute("aria-disabled")) === "true");
-  await join.hover();
-  await page.locator('[data-testid="paper-tip"]').waitFor({ timeout: T });
-  check("hovering a disabled item shows why", ((await page.locator('[data-testid="paper-tip"]').innerText()) ?? "").length > 0, await page.locator('[data-testid="paper-tip"]').innerText());
-  await takeShot("sop-split-menu.png");
-  await page.keyboard.press("Escape");
-  await page.locator('[data-testid="split-menu"]').waitFor({ state: "detached", timeout: T });
-  check("Esc closes the menu", true);
-  // 고른 문장 자신을 우클릭 - 한 문장 메뉴(경계 확인 항목은 없다)
-  await first.click({ button: "right" });
-  await wait(page, "split-menu-split");
-  check("right-click on the selected sentence lists the single actions", (await page.locator('[data-testid="split-menu-ai_split"]').count()) === 1 && (await page.locator('[data-testid="split-menu-check"]').count()) === 0);
-  await page.keyboard.press("Escape");
-  await page.locator('[data-testid="split-menu"]').waitFor({ state: "detached", timeout: T });
-  // 따로 떼기 → 묶기: 짝이 있는 문장을 고르고 그 짝(다른 문장)을 우클릭한다
-  const toastOk = (text) => page.waitForFunction((word) => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((el) => el.textContent?.includes(word)), text, { timeout: T });
-  let partnerId = null;
-  for (let at = 0; at < 8 && partnerId === null; at += 1) {
-    await units.nth(at).click();
-    const partner = page.locator('[data-testid^="split-pair-unit-"]').first();
-    if (await partner.count()) partnerId = (await partner.getAttribute("data-testid")).replace("split-pair-unit-", "");
-  }
-  check("found a selected sentence with a pair", partnerId !== null);
-  const partnerUnit = page.locator(`[data-testid="split-paper-unit-${partnerId}"]`).first();
-  await partnerUnit.click({ button: "right" });
-  await wait(page, "split-menu-unpair");
-  check("join is off for an existing pair, separate is on", (await page.locator('[data-testid="split-menu-join"]').getAttribute("aria-disabled")) === "true" && (await page.locator('[data-testid="split-menu-unpair"]').getAttribute("aria-disabled")) === null);
-  await page.locator('[data-testid="split-menu-unpair"]').click();
-  await toastOk("Separated");
-  await page.waitForFunction(() => document.querySelector('[data-testid="split-pair-remove"]') === null, null, { timeout: T });
-  await partnerUnit.click({ button: "right" });
-  await wait(page, "split-menu-join");
-  check("join is on for an unpaired KO/EN couple", (await page.locator('[data-testid="split-menu-join"]').getAttribute("aria-disabled")) === null);
-  await page.locator('[data-testid="split-menu-join"]').click();
-  await toastOk("Joined");
-  await page.locator('[data-testid="split-join-mode-pair"][aria-pressed="true"]').waitFor({ timeout: T });
-  check("Join pairs a KO/EN couple at once", true);
-});
 
 await runStep("assign: hold an unassigned unit without a destination", {}, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
@@ -862,20 +737,47 @@ await runStep("assign: table rows from the right-click menu, then undo", {}, asy
 });
 
 await runStep("split rows of a table, then assign a row as a table", { allowConsoleErrors: true }, async ({ page }) => {
-  await page.goto(`${BASE}/bundles/${freshBundleId}/assign?edit=first`);
-  const cap = page.locator('button.ptbl-cap[data-testid^="split-paper-unit-"]').first();
-  await cap.waitFor({ timeout: T });
-  await cap.click();
-  await page.locator('[data-testid="split-table-rows"]').click();
-  // 판단이 걸린 단위가 있으면 서버가 먼저 묻는다
-  const confirm = page.locator('[data-testid="split-confirm-confirm"]');
-  if (await confirm.isVisible().catch(() => false)) await confirm.click();
-  await page.locator('[data-testid="split-table-merge"]').waitFor({ timeout: T });
-  const rowId = await getText(page, "split-unit-id");
-  check("rows are split", rowId.length > 0, rowId);
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${freshBundleId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${freshBundleId}/documents/${docId}/view`, { headers })).json();
+  // 통째인 표가 있는 Old 문서 - 그 표의 칸 문장을 우클릭해 행으로 나눈다
+  let doc = null;
+  let table = null;
+  let cell = null;
+  for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await readView(candidate.id);
+    const found = view.units.find((unit) => unit.kind === "table");
+    if (!found) continue;
+    doc = candidate;
+    table = found;
+    cell = view.units.find((unit) => unit.kind === "cell_sentence" && unit.group_unit_id === found.id) ?? null;
+    break;
+  }
+  check("the fresh bundle has a whole table", table !== null);
+  if (table === null) return;
   await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
   await wait(page, "assign-bar");
-  await selectRowById(page, rowId.trim());
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
+  const pieceOf = (unitId) => page.locator(`[data-testid="assign-paper-piece-${unitId}"], [data-testid="assign-paper-unit-${unitId}"]`).first();
+  const target = (await pieceOf(table.id).count()) > 0 || cell === null ? pieceOf(table.id) : pieceOf(cell.id);
+  await target.waitFor({ timeout: T });
+  await target.scrollIntoViewIfNeeded();
+  await target.click({ button: "right" });
+  await wait(page, "assign-ctx-table_rows");
+  await page.locator('[data-testid="assign-ctx-table_rows"]').click();
+  // 판단이 걸린 표면 서버가 먼저 묻는다
+  const confirm = page.locator('[data-testid="assign-edit-confirm-confirm"]');
+  if (await confirm.waitFor({ timeout: 2000 }).then(() => true, () => false)) await confirm.click();
+  let row = null;
+  for (let tries = 0; tries < 60 && row === null; tries += 1) {
+    row = (await readView(doc.id)).units.find((unit) => unit.kind === "table_row" && unit.table_id === table.table_id) ?? null;
+    if (row === null) await page.waitForTimeout(250);
+  }
+  check("rows are split", row !== null, row?.display_id);
+  if (row === null) return;
+  await page.waitForLoadState("networkidle");
+  await selectRowById(page, row.display_id);
   await pickFirstPlace(page);
   await page.locator('[data-testid="assign-primary"]').click();
   await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
@@ -932,8 +834,16 @@ await runStep("assign: one document wide, then two again", {}, async ({ page, ta
   await wait(page, "assign-new");
   const readOldWidth = async () => (await page.locator('[data-pane="old"]').boundingBox()).width;
   const twoWidth = await readOldWidth();
+  // 보기를 바꾸면 Old 용지가 새 자리로 미끄러진다(v1.0.35) - 움직이는 동안의 표시는 금방 지워져서 누르기 전부터 지켜본다
+  await page.evaluate(() => {
+    window.__paneMotions = [];
+    const panes = document.querySelector(".assign-panes");
+    new MutationObserver(() => panes.dataset.motion && window.__paneMotions.push(panes.dataset.motion)).observe(panes, { attributes: true, attributeFilter: ["data-motion"] });
+  });
   await page.locator('[data-testid="assign-view-one"]').click();
   await page.locator('[data-testid="assign-new"]').waitFor({ state: "detached", timeout: T });
+  await page.locator(".assign-panes:not([data-motion])").waitFor({ timeout: T });
+  check("switching the view slides the paper and then settles", (await page.evaluate(() => window.__paneMotions.join(","))) === "one" && (await page.evaluate(() => getComputedStyle(document.querySelector('[data-pane="old"] .sheet')).transform)) === "none");
   check("one view hides the New pane and the divider", (await page.locator('[data-testid="assign-divider"]').count()) === 0);
   check("the Old pane takes the freed width", (await readOldWidth()) > twoWidth * 1.5);
   // 한 단에서도 줄을 고르면 보낼 곳이 보이고, 직접 잇기는 양 단이 필요하다는 안내가 뜬다
@@ -2646,27 +2556,14 @@ await runStep("assign: add and delete destinations from the All list", {}, async
 });
 
 // 네 단계 워크플로우 - 레일은 Documents·Assign·Order·Outputs, 원문 고치기(옛 쪼개기 화면)는 배정 화면 안에서 열린다. C는 Order에서만 고친다
-await runStep("four steps: rail, Edit original round trip, Order edits C and Outputs reads it", {}, async ({ page, takeShot }) => {
+await runStep("four steps: rail, Order edits C and Outputs reads it", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}`);
   await wait(page, "stage-nav");
   const rail = await page.locator('[data-testid="stage-nav"] .stg-n').evaluateAll((els) => els.map((el) => `${el.textContent}:${el.parentElement.dataset.stage}`));
   check("the rail numbers Documents, Assign, Order, Outputs", rail.join(" ") === "1:documents 2:assign 3:order 4:outputs", rail.join(" "));
   await page.locator('[data-testid="stage-nav-assign"]').click();
-  await wait(page, "assign-open-split");
-  await page.locator('[data-testid="assign-open-split"]').click();
-  await page.waitForURL(/\/assign\?edit=\d+$/, { timeout: T });
-  await wait(page, "split-back-assign");
-  check("editing an original stays inside step 2", (await page.locator('[data-testid="stage-nav"] [aria-current="page"]').getAttribute("data-stage")) === "assign" && (await page.locator('[data-testid="assign-bar"]').count()) === 0);
-  await takeShot("sop-split-under-assign.png");
-  await page.locator('[data-testid="split-back-assign"]').click();
-  await page.waitForURL(/\/assign$/, { timeout: T });
-  check("Back to Assign returns", true);
-  // 옛 쪼개기 주소는 배정 화면 안의 원문 고치기로 넘어간다
-  await page.goto(`${BASE}/bundles/${halfBundleId}/split`);
-  await page.waitForURL(/\/assign\?edit=first$/, { timeout: T });
-  await wait(page, "split-back-assign");
-  check("the old Split address opens Edit original inside Assign", (await page.locator('[data-testid="stage-nav-split"]').count()) === 0);
-  await page.goBack();
+  await wait(page, "assign-bar");
+  check("the rail has no Split step and Assign has no separate tool screen", (await page.locator('[data-testid="stage-nav-split"]').count()) === 0 && (await page.locator('[data-testid="assign-open-split"]').count()) === 0);
   await page.locator('[data-testid="stage-nav-order"]').click();
   await wait(page, "order-docs");
   await wait(page, "output-c");
@@ -2794,6 +2691,156 @@ await runStep("new bundle in one click, locked stages, empty assign", { devUser:
   await page.goto(`${page.url()}/assign`);
   await wait(page, "assign-empty");
   check("empty state instead of an endless skeleton", true);
+});
+
+// 목록 둘(v1.0.32) - 위는 Old 문서, 아래는 New 문서. 이미 쓴 New 문서의 파일은 따로 줄을 차지하지 않고 New 목록의 그 줄에 붙어 보인다
+await runStep("documents: an Old list and a New list, with written files on their rows", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${freshId}/documents`, { headers })).json();
+  const tobe = await (await page.request.get(`${BASE}/api/bundles/${freshId}/tobe`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${freshId}/documents`);
+  await wait(page, "tobe-list");
+  await page.locator('[data-testid$="-row"][data-testid^="documents-"]').first().waitFor({ timeout: T });
+  check("the two lists are named Old documents and New documents", (await getText(page, "documents-old-title")) === "Old documents" && (await page.locator('[data-testid="tobe-section"] h2').innerText()) === "New documents");
+  const oldRows = await page.locator('[data-testid="documents-list"] [data-testid$="-row"]').count();
+  check("the top list holds the Old documents only", oldRows === docs.filter((doc) => doc.side === "old").length, String(oldRows));
+  check("the table and card switch and the jump button are gone", (await page.locator('[data-testid="documents-view"], [data-testid="documents-jump-tobe"]').count()) === 0);
+  const written = tobe.docs.find((doc) => doc.document_id !== null);
+  const file = docs.find((doc) => doc.id === written.document_id);
+  const cell = page.locator('[data-testid="tobe-list"] [data-testid$="-written"]:not([data-testid$="-not-written"])').first();
+  check("a written file shows on its New row", (await cell.innerText()).includes(file.file_name.slice(0, 12)));
+  check("rows without a file say so", (await page.locator('[data-testid$="-not-written"]').count()) === tobe.docs.filter((doc) => doc.document_id === null).length);
+  await takeShot("sop-documents-two-lists.png");
+  await cell.locator('[data-testid$="-written-preview"]').click();
+  await wait(page, "documents-preview-split");
+  check("the file's preview opens from the row", true);
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="documents-preview-split"]').waitFor({ state: "detached", timeout: T });
+  // Excel 템플릿·가져오기는 메뉴에 있다
+  await page.locator('[data-testid="tobe-more"]').click();
+  await wait(page, "tobe-more-menu");
+  check("the Excel template and import sit in the menu", (await page.locator('[data-testid="tobe-template"]').count()) === 1 && (await page.locator('[data-testid="tobe-import"]').count()) === 1);
+  await page.keyboard.press("Escape");
+  // 줄을 펼치면 그 파일의 버전과 언어 배치가 있다
+  await cell.locator("xpath=ancestor::tr").locator('[data-testid$="-toggle"]').click();
+  await page.locator('[data-testid$="-written-detail"]').first().waitFor({ timeout: T });
+  check("opening the row shows the file's version and language layout", (await page.locator('[data-testid$="-written-version"]').count()) === 1 && (await page.locator('[data-testid$="-written-layout"]').count()) === 1);
+});
+
+// 올리는 창구 하나(v1.0.31) - Old와 New 파일을 한 창에서 올린다. 앱이 파일 이름의 번호로 쪽을 먼저 고르고, New 파일은 번호가 같은 빈 줄에 붙는다.
+// 묶음을 만들 권한이 있는 사람으로 새 묶음에서 하고, 끝에 그 묶음을 지운다(저장소의 합성 샘플 파일을 쓴다)
+await runStep("documents: one upload window takes Old and New files", { devUser: "dev.admin" }, async ({ page, takeShot }) => {
+  const samples = resolve(SCRIPT_DIR, "../../samples");
+  const headers = { "X-Dev-User": "dev.admin", "Content-Type": "application/json" };
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC upload window", is_synthetic: true } })).json();
+  const docs = [{ code: "SOP-01", doc_type: "sop", title: "Synthetic SOP" }, { code: "WI-05", doc_type: "wi", parent_code: "SOP-01", title: "Synthetic listed WI" }];
+  const listed = await page.request.put(`${BASE}/api/bundles/${created.id}/tobe`, { headers, data: { revision: created.revision, docs, na_slots: [], wi_steps: [{ code: "WI-05", step_no: 1, title: "Clean" }] } });
+  check("a new bundle with two listed New documents is ready", listed.ok());
+  const readTobe = async () => (await (await page.request.get(`${BASE}/api/bundles/${created.id}/tobe`, { headers })).json()).docs;
+  await page.goto(`${BASE}/bundles/${created.id}/documents`);
+  await wait(page, "documents-empty-upload");
+  check("the New list no longer has its own upload button", (await page.locator('[data-testid="tobe-upload-written"]').count()) === 0);
+  await page.locator('[data-testid="documents-empty-upload"]').click();
+  await page.locator('[data-testid="upload-files"]').setInputFiles([`${samples}/SYNTHETIC_OLD-6_Hanil_Centrifuge_Cleaning.docx`, `${samples}/SYNTHETIC_WI-05_Hanil_Centrifuge_Cleaning.docx`, `${samples}/SYNTHETIC_WI-04_Labogene_Centrifuge_Operation.docx`]);
+  await wait(page, "upload-picked");
+  // New 목록을 읽은 뒤에 쪽이 정해진다
+  await page.waitForFunction(() => document.querySelector('[data-testid="upload-side-1-new"]')?.getAttribute("aria-pressed") === "true", null, { timeout: T });
+  const pressed = async (index) => ((await page.locator(`[data-testid="upload-side-${index}-new"]`).getAttribute("aria-pressed")) === "true" ? "new" : "old");
+  check("the app picks New for a number on the New list and Old for the rest", (await pressed(0)) === "old" && (await pressed(1)) === "new" && (await pressed(2)) === "old");
+  check("it says which row the New file attaches to", (await getText(page, "upload-note-1")).includes("WI-05"));
+  // 사람이 뒤집는다 - 목록에 없는 번호라 줄이 새로 생기고, WI는 상위 SOP를 골라야 올릴 수 있다
+  await page.locator('[data-testid="upload-side-2-new"]').click();
+  await page.locator('[data-testid="upload-kind-2"]').click();
+  await page.locator('[data-testid="upload-kind-2-option-wi"]').click();
+  check("a WI that makes a new row needs its parent SOP first", await page.locator('[data-testid="upload-submit"]').isDisabled());
+  await page.locator('[data-testid="upload-parent-2"]').click();
+  await page.locator('[data-testid="upload-parent-2-option-SOP-01"]').click();
+  await takeShot("sop-upload-one-window.png");
+  await page.locator('[data-testid="upload-submit"]').click();
+  await page.locator('[data-testid="upload-done"]:not([disabled])').waitFor({ timeout: 120000 });
+  const rows = Object.fromEntries((await readTobe()).map((doc) => [doc.code, doc]));
+  check("the New file attached to its listed row", rows["WI-05"]?.entrance === "match" && rows["WI-05"]?.document_id !== null && rows["WI-05"]?.parent_code === "SOP-01");
+  check("the other New file made a row under the SOP picked in the window", rows["WI-04"]?.entrance === "match" && rows["WI-04"]?.doc_type === "wi" && rows["WI-04"]?.parent_code === "SOP-01");
+  const documents = await (await page.request.get(`${BASE}/api/bundles/${created.id}/documents`, { headers })).json();
+  check("the Old file became an Old document", documents.some((doc) => doc.side === "old" && doc.doc_code === "OLD-6" && doc.status === "ready"));
+  await page.locator('[data-testid="upload-done"]').click();
+  // 화면 아무 데나 파일을 끌어다 놓으면 같은 창이 그 파일을 담아 열린다
+  const dragged = await page.evaluateHandle(() => {
+    const data = new DataTransfer();
+    data.items.add(new File(["x"], "SYNTHETIC_OLD-9 dropped.docx"));
+    return data;
+  });
+  await page.dispatchEvent('[data-testid="documents-drop"]', "dragover", { dataTransfer: dragged });
+  await wait(page, "documents-drop-veil");
+  check("dragging a file over the screen shows where it will go", true);
+  await page.dispatchEvent('[data-testid="documents-drop"]', "drop", { dataTransfer: dragged });
+  await wait(page, "upload-picked-0");
+  check("dropping it opens the same window with the file in it", (await getText(page, "upload-picked-0")).includes("dropped.docx"));
+  await page.locator('[data-testid="upload-cancel"]').click();
+  // 파일을 지워도 목록 줄은 남는다(배정으로 엮는 줄로 돌아간다)
+  const written = documents.find((doc) => doc.doc_code === "WI-05");
+  const removed = await page.request.delete(`${BASE}/api/bundles/${created.id}/documents/${written.id}?revision=${written.revision}`, { headers });
+  const after = Object.fromEntries((await readTobe()).map((doc) => [doc.code, doc]));
+  check("deleting the written file keeps its row on the New list", removed.status() === 204 && after["WI-05"]?.entrance === "assign" && after["WI-05"]?.document_id === null);
+  const bundle = await (await page.request.get(`${BASE}/api/bundles/${created.id}`, { headers })).json();
+  await page.request.delete(`${BASE}/api/bundles/${created.id}?revision=${bundle.revision}`, { headers });
+});
+
+// AI로 목록 읽기(v1.0.34) - 템플릿에 맞지 않는 글을 붙여 넣으면 AI가 줄을 제안하고, 사람이 보고 고친 뒤 목록에 더한다.
+// 글에 없는 번호는 서버가 버린다(가짜 AI가 일부러 하나를 지어낸다). AI가 꺼진 백엔드에서는 메뉴에 항목이 없는 것만 본다.
+await runStep("documents: AI reads a free-form list into New rows", { devUser: "dev.admin" }, async ({ page }) => {
+  const headers = { "X-Dev-User": "dev.admin", "Content-Type": "application/json" };
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC list reading", is_synthetic: true } })).json();
+  await page.request.put(`${BASE}/api/bundles/${created.id}/tobe`, { headers, data: { revision: created.revision, docs: [{ code: "SOP-01", doc_type: "sop", title: "Synthetic SOP" }], na_slots: [], wi_steps: [] } });
+  const readTobe = async () => (await page.request.get(`${BASE}/api/bundles/${created.id}/tobe`, { headers })).json();
+  const removeBundle = async () => {
+    const bundle = await (await page.request.get(`${BASE}/api/bundles/${created.id}`, { headers })).json();
+    await page.request.delete(`${BASE}/api/bundles/${created.id}?revision=${bundle.revision}`, { headers });
+  };
+  const status = await page.request.get(`${BASE}/api/bundles/${created.id}/ai/status`, { headers });
+  const isAiOn = status.ok() && (await status.json()).ai_enabled;
+  await page.goto(`${BASE}/bundles/${created.id}/documents`);
+  await wait(page, "tobe-add-code");
+  await page.waitForLoadState("networkidle");
+  await page.locator('[data-testid="tobe-more"]').click();
+  await wait(page, "tobe-more-menu");
+  if (!isAiOn) {
+    check("without AI the menu has no list reading", (await page.locator('[data-testid="tobe-read-open"]').count()) === 0);
+    console.log("  (AI is off in this backend - the rest is skipped)");
+    await removeBundle();
+    return;
+  }
+  await page.locator('[data-testid="tobe-read-open"]').click();
+  await wait(page, "tobe-read-ask");
+  check("nothing can be sent before a file or text is given", await page.locator('[data-testid="tobe-read-submit"]').isDisabled());
+  await page.locator('[data-testid="tobe-read-text"]').fill("Synthetic restructuring plan\nSOP-QC-0300 | Synthetic cold storage\nWI-QC-0301 | Synthetic storage operation\nQC-0400 | Synthetic checklist");
+  await page.locator('[data-testid="tobe-read-submit"]').click();
+  await page.locator('[data-testid="tobe-read-preview"]').waitFor({ timeout: 60000 });
+  const codes = await page.locator('[data-testid="tobe-read-list"] tbody tr').evaluateAll((rows) => rows.map((row) => row.dataset.testid));
+  check("the preview lists the numbers found in the text", ["SOP-QC-0300", "WI-QC-0301", "QC-0400"].every((code) => codes.includes(`tobe-read-${code}-row`)), codes.join(","));
+  check("a number that is not in the text is dropped", !codes.some((id) => id.includes("INVENTED")));
+  check("a row without a kind blocks adding and says why", (await page.locator('[data-testid="tobe-read-add"]').isDisabled()) && (await getText(page, "tobe-read-problem")).includes("QC-0400"));
+  check("nothing is written before the person adds", (await readTobe()).docs.length === 1);
+  await page.locator('[data-testid="tobe-read-QC-0400-type"]').click();
+  await page.locator('[data-testid="tobe-read-QC-0400-type-option-sop"]').click();
+  await page.locator('[data-testid="tobe-read-problem"]').waitFor({ state: "detached", timeout: T });
+  await page.locator('[data-testid="tobe-read-add"]').click();
+  await page.locator('[data-testid="tobe-read"]').waitFor({ state: "detached", timeout: 30000 });
+  await page.waitForLoadState("networkidle");
+  const after = await readTobe();
+  const byCode = Object.fromEntries(after.docs.map((doc) => [doc.code, doc]));
+  check("the picked rows are on the New list with kind, parent and title", after.docs.length === 4 && byCode["WI-QC-0301"]?.parent_code === "SOP-QC-0300" && byCode["QC-0400"]?.doc_type === "sop" && byCode["SOP-QC-0300"]?.title === "Synthetic cold storage", JSON.stringify(after.docs.map((doc) => [doc.code, doc.doc_type, doc.parent_code])));
+  check("the WI's steps came with it", after.wi_steps.filter((item) => item.code === "WI-QC-0301").length > 0);
+  // 목록은 창이 닫힌 뒤 다시 받는다 - 넷째 줄이 그려질 때까지 기다린다
+  await page.locator('[data-testid^="tobe-id-"][data-testid$="-code"]').nth(3).waitFor({ timeout: T });
+  const shownCodes = await page.locator('[data-testid^="tobe-id-"][data-testid$="-code"]').evaluateAll((cells) => cells.map((cell) => cell.value ?? cell.textContent));
+  check("the new rows show on the list without a reload", ["SOP-QC-0300", "WI-QC-0301", "QC-0400"].every((code) => shownCodes.includes(code)), shownCodes.join(","));
+  const left = await (await page.request.get(`${BASE}/api/bundles/${created.id}/tobe/read`, { headers })).json();
+  check("the proposal is closed once it is used", left === null && (await page.locator('[data-testid="tobe-proposal"]').count()) === 0);
+  await removeBundle();
 });
 
 // 배정 화면 첫 진입(설계 2026-11-15-ai-prepare-queue §5.2·§8) - PREPARE=1일 때만(머리말의 전제). 알림 → 상단 바 목록의 Background 줄 → 끝나면 AI suggested 수

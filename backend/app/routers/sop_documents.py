@@ -69,7 +69,7 @@ from app.sop.pairs import (
 from app.sop.refs import RefState, build_ref_text, read_ref_state
 from app.sop.schemas import NO_NUL, NoNulStr
 from app.sop.status import get_cover_status
-from app.sop.tobe import MAX_DB_INT, remove_match_doc, rename_match_doc, temp_match_code
+from app.sop.tobe import MAX_DB_INT, release_match_doc, rename_match_doc, temp_match_code
 from app.sop.units import UNIT_ACTIVE, compute_display_id, get_latest_extraction_id, refresh_code_pairs
 
 router = APIRouter(prefix="/api/bundles", tags=["sop-documents"])
@@ -629,7 +629,7 @@ async def delete_document(
     # 단위가 CASCADE로 사라지기 전에 떼어 낸다 — 다른 문서 단위와 합쳐졌던 새 문장이 조용히 확정으로 남지 않고 보류가 되게
     await detach_units(session, bundle_id=bundle.id, unit_ids=unit_ids, cause="retired", actor=ctx.login_id)
     if document.target_doc_id is not None:
-        await remove_match_doc(session, bundle, document.target_doc_id)
+        await release_match_doc(session, bundle, document.target_doc_id, document_id=document.id)
     # 원본·추출·표·블록·경고(와 그 위의 단위)는 DB의 ON DELETE CASCADE가 지운다
     await session.delete(document)
     record_event(

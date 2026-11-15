@@ -4,9 +4,9 @@
 // 보기는 둘이다 - 양 단(Old ‖ New)과 한 단(Old 문서 하나만 넓게, 설계 2026-11-15-assign-merge-documents-design.md §3.1). 한 단에서는 New 칸·세로선·연결선을 그리지 않는다.
 "use client";
 
-import { ArrowDown, ArrowUp, BookMarked, Check, Circle, CircleCheck, CircleDashed, CirclePause, Columns2, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, Redo2, RefreshCw, Scissors, Sparkles, Square, SquarePlus, Trash2, TriangleAlert, Undo2, WandSparkles, X, type LucideIcon } from "lucide-react";
+import { ArrowDown, ArrowUp, BookMarked, Check, Circle, CircleCheck, CircleDashed, CirclePause, Columns2, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, Redo2, RefreshCw, Sparkles, Square, SquarePlus, Trash2, TriangleAlert, Undo2, WandSparkles, X, type LucideIcon } from "lucide-react";
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Fragment, useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 
 import { AssignContextMenu } from "@/components/assign/assign-context-menu";
@@ -19,7 +19,6 @@ import { RefCard } from "@/components/assign/ref-card";
 import { ShapeTools, type ShapeLine } from "@/components/assign/shape-tools";
 import { SplitSuggestionCard } from "@/components/assign/split-suggestion";
 import { SplitUnitActions } from "@/components/split/split-unit-actions";
-import { SplitWorkspace } from "@/components/split/split-workspace";
 import { LinkChoice } from "@/components/assign/link-choice";
 import { findNewLine, findOldStrip, LinkLines } from "@/components/assign/link-lines";
 import { LinkMenu } from "@/components/assign/link-menu";
@@ -50,8 +49,8 @@ import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { findLastStep } from "@/lib/destination-manage-model";
 import { listAckWarnings } from "@/lib/missing-warnings-model";
+import { readSplitOffsets } from "@/lib/split-ai-tabs-model";
 import { planPairLanguages, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
-import { readSplitOffsets } from "@/lib/use-split-ai";
 import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, type AiScope } from "@/lib/api-manage";
 import {
   addToBeDoc,
@@ -160,7 +159,7 @@ import { navigate } from "@/lib/nav-buffer";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, listPartSheets, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
 import { SLOT_LABELS } from "@/lib/slot-labels";
-import { EDIT_ORIGINAL_PARAM, getEditOriginalHref, getNewDocumentsHref, getStageHref } from "@/lib/stages";
+import { EDIT_ORIGINAL_PARAM, getNewDocumentsHref, getStageHref } from "@/lib/stages";
 import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useAiPrepare } from "@/lib/use-ai-prepare";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
@@ -168,6 +167,7 @@ import { useCutLine } from "@/lib/use-cut-line";
 import { countRefLookups, isRefPending, pickRefUnit, readRefAdvice } from "@/lib/ref-model";
 import { useEquisPolling } from "@/lib/use-equis-polling";
 import { useLoaded } from "@/lib/use-loaded";
+import { usePaneSlide } from "@/lib/use-pane-slide";
 import { usePaneZoom, type PaneKey, type ZoomDir } from "@/lib/use-pane-zoom";
 import { Select, type SelectOption } from "@/components/ui/select";
 
@@ -283,10 +283,9 @@ export default function AssignPage() {
   const bundleId = Number(useParams<{ id: string }>().id);
   const { bundle } = useBundle(bundleId);
   const canEdit = bundle?.my_role === "author" && bundle.status === "in_progress";
-  // 원문 고치기(옛 쪼개기 화면) - 주소의 edit 값이 있으면 이 화면 자리에 그 문서의 도구 한 벌이 열린다. 배정 화면은 그대로 살아 있어 고르던 줄이 남는다
+  // 옛 "원문 고치기" 주소(?edit=문서 id 또는 first) - 그 화면은 없어졌다. 그 문서를 한 단으로 열고 주소에서 값을 뗀다(아래 openEditParam)
   const editParam = useSearchParams().get(EDIT_ORIGINAL_PARAM);
-  const isEditingOriginal = editParam !== null;
-  const [wasEditingOriginal, setWasEditingOriginal] = useState(isEditingOriginal);
+  const router = useRouter();
 
   // --- 데이터 ---
   const docs = useLoaded(() => listDocuments(bundleId), String(bundleId));
@@ -611,7 +610,10 @@ export default function AssignPage() {
   const linkPairs = buildLinkPairs(newRows.filter(isWrittenRow), oldUnitIds, draft.destination?.kind === "link" ? { units: rowUnits.map((unit) => ({ id: unit.unit_id, lang: unit.lang })), targetIds: draft.destination.targetIds } : null);
 
   const [view, setView] = useState(readAssignView);
+  const paneSlide = usePaneSlide(view.single);
   function changeView(patch: Partial<typeof view>) {
+    // 한 단 ↔ 양 단 - 바꾸기 전 Old 용지의 자리를 재 둔다(바뀐 뒤 그 자리에서 미끄러져 온다)
+    if (patch.single !== undefined && patch.single !== view.single) paneSlide.capture();
     // 양 단으로 펴면 한 단으로 연 New 문서는 닫힌다(양 단의 왼쪽은 늘 Old 문서다). 한 단으로 접으면 New 칸에서 고르던 문장은 그 문서를 한 단으로 연 것이 된다
     if (patch.single === false) setSolo(null);
     else if (patch.single === true) setSolo((prev) => (prev?.inPlace ? { ...prev, inPlace: false } : prev));
@@ -1702,8 +1704,6 @@ export default function AssignPage() {
   }
 
   const handleKey = useEffectEvent((event: KeyboardEvent) => {
-    // 원문 고치기가 열려 있으면 그 화면의 단축키만 듣는다
-    if (isEditingOriginal) return;
     // 짝 고르는 중의 Esc는 그것부터 거둔다
     if (event.key === "Escape" && pairSource && !isTypingTarget(event.target) && !document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]')) {
       event.preventDefault();
@@ -1770,6 +1770,23 @@ export default function AssignPage() {
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
   }, []);
+
+  // 옛 "원문 고치기" 주소로 들어옴 - 그 문서를 한 단으로 연다(Old 문서면 배정하던 그대로 넓게, 이미 쓴 New 문서면 그 원문). 없는 문서면 그냥 배정 화면이다
+  const openEditParam = useEffectEvent((param: string) => {
+    const doc = param === "first" ? oldDocs[0] : (docs.data ?? []).find((item) => String(item.id) === param && item.status === "ready");
+    if (doc?.side === "new") openSolo(doc.id);
+    else if (doc) {
+      setSolo(null);
+      setManualOldDoc(doc.id);
+      setSelectedKey(null);
+      if (!view.single) changeView({ single: true });
+    }
+    router.replace(getStageHref(bundleId, "assign"), { scroll: false });
+  });
+  const hasDocs = docs.data !== null;
+  useEffect(() => {
+    if (editParam !== null && hasDocs) openEditParam(editParam);
+  }, [editParam, hasDocs]);
 
   // New 원문은 고른 문장(없으면 후보)이 보이게 - 줄을 바꾸거나 고를 때
   // 엮은 문서는 고른 줄이 들어간 문장(그 문서의 후보·이음은 없다)
@@ -2604,21 +2621,6 @@ export default function AssignPage() {
   const reloadAll = () => {
     for (const source of [docs, views, units, tobe, writtenList]) if (source.error !== null) source.reload();
   };
-  // 원문 고치기에서 돌아오면 단위·원문·문서 목록을 다시 받는다 - 거기서 나누고 묶은 것이 줄에 반영된다(렌더 중 상태 맞추기)
-  if (wasEditingOriginal !== isEditingOriginal) {
-    setWasEditingOriginal(isEditingOriginal);
-    if (!isEditingOriginal) {
-      // 고르던 줄은 다시 받은 뒤에 다시 고른다 - 그 Unit이 거기서 잘리거나 묶여 사라졌으면 고름 없이 둔다(없는 Unit의 묶음을 부르지 않게)
-      if (row) setFollow({ unitId: row.unitIds[0], staleViews: viewList, staleUnits: units.data });
-      setSelectedKey(null);
-      docs.reload();
-      views.reload();
-      setUnitsKey((key) => key + 1);
-    }
-  }
-  if (isEditingOriginal) {
-    return <SplitWorkspace bundleId={bundleId} docParam={editParam} onClose={() => navigate(getStageHref(bundleId, "assign"))} />;
-  }
   if (!ready) {
     return error !== null ? (
       <BundleLoadError error={error} onRetry={reloadAll} testId="assign" />
@@ -2762,20 +2764,6 @@ export default function AssignPage() {
             void loadBundle(bundleId);
           }}
         />
-        {/* 원문 고치기 - 지금 보는 Old 문서를 문서 하나만 넓게 보는 도구 화면으로 연다(같은 도구, 긴 표·AI 제안을 훑을 때) */}
-        {canEdit && oldView && (
-          <Tooltip label={t("assign.openSplitTip")}>
-            <Link
-              href={getEditOriginalHref(bundleId, oldView.document.id)}
-              className="btn h-7"
-              aria-label={isBarCompact ? t("assign.openSplit") : undefined}
-              data-testid="assign-open-split"
-            >
-              <Scissors size={14} strokeWidth={1.5} aria-hidden />
-              {!isBarCompact && t("assign.openSplit")}
-            </Link>
-          </Tooltip>
-        )}
         <SourceFontMenu />
       </div>
     </div>

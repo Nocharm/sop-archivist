@@ -1,9 +1,10 @@
-"""To-Be 목록 API — 읽기·통째 쓰기·한 줄 추가·삭제·Excel 템플릿 내려받기와 가져오기. 쓰기는 작성자가 작업 중일 때만 한다."""
+"""To-Be 목록 API — 읽기·통째 쓰기·한 줄 추가·삭제·고치기·Excel 템플릿 내려받기와 가져오기, 자유로운 목록 파일의 AI 읽기. 쓰기는 작성자가 작업 중일 때만 한다."""
 
 import asyncio
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Response, UploadFile
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import clock
@@ -11,12 +12,19 @@ from app.db import get_session
 from app.equis import service as equis_service
 from app.equis.view import EquisOut, build_equis_out
 from app.routers.sop_equis import start_lookups
+from app.settings import settings
 from app.sop import tobe_excel
+from app.sop.ai import tobe_list_text
+from app.sop.ai.schemas import AdoptionIn
+from app.sop.ai.tobe_list_job import TOBE_LIST_KIND, ProposalOut, close_proposal, enqueue_tobe_list, load_open_proposal
 from app.sop.constants import MEMBER_ROLES
-from app.sop.errors import check_revision
+from app.sop.errors import check_revision, raise_rule
+from app.sop.events import record_event
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
 from app.sop.models import Bundle
 from app.sop.tobe import (
+    DocPatchIn,
+    NaReasonIn,
     NewDocIn,
     NewStepIn,
     PlaceCountOut,
@@ -30,6 +38,9 @@ from app.sop.tobe import (
     count_targets_by_step,
     remove_tobe_doc,
     remove_wi_step,
+    rename_wi_step,
+    set_na_slot,
+    update_tobe_doc,
 )
 
 router = APIRouter(prefix="/api/bundles", tags=["sop-tobe"])
@@ -175,6 +186,68 @@ async def delete_wi_step(
     return await _build_tobe_view(session, background_tasks, bundle, sync_titles=False)
 
 
+# --- 줄 하나 고치기(Documents 화면) — 칸마다 바로 저장한다. 한 줄 추가·삭제처럼 revision을 묻지 않는다 ---
+
+
+@router.patch("/{bundle_id}/tobe/docs/{target_doc_id}", response_model=ToBeViewOut)
+async def patch_tobe_doc(
+    target_doc_id: int,
+    body: DocPatchIn,
+    background_tasks: BackgroundTasks,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> ToBeViewOut:
+    bundle = await _open_row_write(session, ctx)
+    await update_tobe_doc(session, bundle, target_doc_id, body, actor=ctx.login_id)
+    await session.commit()
+    # 번호나 제목이 바뀌었을 수 있다 — 새 번호를 EQUIS에 묻고, EQUIS에 있는 번호의 제목은 EQUIS 이름으로 맞춘다
+    return await _build_tobe_view(session, background_tasks, bundle, sync_titles=True)
+
+
+@router.put("/{bundle_id}/tobe/docs/{target_doc_id}/na/{slot_key}", response_model=ToBeViewOut)
+async def put_na_slot(
+    target_doc_id: int,
+    slot_key: str,
+    body: NaReasonIn,
+    background_tasks: BackgroundTasks,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> ToBeViewOut:
+    bundle = await _open_row_write(session, ctx)
+    await set_na_slot(session, bundle, target_doc_id, slot_key, body.reason, actor=ctx.login_id)
+    await session.commit()
+    return await _build_tobe_view(session, background_tasks, bundle, sync_titles=False)
+
+
+@router.delete("/{bundle_id}/tobe/docs/{target_doc_id}/na/{slot_key}", response_model=ToBeViewOut)
+async def delete_na_slot(
+    target_doc_id: int,
+    slot_key: str,
+    background_tasks: BackgroundTasks,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> ToBeViewOut:
+    bundle = await _open_row_write(session, ctx)
+    await set_na_slot(session, bundle, target_doc_id, slot_key, None, actor=ctx.login_id)
+    await session.commit()
+    return await _build_tobe_view(session, background_tasks, bundle, sync_titles=False)
+
+
+@router.patch("/{bundle_id}/tobe/docs/{target_doc_id}/steps/{step_no}", response_model=ToBeViewOut)
+async def patch_wi_step(
+    target_doc_id: int,
+    step_no: int,
+    body: NewStepIn,
+    background_tasks: BackgroundTasks,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> ToBeViewOut:
+    bundle = await _open_row_write(session, ctx)
+    await rename_wi_step(session, bundle, target_doc_id, step_no, body.title, actor=ctx.login_id)
+    await session.commit()
+    return await _build_tobe_view(session, background_tasks, bundle, sync_titles=False)
+
+
 @router.get("/{bundle_id}/tobe/template.xlsx")
 async def download_tobe_template(
     ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
@@ -201,3 +274,70 @@ async def import_tobe(
     # 파싱은 CPU를 쓰므로 이벤트 루프 밖에서 돌린다(묶음 잠금도 파싱이 끝난 뒤에 잡는다)
     parsed = await asyncio.to_thread(tobe_excel.parse_tobe_workbook, data)
     return await _write_tobe(session, background_tasks, ctx, parsed, revision=revision, source="excel")
+
+
+# --- 새 문서 목록 AI 읽기 — 템플릿에 맞지 않는 계획 파일이나 붙여 넣은 글에서 AI가 목록을 읽어 제안한다 ---
+# AI는 제안만 한다: 여기서는 목록에 쓰지 않고, 사람이 미리 보기에서 고른 줄을 위의 한 줄 추가·고치기로 저장한다.
+
+# 붙여 넣는 글의 크기 상한 — 파일과 같은 값(본문이 끝없이 커지지 않게 경계에서 막는다)
+_MAX_PASTED_CHARS = tobe_list_text.MAX_LIST_FILE_BYTES
+
+
+class ListReadOut(BaseModel):
+    queued: int
+    request_id: str
+    # 글이 길어 앞부분만 읽는다
+    truncated: bool
+
+
+@router.post("/{bundle_id}/tobe/read", response_model=ListReadOut, status_code=202)
+async def request_tobe_read(
+    file: UploadFile | None = File(None),
+    text: str | None = Form(None, max_length=_MAX_PASTED_CHARS),
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> ListReadOut:
+    """목록 파일(xlsx·docx·txt·csv·md) 하나 또는 붙여 넣은 글을 받아 AI 작업을 쌓는다. 파일은 저장하지 않는다."""
+    if not settings.ai_enabled:  # 사람 경로(번호로 더하기·Excel 템플릿)는 AI가 꺼져 있어도 그대로다
+        raise_rule(503, "ai_disabled")
+    if file is not None:
+        # 상한보다 1바이트 더 읽어 넘었는지만 알린다 — 큰 파일을 통째로 메모리에 올리지 않는다
+        data = await file.read(tobe_list_text.MAX_LIST_FILE_BYTES + 1)
+        listed = await asyncio.to_thread(tobe_list_text.read_list_file, file.filename or "", data)
+    elif text is not None:
+        listed = tobe_list_text.read_list_text(text)
+    else:
+        raise_rule(422, "list_text_empty")
+    bundle = await _open_row_write(session, ctx)
+    job = enqueue_tobe_list(session, bundle.id, listed, ctx.login_id)
+    await session.flush()
+    record_event(
+        session, bundle_id=bundle.id, actor=ctx.login_id, action="ai.request", target_type="ai_job",
+        target_ids=[job.id], reason=TOBE_LIST_KIND,
+    )
+    await session.commit()
+    return ListReadOut(queued=1, request_id=job.request_id, truncated=listed.truncated)
+
+
+@router.get("/{bundle_id}/tobe/read", response_model=ProposalOut | None)
+async def get_tobe_read(
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> ProposalOut | None:
+    """아직 정하지 않은 가장 새 제안 — 없으면 null."""
+    return await load_open_proposal(session, ctx.bundle.id)
+
+
+@router.post("/{bundle_id}/tobe/read/{suggestion_id}/close", status_code=204)
+async def close_tobe_read(
+    suggestion_id: int,
+    body: AdoptionIn,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """미리 보기를 닫는다 — 줄을 더한 뒤(as_is·edited)나 버릴 때(rejected). 목록은 이 요청이 바꾸지 않는다."""
+    bundle = await _open_row_write(session, ctx)
+    await close_proposal(session, bundle.id, suggestion_id, body.adoption, ctx.login_id)
+    await session.commit()
+    return Response(status_code=204)
+

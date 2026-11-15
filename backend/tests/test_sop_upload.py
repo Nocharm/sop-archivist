@@ -518,11 +518,11 @@ def test_new_doc_code_edit_renames_its_match_doc(client: TestClient) -> None:
          {"code": "invalid_parent", "doc_code": "WI-NEW-02", "parent_code": "SOP-MISSING"}),
         ("SYNTHETIC_WI-NEW-02.docx", "wi", "WI-OLD-01", 422,
          {"code": "invalid_parent", "doc_code": "WI-NEW-02", "parent_code": "WI-OLD-01"}),
-        ("SYNTHETIC_SOP-QC-00009.docx", "sop", "SOP-NEW", 422,
-         {"code": "invalid_parent", "doc_code": "SOP-QC-00009", "parent_code": "SOP-NEW"}),
-        ("SYNTHETIC_SOP-QC-00009 copy.docx", "sop", None, 409, {"code": "duplicate_code", "doc_code": "SOP-QC-00009"}),
+        ("SYNTHETIC_SOP-QC-00008.docx", "sop", "SOP-NEW", 422,
+         {"code": "invalid_parent", "doc_code": "SOP-QC-00008", "parent_code": "SOP-NEW"}),
     ],
-    ids=["no_doc_type", "unknown_parent", "parent_is_wi", "sop_with_parent", "duplicate_code"],
+    # 번호가 목록의 빈 줄과 같으면 그 줄에 붙고, 파일이 이미 붙은 줄이면 duplicate_code다 — 아래 붙이기 테스트가 본다
+    ids=["no_doc_type", "unknown_parent", "parent_is_wi", "sop_with_parent"],
 )
 def test_upload_new_doc_rules(
     client: TestClient, file_name: str, doc_type: str | None, parent_code: str | None, status: int, detail: dict
@@ -577,7 +577,34 @@ def test_delete_document_removes_its_extraction(client: TestClient) -> None:
     assert _count(DocumentFile, DocumentFile.document_id == doc["id"]) == 0
 
 
-def test_delete_new_document_removes_its_match_doc(client: TestClient) -> None:
+def test_new_file_attaches_to_an_empty_listed_row(client: TestClient) -> None:
+    """목록에 번호만 적어 둔 줄(문장 없음)에 그 번호의 파일을 올리면 줄을 새로 만들지 않고 그 줄에 붙는다 — 종류·상위 SOP는 줄의 것."""
+    bundle = create_bundle(client)
+    docs = [
+        {"code": "SOP-QC-00010", "doc_type": "sop", "title": "Synthetic listed title"},
+        {"code": "WI-QC-00011", "doc_type": "wi", "parent_code": "SOP-QC-00010"},
+    ]
+    listed = put_tobe(client, bundle["id"], docs, wi_steps=[{"code": "WI-QC-00011", "step_no": 1, "title": "Step"}]).json()
+    ids = {doc["code"]: doc["id"] for doc in listed["docs"]}
+
+    # 종류를 보내지 않아도 된다 — 줄이 이미 안다
+    wi = upload(client, bundle["id"], _sample_docx("Synthetic WI step"), "SYNTHETIC_WI-QC-00011.docx", side="new")
+
+    assert wi.status_code == 201, wi.text
+    assert wi.json()["target_doc_id"] == ids["WI-QC-00011"]
+    tobe = client.get(f"/api/bundles/{bundle['id']}/tobe", headers=AUTHOR).json()
+    rows = {doc["code"]: doc for doc in tobe["docs"]}
+    assert sorted(rows) == ["SOP-QC-00010", "WI-QC-00011"]
+    assert (rows["WI-QC-00011"]["entrance"], rows["WI-QC-00011"]["parent_code"]) == ("match", "SOP-QC-00010")
+    assert rows["SOP-QC-00010"]["entrance"] == "assign"
+    # 이미 파일이 붙은 줄에는 또 붙이지 않는다
+    again = upload(client, bundle["id"], _sample_docx("Another synthetic body"), "SYNTHETIC_WI-QC-00011 copy.docx", side="new", doc_type="wi", parent_code="SOP-QC-00010")
+    assert again.status_code == 409
+    assert again.json()["detail"] == {"code": "duplicate_code", "doc_code": "WI-QC-00011"}
+
+
+def test_delete_new_document_keeps_its_listed_row(client: TestClient) -> None:
+    """파일을 지워도 목록 줄은 남는다(배정으로 엮는 줄로 돌아간다) — 상위 SOP의 파일도 아래 WI와 상관없이 지워진다."""
     bundle = create_bundle(client)
     sop = upload(client, bundle["id"], _sample_docx(), "SYNTHETIC_SOP-QC-00010.docx", side="new", doc_type="sop").json()
     wi = upload(
@@ -585,14 +612,32 @@ def test_delete_new_document_removes_its_match_doc(client: TestClient) -> None:
         side="new", doc_type="wi", parent_code="SOP-QC-00010",
     ).json()
 
-    blocked = client.delete(f"/api/bundles/{bundle['id']}/documents/{sop['id']}?revision=1", headers=AUTHOR)
+    removed_sop = client.delete(f"/api/bundles/{bundle['id']}/documents/{sop['id']}?revision=1", headers=AUTHOR)
     removed_wi = client.delete(f"/api/bundles/{bundle['id']}/documents/{wi['id']}?revision=1", headers=AUTHOR)
 
-    assert blocked.status_code == 409
-    assert blocked.json()["detail"] == {"code": "doc_has_children", "codes": ["WI-QC-00011"]}
-    assert removed_wi.status_code == 204
+    assert (removed_sop.status_code, removed_wi.status_code) == (204, 204)
     tobe = client.get(f"/api/bundles/{bundle['id']}/tobe", headers=AUTHOR).json()
-    assert [item["code"] for item in tobe["docs"]] == ["SOP-QC-00010"]
+    assert [(item["code"], item["entrance"], item["parent_code"]) for item in tobe["docs"]] == [
+        ("SOP-QC-00010", "assign", None), ("WI-QC-00011", "assign", "SOP-QC-00010"),
+    ]
+    assert _list_documents(client, bundle["id"]) == []
+    # 다시 올리면 남은 줄에 붙는다
+    back = upload(client, bundle["id"], _sample_docx("Synthetic body again"), "SYNTHETIC_SOP-QC-00010.docx", side="new")
+    assert back.status_code == 201, back.text
+    assert back.json()["target_doc_id"] == sop["target_doc_id"]
+
+
+def test_delete_new_document_without_a_number_removes_its_row(client: TestClient) -> None:
+    """번호 없이 올려 임시 번호로 생긴 줄은 파일이 전부다 — 파일을 지우면 줄도 지운다."""
+    bundle = create_bundle(client)
+    doc = upload(client, bundle["id"], _sample_docx(), "SYNTHETIC notes.docx", side="new", doc_type="sop").json()
+    before = client.get(f"/api/bundles/{bundle['id']}/tobe", headers=AUTHOR).json()
+
+    removed = client.delete(f"/api/bundles/{bundle['id']}/documents/{doc['id']}?revision=1", headers=AUTHOR)
+
+    assert [item["code"] for item in before["docs"]] == [f"NEW-{doc['id']}"]
+    assert removed.status_code == 204
+    assert client.get(f"/api/bundles/{bundle['id']}/tobe", headers=AUTHOR).json()["docs"] == []
 
 
 # --- 내려받기·경고 확인·로그 ---

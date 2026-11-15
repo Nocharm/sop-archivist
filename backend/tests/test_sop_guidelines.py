@@ -52,6 +52,7 @@ REPLY_FIELDS = {
     "prompt.match": {"change_type", "reason", "rule_ids"},
     "prompt.split": {"parts", "reason", "rule_ids"},
     "prompt.doc_meta": {"doc_code", "version"},
+    "prompt.tobe_list": {"docs"},
 }
 
 

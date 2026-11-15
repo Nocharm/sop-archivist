@@ -60,7 +60,7 @@ AI 제안은 사내 채팅 모델(`AI_*`)과 별개의 사내 임베딩 모델(`
 
 | 키 | 뜻 |
 |---|---|
-| `AI_ENABLED` / `AI_BASE_URL` / `AI_API_TOKEN` / `AI_MODEL` | 채팅 모델. 분류·고쳐 쓰기·번역·입구 2 변경 종류·나누기 제안이 쓴다 |
+| `AI_ENABLED` / `AI_BASE_URL` / `AI_API_TOKEN` / `AI_MODEL` | 채팅 모델. 분류·고쳐 쓰기·번역·입구 2 변경 종류·나누기 제안·새 문서 목록 읽기가 쓴다 |
 | `EMBED_ENABLED` / `EMBED_BASE_URL` / `EMBED_API_TOKEN` / `EMBED_MODEL` | 임베딩 모델. 후보 칸 추리기·입구 2 짝·한/영 따로 짝 제안이 쓴다. 꺼져 있으면 후보는 전체 칸이나 글자 유사도로 줄이고, 한/영 따로 짝 요청은 409 `embedding_disabled`다 |
 
 로컬에서 배선만 확인할 때는 가짜 AI 서버(`frontend/scripts/fake-ai-server.mjs`)를 쓴다. 명령은 [`docs/qa/verification-commands.md`](docs/qa/verification-commands.md)에 있고, 응답이 고정이라 정확도의 근거가 아니다.

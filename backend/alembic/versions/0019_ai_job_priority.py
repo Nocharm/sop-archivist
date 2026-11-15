@@ -1,7 +1,7 @@
 """Add ai_jobs.priority and background so the worker claims the match plan first and prepared (background) jobs last.
 
-Revision ID: 0018
-Revises: 0017
+Revision ID: 0019
+Revises: 0018
 Create Date: 2026-11-15 20:00:00.000000
 
 """
@@ -11,8 +11,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "0018"
-down_revision: str | Sequence[str] | None = "0017"
+revision: str = "0019"
+down_revision: str | Sequence[str] | None = "0018"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -572,7 +572,7 @@ class AiJob(Base):
     # 요청 한 번이 쌓은 작업들의 묶음 값 — 화면이 "n / N"으로 묶어 보인다. 입구 2 계획 작업이 쌓는 변경 종류 작업은
     # 계획 작업의 값을 잇는다. 0012 이전 행은 'job-<id>'로 채워 저마다 한 요청이다
     request_id: Mapped[str] = mapped_column(String(32), index=True, default=generate_request_id)
-    # 꺼내는 순서(AI_PRIORITY_*, 작을수록 먼저)와 미리 돌리기 표시 — 0018 이전 행은 사람 요청(1)·False다
+    # 꺼내는 순서(AI_PRIORITY_*, 작을수록 먼저)와 미리 돌리기 표시 — 0019 이전 행은 사람 요청(1)·False다
     priority: Mapped[int] = mapped_column(SmallInteger, default=AI_PRIORITY_USER)
     background: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

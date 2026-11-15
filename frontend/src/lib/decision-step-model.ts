@@ -1,6 +1,11 @@
-// Assign 되돌리기 모델 - 저장 종류 고르기, 알림 문구, Ctrl+Z 키 해석. Split의 edit-step-model·split-keys와 같은 모양.
+// Assign 되돌리기 모델 - 저장 종류 고르기, 알림 문구, Ctrl+Z 키 해석.
 import type { DecisionStepResult, SaveOp } from "@/lib/api-sop";
-import type { StepMessage } from "@/lib/edit-step-model";
+
+/** 알림 문구 - 메시지 키와 채울 값 */
+export interface StepMessage {
+  key: string;
+  vars: Record<string, string | number>;
+}
 
 interface KeyLike {
   key: string;

@@ -544,7 +544,109 @@ async def remove_wi_step(
     await apply_tobe(session, bundle, payload, actor=actor, source="api")
 
 
+# --- 줄 하나 고치기 — Documents 화면이 칸마다 바로 저장한다(통째 쓰기의 초안·Save가 없다) ---
+# 한 줄 추가·삭제와 같은 길이다: 지금 목록을 읽어 그 줄만 바꾼 전체를 apply_tobe에 넘긴다. 번호만은 줄 id를 지키려고 직접 바꾼다.
+
+
+class DocPatchIn(BaseModel):
+    """목록 줄 하나의 고칠 칸 — 보낸 칸만 바꾼다(부모는 null이 "없음"이라, 보냈는지로 가른다)."""
+
+    code: DocCode | None = None
+    title: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500), NO_NUL] | None = None
+    doc_type: str | None = None
+    parent_code: Annotated[DocCode | None, BeforeValidator(_blank_to_none)] = None
+    is_equipment_sop: bool | None = None
+
+
+class NaReasonIn(BaseModel):
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000), NO_NUL]
+
+
+async def update_tobe_doc(
+    session: AsyncSession, bundle: Bundle, target_doc_id: int, patch: DocPatchIn, *, actor: str
+) -> None:
+    """문서 한 줄의 칸을 고친다. 검사는 통째 쓰기와 같다(apply_tobe).
+
+    번호를 바꾸면 줄 id는 그대로 두고 번호만 바꾼다 — 통째 쓰기는 번호로 줄을 합쳐서, 번호가 바뀌면 지우고 새로 만드는
+    것이 된다(문장이 든 줄에서 거절된다). 올린 파일의 줄은 409 match_doc_locked(그 번호는 파일의 번호다).
+    종류를 바꾸면 그 줄의 N/A와 단계를 비우고, SOP가 되면 부모도 비운다.
+    """
+    doc = await _get_target_doc(session, bundle.id, target_doc_id)
+    sent = patch.model_fields_set
+    is_renamed = "code" in sent and patch.code is not None and patch.code != doc.code
+    if is_renamed:
+        if doc.entrance != "assign":
+            raise_rule(409, "match_doc_locked", codes=[doc.code])
+        await rename_match_doc(session, bundle, doc.id, patch.code)
+        await session.flush()  # 아래에서 읽는 목록에 새 번호가 보이게
+    payload = await _read_list(session, bundle)
+    revision = bundle.revision
+    row = next(item for item in payload.docs if item.code == doc.code)
+    if "title" in sent and patch.title is not None:
+        row.title = patch.title
+    if "doc_type" in sent and patch.doc_type is not None and patch.doc_type != row.doc_type:
+        row.doc_type = patch.doc_type
+        payload.na_slots = [item for item in payload.na_slots if item.code != doc.code]
+        payload.wi_steps = [item for item in payload.wi_steps if item.code != doc.code]
+        if patch.doc_type == "sop":
+            row.parent_code = None
+    if "parent_code" in sent:
+        row.parent_code = patch.parent_code
+    if "is_equipment_sop" in sent and patch.is_equipment_sop is not None:
+        row.is_equipment_sop = patch.is_equipment_sop
+    await apply_tobe(session, bundle, payload, actor=actor, source="api")
+    if is_renamed and bundle.revision == revision:  # 번호만 바뀌었다 — apply_tobe는 바뀐 게 없어 기록하지 않았다
+        record_event(
+            session, bundle_id=bundle.id, actor=actor, action="tobe.update",
+            target_type="target_doc", target_ids=[doc.id],
+        )
+
+
+async def set_na_slot(
+    session: AsyncSession, bundle: Bundle, target_doc_id: int, slot_key: str, reason: str | None, *, actor: str
+) -> None:
+    """SOP의 칸 하나를 N/A로 두거나(사유와 함께) 되돌린다(reason이 None). 문장이 든 칸은 apply_tobe가 거절한다."""
+    doc = await _get_target_doc(session, bundle.id, target_doc_id)
+    payload = await _read_list(session, bundle)
+    payload.na_slots = [item for item in payload.na_slots if (item.code, item.slot_key) != (doc.code, slot_key)]
+    if reason is not None:
+        _ensure_room(payload.na_slots)
+        payload.na_slots.append(NaSlotIn(code=doc.code, slot_key=slot_key, reason=reason))
+    await apply_tobe(session, bundle, payload, actor=actor, source="api")
+
+
+async def rename_wi_step(
+    session: AsyncSession, bundle: Bundle, target_doc_id: int, step_no: int, title: str, *, actor: str
+) -> None:
+    """WI 단계 한 줄의 제목을 고친다."""
+    doc = await _get_target_doc(session, bundle.id, target_doc_id)
+    payload = await _read_list(session, bundle)
+    row = next((item for item in payload.wi_steps if (item.code, item.step_no) == (doc.code, step_no)), None)
+    if row is None:
+        raise_rule(404, "wi_step_not_found", doc_code=doc.code, step_no=step_no)
+    payload.wi_steps = [
+        WiStepIn(code=item.code, step_no=item.step_no, title=title) if item is row else item for item in payload.wi_steps
+    ]
+    await apply_tobe(session, bundle, payload, actor=actor, source="api")
+
+
 # --- 입구 2(match) 새 문서 — 올린 새 문서(side=new)가 목록에 들어오고 나가는 길 ---
+
+
+async def find_attachable_doc(session: AsyncSession, bundle_id: int, code: str) -> TargetDoc | None:
+    """올린 새 문서를 붙일 목록 줄 — 번호가 같고, 배정으로 엮는 줄(assign)이며, 문장이 하나도 없는 줄. 없으면 None.
+
+    번호가 같은 줄에 문장이 이미 있으면 409 doc_in_use(붙이면 그 문장들의 자리가 없어진다 — 먼저 배정을 지우거나 다른
+    번호로 올린다). 이미 파일이 붙은 줄(match)은 None을 돌려줘 호출부의 번호 검사가 409 duplicate_code로 거절한다.
+    """
+    if not code:
+        return None
+    doc = await session.scalar(select(TargetDoc).where(TargetDoc.bundle_id == bundle_id, TargetDoc.code == code))
+    if doc is None or doc.entrance != "assign":
+        return None
+    if await count_targets_in(session, [doc.id]):
+        raise_rule(409, "doc_in_use", doc_code=code)
+    return doc
 
 
 async def check_match_doc(
@@ -613,13 +715,20 @@ async def rename_match_doc(session: AsyncSession, bundle: Bundle, target_doc_id:
     bundle.revision += 1
 
 
-async def remove_match_doc(session: AsyncSession, bundle: Bundle, target_doc_id: int) -> None:
-    """올린 새 문서를 지울 때 그 목록 줄도 지운다. 새 문장이 있으면 409 doc_has_targets, 이 줄을 부모로 둔 WI가 있으면
-    409 doc_has_children(목록 쓰기에서 부모를 빼면 invalid_parent인 것과 같은 이유). 묶음 revision을 올린다.
+async def release_match_doc(session: AsyncSession, bundle: Bundle, target_doc_id: int, *, document_id: int) -> None:
+    """올린 새 문서의 파일을 지울 때 — 목록 줄은 남기고 배정으로 엮는 줄(assign)로 돌린다. 묶음 revision을 올린다.
+
+    줄과 파일은 화면에서 한 줄이다: 파일만 지웠는데 줄(종류·상위 SOP·N/A·단계)까지 사라지면 안 된다. 줄 지우기는 목록의
+    지우기가 한다. 번호가 없어 임시 번호(NEW-<문서 id>)로 생긴 줄만은 파일과 함께 지운다 — 그 줄은 파일이 전부다.
+    새 문장이 남아 있으면 409 doc_has_targets(이 문서 단위에서 온 새 문장은 호출부가 먼저 떼어 낸다).
     """
     doc = await session.get_one(TargetDoc, target_doc_id)  # 문서의 FK가 가리키므로 늘 있다
     if await count_targets_in(session, [doc.id]):
         raise_rule(409, "doc_has_targets", codes=[doc.code])
+    if doc.code != temp_match_code(document_id):
+        doc.entrance = "assign"
+        bundle.revision += 1
+        return
     children = list(
         await session.scalars(select(TargetDoc.code).where(TargetDoc.parent_id == doc.id).order_by(TargetDoc.code))
     )

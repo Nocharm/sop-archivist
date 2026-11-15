@@ -7,8 +7,7 @@ import { Check, WandSparkles, X } from "lucide-react";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { AiSuggestion, ViewUnit } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
-import { cutSplitPieces } from "@/lib/split-ai-tabs-model";
-import { readSplitOffsets } from "@/lib/use-split-ai";
+import { cutSplitPieces, readSplitOffsets } from "@/lib/split-ai-tabs-model";
 
 interface SplitSuggestionCardProps {
   unit: ViewUnit;
