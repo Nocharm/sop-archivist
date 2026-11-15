@@ -5,7 +5,9 @@
 // 가짜 AI(node scripts/fake-ai-server.mjs)를 보는 backend를 AI_ENABLED=true AI_AUTO_PREPARE=true로 띄운다. 이 backend에서는 작성자가 배정 화면에 들어갈 때마다
 // 남은 줄이 저절로 분류돼 다른 단계의 전제가 깨지므로 같이 돌리지 않는다. 끝에 DB가 바뀐다(분류 절반 묶음의 남은 줄에 AI 제안이 붙는다) - 다시 돌리려면 reset_db부터.
 // 실행(frontend/ 에서): node scripts/pw-smoke-sop.mjs   환경 변수: BASE_URL, CHROME_PATH
-// ONLY="이름 조각,…"이면 이름에 그 조각이 든 단계만 돈다(고치는 중인 단계를 빨리 볼 때. 앞 단계가 남긴 값에 기대는 단계는 혼자 돌지 못한다 - 커밋 전에는 전부 돌린다)
+// ONLY="이름 조각,…"이면 이름에 그 조각이 든 단계만 돈다. 묶음 id를 잡는 첫 단계("bundle list")는 늘 함께 돈다. 화면 하나만 보려면 이름 머리로 고른다: ONLY="assign:" · "documents:" · "new documents:" · "outputs"
+// QUIET=1이면 통과한 줄을 찍지 않는다 - 실패한 줄과 마지막 한 줄(통과 수·실패 수)만 나온다.
+// 평소(변경마다)는 고친 화면만: QUIET=1 ONLY="<화면>" node scripts/pw-smoke-sop.mjs  — 전부 돌리는 것은 dev→main 정식 업데이트 전, 또는 여러 화면이 같이 쓰는 것(공용 부품·API 층·이 스크립트의 틀)을 고쳤을 때만이다(사용자 결정 2026-11-16).
 // playwright-core는 저장소 의존성이 아니다: `npm i --no-save playwright-core` (package.json 불변)
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -26,19 +28,25 @@ const VIEWPORT = { width: 1248, height: 720 };
 
 mkdirSync(SHOT_DIR, { recursive: true });
 
+const QUIET = process.env.QUIET === "1";
+// 묶음 id를 잡아 두는 단계 - 뒤 단계가 모두 여기에 기댄다
+const SETUP_STEP = "bundle list";
 let failures = 0;
+let passes = 0;
 const check = (name, ok, detail = "") => {
-  if (!ok) failures += 1;
+  if (ok) passes += 1;
+  else failures += 1;
+  if (ok && QUIET) return;
   console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? ` - ${String(detail).replace(/\s+/g, " ").trim()}` : ""}`);
 };
 
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 
 async function runStep(name, { devUser = "qa.member", storage = {}, allowConsoleErrors = false } = {}, run) {
-  if (ONLY.length > 0 && !ONLY.some((part) => name.includes(part))) return;
+  if (ONLY.length > 0 && name !== SETUP_STEP && !ONLY.some((part) => name.includes(part))) return;
   // 미리 분류 시나리오는 PREPARE=1일 때만, 그때는 그것만(머리말)
   if (PREPARE !== (name === PREPARE_STEP)) return;
-  console.log(`\n# ${name}`);
+  if (!QUIET) console.log(`\n# ${name}`);
   const ctx = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
   await ctx.addInitScript(
     ({ loginId, extra }) => {
@@ -2909,5 +2917,5 @@ await runStep(PREPARE_STEP, {}, async ({ page, takeShot }) => {
 });
 
 await browser.close();
-console.log(failures === 0 ? "\nALL PASS" : `\n${failures} check(s) FAILED`);
+console.log(failures === 0 ? `\nALL PASS (${passes})` : `\n${failures} check(s) FAILED, ${passes} passed`);
 process.exit(failures === 0 ? 0 : 1);
