@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ViewUnit } from "./api-sop";
-import { buildAssignMenu, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuContext } from "./assign-context-menu-model";
+import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuContext } from "./assign-context-menu-model";
 import { findNearestCut } from "./paper-model";
 
 function makeUnit(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
@@ -237,6 +237,32 @@ describe("planAssignJoin (the button between two pieces)", () => {
   it("waits for an unsaved choice on either sentence", () => {
     const pending = { isDecided: () => false, hasDraft: (unit: ViewUnit) => unit.id === 2 };
     expect(planAssignJoin(ko, koNext, pending)).toEqual({ kind: null, reasonKey: "assign.ctx.why.unsaved" });
+  });
+});
+
+describe("pairing sentences that are apart", () => {
+  const free = { isDecided: () => false, hasDraft: () => false };
+
+  it("takes any free Korean or English sentence into the pick", () => {
+    expect(getPairPickBlocker(makeUnit(1), free)).toBeNull();
+    expect(getPairPickBlocker(makeUnit(1, { lang: "en" }), free)).toBeNull();
+  });
+
+  it("says why a sentence cannot join the pick", () => {
+    expect(getPairPickBlocker(makeUnit(1, { kind: "table" }), free)).toBe("assign.ctx.why.notText");
+    expect(getPairPickBlocker(makeUnit(1, { lang: "neutral" }), free)).toBe("split.menu.why.noLanguage");
+    expect(getPairPickBlocker(makeUnit(1, { pair_id: 3 }), free)).toBe("split.menu.why.alreadyPaired");
+    expect(getPairPickBlocker(makeUnit(1), { ...free, isDecided: () => true })).toBe("assign.ctx.why.neighborAssigned");
+    expect(getPairPickBlocker(makeUnit(1), { ...free, hasDraft: () => true })).toBe("assign.ctx.why.neighborUnsaved");
+  });
+
+  it("pairs two or more sentences once both languages are among them", () => {
+    expect(getPairSetBlocker([makeUnit(1), makeUnit(5, { lang: "en" })])).toBeNull();
+    expect(getPairSetBlocker([makeUnit(1), makeUnit(2), makeUnit(9, { lang: "en" })])).toBeNull();
+  });
+
+  it("asks for the other language when every picked sentence is in one", () => {
+    expect(getPairSetBlocker([makeUnit(1), makeUnit(7)])).toBe("assign.pairPickSameLang");
   });
 });
 
