@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { AiJobCounts, RecentAiJobs, RecentAiRequest } from "./api-sop";
 import {
   AI_ACTIVE_POLL_MS,
+  AI_BACKGROUND_RELOAD_MS,
   AI_IDLE_POLL_MS,
   AI_RETRY_MAX_MS,
   AI_SLOW_MS,
@@ -12,6 +13,8 @@ import {
   getBundleSignature,
   getKindStage,
   getNextPollMs,
+  getReloadDelay,
+  type FinishSnapshot,
   getRequestDocument,
   getRequestElapsedMs,
   getRequestOutcome,
@@ -42,6 +45,7 @@ function makeRequest(id: string, counts: Partial<AiJobCounts>, extra: Partial<Re
     kind: "classify",
     kinds: ["classify"],
     requested_by_me: true,
+    background: false,
     total,
     jobs,
     error_counts: {},
@@ -246,5 +250,42 @@ describe("grouping and screens", () => {
     const later = makeRequest("a", { done: 1, failed: 1 });
     const other = makeRequest("b", { done: 1 });
     expect(mergeToastQueue(mergeToastQueue([], [first]), [later, other])).toEqual([later, other]);
+  });
+});
+
+describe("getReloadDelay", () => {
+  const snap = (finished: number, active: number, userActive: number | null): FinishSnapshot => ({ finished, active, userActive });
+
+  it("says nothing without a previous value", () => {
+    expect(getReloadDelay(null, snap(3, 5, 0), 99_999)).toBeNull();
+  });
+
+  it("says nothing when no job finished", () => {
+    expect(getReloadDelay(snap(3, 5, 0), snap(3, 5, 0), 99_999)).toBeNull();
+  });
+
+  it("reloads at once for the first finish after a quiet while", () => {
+    expect(getReloadDelay(snap(3, 5, 0), snap(4, 4, 0), 99_999)).toBe(0);
+  });
+
+  it("waits out the rest of the gap while only background jobs finish", () => {
+    expect(getReloadDelay(snap(4, 4, 0), snap(5, 3, 0), 3_000)).toBe(AI_BACKGROUND_RELOAD_MS - 3_000);
+    expect(getReloadDelay(snap(4, 4, 0), snap(5, 3, 0), 3_000)).toBe(12_000);
+  });
+
+  it("reloads at once when a person's job finished", () => {
+    expect(getReloadDelay(snap(4, 4, 1), snap(5, 3, 0), 3_000)).toBe(0);
+  });
+
+  it("reloads at once when a person's job is still going", () => {
+    expect(getReloadDelay(snap(4, 4, 0), snap(5, 3, 1), 3_000)).toBe(0);
+  });
+
+  it("reloads at once when everything finished", () => {
+    expect(getReloadDelay(snap(4, 1, 0), snap(5, 0, 0), 3_000)).toBe(0);
+  });
+
+  it("reloads at once when the person count could not be read", () => {
+    expect(getReloadDelay(snap(4, 4, 0), snap(5, 3, null), 3_000)).toBe(0);
   });
 });

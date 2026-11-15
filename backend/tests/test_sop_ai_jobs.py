@@ -33,7 +33,14 @@ from app.sop.ai.schemas import (
     SkippedOut,
     SuggestionOut,
 )
-from app.sop.constants import AI_JOB_STATUSES, SEMANTIC_CHECK_KEYS
+from app.sop.constants import (
+    AI_JOB_STATUSES,
+    AI_PRIORITY_PLAN,
+    AI_PRIORITY_PRE_CLASSIFY,
+    AI_PRIORITY_PRE_REFINE,
+    AI_PRIORITY_USER,
+    SEMANTIC_CHECK_KEYS,
+)
 from app.sop.decisions import TargetIn
 from app.sop.models import AiJob, AiSuggestion, Bundle
 from tests.access_helpers import run_in_session
@@ -330,6 +337,98 @@ def test_claim_takes_the_smallest_queued_id_and_counts_the_attempt(client: TestC
     assert asyncio.run(claim_next_job()) is None
 
 
+def _finish(job_id: int, status: str) -> None:
+    async def _set(session: AsyncSession) -> None:
+        await session.execute(update(AiJob).where(AiJob.id == job_id).values(status=status))
+        await session.commit()
+
+    run_in_session(_set)
+
+
+def test_status_counts_active_jobs_at_user_priority(client: TestClient) -> None:
+    bundle_id = _new_bundle(client)
+    _enqueue(bundle_id, priority=AI_PRIORITY_USER)  # 줄 섬
+    _enqueue(bundle_id, priority=AI_PRIORITY_USER, status="running")
+    for _ in range(3):
+        _enqueue(bundle_id, priority=AI_PRIORITY_PRE_CLASSIFY, background=True)
+    _enqueue(bundle_id, priority=AI_PRIORITY_USER, status="done")
+
+    status = _get_status(client, bundle_id)
+
+    assert status["user_active"] == 2
+
+
+def test_promoted_jobs_count_as_user_active(client: TestClient) -> None:
+    bundle_id = _new_bundle(client)
+    _enqueue(bundle_id, priority=AI_PRIORITY_PRE_CLASSIFY, background=True)
+    assert _get_status(client, bundle_id)["user_active"] == 0
+
+    async def _promote(session: AsyncSession) -> None:
+        await jobs.promote_queued_jobs(session, bundle_id, "classify")
+        await session.commit()
+
+    run_in_session(_promote)
+
+    status = _get_status(client, bundle_id)
+    assert status["user_active"] == 1
+
+
+def test_claim_takes_the_lower_priority_number_first(client: TestClient) -> None:
+    bundle_id = _new_bundle(client)
+    user_job = _enqueue(bundle_id, "translate", priority=AI_PRIORITY_USER)  # 사람 요청을 먼저 쌓는다
+    plan_job = _enqueue(bundle_id, "match_plan", priority=AI_PRIORITY_PLAN)  # 계획은 나중에 쌓아도 앞선다
+
+    claimed = [asyncio.run(claim_next_job()), asyncio.run(claim_next_job())]
+
+    assert claimed == [plan_job, user_job]
+
+
+def test_claim_takes_a_user_job_before_earlier_background_jobs(client: TestClient) -> None:
+    # 설계 §2 목표 3 — 먼저 줄 선 미리 돌리기(분류·다듬기)가 있어도 나중에 누른 사람 요청이 먼저 꺼내진다
+    bundle_id = _new_bundle(client)
+    refine = _enqueue(bundle_id, "match", priority=AI_PRIORITY_PRE_REFINE, background=True)
+    classify = _enqueue(bundle_id, "classify", priority=AI_PRIORITY_PRE_CLASSIFY, background=True)
+    user_job = _enqueue(bundle_id, "translate", priority=AI_PRIORITY_USER)
+
+    claimed = [asyncio.run(claim_next_job()) for _ in range(3)]
+
+    assert claimed == [user_job, classify, refine]
+
+
+def test_claim_keeps_id_order_within_a_priority(client: TestClient) -> None:
+    bundle_id = _new_bundle(client)
+    first = _enqueue(bundle_id, priority=AI_PRIORITY_PRE_CLASSIFY, background=True)
+    second = _enqueue(bundle_id, priority=AI_PRIORITY_PRE_CLASSIFY, background=True)
+
+    claimed = [asyncio.run(claim_next_job()), asyncio.run(claim_next_job())]
+
+    assert claimed == [first, second]
+
+
+def test_classify_waits_for_an_active_plan_in_the_same_bundle(client: TestClient) -> None:
+    bundle_a, bundle_b = _new_bundle(client), _new_bundle(client)
+    classify_a = _enqueue(bundle_a, "classify", priority=AI_PRIORITY_PRE_CLASSIFY)
+    plan_a = _enqueue(bundle_a, "match_plan", priority=AI_PRIORITY_PLAN)
+    classify_b = _enqueue(bundle_b, "classify", priority=AI_PRIORITY_PRE_CLASSIFY)
+
+    assert asyncio.run(claim_next_job()) == plan_a  # 계획이 맨 앞
+    assert asyncio.run(claim_next_job()) == classify_b  # A의 분류는 건너뛴다
+    assert asyncio.run(claim_next_job()) is None  # A의 계획이 도는 동안
+    _finish(plan_a, "done")
+    assert asyncio.run(claim_next_job()) == classify_a
+
+
+def test_second_plan_waits_while_one_runs_in_the_bundle(client: TestClient) -> None:
+    bundle_id = _new_bundle(client)
+    plan_1 = _enqueue(bundle_id, "match_plan", priority=AI_PRIORITY_PLAN)
+    plan_2 = _enqueue(bundle_id, "match_plan", priority=AI_PRIORITY_PLAN)
+
+    assert asyncio.run(claim_next_job()) == plan_1
+    assert asyncio.run(claim_next_job()) is None
+    _finish(plan_1, "done")
+    assert asyncio.run(claim_next_job()) == plan_2
+
+
 # --- 재시작 복구 ---
 
 
@@ -545,6 +644,7 @@ def test_status_reports_counts_by_kind_and_failed_codes(client: TestClient) -> N
             "pair": {**NO_JOBS, "failed": 1, "done": 1},
         },
         "failed_errors": {"timeout": 2, "internal": 1},
+        "user_active": 2,
         "adoption": {},
     }
 

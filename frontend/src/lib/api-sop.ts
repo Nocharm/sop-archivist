@@ -117,6 +117,8 @@ export interface AiStatus {
   by_kind: Record<string, AiJobCounts>;
   /** 실패 코드별 건수(timeout·server_error·connection·client_error·config·interrupted·no_candidates·internal) */
   failed_errors: Record<string, number>;
+  /** 줄 서거나 도는 작업 가운데 사람 순위인 수(미리 돌리기에서 올라온 것 포함) - 0이면 미리 돌리기만 돈다 */
+  user_active: number;
   adoption: Record<string, AdoptionStats>;
 }
 
@@ -159,6 +161,8 @@ export interface RecentAiRequest {
   kind: AiJobKind;
   kinds: AiJobKind[];
   requested_by_me: boolean;
+  /** 미리 돌리기 작업이 하나라도 있으면 참 - 순위를 올린 뒤에도 그대로다 */
+  background: boolean;
   total: number;
   jobs: AiJobCounts;
   /** 실패 코드별 건수(failed만) */

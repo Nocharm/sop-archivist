@@ -34,6 +34,7 @@ class _RequestTally:
     running_started_at: datetime | None = None
     document_ids: set[int | None] = field(default_factory=set)  # 작업들의 문서(문서 없는 작업은 None)
     kinds: set[str] = field(default_factory=set)
+    is_background: bool = False  # 미리 돌리기 작업이 하나라도 있으면 참 — 순위를 올려도 background는 그대로라 표시가 남는다
     statuses: Counter[str] = field(default_factory=Counter)
     errors: Counter[str] = field(default_factory=Counter)
 
@@ -41,7 +42,7 @@ class _RequestTally:
 def _build_window_ids(login_id: str, since: datetime) -> CompoundSelect:
     """범위 안 작업 id — 대기·실행 중과 since 뒤에 끝난 작업을 따로 골라 합친다.
 
-    OR 한 조건으로 쓰면 인덱스를 못 탄다. 앞쪽은 (status, id), 뒤쪽은 (bundle_id, finished_at) 인덱스가 찾는다.
+    OR 한 조건으로 쓰면 인덱스를 못 탄다. 앞쪽은 (status, priority, id), 뒤쪽은 (bundle_id, finished_at) 인덱스가 찾는다.
     멤버십(역할 무관)으로 묶음을 거른다. 바깥 질의가 같은 표라 자동 상관을 끈다.
     """
     member_bundles = select(BundleMember.bundle_id).where(BundleMember.login_id == login_id)
@@ -52,7 +53,10 @@ def _build_window_ids(login_id: str, since: datetime) -> CompoundSelect:
 
 def _fold_request_rows(rows: Sequence[Row]) -> dict[str, _RequestTally]:
     tallies: dict[str, _RequestTally] = {}
-    for request_id, bundle_id, requested_by, kind, status, error, document_id, count, first_id, created, started, finished in rows:
+    for (
+        request_id, bundle_id, requested_by, kind, status, error, document_id, background, count, first_id, created, started,
+        finished,
+    ) in rows:
         tally = tallies.get(request_id)
         if tally is None:
             tally = tallies[request_id] = _RequestTally(bundle_id, requested_by, first_id, kind, created)
@@ -69,6 +73,7 @@ def _fold_request_rows(rows: Sequence[Row]) -> dict[str, _RequestTally]:
             tally.running_started_at = started if current is None else min(current, started)
         tally.document_ids.add(document_id)
         tally.kinds.add(kind)
+        tally.is_background = tally.is_background or background
         tally.statuses[status] += count
         if status == "failed":
             tally.errors[error] += count
@@ -106,12 +111,13 @@ async def _load_requests(session: AsyncSession, window_ids: CompoundSelect) -> t
     rows = await session.execute(
         select(
             AiJob.request_id, AiJob.bundle_id, AiJob.requested_by, AiJob.kind, AiJob.status, AiJob.error,
-            AiJob.document_id, func.count(), func.min(AiJob.id), func.min(AiJob.created_at), func.min(AiJob.started_at),
-            func.max(AiJob.finished_at),
+            AiJob.document_id, AiJob.background, func.count(), func.min(AiJob.id), func.min(AiJob.created_at),
+            func.min(AiJob.started_at), func.max(AiJob.finished_at),
         )
         .where(AiJob.request_id.in_(shown))
         .group_by(
-            AiJob.request_id, AiJob.bundle_id, AiJob.requested_by, AiJob.kind, AiJob.status, AiJob.error, AiJob.document_id
+            AiJob.request_id, AiJob.bundle_id, AiJob.requested_by, AiJob.kind, AiJob.status, AiJob.error, AiJob.document_id,
+            AiJob.background,
         )
     )
     return shown, total, _fold_request_rows(rows.all())
@@ -165,6 +171,7 @@ def _build_request_out(
         kind=tally.first_kind,
         kinds=sorted(tally.kinds),
         requested_by_me=tally.requested_by == login_id,
+        background=tally.is_background,
         total=sum(tally.statuses.values()),
         jobs=AiJobCounts.model_validate(tally.statuses),
         error_counts=dict(tally.errors),

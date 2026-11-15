@@ -327,28 +327,34 @@ class SyntheticDriver:
     # 4단계의 AI 경로: 요청 → 사람이 제안을 받는다 → 남은 답을 저장한다
 
     def request_classification(self) -> None:
-        """구조 제목을 일괄 삭제한 뒤 입구 1 문서마다 분류를, 이어서 입구 2 짝 계획을 요청한다.
+        """구조 제목을 일괄 삭제한 뒤 입구 2 짝 계획을, 이어서 입구 1 문서마다 분류를 요청한다.
 
-        일괄 처분은 AI 제안 단위를 받지 않아(409 ai_suggested_units) AI 앞에 끝낸다. 작업은 쌓인 순서로 돌아 계획은 분류가 남긴 미배정만 본다.
+        머리말 정리(일괄 처분)를 AI 앞에 끝내 그 줄은 AI가 받지 않는다 — 사람이 먼저 정리하는 흐름이다(일괄 처분은 AI 제안 줄도
+        덮을 수 있다). 계획은 묶음 전체를 보고 맨 앞에 돌며 그동안 분류는 기다린다(묶기 먼저) — 분류는 계획이 묶지 않고 남긴
+        미배정을 받는다. 배정 New 문서가 있어 계획은 짝 없는 옛 단위를 삭제 후보로 두지 않는다.
         """
         revisions = self.load_decision_revisions()
         for answers in self._group_answers().values():
             if any(answer.get("bulk") for answer in answers):
                 self.save_group(answers, revisions)
+        self.post("/ai/match", {})
         match_docs = self._find_match_docs()
         for code, view in self.views.items():
             if view["document"]["side"] == "old" and code not in match_docs:
                 self.post("/ai/classify", {"document_id": view["document"]["id"]})
-        self.post("/ai/match", {})
 
     def confirm_suggestions(self) -> int:
-        """적용된 AI 제안을 사람이 그대로 받는다 — 제안마다 관계 묶음 저장 한 번이고, 받은 제안 수를 돌려준다."""
+        """적용된 AI 제안을 사람이 그대로 받는다 — 제안마다 관계 묶음 저장 한 번이고, 받은 제안 수를 돌려준다.
+
+        다듬기를 기다리는 잠정 문장 묶음(다듬기 답이 무효였거나 실패했다)은 받지 않고 사람 저장 길(settle_remaining)로 보낸다 — 변경 종류가 코드가 정한 잠정값이다.
+        """
         answers = {self.find_answer_unit(answer)["id"]: answer for answer in self.expected["answers"]}
         page = self.get("/ai/suggestions", result="applied", limit="1000")
         assert page["total"] == len(page["items"])
-        for suggestion in page["items"]:
+        accepted = [suggestion for suggestion in page["items"] if not suggestion["content"].get("provisional")]
+        for suggestion in accepted:
             self._accept_suggestion(suggestion["content"], answers)
-        return page["total"]
+        return len(accepted)
 
     def _accept_suggestion(self, content: dict, answers: dict[int, dict]) -> None:
         """제안의 묶음을 그대로 확정한다 — 글·변경 종류를 비워 보내면 서버가 제안대로 정하고, 구조 종류는 보내지 않는다. 사유만 사람이 적는다.

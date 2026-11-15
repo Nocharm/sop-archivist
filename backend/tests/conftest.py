@@ -176,6 +176,13 @@ def fake_ai(monkeypatch: pytest.MonkeyPatch) -> FakeAi:
 
 
 @pytest.fixture
+def auto_prepare(fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch) -> FakeAi:
+    """fake_ai 위에 저절로 서는 AI(업로드 뒤 묶기 계획 등)를 켠다 — 같은 FakeAi를 돌려준다."""
+    monkeypatch.setattr(settings, "ai_auto_prepare", True)
+    return fake_ai
+
+
+@pytest.fixture
 def enforce(monkeypatch: pytest.MonkeyPatch) -> None:
     """dev 모드에서도 실제 권한 판정을 켠다 — 테스트가 끝나면 원래 값으로 복원."""
     monkeypatch.setattr(settings, "dev_enforce_permissions", True)

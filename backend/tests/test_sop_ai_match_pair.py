@@ -2,18 +2,22 @@
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 
+import httpx2
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AiUsageEvent
+from app.sop.ai import llm
 from app.sop.ai.adoption import SavedShape, SuggestedShape, TargetShape, decide_adoption
 from app.sop.ai.guidelines import SEEDS_DIR
 from app.sop.ai.llm import parse_reply
+from app.sop.ai.jobs import JobItem, enqueue_jobs
 from app.sop.ai.match_jobs import MatchReply
-from app.sop.constants import SYSTEM_HOLD_AI_INVALID
+from app.sop.constants import AI_PRIORITY_PLAN
 from app.sop.models import AiJob, AiSuggestion, GuidelineVersion, TargetSentence, TargetSource
 from tests.access_helpers import run_in_session
 from tests.ai_fixtures import (
@@ -63,7 +67,7 @@ CELLS = [["합성 항목", "합성 값"], ["합성 압력", "합성 결과"]]
 CHANGED_CELLS = [CELLS[0], ["합성 압력 범위", CELLS[1][1]]]
 CAPTION = "그림 1 합성 장비 배치도"
 MEDIA = {"image1.png": TINY_PNG}
-CONTENT_KEYS = {"unit_ids", "target_ids", "shape", "change_type", "reason", "rule_ids", "retrieval"}
+CONTENT_KEYS = {"unit_ids", "target_ids", "shape", "change_type", "reason", "rule_ids", "retrieval", "provisional"}
 
 
 def build_match_reply(**changes: object) -> str:
@@ -84,8 +88,21 @@ def pair_up(client: TestClient, bundle_id: int) -> None:
 
 
 def read_suggestions(*shapes: str) -> list[AiSuggestion]:
+    """계획이 먼저 쓴 잠정 문장 묶음은 빼고 읽는다 — 이 파일은 변경 종류 작업(다듬기)이 쓴 제안을 본다."""
     rows = read_rows(AiSuggestion)
-    return [row for row in rows if not shapes or row.content.get("shape") in shapes]
+    return [
+        row for row in rows
+        if (not shapes or row.content.get("shape") in shapes) and not row.content.get("provisional")
+    ]
+
+
+def clear_by_hand(client: TestClient, bundle_id: int, unit_id: int) -> None:
+    """계획이 쓴 묶음을 사람이 Clear로 지운다 — 판단은 미배정, 새 문장은 출처 없이 돌아간다."""
+    revision = get_group_by_unit(client, bundle_id, unit_id)["units"][0]["decision"]["revision"]
+    response = client.post(
+        f"/api/bundles/{bundle_id}/decisions/clear", json={"unit_id": unit_id, "revision": revision}, headers=AUTHOR,
+    )
+    assert response.status_code == 200, response.text
 
 
 def read_jobs(kind: str = "match") -> list[AiJob]:
@@ -335,10 +352,12 @@ def test_suggestion_follows_the_api_contract(client: TestClient, fake_ai: FakeAi
     assert set(suggestion.content) == CONTENT_KEYS
     assert suggestion.content == {
         "unit_ids": [unit_id], "target_ids": [target.id], "shape": "one_to_one", "change_type": "tone",
-        "reason": REPLY_REASON, "rule_ids": ["R02", "RW06"], "retrieval": "no_index",
+        "reason": REPLY_REASON, "rule_ids": ["R02", "RW06"], "retrieval": "no_index", "provisional": False,
     }
     assert suggestion.document_id == bundle.old_document_id
     assert set(suggestion.input_refs) == {"sha256", "extraction_id"}
+    (provisional,) = [row for row in read_rows(AiSuggestion) if row.content.get("provisional")]
+    assert (provisional.content["shape"], provisional.result) == ("one_to_one", "stale")  # 계획의 잠정 제안을 다듬기가 바꿔 썼다
 
 
 def test_unknown_rule_ids_are_dropped_with_a_warning(client: TestClient, fake_ai: FakeAi) -> None:
@@ -407,7 +426,79 @@ def test_merged_warning_compares_with_every_source(
 # --- 무효 ---
 
 
-def test_invalid_reply_holds_the_old_units_only(client: TestClient, fake_ai: FakeAi) -> None:
+def read_plan_suggestion() -> AiSuggestion:
+    """계획이 쓴 잠정 문장 묶음 제안."""
+    (suggestion,) = [row for row in read_rows(AiSuggestion) if row.content.get("provisional")]
+    return suggestion
+
+
+def test_refine_replaces_the_provisional_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle = make_match_bundle(client, p(OLD), p(ORIGINAL_NEW_TEXT))
+    (unit_id,) = read_old_ids(client, bundle, OLD)
+    use_match_reply(fake_ai, change_type="tone")
+    assert request_match(client, bundle.id).status_code == 200
+    run_plan()
+    old_suggestion = read_plan_suggestion()
+    assert read_target(ORIGINAL_NEW_TEXT).change_type == "rewritten"  # 잠정값
+
+    run_jobs()
+
+    target = read_target(ORIGINAL_NEW_TEXT)
+    new = next(row for row in read_rows(AiSuggestion) if row.id == target.suggestion_id)
+    assert target.change_type == "tone" and new.content["provisional"] is False and new.content["reason"]
+    assert read_decision(unit_id).suggestion_id == new.id
+    old_suggestion = next(row for row in read_rows(AiSuggestion) if row.id == old_suggestion.id)
+    assert old_suggestion.result == "stale"
+
+
+def queue_background_plan(bundle_id: int) -> None:
+    """배정 화면 첫 진입이 세운 계획 — 다듬기가 미리 돌리기 순위로 쌓여 사람이 청한 작업보다 늦게 돈다."""
+
+    async def _enqueue(session: AsyncSession) -> None:
+        enqueue_jobs(
+            session, bundle_id=bundle_id, kind="match_plan", requested_by=AUTHOR["X-Dev-User"],
+            items=[JobItem(payload={"origin": "prepare"})], priority=AI_PRIORITY_PLAN,
+        )
+        await session.commit()
+
+    run_in_session(_enqueue)
+
+
+def read_link_rows() -> set[tuple[int, int, int]]:
+    return {(row.target_id, row.unit_id, row.seq) for row in read_rows(TargetSource)}
+
+
+def test_refine_keeps_a_translation_requested_on_the_provisional_row(client: TestClient, fake_ai: FakeAi) -> None:
+    # 계획 → 잠정 줄에 사람이 번역을 청한다(순위 1) → 미리 돌리기 다듬기(순위 3)가 나중에 묶음을 다듬는다
+    bundle = make_match_bundle(client, p(OLD), p(ORIGINAL_NEW_TEXT))
+    (unit_id,) = read_old_ids(client, bundle, OLD)
+    fake_ai.chat = lambda data: json.dumps({"text": TRANSLATION}) if data["task"] == "translate" else build_match_reply()
+    queue_background_plan(bundle.id)
+    run_plan()
+    target_id = read_target(ORIGINAL_NEW_TEXT).id
+    links_before = read_link_rows()
+    translate = client.post(
+        f"/api/bundles/{bundle.id}/ai/translate", json={"direction": "ko_to_en", "unit_ids": [unit_id]}, headers=AUTHOR,
+    )
+    assert translate.json()["queued"] == 1, translate.text
+
+    run_jobs()
+
+    assert [job.status for job in read_jobs()] == ["done"]  # 다듬기가 번역 뒤에 돌았다
+    (translation,) = [row for row in read_rows(TargetSentence) if row.origin == "translation"]
+    translated = next(row for row in read_rows(AiSuggestion) if row.id == translation.suggestion_id)
+    assert (translated.kind, translated.result) == ("translate", "applied")
+    target = read_target(ORIGINAL_NEW_TEXT)
+    assert (target.id, target.status, target.change_type) == (target_id, "ai_suggested", "tone")
+    refined = next(row for row in read_rows(AiSuggestion) if row.id == target.suggestion_id)
+    assert (refined.content["provisional"], refined.result) == (False, "applied")
+    assert read_decision(unit_id).suggestion_id == refined.id
+    assert read_link_rows() == links_before
+    assert read_plan_suggestion().result == "stale"
+
+
+def test_invalid_reply_keeps_the_plan_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
+    # 묶기는 코드가 한 것이라 LLM 답과 상관없이 남는다 — 무효는 제안 기록에만 남는다(설계 §4)
     bundle = make_match_bundle(client, p(OLD), p(ORIGINAL_NEW_TEXT))
     (unit_id,) = read_old_ids(client, bundle, OLD)
     secret = "응답에 실린 합성 비밀 글"
@@ -415,19 +506,68 @@ def test_invalid_reply_holds_the_old_units_only(client: TestClient, fake_ai: Fak
 
     pair_up(client, bundle.id)
 
+    plan_suggestion = read_plan_suggestion()
     decision = read_decision(unit_id)
-    assert (decision.status, decision.hold_reason) == ("on_hold", SYSTEM_HOLD_AI_INVALID)
-    assert (decision.disposition, decision.suggestion_id) == ("unassigned", None)
-    target = read_target(ORIGINAL_NEW_TEXT)  # 새 문장 그대로, 출처 없음
-    assert (target.status, target.change_type, target.suggestion_id, target.warnings) == ("unassigned", None, None, [])
-    assert read_links() == set()
-    (suggestion,) = read_suggestions("one_to_one")
-    assert suggestion.result == "invalid"
-    assert suggestion.warnings == [{"kind": "invalid_format", "source": "", "target": ""}]
-    assert (suggestion.content["change_type"], suggestion.content["reason"]) == (None, "")
-    assert secret not in json.dumps(suggestion.content, ensure_ascii=False)
+    target = read_target(ORIGINAL_NEW_TEXT)
+    assert decision.status == "ai_suggested" and target.change_type == "rewritten"
+    assert (decision.disposition, decision.suggestion_id, target.suggestion_id) == (
+        "assigned", plan_suggestion.id, plan_suggestion.id,
+    )
+    assert read_links() == {(target.id, unit_id)}
+    assert [s.result for s in read_rows(AiSuggestion)] == ["applied", "invalid"]
+    (invalid,) = read_suggestions("one_to_one")
+    assert invalid.warnings == [{"kind": "invalid_format", "source": "", "target": ""}]
+    assert (invalid.content["change_type"], invalid.content["reason"]) == (None, "")
+    assert secret not in json.dumps(invalid.content, ensure_ascii=False)
     (job,) = read_jobs()
     assert job.status == "done"
+
+
+def test_failed_refine_keeps_the_plan_suggestion(
+    client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = make_match_bundle(client, p(OLD), p(ORIGINAL_NEW_TEXT))
+    (unit_id,) = read_old_ids(client, bundle, OLD)
+
+    async def skip_sleep(delay: float) -> None:
+        return None
+
+    def refuse(data: dict) -> str:
+        raise httpx2.ConnectError("refused")
+
+    monkeypatch.setattr(llm, "sleep", skip_sleep)
+    fake_ai.chat = refuse
+
+    pair_up(client, bundle.id)
+
+    (job,) = read_jobs()
+    assert (job.status, job.error) == ("failed", "connection")
+    plan_suggestion = read_plan_suggestion()
+    assert plan_suggestion.result == "applied"
+    decision, target = read_decision(unit_id), read_target(ORIGINAL_NEW_TEXT)
+    assert (decision.status, decision.suggestion_id) == ("ai_suggested", plan_suggestion.id)
+    assert (target.status, target.change_type, target.suggestion_id) == ("ai_suggested", "rewritten", plan_suggestion.id)
+    assert read_links() == {(target.id, unit_id)}
+
+
+def test_refine_is_stale_when_the_group_was_cleared(client: TestClient, fake_ai: FakeAi) -> None:
+    # 사람이 Clear로 지운 묶음은 둘 다 미배정이라 후보로는 읽히지만, 다듬을 제안이 없어 다시 제안하지 않는다
+    bundle = make_match_bundle(client, p(OLD), p(ORIGINAL_NEW_TEXT))
+    (unit_id,) = read_old_ids(client, bundle, OLD)
+    use_match_reply(fake_ai)
+    assert request_match(client, bundle.id).status_code == 200
+    run_plan()
+    clear_by_hand(client, bundle.id, unit_id)
+
+    run_jobs()
+
+    (job,) = read_jobs()
+    assert job.status == "stale"
+    assert fake_ai.requests == []
+    decision, target = read_decision(unit_id), read_target(ORIGINAL_NEW_TEXT)
+    assert (decision.status, decision.suggestion_id) == ("unassigned", None)
+    assert (target.status, target.suggestion_id) == ("unassigned", None)
+    assert read_links() == set()
 
 
 @pytest.mark.parametrize(
@@ -446,7 +586,7 @@ def test_reply_outside_the_schema_is_invalid(client: TestClient, fake_ai: FakeAi
 
     pair_up(client, bundle.id)
 
-    assert read_decision(unit_id).status == "on_hold"
+    assert read_decision(unit_id).status == "ai_suggested"  # 계획의 제안이 남는다
     (suggestion,) = read_suggestions("one_to_one")
     assert suggestion.result == "invalid"
 
@@ -480,12 +620,25 @@ def test_seed_example_parses_as_match_reply() -> None:
 # --- 낡음 ---
 
 
+def bump_target_revision(target_id: int) -> None:
+    """새 문장의 revision만 올린다 — 제안은 살아 있어 낡음을 잡는 것은 revision 비교 하나다."""
+
+    async def _bump(session: AsyncSession) -> None:
+        await session.execute(
+            update(TargetSentence).where(TargetSentence.id == target_id).values(revision=TargetSentence.revision + 1)
+        )
+        await session.commit()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:  # 가짜 AI 훅은 실행기의 이벤트 루프 안에서 돈다
+        pool.submit(run_in_session, _bump).result()
+
+
 def test_stale_when_target_revision_changed(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_match_bundle(client, p(OLD), p(ORIGINAL_NEW_TEXT))
     (unit_id,) = read_old_ids(client, bundle, OLD)
-    target = read_target(ORIGINAL_NEW_TEXT)
     use_match_reply(fake_ai)
-    fake_ai.on_chat = lambda data: save_ok(client, bundle.id, build_target_body(target))
+    target_id = read_target(ORIGINAL_NEW_TEXT).id
+    fake_ai.on_chat = lambda data: bump_target_revision(target_id)
 
     pair_up(client, bundle.id)
 
@@ -493,11 +646,13 @@ def test_stale_when_target_revision_changed(client: TestClient, fake_ai: FakeAi)
     assert job.status == "stale"
     (suggestion,) = read_suggestions("one_to_one")
     assert suggestion.result == "stale"
-    confirmed = read_target(ORIGINAL_NEW_TEXT)
-    assert (confirmed.status, confirmed.change_type, confirmed.suggestion_id) == ("confirmed", "new", None)
+    plan_suggestion = read_plan_suggestion()  # 계획의 제안은 살아 있는 채로 남는다
+    assert plan_suggestion.result == "applied"
+    target = read_target(ORIGINAL_NEW_TEXT)
+    assert (target.status, target.change_type, target.suggestion_id) == ("ai_suggested", "rewritten", plan_suggestion.id)
     decision = read_decision(unit_id)
-    assert (decision.status, decision.suggestion_id) == ("unassigned", None)
-    assert read_links() == set()
+    assert (decision.status, decision.suggestion_id) == ("ai_suggested", plan_suggestion.id)
+    assert read_links() == {(target_id, unit_id)}
 
 
 def test_stale_when_a_person_decides_the_old_unit(client: TestClient, fake_ai: FakeAi) -> None:
@@ -505,8 +660,9 @@ def test_stale_when_a_person_decides_the_old_unit(client: TestClient, fake_ai: F
     (unit_id,) = read_old_ids(client, bundle, OLD)
     use_match_reply(fake_ai)
 
-    def delete_by_hand(data: dict) -> None:
-        body = {"action": "delete", "reason": REASON, "units": [{"unit_id": unit_id, "revision": 1}]}
+    def delete_by_hand(data: dict) -> None:  # 일괄 삭제는 계획이 쓴 AI 제안 줄도 받는다 — 지우지 않고 바로 삭제로 확정한다
+        revision = get_group_by_unit(client, bundle.id, unit_id)["units"][0]["decision"]["revision"]
+        body = {"action": "delete", "reason": REASON, "units": [{"unit_id": unit_id, "revision": revision}]}
         response = client.post(f"/api/bundles/{bundle.id}/decisions/bulk", json=body, headers=AUTHOR)
         assert response.status_code == 200, response.text
 
@@ -526,9 +682,14 @@ def test_language_change_during_call_is_stale(client: TestClient, fake_ai: FakeA
     bundle = make_match_bundle(client, p(OLD), p(ORIGINAL_NEW_TEXT))
     (unit_id,) = read_old_ids(client, bundle, OLD)
     use_match_reply(fake_ai)
-    fake_ai.on_chat = lambda data: edit_document(
-        client, bundle.id, bundle.old_document_id, {"type": "set_language", "unit_ids": [unit_id], "lang": "en"},
-    )
+
+    def set_english(data: dict) -> None:  # 제안이 붙은 단위의 언어는 고칠 수 없다(R31) — 계획이 쓴 묶음을 먼저 지운다
+        clear_by_hand(client, bundle.id, unit_id)
+        edit_document(
+            client, bundle.id, bundle.old_document_id, {"type": "set_language", "unit_ids": [unit_id], "lang": "en"},
+        )
+
+    fake_ai.on_chat = set_english
 
     pair_up(client, bundle.id)
 
@@ -547,6 +708,8 @@ def test_language_change_before_start_is_stale_without_a_call(client: TestClient
     response = request_match(client, bundle.id)
     assert response.status_code == 200, response.text
     run_plan()
+    # 제안이 붙은 단위의 언어는 고칠 수 없다(R31) — 계획이 쓴 묶음을 먼저 지운다. 지운 묶음은 둘 다 미배정이라 작업이 읽는다
+    clear_by_hand(client, bundle.id, read_old_ids(client, bundle, OLD)[0])
     edit_document(client, bundle.id, document_id, {"type": "set_language", "unit_ids": [unit_id], "lang": "en"})
 
     run_jobs()
@@ -562,8 +725,9 @@ def test_split_of_the_old_unit_during_call_is_stale(client: TestClient, fake_ai:
     bundle = make_match_bundle(client, p(OLD), p(ORIGINAL_NEW_TEXT))
     (unit_id,) = read_old_ids(client, bundle, OLD)
     use_match_reply(fake_ai)
-    fake_ai.on_chat = lambda data: edit_document(
+    fake_ai.on_chat = lambda data: edit_document(  # confirm — 계획이 쓴 제안을 떼어 내고 쪼갠다
         client, bundle.id, bundle.old_document_id, {"type": "split", "unit_id": unit_id, "at": OLD.index("상태")},
+        confirm=True,
     )
 
     pair_up(client, bundle.id)
@@ -595,19 +759,23 @@ def test_document_removed_during_call_ends_the_job_without_a_write(client: TestC
     assert read_links() == set()
 
 
-def test_decided_before_start_is_stale_without_a_call(client: TestClient, fake_ai: FakeAi) -> None:
+def test_refine_is_stale_when_a_person_confirmed_first(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_match_bundle(client, p(OLD), p(ORIGINAL_NEW_TEXT))
+    (unit_id,) = read_old_ids(client, bundle, OLD)
     use_match_reply(fake_ai)
     response = request_match(client, bundle.id)
     assert response.status_code == 200, response.text
     run_plan()
-    save_ok(client, bundle.id, build_target_body(read_target(ORIGINAL_NEW_TEXT)))
+    save_ok(client, bundle.id, build_group_body(client, bundle.id, unit_id, disposition="assigned"))  # 잠정 제안을 그대로 확정
 
     run_jobs()
 
     (job,) = read_jobs()
     assert job.status == "stale"
     assert fake_ai.requests == []
+    assert read_plan_suggestion().adoption == "as_is"  # 채택은 확정한 잠정 제안에 남는다
+    target = read_target(ORIGINAL_NEW_TEXT)
+    assert (target.status, target.change_type) == ("confirmed", "rewritten")
 
 
 @pytest.mark.usefixtures("restore_guidelines")
@@ -645,7 +813,8 @@ def queue_again(job: AiJob) -> None:
     run_in_session(_queue)
 
 
-def test_replacing_a_pair_sweeps_its_ai_translation(client: TestClient, fake_ai: FakeAi) -> None:
+def test_refining_a_pair_again_keeps_its_ai_translation(client: TestClient, fake_ai: FakeAi) -> None:
+    # 다듬기는 묶음이 그대로일 때만 쓰고 제자리에서 쓴다 — 출처가 그대로라 AI 번역은 남는다(번역은 출처 새 문장을 따른다)
     bundle = make_match_bundle(client, p(OLD), p(ORIGINAL_NEW_TEXT))
     (unit_id,) = read_old_ids(client, bundle, OLD)
     fake_ai.chat = lambda data: json.dumps({"text": TRANSLATION}) if data["task"] == "translate" else build_match_reply()
@@ -662,9 +831,9 @@ def test_replacing_a_pair_sweeps_its_ai_translation(client: TestClient, fake_ai:
 
     run_jobs()
 
-    assert all(row.origin == "new_doc" for row in read_rows(TargetSentence))  # 출처가 다시 쓰인 AI 번역은 지운다
+    assert [row.id for row in read_rows(TargetSentence) if row.origin == "translation"] == [translation.id]
     translated = next(row for row in read_rows(AiSuggestion) if row.id == translation.suggestion_id)
-    assert (translated.kind, translated.result) == ("translate", "stale")
+    assert (translated.kind, translated.result) == ("translate", "applied")
     replaced = next(row for row in read_rows(AiSuggestion) if row.id == first.id)
     assert replaced.result == "stale"
     target = read_target(ORIGINAL_NEW_TEXT)
@@ -674,17 +843,19 @@ def test_replacing_a_pair_sweeps_its_ai_translation(client: TestClient, fake_ai:
     assert read_decision(unit_id).suggestion_id == target.suggestion_id
 
 
-def test_invalid_reply_over_a_previous_pair_unlinks_it(client: TestClient, fake_ai: FakeAi) -> None:
+def test_invalid_reply_over_a_previous_pair_keeps_it(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, unit_id = make_pair(client, fake_ai)
+    refined = read_target(ORIGINAL_NEW_TEXT).suggestion_id
     queue_again(read_jobs()[0])
     fake_ai.chat = lambda data: "not json"
 
     run_jobs()
 
-    assert read_decision(unit_id).status == "on_hold"
+    decision = read_decision(unit_id)
+    assert (decision.status, decision.suggestion_id) == ("ai_suggested", refined)
     target = read_target(ORIGINAL_NEW_TEXT)
-    assert (target.status, target.change_type, target.confirmed_text) == ("unassigned", None, ORIGINAL_NEW_TEXT)
-    assert read_links() == set()
+    assert (target.status, target.change_type, target.suggestion_id) == ("ai_suggested", "tone", refined)
+    assert read_links() == {(target.id, unit_id)}
 
 
 # --- 사람 확정과 채택 ---

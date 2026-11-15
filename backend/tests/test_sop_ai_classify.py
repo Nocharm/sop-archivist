@@ -20,7 +20,7 @@ from app.sop.ai.classify import ClassifyReply
 from app.sop.ai.constants import CANDIDATE_TOP_K, MAX_REWRITE_SENTENCES
 from app.sop.ai.guidelines import SEEDS_DIR
 from app.sop.checks import check_sentence
-from app.sop.constants import SLOT_KEYS, SYSTEM_HOLD_AI_INVALID
+from app.sop.constants import AI_PRIORITY_PRE_CLASSIFY, AI_PRIORITY_USER, SLOT_KEYS, SYSTEM_HOLD_AI_INVALID
 from app.sop.models import (
     AiJob,
     AiSuggestion,
@@ -138,6 +138,67 @@ def test_request_queues_one_job_per_pair(client: TestClient, fake_ai: FakeAi) ->
     job = read_single_job()
     assert (job.kind, job.status, job.unit_ids) == ("classify", "queued", [ko, en])
     assert (job.document_id, job.requested_by) == (bundle.document_id, "qa.member")
+
+
+def queue_background_classify(bundle_id: int, document_id: int, pairs: Sequence[Sequence[int]]) -> None:
+    """미리 돌리기 작업을 직접 쌓는다 — 미리 돌리기 걸이가 아직 없는 시험에서도 줄 상태를 만든다."""
+
+    async def _enqueue(session: AsyncSession) -> None:
+        items = [jobs.JobItem(document_id=document_id, unit_ids=list(pair)) for pair in pairs]
+        jobs.enqueue_jobs(
+            session, bundle_id=bundle_id, kind="classify", requested_by="qa.member", items=items,
+            priority=AI_PRIORITY_PRE_CLASSIFY, background=True,
+        )
+        await session.commit()
+
+    run_in_session(_enqueue)
+
+
+def test_document_request_promotes_queued_background_jobs(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle = make_ai_bundle(client)
+    first = find_ids(client, bundle, AI_KO_1, AI_EN_1)
+    queue_background_classify(bundle.id, bundle.document_id, [first])
+
+    out = request_classify(client, bundle.id, document_id=bundle.document_id).json()
+
+    assert out["queued"] == 2  # 올린 1 + 새로 쌓은 1
+    assert "already_queued" not in out["skipped_by_reason"]
+    by_units = {tuple(job.unit_ids): job for job in read_rows(AiJob)}
+    assert len(by_units) == 2
+    assert {job.priority for job in by_units.values()} == {AI_PRIORITY_USER}
+    assert by_units[tuple(first)].background is True
+    assert [job.background for job in by_units.values() if job is not by_units[tuple(first)]] == [False]
+
+
+def test_unit_request_promotes_only_the_jobs_holding_those_units(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle = make_ai_bundle(client)
+    first = find_ids(client, bundle, AI_KO_1, AI_EN_1)
+    second = find_ids(client, bundle, AI_KO_2, AI_EN_2)
+    queue_background_classify(bundle.id, bundle.document_id, [first, second])
+
+    out = request_classify(client, bundle.id, unit_ids=first).json()
+
+    assert (out["queued"], out["skipped_total"]) == (1, 0)
+    priorities = {tuple(job.unit_ids): job.priority for job in read_rows(AiJob)}
+    assert priorities == {tuple(first): AI_PRIORITY_USER, tuple(second): AI_PRIORITY_PRE_CLASSIFY}
+
+
+def test_running_background_job_is_still_skipped_as_already_queued(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle = make_ai_bundle(client)
+    first = find_ids(client, bundle, AI_KO_1, AI_EN_1)
+    queue_background_classify(bundle.id, bundle.document_id, [first])
+
+    async def _start(session: AsyncSession) -> None:
+        await session.execute(update(AiJob).values(status="running"))
+        await session.commit()
+
+    run_in_session(_start)
+
+    out = request_classify(client, bundle.id, unit_ids=first).json()
+
+    assert (out["queued"], out["skipped_by_reason"]) == (0, {"already_queued": 2})
+    (job,) = read_rows(AiJob)
+    assert (job.status, job.priority) == ("running", AI_PRIORITY_PRE_CLASSIFY)
 
 
 def test_request_for_a_document_queues_every_pair_once(client: TestClient, fake_ai: FakeAi) -> None:

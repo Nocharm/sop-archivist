@@ -13,6 +13,7 @@ from sqlalchemy import (
     Index,
     Integer,
     LargeBinary,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -26,6 +27,7 @@ from app.sop.constants import (
     AI_ADOPTIONS,
     AI_JOB_KINDS,
     AI_JOB_STATUSES,
+    AI_PRIORITY_USER,
     AI_SUGGESTION_RESULTS,
     BUNDLE_STATUSES,
     MEMBER_ROLES,
@@ -539,14 +541,14 @@ def generate_request_id() -> str:
 
 
 class AiJob(Base):
-    """AI 작업 — 요청이 쌓는 큐 한 줄. 실행기가 (status, id) 순으로 다음 작업을 꺼낸다."""
+    """AI 작업 — 요청이 쌓는 큐 한 줄. 실행기가 queued 중 (priority, id) 순으로 다음 작업을 꺼낸다."""
 
     __tablename__ = "ai_jobs"
     __table_args__ = (
         CheckConstraint(_build_in_check("kind", AI_JOB_KINDS), name="kind"),
         CheckConstraint(_build_in_check("status", AI_JOB_STATUSES), name="status"),
-        Index("ix_ai_jobs_status_id", "status", "id"),
-        # 최근 작업 목록이 묶음마다 하루 안에 끝난 작업을 찾는다(대기·실행 중은 위 (status, id)가 찾는다)
+        Index("ix_ai_jobs_status_priority_id", "status", "priority", "id"),
+        # 최근 작업 목록이 묶음마다 하루 안에 끝난 작업을 찾는다(대기·실행 중은 위 (status, priority, id)가 찾는다)
         Index("ix_ai_jobs_bundle_id_finished_at", "bundle_id", "finished_at"),
     )
 
@@ -570,6 +572,9 @@ class AiJob(Base):
     # 요청 한 번이 쌓은 작업들의 묶음 값 — 화면이 "n / N"으로 묶어 보인다. 입구 2 계획 작업이 쌓는 변경 종류 작업은
     # 계획 작업의 값을 잇는다. 0012 이전 행은 'job-<id>'로 채워 저마다 한 요청이다
     request_id: Mapped[str] = mapped_column(String(32), index=True, default=generate_request_id)
+    # 꺼내는 순서(AI_PRIORITY_*, 작을수록 먼저)와 미리 돌리기 표시 — 0019 이전 행은 사람 요청(1)·False다
+    priority: Mapped[int] = mapped_column(SmallInteger, default=AI_PRIORITY_USER)
+    background: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

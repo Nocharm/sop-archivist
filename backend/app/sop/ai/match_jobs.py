@@ -1,6 +1,7 @@
 """입구 2 짝 — 묶음의 옛 단위와 새 문장을 임베딩(꺼졌거나 실패하면 글자 유사도)으로 묶는 계획과, 문장 그룹마다 LLM에 변경 종류를 묻는 작업 (설계 §6.7, §7.10, §8.4).
 
-계획은 LLM을 부르지 않고 표·그림·남은 항목의 제안은 바로 쓴다. 점수는 compute 안에서만 쓰고 제안·작업·응답·로그 어디에도 남기지 않는다(설계 §12).
+계획은 LLM을 부르지 않고 문장 묶음(잠정 변경 종류)·표·그림·남은 항목의 제안을 바로 쓰며, 문장 묶음은 변경 종류 작업이 다듬는다.
+다시 세운 계획은 살아 있는 제안과 같은 묶음을 그대로 두고 달라진 것만 걷고 다시 쓴다(설계 §4). 점수는 compute 안에서만 쓰고 제안·작업·응답·로그 어디에도 남기지 않는다(설계 §12).
 입구 2 새 문장의 글은 새 문서 원문이라 제안이 건드리지 않는다(설계 §6.7).
 """
 
@@ -13,17 +14,18 @@ from typing import Any, Literal, NamedTuple, TypeVar
 
 import numpy as np
 from pydantic import BaseModel
-from sqlalchemy import Row, Select, insert, select
+from sqlalchemy import Row, Select, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
+from app.clock import now
+from app.settings import settings
 from app.sop.ai.apply import (
     AI_SUGGESTED,
     add_suggestion,
     can_receive_suggestion,
     clear_previous_suggestion,
     decide_ai_change_type,
-    hold_invalid,
 )
 from app.sop.ai.candidates import RETRIEVAL_OF_UNAVAILABLE, Retrieval
 from app.sop.ai.classify import AiWarning, build_warning, check_rule_ids, load_units
@@ -31,17 +33,25 @@ from app.sop.ai.constants import MATCH_EMBED_THRESHOLD, MATCH_TEXT_THRESHOLD
 from app.sop.ai.context import UnitContext, load_unit_context
 from app.sop.ai.embeddings import EmbeddingUnavailable, embed_texts
 from app.sop.ai.guidelines import RULES_KEY, GuidelineRef, format_guideline_versions, load_active_guidelines
-from app.sop.ai.jobs import ACTIVE_JOB_STATUSES, JobItem, enqueue_jobs
+from app.sop.ai.jobs import ACTIVE_JOB_STATUSES, JobItem, enqueue_jobs, promote_queued_jobs
 from app.sop.ai.llm import AiStr, build_messages, call_llm, ensure_llm_enabled, parse_reply
-from app.sop.ai.matching import MatchGroup, MatchItem, MatchProposal, build_text_scores, propose_groups
+from app.sop.ai.matching import (
+    MatchGroup,
+    MatchItem,
+    MatchProposal,
+    build_text_scores,
+    is_spacing_change,
+    propose_groups,
+)
 from app.sop.ai.runner import AiCallFailed
 from app.sop.ai.schemas import SkippedOut
 from app.sop.ai.similarity import cosine_matrix
 from app.sop.checks import check_sentence
+from app.sop.constants import AI_PRIORITY_PLAN, AI_PRIORITY_PRE_REFINE, AI_PRIORITY_USER
 from app.sop.decisions import load_cell_positions, load_table_shapes
 from app.sop.detach import ORIGIN_NEW_DOC, UNASSIGNED
 from app.sop.errors import raise_rule
-from app.sop.groups import TABLE_UNIT_KINDS, select_in_chunks
+from app.sop.groups import TABLE_UNIT_KINDS, iter_chunks, select_in_chunks
 from app.sop.match import list_identical_candidates
 from app.sop.models import (
     AiJob,
@@ -59,7 +69,7 @@ from app.sop.units import UNIT_ACTIVE
 
 MATCH_PLAN_KIND = "match_plan"
 MATCH_KIND = "match"  # 계획이 쓴 제안도 이 종류다 — 화면·다시 받기는 계획과 변경 종류 작업을 가르지 않는다
-_ACTIVE_KINDS = (MATCH_PLAN_KIND, MATCH_KIND)  # 계획은 묶음 전체를 다시 쓰므로 어느 쪽이 돌아도 새로 쌓지 않는다
+_ACTIVE_KINDS = (MATCH_PLAN_KIND, MATCH_KIND)  # 계획은 묶음 전체를 다시 보므로 어느 쪽이 돌아도 새로 쌓지 않는다
 _SUGGESTION_KINDS = (MATCH_KIND,)  # 같은 종류 제안 위에만 쓴다 — 분류 제안을 덮지 않는다(설계 §6.8)
 _WHOLE_BUNDLE = 0  # 건너뜀 응답의 unit_id — 묶음 전체 요청이라 가리킬 단위가 없고, 0은 어떤 단위의 id도 아니다
 _SENTENCE, _TABLE, _FIGURE = "sentence", "table", "figure"  # MatchItem.kind — 새 문장 종류와 같은 값
@@ -67,6 +77,11 @@ _CELL_SEPARATOR = " "  # 양쪽 표 글을 같게 이어야 점수가 뜻이 있
 _PROMPT_KEY = "prompt.match"
 _FEATURE = "sop.match"
 _CHANGE_ORDER = ("as_is", "tone", "rewritten", "split", "merged")  # 변화가 작은 순서 — 제안 기록의 한 칸을 정한다
+# 계획 작업 payload["origin"] — 누가 세웠는지가 다듬기 작업의 순위와 삭제 후보를 정한다(설계 §4의 표). 값은 "user" | "prepare" | "upload"
+PLAN_ORIGIN_USER = "user"  # Match 단추. 키가 없는 옛 계획도 이것으로 읽는다. 그대로 둔 잠정 묶음의 다듬기를 다시 쌓는 것은 이것뿐이다
+PLAN_ORIGIN_PREPARE = "prepare"  # 배정 화면 첫 진입
+PLAN_ORIGIN_UPLOAD = "upload"  # 파일 읽기 끝 — 새 문서 목록이 덜 찼을 수 있어 새 삭제 후보를 쓰지 않는다
+_DELETE_CANDIDATE = "delete_candidate"  # 제안 모양
 
 _CellT = TypeVar("_CellT")
 _CellKey = tuple[int, int, str, int]  # (행, 열, 언어, 칸 안 순서)
@@ -94,6 +109,19 @@ async def has_assign_documents(session: AsyncSession, bundle_id: int) -> bool:
     return await _has_target_doc(session, bundle_id, "assign")
 
 
+async def promote_match_jobs(session: AsyncSession, bundle_id: int) -> int:
+    """계획이 줄 서 있거나 돌고 있으면 0 — 그 계획이 곧 줄 서는 변경 종류 작업을 쌓는다. 아니면 줄 선 변경 종류 작업을 사람 순위로 올린 수."""
+    plan_active = await session.scalar(
+        select(AiJob.id)
+        .where(AiJob.bundle_id == bundle_id, AiJob.kind == MATCH_PLAN_KIND, AiJob.status.in_(ACTIVE_JOB_STATUSES))
+        .limit(1)
+    )
+    if plan_active is not None:
+        return 0
+    promoted, _ = await promote_queued_jobs(session, bundle_id, MATCH_KIND)
+    return promoted
+
+
 async def select_match_items(session: AsyncSession, bundle_id: int) -> tuple[list[JobItem], list[SkippedOut]]:
     """요청을 작업 줄로 — 묶음 전체라 작업 하나다. 입구 2 문서가 없으면 409, 이전 계획이나 그 변경 종류 작업이 돌고 있으면 쌓지 않는다."""
     if not await _has_target_doc(session, bundle_id, "match"):
@@ -105,7 +133,33 @@ async def select_match_items(session: AsyncSession, bundle_id: int) -> tuple[lis
     )
     if active is not None:
         return [], [SkippedOut(unit_id=_WHOLE_BUNDLE, reason="already_queued")]
-    return [JobItem()], []
+    return [JobItem(payload={"origin": PLAN_ORIGIN_USER})], []
+
+
+async def _has_ready_document(session: AsyncSession, bundle_id: int, side: str) -> bool:
+    """읽기가 끝난 문서가 있는지 — 새 문서는 입구 2(이미 쓴 문서)에 속한 것만 센다."""
+    statement = select(Document.id).where(Document.bundle_id == bundle_id, Document.side == side, Document.status == "ready")
+    if side == "new":
+        statement = statement.join(TargetDoc, TargetDoc.id == Document.target_doc_id).where(TargetDoc.entrance == "match")
+    return await session.scalar(statement.limit(1)) is not None
+
+
+async def enqueue_auto_plan(session: AsyncSession, bundle_id: int, actor: str, *, origin: str) -> AiJob | None:
+    """저절로 서는 계획 — 설정·AI가 켜져 있고 읽힌 옛 문서와 이미 쓴 새 문서가 있고 줄 선 계획이 없을 때만 하나 쌓는다. 돌고 있는 계획이나 변경 종류 작업은 막지 않는다. 확인하고 쌓는 사이에 다른 요청이 끼지 않게 호출부가 묶음을 잠근 채로 부르고 커밋한다."""
+    if not (settings.ai_auto_prepare and settings.ai_enabled):
+        return None
+    queued = await session.scalar(
+        select(AiJob.id).where(AiJob.bundle_id == bundle_id, AiJob.kind == MATCH_PLAN_KIND, AiJob.status == "queued").limit(1)
+    )
+    if queued is not None:
+        return None
+    if not (await _has_ready_document(session, bundle_id, "old") and await _has_ready_document(session, bundle_id, "new")):
+        return None
+    (job,) = enqueue_jobs(
+        session, bundle_id=bundle_id, kind=MATCH_PLAN_KIND, requested_by=actor,
+        items=[JobItem(payload={"origin": origin})], priority=AI_PRIORITY_PLAN,
+    )
+    return job
 
 
 # --- load ---
@@ -305,6 +359,7 @@ class _Write:
     disposition: str = UNASSIGNED
     targets: tuple[_TargetWrite, ...] = ()
     links: tuple[tuple[int, int], ...] = ()  # (새 문장 id, 단위 id)
+    provisional: bool = False  # 계획이 쓴 문장 묶음이 다듬기(변경 종류 작업)를 기다리는 중
 
 
 def _list_fresh(loaded: Mapping[int, _Entry], current: Mapping[int, _Entry], revisions: Mapping[str, int]) -> set[int]:
@@ -452,6 +507,61 @@ def _plan_figure(group: MatchGroup, olds: Mapping[int, _Entry], targets: Mapping
     )
 
 
+def _plan_sentence(
+    group: MatchGroup,
+    sources: Sequence[Unit],
+    olds: Mapping[int, _Entry],
+    news: Mapping[int, _Entry],
+    targets: Mapping[int, TargetSentence],
+) -> _Write:
+    """문장 묶음 — 변경 종류는 코드가 정한 잠정값이고 다듬기 작업이 LLM 답으로 바꿔 쓴다(설계 §4). sources는 문서 순서다.
+
+    띄어쓰기만 다른 1:1은 뜻이 바뀔 수 없어 말투로 정하고 다듬지 않는다. 나머지는 고쳐 씀을 넘겨 합침·나눔·그대로는 구조와 글이 정한다.
+    """
+    is_spacing = (
+        len(sources) == 1 and len(group.target_ids) == 1
+        and is_spacing_change(sources[0].text, news[group.target_ids[0]].item.text)
+    )
+    requested = "tone" if is_spacing else "rewritten"
+    per_document = Counter(news[target_id].document_id for target_id in group.target_ids)  # 나눔은 같은 새 문서 안에서만이다
+    change_types = {
+        target_id: decide_ai_change_type(
+            sources, news[target_id].item.text, requested, sentence_count=per_document[news[target_id].document_id]
+        )
+        for target_id in group.target_ids
+    }
+    old_texts = [source.text for source in sources]
+    return _Write(
+        olds[group.old_ids[0]], _get_group_shape(group.old_ids, group.target_ids),
+        max(change_types.values(), key=_CHANGE_ORDER.index), unit_ids=group.old_ids, disposition="assigned",
+        targets=tuple(
+            _TargetWrite(targets[target_id], change_types[target_id], check_sentence(old_texts, news[target_id].item.text))
+            for target_id in group.target_ids
+        ),
+        links=tuple(product(group.target_ids, [source.id for source in sources])),
+        provisional=not is_spacing,
+    )
+
+
+async def _plan_sentences(
+    session: AsyncSession,
+    groups: Sequence[MatchGroup],
+    olds: Mapping[int, _Entry],
+    news: Mapping[int, _Entry],
+    targets: Mapping[int, TargetSentence],
+) -> list[_Write]:
+    """문장 묶음마다 제안 — 출처 순서는 변경 종류 작업과 같게 문서 순서다(load_units)."""
+    units = await load_units(session, {unit_id for group in groups for unit_id in group.old_ids})
+    position = {unit.id: index for index, unit in enumerate(units)}
+    by_id = {unit.id: unit for unit in units}
+    return [
+        _plan_sentence(
+            group, [by_id[unit_id] for unit_id in sorted(group.old_ids, key=position.__getitem__)], olds, news, targets
+        )
+        for group in groups
+    ]
+
+
 async def _plan_new(
     session: AsyncSession, target_ids: Sequence[int], news: Mapping[int, _Entry], targets: Mapping[int, TargetSentence]
 ) -> list[_Write]:
@@ -475,8 +585,12 @@ def _build_content(
     *,
     reason: str = "",
     rule_ids: Iterable[str] = (),
+    provisional: bool = False,
 ) -> dict[str, object]:
-    """제안 내용(API 계약 `match`) — 계획이 쓴 제안은 LLM을 거치지 않아 이유·규칙이 비고, 삭제 후보의 사유는 사람이 확정할 때 적는다(설계 §7.10)."""
+    """제안 내용(API 계약 `match`) — 계획이 쓴 제안은 LLM을 거치지 않아 이유·규칙이 비고, 삭제 후보의 사유는 사람이 확정할 때 적는다(설계 §7.10).
+
+    provisional은 늘 있는 칸이고, 계획이 쓴 문장 묶음이 다듬기를 기다리는 동안만 참이다(설계 §4).
+    """
     return {
         "unit_ids": list(unit_ids),
         "target_ids": list(target_ids),
@@ -485,14 +599,18 @@ def _build_content(
         "reason": reason,
         "rule_ids": list(rule_ids),
         "retrieval": retrieval,
+        "provisional": provisional,
     }
 
 
 def _add_suggestion(session: AsyncSession, job: AiJob, write: _Write, retrieval: Retrieval) -> AiSuggestion:
     """작업은 계획 하나지만 제안은 항목마다다 — 종류는 match이고, 문서는 작업이 아니라 그 항목의 것이다."""
     target_ids = [item.target.id for item in write.targets]
+    content = _build_content(
+        write.unit_ids, target_ids, write.shape, write.change_type, retrieval, provisional=write.provisional
+    )
     suggestion = add_suggestion(
-        session, job, content=_build_content(write.unit_ids, target_ids, write.shape, write.change_type, retrieval),
+        session, job, content=content,
         warnings=[warning for item in write.targets for warning in item.warnings], result="applied",
         input_refs=write.entry.input_refs,
     )
@@ -521,6 +639,128 @@ async def _insert_links(session: AsyncSession, writes: Iterable[_Write]) -> None
             seqs[target_id] += 1
     if rows:
         await session.execute(insert(TargetSource), rows)
+
+
+# --- 묶음이 그대로인가 (설계 §4) ---
+
+
+async def _load_live_suggestions(
+    session: AsyncSession, members: Iterable[UnitDecision | TargetSentence]
+) -> dict[int, AiSuggestion]:
+    """판단·새 문장이 AI 제안으로 가리키는 살아 있는(applied) 짝 맞추기 제안 — {제안 id: 제안}."""
+    ids = {member.suggestion_id for member in members if member.status == AI_SUGGESTED and member.suggestion_id is not None}
+    rows = await select_in_chunks(
+        session,
+        lambda chunk: select(AiSuggestion).where(
+            AiSuggestion.id.in_(chunk), AiSuggestion.kind == MATCH_KIND, AiSuggestion.result == "applied"
+        ),
+        ids,
+    )
+    return {row[0].id: row[0] for row in rows}
+
+
+def _find_live_suggestion(
+    unit_ids: Iterable[int],
+    targets: Iterable[TargetSentence],
+    decisions: Mapping[int, UnitDecision],
+    live: Mapping[int, AiSuggestion],
+) -> AiSuggestion | None:
+    """단위·새 문장이 모두 한 살아 있는 짝 맞추기 제안을 가리키고 그 제안의 단위·새 문장이 이것과 같으면 그 제안, 아니면 None.
+
+    다듬기는 이것이 있을 때만 쓰고(사람이 Clear로 지운 묶음·새 계획이 바꾼 묶음을 다시 쓰지 않게), 다시 세운 계획은 이것이 같은 모양이면 걷지 않는다.
+    """
+    unit_ids, target_rows = list(unit_ids), list(targets)
+    if any(unit_id not in decisions for unit_id in unit_ids):
+        return None
+    pointed = [*(decisions[unit_id] for unit_id in unit_ids), *target_rows]
+    if any(member.status != AI_SUGGESTED for member in pointed) or len({member.suggestion_id for member in pointed}) != 1:
+        return None
+    suggestion = live.get(pointed[0].suggestion_id)
+    if suggestion is None:
+        return None
+    if set(suggestion.content["unit_ids"]) != set(unit_ids):
+        return None
+    if set(suggestion.content["target_ids"]) != {target.id for target in target_rows}:
+        return None
+    return suggestion
+
+
+_GroupKey = tuple[str, frozenset[int], frozenset[int]]  # (모양, 단위, 새 문장) — 다시 세운 계획이 "같은 묶음"을 가리는 열쇠
+
+
+def _get_write_key(write: _Write) -> _GroupKey:
+    return write.shape, frozenset(write.unit_ids), frozenset(item.target.id for item in write.targets)
+
+
+def _get_suggestion_key(suggestion: AiSuggestion) -> _GroupKey:
+    content = suggestion.content
+    return content["shape"], frozenset(content["unit_ids"]), frozenset(content["target_ids"])
+
+
+def _find_kept_suggestion(
+    write: _Write, decisions: Mapping[int, UnitDecision], live: Mapping[int, AiSuggestion]
+) -> AiSuggestion | None:
+    """다시 세운 계획이 그대로 둘 살아 있는 제안 — 구성원이 모두 그것을 가리키고 열쇠가 같을 때만."""
+    suggestion = _find_live_suggestion(write.unit_ids, (item.target for item in write.targets), decisions, live)
+    if suggestion is None or _get_suggestion_key(suggestion) != _get_write_key(write):
+        return None
+    return suggestion
+
+
+async def _load_rejected_keys(session: AsyncSession, bundle_id: int) -> set[_GroupKey]:
+    """사람이 버린(Clear 등, 채택 rejected) 짝 맞추기 제안의 열쇠 — 저절로 선 계획은 이 묶음을 다시 쓰지 않는다(설계 §4)."""
+    rows = await session.execute(
+        select(AiSuggestion).where(
+            AiSuggestion.bundle_id == bundle_id, AiSuggestion.kind == MATCH_KIND, AiSuggestion.adoption == "rejected"
+        )
+    )
+    return {_get_suggestion_key(suggestion) for (suggestion,) in rows}
+
+
+class _ActiveRefine(NamedTuple):
+    job_id: int
+    unit_ids: frozenset[int]
+    target_ids: frozenset[int]
+
+
+async def _load_active_refines(session: AsyncSession, bundle_id: int) -> list[_ActiveRefine]:
+    """줄 섰거나 도는 다듬기 작업이 잡은 단위·새 문장 — JSON 열이라 읽은 뒤 가린다."""
+    rows = await session.execute(
+        select(AiJob.id, AiJob.unit_ids, AiJob.target_ids).where(
+            AiJob.bundle_id == bundle_id, AiJob.kind == MATCH_KIND, AiJob.status.in_(ACTIVE_JOB_STATUSES)
+        )
+    )
+    return [_ActiveRefine(row.id, frozenset(row.unit_ids), frozenset(row.target_ids)) for row in rows]
+
+
+def _touches(refine: _ActiveRefine, unit_ids: Collection[int], target_ids: Collection[int]) -> bool:
+    return not (refine.unit_ids.isdisjoint(unit_ids) and refine.target_ids.isdisjoint(target_ids))
+
+
+def _should_refine(write: _Write, kept: AiSuggestion | None, origin: str, refines: Sequence[_ActiveRefine]) -> bool:
+    """문장 묶음에 다듬기를 쌓을까 — 새로 쓴 잠정 묶음은 늘, 그대로 둔 묶음은 사람이 낸 계획이고 아직 잠정이며 잡은 다듬기가 없을 때만.
+
+    저절로 선 계획이 다시 쌓으면 사람이 취소한 다듬기가 되살아나고 무효 답을 낸 묶음을 계획마다 다시 묻는다(설계 §4).
+    """
+    if kept is None:
+        return write.provisional
+    target_ids = {item.target.id for item in write.targets}
+    return (
+        origin == PLAN_ORIGIN_USER
+        and bool(kept.content.get("provisional"))  # 칸이 없는 옛 제안은 잠정이 아니다
+        and not any(_touches(refine, write.unit_ids, target_ids) for refine in refines)
+    )
+
+
+async def _cancel_refines(session: AsyncSession, refines: Sequence[_ActiveRefine]) -> None:
+    """계획이 바꾼 묶음의 옛 다듬기 — 남기면 옛 묶음의 답이 새 계획의 제안을 걷는다. 돌던 작업의 결과는 실행기가 버린다."""
+    for chunk in iter_chunks([refine.job_id for refine in refines]):
+        await session.execute(
+            update(AiJob)
+            .where(AiJob.id.in_(chunk), AiJob.status.in_(ACTIVE_JOB_STATUSES))
+            .values(status="cancelled", finished_at=now())
+            .execution_options(synchronize_session=False)
+        )
 
 
 class MatchPlanHandler:
@@ -564,40 +804,77 @@ class MatchPlanHandler:
         targets = await _load_targets(
             session, {*lone_news, *(target_id for group in groups for target_id in group.target_ids)}
         )
-        replaced = [decision for decision in decisions.values() if decision.status == AI_SUGGESTED]
-        await clear_previous_suggestion(session, decisions.values(), targets.values())
-        for decision in replaced:  # 문장 그룹은 변경 종류 작업까지 미배정이라 새 상태가 대신 올려 주지 않는다
-            decision.revision += 1
 
         by_kind: dict[str, list[MatchGroup]] = defaultdict(list)
         for group in groups:
             by_kind[loaded.olds[group.old_ids[0]].item.kind].append(group)
-        enqueue_jobs(
-            session, bundle_id=job.bundle_id, kind=MATCH_KIND, requested_by=job.requested_by,
-            request_id=job.request_id,  # 사람이 낸 짝 맞추기 요청 하나로 진행을 센다
-            items=[
-                JobItem(
-                    document_id=loaded.olds[group.old_ids[0]].document_id, unit_ids=group.old_ids,
-                    target_ids=group.target_ids, payload={"retrieval": retrieval},
-                )
-                for group in by_kind[_SENTENCE]
-            ],
-        )
+        sentences = await _plan_sentences(session, by_kind[_SENTENCE], loaded.olds, loaded.news, targets)
         writes = [
+            *sentences,
             *await _plan_tables(session, by_kind[_TABLE], loaded.olds, targets),
             *(_plan_figure(group, loaded.olds, targets) for group in by_kind[_FIGURE]),
             *await _plan_new(session, lone_news, loaded.news, targets),
         ]
         if not await has_assign_documents(session, job.bundle_id):  # 입구 1이 있으면 분류가 받도록 미배정으로 남긴다(설계 §7.10)
             writes += [
-                _Write(loaded.olds[unit_id], "delete_candidate", "deleted", unit_ids=(unit_id,), disposition="delete")
+                _Write(loaded.olds[unit_id], _DELETE_CANDIDATE, "deleted", unit_ids=(unit_id,), disposition="delete")
                 for unit_id in lone_olds
             ]
-        suggestions = [_add_suggestion(session, job, write, retrieval) for write in writes]
+
+        # 모양·단위·새 문장이 살아 있는 제안과 같으면 걷지도 쓰지도 않는다 — 다듬은 종류와 줄 선 다듬기가 남는다(설계 §4)
+        live = await _load_live_suggestions(
+            session, [*decisions.values(), *(item.target for write in writes for item in write.targets)]
+        )
+        judged = [(write, _find_kept_suggestion(write, decisions, live)) for write in writes]  # 쓸 것과 그대로 둔 제안
+        origin = job.payload.get("origin", PLAN_ORIGIN_USER)
+        left: list[_Write] = []  # 걷지도 쓰지도 않는다
+        if origin != PLAN_ORIGIN_USER:  # 저절로 선 계획은 사람이 지운 묶음을 다시 제안하지 않는다 — Match를 누르면 다시 낸다
+            rejected = await _load_rejected_keys(session, job.bundle_id)
+            left = [write for write, kept in judged if kept is None and _get_write_key(write) in rejected]
+            judged = [(write, kept) for write, kept in judged if kept is not None or _get_write_key(write) not in rejected]
+        # 업로드 계획은 새 삭제 후보만 쓰지 않는다 — 지금 규칙으로도 삭제 후보인 살아 있는 제안은 위에서 그대로 두었다(§4)
+        changed = [
+            write for write, kept in judged
+            if kept is None and not (origin == PLAN_ORIGIN_UPLOAD and write.shape == _DELETE_CANDIDATE)
+        ]
+        untouched = [*(write for write, kept in judged if kept is not None), *left]
+        kept_units = {unit_id for write in untouched for unit_id in write.unit_ids}
+        kept_targets = {item.target.id for write in untouched for item in write.targets}
+        cleared = [decision for unit_id, decision in decisions.items() if unit_id not in kept_units]
+        cleared_targets = [target for target_id, target in targets.items() if target_id not in kept_targets]
+
+        cleared_unit_ids, cleared_target_ids = {row.unit_id for row in cleared}, {row.id for row in cleared_targets}
+        refines: list[_ActiveRefine] = []  # 취소하지 않고 남는 다듬기
+        cancelled: list[_ActiveRefine] = []
+        for refine in await _load_active_refines(session, job.bundle_id):
+            (cancelled if _touches(refine, cleared_unit_ids, cleared_target_ids) else refines).append(refine)
+        await _cancel_refines(session, cancelled)
+        replaced = [decision for decision in cleared if decision.status == AI_SUGGESTED]
+        await clear_previous_suggestion(session, cleared, cleared_targets)
+        for decision in replaced:  # 미배정으로 남는 짝 없는 옛 단위는 새 상태가 대신 올려 주지 않는다
+            decision.revision += 1
+
+        priority, background = (
+            (AI_PRIORITY_USER, False) if origin == PLAN_ORIGIN_USER else (AI_PRIORITY_PRE_REFINE, True)
+        )
+        enqueue_jobs(
+            session, bundle_id=job.bundle_id, kind=MATCH_KIND, requested_by=job.requested_by,
+            request_id=job.request_id,  # 계획을 세운 요청 하나로 진행을 센다
+            priority=priority, background=background,
+            items=[
+                JobItem(
+                    document_id=write.entry.document_id, unit_ids=write.unit_ids,
+                    target_ids=[item.target.id for item in write.targets], payload={"retrieval": retrieval},
+                )
+                for write, kept in judged  # 잠정인 것은 문장 묶음뿐이라 표·그림·신규·삭제 후보에는 쌓이지 않는다
+                if _should_refine(write, kept, origin, refines)
+            ],
+        )
+        suggestions = [_add_suggestion(session, job, write, retrieval) for write in changed]
         await session.flush()  # 판단·새 문장이 제안 id를 가리킨다
-        for write, suggestion in zip(writes, suggestions, strict=True):
+        for write, suggestion in zip(changed, suggestions, strict=True):
             _apply_write(write, suggestion.id, decisions)
-        await _insert_links(session, writes)
+        await _insert_links(session, changed)
         return "done"
 
 
@@ -661,11 +938,11 @@ def _judge_reply(reply: MatchReply | None, job: AiJob, loaded: _PairInput, model
     return _PairVerdict(model, change_types, reply.reason, rule_ids, tuple(unknown), checks)
 
 
-def _get_pair_shape(job: AiJob) -> str:
+def _get_group_shape(unit_ids: Sequence[int], target_ids: Sequence[int]) -> str:
     """그룹은 한쪽이 늘 하나다 — 합침이 먼저인 순서는 decide_ai_change_type과 같다. 새 문서 둘에 걸친 1:N도 split이고 종류만 새 문장마다 따로다."""
-    if len(job.unit_ids) >= 2:
+    if len(unit_ids) >= 2:
         return "merged"
-    return "split" if len(job.target_ids) >= 2 else "one_to_one"
+    return "split" if len(target_ids) >= 2 else "one_to_one"
 
 
 def _get_group_change_type(verdict: _PairVerdict) -> str | None:
@@ -677,7 +954,8 @@ def _add_pair_result(
     session: AsyncSession, job: AiJob, loaded: _PairInput, verdict: _PairVerdict, result: str
 ) -> AiSuggestion:
     content = _build_content(
-        job.unit_ids, job.target_ids, _get_pair_shape(job), _get_group_change_type(verdict), job.payload["retrieval"],
+        job.unit_ids, job.target_ids, _get_group_shape(job.unit_ids, job.target_ids), _get_group_change_type(verdict),
+        job.payload["retrieval"],
         reason=verdict.reason, rule_ids=verdict.rule_ids,
     )
     return add_suggestion(
@@ -693,7 +971,8 @@ def _plan_pair(
 ) -> _Write:
     """옛 단위는 배정, 새 문장은 그 변경 종류로 — 글은 그대로 두고 출처만 잇는다(설계 §6.7)."""
     return _Write(
-        loaded.candidates.olds[job.unit_ids[0]], _get_pair_shape(job), _get_group_change_type(verdict),
+        loaded.candidates.olds[job.unit_ids[0]], _get_group_shape(job.unit_ids, job.target_ids),
+        _get_group_change_type(verdict),
         unit_ids=tuple(job.unit_ids), disposition="assigned",
         targets=tuple(
             _TargetWrite(
@@ -705,8 +984,22 @@ def _plan_pair(
     )
 
 
+async def _find_group_suggestion(
+    session: AsyncSession, job: AiJob, decisions: Mapping[int, UnitDecision], targets: Mapping[int, TargetSentence]
+) -> AiSuggestion | None:
+    """다듬기 작업이 잡은 묶음의 살아 있는 짝 맞추기 제안 — 단위·새 문장이 작업의 것과 같을 때만."""
+    rows = [targets[target_id] for target_id in job.target_ids if target_id in targets]
+    if len(rows) != len(job.target_ids):
+        return None
+    live = await _load_live_suggestions(session, [*decisions.values(), *rows])
+    return _find_live_suggestion(job.unit_ids, rows, decisions, live)
+
+
 class MatchHandler:
-    """문장 그룹 하나 — LLM에 변경 종류를 묻고, 그룹이 그대로일 때만 출처를 잇고 제안을 쓴다. 그룹은 한 덩어리라 한 행만 바뀌어도 통째로 낡음이다."""
+    """문장 그룹 하나를 다듬는다 — 계획이 쓴 그 묶음의 제안이 그대로일 때만 LLM에 변경 종류를 묻고 제안을 바꿔 쓴다(설계 §4).
+
+    그룹은 한 덩어리라 한 행만 바뀌어도 통째로 낡음이다. 답이 무효이거나 호출이 실패해도 계획의 제안은 남는다.
+    """
 
     async def load(self, session: AsyncSession, job: AiJob) -> _PairInput | None:
         """입력을 읽고 작업 시작 시점의 revision을 적는다 — 다시 시도도 이 단계를 지나므로 그때의 상태가 기준이 된다."""
@@ -716,13 +1009,16 @@ class MatchHandler:
         # 계획은 같은 언어·종류끼리만 견줘 묶는다(matching) — 그 뒤에 언어를 고치면 revision이 그대로라도 견준 근거가 없어져 낡음이다
         if len({entry.item.lang for entry in (*candidates.olds.values(), *candidates.news.values())}) > 1:
             return None
+        targets = await _load_targets(session, job.target_ids)
+        # 사람이 Clear로 지웠거나 새 계획이 묶음을 바꿨으면 다듬을 제안이 없다 — LLM을 부르지 않는다
+        if await _find_group_suggestion(session, job, await _load_decisions(session, job.unit_ids), targets) is None:
+            return None
         try:
             guidelines = await load_active_guidelines(session, (RULES_KEY, _PROMPT_KEY))
         except LookupError as exc:
             raise AiCallFailed("config") from exc
         job.input_snapshot = _build_snapshot(candidates.olds, candidates.news)
         units = await load_units(session, job.unit_ids)
-        targets = await _load_targets(session, job.target_ids)
         return _PairInput(
             candidates=candidates,
             units=tuple(units),
@@ -745,23 +1041,23 @@ class MatchHandler:
         current = await _load_candidates(session, job.bundle_id, job.unit_ids, job.target_ids)
         fresh_olds = _list_fresh(loaded.candidates.olds, current.olds, job.input_snapshot["unit_revisions"])
         fresh_news = _list_fresh(loaded.candidates.news, current.news, job.input_snapshot["target_revisions"])
-        if fresh_olds != loaded.candidates.olds.keys() or fresh_news != loaded.candidates.news.keys():
-            _add_pair_result(session, job, loaded, computed, "stale")
-            return "stale"
-
         decisions = await _load_decisions(session, job.unit_ids)
         targets = await _load_targets(session, job.target_ids)
-        await clear_previous_suggestion(session, decisions.values(), targets.values())
-        if not computed.change_types:
-            hold_invalid(decisions.values())
+        is_fresh = fresh_olds == loaded.candidates.olds.keys() and fresh_news == loaded.candidates.news.keys()
+        previous = await _find_group_suggestion(session, job, decisions, targets) if is_fresh else None
+        if previous is None:
+            _add_pair_result(session, job, loaded, computed, "stale")
+            return "stale"
+        if not computed.change_types:  # 묶기는 코드가 한 것이라 계획의 제안을 그대로 두고 무효는 기록에만 남긴다
             _add_pair_result(session, job, loaded, computed, "invalid")
             return "done"
 
+        # 묶음이 그대로라 제자리에서 다듬는다 — 걷고 다시 쓰면 출처를 떼었다 붙여 그 새 문장에 사람이 청한 AI 번역이 쓸려 간다
+        if previous.adoption is None:  # 채택이 남은 제안은 applied 그대로다(clear_previous_suggestion과 같은 경계)
+            previous.result = "stale"
         suggestion = _add_pair_result(session, job, loaded, computed, "applied")
         await session.flush()  # 판단·새 문장이 제안 id를 가리킨다
-        write = _plan_pair(job, loaded, computed, targets)
-        _apply_write(write, suggestion.id, decisions)
-        await _insert_links(session, (write,))
+        _apply_write(_plan_pair(job, loaded, computed, targets), suggestion.id, decisions)  # revision을 올려 낡은 화면의 저장을 막는다
         return "done"
 
 

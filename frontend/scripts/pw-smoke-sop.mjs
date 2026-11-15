@@ -1,6 +1,9 @@
 // SOP 화면 스모크(Playwright + 시스템 Chrome) - 묶음 목록, 개요, 단계 이동(레일·상단 탭), 배치 메뉴, 첫 페인트 전 설정.
 // 전제: backend/에서 reset_db → seed_sop_demo(합성 묶음 4개) 직후, backend 8777 + frontend 3777. 고친 값은 시나리오 안에서 되돌린다.
 // AI 나눔 확정 시나리오는 backend가 AI를 켜고 가짜 AI(FAKE_AI_SPLIT=1 node scripts/fake-ai-server.mjs)를 볼 때만 돈다 - 꺼져 있으면 건너뛴다.
+// PREPARE=1이면 "배정 화면 첫 진입 미리 분류" 시나리오 하나만 돈다(나머지는 건너뛴다). 전제: reset_db → seed_sop_demo 직후(시드는 AI_AUTO_PREPARE=false),
+// 가짜 AI(node scripts/fake-ai-server.mjs)를 보는 backend를 AI_ENABLED=true AI_AUTO_PREPARE=true로 띄운다. 이 backend에서는 작성자가 배정 화면에 들어갈 때마다
+// 남은 줄이 저절로 분류돼 다른 단계의 전제가 깨지므로 같이 돌리지 않는다. 끝에 DB가 바뀐다(분류 절반 묶음의 남은 줄에 AI 제안이 붙는다) - 다시 돌리려면 reset_db부터.
 // 실행(frontend/ 에서): node scripts/pw-smoke-sop.mjs   환경 변수: BASE_URL, CHROME_PATH
 // ONLY="이름 조각,…"이면 이름에 그 조각이 든 단계만 돈다(고치는 중인 단계를 빨리 볼 때. 앞 단계가 남긴 값에 기대는 단계는 혼자 돌지 못한다 - 커밋 전에는 전부 돌린다)
 // playwright-core는 저장소 의존성이 아니다: `npm i --no-save playwright-core` (package.json 불변)
@@ -16,6 +19,8 @@ const BASE = process.env.BASE_URL ?? "http://localhost:3777";
 const SHOT_DIR = resolve(SCRIPT_DIR, "../../.shots");
 const T = 15000;
 const ONLY = (process.env.ONLY ?? "").split(",").map((part) => part.trim()).filter(Boolean);
+const PREPARE = process.env.PREPARE === "1";
+const PREPARE_STEP = "assign: first entry classifies the remaining rows in the background";
 // 시안의 모든 수치는 1248 × 720 프레임 기준이다(디자인 문서 15절)
 const VIEWPORT = { width: 1248, height: 720 };
 
@@ -31,6 +36,8 @@ const browser = await chromium.launch({ executablePath: CHROME, headless: true }
 
 async function runStep(name, { devUser = "qa.member", storage = {}, allowConsoleErrors = false } = {}, run) {
   if (ONLY.length > 0 && !ONLY.some((part) => name.includes(part))) return;
+  // 미리 분류 시나리오는 PREPARE=1일 때만, 그때는 그것만(머리말)
+  if (PREPARE !== (name === PREPARE_STEP)) return;
   console.log(`\n# ${name}`);
   const ctx = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
   await ctx.addInitScript(
@@ -2859,6 +2866,46 @@ await runStep("documents: AI reads a free-form list into New rows", { devUser: "
   const left = await (await page.request.get(`${BASE}/api/bundles/${created.id}/tobe/read`, { headers })).json();
   check("the proposal is closed once it is used", left === null && (await page.locator('[data-testid="tobe-proposal"]').count()) === 0);
   await removeBundle();
+});
+
+// 배정 화면 첫 진입(설계 2026-11-15-ai-prepare-queue §5.2·§8) - PREPARE=1일 때만(머리말의 전제). 알림 → 상단 바 목록의 Background 줄 → 끝나면 AI suggested 수
+await runStep(PREPARE_STEP, {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/`);
+  await page.locator('[data-testid^="bundles-row-"]').first().waitFor({ timeout: T });
+  const half = page.locator('[data-testid^="bundles-row-"]', { hasText: "분류 절반" });
+  const bundleId = Number((await half.getAttribute("data-testid")).replace("bundles-row-", ""));
+  const headers = { "X-Dev-User": "qa.member" };
+  const status = await (await page.request.get(`${BASE}/api/bundles/${bundleId}/ai/status`, { headers })).json();
+  check("backend has AI on (PREPARE=1 needs the fake AI and AI_AUTO_PREPARE=true)", status.ai_enabled === true);
+  const before = await (await page.request.get(`${BASE}/api/bundles/${bundleId}`, { headers })).json();
+  check("no AI suggestion before the first entry", before.progress.ai_suggested === 0, String(before.progress.ai_suggested));
+
+  await page.goto(`${BASE}/bundles/${bundleId}/assign`);
+  const toast = page.locator('[data-testid="toast-ok"]', { hasText: "in the background" });
+  await toast.first().waitFor({ timeout: T });
+  check("a toast says the remaining rows are classified in the background", /remaining \d+ rows/.test(await toast.first().innerText()), await toast.first().innerText());
+
+  await page.locator('[data-testid="top-bar-ai"]').click();
+  const mark = page.locator('[data-testid="ai-jobs-popover"] [data-testid^="ai-jobs-request-"][data-testid$="-background"]');
+  await mark.first().waitFor({ timeout: T });
+  check("the AI job list marks the request as Background", (await mark.first().innerText()).trim() === "Background");
+  await mark.first().hover();
+  const tip = page.locator('[role="tooltip"]', { hasText: "Started automatically" });
+  await tip.first().waitFor({ timeout: T });
+  check("the mark explains itself on hover", true);
+  await takeShot("sop-assign-prepare-popover.png");
+  const requestRow = (await mark.first().getAttribute("data-testid")).replace(/-background$/, "");
+  // 묶기 계획이 먼저 짝을 찾은 줄의 분류는 낡음(stale)으로 끝난다(설계 §5.2) - 실패·취소만 아니면 된다
+  const row = page.locator(`[data-testid="${requestRow}"]`);
+  await page.locator(`[data-testid="${requestRow}"]:not([data-outcome="running"]):not([data-outcome="queued"])`).waitFor({ timeout: 60000 });
+  const outcome = await row.getAttribute("data-outcome");
+  check("the background request finishes", outcome === "done" || outcome === "stale", outcome);
+  await page.keyboard.press("Escape");
+
+  // 끝나면 화면이 단위를 다시 받는다 - AI suggested 탭 수가 0보다 커진다
+  await page.waitForFunction(() => Number(document.querySelector('[data-testid="assign-filter-ai_suggested"] .schip-n')?.textContent ?? 0) > 0, null, { timeout: 30000 });
+  check("AI suggested tab count is above zero", true, await page.locator('[data-testid="assign-filter-ai_suggested"] .schip-n').textContent());
+  await takeShot("sop-assign-prepare-done.png");
 });
 
 await browser.close();

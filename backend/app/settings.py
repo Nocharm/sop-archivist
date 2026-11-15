@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     ai_endpoints: str = ""
     # AI 부하 가드 — 백엔드 전체 동시 AI 호출 상한(채팅·임베딩이 함께 센다)
     ai_max_concurrency: int = 4
+    ai_auto_prepare: bool = True  # 저절로 도는 AI(읽기 뒤 묶기 계획, 배정 화면 첫 진입 분류) — 끄면 사람이 누른 요청만 돈다
 
     # 임베딩 서버(OpenAI 호환 /embeddings) — 채팅 서버와 주소·모델이 달라 AI_*와 따로 둔다. 로컬 기본 비활성
     embed_enabled: bool = False

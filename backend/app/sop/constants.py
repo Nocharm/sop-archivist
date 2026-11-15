@@ -46,6 +46,11 @@ NUMBERED, NUMBER_OMITTED, NUMBER_NOTE = NUMBER_STYLES
 AI_JOB_KINDS = ("classify", "translate", "match_plan", "match", "pair", "split", "doc_meta", "tobe_list")
 AI_JOB_STATUSES = ("queued", "running", "done", "failed", "stale", "cancelled")
 AI_SUGGESTION_RESULTS = ("applied", "stale", "invalid")  # 적용됨 | 낡아서 안 씀 | 응답이 규칙 위반
+# 작업 순위 — 작은 수가 먼저 나간다. 같은 순위 안에서는 id 순
+AI_PRIORITY_PLAN = 0  # 짝 맞추기 계획(입구 2) — 뒤 작업을 쌓는 앞잡이라 맨 앞
+AI_PRIORITY_USER = 1  # 사람이 누른 요청
+AI_PRIORITY_PRE_CLASSIFY = 2  # 미리 돌리기: 분류
+AI_PRIORITY_PRE_REFINE = 3  # 미리 돌리기: 고쳐 쓰기
 AI_ADOPTIONS = ("as_is", "edited", "rejected")  # 사람의 결과: 그대로 채택 | 고쳐서 채택 | 버림
 GUIDELINE_KEYS = (
     "rules", "prompt.classify", "prompt.translate", "prompt.match", "prompt.split", "prompt.doc_meta", "prompt.tobe_list",

@@ -70,6 +70,8 @@ services:
       AI_ENDPOINTS: ${AI_ENDPOINTS:-}
       # AI 호출 동시성 상한
       AI_MAX_CONCURRENCY: ${AI_MAX_CONCURRENCY:-4}
+      # 저절로 도는 AI(읽기 뒤 묶기 계획, 배정 화면 첫 진입 분류) — Settings 기본값과 같다
+      AI_AUTO_PREPARE: ${AI_AUTO_PREPARE:-true}
       # 임베딩 서버(OpenAI 호환 /embeddings) — 채팅 AI_*와 따로. 꺼 두면 임베딩을 쓰는 기능이 비활성(시크릿은 .env로 주입)
       EMBED_ENABLED: ${EMBED_ENABLED:-false}
       EMBED_BASE_URL: ${EMBED_BASE_URL:-}
