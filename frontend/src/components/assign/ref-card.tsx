@@ -8,16 +8,15 @@ import { useState } from "react";
 
 import { EquisStatus } from "@/components/equis/equis-status";
 import { Tooltip } from "@/components/ui/tooltip";
-import { getUnitRef, type ViewUnit } from "@/lib/api-sop";
+import type { EquisInfo, ViewUnit } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import { guessRefNumber } from "@/lib/ref-model";
-import { useEquisPolling } from "@/lib/use-equis-polling";
-import { useLoaded } from "@/lib/use-loaded";
 
 interface RefCardProps {
-  bundleId: number;
-  docId: number;
   unit: ViewUnit;
+  /** 그 번호의 EQUIS 표시 - 화면이 받아 넘긴다(결정 칸의 새 문장 제안도 같은 답을 쓴다). 꺼져 있거나 아직 없으면 null */
+  equis: EquisInfo | null;
+  onReloadEquis: () => void;
   canEdit: boolean;
   busy: boolean;
   /** 번호를 고칠 수 없는 까닭(이미 배정을 결정한 줄) - 고칠 수 있으면 null */
@@ -31,16 +30,12 @@ interface RefCardProps {
   onNext: () => void;
 }
 
-export function RefCard({ bundleId, docId, unit, canEdit, busy, blockedReason, left, onConfirm, onReject, onClose, onNext }: RefCardProps) {
+export function RefCard({ unit, equis, onReloadEquis, canEdit, busy, blockedReason, left, onConfirm, onReject, onClose, onNext }: RefCardProps) {
   const { t } = useI18n();
   const mark = unit.ref;
   // 제안도 확정도 없는 줄은 번호를 적는 칸부터 연다(메뉴의 "참조 줄로 표시")
   const [draft, setDraft] = useState<string | null>(mark === null ? guessRefNumber(unit.text) : null);
   const isTyping = draft !== null;
-  const detail = useLoaded(() => (mark === null ? Promise.resolve(null) : getUnitRef(bundleId, docId, unit.id)), `${unit.id}:${mark?.state ?? ""}:${mark?.number ?? ""}`);
-  // 앞서 고른 줄의 답이 남아 있을 수 있다 - 이 줄의 이 번호에 대한 답만 쓴다
-  const equis = !detail.isLoading && detail.data?.number === mark?.number ? (detail.data?.equis ?? null) : null;
-  useEquisPolling(equis?.refreshing === true, detail.reload);
   const isLocked = blockedReason !== null || busy;
 
   function submitDraft() {
@@ -104,7 +99,7 @@ export function RefCard({ bundleId, docId, unit, canEdit, busy, blockedReason, l
             <span className="lang-token h-5 px-1.5 text-[12px]" data-lang="ref" data-proposed={mark?.state === "proposed" ? "" : undefined} data-testid="assign-ref-number">
               {mark?.number}
             </span>
-            {equis && <EquisStatus equis={equis} testId="assign-ref-equis" canEdit={false} onRefresh={detail.reload} />}
+            {equis && <EquisStatus equis={equis} testId="assign-ref-equis" canEdit={false} onRefresh={onReloadEquis} />}
           </span>
           {equis?.state === "found" && equis.name !== "" && (
             <p className="min-w-0 break-words text-xs text-ink-2" data-testid="assign-ref-now">

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { ViewUnit } from "./api-sop";
-import { guessRefNumber, isRefPending, pickRefUnit } from "./ref-model";
+import type { EquisInfo, UnitRefDetail, ViewUnit } from "./api-sop";
+import { guessRefNumber, isRefPending, pickRefUnit, readRefAdvice } from "./ref-model";
 
 function makeUnit(id: number, ref: ViewUnit["ref"]): ViewUnit {
   return {
@@ -37,5 +37,40 @@ describe("pickRefUnit", () => {
     expect(isRefPending(makeUnit(1, { state: "proposed", number: "SOP-A-1" }))).toBe(true);
     expect(isRefPending(makeUnit(1, { state: "confirmed", number: "SOP-A-1" }))).toBe(false);
     expect(isRefPending(undefined)).toBe(false);
+  });
+});
+
+describe("readRefAdvice", () => {
+  const OLD = "SOP-ABC-1016 Operation of UV spectrophotometer";
+  const NOW = "SOP-ABC-00001 Operation and Maintenance of UV spectrophotometer";
+  const equis: EquisInfo = {
+    state: "found", refreshing: false, verdict: "attention", reasons: ["old_number"], notes: [], current: null, in_progress: [], retired: null,
+    number: "SOP-ABC-00001", trail: [], ambiguous: [], name: "Operation and Maintenance of UV spectrophotometer", subtype: "", owning_department: "", plant: "", area: "",
+    legacy_numbers: [], equipment_tag: "", doc_url: null, title_locked: false, fetched_at: null,
+  };
+  const detail = (over: Partial<UnitRefDetail> = {}): UnitRefDetail => ({ state: "confirmed", number: "SOP-ABC-1016", equis, suggested_text: NOW, ...over });
+
+  it("says the number differs while the old number is still written", () => {
+    expect(readRefAdvice(OLD, OLD, detail())).toEqual({ issue: "number", text: NOW });
+  });
+
+  it("says the title differs once the number is the current one", () => {
+    expect(readRefAdvice("SOP-ABC-00001 Operation of UV spectrophotometer", OLD, detail())).toEqual({ issue: "title", text: NOW });
+  });
+
+  it("is quiet when the text matches, ignoring case and spacing", () => {
+    expect(readRefAdvice("sop-abc-00001  operation and maintenance of UV spectrophotometer ", OLD, detail())).toBeNull();
+  });
+
+  it("compares with the source when the source already matches EQUIS", () => {
+    expect(readRefAdvice(NOW, NOW, detail({ suggested_text: null }))).toBeNull();
+    expect(readRefAdvice("SOP-ABC-00001 UV", NOW, detail({ suggested_text: null }))).toEqual({ issue: "title", text: NOW });
+  });
+
+  it("has nothing to compare with when EQUIS does not know the number, retired it, or is off", () => {
+    expect(readRefAdvice(OLD, OLD, detail({ equis: { ...equis, state: "not_found" } }))).toBeNull();
+    expect(readRefAdvice(OLD, OLD, detail({ equis: { ...equis, retired: { version: "3.0", status: "Obsolete", effective_date: "", retired_date: "2018-11-21" } } }))).toBeNull();
+    expect(readRefAdvice(OLD, OLD, detail({ equis: null }))).toBeNull();
+    expect(readRefAdvice(OLD, OLD, null)).toBeNull();
   });
 });

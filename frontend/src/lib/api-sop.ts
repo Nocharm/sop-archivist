@@ -409,6 +409,8 @@ export interface UnitRefDetail {
   number: string;
   /** EQUIS가 꺼져 있으면 null */
   equis: EquisInfo | null;
+  /** 그 줄의 글을 EQUIS의 지금 번호·정식 이름으로 맞춘 글 - 새 문장에 쓸 제안. EQUIS가 모르는 번호거나 이미 같으면 null */
+  suggested_text: string | null;
 }
 
 export interface ViewPair {

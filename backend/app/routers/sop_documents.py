@@ -71,7 +71,7 @@ from app.sop.pairs import (
     create_pair,
     delete_pair,
 )
-from app.sop.refs import RefState, read_ref_state
+from app.sop.refs import RefState, build_ref_text, read_ref_state
 from app.sop.schemas import NO_NUL, NoNulStr
 from app.sop.snapshot import count_unchecked_boundaries
 from app.sop.status import get_cover_status
@@ -233,6 +233,8 @@ class UnitRefDetailOut(BaseModel):
     state: Literal["proposed", "confirmed"] | None
     number: str = ""
     equis: EquisOut | None = None
+    # 그 줄의 글을 EQUIS의 지금 번호·정식 이름으로 맞춘 글 — 새 문장에 쓸 제안. EQUIS가 모르는 번호거나 이미 같으면 null
+    suggested_text: str | None = None
 
 
 class ViewUnitOut(BaseModel):
@@ -683,7 +685,12 @@ async def get_unit_ref(
     # 참조 문서는 이 묶음의 옛·새 문서가 아니다 — 올린 판과 견줄 것이 없어 새 문서 쪽 판정(폐기만 본다)을 쓴다
     equis = build_equis_out(state.number, "new", "", lookups, now())
     await start_lookups(session, background_tasks, ctx.bundle, [state.number], sync_titles=False)
-    return UnitRefDetailOut(state=state.state, number=state.number, equis=equis)
+    suggested = (
+        build_ref_text(unit.text, state.number, equis.number, equis.name)
+        if equis is not None and equis.state == "found" and equis.retired is None
+        else None
+    )
+    return UnitRefDetailOut(state=state.state, number=state.number, equis=equis, suggested_text=suggested)
 
 
 async def _lock_editable_document(

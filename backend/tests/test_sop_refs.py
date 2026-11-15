@@ -7,7 +7,7 @@ import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
-from app.sop.refs import find_leading_number, read_number_in_text
+from app.sop.refs import build_ref_text, find_leading_number, read_number_in_text
 from tests.docx_factory import build_docx, p
 from tests.sop_helpers import (
     AUTHOR,
@@ -104,6 +104,31 @@ def test_read_number_in_text_only_accepts_what_the_text_holds() -> None:
     assert read_number_in_text(PROSE, NUMBER) is None
     assert read_number_in_text(PROSE, "") is None
     assert read_number_in_text("see ';drop", "';drop") is None
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # 번호로 시작하는 줄 — 번호와 이름을 모두 맞춘다
+        (REF_LINE, f"{NUMBER} {NAME}"),
+        (f"- {OLD_NUMBER}, Operation of UV spectrophotometer.", f"- {NUMBER}, {NAME}."),
+        (f"3) {OLD_NUMBER} - UV operation;", f"3) {NUMBER} - {NAME};"),
+        # 이름 없이 번호만 있는 줄 — 번호만 바꾼다
+        (OLD_NUMBER, NUMBER),
+        # 번호가 문장 가운데 — 문장은 두고 번호만 바꾼다
+        (PROSE, f"세부 사항은 {NUMBER}을 따른다."),
+        # 이미 같다
+        (f"{NUMBER} {NAME}", None),
+    ],
+)
+def test_build_ref_text(text: str, expected: str | None) -> None:
+    number = NUMBER if text.startswith(NUMBER) else OLD_NUMBER
+    assert build_ref_text(text, number, NUMBER, NAME) == expected
+
+
+def test_build_ref_text_without_a_current_number_suggests_nothing() -> None:
+    assert build_ref_text(REF_LINE, OLD_NUMBER, "", NAME) is None
+    assert build_ref_text(REF_LINE, "SOP-ZZZ-1", NUMBER, NAME) is None
 
 
 # --- 제안과 확인 ---
@@ -221,8 +246,8 @@ def test_reviewer_cannot_mark_references(client: TestClient) -> None:
 def test_detail_is_empty_without_equis(client: TestClient) -> None:
     fx = Setup(client)
 
-    assert fx.detail(REF_LINE) == {"state": "proposed", "number": OLD_NUMBER, "equis": None}
-    assert fx.detail(HEADING) == {"state": None, "number": "", "equis": None}
+    assert fx.detail(REF_LINE) == {"state": "proposed", "number": OLD_NUMBER, "equis": None, "suggested_text": None}
+    assert fx.detail(HEADING) == {"state": None, "number": "", "equis": None, "suggested_text": None}
 
 
 def test_detail_follows_an_old_number_to_the_current_document(client: TestClient, equis: FakeEquis) -> None:  # noqa: F811
@@ -237,6 +262,8 @@ def test_detail_follows_an_old_number_to_the_current_document(client: TestClient
     assert (found["state"], found["number"], found["name"]) == ("found", NUMBER, NAME)
     assert found["reasons"][0] == "old_number"
     assert found["doc_url"] == "https://equis.test/ui/#doc_info/900001"
+    # 새 문장에 쓸 글 — 지금 번호와 정식 이름
+    assert fx.detail(REF_LINE)["suggested_text"] == f"{NUMBER} {NAME}"
     # 글에 있는 번호만 묻는다
     assert set(equis.asked[asked_by_setup:]) == {OLD_NUMBER, NUMBER}
 
