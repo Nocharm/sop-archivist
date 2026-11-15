@@ -1,6 +1,6 @@
 """입구 2 짝 — 묶음의 옛 단위와 새 문장을 임베딩(꺼졌거나 실패하면 글자 유사도)으로 묶는 계획과, 문장 그룹마다 LLM에 변경 종류를 묻는 작업 (설계 §6.7, §7.10, §8.4).
 
-계획은 LLM을 부르지 않고 표·그림·남은 항목의 제안은 바로 쓴다. 점수는 compute 안에서만 쓰고 제안·작업·응답·로그 어디에도 남기지 않는다(설계 §12).
+계획은 LLM을 부르지 않고 문장 묶음(잠정 변경 종류)·표·그림·남은 항목의 제안을 바로 쓰며, 문장 묶음은 변경 종류 작업이 다듬는다. 점수는 compute 안에서만 쓰고 제안·작업·응답·로그 어디에도 남기지 않는다(설계 §12).
 입구 2 새 문장의 글은 새 문서 원문이라 제안이 건드리지 않는다(설계 §6.7).
 """
 
@@ -33,11 +33,19 @@ from app.sop.ai.embeddings import EmbeddingUnavailable, embed_texts
 from app.sop.ai.guidelines import RULES_KEY, GuidelineRef, format_guideline_versions, load_active_guidelines
 from app.sop.ai.jobs import ACTIVE_JOB_STATUSES, JobItem, enqueue_jobs, promote_queued_jobs
 from app.sop.ai.llm import AiStr, build_messages, call_llm, ensure_llm_enabled, parse_reply
-from app.sop.ai.matching import MatchGroup, MatchItem, MatchProposal, build_text_scores, propose_groups
+from app.sop.ai.matching import (
+    MatchGroup,
+    MatchItem,
+    MatchProposal,
+    build_text_scores,
+    is_spacing_change,
+    propose_groups,
+)
 from app.sop.ai.runner import AiCallFailed
 from app.sop.ai.schemas import SkippedOut
 from app.sop.ai.similarity import cosine_matrix
 from app.sop.checks import check_sentence
+from app.sop.constants import AI_PRIORITY_PRE_REFINE, AI_PRIORITY_USER
 from app.sop.decisions import load_cell_positions, load_table_shapes
 from app.sop.detach import ORIGIN_NEW_DOC, UNASSIGNED
 from app.sop.errors import raise_rule
@@ -67,6 +75,9 @@ _CELL_SEPARATOR = " "  # 양쪽 표 글을 같게 이어야 점수가 뜻이 있
 _PROMPT_KEY = "prompt.match"
 _FEATURE = "sop.match"
 _CHANGE_ORDER = ("as_is", "tone", "rewritten", "split", "merged")  # 변화가 작은 순서 — 제안 기록의 한 칸을 정한다
+# 계획 작업 payload["origin"] — 누가 세웠는지가 다듬기 작업의 순위와 삭제 후보를 정한다(설계 §4의 표). 값은 "user" | "prepare" | "upload"
+PLAN_ORIGIN_USER = "user"  # Match 단추. 키가 없는 옛 계획도 이것으로 읽는다
+PLAN_ORIGIN_UPLOAD = "upload"  # 파일 읽기 끝 — 새 문서 목록이 덜 찼을 수 있어 삭제 후보를 쓰지 않는다
 
 _CellT = TypeVar("_CellT")
 _CellKey = tuple[int, int, str, int]  # (행, 열, 언어, 칸 안 순서)
@@ -118,7 +129,7 @@ async def select_match_items(session: AsyncSession, bundle_id: int) -> tuple[lis
     )
     if active is not None:
         return [], [SkippedOut(unit_id=_WHOLE_BUNDLE, reason="already_queued")]
-    return [JobItem()], []
+    return [JobItem(payload={"origin": PLAN_ORIGIN_USER})], []
 
 
 # --- load ---
@@ -318,6 +329,7 @@ class _Write:
     disposition: str = UNASSIGNED
     targets: tuple[_TargetWrite, ...] = ()
     links: tuple[tuple[int, int], ...] = ()  # (새 문장 id, 단위 id)
+    provisional: bool = False  # 계획이 쓴 문장 묶음이 다듬기(변경 종류 작업)를 기다리는 중
 
 
 def _list_fresh(loaded: Mapping[int, _Entry], current: Mapping[int, _Entry], revisions: Mapping[str, int]) -> set[int]:
@@ -465,6 +477,61 @@ def _plan_figure(group: MatchGroup, olds: Mapping[int, _Entry], targets: Mapping
     )
 
 
+def _plan_sentence(
+    group: MatchGroup,
+    sources: Sequence[Unit],
+    olds: Mapping[int, _Entry],
+    news: Mapping[int, _Entry],
+    targets: Mapping[int, TargetSentence],
+) -> _Write:
+    """문장 묶음 — 변경 종류는 코드가 정한 잠정값이고 다듬기 작업이 LLM 답으로 바꿔 쓴다(설계 §4). sources는 문서 순서다.
+
+    띄어쓰기만 다른 1:1은 뜻이 바뀔 수 없어 말투로 정하고 다듬지 않는다. 나머지는 고쳐 씀을 넘겨 합침·나눔·그대로는 구조와 글이 정한다.
+    """
+    is_spacing = (
+        len(sources) == 1 and len(group.target_ids) == 1
+        and is_spacing_change(sources[0].text, news[group.target_ids[0]].item.text)
+    )
+    requested = "tone" if is_spacing else "rewritten"
+    per_document = Counter(news[target_id].document_id for target_id in group.target_ids)  # 나눔은 같은 새 문서 안에서만이다
+    change_types = {
+        target_id: decide_ai_change_type(
+            sources, news[target_id].item.text, requested, sentence_count=per_document[news[target_id].document_id]
+        )
+        for target_id in group.target_ids
+    }
+    old_texts = [source.text for source in sources]
+    return _Write(
+        olds[group.old_ids[0]], _get_group_shape(group.old_ids, group.target_ids),
+        max(change_types.values(), key=_CHANGE_ORDER.index), unit_ids=group.old_ids, disposition="assigned",
+        targets=tuple(
+            _TargetWrite(targets[target_id], change_types[target_id], check_sentence(old_texts, news[target_id].item.text))
+            for target_id in group.target_ids
+        ),
+        links=tuple(product(group.target_ids, [source.id for source in sources])),
+        provisional=not is_spacing,
+    )
+
+
+async def _plan_sentences(
+    session: AsyncSession,
+    groups: Sequence[MatchGroup],
+    olds: Mapping[int, _Entry],
+    news: Mapping[int, _Entry],
+    targets: Mapping[int, TargetSentence],
+) -> list[_Write]:
+    """문장 묶음마다 제안 — 출처 순서는 변경 종류 작업과 같게 문서 순서다(load_units)."""
+    units = await load_units(session, {unit_id for group in groups for unit_id in group.old_ids})
+    position = {unit.id: index for index, unit in enumerate(units)}
+    by_id = {unit.id: unit for unit in units}
+    return [
+        _plan_sentence(
+            group, [by_id[unit_id] for unit_id in sorted(group.old_ids, key=position.__getitem__)], olds, news, targets
+        )
+        for group in groups
+    ]
+
+
 async def _plan_new(
     session: AsyncSession, target_ids: Sequence[int], news: Mapping[int, _Entry], targets: Mapping[int, TargetSentence]
 ) -> list[_Write]:
@@ -488,8 +555,12 @@ def _build_content(
     *,
     reason: str = "",
     rule_ids: Iterable[str] = (),
+    provisional: bool = False,
 ) -> dict[str, object]:
-    """제안 내용(API 계약 `match`) — 계획이 쓴 제안은 LLM을 거치지 않아 이유·규칙이 비고, 삭제 후보의 사유는 사람이 확정할 때 적는다(설계 §7.10)."""
+    """제안 내용(API 계약 `match`) — 계획이 쓴 제안은 LLM을 거치지 않아 이유·규칙이 비고, 삭제 후보의 사유는 사람이 확정할 때 적는다(설계 §7.10).
+
+    provisional은 늘 있는 칸이고, 계획이 쓴 문장 묶음이 다듬기를 기다리는 동안만 참이다(설계 §4).
+    """
     return {
         "unit_ids": list(unit_ids),
         "target_ids": list(target_ids),
@@ -498,14 +569,18 @@ def _build_content(
         "reason": reason,
         "rule_ids": list(rule_ids),
         "retrieval": retrieval,
+        "provisional": provisional,
     }
 
 
 def _add_suggestion(session: AsyncSession, job: AiJob, write: _Write, retrieval: Retrieval) -> AiSuggestion:
     """작업은 계획 하나지만 제안은 항목마다다 — 종류는 match이고, 문서는 작업이 아니라 그 항목의 것이다."""
     target_ids = [item.target.id for item in write.targets]
+    content = _build_content(
+        write.unit_ids, target_ids, write.shape, write.change_type, retrieval, provisional=write.provisional
+    )
     suggestion = add_suggestion(
-        session, job, content=_build_content(write.unit_ids, target_ids, write.shape, write.change_type, retrieval),
+        session, job, content=content,
         warnings=[warning for item in write.targets for warning in item.warnings], result="applied",
         input_refs=write.entry.input_refs,
     )
@@ -579,29 +654,38 @@ class MatchPlanHandler:
         )
         replaced = [decision for decision in decisions.values() if decision.status == AI_SUGGESTED]
         await clear_previous_suggestion(session, decisions.values(), targets.values())
-        for decision in replaced:  # 문장 그룹은 변경 종류 작업까지 미배정이라 새 상태가 대신 올려 주지 않는다
+        for decision in replaced:  # 미배정으로 남는 짝 없는 옛 단위는 새 상태가 대신 올려 주지 않는다
             decision.revision += 1
 
         by_kind: dict[str, list[MatchGroup]] = defaultdict(list)
         for group in groups:
             by_kind[loaded.olds[group.old_ids[0]].item.kind].append(group)
+        sentences = await _plan_sentences(session, by_kind[_SENTENCE], loaded.olds, loaded.news, targets)
+        origin = job.payload.get("origin", PLAN_ORIGIN_USER)
+        priority, background = (
+            (AI_PRIORITY_USER, False) if origin == PLAN_ORIGIN_USER else (AI_PRIORITY_PRE_REFINE, True)
+        )
         enqueue_jobs(
             session, bundle_id=job.bundle_id, kind=MATCH_KIND, requested_by=job.requested_by,
-            request_id=job.request_id,  # 사람이 낸 짝 맞추기 요청 하나로 진행을 센다
+            request_id=job.request_id,  # 계획을 세운 요청 하나로 진행을 센다
+            priority=priority, background=background,
             items=[
                 JobItem(
-                    document_id=loaded.olds[group.old_ids[0]].document_id, unit_ids=group.old_ids,
-                    target_ids=group.target_ids, payload={"retrieval": retrieval},
+                    document_id=write.entry.document_id, unit_ids=write.unit_ids,
+                    target_ids=[item.target.id for item in write.targets], payload={"retrieval": retrieval},
                 )
-                for group in by_kind[_SENTENCE]
+                for write in sentences
+                if write.provisional
             ],
         )
         writes = [
+            *sentences,
             *await _plan_tables(session, by_kind[_TABLE], loaded.olds, targets),
             *(_plan_figure(group, loaded.olds, targets) for group in by_kind[_FIGURE]),
             *await _plan_new(session, lone_news, loaded.news, targets),
         ]
-        if not await has_assign_documents(session, job.bundle_id):  # 입구 1이 있으면 분류가 받도록 미배정으로 남긴다(설계 §7.10)
+        # 입구 1이 있으면 분류가 받도록 미배정으로 남긴다(설계 §7.10). 업로드 계획은 New 문서 목록이 덜 찼을 수 있어 늘 남긴다(§4)
+        if origin != PLAN_ORIGIN_UPLOAD and not await has_assign_documents(session, job.bundle_id):
             writes += [
                 _Write(loaded.olds[unit_id], "delete_candidate", "deleted", unit_ids=(unit_id,), disposition="delete")
                 for unit_id in lone_olds
@@ -674,11 +758,11 @@ def _judge_reply(reply: MatchReply | None, job: AiJob, loaded: _PairInput, model
     return _PairVerdict(model, change_types, reply.reason, rule_ids, tuple(unknown), checks)
 
 
-def _get_pair_shape(job: AiJob) -> str:
+def _get_group_shape(unit_ids: Sequence[int], target_ids: Sequence[int]) -> str:
     """그룹은 한쪽이 늘 하나다 — 합침이 먼저인 순서는 decide_ai_change_type과 같다. 새 문서 둘에 걸친 1:N도 split이고 종류만 새 문장마다 따로다."""
-    if len(job.unit_ids) >= 2:
+    if len(unit_ids) >= 2:
         return "merged"
-    return "split" if len(job.target_ids) >= 2 else "one_to_one"
+    return "split" if len(target_ids) >= 2 else "one_to_one"
 
 
 def _get_group_change_type(verdict: _PairVerdict) -> str | None:
@@ -690,7 +774,8 @@ def _add_pair_result(
     session: AsyncSession, job: AiJob, loaded: _PairInput, verdict: _PairVerdict, result: str
 ) -> AiSuggestion:
     content = _build_content(
-        job.unit_ids, job.target_ids, _get_pair_shape(job), _get_group_change_type(verdict), job.payload["retrieval"],
+        job.unit_ids, job.target_ids, _get_group_shape(job.unit_ids, job.target_ids), _get_group_change_type(verdict),
+        job.payload["retrieval"],
         reason=verdict.reason, rule_ids=verdict.rule_ids,
     )
     return add_suggestion(
@@ -706,7 +791,8 @@ def _plan_pair(
 ) -> _Write:
     """옛 단위는 배정, 새 문장은 그 변경 종류로 — 글은 그대로 두고 출처만 잇는다(설계 §6.7)."""
     return _Write(
-        loaded.candidates.olds[job.unit_ids[0]], _get_pair_shape(job), _get_group_change_type(verdict),
+        loaded.candidates.olds[job.unit_ids[0]], _get_group_shape(job.unit_ids, job.target_ids),
+        _get_group_change_type(verdict),
         unit_ids=tuple(job.unit_ids), disposition="assigned",
         targets=tuple(
             _TargetWrite(

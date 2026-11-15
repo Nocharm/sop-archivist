@@ -16,7 +16,7 @@ from app.settings import settings
 from app.sop.ai import embeddings
 from app.sop.ai.constants import AI_CALL_ATTEMPTS
 from app.sop.ai.jobs import JobItem, enqueue_jobs
-from app.sop.constants import AI_PRIORITY_PRE_REFINE, AI_PRIORITY_USER
+from app.sop.constants import AI_PRIORITY_PLAN, AI_PRIORITY_PRE_REFINE, AI_PRIORITY_USER
 from app.sop.models import AiJob, AiSuggestion, Bundle, TargetSentence, UnitDecision
 from tests.access_helpers import run_in_session
 from tests.ai_fixtures import (
@@ -66,6 +66,8 @@ NEW_3B = "합성 배관 점검 결과를 기록한다."
 OLD_4 = "합성 필터를 교체한다."
 OLD_5 = "합성 필터 교체일을 적는다."
 NEW_45 = "합성 필터를 교체하고 교체일을 적는다."
+SPACED_OLD = "사용 전에 밸브상태를 확인한다."
+SPACED_NEW = "사용 전에 밸브 상태를 확인한다."
 SAME = "두 문서에 똑같이 있는 합성 문장이다."
 LONE_OLD = "옛 문서에만 남은 교육 일정 공지문이다."
 LONE_NEW = "새로 넣은 비상 연락망 안내 문장이다."
@@ -77,7 +79,7 @@ REWRITTEN_CELL = "합성 압력 범위"
 EXTRA_CELL = "합성 설명을 덧붙인다."
 REASON = "사람이 정한 삭제 사유."
 MEDIA = {"image1.png": TINY_PNG}
-CONTENT_KEYS = {"unit_ids", "target_ids", "shape", "change_type", "reason", "rule_ids", "retrieval"}
+CONTENT_KEYS = {"unit_ids", "target_ids", "shape", "change_type", "reason", "rule_ids", "retrieval", "provisional"}
 
 
 def make_figure(caption: str) -> str:
@@ -142,6 +144,7 @@ def test_match_request_queues_one_plan_job_for_the_bundle(client: TestClient, fa
     (job,) = read_rows(AiJob)
     assert (job.kind, job.status, job.unit_ids, job.target_ids) == ("match_plan", "queued", [], [])
     assert job.requested_by == AUTHOR["X-Dev-User"]
+    assert job.payload == {"origin": "user"}
 
 
 def test_active_plan_job_reports_already_queued(client: TestClient, fake_ai: FakeAi) -> None:
@@ -351,10 +354,111 @@ def test_plan_queues_one_llm_job_per_sentence_group(
     assert {job.document_id for job in jobs.values()} == {bundle.old_document_id}
     assert {job.requested_by for job in jobs.values()} == {AUTHOR["X-Dev-User"]}
     assert all(job.payload == {"retrieval": "embedding"} for job in jobs.values())
-    # 문장 그룹은 변경 종류 작업이 끝나야 제안이 된다
-    assert_untouched(read_decision(one))
-    assert read_target(NEW_1).status == "unassigned"
-    assert read_rows(AiSuggestion) == []
+    assert {(job.priority, job.background) for job in jobs.values()} == {(AI_PRIORITY_USER, False)}
+    # 문장 그룹은 계획이 잠정 변경 종류로 바로 쓰고, 변경 종류 작업이 다듬는다
+    decision = read_decision(one)
+    assert (decision.status, decision.disposition) == ("ai_suggested", "assigned")
+    assert {
+        (tuple(row.content["unit_ids"]), row.content["shape"], row.content["change_type"], row.content["provisional"])
+        for row in read_rows(AiSuggestion)
+    } == {
+        ((one,), "one_to_one", "rewritten", True),
+        ((split,), "split", "split", True),
+        ((merge_a, merge_b), "merged", "merged", True),
+    }
+    assert {text: read_target(text).change_type for text in (NEW_1, NEW_3A, NEW_3B, NEW_45)} == {
+        NEW_1: "rewritten", NEW_3A: "split", NEW_3B: "split", NEW_45: "merged",
+    }
+
+
+def queue_plan(bundle_id: int, payload: dict[str, object]) -> None:
+    """저절로 서는 계획을 직접 쌓는다 — 업로드·배정 화면 첫 진입의 자리는 아직 없다."""
+
+    async def _enqueue(session: AsyncSession) -> None:
+        enqueue_jobs(
+            session, bundle_id=bundle_id, kind="match_plan", requested_by=AUTHOR["X-Dev-User"],
+            items=[JobItem(payload=payload)], priority=AI_PRIORITY_PLAN,
+        )
+        await session.commit()
+
+    run_in_session(_enqueue)
+
+
+def test_plan_writes_sentence_groups_before_any_llm_call(
+    client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = make_match_bundle(client, p(OLD_1), p(NEW_1))
+    use_vectors(monkeypatch, fake_ai, {OLD_1: 0, NEW_1: 0})
+    (unit_id,) = read_old_ids(client, bundle, OLD_1)
+
+    plan(client, bundle.id)
+
+    decision, target, suggestion = read_decision(unit_id), read_target(NEW_1), read_suggestion("one_to_one")
+    assert (decision.status, decision.disposition, decision.suggestion_id) == ("ai_suggested", "assigned", suggestion.id)
+    assert (target.status, target.change_type, target.suggestion_id) == ("ai_suggested", "rewritten", suggestion.id)
+    assert read_links() == {(target.id, unit_id)}
+    assert suggestion.content["provisional"] is True and suggestion.content["shape"] == "one_to_one"
+    assert (suggestion.content["change_type"], suggestion.content["reason"]) == ("rewritten", "")
+    assert fake_ai.requests == [] and len(read_jobs("match")) == 1  # 채팅 호출 없이 쓰였다
+
+
+def test_spacing_only_pair_is_tone_without_a_refine_job(
+    client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = make_match_bundle(client, p(SPACED_OLD), p(SPACED_NEW))
+    use_vectors(monkeypatch, fake_ai, {SPACED_OLD: 0, SPACED_NEW: 0})
+
+    plan(client, bundle.id)
+
+    target, suggestion = read_target(SPACED_NEW), read_suggestion("one_to_one")
+    assert (target.status, target.change_type) == ("ai_suggested", "tone")
+    assert suggestion.content["provisional"] is False and suggestion.content["change_type"] == "tone"
+    assert read_jobs("match") == []
+
+
+@pytest.mark.parametrize(("payload", "priority", "background"), [
+    ({"origin": "user"}, AI_PRIORITY_USER, False),
+    ({}, AI_PRIORITY_USER, False),  # origin이 없는 옛 계획은 사람이 낸 것으로 읽는다
+    ({"origin": "prepare"}, AI_PRIORITY_PRE_REFINE, True),
+    ({"origin": "upload"}, AI_PRIORITY_PRE_REFINE, True),
+])
+def test_refine_jobs_follow_the_plan_origin(
+    client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch,
+    payload: dict[str, object], priority: int, background: bool,
+) -> None:
+    bundle = make_match_bundle(client, p(OLD_1), p(NEW_1))
+    use_vectors(monkeypatch, fake_ai, {OLD_1: 0, NEW_1: 0})
+    queue_plan(bundle.id, payload)
+
+    run_plan()
+
+    (job,) = read_jobs("match")
+    assert (job.priority, job.background) == (priority, background)
+    assert job.request_id == read_jobs("match_plan")[0].request_id
+
+
+def test_upload_origin_plan_writes_no_delete_candidates(client: TestClient, fake_ai: FakeAi) -> None:
+    """파일을 읽은 직후에는 배정 New 문서 목록이 아직 비어 있을 수 있어 짝 없는 옛 단위를 분류 몫으로 남긴다."""
+    bundle = make_match_bundle(client, p(LONE_OLD), p(LONE_NEW))
+    (unit,) = read_old_ids(client, bundle, LONE_OLD)
+    queue_plan(bundle.id, {"origin": "upload"})
+
+    run_plan()
+
+    assert_untouched(read_decision(unit))
+    assert read_target(LONE_NEW).change_type == "new"  # 신규는 그대로 쓴다
+
+
+def test_prepare_origin_plan_writes_delete_candidates(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle = make_match_bundle(client, p(LONE_OLD), p(LONE_NEW))
+    (unit,) = read_old_ids(client, bundle, LONE_OLD)
+    queue_plan(bundle.id, {"origin": "prepare"})
+
+    run_plan()
+
+    decision = read_decision(unit)
+    assert (decision.status, decision.disposition) == ("ai_suggested", "delete")
+    assert decision.suggestion_id == read_suggestion("delete_candidate").id
 
 
 def test_repeated_text_pairs_one_to_one_and_leaves_no_delete_candidate(client: TestClient, fake_ai: FakeAi) -> None:
@@ -370,7 +474,9 @@ def test_repeated_text_pairs_one_to_one_and_leaves_no_delete_candidate(client: T
     assert {tuple(job.unit_ids): job.target_ids for job in read_jobs()} == {
         (first,): [same_targets[0]], (old_once,): [read_target(NEW_1).id], (second,): [same_targets[1]],
     }
-    assert read_rows(AiSuggestion) == []
+    assert {tuple(row.content["unit_ids"]): row.content["change_type"] for row in read_rows(AiSuggestion)} == {
+        (first,): "as_is", (old_once,): "rewritten", (second,): "as_is",
+    }
     assert client.get(f"/api/bundles/{bundle.id}/match/identical-candidates", headers=AUTHOR).json() == []
 
 
@@ -410,7 +516,7 @@ def test_unmatched_old_is_delete_candidate_only_without_assign_docs(
     assert decision.revision == 2
     assert suggestion.content == {
         "unit_ids": [unit], "target_ids": [], "shape": "delete_candidate", "change_type": "deleted", "reason": "",
-        "rule_ids": [], "retrieval": "no_index",
+        "rule_ids": [], "retrieval": "no_index", "provisional": False,
     }
     assert (suggestion.kind, suggestion.result, suggestion.document_id) == ("match", "applied", bundle.old_document_id)
 
@@ -427,7 +533,7 @@ def test_unmatched_new_is_suggested_as_new(client: TestClient, fake_ai: FakeAi) 
     assert target.revision == 2
     assert suggestion.content == {
         "unit_ids": [], "target_ids": [target.id], "shape": "new", "change_type": "new", "reason": "", "rule_ids": [],
-        "retrieval": "no_index",
+        "retrieval": "no_index", "provisional": False,
     }
     assert (suggestion.kind, suggestion.document_id) == ("match", bundle.new_document_id)
 
@@ -592,7 +698,7 @@ def test_figures_pair_as_is_without_llm(client: TestClient, fake_ai: FakeAi) -> 
     assert (decision.status, decision.disposition) == ("ai_suggested", "assigned")
     assert suggestion.content == {
         "unit_ids": [unit], "target_ids": [figure.id], "shape": "figure", "change_type": "as_is", "reason": "",
-        "rule_ids": [], "retrieval": "no_index",
+        "rule_ids": [], "retrieval": "no_index", "provisional": False,
     }
     assert fake_ai.requests == [] and read_jobs() == []
 
@@ -659,7 +765,7 @@ def test_blank_texts_are_not_embedded(client: TestClient, fake_ai: FakeAi, monke
 
     (job,) = read_jobs()
     assert job.payload == {"retrieval": "embedding"}
-    assert read_links() == set()
+    assert read_links() == {(read_target(NEW_1).id, *read_old_ids(client, bundle, OLD_1))}  # 그림은 잇지 않는다
 
 
 @pytest.mark.parametrize(("old_blank", "new_blank"), [(True, True), (True, False), (False, True)])
@@ -710,7 +816,7 @@ def test_scores_are_not_stored(client: TestClient, fake_ai: FakeAi, monkeypatch:
     plan(client, bundle.id)
 
     suggestions = read_rows(AiSuggestion)
-    assert {row.content["shape"] for row in suggestions} == {"delete_candidate", "new", "table"}
+    assert {row.content["shape"] for row in suggestions} == {"delete_candidate", "new", "table", "one_to_one"}
     assert all(set(row.content) == CONTENT_KEYS for row in suggestions)
     (plan_job,) = read_jobs("match_plan")
     assert set(plan_job.input_snapshot) == {"unit_revisions", "target_revisions"}
@@ -752,24 +858,28 @@ def test_rerun_replaces_previous_match_suggestions(client: TestClient, fake_ai: 
 def test_rerun_that_finds_a_pair_clears_the_old_suggestions(
     client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """앞 계획의 삭제 후보·신규가 뒤 계획에서 짝이 되면 변경 종류 작업을 기다리며 미배정으로 돌아간다."""
+    """앞 계획의 삭제 후보·신규가 뒤 계획에서 짝이 되면 걷히고 그 자리에 잠정 문장 묶음 제안이 쓰인다."""
     bundle = make_match_bundle(client, p(OLD_1), p(NEW_1))
     use_vectors(monkeypatch, fake_ai, {OLD_1: 0, NEW_1: 1})
     plan(client, bundle.id)
     (unit,) = read_old_ids(client, bundle, OLD_1)
     suggested = read_decision(unit)
     assert suggested.status == "ai_suggested"
+    first_delete, first_new = read_suggestion("delete_candidate").id, read_suggestion("new").id
 
     monkeypatch.setattr(settings, "embed_enabled", False)  # 글자 유사도로는 짝이 된다
     plan(client, bundle.id)
 
     (job,) = read_jobs()
     assert job.unit_ids == [unit]
+    rows = {row.id: row for row in read_rows(AiSuggestion)}
+    assert (rows[first_delete].result, rows[first_new].result) == ("stale", "stale")
+    pair = read_suggestion("one_to_one")
     decision = read_decision(unit)
-    assert_untouched(decision)
+    assert (decision.status, decision.disposition, decision.suggestion_id) == ("ai_suggested", "assigned", pair.id)
     assert decision.revision > suggested.revision  # 낡은 화면이 덮어쓰지 않게
     target = read_target(NEW_1)
-    assert (target.status, target.change_type, target.suggestion_id) == ("unassigned", None, None)
+    assert (target.status, target.change_type, target.suggestion_id) == ("ai_suggested", "rewritten", pair.id)
 
 
 def test_rerun_keeps_new_doc_targets_and_their_text(client: TestClient, fake_ai: FakeAi) -> None:
@@ -922,7 +1032,7 @@ def test_group_with_a_changed_member_is_skipped_whole(
     assert job.unit_ids == [other]
     assert_untouched(read_decision(changed))
     assert read_target(NEW_1).status == "confirmed"
-    assert read_rows(AiSuggestion) == []
+    assert [row.content["unit_ids"] for row in read_rows(AiSuggestion)] == [[other]]  # 그대로인 짝만 제안이 쓰인다
 
 
 def test_language_change_during_plan_skips_the_unit(
@@ -963,4 +1073,5 @@ def test_retired_unit_during_plan_is_left_alone(
 
     (job,) = read_jobs()
     assert job.unit_ids == [kept]
-    assert read_rows(AiSuggestion) == []  # 은퇴한 단위에 삭제 후보를 쓰지 않는다
+    # 은퇴한 단위에 삭제 후보를 쓰지 않는다 — 남은 짝의 문장 묶음 제안 하나뿐이다
+    assert [row.content["unit_ids"] for row in read_rows(AiSuggestion)] == [[kept]]
