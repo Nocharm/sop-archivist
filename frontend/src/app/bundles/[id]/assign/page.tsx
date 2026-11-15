@@ -49,7 +49,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { findLastStep } from "@/lib/destination-manage-model";
-import { planJoin, planPairLanguages, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
+import { planPairLanguages, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
 import { readSplitOffsets } from "@/lib/use-split-ai";
 import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, type AiScope } from "@/lib/api-manage";
 import {
@@ -112,7 +112,7 @@ import {
   type LinkMenuItem,
   type Recommendation,
 } from "@/lib/assign-model";
-import { buildAssignMenu, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
+import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { describeDecisionStep, getAssignUndoKey, pickSaveOp } from "@/lib/decision-step-model";
@@ -668,8 +668,9 @@ export default function AssignPage() {
     setCarvePick(null);
     window.getSelection()?.removeAllRanges();
   }
-  // 떨어진 문장과 한/영 짝 맺기 - 메뉴에서 시작하면 다음에 누르는 문장이 짝이 된다(Esc로 거둔다). 문서를 바꾸면 버려진다
-  const [pairFrom, setPairFrom] = useState<{ docId: number; unitId: number } | null>(null);
+  // 떨어진 문장과 한/영 짝 맺기 - 메뉴에서 시작하면 다음에 누르는 문장이 짝이 된다(Esc로 거둔다). 문서를 바꾸면 버려진다.
+  // 셋 이상이면 Shift+클릭으로 모으고(picked) 마지막 문장을 그냥 누르거나 줄의 단추로 맺는다
+  const [pairFrom, setPairFrom] = useState<{ docId: number; unitId: number; picked: number[] } | null>(null);
   // 메뉴의 "참조 줄로 표시"로 번호 칸을 연 문장 - 제안도 확정도 없는 문장에 참조 카드를 띄운다
   const [refEntryId, setRefEntryId] = useState<number | null>(null);
   const pairSource = pairFrom !== null && pairFrom.docId === oldView?.document.id ? (paperModel?.units.get(pairFrom.unitId) ?? null) : null;
@@ -1011,7 +1012,7 @@ export default function AssignPage() {
     } else if (action === "pair_pick") {
       if (!oldView) return;
       clearCarve();
-      setPairFrom({ docId: oldView.document.id, unitId: target.id });
+      setPairFrom({ docId: oldView.document.id, unitId: target.id, picked: [] });
     } else if (action === "unpair") {
       const pairId = target.pair_id;
       if (pairId !== null) void runPairChange((docId, revision) => deletePair(bundleId, docId, pairId, revision), t("split.pairRemoved"), target.id);
@@ -1477,25 +1478,42 @@ export default function AssignPage() {
     return () => cancelAnimationFrame(frame);
   }, [jump]);
 
+  /** 짝 고르기를 맺는다 - 처음 문장과 고른 문장들이 한 짝이 된다. 맺을 수 없으면 까닭을 알리고 고르던 것을 그대로 둔다 */
+  function finishPairPick(pickedIds: number[]) {
+    if (!pairSource || pickedIds.length === 0) return;
+    const others = pickedIds.map((id) => paperModel?.units.get(id)).filter((unit): unit is ViewUnit => unit !== undefined);
+    const blocker = others.map((unit) => getPairPickBlocker(unit, { isDecided: isUnitDecided, hasDraft: hasUnitDraft })).find((reason) => reason !== null) ?? getPairSetBlocker([pairSource, ...others]);
+    if (blocker !== null) {
+      showToast(t(blocker), "error");
+      return;
+    }
+    const unitIds = [pairSource.id, ...others.map((unit) => unit.id)];
+    setPairFrom(null);
+    void runPairChange((docId, revision) => createPair(bundleId, docId, revision, unitIds), t("split.didJoin"), unitIds[0]);
+  }
+
   function handleOldClick(unitId: number, keys: { shiftKey: boolean }) {
     if (mode === "unsourced") {
       void linkAsSource(unitId);
       return;
     }
-    if (pairSource) {
+    if (pairSource && pairFrom) {
       const other = paperModel?.units.get(unitId);
       if (!other || other.id === pairSource.id) return;
-      // 묶을 수 있는지는 Split과 같은 규칙 - 한글·영어 한 쌍이고 둘 다 짝이 없어야 한다. 누른 문장에 판단·저장 전 고름이 있어도 못 맺는다
-      const plan = planJoin([pairSource, other], false);
-      // 같은 언어를 누르면 합치기 규칙의 까닭("이웃한 문장만") 대신 짝에 맞는 까닭을 말한다
-      const blocker = other.lang === pairSource.lang ? "assign.pairPickSameLang" : plan.kind !== "pair" ? (plan.reasonKey ?? "assign.ctx.why.cannotMerge") : isUnitDecided(other) ? "assign.ctx.why.neighborAssigned" : hasUnitDraft(other) ? "assign.ctx.why.neighborUnsaved" : null;
-      if (blocker !== null) {
-        showToast(t(blocker), "error");
+      const { picked } = pairFrom;
+      if (!keys.shiftKey) {
+        // 그냥 누르면 그 문장까지 넣어 바로 맺는다 - 둘뿐인 흔한 경우는 누르기 한 번이다
+        finishPairPick(picked.includes(other.id) ? picked : [...picked, other.id]);
         return;
       }
-      const from = pairSource;
-      setPairFrom(null);
-      void runPairChange((docId, revision) => createPair(bundleId, docId, revision, [from.id, other.id]), t("split.didJoin"), from.id);
+      // Shift+클릭은 모으기 - 다시 누르면 뺀다. 넣을 수 없는 문장은 까닭을 알리고 계속 기다린다
+      if (picked.includes(other.id)) {
+        setPairFrom({ ...pairFrom, picked: picked.filter((id) => id !== other.id) });
+        return;
+      }
+      const blocker = getPairPickBlocker(other, { isDecided: isUnitDecided, hasDraft: hasUnitDraft });
+      if (blocker !== null) showToast(t(blocker), "error");
+      else setPairFrom({ ...pairFrom, picked: [...picked, other.id] });
       return;
     }
     const key = rowOfUnit.get(unitId);
@@ -1544,6 +1562,12 @@ export default function AssignPage() {
     if (event.key === "Escape" && pairSource && !isTypingTarget(event.target) && !document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]')) {
       event.preventDefault();
       setPairFrom(null);
+      return;
+    }
+    // 짝 고르는 중에 모은 문장이 있으면 ↵가 맺는다(확정의 ↵보다 먼저)
+    if (event.key === "Enter" && pairSource && pairFrom && pairFrom.picked.length > 0 && !isTypingTarget(event.target) && !document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]')) {
+      event.preventDefault();
+      finishPairPick(pairFrom.picked);
       return;
     }
     // 메뉴 글쇠·Shift+F10 - 고른 줄(나눌 선이 있으면 그 문장)에서 우클릭 메뉴를 연다
@@ -2570,7 +2594,8 @@ export default function AssignPage() {
   ];
   const highlightIds = new Set(row?.unitIds ?? []);
   const pickedNew = new Set(linkIds);
-  const pickedOld = new Set([...checked].flatMap((key) => rowMap.get(key)?.unitIds ?? []));
+  // Shift로 고른 줄, 그리고 짝 고르기에서 모은 문장
+  const pickedOld = new Set([...[...checked].flatMap((key) => rowMap.get(key)?.unitIds ?? []), ...(pairSource && pairFrom ? pairFrom.picked : [])]);
   const placeOf = (unitIds: number[]) => {
     const decided = unitIds.map((id) => unitMap.get(id)).find((unit) => unit?.status === "confirmed");
     if (!decided) return null;
@@ -2674,7 +2699,14 @@ export default function AssignPage() {
                   pairSource ? (
                     <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-pair-pick">
                       <Link2 size={14} strokeWidth={1.5} className="flex-none text-ink-2" aria-hidden />
-                      <span className="min-w-0 flex-1 text-ink">{t("assign.pairPick", { id: pairSource.display_id })}</span>
+                      <span className="min-w-0 flex-1 text-ink" data-testid="assign-pair-pick-text">
+                        {pairFrom && pairFrom.picked.length > 0 ? t("assign.pairPicked", { id: pairSource.display_id, n: pairFrom.picked.length }) : t("assign.pairPick", { id: pairSource.display_id })}
+                      </span>
+                      {pairFrom && pairFrom.picked.length > 0 && (
+                        <button type="button" className="btn pri h-7 flex-none" data-testid="assign-pair-pick-run" disabled={busy} onClick={() => finishPairPick(pairFrom.picked)}>
+                          {t("assign.pairPickRun", { n: pairFrom.picked.length + 1 })} <kbd>↵</kbd>
+                        </button>
+                      )}
                       <button type="button" className="btn ghost h-7 flex-none" data-testid="assign-pair-pick-cancel" onClick={() => setPairFrom(null)}>
                         {t("common.cancel")} <kbd>Esc</kbd>
                       </button>

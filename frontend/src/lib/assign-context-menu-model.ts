@@ -152,6 +152,23 @@ export function planAssignJoin(first: ViewUnit | undefined, second: ViewUnit | u
   return plan;
 }
 
+/** 떨어진 문장 짝 고르기에 그 문장을 넣을 수 없는 까닭의 문구 키 - 넣을 수 있으면 null. 언어 조합은 다 고른 뒤에 본다(getPairSetBlocker) */
+export function getPairPickBlocker(unit: ViewUnit, state: Pick<AssignMenuContext, "isDecided" | "hasDraft">): string | null {
+  if (!EDITABLE_KINDS.has(unit.kind)) return why("notText");
+  if (unit.lang !== "ko" && unit.lang !== "en") return "split.menu.why.noLanguage";
+  if (unit.pair_id !== null) return "split.menu.why.alreadyPaired";
+  if (state.isDecided(unit)) return why("neighborAssigned");
+  return state.hasDraft(unit) ? why("neighborUnsaved") : null;
+}
+
+/** 고른 문장들(처음 문장 포함)을 한 짝으로 맺을 수 없는 까닭의 문구 키 - 한글과 영어가 모두 있어야 한다 */
+export function getPairSetBlocker(units: ViewUnit[]): string | null {
+  const plan = planJoin(units, false);
+  if (plan.kind === "pair") return null;
+  // 같은 언어뿐이면 합치기 규칙의 까닭("이웃한 문장만") 대신 짝에 맞는 까닭을 말한다
+  return new Set(units.map((unit) => unit.lang)).size === 1 ? "assign.pairPickSameLang" : (plan.reasonKey ?? why("cannotMerge"));
+}
+
 export interface ShapeMode {
   /** 고른 줄의 지금 모양 - 합친 한 문장 또는 한/영 짝 */
   current: "one" | "pair";

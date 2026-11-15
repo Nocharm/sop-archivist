@@ -2361,6 +2361,49 @@ await runStep("assign: separate and pair KO/EN from the right-click menu", {}, a
   await page.waitForFunction(() => document.querySelector('[data-testid="assign-pair-pick"]') === null, null, { timeout: T });
   const pickedPair = await readPairs([ko.id, en.id]);
   check("the picked sentences are a pair", pickedPair[0] !== null && pickedPair[0] === pickedPair[1]);
+  // 셋 이상을 한 짝으로(v1.0.25) - 다시 풀고, Shift+클릭으로 모은 뒤 줄의 단추로 한 번에 맺는다. 끝에는 처음의 두 문장 짝으로 돌려 둔다
+  const third = sentences.find((unit) => unit.status === "unassigned" && unit.pair_id === null && (unit.lang === "ko" || unit.lang === "en") && unit.id !== ko.id && unit.id !== en.id);
+  if (third === undefined || (await page.locator(`[data-testid="assign-paper-unit-${third.id}"]`).count()) === 0) {
+    console.log("  (no third free sentence on screen - pairing three not exercised)");
+    return;
+  }
+  const unpair = async () => {
+    await piece.click({ button: "right" });
+    await wait(page, "assign-ctx-unpair");
+    const gone = page.waitForResponse((response) => response.request().method() === "DELETE" && /\/pairs\/\d+/.test(response.url()), { timeout: T });
+    await page.locator('[data-testid="assign-ctx-unpair"]').click();
+    await gone;
+    await page.waitForFunction((id) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() === id, ko.display_id, { timeout: T });
+    await page.waitForLoadState("networkidle");
+  };
+  await unpair();
+  await piece.click({ button: "right" });
+  await page.locator('[data-testid="assign-ctx-pair_pick"]').click();
+  await wait(page, "assign-pair-pick");
+  check("nothing is offered to run until a sentence is picked", (await page.locator('[data-testid="assign-pair-pick-run"]').count()) === 0);
+  await page.locator(`[data-testid="assign-paper-unit-${en.id}"]`).first().click({ modifiers: ["Shift"] });
+  await page.locator(`[data-testid="assign-paper-unit-${third.id}"]`).first().click({ modifiers: ["Shift"] });
+  await wait(page, "assign-pair-pick-run");
+  check("Shift+click collects sentences and marks them on the paper", (await getText(page, "assign-pair-pick-run")).includes("3") && (await page.locator(`[data-testid="assign-paper-unit-${third.id}"][data-pick]`).count()) > 0, await getText(page, "assign-pair-pick-text"));
+  await takeShot("sop-assign-pair-many.png");
+  const three = page.waitForResponse((response) => response.request().method() === "POST" && /\/pairs$/.test(response.url()), { timeout: T });
+  await page.locator('[data-testid="assign-pair-pick-run"]').click();
+  check("Pair 3 saves", (await three).ok());
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-pair-pick"]') === null, null, { timeout: T });
+  const trio = await readPairs([ko.id, en.id, third.id]);
+  check("the three sentences share one pair", trio[0] !== null && trio.every((pairId) => pairId === trio[0]), trio.join(","));
+  await page.waitForFunction((id) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.includes(id), ko.display_id, { timeout: T });
+  await page.waitForLoadState("networkidle");
+  await unpair();
+  await piece.click({ button: "right" });
+  await page.locator('[data-testid="assign-ctx-pair_pick"]').click();
+  await wait(page, "assign-pair-pick");
+  const restored = page.waitForResponse((response) => response.request().method() === "POST" && /\/pairs$/.test(response.url()), { timeout: T });
+  await page.locator(`[data-testid="assign-paper-unit-${en.id}"]`).first().click();
+  await restored;
+  const after = await readPairs();
+  const pairOf = (id) => after.find((unit) => unit.id === id)?.pair_id ?? null;
+  check("the first two are a pair again and the third is free", pairOf(ko.id) !== null && pairOf(ko.id) === pairOf(en.id) && pairOf(third.id) === null);
 });
 
 // 배정 화면에서 보낼 곳 더하고 지우기 - All 목록에서 SOP·WI·단계를 만들고(한 줄씩 바로 저장), 두 번 눌러 지운다. 끝에는 목록이 처음과 같다
