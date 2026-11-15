@@ -7,6 +7,7 @@ import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
+from app.equis.service import REF_LOOKUPS_PER_READ
 from app.sop.refs import build_ref_text, check_ref_text, find_leading_number, read_number_in_text
 from tests.docx_factory import build_docx, p
 from tests.sop_helpers import (
@@ -383,9 +384,122 @@ def test_written_sentence_of_a_reference_is_checked_against_equis(
     row = next(row for row in _list_written(client, fx.bundle_id) if row["text"] == new_line)
 
     assert row["ref_issue"] == expected
+    # 견준 번호는 출처 참조 줄의 번호다(이 문장의 글에서 다시 읽지 않는다)
+    assert (row["ref"]["number"], row["ref"]["equis"]["number"]) == (OLD_NUMBER, NUMBER)
 
 
 def test_written_sentence_is_not_checked_without_equis(client: TestClient) -> None:
     fx, _ = _link_to_written(client, REF_LINE)
 
     assert [row["ref_issue"] for row in _list_written(client, fx.bundle_id)] == [None]
+
+
+# --- 새 문서에만 있는 참조 줄(출처 없음) ---
+
+
+def _upload_written(client: TestClient, fx: Setup, *lines: str) -> int:
+    """이미 쓴 새 문서를 올리고 옛 문서와 잇지 않은 채 둔다 — 문서 id."""
+    uploaded = upload(
+        client, fx.bundle_id, build_docx("".join(p(line) for line in lines), headers=[p("합성 새 문서")]),
+        "SYNTHETIC_SOP-W_Refs.docx", side="new", doc_type="sop",
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    return uploaded.json()["id"]
+
+
+def _find_written(client: TestClient, bundle_id: int, text: str) -> dict:
+    return next(row for row in _list_written(client, bundle_id) if row["text"] == text)
+
+
+def _edit_written(client: TestClient, fx: Setup, doc_id: int, op_type: str, text: str, **extra: str) -> httpx2.Response:
+    view = get_view(client, fx.bundle_id, doc_id)
+    op = {"type": op_type, "unit_id": find_unit(view, text)["id"], **extra}
+    body = {"revision": view["document"]["revision"], "confirm": False, "op": op}
+    return client.post(f"/api/bundles/{fx.bundle_id}/documents/{doc_id}/edits", json=body, headers=AUTHOR)
+
+
+@pytest.mark.parametrize(
+    ("new_line", "expected"),
+    [
+        (REF_LINE, "number"),
+        (f"{NUMBER} Operation of UV spectrophotometer", "title"),
+        (f"{NUMBER} {NAME}", None),
+    ],
+)
+def test_reference_line_only_in_a_written_document_is_checked_against_equis(
+    client: TestClient, equis: FakeEquis, new_line: str, expected: str | None  # noqa: F811
+) -> None:
+    equis.rows = [make_row(NUMBER, legacy=OLD_NUMBER)]
+    fx = Setup(client)
+    _upload_written(client, fx, new_line)
+
+    first = _find_written(client, fx.bundle_id, new_line)  # 이 읽기가 조회를 건다(응답 뒤에 끝난다)
+    row = _find_written(client, fx.bundle_id, new_line)
+
+    assert row["source_unit_ids"] == []
+    assert (first["ref"]["number"], first["ref"]["equis"]["state"], first["ref_issue"]) == (
+        find_leading_number(new_line), "pending", None,
+    )
+    found = row["ref"]["equis"]
+    assert (found["state"], found["number"], found["name"]) == ("found", NUMBER, NAME)
+    assert row["ref_issue"] == expected
+
+
+def test_written_prose_that_mentions_a_number_is_not_a_reference(client: TestClient, equis: FakeEquis) -> None:  # noqa: F811
+    fx = Setup(client)
+    _upload_written(client, fx, PROSE_EN)
+    asked_before = list(equis.asked)
+
+    row = _find_written(client, fx.bundle_id, PROSE_EN)
+
+    assert (row["ref"], row["ref_issue"]) == (None, None)
+    assert equis.asked == asked_before
+
+
+def test_reference_line_unknown_to_equis_is_shown_as_not_found(client: TestClient, equis: FakeEquis) -> None:  # noqa: F811
+    fx = Setup(client)
+    _upload_written(client, fx, REF_LINE)
+    _list_written(client, fx.bundle_id)
+
+    row = _find_written(client, fx.bundle_id, REF_LINE)
+
+    assert (row["ref"]["equis"]["state"], row["ref_issue"]) == ("not_found", None)
+
+
+def test_a_written_line_marked_not_a_reference_is_left_alone(client: TestClient) -> None:
+    fx = Setup(client)
+    doc_id = _upload_written(client, fx, REF_LINE)
+    # EQUIS가 꺼져 있어도 참조 줄인지는 안다(표시만 없다)
+    assert _find_written(client, fx.bundle_id, REF_LINE)["ref"] == {"number": OLD_NUMBER, "equis": None}
+
+    response = _edit_written(client, fx, doc_id, "clear_ref", REF_LINE)
+
+    assert response.status_code == 200, response.text
+    assert _find_written(client, fx.bundle_id, REF_LINE)["ref"] is None
+
+
+def test_a_written_line_marked_as_a_reference_by_hand_uses_that_number(client: TestClient) -> None:
+    fx = Setup(client)
+    doc_id = _upload_written(client, fx, PROSE_EN)
+
+    response = _edit_written(client, fx, doc_id, "set_ref", PROSE_EN, number=OLD_NUMBER)
+
+    assert response.status_code == 200, response.text
+    row = _find_written(client, fx.bundle_id, PROSE_EN)
+    assert (row["lang"], row["ref"]) == ("ref", {"number": OLD_NUMBER, "equis": None})
+
+
+def test_reference_lookups_are_asked_a_few_at_a_time(client: TestClient, equis: FakeEquis) -> None:  # noqa: F811
+    # 조회는 응답 뒤에 줄지어 돈다 — 한꺼번에 걸면 뒤쪽 번호가 제한 시간을 넘겨 다음 읽기에 또 걸린다
+    fx = Setup(client)
+    extra = 2
+    lines = [f"SOP-REF-{index:03d} Synthetic reference {index}" for index in range(REF_LOOKUPS_PER_READ + extra)]
+    _upload_written(client, fx, *lines)
+    asked_before = len(equis.asked)
+
+    _list_written(client, fx.bundle_id)
+    asked_first = len(equis.asked) - asked_before
+    _list_written(client, fx.bundle_id)
+    _list_written(client, fx.bundle_id)
+
+    assert (asked_first, len(equis.asked) - asked_before) == (REF_LOOKUPS_PER_READ, REF_LOOKUPS_PER_READ + extra)

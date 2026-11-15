@@ -31,6 +31,9 @@ REFRESH_AFTER_HOURS = 24
 RETRY_UNAVAILABLE_SECONDS = 600
 # "다시 조회"를 연달아 눌러도 웹훅을 다시 부르지 않는 간격(초)
 REFRESH_DEBOUNCE_SECONDS = 30
+# 본문의 참조 줄 번호를 읽기 한 번에 조회하는 수 — 한 요청의 조회는 응답 뒤에 줄지어 돈다. 참조 줄은 문서마다 수십 개라
+# 한꺼번에 걸면 뒤쪽 번호가 PENDING_TIMEOUT_SECONDS를 넘겨 다음 읽기에 또 걸린다. 남은 번호는 다음 읽기가 잇는다
+REF_LOOKUPS_PER_READ = 10
 # 제목을 EQUIS 이름으로 맞춘 기록의 행위자
 SYSTEM_ACTOR = "system:equis"
 
@@ -103,11 +106,13 @@ async def load_lookups(session: AsyncSession, codes: Iterable[str]) -> dict[str,
     return {row.doc_number: row for row in rows}
 
 
-async def request_lookups(session: AsyncSession, codes: Iterable[str], *, force: bool = False) -> list[str]:
+async def request_lookups(
+    session: AsyncSession, codes: Iterable[str], *, force: bool = False, limit: int | None = None
+) -> list[str]:
     """조회할 번호를 표시하고 그 번호들을 돌려준다 — 커밋은 호출부가 하고, 커밋 뒤 `run_lookup`에 넘긴다.
 
     처음 보는 번호와 다시 조회할 때가 된 번호만 고른다. 이미 조회 중인 번호는 건너뛴다(같은 번호는 한 번만 묻는다).
-    force는 사람이 누른 "다시 조회"다.
+    force는 사람이 누른 "다시 조회"다. limit을 주면 그 수까지만 고르고 나머지는 다음 부름에 남긴다.
     """
     if not settings.equis_enabled:
         return []
@@ -116,6 +121,8 @@ async def request_lookups(session: AsyncSession, codes: Iterable[str], *, force:
     now = clock.now()
     requested: list[str] = []
     for number in numbers:
+        if limit is not None and len(requested) >= limit:
+            break
         lookup = existing.get(number)
         if lookup is None:
             try:
