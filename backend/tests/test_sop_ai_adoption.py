@@ -5,7 +5,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.sop.ai.adoption import SavedShape, SuggestedShape, TargetShape, decide_adoption
-from app.sop.models import AiSuggestion, TargetSentence, TargetTextHistory
+from app.sop.models import AiSuggestion, TargetSentence, TargetTextHistory, UnitDecision
+from tests.access_helpers import update_row
 from tests.ai_fixtures import (
     AI_EN_1,
     AI_EN_2,
@@ -757,6 +758,39 @@ def test_bulk_still_refuses_units_with_confirmed_targets(client: TestClient, fak
     decision = read_decision(ko)
     assert (decision.status, decision.revision, decision.suggestion_id) == ("ai_suggested", before.revision, before.suggestion_id)
     assert read_suggestions()[0].adoption is None
+
+
+@pytest.mark.usefixtures("clean_embedding_cache")
+def test_bulk_over_a_match_table_clears_the_cell_links_too(client: TestClient, fake_ai: FakeAi) -> None:
+    # 칸 새 문장은 표 단위의 칸 문장이 출처다 — 같은 제안의 것이라 거절하지 않고 함께 걷는다
+    bundle = make_match_bundle(client, tbl(CELLS), tbl([CELLS[0], ["합성 압력 범위", CELLS[1][1]]]))
+    table_unit = find_kind(get_view(client, bundle.id, bundle.old_document_id), "table")["id"]
+    plan(client, bundle.id)
+    assert read_decision(table_unit).status == "ai_suggested" and len(read_links()) == 5
+
+    response = bulk_delete(client, bundle.id, table_unit)
+
+    assert response.status_code == 200, response.text
+    assert (read_decision(table_unit).status, read_decision(table_unit).disposition) == ("confirmed", "delete")
+    assert read_links() == set()
+    assert {row.status for row in read_rows(TargetSentence)} == {"unassigned"}
+
+
+@pytest.mark.parametrize("status", ["confirmed", "on_hold"])
+def test_bulk_refuses_an_ai_target_it_would_not_clear(client: TestClient, fake_ai: FakeAi, status: str) -> None:
+    # 지킴 시험 — 지금 길로는 만들 수 없는 모양을 DB에 직접 만든다: 판단은 AI 제안이 아닌데 AI 새 문장이 남아 있다.
+    # 걷기는 고른 AI 제안 판단의 제안만 걷으므로, 그 밖의 AI 새 문장은 사람의 것처럼 거절해야 처분한 단위에 매달린 채 남지 않는다
+    bundle, ko, _ = suggest_first_pair(client, fake_ai)
+    (target_id,) = ai_targets_of(ko)
+    update_row(UnitDecision, ko, status=status)
+    before = read_decision(ko)
+
+    response = bulk_delete(client, bundle.id, ko)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == {"code": "unit_has_targets", "unit_ids": [ko]}
+    assert (read_decision(ko).status, read_decision(ko).revision) == (status, before.revision)
+    assert ai_targets_of(ko) == [target_id]
 
 
 @pytest.mark.parametrize(("candidate", "expected"), [("delete", "as_is"), ("c1", "rejected")])

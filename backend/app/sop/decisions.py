@@ -1264,9 +1264,16 @@ async def save_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveIn
     return out
 
 
-async def _find_units_with_targets(session: AsyncSession, unit_ids: Collection[int]) -> list[int]:
-    """사람이 확정·보류한 새 문장의 출처인 단위 — 표·행 단위는 칸 문장이 출처여도 센다. AI 제안 새 문장은 일괄 처분이 걷으니 세지 않는다."""
+async def _find_units_with_targets(
+    session: AsyncSession, unit_ids: Collection[int], cleared_suggestion_ids: Collection[int]
+) -> list[int]:
+    """새 문장의 출처인 단위 — 표·행 단위는 칸 문장이 출처여도 센다.
+
+    cleared_suggestion_ids는 일괄 처분이 곧 걷을 제안이다 — 그 제안의 AI 새 문장만 빼고, 사람의 새 문장과 걷지 않을 AI 새 문장은
+    센다(걷지 않은 채 처분하면 처분한 단위에 매달린 AI 새 문장이 남는다).
+    """
     wanted = set(unit_ids)
+    cleared = set(cleared_suggestion_ids)
     rows = await select_in_chunks(
         session,
         lambda chunk: select(TargetSource.unit_id, Unit.group_unit_id)
@@ -1274,7 +1281,11 @@ async def _find_units_with_targets(session: AsyncSession, unit_ids: Collection[i
         .join(TargetSentence, TargetSentence.id == TargetSource.target_id)
         .where(
             or_(TargetSource.unit_id.in_(chunk), Unit.group_unit_id.in_(chunk)),
-            TargetSentence.status != AI_SUGGESTED,
+            or_(
+                TargetSentence.status != AI_SUGGESTED,
+                TargetSentence.suggestion_id.is_(None),
+                TargetSentence.suggestion_id.not_in(cleared),
+            ),
         ),
         unit_ids,
     )
@@ -1304,17 +1315,19 @@ async def dispose_units(
     ]
     if conflicts:
         raise_rule(409, "revision_conflict", conflicts=conflicts)
-    with_targets = await _find_units_with_targets(session, unit_ids)
+    decisions = {unit_id: loaded[unit_id][1] for unit_id in unit_ids}
+    suggested = [decision for decision in decisions.values() if decision.status == AI_SUGGESTED]
+    cleared = {decision.suggestion_id for decision in suggested if decision.suggestion_id is not None}
+    with_targets = await _find_units_with_targets(session, unit_ids, cleared)
     if with_targets:
         raise_rule(409, "unit_has_targets", unit_ids=with_targets)
     stamp = now()
-    decisions = {unit_id: loaded[unit_id][1] for unit_id in unit_ids}
     # 걷기가 판단의 제안 칸을 비우므로 채택을 먼저 남긴다
     await record_unit_adoption(
         session, plans=(), dispositions=dict.fromkeys(unit_ids, payload.action), decisions=decisions,
         actor=actor, stamp=stamp,
     )
-    await clear_previous_suggestion(session, [decision for decision in decisions.values() if decision.status == AI_SUGGESTED])
+    await clear_previous_suggestion(session, suggested)
     for decision in decisions.values():
         decision.disposition, decision.reason = payload.action, payload.reason
         decision.move_target_code = payload.move_target_code if payload.action == "move_external" else ""
