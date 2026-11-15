@@ -31,7 +31,7 @@ from app.sop.ai.constants import MATCH_EMBED_THRESHOLD, MATCH_TEXT_THRESHOLD
 from app.sop.ai.context import UnitContext, load_unit_context
 from app.sop.ai.embeddings import EmbeddingUnavailable, embed_texts
 from app.sop.ai.guidelines import RULES_KEY, GuidelineRef, format_guideline_versions, load_active_guidelines
-from app.sop.ai.jobs import ACTIVE_JOB_STATUSES, JobItem, enqueue_jobs
+from app.sop.ai.jobs import ACTIVE_JOB_STATUSES, JobItem, enqueue_jobs, promote_queued_jobs
 from app.sop.ai.llm import AiStr, build_messages, call_llm, ensure_llm_enabled, parse_reply
 from app.sop.ai.matching import MatchGroup, MatchItem, MatchProposal, build_text_scores, propose_groups
 from app.sop.ai.runner import AiCallFailed
@@ -92,6 +92,19 @@ async def _has_target_doc(session: AsyncSession, bundle_id: int, entrance: str) 
 
 async def has_assign_documents(session: AsyncSession, bundle_id: int) -> bool:
     return await _has_target_doc(session, bundle_id, "assign")
+
+
+async def promote_match_jobs(session: AsyncSession, bundle_id: int) -> int:
+    """계획이 줄 서 있거나 돌고 있으면 0 — 그 계획이 곧 줄 서는 변경 종류 작업을 쌓는다. 아니면 줄 선 변경 종류 작업을 사람 순위로 올린 수."""
+    plan_active = await session.scalar(
+        select(AiJob.id)
+        .where(AiJob.bundle_id == bundle_id, AiJob.kind == MATCH_PLAN_KIND, AiJob.status.in_(ACTIVE_JOB_STATUSES))
+        .limit(1)
+    )
+    if plan_active is not None:
+        return 0
+    promoted, _ = await promote_queued_jobs(session, bundle_id, MATCH_KIND)
+    return promoted
 
 
 async def select_match_items(session: AsyncSession, bundle_id: int) -> tuple[list[JobItem], list[SkippedOut]]:

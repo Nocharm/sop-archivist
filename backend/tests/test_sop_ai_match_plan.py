@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.settings import settings
 from app.sop.ai import embeddings
 from app.sop.ai.constants import AI_CALL_ATTEMPTS
+from app.sop.ai.jobs import JobItem, enqueue_jobs
+from app.sop.constants import AI_PRIORITY_PRE_REFINE, AI_PRIORITY_USER
 from app.sop.models import AiJob, AiSuggestion, Bundle, TargetSentence, UnitDecision
 from tests.access_helpers import run_in_session
 from tests.ai_fixtures import (
@@ -153,6 +155,44 @@ def test_active_plan_job_reports_already_queued(client: TestClient, fake_ai: Fak
         "skipped_by_reason": {"already_queued": 1},
     }
     assert len(read_jobs("match_plan")) == 1
+
+
+def queue_background_refine(bundle_id: int, count: int) -> None:
+    """미리 돌리기 변경 종류 작업을 직접 쌓는다 — 계획 없이도 줄 상태를 만든다."""
+
+    async def _enqueue(session: AsyncSession) -> None:
+        enqueue_jobs(
+            session, bundle_id=bundle_id, kind="match", requested_by=AUTHOR["X-Dev-User"],
+            items=[JobItem() for _ in range(count)], priority=AI_PRIORITY_PRE_REFINE, background=True,
+        )
+        await session.commit()
+
+    run_in_session(_enqueue)
+
+
+def test_match_request_promotes_queued_refine_jobs(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle = make_match_bundle(client, p(OLD_1), p(NEW_1))
+    queue_background_refine(bundle.id, 2)
+
+    out = request_match(client, bundle.id).json()
+
+    assert (out["queued"], out["skipped_total"]) == (2, 0)
+    assert read_jobs("match_plan") == []  # 새 계획은 안 쌓인다
+    refine = read_jobs()
+    assert {job.priority for job in refine} == {AI_PRIORITY_USER}
+    assert all(job.background for job in refine)
+
+
+def test_match_request_is_skipped_while_a_plan_is_active(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle = make_match_bundle(client, p(OLD_1), p(NEW_1))
+    assert request_match(client, bundle.id).json()["queued"] == 1
+    queue_background_refine(bundle.id, 1)
+
+    body = request_match(client, bundle.id).json()
+
+    assert (body["queued"], body["skipped"]) == (0, [{"unit_id": 0, "reason": "already_queued"}])
+    (refine,) = read_jobs()
+    assert refine.priority == AI_PRIORITY_PRE_REFINE
 
 
 def test_active_llm_job_also_blocks_a_new_plan(client: TestClient, fake_ai: FakeAi) -> None:

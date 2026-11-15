@@ -18,9 +18,10 @@ from app.sop.ai.jobs import (
     cancel_active_jobs,
     enqueue_jobs,
     load_job_breakdown,
+    promote_queued_jobs,
     retry_failed_jobs,
 )
-from app.sop.ai.match_jobs import MATCH_PLAN_KIND, select_match_items
+from app.sop.ai.match_jobs import MATCH_PLAN_KIND, promote_match_jobs, select_match_items
 from app.sop.ai.pairing import PAIR_KIND, select_pair_items
 from app.sop.ai.recent import list_recent_jobs
 from app.sop.ai.schemas import (
@@ -96,10 +97,17 @@ async def request_classify(
 ) -> AiRequestOut:
     await lock_bundle(session, ctx.bundle)
     ensure_editable(ctx.bundle)
+    promoted, promoted_units = await promote_queued_jobs(
+        session, ctx.bundle.id, CLASSIFY_KIND,
+        unit_ids=body.unit_ids or None, document_id=None if body.unit_ids else body.document_id,
+    )
     items, skipped = await select_classify_items(
         session, ctx.bundle.id, document_id=body.document_id, unit_ids=body.unit_ids
     )
-    return await _queue_request(session, ctx, CLASSIFY_KIND, items, skipped)
+    skipped = [
+        item for item in skipped if not (item.reason == "already_queued" and item.unit_id in promoted_units)
+    ]  # 순위가 올라 이미 사람 요청이 된 단위 — 건너뛴 게 아니라 응답 queued에 든다
+    return await _queue_request(session, ctx, CLASSIFY_KIND, items, skipped, promoted=promoted)
 
 
 @router.post("/translate", response_model=AiRequestOut, dependencies=[Depends(require_ai_enabled)])
@@ -123,6 +131,9 @@ async def request_match(
 ) -> AiRequestOut:
     await lock_bundle(session, ctx.bundle)
     ensure_editable(ctx.bundle)
+    promoted = await promote_match_jobs(session, ctx.bundle.id)
+    if promoted:  # 미리 돌리던 변경 종류 작업이 줄에 있다 — 새 계획 없이 순위만 올린다
+        return await _queue_request(session, ctx, MATCH_PLAN_KIND, [], [], promoted=promoted)
     items, skipped = await select_match_items(session, ctx.bundle.id)
     return await _queue_request(session, ctx, MATCH_PLAN_KIND, items, skipped, priority=AI_PRIORITY_PLAN)
 

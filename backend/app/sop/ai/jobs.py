@@ -117,6 +117,41 @@ async def find_active_unit_ids(session: AsyncSession, bundle_id: int, kinds: Col
     return {unit_id for unit_ids in rows for unit_id in unit_ids}
 
 
+async def promote_queued_jobs(
+    session: AsyncSession,
+    bundle_id: int,
+    kind: str,
+    *,
+    unit_ids: Collection[int] | None = None,
+    document_id: int | None = None,
+) -> tuple[int, set[int]]:
+    """줄 선 미리 돌리기 작업의 순위를 사람 요청 순위로 올리고 (올린 작업 수, 그 작업들이 잡은 단위 id)를 돌려준다.
+
+    unit_ids는 작업의 단위와 하나라도 겹치는 것, document_id는 그 문서의 것, 둘 다 None이면 그 종류 전부다. unit_ids는 JSON 열이라
+    SQL로 가리지 못하고 읽은 뒤 가린다. background와 request_id는 그대로 둔다 — 미리 돌린 작업이라는 표시와 진행 묶음은 그대로다.
+    """
+    rows = (
+        await session.execute(
+            select(AiJob.id, AiJob.document_id, AiJob.unit_ids).where(
+                *_build_job_filter(bundle_id, kind), AiJob.status == "queued", AiJob.priority > AI_PRIORITY_USER
+            )
+        )
+    ).all()
+    wanted = None if unit_ids is None else set(unit_ids)
+    chosen = [
+        row for row in rows
+        if (wanted is None or wanted & set(row.unit_ids)) and (document_id is None or row.document_id == document_id)
+    ]
+    if chosen:
+        await session.execute(
+            update(AiJob)
+            .where(AiJob.id.in_([row.id for row in chosen]), AiJob.status == "queued")
+            .values(priority=AI_PRIORITY_USER)
+            .execution_options(synchronize_session=False)
+        )
+    return len(chosen), {unit_id for row in chosen for unit_id in row.unit_ids}
+
+
 async def cancel_active_jobs(session: AsyncSession, bundle_id: int, kind: str | None = None) -> int:
     """대기·실행 중 작업을 취소하고 건수를 돌려준다 — 실행 중이던 작업의 결과는 실행기가 버린다.
 
