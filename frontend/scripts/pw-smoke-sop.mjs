@@ -912,6 +912,50 @@ await runStep("assign: an AI split keeps both sentences when confirmed", {}, asy
   check("both sentences are still there after confirming", (await page.locator('[data-testid^="assign-text-t"]').count()) === slots);
 });
 
+// 한 단 · 양 단 보기(v1.0.20) - 문서 하나만 넓게 보고 돌아온다. 고른 보기는 브라우저에 기억된다
+await runStep("assign: one document wide, then two again", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-new");
+  const readOldWidth = async () => (await page.locator('[data-pane="old"]').boundingBox()).width;
+  const twoWidth = await readOldWidth();
+  await page.locator('[data-testid="assign-view-one"]').click();
+  await page.locator('[data-testid="assign-new"]').waitFor({ state: "detached", timeout: T });
+  check("one view hides the New pane and the divider", (await page.locator('[data-testid="assign-divider"]').count()) === 0);
+  check("the Old pane takes the freed width", (await readOldWidth()) > twoWidth * 1.5);
+  // 한 단에서도 줄을 고르면 보낼 곳이 보이고, 직접 잇기는 양 단이 필요하다는 안내가 뜬다
+  await page.locator(".strip[data-strip-unit]").first().click();
+  await wait(page, "assign-single-hint");
+  check("the destination list still works in one view", (await page.locator('[data-testid="assign-pick"]').count()) === 1);
+  await takeShot("sop-assign-single.png");
+  await page.reload();
+  await wait(page, "assign-view-one");
+  check("the view is remembered after a reload", (await page.locator('[data-testid="assign-view-one"]').getAttribute("aria-pressed")) === "true" && (await page.locator('[data-testid="assign-new"]').count()) === 0);
+  await page.locator(".strip[data-strip-unit]").first().click();
+  await wait(page, "assign-single-hint-two");
+  await page.locator('[data-testid="assign-single-hint-two"]').click();
+  await wait(page, "assign-new");
+  check("the hint's button brings both documents back", (await page.locator('[data-testid="assign-view-two"]').getAttribute("aria-pressed")) === "true");
+  // 글쇠 V로 오간다 - 입력 칸 밖에서
+  await page.locator('[data-testid="assign-view-two"]').blur();
+  await page.keyboard.press("v");
+  await page.locator('[data-testid="assign-new"]').waitFor({ state: "detached", timeout: T });
+  // 출처 없는 New 문장은 New 칸에서 보므로 양 단으로 편다
+  await page.locator('[data-testid="assign-filter-unsourced"]').click();
+  await wait(page, "assign-new");
+  check("New without source opens both documents", (await page.locator('[data-testid="assign-view-two"]').getAttribute("aria-pressed")) === "true");
+  // 세로선을 오른쪽 끝까지 끌어 놓으면 한 단
+  const panes = await page.locator(".assign-panes").boundingBox();
+  const divider = await page.locator('[data-testid="assign-divider"]').boundingBox();
+  await page.mouse.move(divider.x + divider.width / 2, divider.y + divider.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(panes.x + panes.width - 8, divider.y + divider.height / 2, { steps: 6 });
+  await page.mouse.up();
+  await page.locator('[data-testid="assign-new"]').waitFor({ state: "detached", timeout: T });
+  check("dragging the divider to the right edge folds the New pane", (await page.locator('[data-testid="assign-view-one"]').getAttribute("aria-pressed")) === "true");
+  await page.locator('[data-testid="assign-view-two"]').click();
+  await wait(page, "assign-new");
+});
+
 await runStep("assign: written New document - identical, link by clicking, split with Ctrl, zoom, width, mark new", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
   await wait(page, "assign-identical");

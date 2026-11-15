@@ -1,9 +1,10 @@
 // 3단계 Assign - Old 조각을 한 줄씩(한/영 짝은 함께) 보낼 곳을 정한다. 보낼 곳은 이미 쓴 New 문서의 문장(옛 짝 맞추기)이거나
 // 아직 안 쓴 To-Be 문서의 칸(옛 분류), 또는 삭제·외부 이동이다. 가운데는 Old 원문(Split 조각이 곧 목록) ‖ New 원문,
 // 오른쪽은 고른 곳·확정·우선순위 아코디언이다(설계 docs/superpowers/specs/2026-11-09-assign-unified-design.md).
+// 보기는 둘이다 - 양 단(Old ‖ New)과 한 단(Old 문서 하나만 넓게, 설계 2026-11-15-assign-merge-documents-design.md §3.1). 한 단에서는 New 칸·세로선·연결선을 그리지 않는다.
 "use client";
 
-import { BookMarked, Check, Circle, CircleCheck, CircleDashed, CirclePause, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, Redo2, RefreshCw, Scissors, Sparkles, SquarePlus, Trash2, TriangleAlert, Undo2, WandSparkles, X, type LucideIcon } from "lucide-react";
+import { BookMarked, Check, Circle, CircleCheck, CircleDashed, CirclePause, Columns2, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, Redo2, RefreshCw, Scissors, Sparkles, Square, SquarePlus, Trash2, TriangleAlert, Undo2, WandSparkles, X, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { Fragment, useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
@@ -1304,6 +1305,8 @@ export default function AssignPage() {
     setChecked(new Set());
     setMenu(null);
     setManualNewDoc({ key, docId });
+    // New 칸의 그 문장으로 가는 길이라 한 단이면 양 단으로 편다
+    if (view.single) changeView({ single: false });
     setJump({ side: "new", id: targetId, targetId, rowKey: key });
   }
 
@@ -1311,6 +1314,7 @@ export default function AssignPage() {
   function showInNew(targetId: number) {
     const docId = writtenMap.get(targetId)?.target_doc_id;
     if (docId !== undefined) setManualNewDoc({ key: toggleKey, docId });
+    if (view.single) changeView({ single: false });
     setJump({ side: "new", id: targetId, targetId, rowKey: "", quiet: true });
   }
 
@@ -1453,7 +1457,8 @@ export default function AssignPage() {
       // 나눌 선이 있으면 선부터 거둔다(Split과 같다)
       if (cutLine.at !== null) cutLine.clear();
       else setChecked(new Set());
-    } else if (!canEdit || !row) return;
+    } else if (key === "v") changeView({ single: !view.single });
+    else if (!canEdit || !row) return;
     else if (key === "s" && cutLine.at !== null) splitAtCut();
     else if (key === "enter") handlePrimary();
     else if (key === "e") startEdit();
@@ -2154,6 +2159,16 @@ export default function AssignPage() {
           )}
           {renderStep(1, t("assign.step.pick"))}
           <DestinationAccordion sections={accSections} open={accOpen} onToggle={toggleAcc} />
+          {/* 한 단에서는 New 칸이 없어 이미 쓴 문장을 직접 눌러 고르지 못한다 - 까닭과 양 단으로 넘어가는 길을 그 자리에(추천 카드로 잇는 것은 된다) */}
+          {view.single && writtenDocs.length > 0 && (
+            <p className="mx-[var(--pad)] mt-1 grid justify-items-start gap-1 rounded-md bg-sunken px-2.5 py-2 text-xs text-ink-2" data-testid="assign-single-hint">
+              <span>{t("assign.single.linkHint")}</span>
+              <button type="button" className="btn ghost -ml-2 h-7" data-testid="assign-single-hint-two" onClick={() => changeView({ single: false })}>
+                <Columns2 size={14} strokeWidth={1.5} aria-hidden />
+                {t("assign.view.two")}
+              </button>
+            </p>
+          )}
           <div className="px-[var(--pad)] pb-[var(--pad)] pt-1">{aiNote}</div>
         </div>
         {/* ② 결정 칸 - 패널 아래에 붙는다. 다른 길 셋 · 고른 곳(높이 상한 안에서 이 부분만 스크롤) · 대상 문서 · Remark · 맨 아래 확정 */}
@@ -2268,7 +2283,11 @@ export default function AssignPage() {
             label={t("assign.filterUnsourced")}
             count={unsourced.length}
             selected={mode === "unsourced"}
-            onClick={() => setMode("unsourced")}
+            onClick={() => {
+              // 출처 없는 New 문장은 New 칸에서 본다
+              if (view.single) changeView({ single: false });
+              setMode("unsourced");
+            }}
             testId="assign-filter-unsourced"
             icon={TriangleAlert}
           />
@@ -2280,7 +2299,20 @@ export default function AssignPage() {
       <ReadOnlyNote bundle={bundle} testId="assign" />
       {/* 오른쪽 묶음은 한 요소로 - 줄이 넘치면 통째로 다음 줄 오른쪽 끝으로 간다 */}
       <div className="assign-bar-end" data-testid="assign-bar-end">
-        {/* 맨 앞 - 오른쪽 묶음이 줄을 넘겨도 늘 같은 자리 */}
+        {/* 한 단 · 양 단 - 문서 하나만 넓게 보거나 두 문서를 나란히(글쇠 V). 읽기만 하는 사람에게도 보인다 */}
+        <span className="view-toggle" role="group" aria-label={t("assign.view.group")} data-testid="assign-view">
+          <Tooltip label={t("assign.view.oneTip")}>
+            <button type="button" aria-pressed={view.single} aria-label={t("assign.view.one")} data-testid="assign-view-one" onClick={() => changeView({ single: true })}>
+              <Square size={14} strokeWidth={1.5} aria-hidden />
+            </button>
+          </Tooltip>
+          <Tooltip label={t("assign.view.twoTip")}>
+            <button type="button" aria-pressed={!view.single} aria-label={t("assign.view.two")} data-testid="assign-view-two" onClick={() => changeView({ single: false })}>
+              <Columns2 size={14} strokeWidth={1.5} aria-hidden />
+            </button>
+          </Tooltip>
+        </span>
+        {/* 그다음 - 오른쪽 묶음이 줄을 넘겨도 늘 같은 자리 */}
         {canEdit && (
           <span className="flex items-center gap-1">
             <Tooltip label={t("assign.undo")}>
@@ -2456,7 +2488,7 @@ export default function AssignPage() {
               }
             />
           ) : (
-            <div ref={panesRef} className="assign-panes" style={{ "--split": `${view.split * 100}%` }}>
+            <div ref={panesRef} className="assign-panes" data-single={view.single ? "" : undefined} style={{ "--split": `${view.split * 100}%` }}>
               <OldPane
                 docOptions={oldDocOptions}
                 docId={String(oldView?.document.id ?? "")}
@@ -2535,7 +2567,9 @@ export default function AssignPage() {
                 zoom={view.zoomOld}
                 onZoom={(dir) => zoomPane("old", dir)}
               />
-              <PaneDivider value={view.split} onCommit={(ratio) => changeView({ split: ratio })} />
+              {!view.single && (
+              <>
+              <PaneDivider value={view.split} onCommit={(ratio) => changeView({ split: ratio })} onCollapse={() => changeView({ single: true })} />
               {newDocId === null ? (
                 <NewPaneEmpty zoom={view.zoomNew} onGoToBe={() => navigate(getNewDocumentsHref(bundleId))} />
               ) : (
@@ -2568,6 +2602,8 @@ export default function AssignPage() {
                   />
                   <LinkLines pairs={linkPairs} focusUnits={highlightIds} focusTargets={liveDoc ? new Set([...pickedNew, ...liveDoc.targetIds]) : pickedNew} visible={view.lines} />
                 </>
+              )}
+              </>
               )}
             </div>
           )}
