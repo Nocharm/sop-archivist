@@ -871,7 +871,13 @@ export interface WrittenSentence {
   /** 사람이 적는 메모(출처 없는 새 문장의 Remark) */
   remark: string;
   revision: number;
-  /** 출처가 참조 줄(REF)인데 이 문장의 번호(number)나 이름(title)이 EQUIS와 다르다 - 작은 주의. 견줄 것이 없으면 null */
+  /**
+   * 참조 줄이면 가리키는 문서 - 출처가 참조 줄인 문장과, 출처 없이 이 문서에만 있는 참조 줄 둘 다(v1.0.18). 아니면 null.
+   * 번호는 서버가 읽는다(출처 참조 줄의 번호, 없으면 이 문장의 글). equis는 참조 카드와 같은 모양이고 꺼져 있으면 null -
+   * EQUIS가 모르는 번호(state "not_found")와 폐기된 문서(retired)는 여기서 읽는다. refreshing이면 조금 뒤 목록을 다시 읽는다
+   */
+  ref?: { number: string; equis: EquisInfo | null } | null;
+  /** 참조 줄인데 이 문장의 번호(number)나 이름(title)이 EQUIS와 다르다 - 작은 주의. 참조 줄이 아니거나 견줄 것이 없으면 null */
   ref_issue?: "number" | "title" | null;
 }
 

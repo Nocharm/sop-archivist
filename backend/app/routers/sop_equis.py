@@ -40,14 +40,16 @@ async def start_lookups(
     codes: Iterable[str],
     *,
     sync_titles: bool = True,
+    limit: int | None = None,
 ) -> None:
     """번호를 저장한 뒤와 목록을 읽을 때 부른다 — 받아 둔 이름으로 제목을 맞추고, 물을 번호는 응답 뒤에 조회한다.
 
     기능이 꺼져 있으면 아무 일도 하지 않는다. 조회는 응답 뒤에 돌아 저장을 늦추지도 막지도 않는다.
+    limit은 한 번에 걸 조회 수다(`request_lookups`).
     """
     if sync_titles:
         await equis_service.sync_bundle_titles(session, bundle)
-    requested = await equis_service.request_lookups(session, codes)
+    requested = await equis_service.request_lookups(session, codes, limit=limit)
     await session.commit()
     for number in requested:
         background_tasks.add_task(equis_service.run_lookup, number)
