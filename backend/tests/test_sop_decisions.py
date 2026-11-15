@@ -434,6 +434,19 @@ def test_entrance_two_target_keeps_its_own_language(client: TestClient) -> None:
     assert (target["origin"], target["lang"], target["change_type"]) == ("new_doc", "ko", "translated")
 
 
+def test_a_written_sentence_names_the_unit_it_came_from(client: TestClient) -> None:
+    """이미 쓴 새 문서의 문장은 그 문서 원문의 Unit을 가리킨다 — 화면이 그 문장을 원문 다듬기의 대상으로 고른다."""
+    fx = _setup(client)
+    text = "합성 로그북을 새로 둔다."
+
+    written = _upload_match_doc(client, fx, text)
+
+    documents = client.get(f"/api/bundles/{fx.bundle_id}/documents", headers=AUTHOR).json()
+    (new_doc,) = [doc for doc in documents if doc["side"] == "new"]
+    unit = find_unit(get_view(client, fx.bundle_id, new_doc["id"]), text)
+    assert written["new_unit_id"] == unit["id"]
+
+
 def test_target_remark_round_trips(client: TestClient) -> None:
     fx = _setup(client)
     unit = find_unit(fx.view, STORAGE)

@@ -2148,6 +2148,75 @@ await runStep("assign: a written New document opens on its own with the same too
   check("two documents closes it - the left side is an Old document again", (await page.locator('[data-testid="assign-solo"]').count()) === 0 && (await getText(page, "assign-old-tag")) === "Old");
 });
 
+// 양 단에서 New 문장 바로 다듬기(v1.0.29) - Old 줄을 고르지 않은 채 New 문장을 누르면 그 문장이 골라지고, 그 자리에서 자르고 되돌린다. Old 줄을 고른 채면 전처럼 잇는다
+await runStep("assign: shape a written New sentence in place, in the two-document view", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  const headers = { "X-Dev-User": "qa.member" };
+  const readWritten = async () => (await page.request.get(`${BASE}/api/bundles/${freshId}/written-sentences`, { headers })).json();
+  const waitCount = async (expected) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      if ((await readWritten()).length === expected) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  const before = await readWritten();
+  const target = before.find((item) => item.kind === "sentence" && item.new_unit_id !== null && item.partner_target_id === null && item.text.trim().split(" ").length >= 6);
+  check("the written New document has a sentence that knows its unit", target !== undefined);
+  if (target === undefined) return;
+  await page.goto(`${BASE}/bundles/${freshId}/assign`);
+  await wait(page, "assign-bar");
+  await page.waitForLoadState("networkidle");
+  const line = page.locator(`[data-testid="assign-new-${target.target_id}"]`);
+  await line.waitFor({ timeout: T });
+  await page.locator(`[data-testid="assign-new-pick-${target.target_id}"]`).click();
+  await wait(page, "assign-solo");
+  check("with no Old row picked, clicking a New sentence picks it for shaping", (await line.getAttribute("data-state")) === "shape" && (await page.locator(".assign-panes").getAttribute("data-single")) === null && (await getText(page, "assign-old-tag")) === "Old");
+  const splitButton = page.locator('[data-testid^="assign-shape-split-"]:not([aria-disabled="true"])').first();
+  await splitButton.waitFor({ timeout: T });
+  check("the panel shows its Shape line and nothing to decide", (await page.locator('[data-testid^="assign-shape-line-"]').count()) === 1 && (await page.locator('[data-testid="assign-decide"]').count()) === 0);
+  await splitButton.click();
+  const cut = page.locator(`[data-testid="assign-new-cut-${target.target_id}"]`);
+  await cut.waitFor({ timeout: T });
+  const readCut = () => page.evaluate((id) => document.querySelector(`[data-testid="assign-new-cut-${id}"]`)?.previousSibling?.textContent?.length ?? -1, target.target_id);
+  const placed = await readCut();
+  await page.keyboard.press("ArrowRight");
+  await page.waitForFunction(({ id, was }) => (document.querySelector(`[data-testid="assign-new-cut-${id}"]`)?.previousSibling?.textContent?.length ?? -1) > was, { id: target.target_id, was: placed }, { timeout: T });
+  check("the cut sits inside the sentence and the arrow keys move it", placed > 0 && (await readCut()) > placed);
+  await takeShot("sop-assign-new-inplace.png");
+  await page.locator('[data-testid="assign-cut-run"]').click();
+  const confirmEdit = page.locator('[data-testid="assign-edit-confirm-confirm"]');
+  if (await confirmEdit.waitFor({ timeout: 2000 }).then(() => true, () => false)) await confirmEdit.click();
+  check("Split here cuts the New sentence where it stands", await waitCount(before.length + 1));
+  await page.waitForFunction(() => document.querySelector('.new-line[data-state="shape"]') !== null, null, { timeout: T });
+  check("the new piece is picked in the New pane", true);
+  await page.waitForLoadState("networkidle");
+  await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+  check("Undo puts the sentence back", await waitCount(before.length));
+  await page.waitForLoadState("networkidle");
+  // Old 줄을 고른 채여도 우클릭은 그 New 문장의 고치기 메뉴다(보낼 곳 항목은 없다)
+  await page.locator('[data-testid="assign-old"] [data-testid^="assign-paper-unit-"]').first().click();
+  await wait(page, "assign-decide");
+  const again = (await readWritten()).find((item) => item.text === target.text);
+  await page.locator(`[data-testid="assign-new-${again.target_id}"]`).click({ button: "right" });
+  await wait(page, "assign-ctx-split");
+  check("right-click on a New sentence opens its shaping menu, without assignment items", (await page.locator('[data-testid="assign-ctx-confirm"], [data-testid="assign-ctx-clear"], [data-testid="assign-ctx-pair_pick"]').count()) === 0);
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="assign-ctx-menu"]').waitFor({ state: "detached", timeout: T });
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="assign-solo"]').waitFor({ state: "detached", timeout: T });
+  check("Esc lets the New sentence go", true);
+  // Old 줄을 고른 채 그냥 누르면 전처럼 그 줄에 잇는다
+  await page.locator('[data-testid="assign-old"] [data-testid^="assign-paper-unit-"]').first().click();
+  await wait(page, "assign-decide");
+  await page.locator(`[data-testid="assign-new-pick-${again.target_id}"]`).click();
+  await page.locator(".link-menu").waitFor({ timeout: T });
+  check("with an Old row picked, clicking a New sentence still links", (await page.locator('[data-testid="assign-solo"]').count()) === 0);
+  await page.keyboard.press("Escape");
+});
+
 // 머리말·꼬리말 탭의 설명 줄(v1.0.28) - 전에는 원문 고치기 화면에만 있었다. 장마다 어느 구역의 머리말인지 적힌다
 await runStep("assign: header and footer sheets say where they are used", {}, async ({ page }) => {
   await page.goto(`${BASE}/`);

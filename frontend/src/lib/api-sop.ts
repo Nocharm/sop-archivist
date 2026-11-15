@@ -871,6 +871,8 @@ export interface WrittenSentence {
   /** 사람이 적는 메모(출처 없는 새 문장의 Remark) */
   remark: string;
   revision: number;
+  /** 이 문장이 온 새 문서 원문의 Unit - 원문 다듬기의 대상으로 고를 때 쓴다. 원문 없이 만든 문장은 null */
+  new_unit_id?: number | null;
   /**
    * 참조 줄이면 가리키는 문서 - 출처가 참조 줄인 문장과, 출처 없이 이 문서에만 있는 참조 줄 둘 다(v1.0.18). 아니면 null.
    * 번호는 서버가 읽는다(출처 참조 줄의 번호, 없으면 이 문장의 글). equis는 참조 카드와 같은 모양이고 꺼져 있으면 null -
