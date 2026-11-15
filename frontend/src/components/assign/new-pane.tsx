@@ -8,7 +8,6 @@
 "use client";
 
 import { ChevronDown, ChevronUp, FilePlus2, Scissors, Spline } from "lucide-react";
-import Link from "next/link";
 import { Fragment, useEffect, useRef, useState, type FocusEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { PaneZoom } from "@/components/assign/pane-zoom";
@@ -53,7 +52,8 @@ interface NewPaneProps {
   zoom: number;
   onZoom: (dir: "+" | "-") => void;
   /** 이미 쓴 문서의 원문 고치기 주소 - 엮은 문서나 읽기 전용이면 없다 */
-  editOriginalHref?: string;
+  /** 이 문서의 원문을 한 단으로 열어 다듬는다 - 이미 쓴 문서에만 있다 */
+  onEditOriginal?: () => void;
   /** 두 문서 사이 연결선 켜기·끄기 */
   linesOn: boolean;
   onToggleLines: () => void;
@@ -334,11 +334,11 @@ export function NewPane(props: NewPaneProps) {
           {props.tag}
         </span>
         <span className="flex-1" />
-        {props.editOriginalHref && (
+        {props.onEditOriginal && (
           <Tooltip label={t("assign.openSplitTip")}>
-            <Link href={props.editOriginalHref} className="pane-toggle" aria-label={t("assign.openSplit")} data-testid="assign-new-edit-original">
+            <button type="button" className="pane-toggle" aria-label={t("assign.openSplit")} data-testid="assign-new-edit-original" onClick={props.onEditOriginal}>
               <Scissors size={14} strokeWidth={1.5} aria-hidden />
-            </Link>
+            </button>
           </Tooltip>
         )}
         <Tooltip label={props.linesOn ? t("assign.linesOn") : t("assign.linesOff")}>
