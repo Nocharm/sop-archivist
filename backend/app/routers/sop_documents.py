@@ -511,8 +511,11 @@ async def upload_document(
     if enqueue_doc_meta(session, document, ctx.login_id):
         await session.commit()
     # 옛 문서와 이미 쓴 새 문서가 둘 다 읽혔으면 묶기 계획이 저절로 선다 — 기록은 남기지 않는다(사람 요청이 아니다)
-    if document.status == "ready" and await enqueue_auto_plan(session, ctx.bundle.id, ctx.login_id, origin=PLAN_ORIGIN_UPLOAD):
-        await session.commit()
+    # 줄 선 계획이 있는지 보고 쌓는 사이에 다른 업로드가 끼지 않게 묶음을 잠근다 — 업로드는 이미 끝났으니 검사로 거절하지 않는다
+    if document.status == "ready":
+        await lock_bundle(session, ctx.bundle)
+        if await enqueue_auto_plan(session, ctx.bundle.id, ctx.login_id, origin=PLAN_ORIGIN_UPLOAD):
+            await session.commit()
     # 번호가 채워졌으면 EQUIS에 묻는다(켜져 있을 때만) — 응답 뒤에 돌아 업로드를 늦추지 않는다
     await start_lookups(session, background_tasks, ctx.bundle, [document.doc_code])
     out = (await build_documents_out(session, [document]))[0]

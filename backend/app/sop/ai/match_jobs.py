@@ -145,7 +145,7 @@ async def _has_ready_document(session: AsyncSession, bundle_id: int, side: str) 
 
 
 async def enqueue_auto_plan(session: AsyncSession, bundle_id: int, actor: str, *, origin: str) -> AiJob | None:
-    """저절로 서는 계획 — 설정·AI가 켜져 있고 읽힌 옛 문서와 이미 쓴 새 문서가 있고 줄 선 계획이 없을 때만 하나 쌓는다. 돌고 있는 계획이나 변경 종류 작업은 막지 않는다. 커밋은 호출부가 한다."""
+    """저절로 서는 계획 — 설정·AI가 켜져 있고 읽힌 옛 문서와 이미 쓴 새 문서가 있고 줄 선 계획이 없을 때만 하나 쌓는다. 돌고 있는 계획이나 변경 종류 작업은 막지 않는다. 확인하고 쌓는 사이에 다른 요청이 끼지 않게 호출부가 묶음을 잠근 채로 부르고 커밋한다."""
     if not (settings.ai_auto_prepare and settings.ai_enabled):
         return None
     queued = await session.scalar(
