@@ -189,6 +189,14 @@ export function stepZoom(zoom: number, dir: "+" | "-" | "0"): number {
   return clampZoom(zoom + (dir === "+" ? 0.1 : -0.1));
 }
 
+// 세로선을 이 비율 너머(오른쪽 끝 가까이)에서 놓으면 New 칸을 접어 한 단 보기가 된다 - 폭 상한(70%)과 멀어 폭 고르기와 헷갈리지 않는다
+const SINGLE_DROP_AT = 0.9;
+
+/** 세로선을 놓은 자리(왼쪽 비율, 자르지 않은 값)가 한 단 보기로 접는 자리인가 */
+export function isSingleDrop(rawRatio: number): boolean {
+  return rawRatio >= SINGLE_DROP_AT;
+}
+
 /** 두 문서 폭 - 왼쪽(Old) 비율 30~70% */
 export function clampSplit(ratio: number): number {
   return Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, ratio));

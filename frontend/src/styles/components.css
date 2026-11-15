@@ -1354,6 +1354,10 @@
   .assign-panes [data-pane="new"] .pane-body { padding: 10px 4px 24px 10px; }
   .assign-panes [data-pane="old"] .sheet { margin-inline: auto 0; }
   .assign-panes [data-pane="new"] .sheet { margin-inline: 0 auto; }
+  /* 한 단 보기 - Old 문서 하나만 가운데에 넓게. 세로선이 없으니 스크롤 막대는 보통 자리(오른쪽)로 */
+  .assign-panes[data-single] { grid-template-columns: minmax(0, 1fr); }
+  .assign-panes[data-single] [data-pane="old"] .pane-body { direction: ltr; padding: 10px 4px 24px; }
+  .assign-panes[data-single] [data-pane="old"] .sheet { margin-inline: auto; }
   /* 문서별 확대 - 원문 글자·줄 높이·용지 폭이 --z를 따른다. 종이 상한은 Split(.sheets)과 같은 860 */
   .assign-pane .sheet { max-width: calc(860px * var(--z, 1)); }
   .assign-pane .pg { font-size: calc(var(--fs-read) * var(--z, 1)); line-height: calc(var(--lh-read) * var(--z, 1)); }
@@ -1377,6 +1381,8 @@
   .pane-divider:hover::before, .pane-divider:focus-visible::before, .pane-divider[data-drag]::before { background: var(--accent); }
   .pane-divider:hover::after, .pane-divider:focus-visible::after, .pane-divider[data-drag]::after { border-color: var(--accent); }
   .pane-divider:focus-visible { outline: none; }
+  /* 오른쪽 끝까지 끌었다 - 놓으면 New 칸이 접힌다(한 단 보기) */
+  .pane-divider[data-collapse]::before { left: 4px; width: 4px; }
 
   /* 확정한 조각의 간 곳 - 이어진 문장이면 단추(누르면 New 문서의 그 문장으로) */
   .strip-note { display: flex; align-items: center; gap: 4px; margin-top: 2px; font: 600 var(--fs-micro) / 16px var(--font-mono); color: var(--st-ok-ink); text-align: left; }
