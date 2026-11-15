@@ -193,7 +193,7 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
     response = client.get(f"/api/bundles/{run.bundle_id}/export.xlsx", headers=AUTHOR)
     assert response.status_code == 200, response.text
     workbook = load_workbook(BytesIO(response.content))
-    assert workbook.sheetnames == ["A Comparison", "B Flow", "C New documents", "Info"]
+    assert workbook.sheetnames == ["A Comparison", "B Flow", "C New documents", "Info", "Documents"]
     cells = [cell for sheet in workbook for row in sheet.iter_rows() for cell in row]
     assert [cell.coordinate for cell in cells if cell.data_type == "f"] == []
     sheet_a = workbook["A Comparison"]  # 1행 상태, 2행 머리, 3행부터 데이터

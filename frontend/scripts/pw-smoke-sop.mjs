@@ -1263,12 +1263,12 @@ await runStep("outputs: A, B, C and the Excel preview", {}, async ({ page, takeS
   await page.locator('[data-testid="outputs-tab-b"]').click();
   await wait(page, "output-b");
   check("B shows flows from old documents", (await getText(page, "output-b")).includes("OLD-1"));
-  // Export Excel은 미리보기 창을 먼저 연다 - 파일과 같은 시트 네 장, 받기는 창에서
+  // Export Excel은 미리보기 창을 먼저 연다 - 파일과 같은 시트 다섯 장, 받기는 창에서
   await page.locator('[data-testid="outputs-export-open"]').click();
   await wait(page, "export-preview");
   await wait(page, "export-preview-sheet");
   const tabs = await page.locator('[data-testid^="export-preview-tab-"]').allInnerTexts();
-  check("the preview has the four sheet tabs in file order", JSON.stringify(tabs.map((name) => name.trim())) === JSON.stringify(["A Comparison", "B Flow", "C New documents", "Info"]), JSON.stringify(tabs));
+  check("the preview has the five sheet tabs in file order", JSON.stringify(tabs.map((name) => name.trim())) === JSON.stringify(["A Comparison", "B Flow", "C New documents", "Info", "Documents"]), JSON.stringify(tabs));
   await takeShot("sop-outputs-preview.png");
   const download = page.waitForEvent("download", { timeout: T });
   await page.locator('[data-testid="export-preview-download"]').click();
