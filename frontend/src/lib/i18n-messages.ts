@@ -926,7 +926,7 @@ const en = {
   "tobe.colDetail": "N/A or steps",
   "tobe.codePlaceholder": "SOP-XX-00000",
   "tobe.noCode": "(no code)",
-  "tobe.naCount": "N/A sections: {n}",
+  "tobe.naCount": "N/A: {n}",
   "tobe.stepCount": "Steps: {n}",
   "tobe.naHint": "Mark sections this SOP does not have. Each needs a reason.",
   "tobe.naReason": "Reason",

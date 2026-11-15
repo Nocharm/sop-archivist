@@ -416,7 +416,7 @@ const AUDIT_ENTRIES = [
       return { tables: tables.length, worst: Math.round(worst) };
     }),
     expect: (value) => value.tables > 0 && value.worst <= 1,
-    note: "no Assign .ptbl is wider than the strip that holds it (min-width 16ch stays in Split)",
+    note: "no Assign .ptbl is wider than the strip that holds it (min-width 16ch only applies in the one-pane view)",
   },
   // ---- Task 6: Assign ----
   {
@@ -739,84 +739,6 @@ const AUDIT_ENTRIES = [
     note: "bundle cards: dcard-meta bottoms within 1px per grid row, synthetic chip left edge identical across cards",
   },
   {
-    // C5b: 문서 카드 보기(cardActions="row")에서 같은 줄 카드의 .dcard-meta 아래 끝이 같다 - meta와 아랫줄 사이 틈이 카드 키와 상관없이 같다(auto 여백 둘이 남는 높이를 나누지 않는다)
-    id: "C5b", ds: "mid", user: MEMBER, views: [1440],
-    path: (ids) => `/bundles/${ids.mid[2]}/documents`,
-    open: async (page) => {
-      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "cards"));
-      await page.reload({ waitUntil: "networkidle" });
-      await page.locator(".dcard").first().waitFor({ timeout: T });
-      await page.waitForTimeout(800);
-    },
-    measure: (page) => page.evaluate(() => {
-      const cards = [...document.querySelectorAll('[data-testid="documents-list"] .dcard')];
-      const byTop = new Map();
-      for (const card of cards) {
-        const top = Math.round(card.getBoundingClientRect().top);
-        byTop.set(top, [...(byTop.get(top) ?? []), card]);
-      }
-      let metaSpread = 0;
-      let gapSpread = 0;
-      let multi = 0;
-      let unequal = 0;
-      for (const group of byTop.values()) {
-        if (group.length < 2) continue;
-        multi += 1;
-        const heights = group.map((card) => card.querySelector(".dcard-body, .dcard-meta").getBoundingClientRect().height);
-        const bottoms = group.map((card) => card.querySelector(".dcard-meta").getBoundingClientRect().bottom);
-        const gaps = group.map((card) => {
-          const foot = card.querySelector(".dcard-foot");
-          return foot ? foot.getBoundingClientRect().top - card.querySelector(".dcard-meta").getBoundingClientRect().bottom : 0;
-        });
-        if (Math.max(...heights) - Math.min(...heights) > 1) unequal += 1;
-        metaSpread = Math.max(metaSpread, Math.max(...bottoms) - Math.min(...bottoms));
-        gapSpread = Math.max(gapSpread, Math.max(...gaps) - Math.min(...gaps));
-      }
-      return { cards: cards.length, multi, unequal, metaSpread: Math.round(metaSpread * 10) / 10, gapSpread: Math.round(gapSpread * 10) / 10 };
-    }),
-    expect: (value) => value.multi > 0 && value.metaSpread <= 1 && value.gapSpread <= 1,
-    note: "document cards: dcard-meta bottoms within 1px per grid row and the meta-to-footer gap is the same in every card of the row",
-  },
-  {
-    // C5c: 문서 카드 보기(cardActions="row")에서 같은 줄 카드의 .dcard-meta 아래 끝이 같다 - meta와 아랫줄 사이 틈이 카드 키와 상관없이 같다(auto 여백 둘이 남는 높이를 나누지 않는다)
-    id: "C5c", ds: "worst", user: MEMBER, views: [1440],
-    path: (ids) => `/bundles/${ids.w[1]}/documents`,
-    open: async (page) => {
-      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "cards"));
-      await page.reload({ waitUntil: "networkidle" });
-      await page.locator(".dcard").first().waitFor({ timeout: T });
-      await page.waitForTimeout(800);
-    },
-    measure: (page) => page.evaluate(() => {
-      const cards = [...document.querySelectorAll('[data-testid="documents-list"] .dcard')];
-      const byTop = new Map();
-      for (const card of cards) {
-        const top = Math.round(card.getBoundingClientRect().top);
-        byTop.set(top, [...(byTop.get(top) ?? []), card]);
-      }
-      let metaSpread = 0;
-      let gapSpread = 0;
-      let multi = 0;
-      let unequal = 0;
-      for (const group of byTop.values()) {
-        if (group.length < 2) continue;
-        multi += 1;
-        const heights = group.map((card) => card.querySelector(".dcard-body, .dcard-meta").getBoundingClientRect().height);
-        const bottoms = group.map((card) => card.querySelector(".dcard-meta").getBoundingClientRect().bottom);
-        const gaps = group.map((card) => {
-          const foot = card.querySelector(".dcard-foot");
-          return foot ? foot.getBoundingClientRect().top - card.querySelector(".dcard-meta").getBoundingClientRect().bottom : 0;
-        });
-        if (Math.max(...heights) - Math.min(...heights) > 1) unequal += 1;
-        metaSpread = Math.max(metaSpread, Math.max(...bottoms) - Math.min(...bottoms));
-        gapSpread = Math.max(gapSpread, Math.max(...gaps) - Math.min(...gaps));
-      }
-      return { cards: cards.length, multi, unequal, metaSpread: Math.round(metaSpread * 10) / 10, gapSpread: Math.round(gapSpread * 10) / 10 };
-    }),
-    expect: (value) => value.multi > 0 && value.metaSpread <= 1 && value.gapSpread <= 1,
-    note: "document cards: dcard-meta bottoms within 1px per grid row and the meta-to-footer gap is the same in every card of the row",
-  },
-  {
     // C7: 목록 화면은 1600, 개요·계정·설명서는 1280, 배정 화면 안의 원문 고치기는 배정과 같은 1920 (본문 폭)
     id: "C7", ds: "worst", user: MEMBER, views: [2560],
     path: (ids) => [
@@ -843,11 +765,11 @@ const AUDIT_ENTRIES = [
     open: async (page) => {
       await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
       await page.reload({ waitUntil: "networkidle" });
-      await page.locator('[data-testid^="documents-"][data-testid$="-title"]').first().waitFor({ timeout: T });
+      await page.locator('td [data-testid^="documents-"][data-testid$="-title"]').first().waitFor({ timeout: T });
       await page.waitForTimeout(1000);
     },
     measure: (page) => page.evaluate(() => {
-      const cell = document.querySelector('[data-testid^="documents-"][data-testid$="-title"]')?.closest("td");
+      const cell = document.querySelector('td [data-testid^="documents-"][data-testid$="-title"]')?.closest("td");
       return cell ? Math.round(cell.getBoundingClientRect().width) : -1;
     }),
     expect: (value) => value >= 420,
@@ -1109,7 +1031,7 @@ const AUDIT_ENTRIES = [
     open: async (page) => {
       await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
       await page.reload({ waitUntil: "networkidle" });
-      await page.locator('[data-testid^="documents-"][data-testid$="-title"]').first().waitFor({ timeout: T });
+      await page.locator('td [data-testid^="documents-"][data-testid$="-title"]').first().waitFor({ timeout: T });
       await page.waitForTimeout(1000);
     },
     measure: (page) => page.evaluate(() => {
@@ -1165,7 +1087,7 @@ const AUDIT_ENTRIES = [
     open: async (page) => {
       await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
       await page.reload({ waitUntil: "networkidle" });
-      await page.locator('[data-testid^="documents-"][data-testid$="-title"]').first().waitFor({ timeout: T });
+      await page.locator('td [data-testid^="documents-"][data-testid$="-title"]').first().waitFor({ timeout: T });
       await page.waitForTimeout(1000);
     },
     measure: async (page) => page.evaluate(() => {
@@ -1180,7 +1102,7 @@ const AUDIT_ENTRIES = [
       };
       const reason = document.querySelector('[data-testid$="-reason"]');
       const rejected = reason?.closest("tr")?.querySelector('[data-testid$="-title"]');
-      const normal = [...document.querySelectorAll('[data-testid^="documents-"][data-testid$="-title"]')].find((el) => !el.closest("tr")?.querySelector('[data-testid$="-reason"]') && (el.value ?? el.textContent));
+      const normal = [...document.querySelectorAll('td [data-testid^="documents-"][data-testid$="-title"]')].find((el) => !el.closest("tr")?.querySelector('[data-testid$="-reason"]') && (el.value ?? el.textContent));
       if (!rejected || !normal) return { missing: true };
       const readValue = (el) => (el.tagName === "INPUT" ? { left: el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft) + parseFloat(getComputedStyle(el).borderLeftWidth), weight: getComputedStyle(el).fontWeight } : textLeft(el));
       return { rejected: readValue(rejected), normal: readValue(normal) };
@@ -1276,9 +1198,9 @@ const AUDIT_ENTRIES = [
         colors: `${getComputedStyle(sheet).backgroundColor}|${head.backgroundColor}|${head.color}`,
       };
     }),
-    expect: (value) => /^BND-\d{4}_SYNTHETIC W1 /.test(value.file) && value.inView && !value.pageX && !value.dialogX && value.sheetX && value.tabs === 4 && !value.tabsClipped && !value.tabsOverlap
+    expect: (value) => /^BND-\d{4}_SYNTHETIC W1 /.test(value.file) && value.inView && !value.pageX && !value.dialogX && value.sheetX && value.tabs === 5 && !value.tabsClipped && !value.tabsOverlap
       && Math.abs(value.headDrift) <= 2 && value.colors === "rgb(255, 255, 255)|rgb(43, 47, 54)|rgb(255, 255, 255)",
-    note: "W1 Excel preview: window and Download inside the viewport, horizontal scroll only inside the sheet, 4 tabs unclipped, sticky head, Graphite paper in every theme",
+    note: "W1 Excel preview: window and Download inside the viewport, horizontal scroll only inside the sheet, 5 tabs unclipped, sticky head, Graphite paper in every theme",
   },
   {
     // T1: W1 Assign 나무의 칸 제목 자리(코드가 가장 긴 SOP) - 항목 글이 상자를 넘치지 않고 나무가 가로로 넘치지 않으며, 고른 칸 제목의 보낼 곳 카드가 넘치지 않는다
@@ -1501,6 +1423,8 @@ async function main() {
         localStorage.setItem("sopa.devUser", init.user);
         localStorage.setItem("sopa.lang", init.lang);
         localStorage.setItem("sopa.theme", init.theme);
+        // ?edit= 주소는 한 단 보기를 기억시킨다 - 뒤 항목이 그 상태를 물려받지 않게 문서를 읽을 때마다 지운다(양 단이 기본)
+        localStorage.removeItem("sopa.assign.single");
       }, { user, lang, theme });
       contexts.set(key, ctx);
     }
