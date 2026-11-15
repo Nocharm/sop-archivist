@@ -17,6 +17,7 @@ from tests.ai_fixtures import (
     make_match_bundle,
     read_decision,
     read_rows,
+    read_target,
     request_match,
     run_jobs,
     run_plan,
@@ -113,6 +114,27 @@ def test_prepare_leaves_identical_text_candidates_out(client: TestClient, auto_p
 
     (job,) = read_jobs("classify")
     assert out["queued"] == 1 and job.unit_ids == [old_1] and same not in job.unit_ids
+
+
+def test_person_bulk_confirms_identical_text_after_the_automatic_work(client: TestClient, auto_prepare: FakeAi) -> None:
+    # 설계 §2 목표 5 — 업로드 계획·첫 진입 분류가 다 돈 뒤에도 같은 글 일괄 확정이 그 줄을 받는다
+    bundle = make_match_bundle(client, p(SAME) + p(OLD_1) + p(LONE), p(SAME) + p(NEW_1), has_assign=True)
+    (same,) = (unit["id"] for unit in _find_old_units(client, bundle.id, bundle.old_document_id, SAME))
+    use_reply(auto_prepare)
+    assert post_prepare(client, bundle.id).json()["queued"] >= 1
+    run_jobs()
+    assert read_jobs("match_plan") and {job.status for job in read_jobs("classify")} <= {"done", "stale"}
+    candidates = client.get(f"/api/bundles/{bundle.id}/match/identical-candidates", headers=AUTHOR).json()
+    assert [candidate["unit_id"] for candidate in candidates] == [same]
+    (candidate,) = candidates
+    body = {"identical": [{key: candidate[key] for key in ("unit_id", "unit_revision", "target_id", "target_revision")}]}
+
+    response = client.post(f"/api/bundles/{bundle.id}/match/bulk-confirm", json=body, headers=AUTHOR)
+
+    assert response.status_code == 200, response.text
+    assert read_decision(same).status == "confirmed"
+    target = read_target(SAME)
+    assert (target.status, target.suggestion_id) == ("confirmed", None)
 
 
 def test_prepare_leaves_the_whole_pair_out_when_one_side_is_a_candidate(client: TestClient, auto_prepare: FakeAi) -> None:
