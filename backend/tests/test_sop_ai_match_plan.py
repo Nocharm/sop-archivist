@@ -1052,7 +1052,10 @@ def test_replan_cancels_refine_jobs_of_changed_groups(
 def test_refine_is_stale_when_a_newer_plan_regrouped_it(
     client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """실패한 다듬기는 취소되지 않는다 — 그사이 묶음이 바뀐 뒤 다시 돌면 낡음이고 LLM을 부르지 않는다."""
+    """옛 묶음의 다듬기가 줄로 돌아와도 그사이 새 계획이 묶음을 바꿨으면 낡음이고 LLM을 부르지 않는다.
+
+    새 계획이 취소한 옛 다듬기를 UPDATE로 queued에 되돌려 그 모습을 만든다 — 작업을 시작할 때(load)의 낡음 판정을 본다.
+    """
     bundle = make_match_bundle(client, p(OLD_3), p(NEW_3A))
     use_vectors(monkeypatch, fake_ai, {OLD_3: 0, NEW_3A: 0, NEW_3B: 0})
     plan(client, bundle.id)
@@ -1411,6 +1414,24 @@ def test_upload_queues_one_more_while_a_plan_runs(client: TestClient, auto_prepa
     upload_written_new(client, bundle_id, p(NEW_2), SECOND_NEW_FILE)
 
     assert sorted(job.status for job in read_jobs("match_plan")) == ["queued", "running"]
+
+
+@pytest.mark.parametrize("refine_status", ["queued", "running"])
+def test_upload_queues_a_plan_while_a_refine_job_is_active(
+    client: TestClient, auto_prepare: FakeAi, monkeypatch: pytest.MonkeyPatch, refine_status: str
+) -> None:
+    use_vectors(monkeypatch, auto_prepare, {OLD_1: 0, NEW_1: 0, OLD_2: 1, NEW_2: 1})
+    bundle_id = start_old_only_bundle(client, p(OLD_1) + p(OLD_2))
+    upload_written_new(client, bundle_id, p(NEW_1))
+    run_plan()  # 업로드 계획이 다듬기 하나를 쌓는다
+    if refine_status == "running":
+        assert asyncio.run(claim_next_job()) is not None
+    (refine,) = read_jobs("match")
+    assert refine.status == refine_status
+
+    upload_written_new(client, bundle_id, p(NEW_2), SECOND_NEW_FILE)
+
+    assert [job.status for job in read_jobs("match_plan")] == ["done", "queued"]
 
 
 @pytest.mark.parametrize("switch", ["ai_auto_prepare", "ai_enabled"])

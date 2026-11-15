@@ -6,15 +6,21 @@ from fastapi.testclient import TestClient
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.sop.constants import AI_PRIORITY_PLAN, AI_PRIORITY_PRE_CLASSIFY
 from app.settings import settings
+from app.sop.constants import AI_PRIORITY_PLAN, AI_PRIORITY_PRE_CLASSIFY
 from app.sop.models import AiJob, AiSuggestion, Bundle, BundleEvent
 from tests.access_helpers import run_in_session
 from tests.ai_fixtures import (
+    AI_EN_1,
+    AI_EN_2,
+    AI_KO_1,
+    AI_KO_2,
     AI_SOP_DOC,
     clean_ai_jobs,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
+    find_ids,
     make_ai_bundle,
     make_match_bundle,
+    queue_units,
     read_decision,
     read_rows,
     read_target,
@@ -230,7 +236,32 @@ def test_uploaded_before_the_new_list_then_prepare_classifies_lone_units(client:
     run_jobs()
 
     assert read_decision(lone).status == "ai_suggested"
-    assert {row.kind for row in read_rows(AiSuggestion) if lone in row.content.get("unit_ids", [lone])} >= {"classify"}
+    assert any(row.kind == "classify" and lone in row.content["unit_ids"] for row in read_rows(AiSuggestion))
+
+
+def test_user_classify_job_does_not_count_as_prepared(client: TestClient, auto_prepare: FakeAi) -> None:
+    # 미리 돌린 문서는 background 분류 행으로만 가린다 — 사람이 누른 분류가 있던 문서도 남은 줄을 미리 분류한다
+    bundle = make_ai_bundle(client)
+    ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
+    queue_units(client, bundle.id, [ko, en])
+    (user_job,) = read_jobs("classify")
+    assert (user_job.background, user_job.document_id) == (False, bundle.document_id)
+
+    out = post_prepare(client, bundle.id).json()
+
+    prepared = [job for job in read_jobs("classify") if job.background]
+    assert out["queued"] == 1 and len(prepared) == 1
+    assert prepared[0].document_id == bundle.document_id
+    assert set(prepared[0].unit_ids) == set(find_ids(client, bundle, AI_KO_2, AI_EN_2))
+
+
+def test_prepare_queues_no_plan_without_a_written_new_document(client: TestClient, auto_prepare: FakeAi) -> None:
+    bundle = make_ai_bundle(client)  # 배정 New 문서만 있고 이미 쓴 New 문서는 없다
+
+    out = post_prepare(client, bundle.id).json()
+
+    assert read_jobs("match_plan") == []
+    assert out["queued"] == len(read_jobs("classify")) == 2
 
 
 def _find_old_units(client: TestClient, bundle_id: int, document_id: int, text: str) -> list[dict]:

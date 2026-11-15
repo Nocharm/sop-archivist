@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.sop.ai.adoption import SavedShape, SuggestedShape, TargetShape, decide_adoption
-from app.sop.models import AiSuggestion, TargetSentence, TargetTextHistory, UnitDecision
+from app.sop.models import AiSuggestion, TargetSentence, TargetTextHistory, UnitDecision, UnitPair, UnitPairMember
 from tests.access_helpers import update_row
 from tests.ai_fixtures import (
     AI_EN_1,
@@ -690,6 +690,36 @@ def test_bulk_delete_takes_ai_suggested_units(client: TestClient, fake_ai: FakeA
     assert read_rows(TargetSentence) == []  # 새 문서가 없는 묶음이라 새 문장은 모두 AI가 쓴 것이었다
 
 
+def test_bulk_move_external_takes_ai_suggested_units(client: TestClient, fake_ai: FakeAi) -> None:
+    # 다른 문서로 이동도 같은 길이다 — 제안을 걷고 이동으로 확정하며 채택은 버림
+    bundle, ko, en = suggest_first_pair(client, fake_ai)
+    assert ai_targets_of(ko)
+    units = [{"unit_id": unit_id, "revision": read_decision(unit_id).revision} for unit_id in (ko, en)]
+    body = {"action": "move_external", "reason": "합성 사유", "move_target_code": "SOP-OTHER", "units": units}
+
+    response = client.post(f"/api/bundles/{bundle.id}/decisions/bulk", json=body, headers=AUTHOR)
+
+    assert response.status_code == 200, response.text
+    for unit_id in (ko, en):
+        decision = read_decision(unit_id)
+        assert (decision.status, decision.disposition, decision.move_target_code) == (
+            "confirmed", "move_external", "SOP-OTHER",
+        )
+        assert decision.suggestion_id is None
+        assert ai_targets_of(unit_id) == []
+    (suggestion,) = read_suggestions()
+    assert (suggestion.adoption, suggestion.result) == ("rejected", "applied")
+    assert read_rows(TargetSentence) == []
+
+
+def read_pair_of(unit_id: int) -> tuple[int, str, set[int]]:
+    """(짝 id, 상태, 구성 단위) — 짝이 풀렸으면 단위가 짝 구성원 표에 없다."""
+    members = read_rows(UnitPairMember)
+    (pair_id,) = [row.pair_id for row in members if row.unit_id == unit_id]
+    (pair,) = [row for row in read_rows(UnitPair) if row.id == pair_id]
+    return pair.id, pair.status, {row.unit_id for row in members if row.pair_id == pair_id}
+
+
 def test_bulk_delete_on_a_delete_suggestion_is_as_is(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, ko, en = suggest_first_pair(client, fake_ai, candidate="delete", change_type="as_is", rewrites={})
     assert read_decision(ko).status == "ai_suggested"
@@ -706,6 +736,8 @@ def test_bulk_over_one_side_of_a_pair_releases_the_other(client: TestClient, fak
     # 제안 하나가 짝을 덮는다 — 한쪽만 골라도 제안은 통째로 걷히고 고르지 않은 쪽은 미배정으로 돌아간다
     bundle, ko, en = suggest_first_pair(client, fake_ai)
     en_before = read_decision(en)
+    pair_before = read_pair_of(ko)
+    assert pair_before[2] == {ko, en}
 
     response = bulk_delete(client, bundle.id, ko)
 
@@ -717,6 +749,8 @@ def test_bulk_over_one_side_of_a_pair_releases_the_other(client: TestClient, fak
     assert ai_targets_of(en) == []
     (suggestion,) = read_suggestions()
     assert (suggestion.adoption, suggestion.result) == ("rejected", "applied")
+    # settle_pairs: 정한 운명은 삭제 하나뿐이고 다른 쪽은 미배정이라 짝을 풀지도 확정하지도 않는다
+    assert read_pair_of(ko) == pair_before
 
 
 @pytest.mark.usefixtures("clean_embedding_cache")

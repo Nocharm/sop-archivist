@@ -19,7 +19,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    # server_default는 NOT NULL 칸을 기존 행에 더하려는 자리값일 뿐이라 채운 뒤 걷는다(새 행은 앱이 늘 값을 넣는다).
+    # NOT NULL 칸을 기존 행에 더하려고 nullable로 더해 채운 뒤 NOT NULL로 바꾼다 — server_default는 두지 않는다(새 행은 앱이 늘 값을 넣는다).
     # 지난 작업은 모두 사람이 누른 요청이다(priority 1, background 아님)
     with op.batch_alter_table("ai_jobs", schema=None) as batch_op:
         batch_op.add_column(sa.Column("priority", sa.SmallInteger(), nullable=True))

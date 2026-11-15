@@ -20,8 +20,11 @@ from tests.ai_fixtures import (
     clean_ai_jobs,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
     find_ids,
     make_ai_bundle,
+    make_match_bundle,
     request_classify,
+    run_plan,
 )
+from tests.docx_factory import p
 from tests.fake_ai import FakeAi
 from tests.sop_helpers import AUTHOR, OUTSIDER, REVIEWER, create_bundle, set_members
 
@@ -273,6 +276,24 @@ def test_recent_keeps_the_mark_after_promotion(client: TestClient, auto_prepare:
     assert (promoted["queued"], promoted["request_id"]) == (prepared["queued"], None)
     assert {job.priority for job in run_in_session(_read_jobs)} == {AI_PRIORITY_USER}
     assert (request["request_id"], request["background"]) == (prepared["request_id"], True)
+
+
+def test_recent_marks_a_plan_request_once_its_background_refines_are_queued(
+    client: TestClient, auto_prepare: FakeAi
+) -> None:
+    # 업로드 계획 행은 미리 돌리기가 아니지만 같은 요청으로 쌓인 다듬기가 미리 돌리기다 — 한 요청에 둘이 섞인다
+    old, new = "합성 장비의 전원을 켠 뒤 상태 표시등을 확인한다.", "합성 장비의 전원을 켠 뒤 상태 표시등을 반드시 확인한다."
+    bundle = make_match_bundle(client, p(old), p(new))
+    run_plan()
+    jobs = run_in_session(_read_jobs)
+    assert sorted((job.kind, job.background) for job in jobs) == [("match", True), ("match_plan", False)]
+    assert len({job.request_id for job in jobs}) == 1
+
+    (request,) = get_recent(client)["requests"]
+
+    assert (request["request_id"], request["background"], request["total"]) == (jobs[0].request_id, True, 2)
+    assert sorted(request["kinds"]) == ["match", "match_plan"]
+    assert request["bundle_code"] == f"BND-{bundle.id:04d}"
 
 
 async def _read_jobs(session: AsyncSession) -> list[AiJob]:

@@ -35,7 +35,7 @@ async def _list_unprepared_documents(session: AsyncSession, bundle_id: int, firs
             select(AiJob.document_id).where(
                 AiJob.bundle_id == bundle_id, AiJob.kind == CLASSIFY_KIND, AiJob.background.is_(True),
                 AiJob.document_id.is_not(None),
-            )
+            ).distinct()
         )
     )
     ready = await session.scalars(

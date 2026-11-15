@@ -13,6 +13,7 @@ from app.sop.ai.constants import MAX_JOBS_PER_REQUEST, MAX_SKIPPED_REPORTED
 from app.sop.ai.schemas import AiJobCounts, AiRequestOut, SkippedOut
 from app.sop.constants import AI_PRIORITY_USER
 from app.sop.errors import raise_rule
+from app.sop.groups import iter_chunks
 from app.sop.models import AiJob, generate_request_id
 
 ACTIVE_JOB_STATUSES = ("queued", "running")
@@ -143,14 +144,18 @@ async def promote_queued_jobs(
         row for row in rows
         if (wanted is None or wanted & set(row.unit_ids)) and (document_id is None or row.document_id == document_id)
     ]
-    if chosen:
-        await session.execute(
+    # 수와 단위는 UPDATE가 실제로 바꾼 행에서 — 읽은 뒤 실행기가 꺼내 간 작업은 올리지 않았으니 세지 않는다
+    promoted: list[list[int]] = []
+    for chunk in iter_chunks([row.id for row in chosen]):
+        result = await session.execute(
             update(AiJob)
-            .where(AiJob.id.in_([row.id for row in chosen]), AiJob.status == "queued")
+            .where(AiJob.id.in_(chunk), AiJob.status == "queued")
             .values(priority=AI_PRIORITY_USER)
+            .returning(AiJob.unit_ids)
             .execution_options(synchronize_session=False)
         )
-    return len(chosen), {unit_id for row in chosen for unit_id in row.unit_ids}
+        promoted.extend(result.scalars())
+    return len(promoted), {unit_id for job_unit_ids in promoted for unit_id in job_unit_ids}
 
 
 async def cancel_active_jobs(session: AsyncSession, bundle_id: int, kind: str | None = None) -> int:

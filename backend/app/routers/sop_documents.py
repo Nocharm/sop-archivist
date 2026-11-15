@@ -514,8 +514,8 @@ async def upload_document(
     # 줄 선 계획이 있는지 보고 쌓는 사이에 다른 업로드가 끼지 않게 묶음을 잠근다 — 업로드는 이미 끝났으니 검사로 거절하지 않는다
     if document.status == "ready":
         await lock_bundle(session, ctx.bundle)
-        if await enqueue_auto_plan(session, ctx.bundle.id, ctx.login_id, origin=PLAN_ORIGIN_UPLOAD):
-            await session.commit()
+        await enqueue_auto_plan(session, ctx.bundle.id, ctx.login_id, origin=PLAN_ORIGIN_UPLOAD)
+        await session.commit()  # 쌓지 않았어도 잠금을 바로 놓는다 — 아래 조회 동안 묶음을 잡고 있지 않게
     # 번호가 채워졌으면 EQUIS에 묻는다(켜져 있을 때만) — 응답 뒤에 돌아 업로드를 늦추지 않는다
     await start_lookups(session, background_tasks, ctx.bundle, [document.doc_code])
     out = (await build_documents_out(session, [document]))[0]

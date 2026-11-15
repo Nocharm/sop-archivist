@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
 from app.clock import now
+from app.settings import settings
 from app.sop.ai.apply import (
     AI_SUGGESTED,
     add_suggestion,
@@ -46,12 +47,11 @@ from app.sop.ai.runner import AiCallFailed
 from app.sop.ai.schemas import SkippedOut
 from app.sop.ai.similarity import cosine_matrix
 from app.sop.checks import check_sentence
-from app.settings import settings
 from app.sop.constants import AI_PRIORITY_PLAN, AI_PRIORITY_PRE_REFINE, AI_PRIORITY_USER
 from app.sop.decisions import load_cell_positions, load_table_shapes
 from app.sop.detach import ORIGIN_NEW_DOC, UNASSIGNED
 from app.sop.errors import raise_rule
-from app.sop.groups import TABLE_UNIT_KINDS, select_in_chunks
+from app.sop.groups import TABLE_UNIT_KINDS, iter_chunks, select_in_chunks
 from app.sop.match import list_identical_candidates
 from app.sop.models import (
     AiJob,
@@ -754,10 +754,10 @@ def _should_refine(write: _Write, kept: AiSuggestion | None, origin: str, refine
 
 async def _cancel_refines(session: AsyncSession, refines: Sequence[_ActiveRefine]) -> None:
     """계획이 바꾼 묶음의 옛 다듬기 — 남기면 옛 묶음의 답이 새 계획의 제안을 걷는다. 돌던 작업의 결과는 실행기가 버린다."""
-    if refines:
+    for chunk in iter_chunks([refine.job_id for refine in refines]):
         await session.execute(
             update(AiJob)
-            .where(AiJob.id.in_([refine.job_id for refine in refines]), AiJob.status.in_(ACTIVE_JOB_STATUSES))
+            .where(AiJob.id.in_(chunk), AiJob.status.in_(ACTIVE_JOB_STATUSES))
             .values(status="cancelled", finished_at=now())
             .execution_options(synchronize_session=False)
         )

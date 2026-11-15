@@ -42,7 +42,7 @@ class _RequestTally:
 def _build_window_ids(login_id: str, since: datetime) -> CompoundSelect:
     """범위 안 작업 id — 대기·실행 중과 since 뒤에 끝난 작업을 따로 골라 합친다.
 
-    OR 한 조건으로 쓰면 인덱스를 못 탄다. 앞쪽은 (status, id), 뒤쪽은 (bundle_id, finished_at) 인덱스가 찾는다.
+    OR 한 조건으로 쓰면 인덱스를 못 탄다. 앞쪽은 (status, priority, id), 뒤쪽은 (bundle_id, finished_at) 인덱스가 찾는다.
     멤버십(역할 무관)으로 묶음을 거른다. 바깥 질의가 같은 표라 자동 상관을 끈다.
     """
     member_bundles = select(BundleMember.bundle_id).where(BundleMember.login_id == login_id)
