@@ -131,6 +131,26 @@ export function pickEnglishSide(units: Pick<ViewUnit, "id" | "text">[]): number 
   return best?.id ?? null;
 }
 
+export interface LanguageChange {
+  lang: "ko" | "en";
+  unitIds: number[];
+}
+
+/**
+ * 합치기를 풀어 되살아난 단위들을 한/영 짝으로 맺기 전에 바꿀 언어 - 이미 짝이 되는 언어면 빈 목록.
+ * 언어가 같게(또는 없게) 잡혔으면 라틴 글자 비율이 가장 높은 쪽을 EN, 나머지를 KO로 맞춘다. 라틴 글자가 하나도 없어 정할 수 없으면 null.
+ */
+export function planPairLanguages(units: ViewUnit[]): LanguageChange[] | null {
+  if (planJoin(units, false).kind === "pair") return [];
+  const enId = pickEnglishSide(units);
+  if (enId === null) return null;
+  const changes: LanguageChange[] = [
+    { lang: "en", unitIds: units.filter((unit) => unit.id === enId && unit.lang !== "en").map((unit) => unit.id) },
+    { lang: "ko", unitIds: units.filter((unit) => unit.id !== enId && unit.lang !== "ko").map((unit) => unit.id) },
+  ];
+  return changes.filter((change) => change.unitIds.length > 0);
+}
+
 function buildPair(ctx: SplitMenuContext & { selected: ViewUnit }): SplitMenuItem[] {
   const { selected, target } = ctx;
   const isPaired = selected.pair_id !== null && selected.pair_id === target.pair_id;

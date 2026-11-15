@@ -676,6 +676,8 @@ await runStep("assign: hold an unassigned unit without a destination", {}, async
   await wait(page, "assign-row-id");
   check("hold is available with no destination", !(await page.locator('[data-testid="assign-hold"]').isDisabled()));
   // 사유 없이 보류하면 Remark 창이 열린다 - 최근 사유를 골라 확인하면 보류가 이어진다
+  // 그 줄의 정보를 다 받은 뒤에 누른다 - 받는 동안의 Hold는 아무 일도 하지 않는다(느린 기계에서 이 단계가 떨어졌다)
+  await page.waitForLoadState("networkidle");
   await page.locator('[data-testid="assign-hold"]').click();
   await wait(page, "assign-remark-modal");
   await page.locator('[data-testid="assign-remark-modal-recent-0"]').click();
@@ -845,6 +847,8 @@ await runStep("assign: table rows from the right-click menu, then undo", {}, asy
   await page.waitForFunction(() => document.querySelector('[data-testid="assign-undo"]')?.disabled === false, null, { timeout: T });
   const changed = await countKinds();
   check(action === "table_rows" ? "the table becomes rows" : "the rows become one table again", changed !== before, `${before} -> ${changed}`);
+  // 화면이 새 줄을 고른 뒤에 되돌린다 - 그 전에 되돌리면 막 사라진 단위의 정보를 한 번 불러 404가 콘솔에 찍힌다(사람 손으로는 나오지 않는 속도)
+  await page.waitForLoadState("networkidle");
   await page.locator('[data-testid="assign-undo"]').click();
   await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((toast) => /table rows/i.test(toast.textContent ?? "")), null, { timeout: T });
   check("Undo puts the table back as it was", (await countKinds()) === before, await countKinds());
@@ -2072,6 +2076,110 @@ await runStep("assign: the inspector walks Shape, Where it goes, Decide", {}, as
   await page.locator('[data-testid="assign-row-prev"]').click();
   await page.waitForFunction((before) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() === before, rowBefore, { timeout: T });
   check("the head's arrows move to the next row and back", true);
+});
+
+// 한 문장 ↔ 한/영 짝 바꾸기(v1.0.24) - 전에는 원문 고치기 화면에만 있었다. 짝인 줄을 한 문장으로 합치고, 합친 문장을 다시 짝으로 돌린다(풀기 + 짝 맺기를 한 번에)
+await runStep("assign: switch a KO/EN pair to one sentence and back", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${freshId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${freshId}/documents/${docId}/view`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${freshId}/assign`);
+  await wait(page, "assign-bar");
+  const pieceOf = (unitId) => page.locator(`[data-testid="assign-paper-piece-${unitId}"], [data-testid="assign-paper-unit-${unitId}"]`).first();
+  const toOne = page.locator('[data-testid="assign-shape-mode-one"]');
+  const toPair = page.locator('[data-testid="assign-shape-mode-pair"]');
+  let doc = null;
+  let members = null;
+  for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await readView(candidate.id);
+    const byPair = new Map();
+    for (const item of view.units.filter((unit) => unit.pair_id !== null)) byPair.set(item.pair_id, [...(byPair.get(item.pair_id) ?? []), item]);
+    const pairs = [...byPair.values()].filter((group) => group.length === 2 && group.every((unit) => unit.kind === "sentence" && unit.status === "unassigned"));
+    if (pairs.length === 0) continue;
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${candidate.id}"]`).click();
+    await page.waitForTimeout(600);
+    for (const group of pairs) {
+      if ((await pieceOf(group[0].id).count()) === 0) continue;
+      await pieceOf(group[0].id).click();
+      if (!(await toOne.waitFor({ timeout: 2500 }).then(() => true, () => false))) continue;
+      // 떨어진 짝은 한 문장으로 합치지 않는다 - 이웃한 짝이 나올 때까지 넘긴다
+      if ((await toOne.getAttribute("aria-disabled")) === "true") continue;
+      doc = candidate;
+      members = group;
+      break;
+    }
+    if (members !== null) break;
+  }
+  check("the fresh bundle has a neighbouring KO/EN pair on screen", members !== null);
+  if (members === null) return;
+  const readUnits = async () => (await readView(doc.id)).units;
+  const waitUnits = async (test) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const units = await readUnits();
+      if (test(units)) return units;
+      await page.waitForTimeout(250);
+    }
+    return null;
+  };
+  const before = await readUnits();
+  check("a pair row shows KO/EN pair as its shape", (await toPair.getAttribute("aria-pressed")) === "true" && (await toOne.getAttribute("aria-pressed")) === "false");
+  await takeShot("sop-assign-shape-mode.png");
+  await toOne.click();
+  const merged = await waitUnits((units) => units.length === before.length - 1);
+  check("One sentence merges the pair", merged !== null);
+  if (merged === null) return;
+  const one = merged.find((unit) => !before.some((item) => item.id === unit.id));
+  check("the merged sentence holds both texts and can be taken apart", one !== undefined && one.can_unmerge === true && members.every((unit) => one.text.includes(unit.text.trim())));
+  // 화면이 합친 문장의 줄을 고른 뒤 전환이 한 문장 쪽으로 눌려 있다
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-shape-mode-one"]')?.getAttribute("aria-pressed") === "true", null, { timeout: T });
+  check("the merged row shows One sentence as its shape", (await toPair.getAttribute("aria-disabled")) === null);
+  await page.waitForLoadState("networkidle");
+  await toPair.click();
+  const back = await waitUnits((units) => units.length === before.length && units.filter((unit) => members.some((item) => item.text === unit.text)).every((unit) => unit.pair_id !== null));
+  check("KO/EN pair takes it apart and pairs the two again", back !== null);
+  if (back === null) return;
+  const again = back.filter((unit) => members.some((item) => item.text === unit.text));
+  check("the two sentences keep their languages and share one pair", again.length === 2 && new Set(again.map((unit) => unit.pair_id)).size === 1 && again.map((unit) => unit.lang).sort().join() === "en,ko");
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-shape-mode-pair"]')?.getAttribute("aria-pressed") === "true", null, { timeout: T });
+  check("the row is a pair again on screen", true);
+  // 배정된 한 문장을 짝으로 돌리면 한 번 묻는다 - 풀기가 배정을 지우기 때문이다(예상한 409가 콘솔에 찍힌다)
+  await page.waitForLoadState("networkidle");
+  await toOne.click();
+  const mergedAgain = await waitUnits((units) => units.length === before.length - 1);
+  check("the pair merges a second time", mergedAgain !== null);
+  if (mergedAgain === null) return;
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-shape-mode-one"]')?.getAttribute("aria-pressed") === "true", null, { timeout: T });
+  await page.waitForLoadState("networkidle");
+  await pickFirstPlace(page);
+  await page.locator('[data-testid="assign-primary"]').click();
+  const assigned = await waitUnits((units) => units.some((unit) => unit.can_unmerge && unit.status === "confirmed" && members.every((item) => unit.text.includes(item.text.trim()))));
+  check("the merged sentence is assigned", assigned !== null);
+  if (assigned === null) return;
+  // 확정하면 다음 줄로 넘어간다 - 합친 문장으로 돌아와서 누른다
+  await page.waitForLoadState("networkidle");
+  await pieceOf(assigned.find((unit) => unit.can_unmerge && unit.status === "confirmed" && members.every((item) => unit.text.includes(item.text.trim()))).id).click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-shape-mode-one"]')?.getAttribute("aria-pressed") === "true", null, { timeout: T });
+  check("KO/EN pair stays offered on an assigned sentence", (await toPair.getAttribute("aria-disabled")) === null);
+  await toPair.click();
+  await wait(page, "assign-edit-confirm");
+  await page.locator('[data-testid="assign-edit-confirm-confirm"]').click();
+  const cleared = await waitUnits((units) => units.length === before.length && units.filter((unit) => members.some((item) => item.text === unit.text)).every((unit) => unit.pair_id !== null && unit.status === "unassigned"));
+  check("after asking once it is a pair again, with the assignment cleared", cleared !== null);
+  // 확인 창을 거친 뒤에도 화면이 새 줄을 따라가 고른다(묻는 사이에 다시 받은 값으로 고르면 놓친다)
+  // 되돌리면 풀기 앞으로 - 합친 한 문장이 돌아온다(짝은 사라진 조각과 함께 없어진다). 다시 눌러 처음 모양으로 둔다
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-shape-mode-pair"]')?.getAttribute("aria-pressed") === "true", null, { timeout: T });
+  await page.waitForLoadState("networkidle");
+  await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+  check("Undo brings the merged sentence back", (await waitUnits((units) => units.length === before.length - 1)) !== null);
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-shape-mode-one"]')?.getAttribute("aria-pressed") === "true", null, { timeout: T });
+  await page.waitForLoadState("networkidle");
+  await toPair.click();
+  const restored = await waitUnits((units) => units.length === before.length && units.filter((unit) => members.some((item) => item.text === unit.text)).every((unit) => unit.pair_id !== null));
+  check("the pair is back as the step found it", restored !== null);
 });
 
 // 조각 사이의 붙이기 단추와 합친 문장 풀기(v1.0.22) - 전에는 원문 고치기 화면에만 있었다. 자른 두 조각을 틈의 단추로 붙이고, 붙인 문장을 조각 아래 단추로 다시 푼다

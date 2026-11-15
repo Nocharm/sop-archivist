@@ -49,7 +49,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { findLastStep } from "@/lib/destination-manage-model";
-import { planJoin, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
+import { planJoin, planPairLanguages, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
 import { readSplitOffsets } from "@/lib/use-split-ai";
 import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, type AiScope } from "@/lib/api-manage";
 import {
@@ -112,7 +112,7 @@ import {
   type LinkMenuItem,
   type Recommendation,
 } from "@/lib/assign-model";
-import { buildAssignMenu, planAssignJoin, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
+import { buildAssignMenu, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { describeDecisionStep, getAssignUndoKey, pickSaveOp } from "@/lib/decision-step-model";
@@ -196,6 +196,12 @@ const NO_NUMBERS: ReadonlySet<number> = new Set();
 
 /** 되돌리면 단위가 은퇴할 수 있는 편집 - 그 줄을 고른 채 다시 받으면 없는 단위의 묶음을 부르게 된다 */
 const RETIRING_OPS: ReadonlySet<string> = new Set(["cut", "carve", "merge", "unmerge", "split_table_rows", "merge_table_rows", "set_layout_table"]);
+
+/** 배정이 걸려 서버가 되물은 편집 - 확인하면 같은 일을 confirm을 켜고 다시 보낸다 */
+type ConfirmedEdit =
+  | { kind: "edit"; op: EditOp; okText: string; followId: number | null }
+  | { kind: "to_pair"; unit: ViewUnit }
+  | { kind: "ai_split"; unit: ViewUnit; suggestion: AiSuggestion };
 
 function isTypingTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
@@ -615,7 +621,8 @@ export default function AssignPage() {
   const firstTextRef = useRef<HTMLTextAreaElement>(null);
   const [busy, setBusy] = useState(false);
   // 배정이 걸린 문장을 자르거나 합치려 할 때 - 서버가 409 confirm_required로 물으면 확인을 받아 배정을 풀며 다시 보낸다(원문 고치기와 같은 규칙, 설계 2026-11-15 §3.5)
-  const [editConfirm, setEditConfirm] = useState<{ count: number; run: () => Promise<void> } | null>(null);
+  // 다시 보낼 일은 함수가 아니라 값으로 둔다 - 확인을 누른 그때의 화면 값(원문 보기·문서 판)으로 보내야 고친 뒤 새 줄을 따라간다
+  const [editConfirm, setEditConfirm] = useState<{ count: number; retry: ConfirmedEdit } | null>(null);
   // 되돌리기 기록은 이 화면을 연 동안만 - 세션 키가 서버 기록을 가른다(설계 docs/superpowers/specs/2026-11-13-assign-undo-design.md)
   const undoSession = useRef(genId());
   const [undoState, setUndoState] = useState({ canUndo: false, canRedo: false });
@@ -748,6 +755,8 @@ export default function AssignPage() {
   const isRefGate = row !== null && row.status !== "confirmed" && rowViewUnits.some(isRefPending);
   // 오른쪽 칸 1번(다듬기) - 고른 줄의 문장마다 할 수 있는 일. 우클릭 메뉴와 같은 답이다. 고칠 수 없는 사람에게는 줄을 보이지 않는다
   const shapeLines: ShapeLine[] = canEdit && mode === "old" ? rowViewUnits.flatMap((unit) => { const menu = buildUnitMenu(unit); return menu ? [{ unit, items: menu.edit }] : []; }) : [];
+  // 고른 줄이 한/영 짝이거나 합친 한 문장이면 둘 사이를 바꾸는 전환을 다듬기에 둔다
+  const shapeMode = shapeLines.length > 0 ? planShapeMode(rowViewUnits, paperTabs?.order ?? [], hasUnitDraft) : null;
   const stepBase = shapeLines.length > 0 ? 1 : 0;
   const refPendingIds = (paperTabs?.order ?? []).filter((id) => isRefPending(paperModel?.units.get(id)) && rowOfUnit.has(id));
   // 그 줄의 번호에 대한 EQUIS 표시와 새 문장에 쓸 제안 - 참조 카드와 결정 칸의 새 문장이 같은 답을 쓴다. 조회가 도는 동안은 조금 뒤 다시 읽는다
@@ -781,10 +790,18 @@ export default function AssignPage() {
     return Array.isArray(unitIds) ? unitIds.length : null;
   }
 
+  /** 편집 뒤 - 원문 보기·단위·Bundle을 다시 받는다 */
+  function reloadAfterEdit() {
+    views.reload();
+    setUnitsKey((key) => key + 1);
+    void loadBundle(bundleId);
+  }
+
   /** 편집 한 번 - 끝나면 원문 보기·단위를 다시 받고 followId(없으면 새로 생긴 첫 단위)의 줄을 고른다. confirm은 확인 창에서 다시 보낼 때만 켠다 */
   async function runUnitEdit(op: EditOp, okText: string, followId: number | null, confirm = false) {
     if (!oldView || busy) return;
     setBusy(true);
+    let isAsking = false;
     try {
       // 자르기·합치기·언어 바꾸기 모두 Assign 기록에 넣는다(설계 §4.4) - 서버는 Split 편집 기록 번호만 가리킨다
       const undo = buildUndo({ focus_unit_id: op.type === "split" ? op.unit_id : (followId ?? undefined) });
@@ -802,12 +819,12 @@ export default function AssignPage() {
     } catch (err) {
       // 판단이 걸린 단위를 바꾸는 편집은 한 번 묻는다 - 확인하면 배정을 풀며 다시 보낸다
       const count = readConfirmCount(err);
-      if (count !== null && !confirm) setEditConfirm({ count, run: () => runUnitEdit(op, okText, followId, true) });
+      isAsking = count !== null && !confirm;
+      if (count !== null && !confirm) setEditConfirm({ count, retry: { kind: "edit", op, okText, followId } });
       else showToast(humanizeApiError(err, t), "error");
     } finally {
-      views.reload();
-      setUnitsKey((key) => key + 1);
-      void loadBundle(bundleId);
+      // 되묻는 동안은 다시 받지 않는다 - 바뀐 것이 없고, 늦게 닿은 응답이 확인 뒤의 편집과 엇갈리면 새 줄을 따라가지 못한다
+      if (!isAsking) reloadAfterEdit();
       setBusy(false);
     }
   }
@@ -833,10 +850,66 @@ export default function AssignPage() {
     }
   }
 
+  /** 다듬기의 `One sentence | KO/EN pair` - 짝이면 문서 순서대로 한 문장으로 합치고, 합친 한 문장이면 풀어서 짝으로 맺는다 */
+  function switchShapeMode(next: "one" | "pair") {
+    if (!paperTabs || shapeMode === null || shapeMode.current === next || shapeMode.reasonKey !== null) return;
+    if (next === "pair") {
+      void switchToPair(rowViewUnits[0]);
+      return;
+    }
+    const order = paperTabs.order;
+    const unitIds = rowViewUnits.map((unit) => unit.id).sort((a, b) => order.indexOf(a) - order.indexOf(b));
+    void runUnitEdit({ type: "merge", unit_ids: unitIds }, t("split.didMerge"), null);
+  }
+
+  /**
+   * 합친 한 문장 → 한/영 짝: 합치기를 풀고(배정이 걸렸으면 한 번 묻는다) 되살아난 문장의 언어를 맞춘 뒤 짝으로 맺는다.
+   * 풀기와 언어 바꾸기는 되돌리기 기록에 남고 짝 맺기는 남지 않는다. 푼 뒤에 실패하면 어디까지 됐는지 알린다.
+   */
+  async function switchToPair(unit: ViewUnit, confirm = false) {
+    if (!oldView || busy) return;
+    setBusy(true);
+    const docId = oldView.document.id;
+    let restoredIds: number[] | null = null;
+    let isAsking = false;
+    try {
+      const undone = await editUnits(bundleId, docId, oldView.document.revision, { type: "unmerge", unit_id: unit.id }, confirm, buildUndo({ focus_unit_id: unit.id }));
+      restoredIds = undone.created_unit_ids;
+      markRecorded();
+      const view = await getDocumentView(bundleId, docId);
+      const restored = view.units.filter((item) => undone.created_unit_ids.includes(item.id));
+      const changes = restored.length < 2 ? null : planPairLanguages(restored);
+      if (changes === null) throw new Error(`cannot pair ${restored.length} restored unit(s)`);
+      let revision = view.document.revision;
+      for (const change of changes) {
+        revision = (await editUnits(bundleId, docId, revision, { type: "set_language", unit_ids: change.unitIds, lang: change.lang }, false, buildUndo({ focus_unit_id: change.unitIds[0] }))).document_revision;
+      }
+      await createPair(bundleId, docId, revision, restored.map((item) => item.id));
+      showToast(t("split.didJoin"));
+    } catch (err) {
+      const count = readConfirmCount(err);
+      isAsking = count !== null && !confirm;
+      if (count !== null && !confirm) setEditConfirm({ count, retry: { kind: "to_pair", unit } });
+      else showToast(restoredIds !== null ? t("split.join.partly") : humanizeApiError(err, t), "error");
+    } finally {
+      if (restoredIds !== null) {
+        // 풀린 뒤로는 옛 단위가 없다 - 고름을 비우고, 다시 받은 뒤 되살아난 첫 문장의 줄을 고른다
+        setRefEntryId(null);
+        cutLine.clear();
+        setCutUnitId(null);
+        setSelectedKey(null);
+        if (restoredIds.length > 0) setFollow({ unitId: restoredIds[0], staleViews: viewList, staleUnits: units.data });
+      }
+      if (!isAsking) reloadAfterEdit();
+      setBusy(false);
+    }
+  }
+
   /** AI 나누기 제안 적용 - 뒤쪽 위치부터 자르면 앞 조각의 위치가 바뀌지 않는다. 자를 때마다 되돌리기 기록에 한 단계씩 남는다 */
   async function applySplitSuggestion(unit: ViewUnit, suggestion: AiSuggestion, confirm = false) {
     if (!oldView || busy) return;
     setBusy(true);
+    let isAsking = false;
     try {
       let unitId = unit.id;
       let revision = oldView.document.revision;
@@ -855,12 +928,11 @@ export default function AssignPage() {
     } catch (err) {
       // 첫 자르기에서 묻는다(배정이 걸린 것은 자르기 전의 그 문장이다) - 확인하면 처음부터 다시 자른다
       const count = readConfirmCount(err);
-      if (count !== null && !confirm) setEditConfirm({ count, run: () => applySplitSuggestion(unit, suggestion, true) });
+      isAsking = count !== null && !confirm;
+      if (count !== null && !confirm) setEditConfirm({ count, retry: { kind: "ai_split", unit, suggestion } });
       else showToast(humanizeApiError(err, t), "error");
     } finally {
-      views.reload();
-      setUnitsKey((key) => key + 1);
-      void loadBundle(bundleId);
+      if (!isAsking) reloadAfterEdit();
       setBusy(false);
     }
   }
@@ -2197,7 +2269,7 @@ export default function AssignPage() {
           {shapeLines.length > 0 && (
             <>
               {renderStep(1, t("assign.step.shape"))}
-              <ShapeTools lines={shapeLines} cutUnitId={cutLine.at !== null ? cutUnitId : null} busy={busy} onAction={(unit, action, lang) => runUnitAction(unit, action, lang)} />
+              <ShapeTools lines={shapeLines} cutUnitId={cutLine.at !== null ? cutUnitId : null} busy={busy} onAction={(unit, action, lang) => runUnitAction(unit, action, lang)} mode={shapeMode} onMode={switchShapeMode} />
             </>
           )}
           {rowRefUnit && oldView && (
@@ -2722,9 +2794,11 @@ export default function AssignPage() {
           busy={busy}
           testId="assign-edit-confirm"
           onConfirm={() => {
-            const { run } = editConfirm;
+            const { retry } = editConfirm;
             setEditConfirm(null);
-            void run();
+            if (retry.kind === "edit") void runUnitEdit(retry.op, retry.okText, retry.followId, true);
+            else if (retry.kind === "to_pair") void switchToPair(retry.unit, true);
+            else void applySplitSuggestion(retry.unit, retry.suggestion, true);
           }}
           onClose={() => setEditConfirm(null)}
         />
