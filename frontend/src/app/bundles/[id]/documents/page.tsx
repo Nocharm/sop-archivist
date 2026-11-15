@@ -250,6 +250,19 @@ export default function DocumentsPage() {
           testId={`documents-${document.id}-version`}
           onCommit={(doc_version) => void saveField(document, { doc_version }).catch(() => undefined)}
         />
+        {/* 버전 칸이 비어 있으면 EQUIS의 지금 판을 제안한다 - 이 칸은 올린 파일의 판이라 자동으로 넣지 않는다("지금 판이 아님" 판정이 뜻을 잃는다) */}
+        {canEdit && !document.doc_version && !document.ai_meta?.doc_version && document.equis?.current?.version && (
+          <button
+            type="button"
+            className="ai-suggest"
+            data-testid={`documents-${document.id}-version-equis`}
+            aria-label={t("documents.acceptEquis", { value: document.equis.current.version })}
+            onClick={() => void saveField(document, { doc_version: document.equis?.current?.version ?? "" }).catch(() => undefined)}
+          >
+            <span className="truncate font-mono">{document.equis.current.version}</span>
+            <span className="src-badge">EQUIS</span>
+          </button>
+        )}
         {canEdit && !document.doc_version && document.ai_meta?.doc_version && (
           <AiSuggestChip value={document.ai_meta.doc_version} testId={`documents-${document.id}-version-ai`} onAccept={() => void saveField(document, { doc_version: document.ai_meta?.doc_version ?? "" }).catch(() => undefined)} />
         )}

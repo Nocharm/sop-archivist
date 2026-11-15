@@ -17,6 +17,8 @@ from app.sop.errors import check_revision
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
 from app.sop.models import Bundle
 from app.sop.tobe import (
+    DocPatchIn,
+    NaReasonIn,
     NewDocIn,
     NewStepIn,
     PlaceCountOut,
@@ -30,6 +32,9 @@ from app.sop.tobe import (
     count_targets_by_step,
     remove_tobe_doc,
     remove_wi_step,
+    rename_wi_step,
+    set_na_slot,
+    update_tobe_doc,
 )
 
 router = APIRouter(prefix="/api/bundles", tags=["sop-tobe"])
@@ -171,6 +176,68 @@ async def delete_wi_step(
 ) -> ToBeViewOut:
     bundle = await _open_row_write(session, ctx)
     await remove_wi_step(session, bundle, target_doc_id, step_no, actor=ctx.login_id)
+    await session.commit()
+    return await _build_tobe_view(session, background_tasks, bundle, sync_titles=False)
+
+
+# --- 줄 하나 고치기(Documents 화면) — 칸마다 바로 저장한다. 한 줄 추가·삭제처럼 revision을 묻지 않는다 ---
+
+
+@router.patch("/{bundle_id}/tobe/docs/{target_doc_id}", response_model=ToBeViewOut)
+async def patch_tobe_doc(
+    target_doc_id: int,
+    body: DocPatchIn,
+    background_tasks: BackgroundTasks,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> ToBeViewOut:
+    bundle = await _open_row_write(session, ctx)
+    await update_tobe_doc(session, bundle, target_doc_id, body, actor=ctx.login_id)
+    await session.commit()
+    # 번호나 제목이 바뀌었을 수 있다 — 새 번호를 EQUIS에 묻고, EQUIS에 있는 번호의 제목은 EQUIS 이름으로 맞춘다
+    return await _build_tobe_view(session, background_tasks, bundle, sync_titles=True)
+
+
+@router.put("/{bundle_id}/tobe/docs/{target_doc_id}/na/{slot_key}", response_model=ToBeViewOut)
+async def put_na_slot(
+    target_doc_id: int,
+    slot_key: str,
+    body: NaReasonIn,
+    background_tasks: BackgroundTasks,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> ToBeViewOut:
+    bundle = await _open_row_write(session, ctx)
+    await set_na_slot(session, bundle, target_doc_id, slot_key, body.reason, actor=ctx.login_id)
+    await session.commit()
+    return await _build_tobe_view(session, background_tasks, bundle, sync_titles=False)
+
+
+@router.delete("/{bundle_id}/tobe/docs/{target_doc_id}/na/{slot_key}", response_model=ToBeViewOut)
+async def delete_na_slot(
+    target_doc_id: int,
+    slot_key: str,
+    background_tasks: BackgroundTasks,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> ToBeViewOut:
+    bundle = await _open_row_write(session, ctx)
+    await set_na_slot(session, bundle, target_doc_id, slot_key, None, actor=ctx.login_id)
+    await session.commit()
+    return await _build_tobe_view(session, background_tasks, bundle, sync_titles=False)
+
+
+@router.patch("/{bundle_id}/tobe/docs/{target_doc_id}/steps/{step_no}", response_model=ToBeViewOut)
+async def patch_wi_step(
+    target_doc_id: int,
+    step_no: int,
+    body: NewStepIn,
+    background_tasks: BackgroundTasks,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> ToBeViewOut:
+    bundle = await _open_row_write(session, ctx)
+    await rename_wi_step(session, bundle, target_doc_id, step_no, body.title, actor=ctx.login_id)
     await session.commit()
     return await _build_tobe_view(session, background_tasks, bundle, sync_titles=False)
 

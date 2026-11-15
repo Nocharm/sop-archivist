@@ -289,48 +289,93 @@ await runStep("old Edit original addresses open the document in the one-document
 
 
 // 일부러 거절당하는 저장이 있어 콘솔 오류를 허용한다
-await runStep("to-be: nested rows, N/A detail, edit and save", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+// New 문서 목록은 칸마다 바로 저장한다(v1.0.33) - Save 단추와 초안이 없다. 떠나거나 Enter를 누르면 그 칸이 저장된다
+const settleToBe = async (page) => {
+  await page.waitForFunction(() => document.querySelector('[data-testid="tobe-saving"]')?.textContent === "", null, { timeout: T });
+  await page.waitForLoadState("networkidle");
+};
+const readToBe = async (page, bundleId) => (await page.request.get(`${BASE}/api/bundles/${bundleId}/tobe`, { headers: { "X-Dev-User": "qa.member" } })).json();
+
+await runStep("new documents: nested rows, N/A detail, each cell saves as you leave it", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
-  await page.locator('[data-testid$="-row"][data-testid^="tobe-"]').first().waitFor({ timeout: T });
-  const codes = await page.locator('[data-testid$="-code"][data-testid^="tobe-"]').evaluateAll((els) => els.map((el) => el.value));
+  await page.locator('[data-testid$="-row"][data-testid^="tobe-id-"]').first().waitFor({ timeout: T });
+  const codes = await page.locator('[data-testid$="-code"][data-testid^="tobe-id-"]').evaluateAll((els) => els.map((el) => el.value));
   check("SOP first, its WIs under it", codes[0] === "SOP-CF" && codes.slice(1).every((code) => code.startsWith("WI-")), codes.join(","));
-  check("save is off until something changes", await page.locator('[data-testid="tobe-save"]').isDisabled());
-  const sopRow = page.locator('[data-testid$="-row"][data-testid^="tobe-"]').first();
+  check("there is no Save button and no draft bar", (await page.locator('[data-testid="tobe-save"], [data-testid="tobe-dirty"]').count()) === 0);
+  const sopRow = page.locator('[data-testid$="-row"][data-testid^="tobe-id-"]').first();
   const sopKey = (await sopRow.getAttribute("data-testid")).replace("tobe-", "").replace("-row", "");
   await page.locator(`[data-testid="tobe-${sopKey}-toggle"]`).click();
   check("troubleshooting is N/A with its reason", await page.locator(`[data-testid="tobe-${sopKey}-na-procedures.troubleshooting"]`).isChecked());
   await takeShot("sop-tobe.png");
   const title = page.locator(`[data-testid="tobe-${sopKey}-title"]`);
   const before = await title.inputValue();
+  const readTitle = async () => (await readToBe(page, halfBundleId)).docs.find((doc) => `id-${doc.id}` === sopKey).title;
   await title.fill(`${before} (edited)`);
-  await wait(page, "tobe-dirty");
-  await page.locator('[data-testid="tobe-save"]').click();
-  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
-  await page.locator('[data-testid="tobe-dirty"]').waitFor({ state: "detached", timeout: T });
-  check("saved and clean again", (await title.inputValue()) === `${before} (edited)`);
+  check("typing alone does not save", (await readTitle()) === before);
+  await page.keyboard.press("Enter");
+  await settleToBe(page);
+  check("Enter saves the cell", (await readTitle()) === `${before} (edited)`);
+  // Esc는 고치던 것을 버린다
+  await title.fill("thrown away");
+  await page.keyboard.press("Escape");
+  check("Esc puts the saved text back", (await title.inputValue()) === `${before} (edited)`);
   await title.fill(before);
-  await page.locator('[data-testid="tobe-save"]').click();
-  await page.locator('[data-testid="tobe-dirty"]').waitFor({ state: "detached", timeout: T });
-  // 잘못된 줄 - 부모 없는 WI는 서버가 거절하고 사람 말로 보인다
-  await page.locator('[data-testid="tobe-add"]').click();
-  const newCode = page.locator('[data-testid^="tobe-new-"][data-testid$="-code"]');
-  await newCode.fill("WI-99");
-  const newKey = (await newCode.getAttribute("data-testid")).replace("tobe-", "").replace("-code", "");
-  // 값 고르기는 기본 <select>가 아니다 - 트리거를 누르고 "없음" 항목을 누른다
-  await page.locator(`[data-testid="tobe-${newKey}-parent"]`).click();
-  await page.locator(`[data-testid="tobe-${newKey}-parent-option-none"]`).click();
-  await page.locator('[data-testid="tobe-save"]').click();
+  await page.keyboard.press("Tab");
+  await settleToBe(page);
+  check("leaving the cell saves it too", (await readTitle()) === before);
+  // N/A는 사유를 적어야 저장된다 - 체크만 하고 떠나면 거둔다
+  // 문장이 들지 않은 칸으로 한다(문장이 든 칸은 서버가 N/A를 거절한다)
+  const naBox = page.locator(`[data-testid="tobe-${sopKey}-na-document_relationships.appendices"]`);
+  const wasNa = await naBox.isChecked();
+  if (!wasNa) {
+    await naBox.click();
+    await wait(page, `tobe-${sopKey}-na-document_relationships.appendices-reason`);
+    const countNa = async () => (await readToBe(page, halfBundleId)).na_slots.filter((slot) => slot.slot_key === "document_relationships.appendices").length;
+    check("a checked N/A section is not saved before its reason", (await countNa()) === 0);
+    await page.locator(`[data-testid="tobe-${sopKey}-na-document_relationships.appendices-reason"]`).fill("Smoke: covered elsewhere");
+    await page.keyboard.press("Enter");
+    await settleToBe(page);
+    check("the reason saves the N/A section", (await countNa()) === 1);
+    await naBox.click();
+    await settleToBe(page);
+    check("unchecking removes it at once", (await countNa()) === 0);
+  }
+  // 번호로 더하기 - Enter면 줄이 저장된다. 종류와 상위 SOP는 앱이 고르고 사람이 고친다
+  const rowsBefore = (await readToBe(page, halfBundleId)).docs.length;
+  await page.locator('[data-testid="tobe-add-code"]').fill("WI-99");
+  await page.keyboard.press("Enter");
+  await settleToBe(page);
+  const added = (await readToBe(page, halfBundleId)).docs.find((doc) => doc.code === "WI-99");
+  check("a number and Enter add a saved row, as a WI under the SOP", added !== undefined && added.doc_type === "wi" && added.parent_code === "SOP-CF");
+  // 이미 있는 번호는 더하지 않고 알린다
+  await page.locator('[data-testid="tobe-add-code"]').fill("WI-99");
+  await page.keyboard.press("Enter");
   await page.locator('[data-testid="toast-error"]').first().waitFor({ timeout: T });
-  check("server rejection reads as a sentence", (await getText(page, "toast-error")).includes("WI-99"), await getText(page, "toast-error"));
-  await page.locator('[data-testid="tobe-discard"]').click();
-  await page.locator('[data-testid="tobe-dirty"]').waitFor({ state: "detached", timeout: T });
+  check("a number already on the list is refused in words", (await getText(page, "toast-error")).includes("Already on the list"));
+  // 번호를 고쳐도 같은 줄이다(줄 id가 그대로)
+  await page.locator(`[data-testid="tobe-id-${added.id}-code"]`).fill("WI-98");
+  await page.keyboard.press("Enter");
+  await settleToBe(page);
+  check("renaming keeps the same row", (await readToBe(page, halfBundleId)).docs.some((doc) => doc.id === added.id && doc.code === "WI-98"));
+  // 다른 줄의 번호로는 못 고친다 - 서버가 거절하고 칸이 저장된 번호로 돌아간다
+  await page.locator(`[data-testid="tobe-id-${added.id}-code"]`).fill("SOP-CF");
+  await page.keyboard.press("Enter");
+  await page.locator('[data-testid="toast-error"]').last().waitFor({ timeout: T });
+  await settleToBe(page);
+  check("a refused change puts the saved number back", (await page.locator(`[data-testid="tobe-id-${added.id}-code"]`).inputValue()) === "WI-98");
+  const remove = page.locator(`[data-testid="tobe-id-${added.id}-remove"]`);
+  await remove.scrollIntoViewIfNeeded();
+  await remove.hover();
+  await remove.click();
+  await settleToBe(page);
+  check("removing the row saves at once", (await readToBe(page, halfBundleId)).docs.length === rowsBefore);
 });
 
-// 검토 v0.4.0: 앞 단계를 지워도 뒤 단계 번호가 그대로여야 한다(분류한 문장이 단계 번호를 가리킨다), 저장 안 한 편집은 나갈 때 묻는다
-await runStep("to-be: removing a step keeps the other numbers, leaving asks first", {}, async ({ page }) => {
+// 검토 v0.4.0: 앞 단계를 지워도 뒤 단계 번호가 그대로여야 한다(분류한 문장이 단계 번호를 가리킨다)
+await runStep("new documents: removing a step keeps the other numbers", {}, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
-  await page.locator('[data-testid$="-row"][data-testid^="tobe-"]').first().waitFor({ timeout: T });
-  const wiRow = page.locator('[data-testid$="-row"][data-testid^="tobe-"]').nth(1);
+  await page.locator('[data-testid$="-row"][data-testid^="tobe-id-"]').first().waitFor({ timeout: T });
+  const wiRow = page.locator('[data-testid$="-row"][data-testid^="tobe-id-"]').nth(1);
   const wiKey = (await wiRow.getAttribute("data-testid")).replace("tobe-", "").replace("-row", "");
   await page.locator(`[data-testid="tobe-${wiKey}-toggle"]`).click();
   await wait(page, `tobe-${wiKey}-add-step`);
@@ -338,38 +383,34 @@ await runStep("to-be: removing a step keeps the other numbers, leaving asks firs
     (await page.locator(`[data-testid^="tobe-${wiKey}-step-"]`).evaluateAll((els) => els.map((el) => el.getAttribute("data-testid")))).map((id) => Number(id.split("-step-")[1]));
   const before = await readNumbers();
   const top = Math.max(0, ...before);
-  await page.locator(`[data-testid="tobe-${wiKey}-add-step"]`).click();
-  await page.locator(`[data-testid="tobe-${wiKey}-add-step"]`).click();
-  await page.locator(`[data-testid="tobe-${wiKey}-step-${top + 1}"]`).fill("Smoke step A");
-  await page.locator(`[data-testid="tobe-${wiKey}-step-${top + 2}"]`).fill("Smoke step B");
-  await page.locator('[data-testid="tobe-save"]').click();
-  await page.locator('[data-testid="tobe-dirty"]').waitFor({ state: "detached", timeout: T });
-  await page.locator(`[data-testid="tobe-${wiKey}-remove-step-${top + 1}"]`).click();
-  await page.locator('[data-testid="tobe-save"]').click();
-  await page.locator('[data-testid="tobe-dirty"]').waitFor({ state: "detached", timeout: T });
+  for (const [offset, text] of [[1, "Smoke step A"], [2, "Smoke step B"]]) {
+    await page.locator(`[data-testid="tobe-${wiKey}-add-step"]`).click();
+    await wait(page, `tobe-${wiKey}-step-${top + offset}`);
+    await settleToBe(page);
+    await page.locator(`[data-testid="tobe-${wiKey}-step-${top + offset}"]`).fill(text);
+    await page.keyboard.press("Enter");
+    await settleToBe(page);
+  }
+  const removeFirst = page.locator(`[data-testid="tobe-${wiKey}-remove-step-${top + 1}"]`);
+  await removeFirst.hover();
+  await removeFirst.click();
+  await settleToBe(page);
   const after = await readNumbers();
   check("the later step keeps its number after an earlier one is removed", after.includes(top + 2) && !after.includes(top + 1), after.join(","));
   check("its title stays with its number", (await page.locator(`[data-testid="tobe-${wiKey}-step-${top + 2}"]`).inputValue()) === "Smoke step B");
   check("the steps that were there are untouched", before.every((no) => after.includes(no)), `${before} -> ${after}`);
-
-  // 저장 안 한 편집 - 단계 링크를 누르면 먼저 묻는다
-  await page.locator(`[data-testid="tobe-${wiKey}-step-${top + 2}"]`).fill("Smoke step B (unsaved)");
+  // 저장이 끝난 목록이라 떠날 때 묻지 않는다
   await page.locator('[data-testid="stage-nav-assign"]').click();
-  await wait(page, "tobe-leave");
-  check("leaving with unsaved edits asks first", page.url().includes("/documents"));
-  await page.locator('[data-testid="tobe-leave-cancel"]').click();
-  check("cancel stays on To-Be with the edit", (await page.locator(`[data-testid="tobe-${wiKey}-step-${top + 2}"]`).inputValue()) === "Smoke step B (unsaved)");
-  await page.locator('[data-testid="stage-nav-assign"]').click();
-  await page.locator('[data-testid="tobe-leave-confirm"]').click();
   await page.waitForURL(/\/assign$/, { timeout: T });
-  check("confirm discards and leaves", true);
-
+  check("leaving does not ask - nothing is left unsaved", (await page.locator('[data-testid="tobe-leave"]').count()) === 0);
   // 되돌리기
   await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
   await page.locator(`[data-testid="tobe-${wiKey}-toggle"]`).click();
-  await page.locator(`[data-testid="tobe-${wiKey}-remove-step-${top + 2}"]`).click();
-  await page.locator('[data-testid="tobe-save"]').click();
-  await page.locator('[data-testid="tobe-dirty"]').waitFor({ state: "detached", timeout: T });
+  const removeSecond = page.locator(`[data-testid="tobe-${wiKey}-remove-step-${top + 2}"]`);
+  await removeSecond.waitFor({ timeout: T });
+  await removeSecond.hover();
+  await removeSecond.click();
+  await settleToBe(page);
   check("restored the step list", (await readNumbers()).join(",") === before.join(","));
 });
 
