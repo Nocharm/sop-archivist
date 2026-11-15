@@ -49,6 +49,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { findLastStep } from "@/lib/destination-manage-model";
+import { listAckWarnings } from "@/lib/missing-warnings-model";
 import { planPairLanguages, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
 import { readSplitOffsets } from "@/lib/use-split-ai";
 import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, type AiScope } from "@/lib/api-manage";
@@ -2120,8 +2121,15 @@ export default function AssignPage() {
 
   // 머리 아래 한 줄 - 결정 전에 볼 것(검사 결과·확정한 사람)
   const checks = groupData?.targets.flatMap((target) => target.warnings) ?? [];
+  // 고른 줄의 첫 문장이 원문에서 놓인 쪽 - 종이 문서와 견줄 때 찾는 자리다(PDF가 아니면 어림한 쪽이라 ≈를 붙인다)
+  const rowBlock = mode === "old" && rowViewUnits.length > 0 ? (oldView?.blocks.find((block) => block.id === rowViewUnits[0].block_id) ?? null) : null;
   const meta = (
     <div className="assign-meta">
+      {rowBlock !== null && rowBlock.page !== null && (
+        <span className="assign-meta-item tabular-nums text-ink-3" data-testid="assign-row-page">
+          {rowBlock.page_basis === "estimated" ? "≈ " : ""}p.{rowBlock.page}
+        </span>
+      )}
       <span className="assign-meta-item">
         <span className="text-ink-3">{t("classify.checks")}</span>
         <span className="flex flex-wrap gap-1 text-ink-2" data-testid="assign-checks">
@@ -2594,6 +2602,8 @@ export default function AssignPage() {
   ];
   const highlightIds = new Set(row?.unitIds ?? []);
   const pickedNew = new Set(linkIds);
+  // 확인이 남은 누락 의심 경고의 문단 - 용지의 그 줄에 표시한다. 위쪽 줄의 목록에서 확인하면(문서 목록을 다시 받아) 사라진다
+  const warnBlockIds = new Set(listAckWarnings(docs.data ?? []).flatMap((item) => (item.docId === oldDocId && item.warning.acked_by === null && item.warning.block_id !== null ? [item.warning.block_id] : [])));
   // Shift로 고른 줄, 그리고 짝 고르기에서 모은 문장
   const pickedOld = new Set([...[...checked].flatMap((key) => rowMap.get(key)?.unitIds ?? []), ...(pairSource && pairFrom ? pairFrom.picked : [])]);
   const placeOf = (unitIds: number[]) => {
@@ -2682,6 +2692,7 @@ export default function AssignPage() {
                 selectedId={mode === "old" ? (cutUnit?.id ?? row?.unitIds[0] ?? null) : null}
                 highlightIds={mode === "old" ? highlightIds : NO_NUMBERS}
                 pickedIds={pickedOld}
+                warnBlockIds={warnBlockIds}
                 statusOf={(unitId) => unitMap.get(unitId)?.status}
                 renderNote={placeOf}
                 renderPills={(unitId) => {

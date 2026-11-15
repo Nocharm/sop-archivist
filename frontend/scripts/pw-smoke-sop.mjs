@@ -2061,6 +2061,8 @@ await runStep("assign: the inspector walks Shape, Where it goes, Decide", {}, as
   check("the inspector has three numbered steps", steps.length === 3 && steps[0].includes("SHAPE") && steps[2].includes("DECIDE"), steps.join(" | "));
   const lines = page.locator('[data-testid^="assign-shape-line-"]');
   check("every sentence of the row has its own tool line", (await lines.count()) >= 1);
+  // 머리의 아랫줄 - 고른 문장이 원문에서 놓인 쪽(v1.0.26)
+  check("the head says which page of the original the sentence is on", /^(≈ )?p\.\d+$/.test((await getText(page, "assign-row-page")).trim()), await getText(page, "assign-row-page"));
   // 다듬기 줄에서 자를 자리를 놓는다 - 우클릭 메뉴의 Split here와 같은 일
   const split = page.locator('[data-testid^="assign-shape-split-"]:not([aria-disabled="true"])').first();
   await split.click();

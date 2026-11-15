@@ -33,6 +33,8 @@ interface OldPaneProps {
   selectedId: number | null;
   highlightIds: ReadonlySet<number>;
   pickedIds: ReadonlySet<number>;
+  /** 확인이 남은 누락 의심 경고가 걸린 문단 - 그 줄에 경고 표시가 붙는다 */
+  warnBlockIds: ReadonlySet<number>;
   statusOf: (unitId: number) => ViewUnit["status"] | undefined;
   renderNote: (unitIds: number[]) => ReactNode;
   /** 조각 오른쪽 칸 - 연결 배지 */
@@ -113,6 +115,7 @@ export function OldPane(props: OldPaneProps) {
             selectedId={props.selectedId}
             highlightIds={props.highlightIds}
             pickedIds={props.pickedIds}
+            warnBlockIds={props.warnBlockIds}
             onUnitClick={(unitId, _at, event) => props.onUnitClick(unitId, { shiftKey: event.shiftKey })}
             onUnitContextMenu={props.onUnitContextMenu}
             onUnitDoubleClick={props.onUnitDoubleClick}
