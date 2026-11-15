@@ -3,7 +3,7 @@
 
 import { ArrowDown, Download, Eye, FileText, Loader2, Trash2, Upload } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useState, type DragEvent } from "react";
 
 import { DeleteDocumentModal } from "@/components/documents/delete-document-modal";
 import { AuxPill, DocStatusPill, getDocReason, WarningChips, WarningCountChip } from "@/components/documents/doc-status";
@@ -61,7 +61,9 @@ export default function DocumentsPage() {
   const { bundle } = useBundle(bundleId);
   const { data, error, isLoading, reload } = useLoaded(() => listDocuments(bundleId), String(bundleId));
   const showSkeleton = useDelayedFlag(isLoading && data === null);
-  const [uploading, setUploading] = useState(false);
+  // 올리기 창 - 단추로 열면 빈 채로, 화면에 파일을 끌어다 놓으면 그 파일을 담아 연다
+  const [uploading, setUploading] = useState<File[] | null>(null);
+  const [isDropping, setIsDropping] = useState(false);
   const [deleting, setDeleting] = useState<SopDocument | null>(null);
   const [previewing, setPreviewing] = useState<SopDocument | null>(null);
   const view = useListView(LIST_KEY);
@@ -86,6 +88,21 @@ export default function DocumentsPage() {
   const canEdit = bundle?.my_role === "author" && bundle.status === "in_progress";
 
   // 문서가 바뀌면 개요 숫자·다음 행동도 바뀐다 - 묶음도 같이 다시 읽는다
+  const canDrop = canEdit && uploading === null;
+  function handleDragOver(event: DragEvent<HTMLDivElement>) {
+    // 파일을 끄는 것만 받는다 - 글자나 링크를 끄는 것은 그대로 둔다
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    setIsDropping(true);
+  }
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    setIsDropping(false);
+    const files = Array.from(event.dataTransfer.files);
+    if (files.length > 0) setUploading(files);
+  }
+
   function refreshAll() {
     reload();
     void loadBundle(bundleId);
@@ -324,7 +341,20 @@ export default function DocumentsPage() {
   ];
 
   return (
-    <div className="dense flex min-h-full flex-col bg-surface">
+    <div
+      className="dense relative flex min-h-full flex-col bg-surface"
+      data-testid="documents-drop"
+      // 화면 아무 데나 파일을 놓으면 올리기 창이 그 파일을 담아 열린다(창이 이미 열려 있으면 받지 않는다)
+      onDragOver={canDrop ? handleDragOver : undefined}
+      onDragLeave={canDrop ? () => setIsDropping(false) : undefined}
+      onDrop={canDrop ? handleDrop : undefined}
+    >
+      {isDropping && (
+        <div className="drop-veil" aria-hidden data-testid="documents-drop-veil">
+          <Upload size={20} strokeWidth={1.5} aria-hidden />
+          {t("documents.dropHint")}
+        </div>
+      )}
       <div className="flex h-[52px] shrink-0 items-center justify-between gap-3 border-b border-line px-[var(--pad)]">
         <div className="flex min-w-0 items-center gap-3">
           <h1 className="page-title ul">{t("documents.title")}</h1>
@@ -340,7 +370,7 @@ export default function DocumentsPage() {
         <div className="flex items-center gap-2">
           <ListViewToggle listKey={LIST_KEY} view={view} testId="documents-view" />
           {canEdit && (
-            <button type="button" className="btn pri" data-testid="documents-upload" onClick={() => setUploading(true)}>
+            <button type="button" className="btn pri" data-testid="documents-upload" onClick={() => setUploading([])}>
               <Upload size={16} strokeWidth={1.5} aria-hidden />
               {t("documents.upload")}
             </button>
@@ -358,7 +388,7 @@ export default function DocumentsPage() {
           body={canEdit ? t("documents.emptyEdit") : t("documents.empty")}
           action={
             canEdit && (
-              <button type="button" className="btn pri" data-testid="documents-empty-upload" onClick={() => setUploading(true)}>
+              <button type="button" className="btn pri" data-testid="documents-empty-upload" onClick={() => setUploading([])}>
                 <Upload size={16} strokeWidth={1.5} aria-hidden />
                 {t("documents.upload")}
               </button>
@@ -384,13 +414,14 @@ export default function DocumentsPage() {
       )}
 
       {/* New 문서 목록(옛 To-Be 화면) - 올린 문서 목록과 한 화면, 한 스크롤이다. 문서를 못 읽었어도 이 목록은 따로 읽는다 */}
-      <ToBeSection bundleId={bundleId} documents={data} onDocumentsChanged={refreshAll} />
+      <ToBeSection bundleId={bundleId} documents={data} />
 
-      {uploading && (
+      {uploading !== null && (
         <UploadModal
           bundleId={bundleId}
+          initialFiles={uploading}
           latest={data ?? []}
-          onClose={() => setUploading(false)}
+          onClose={() => setUploading(null)}
           onUploaded={() => {
             refreshAll();
             aiJobs.watch();

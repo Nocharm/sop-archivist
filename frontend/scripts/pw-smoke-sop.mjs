@@ -2637,6 +2637,65 @@ await runStep("new bundle in one click, locked stages, empty assign", { devUser:
   check("empty state instead of an endless skeleton", true);
 });
 
+// 올리는 창구 하나(v1.0.31) - Old와 New 파일을 한 창에서 올린다. 앱이 파일 이름의 번호로 쪽을 먼저 고르고, New 파일은 번호가 같은 빈 줄에 붙는다.
+// 묶음을 만들 권한이 있는 사람으로 새 묶음에서 하고, 끝에 그 묶음을 지운다(저장소의 합성 샘플 파일을 쓴다)
+await runStep("documents: one upload window takes Old and New files", { devUser: "dev.admin" }, async ({ page, takeShot }) => {
+  const samples = resolve(SCRIPT_DIR, "../../samples");
+  const headers = { "X-Dev-User": "dev.admin", "Content-Type": "application/json" };
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC upload window", is_synthetic: true } })).json();
+  const docs = [{ code: "SOP-01", doc_type: "sop", title: "Synthetic SOP" }, { code: "WI-05", doc_type: "wi", parent_code: "SOP-01", title: "Synthetic listed WI" }];
+  const listed = await page.request.put(`${BASE}/api/bundles/${created.id}/tobe`, { headers, data: { revision: created.revision, docs, na_slots: [], wi_steps: [{ code: "WI-05", step_no: 1, title: "Clean" }] } });
+  check("a new bundle with two listed New documents is ready", listed.ok());
+  const readTobe = async () => (await (await page.request.get(`${BASE}/api/bundles/${created.id}/tobe`, { headers })).json()).docs;
+  await page.goto(`${BASE}/bundles/${created.id}/documents`);
+  await wait(page, "documents-empty-upload");
+  check("the New list no longer has its own upload button", (await page.locator('[data-testid="tobe-upload-written"]').count()) === 0);
+  await page.locator('[data-testid="documents-empty-upload"]').click();
+  await page.locator('[data-testid="upload-files"]').setInputFiles([`${samples}/SYNTHETIC_OLD-6_Hanil_Centrifuge_Cleaning.docx`, `${samples}/SYNTHETIC_WI-05_Hanil_Centrifuge_Cleaning.docx`, `${samples}/SYNTHETIC_WI-04_Labogene_Centrifuge_Operation.docx`]);
+  await wait(page, "upload-picked");
+  // New 목록을 읽은 뒤에 쪽이 정해진다
+  await page.waitForFunction(() => document.querySelector('[data-testid="upload-side-1-new"]')?.getAttribute("aria-pressed") === "true", null, { timeout: T });
+  const pressed = async (index) => ((await page.locator(`[data-testid="upload-side-${index}-new"]`).getAttribute("aria-pressed")) === "true" ? "new" : "old");
+  check("the app picks New for a number on the New list and Old for the rest", (await pressed(0)) === "old" && (await pressed(1)) === "new" && (await pressed(2)) === "old");
+  check("it says which row the New file attaches to", (await getText(page, "upload-note-1")).includes("WI-05"));
+  // 사람이 뒤집는다 - 목록에 없는 번호라 줄이 새로 생기고, WI는 상위 SOP를 골라야 올릴 수 있다
+  await page.locator('[data-testid="upload-side-2-new"]').click();
+  await page.locator('[data-testid="upload-kind-2"]').click();
+  await page.locator('[data-testid="upload-kind-2-option-wi"]').click();
+  check("a WI that makes a new row needs its parent SOP first", await page.locator('[data-testid="upload-submit"]').isDisabled());
+  await page.locator('[data-testid="upload-parent-2"]').click();
+  await page.locator('[data-testid="upload-parent-2-option-SOP-01"]').click();
+  await takeShot("sop-upload-one-window.png");
+  await page.locator('[data-testid="upload-submit"]').click();
+  await page.locator('[data-testid="upload-done"]:not([disabled])').waitFor({ timeout: 120000 });
+  const rows = Object.fromEntries((await readTobe()).map((doc) => [doc.code, doc]));
+  check("the New file attached to its listed row", rows["WI-05"]?.entrance === "match" && rows["WI-05"]?.document_id !== null && rows["WI-05"]?.parent_code === "SOP-01");
+  check("the other New file made a row under the SOP picked in the window", rows["WI-04"]?.entrance === "match" && rows["WI-04"]?.doc_type === "wi" && rows["WI-04"]?.parent_code === "SOP-01");
+  const documents = await (await page.request.get(`${BASE}/api/bundles/${created.id}/documents`, { headers })).json();
+  check("the Old file became an Old document", documents.some((doc) => doc.side === "old" && doc.doc_code === "OLD-6" && doc.status === "ready"));
+  await page.locator('[data-testid="upload-done"]').click();
+  // 화면 아무 데나 파일을 끌어다 놓으면 같은 창이 그 파일을 담아 열린다
+  const dragged = await page.evaluateHandle(() => {
+    const data = new DataTransfer();
+    data.items.add(new File(["x"], "SYNTHETIC_OLD-9 dropped.docx"));
+    return data;
+  });
+  await page.dispatchEvent('[data-testid="documents-drop"]', "dragover", { dataTransfer: dragged });
+  await wait(page, "documents-drop-veil");
+  check("dragging a file over the screen shows where it will go", true);
+  await page.dispatchEvent('[data-testid="documents-drop"]', "drop", { dataTransfer: dragged });
+  await wait(page, "upload-picked-0");
+  check("dropping it opens the same window with the file in it", (await getText(page, "upload-picked-0")).includes("dropped.docx"));
+  await page.locator('[data-testid="upload-cancel"]').click();
+  // 파일을 지워도 목록 줄은 남는다(배정으로 엮는 줄로 돌아간다)
+  const written = documents.find((doc) => doc.doc_code === "WI-05");
+  const removed = await page.request.delete(`${BASE}/api/bundles/${created.id}/documents/${written.id}?revision=${written.revision}`, { headers });
+  const after = Object.fromEntries((await readTobe()).map((doc) => [doc.code, doc]));
+  check("deleting the written file keeps its row on the New list", removed.status() === 204 && after["WI-05"]?.entrance === "assign" && after["WI-05"]?.document_id === null);
+  const bundle = await (await page.request.get(`${BASE}/api/bundles/${created.id}`, { headers })).json();
+  await page.request.delete(`${BASE}/api/bundles/${created.id}?revision=${bundle.revision}`, { headers });
+});
+
 await browser.close();
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} check(s) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

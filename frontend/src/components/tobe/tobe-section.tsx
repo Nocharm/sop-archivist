@@ -2,12 +2,11 @@
 // SOP는 칸 N/A(사유), WI는 단계를 줄 아래에서 편다. Excel 템플릿 내려받기·가져오기(명세 §12-5).
 "use client";
 
-import { ChevronRight, Download, FileUp, FilePlus, ListTree, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ChevronRight, Download, FileUp, ListTree, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { EquisStatus } from "@/components/equis/equis-status";
 import { TitleLock } from "@/components/equis/title-lock";
-import { UploadWritten } from "@/components/tobe/upload-written";
 import { BundleLoadError } from "@/components/bundle-load-error";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { MorphButton } from "@/components/ui/morph-button";
@@ -51,16 +50,13 @@ interface ToBeSectionProps {
   bundleId: number;
   /** Documents 화면이 읽은 문서 목록 - 남은 경계 안내와, 올린 New 문서가 바뀌었는지 아는 데 쓴다. 아직 못 읽었으면 null */
   documents: SopDocument[] | null;
-  /** 이미 쓴 문서를 올린 뒤 - Documents 목록도 다시 읽게 한다 */
-  onDocumentsChanged: () => void;
 }
 
-export function ToBeSection({ bundleId, documents, onDocumentsChanged }: ToBeSectionProps) {
+export function ToBeSection({ bundleId, documents }: ToBeSectionProps) {
   const { t } = useI18n();
   const { bundle } = useBundle(bundleId);
   const canEdit = bundle?.my_role === "author" && bundle.status === "in_progress";
   const { data, error, isLoading, reload } = useLoaded(() => getToBe(bundleId), String(bundleId));
-  const [uploadOpen, setUploadOpen] = useState(false);
   const showSkeleton = useDelayedFlag(isLoading && data === null);
   // 초안은 불러온 목록에 묶인다 - 저장·다시 불러오기로 새 목록이 오면 저절로 버려진다
   const [edit, setEdit] = useState<{ base: ToBe; draft: ToBeDraft } | null>(null);
@@ -337,10 +333,6 @@ export function ToBeSection({ bundleId, documents, onDocumentsChanged }: ToBeSec
                 {t("tobe.import")}
               </button>
             </Tooltip>
-            <button type="button" className="btn ghost" data-testid="tobe-upload-written" disabled={saving || dirty} onClick={() => setUploadOpen(true)}>
-              <FilePlus size={14} strokeWidth={1.5} aria-hidden />
-              {t("tobe.uploadWritten")}
-            </button>
             <button type="button" className="btn" data-testid="tobe-add" onClick={addDoc}>
               <Plus size={14} strokeWidth={1.5} aria-hidden />
               {t("tobe.addDoc")}
@@ -523,7 +515,6 @@ export function ToBeSection({ bundleId, documents, onDocumentsChanged }: ToBeSec
           </tbody>
         </table>
       )}
-      {uploadOpen && <UploadWritten bundleId={bundleId} onClose={() => setUploadOpen(false)} onUploaded={() => { reload(); void loadBundle(bundleId); onDocumentsChanged(); }} />}
       {leaveTo !== null && (
         <ConfirmModal
           title={t("tobe.leaveTitle")}
