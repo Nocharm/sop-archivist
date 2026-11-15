@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ViewUnit } from "./api-sop";
-import { buildAssignMenu, type AssignMenuAction, type AssignMenuContext } from "./assign-context-menu-model";
+import { buildAssignMenu, planAssignJoin, type AssignMenuAction, type AssignMenuContext } from "./assign-context-menu-model";
 import { findNearestCut } from "./paper-model";
 
 function makeUnit(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
@@ -213,5 +213,29 @@ describe("reference lines from the Assign menu", () => {
   it("has no language to pick and no far pairing on a reference", () => {
     expect(find(ctx({ target: confirmed }), "lang")).toMatchObject({ enabled: false, reasonKey: "assign.ctx.why.refLang", lang: "ref" });
     expect(buildAssignMenu(ctx({ target: confirmed })).edit.some((item) => item.action === "pair_pick")).toBe(false);
+  });
+});
+
+describe("planAssignJoin (the button between two pieces)", () => {
+  const free = { isDecided: () => false, hasDraft: () => false };
+  const ko = makeUnit(1, { lang: "ko" });
+  const koNext = makeUnit(2, { lang: "ko" });
+  const en = makeUnit(3, { lang: "en" });
+
+  it("merges same-language neighbours and pairs a KO/EN couple, as Edit original does", () => {
+    expect(planAssignJoin(ko, koNext, free).kind).toBe("merge");
+    expect(planAssignJoin(ko, en, free).kind).toBe("pair");
+    expect(planAssignJoin(ko, undefined, free).kind).toBeNull();
+  });
+
+  it("merges an assigned sentence (the screen asks first) but will not pair one", () => {
+    const decided = { isDecided: (unit: ViewUnit) => unit.id === 1, hasDraft: () => false };
+    expect(planAssignJoin(ko, koNext, decided).kind).toBe("merge");
+    expect(planAssignJoin(ko, en, decided)).toEqual({ kind: null, reasonKey: "assign.ctx.why.assigned" });
+  });
+
+  it("waits for an unsaved choice on either sentence", () => {
+    const pending = { isDecided: () => false, hasDraft: (unit: ViewUnit) => unit.id === 2 };
+    expect(planAssignJoin(ko, koNext, pending)).toEqual({ kind: null, reasonKey: "assign.ctx.why.unsaved" });
   });
 });

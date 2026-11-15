@@ -2,6 +2,7 @@
 // 전제: backend/에서 reset_db → seed_sop_demo(합성 묶음 4개) 직후, backend 8777 + frontend 3777. 고친 값은 시나리오 안에서 되돌린다.
 // AI 나눔 확정 시나리오는 backend가 AI를 켜고 가짜 AI(FAKE_AI_SPLIT=1 node scripts/fake-ai-server.mjs)를 볼 때만 돈다 - 꺼져 있으면 건너뛴다.
 // 실행(frontend/ 에서): node scripts/pw-smoke-sop.mjs   환경 변수: BASE_URL, CHROME_PATH
+// ONLY="이름 조각,…"이면 이름에 그 조각이 든 단계만 돈다(고치는 중인 단계를 빨리 볼 때. 앞 단계가 남긴 값에 기대는 단계는 혼자 돌지 못한다 - 커밋 전에는 전부 돌린다)
 // playwright-core는 저장소 의존성이 아니다: `npm i --no-save playwright-core` (package.json 불변)
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -14,6 +15,7 @@ const CHROME = process.env.CHROME_PATH ?? "/Applications/Google Chrome.app/Conte
 const BASE = process.env.BASE_URL ?? "http://localhost:3777";
 const SHOT_DIR = resolve(SCRIPT_DIR, "../../.shots");
 const T = 15000;
+const ONLY = (process.env.ONLY ?? "").split(",").map((part) => part.trim()).filter(Boolean);
 // 시안의 모든 수치는 1248 × 720 프레임 기준이다(디자인 문서 15절)
 const VIEWPORT = { width: 1248, height: 720 };
 
@@ -28,6 +30,7 @@ const check = (name, ok, detail = "") => {
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 
 async function runStep(name, { devUser = "qa.member", storage = {}, allowConsoleErrors = false } = {}, run) {
+  if (ONLY.length > 0 && !ONLY.some((part) => name.includes(part))) return;
   console.log(`\n# ${name}`);
   const ctx = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
   await ctx.addInitScript(
@@ -2039,6 +2042,86 @@ await runStep("assign: AI split suggestions - ask for the whole document, apply 
   await page.locator('[data-testid="assign-undo"]').click();
   await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="toast-ok"]')].some((toast) => toast.textContent?.includes("Cut")), null, { timeout: T });
   check("Undo takes the cut back", true);
+});
+
+// 조각 사이의 붙이기 단추와 합친 문장 풀기(v1.0.22) - 전에는 원문 고치기 화면에만 있었다. 자른 두 조각을 틈의 단추로 붙이고, 붙인 문장을 조각 아래 단추로 다시 푼다
+await runStep("assign: join two pieces from the gap between them, then unmerge", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${freshId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${freshId}/documents/${docId}/view`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${freshId}/assign`);
+  await wait(page, "assign-bar");
+  const pieceOf = (unitId) => page.locator(`[data-testid="assign-paper-piece-${unitId}"], [data-testid="assign-paper-unit-${unitId}"]`).first();
+  let doc = null;
+  let unit = null;
+  for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await readView(candidate.id);
+    const found = view.units.filter((item) => item.kind === "sentence" && item.status === "unassigned" && item.lang === "en" && item.pair_id === null && item.text.trim().split(" ").length >= 6);
+    if (found.length === 0) continue;
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${candidate.id}"]`).click();
+    await page.waitForTimeout(600);
+    for (const item of found) {
+      if ((await pieceOf(item.id).count()) === 0) continue;
+      doc = candidate;
+      unit = item;
+      break;
+    }
+    if (unit !== null) break;
+  }
+  check("the fresh bundle has an unpaired English sentence on screen", unit !== null);
+  if (unit === null) return;
+  const readIds = async () => (await readView(doc.id)).units.map((item) => item.id);
+  const waitCount = async (expected) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      if ((await readIds()).length === expected) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  const beforeIds = await readIds();
+  const before = beforeIds.length;
+  // 먼저 자른다 - 우클릭 메뉴
+  await pieceOf(unit.id).scrollIntoViewIfNeeded();
+  await pieceOf(unit.id).click({ button: "right" });
+  await wait(page, "assign-ctx-split");
+  await page.locator('[data-testid="assign-ctx-split"]').click();
+  await wait(page, "assign-cut-run");
+  await page.locator('[data-testid="assign-cut-run"]').click();
+  check("the sentence is cut in two", await waitCount(before + 1));
+  const halves = (await readView(doc.id)).units.filter((item) => !beforeIds.includes(item.id)).sort((a, b) => a.pos_seq - b.pos_seq);
+  // 틈의 붙이기 단추 - 포인터가 틈에 머물러 단추가 나타난 뒤에 누른다(사람처럼)
+  const join = page.locator(`[data-testid="assign-paper-join-${halves[0].id}-${halves[1].id}"]`);
+  await join.waitFor({ state: "attached", timeout: T });
+  check("the gap between the two pieces offers Join", (await join.getAttribute("aria-disabled")) === null);
+  await page.waitForFunction(() => { const acts = document.querySelector(".strip-acts[data-open]"); return acts === null || acts.getAnimations().length === 0; }, null, { timeout: T });
+  await page.locator(".strip-gap", { has: join }).hover({ position: { x: 200, y: 2 } });
+  await page.waitForFunction(() => [...document.querySelectorAll(".strip-gap:hover .strip-merge")].some((el) => getComputedStyle(el).pointerEvents === "auto"), null, { timeout: T });
+  await takeShot("sop-assign-gap-join.png");
+  await join.click();
+  check("Join merges the two pieces back into one sentence", await waitCount(before));
+  const merged = (await readView(doc.id)).units.find((item) => !beforeIds.includes(item.id) && item.kind === "sentence");
+  check("the merged sentence can be taken apart again", merged !== undefined && merged.can_unmerge === true);
+  // 붙인 문장을 고르면 글 아래에 풀기 단추가 생긴다
+  await pieceOf(merged.id).click();
+  const unmerge = page.locator(`[data-testid="assign-act-unmerge-${merged.id}"]`);
+  await unmerge.waitFor({ timeout: T });
+  await takeShot("sop-assign-unmerge.png");
+  await unmerge.click();
+  check("Unmerge gives the two pieces back", await waitCount(before + 1));
+  // 되돌리기 세 번으로 처음 모양까지(풀기 → 붙이기 → 자르기)
+  // 화면이 풀린 조각의 줄을 고른 뒤에 누른다 - 그 전에 되돌리면 화면이 막 사라진 조각의 정보를 한 번 불러 404가 콘솔에 찍힌다(사람 손으로는 나오지 않는 속도)
+  await wait(page, "assign-row-id");
+  await page.waitForLoadState("networkidle");
+  for (const expected of [before, before + 1, before]) {
+    await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+    if (!(await waitCount(expected))) break;
+    await page.waitForLoadState("networkidle");
+  }
+  check("three undos return to the original sentence", (await readIds()).length === before);
 });
 
 // 배정 화면에서 고른 글자로 새 Unit 만들기(전에는 쪼개기 화면에서만 했다) - 끌어 고르면 용지 위에 줄이 뜨고, 만들고, 되돌린다

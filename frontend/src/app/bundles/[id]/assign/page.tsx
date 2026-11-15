@@ -17,6 +17,7 @@ import { DestinationTree, type DestinationManage } from "@/components/assign/des
 import { MissingWarnings } from "@/components/assign/missing-warnings";
 import { RefCard } from "@/components/assign/ref-card";
 import { SplitSuggestionCard } from "@/components/assign/split-suggestion";
+import { SplitUnitActions } from "@/components/split/split-unit-actions";
 import { SplitWorkspace } from "@/components/split/split-workspace";
 import { LinkChoice } from "@/components/assign/link-choice";
 import { findNewLine, findOldStrip, LinkLines } from "@/components/assign/link-lines";
@@ -47,7 +48,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import { findLastStep } from "@/lib/destination-manage-model";
-import { planJoin } from "@/lib/split-menu-model";
+import { planJoin, type JoinKind, type JoinPlan } from "@/lib/split-menu-model";
 import { readSplitOffsets } from "@/lib/use-split-ai";
 import { listAppliedSuggestions, requestAi, setSuggestionAdoption, type AiKind, type AiScope } from "@/lib/api-manage";
 import {
@@ -110,7 +111,7 @@ import {
   type LinkMenuItem,
   type Recommendation,
 } from "@/lib/assign-model";
-import { buildAssignMenu, type AssignMenuAction } from "@/lib/assign-context-menu-model";
+import { buildAssignMenu, planAssignJoin, type AssignMenuAction } from "@/lib/assign-context-menu-model";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { describeDecisionStep, getAssignUndoKey, pickSaveOp } from "@/lib/decision-step-model";
@@ -193,7 +194,7 @@ const EMPTY_DRAFT: PageDraft = { destination: null, texts: {}, changeTypes: {}, 
 const NO_NUMBERS: ReadonlySet<number> = new Set();
 
 /** 되돌리면 단위가 은퇴할 수 있는 편집 - 그 줄을 고른 채 다시 받으면 없는 단위의 묶음을 부르게 된다 */
-const RETIRING_OPS: ReadonlySet<string> = new Set(["cut", "carve", "split_table_rows", "merge_table_rows", "set_layout_table"]);
+const RETIRING_OPS: ReadonlySet<string> = new Set(["cut", "carve", "merge", "unmerge", "split_table_rows", "merge_table_rows", "set_layout_table"]);
 
 function isTypingTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
@@ -933,6 +934,34 @@ export default function AssignPage() {
     else if (action === "table_merge" && table && table.table_id !== null) void runUnitEdit({ type: "merge_table_rows", table_id: table.table_id }, t("split.didMerge"), null);
     else if (action === "table_layout" && table && table.table_id !== null) void runUnitEdit({ type: "set_layout_table", table_id: table.table_id, is_layout: true }, t("common.saved"), null);
     else if (action === "lang" && lang) void runUnitEdit({ type: "set_language", unit_ids: [target.id], lang }, t("common.saved"), target.id);
+  }
+
+  /** 조각 사이의 붙이기 단추가 할 일 - 같은 언어면 합치기, 한글·영어면 짝(원문 고치기와 같은 규칙에 Assign의 막는 까닭을 더한다) */
+  function planOldJoin(firstId: number, secondId: number): JoinPlan {
+    return planAssignJoin(paperModel?.units.get(firstId), paperModel?.units.get(secondId), { isDecided: isUnitDecided, hasDraft: hasUnitDraft });
+  }
+
+  function joinOld(firstId: number, secondId: number, kind: JoinKind) {
+    if (kind === "merge") void runUnitEdit({ type: "merge", unit_ids: [firstId, secondId] }, t("split.didMerge"), null);
+    else void runPairChange((docId, revision) => createPair(bundleId, docId, revision, [firstId, secondId]), t("split.didJoin"), firstId);
+  }
+
+  /** 고른 조각의 글 아래 단추 - 합친 문장 풀기(풀 것이 있을 때만 줄이 생긴다). 짝 풀기는 우클릭 메뉴에 있어 여기 두지 않는다(줄마다 단추 줄이 붙지 않게) */
+  function renderOldActions(unitId: number): ReactNode {
+    const unit = paperModel?.units.get(unitId);
+    if (!canEdit || mode !== "old" || !unit || !unit.can_unmerge || hasUnitDraft(unit)) return null;
+    return (
+      <SplitUnitActions
+        key={unit.id}
+        testIdPrefix="assign"
+        unitId={unit.id}
+        canUnpair={false}
+        canUnmerge
+        busy={busy}
+        onUnpair={() => undefined}
+        onUnmerge={() => void runUnitEdit({ type: "unmerge", unit_id: unit.id }, t("split.didUnmerge"), null)}
+      />
+    );
   }
 
   function buildTables(): Map<number, { rows: number; cols: number; cells: CellSource[] }> {
@@ -2574,6 +2603,8 @@ export default function AssignPage() {
                 onCutDrag={canEdit ? cutLine.drag : undefined}
                 onCutNudge={canEdit ? cutLine.nudge : undefined}
                 renderAtCut={() => <CutPop busy={busy} onRun={splitAtCut} onCancel={cutLine.clear} testIdPrefix="assign" />}
+                join={canEdit && mode === "old" ? { busy, plan: planOldJoin, onJoin: joinOld } : undefined}
+                renderUnitActions={renderOldActions}
                 figureSource={oldView ? { bundleId, docId: oldView.document.id } : undefined}
                 zoom={view.zoomOld}
                 onZoom={(dir) => zoomPane("old", dir)}

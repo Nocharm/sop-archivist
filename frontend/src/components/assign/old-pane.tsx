@@ -14,6 +14,7 @@ import type { ViewUnit } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import type { FoldOpen } from "@/lib/paper-fold-model";
 import type { PaperModel, PaperTabKey } from "@/lib/paper-model";
+import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
 
 interface OldPaneProps {
   docOptions: SelectOption<string>[];
@@ -55,6 +56,10 @@ interface OldPaneProps {
   onCutDrag?: (pos: CutDragPos) => void;
   onCutNudge?: (step: 1 | -1) => void;
   renderAtCut?: () => ReactNode;
+  /** 조각 사이의 붙이기 단추(원문 고치기와 같은 부품) - 작성자만 */
+  join?: { busy: boolean; plan: (firstId: number, secondId: number) => JoinPlan; onJoin: (firstId: number, secondId: number, kind: JoinKind) => void };
+  /** 고른 조각의 글 아래 단추 줄 - 합친 문장 풀기 */
+  renderUnitActions?: (unitId: number) => ReactNode;
   figureSource?: { bundleId: number; docId: number };
   zoom: number;
   onZoom: (dir: "+" | "-") => void;
@@ -119,7 +124,8 @@ export function OldPane(props: OldPaneProps) {
             renderAtCut={props.cut ? props.renderAtCut : undefined}
             figureSource={props.figureSource}
             contour
-            strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold }}
+            strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join }}
+            renderUnitActions={props.renderUnitActions}
             testId="assign-paper"
           />
         ) : (
