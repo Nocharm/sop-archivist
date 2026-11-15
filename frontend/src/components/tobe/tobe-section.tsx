@@ -181,7 +181,8 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
     // WI는 상위 SOP가 있어야 한다 - 목록의 첫 SOP(자기 자신 말고) 아래로 두고, 사람이 옆 칸에서 바꾼다
     const parent = sops.find((sop) => sop.key !== doc.key);
     if (!parent) showToast(t("tobe.needSop"), "error");
-    else void saveDoc(doc, { doc_type: "wi", parent_code: parent.code });
+    // 장비 SOP 표시는 SOP에만 있다 - 켜진 채 WI로 바꾸면 서버가 거절하므로 함께 끈다
+    else void saveDoc(doc, { doc_type: "wi", parent_code: parent.code, ...(doc.is_equipment_sop ? { is_equipment_sop: false } : {}) });
   }
 
   async function handleEquisRefresh(code: string) {
@@ -460,19 +461,19 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
       {error !== null && data === null ? (
         <BundleLoadError error={error} onRetry={reload} testId="tobe" />
       ) : (
-        <table className="dtable border-t border-line" data-testid="tobe-list">
+        <table className="dtable tobe-table border-t border-line" data-testid="tobe-list">
           <thead>
             <tr>
               <th className="w-8" aria-label={t("tobe.details")} />
-              <th className="w-40 min-w-[160px]">{t("tobe.colCode")}</th>
-              <th className="min-w-[196px]">{t("tobe.colTitle")}</th>
+              <th className="w-[164px] min-w-[164px] max-[1279px]:w-40 max-[1279px]:min-w-[160px]">{t("tobe.colCode")}</th>
+              <th className="min-w-[196px] max-[1279px]:min-w-[156px]">{t("tobe.colTitle")}</th>
               <th className="w-24">{t("tobe.colType")}</th>
-              <th className="w-[180px] min-w-[180px]">{t("tobe.colParent")}</th>
-              <th className="w-[184px]">{t("tobe.colWritten")}</th>
-              <th className="w-28">{t("tobe.colEquipment")}</th>
-              <th className="w-32">{t("tobe.colDetail")}</th>
+              <th className="w-[168px] min-w-[168px] max-[1279px]:w-[160px] max-[1279px]:min-w-[160px]">{t("tobe.colParent")}</th>
+              <th className="w-[184px] max-[1279px]:w-[164px]">{t("tobe.colWritten")}</th>
+              <th className="w-28 max-[1279px]:w-16 max-[1279px]:whitespace-normal">{t("tobe.colEquipment")}</th>
+              <th className="w-32 max-[1279px]:w-24">{t("tobe.colDetail")}</th>
               {/* 빼기 단추가 라벨까지 펼쳐질 폭을 미리 잡는다 - 펼쳐져도 옆 칸(세부)의 글자를 덮지 않는다 */}
-              {canEdit && <th className="w-[108px]" aria-label={t("common.delete")} />}
+              {canEdit && <th className="w-[108px] min-w-[108px] max-[1279px]:w-[100px] max-[1279px]:min-w-[100px]" aria-label={t("common.delete")} />}
             </tr>
           </thead>
           <tbody>
@@ -525,7 +526,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
                           </button>
                         </Tooltip>
                       </td>
-                      <td className={depth === 1 ? "pl-6" : undefined}>
+                      <td className={depth === 1 ? "pl-4" : undefined}>
                         {equis ? (
                           // 좁은 칸이라 아이콘만 둔다 - 글은 툴팁과 펼친 정보에 있다
                           <span className="flex items-center gap-1">
@@ -586,7 +587,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
                             ariaLabel={t("tobe.colParent")}
                             size="sm"
                             mono
-                            width={160}
+                            width={148}
                             value={doc.parent_key ?? ""}
                             disabled={!canEdit}
                             options={sops.map((sop) => ({ value: sop.key, label: sop.code.trim() || t("tobe.noCode"), tip: sop.code.trim() || t("tobe.noCode") }))}
@@ -602,7 +603,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
                       <td>
                         {written ? (
                           // 쓴 파일은 이 줄에 붙어 있다 - 따로 줄을 만들지 않는다. 버전·언어 배치는 줄을 펼치면 있다
-                          <span className="flex w-[168px] min-w-0 items-center gap-0.5" data-testid={`${prefix}-written`}>
+                          <span className="flex w-[168px] min-w-0 items-center gap-0.5 max-[1279px]:w-[152px]" data-testid={`${prefix}-written`}>
                             <Truncate className="min-w-0 flex-1 font-mono text-xs text-ink-2" text={written.file_name} />
                             <span className="row-actions-quiet flex flex-none gap-0.5">
                               <Tooltip label={t("documents.preview")} align="end">

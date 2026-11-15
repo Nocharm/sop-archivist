@@ -1,6 +1,6 @@
 // 새 문서 목록 AI 제안의 미리 보기 - 제안 줄을 화면 줄로 만들고, 더할 수 없는 까닭을 찾고, 저장할 순서를 정한다.
-// AI는 제안만 한다: 여기서 고른 줄을 사람이 Add로 저장한다(목록의 한 줄 추가·고치기 API). 이미 목록에 있는 번호는 기본으로 뺀다.
-import type { ProposedDoc, TargetDocType, ToBeProposal } from "./api-sop";
+// AI는 제안만 한다: 여기서 고른 줄을 사람이 Add로 저장한다(지금 목록에 더한 전체를 한 번에 보낸다). 이미 목록에 있는 번호는 기본으로 뺀다.
+import type { ProposedDoc, TargetDocType, ToBe, ToBeInput, ToBeProposal } from "./api-sop";
 
 export interface ProposalRow {
   code: string;
@@ -51,6 +51,24 @@ export function findProposalProblem(rows: readonly ProposalRow[], listedSops: re
 export function orderProposalWrites(rows: readonly ProposalRow[]): ProposalRow[] {
   const picked = rows.filter((row) => row.isPicked && row.doc_type !== null);
   return [...picked.filter((row) => row.doc_type === "sop"), ...picked.filter((row) => row.doc_type === "wi")];
+}
+
+/**
+ * 고른 줄을 지금 목록에 더한 전체 목록 - 저장 한 번으로 보낸다. 있던 줄·N/A·단계는 받은 그대로 싣는다.
+ * 줄마다 따로 보내면 200줄에 요청 760번, 1분이 걸렸고 중간에 멈추면 일부만 들어갔다 - 한 번이면 다 들어가거나 하나도 안 들어간다.
+ */
+export function buildProposalInput(tobe: ToBe, rows: readonly ProposalRow[]): ToBeInput {
+  let order = Math.max(-1, ...tobe.docs.map((doc) => doc.order_index));
+  const docs: ToBeInput["docs"] = tobe.docs.map(({ code, title, doc_type, parent_code, is_equipment_sop, order_index }) => ({ code, title, doc_type, parent_code, is_equipment_sop, order_index }));
+  const steps = [...tobe.wi_steps];
+  for (const row of orderProposalWrites(rows)) {
+    if (row.doc_type === null) continue;
+    order += 1;
+    const isWi = row.doc_type === "wi";
+    docs.push({ code: row.code, title: row.title, doc_type: row.doc_type, parent_code: isWi ? row.parent_code : null, is_equipment_sop: !isWi && row.is_equipment_sop, order_index: order });
+    if (isWi) steps.push(...row.steps.map((title, index) => ({ code: row.code, step_no: index + 1, title })));
+  }
+  return { revision: tobe.revision, docs, na_slots: tobe.na_slots, wi_steps: steps };
 }
 
 function isSameDoc(row: ProposalRow, doc: ProposedDoc): boolean {

@@ -363,6 +363,23 @@ await runStep("new documents: nested rows, N/A detail, each cell saves as you le
   await page.locator('[data-testid="toast-error"]').last().waitFor({ timeout: T });
   await settleToBe(page);
   check("a refused change puts the saved number back", (await page.locator(`[data-testid="tobe-id-${added.id}-code"]`).inputValue()) === "WI-98");
+  // 장비 SOP로 표시한 줄을 WI로 바꾼다 - 표시가 함께 꺼져야 서버가 받는다(v1.0.36, 전에는 "Only an SOP can be an equipment SOP"로 거절됐다)
+  await page.locator('[data-testid="tobe-add-code"]').fill("SOP-97");
+  await page.keyboard.press("Enter");
+  await settleToBe(page);
+  const marked = (await readToBe(page, halfBundleId)).docs.find((doc) => doc.code === "SOP-97");
+  await page.locator(`[data-testid="tobe-id-${marked.id}-equipment"]`).click();
+  await settleToBe(page);
+  await page.locator(`[data-testid="tobe-id-${marked.id}-type"]`).click();
+  await page.locator(`[data-testid="tobe-id-${marked.id}-type-option-wi"]`).click();
+  await settleToBe(page);
+  const markedAfter = (await readToBe(page, halfBundleId)).docs.find((doc) => doc.id === marked.id);
+  check("an equipment SOP turns into a WI and the mark goes off with it", markedAfter.doc_type === "wi" && markedAfter.is_equipment_sop === false, JSON.stringify({ type: markedAfter.doc_type, equipment: markedAfter.is_equipment_sop }));
+  const removeMarked = page.locator(`[data-testid="tobe-id-${marked.id}-remove"]`);
+  await removeMarked.scrollIntoViewIfNeeded();
+  await removeMarked.hover();
+  await removeMarked.click();
+  await settleToBe(page);
   const remove = page.locator(`[data-testid="tobe-id-${added.id}-remove"]`);
   await remove.scrollIntoViewIfNeeded();
   await remove.hover();
@@ -832,11 +849,17 @@ await runStep("assign: one document wide, then two again", {}, async ({ page, ta
     window.__paneMotions = [];
     const panes = document.querySelector(".assign-panes");
     new MutationObserver(() => panes.dataset.motion && window.__paneMotions.push(panes.dataset.motion)).observe(panes, { attributes: true, attributeFilter: ["data-motion"] });
+    // 접을 때 New 칸의 복제본이 잠깐 붙었다 떨어진다(v1.0.36)
+    window.__paneGhosts = 0;
+    new MutationObserver((records) => {
+      for (const record of records) for (const node of record.addedNodes) if (node instanceof HTMLElement && "ghost" in node.dataset) window.__paneGhosts += 1;
+    }).observe(panes, { childList: true });
   });
   await page.locator('[data-testid="assign-view-one"]').click();
   await page.locator('[data-testid="assign-new"]').waitFor({ state: "detached", timeout: T });
   await page.locator(".assign-panes:not([data-motion])").waitFor({ timeout: T });
   check("switching the view slides the paper and then settles", (await page.evaluate(() => window.__paneMotions.join(","))) === "one" && (await page.evaluate(() => getComputedStyle(document.querySelector('[data-pane="old"] .sheet')).transform)) === "none");
+  check("the folded New pane fades out as a picture and is removed", (await page.evaluate(() => window.__paneGhosts)) === 1 && (await page.locator("[data-ghost]").count()) === 0);
   check("one view hides the New pane and the divider", (await page.locator('[data-testid="assign-divider"]').count()) === 0);
   check("the Old pane takes the freed width", (await readOldWidth()) > twoWidth * 1.5);
   // 한 단에서도 줄을 고르면 보낼 곳이 보이고, 직접 잇기는 양 단이 필요하다는 안내가 뜬다
@@ -2112,7 +2135,9 @@ await runStep("assign: shape a written New sentence in place, in the two-documen
   const again = (await readWritten()).find((item) => item.text === target.text);
   await page.locator(`[data-testid="assign-new-${again.target_id}"]`).click({ button: "right" });
   await wait(page, "assign-ctx-split");
-  check("right-click on a New sentence opens its shaping menu, without assignment items", (await page.locator('[data-testid="assign-ctx-confirm"], [data-testid="assign-ctx-clear"], [data-testid="assign-ctx-pair_pick"]').count()) === 0);
+  check("right-click on a New sentence opens its shaping menu, without assignment items", (await page.locator('[data-testid="assign-ctx-confirm"], [data-testid="assign-ctx-clear"]').count()) === 0);
+  // 떨어진 문장과 짝 맺기도 이 칸에서 된다(v1.0.36 - 전에는 한 단으로 열어야 했다)
+  check("the menu offers pairing with a distant sentence", (await page.locator('[data-testid="assign-ctx-pair_pick"]').count()) === 1);
   await page.keyboard.press("Escape");
   await page.locator('[data-testid="assign-ctx-menu"]').waitFor({ state: "detached", timeout: T });
   await page.keyboard.press("Escape");

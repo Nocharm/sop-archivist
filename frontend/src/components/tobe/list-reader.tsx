@@ -11,9 +11,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select } from "@/components/ui/select";
 import { showToast } from "@/components/ui/toast";
 import { humanizeApiError } from "@/lib/api-errors";
-import { addToBeDoc, addWiStep, closeToBeRead, requestToBeRead, updateToBeDoc, type TargetDocType, type ToBe, type ToBeProposal } from "@/lib/api-sop";
+import { closeToBeRead, getToBe, putToBe, requestToBeRead, type TargetDocType, type ToBe, type ToBeProposal } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
-import { buildProposalRows, decideProposalAdoption, decideReadWait, findProposalProblem, listParentChoices, orderProposalWrites, type ProposalRow, type ReadWait } from "@/lib/tobe-proposal-model";
+import { buildProposalInput, buildProposalRows, decideProposalAdoption, decideReadWait, findProposalProblem, listParentChoices, orderProposalWrites, type ProposalRow, type ReadWait } from "@/lib/tobe-proposal-model";
 import { INPUT_FIELD } from "@/lib/ui-classes";
 
 // 제안이 왔는지 다시 보는 간격(ms) - 읽기는 보통 몇 초다
@@ -95,30 +95,18 @@ export function ListReader({ bundleId, tobe, proposal, stoppedJobs, onClose, onL
   async function handleAdd() {
     if (shown === null || rows === null || problem !== null) return;
     setBusy(true);
-    const added: string[] = [];
     try {
-      for (const row of orderProposalWrites(rows)) {
-        if (row.doc_type === null) continue;
-        let list = await addToBeDoc(bundleId, { code: row.code, doc_type: row.doc_type, parent_code: row.doc_type === "wi" ? row.parent_code : null });
-        added.push(row.code);
-        const id = list.docs.find((doc) => doc.code === row.code)?.id;
-        if (id === undefined) continue;
-        // 제목은 EQUIS가 아는 번호면 서버가 EQUIS 이름으로 맞춘다 - 그래도 읽은 제목을 보내 둔다
-        if (row.title !== "" || row.is_equipment_sop) list = await updateToBeDoc(bundleId, id, { ...(row.title !== "" ? { title: row.title } : {}), ...(row.is_equipment_sop ? { is_equipment_sop: true } : {}) });
-        for (const step of row.steps) list = await addWiStep(bundleId, id, step);
-      }
+      // 지금 목록을 새로 받아 고른 줄을 더한 전체를 한 번에 보낸다 - 다 들어가거나 하나도 안 들어간다(줄마다 보내면 200줄에 1분이 걸렸다)
+      await putToBe(bundleId, buildProposalInput(await getToBe(bundleId), rows));
       await closeToBeRead(bundleId, shown.suggestion_id, decideProposalAdoption(shown, rows));
-      showToast(t("tobe.added", { n: added.length }));
+      showToast(t("tobe.added", { n: orderProposalWrites(rows).length }));
       onListChanged();
       onProposalChanged();
       onClose();
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
-      // 이미 들어간 줄은 목록에 있다 - 다시 누를 때 또 보내지 않게 빼 둔다
-      if (added.length > 0) {
-        setEdit({ id: shown.suggestion_id, rows: rows.map((row) => (added.includes(row.code) ? { ...row, isPicked: false, isListed: true } : row)) });
-        onListChanged();
-      }
+      // 그 사이 목록이 바뀌어 거절됐을 수 있다 - 다시 받아 둔다
+      onListChanged();
     } finally {
       setBusy(false);
     }
@@ -244,16 +232,19 @@ export function ListReader({ bundleId, tobe, proposal, stoppedJobs, onClose, onL
               {t("tobe.read.truncated")}
             </p>
           )}
+          {/* 줄이 많아도 창이 화면 안에 남게 표만 스크롤한다 - 아래 단추(더하기·버리기)가 늘 보인다. 표 머리는 붙어 있다 */}
+          <div className="max-h-[min(560px,calc(100vh-340px))] overflow-y-auto rounded-md border border-line" data-testid="tobe-read-scroll">
           <table className="dtable w-full" data-testid="tobe-read-list">
             <thead>
               <tr>
                 <th className="w-8" aria-label={t("tobe.read.colPick")} />
-                <th className="w-40">{t("tobe.colCode")}</th>
-                <th className="min-w-[220px]">{t("tobe.colTitle")}</th>
+                {/* 번호 칸은 13자 번호가 한 줄에 드는 폭을 지킨다 - 좁아지면 번호가 서너 줄로 접혀 줄이 길어진다 */}
+                <th className="w-40 min-w-[136px]">{t("tobe.colCode")}</th>
+                <th className="min-w-[180px]">{t("tobe.colTitle")}</th>
                 <th className="w-24">{t("tobe.colType")}</th>
-                <th className="w-44">{t("tobe.colParent")}</th>
-                <th className="w-24">{t("tobe.colEquipment")}</th>
-                <th className="w-20">{t("tobe.read.colSteps")}</th>
+                <th className="w-40">{t("tobe.colParent")}</th>
+                <th className="w-20 whitespace-normal">{t("tobe.colEquipment")}</th>
+                <th className="w-14">{t("tobe.read.colSteps")}</th>
               </tr>
             </thead>
             <tbody>
@@ -320,6 +311,7 @@ export function ListReader({ bundleId, tobe, proposal, stoppedJobs, onClose, onL
               })}
             </tbody>
           </table>
+          </div>
           {problem !== null && (
             <p className="text-xs text-danger" data-testid="tobe-read-problem">
               {problem.kind === "none" ? t("tobe.read.problemNone") : t(problem.kind === "type" ? "tobe.read.problemType" : "tobe.read.problemParent", { code: problem.code })}

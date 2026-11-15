@@ -713,7 +713,8 @@ export default function AssignPage() {
   const [pairFrom, setPairFrom] = useState<{ docId: number; unitId: number; picked: number[] } | null>(null);
   // 메뉴의 "참조 줄로 표시"로 번호 칸을 연 문장 - 제안도 확정도 없는 문장에 참조 카드를 띄운다
   const [refEntryId, setRefEntryId] = useState<number | null>(null);
-  const pairSource = pairFrom !== null && pairFrom.docId === oldView?.document.id ? (paperModel?.units.get(pairFrom.unitId) ?? null) : null;
+  // 양 단에서 New 문장을 다듬는 중이면 그 New 문서의 문장이다(shapeView)
+  const pairSource = pairFrom !== null && pairFrom.docId === shapeView?.document.id ? (shapeModel?.units.get(pairFrom.unitId) ?? null) : null;
 
   function selectRow(key: string, scroll = true) {
     setMode("old");
@@ -859,7 +860,7 @@ export default function AssignPage() {
     const at = order.indexOf(target.id);
     const neighbor = (step: number) => (at < 0 ? null : (shapeModel.units.get(order[at + step]) ?? null));
     const table = findTableOf(target);
-    const groups = buildAssignMenu({
+    return buildAssignMenu({
       target,
       prev: neighbor(-1),
       next: neighbor(1),
@@ -873,8 +874,6 @@ export default function AssignPage() {
       table,
       tableRows: table?.kind === "table_row" ? [...shapeModel.units.values()].filter((unit) => unit.kind === "table_row" && unit.table_id === table.table_id) : [],
     });
-    // 양 단의 New 칸에서는 떨어진 문장을 눌러 짝 맺는 길이 없다(그 칸의 누르기는 고르기다) - 그 일은 한 단으로 열어서 한다
-    return isNewEdit ? { ...groups, edit: groups.edit.filter((item) => item.action !== "pair_pick") } : groups;
   }
   const ctxMenuGroups = ctxTarget ? buildUnitMenu(ctxTarget) : null;
   // New 문서의 문장에는 보낼 곳이 없다 - 고치기 묶음만
@@ -1149,9 +1148,9 @@ export default function AssignPage() {
       const other = order[order.indexOf(target.id) + (action === "pair_prev" ? -1 : 1)];
       void runPairChange((docId, revision) => createPair(bundleId, docId, revision, [target.id, other]), t("split.didJoin"), target.id);
     } else if (action === "pair_pick") {
-      if (!oldView || isNewEdit) return;
+      if (!shapeView) return;
       clearCarve();
-      setPairFrom({ docId: oldView.document.id, unitId: target.id, picked: [] });
+      setPairFrom({ docId: shapeView.document.id, unitId: target.id, picked: [] });
     } else if (action === "unpair") {
       const pairId = target.pair_id;
       if (pairId !== null) void runPairChange((docId, revision) => deletePair(bundleId, docId, pairId, revision), t("split.pairRemoved"), target.id);
@@ -1236,7 +1235,12 @@ export default function AssignPage() {
   /** reasonOverride는 Remark 창에서 방금 확인한 사유 - 초안 상태가 아직 반영되기 전이라 직접 넘긴다 */
   async function runSave(action: "confirm" | "hold", reasonOverride?: string) {
     // 보낼 곳 없이는 보류만 된다(처분 unassigned + hold, 사유는 hold_reason)
-    if (!row || busy || groupPending || pickedGroups.isLoading || (!destination && action !== "hold")) return;
+    if (!row || busy || (!destination && action !== "hold")) return;
+    if (isRowLoading) {
+      // 줄의 정보를 받는 중이다 - 누른 것을 버리지 않고, 다 받으면 한다(전에는 단추가 켜져 보이는데 눌러도 아무 일이 없었다)
+      queuedSaveRef.current = { key: row.key, action, reason: reasonOverride };
+      return;
+    }
     if (action === "confirm" && isRefGate) {
       // 참조 줄 제안이 남았다 - 결정 전에 번호만 확인한다(오른쪽 칸 맨 위 카드). ↵·메뉴·사유 창 뒤 확정이 모두 여기를 지난다
       showToast(t("assign.ref.checkFirst"), "error");
@@ -1283,6 +1287,19 @@ export default function AssignPage() {
       setBusy(false);
     }
   }
+
+  // 줄의 정보를 받는 사이에 누른 확정·보류 - 다 받은 뒤 그 줄을 그대로 고르고 있을 때만 한다(그 사이 다른 줄로 갔으면 버린다)
+  const queuedSaveRef = useRef<{ key: string; action: "confirm" | "hold"; reason?: string } | null>(null);
+  const isRowLoading = groupPending || pickedGroups.isLoading;
+  const runQueuedSave = useEffectEvent(() => {
+    const queued = queuedSaveRef.current;
+    queuedSaveRef.current = null;
+    if (queued && row?.key === queued.key) void runSave(queued.action, queued.reason);
+  });
+  const queuedRowKey = row?.key ?? null;
+  useEffect(() => {
+    if (!isRowLoading) runQueuedSave();
+  }, [isRowLoading, queuedRowKey]);
 
   /**
    * 확정한 곳을 오른쪽 칸에 바로 보인다 - 그 문서로 옮기고(다음 줄에서도, 손으로 고른 문서가 없을 때), 엮은 문서면 저장 응답으로 칸에 미리 넣는다.
@@ -1551,6 +1568,12 @@ export default function AssignPage() {
 
   /** New 원문의 줄을 누름 - 이미 확정해 이은 문장이면 고름을 바꾸지 않고 끊기 메뉴를, 아니면 고른 뒤 확정 메뉴를 그 자리에 띄운다 */
   function handleNewPick(targetId: number, additive: boolean, anchor: HTMLElement, event: MouseEvent) {
+    // New 문장의 짝을 고르는 중 - 누른 문장이 짝이 된다(다듬을 대상을 바꾸지 않는다). 원문의 Unit을 모르는 문장은 짝이 될 수 없다
+    if (isNewEdit && pairSource && pairFrom) {
+      const unitId = writtenMap.get(targetId)?.new_unit_id ?? null;
+      if (unitId !== null) pickPairUnit(unitId, event.shiftKey);
+      return;
+    }
     // Old 줄을 고르지 않은 채 누르면 그 New 문장을 다듬을 대상으로 고른다(Old 줄을 고른 채면 전처럼 그 줄에 잇는다)
     if (mode === "old" && row === null && canEdit) {
       selectNewSentence(targetId);
@@ -1623,7 +1646,7 @@ export default function AssignPage() {
   /** 짝 고르기를 맺는다 - 처음 문장과 고른 문장들이 한 짝이 된다. 맺을 수 없으면 까닭을 알리고 고르던 것을 그대로 둔다 */
   function finishPairPick(pickedIds: number[]) {
     if (!pairSource || pickedIds.length === 0) return;
-    const others = pickedIds.map((id) => paperModel?.units.get(id)).filter((unit): unit is ViewUnit => unit !== undefined);
+    const others = pickedIds.map((id) => shapeModel?.units.get(id)).filter((unit): unit is ViewUnit => unit !== undefined);
     const blocker = others.map((unit) => getPairPickBlocker(unit, { isDecided: isUnitDecided, hasDraft: hasUnitDraft })).find((reason) => reason !== null) ?? getPairSetBlocker([pairSource, ...others]);
     if (blocker !== null) {
       showToast(t(blocker), "error");
@@ -1634,28 +1657,34 @@ export default function AssignPage() {
     void runPairChange((docId, revision) => createPair(bundleId, docId, revision, unitIds), t("split.didJoin"), unitIds[0]);
   }
 
+  /** 짝 고르는 중에 문장을 눌렀다 - 그냥 누르면 그 문장까지 넣어 맺고, Shift+클릭은 모은다(Old 용지와 양 단의 New 칸이 같이 쓴다) */
+  function pickPairUnit(unitId: number, shiftKey: boolean) {
+    const other = shapeModel?.units.get(unitId);
+    if (!pairSource || !pairFrom || !other || other.id === pairSource.id) return;
+    const { picked } = pairFrom;
+    if (!shiftKey) {
+      // 그냥 누르면 그 문장까지 넣어 바로 맺는다 - 둘뿐인 흔한 경우는 누르기 한 번이다
+      finishPairPick(picked.includes(other.id) ? picked : [...picked, other.id]);
+      return;
+    }
+    // Shift+클릭은 모으기 - 다시 누르면 뺀다. 넣을 수 없는 문장은 까닭을 알리고 계속 기다린다
+    if (picked.includes(other.id)) {
+      setPairFrom({ ...pairFrom, picked: picked.filter((id) => id !== other.id) });
+      return;
+    }
+    const blocker = getPairPickBlocker(other, { isDecided: isUnitDecided, hasDraft: hasUnitDraft });
+    if (blocker !== null) showToast(t(blocker), "error");
+    else setPairFrom({ ...pairFrom, picked: [...picked, other.id] });
+  }
+
   function handleOldClick(unitId: number, keys: { shiftKey: boolean }) {
     if (mode === "unsourced") {
       void linkAsSource(unitId);
       return;
     }
-    if (pairSource && pairFrom) {
-      const other = paperModel?.units.get(unitId);
-      if (!other || other.id === pairSource.id) return;
-      const { picked } = pairFrom;
-      if (!keys.shiftKey) {
-        // 그냥 누르면 그 문장까지 넣어 바로 맺는다 - 둘뿐인 흔한 경우는 누르기 한 번이다
-        finishPairPick(picked.includes(other.id) ? picked : [...picked, other.id]);
-        return;
-      }
-      // Shift+클릭은 모으기 - 다시 누르면 뺀다. 넣을 수 없는 문장은 까닭을 알리고 계속 기다린다
-      if (picked.includes(other.id)) {
-        setPairFrom({ ...pairFrom, picked: picked.filter((id) => id !== other.id) });
-        return;
-      }
-      const blocker = getPairPickBlocker(other, { isDecided: isUnitDecided, hasDraft: hasUnitDraft });
-      if (blocker !== null) showToast(t(blocker), "error");
-      else setPairFrom({ ...pairFrom, picked: [...picked, other.id] });
+    // 짝 고르는 중 - New 문장의 짝을 고르는 중이면 Old 용지의 누르기는 평소처럼 그 줄을 고른다(짝은 같은 문서 안에서만 맺는다)
+    if (pairSource && pairFrom && !isNewEdit) {
+      pickPairUnit(unitId, keys.shiftKey);
       return;
     }
     if (isSolo) {
@@ -2805,11 +2834,30 @@ export default function AssignPage() {
   // 양 단에서 다듬으려고 고른 New 문장의 줄, 그리고 나눌 선이 놓인 줄
   const editTargetId = isNewEdit && soloUnit !== null ? (written.find((item) => item.new_unit_id === soloUnit.id)?.target_id ?? null) : null;
   const cutTargetId = isNewEdit && cutUnit !== null ? (written.find((item) => item.new_unit_id === cutUnit.id)?.target_id ?? null) : null;
-  const pickedNew = new Set(linkIds);
+  // 고른 New 문장 - 이을 문장, 또는 양 단에서 New 문장의 짝을 고르는 중이면 모은 문장
+  const isNewPairPick = isNewEdit && pairSource !== null && pairFrom !== null;
+  const pickedNew = new Set(isNewPairPick ? pairFrom.picked.flatMap((unitId) => written.find((item) => item.new_unit_id === unitId)?.target_id ?? []) : linkIds);
   // 확인이 남은 누락 의심 경고의 문단 - 용지의 그 줄에 표시한다. 위쪽 줄의 목록에서 확인하면(문서 목록을 다시 받아) 사라진다
   const warnBlockIds = new Set(listAckWarnings(docs.data ?? []).flatMap((item) => (item.docId === oldDocId && item.warning.acked_by === null && item.warning.block_id !== null ? [item.warning.block_id] : [])));
   // Shift로 고른 줄, 그리고 짝 고르기에서 모은 문장
-  const pickedOld = new Set([...[...checked].flatMap((key) => rowMap.get(key)?.unitIds ?? []), ...(pairSource && pairFrom ? pairFrom.picked : [])]);
+  const pickedOld = new Set([...[...checked].flatMap((key) => rowMap.get(key)?.unitIds ?? []), ...(pairSource && pairFrom && !isNewEdit ? pairFrom.picked : [])]);
+  // 짝 고르는 중의 안내 한 줄 - 고르는 문장이 있는 칸의 머리 아래에 둔다(Old 용지, 또는 양 단에서 New 문장을 다듬는 중이면 New 칸)
+  const pairBanner = pairSource ? (
+    <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-pair-pick">
+      <Link2 size={14} strokeWidth={1.5} className="flex-none text-ink-2" aria-hidden />
+      <span className="min-w-0 flex-1 text-ink" data-testid="assign-pair-pick-text">
+        {pairFrom && pairFrom.picked.length > 0 ? t("assign.pairPicked", { id: pairSource.display_id, n: pairFrom.picked.length }) : t("assign.pairPick", { id: pairSource.display_id })}
+      </span>
+      {pairFrom && pairFrom.picked.length > 0 && (
+        <button type="button" className="btn pri h-7 flex-none" data-testid="assign-pair-pick-run" disabled={busy} onClick={() => finishPairPick(pairFrom.picked)}>
+          {t("assign.pairPickRun", { n: pairFrom.picked.length + 1 })} <kbd>↵</kbd>
+        </button>
+      )}
+      <button type="button" className="btn ghost h-7 flex-none" data-testid="assign-pair-pick-cancel" onClick={() => setPairFrom(null)}>
+        {t("common.cancel")} <kbd>Esc</kbd>
+      </button>
+    </div>
+  ) : null;
   const placeOf = (unitIds: number[]) => {
     const decided = unitIds.map((id) => unitMap.get(id)).find((unit) => unit?.status === "confirmed");
     if (!decided) return null;
@@ -2918,21 +2966,8 @@ export default function AssignPage() {
                 onUnitDoubleClick={canEdit ? handleOldDoubleClick : undefined}
                 onRangeSelect={canEdit && mode === "old" && oldView ? (range) => setCarvePick({ docId: oldView.document.id, ...range }) : undefined}
                 banner={
-                  pairSource ? (
-                    <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-pair-pick">
-                      <Link2 size={14} strokeWidth={1.5} className="flex-none text-ink-2" aria-hidden />
-                      <span className="min-w-0 flex-1 text-ink" data-testid="assign-pair-pick-text">
-                        {pairFrom && pairFrom.picked.length > 0 ? t("assign.pairPicked", { id: pairSource.display_id, n: pairFrom.picked.length }) : t("assign.pairPick", { id: pairSource.display_id })}
-                      </span>
-                      {pairFrom && pairFrom.picked.length > 0 && (
-                        <button type="button" className="btn pri h-7 flex-none" data-testid="assign-pair-pick-run" disabled={busy} onClick={() => finishPairPick(pairFrom.picked)}>
-                          {t("assign.pairPickRun", { n: pairFrom.picked.length + 1 })} <kbd>↵</kbd>
-                        </button>
-                      )}
-                      <button type="button" className="btn ghost h-7 flex-none" data-testid="assign-pair-pick-cancel" onClick={() => setPairFrom(null)}>
-                        {t("common.cancel")} <kbd>Esc</kbd>
-                      </button>
-                    </div>
+                  pairBanner !== null && !isNewEdit ? (
+                    pairBanner
                   ) : carve && (
                     <div className="flex items-center gap-2 border-b border-line bg-accent-tint px-3 py-1.5 text-xs" role="status" data-testid="assign-carve">
                       <span className="flex-none font-semibold text-ink">{t("split.carve")}</span>
@@ -2996,6 +3031,8 @@ export default function AssignPage() {
                     onShape={canEdit && mode === "old" && !isComposedDoc ? openNewCtxMenu : undefined}
                     cut={isNewEdit && cutUnit !== null && cutLine.at !== null && cutTargetId !== null ? { targetId: cutTargetId, at: cutLine.at } : null}
                     cutPop={<CutPop busy={busy} onRun={splitAtCut} onCancel={cutLine.clear} testIdPrefix="assign" />}
+                    onCutDrag={canEdit && isNewEdit ? cutLine.dragTo : undefined}
+                    banner={isNewEdit ? pairBanner : null}
                     sourceLabel={(unitId) => (unitMap.get(unitId)?.display_id ?? String(unitId)).replace(/^OLD-/, "")}
                     onPick={handleNewPick}
                     onJumpSource={jumpToOld}

@@ -8,7 +8,7 @@
 "use client";
 
 import { ChevronDown, ChevronUp, FilePlus2, Scissors, Spline } from "lucide-react";
-import { Fragment, useEffect, useRef, useState, type FocusEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useEffectEvent, useRef, useState, type FocusEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { PaneZoom } from "@/components/assign/pane-zoom";
 import { RefMark } from "@/components/assign/ref-mark";
@@ -19,6 +19,7 @@ import { Truncate } from "@/components/ui/motion";
 import { Select, type SelectOption } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { WrittenSentence } from "@/lib/api-sop";
+import { readCaretPoint } from "@/lib/caret-point";
 import { diffRows, getComposedLeadWidths, getNewRowKey, isComposedRow, isWrittenRow, readSectionNumber, type NewPaneRow } from "@/lib/composed-model";
 import { useI18n } from "@/lib/i18n";
 import { readWrittenRefMark } from "@/lib/ref-model";
@@ -61,6 +62,10 @@ interface NewPaneProps {
   /** 그 자리에서 나눌 선 - 그 줄의 글 안 at 자리에 선을 긋고 바로 아래에 cutPop(나누기·취소)을 둔다 */
   cut?: { targetId: number; at: number } | null;
   cutPop?: ReactNode;
+  /** 나눌 선을 끄는 중 - 그 줄의 글 안 글자 위치, 글 위·아래로 벗어났으면 처음·끝 */
+  onCutDrag?: (at: number | "start" | "end") => void;
+  /** 칸 머리 아래 한 줄 - 짝 고르는 중 같은 안내 */
+  banner?: ReactNode;
   /** 두 문서 사이 연결선 켜기·끄기 */
   linesOn: boolean;
   onToggleLines: () => void;
@@ -73,6 +78,18 @@ function readState(row: WrittenSentence, props: NewPaneProps): string | undefine
   if (props.candidateIds.has(row.target_id)) return "candidate";
   if (!props.readOnly && row.kind === "sentence" && row.source_unit_ids.length === 0 && row.change_type !== "new") return "unsourced";
   return undefined;
+}
+
+/** 끄는 자리 → 그 줄의 글 안 글자 위치. 글자 위가 아니면 글의 위·아래 어느 쪽인지로 답하고, 옆으로만 벗어났으면 선을 그대로 둔다(null) */
+function readCutDragAt(text: HTMLElement, x: number, y: number): number | "start" | "end" | null {
+  const caret = readCaretPoint(x, y);
+  const holder = caret ? (caret.node instanceof Element ? caret.node : caret.node.parentElement) : null;
+  const piece = holder?.closest<HTMLElement>("[data-start]") ?? null;
+  if (caret && piece && text.contains(piece)) return Number(piece.dataset.start) + (caret.node.nodeType === Node.TEXT_NODE ? caret.offset : 0);
+  const rect = text.getBoundingClientRect();
+  if (y < rect.top) return "start";
+  if (y > rect.bottom) return "end";
+  return null;
 }
 
 /** 짝 묶음 번호 - 짝의 작은 문장 id(서버는 둘짜리 짝만 서로를 가리킨다), 짝이 아니면 null. 앞머리 괄호와 언어 탭이 같은 기준을 쓴다 */
@@ -183,6 +200,45 @@ export function NewPane(props: NewPaneProps) {
     onReveal(el, !el.closest("[data-enter]"));
   });
 
+  // 나눌 선 끌기 - 선이 옮겨 가며 다시 그려져도 끊기지 않게 창에서 듣는다(Old 용지와 같은 방식)
+  const [isCutDragging, setIsCutDragging] = useState(false);
+  const handleCutMove = useEffectEvent((event: PointerEvent) => {
+    const targetId = props.cut?.targetId;
+    const text = targetId === undefined ? null : paneRef.current?.querySelector<HTMLElement>(`.new-line[data-target="${targetId}"] .new-text`);
+    if (!text || !props.onCutDrag) return;
+    const at = readCutDragAt(text, event.clientX, event.clientY);
+    if (at !== null) props.onCutDrag(at);
+  });
+  useEffect(() => {
+    if (!isCutDragging) return;
+    const move = (event: PointerEvent) => handleCutMove(event);
+    const stop = () => {
+      setIsCutDragging(false);
+      // 놓은 자리가 문장 위면 누르기(click)가 따라온다 - 끌기가 고르기로 읽히지 않게 그 한 번은 삼킨다
+      const swallow = (event: Event) => {
+        event.stopPropagation();
+        event.preventDefault();
+      };
+      window.addEventListener("click", swallow, { capture: true, once: true });
+      window.setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 0);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+    };
+  }, [isCutDragging]);
+
+  function handleCutDown(event: ReactPointerEvent<HTMLElement>) {
+    if (event.button !== 0) return;
+    event.preventDefault(); // 글자가 끌려 골라지지 않게
+    window.getSelection()?.removeAllRanges();
+    setIsCutDragging(true);
+  }
+
   function renderSources(row: WrittenSentence) {
     const isOpen = openSources.has(row.target_id);
     const ids = row.source_unit_ids;
@@ -249,9 +305,11 @@ export function NewPane(props: NewPaneProps) {
           row.text
         ) : (
           <>
-            {row.text.slice(0, cutAt)}
-            <span className="new-cut" aria-hidden data-testid={`assign-new-cut-${row.target_id}`} />
-            {row.text.slice(cutAt)}
+            <span data-start={0}>{row.text.slice(0, cutAt)}</span>
+            <span className="new-cut" aria-hidden data-testid={`assign-new-cut-${row.target_id}`}>
+              {props.onCutDrag && <span className="cut-handle" data-tip={isCutDragging ? undefined : t("split.cutMove")} data-testid={`assign-new-cut-handle-${row.target_id}`} onPointerDown={handleCutDown} />}
+            </span>
+            <span data-start={cutAt}>{row.text.slice(cutAt)}</span>
           </>
         )}
       </span>
@@ -374,11 +432,13 @@ export function NewPane(props: NewPaneProps) {
         </Tooltip>
         <PaneZoom value={props.zoom} onStep={props.onZoom} testId="assign-new-zoom" />
       </div>
+      {props.banner}
       <div className="pane-body">
         <div className="sheet">
           <div
             className="pg new-sheet"
             data-strips=""
+            data-dragging={isCutDragging ? "" : undefined}
             data-read-only={props.readOnly ? "" : undefined}
             onPointerOver={(event: ReactPointerEvent<HTMLDivElement>) => markMates(event.target)}
             onPointerLeave={() => markMates(null)}
