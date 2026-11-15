@@ -1987,7 +1987,8 @@ await runStep("members picker keeps Add inside the panel and adds the person", {
 
 // 바로 생성(2026-11-09): 이름 없이 BND 코드로 만들고, 문서가 없으면 Split~Review는 잠기고 To-Be는 열려 있다
 // 배정 화면에서 AI 나누기 제안 받기·적용·되돌리기(전에는 요청만 되고 적용은 쪼개기 화면에서 했다). AI가 꺼져 있으면 건너뛴다
-await runStep("assign: AI split suggestions - ask for the whole document, apply one, undo", {}, async ({ page, takeShot }) => {
+// 배정된 문장에 적용하면 서버가 먼저 묻는다(409 confirm_required) - 콘솔에 오류로 찍히는 그 응답은 이 단계가 일부러 받는 것이다
+await runStep("assign: AI split suggestions - ask for the whole document, apply one, undo", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const status = await page.request.get(`${BASE}/api/bundles/1/ai/status`, { headers });
   if (!status.ok() || !(await status.json()).ai_enabled) {
@@ -2012,7 +2013,7 @@ await runStep("assign: AI split suggestions - ask for the whole document, apply 
   check("the card previews the pieces", pieces >= 2, String(pieces));
   await takeShot("sop-assign-ai-split.png");
   const applyButton = page.locator('[data-testid="assign-split-apply"]');
-  // 앞 시나리오가 배정해 둔 문장은 적용이 잠긴다(다른 문장 고치기와 같은 규칙) - 적용할 수 있는 제안이 나올 때까지 다음으로 넘긴다
+  // 저장하지 않은 고름이 있는 문장은 적용이 잠긴다(다른 문장 고치기와 같은 규칙) - 적용할 수 있는 제안이 나올 때까지 다음으로 넘긴다
   let sawLocked = false;
   for (let step = 0; step < 40 && (await applyButton.getAttribute("aria-disabled")) === "true"; step += 1) {
     sawLocked = true;
@@ -2023,13 +2024,16 @@ await runStep("assign: AI split suggestions - ask for the whole document, apply 
     await page.waitForFunction((before) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() !== before, row, { timeout: T });
     await wait(page, "assign-split-suggestion");
   }
-  if (sawLocked) check("an assigned sentence keeps Apply split locked", true);
+  if (sawLocked) check("a sentence with an unsaved choice keeps Apply split locked", true);
   if ((await applyButton.getAttribute("aria-disabled")) === "true") {
     console.log("  (every suggested sentence is assigned - apply and undo not exercised)");
     return;
   }
   const rowBefore = (await getText(page, "assign-row-id")).trim();
   await applyButton.click();
+  // 배정된 문장이면 한 번 묻는다(v1.0.21) - 확인하고 적용한다
+  const confirmEdit = page.locator('[data-testid="assign-edit-confirm-confirm"]');
+  if (await confirmEdit.waitFor({ timeout: 2500 }).then(() => true, () => false)) await confirmEdit.click();
   await page.waitForFunction((before) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() !== before && document.querySelector('[data-testid="assign-undo"]')?.disabled === false, rowBefore, { timeout: T });
   check("Apply split cuts the sentence and moves to the new piece", true);
   await page.locator('[data-testid="assign-undo"]').click();
@@ -2236,6 +2240,94 @@ await runStep("four steps: rail, Edit original round trip, Order edits C and Out
   await page.waitForURL(/\/order$/, { timeout: T });
   await wait(page, "order-docs");
   check("Edit order returns to the document last opened", (await page.locator('[data-testid^="order-doc-"][aria-current="true"]').getAttribute("data-testid")) === picked);
+});
+
+// 배정된 문장도 자른다(v1.0.21) - 한 번 묻고 배정을 풀며 자른다(원문 고치기와 같은 규칙). 전에는 "먼저 배정을 지우라"며 막았다
+// 서버의 물음(409 confirm_required)이 콘솔에 오류로 찍힌다 - 이 단계가 일부러 받는 응답이다
+await runStep("assign: cutting an assigned sentence asks once, then clears its assignment", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();
+  const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${docId}/view`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  // 화면의 본문에 조각이 있는 영어 문장을 골라 먼저 배정해 확정한다(앞 단계들이 이 Bundle의 배정을 모두 지웠을 수 있다. 머리말·꼬리말의 문장은 다른 탭에 있다)
+  let doc = null;
+  let unit = null;
+  let piece = null;
+  for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await readView(candidate.id);
+    const found = view.units.filter((item) => item.kind === "sentence" && item.status === "unassigned" && item.lang === "en" && item.text.trim().split(" ").length >= 4);
+    if (found.length === 0) continue;
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${candidate.id}"]`).click();
+    await page.locator(`[data-testid="assign-old"]`).waitFor({ timeout: T });
+    await page.waitForTimeout(600);
+    for (const item of found) {
+      const locator = page.locator(`[data-testid="assign-paper-piece-${item.id}"], [data-testid="assign-paper-unit-${item.id}"]`).first();
+      if ((await locator.count()) === 0) continue;
+      doc = candidate;
+      unit = item;
+      piece = locator;
+      break;
+    }
+    if (unit !== null) break;
+  }
+  check("the bundle has an open English sentence on screen", unit !== null);
+  if (unit === null) return;
+  await piece.click();
+  await wait(page, "assign-row-id");
+  await pickFirstPlace(page);
+  await page.locator('[data-testid="assign-primary"]').click();
+  let assigned = false;
+  for (let tries = 0; tries < 60 && !assigned; tries += 1) {
+    assigned = (await readView(doc.id)).units.some((item) => item.id === unit.id && item.status === "confirmed");
+    if (!assigned) await page.waitForTimeout(250);
+  }
+  check("the sentence is assigned first", assigned);
+  const countUnits = async () => (await readView(doc.id)).units.length;
+  // 저장이 끝날 때까지 서버 값을 직접 다시 읽는다
+  const waitUnits = async (expected) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      if ((await countUnits()) === expected) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+  const beforeIds = new Set((await readView(doc.id)).units.map((item) => item.id));
+  const before = beforeIds.size;
+  const openSplit = async () => {
+    await piece.scrollIntoViewIfNeeded();
+    await piece.click({ button: "right" });
+    await wait(page, "assign-ctx-split");
+  };
+  await openSplit();
+  check("Split is offered on an assigned sentence", (await page.locator('[data-testid="assign-ctx-split"]').getAttribute("aria-disabled")) === null);
+  check("changing its language stays locked", (await page.locator('[data-testid="assign-ctx-lang-ko"]').getAttribute("aria-disabled")) === "true");
+  await page.locator('[data-testid="assign-ctx-split"]').click();
+  await wait(page, "assign-cut-run");
+  await page.locator('[data-testid="assign-cut-run"]').click();
+  await wait(page, "assign-edit-confirm");
+  await takeShot("sop-assign-edit-confirm.png");
+  // 그만두면 아무것도 바뀌지 않는다
+  await page.locator('[data-testid="assign-edit-confirm-cancel"]').click();
+  await page.locator('[data-testid="assign-edit-confirm"]').waitFor({ state: "detached", timeout: T });
+  check("cancelling leaves the sentence as it was", (await countUnits()) === before);
+  if ((await page.locator('[data-testid="assign-cut-run"]').count()) === 0) {
+    await openSplit();
+    await page.locator('[data-testid="assign-ctx-split"]').click();
+    await wait(page, "assign-cut-run");
+  }
+  await page.locator('[data-testid="assign-cut-run"]').click();
+  await wait(page, "assign-edit-confirm");
+  await page.locator('[data-testid="assign-edit-confirm-confirm"]').click();
+  check("confirming cuts the sentence in two", await waitUnits(before + 1));
+  const after = await readView(doc.id);
+  check("the cut sentence is no longer among the units", !after.units.some((item) => item.id === unit.id));
+  const pieces = after.units.filter((item) => !beforeIds.has(item.id));
+  check("its two pieces are unassigned again", pieces.length === 2 && pieces.every((item) => item.status === "unassigned"), pieces.map((item) => item.status).join(", "));
+  // 되돌리면 글은 한 문장으로 돌아온다
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("Undo brings the sentence back as one", await waitUnits(before));
 });
 
 await runStep("new bundle in one click, locked stages, empty assign", { devUser: "dev.admin" }, async ({ page }) => {
