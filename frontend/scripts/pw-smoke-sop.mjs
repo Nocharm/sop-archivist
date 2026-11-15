@@ -2135,7 +2135,9 @@ await runStep("assign: shape a written New sentence in place, in the two-documen
   const again = (await readWritten()).find((item) => item.text === target.text);
   await page.locator(`[data-testid="assign-new-${again.target_id}"]`).click({ button: "right" });
   await wait(page, "assign-ctx-split");
-  check("right-click on a New sentence opens its shaping menu, without assignment items", (await page.locator('[data-testid="assign-ctx-confirm"], [data-testid="assign-ctx-clear"], [data-testid="assign-ctx-pair_pick"]').count()) === 0);
+  check("right-click on a New sentence opens its shaping menu, without assignment items", (await page.locator('[data-testid="assign-ctx-confirm"], [data-testid="assign-ctx-clear"]').count()) === 0);
+  // 떨어진 문장과 짝 맺기도 이 칸에서 된다(v1.0.36 - 전에는 한 단으로 열어야 했다)
+  check("the menu offers pairing with a distant sentence", (await page.locator('[data-testid="assign-ctx-pair_pick"]').count()) === 1);
   await page.keyboard.press("Escape");
   await page.locator('[data-testid="assign-ctx-menu"]').waitFor({ state: "detached", timeout: T });
   await page.keyboard.press("Escape");
