@@ -24,18 +24,13 @@ from app.sop.constants import LANGUAGE_LAYOUTS, MEMBER_ROLES
 from app.sop.decision_steps import record_unit_edit_step
 from app.sop.detach import detach_units, find_units_needing_confirm
 from app.sop.editing import (
-    BoundaryAllOut,
-    BoundaryIn,
-    BoundaryOut,
     EditIn,
     EditResult,
     EditStepResult,
     EditStepIn,
     apply_edit,
-    confirm_all_boundaries,
     load_active_units,
     redo_edit,
-    set_boundary_confirmed,
     undo_edit,
 )
 from app.sop.ai.adoption import record_doc_meta_adoption
@@ -53,7 +48,6 @@ from app.sop.models import (
     ExtractionWarning,
     SourceBlock,
     SourceTable,
-    TargetSentence,
     Unit,
     UnitDecision,
     UnitEdit,
@@ -73,7 +67,6 @@ from app.sop.pairs import (
 )
 from app.sop.refs import RefState, build_ref_text, read_ref_state
 from app.sop.schemas import NO_NUL, NoNulStr
-from app.sop.snapshot import count_unchecked_boundaries
 from app.sop.status import get_cover_status
 from app.sop.tobe import MAX_DB_INT, remove_match_doc, rename_match_doc, temp_match_code
 from app.sop.units import UNIT_ACTIVE, compute_display_id, get_latest_extraction_id, refresh_code_pairs
@@ -159,8 +152,6 @@ class DocumentOut(DocumentBase):
     prefill_sources: dict[PrefillField, PrefillSource] = {}
     # 비어 있는 번호·버전에 대한 AI 제안(문서에 쓰지 않은 값) — 사람이 눌러 저장한다
     ai_meta: AiMetaOut | None = None
-    # 경계를 아직 확인하지 않은 단위 수 — 0이 아니면 검토 요청을 막는다(쪼개기 문서 목록의 남은 수)
-    unchecked_boundaries: int = 0
     # 문서 번호의 EQUIS 표시 — 기능이 꺼졌거나 묻지 않는 번호(빈 칸·임시 번호)면 None
     equis: EquisOut | None = None
 
@@ -247,7 +238,6 @@ class ViewUnitOut(BaseModel):
     table_id: int | None
     row_index: int | None
     group_unit_id: int | None
-    boundary_confirmed: bool
     # 커버 단위 상태(get_cover_status) — 판단이 없는 새 문서 단위는 null
     status: str | None
     pair_id: int | None
@@ -328,7 +318,6 @@ async def build_documents_out(session: AsyncSession, documents: Sequence[Documen
         for warning in rows:
             warnings[warning.extraction_id].append(WarningOut.model_validate(warning))
     ai_suggestions = await load_open_doc_meta(session, doc_ids)
-    unchecked = await count_unchecked_boundaries(session, documents[0].bundle_id) if documents else {}
     lookups = await equis_service.load_lookups(session, [document.doc_code for document in documents])
     read_at = now()
     out = []
@@ -342,7 +331,6 @@ async def build_documents_out(session: AsyncSession, documents: Sequence[Documen
                     id=extraction.id, aux_status=extraction.aux_status, warnings=warnings[extraction.id]
                 ),
                 ai_meta=None if ai_meta is None else AiMetaOut.model_validate(ai_meta),
-                unchecked_boundaries=unchecked.get(document.id, 0),
                 equis=build_equis_out(
                     document.doc_code, "old" if document.side == "old" else "new", document.doc_version, lookups, read_at
                 ),
@@ -398,15 +386,6 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
             select(UnitDecision).join(Unit, Unit.id == UnitDecision.unit_id).where(Unit.extraction_id == extraction.id)
         )
         decisions = {decision.unit_id: decision for decision in rows}
-        settled = {unit_id for unit_id, decision in decisions.items() if decision.status == "confirmed"}
-    else:
-        settled = set(
-            await session.scalars(
-                select(TargetSentence.new_unit_id)
-                .join(Unit, Unit.id == TargetSentence.new_unit_id)
-                .where(Unit.extraction_id == extraction.id, TargetSentence.status == "confirmed")
-            )
-        )
     pairs = await _load_view_pairs(session, document.id)
     created_lists = (
         await session.execute(
@@ -452,8 +431,6 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 table_id=unit.table_id,
                 row_index=unit.row_index,
                 group_unit_id=unit.group_unit_id,
-                # 배정을 확정한 단위는 경계도 확인된 것으로 보인다(문서 목록의 남은 수와 같은 기준)
-                boundary_confirmed=unit.boundary_confirmed or unit.id in settled,
                 status=get_cover_status(unit, decisions) if document.side == "old" else None,
                 pair_id=pair_by_unit.get(unit.id),
                 is_edited=unit.id in edited_ids,
@@ -746,32 +723,6 @@ async def redo_unit_edit(
     result = await redo_edit(session, document, confirm=body.confirm, actor=ctx.login_id)
     await session.commit()
     return result
-
-
-@router.post("/{bundle_id}/documents/{doc_id}/units/boundary", response_model=BoundaryOut)
-async def confirm_unit_boundaries(
-    body: BoundaryIn,
-    doc_id: IdPath,
-    ctx: BundleContext = Depends(_require_author),
-    session: AsyncSession = Depends(get_session),
-) -> BoundaryOut:
-    # 경계 확인은 단위 집합을 바꾸지 않아 문서 revision을 싣지 않는다 - 되돌리기 기록에는 들어간다
-    document = await _lock_editable_document(session, ctx, doc_id, None)
-    unit_ids = await set_boundary_confirmed(session, document, body.unit_ids, body.confirmed, actor=ctx.login_id)
-    await session.commit()
-    return BoundaryOut(unit_ids=unit_ids, confirmed=body.confirmed)
-
-
-@router.post("/{bundle_id}/documents/{doc_id}/units/boundary/all", response_model=BoundaryAllOut)
-async def confirm_all_unit_boundaries(
-    doc_id: IdPath,
-    ctx: BundleContext = Depends(_require_author),
-    session: AsyncSession = Depends(get_session),
-) -> BoundaryAllOut:
-    document = await _lock_editable_document(session, ctx, doc_id, None)
-    confirmed_count = await confirm_all_boundaries(session, document, actor=ctx.login_id)
-    await session.commit()
-    return BoundaryAllOut(confirmed_count=confirmed_count)
 
 
 @router.post("/{bundle_id}/documents/{doc_id}/pairs", response_model=PairResult, status_code=201)

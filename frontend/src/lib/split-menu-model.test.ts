@@ -14,7 +14,6 @@ function makeUnit(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
     table_id: null,
     row_index: null,
     group_unit_id: null,
-    boundary_confirmed: false,
     status: null,
     pair_id: null,
     pos_seq: id,

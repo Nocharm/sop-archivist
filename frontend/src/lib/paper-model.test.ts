@@ -14,7 +14,7 @@ function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlo
 function makeUnit(id: number, spans: Array<[number, number, number]>, text: string, extra: Partial<ViewUnit> = {}): ViewUnit {
   return {
     id, display_id: `D-${id}`, kind: "sentence", spans, text, lang: "en", table_id: null, row_index: null, group_unit_id: null,
-    boundary_confirmed: false, status: "unassigned", pair_id: null, pos_seq: spans[0]?.[0] ?? 0, block_id: spans[0]?.[0] ?? 0, is_edited: false, can_unmerge: false, split_suggestion_id: null, ref: null, ...extra,
+    status: "unassigned", pair_id: null, pos_seq: spans[0]?.[0] ?? 0, block_id: spans[0]?.[0] ?? 0, is_edited: false, can_unmerge: false, split_suggestion_id: null, ref: null, ...extra,
   };
 }
 
@@ -102,7 +102,6 @@ function makeSplitUnit(over: Partial<ViewUnit> = {}): ViewUnit {
     table_id: null,
     row_index: null,
     group_unit_id: null,
-    boundary_confirmed: false,
     status: "unassigned",
     pair_id: null,
     pos_seq: 1,
@@ -158,7 +157,7 @@ describe("getTags and getMarks", () => {
   });
 
   it("lists icon marks in a stable order", () => {
-    const unit = makeSplitUnit({ boundary_confirmed: true, pair_id: 4, is_edited: true, status: "confirmed" });
+    const unit = makeSplitUnit({ pair_id: 4, is_edited: true, status: "confirmed" });
     expect(getMarks(unit)).toEqual(["edited", "pair", "classified"]);
     expect(getMarks(makeSplitUnit({ status: "ai_suggested" }))).toEqual(["ai"]);
   });
@@ -229,7 +228,7 @@ describe("getGapMerge", () => {
   it("always offers a merge between two text pieces, whatever their languages", () => {
     const { model, rows } = build(
       [makeBlock(1, 0, "One. Two."), makeBlock(2, 1, "셋.")],
-      [makeUnit(10, [[1, 0, 4]], "One.", { boundary_confirmed: true }), makeUnit(11, [[1, 5, 9]], "Two."), makeUnit(12, [[2, 0, 2]], "셋.", { lang: "ko" })],
+      [makeUnit(10, [[1, 0, 4]], "One."), makeUnit(11, [[1, 5, 9]], "Two."), makeUnit(12, [[2, 0, 2]], "셋.", { lang: "ko" })],
     );
     expect(getGapMerge(rows[0], rows[1], model.units)).toEqual({ firstId: 10, secondId: 11, blocker: null });
     expect(getGapMerge(rows[1], rows[2], model.units)).toEqual({ firstId: 11, secondId: 12, blocker: null });
