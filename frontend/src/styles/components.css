@@ -1476,7 +1476,8 @@
      결정 칸은 패널 몸통의 52%까지만 크고 넘치면 고른 곳 상자 부분만 스크롤(Remark·확정은 늘 보인다) - 목록이 늘 몇 줄은 보이고 확정은 화면 밖으로 나가지 않는다.
      패널이 아주 낮으면 몸통 전체가 스크롤된다(목록 최소 높이를 지키려고) */
   .assign-side-body { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; overflow-wrap: anywhere; overflow-y: auto; }
-  .assign-side-head { flex: none; display: grid; gap: 6px; padding: 12px var(--pad) 10px; border-bottom: 1px solid var(--line); }
+  /* 열은 minmax(0, 1fr) - 아랫줄(확정한 사람·시각)의 긴 글이 머리를 칸 밖으로 밀면 윗줄의 Unit 번호가 말줄임되지 않고 끝의 단추가 잘린다 */
+  .assign-side-head { flex: none; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 12px var(--pad) 10px; border-bottom: 1px solid var(--line); }
   .assign-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; min-width: 0; font-size: var(--fs-cap); line-height: var(--lh-cap); }
   .assign-meta-item { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; }
   .assign-pick { flex: 1 1 0; min-height: 132px; overflow-y: auto; overscroll-behavior: contain; }
@@ -1486,6 +1487,15 @@
   .assign-decide { flex: 0 1 auto; display: flex; flex-direction: column; gap: 10px; min-height: 0; max-height: 52%; padding: 0 var(--pad) 12px; border-top: 1px solid var(--line-2); background: var(--surface); box-shadow: 0 -8px 16px -12px color-mix(in oklab, var(--ink) 30%, transparent); }
   .assign-decide-body { flex: 0 1 auto; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 10px; min-height: 0; overflow-y: auto; margin-inline: calc(var(--pad) * -1); padding-inline: var(--pad); }
   .assign-decide-body > .assign-step { padding: 10px 0 0; }
+  /* 1번 다듬기 - 문장마다 한 줄: 언어, 글의 앞부분, 그 문장의 도구. 꺼진 단추는 흐리고 까닭은 툴팁으로 */
+  .shape-tools { display: grid; gap: 2px; padding: 0 var(--pad) 8px; border-bottom: 1px solid var(--line); }
+  .shape-line { display: flex; align-items: center; gap: 6px; min-height: 28px; min-width: 0; }
+  .shape-line .btn[aria-disabled="true"] { color: var(--ink-4); cursor: not-allowed; }
+  .shape-line .btn[aria-disabled="true"]:hover { background: none; }
+  .shape-line .btn[data-on] { background: var(--accent-tint); color: var(--accent); }
+  .shape-lang { flex: none; cursor: pointer; }
+  .shape-lang[aria-disabled="true"] { cursor: not-allowed; }
+  .shape-lang:not([aria-disabled="true"]):hover { box-shadow: 0 0 0 1px currentColor; }
   .assign-confirm { width: 100%; height: 40px; font-size: 14px; }
   .assign-alt { height: 30px; min-width: 0; gap: 4px; padding: 0 6px; font-size: var(--fs-cap); font-weight: 400; width: 100%; }
   .assign-alt > :not(svg, kbd) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }

@@ -13,7 +13,8 @@ import type { AssignMenuAction, AssignMenuGroups, AssignMenuItem } from "@/lib/a
 import { useI18n } from "@/lib/i18n";
 import { placeLinkMenu } from "@/lib/link-menu-place";
 
-const ICONS: Record<Exclude<AssignMenuAction, "lang">, LucideIcon> = {
+// 오른쪽 칸의 다듬기 줄(shape-tools)도 같은 아이콘·이름을 쓴다 - 같은 일은 어디서나 같은 모양으로
+export const ASSIGN_ACTION_ICONS: Record<Exclude<AssignMenuAction, "lang">, LucideIcon> = {
   confirm: Check,
   clear: Eraser,
   split: Scissors,
@@ -31,7 +32,7 @@ const ICONS: Record<Exclude<AssignMenuAction, "lang">, LucideIcon> = {
   table_layout: LayoutList,
 };
 
-const LABELS: Record<Exclude<AssignMenuAction, "lang">, string> = {
+export const ASSIGN_ACTION_LABELS: Record<Exclude<AssignMenuAction, "lang">, string> = {
   confirm: "classify.confirm",
   clear: "classify.clear",
   split: "split.cutHere",
@@ -90,8 +91,8 @@ export function AssignContextMenu({ anchor, cover, click, groups, destinationLab
         />
       );
     }
-    const Icon = ICONS[item.action];
-    const label = t(LABELS[item.action]);
+    const Icon = ASSIGN_ACTION_ICONS[item.action];
+    const label = t(ASSIGN_ACTION_LABELS[item.action]);
     const reason = item.reasonKey ? t(item.reasonKey) : null;
     const hint = item.action === "confirm" && item.enabled ? destinationLabel : "";
     return (

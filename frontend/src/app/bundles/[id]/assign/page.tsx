@@ -4,7 +4,7 @@
 // 보기는 둘이다 - 양 단(Old ‖ New)과 한 단(Old 문서 하나만 넓게, 설계 2026-11-15-assign-merge-documents-design.md §3.1). 한 단에서는 New 칸·세로선·연결선을 그리지 않는다.
 "use client";
 
-import { BookMarked, Check, Circle, CircleCheck, CircleDashed, CirclePause, Columns2, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, Redo2, RefreshCw, Scissors, Sparkles, Square, SquarePlus, Trash2, TriangleAlert, Undo2, WandSparkles, X, type LucideIcon } from "lucide-react";
+import { ArrowDown, ArrowUp, BookMarked, Check, Circle, CircleCheck, CircleDashed, CirclePause, Columns2, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, Redo2, RefreshCw, Scissors, Sparkles, Square, SquarePlus, Trash2, TriangleAlert, Undo2, WandSparkles, X, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { Fragment, useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
@@ -16,6 +16,7 @@ import { DestinationAccordion, type AccordionSection } from "@/components/assign
 import { DestinationTree, type DestinationManage } from "@/components/assign/destination-tree";
 import { MissingWarnings } from "@/components/assign/missing-warnings";
 import { RefCard } from "@/components/assign/ref-card";
+import { ShapeTools, type ShapeLine } from "@/components/assign/shape-tools";
 import { SplitSuggestionCard } from "@/components/assign/split-suggestion";
 import { SplitUnitActions } from "@/components/split/split-unit-actions";
 import { SplitWorkspace } from "@/components/split/split-workspace";
@@ -111,7 +112,7 @@ import {
   type LinkMenuItem,
   type Recommendation,
 } from "@/lib/assign-model";
-import { buildAssignMenu, planAssignJoin, type AssignMenuAction } from "@/lib/assign-context-menu-model";
+import { buildAssignMenu, planAssignJoin, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { describeDecisionStep, getAssignUndoKey, pickSaveOp } from "@/lib/decision-step-model";
@@ -705,18 +706,22 @@ export default function AssignPage() {
 
   const ctxTarget = ctxMenu ? (paperModel?.units.get(ctxMenu.unitId) ?? null) : null;
   // 우클릭한 것이 든 표(또는 행) 단위 - 칸 문장이면 묶인 표·행, 표·행을 직접 눌렀으면 그 단위
-  const ctxTable = (() => {
-    if (!ctxTarget || !paperModel) return null;
-    const holder = ctxTarget.kind === "table" || ctxTarget.kind === "table_row" ? ctxTarget : ctxTarget.group_unit_id !== null ? (paperModel.units.get(ctxTarget.group_unit_id) ?? null) : null;
+  /** 그 단위가 든 표(또는 행) 단위 - 칸 문장이면 묶인 표·행, 표·행이면 그 단위 */
+  function findTableOf(target: ViewUnit | null): ViewUnit | null {
+    if (!target || !paperModel) return null;
+    const holder = target.kind === "table" || target.kind === "table_row" ? target : target.group_unit_id !== null ? (paperModel.units.get(target.group_unit_id) ?? null) : null;
     return holder !== null && (holder.kind === "table" || holder.kind === "table_row") ? holder : null;
-  })();
-  const ctxGroups = (() => {
-    if (!ctxTarget || !paperTabs || !paperModel) return null;
+  }
+
+  /** 그 단위에 할 수 있는 일과 못 하는 까닭 - 우클릭 메뉴와 오른쪽 칸의 다듬기 줄이 같은 답을 쓴다 */
+  function buildUnitMenu(target: ViewUnit): AssignMenuGroups | null {
+    if (!paperTabs || !paperModel) return null;
     const order = paperTabs.order;
-    const at = order.indexOf(ctxTarget.id);
+    const at = order.indexOf(target.id);
     const neighbor = (step: number) => (at < 0 ? null : (paperModel.units.get(order[at + step]) ?? null));
+    const table = findTableOf(target);
     return buildAssignMenu({
-      target: ctxTarget,
+      target,
       prev: neighbor(-1),
       next: neighbor(1),
       readOnly: !canEdit,
@@ -725,11 +730,12 @@ export default function AssignPage() {
       isConfirmedAsIs: row?.status === "confirmed" && !hasDraftChange(draft),
       isDecided: isUnitDecided,
       hasDraft: hasUnitDraft,
-      canSplit: findNearestCut(ctxTarget, Math.floor(ctxTarget.text.length / 2)) !== null,
-      table: ctxTable,
-      tableRows: ctxTable?.kind === "table_row" ? [...paperModel.units.values()].filter((unit) => unit.kind === "table_row" && unit.table_id === ctxTable.table_id) : [],
+      canSplit: findNearestCut(target, Math.floor(target.text.length / 2)) !== null,
+      table,
+      tableRows: table?.kind === "table_row" ? [...paperModel.units.values()].filter((unit) => unit.kind === "table_row" && unit.table_id === table.table_id) : [],
     });
-  })();
+  }
+  const ctxGroups = ctxTarget ? buildUnitMenu(ctxTarget) : null;
   // 고른 줄의 문장에 걸린 AI 나누기 제안 - 저장 전 고름이 있으면 다른 문장 고치기처럼 적용을 잠근다(배정이 있으면 적용할 때 묻는다)
   const rowSplitUnit: ViewUnit | null = (row?.unitIds ?? []).map((id) => paperModel?.units.get(id)).find((unit): unit is ViewUnit => unit !== undefined && splitByUnit.has(unit.id)) ?? null;
   const rowSplit = rowSplitUnit ? (splitByUnit.get(rowSplitUnit.id) ?? null) : null;
@@ -740,6 +746,9 @@ export default function AssignPage() {
   // 저장 전 고름이 있어도 번호 확인은 된다 - 보낼 곳을 먼저 고른 사람이 확인 때문에 고름을 버리지 않게(단위가 바뀌지 않는 편집이다)
   const refBlocked = rowRefUnit !== null && isUnitDecided(rowRefUnit) ? t("assign.ctx.why.assigned") : null;
   const isRefGate = row !== null && row.status !== "confirmed" && rowViewUnits.some(isRefPending);
+  // 오른쪽 칸 1번(다듬기) - 고른 줄의 문장마다 할 수 있는 일. 우클릭 메뉴와 같은 답이다. 고칠 수 없는 사람에게는 줄을 보이지 않는다
+  const shapeLines: ShapeLine[] = canEdit && mode === "old" ? rowViewUnits.flatMap((unit) => { const menu = buildUnitMenu(unit); return menu ? [{ unit, items: menu.edit }] : []; }) : [];
+  const stepBase = shapeLines.length > 0 ? 1 : 0;
   const refPendingIds = (paperTabs?.order ?? []).filter((id) => isRefPending(paperModel?.units.get(id)) && rowOfUnit.has(id));
   // 그 줄의 번호에 대한 EQUIS 표시와 새 문장에 쓸 제안 - 참조 카드와 결정 칸의 새 문장이 같은 답을 쓴다. 조회가 도는 동안은 조금 뒤 다시 읽는다
   const rowRefMark = rowRefUnit?.ref ?? null;
@@ -902,10 +911,14 @@ export default function AssignPage() {
 
   function runCtx(action: AssignMenuAction, lang?: "ko" | "en") {
     const target = ctxTarget;
-    const table = ctxTable;
     const caret = ctxMenu?.caret ?? null;
     setCtxMenu(null);
-    if (!target) return;
+    if (target) runUnitAction(target, action, lang, caret);
+  }
+
+  /** 문장 하나에 대한 동작 - 우클릭 메뉴와 오른쪽 칸의 다듬기 줄이 함께 쓴다. caret은 누른 글자 자리(자를 선을 그 가까이에 놓는다) */
+  function runUnitAction(target: ViewUnit, action: AssignMenuAction, lang?: "ko" | "en", caret: { blockId: number; offset: number } | null = null) {
+    const table = findTableOf(target);
     if (action === "confirm") handlePrimary();
     else if (action === "clear") void runClear();
     else if (action === "ref_mark") setRefEntryId(target.id);
@@ -2148,6 +2161,19 @@ export default function AssignPage() {
             <span className="flex-none">
               <UnitStatusChip status={row.status} testId="assign-row-status" />
             </span>
+            {/* 앞·다음 줄 - 손이 오른쪽 칸에 있을 때 원문까지 가지 않고 넘긴다(글쇠 K·J와 같다) */}
+            <span className="flex flex-none gap-0.5">
+              <Tooltip label={t("assign.rowPrev")} align="end">
+                <button type="button" className="btn ghost icon h-6 w-6" aria-label={t("assign.rowPrev")} data-testid="assign-row-prev" onClick={() => moveRow(-1)}>
+                  <ArrowUp size={13} strokeWidth={1.6} aria-hidden />
+                </button>
+              </Tooltip>
+              <Tooltip label={t("assign.rowNext")} align="end">
+                <button type="button" className="btn ghost icon h-6 w-6" aria-label={t("assign.rowNext")} data-testid="assign-row-next" onClick={() => moveRow(1)}>
+                  <ArrowDown size={13} strokeWidth={1.6} aria-hidden />
+                </button>
+              </Tooltip>
+            </span>
             {(units.error ?? suggestions.error) !== null && (
               <button type="button" className="btn h-6 gap-1 px-1.5 text-xs font-normal text-st-hold" data-testid="assign-refresh-error" onClick={() => setUnitsKey((key) => key + 1)}>
                 <RefreshCw size={12} strokeWidth={1.5} aria-hidden />
@@ -2166,8 +2192,14 @@ export default function AssignPage() {
             </div>
           )}
         </div>
-        {/* ① 보낼 곳 - 패널에서 이곳만 스크롤된다. 바로 아래 결정 칸이 붙어 있어 고른 곳에서 확정까지 손이 짧다 */}
+        {/* ① 다듬기 → ② 보낼 곳 - 패널에서 이곳만 스크롤된다. 바로 아래 결정 칸(③)이 붙어 있어 고른 곳에서 확정까지 손이 짧다 */}
         <div className="assign-pick" data-testid="assign-pick" onClickCapture={handlePickClickCapture}>
+          {shapeLines.length > 0 && (
+            <>
+              {renderStep(1, t("assign.step.shape"))}
+              <ShapeTools lines={shapeLines} cutUnitId={cutLine.at !== null ? cutUnitId : null} busy={busy} onAction={(unit, action, lang) => runUnitAction(unit, action, lang)} />
+            </>
+          )}
           {rowRefUnit && oldView && (
             <RefCard
               key={`${rowRefUnit.id}:${rowRefUnit.ref?.state ?? "new"}:${rowRefUnit.ref?.number ?? ""}`}
@@ -2197,7 +2229,7 @@ export default function AssignPage() {
               onNext={selectNextSplit}
             />
           )}
-          {renderStep(1, t("assign.step.pick"))}
+          {renderStep(stepBase + 1, t("assign.step.pick"))}
           <DestinationAccordion sections={accSections} open={accOpen} onToggle={toggleAcc} />
           {/* 한 단에서는 New 칸이 없어 이미 쓴 문장을 직접 눌러 고르지 못한다 - 까닭과 양 단으로 넘어가는 길을 그 자리에(추천 카드로 잇는 것은 된다) */}
           {view.single && writtenDocs.length > 0 && (
@@ -2214,7 +2246,7 @@ export default function AssignPage() {
         {/* ② 결정 칸 - 패널 아래에 붙는다. 다른 길 셋 · 고른 곳(높이 상한 안에서 이 부분만 스크롤) · 대상 문서 · Remark · 맨 아래 확정 */}
         <div className="assign-decide" data-testid="assign-decide">
           <div className="assign-decide-body">
-            {renderStep(2, t("assign.step.decide"))}
+            {renderStep(stepBase + 2, t("assign.step.decide"))}
             {actions}
             {renderChosen()}
           </div>

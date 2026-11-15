@@ -2044,6 +2044,36 @@ await runStep("assign: AI split suggestions - ask for the whole document, apply 
   check("Undo takes the cut back", true);
 });
 
+// 오른쪽 칸의 세 걸음(v1.0.23) - 1 다듬기 · 2 보낼 곳 · 3 결정. 다듬기 줄의 단추는 우클릭 메뉴와 같은 일을 한다
+await runStep("assign: the inspector walks Shape, Where it goes, Decide", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  await page.goto(`${BASE}/bundles/${freshId}/assign`);
+  await wait(page, "assign-bar");
+  await page.keyboard.press("j");
+  await wait(page, "assign-shape");
+  const steps = await page.locator('[data-testid="assign-inspector"] .assign-step').allInnerTexts();
+  check("the inspector has three numbered steps", steps.length === 3 && steps[0].includes("SHAPE") && steps[2].includes("DECIDE"), steps.join(" | "));
+  const lines = page.locator('[data-testid^="assign-shape-line-"]');
+  check("every sentence of the row has its own tool line", (await lines.count()) >= 1);
+  // 다듬기 줄에서 자를 자리를 놓는다 - 우클릭 메뉴의 Split here와 같은 일
+  const split = page.locator('[data-testid^="assign-shape-split-"]:not([aria-disabled="true"])').first();
+  await split.click();
+  await wait(page, "assign-cut-run");
+  check("Split in the Shape line places the cut on the paper", (await split.getAttribute("data-on")) !== null);
+  await takeShot("sop-assign-shape.png");
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="assign-cut-run"]').waitFor({ state: "detached", timeout: T });
+  // 앞·다음 줄 단추
+  const rowBefore = (await getText(page, "assign-row-id")).trim();
+  await page.locator('[data-testid="assign-row-next"]').click();
+  await page.waitForFunction((before) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() !== before, rowBefore, { timeout: T });
+  await page.locator('[data-testid="assign-row-prev"]').click();
+  await page.waitForFunction((before) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() === before, rowBefore, { timeout: T });
+  check("the head's arrows move to the next row and back", true);
+});
+
 // 조각 사이의 붙이기 단추와 합친 문장 풀기(v1.0.22) - 전에는 원문 고치기 화면에만 있었다. 자른 두 조각을 틈의 단추로 붙이고, 붙인 문장을 조각 아래 단추로 다시 푼다
 await runStep("assign: join two pieces from the gap between them, then unmerge", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);
