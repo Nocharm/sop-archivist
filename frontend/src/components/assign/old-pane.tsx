@@ -13,7 +13,7 @@ import { Select, type SelectOption } from "@/components/ui/select";
 import type { ViewUnit } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import type { FoldOpen } from "@/lib/paper-fold-model";
-import type { PaperModel, PaperTabKey } from "@/lib/paper-model";
+import type { PaperItem, PaperModel, PaperSheet, PaperTabKey } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
 
 interface OldPaneProps {
@@ -22,6 +22,8 @@ interface OldPaneProps {
   onDocChange: (docId: string) => void;
   /** 고른 문서의 제목 - 좁으면 말줄임 */
   docTitle: string;
+  /** 문서 이름 옆의 꼬리표 - 한 단으로 연 New 문서면 그 이름 */
+  docTag: string;
   model: PaperModel | null;
   /** 필터 접기 - 없으면(All·출처 없는 New 모드) 용지 전부 */
   fold?: { matchIds: ReadonlySet<number>; open: FoldOpen; onOpenChange: (next: FoldOpen) => void };
@@ -33,6 +35,8 @@ interface OldPaneProps {
   selectedId: number | null;
   highlightIds: ReadonlySet<number>;
   pickedIds: ReadonlySet<number>;
+  /** 확인이 남은 누락 의심 경고가 걸린 문단 - 그 줄에 경고 표시가 붙는다 */
+  warnBlockIds: ReadonlySet<number>;
   statusOf: (unitId: number) => ViewUnit["status"] | undefined;
   renderNote: (unitIds: number[]) => ReactNode;
   /** 조각 오른쪽 칸 - 연결 배지 */
@@ -40,6 +44,8 @@ interface OldPaneProps {
   /** 내용이 있는 본문·머리말·꼬리말 탭 - 둘 이상일 때만 탭 줄을 그린다 */
   partKeys: readonly PaperTabKey[];
   activePart: PaperTabKey;
+  /** 머리말·꼬리말 탭의 쪽들(설명 줄과 함께 따로 그린다) - 본문 탭이면 null */
+  sheets: readonly PaperSheet[] | null;
   onPartChange: (key: PaperTabKey) => void;
   /** Shift는 일괄 고르기 */
   onUnitClick: (unitId: number, keys: { shiftKey: boolean }) => void;
@@ -68,6 +74,40 @@ interface OldPaneProps {
 export function OldPane(props: OldPaneProps) {
   const { t } = useI18n();
   const { model } = props;
+
+  /** 쪽의 설명 줄 - 쓰이는 구역(1구역 · 첫 쪽…), 구역 정보가 없는 옛 추출이나 각주는 "머리말 2"처럼 차례로 */
+  function describeSheet(sheet: PaperSheet, index: number): string {
+    if (sheet.refs.length === 0) return t("split.sheetOrdinal", { name: t(`split.part.${sheet.part}`), n: index + 1 });
+    return sheet.refs.map((ref) => t("split.sheetRef", { n: ref.section, type: t(`split.refType.${ref.type}`) })).join(", ");
+  }
+
+  function renderPaper(paperModel: PaperModel, items: PaperItem[] | undefined) {
+    return (
+      <Paper
+        model={paperModel}
+        items={items}
+        selectedId={props.selectedId}
+        highlightIds={props.highlightIds}
+        pickedIds={props.pickedIds}
+        warnBlockIds={props.warnBlockIds}
+        onUnitClick={(unitId, _at, event) => props.onUnitClick(unitId, { shiftKey: event.shiftKey })}
+        onUnitContextMenu={props.onUnitContextMenu}
+        onUnitDoubleClick={props.onUnitDoubleClick}
+        onRangeSelect={props.onRangeSelect}
+        shiftClickPicks
+        cut={props.cut}
+        onCutDrag={props.onCutDrag}
+        onCutNudge={props.onCutNudge}
+        renderAtCut={props.cut ? props.renderAtCut : undefined}
+        figureSource={props.figureSource}
+        contour
+        strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join }}
+        renderUnitActions={props.renderUnitActions}
+        testId="assign-paper"
+      />
+    );
+  }
+
   return (
     <section className="assign-pane" style={{ "--z": props.zoom }} data-pane="old" data-testid="assign-old">
       <div className="pane-head">
@@ -76,7 +116,7 @@ export function OldPane(props: OldPaneProps) {
         ) : (
           <span className="pane-title">{props.docOptions[0]?.label}</span>
         )}
-        <span className="tag">Old</span>
+        <span className="tag" data-testid="assign-old-tag">{props.docTag}</span>
         <span className="pane-sub">{props.docTitle}</span>
         <span className="flex-1" />
         <PaneZoom value={props.zoom} onStep={props.onZoom} testId="assign-old-zoom" />
@@ -107,27 +147,21 @@ export function OldPane(props: OldPaneProps) {
             }
           />
         ) : model ? (
-          <Paper
-            model={model}
-            items={props.partKeys.length > 1 ? model[props.activePart] : undefined}
-            selectedId={props.selectedId}
-            highlightIds={props.highlightIds}
-            pickedIds={props.pickedIds}
-            onUnitClick={(unitId, _at, event) => props.onUnitClick(unitId, { shiftKey: event.shiftKey })}
-            onUnitContextMenu={props.onUnitContextMenu}
-            onUnitDoubleClick={props.onUnitDoubleClick}
-            onRangeSelect={props.onRangeSelect}
-            shiftClickPicks
-            cut={props.cut}
-            onCutDrag={props.onCutDrag}
-            onCutNudge={props.onCutNudge}
-            renderAtCut={props.cut ? props.renderAtCut : undefined}
-            figureSource={props.figureSource}
-            contour
-            strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join }}
-            renderUnitActions={props.renderUnitActions}
-            testId="assign-paper"
-          />
+          props.sheets !== null ? (
+            // 머리말·꼬리말 탭 - 묶음(구역마다 다른 머리말…)마다 한 쪽이고 어디에 쓰이는지 설명 줄이 붙는다
+            <div className="grid w-full gap-[22px]">
+              {props.sheets.map((sheet, index) => (
+                <div key={sheet.key} className="sheet-set">
+                  <p className="sheet-cap" data-testid={`assign-sheet-cap-${sheet.key}`}>
+                    {describeSheet(sheet, index)}
+                  </p>
+                  {renderPaper(model, sheet.items)}
+                </div>
+              ))}
+            </div>
+          ) : (
+            renderPaper(model, props.partKeys.length > 1 ? model[props.activePart] : undefined)
+          )
         ) : (
           props.placeholder
         )}

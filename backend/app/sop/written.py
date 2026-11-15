@@ -64,6 +64,8 @@ class WrittenSentenceOut(BaseModel):
     # 같은 New 문서의 한/영 짝 상대가 만든 문장 — Old 짝 조각에 함께 붙이는 데 쓴다
     partner_target_id: int | None
     revision: int
+    # 이 문장이 온 새 문서 원문의 Unit — 화면이 이 문장을 원문 다듬기(자르기·합치기·짝)의 대상으로 고른다. 원문 없이 만든 문장은 null
+    new_unit_id: int | None = None
     # 참조 줄이면 가리키는 문서 — 출처가 참조 줄인 문장과, 출처 없이 이 문서에만 있는 참조 줄 둘 다. 아니면 null
     ref: WrittenRefOut | None = None
     # 참조 줄인데 이 문장의 번호나 이름이 EQUIS와 다르다 — 작은 주의. 참조 줄이 아니거나 견줄 값이 없으면 null
@@ -168,6 +170,7 @@ async def list_written_sentences(session: AsyncSession, bundle_id: int) -> list[
             source_unit_ids=sources.get(target.id, []),
             partner_target_id=partners.get(target.id),
             revision=target.revision,
+            new_unit_id=target.new_unit_id,
             ref=None if ref is None else WrittenRefOut(
                 number=ref.number, equis=build_equis_out(ref.number, "new", "", lookups, now)
             ),

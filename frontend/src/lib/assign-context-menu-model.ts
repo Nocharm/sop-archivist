@@ -2,7 +2,7 @@
 // 두 묶음이다: 배정(지금 고른 곳으로 확정·배정 취소)과 문장 고치기(여기서 나누기·앞뒤 문장과 합치기 또는 한/영 짝 맺기·짝 풀기·언어).
 // 고치기는 Split의 편집을 그대로 부르므로 판단이 없는 단위만 받는다 - 배정된 문장은 먼저 배정을 취소한다(서버도 판단이 걸린 단위는 확인을 요구한다).
 import type { CoverStatus, ViewUnit } from "./api-sop";
-import { planJoin, type JoinPlan } from "./split-menu-model";
+import { getPairMergeReason, hasBothScripts, planJoin, type JoinPlan } from "./split-menu-model";
 
 export type AssignMenuAction =
   | "confirm" | "clear"
@@ -150,4 +150,43 @@ export function planAssignJoin(first: ViewUnit | undefined, second: ViewUnit | u
   const plan = planJoin([first, second], true);
   if (plan.kind === "pair" && (state.isDecided(first) || state.isDecided(second))) return { kind: null, reasonKey: why("assigned") };
   return plan;
+}
+
+/** 떨어진 문장 짝 고르기에 그 문장을 넣을 수 없는 까닭의 문구 키 - 넣을 수 있으면 null. 언어 조합은 다 고른 뒤에 본다(getPairSetBlocker) */
+export function getPairPickBlocker(unit: ViewUnit, state: Pick<AssignMenuContext, "isDecided" | "hasDraft">): string | null {
+  if (!EDITABLE_KINDS.has(unit.kind)) return why("notText");
+  if (unit.lang !== "ko" && unit.lang !== "en") return "split.menu.why.noLanguage";
+  if (unit.pair_id !== null) return "split.menu.why.alreadyPaired";
+  if (state.isDecided(unit)) return why("neighborAssigned");
+  return state.hasDraft(unit) ? why("neighborUnsaved") : null;
+}
+
+/** 고른 문장들(처음 문장 포함)을 한 짝으로 맺을 수 없는 까닭의 문구 키 - 한글과 영어가 모두 있어야 한다 */
+export function getPairSetBlocker(units: ViewUnit[]): string | null {
+  const plan = planJoin(units, false);
+  if (plan.kind === "pair") return null;
+  // 같은 언어뿐이면 합치기 규칙의 까닭("이웃한 문장만") 대신 짝에 맞는 까닭을 말한다
+  return new Set(units.map((unit) => unit.lang)).size === 1 ? "assign.pairPickSameLang" : (plan.reasonKey ?? why("cannotMerge"));
+}
+
+export interface ShapeMode {
+  /** 고른 줄의 지금 모양 - 합친 한 문장 또는 한/영 짝 */
+  current: "one" | "pair";
+  /** 다른 모양으로 바꿀 수 없는 까닭의 문구 키 - 바꿀 수 있으면 null */
+  reasonKey: string | null;
+}
+
+/**
+ * 오른쪽 칸 다듬기의 `One sentence | KO/EN pair` - 고른 줄이 한/영 짝이면 한 문장으로 합칠 수 있고, 합친 한 문장이면 풀어서 짝으로 맺을 수 있다.
+ * 둘 다 아닌 줄(합친 적 없는 한 문장, 표)은 null - 전환을 보이지 않는다. 배정이 있어도 막지 않는다(합치기·풀기는 서버가 묻고 배정을 풀어 준다).
+ */
+export function planShapeMode(units: readonly ViewUnit[], order: readonly number[], hasDraft: (unit: ViewUnit) => boolean): ShapeMode | null {
+  const pairId = units[0]?.pair_id ?? null;
+  const isPair = units.length > 1 && pairId !== null && units.every((unit) => unit.pair_id === pairId);
+  if (!isPair && !(units.length === 1 && units[0].can_unmerge)) return null;
+  const current = isPair ? "pair" : "one";
+  if (units.some(hasDraft)) return { current, reasonKey: why("unsaved") };
+  if (isPair) return { current, reasonKey: getPairMergeReason([...units], order) };
+  // 풀어서 짝이 되려면 한글과 라틴 글자가 모두 있어야 한다
+  return { current, reasonKey: hasBothScripts(units[0].text) ? null : "split.menu.why.oneLanguage" };
 }

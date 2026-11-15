@@ -1,5 +1,6 @@
 // 오른쪽 칸 1번 "다듬기" - 고른 줄의 문장마다 한 줄: 언어, 글의 앞부분, 그 문장에 할 수 있는 일(자르기·앞뒤와 묶기·짝 풀기). 표·행이면 표 도구.
 // 할 수 있는 일과 못 하는 까닭은 우클릭 메뉴와 같은 답(lib/assign-context-menu-model buildAssignMenu)이고 아이콘·이름도 같다 - 꺼진 단추는 까닭을 툴팁으로 보인다.
+// 줄이 한/영 짝이거나 합친 한 문장이면 맨 아래에 둘 사이를 바꾸는 전환(One sentence | KO/EN pair)이 붙는다 - 언어 판정이 틀려 잘못 묶였을 때 고치는 길이다.
 // 보낼 곳(2번)을 고르기 전에 문장 모양부터 맞추는 자리다. 참조 줄 확인과 AI 나누기 제안은 이 줄 아래의 카드가 맡는다.
 "use client";
 
@@ -8,7 +9,7 @@ import { LangToken } from "@/components/paper/lang-token";
 import { Truncate } from "@/components/ui/motion";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { ViewUnit } from "@/lib/api-sop";
-import type { AssignMenuAction, AssignMenuItem } from "@/lib/assign-context-menu-model";
+import type { AssignMenuAction, AssignMenuItem, ShapeMode } from "@/lib/assign-context-menu-model";
 import { useI18n } from "@/lib/i18n";
 
 export interface ShapeLine {
@@ -23,12 +24,17 @@ interface ShapeToolsProps {
   cutUnitId: number | null;
   busy: boolean;
   onAction: (unit: ViewUnit, action: AssignMenuAction, lang?: "ko" | "en") => void;
+  /** 줄의 지금 모양(합친 한 문장·한/영 짝)과 바꿀 수 없는 까닭 - 둘 다 아닌 줄이면 null */
+  mode: ShapeMode | null;
+  onMode: (next: ShapeMode["current"]) => void;
 }
+
+const MODE_LABELS = { one: "split.join.one", pair: "split.join.pair" } as const;
 
 // 줄에 단추로 두는 일 - 참조 줄 표시는 아래 카드가, 확정·지우기는 3번이 맡는다
 const LINE_ACTIONS: ReadonlySet<AssignMenuAction> = new Set(["split", "merge_prev", "pair_prev", "merge_next", "pair_next", "pair_pick", "unpair", "table_rows", "table_layout", "table_merge"]);
 
-export function ShapeTools({ lines, cutUnitId, busy, onAction }: ShapeToolsProps) {
+export function ShapeTools({ lines, cutUnitId, busy, onAction, mode, onMode }: ShapeToolsProps) {
   const { t } = useI18n();
 
   function renderLang(unit: ViewUnit, item: AssignMenuItem | undefined) {
@@ -90,6 +96,29 @@ export function ShapeTools({ lines, cutUnitId, busy, onAction }: ShapeToolsProps
           </span>
         </div>
       ))}
+      {mode && (
+        <div className="shape-mode" role="group" aria-label={t("assign.shape.mode")} data-testid="assign-shape-mode">
+          {(["one", "pair"] as const).map((kind) => {
+            const isCurrent = mode.current === kind;
+            const reason = !isCurrent && mode.reasonKey ? t(mode.reasonKey) : null;
+            const isOff = !isCurrent && (reason !== null || busy);
+            return (
+              <Tooltip key={kind} label={reason ?? ""} suppressed={reason === null} align="start">
+                <button
+                  type="button"
+                  aria-pressed={isCurrent}
+                  // disabled 대신 aria-disabled - 누른 단추가 꺼지면 포커스가 문서로 떨어지고, 꺼진 까닭도 보여야 한다
+                  aria-disabled={isOff ? "true" : undefined}
+                  data-testid={`assign-shape-mode-${kind}`}
+                  onClick={() => !isCurrent && !isOff && onMode(kind)}
+                >
+                  {t(MODE_LABELS[kind])}
+                </button>
+              </Tooltip>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

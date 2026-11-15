@@ -8,7 +8,6 @@
 "use client";
 
 import { ChevronDown, ChevronUp, FilePlus2, Scissors, Spline } from "lucide-react";
-import Link from "next/link";
 import { Fragment, useEffect, useRef, useState, type FocusEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { PaneZoom } from "@/components/assign/pane-zoom";
@@ -42,6 +41,8 @@ interface NewPaneProps {
   pickedIds: ReadonlySet<number>;
   /** 출처 없는 New 모드에서 고른 문장 */
   focusId: number | null;
+  /** 양 단에서 다듬으려고 고른 문장 */
+  shapeId?: number | null;
   sourceLabel: (unitId: number) => string;
   /** 줄을 누름 - anchor는 그 줄(그 자리 메뉴가 붙는다) */
   onPick: (targetId: number, additive: boolean, anchor: HTMLElement, event: MouseEvent) => void;
@@ -53,7 +54,13 @@ interface NewPaneProps {
   zoom: number;
   onZoom: (dir: "+" | "-") => void;
   /** 이미 쓴 문서의 원문 고치기 주소 - 엮은 문서나 읽기 전용이면 없다 */
-  editOriginalHref?: string;
+  /** 이 문서의 원문을 한 단으로 열어 다듬는다 - 이미 쓴 문서에만 있다 */
+  onEditOriginal?: () => void;
+  /** 줄을 우클릭 - 그 문장의 고치기 메뉴를 연다(이미 쓴 문서에서 고칠 수 있는 사람만) */
+  onShape?: (targetId: number, click: { x: number; y: number }) => void;
+  /** 그 자리에서 나눌 선 - 그 줄의 글 안 at 자리에 선을 긋고 바로 아래에 cutPop(나누기·취소)을 둔다 */
+  cut?: { targetId: number; at: number } | null;
+  cutPop?: ReactNode;
   /** 두 문서 사이 연결선 켜기·끄기 */
   linesOn: boolean;
   onToggleLines: () => void;
@@ -61,6 +68,7 @@ interface NewPaneProps {
 
 function readState(row: WrittenSentence, props: NewPaneProps): string | undefined {
   if (row.target_id === props.focusId) return "focus";
+  if (row.target_id === props.shapeId) return "shape";
   if (props.pickedIds.has(row.target_id)) return "picked";
   if (props.candidateIds.has(row.target_id)) return "candidate";
   if (!props.readOnly && row.kind === "sentence" && row.source_unit_ids.length === 0 && row.change_type !== "new") return "unsourced";
@@ -234,9 +242,18 @@ export function NewPane(props: NewPaneProps) {
     // 엮은 문서는 줄마다 결과물 C의 자기 번호(생략·주석은 없음). 이미 쓴 문서는 절을 여는 줄에만 절 번호 - 짝 카드의 둘째 줄부터가 절을 열면 앞머리에 번호가 없다
     const isOwnNumber = isComposedRow(row);
     const number = isOwnNumber ? row.number : isSectionStart && !cardTops.has(row.target_id) ? getSectionPill(readSectionNumber(row.section_path)) : null;
+    const cutAt = props.cut && props.cut.targetId === row.target_id ? props.cut.at : null;
     const text = (
       <span lang={row.lang === "neutral" ? undefined : row.lang} className="new-text">
-        {row.text}
+        {cutAt === null ? (
+          row.text
+        ) : (
+          <>
+            {row.text.slice(0, cutAt)}
+            <span className="new-cut" aria-hidden data-testid={`assign-new-cut-${row.target_id}`} />
+            {row.text.slice(cutAt)}
+          </>
+        )}
       </span>
     );
     return (
@@ -252,6 +269,14 @@ export function NewPane(props: NewPaneProps) {
             data-target={row.target_id}
             data-pair-group={readPairGroup(row) ?? undefined}
             data-testid={`assign-new-${row.target_id}`}
+            onContextMenu={
+              props.onShape && isWrittenRow(row)
+                ? (event) => {
+                    event.preventDefault();
+                    props.onShape?.(row.target_id, { x: event.clientX, y: event.clientY });
+                  }
+                : undefined
+            }
           >
             {(row.source_unit_ids.length > 0 || row.change_type === "new" || readWrittenRefMark(row) !== null) && renderSources(row)}
             {props.readOnly ? (
@@ -271,6 +296,7 @@ export function NewPane(props: NewPaneProps) {
               </button>
             )}
             <LangToken lang={row.lang} className="strip-lang" testId={`assign-new-lang-${row.target_id}`} />
+            {cutAt !== null && <div className="new-cut-pop">{props.cutPop}</div>}
           </div>
         </div>
       </>
@@ -334,11 +360,11 @@ export function NewPane(props: NewPaneProps) {
           {props.tag}
         </span>
         <span className="flex-1" />
-        {props.editOriginalHref && (
+        {props.onEditOriginal && (
           <Tooltip label={t("assign.openSplitTip")}>
-            <Link href={props.editOriginalHref} className="pane-toggle" aria-label={t("assign.openSplit")} data-testid="assign-new-edit-original">
+            <button type="button" className="pane-toggle" aria-label={t("assign.openSplit")} data-testid="assign-new-edit-original" onClick={props.onEditOriginal}>
               <Scissors size={14} strokeWidth={1.5} aria-hidden />
-            </Link>
+            </button>
           </Tooltip>
         )}
         <Tooltip label={props.linesOn ? t("assign.linesOn") : t("assign.linesOff")}>

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ViewUnit } from "./api-sop";
-import { buildSplitMenu, getAiSplitReason, getPairMergeReason, hasBothScripts, pickEnglishSide, planJoin, type SplitMenuAction, type SplitMenuContext } from "./split-menu-model";
+import { buildSplitMenu, getAiSplitReason, getPairMergeReason, hasBothScripts, pickEnglishSide, planJoin, planPairLanguages, type SplitMenuAction, type SplitMenuContext } from "./split-menu-model";
 
 function makeUnit(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
   return {
@@ -74,6 +74,18 @@ describe("pickEnglishSide", () => {
     expect(pickEnglishSide([{ id: 1, text: "로터를 닦는다" }, { id: 2, text: "Wipe the rotor 로터" }])).toBe(2));
   it("returns null when no unit has Latin letters", () =>
     expect(pickEnglishSide([{ id: 1, text: "가" }, { id: 2, text: "나" }])).toBeNull());
+});
+describe("planPairLanguages (languages to fix before pairing what an unmerge restored)", () => {
+  it("changes nothing when the two already read as KO and EN", () =>
+    expect(planPairLanguages([makeUnit(1, { lang: "ko" }), makeUnit(2, { lang: "en" })])).toEqual([]));
+  it("makes the most Latin side EN and the rest KO when both were read as one language", () => {
+    const units = [makeUnit(1, { lang: "ko", text: "로터를 닦는다" }), makeUnit(2, { lang: "ko", text: "Wipe the rotor" })];
+    expect(planPairLanguages(units)).toEqual([{ lang: "en", unitIds: [2] }]);
+    const neutral = [makeUnit(1, { lang: "neutral", text: "로터를 닦는다" }), makeUnit(2, { lang: "neutral", text: "Wipe the rotor" })];
+    expect(planPairLanguages(neutral)).toEqual([{ lang: "en", unitIds: [2] }, { lang: "ko", unitIds: [1] }]);
+  });
+  it("cannot decide without any Latin letters", () =>
+    expect(planPairLanguages([makeUnit(1, { text: "가" }), makeUnit(2, { text: "나" })])).toBeNull());
 });
 it("hasBothScripts", () => {
   expect(hasBothScripts("로터 rotor")).toBe(true);

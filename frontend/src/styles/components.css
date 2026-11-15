@@ -1449,6 +1449,14 @@
   /* 출처 없음 - 상자 왼쪽 바깥의 따로 선 세로 막대(3px, 상자와 2px 틈, 모서리 거의 직각). 상자는 제 테두리·둥글기 그대로 - 테두리를 칠하면 오류 상자처럼 읽힌다.
      앞머리 틈(STRIP_LEAD_EXTRA 5px) 안이라 번호와 겹치지 않고, 출처가 없으니 연결선이 이 자리에 닿지 않는다 */
   .pg[data-strips] .new-line[data-state="unsourced"]::before { content: ""; position: absolute; top: -1px; bottom: -1px; left: -5px; width: 3px; border-radius: 1px; background: var(--danger-fill); pointer-events: none; }
+  /* 양 단에서 다듬으려고 고른 New 문장 - Old 용지의 고른 문장과 같은 강조색 테두리 */
+  .pg[data-strips] .new-line[data-state="shape"] { box-shadow: var(--shadow-1), inset 0 0 0 1.5px var(--accent); }
+  /* 그 줄의 글 안에 놓인 나눌 선과 바로 아래의 나누기·취소 - 용지의 선과 같은 모양(끌지는 못하고 ←→로 옮긴다) */
+  .new-cut { position: relative; display: inline-block; width: 0; height: 1.2em; margin-inline: 1px; border-left: 2px solid var(--ink); vertical-align: text-bottom; }
+  .new-cut::before { content: ""; position: absolute; left: -5px; top: -5px; width: 8px; height: 8px; border-radius: 50%; background: var(--ink); }
+  .new-cut-pop { display: flex; padding-top: 6px; }
+  .new-cut-pop .cut-pop { position: static; translate: none; animation: none; }
+  .new-cut-pop .cut-pop::before { display: none; }
   .pg[data-strips] .new-line[data-state="focus"] { background: var(--danger-tint); box-shadow: var(--shadow-1), inset 0 0 0 1.5px var(--danger-ink); }
   .new-src { display: inline-block; padding: 0 4px; border-radius: var(--r-1); font: 600 10px / 16px var(--font-mono); white-space: nowrap; background: var(--st-ok-tint); color: var(--st-ok-ink); }
   button.new-src { cursor: pointer; box-shadow: inset 0 0 0 1px transparent; }
@@ -1496,6 +1504,12 @@
   .shape-lang { flex: none; cursor: pointer; }
   .shape-lang[aria-disabled="true"] { cursor: not-allowed; }
   .shape-lang:not([aria-disabled="true"]):hover { box-shadow: 0 0 0 1px currentColor; }
+  /* 한 문장 ↔ 한/영 짝 - 눌린 쪽이 지금 모양 */
+  .shape-mode { display: inline-flex; justify-self: start; gap: 2px; margin-top: 4px; padding: 2px; border-radius: var(--r-2); background: var(--sunken); }
+  .shape-mode button { height: 22px; padding: 0 8px; border-radius: var(--r-1); font-size: var(--fs-cap); color: var(--ink-3); cursor: pointer; transition: background var(--dur-fast), color var(--dur-fast); }
+  .shape-mode button:not([aria-disabled="true"], [aria-pressed="true"]):hover { background: var(--menu-hover); color: var(--ink); }
+  .shape-mode button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--line-2); cursor: default; }
+  .shape-mode button[aria-disabled="true"] { color: var(--ink-4); cursor: not-allowed; }
   .assign-confirm { width: 100%; height: 40px; font-size: 14px; }
   .assign-alt { height: 30px; min-width: 0; gap: 4px; padding: 0 6px; font-size: var(--fs-cap); font-weight: 400; width: 100%; }
   .assign-alt > :not(svg, kbd) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
