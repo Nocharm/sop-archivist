@@ -1128,6 +1128,61 @@ def test_auto_plan_does_not_requeue_cancelled_refine(
     assert read_decision(unit_id).suggestion_id == suggestion_id
 
 
+def clear_by_hand(client: TestClient, bundle_id: int, unit_id: int) -> None:
+    """계획이 쓴 묶음을 사람이 Clear로 지운다 — 제안의 채택은 버림, 판단은 미배정, 새 문장은 출처 없이 돌아간다."""
+    revision = get_group_by_unit(client, bundle_id, unit_id)["units"][0]["decision"]["revision"]
+    response = client.post(
+        f"/api/bundles/{bundle_id}/decisions/clear", json={"unit_id": unit_id, "revision": revision}, headers=AUTHOR,
+    )
+    assert response.status_code == 200, response.text
+
+
+def make_cleared_group(client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch) -> tuple[int, int, int]:
+    """Match로 쓴 문장 묶음을 사람이 지운 묶음 — (묶음 id, 단위 id, 지운 제안 id). 다듬기는 취소해 두어 다음 계획을 막지 않는다."""
+    bundle = make_match_bundle(client, p(OLD_1), p(NEW_1))
+    use_vectors(monkeypatch, fake_ai, {OLD_1: 0, NEW_1: 0})
+    (unit_id,) = read_old_ids(client, bundle, OLD_1)
+    plan(client, bundle.id)
+    cancel_jobs(client, bundle.id)
+    suggestion_id = read_decision(unit_id).suggestion_id
+    clear_by_hand(client, bundle.id, unit_id)
+    assert next(row for row in read_rows(AiSuggestion) if row.id == suggestion_id).adoption == "rejected"
+    return bundle.id, unit_id, suggestion_id
+
+
+@pytest.mark.parametrize("origin", ["upload", "prepare"])
+def test_auto_plan_does_not_resuggest_a_cleared_group(
+    client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch, origin: str
+) -> None:
+    bundle_id, unit_id, _ = make_cleared_group(client, fake_ai, monkeypatch)
+    suggestions_before = len(read_rows(AiSuggestion))
+    queue_plan(bundle_id, {"origin": origin})
+
+    run_plan()
+
+    assert read_jobs("match_plan")[-1].status == "done"
+    assert_untouched(read_decision(unit_id))
+    target = read_target(NEW_1)
+    assert (target.status, target.suggestion_id) == ("unassigned", None)
+    assert read_links() == set()
+    assert len(read_rows(AiSuggestion)) == suggestions_before
+    assert [job.status for job in read_jobs("match")] == ["cancelled"]  # 다듬기를 새로 쌓지 않았다
+
+
+def test_user_plan_resuggests_a_cleared_group(
+    client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle_id, unit_id, cleared = make_cleared_group(client, fake_ai, monkeypatch)
+
+    plan(client, bundle_id)  # Match를 누르는 것이 다시 청하는 길이다
+
+    decision, target = read_decision(unit_id), read_target(NEW_1)
+    assert (decision.status, decision.disposition) == ("ai_suggested", "assigned")
+    assert decision.suggestion_id not in (None, cleared) and target.suggestion_id == decision.suggestion_id
+    assert read_links() == {(target.id, unit_id)}
+    assert [job.status for job in read_jobs("match")] == ["cancelled", "queued"]
+
+
 def test_upload_plan_keeps_existing_delete_candidates(client: TestClient, fake_ai: FakeAi) -> None:
     """업로드 계획은 새 삭제 후보를 쓰지 않을 뿐이다 — 지금 규칙으로도 삭제 후보인 살아 있는 제안은 걷지 않는다."""
     bundle = make_match_bundle(client, p(LONE_OLD) + p(OLD_2), p(LONE_NEW))

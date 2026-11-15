@@ -685,6 +685,38 @@ def _find_live_suggestion(
     return suggestion
 
 
+_GroupKey = tuple[str, frozenset[int], frozenset[int]]  # (모양, 단위, 새 문장) — 다시 세운 계획이 "같은 묶음"을 가리는 열쇠
+
+
+def _get_write_key(write: _Write) -> _GroupKey:
+    return write.shape, frozenset(write.unit_ids), frozenset(item.target.id for item in write.targets)
+
+
+def _get_suggestion_key(suggestion: AiSuggestion) -> _GroupKey:
+    content = suggestion.content
+    return content["shape"], frozenset(content["unit_ids"]), frozenset(content["target_ids"])
+
+
+def _find_kept_suggestion(
+    write: _Write, decisions: Mapping[int, UnitDecision], live: Mapping[int, AiSuggestion]
+) -> AiSuggestion | None:
+    """다시 세운 계획이 그대로 둘 살아 있는 제안 — 구성원이 모두 그것을 가리키고 열쇠가 같을 때만."""
+    suggestion = _find_live_suggestion(write.unit_ids, (item.target for item in write.targets), decisions, live)
+    if suggestion is None or _get_suggestion_key(suggestion) != _get_write_key(write):
+        return None
+    return suggestion
+
+
+async def _load_rejected_keys(session: AsyncSession, bundle_id: int) -> set[_GroupKey]:
+    """사람이 버린(Clear 등, 채택 rejected) 짝 맞추기 제안의 열쇠 — 저절로 선 계획은 이 묶음을 다시 쓰지 않는다(설계 §4)."""
+    rows = await session.execute(
+        select(AiSuggestion).where(
+            AiSuggestion.bundle_id == bundle_id, AiSuggestion.kind == MATCH_KIND, AiSuggestion.adoption == "rejected"
+        )
+    )
+    return {_get_suggestion_key(suggestion) for (suggestion,) in rows}
+
+
 class _ActiveRefine(NamedTuple):
     job_id: int
     unit_ids: frozenset[int]
@@ -793,19 +825,21 @@ class MatchPlanHandler:
         live = await _load_live_suggestions(
             session, [*decisions.values(), *(item.target for write in writes for item in write.targets)]
         )
-        kept: dict[int, AiSuggestion] = {}  # writes 안 자리 → 그대로 둔 제안
-        for index, write in enumerate(writes):
-            suggestion = _find_live_suggestion(write.unit_ids, (item.target for item in write.targets), decisions, live)
-            if suggestion is not None and suggestion.content["shape"] == write.shape:
-                kept[index] = suggestion
+        judged = [(write, _find_kept_suggestion(write, decisions, live)) for write in writes]  # 쓸 것과 그대로 둔 제안
         origin = job.payload.get("origin", PLAN_ORIGIN_USER)
+        left: list[_Write] = []  # 걷지도 쓰지도 않는다
+        if origin != PLAN_ORIGIN_USER:  # 저절로 선 계획은 사람이 지운 묶음을 다시 제안하지 않는다 — Match를 누르면 다시 낸다
+            rejected = await _load_rejected_keys(session, job.bundle_id)
+            left = [write for write, kept in judged if kept is None and _get_write_key(write) in rejected]
+            judged = [(write, kept) for write, kept in judged if kept is not None or _get_write_key(write) not in rejected]
         # 업로드 계획은 새 삭제 후보만 쓰지 않는다 — 지금 규칙으로도 삭제 후보인 살아 있는 제안은 위에서 그대로 두었다(§4)
         changed = [
-            write for index, write in enumerate(writes)
-            if index not in kept and not (origin == PLAN_ORIGIN_UPLOAD and write.shape == _DELETE_CANDIDATE)
+            write for write, kept in judged
+            if kept is None and not (origin == PLAN_ORIGIN_UPLOAD and write.shape == _DELETE_CANDIDATE)
         ]
-        kept_units = {unit_id for index in kept for unit_id in writes[index].unit_ids}
-        kept_targets = {item.target.id for index in kept for item in writes[index].targets}
+        untouched = [*(write for write, kept in judged if kept is not None), *left]
+        kept_units = {unit_id for write in untouched for unit_id in write.unit_ids}
+        kept_targets = {item.target.id for write in untouched for item in write.targets}
         cleared = [decision for unit_id, decision in decisions.items() if unit_id not in kept_units]
         cleared_targets = [target for target_id, target in targets.items() if target_id not in kept_targets]
 
@@ -832,8 +866,8 @@ class MatchPlanHandler:
                     document_id=write.entry.document_id, unit_ids=write.unit_ids,
                     target_ids=[item.target.id for item in write.targets], payload={"retrieval": retrieval},
                 )
-                for index, write in enumerate(sentences)  # sentences는 writes의 앞자리다
-                if _should_refine(write, kept.get(index), origin, refines)
+                for write, kept in judged  # 잠정인 것은 문장 묶음뿐이라 표·그림·신규·삭제 후보에는 쌓이지 않는다
+                if _should_refine(write, kept, origin, refines)
             ],
         )
         suggestions = [_add_suggestion(session, job, write, retrieval) for write in changed]
