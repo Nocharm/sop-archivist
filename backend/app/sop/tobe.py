@@ -547,6 +547,22 @@ async def remove_wi_step(
 # --- 입구 2(match) 새 문서 — 올린 새 문서(side=new)가 목록에 들어오고 나가는 길 ---
 
 
+async def find_attachable_doc(session: AsyncSession, bundle_id: int, code: str) -> TargetDoc | None:
+    """올린 새 문서를 붙일 목록 줄 — 번호가 같고, 배정으로 엮는 줄(assign)이며, 문장이 하나도 없는 줄. 없으면 None.
+
+    번호가 같은 줄에 문장이 이미 있으면 409 doc_in_use(붙이면 그 문장들의 자리가 없어진다 — 먼저 배정을 지우거나 다른
+    번호로 올린다). 이미 파일이 붙은 줄(match)은 None을 돌려줘 호출부의 번호 검사가 409 duplicate_code로 거절한다.
+    """
+    if not code:
+        return None
+    doc = await session.scalar(select(TargetDoc).where(TargetDoc.bundle_id == bundle_id, TargetDoc.code == code))
+    if doc is None or doc.entrance != "assign":
+        return None
+    if await count_targets_in(session, [doc.id]):
+        raise_rule(409, "doc_in_use", doc_code=code)
+    return doc
+
+
 async def check_match_doc(
     session: AsyncSession, bundle_id: int, *, code: str, doc_type: str | None, parent_code: str | None
 ) -> int | None:
@@ -613,13 +629,20 @@ async def rename_match_doc(session: AsyncSession, bundle: Bundle, target_doc_id:
     bundle.revision += 1
 
 
-async def remove_match_doc(session: AsyncSession, bundle: Bundle, target_doc_id: int) -> None:
-    """올린 새 문서를 지울 때 그 목록 줄도 지운다. 새 문장이 있으면 409 doc_has_targets, 이 줄을 부모로 둔 WI가 있으면
-    409 doc_has_children(목록 쓰기에서 부모를 빼면 invalid_parent인 것과 같은 이유). 묶음 revision을 올린다.
+async def release_match_doc(session: AsyncSession, bundle: Bundle, target_doc_id: int, *, document_id: int) -> None:
+    """올린 새 문서의 파일을 지울 때 — 목록 줄은 남기고 배정으로 엮는 줄(assign)로 돌린다. 묶음 revision을 올린다.
+
+    줄과 파일은 화면에서 한 줄이다: 파일만 지웠는데 줄(종류·상위 SOP·N/A·단계)까지 사라지면 안 된다. 줄 지우기는 목록의
+    지우기가 한다. 번호가 없어 임시 번호(NEW-<문서 id>)로 생긴 줄만은 파일과 함께 지운다 — 그 줄은 파일이 전부다.
+    새 문장이 남아 있으면 409 doc_has_targets(이 문서 단위에서 온 새 문장은 호출부가 먼저 떼어 낸다).
     """
     doc = await session.get_one(TargetDoc, target_doc_id)  # 문서의 FK가 가리키므로 늘 있다
     if await count_targets_in(session, [doc.id]):
         raise_rule(409, "doc_has_targets", codes=[doc.code])
+    if doc.code != temp_match_code(document_id):
+        doc.entrance = "assign"
+        bundle.revision += 1
+        return
     children = list(
         await session.scalars(select(TargetDoc.code).where(TargetDoc.parent_id == doc.id).order_by(TargetDoc.code))
     )
