@@ -1236,7 +1236,12 @@ export default function AssignPage() {
   /** reasonOverride는 Remark 창에서 방금 확인한 사유 - 초안 상태가 아직 반영되기 전이라 직접 넘긴다 */
   async function runSave(action: "confirm" | "hold", reasonOverride?: string) {
     // 보낼 곳 없이는 보류만 된다(처분 unassigned + hold, 사유는 hold_reason)
-    if (!row || busy || groupPending || pickedGroups.isLoading || (!destination && action !== "hold")) return;
+    if (!row || busy || (!destination && action !== "hold")) return;
+    if (isRowLoading) {
+      // 줄의 정보를 받는 중이다 - 누른 것을 버리지 않고, 다 받으면 한다(전에는 단추가 켜져 보이는데 눌러도 아무 일이 없었다)
+      queuedSaveRef.current = { key: row.key, action, reason: reasonOverride };
+      return;
+    }
     if (action === "confirm" && isRefGate) {
       // 참조 줄 제안이 남았다 - 결정 전에 번호만 확인한다(오른쪽 칸 맨 위 카드). ↵·메뉴·사유 창 뒤 확정이 모두 여기를 지난다
       showToast(t("assign.ref.checkFirst"), "error");
@@ -1283,6 +1288,19 @@ export default function AssignPage() {
       setBusy(false);
     }
   }
+
+  // 줄의 정보를 받는 사이에 누른 확정·보류 - 다 받은 뒤 그 줄을 그대로 고르고 있을 때만 한다(그 사이 다른 줄로 갔으면 버린다)
+  const queuedSaveRef = useRef<{ key: string; action: "confirm" | "hold"; reason?: string } | null>(null);
+  const isRowLoading = groupPending || pickedGroups.isLoading;
+  const runQueuedSave = useEffectEvent(() => {
+    const queued = queuedSaveRef.current;
+    queuedSaveRef.current = null;
+    if (queued && row?.key === queued.key) void runSave(queued.action, queued.reason);
+  });
+  const queuedRowKey = row?.key ?? null;
+  useEffect(() => {
+    if (!isRowLoading) runQueuedSave();
+  }, [isRowLoading, queuedRowKey]);
 
   /**
    * 확정한 곳을 오른쪽 칸에 바로 보인다 - 그 문서로 옮기고(다음 줄에서도, 손으로 고른 문서가 없을 때), 엮은 문서면 저장 응답으로 칸에 미리 넣는다.
