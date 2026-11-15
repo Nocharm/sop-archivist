@@ -2637,6 +2637,43 @@ await runStep("new bundle in one click, locked stages, empty assign", { devUser:
   check("empty state instead of an endless skeleton", true);
 });
 
+// 목록 둘(v1.0.32) - 위는 Old 문서, 아래는 New 문서. 이미 쓴 New 문서의 파일은 따로 줄을 차지하지 않고 New 목록의 그 줄에 붙어 보인다
+await runStep("documents: an Old list and a New list, with written files on their rows", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${freshId}/documents`, { headers })).json();
+  const tobe = await (await page.request.get(`${BASE}/api/bundles/${freshId}/tobe`, { headers })).json();
+  await page.goto(`${BASE}/bundles/${freshId}/documents`);
+  await wait(page, "tobe-list");
+  await page.locator('[data-testid$="-row"][data-testid^="documents-"]').first().waitFor({ timeout: T });
+  check("the two lists are named Old documents and New documents", (await getText(page, "documents-old-title")) === "Old documents" && (await page.locator('[data-testid="tobe-section"] h2').innerText()) === "New documents");
+  const oldRows = await page.locator('[data-testid="documents-list"] [data-testid$="-row"]').count();
+  check("the top list holds the Old documents only", oldRows === docs.filter((doc) => doc.side === "old").length, String(oldRows));
+  check("the table and card switch and the jump button are gone", (await page.locator('[data-testid="documents-view"], [data-testid="documents-jump-tobe"]').count()) === 0);
+  const written = tobe.docs.find((doc) => doc.document_id !== null);
+  const file = docs.find((doc) => doc.id === written.document_id);
+  const cell = page.locator('[data-testid="tobe-list"] [data-testid$="-written"]:not([data-testid$="-not-written"])').first();
+  check("a written file shows on its New row", (await cell.innerText()).includes(file.file_name.slice(0, 12)));
+  check("rows without a file say so", (await page.locator('[data-testid$="-not-written"]').count()) === tobe.docs.filter((doc) => doc.document_id === null).length);
+  await takeShot("sop-documents-two-lists.png");
+  await cell.locator('[data-testid$="-written-preview"]').click();
+  await wait(page, "documents-preview-split");
+  check("the file's preview opens from the row", true);
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="documents-preview-split"]').waitFor({ state: "detached", timeout: T });
+  // Excel 템플릿·가져오기는 메뉴에 있다
+  await page.locator('[data-testid="tobe-more"]').click();
+  await wait(page, "tobe-more-menu");
+  check("the Excel template and import sit in the menu", (await page.locator('[data-testid="tobe-template"]').count()) === 1 && (await page.locator('[data-testid="tobe-import"]').count()) === 1);
+  await page.keyboard.press("Escape");
+  // 줄을 펼치면 그 파일의 버전과 언어 배치가 있다
+  await cell.locator("xpath=ancestor::tr").locator('[data-testid$="-toggle"]').click();
+  await page.locator('[data-testid$="-written-detail"]').first().waitFor({ timeout: T });
+  check("opening the row shows the file's version and language layout", (await page.locator('[data-testid$="-written-version"]').count()) === 1 && (await page.locator('[data-testid$="-written-layout"]').count()) === 1);
+});
+
 // 올리는 창구 하나(v1.0.31) - Old와 New 파일을 한 창에서 올린다. 앱이 파일 이름의 번호로 쪽을 먼저 고르고, New 파일은 번호가 같은 빈 줄에 붙는다.
 // 묶음을 만들 권한이 있는 사람으로 새 묶음에서 하고, 끝에 그 묶음을 지운다(저장소의 합성 샘플 파일을 쓴다)
 await runStep("documents: one upload window takes Old and New files", { devUser: "dev.admin" }, async ({ page, takeShot }) => {

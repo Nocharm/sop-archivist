@@ -1,7 +1,7 @@
 // 문서 - Bundle에 올린 Old SOP와 New 문서. 번호·버전·제목은 칸에서 바로 고치고(제목을 누르면 그 문서의 Split), 언어 배치를 고르고, 추출 상태와 경고를 본다.
 "use client";
 
-import { ArrowDown, Download, Eye, FileText, Loader2, Trash2, Upload } from "lucide-react";
+import { Download, Eye, FileText, Loader2, Trash2, Upload } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useState, type DragEvent } from "react";
 
@@ -17,7 +17,7 @@ import { TitleLock } from "@/components/equis/title-lock";
 import { InlineText } from "@/components/inline-text";
 import { ReadOnlyNote } from "@/components/read-only-note";
 import { ToBeSection } from "@/components/tobe/tobe-section";
-import { DataList, ListViewToggle, type DataColumn } from "@/components/ui/data-list";
+import { DataList, type DataColumn } from "@/components/ui/data-list";
 import { EmptyState } from "@/components/ui/empty-state";
 import { BundleLoadError } from "@/components/bundle-load-error";
 import { Truncate } from "@/components/ui/motion";
@@ -33,18 +33,16 @@ import { LANGUAGE_LAYOUTS, listDocuments, refreshEquis, updateDocument, type Doc
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { hasRefreshingEquis } from "@/lib/equis-model";
 import { useI18n } from "@/lib/i18n";
-import { getEditOriginalHref, NEW_DOCUMENTS_ANCHOR } from "@/lib/stages";
+import { getEditOriginalHref } from "@/lib/stages";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useEquisPolling } from "@/lib/use-equis-polling";
 import { saveBlob } from "@/lib/save-file";
-import { useListView } from "@/lib/use-list-view";
 import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useElementWidth } from "@/lib/use-element-width";
 import { useLoaded } from "@/lib/use-loaded";
 
 const SKELETON_ROWS = 4;
 
-const LIST_KEY = "documents";
 
 // 동작 칸 폭 - 아이콘 단추 셋(24px × 3 + 간격 2px × 2 = 76px). 단추가 모자란 줄(거절된 줄)도 오른쪽 끝에 붙는다
 const ACTIONS_WIDTH = "w-[80px]";
@@ -66,10 +64,11 @@ export default function DocumentsPage() {
   const [isDropping, setIsDropping] = useState(false);
   const [deleting, setDeleting] = useState<SopDocument | null>(null);
   const [previewing, setPreviewing] = useState<SopDocument | null>(null);
-  const view = useListView(LIST_KEY);
+  // 목록은 표 하나다 - 표·카드 전환은 없앴다(문서 줄은 칸을 나란히 견주는 자료다)
+  const view = "table" as const;
   const [hostRef, hostWidth] = useElementWidth();
   // 카드는 열 정의가 자리(card)로만 쓰여 접을 일이 없다 - 접는 건 표뿐
-  const isTrailWrapped = view === "table" && hostWidth !== null && hostWidth < TRAIL_WRAP_BELOW;
+  const isTrailWrapped = hostWidth !== null && hostWidth < TRAIL_WRAP_BELOW;
   // 업로드 뒤 AI가 비운 번호·버전을 묻는 작업이 끝나면 목록을 다시 읽어 제안이 바로 보이게 한다
   const aiJobs = useAiJobs(bundleId, reload);
   // 문서 정보(번호·버전)를 AI가 읽는 중인 문서 - 공용 작업 목록에서 고른다(문자열 키라 같은 값이면 다시 그리지 않는다)
@@ -132,7 +131,10 @@ export default function DocumentsPage() {
   }
 
   // Old 구역 먼저, New 구역 다음 - 구역 안 순서는 서버가 준 그대로
-  const rows = data === null ? null : [...data.filter((document) => document.side === "old"), ...data.filter((document) => document.side !== "old")];
+  // 위 목록은 Old 문서다. 이미 쓴 New 문서의 파일은 아래 New 목록의 그 줄에 붙어 보인다 - 읽지 못해 줄이 없는 New 파일만 여기 남는다(지울 수 있게)
+  const isStrayNew = (document: SopDocument) => document.side === "new" && document.target_doc_id === null;
+  const rows = data === null ? null : [...data.filter((document) => document.side === "old"), ...data.filter(isStrayNew)];
+  const hasStrayNew = rows?.some(isStrayNew) ?? false;
 
   // 늘 보이되 흐린 아이콘 단추(.row-actions-quiet) - 펼치는 라벨 대신 툴팁이라 왼쪽 알약을 덮지 않는다. 자리는 오른쪽 끝 고정 폭이라 줄마다 오른쪽 끝이 같다
   const renderActions = (document: SopDocument) => {
@@ -196,8 +198,10 @@ export default function DocumentsPage() {
 
   // 제목 칸만 여러 줄이라 나머지 칸은 줄 가운데에 맞춘다(align-middle)
   const columns: DataColumn<SopDocument>[] = [
-    // Old·New는 화면 언어와 상관없이 영어(도메인 용어). 카드에서는 구역 머리가 대신한다
-    { key: "side", header: t("documents.colSide"), card: "none", className: "align-middle", nowrap: true, skeletonWidth: 32, cell: (document) => <span className={`side-tag ${document.side}`}>{document.side === "old" ? "Old" : "New"}</span> },
+    // 줄이 없는 New 파일이 섞여 있을 때만 쪽을 보인다(Old·New는 화면 언어와 상관없이 영어 - 도메인 용어)
+    ...(hasStrayNew
+      ? [{ key: "side", header: t("documents.colSide"), card: "none" as const, className: "align-middle", nowrap: true, skeletonWidth: 32, cell: (document: SopDocument) => <span className={`side-tag ${document.side}`}>{document.side === "old" ? "Old" : "New"}</span> }]
+      : []),
     {
       key: "code",
       header: t("documents.colCode"),
@@ -359,16 +363,8 @@ export default function DocumentsPage() {
         <div className="flex min-w-0 items-center gap-3">
           <h1 className="page-title ul">{t("documents.title")}</h1>
           <ReadOnlyNote bundle={bundle} testId="documents" />
-          {/* 문서가 많으면 To-Be 목록이 화면 아래로 내려간다 - 제목 옆에서 한 번에 닿게 한다 */}
-          <Tooltip label={t("documents.jumpTobe")}>
-            <a href={`#${NEW_DOCUMENTS_ANCHOR}`} className="btn ghost h-7" data-testid="documents-jump-tobe">
-              {t("documents.tobeTitle")}
-              <ArrowDown size={14} strokeWidth={1.5} aria-hidden />
-            </a>
-          </Tooltip>
         </div>
         <div className="flex items-center gap-2">
-          <ListViewToggle listKey={LIST_KEY} view={view} testId="documents-view" />
           {canEdit && (
             <button type="button" className="btn pri" data-testid="documents-upload" onClick={() => setUploading([])}>
               <Upload size={16} strokeWidth={1.5} aria-hidden />
@@ -380,7 +376,7 @@ export default function DocumentsPage() {
 
       {error !== null && data === null ? (
         <BundleLoadError error={error} onRetry={reload} testId="documents" />
-      ) : data !== null && data.length === 0 ? (
+      ) : rows !== null && rows.length === 0 ? (
         <EmptyState
           icon={FileText}
           testId="documents-empty"
@@ -397,11 +393,17 @@ export default function DocumentsPage() {
         />
       ) : (
         <div ref={hostRef}>
+        {/* 목록 둘 - 지금 있는 문서(Old)와 만들 문서(New, 아래). 머리 모양이 같다 */}
+        <div className="flex min-h-[44px] items-center gap-2 border-b border-line px-[var(--pad)] py-2">
+          <h2 className="page-title" data-testid="documents-old-title">
+            {t("documents.oldTitle")}
+          </h2>
+          <span className="text-xs text-ink-3">{t("documents.oldLead")}</span>
+        </div>
         <DataList
           view={view}
           rows={rows}
           columns={columns}
-          getRowGroup={(document) => ({ key: document.side, label: document.side === "old" ? t("documents.sideOldLong") : t("documents.sideNewLong") })}
           cardActions="row"
           getRowKey={(document) => document.id}
           testId="documents-list"
@@ -414,7 +416,11 @@ export default function DocumentsPage() {
       )}
 
       {/* New 문서 목록(옛 To-Be 화면) - 올린 문서 목록과 한 화면, 한 스크롤이다. 문서를 못 읽었어도 이 목록은 따로 읽는다 */}
-      <ToBeSection bundleId={bundleId} documents={data} />
+      <ToBeSection
+        bundleId={bundleId}
+        documents={data}
+        file={{ onPreview: setPreviewing, onDownload: (document) => void handleDownload(document), onDelete: setDeleting, onSave: saveField }}
+      />
 
       {uploading !== null && (
         <UploadModal

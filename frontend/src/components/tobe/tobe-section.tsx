@@ -2,21 +2,24 @@
 // SOP는 칸 N/A(사유), WI는 단계를 줄 아래에서 편다. Excel 템플릿 내려받기·가져오기(명세 §12-5).
 "use client";
 
-import { ChevronRight, Download, FileUp, ListTree, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ChevronRight, Download, Eye, FileUp, ListTree, MoreHorizontal, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { EquisStatus } from "@/components/equis/equis-status";
 import { TitleLock } from "@/components/equis/title-lock";
 import { BundleLoadError } from "@/components/bundle-load-error";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { LayoutLabel } from "@/components/documents/layout-picto";
+import { Menu } from "@/components/ui/menu";
 import { MorphButton } from "@/components/ui/morph-button";
-import { CollapseRow } from "@/components/ui/motion";
+import { CollapseRow, Truncate } from "@/components/ui/motion";
 import { Select } from "@/components/ui/select";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
+import { VersionInput } from "@/components/ui/version-input";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
-import { downloadToBeTemplate, getToBe, importToBe, putToBe, refreshEquis, SLOT_KEYS, type SopDocument, type ToBe } from "@/lib/api-sop";
+import { downloadToBeTemplate, getToBe, importToBe, LANGUAGE_LAYOUTS, putToBe, refreshEquis, SLOT_KEYS, type DocumentUpdateInput, type SopDocument, type ToBe } from "@/lib/api-sop";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { buildDownloadName } from "@/lib/download-name";
 import { hasRefreshingEquis, normalizeDocNumber } from "@/lib/equis-model";
@@ -50,14 +53,28 @@ interface ToBeSectionProps {
   bundleId: number;
   /** Documents 화면이 읽은 문서 목록 - 남은 경계 안내와, 올린 New 문서가 바뀌었는지 아는 데 쓴다. 아직 못 읽었으면 null */
   documents: SopDocument[] | null;
+  /** 줄에 붙은 쓴 파일에 하는 일 - 미리 보기·내려받기·지우기와 그 파일의 버전·언어 배치 고치기(Documents 화면이 Old 문서에 쓰는 것과 같다) */
+  file: {
+    onPreview: (document: SopDocument) => void;
+    onDownload: (document: SopDocument) => void;
+    onDelete: (document: SopDocument) => void;
+    onSave: (document: SopDocument, change: Omit<DocumentUpdateInput, "revision">) => Promise<unknown>;
+  };
 }
 
-export function ToBeSection({ bundleId, documents }: ToBeSectionProps) {
+export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
   const { t } = useI18n();
   const { bundle } = useBundle(bundleId);
   const canEdit = bundle?.my_role === "author" && bundle.status === "in_progress";
   const { data, error, isLoading, reload } = useLoaded(() => getToBe(bundleId), String(bundleId));
   const showSkeleton = useDelayedFlag(isLoading && data === null);
+  const menuRef = useRef<HTMLButtonElement>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  /** 그 줄에 붙은 쓴 파일(문서) - 저장된 목록의 번호로 찾는다. 없으면 null */
+  const findFile = (code: string): SopDocument | null => {
+    const documentId = data?.docs.find((item) => item.code === code)?.document_id ?? null;
+    return documentId === null ? null : ((documents ?? []).find((item) => item.id === documentId) ?? null);
+  };
   // 초안은 불러온 목록에 묶인다 - 저장·다시 불러오기로 새 목록이 오면 저절로 버려진다
   const [edit, setEdit] = useState<{ base: ToBe; draft: ToBeDraft } | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
@@ -320,19 +337,51 @@ export function ToBeSection({ bundleId, documents }: ToBeSectionProps) {
         <span className="flex-1" />
         {/* 단추는 한 묶음으로 움직인다 - 좁아져 줄이 바뀌어도 주 버튼(Save)이 묶음의 오른쪽 끝을 지킨다 */}
         <div className="flex items-center gap-2">
-        <button type="button" className="btn ghost" data-testid="tobe-template" onClick={() => void handleTemplate()}>
-          <Download size={14} strokeWidth={1.5} aria-hidden />
-          {t("tobe.template")}
-        </button>
+        {canEdit && <input ref={fileRef} type="file" accept=".xlsx" className="sr-only" data-testid="tobe-import-file" onChange={(event) => event.target.files?.[0] && pickImportFile(event.target.files[0])} />}
+        {/* Excel 템플릿·가져오기는 가끔 쓰는 일이라 메뉴에 둔다 - 줄에는 더하기와 저장만 */}
+        <Tooltip label={t("tobe.more")} suppressed={menuOpen}>
+          <button ref={menuRef} type="button" className="btn ghost icon" aria-haspopup="menu" aria-expanded={menuOpen} aria-label={t("tobe.more")} data-testid="tobe-more" onClick={() => setMenuOpen((prev) => !prev)}>
+            <MoreHorizontal size={16} strokeWidth={1.5} aria-hidden />
+          </button>
+        </Tooltip>
+        {menuOpen && (
+          <Menu anchorRef={menuRef} onClose={() => setMenuOpen(false)} testId="tobe-more-menu" align="end">
+            <button
+              type="button"
+              role="menuitem"
+              className="menu-item"
+              data-testid="tobe-template"
+              onClick={() => {
+                setMenuOpen(false);
+                void handleTemplate();
+              }}
+            >
+              <Download size={14} strokeWidth={1.5} aria-hidden />
+              {t("tobe.template")}
+            </button>
+            {canEdit && (
+              <button
+                type="button"
+                role="menuitem"
+                className="menu-item"
+                data-testid="tobe-import"
+                disabled={saving || dirty}
+                onClick={() => {
+                  setMenuOpen(false);
+                  fileRef.current?.click();
+                }}
+              >
+                <FileUp size={14} strokeWidth={1.5} aria-hidden />
+                <span className="grid">
+                  {t("tobe.import")}
+                  <span className="text-[11px] text-ink-3">{t("tobe.importHint")}</span>
+                </span>
+              </button>
+            )}
+          </Menu>
+        )}
         {canEdit && (
           <>
-            <input ref={fileRef} type="file" accept=".xlsx" className="sr-only" data-testid="tobe-import-file" onChange={(event) => event.target.files?.[0] && pickImportFile(event.target.files[0])} />
-            <Tooltip label={t("tobe.importHint")}>
-              <button type="button" className="btn ghost" data-testid="tobe-import" disabled={saving || dirty} onClick={() => fileRef.current?.click()}>
-                <FileUp size={14} strokeWidth={1.5} aria-hidden />
-                {t("tobe.import")}
-              </button>
-            </Tooltip>
             <button type="button" className="btn" data-testid="tobe-add" onClick={addDoc}>
               <Plus size={14} strokeWidth={1.5} aria-hidden />
               {t("tobe.addDoc")}
@@ -368,7 +417,7 @@ export function ToBeSection({ bundleId, documents }: ToBeSectionProps) {
               <th className="min-w-[196px]">{t("tobe.colTitle")}</th>
               <th className="w-24">{t("tobe.colType")}</th>
               <th className="w-[180px] min-w-[180px]">{t("tobe.colParent")}</th>
-              <th className="w-24">{t("tobe.colEntrance")}</th>
+              <th className="w-[184px]">{t("tobe.colWritten")}</th>
               <th className="w-28">{t("tobe.colEquipment")}</th>
               <th className="w-32">{t("tobe.colDetail")}</th>
               {/* 빼기 단추가 라벨까지 펼쳐질 폭을 미리 잡는다 - 펼쳐져도 옆 칸(세부)의 글자를 덮지 않는다 */}
@@ -389,6 +438,7 @@ export function ToBeSection({ bundleId, documents }: ToBeSectionProps) {
                 ))
               : rows.flatMap(({ doc, depth }) => {
                   const isMatch = doc.entrance === "match";
+                  const written = findFile(doc.code);
                   const isOpen = open.has(doc.key);
                   const naCount = draft.na_slots.filter((slot) => slot.doc_key === doc.key).length;
                   const stepCount = draft.wi_steps.filter((step) => step.doc_key === doc.key).length;
@@ -476,7 +526,35 @@ export function ToBeSection({ bundleId, documents }: ToBeSectionProps) {
                         )}
                       </td>
                       <td>
-                        <span className={`tag ${isMatch ? "" : "text-ink-3"}`}>{isMatch ? t("tobe.entranceMatch") : t("tobe.entranceAssign")}</span>
+                        {written ? (
+                          // 쓴 파일은 이 줄에 붙어 있다 - 따로 줄을 만들지 않는다. 버전·언어 배치는 줄을 펼치면 있다
+                          <span className="flex w-[168px] min-w-0 items-center gap-0.5" data-testid={`${prefix}-written`}>
+                            <Truncate className="min-w-0 flex-1 font-mono text-xs text-ink-2" text={written.file_name} />
+                            <span className="row-actions-quiet flex flex-none gap-0.5">
+                              <Tooltip label={t("documents.preview")} align="end">
+                                <button type="button" className="btn ghost icon h-6 w-6" aria-label={t("documents.preview")} data-testid={`${prefix}-written-preview`} onClick={() => file.onPreview(written)}>
+                                  <Eye size={16} strokeWidth={1.5} aria-hidden />
+                                </button>
+                              </Tooltip>
+                              <Tooltip label={t("documents.download")} align="end">
+                                <button type="button" className="btn ghost icon h-6 w-6" aria-label={t("documents.download")} data-testid={`${prefix}-written-download`} onClick={() => file.onDownload(written)}>
+                                  <Download size={16} strokeWidth={1.5} aria-hidden />
+                                </button>
+                              </Tooltip>
+                              {canEdit && (
+                                <Tooltip label={t("tobe.deleteWritten")} align="end">
+                                  <button type="button" className="btn ghost icon h-6 w-6 text-danger" aria-label={t("tobe.deleteWritten")} data-testid={`${prefix}-written-delete`} onClick={() => file.onDelete(written)}>
+                                    <Trash2 size={16} strokeWidth={1.5} aria-hidden />
+                                  </button>
+                                </Tooltip>
+                              )}
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="text-ink-4" data-testid={`${prefix}-not-written`}>
+                            {t("tobe.notWritten")}
+                          </span>
+                        )}
                       </td>
                       <td>
                         {doc.doc_type === "sop" ? (
@@ -508,6 +586,27 @@ export function ToBeSection({ bundleId, documents }: ToBeSectionProps) {
                   return [
                     row,
                     <CollapseRow key={`${doc.key}-detail`} open={isOpen} colSpan={canEdit ? 8 : 7} className="bg-sunken">
+                      {written && (
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pb-1 pt-1.5 text-xs" data-testid={`${prefix}-written-detail`}>
+                          <span className="text-ink-3">{t("tobe.colWritten")}</span>
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="text-ink-3">{t("documents.colVersion")}</span>
+                            <VersionInput value={written.doc_version} disabled={!canEdit} testId={`${prefix}-written-version`} onCommit={(doc_version) => void file.onSave(written, { doc_version }).catch(() => undefined)} />
+                          </span>
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="text-ink-3">{t("documents.colLayout")}</span>
+                            <Select
+                              testId={`${prefix}-written-layout`}
+                              ariaLabel={t("documents.colLayout")}
+                              size="sm"
+                              value={written.language_layout}
+                              disabled={!canEdit}
+                              options={LANGUAGE_LAYOUTS.map((layout) => ({ value: layout, label: <LayoutLabel layout={layout} label={t(`layoutKind.${layout}`)} />, tip: t(`layoutKind.${layout}`) }))}
+                              onChange={(next) => void file.onSave(written, { language_layout: next }).catch(() => undefined)}
+                            />
+                          </span>
+                        </div>
+                      )}
                       {renderDetail(doc)}
                     </CollapseRow>,
                   ];
