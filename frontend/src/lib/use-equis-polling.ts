@@ -5,7 +5,8 @@ import { useEffect, useEffectEvent } from "react";
 
 import { EQUIS_POLL_MAX, EQUIS_POLL_MS } from "./equis-model";
 
-export function useEquisPolling(active: boolean, reload: () => void): void {
+/** progress - 조회가 여러 번에 나뉘어 도는 목록(참조 줄)은 남은 수를 넘긴다. 수가 바뀌면 30초를 새로 센다(줄어드는 동안은 멈추지 않는다) */
+export function useEquisPolling(active: boolean, reload: () => void, progress = 0): void {
   const run = useEffectEvent(reload);
   useEffect(() => {
     if (!active) return;
@@ -16,5 +17,5 @@ export function useEquisPolling(active: boolean, reload: () => void): void {
       if (ticks >= EQUIS_POLL_MAX) window.clearInterval(id);
     }, EQUIS_POLL_MS);
     return () => window.clearInterval(id);
-  }, [active]);
+  }, [active, progress]);
 }

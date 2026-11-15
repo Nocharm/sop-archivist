@@ -1,5 +1,5 @@
 // EQUIS 표시의 글·모양과 다시 읽기 규칙 - 화면 규칙을 순수 함수로 두고 시험한다(설계 2026-11-13-equis-lookup-design §4.1·§9).
-import type { EquisInfo, EquisVersion } from "./api-sop";
+import type { EquisInfo, EquisVersion, SopDocument, TargetDoc } from "./api-sop";
 
 /** quiet는 할 일 없음(회색), attention은 한 번 확인(경고색), muted는 EQUIS에 없음, neutral은 조회 실패 */
 export type EquisTone = "quiet" | "attention" | "muted" | "neutral";
@@ -69,4 +69,18 @@ export function normalizeDocNumber(code: string): string {
 /** 목록에 조회 중인 줄이 있는지 - 있는 동안만 다시 읽는다 */
 export function hasRefreshingEquis(rows: ReadonlyArray<{ equis?: EquisInfo | null }> | null | undefined): boolean {
   return rows?.some((row) => row.equis?.refreshing === true) ?? false;
+}
+
+/**
+ * 결과물 화면의 문서마다 붙일 EQUIS 표시 - 열쇠는 결과물 B의 노드 id("old:<옛 문서 id>" · "target:<새 문서 id>")다.
+ * 문서 목록과 To-Be 응답이 이미 싣는 값을 잇기만 한다. 표시가 없는 문서(EQUIS 꺼짐·임시 번호)는 빠진다 - 그 자리에는 아무것도 그리지 않는다.
+ */
+export function mapOutputEquis(
+  documents: ReadonlyArray<Pick<SopDocument, "id" | "side" | "equis">> | null | undefined,
+  targetDocs: ReadonlyArray<Pick<TargetDoc, "id" | "equis">> | null | undefined,
+): Map<string, EquisInfo> {
+  const map = new Map<string, EquisInfo>();
+  for (const doc of documents ?? []) if (doc.side === "old" && doc.equis) map.set(`old:${doc.id}`, doc.equis);
+  for (const doc of targetDocs ?? []) if (doc.equis) map.set(`target:${doc.id}`, doc.equis);
+  return map;
 }

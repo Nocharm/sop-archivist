@@ -1,5 +1,5 @@
 // 결과물 C 한 벌 - 새 문서를 칸·단계 순서로 미리 본다. 칸마다 두 언어 문장이 C 순서대로 한 목록이고, 같은 의미에서 나온 이웃 문장은 굵은 선으로 묶인다.
-// 결과물 화면과 검토 화면이 같이 쓴다. 확정 전 새 문장은 점선. 긴 C는 줄(문서 머리·칸 머리·문장) 단위로 이어 그린다.
+// 결과물 화면과 검토 화면이 같이 쓴다. 확정 전 새 문장은 점선. 문서 머리 오른쪽에 그 번호의 EQUIS 표시(읽기 전용, EQUIS가 꺼져 있으면 없다). 긴 C는 줄(문서 머리·칸 머리·문장) 단위로 이어 그린다.
 // 위·아래로 옮기면 두 줄이 미끄러지며 자리를 바꾸고(useFlip), 옮긴 줄이 아직 그리지 않은 구간으로 가면 거기까지 그린 뒤 그 줄을 따라 스크롤한다.
 "use client";
 
@@ -7,10 +7,11 @@ import { ArrowDown, ArrowUp, FileStack, IndentDecrease, IndentIncrease, Italic, 
 import Link from "next/link";
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
+import { EquisStatus } from "@/components/equis/equis-status";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useFlip } from "@/components/ui/motion";
 import { Tooltip } from "@/components/ui/tooltip";
-import type { NumberStyle, OutputC, OutputCItem } from "@/lib/api-sop";
+import type { EquisInfo, NumberStyle, OutputC, OutputCItem } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import { buildCLines, listMeaningStarts, type CLine } from "@/lib/output-groups";
 import { shouldRecenter } from "@/lib/paper-model";
@@ -204,9 +205,11 @@ interface OutputCViewProps {
   resetKey?: string;
   /** 비었을 때 갈 곳(To-Be) - 고칠 수 있는 화면에서만 준다 */
   tobeHref?: string;
+  /** "target:<새 문서 id>" → 그 문서 번호의 EQUIS 표시(결과물 B의 노드 id와 같은 열쇠) - 문서 머리에 붙인다 */
+  equis?: ReadonlyMap<string, EquisInfo>;
 }
 
-export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", tobeHref }: OutputCViewProps) {
+export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", tobeHref, equis }: OutputCViewProps) {
   const { t } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
   const pendingMoveRef = useRef<PendingMove | null>(null);
@@ -271,14 +274,22 @@ export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", to
   }
   return (
     <div ref={rootRef} className="grid gap-6 p-[var(--pad)]" data-testid="output-c">
-      {blocks.map(({ doc, sections }, blockIndex) => (
+      {blocks.map(({ doc, sections }, blockIndex) => {
+        const docEquis = equis?.get(`target:${doc.target_doc_id}`);
+        return (
         <article key={doc.target_doc_id} className="sheet mx-0 max-w-[760px]">
           {/* 줄마다 자기 언어(lang)로 글꼴을 고른다 - 한 칸에 두 언어가 섞인다 */}
           <div className="pg">
             <header className="flex items-baseline gap-2 border-b border-line pb-2" style={{ fontFamily: "var(--font-ui)" }}>
               <span className="font-mono text-[13px] font-semibold">{doc.code}</span>
               <span className="font-semibold">{doc.title}</span>
-              <span className="tag ml-auto">{doc.doc_type.toUpperCase()}</span>
+              {/* 긴 제목이 먼저 감기고 표시는 제 폭을 지킨다(머리의 절반까지, 넘으면 말줄임) */}
+              {docEquis && (
+                <span className="ml-auto flex max-w-[50%] shrink-0 self-center">
+                  <EquisStatus equis={docEquis} testId={`output-c-equis-${doc.target_doc_id}`} canEdit={false} />
+                </span>
+              )}
+              <span className={`tag ${docEquis ? "" : "ml-auto"}`}>{doc.doc_type.toUpperCase()}</span>
             </header>
             {sections.map(({ sectionIndex, itemIndexes }) => {
               const section = doc.sections[sectionIndex];
@@ -364,7 +375,8 @@ export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", to
             {progressive.hasMore && blockIndex === blocks.length - 1 && <CMore sentinelRef={progressive.sentinelRef} />}
           </div>
         </article>
-      ))}
+        );
+      })}
       {/* 삭제·이동 목록은 마지막 줄까지 그린 뒤에 보인다 */}
       {!progressive.hasMore && (data.deleted.length > 0 || data.moved.length > 0) && (
         <section className="grid max-w-[760px] gap-2">

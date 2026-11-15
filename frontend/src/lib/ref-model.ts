@@ -1,5 +1,5 @@
 // 참조 줄(REF) 화면 규칙 - 다른 문서를 번호로 가리키는 줄의 번호 짐작과 확인이 남은 줄 세기(설계 2026-11-15-ref-paragraph-design).
-import type { UnitRefDetail, ViewUnit } from "./api-sop";
+import type { UnitRefDetail, ViewUnit, WrittenSentence } from "./api-sop";
 
 // 문서 번호 꼴 - 서버의 제안 규칙(backend app/sop/refs.py)과 같다: 영문 대문자 머리 + 하이픈 마디 + 숫자 끝
 const NUMBER = /(?<![A-Za-z0-9])[A-Z]{2,}(?:-[A-Z0-9]{1,8})*-\d{1,6}(?![A-Za-z0-9])/;
@@ -41,4 +41,26 @@ export function readRefAdvice(text: string, sourceText: string, detail: UnitRefD
   const expected = detail.suggested_text ?? sourceText;
   if (fold(text) === fold(expected)) return null;
   return { issue: fold(text).includes(equis.number.toUpperCase()) ? "title" : "number", text: expected };
+}
+
+/** 이미 쓴 New 문서의 참조 줄에 붙는 작은 표시 - 번호·이름이 EQUIS와 다름, EQUIS가 모르는 번호, 폐기된 문서, 조회 실패 */
+export type WrittenRefMark = "number" | "title" | "not_found" | "retired" | "failed";
+
+/**
+ * New 원문의 참조 줄에 보일 표시 - 문제없는 줄과 조회 중인 줄은 null이다(아무것도 띄우지 않는다).
+ * EQUIS가 모르는 번호와 폐기된 문서는 서버가 견주지 않아 ref_issue가 비어 있고, 그 번호의 EQUIS 표시에서 읽는다.
+ */
+export function readWrittenRefMark(row: Pick<WrittenSentence, "ref" | "ref_issue">): WrittenRefMark | null {
+  const equis = row.ref?.equis ?? null;
+  if (equis?.state === "not_found") return "not_found";
+  if (equis !== null && equis.retired !== null) return "retired";
+  if (row.ref_issue) return row.ref_issue;
+  // 조회에 실패했고 전에 받은 값도 없다 - 표시가 없으면 "문제없음"으로 읽히므로 못 봤다고 알린다
+  if (equis?.state === "unavailable" && equis.verdict === null) return "failed";
+  return null;
+}
+
+/** 조회 중인 참조 줄 수 - 0이 될 때까지 New 원문 목록을 다시 읽는다(서버는 한 번 읽을 때 10개씩 조회한다) */
+export function countRefLookups(rows: ReadonlyArray<Pick<WrittenSentence, "ref">>): number {
+  return rows.filter((row) => row.ref?.equis?.refreshing === true).length;
 }

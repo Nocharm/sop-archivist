@@ -2,15 +2,17 @@
 // Old와 같은 종이 조각: 왼쪽 밖 앞머리(절 번호 칸, 폭 = 절 깊이라 들여쓴 것처럼 읽힌다), 본문 위 줄에 출처 칩, 위 테두리 오른쪽에 올리거나 고를 때만 KO/EN 탭(짝은 모두).
 // 엮은 문서의 앞머리는 결과물 C와 같은 줄마다 자기 번호(생략·주석은 없음)이고 칸 번호는 칸 머리 줄에 남는다.
 // 점선 = 후보, 채움 = 고른 문장, 칩 = 붙은 Old 출처(누르면 Old의 그 조각으로), 왼쪽 끝 위험색 막대 = 출처 없음. 엮은 문서의 빈 칸은 옅은 자리 표시.
+// 참조 줄이 EQUIS와 어긋나면 칩 줄 끝에 작은 표시(RefMark) - 출처 없는 줄은 그 표시만 있는 칩 줄이 생긴다.
 // 칩 오른쪽 갈매기는 그 Old 조각이 왼쪽 칸 화면 위·아래 밖에 있다는 표시 - 스크롤마다 바뀌어 LinkLines가 data-dir로 단다(Old 배지와 같은 방식).
 // 줄이 새로 들어오면 펼치며 나타나고 빠지면 접히며 사라진다(확정이 곧 보이는 실시간 넣기). 표·그림은 이번 화면에서 잇지 않아 회색 상자로만 보인다(설계 §2).
 "use client";
 
-import { ChevronDown, ChevronUp, FilePlus2, Scissors, Spline, TriangleAlert } from "lucide-react";
+import { ChevronDown, ChevronUp, FilePlus2, Scissors, Spline } from "lucide-react";
 import Link from "next/link";
 import { Fragment, useEffect, useRef, useState, type FocusEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { PaneZoom } from "@/components/assign/pane-zoom";
+import { RefMark } from "@/components/assign/ref-mark";
 import { LangToken } from "@/components/paper/lang-token";
 import { StripLead, STRIP_LEAD_EXTRA } from "@/components/paper/strip-lead";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -20,6 +22,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import type { WrittenSentence } from "@/lib/api-sop";
 import { diffRows, getComposedLeadWidths, getNewRowKey, isComposedRow, isWrittenRow, readSectionNumber, type NewPaneRow } from "@/lib/composed-model";
 import { useI18n } from "@/lib/i18n";
+import { readWrittenRefMark } from "@/lib/ref-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionPill, getTabWidths } from "@/lib/strip-pill-model";
 
 interface NewPaneProps {
@@ -208,13 +211,8 @@ export function NewPane(props: NewPaneProps) {
           </button>
         )}
         {row.change_type === "new" && <span className="new-src is-new">{t("assign.markedNew")}</span>}
-        {/* 참조 줄을 이은 문장인데 번호나 이름이 EQUIS와 다르다 - 이 문서의 글은 여기서 고치지 않아 알리기만 한다 */}
-        {row.ref_issue && (
-          <span className="new-src is-warn" data-testid={`assign-new-ref-issue-${row.target_id}`}>
-            <TriangleAlert size={10} strokeWidth={2.25} className="mr-0.5 inline-block align-[-1px]" aria-hidden />
-            {t(row.ref_issue === "number" ? "assign.ref.adviceNumber" : "assign.ref.adviceTitle")}
-          </span>
-        )}
+        {/* 참조 줄이 EQUIS와 어긋난다(번호·이름·EQUIS에 없음·폐기) - 출처가 없는 줄에도 뜬다. 이 문서의 글은 여기서 고치지 않아 알리기만 한다 */}
+        <RefMark row={row} />
       </span>
     );
   }
@@ -255,7 +253,7 @@ export function NewPane(props: NewPaneProps) {
             data-pair-group={readPairGroup(row) ?? undefined}
             data-testid={`assign-new-${row.target_id}`}
           >
-            {(row.source_unit_ids.length > 0 || row.change_type === "new") && renderSources(row)}
+            {(row.source_unit_ids.length > 0 || row.change_type === "new" || readWrittenRefMark(row) !== null) && renderSources(row)}
             {props.readOnly ? (
               <span className="new-hit is-static">{text}</span>
             ) : (
