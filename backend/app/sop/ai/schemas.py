@@ -40,6 +40,12 @@ class AdoptionIn(BaseModel):
     adoption: Annotated[str, AfterValidator(_check_adoption)]
 
 
+class PrepareIn(BaseModel):
+    """배정 화면 첫 진입 요청 — 지금 열어 본 Old 문서를 먼저 분류한다(없어도 된다)."""
+
+    document_id: RequestId | None = None
+
+
 class ScopeIn(BaseModel):
     """AI 요청의 범위 — 문서 하나 또는 단위 목록. 빈 목록은 없는 것과 같다."""
 

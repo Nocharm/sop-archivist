@@ -1,4 +1,4 @@
-"""AI API — 내가 멤버인 묶음 전체의 최근 작업 목록(멤버), 분류·번역·짝 맞추기·복합 문장 나누기 요청(작성자, AI가 켜져 있을 때), 한/영 따로 짝 제안 요청(작성자, 임베딩이 켜져 있을 때)과 작업 현황·제안 읽기(멤버)·나누기 제안 채택 기록·취소·실패분 다시 시도(작성자, 작업 중 묶음만). 요청 말고는 AI가 꺼져 있어도 동작한다."""
+"""AI API — 내가 멤버인 묶음 전체의 최근 작업 목록(멤버), 분류·번역·짝 맞추기·복합 문장 나누기 요청과 배정 화면 첫 진입 미리 분류 prepare(작성자, AI가 켜져 있을 때), 한/영 따로 짝 제안 요청(작성자, 임베딩이 켜져 있을 때)과 작업 현황·제안 읽기(멤버)·나누기 제안 채택 기록·취소·실패분 다시 시도(작성자, 작업 중 묶음만). 요청 말고는 AI가 꺼져 있어도 동작한다."""
 
 from collections.abc import Sequence
 from typing import Annotated, Literal
@@ -23,6 +23,7 @@ from app.sop.ai.jobs import (
 )
 from app.sop.ai.match_jobs import MATCH_PLAN_KIND, promote_match_jobs, select_match_items
 from app.sop.ai.pairing import PAIR_KIND, select_pair_items
+from app.sop.ai.prepare import queue_prepare
 from app.sop.ai.recent import list_recent_jobs
 from app.sop.ai.schemas import (
     AdoptionIn,
@@ -32,6 +33,7 @@ from app.sop.ai.schemas import (
     JobKind,
     JobKindIn,
     PairRequestIn,
+    PrepareIn,
     RecentJobsOut,
     RetryOut,
     ScopeIn,
@@ -136,6 +138,20 @@ async def request_match(
         return await _queue_request(session, ctx, MATCH_PLAN_KIND, [], [], promoted=promoted)
     items, skipped = await select_match_items(session, ctx.bundle.id)
     return await _queue_request(session, ctx, MATCH_PLAN_KIND, items, skipped, priority=AI_PRIORITY_PLAN)
+
+
+@router.post("/prepare", response_model=AiRequestOut, dependencies=[Depends(require_ai_enabled)])
+async def request_prepare(
+    body: PrepareIn,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> AiRequestOut:
+    """배정 화면 첫 진입 — 남은 줄의 미리 분류(필요하면 계획 먼저). 작업 기록은 남기지 않고 응답 queued는 분류 작업 수다."""
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    jobs = await queue_prepare(session, ctx.bundle.id, ctx.login_id, document_id=body.document_id)
+    await session.commit()
+    return build_request_out(len(jobs), [], jobs[0].request_id if jobs else None)
 
 
 @router.post("/pair", response_model=AiRequestOut, dependencies=[Depends(require_embed_enabled)])
