@@ -364,6 +364,18 @@ function getTabKey(part: string): PaperTabKey {
   return TOP_PARTS.has(part) ? "header" : BOTTOM_PARTS.has(part) ? "footer" : "body";
 }
 
+/**
+ * 한 탭의 쪽들 - 묶음(구역마다 다른 머리말·꼬리말, 각주…)마다 한 쪽이고, 내용이 같은 묶음도 숨기지 않는다.
+ * 배정 화면이 쓴다: 그 화면에서는 같은 내용의 머리말도 저마다 배정할 줄이라 한 번만 보일 수 없다(buildPaperTabs는 숨긴다).
+ */
+export function listPartSheets(view: DocumentView, model: PaperModel, tab: PaperTabKey): PaperSheet[] {
+  if (tab === "body") return [{ key: "body", part: "body", refs: [], items: model.body }];
+  const meta = new Map(view.part_groups.map((group) => [group.key, group]));
+  return model.groups
+    .filter((group) => getTabKey(group.part) === tab)
+    .map((group) => ({ key: group.key, part: group.part, refs: [...(meta.get(group.key)?.refs ?? [])].sort((a, b) => a.section - b.section), items: group.items }));
+}
+
 /** 묶음 안 자리로 적은 단위 지문 - 내용이 같은 두 묶음이 같은 모양으로 쪼개져 있는지 견준다 */
 function buildSignatures(units: readonly ViewUnit[], blockIndex: ReadonlyMap<number, number>): Map<string, number> {
   const signatures = new Map<string, number>();

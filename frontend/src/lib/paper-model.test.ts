@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewPartGroup, ViewUnit } from "./api-sop";
-import { buildContourPath, buildPaperModel, buildPaperTabs, buildRows, canSplitAt, clampSplitAt, getGapMerge, getMergeBlocker, resolveCutDrag, getMarks, getTags, readWarningText, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
+import { buildContourPath, buildPaperModel, buildPaperTabs, buildRows, listPartSheets, canSplitAt, clampSplitAt, getGapMerge, getMergeBlocker, resolveCutDrag, getMarks, getTags, readWarningText, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -258,6 +258,37 @@ describe("getGapMerge", () => {
     const model = buildPaperModel(makeView(blocks, units));
     const rows = buildRows(model.header, model.segments);
     expect(getGapMerge(rows[0], rows[1], model.units)).toBeNull();
+  });
+});
+
+describe("listPartSheets (sheets of one tab on the Assign paper)", () => {
+  const blocks = [
+    makeBlock(1, 0, "Head A", { part: "header", part_group: "h1" }),
+    makeBlock(2, 1, "Head A", { part: "header", part_group: "h2" }),
+    makeBlock(3, 2, "Body."),
+    makeBlock(4, 3, "Note", { part: "footnote", part_group: "footnote" }),
+  ];
+  const units = [makeUnit(10, [[1, 0, 6]], "Head A"), makeUnit(11, [[2, 0, 6]], "Head A"), makeUnit(12, [[3, 0, 5]], "Body."), makeUnit(13, [[4, 0, 4]], "Note")];
+  const groups: ViewPartGroup[] = [
+    { key: "h1", part: "header", refs: [{ section: 2, type: "default" }, { section: 1, type: "default" }], block_count: 1, same_as: null },
+    { key: "h2", part: "header", refs: [{ section: 3, type: "first" }], block_count: 1, same_as: "h1" },
+    { key: "body", part: "body", refs: [], block_count: 1, same_as: null },
+    { key: "footnote", part: "footnote", refs: [], block_count: 1, same_as: null },
+  ];
+  const view = makeView(blocks, units, groups);
+  const model = buildPaperModel(view);
+
+  it("keeps a repeated header as its own sheet, with where each one is used", () => {
+    const sheets = listPartSheets(view, model, "header");
+    expect(sheets.map((sheet) => sheet.key)).toEqual(["h1", "h2"]);
+    expect(sheets[0].refs.map((ref) => ref.section)).toEqual([1, 2]);
+    expect(sheets[1].refs).toEqual([{ section: 3, type: "first" }]);
+    expect(sheets.every((sheet) => sheet.items.length === 1)).toBe(true);
+  });
+
+  it("gives the footer tab its footnotes and the body one sheet", () => {
+    expect(listPartSheets(view, model, "footer").map((sheet) => sheet.part)).toEqual(["footnote"]);
+    expect(listPartSheets(view, model, "body")).toHaveLength(1);
   });
 });
 
