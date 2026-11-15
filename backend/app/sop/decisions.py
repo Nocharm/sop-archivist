@@ -14,6 +14,7 @@ from sqlalchemy.orm.util import AliasedClass
 
 from app.clock import now
 from app.sop.ai.adoption import record_group_adoption, record_unit_adoption, reject_suggestions
+from app.sop.ai.apply import clear_previous_suggestion
 from app.sop.checks import check_sentence
 from app.sop.constants import SLOT_HEADING, SLOT_KEYS
 from app.sop.decision_steps import UndoMetaIn
@@ -1264,13 +1265,17 @@ async def save_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveIn
 
 
 async def _find_units_with_targets(session: AsyncSession, unit_ids: Collection[int]) -> list[int]:
-    """새 문장의 출처인 단위 — 표·행 단위는 칸 문장이 출처여도 센다."""
+    """사람이 확정·보류한 새 문장의 출처인 단위 — 표·행 단위는 칸 문장이 출처여도 센다. AI 제안 새 문장은 일괄 처분이 걷으니 세지 않는다."""
     wanted = set(unit_ids)
     rows = await select_in_chunks(
         session,
         lambda chunk: select(TargetSource.unit_id, Unit.group_unit_id)
         .join(Unit, Unit.id == TargetSource.unit_id)
-        .where(or_(TargetSource.unit_id.in_(chunk), Unit.group_unit_id.in_(chunk))),
+        .join(TargetSentence, TargetSentence.id == TargetSource.target_id)
+        .where(
+            or_(TargetSource.unit_id.in_(chunk), Unit.group_unit_id.in_(chunk)),
+            TargetSentence.status != AI_SUGGESTED,
+        ),
         unit_ids,
     )
     return sorted({unit_id if unit_id in wanted else group_unit_id for unit_id, group_unit_id in rows})
@@ -1279,9 +1284,11 @@ async def _find_units_with_targets(session: AsyncSession, unit_ids: Collection[i
 async def dispose_units(
     session: AsyncSession, bundle: Bundle, payload: BulkDecisionIn, actor: str
 ) -> list[UnitDecisionRowOut]:
-    """여러 단위를 같은 삭제·이동 사유로 확정한다 — 단위마다 따로 저장한 것과 같고, 새 문장이 달린 단위가 섞이면 409.
+    """여러 단위를 같은 삭제·이동 사유로 확정한다 — 단위마다 따로 저장한 것과 같고, 사람의 새 문장이 달린 단위가 섞이면 409.
 
-    AI 제안 단위가 섞여도 409다 — AI 제안은 사람이 줄마다 본다(스펙 §7.7). 사람이 보류해 둔 제안 단위는 지날 수 있어 채택을 남긴다.
+    AI 제안 단위는 받는다(스펙 §7.7, 사용자 결정 2026-11-15) — 채택(같은 처분이면 그대로, 아니면 버림)을 먼저 남긴 뒤 제안을 걷고
+    사람의 처분으로 덮는다. 채택이 남은 제안은 걷혀도 applied다. 제안이 짝·묶음을 덮으면 고르지 않은 단위는 걷기 규칙대로 미배정이 된다.
+    사람이 보류해 둔 제안 단위도 지나며 채택을 남긴다.
     """
     await lock_bundle(session, bundle)
     ensure_editable(bundle)
@@ -1297,23 +1304,22 @@ async def dispose_units(
     ]
     if conflicts:
         raise_rule(409, "revision_conflict", conflicts=conflicts)
-    suggested = sorted(unit_id for unit_id, (_, decision) in loaded.items() if decision.status == AI_SUGGESTED)
-    if suggested:
-        raise_rule(409, "ai_suggested_units", unit_ids=suggested)
     with_targets = await _find_units_with_targets(session, unit_ids)
     if with_targets:
         raise_rule(409, "unit_has_targets", unit_ids=with_targets)
     stamp = now()
-    for unit_id in unit_ids:
-        decision = loaded[unit_id][1]
+    decisions = {unit_id: loaded[unit_id][1] for unit_id in unit_ids}
+    # 걷기가 판단의 제안 칸을 비우므로 채택을 먼저 남긴다
+    await record_unit_adoption(
+        session, plans=(), dispositions=dict.fromkeys(unit_ids, payload.action), decisions=decisions,
+        actor=actor, stamp=stamp,
+    )
+    await clear_previous_suggestion(session, [decision for decision in decisions.values() if decision.status == AI_SUGGESTED])
+    for decision in decisions.values():
         decision.disposition, decision.reason = payload.action, payload.reason
         decision.move_target_code = payload.move_target_code if payload.action == "move_external" else ""
         _set_human_status(decision, "confirm", "", actor, stamp)
         decision.revision += 1
-    await record_unit_adoption(
-        session, plans=(), dispositions=dict.fromkeys(unit_ids, payload.action),
-        decisions={unit_id: loaded[unit_id][1] for unit_id in unit_ids}, actor=actor, stamp=stamp,
-    )
     record_event(
         session, bundle_id=bundle.id, actor=actor, action="decision.bulk", target_type="unit", target_ids=unit_ids,
         reason=payload.reason,

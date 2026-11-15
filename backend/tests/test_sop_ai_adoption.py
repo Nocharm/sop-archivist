@@ -20,17 +20,24 @@ from tests.ai_fixtures import (
     attach_suggestion,
     build_reply,
     clean_ai_jobs,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
+    clean_embedding_cache,  # noqa: F401
     edit_document,
     find_ids,
     find_kind,
     get_target,
     make_ai_bundle,
+    make_match_bundle,
+    plan,
     queue_units,
     read_decision,
+    read_links,
+    read_old_ids,
     read_rows,
+    read_target,
     run_jobs,
     upload_second_document,
     use_reply,
+    use_vectors,
 )
 from tests.docx_factory import build_docx, p, tbl
 from tests.fake_ai import FakeAi
@@ -39,6 +46,7 @@ from tests.sop_helpers import (
     OUTSIDER,
     REVIEWER,
     assign_as_is,
+    find_unit,
     get_group_by_unit,
     get_view,
     put_tobe,
@@ -117,10 +125,16 @@ def clear_unit(client: TestClient, bundle_id: int, unit_id: int) -> httpx2.Respo
     )
 
 
-def bulk_delete(client: TestClient, bundle_id: int, unit_id: int) -> httpx2.Response:
-    revision = get_group_by_unit(client, bundle_id, unit_id)["units"][0]["decision"]["revision"]
-    body = {"action": "delete", "reason": "합성 사유", "units": [{"unit_id": unit_id, "revision": revision}]}
+def bulk_delete(client: TestClient, bundle_id: int, *unit_ids: int) -> httpx2.Response:
+    units = [{"unit_id": unit_id, "revision": read_decision(unit_id).revision} for unit_id in unit_ids]
+    body = {"action": "delete", "reason": "합성 사유", "units": units}
     return client.post(f"/api/bundles/{bundle_id}/decisions/bulk", json=body, headers=AUTHOR)
+
+
+def ai_targets_of(unit_id: int) -> list[int]:
+    """단위를 출처로 둔 AI 제안 새 문장 — 걷힌 제안의 새 문장은 지워지거나(입구 1) 출처를 잃는다(입구 2)."""
+    linked = {target_id for target_id, source_id in read_links() if source_id == unit_id}
+    return [row.id for row in read_rows(TargetSentence) if row.id in linked and row.status == "ai_suggested"]
 
 
 def save_table(
@@ -657,16 +671,92 @@ def test_clear_of_a_held_suggestion_records_rejected(client: TestClient, fake_ai
     assert read_suggestions()[0].adoption == "rejected"
 
 
-def test_bulk_delete_refuses_ai_suggested_units(client: TestClient, fake_ai: FakeAi) -> None:
-    bundle, ko, _ = suggest_first_pair(client, fake_ai, candidate="delete", change_type="as_is", rewrites={})
-    before = read_decision(ko)
+def test_bulk_delete_takes_ai_suggested_units(client: TestClient, fake_ai: FakeAi) -> None:
+    # 분류 제안(배정)이 붙은 줄 — 사람의 일괄 처분이 제안을 걷고 덮는다(설계 §6)
+    bundle, ko, en = suggest_first_pair(client, fake_ai)
+    assert ai_targets_of(ko)
+
+    response = bulk_delete(client, bundle.id, ko, en)
+
+    assert response.status_code == 200, response.text
+    for unit_id in (ko, en):
+        decision = read_decision(unit_id)
+        assert (decision.status, decision.disposition) == ("confirmed", "delete")
+        assert decision.suggestion_id is None
+        assert ai_targets_of(unit_id) == []
+    (suggestion,) = read_suggestions()
+    assert (suggestion.adoption, suggestion.result) == ("rejected", "applied")
+    assert read_rows(TargetSentence) == []  # 새 문서가 없는 묶음이라 새 문장은 모두 AI가 쓴 것이었다
+
+
+def test_bulk_delete_on_a_delete_suggestion_is_as_is(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, ko, en = suggest_first_pair(client, fake_ai, candidate="delete", change_type="as_is", rewrites={})
+    assert read_decision(ko).status == "ai_suggested"
+
+    response = bulk_delete(client, bundle.id, ko, en)
+
+    assert response.status_code == 200, response.text
+    assert {(read_decision(u).status, read_decision(u).disposition) for u in (ko, en)} == {("confirmed", "delete")}
+    (suggestion,) = read_suggestions()
+    assert (suggestion.adoption, suggestion.result) == ("as_is", "applied")
+
+
+def test_bulk_over_one_side_of_a_pair_releases_the_other(client: TestClient, fake_ai: FakeAi) -> None:
+    # 제안 하나가 짝을 덮는다 — 한쪽만 골라도 제안은 통째로 걷히고 고르지 않은 쪽은 미배정으로 돌아간다
+    bundle, ko, en = suggest_first_pair(client, fake_ai)
+    en_before = read_decision(en)
 
     response = bulk_delete(client, bundle.id, ko)
 
-    assert (response.status_code, response.json()["detail"]["code"]) == (409, "ai_suggested_units")
-    assert response.json()["detail"]["unit_ids"] == [ko]
+    assert response.status_code == 200, response.text
+    decision, other = read_decision(ko), read_decision(en)
+    assert (decision.status, decision.disposition) == ("confirmed", "delete")
+    assert (other.status, other.disposition, other.suggestion_id) == ("unassigned", "unassigned", None)
+    assert other.revision > en_before.revision
+    assert ai_targets_of(en) == []
+    (suggestion,) = read_suggestions()
+    assert (suggestion.adoption, suggestion.result) == ("rejected", "applied")
+
+
+@pytest.mark.usefixtures("clean_embedding_cache")
+def test_bulk_over_a_match_suggestion_detaches_the_written_sentence(
+    client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 계획이 쓴 문장 묶음 제안 — 새 문서의 문장은 원문이라 남고 출처만 떨어진다
+    old_text, new_text = "합성 장비의 전원을 켠 뒤 상태 표시등을 확인한다.", "합성 장비의 전원을 켠 뒤 상태 표시등을 반드시 확인한다."
+    bundle = make_match_bundle(client, p(old_text), p(new_text))
+    use_vectors(monkeypatch, fake_ai, {old_text: 0, new_text: 0})
+    (unit_id,) = read_old_ids(client, bundle, old_text)
+    plan(client, bundle.id)
+    assert read_decision(unit_id).status == "ai_suggested" and ai_targets_of(unit_id)
+    written = read_target(new_text)
+
+    response = bulk_delete(client, bundle.id, unit_id)
+
+    assert response.status_code == 200, response.text
+    decision = read_decision(unit_id)
+    assert (decision.status, decision.disposition, decision.suggestion_id) == ("confirmed", "delete", None)
+    target = read_target(new_text)
+    assert (target.id, target.status, target.suggestion_id) == (written.id, "unassigned", None)
+    assert read_links() == set()
+    (suggestion,) = read_suggestions()
+    assert (suggestion.adoption, suggestion.result) == ("rejected", "applied")
+
+
+def test_bulk_still_refuses_units_with_confirmed_targets(client: TestClient, fake_ai: FakeAi) -> None:
+    # 사람이 확정한 새 문장이 달린 줄은 지금처럼 통째 거절한다 — 섞인 AI 제안 줄도 그대로다
+    bundle, ko, en = suggest_first_pair(client, fake_ai)
+    human = find_unit(get_view(client, bundle.id, bundle.document_id), AI_KO_2)
+    assign_as_is(client, bundle.id, human, bundle.sop_id, slot_key="purpose")
+    before = read_decision(ko)
+
+    response = bulk_delete(client, bundle.id, ko, en, human["id"])
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == {"code": "unit_has_targets", "unit_ids": [human["id"]]}
     decision = read_decision(ko)
-    assert (decision.status, decision.revision) == ("ai_suggested", before.revision)
+    assert (decision.status, decision.revision, decision.suggestion_id) == ("ai_suggested", before.revision, before.suggestion_id)
+    assert read_suggestions()[0].adoption is None
 
 
 @pytest.mark.parametrize(("candidate", "expected"), [("delete", "as_is"), ("c1", "rejected")])

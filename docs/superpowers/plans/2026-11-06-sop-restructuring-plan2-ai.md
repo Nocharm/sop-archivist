@@ -87,7 +87,7 @@
   - `pair`: `{pair_id, ko_unit_id, en_unit_id}`
   - `split`: `{unit_id, offsets, reason, rule_ids}`. 조각이 원문과 맞지 않으면 `result`가 `invalid`이고 경고 종류는 `parts_mismatch`다. `offsets`는 `SplitOp.at`에 그대로 쓰는 위치이고, 뒤쪽부터 적용하면 앞 위치가 바뀌지 않는다.
 - `adoption`의 `applied`는 나머지 숫자의 합이 아니다. 작업 뒤 은퇴한 단위의 제안은 `applied`에만 있고 `pending`에 없다.
-- 오류: 404 `suggestion_not_found` · 503 `ai_disabled` · 409 `embedding_disabled` · 409 `no_assign_targets` · 409 `no_match_documents` · 409 `not_separate_layout` · 409 `not_manual_adoption` · 422 `scope_required` · 409 `bundle_not_editable`. 계획 1의 `POST /decisions/bulk`는 AI 제안 단위가 섞이면 409 `ai_suggested_units`를 낸다.
+- 오류: 404 `suggestion_not_found` · 503 `ai_disabled` · 409 `embedding_disabled` · 409 `no_assign_targets` · 409 `no_match_documents` · 409 `not_separate_layout` · 409 `not_manual_adoption` · 422 `scope_required` · 409 `bundle_not_editable`. 계획 1의 `POST /decisions/bulk`는 AI 제안 단위도 받아 제안을 걷고 채택을 남긴다(2026-11-15 — 옛 409 `ai_suggested_units`는 없어졌다, 제품 명세 §7.7).
 - 짝 보기의 `pairs[].source`에 값 `ai`가 더해진다(`status`는 `suggested`).
 - 기존 응답에 더하는 필드: `DecisionOut.suggestion_id`, `GroupTargetOut.suggestion_id`·`translation_source_unit_id`, `BundleOut.ai_jobs`(상태별 건수), `ARow.row_kind`의 값 `translation`.
 - 번역 새 문장의 자리는 출처 새 문장을 따른다. 저장에서 자리는 비우거나, 지금 자리나 출처의 저장 뒤 자리를 보낸다. 그 밖의 자리는 422 `invalid_group`(`translation_locked`)이다. 표 칸 번역은 표 전체와 함께 저장한다. `PUT /targets/order`는 번역 줄도 목록에 담아야 하고, 번역 줄의 단계는 출처의 새 단계로만 바꿀 수 있다. 번역이 든 입구 2 문서를 지우면 409 `doc_has_targets`다.

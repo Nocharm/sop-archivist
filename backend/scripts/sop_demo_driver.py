@@ -329,7 +329,8 @@ class SyntheticDriver:
     def request_classification(self) -> None:
         """구조 제목을 일괄 삭제한 뒤 입구 2 짝 계획을, 이어서 입구 1 문서마다 분류를 요청한다.
 
-        일괄 처분은 AI 제안 단위를 받지 않아(409 ai_suggested_units) AI 앞에 끝낸다. 계획은 묶음 전체를 보고 맨 앞에 돌며 그동안 분류는
+        머리말 정리(일괄 처분)를 AI 앞에 끝내 그 줄은 AI가 받지 않는다 — 사람이 먼저 정리하는 흐름이다(일괄 처분은 AI 제안 줄도 덮을 수
+        있다). 계획은 묶음 전체를 보고 맨 앞에 돌며 그동안 분류는
         기다린다(묶기 먼저) — 분류는 계획이 묶지 않고 남긴 미배정을 받는다. 배정 New 문서가 있어 계획은 짝 없는 옛 단위를 삭제 후보로 두지 않는다.
         """
         revisions = self.load_decision_revisions()
