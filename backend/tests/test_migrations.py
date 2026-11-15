@@ -228,3 +228,30 @@ def test_request_id_backfills_existing_jobs_as_their_own_requests(tmp_path: path
         assert [request_id for _, request_id in rows] == [f"job-{job_id}" for job_id, _ in rows]
     finally:
         engine.dispose()
+
+
+def test_0018_gives_existing_jobs_user_priority(tmp_path: pathlib.Path) -> None:
+    # 0018 이전 작업은 모두 사람이 누른 요청(priority 1)이고 미리 돌리기가 아니다
+    db_path = tmp_path / "priority.db"
+    run_migrations(_async_url(db_path))
+    config = Config(str(pathlib.Path(__file__).resolve().parent.parent / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", _async_url(db_path))
+    config.attributes["configure_logger"] = False
+    command.downgrade(config, "0017")
+    engine = create_engine(_sync_url(db_path))  # FK를 켜지 않아 묶음 행 없이 작업 행만 넣는다
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO ai_jobs (bundle_id, kind, status, unit_ids, target_ids, payload, input_snapshot,"
+                " attempts, error, requested_by, request_id, created_at)"
+                " VALUES (1, 'classify', 'queued', '[]', '[]', '{}', '{}', 0, '', 'qa.member', 'job-1',"
+                " '2026-11-15 00:00:00')"
+            ))
+
+        command.upgrade(config, "0018")
+
+        with engine.connect() as conn:
+            row = conn.execute(text("SELECT priority, background FROM ai_jobs")).one()
+        assert (row.priority, bool(row.background)) == (1, False)
+    finally:
+        engine.dispose()

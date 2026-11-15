@@ -41,7 +41,7 @@ from app.sop.ai.schemas import (
 )
 from app.sop.ai.split import SPLIT_KIND, select_split_items
 from app.sop.ai.translate import TRANSLATE_KIND, select_translate_items
-from app.sop.constants import MEMBER_ROLES
+from app.sop.constants import AI_PRIORITY_PLAN, AI_PRIORITY_USER, MEMBER_ROLES
 from app.sop.errors import raise_rule
 from app.sop.events import record_event
 from app.sop.membership import BundleContext, ensure_active_account, ensure_editable, lock_bundle, require_bundle_role
@@ -71,10 +71,13 @@ def require_embed_enabled() -> None:
 
 
 async def _queue_request(
-    session: AsyncSession, ctx: BundleContext, kind: str, items: Sequence[JobItem], skipped: Sequence[SkippedOut]
+    session: AsyncSession, ctx: BundleContext, kind: str, items: Sequence[JobItem], skipped: Sequence[SkippedOut],
+    *, priority: int = AI_PRIORITY_USER, promoted: int = 0,
 ) -> AiRequestOut:
-    """고른 작업을 쌓고 기록을 남겨 커밋한다 — 요청 종류마다 같은 마무리다."""
-    jobs = enqueue_jobs(session, bundle_id=ctx.bundle.id, kind=kind, requested_by=ctx.login_id, items=items)
+    """고른 작업을 쌓고 기록을 남겨 커밋한다 — 요청 종류마다 같은 마무리다. promoted는 이미 줄에 있다가 순위가 올라간 수(응답 queued에 더한다)."""
+    jobs = enqueue_jobs(
+        session, bundle_id=ctx.bundle.id, kind=kind, requested_by=ctx.login_id, items=items, priority=priority
+    )
     if jobs:  # 쌓인 게 없으면 바뀐 것도 없으니 기록도 남기지 않는다
         await session.flush()
         record_event(
@@ -82,7 +85,7 @@ async def _queue_request(
             target_ids=[job.id for job in jobs], reason=kind,
         )
     await session.commit()
-    return build_request_out(len(jobs), skipped, jobs[0].request_id if jobs else None)
+    return build_request_out(len(jobs) + promoted, skipped, jobs[0].request_id if jobs else None)
 
 
 @router.post("/classify", response_model=AiRequestOut, dependencies=[Depends(require_ai_enabled)])
@@ -121,7 +124,7 @@ async def request_match(
     await lock_bundle(session, ctx.bundle)
     ensure_editable(ctx.bundle)
     items, skipped = await select_match_items(session, ctx.bundle.id)
-    return await _queue_request(session, ctx, MATCH_PLAN_KIND, items, skipped)
+    return await _queue_request(session, ctx, MATCH_PLAN_KIND, items, skipped, priority=AI_PRIORITY_PLAN)
 
 
 @router.post("/pair", response_model=AiRequestOut, dependencies=[Depends(require_embed_enabled)])

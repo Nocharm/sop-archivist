@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.clock import now
 from app.sop.ai.constants import MAX_JOBS_PER_REQUEST, MAX_SKIPPED_REPORTED
 from app.sop.ai.schemas import AiJobCounts, AiRequestOut, SkippedOut
+from app.sop.constants import AI_PRIORITY_USER
 from app.sop.errors import raise_rule
 from app.sop.models import AiJob, generate_request_id
 
@@ -81,8 +82,10 @@ def enqueue_jobs(
     requested_by: str,
     items: Sequence[JobItem],
     request_id: str | None = None,
+    priority: int = AI_PRIORITY_USER,
+    background: bool = False,
 ) -> list[AiJob]:
-    """행만 추가한다 — id는 flush 뒤에 생긴다. 한 번에 쌓은 작업은 같은 request_id를 받고, 넘겨받으면(계획 작업의 뒤 작업) 그 값을 잇는다."""
+    """행만 추가한다 — id는 flush 뒤에 생긴다. 한 번에 쌓은 작업은 같은 request_id를 받고, 넘겨받으면(계획 작업의 뒤 작업) 그 값을 잇는다. priority는 꺼내는 순서, background는 미리 돌리기 표시다."""
     request_id = request_id or generate_request_id()
     jobs = [
         AiJob(
@@ -95,6 +98,8 @@ def enqueue_jobs(
             payload=item.payload,
             requested_by=requested_by,
             request_id=request_id,
+            priority=priority,
+            background=background,
         )
         for item in items
     ]

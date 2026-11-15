@@ -8,8 +8,9 @@ import logging
 from collections.abc import Mapping
 from typing import Protocol
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.clock import now
 from app.db import SessionLocal
@@ -42,9 +43,28 @@ class JobHandler(Protocol):
 
 
 async def claim_next_job() -> int | None:
-    """queued 중 가장 작은 id를 running으로 꺼낸다 — 단일 워커 전제라 꺼내는 쪽끼리는 겨루지 않고, 조건은 그사이 온 취소만 막는다."""
+    """queued 중 (priority, id) 첫 작업을 running으로 꺼낸다 — 단일 워커 전제라 꺼내는 쪽끼리는 겨루지 않고, 조건은 그사이 온 취소만 막는다.
+
+    같은 묶음의 계획이 돌거나 줄 서 있으면 분류는 건너뛰고, 계획은 묶음마다 하나만 돈다.
+    """
+    plan = aliased(AiJob)
+    plan_active = exists().where(
+        plan.bundle_id == AiJob.bundle_id, plan.kind == "match_plan", plan.status.in_(("queued", "running"))
+    )
+    plan_running = exists().where(
+        plan.bundle_id == AiJob.bundle_id, plan.kind == "match_plan", plan.status == "running"
+    )
     async with SessionLocal() as session:
-        job_id = await session.scalar(select(func.min(AiJob.id)).where(AiJob.status == "queued"))
+        job_id = await session.scalar(
+            select(AiJob.id)
+            .where(
+                AiJob.status == "queued",
+                ~and_(AiJob.kind == "classify", plan_active),
+                ~and_(AiJob.kind == "match_plan", plan_running),
+            )
+            .order_by(AiJob.priority, AiJob.id)
+            .limit(1)
+        )
         if job_id is None:
             return None
         result = await session.execute(
