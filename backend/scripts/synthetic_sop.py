@@ -72,6 +72,9 @@ LAYOUTS = {"interleaved": "ko_en_interleaved", "separate": "ko_en_separate", "en
 
 STRUCTURE_REASON = "합성: 구조 제목·머리말·꼬리말은 새 문서 양식(SOP 칸·WI 단계)이 대신한다."
 REPEAT_REASON = "합성: 같은 문장이 5절에도 있어 한 번만 남긴다."
+# 참조 줄(REF) 예시 — 줄이 문서 번호로 시작한다. 지어낸 번호·이름이고, 가짜 EQUIS 웹훅(frontend/scripts/fake-equis-webhook.mjs)이
+# 이 번호를 옛 번호로 가진 문서를 돌려준다
+REFERENCE_LINE = "SOP-ABC-1016 Operation of UV spectrophotometer"
 DUPLICATE_REASON = "합성: 안전 요구사항은 SOP에 두고, 같은 행동을 WI-01 4단계에서도 지시한다."
 HISTORY_REASON = "합성: 장비 도입 이력은 절차 내용이 아니다."
 PURCHASE_REASON = "합성: 구매 이력은 절차 내용이 아니어서 WI-04에 옮기지 않았다."
@@ -452,6 +455,8 @@ def _build_old_1(sheet: _AnswerSheet) -> tuple[bytes, list[dict]]:
         document,
         add(doc, manual_ko, "ko", _sop("document_relationships", manual_ko, "as_is", "ko")),
         add(doc, manual_en, "en", _sop("document_relationships", manual_en, "as_is", "en")),
+        # 참조 줄 — 다른 문서를 번호로 가리키는 한 줄(짝 없음). 번호와 이름은 지어낸 값이다
+        add(doc, REFERENCE_LINE, "en", _sop("document_relationships", REFERENCE_LINE, "as_is", "en")),
     )
     edits = [{"doc": doc, "op": "split", "unit_text": compound_ko, "at_text": start_ko}]
     return _save_docx(document), edits

@@ -22,7 +22,7 @@ function makeUnit(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
     block_id: 1,
     is_edited: false,
     can_unmerge: false,
-    split_suggestion_id: null,
+    split_suggestion_id: null, ref: null,
     ...over,
   };
 }
@@ -55,7 +55,7 @@ describe("buildAssignMenu", () => {
   it("groups assign actions before edit actions", () => {
     const groups = buildAssignMenu(ctx());
     expect(groups.assign.map((item) => item.action)).toEqual(["confirm", "clear"]);
-    expect(groups.edit.map((item) => item.action)).toEqual(["split", "merge_prev", "merge_next", "pair_pick", "lang"]);
+    expect(groups.edit.map((item) => item.action)).toEqual(["split", "merge_prev", "merge_next", "pair_pick", "lang", "ref_mark"]);
   });
 
   it("enables every edit on an unassigned sentence with same-language neighbours", () => {
@@ -123,7 +123,7 @@ describe("KO/EN pairing from the Assign menu", () => {
   it("offers pairing instead of merging when the neighbour is the other language", () => {
     const groups = buildAssignMenu(ctx({ next: makeUnit(3, { lang: "en" }) }));
 
-    expect(groups.edit.map((item) => item.action)).toEqual(["split", "merge_prev", "pair_next", "pair_pick", "lang"]);
+    expect(groups.edit.map((item) => item.action)).toEqual(["split", "merge_prev", "pair_next", "pair_pick", "lang", "ref_mark"]);
     expect(find(ctx({ next: makeUnit(3, { lang: "en" }) }), "pair_next").enabled).toBe(true);
     expect(find(ctx({ target: makeUnit(2, { lang: "en" }), prev: makeUnit(1) }), "pair_prev").enabled).toBe(true);
   });
@@ -149,7 +149,7 @@ describe("KO/EN pairing from the Assign menu", () => {
     const paired = ctx({ target: makeUnit(2, { pair_id: 7 }), next: makeUnit(3, { lang: "en", pair_id: 7 }) });
 
     expect(buildAssignMenu(ctx()).edit.some((item) => item.action === "unpair")).toBe(false);
-    expect(buildAssignMenu(paired).edit.map((item) => item.action)).toEqual(["split", "merge_prev", "pair_next", "unpair", "lang"]);
+    expect(buildAssignMenu(paired).edit.map((item) => item.action)).toEqual(["split", "merge_prev", "pair_next", "unpair", "lang", "ref_mark"]);
     expect(find(paired, "unpair").enabled).toBe(true);
     expect(find({ ...paired, isDecided: (unit) => unit.id === 2 }, "unpair").reasonKey).toBe("assign.ctx.why.assigned");
   });
@@ -168,7 +168,7 @@ describe("table rows from the Assign menu", () => {
   it("adds them after the sentence items on a cell sentence", () => {
     const cell = makeUnit(12, { kind: "cell_sentence", group_unit_id: 10 });
 
-    expect(buildAssignMenu(ctx({ target: cell, table })).edit.map((item) => item.action)).toEqual(["split", "merge_prev", "merge_next", "pair_pick", "lang", "table_rows", "table_layout"]);
+    expect(buildAssignMenu(ctx({ target: cell, table })).edit.map((item) => item.action)).toEqual(["split", "merge_prev", "merge_next", "pair_pick", "lang", "ref_mark", "table_rows", "table_layout"]);
   });
 
   it("locks them while the table is assigned, has an unsaved pick, or the bundle is read-only", () => {
@@ -184,5 +184,31 @@ describe("table rows from the Assign menu", () => {
     expect(find(ctx(base), "table_merge").enabled).toBe(true);
     expect(find(ctx({ ...base, isDecided: (unit) => unit.id === 13 }), "table_merge").reasonKey).toBe("assign.ctx.why.rowAssigned");
     expect(find(ctx({ ...base, hasDraft: (unit) => unit.id === 13 }), "table_merge").reasonKey).toBe("assign.ctx.why.rowUnsaved");
+  });
+});
+
+describe("reference lines from the Assign menu", () => {
+  const proposed = makeUnit(2, { lang: "en", ref: { state: "proposed", number: "SOP-A-1" } });
+  const confirmed = makeUnit(2, { lang: "ref", ref: { state: "confirmed", number: "SOP-A-1" } });
+
+  it("offers marking on plain text and Not a reference on a proposal or a reference", () => {
+    expect(find(ctx(), "ref_mark").enabled).toBe(true);
+    expect(find(ctx({ target: proposed }), "ref_clear").enabled).toBe(true);
+    expect(find(ctx({ target: confirmed }), "ref_clear").enabled).toBe(true);
+    expect(buildAssignMenu(ctx({ target: confirmed })).edit.some((item) => item.action === "ref_mark")).toBe(false);
+  });
+
+  it("lets a proposal be dismissed on an assigned line, but not a reference be changed", () => {
+    const assigned = { isDecided: () => true, rowStatus: "confirmed" as const };
+
+    expect(find(ctx({ target: proposed, ...assigned }), "ref_clear").enabled).toBe(true);
+    expect(find(ctx({ target: confirmed, ...assigned }), "ref_clear")).toMatchObject({ enabled: false, reasonKey: "assign.ctx.why.assigned" });
+    expect(find(ctx({ ...assigned }), "ref_mark")).toMatchObject({ enabled: false, reasonKey: "assign.ctx.why.assigned" });
+    expect(find(ctx({ target: proposed, readOnly: true }), "ref_clear")).toMatchObject({ enabled: false, reasonKey: "assign.ctx.why.readOnly" });
+  });
+
+  it("has no language to pick and no far pairing on a reference", () => {
+    expect(find(ctx({ target: confirmed }), "lang")).toMatchObject({ enabled: false, reasonKey: "assign.ctx.why.refLang", lang: "ref" });
+    expect(buildAssignMenu(ctx({ target: confirmed })).edit.some((item) => item.action === "pair_pick")).toBe(false);
   });
 });

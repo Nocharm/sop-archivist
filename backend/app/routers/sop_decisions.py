@@ -59,7 +59,7 @@ IdPath = Annotated[int, Path(ge=1, le=MAX_DB_INT)]
 async def get_units(
     # 판단은 옛 문서 단위에만 있어 이 목록은 옛 문서 단위만 다룬다
     side: Literal["old"] = Query("old"),
-    lang: Literal["ko", "en", "neutral"] | None = Query(None),
+    lang: Literal["ko", "en", "ref", "neutral"] | None = Query(None),
     status: Literal["unassigned", "ai_suggested", "confirmed", "on_hold"] | None = Query(None),
     document_id: int | None = Query(None, ge=1, le=MAX_DB_INT),
     target_doc_id: int | None = Query(None, ge=1, le=MAX_DB_INT),

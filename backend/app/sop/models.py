@@ -617,6 +617,25 @@ class EmbeddingCache(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class UnitRef(Base):
+    """참조 줄(REF) 표시 — 사람이 그 단위의 문서 번호 영역을 확인했거나("confirmed") 참조가 아니라고 한("rejected") 기록.
+
+    제안은 담지 않는다(읽을 때 글에서 찾는다, `refs.read_ref_state`). 단위가 REF인지는 `Unit.lang`이 말한다 — 되돌리기가
+    언어만 되돌리므로 이 행은 번호와 사람의 뜻만 기억한다.
+    """
+
+    __tablename__ = "unit_refs"
+
+    unit_id: Mapped[int] = mapped_column(ForeignKey("units.id", ondelete="CASCADE"), primary_key=True)
+    state: Mapped[str] = mapped_column(String(9))  # confirmed | rejected
+    # 다듬은 문서 번호(대문자) — 그 단위의 글 안에 있는 글자다. rejected면 빈 값일 수 있다
+    number: Mapped[str] = mapped_column(String(100), default="")
+    # REF가 되기 전의 언어 — "참조 아님"으로 되돌릴 때 쓴다
+    prev_lang: Mapped[str] = mapped_column(String(7), default="")
+    decided_by: Mapped[str] = mapped_column(String(100))
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 # --- EQUIS 조회 ---
 
 

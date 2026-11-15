@@ -61,6 +61,7 @@ from app.sop.models import (
     WiStep,
 )
 from app.sop.pair_settle import settle_pairs
+from app.sop.refs import REF_LANG
 from app.sop.schemas import NO_NUL, NoNulStr
 from app.sop.segment import detect_language, has_visible_char
 from app.sop.status import get_cover_status
@@ -114,7 +115,7 @@ class TargetIn(BaseModel):
     wi_step: DbId | None = None
     wi_part: Literal["instruction", "why"] | None = None
     kind: Literal["sentence", "table", "figure", "slot_heading"] = "sentence"
-    lang: Literal["ko", "en", "neutral"] | None = None
+    lang: Literal["ko", "en", "ref", "neutral"] | None = None
     text: Annotated[str, StringConstraints(max_length=20000), NO_NUL] | None = None
     change_type: Literal["as_is", "tone", "rewritten", "table_restructured"] | None = None
     # 사람이 적는 메모 — None이면 지금 값을 둔다(출처 없는 새 문장에도 적을 수 있다)
@@ -1032,7 +1033,9 @@ def _apply_plan(
     if plan.item.remark is not None:
         target.remark = plan.item.remark.strip()
     check_texts = _list_check_texts(plan, state)
-    target.warnings = check_sentence(check_texts, plan.text) if plan.item.kind == "sentence" and check_texts else []
+    # 참조 줄(REF)은 번호를 지금 번호로 바꿔 쓰는 글이라 숫자 불일치 검사를 하지 않는다
+    is_checked = plan.item.kind == "sentence" and plan.lang != REF_LANG and bool(check_texts)
+    target.warnings = check_sentence(check_texts, plan.text) if is_checked else []
     _set_human_status(target, action, hold_reason, actor, stamp)
     target.revision += 1
     plan.row = target

@@ -255,6 +255,7 @@
   }
   .pill.none { color: var(--st-none-ink); border-color: var(--line-2); }
   .pill.ai { color: var(--st-ai-ink); background: var(--st-ai-tint); border: 1px dashed var(--st-ai-line); }
+  .pill.ref { color: var(--lang-ref-ink); background: var(--lang-ref-bg); border: 1px dashed var(--lang-ref-line); }
   .pill.ok { color: var(--on-accent); background: var(--accent); }
   .pill.hold { color: var(--st-hold-ink); background: var(--st-hold-tint); border-color: var(--st-hold-line); }
   .pill.warn { color: var(--warn-ink); background: var(--warn-tint); border-color: color-mix(in oklab, var(--warn-fill) 45%, var(--surface)); }
@@ -1215,6 +1216,9 @@
   .lang-token { display: inline-grid; place-items: center; height: 15px; padding: 0 3px; border: 1px solid var(--line-2); border-radius: 3px; background: var(--surface); color: var(--ink-2); font: 600 10px / 1 var(--font-mono); }
   .lang-token[data-lang="ko"] { border-color: var(--lang-ko-line); background: var(--lang-ko-bg); color: var(--lang-ko-ink); }
   .lang-token[data-lang="en"] { border-color: var(--lang-en-line); background: var(--lang-en-bg); color: var(--lang-en-ink); }
+  .lang-token[data-lang="ref"] { border-color: var(--lang-ref-line); background: var(--lang-ref-bg); color: var(--lang-ref-ink); }
+  /* 참조 줄 제안 - 아직 사람이 확인하지 않아 점선 */
+  .lang-token[data-proposed] { border-style: dashed; }
   .strip-lang { position: absolute; top: -8px; right: 9px; z-index: 2; visibility: hidden; opacity: 0; transition: opacity var(--dur-fast), visibility 0s var(--dur-fast); }
   .assign-pane .strip-lang { right: 30px; }
   .strip-lang:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -1231,6 +1235,10 @@
   .pmark.ai { color: var(--st-ai-ink); }
   .pmark.suggest { color: var(--st-ai-ink); }
   .pmark.warn { color: var(--st-hold-ink); }
+  .pmark.ref { color: var(--lang-ref-ink); }
+  /* 참조 줄 카드(배정 오른쪽 칸) - 제안은 점선, 확정은 실선 */
+  .ref-card { border-color: var(--lang-ref-line); background: var(--lang-ref-bg); }
+  .ref-card[data-state="proposed"], .ref-card[data-state="new"] { border-style: dashed; }
   /* 아이콘 표시는 포인터·키보드 포커스로 툴팁을 띄운다(delegated-tip) */
   .pmark-host { display: inline-grid; place-items: center; border-radius: 3px; }
   .pmark-host:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

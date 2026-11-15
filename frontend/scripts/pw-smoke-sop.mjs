@@ -547,7 +547,12 @@ await runStep("assign: legend first, place, delete with reason, edit, clear, bul
   await page.locator('[data-testid="assign-remark-modal-confirm"]').click();
   await page.waitForFunction((done) => Number(document.querySelector('[data-testid="assign-progress"]')?.textContent?.split("/")[0]) === done + 2, before, { timeout: T });
   check("delete with a reason confirms", true);
-  // 고쳐 확정 - E로 새 문장을 고치면 변경 종류를 고른다
+  // 고쳐 확정 - E로 새 문장을 고치면 변경 종류를 고른다. 고쳐 쓰기는 문장 줄에서만 되니 그림·표 줄이면 다음 줄로 넘어간다(합성 문서의 줄 순서에 기대지 않게)
+  const isSentenceRow = () => page.locator('[data-testid="assign-old"] [data-testid^="assign-paper-unit-"][data-sel]').evaluateAll((els) => els.length > 0 && els.every((el) => ["ko", "en"].includes(el.getAttribute("lang") ?? "")));
+  for (let step = 0; step < 10 && !(await isSentenceRow()); step += 1) {
+    await page.keyboard.press("j");
+    await page.waitForTimeout(200);
+  }
   await pickFirstPlace(page);
   await page.keyboard.press("e");
   const textarea = page.locator('textarea[data-testid^="assign-text-"]').first();
@@ -675,6 +680,32 @@ await runStep("assign: hold an unassigned unit without a destination", {}, async
   await page.locator('[data-testid="assign-remark-modal-confirm"]').click();
   await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
   check("the unit is on hold", true);
+});
+
+await runStep("assign: a reference line asks for its number before it can be decided", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+  await wait(page, "assign-bar");
+  // 위쪽 줄의 남은 수를 누르면 확인이 남은 참조 줄로 간다(합성 문서 7절의 한 줄)
+  await page.locator('[data-testid="assign-ref-pending"]').click();
+  await wait(page, "assign-ref");
+  check("the pill goes to the proposed reference line", (await getText(page, "assign-ref-title")) === "Reference line?" && (await getText(page, "assign-ref-number")).includes("SOP-ABC-1016"), await getText(page, "assign-ref-number"));
+  check("the paper marks the proposal", (await page.locator('.strip-lang[data-proposed]').count()) === 1);
+  await pickFirstPlace(page);
+  check("Confirm stays off until the number is checked", await page.locator('[data-testid="assign-primary"]').isDisabled());
+  await page.locator('[data-testid="assign-ref-confirm"]').click();
+  await page.locator('[data-testid="assign-ref"][data-state="confirmed"]').waitFor({ timeout: T });
+  check("confirming the number makes it a reference line", (await getText(page, "assign-ref-title")) === "Reference line" && (await page.locator('[data-testid="assign-ref-pending"]').count()) === 0);
+  check("the paper shows REF where KO or EN would be", (await page.locator('.strip[data-sel] .lang-token[data-lang="ref"]:not([data-proposed])').count()) === 1);
+  await takeShot("sop-assign-ref.png");
+  await page.locator('[data-testid="assign-undo"]').click();
+  await page.locator('[data-testid="assign-ref"][data-state="proposed"]').waitFor({ timeout: T });
+  check("undo brings the proposal back", true);
+  // 참조 아님 - 카드와 남은 수가 사라지고 다시 제안하지 않는다
+  await page.locator('[data-testid="assign-ref-reject"]').click();
+  await page.locator('[data-testid="assign-ref"]').waitFor({ state: "detached", timeout: T });
+  // 원문을 다시 받은 뒤에 남은 수가 사라진다
+  const isCountGone = await page.locator('[data-testid="assign-ref-pending"]').waitFor({ state: "detached", timeout: T }).then(() => true, () => false);
+  check("Not a reference removes the card and the count", isCountGone);
 });
 
 await runStep("assign: move picks its target doc from the dropdown", {}, async ({ page, takeShot }) => {
@@ -910,7 +941,8 @@ await runStep("assign: written New document - identical, link by clicking, split
     if (langs.length !== 1 || langs[0] === "neutral") return null;
     return page.locator(`[data-testid="assign-new"] .new-line:not([data-state="picked"]):not([data-lang="${langs[0]}"]):not([data-lang="neutral"])`);
   };
-  const isReady = async () => (await candidate.count()) > 0 && (await (await otherLangLines())?.count() ?? 0) > 0;
+  // 참조 줄 제안이 남은 줄은 번호를 확인하기 전에는 확정되지 않는다 - 이 단계는 그런 줄을 건너뛴다
+  const isReady = async () => (await candidate.count()) > 0 && (await page.locator('[data-testid="assign-ref"]').count()) === 0 && (await (await otherLangLines())?.count() ?? 0) > 0;
   for (let step = 0; step < 40 && !(await isReady()); step += 1) {
     await page.keyboard.press("j");
     // 요청이 나갈 틈(문장이 없는 줄은 요청이 없다) → 걸린 요청이 없을 때까지 → 응답을 그릴 틈

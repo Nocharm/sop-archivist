@@ -34,6 +34,7 @@ from app.sop.models import (
     UnitPairMember,
     WiStep,
 )
+from app.sop.refs import REF_LANG
 from app.sop.status import ROW_STATUS_ORDER
 from app.sop.units import UNIT_ACTIVE, compute_display_id
 
@@ -473,7 +474,8 @@ async def load_bundle_progress(session: AsyncSession, bundle_ids: Collection[int
     for bundle_id, count in await session.execute(
         _select_judged_units(bundle_ids, Document.bundle_id, func.count())
         .where(
-            UnitPairMember.pair_id.is_(None), Unit.kind.in_(SINGLE_LANGUAGE_KINDS),
+            # 참조 줄(REF)은 한 줄뿐인 글이라 짝이 없어도 세지 않는다
+            UnitPairMember.pair_id.is_(None), Unit.kind.in_(SINGLE_LANGUAGE_KINDS), Unit.lang != REF_LANG,
             Document.language_layout.in_(TWO_LANGUAGE_LAYOUTS), ~has_other_language_target,
         )
         .group_by(Document.bundle_id)

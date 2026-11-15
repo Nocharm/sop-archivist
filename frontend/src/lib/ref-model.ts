@@ -1,0 +1,20 @@
+// 참조 줄(REF) 화면 규칙 - 다른 문서를 번호로 가리키는 줄의 번호 짐작과 확인이 남은 줄 세기(설계 2026-11-15-ref-paragraph-design).
+import type { ViewUnit } from "./api-sop";
+
+// 문서 번호 꼴 - 서버의 제안 규칙(backend app/sop/refs.py)과 같다: 영문 대문자 머리 + 하이픈 마디 + 숫자 끝
+const NUMBER = /(?<![A-Za-z0-9])[A-Z]{2,}(?:-[A-Z0-9]{1,8})*-\d{1,6}(?![A-Za-z0-9])/;
+
+/** 글 안에서 문서 번호처럼 보이는 첫 글자 묶음 - 사람이 "참조 줄로 표시"를 열 때 번호 칸에 미리 넣는다. 없으면 빈 글 */
+export function guessRefNumber(text: string): string {
+  return NUMBER.exec(text)?.[0] ?? "";
+}
+
+/** 사람이 번호를 확인하기 전인 제안 */
+export function isRefPending(unit: ViewUnit | undefined): boolean {
+  return unit?.ref?.state === "proposed";
+}
+
+/** 줄(단위 여럿)에서 참조 카드를 보일 단위 - 확인이 남은 제안이 먼저, 없으면 확정된 참조 줄 */
+export function pickRefUnit(units: readonly ViewUnit[]): ViewUnit | null {
+  return units.find((unit) => isRefPending(unit)) ?? units.find((unit) => unit.ref !== null) ?? null;
+}

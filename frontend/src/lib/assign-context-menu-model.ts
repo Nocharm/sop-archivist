@@ -7,6 +7,7 @@ import { planJoin } from "./split-menu-model";
 export type AssignMenuAction =
   | "confirm" | "clear"
   | "split" | "merge_prev" | "merge_next" | "pair_prev" | "pair_next" | "pair_pick" | "unpair" | "lang"
+  | "ref_mark" | "ref_clear"
   | "table_rows" | "table_merge" | "table_layout";
 
 export interface AssignMenuItem {
@@ -85,6 +86,13 @@ function buildJoin(ctx: AssignMenuContext, neighbor: ViewUnit | null, side: "pre
   return build(action, plan.kind === (isPair ? "pair" : "merge") ? null : (plan.reasonKey ?? why("cannotMerge")));
 }
 
+/** 참조 줄 항목 - 참조도 제안도 아닌 글에는 "참조 줄로 표시", 그 밖에는 "참조 아님". 제안을 물리는 것은 언어를 바꾸지 않아 배정이 있어도 된다 */
+function buildRefItem(ctx: AssignMenuContext, editReason: string | null): AssignMenuItem {
+  const { ref } = ctx.target;
+  if (ref === null) return build("ref_mark", editReason);
+  return build("ref_clear", ref.state === "proposed" ? (ctx.readOnly ? why("readOnly") : null) : editReason);
+}
+
 /** 표 항목 - 통째인 표는 행으로 나누거나 레이아웃 표로 바꾸고, 행으로 나눈 표는 다시 합친다. 판단이나 저장 전 고름이 있으면 잠근다 */
 function buildTableItems(ctx: AssignMenuContext): AssignMenuItem[] {
   const { table } = ctx;
@@ -112,7 +120,9 @@ export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
       ...(ctx.target.pair_id === null && (ctx.target.lang === "ko" || ctx.target.lang === "en") ? [build("pair_pick", editReason)] : []),
       // 짝 풀기는 짝인 문장에서만 보인다
       ...(ctx.target.pair_id !== null ? [build("unpair", editReason)] : []),
-      { ...build("lang", editReason), lang: ctx.target.lang },
+      // 참조 줄은 언어가 없다 - 언어를 주려면 먼저 "참조 아님"으로 돌린다
+      { ...build("lang", editReason ?? (ctx.target.lang === "ref" ? why("refLang") : null)), lang: ctx.target.lang },
+      buildRefItem(ctx, editReason),
       ...buildTableItems(ctx),
     ],
   };

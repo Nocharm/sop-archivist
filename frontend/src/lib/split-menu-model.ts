@@ -150,7 +150,8 @@ function buildSingle(ctx: SplitMenuContext): SplitMenuItem[] {
     build("ai_split", guard(getAiSplitReason({ aiEnabled: ctx.aiEnabled, isText: isAiSplitKind(target.kind), hasSuggestion: ctx.hasSuggestion, isWaiting: ctx.isAiWaiting }))),
     build("hold", guard(ctx.isDecided ? why("decided") : null)),
     // KO·EN은 한 줄(지금 언어는 고른 모양으로 꺼져 있다) - 줄 전체가 꺼지는 것은 글이 아닐 때와 읽기 전용뿐
-    { ...build("lang", guard(isText ? null : why("notText"))), lang: target.lang },
+    // 참조 줄(REF)은 언어가 없다 - 배정 화면의 "참조 아님"으로 먼저 돌린다
+    { ...build("lang", guard(!isText ? why("notText") : target.lang === "ref" ? why("refLang") : null)), lang: target.lang },
     build("unpair", guard(target.pair_id !== null ? null : why("notPaired"))),
   ];
 }
