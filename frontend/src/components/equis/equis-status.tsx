@@ -23,7 +23,8 @@ interface EquisStatusProps {
   compact?: boolean;
   /** 작성자가 작업 중일 때만 다시 조회·번호 바꾸기를 보인다 */
   canEdit: boolean;
-  onRefresh: () => void;
+  /** 다시 조회 - 읽기만 하는 자리(결과물, 참조 줄 표시)는 넘기지 않는다 */
+  onRefresh?: () => void;
   /** 옛 번호일 때 지금 번호로 바꾸기 - 번호를 그 자리에서 저장하는 화면만 넘긴다 */
   onUseCurrentNumber?: () => void;
 }
@@ -76,7 +77,7 @@ export function EquisStatus({ equis, testId, compact = false, canEdit, onRefresh
       ) : (
         trigger
       )}
-      {!compact && canEdit && label.icon === "failed" && (
+      {!compact && canEdit && onRefresh && label.icon === "failed" && (
         <button type="button" className="btn ghost h-5 px-1.5 text-[11px]" data-testid={`${testId}-retry`} onClick={onRefresh}>
           {t("equis.retry")}
         </button>
@@ -102,11 +103,12 @@ interface EquisPopoverProps {
   testId: string;
   canEdit: boolean;
   onClose: () => void;
-  onRefresh: () => void;
+  onRefresh?: () => void;
   onUseCurrentNumber?: () => void;
 }
 
-function EquisPopover({ equis, anchorRef, testId, canEdit, onClose, onRefresh, onUseCurrentNumber }: EquisPopoverProps) {
+/** 펼친 정보 - 자기 표시(참조 줄의 작은 주의 등)에서 같은 정보를 여는 곳도 쓴다 */
+export function EquisPopover({ equis, anchorRef, testId, canEdit, onClose, onRefresh, onUseCurrentNumber }: EquisPopoverProps) {
   const { t } = useI18n();
   const panelRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<FloatingPos | null>(null);
@@ -218,7 +220,7 @@ function EquisPopover({ equis, anchorRef, testId, canEdit, onClose, onRefresh, o
             {t("equis.useCurrentNumber")}
           </button>
         )}
-        {canEdit && (
+        {canEdit && onRefresh && (
           <button type="button" className="btn ghost h-7" data-testid={`${testId}-refresh`} onClick={() => act(onRefresh)}>
             <RotateCcw size={14} strokeWidth={1.5} aria-hidden />
             {t("equis.lookUpAgain")}

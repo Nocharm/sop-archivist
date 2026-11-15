@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { EquisInfo } from "./api-sop";
-import { formatEquisLabel, hasRefreshingEquis, listEquisHintKeys, normalizeDocNumber } from "./equis-model";
+import { formatEquisLabel, hasRefreshingEquis, listEquisHintKeys, mapOutputEquis, normalizeDocNumber } from "./equis-model";
 import { MESSAGES } from "./i18n-messages";
 
 function t(key: string, vars: Record<string, string | number> = {}): string {
@@ -93,5 +93,18 @@ describe("helpers", () => {
     expect(hasRefreshingEquis(null)).toBe(false);
     expect(hasRefreshingEquis([{ equis: null }, { equis: make({}) }])).toBe(false);
     expect(hasRefreshingEquis([{ equis: make({ refreshing: true }) }])).toBe(true);
+  });
+
+  it("keys the outputs screen's EQUIS marks by flow node id, skipping documents without one", () => {
+    const old = make({ number: "SOP-ABC-00001" });
+    const target = make({ number: "SOP-ABC-00120", verdict: "in_equis" });
+    const map = mapOutputEquis(
+      [{ id: 3, side: "old", equis: old }, { id: 4, side: "old", equis: null }, { id: 5, side: "new", equis: make({}) }],
+      [{ id: 3, equis: target }, { id: 9 }],
+    );
+    expect([...map.keys()]).toEqual(["old:3", "target:3"]);
+    expect(map.get("old:3")).toBe(old);
+    expect(map.get("target:3")).toBe(target);
+    expect(mapOutputEquis(null, undefined).size).toBe(0);
   });
 });

@@ -160,7 +160,7 @@ import { EDIT_ORIGINAL_PARAM, getEditOriginalHref, getNewDocumentsHref, getStage
 import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useCutLine } from "@/lib/use-cut-line";
-import { isRefPending, pickRefUnit, readRefAdvice } from "@/lib/ref-model";
+import { countRefLookups, isRefPending, pickRefUnit, readRefAdvice } from "@/lib/ref-model";
 import { useEquisPolling } from "@/lib/use-equis-polling";
 import { useLoaded } from "@/lib/use-loaded";
 import { usePaneZoom, type PaneKey, type ZoomDir } from "@/lib/use-pane-zoom";
@@ -313,6 +313,9 @@ export default function AssignPage() {
 
   const unitMap = useMemo(() => new Map((units.data ?? []).map((row) => [row.unit_id, row])), [units.data]);
   const written = useMemo(() => writtenList.data ?? [], [writtenList.data]);
+  // New 원문의 참조 줄 번호는 이 목록을 읽는 요청이 조회한다(한 번에 10개) - 조회 중인 줄이 남은 동안 다시 읽어 표시가 새로 고침 없이 채워지게 한다
+  const refLookups = countRefLookups(written);
+  useEquisPolling(refLookups > 0, writtenList.reload, refLookups);
   const writtenMap = useMemo(() => new Map(written.map((row) => [row.target_id, row])), [written]);
   const viewList = views.data;
   const rows = useMemo(() => (viewList ? buildRows(viewList, unitMap) : []), [viewList, unitMap]);

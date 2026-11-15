@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { EquisInfo, UnitRefDetail, ViewUnit } from "./api-sop";
-import { guessRefNumber, isRefPending, pickRefUnit, readRefAdvice } from "./ref-model";
+import { countRefLookups, guessRefNumber, isRefPending, pickRefUnit, readRefAdvice, readWrittenRefMark } from "./ref-model";
 
 function makeUnit(id: number, ref: ViewUnit["ref"]): ViewUnit {
   return {
@@ -72,5 +72,44 @@ describe("readRefAdvice", () => {
     expect(readRefAdvice(OLD, OLD, detail({ equis: { ...equis, retired: { version: "3.0", status: "Obsolete", effective_date: "", retired_date: "2018-11-21" } } }))).toBeNull();
     expect(readRefAdvice(OLD, OLD, detail({ equis: null }))).toBeNull();
     expect(readRefAdvice(OLD, OLD, null)).toBeNull();
+  });
+});
+
+describe("readWrittenRefMark", () => {
+  const equis: EquisInfo = {
+    state: "found", refreshing: false, verdict: "in_equis", reasons: [], notes: [], current: null, in_progress: [], retired: null,
+    number: "SOP-ABC-00120", trail: [], ambiguous: [], name: "Cleaning of Laboratory Glassware", subtype: "", owning_department: "", plant: "", area: "",
+    legacy_numbers: [], equipment_tag: "", doc_url: null, title_locked: false, fetched_at: null,
+  };
+  const ref = (over: Partial<EquisInfo> = {}) => ({ number: "SOP-ABC-00120", equis: { ...equis, ...over } });
+
+  it("shows nothing on a line that is not a reference or matches EQUIS", () => {
+    expect(readWrittenRefMark({ ref: null, ref_issue: null })).toBeNull();
+    expect(readWrittenRefMark({})).toBeNull();
+    expect(readWrittenRefMark({ ref: ref(), ref_issue: null })).toBeNull();
+  });
+
+  it("passes on the server's number and title mismatch, also for a line with no source", () => {
+    expect(readWrittenRefMark({ ref: ref({ verdict: "attention", reasons: ["old_number"] }), ref_issue: "number" })).toBe("number");
+    expect(readWrittenRefMark({ ref: ref(), ref_issue: "title" })).toBe("title");
+    expect(readWrittenRefMark({ ref_issue: "title" })).toBe("title");
+  });
+
+  it("tells a number EQUIS does not know from a retired document", () => {
+    expect(readWrittenRefMark({ ref: ref({ state: "not_found", verdict: null }), ref_issue: null })).toBe("not_found");
+    const retired = { version: "3.0", status: "Obsolete", effective_date: "", retired_date: "2018-11-21" };
+    expect(readWrittenRefMark({ ref: ref({ verdict: "attention", reasons: ["retired"], retired }), ref_issue: null })).toBe("retired");
+  });
+
+  it("stays quiet while looking up and when EQUIS is off, and says so when the lookup failed with nothing kept", () => {
+    expect(readWrittenRefMark({ ref: ref({ state: "pending", refreshing: true, verdict: null }), ref_issue: null })).toBeNull();
+    expect(readWrittenRefMark({ ref: { number: "SOP-ABC-00120", equis: null }, ref_issue: null })).toBeNull();
+    expect(readWrittenRefMark({ ref: ref({ state: "unavailable", verdict: null }), ref_issue: null })).toBe("failed");
+    expect(readWrittenRefMark({ ref: ref({ state: "unavailable" }), ref_issue: null })).toBeNull();
+  });
+
+  it("counts the reference lines still being looked up", () => {
+    expect(countRefLookups([{ ref: null }, {}, { ref: ref() }])).toBe(0);
+    expect(countRefLookups([{ ref: ref({ state: "pending", refreshing: true }) }, { ref: ref({ refreshing: true }) }, { ref: ref() }])).toBe(2);
   });
 });

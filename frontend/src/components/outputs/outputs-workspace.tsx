@@ -2,6 +2,7 @@
 // 두 화면이 이 한 벌을 쓴다(네 단계 워크플로우 §4.4·§4.5): 4단계 결과(mode="outputs", C는 읽기만)와 3단계 순서·문단번호(mode="order", New 문서 하나의 C에서 순서·깊이·표시를 고친다).
 // 저장 줄과 초안 맞추기가 한 덩어리라, 화면을 나누면서도 그 코드는 한 곳에 둔다.
 // 판(한글판/영어판)이 없다 - 화면 UI 언어는 위치 표기·칸 이름 같은 라벨 언어로만 보낸다. Excel은 요청 중 → 파일 생성 / 실패 두 단계로 보인다(디자인 문서 10절).
+// B의 문서 카드와 C의 문서 머리에는 문서 번호의 EQUIS 표시를 붙인다 - 서버가 문서 목록·To-Be 응답에 이미 싣는 값을 받아 잇는다(읽기 전용, EQUIS가 꺼져 있으면 없다).
 // C의 순서·깊이·표시와 의미 확인은 화면에 먼저 얹고 뒤에서 한 번에 하나씩 저장한다(제품 명세 §7.13 C 순서 바꾸기) - 저장 응답으로 그 문서만 맞추고 C 전체를 다시 받지 않는다.
 "use client";
 
@@ -29,6 +30,8 @@ import {
   getOutputB,
   getOutputC,
   getSummary,
+  getToBe,
+  listDocuments,
   putSemanticChecks,
   putTargetOrder,
   SEMANTIC_CHECK_KEYS,
@@ -57,11 +60,13 @@ import {
   type SaveHold,
   type SaveJob,
 } from "@/lib/c-save-queue";
+import { mapOutputEquis } from "@/lib/equis-model";
 import { useI18n } from "@/lib/i18n";
 import { useLeaveGuard } from "@/lib/leave-guard";
 import { navigate } from "@/lib/nav-buffer";
 import { buildAScreenLines } from "@/lib/output-groups";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
+import { useEquisPolling } from "@/lib/use-equis-polling";
 import { useLoaded } from "@/lib/use-loaded";
 import { readOutputsView, writeOutputsView, type OutputsTab } from "@/lib/outputs-view-prefs";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -132,6 +137,15 @@ export function OutputsWorkspace({ mode }: { mode: OutputsMode }) {
   const outA = useLoaded(() => (tab === "a" ? getOutputA(bundleId, lang) : Promise.resolve(null)), `a:${tab}:${key}`);
   const outB = useLoaded(() => (tab === "b" ? getOutputB(bundleId, lang) : Promise.resolve(null)), `b:${tab}:${key}`);
   const summary = useLoaded(() => (isOrder ? Promise.resolve(null) : getSummary(bundleId)), `${bundleId}:${dataRevision}:${mode}`);
+  // 문서별 EQUIS 표시 - 옛 문서는 문서 목록(B만 쓴다), 새 문서는 To-Be(B·C)에 실려 온다. 못 받아도 결과물은 그대로 보인다(표시만 없다).
+  // 두 응답은 읽을 때 조회를 걸어 주므로, 조회 중인 문서가 있는 동안 다시 읽어 표시가 따라오게 한다
+  const equisDocs = useLoaded(() => (tab === "b" ? listDocuments(bundleId) : Promise.resolve(null)), `equis:${tab === "b"}:${bundleId}:${dataRevision}`);
+  const equisTobe = useLoaded(() => (tab === "a" ? Promise.resolve(null) : getToBe(bundleId)), `equis:${tab === "a"}:${bundleId}:${dataRevision}`);
+  const equisByNode = useMemo(() => mapOutputEquis(equisDocs.data, equisTobe.data?.docs), [equisDocs.data, equisTobe.data]);
+  useEquisPolling([...equisByNode.values()].some((equis) => equis.refreshing), () => {
+    equisDocs.reload();
+    equisTobe.reload();
+  });
 
   // C - 받은 C와 초안을 한 응답 처리 안에서 함께 맞추려고(adoptC) useLoaded 대신 직접 받는다. 다른 탭에 다녀와도 받은 C는 남아 새로 받는 동안 보인다
   const [cReloads, setCReloads] = useState(0);
@@ -531,7 +545,7 @@ export function OutputsWorkspace({ mode }: { mode: OutputsMode }) {
               {outB.data.nodes
                 .filter((node) => node.kind === "old")
                 .map((node) => (
-                  <OutputBCard key={node.id} node={node} nodes={outB.data?.nodes ?? []} edges={outB.data?.edges.filter((edge) => edge.source === node.id) ?? []} />
+                  <OutputBCard key={node.id} node={node} nodes={outB.data?.nodes ?? []} edges={outB.data?.edges.filter((edge) => edge.source === node.id) ?? []} equis={equisByNode} />
                 ))}
             </div>
           ) : tab === "c" && viewC ? (
@@ -558,7 +572,8 @@ export function OutputsWorkspace({ mode }: { mode: OutputsMode }) {
                 onMove={canEditC ? (docId, locationKey, targetId, dir) => editC(docId, { kind: "move", locationKey, targetId, dir }) : undefined}
                 onIndent={canEditC ? (docId, targetId, depth) => editC(docId, { kind: "indent", targetId, depth }) : undefined}
                 onMark={canEditC ? (docId, targetId, style) => editC(docId, { kind: "style", targetId, style }) : undefined}
-                tobeHref={canEdit ? getNewDocumentsHref(bundleId) : undefined} />
+                tobeHref={canEdit ? getNewDocumentsHref(bundleId) : undefined}
+                equis={equisByNode} />
             </>
           ) : null}
         </div>
