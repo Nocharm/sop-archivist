@@ -827,8 +827,16 @@ await runStep("assign: one document wide, then two again", {}, async ({ page, ta
   await wait(page, "assign-new");
   const readOldWidth = async () => (await page.locator('[data-pane="old"]').boundingBox()).width;
   const twoWidth = await readOldWidth();
+  // 보기를 바꾸면 Old 용지가 새 자리로 미끄러진다(v1.0.35) - 움직이는 동안의 표시는 금방 지워져서 누르기 전부터 지켜본다
+  await page.evaluate(() => {
+    window.__paneMotions = [];
+    const panes = document.querySelector(".assign-panes");
+    new MutationObserver(() => panes.dataset.motion && window.__paneMotions.push(panes.dataset.motion)).observe(panes, { attributes: true, attributeFilter: ["data-motion"] });
+  });
   await page.locator('[data-testid="assign-view-one"]').click();
   await page.locator('[data-testid="assign-new"]').waitFor({ state: "detached", timeout: T });
+  await page.locator(".assign-panes:not([data-motion])").waitFor({ timeout: T });
+  check("switching the view slides the paper and then settles", (await page.evaluate(() => window.__paneMotions.join(","))) === "one" && (await page.evaluate(() => getComputedStyle(document.querySelector('[data-pane="old"] .sheet')).transform)) === "none");
   check("one view hides the New pane and the divider", (await page.locator('[data-testid="assign-divider"]').count()) === 0);
   check("the Old pane takes the freed width", (await readOldWidth()) > twoWidth * 1.5);
   // 한 단에서도 줄을 고르면 보낼 곳이 보이고, 직접 잇기는 양 단이 필요하다는 안내가 뜬다

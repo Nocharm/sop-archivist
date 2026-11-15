@@ -167,10 +167,13 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
     observer.observe(root);
     for (const el of root.querySelectorAll(".pane-body, .pane-body > *")) observer.observe(el);
     root.addEventListener("scroll", onChange, true);
+    // 보기를 바꿀 때 용지가 미끄러지는 동안 잰 자리는 어긋나 있다 - 움직임이 끝나면 다시 잰다
+    root.addEventListener("animationend", onChange);
     window.addEventListener("resize", onChange);
     return () => {
       observer.disconnect();
       root.removeEventListener("scroll", onChange, true);
+      root.removeEventListener("animationend", onChange);
       window.removeEventListener("resize", onChange);
       cancelAnimationFrame(frameRef.current);
       frameRef.current = 0;
