@@ -4,17 +4,18 @@ import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 
+import httpx2
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AiUsageEvent
+from app.sop.ai import llm
 from app.sop.ai.adoption import SavedShape, SuggestedShape, TargetShape, decide_adoption
 from app.sop.ai.guidelines import SEEDS_DIR
 from app.sop.ai.llm import parse_reply
 from app.sop.ai.match_jobs import MatchReply
-from app.sop.constants import SYSTEM_HOLD_AI_INVALID
 from app.sop.models import AiJob, AiSuggestion, GuidelineVersion, TargetSentence, TargetSource
 from tests.access_helpers import run_in_session
 from tests.ai_fixtures import (
@@ -429,7 +430,33 @@ def test_merged_warning_compares_with_every_source(
 # --- 무효 ---
 
 
-def test_invalid_reply_holds_the_old_units_only(client: TestClient, fake_ai: FakeAi) -> None:
+def read_plan_suggestion() -> AiSuggestion:
+    """계획이 쓴 잠정 문장 묶음 제안."""
+    (suggestion,) = [row for row in read_rows(AiSuggestion) if row.content.get("provisional")]
+    return suggestion
+
+
+def test_refine_replaces_the_provisional_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle = make_match_bundle(client, p(OLD), p(ORIGINAL_NEW_TEXT))
+    (unit_id,) = read_old_ids(client, bundle, OLD)
+    use_match_reply(fake_ai, change_type="tone")
+    assert request_match(client, bundle.id).status_code == 200
+    run_plan()
+    old_suggestion = read_plan_suggestion()
+    assert read_target(ORIGINAL_NEW_TEXT).change_type == "rewritten"  # 잠정값
+
+    run_jobs()
+
+    target = read_target(ORIGINAL_NEW_TEXT)
+    new = next(row for row in read_rows(AiSuggestion) if row.id == target.suggestion_id)
+    assert target.change_type == "tone" and new.content["provisional"] is False and new.content["reason"]
+    assert read_decision(unit_id).suggestion_id == new.id
+    old_suggestion = next(row for row in read_rows(AiSuggestion) if row.id == old_suggestion.id)
+    assert old_suggestion.result == "stale"
+
+
+def test_invalid_reply_keeps_the_plan_suggestion(client: TestClient, fake_ai: FakeAi) -> None:
+    # 묶기는 코드가 한 것이라 LLM 답과 상관없이 남는다 — 무효는 제안 기록에만 남는다(설계 §4)
     bundle = make_match_bundle(client, p(OLD), p(ORIGINAL_NEW_TEXT))
     (unit_id,) = read_old_ids(client, bundle, OLD)
     secret = "응답에 실린 합성 비밀 글"
@@ -437,19 +464,68 @@ def test_invalid_reply_holds_the_old_units_only(client: TestClient, fake_ai: Fak
 
     pair_up(client, bundle.id)
 
+    plan_suggestion = read_plan_suggestion()
     decision = read_decision(unit_id)
-    assert (decision.status, decision.hold_reason) == ("on_hold", SYSTEM_HOLD_AI_INVALID)
-    assert (decision.disposition, decision.suggestion_id) == ("unassigned", None)
-    target = read_target(ORIGINAL_NEW_TEXT)  # 새 문장 그대로, 출처 없음
-    assert (target.status, target.change_type, target.suggestion_id, target.warnings) == ("unassigned", None, None, [])
-    assert read_links() == set()
-    (suggestion,) = read_suggestions("one_to_one")
-    assert suggestion.result == "invalid"
-    assert suggestion.warnings == [{"kind": "invalid_format", "source": "", "target": ""}]
-    assert (suggestion.content["change_type"], suggestion.content["reason"]) == (None, "")
-    assert secret not in json.dumps(suggestion.content, ensure_ascii=False)
+    target = read_target(ORIGINAL_NEW_TEXT)
+    assert decision.status == "ai_suggested" and target.change_type == "rewritten"
+    assert (decision.disposition, decision.suggestion_id, target.suggestion_id) == (
+        "assigned", plan_suggestion.id, plan_suggestion.id,
+    )
+    assert read_links() == {(target.id, unit_id)}
+    assert [s.result for s in read_rows(AiSuggestion)] == ["applied", "invalid"]
+    (invalid,) = read_suggestions("one_to_one")
+    assert invalid.warnings == [{"kind": "invalid_format", "source": "", "target": ""}]
+    assert (invalid.content["change_type"], invalid.content["reason"]) == (None, "")
+    assert secret not in json.dumps(invalid.content, ensure_ascii=False)
     (job,) = read_jobs()
     assert job.status == "done"
+
+
+def test_failed_refine_keeps_the_plan_suggestion(
+    client: TestClient, fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = make_match_bundle(client, p(OLD), p(ORIGINAL_NEW_TEXT))
+    (unit_id,) = read_old_ids(client, bundle, OLD)
+
+    async def skip_sleep(delay: float) -> None:
+        return None
+
+    def refuse(data: dict) -> str:
+        raise httpx2.ConnectError("refused")
+
+    monkeypatch.setattr(llm, "sleep", skip_sleep)
+    fake_ai.chat = refuse
+
+    pair_up(client, bundle.id)
+
+    (job,) = read_jobs()
+    assert (job.status, job.error) == ("failed", "connection")
+    plan_suggestion = read_plan_suggestion()
+    assert plan_suggestion.result == "applied"
+    decision, target = read_decision(unit_id), read_target(ORIGINAL_NEW_TEXT)
+    assert (decision.status, decision.suggestion_id) == ("ai_suggested", plan_suggestion.id)
+    assert (target.status, target.change_type, target.suggestion_id) == ("ai_suggested", "rewritten", plan_suggestion.id)
+    assert read_links() == {(target.id, unit_id)}
+
+
+def test_refine_is_stale_when_the_group_was_cleared(client: TestClient, fake_ai: FakeAi) -> None:
+    # 사람이 Clear로 지운 묶음은 둘 다 미배정이라 후보로는 읽히지만, 다듬을 제안이 없어 다시 제안하지 않는다
+    bundle = make_match_bundle(client, p(OLD), p(ORIGINAL_NEW_TEXT))
+    (unit_id,) = read_old_ids(client, bundle, OLD)
+    use_match_reply(fake_ai)
+    assert request_match(client, bundle.id).status_code == 200
+    run_plan()
+    clear_by_hand(client, bundle.id, unit_id)
+
+    run_jobs()
+
+    (job,) = read_jobs()
+    assert job.status == "stale"
+    assert fake_ai.requests == []
+    decision, target = read_decision(unit_id), read_target(ORIGINAL_NEW_TEXT)
+    assert (decision.status, decision.suggestion_id) == ("unassigned", None)
+    assert (target.status, target.suggestion_id) == ("unassigned", None)
+    assert read_links() == set()
 
 
 @pytest.mark.parametrize(
@@ -468,7 +544,7 @@ def test_reply_outside_the_schema_is_invalid(client: TestClient, fake_ai: FakeAi
 
     pair_up(client, bundle.id)
 
-    assert read_decision(unit_id).status == "on_hold"
+    assert read_decision(unit_id).status == "ai_suggested"  # 계획의 제안이 남는다
     (suggestion,) = read_suggestions("one_to_one")
     assert suggestion.result == "invalid"
 
@@ -631,7 +707,7 @@ def test_document_removed_during_call_ends_the_job_without_a_write(client: TestC
     assert read_links() == set()
 
 
-def test_decided_before_start_is_stale_without_a_call(client: TestClient, fake_ai: FakeAi) -> None:
+def test_refine_is_stale_when_a_person_confirmed_first(client: TestClient, fake_ai: FakeAi) -> None:
     bundle = make_match_bundle(client, p(OLD), p(ORIGINAL_NEW_TEXT))
     (unit_id,) = read_old_ids(client, bundle, OLD)
     use_match_reply(fake_ai)
@@ -645,6 +721,9 @@ def test_decided_before_start_is_stale_without_a_call(client: TestClient, fake_a
     (job,) = read_jobs()
     assert job.status == "stale"
     assert fake_ai.requests == []
+    assert read_plan_suggestion().adoption == "as_is"  # 채택은 확정한 잠정 제안에 남는다
+    target = read_target(ORIGINAL_NEW_TEXT)
+    assert (target.status, target.change_type) == ("confirmed", "rewritten")
 
 
 @pytest.mark.usefixtures("restore_guidelines")
@@ -711,17 +790,19 @@ def test_replacing_a_pair_sweeps_its_ai_translation(client: TestClient, fake_ai:
     assert read_decision(unit_id).suggestion_id == target.suggestion_id
 
 
-def test_invalid_reply_over_a_previous_pair_unlinks_it(client: TestClient, fake_ai: FakeAi) -> None:
+def test_invalid_reply_over_a_previous_pair_keeps_it(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, unit_id = make_pair(client, fake_ai)
+    refined = read_target(ORIGINAL_NEW_TEXT).suggestion_id
     queue_again(read_jobs()[0])
     fake_ai.chat = lambda data: "not json"
 
     run_jobs()
 
-    assert read_decision(unit_id).status == "on_hold"
+    decision = read_decision(unit_id)
+    assert (decision.status, decision.suggestion_id) == ("ai_suggested", refined)
     target = read_target(ORIGINAL_NEW_TEXT)
-    assert (target.status, target.change_type, target.confirmed_text) == ("unassigned", None, ORIGINAL_NEW_TEXT)
-    assert read_links() == set()
+    assert (target.status, target.change_type, target.suggestion_id) == ("ai_suggested", "tone", refined)
+    assert read_links() == {(target.id, unit_id)}
 
 
 # --- 사람 확정과 채택 ---

@@ -38,6 +38,9 @@ _ANSWER_KINDS = ("table", "figure")  # 기대 정답에서 `kind`로 찾는 단�
 _REPLY_CHANGE_TYPES = ("as_is", "tone", "rewritten")  # LLM이 낼 수 있는 종류 — 나눔·합침은 서버가 구조로 정한다
 _REPLY_RULE_IDS = ["R01"]  # 규칙 문서에 있는 ID — 없는 ID는 서버가 경고를 남긴다
 _ANSWER_REASON = "합성: 기대 정답으로 답한 가짜 AI 제안이다."
+# 정답 임베딩의 차원 — 해시 바이트 32개를 다 쓴다. 8차원이면 정답이 아닌 글끼리도 코사인이 짝 임계값(0.75)을 넘어,
+# 맨 앞에 도는 짝 계획(설계 §3)이 입구 1 단위를 입구 2 새 문장과 거짓으로 묶는다.
+_ANSWER_VECTOR_DIM = 32
 
 
 def extract_data(messages: list[dict]) -> dict:
@@ -140,7 +143,7 @@ class SyntheticAnswers:
     """합성 묶음의 기대 정답으로 답하는 가짜 AI — 단순한 답(한 자리, 같은 언어)은 정답으로, 나머지는 무효 응답으로 돌려 사람 경로를 타게 한다.
 
     나머지는 합침·중복 배정·표, 분류 후보에 없는 외부 이동, 한 응답에 담을 수 없는 짝(두 언어의 자리나 변경 종류가 갈린다)이다.
-    임베딩은 정답끼리 같은 벡터를 줘 후보 추리기와 입구 2 짝 계획이 정답을 고르게 한다. 작업이 문서 순서로 돈다고 본다(같은 글의 몇 번째인지).
+    임베딩은 정답끼리 같은 벡터를 주고 나머지 글끼리는 비슷하지 않게 해 후보 추리기와 입구 2 짝 계획이 정답을 고르게 한다. 작업이 문서 순서로 돈다고 본다(같은 글의 몇 번째인지).
     """
 
     def __init__(self, expected: dict) -> None:
@@ -159,7 +162,7 @@ class SyntheticAnswers:
 
     def embed(self, text: str) -> list[float]:
         """정답끼리 같은 벡터 — 분류 질의는 짝의 글을 줄바꿈으로 이어서 첫 줄로 찾는다. 정답이 없는 글(라벨 포함)은 자기 벡터다."""
-        return hash_vector(self._anchors.get(text.partition("\n")[0], text))
+        return vector_for(self._anchors.get(text.partition("\n")[0], text), _ANSWER_VECTOR_DIM)
 
     def chat(self, data: dict) -> str:
         reply = {"classify": self._answer_classify, "match": self._answer_match}[data["task"]](data)

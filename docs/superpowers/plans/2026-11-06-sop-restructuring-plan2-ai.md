@@ -83,7 +83,7 @@
 - `content`:
   - `classify`: `{unit_ids, disposition, target_doc_id, slot_key, wi_step, wi_part, reason, rule_ids, evidence: [{unit_id, quote}], change_type, rewrites: {ko: [...], en: [...]}, retrieval, target_ids}`. `retrieval`은 `embedding`·`embedding_failed`·`no_index`다.
   - `translate`: `{unit_id, source_target_id, to, target_id, text}`
-  - `match`: `{unit_ids, target_ids, shape, change_type, reason, rule_ids, retrieval}`. `shape`는 `one_to_one`·`split`·`merged`·`delete_candidate`·`new`·`table`·`figure`다.
+  - `match`: `{unit_ids, target_ids, shape, change_type, reason, rule_ids, retrieval, provisional}`. `shape`는 `one_to_one`·`split`·`merged`·`delete_candidate`·`new`·`table`·`figure`다. `provisional`(bool, 2026-11-15)은 계획이 쓴 문장 묶음이 다듬기(`match` 작업의 LLM 답)를 기다리는 동안만 참이다 — `change_type`이 코드가 정한 잠정값이고 `reason`·`rule_ids`가 비어 있다. 다듬기가 바꿔 쓴 제안과 표·그림·신규·삭제 후보, 띄어쓰기만 다른 짝은 거짓이다. 이 칸이 없는 옛 제안은 거짓으로 읽는다.
   - `pair`: `{pair_id, ko_unit_id, en_unit_id}`
   - `split`: `{unit_id, offsets, reason, rule_ids}`. 조각이 원문과 맞지 않으면 `result`가 `invalid`이고 경고 종류는 `parts_mismatch`다. `offsets`는 `SplitOp.at`에 그대로 쓰는 위치이고, 뒤쪽부터 적용하면 앞 위치가 바뀌지 않는다.
 - `adoption`의 `applied`는 나머지 숫자의 합이 아니다. 작업 뒤 은퇴한 단위의 제안은 `applied`에만 있고 `pending`에 없다.
