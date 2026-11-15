@@ -832,11 +832,17 @@ await runStep("assign: one document wide, then two again", {}, async ({ page, ta
     window.__paneMotions = [];
     const panes = document.querySelector(".assign-panes");
     new MutationObserver(() => panes.dataset.motion && window.__paneMotions.push(panes.dataset.motion)).observe(panes, { attributes: true, attributeFilter: ["data-motion"] });
+    // 접을 때 New 칸의 복제본이 잠깐 붙었다 떨어진다(v1.0.36)
+    window.__paneGhosts = 0;
+    new MutationObserver((records) => {
+      for (const record of records) for (const node of record.addedNodes) if (node instanceof HTMLElement && "ghost" in node.dataset) window.__paneGhosts += 1;
+    }).observe(panes, { childList: true });
   });
   await page.locator('[data-testid="assign-view-one"]').click();
   await page.locator('[data-testid="assign-new"]').waitFor({ state: "detached", timeout: T });
   await page.locator(".assign-panes:not([data-motion])").waitFor({ timeout: T });
   check("switching the view slides the paper and then settles", (await page.evaluate(() => window.__paneMotions.join(","))) === "one" && (await page.evaluate(() => getComputedStyle(document.querySelector('[data-pane="old"] .sheet')).transform)) === "none");
+  check("the folded New pane fades out as a picture and is removed", (await page.evaluate(() => window.__paneGhosts)) === 1 && (await page.locator("[data-ghost]").count()) === 0);
   check("one view hides the New pane and the divider", (await page.locator('[data-testid="assign-divider"]').count()) === 0);
   check("the Old pane takes the freed width", (await readOldWidth()) > twoWidth * 1.5);
   // 한 단에서도 줄을 고르면 보낼 곳이 보이고, 직접 잇기는 양 단이 필요하다는 안내가 뜬다

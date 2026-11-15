@@ -1372,6 +1372,9 @@
   .assign-panes[data-motion] .pane-body { overflow-x: hidden; }
   .assign-panes[data-motion="two"] [data-pane="new"], .assign-panes[data-motion="two"] .pane-divider { animation: fade-in var(--dur-slow) var(--ease-enter); }
   .assign-panes[data-motion] .link-lines { visibility: hidden; }
+  /* 한 단으로 접을 때 - 사라진 New 칸의 복제본이 오른쪽으로 조금 물러나며 옅어진다(use-pane-slide가 달고 뗀다). 넓어지는 Old 용지와 글이 겹쳐 보이는 시간을 줄이려고 용지보다 빨리 끝낸다 */
+  .assign-panes > [data-ghost] { position: absolute; pointer-events: none; animation: pane-ghost var(--dur-base) var(--ease-exit) forwards; }
+  @keyframes pane-ghost { to { opacity: 0; translate: 24px 0; } }
   @keyframes pane-slide { from { transform: translateX(var(--pane-dx, 0px)); } }
   /* 문서별 확대 - 원문 글자·줄 높이·용지 폭이 --z를 따른다. 종이 상한은 Split(.sheets)과 같은 860 */
   .assign-pane .sheet { max-width: calc(860px * var(--z, 1)); }
