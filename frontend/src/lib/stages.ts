@@ -50,10 +50,10 @@ export function parseBundlePath(pathname: string): { bundleId: number; stage: St
   return { bundleId: Number(match[1]), stage };
 }
 
-/** 배정 화면 안의 원문 고치기를 여는 주소 값 - 문서 id, 또는 읽을 수 있는 첫 문서("first") */
+/** 문서 하나를 배정 화면의 한 단 보기로 여는 주소 값 - 문서 id, 또는 읽을 수 있는 첫 문서("first"). 옛 원문 고치기 화면의 주소였고, 배정 화면이 읽은 뒤 주소에서 뗀다 */
 export const EDIT_ORIGINAL_PARAM = "edit";
 
-/** 그 문서의 원문 고치기(옛 쪼개기 화면)를 연 배정 화면 주소 */
+/** 그 문서를 한 단으로 연 배정 화면 주소 - Old 문서면 넓게 보며 배정하고, 이미 쓴 New 문서면 그 원문을 다듬는다 */
 export function getEditOriginalHref(bundleId: number, docId: number): string {
   return `${getStageHref(bundleId, "assign")}?${EDIT_ORIGINAL_PARAM}=${docId}`;
 }

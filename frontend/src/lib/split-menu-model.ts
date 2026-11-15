@@ -1,62 +1,13 @@
-// Split 문장 우클릭 메뉴의 가능/불가 판정 - 화면은 이 결과대로 항목을 켜고 끄며 까닭을 툴팁으로 보인다.
-import type { UnitLang, ViewUnit } from "./api-sop";
+// 문장을 묶는 규칙 - 같은 언어의 이웃은 한 문장으로 합치고 한글·영어는 짝으로 맺는다. 용지의 조각 사이 단추·우클릭 메뉴·떨어진 문장 고르기가 같은 답을 쓴다.
+// (옛 쪼개기 화면의 메뉴 판정이 있던 파일이다 - 그 화면은 배정 화면에 합쳐졌고 묶는 규칙만 남았다. 문구 키는 split.menu.why.* 그대로다)
+import type { ViewUnit } from "./api-sop";
 import { getMergeBlocker, MERGE_BLOCKER_KEYS } from "./paper-model";
 
-export type SplitMenuAction = "join" | "unpair" | "split" | "ai_split" | "hold" | "lang";
-
-export interface SplitMenuItem {
-  action: SplitMenuAction;
-  enabled: boolean;
-  /** 꺼진 까닭의 문구 키 - 켜져 있으면 없다 */
-  reasonKey?: string;
-  /** 언어 줄(lang)의 지금 언어 - 그 쪽은 고를 수 없고 다른 쪽만 누른다 */
-  lang?: UnitLang;
-}
-
-export interface SplitMenuContext {
-  /** 지금 고른 문장 */
-  selected: ViewUnit | null;
-  /** 우클릭한 문장 */
-  target: ViewUnit;
-  /** 두 문장이 위아래로 이웃하다(용지 순서) */
-  adjacent: boolean;
-  readOnly: boolean;
-  aiEnabled: boolean;
-  /** 우클릭한 문장에 나눌 선이 놓여 있다 */
-  hasCut?: boolean;
-  /** 우클릭한 문장에 아직 정하지 않은 AI 나누기 제안이 있다 */
-  hasSuggestion?: boolean;
-  /** 우클릭한 문장의 AI 나누기 요청이 대기·실행 중이다 */
-  isAiWaiting?: boolean;
-  /** 우클릭한 문장이 이미 판단을 받았다(보류는 판단 전 단위만) */
-  isDecided?: boolean;
-}
-
 const EDITABLE_KINDS = new Set(["sentence", "heading", "cell_sentence"]);
-/** AI 나누기가 받는 종류 - 백엔드(split.py)는 문장·칸 문장만 쪼갠다. 오른쪽 칸 단추와 우클릭 메뉴가 같이 쓴다 */
-const AI_SPLIT_KINDS = new Set(["sentence", "cell_sentence"]);
-
-export function isAiSplitKind(kind: string): boolean {
-  return AI_SPLIT_KINDS.has(kind);
-}
-
 function why(reason: string): string {
   return `split.menu.why.${reason}`;
 }
 
-function build(action: SplitMenuAction, reasonKey: string | null): SplitMenuItem {
-  return reasonKey === null ? { action, enabled: true } : { action, enabled: false, reasonKey };
-}
-
-/** AI 나누기를 못 쓰는 까닭의 문구 키 - 오른쪽 칸 단추와 우클릭 메뉴가 같은 규칙을 쓴다. 쓸 수 있으면 null */
-export function getAiSplitReason(input: { aiEnabled: boolean; isText: boolean; hasSuggestion?: boolean; isWaiting?: boolean }): string | null {
-  if (!input.aiEnabled) return why("aiOff");
-  if (!input.isText) return why("notText");
-  if (input.isWaiting) return why("aiWaiting");
-  return input.hasSuggestion ? why("hasSuggestion") : null;
-}
-
-/** 묶기의 결과 - 언어가 모두 같으면 한 문장으로 합치기, 한글과 영어가 섞였으면 한/영 짝 */
 export type JoinKind = "merge" | "pair";
 
 export interface JoinPlan {
@@ -149,39 +100,4 @@ export function planPairLanguages(units: ViewUnit[]): LanguageChange[] | null {
     { lang: "ko", unitIds: units.filter((unit) => unit.id !== enId && unit.lang !== "ko").map((unit) => unit.id) },
   ];
   return changes.filter((change) => change.unitIds.length > 0);
-}
-
-function buildPair(ctx: SplitMenuContext & { selected: ViewUnit }): SplitMenuItem[] {
-  const { selected, target } = ctx;
-  const isPaired = selected.pair_id !== null && selected.pair_id === target.pair_id;
-  const guard = (reason: string | null) => (ctx.readOnly ? why("readOnly") : reason);
-  return [
-    build("join", guard(planJoin([selected, target], ctx.adjacent).reasonKey ?? null)),
-    build("unpair", guard(isPaired ? null : why("notPaired"))),
-  ];
-}
-
-function buildSingle(ctx: SplitMenuContext): SplitMenuItem[] {
-  const { target } = ctx;
-  const guard = (reason: string | null) => (ctx.readOnly ? why("readOnly") : reason);
-  const isText = EDITABLE_KINDS.has(target.kind);
-  return [
-    build("split", guard(ctx.hasCut ? null : why("noCut"))),
-    build("ai_split", guard(getAiSplitReason({ aiEnabled: ctx.aiEnabled, isText: isAiSplitKind(target.kind), hasSuggestion: ctx.hasSuggestion, isWaiting: ctx.isAiWaiting }))),
-    build("hold", guard(ctx.isDecided ? why("decided") : null)),
-    // KO·EN은 한 줄(지금 언어는 고른 모양으로 꺼져 있다) - 줄 전체가 꺼지는 것은 글이 아닐 때와 읽기 전용뿐
-    // 참조 줄(REF)은 언어가 없다 - 배정 화면의 "참조 아님"으로 먼저 돌린다
-    { ...build("lang", guard(!isText ? why("notText") : target.lang === "ref" ? why("refLang") : null)), lang: target.lang },
-    build("unpair", guard(target.pair_id !== null ? null : why("notPaired"))),
-  ];
-}
-
-/** 고른 문장이 있고 다른 문장을 눌렀으면 두 문장 동작, 아니면 오른쪽 칸과 같은 한 문장 동작 */
-export function buildSplitMenu(ctx: SplitMenuContext): SplitMenuItem[] {
-  return ctx.selected !== null && ctx.selected.id !== ctx.target.id ? buildPair({ ...ctx, selected: ctx.selected }) : buildSingle(ctx);
-}
-
-/** 보류는 아직 판단이 없는 단위만 - 오른쪽 칸 H와 우클릭 메뉴가 같은 규칙을 쓴다(칸 문장은 묶인 표·행 단위를 본다) */
-export function isUnitDecided(unit: ViewUnit, units: ReadonlyMap<number, ViewUnit>): boolean {
-  return units.get(unit.group_unit_id ?? unit.id)?.status !== "unassigned";
 }

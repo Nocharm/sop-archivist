@@ -32,12 +32,6 @@ const SAMPLE_BATCH_RUNS = [
 const text = (value) => `text=${value}`;
 const id = (value) => `[data-testid="${value}"]`;
 
-async function clickText(page, value) {
-  const target = page.getByText(value, { exact: false }).first();
-  await target.scrollIntoViewIfNeeded();
-  await target.click();
-}
-
 async function click(page, selector) {
   const target = page.locator(selector).first();
   await target.waitFor({ state: "visible", timeout: T });
@@ -78,26 +72,6 @@ const SCENES = [
     name: "upload", app: { clip: id("upload") }, user: "qa.member", path: "/bundles/1/documents",
     prep: (page) => click(page, id("documents-upload")),
     marks: [id("upload-pick")],
-  },
-  {
-    name: "split-unit", app: { name: "split", width: 1280 }, user: "qa.member", path: "/bundles/1/assign?edit=first",
-    prep: (page) => clickText(page, "로터를 장착하고 뚜껑을 닫은 후"),
-    marks: [id("split-docs"), `${id("split-paper")} >> text=로터를 장착하고 뚜껑을 닫은 후`, id("split-unit-id"), id("split-split"), id("split-split"), id("split-pair"), id("split-help")],
-  },
-  {
-    name: "split-table", user: "qa.member", path: "/bundles/1/assign?edit=first",
-    prep: async (page) => {
-      // 표 위의 가는 손잡이가 표 전체 단위다(칸 글자를 누르면 칸 문장이 골라진다)
-      const handle = page.locator(`${id("split-paper")} .ptbl-cap`).first();
-      await handle.scrollIntoViewIfNeeded();
-      await handle.click();
-    },
-    marks: [`${id("split-paper")} .ptbl-cap`, id("split-unit-id"), id("split-table")],
-  },
-  {
-    name: "split-pdf", user: "qa.member", path: "/bundles/1/assign?edit=first",
-    prep: (page) => click(page, id("split-doc-5")),
-    marks: [id("split-doc-5"), id("split-paper")],
   },
   { name: "tobe", user: "qa.member", path: "/bundles/1/documents", prep: (page) => page.locator(id("tobe-section")).scrollIntoViewIfNeeded(), marks: [text("Excel template"), text("Import Excel"), id("tobe-add"), `[data-testid$="-toggle"]`, id("tobe-save")] },
   {
