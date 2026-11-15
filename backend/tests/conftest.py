@@ -24,6 +24,9 @@ os.environ["AI_ENABLED"] = "false"
 os.environ["EMBED_ENABLED"] = "false"  # 켜져 있으면 lifespan이 AI 워커를 띄워 시험의 run_jobs()와 작업을 다툰다
 os.environ["N8N_HR_URL"] = ""
 os.environ["N8N_HR_TOKEN"] = ""
+os.environ["N8N_QUERY_URL"] = ""  # EQUIS 조회는 꺼진 채로 시작한다 — 켜는 시험은 settings를 런타임에 바꾼다
+os.environ["EQUIS_EDW_TABLE"] = ""
+os.environ["EQUIS_DOC_URL_BASE"] = ""
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -44,7 +47,7 @@ from app.models import (  # noqa: E402
     RolePermission,
 )
 from app.settings import settings  # noqa: E402
-from app.sop.models import Bundle, BundleDeletionRecord, GuidelineVersion  # noqa: E402
+from app.sop.models import Bundle, BundleDeletionRecord, EquisLookup, GuidelineVersion  # noqa: E402
 from tests.fake_ai import FakeAi, install_fake_ai  # noqa: E402
 
 
@@ -122,8 +125,8 @@ def clean_ai_usage(client: TestClient) -> Iterator[None]:
 def _reset_sop() -> None:
     async def _run() -> None:
         async with SessionLocal() as session:
-            # 묶음 삭제가 나머지 SOP 표를 CASCADE로 지운다. 삭제 기록은 FK가 없어 따로 지운다
-            for model in (Bundle, BundleDeletionRecord):
+            # 묶음 삭제가 나머지 SOP 표를 CASCADE로 지운다. 삭제 기록과 EQUIS 조회 결과는 FK가 없어 따로 지운다
+            for model in (Bundle, BundleDeletionRecord, EquisLookup):
                 await session.execute(delete(model))
             await session.commit()
 
@@ -170,6 +173,13 @@ def fake_ai(monkeypatch: pytest.MonkeyPatch) -> FakeAi:
     시험 인자로 쓰는 픽스처라 모듈에서 import하면 F811이 나서 여기에 둔다.
     """
     return install_fake_ai(monkeypatch, chat=lambda data: "{}")
+
+
+@pytest.fixture
+def auto_prepare(fake_ai: FakeAi, monkeypatch: pytest.MonkeyPatch) -> FakeAi:
+    """fake_ai 위에 저절로 서는 AI(업로드 뒤 묶기 계획 등)를 켠다 — 같은 FakeAi를 돌려준다."""
+    monkeypatch.setattr(settings, "ai_auto_prepare", True)
+    return fake_ai
 
 
 @pytest.fixture

@@ -2,14 +2,16 @@
 // Old와 같은 종이 조각: 왼쪽 밖 앞머리(절 번호 칸, 폭 = 절 깊이라 들여쓴 것처럼 읽힌다), 본문 위 줄에 출처 칩, 위 테두리 오른쪽에 올리거나 고를 때만 KO/EN 탭(짝은 모두).
 // 엮은 문서의 앞머리는 결과물 C와 같은 줄마다 자기 번호(생략·주석은 없음)이고 칸 번호는 칸 머리 줄에 남는다.
 // 점선 = 후보, 채움 = 고른 문장, 칩 = 붙은 Old 출처(누르면 Old의 그 조각으로), 왼쪽 끝 위험색 막대 = 출처 없음. 엮은 문서의 빈 칸은 옅은 자리 표시.
+// 참조 줄이 EQUIS와 어긋나면 칩 줄 끝에 작은 표시(RefMark) - 출처 없는 줄은 그 표시만 있는 칩 줄이 생긴다.
 // 칩 오른쪽 갈매기는 그 Old 조각이 왼쪽 칸 화면 위·아래 밖에 있다는 표시 - 스크롤마다 바뀌어 LinkLines가 data-dir로 단다(Old 배지와 같은 방식).
 // 줄이 새로 들어오면 펼치며 나타나고 빠지면 접히며 사라진다(확정이 곧 보이는 실시간 넣기). 표·그림은 이번 화면에서 잇지 않아 회색 상자로만 보인다(설계 §2).
 "use client";
 
-import { ChevronDown, ChevronUp, FilePlus2, Spline } from "lucide-react";
-import { Fragment, useEffect, useRef, useState, type FocusEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { ChevronDown, ChevronUp, FilePlus2, Scissors, Spline } from "lucide-react";
+import { Fragment, useEffect, useEffectEvent, useRef, useState, type FocusEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { PaneZoom } from "@/components/assign/pane-zoom";
+import { RefMark } from "@/components/assign/ref-mark";
 import { LangToken } from "@/components/paper/lang-token";
 import { StripLead, STRIP_LEAD_EXTRA } from "@/components/paper/strip-lead";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -17,8 +19,10 @@ import { Truncate } from "@/components/ui/motion";
 import { Select, type SelectOption } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { WrittenSentence } from "@/lib/api-sop";
+import { readCaretPoint } from "@/lib/caret-point";
 import { diffRows, getComposedLeadWidths, getNewRowKey, isComposedRow, isWrittenRow, readSectionNumber, type NewPaneRow } from "@/lib/composed-model";
 import { useI18n } from "@/lib/i18n";
+import { readWrittenRefMark } from "@/lib/ref-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionPill, getTabWidths } from "@/lib/strip-pill-model";
 
 interface NewPaneProps {
@@ -38,6 +42,8 @@ interface NewPaneProps {
   pickedIds: ReadonlySet<number>;
   /** 출처 없는 New 모드에서 고른 문장 */
   focusId: number | null;
+  /** 양 단에서 다듬으려고 고른 문장 */
+  shapeId?: number | null;
   sourceLabel: (unitId: number) => string;
   /** 줄을 누름 - anchor는 그 줄(그 자리 메뉴가 붙는다) */
   onPick: (targetId: number, additive: boolean, anchor: HTMLElement, event: MouseEvent) => void;
@@ -48,6 +54,18 @@ interface NewPaneProps {
   onReveal: (el: HTMLElement, flash: boolean) => void;
   zoom: number;
   onZoom: (dir: "+" | "-") => void;
+  /** 이미 쓴 문서의 원문 고치기 주소 - 엮은 문서나 읽기 전용이면 없다 */
+  /** 이 문서의 원문을 한 단으로 열어 다듬는다 - 이미 쓴 문서에만 있다 */
+  onEditOriginal?: () => void;
+  /** 줄을 우클릭 - 그 문장의 고치기 메뉴를 연다(이미 쓴 문서에서 고칠 수 있는 사람만) */
+  onShape?: (targetId: number, click: { x: number; y: number }) => void;
+  /** 그 자리에서 나눌 선 - 그 줄의 글 안 at 자리에 선을 긋고 바로 아래에 cutPop(나누기·취소)을 둔다 */
+  cut?: { targetId: number; at: number } | null;
+  cutPop?: ReactNode;
+  /** 나눌 선을 끄는 중 - 그 줄의 글 안 글자 위치, 글 위·아래로 벗어났으면 처음·끝 */
+  onCutDrag?: (at: number | "start" | "end") => void;
+  /** 칸 머리 아래 한 줄 - 짝 고르는 중 같은 안내 */
+  banner?: ReactNode;
   /** 두 문서 사이 연결선 켜기·끄기 */
   linesOn: boolean;
   onToggleLines: () => void;
@@ -55,10 +73,23 @@ interface NewPaneProps {
 
 function readState(row: WrittenSentence, props: NewPaneProps): string | undefined {
   if (row.target_id === props.focusId) return "focus";
+  if (row.target_id === props.shapeId) return "shape";
   if (props.pickedIds.has(row.target_id)) return "picked";
   if (props.candidateIds.has(row.target_id)) return "candidate";
   if (!props.readOnly && row.kind === "sentence" && row.source_unit_ids.length === 0 && row.change_type !== "new") return "unsourced";
   return undefined;
+}
+
+/** 끄는 자리 → 그 줄의 글 안 글자 위치. 글자 위가 아니면 글의 위·아래 어느 쪽인지로 답하고, 옆으로만 벗어났으면 선을 그대로 둔다(null) */
+function readCutDragAt(text: HTMLElement, x: number, y: number): number | "start" | "end" | null {
+  const caret = readCaretPoint(x, y);
+  const holder = caret ? (caret.node instanceof Element ? caret.node : caret.node.parentElement) : null;
+  const piece = holder?.closest<HTMLElement>("[data-start]") ?? null;
+  if (caret && piece && text.contains(piece)) return Number(piece.dataset.start) + (caret.node.nodeType === Node.TEXT_NODE ? caret.offset : 0);
+  const rect = text.getBoundingClientRect();
+  if (y < rect.top) return "start";
+  if (y > rect.bottom) return "end";
+  return null;
 }
 
 /** 짝 묶음 번호 - 짝의 작은 문장 id(서버는 둘짜리 짝만 서로를 가리킨다), 짝이 아니면 null. 앞머리 괄호와 언어 탭이 같은 기준을 쓴다 */
@@ -169,6 +200,45 @@ export function NewPane(props: NewPaneProps) {
     onReveal(el, !el.closest("[data-enter]"));
   });
 
+  // 나눌 선 끌기 - 선이 옮겨 가며 다시 그려져도 끊기지 않게 창에서 듣는다(Old 용지와 같은 방식)
+  const [isCutDragging, setIsCutDragging] = useState(false);
+  const handleCutMove = useEffectEvent((event: PointerEvent) => {
+    const targetId = props.cut?.targetId;
+    const text = targetId === undefined ? null : paneRef.current?.querySelector<HTMLElement>(`.new-line[data-target="${targetId}"] .new-text`);
+    if (!text || !props.onCutDrag) return;
+    const at = readCutDragAt(text, event.clientX, event.clientY);
+    if (at !== null) props.onCutDrag(at);
+  });
+  useEffect(() => {
+    if (!isCutDragging) return;
+    const move = (event: PointerEvent) => handleCutMove(event);
+    const stop = () => {
+      setIsCutDragging(false);
+      // 놓은 자리가 문장 위면 누르기(click)가 따라온다 - 끌기가 고르기로 읽히지 않게 그 한 번은 삼킨다
+      const swallow = (event: Event) => {
+        event.stopPropagation();
+        event.preventDefault();
+      };
+      window.addEventListener("click", swallow, { capture: true, once: true });
+      window.setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 0);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+    };
+  }, [isCutDragging]);
+
+  function handleCutDown(event: ReactPointerEvent<HTMLElement>) {
+    if (event.button !== 0) return;
+    event.preventDefault(); // 글자가 끌려 골라지지 않게
+    window.getSelection()?.removeAllRanges();
+    setIsCutDragging(true);
+  }
+
   function renderSources(row: WrittenSentence) {
     const isOpen = openSources.has(row.target_id);
     const ids = row.source_unit_ids;
@@ -205,6 +275,8 @@ export function NewPane(props: NewPaneProps) {
           </button>
         )}
         {row.change_type === "new" && <span className="new-src is-new">{t("assign.markedNew")}</span>}
+        {/* 참조 줄이 EQUIS와 어긋난다(번호·이름·EQUIS에 없음·폐기) - 출처가 없는 줄에도 뜬다. 이 문서의 글은 여기서 고치지 않아 알리기만 한다 */}
+        <RefMark row={row} />
       </span>
     );
   }
@@ -226,9 +298,20 @@ export function NewPane(props: NewPaneProps) {
     // 엮은 문서는 줄마다 결과물 C의 자기 번호(생략·주석은 없음). 이미 쓴 문서는 절을 여는 줄에만 절 번호 - 짝 카드의 둘째 줄부터가 절을 열면 앞머리에 번호가 없다
     const isOwnNumber = isComposedRow(row);
     const number = isOwnNumber ? row.number : isSectionStart && !cardTops.has(row.target_id) ? getSectionPill(readSectionNumber(row.section_path)) : null;
+    const cutAt = props.cut && props.cut.targetId === row.target_id ? props.cut.at : null;
     const text = (
       <span lang={row.lang === "neutral" ? undefined : row.lang} className="new-text">
-        {row.text}
+        {cutAt === null ? (
+          row.text
+        ) : (
+          <>
+            <span data-start={0}>{row.text.slice(0, cutAt)}</span>
+            <span className="new-cut" aria-hidden data-testid={`assign-new-cut-${row.target_id}`}>
+              {props.onCutDrag && <span className="cut-handle" data-tip={isCutDragging ? undefined : t("split.cutMove")} data-testid={`assign-new-cut-handle-${row.target_id}`} onPointerDown={handleCutDown} />}
+            </span>
+            <span data-start={cutAt}>{row.text.slice(cutAt)}</span>
+          </>
+        )}
       </span>
     );
     return (
@@ -244,8 +327,16 @@ export function NewPane(props: NewPaneProps) {
             data-target={row.target_id}
             data-pair-group={readPairGroup(row) ?? undefined}
             data-testid={`assign-new-${row.target_id}`}
+            onContextMenu={
+              props.onShape && isWrittenRow(row)
+                ? (event) => {
+                    event.preventDefault();
+                    props.onShape?.(row.target_id, { x: event.clientX, y: event.clientY });
+                  }
+                : undefined
+            }
           >
-            {(row.source_unit_ids.length > 0 || row.change_type === "new") && renderSources(row)}
+            {(row.source_unit_ids.length > 0 || row.change_type === "new" || readWrittenRefMark(row) !== null) && renderSources(row)}
             {props.readOnly ? (
               <span className="new-hit is-static">{text}</span>
             ) : (
@@ -263,6 +354,7 @@ export function NewPane(props: NewPaneProps) {
               </button>
             )}
             <LangToken lang={row.lang} className="strip-lang" testId={`assign-new-lang-${row.target_id}`} />
+            {cutAt !== null && <div className="new-cut-pop">{props.cutPop}</div>}
           </div>
         </div>
       </>
@@ -326,6 +418,13 @@ export function NewPane(props: NewPaneProps) {
           {props.tag}
         </span>
         <span className="flex-1" />
+        {props.onEditOriginal && (
+          <Tooltip label={t("assign.openSplitTip")}>
+            <button type="button" className="pane-toggle" aria-label={t("assign.openSplit")} data-testid="assign-new-edit-original" onClick={props.onEditOriginal}>
+              <Scissors size={14} strokeWidth={1.5} aria-hidden />
+            </button>
+          </Tooltip>
+        )}
         <Tooltip label={props.linesOn ? t("assign.linesOn") : t("assign.linesOff")}>
           <button type="button" className="pane-toggle" aria-pressed={props.linesOn} aria-label={props.linesOn ? t("assign.linesOn") : t("assign.linesOff")} data-testid="assign-lines-toggle" onClick={props.onToggleLines}>
             <Spline size={13} strokeWidth={1.8} aria-hidden />
@@ -333,11 +432,13 @@ export function NewPane(props: NewPaneProps) {
         </Tooltip>
         <PaneZoom value={props.zoom} onStep={props.onZoom} testId="assign-new-zoom" />
       </div>
+      {props.banner}
       <div className="pane-body">
         <div className="sheet">
           <div
             className="pg new-sheet"
             data-strips=""
+            data-dragging={isCutDragging ? "" : undefined}
             data-read-only={props.readOnly ? "" : undefined}
             onPointerOver={(event: ReactPointerEvent<HTMLDivElement>) => markMates(event.target)}
             onPointerLeave={() => markMates(null)}

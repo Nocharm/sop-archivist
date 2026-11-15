@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
 from app.db import get_session
+from app.equis import service as equis_service
+from app.equis.view import EquisOut, build_equis_out
 from app.routers.sop_documents import build_content_disposition
 from app.sop import sheet_model
 from app.sop.ai.guidelines import get_rules_version_label
@@ -41,7 +43,7 @@ from app.sop.outputs import (
     build_output_c_doc,
     build_summary,
 )
-from app.sop.sheet_model import WorkbookModel, build_workbook_model, limit_preview
+from app.sop.sheet_model import WorkbookModel, build_equis_key, build_workbook_model, limit_preview
 from app.sop.snapshot import BundleSnapshot, list_confirmer_ids, load_bundle_snapshot, load_people_names
 from app.sop.tobe import MAX_DB_INT
 
@@ -161,19 +163,34 @@ async def get_summary(
     return await asyncio.to_thread(build_summary, snap)
 
 
+async def _load_export_equis(session: AsyncSession, snap: BundleSnapshot) -> dict[str, EquisOut]:
+    """문서 목록 시트에 실을 EQUIS 값 — 받아 둔 조회 결과만 읽는다(내보내기가 조회를 걸지 않는다). 꺼져 있으면 빈 값."""
+    old_docs = [doc for doc in snap.documents.values() if doc.side == "old"]
+    targets = list(snap.target_docs.values())
+    lookups = await equis_service.load_lookups(session, [doc.doc_code for doc in old_docs] + [doc.code for doc in targets])
+    stamp = now()
+    found = {
+        build_equis_key("old", doc.id): build_equis_out(doc.doc_code, "old", doc.doc_version, lookups, stamp)
+        for doc in old_docs
+    } | {build_equis_key("new", doc.id): build_equis_out(doc.code, "new", "", lookups, stamp) for doc in targets}
+    return {key: equis for key, equis in found.items() if equis is not None}
+
+
 async def _load_export_inputs(
     session: AsyncSession, ctx: BundleContext
-) -> tuple[BundleSnapshot, ExportMeta, dict[str, str]]:
-    """Excel·미리보기 재료(지침 버전·스냅숏·확정한 사람 이름)를 읽고 트랜잭션을 끝낸다 — 스레드 계산 동안 묶음 행 잠금을 쥐지 않게.
+) -> tuple[BundleSnapshot, ExportMeta, dict[str, str], dict[str, EquisOut]]:
+    """Excel·미리보기 재료(지침 버전·스냅숏·확정한 사람 이름·문서의 EQUIS 값)를 읽고 트랜잭션을 끝낸다 — 스레드 계산 동안 묶음 행
+    잠금을 쥐지 않게.
 
     파일 이름의 시각도 여기서 정한다(now()) — 미리보기와 받기가 같은 분이면 같은 이름이다.
     """
     guideline_version = await get_rules_version_label(session)
     snap = await load_bundle_snapshot(session, ctx.bundle.id)
     people = await load_people_names(session, list_confirmer_ids(snap))
+    equis = await _load_export_equis(session, snap)
     await session.commit()
     meta = ExportMeta(exported_by=ctx.login_id, exported_at=now(), guideline_version=guideline_version)
-    return snap, meta, people
+    return snap, meta, people, equis
 
 
 def _raise_export_failed(bundle_id: int, error: Exception) -> NoReturn:
@@ -188,9 +205,9 @@ async def get_export(
 ) -> Response:
     """Excel 파일 한 벌 — 작업 중·검토 중·완료 어느 상태에서나 받고, 받은 사실은 작업 기록에 남는다. 이름은 시트 모델의 file_name."""
     bundle = ctx.bundle
-    snap, meta, people = await _load_export_inputs(session, ctx)
+    snap, meta, people, equis = await _load_export_inputs(session, ctx)
     try:
-        model = await asyncio.to_thread(build_workbook_model, snap, meta, people)
+        model = await asyncio.to_thread(build_workbook_model, snap, meta, people, equis)
         content = await asyncio.to_thread(build_workbook, model)
     except Exception as error:
         _raise_export_failed(bundle.id, error)
@@ -207,9 +224,9 @@ async def get_export_preview(
     ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
 ) -> WorkbookModel:
     """Excel 미리보기 — 받을 파일과 같은 시트 모델(시트마다 MAX_PREVIEW_ROWS줄까지)과 파일 이름. 작업 기록은 남기지 않는다."""
-    snap, meta, people = await _load_export_inputs(session, ctx)
+    snap, meta, people, equis = await _load_export_inputs(session, ctx)
     try:
-        model = await asyncio.to_thread(build_workbook_model, snap, meta, people)
+        model = await asyncio.to_thread(build_workbook_model, snap, meta, people, equis)
     except Exception as error:
         _raise_export_failed(ctx.bundle.id, error)
     # 상한은 부를 때 읽는다 — 시험이 모듈 값을 바꿔 자르기를 본다

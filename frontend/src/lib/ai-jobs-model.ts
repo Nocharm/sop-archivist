@@ -12,15 +12,37 @@ export const AI_RETRY_MAX_MS = 30000;
 /** 작업 하나가 이보다 오래 running이면 "오래 걸림"을 보인다(ms). AI 호출 타임아웃(60초)의 세 배 - 그 안에 끝나지 않으면 멈췄을 가능성이 크다 */
 export const AI_SLOW_MS = 3 * 60_000;
 
+/** 미리 돌리기 작업만 끝나는 동안 화면이 다시 받는 간격(ms) - 짧으면 수백 건이 끝나는 내내 계속 다시 받고, 길면 제안이 늦게 보인다 */
+export const AI_BACKGROUND_RELOAD_MS = 15_000;
+
+/** 한 묶음 AI 상태에서 다시 받을지 가리는 값 - finished는 끝난 작업 수, active는 줄 서거나 도는 수, userActive는 그 가운데 사람 순위인 수(못 읽었으면 null) */
+export interface FinishSnapshot {
+  finished: number;
+  active: number;
+  userActive: number | null;
+}
+
+/**
+ * 끝난 작업이 늘었을 때 화면이 다시 받기까지 기다릴 ms. 늘지 않았으면 null.
+ * 사람 작업이 얽혔거나 다 끝났거나 값을 못 읽었으면 0(바로), 미리 돌리기만 도는 중이면 마지막으로 다시 받은 뒤 15초가 찰 때까지.
+ */
+export function getReloadDelay(previous: FinishSnapshot | null, next: FinishSnapshot, msSinceLastReload: number): number | null {
+  if (previous === null || next.finished <= previous.finished) return null;
+  if (next.active === 0 || next.userActive === null || next.userActive > 0 || (previous.userActive ?? 0) > 0) return 0;
+  return Math.max(0, AI_BACKGROUND_RELOAD_MS - msSinceLastReload);
+}
+
 /** 종류가 결과를 보이는 화면 - 목록의 "열기"가 데려간다 */
 const KIND_STAGE: Record<AiJobKind, StageKey> = {
   classify: "assign",
   translate: "assign",
   match_plan: "assign",
   match: "assign",
-  pair: "split",
-  split: "split",
+  // 나누기·짝 제안은 배정 화면에서 받고 적용한다(옛 쪼개기 화면)
+  pair: "assign",
+  split: "assign",
   doc_meta: "documents",
+  tobe_list: "documents",
 };
 
 export function getKindStage(kind: AiJobKind): StageKey {

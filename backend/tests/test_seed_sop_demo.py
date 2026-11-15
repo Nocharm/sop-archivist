@@ -168,6 +168,16 @@ def test_fake_ai_session_undoes_itself() -> None:
     assert httpx2.AsyncClient is real_client
 
 
+def test_fake_ai_session_keeps_auto_prepare_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 시드의 작업·제안 수가 저절로 서는 계획·분류로 조용히 바뀌지 않게 — 설정이 켜진 .env에서도 안에서는 꺼진다
+    monkeypatch.setattr(settings, "ai_auto_prepare", True)
+
+    with fake_ai_session():
+        assert settings.ai_auto_prepare is False
+
+    assert settings.ai_auto_prepare is True
+
+
 @pytest.mark.usefixtures("clean_sop")
 def test_failed_stage_leaves_no_half_built_bundle(client: TestClient, tmp_path: Path) -> None:
     def fail_midway(driver: object) -> None:

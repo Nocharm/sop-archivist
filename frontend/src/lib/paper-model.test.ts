@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewPartGroup, ViewUnit } from "./api-sop";
-import { buildContourPath, buildPaperModel, buildPaperTabs, buildRows, canSplitAt, clampSplitAt, getGapMerge, getMergeBlocker, resolveCutDrag, countUnchecked, readCountedCheck, getMarks, getTags, readWarningText, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
+import { buildContourPath, buildPaperModel, buildPaperTabs, buildRows, listPartSheets, canSplitAt, clampSplitAt, getGapMerge, getMergeBlocker, resolveCutDrag, getMarks, getTags, readWarningText, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -14,7 +14,7 @@ function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlo
 function makeUnit(id: number, spans: Array<[number, number, number]>, text: string, extra: Partial<ViewUnit> = {}): ViewUnit {
   return {
     id, display_id: `D-${id}`, kind: "sentence", spans, text, lang: "en", table_id: null, row_index: null, group_unit_id: null,
-    boundary_confirmed: false, status: "unassigned", pair_id: null, pos_seq: spans[0]?.[0] ?? 0, block_id: spans[0]?.[0] ?? 0, is_edited: false, can_unmerge: false, split_suggestion_id: null, ...extra,
+    status: "unassigned", pair_id: null, pos_seq: spans[0]?.[0] ?? 0, block_id: spans[0]?.[0] ?? 0, is_edited: false, can_unmerge: false, split_suggestion_id: null, ref: null, ...extra,
   };
 }
 
@@ -102,13 +102,12 @@ function makeSplitUnit(over: Partial<ViewUnit> = {}): ViewUnit {
     table_id: null,
     row_index: null,
     group_unit_id: null,
-    boundary_confirmed: false,
     status: "unassigned",
     pair_id: null,
     pos_seq: 1,
     block_id: 10,
     is_edited: false, can_unmerge: false,
-    split_suggestion_id: null,
+    split_suggestion_id: null, ref: null,
     ...over,
   };
 }
@@ -158,45 +157,9 @@ describe("getTags and getMarks", () => {
   });
 
   it("lists icon marks in a stable order", () => {
-    const unit = makeSplitUnit({ boundary_confirmed: true, pair_id: 4, is_edited: true, status: "confirmed" });
-    expect(getMarks(unit)).toEqual(["edited", "pair", "classified", "checked"]);
+    const unit = makeSplitUnit({ pair_id: 4, is_edited: true, status: "confirmed" });
+    expect(getMarks(unit)).toEqual(["edited", "pair", "classified"]);
     expect(getMarks(makeSplitUnit({ status: "ai_suggested" }))).toEqual(["ai"]);
-  });
-});
-
-describe("countUnchecked", () => {
-  const units = [
-    makeSplitUnit({ id: 1 }),
-    makeSplitUnit({ id: 2, boundary_confirmed: true }),
-    makeSplitUnit({ id: 3, kind: "heading" }),
-    makeSplitUnit({ id: 4, kind: "figure" }),
-    makeSplitUnit({ id: 5, kind: "cell_sentence" }),
-    makeSplitUnit({ id: 6, kind: "table", spans: [] }),
-    makeSplitUnit({ id: 7, kind: "table_row", spans: [] }),
-  ];
-
-  it("counts text units still to check and leaves table groups to their cells", () => {
-    expect(countUnchecked(units, (unit) => unit.boundary_confirmed)).toBe(4);
-  });
-
-  it("follows what the screen already painted as checked", () => {
-    expect(countUnchecked(units, (unit) => unit.boundary_confirmed || unit.id === 1)).toBe(3);
-    expect(countUnchecked(units, () => true)).toBe(0);
-  });
-});
-
-describe("readCountedCheck", () => {
-  // 같은 머리말 셋 - 10이 보이고 11·12는 숨는다
-  const mirrors = new Map([[10, [11, 12]]]);
-  const header = [makeSplitUnit({ id: 10 }), makeSplitUnit({ id: 11 }), makeSplitUnit({ id: 12, boundary_confirmed: true })];
-
-  it("counts hidden same-content units one by one like the server", () => {
-    expect(countUnchecked(header, readCountedCheck(mirrors, {}))).toBe(2);
-  });
-
-  it("lets hidden units follow the check just painted on the shown one", () => {
-    expect(countUnchecked(header, readCountedCheck(mirrors, { 10: true }))).toBe(0);
-    expect(countUnchecked(header, readCountedCheck(mirrors, { 10: false }))).toBe(3);
   });
 });
 
@@ -265,7 +228,7 @@ describe("getGapMerge", () => {
   it("always offers a merge between two text pieces, whatever their languages", () => {
     const { model, rows } = build(
       [makeBlock(1, 0, "One. Two."), makeBlock(2, 1, "셋.")],
-      [makeUnit(10, [[1, 0, 4]], "One.", { boundary_confirmed: true }), makeUnit(11, [[1, 5, 9]], "Two."), makeUnit(12, [[2, 0, 2]], "셋.", { lang: "ko" })],
+      [makeUnit(10, [[1, 0, 4]], "One."), makeUnit(11, [[1, 5, 9]], "Two."), makeUnit(12, [[2, 0, 2]], "셋.", { lang: "ko" })],
     );
     expect(getGapMerge(rows[0], rows[1], model.units)).toEqual({ firstId: 10, secondId: 11, blocker: null });
     expect(getGapMerge(rows[1], rows[2], model.units)).toEqual({ firstId: 11, secondId: 12, blocker: null });
@@ -295,6 +258,37 @@ describe("getGapMerge", () => {
     const model = buildPaperModel(makeView(blocks, units));
     const rows = buildRows(model.header, model.segments);
     expect(getGapMerge(rows[0], rows[1], model.units)).toBeNull();
+  });
+});
+
+describe("listPartSheets (sheets of one tab on the Assign paper)", () => {
+  const blocks = [
+    makeBlock(1, 0, "Head A", { part: "header", part_group: "h1" }),
+    makeBlock(2, 1, "Head A", { part: "header", part_group: "h2" }),
+    makeBlock(3, 2, "Body."),
+    makeBlock(4, 3, "Note", { part: "footnote", part_group: "footnote" }),
+  ];
+  const units = [makeUnit(10, [[1, 0, 6]], "Head A"), makeUnit(11, [[2, 0, 6]], "Head A"), makeUnit(12, [[3, 0, 5]], "Body."), makeUnit(13, [[4, 0, 4]], "Note")];
+  const groups: ViewPartGroup[] = [
+    { key: "h1", part: "header", refs: [{ section: 2, type: "default" }, { section: 1, type: "default" }], block_count: 1, same_as: null },
+    { key: "h2", part: "header", refs: [{ section: 3, type: "first" }], block_count: 1, same_as: "h1" },
+    { key: "body", part: "body", refs: [], block_count: 1, same_as: null },
+    { key: "footnote", part: "footnote", refs: [], block_count: 1, same_as: null },
+  ];
+  const view = makeView(blocks, units, groups);
+  const model = buildPaperModel(view);
+
+  it("keeps a repeated header as its own sheet, with where each one is used", () => {
+    const sheets = listPartSheets(view, model, "header");
+    expect(sheets.map((sheet) => sheet.key)).toEqual(["h1", "h2"]);
+    expect(sheets[0].refs.map((ref) => ref.section)).toEqual([1, 2]);
+    expect(sheets[1].refs).toEqual([{ section: 3, type: "first" }]);
+    expect(sheets.every((sheet) => sheet.items.length === 1)).toBe(true);
+  });
+
+  it("gives the footer tab its footnotes and the body one sheet", () => {
+    expect(listPartSheets(view, model, "footer").map((sheet) => sheet.part)).toEqual(["footnote"]);
+    expect(listPartSheets(view, model, "body")).toHaveLength(1);
   });
 });
 

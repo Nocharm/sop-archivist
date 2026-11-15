@@ -3,7 +3,7 @@ import { parseBundlePath, type StageKey } from "@/lib/stages";
 
 export type PageWidth = "default" | "wide" | "desk";
 
-const WIDE_STAGES: ReadonlySet<StageKey> = new Set(["documents", "split", "tobe", "history"]);
+const WIDE_STAGES: ReadonlySet<StageKey> = new Set(["documents", "history"]);
 
 export function getPageWidth(pathname: string): PageWidth {
   if (pathname === "/" || pathname === "/admin" || pathname.startsWith("/admin/")) return "wide";

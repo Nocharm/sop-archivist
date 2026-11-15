@@ -11,10 +11,11 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Annotated, Literal, TypeVar, assert_never
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import clock
 from app.sop.decision_steps import UndoMetaIn
 from app.sop.decisions import DbId
 from app.sop.detach import (
@@ -40,7 +41,10 @@ from app.sop.models import (
     UnitEdit,
     UnitPair,
     UnitPairMember,
+    UnitRef,
 )
+from app.sop.refs import REF_CONFIRMED, REF_LANG, REF_REJECTED, read_number_in_text
+from app.sop.schemas import NO_NUL
 from app.sop.segment import build_unit_text, detect_language, has_visible_char
 from app.sop.spans import (
     NEUTRAL,
@@ -60,12 +64,13 @@ from app.sop.units import UNIT_ACTIVE, get_latest_extraction_id, refresh_code_pa
 UNIT_RETIRED = "retired"
 EDIT_APPLIED = "applied"
 EDIT_UNDONE = "undone"
-# 경계 확인 표시만 바꾼 기록 - 단위 집합은 그대로라 되돌릴 때 표시만 거꾸로 돌린다(payload: unit_ids·confirmed)
+# 경계 확인 표시만 바꾼 옛 기록 - 확인 동작은 없어졌지만(v1.0.18) 이미 쌓인 기록은 되돌리기 줄에 남아 있어 계속 돌린다.
+# 단위 집합은 그대로라 되돌릴 때 표시만 거꾸로 돌린다(payload: unit_ids·confirmed)
 BOUNDARY_OPS = ("boundary", "check_all")
 # 글자 범위를 고칠 수 있는 단위 — 그림·표·행은 범위를 나누거나 잇지 않는다
 TEXT_KINDS = ("sentence", "heading", "cell_sentence")
 PAIR_LANGS = {"ko", "en"}  # 짝의 두 쪽 — 한쪽이 비면 짝을 지운다
-MAX_EDIT_UNITS = 2000  # 합치기·언어 바꾸기·경계 확인이 한 번에 고르는 단위 수 상한
+MAX_EDIT_UNITS = 2000  # 합치기·언어 바꾸기가 한 번에 고르는 단위 수 상한
 
 Offset = Annotated[int, Field(ge=0, le=MAX_DB_INT)]
 T = TypeVar("T")
@@ -132,9 +137,24 @@ class SetLayoutTableOp(BaseModel):
     is_layout: bool
 
 
+class SetRefOp(BaseModel):
+    """글 단위를 참조 줄(REF)로 — 번호는 그 단위의 글 안에 있어야 한다. 이미 REF면 번호만 고친다."""
+
+    type: Literal["set_ref"]
+    unit_id: DbId
+    number: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100), NO_NUL]
+
+
+class ClearRefOp(BaseModel):
+    """참조 아님 — REF면 그 전 언어로 돌리고, 제안뿐이었으면 다시 제안하지 않게 표시만 남긴다."""
+
+    type: Literal["clear_ref"]
+    unit_id: DbId
+
+
 EditOp = Annotated[
     SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp | SplitTableRowsOp
-    | MergeTableRowsOp | SetLayoutTableOp,
+    | MergeTableRowsOp | SetLayoutTableOp | SetRefOp | ClearRefOp,
     Field(discriminator="type"),
 ]
 
@@ -154,20 +174,6 @@ class EditStepIn(BaseModel):
     confirm: bool = False
 
 
-class BoundaryIn(BaseModel):
-    unit_ids: list[DbId] = Field(min_length=1, max_length=MAX_EDIT_UNITS)
-    confirmed: bool
-
-
-class BoundaryOut(BaseModel):
-    unit_ids: list[int]
-    confirmed: bool
-
-
-class BoundaryAllOut(BaseModel):
-    confirmed_count: int
-
-
 class EditResult(BaseModel):
     document_revision: int
     # 이 요청으로 활성이 된 단위(되살린 것은 id 순, 새로 만든 것은 원문 순)와 은퇴한 단위(id 순)
@@ -181,7 +187,7 @@ class EditStepResult(EditResult):
     """되돌리기·다시 하기 응답 - 무엇을 거꾸로(또는 다시) 했는지 화면이 알리고 그 자리로 갈 수 있게."""
 
     op: str
-    # 경계 확인 기록이면 표시가 바뀐 단위와 바뀐 뒤 값, 아니면 빈 목록과 None
+    # 옛 경계 확인 기록(BOUNDARY_OPS)이면 표시가 바뀐 단위와 바뀐 뒤 값, 아니면 빈 목록과 None
     boundary_unit_ids: list[int]
     confirmed: bool | None
 
@@ -482,6 +488,43 @@ async def _plan_set_language(session: AsyncSession, extraction_id: ExtractionId,
     return _Change(langs=changes)
 
 
+async def _plan_set_ref(session: AsyncSession, extraction_id: ExtractionId, op: SetRefOp) -> _Change:
+    unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
+    _ensure_text_kinds([unit])
+    if read_number_in_text(unit.text, op.number) is None:
+        raise_rule(422, "ref_number_not_in_text", unit_ids=[unit.id])
+    return _Change(langs={} if unit.lang == REF_LANG else {unit.id: (unit.lang, REF_LANG)})
+
+
+async def _plan_clear_ref(session: AsyncSession, extraction_id: ExtractionId, op: ClearRefOp) -> _Change:
+    unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
+    _ensure_text_kinds([unit])
+    if unit.lang != REF_LANG:
+        return _Change()
+    mark = await session.get(UnitRef, unit.id)
+    # 표시 없이 REF가 된 단위는 없지만(set_ref만 REF를 만든다) 있더라도 글자로 언어를 정해 돌린다
+    lang = (mark.prev_lang if mark is not None else "") or detect_language(unit.text) or "en"
+    return _Change(langs={unit.id: (REF_LANG, lang)})
+
+
+async def _save_ref_mark(session: AsyncSession, op: SetRefOp | ClearRefOp, actor: str) -> None:
+    """사람의 뜻(참조다·아니다)과 번호를 남긴다 — 언어를 바꾸기 전에 불러 그 전 언어를 기억한다."""
+    unit = await session.get_one(Unit, op.unit_id)
+    mark = await session.get(UnitRef, op.unit_id)
+    if mark is None:
+        mark = UnitRef(unit_id=op.unit_id, state=REF_REJECTED, decided_by=actor)
+        session.add(mark)
+    if isinstance(op, SetRefOp):
+        mark.state = REF_CONFIRMED
+        mark.number = read_number_in_text(unit.text, op.number) or ""
+        if unit.lang != REF_LANG:
+            mark.prev_lang = unit.lang
+    else:
+        mark.state = REF_REJECTED
+    mark.decided_by = actor
+    mark.decided_at = clock.now()
+
+
 async def _load_table(session: AsyncSession, extraction_id: ExtractionId, table_id: int) -> SourceTable:
     table = await session.scalar(
         select(SourceTable).where(SourceTable.id == table_id, SourceTable.extraction_id == extraction_id)
@@ -655,6 +698,10 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_merge_table_rows(session, extraction_id, op)
         case SetLayoutTableOp():
             return await _plan_set_layout_table(session, extraction_id, op)
+        case SetRefOp():
+            return await _plan_set_ref(session, extraction_id, op)
+        case ClearRefOp():
+            return await _plan_clear_ref(session, extraction_id, op)
         case _:
             assert_never(op)
 
@@ -936,19 +983,6 @@ async def _start_new_edit(session: AsyncSession, document: Document) -> int:
     return (last_seq or 0) + 1
 
 
-async def _add_boundary_edit(
-    session: AsyncSession, document: Document, op: str, unit_ids: list[int], confirmed: bool, actor: str
-) -> None:
-    """경계 확인 표시를 바꾼 기록 - 되돌리기·다시 하기가 편집과 한 줄 순서로 돈다(사용자 결정 2026-11-13)."""
-    session.add(
-        UnitEdit(
-            document_id=document.id, seq=await _start_new_edit(session, document), op=op,
-            payload={"unit_ids": unit_ids, "confirmed": confirmed}, created_unit_ids=[], retired_unit_ids=[],
-            regrouped={}, lang_changes={}, layout_changes={}, actor=actor,
-        )
-    )
-
-
 async def apply_edit(
     session: AsyncSession, document: Document, op: EditOp, *, confirm: bool, actor: str
 ) -> EditResult:
@@ -959,7 +993,15 @@ async def apply_edit(
     """
     extraction_id = await get_latest_extraction_id(session, document.id)
     change = await _plan(session, document.id, extraction_id, op)
+    if isinstance(op, SetRefOp | ClearRefOp):
+        await _save_ref_mark(session, op, actor)
     if change.is_unchanged():
+        if isinstance(op, SetRefOp | ClearRefOp):
+            # 언어는 그대로여도(제안을 물리거나 번호만 고침) 사람이 한 일이라 작업 기록에는 남긴다
+            record_event(
+                session, bundle_id=document.bundle_id, actor=actor, action="unit.edit", target_type="unit",
+                target_ids=[op.unit_id], reason=op.type,
+            )
         return EditResult(document_revision=document.revision, created_unit_ids=[], retired_unit_ids=[], detach=None)
     result = await _write_change(session, document, extraction_id, change, confirm=confirm, actor=actor)
     session.add(
@@ -1054,41 +1096,3 @@ async def redo_edit(session: AsyncSession, document: Document, *, confirm: bool,
     edit.state = EDIT_APPLIED
     await session.flush()
     return result
-
-
-async def set_boundary_confirmed(
-    session: AsyncSession, document: Document, unit_ids: Sequence[int], confirmed: bool, *, actor: str
-) -> list[int]:
-    """경계 확인 표시를 켜거나 끈다 — 단위 집합은 그대로라 문서 revision은 그대로고, 바뀐 단위만 되돌리기 기록에 넣는다."""
-    ensure_unique_units(unit_ids)
-    units = await load_active_units(session, await get_latest_extraction_id(session, document.id), unit_ids)
-    changed = sorted(unit.id for unit in units.values() if unit.boundary_confirmed != confirmed)
-    for unit in units.values():
-        unit.boundary_confirmed = confirmed
-    if changed:
-        await _add_boundary_edit(session, document, "boundary", changed, confirmed, actor)
-    await session.flush()
-    return sorted(units)
-
-
-async def confirm_all_boundaries(session: AsyncSession, document: Document, *, actor: str) -> int:
-    """문서에 남은 활성 단위의 경계를 한 번에 확인으로 돌리고 바뀐 건수를 돌려준다.
-
-    하나씩 확인하는 길(`set_boundary_confirmed`)은 요청당 단위 수 상한이 있어 큰 표 문서를 한 번에 못 끝낸다.
-    검토 요청 조건을 한꺼번에 채우는 동작이라 누가 했는지 작업 기록 한 줄을 남긴다(바뀐 것이 없으면 남기지 않는다).
-    """
-    extraction_id = await get_latest_extraction_id(session, document.id)
-    result = await session.execute(
-        update(Unit)
-        .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.boundary_confirmed.is_(False))
-        .values(boundary_confirmed=True)
-        .returning(Unit.id)
-    )
-    changed = sorted(result.scalars())
-    if changed:
-        await _add_boundary_edit(session, document, "check_all", changed, True, actor)
-        record_event(
-            session, bundle_id=document.bundle_id, actor=actor, action="unit.check_all", target_type="document",
-            target_ids=[document.id], detail={"count": len(changed)},
-        )
-    return len(changed)

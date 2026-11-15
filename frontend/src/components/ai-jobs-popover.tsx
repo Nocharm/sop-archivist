@@ -202,6 +202,15 @@ export function AiJobsPopover({ anchorRef, snapshot, onClose }: AiJobsPopoverPro
         <div className="flex min-w-0 items-center gap-2">
           {OUTCOME_ICON[outcome]}
           <span className="shrink-0 font-medium">{kindLabel}</span>
+          {/* 내가 누르지 않은 요청이 왜 있는지 - 미리 돌리기(배정 화면 첫 진입 등)는 순위를 올려도 표시가 남는다 */}
+          {request.background && (
+            // 목록 왼쪽으로 비켜 선 알림 밑에 깔리지 않게 표시의 왼쪽 끝에서 오른쪽으로 펼친다
+            <Tooltip label={t("aiJobs.backgroundTip")} align="start">
+              <span className="tag shrink-0" tabIndex={0} data-testid={`${testId}-background`}>
+                {t("aiJobs.background")}
+              </span>
+            </Tooltip>
+          )}
           {documentName && <Truncate text={documentName} className="min-w-0 text-ink-2" />}
           <span className="flex-1" />
           <Tooltip label={t("aiJobs.progressTip", { done: progress.done, total: progress.total })} align="end">

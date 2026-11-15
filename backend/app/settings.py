@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     ai_endpoints: str = ""
     # AI 부하 가드 — 백엔드 전체 동시 AI 호출 상한(채팅·임베딩이 함께 센다)
     ai_max_concurrency: int = 4
+    ai_auto_prepare: bool = True  # 저절로 도는 AI(읽기 뒤 묶기 계획, 배정 화면 첫 진입 분류) — 끄면 사람이 누른 요청만 돈다
 
     # 임베딩 서버(OpenAI 호환 /embeddings) — 채팅 서버와 주소·모델이 달라 AI_*와 따로 둔다. 로컬 기본 비활성
     embed_enabled: bool = False
@@ -52,6 +53,11 @@ class Settings(BaseSettings):
     n8n_hr_token: str = ""  # X-API-Key 시크릿 (.env만)
     hr_sync_interval_hours: int = 24  # 내장 스케줄러 주기(시간). 0 = off
     hr_sync_delete_cap_pct: int = 20  # 전체 동기화 삭제 상한(% of 배치 관리 행). 0 = 가드 off
+
+    # EQUIS 문서 조회 — db-viewer가 쓰는 n8n 질의 웹훅을 함께 쓴다(인증 헤더 없음). 셋 중 하나라도 비면 비활성.
+    n8n_query_url: str = ""  # 예: http://<n8n-host>:5678/webhook/dbv-query
+    equis_edw_table: str = ""  # 스키마를 포함한 EDW 표 이름. 예: <schema>.EQUIS_DOCUMENT
+    equis_doc_url_base: str = ""  # EQUIS 문서 링크 앞부분. 예: https://<equis-host>
 
     # SOP 문서 업로드·파싱 상한(Tuning) — 부하 검증 전 추천값(설계 §7.1). 넘는 파일은 사유를 남기고 거절한다.
     sop_max_file_mb: int = 25  # 파일 하나(MiB)
@@ -84,6 +90,11 @@ class Settings(BaseSettings):
     def hr_enabled(self) -> bool:
         """HR 웹훅 동기화 활성 여부 — URL·토큰이 모두 설정된 경우만."""
         return bool(self.n8n_hr_url and self.n8n_hr_token)
+
+    @property
+    def equis_enabled(self) -> bool:
+        """EQUIS 조회 활성 여부 — 웹훅 주소·EDW 표 이름·링크 앞부분이 모두 설정된 경우만."""
+        return bool(self.n8n_query_url and self.equis_edw_table and self.equis_doc_url_base)
 
     def sysadmin_login_ids(self) -> set[str]:
         return {x.strip() for x in self.app_sysadmins.split(",") if x.strip()}

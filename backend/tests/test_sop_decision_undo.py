@@ -669,6 +669,34 @@ def test_undo_brings_back_ai_suggested_and_adoption(client: TestClient, fake_ai:
     assert_same_state(_dump(bundle.id), s0)
 
 
+@pytest.mark.usefixtures("clean_ai_jobs")
+def test_bulk_over_ai_suggested_units_can_be_undone(client: TestClient, fake_ai: FakeAi) -> None:
+    # 일괄 처분이 걷은 제안도 스냅숏 되돌리기로 AI 제안 상태·AI가 쓴 새 문장·빈 채택이 돌아온다
+    bundle = make_ai_bundle(client)
+    ko, en = find_ids(client, bundle, AI_KO_1, AI_EN_1)
+    use_reply(fake_ai)
+    queue_units(client, bundle.id, [ko, en])
+    run_jobs()
+    assert read_decision(ko).status == "ai_suggested"
+    written = {row.id for row in read_rows(TargetSentence) if row.status == "ai_suggested"}
+    assert written
+    s0 = _dump(bundle.id)
+    body = {
+        "action": "delete", "reason": "합성 사유", "undo": UNDO,
+        "units": [{"unit_id": unit_id, "revision": read_decision(unit_id).revision} for unit_id in (ko, en)],
+    }
+    _ok(client.post(f"/api/bundles/{bundle.id}/decisions/bulk", json=body, headers=AUTHOR))
+    assert read_rows(TargetSentence) == []
+    assert {row.adoption for row in read_rows(AiSuggestion)} == {"rejected"}
+
+    _ok(_undo(client, bundle.id))
+
+    assert read_decision(ko).status == "ai_suggested"
+    assert {row.id for row in read_rows(TargetSentence) if row.status == "ai_suggested"} == written
+    assert {row.adoption for row in read_rows(AiSuggestion)} == {None}
+    assert_same_state(_dump(bundle.id), s0)
+
+
 def test_undo_brings_back_deleted_new_sentence_same_id(client: TestClient) -> None:
     fx = _setup_rich(client)
     _confirm_unit(client, fx, fx.a)

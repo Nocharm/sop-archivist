@@ -13,6 +13,7 @@ from sqlalchemy import (
     Index,
     Integer,
     LargeBinary,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -26,6 +27,7 @@ from app.sop.constants import (
     AI_ADOPTIONS,
     AI_JOB_KINDS,
     AI_JOB_STATUSES,
+    AI_PRIORITY_USER,
     AI_SUGGESTION_RESULTS,
     BUNDLE_STATUSES,
     MEMBER_ROLES,
@@ -539,14 +541,14 @@ def generate_request_id() -> str:
 
 
 class AiJob(Base):
-    """AI 작업 — 요청이 쌓는 큐 한 줄. 실행기가 (status, id) 순으로 다음 작업을 꺼낸다."""
+    """AI 작업 — 요청이 쌓는 큐 한 줄. 실행기가 queued 중 (priority, id) 순으로 다음 작업을 꺼낸다."""
 
     __tablename__ = "ai_jobs"
     __table_args__ = (
         CheckConstraint(_build_in_check("kind", AI_JOB_KINDS), name="kind"),
         CheckConstraint(_build_in_check("status", AI_JOB_STATUSES), name="status"),
-        Index("ix_ai_jobs_status_id", "status", "id"),
-        # 최근 작업 목록이 묶음마다 하루 안에 끝난 작업을 찾는다(대기·실행 중은 위 (status, id)가 찾는다)
+        Index("ix_ai_jobs_status_priority_id", "status", "priority", "id"),
+        # 최근 작업 목록이 묶음마다 하루 안에 끝난 작업을 찾는다(대기·실행 중은 위 (status, priority, id)가 찾는다)
         Index("ix_ai_jobs_bundle_id_finished_at", "bundle_id", "finished_at"),
     )
 
@@ -570,6 +572,9 @@ class AiJob(Base):
     # 요청 한 번이 쌓은 작업들의 묶음 값 — 화면이 "n / N"으로 묶어 보인다. 입구 2 계획 작업이 쌓는 변경 종류 작업은
     # 계획 작업의 값을 잇는다. 0012 이전 행은 'job-<id>'로 채워 저마다 한 요청이다
     request_id: Mapped[str] = mapped_column(String(32), index=True, default=generate_request_id)
+    # 꺼내는 순서(AI_PRIORITY_*, 작을수록 먼저)와 미리 돌리기 표시 — 0019 이전 행은 사람 요청(1)·False다
+    priority: Mapped[int] = mapped_column(SmallInteger, default=AI_PRIORITY_USER)
+    background: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
@@ -615,3 +620,42 @@ class EmbeddingCache(Base):
     dim: Mapped[int] = mapped_column(Integer)
     vector: Mapped[bytes] = mapped_column(LargeBinary)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class UnitRef(Base):
+    """참조 줄(REF) 표시 — 사람이 그 단위의 문서 번호 영역을 확인했거나("confirmed") 참조가 아니라고 한("rejected") 기록.
+
+    제안은 담지 않는다(읽을 때 글에서 찾는다, `refs.read_ref_state`). 단위가 REF인지는 `Unit.lang`이 말한다 — 되돌리기가
+    언어만 되돌리므로 이 행은 번호와 사람의 뜻만 기억한다.
+    """
+
+    __tablename__ = "unit_refs"
+
+    unit_id: Mapped[int] = mapped_column(ForeignKey("units.id", ondelete="CASCADE"), primary_key=True)
+    state: Mapped[str] = mapped_column(String(9))  # confirmed | rejected
+    # 다듬은 문서 번호(대문자) — 그 단위의 글 안에 있는 글자다. rejected면 빈 값일 수 있다
+    number: Mapped[str] = mapped_column(String(100), default="")
+    # REF가 되기 전의 언어 — "참조 아님"으로 되돌릴 때 쓴다
+    prev_lang: Mapped[str] = mapped_column(String(7), default="")
+    decided_by: Mapped[str] = mapped_column(String(100))
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+# --- EQUIS 조회 ---
+
+
+class EquisLookup(Base):
+    """EQUIS 조회 결과 — 다듬은 문서 번호마다 한 행이고 묶음들이 함께 쓴다.
+
+    facts는 문서의 사실만 담는다. 판정은 줄의 쪽과 올린 판에 따라 달라 읽을 때 계산한다(설계 §8.1).
+    state는 마지막으로 끝난 조회의 결과다. 다시 묻는 중인지는 requested_at이 fetched_at보다 새로운지로 안다.
+    """
+
+    __tablename__ = "equis_lookups"
+
+    doc_number: Mapped[str] = mapped_column(String(100), primary_key=True)
+    state: Mapped[str] = mapped_column(String(11))  # pending | found | not_found | unavailable
+    # {"doc": DocFacts | None, "trail": [번호…], "ambiguous": [번호…]} — 조회가 실패해도 지우지 않는다
+    facts: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), default=None)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

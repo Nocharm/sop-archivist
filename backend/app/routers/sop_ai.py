@@ -1,4 +1,4 @@
-"""AI API — 내가 멤버인 묶음 전체의 최근 작업 목록(멤버), 분류·번역·짝 맞추기·복합 문장 나누기 요청(작성자, AI가 켜져 있을 때), 한/영 따로 짝 제안 요청(작성자, 임베딩이 켜져 있을 때)과 작업 현황·제안 읽기(멤버)·나누기 제안 채택 기록·취소·실패분 다시 시도(작성자, 작업 중 묶음만). 요청 말고는 AI가 꺼져 있어도 동작한다."""
+"""AI API — 내가 멤버인 묶음 전체의 최근 작업 목록(멤버), 분류·번역·짝 맞추기·복합 문장 나누기 요청과 배정 화면 첫 진입 미리 분류 prepare(작성자, AI가 켜져 있을 때), 한/영 따로 짝 제안 요청(작성자, 임베딩이 켜져 있을 때)과 작업 현황·제안 읽기(멤버)·나누기 제안 채택 기록·취소·실패분 다시 시도(작성자, 작업 중 묶음만). 요청 말고는 AI가 꺼져 있어도 동작한다."""
 
 from collections.abc import Sequence
 from typing import Annotated, Literal
@@ -18,10 +18,12 @@ from app.sop.ai.jobs import (
     cancel_active_jobs,
     enqueue_jobs,
     load_job_breakdown,
+    promote_queued_jobs,
     retry_failed_jobs,
 )
-from app.sop.ai.match_jobs import MATCH_PLAN_KIND, select_match_items
+from app.sop.ai.match_jobs import MATCH_PLAN_KIND, promote_match_jobs, select_match_items
 from app.sop.ai.pairing import PAIR_KIND, select_pair_items
+from app.sop.ai.prepare import queue_prepare
 from app.sop.ai.recent import list_recent_jobs
 from app.sop.ai.schemas import (
     AdoptionIn,
@@ -31,6 +33,7 @@ from app.sop.ai.schemas import (
     JobKind,
     JobKindIn,
     PairRequestIn,
+    PrepareIn,
     RecentJobsOut,
     RetryOut,
     ScopeIn,
@@ -41,7 +44,7 @@ from app.sop.ai.schemas import (
 )
 from app.sop.ai.split import SPLIT_KIND, select_split_items
 from app.sop.ai.translate import TRANSLATE_KIND, select_translate_items
-from app.sop.constants import MEMBER_ROLES
+from app.sop.constants import AI_PRIORITY_PLAN, AI_PRIORITY_USER, MEMBER_ROLES
 from app.sop.errors import raise_rule
 from app.sop.events import record_event
 from app.sop.membership import BundleContext, ensure_active_account, ensure_editable, lock_bundle, require_bundle_role
@@ -71,10 +74,13 @@ def require_embed_enabled() -> None:
 
 
 async def _queue_request(
-    session: AsyncSession, ctx: BundleContext, kind: str, items: Sequence[JobItem], skipped: Sequence[SkippedOut]
+    session: AsyncSession, ctx: BundleContext, kind: str, items: Sequence[JobItem], skipped: Sequence[SkippedOut],
+    *, priority: int = AI_PRIORITY_USER, promoted: int = 0,
 ) -> AiRequestOut:
-    """고른 작업을 쌓고 기록을 남겨 커밋한다 — 요청 종류마다 같은 마무리다."""
-    jobs = enqueue_jobs(session, bundle_id=ctx.bundle.id, kind=kind, requested_by=ctx.login_id, items=items)
+    """고른 작업을 쌓고 기록을 남겨 커밋한다 — 요청 종류마다 같은 마무리다. promoted는 이미 줄에 있다가 순위가 올라간 수(응답 queued에 더한다)."""
+    jobs = enqueue_jobs(
+        session, bundle_id=ctx.bundle.id, kind=kind, requested_by=ctx.login_id, items=items, priority=priority
+    )
     if jobs:  # 쌓인 게 없으면 바뀐 것도 없으니 기록도 남기지 않는다
         await session.flush()
         record_event(
@@ -82,7 +88,7 @@ async def _queue_request(
             target_ids=[job.id for job in jobs], reason=kind,
         )
     await session.commit()
-    return build_request_out(len(jobs), skipped, jobs[0].request_id if jobs else None)
+    return build_request_out(len(jobs) + promoted, skipped, jobs[0].request_id if jobs else None)
 
 
 @router.post("/classify", response_model=AiRequestOut, dependencies=[Depends(require_ai_enabled)])
@@ -93,10 +99,17 @@ async def request_classify(
 ) -> AiRequestOut:
     await lock_bundle(session, ctx.bundle)
     ensure_editable(ctx.bundle)
+    promoted, promoted_units = await promote_queued_jobs(
+        session, ctx.bundle.id, CLASSIFY_KIND,
+        unit_ids=body.unit_ids or None, document_id=None if body.unit_ids else body.document_id,
+    )
     items, skipped = await select_classify_items(
         session, ctx.bundle.id, document_id=body.document_id, unit_ids=body.unit_ids
     )
-    return await _queue_request(session, ctx, CLASSIFY_KIND, items, skipped)
+    skipped = [
+        item for item in skipped if not (item.reason == "already_queued" and item.unit_id in promoted_units)
+    ]  # 순위가 올라 이미 사람 요청이 된 단위 — 건너뛴 게 아니라 응답 queued에 든다
+    return await _queue_request(session, ctx, CLASSIFY_KIND, items, skipped, promoted=promoted)
 
 
 @router.post("/translate", response_model=AiRequestOut, dependencies=[Depends(require_ai_enabled)])
@@ -120,8 +133,25 @@ async def request_match(
 ) -> AiRequestOut:
     await lock_bundle(session, ctx.bundle)
     ensure_editable(ctx.bundle)
+    promoted = await promote_match_jobs(session, ctx.bundle.id)
+    if promoted:  # 미리 돌리던 변경 종류 작업이 줄에 있다 — 새 계획 없이 순위만 올린다
+        return await _queue_request(session, ctx, MATCH_PLAN_KIND, [], [], promoted=promoted)
     items, skipped = await select_match_items(session, ctx.bundle.id)
-    return await _queue_request(session, ctx, MATCH_PLAN_KIND, items, skipped)
+    return await _queue_request(session, ctx, MATCH_PLAN_KIND, items, skipped, priority=AI_PRIORITY_PLAN)
+
+
+@router.post("/prepare", response_model=AiRequestOut, dependencies=[Depends(require_ai_enabled)])
+async def request_prepare(
+    body: PrepareIn,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> AiRequestOut:
+    """배정 화면 첫 진입 — 남은 줄의 미리 분류(필요하면 계획 먼저). 작업 기록은 남기지 않고 응답 queued는 분류 작업 수다."""
+    await lock_bundle(session, ctx.bundle)
+    ensure_editable(ctx.bundle)
+    jobs = await queue_prepare(session, ctx.bundle.id, ctx.login_id, document_id=body.document_id)
+    await session.commit()
+    return build_request_out(len(jobs), [], jobs[0].request_id if jobs else None)
 
 
 @router.post("/pair", response_model=AiRequestOut, dependencies=[Depends(require_embed_enabled)])
@@ -161,6 +191,7 @@ async def get_ai_status(
         jobs=breakdown.jobs,
         by_kind=breakdown.by_kind,
         failed_errors=breakdown.failed_errors,
+        user_active=breakdown.user_active,
         adoption=await load_adoption_stats(session, ctx.bundle.id),
     )
 

@@ -219,7 +219,7 @@ def test_workbook_sheets_and_headers(client: TestClient) -> None:
     _bulk(client, fx.bundle_id, "delete", drop, DROP_REASON)
 
     wb = _load(client, fx.bundle_id)
-    assert wb.sheetnames == ["A Comparison", "B Flow", "C New documents", "Info"]
+    assert wb.sheetnames == ["A Comparison", "B Flow", "C New documents", "Info", "Documents"]
     sheet_a = wb["A Comparison"]
     assert sheet_a["A1"].value == "Status: In progress"
     assert [cell.value for cell in sheet_a[2]] == list(A_HEADERS)
@@ -429,7 +429,7 @@ def test_preview_matches_the_file(client: TestClient) -> None:
     assert {row["kind"]: row["wrap"] for row in b["rows"]} == {"status": False, "header": True, "plain": False}
     assert not wb["B Flow"]["A1"].alignment.wrap_text
     assert {sheet["name"]: sheet["filter_columns"] for sheet in preview["sheets"]} == {
-        "A Comparison": 20, "B Flow": 0, "C New documents": 0, "Info": 0,
+        "A Comparison": 20, "B Flow": 0, "C New documents": 0, "Info": 0, "Documents": 0,
     }
 
 

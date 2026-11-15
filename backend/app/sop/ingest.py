@@ -28,7 +28,7 @@ from app.sop.models import (
     SourceTable,
 )
 from app.sop.segment import has_unstorable_char
-from app.sop.tobe import add_match_doc, check_match_doc, ensure_code_free, temp_match_code
+from app.sop.tobe import add_match_doc, check_match_doc, ensure_code_free, find_attachable_doc, temp_match_code
 from app.sop.units import create_initial_units
 
 logger = logging.getLogger(__name__)
@@ -93,7 +93,8 @@ async def ingest_upload(
     file_format = _detect_format(file_name)
     sha256 = hashlib.sha256(data).hexdigest()
     await _ensure_new_file(session, bundle_id, sha256)
-    if side == "new":
+    # 번호가 같은 빈 목록 줄에 붙을 파일이면 종류·상위 SOP는 그 줄의 것이라 검사하지 않는다(쓰기 직전에 다시 본다)
+    if side == "new" and await find_attachable_doc(session, bundle_id, parsed.doc_code) is None:
         await check_match_doc(session, bundle_id, code=parsed.doc_code, doc_type=doc_type, parent_code=parent_code)
     await session.rollback()  # 파싱하는 동안 DB 연결을 붙잡지 않는다
 
@@ -108,7 +109,9 @@ async def ingest_upload(
     await _ensure_new_file(session, bundle_id, sha256)
     links_match_doc = side == "new" and outcome.result is not None
     parent_id = None
-    if links_match_doc:
+    # 번호가 같은 빈 목록 줄이 있으면 그 줄에 붙는다(종류·상위 SOP·N/A·단계는 그 줄의 것 그대로) — 없으면 줄을 새로 만든다
+    attach_to = await find_attachable_doc(session, bundle_id, parsed.doc_code) if links_match_doc else None
+    if links_match_doc and attach_to is None:
         parent_id = await check_match_doc(
             session, bundle_id, code=parsed.doc_code, doc_type=doc_type, parent_code=parent_code
         )
@@ -130,7 +133,11 @@ async def ingest_upload(
     except IntegrityError:  # 잠금이 없는 sqlite에서 같은 파일 두 요청이 함께 검사를 통과한 경우
         await session.rollback()
         raise_rule(409, "duplicate_file")
-    if links_match_doc:
+    if attach_to is not None:
+        attach_to.entrance = "match"
+        locked.revision += 1  # 목록이 바뀌었다
+        document.target_doc_id = attach_to.id
+    elif links_match_doc:
         code = parsed.doc_code or temp_match_code(document.id)
         if not parsed.doc_code:
             await ensure_code_free(session, bundle_id, code)

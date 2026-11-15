@@ -12,7 +12,7 @@
 python3.11 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m scripts.reset_db      # 로컬 데모 DB 초기화(backend/dev.db): Alembic base→head + 지침·dev 디렉터리·데모 권한. 서버 실행 금지
 .venv/bin/python -m scripts.seed_sop_worst # 로컬 전용(운영 DB 금지): seed_sop_demo 위에 극단 자료(W1 극단 묶음·W2~W7 단계별·가벼운 36개·역할·부여·지침 버전)를 앱 API로 얹는다. 화면 배치 감사용 — 별도 sqlite 파일(DATABASE_URL)에 reset_db → seed_sop_demo → 이것 순서로, 같은 자료는 건너뛰어 다시 돌려도 된다(약 2분 반). 끝 줄 `worst seed done: 43 bundles`(W1~W7+light 36, 데모 4개 더하면 화면에 47개). DEV_ENFORCE_PERMISSIONS 없이 돌린다
-.venv/bin/python -m scripts.seed_sop_demo # 로컬 전용(운영 DB 금지): 합성 SOP 묶음 4개(쪼개기 직후·분류 절반·검토 대기·AI 제안)를 앱 API로 만든다(작성자 qa.member, 검토자 qa.lead). 묶음 2~4는 경계를 미리 모두 확인하고 "쪼개기 직후"만 미확인으로 남긴다(경계 확인이 검토 요청 조건이라서). AI 제안 단계는 프로세스 안의 가짜 전송으로 돌아 AI 설정이 필요 없고 실제 모델을 부르지 않는다. 같은 제목이 있으면 건너뛰어 다시 돌려도 된다. AUTH_MODE=dev에서만 돈다(dev 의존성 python-docx 필요, DEV_ENFORCE_PERMISSIONS=true면 bundle.create가 없어 403)
+.venv/bin/python -m scripts.seed_sop_demo # 로컬 전용(운영 DB 금지): 합성 SOP 묶음 4개(쪼개기 직후·분류 절반·검토 대기·AI 제안)를 앱 API로 만든다(작성자 qa.member, 검토자 qa.lead). 묶음 2~4는 경계를 미리 모두 확인하고 "쪼개기 직후"만 미확인으로 남긴다(v1.0.3부터 경계 확인은 검토 요청 조건이 아니지만 시드는 그대로다). AI 제안 단계는 프로세스 안의 가짜 전송으로 돌아 AI 설정이 필요 없고 실제 모델을 부르지 않는다. 같은 제목이 있으면 건너뛰어 다시 돌려도 된다. AUTH_MODE=dev에서만 돈다(dev 의존성 python-docx 필요, DEV_ENFORCE_PERMISSIONS=true면 bundle.create가 없어 403)
 AUTH_MODE=dev DEV_ENFORCE_PERMISSIONS=true APP_SYSADMINS=dev.admin .venv/bin/uvicorn app.main:app --reload --port 8777   # 개발 서버
 .venv/bin/python -m pytest tests/ -q -n auto   # 테스트(병렬, 작업자마다 DB 파일이 따로) — conftest가 AUTH_MODE·AI·HR 등을 baseline으로 고정해 backend/.env가 있어도 안전. 한 파일만 볼 때는 -n 없이
 .venv/bin/ruff check app/ tests/          # 린트(target py311)
@@ -30,6 +30,8 @@ npm i --no-save playwright-core           # package.json 불변
 BASE_URL=http://localhost:3777 node scripts/pw-smoke-baseline.mjs   # 산출물은 저장소 루트 .shots/(gitignore). Chrome 경로는 CHROME_PATH
 #   SOP 화면 스모크·글자 대비 감사는 reset_db → seed_sop_demo 직후 DB에서(dev.db 대신 DATABASE_URL로 별도 sqlite 파일을 쓰면 다시 돌리기 쉽다)
 BASE_URL=http://localhost:3777 node scripts/pw-smoke-sop.mjs        # AI 나눔 확정 단계는 backend가 가짜 AI(FAKE_AI_SPLIT=1)를 볼 때만 돈다
+PREPARE=1 BASE_URL=http://localhost:3777 node scripts/pw-smoke-sop.mjs   # 배정 화면 첫 진입 미리 분류(알림 → AI jobs의 Background 줄 → AI suggested 수) 하나만 돈다. 전제: reset_db → seed_sop_demo(AI_AUTO_PREPARE=false) 직후,
+#   backend를 아래 가짜 AI로 AI_ENABLED=true AI_AUTO_PREPARE=true로 띄운다(다른 단계는 이 backend에서 전제가 깨져 건너뛴다). 끝에 DB가 바뀐다 — 다시 돌리려면 reset_db부터
 BASE_URL=http://localhost:3777 node scripts/pw-contrast-audit.mjs   # 14화면 × 라이트·다크, 4.5:1
 DS=worst BASE_URL=http://localhost:3787 node scripts/pw-layout-audit.mjs   # 배치 감사(DB 불변): seed_sop_demo(DS=mid)·seed_sop_worst(DS=worst)를 얹은 DB의 backend 8787/frontend 3787에서. ONLY=항목 id·WIDTHS·LANGS·THEMES, 실패는 종료 코드 1과 ../.shots/layout-<id>-<width>.png (docs/lessons/browser-verification.md)
 BASE_URL=http://localhost:3777 node scripts/pw-overlap-audit.mjs    # 겹침 감사(seed 직후, DB 불변): 모핑 단추·C 줄 끝 단추·그 자리 메뉴·AI 작업 목록과 알림이 옆 글자를 덮는지, 1280·1920 × EN·KO. 긴 글은 LONG=1, 다크는 THEMES=light,dark
@@ -39,6 +41,7 @@ MANUAL=app BASE_URL=http://localhost:3777 node scripts/pw-manual-shots.mjs   # �
 # 가짜 AI — 고정 응답, 배선 확인용 (저장소 루트에서, 포트 9999). 합성 응답이라 프롬프트 품질·정확도의 근거가 아니다
 node frontend/scripts/fake-ai-server.mjs   # FAKE_AI_SPLIT=1이면 분류 답과 나누기 제안 답이 문장을 둘로 나눈다(AI 나눔 확정·AI 나누기 제안 경로 스모크용)
 #   backend를 AI_ENABLED=true AI_BASE_URL=http://localhost:9999/v1 AI_MODEL=fake AI_API_TOKEN=fake AI_ENDPOINTS="" 로 띄운다.
+#   AI를 켜고 스모크·감사·시드를 돌릴 때는 AI_AUTO_PREPARE=false를 더한다 — 업로드 뒤 묶기 계획·배정 화면 첫 진입 분류가 저절로 쌓여 작업·제안 수가 달라지지 않게(꺼도 사람이 누른 요청은 그대로 돈다).
 #   임베딩까지 쓰면 EMBED_ENABLED=true EMBED_BASE_URL=http://localhost:9999/v1 EMBED_API_TOKEN=fake EMBED_MODEL=fake 를 더한다(벡터가 글자 해시라 입구 2 짝은 안 생겨 신규로 간다).
 #   토큰이 비면 ai_client가 "Bearer " 헤더를 보내 호출이 실패하므로 가짜 서버에도 아무 값이나 넣는다.
 # dev 인증 = localStorage `sopa.devUser` / 헤더 `X-Dev-User`. 권한 차등은 DEV_ENFORCE_PERMISSIONS=true로 본다(dev.admin이 sysadmin).
@@ -66,6 +69,7 @@ npx vitest run
 npm i --no-save playwright-core
 $env:BASE_URL="http://localhost:3777"; $env:CHROME_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"; node scripts\pw-smoke-baseline.mjs
 node scripts\pw-smoke-sop.mjs        # seed_sop_demo 직후. 설명은 bash 쪽과 같다
+$env:PREPARE="1"; node scripts\pw-smoke-sop.mjs; Remove-Item Env:PREPARE   # 배정 화면 첫 진입 미리 분류만. 전제(가짜 AI + $env:AI_AUTO_PREPARE="true" backend, 끝에 DB가 바뀜)는 bash 쪽과 같다
 node scripts\pw-contrast-audit.mjs
 node scripts\pw-overlap-audit.mjs   # 겹침 감사. 설명은 bash 쪽과 같다
 $env:BASE_URL="http://localhost:3787"; $env:DS="worst"; node scripts\pw-layout-audit.mjs; Remove-Item Env:DS   # 배치 감사. 설명은 bash 쪽과 같다(변수를 지우지 않으면 다음 실행도 그 자료다)
@@ -77,6 +81,7 @@ node frontend\scripts\fake-ai-server.mjs   # 나눔 모드: $env:FAKE_AI_SPLIT="
 
 # 배포 스크립트 검증은 POSIX sh가 필요하다 — Git Bash에서 sh ci/test-deploy.sh, 아니면 GitLab의 deploy-script-test Job 결과를 본다
 # backend: $env:AI_ENABLED="true"; $env:AI_BASE_URL="http://localhost:9999/v1"; $env:AI_MODEL="fake"; $env:AI_API_TOKEN="fake"; $env:AI_ENDPOINTS=""
+# 스모크·감사·시드에는 저절로 도는 AI를 끈다: $env:AI_AUTO_PREPARE="false"
 # 임베딩까지: $env:EMBED_ENABLED="true"; $env:EMBED_BASE_URL="http://localhost:9999/v1"; $env:EMBED_API_TOKEN="fake"; $env:EMBED_MODEL="fake"
 ```
 

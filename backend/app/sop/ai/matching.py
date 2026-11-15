@@ -11,7 +11,8 @@ from itertools import product
 import numpy as np
 
 from app.sop.ai.similarity import build_text_bigrams, compare_bigrams
-from app.sop.segment import has_visible_char
+from app.sop.checks import check_sentence
+from app.sop.segment import has_visible_char, is_blank_char
 
 _ONE_TO_ONE_KINDS = ("table", "figure")  # 글자를 나누거나 합칠 수 없는 종류 — 묶지 않고 1:1로만 잇는다
 
@@ -47,6 +48,21 @@ class MatchProposal:
 
 def _is_comparable(old: MatchItem, new: MatchItem) -> bool:
     return (old.lang, old.kind) == (new.lang, new.kind)
+
+
+def _strip_blanks(text: str) -> str:
+    return "".join(ch for ch in text if not is_blank_char(ch))
+
+
+def is_spacing_change(old_text: str, new_text: str) -> bool:
+    """띄어쓰기만 다른 글인가 — 뜻이 바뀔 수 없는 좁은 경우만 참이라 LLM에 묻지 않는다(설계 §4).
+
+    한 글자가 뜻을 뒤집는 문장("전에" ↔ "후에")이 있어 유사도 기준값은 두지 않는다. 빈 글자를 걷으면 같아도
+    숫자·단위·부정 검사가 다르면("1 0" ↔ "10") 거짓이다. 같은 글은 이 판정의 몫이 아니다.
+    """
+    if old_text == new_text or _strip_blanks(old_text) != _strip_blanks(new_text):
+        return False
+    return not check_sentence([old_text], new_text)
 
 
 def build_text_scores(olds: Sequence[MatchItem], news: Sequence[MatchItem]) -> np.ndarray:

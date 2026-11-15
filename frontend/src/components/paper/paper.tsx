@@ -5,7 +5,7 @@
 // strips.fold(Assign 필터)가 있으면 맞는 조각만 제 모양, 곁은 한 줄 판, 먼 구간은 묶음 한 줄로 접는다(paper-fold-model.ts) - 한 줄 판·묶음은 단추라 눌러도 조각을 고르지 않는다.
 "use client";
 
-import { ChevronsDownUp, CircleCheck, Ellipsis, FoldVertical, FolderCheck, ImageIcon, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles } from "lucide-react";
+import { BookMarked, ChevronsDownUp, Ellipsis, FoldVertical, FolderCheck, ImageIcon, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles, type LucideIcon } from "lucide-react";
 import { Fragment, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { FigureImage } from "@/components/paper/figure-image";
@@ -15,6 +15,7 @@ import { UnitStatusChip } from "@/components/status";
 import { Collapse } from "@/components/ui/motion";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
+import { readCaretPoint } from "@/lib/caret-point";
 import { useI18n } from "@/lib/i18n";
 import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildContourPath, buildRows, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
@@ -24,24 +25,24 @@ import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getS
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
 type PaperMark = UnitMark | "warn";
 
-const MARK_ICONS: Record<PaperMark, typeof CircleCheck> = {
+const MARK_ICONS: Record<PaperMark, LucideIcon> = {
   edited: Scissors,
   pair: Link2,
   classified: FolderCheck,
   ai: Sparkles,
   suggest: WandSparkles,
+  ref: BookMarked,
   warn: TriangleAlert,
-  checked: CircleCheck,
 };
-const MARK_ORDER: readonly PaperMark[] = ["edited", "pair", "classified", "ai", "suggest", "warn", "checked"];
+const MARK_ORDER: readonly PaperMark[] = ["edited", "pair", "classified", "ai", "suggest", "ref", "warn"];
 const MARK_LABELS: Record<PaperMark, string> = {
   edited: "split.legendEdited",
   pair: "split.legendPair",
   classified: "split.legendClassified",
   ai: "split.legendAi",
   suggest: "split.markSuggest",
+  ref: "split.markRef",
   warn: "split.markWarn",
-  checked: "split.legendChecked",
 };
 
 function readRowUnitId(row: PaperRow): number | null {
@@ -99,19 +100,18 @@ interface PaperProps {
   isDone?: (unitId: number) => boolean;
   onUnitClick: (unitId: number, at: { blockId: number; offset: number } | null, event: MouseEvent) => void;
   onRangeSelect?: (range: { blockId: number; start: number; end: number }) => void;
+  /** Shift+클릭이 여럿 고르기인 화면(Assign) - 끌어 고르기(onRangeSelect)를 함께 써도 Shift+클릭이 글자 선택을 늘리지 않게 한다 */
+  shiftClickPicks?: boolean;
   /** 그림을 받을 묶음·문서 - 없으면 그림 자리 상자만 */
   figureSource?: { bundleId: number; docId: number };
   /** 단위·조각·표시 testid의 앞말 */
   testId: string;
   /** 용지 자체의 testid - 한 화면에 용지가 여럿일 때(없으면 testId) */
   sheetTestId?: string;
-  /** 단위마다 종이 조각으로, 앞에 태그, 끝에 표시. isChecked는 먼저 칠한 경계 확인까지 본다 */
+  /** 단위마다 종이 조각으로, 앞에 태그, 끝에 표시 */
   strips?: {
-    isChecked: (unit: ViewUnit) => boolean;
     /** Split - 조각 사이의 묶기(합치기냐 한/영 짝이냐는 plan이 고른다). 없으면 틈만 둔다(Assign) */
     join?: { busy: boolean; plan: (firstId: number, secondId: number) => JoinPlan; onJoin: (firstId: number, secondId: number, kind: JoinKind) => void };
-    /** Assign - 경계 확인 표시는 뺀다 */
-    hideChecked?: boolean;
     /** Assign - 보기를 다시 부르지 않아도 지금 커버 상태로 표시한다 */
     statusOf?: (unitId: number) => ViewUnit["status"] | undefined;
     /** Assign - 조각 아래 한 줄(간 곳) */
@@ -138,19 +138,8 @@ interface PaperProps {
 
 /** 화면 좌표 → 블록 위치. 글자 조각 요소의 data-start에 글자 노드 안 위치를 더한다 */
 function readCaret(x: number, y: number): { blockId: number; offset: number } | null {
-  let node: Node | null = null;
-  let nodeOffset = 0;
-  if ("caretPositionFromPoint" in document) {
-    const pos = document.caretPositionFromPoint(x, y);
-    node = pos?.offsetNode ?? null;
-    nodeOffset = pos?.offset ?? 0;
-  } else if ("caretRangeFromPoint" in document) {
-    // Safari 등 구형 API
-    const range = (document as Document & { caretRangeFromPoint: (x: number, y: number) => Range | null }).caretRangeFromPoint(x, y);
-    node = range?.startContainer ?? null;
-    nodeOffset = range?.startOffset ?? 0;
-  }
-  return node ? readNodeOffset(node, nodeOffset) : null;
+  const caret = readCaretPoint(x, y);
+  return caret ? readNodeOffset(caret.node, caret.offset) : null;
 }
 
 function readNodeOffset(node: Node, nodeOffset: number): { blockId: number; offset: number } | null {
@@ -192,6 +181,7 @@ export function Paper({
   isDone,
   onUnitClick,
   onRangeSelect,
+  shiftClickPicks = false,
   figureSource,
   testId,
   sheetTestId,
@@ -520,8 +510,7 @@ export function Paper({
     if (!strips) return null;
     const marks = new Set<PaperMark>();
     if (unit) {
-      for (const mark of getMarks({ ...unit, status: strips.statusOf?.(unit.id) ?? unit.status })) if (mark !== "checked") marks.add(mark);
-      if (strips.isChecked(unit) && !strips.hideChecked) marks.add("checked");
+      for (const mark of getMarks({ ...unit, status: strips.statusOf?.(unit.id) ?? unit.status })) marks.add(mark);
     }
     if (hasWarn) marks.add("warn");
     if (marks.size === 0) return null;
@@ -541,7 +530,7 @@ export function Paper({
               tabIndex={unit !== undefined && unit.id === selectedId ? 0 : -1}
               data-testid={`${testId}-mark-${mark}-${unit?.id ?? "x"}`}
             >
-              <Icon size={14} strokeWidth={mark === "checked" ? 2 : 1.6} className={`pmark ${mark}`} aria-hidden />
+              <Icon size={14} strokeWidth={1.6} className={`pmark ${mark}`} aria-hidden />
             </span>
           );
         })}
@@ -553,7 +542,7 @@ export function Paper({
    *  자리는 조각 위 테두리 오른쪽 끝에 걸친 작은 탭 - 글·끝 아이콘과 겹치지 않고 조각 높이를 바꾸지 않는다. 언어가 없는 단위(neutral)는 없다 */
   function renderLang(unit: ViewUnit | undefined): ReactNode {
     if (!unit) return null;
-    return <LangToken lang={unit.lang} className="strip-lang" tabIndex={unit.id === selectedId ? 0 : -1} testId={`${testId}-lang-${unit.id}`} />;
+    return <LangToken lang={unit.lang} isRefProposed={unit.ref?.state === "proposed"} className="strip-lang" tabIndex={unit.id === selectedId ? 0 : -1} testId={`${testId}-lang-${unit.id}`} />;
   }
 
   /** 두 줄 사이의 묶기 - 같은 언어면 합치기, 한글·영어면 짝(아이콘으로 구별). 못 묶는 자리는 꺼 두고 까닭을 툴팁으로 */
@@ -974,8 +963,8 @@ export function Paper({
       pressRef.current = el ? { el, top: el.getBoundingClientRect().top } : null;
     }
     if (onUnitDoubleClick && event.detail > 1 && (event.target as HTMLElement).closest(".su[data-unit]")) event.preventDefault();
-    // 끌어 고르기가 없는 화면(Assign)에서 Shift+클릭은 여럿 고르기다 - 브라우저가 글자 선택을 늘려 클릭을 삼키지 않게
-    if (!onRangeSelect && event.shiftKey && (event.target as HTMLElement).closest(".su[data-unit]")) event.preventDefault();
+    // Shift+클릭이 여럿 고르기인 화면(Assign, 또는 끌어 고르기가 없는 화면)에서는 브라우저가 글자 선택을 늘려 클릭을 삼키지 않게
+    if ((shiftClickPicks || !onRangeSelect) && event.shiftKey && (event.target as HTMLElement).closest(".su[data-unit]")) event.preventDefault();
   }
 
   /** 떨어진 짝 구성원도 언어 칩을 보이게 - 올린 줄의 짝 조각에 data-mate-hover를 직접 단다(이웃한 짝 카드는 CSS가 맡는다).

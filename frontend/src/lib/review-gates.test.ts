@@ -30,8 +30,6 @@ describe("GATE_STAGE", () => {
     expect(GATE_STAGE.documents).toBe(NEXT_ACTION_STAGE.upload_documents);
     expect(GATE_STAGE.versions).toBe(NEXT_ACTION_STAGE.fill_doc_versions);
     expect(GATE_STAGE.versions).toBe("documents");
-    expect(GATE_STAGE.boundaries).toBe(NEXT_ACTION_STAGE.check_boundaries);
-    expect(GATE_STAGE.boundaries).toBe("split");
     expect(GATE_STAGE.units).toBe(NEXT_ACTION_STAGE.decide_units);
     expect(GATE_STAGE.warnings).toBe(NEXT_ACTION_STAGE.ack_warnings);
     expect(GATE_STAGE.reasons).toBe(NEXT_ACTION_STAGE.fill_reasons);

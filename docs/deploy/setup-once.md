@@ -96,6 +96,7 @@ chmod 600 /data/home_<계정>/deployments/sop-archivist/.env   # 시크릿이 �
 | `N8N_HR_URL` / `N8N_HR_TOKEN` | `http://<n8n-host>:5678/webhook/hr-dept` / 웹훅 토큰(`X-API-Key`) |
 | `HR_SYNC_INTERVAL_HOURS` | **처음엔 `0`**. 첫 수동 동기화(A8)를 확인한 뒤 `24` |
 | `HR_SYNC_DELETE_CAP_PCT` | `20` |
+| `N8N_QUERY_URL` / `EQUIS_EDW_TABLE` / `EQUIS_DOC_URL_BASE` | EQUIS 문서 조회. `http://<n8n-host>:5678/webhook/dbv-query`(db-viewer와 같은 웹훅) / `<schema>.EQUIS_DOCUMENT` / `https://<equis-host>`. 셋 중 하나라도 비우면 꺼진다 |
 | `SOP_MAX_FILE_MB` / `SOP_MAX_DOCX_UNZIPPED_MB` | `25` / `200` (파일 하나·DOCX 압축 해제 합계, MiB. 파일 상한은 nginx `client_max_body_size`(50m)보다 크게 올리지 않는다) |
 | `SOP_MAX_PDF_PAGES` / `SOP_MAX_DOC_CHARS` | `500` / `2000000` (넘는 파일은 문서 목록에 "거절"과 사유로 남는다) |
 | `SOP_PARSE_TIMEOUT_SECONDS` | `60` (파싱 한 번 시간 한도, 메인 추출과 보조 변환이 각자 이만큼 쓴다) |

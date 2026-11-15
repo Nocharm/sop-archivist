@@ -255,6 +255,7 @@
   }
   .pill.none { color: var(--st-none-ink); border-color: var(--line-2); }
   .pill.ai { color: var(--st-ai-ink); background: var(--st-ai-tint); border: 1px dashed var(--st-ai-line); }
+  .pill.ref { color: var(--lang-ref-ink); background: var(--lang-ref-bg); border: 1px dashed var(--lang-ref-line); }
   .pill.ok { color: var(--on-accent); background: var(--accent); }
   .pill.hold { color: var(--st-hold-ink); background: var(--st-hold-tint); border-color: var(--st-hold-line); }
   .pill.warn { color: var(--warn-ink); background: var(--warn-tint); border-color: color-mix(in oklab, var(--warn-fill) 45%, var(--surface)); }
@@ -314,6 +315,10 @@
   /* 두 줄 제한 - td가 아니라 칸 안을 감싼 요소에 건다(td를 직접 제한하면 줄 테두리가 깨진다) */
   .clamp-2 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
   .clamp-6 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; overflow: hidden; overflow-wrap: anywhere; }
+  /* New 문서 목록 표는 열이 아홉이라 좁은 창(1280 미만)에서 넘쳤다 - 칸 사이 여백을 줄여 빼기 단추까지 한 화면에 든다(열 폭은 표의 th가 함께 줄인다) */
+  @media (max-width: 1279px) {
+    .tobe-table th, .tobe-table td { padding-left: 6px; padding-right: 6px; }
+  }
   .dtable tbody tr { transition: background var(--dur-fast); }
   .dtable tbody tr[data-link]:hover td { background: var(--hover); cursor: pointer; }
   /* 키보드로 닿은 줄 - 테두리는 줄 안쪽으로(바깥으로 내면 옆 줄·틀에 잘린다) */
@@ -581,8 +586,6 @@
 /* ---- 원문 용지: 용지에는 추출한 글자만 둔다(앱 글자 금지). 원문 글꼴은 사람마다 설정(data-src-*) ---- */
 @layer components {
   .desk { overflow-y: auto; scrollbar-gutter: stable; padding: 18px 20px; min-width: 0; min-height: 0; background: var(--bg); }
-  /* 표를 감싼 조각만 가로로 스크롤하게 책상 쪽은 자른다 - 설명서 책상 등 다른 .desk에는 걸지 않는다 */
-  .split-desk { overflow-x: clip; }
   .sheet {
     width: 100%;
     max-width: 600px;
@@ -634,9 +637,9 @@
   .su[data-cut] { background-image: none; }
   .su[data-done] { color: color-mix(in oklab, var(--paper-ink) 62%, var(--paper)); }
   .ptbl { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 22px; }
-  /* 칸마다 16ch는 지켜 열이 많은 표가 글자 한 줄 폭으로 찌그러지지 않게 한다. max-content는 쓰지 않는다(긴 칸이 표를 3,000px 넘게 민다) - 넘치면 표를 감싼 조각이 가로로 스크롤한다 */
-  .split-desk .ptbl { width: auto; min-width: 100%; }
-  .split-desk .ptbl td { min-width: 16ch; }
+  /* 한 단 보기(옛 원문 고치기 자리)에서는 칸마다 16ch는 지켜 열이 많은 표가 글자 한 줄 폭으로 찌그러지지 않게 한다. max-content는 쓰지 않는다(긴 칸이 표를 3,000px 넘게 민다) - 넘치면 표를 감싼 조각이 가로로 스크롤한다 */
+  .assign-panes[data-single] .ptbl { width: auto; min-width: 100%; }
+  .assign-panes[data-single] .ptbl td { min-width: 16ch; }
   .ptbl td { border: 1px solid var(--line-2); padding: 3px 8px; text-align: left; vertical-align: top; }
   .ptbl-cap {
     display: flex;
@@ -1021,6 +1024,13 @@
 @layer components {
 
   /* 결과 행 - 파일 줄 아래에 번호·버전·배치 세 칸 */
+  /* 파일을 끌고 들어온 동안 화면을 덮는 안내 - 포인터를 받지 않아 놓는 자리는 그 아래 화면 그대로다 */
+  .drop-veil { position: absolute; inset: 8px; z-index: 30; display: grid; place-content: center; justify-items: center; gap: 8px; border: 2px dashed var(--accent); border-radius: var(--r-3); background: color-mix(in oklch, var(--accent-tint) 85%, transparent); color: var(--accent); font-size: 15px; font-weight: 600; pointer-events: none; }
+  /* 고른 파일 줄 - 이름 | Old·New | 갈 곳 | 빼기 */
+  .upload-picked { display: grid; border: 1px solid var(--line); border-radius: var(--r-2); overflow: hidden; }
+  .upload-picked-row { display: grid; grid-template-columns: minmax(0, 1.1fr) auto minmax(0, 1.4fr) auto; align-items: center; gap: 6px 10px; min-height: 40px; padding: 6px 10px; border-top: 1px solid var(--line); }
+  .upload-picked-row:first-child { border-top: 0; }
+  .view-toggle.upload-side button { width: auto; padding: 0 8px; font-size: var(--fs-cap); }
   .upload-results { display: grid; border: 1px solid var(--line); border-radius: var(--r-2); overflow: hidden; }
   .upload-row { display: grid; grid-template-columns: minmax(0, 1fr) 150px minmax(0, 1.1fr); align-items: center; gap: 6px 10px; padding: 8px 10px; border-top: 1px solid var(--line); }
   .upload-row > :first-child { grid-column: 1 / -1; }
@@ -1028,6 +1038,9 @@
   .upload-row.head > :first-child { display: none; }
   .src-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .src-badge { flex: none; padding: 0 5px; border-radius: var(--r-1); font-size: 10px; line-height: 16px; font-weight: 600; background: var(--accent-tint); color: var(--accent); }
+  /* EQUIS가 아는 값으로 채우자는 제안 - 눌러야 들어간다 */
+  .equis-hint { display: inline-flex; align-items: baseline; gap: 4px; max-width: 100%; text-align: left; padding: 1px 6px 1px 2px; border: 1px dashed var(--accent-line); border-radius: var(--r-1); font-size: var(--fs-micro); line-height: 18px; color: var(--ink-2); cursor: pointer; }
+  .equis-hint:hover { border-style: solid; background: var(--accent-tint); color: var(--ink); }
   .src-badge.ai { background: var(--st-ai-tint); color: var(--st-ai-ink); }
 }
 @layer components {
@@ -1152,8 +1165,7 @@
 
   /* 표 칸 안의 조각 - 칸 문장마다 점선으로 나누고 같은 칸의 이웃 사이에 합치기 */
   .cell-piece { position: relative; padding-right: 18px; border-radius: 2px; }
-  .split-desk .cell-piece { padding-right: 38px; }
-  /* Assign도 줄 끝 아이콘이 둘 이상 붙어도 글과 겹치지 않을 자리를 잡는다(Split과 같은 폭, 다른 화면으로 새지 않게 Assign 용지에만) */
+  /* Assign은 줄 끝 아이콘이 둘 이상 붙어도 글과 겹치지 않을 자리를 잡는다(다른 화면으로 새지 않게 Assign 용지에만) */
   .assign-pane .cell-piece { padding-right: 38px; }
   .cell-piece > p { margin: 0; }
   .cell-gap { position: relative; height: 11px; }
@@ -1163,9 +1175,6 @@
   .cell-marks { position: absolute; right: 0; top: 4px; display: flex; gap: 3px; align-items: center; }
 
   /* 왼쪽 탭 - 줄의 왼쪽 밖에 맞닿아 붙는다(맞닿는 쪽 모서리 직각, 바깥 모서리 둥글게). 바탕 = 언어 색, 보류는 그 위에 사선 줄무늬. 번호는 절의 첫 블록에만, 번호 없는 탭은 옅게 해 번호를 따라가는 눈을 덜 방해하고 올리면 진해진다. 탭에 올리면 번호가 사라지고 언어 글자가 뜬다. 첫 글줄 높이(27px)에 번호를 맞춘다 */
-  /* 1280 미만 Split에서만 3단 이상의 절 번호 탭을 46px에서 멈춘다(Assign 탭은 그대로) - 깊은 번호가 글 상자를 좁히지 않게(긴 번호는 탭 안에서 잘린다) */
-  /* 앞머리 전체(번호 칸 + 틈 5px)를 옛 탭 상한과 같은 46px에서 멈춘다 - 번호 칸만 46px이면 1,800자 문단 글 폭이 333px로 줄어 감사 R8(340) 아래였다. 잘린 번호는 툴팁에 전체가 있다 */
-  @media (max-width: 1279px) { .split-desk .strip-lead-num { max-width: 41px; } .split-desk :is(.strip-lead, .strip-lead-gap) { max-width: 46px; } .split-desk .strip-gap { --gap-tab-cap: 46px; } }
   /* Split 3단 열: 문서 목록 232px, 1280 미만은 216px - 1,800자 문단 글 상자가 340px을 지키게(사용자 결정 2026-11-12). Assign과 무관 */
   .split-cols { grid-template-columns: 232px minmax(0, 1fr) clamp(280px, 26vw, 420px); }
   @media (max-width: 1279px) { .split-cols { grid-template-columns: 216px minmax(0, 1fr) clamp(280px, 26vw, 420px); } }
@@ -1215,6 +1224,9 @@
   .lang-token { display: inline-grid; place-items: center; height: 15px; padding: 0 3px; border: 1px solid var(--line-2); border-radius: 3px; background: var(--surface); color: var(--ink-2); font: 600 10px / 1 var(--font-mono); }
   .lang-token[data-lang="ko"] { border-color: var(--lang-ko-line); background: var(--lang-ko-bg); color: var(--lang-ko-ink); }
   .lang-token[data-lang="en"] { border-color: var(--lang-en-line); background: var(--lang-en-bg); color: var(--lang-en-ink); }
+  .lang-token[data-lang="ref"] { border-color: var(--lang-ref-line); background: var(--lang-ref-bg); color: var(--lang-ref-ink); }
+  /* 참조 줄 제안 - 아직 사람이 확인하지 않아 점선 */
+  .lang-token[data-proposed] { border-style: dashed; }
   .strip-lang { position: absolute; top: -8px; right: 9px; z-index: 2; visibility: hidden; opacity: 0; transition: opacity var(--dur-fast), visibility 0s var(--dur-fast); }
   .assign-pane .strip-lang { right: 30px; }
   .strip-lang:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -1226,12 +1238,17 @@
   .insp-h { display: flex; align-items: center; gap: 4px; font-size: var(--fs-micro); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }
   .insp-h::after { content: ""; flex: 1; height: 1px; background: var(--line); }
   .pmark { flex: none; color: var(--ink-3); }
-  .pmark.checked { color: var(--accent); }
   .pmark.pair { color: var(--st-ai-ink); }
   .pmark.classified { color: var(--accent); }
   .pmark.ai { color: var(--st-ai-ink); }
   .pmark.suggest { color: var(--st-ai-ink); }
   .pmark.warn { color: var(--st-hold-ink); }
+  .pmark.ref { color: var(--lang-ref-ink); }
+  /* 참조 줄 카드(배정 오른쪽 칸) - 제안은 점선, 확정은 실선 */
+  .ref-card { border-color: var(--lang-ref-line); background: var(--lang-ref-bg); }
+  .ref-card[data-state="proposed"], .ref-card[data-state="new"] { border-style: dashed; }
+  /* 참조 줄 새 문장의 작은 주의(결정 칸) - EQUIS의 지금 번호·이름과 다를 때만 */
+  .ref-advice { display: flex; align-items: flex-start; gap: 6px; min-width: 0; font-size: var(--fs-cap); line-height: 16px; color: var(--warn-ink); }
   /* 아이콘 표시는 포인터·키보드 포커스로 툴팁을 띄운다(delegated-tip) */
   .pmark-host { display: inline-grid; place-items: center; border-radius: 3px; }
   .pmark-host:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -1240,13 +1257,6 @@
   /* 접기 안쪽은 넘침을 자른다 - 단추의 포커스 테두리(2px)가 잘리지 않게 줄 안쪽에 여유를 둔다(바깥 여백이면 접힌 뒤에도 그만큼 남는다) */
   .strip-acts > .fold-inner { margin: 0 -3px; }
   .strip-acts-bar { display: flex; flex-wrap: wrap; gap: 6px; width: fit-content; padding: 6px 3px 3px; }
-  /* 단추 묶음이 바뀔 때(SplitUnitActions) - 옛 묶음은 브라운관 TV가 꺼지듯 세로로 눌려 가는 선이 된 뒤 가운데 점으로, 새 묶음은 거꾸로 켜진다. 줄 폭은 단추 묶음만큼이라 가운데가 단추들의 가운데다 */
-  .strip-acts-bar[data-crt="off"] { animation: crt-off calc(var(--dur-slow) * 1.15) var(--ease-exit) both; pointer-events: none; }
-  .strip-acts-bar[data-crt="on"] { animation: crt-on calc(var(--dur-slow) * 1.15) var(--ease-enter) both; }
-  /* 확인 뒤 넘어가기를 기다리는 동안 - 꺼진 모양 그대로(자리는 남겨 조각 높이가 튀지 않게) */
-  .strip-acts-bar[data-crt="gone"] { opacity: 0; transform: scale(0, 0.06); pointer-events: none; }
-  @keyframes crt-off { 0% { transform: scale(1, 1); filter: brightness(1); } 55% { transform: scale(1, 0.06); filter: brightness(1.6); opacity: 1; } 100% { transform: scale(0, 0.06); filter: brightness(2.2); opacity: 0; } }
-  @keyframes crt-on { 0% { transform: scale(0, 0.06); filter: brightness(2.2); opacity: 0; } 45% { transform: scale(1, 0.06); filter: brightness(1.6); opacity: 1; } 100% { transform: scale(1, 1); filter: brightness(1); } }
   .strip-act { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--surface); color: var(--ink-2); font: 600 var(--fs-cap) / 1 var(--font-ui); white-space: nowrap; cursor: pointer; user-select: none; transition: background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast); }
   .strip-act > svg { flex: none; }
   /* 확인 취소 ↔ 한 번 더 눌러 취소 - 폭은 MorphWidth가 늘리고 새 라벨은 스며 나온다 */
@@ -1275,20 +1285,12 @@
   @keyframes cut-pop-in { from { opacity: 0; visibility: hidden; translate: calc(-50% + var(--pop-dx, 0px)) -5px; } }
   @keyframes cut-pop-wait { from { opacity: 0; visibility: hidden; } }
 
-  /* 경계 확인 상태 칩 - 확인 전은 노란 테두리, 확인함은 파란 채움 */
-  .check-chip { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 11px; font-size: var(--fs-cap); font-weight: 600; }
-  .check-chip.no { background: var(--st-hold-tint); color: var(--st-hold-ink); box-shadow: inset 0 0 0 1px var(--st-hold-line); }
-  .check-chip.yes { background: var(--accent); color: var(--on-accent); }
-  /* 방금 확인한 단위의 칩 - 가로축으로 뒤집히며 Checked로 바뀐다(Split이 이 바뀜과 단추 줄 전환이 끝난 뒤 다음 단위로 넘어간다). 움직임 줄이기면 --dur-slow가 0이라 바로 */
-  .check-chip[data-flip] { animation: chip-flip var(--dur-slow) var(--ease-enter) both; }
-  @keyframes chip-flip { from { transform: perspective(80px) rotateX(90deg); opacity: .4; } }
 
   /* 종이 묶음 - 탭 하나에 용지 하나(본문) 또는 구역 묶음마다 하나(머리말·꼬리말). 넓은 창에서는 폭을 더 쓰되 줄 길이는 묶는다 */
   .sheets { display: grid; gap: 22px; width: 100%; max-width: 860px; margin-inline: auto; }
   .sheets .sheet { max-width: none; }
   .sheet-set { display: grid; gap: 6px; min-width: 0; }
   .sheet-cap { margin: 0; padding-inline: 2px; font-size: var(--fs-cap); line-height: var(--lh-cap); font-weight: 600; color: var(--ink-2); overflow-wrap: anywhere; }
-  .tab-left { display: inline-grid; place-items: center; min-width: 18px; height: 16px; padding: 0 5px; border-radius: 8px; background: var(--st-hold-tint); color: var(--st-hold-ink); box-shadow: inset 0 0 0 1px var(--st-hold-line); font: 600 10px / 1 var(--font-mono); font-variant-numeric: tabular-nums; }
 
   /* 왼쪽 아래 도움말 - 글쇠 | 표시 탭, 접을 수 있다 */
   .help-panel { display: grid; gap: 8px; padding: 8px 10px 10px; border-top: 1px solid var(--line); font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-2); min-width: 0; }
@@ -1308,8 +1310,6 @@
 
   @media (prefers-reduced-motion: reduce) {
     .strip-act, .strip-merge, .strip-merge > svg, .strip-merge-label { transition: none; animation: none; }
-    /* 묶음 바꿈은 animationend로 넘어간다 - 0이 아닌 아주 짧은 시간으로 두어 끝 이벤트가 반드시 오게 */
-    .strip-acts-bar[data-crt] { animation-duration: 1ms; }
     /* 팝업은 움직임 없이 늦게만 뜬다 */
     .cut-pop { animation: cut-pop-wait 1ms linear 380ms both; }
   }
@@ -1362,6 +1362,20 @@
   .assign-panes [data-pane="new"] .pane-body { padding: 10px 4px 24px 10px; }
   .assign-panes [data-pane="old"] .sheet { margin-inline: auto 0; }
   .assign-panes [data-pane="new"] .sheet { margin-inline: 0 auto; }
+  /* 한 단 보기 - Old 문서 하나만 가운데에 넓게. 세로선이 없으니 스크롤 막대는 보통 자리(오른쪽)로 */
+  .assign-panes[data-single] { grid-template-columns: minmax(0, 1fr); }
+  .assign-panes[data-single] [data-pane="old"] .pane-body { direction: ltr; padding: 10px 4px 24px; }
+  .assign-panes[data-single] [data-pane="old"] .sheet { margin-inline: auto; }
+  /* 한 단 ↔ 양 단 전환(lib/use-pane-slide) - 폭은 바로 바뀌고 Old 용지가 앞 자리(--pane-dx)에서 미끄러져 온다. New 칸과 세로선은 옅게 나타난다.
+     옮겨진 용지가 가로 스크롤 막대를 만들지 않게 그 동안 가로 넘침을 자르고, 어긋난 자리로 그려질 연결선은 숨긴다 */
+  .assign-panes[data-motion] [data-pane="old"] .pane-body > * { animation: pane-slide var(--dur-slow) var(--ease-move); }
+  .assign-panes[data-motion] .pane-body { overflow-x: hidden; }
+  .assign-panes[data-motion="two"] [data-pane="new"], .assign-panes[data-motion="two"] .pane-divider { animation: fade-in var(--dur-slow) var(--ease-enter); }
+  .assign-panes[data-motion] .link-lines { visibility: hidden; }
+  /* 한 단으로 접을 때 - 사라진 New 칸의 복제본이 오른쪽으로 조금 물러나며 옅어진다(use-pane-slide가 달고 뗀다). 넓어지는 Old 용지와 글이 겹쳐 보이는 시간을 줄이려고 용지보다 빨리 끝낸다 */
+  .assign-panes > [data-ghost] { position: absolute; pointer-events: none; animation: pane-ghost var(--dur-base) var(--ease-exit) forwards; }
+  @keyframes pane-ghost { to { opacity: 0; translate: 24px 0; } }
+  @keyframes pane-slide { from { transform: translateX(var(--pane-dx, 0px)); } }
   /* 문서별 확대 - 원문 글자·줄 높이·용지 폭이 --z를 따른다. 종이 상한은 Split(.sheets)과 같은 860 */
   .assign-pane .sheet { max-width: calc(860px * var(--z, 1)); }
   .assign-pane .pg { font-size: calc(var(--fs-read) * var(--z, 1)); line-height: calc(var(--lh-read) * var(--z, 1)); }
@@ -1385,6 +1399,8 @@
   .pane-divider:hover::before, .pane-divider:focus-visible::before, .pane-divider[data-drag]::before { background: var(--accent); }
   .pane-divider:hover::after, .pane-divider:focus-visible::after, .pane-divider[data-drag]::after { border-color: var(--accent); }
   .pane-divider:focus-visible { outline: none; }
+  /* 오른쪽 끝까지 끌었다 - 놓으면 New 칸이 접힌다(한 단 보기) */
+  .pane-divider[data-collapse]::before { left: 4px; width: 4px; }
 
   /* 확정한 조각의 간 곳 - 이어진 문장이면 단추(누르면 New 문서의 그 문장으로) */
   .strip-note { display: flex; align-items: center; gap: 4px; margin-top: 2px; font: 600 var(--fs-micro) / 16px var(--font-mono); color: var(--st-ok-ink); text-align: left; }
@@ -1451,12 +1467,31 @@
   /* 출처 없음 - 상자 왼쪽 바깥의 따로 선 세로 막대(3px, 상자와 2px 틈, 모서리 거의 직각). 상자는 제 테두리·둥글기 그대로 - 테두리를 칠하면 오류 상자처럼 읽힌다.
      앞머리 틈(STRIP_LEAD_EXTRA 5px) 안이라 번호와 겹치지 않고, 출처가 없으니 연결선이 이 자리에 닿지 않는다 */
   .pg[data-strips] .new-line[data-state="unsourced"]::before { content: ""; position: absolute; top: -1px; bottom: -1px; left: -5px; width: 3px; border-radius: 1px; background: var(--danger-fill); pointer-events: none; }
+  /* 양 단에서 다듬으려고 고른 New 문장 - Old 용지의 고른 문장과 같은 강조색 테두리 */
+  .pg[data-strips] .new-line[data-state="shape"] { box-shadow: var(--shadow-1), inset 0 0 0 1.5px var(--accent); }
+  /* 그 줄의 글 안에 놓인 나눌 선과 바로 아래의 나누기·취소 - 용지의 선과 같은 모양(끌지는 못하고 ←→로 옮긴다) */
+  .new-cut { position: relative; display: inline-block; width: 0; height: 1.2em; margin-inline: 1px; border-left: 2px solid var(--ink); vertical-align: text-bottom; }
+  .new-cut::before { content: ""; position: absolute; left: -5px; top: -5px; width: 8px; height: 8px; border-radius: 50%; background: var(--ink); }
+  /* 끌 수 있는 선 - 손잡이가 제 점을 그린다(올리면 강조색). 선의 가운데에 맞춘다 */
+  .new-cut:has(> .cut-handle)::before { display: none; }
+  .new-cut > .cut-handle { left: -8px; }
+  /* 끄는 동안에는 줄을 덮은 누름 자리(::after)를 비켜 둔다 - 덮여 있으면 끄는 자리의 글자를 읽지 못해 선이 끝으로만 간다 */
+  .pg[data-dragging] .new-hit::after { pointer-events: none; }
+  .new-cut-pop { display: flex; padding-top: 6px; }
+  .new-cut-pop .cut-pop { position: static; translate: none; animation: none; }
+  .new-cut-pop .cut-pop::before { display: none; }
   .pg[data-strips] .new-line[data-state="focus"] { background: var(--danger-tint); box-shadow: var(--shadow-1), inset 0 0 0 1.5px var(--danger-ink); }
   .new-src { display: inline-block; padding: 0 4px; border-radius: var(--r-1); font: 600 10px / 16px var(--font-mono); white-space: nowrap; background: var(--st-ok-tint); color: var(--st-ok-ink); }
   button.new-src { cursor: pointer; box-shadow: inset 0 0 0 1px transparent; }
   button.new-src:is(:hover, [data-link-hot]) { box-shadow: inset 0 0 0 1px var(--st-ok-ink); }
   /* AI가 이어 두고 아직 확정하지 않은 출처 - 연결선·배지와 같은 AI 색(보라) */
   .new-src[data-ai] { background: var(--st-ai-tint); color: var(--st-ai-ink); }
+  /* 참조 줄이 EQUIS와 다르다는 작은 주의 - 출처 칩 줄 끝에(출처 없는 줄은 이것만). 경고색은 한 번 볼 줄(번호·이름 어긋남·폐기), 회색(.is-note)은 EQUIS에 없음·조회 실패.
+     누르면 EQUIS 정보가 펼쳐진다 - 호버·펼침 테두리는 제 글자색으로(출처 칩의 초록 테두리가 아니라) */
+  .new-src.is-warn { background: color-mix(in oklab, var(--warn-fill) var(--tint), var(--surface)); color: var(--warn-ink); font-family: var(--font-ui); }
+  .new-src.is-note { background: var(--sunken); color: var(--ink-2); font-family: var(--font-ui); }
+  button.new-src.is-warn:is(:hover, [aria-expanded="true"]) { box-shadow: inset 0 0 0 1px var(--warn-ink); }
+  button.new-src.is-note:is(:hover, [aria-expanded="true"]) { box-shadow: inset 0 0 0 1px var(--ink-3); }
   button.new-src[data-ai]:is(:hover, [data-link-hot]) { box-shadow: inset 0 0 0 1px var(--st-ai-ink); }
   /* 칩 오른쪽 갈매기 - 그 Old 조각이 왼쪽 칸 화면 위·아래 밖(LinkLines가 data-dir) */
   .new-src-dir { display: none; }
@@ -1472,7 +1507,8 @@
      결정 칸은 패널 몸통의 52%까지만 크고 넘치면 고른 곳 상자 부분만 스크롤(Remark·확정은 늘 보인다) - 목록이 늘 몇 줄은 보이고 확정은 화면 밖으로 나가지 않는다.
      패널이 아주 낮으면 몸통 전체가 스크롤된다(목록 최소 높이를 지키려고) */
   .assign-side-body { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; overflow-wrap: anywhere; overflow-y: auto; }
-  .assign-side-head { flex: none; display: grid; gap: 6px; padding: 12px var(--pad) 10px; border-bottom: 1px solid var(--line); }
+  /* 열은 minmax(0, 1fr) - 아랫줄(확정한 사람·시각)의 긴 글이 머리를 칸 밖으로 밀면 윗줄의 Unit 번호가 말줄임되지 않고 끝의 단추가 잘린다 */
+  .assign-side-head { flex: none; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 12px var(--pad) 10px; border-bottom: 1px solid var(--line); }
   .assign-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; min-width: 0; font-size: var(--fs-cap); line-height: var(--lh-cap); }
   .assign-meta-item { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; }
   .assign-pick { flex: 1 1 0; min-height: 132px; overflow-y: auto; overscroll-behavior: contain; }
@@ -1482,6 +1518,21 @@
   .assign-decide { flex: 0 1 auto; display: flex; flex-direction: column; gap: 10px; min-height: 0; max-height: 52%; padding: 0 var(--pad) 12px; border-top: 1px solid var(--line-2); background: var(--surface); box-shadow: 0 -8px 16px -12px color-mix(in oklab, var(--ink) 30%, transparent); }
   .assign-decide-body { flex: 0 1 auto; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 10px; min-height: 0; overflow-y: auto; margin-inline: calc(var(--pad) * -1); padding-inline: var(--pad); }
   .assign-decide-body > .assign-step { padding: 10px 0 0; }
+  /* 1번 다듬기 - 문장마다 한 줄: 언어, 글의 앞부분, 그 문장의 도구. 꺼진 단추는 흐리고 까닭은 툴팁으로 */
+  .shape-tools { display: grid; gap: 2px; padding: 0 var(--pad) 8px; border-bottom: 1px solid var(--line); }
+  .shape-line { display: flex; align-items: center; gap: 6px; min-height: 28px; min-width: 0; }
+  .shape-line .btn[aria-disabled="true"] { color: var(--ink-4); cursor: not-allowed; }
+  .shape-line .btn[aria-disabled="true"]:hover { background: none; }
+  .shape-line .btn[data-on] { background: var(--accent-tint); color: var(--accent); }
+  .shape-lang { flex: none; cursor: pointer; }
+  .shape-lang[aria-disabled="true"] { cursor: not-allowed; }
+  .shape-lang:not([aria-disabled="true"]):hover { box-shadow: 0 0 0 1px currentColor; }
+  /* 한 문장 ↔ 한/영 짝 - 눌린 쪽이 지금 모양 */
+  .shape-mode { display: inline-flex; justify-self: start; gap: 2px; margin-top: 4px; padding: 2px; border-radius: var(--r-2); background: var(--sunken); }
+  .shape-mode button { height: 22px; padding: 0 8px; border-radius: var(--r-1); font-size: var(--fs-cap); color: var(--ink-3); cursor: pointer; transition: background var(--dur-fast), color var(--dur-fast); }
+  .shape-mode button:not([aria-disabled="true"], [aria-pressed="true"]):hover { background: var(--menu-hover); color: var(--ink); }
+  .shape-mode button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--line-2); cursor: default; }
+  .shape-mode button[aria-disabled="true"] { color: var(--ink-4); cursor: not-allowed; }
   .assign-confirm { width: 100%; height: 40px; font-size: 14px; }
   .assign-alt { height: 30px; min-width: 0; gap: 4px; padding: 0 6px; font-size: var(--fs-cap); font-weight: 400; width: 100%; }
   .assign-alt > :not(svg, kbd) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -1552,13 +1603,28 @@
   .tree-leaf { display: block; width: 100%; padding: 4px 8px; border-radius: var(--r-1); font-size: var(--fs-cap); line-height: 17px; color: var(--ink-2); text-align: left; cursor: pointer; }
   .tree-leaf:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
   .tree-leaf:disabled { color: var(--ink-4); cursor: not-allowed; }
+  /* 보낼 곳 더하기·지우기(작성자) - 지우기 단추는 줄 끝에 늘 제자리로 흐리게 있고, 줄에 올리거나 포커스하면 또렷해진다(줄 폭이 변하지 않는다) */
+  .tree-row { display: flex; min-width: 0; align-items: center; gap: 2px; }
+  .tree-row > .tree-node, .tree-row > .tree-leaf { flex: 1; min-width: 0; width: auto; }
+  .tree-act { display: grid; flex: none; place-items: center; width: 24px; height: 24px; border-radius: var(--r-1); color: var(--ink-3); opacity: 0.45; cursor: pointer; transition: opacity var(--dur-fast); }
+  .tree-row:hover .tree-act, .tree-act:focus-visible, .tree-act[data-armed] { opacity: 1; }
+  .tree-act:hover:not([aria-disabled="true"]) { background: var(--hover); color: var(--ink); }
+  /* 지울 수 없는 줄 - 흐린 채로 두고 이유는 툴팁이 말한다 */
+  .tree-act[aria-disabled="true"], .tree-row:hover .tree-act[aria-disabled="true"] { opacity: 0.3; cursor: not-allowed; }
+  .tree-act[aria-disabled="true"]:focus-visible { opacity: 0.6; }
+  /* 한 번 누른 지우기 - 다시 누르면 지운다 */
+  .tree-act[data-armed], .tree-act[data-armed]:hover { background: var(--danger-tint); color: var(--danger-ink); }
+  .tree-add { display: flex; width: 100%; align-items: center; gap: 6px; padding: 5px 6px; border-radius: var(--r-1); font-size: var(--fs-cap); color: var(--ink-3); text-align: left; cursor: pointer; }
+  .tree-add:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+  .tree-add:disabled { cursor: default; opacity: 0.5; }
+  .tree-form { display: grid; gap: 6px; margin: 2px 0; padding: 6px; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--sunken); }
 
   .mini-chip { height: 24px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: var(--r-1); font-size: var(--fs-micro); color: var(--ink-2); cursor: pointer; }
   .mini-chip:hover { background: var(--hover); color: var(--ink); }
   .mini-chip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-tint); color: var(--ink); font-weight: 600; }
 
   @media (prefers-reduced-motion: reduce) {
-    .pane-zoom, .pane-divider::before, .dest-acc-chev, .tree-chev, .dest-card { transition: none; }
+    .pane-zoom, .pane-divider::before, .dest-acc-chev, .tree-chev, .tree-act, .dest-card { transition: none; }
     .link-menu { animation: cut-pop-wait 1ms linear 380ms both; }
   }
 }
@@ -1585,4 +1651,7 @@
   .out-a td { border-bottom: 0; border-top: 1px solid var(--line); }
   .out-a tbody tr[data-group-start] > td { border-top: 2px solid var(--line-2); }
   .out-a tbody tr:first-child > td { border-top: 0; }
+  /* 12px 글(줄 높이 16px)로 시작하는 칸은 13px 글(줄 높이 20px) 칸보다 첫 줄이 2px 높이 앉는다 - 첫 조각만 2px 내려 줄의 글이 한 줄에 선다 */
+  .out-a td.text-xs { padding-top: calc(var(--row-y) + 2px); }
+  .out-a td > .text-xs:first-child { margin-top: 2px; }
 }

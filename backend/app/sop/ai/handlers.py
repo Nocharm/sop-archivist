@@ -6,6 +6,7 @@ from app.sop.ai.match_jobs import MATCH_HANDLER, MATCH_KIND, MATCH_PLAN_HANDLER,
 from app.sop.ai.pairing import PAIR_HANDLER, PAIR_KIND
 from app.sop.ai.runner import JobHandler
 from app.sop.ai.split import SPLIT_HANDLER, SPLIT_KIND
+from app.sop.ai.tobe_list_job import TOBE_LIST_HANDLER, TOBE_LIST_KIND
 from app.sop.ai.translate import TRANSLATE_HANDLER, TRANSLATE_KIND
 
 HANDLERS: dict[str, JobHandler] = {
@@ -16,4 +17,5 @@ HANDLERS: dict[str, JobHandler] = {
     PAIR_KIND: PAIR_HANDLER,
     SPLIT_KIND: SPLIT_HANDLER,
     DOC_META_KIND: DOC_META_HANDLER,
+    TOBE_LIST_KIND: TOBE_LIST_HANDLER,
 }

@@ -287,9 +287,6 @@ class WorstSeeder:
         add("tiny", "SYNTHETIC_A.docx", build_small("A", 2))
         for i in range(6):
             add(f"small{i}", f"SYNTHETIC_OLD-{97 + i}_합성 소형 문서 {i} small synthetic document {i}.docx", build_small(f"OLD-{97 + i}", 6 + i * 3, ["both", "ko", "en"][i % 3]))
-        for doc in extras.values():
-            response = self.client.post(f"/api/bundles/{bundle_id}/documents/{doc['id']}/units/boundary/all", headers=AUTHOR)
-            assert response.status_code == 200, response.text
         return extras
 
     def upload_rejected_files(self, bundle_id: int) -> None:
@@ -425,7 +422,6 @@ class WorstSeeder:
             self.client.patch(f"/api/bundles/{bundle_id}", json={"revision": self.get_revision(bundle_id), "description": description}, headers=AUTHOR)
             sop_codes, wi_codes = self.build_w1_tobe(driver, bundle_id)
             locations = self.list_locations(driver, sop_codes, wi_codes)
-            driver.confirm_boundaries()
             driver.save_answers(skip_omitted=False)  # 큰 문서보다 먼저 — Unit이 1,000개를 넘으면 몰이가 죽는다
             extras = self.upload_w1_documents(bundle_id)
             stats = self.assign_w1_units(driver, bundle_id, extras, locations)
@@ -447,7 +443,6 @@ class WorstSeeder:
         driver = SyntheticDriver(self.client, self.synthetic, AUTHOR, title=title[:200])
         try:
             driver.start()
-            driver.confirm_boundaries()
             driver.save_answers(skip_omitted=False)
             driver.put_semantic_checks()
             bundle_id = driver.bundle_id

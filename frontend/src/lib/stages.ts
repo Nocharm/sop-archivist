@@ -2,7 +2,10 @@
 
 import type { NextAction } from "./api-sop";
 
-export type StageKey = "overview" | "documents" | "split" | "tobe" | "assign" | "outputs" | "review" | "history";
+export type StageKey = "overview" | "documents" | "assign" | "order" | "outputs" | "history";
+
+/** Documents 화면 안 New 문서 목록(옛 To-Be 화면)의 자리 - 옛 주소 /tobe도 여기로 넘긴다 */
+export const NEW_DOCUMENTS_ANCHOR = "new-documents";
 
 export interface Stage {
   key: StageKey;
@@ -16,19 +19,21 @@ export interface Stage {
 
 export const STAGES: readonly Stage[] = [
   { key: "overview", path: "", ready: true },
-  { key: "documents", path: "/documents", ready: true },
-  { key: "split", path: "/split", step: 1, ready: true },
-  { key: "tobe", path: "/tobe", step: 2, ready: true },
-  // 배정의 두 입구(분류·짝 맞추기)를 Old 조각 한 줄씩 처리하는 한 화면 - 옛 /classify·/match는 여기로 넘긴다
-  { key: "assign", path: "/assign", step: 3, ready: true },
+  // 1단계 - Old 문서 목록과 그 아래 New 문서 목록(옛 To-Be 화면, 네 단계 워크플로우 B1). 옛 /tobe는 여기로 넘긴다
+  { key: "documents", path: "/documents", step: 1, ready: true },
+  // 2단계 - 쪼개기와 배정을 한 걸음으로 센다. 배정을 확정하면 그 조각의 경계도 확인된 것으로 본다(네 단계 워크플로우 B2).
+  // 옛 /classify·/match·/split은 여기로 넘긴다 - 쪼개기 화면은 이 화면 안의 "원문 고치기"(주소의 edit)가 되었다
+  { key: "assign", path: "/assign", step: 2, ready: true },
+  // 3단계 - New 문서별 문장 순서와 문단번호
+  { key: "order", path: "/order", step: 3, ready: true },
+  // 4단계 - 결과물과 검토. 검토 요청·완료·되돌림은 이 화면 위의 검토 띠에 있다(옛 /review는 여기로 넘긴다, B4)
   { key: "outputs", path: "/outputs", step: 4, ready: true },
-  { key: "review", path: "/review", ready: true },
   // 레일 맨 아래 - 작업 기록 전체(개요 Activity의 "모두 보기")
   { key: "history", path: "/history", ready: true },
 ];
 
-// 문서가 하나도 없으면 들어가 봐야 할 일이 없는 단계. To-Be는 Excel로 문서보다 먼저 채울 수 있어 열어 둔다
-const NEEDS_DOCUMENTS: ReadonlySet<StageKey> = new Set(["split", "assign", "outputs", "review"]);
+// 문서가 하나도 없으면 들어가 봐야 할 일이 없는 단계. New 문서 목록은 Excel로 문서보다 먼저 채울 수 있고, Documents 화면에 있어 늘 열린다
+const NEEDS_DOCUMENTS: ReadonlySet<StageKey> = new Set(["assign", "order", "outputs"]);
 
 export function isStageLocked(key: StageKey, documentCount: number): boolean {
   return documentCount === 0 && NEEDS_DOCUMENTS.has(key);
@@ -45,9 +50,22 @@ export function parseBundlePath(pathname: string): { bundleId: number; stage: St
   return { bundleId: Number(match[1]), stage };
 }
 
+/** 문서 하나를 배정 화면의 한 단 보기로 여는 주소 값 - 문서 id, 또는 읽을 수 있는 첫 문서("first"). 옛 원문 고치기 화면의 주소였고, 배정 화면이 읽은 뒤 주소에서 뗀다 */
+export const EDIT_ORIGINAL_PARAM = "edit";
+
+/** 그 문서를 한 단으로 연 배정 화면 주소 - Old 문서면 넓게 보며 배정하고, 이미 쓴 New 문서면 그 원문을 다듬는다 */
+export function getEditOriginalHref(bundleId: number, docId: number): string {
+  return `${getStageHref(bundleId, "assign")}?${EDIT_ORIGINAL_PARAM}=${docId}`;
+}
+
 export function getStageHref(bundleId: number, key: StageKey): string {
   const stage = STAGES.find((item) => item.key === key);
   return `/bundles/${bundleId}${stage?.path ?? ""}`;
+}
+
+/** Documents 화면의 New 문서 목록으로 가는 주소 */
+export function getNewDocumentsHref(bundleId: number): string {
+  return `${getStageHref(bundleId, "documents")}#${NEW_DOCUMENTS_ANCHOR}`;
 }
 
 /** 다음 행동이 데려갈 화면. 없으면 개요 안에서 끝나는 일이다 */
@@ -55,14 +73,21 @@ export const NEXT_ACTION_STAGE: Record<NextAction, StageKey | null> = {
   upload_documents: "documents",
   resolve_documents: "documents",
   fill_doc_versions: "documents",
-  check_boundaries: "split",
-  fill_tobe: "tobe",
+  fill_tobe: "documents",
   decide_units: "assign",
-  ack_warnings: "split",
+  // 누락 의심 경고는 배정 화면 위쪽 줄의 경고 표시에서 확인한다(전에는 쪼개기 화면)
+  ack_warnings: "assign",
   fill_reasons: "assign",
   semantic_checks: "outputs",
   add_reviewer: null,
   request_review: null,
-  await_review: "review",
+  await_review: "outputs",
   done: null,
 };
+
+/** 다음 행동의 주소 - New 문서 목록을 채우는 일은 Documents 화면의 그 자리로 간다. 개요 안에서 끝나는 일이면 null */
+export function getNextActionHref(bundleId: number, action: NextAction): string | null {
+  const stage = NEXT_ACTION_STAGE[action];
+  if (stage === null) return null;
+  return action === "fill_tobe" ? getNewDocumentsHref(bundleId) : getStageHref(bundleId, stage);
+}

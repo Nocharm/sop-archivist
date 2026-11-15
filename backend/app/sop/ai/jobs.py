@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.clock import now
 from app.sop.ai.constants import MAX_JOBS_PER_REQUEST, MAX_SKIPPED_REPORTED
 from app.sop.ai.schemas import AiJobCounts, AiRequestOut, SkippedOut
+from app.sop.constants import AI_PRIORITY_USER
 from app.sop.errors import raise_rule
+from app.sop.groups import iter_chunks
 from app.sop.models import AiJob, generate_request_id
 
 ACTIVE_JOB_STATUSES = ("queued", "running")
@@ -33,6 +35,7 @@ class JobBreakdown(NamedTuple):
     jobs: AiJobCounts
     by_kind: dict[str, AiJobCounts]
     failed_errors: dict[str, int]
+    user_active: int  # queued·running 가운데 사람 순위(priority <= AI_PRIORITY_USER)인 수 — 승격된 미리 돌리기 작업도 센다
 
 
 def _build_job_filter(bundle_id: int, kind: str | None) -> list[ColumnElement[bool]]:
@@ -81,8 +84,10 @@ def enqueue_jobs(
     requested_by: str,
     items: Sequence[JobItem],
     request_id: str | None = None,
+    priority: int = AI_PRIORITY_USER,
+    background: bool = False,
 ) -> list[AiJob]:
-    """행만 추가한다 — id는 flush 뒤에 생긴다. 한 번에 쌓은 작업은 같은 request_id를 받고, 넘겨받으면(계획 작업의 뒤 작업) 그 값을 잇는다."""
+    """행만 추가한다 — id는 flush 뒤에 생긴다. 한 번에 쌓은 작업은 같은 request_id를 받고, 넘겨받으면(계획 작업의 뒤 작업) 그 값을 잇는다. priority는 꺼내는 순서, background는 미리 돌리기 표시다."""
     request_id = request_id or generate_request_id()
     jobs = [
         AiJob(
@@ -95,6 +100,8 @@ def enqueue_jobs(
             payload=item.payload,
             requested_by=requested_by,
             request_id=request_id,
+            priority=priority,
+            background=background,
         )
         for item in items
     ]
@@ -110,6 +117,45 @@ async def find_active_unit_ids(session: AsyncSession, bundle_id: int, kinds: Col
         )
     )
     return {unit_id for unit_ids in rows for unit_id in unit_ids}
+
+
+async def promote_queued_jobs(
+    session: AsyncSession,
+    bundle_id: int,
+    kind: str,
+    *,
+    unit_ids: Collection[int] | None = None,
+    document_id: int | None = None,
+) -> tuple[int, set[int]]:
+    """줄 선 미리 돌리기 작업의 순위를 사람 요청 순위로 올리고 (올린 작업 수, 그 작업들이 잡은 단위 id)를 돌려준다.
+
+    unit_ids는 작업의 단위와 하나라도 겹치는 것, document_id는 그 문서의 것, 둘 다 None이면 그 종류 전부다. unit_ids는 JSON 열이라
+    SQL로 가리지 못하고 읽은 뒤 가린다. background와 request_id는 그대로 둔다 — 미리 돌린 작업이라는 표시와 진행 묶음은 그대로다.
+    """
+    rows = (
+        await session.execute(
+            select(AiJob.id, AiJob.document_id, AiJob.unit_ids).where(
+                *_build_job_filter(bundle_id, kind), AiJob.status == "queued", AiJob.priority > AI_PRIORITY_USER
+            )
+        )
+    ).all()
+    wanted = None if unit_ids is None else set(unit_ids)
+    chosen = [
+        row for row in rows
+        if (wanted is None or wanted & set(row.unit_ids)) and (document_id is None or row.document_id == document_id)
+    ]
+    # 수와 단위는 UPDATE가 실제로 바꾼 행에서 — 읽은 뒤 실행기가 꺼내 간 작업은 올리지 않았으니 세지 않는다
+    promoted: list[list[int]] = []
+    for chunk in iter_chunks([row.id for row in chosen]):
+        result = await session.execute(
+            update(AiJob)
+            .where(AiJob.id.in_(chunk), AiJob.status == "queued")
+            .values(priority=AI_PRIORITY_USER)
+            .returning(AiJob.unit_ids)
+            .execution_options(synchronize_session=False)
+        )
+        promoted.extend(result.scalars())
+    return len(promoted), {unit_id for job_unit_ids in promoted for unit_id in job_unit_ids}
 
 
 async def cancel_active_jobs(session: AsyncSession, bundle_id: int, kind: str | None = None) -> int:
@@ -145,7 +191,7 @@ async def load_job_counts(session: AsyncSession, bundle_id: int) -> AiJobCounts:
 
 
 async def load_job_breakdown(session: AsyncSession, bundle_id: int) -> JobBreakdown:
-    """전체·종류별 상태 수와 실패 코드별 수를 질의 한 번으로 읽는다."""
+    """전체·종류별 상태 수와 실패 코드별 수를 질의 한 번으로, 사람 순위로 도는 작업 수를 한 번 더 읽는다."""
     rows = await session.execute(
         select(AiJob.kind, AiJob.status, AiJob.error, func.count())
         .where(AiJob.bundle_id == bundle_id)
@@ -159,8 +205,18 @@ async def load_job_breakdown(session: AsyncSession, bundle_id: int) -> JobBreakd
         by_kind.setdefault(kind, Counter())[status] += count
         if status == "failed":
             failed_errors[error] += count
+    user_active = await session.scalar(
+        select(func.count())
+        .select_from(AiJob)
+        .where(
+            AiJob.bundle_id == bundle_id,
+            AiJob.status.in_(("queued", "running")),
+            AiJob.priority <= AI_PRIORITY_USER,
+        )
+    )
     return JobBreakdown(
         jobs=AiJobCounts.model_validate(totals),
         by_kind={kind: AiJobCounts.model_validate(counts) for kind, counts in by_kind.items()},
         failed_errors=dict(failed_errors),
+        user_active=user_active or 0,
     )

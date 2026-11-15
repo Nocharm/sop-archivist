@@ -3,7 +3,7 @@
 // 자리는 그 자리 메뉴와 같은 규칙(placeLinkMenu) - 그 줄의 조각들(한/영 짝이면 둘 다) 아래(모자라면 위)에 놓아 다룰 문장을 가리지 않는다.
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, Check, Eraser, Scissors, type LucideIcon } from "lucide-react";
+import { ArrowDownToLine, ArrowUpToLine, BookMarked, BookX, Check, Eraser, LayoutList, Link2, MousePointerClick, Rows3, Scissors, Table2, Unlink, type LucideIcon } from "lucide-react";
 import { useRef } from "react";
 
 import { Menu } from "@/components/ui/menu";
@@ -13,20 +13,41 @@ import type { AssignMenuAction, AssignMenuGroups, AssignMenuItem } from "@/lib/a
 import { useI18n } from "@/lib/i18n";
 import { placeLinkMenu } from "@/lib/link-menu-place";
 
-const ICONS: Record<Exclude<AssignMenuAction, "lang">, LucideIcon> = {
+// 오른쪽 칸의 다듬기 줄(shape-tools)도 같은 아이콘·이름을 쓴다 - 같은 일은 어디서나 같은 모양으로
+export const ASSIGN_ACTION_ICONS: Record<Exclude<AssignMenuAction, "lang">, LucideIcon> = {
   confirm: Check,
   clear: Eraser,
   split: Scissors,
   merge_prev: ArrowUpToLine,
   merge_next: ArrowDownToLine,
+  // 한글·영어 이웃은 합치지 않고 짝으로 맺는다 - 같은 자리에 합치기 대신 나온다
+  pair_prev: Link2,
+  pair_next: Link2,
+  pair_pick: MousePointerClick,
+  unpair: Unlink,
+  ref_mark: BookMarked,
+  ref_clear: BookX,
+  table_rows: Rows3,
+  table_merge: Table2,
+  table_layout: LayoutList,
 };
 
-const LABELS: Record<Exclude<AssignMenuAction, "lang">, string> = {
+export const ASSIGN_ACTION_LABELS: Record<Exclude<AssignMenuAction, "lang">, string> = {
   confirm: "classify.confirm",
   clear: "classify.clear",
   split: "split.cutHere",
   merge_prev: "assign.ctx.mergePrev",
   merge_next: "assign.ctx.mergeNext",
+  pair_prev: "assign.ctx.pairPrev",
+  pair_next: "assign.ctx.pairNext",
+  pair_pick: "assign.ctx.pairPick",
+  unpair: "assign.ctx.unpair",
+  ref_mark: "assign.ctx.refMark",
+  ref_clear: "assign.ref.reject",
+  // 표 항목은 쪼개기 화면의 단추와 같은 이름을 쓴다
+  table_rows: "split.splitRows",
+  table_merge: "split.mergeRows",
+  table_layout: "split.layoutTable",
 };
 
 const KEYS: Partial<Record<AssignMenuAction, string>> = { confirm: "↵", clear: "U" };
@@ -70,8 +91,8 @@ export function AssignContextMenu({ anchor, cover, click, groups, destinationLab
         />
       );
     }
-    const Icon = ICONS[item.action];
-    const label = t(LABELS[item.action]);
+    const Icon = ASSIGN_ACTION_ICONS[item.action];
+    const label = t(ASSIGN_ACTION_LABELS[item.action]);
     const reason = item.reasonKey ? t(item.reasonKey) : null;
     const hint = item.action === "confirm" && item.enabled ? destinationLabel : "";
     return (

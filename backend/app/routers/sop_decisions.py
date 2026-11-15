@@ -6,11 +6,13 @@ Remark 고르기 도움(내 최근 사유 — 묶음 밖 `remarks_router`, 외�
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
 from app.db import get_session
+from app.equis import service as equis_service
+from app.routers.sop_equis import start_lookups
 from app.sop.constants import MEMBER_ROLES
 from app.sop.decision_steps import DecisionStepIn, DecisionStepResult, record_snapshot_step, redo_step, undo_step
 from app.sop.decisions import (
@@ -59,7 +61,7 @@ IdPath = Annotated[int, Path(ge=1, le=MAX_DB_INT)]
 async def get_units(
     # 판단은 옛 문서 단위에만 있어 이 목록은 옛 문서 단위만 다룬다
     side: Literal["old"] = Query("old"),
-    lang: Literal["ko", "en", "neutral"] | None = Query(None),
+    lang: Literal["ko", "en", "ref", "neutral"] | None = Query(None),
     status: Literal["unassigned", "ai_suggested", "confirmed", "on_hold"] | None = Query(None),
     document_id: int | None = Query(None, ge=1, le=MAX_DB_INT),
     target_doc_id: int | None = Query(None, ge=1, le=MAX_DB_INT),
@@ -139,10 +141,18 @@ async def reset_decisions(
 
 @router.get("/{bundle_id}/written-sentences", response_model=list[WrittenSentenceOut])
 async def get_written_sentences(
-    ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
+    background_tasks: BackgroundTasks,
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
 ) -> list[WrittenSentenceOut]:
-    """Assign 화면의 New 원문 — 이미 쓴 문서(입구 2)의 최상위 문장과 출처·한/영 짝 상대."""
-    return await list_written_sentences(session, ctx.bundle.id)
+    """Assign 화면의 New 원문 — 이미 쓴 문서(입구 2)의 최상위 문장과 출처·한/영 짝 상대, 참조 줄이 가리키는 문서의 EQUIS 표시."""
+    rows = await list_written_sentences(session, ctx.bundle.id)
+    # 참조 줄의 번호는 서버가 문서의 글에서 읽은 것이다(자유 검색이 아니다) — 물을 번호는 응답 뒤에, 한 번에 조금씩 조회한다
+    numbers = [row.ref.number for row in rows if row.ref is not None]
+    await start_lookups(
+        session, background_tasks, ctx.bundle, numbers, sync_titles=False, limit=equis_service.REF_LOOKUPS_PER_READ
+    )
+    return rows
 
 
 @router.get("/{bundle_id}/units/{unit_id}/new-candidates", response_model=list[NewCandidateOut])

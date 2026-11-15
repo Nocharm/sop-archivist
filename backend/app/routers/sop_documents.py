@@ -8,33 +8,34 @@ from io import BytesIO
 from typing import Annotated, Literal, Self
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, Path, Query, Response, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Path, Query, Response, UploadFile
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
 from app.db import get_session
+from app.equis import service as equis_service
+from app.equis.rules import normalize_number
+from app.equis.view import EquisOut, build_equis_out
 from app.routers.admin import KstDatetime
+from app.routers.sop_equis import start_lookups
 from app.sop.constants import LANGUAGE_LAYOUTS, MEMBER_ROLES
 from app.sop.decision_steps import record_unit_edit_step
 from app.sop.detach import detach_units, find_units_needing_confirm
 from app.sop.editing import (
-    BoundaryAllOut,
-    BoundaryIn,
-    BoundaryOut,
     EditIn,
     EditResult,
     EditStepResult,
     EditStepIn,
     apply_edit,
-    confirm_all_boundaries,
+    load_active_units,
     redo_edit,
-    set_boundary_confirmed,
     undo_edit,
 )
 from app.sop.ai.adoption import record_doc_meta_adoption
 from app.sop.ai.doc_meta_job import build_ai_meta, enqueue_doc_meta, load_open_doc_meta
+from app.sop.ai.match_jobs import PLAN_ORIGIN_UPLOAD, enqueue_auto_plan
 from app.sop.ai.split import load_open_split_suggestion_ids
 from app.sop.filename import parse_file_name
 from app.sop.errors import check_revision, raise_rule
@@ -53,6 +54,7 @@ from app.sop.models import (
     UnitEdit,
     UnitPair,
     UnitPairMember,
+    UnitRef,
 )
 from app.sop.part_groups import build_part_groups, get_part_group_key
 from app.sop.pairs import (
@@ -64,11 +66,11 @@ from app.sop.pairs import (
     create_pair,
     delete_pair,
 )
+from app.sop.refs import RefState, build_ref_text, read_ref_state
 from app.sop.schemas import NO_NUL, NoNulStr
-from app.sop.snapshot import count_unchecked_boundaries
 from app.sop.status import get_cover_status
-from app.sop.tobe import MAX_DB_INT, remove_match_doc, rename_match_doc, temp_match_code
-from app.sop.units import UNIT_ACTIVE, compute_display_id, refresh_code_pairs
+from app.sop.tobe import MAX_DB_INT, release_match_doc, rename_match_doc, temp_match_code
+from app.sop.units import UNIT_ACTIVE, compute_display_id, get_latest_extraction_id, refresh_code_pairs
 
 router = APIRouter(prefix="/api/bundles", tags=["sop-documents"])
 
@@ -151,8 +153,8 @@ class DocumentOut(DocumentBase):
     prefill_sources: dict[PrefillField, PrefillSource] = {}
     # 비어 있는 번호·버전에 대한 AI 제안(문서에 쓰지 않은 값) — 사람이 눌러 저장한다
     ai_meta: AiMetaOut | None = None
-    # 경계를 아직 확인하지 않은 단위 수 — 0이 아니면 검토 요청을 막는다(쪼개기 문서 목록의 남은 수)
-    unchecked_boundaries: int = 0
+    # 문서 번호의 EQUIS 표시 — 기능이 꺼졌거나 묻지 않는 번호(빈 칸·임시 번호)면 None
+    equis: EquisOut | None = None
 
 
 class DocumentUpdateIn(BaseModel):
@@ -210,6 +212,23 @@ class ViewBlockOut(BaseModel):
     part_group: str
 
 
+class ViewUnitRefOut(BaseModel):
+    """참조 줄 상태 — proposed는 앱의 제안(사람이 번호 영역을 확인하기 전), confirmed는 REF로 확정된 것."""
+
+    state: Literal["proposed", "confirmed"]
+    number: str
+
+
+class UnitRefDetailOut(BaseModel):
+    """고른 단위의 참조 상태와 그 번호의 EQUIS 표시 — 참조가 아니면 state가 null이다."""
+
+    state: Literal["proposed", "confirmed"] | None
+    number: str = ""
+    equis: EquisOut | None = None
+    # 그 줄의 글을 EQUIS의 지금 번호·정식 이름으로 맞춘 글 — 새 문장에 쓸 제안. EQUIS가 모르는 번호거나 이미 같으면 null
+    suggested_text: str | None = None
+
+
 class ViewUnitOut(BaseModel):
     id: int
     display_id: str
@@ -220,7 +239,6 @@ class ViewUnitOut(BaseModel):
     table_id: int | None
     row_index: int | None
     group_unit_id: int | None
-    boundary_confirmed: bool
     # 커버 단위 상태(get_cover_status) — 판단이 없는 새 문서 단위는 null
     status: str | None
     pair_id: int | None
@@ -233,6 +251,12 @@ class ViewUnitOut(BaseModel):
     block_id: int
     # 이 단위에 걸린 열린 AI 나누기 제안(적용됐고 사람이 아직 채택·거절하지 않은 것) — 없으면 null
     split_suggestion_id: int | None
+    # 참조 줄 제안·확정 — 참조가 아니면 null
+    ref: ViewUnitRefOut | None = None
+
+
+def _to_ref_out(state: RefState | None) -> ViewUnitRefOut | None:
+    return ViewUnitRefOut(state=state.state, number=state.number) if state else None
 
 
 class ViewPartRefOut(BaseModel):
@@ -295,7 +319,8 @@ async def build_documents_out(session: AsyncSession, documents: Sequence[Documen
         for warning in rows:
             warnings[warning.extraction_id].append(WarningOut.model_validate(warning))
     ai_suggestions = await load_open_doc_meta(session, doc_ids)
-    unchecked = await count_unchecked_boundaries(session, documents[0].bundle_id) if documents else {}
+    lookups = await equis_service.load_lookups(session, [document.doc_code for document in documents])
+    read_at = now()
     out = []
     for document in documents:
         extraction = extraction_by_doc.get(document.id)
@@ -307,7 +332,9 @@ async def build_documents_out(session: AsyncSession, documents: Sequence[Documen
                     id=extraction.id, aux_status=extraction.aux_status, warnings=warnings[extraction.id]
                 ),
                 ai_meta=None if ai_meta is None else AiMetaOut.model_validate(ai_meta),
-                unchecked_boundaries=unchecked.get(document.id, 0),
+                equis=build_equis_out(
+                    document.doc_code, "old" if document.side == "old" else "new", document.doc_version, lookups, read_at
+                ),
             )
         )
     return out
@@ -373,6 +400,12 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
     merged_ids = {created[0] for op, created in created_lists if op == "merge" and len(created) == 1}
     pair_by_unit = {unit_id: pair.id for pair in pairs for unit_id in pair.unit_ids}
     split_suggestions = await load_open_split_suggestion_ids(session, document)
+    ref_marks = {
+        mark.unit_id: mark
+        for mark in await session.scalars(
+            select(UnitRef).join(Unit, Unit.id == UnitRef.unit_id).where(Unit.extraction_id == extraction.id)
+        )
+    }
     return DocumentViewOut(
         document=document_out,
         extraction=extraction,
@@ -399,7 +432,6 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 table_id=unit.table_id,
                 row_index=unit.row_index,
                 group_unit_id=unit.group_unit_id,
-                boundary_confirmed=unit.boundary_confirmed,
                 status=get_cover_status(unit, decisions) if document.side == "old" else None,
                 pair_id=pair_by_unit.get(unit.id),
                 is_edited=unit.id in edited_ids,
@@ -407,6 +439,7 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 pos_seq=unit.pos_seq,
                 block_id=unit.spans[0][0] if unit.spans else block_id_by_seq[unit.pos_seq],
                 split_suggestion_id=split_suggestions.get(unit.id),
+                ref=_to_ref_out(read_ref_state(unit, ref_marks.get(unit.id))),
             )
             for unit in units
         ],
@@ -450,6 +483,7 @@ def _read_zip_entry(content: bytes, name: str) -> bytes | None:
 
 @router.post("/{bundle_id}/documents", response_model=DocumentOut, status_code=201)
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(),
     side: Literal["old", "new"] = Form(),
     # 새 문서(side=new)일 때만 쓴다 — 옛 문서에서는 무시한다
@@ -476,6 +510,14 @@ async def upload_document(
     # 규칙이 비운 번호·버전이 있으면 AI에게 묻는다(켜져 있을 때만) — 제안은 문서 목록에 따로 보인다
     if enqueue_doc_meta(session, document, ctx.login_id):
         await session.commit()
+    # 옛 문서와 이미 쓴 새 문서가 둘 다 읽혔으면 묶기 계획이 저절로 선다 — 기록은 남기지 않는다(사람 요청이 아니다)
+    # 줄 선 계획이 있는지 보고 쌓는 사이에 다른 업로드가 끼지 않게 묶음을 잠근다 — 업로드는 이미 끝났으니 검사로 거절하지 않는다
+    if document.status == "ready":
+        await lock_bundle(session, ctx.bundle)
+        await enqueue_auto_plan(session, ctx.bundle.id, ctx.login_id, origin=PLAN_ORIGIN_UPLOAD)
+        await session.commit()  # 쌓지 않았어도 잠금을 바로 놓는다 — 아래 조회 동안 묶음을 잡고 있지 않게
+    # 번호가 채워졌으면 EQUIS에 묻는다(켜져 있을 때만) — 응답 뒤에 돌아 업로드를 늦추지 않는다
+    await start_lookups(session, background_tasks, ctx.bundle, [document.doc_code])
     out = (await build_documents_out(session, [document]))[0]
     out.prefill_sources = _find_prefill_sources(file.filename or "", document)
     return out
@@ -496,18 +538,27 @@ def _find_prefill_sources(file_name: str, document: Document) -> dict[PrefillFie
 
 @router.get("/{bundle_id}/documents", response_model=list[DocumentOut])
 async def list_documents(
-    ctx: BundleContext = Depends(_require_member), session: AsyncSession = Depends(get_session)
+    background_tasks: BackgroundTasks,
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
 ) -> list[DocumentOut]:
-    documents = await session.scalars(
-        select(Document).where(Document.bundle_id == ctx.bundle.id).order_by(Document.id)  # 올린 순서
+    documents = list(
+        await session.scalars(
+            select(Document).where(Document.bundle_id == ctx.bundle.id).order_by(Document.id)  # 올린 순서
+        )
     )
-    return await build_documents_out(session, list(documents))
+    # 아직 묻지 않았거나 하루가 지난 번호는 응답 뒤에 다시 조회한다 — 있던 값은 그대로 보여 준다
+    await start_lookups(
+        session, background_tasks, ctx.bundle, [document.doc_code for document in documents], sync_titles=False
+    )
+    return await build_documents_out(session, documents)
 
 
 @router.patch("/{bundle_id}/documents/{doc_id}", response_model=DocumentOut)
 async def update_document(
     body: DocumentUpdateIn,
     doc_id: IdPath,
+    background_tasks: BackgroundTasks,
     ctx: BundleContext = Depends(_require_author),
     session: AsyncSession = Depends(get_session),
 ) -> DocumentOut:
@@ -521,6 +572,12 @@ async def update_document(
         for name, value in body.model_dump(exclude={"revision"}, exclude_none=True).items()
         if getattr(document, name) != value
     }
+    if "title" in changes:
+        # EQUIS에 있는 문서의 제목은 EQUIS가 정한다 — 번호를 함께 바꾸는 요청은 새 번호로 본다
+        number = normalize_number(changes.get("doc_code", document.doc_code))
+        lookup = (await equis_service.load_lookups(session, [number])).get(number)
+        if equis_service.is_title_locked(lookup, now()):
+            raise_rule(409, "title_locked", document_id=document.id)
     if changes:  # 바뀐 게 없으면 revision을 올리지 않고 기록도 남기지 않는다
         # 비어 있던 칸을 AI 제안이 있는 채로 채우면 채택을 남긴다(같은 값 as_is, 다른 값 edited) — 처음 정한 판정이 남는다
         empty_before = [name for name in ("doc_code", "doc_version") if not getattr(document, name)]
@@ -541,6 +598,9 @@ async def update_document(
             target_type="document", target_ids=[document.id],
         )
         await session.commit()
+        if "doc_code" in changes:
+            # 새 번호를 EQUIS에 묻는다. 이미 받아 둔 번호면 제목을 바로 맞춘다
+            await start_lookups(session, background_tasks, bundle, [document.doc_code])
     return (await build_documents_out(session, [document]))[0]
 
 
@@ -569,7 +629,7 @@ async def delete_document(
     # 단위가 CASCADE로 사라지기 전에 떼어 낸다 — 다른 문서 단위와 합쳐졌던 새 문장이 조용히 확정으로 남지 않고 보류가 되게
     await detach_units(session, bundle_id=bundle.id, unit_ids=unit_ids, cause="retired", actor=ctx.login_id)
     if document.target_doc_id is not None:
-        await remove_match_doc(session, bundle, document.target_doc_id)
+        await release_match_doc(session, bundle, document.target_doc_id, document_id=document.id)
     # 원본·추출·표·블록·경고(와 그 위의 단위)는 DB의 ON DELETE CASCADE가 지운다
     await session.delete(document)
     record_event(
@@ -588,6 +648,33 @@ async def get_document_view(
 ) -> DocumentViewOut:
     document = await _get_document(session, ctx.bundle.id, doc_id)
     return await build_document_view(session, document)
+
+
+@router.get("/{bundle_id}/documents/{doc_id}/units/{unit_id}/ref", response_model=UnitRefDetailOut)
+async def get_unit_ref(
+    doc_id: IdPath,
+    unit_id: IdPath,
+    background_tasks: BackgroundTasks,
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> UnitRefDetailOut:
+    """고른 단위가 가리키는 문서 번호와 그 번호의 EQUIS 표시 — 번호는 단위의 글에서만 나온다(자유 검색이 아니다)."""
+    document = await _get_document(session, ctx.bundle.id, doc_id)
+    extraction_id = await get_latest_extraction_id(session, document.id)
+    unit = (await load_active_units(session, extraction_id, [unit_id]))[unit_id]
+    state = read_ref_state(unit, await session.get(UnitRef, unit.id))
+    if state is None or not state.number:
+        return UnitRefDetailOut(state=state.state if state else None)
+    lookups = await equis_service.load_lookups(session, [state.number])
+    # 참조 문서는 이 묶음의 옛·새 문서가 아니다 — 올린 판과 견줄 것이 없어 새 문서 쪽 판정(폐기만 본다)을 쓴다
+    equis = build_equis_out(state.number, "new", "", lookups, now())
+    await start_lookups(session, background_tasks, ctx.bundle, [state.number], sync_titles=False)
+    suggested = (
+        build_ref_text(unit.text, state.number, equis.number, equis.name)
+        if equis is not None and equis.state == "found" and equis.retired is None
+        else None
+    )
+    return UnitRefDetailOut(state=state.state, number=state.number, equis=equis, suggested_text=suggested)
 
 
 async def _lock_editable_document(
@@ -643,32 +730,6 @@ async def redo_unit_edit(
     result = await redo_edit(session, document, confirm=body.confirm, actor=ctx.login_id)
     await session.commit()
     return result
-
-
-@router.post("/{bundle_id}/documents/{doc_id}/units/boundary", response_model=BoundaryOut)
-async def confirm_unit_boundaries(
-    body: BoundaryIn,
-    doc_id: IdPath,
-    ctx: BundleContext = Depends(_require_author),
-    session: AsyncSession = Depends(get_session),
-) -> BoundaryOut:
-    # 경계 확인은 단위 집합을 바꾸지 않아 문서 revision을 싣지 않는다 - 되돌리기 기록에는 들어간다
-    document = await _lock_editable_document(session, ctx, doc_id, None)
-    unit_ids = await set_boundary_confirmed(session, document, body.unit_ids, body.confirmed, actor=ctx.login_id)
-    await session.commit()
-    return BoundaryOut(unit_ids=unit_ids, confirmed=body.confirmed)
-
-
-@router.post("/{bundle_id}/documents/{doc_id}/units/boundary/all", response_model=BoundaryAllOut)
-async def confirm_all_unit_boundaries(
-    doc_id: IdPath,
-    ctx: BundleContext = Depends(_require_author),
-    session: AsyncSession = Depends(get_session),
-) -> BoundaryAllOut:
-    document = await _lock_editable_document(session, ctx, doc_id, None)
-    confirmed_count = await confirm_all_boundaries(session, document, actor=ctx.login_id)
-    await session.commit()
-    return BoundaryAllOut(confirmed_count=confirmed_count)
 
 
 @router.post("/{bundle_id}/documents/{doc_id}/pairs", response_model=PairResult, status_code=201)

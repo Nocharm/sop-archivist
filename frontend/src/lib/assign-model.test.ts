@@ -8,6 +8,7 @@ import {
   buildRecommendations,
   canMakeOtherLanguage,
   clampSplit,
+  isSingleDrop,
   clampZoom,
   findLinkPartners,
   isRecommendationPicked,
@@ -166,6 +167,10 @@ describe("zoom and split ranges", () => {
     expect(clampSplit(0.9)).toBe(0.7);
     expect(clampSplit(0.1)).toBe(0.3);
     expect(clampSplit(0.55)).toBe(0.55);
+    // 세로선을 오른쪽 끝까지 끌면 한 단 보기 - 폭 상한(70%)을 조금 넘긴 것은 아니다
+    expect(isSingleDrop(0.95)).toBe(true);
+    expect(isSingleDrop(0.75)).toBe(false);
+    expect(isSingleDrop(0.05)).toBe(false);
   });
 });
 
@@ -201,6 +206,8 @@ describe("canMakeOtherLanguage", () => {
 
   it("offers the missing language for a confirmed one-language row in a slot", () => {
     expect(canMakeOtherLanguage(["ko"], slot, true)).toBe("en");
+    // 참조 줄은 한 줄뿐이라 다른 언어 문장을 만들지 않는다
+    expect(canMakeOtherLanguage(["ref"], slot, true)).toBeNull();
     expect(canMakeOtherLanguage(["en"], slot, true)).toBe("ko");
   });
 

@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
 from app.models import Employee
-from app.sop.constants import COVER_KINDS
 from app.sop.detach import UNASSIGNED
 from app.sop.errors import raise_rule
 from app.sop.groups import build_unit_order_key
@@ -34,6 +33,7 @@ from app.sop.models import (
     UnitPairMember,
     WiStep,
 )
+from app.sop.refs import REF_LANG
 from app.sop.status import ROW_STATUS_ORDER
 from app.sop.units import UNIT_ACTIVE, compute_display_id
 
@@ -473,7 +473,8 @@ async def load_bundle_progress(session: AsyncSession, bundle_ids: Collection[int
     for bundle_id, count in await session.execute(
         _select_judged_units(bundle_ids, Document.bundle_id, func.count())
         .where(
-            UnitPairMember.pair_id.is_(None), Unit.kind.in_(SINGLE_LANGUAGE_KINDS),
+            # 참조 줄(REF)은 한 줄뿐인 글이라 짝이 없어도 세지 않는다
+            UnitPairMember.pair_id.is_(None), Unit.kind.in_(SINGLE_LANGUAGE_KINDS), Unit.lang != REF_LANG,
             Document.language_layout.in_(TWO_LANGUAGE_LAYOUTS), ~has_other_language_target,
         )
         .group_by(Document.bundle_id)
@@ -494,23 +495,3 @@ async def count_unacked_missing_text(session: AsyncSession, bundle_id: int) -> i
         )
     )
     return count or 0
-
-
-async def count_unchecked_boundaries(session: AsyncSession, bundle_id: int) -> dict[int, int]:
-    """경계를 아직 확인하지 않은 단위 수(문서 id → 건수, 0인 문서는 뺀다) — 검토 요청 조건과 문서 목록이 같이 쓴다.
-
-    글자 범위가 있는 단위(COVER_KINDS)만 센다. 표·행 묶음 단위는 범위가 없고 그 칸 문장이 대신한다.
-    """
-    rows = await session.execute(
-        select(Extraction.document_id, func.count())
-        .select_from(Unit)
-        .join(Extraction, Extraction.id == Unit.extraction_id)
-        .where(
-            Unit.extraction_id.in_(_select_latest_extractions(Document.bundle_id == bundle_id)),
-            Unit.status == UNIT_ACTIVE,
-            Unit.kind.in_(COVER_KINDS),
-            Unit.boundary_confirmed.is_(False),
-        )
-        .group_by(Extraction.document_id)
-    )
-    return {document_id: count for document_id, count in rows}

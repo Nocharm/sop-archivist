@@ -33,6 +33,7 @@ type(scope): English summary — 한국어 요약
 - **MINOR — `dev`→`main` 정식 업데이트**: 머지 정리 커밋에서 MINOR를 올리고(PATCH는 0으로) `Unreleased (dev)`의 줄들을 그 릴리스 항목(날짜·범위·주요 변경·배포 메모) 하나로 모은다. 그 커밋에 annotated 태그 `vX.Y.Z`를 달고 태그까지 푸시한다(`git push origin vX.Y.Z`). 태그는 옮기거나 다시 달지 않는다. 고칠 것이 생기면 `dev`에서 고쳐 다음 업데이트로. 같은 커밋에서 아래 "정식 업데이트 때 문서 정리"도 한다.
 - **운영 급한 수정**: `main`에서 바로 고쳐야 하면 PATCH를 올리고 태그를 단 뒤 같은 커밋을 `dev`에도 합친다.
 - **MAJOR — 1.0.0**: T/F가 실제 SOP로 정식 사용을 시작할 때 한 번 올린다(0.x는 "실제 SOP·모델 검증 전"이라는 뜻). 그 뒤로는 화면 흐름이나 자료 구조가 크게 바뀌어 사용자가 다시 익혀야 할 때만, 사용자와 정한다.
+- **사용 설명서 그림**: 설명서의 글은 화면을 바꾸는 커밋에서 함께 고치고, 화면 그림은 MINOR(`dev`→`main`) 때만 다시 뽑는다(사용자 결정 2026-11-15) — 그림 뽑기는 오래 걸리고, 글은 나중에 몰아서 검사하기 어렵다.
 - **사용 설명서 버전**: MINOR(또는 MAJOR)를 올리면 `frontend/public/manual/user-manual.md` 머리의 `version`(`MAJOR.MINOR`)·`updated`도 같은 커밋에서 올린다 — 설명서를 그 릴리스의 화면과 다시 맞춰 읽었다는 표시다. 어긋나면 `manual-content.test.ts`가 실패한다. PATCH는 그대로 둔다.
 - **푸시 범위**: 커밋·푸시는 GitHub(`origin`)에만 한다. 사내 GitLab push와 파이프라인 배포는 사용자가 PC에서 한다(`docs/deploy/gitlab-runner.md`).
 - **배포 기록**: 운영 서버에 올린 뒤 상단 바 버전으로 확인하고, `CHANGELOG.md` 해당 항목에 배포일을 적는다. 개발 스택 배포는 적지 않는다.

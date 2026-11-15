@@ -45,7 +45,6 @@ export type NextAction =
   | "upload_documents"
   | "resolve_documents"
   | "fill_doc_versions"
-  | "check_boundaries"
   | "fill_tobe"
   | "decide_units"
   | "ack_warnings"
@@ -118,6 +117,8 @@ export interface AiStatus {
   by_kind: Record<string, AiJobCounts>;
   /** 실패 코드별 건수(timeout·server_error·connection·client_error·config·interrupted·no_candidates·internal) */
   failed_errors: Record<string, number>;
+  /** 줄 서거나 도는 작업 가운데 사람 순위인 수(미리 돌리기에서 올라온 것 포함) - 0이면 미리 돌리기만 돈다 */
+  user_active: number;
   adoption: Record<string, AdoptionStats>;
 }
 
@@ -147,7 +148,7 @@ export function getAiStatus(bundleId: number): Promise<AiStatus> {
   return apiFetch<AiStatus>(`/bundles/${bundleId}/ai/status`);
 }
 
-export type AiJobKind = "classify" | "translate" | "match_plan" | "match" | "pair" | "split" | "doc_meta";
+export type AiJobKind = "classify" | "translate" | "match_plan" | "match" | "pair" | "split" | "doc_meta" | "tobe_list";
 export type AiJobStatus = keyof AiJobCounts;
 
 /** 요청 한 번(같은 request_id)의 집계 - total은 24시간 범위와 상관없이 센다. 짝 맞추기는 도중에 total이 는다 */
@@ -160,6 +161,8 @@ export interface RecentAiRequest {
   kind: AiJobKind;
   kinds: AiJobKind[];
   requested_by_me: boolean;
+  /** 미리 돌리기 작업이 하나라도 있으면 참 - 순위를 올린 뒤에도 그대로다 */
+  background: boolean;
   total: number;
   jobs: AiJobCounts;
   /** 실패 코드별 건수(failed만) */
@@ -228,12 +231,49 @@ export interface SopDocument {
   uploaded_by: string;
   uploaded_at: string;
   extraction: { id: number; aux_status: "ok" | "failed"; warnings: ExtractionWarning[] } | null;
-  /** 경계를 아직 확인하지 않은 단위 수 - 0이 아니면 검토 요청이 막힌다 */
-  unchecked_boundaries: number;
   /** 업로드 응답에서만 - 서버가 미리 채운 칸이 어디서 왔는지(파일 이름·본문 첫 장). 목록 조회에서는 빈 객체 */
   prefill_sources?: Partial<Record<"doc_code" | "doc_version" | "language_layout", "file_name" | "content">>;
   /** 비어 있는 번호·버전에 대한 AI 제안(문서에 쓰지 않은 값). 누르면 사람이 저장한다 */
   ai_meta?: { doc_code: string | null; doc_version: string | null; suggestion_id: number } | null;
+  /** 문서 번호의 EQUIS 표시 - 기능이 꺼졌거나 묻지 않는 번호(빈 칸·임시 번호)면 null */
+  equis?: EquisInfo | null;
+}
+
+export interface EquisVersion {
+  version: string;
+  status: string;
+  /** KST 날짜(YYYY-MM-DD) 또는 빈 글 */
+  effective_date: string;
+  retired_date: string;
+}
+
+/** 문서나 To-Be 줄 하나의 EQUIS 조회 결과 - backend app/equis/view.py EquisOut과 같은 모양 */
+export interface EquisInfo {
+  state: "pending" | "found" | "not_found" | "unavailable";
+  /** 조회가 도는 중 - 화면이 조금 뒤 다시 읽는다 */
+  refreshing: boolean;
+  verdict: "ok" | "attention" | "in_equis" | null;
+  /** old_number · retired · version_mismatch · newer_authorized · no_current */
+  reasons: string[];
+  /** 경고는 아니지만 알릴 진행 중인 판(In Review · In Approval) */
+  notes: EquisVersion[];
+  current: EquisVersion | null;
+  in_progress: EquisVersion[];
+  retired: EquisVersion | null;
+  /** 지금 문서의 번호 - 물은 번호가 옛 번호면 다르다 */
+  number: string;
+  trail: string[];
+  ambiguous: string[];
+  name: string;
+  subtype: string;
+  owning_department: string;
+  plant: string;
+  area: string;
+  legacy_numbers: string[];
+  equipment_tag: string;
+  doc_url: string | null;
+  title_locked: boolean;
+  fetched_at: string | null;
 }
 
 export interface DocumentUpdateInput {
@@ -268,6 +308,11 @@ export function updateDocument(bundleId: number, docId: number, body: DocumentUp
   return apiFetch<SopDocument>(`/bundles/${bundleId}/documents/${docId}`, { method: "PATCH", body: JSON.stringify(body) });
 }
 
+/** 이 Bundle에 있는 번호 하나를 EQUIS에 다시 묻는다 - requested가 false면 방금 조회했거나 조회 중이다 */
+export function refreshEquis(bundleId: number, documentNumber: string): Promise<{ requested: boolean }> {
+  return apiFetch<{ requested: boolean }>(`/bundles/${bundleId}/equis/refresh`, { method: "POST", body: JSON.stringify({ document_number: documentNumber }) });
+}
+
 export function deleteDocument(bundleId: number, docId: number, revision: number, confirm = false): Promise<void> {
   const query = new URLSearchParams({ revision: String(revision), confirm: String(confirm) });
   return apiFetch<void>(`/bundles/${bundleId}/documents/${docId}?${query}`, { method: "DELETE" });
@@ -276,7 +321,14 @@ export function deleteDocument(bundleId: number, docId: number, revision: number
 // --- 원문 보기와 쪼개기 편집 ---
 
 export type UnitKind = "sentence" | "heading" | "figure" | "table" | "table_row" | "cell_sentence";
-export type UnitLang = "ko" | "en" | "neutral";
+/** ref는 참조 줄(다른 문서를 번호로 가리키는 글) - 한/영 짝이 없다 */
+export type UnitLang = "ko" | "en" | "ref" | "neutral";
+/** 참조 줄 상태 - proposed는 앱의 제안(사람이 번호를 확인하기 전), confirmed는 REF로 확정된 것 */
+export interface UnitRefMark {
+  state: "proposed" | "confirmed";
+  /** 다듬은 문서 번호(대문자) - 그 단위의 글 안에 있는 글자 */
+  number: string;
+}
 export type CoverStatus = "unassigned" | "ai_suggested" | "confirmed" | "on_hold";
 /** (블록 id, 시작, 끝) - 끝은 포함하지 않는다 */
 export type UnitSpan = [number, number, number];
@@ -338,7 +390,6 @@ export interface ViewUnit {
   table_id: number | null;
   row_index: number | null;
   group_unit_id: number | null;
-  boundary_confirmed: boolean;
   status: CoverStatus | null;
   pair_id: number | null;
   pos_seq: number;
@@ -349,6 +400,18 @@ export interface ViewUnit {
   can_unmerge: boolean;
   /** 사람이 아직 정하지 않은 AI 나누기 제안 */
   split_suggestion_id: number | null;
+  /** 참조 줄 제안·확정 - 참조가 아니면 null */
+  ref: UnitRefMark | null;
+}
+
+/** 고른 단위의 참조 상태와 그 번호의 EQUIS 표시 - 참조가 아니면 state가 null */
+export interface UnitRefDetail {
+  state: UnitRefMark["state"] | null;
+  number: string;
+  /** EQUIS가 꺼져 있으면 null */
+  equis: EquisInfo | null;
+  /** 그 줄의 글을 EQUIS의 지금 번호·정식 이름으로 맞춘 글 - 새 문장에 쓸 제안. EQUIS가 모르는 번호거나 이미 같으면 null */
+  suggested_text: string | null;
 }
 
 export interface ViewPair {
@@ -359,7 +422,7 @@ export interface ViewPair {
 }
 
 export interface DocumentView {
-  document: Omit<SopDocument, "extraction" | "unchecked_boundaries">;
+  document: Omit<SopDocument, "extraction">;
   extraction: SopDocument["extraction"];
   tables: ViewTable[];
   blocks: ViewBlock[];
@@ -379,7 +442,11 @@ export type EditOp =
   | { type: "set_language"; unit_ids: number[]; lang: "ko" | "en" }
   | { type: "split_table_rows"; table_unit_id: number }
   | { type: "merge_table_rows"; table_id: number }
-  | { type: "set_layout_table"; table_id: number; is_layout: boolean };
+  | { type: "set_layout_table"; table_id: number; is_layout: boolean }
+  /** 참조 줄로 - 번호는 그 단위의 글 안에 있어야 한다. 이미 참조 줄이면 번호만 고친다 */
+  | { type: "set_ref"; unit_id: number; number: string }
+  /** 참조 아님 - 참조 줄이면 그 전 언어로 돌리고, 제안뿐이었으면 다시 제안하지 않는다 */
+  | { type: "clear_ref"; unit_id: number };
 
 export interface EditResult {
   document_revision: number;
@@ -405,6 +472,11 @@ export function getDocumentView(bundleId: number, docId: number): Promise<Docume
 
 const buildDocPath = (bundleId: number, docId: number) => `/bundles/${bundleId}/documents/${docId}`;
 
+/** 단위가 가리키는 문서 번호와 그 번호의 EQUIS 표시 - 번호는 서버가 단위의 글에서 읽는다 */
+export function getUnitRef(bundleId: number, docId: number, unitId: number): Promise<UnitRefDetail> {
+  return apiFetch<UnitRefDetail>(`${buildDocPath(bundleId, docId)}/units/${unitId}/ref`);
+}
+
 export function editUnits(bundleId: number, docId: number, revision: number, op: EditOp, confirm = false, undo?: UndoMeta): Promise<EditResult> {
   return apiFetch<EditResult>(`${buildDocPath(bundleId, docId)}/edits`, { method: "POST", body: JSON.stringify({ revision, confirm, op, undo }) });
 }
@@ -415,15 +487,6 @@ export function undoEdit(bundleId: number, docId: number, revision: number, conf
 
 export function redoEdit(bundleId: number, docId: number, revision: number, confirm = false): Promise<EditStepResult> {
   return apiFetch<EditStepResult>(`${buildDocPath(bundleId, docId)}/edits/redo`, { method: "POST", body: JSON.stringify({ revision, confirm }) });
-}
-
-export function setBoundaryConfirmed(bundleId: number, docId: number, unitIds: number[], confirmed: boolean): Promise<{ unit_ids: number[]; confirmed: boolean }> {
-  return apiFetch(`${buildDocPath(bundleId, docId)}/units/boundary`, { method: "POST", body: JSON.stringify({ unit_ids: unitIds, confirmed }) });
-}
-
-/** 문서에 남은 단위의 경계를 한 번에 확인한다 - 하나씩 확인하는 길은 요청당 단위 수 상한이 있다 */
-export function confirmAllBoundaries(bundleId: number, docId: number): Promise<{ confirmed_count: number }> {
-  return apiFetch(`${buildDocPath(bundleId, docId)}/units/boundary/all`, { method: "POST" });
 }
 
 export function createPair(bundleId: number, docId: number, revision: number, unitIds: number[]): Promise<PairResult> {
@@ -452,6 +515,8 @@ export interface TargetDoc {
   is_equipment_sop: boolean;
   order_index: number;
   document_id: number | null;
+  /** 줄 번호의 EQUIS 표시 - 기능이 꺼졌거나 묻지 않는 번호(임시 번호)면 null */
+  equis?: EquisInfo | null;
 }
 
 export interface NaSlot {
@@ -466,11 +531,20 @@ export interface WiStep {
   title: string;
 }
 
+/** 문장이 든 자리 - 단계가 없는 자리(SOP의 칸, 단계를 적지 않은 WI)는 wi_step이 null */
+export interface PlaceCount {
+  target_doc_id: number;
+  wi_step: number | null;
+  count: number;
+}
+
 export interface ToBe {
   revision: number;
   docs: TargetDoc[];
   na_slots: NaSlot[];
   wi_steps: WiStep[];
+  /** 문장이 든 자리만 실린다 - 배정 화면이 지울 수 없는 문서·단계의 지우기 단추를 잠근다 */
+  sentence_counts?: PlaceCount[];
 }
 
 export interface ToBeInput {
@@ -505,6 +579,96 @@ export function getToBe(bundleId: number): Promise<ToBe> {
 
 export function putToBe(bundleId: number, body: ToBeInput): Promise<ToBe> {
   return apiFetch<ToBe>(`/bundles/${bundleId}/tobe`, { method: "PUT", body: JSON.stringify(body) });
+}
+
+// 한 줄 추가·삭제(배정 화면) - revision을 보내지 않는다. 서버가 지금 목록에 한 줄을 더하거나 빼고 새 목록을 돌려준다
+export interface NewToBeDoc {
+  code: string;
+  doc_type: TargetDocType;
+  parent_code: string | null;
+}
+
+export function addToBeDoc(bundleId: number, body: NewToBeDoc): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export function removeToBeDoc(bundleId: number, targetDocId: number): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}`, { method: "DELETE" });
+}
+
+export function addWiStep(bundleId: number, targetDocId: number, title: string): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/steps`, { method: "POST", body: JSON.stringify({ title }) });
+}
+
+export function removeWiStep(bundleId: number, targetDocId: number, stepNo: number): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/steps/${stepNo}`, { method: "DELETE" });
+}
+
+// 줄 하나 고치기(Documents 화면) - 칸마다 바로 저장한다. 보낸 칸만 바뀌고 새 목록이 돌아온다(revision을 보내지 않는다)
+export interface ToBeDocPatch {
+  code?: string;
+  title?: string;
+  doc_type?: TargetDocType;
+  /** null은 "상위 SOP 없음" */
+  parent_code?: string | null;
+  is_equipment_sop?: boolean;
+}
+
+export function updateToBeDoc(bundleId: number, targetDocId: number, patch: ToBeDocPatch): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+/** SOP의 칸 하나를 N/A로(사유와 함께) - 이미 N/A면 사유를 바꾼다 */
+export function setNaSlot(bundleId: number, targetDocId: number, slotKey: string, reason: string): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/na/${encodeURIComponent(slotKey)}`, { method: "PUT", body: JSON.stringify({ reason }) });
+}
+
+export function clearNaSlot(bundleId: number, targetDocId: number, slotKey: string): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/na/${encodeURIComponent(slotKey)}`, { method: "DELETE" });
+}
+
+export function renameWiStep(bundleId: number, targetDocId: number, stepNo: number, title: string): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/steps/${stepNo}`, { method: "PATCH", body: JSON.stringify({ title }) });
+}
+
+// 새 문서 목록 AI 읽기 - 템플릿에 맞지 않는 계획 파일이나 붙여 넣은 글에서 AI가 목록을 읽어 제안한다. AI는 목록에 쓰지 않는다
+export interface ProposedDoc {
+  code: string;
+  title: string;
+  /** 글이 종류를 말하지 않으면 null - 사람이 고른다 */
+  doc_type: TargetDocType | null;
+  parent_code: string | null;
+  is_equipment_sop: boolean;
+  steps: string[];
+}
+
+export interface ToBeProposal {
+  suggestion_id: number;
+  docs: ProposedDoc[];
+  /** 이미 목록에 있는 번호 */
+  listed_codes: string[];
+  /** 글이 길어 앞부분만 읽었거나 제안이 많아 앞쪽만 남겼다 */
+  truncated: boolean;
+  /** 응답을 읽지 못했다 - 줄이 없다 */
+  invalid: boolean;
+}
+
+/** 목록 파일 하나(xlsx·docx·txt·csv·md) 또는 붙여 넣은 글을 보내 AI 작업을 쌓는다 - 파일은 저장되지 않는다 */
+export function requestToBeRead(bundleId: number, source: { file: File } | { text: string }): Promise<{ queued: number; request_id: string; truncated: boolean }> {
+  const form = new FormData();
+  if ("file" in source) form.append("file", source.file);
+  else form.append("text", source.text);
+  return apiFetch(`/bundles/${bundleId}/tobe/read`, { method: "POST", body: form });
+}
+
+/** 아직 정하지 않은 가장 새 제안 - 없으면 null */
+export function getToBeRead(bundleId: number): Promise<ToBeProposal | null> {
+  return apiFetch<ToBeProposal | null>(`/bundles/${bundleId}/tobe/read`);
+}
+
+/** 미리 보기를 닫는다 - 줄을 더했으면 as_is(그대로)·edited(고치거나 일부만), 버렸으면 rejected */
+export function closeToBeRead(bundleId: number, suggestionId: number, adoption: "as_is" | "edited" | "rejected"): Promise<void> {
+  return apiFetch<void>(`/bundles/${bundleId}/tobe/read/${suggestionId}/close`, { method: "POST", body: JSON.stringify({ adoption }) });
 }
 
 export function importToBe(bundleId: number, file: File, revision: number): Promise<ToBe> {
@@ -778,6 +942,16 @@ export interface WrittenSentence {
   /** 사람이 적는 메모(출처 없는 새 문장의 Remark) */
   remark: string;
   revision: number;
+  /** 이 문장이 온 새 문서 원문의 Unit - 원문 다듬기의 대상으로 고를 때 쓴다. 원문 없이 만든 문장은 null */
+  new_unit_id?: number | null;
+  /**
+   * 참조 줄이면 가리키는 문서 - 출처가 참조 줄인 문장과, 출처 없이 이 문서에만 있는 참조 줄 둘 다(v1.0.18). 아니면 null.
+   * 번호는 서버가 읽는다(출처 참조 줄의 번호, 없으면 이 문장의 글). equis는 참조 카드와 같은 모양이고 꺼져 있으면 null -
+   * EQUIS가 모르는 번호(state "not_found")와 폐기된 문서(retired)는 여기서 읽는다. refreshing이면 조금 뒤 목록을 다시 읽는다
+   */
+  ref?: { number: string; equis: EquisInfo | null } | null;
+  /** 참조 줄인데 이 문장의 번호(number)나 이름(title)이 EQUIS와 다르다 - 작은 주의. 참조 줄이 아니거나 견줄 것이 없으면 null */
+  ref_issue?: "number" | "title" | null;
 }
 
 /** Old 단위 하나에 가까운 이미 쓴 문서 문장 - 유사도는 확률로 보이지 않는다 */

@@ -1,4 +1,4 @@
-// Assign 보기 설정 - 문서별 확대(Old·New)·두 문서 폭·연결선 켜기를 사람마다 브라우저에 기억한다. 저장소가 막혀 있으면 기본값으로 그린다.
+// Assign 보기 설정 - 문서별 확대(Old·New)·두 문서 폭·연결선 켜기·한 단 보기를 사람마다 브라우저에 기억한다. 저장소가 막혀 있으면 기본값으로 그린다.
 import { clampSplit, clampZoom } from "./assign-model";
 
 export interface AssignView {
@@ -8,10 +8,12 @@ export interface AssignView {
   split: number;
   /** 두 문서 사이 연결선을 그린다 */
   lines: boolean;
+  /** 한 단 보기 - Old 문서 하나만 넓게 본다(New 칸과 연결선을 접는다) */
+  single: boolean;
 }
 
-const DEFAULTS: AssignView = { zoomOld: 1, zoomNew: 1, split: 0.5, lines: true };
-const KEYS: Record<keyof AssignView, string> = { zoomOld: "sopa.assign.zoomOld", zoomNew: "sopa.assign.zoomNew", split: "sopa.assign.split", lines: "sopa.assign.lines" };
+const DEFAULTS: AssignView = { zoomOld: 1, zoomNew: 1, split: 0.5, lines: true, single: false };
+const KEYS: Record<keyof AssignView, string> = { zoomOld: "sopa.assign.zoomOld", zoomNew: "sopa.assign.zoomNew", split: "sopa.assign.split", lines: "sopa.assign.lines", single: "sopa.assign.single" };
 
 function readNumber(key: string): number | null {
   try {
@@ -28,11 +30,13 @@ export function readAssignView(): AssignView {
   const zoomNew = readNumber(KEYS.zoomNew);
   const split = readNumber(KEYS.split);
   const lines = readNumber(KEYS.lines);
+  const single = readNumber(KEYS.single);
   return {
     zoomOld: zoomOld === null ? DEFAULTS.zoomOld : clampZoom(zoomOld),
     zoomNew: zoomNew === null ? DEFAULTS.zoomNew : clampZoom(zoomNew),
     split: split === null ? DEFAULTS.split : clampSplit(split),
     lines: lines === null ? DEFAULTS.lines : lines !== 0,
+    single: single === null ? DEFAULTS.single : single !== 0,
   };
 }
 

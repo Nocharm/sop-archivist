@@ -132,15 +132,14 @@ for (const theme of ["light", "dark"]) {
     ["bundles", "/", '[data-testid^="bundles-row-"]'],
     ["overview", `/bundles/${id}`, '[data-testid="overview-gate-units"]'],
     ["documents", `/bundles/${id}/documents`, '[data-testid$="-row"][data-testid^="documents-"]'],
-    ["split", `/bundles/${id}/split`, '[data-testid^="split-paper-unit-"]'],
+    ["tobe", `/bundles/${id}/documents`, '[data-testid$="-row"][data-testid^="tobe-"]'],
+    ["assign", `/bundles/${id}/assign`, '[data-testid="assign-help"]'],
     // 고른 조각 - 올리거나 고를 때만 보이는 KO/EN 탭(짝이면 둘 다)의 글자 대비를 잰다. 탭이 다 드러난(opacity 1) 뒤에
-    ["split-selected", `/bundles/${id}/split`, '[data-testid^="split-paper-unit-"]', async (page) => {
-      await page.locator('[data-testid^="split-paper-unit-"]').first().click();
+    ["assign-selected", `/bundles/${id}/assign`, '[data-testid^="assign-paper-unit-"]', async (page) => {
+      await page.locator('[data-testid^="assign-paper-unit-"]').first().click();
       await page.locator(".strip[data-sel] > .strip-lang").first().waitFor({ state: "visible", timeout: T });
       await page.waitForFunction(() => getComputedStyle(document.querySelector(".strip[data-sel] > .strip-lang")).opacity === "1", null, { timeout: T });
     }],
-    ["tobe", `/bundles/${id}/tobe`, '[data-testid$="-row"][data-testid^="tobe-"]'],
-    ["assign", `/bundles/${id}/assign`, '[data-testid="assign-help"]'],
     ["assign-help-marks", `/bundles/${id}/assign`, '[data-testid="assign-help"]', async (page) => { const toggle = page.locator('[data-testid="assign-help-toggle"]'); if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click(); await page.locator('[data-testid="assign-help-tab-marks"]').click(); }],
     ["assign-link", `/bundles/${id}/assign`, '[data-testid="assign-bar"]', pickCandidate],
     ["assign-unsourced", `/bundles/${id}/assign`, '[data-testid="assign-filter-unsourced"]', (page) => page.locator('[data-testid="assign-filter-unsourced"]').click()],
@@ -158,9 +157,8 @@ for (const theme of ["light", "dark"]) {
     ["outputs", `/bundles/${id}/outputs`, '[data-testid="output-c"]'],
     ["outputs-a", `/bundles/${id}/outputs`, '[data-testid="outputs-tab-a"]', async (page) => { await page.locator('[data-testid="outputs-tab-a"]').click(); await page.locator('tr[data-testid^="output-a-row-"]').first().waitFor({ timeout: T }); }],
     // 순서를 바꾼 직후(저장 전) - 저장은 붙잡았다가 실패로 돌려 DB를 바꾸지 않는다
-    ["outputs-c-moved", `/bundles/${id}/outputs`, '[data-testid="outputs-tab-c"]', async (page) => {
-      // 앞 장면이 A 탭을 골라 두어(브라우저가 기억) C로 돌아온다
-      await page.locator('[data-testid="outputs-tab-c"]').click();
+    ["order-moved", `/bundles/${id}/order`, '[data-testid="order-docs"]', async (page) => {
+      // 순서는 3단계(Order) 화면에서 바꾼다 - 결과 화면의 C는 읽기 전용
       await page.locator('[data-testid^="output-c-move-down-"]').first().waitFor({ timeout: T });
       await page.route("**/targets/order**", async (route) => {
         await new Promise((done) => setTimeout(done, 4000));
@@ -194,9 +192,11 @@ for (const theme of ["light", "dark"]) {
       await page.locator('[data-testid^="assign-new-heading-note-"]').first().waitFor({ timeout: T });
       await page.unroute("**/outputs/c/docs/**");
     }],
-    ["review", `/bundles/${id}/review`, '[data-testid="output-c"]'],
+    // 검토는 결과 화면 위의 검토 띠다 - 앞의 outputs-a 장면이 A 탭을 골라 두어 C로 돌아온다
+    ["review", `/bundles/${id}/outputs`, '[data-testid="review"]', async (page) => { await page.locator('[data-testid="outputs-tab-c"]').click(); await page.locator('[data-testid="output-c"]').waitFor({ timeout: T }); }],
     ["assign-ai", `/bundles/${aiId}/assign`, '[data-testid="assign-bar"]', async (page) => { await page.locator('[data-testid="assign-filter-ai_suggested"]').click(); await page.keyboard.press("j"); await page.locator('[data-testid="assign-rec-0"]').waitFor({ timeout: T }); }],
-    ["outputs-ai", `/bundles/${aiId}/outputs`, '[data-testid="output-c"]'],
+    // 앞의 outputs-a 장면이 A 탭을 골라 두어(브라우저가 기억) C로 돌아온다
+    ["outputs-ai", `/bundles/${aiId}/outputs`, '[data-testid="outputs-tab-c"]', async (page) => { await page.locator('[data-testid="outputs-tab-c"]').click(); await page.locator('[data-testid="output-c"]').waitFor({ timeout: T }); }],
     // 상단 바 AI 작업 목록을 연 상태 - 시드의 AI 제안 단계가 남긴 끝난 요청이 보인다
     ["ai-jobs", `/bundles/${aiId}`, '[data-testid="top-bar-ai"]', async (page) => { await page.locator('[data-testid="top-bar-ai"]').click(); await page.locator('[data-testid^="ai-jobs-request-"]').first().waitFor({ timeout: T }); }],
     ["manual", "/manual", '[data-testid^="manual-unit-"]'],

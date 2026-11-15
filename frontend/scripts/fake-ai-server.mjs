@@ -50,6 +50,21 @@ const TASK_REPLIES = {
   translate: (data) => ({ text: `[${data.to}] ${data.text}` }),
   match: () => ({ change_type: "as_is", reason: FAKE_REASON, rule_ids: FAKE_RULE_IDS }),
   split: (data) => ({ parts: SPLIT_REWRITES ? splitInTwo(data.text) : [data.text], reason: FAKE_REASON, rule_ids: FAKE_RULE_IDS }),
+  // 새 문서 목록 읽기 - 글의 줄마다 첫 문서 번호를 한 줄로 답한다(SOP-…는 SOP, WI-…는 바로 앞 SOP 아래의 WI, 나머지는 종류 없이).
+  // 번호 뒤의 글(칸 구분 " | " 다음 칸)을 제목으로 쓴다. 글에 없는 번호 하나를 끼워 서버가 버리는지도 보인다
+  tobe_list(data) {
+    const docs = [];
+    let lastSop = null;
+    for (const line of String(data.text ?? "").split("\n")) {
+      const code = /(?<![A-Za-z0-9])([A-Z]{2,}(?:-[A-Z0-9]{1,8})*-\d{1,6})(?![A-Za-z0-9])/.exec(line)?.[1];
+      if (!code || docs.some((doc) => doc.code === code)) continue;
+      const title = (line.split(" | ")[1] ?? "").trim();
+      const docType = code.startsWith("SOP") ? "sop" : code.startsWith("WI") ? "wi" : null;
+      if (docType === "sop") lastSop = code;
+      docs.push({ code, title, doc_type: docType, parent_code: docType === "wi" ? lastSop : null, is_equipment_sop: false, steps: docType === "wi" ? ["Prepare", "Run"] : [] });
+    }
+    return { docs: [...docs, { code: "SOP-INVENTED-999", title: "not in the text", doc_type: "sop", parent_code: null, is_equipment_sop: false, steps: [] }] };
+  },
 };
 
 function sendJson(res, status, body) {

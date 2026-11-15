@@ -32,12 +32,6 @@ const SAMPLE_BATCH_RUNS = [
 const text = (value) => `text=${value}`;
 const id = (value) => `[data-testid="${value}"]`;
 
-async function clickText(page, value) {
-  const target = page.getByText(value, { exact: false }).first();
-  await target.scrollIntoViewIfNeeded();
-  await target.click();
-}
-
 async function click(page, selector) {
   const target = page.locator(selector).first();
   await target.waitFor({ state: "visible", timeout: T });
@@ -56,7 +50,7 @@ const SCENES = [
       await click(page, id("bundles-new"));
       await page.locator(id("overview-code")).waitFor({ timeout: 15000 });
     },
-    marks: [id("overview-code"), id("overview-menu"), id("overview-next"), id("stage-nav-split"), id("stage-nav-history")],
+    marks: [id("overview-code"), id("overview-menu"), id("overview-next"), id("stage-nav-assign"), id("stage-nav-history")],
   },
   {
     // 하위 메뉴는 마우스가 떠나면 닫힌다 - 올려 둔 채로 찍는다(keepMouse)
@@ -79,34 +73,15 @@ const SCENES = [
     prep: (page) => click(page, id("documents-upload")),
     marks: [id("upload-pick")],
   },
+  { name: "tobe", user: "qa.member", path: "/bundles/1/documents", prep: (page) => page.locator(id("tobe-section")).scrollIntoViewIfNeeded(), marks: [text("Excel template"), text("Import Excel"), id("tobe-add"), `[data-testid$="-toggle"]`, id("tobe-save")] },
   {
-    name: "split-unit", app: { name: "split", width: 1280 }, user: "qa.member", path: "/bundles/1/split",
-    prep: (page) => clickText(page, "로터를 장착하고 뚜껑을 닫은 후"),
-    marks: [id("split-docs"), `${id("split-paper")} >> text=로터를 장착하고 뚜껑을 닫은 후`, '[data-testid^="split-act-check-"]', id("split-unit-id"), id("split-primary"), id("split-split"), id("split-pair"), id("split-help")],
-  },
-  {
-    name: "split-table", user: "qa.member", path: "/bundles/1/split",
-    prep: async (page) => {
-      // 표 위의 가는 손잡이가 표 전체 단위다(칸 글자를 누르면 칸 문장이 골라진다)
-      const handle = page.locator(`${id("split-paper")} .ptbl-cap`).first();
-      await handle.scrollIntoViewIfNeeded();
-      await handle.click();
-    },
-    marks: [`${id("split-paper")} .ptbl-cap`, id("split-unit-id"), id("split-table")],
-  },
-  {
-    name: "split-pdf", user: "qa.member", path: "/bundles/1/split",
-    prep: (page) => click(page, id("split-doc-5")),
-    marks: [id("split-doc-5"), id("split-paper")],
-  },
-  { name: "tobe", user: "qa.member", path: "/bundles/1/tobe", marks: [text("Excel template"), text("Import Excel"), id("tobe-add"), `[data-testid$="-toggle"]`, id("tobe-save")] },
-  {
-    name: "tobe-sop", app: { name: "tobe" }, user: "qa.member", path: "/bundles/1/tobe",
+    // To-Be 목록은 Documents 화면 아래쪽 영역이다 - 앱 설명서 그림은 그 영역만 잘라 찍는다
+    name: "tobe-sop", app: { name: "tobe", clip: id("tobe-section") }, user: "qa.member", path: "/bundles/1/documents",
     prep: (page) => click(page, `[data-testid$="-toggle"]`),
     marks: [`[data-testid$="-slots"]`, `[data-testid*="-na-"]`],
   },
   {
-    name: "tobe-wi", user: "qa.member", path: "/bundles/1/tobe",
+    name: "tobe-wi", user: "qa.member", path: "/bundles/1/documents",
     prep: async (page) => {
       await page.locator(`[data-testid$="-toggle"]`).nth(1).click();
     },
@@ -174,6 +149,17 @@ const SCENES = [
     marks: [id("assign-filter-ai_suggested"), id("assign-ai-reason"), id("assign-rec-0"), id("assign-chosen"), id("assign-primary")],
   },
   {
+    // 참조 줄 - 위쪽 줄의 남은 수를 눌러 제안이 붙은 줄로 가면 오른쪽 칸 맨 위에 번호 확인 카드가 뜬다(앱 안 설명서만)
+    name: "assign-ref", appOnly: true, app: {}, user: "qa.member", path: "/bundles/1/assign",
+    prep: async (page) => {
+      await click(page, id("assign-ref-pending"));
+      await page.locator(id("assign-ref")).waitFor({ state: "visible", timeout: T });
+      // 문서의 마지막 줄이라 낮은 창에서는 아래로 밀린다 - 고른 줄이 그림에 들어오게 한다
+      await page.locator(".strip-lang[data-proposed]").scrollIntoViewIfNeeded();
+      await page.waitForTimeout(300);
+    },
+  },
+  {
     // 상단 바 AI 작업 목록 - seed가 묶음 4에 쌓은 요청(하루 안)이 보인다
     name: "ai-jobs", appOnly: true, app: { clip: id("ai-jobs-popover") }, user: "qa.member", path: "/bundles/4",
     prep: async (page) => {
@@ -189,6 +175,11 @@ const SCENES = [
       await page.waitForLoadState("networkidle");
     },
     marks: [id("assign-filter-on_hold"), id("assign-system-hold")],
+  },
+  {
+    // 3단계 - New 문서를 하나씩 열어 순서·들여쓰기·번호를 고친다(작업 중인 묶음이라 줄 끝 단추가 보인다)
+    name: "order", appOnly: true, app: {}, user: "qa.member", path: "/bundles/2/order",
+    prep: (page) => page.locator('[data-testid^="output-c-move-"]').first().waitFor({ state: "attached", timeout: T }),
   },
   {
     name: "outputs-a", app: {}, user: "qa.member", path: "/bundles/3/outputs",
@@ -214,9 +205,9 @@ const SCENES = [
     marks: [text("Operation of Eppendorf Centrifuge")],
   },
   { name: "overview-ready", user: "qa.member", path: "/bundles/3", marks: [id("overview-status"), id("overview-gate")] },
-  { name: "review-reviewer", app: { name: "review" }, user: "qa.lead", path: "/bundles/3/review", marks: [id("review-status"), id("review-complete"), id("review-return")] },
+  { name: "review-reviewer", app: { name: "review" }, user: "qa.lead", path: "/bundles/3/outputs", marks: [id("review-status"), id("review-complete"), id("review-return")] },
   {
-    name: "review-return", user: "qa.lead", path: "/bundles/3/review",
+    name: "review-return", user: "qa.lead", path: "/bundles/3/outputs",
     prep: (page) => click(page, id("review-return")),
     marks: [id("review-reason-text"), id("review-reason-confirm")],
   },
@@ -254,7 +245,7 @@ const SCENES = [
   { name: "admin-guidelines", user: "dev.admin", path: "/admin?tab=guidelines", marks: [id("guideline-key-rules"), id("guideline-versions"), id("guideline-detail")] },
   // 여기부터 묶음 3을 바꾼다 - 검토 완료 뒤 모습
   {
-    name: "review-done", user: "qa.lead", path: "/bundles/3/review", mutates: true,
+    name: "review-done", user: "qa.lead", path: "/bundles/3/outputs", mutates: true,
     prep: async (page) => {
       await click(page, id("review-complete"));
       await click(page, id("review-complete-modal-confirm"));
@@ -262,7 +253,7 @@ const SCENES = [
     },
     marks: [id("review-status")],
   },
-  { name: "review-reopen", user: "qa.member", path: "/bundles/3/review", mutates: true, marks: [id("review-status"), id("review-reopen")] },
+  { name: "review-reopen", user: "qa.member", path: "/bundles/3/outputs", mutates: true, marks: [id("review-status"), id("review-reopen")] },
   { name: "home-done", user: "qa.member", path: "/", mutates: true, marks: [`${id("bundles-row-3")} .pill`, `${id("bundles-row-2")} .pill`] },
 ];
 

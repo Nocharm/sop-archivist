@@ -8,12 +8,12 @@ describe("assign view prefs", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it("reads defaults when nothing is stored", () => {
-    expect(readAssignView()).toEqual({ zoomOld: 1, zoomNew: 1, split: 0.5, lines: true });
+    expect(readAssignView()).toEqual({ zoomOld: 1, zoomNew: 1, split: 0.5, lines: true, single: false });
   });
 
   it("round-trips stored values", () => {
     writeAssignView({ zoomNew: 1.2, split: 0.6, lines: true });
-    expect(readAssignView()).toEqual({ zoomOld: 1, zoomNew: 1.2, split: 0.6, lines: true });
+    expect(readAssignView()).toEqual({ zoomOld: 1, zoomNew: 1.2, split: 0.6, lines: true, single: false });
   });
 
   it("remembers turning the link lines off", () => {
@@ -23,16 +23,23 @@ describe("assign view prefs", () => {
     expect(readAssignView().lines).toBe(true);
   });
 
+  it("remembers the one-document view", () => {
+    writeAssignView({ single: true });
+    expect(readAssignView().single).toBe(true);
+    writeAssignView({ single: false });
+    expect(readAssignView().single).toBe(false);
+  });
+
   it("clamps out-of-range and junk values", () => {
     window.localStorage.setItem("sopa.assign.zoomOld", "3");
     window.localStorage.setItem("sopa.assign.split", "abc");
-    expect(readAssignView()).toEqual({ zoomOld: 1.6, zoomNew: 1, split: 0.5, lines: true });
+    expect(readAssignView()).toEqual({ zoomOld: 1.6, zoomNew: 1, split: 0.5, lines: true, single: false });
   });
 
   it("falls back to defaults when storage throws", () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new Error("blocked");
     });
-    expect(readAssignView()).toEqual({ zoomOld: 1, zoomNew: 1, split: 0.5, lines: true });
+    expect(readAssignView()).toEqual({ zoomOld: 1, zoomNew: 1, split: 0.5, lines: true, single: false });
   });
 });

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **SOP Archivist — SOP Restructuring T/F가 쓰는 사내 AI 에이전트 웹 서비스** (FastAPI + Next.js, 사내 서버에 docker compose로 배포). 옛 SOP 묶음을 새 SOP·WI 구조로 다시 짜는 일(문서 쪼개기 → 배정·고쳐 쓰기 → 결과물 A·B·C·Excel → 검토)을 돕는다. **제품 명세: [`docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md`](docs/superpowers/specs/2026-11-05-sop-restructuring-e2e-design.md)**(판단 기준 `docs/domain/`), 기반 명세 `docs/superpowers/specs/2026-11-04-sop-archivist-baseline-design.md`, 프런트와 맞춘 API 계약은 `docs/superpowers/plans/2026-11-06-sop-restructuring-plan2-ai.md`의 "API 계약" 블록, 프런트 디자인 기초 `frontend/docs/design/2026-11-07-frontend-design-foundations.md`.
 
-> 상태: **v1.0.0 — 운영 배포 2026-11-14**(운영 :7777, 개발 스택 :4444). 기능 이력은 `CHANGELOG.md`, 지금 진행은 `PROGRESS.md`. **실제 SOP·실제 모델 미검증** — AI 층은 합성 SOP·가짜 AI로만 검증했고 유사도 임계값은 합성 자료로 잡은 값이다(실제 시험 뒤 다시 정한다).
+> 상태: **v1.1.0 — 정식 업데이트 2026-11-16**(운영 :7777에는 아직 v1.0.0 — 배포는 사용자가 한다. 개발 스택 :4444). 기능 이력은 `CHANGELOG.md`, 지금 진행은 `PROGRESS.md`. **실제 SOP·실제 모델 미검증** — AI 층은 합성 SOP·가짜 AI로만 검증했고 유사도 임계값은 합성 자료로 잡은 값이다(실제 시험 뒤 다시 정한다).
 > **서비스 버전**: 단일 소스 `frontend/package.json` `version`(상단 바에 표시). `dev`에 올릴 때마다 PATCH, `dev`→`main` 정식 업데이트마다 MINOR + `vX.Y.Z` 태그(`rules/common/git.md`). 커밋·푸시는 GitHub에만, 사내 GitLab push·배포는 사용자. 운영 배포일은 CHANGELOG에 적는다.
 > **DB**: 로컬은 sqlite 파일(연결마다 `PRAGMA foreign_keys=ON`), 서버는 postgres. 스키마는 **Alembic**(backend 기동 때 head까지 자동 적용).
 > **원칙**: AI는 제안만 하고 사람이 줄마다 확정한다 — AI가 꺼지거나 실패해도 사람 경로는 돈다. AI 페이로드에 직원 실명을 싣지 않는다(역할·부서만). 공개 저장소라 실서버 IP·사내 호스트명·시크릿은 추적 파일에 넣지 않는다(`<server-ip>` 등).
@@ -29,6 +29,7 @@ npm install && npm run dev                  # :3777, /api는 BACKEND_URL(기본 
 npm run build                               # 경고 0이어야 한다. next dev를 먼저 내린다
 npm run lint && npx tsc --noEmit -p tsconfig.json && npx vitest run   # 커밋 전 필수
 # 브라우저 검증(npm i --no-save playwright-core, 시스템 Chrome): scripts/pw-smoke-sop.mjs · pw-layout-audit.mjs(DS=worst) · pw-overlap-audit.mjs · pw-contrast-audit.mjs · pw-manual-shots.mjs
+# 평소(변경마다)는 고친 화면의 스모크만: QUIET=1 ONLY="assign:" node scripts/pw-smoke-sop.mjs  (전체 스모크·감사 넷은 dev→main 전, 또는 공용 부품·API 층을 고쳤을 때만 — 사용자 결정 2026-11-16)
 node frontend/scripts/fake-ai-server.mjs    # 가짜 AI :9999(저장소 루트에서, FAKE_AI_SPLIT=1이면 나눔). 배선 확인용, 정확도 근거 아님
 # dev 인증 = localStorage `sopa.devUser` / 헤더 `X-Dev-User`. 권한 차등은 DEV_ENFORCE_PERMISSIONS=true(dev.admin이 sysadmin)
 ```
@@ -47,7 +48,7 @@ node frontend/scripts/fake-ai-server.mjs    # 가짜 AI :9999(저장소 루트�
 
 **경계:** 브라우저 → `:7777` nginx → (Next.js | FastAPI) → PostgreSQL. 로컬은 Next rewrites가 `/api`를 `BACKEND_URL`로 넘긴다. 입력 검증은 backend API 경계(`rules/common/security.md`). 인증은 Keycloak realm `ai-portal`의 public 클라이언트 `sop-archivist-frontend`, 주소는 `.env`(`docs/deploy/setup-once.md` A5).
 
-**디렉터리:** `backend/`(앱·Alembic·시드 `scripts/`·tests) · `frontend/`(src/app·components·lib, `scripts/` 스모크·가짜 AI) · `nginx/` · `scripts/db-backup.sh` · `ci/`(`deploy.sh`·`test-deploy.sh`, `.gitlab-ci.yml`이 부름) · `docs/`(인덱스 `docs/README.md`).
+**디렉터리:** `backend/`(앱·Alembic·시드 `scripts/`·tests) · `frontend/`(src/app·components·lib, `scripts/` 스모크·가짜 AI) · `nginx/` · `scripts/db-backup.sh` · `ci/`(`deploy.sh`·`test-deploy.sh`, `.gitlab-ci.yml`이 부름) · `samples/`(화면에 올려 볼 합성 SOP 파일 — 생성기 출력 사본) · `docs/`(인덱스 `docs/README.md`).
 
 **세부 구조는 폴더별 CLAUDE.md에** — 그 폴더의 파일을 읽을 때 함께 실리고, 실리지 않은 채 그 폴더를 고치게 되면 먼저 직접 읽는다. [`backend/CLAUDE.md`](backend/CLAUDE.md)(핵심 모듈·AI 제안 층 불변식·SOP 규칙 이중 사용 지점, Python·설정 규칙을 불러옴) · [`frontend/CLAUDE.md`](frontend/CLAUDE.md)(핵심 구조·공통 부품·사용 설명서, TypeScript·식별자 규칙을 불러옴).
 
@@ -58,7 +59,7 @@ node frontend/scripts/fake-ai-server.mjs    # 가짜 AI :9999(저장소 루트�
 - **새 권한(permission) — 3곳을 한 커밋에서:** backend `app/access/catalog.py` `PERMISSIONS` ↔ frontend `src/lib/access.ts` `PERMISSIONS`(같은 값·순서) ↔ i18n `permission.<key>`(en·ko). 키가 `permission.`으로 시작하면 메시지 키는 `permission.permission.manage`. 라우트는 `Depends(require_permission("<key>"))`(모르는 키는 import 때 `ValueError`). 카탈로그에서 뺀 키는 저장된 역할·부여에서 조용히 버려진다.
 - **새 env — 3곳:** `app/settings.py` · `.env.example` · `docker-compose.yml` backend `environment:`(`VAR: ${VAR:-}`). backend에 `env_file`이 없어 compose에 빠지면 서버에서만 조용히 기본값이다. 빈 문자열이 기동을 죽이는 int/bool은 Settings 기본값과 같은 폴백. 시크릿 값은 어디에도 쓰지 않는다.
 - **새 업무 규칙 거절 코드(`raise_rule`) = 프런트 문구:** 화면에서 닿는 코드면 `rule.<code>` en·ko(세부 사유는 `rule.<code>.<reason>`). 없으면 상태 코드 문구로 떨어진다.
-- **화면·동작·라벨을 바꾸면 사용 설명서도 같은 커밋에서:** `frontend/public/manual/user-manual.md` 해당 조각. backend만 고쳐 동작이 달라질 때도 같다(세부는 `frontend/CLAUDE.md`).
+- **화면·동작·라벨을 바꾸면 사용 설명서의 글도 같은 커밋에서, 그림은 정식 업데이트 때(사용자 결정 2026-11-15):** `frontend/public/manual/user-manual.md` 해당 조각의 글은 바꿀 때마다 고친다(나중에 몰아서 검사하기 어렵다). backend만 고쳐 동작이 달라질 때도 같다. 화면 그림(`frontend/public/manual/img`)은 오래 걸리니 `dev`에 올리는 PATCH에서는 다시 뽑지 않고, `dev`→`main` 정식 업데이트(MINOR) 때 한 번에 뽑는다(세부는 `frontend/CLAUDE.md`).
 
 ## Operations / Deployment
 

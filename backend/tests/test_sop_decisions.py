@@ -434,6 +434,33 @@ def test_entrance_two_target_keeps_its_own_language(client: TestClient) -> None:
     assert (target["origin"], target["lang"], target["change_type"]) == ("new_doc", "ko", "translated")
 
 
+def test_a_written_file_does_not_attach_to_a_row_that_has_sentences(client: TestClient) -> None:
+    """배정으로 문장이 든 목록 줄에는 그 번호의 파일을 붙이지 않는다 — 붙이면 그 문장들의 자리가 없어진다."""
+    fx = _setup(client)
+    unit = find_unit(fx.view, STORAGE)
+    target = _target("t", fx.wi_id, [unit], wi_step=1, wi_part="instruction")
+    saved = save_group(client, fx.bundle_id, _body([_unit_in(unit)], [target]))
+    assert saved.status_code == 200, saved.text
+
+    response = upload(client, fx.bundle_id, build_docx(p("합성 새 문서의 문장이다.")), "SYNTHETIC_WI-01.docx", side="new")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"code": "doc_in_use", "doc_code": "WI-01"}
+
+
+def test_a_written_sentence_names_the_unit_it_came_from(client: TestClient) -> None:
+    """이미 쓴 새 문서의 문장은 그 문서 원문의 Unit을 가리킨다 — 화면이 그 문장을 원문 다듬기의 대상으로 고른다."""
+    fx = _setup(client)
+    text = "합성 로그북을 새로 둔다."
+
+    written = _upload_match_doc(client, fx, text)
+
+    documents = client.get(f"/api/bundles/{fx.bundle_id}/documents", headers=AUTHOR).json()
+    (new_doc,) = [doc for doc in documents if doc["side"] == "new"]
+    unit = find_unit(get_view(client, fx.bundle_id, new_doc["id"]), text)
+    assert written["new_unit_id"] == unit["id"]
+
+
 def test_target_remark_round_trips(client: TestClient) -> None:
     fx = _setup(client)
     unit = find_unit(fx.view, STORAGE)

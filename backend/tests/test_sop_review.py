@@ -24,7 +24,6 @@ from tests.sop_helpers import (
     OUTSIDER,
     REVIEWER,
     assign_as_is,
-    confirm_boundaries,
     create_bundle,
     find_unit,
     get_bundle,
@@ -98,7 +97,7 @@ def _list_events(client: TestClient, bundle_id: int) -> list[dict]:
 def _setup(
     client: TestClient, *, docs: list[dict] | None = None, na_slots: list[dict] | None = None, fill_versions: bool = True
 ) -> Fixture:
-    """멤버(작성자·검토자)와 To-Be, 옛 문서(한국어 둘·영어 하나)를 갖추고 경계도 모두 확인했지만 판단은 하나도 안 한 묶음(버전은 기본으로 채움)."""
+    """멤버(작성자·검토자)와 To-Be, 옛 문서(한국어 둘·영어 하나)를 갖췄지만 판단은 하나도 안 한 묶음(버전은 기본으로 채움)."""
     bundle_id = create_bundle(client, is_synthetic=True)["id"]
     assert set_members(client, bundle_id, WITH_REVIEWER).status_code == 200
     tobe = docs or [SOP_DOC]
@@ -110,7 +109,6 @@ def _setup(
     doc = uploaded.json()
     if fill_versions:
         set_doc_version(client, bundle_id, doc)
-    assert confirm_boundaries(client, bundle_id, doc["id"]) == 3
     fixture = Fixture(
         bundle_id, ids[tobe[0]["code"]], ids, doc["extraction"]["id"], get_view(client, bundle_id, doc["id"])
     )
@@ -207,17 +205,6 @@ def _drop_reviewer(client: TestClient, fx: Fixture) -> list[dict]:
     return [{"code": "no_reviewer"}]
 
 
-def _set_boundary(client: TestClient, fx: Fixture, unit_ids: list[int], confirmed: bool) -> None:
-    url = f"/api/bundles/{fx.bundle_id}/documents/{fx.view['document']['id']}/units/boundary"
-    response = client.post(url, json={"unit_ids": unit_ids, "confirmed": confirmed}, headers=AUTHOR)
-    assert response.status_code == 200, response.text
-
-
-def _uncheck_one_boundary(client: TestClient, fx: Fixture) -> list[dict]:
-    _set_boundary(client, fx, [_unit_id(fx, KO_2)], False)
-    return [{"code": "unchecked_boundaries", "count": 1, "document_ids": [fx.view["document"]["id"]]}]
-
-
 def _upload_rejected(client: TestClient, fx: Fixture) -> list[dict]:
     rejected = upload(client, fx.bundle_id, b"Synthetic notes", "SYNTHETIC notes.txt")
     assert rejected.status_code == 201 and rejected.json()["status"] == "rejected", rejected.text
@@ -226,8 +213,8 @@ def _upload_rejected(client: TestClient, fx: Fixture) -> list[dict]:
 
 @pytest.mark.parametrize(
     "spoil",
-    [_hold_one_unit, _add_unacked_warning, _uncheck_one_boundary, _uncheck_numbers, _drop_reviewer, _upload_rejected],
-    ids=["on_hold", "unacked_missing_text", "unchecked_boundary", "semantic_check", "no_reviewer", "rejected_document"],
+    [_hold_one_unit, _add_unacked_warning, _uncheck_numbers, _drop_reviewer, _upload_rejected],
+    ids=["on_hold", "unacked_missing_text", "semantic_check", "no_reviewer", "rejected_document"],
 )
 def test_blockers_cover_each_condition(client: TestClient, spoil: Callable[[TestClient, Fixture], list[dict]]) -> None:
     fx = _make_ready(client)
@@ -368,46 +355,6 @@ def test_table_restructured_needs_a_reason(client: TestClient) -> None:
     assert "missing_reason" not in {b["code"] for b in _get_readiness(client, fx.bundle_id)["blockers"]}
 
 
-def test_boundaries_count_only_text_units_of_every_document(client: TestClient) -> None:
-    """경계 확인은 글자 범위가 있는 단위(문장·제목·그림·칸 문장)만 센다 — 표·행 묶음 단위는 칸 문장이 대신한다."""
-    fx = _make_ready(client)
-    table_doc = upload(client, fx.bundle_id, build_docx(tbl([["항목", "Item"], ["합성 값", "Synthetic value"]])), "SYNTHETIC_TABLE.docx")
-    assert table_doc.status_code == 201, table_doc.text
-    doc_id = table_doc.json()["id"]
-    units = get_view(client, fx.bundle_id, doc_id)["units"]
-    cells = [unit["id"] for unit in units if unit["kind"] == "cell_sentence"]
-    assert len(cells) == 4 and len(units) > len(cells)
-
-    blocked = _get_readiness(client, fx.bundle_id)
-    _set_boundary(client, fx, [_unit_id(fx, KO_1)], False)
-    both = _get_readiness(client, fx.bundle_id)
-    url = f"/api/bundles/{fx.bundle_id}/documents/{doc_id}/units/boundary"
-    assert client.post(url, json={"unit_ids": cells, "confirmed": True}, headers=AUTHOR).status_code == 200
-    _set_boundary(client, fx, [_unit_id(fx, KO_1)], True)
-    cleared = _get_readiness(client, fx.bundle_id)
-
-    assert {"code": "unchecked_boundaries", "count": 4, "document_ids": [doc_id]} in blocked["blockers"]
-    assert {"code": "unchecked_boundaries", "count": 5, "document_ids": sorted([fx.view["document"]["id"], doc_id])} in both[
-        "blockers"
-    ]
-    assert "unchecked_boundaries" not in {blocker["code"] for blocker in cleared["blockers"]}
-
-
-def test_edited_units_need_their_boundaries_checked_again(client: TestClient) -> None:
-    fx = _setup(client)
-    doc_id = fx.view["document"]["id"]
-    unit = find_unit(fx.view, KO_2)
-    edit = {"revision": fx.view["document"]["revision"], "op": {"type": "split", "unit_id": unit["id"], "at": 3}}
-
-    split = client.post(f"/api/bundles/{fx.bundle_id}/documents/{doc_id}/edits", json=edit, headers=AUTHOR)
-
-    assert split.status_code == 200, split.text
-    assert {"code": "unchecked_boundaries", "count": 2, "document_ids": [doc_id]} in _get_readiness(client, fx.bundle_id)[
-        "blockers"
-    ]
-    assert get_bundle(client, fx.bundle_id)["next_action"] == "check_boundaries"
-
-
 def test_acking_the_warning_clears_the_blocker(client: TestClient) -> None:
     fx = _make_ready(client)
     warning_id = _add_warning(fx)
@@ -465,17 +412,17 @@ def test_whitespace_version_still_blocks_review(client: TestClient) -> None:
     assert "missing_doc_versions" in codes
 
 
-def test_next_action_puts_versions_after_documents_and_before_boundaries(client: TestClient) -> None:
+def test_next_action_puts_versions_after_documents(client: TestClient) -> None:
     bundle_id = create_bundle(client)["id"]
     assert set_members(client, bundle_id, WITH_REVIEWER).status_code == 200
     uploaded = upload(client, bundle_id, build_docx(p(KO_1) + p(EN_1)), OLD_NAME)
     assert uploaded.status_code == 201, uploaded.text
 
     readiness = _get_readiness(client, bundle_id)
-    assert readiness["next_action"] == "fill_doc_versions"  # 경계도 안 봤지만 버전이 먼저
+    assert readiness["next_action"] == "fill_doc_versions"
 
     set_doc_version(client, bundle_id, uploaded.json())
-    assert _get_readiness(client, bundle_id)["next_action"] == "check_boundaries"
+    assert _get_readiness(client, bundle_id)["next_action"] == "fill_tobe"
 
 
 # --- 알림 ---
@@ -800,8 +747,6 @@ def test_next_action_sequence(client: TestClient) -> None:
     assert uploaded.status_code == 201, uploaded.text
     assert get_bundle(client, bundle_id)["next_action"] == "fill_doc_versions"
     set_doc_version(client, bundle_id, uploaded.json())
-    assert get_bundle(client, bundle_id)["next_action"] == "check_boundaries"
-    assert confirm_boundaries(client, bundle_id, uploaded.json()["id"]) == 2
     assert get_bundle(client, bundle_id)["next_action"] == "fill_tobe"
 
     tobe = put_tobe(client, bundle_id, [SOP_DOC])
@@ -834,8 +779,6 @@ def test_next_action_follows_the_first_unmet_condition(client: TestClient) -> No
     assert get_bundle(client, fx.bundle_id)["next_action"] == "ack_warnings"
     update_row(UnitDecision, _unit_id(fx, EN_1), status="on_hold", hold_reason=HOLD_REASON)
     assert get_bundle(client, fx.bundle_id)["next_action"] == "decide_units"
-    _set_boundary(client, fx, [_unit_id(fx, KO_1)], False)
-    assert get_bundle(client, fx.bundle_id)["next_action"] == "check_boundaries"
     rejected = upload(client, fx.bundle_id, b"Synthetic notes", "SYNTHETIC notes.txt")
     assert rejected.json()["status"] == "rejected"
     assert get_bundle(client, fx.bundle_id)["next_action"] == "resolve_documents"
@@ -890,7 +833,7 @@ def test_readiness_does_not_read_document_text(client: TestClient) -> None:
     for column in ("units.text", "target_sentences.confirmed_text", "target_sentences.ai_text"):
         assert column in full_sql
         assert column not in bare_sql  # 글자 열은 DB에서 아예 읽지 않는다
-    options = {"semantic_checks": ALL_CHECKED, "unacked_missing_text": 0, "unchecked_boundaries": {}, "reviewer_count": 1}
+    options = {"semantic_checks": ALL_CHECKED, "unacked_missing_text": 0, "reviewer_count": 1}
     expected = [{"code": "units_on_hold", "count": 1}]
     assert evaluate_readiness(full, **options).blockers == expected
     assert evaluate_readiness(bare, **options) == evaluate_readiness(full, **options)

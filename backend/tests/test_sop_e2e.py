@@ -17,7 +17,14 @@ from app.settings import settings
 from app.sop.constants import COVER_KINDS
 from app.sop.coverage import find_coverage_problems
 from scripts.sop_demo_driver import SyntheticDriver, find_unit_by_text, iter_c_items
-from scripts.synthetic_sop import FIXED_ZIP_TIME, SyntheticBundle, build_synthetic_bundle
+from scripts.synthetic_sop import (
+    EXPECTED_FILE,
+    FILE_PREFIX,
+    FIXED_ZIP_TIME,
+    SAMPLES_DIR,
+    SyntheticBundle,
+    build_synthetic_bundle,
+)
 from tests.ai_fixtures import (
     clean_ai_jobs,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
     clean_embedding_cache,  # noqa: F401
@@ -116,6 +123,16 @@ def test_synthetic_bundle_is_byte_identical(synthetic: SyntheticBundle, tmp_path
         assert {info.date_time for info in archive.infolist()} == {FIXED_ZIP_TIME}
 
 
+def test_samples_match_generator(synthetic: SyntheticBundle) -> None:
+    samples = {path.name for path in SAMPLES_DIR.glob(f"{FILE_PREFIX}*")}
+
+    assert samples == {path.name for path in synthetic.directory.iterdir()} - {EXPECTED_FILE}
+    for name in samples:
+        assert (SAMPLES_DIR / name).read_bytes() == (synthetic.directory / name).read_bytes(), (
+            f"{name}: samples/ is stale — rerun `python -m scripts.synthetic_sop` in backend/"
+        )
+
+
 def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundle) -> None:
     assert settings.ai_enabled is False
     expected = synthetic.expected
@@ -149,8 +166,6 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
     }
     unmatched = set(old_cover) ^ set(addressed)
     assert sorted(addressed) == sorted(old_cover), [old_cover.get(unit_id, unit_id) for unit_id in unmatched]
-    # 쪼개기가 끝났으면 경계를 모두 확인한다(검토 요청 조건)
-    run.confirm_boundaries()
 
     # 4. 답 저장(누락 하나는 남긴다) — 입구 2는 같은 글자 후보로 한 번에 확정한 뒤 나머지를 관계 묶음으로
     run.save_answers(skip_omitted=True)
@@ -193,7 +208,7 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
     response = client.get(f"/api/bundles/{run.bundle_id}/export.xlsx", headers=AUTHOR)
     assert response.status_code == 200, response.text
     workbook = load_workbook(BytesIO(response.content))
-    assert workbook.sheetnames == ["A Comparison", "B Flow", "C New documents", "Info"]
+    assert workbook.sheetnames == ["A Comparison", "B Flow", "C New documents", "Info", "Documents"]
     cells = [cell for sheet in workbook for row in sheet.iter_rows() for cell in row]
     assert [cell.coordinate for cell in cells if cell.data_type == "f"] == []
     sheet_a = workbook["A Comparison"]  # 1행 상태, 2행 머리, 3행부터 데이터
@@ -242,7 +257,6 @@ def test_end_to_end_with_fake_ai(
 ) -> None:
     run = SyntheticDriver(client, synthetic, AUTHOR)
     run.start()
-    run.confirm_boundaries()
     answers = SyntheticAnswers(synthetic.expected)
     install_fake_ai(monkeypatch, chat=answers.chat, embed=answers.embed)
 
@@ -269,7 +283,6 @@ def test_ai_off_still_finishes_the_human_path(client: TestClient, synthetic: Syn
     assert settings.ai_enabled is False
     run = SyntheticDriver(client, synthetic, AUTHOR)
     run.start()
-    run.confirm_boundaries()
     document_id = run.uploads["OLD-1"]["id"]
     ai_requests = {
         "/ai/classify": {"document_id": document_id},

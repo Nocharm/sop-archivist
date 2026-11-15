@@ -11,6 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from app.equis.view import EquisOut
 from app.sop.constants import NUMBER_NOTE
 from app.sop.excel_export import ExportMeta, build_export_file_name, clean_cell_text, format_kst, split_cell_text
 from app.sop.flow_image import draw_flow_png
@@ -29,7 +30,7 @@ from app.sop.snapshot import BundleSnapshot
 
 RowKind = Literal["status", "header", "group_start", "in_group", "doc", "section", "plain"]
 
-SHEET_NAMES = ("A Comparison", "B Flow", "C New documents", "Info")
+SHEET_NAMES = ("A Comparison", "B Flow", "C New documents", "Info", "Documents")
 A_HEADERS = (
     "Row", "Old doc", "Ver.", "Location", "Unit ID", "Old text", "Destination", "New doc", "New doc title", "Place",
     "No.", "New text", "AI suggestion", "Change", "Remark", "Status", "Confirmed by", "Confirmed at", "Group ID",
@@ -52,6 +53,17 @@ C_COLUMN_WIDTHS = (34, 30, 12, 50, 40, 12, 14, 40, 14, 10, 30, 18, 30)
 B_COLUMN_WIDTHS = (34, 12)  # 이름·건수, 그 뒤로 보낸 곳마다 B_DEST_WIDTH
 B_DEST_WIDTH = 18
 INFO_COLUMN_WIDTHS = (24, 60)
+# 문서 목록 시트 — 묶음의 옛 문서와 새 문서, 그리고 그 번호의 EQUIS 값(꺼져 있거나 묻지 않는 번호면 EQUIS 칸은 빈다)
+DOC_HEADERS = (
+    "Side", "Doc no.", "Title", "Uploaded ver.", "EQUIS", "Current no.", "Current ver.", "Effective date", "Owning dept.",
+    "EQUIS link",
+)
+DOC_COLUMN_WIDTHS = (8, 20, 50, 14, 30, 20, 20, 14, 26, 50)
+# EQUIS 판정 이유의 시트 글 — 화면의 상태 글자와 같이 영어다
+_EQUIS_REASONS = {
+    "old_number": "Old number", "retired": "Retired", "version_mismatch": "Not the current version",
+    "newer_authorized": "Newer version authorized", "no_current": "No current version",
+}
 # 시트마다 미리보기 줄 상한(제품 명세 §7.14 시트 모델) — 파일에는 전체를 싣는다. 2026-11-13 극단 시드 W1(A 1,558줄·C 2,304줄)에서 잰 값:
 # 500이면 응답 3.6MB(그중 B 흐름도 PNG 1.6MB는 상한과 무관)·서버 0.8초·창을 눌러 시트가 보일 때까지 1.9초.
 # 상한이 없으면 약 8.3MB, 300이면 2.9MB — 500줄이면 모양 확인에 넉넉하고 크기도 받을 만해 그대로 둔다
@@ -389,12 +401,67 @@ def _build_info_sheet(snap: BundleSnapshot, meta: ExportMeta) -> Sheet:
     return _make_sheet(SHEET_NAMES[3], INFO_COLUMN_WIDTHS, rows)
 
 
+# --- Documents ---
+
+
+def build_equis_key(side: Literal["old", "new"], row_id: int) -> str:
+    """문서 목록 시트가 EQUIS 값을 찾는 열쇠 — 옛 문서는 문서 id, 새 문서는 To-Be 줄 id."""
+    return f"{side}:{row_id}"
+
+
+def _describe_equis(equis: EquisOut | None) -> str:
+    """EQUIS 칸의 한 줄 — 화면의 표시와 같은 뜻을 글로만 적는다."""
+    if equis is None:
+        return ""
+    if equis.state == "pending":
+        return "Looking up"
+    if equis.state == "not_found":
+        return "Not in EQUIS"
+    if equis.verdict is None:
+        return "Lookup failed"
+    if equis.verdict == "attention":
+        return "Check: " + ", ".join(_EQUIS_REASONS.get(reason, reason) for reason in equis.reasons)
+    return "Current" if equis.verdict == "ok" else "In EQUIS"
+
+
+def _list_equis_texts(equis: EquisOut | None) -> list[str]:
+    """EQUIS 여섯 칸 — 표시·지금 번호·지금 판·시행일·소유 부서·링크. 받은 값이 없으면 표시만 채운다."""
+    label = _describe_equis(equis)
+    if equis is None or equis.verdict is None:
+        return [label, "", "", "", "", ""]
+    current = equis.current
+    version = f"{current.version} {current.status}".strip() if current else ""
+    return [
+        label, equis.number, version, current.effective_date if current else "", equis.owning_department,
+        equis.doc_url or "",
+    ]
+
+
+def _build_documents_sheet(snap: BundleSnapshot, equis: Mapping[str, EquisOut]) -> Sheet:
+    """묶음의 문서 목록 — 옛 문서(올린 순서)와 새 문서(To-Be 순서). 새 문서는 올린 판이 없다."""
+    rows = [_build_status_row(snap, len(DOC_HEADERS)), _make_row("header", DOC_HEADERS)]
+    old_docs = sorted((doc for doc in snap.documents.values() if doc.side == "old"), key=lambda doc: doc.order)
+    for doc in old_docs:
+        texts = ["Old", doc.doc_code, doc.title, doc.doc_version, *_list_equis_texts(equis.get(build_equis_key("old", doc.id)))]
+        rows.append(_make_row("plain", texts))
+    for target in sorted(snap.target_docs.values(), key=lambda item: (item.order_index, item.id)):
+        texts = ["New", target.code, target.title, "", *_list_equis_texts(equis.get(build_equis_key("new", target.id)))]
+        rows.append(_make_row("plain", texts))
+    return _make_sheet(SHEET_NAMES[4], DOC_COLUMN_WIDTHS, rows, freeze="A3")
+
+
 # --- 통합 문서 ---
 
 
-def build_workbook_model(snap: BundleSnapshot, meta: ExportMeta, people: Mapping[str, str]) -> WorkbookModel:
-    """Excel 네 시트의 모델과 파일 이름 — 순수 계산이라 이벤트 루프 밖 스레드에서 부른다. people(로그인 ID → 이름)은 Confirmed by용."""
-    sheets = [_build_a_sheet(snap, people), _build_b_sheet(snap), _build_c_sheet(snap), _build_info_sheet(snap, meta)]
+def build_workbook_model(
+    snap: BundleSnapshot, meta: ExportMeta, people: Mapping[str, str], equis: Mapping[str, EquisOut] | None = None
+) -> WorkbookModel:
+    """Excel 다섯 시트의 모델과 파일 이름 — 순수 계산이라 이벤트 루프 밖 스레드에서 부른다. people(로그인 ID → 이름)은 Confirmed by용,
+    equis(`build_equis_key` → 그 문서의 EQUIS 값)는 문서 목록 시트용이다."""
+    sheets = [
+        _build_a_sheet(snap, people), _build_b_sheet(snap), _build_c_sheet(snap), _build_info_sheet(snap, meta),
+        _build_documents_sheet(snap, equis or {}),
+    ]
     file_name = build_export_file_name(snap.bundle.id, snap.bundle.title, meta.exported_at)
     return WorkbookModel(file_name=file_name, sheets=sheets)
 
