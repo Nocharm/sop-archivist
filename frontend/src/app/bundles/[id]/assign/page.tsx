@@ -612,6 +612,8 @@ export default function AssignPage() {
   }, [barEl]);
   const firstTextRef = useRef<HTMLTextAreaElement>(null);
   const [busy, setBusy] = useState(false);
+  // 배정이 걸린 문장을 자르거나 합치려 할 때 - 서버가 409 confirm_required로 물으면 확인을 받아 배정을 풀며 다시 보낸다(원문 고치기와 같은 규칙, 설계 2026-11-15 §3.5)
+  const [editConfirm, setEditConfirm] = useState<{ count: number; run: () => Promise<void> } | null>(null);
   // 되돌리기 기록은 이 화면을 연 동안만 - 세션 키가 서버 기록을 가른다(설계 docs/superpowers/specs/2026-11-13-assign-undo-design.md)
   const undoSession = useRef(genId());
   const [undoState, setUndoState] = useState({ canUndo: false, canRedo: false });
@@ -727,10 +729,10 @@ export default function AssignPage() {
       tableRows: ctxTable?.kind === "table_row" ? [...paperModel.units.values()].filter((unit) => unit.kind === "table_row" && unit.table_id === ctxTable.table_id) : [],
     });
   })();
-  // 고른 줄의 문장에 걸린 AI 나누기 제안 - 배정이 있거나 저장 전 고름이 있으면 다른 문장 고치기처럼 적용을 잠근다
+  // 고른 줄의 문장에 걸린 AI 나누기 제안 - 저장 전 고름이 있으면 다른 문장 고치기처럼 적용을 잠근다(배정이 있으면 적용할 때 묻는다)
   const rowSplitUnit: ViewUnit | null = (row?.unitIds ?? []).map((id) => paperModel?.units.get(id)).find((unit): unit is ViewUnit => unit !== undefined && splitByUnit.has(unit.id)) ?? null;
   const rowSplit = rowSplitUnit ? (splitByUnit.get(rowSplitUnit.id) ?? null) : null;
-  const splitBlocked = rowSplitUnit === null ? null : isUnitDecided(rowSplitUnit) ? t("assign.ctx.why.assigned") : hasUnitDraft(rowSplitUnit) ? t("assign.ctx.why.unsaved") : null;
+  const splitBlocked = rowSplitUnit !== null && hasUnitDraft(rowSplitUnit) ? t("assign.ctx.why.unsaved") : null;
   // 고른 줄의 참조 줄(REF) - 확인이 남은 제안이 먼저다. 제안이 남은 줄은 번호를 확인하거나 물려야 Confirm이 켜진다(이미 확정한 줄은 막지 않는다)
   const rowViewUnits = (row?.unitIds ?? []).map((id) => paperModel?.units.get(id)).filter((unit): unit is ViewUnit => unit !== undefined);
   const rowRefUnit = pickRefUnit(rowViewUnits) ?? rowViewUnits.find((unit) => unit.id === refEntryId) ?? null;
@@ -763,14 +765,20 @@ export default function AssignPage() {
     setCtxMenu({ seq: menuSeq.current, unitId, rowKey: key, anchor, click, caret });
   }
 
-  /** 편집 한 번 - 끝나면 원문 보기·단위를 다시 받고 followId(없으면 새로 생긴 첫 단위)의 줄을 고른다 */
-  async function runUnitEdit(op: EditOp, okText: string, followId: number | null) {
+  /** 서버가 "판단이 걸린 단위를 바꾼다"고 물었으면 그 단위 수 - 다른 오류면 null */
+  function readConfirmCount(err: unknown): number | null {
+    const unitIds = err instanceof ApiError && err.rule?.code === "confirm_required" ? err.rule.unit_ids : null;
+    return Array.isArray(unitIds) ? unitIds.length : null;
+  }
+
+  /** 편집 한 번 - 끝나면 원문 보기·단위를 다시 받고 followId(없으면 새로 생긴 첫 단위)의 줄을 고른다. confirm은 확인 창에서 다시 보낼 때만 켠다 */
+  async function runUnitEdit(op: EditOp, okText: string, followId: number | null, confirm = false) {
     if (!oldView || busy) return;
     setBusy(true);
     try {
       // 자르기·합치기·언어 바꾸기 모두 Assign 기록에 넣는다(설계 §4.4) - 서버는 Split 편집 기록 번호만 가리킨다
       const undo = buildUndo({ focus_unit_id: op.type === "split" ? op.unit_id : (followId ?? undefined) });
-      const result = await editUnits(bundleId, oldView.document.id, oldView.document.revision, op, false, undo);
+      const result = await editUnits(bundleId, oldView.document.id, oldView.document.revision, op, confirm, undo);
       // 문서가 바뀌지 않은 편집(참조 제안 물리기)은 서버도 단계를 남기지 않는다
       if (result.document_revision !== oldView.document.revision) markRecorded();
       setRefEntryId(null);
@@ -782,9 +790,10 @@ export default function AssignPage() {
       const next = result.created_unit_ids[0] ?? followId;
       if (next !== null && next !== undefined) setFollow({ unitId: next, staleViews: viewList, staleUnits: units.data });
     } catch (err) {
-      // 판단이 걸린 단위(다른 문장의 출처 등)는 Split처럼 확인하고 떼어 내지 않는다 - 배정 화면에서는 먼저 배정을 취소하게 한다
-      const isLinked = err instanceof ApiError && err.rule?.code === "confirm_required";
-      showToast(isLinked ? t("assign.ctx.why.assigned") : humanizeApiError(err, t), "error");
+      // 판단이 걸린 단위를 바꾸는 편집은 한 번 묻는다 - 확인하면 배정을 풀며 다시 보낸다
+      const count = readConfirmCount(err);
+      if (count !== null && !confirm) setEditConfirm({ count, run: () => runUnitEdit(op, okText, followId, true) });
+      else showToast(humanizeApiError(err, t), "error");
     } finally {
       views.reload();
       setUnitsKey((key) => key + 1);
@@ -815,14 +824,14 @@ export default function AssignPage() {
   }
 
   /** AI 나누기 제안 적용 - 뒤쪽 위치부터 자르면 앞 조각의 위치가 바뀌지 않는다. 자를 때마다 되돌리기 기록에 한 단계씩 남는다 */
-  async function applySplitSuggestion(unit: ViewUnit, suggestion: AiSuggestion) {
+  async function applySplitSuggestion(unit: ViewUnit, suggestion: AiSuggestion, confirm = false) {
     if (!oldView || busy) return;
     setBusy(true);
     try {
       let unitId = unit.id;
       let revision = oldView.document.revision;
       for (const at of readSplitOffsets(suggestion.content.offsets).sort((a, b) => b - a)) {
-        const result = await editUnits(bundleId, oldView.document.id, revision, { type: "split", unit_id: unitId, at }, false, buildUndo({ focus_unit_id: unitId }));
+        const result = await editUnits(bundleId, oldView.document.id, revision, { type: "split", unit_id: unitId, at }, confirm, buildUndo({ focus_unit_id: unitId }));
         revision = result.document_revision;
         unitId = result.created_unit_ids[0] ?? unitId;
       }
@@ -834,8 +843,10 @@ export default function AssignPage() {
       showToast(t("split.didSplit"));
       setFollow({ unitId, staleViews: viewList, staleUnits: units.data });
     } catch (err) {
-      const isLinked = err instanceof ApiError && err.rule?.code === "confirm_required";
-      showToast(isLinked ? t("assign.ctx.why.assigned") : humanizeApiError(err, t), "error");
+      // 첫 자르기에서 묻는다(배정이 걸린 것은 자르기 전의 그 문장이다) - 확인하면 처음부터 다시 자른다
+      const count = readConfirmCount(err);
+      if (count !== null && !confirm) setEditConfirm({ count, run: () => applySplitSuggestion(unit, suggestion, true) });
+      else showToast(humanizeApiError(err, t), "error");
     } finally {
       views.reload();
       setUnitsKey((key) => key + 1);
@@ -884,7 +895,7 @@ export default function AssignPage() {
   /** 두 번 누른 자리에 나눌 선 - 메뉴의 "Split here"를 쓸 수 있는 문장만 */
   function handleOldDoubleClick(unitId: number, caret: { blockId: number; offset: number } | null) {
     const unit = paperModel?.units.get(unitId);
-    if (!unit || !canEdit || mode !== "old" || isUnitDecided(unit) || hasUnitDraft(unit) || !["sentence", "heading", "cell_sentence"].includes(unit.kind)) return;
+    if (!unit || !canEdit || mode !== "old" || hasUnitDraft(unit) || !["sentence", "heading", "cell_sentence"].includes(unit.kind)) return;
     if (cutLine.placeAtCaret(unit, caret)) setCutUnitId(unit.id);
   }
 
@@ -2638,6 +2649,21 @@ export default function AssignPage() {
           testId="assign-identical-modal"
           onConfirm={() => void confirmIdenticalAll()}
           onClose={() => setConfirmingIdentical(false)}
+        />
+      )}
+      {editConfirm && (
+        <ConfirmModal
+          title={t("split.confirmTitle")}
+          summary={t("split.confirmBody", { n: editConfirm.count })}
+          confirmLabel={t("split.confirmRun")}
+          busy={busy}
+          testId="assign-edit-confirm"
+          onConfirm={() => {
+            const { run } = editConfirm;
+            setEditConfirm(null);
+            void run();
+          }}
+          onClose={() => setEditConfirm(null)}
         />
       )}
       {resetScope && bundle && (

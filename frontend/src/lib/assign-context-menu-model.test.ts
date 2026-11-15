@@ -74,9 +74,12 @@ describe("buildAssignMenu", () => {
     expect(find(ctx({ isDecided: () => true }), "clear").enabled).toBe(true);
   });
 
-  it("blocks edits on an assigned sentence and asks to cancel the assignment first", () => {
+  it("lets an assigned sentence be cut or merged (the screen asks before clearing the assignment) but not change language", () => {
     const context = ctx({ rowStatus: "confirmed", isDecided: (unit) => unit.id === 2 });
-    for (const action of ["split", "merge_prev", "merge_next", "lang"] as const) expect(find(context, action).reasonKey).toBe("assign.ctx.why.assigned");
+    // 자르기·합치기는 그 문장을 새 문장으로 바꾼다 - 서버가 한 번 묻고 배정을 풀어 준다
+    for (const action of ["split", "merge_prev", "merge_next"] as const) expect(find(context, action).enabled).toBe(true);
+    // 언어는 제자리에서 바뀌어 사람의 판단과 어긋난다 - 서버가 묻지 않고 거절한다
+    expect(find(context, "lang").reasonKey).toBe("assign.ctx.why.assigned");
   });
 
   it("blocks edits while the row has an unsaved choice", () => {
@@ -85,7 +88,8 @@ describe("buildAssignMenu", () => {
 
   it("explains a blocked merge by the neighbour", () => {
     expect(find(ctx({ prev: null }), "merge_prev").reasonKey).toBe("assign.ctx.why.noNeighbor");
-    expect(find(ctx({ isDecided: (unit) => unit.id === 3 }), "merge_next").reasonKey).toBe("assign.ctx.why.neighborAssigned");
+    // 배정된 이웃과도 합친다(묻고 배정을 푼다) - 저장하지 않은 고름이 있는 이웃은 그대로 막는다
+    expect(find(ctx({ isDecided: (unit) => unit.id === 3 }), "merge_next").enabled).toBe(true);
     expect(find(ctx({ hasDraft: (unit) => unit.id === 1 }), "merge_prev").reasonKey).toBe("assign.ctx.why.neighborUnsaved");
     expect(find(ctx({ next: makeUnit(3, { kind: "table" }) }), "merge_next").reasonKey).toBe("assign.ctx.why.neighborNotText");
     // 언어가 다르면 합치기가 아니라 짝이다 - 짝은 Split에서 맺는다
@@ -170,8 +174,8 @@ describe("table rows from the Assign menu", () => {
     expect(buildAssignMenu(ctx({ target: cell, table })).edit.map((item) => item.action)).toEqual(["split", "merge_prev", "merge_next", "pair_pick", "lang", "ref_mark", "table_rows", "table_layout"]);
   });
 
-  it("locks them while the table is assigned, has an unsaved pick, or the bundle is read-only", () => {
-    expect(find(ctx({ target: table, table, isDecided: (unit) => unit.id === 10 }), "table_rows").reasonKey).toBe("assign.ctx.why.assigned");
+  it("locks them while the table has an unsaved pick or the bundle is read-only, not because it is assigned", () => {
+    expect(find(ctx({ target: table, table, isDecided: (unit) => unit.id === 10 }), "table_rows").enabled).toBe(true);
     expect(find(ctx({ target: row, table: row, hasDraft: (unit) => unit.id === 11 }), "table_merge").reasonKey).toBe("assign.ctx.why.unsaved");
     expect(find(ctx({ target: table, table, readOnly: true }), "table_layout").reasonKey).toBe("assign.ctx.why.readOnly");
   });
