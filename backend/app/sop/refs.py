@@ -47,6 +47,33 @@ def read_number_in_text(text: str, number: str) -> str | None:
     return normalized
 
 
+# 번호와 이름 사이를 잇는 글자(빈칸·쉼표·줄표·쌍점) — 원문의 것을 그대로 쓴다
+_SEPARATOR = re.compile(r"[\s,:;–—-]*")
+# 줄 끝에 남겨 둘 마침 부호
+_TAIL = re.compile(r"[.;,]?\s*$")
+
+
+def build_ref_text(text: str, number: str, current_number: str, name: str) -> str | None:
+    """참조 줄의 글을 EQUIS의 지금 번호와 정식 이름으로 맞춘 글 — 새 문장에 쓸 제안. 이미 같으면 None.
+
+    줄이 번호로 시작하면 번호 뒤를 이름으로 갈아 끼운다(줄 앞의 글머리 기호·항목 번호와 끝의 마침 부호는 둔다). 번호가 문장
+    가운데에 있으면 문장을 건드리지 않고 번호만 지금 번호로 바꾼다 — 그 뒤의 글은 문서 이름이 아니다.
+    """
+    at = text.upper().find(number)
+    if at < 0 or not current_number:
+        return None
+    head, rest = text[:at], text[at + len(number) :]
+    is_leading = find_leading_number(text) is not None and normalize_number(find_leading_number(text) or "") == number
+    if not is_leading or not name or not rest.strip():
+        suggestion = f"{head}{current_number}{rest}"
+    else:
+        separator = _SEPARATOR.match(rest)
+        tail = _TAIL.search(rest)
+        joiner = separator.group(0) if separator and separator.group(0) else " "
+        suggestion = f"{head}{current_number}{joiner}{name}{tail.group(0).rstrip() if tail else ''}"
+    return None if suggestion == text else suggestion
+
+
 def read_ref_state(unit: Unit, mark: UnitRef | None) -> RefState | None:
     """단위의 참조 상태 — REF로 확정됐는지, 앱이 제안하는지, 아무것도 아닌지.
 

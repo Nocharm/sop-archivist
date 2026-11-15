@@ -6,7 +6,7 @@
 import { BookMarked, Check, Circle, CircleCheck, CircleDashed, CirclePause, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, Redo2, RefreshCw, Scissors, Sparkles, SquarePlus, Trash2, TriangleAlert, Undo2, WandSparkles, X, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent } from "react";
+import { Fragment, useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 
 import { AssignContextMenu } from "@/components/assign/assign-context-menu";
 import { AssignHelp } from "@/components/assign/assign-help";
@@ -61,6 +61,7 @@ import {
   getComposedDoc,
   getDocumentView,
   getGroupByTarget,
+  getUnitRef,
   getGroupByUnit,
   getToBe,
   listAllUnits,
@@ -85,6 +86,7 @@ import {
   type NewCandidate,
   type ToBe,
   type UndoMeta,
+  type UnitRefDetail,
   type UnitRow,
   type ViewUnit,
   type WrittenSentence,
@@ -158,7 +160,8 @@ import { EDIT_ORIGINAL_PARAM, getEditOriginalHref, getNewDocumentsHref, getStage
 import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useCutLine } from "@/lib/use-cut-line";
-import { isRefPending, pickRefUnit } from "@/lib/ref-model";
+import { isRefPending, pickRefUnit, readRefAdvice } from "@/lib/ref-model";
+import { useEquisPolling } from "@/lib/use-equis-polling";
 import { useLoaded } from "@/lib/use-loaded";
 import { usePaneZoom, type PaneKey, type ZoomDir } from "@/lib/use-pane-zoom";
 import { Select, type SelectOption } from "@/components/ui/select";
@@ -731,6 +734,15 @@ export default function AssignPage() {
   const refBlocked = rowRefUnit !== null && isUnitDecided(rowRefUnit) ? t("assign.ctx.why.assigned") : null;
   const isRefGate = row !== null && row.status !== "confirmed" && rowViewUnits.some(isRefPending);
   const refPendingIds = (paperTabs?.order ?? []).filter((id) => isRefPending(paperModel?.units.get(id)) && rowOfUnit.has(id));
+  // 그 줄의 번호에 대한 EQUIS 표시와 새 문장에 쓸 제안 - 참조 카드와 결정 칸의 새 문장이 같은 답을 쓴다. 조회가 도는 동안은 조금 뒤 다시 읽는다
+  const rowRefMark = rowRefUnit?.ref ?? null;
+  const refDetail = useLoaded<UnitRefDetail | null>(
+    () => (rowRefUnit !== null && rowRefMark !== null && oldDocId !== null ? getUnitRef(bundleId, oldDocId, rowRefUnit.id) : Promise.resolve(null)),
+    `${oldDocId}:${rowRefUnit?.id ?? ""}:${rowRefMark?.state ?? ""}:${rowRefMark?.number ?? ""}`,
+  );
+  // 앞서 고른 줄의 답이 남아 있을 수 있다 - 이 줄의 이 번호에 대한 답만 쓴다
+  const refInfo = !refDetail.isLoading && rowRefMark !== null && refDetail.data?.number === rowRefMark.number ? refDetail.data : null;
+  useEquisPolling(refInfo?.equis?.refreshing === true, refDetail.reload);
   // 메뉴를 연 뒤 편집으로 그 문장이 사라졌으면 닫는다(렌더 중 상태 맞추기)
   if (ctxMenu !== null && paperModel !== null && ctxTarget === null) setCtxMenu(null);
 
@@ -1653,6 +1665,27 @@ export default function AssignPage() {
     },
   ];
 
+  /** 참조 줄의 새 문장이 EQUIS의 지금 번호·정식 이름과 다르면 작은 주의와 맞춘 글 - 누르면 그 글로 바꾼다(저장은 Confirm) */
+  function renderRefAdvice(slotKey: string, lang: ViewUnit["lang"], sourceIds: readonly number[], text: string): ReactNode {
+    if (lang !== "ref" || rowRefUnit === null || !sourceIds.includes(rowRefUnit.id)) return null;
+    const advice = readRefAdvice(text, rowRefUnit.text, refInfo);
+    if (advice === null) return null;
+    return (
+      <div className="ref-advice" data-testid={`assign-ref-advice-${slotKey}`}>
+        <TriangleAlert size={12} strokeWidth={1.75} className="mt-0.5 flex-none" aria-hidden />
+        <span className="min-w-0 flex-1">
+          <span className="font-semibold">{t(advice.issue === "number" ? "assign.ref.adviceNumber" : "assign.ref.adviceTitle")}</span>
+          <span className="block break-words text-ink-2">{advice.text}</span>
+        </span>
+        {canEdit && (
+          <button type="button" className="btn ghost h-6 flex-none px-1.5 text-xs" data-testid={`assign-ref-advice-use-${slotKey}`} onClick={() => setDraft({ texts: { ...draft.texts, [slotKey]: advice.text }, changeTypes: { ...draft.changeTypes, [slotKey]: "rewritten" } })}>
+            {t("assign.ref.useEquis")}
+          </button>
+        )}
+      </div>
+    );
+  }
+
   const newSentences = (
     <div className="grid gap-2" data-testid="assign-new-sentences">
       {rowUnits.some((unit) => unit.kind === "table" || unit.kind === "table_row" || unit.kind === "figure") ? (
@@ -1678,22 +1711,26 @@ export default function AssignPage() {
               onChange={(next) => setDraft({ changeTypes: { ...draft.changeTypes, [slot.key]: next } })}
             />
           );
+          const refAdvice = renderRefAdvice(slot.key, slot.lang, slot.sourceIds, text);
           // 읽기 보기는 문장마다 한 줄(언어 · 글 · 끝에 변경 종류) - 결정 칸을 낮게 두어 위 목록이 늘 보이게. 전체 글은 올리면 툴팁, 고치기는 Edit and confirm
           if (!editing) {
             return (
-              <div key={slot.key} className="chosen-line">
-                <LangToken lang={slot.lang} />
-                <span className="min-w-0 flex-1 text-[13px] leading-5 text-ink" style={{ fontFamily: slot.lang === "en" ? "var(--font-source-en)" : "var(--font-source)" }}>
-                  <Truncate text={text || "_"} lang={slot.lang === "neutral" ? undefined : slot.lang} testId={`assign-text-${slot.key}`} />
-                </span>
-                {structural ? (
-                  <span className="flex-none text-xs text-ink-2" data-testid={`assign-slot-kind-${slot.key}`}>
-                    {t(`change.${structural}`)}
+              <Fragment key={slot.key}>
+                <div className="chosen-line">
+                  <LangToken lang={slot.lang} />
+                  <span className="min-w-0 flex-1 text-[13px] leading-5 text-ink" style={{ fontFamily: slot.lang === "en" ? "var(--font-source-en)" : "var(--font-source)" }}>
+                    <Truncate text={text || "_"} lang={slot.lang === "neutral" ? undefined : slot.lang} testId={`assign-text-${slot.key}`} />
                   </span>
-                ) : (
-                  changed && <span className="flex-none">{changeSelect}</span>
-                )}
-              </div>
+                  {structural ? (
+                    <span className="flex-none text-xs text-ink-2" data-testid={`assign-slot-kind-${slot.key}`}>
+                      {t(`change.${structural}`)}
+                    </span>
+                  ) : (
+                    changed && <span className="flex-none">{changeSelect}</span>
+                  )}
+                </div>
+                {refAdvice}
+              </Fragment>
             );
           }
           return (
@@ -1724,6 +1761,7 @@ export default function AssignPage() {
                   )}
                 </span>
               )}
+              {refAdvice}
             </div>
           );
         })
@@ -2068,9 +2106,9 @@ export default function AssignPage() {
           {rowRefUnit && oldView && (
             <RefCard
               key={`${rowRefUnit.id}:${rowRefUnit.ref?.state ?? "new"}:${rowRefUnit.ref?.number ?? ""}`}
-              bundleId={bundleId}
-              docId={oldView.document.id}
               unit={rowRefUnit}
+              equis={refInfo?.equis ?? null}
+              onReloadEquis={refDetail.reload}
               canEdit={canEdit}
               busy={busy}
               blockedReason={refBlocked}

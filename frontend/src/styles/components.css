@@ -1239,6 +1239,8 @@
   /* 참조 줄 카드(배정 오른쪽 칸) - 제안은 점선, 확정은 실선 */
   .ref-card { border-color: var(--lang-ref-line); background: var(--lang-ref-bg); }
   .ref-card[data-state="proposed"], .ref-card[data-state="new"] { border-style: dashed; }
+  /* 참조 줄 새 문장의 작은 주의(결정 칸) - EQUIS의 지금 번호·이름과 다를 때만 */
+  .ref-advice { display: flex; align-items: flex-start; gap: 6px; min-width: 0; font-size: var(--fs-cap); line-height: 16px; color: var(--warn-ink); }
   /* 아이콘 표시는 포인터·키보드 포커스로 툴팁을 띄운다(delegated-tip) */
   .pmark-host { display: inline-grid; place-items: center; border-radius: 3px; }
   .pmark-host:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
