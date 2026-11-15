@@ -42,6 +42,7 @@ function makeRequest(id: string, counts: Partial<AiJobCounts>, extra: Partial<Re
     kind: "classify",
     kinds: ["classify"],
     requested_by_me: true,
+    background: false,
     total,
     jobs,
     error_counts: {},

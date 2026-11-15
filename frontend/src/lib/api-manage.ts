@@ -94,6 +94,12 @@ export function requestAi(bundleId: number, kind: AiKind, body: AiScope & { dire
   return apiFetch<AiRequestOut>(`/bundles/${bundleId}/ai/${kind}`, { method: "POST", body: JSON.stringify(body) });
 }
 
+/** 배정 화면 첫 진입 - 남은 줄을 미리 분류하는 작업을 쌓는다(서버가 되풀이를 막는다). queued는 쌓은 분류 작업 수 */
+export function prepareAi(bundleId: number, documentId?: number): Promise<AiRequestOut> {
+  const body = documentId === undefined ? {} : { document_id: documentId };
+  return apiFetch<AiRequestOut>(`/bundles/${bundleId}/ai/prepare`, { method: "POST", body: JSON.stringify(body) });
+}
+
 export function cancelAi(bundleId: number, kind?: AiJobKind): Promise<{ cancelled: number }> {
   return apiFetch(`/bundles/${bundleId}/ai/cancel`, { method: "POST", body: JSON.stringify(kind ? { kind } : {}) });
 }

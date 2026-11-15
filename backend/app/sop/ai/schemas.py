@@ -122,6 +122,7 @@ class RecentRequestOut(BaseModel):
     kind: str  # 요청의 첫 작업 종류(짝 맞추기는 match_plan — 뒤에 쌓이는 match 작업도 이 요청으로 센다)
     kinds: list[str]  # 이 요청에 든 작업 종류 전부(정렬)
     requested_by_me: bool
+    background: bool  # 미리 돌리기 작업이 하나라도 있으면 참 — 순위를 올린 뒤에도 그대로다(상단 바 "Background" 표시)
     total: int
     jobs: AiJobCounts
     error_counts: dict[str, int]  # 실패 코드 → 건수(failed만)

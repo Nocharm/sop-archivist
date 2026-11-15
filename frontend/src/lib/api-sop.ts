@@ -159,6 +159,8 @@ export interface RecentAiRequest {
   kind: AiJobKind;
   kinds: AiJobKind[];
   requested_by_me: boolean;
+  /** 미리 돌리기 작업이 하나라도 있으면 참 - 순위를 올린 뒤에도 그대로다 */
+  background: boolean;
   total: number;
   jobs: AiJobCounts;
   /** 실패 코드별 건수(failed만) */

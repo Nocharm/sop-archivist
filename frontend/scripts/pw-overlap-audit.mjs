@@ -1,5 +1,5 @@
 // 겹침 감사(Playwright + 시스템 Chrome) - 호버로 펼치거나 떠서 보이는 UI가 옆 글자·입력을 덮는지 잰다.
-// 모핑 단추(.mbtn — 라벨 폭은 px로 손으로 맞춘 값이라 번역이 길어지면 조용히 겹친다)·C 줄 끝 단추·Assign 그 자리 메뉴·상단 바 AI 작업 목록과 알림.
+// 모핑 단추(.mbtn — 라벨 폭은 px로 손으로 맞춘 값이라 번역이 길어지면 조용히 겹친다)·C 줄 끝 단추·Assign 그 자리 메뉴·상단 바 AI 작업 목록과 알림(요청 줄의 Background 표시 포함).
 // 전제: reset_db → seed_sop_demo 직후 backend 8777(DEV_ENFORCE_PERMISSIONS=true) + frontend 3777. DB를 바꾸지 않는다
 // (AI 목록과 알림은 /api/ai/jobs/recent 응답을 브라우저 안에서 바꿔 그린다).
 // 실행(frontend/ 에서): node scripts/pw-overlap-audit.mjs — 겹침이 하나라도 있으면 종료 코드 1, 그 화면은 ../.shots/overlap-*.png
@@ -252,25 +252,44 @@ const aiJobsScene = {
   user: "qa.member",
   run: async (page, report) => {
     let isFinished = false;
-    const makeRequest = (id, kind, counts, finishedAt, now) => ({
+    // 미리 돌리기 요청(Background 표시)은 문서 이름 옆에 붙는다 - LONG이면 긴 문서 이름과 다른 멤버의 끝난 한 줄 요청(가장 좁은 줄)도 그린다
+    const documentTitle = LONG ? "SYNTHETIC very long Old document title that keeps going past the row width" : "";
+    const makeRequest = (id, kind, counts, finishedAt, now, extra = {}) => ({
       request_id: id, bundle_id: BUNDLE, bundle_code: `BND-${String(BUNDLE).padStart(4, "0")}`, bundle_title: "SYNTHETIC overlap audit bundle with a long title",
-      kind, kinds: [kind], requested_by_me: true, total: 3,
+      kind, kinds: [kind], requested_by_me: true, background: false, total: 3,
       jobs: { queued: 0, running: 0, done: 0, failed: 0, stale: 0, cancelled: 0, ...counts },
       error_counts: counts.failed ? { timeout: counts.failed } : {}, created_at: now, started_at: now,
       running_started_at: counts.running ? now : null, finished_at: finishedAt, document_id: null, document_title: "", document_file_name: "",
+      ...extra,
     });
+    const background = { background: true, document_id: documentTitle ? 1 : null, document_title: documentTitle };
     await page.route("**/api/ai/jobs/recent", async (route) => {
       const now = new Date().toISOString();
       const requests = isFinished
-        ? [makeRequest("audit-a", "classify", { done: 1, failed: 2 }, now, now), makeRequest("audit-b", "translate", { done: 1, cancelled: 2 }, now, now)]
-        : [makeRequest("audit-a", "classify", { running: 3 }, null, now), makeRequest("audit-b", "translate", { queued: 3 }, null, now)];
+        ? [makeRequest("audit-a", "classify", { done: 1, failed: 2 }, now, now, background), makeRequest("audit-b", "translate", { done: 1, cancelled: 2 }, now, now)]
+        : [makeRequest("audit-a", "classify", { running: 3 }, null, now, background), makeRequest("audit-b", "translate", { queued: 3 }, null, now)];
+      if (LONG) requests.push(makeRequest("audit-c", "classify", { done: 3 }, now, now, { ...background, requested_by_me: false }));
       await route.fulfill({ json: { server_time: now, requests, requests_total: requests.length } });
     });
+    // Background 표시가 옆 글(종류·문서 이름·진행 수 등)을 덮거나 제 글이 잘리지 않는다
+    const auditBackgroundMarks = async (when) => {
+      const marks = await page.locator('[data-testid="ai-jobs-popover"] [data-testid$="-background"]').all();
+      if (marks.length === 0) report(`ai-jobs background mark (${when})`, "no mark was measured");
+      for (const mark of marks) {
+        const name = `${await mark.getAttribute("data-testid")} (${when})`;
+        const { hits } = await findCovered(mark);
+        if (hits.length > 0) report(name, hits.join(", "));
+        const spill = await findSpill(mark);
+        if (spill.length > 0) report(name, spill.join(", "));
+      }
+    };
     await page.goto(`${BASE}/bundles/${BUNDLE}`);
     await page.locator('[data-testid="top-bar-ai"][data-state="active"]').waitFor({ timeout: T });
     await page.locator('[data-testid="top-bar-ai"]').click();
     const popover = page.locator('[data-testid="ai-jobs-popover"]');
     await popover.waitFor({ timeout: T });
+    await page.waitForTimeout(HOVER_SETTLE_MS);
+    await auditBackgroundMarks("running");
     isFinished = true;
     const toastSel = '[data-testid="toast-error"], [data-testid="toast-info"]';
     await page.locator('[data-testid="toast-error"]').first().waitFor({ timeout: T });
@@ -286,6 +305,7 @@ const aiJobsScene = {
       const spill = await findSpill(toast);
       if (spill.length > 0) report(await toast.getAttribute("data-testid"), spill.join(", "));
     }
+    await auditBackgroundMarks("finished");
     await page.locator('[data-testid^="toast-close-"]').first().click();
     await page.waitForTimeout(300);
     if (!(await popover.isVisible())) report("ai-jobs-popover", "closing a toast closed the job list");

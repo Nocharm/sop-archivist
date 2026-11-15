@@ -34,6 +34,7 @@ function makeRecent(byBundle: Record<number, Partial<AiJobCounts>>): RecentAiJob
       kind: "classify" as const,
       kinds: ["classify" as const],
       requested_by_me: true,
+      background: false,
       total: Object.values(jobs).reduce((a, b) => a + b, 0),
       jobs,
       error_counts: {},

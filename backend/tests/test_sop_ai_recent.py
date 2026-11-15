@@ -11,9 +11,17 @@ from app.clock import now
 from app.dev_users import DEV_USERS
 from app.sop.ai.constants import MAX_RECENT_REQUESTS, RECENT_JOBS_WINDOW_HOURS
 from app.sop.ai.jobs import JobItem, enqueue_jobs
+from app.sop.constants import AI_PRIORITY_USER
 from app.sop.models import AiJob
 from tests.access_helpers import run_in_session
-from tests.ai_fixtures import clean_ai_jobs, make_ai_bundle, request_classify  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
+from tests.ai_fixtures import (
+    AI_EN_1,
+    AI_KO_1,
+    clean_ai_jobs,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
+    find_ids,
+    make_ai_bundle,
+    request_classify,
+)
 from tests.fake_ai import FakeAi
 from tests.sop_helpers import AUTHOR, OUTSIDER, REVIEWER, create_bundle, set_members
 
@@ -235,6 +243,40 @@ def test_request_out_returns_the_request_id_of_the_queued_jobs(client: TestClien
 
 async def _read_request_ids(session: AsyncSession, bundle_id: int) -> set[str]:
     return set(await session.scalars(select(AiJob.request_id).where(AiJob.bundle_id == bundle_id)))
+
+
+def post_prepare(client: TestClient, bundle_id: int) -> dict:
+    response = client.post(f"/api/bundles/{bundle_id}/ai/prepare", json={}, headers=AUTHOR)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_recent_marks_requests_with_background_jobs(client: TestClient, auto_prepare: FakeAi) -> None:
+    bundle = make_ai_bundle(client)
+    user = request_classify(client, bundle.id, unit_ids=find_ids(client, bundle, AI_KO_1, AI_EN_1)).json()
+    prepared = post_prepare(client, bundle.id)  # 사람이 요청한 줄은 건너뛰고 남은 줄만 쌓는다
+
+    recent = get_recent(client)["requests"]
+
+    assert [r["request_id"] for r in recent] == [prepared["request_id"], user["request_id"]]
+    assert [r["background"] for r in recent] == [True, False]  # 미리 분류 요청, 사람 요청
+
+
+def test_recent_keeps_the_mark_after_promotion(client: TestClient, auto_prepare: FakeAi) -> None:
+    bundle = make_ai_bundle(client)
+    prepared = post_prepare(client, bundle.id)
+    promoted = request_classify(client, bundle.id, document_id=bundle.document_id).json()
+
+    (request,) = get_recent(client)["requests"]
+
+    # 문서 요청이 미리 분류 작업을 모두 사람 순위로 올렸고 새로 쌓은 것은 없다 — 요청은 그대로 미리 돌리기다
+    assert (promoted["queued"], promoted["request_id"]) == (prepared["queued"], None)
+    assert {job.priority for job in run_in_session(_read_jobs)} == {AI_PRIORITY_USER}
+    assert (request["request_id"], request["background"]) == (prepared["request_id"], True)
+
+
+async def _read_jobs(session: AsyncSession) -> list[AiJob]:
+    return list(await session.scalars(select(AiJob)))
 
 
 def test_response_never_names_people(client: TestClient) -> None:

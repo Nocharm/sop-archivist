@@ -30,6 +30,8 @@ npm i --no-save playwright-core           # package.json 불변
 BASE_URL=http://localhost:3777 node scripts/pw-smoke-baseline.mjs   # 산출물은 저장소 루트 .shots/(gitignore). Chrome 경로는 CHROME_PATH
 #   SOP 화면 스모크·글자 대비 감사는 reset_db → seed_sop_demo 직후 DB에서(dev.db 대신 DATABASE_URL로 별도 sqlite 파일을 쓰면 다시 돌리기 쉽다)
 BASE_URL=http://localhost:3777 node scripts/pw-smoke-sop.mjs        # AI 나눔 확정 단계는 backend가 가짜 AI(FAKE_AI_SPLIT=1)를 볼 때만 돈다
+PREPARE=1 BASE_URL=http://localhost:3777 node scripts/pw-smoke-sop.mjs   # 배정 화면 첫 진입 미리 분류(알림 → AI jobs의 Background 줄 → AI suggested 수) 하나만 돈다. 전제: reset_db → seed_sop_demo(AI_AUTO_PREPARE=false) 직후,
+#   backend를 아래 가짜 AI로 AI_ENABLED=true AI_AUTO_PREPARE=true로 띄운다(다른 단계는 이 backend에서 전제가 깨져 건너뛴다). 끝에 DB가 바뀐다 — 다시 돌리려면 reset_db부터
 BASE_URL=http://localhost:3777 node scripts/pw-contrast-audit.mjs   # 14화면 × 라이트·다크, 4.5:1
 DS=worst BASE_URL=http://localhost:3787 node scripts/pw-layout-audit.mjs   # 배치 감사(DB 불변): seed_sop_demo(DS=mid)·seed_sop_worst(DS=worst)를 얹은 DB의 backend 8787/frontend 3787에서. ONLY=항목 id·WIDTHS·LANGS·THEMES, 실패는 종료 코드 1과 ../.shots/layout-<id>-<width>.png (docs/lessons/browser-verification.md)
 BASE_URL=http://localhost:3777 node scripts/pw-overlap-audit.mjs    # 겹침 감사(seed 직후, DB 불변): 모핑 단추·C 줄 끝 단추·그 자리 메뉴·AI 작업 목록과 알림이 옆 글자를 덮는지, 1280·1920 × EN·KO. 긴 글은 LONG=1, 다크는 THEMES=light,dark
@@ -67,6 +69,7 @@ npx vitest run
 npm i --no-save playwright-core
 $env:BASE_URL="http://localhost:3777"; $env:CHROME_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"; node scripts\pw-smoke-baseline.mjs
 node scripts\pw-smoke-sop.mjs        # seed_sop_demo 직후. 설명은 bash 쪽과 같다
+$env:PREPARE="1"; node scripts\pw-smoke-sop.mjs; Remove-Item Env:PREPARE   # 배정 화면 첫 진입 미리 분류만. 전제(가짜 AI + $env:AI_AUTO_PREPARE="true" backend, 끝에 DB가 바뀜)는 bash 쪽과 같다
 node scripts\pw-contrast-audit.mjs
 node scripts\pw-overlap-audit.mjs   # 겹침 감사. 설명은 bash 쪽과 같다
 $env:BASE_URL="http://localhost:3787"; $env:DS="worst"; node scripts\pw-layout-audit.mjs; Remove-Item Env:DS   # 배치 감사. 설명은 bash 쪽과 같다(변수를 지우지 않으면 다음 실행도 그 자료다)

@@ -162,6 +162,7 @@ import { buildPaperModel, buildPaperTabs, findNearestCut, listPartSheets, should
 import { SLOT_LABELS } from "@/lib/slot-labels";
 import { EDIT_ORIGINAL_PARAM, getEditOriginalHref, getNewDocumentsHref, getStageHref } from "@/lib/stages";
 import { useAiJobs } from "@/lib/use-ai-jobs";
+import { useAiPrepare } from "@/lib/use-ai-prepare";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useCutLine } from "@/lib/use-cut-line";
 import { countRefLookups, isRefPending, pickRefUnit, readRefAdvice } from "@/lib/ref-model";
@@ -520,6 +521,7 @@ export default function AssignPage() {
   const paperTabs = useMemo(() => (oldView && paperModel ? buildPaperTabs(oldView, paperModel) : null), [oldView, paperModel]);
   // AI 나누기 제안 - 보는 Old 문서의 아직 정하지 않은 것. 문장마다 가장 새 제안 하나(전에는 쪼개기 화면에서만 적용·거절했다)
   const oldDocId = oldView?.document.id ?? null;
+  useAiPrepare(bundleId, { enabled: canEdit && aiOn, documentId: oldDocId, onQueued: (n) => { showToast(t("ai.prepareQueued", { n })); aiJobs.watch(); } });
   const splitSuggestions = useLoaded(() => (aiOn && oldDocId !== null ? listAppliedSuggestions(bundleId, "split", oldDocId) : Promise.resolve([])), `${aiOn}:${oldDocId}:${dataKey}`);
   const splitByUnit = useMemo(() => {
     const map = new Map<number, AiSuggestion>();
