@@ -1368,6 +1368,13 @@
   .assign-panes[data-single] { grid-template-columns: minmax(0, 1fr); }
   .assign-panes[data-single] [data-pane="old"] .pane-body { direction: ltr; padding: 10px 4px 24px; }
   .assign-panes[data-single] [data-pane="old"] .sheet { margin-inline: auto; }
+  /* 한 단 ↔ 양 단 전환(lib/use-pane-slide) - 폭은 바로 바뀌고 Old 용지가 앞 자리(--pane-dx)에서 미끄러져 온다. New 칸과 세로선은 옅게 나타난다.
+     옮겨진 용지가 가로 스크롤 막대를 만들지 않게 그 동안 가로 넘침을 자르고, 어긋난 자리로 그려질 연결선은 숨긴다 */
+  .assign-panes[data-motion] [data-pane="old"] .pane-body > * { animation: pane-slide var(--dur-slow) var(--ease-move); }
+  .assign-panes[data-motion] .pane-body { overflow-x: hidden; }
+  .assign-panes[data-motion="two"] [data-pane="new"], .assign-panes[data-motion="two"] .pane-divider { animation: fade-in var(--dur-slow) var(--ease-enter); }
+  .assign-panes[data-motion] .link-lines { visibility: hidden; }
+  @keyframes pane-slide { from { transform: translateX(var(--pane-dx, 0px)); } }
   /* 문서별 확대 - 원문 글자·줄 높이·용지 폭이 --z를 따른다. 종이 상한은 Split(.sheets)과 같은 860 */
   .assign-pane .sheet { max-width: calc(860px * var(--z, 1)); }
   .assign-pane .pg { font-size: calc(var(--fs-read) * var(--z, 1)); line-height: calc(var(--lh-read) * var(--z, 1)); }

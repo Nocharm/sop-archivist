@@ -166,6 +166,7 @@ import { useCutLine } from "@/lib/use-cut-line";
 import { countRefLookups, isRefPending, pickRefUnit, readRefAdvice } from "@/lib/ref-model";
 import { useEquisPolling } from "@/lib/use-equis-polling";
 import { useLoaded } from "@/lib/use-loaded";
+import { usePaneSlide } from "@/lib/use-pane-slide";
 import { usePaneZoom, type PaneKey, type ZoomDir } from "@/lib/use-pane-zoom";
 import { Select, type SelectOption } from "@/components/ui/select";
 
@@ -607,7 +608,10 @@ export default function AssignPage() {
   const linkPairs = buildLinkPairs(newRows.filter(isWrittenRow), oldUnitIds, draft.destination?.kind === "link" ? { units: rowUnits.map((unit) => ({ id: unit.unit_id, lang: unit.lang })), targetIds: draft.destination.targetIds } : null);
 
   const [view, setView] = useState(readAssignView);
+  const paneSlide = usePaneSlide(view.single);
   function changeView(patch: Partial<typeof view>) {
+    // 한 단 ↔ 양 단 - 바꾸기 전 Old 용지의 자리를 재 둔다(바뀐 뒤 그 자리에서 미끄러져 온다)
+    if (patch.single !== undefined && patch.single !== view.single) paneSlide.capture();
     // 양 단으로 펴면 한 단으로 연 New 문서는 닫힌다(양 단의 왼쪽은 늘 Old 문서다). 한 단으로 접으면 New 칸에서 고르던 문장은 그 문서를 한 단으로 연 것이 된다
     if (patch.single === false) setSolo(null);
     else if (patch.single === true) setSolo((prev) => (prev?.inPlace ? { ...prev, inPlace: false } : prev));
