@@ -256,6 +256,8 @@ describe("captions from the Assign menu", () => {
     expect(listShapeLineItems(caption, buildAssignMenu(oneLang).edit, false).map((item) => item.action)).toContain("split");
     // 묶음에 영어 캡션이 따로 있으면 한/영 캡션을 나눈 영어 조각이 겹친다
     expect(find(ctx({ target: bilingual, captionBundle: table, listCaptionLangs: () => ["ko", "en"] }), "split").reasonKey).toBe("assign.ctx.why.captionSplitOneLang");
+    // 목록에 이 캡션의 언어가 없어도 다른 캡션의 언어를 지우지 않는다
+    expect(find(ctx({ target: bilingual, captionBundle: table, listCaptionLangs: () => ["en"] }), "split").reasonKey).toBe("assign.ctx.why.captionSplitOneLang");
   });
 
   it("keeps the sentence tools on a caption but no joins, pairing or reference", () => {
