@@ -4,6 +4,7 @@
 
 ## 2026-11-16
 
+- **Order 1b걸음 Task 3: 놓기 모델의 다른 칸** — `c-drop-model`에 포인터 아래 칸 고르기(`findDropSection`: 출발 칸 띠 먼저, 겹치면 아래 칸, 빈틈은 밖), 거절 사유(`findLeaveRefusal` 이미 쓴 문서·번역 묶음 갈라짐 → `findEnterRefusal` N/A·다른 문서·다른 WI 부분), 도착 칸의 자리·깊이(`planCrossDrop`)를 더했다. 깊이 자르기는 `planDrop`과 한 도우미를 쓴다. 번역은 서버가 원문과 같은 자리로만 옮기고(`translation_locked`) 원문만 옮기면 번역을 지우거나 보류하므로, 번역이 든 의미 묶음은 통째로 들 때만 떠난다. `classifyDropZone`은 같은 칸 안 끌기가 쓰는 판정이라 두고 화면 연결은 다음 Task.
 - **Order 1b걸음 Task 2: 편집 모델의 칸 넘는 `place`** — `PlaceEdit`에 도착 칸 `toLocationKey`를 더하고(없거나 같으면 칸 안, 결과·요청 바이트까지 그대로), 칸을 넘을 때는 두 칸을 다시 세며 깊이를 필수로 받는다(서버가 자리 바뀐 줄을 0으로 돌리므로). `sendDraft`는 칸이 바뀐 줄에 `slot_key` 또는 `wi_step`(null도 키로)과 `indent_level`을 늘 싣는다. `readLocationPlace`가 칸 키를 서버 자리로 읽는다.
 - **Order 1b걸음 Task 1: 순서 저장의 `slot_key`** — `PUT /targets/order` 줄마다 선택 필드 `slot_key`(보냈고 지금 칸과 다를 때만)로 SOP 줄·표(칸 새 문장 포함)를 다른 칸으로 옮긴다. 검사는 쓰기 전 — `slot_not_allowed`(WI·입구 2 문서·직접 쓴 줄 아님)·`unknown_slot`(null 포함)·`na_slot`(상위 칸 N/A 포함)·`translation_locked`(번역은 출처와 같은 칸으로만, `wi_step` 검사를 `_check_translation_moves`로 빼 둘이 쓴다). 쓰기·revision·번역 쓸기·깊이(안 보내면 0)는 단계 옮기기와 같다. Alembic 없음.
 - **Order 다른 칸으로 끌기(1b걸음) 계획·명세 고침(`feat/order-cross-section`)** — 1걸음이 "같은 칸 안에서만"으로 둔 Order 끌기를 같은 New 문서의 다른 칸·WI 단계까지 넓히기로 하고 명세 §5·§8을 고쳐 계획을 썼다. 서버(순서 저장의 `slot_key`) → 편집 모델 → 놓을 자리 모델 → 화면 순이다.

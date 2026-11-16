@@ -1,6 +1,6 @@
 // Order 화면 줄 끌기의 순수 모델 - 함께 움직일 덩어리, 포인터가 놓을 수 있는 칸 위인지, 놓을 자리·깊이와 그에 맞는 place 편집을 정한다.
 import type { OutputCItem } from "./api-sop";
-import type { PlaceEdit } from "./c-edit-model";
+import { readLocationPlace, type PlaceEdit } from "./c-edit-model";
 import { canChangeDepth, isCounted, MAX_INDENT_LEVEL } from "./section-number";
 
 /** 좌우로 이만큼 움직이면 깊이가 한 단 */
@@ -44,16 +44,16 @@ export function findLiveBlock(items: readonly OutputCItem[], depths: readonly nu
   return ids.length === blockIds.length && ids.every((id, k) => id === blockIds[k]) ? block : null;
 }
 
-/** planDrop에 넘길 줄 - 잰 줄(화면 순서) 가운데 덩어리 줄과 지금 칸에 없는 줄을 id로 뺀다. 끄는 도중 이어 그려진 덩어리 줄도 빠진다 */
-export function listDropRows(items: readonly OutputCItem[], block: DragBlock, measured: readonly RowBox[]): RowBox[] {
-  const blockIds = new Set(items.slice(block.start, block.end + 1).map((item) => item.target_id));
+/** planDrop·planCrossDrop에 넘길 줄 - 잰 줄(화면 순서) 가운데 덩어리 줄과 그 칸에 없는 줄을 id로 뺀다. 끄는 도중 이어 그려진 덩어리 줄도 빠진다. block null = 도착 칸(덩어리 줄이 없다) */
+export function listDropRows(items: readonly OutputCItem[], block: DragBlock | null, measured: readonly RowBox[]): RowBox[] {
+  const blockIds = new Set(block ? items.slice(block.start, block.end + 1).map((item) => item.target_id) : []);
   const known = new Set(items.map((item) => item.target_id));
   return measured.filter((row) => known.has(row.targetId) && !blockIds.has(row.targetId));
 }
 
 export type DropZone = "home" | "other" | "outside";
 
-type Band = { top: number; bottom: number };
+export type Band = { top: number; bottom: number };
 
 function isInBand(y: number, band: Band): boolean {
   return y >= band.top - SECTION_SLACK_TOP_PX && y <= band.bottom + SECTION_SLACK_BOTTOM_PX;
@@ -67,6 +67,17 @@ export function classifyDropZone(point: { x: number; y: number }, sheet: { left:
   if (point.x < sheet.left || point.x > sheet.right || point.y < sheet.top || point.y > sheet.bottom) return "outside";
   if (isInBand(point.y, section)) return "home";
   return isInBand(point.y, sections) ? "other" : "outside";
+}
+
+/**
+ * 포인터 아래 칸의 인덱스 - 종이 밖이거나 어느 칸의 띠(위 10px·아래 28px 여유)도 아니면(첫 칸 위·마지막 칸 아래·칸 사이 빈틈) null.
+ * 출발 칸(homeIndex)의 띠가 먼저고, 그 밖에서 여유 띠가 겹치면 아래 칸이다. classifyDropZone은 같은 칸 안 끌기가 쓰는 예전 판정이라 그대로 둔다
+ */
+export function findDropSection(point: { x: number; y: number }, sheet: { left: number; right: number; top: number; bottom: number }, bands: readonly Band[], homeIndex: number): number | null {
+  if (point.x < sheet.left || point.x > sheet.right || point.y < sheet.top || point.y > sheet.bottom) return null;
+  if (bands[homeIndex] && isInBand(point.y, bands[homeIndex])) return homeIndex;
+  for (let i = bands.length - 1; i >= 0; i -= 1) if (i !== homeIndex && isInBand(point.y, bands[i])) return i;
+  return null;
 }
 
 /** 그려진 줄 하나(덩어리 줄은 뺀다) - 화면 순서, y는 pointerY와 같은 좌표계 */
@@ -103,6 +114,20 @@ function findInsertIndex(items: readonly OutputCItem[], rows: readonly RowBox[],
   return k;
 }
 
+/**
+ * 넣을 자리(insertAt)에서 덩어리 첫 줄의 깊이 - 시작 깊이 + round(dx / 24)를 0 ~ 넣을 자리 위 가장 가까운 번호 줄 깊이 + 1로 자른다(앞 줄이 없으면 0).
+ * skip은 옮기고 나면 그 자리에 없는 줄(같은 칸 안 끌기의 덩어리 자신). 서버 상한(MAX_INDENT_LEVEL)은 덩어리의 가장 깊은 줄에 건다 -
+ * 첫 줄을 그만큼 덜 들여 아래 줄들이 자기 단 차이를 지킨다. 깊이가 잠긴 덩어리는 baseDepth 그대로다
+ */
+function calcDropDepth(input: { items: readonly OutputCItem[]; depths: readonly number[]; insertAt: number; skip?: (index: number) => boolean; block: DragBlock; blockDepths: readonly number[]; dx: number }): number {
+  const { items, depths, block } = input;
+  let above = input.insertAt - 1;
+  while (above >= 0 && (input.skip?.(above) || !isCounted(items[above]))) above -= 1;
+  const deepestOffset = Math.max(...input.blockDepths) - block.baseDepth;
+  const max = above < 0 ? 0 : Math.min(depths[above] + 1, MAX_INDENT_LEVEL - deepestOffset);
+  return block.isDepthLocked ? block.baseDepth : Math.max(0, Math.min(max, block.baseDepth + Math.round(input.dx / DEPTH_STEP_PX)));
+}
+
 /** 포인터 위치(pointerY)와 좌우 이동(dx)에서 놓을 자리·깊이·그 선의 y·편집을 정한다 */
 export function planDrop(input: {
   locationKey: string;
@@ -128,15 +153,9 @@ export function planDrop(input: {
   }
   const lineY = k < rows.length ? rows[k].top - 1 : rows.length > 0 ? rows[rows.length - 1].bottom + 1 : input.homeTop;
 
-  // 깊이 한계 = 넣을 자리 앞의 가장 가까운 번호 줄 깊이 + 1. 덩어리 자신의 줄은 건너뛴다(옮기고 나면 그 자리에 없다)
   const insertAt = beforeId === null ? items.length : items.findIndex((item) => item.target_id === beforeId);
-  let above = insertAt - 1;
-  while (above >= 0 && (inBlock(above) || !isCounted(items[above]))) above -= 1;
-  // 서버 상한(MAX_INDENT_LEVEL)은 덩어리의 가장 깊은 줄에 건다 - 첫 줄을 그만큼 덜 들여 아래 줄들이 자기 단 차이를 지킨다
   const blockDepths = depths.slice(block.start, block.end + 1);
-  const deepestOffset = Math.max(...blockDepths) - block.baseDepth;
-  const max = above < 0 ? 0 : Math.min(depths[above] + 1, MAX_INDENT_LEVEL - deepestOffset);
-  const depth = block.isDepthLocked ? block.baseDepth : Math.max(0, Math.min(max, block.baseDepth + Math.round(input.dx / DEPTH_STEP_PX)));
+  const depth = calcDropDepth({ items, depths, insertAt, skip: inBlock, block, blockDepths, dx: input.dx });
 
   const targetIds = items.slice(block.start, block.end + 1).map((item) => item.target_id);
   const rest = items.filter((_, index) => !inBlock(index));
@@ -148,4 +167,77 @@ export function planDrop(input: {
   // 아래 덩어리 줄은 같은 만큼 옮긴다 - 위 한계가 가장 깊은 줄도 MAX_INDENT_LEVEL 안에 둔다
   const shifted = isSameDepth ? null : blockDepths.map((d) => d - block.baseDepth + depth);
   return { beforeId, depth, lineY, edit: { kind: "place", locationKey: input.locationKey, targetIds, beforeId, depths: shifted } };
+}
+
+export type EnterRefusal = "na" | "otherDoc" | "otherPart";
+export type LeaveRefusal = "written" | "translation";
+
+/**
+ * 덩어리가 도착 칸에 들어갈 수 있나 - N/A 칸, 다른 문서, 서버가 받는 자리가 없거나(path: 칸) 종류가 다른 칸·다른 WI 부분(Instruction↔Why)이면 사유.
+ * 같은 부분의 다른 step이나 단계 없는 칸은 들어간다. 검사 순서는 N/A → 다른 문서 → 자리
+ */
+export function findEnterRefusal(fromKey: string, to: { location_key: string; na_reason: string | null }, isSameDoc: boolean): EnterRefusal | null {
+  if (to.na_reason !== null) return "na";
+  if (!isSameDoc) return "otherDoc";
+  const fromPlace = readLocationPlace(fromKey);
+  const toPlace = readLocationPlace(to.location_key);
+  if (!fromPlace || !toPlace || "slot_key" in fromPlace !== "slot_key" in toPlace) return "otherPart";
+  if ("wi_part" in fromPlace && "wi_part" in toPlace && fromPlace.wi_part !== toPlace.wi_part) return "otherPart";
+  return null;
+}
+
+/**
+ * 덩어리가 지금 칸을 떠날 수 있나 - 이미 쓴 문서(entrance match)의 줄은 자리가 잠겨 written.
+ * translation은 AI 번역이 있는 의미 묶음을 가르는 경우다: 서버는 번역을 원문과 같은 자리로만 옮기고(translation_locked) 원문만 옮기면 번역을 지우거나 보류한다.
+ * 화면은 번역의 원문 id를 몰라 보수적으로 본다 - 번역이 든 의미 묶음은 그 묶음 줄이 칸에서 모두 덩어리 안에 있고 번역 아닌 줄도 있을 때만 떠난다.
+ * 의미 키 없는 번역 줄(출처가 사라진 번역)은 서버가 출처를 옮긴 줄에서 찾지 못해 거절하므로 같이 막는다
+ */
+export function findLeaveRefusal(entrance: string, items: readonly OutputCItem[], block: DragBlock): LeaveRefusal | null {
+  if (entrance === "match") return "written";
+  const inBlock = items.slice(block.start, block.end + 1);
+  if (inBlock.some((item) => item.origin === "translation" && item.meaning_key === null)) return "translation";
+  const keys = new Set(inBlock.map((item) => item.meaning_key).filter((key): key is string => key !== null));
+  for (const key of keys) {
+    const group = items.filter((item) => item.meaning_key === key);
+    if (!group.some((item) => item.origin === "translation")) continue;
+    const isWhole = group.every((item) => inBlock.includes(item));
+    if (!isWhole || !group.some((item) => item.origin !== "translation")) return "translation";
+  }
+  return null;
+}
+
+/**
+ * 덩어리를 다른 칸(toKey)에 놓을 자리·깊이·그 선의 y·편집을 정한다. 들어가도 되는지(findLeaveRefusal·findEnterRefusal)는 부르는 쪽이 먼저 본다.
+ * dest.items는 그 칸 전체(안 그려진 줄 포함), rows는 listDropRows(dest.items, null, 잰 줄) - 놓는 칸이 같은 칸이면 이 함수가 아니라 planDrop을 쓴다.
+ * 깊이는 planDrop과 같은 도우미로 자르고, 줄이 없는 칸은 0. 편집은 늘 있고 깊이(depths)를 늘 싣는다 - 칸을 넘는 편집의 필수 값이다
+ */
+export function planCrossDrop(input: {
+  fromKey: string;
+  toKey: string;
+  source: { items: readonly OutputCItem[]; depths: readonly number[]; block: DragBlock };
+  dest: { items: readonly OutputCItem[]; depths: readonly number[] };
+  rows: readonly RowBox[];
+  pointerY: number;
+  dx: number;
+  emptyTop: number; // 도착 칸에 그려진 줄이 없을 때 선을 그을 y
+}): DropPlan {
+  const { source, dest, rows } = input;
+  const { block } = source;
+  const k = findInsertIndex(dest.items, rows, input.pointerY);
+
+  // 그려진 마지막 줄 뒤에서는 아직 안 그려진 첫 줄 앞(없으면 칸 끝) - 덩어리 줄은 이 칸에 없다
+  let beforeId: number | null = null;
+  if (k < rows.length) beforeId = rows[k].targetId;
+  else {
+    const lastDrawn = rows.length > 0 ? dest.items.findIndex((item) => item.target_id === rows[rows.length - 1].targetId) : -1;
+    beforeId = lastDrawn + 1 < dest.items.length ? dest.items[lastDrawn + 1].target_id : null;
+  }
+  const lineY = k < rows.length ? rows[k].top - 1 : rows.length > 0 ? rows[rows.length - 1].bottom + 1 : input.emptyTop;
+
+  const insertAt = beforeId === null ? dest.items.length : dest.items.findIndex((item) => item.target_id === beforeId);
+  const blockDepths = source.depths.slice(block.start, block.end + 1);
+  const depth = calcDropDepth({ items: dest.items, depths: dest.depths, insertAt, block, blockDepths, dx: input.dx });
+  const targetIds = source.items.slice(block.start, block.end + 1).map((item) => item.target_id);
+  const depths = blockDepths.map((d) => d - block.baseDepth + depth);
+  return { beforeId, depth, lineY, edit: { kind: "place", locationKey: input.fromKey, toLocationKey: input.toKey, targetIds, beforeId, depths } };
 }
