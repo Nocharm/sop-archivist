@@ -1,11 +1,11 @@
 // Assign Old 문장 우클릭 메뉴의 항목과 가능/불가 - 화면은 이 결과대로 항목을 켜고 끄며 까닭을 툴팁으로 보인다.
-// 두 묶음이다: 배정(지금 고른 곳으로 확정·배정 취소)과 문장 고치기(여기서 나누기·앞뒤 문장과 합치기 또는 한/영 짝 맺기·짝 풀기·언어).
+// 두 묶음이다: 배정(배정 취소 - 확정은 Enter·오른쪽 칸·그 자리 메뉴가 맡는다)과 문장 고치기(여기서 나누기·앞뒤 문장과 합치기 또는 한/영 짝 맺기·짝 풀기·언어).
 // 고치기는 Split의 편집을 그대로 부르므로 판단이 없는 단위만 받는다 - 배정된 문장은 먼저 배정을 취소한다(서버도 판단이 걸린 단위는 확인을 요구한다).
 import type { CoverStatus, ViewUnit } from "./api-sop";
 import { getPairMergeReason, hasBothScripts, planJoin, type JoinPlan } from "./split-menu-model";
 
 export type AssignMenuAction =
-  | "confirm" | "clear"
+  | "clear"
   | "split" | "merge_prev" | "merge_next" | "pair_prev" | "pair_next" | "pair_pick" | "unpair" | "lang"
   | "ref_mark" | "ref_clear"
   | "table_rows" | "table_merge" | "table_layout";
@@ -33,10 +33,6 @@ export interface AssignMenuContext {
   readOnly: boolean;
   /** 우클릭한 문장의 줄 상태 */
   rowStatus: CoverStatus;
-  /** 줄에 보낼 곳이 있다(저장 전 고름 또는 저장된 곳·AI 제안) */
-  hasDestination: boolean;
-  /** 저장 전 고름이 없고 줄이 이미 확정됐다 - 확정할 것이 없다 */
-  isConfirmedAsIs: boolean;
   /** 단위(칸 문장이면 묶인 표·행)에 판단이 있다 - 미배정이 아닌 상태나 처분 */
   isDecided: (unit: ViewUnit) => boolean;
   /** 단위의 줄에 저장 전 고름·고친 글이 있다 */
@@ -117,12 +113,11 @@ function buildTableItems(ctx: AssignMenuContext): AssignMenuItem[] {
 }
 
 export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
-  const confirmReason = ctx.readOnly ? why("readOnly") : !ctx.hasDestination ? why("noDestination") : ctx.isConfirmedAsIs ? why("alreadyConfirmed") : null;
   const clearReason = ctx.readOnly ? why("readOnly") : ctx.rowStatus === "unassigned" && !ctx.isDecided(ctx.target) ? why("notAssigned") : null;
   const editReason = getEditBlocker(ctx, ctx.target);
   const retireReason = getRetireBlocker(ctx, ctx.target);
   return {
-    assign: [build("confirm", confirmReason), build("clear", clearReason)],
+    assign: [build("clear", clearReason)],
     // 표·행 단위에는 문장 항목이 뜻이 없어 표 항목만 둔다
     edit: ctx.target.kind === "table" || ctx.target.kind === "table_row" ? buildTableItems(ctx) : [
       build("split", retireReason ?? (ctx.canSplit ? null : why("nothingToSplit"))),

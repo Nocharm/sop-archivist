@@ -33,8 +33,6 @@ function ctx(over: Partial<AssignMenuContext> = {}): AssignMenuContext {
     next: makeUnit(3),
     readOnly: false,
     rowStatus: "unassigned",
-    hasDestination: false,
-    isConfirmedAsIs: false,
     isDecided: () => false,
     hasDraft: () => false,
     canSplit: true,
@@ -53,19 +51,13 @@ function find(context: AssignMenuContext, action: AssignMenuAction) {
 describe("buildAssignMenu", () => {
   it("groups assign actions before edit actions", () => {
     const groups = buildAssignMenu(ctx());
-    expect(groups.assign.map((item) => item.action)).toEqual(["confirm", "clear"]);
+    expect(groups.assign.map((item) => item.action)).toEqual(["clear"]);
     expect(groups.edit.map((item) => item.action)).toEqual(["split", "merge_prev", "merge_next", "pair_pick", "lang", "ref_mark"]);
   });
 
   it("enables every edit on an unassigned sentence with same-language neighbours", () => {
     const { edit } = buildAssignMenu(ctx());
     expect(edit.every((item) => item.enabled)).toBe(true);
-  });
-
-  it("needs a destination to confirm, and nothing new to confirm on a confirmed row", () => {
-    expect(find(ctx(), "confirm").reasonKey).toBe("assign.ctx.why.noDestination");
-    expect(find(ctx({ hasDestination: true }), "confirm").enabled).toBe(true);
-    expect(find(ctx({ hasDestination: true, isConfirmedAsIs: true }), "confirm").reasonKey).toBe("assign.ctx.why.alreadyConfirmed");
   });
 
   it("cancels an assignment only when there is one", () => {
@@ -98,7 +90,7 @@ describe("buildAssignMenu", () => {
 
   it("does not edit tables or figures, and read-only blocks everything", () => {
     expect(find(ctx({ target: makeUnit(2, { kind: "figure" }) }), "lang").reasonKey).toBe("assign.ctx.why.notText");
-    const readOnly = buildAssignMenu(ctx({ readOnly: true, hasDestination: true, rowStatus: "confirmed" }));
+    const readOnly = buildAssignMenu(ctx({ readOnly: true, rowStatus: "confirmed" }));
     expect([...readOnly.assign, ...readOnly.edit].every((item) => item.reasonKey === "assign.ctx.why.readOnly")).toBe(true);
   });
 

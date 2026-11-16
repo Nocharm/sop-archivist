@@ -14,7 +14,7 @@ import { listImageRefs, MANUAL_ASSET_BASE, MANUAL_PAGE_SECTION, MANUAL_STAGE_SEC
 import { MANUAL_DIR, readImageSizes, readManualSource } from "./manual-files";
 
 // 화면 문구 사전에 없는 화면 글자 - 코드에 그대로 박혀 있는 것만 둔다
-const LABELS_OUTSIDE_MESSAGES = new Set(["EN", "KO", "Synthetic data"]);
+const LABELS_OUTSIDE_MESSAGES = new Set(["EN", "KO", "REF", "Synthetic data"]);
 
 const HANGUL = /[ㄱ-ㆎ가-힣]/;
 

@@ -1,4 +1,4 @@
-// 오른쪽 칸 1번 "다듬기" - 고른 줄의 문장마다 한 줄: 언어, 글의 앞부분, 그 문장에 할 수 있는 일(자르기·앞뒤와 묶기·짝 풀기). 표·행이면 표 도구.
+// 오른쪽 칸 1번 "다듬기" - 고른 줄의 문장마다 한 줄: 언어 세 칸(KO | EN | REF), 글의 앞부분, 그 문장에 할 수 있는 일(자르기·앞뒤와 묶기·짝 풀기). 표·행이면 표 도구.
 // 할 수 있는 일과 못 하는 까닭은 우클릭 메뉴와 같은 답(lib/assign-context-menu-model buildAssignMenu)이고 아이콘·이름도 같다 - 꺼진 단추는 까닭을 툴팁으로 보인다.
 // 줄이 한/영 짝이거나 합친 한 문장이면 맨 아래에 둘 사이를 바꾸는 전환(One sentence | KO/EN pair)이 붙는다 - 언어 판정이 틀려 잘못 묶였을 때 고치는 길이다.
 // 보낼 곳(2번)을 고르기 전에 문장 모양부터 맞추는 자리다. 참조 줄 확인과 AI 나누기 제안은 이 줄 아래의 카드가 맡는다.
@@ -30,6 +30,7 @@ interface ShapeToolsProps {
 }
 
 const MODE_LABELS = { one: "split.join.one", pair: "split.join.pair" } as const;
+const LANGS = ["ko", "en", "ref"] as const;
 
 // 줄에 단추로 두는 일 - 참조 줄 표시는 아래 카드가, 확정·지우기는 3번이 맡는다
 const LINE_ACTIONS: ReadonlySet<AssignMenuAction> = new Set(["split", "merge_prev", "pair_prev", "merge_next", "pair_next", "pair_pick", "unpair", "table_rows", "table_layout", "table_merge"]);
@@ -37,27 +38,44 @@ const LINE_ACTIONS: ReadonlySet<AssignMenuAction> = new Set(["split", "merge_pre
 export function ShapeTools({ lines, cutUnitId, busy, onAction, mode, onMode }: ShapeToolsProps) {
   const { t } = useI18n();
 
-  function renderLang(unit: ViewUnit, item: AssignMenuItem | undefined) {
-    // 한글·영어 문장만 서로 바꾼다 - 참조 줄과 언어가 없는 단위는 표시만
-    if (!item || (unit.lang !== "ko" && unit.lang !== "en")) return <LangToken lang={unit.lang} isRefProposed={unit.ref?.state === "proposed"} />;
-    const other = unit.lang === "ko" ? "en" : "ko";
-    const reason = item.reasonKey ? t(item.reasonKey) : null;
-    const isOff = !item.enabled || busy;
+  /**
+   * 언어 세 칸 - 눌린 칸이 지금 언어. 한글·영어 문장에서 REF는 참조 줄 표시(번호 입력), 참조 줄에서 KO·EN은 참조를 풀고 그 언어로.
+   * 켜고 끄는 까닭은 우클릭 메뉴와 같은 답이다 - 한글·영어 줄은 언어 항목, 참조 줄은 "참조 아님" 항목을 따른다. 언어가 없는 단위(표·그림)는 표시만
+   */
+  function renderLangs(unit: ViewUnit, items: AssignMenuItem[]) {
+    const langItem = items.find((item) => item.action === "lang");
+    if (!langItem || unit.lang === "neutral") return <LangToken lang={unit.lang} isRefProposed={unit.ref?.state === "proposed"} />;
+    const item = unit.lang === "ref" ? items.find((entry) => entry.action === "ref_clear") : langItem;
     return (
-      <Tooltip label={reason ?? t("assign.shape.langTo", { lang: other.toUpperCase() })} align="start">
-        <button
-          type="button"
-          className="lang-token shape-lang"
-          data-lang={unit.lang}
-          // disabled 대신 aria-disabled - 포커스를 받아야 꺼진 까닭이 보인다
-          aria-disabled={isOff ? "true" : undefined}
-          aria-label={t("assign.shape.langTo", { lang: other.toUpperCase() })}
-          data-testid={`assign-shape-lang-${unit.id}`}
-          onClick={() => !isOff && onAction(unit, "lang", other)}
-        >
-          {unit.lang.toUpperCase()}
-        </button>
-      </Tooltip>
+      <span className="shape-langs" role="group" aria-label={t("split.menu.lang")} data-testid={`assign-shape-lang-${unit.id}`}>
+        {LANGS.map((lang) => {
+          const isCurrent = unit.lang === lang;
+          const reason = !isCurrent && item?.reasonKey ? t(item.reasonKey) : null;
+          const isOff = !isCurrent && (!item?.enabled || busy);
+          const label = lang === "ref" ? t("assign.ctx.refMark") : t("assign.shape.langTo", { lang: lang.toUpperCase() });
+          return (
+            <Tooltip key={lang} label={reason ?? (isCurrent ? t("split.menu.why.alreadyLang") : label)} align="start">
+              <button
+                type="button"
+                data-lang={lang}
+                aria-pressed={isCurrent}
+                // disabled 대신 aria-disabled - 포커스를 받아야 꺼진 까닭이 보인다
+                aria-disabled={isOff ? "true" : undefined}
+                aria-label={isCurrent ? lang.toUpperCase() : label}
+                data-proposed={lang === "ref" && unit.ref?.state === "proposed" ? "" : undefined}
+                data-testid={`assign-shape-lang-${unit.id}-${lang}`}
+                onClick={() => {
+                  if (isCurrent || isOff) return;
+                  if (lang === "ref") onAction(unit, "ref_mark");
+                  else onAction(unit, "lang", lang);
+                }}
+              >
+                {lang.toUpperCase()}
+              </button>
+            </Tooltip>
+          );
+        })}
+      </span>
     );
   }
 
@@ -65,7 +83,7 @@ export function ShapeTools({ lines, cutUnitId, busy, onAction, mode, onMode }: S
     <div className="shape-tools" role="group" aria-label={t("assign.step.shape")} data-testid="assign-shape">
       {lines.map(({ unit, items }) => (
         <div key={unit.id} className="shape-line" data-testid={`assign-shape-line-${unit.id}`}>
-          {renderLang(unit, items.find((item) => item.action === "lang"))}
+          {renderLangs(unit, items)}
           <Truncate className="min-w-0 flex-1 text-xs text-ink-2" text={unit.text.trim() || unit.display_id} />
           <span className="flex flex-none gap-0.5">
             {items
