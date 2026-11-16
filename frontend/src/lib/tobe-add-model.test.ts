@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { EquisInfo } from "./api-sop";
-import { listEquisHints, planAddRows, readCodes } from "./tobe-add-model";
+import { describeAdd, listEquisHints, planAddRows, readCodes } from "./tobe-add-model";
 
 describe("readCodes (numbers typed or pasted into the add field)", () => {
   it("reads one number, trimmed", () => expect(readCodes("  WI-07 ")).toEqual(["WI-07"]));
@@ -57,4 +57,23 @@ describe("listEquisHints (what EQUIS knows that the row does not say yet)", () =
     expect(listEquisHints({ doc_type: "sop", is_equipment_sop: true }, found({ equipment_tag: "CF-001" }))).toEqual([]);
     expect(listEquisHints({ doc_type: "wi", is_equipment_sop: false }, found({ equipment_tag: "CF-001" }))).toEqual([]);
   });
+});
+
+describe("describeAdd (what the add field will do)", () => {
+  const listed = [{ code: "SOP-PH", doc_type: "sop" as const }, { code: "WI-04", doc_type: "wi" as const }];
+  it("says nothing for an empty field", () => expect(describeAdd("  ", listed)).toEqual({ kind: "none" }));
+  it("names the SOP or the WI and its parent", () => {
+    expect(describeAdd("SOP-MX", listed)).toEqual({ kind: "sop", code: "SOP-MX" });
+    expect(describeAdd(" WI-09 ", listed)).toEqual({ kind: "wi", code: "WI-09", parent: "SOP-PH" });
+    expect(describeAdd("QC-0400", listed)).toEqual({ kind: "wi", code: "QC-0400", parent: "SOP-PH" });
+  });
+  it("says a WI number becomes an SOP when the list has no SOP, and only then", () => {
+    expect(describeAdd("WI-09", [])).toEqual({ kind: "sopFallback", code: "WI-09" });
+    expect(describeAdd("QC-0400", [])).toEqual({ kind: "sop", code: "QC-0400" });
+  });
+  it("says a number is already on the list", () => {
+    expect(describeAdd("WI-04", listed)).toEqual({ kind: "taken", code: "WI-04" });
+    expect(describeAdd("WI-04, SOP-PH", listed)).toEqual({ kind: "taken", code: "WI-04" });
+  });
+  it("counts several new numbers", () => expect(describeAdd("WI-09, WI-10, WI-04", listed)).toEqual({ kind: "many", n: 2 }));
 });

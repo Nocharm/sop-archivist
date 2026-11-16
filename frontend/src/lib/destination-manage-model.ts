@@ -16,6 +16,11 @@ export function getStepRemoveBlock(tobe: ToBe, doc: TargetDoc, stepNo: number): 
   return (tobe.sentence_counts ?? []).some((row) => row.target_doc_id === doc.id && row.wi_step === stepNo) ? "hasSentences" : null;
 }
 
+/** 그 단계에 든 문장 수 - 없으면 0 */
+export function getStepCount(tobe: ToBe, docId: number, stepNo: number): number {
+  return (tobe.sentence_counts ?? []).find((row) => row.target_doc_id === docId && row.wi_step === stepNo)?.count ?? 0;
+}
+
 /** WI의 부모로 고를 수 있는 SOP 번호 - 목록 순서 */
 export function listParentCodes(tobe: ToBe): string[] {
   return [...tobe.docs]
