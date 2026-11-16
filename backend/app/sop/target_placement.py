@@ -1,14 +1,18 @@
 """새 문장을 문서 안 순서에 끼워 넣는 자리 계산 — 새로 놓이는 짝·번역의 기본 번호 표시와 순서(제품 명세 §7.13 섹션 번호, O10), manual_order 문서에서 번역을 출처 바로 뒤에 둔다."""
 
+import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.sop.constants import NUMBER_OMITTED, NUMBERED, NumberStyle
-from app.sop.models import TargetSentence
+from app.sop.constants import NUMBER_OMITTED, NUMBERED, SLOT_HEADING, NumberStyle
+from app.sop.events import record_event
+from app.sop.models import TargetDoc, TargetSentence
+from app.sop.outputs import list_target_order
 from app.sop.segment import NEUTRAL
+from app.sop.snapshot import load_bundle_snapshot
 
 ENGLISH = "en"
 
@@ -94,3 +98,40 @@ async def insert_after(session: AsyncSession, source: TargetSentence) -> int:
         .values(order_index=TargetSentence.order_index + 1)
     )
     return source.order_index + 1
+
+
+async def open_gap(session: AsyncSession, target_doc_id: int, at: int, count: int) -> None:
+    """order_index가 at 이상인 그 문서의 최상위 새 문장을 count칸 민다 — insert_after와 같은 조건, 묶음 잠금 안에서 부른다."""
+    await session.execute(
+        update(TargetSentence)
+        .where(
+            TargetSentence.target_doc_id == target_doc_id,
+            TargetSentence.parent_target_id.is_(None),
+            TargetSentence.order_index >= at,
+        )
+        .values(order_index=TargetSentence.order_index + count)
+    )
+
+
+async def freeze_order(session: AsyncSession, bundle_id: int, doc: TargetDoc, actor: str) -> None:
+    """지금 결과물 C가 보이는 순서를 order_index로 굳히고 manual_order를 켠다 — PUT /targets/order와 같은 일(끌어다 놓기 설계 §8).
+
+    문서마다 한 번만 도는 길이다(그 뒤로는 manual_order). 칸 제목과 칸 새 문장은 순서가 없어 건드리지 않는다.
+    """
+    # 글자를 빼고 읽으면(include_text=False) 같은 세션의 단위 글이 미적재 열이 되어 뒤의 저장이 읽지 못한다
+    snap = await load_bundle_snapshot(session, bundle_id)
+    order = await asyncio.to_thread(list_target_order, snap, doc.id)
+    rows = {
+        row.id: row
+        for row in await session.scalars(
+            select(TargetSentence).where(
+                TargetSentence.target_doc_id == doc.id,
+                TargetSentence.parent_target_id.is_(None),
+                TargetSentence.kind != SLOT_HEADING,
+            )
+        )
+    }
+    for order_index, target_id in enumerate(order):
+        rows[target_id].order_index = order_index
+    doc.manual_order = True
+    record_event(session, bundle_id=bundle_id, actor=actor, action="targets.reorder", target_type="target_doc", target_ids=[doc.id])

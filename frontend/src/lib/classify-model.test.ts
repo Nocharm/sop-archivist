@@ -756,3 +756,27 @@ describe("slot heading destination", () => {
     expect(readDestination(group, [20, 21])).toEqual(HEADING);
   });
 });
+
+describe("buildGroupSave with a drop position", () => {
+  const position = { placeId: "slot:6:scope", after: 41 };
+  const context = (group: Group | null) => ({ units: ONE_UNIT, group, tables: new Map() });
+  it("sends the position on a new sentence, and null for the front of the slot", () => {
+    expect(buildGroupSave(makeDraft({ position }), context(null), "confirm").targets[0]).toMatchObject({ key: "u10", position: { after_target_id: 41 } });
+    expect(buildGroupSave(makeDraft({ position: { placeId: "slot:6:scope", after: null } }), context(null), "confirm").targets[0].position).toEqual({ after_target_id: null });
+  });
+  it("adds no position key without a drop, or once the destination is no longer the dropped place", () => {
+    expect(buildGroupSave(makeDraft(), context(null), "confirm").targets[0]).not.toHaveProperty("position");
+    expect(buildGroupSave(makeDraft({ position: { placeId: "slot:6:purpose", after: 41 } }), context(null), "confirm").targets[0]).not.toHaveProperty("position");
+  });
+  it("sends it on a sentence that moves from another slot, not on one already in the slot", () => {
+    const moved: Group = { units: [], targets: [makeTarget({ id: 90, slot_key: "purpose", confirmed_text: "원문", status: "confirmed" })] };
+    expect(buildGroupSave(makeDraft({ position }), context(moved), "confirm").targets[0]).toMatchObject({ id: 90, slot_key: "scope", position: { after_target_id: 41 } });
+    const here: Group = { units: [], targets: [makeTarget({ id: 90, confirmed_text: "원문", status: "confirmed" })] };
+    expect(buildGroupSave(makeDraft({ position }), context(here), "confirm").targets[0]).not.toHaveProperty("position");
+  });
+  it("sends it on a table sentence but not on its cells", () => {
+    const tables = new Map([[10, { rows: 1, cols: 1, cells: [{ id: 11, lang: "ko" as const, text: "칸", row: 0, col: 0 }] }]]);
+    const body = buildGroupSave(makeDraft({ position }), { units: [{ id: 10, kind: "table", lang: "neutral" as const, text: "", revision: 1 }], group: null, tables }, "confirm");
+    expect(body.targets.map((target) => [target.key, target.position ?? null])).toEqual([["u10", { after_target_id: 41 }], ["c11", null]]);
+  });
+});

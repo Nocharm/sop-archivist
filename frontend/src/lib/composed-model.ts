@@ -40,7 +40,7 @@ export function readSectionNumber(path: string): string {
 }
 
 /** 칸 머리 글 - 번호가 있으면 "5.1. 이름" */
-function formatSectionPath(number: string | null, label: string): string {
+export function formatSectionPath(number: string | null, label: string): string {
   return number ? `${number}. ${label}` : label;
 }
 
@@ -128,13 +128,28 @@ function readSectionKey(target: GroupTarget): string | null {
   return target.wi_step === null ? `unstepped:${target.wi_part}` : `step:${target.wi_step}:${target.wi_part}`;
 }
 
+/** 칸 안에서 끼울 자리 - 맨 앞이면 0, after의 문장 바로 뒤. 그 칸이 아니거나 after의 문장이 없으면 -1(끝에 붙인다) */
+function findInsertAt(kept: readonly ComposedItem[], sectionKey: string, at: { sectionKey: string; after: number | null } | null | undefined): number {
+  if (at?.sectionKey !== sectionKey) return -1;
+  if (at.after === null) return 0;
+  const anchor = kept.findIndex((item) => item.target_id === at.after);
+  return anchor < 0 ? -1 : anchor + 1;
+}
+
 /**
  * 저장 응답으로 미리 고친 문서 - 이 저장의 새 문장을 모든 칸에서 뺀 뒤 이 문서에 속한 최상위 문장을 제 칸 끝에 넣는다.
- * 칸이 아직 없으면(단계 없음 칸 등) 넣지 않는다 - 곧 다시 읽는 서버 값이 채운다. textOf는 고친 글이 없을 때 출처 원문
+ * 칸이 아직 없으면(단계 없음 칸 등) 넣지 않는다 - 곧 다시 읽는 서버 값이 채운다. textOf는 고친 글이 없을 때 출처 원문.
+ * at이 있고 그 칸에 after의 문장이 남아 있으면(null이면 맨 앞) 그 칸의 새 문장을 order_index 순으로 그 자리에 끼운다
  */
-export function applySavedTargets(doc: ComposedDoc, targets: readonly GroupTarget[], textOf: (unitIds: number[]) => string): ComposedDoc {
+export function applySavedTargets(
+  doc: ComposedDoc,
+  targets: readonly GroupTarget[],
+  textOf: (unitIds: number[]) => string,
+  at?: { sectionKey: string; after: number | null } | null,
+): ComposedDoc {
   const savedIds = new Set(targets.map((target) => target.id));
   const placed = new Map<string, ComposedItem[]>();
+  const orderOf = new Map(targets.map((target) => [target.id, target.order_index]));
   for (const target of targets) {
     if (target.target_doc_id !== doc.target_doc_id || target.parent_target_id !== null) continue;
     // 칸 제목은 칸 항목이 아니다 - 머리 줄 출처는 곧 다시 읽는 서버 값이 채운다
@@ -158,7 +173,11 @@ export function applySavedTargets(doc: ComposedDoc, targets: readonly GroupTarge
     ...doc,
     sections: doc.sections.map((section) => {
       const kept = section.items.filter((item) => !savedIds.has(item.target_id));
-      return { ...section, items: [...kept, ...(placed.get(section.location_key) ?? [])] };
+      const added = placed.get(section.location_key) ?? [];
+      const cut = findInsertAt(kept, section.location_key, at);
+      if (cut < 0) return { ...section, items: [...kept, ...added] };
+      added.sort((a, b) => (orderOf.get(a.target_id) ?? 0) - (orderOf.get(b.target_id) ?? 0));
+      return { ...section, items: [...kept.slice(0, cut), ...added, ...kept.slice(cut)] };
     }),
   };
 }

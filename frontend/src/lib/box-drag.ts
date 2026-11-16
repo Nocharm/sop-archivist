@@ -35,6 +35,13 @@ export function hasPassedThreshold(dx: number, dy: number): boolean {
   return Math.hypot(dx, dy) >= DRAG_THRESHOLD_PX;
 }
 
+/** 표의 왼쪽 x - 포인터 오른쪽에 두되 창 오른쪽을 넘으면 포인터 왼쪽으로 넘긴다(좁은 창에서 긴 거절 이유가 창 밖으로 나가지 않게) */
+export function getCardLeft(pointerX: number, cardWidth: number, viewportWidth: number): number {
+  const right = pointerX + CARD_OFFSET_X_PX;
+  if (right + cardWidth <= viewportWidth) return right;
+  return Math.max(0, pointerX - CARD_OFFSET_X_PX - cardWidth);
+}
+
 export function getEdgeScrollDir(point: DragPoint, frame: { left: number; right: number; top: number; bottom: number }): -1 | 0 | 1 {
   if (point.x < frame.left || point.x > frame.right) return 0;
   if (point.y < frame.top - EDGE_SCROLL_OUTSIDE_PX || point.y > frame.bottom + EDGE_SCROLL_OUTSIDE_PX) return 0;
@@ -177,8 +184,9 @@ export function attachBoxDrag<S>(root: HTMLElement, config: BoxDragConfig<S>): (
 
     function render(): void {
       if (!view) return;
-      view.el.style.transform = `translate(${last.x + CARD_OFFSET_X_PX}px, ${last.y + CARD_OFFSET_Y_PX}px)`;
       hoverTarget = applyHover(view, config.onMove(source, last, start), hoverTarget);
+      // 메모가 바뀌면 폭이 바뀐다 - 메모를 넣은 뒤에 재고 둔다
+      view.el.style.transform = `translate(${getCardLeft(last.x, view.el.offsetWidth, window.innerWidth)}px, ${last.y + CARD_OFFSET_Y_PX}px)`;
     }
 
     function tick(): void {

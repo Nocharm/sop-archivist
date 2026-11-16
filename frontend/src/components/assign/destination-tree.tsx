@@ -330,8 +330,9 @@ export function DestinationTree({ written, options, tobeHref, onPickLink, onPick
                   const { destination } = option;
                   // 단계 지우기는 그 단계의 첫 줄(Instruction) 끝에 한 번만 둔다
                   const stepNo = destination.kind === "step" && destination.part === "instruction" ? destination.step : null;
+                  // data-place는 Old 조각을 끌어 놓을 때 이 줄의 보낼 곳을 찾는 열쇠(무엇을 받는지는 놓기 모델이 정한다)
                   return (
-                    <div key={option.id} className="tree-row">
+                    <div key={option.id} className="tree-row" data-place={option.id} data-na={option.disabled ? "" : undefined}>
                       <button
                         type="button"
                         className="tree-leaf"

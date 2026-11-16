@@ -27,7 +27,7 @@
 **시작 전에(워크트리 `sop-archivist-dnd`, 브랜치 `feat/order-cross-section`에 한 번)** — 워크트리에는 `node_modules`와 `backend/.venv`가 없다. backend는 원본 체크아웃의 venv를 절대 경로로 쓴다(링크를 만들지 않는다). PowerShell 표기는 `docs/qa/verification-commands.md`의 같은 줄을 따른다.
 
 ```bash
-VENV=/Users/hyeonjin/Documents/sop-archivist/backend/.venv/bin
+VENV=<original-checkout>/backend/.venv/bin
 PY=$VENV/python
 cd frontend && npm ci && npm i --no-save playwright-core
 npx vitest run src/lib/c-edit-model.test.ts src/lib/c-drop-model.test.ts   # 손대기 전 초록

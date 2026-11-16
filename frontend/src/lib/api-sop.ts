@@ -771,6 +771,11 @@ export interface Group {
   pairs_dissolved?: number[];
 }
 
+/** 문장 사이에 놓은 자리 - 이 새 문장 id 뒤에 끼운다. null이면 칸의 맨 앞(자리 없음은 키를 넣지 않는다) */
+export interface TargetPosition {
+  after_target_id: number | null;
+}
+
 export interface TargetInput {
   key: string;
   id?: number;
@@ -790,6 +795,8 @@ export interface TargetInput {
   cell_row?: number | null;
   cell_col?: number | null;
   grid?: { rows: number; cols: number } | null;
+  /** 놓은 자리 - 최상위 새 문장에만, 없으면 키를 넣지 않는다 */
+  position?: TargetPosition;
 }
 
 export interface GroupSaveInput {
