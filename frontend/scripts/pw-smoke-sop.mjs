@@ -1209,6 +1209,146 @@ await runStep("assign: written New document - identical, link by clicking, split
   check("an unsourced New sentence is marked new", true);
 });
 
+// 끌어서 잇기(끌어다 놓기 설계 §6, 2걸음) - Old 조각을 이미 쓴 New 문장에 놓으면 클릭으로 이을 때와 같은 상태(그 줄 고름 · 그 문장 고름 · 그 자리 메뉴)가 되고 저장은 하지 않는다.
+// 마우스는 걸음으로 움직인다(dragTo는 쓰지 않는다). 저장하지 않으므로 되돌릴 것이 없다
+await runStep("assign: drag an Old piece onto a written New sentence, it links like a click", {}, async ({ page, takeShot }) => {
+  await installCommitCounter(page);
+  const headers = { "X-Dev-User": "qa.member" };
+  const readUnits = async () => (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/units?limit=1000`, { headers })).json()).items;
+  const written = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/written-sentences`, { headers })).json();
+  const writtenDocIds = [...new Set(written.map((row) => row.target_doc_id))];
+  const composedDocIds = (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/tobe`, { headers })).json()).docs.filter((doc) => doc.entrance === "assign").map((doc) => doc.id);
+  // 짝 없는 미배정 문장 - 줄 하나가 Unit 하나다
+  const loose = new Map((await readUnits()).filter((unit) => unit.status === "unassigned" && unit.kind === "sentence" && unit.pair_id === null).map((unit) => [unit.unit_id, unit]));
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.locator('[data-pane="old"] .strip[data-strip-unit]').first().waitFor({ timeout: T });
+  const shownIds = await page.locator('[data-pane="old"] .strip[data-strip-unit]').evaluateAll((els) => els.map((el) => Number(el.dataset.stripUnit)));
+  const [aId, bId] = shownIds.filter((id) => loose.has(id));
+  check("the Old paper shows two loose unassigned sentences", aId !== undefined && bId !== undefined, `${aId} ${bId}`);
+  const pieceOf = (id) => page.locator(`[data-testid="assign-paper-piece-${id}"]`);
+  const centre = (selector) => page.locator(selector).first().evaluate((el) => el.scrollIntoView({ block: "center" }));
+  // 조각 글의 첫 글줄 위 한 점 - 앞머리·배지·줄 끝 표시를 비켜 글 위를 누른다
+  const pointInUnit = async (id) => {
+    await centre(`[data-testid="assign-paper-piece-${id}"]`);
+    await page.waitForTimeout(150);
+    return page.locator(`[data-testid="assign-paper-unit-${id}"]`).first().evaluate((el) => {
+      const rect = el.getClientRects()[0];
+      return { x: rect.left + Math.min(24, rect.width / 2), y: rect.top + rect.height / 2 };
+    });
+  };
+  const pointInLine = async (id) => {
+    await centre(`[data-testid="assign-new-${id}"]`);
+    await page.waitForTimeout(150);
+    const box = await page.locator(`[data-testid="assign-new-${id}"] .new-hit`).boundingBox();
+    return { x: box.x + Math.min(60, box.width / 2), y: box.y + box.height / 2 };
+  };
+  const newPane = page.locator('[data-testid="assign-new"]');
+  const openNewDoc = async (docId) => {
+    if ((await newPane.getAttribute("data-doc")) === String(docId)) return;
+    await page.locator('[data-testid="assign-new-doc"]').click();
+    await page.locator(`[data-testid="assign-new-doc-option-${docId}"]`).click();
+    await page.waitForFunction((id) => document.querySelector('[data-testid="assign-new"]')?.getAttribute("data-doc") === String(id), docId, { timeout: T });
+  };
+  const readMarks = () => page.evaluate(() => ({
+    cards: document.querySelectorAll('[data-testid="drag-card"]').length,
+    lines: document.querySelectorAll("svg[data-drag-line]").length,
+    drops: document.querySelectorAll("[data-drop]").length,
+    srcs: document.querySelectorAll("[data-drag-src]").length,
+  }));
+  const isPressed = async (id) => (await page.locator(`[data-testid="assign-new-pick-${id}"]`).getAttribute("aria-pressed")) === "true";
+  const menu = page.locator('[data-testid="assign-link-menu"]');
+
+  // 1. 다른 줄을 먼저 골라 둔다 - 끄는 줄은 지금 고른 줄이 아니다
+  const aPoint = await pointInUnit(aId);
+  await page.mouse.click(aPoint.x, aPoint.y);
+  await page.waitForLoadState("networkidle");
+  check("clicking a piece picks its row first", (await pieceOf(aId).getAttribute("data-sel")) === "");
+  await newPane.waitFor({ timeout: T });
+  const shownDoc = Number(await newPane.getAttribute("data-doc"));
+  await openNewDoc(writtenDocIds.includes(shownDoc) ? shownDoc : writtenDocIds[0]);
+  const tId = Number(await page.locator('[data-testid="assign-new"] .pg:not([data-read-only]) .new-line[data-target]:not([data-state="picked"])').first().getAttribute("data-target"));
+
+  // 2. 끄는 동안 - 표 한 장, 놓을 문장 테두리와 표의 메모, 따라오는 점선, 흐린 출발 조각
+  const from = await pointInUnit(bId);
+  const onto = await pointInLine(tId);
+  await dragThrough(page, from, [onto]);
+  await page.waitForTimeout(100);
+  const during = await page.evaluate(({ b, t }) => ({
+    card: document.querySelector('[data-testid="drag-card"]')?.textContent ?? null,
+    note: document.querySelector('[data-testid="drag-card"] .drag-card-note')?.textContent ?? "",
+    drop: document.querySelector(`[data-testid="assign-new-${t}"]`)?.getAttribute("data-drop") ?? null,
+    line: document.querySelector("svg[data-drag-line] path")?.getAttribute("d") ?? "",
+    src: document.querySelector(`[data-testid="assign-paper-piece-${b}"]`)?.hasAttribute("data-drag-src") ?? false,
+  }), { b: bId, t: tId });
+  check("dragging an Old piece shows a card with its unit id", during.card !== null && during.card.includes(loose.get(bId).display_id), during.card);
+  check("over a written sentence the line is marked and the card says link", during.drop === "over" && during.note === "Link to this sentence", JSON.stringify({ drop: during.drop, note: during.note }));
+  check("a draft line follows from the piece", during.line.length > 0);
+  check("the dragged piece stays dimmed in place", during.src);
+  await takeShot("sop-assign-drag-link.png");
+  // 3. 문장 위를 여러 걸음 지나도 React는 다시 그리지 않는다(G11)
+  const commitsBefore = await page.evaluate(() => window.__commits ?? -1);
+  for (let i = 0; i < 12; i += 1) await page.mouse.move(onto.x + (i % 4) * 6, onto.y + (i % 3) - 1);
+  const commitsAfter = await page.evaluate(() => window.__commits ?? -1);
+  check("no React commit while dragging over a sentence", commitsBefore > 0 && commitsBefore === commitsAfter, `${commitsBefore} -> ${commitsAfter}`);
+
+  // 4. 놓으면 클릭과 같은 상태 - 끈 줄을 고르고 그 문장을 고르고 그 자리 메뉴(저장 전), 끌기 표시는 모두 치운다
+  await page.mouse.up();
+  await menu.waitFor({ timeout: T });
+  check("dropping picks the dragged row", (await pieceOf(bId).getAttribute("data-sel")) === "" && (await pieceOf(aId).getAttribute("data-sel")) === null);
+  check("dropping picks the sentence", await isPressed(tId));
+  check("the in-place menu opens, not saved yet", (await page.locator('[data-testid="assign-link-menu-unsaved"]').count()) === 1);
+  const marks = await readMarks();
+  check("the drag leaves no marks behind", marks.cards + marks.lines + marks.drops + marks.srcs === 0, JSON.stringify(marks));
+  // 5. 저장하지 않았다
+  check("dropping saves nothing", (await readUnits()).find((unit) => unit.unit_id === bId)?.status === "unassigned");
+  // 6. 메뉴의 Cancel이 고름을 거둔다(클릭으로 고른 때와 같다)
+  await page.locator('[data-testid="assign-link-menu-cancel"]').click();
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-new-pick-${id}"]`)?.getAttribute("aria-pressed") === "false", tId, { timeout: T });
+  check("Cancel in the menu drops the pick", !(await isPressed(tId)));
+
+  // 7. Esc - 끄다가 문장 위에서 취소하면 표가 사라지고 아무것도 고르지 않는다
+  await dragThrough(page, await pointInUnit(bId), [await pointInLine(tId)]);
+  await page.waitForTimeout(100);
+  const overBeforeEsc = await page.locator(`[data-testid="assign-new-${tId}"]`).getAttribute("data-drop");
+  await page.keyboard.press("Escape");
+  const afterEsc = await readMarks();
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  check("Esc cancels the drag over a sentence", overBeforeEsc === "over" && afterEsc.cards + afterEsc.lines + afterEsc.drops + afterEsc.srcs === 0, JSON.stringify(afterEsc));
+  check("a cancelled drag picks nothing and opens no menu", !(await isPressed(tId)) && (await menu.count()) === 0);
+
+  // 9. 클릭은 그대로 - 움직이지 않고 누르면 표 없이 그 줄을 고른다
+  const press = await pointInUnit(aId);
+  await page.mouse.move(press.x, press.y);
+  await page.mouse.down();
+  const cardsOnPress = await page.locator('[data-testid="drag-card"]').count();
+  await page.mouse.up();
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-sel"), aId, { timeout: T });
+  check("a press without moving still picks the row, with no card", cardsOnPress === 0 && (await page.locator('[data-testid="drag-card"]').count()) === 0);
+
+  // 8. 아직 쓰지 않은 문서 - 그 문장 위에는 놓을 자리가 없고 놓아도 아무 일도 없다(3걸음에서 보내기로 놓인다)
+  let composedLine = null;
+  for (const docId of composedDocIds) {
+    await openNewDoc(docId);
+    const line = page.locator('[data-testid="assign-new"] .pg[data-read-only] .new-line[data-target]').first();
+    if (await line.waitFor({ timeout: 4000 }).then(() => true, () => false)) {
+      composedLine = Number(await line.getAttribute("data-target"));
+      break;
+    }
+  }
+  check("an unwritten New document with sentences opens", composedLine !== null, composedDocIds.join(","));
+  await centre(`[data-testid="assign-new-${composedLine}"]`);
+  const composedBox = await page.locator(`[data-testid="assign-new-${composedLine}"]`).boundingBox();
+  await dragThrough(page, await pointInUnit(bId), [{ x: composedBox.x + Math.min(60, composedBox.width / 2), y: composedBox.y + composedBox.height / 2 }]);
+  await page.waitForTimeout(100);
+  const overComposed = await readMarks();
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  check("a sentence of an unwritten document takes no drop yet", overComposed.cards === 1 && overComposed.drops === 0, JSON.stringify(overComposed));
+  check("dropping there does nothing", (await menu.count()) === 0 && (await pieceOf(aId).getAttribute("data-sel")) === "" && (await pieceOf(bId).getAttribute("data-sel")) === null);
+});
+
 // 한 언어만 잇기(v0.11.1) - Old는 한/영 짝인데 쓴 New에는 한 언어만 있는 예외. 있는 언어만 이어 확정하면 서버가 같은 저장 안에서
 // 짝을 풀고(release_unit_ids - 화면이 짝 풀기를 따로 부르지 않는다) 남은 문장이 제 줄이 되어 사람이 삭제(Remark)나 보류로 끝낸다
 await runStep("assign: a one-language link on a KO/EN pair row unpairs it and leaves the other sentence open", {}, async ({ page, takeShot }) => {
@@ -3956,10 +4096,13 @@ await runStep("assign: make a unit from a dragged selection, then undo", {}, asy
   await span.waitFor({ timeout: T });
   await span.scrollIntoViewIfNeeded();
   const box = await span.boundingBox();
+  // Old 조각은 끌어서 잇는 상자라 글자는 Alt를 누른 동안만 긁힌다(끌어다 놓기 설계 G3)
   await page.mouse.move(box.x + 2, box.y + 10);
+  await page.keyboard.down("Alt");
   await page.mouse.down();
   await page.mouse.move(box.x + 150, box.y + 10, { steps: 10 });
   await page.mouse.up();
+  await page.keyboard.up("Alt");
   await wait(page, "assign-carve");
   const picked = (await getText(page, "assign-carve-text")).trim();
   check("the bar above the paper shows the picked text", picked.length > 0 && unit.text.startsWith(picked), picked);
