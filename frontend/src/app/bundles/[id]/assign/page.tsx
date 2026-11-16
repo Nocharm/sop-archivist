@@ -232,6 +232,9 @@ const RETIRING_OPS: ReadonlySet<string> = new Set(["cut", "carve", "merge", "unm
 // 한 단으로 연 New 문서에서 연 우클릭 메뉴의 줄 키 자리 - 그 문서에는 줄이 없다
 const SOLO_ROW_KEY = "solo";
 
+// Pair view를 끈 뒤 스크롤 자리 맞추기를 멈추는 사람의 입력 - 굴림(휠·스크롤 막대 누름)·글쇠가 이긴다
+const PAIR_RESTORE_STOPS = ["wheel", "pointerdown", "keydown", "touchstart"] as const;
+
 /** 배정이 걸려 서버가 되물은 편집 - 확인하면 같은 일을 confirm을 켜고 다시 보낸다 */
 type ConfirmedEdit =
   | { kind: "edit"; op: EditOp; okText: string; followId: number | null }
@@ -297,6 +300,26 @@ function revealElement(el: HTMLElement) {
   const box = el.getBoundingClientRect();
   const frame = pane.getBoundingClientRect();
   if (shouldRecenter(box.top, box.bottom, frame.top, frame.bottom)) el.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+}
+
+/** Pair view 조각을 보이게 - 칸의 조각은 그려지기 전 높이를 어림하므로(content-visibility), 멀리 부드럽게 굴리면 지나가며 그려진 조각이 자라 목표가 밀려
+ *  화면 밖에서 멈춘다(잰 값: 극단 자료 OLD-90에서 5,000px 모자랐다). 한 화면 넘게 떨어졌으면 바로 옮기고, 다음 프레임에 아직 밖이면 한 번 더 맞춘다 */
+function revealPairPiece(el: HTMLElement) {
+  const pane = el.closest(".pane-body");
+  if (!pane) return;
+  const box = el.getBoundingClientRect();
+  const frame = pane.getBoundingClientRect();
+  if (!shouldRecenter(box.top, box.bottom, frame.top, frame.bottom)) return;
+  if (box.bottom > frame.top - frame.height && box.top < frame.bottom + frame.height) {
+    revealElement(el);
+    return;
+  }
+  el.scrollIntoView({ block: "center" });
+  requestAnimationFrame(() => {
+    const next = el.getBoundingClientRect();
+    const now = pane.getBoundingClientRect();
+    if (shouldRecenter(next.top, next.bottom, now.top, now.bottom)) el.scrollIntoView({ block: "center" });
+  });
 }
 
 // 도구 줄이 이보다 좁으면 오른쪽 단추는 아이콘만(라벨은 툴팁) - 1440 창에서 한 줄을 지킨다(한·영 모두 AI 메뉴가 있어도)
@@ -551,6 +574,8 @@ export default function AssignPage() {
   const pairLinks = useMemo(() => (pairColumns ? listPairLinks(pairColumns) : []), [pairColumns]);
   // 켜기 전 Old 용지의 스크롤 자리 - 고른 줄 없이 끄면 이리로 돌아간다
   const pairScrollRef = useRef(0);
+  // 고른 줄 없이 끈 뒤 그 자리로 되풀이해 맞추는 중이면 그 멈춤 함수
+  const pairRestoreRef = useRef<(() => void) | null>(null);
   // 본문·머리말·꼬리말 탭 - 고른 조각이 다른 탭에 있으면 그 탭으로 가고, 사람이 고른 탭은 그 줄에서 그대로 둔다
   const partKeys = useMemo(() => (paperModel ? (["body", "header", "footer"] as const).filter((key) => paperModel[key].length > 0) : []), [paperModel]);
   const paperTabs = useMemo(() => (oldView && paperModel ? buildPaperTabs(oldView, paperModel) : null), [oldView, paperModel]);
@@ -787,6 +812,7 @@ export default function AssignPage() {
     clearCarve();
     setMenu(null);
     setCtxMenu(null);
+    stopPairRestore();
     pairScrollRef.current = document.querySelector<HTMLElement>('[data-pane="old"] .pane-body')?.scrollTop ?? 0;
     setPairViewDoc(oldView.document.id);
   }
@@ -801,9 +827,17 @@ export default function AssignPage() {
     }
     // 다시 그려진 용지는 몇 프레임에 걸쳐 높이가 자란다(첫 프레임에 맞추면 그때의 끝에 걸린다, 잰 값) - 자리가 두 프레임 버틸 때까지(길어도 30프레임) 다시 맞춘다.
     // 한 단처럼 용지가 짧아져 그 자리까지 못 가면 끝까지
+    // 되풀이는 다시 켜기·화면 떠나기·사람의 굴림·누름·글쇠에서 멈춘다 - 다시 켠 KO 칸도 같은 선택자에 걸려 용지의 자리를 받는다
+    stopPairRestore();
     const top = pairScrollRef.current;
     let frames = 0;
     let held = 0;
+    let frame = 0;
+    const stop = () => {
+      cancelAnimationFrame(frame);
+      for (const type of PAIR_RESTORE_STOPS) window.removeEventListener(type, stop, true);
+      if (pairRestoreRef.current === stop) pairRestoreRef.current = null;
+    };
     const restore = () => {
       const pane = document.querySelector<HTMLElement>('[data-pane="old"] .pane-body');
       if (pane) {
@@ -811,16 +845,23 @@ export default function AssignPage() {
         held = Math.abs(pane.scrollTop - want) <= 1 ? held + 1 : 0;
         if (held === 0) pane.scrollTop = want;
       }
-      if (held < 2 && ++frames < 30) requestAnimationFrame(restore);
+      if (held < 2 && ++frames < 30) frame = requestAnimationFrame(restore);
+      else stop();
     };
-    requestAnimationFrame(restore);
+    for (const type of PAIR_RESTORE_STOPS) window.addEventListener(type, stop, { capture: true, passive: true });
+    pairRestoreRef.current = stop;
+    frame = requestAnimationFrame(restore);
   }
+  function stopPairRestore() {
+    pairRestoreRef.current?.();
+  }
+  useEffect(() => () => pairRestoreRef.current?.(), []);
 
   // Pair view 동안 고른 줄이 바뀌면 그 줄의 조각을 칸마다 화면 안으로(이미 보이면 움직이지 않는다) - 짝의 두 끝을 한 화면에 들이는 길이다
   const revealPairRow = useEffectEvent(() => {
     for (const unitId of row?.unitIds ?? []) {
       const el = document.querySelector<HTMLElement>(`[data-testid="assign-pair-piece-${unitId}"]`);
-      if (el) revealElement(el);
+      if (el) revealPairPiece(el);
     }
   });
   useEffect(() => {

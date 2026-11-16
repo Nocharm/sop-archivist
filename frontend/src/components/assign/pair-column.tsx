@@ -19,7 +19,8 @@ import type { PairColumnItem, PairLang, PairUnit } from "@/lib/pair-drop-model";
 export function PairViewToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   const { t } = useI18n();
   return (
-    <Tooltip label={t("assign.pairView.tip")}>
+    // 라벨은 칸 머리가 좁으면 접힌다(CSS 컨테이너 질의라 화면 코드는 모른다) - 툴팁이 늘 이름부터 말한다
+    <Tooltip label={`${t("assign.pairView")} — ${t("assign.pairView.tip")}`}>
       <button type="button" className="pane-toggle has-label" aria-pressed={on} aria-label={t("assign.pairView")} data-testid="assign-pair-view" onClick={onToggle}>
         <Languages size={13} strokeWidth={1.8} aria-hidden />
         <span>{t("assign.pairView")}</span>

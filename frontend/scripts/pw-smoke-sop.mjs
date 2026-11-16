@@ -121,6 +121,16 @@ async function installCommitCounter(page) {
     };
   });
 }
+// 두 문서 틀(.assign-panes)에 닿은 click 수(문서의 거품 단계) - 놓은 자리의 click을 끌기 층이 삼키면 0이다.
+// 두 조각에 걸친 누름·뗌의 click은 두 조각의 공통 조상으로 가서 고른 줄을 바꾸지 않으므로 고른 줄만으로는 삼켜졌는지 보이지 않는다
+async function installPanesClickCounter(page) {
+  await page.evaluate(() => {
+    window.__panesClicks = 0;
+    document.addEventListener("click", (event) => {
+      if (event.target instanceof Element && event.target.closest(".assign-panes")) window.__panesClicks += 1;
+    });
+  });
+}
 // 줄 안의 한 점 - 글이 있으면 첫 글줄 위, 없으면(표) 줄 왼쪽 위. 앞선 놓기의 미끄러짐·따라가는 스크롤이 멈춘 뒤에 잰다(움직이는 중에 재면 다른 줄을 누른다)
 async function pointInRow(page, id) {
   const text = page.locator(`[data-testid="output-c-item-${id}"]`);
@@ -5847,7 +5857,7 @@ await runStep("assign: Pair view opens a KO | EN document in two columns and giv
 
 // Pair view를 끄는 길은 모두 같은 자리로 돌아온다(계획 판단 5) - 고른 줄이 있으면 Old 용지에 그 조각이 보이고, 없으면 켜기 전 스크롤 자리.
 // 그리고 Pair view에서 Split을 누르면 먼저 끄고 용지에 나눌 선을 놓는다 - 보이지 않는 자리에서 자르지 않는다. 나눈 것은 Assign 되돌리기로 거둔다
-await runStep("assign: every way out of Pair view shows the picked piece or the old scroll, and Split turns it off first", { allowConsoleErrors: true }, async ({ page }) => {
+await runStep("assign: every way out of Pair view shows the picked piece or the old scroll, and Split turns it off first", {}, async ({ page }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const api = `${BASE}/api/bundles/${halfBundleId}`;
   const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
@@ -5942,6 +5952,25 @@ await runStep("assign: every way out of Pair view shows the picked piece or the 
   const afterOne = await oldScroll();
   check("and so does One document (or its end, when the wider paper is shorter)", Math.abs(afterOne - Math.min(before, oneMax)) <= 2, `${before} -> ${afterOne} (max ${oneMax})`);
   await page.locator('[data-testid="assign-view-two"]').click();
+  await wait(page, "assign-new");
+  // 끄자마자(자리 맞추기가 도는 동안) 다시 켜도 KO 칸은 제 자리(맨 위)다 - 그 되풀이가 같은 data-pane="old"인 KO 칸에 용지의 자리를 쓰지 않는다.
+  // 두 프레임 안에 DOM click으로 누른다(포인터 입력이 아니라 켜기 자체가 되풀이를 멈춰야 한다). 창을 낮춰 KO 칸도 굴러갈 만큼 길게 한다(그래야 잘못 쓴 자리가 0이 아니다)
+  await page.setViewportSize({ width: VIEWPORT.width, height: 360 });
+  await page.locator('[data-pane="old"] .pane-body').evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await page.waitForTimeout(200);
+  await turnOn();
+  await page.evaluate(async () => {
+    document.querySelector('[data-testid="assign-view-two"]').click();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    document.querySelector('[data-testid="assign-pair-view"]').click();
+  });
+  await wait(page, "assign-pair-en");
+  await page.waitForTimeout(700);
+  const ko = await page.locator('[data-pair-col="ko"] .pane-body').evaluate((el) => ({ top: el.scrollTop, max: el.scrollHeight - el.clientHeight }));
+  check("closing and reopening at once leaves the KO column at its own top", ko.max > 0 && ko.top === 0, JSON.stringify(ko));
+  await page.locator('[data-testid="assign-view-two"]').click();
+  await waitOff();
+  await page.setViewportSize(VIEWPORT);
   await wait(page, "assign-new");
 
   // 4. Split - Pair view에서 누르면 먼저 끄고 용지의 그 문장에 선을 놓는다. 나누지는 않는다. 다음 S가 나눈다
@@ -6099,6 +6128,10 @@ await runStep("assign: Pair view - drag a piece onto its partner to pair or conf
   await wait(page, "assign-pair-en");
   await page.waitForLoadState("networkidle");
   check("the pieces of a free sentence are drag boxes", (await pairPiece(a.id).getAttribute("data-drag-box")) === "" && (await pairPiece(a2.id).getAttribute("data-drag-box")) === "");
+  // 다른 줄(h)을 골라 둔 채 끈다 - 놓은 뒤 고른 줄은 놓기가 고른 짝 줄이고, 놓은 자리의 click은 끌기 층이 삼켜 두 칸에 닿지 않는다
+  await pairPiece(h.id).click();
+  await page.waitForFunction((want) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() === want, h.display_id, { timeout: T });
+  await installPanesClickCounter(page);
 
   // 1. 끄는 동안 - 표의 메모·놓을 조각의 테두리·출발 조각·따라오는 선 하나. 두 칸의 조각 위를 지나도 React는 다시 그리지 않는다(G11)
   await startDrag(a.id);
@@ -6132,7 +6165,9 @@ await runStep("assign: Pair view - drag a piece onto its partner to pair or conf
 
   // 2. 놓으면 바로 저장하고 Undo가 든 알림
   await moveOnto(a2.id);
+  await page.evaluate(() => { window.__panesClicks = 0; });
   const paired = await dropAndSave(POST_PAIR, `Paired ${idsOf(a, a2)}`);
+  const pairDropClicks = await page.evaluate(() => window.__panesClicks);
   const sent = JSON.parse(pairRequests.at(-1).body);
   check("the drop posts the pair [a, a′] and gets 201", paired.response.status() === 201 && JSON.stringify(sent.unit_ids) === JSON.stringify([a.id, a2.id]), `${paired.response.status()} ${pairRequests.at(-1).body}`);
   const pairedText = (await paired.toast.innerText()).trim();
@@ -6142,6 +6177,8 @@ await runStep("assign: Pair view - drag a piece onto its partner to pair or conf
   await page.locator(`[data-testid="assign-pair-lines"] g[data-pair-link="${a.id}:${a2.id}"][data-status="confirmed"]`).waitFor({ timeout: T });
   await page.waitForFunction((want) => want.every((id) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.includes(id)), [a.display_id, a2.display_id], { timeout: T });
   check("the pair line is drawn, the pair row is picked and the drag marks are gone", JSON.stringify(await readMarks()) === NO_MARKS, JSON.stringify(await readMarks()));
+  const pickedAfterDrop = (await getText(page, "assign-row-id")).trim();
+  check("the click after the drop is swallowed and h is no longer the picked row", pairDropClicks === 0 && !pickedAfterDrop.includes(h.display_id), `${pairDropClicks} clicks, row ${pickedAfterDrop}`);
   // Undo는 강조색 글(.btn.ghost보다 앞서야 한다)
   const undoColour = await undoIn(paired.toast).evaluate((el) => {
     const probe = document.createElement("span");
@@ -6363,7 +6400,9 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
   const interleaved = [];
   for (const item of docs.filter((doc) => doc.side === "old" && doc.status === "ready" && doc.language_layout === "ko_en_interleaved")) {
     const view = await getJson(`/documents/${item.id}/view`);
-    if (view.units.some((unit) => unit.group_unit_id === null && (unit.kind === "figure" || unit.kind === "table"))) interleaved.push({ doc: item, view });
+    // 그림과 표가 모두 있는 문서만 - 아래 5의 두 확인이 늘 돈다(검사 수가 자료에 따라 달라지지 않게)
+    const hasKind = (kind) => view.units.some((unit) => unit.group_unit_id === null && unit.kind === kind);
+    if (hasKind("figure") && hasKind("table")) interleaved.push({ doc: item, view });
   }
   let picked = interleaved.find((entry) => findNearPairs(entry.view).length >= 3);
   if (!picked && interleaved.length > 0) {
@@ -6372,7 +6411,7 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
     picked = { doc: interleaved[0].doc, view: await getJson(`/documents/${interleaved[0].doc.id}/view`) };
   }
   const near = picked ? findNearPairs(picked.view) : [];
-  check("an interleaved document with a figure or table has three nearby KO/EN sentence pairs left open", near.length >= 3, picked?.doc.doc_code ?? "none");
+  check("an interleaved document with a figure and a table has three nearby KO/EN sentence pairs left open", near.length >= 3, picked?.doc.doc_code ?? "none");
   const doc = picked.doc;
   const docPath = `/documents/${doc.id}`;
   const readView = () => getJson(`${docPath}/view`);
@@ -6466,12 +6505,18 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
   await openDoc(doc.id, x.id);
   check("the interleaved document opens in the two-document view without Pair view", (await page.locator('[data-testid="assign-new"]').count()) === 1 && (await page.locator('[data-testid="assign-pair-view"]').count()) === 0);
 
+  // 다른 줄(q 카드)을 골라 둔 채 끈다 - 놓은 뒤 고른 줄은 놓기가 고른 짝 줄이고 놓은 자리의 click은 Old 칸에 닿지 않는다
+  await pieceOf(q.id).click();
+  await page.waitForFunction((want) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.includes(want), q.display_id, { timeout: T });
+  await installPanesClickCounter(page);
+
   // 1. 끄는 동안 - x를 x′ 위로. Old 조각들 위를 지나도 React는 다시 그리지 않는다(G11)
   await startDrag(x.id);
   await moveOnto(x2.id);
   const overX2 = await readCard();
   check("dragging x over x′ says Pair with x′", overX2.note === `Pair with ${x2.display_id}` && !overX2.refused, overX2.note);
   check("x′ is the drop target", (await pieceOf(x2.id).getAttribute("data-drop")) === "over");
+  const stripOverOffset = await pieceOf(x2.id).evaluate((el) => getComputedStyle(el).outlineOffset);
   const wanderPoints = await page.evaluate(() => {
     const frame = document.querySelector('[data-pane="old"] .pane-body').getBoundingClientRect();
     const points = [];
@@ -6493,7 +6538,12 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
 
   // 2. 놓으면 바로 저장하고 Undo가 든 알림 - 두 조각이 한 카드가 된다
   await moveOnto(x2.id);
+  await page.evaluate(() => { window.__panesClicks = 0; });
   const paired = await dropAndSave(`Paired ${idsOf(x, x2)}`);
+  const nearDropClicks = await page.evaluate(() => window.__panesClicks);
+  const pickedPairRow = await page.waitForFunction((want) => want.every((id) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.includes(id)), [x.display_id, x2.display_id], { timeout: T }).then(() => true, () => false);
+  const pickedAfterNear = (await getText(page, "assign-row-id")).trim();
+  check("after the drop the new pair row is picked, not q's, and the click after it is swallowed", pickedPairRow && !pickedAfterNear.includes(q.display_id) && nearDropClicks === 0, `${nearDropClicks} clicks, row ${pickedAfterNear}`);
   check("the drop posts the pair [x, x′] and gets 201", paired.response.status() === 201 && JSON.stringify(JSON.parse(pairRequests.at(-1).body).unit_ids) === JSON.stringify([x.id, x2.id]), `${paired.response.status()} ${pairRequests.at(-1).body}`);
   check("the toast carries Undo", (await undoIn(paired.toast).innerText()).trim() === "Undo");
   check("x and x′ are one pair in the API", isPaired(await readView(), x, x2));
@@ -6543,20 +6593,27 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
   await moveTo({ x: lineBox.x + Math.min(60, lineBox.width / 2), y: lineBox.y + lineBox.height / 2 });
   const overLine = await readCard();
   check("over a written New sentence the card still says link", overLine.note === "Link to this sentence" && (await line.getAttribute("data-drop")) === "over", overLine.note);
-  if (figure) {
-    await moveTo(await centreOf(pieceOf(figure.id)));
-    const overFigure = await readCard();
-    check("over a figure piece nothing is marked and the card says nothing", overFigure.drops === 0 && overFigure.note === "", JSON.stringify(overFigure));
-  }
-  if (table) {
-    await moveTo(await centreOf(page.locator(`[data-testid="assign-paper-unit-${table.id}"]`)));
-    const overTable = await readCard();
-    check("over a table piece nothing is marked and the card says nothing", overTable.drops === 0 && overTable.note === "", JSON.stringify(overTable));
-  }
+  // 5걸음의 안쪽 테두리(-5px)는 Old 칸만 - New 문장의 잇기 테두리는 2걸음 값(-2px), 거절 테두리는 공통 값(-1px) 그대로다(New 칸도 .pg[data-strips]다)
+  const offsetOf = (locator) => locator.evaluate((el) => getComputedStyle(el).outlineOffset);
+  const lineOverOffset = await offsetOf(line);
+  await moveTo(await centreOf(pieceOf(figure.id)));
+  const overFigure = await readCard();
+  check("over a figure piece nothing is marked and the card says nothing", overFigure.drops === 0 && overFigure.note === "", JSON.stringify(overFigure));
+  await moveTo(await centreOf(page.locator(`[data-testid="assign-paper-unit-${table.id}"]`)));
+  const overTable = await readCard();
+  check("over a table piece nothing is marked and the card says nothing", overTable.drops === 0 && overTable.note === "", JSON.stringify(overTable));
   await page.keyboard.press("Escape");
   await page.mouse.up();
   await page.waitForTimeout(300);
   check("Esc ends the drag and nothing is paired", pairRequests.length === requestsBeforeNew && pairOf(await readView(), y.id) === null);
+  // 거절 표시는 끌기 층이 다는 속성 하나다 - 끌기 없이 달아 CSS만 잰다
+  const lineRefusedOffset = await line.evaluate((el) => {
+    el.dataset.drop = "refused";
+    const value = getComputedStyle(el).outlineOffset;
+    delete el.dataset.drop;
+    return value;
+  });
+  check("drop outlines: Old strip inside (-5px), New line link -2px and refused -1px as before", JSON.stringify([stripOverOffset, lineOverOffset, lineRefusedOffset]) === JSON.stringify(["-5px", "-2px", "-1px"]), JSON.stringify([stripOverOffset, lineOverOffset, lineRefusedOffset]));
 
   // 6. 다른 배치에서는 조용하다 - 한/영 따로 문서의 평소 보기에서 KO 문장을 EN 문장 위로
   const separateView = await getJson(`/documents/${separate.id}/view`);
