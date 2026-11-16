@@ -179,8 +179,17 @@ def _read_moved_lines(rows: Iterable[Row[Any]]) -> list[MapLine]:
     ]
 
 
+def _is_matchable(number: str) -> bool:
+    """Bundle을 건너 맞춰 볼 수 있는 번호인가 — 문서 번호 꼴이고 임시 번호가 아니다.
+
+    꼴을 보지 않으면 작성자가 자기 문서 번호를 아무 글로 바꿔 남의 Bundle의 숨은 글(확정 참조 번호·이동 대상 코드)을
+    맞혀 볼 수 있다 — 선과 줄 수가 답이 된다. 그래서 맞추기의 양쪽, 모든 길에 건다. 꼴이 아닌 진짜 번호(`QP 07`)는 선을 잃는다.
+    """
+    return is_document_number(number) and not is_temp_match_code(number)
+
+
 async def _load_own_numbers(session: AsyncSession, bundle_id: int) -> set[str]:
-    """이 Bundle을 가리킬 수 있는 번호 — 읽힌 Old 문서 번호와 New 문서 번호. 빈 값과 임시 번호는 번호가 아니다."""
+    """이 Bundle을 가리킬 수 있는 번호 — 읽힌 Old 문서 번호와 New 문서 번호 가운데 맞춰 볼 수 있는 것."""
     doc_codes = await session.scalars(
         select(Document.doc_code).where(
             Document.bundle_id == bundle_id, Document.side == _OLD_SIDE, Document.status == _READY
@@ -188,7 +197,7 @@ async def _load_own_numbers(session: AsyncSession, bundle_id: int) -> set[str]:
     )
     target_codes = await session.scalars(select(TargetDoc.code).where(TargetDoc.bundle_id == bundle_id))
     numbers = {normalize_number(code) for code in [*doc_codes, *target_codes]}
-    return {number for number in numbers if number and not is_temp_match_code(number)}
+    return {number for number in numbers if _is_matchable(number)}
 
 
 def _in_same_kind(bundle: Bundle, column: Any) -> ColumnElement[bool]:
@@ -288,16 +297,16 @@ async def _resolve_numbers(
 
 
 def _pick_ends(line: MapLine, olds: dict[str, list[_Node]], targets: dict[str, list[_Node]]) -> list[_Node]:
-    """줄의 번호가 닿는 마디 — 참조는 Old 먼저, 이동은 New 먼저, 둘 다 없으면 번호 꼴일 때만 num. 임시 번호는 버린다."""
-    if is_temp_match_code(line.number):
+    """줄의 번호가 닿는 마디 — 참조는 Old 먼저, 이동은 New 먼저, 둘 다 없으면 num. 맞춰 볼 수 없는 번호의 줄은 버린다.
+
+    번호 꼴을 문서와 맞추기 전에 본다 — 자유 입력 글이 번호처럼 남에게 보이지도, 남의 문서 번호와 맞아 선이 되지도 않게.
+    """
+    if not _is_matchable(line.number):
         return []
     first, second = (olds, targets) if line.kind == "ref" else (targets, olds)
-    ends = first.get(line.number) or second.get(line.number)
-    if ends:
-        return ends
-    if not is_document_number(line.number):  # 자유 입력 글이 번호처럼 남에게 보이지 않게
-        return []
-    return [_Node(f"num:{line.number}", "num", None, line.number, "", None, 0)]
+    return first.get(line.number) or second.get(line.number) or [
+        _Node(f"num:{line.number}", "num", None, line.number, "", None, 0)
+    ]
 
 
 async def _load_old_nodes(session: AsyncSession, bundle_id: int, extra_ids: set[int]) -> dict[str, _Node]:
@@ -386,7 +395,7 @@ async def build_reference_map(session: AsyncSession, ctx: BundleContext, scope: 
     member_of = set(await session.scalars(select(BundleMember.bundle_id).where(BundleMember.login_id == ctx.login_id)))
 
     lines = await collect_map_lines(session, bundle, scope)
-    olds, targets = await _resolve_numbers(session, bundle, {line.number for line in lines})
+    olds, targets = await _resolve_numbers(session, bundle, {line.number for line in lines if _is_matchable(line.number)})
     nodes: dict[str, _Node] = {}
     edges: Counter[tuple[str, str, str, str]] = Counter()
     for line in lines:

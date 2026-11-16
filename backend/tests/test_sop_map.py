@@ -3,16 +3,22 @@
 번호·이름은 모두 합성이다. 남의 Bundle(S)의 문장·제목에는 표시 글자를 심어 응답 본문 전체에서 찾는다.
 """
 
+import re
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any
+
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db import engine
 from app.models import Employee
 from app.settings import settings
 from app.sop import ref_map
 from app.sop.bundle_code import format_bundle_code
-from app.sop.models import Extraction, TargetSentence, Unit, UnitDecision
+from app.sop.models import Extraction, TargetDoc, TargetSentence, Unit, UnitDecision, UnitRef
 from app.sop.refs import is_document_number
 from app.sop.tobe import is_temp_match_code
 from tests.access_helpers import add_grant, run_in_session, update_row
@@ -22,9 +28,11 @@ from tests.sop_helpers import (
     OUTSIDER,
     REVIEWER,
     assign_as_is,
+    create_bundle,
     get_group_by_unit,
     get_view,
     put_tobe,
+    set_members,
 )
 from tests.sop_map_helpers import (
     M_EXTRA,
@@ -35,6 +43,8 @@ from tests.sop_map_helpers import (
     PLAIN,
     REF_NONE,
     REF_UV,
+    S_MOVED,
+    S_REF,
     S_TITLE,
     V_TITLE,
     World,
@@ -46,6 +56,8 @@ from tests.sop_map_helpers import (
 )
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
+
+SCOPES = ("linked", "all")
 
 
 def _edges_from(body: dict, source: str) -> list[dict]:
@@ -64,6 +76,34 @@ def _node(body: dict, node_id: str) -> dict:
 
 def _becomes(body: dict, doc_id: int) -> list[dict]:
     return _node(body, f"old:{doc_id}")["becomes"]
+
+
+@contextmanager
+def _record_statements() -> Iterator[list[tuple[str, Any]]]:
+    """이 안에서 DB로 나간 SQL과 그 매개변수(test_sop_review의 _count_queries와 같은 방식)."""
+    statements: list[tuple[str, Any]] = []
+
+    def record(_conn: object, _cursor: object, statement: str, parameters: Any, *_args: object) -> None:
+        statements.append((statement, parameters))
+
+    event.listen(engine.sync_engine, "before_cursor_execute", record)
+    try:
+        yield statements
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", record)
+
+
+def _find_active_unit_id(text: str) -> int:
+    async def find(session: AsyncSession) -> int:
+        return (await session.scalars(select(Unit.id).where(Unit.text == text, Unit.status == "active"))).one()
+
+    return run_in_session(find)
+
+
+def _plant_free_text_in_s() -> None:
+    """S(qa.member에게 summary)의 확정 참조 번호와 이동 대상 코드를 번호 꼴이 아닌 그 줄의 글 조각으로 바꾼다."""
+    update_row(UnitRef, _find_active_unit_id(S_REF), number="ZZ-REF-TEXT SYNTHETIC")
+    update_row(UnitDecision, _find_active_unit_id(S_MOVED), move_target_code="ZZ-MOVED-SENTENCE synthetic.")
 
 
 # --- 번호 규칙 ---
@@ -315,6 +355,80 @@ def test_odd_document_numbers_do_not_break_the_scan(client: TestClient) -> None:
     assert _edges_from(get_map(client, w.v_id), f"old:{odd['id']}") == []
     rename("MAP" + "-ABCDEFGH" * 10 + "-123456")
     assert _edges_from(get_map(client, w.v_id), f"old:{odd['id']}") == []
+
+
+def test_only_number_shaped_values_reach_the_like_scan(client: TestClient) -> None:
+    """표시 없는 줄을 고르는 LIKE에는 문서 번호 꼴만 들어간다 — `%`·`_`나 자유 글이 들어가면 엉뚱한 줄을 잡는다.
+
+    뒤의 거르기(read_ref_state)가 넓게 잡힌 줄을 다시 버리므로 응답만으로는 이것을 볼 수 없다 — 나간 매개변수를 본다.
+    """
+    w = World(client)
+    add_doc(client, w.v_id, "SYNTHETIC_OLD-7_Extra.docx", "Synthetic extra line.")
+    current = get_view(client, w.v_id, w.v_doc["id"])["document"]["revision"]
+    response = client.patch(
+        f"/api/bundles/{w.v_id}/documents/{w.v_doc['id']}", json={"revision": current, "doc_code": "OLD_1%"}, headers=AUTHOR
+    )
+    assert response.status_code == 200, response.text
+
+    for scope in SCOPES:
+        with _record_statements() as statements:
+            get_map(client, w.v_id, scope=scope)
+        like_count, patterns = 0, []
+        for statement, parameters in statements:
+            like_count += statement.count(" LIKE ")
+            patterns += [value for value in parameters if isinstance(value, str) and value.startswith("%")]
+        assert len(patterns) == like_count  # LIKE 매개변수를 하나도 빠뜨리지 않고 본다
+        assert [value for value in patterns if not re.fullmatch(r"%[A-Z0-9-]+%", value)] == []
+        # 이 Bundle의 번호 OLD-7 · OLD_1% · SOP-CF 가운데 번호 꼴은 OLD-7 하나다
+        assert set(patterns) == {"%OLD-7%"}
+
+
+@pytest.mark.parametrize("guess", ["Zz-Ref-Text Synthetic", "zz-moved-sentence synthetic."])
+def test_free_text_elsewhere_cannot_be_guessed_with_an_old_document_code(client: TestClient, guess: str) -> None:
+    """작성자가 자기 Old 문서 번호를 남의 Bundle의 숨은 글(확정 참조 번호·이동 대상 코드)로 바꿔도 그 Bundle에서 선이 오지 않는다."""
+    w = World(client)
+    _plant_free_text_in_s()
+    current = get_view(client, w.v_id, w.v_doc["id"])["document"]["revision"]
+    response = client.patch(
+        f"/api/bundles/{w.v_id}/documents/{w.v_doc['id']}", json={"revision": current, "doc_code": guess}, headers=AUTHOR
+    )
+    assert response.status_code == 200, response.text
+
+    for scope in SCOPES:
+        response = client.get(f"/api/bundles/{w.v_id}/map", params={"scope": scope}, headers=AUTHOR)
+        assert response.status_code == 200, response.text
+        assert _edges_from(response.json(), f"old:{w.s_doc['id']}") == []
+        assert [marker for marker in MARKERS if marker in response.text] == []
+
+
+@pytest.mark.parametrize("guess", ["Zz-Ref-Text Synthetic", "zz-moved-sentence synthetic."])
+def test_free_text_elsewhere_cannot_be_guessed_with_a_new_document_code(client: TestClient, guess: str) -> None:
+    w = World(client)
+    _plant_free_text_in_s()
+    update_row(TargetDoc, w.v_sop, code=guess)
+
+    for scope in SCOPES:
+        response = client.get(f"/api/bundles/{w.v_id}/map", params={"scope": scope}, headers=AUTHOR)
+        assert response.status_code == 200, response.text
+        assert _edges_from(response.json(), f"old:{w.s_doc['id']}") == []
+        assert [marker for marker in MARKERS if marker in response.text] == []
+
+
+def test_linked_scope_draws_no_edge_to_a_third_bundle_with_the_same_number(client: TestClient) -> None:
+    """M의 제안 줄과 S의 확정 줄이 가리키는 OLD-1이 셋째 Bundle에도 있다 — linked는 V 쪽 선만 긋는다."""
+    w = World(client)
+    third_id = create_bundle(client, title="SYNTHETIC map third", is_synthetic=True)["id"]
+    twin = add_doc(client, third_id, "SYNTHETIC_OLD-1_Twin.docx", "Synthetic twin line.")
+    response = set_members(client, third_id, [("prod.member", "author")])
+    assert response.status_code == 200, response.text
+    v, m, s, t = (f"old:{doc_id}" for doc_id in (w.v_doc["id"], w.m_doc["id"], w.s_doc["id"], twin["id"]))
+
+    body = get_map(client, w.v_id)
+    assert _edge(body, m, v, "ref") is not None and _edge(body, s, v, "ref") is not None
+    # T에 닿는 선은 V 자신의 줄(REF_SELF "OLD-1 …")에서 나간 것 하나뿐 — 한쪽 끝이 V다
+    assert [(e["source"], e["kind"], e["state"]) for e in body["edges"] if t in (e["source"], e["target"])] == [
+        (v, "ref", "proposed"),
+    ]
 
 
 def test_only_active_units_of_the_latest_extraction_count(client: TestClient) -> None:
