@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
 from app.sop.ai.schemas import AdoptionStats, SuggestionOut, SuggestionsPageOut
+from app.sop.captions import CAPTION_KIND
 from app.sop.detach import ORIGIN_NEW_DOC, ORIGIN_TRANSLATION
 from app.sop.errors import raise_rule
 from app.sop.groups import TABLE_UNIT_KINDS, iter_chunks, select_in_chunks
@@ -118,6 +119,8 @@ def _build_suggested_shape(suggestion: AiSuggestion, units: Iterable[Unit]) -> S
     targets: list[TargetShape] = []
     sources_by_lang: dict[str, set[int]] = defaultdict(set)
     for unit in units:
+        if unit.kind == CAPTION_KIND:  # 분류 제안은 아직 캡션 새 문장을 만들지 않는다(Task 12) — 저장 모습과 견주지 않는다
+            continue
         if unit.group_unit_id is not None:
             targets.append(TargetShape(place, unit.text, frozenset((unit.id,))))
         elif unit.kind in _NO_TEXT_KINDS:

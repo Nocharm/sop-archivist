@@ -147,6 +147,12 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
         for answer in expected["answers"] if answer.get("kind") == "table"
         for spec in answer["targets"] if "parent_key" in spec
     ]
+    # 표·그림에 묶인 캡션은 답이 없고 묶음 답의 처분을 따른다
+    bundle_ids = {run.find_answer_unit(answer)["id"] for answer in expected["answers"] if answer.get("kind")}
+    addressed += [
+        unit["id"] for view in run.views.values() for unit in view["units"]
+        if unit["kind"] == "caption" and unit["group_unit_id"] in bundle_ids
+    ]
     old_cover = {
         unit["id"]: (code, unit["text"]) for code, view in run.views.items() if view["document"]["side"] == "old"
         for unit in view["units"] if unit["kind"] in COVER_KINDS

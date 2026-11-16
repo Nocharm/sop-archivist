@@ -1,7 +1,7 @@
 """DOCX 메인 추출기 — ZIP 안전 검사 뒤 WordprocessingML을 직접 읽어 원문 블록을 읽은 순서대로 낸다(순수 함수).
 
 두 단계다. 1단계(_Collector)는 부분들을 문서 순서로 걸으며 문단·칸 레코드를 모으고 본문 흐름의 쪽 나눔을 센다.
-2단계(_BlockWriter)는 캡션을 그림에 묶은 뒤 레코드를 블록으로 바꾸며 seq·구역 이름·쪽을 매긴다.
+2단계(_BlockWriter)는 캡션 문단을 그림·표에 이은 뒤 레코드를 블록으로 바꾸며 seq·구역 이름·쪽을 매긴다.
 """
 
 import posixpath
@@ -11,6 +11,7 @@ import zlib
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field, replace
 from io import BytesIO
+from typing import Literal
 from xml.etree.ElementTree import Element, ParseError
 
 from defusedxml import DefusedXmlException
@@ -41,6 +42,8 @@ FLAG_AUTO_NUMBERING = "auto_numbering"
 FLAG_CLAUSE_NUMBER = "clause_number"
 FLAG_MERGED_CELL = "merged_cell"
 FLAG_IMAGE_PART_TOO_LONG = "image_part_too_long"
+# 캡션 문단 블록이 제 그림·표를 가리키는 표시 — "caption_of:<그림 블록 seq | 표 첫 칸 블록 seq>"
+FLAG_CAPTION_OF = "caption_of"
 WARNING_MERGED_CELL_CONTENT = "merged_cell_content"
 
 DOCUMENT_PART = "word/document.xml"
@@ -59,7 +62,9 @@ _HEADING_STYLE_RE = re.compile(r"(?:heading|제목)\s*([1-9])")
 _CLAUSE_LINE_RE = re.compile(r"^\s*\d+(\.\d+)*\.?\s*$")
 # 구역 이름으로 쓸 앞머리 조항 번호 — 번호만 있는 줄("5.1")도 번호가 되도록 끝($)도 받는다
 _LABEL_NUMBER_RE = re.compile(r"(\d+(?:\.\d+)*)\.?(?:\s|$)")
-_CAPTION_TEXT_RE = re.compile(r"^(그림|Figure|Fig\.)\s*\d+")
+# 캡션 머리 — 번호 바로 뒤는 끝·공백·구두점만 받아 "표 1에 따라"처럼 조사가 붙은 참조 문장을 거른다
+_FIGURE_CAPTION_RE = re.compile(r"^(?:그림|Figure|Fig)\s*\.?\s*\d+(?=$|[\s.:)\-–—])")
+_TABLE_CAPTION_RE = re.compile(r"^(?:표|Table)\s*\.?\s*\d+(?=$|[\s.:)\-–—])")
 _LEVEL_REF_RE = re.compile(r"%([1-9])")  # lvlText 안의 수준 자리("%1.%2")
 MAX_NUMBER_LEVELS = 9  # Word 목록 수준 수(ilvl 0~8)
 PLAIN_BULLET = "•"
@@ -362,8 +367,8 @@ class _ParaRecord:
     has_figure: bool
     image_part: str | None
     slot: tuple[int, int]  # (컨테이너 번호, 컨테이너 안 순번) — 캡션이 "바로 앞·뒤 문단"인지 판정한다
-    caption: str | None = None
-    is_consumed: bool = False  # 그림 캡션으로 묶여 따로 블록을 만들지 않는다
+    # 이 문단이 캡션인 묶음 — ("figure", 그림 레코드의 목록 위치) | ("table", table_index)
+    caption_for: tuple[Literal["figure", "table"], int] | None = None
 
 
 @dataclass
@@ -433,7 +438,7 @@ def read_docx(data: bytes, limits: ExtractLimits) -> ExtractResult:
             if note.get(W_TYPE) not in _SEPARATOR_NOTE_TYPES:
                 collector.read_container(note, note_path, context, None, NO_PAGE_MARKS, collector.records)
 
-    writer = _build_blocks(collector.records, collector.marks, _read_section_refs(document))
+    writer = _build_blocks(collector.records, collector.marks, _read_section_refs(document), collector.table_slots)
     blocks = writer.blocks
     if sum(len(block.text) for block in blocks) > limits.max_chars:
         raise ExtractionRejected("too_many_chars")
@@ -819,6 +824,7 @@ class _Collector:
         self.records: list[_Record] = []
         self.tables: list[ExtractedTable] = []
         self.marks = _PageMarks()  # 본문 흐름 하나뿐이다
+        self.table_slots: dict[int, tuple[int, int]] = {}  # 컨테이너에 바로 놓인 표 → 슬롯(칸 안 표는 없다)
         self._table_count = 0
         self._container_count = 0
 
@@ -837,7 +843,7 @@ class _Collector:
             if item.tag == W_P:
                 self._read_paragraph(item, item_path, context, marks, host_marks, (container, position), out)
             else:
-                self._read_table(item, item_path, context, marks, host_marks, None, out)
+                self._read_table(item, item_path, context, marks, host_marks, None, out, (container, position))
 
     def _read_runs(
         self, paragraph: Element, marks: _PageMarks | None, host_marks: tuple[int, int]
@@ -907,9 +913,12 @@ class _Collector:
         host_marks: tuple[int, int],
         parent_index: int | None,
         out: list[_Record],
+        slot: tuple[int, int] | None = None,
     ) -> None:
         index = self._table_count
         self._table_count += 1
+        if slot is not None:
+            self.table_slots[index] = slot
         grid = table.find(W_TBL_GRID)
         rows = list(_iter_tagged(table, path, _ROW_TAGS))
         open_merges: dict[int, _CellRecord] = {}  # 격자 열 → vMerge를 시작한 칸
@@ -1028,30 +1037,47 @@ def _fit_xml_path(path: str) -> str:
     return head + path[len(path) - (XML_PATH_MAX_CHARS - len(head)) :]
 
 
-def _is_caption(record: _ParaRecord) -> bool:
-    return (
-        not record.is_consumed
-        and not record.has_figure
-        and has_visible_char(record.text)
-        and (record.style.is_caption or _CAPTION_TEXT_RE.match(record.text) is not None)
-    )
+def _is_caption(record: _ParaRecord, kind: Literal["figure", "table"]) -> bool:
+    """그 종류의 캡션 꼴인지 — 캡션 스타일이거나 그 종류의 머리면 캡션, 다른 종류의 머리면 아니다."""
+    own, other = (_FIGURE_CAPTION_RE, _TABLE_CAPTION_RE) if kind == "figure" else (_TABLE_CAPTION_RE, _FIGURE_CAPTION_RE)
+    if record.caption_for is not None or record.has_figure or not has_visible_char(record.text):
+        return False
+    if own.match(record.text) is not None:
+        return True
+    return record.style.is_caption and other.match(record.text) is None
 
 
 def _pick_flags(*candidates: tuple[str, bool]) -> tuple[str, ...]:
     return tuple(flag for flag, is_on in candidates if is_on)
 
 
-def _attach_captions(records: list[_Record]) -> None:
-    """그림 문단의 캡션 — 같은 컨테이너의 바로 다음 문단, 아니면 바로 앞 문단이 캡션 꼴이면 그 글자."""
+def _attach_captions(records: list[_Record], table_slots: dict[int, tuple[int, int]]) -> None:
+    """캡션 문단 찾기 — 같은 컨테이너의 이웃 문단 중 그림은 바로 뒤 → 바로 앞, 표는 바로 앞 → 바로 뒤가 캡션 꼴이면 잇는다.
+
+    문서 순서로 보므로 두 묶음 사이의 문단은 먼저 만난 묶음이 갖는다. 칸 안 그림·칸 안 표에는 잇지 않는다.
+    칸 블록이 하나도 없는 표는 가리킬 블록이 없어 건너뛴다.
+    """
     by_slot = {record.slot: record for record in records if isinstance(record, _ParaRecord)}
-    for record in records:
-        if not (isinstance(record, _ParaRecord) and record.has_figure):
+    seen_tables: set[int] = set()
+    for index, record in enumerate(records):
+        target: tuple[Literal["figure", "table"], int]
+        if isinstance(record, _ParaRecord) and record.has_figure:
+            target, (container, position) = ("figure", index), record.slot
+            offsets = (1, -1)
+        elif (
+            isinstance(record, _CellRecord)
+            and record.table_index in table_slots
+            and record.table_index not in seen_tables
+        ):
+            seen_tables.add(record.table_index)
+            target, (container, position) = ("table", record.table_index), table_slots[record.table_index]
+            offsets = (-1, 1)
+        else:
             continue
-        container, position = record.slot
-        for neighbor in (by_slot.get((container, position + 1)), by_slot.get((container, position - 1))):
-            if neighbor is not None and _is_caption(neighbor):
-                neighbor.is_consumed = True
-                record.caption = neighbor.text
+        for offset in offsets:
+            neighbor = by_slot.get((container, position + offset))
+            if neighbor is not None and _is_caption(neighbor, target[0]):
+                neighbor.caption_for = target
                 break
 
 
@@ -1065,25 +1091,35 @@ class _BlockWriter:
         self._section_label = ""
         self._body_chars = 0
         self._continuation_seqs: dict[int, list[int]] = {}  # 표 → 글이 남은 vMerge 이어지는 칸 블록들
+        self._figure_seqs: dict[int, int] = {}  # 그림 문단 레코드의 목록 위치 → 그림 블록 seq
+        self._first_cell_seqs: dict[int, int] = {}  # table_index → 첫 칸 블록 seq
+        self._caption_seqs: list[tuple[int, tuple[Literal["figure", "table"], int]]] = []  # (캡션 블록 seq, 묶음)
 
-    def add_paragraph(self, record: _ParaRecord) -> None:
-        """글자가 있으면 문단 블록, 그림이 있으면 그 뒤에 그림 블록. 빈 문단은 블록을 만들지 않는다."""
+    def add_paragraph(self, record: _ParaRecord, index: int) -> None:
+        """글자가 있으면 문단 블록, 그림이 있으면 그 뒤에 그림 블록(글 없음). 빈 문단은 블록을 만들지 않는다.
+
+        index는 레코드 목록 위치 — 캡션 문단이 가리키는 그림을 그림 블록 seq로 바꿀 때 쓴다.
+        """
         if record.text:
             is_clause = _CLAUSE_LINE_RE.match(record.text) is not None
             if record.part == PART_BODY and (record.style.heading_level is not None or is_clause):
                 self._update_section_label(record.text)
             flags = _pick_flags((FLAG_AUTO_NUMBERING, record.is_number_unresolved), (FLAG_CLAUSE_NUMBER, is_clause))
+            if record.caption_for is not None:
+                self._caption_seqs.append((len(self.blocks), record.caption_for))
             self._append(record, KIND_PARAGRAPH, record.text, heading_level=record.style.heading_level, flags=flags)
         if record.has_figure:
             # 번호는 그 문단의 첫 블록에만 붙여 경고 개수가 번호 문단 수와 같게 한다
             flags = _pick_flags((FLAG_AUTO_NUMBERING, record.is_number_unresolved and not record.text))
-            self._append(record, KIND_FIGURE, record.caption or "", image_part=record.image_part, flags=flags)
+            self._figure_seqs[index] = len(self.blocks)
+            self._append(record, KIND_FIGURE, "", image_part=record.image_part, flags=flags)
 
     def add_cell(self, record: _CellRecord) -> None:
         is_merged = record.grid_span > 1 or record.row_span > 1 or record.is_merge_continuation
         flags = _pick_flags((FLAG_AUTO_NUMBERING, record.is_number_unresolved), (FLAG_MERGED_CELL, is_merged))
         if record.is_merge_continuation:
             self._continuation_seqs.setdefault(record.table_index, []).append(len(self.blocks))
+        self._first_cell_seqs.setdefault(record.table_index, len(self.blocks))
         self._append(
             record,
             KIND_TABLE_CELL,
@@ -1106,6 +1142,13 @@ class _BlockWriter:
             col_index=record.col_index,
             image_part=record.image_part,
         )
+
+    def link_captions(self) -> None:
+        """캡션 문단 블록에 제 그림·표 블록 seq 표시를 더한다 — 그림·표 블록은 캡션보다 뒤에 올 수 있어 다 낸 뒤에 한다."""
+        for caption_seq, (kind, key) in self._caption_seqs:
+            target_seq = self._figure_seqs[key] if kind == "figure" else self._first_cell_seqs[key]
+            block = self.blocks[caption_seq]
+            self.blocks[caption_seq] = replace(block, flags=(*block.flags, f"{FLAG_CAPTION_OF}:{target_seq}"))
 
     def build_warnings(self) -> tuple[ExtractedWarning, ...]:
         """병합 칸 경고는 표마다 하나(첫 병합 칸을 가리킨다), 글이 남은 이어지는 칸 경고도 표마다 하나(개수),
@@ -1188,17 +1231,21 @@ class _BlockWriter:
 
 
 def _build_blocks(
-    records: list[_Record], marks: _PageMarks, section_refs: dict[str, tuple[str, ...]]
+    records: list[_Record],
+    marks: _PageMarks,
+    section_refs: dict[str, tuple[str, ...]],
+    table_slots: dict[int, tuple[int, int]],
 ) -> _BlockWriter:
     """쪽 근거는 문서 전체에 하나 — Word 저장 쪽 나눔이 하나라도 있으면 그것, 없으면 수동 쪽 나눔, 둘 다 없으면 추정."""
     page_basis = "rendered" if marks.rendered else "manual" if marks.manual else "estimated"
-    _attach_captions(records)
+    _attach_captions(records, table_slots)
     writer = _BlockWriter(page_basis, section_refs)
-    for record in records:
+    for index, record in enumerate(records):
         if isinstance(record, _CellRecord):
             writer.add_cell(record)
         elif isinstance(record, _CellFigureRecord):
             writer.add_cell_figure(record)
-        elif not record.is_consumed:
-            writer.add_paragraph(record)
+        else:
+            writer.add_paragraph(record, index)
+    writer.link_captions()
     return writer

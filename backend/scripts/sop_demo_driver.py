@@ -285,6 +285,13 @@ class SyntheticDriver:
             item["text"] = spec["text"]
         if spec["kind"] == "table":
             item["grid"] = spec["grid"]
+        if "parent_key" in spec and "cell_row" not in spec:  # 캡션 새 문장 — 출처는 같은 문서의 캡션 단위, 없으면 써 넣은 캡션
+            item = {"key": spec["key"], "kind": "sentence", "lang": spec["lang"], "text": spec["text"],
+                    "parent_key": spec["parent_key"], "source_unit_ids": []}
+            if "source_text" in spec:
+                caption = find_unit_by_text(self.views[answer["doc"]], spec["source_text"], 1, ("caption",))
+                item["source_unit_ids"] = [caption["id"]]
+            return item
         if "parent_key" in spec:  # 칸 새 문장 — 출처는 표 답과 같은 문서의 칸 문장
             cell = find_unit_by_text(self.views[answer["doc"]], spec["source_text"], 1, ("cell_sentence",))
             item.update(

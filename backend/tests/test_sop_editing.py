@@ -534,6 +534,29 @@ def test_cell_pieces_take_row_from_their_block(client: TestClient) -> None:
     assert all(unit["row_index"] == blocks[unit["block_id"]]["row_index"] for unit in pieces)
 
 
+
+def test_unwrap_table_turns_its_caption_into_a_sentence(client: TestClient) -> None:
+    """레이아웃 표의 캡션은 보통 문장으로 돌아간다(명세 §3.1) — 쪼개지 않고 캡션 범위 그대로, 되돌리면 캡션이 살아난다."""
+    caption_text = "표 7. 기록 양식"
+    fx = _setup(client, p(HEADING) + p(caption_text, "Caption") + tbl([["합성 칸이다."]]))
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+    caption = find_unit(fx.view, caption_text)
+    assert (caption["kind"], caption["group_unit_id"]) == ("caption", table["id"])
+
+    to_layout = {"type": "set_layout_table", "table_id": table["table_id"], "is_layout": True}
+    _ok(_edit(client, fx.bundle_id, fx.doc["id"], to_layout))
+
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    sentence = find_unit(view, caption_text)
+    assert (sentence["kind"], sentence["group_unit_id"], sentence["spans"]) == ("sentence", None, caption["spans"])
+    assert sentence["lang"] == caption["lang"]
+    assert _find_coverage_problems(view) == []
+
+    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
+    revived = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), caption_text)
+    assert (revived["id"], revived["kind"], revived["group_unit_id"]) == (caption["id"], "caption", table["id"])
+
+
 # ── 되돌리기·다시 하기 ────────────────────────────────────────────────────────
 
 

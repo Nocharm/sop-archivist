@@ -15,6 +15,7 @@ from sqlalchemy.orm.util import AliasedClass
 from app.clock import now
 from app.sop.ai.adoption import record_group_adoption, record_unit_adoption, reject_suggestions
 from app.sop.ai.apply import clear_previous_suggestion
+from app.sop.captions import CAPTION_KIND
 from app.sop.checks import check_sentence
 from app.sop.constants import SLOT_HEADING, SLOT_KEYS
 from app.sop.decision_steps import UndoMetaIn
@@ -35,6 +36,7 @@ from app.sop.detach import (
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
 from app.sop.groups import (
+    BUNDLE_UNIT_KINDS,
     TABLE_UNIT_KINDS,
     DecisionOut,
     GroupOut,
@@ -227,13 +229,14 @@ class _State:
     units: dict[int, Unit]  # 보낸 단위와 그 칸 문장(U*)
     decisions: dict[int, UnitDecision]  # 보낸 단위의 판단
     cells: dict[int, list[int]]  # 표·행 단위 → 묶인 활성 칸 문장
-    group_of: dict[int, int]  # 칸 문장 → 표·행 단위
+    captions: dict[int, list[int]]  # 표·행·그림 단위 → 묶인 활성 캡션 — 캡션 새 문장 검사는 Task 10
+    group_of: dict[int, int]  # 묶인 칸 문장·캡션 → 표·행·그림 단위
     existing: dict[int, TargetSentence]  # 보낸 기존 새 문장과 지울 새 문장
     removed: set[int]  # 지울 새 문장
     sources: dict[int, set[int]]  # 기존 새 문장 → 지금 출처 단위
     translation_sources: dict[int, TargetSentence]  # 번역 → 그 출처 새 문장(지금 값). 출처가 이미 없어진 번역은 빠진다
     translation_texts: dict[int, str]  # 번역 출처 단위 → 글자 — 번역의 문장 검사가 읽는다. 은퇴한 단위도 든다
-    member_unit_ids: set[int]  # 보낸 단위와 묶인 칸 문장 전부(은퇴한 칸 포함) — 닫힘 검사의 경계
+    member_unit_ids: set[int]  # 보낸 단위와 묶인 칸 문장·캡션 전부(은퇴한 것 포함) — 닫힘 검사의 경계
     # U*와 기존 새 문장에서 출발한 지금의 연결 요소(collect_component — 묶음 읽기·떼어 내기와 같은 그래프)
     component_units: set[int]
     component_targets: set[int]
@@ -340,19 +343,20 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
     units = {unit_id: unit for unit_id, (unit, _) in loaded.items()}
     decisions = {unit_id: decision for unit_id, (_, decision) in loaded.items()}
 
-    table_unit_ids = [unit_id for unit_id, unit in units.items() if unit.kind in TABLE_UNIT_KINDS]
-    cell_rows = await select_in_chunks(
-        session, lambda chunk: select(Unit).where(Unit.group_unit_id.in_(chunk)), table_unit_ids
+    bundle_unit_ids = [unit_id for unit_id, unit in units.items() if unit.kind in BUNDLE_UNIT_KINDS]
+    member_rows = await select_in_chunks(
+        session, lambda chunk: select(Unit).where(Unit.group_unit_id.in_(chunk)), bundle_unit_ids
     )
-    member_unit_ids = set(units) | {cell.id for (cell,) in cell_rows}
+    member_unit_ids = set(units) | {member.id for (member,) in member_rows}
     cells: dict[int, list[int]] = defaultdict(list)
+    captions: dict[int, list[int]] = defaultdict(list)
     group_of: dict[int, int] = {}
-    for (cell,) in sorted(cell_rows, key=lambda row: (row[0].pos_seq, row[0].pos_start, row[0].id)):
-        if cell.status != UNIT_ACTIVE:  # 은퇴한 칸 문장은 출처가 될 수 없다(연결은 떼어 내기가 이미 뗐다)
+    for (member,) in sorted(member_rows, key=lambda row: (row[0].pos_seq, row[0].pos_start, row[0].id)):
+        if member.status != UNIT_ACTIVE:  # 은퇴한 묶인 단위는 출처가 될 수 없다(연결은 떼어 내기가 이미 뗐다)
             continue
-        cells[cell.group_unit_id].append(cell.id)
-        group_of[cell.id] = cell.group_unit_id
-        units[cell.id] = cell
+        (captions if member.kind == CAPTION_KIND else cells)[member.group_unit_id].append(member.id)
+        group_of[member.id] = member.group_unit_id
+        units[member.id] = member
 
     existing_ids = [item.id for item in payload.targets if item.id is not None] + payload.removed_target_ids
     existing = {
@@ -418,7 +422,7 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
             slot_heading_sources[row.id].append(unit_id)
             slot_heading_decisions[unit_id] = decision
     return _State(
-        units=units, decisions=decisions, cells=cells, group_of=group_of, existing=existing,
+        units=units, decisions=decisions, cells=cells, captions=captions, group_of=group_of, existing=existing,
         removed=set(payload.removed_target_ids), sources=sources,
         translation_sources={
             target_id: source_by_id[source_id] for target_id, source_id in source_ids.items() if source_id in source_by_id
@@ -426,8 +430,8 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
         translation_texts={unit_id: text for unit_id, text in translation_rows},
         member_unit_ids=member_unit_ids, component_units=component_units, component_targets=component_targets,
         docs=docs, na_slots=na_slots, steps=steps,
-        table_shapes=await load_table_shapes(session, [units[unit_id] for unit_id in table_unit_ids]),
-        cell_positions=await load_cell_positions(session, [units[cell_id] for cell_id in group_of]),
+        table_shapes=await load_table_shapes(session, [units[unit_id] for unit_id in bundle_unit_ids if units[unit_id].kind in TABLE_UNIT_KINDS]),
+        cell_positions=await load_cell_positions(session, [units[cell_id] for ids in cells.values() for cell_id in ids]),
         pair_of={
             unit_id: pair_id
             for unit_id, pair_id in await select_in_chunks(

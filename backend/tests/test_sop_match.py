@@ -176,7 +176,7 @@ def test_new_doc_tables_figures_and_nested_paths(client: TestClient) -> None:
 
     targets = _load_targets(new_doc["target_doc_id"])
 
-    sentence, table, *cells, figure = targets
+    sentence, table, *cells, figure, caption = targets
     assert (sentence["confirmed_text"], sentence["section_path"]) == ("합성 장비를 켠다.", "1. 준비 › 1.1 장비")
     assert (table["kind"], table["lang"], table["confirmed_text"], table["grid"], table["section_path"]) == (
         "table", "neutral", "", {"rows": 2, "cols": 2}, "2. 기록",
@@ -192,6 +192,11 @@ def test_new_doc_tables_figures_and_nested_paths(client: TestClient) -> None:
     assert {(c["kind"], c["section_path"]) for c in cells} == {("sentence", "2. 기록")}
     assert (figure["kind"], figure["lang"], figure["confirmed_text"], figure["new_unit_id"]) == (
         "figure", "neutral", "", figure_unit["id"],
+    )
+    # 캡션은 제 단위의 새 문장이다 — 그림 새 문장 아래에 잇는 것은 Task 12라 아직 보통 문장이다
+    caption_unit = find_unit(view, "그림 1 합성 장비")
+    assert (caption["kind"], caption["confirmed_text"], caption["new_unit_id"], caption["parent_target_id"]) == (
+        "sentence", "그림 1 합성 장비", caption_unit["id"], None,
     )
     assert [t["order_index"] for t in targets] == sorted(t["order_index"] for t in targets)
 

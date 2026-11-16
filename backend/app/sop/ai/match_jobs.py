@@ -46,12 +46,13 @@ from app.sop.ai.matching import (
 from app.sop.ai.runner import AiCallFailed
 from app.sop.ai.schemas import SkippedOut
 from app.sop.ai.similarity import cosine_matrix
+from app.sop.captions import CAPTION_KIND
 from app.sop.checks import check_sentence
 from app.sop.constants import AI_PRIORITY_PLAN, AI_PRIORITY_PRE_REFINE, AI_PRIORITY_USER
 from app.sop.decisions import load_cell_positions, load_table_shapes
 from app.sop.detach import ORIGIN_NEW_DOC, UNASSIGNED
 from app.sop.errors import raise_rule
-from app.sop.groups import TABLE_UNIT_KINDS, iter_chunks, select_in_chunks
+from app.sop.groups import BUNDLE_UNIT_KINDS, TABLE_UNIT_KINDS, iter_chunks, select_in_chunks
 from app.sop.match import list_identical_candidates
 from app.sop.models import (
     AiJob,
@@ -237,27 +238,33 @@ async def _load_old_entries(
         row for row in rows
         if can_receive_suggestion(row.status, row.disposition, row.suggestion_kind, _SUGGESTION_KINDS)
     ]
-    cells = await select_in_chunks(
+    members = await select_in_chunks(
         session,
-        lambda chunk: select(Unit.group_unit_id, Unit.text)
+        lambda chunk: select(Unit.group_unit_id, Unit.kind, Unit.text)
         .where(Unit.group_unit_id.in_(chunk), Unit.status == UNIT_ACTIVE)
         .order_by(Unit.pos_seq, Unit.pos_start, Unit.id),
-        [row.id for row in open_rows if row.kind in TABLE_UNIT_KINDS],
+        [row.id for row in open_rows if row.kind in BUNDLE_UNIT_KINDS],
     )
-    table_texts = _join_cell_texts(cells)
+    kinds = {row.id: row.kind for row in open_rows}
+    # 표는 칸 글, 그림은 캡션 글로 견준다 — 표의 캡션은 표 글에 넣지 않는다
+    bundle_texts = _join_cell_texts(
+        (group_id, text) for group_id, kind, text in members if (kind == CAPTION_KIND) == (kinds[group_id] == _FIGURE)
+    )
     return {
-        row.id: _build_entry(row, _get_match_kind(row.kind), table_texts.get(row.id, row.text)) for row in open_rows
+        row.id: _build_entry(row, _get_match_kind(row.kind), bundle_texts.get(row.id, row.text)) for row in open_rows
     }
 
 
 async def _load_new_entries(
     session: AsyncSession, bundle_id: int, target_ids: Collection[int] | None = None
 ) -> dict[int, _Entry]:
-    """AI가 쓸 수 있는 최상위 입구 2 새 문장 — 칸 새 문장은 표가 대신한다. 그림은 글이 비어 있어 캡션을 새 단위에서 읽는다."""
+    """AI가 쓸 수 있는 최상위 입구 2 새 문장 — 칸 새 문장은 표가 대신한다. 그림은 글이 비어 있어 캡션을 새 단위(캡션 단위,
+    예전 추출은 그림 단위 글)에서 읽는다."""
     statement = (
         select(
             TargetSentence.id, TargetSentence.kind, TargetSentence.lang, TargetSentence.confirmed_text,
-            TargetSentence.status, TargetSentence.revision, Unit.text.label("unit_text"), Unit.extraction_id,
+            TargetSentence.status, TargetSentence.revision, Unit.id.label("unit_id"), Unit.text.label("unit_text"),
+            Unit.extraction_id,
             Document.id.label("document_id"), Document.sha256, AiSuggestion.kind.label("suggestion_kind"),
         )
         .join(Unit, Unit.id == TargetSentence.new_unit_id)
@@ -281,8 +288,18 @@ async def _load_new_entries(
         [row.id for row in open_rows if row.kind == _TABLE],
     )
     table_texts = _join_cell_texts(cells)
+    captions = await select_in_chunks(
+        session,
+        lambda chunk: select(Unit.group_unit_id, Unit.text)
+        .where(Unit.group_unit_id.in_(chunk), Unit.kind == CAPTION_KIND, Unit.status == UNIT_ACTIVE)
+        .order_by(Unit.pos_seq, Unit.pos_start, Unit.id),
+        [row.unit_id for row in open_rows if row.kind == _FIGURE],
+    )
+    caption_texts = _join_cell_texts(captions)  # 그림 단위 → 캡션 글(새 추출은 그림 단위 글이 비었다)
     return {
-        row.id: _build_entry(row, row.kind, table_texts.get(row.id, row.confirmed_text or row.unit_text))
+        row.id: _build_entry(
+            row, row.kind, table_texts.get(row.id) or caption_texts.get(row.unit_id) or row.confirmed_text or row.unit_text
+        )
         for row in open_rows
     }
 

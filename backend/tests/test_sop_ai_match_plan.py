@@ -720,7 +720,11 @@ def test_figures_with_other_captions_do_not_pair(client: TestClient, fake_ai: Fa
     plan(client, bundle.id)
 
     assert read_links() == set()
-    assert read_suggestion("new").content["target_ids"] == [read_kind("figure")[0].id]
+    # 새 문서의 캡션 새 문장은 아직 그림 아래가 아닌 보통 문장이라(Task 12) 따로 신규 제안이 된다
+    new_targets = [
+        target_id for row in read_rows(AiSuggestion) if row.content["shape"] == "new" for target_id in row.content["target_ids"]
+    ]
+    assert read_kind("figure")[0].id in new_targets
 
 
 # --- 점수 ---

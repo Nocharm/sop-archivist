@@ -204,7 +204,9 @@ class SyntheticAnswers:
         if len(places) != 1 or len(change_types) > 1:
             return {}
         label = self._labels[places.pop()]
-        candidate = next(item["key"] for item in data["candidates"] if item["label"] == label)
+        candidate = next((item["key"] for item in data["candidates"] if item["label"] == label), None)
+        if candidate is None:  # 글 없는 그림은 임베딩으로 자리를 추릴 수 없어 정답 자리가 후보에 없을 수 있다 — 사람 경로
+            return {}
         rewrites = {spec["lang"]: [spec["text"]] for spec in specs if spec["kind"] == "sentence"}
         return self._build_classify_reply(data, candidate, change_types.pop() if change_types else "as_is", rewrites)
 

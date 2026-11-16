@@ -16,6 +16,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import clock
+from app.sop.captions import CAPTION_KIND
 from app.sop.decision_steps import UndoMetaIn
 from app.sop.decisions import DbId
 from app.sop.detach import (
@@ -651,6 +652,13 @@ async def _find_crossing_cells(
     return own, sorted(crossing)
 
 
+def _build_sentence_from(caption: Unit) -> _Draft:
+    return _Draft(
+        kind="sentence", spans=to_spans(caption.spans), text=caption.text, lang=caption.lang, table_id=None,
+        row_index=None, group_unit_id=None, pos_seq=caption.pos_seq, pos_start=caption.pos_start,
+    )
+
+
 async def _plan_set_layout_table(session: AsyncSession, extraction_id: ExtractionId, op: SetLayoutTableOp) -> _Change:
     """데이터 → 레이아웃: 표·행 단위를 은퇴시키고 칸 문장의 묶음을 푼다. 레이아웃 → 데이터: 새 표 단위에 칸 문장을 묶는다.
 
@@ -661,9 +669,11 @@ async def _plan_set_layout_table(session: AsyncSession, extraction_id: Extractio
         return _Change()
     if op.is_layout:
         groups = await _load_table_units(session, extraction_id, table.id, TABLE_UNIT_KINDS)
-        change = _build_replacement(groups, [])
-        cells = await _load_grouped_cells(session, [group.id for group in groups])
-        change.regroup = {cell.id: (cell.group_unit_id, None) for cell in cells}
+        members = await _load_grouped_cells(session, [group.id for group in groups])
+        # 레이아웃 표의 캡션은 보통 문장으로 돌아간다(명세 §3.1) — 같은 범위·언어의 묶이지 않은 문장 단위로 바꾼다
+        captions = [member for member in members if member.kind == CAPTION_KIND]
+        change = _build_replacement([*groups, *captions], [_build_sentence_from(caption) for caption in captions])
+        change.regroup = {cell.id: (cell.group_unit_id, None) for cell in members if cell.kind != CAPTION_KIND}
     else:
         own, crossing = await _find_crossing_cells(session, extraction_id, table.id)
         if crossing:

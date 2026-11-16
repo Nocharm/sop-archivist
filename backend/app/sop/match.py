@@ -118,7 +118,8 @@ def _build_want(row: Row[Any], rank: int, path: str, units: dict[int, Row[Any]],
         kind, lang, text, grid = "table", NEUTRAL, "", {"rows": rows_in_grid, "cols": row.n_cols}
     elif row.kind == "figure":
         kind, lang, text = "figure", NEUTRAL, ""
-    elif row.group_unit_id in targeted:
+    elif row.kind != "caption" and row.group_unit_id in targeted:
+        # 캡션은 칸 좌표가 없어 아직 보통 문장으로 둔다 — 그림·표 새 문장 아래에 잇는 것은 Task 12
         group = units[row.group_unit_id]
         # 행 단위에 묶인 칸은 그 행 기준 좌표다
         first_row = (group.unit_row_index or 0) if group.kind == "table_row" else 0

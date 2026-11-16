@@ -14,6 +14,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from app.routers.admin import KstDatetime
+from app.sop.captions import CAPTION_KIND
 from app.sop.constants import COVER_KINDS, NUMBER_NOTE, NUMBERED, SLOT_HEADING, SLOT_KEYS, WI_PARTS
 from app.sop.groups import TABLE_UNIT_KINDS, build_group_ids, collapse_table_members
 from app.sop.output_labels import LABELS, OutputLabels
@@ -591,10 +592,17 @@ def _format_place(index: _Index, unit: UnitInfo, labels: OutputLabels) -> str:
     return " · ".join(pieces or [labels.paragraph])
 
 
+def _read_unit_text(index: _Index, unit: UnitInfo) -> str:
+    """단위 글자 — 글 없는 그림(새 추출)은 묶인 캡션 글. 캡션을 제 줄·새 문장으로 싣는 것은 Task 13이다."""
+    if unit.kind == "figure" and not unit.text:
+        return "\n".join(member.text for member in index.cells.get(unit.id, ()) if member.kind == CAPTION_KIND)
+    return unit.text
+
+
 def _format_source_text(index: _Index, unit: UnitInfo, labels: OutputLabels) -> str:
-    """원문 칸 — 표·행 단위는 "[표 n, 행×열]"(행 단위는 그 행 하나), 나머지는 단위 글자 그대로."""
+    """원문 칸 — 표·행 단위는 "[표 n, 행×열]"(행 단위는 그 행 하나), 나머지는 단위 글자 그대로(그림은 캡션)."""
     if unit.kind not in TABLE_UNIT_KINDS:
-        return unit.text
+        return _read_unit_text(index, unit)
     table = index.snap.tables[unit.table_id]
     rows = 1 if unit.kind == "table_row" else table.n_rows
     return labels.table_source_template.format(table=table.table_index + 1, rows=rows, cols=table.n_cols)
@@ -1189,7 +1197,9 @@ def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> 
         sources = list(target.source_unit_ids)
         if not sources and target.translation_source_unit_id in snap.units:
             sources = [target.translation_source_unit_id]
-        text = target.confirmed_text or target.ai_text or " ".join(snap.units[uid].text for uid in sources if uid in snap.units)
+        text = target.confirmed_text or target.ai_text or " ".join(
+            _read_unit_text(index, snap.units[uid]) for uid in sources if uid in snap.units
+        )
         table = None
         if target.kind == "table":
             cells = [
