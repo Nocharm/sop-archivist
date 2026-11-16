@@ -45,6 +45,9 @@ export const TOAST_RELEASE_MS = 3000;
 let toasts: Toast[] = [];
 // 알림마다 사라지는 타이머 - 올려 둔 동안(holdToast)은 멈추고 떠나면 다시 건다
 const fadeTimers = new Map<string, number>();
+/** 알림을 붙드는 것 - 포인터와 포커스는 따로 든다(하나가 떠나도 다른 하나가 남아 있으면 머문다) */
+export type ToastHold = "pointer" | "focus";
+const holds = new Map<string, Set<ToastHold>>();
 const listeners = new Set<() => void>();
 
 function emit(): void {
@@ -73,6 +76,7 @@ function armFade(id: string, ms: number): void {
 
 export function dismissToast(id: string): void {
   clearFade(id);
+  holds.delete(id);
   if (!toasts.some((toast) => toast.id === id && !toast.leaving)) return;
   toasts = toasts.map((toast) => (toast.id === id ? { ...toast, leaving: true } : toast));
   emit();
@@ -93,7 +97,11 @@ export function showToast(text: string, tone: ToastTone = "ok", options?: ToastO
   const before = toasts;
   toasts = pushToast(toasts, next);
   // 같은 글이나 넘침으로 빠진 알림의 타이머는 거둔다
-  for (const gone of before) if (!toasts.some((toast) => toast.id === gone.id)) clearFade(gone.id);
+  for (const gone of before) {
+    if (toasts.some((toast) => toast.id === gone.id)) continue;
+    clearFade(gone.id);
+    holds.delete(gone.id);
+  }
   emit();
   armFade(id, getToastMs(tone, options));
 }
@@ -111,12 +119,19 @@ export function runToastAction(id: string): void {
   toast.action.run();
 }
 
-export function holdToast(id: string): void {
+export function holdToast(id: string, by: ToastHold = "pointer"): void {
+  if (!toasts.some((toast) => toast.id === id && !toast.leaving)) return;
+  holds.set(id, new Set([...(holds.get(id) ?? []), by]));
   clearFade(id);
 }
 
-export function releaseToast(id: string): void {
+/** 그 붙듦을 놓는다 - 남은 붙듦이 없을 때만 TOAST_RELEASE_MS 뒤에 사라지게 다시 건다 */
+export function releaseToast(id: string, by: ToastHold = "pointer"): void {
   if (!toasts.some((toast) => toast.id === id && !toast.leaving)) return;
+  const left = holds.get(id);
+  left?.delete(by);
+  if (left && left.size > 0) return;
+  holds.delete(id);
   armFade(id, TOAST_RELEASE_MS);
 }
 
@@ -124,7 +139,7 @@ const EMPTY: Toast[] = [];
 
 // 행동이 있는 알림만 포인터·포커스가 머무는 동안 사라지지 않는다
 function hoverProps(id: string) {
-  return { onPointerEnter: () => holdToast(id), onFocus: () => holdToast(id), onPointerLeave: () => releaseToast(id), onBlur: () => releaseToast(id) };
+  return { onPointerEnter: () => holdToast(id, "pointer"), onFocus: () => holdToast(id, "focus"), onPointerLeave: () => releaseToast(id, "pointer"), onBlur: () => releaseToast(id, "focus") };
 }
 
 export function ToastHost() {

@@ -5844,6 +5844,374 @@ await runStep("assign: Pair view opens a KO | EN document in two columns and giv
   check("the step leaves the document without pairs", (await readView()).pairs.length === 0);
 });
 
+// Pair view에서 끌어 짝 맺기(끌어다 놓기 4걸음) - 조각을 맞은편 언어의 조각에 놓으면 바로 짝이 되고(제안 짝의 구성원끼리면 그 제안을 확정), 알림의 Undo가 그 짝을 푼다.
+// 제안 짝은 검증 스택에 임베딩이 없어 만들 수 없다 - API로 맺은 짝을 원문 보기 응답에서 suggested로 바꿔 그린다(page.route). 확정 호출 자체는 진짜 서버로 간다.
+// 자료는 API로 만들고 끝에 짝을 모두 풀고 그 문서의 판단을 비운다. 409·거절 알림이 콘솔에 찍히므로 콘솔 오류를 허락하고, 처리되지 않은 예외(pageerror)는 따로 센다
+await runStep("assign: Pair view - drag a piece onto its partner to pair or confirm, Undo separates", { allowConsoleErrors: true }, async ({ page }) => {
+  await installCommitCounter(page);
+  const pageErrors = [];
+  page.on("pageerror", (err) => pageErrors.push(String(err)));
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const doc = (await getJson("/documents")).find((item) => item.side === "old" && item.status === "ready" && item.language_layout === "ko_en_separate");
+  const docPath = `/documents/${doc.id}`;
+  const readView = () => getJson(`${docPath}/view`);
+  await page.request.post(`${api}/decisions/reset`, { headers, data: { revision: (await getJson("")).revision, document_id: doc.id } });
+  const unpair = async (pairId) => page.request.delete(`${api}${docPath}/pairs/${pairId}?revision=${(await readView()).document.revision}`, { headers });
+  for (const pair of (await readView()).pairs) await unpair(pair.id);
+  const pairUnits = async (ids) => page.request.post(`${api}${docPath}/pairs`, { headers, data: { revision: (await readView()).document.revision, unit_ids: ids } });
+  const pairOf = (view, unitId) => view.pairs.find((pair) => pair.unit_ids.includes(unitId)) ?? null;
+  const sourceOrder = (one, two) => one.pos_seq - two.pos_seq || (one.spans[0]?.[1] ?? 0) - (two.spans[0]?.[1] ?? 0) || one.id - two.id;
+  const units = (await readView()).units.filter((unit) => unit.group_unit_id === null).sort(sourceOrder);
+  const [a, b, c, d] = units.filter((unit) => unit.kind === "sentence" && unit.lang === "ko");
+  const [a2, b2, c2, d2] = units.filter((unit) => unit.kind === "sentence" && unit.lang === "en");
+  const h = units.find((unit) => unit.kind === "heading" && unit.lang === "ko");
+  const h2 = units.find((unit) => unit.kind === "heading" && unit.lang === "en");
+  check("the separate-layout document has four sentences and a heading in each language, no pairs", [a, b, c, d, a2, b2, c2, d2, h, h2].every(Boolean) && (await readView()).pairs.length === 0, doc.doc_code);
+  const isPaired = (view, one, two) => pairOf(view, one.id) !== null && pairOf(view, one.id) === pairOf(view, two.id);
+
+  let patchView = (body) => body;
+  const isDocView = (url) => url.pathname.endsWith(`/api/bundles/${halfBundleId}${docPath}/view`);
+  await page.route(isDocView, async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: patchView(await response.json()) });
+  });
+  // 화면이 보낸 짝 요청(page.request로 만든 자료는 세지 않는다)과 Assign 되돌리기 요청
+  const pairRequests = [];
+  let assignUndoRequests = 0;
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (/\/pairs(\/\d+(\/confirm)?)?$/.test(path)) pairRequests.push({ method: request.method(), path, body: request.postData() });
+    if (path.endsWith("/decisions/undo")) assignUndoRequests += 1;
+  });
+  const isPairCall = (method, pattern) => (response) => response.request().method() === method && pattern.test(new URL(response.url()).pathname);
+  const POST_PAIR = isPairCall("POST", /\/pairs$/);
+  const POST_CONFIRM = isPairCall("POST", /\/pairs\/\d+\/confirm$/);
+  const DELETE_PAIR = isPairCall("DELETE", /\/pairs\/\d+$/);
+
+  const pairPiece = (id) => page.locator(`[data-testid="assign-pair-piece-${id}"]`);
+  const openDoc = async (unitId) => {
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
+    await page.locator(`[data-testid="assign-paper-piece-${unitId}"]`).waitFor({ timeout: T });
+  };
+  const reopen = async () => {
+    await page.reload();
+    await wait(page, "assign-bar");
+    await openDoc(a.id);
+    await page.locator('[data-testid="assign-pair-view"]').click();
+    await wait(page, "assign-pair-en");
+    await page.waitForLoadState("networkidle");
+  };
+  // 조각 첫 글줄 위 한 점 - 그 조각을 제 칸 가운데로 굴린 뒤에 잰다(가장자리 자동 스크롤에 걸리지 않게)
+  const pointOn = async (id) => {
+    await pairPiece(id).evaluate((el) => el.scrollIntoView({ block: "center" }));
+    await page.waitForTimeout(150);
+    return pairPiece(id).evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      return { x: rect.left + Math.min(60, rect.width / 2), y: rect.top + Math.min(rect.height / 2, 14) };
+    });
+  };
+  const startDrag = async (fromId) => {
+    const from = await pointOn(fromId);
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x + 10, from.y, { steps: 5 });
+  };
+  const moveOnto = async (toId) => {
+    const to = await pointOn(toId);
+    await page.mouse.move(to.x, to.y, { steps: 12 });
+    await page.waitForTimeout(100);
+  };
+  const readCard = () => page.evaluate(() => ({
+    note: document.querySelector('[data-testid="drag-card"] .drag-card-note')?.textContent ?? "",
+    refused: document.querySelector('[data-testid="drag-card"]')?.hasAttribute("data-refused") ?? false,
+  }));
+  const readMarks = () => page.evaluate(() => ({
+    cards: document.querySelectorAll('[data-testid="drag-card"]').length,
+    lines: document.querySelectorAll("svg[data-drag-line]").length,
+    drops: document.querySelectorAll("[data-drop]").length,
+    srcs: document.querySelectorAll("[data-drag-src]").length,
+  }));
+  const NO_MARKS = JSON.stringify({ cards: 0, lines: 0, drops: 0, srcs: 0 });
+  const toastWith = (tone, text) => page.locator(`[data-testid="toast-${tone}"]`, { hasText: text });
+  const undoIn = (toast) => toast.locator('[data-testid^="toast-action-"]');
+  const actionCount = () => page.locator('[data-testid^="toast-action-"]').count();
+  const idsOf = (one, two) => [one, two].sort(sourceOrder).map((unit) => unit.display_id).join(" + ");
+  const clearToasts = async () => {
+    // 셋 사이에 저절로 빠지는 알림이 있어 DOM에서 한 번에 누른다
+    await page.evaluate(() => document.querySelectorAll('[data-testid^="toast-close-"]').forEach((button) => button.click()));
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid="toasts"] .toast-slot').length === 0, null, { timeout: T });
+  };
+  // 놓고 저장 응답과 그 알림까지 기다린다
+  const dropAndSave = async (match, toastText) => {
+    const response = page.waitForResponse(match, { timeout: T });
+    await page.mouse.up();
+    const done = await response;
+    const toast = toastWith("ok", toastText);
+    await toast.waitFor({ timeout: T });
+    await page.waitForLoadState("networkidle");
+    return { response: done, toast };
+  };
+  const expectRefused = async (label, fromId, toId, text) => {
+    const before = { requests: pairRequests.length, pairs: JSON.stringify((await readView()).pairs) };
+    await startDrag(fromId);
+    await moveOnto(toId);
+    const card = await readCard();
+    const drop = await pairPiece(toId).getAttribute("data-drop");
+    await page.mouse.up();
+    await page.waitForTimeout(400);
+    check(`${label}: the card says why and the piece is marked refused`, card.refused && card.note === text && drop === "refused", JSON.stringify({ card, drop }));
+    check(`${label}: the drop writes nothing`, pairRequests.length === before.requests && JSON.stringify((await readView()).pairs) === before.pairs, String(pairRequests.length - before.requests));
+  };
+
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await openDoc(a.id);
+  await page.locator('[data-testid="assign-pair-view"]').click();
+  await wait(page, "assign-pair-en");
+  await page.waitForLoadState("networkidle");
+  check("the pieces of a free sentence are drag boxes", (await pairPiece(a.id).getAttribute("data-drag-box")) === "" && (await pairPiece(a2.id).getAttribute("data-drag-box")) === "");
+
+  // 1. 끄는 동안 - 표의 메모·놓을 조각의 테두리·출발 조각·따라오는 선 하나. 두 칸의 조각 위를 지나도 React는 다시 그리지 않는다(G11)
+  await startDrag(a.id);
+  await moveOnto(a2.id);
+  const overPartner = await readCard();
+  check("dragging a over a′ says Pair with a′", overPartner.note === `Pair with ${a2.display_id}` && !overPartner.refused, overPartner.note);
+  check("a′ is the drop target, a is the drag source and one line follows", (await pairPiece(a2.id).getAttribute("data-drop")) === "over" && (await pairPiece(a.id).getAttribute("data-drag-src")) === "" && (await page.locator("svg[data-drag-line]").count()) === 1);
+  const wanderPoints = await page.evaluate(() => {
+    const points = [];
+    for (const side of ["ko", "en"]) {
+      const frame = document.querySelector(`[data-pair-col="${side}"] .pane-body`).getBoundingClientRect();
+      for (const el of document.querySelectorAll(`[data-pair-col="${side}"] .pair-piece`)) {
+        const rect = el.getBoundingClientRect();
+        if (rect.top > frame.top + 70 && rect.bottom < frame.bottom - 70 && points.filter((point) => point.side === side).length < 4) points.push({ side, x: rect.left + 30, y: rect.top + rect.height / 2 });
+      }
+    }
+    return points;
+  });
+  const commitsBefore = await page.evaluate(() => window.__commits ?? -1);
+  const wanderNotes = new Set();
+  for (let i = 0; i < 40; i += 1) {
+    const point = wanderPoints[i % wanderPoints.length];
+    await page.mouse.move(point.x + (i % 3), point.y + (i % 2));
+    wanderNotes.add((await readCard()).note);
+  }
+  const commitsAfter = await page.evaluate(() => window.__commits ?? -1);
+  check("no React commit while passing over pieces of both columns", wanderPoints.length >= 4 && commitsBefore > 0 && commitsBefore === commitsAfter, `${wanderPoints.length} points, ${commitsBefore} -> ${commitsAfter}`);
+  // 2~3걸음의 잇기·보내기 끌기는 Pair view에서 붙지 않는다(KO 칸도 data-pane="old"다) - 표는 한 장, 선은 하나, 잇기·보내기 메모와 놓을 자리 선은 없다
+  const wanderMarks = await page.evaluate(() => ({ cards: document.querySelectorAll('[data-testid="drag-card"]').length, lines: document.querySelectorAll("svg[data-drag-line]").length, gaps: document.querySelectorAll('[data-testid="assign-drop-gap"]').length }));
+  check("only the pair drag runs - no link or send notes, one card, one line, no drop gap", [...wanderNotes].every((note) => note !== "Link to this sentence" && !note.startsWith("→")) && JSON.stringify(wanderMarks) === JSON.stringify({ cards: 1, lines: 1, gaps: 0 }), `${JSON.stringify([...wanderNotes])} ${JSON.stringify(wanderMarks)}`);
+
+  // 2. 놓으면 바로 저장하고 Undo가 든 알림
+  await moveOnto(a2.id);
+  const paired = await dropAndSave(POST_PAIR, `Paired ${idsOf(a, a2)}`);
+  const sent = JSON.parse(pairRequests.at(-1).body);
+  check("the drop posts the pair [a, a′] and gets 201", paired.response.status() === 201 && JSON.stringify(sent.unit_ids) === JSON.stringify([a.id, a2.id]), `${paired.response.status()} ${pairRequests.at(-1).body}`);
+  const pairedText = (await paired.toast.innerText()).trim();
+  check("the toast names both pieces and carries one Undo", pairedText.startsWith("Paired ") && pairedText.includes(a.display_id) && pairedText.includes(a2.display_id) && (await actionCount()) === 1 && (await undoIn(paired.toast).innerText()).trim() === "Undo", pairedText);
+  const afterDrop = pairOf(await readView(), a.id);
+  check("a and a′ are one confirmed pair made by a person", afterDrop !== null && afterDrop.unit_ids.includes(a2.id) && afterDrop.status === "confirmed" && afterDrop.source === "human", JSON.stringify(afterDrop));
+  await page.locator(`[data-testid="assign-pair-lines"] g[data-pair-link="${a.id}:${a2.id}"][data-status="confirmed"]`).waitFor({ timeout: T });
+  await page.waitForFunction((want) => want.every((id) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.includes(id)), [a.display_id, a2.display_id], { timeout: T });
+  check("the pair line is drawn, the pair row is picked and the drag marks are gone", JSON.stringify(await readMarks()) === NO_MARKS, JSON.stringify(await readMarks()));
+  // Undo는 강조색 글(.btn.ghost보다 앞서야 한다)
+  const undoColour = await undoIn(paired.toast).evaluate((el) => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--accent)";
+    document.body.append(probe);
+    const accent = getComputedStyle(probe).color;
+    probe.remove();
+    return { undo: getComputedStyle(el).color, accent };
+  });
+  check("the Undo label is the accent colour", undoColour.undo === undoColour.accent, JSON.stringify(undoColour));
+
+  // 3. 글쇠로 Undo - 포커스를 주고 ↵. 짝만 풀고 Assign 되돌리기는 부르지 않는다
+  await undoIn(paired.toast).focus();
+  const undone = page.waitForResponse(DELETE_PAIR, { timeout: T });
+  await page.keyboard.press("Enter");
+  check("Enter on Undo deletes the pair (200)", (await undone).status() === 200);
+  await toastWith("ok", "Separated").waitFor({ timeout: T });
+  check("a and a′ are apart again, and Assign undo was not called", pairOf(await readView(), a.id) === null && assignUndoRequests === 0, String(assignUndoRequests));
+  await page.waitForLoadState("networkidle");
+
+  // 4. 반대 방향 - EN 조각을 KO 조각에. 이 짝(P1)은 남긴다
+  await startDrag(a2.id);
+  await moveOnto(a.id);
+  const overBack = await readCard();
+  check("dragging a′ over a says Pair with a", overBack.note === `Pair with ${a.display_id}`, overBack.note);
+  const back = await dropAndSave(POST_PAIR, `Paired ${idsOf(a, a2)}`);
+  check("the drop posts [a′, a] and they are a pair again", back.response.status() === 201 && JSON.stringify(JSON.parse(pairRequests.at(-1).body).unit_ids) === JSON.stringify([a2.id, a.id]) && isPaired(await readView(), a, a2), pairRequests.at(-1).body);
+
+  // 5. 못 놓는 곳은 이유를 보이고 아무것도 쓰지 않는다
+  await expectRefused("same language (b → c)", b.id, c.id, "A pair needs one Korean and one English sentence. Pick one in the other language.");
+  await expectRefused("onto a confirmed pair (b → a′)", b.id, a2.id, "One of these sentences is already in a confirmed pair.");
+  await expectRefused("dragging a confirmed pair (a → b′)", a.id, b2.id, "One of these sentences is already in a confirmed pair.");
+  // c′를 칸에 확정한다(화면의 저장과 같은 모양)
+  const sop = (await getJson("/tobe")).docs.find((item) => item.entrance === "assign" && item.doc_type === "sop");
+  const sections = (await getJson(`/outputs/c/docs/${sop.id}?lang=en`)).sections;
+  const slot = sections.find((section) => section.na_reason === null && !sections.some((other) => other.location_key.startsWith(`${section.location_key}.`)));
+  const c2Row = (await getJson("/units?limit=1000")).items.find((unit) => unit.unit_id === c2.id);
+  const assigned = await page.request.post(`${api}/groups/save`, {
+    headers,
+    data: {
+      action: "confirm",
+      hold_reason: "",
+      units: [{ unit_id: c2.id, revision: c2Row.decision.revision, disposition: "assigned", move_target_code: "", reason: "" }],
+      targets: [{ key: `u${c2.id}`, target_doc_id: sop.id, slot_key: slot.location_key, kind: "sentence", lang: "en", text: c2Row.text.trim(), change_type: "as_is", source_unit_ids: [c2.id] }],
+      removed_target_ids: [],
+    },
+  });
+  check("the API assigns c′", assigned.ok(), String(assigned.status()));
+  // (b, b′)를 맺고 응답에서 제안으로, d′를 참조 줄로 바꿔 그린다
+  check("the API pairs b and b′", (await pairUnits([b.id, b2.id])).status() === 201);
+  patchView = (body) => ({
+    ...body,
+    pairs: body.pairs.map((pair) => (pair.unit_ids.includes(b.id) ? { ...pair, status: "suggested", source: "code" } : pair)),
+    units: body.units.map((unit) => (unit.id === d2.id ? { ...unit, lang: "ref", ref: { state: "confirmed", number: "SOP-ABC-1016" } } : unit)),
+  });
+  await reopen();
+  await expectRefused("onto an assigned piece (c → c′)", c.id, c2.id, "The sentence on that side is assigned. Clear its assignment first.");
+  await expectRefused("dragging an assigned piece (c′ → c)", c2.id, c.id, "This sentence is assigned. Clear the assignment first.");
+  await expectRefused("onto a reference line (d → d′)", d.id, d2.id, "A reference line has no language. Choose Not a reference first.");
+  const refPoint = await pointOn(d2.id);
+  await page.mouse.move(refPoint.x, refPoint.y);
+  await page.mouse.down();
+  await page.mouse.move(refPoint.x + 40, refPoint.y, { steps: 8 });
+  const refCards = await page.locator('[data-testid="drag-card"]').count();
+  await page.mouse.up();
+  check("a reference line is not a drag box and does not drag", (await pairPiece(d2.id).getAttribute("data-drag-box")) === null && refCards === 0, String(refCards));
+  await expectRefused("onto a piece of a suggestion for another sentence (d → b′)", d.id, b2.id, "One of them is already in a pair. Separate it first.");
+  await expectRefused("dragging a piece of a suggestion elsewhere (b → h′)", b.id, h2.id, "One of them is already in a pair. Separate it first.");
+
+  // 6. 제안의 조각을 제 짝에 놓으면 그 제안을 확정한다 - 확정 호출은 진짜 서버로. Undo는 풀기까지다(제안으로 돌아가지 않는다)
+  await startDrag(b.id);
+  await moveOnto(b2.id);
+  const overSuggestion = await readCard();
+  check("dragging b over its suggested partner says Confirm this suggested pair", overSuggestion.note === "Confirm this suggested pair" && !overSuggestion.refused, overSuggestion.note);
+  const confirmed = await dropAndSave(POST_CONFIRM, `Confirmed the pair ${idsOf(b, b2)}`);
+  const confirmBody = JSON.parse(pairRequests.at(-1).body);
+  check("the drop confirms the suggestion (200) with only the revision", confirmed.response.status() === 200 && JSON.stringify(Object.keys(confirmBody)) === JSON.stringify(["revision"]), pairRequests.at(-1).body);
+  check("the toast says Confirmed the pair and carries Undo", (await confirmed.toast.innerText()).trim().startsWith("Confirmed the pair ") && (await undoIn(confirmed.toast).count()) === 1);
+  patchView = (body) => body;
+  const confirmUndone = page.waitForResponse(DELETE_PAIR, { timeout: T });
+  await undoIn(confirmed.toast).click();
+  check("Undo after confirming deletes the pair (200) and b, b′ have no pair at all", (await confirmUndone).status() === 200 && pairOf(await readView(), b.id) === null && pairOf(await readView(), b2.id) === null);
+  await page.waitForLoadState("networkidle");
+
+  // 7. Esc는 끌기만 거둔다
+  const escBefore = pairRequests.length;
+  await startDrag(b.id);
+  await moveOnto(b2.id);
+  await page.keyboard.press("Escape");
+  const escMarks = await readMarks();
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  check("Esc clears the card, the line and the drop marks and sends nothing", JSON.stringify(escMarks) === NO_MARKS && pairRequests.length === escBefore, JSON.stringify(escMarks));
+
+  // 8. 그사이 짝이 바뀐 뒤의 Undo - 아무것도 쓰지 않고 이유를 알린다
+  await startDrag(b.id);
+  await moveOnto(b2.id);
+  const stale = await dropAndSave(POST_PAIR, `Paired ${idsOf(b, b2)}`);
+  const stalePair = pairOf(await readView(), b.id);
+  check("the API separates b and b′ behind the screen", stalePair !== null && (await unpair(stalePair.id)).ok());
+  const deletesBefore = pairRequests.filter((request) => request.method === "DELETE").length;
+  await undoIn(stale.toast).click();
+  await toastWith("info", "The pair changed after that. Nothing was undone.").waitFor({ timeout: T });
+  check("Undo after the pair changed sends no delete and says so", pairRequests.filter((request) => request.method === "DELETE").length === deletesBefore);
+  await page.waitForLoadState("networkidle");
+
+  // 9. 잇달아 두 번 - 알림마다 제 Undo
+  await clearToasts();
+  await startDrag(b.id);
+  await moveOnto(b2.id);
+  const first = await dropAndSave(POST_PAIR, `Paired ${idsOf(b, b2)}`);
+  await startDrag(h.id);
+  await moveOnto(h2.id);
+  await dropAndSave(POST_PAIR, `Paired ${idsOf(h, h2)}`);
+  check("two pairings in a row leave two toasts with their own Undo", (await actionCount()) === 2, String(await actionCount()));
+  const firstUndone = page.waitForResponse(DELETE_PAIR, { timeout: T });
+  await undoIn(first.toast).click();
+  await firstUndone;
+  const afterTwo = await readView();
+  check("the lower (first) toast's Undo separates b, b′ only", pairOf(afterTwo, b.id) === null && isPaired(afterTwo, h, h2));
+  await page.waitForLoadState("networkidle");
+
+  // 10. 낡은 revision - 끄는 사이 다른 곳에서 문서가 바뀌면 서버가 409로 거절하고 짝은 생기지 않는다. 다시 놓으면 된다
+  await reopen();
+  await startDrag(d.id);
+  await moveOnto(d2.id);
+  check("d′ is an English sentence again (no rewritten response)", (await readCard()).note === `Pair with ${d2.display_id}`);
+  const bump = await pairUnits([b.id, b2.id]);
+  const bumped = pairOf(await readView(), b.id);
+  check("the API bumps the revision while the drag is on", bump.status() === 201 && bumped !== null && (await unpair(bumped.id)).ok());
+  const conflict = page.waitForResponse(POST_PAIR, { timeout: T });
+  await page.mouse.up();
+  check("the drop with an old revision is refused (409)", (await conflict).status() === 409);
+  await toastWith("error", "Someone changed this first").waitFor({ timeout: T });
+  check("no pair is made for d and d′", pairOf(await readView(), d.id) === null);
+  await page.waitForLoadState("networkidle");
+  await startDrag(d.id);
+  await moveOnto(d2.id);
+  const retried = await dropAndSave(POST_PAIR, `Paired ${idsOf(d, d2)}`);
+  check("dropping again pairs them (201)", retried.response.status() === 201 && isPaired(await readView(), d, d2));
+
+  // 11. 다른 화면에서의 Undo - 알림은 화면을 넘어 남는다(page.goto는 화면을 새로 받아 알림을 지우니 레일로 간다)
+  await page.locator('[data-testid="stage-nav-outputs"]').click();
+  await page.waitForURL(/\/outputs/, { timeout: T });
+  const awayUndone = page.waitForResponse(DELETE_PAIR, { timeout: T });
+  await undoIn(retried.toast).click();
+  check("Undo from the Outputs screen deletes the pair (200)", (await awayUndone).status() === 200);
+  await toastWith("ok", "Separated").waitFor({ timeout: T });
+  check("d and d′ are apart and nothing threw", pairOf(await readView(), d.id) === null && pageErrors.length === 0, pageErrors.join(" | "));
+
+  // 12. 메뉴 길은 그대로 - Pair view를 켜지 않고 우클릭
+  await page.locator('[data-testid="stage-nav-assign"]').click();
+  await wait(page, "assign-bar");
+  await openDoc(c.id);
+  await page.locator(`[data-testid="assign-paper-piece-${c.id}"]`).click({ button: "right" });
+  await wait(page, "assign-ctx-pair_pick");
+  check("the context menu still offers Pair with another sentence", (await page.locator('[data-testid="assign-ctx-pair_pick"]').count()) === 1 && (await page.locator('[data-testid="assign-ctx-pair_pick"]').getAttribute("aria-disabled")) === null);
+  await page.keyboard.press("Escape");
+
+  // 13. 뒷정리 - 짝을 풀고 그 문서의 판단을 비운다
+  await page.unroute(isDocView);
+  for (const pair of (await readView()).pairs) await unpair(pair.id);
+  await page.request.post(`${api}/decisions/reset`, { headers, data: { revision: (await getJson("")).revision, document_id: doc.id } });
+  const cleaned = await readView();
+  check("the step leaves the document without pairs or decisions", cleaned.pairs.length === 0 && cleaned.units.every((unit) => unit.status === null || unit.status === "unassigned"));
+});
+
+// 읽기 전용 묶음에서도 Pair view는 읽는 일이라 켜진다. 조각은 끌리지 않는다(G13)
+await runStep("assign: Pair view reads on a read-only bundle, nothing drags", { devUser: "qa.lead" }, async ({ page }) => {
+  await page.goto(`${BASE}/`);
+  await wait(page, "bundles-list");
+  const review = page.locator('[data-testid^="bundles-row-"]', { hasText: "검토 대기" });
+  const reviewId = Number((await review.getAttribute("data-testid")).replace("bundles-row-", ""));
+  const doc = (await (await page.request.get(`${BASE}/api/bundles/${reviewId}/documents`, { headers: { "X-Dev-User": "qa.lead" } })).json()).find((item) => item.side === "old" && item.status === "ready" && item.language_layout === "ko_en_separate");
+  let pairRequests = 0;
+  page.on("request", (request) => {
+    if (/\/pairs(\/|$)/.test(new URL(request.url()).pathname)) pairRequests += 1;
+  });
+  await page.goto(`${BASE}/bundles/${reviewId}/assign`);
+  await wait(page, "assign-bar");
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
+  await wait(page, "assign-pair-view");
+  await page.locator('[data-testid="assign-pair-view"]').click();
+  await wait(page, "assign-pair-en");
+  check("Pair view opens two columns for a reader", (await page.locator('[data-testid="assign-pair-ko"]').isVisible()) && (await page.locator('[data-testid="assign-pair-en"]').isVisible()));
+  check("no piece is a drag box", (await page.locator(".pair-piece[data-drag-box]").count()) === 0);
+  const box = await page.locator(".pair-piece").first().boundingBox();
+  await page.mouse.move(box.x + 30, box.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 70, box.y + 10, { steps: 8 });
+  const cards = await page.locator('[data-testid="drag-card"]').count();
+  await page.mouse.up();
+  check("pressing and moving a piece starts no drag and sends nothing", cards === 0 && pairRequests === 0, `${cards} cards, ${pairRequests} requests`);
+});
+
 await runStep("new bundle in one click, locked stages, empty assign", { devUser: "dev.admin" }, async ({ page }) => {
   await page.goto(`${BASE}/`);
   await page.locator('[data-testid="bundles-new"]').click();

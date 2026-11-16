@@ -1432,7 +1432,7 @@
   .pair-piece { position: relative; display: flex; align-items: baseline; gap: 8px; min-width: 0; padding: 6px 10px; background: var(--paper); border: 1px solid var(--line-2); border-radius: var(--r-1); box-shadow: var(--shadow-1); font-size: calc(var(--fs-read) * var(--z, 1)); line-height: calc(var(--lh-read) * var(--z, 1)); color: var(--ink); cursor: pointer; content-visibility: auto; overflow-clip-margin: 32px; contain-intrinsic-size: auto 46px; }
   .pair-piece:is([data-sel], :focus-visible) { content-visibility: visible; }
   .pair-piece:lang(ko) { line-height: calc(27px * var(--z, 1)); }
-  .pair-piece:hover { background: color-mix(in oklab, var(--hover) 60%, var(--paper)); }
+  :where(html:not([data-box-drag])) .pair-piece:hover { background: color-mix(in oklab, var(--hover) 60%, var(--paper)); }
   .pair-piece-id { flex: none; font: 600 var(--fs-micro) / 1 var(--font-mono); color: var(--ink-3); }
   .pair-piece-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
   .pair-piece[data-kind="heading"] .pair-piece-text { font-weight: 600; }
@@ -1449,6 +1449,19 @@
   [data-pair-col="en"] .pair-piece[data-pair="suggested"] { border-left: 3px dashed var(--ink-4); }
   [data-pair-col="ko"] .pair-piece[data-pair][data-sel]::after { border-top-right-radius: 0; border-bottom-right-radius: 0; }
   [data-pair-col="en"] .pair-piece[data-pair][data-sel]::after { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+  /* 짝 끌기(끌어다 놓기 4걸음, G9·G10) - 올리면 Old 조각과 같은 고리·그림자로 살짝 들린다. 끄는 동안 조각 안의 것(상태 칩·REF 표시)은 포인터를 받지 않는다 - 놓을 곳은 조각 상자다 */
+  @media (hover: hover) {
+    html:not([data-box-drag]):not([data-box-select]) .assign-panes .pair-piece[data-drag-box]:hover { box-shadow: 0 0 0 1px var(--line-2), var(--shadow-1); }
+  }
+  /* 커서는 손가락 그대로 - 공통 끌기 규칙(motion.css [data-drag-box])의 화살표에 지지 않게. Alt를 누르는 동안은 글자 커서(G3) */
+  .assign-panes .pair-piece[data-drag-box] { cursor: pointer; transition: box-shadow var(--dur-fast); }
+  html[data-box-select] .assign-panes .pair-piece[data-drag-box] { cursor: text; }
+  @media (prefers-reduced-motion: reduce) {
+    .assign-panes .pair-piece[data-drag-box] { transition: none; }
+  }
+  html[data-box-drag] .assign-panes .pair-piece > * { pointer-events: none; }
+  /* 놓을 자리 테두리는 조각 안쪽, 짝 막대(3px)와 고른 고리(바깥 2px) 사이를 피해 - 바깥 고리에 덮이면 고른 짝에서 거절 점선이 보이지 않는다(잰 값) */
+  .assign-panes .pair-piece[data-drop] { outline-offset: -5px; }
   /* 짝 선 - 이음 선(.link-lines) 규칙을 그대로 받고 제안만 회색 점선 */
   .pair-lines g[data-status="suggested"] { color: var(--ink-4); }
   .pair-lines g[data-status="suggested"] path { stroke-dasharray: 2 3; }

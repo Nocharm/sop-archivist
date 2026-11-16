@@ -90,4 +90,32 @@ describe("toast actions", () => {
     runToastAction(firstId);
     expect(first).not.toHaveBeenCalled();
   });
+
+  it("stays while focus is inside even after the pointer leaves, and leaves three seconds after focus goes", () => {
+    showToast("Paired OLD-3-004 + OLD-3-011", "ok", { action });
+    const { id } = top();
+    holdToast(id, "focus");
+    holdToast(id, "pointer");
+    releaseToast(id, "pointer");
+    vi.advanceTimersByTime(60000);
+    expect(top().leaving).toBe(false);
+    releaseToast(id, "focus");
+    vi.advanceTimersByTime(2999);
+    expect(top().leaving).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(top().leaving).toBe(true);
+  });
+
+  it("stays while the pointer is on it even after focus leaves", () => {
+    showToast("Paired OLD-3-004 + OLD-3-011", "ok", { action });
+    const { id } = top();
+    holdToast(id, "pointer");
+    holdToast(id, "focus");
+    releaseToast(id, "focus");
+    vi.advanceTimersByTime(60000);
+    expect(top().leaving).toBe(false);
+    releaseToast(id, "pointer");
+    vi.advanceTimersByTime(3000);
+    expect(top().leaving).toBe(true);
+  });
 });
