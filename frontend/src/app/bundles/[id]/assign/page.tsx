@@ -1733,6 +1733,8 @@ export default function AssignPage() {
     }
     if (dropPlace.menu) setDraftMenu({ rowKey: dropPlace.rowKey });
   }
+  // 메뉴를 띄우기 전에 다른 줄을 고르면 버린다 - 그 줄의 초안 자리 표시를 대신 찾아 번쩍이지 않게
+  if (draftMenu !== null && draftMenu.rowKey !== activeKey) setDraftMenu(null);
   // 놓은 뒤 - 점선 초안(없으면 초안이 든 빈 칸 자리 표시)이 그려지면 보이게 하고 번쩍인 뒤 그 옆에 메뉴(jump 이펙트와 같은 짜임)
   useEffect(() => {
     if (!draftMenu) return;

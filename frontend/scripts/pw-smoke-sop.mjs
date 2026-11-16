@@ -1361,7 +1361,7 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   await page.keyboard.press("Escape");
   await page.locator('[data-pane="old"] .cut-anchor').first().waitFor({ state: "detached", timeout: T });
 
-  // 8. 아직 쓰지 않은 문서 - 그 문장 위에는 놓을 자리가 없고 놓아도 아무 일도 없다(3걸음에서 보내기로 놓인다)
+  // 8. 아직 쓰지 않은 문서 - 그 문장은 잇는 대상이 아니다. 3걸음부터 문장 위는 보내기의 놓을 자리라 놓으면 저장 전 초안이 된다(잇기가 아니다)
   let composedLine = null;
   for (const docId of composedDocIds) {
     await openNewDoc(docId);
@@ -1377,10 +1377,27 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   await dragThrough(page, await pointInUnit(bId), [{ x: composedBox.x + Math.min(60, composedBox.width / 2), y: composedBox.y + composedBox.height / 2 }]);
   await page.waitForTimeout(100);
   const overComposed = await readMarks();
+  const composedNote = await page.evaluate(() => ({
+    note: document.querySelector('[data-testid="drag-card"] .drag-card-note')?.textContent ?? "",
+    lineDrops: document.querySelectorAll('[data-pane="new"] .new-line[data-drop]').length,
+  }));
+  // 끈 Unit은 미배정이라 어느 칸에도 문장이 없다 - "이미 이 칸에 있다" 거절이 될 수 없다
+  const bBefore = (await readUnits()).find((unit) => unit.unit_id === bId);
+  check("the dragged unit has no sentence anywhere yet", bBefore?.status === "unassigned" && bBefore.target_ids.length === 0, JSON.stringify(bBefore?.target_ids));
   await page.mouse.up();
-  await page.waitForTimeout(600);
-  check("a sentence of an unwritten document takes no drop yet", overComposed.cards === 1 && overComposed.drops === 0, JSON.stringify(overComposed));
-  check("dropping there does nothing", (await menu.count()) === 0 && (await pieceOf(aId).getAttribute("data-sel")) === "" && (await pieceOf(bId).getAttribute("data-sel")) === null);
+  check("a sentence of an unwritten document is not a link target", overComposed.cards === 1 && composedNote.lineDrops === 0 && composedNote.note.startsWith("→ "), JSON.stringify({ ...overComposed, ...composedNote }));
+  await menu.waitFor({ timeout: T });
+  check(
+    "dropping there makes an unsaved draft, not a link",
+    (await menu.isVisible()) && (await page.locator('[data-testid="assign-new-draft"]').count()) === 1 && (await page.locator('[data-testid="assign-link-menu-unsaved"]').count()) === 1 && (await pieceOf(bId).getAttribute("data-sel")) === "" && (await readUnits()).find((unit) => unit.unit_id === bId)?.status === "unassigned",
+  );
+  await page.locator('[data-testid="assign-link-menu-cancel"]').click();
+  await page.locator('[data-testid="assign-new-draft"]').waitFor({ state: "detached", timeout: T });
+  // 아래 경주는 끈 줄이 고른 줄이 아닐 때다 - 앞서처럼 다른 줄(a)을 다시 고른다
+  const aAgain = await pointInUnit(aId);
+  await page.mouse.click(aAgain.x, aAgain.y);
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-sel"), aId, { timeout: T });
+  await page.waitForLoadState("networkidle");
 
   // 놓자마자 j로 다음 줄로 옮기면 늦게 온 관계 묶음이 옮겨 간 줄에 잇기를 적용하지 않는다 - 끈 줄의 묶음 응답을 늦춰 경주를 정해 둔다
   await openNewDoc(written.find((row) => row.target_id === tId).target_doc_id);
@@ -4774,6 +4791,19 @@ await runStep("assign: drag an Old piece between two sentences of a New · from 
   }));
   const menu = page.locator('[data-testid="assign-link-menu"]');
   const draft = page.locator('[data-testid="assign-new-draft"]');
+  // 놓기는 저장하지 않는다(반목표) - 화면이 보낸 /groups/save 요청 수(API로 만든 자료는 page.request라 세지 않는다)
+  let saveRequests = 0;
+  page.on("request", (request) => {
+    if (request.url().includes("/groups/save")) saveRequests += 1;
+  });
+  // 놓고 그 자리 메뉴가 뜰 때까지 저장 요청이 하나도 없다
+  const dropAndOpen = async (label) => {
+    const before = saveRequests;
+    await page.mouse.up();
+    await menu.waitFor({ timeout: T });
+    await page.waitForTimeout(400);
+    check(`${label}: the drop sends no save`, saveRequests === before, String(saveRequests - before));
+  };
   // 저장 요청의 최상위 새 문장 - 그 Unit이 출처인 것
   const topItemsOf = (body, unitId) => body.targets.filter((target) => !target.parent_key && target.source_unit_ids.includes(unitId));
   const saveAfterEnter = async () => {
@@ -4817,8 +4847,7 @@ await runStep("assign: drag an Old piece between two sentences of a New · from 
 
   // 2. 놓은 뒤 - 끈 줄을 고르고 A와 B 사이에 점선 초안, 그 자리 메뉴(저장 전)
   await page.mouse.move(belowA.x, belowA.y);
-  await page.mouse.up();
-  await menu.waitFor({ timeout: T });
+  await dropAndOpen("between sentences");
   check("dropping picks the dragged row", (await pieceOf(unitX.unit_id).getAttribute("data-sel")) === "");
   const placed = await page.evaluate(({ first, second }) => {
     const box = document.querySelector('[data-testid="assign-new-draft"]');
@@ -4857,7 +4886,7 @@ await runStep("assign: drag an Old piece between two sentences of a New · from 
   // 6. Confirm(↵) - 저장 요청이 자리를 싣고, X가 A 바로 뒤에 선다. 다시 읽어도, 화면의 줄 순서도 같다
   await dragThrough(page, await pointInUnit(unitX.unit_id), [await pointInItem(a, "bottom")]);
   await page.waitForTimeout(100);
-  await page.mouse.up();
+  await dropAndOpen("between sentences again");
   const sentX = await saveAfterEnter();
   const xItems = topItemsOf(sentX.body, unitX.unit_id);
   check("the save carries the drop place", sentX.ok && xItems.length === 1 && JSON.stringify(xItems[0].position) === JSON.stringify({ after_target_id: a }), JSON.stringify(xItems.map((item) => item.position)));
@@ -4879,8 +4908,7 @@ await runStep("assign: drag an Old piece between two sentences of a New · from 
   await dragThrough(page, await pointInUnit(unitY.unit_id), [{ x: slotBox.x + Math.min(60, slotBox.width / 2), y: slotBox.y + slotBox.height / 2 }]);
   await page.waitForTimeout(100);
   check("over an empty section its placeholder is outlined", (await page.locator(`[data-testid="assign-new-slot-${slotE}"]`).getAttribute("data-drop")) === "over");
-  await page.mouse.up();
-  await menu.waitFor({ timeout: T });
+  await dropAndOpen("on an empty section");
   check("dropping on an empty section marks it as the draft", (await page.locator(`[data-testid="assign-new-slot-${slotE}"]`).getAttribute("data-draft")) === "");
   const sentY = await saveAfterEnter();
   check("an empty section saves without a place", sentY.ok && sentY.body.targets.every((target) => !("position" in target)), JSON.stringify(sentY.body.targets));
@@ -4890,6 +4918,7 @@ await runStep("assign: drag an Old piece between two sentences of a New · from 
 
   // 8. 못 놓는 곳 셋 - 이유를 보이고 아무것도 쓰지 않는다
   const unitsBefore = JSON.stringify((await readUnits()).map((unit) => [unit.unit_id, unit.status]));
+  const savesBeforeRefusals = saveRequests;
   const refusals = [];
   // 저장 뒤 다음 줄로 옮겨 New 칸이 그 줄의 문서로 갔을 수 있다
   await openNewDoc(sop.id);
@@ -4939,14 +4968,14 @@ await runStep("assign: drag an Old piece between two sentences of a New · from 
   check("over an N/A section the card refuses and says why", refusals[0].refused && refusals[0].note === "That section is N/A in the To-Be list." && refusals[0].drop === "refused", JSON.stringify(refusals[0]));
   check("over its own section the card refuses and points to Order", refusals[1].refused && refusals[1].note === "Already in this section. Change the order in Order" && refusals[1].drop === "refused", JSON.stringify(refusals[1]));
   check("between sentences of a written document the card refuses", refusals[2].refused && refusals[2].note === "A document that is already written takes no new sentences. Link to one of its sentences.", JSON.stringify(refusals[2]));
+  check("refused drops send no save", saveRequests === savesBeforeRefusals, String(saveRequests - savesBeforeRefusals));
   check("refused drops make no draft, open no menu and write nothing", (await draft.count()) === 0 && (await menu.count()) === 0 && JSON.stringify((await readUnits()).map((unit) => [unit.unit_id, unit.status])) === unitsBefore && JSON.stringify(await readIds(slotK)) === JSON.stringify([a, x, b, c]));
 
   // 9. 확정한 줄을 다른 칸의 문장 사이로 - X를 K2의 P 위 절반에 놓으면 P 앞에 초안, 저장은 그 문장을 옮기며 맨 앞 자리를 싣는다
   await openNewDoc(sop.id);
   await dragThrough(page, await pointInUnit(unitX.unit_id), [await pointInItem(p, "top")]);
   await page.waitForTimeout(100);
-  await page.mouse.up();
-  await menu.waitFor({ timeout: T });
+  await dropAndOpen("a confirmed row into another section");
   const beforeP = await page.evaluate((id) => {
     const box = document.querySelector('[data-testid="assign-new-draft"]');
     const item = document.querySelector(`[data-pane="new"] .new-item[data-row="t:${id}"]`);
@@ -4977,8 +5006,7 @@ await runStep("assign: drag an Old piece between two sentences of a New · from 
   await openNewDoc(sop.id);
   await dragThrough(page, await pointInUnit(pair[0].unit_id), [await pointInItem(a, "bottom")]);
   await page.waitForTimeout(100);
-  await page.mouse.up();
-  await menu.waitFor({ timeout: T });
+  await dropAndOpen("a KO/EN pair between sentences");
   const pairDraft = await page.evaluate(() => [...document.querySelectorAll('[data-testid^="assign-new-draft-line-"]')].map((el) => el.dataset.lang));
   check("the pair draft shows both sentences, English first", JSON.stringify(pairDraft) === JSON.stringify(["en", "ko"]), JSON.stringify(pairDraft));
   const sentPair = await saveAfterEnter();
