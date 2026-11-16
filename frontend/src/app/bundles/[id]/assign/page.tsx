@@ -2957,6 +2957,8 @@ export default function AssignPage() {
                 warnBlockIds={warnBlockIds}
                 statusOf={(unitId) => unitMap.get(unitId)?.status}
                 renderNote={placeOf}
+                // 이미 쓴 New 문서에 이은 표·그림(입구 2)은 캡션을 그 문서가 정한다 - 서버도 캡션을 요구하지 않는다
+                isCaptionExempt={(unitId) => linkedTargets.has(unitId)}
                 renderPills={(unitId) => {
                   const targets = linkedTargets.get(unitId);
                   return targets ? <LinkBadge unitId={unitId} targets={targets} currentDocId={newDocId} onJump={(_unitId, targetId) => showInNew(targetId)} /> : null;

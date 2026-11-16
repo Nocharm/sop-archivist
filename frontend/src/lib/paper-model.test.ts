@@ -2,7 +2,8 @@
 import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewPartGroup, ViewUnit } from "./api-sop";
-import { buildPaperModel, buildPaperTabs, buildRows, listPartSheets, canSplitAt, clampSplitAt, getBundleHeader, getGapMerge, getMergeBlocker, resolveCutDrag, getMarks, getTags, readWarningText, resolvePickUnit, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
+import type { PaperRow } from "./paper-model";
+import { buildPaperModel, buildPaperTabs, buildRows, foldCaptionRows, listPartSheets, canSplitAt, clampSplitAt, getBundleHeader, getGapMerge, getMergeBlocker, resolveCutDrag, getMarks, getTags, readWarningText, resolvePickUnit, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -224,6 +225,55 @@ describe("getBundleHeader", () => {
   it("previews the first row of a table and the block text of a figure", () => {
     expect(getBundleHeader(tableRow, model)).toEqual({ kind: "table", unitId: 20, displayId: "D-20", preview: "열1 · 열2" });
     expect(getBundleHeader(figureRow, model)).toMatchObject({ kind: "figure", unitId: 21, displayId: "D-21", preview: "그림 1 로터" });
+  });
+});
+
+describe("foldCaptionRows", () => {
+  function pieceRow(unitId: number): PaperRow {
+    return { type: "piece", key: `u${unitId}`, unitId, parts: [{ block: makeBlock(unitId, unitId, "캡션"), segments: [{ start: 0, end: 2, unitId }] }] };
+  }
+  function tableRow(unitId: number): PaperRow {
+    const table = { id: 70, table_index: 0, parent_table_id: null, part: "body", n_rows: 0, n_cols: 0, is_layout: false };
+    return { type: "table", key: "t70", item: { type: "table", table, rows: [], unitId } };
+  }
+  function units(spec: Record<number, Partial<ViewUnit>>): Map<number, ViewUnit> {
+    return new Map(Object.entries(spec).map(([id, extra]) => [Number(id), makeUnit(Number(id), [], "", extra)]));
+  }
+
+  it("folds a caption piece before the table into the table row", () => {
+    const rows = foldCaptionRows([pieceRow(5), tableRow(9)], units({ 5: { kind: "caption", group_unit_id: 9 }, 9: { kind: "table" } }));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ type: "table", captions: [expect.objectContaining({ unitId: 5 })] });
+  });
+
+  it("ties a figure row to its figure unit and folds the caption paragraph under it", () => {
+    const view = makeView(
+      [makeBlock(1, 0, "", { kind: "figure" }), makeBlock(2, 1, "그림 1 로터")],
+      [makeUnit(20, [], "", { kind: "figure", block_id: 1, pos_seq: 0 }), makeUnit(21, [[2, 0, 7]], "그림 1 로터", { kind: "caption", group_unit_id: 20 })],
+    );
+    const model = buildPaperModel(view);
+    const rows = foldCaptionRows(buildRows(model.body, model.segments), model.units);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ type: "figure", unitId: 20, captions: [expect.objectContaining({ unitId: 21 })] });
+  });
+
+  it("reads an old-extraction caption anchored on the figure block as the figure's caption", () => {
+    const view = makeView(
+      [makeBlock(1, 0, "그림 1 로터", { kind: "figure" })],
+      [makeUnit(20, [], "", { kind: "figure", block_id: 1, pos_seq: 0 }), makeUnit(21, [[1, 0, 7]], "그림 1 로터", { kind: "caption", group_unit_id: 20 })],
+    );
+    const model = buildPaperModel(view);
+    const [row] = foldCaptionRows(buildRows(model.body, model.segments), model.units);
+    expect(row).toMatchObject({ type: "figure", unitId: 20 });
+    const caption = row.type === "figure" ? row.captions?.[0] : undefined;
+    expect(caption?.unitId).toBe(21);
+    expect(caption?.parts[0]).toMatchObject({ block: { id: 1 }, segments: [{ start: 0, end: 7, unitId: 21 }] });
+  });
+
+  it("leaves a caption whose bundle is not on the list as its own piece and gives a captionless bundle an empty list", () => {
+    const rows = foldCaptionRows([pieceRow(5), tableRow(9)], units({ 5: { kind: "caption", group_unit_id: 8 }, 9: { kind: "table" } }));
+    expect(rows.map((row) => row.type)).toEqual(["piece", "table"]);
+    expect(rows[1]).toMatchObject({ captions: [] });
   });
 });
 

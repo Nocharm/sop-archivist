@@ -214,14 +214,17 @@ export interface PiecePart {
 /** 용지에 위에서 아래로 놓이는 것 - 단위 하나가 조각 하나다(unitId가 null이면 어느 단위에도 없는 글자) */
 export type PaperRow =
   | { type: "piece"; key: string; unitId: number | null; parts: PiecePart[] }
-  | { type: "table"; key: string; item: Extract<PaperItem, { type: "table" }> }
-  | { type: "figure"; key: string; block: ViewBlock; unitId: number | null };
+  | { type: "table"; key: string; item: Extract<PaperItem, { type: "table" }>; captions?: CaptionPiece[] }
+  | { type: "figure"; key: string; block: ViewBlock; unitId: number | null; captions?: CaptionPiece[] };
+
+/** 표·그림 머리 줄에 접힌 캡션 단위의 조각 */
+export type CaptionPiece = Extract<PaperRow, { type: "piece" }>;
 
 export interface BundleHeader {
   kind: "table" | "figure";
   unitId: number | null;
   displayId: string;
-  /** 머리 줄 한 줄 미리보기 - 표는 첫 행 칸 글, 그림은 그림 블록 글(옛 추출 캡션) */
+  /** 캡션이 없을 때 머리 줄 한 줄 미리보기 - 표는 첫 행 칸 글, 그림은 그림 블록 글(새 추출은 비었다) */
   preview: string;
 }
 
@@ -233,6 +236,48 @@ export function getBundleHeader(row: Extract<PaperRow, { type: "table" | "figure
   const firstRow = row.item.rows[0] ?? [];
   const preview = firstRow.map((cell) => cell.text.trim()).filter(Boolean).join(" · ");
   return { kind: "table", unitId, displayId, preview };
+}
+
+/**
+ * 캡션 단위의 조각 줄을 빼서 그 묶음(group_unit_id) 표·그림 줄의 captions에 담는다 - 캡션은 머리 줄에서 한 번만 읽힌다.
+ * 그림 줄은 그림 단위(범위 없음 - block_id로 찾는다)에 잇고, 옛 추출처럼 그림 블록 글을 범위로 가진 캡션도 그 그림의 캡션으로 둔다.
+ * 묶음 줄이 이 목록에 없는 캡션(행으로 나눈 표 등)은 제 조각 줄로 남는다. 표·그림 줄의 captions는 늘 채운다(없으면 빈 목록).
+ */
+export function foldCaptionRows(rows: PaperRow[], units: ReadonlyMap<number, ViewUnit>): PaperRow[] {
+  const figureOfBlock = new Map<number, number>();
+  const anchored = new Map<number, ViewUnit[]>();
+  for (const unit of units.values()) {
+    if (unit.kind === "figure") figureOfBlock.set(unit.block_id, unit.id);
+    else if (unit.kind === "caption" && unit.group_unit_id !== null) anchored.set(unit.group_unit_id, [...(anchored.get(unit.group_unit_id) ?? []), unit]);
+  }
+  const bundles = new Map<number, Extract<PaperRow, { type: "table" | "figure" }>>();
+  const out = rows.map((row): PaperRow => {
+    if (row.type === "piece") return row;
+    if (row.type === "table") {
+      const next = { ...row, captions: [] };
+      if (row.item.unitId !== null) bundles.set(row.item.unitId, next);
+      return next;
+    }
+    const unitId = figureOfBlock.get(row.block.id) ?? (row.unitId !== null && units.get(row.unitId)?.kind === "caption" ? null : row.unitId);
+    // 그림 블록 안에 범위를 둔 캡션(옛 추출) - 블록 글자를 그대로 조각으로 편다
+    const inBlock = (unitId === null ? [] : (anchored.get(unitId) ?? []))
+      .map((caption): CaptionPiece | null => {
+        const segments = caption.spans.filter(([blockId]) => blockId === row.block.id).map(([, start, end]) => ({ start, end, unitId: caption.id }));
+        return segments.length === 0 ? null : { type: "piece", key: `c${caption.id}`, unitId: caption.id, parts: [{ block: row.block, segments }] };
+      })
+      .filter((piece) => piece !== null);
+    const next = { ...row, unitId, captions: inBlock };
+    if (unitId !== null) bundles.set(unitId, next);
+    return next;
+  });
+  return out.filter((row) => {
+    if (row.type !== "piece" || row.unitId === null) return true;
+    const unit = units.get(row.unitId);
+    const bundle = unit?.kind === "caption" && unit.group_unit_id !== null ? bundles.get(unit.group_unit_id) : undefined;
+    if (!bundle) return true;
+    bundle.captions?.push(row);
+    return false;
+  });
 }
 
 /** 용지 내용 → 조각 줄. 한 문단의 문장들·Shift+Enter 줄도 단위마다 따로 놓고, 한 단위가 이어진 문단에 걸치면 한 조각으로 둔다 */

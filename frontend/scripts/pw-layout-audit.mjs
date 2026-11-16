@@ -1408,6 +1408,39 @@ const AUDIT_ENTRIES = [
     expect: (value) => isWideTableOk({ ...value, cell600: value.cell600 ?? { width: 1, limit: 1 } }),
     note: "output C: no page scroll, 18-col table rows <= 66px, the table scrolls inside its own box",
   },
+  {
+    // TW3: Assign Old 머리 줄 - 420자 캡션은 두 줄에서 말줄임, 표를 고르면 펼친다. 머리 줄이 조각 밖으로 넘치지 않는다. 문서 id는 주소 #doc=로 넘긴다
+    id: "TW3", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => `/bundles/${ids.w[1]}/assign#doc=${ids.docs.captions}`,
+    open: async (page) => {
+      const docId = /#doc=(\d+)/.exec(page.url())[1];
+      await page.locator('[data-testid="assign-old-doc"]').click();
+      await page.locator(`[data-testid="assign-old-doc-option-${docId}"]`).click();
+      await scrollUntilWideTable(page, ".assign-panes [data-pane='old'] .pane-body");
+    },
+    measure: async (page) => {
+      const read = () =>
+        page.evaluate(() => {
+          const table = [...document.querySelectorAll(".ptbl")].find((one) => one.rows[0]?.cells.length === 18);
+          const strip = table?.closest(".strip");
+          const head = strip?.querySelector(".bundle-head");
+          const caption = head?.querySelector(".bundle-head-caption");
+          if (!strip || !head || !caption) return null;
+          const lineHeight = parseFloat(getComputedStyle(head).lineHeight);
+          return {
+            lines: Math.round(caption.getBoundingClientRect().height / lineHeight),
+            headSpill: Math.round(head.getBoundingClientRect().right - strip.getBoundingClientRect().right),
+            pageScroll: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          };
+        });
+      const before = await read();
+      await page.locator(".strip:has(.ptbl tr:first-child > td:nth-child(18)) .bundle-head-id").click();
+      await page.waitForTimeout(SETTLE_MS);
+      return { before, after: await read() };
+    },
+    expect: (value) => value.before !== null && value.after !== null && value.before.lines === 2 && value.after.lines > 2 && value.before.headSpill <= 0 && value.after.headSpill <= 0 && value.before.pageScroll === 0,
+    note: "Assign old head row: a 420-char caption stays at two lines, opens fully when the table is picked, and never spills its strip",
+  },
 ];
 
 // 18열 표가 그려질 때까지 스크롤한다 - 긴 문서·긴 C는 화면 밖 줄을 늦게 그린다. scroller가 null이면 C의 끝 표지(output-c-more)를 화면에 끌어온다

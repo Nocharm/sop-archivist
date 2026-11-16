@@ -19,7 +19,7 @@ import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
 import { readCaretPoint } from "@/lib/caret-point";
 import { useI18n } from "@/lib/i18n";
 import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
-import { buildRows, getBundleHeader, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, resolvePickUnit, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
+import { buildRows, foldCaptionRows, getBundleHeader, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, resolvePickUnit, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
 
@@ -50,10 +50,11 @@ function readRowUnitId(row: PaperRow): number | null {
   return row.type === "table" ? row.item.unitId : row.unitId;
 }
 
-/** 접기에서 줄이 맞는지 볼 단위 - 표는 표 단위와 칸 안 문장 단위 모두 */
+/** 접기에서 줄이 맞는지 볼 단위 - 표는 표 단위와 칸 안 문장 단위 모두, 표·그림은 머리 줄의 캡션 단위도 */
 function listRowUnitIds(row: PaperRow, segments: ReadonlyMap<number, Segment[]>): number[] {
-  if (row.type !== "table") return row.unitId === null ? [] : [row.unitId];
-  const ids = new Set<number>();
+  const captionIds = row.type === "piece" ? [] : (row.captions ?? []).flatMap((caption) => (caption.unitId === null ? [] : [caption.unitId]));
+  if (row.type !== "table") return [...(row.unitId === null ? [] : [row.unitId]), ...captionIds];
+  const ids = new Set<number>(captionIds);
   if (row.item.unitId !== null) ids.add(row.item.unitId);
   for (const cell of row.item.rows.flat()) for (const segment of segments.get(cell.id) ?? []) if (segment.unitId !== null) ids.add(segment.unitId);
   return [...ids];
@@ -123,6 +124,8 @@ interface PaperProps {
     renderPills?: (unitId: number) => ReactNode;
     /** Assign - 필터 접기. matchIds는 필터를 걸 때의 목록(스냅숏), 없으면 전부 그린다 */
     fold?: { matchIds: ReadonlySet<number>; open: FoldOpen; onOpenChange: (next: FoldOpen) => void };
+    /** Assign - 캡션이 없어도 "Caption needed"를 띄우지 않을 묶음(이미 쓴 New 문서에 이은 표·그림 - 캡션을 그 문서가 정한다) */
+    isCaptionExempt?: (unitId: number) => boolean;
   };
   /** strips에서 고른 조각의 글 바로 아래 줄(확인·짝 풀기 등 단추) - 조각 상자가 펼쳐지며 밀려 내려오고, 고름이 옮겨 가면 접힌다 */
   renderUnitActions?: (unitId: number) => ReactNode;
@@ -216,7 +219,7 @@ export function Paper({
           { edge: null, items: model.body },
           { edge: "bottom", items: model.footer },
         ];
-    return lists.filter((list) => list.items.length > 0).map((list) => ({ edge: list.edge, rows: buildRows(list.items, model.segments) }));
+    return lists.filter((list) => list.items.length > 0).map((list) => ({ edge: list.edge, rows: foldCaptionRows(buildRows(list.items, model.segments), model.units) }));
   }, [hasStrips, items, model]);
   // 짝 - 단위 → 같은 짝의 다른 구성원(원문 순서, 떨어진 구성원 포함). 한 카드는 아래 brackets가 정한다(같은 쪽·같은 부분의 끊김 없는 줄만)
   const matesOf = useMemo(() => {
@@ -579,10 +582,30 @@ export function Paper({
     });
   }
 
-  /** 표·그림 조각 위 머리 줄 - 묶음 단위가 있을 때만(행으로 나눈 표는 행마다 단위라 없다) */
+  /** 표·그림 조각 위 머리 줄 - 묶음 단위가 있을 때만(행으로 나눈 표는 행마다 단위라 없다).
+   *  캡션은 글자 조각(.su) 그대로라 Alt 긁기·나눌 자리·우클릭이 캡션 단위에 가고, 누르면 묶음으로 올려 고른다(resolvePickUnit) */
   function renderBundleHead(row: Extract<PaperRow, { type: "table" | "figure" }>, unit: ViewUnit | undefined): ReactNode {
     if (!unit) return null;
-    return <BundleHead head={getBundleHeader(row, model)} selected={unit.id === selectedId || (highlightIds?.has(unit.id) ?? false)} testId={testId} />;
+    const captions = row.captions ?? [];
+    const caption =
+      captions.length === 0 ? undefined : (
+        <span className="bundle-head-caption" data-testid={`${testId}-caption-${unit.id}`}>
+          {captions.map((piece, index) => (
+            <Fragment key={piece.key}>
+              {index > 0 && <span aria-hidden> / </span>}
+              <span data-strip-unit={piece.unitId ?? undefined}>
+                {piece.parts.map((part) => (
+                  <span key={part.block.id} data-block={part.block.id}>
+                    {part.segments.map((segment, at) => renderSegment(part.block, segment, at))}
+                  </span>
+                ))}
+              </span>
+            </Fragment>
+          ))}
+        </span>
+      );
+    const isMissing = captions.length === 0 && !(strips?.isCaptionExempt?.(unit.id) ?? false);
+    return <BundleHead head={getBundleHeader(row, model)} selected={unit.id === selectedId || (highlightIds?.has(unit.id) ?? false)} testId={testId} caption={caption} captionMissing={isMissing} />;
   }
 
   function renderTable(item: Extract<PaperItem, { type: "table" }>, head: ReactNode = null): ReactNode {
@@ -609,7 +632,7 @@ export function Paper({
     );
   }
 
-  /** 그림 - 그림 블록 글(옛 추출 캡션)은 머리 줄에도 보이지만 아래 글은 Alt 긁기·나누기 자리라 남긴다 */
+  /** 그림 - 머리 줄이 있으면 그림 블록 글(옛 추출 캡션)은 머리 줄의 캡션으로만 읽힌다(두 번 보이지 않게). 머리 줄이 없는 용지만 아래에 둔다 */
   function renderFigure(block: ViewBlock, head: ReactNode = null): ReactNode {
     return (
       <>
@@ -622,7 +645,7 @@ export function Paper({
               <ImageIcon size={28} strokeWidth={1.5} />
             </span>
           )}
-          <p data-block={block.id}>{renderBlockText(block)}</p>
+          {head === null && <p data-block={block.id}>{renderBlockText(block)}</p>}
         </figure>
       </>
     );
@@ -885,7 +908,8 @@ export function Paper({
     const holder = element.closest<HTMLElement>("[data-strip-unit]") ?? element.closest(".strip-lead")?.parentElement?.querySelector<HTMLElement>(":scope > .strip[data-strip-unit]");
     // 표 안에서 칸 조각을 비껴 누른 것(칸 여백·칸 사이 틈)으로 표 전체를 고르지 않는다 - 표 전체는 머리 줄(BundleHead)·표 밖 여백으로(묶음째 고르는 화면은 표 전체)
     if (!pickWholeBundle && holder?.dataset.kind === "table" && element.closest("table")) return;
-    if (holder) onUnitClick(Number(holder.dataset.stripUnit), null, event);
+    // 머리 줄 캡션의 빈자리도 캡션 단위를 가리킨다 - 묶음째 고르는 화면은 그 묶음으로 올린다
+    if (holder) onUnitClick(pickWholeBundle ? resolvePickUnit(Number(holder.dataset.stripUnit), model.units) : Number(holder.dataset.stripUnit), null, event);
   }
 
   function handleDoubleClick(event: MouseEvent<HTMLDivElement>) {

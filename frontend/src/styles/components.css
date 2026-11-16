@@ -642,10 +642,14 @@
   /* 표·그림 머리 줄(components/paper/bundle-head.tsx) - 종류 표시는 .strip-lang 자리(조각 위 테두리), 줄에는 미리보기 한 줄 + 오른쪽 흐린 표시 ID. 골라진 테두리는 조각 상자(.strip[data-sel])가 그린다 */
   /* 위 2px - 종류 표시(위 테두리에서 7px 내려온다)와 오른쪽 끝 표시 ID가 겹치지 않게 */
   .bundle-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; margin-top: 2px; padding: 0 4px; border-radius: var(--r-1); font-family: var(--font-ui); font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-2); }
-  .bundle-head:hover { background: var(--hover); }
   .bundle-head[data-sel] { color: var(--ink); }
   .bundle-head-label { flex: none; color: var(--ink-3); }
   .bundle-head-text { flex: 1 1 auto; }
+  .bundle-head-missing { flex: none; font-weight: 600; color: var(--warn-ink); }
+  /* 캡션은 두 줄에서 말줄임, 묶음을 고르면 다 펼친다(나눌 자리·Alt 긁기를 그때 한다). 줄 높이는 머리 줄 것 - 원문 조각의 27px를 따르지 않는다 */
+  .bundle-head-caption { flex: 1 1 auto; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; white-space: pre-wrap; }
+  .bundle-head[data-sel] .bundle-head-caption { display: block; -webkit-line-clamp: none; overflow: visible; }
+  .pg .bundle-head .bundle-head-caption .su:is(:lang(ko), :lang(en)), .pg .bundle-head .bundle-head-caption .su { line-height: inherit; }
   .bundle-head-id { flex: none; margin-left: auto; font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--ink-3); }
   .pfig { display: grid; gap: 6px; justify-items: start; }
   .pfig-box {

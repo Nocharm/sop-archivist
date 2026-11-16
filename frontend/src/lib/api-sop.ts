@@ -320,7 +320,7 @@ export function deleteDocument(bundleId: number, docId: number, revision: number
 
 // --- 원문 보기와 쪼개기 편집 ---
 
-export type UnitKind = "sentence" | "heading" | "figure" | "table" | "table_row" | "cell_sentence";
+export type UnitKind = "sentence" | "heading" | "figure" | "table" | "table_row" | "cell_sentence" | "caption";
 /** ref는 참조 줄(다른 문서를 번호로 가리키는 글) - 한/영 짝이 없다 */
 export type UnitLang = "ko" | "en" | "ref" | "neutral";
 /** 참조 줄 상태 - proposed는 앱의 제안(사람이 번호를 확인하기 전), confirmed는 REF로 확정된 것 */
