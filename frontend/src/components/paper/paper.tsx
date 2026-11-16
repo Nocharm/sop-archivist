@@ -589,8 +589,8 @@ export function Paper({
     return (
       <div className="grid grid-cols-[minmax(0,1fr)] gap-1">
         {head}
-        {/* 가로 스크롤은 표만 - 조각 상자가 스크롤하면 위 테두리의 종류 표시가 잘린다 */}
-        <div className="ptbl-scroll">
+        {/* 가로 스크롤은 표만 - 조각 상자가 스크롤하면 위 테두리의 종류 표시가 잘린다. data-no-drag: 스크롤 막대를 끌어도 끌기가 시작되지 않게 */}
+        <div className="ptbl-scroll" data-no-drag>
           <table className="ptbl">
             <tbody>
               {item.rows.map((row, rowIndex) => (

@@ -17,7 +17,7 @@
 //     mid:   { 1..4: 데모 묶음 id }                 // "SYNTHETIC 1 …" ~ "SYNTHETIC 4 …"(쪼개기 직후·분류 절반·검토 대기·AI 제안)
 //     w:     { 1..7: 극단 묶음 id }                 // W1 worst · W2 in-review · W3 returned · W4 done · W5 reopened · W6 ready · W7 empty
 //     light: number[]                              // 위 11개 말고 qa.member에게 보이는 나머지 36개(극단 제목 11 + "SYNTHETIC light NN" 25)
-//     docs:  { big, tables, longName, longNameEn, pdf, failed }   // W1의 문서 id — 372 Unit 문서 · 14열 표+120행 표 문서 · 이름 246자 ko · 255자 en · 6쪽 PDF · 거절된 docx
+//     docs:  { big, tables, longName, longNameEn, pdf, failed, captions }   // W1의 문서 id — 372 Unit 문서 · 14열 표+120행 표 문서 · 이름 246자 ko · 255자 en · 6쪽 PDF · 거절된 docx · 18열 표+600자 칸 표 캡션 문서
 //   }
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -413,17 +413,22 @@ const AUDIT_ENTRIES = [
   {
     id: "I2", ds: "mid", user: MEMBER, views: [1120],
     path: (ids) => `/bundles/${ids.mid[2]}/assign`,
+    // 넓은 표는 좌우로 스크롤한다(표·그림 캡션 Task 5) - 표가 넘치는 것은 감싼 .ptbl-scroll 안뿐이고, 그 상자는 조각을 넘지 않는다
     measure: (page) => page.locator(".ptbl").evaluateAll((tables) => {
       let worst = 0;
+      let unwrapped = 0;
       for (const table of tables) {
-        let strip = table.parentElement;
-        while (strip && !/(auto|scroll)/.test(getComputedStyle(strip).overflowX)) strip = strip.parentElement;
-        if (strip) worst = Math.max(worst, table.scrollWidth - strip.clientWidth);
+        const box = table.closest(".ptbl-scroll");
+        if (!box || getComputedStyle(box).overflowX !== "auto") {
+          unwrapped += 1;
+          continue;
+        }
+        worst = Math.max(worst, box.getBoundingClientRect().right - box.parentElement.getBoundingClientRect().right);
       }
-      return { tables: tables.length, worst: Math.round(worst) };
+      return { tables: tables.length, unwrapped, worst: Math.round(worst) };
     }),
-    expect: (value) => value.tables > 0 && value.worst <= 1,
-    note: "no Assign .ptbl is wider than the strip that holds it (min-width 16ch only applies in the one-pane view)",
+    expect: (value) => value.tables > 0 && value.unwrapped === 0 && value.worst <= 1,
+    note: "every Assign .ptbl sits in a horizontal .ptbl-scroll box that stays inside its strip",
   },
   // ---- Task 6: Assign ----
   {
@@ -1368,7 +1373,98 @@ const AUDIT_ENTRIES = [
     expect: (value) => /^SYNTHETIC W[16]$/.test(value.title) && value.lines === 8 && value.spill === 0 && !value.boxX && value.maxLine <= 120 && (value.title !== "SYNTHETIC W6" || value.canRequest),
     note: "overview gate list: eight lines when expanded (boundary checks are no longer a condition), none spills its box (W1 and W6); W6 can still request review",
   },
+  // ---- 표·그림·캡션 Task 5: 넓은 표는 세로로 늘지 않고 좌우로 스크롤한다(OLD-89 캡션 극단 문서). 기존 T1과 겹치지 않게 TW ----
+  {
+    // TW1: Assign Old 칸에서 18열 표·600자 칸 표 - 한 단(?edit=)과 양 단 둘 다
+    id: "TW1", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => `/bundles/${ids.w[1]}/assign?edit=${ids.docs.captions}`,
+    open: async (page) => {
+      await page.locator(".ptbl").first().waitFor({ timeout: T });
+    },
+    measure: async (page) => {
+      await scrollUntilWideTable(page, ".assign-panes [data-pane='old'] .pane-body");
+      const single = await measureWideTables(page);
+      await page.getByTestId("assign-view-two").click();
+      await page.waitForTimeout(SETTLE_MS);
+      await scrollUntilWideTable(page, ".assign-panes [data-pane='old'] .pane-body");
+      const two = await measureWideTables(page);
+      return { single, two };
+    },
+    expect: (value) => [value.single, value.two].every(isWideTableOk),
+    note: "Assign old pane (one and two panes): no page scroll, 18-col table rows <= 66px, 600-char cell folds at 32.4-36ch, tables scroll inside their own box",
+  },
+  {
+    // TW2: 결과물 C - 시드가 OLD-89의 첫 표 셋(18열 표 포함)을 한 칸에 확정해 둔다. 600자 칸 표는 C에 없다
+    id: "TW2", ds: "worst", user: MEMBER, views: [1120, 1920],
+    path: (ids) => `/bundles/${ids.w[1]}/outputs`,
+    open: async (page) => {
+      await page.getByTestId("outputs-tab-c").click();
+      await page.locator('[data-testid^="output-c-section-"]').first().waitFor({ timeout: T });
+    },
+    measure: async (page) => {
+      await scrollUntilWideTable(page, null);
+      return measureWideTables(page);
+    },
+    expect: (value) => isWideTableOk({ ...value, cell600: value.cell600 ?? { width: 1, limit: 1 } }),
+    note: "output C: no page scroll, 18-col table rows <= 66px, the table scrolls inside its own box",
+  },
 ];
+
+// 18열 표가 그려질 때까지 스크롤한다 - 긴 문서·긴 C는 화면 밖 줄을 늦게 그린다. scroller가 null이면 C의 끝 표지(output-c-more)를 화면에 끌어온다
+async function scrollUntilWideTable(page, scroller) {
+  for (let step = 0; step < 80; step += 1) {
+    const found = await page.evaluate(() => [...document.querySelectorAll(".ptbl")].some((table) => table.rows[0]?.cells.length === 18));
+    if (found) break;
+    await page.evaluate((selector) => {
+      if (!selector) {
+        document.querySelector('[data-testid="output-c-more"]')?.scrollIntoView({ block: "end" });
+        return;
+      }
+      const el = document.querySelector(selector);
+      el.scrollTop += el.clientHeight * 0.8;
+    }, scroller);
+    await page.waitForTimeout(150);
+  }
+  await page.evaluate(() => [...document.querySelectorAll(".ptbl")].find((table) => table.rows[0]?.cells.length === 18)?.scrollIntoView({ block: "center" }));
+  await page.waitForTimeout(300);
+}
+
+// 18열 표의 가장 높은 행, 600자 칸의 글 폭과 36ch, 표가 제 스크롤 상자 밖으로 나가는지
+async function measureWideTables(page) {
+  return page.evaluate(() => {
+    const tables = [...document.querySelectorAll(".ptbl")];
+    const wide = tables.find((table) => table.rows[0]?.cells.length === 18);
+    const longCell = [...document.querySelectorAll(".ptbl td")].find((td) => td.textContent.trim().length >= 590);
+    let cell600 = null;
+    if (longCell) {
+      const style = getComputedStyle(longCell);
+      const probe = document.createElement("span");
+      probe.style.cssText = "position:absolute;visibility:hidden;width:36ch";
+      longCell.appendChild(probe);
+      const limit = probe.getBoundingClientRect().width;
+      probe.remove();
+      const width = longCell.getBoundingClientRect().width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth);
+      cell600 = { width: Math.round(width), limit: Math.round(limit) };
+    }
+    // 표를 감싼 .ptbl-scroll이 조각(용지) 오른쪽을 넘지 않는다 - 넘치는 것은 상자 안 스크롤뿐
+    const boxOut = Math.round(Math.max(0, ...tables.map((table) => {
+      const box = table.closest(".ptbl-scroll");
+      const frame = box?.parentElement;
+      return box && frame ? box.getBoundingClientRect().right - frame.getBoundingClientRect().right : 0;
+    })));
+    return {
+      docX: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+      wideRow: wide ? Math.round(Math.max(...[...wide.rows].map((row) => row.getBoundingClientRect().height))) : null,
+      wideScrolls: wide ? wide.closest(".ptbl-scroll")?.scrollWidth > wide.closest(".ptbl-scroll")?.clientWidth : null,
+      cell600,
+      boxOut,
+    };
+  });
+}
+
+function isWideTableOk(value) {
+  return value.docX === false && value.wideRow !== null && value.wideRow <= 66 && value.cell600 !== null && value.cell600.width <= value.cell600.limit + 1 && value.cell600.width >= value.cell600.limit * 0.9 && value.boxOut <= 1;
+}
 // B5는 새(문서 0개) Bundle이면 되므로 mid에서도 W7로 한 번 더 잰다(W7은 같은 DB에 있다)
 AUDIT_ENTRIES.push({ ...AUDIT_ENTRIES.find((entry) => entry.id === "B5"), ds: "mid" });
 
@@ -1391,7 +1487,7 @@ async function loadIds() {
   ids.light = bundles.filter((b) => !known.has(b.id)).map((b) => b.id).sort((a, b) => a - b);
   if (ids.w[1]) {
     const documents = await getJson(`/api/bundles/${ids.w[1]}/documents`);
-    const docPrefixes = { big: "SYNTHETIC_OLD-90_", tables: "SYNTHETIC_OLD-92_", longName: "SYNTHETIC_OLD-93_", longNameEn: "SYNTHETIC_OLD-94_", pdf: "SYNTHETIC_OLD-96_", failed: "SYNTHETIC_corrupt" };
+    const docPrefixes = { big: "SYNTHETIC_OLD-90_", tables: "SYNTHETIC_OLD-92_", longName: "SYNTHETIC_OLD-93_", longNameEn: "SYNTHETIC_OLD-94_", pdf: "SYNTHETIC_OLD-96_", failed: "SYNTHETIC_corrupt", captions: "SYNTHETIC_OLD-89_" };
     for (const [key, prefix] of Object.entries(docPrefixes)) ids.docs[key] = documents.find((d) => d.file_name.startsWith(prefix))?.id;
   }
   await api.dispose();
