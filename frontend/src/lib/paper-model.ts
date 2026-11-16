@@ -199,6 +199,11 @@ export function getMergeBlocker(a: ViewUnit, b: ViewUnit): MergeBlocker | null {
   return null;
 }
 
+/** 누른 단위 → 고를 단위. 표·행에 묶인 칸 문장이면 그 묶음 단위, 아니면 자기(Assign은 표·그림을 묶음째 배정한다) */
+export function resolvePickUnit(unitId: number, units: ReadonlyMap<number, ViewUnit>): number {
+  return units.get(unitId)?.group_unit_id ?? unitId;
+}
+
 // ── Split 2차 개편(2026-11-10): 단위마다 종이 한 조각, 조각 사이 합치기, 본문·머리말·꼬리말 탭, 나눌 선 끌기 ──
 
 export interface PiecePart {

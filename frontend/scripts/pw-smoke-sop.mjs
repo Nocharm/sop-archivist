@@ -728,6 +728,52 @@ await runStep("assign: an edit survives looking at another unit", {}, async ({ p
   check("the edit is still there", (await textarea.inputValue()) === "Smoke: edit kept across units");
 });
 
+// 표는 묶음째 배정한다 - 칸 글자를 눌러도 표 전체가 골라지고(전에는 아무 일도 없었다), Alt를 누른 채 끌면 글자가 골라진다
+await runStep("assign: a click anywhere on a table picks the whole table, Alt still selects text", {}, async ({ page }) => {
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${freshId}/documents`, { headers })).json();
+  let doc = null;
+  let table = null;
+  let cell = null;
+  for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await (await page.request.get(`${BASE}/api/bundles/${freshId}/documents/${candidate.id}/view`, { headers })).json();
+    const found = view.units.find((unit) => unit.kind === "table" && unit.status === "unassigned" && view.units.some((other) => other.kind === "cell_sentence" && other.group_unit_id === unit.id && other.text.length > 3));
+    if (!found) continue;
+    doc = candidate;
+    table = found;
+    cell = view.units.find((unit) => unit.kind === "cell_sentence" && unit.group_unit_id === found.id && unit.text.length > 3);
+    break;
+  }
+  check("the fresh bundle has an unassigned whole table", table !== null);
+  if (table === null) return;
+  await page.goto(`${BASE}/bundles/${freshId}/assign`);
+  await wait(page, "assign-bar");
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
+  const cellText = page.locator(`[data-testid="assign-paper-unit-${cell.id}"]`).first();
+  await cellText.waitFor({ timeout: T });
+  await cellText.scrollIntoViewIfNeeded();
+  await cellText.click();
+  const splitRows = page.locator(`[data-testid="assign-shape-table_rows-${table.id}"]`);
+  await splitRows.waitFor({ state: "attached", timeout: T });
+  check("clicking cell text picks the whole table (Shape offers Split into rows)", (await splitRows.getAttribute("aria-label")) === "Split into rows");
+  check("the table piece is the selected one", (await page.locator(`[data-testid="assign-paper-piece-${table.id}"]`).getAttribute("data-sel")) === "");
+  // Alt+끌기 - 칸 글자 첫머리에서 끝까지
+  const box = await cellText.boundingBox();
+  await page.keyboard.down("Alt");
+  await page.mouse.move(box.x + 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 2, box.y + box.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await page.keyboard.up("Alt");
+  const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+  check("Alt+drag still selects text", selected.trim().length > 0, JSON.stringify(selected));
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
+});
+
 // 배정 화면에서 표를 행으로 나누거나 다시 합치고 되돌리기 - 우클릭 메뉴(전에는 쪼개기 화면에서만 했다). Ctrl+Z로 처음 모양으로 돌아온다
 await runStep("assign: table rows from the right-click menu, then undo", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);

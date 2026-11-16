@@ -47,6 +47,8 @@ interface OldPaneProps {
   /** 머리말·꼬리말 탭의 쪽들(설명 줄과 함께 따로 그린다) - 본문 탭이면 null */
   sheets: readonly PaperSheet[] | null;
   onPartChange: (key: PaperTabKey) => void;
+  /** 표·그림 어디를 눌러도 묶음 전체를 고른다 - 짝 고르는 중에는 꺼서 칸 문장을 그대로 고른다 */
+  pickWholeBundle: boolean;
   /** Shift는 일괄 고르기 */
   onUnitClick: (unitId: number, keys: { shiftKey: boolean }) => void;
   /** 우클릭·메뉴 글쇠 - 누른 자리와 글자 자리 */
@@ -95,6 +97,7 @@ export function OldPane(props: OldPaneProps) {
         onUnitDoubleClick={props.onUnitDoubleClick}
         onRangeSelect={props.onRangeSelect}
         shiftClickPicks
+        pickWholeBundle={props.pickWholeBundle}
         cut={props.cut}
         onCutDrag={props.onCutDrag}
         onCutNudge={props.onCutNudge}

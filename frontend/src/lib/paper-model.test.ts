@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewPartGroup, ViewUnit } from "./api-sop";
-import { buildPaperModel, buildPaperTabs, buildRows, listPartSheets, canSplitAt, clampSplitAt, getGapMerge, getMergeBlocker, resolveCutDrag, getMarks, getTags, readWarningText, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
+import { buildPaperModel, buildPaperTabs, buildRows, listPartSheets, canSplitAt, clampSplitAt, getGapMerge, getMergeBlocker, resolveCutDrag, getMarks, getTags, readWarningText, resolvePickUnit, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -154,6 +154,18 @@ describe("getMergeBlocker", () => {
 
   it("lets cell sentences of the same table or row group merge", () => {
     expect(getMergeBlocker(makeSplitUnit({ kind: "cell_sentence", group_unit_id: 7 }), makeSplitUnit({ id: 2, kind: "cell_sentence", group_unit_id: 7 }))).toBeNull();
+  });
+});
+
+describe("resolvePickUnit", () => {
+  it("picks the table for a bound cell sentence and itself otherwise", () => {
+    const units = new Map([
+      [1, makeSplitUnit({ id: 1, kind: "table" })],
+      [2, makeSplitUnit({ id: 2, kind: "cell_sentence", group_unit_id: 1 })],
+      [3, makeSplitUnit({ id: 3, kind: "sentence" })],
+    ]);
+    expect(resolvePickUnit(2, units)).toBe(1);
+    expect(resolvePickUnit(3, units)).toBe(3);
   });
 });
 

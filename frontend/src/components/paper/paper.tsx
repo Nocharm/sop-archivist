@@ -18,7 +18,7 @@ import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
 import { readCaretPoint } from "@/lib/caret-point";
 import { useI18n } from "@/lib/i18n";
 import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
-import { buildRows, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
+import { buildRows, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, resolvePickUnit, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
 
@@ -102,6 +102,8 @@ interface PaperProps {
   onRangeSelect?: (range: { blockId: number; start: number; end: number }) => void;
   /** Shift+클릭이 여럿 고르기인 화면(Assign) - 끌어 고르기(onRangeSelect)를 함께 써도 Shift+클릭이 글자 선택을 늘리지 않게 한다 */
   shiftClickPicks?: boolean;
+  /** 표·그림 어디를 눌러도 묶음 전체를 고른다(Assign) - 칸 문장·칸 틈을 눌러도 표 단위로 부른다. Alt 누름은 글자 고르기라 고르지 않는다. 없으면 칸 문장을 그대로(Split) */
+  pickWholeBundle?: boolean;
   /** 그림을 받을 묶음·문서 - 없으면 그림 자리 상자만 */
   figureSource?: { bundleId: number; docId: number };
   /** 단위·조각·표시 testid의 앞말 */
@@ -180,6 +182,7 @@ export function Paper({
   onUnitClick,
   onRangeSelect,
   shiftClickPicks = false,
+  pickWholeBundle = false,
   figureSource,
   testId,
   sheetTestId,
@@ -858,9 +861,13 @@ export function Paper({
   function handleClick(event: MouseEvent<HTMLDivElement>) {
     const selection = window.getSelection();
     if (selection && !selection.isCollapsed) return; // 끌어 고르기는 mouseup이 맡는다
+    if (pickWholeBundle && event.altKey) return; // Alt는 글자 긁기 - 고름을 옮기지 않는다
     const target = (event.target as HTMLElement).closest<HTMLElement>(".su[data-unit]");
     if (target) {
-      onUnitClick(Number(target.dataset.unit), readCaret(event.clientX, event.clientY), event);
+      const unitId = Number(target.dataset.unit);
+      const pickId = pickWholeBundle ? resolvePickUnit(unitId, model.units) : unitId;
+      // 묶음으로 올려 고르면 누른 글자 자리는 그 묶음의 자리가 아니다
+      onUnitClick(pickId, pickId === unitId ? readCaret(event.clientX, event.clientY) : null, event);
       return;
     }
     // 조각 끝 아이콘을 눌러도 그 단위를 고른다
@@ -873,8 +880,8 @@ export function Paper({
     const element = event.target as HTMLElement;
     if (element.closest("button, a, input, [role='slider']")) return;
     const holder = element.closest<HTMLElement>("[data-strip-unit]") ?? element.closest(".strip-lead")?.parentElement?.querySelector<HTMLElement>(":scope > .strip[data-strip-unit]");
-    // 표 안에서 칸 조각을 비껴 누른 것(칸 여백·칸 사이 틈)으로 표 전체를 고르지 않는다 - 표 전체는 표 위 손잡이·표 밖 여백으로
-    if (holder?.dataset.kind === "table" && element.closest("table")) return;
+    // 표 안에서 칸 조각을 비껴 누른 것(칸 여백·칸 사이 틈)으로 표 전체를 고르지 않는다 - 표 전체는 표 위 손잡이·표 밖 여백으로(묶음째 고르는 화면은 표 전체)
+    if (!pickWholeBundle && holder?.dataset.kind === "table" && element.closest("table")) return;
     if (holder) onUnitClick(Number(holder.dataset.stripUnit), null, event);
   }
 

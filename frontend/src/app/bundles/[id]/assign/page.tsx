@@ -1703,7 +1703,7 @@ export default function AssignPage() {
       selectSolo(unitId);
       return;
     }
-    const key = rowOfUnit.get(unitId);
+    const key = findRowKey(unitId);
     if (!key) return;
     if (keys.shiftKey && canEdit) {
       setChecked((prev) => {
@@ -2965,6 +2965,8 @@ export default function AssignPage() {
                 activePart={activePart}
                 sheets={oldView && paperModel && activePart !== "body" ? listPartSheets(oldView, paperModel, activePart) : null}
                 onPartChange={(part) => setManualPart({ key: activeKey ?? "", part })}
+                // 짝 고르는 중에는 칸 문장끼리도 짝을 맺으니 묶음으로 올리지 않는다
+                pickWholeBundle={!(pairSource && pairFrom && !isNewEdit)}
                 onUnitClick={handleOldClick}
                 onUnitContextMenu={(unitId, at, caret) => openCtxMenu(unitId, at, caret)}
                 onUnitDoubleClick={canEdit ? handleOldDoubleClick : undefined}
