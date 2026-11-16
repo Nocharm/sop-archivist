@@ -651,12 +651,16 @@ const slotNumber = (key) => {
   if (parent === null) return String(tops.indexOf(key) + 1);
   return `${tops.indexOf(parent) + 1}.${SLOT_ORDER.filter((item) => slotParent(item) === parent).indexOf(key) + 1}`;
 };
-await runStep("new documents: the section table shows each section's state and saves N/A only with a reason", { allowConsoleErrors: true }, async ({ page }) => {
+// 일부러 거절당하는 저장(409 · 500)은 따로 아래 단계에 둔다 - 이 단계는 콘솔 오류를 허용하지 않는다
+await runStep("new documents: the section table shows each section's state and saves N/A only with a reason", {}, async ({ page }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const start = await readToBe(page, halfBundleId);
   const naBefore = start.na_slots.length;
   const sop = start.docs.find((doc) => doc.doc_type === "sop");
   const prefix = `tobe-id-${sop.id}`;
+  // 다른 SOP 줄 - 접힌 줄에 적던 사유가 있을 때 그 줄의 Mark N/A를 누른다(끝에 지운다)
+  await page.request.post(`${BASE}/api/bundles/${halfBundleId}/tobe/docs`, { headers: { ...headers, "Content-Type": "application/json" }, data: { code: "SOP-95", doc_type: "sop", parent_code: null } });
+  const otherSop = (await readToBe(page, halfBundleId)).docs.find((doc) => doc.code === "SOP-95");
   // …/na/…로 가는 요청 모두(메서드 · 주소)
   const naCalls = [];
   page.on("request", (request) => {
@@ -685,11 +689,6 @@ await runStep("new documents: the section table shows each section's state and s
       const fold = document.querySelector(`[data-testid="${id}"]`)?.closest(".fold-inner");
       return fold !== null && fold !== undefined && fold.clientHeight >= fold.scrollHeight;
     }, inner, { timeout: T });
-  };
-  const countErrors = () => page.locator('[data-testid="toast-error"]').count();
-  const waitNewError = async (before) => {
-    await page.waitForFunction((n) => document.querySelectorAll('[data-testid="toast-error"]').length > n, before, { timeout: T });
-    return ((await page.locator('[data-testid="toast-error"]').last().textContent()) ?? "").trim();
   };
   try {
     check("the row is the equipment SOP SOP-CF", sop.code === "SOP-CF" && sop.is_equipment_sop, sop.code);
@@ -780,6 +779,23 @@ await runStep("new documents: the section table shows each section's state and s
     check("a folded row with a reason being written says so", (await getText(page, `${prefix}-unsaved`)).trim() === "Unsaved N/A reason");
     await openRow(prefix, `${prefix}-na-${leafKey}-reason`);
     check("unfolding brings the reason back", (await reason(leafKey).inputValue()) === "Smoke: covered elsewhere");
+    // 7b. 접힌 줄에 적던 사유가 있는 채 다른 SOP 줄의 Mark N/A - 그 줄이 다시 펼쳐지고 편집기로 돌아간다(설계 §8). 아무것도 보내지 않는다
+    await page.locator(`[data-testid="${prefix}-toggle"]`).click();
+    await wait(page, `${prefix}-unsaved`);
+    const otherPrefix = `tobe-id-${otherSop.id}`;
+    await openRow(otherPrefix, `${otherPrefix}-slots`);
+    await page.locator(`[data-testid="${otherPrefix}-slot-purpose"]`).hover();
+    await page.locator(`[data-testid="${otherPrefix}-na-purpose-mark"]`).click();
+    await page.waitForFunction((id) => document.activeElement?.dataset.testid === id, `${prefix}-na-${leafKey}-reason`, { timeout: T }).then(() => undefined, () => undefined);
+    check(
+      "Mark N/A in another SOP row reopens the folded row and asks to finish first",
+      (await page.locator(`[data-testid="${prefix}-toggle"]`).getAttribute("aria-expanded")) === "true" &&
+        (await page.locator(`[data-testid="${prefix}-na-${leafKey}-finish-first"]`).isVisible()) &&
+        (await page.locator(`[data-testid="${otherPrefix}-na-purpose-editor"]`).count()) === 0,
+    );
+    check("the focus is in the folded row's reason, which kept its text, and nothing was sent", (await focusedTestId()) === `${prefix}-na-${leafKey}-reason` && (await reason(leafKey).inputValue()) === "Smoke: covered elsewhere" && countCalls("PUT") === 0, await focusedTestId());
+    await page.locator(`[data-testid="${otherPrefix}-toggle"]`).click();
+    await page.locator(`[data-testid="${otherPrefix}-panel"]`).waitFor({ state: "detached", timeout: T });
     // 8. 떠나기 전에 묻는다
     await page.locator('[data-testid="stage-nav-assign"]').click();
     await wait(page, "tobe-leave");
@@ -796,6 +812,7 @@ await runStep("new documents: the section table shows each section's state and s
     await editor(leafKey).waitFor({ state: "detached", timeout: T });
     check("Enter twice saves once", countCalls("PUT", leafKey) === 1 && putResponse.status() === 200, naCalls.join(" | "));
     check("the saved section turns N/A", (await readState(leafKey)) === "na", await readState(leafKey));
+    check("after saving, the focus is on that section's Edit reason", (await focusedTestId()) === `${prefix}-na-${leafKey}-edit`, await focusedTestId());
     check("the server holds one more N/A", (await readToBe(page, halfBundleId)).na_slots.length === naBefore + 1);
     await page.reload();
     await openRow(prefix, `${prefix}-slots`);
@@ -814,6 +831,13 @@ await runStep("new documents: the section table shows each section's state and s
       "Esc closes the editor, keeps the row open and saves nothing",
       (await editor(siblingKey).count()) === 0 && (await page.locator(`[data-testid="${prefix}-toggle"]`).getAttribute("aria-expanded")) === "true" && countCalls("PUT") === putsBefore,
     );
+    check("after Esc, the focus is on that section's Mark N/A", (await focusedTestId()) === `${prefix}-na-${siblingKey}-mark`, await focusedTestId());
+    // Esc는 편집기 어디에서나 - 칩에 포커스가 있어도 닫힌다
+    await button(siblingKey, "mark").click();
+    await editor(siblingKey).waitFor({ timeout: T });
+    await button(siblingKey, "chip-0").focus();
+    await page.keyboard.press("Escape");
+    check("Esc from a chip closes the editor too", (await editor(siblingKey).count()) === 0 && (await focusedTestId()) === `${prefix}-na-${siblingKey}-mark`, await focusedTestId());
     // 11. 상위 칸이 덮는다 - 따로 N/A인 하위 칸은 제 사유 그대로
     await slot(parentKey).hover();
     await button(parentKey, "mark").click();
@@ -851,33 +875,6 @@ await runStep("new documents: the section table shows each section's state and s
     await settleToBe(page);
     await page.waitForFunction((id) => document.querySelector(`[data-testid="${id}"]`)?.dataset.state === "empty", `${prefix}-slot-${leafKey}`, { timeout: T });
     check("restoring the sub-section brings the count back", (await readToBe(page, halfBundleId)).na_slots.length === naBefore);
-    // 13. 409는 편집기를 닫고(둘 곳이 없다), 그 밖의 실패는 적던 사유를 남긴다
-    let answer = 409;
-    await page.route("**/tobe/docs/*/na/*", (route) =>
-      route.request().method() === "PUT"
-        ? route.fulfill({ status: answer, contentType: "application/json", body: JSON.stringify(answer === 409 ? { detail: { code: "slot_has_targets", slots: [] } } : { detail: "Synthetic server error" }) })
-        : route.continue(),
-    );
-    let errorsBefore = await countErrors();
-    await slot(leafKey).hover();
-    await button(leafKey, "mark").click();
-    await reason(leafKey).fill("Smoke: refused");
-    await reason(leafKey).press("Enter");
-    const conflictText = await waitNewError(errorsBefore);
-    await settleToBe(page);
-    check("a 409 says why and closes the editor", conflictText.includes("A section with new sentences cannot be N/A.") && (await editor(leafKey).count()) === 0, conflictText);
-    answer = 500;
-    errorsBefore = await countErrors();
-    await slot(leafKey).hover();
-    await button(leafKey, "mark").click();
-    await reason(leafKey).fill("Smoke: kept");
-    await reason(leafKey).press("Enter");
-    await waitNewError(errorsBefore);
-    await settleToBe(page);
-    check("any other failure keeps the editor and the reason", (await editor(leafKey).count()) === 1 && (await reason(leafKey).inputValue()) === "Smoke: kept");
-    await page.unroute("**/tobe/docs/*/na/*");
-    await button(leafKey, "cancel").click();
-    check("Cancel closes it", (await editor(leafKey).count()) === 0);
     // WI 줄을 펼치면 단계만 있고 칸 표는 없다
     const wi = start.docs.find((doc) => doc.doc_type === "wi");
     await openRow(`tobe-id-${wi.id}`, `tobe-id-${wi.id}-steps`);
@@ -891,6 +888,65 @@ await runStep("new documents: the section table shows each section's state and s
       if (!startKeys.has(`${na.code}|${na.slot_key}`) && doc) await page.request.delete(`${BASE}/api/bundles/${halfBundleId}/tobe/docs/${doc.id}/na/${encodeURIComponent(na.slot_key)}`, { headers });
     }
     check("the N/A count is back where it started", (await readToBe(page, halfBundleId)).na_slots.length === naBefore);
+    if (otherSop) await page.request.delete(`${BASE}/api/bundles/${halfBundleId}/tobe/docs/${otherSop.id}`, { headers });
+    check("the extra SOP is gone again", (await readToBe(page, halfBundleId)).docs.length === start.docs.length);
+  }
+});
+
+// 거절된 N/A 저장 - 409 slot_has_targets(그 사이 문장이 들어왔다)는 둘 곳이 없어 편집기를 닫고, 그 밖의 실패는 적던 사유를 남긴다.
+// 거절 응답이 콘솔에 찍혀 이 단계만 콘솔 오류를 허용한다
+await runStep("new documents: a refused N/A save closes the editor, any other failure keeps the reason", { allowConsoleErrors: true }, async ({ page }) => {
+  const start = await readToBe(page, halfBundleId);
+  const sop = start.docs.find((doc) => doc.doc_type === "sop");
+  const prefix = `tobe-id-${sop.id}`;
+  await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
+  await page.locator(`[data-testid="${prefix}-toggle"]`).click();
+  await wait(page, `${prefix}-slots`);
+  await page.waitForFunction((id) => {
+    const fold = document.querySelector(`[data-testid="${id}"]`)?.closest(".fold-inner");
+    return fold !== null && fold !== undefined && fold.clientHeight >= fold.scrollHeight;
+  }, `${prefix}-slots`, { timeout: T });
+  // Mark N/A가 그려진 빈 칸 하나
+  const key = await page.locator(`[data-testid="${prefix}-slots"] [data-slot][data-state="empty"]`).evaluateAll((rows, p) => rows.map((row) => row.dataset.slot).find((k) => document.querySelector(`[data-testid="${p}-na-${k}-mark"]`) !== null), prefix);
+  check("the seed has an empty section to mark", Boolean(key), String(key));
+  const slot = page.locator(`[data-testid="${prefix}-slot-${key}"]`);
+  const button = (kind) => page.locator(`[data-testid="${prefix}-na-${key}-${kind}"]`);
+  const editor = page.locator(`[data-testid="${prefix}-na-${key}-editor"]`);
+  const reason = page.locator(`[data-testid="${prefix}-na-${key}-reason"]`);
+  const countErrors = () => page.locator('[data-testid="toast-error"]').count();
+  const waitNewError = async (before) => {
+    await page.waitForFunction((n) => document.querySelectorAll('[data-testid="toast-error"]').length > n, before, { timeout: T });
+    return ((await page.locator('[data-testid="toast-error"]').last().textContent()) ?? "").trim();
+  };
+  let answer = 409;
+  await page.route("**/tobe/docs/*/na/*", (route) =>
+    route.request().method() === "PUT"
+      ? route.fulfill({ status: answer, contentType: "application/json", body: JSON.stringify(answer === 409 ? { detail: { code: "slot_has_targets", slots: [] } } : { detail: "Synthetic server error" }) })
+      : route.continue(),
+  );
+  try {
+    let errorsBefore = await countErrors();
+    await slot.hover();
+    await button("mark").click();
+    await reason.fill("Smoke: refused");
+    await reason.press("Enter");
+    const conflictText = await waitNewError(errorsBefore);
+    await settleToBe(page);
+    check("a 409 says why and closes the editor", conflictText.includes("A section with new sentences cannot be N/A.") && (await editor.count()) === 0, conflictText);
+    answer = 500;
+    errorsBefore = await countErrors();
+    await slot.hover();
+    await button("mark").click();
+    await reason.fill("Smoke: kept");
+    await reason.press("Enter");
+    await waitNewError(errorsBefore);
+    await settleToBe(page);
+    check("any other failure keeps the editor and the reason", (await editor.count()) === 1 && (await reason.inputValue()) === "Smoke: kept");
+    await button("cancel").click();
+    check("Cancel closes it and puts the focus on Mark N/A", (await editor.count()) === 0 && (await page.evaluate(() => document.activeElement?.dataset.testid ?? null)) === `${prefix}-na-${key}-mark`);
+  } finally {
+    await page.unroute("**/tobe/docs/*/na/*");
+    check("no N/A was saved", (await readToBe(page, halfBundleId)).na_slots.length === start.na_slots.length);
   }
 });
 

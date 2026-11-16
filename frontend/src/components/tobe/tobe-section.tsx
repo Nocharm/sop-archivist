@@ -118,6 +118,8 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
   const savedByCode = new Map((tobe?.docs ?? []).map((doc) => [doc.code, doc]));
   // 다시 받은 목록에서 편집기의 문서가 사라졌거나 SOP가 아니게 됐으면 편집기를 닫는다 - 렌더 중 상태 맞추기
   if (naEdit !== null && tobe !== null && !tobe.docs.some((doc) => `id-${doc.id}` === naEdit.docKey && doc.doc_type === "sop")) setNaEdit(null);
+  // 다시 받은 Bundle을 더는 고칠 수 없으면(검토 요청 · 끝남) 편집기를 닫는다 - 저장할 길이 없다
+  if (naEdit !== null && bundle !== null && !canEdit) setNaEdit(null);
   useLeaveGuard(isNaEditDirty(naEdit), setLeaveTo);
   // 줄 번호의 EQUIS 표시 - 저장된 번호로 찾는다
   const equisByCode = new Map((tobe?.docs ?? []).map((doc) => [normalizeDocNumber(doc.code), doc.equis ?? null]));
@@ -181,7 +183,16 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
   async function saveNa(docId: number, slotKey: SlotKey, reason: string) {
     if (saving) return;
     const result = await runWriteResult(() => setNaSlot(bundleId, docId, slotKey, reason));
-    if (result.ok || (result.error instanceof ApiError && result.error.rule?.code === "slot_has_targets")) setNaEdit(null);
+    if (!result.ok && !(result.error instanceof ApiError && result.error.rule?.code === "slot_has_targets")) return;
+    // 저장하는 사이 Esc로 닫고 다른 칸에 적기 시작했으면 그 편집기는 두고, 저장한 칸의 편집기만 닫는다
+    const docKey = `id-${docId}`;
+    setNaEdit((current) => (current !== null && current.docKey === docKey && current.slotKey === slotKey ? null : current));
+  }
+
+  /** 편집기를 열고 닫는다 - 접힌 줄에 적던 사유가 있어 다른 칸이 막히면(refused) 그 줄을 다시 펼쳐 편집기와 까닭이 보이게 한다 */
+  function editNa(next: NaEdit | null) {
+    if (next !== null && next.refused && !open.has(next.docKey)) setOpen((prev) => new Set(prev).add(next.docKey));
+    setNaEdit(next);
   }
 
   /** N/A를 바로 지운다 - 그 칸은 빈 칸(또는 정할 칸)으로, 덮였던 하위 칸도 제 상태로 돌아간다 */
@@ -309,7 +320,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
         saving={saving}
         usedReasons={listUsedReasons(tobe)}
         edit={naEdit}
-        onEdit={setNaEdit}
+        onEdit={editNa}
         onSave={(slotKey, reason) => void saveNa(docId, slotKey, reason)}
         onRestore={(row) => void restoreNa(doc, row)}
       />

@@ -29,16 +29,45 @@ interface SlotTableProps {
 
 export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, saving, usedReasons, edit, onEdit, onSave, onRestore }: SlotTableProps): ReactNode {
   const { t } = useI18n();
-  const myEdit = edit !== null && edit.docKey === docKey ? edit : null;
+  // 고칠 수 없게 되면(검토 요청 등으로 다시 받은 Bundle) 편집기를 그리지 않는다 - 목록이 편집기도 닫는다
+  const myEdit = canEdit && edit !== null && edit.docKey === docKey ? edit : null;
   const byKey = new Map(rows.map((row) => [row.key, row]));
   // 다 펼친 사유 - 그 줄만이고 기억하지 않는다
   const [openReasons, setOpenReasons] = useState<ReadonlySet<SlotKey>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
+  const tableRef = useRef<HTMLDivElement>(null);
+  // 바로 전 그림에서 편집기가 열려 있던 칸 - 닫힐 때 포커스를 그 칸의 다음 할 일로 옮긴다
+  const lastEditKeyRef = useRef<SlotKey | null>(null);
+  const editingKey = myEdit?.slotKey ?? null;
 
-  // 적는 중에 다른 칸을 열려 하면 열려 있는 편집기로 포커스를 돌린다(누른 단추가 포커스를 가져간 뒤라 이펙트에서)
+  // 적는 중에 다른 칸을 열려 하면 열려 있는 편집기로 포커스를 돌린다(누른 단추가 포커스를 가져간 뒤라 이펙트에서).
+  // 접혀 있던 줄이 다시 펼쳐졌으면 접힘 전환이 보이게 할 때까지(visibility) 포커스를 받지 못한다 - 받을 때까지 몇 프레임 다시 시도한다
   useEffect(() => {
-    if (myEdit?.refused) inputRef.current?.focus();
+    if (!myEdit?.refused) return;
+    let frame = 0;
+    let tries = 0;
+    const tryFocus = () => {
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus();
+      if (document.activeElement !== input && tries < 30) {
+        tries += 1;
+        frame = requestAnimationFrame(tryFocus);
+      }
+    };
+    tryFocus();
+    return () => cancelAnimationFrame(frame);
   }, [myEdit]);
+
+  // 편집기가 닫히며(저장 · 취소 · Esc) 포커스가 쪽으로 떨어졌으면 그 칸의 다음 할 일(Edit reason · Mark N/A)로 - 키보드 사용자가 제자리에 남는다
+  useEffect(() => {
+    const closed = lastEditKeyRef.current;
+    lastEditKeyRef.current = editingKey;
+    if (closed === null || editingKey !== null) return;
+    const active = document.activeElement;
+    if (active !== null && active !== document.body) return;
+    tableRef.current?.querySelector<HTMLElement>(`[data-slot="${closed}"] .slot-acts button`)?.focus();
+  }, [editingKey]);
 
   function openEditor(row: SlotRow) {
     const saved = row.state.kind === "na" ? row.state.reason : "";
@@ -60,12 +89,16 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
     if (event.key === "Enter") {
       event.preventDefault();
       if (current.text.trim() !== "" && !saving) onSave(current.slotKey, current.text.trim());
-    } else if (event.key === "Escape") {
-      // 펼친 곳 밖의 Esc 처리(창 닫기 등)로 번지지 않게
-      event.preventDefault();
-      event.stopPropagation();
-      onEdit(null);
     }
+  }
+
+  /** Esc는 편집기 어디에서나(사유 칸 · 칩 · Save · Cancel) 닫는다 */
+  function handleEditorKey(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "Escape" || event.nativeEvent.isComposing) return;
+    // 펼친 곳 밖의 Esc 처리(창 닫기 등)로 번지지 않게
+    event.preventDefault();
+    event.stopPropagation();
+    onEdit(null);
   }
 
   function renderState(row: SlotRow): ReactNode {
@@ -88,7 +121,7 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
         return <span className="text-ink-3">{isWritten ? t("tobe.slots.fromFile") : t("tobe.slots.empty")}</span>;
       case "na":
       case "covered":
-        return <span className="pill quiet">{t("assign.slotNa")}</span>;
+        return <span className="pill quiet">{t("tobe.slots.na")}</span>;
     }
   }
 
@@ -120,7 +153,7 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
     const key = row.key;
     const inputId = `${prefix}-na-${key}-input`;
     return (
-      <div className="slot-editor" data-testid={`${prefix}-na-${key}-editor`}>
+      <div className="slot-editor" data-testid={`${prefix}-na-${key}-editor`} onKeyDown={handleEditorKey}>
         <label htmlFor={inputId} className="text-xs text-ink-3">
           {t("tobe.slots.reasonLabel")}
         </label>
@@ -213,7 +246,7 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
   }
 
   return (
-    <div className="slot-table" data-testid={`${prefix}-slots`}>
+    <div ref={tableRef} className="slot-table" data-testid={`${prefix}-slots`}>
       <div className="slot-head">
         <span className="slot-title">{t("tobe.slots.title")}</span>
         <span className="text-xs text-ink-2" data-testid={`${prefix}-slots-summary`}>
