@@ -1,7 +1,7 @@
 // Assign New 칸의 아직 쓰지 않은 문서 - 서버가 결과물 C 규칙으로 엮은 문서(ComposedDoc)를 New 칸 줄로 펴고,
 // 저장 응답으로 서버 다시 읽기 전에 미리 고친다(칸 끝에 넣기·지우기). 순서·번호는 다시 읽은 서버 값이 정한다.
 // 줄 앞머리에는 결과물 C와 같은 그 줄 자기 번호("5.1.1", 생략·주석은 없음)를 두고, 칸 번호는 칸 머리 줄에 남긴다.
-import type { ComposedDoc, ComposedItem, GroupTarget, WrittenSentence } from "@/lib/api-sop";
+import type { BundleCell, BundleTable, ComposedDoc, ComposedItem, GroupTarget, WrittenSentence } from "@/lib/api-sop";
 import { getPillWidth, getSectionLevel } from "@/lib/strip-pill-model";
 
 /** 아무것도 받지 않은 칸 - 옅은 자리 표시. key는 칸 키라 칸이 차고 비어도 같은 줄로 읽힌다 */
@@ -76,6 +76,16 @@ export function buildComposedRows(doc: ComposedDoc): Array<ComposedRow | EmptySl
     });
   }
   return rows;
+}
+
+/**
+ * 표 줄을 행 → 열 → 그 자리의 칸 새 문장들로 - 칸 번역은 같은 자리에 여럿이라 한 칸 안에 줄로 쌓는다(열이 밀리지 않게).
+ * 빈 자리는 빈 배열이고, 행·열 수는 서버 격자(칸 자리보다 작지 않다)를 따른다
+ */
+export function groupTableCells(table: BundleTable): BundleCell[][][] {
+  const grid = Array.from({ length: table.rows }, () => Array.from({ length: table.cols }, (): BundleCell[] => []));
+  for (const cell of table.cells) grid[cell.row]?.[cell.col]?.push(cell);
+  return grid;
 }
 
 // 앞머리 번호 한 글자 폭(px) - .strip-lead-num(500 11px JetBrains Mono) 실측 6.6px. 글꼴·크기를 바꾸면 함께 고친다

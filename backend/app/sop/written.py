@@ -200,14 +200,14 @@ async def _load_tables(session: AsyncSession, table_targets: Sequence[TargetSent
     cell_rows = await select_in_chunks(
         session,
         lambda chunk: select(
-            TargetSentence.parent_target_id, TargetSentence.cell_row, TargetSentence.cell_col, TargetSentence.lang,
+            TargetSentence.id, TargetSentence.parent_target_id, TargetSentence.cell_row, TargetSentence.cell_col, TargetSentence.lang,
             TargetSentence.confirmed_text, TargetSentence.ai_text, TargetSentence.status,
         ).where(TargetSentence.parent_target_id.in_(chunk)),
         [target.id for target in table_targets],
     )
     for row in cell_rows:
         cells[row.parent_target_id].append(BundleCellOut(
-            row=row.cell_row or 0, col=row.cell_col or 0, lang=row.lang, text=row.confirmed_text or row.ai_text,
+            target_id=row.id, row=row.cell_row or 0, col=row.cell_col or 0, lang=row.lang, text=row.confirmed_text or row.ai_text,
             status=row.status,
         ))
     return {target.id: build_bundle_table(target.grid, cells[target.id]) for target in table_targets}

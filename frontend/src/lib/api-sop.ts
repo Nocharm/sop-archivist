@@ -960,6 +960,8 @@ export interface WrittenSentence {
 
 /** New 칸 표 줄의 칸 새 문장 - 글은 확정 글, 없으면 AI 글 */
 export interface BundleCell {
+  /** 칸 새 문장 id - 칸 번역은 같은 (row, col)에 하나 더 있다 */
+  target_id: number;
   row: number;
   col: number;
   lang: UnitLang;

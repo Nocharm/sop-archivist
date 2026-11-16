@@ -1094,8 +1094,9 @@ def build_output_c(snap: BundleSnapshot, lang: Lang) -> COutput:
 
 
 class BundleCellOut(BaseModel):
-    """표 줄의 칸 새 문장 하나 — 글은 확정 글, 없으면 AI 글(결과물 C 표 칸과 같은 규칙)."""
+    """표 줄의 칸 새 문장 하나 — 글은 확정 글, 없으면 AI 글(결과물 C 표 칸과 같은 규칙). 칸 번역은 같은 자리에 하나 더 있다."""
 
+    target_id: int
     row: int
     col: int
     lang: str
@@ -1119,12 +1120,10 @@ class BundleFigureOut(BaseModel):
 
 
 def build_bundle_table(grid: dict[str, int] | None, cells: list[BundleCellOut]) -> BundleTableOut:
-    """칸 새 문장들을 표 하나로 — 격자는 표 새 문장의 grid, 없으면(옛 자료) 칸 자리에서 센다."""
-    cells = sorted(cells, key=lambda cell: (cell.row, cell.col))
-    if grid is not None:
-        return BundleTableOut(rows=grid["rows"], cols=grid["cols"], cells=cells)
-    rows = max((cell.row + 1 for cell in cells), default=0)
-    cols = max((cell.col + 1 for cell in cells), default=0)
+    """칸 새 문장들을 표 하나로 — 격자는 표 새 문장의 grid와 칸 자리 중 큰 쪽(grid가 낡거나 없어도 칸이 빠지지 않게)."""
+    cells = sorted(cells, key=lambda cell: (cell.row, cell.col, cell.target_id))
+    rows = max([cell.row + 1 for cell in cells] + [grid["rows"] if grid else 0])
+    cols = max([cell.col + 1 for cell in cells] + [grid["cols"] if grid else 0])
     return BundleTableOut(rows=rows, cols=cols, cells=cells)
 
 
@@ -1195,7 +1194,7 @@ def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> 
         if target.kind == "table":
             cells = [
                 BundleCellOut(
-                    row=cell.cell_row or 0, col=cell.cell_col or 0, lang=cell.lang,
+                    target_id=cell.id, row=cell.cell_row or 0, col=cell.cell_col or 0, lang=cell.lang,
                     text=cell.confirmed_text or cell.ai_text, status=cell.status,
                 )
                 for cell in index.children.get(target.id, [])

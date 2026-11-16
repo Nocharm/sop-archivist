@@ -5,6 +5,7 @@ import { ImageIcon } from "lucide-react";
 
 import { FigureImage } from "@/components/paper/figure-image";
 import type { BundleFigure, BundleTable } from "@/lib/api-sop";
+import { groupTableCells } from "@/lib/composed-model";
 
 interface NewBundleProps {
   kind: "table" | "figure";
@@ -12,6 +13,11 @@ interface NewBundleProps {
   figure?: BundleFigure | null;
   bundleId: number;
   testId: string;
+}
+
+/** 글꼴을 고르는 lang 속성 - 언어 없는 칸은 감싼 쪽을 따른다 */
+function readLangAttr(lang: string): string | undefined {
+  return lang === "ko" || lang === "en" ? lang : undefined;
 }
 
 export function NewBundle({ kind, table, figure, bundleId, testId }: NewBundleProps) {
@@ -28,18 +34,22 @@ export function NewBundle({ kind, table, figure, bundleId, testId }: NewBundlePr
       </figure>
     );
   }
-  const rows = Array.from({ length: table?.rows ?? 0 }, (_, row) => table?.cells.filter((cell) => cell.row === row) ?? []);
+  const rows = table ? groupTableCells(table) : [];
   return (
-    // 넓은 표는 좌우로 스크롤한다 - 결과물 C 표와 같은 .ptbl-scroll, 확정 전 칸은 점선
+    // 넓은 표는 좌우로 스크롤한다 - 결과물 C 표와 같은 .ptbl-scroll, 확정 전 칸이 든 자리는 점선
     <div className="new-bundle ptbl-scroll" data-testid={testId}>
       <table className="ptbl">
         <tbody>
-          {rows.map((cells, row) => (
+          {rows.map((cols, row) => (
             <tr key={row}>
-              {cells.map((cell) => (
-                // lang은 글꼴을 고른다 - 언어 없는 칸은 감싼 쪽을 따른다
-                <td key={cell.col} className={cell.status === "confirmed" ? undefined : "border-dashed"} lang={cell.lang === "ko" || cell.lang === "en" ? cell.lang : undefined}>
-                  {cell.text}
+              {cols.map((cells, col) => (
+                // 칸 번역은 같은 자리에 줄로 쌓는다 - 칸을 하나 더 두면 뒤 열이 밀린다
+                <td key={col} className={cells.every((cell) => cell.status === "confirmed") ? undefined : "border-dashed"}>
+                  {cells.map((cell) => (
+                    <div key={cell.target_id} lang={readLangAttr(cell.lang)} data-cell-target={cell.target_id}>
+                      {cell.text}
+                    </div>
+                  ))}
                 </td>
               ))}
             </tr>

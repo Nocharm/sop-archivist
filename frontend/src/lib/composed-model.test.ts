@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import type { ComposedDoc, ComposedItem, ComposedSection, GroupTarget, WrittenSentence } from "@/lib/api-sop";
+import type { BundleCell, BundleTable, ComposedDoc, ComposedItem, ComposedSection, GroupTarget, WrittenSentence } from "@/lib/api-sop";
 import {
   applySavedTargets,
   buildComposedRows,
   diffRows,
   getComposedLeadWidths,
   getNewRowKey,
+  groupTableCells,
   isComposedRow,
   listHeadingNotes,
   readSectionNumber,
@@ -37,6 +38,10 @@ function makeItem(targetId: number, number: string | null, kind: ComposedItem["k
   return { target_id: targetId, kind, lang: "en", text: `t${targetId}`, status: "confirmed", change_type: "as_is", number, source_unit_ids: [targetId] };
 }
 
+function makeCell(targetId: number, row: number, col: number, text: string, lang: BundleCell["lang"] = "ko"): BundleCell {
+  return { target_id: targetId, row, col, lang, text, status: "confirmed" };
+}
+
 function makeSlot(locationKey: string, number: string | null, label: string, items: ComposedItem[]): ComposedSection {
   return { location_key: locationKey, label, number, na_reason: null, heading_note: "", items };
 }
@@ -49,6 +54,20 @@ function makeTarget(fields: Partial<GroupTarget>): GroupTarget {
     revision: 1, indent_level: 0, ...fields,
   };
 }
+
+describe("groupTableCells", () => {
+  it("stacks a translated cell in the same position instead of shifting the columns", () => {
+    const table: BundleTable = { rows: 2, cols: 2, cells: [makeCell(1, 0, 0, "항목"), makeCell(5, 0, 0, "Item", "en"), makeCell(2, 0, 1, "값"), makeCell(4, 1, 1, "x")] };
+
+    const grid = groupTableCells(table);
+
+    expect(grid.map((cols) => cols.map((cells) => cells.map((cell) => cell.target_id)))).toEqual([
+      [[1, 5], [2]],
+      // 빈 자리는 빈 칸으로 남아 열이 맞는다
+      [[], [4]],
+    ]);
+  });
+});
 
 describe("buildComposedRows", () => {
   it("lists sentences in section order and one placeholder per empty section", () => {
@@ -74,7 +93,7 @@ describe("buildComposedRows", () => {
   });
 
   it("carries a table's cells and a figure's image block onto the row", () => {
-    const table = { rows: 1, cols: 2, cells: [{ row: 0, col: 0, lang: "ko" as const, text: "a", status: "confirmed" as const }, { row: 0, col: 1, lang: "en" as const, text: "b", status: "confirmed" as const }] };
+    const table: BundleTable = { rows: 1, cols: 2, cells: [makeCell(11, 0, 0, "a"), makeCell(12, 0, 1, "b")] };
     const figure = { document_id: 3, block_id: 30 };
     const doc = makeDoc([makeSlot("5.1", "5.1", "Procedure", [{ ...makeItem(1, "5.1.1", "table"), table }, { ...makeItem(2, "5.1.2", "figure"), figure }, makeItem(3, "5.1.3")])]);
 

@@ -1352,15 +1352,19 @@ await runStep("assign: the New pane shows a real table and figure", {}, async ({
     }
   }
   check("the bundle has a composed document with a table and a figure", Boolean(found), found ? `${found.doc.code} t${found.table.target_id} f${found.figure.target_id}` : "none");
+  if (!found) return;
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
   await wait(page, "assign-bar");
   await page.locator('[data-testid="assign-new-doc"]').click();
   await page.locator(`[data-testid="assign-new-doc-option-${found.doc.id}"]`).click();
   const tableBox = page.locator(`[data-testid="assign-new-${found.table.target_id}"]`);
   await tableBox.scrollIntoViewIfNeeded({ timeout: T });
-  const cells = await tableBox.locator("table.ptbl td").allInnerTexts();
-  const expected = found.table.table.cells.map((cell) => cell.text);
-  check("the table row draws its cells as a table", cells.length === expected.length && cells.every((text, index) => text.trim() === expected[index].trim()), `${cells.length}/${expected.length}`);
+  // 격자 자리마다 칸 하나(칸 번역은 그 칸 안에 줄로), 칸 새 문장은 서버 순서(행·열·id) 그대로
+  const { rows, cols, cells: expectedCells } = found.table.table;
+  const tdCount = await tableBox.locator("table.ptbl td").count();
+  const cells = await tableBox.locator("table.ptbl td [data-cell-target]").allInnerTexts();
+  const expected = expectedCells.map((cell) => cell.text);
+  check("the table row draws its cells as a table", tdCount === rows * cols && cells.length === expected.length && cells.every((text, index) => text.trim() === expected[index].trim()), `${tdCount} td, ${cells.length}/${expected.length}`);
   check("the table sits in a side-scrolling box", await tableBox.evaluate((el) => el.classList.contains("ptbl-scroll") && getComputedStyle(el).overflowX === "auto"));
   const figureBox = page.locator(`[data-testid="assign-new-${found.figure.target_id}"]`);
   await figureBox.scrollIntoViewIfNeeded({ timeout: T });

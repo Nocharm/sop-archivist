@@ -20,6 +20,7 @@ from app.db import engine
 from app.models import Employee
 from app.sop.constants import SLOT_KEYS
 from app.sop.models import TargetSentence, UnitDecision, UnitPair, UnitPairMember
+from app.sop.outputs import BundleCellOut, build_bundle_table
 from tests.access_helpers import run_in_session
 from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
 from tests.sop_helpers import (
@@ -1025,6 +1026,44 @@ def test_composed_doc_carries_table_cells_and_figure_block(client: TestClient) -
     assert figure["table"] is None
     sentence = next(item for section in sop["sections"] for item in section["items"] if item["kind"] == "sentence")
     assert (sentence["table"], sentence["figure"]) == (None, None)
+
+
+def test_composed_doc_keeps_a_translated_cell_on_the_same_position(client: TestClient) -> None:
+    fx = _setup(client)
+    sop = _get_output(client, fx.bundle_id, f"outputs/c/docs/{fx.sop_id}", "en")
+    table_id = next(item for s in sop["sections"] for item in s["items"] if item["kind"] == "table")["target_id"]
+    source_cell = find_unit(fx.old1, "항목")
+
+    async def _insert(session: AsyncSession) -> None:
+        # 칸 번역 - 같은 표 아래 같은 (행, 열)에 다른 언어 새 문장이 하나 더
+        session.add(TargetSentence(
+            bundle_id=fx.bundle_id, target_doc_id=fx.sop_id, slot_key="general_requirements", lang="en", kind="sentence",
+            ai_text="Item (EN)", origin="translation", translation_source_unit_id=source_cell["id"],
+            change_type="translated", status="ai_suggested", parent_target_id=table_id, cell_row=0, cell_col=0,
+        ))
+        await session.commit()
+
+    run_in_session(_insert)
+
+    sop = _get_output(client, fx.bundle_id, f"outputs/c/docs/{fx.sop_id}", "en")
+
+    table = next(item for s in sop["sections"] for item in s["items"] if item["kind"] == "table")["table"]
+    same_place = [cell for cell in table["cells"] if (cell["row"], cell["col"]) == (0, 0)]
+    assert [cell["text"] for cell in same_place] == ["항목", "Item (EN)"]
+    assert len({cell["target_id"] for cell in table["cells"]}) == len(table["cells"]) == 5
+    assert (table["rows"], table["cols"]) == (2, 2)
+
+
+def test_bundle_table_grows_past_a_stale_grid() -> None:
+    cells = [
+        BundleCellOut(target_id=2, row=1, col=2, lang="en", text="b", status="confirmed"),
+        BundleCellOut(target_id=1, row=0, col=0, lang="ko", text="a", status="confirmed"),
+    ]
+
+    table = build_bundle_table({"rows": 1, "cols": 1}, cells)
+
+    assert (table.rows, table.cols) == (2, 3)
+    assert [cell.target_id for cell in table.cells] == [1, 2]
 
 
 def test_composed_doc_rejects_other_bundles_and_outsiders(client: TestClient) -> None:
