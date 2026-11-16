@@ -543,6 +543,14 @@ export interface PlaceCount {
   count: number;
 }
 
+/** 문장이나 칸 제목이 든 SOP 칸 - count는 결과물 C가 그 칸의 줄로 그리는 수, heading_count는 칸 제목에 이은 옛 제목 수 */
+export interface SlotCount {
+  target_doc_id: number;
+  slot_key: string;
+  count: number;
+  heading_count: number;
+}
+
 export interface ToBe {
   revision: number;
   docs: TargetDoc[];
@@ -550,6 +558,8 @@ export interface ToBe {
   wi_steps: WiStep[];
   /** 문장이 든 자리만 실린다 - 배정 화면이 지울 수 없는 문서·단계의 지우기 단추를 잠근다 */
   sentence_counts?: PlaceCount[];
+  /** 문장이나 칸 제목이 든 SOP 칸만 실린다 - N/A 칸 상태 표가 N/A로 둘 수 없는 칸을 가린다 */
+  slot_counts?: SlotCount[];
 }
 
 export interface ToBeInput {
