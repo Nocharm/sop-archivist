@@ -15,6 +15,7 @@ from app.sop.models import Document, Extraction, TargetSentence, TargetSource, U
 from app.sop.units import UNIT_ACTIVE, compute_display_id
 
 TABLE_UNIT_KINDS = ("table", "table_row")  # 칸 문장이 묶이는 단위 — 칸 문장의 처분·상태를 담는다
+BUNDLE_UNIT_KINDS = (*TABLE_UNIT_KINDS, "figure")  # 묶인 단위(칸 문장·캡션)를 갖는 단위 — 묶인 단위의 처분·상태를 담는다
 GROUP_ID_PREFIX = "G-"
 # IN 목록 한 번에 싣는 id 수 — asyncpg 바인드 인자 상한(32767) 아래로, 큰 표·큰 문서도 한 질의가 넘치지 않게
 IN_CHUNK_SIZE = 5000

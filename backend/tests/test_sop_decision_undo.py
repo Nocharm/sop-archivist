@@ -14,7 +14,7 @@ from app.main import app
 from app.sop import decision_steps
 from app.sop.constants import SLOT_HEADING
 from app.sop.decision_steps import Snapshot, diff_states, dump_bundle_state, find_mismatches, write_state
-from app.sop.models import AiSuggestion, Bundle, BundleEvent, DecisionStep, TargetSentence, UnitEdit
+from app.sop.models import AiSuggestion, Bundle, BundleEvent, DecisionStep, TargetSentence, TargetSource, UnitEdit
 from tests.access_helpers import run_in_session, update_row
 from tests.ai_fixtures import (
     AI_EN_1,
@@ -43,6 +43,7 @@ from tests.sop_helpers import (
     put_tobe,
     save_group,
     set_members,
+    WRITTEN_CAPTION,
     upload,
 )
 from tests.test_sop_ai_translate import EDITED, load_translations, make_assigned_unit, translate
@@ -611,6 +612,40 @@ def test_undo_restores_and_redo_reapplies(client: TestClient, case: str) -> None
 
     _ok(_undo(client, bundle_id))  # 두 번째 왕복도 맞물린다
     assert_same_state(_dump(bundle_id), s0)
+
+
+def _read_written_captions(bundle_id: int) -> list[tuple[int, int | None, str, str]]:
+    """표 새 문장 아래 출처 없이 써 넣은 캡션 새 문장 — (id, 부모 id, 글, 상태)."""
+    rows = [row for row in read_rows(TargetSentence) if row.bundle_id == bundle_id]
+    sourced = {link.target_id for link in read_rows(TargetSource)}
+    parents = {row.id for row in rows if row.kind == "table"}
+    return [
+        (row.id, row.parent_target_id, row.confirmed_text, row.status) for row in rows
+        if row.parent_target_id in parents and row.cell_row is None and row.id not in sourced
+    ]
+
+
+def test_undo_and_redo_of_clear_bring_back_a_written_caption_under_its_table(client: TestClient) -> None:
+    """출처 없는 캡션 새 문장은 판단에 매이지 않고 확정한 표에만 매인다 — Clear를 되돌리면 같은 id로 그 표 아래에 돌아오고 다시 하면 사라진다."""
+    fx = _setup_decisions(client)
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+    assign_as_is(client, fx.bundle_id, table, fx.sop_id, slot_key="general_requirements", undo=UNDO)
+    ((caption_id, parent_id, text, status),) = _read_written_captions(fx.bundle_id)
+    assert (text, status) == (WRITTEN_CAPTION, "confirmed")
+
+    _clear(client, fx.bundle_id, table, 2, undo=UNDO)
+    assert _read_written_captions(fx.bundle_id) == []
+
+    _ok(_undo(client, fx.bundle_id))
+    assert _read_written_captions(fx.bundle_id) == [(caption_id, parent_id, WRITTEN_CAPTION, "confirmed")]
+    _ok(_redo(client, fx.bundle_id))
+    assert _read_written_captions(fx.bundle_id) == []
+    # 확정까지 되돌리면 캡션도 표와 함께 사라지고, 다시 하면 같은 id로 돌아온다
+    _ok(_undo(client, fx.bundle_id))
+    _ok(_undo(client, fx.bundle_id))
+    assert _read_written_captions(fx.bundle_id) == []
+    _ok(_redo(client, fx.bundle_id))
+    assert _read_written_captions(fx.bundle_id) == [(caption_id, parent_id, WRITTEN_CAPTION, "confirmed")]
 
 
 def test_undo_raises_revisions_and_logs_event(client: TestClient) -> None:

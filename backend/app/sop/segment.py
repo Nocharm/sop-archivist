@@ -37,6 +37,8 @@ PAIR_RATIO_MIN_CHARS = 10
 PAIR_DIGIT_OVERLAP_MIN = 0.5
 # docx_reader.FLAG_CLAUSE_NUMBER와 같은 값 — 추출기가 이 모듈을 import하므로 거꾸로 import하지 않는다(테스트가 같음을 지킨다)
 CLAUSE_NUMBER_FLAG = "clause_number"
+# docx_reader.FLAG_CAPTION_OF와 같은 값 — 캡션 문단 블록이 "caption_of:<그림 블록 seq | 표 첫 칸 블록 seq>"로 제 묶음을 가리킨다
+CAPTION_OF_FLAG = "caption_of"
 NEUTRAL = "neutral"
 
 
@@ -198,7 +200,7 @@ class TableView:
 
 @dataclass(frozen=True)
 class UnitDraft:
-    """만들 단위 하나 — spans는 (블록 id, 시작, 끝), group_index는 묶일 표 초안의 목록 번호.
+    """만들 단위 하나 — spans는 (블록 id, 시작, 끝), group_index는 묶일 표·그림 초안의 목록 번호.
 
     pos_seq·pos_start는 정렬 키(units.pos_seq·pos_start)다 — 범위가 없는 표·캡션 없는 그림도 자리를 가져야 해서 따로 싣는다.
     """
@@ -223,13 +225,36 @@ def build_unit_drafts(
       언어별로 나뉜다), 아니면 문장마다. 머리말·각주 등도 같은 규칙.
     - 표 칸: 데이터 표는 표마다 첫 칸 자리에 표 단위(범위 없음·중립)를 두고 칸 문장을 묶는다. 레이아웃 표는 묶지 않는다.
       병합 칸(merged_cell)도 보통 칸이다.
-    - 그림: 캡션 글자를 범위로 갖는 중립 단위 하나. 칸 안 그림도 표에 묶지 않는 독립 단위다.
+    - 그림: 그림 블록 글자(새 추출은 비었다, 예전 추출은 캡션)를 범위로 갖는 중립 단위 하나. 칸 안 그림도 표에 묶지 않는
+      독립 단위다.
+    - 캡션: caption_of 표시가 있는 블록은 문장으로 쪼개지 않고 블록 전체 범위 하나의 캡션 단위로 그 그림·표 초안에 묶는다.
+      이을 초안이 없으면(레이아웃 표) 표시를 무시하고 보통 문장으로 쪼갠다.
     """
     layout_table_ids = {table.id for table in tables if table.is_layout}
-    drafts: list[UnitDraft] = []
-    table_draft_index: dict[int, int] = {}
+    # 캡션이 묶음보다 앞에 올 수 있어 묶음 초안이 생길 블록 seq를 먼저 모은다 — 그림 블록, 데이터 표의 첫 칸 블록
+    bundle_seqs: set[int] = set()
+    first_cell_tables: set[int] = set()
     for block in blocks:
         if block.kind == "figure":
+            bundle_seqs.add(block.seq)
+        elif block.kind == "table_cell" and block.table_id is not None and block.table_id not in layout_table_ids:
+            if block.table_id not in first_cell_tables:
+                first_cell_tables.add(block.table_id)
+                bundle_seqs.add(block.seq)
+    drafts: list[UnitDraft] = []
+    table_draft_index: dict[int, int] = {}
+    bundle_draft_index: dict[int, int] = {}  # 묶음 블록 seq → 그 그림·표 초안의 목록 번호
+    caption_targets: dict[int, int] = {}  # 캡션 초안 목록 번호 → 가리키는 묶음 블록 seq
+    for block in blocks:
+        caption_of = _read_caption_of(block.flags)
+        if caption_of is not None and caption_of in bundle_seqs:
+            caption = trim_blank_range(block.text, 0, len(block.text))
+            if caption is not None:
+                caption_targets[len(drafts)] = caption_of
+                drafts.append(_build_text_draft("caption", block, *caption))
+                continue
+        if block.kind == "figure":
+            bundle_draft_index[block.seq] = len(drafts)
             caption = trim_blank_range(block.text, 0, len(block.text))
             spans = [] if caption is None else [(block.id, *caption)]
             pos_start = 0 if caption is None else caption[0]
@@ -239,7 +264,7 @@ def build_unit_drafts(
             if block.table_id is not None and block.table_id not in layout_table_ids:
                 group_index = table_draft_index.get(block.table_id)
                 if group_index is None:
-                    group_index = table_draft_index[block.table_id] = len(drafts)
+                    group_index = table_draft_index[block.table_id] = bundle_draft_index[block.seq] = len(drafts)
                     drafts.append(UnitDraft("table", [], NEUTRAL, block.table_id, None, None, block.seq, -1))
             drafts.extend(
                 _build_text_draft("cell_sentence", block, start, end, block.table_id, block.row_index, group_index)
@@ -254,7 +279,16 @@ def build_unit_drafts(
                 _build_text_draft("sentence", block, start, end)
                 for start, end in split_sentences(block.text, split_lines=split_lines)
             )
+    for index, target_seq in caption_targets.items():
+        drafts[index] = replace(drafts[index], group_index=bundle_draft_index[target_seq])
     return _fill_languages(drafts, layout)
+
+
+def _read_caption_of(flags: Sequence[str]) -> int | None:
+    """caption_of 표시가 가리키는 묶음 블록 seq — 없으면 None."""
+    prefix = f"{CAPTION_OF_FLAG}:"
+    value = next((flag[len(prefix):] for flag in flags if flag.startswith(prefix)), None)
+    return int(value) if value is not None and value.isdigit() else None
 
 
 def _split_heading(text: str, split_lines: bool) -> list[tuple[int, int]]:

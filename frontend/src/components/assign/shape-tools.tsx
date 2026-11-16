@@ -1,4 +1,5 @@
-// 오른쪽 칸 1번 "다듬기" - 고른 줄의 문장마다 한 줄: 언어 세 칸(KO | EN | REF), 글의 앞부분, 그 문장에 할 수 있는 일(자르기·앞뒤와 묶기·짝 풀기). 표·행이면 표 도구.
+// 오른쪽 칸 1번 "다듬기" - 고른 줄의 문장마다 한 줄: 언어 세 칸(KO | EN | REF), 글의 앞부분, 그 문장에 할 수 있는 일(자르기·앞뒤와 묶기·짝 풀기).
+// 표·행·그림이면 묶음 도구(행·표 벗기기·캡션 붙이기), 그 묶음의 캡션은 문장처럼 한 줄(언어 세 칸·자르기·캡션 떼기).
 // 할 수 있는 일과 못 하는 까닭은 우클릭 메뉴와 같은 답(lib/assign-context-menu-model buildAssignMenu)이고 아이콘·이름도 같다. 그 줄에서 풀 길이 없는 일은 빼고(listShapeLineItems),
 // 먼저 할 일이 있어 꺼진 단추는 까닭을 툴팁으로 보인다. 단추는 줄에 마우스를 올리거나 포커스가 갈 때만 드러난다.
 // 줄이 한/영 짝이거나 합친 한 문장이면 맨 아래에 둘 사이를 바꾸는 전환(One sentence | KO/EN pair)이 붙는다 - 언어 판정이 틀려 잘못 묶였을 때 고치는 길이다. 짝 줄의 짝 풀기도 그 옆에 한 번.
@@ -47,7 +48,7 @@ export function ShapeTools({ lines, cutUnitId, busy, onAction, mode, onMode }: S
     if (item.action === "lang") return null;
     const Icon = ASSIGN_ACTION_ICONS[item.action];
     const isCutting = item.action === "split" && cutUnitId === unit.id;
-    const label = t(ASSIGN_ACTION_LABELS[item.action]);
+    const label = t(item.labelKey ?? ASSIGN_ACTION_LABELS[item.action]);
     const reason = item.reasonKey ? t(item.reasonKey) : null;
     const isOff = !item.enabled || busy;
     return (
@@ -79,8 +80,9 @@ export function ShapeTools({ lines, cutUnitId, busy, onAction, mode, onMode }: S
       <span className="shape-langs" role="group" aria-label={t("split.menu.lang")} data-testid={`assign-shape-lang-${unit.id}`}>
         {LANGS.map((lang) => {
           const isCurrent = unit.lang === lang;
-          const reason = !isCurrent && item?.reasonKey ? t(item.reasonKey) : null;
-          const isOff = !isCurrent && (!item?.enabled || busy);
+          const reasonKey = isCurrent ? undefined : (item?.reasonKey ?? item?.langReasons?.[lang]);
+          const reason = reasonKey ? t(reasonKey) : null;
+          const isOff = !isCurrent && (!item?.enabled || reason !== null || busy);
           const label = lang === "ref" ? t("assign.ctx.refMark") : t("assign.shape.langTo", { lang: lang.toUpperCase() });
           return (
             <Tooltip key={lang} label={reason ?? (isCurrent ? t("split.menu.why.alreadyLang") : label)} align="start">

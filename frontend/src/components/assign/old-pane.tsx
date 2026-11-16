@@ -41,12 +41,16 @@ interface OldPaneProps {
   renderNote: (unitIds: number[]) => ReactNode;
   /** 조각 오른쪽 칸 - 연결 배지 */
   renderPills: (unitId: number) => ReactNode;
+  /** 머리 줄에 "Caption needed"를 띄울 표·그림 단위(lib/caption-model isCaptionNeeded) */
+  isCaptionNeeded: (unitId: number, hasCaption: boolean) => boolean;
   /** 내용이 있는 본문·머리말·꼬리말 탭 - 둘 이상일 때만 탭 줄을 그린다 */
   partKeys: readonly PaperTabKey[];
   activePart: PaperTabKey;
   /** 머리말·꼬리말 탭의 쪽들(설명 줄과 함께 따로 그린다) - 본문 탭이면 null */
   sheets: readonly PaperSheet[] | null;
   onPartChange: (key: PaperTabKey) => void;
+  /** 표·그림 어디를 눌러도 묶음 전체를 고른다 - 한/영 짝을 고르거나 쓴 New 문서를 혼자 다듬는 중에는 꺼서 칸 문장을 그대로 고른다 */
+  pickWholeBundle: boolean;
   /** Shift는 일괄 고르기 */
   onUnitClick: (unitId: number, keys: { shiftKey: boolean }) => void;
   /** 우클릭·메뉴 글쇠 - 누른 자리와 글자 자리 */
@@ -99,12 +103,13 @@ export function OldPane(props: OldPaneProps) {
         onUnitDoubleClick={props.onUnitDoubleClick}
         onRangeSelect={props.onRangeSelect}
         shiftClickPicks
+        pickWholeBundle={props.pickWholeBundle}
         cut={props.cut}
         onCutDrag={props.onCutDrag}
         onCutNudge={props.onCutNudge}
         renderAtCut={props.cut ? props.renderAtCut : undefined}
         figureSource={props.figureSource}
-        strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join }}
+        strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join, isCaptionNeeded: props.isCaptionNeeded }}
         renderUnitActions={props.renderUnitActions}
         dragBoxes={props.dragBoxes}
         testId="assign-paper"

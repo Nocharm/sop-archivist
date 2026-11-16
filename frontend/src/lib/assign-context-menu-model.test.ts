@@ -89,7 +89,8 @@ describe("buildAssignMenu", () => {
   });
 
   it("does not edit tables or figures, and read-only blocks everything", () => {
-    expect(find(ctx({ target: makeUnit(2, { kind: "figure" }) }), "lang").reasonKey).toBe("assign.ctx.why.notText");
+    // 그림은 묶음 메뉴(캡션 도구)만 - 이웃한 글이 없으면 고칠 것이 없다
+    expect(buildAssignMenu(ctx({ target: makeUnit(2, { kind: "figure" }), prev: null, next: null })).edit).toEqual([]);
     const readOnly = buildAssignMenu(ctx({ readOnly: true, rowStatus: "confirmed" }));
     expect([...readOnly.assign, ...readOnly.edit].every((item) => item.reasonKey === "assign.ctx.why.readOnly")).toBe(true);
   });
@@ -155,8 +156,9 @@ describe("table rows from the Assign menu", () => {
   const row = makeUnit(11, { kind: "table_row", table_id: 4, row_index: 0, lang: "none" as ViewUnit["lang"] });
 
   it("shows only table items on a table or a row", () => {
-    expect(buildAssignMenu(ctx({ target: table, table })).edit.map((item) => item.action)).toEqual(["table_rows", "table_layout"]);
-    expect(buildAssignMenu(ctx({ target: row, table: row })).edit.map((item) => item.action)).toEqual(["table_merge"]);
+    // 이웃한 글이 없는 표 - 캡션 붙이기 없이 표 항목만
+    expect(buildAssignMenu(ctx({ target: table, table, prev: null, next: null })).edit.map((item) => item.action)).toEqual(["table_rows", "table_layout"]);
+    expect(buildAssignMenu(ctx({ target: row, table: row, prev: null, next: null })).edit.map((item) => item.action)).toEqual(["table_merge"]);
     expect(find(ctx({ target: table, table }), "table_rows").enabled).toBe(true);
   });
 
@@ -179,6 +181,97 @@ describe("table rows from the Assign menu", () => {
     expect(find(ctx(base), "table_merge").enabled).toBe(true);
     expect(find(ctx({ ...base, isDecided: (unit) => unit.id === 13 }), "table_merge").reasonKey).toBe("assign.ctx.why.rowAssigned");
     expect(find(ctx({ ...base, hasDraft: (unit) => unit.id === 13 }), "table_merge").reasonKey).toBe("assign.ctx.why.rowUnsaved");
+  });
+});
+
+describe("captions from the Assign menu", () => {
+  const table = makeUnit(10, { kind: "table", table_id: 4, lang: "none" as ViewUnit["lang"] });
+  const figure = makeUnit(20, { kind: "figure", lang: "none" as ViewUnit["lang"] });
+  const sentence = makeUnit(1);
+  const caption = makeUnit(11, { kind: "caption", group_unit_id: 10 });
+
+  it("offers to attach the sentence above as caption of a table", () => {
+    const menu = buildAssignMenu(ctx({ target: table, table, prev: sentence, next: null }));
+    expect(menu.edit.map((item) => item.action)).toEqual(["table_rows", "table_layout", "caption_attach_prev"]);
+  });
+
+  it("gives a figure the bundle menu, not the sentence menu", () => {
+    const menu = buildAssignMenu(ctx({ target: figure, prev: sentence, next: makeUnit(21) }));
+    expect(menu.edit.map((item) => item.action)).toEqual(["caption_attach_prev", "caption_attach_next"]);
+  });
+
+  it("offers nothing to attach when the neighbour is not free text", () => {
+    const cell = makeUnit(12, { kind: "cell_sentence", group_unit_id: 30 });
+    const ref = makeUnit(13, { lang: "ref", ref: { state: "confirmed", number: "SOP-A-1" } });
+    expect(buildAssignMenu(ctx({ target: figure, prev: cell, next: ref })).edit).toEqual([]);
+  });
+
+  it("offers a sentence as caption of the table or figure next to it, with the right name", () => {
+    const below = find(ctx({ prev: null, nextBundle: table }), "caption_attach_next");
+    const above = find(ctx({ prevBundle: figure }), "caption_attach_prev");
+    expect(below).toMatchObject({ enabled: true, labelKey: "assign.ctx.captionOfTableNext" });
+    expect(above.labelKey).toBe("assign.ctx.captionOfFigurePrev");
+    expect(buildAssignMenu(ctx()).edit.some((item) => item.action.startsWith("caption_"))).toBe(false);
+  });
+
+  it("will not take a second caption in the same language, and waits for unsaved picks", () => {
+    const taken = { listCaptionLangs: () => ["ko"] as const };
+    expect(find(ctx({ nextBundle: table, ...taken }), "caption_attach_next").reasonKey).toBe("assign.ctx.why.captionExists");
+    expect(find(ctx({ target: table, table, prev: sentence, next: null, ...taken }), "caption_attach_prev").reasonKey).toBe("assign.ctx.why.captionExists");
+    expect(find(ctx({ nextBundle: table, listCaptionLangs: () => ["en"] }), "caption_attach_next").enabled).toBe(true);
+    expect(find(ctx({ target: table, table, prev: sentence, next: null, hasDraft: (unit) => unit.id === 1 }), "caption_attach_prev").reasonKey).toBe("assign.ctx.why.neighborUnsaved");
+    expect(find(ctx({ nextBundle: table, hasDraft: (unit) => unit.id === 2 }), "caption_attach_next").reasonKey).toBe("assign.ctx.why.unsaved");
+    expect(find(ctx({ nextBundle: table, hasDraft: (unit) => unit.id === 10 }), "caption_attach_next").reasonKey).toBe("assign.ctx.why.bundleUnsaved");
+  });
+
+  it("asks before attaching to an assigned bundle instead of refusing (the server asks once)", () => {
+    expect(find(ctx({ target: table, table, prev: sentence, next: null, isDecided: (unit) => unit.id === 10 }), "caption_attach_prev").enabled).toBe(true);
+  });
+
+  it("offers detach on a caption and blocks it while a draft is open", () => {
+    expect(find(ctx({ target: caption }), "caption_detach").enabled).toBe(true);
+    expect(find(ctx({ target: caption, hasDraft: () => true }), "caption_detach").reasonKey).toBe("assign.ctx.why.unsaved");
+    expect(find(ctx({ target: caption, readOnly: true }), "caption_detach").reasonKey).toBe("assign.ctx.why.readOnly");
+  });
+
+  it("will not detach a caption that sits inside an old figure block: dimmed in the menu, hidden in Shape", () => {
+    const fixed = ctx({ target: caption, isFixedCaption: (unit) => unit.id === 11 });
+    expect(find(fixed, "caption_detach").reasonKey).toBe("assign.ctx.why.captionInFigure");
+    expect(listShapeLineItems(caption, buildAssignMenu(fixed).edit, false).map((item) => item.action)).toEqual(["split"]);
+  });
+
+  it("will not change a caption to a language another caption of its bundle already has, nor make it a reference", () => {
+    const withEn = ctx({ target: caption, captionBundle: table, listCaptionLangs: () => ["ko", "en"] });
+    expect(find(withEn, "lang").langReasons).toEqual({ en: "assign.ctx.why.captionExists", ref: "assign.ctx.why.captionNoRef" });
+    expect(find(withEn, "lang").enabled).toBe(true);
+    expect(find(ctx({ target: caption, captionBundle: table, listCaptionLangs: () => ["ko"] }), "lang").langReasons).toEqual({ ref: "assign.ctx.why.captionNoRef" });
+  });
+
+  it("splits a caption only between its Korean and English text, and only when no other caption has either language", () => {
+    const bilingual = { ...caption, text: "표 1. 운전 조건 Table 1. Run conditions" };
+    expect(find(ctx({ target: bilingual, captionBundle: table, listCaptionLangs: () => ["ko"] }), "split").enabled).toBe(true);
+    // 한 언어뿐인 캡션은 나누면 같은 언어 캡션 둘이 된다 - 꺼 두고(다듬기에도 흐리게 보인다) 까닭을 단다
+    const oneLang = ctx({ target: { ...caption, text: "표 1. 운전 조건" }, captionBundle: table, listCaptionLangs: () => ["ko"] });
+    expect(find(oneLang, "split").reasonKey).toBe("assign.ctx.why.captionSplitOneLang");
+    expect(listShapeLineItems(caption, buildAssignMenu(oneLang).edit, false).map((item) => item.action)).toContain("split");
+    // 묶음에 영어 캡션이 따로 있으면 한/영 캡션을 나눈 영어 조각이 겹친다
+    expect(find(ctx({ target: bilingual, captionBundle: table, listCaptionLangs: () => ["ko", "en"] }), "split").reasonKey).toBe("assign.ctx.why.captionSplitOneLang");
+    // 목록에 이 캡션의 언어가 없어도 다른 캡션의 언어를 지우지 않는다
+    expect(find(ctx({ target: bilingual, captionBundle: table, listCaptionLangs: () => ["en"] }), "split").reasonKey).toBe("assign.ctx.why.captionSplitOneLang");
+  });
+
+  it("keeps the sentence tools on a caption but no joins, pairing or reference", () => {
+    expect(buildAssignMenu(ctx({ target: caption })).edit.map((item) => item.action)).toEqual(["split", "lang", "caption_detach"]);
+  });
+
+  it("does not merge a sentence into a caption or pick a caption as KO/EN partner", () => {
+    expect(find(ctx({ next: caption }), "merge_next").reasonKey).toBe("assign.ctx.why.neighborNotText");
+    expect(getPairPickBlocker(caption, { isDecided: () => false, hasDraft: () => false })).toBe("assign.ctx.why.notText");
+  });
+
+  it("shows the caption tools as Shape buttons", () => {
+    expect(listShapeLineItems(caption, buildAssignMenu(ctx({ target: caption })).edit, false).map((item) => item.action)).toEqual(["split", "caption_detach"]);
+    expect(listShapeLineItems(table, buildAssignMenu(ctx({ target: table, table, prev: sentence, next: null })).edit, false).map((item) => item.action)).toEqual(["table_rows", "table_layout", "caption_attach_prev"]);
   });
 });
 

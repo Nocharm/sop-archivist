@@ -731,7 +731,7 @@ await runStep("assign: legend first, place, delete with reason, edit, clear, bul
 await runStep("assign: H holds a unit without a destination, with a reason typed in", {}, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
   await wait(page, "assign-bar");
-  const unit = page.locator('[data-testid="assign-old"] [data-testid^="assign-paper-unit-"]:not(.ptbl-cap)').nth(2);
+  const unit = page.locator('[data-testid="assign-old"] [data-testid^="assign-paper-unit-"]').nth(2);
   await unit.waitFor({ timeout: T });
   await unit.click();
   await wait(page, "assign-row-id");
@@ -912,6 +912,52 @@ await runStep("assign: an edit survives looking at another unit", {}, async ({ p
   check("the edit is still there", (await textarea.inputValue()) === "Smoke: edit kept across units");
 });
 
+// 표는 묶음째 배정한다 - 칸 글자를 눌러도 표 전체가 골라지고(전에는 아무 일도 없었다), Alt를 누른 채 끌면 글자가 골라진다
+await runStep("assign: a click anywhere on a table picks the whole table, Alt still selects text", {}, async ({ page }) => {
+  await page.goto(`${BASE}/`);
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
+  const headers = { "X-Dev-User": "qa.member" };
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${freshId}/documents`, { headers })).json();
+  let doc = null;
+  let table = null;
+  let cell = null;
+  for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await (await page.request.get(`${BASE}/api/bundles/${freshId}/documents/${candidate.id}/view`, { headers })).json();
+    const found = view.units.find((unit) => unit.kind === "table" && unit.status === "unassigned" && view.units.some((other) => other.kind === "cell_sentence" && other.group_unit_id === unit.id && other.text.length > 3));
+    if (!found) continue;
+    doc = candidate;
+    table = found;
+    cell = view.units.find((unit) => unit.kind === "cell_sentence" && unit.group_unit_id === found.id && unit.text.length > 3);
+    break;
+  }
+  check("the fresh bundle has an unassigned whole table", table !== null);
+  if (table === null) return;
+  await page.goto(`${BASE}/bundles/${freshId}/assign`);
+  await wait(page, "assign-bar");
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
+  const cellText = page.locator(`[data-testid="assign-paper-unit-${cell.id}"]`).first();
+  await cellText.waitFor({ timeout: T });
+  await cellText.scrollIntoViewIfNeeded();
+  await cellText.click();
+  const splitRows = page.locator(`[data-testid="assign-shape-table_rows-${table.id}"]`);
+  await splitRows.waitFor({ state: "attached", timeout: T });
+  check("clicking cell text picks the whole table (Shape offers Split into rows)", (await splitRows.getAttribute("aria-label")) === "Split into rows");
+  check("the table piece is the selected one", (await page.locator(`[data-testid="assign-paper-piece-${table.id}"]`).getAttribute("data-sel")) === "");
+  // Alt+끌기 - 칸 글자 첫머리에서 끝까지
+  const box = await cellText.boundingBox();
+  await page.keyboard.down("Alt");
+  await page.mouse.move(box.x + 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 2, box.y + box.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await page.keyboard.up("Alt");
+  const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+  check("Alt+drag still selects text", selected.trim().length > 0, JSON.stringify(selected));
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
+});
+
 // 배정 화면에서 표를 행으로 나누거나 다시 합치고 되돌리기 - 우클릭 메뉴(전에는 쪼개기 화면에서만 했다). Ctrl+Z로 처음 모양으로 돌아온다
 await runStep("assign: table rows from the right-click menu, then undo", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);
@@ -948,7 +994,9 @@ await runStep("assign: table rows from the right-click menu, then undo", {}, asy
     await page.locator('[data-testid="assign-old-doc"]').click();
     await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
   }
-  const target = (await pieceOf(holder.id).count()) > 0 || cell === null ? pieceOf(holder.id) : pieceOf(cell.id);
+  // 통째인 표는 머리 줄을 우클릭한다(칸 위가 아니라 표 전체), 행으로 나눈 표는 머리 줄이 없어 칸 문장으로
+  const headOf = (unitId) => page.locator(`[data-testid="assign-paper-head-${unitId}"]`).first();
+  const target = (await headOf(holder.id).count()) > 0 ? headOf(holder.id) : (await pieceOf(holder.id).count()) > 0 || cell === null ? pieceOf(holder.id) : pieceOf(cell.id);
   await target.waitFor({ timeout: T });
   await target.scrollIntoViewIfNeeded();
   await target.click({ button: "right" });
@@ -1014,9 +1062,152 @@ await runStep("split rows of a table, then assign a row as a table", { allowCons
   await page.waitForLoadState("networkidle");
   await selectRowById(page, row.display_id);
   await pickFirstPlace(page);
-  await page.locator('[data-testid="assign-primary"]').click();
+  // 원문 캡션은 첫 행에 딸린다 - 캡션이 없는 행은 새 표라 Confirm이 꺼져 있고, 캡션을 써 넣어야 확정된다(명세 §3.4)
+  const primary = page.locator('[data-testid="assign-primary"]');
+  if (await primary.isDisabled()) {
+    await page.locator('[data-testid="assign-caption-write"]').click();
+    await page.locator('[data-testid^="assign-caption-text-"]').first().fill("SYNTHETIC row table caption");
+  }
+  await primary.click();
   await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
   check("a table row confirms as a one-row table", true);
+});
+
+// 캡션 없는 표 바로 앞 문장을 Shape에서 붙였다 떼고, 되돌리기 두 번으로 처음대로 둔다 - 다음 단계가 같은 표에 캡션을 써 넣는다
+await runStep("assign: attach and detach a caption from Shape", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}${path}`, { headers })).json();
+  const units = (await getJson("/units?limit=1000")).items;
+  const captioned = new Set(units.filter((unit) => unit.kind === "caption").map((unit) => unit.group_unit_id));
+  const table = units.find((unit) => unit.kind === "table" && unit.status === "unassigned" && !captioned.has(unit.unit_id) && !unit.has_caption_target);
+  check("the half bundle has an unassigned table without a caption", Boolean(table), table?.display_id);
+  if (!table) return;
+  // 그 표가 든 Old 문서와 표 바로 앞 단위(칸 문장·캡션은 표 자리로 친다)
+  let doc = null;
+  let sentence = null;
+  let figure = null;
+  let after = null;
+  for (const candidate of (await getJson("/documents")).filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await getJson(`/documents/${candidate.id}/view`);
+    if (!view.units.some((unit) => unit.id === table.unit_id)) continue;
+    const ordered = [...view.units].filter((unit) => unit.kind !== "table_row" || unit.spans.length > 0).sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0) || a.id - b.id);
+    const first = ordered.findIndex((unit) => unit.id === table.unit_id || unit.group_unit_id === table.unit_id);
+    doc = candidate;
+    sentence = ordered[first - 1] ?? null;
+    const last = ordered.findLastIndex((unit) => unit.id === table.unit_id || unit.group_unit_id === table.unit_id);
+    after = ordered[last + 1] ?? null;
+    figure = view.units.find((unit) => unit.kind === "figure") ?? null;
+  }
+  check("a free sentence sits right above the table", sentence !== null && sentence.kind === "sentence" && sentence.group_unit_id === null, sentence?.text);
+  if (!doc || !sentence) return;
+  const captionsOf = async () => (await getJson(`/documents/${doc.id}/view`)).units.filter((unit) => unit.kind === "caption" && unit.group_unit_id === table.unit_id);
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await selectRowById(page, table.display_id);
+  // 우클릭도 같은 항목 - 글에서는 "아래 표의 캡션으로 쓰기", 그림에서는 문장 메뉴가 아닌 묶음 메뉴(언어 줄 없음)
+  const sentencePiece = page.locator(`[data-testid="assign-paper-unit-${sentence.id}"]`).first();
+  await sentencePiece.scrollIntoViewIfNeeded();
+  await sentencePiece.click({ button: "right" });
+  await wait(page, "assign-ctx-caption_attach_next");
+  check("right-click on the sentence offers Use as caption of the table below", (await page.locator('[data-testid="assign-ctx-caption_attach_next"]').innerText()).includes("Use as caption of the table below"));
+  await page.keyboard.press("Escape");
+  if (figure) {
+    const figurePiece = page.locator(`[data-testid="assign-paper-piece-${figure.id}"]`).first();
+    await figurePiece.scrollIntoViewIfNeeded();
+    await figurePiece.click({ button: "right" });
+    await wait(page, "assign-ctx-menu");
+    check("right-click on a figure opens the bundle menu, not the sentence menu", (await page.locator('[data-testid="assign-ctx-lang"], [data-testid="assign-ctx-split"]').count()) === 0);
+    await page.keyboard.press("Escape");
+  }
+  await selectRowById(page, table.display_id);
+  const tableLine = page.locator(`[data-testid="assign-shape-line-${table.unit_id}"]`);
+  await tableLine.waitFor({ timeout: T });
+  // 표 뒤가 묶이지 않은 글이 아니면(데모에서는 그림) 아래 붙이기 단추가 없다
+  const canAttachBelow = after !== null && (after.kind === "sentence" || after.kind === "heading") && after.group_unit_id === null && after.lang !== "ref";
+  check("Shape offers attach below only when free text follows the table", (await page.locator(`[data-testid="assign-shape-caption_attach_next-${table.unit_id}"]`).count()) === (canAttachBelow ? 1 : 0), after?.kind);
+  await tableLine.hover();
+  const attach = page.locator(`[data-testid="assign-shape-caption_attach_prev-${table.unit_id}"]`);
+  check("Shape offers Attach the sentence above as caption", (await attach.getAttribute("aria-label")) === "Attach the sentence above as caption", await attach.getAttribute("aria-label"));
+  await attach.click();
+  await page.locator('[data-testid="toast-ok"]', { hasText: "Caption attached" }).first().waitFor({ timeout: T });
+  const [caption] = await captionsOf();
+  check("the sentence becomes the table's caption", caption?.text === sentence.text, caption?.text);
+  if (!caption) return;
+  const head = page.locator(`[data-testid="assign-paper-caption-${table.unit_id}"]`);
+  await head.waitFor({ timeout: T });
+  check("the table head shows the sentence as its caption", (await head.innerText()).includes(sentence.text.slice(0, 10)), await head.innerText());
+  check("Caption needed is gone", (await page.locator(`[data-testid="assign-paper-caption-missing-${table.unit_id}"]`).count()) === 0);
+  // 캡션은 Shape에서 문장처럼 한 줄 - 언어 세 칸과 떼기 단추
+  const captionLine = page.locator(`[data-testid="assign-shape-line-${caption.id}"]`);
+  await captionLine.waitFor({ timeout: T });
+  check("the caption has its own Shape line with KO | EN | REF", (await page.locator(`[data-testid="assign-shape-lang-${caption.id}"] button`).count()) === 3);
+  await captionLine.hover();
+  check("a caption cannot become a reference line (REF is off)", (await page.locator(`[data-testid="assign-shape-lang-${caption.id}-ref"]`).getAttribute("aria-disabled")) === "true");
+  await takeShot("sop-assign-caption-shape.png");
+  await page.locator(`[data-testid="assign-shape-caption_detach-${caption.id}"]`).click();
+  await page.locator('[data-testid="toast-ok"]', { hasText: "Caption detached" }).first().waitFor({ timeout: T });
+  await page.locator(`[data-testid="assign-paper-caption-missing-${table.unit_id}"]`).waitFor({ timeout: T });
+  check("after Detach caption the head says Caption needed again", (await captionsOf()).length === 0);
+  // 되돌리기 - 떼기를 되돌리면 캡션이 돌아오고, 붙이기까지 되돌리면 처음처럼 캡션이 없다
+  await page.waitForLoadState("networkidle");
+  await page.locator('[data-testid="assign-undo"]').click();
+  await head.waitFor({ timeout: T });
+  check("Undo brings the caption back", (await captionsOf()).length === 1);
+  await page.waitForLoadState("networkidle");
+  await page.locator('[data-testid="assign-undo"]').click();
+  await page.locator(`[data-testid="assign-paper-caption-missing-${table.unit_id}"]`).waitFor({ timeout: T });
+  check("Undo again leaves the table without a caption, as it was", (await captionsOf()).length === 0);
+});
+
+await runStep("assign: a bundle without a caption cannot be confirmed until one is written", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}${path}`, { headers })).json();
+  // 데모 시드가 일부러 남긴 캡션 없는 미배정 표(OLD-7) - 캡션 단위도 써 넣은 캡션도 없다
+  const units = (await getJson("/units?limit=1000")).items;
+  const captioned = new Set(units.filter((unit) => unit.kind === "caption").map((unit) => unit.group_unit_id));
+  const table = units.find((unit) => unit.kind === "table" && unit.status === "unassigned" && !captioned.has(unit.unit_id) && !unit.has_caption_target);
+  check("the half bundle has an unassigned table without a caption", Boolean(table), table?.display_id);
+  if (!table) return;
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const pending = page.locator('[data-testid="assign-caption-pending"]');
+  await pending.waitFor({ timeout: T });
+  const countBefore = parseInt(await pending.innerText(), 10);
+  // 좁은 상단 바에서는 수만 보이고 문구는 aria-label에 있다
+  const pendingLabel = (await pending.getAttribute("aria-label")) ?? (await pending.innerText());
+  check("the top bar counts the bundles that need a caption", countBefore > 0 && pendingLabel.includes(`${countBefore} captions needed`), pendingLabel);
+  // 누를 때마다 캡션이 필요한 다음 묶음 - 그 표에 닿을 때까지
+  for (let step = 0; step <= countBefore && (await page.locator('[data-testid="assign-row-id"]').count() === 0 || !(await rowIds(page)).includes(table.display_id)); step += 1) {
+    await pending.click();
+    await page.locator('[data-testid="assign-row-id"]').waitFor({ timeout: T });
+  }
+  check("the count walks to that table", (await rowIds(page)).includes(table.display_id), await rowIds(page));
+  check("its head says Caption needed", (await page.locator(`[data-testid="assign-paper-caption-missing-${table.unit_id}"]`).count()) === 1);
+  await pickFirstPlace(page);
+  const primary = page.locator('[data-testid="assign-primary"]');
+  check("Confirm is off for a table without a caption", await primary.isDisabled());
+  await wait(page, "assign-caption-needed");
+  await page.locator('[data-testid="assign-caption-write"]').click();
+  const field = page.locator('[data-testid^="assign-caption-text-"]');
+  await field.first().waitFor({ timeout: T });
+  check("Write a caption opens one caption field", (await field.count()) === 1);
+  const text = "표 9. 회전 속도 SYNTHETIC";
+  await field.first().fill(text);
+  check("writing a caption turns Confirm on", await primary.isEnabled());
+  await takeShot("sop-assign-caption-write.png");
+  await primary.click();
+  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
+  // 남은 수가 하나 줄고, 머리 줄의 Caption needed도 사라진다(같은 규칙)
+  await page.waitForFunction((n) => Number.parseInt(document.querySelector('[data-testid="assign-caption-pending"]')?.textContent ?? "0", 10) === n - 1, countBefore, { timeout: T });
+  check("the count drops by one", true);
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-paper-caption-missing-${id}"]`) === null, table.unit_id, { timeout: T });
+  check("the head no longer says Caption needed", true);
+  check("the unit list now marks the table as captioned", (await getJson("/units?limit=1000")).items.find((unit) => unit.unit_id === table.unit_id)?.has_caption_target === true);
+  let inC = false;
+  for (const doc of (await getJson("/tobe")).docs.filter((item) => item.entrance === "assign")) {
+    if (JSON.stringify(await getJson(`/outputs/c/docs/${doc.id}?lang=ko`)).includes("회전 속도 SYNTHETIC")) inC = true;
+  }
+  check("output C carries the written caption", inC);
 });
 
 await runStep("assign: an AI split keeps both sentences when confirmed", {}, async ({ page }) => {
@@ -1333,7 +1524,9 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   check("Cancel in the menu drops the pick", !(await isPressed(tId)));
   // 놓은 뒤의 메뉴는 그 문장을 같은 자리에서 눌렀을 때와 같은 곳(이음 선 끝)에 뜬다 - 끈 줄은 고른 채다
   check("the dragged row stays picked after Cancel", (await pieceOf(bId).getAttribute("data-sel")) === "");
-  await page.mouse.click(onto.x, onto.y);
+  // 놓은 뒤·Cancel 뒤에 New 칸이 굴렀을 수 있다 - 낡은 좌표를 누르면 같은 문장의 다른 점이라 메뉴 자리가 다르다. 그 문장을 다시 가운데 두고 같은 점을 누른다
+  const ontoNow = await pointInLine(tId);
+  await page.mouse.click(ontoNow.x, ontoNow.y);
   await menu.waitFor({ timeout: T });
   const clickPlace = await readMenuPlace();
   check("the menu after a drop opens where a click on that sentence opens it", Math.abs(dropPlace.top - clickPlace.top) <= 2 && Math.abs(dropPlace.left - clickPlace.left) <= 2, `drop ${JSON.stringify(dropPlace)} click ${JSON.stringify(clickPlace)}`);
@@ -1422,11 +1615,16 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   await page.keyboard.press("j");
   await page.waitForTimeout(2500);
   await page.unroute(lateGroup);
-  const afterSwitch = { menu: await menu.count(), pressed: await isPressed(tId), dragged: (await pieceOf(bId).getAttribute("data-sel")) !== null, picked: await page.locator('[data-testid="assign-new"] .new-line[data-state="picked"]').count() };
+  // 옮겨 간 줄의 추천 문서가 다르면 New 칸이 그 문서로 넘어가 놓았던 문장이 없다 - 없으면 골라지지 않은 것이다
+  const isShownPressed = async (id) => (await page.locator(`[data-testid="assign-new-pick-${id}"]`).count()) > 0 && (await isPressed(id));
+  const afterSwitch = { menu: await menu.count(), pressed: await isShownPressed(tId), dragged: (await pieceOf(bId).getAttribute("data-sel")) !== null, picked: await page.locator('[data-testid="assign-new"] .new-line[data-state="picked"]').count() };
   check("a drop is let go when another row is picked before its group arrives", afterSwitch.menu === 0 && !afterSwitch.pressed && !afterSwitch.dragged && afterSwitch.picked === 0, JSON.stringify(afterSwitch));
 
-  // 놓은 뒤 ↵가 저장한다(메뉴의 Confirm과 같다) - 앞 확인들이 쓰지 않는 셋째 미배정 문장을 다른 문장에 놓는다
-  const cId = shownIds.filter((id) => loose.has(id))[2];
+  // 놓은 뒤 ↵가 저장한다(메뉴의 Confirm과 같다) - 앞 확인들이 쓰지 않는 셋째 미배정 문장을 다른 문장에 놓는다(New 칸이 넘어갔으면 놓았던 문서로 되돌린다)
+  await openNewDoc(written.find((row) => row.target_id === tId).target_doc_id);
+  // 참조 줄(REF)은 번호를 받기 전에는 확정되지 않는다 - 시드에 따라 셋째 미배정 문장이 참조 줄일 수 있어 건너뛰고, 없으면 저장하지 않은 첫 문장(aId - 뒤에서 쓰지 않는다)
+  const refIds = new Set(await page.locator('[data-pane="old"] [data-lang="ref"][data-testid^="assign-paper-lang-"]').evaluateAll((els) => els.map((el) => Number(el.dataset.testid.replace("assign-paper-lang-", "")))));
+  const cId = shownIds.filter((id) => loose.has(id)).slice(2).find((id) => !refIds.has(id)) ?? aId;
   const confirmTarget = Number(await page.locator(`[data-testid="assign-new"] .pg:not([data-read-only]) .new-line[data-target]:not([data-target="${tId}"]):not([data-state="picked"])`).first().getAttribute("data-target"));
   check("the Old paper shows a third loose unassigned sentence", cId !== undefined, String(cId));
   await dragThrough(page, await pointInUnit(cId), [await pointInLine(confirmTarget)]);
@@ -1877,10 +2075,65 @@ await runStep("assign: an old heading confirmed as a slot heading shows on C and
   check("its decision is deleted and confirmed again", after.decision.disposition === "delete" && after.decision.status === "confirmed", JSON.stringify(after.decision));
 });
 
+await runStep("assign: the New pane shows a real table and figure", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}${path}`, { headers })).json();
+  // 표와 그림을 함께 받은 아직 쓰지 않은 문서를 서버 미리 보기에서 찾는다
+  let found = null;
+  for (const doc of (await getJson("/tobe")).docs.filter((item) => item.entrance === "assign")) {
+    const items = (await getJson(`/outputs/c/docs/${doc.id}?lang=en`)).sections.flatMap((section) => section.items);
+    const table = items.find((item) => item.kind === "table" && item.table);
+    const figure = items.find((item) => item.kind === "figure" && item.figure);
+    if (table && figure) {
+      found = { doc, table, figure };
+      break;
+    }
+  }
+  check("the bundle has a composed document with a table and a figure", Boolean(found), found ? `${found.doc.code} t${found.table.target_id} f${found.figure.target_id}` : "none");
+  if (!found) return;
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.locator('[data-testid="assign-new-doc"]').click();
+  await page.locator(`[data-testid="assign-new-doc-option-${found.doc.id}"]`).click();
+  const tableBox = page.locator(`[data-testid="assign-new-${found.table.target_id}"]`);
+  await tableBox.scrollIntoViewIfNeeded({ timeout: T });
+  // 격자 자리마다 칸 하나(칸 번역은 그 칸 안에 줄로), 칸 새 문장은 서버 순서(행·열·id) 그대로
+  const { rows, cols, cells: expectedCells } = found.table.table;
+  const tdCount = await tableBox.locator("table.ptbl td").count();
+  const cells = await tableBox.locator("table.ptbl td [data-cell-target]").allInnerTexts();
+  const expected = expectedCells.map((cell) => cell.text);
+  check("the table row draws its cells as a table", tdCount === rows * cols && cells.length === expected.length && cells.every((text, index) => text.trim() === expected[index].trim()), `${tdCount} td, ${cells.length}/${expected.length}`);
+  check("the table sits in a side-scrolling box", await tableBox.locator(".ptbl-scroll").evaluate((el) => getComputedStyle(el).overflowX === "auto"));
+  // 캡션 줄은 표·그림 위 - 서버 caption 그대로(여러 언어는 줄바꿈), 없으면 쓰지 않은 문서라 "Caption needed"
+  const readCaptionLine = async (box, item) => {
+    const line = box.locator(":scope > .new-bundle-cap");
+    const ok = (await line.count()) === 1 && (await line.evaluate((el) => el.nextElementSibling !== null)) && (item.caption ? (await line.innerText()).trim() === item.caption.trim() : (await line.getAttribute("data-missing")) !== null);
+    return { ok, detail: item.caption ?? "missing" };
+  };
+  for (const [label, box, item] of [["table", tableBox, found.table], ["figure", page.locator(`[data-testid="assign-new-${found.figure.target_id}"]`), found.figure]]) {
+    const { ok, detail } = await readCaptionLine(box, item);
+    check(`the ${label} row shows its caption line above it`, ok, detail);
+  }
+  const figureBox = page.locator(`[data-testid="assign-new-${found.figure.target_id}"]`);
+  await figureBox.scrollIntoViewIfNeeded({ timeout: T });
+  const image = figureBox.locator("img");
+  await image.waitFor({ timeout: T });
+  check("the figure row shows the image", await image.evaluate((el) => el.complete && el.naturalWidth > 0));
+  check("no text placeholder is left for them", (await page.locator('[data-pane="new"] .new-block').count()) === 0);
+  await takeShot("sop-assign-new-table-figure.png");
+});
+
 await runStep("outputs: A, B, C and the Excel preview", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
   await wait(page, "output-c");
   check("C shows the new documents", (await getText(page, "output-c")).includes("SOP-CF"));
+  // 표는 캡션 줄이 표 앞, 그림은 [Figure] 대신 캡션 글(캡션 있는 표·그림이 데모에 있다)
+  const captionBeforeTable = await page.evaluate(() => [...document.querySelectorAll('[data-testid^="output-c-caption-"]')].some((el) => {
+    let next = el.nextElementSibling;
+    while (next?.matches('[data-testid^="output-c-caption-"]')) next = next.nextElementSibling;
+    return next?.classList.contains("ptbl-scroll") ?? false;
+  }));
+  check("C puts a table caption line before its table", captionBeforeTable);
   check("no edition toggle on the outputs screen", (await page.locator('[data-testid^="outputs-lang"]').count()) === 0);
   await takeShot("sop-outputs-c.png");
   await page.locator('[data-testid="outputs-tab-a"]').click();
@@ -2654,14 +2907,15 @@ await runStep("order: drag a block into another section, a sub-slot and an empty
   await installCommitCounter(page);
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
-  // A = 줄이 있는 첫 칸, R = 줄 넷 이상에 둘째 의미 묶음이 있는 칸, B = 줄이 있는 하위 칸(키에 "."), E = B 아래 150px 넘게 떨어진 N/A 아닌 빈 하위 칸
+  // A = 줄이 한 의미 묶음뿐인(첫 줄을 끌면 칸의 줄이 모두 가는) 첫 칸, R = 줄 넷 이상에 둘째 의미 묶음이 있는 칸, B = 줄이 있는 하위 칸(키에 "."), E = B 아래 150px 넘게 떨어진 N/A 아닌 빈 하위 칸.
+  // A가 한 묶음이어야 하는 까닭 - 앞 단계(캡션 없는 표 확정)가 첫 칸 맨 앞에 표를 더하면 그 칸은 표와 한/영 짝 두 덩어리가 된다
   const [hit] = await findOrderDocs(page, () => {
     const sheet = document.querySelector('[data-testid="output-c"] article[data-doc-id]');
     if (!sheet || sheet.querySelector("header .tag")?.textContent !== "SOP") return null;
     const sections = [...sheet.querySelectorAll("section[data-location-key]")];
     const rowsOf = (section) => [...section.querySelectorAll("[data-drag-box]")];
     const numberOf = (section) => section.querySelector("h3 .font-mono")?.textContent.trim() ?? null;
-    const a = sections.find((section) => rowsOf(section).length >= 2);
+    const a = sections.find((section) => rowsOf(section).length >= 2 && !rowsOf(section).some((row, i) => i > 0 && row.hasAttribute("data-meaning-start")));
     const r = sections.find((section) => section !== a && rowsOf(section).length >= 4 && rowsOf(section).some((row, i) => i > 0 && row.hasAttribute("data-meaning-start")));
     const b = sections.find((section) => section.dataset.locationKey.includes(".") && rowsOf(section).length >= 1);
     if (!a || !r || !b || sections.indexOf(a) > sections.indexOf(r) || sections.indexOf(r) > sections.indexOf(b)) return null;
@@ -2905,7 +3159,8 @@ await runStep("order: a drop into another section while a save is in flight is r
     if (!sheet || sheet.querySelector("header .tag")?.textContent !== "SOP") return null;
     const sections = [...sheet.querySelectorAll("section[data-location-key]")];
     const rowsOf = (section) => [...section.querySelectorAll("[data-drag-box]")];
-    const [a, s] = sections.filter((section) => rowsOf(section).length >= 2);
+    // A·S는 줄이 한 의미 묶음뿐인 칸 - 앞 단계가 첫 칸에 표를 더하면 그 칸은 두 덩어리다(위 단계와 같은 까닭)
+    const [a, s] = sections.filter((section) => rowsOf(section).length >= 2 && !rowsOf(section).some((row, i) => i > 0 && row.hasAttribute("data-meaning-start")));
     const r = sections.find((section) => rowsOf(section).length >= 4 && rowsOf(section).some((row, i) => i > 0 && row.hasAttribute("data-meaning-start")));
     if (!a || !s || !r || r === a || r === s) return null;
     return {
@@ -3190,7 +3445,9 @@ await runStep("order: a save landing mid-drag keeps the drop line and the saved 
   const above = await page.evaluate((id) => {
     const home = document.querySelector(`[data-testid="output-c-row-${id}"]`).closest("section");
     const sections = [...home.closest("article").querySelectorAll("section[data-location-key]")];
-    const source = sections.slice(0, sections.indexOf(home)).find((section) => section.querySelector("[data-drag-box]"));
+    // 줄이 한 의미 묶음뿐인 칸 - 앞 단계(캡션 없는 표 확정)가 첫 칸 맨 앞에 표를 더하면 그 칸은 두 덩어리다
+    const isOneBlock = (section) => ![...section.querySelectorAll("[data-drag-box]")].some((row, i) => i > 0 && row.hasAttribute("data-meaning-start"));
+    const source = sections.slice(0, sections.indexOf(home)).find((section) => section.querySelector("[data-drag-box]") && isOneBlock(section));
     return source ? { key: source.dataset.locationKey, ids: [...source.querySelectorAll("[data-drag-box]")].map((row) => row.dataset.flipKey) } : null;
   }, first);
   check("a section with lines sits above it", above !== null);
@@ -3278,11 +3535,12 @@ await runStep("order: mark a line as a note on C, the count continues and the no
     for (const section of document.querySelectorAll('[data-testid="output-c"] section')) {
       const rows = [...section.querySelectorAll('[data-testid^="output-c-row-"]')].map((row) => {
         const id = row.getAttribute("data-testid").replace("output-c-row-", "");
-        return { id, number: row.querySelector(`[data-testid="output-c-number-${id}"]`)?.textContent?.trim() ?? null, markable: !!row.querySelector(`[data-testid="output-c-mark-note-${id}"]`) };
+        // 글 줄만(output-c-item) - 표 줄은 기울임을 표에 싣는다
+        return { id, number: row.querySelector(`[data-testid="output-c-number-${id}"]`)?.textContent?.trim() ?? null, markable: !!row.querySelector(`[data-testid="output-c-mark-note-${id}"]`), isText: !!row.querySelector(`[data-testid="output-c-item-${id}"]`) };
       });
       for (let i = 0; i + 1 < rows.length; i += 1) {
         const [x, y] = [rows[i], rows[i + 1]];
-        if (x.markable && x.number && y.number && x.number.split(".").length === y.number.split(".").length) return { x: x.id, y: y.id, xNumber: x.number, yNumber: y.number };
+        if (x.markable && x.isText && x.number && y.number && x.number.split(".").length === y.number.split(".").length) return { x: x.id, y: y.id, xNumber: x.number, yNumber: y.number };
       }
     }
     return null;
@@ -6673,7 +6931,8 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
   await moveTo(await centreOf(pieceOf(figure.id)));
   const overFigure = await readCard();
   check("over a figure piece nothing is marked and the card says nothing", overFigure.drops === 0 && overFigure.note === "", JSON.stringify(overFigure));
-  await moveTo(await centreOf(page.locator(`[data-testid="assign-paper-unit-${table.id}"]`)));
+  // 표 묶음에는 표 자체의 assign-paper-unit 손잡이가 없다(머리 줄) - 조각 상자 가운데(칸 문장 위)
+  await moveTo(await centreOf(pieceOf(table.id)));
   const overTable = await readCard();
   check("over a table piece nothing is marked and the card says nothing", overTable.drops === 0 && overTable.note === "", JSON.stringify(overTable));
   await page.keyboard.press("Escape");
@@ -6907,6 +7166,44 @@ await runStep("documents: AI reads a free-form list into New rows", { devUser: "
   const left = await (await page.request.get(`${BASE}/api/bundles/${created.id}/tobe/read`, { headers })).json();
   check("the proposal is closed once it is used", left === null && (await page.locator('[data-testid="tobe-proposal"]').count()) === 0);
   await removeBundle();
+});
+
+await runStep("assign: an AI-suggested figure shows its caption and confirms with it", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = (path, body) => (body === undefined ? page.request.get(`${BASE}/api/bundles/${freshBundleId}${path}`, { headers }) : page.request.post(`${BASE}/api/bundles/${freshBundleId}${path}`, { headers, data: body }));
+  const status = await api("/ai/status");
+  if (!status.ok() || !(await status.json()).ai_enabled) {
+    console.log("  (AI is off in this backend - skipped)");
+    return;
+  }
+  // 캡션 단위가 딸린 미확정 그림 - AI 분류가 그림과 그 아래 캡션 새 문장을 함께 제안한다(첫 진입 미리 분류가 이미 했으면 그대로 쓴다)
+  const units = (await (await api("/units?limit=1000")).json()).items;
+  const caption = units.find((unit) => unit.kind === "caption" && units.some((other) => other.unit_id === unit.group_unit_id && other.kind === "figure" && ["unassigned", "ai_suggested"].includes(other.status)));
+  check("the fresh bundle has an open figure with a caption", Boolean(caption));
+  if (!caption) return;
+  const figure = units.find((unit) => unit.unit_id === caption.group_unit_id);
+  if (figure.status === "unassigned") await api("/ai/classify", { unit_ids: [figure.unit_id] });
+  for (let tries = 0; tries < 60; tries += 1) {
+    const jobs = (await (await api("/ai/status")).json()).jobs;
+    if (jobs.queued + jobs.running === 0) break;
+    await page.waitForTimeout(500);
+  }
+  const suggested = (await (await api(`/groups/by-unit/${figure.unit_id}`)).json()).targets.find((target) => target.parent_target_id !== null && target.source_unit_ids.includes(caption.unit_id));
+  check("the AI suggestion carries the caption under the figure", suggested?.status === "ai_suggested", suggested?.status);
+  if (!suggested) return;
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await selectRowById(page, figure.display_id);
+  const line = page.locator(`[data-testid="assign-caption-${caption.lang}"]`);
+  await line.waitFor({ timeout: T });
+  check("the decide box shows the suggested caption", (await line.innerText()).trim() === (suggested.confirmed_text || suggested.ai_text).trim(), await line.innerText());
+  const primary = page.locator('[data-testid="assign-primary"]');
+  check("Confirm is on for a captioned figure", await primary.isEnabled());
+  await takeShot("sop-assign-ai-figure-caption.png");
+  await primary.click();
+  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
+  const saved = (await (await api(`/groups/by-unit/${figure.unit_id}`)).json()).targets.find((target) => target.id === suggested.id);
+  check("the caption is confirmed in place under the figure", saved?.status === "confirmed" && saved.parent_target_id === suggested.parent_target_id, saved?.status);
 });
 
 // 배정 화면 첫 진입(설계 2026-11-15-ai-prepare-queue §5.2·§8) - PREPARE=1일 때만(머리말의 전제). 알림 → 상단 바 목록의 Background 줄 → 끝나면 AI suggested 수

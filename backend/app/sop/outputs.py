@@ -14,6 +14,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from app.routers.admin import KstDatetime
+from app.sop.captions import CAPTION_KIND, get_caption_lang_rank, is_caption_target, join_caption_texts
 from app.sop.constants import COVER_KINDS, NUMBER_NOTE, NUMBERED, SLOT_HEADING, SLOT_KEYS, WI_PARTS
 from app.sop.groups import TABLE_UNIT_KINDS, build_group_ids, collapse_table_members
 from app.sop.output_labels import LABELS, OutputLabels
@@ -64,7 +65,7 @@ class ARow(BaseModel):
 
     row_no: int  # 묶음 번호, 묶음마다 1부터 — 옛 문서 줄 → 고아 번역 → 신규
     is_group_start: bool
-    row_kind: Literal["unit", "table", "cell", "translation", "new"]
+    row_kind: Literal["unit", "table", "caption", "cell", "translation", "new"]  # caption = 표·그림 줄 뒤 캡션 단위 줄
     old_doc_code: str
     old_doc_version: str
     location: LocationOut
@@ -128,7 +129,11 @@ class CItem(BaseModel):
     number_style: str
     cell_row: int | None
     cell_col: int | None
-    children: list["CItem"]  # 표 새 문장의 칸 새 문장(행·열 순)
+    # 표·그림 새 문장의 자식 — 캡션 새 문장(한국어·영어 순)이 먼저, 그다음 칸 새 문장(행·열 순)
+    children: list["CItem"]
+    # 표·그림 새 문장의 캡션 글(_pick_caption_text — 확정 글이 없으면 AI 글), 없거나 표·그림이 아니면 None. 미리 보기 글(끌기 카드)용이고,
+    # 줄마다의 확정·AI 글·상태는 캡션 자식이 싣는다
+    caption: str | None = None
 
 
 class CSection(BaseModel):
@@ -244,6 +249,13 @@ def _order_target_docs(snap: BundleSnapshot) -> list[TargetDocInfo]:
     return ordered + [doc for doc in docs if doc.id not in placed]
 
 
+def _get_child_key(target: TargetInfo) -> tuple[int, int, int, int]:
+    """표·그림 새 문장의 자식 순서 — 캡션(한국어·영어 순)이 칸보다 먼저, 칸은 행·열 순(칸 번역은 같은 자리 id 순)."""
+    if is_caption_target(target):
+        return 0, get_caption_lang_rank(target.lang), 0, target.id
+    return 1, target.cell_row or 0, target.cell_col or 0, target.id
+
+
 def _build_index(snap: BundleSnapshot) -> _Index:
     old_doc_ids = {document.id for document in snap.documents.values() if document.side == "old"}
     old_units = sorted(
@@ -270,7 +282,7 @@ def _build_index(snap: BundleSnapshot) -> _Index:
         if target.translation_source_unit_id is not None:
             translations[target.translation_source_unit_id].append(target)
     for cell_targets in children.values():
-        cell_targets.sort(key=lambda target: (target.cell_row or 0, target.cell_col or 0, target.id))
+        cell_targets.sort(key=_get_child_key)
 
     # 사람이 쓴 다른 언어 문장(translated)은 AI 번역처럼 번역 줄이라 관계 묶음(나눔·합침·중복 배정)에 넣지 않는다(제품 명세 §7.13 줄 규칙 (3)).
     # 칸 제목도 넣지 않는다 — 다른 옛 문서의 같은 제목이 출처로 함께 있어도 합침이 아니다(제품 명세 §7.13 칸 제목, groups._find_neighbors)
@@ -594,17 +606,24 @@ def _format_place(index: _Index, unit: UnitInfo, labels: OutputLabels) -> str:
         pieces.append(
             labels.cell_template.format(table=block.table_index + 1, row=block.row_index + 1, col=block.col_index + 1)
         )
-    if block.kind == "figure":
+    # 캡션은 제 문단 블록(새 추출)에도, 이행한 옛 그림 블록(0020)에도 있다 — 어느 쪽이든 문단으로 적는다
+    if block.kind == "figure" and unit.kind != CAPTION_KIND:
         pieces.append(labels.figure)
     return " · ".join(pieces or [labels.paragraph])
 
 
 def _format_source_text(index: _Index, unit: UnitInfo, labels: OutputLabels) -> str:
-    """원문 칸 — 표·행 단위는 "[표 n, 행×열]"(행 단위는 그 행 하나), 나머지는 단위 글자 그대로."""
+    """원문 칸 — 표·그림 단위는 묶인 원문 캡션 글(표는 뒤에 " [행×열]"), 캡션 없는 표·행 단위는 "[표 n, 행×열]"(행 단위는 그 행 하나).
+
+    나머지는 단위 글자 그대로다. 옛 문서 칸이라 번호도 원문 그대로다.
+    """
+    caption = "\n".join(member.text for member in index.cells.get(unit.id, ()) if member.kind == CAPTION_KIND)
     if unit.kind not in TABLE_UNIT_KINDS:
-        return unit.text
+        return caption or unit.text
     table = index.snap.tables[unit.table_id]
     rows = 1 if unit.kind == "table_row" else table.n_rows
+    if caption:
+        return f"{caption} [{rows}×{table.n_cols}]"
     return labels.table_source_template.format(table=table.table_index + 1, rows=rows, cols=table.n_cols)
 
 
@@ -712,7 +731,7 @@ _NO_LOCATION = LocationOut(section="", place="", page=None, page_basis="")
 
 
 def _build_unit_rows(
-    ctx: _AContext, unit: UnitInfo, row_kind: Literal["unit", "table", "cell"], slot: _GroupSlot
+    ctx: _AContext, unit: UnitInfo, row_kind: Literal["unit", "table", "caption", "cell"], slot: _GroupSlot
 ) -> list[ARow]:
     """옛 단위 하나의 줄 — 보낸 새 문서마다 한 줄(중복 배정), 없으면 삭제·이동·미배정 한 줄."""
     index = ctx.index
@@ -811,17 +830,17 @@ def _build_old_remark(index: _Index, added: Mapping[int, list[TargetInfo]], mean
 
 
 def _build_old_group(ctx: _AContext, meaning: MeaningRow, row_no: int) -> list[ARow]:
-    """옛 문서 의미 묶음 — 구성 단위마다 단위 줄(표·행 단위는 표 줄 뒤에 칸 문장 줄), 각 줄 바로 뒤에 그 단위의 번역 줄."""
+    """옛 문서 의미 묶음 — 구성 단위마다 단위 줄, 표·그림 단위면 그 뒤에 캡션 줄, 표·행 단위면 칸 문장 줄. 각 줄 바로 뒤에 그 단위의 번역 줄."""
     slot = _GroupSlot(row_no, _build_old_remark(ctx.index, ctx.added, meaning))
     rows: list[ARow] = []
     for unit_id in meaning.unit_ids:
         unit = ctx.index.snap.units[unit_id]
-        if unit.kind in TABLE_UNIT_KINDS:
-            rows += _build_unit_rows(ctx, unit, "table", slot) + _build_after_rows(ctx, unit, slot)
-            for cell in ctx.index.cells.get(unit_id, []):
-                rows += _build_unit_rows(ctx, cell, "cell", slot) + _build_after_rows(ctx, cell, slot)
-        else:
-            rows += _build_unit_rows(ctx, unit, "unit", slot) + _build_after_rows(ctx, unit, slot)
+        rows += _build_unit_rows(ctx, unit, "table" if unit.kind in TABLE_UNIT_KINDS else "unit", slot)
+        rows += _build_after_rows(ctx, unit, slot)
+        members = ctx.index.cells.get(unit_id, [])
+        for member in [*(m for m in members if m.kind == CAPTION_KIND), *(m for m in members if m.kind != CAPTION_KIND)]:
+            rows += _build_unit_rows(ctx, member, "caption" if member.kind == CAPTION_KIND else "cell", slot)
+            rows += _build_after_rows(ctx, member, slot)
     return rows
 
 
@@ -1010,16 +1029,29 @@ def _format_meaning_key(ctx: _CContext, target: TargetInfo) -> str | None:
     return None
 
 
+def _pick_caption_text(index: _Index, bundle_target: TargetInfo) -> str | None:
+    """표·그림 새 문장의 캡션 글 — 캡션 새 문장마다 확정 글, 없으면 AI 글. 여러 언어면 한국어·영어 순 줄바꿈 이음, 없으면 None.
+
+    번호는 원문 그대로다(다시 매기기는 Renumbering이 덮는다).
+    """
+    return join_caption_texts(
+        (child.lang, child.confirmed_text or child.ai_text)
+        for child in index.children.get(bundle_target.id, [])
+        if is_caption_target(child)
+    )
+
+
 def _build_item(ctx: _CContext, target: TargetInfo) -> CItem:
+    """C 항목 하나 — 표·그림의 캡션 새 문장은 칸 앞의 자식이다(칸 문장처럼 줄마다 확정 글·AI 글·상태를 싣는다). text는 그 새 문장 자기 글."""
     index = ctx.index
+    caption = _pick_caption_text(index, target) if target.kind in ("table", "figure") else None
     return CItem(
         target_id=target.id, kind=target.kind, lang=target.lang, text=target.confirmed_text, ai_text=target.ai_text,
         change_type=target.change_type, status=target.status, source_note=_format_source_note(index, target, ctx.labels),
         origin=target.origin, meaning_key=_format_meaning_key(ctx, target),
         number=ctx.numbers.get(target.id), indent_level=target.indent_level,
         number_style=_get_number_style(index, target), cell_row=target.cell_row,
-        cell_col=target.cell_col,
-        children=[_build_item(ctx, child) for child in index.children.get(target.id, [])],
+        cell_col=target.cell_col, children=[_build_item(ctx, child) for child in index.children.get(target.id, [])], caption=caption,
     )
 
 
@@ -1101,6 +1133,40 @@ def build_output_c(snap: BundleSnapshot, lang: Lang) -> COutput:
 # --- Assign New 칸의 쓰는 중 문서 ---
 
 
+class BundleCellOut(BaseModel):
+    """표 줄의 칸 새 문장 하나 — 글은 확정 글, 없으면 AI 글(결과물 C 표 칸과 같은 규칙). 칸 번역은 같은 자리에 하나 더 있다."""
+
+    target_id: int
+    row: int
+    col: int
+    lang: str
+    text: str
+    status: str
+
+
+class BundleTableOut(BaseModel):
+    """New 칸이 그리는 표 — 격자 크기와 칸 새 문장(행·열 순)."""
+
+    rows: int
+    cols: int
+    cells: list[BundleCellOut]
+
+
+class BundleFigureOut(BaseModel):
+    """New 칸이 그리는 그림 — 이미지를 받을 문서와 블록(figures/{block_id})."""
+
+    document_id: int
+    block_id: int
+
+
+def build_bundle_table(grid: dict[str, int] | None, cells: list[BundleCellOut]) -> BundleTableOut:
+    """칸 새 문장들을 표 하나로 — 격자는 표 새 문장의 grid와 칸 자리 중 큰 쪽(grid가 낡거나 없어도 칸이 빠지지 않게)."""
+    cells = sorted(cells, key=lambda cell: (cell.row, cell.col, cell.target_id))
+    rows = max([cell.row + 1 for cell in cells] + [grid["rows"] if grid else 0])
+    cols = max([cell.col + 1 for cell in cells] + [grid["cols"] if grid else 0])
+    return BundleTableOut(rows=rows, cols=cols, cells=cells)
+
+
 class ComposedItem(BaseModel):
     target_id: int
     kind: str
@@ -1111,6 +1177,9 @@ class ComposedItem(BaseModel):
     number: str | None  # 그 문장 자기 번호(칸마다 한 줄, 생략·주석은 None)
     # 출처 단위 — 번역은 번역 출처 단위(Old 쪽으로 잇는 선과 칩이 쓴다)
     source_unit_ids: list[int]
+    table: BundleTableOut | None = None  # 표 줄이면 칸 새 문장 격자
+    figure: BundleFigureOut | None = None  # 그림 줄이고 출처 그림에 이미지가 있으면 그 블록
+    caption: str | None = None  # 표·그림 줄의 캡션 글(결과물 C와 같은 _pick_caption_text), 없으면 None — New 칸이 표·그림 위에 보인다
 
 
 class ComposedSection(BaseModel):
@@ -1131,10 +1200,22 @@ class ComposedDoc(BaseModel):
     sections: list[ComposedSection]
 
 
+def _find_figure_block(snap: BundleSnapshot, unit_ids: list[int]) -> BundleFigureOut | None:
+    """그림 새 문장이 보일 이미지 — 출처 단위 중 첫 그림 블록이고 이미지가 있는 것. 없으면 None(화면은 자리 상자)."""
+    for unit_id in unit_ids:
+        unit = snap.units.get(unit_id)
+        if unit is None:
+            continue
+        block = snap.blocks[unit.block_id]
+        if block.kind == "figure" and block.has_image:
+            return BundleFigureOut(document_id=unit.document_id, block_id=block.id)
+    return None
+
+
 def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> ComposedDoc | None:
     """새 문서 하나를 지금까지의 배정으로 — 결과물 C와 같은 칸·순서(_plan_sections)에 두 언어 새 문장을 함께 싣는다.
 
-    Assign 화면의 New 칸이 아직 쓰지 않은 문서를 미리 보이는 데 쓴다. 칸 새 문장(표 칸)은 표 줄에 딸려 따로 싣지 않는다.
+    Assign 화면의 New 칸이 아직 쓰지 않은 문서를 미리 보이는 데 쓴다. 칸 새 문장(표 칸)은 따로 줄로 싣지 않고 표 줄의 table에 격자로 싣는다.
     번호는 결과물 C와 같은 한 줄 세기이고, 칸 제목은 항목이 아니라 C처럼 칸 머리의 출처(heading_note)로 싣는다.
     lang은 라벨 언어만 고른다. 문서가 묶음에 없으면 None.
     """
@@ -1149,11 +1230,26 @@ def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> 
         sources = list(target.source_unit_ids)
         if not sources and target.translation_source_unit_id in snap.units:
             sources = [target.translation_source_unit_id]
-        text = target.confirmed_text or target.ai_text or " ".join(snap.units[uid].text for uid in sources if uid in snap.units)
+        text = target.confirmed_text or target.ai_text or " ".join(
+            snap.units[uid].text for uid in sources if uid in snap.units
+        )
+        table = None
+        if target.kind == "table":
+            cells = [
+                BundleCellOut(
+                    target_id=cell.id, row=cell.cell_row or 0, col=cell.cell_col or 0, lang=cell.lang,
+                    text=cell.confirmed_text or cell.ai_text, status=cell.status,
+                )
+                for cell in index.children.get(target.id, [])
+                if not is_caption_target(cell)  # 캡션은 칸이 아니다 — 격자 (0, 0)에 겹쳐 그리지 않는다
+            ]
+            table = build_bundle_table(target.grid, cells)
+        figure = _find_figure_block(snap, [target.new_unit_id] if target.new_unit_id else sources) if target.kind == "figure" else None
         return ComposedItem(
             target_id=target.id, kind=target.kind, lang=target.lang, text=text, status=target.status,
             change_type=target.change_type, number=numbers.get(target.id),
-            source_unit_ids=sources,
+            source_unit_ids=sources, table=table, figure=figure,
+            caption=_pick_caption_text(index, target) if target.kind in ("table", "figure") else None,
         )
 
     sections = [

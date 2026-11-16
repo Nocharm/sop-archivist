@@ -26,7 +26,7 @@ EXPECTED_BUNDLES = [
     ("SYNTHETIC 3 검토 대기", "in_review"),
     (AI_STAGE_TITLE, "in_progress"),
 ]
-DOCUMENTS_PER_BUNDLE = 8  # 옛 문서 6개 + 입구 2 새 문서 2개
+DOCUMENTS_PER_BUNDLE = 9  # 옛 문서 7개 + 입구 2 새 문서 2개
 
 
 class SeedRuns(NamedTuple):
@@ -119,6 +119,25 @@ def test_seed_creates_bundles_at_stages(seed_runs: SeedRuns) -> None:
 
     assert _query_bundles(database_path) == bundles
     assert second.stdout.count("skipped") == len(EXPECTED_BUNDLES)
+
+
+def test_half_stage_leaves_a_captionless_table_unassigned(seed_runs: SeedRuns) -> None:
+    """분류 절반 묶음에는 캡션 없는 OLD-7 표가 미배정으로 남는다 — 캡션 필수 확정을 화면 스모크가 시험한다."""
+    database_path, _, _, bundles = seed_runs
+    (bundle_id,) = [bundle_id for bundle_id, title, _ in bundles if title == "SYNTHETIC 2 분류 절반"]
+
+    rows = _query(database_path, f"""
+        SELECT ud.disposition, ud.status FROM units u
+        JOIN extractions e ON e.id = u.extraction_id
+        JOIN documents d ON d.id = e.document_id
+        JOIN unit_decisions ud ON ud.unit_id = u.id
+        WHERE d.bundle_id = {bundle_id} AND d.file_name LIKE '%OLD-7%' AND u.kind = 'table' AND u.status = 'active'
+          AND NOT EXISTS (
+            SELECT 1 FROM units c WHERE c.group_unit_id = u.id AND c.kind = 'caption' AND c.status = 'active'
+          )
+    """)
+
+    assert rows == [("unassigned", "unassigned")]
 
 
 def test_seed_creates_the_ai_stage(seed_runs: SeedRuns) -> None:

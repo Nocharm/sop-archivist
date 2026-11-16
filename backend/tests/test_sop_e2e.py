@@ -129,7 +129,7 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
     run.start()
 
     assert {code: uploaded["status"] for code, uploaded in run.uploads.items()} == dict.fromkeys(
-        ("OLD-1", "OLD-2", "OLD-3", "OLD-4", "OLD-5", "WI-04", "OLD-6", "WI-05"), "ready"
+        ("OLD-1", "OLD-2", "OLD-3", "OLD-4", "OLD-5", "WI-04", "OLD-6", "WI-05", "OLD-7"), "ready"
     )
     warnings = [warning["kind"] for uploaded in run.uploads.values() for warning in uploaded["extraction"]["warnings"]]
     assert not set(warnings) & set(MISSING_TEXT_WARNINGS)
@@ -145,7 +145,13 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
     addressed += [
         find_unit_by_text(run.views[answer["doc"]], spec["source_text"], 1, ("cell_sentence",))["id"]
         for answer in expected["answers"] if answer.get("kind") == "table"
-        for spec in answer["targets"] if "parent_key" in spec
+        for spec in answer["targets"] if "cell_row" in spec  # 캡션 새 문장(칸 좌표 없음)은 아래 캡션 단위가 맡는다
+    ]
+    # 표·그림에 묶인 캡션은 답이 없고 묶음 답의 처분을 따른다
+    bundle_ids = {run.find_answer_unit(answer)["id"] for answer in expected["answers"] if answer.get("kind")}
+    addressed += [
+        unit["id"] for view in run.views.values() for unit in view["units"]
+        if unit["kind"] == "caption" and unit["group_unit_id"] in bundle_ids
     ]
     old_cover = {
         unit["id"]: (code, unit["text"]) for code, view in run.views.items() if view["document"]["side"] == "old"

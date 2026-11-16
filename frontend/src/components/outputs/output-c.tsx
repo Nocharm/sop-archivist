@@ -31,6 +31,7 @@ import {
   type RowBox,
 } from "@/lib/c-drop-model";
 import { previewEdit, type PlaceEdit } from "@/lib/c-edit-model";
+import { splitCTable } from "@/lib/composed-model";
 import { useI18n } from "@/lib/i18n";
 import { buildCLines, listMeaningStarts, type CLine } from "@/lib/output-groups";
 import { shouldRecenter } from "@/lib/paper-model";
@@ -63,27 +64,60 @@ const MARK_KEYS: Record<NumberStyle, { label: string; tip: string }> = {
   note: { label: "outputs.markNote", tip: "outputs.markNoteTip" },
 };
 
+/** 표·그림의 캡션 줄 - 확정 글이 없으면 AI 글, 확정 전이면 점선(문장과 같은 규칙). 줄마다 자기 상태를 따른다 */
+function CaptionLines({ captions, isNote }: { captions: readonly OutputCItem[]; isNote: boolean }) {
+  return captions.map((caption) => (
+    <p
+      key={caption.target_id}
+      className={`${caption.status === "confirmed" ? "" : "rounded-sm border border-dashed border-line-2 px-1"} ${isNote ? "italic" : ""}`}
+      lang={readLangAttr(caption.lang)}
+      data-testid={`output-c-caption-${caption.target_id}`}
+    >
+      {caption.text || caption.ai_text}
+    </p>
+  ));
+}
+
 function CItemView({ item }: { item: OutputCItem }) {
   // 주석 줄은 번호 없이 기울여 보인다 - 표 칸은 표의 표시를 싣는다
   const isNote = item.number_style === "note";
   if (item.kind === "table") {
-    const rows = new Map<number, OutputCItem[]>();
-    for (const cell of item.children) rows.set(cell.cell_row ?? 0, [...(rows.get(cell.cell_row ?? 0) ?? []), cell]);
+    const { captions, grid } = splitCTable(item.children);
     return (
-      <table className={`ptbl my-1 ${isNote ? "italic" : ""}`}>
-        <tbody>
-          {[...rows.entries()].sort((a, b) => a[0] - b[0]).map(([index, cells]) => (
-            <tr key={index}>
-              {cells.sort((a, b) => (a.cell_col ?? 0) - (b.cell_col ?? 0)).map((cell) => (
-                // 확정 글이 없으면 AI 글 - 문장과 같은 규칙, 확정 전 칸은 점선
-                <td key={cell.target_id} className={cell.status === "confirmed" ? undefined : "border-dashed"} lang={readLangAttr(cell.lang)}>
-                  {cell.text || cell.ai_text}
-                </td>
+      <>
+        {/* 캡션 줄은 표 앞 */}
+        <CaptionLines captions={captions} isNote={isNote} />
+        {/* 넓은 표는 좌우로 스크롤한다 - 표 안을 눌러도 줄이 끌리고, 스크롤 막대 누름만 끌기에서 빠진다(lib/box-drag.ts isOnHorizontalScrollbar) */}
+        <div className="ptbl-scroll my-1">
+          <table className={`ptbl ${isNote ? "italic" : ""}`}>
+            <tbody>
+              {grid.map((cols, row) => (
+                <tr key={row}>
+                  {cols.map((cells, col) => (
+                    // 칸 번역은 같은 자리에 줄로 쌓는다 - 칸을 하나 더 두면 뒤 열이 밀린다. 확정 전 칸이 든 자리는 점선
+                    <td key={col} className={cells.every((cell) => cell.item.status === "confirmed") ? undefined : "border-dashed"}>
+                      {cells.map(({ item: cell }) => (
+                        <div key={cell.target_id} lang={readLangAttr(cell.lang)}>
+                          {cell.text || cell.ai_text}
+                        </div>
+                      ))}
+                    </td>
+                  ))}
+                </tr>
               ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+            </tbody>
+          </table>
+        </div>
+      </>
+    );
+  }
+  // 그림은 [Figure] 대신 캡션 자식의 줄들 - 캡션이 없으면 그림 자기 글, 그것도 없으면 표시만
+  const captions = item.kind === "figure" ? splitCTable(item.children).captions : [];
+  if (captions.length > 0) {
+    return (
+      <div data-testid={`output-c-item-${item.target_id}`} data-number-style={item.number_style}>
+        <CaptionLines captions={captions} isNote={isNote} />
+      </div>
     );
   }
   return (
@@ -93,7 +127,7 @@ function CItemView({ item }: { item: OutputCItem }) {
       data-testid={`output-c-item-${item.target_id}`}
       data-number-style={item.number_style}
     >
-      {item.kind === "figure" ? "[Figure]" : item.text || item.ai_text}
+      {item.kind === "figure" ? item.text || "[Figure]" : item.text || item.ai_text}
     </p>
   );
 }
@@ -334,10 +368,10 @@ function readLiveDrag(data: OutputC, source: DragSource): LiveDrag | null {
   return block && { doc, section, depths, block };
 }
 
-/** 표의 글 한 줄 - 그림은 표시, 표는 칸 글을 잇는다 */
+/** 표의 글 한 줄 - 표·그림은 캡션 글, 캡션 없는 그림은 표시, 캡션 없는 표는 칸 글을 잇는다 */
 function readCardText(item: OutputCItem): string {
-  if (item.kind === "figure") return "[Figure]";
-  return item.text || item.ai_text || item.children.map((cell) => cell.text || cell.ai_text).join(" ");
+  if (item.kind === "figure") return item.caption || item.text || "[Figure]";
+  return item.text || item.ai_text || item.caption || item.children.map((cell) => cell.text || cell.ai_text).join(" ");
 }
 
 /** 칸 하나의 모양 - N/A 여부와 줄 id·깊이·번호 표시. N/A가 되면 그 칸에는 놓을 수 없으므로 모양이 바뀐 것으로 친다 */

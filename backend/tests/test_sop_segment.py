@@ -168,6 +168,36 @@ def test_build_drafts_cell_figures_merged_cells_and_layout_tables() -> None:
     assert CLAUSE_NUMBER_FLAG == docx_reader.FLAG_CLAUSE_NUMBER  # 추출기가 붙이는 표시와 같은 값을 본다
 
 
+
+def test_caption_block_becomes_a_caption_draft_bound_to_its_table() -> None:
+    drafts = build_unit_drafts(
+        [_para(1, 0, "표 3. 운전 조건", flags=("caption_of:1",)), _cell(2, 1, "a", 9, 0)], [TableView(9, False)], "ko_only"
+    )
+    caption = next(d for d in drafts if d.kind == "caption")
+    assert drafts[caption.group_index].kind == "table"
+    assert caption.spans == [(1, 0, len("표 3. 운전 조건"))]
+
+
+def test_caption_of_a_layout_table_is_a_sentence() -> None:
+    drafts = build_unit_drafts(
+        [_para(1, 0, "표 7. 양식", flags=("caption_of:1",)), _cell(2, 1, "a", 9, 0)], [TableView(9, True)], "ko_only"
+    )
+    assert [d.kind for d in drafts][:1] == ["sentence"]
+
+
+def test_caption_after_a_figure_is_one_unit_bound_to_the_figure() -> None:
+    # 문장 쪼개기를 하지 않는다 — "그림 5. 로터 (Figure 5. Rotor)"는 마침표가 있어도 단위 하나다
+    text = " 그림 5. 로터 장착 (Figure 5. Rotor mounting) "
+    blocks = [BlockView(1, 0, "figure", "body", "", None, (), None, None), _para(2, 1, text, flags=("caption_of:0",))]
+
+    drafts = build_unit_drafts(blocks, [], "ko_en_interleaved")
+
+    assert [(d.kind, d.spans, d.lang, d.group_index) for d in drafts] == [
+        ("figure", [], "neutral", None),
+        ("caption", [(2, 1, len(text) - 1)], "ko", 0),
+    ]
+
+
 def test_drafts_fill_unknown_language_from_neighbors() -> None:
     blocks = [_para(1, 0, "12.5 %"), _para(2, 1, "Synthetic step."), _para(3, 2, "3.5"), _para(4, 3, "합성 단계.")]
 

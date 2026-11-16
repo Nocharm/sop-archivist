@@ -12,6 +12,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from app.equis.view import EquisOut
+from app.sop.captions import join_caption_texts
 from app.sop.constants import NUMBER_NOTE
 from app.sop.excel_export import ExportMeta, build_export_file_name, clean_cell_text, format_kst, split_cell_text
 from app.sop.flow_image import draw_flow_png
@@ -80,7 +81,8 @@ INFO_NAMES = (
     "Synthetic data",
 )
 _LABELS = LABELS["en"]
-_MARKERS = {"table": "[Table]", "figure": "[Figure]"}
+_MARKERS = {"table": "[Table]", "figure": "[Figure]"}  # 확정한 캡션 글이 없는 표·그림 줄에만
+_CAPTION_POSITION = "Caption"  # 캡션 줄의 Cell position 칸 — 칸 줄의 "R 1 C 1" 자리
 _NO_WRAP_KINDS = ("status", "plain")  # 상태 줄·제목·이름 칸은 옆 칸으로 넘쳐 보이게 접지 않는다
 
 
@@ -313,9 +315,16 @@ def _make_c_texts(values: Mapping[int, str]) -> list[str]:
 
 
 def _list_c_item_lines(item: CItem, depth: int) -> Iterator[tuple[list[str], tuple[int, ...]]]:
-    """새 문장 한 줄과, 표 새 문장이면 그 칸 새 문장들(한 단계 더 들여쓴 열) — (칸 글, 기울일 열(1부터)). 주석 줄은 항목·AI 글을 기울인다."""
+    """새 문장 한 줄과, 표·그림 새 문장이면 그 자식들(한 단계 더 들여쓴 열) — (칸 글, 기울일 열(1부터)). 주석 줄은 항목·AI 글을 기울인다.
+
+    표·그림 줄의 항목 칸은 [Table]·[Figure] 대신 확정한 캡션 글(AI 글은 쓰지 않는다 — 캡션 줄의 AI 칸에 있다)이다. 자식은 캡션 줄이
+    칸 줄 앞에 오고(서버 순서), 칸 줄처럼 자기 확정 글·AI 글·변경 종류·상태·출처를 싣는다.
+    """
+    confirmed_caption = join_caption_texts(
+        (child.lang, child.text) for child in item.children if child.cell_row is None or child.cell_col is None
+    )
     values = {
-        C_ITEM + depth: item.text or _MARKERS.get(item.kind, ""),
+        C_ITEM + depth: item.text or confirmed_caption or _MARKERS.get(item.kind, ""),
         C_AI: item.ai_text,
         C_CHANGE: _LABELS.change_types.get(item.change_type or "", ""),
         C_STATUS: _LABELS.statuses.get(item.status, item.status),
@@ -325,6 +334,8 @@ def _list_c_item_lines(item: CItem, depth: int) -> Iterator[tuple[list[str], tup
         values[C_NUMBER] = item.number
     if item.cell_row is not None and item.cell_col is not None:
         values[C_POSITION] = f"R {item.cell_row + 1} C {item.cell_col + 1}"
+    elif depth > 0:  # 표·그림 아래 칸 좌표 없는 자식 = 캡션 줄
+        values[C_POSITION] = _CAPTION_POSITION
     italic = (C_ITEM + depth + 1, C_AI + 1) if item.number_style == NUMBER_NOTE else ()
     yield _make_c_texts(values), italic
     for child in item.children:

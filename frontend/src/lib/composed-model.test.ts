@@ -1,16 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import type { ComposedDoc, ComposedItem, ComposedSection, GroupTarget, WrittenSentence } from "@/lib/api-sop";
+import type { BundleCell, BundleTable, ComposedDoc, ComposedItem, ComposedSection, GroupTarget, OutputCItem, WrittenSentence } from "@/lib/api-sop";
 import {
   applySavedTargets,
   buildComposedRows,
   diffRows,
   getComposedLeadWidths,
   getNewRowKey,
+  groupTableCells,
   isComposedRow,
   listHeadingNotes,
   readSectionNumber,
   removeClearedUnits,
+  splitCTable,
 } from "@/lib/composed-model";
 import { getPillWidth } from "@/lib/strip-pill-model";
 
@@ -37,6 +39,10 @@ function makeItem(targetId: number, number: string | null, kind: ComposedItem["k
   return { target_id: targetId, kind, lang: "en", text: `t${targetId}`, status: "confirmed", change_type: "as_is", number, source_unit_ids: [targetId] };
 }
 
+function makeCell(targetId: number, row: number, col: number, text: string, lang: BundleCell["lang"] = "ko"): BundleCell {
+  return { target_id: targetId, row, col, lang, text, status: "confirmed" };
+}
+
 function makeSlot(locationKey: string, number: string | null, label: string, items: ComposedItem[]): ComposedSection {
   return { location_key: locationKey, label, number, na_reason: null, heading_note: "", items };
 }
@@ -49,6 +55,37 @@ function makeTarget(fields: Partial<GroupTarget>): GroupTarget {
     revision: 1, indent_level: 0, ...fields,
   };
 }
+
+describe("groupTableCells", () => {
+  it("stacks a translated cell in the same position instead of shifting the columns", () => {
+    const table: BundleTable = { rows: 2, cols: 2, cells: [makeCell(1, 0, 0, "항목"), makeCell(5, 0, 0, "Item", "en"), makeCell(2, 0, 1, "값"), makeCell(4, 1, 1, "x")] };
+
+    const grid = groupTableCells(table);
+
+    expect(grid.map((cols) => cols.map((cells) => cells.map((cell) => cell.target_id)))).toEqual([
+      [[1, 5], [2]],
+      // 빈 자리는 빈 칸으로 남아 열이 맞는다
+      [[], [4]],
+    ]);
+  });
+});
+
+describe("splitCTable", () => {
+  it("takes caption children out of the grid and stacks a translated cell in its own position", () => {
+    const item = (target_id: number, cell_row: number | null, cell_col: number | null): OutputCItem => ({
+      target_id, kind: "sentence", lang: "ko", text: String(target_id), ai_text: "", change_type: null, status: "confirmed", source_note: "",
+      origin: "units", meaning_key: null, number: null, indent_level: 0, number_style: "numbered", cell_row, cell_col, children: [],
+    });
+
+    const { captions, grid } = splitCTable([item(1, null, null), item(2, 0, 0), item(3, 0, 0), item(4, 1, 1)]);
+
+    expect(captions.map((caption) => caption.target_id)).toEqual([1]);
+    expect(grid.map((cols) => cols.map((cells) => cells.map((cell) => cell.item.target_id)))).toEqual([
+      [[2, 3], []],
+      [[], [4]],
+    ]);
+  });
+});
 
 describe("buildComposedRows", () => {
   it("lists sentences in section order and one placeholder per empty section", () => {
@@ -71,6 +108,21 @@ describe("buildComposedRows", () => {
       ["5.1. Procedure", "5.1.1.1"],
       ["5.1. Procedure", "5.1.2"],
     ]);
+  });
+
+  it("carries a table's cells and a figure's image block onto the row", () => {
+    const table: BundleTable = { rows: 1, cols: 2, cells: [makeCell(11, 0, 0, "a"), makeCell(12, 0, 1, "b")] };
+    const figure = { document_id: 3, block_id: 30 };
+    const doc = makeDoc([
+      makeSlot("5.1", "5.1", "Procedure", [{ ...makeItem(1, "5.1.1", "table"), table }, { ...makeItem(2, "5.1.2", "figure"), figure, caption: "그림 2. 로터" }, makeItem(3, "5.1.3")]),
+    ]);
+
+    const rows = buildComposedRows(doc);
+
+    // 캡션 글도 줄에 싣는다 - 없으면 null(New 칸이 쓰지 않은 문서에서 "Caption needed"를 보인다)
+    expect(rows[0]).toMatchObject({ kind: "table", table, figure: null, caption: null });
+    expect(rows[1]).toMatchObject({ kind: "figure", table: null, figure, caption: "그림 2. 로터" });
+    expect(rows[2]).toMatchObject({ table: null, figure: null });
   });
 
   it("tells composed rows from already-written sentences", () => {

@@ -16,9 +16,10 @@ expected.json 형식:
 - `tobe_na_slots`: [{code, slot_key, reason}] — Excel 템플릿에 N/A 칸이 없어 To-Be 가져오기 뒤 PUT /tobe로 싣는다(선택 키).
 - `edits`: 쪼개기 편집. split은 {doc, op, unit_text, at_text}(at = unit_text 안 at_text 위치),
   set_layout_table은 {doc, op, table_index, is_layout}(table_index는 문서 안 표 번호, 0부터).
-- `answers`: 옛 문서의 판단 단위마다 하나(표 단위 포함, 묶인 칸 문장은 표 답의 칸 targets가 맡는다).
+- `answers`: 옛 문서의 판단 단위마다 하나(표 단위 포함, 묶인 칸 문장은 표 답의 칸 targets가 맡는다). 표·그림에 묶인 캡션
+  단위는 답이 없다 — 묶음의 처분을 따른다.
   - 단위는 (doc 문서 번호, text 정확한 글자, occurrence 같은 글자 중 몇 번째, 1부터)로 가리킨다. `kind`("table"·"figure")가
-    있으면 그 종류 단위 중에서, 없으면 글 단위(문장·제목·칸 문장) 중에서 찾는다. 표 단위의 text는 ""다.
+    있으면 그 종류 단위 중에서, 없으면 글 단위(문장·제목·칸 문장) 중에서 찾는다. 표·그림 단위의 text는 ""다(캡션은 따로 단위).
   - `group`이 같은 답은 한 번에 저장한다(관계 묶음 저장 한 번). `disposition`은 assigned·delete·move_external, `reason`은 사유.
   - 선택 키: `lang`(생성기가 쓴 언어 ko·en·neutral — 서버의 언어 판정과 같아야 한다), `move_target_code`(외부 이동 문서 번호),
     `bulk`(true면 그 묶음은 일괄 처분 POST /decisions/bulk로 저장 — 구조 제목·머리말), `identical`(true면 입구 2 같은 글자
@@ -27,7 +28,9 @@ expected.json 형식:
     위치는 `slot_key`(SOP) 또는 `wi_step`+`wi_part`(WI) 또는 `section_path`(입구 2 — 새 문서의 기존 새 문장을 text로 찾는다).
     `kind`(sentence·table·figure), `lang`, `text`(확정 글자, 표·그림은 없음), `change_type`(결과물의 변경 종류 — 나눔·합침은 구조로
     정해지므로 요청에는 싣지 않는다), 표는 `grid`. 칸 새 문장은 `parent_key`·`cell_row`·`cell_col`·`source_text`(출처 칸 문장 글자,
-    표 답과 같은 문서)를 갖는다.
+    표 답과 같은 문서)를 갖는다. 캡션 새 문장은 `parent_key`가 있고 `cell_row`가 없으며 `source_text`(출처 캡션 단위 글자, 없으면
+    출처 없는 캡션 — 써 넣은 캡션, 변경 종류 new)를 갖는다. 배정한 표·그림은 캡션이 있어야 확정되므로 표·그림 답마다 캡션 새 문장이 있다.
+  - `demo_unassigned`(true면 데모 시드의 "분류 절반" 묶음에서 저장하지 않고 미배정으로 둔다 — 캡션 없는 표가 화면 스모크에 남게).
 - `match`: 입구 2. `identical_count`(같은 글자 후보 수), `new_texts`([{doc, text, lang, section_path}] — 짝 없는 새 문장, 신규).
 - `omitted`: {doc, text, occurrence} — 일부러 남기는 누락. answers에도 들어 있고(혼자인 group) 검토 요청 거절을 본 뒤 저장한다.
 
@@ -80,6 +83,7 @@ HISTORY_REASON = "합성: 장비 도입 이력은 절차 내용이 아니다."
 PURCHASE_REASON = "합성: 구매 이력은 절차 내용이 아니어서 WI-04에 옮기지 않았다."
 MOVE_REASON = "합성: 교정 절차는 장비 교정 SOP가 관리한다."
 SHAPE_REASON = "합성: 글 상자의 도형 틀은 그림이 아니다(상자 글은 따로 옮겼다)."
+MISSING_TABLE_REASON = "합성: 가리키는 표 9가 문서에 없다."
 NA_REASON = "합성: QC 원심분리기는 별도 문제 해결 절차 없이 제조사 지원으로 처리한다."
 
 TOBE_DOCS = (
@@ -165,6 +169,14 @@ def _match(section_path: str, text: str, change_type: str, *, code: str = MATCH_
 def _target(code: str, location: dict, text: str, change_type: str, lang: str, *, key: str | None = None) -> dict:
     target = {"code": code, **location, "kind": "sentence", "lang": lang, "text": text, "change_type": change_type}
     return target if key is None else {"key": key, **target}
+
+
+def _caption_target(location: dict, parent_key: str, text: str, lang: str, *, source: bool) -> dict:
+    """표·그림 새 문장(parent_key) 아래 캡션 새 문장 — source면 같은 글자의 캡션 단위를 그대로, 아니면 출처 없이 써 넣는다."""
+    target = {**location, "parent_key": parent_key, "kind": "sentence", "lang": lang, "text": text}
+    if source:
+        return {**target, "change_type": "as_is", "source_text": text}
+    return {**target, "change_type": "new"}
 
 
 class _AnswerSheet:
@@ -400,12 +412,12 @@ def _build_old_1(sheet: _AnswerSheet) -> tuple[bytes, list[dict]]:
         ),
     )
     document.add_picture(BytesIO(_draw_figure()), width=Inches(1.6))
-    figure_target = {
-        "code": "WI-01", "wi_step": 3, "wi_part": "instruction", "kind": "figure", "lang": "neutral",
-        "change_type": "as_is",
-    }
-    caption = add(doc, "그림 1. 로터 장착 위치 (Figure 1. Rotor mounting position)", "neutral", figure_target, kind="figure")
-    document.add_paragraph(caption, style="Caption")
+    figure_location = {"code": "WI-01", "wi_step": 3, "wi_part": "instruction"}
+    figure_target = {"key": "t-figure-1", **figure_location, "kind": "figure", "lang": "neutral", "change_type": "as_is"}
+    figure_caption = "그림 1. 로터 장착 위치 (Figure 1. Rotor mounting position)"
+    # 그림 단위는 글이 없고 캡션 문단은 그림에 묶인 캡션 단위라 답이 없다(그림 답의 처분을 따르고, 그림 답의 캡션 새 문장이 잇는다)
+    add(doc, "", "neutral", figure_target, _caption_target(figure_location, "t-figure-1", figure_caption, "ko", source=True), kind="figure")
+    document.add_paragraph(figure_caption, style="Caption")
     table_ko, table_en = "운전 조건은 아래 표를 따른다.", "Run conditions are given in the table below."
     _add_paragraphs(
         document,
@@ -426,7 +438,9 @@ def _build_old_1(sheet: _AnswerSheet) -> tuple[bytes, list[dict]]:
         "key": "t-table-1", **location, "kind": "table", "lang": "neutral", "change_type": "as_is",
         "grid": {"rows": len(rows), "cols": len(rows[0])},
     }
-    add(doc, "", "neutral", table_target, *cells, kind="table")
+    # 원문에 캡션이 없는 표 — 확정하려면 캡션을 써 넣는다
+    written = _caption_target(location, "t-table-1", "표 1. 운전 조건 (Table 1. Run conditions)", "ko", source=False)
+    add(doc, "", "neutral", table_target, *cells, written, kind="table")
     _add_table(document, rows)
     _add_paragraphs(
         document,
@@ -614,6 +628,93 @@ def _build_old_6(sheet: _AnswerSheet) -> bytes:
     return _save_docx(document)
 
 
+def _build_old_7(sheet: _AnswerSheet) -> tuple[bytes, list[dict]]:
+    """OLD-7 표·그림 캡션 — 원문 번호가 1이 아닌 캡션, 표 앞·뒤 캡션, 스타일 없는 캡션, 캡션 없는 표, 없는 번호를 가리키는 참조, 템플릿 표.
+
+    모두 SOP 절차(procedures.procedure)로 그대로 옮긴다. 캡션 문단은 표·그림에 묶인 캡션 단위라 답이 없고(묶음의 처분을 따른다),
+    템플릿 표의 캡션은 레이아웃 편집 뒤 캡션 범위 그대로 문장 하나가 된다.
+    """
+    doc, add = "OLD-7", sheet.add
+    document = _new_docx(doc, "Tables Figures Captions")
+    location = {"code": SOP_CODE, "slot_key": "procedures.procedure"}
+    table_keys, figure_keys = itertools.count(1), itertools.count(1)
+
+    def add_sentence(text: str, lang: str) -> str:
+        return add(doc, text, lang, _sop("procedures.procedure", text, "as_is", lang))
+
+    def add_data_table(rows: list[list[str]], caption: str, caption_lang: str, *, written: bool = False) -> None:
+        """표 하나와 그 칸·캡션 답 — 칸 글자는 표 단위가 먹는다(OLD-1 표와 같은 꼴). 드라이버가 칸 출처를 글자로 찾으니 칸 글자는 문서 안에서 겹치지 않게 한다.
+
+        written이면 원문에 캡션이 없는 표라 캡션을 써 넣고, 데모 시드의 "분류 절반" 묶음에서는 미배정으로 둔다(캡션 필수 스모크용).
+        """
+        key = f"t-old7-table-{next(table_keys)}"
+        cells = [
+            {
+                **location, "parent_key": key, "kind": "sentence", "lang": "en", "text": text,
+                "change_type": "as_is", "source_text": text, "cell_row": row, "cell_col": col,
+            }
+            for row, texts in enumerate(rows)
+            for col, text in enumerate(texts)
+        ]
+        table_target = {
+            "key": key, **location, "kind": "table", "lang": "neutral", "change_type": "as_is",
+            "grid": {"rows": len(rows), "cols": len(rows[0])},
+        }
+        caption_target = _caption_target(location, key, caption, caption_lang, source=not written)
+        extra = {"demo_unassigned": True} if written else {}
+        add(doc, "", "neutral", table_target, *cells, caption_target, kind="table", **extra)
+        _add_table(document, rows)
+
+    def add_figure(caption: str, caption_lang: str) -> None:
+        key = f"t-old7-figure-{next(figure_keys)}"
+        figure_target = {"key": key, **location, "kind": "figure", "lang": "neutral", "change_type": "as_is"}
+        caption_target = _caption_target(location, key, caption, caption_lang, source=True)
+        add(doc, "", "neutral", figure_target, caption_target, kind="figure")
+
+    document.add_paragraph(add_sentence("1. 표와 그림 Tables and figures", "ko"), style="Heading 1")
+    # 앞 캡션(Caption 스타일) + 표, 원문 번호가 3
+    first_caption = "표 3. 운전 조건 (Table 3. Operating conditions)"
+    document.add_paragraph(first_caption, style="Caption")
+    add_data_table([["Program", "Speed", "Time"], ["P1", "3,000 rpm", "5 min"], ["P2", "14,000 rpm", "10 min"]], first_caption, "ko")
+    # 표 + 뒤 캡션, 스타일 없는 글 꼴
+    add_data_table([["Rotor", "Limit"], ["F-45-30-11", "14,500 rpm"]], "Table 4: Rotor limits", "en")
+    document.add_paragraph("Table 4: Rotor limits")
+    # 캡션 없는 표 — 정답은 캡션을 써 넣어 확정하고, 데모 시드의 분류 절반 묶음에서는 배정하지 않고 둔다(캡션 필수 규칙 화면 시험용)
+    document.add_paragraph(add_sentence("회전 속도는 아래 표를 따른다.", "ko"))
+    add_data_table(
+        [["Type", "Run speed", "Run time"], ["S-20", "12,000 rpm", "15 min"]], "표 5. 회전 속도 (Table 5. Run speed)", "ko",
+        written=True,
+    )
+    # 그림 + 뒤 캡션(스타일 없음), 그림 + 앞 캡션(띄어쓰기 없는 변형)
+    document.add_picture(BytesIO(_draw_figure()), width=Inches(1.6))
+    add_figure("그림 5. 로터 장착 (Figure 5. Rotor mounting)", "ko")
+    document.add_paragraph("그림 5. 로터 장착 (Figure 5. Rotor mounting)")
+    document.add_paragraph("Fig.6 Lid lock")
+    add_figure("Fig.6 Lid lock", "en")
+    document.add_picture(BytesIO(_draw_figure()), width=Inches(1.6))
+    # 참조 문장 — 마지막은 문서에 없는 표 9를 가리켜 지운다
+    for text, lang in (
+        ("운전 조건은 표 3을 따른다.", "ko"),
+        ("See Figure 5 for the mounting position.", "en"),
+        ("Table 4 lists the rotor limits.", "en"),
+    ):
+        document.add_paragraph(add_sentence(text, lang))
+    document.add_paragraph(sheet.delete(doc, "표 9 참조.", "ko", MISSING_TABLE_REASON))
+    # 템플릿 표 — 칸마다 문장 두 개, 편집으로 레이아웃 표(보통 표로 만들고 편집으로 바꾼다)
+    document.add_paragraph(add_sentence("표 7. 기록 양식", "ko"))
+    form_rows = [
+        ["작업자는 날짜를 적는다. 작업자는 서명한다.", "검토자는 결과를 확인한다. 검토자는 서명한다."],
+        ["장비 번호를 적는다. 로터 종류를 적는다.", "특이 사항을 적는다. 없으면 없음이라고 적는다."],
+    ]
+    for row in form_rows:
+        for cell_text in row:
+            for sentence in cell_text.split(". "):
+                add_sentence(sentence if sentence.endswith(".") else sentence + ".", "ko")
+    _add_table(document, form_rows)
+    edits = [{"doc": doc, "op": "set_layout_table", "table_index": 3, "is_layout": True}]
+    return _save_docx(document), edits
+
+
 def _build_wi_05() -> bytes:
     """WI-05 Hanil 세척 — 입구 2 새 문서(한/영 연달아). 한/영 절 제목 한 쌍 아래 한/영 짝 문장 두 쌍."""
     document = _new_docx(PAIR_MATCH_CODE, "Hanil Centrifuge Cleaning")
@@ -666,6 +767,7 @@ def build_synthetic_bundle(out_dir: Path) -> SyntheticBundle:
     old_4, layout_edits = _build_old_4(sheet)
     old_5 = _build_old_5(sheet)
     old_6 = _build_old_6(sheet)
+    old_7, caption_edits = _build_old_7(sheet)
     wi_04, new_texts = _build_wi_04()
     files = (
         # (파일 이름, 바이트, 쪽, 언어 배치, 새 문서 종류, 부모 번호)
@@ -678,6 +780,7 @@ def build_synthetic_bundle(out_dir: Path) -> SyntheticBundle:
         # 기존 문서 뒤에 둔다 — 앞 문서의 업로드 순서·답 순서(group 번호)가 그대로여야 데모·스모크가 같은 줄을 본다
         ("SYNTHETIC_OLD-6_Hanil_Centrifuge_Cleaning.docx", old_6, "old", "interleaved", None, None),
         ("SYNTHETIC_WI-05_Hanil_Centrifuge_Cleaning.docx", _build_wi_05(), "new", "interleaved", "wi", SOP_CODE),
+        ("SYNTHETIC_OLD-7_Tables_Figures_Captions.docx", old_7, "old", "interleaved", None, None),
     )
     documents = []
     for name, data, side, layout, doc_type, parent_code in files:
@@ -691,7 +794,7 @@ def build_synthetic_bundle(out_dir: Path) -> SyntheticBundle:
     expected = {
         "bundle_title": BUNDLE_TITLE,
         "tobe_na_slots": [{"code": SOP_CODE, "slot_key": "procedures.troubleshooting", "reason": NA_REASON}],
-        "edits": split_edits + layout_edits,
+        "edits": split_edits + layout_edits + caption_edits,
         "answers": sheet.answers,
         "match": {"identical_count": identical_count, "new_texts": new_texts},
         "omitted": omitted,

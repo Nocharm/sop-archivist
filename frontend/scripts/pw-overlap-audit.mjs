@@ -1,5 +1,5 @@
 // 겹침 감사(Playwright + 시스템 Chrome) - 호버로 펼치거나 떠서 보이는 UI가 옆 글자·입력을 덮는지 잰다.
-// 모핑 단추(.mbtn — 라벨 폭은 px로 손으로 맞춘 값이라 번역이 길어지면 조용히 겹친다)·C 줄 끝 단추·Assign 그 자리 메뉴·상단 바 AI 작업 목록과 알림(요청 줄의 Background 표시 포함).
+// 모핑 단추(.mbtn — 라벨 폭은 px로 손으로 맞춘 값이라 번역이 길어지면 조용히 겹친다)·C 줄 끝 단추·Assign 그 자리 메뉴·상단 바 AI 작업 목록과 알림(요청 줄의 Background 표시 포함)·Assign 표·그림 머리 줄의 TABLE/FIGURE 표시.
 // 전제: reset_db → seed_sop_demo 직후 backend 8777(DEV_ENFORCE_PERMISSIONS=true) + frontend 3777. DB를 바꾸지 않는다
 // (AI 목록과 알림은 /api/ai/jobs/recent 응답을 브라우저 안에서 바꿔 그린다).
 // 실행(frontend/ 에서): node scripts/pw-overlap-audit.mjs — 겹침이 하나라도 있으면 종료 코드 1, 그 화면은 ../.shots/overlap-*.png
@@ -464,7 +464,51 @@ const composedHeadingScene = {
   },
 };
 
-const scenes = [...mbtnScenes, outputsScene, outputsEndRowsScene, outputsReorderScene, exportPreviewScene, composedHeadingScene, linkMenuScene, aiJobsScene].filter((scene) => !only || only.includes(scene.name));
+// 표·그림 머리 줄 - 위 테두리의 TABLE/FIGURE 표시가 표시 ID·미리보기 글을 덮지 않는다(넓은 한 단·좁은 양 단), 머리 줄을 누르면 그 조각에 data-sel.
+// 머리 줄이 있는 Old 문서를 ?edit=로 연다(고르기만 하고 저장하지 않는다)
+const bundleHeadScene = {
+  name: "assign-bundle-head",
+  user: "qa.member",
+  run: async (page, report) => {
+    const documents = await (await page.request.get(`${BASE}/api/bundles/${BUNDLE}/documents`, { headers: { "X-Dev-User": "qa.member" } })).json();
+    let opened = false;
+    for (const doc of documents) {
+      await page.goto(`${BASE}/bundles/${BUNDLE}/assign?edit=${doc.id}`);
+      await page.locator('[data-testid="assign-bar"]').waitFor({ timeout: T });
+      await page.waitForTimeout(800);
+      if ((await page.locator(".bundle-head").count()) > 0) {
+        opened = true;
+        break;
+      }
+    }
+    if (!opened) {
+      report("assign-bundle-head", "no document with a table or figure head row");
+      return;
+    }
+    const measureTags = async (view) => {
+      const tags = await page.locator('.bundle-head .strip-lang[data-lang="bundle"]').all();
+      for (const tag of tags.slice(0, 6)) {
+        await tag.scrollIntoViewIfNeeded();
+        const { hits, width } = await findCovered(tag);
+        if (hits.length > 0) report(`${view} ${await tag.textContent()} tag (${width}px)`, hits.join(", "));
+      }
+      return tags.length;
+    };
+    const wide = await measureTags("one pane");
+    await page.getByTestId("assign-view-two").click();
+    await page.waitForTimeout(800);
+    const narrow = await measureTags("two panes");
+    if (wide === 0 || narrow === 0) report("assign-bundle-head", `tags measured: one pane ${wide}, two panes ${narrow}`);
+    const head = page.locator(".bundle-head").first();
+    await head.scrollIntoViewIfNeeded();
+    await head.click();
+    await page.waitForTimeout(400);
+    const picked = await head.evaluate((el) => el.closest(".strip")?.hasAttribute("data-sel") ?? false);
+    if (!picked) report("assign-bundle-head", "clicking the head row did not set data-sel on its strip");
+  },
+};
+
+const scenes = [...mbtnScenes, outputsScene, outputsEndRowsScene, outputsReorderScene, exportPreviewScene, composedHeadingScene, linkMenuScene, aiJobsScene, bundleHeadScene].filter((scene) => !only || only.includes(scene.name));
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 let problems = 0;
 let runs = 0;

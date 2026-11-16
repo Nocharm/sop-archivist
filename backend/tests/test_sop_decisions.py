@@ -16,7 +16,9 @@ from tests.fake_ai import FakeAi
 from tests.sop_helpers import (
     AUTHOR,
     REVIEWER,
+    WRITTEN_CAPTION,
     assign_as_is,
+    build_as_is_targets,
     create_bundle,
     find_unit,
     get_group_by_unit,
@@ -499,6 +501,155 @@ def test_target_kind_follows_source_kind(client: TestClient) -> None:
         assert _reason(save_group(client, fx.bundle_id, body)) == reason, (unit["kind"], fields)
 
 
+# ── 캡션 새 문장 (표·그림 명세 §3.4) ───────────────────────────────────────────
+
+
+def _find_bundles(fx: Fixture) -> tuple[dict, dict, dict]:
+    """픽스처의 표(캡션 없음)·그림·그림에 딸린 캡션 단위."""
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+    figure = next(unit for unit in fx.view["units"] if unit["kind"] == "figure")
+    (caption,) = [unit for unit in fx.view["units"] if unit["kind"] == "caption"]
+    assert caption["group_unit_id"] == figure["id"]
+    return table, figure, caption
+
+
+def _caption(key: str, doc_id: int, parent_key: str, sources: list[dict], **fields: object) -> dict:
+    return _target(key, doc_id, sources, parent_key=parent_key, slot_key="purpose", **fields)
+
+
+def _rule_code(response: httpx2.Response) -> str:
+    assert response.status_code == 422, response.text
+    return response.json()["detail"]["code"]
+
+
+def test_figure_confirm_needs_a_caption(client: TestClient) -> None:
+    fx = _setup(client)
+    _, figure, _ = _find_bundles(fx)
+    body = _body([_unit_in(figure)], [_target("f", fx.sop_id, [figure], slot_key="purpose", kind="figure")])
+
+    response = save_group(client, fx.bundle_id, body)
+
+    assert _rule_code(response) == "caption_required"
+    assert response.json()["detail"]["keys"] == ["f"]
+    assert _count_rows(TargetSentence, bundle_id=fx.bundle_id) == 0
+
+
+def test_figure_confirms_with_its_caption_unit(client: TestClient) -> None:
+    fx = _setup(client)
+    _, figure, caption = _find_bundles(fx)
+    body = _body([_unit_in(figure)], [
+        _target("f", fx.sop_id, [figure], slot_key="purpose", kind="figure"),
+        _caption("c", fx.sop_id, "f", [caption]),
+    ])
+
+    response = save_group(client, fx.bundle_id, body)
+
+    assert response.status_code == 200, response.text
+    targets = response.json()["targets"]
+    (figure_target,) = [target for target in targets if target["kind"] == "figure"]
+    (child,) = [target for target in targets if target["source_unit_ids"] == [caption["id"]]]
+    assert (child["parent_target_id"], child["cell_row"], child["cell_col"]) == (figure_target["id"], None, None)
+    assert (child["lang"], child["confirmed_text"], child["change_type"]) == ("ko", caption["text"], "as_is")
+    assert child["status"] == "confirmed"
+
+
+def test_written_caption_has_no_source_and_is_new(client: TestClient) -> None:
+    fx = _setup(client)
+    table, _, _ = _find_bundles(fx)
+    targets, captions = build_as_is_targets(client, fx.bundle_id, table, fx.sop_id, slot_key="purpose")
+    assert captions == []
+    written = _caption("c", fx.sop_id, "t", [], text="운전 조건", lang="ko")
+
+    response = save_group(client, fx.bundle_id, _body([_unit_in(table)], [*targets, written]))
+
+    assert response.status_code == 200, response.text
+    saved = response.json()["targets"]
+    (table_target,) = [target for target in saved if target["kind"] == "table"]
+    (child,) = [target for target in saved if target["confirmed_text"] == "운전 조건"]
+    assert (child["source_unit_ids"], child["change_type"], child["lang"]) == ([], "new", "ko")
+    assert (child["parent_target_id"], child["cell_row"]) == (table_target["id"], None)
+
+
+def test_units_list_marks_bundles_with_a_caption_target(client: TestClient) -> None:
+    fx = _setup(client)
+    table, figure, _ = _find_bundles(fx)
+    targets, _ = build_as_is_targets(client, fx.bundle_id, table, fx.sop_id, slot_key="purpose")
+    written = _caption("c", fx.sop_id, "t", [], text="운전 조건", lang="ko")
+    assert save_group(client, fx.bundle_id, _body([_unit_in(table)], [*targets, written])).status_code == 200
+
+    rows = {row["unit_id"]: row for row in _list_units(client, fx.bundle_id, limit=1000)["items"]}
+
+    # 써 넣은 캡션은 출처가 없어 캡션 단위로는 보이지 않는다 - 목록이 묶음에 캡션 새 문장이 있다고 알린다
+    assert rows[table["id"]]["has_caption_target"] is True
+    assert rows[figure["id"]]["has_caption_target"] is False
+
+
+def test_written_caption_without_language_takes_it_from_the_text(client: TestClient) -> None:
+    fx = _setup(client)
+    table, _, _ = _find_bundles(fx)
+    targets, _ = build_as_is_targets(client, fx.bundle_id, table, fx.sop_id, slot_key="purpose")
+    body = _body([_unit_in(table)], [*targets, _caption("c", fx.sop_id, "t", [], text="Run conditions")])
+
+    response = save_group(client, fx.bundle_id, body)
+
+    assert response.status_code == 200, response.text
+    (child,) = [target for target in response.json()["targets"] if target["confirmed_text"] == "Run conditions"]
+    assert child["lang"] == "en"
+
+
+def test_caption_unit_cannot_be_a_plain_sentence_source(client: TestClient) -> None:
+    fx = _setup(client)
+    _, figure, caption = _find_bundles(fx)
+    figure_target = _target("f", fx.sop_id, [figure], slot_key="purpose", kind="figure")
+    cases = [
+        _target("s", fx.sop_id, [caption], slot_key="purpose"),  # 묶음 밖 일반 문장
+        _target("s", fx.sop_id, [caption], slot_key="purpose", parent_key="f", cell_row=0, cell_col=0),  # 칸 자리
+    ]
+
+    for sentence in cases:
+        response = save_group(client, fx.bundle_id, _body([_unit_in(figure)], [figure_target, sentence]))
+        assert _rule_code(response) == "invalid_caption_target", sentence
+        assert response.json()["detail"]["keys"] == ["s"]
+
+
+def test_caption_of_another_bundle_is_rejected(client: TestClient) -> None:
+    fx = _setup(client)
+    table, figure, caption = _find_bundles(fx)
+    table_targets, _ = build_as_is_targets(client, fx.bundle_id, table, fx.sop_id, slot_key="purpose")
+    figure_target = _target("f", fx.sop_id, [figure], slot_key="purpose", kind="figure")
+    units = [_unit_in(table), _unit_in(figure)]
+    sentence = find_unit(fx.view, STORAGE)
+    cases = [
+        # 그림의 캡션을 표 아래에
+        ([*table_targets, figure_target, _caption("c", fx.sop_id, "t", [caption])], units),
+        # 칸 문장은 캡션의 출처가 아니다
+        ([*table_targets, figure_target, {**_caption("c", fx.sop_id, "f", []), "source_unit_ids": table_targets[1]["source_unit_ids"]}], units),
+        # 문장 새 문장 아래 캡션
+        ([figure_target, _target("s", fx.sop_id, [sentence], slot_key="purpose"),
+          _caption("c", fx.sop_id, "s", [], text="합성 캡션", lang="ko")], [_unit_in(figure), _unit_in(sentence)]),
+        # 부모와 다른 칸
+        ([figure_target, _caption("c", fx.sop_id, "f", [caption]) | {"slot_key": "responsibilities"}], [_unit_in(figure)]),
+    ]
+
+    for targets, sent_units in cases:
+        response = save_group(client, fx.bundle_id, _body(sent_units, targets))
+        assert _rule_code(response) == "invalid_caption_target", targets[-1]
+        assert response.json()["detail"]["keys"] == ["c"]
+
+
+def test_hold_or_disposal_without_caption_is_allowed(client: TestClient) -> None:
+    fx = _setup(client)
+    table, figure, _ = _find_bundles(fx)
+    held = _body(
+        [_unit_in(figure)], [_target("f", fx.sop_id, [figure], slot_key="purpose", kind="figure")],
+        action="hold", hold_reason="Synthetic: caption later",
+    )
+    deleted = _body([_unit_in(table, disposition="delete", reason="Synthetic: obsolete table")], [])
+
+    assert save_group(client, fx.bundle_id, held).status_code == 200
+    assert save_group(client, fx.bundle_id, deleted).status_code == 200
+
+
 def test_group_rules_reject_without_writing(client: TestClient) -> None:
     fx = _setup(client)
     unit, other = find_unit(fx.view, STORAGE), find_unit(fx.view, RECORDS)
@@ -519,7 +670,7 @@ def test_group_rules_reject_without_writing(client: TestClient) -> None:
         (_body([_unit_in(unit)], [{**target, "text": "합성 시료는 냉장 보관한다.", "change_type": "as_is"}]),
          "invalid_change_type"),
         (_body([_unit_in(unit)], [{**target, "cell_row": 0, "cell_col": 0}]), "invalid_cell_target"),
-        (_body([_unit_in(unit)], [{**target, "parent_key": "nope"}]), "invalid_cell_target"),
+        (_body([_unit_in(unit)], [{**target, "parent_key": "nope", "cell_row": 0, "cell_col": 0}]), "invalid_cell_target"),
         (_body([_unit_in(unit)], [{**target, "target_doc_id": None}]), "target_doc_required"),
         (_body([{"unit_id": 999_999, "revision": 1, "disposition": "assigned"}], [target]), "unknown_unit"),
         (_body([_unit_in(unit)], [target], removed_target_ids=[999_999]), "unknown_target"),
@@ -547,8 +698,11 @@ def test_table_destination_creates_table_and_cell_targets(client: TestClient) ->
     (table_target,) = [t for t in group["targets"] if t["kind"] == "table"]
     assert (table_target["grid"], table_target["lang"], table_target["confirmed_text"]) == ({"rows": 2, "cols": 2}, "neutral", "")
     assert (table_target["change_type"], table_target["source_unit_ids"]) == ("as_is", [table["id"]])
-    cell_targets = [t for t in group["targets"] if t["parent_target_id"] == table_target["id"]]
+    children = [t for t in group["targets"] if t["parent_target_id"] == table_target["id"]]
+    cell_targets = [t for t in children if t["cell_row"] is not None]
     assert len(cell_targets) == len(cells) == 4
+    # 캡션 없는 표라 확정하며 써 넣은 캡션 하나가 칸 좌표 없이 표 아래에 붙는다
+    assert [(t["confirmed_text"], t["cell_col"]) for t in children if t["cell_row"] is None] == [(WRITTEN_CAPTION, None)]
     assert [(t["source_unit_ids"], t["confirmed_text"], t["lang"], t["change_type"]) for t in cell_targets] == [
         ([cell["id"]], cell["text"], cell["lang"], "as_is") for cell in cells
     ]
@@ -564,6 +718,7 @@ def test_table_restructure_needs_reason(client: TestClient) -> None:
     first_cell = next(unit for unit in fx.view["units"] if unit["group_unit_id"] == table["id"])
     reshaped = _target("t", fx.sop_id, [table], slot_key="purpose", kind="table", grid={"rows": 3, "cols": 2})
     cell = _target("c", fx.sop_id, [first_cell], slot_key="purpose", parent_key="t", cell_row=0, cell_col=1)
+    caption = _caption("cap", fx.sop_id, "t", [], text="합성 표", lang="ko")
 
     # 그대로인 표는 원래 격자·칸 자리를 지킨다
     assert _reason(save_group(client, fx.bundle_id, _body([_unit_in(table)], [reshaped]))) == "grid_mismatch"
@@ -572,11 +727,11 @@ def test_table_restructure_needs_reason(client: TestClient) -> None:
     restructured = {**reshaped, "change_type": "table_restructured"}
     assert _reason(save_group(client, fx.bundle_id, _body([_unit_in(table)], [restructured, cell]))) == "reason_required"
     response = save_group(
-        client, fx.bundle_id, _body([_unit_in(table, reason="Synthetic: added a row")], [restructured, cell])
+        client, fx.bundle_id, _body([_unit_in(table, reason="Synthetic: added a row")], [restructured, cell, caption])
     )
 
     assert response.status_code == 200, response.text
-    table_target, cell_target = response.json()["targets"]
+    table_target, cell_target, _ = response.json()["targets"]
     assert (table_target["change_type"], table_target["grid"]) == ("table_restructured", {"rows": 3, "cols": 2})
     assert (cell_target["parent_target_id"], cell_target["cell_col"]) == (table_target["id"], 1)
 
@@ -606,9 +761,9 @@ def test_as_is_table_needs_one_cell_target_per_cell_sentence(client: TestClient)
             422, {"code": "invalid_group", "reason": "table_cells_missing", "unit_ids": unit_ids},
         )
     assert _count_rows(TargetSentence, bundle_id=fx.bundle_id) == 0
-    whole = _save(cell_targets)
+    whole = _save([*cell_targets, _caption("cap", fx.sop_id, "t", [], text="합성 표", lang="ko")])
     assert whole.status_code == 200, whole.text
-    assert sorted(t["change_type"] for t in whole.json()["targets"]) == ["as_is"] * 5
+    assert sorted(t["change_type"] for t in whole.json()["targets"]) == ["as_is"] * 5 + ["new"]
 
 
 def test_hold_requires_reason_and_sets_on_hold(client: TestClient) -> None:

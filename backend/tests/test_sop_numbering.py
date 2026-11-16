@@ -101,7 +101,7 @@ def test_output_c_numbers_slots_steps_and_lines(client: TestClient) -> None:
     assert sop_numbers["general_requirements.operation"][1] == [(MERGED, "5.2.1"), (RECORDS_EN, "5.2.2")]
     # 표 칸은 언어와 무관하게 표의 번호를 따른다
     (table,) = next(section["items"] for section in sop["sections"] if section["location_key"] == "general_requirements")
-    assert [cell["number"] for cell in table["children"]] == ["5.1"] * 4
+    assert [cell["number"] for cell in table["children"] if cell["cell_row"] is not None] == ["5.1"] * 4
     # WI는 단계 번호 아래로 Instruction·Why를 이어 센다
     assert _read_numbers(wi) == [
         ("step:1:instruction", "1", [(SPLIT_A, "1.1")]),
