@@ -422,6 +422,14 @@ def _plan_sections(index: _Index, doc: TargetDocInfo, labels: OutputLabels) -> l
     return plans
 
 
+def list_target_order(snap: BundleSnapshot, target_doc_id: int) -> list[int]:
+    """새 문서의 최상위 새 문장(칸 제목 제외) id를 결과물 C가 보이는 순서로 — 칸 순서, 그 안은 칸 안 순서. 문서가 없으면 빈 목록."""
+    doc = snap.target_docs.get(target_doc_id)
+    if doc is None:
+        return []
+    return [target.id for plan in _plan_sections(_build_index(snap), doc, LABELS["en"]) for target in plan.targets]
+
+
 # --- 섹션 번호 ---
 
 
