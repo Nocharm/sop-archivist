@@ -335,7 +335,8 @@ Unit은 **한곳으로 보낼 수 있는 가장 작은 조각**입니다. 올릴
 
 ### AI 나누기 제안 {#split-ai}
 
-1. **Assign** 위쪽 줄의 AI 메뉴에서 **AI split whole document** 를 고르면 보고 있는 문서의 문장을 한꺼번에 보냅니다. 30자보다 짧은 문장은 보내지 않습니다.
+1. **Assign** 위쪽 줄의 AI 메뉴에서 **AI split whole document** 를 고르면 보고 있는 문서의 문장을 한꺼번에 보냅니다. 30자보다 짧은 문장은 보내지 않습니다. 고른 줄 하나만 보내려면 **Suggest a split for this row** 를 고릅니다.
+   AI는 미배정 문장과 AI 분류 제안만 있는 문장을 나눕니다. 확정·보류한 줄, AI 짝 맞추기 제안이 있는 줄, 제목·그림·표 줄에서는 **Suggest a split for this row** 가 흐리게 꺼져 있고, 포인터를 올리면 까닭이 뜹니다 — 이런 줄은 먼저 **Clear assignment** 를 합니다.
 2. 제안이 오면 그 조각 끝에 AI 표시가 붙고, 위쪽 줄에 보라색 제안 수가 뜹니다. 누르면 다음 제안이 붙은 줄로 갑니다.
 3. 그 줄을 고르면 오른쪽 칸에 잘린 모습이 미리 보입니다. **Apply split** 으로 적용하거나 **Dismiss** 로 버리고, 남은 것이 있으면 다음 제안으로 넘어갑니다. 적용한 나누기는 <kbd>Ctrl</kbd>+<kbd>Z</kbd>로 되돌립니다.
 
@@ -714,12 +715,12 @@ AI는 제안만 합니다. 사람이 줄마다 확인해 확정하기 전에는 
 
 | 종류 | 제안하는 것 | 요청하는 곳 |
 |---|---|---|
-| **Classify** | Unit을 보낼 칸과 한·영 고쳐 쓴 문장 | **Assign** 의 **Ask AI**, **More AI** → **Classify the whole document** |
-| **Translate** | 한쪽 언어만 있는 새 문장의 번역 | **More AI** → **Translate to EN** · **Translate to KO** |
-| **Match** | Old Unit과 이미 쓴 New 문장의 짝과 변경 종류 | **More AI** → **Ask AI to match** |
-| **KO/EN pair** | 한글과 영어가 따로 있는 문서의 한/영 짝 | **Assign** 의 **More AI** 메뉴에 있는 **AI pair**(한글·영어가 따로 적힌 문서에서만 나온다) |
+| **Classify** | Unit을 보낼 칸과 한·영 고쳐 쓴 문장 | **Assign** 의 **Ask AI**, **AI** → **Classify the whole document** |
+| **Translate** | 한쪽 언어만 있는 새 문장의 번역 | **AI** → **Translate to EN** · **Translate to KO** |
+| **Match** | Old Unit과 이미 쓴 New 문장의 짝과 변경 종류 | **AI** → **Ask AI to match** |
+| **KO/EN pair** | 한글과 영어가 따로 있는 문서의 한/영 짝 | **Assign** 의 **AI** 메뉴에 있는 **AI pair**(한글·영어가 따로 적힌 문서에서만 나온다) |
 | **New document list** | 계획 파일·글에 적힌 새 문서 목록(번호·제목·종류·상위 SOP·단계) | **Documents** 의 **New documents** 목록 `⋯` 메뉴 → **Read a list with AI…** ([AI로 목록 읽기](#tobe-ai)) |
-| **Split** | 여러 뜻이 섞인 문장을 나눌 자리 | **Assign** 의 **More AI** 메뉴에 있는 **AI split whole document**(30자보다 짧은 문장은 일괄로는 보내지 않는다)와 **Suggest a split for this row** |
+| **Split** | 여러 뜻이 섞인 문장을 나눌 자리 | **Assign** 의 **AI** 메뉴에 있는 **AI split whole document**(30자보다 짧은 문장은 일괄로는 보내지 않는다)와 **Suggest a split for this row** |
 
 ### 요청하고 확인하기 {#ai-flow}
 
