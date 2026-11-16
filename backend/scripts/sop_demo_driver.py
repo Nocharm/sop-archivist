@@ -25,7 +25,6 @@ from tests.sop_helpers import (
 
 REVIEWER_LOGIN = REVIEWER["X-Dev-User"]
 TEXT_KINDS = ("sentence", "heading", "cell_sentence")  # kind 없는 답이 가리키는 글 단위
-DEFAULT_LAYOUT = "ko_en_interleaved"
 # 요청에 실을 수 있는 변경 종류 — 나눔·합침·신규는 서버가 구조로 정한다
 REQUESTABLE_CHANGE_TYPES = ("as_is", "tone", "rewritten", "table_restructured")
 
@@ -80,7 +79,7 @@ class SyntheticDriver:
             )
             assert response.status_code == 201, response.text
             uploaded = response.json()
-            if document.layout != DEFAULT_LAYOUT:
+            if document.layout != uploaded["language_layout"]:  # 올린 뒤 자동 판정과 다르면 고친다(짝 없는 문서는 separate로 판정된다)
                 self._patch_layout(uploaded, document.layout)
                 uploaded = self._get_document(uploaded["id"])
             if document.side == "old" and not uploaded["doc_version"]:  # 검토 요청 조건 — 파일 이름에 버전이 없으면 1.0

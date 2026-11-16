@@ -80,6 +80,7 @@ HISTORY_REASON = "합성: 장비 도입 이력은 절차 내용이 아니다."
 PURCHASE_REASON = "합성: 구매 이력은 절차 내용이 아니어서 WI-04에 옮기지 않았다."
 MOVE_REASON = "합성: 교정 절차는 장비 교정 SOP가 관리한다."
 SHAPE_REASON = "합성: 글 상자의 도형 틀은 그림이 아니다(상자 글은 따로 옮겼다)."
+MISSING_TABLE_REASON = "합성: 가리키는 표 9가 문서에 없다."
 NA_REASON = "합성: QC 원심분리기는 별도 문제 해결 절차 없이 제조사 지원으로 처리한다."
 
 TOBE_DOCS = (
@@ -614,6 +615,88 @@ def _build_old_6(sheet: _AnswerSheet) -> bytes:
     return _save_docx(document)
 
 
+def _build_old_7(sheet: _AnswerSheet) -> tuple[bytes, list[dict]]:
+    """OLD-7 표·그림 캡션 — 원문 번호가 1이 아닌 캡션, 표 앞·뒤 캡션, 스타일 없는 캡션, 캡션 없는 표, 없는 번호를 가리키는 참조, 템플릿 표.
+
+    모두 SOP 절차(procedures.procedure)로 그대로 옮긴다. 캡션 문단은 아직 일반 문장 답이고, 그림 캡션은 그림 단위가 먹는다.
+    """
+    doc, add = "OLD-7", sheet.add
+    document = _new_docx(doc, "Tables Figures Captions")
+    location = {"code": SOP_CODE, "slot_key": "procedures.procedure"}
+    table_keys = itertools.count(1)
+
+    def add_sentence(text: str, lang: str) -> str:
+        return add(doc, text, lang, _sop("procedures.procedure", text, "as_is", lang))
+
+    def add_split_sentence(*pieces: tuple[str, str]) -> str:
+        """문장 나누기가 "표 3."의 마침표에서 끊는 문단 — 나뉜 조각마다 답을 적고 문단 글자를 돌려준다."""
+        return " ".join(add_sentence(text, lang) for text, lang in pieces)
+
+    def add_data_table(rows: list[list[str]]) -> None:
+        """표 하나와 그 칸 답 — 칸 글자는 표 단위가 먹는다(OLD-1 표와 같은 꼴). 드라이버가 칸 출처를 글자로 찾으니 칸 글자는 문서 안에서 겹치지 않게 한다."""
+        key = f"t-old7-table-{next(table_keys)}"
+        cells = [
+            {
+                **location, "parent_key": key, "kind": "sentence", "lang": "en", "text": text,
+                "change_type": "as_is", "source_text": text, "cell_row": row, "cell_col": col,
+            }
+            for row, texts in enumerate(rows)
+            for col, text in enumerate(texts)
+        ]
+        table_target = {
+            "key": key, **location, "kind": "table", "lang": "neutral", "change_type": "as_is",
+            "grid": {"rows": len(rows), "cols": len(rows[0])},
+        }
+        add(doc, "", "neutral", table_target, *cells, kind="table")
+        _add_table(document, rows)
+
+    def add_figure(caption: str) -> None:
+        figure_target = {**location, "kind": "figure", "lang": "neutral", "change_type": "as_is"}
+        add(doc, caption, "neutral", figure_target, kind="figure")
+
+    document.add_paragraph(add_sentence("1. 표와 그림 Tables and figures", "ko"), style="Heading 1")
+    # 앞 캡션(Caption 스타일) + 표, 원문 번호가 3
+    caption_table_3 = add_split_sentence(("표 3.", "ko"), ("운전 조건 (Table 3.", "ko"), ("Operating conditions)", "en"))
+    document.add_paragraph(caption_table_3, style="Caption")
+    add_data_table([["Program", "Speed", "Time"], ["P1", "3,000 rpm", "5 min"], ["P2", "14,000 rpm", "10 min"]])
+    # 표 + 뒤 캡션, 스타일 없는 글 꼴
+    add_data_table([["Rotor", "Limit"], ["F-45-30-11", "14,500 rpm"]])
+    document.add_paragraph(add_sentence("Table 4: Rotor limits", "en"))
+    # 캡션 없는 표 — 데모 시드에서 배정하지 않고 둔다(뒤 단계의 캡션 필수 규칙 시험용)
+    document.add_paragraph(add_sentence("회전 속도는 아래 표를 따른다.", "ko"))
+    add_data_table([["Type", "Run speed", "Run time"], ["S-20", "12,000 rpm", "15 min"]])
+    # 그림 + 뒤 캡션(스타일 없음), 그림 + 앞 캡션(띄어쓰기 없는 변형)
+    document.add_picture(BytesIO(_draw_figure()), width=Inches(1.6))
+    caption_after = "그림 5. 로터 장착 (Figure 5. Rotor mounting)"
+    add_figure(caption_after)
+    document.add_paragraph(caption_after)
+    caption_before = "Fig.6 Lid lock"
+    document.add_paragraph(caption_before)
+    add_figure(caption_before)
+    document.add_picture(BytesIO(_draw_figure()), width=Inches(1.6))
+    # 참조 문장 — 마지막은 문서에 없는 표 9를 가리켜 지운다
+    for text, lang in (
+        ("운전 조건은 표 3을 따른다.", "ko"),
+        ("See Figure 5 for the mounting position.", "en"),
+        ("Table 4 lists the rotor limits.", "en"),
+    ):
+        document.add_paragraph(add_sentence(text, lang))
+    document.add_paragraph(sheet.delete(doc, "표 9 참조.", "ko", MISSING_TABLE_REASON))
+    # 템플릿 표 — 칸마다 문장 두 개, 편집으로 레이아웃 표(보통 표로 만들고 편집으로 바꾼다)
+    document.add_paragraph(add_split_sentence(("표 7.", "ko"), ("기록 양식", "ko")))
+    form_rows = [
+        ["작업자는 날짜를 적는다. 작업자는 서명한다.", "검토자는 결과를 확인한다. 검토자는 서명한다."],
+        ["장비 번호를 적는다. 로터 종류를 적는다.", "특이 사항을 적는다. 없으면 없음이라고 적는다."],
+    ]
+    for row in form_rows:
+        for cell_text in row:
+            for sentence in cell_text.split(". "):
+                add_sentence(sentence if sentence.endswith(".") else sentence + ".", "ko")
+    _add_table(document, form_rows)
+    edits = [{"doc": doc, "op": "set_layout_table", "table_index": 3, "is_layout": True}]
+    return _save_docx(document), edits
+
+
 def _build_wi_05() -> bytes:
     """WI-05 Hanil 세척 — 입구 2 새 문서(한/영 연달아). 한/영 절 제목 한 쌍 아래 한/영 짝 문장 두 쌍."""
     document = _new_docx(PAIR_MATCH_CODE, "Hanil Centrifuge Cleaning")
@@ -666,6 +749,7 @@ def build_synthetic_bundle(out_dir: Path) -> SyntheticBundle:
     old_4, layout_edits = _build_old_4(sheet)
     old_5 = _build_old_5(sheet)
     old_6 = _build_old_6(sheet)
+    old_7, caption_edits = _build_old_7(sheet)
     wi_04, new_texts = _build_wi_04()
     files = (
         # (파일 이름, 바이트, 쪽, 언어 배치, 새 문서 종류, 부모 번호)
@@ -678,6 +762,7 @@ def build_synthetic_bundle(out_dir: Path) -> SyntheticBundle:
         # 기존 문서 뒤에 둔다 — 앞 문서의 업로드 순서·답 순서(group 번호)가 그대로여야 데모·스모크가 같은 줄을 본다
         ("SYNTHETIC_OLD-6_Hanil_Centrifuge_Cleaning.docx", old_6, "old", "interleaved", None, None),
         ("SYNTHETIC_WI-05_Hanil_Centrifuge_Cleaning.docx", _build_wi_05(), "new", "interleaved", "wi", SOP_CODE),
+        ("SYNTHETIC_OLD-7_Tables_Figures_Captions.docx", old_7, "old", "interleaved", None, None),
     )
     documents = []
     for name, data, side, layout, doc_type, parent_code in files:
@@ -691,7 +776,7 @@ def build_synthetic_bundle(out_dir: Path) -> SyntheticBundle:
     expected = {
         "bundle_title": BUNDLE_TITLE,
         "tobe_na_slots": [{"code": SOP_CODE, "slot_key": "procedures.troubleshooting", "reason": NA_REASON}],
-        "edits": split_edits + layout_edits,
+        "edits": split_edits + layout_edits + caption_edits,
         "answers": sheet.answers,
         "match": {"identical_count": identical_count, "new_texts": new_texts},
         "omitted": omitted,

@@ -26,7 +26,7 @@ EXPECTED_BUNDLES = [
     ("SYNTHETIC 3 검토 대기", "in_review"),
     (AI_STAGE_TITLE, "in_progress"),
 ]
-DOCUMENTS_PER_BUNDLE = 8  # 옛 문서 6개 + 입구 2 새 문서 2개
+DOCUMENTS_PER_BUNDLE = 9  # 옛 문서 7개 + 입구 2 새 문서 2개
 
 
 class SeedRuns(NamedTuple):

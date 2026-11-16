@@ -129,7 +129,7 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
     run.start()
 
     assert {code: uploaded["status"] for code, uploaded in run.uploads.items()} == dict.fromkeys(
-        ("OLD-1", "OLD-2", "OLD-3", "OLD-4", "OLD-5", "WI-04", "OLD-6", "WI-05"), "ready"
+        ("OLD-1", "OLD-2", "OLD-3", "OLD-4", "OLD-5", "WI-04", "OLD-6", "WI-05", "OLD-7"), "ready"
     )
     warnings = [warning["kind"] for uploaded in run.uploads.values() for warning in uploaded["extraction"]["warnings"]]
     assert not set(warnings) & set(MISSING_TEXT_WARNINGS)

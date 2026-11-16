@@ -152,7 +152,12 @@ class SyntheticAnswers:
     """
 
     def __init__(self, expected: dict) -> None:
-        self._answers = {(answer.get("kind"), answer["text"], answer["occurrence"]): answer for answer in expected["answers"]}
+        # 몇 번째인지는 문서를 가로질러 센다(AI는 단위 글만 본다) — 표 단위는 글이 ""이라 문서마다 겹친다
+        counts: Counter[tuple[str | None, str]] = Counter()
+        self._answers = {}
+        for answer in expected["answers"]:
+            counts[(answer.get("kind"), answer["text"])] += 1
+            self._answers[(answer.get("kind"), answer["text"], counts[(answer.get("kind"), answer["text"])])] = answer
         self._labels = _build_place_labels(expected)
         keys = Counter(spec["key"] for answer in expected["answers"] for spec in answer["targets"])
         self._merged_keys = {key for key, count in keys.items() if count >= 2}
