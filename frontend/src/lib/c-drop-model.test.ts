@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { OutputCItem } from "./api-sop";
-import { classifyDropZone, findDragBlock, findEnterRefusal, findDropSection, findLeaveRefusal, findLiveBlock, listDropRows, planCrossDrop, planDrop } from "./c-drop-model";
+import { classifyDropZone, findDragBlock, findEnterRefusal, findDropSection, findDropSectionByKey, findLeaveRefusal, findLiveBlock, listDropRows, planCrossDrop, planDrop } from "./c-drop-model";
 import { previewEdit } from "./c-edit-model";
 
 function line(id: number, extra: Partial<OutputCItem> = {}): OutputCItem {
@@ -163,6 +163,29 @@ describe("listDropRows for a destination", () => {
   it("keeps every known row when there is no block, and still drops rows that are not in the section", () => {
     const items = [1, 2, 3].map((id) => line(id));
     expect(listDropRows(items, null, box([1, 8, 2, 3])).map((row) => row.targetId)).toEqual([1, 2, 3]);
+  });
+});
+
+describe("findDropSectionByKey", () => {
+  const sheet = { left: 0, right: 800, top: 0, bottom: 2000 };
+  const sections = [
+    { key: "purpose", band: { top: 100, bottom: 200 } },
+    { key: "scope", band: { top: 260, bottom: 300 } },
+    { key: "responsibilities", band: { top: 320, bottom: 500 } },
+  ];
+  it("decides home by the section key, whatever element drew it", () => {
+    // 끄는 도중 다시 그려진 출발 칸도 키가 같으면 출발 칸 - 다른 칸(planCrossDrop)으로 넘기지 않는다
+    expect(findDropSectionByKey({ x: 50, y: 150 }, sheet, sections, "purpose")).toEqual({ index: 0, isHome: true });
+    expect(findDropSectionByKey({ x: 50, y: 400 }, sheet, sections, "purpose")).toEqual({ index: 2, isHome: false });
+  });
+  it("keeps the home band first by key where two bands overlap", () => {
+    // y 312는 scope 아래 여유와 responsibilities 위 여유가 겹친다 - 출발 칸 키가 이긴다
+    expect(findDropSectionByKey({ x: 50, y: 312 }, sheet, sections, "scope")).toEqual({ index: 1, isHome: true });
+    expect(findDropSectionByKey({ x: 50, y: 312 }, sheet, sections, "purpose")).toEqual({ index: 2, isHome: false });
+  });
+  it("never reports home when the home section is not drawn", () => {
+    expect(findDropSectionByKey({ x: 50, y: 150 }, sheet, sections, "definitions")).toEqual({ index: 0, isHome: false });
+    expect(findDropSectionByKey({ x: 50, y: 240 }, sheet, sections, "definitions")).toBeNull();
   });
 });
 

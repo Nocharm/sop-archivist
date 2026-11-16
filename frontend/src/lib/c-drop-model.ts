@@ -80,6 +80,20 @@ export function findDropSection(point: { x: number; y: number }, sheet: { left: 
   return null;
 }
 
+/**
+ * findDropSection을 칸 키로 - 출발 칸은 요소가 아니라 키(homeKey)로 찾는다. 끄는 도중 출발 칸이 다시 그려져(새 요소) "다른 칸"으로 보이면
+ * 덩어리 줄이 든 칸에 planCrossDrop을 부르게 된다. isHome이면 칸 안 끌기(planDrop), 아니면 다른 칸
+ */
+export function findDropSectionByKey(
+  point: { x: number; y: number },
+  sheet: { left: number; right: number; top: number; bottom: number },
+  sections: readonly { key: string; band: Band }[],
+  homeKey: string,
+): { index: number; isHome: boolean } | null {
+  const index = findDropSection(point, sheet, sections.map((section) => section.band), sections.findIndex((section) => section.key === homeKey));
+  return index === null ? null : { index, isHome: sections[index].key === homeKey };
+}
+
 /** 그려진 줄 하나(덩어리 줄은 뺀다) - 화면 순서, y는 pointerY와 같은 좌표계 */
 export interface RowBox {
   targetId: number;

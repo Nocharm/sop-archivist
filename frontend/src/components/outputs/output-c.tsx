@@ -17,7 +17,7 @@ import type { EquisInfo, NumberStyle, OutputC, OutputCItem } from "@/lib/api-sop
 import type { BoxDragConfig, DragCard, DragHover, DragPoint } from "@/lib/box-drag";
 import {
   findDragBlock,
-  findDropSection,
+  findDropSectionByKey,
   findEnterRefusal,
   findLeaveRefusal,
   findLiveBlock,
@@ -302,7 +302,7 @@ interface PendingMove {
 }
 
 /** 끄는 줄 - 누른 줄과 그때의 덩어리 줄 id만 들고 간다. 칸의 줄은 move마다 지금 데이터에서 다시 읽는다(저장 응답·다시 받기로 바뀔 수 있다).
- * sheet는 출발 용지(article), isLocked는 누를 때 덩어리가 칸을 떠날 수 없었나 - 끄는 동안 흐리게 할 칸을 고르는 데만 쓴다 */
+ * row·sheet는 누를 때의 줄·용지(끄는 도중 다시 그려지면 문서 id·줄 id로 다시 찾고 이것은 대신 쓴다), isLocked는 누를 때 덩어리가 칸을 떠날 수 없었나 - 흐리게 할 칸을 고르는 데만 쓴다 */
 interface DragSource {
   docId: number;
   locationKey: string;
@@ -310,10 +310,12 @@ interface DragSource {
   blockIds: readonly number[];
   card: DragCard;
   row: HTMLElement;
-  home: HTMLElement;
   sheet: HTMLElement;
   isLocked: boolean;
 }
+
+/** 끄는 동안 붙이는 표시 - 놓기·취소 어느 길에서든 모두 거둔다(clearDragMarks) */
+const DRAG_MARKS = ["data-drag-src", "data-drag-home", "data-drag-seen", "data-drag-closed", "data-drag-sheet", "data-drag-locked"] as const;
 
 /** 지금 데이터의 그 칸과 덩어리 - 누른 줄이나 덩어리 줄이 그때와 다르면 null(그 끌기는 놓지 않는다) */
 interface LiveDrag {
@@ -338,17 +340,19 @@ function readCardText(item: OutputCItem): string {
   return item.text || item.ai_text || item.children.map((cell) => cell.text || cell.ai_text).join(" ");
 }
 
-function readItemsShape(items: readonly OutputCItem[], depths: readonly number[]): string {
-  return items.map((item, index) => `${item.target_id}/${depths[index]}/${item.number_style}`).join(",");
+/** 칸 하나의 모양 - N/A 여부와 줄 id·깊이·번호 표시. N/A가 되면 그 칸에는 놓을 수 없으므로 모양이 바뀐 것으로 친다 */
+function readSectionShape(section: Section, depths: readonly number[]): string {
+  const items = section.items.map((item, index) => `${item.target_id}/${depths[index]}/${item.number_style}`).join(",");
+  return `${section.na_reason !== null ? "na:" : ""}${items}`;
 }
 
 /**
- * 출발 칸(과 도착 칸)의 줄 id·깊이·번호 표시 - 저장 응답은 바뀐 것이 없어도 새 칸 객체를 만들므로 같은 칸인지는 이것으로 본다.
+ * 출발 칸(과 도착 칸)의 모양 - 저장 응답은 바뀐 것이 없어도 새 칸 객체를 만들므로 같은 칸인지는 이것으로 본다.
  * 같으면 id·깊이로 적은 place 편집이 그대로 맞다. dest null = 같은 칸 안의 자리
  */
 function readDropShape(live: LiveDrag, dest: Section | null): string {
-  const home = readItemsShape(live.section.items, live.depths);
-  return dest ? `${home}|${dest.location_key}:${readItemsShape(dest.items, getSectionDepths(dest))}` : home;
+  const home = readSectionShape(live.section, live.depths);
+  return dest ? `${home}|${dest.location_key}:${readSectionShape(dest, getSectionDepths(dest))}` : home;
 }
 
 /** 이 문서에서 그 칸 - 없으면(다시 받기로 사라짐) null */
@@ -480,11 +484,47 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
     if (dropLineRef.current) dropLineRef.current.hidden = true;
   }
 
-  // 덩어리 줄은 id로 흐리게 - 끄는 도중 이어 그려진 줄도 move마다 붙인다
-  function markBlockRows(source: DragSource) {
+  // 지금 그려진 출발 용지 - 끄는 도중 다시 그려지면 누를 때의 요소는 떨어져 나가므로 문서 id로 다시 찾는다
+  function findSheet(source: DragSource): HTMLElement {
+    return rootRef.current?.querySelector<HTMLElement>(`article[data-doc-id="${source.docId}"]`) ?? source.sheet;
+  }
+
+  // 지금 그려진 그 줄 - 선의 왼쪽·폭·들여쓰기 폭을 잴 기준(같은 용지의 줄은 왼쪽·폭이 같다)
+  function findRow(sheet: HTMLElement, source: DragSource): HTMLElement {
+    return sheet.querySelector<HTMLElement>(`[data-testid="output-c-row-${source.targetId}"]`) ?? source.row;
+  }
+
+  // 끄는 동안의 표시(CSS가 흐리게 할 곳을 고른다) - 덩어리 줄(data-drag-src), 출발 용지(data-drag-sheet, 떠날 수 없으면 data-drag-locked), 출발 칸(data-drag-home),
+  // 받을 수 없는 칸(data-drag-closed: N/A·다른 WI 부분·자리가 없는 칸, 떠날 수 없는 덩어리면 출발 칸 밖 전부). 칸마다 한 번만 정하고(data-drag-seen)
+  // 끄는 도중 이어 그려진 칸·줄에도 붙인다 - 출발 칸은 요소가 아니라 키로 본다(다시 그려진 출발 칸도 출발 칸)
+  function markDrag(source: DragSource, live: LiveDrag) {
+    const sheet = findSheet(source);
+    if (!sheet.hasAttribute("data-drag-sheet")) {
+      sheet.setAttribute("data-drag-sheet", "");
+      sheet.toggleAttribute("data-drag-locked", source.isLocked);
+    }
     for (const id of source.blockIds) {
-      const row = source.home.querySelector(`[data-testid="output-c-row-${id}"]`);
+      const row = sheet.querySelector(`[data-testid="output-c-row-${id}"]`);
       if (row && !row.hasAttribute("data-drag-src")) row.setAttribute("data-drag-src", "");
+    }
+    for (const el of sheet.querySelectorAll<HTMLElement>("section[data-location-key]:not([data-drag-seen])")) {
+      el.setAttribute("data-drag-seen", "");
+      const key = el.dataset.locationKey ?? "";
+      if (key === live.section.location_key) {
+        el.setAttribute("data-drag-home", "");
+        continue;
+      }
+      const section = findSection(live.doc, key);
+      if (source.isLocked || !section || findEnterRefusal(live.section.location_key, section, true)) el.setAttribute("data-drag-closed", "");
+    }
+  }
+
+  // 끄기 표시를 모두 거둔다 - 놓기·Esc·취소 어느 길에서든(onEnd). 다시 그려진 요소에도 붙었을 수 있어 틀 전체에서 찾는다
+  function clearDragMarks(source: DragSource) {
+    for (const scope of [rootRef.current, source.sheet]) {
+      if (!scope) continue;
+      for (const name of DRAG_MARKS) scope.removeAttribute(name);
+      for (const el of scope.querySelectorAll(DRAG_MARKS.map((name) => `[${name}]`).join(","))) for (const name of DRAG_MARKS) el.removeAttribute(name);
     }
   }
 
@@ -502,8 +542,9 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
     const line = dropLineRef.current;
     if (root && line) {
       const rootBox = root.getBoundingClientRect();
-      const rowBox = source.row.getBoundingClientRect();
-      const inset = plan.depth * readIndentPx(source.row.querySelector(".c-line") ?? source.row);
+      const row = findRow(findSheet(source), source);
+      const rowBox = row.getBoundingClientRect();
+      const inset = plan.depth * readIndentPx(row.querySelector(".c-line") ?? row);
       line.style.top = `${plan.lineY - rootBox.top}px`;
       line.style.left = `${rowBox.left - rootBox.left + inset}px`;
       line.style.width = `${Math.max(0, rowBox.width - inset)}px`;
@@ -515,36 +556,37 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
 
   // 포인터 자리의 놓을 자리 - 출발 칸이면 칸 안 끌기, 같은 문서의 다른 칸이면 그 칸의 자리나 못 놓는 이유, 다른 용지 위는 이유, 용지·칸 밖은 표시 없음
   function planAt(source: DragSource, live: LiveDrag, point: DragPoint, start: DragPoint): PlanResult {
-    const sheetBox = source.sheet.getBoundingClientRect();
+    const sheet = findSheet(source);
+    const sheetBox = sheet.getBoundingClientRect();
     const pointer = { clientX: point.x, clientY: point.y };
     if (!isInsideBox(pointer, sheetBox)) {
-      const other = [...(rootRef.current?.querySelectorAll<HTMLElement>("article[data-doc-id]") ?? [])].find((el) => el !== source.sheet && isInsideBox(pointer, el.getBoundingClientRect()));
+      const other = [...(rootRef.current?.querySelectorAll<HTMLElement>("article[data-doc-id]") ?? [])].find((el) => el !== sheet && isInsideBox(pointer, el.getBoundingClientRect()));
       return { hover: other ? { state: "refused", note: t(readRefusalKey("otherDoc", live.doc.doc_type)), target: other } : { state: "none" } };
     }
-    const sections = [...source.sheet.querySelectorAll<HTMLElement>("section[data-location-key]")];
-    const homeIndex = sections.indexOf(source.home);
+    const sections = [...sheet.querySelectorAll<HTMLElement>("section[data-location-key]")];
     const bands = sections.map((el) => {
       const box = el.getBoundingClientRect();
-      return { top: box.top, bottom: box.bottom };
+      return { key: el.dataset.locationKey ?? "", band: { top: box.top, bottom: box.bottom } };
     });
-    const index = findDropSection(point, sheetBox, bands, homeIndex);
-    if (index === null) return { hover: { state: "none" } };
-    if (index === homeIndex) {
+    // 출발 칸은 지금 데이터의 칸 키로 - 끄는 도중 다시 그려진 출발 칸을 다른 칸으로 보지 않는다(덩어리 줄이 든 칸에 planCrossDrop을 부르지 않게)
+    const found = findDropSectionByKey(point, sheetBox, bands, live.section.location_key);
+    if (found === null) return { hover: { state: "none" } };
+    const target = sections[found.index];
+    if (found.isHome) {
       // 읽기만 한다 - 칸의 그려진 줄 가운데 덩어리 줄과 지금 칸에 없는 줄을 id로 뺀 것
-      const blockTop = (source.home.querySelector(`[data-testid="output-c-row-${source.blockIds[0]}"]`) ?? source.row).getBoundingClientRect().top;
+      const blockTop = (target.querySelector(`[data-testid="output-c-row-${source.blockIds[0]}"]`) ?? findRow(sheet, source)).getBoundingClientRect().top;
       const plan = planDrop({
-        locationKey: source.locationKey,
+        locationKey: live.section.location_key,
         items: live.section.items,
         depths: live.depths,
         block: live.block,
-        rows: listDropRows(live.section.items, live.block, measureRows(source.home)),
+        rows: listDropRows(live.section.items, live.block, measureRows(target)),
         pointerY: point.y,
         dx: point.x - start.x,
         homeTop: blockTop - 1,
       });
       return { plan, dest: null, target: null };
     }
-    const target = sections[index];
     const dest = findSection(live.doc, target.dataset.locationKey ?? null);
     if (!dest) return { hover: { state: "none" } };
     // 떠날 수 있는지 먼저 - 이미 쓴 문서의 줄은 어느 칸 위에서든 그 이유를 보인다
@@ -584,7 +626,7 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
           const blockIds = section.items.slice(block.start, block.end + 1).map((item) => item.target_id);
           const card = { id: section.items[block.start].number ?? "", text: readCardText(section.items[index]), count: blockIds.length > 1 ? t("order.drag.lines", { count: blockIds.length }) : null };
           const isLocked = findLeaveRefusal(doc.entrance, section.items, block) !== null;
-          return { docId: doc.target_doc_id, locationKey: section.location_key, targetId, blockIds, card, row, home, sheet, isLocked };
+          return { docId: doc.target_doc_id, locationKey: section.location_key, targetId, blockIds, card, row, sheet, isLocked };
         }
       }
       return null;
@@ -596,11 +638,9 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
     },
     onStart: (source) => {
       dragFrameRef.current = EMPTY_FRAME;
-      markBlockRows(source);
-      source.home.setAttribute("data-drag-home", "");
-      // 흐리게 할 곳을 CSS가 고른다 - 다른 용지, N/A 칸, 떠날 수 없는 덩어리면 출발 칸 밖의 모든 칸
-      source.sheet.setAttribute("data-drag-sheet", "");
-      if (source.isLocked) source.sheet.setAttribute("data-drag-locked", "");
+      // 흐리게 할 곳을 CSS가 고른다 - 다른 용지, 받을 수 없는 칸, 떠날 수 없는 덩어리면 출발 칸 밖의 모든 칸. 덩어리가 이미 바뀌었으면 첫 move가 거절한다
+      const live = readLiveDrag(dataRef.current, source);
+      if (live) markDrag(source, live);
     },
     onMove: (source, point, start) => {
       const live = dragFrameRef.current.isGone ? null : readLiveDrag(dataRef.current, source);
@@ -609,7 +649,7 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
         clearDropPlan(true);
         return { state: "refused", note: t("order.drag.changed") };
       }
-      markBlockRows(source);
+      markDrag(source, live);
       const result = planAt(source, live, point, start);
       if ("hover" in result) {
         // 못 놓는 칸·용지 밖에서 놓으면 아무 일도 없다 - 앞서 잡은 자리를 버린다
@@ -653,20 +693,17 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
       }
       if (!edit) return;
       // 잡은 줄이 앞(미끄러지는 동안 이웃 위로 지난다) - 출발 칸(과 도착 칸)의 그려진 줄을 모두 잰다
-      const destEl = dest ? source.sheet.querySelector<HTMLElement>(`section[data-location-key="${CSS.escape(dest.location_key)}"]`) : null;
-      const others = [source.home, destEl].flatMap((el) => (el ? [...el.querySelectorAll<HTMLElement>("[data-drag-box]")] : [])).map((el) => el.dataset.flipKey ?? "").filter((key) => key !== String(source.targetId));
+      const sheet = findSheet(source);
+      const findSectionEl = (key: string) => sheet.querySelector<HTMLElement>(`section[data-location-key="${CSS.escape(key)}"]`);
+      const others = [findSectionEl(live.section.location_key), dest ? findSectionEl(dest.location_key) : null].flatMap((el) => (el ? [...el.querySelectorAll<HTMLElement>("[data-drag-box]")] : [])).map((el) => el.dataset.flipKey ?? "").filter((key) => key !== String(source.targetId));
       flip.capture([String(source.targetId), ...others]);
       // dir은 단추 포커스에만 쓰인다 - 놓은 줄은 고른 채로 남는다. 다른 칸에 놓은 줄은 놓은 자리에서 번쩍인다
       pendingMoveRef.current = { targetId: source.targetId, dir: 1, refocus: "row", flashIds: dest ? edit.targetIds : null };
       setFollowId(source.targetId);
       onPlace(source.docId, edit);
     },
-    onEnd: ({ home, sheet }) => {
-      // 다른 칸에 놓은 줄은 커밋 뒤 다른 칸에 있을 수 있다 - 용지 전체에서 거둔다
-      for (const el of sheet.querySelectorAll("[data-drag-src]")) el.removeAttribute("data-drag-src");
-      home.removeAttribute("data-drag-home");
-      sheet.removeAttribute("data-drag-sheet");
-      sheet.removeAttribute("data-drag-locked");
+    onEnd: (source) => {
+      clearDragMarks(source);
       clearDropPlan(false);
     },
   };

@@ -150,7 +150,7 @@ const readDragCard = (page) => page.evaluate(() => {
 const readDragMarks = (page) => page.evaluate(() => ({
   flag: document.documentElement.hasAttribute("data-box-drag"),
   cards: document.querySelectorAll('[data-testid="drag-card"]').length,
-  marks: document.querySelectorAll("[data-drag-src], [data-drag-home], [data-drag-sheet], [data-drag-locked], [data-drop]").length,
+  marks: document.querySelectorAll("[data-drag-src], [data-drag-home], [data-drag-seen], [data-drag-closed], [data-drag-sheet], [data-drag-locked], [data-drop]").length,
   lineShown: document.querySelector('[data-testid="output-c-dropline"]')?.hidden === false,
 }));
 // 칸 하나의 상태 - 흐림(opacity)과 올린 칸 테두리(data-drop)
@@ -158,6 +158,47 @@ const readSectionState = (page, key) => page.evaluate((k) => {
   const section = document.querySelector(`[data-testid="output-c"] section[data-location-key="${CSS.escape(k)}"]`);
   return section ? { opacity: Number(getComputedStyle(section).opacity), drop: section.dataset.drop ?? null } : null;
 }, key);
+// 올린 칸의 테두리(outline)가 그 칸의 글자와 놓을 선에 닿지 않나 - 테두리 띠는 칸 상자를 outline-offset만큼 넓힌 안쪽 선부터 굵기만큼 더 넓힌 바깥 선까지.
+// 글자(칸 머리·줄 번호·줄 글·표 칸·빈 칸 "–"·N/A 줄을 글자 범위로 잰다)와 선·선의 동그라미(::before)마다 띠까지의 여유(px)를 재 가장 작은 값을 돌려준다
+// (안쪽 선 안이면 안쪽 선까지, 바깥 선 밖이면 바깥 선까지 - 음수면 띠에 걸친다). 테두리가 없으면 null, 잰 글자가 없으면 texts 0으로 실패한다
+const readOutlineFit = (page, key) => page.evaluate((k) => {
+  const section = document.querySelector(`[data-testid="output-c"] section[data-location-key="${CSS.escape(k)}"]`);
+  if (!section?.dataset.drop) return null;
+  const style = getComputedStyle(section);
+  const offset = parseFloat(style.outlineOffset);
+  const width = parseFloat(style.outlineWidth);
+  const box = section.getBoundingClientRect();
+  const grow = (r, d) => ({ left: r.left - d, top: r.top - d, right: r.right + d, bottom: r.bottom + d });
+  const inner = grow(box, offset);
+  const outer = grow(box, offset + width);
+  const clearance = (r) => Math.max(
+    Math.min(r.left - inner.left, inner.right - r.right, r.top - inner.top, inner.bottom - r.bottom),
+    Math.max(outer.left - r.right, r.left - outer.right, outer.top - r.bottom, r.top - outer.bottom),
+  );
+  const texts = [];
+  for (const el of section.querySelectorAll('h3, [data-testid^="output-c-number-"], [data-testid^="output-c-item-"], [data-testid^="output-c-empty-"], h3 + p, td')) {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!node.textContent.trim()) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      for (const rect of range.getClientRects()) if (rect.width > 0 && rect.height > 0) texts.push(rect);
+    }
+  }
+  const line = document.querySelector('[data-testid="output-c-dropline"]');
+  const marks = [];
+  if (line && !line.hidden) {
+    const lineBox = line.getBoundingClientRect();
+    const dot = getComputedStyle(line, "::before");
+    const left = lineBox.left + parseFloat(dot.left);
+    const top = lineBox.top + parseFloat(dot.top);
+    marks.push(lineBox, { left, top, right: left + parseFloat(dot.width), bottom: top + parseFloat(dot.height) });
+  }
+  const round = (value) => Math.round(value * 10) / 10;
+  return { drop: section.dataset.drop, offset, width, texts: texts.length, textClear: texts.length ? round(Math.min(...texts.map(clearance))) : null, marks: marks.length, markClear: marks.length ? round(Math.min(...marks.map(clearance))) : null };
+}, key);
+// 1px 넘게 떨어져야 닿지 않은 것이다. 놓을 수 있는 칸(over)에는 선이 그어져 있어야 한다
+const isOutlineClear = (fit) => fit !== null && fit.texts > 0 && fit.textClear >= 1 && (fit.drop !== "over" || (fit.marks === 2 && fit.markClear >= 1));
 // 칸 안의 놓을 점 - 줄이 있으면 마지막 줄 아래 끝 바로 위(칸 끝), 없으면 빈 칸 표시("–")·N/A 사유 줄의 가운데
 const pointInSectionEnd = (page, key) => page.evaluate((k) => {
   const section = document.querySelector(`[data-testid="output-c"] section[data-location-key="${CSS.escape(k)}"]`);
@@ -2045,6 +2086,8 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page, tak
   const validFirst = await dropLine.isVisible();
   await page.mouse.move(np.x, (await pointInSectionEnd(page, naCase.na)).y, { steps: 12 });
   const refusal = { ...(await readDragCard(page)), section: await readSectionState(page, naCase.na) };
+  const naFit = await readOutlineFit(page, naCase.na);
+  check("the refused outline clears the N/A section's heading and reason", isOutlineClear(naFit), JSON.stringify(naFit));
   await takeShot("order-xsec-refused-na.png");
   check("an N/A section refuses with a reason", validFirst && refusal.refused && refusal.text.includes("That section is N/A in the To-Be list.") && (await dropLine.isHidden()) && refusal.section?.opacity < 1 && refusal.section?.drop === "refused", JSON.stringify({ validFirst, ...refusal }));
   const refusalPuts = puts.length;
@@ -2166,17 +2209,22 @@ await runStep("order: drag a block into another section, a sub-slot and an empty
     const b = sections.find((section) => section.dataset.locationKey.includes(".") && rowsOf(section).length >= 1);
     if (!a || !r || !b || sections.indexOf(a) > sections.indexOf(r) || sections.indexOf(r) > sections.indexOf(b)) return null;
     const e = sections.find((section) => section.dataset.locationKey.includes(".") && !section.hasAttribute("data-na") && rowsOf(section).length === 0 && section.querySelector('[data-testid^="output-c-empty-"]') && section.getBoundingClientRect().top - b.getBoundingClientRect().bottom > 100);
-    if (!e) return null;
+    // 좁은 틀에서 잴 빈 하위 칸(B 바로 뒤의 것)과 N/A 칸
+    const nextEmpty = sections.slice(sections.indexOf(b) + 1).find((section) => section.dataset.locationKey.includes(".") && !section.hasAttribute("data-na") && rowsOf(section).length === 0);
+    const na = sheet.querySelector("section[data-na]");
+    if (!e || !nextEmpty || !na) return null;
     const between = rowsOf(r).find((row, i) => i > 0 && row.hasAttribute("data-meaning-start"));
     return {
       a: { key: a.dataset.locationKey, number: numberOf(a), ids: rowsOf(a).map((row) => row.dataset.flipKey) },
       r: { key: r.dataset.locationKey, ids: rowsOf(r).map((row) => row.dataset.flipKey), between: between.dataset.flipKey },
       b: { key: b.dataset.locationKey, number: numberOf(b), first: rowsOf(b)[0].dataset.flipKey },
       e: { key: e.dataset.locationKey, number: numberOf(e) },
+      nextEmpty: nextEmpty.dataset.locationKey,
+      na: na.dataset.locationKey,
     };
   });
-  check("an SOP has a section, a later section with two meaning groups, a sub-slot with lines and an empty sub-slot below it", Boolean(hit));
-  const [docId, { a, r, b, e }] = hit;
+  check("an SOP has a section, a later section with two meaning groups, a sub-slot with lines, empty sub-slots and an N/A section", Boolean(hit));
+  const [docId, { a, r, b, e, nextEmpty, na }] = hit;
   // 덩어리 = A의 첫 줄을 누르면 함께 가는 줄(데모 시드에서는 A의 두 줄 - 같은 의미의 한/영 짝)
   const lead = a.ids[0];
   const puts = [];
@@ -2195,6 +2243,8 @@ await runStep("order: drag a block into another section, a sub-slot and an empty
   await dragThrough(page, await pointInRow(page, lead), [{ x: rBetween.x + 40, y: rBetween.y + 2 }]);
   const overR = { card: await readDragCard(page), section: await readSectionState(page, r.key), home: await readSectionState(page, a.key) };
   check("over another section the card shows the number the line will get there", !overR.card.refused && overR.card.note === `→ ${expectedBetween}` && overR.section?.drop === "over" && overR.section.opacity === 1 && overR.home?.opacity === 1, JSON.stringify(overR));
+  const fitR = await readOutlineFit(page, r.key);
+  check("the outline of a section with lines clears its heading, numbers, text and the drop line", isOutlineClear(fitR), JSON.stringify(fitR));
   const firstSave = waitOrderSave(page);
   await page.mouse.up();
   const flashedFirst = await waitFlash(page, lead);
@@ -2211,6 +2261,8 @@ await runStep("order: drag a block into another section, a sub-slot and an empty
   const bEnd = await pointInSectionEnd(page, b.key);
   await dragThrough(page, await pointInRow(page, lead), [bEnd]);
   const overB = await readDragCard(page);
+  const fitB = await readOutlineFit(page, b.key);
+  check("the outline of a sub-slot clears its heading, numbers, text and the drop line", isOutlineClear(fitB), JSON.stringify(fitB));
   await takeShot("order-xsec-note.png");
   const commitsBefore = await page.evaluate(() => window.__commits ?? -1);
   for (let i = 0; i < 20; i += 1) await page.mouse.move(bEnd.x + (i % 5), bEnd.y - (i % 3));
@@ -2228,6 +2280,8 @@ await runStep("order: drag a block into another section, a sub-slot and an empty
   await scrollRowToTop(page, lead, 120);
   await dragThrough(page, await pointInRow(page, lead), [await pointInSectionEnd(page, e.key)]);
   const overE = { card: await readDragCard(page), section: await readSectionState(page, e.key), lineShown: (await readDragMarks(page)).lineShown };
+  const fitE = await readOutlineFit(page, e.key);
+  check("the outline of an empty section clears its heading, the dash and the drop line", isOutlineClear(fitE), JSON.stringify(fitE));
   await takeShot("order-xsec-empty.png");
   check("over an empty section the card shows its first number and the line is drawn", overE.card.src.includes(lead) && overE.card.note === `→ ${e.number}.1` && overE.section?.drop === "over" && overE.lineShown, JSON.stringify(overE));
   const emptySave = waitOrderSave(page);
@@ -2272,6 +2326,31 @@ await runStep("order: drag a block into another section, a sub-slot and an empty
   await page.keyboard.press("Alt+ArrowUp");
   await page.waitForTimeout(400);
   check("Move up and Alt+ArrowUp stop at the top of the section", upDisabled && puts.length === keyPuts && (await readRowKey(page, b.first)) === b.key, JSON.stringify({ upDisabled, puts: puts.length - keyPuts }));
+
+  // 7. 좁은 틀(900)·다크에서도 테두리가 글자와 선에 닿지 않는다 - 줄이 있는 칸(A), 줄이 있는 하위 칸(B), 빈 하위 칸, 거절(N/A 칸). 모두 Esc로 끝내 저장하지 않는다
+  await page.evaluate(() => window.localStorage.setItem("sopa.theme", "dark"));
+  await page.setViewportSize({ width: 900, height: 720 });
+  await reopenOrderDoc(page, docId, lead);
+  const narrowPuts = puts.length;
+  const narrow = { dark: await page.evaluate(() => document.documentElement.getAttribute("data-theme") === "dark"), fits: {} };
+  const measureOver = async (from, keys, shot) => {
+    await dragThrough(page, await pointInRow(page, from), []);
+    for (const key of keys) {
+      await page.mouse.move((await pointInRow(page, from)).x, (await pointInSectionEnd(page, key)).y, { steps: 12 });
+      narrow.fits[key] = await readOutlineFit(page, key);
+    }
+    if (shot) await takeShot(shot);
+    await page.keyboard.press("Escape");
+    await page.mouse.up();
+  };
+  await scrollRowToTop(page, r.ids[0], 300);
+  await measureOver(r.ids[0], [a.key], null);
+  await scrollRowToTop(page, r.ids[0], 60);
+  await measureOver(r.ids[0], [b.key, nextEmpty], "order-xsec-narrow-dark.png");
+  await scrollRowToTop(page, b.first, 60);
+  await measureOver(b.first, [na], null);
+  await page.waitForTimeout(300);
+  check("at 900 in dark the outline clears the text and the drop line (lines, sub-slot, empty sub-slot, refused N/A)", narrow.dark && Object.keys(narrow.fits).length === 4 && Object.values(narrow.fits).every(isOutlineClear) && narrow.fits[na]?.drop === "refused" && puts.length === narrowPuts, JSON.stringify(narrow));
 });
 
 // WI는 같은 부분끼리만 - 데모 시드 WI-01: Step 2 · Instruction의 의미 짝을 Step 3 · Instruction(줄 하나)의 끝으로. 지나는 길의 Step 2 · Why 위에서는 거절된다.
@@ -2304,12 +2383,18 @@ await runStep("order: drag a WI line to another step", {}, async ({ page }) => {
   const from = await pointInRow(page, lead);
   await dragThrough(page, from, [await pointInSectionEnd(page, wi.why)]);
   const overWhy = { card: await readDragCard(page), section: await readSectionState(page, wi.why) };
-  check("over the other part (Why) the drag is refused with its reason", overWhy.card.refused && overWhy.card.text.includes("Instruction or Why: change it in Assign") && overWhy.section?.drop === "refused", JSON.stringify(overWhy));
+  const whyFit = await readOutlineFit(page, wi.why);
+  check("over the other part (Why) the drag is refused with its reason", overWhy.card.refused && overWhy.card.text.includes("Instruction or Why: change it in Assign") && overWhy.section?.drop === "refused" && isOutlineClear(whyFit), JSON.stringify({ ...overWhy, whyFit }));
   await page.mouse.move(from.x, (await pointInSectionEnd(page, wi.to)).y, { steps: 12 });
   const overTo = await readDragCard(page);
+  // 받을 수 없는 다른 부분(Why)은 그 위에 있지 않아도 끄는 내내 흐리고, 받는 칸은 흐리지 않다
+  const dimmed = { why: await readSectionState(page, wi.why), to: await readSectionState(page, wi.to) };
+  check("while dragging, the other part (Why) is dimmed and the target step is not", overWhy.section?.opacity < 1 && dimmed.why?.opacity < 1 && dimmed.why.drop === null && dimmed.to?.opacity === 1, JSON.stringify({ overWhy: overWhy.section, ...dimmed }));
   const saved = waitOrderSave(page);
   await page.mouse.up();
   const savedOk = (await saved).ok();
+  const whyAfter = await readSectionState(page, wi.why);
+  check("after the drop the other part is no longer dimmed and no marks are left", whyAfter?.opacity === 1 && (await readDragMarks(page)).marks === 0, JSON.stringify({ whyAfter, marks: await readDragMarks(page) }));
   const moved = bodies[0]?.items.filter((item) => wi.ids.includes(String(item.target_id))) ?? [];
   check("dropping into another step's instruction sends the new step and depth", !overTo.refused && overTo.note.startsWith(`→ ${wi.toStep}.`) && savedOk && moved.length === wi.ids.length && moved.every((item) => item.wi_step === wi.toStep && "indent_level" in item), JSON.stringify({ overTo, moved }));
   await reopenOrderDoc(page, docId, lead);
