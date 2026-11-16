@@ -1283,6 +1283,33 @@ await runStep("outputs: A, B, C and the Excel preview", {}, async ({ page, takeS
   await page.waitForFunction(() => document.querySelector('[data-testid="outputs-check-numbers"]')?.checked === false, null, { timeout: T });
 });
 
+// 결과물 C는 읽기 전용이라 줄 끝 단추가 없다 - Order의 호버 바탕·다리(::after)가 새어 들지 않고 줄에 올려도 가로 스크롤이 늘지 않는다
+await runStep("outputs: read-only C rows keep their rest look on hover", {}, async ({ page }) => {
+  for (const width of [1120, 1440]) {
+    await page.setViewportSize({ width, height: 720 });
+    await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
+    await page.locator('[data-testid="outputs-tab-c"]').click();
+    const row = page.locator('[data-testid="output-c"] [data-testid^="output-c-row-"]').nth(1);
+    await row.waitFor({ timeout: T });
+    const readState = () => row.evaluate((el) => {
+      const pane = el.closest(".overflow-auto, .overflow-y-auto");
+      return { background: getComputedStyle(el).backgroundColor, after: getComputedStyle(el, "::after").content, page: document.scrollingElement.scrollWidth, pane: pane.scrollWidth };
+    });
+    await row.scrollIntoViewIfNeeded();
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(200);
+    const rest = await readState();
+    // 줄의 오른쪽 끝에 올린다 - 다리가 있다면 여기서 줄 밖으로 나간다
+    const box = await row.boundingBox();
+    await page.mouse.move(box.x + box.width - 2, box.y + 6);
+    await page.waitForTimeout(200);
+    const hovered = await readState();
+    check(`at ${width} a hovered read-only C row keeps its background`, hovered.background === rest.background, `${rest.background} -> ${hovered.background}`);
+    check(`at ${width} a hovered read-only C row has no ::after box`, hovered.after === "none", hovered.after);
+    check(`at ${width} hovering a read-only C row does not widen the page or the pane`, hovered.page === rest.page && hovered.pane === rest.pane, JSON.stringify({ rest, hovered }));
+  }
+});
+
 // 줄 끝 단추 묶음은 호버·포커스 때만, 글 밖에 뜬다(끌어다 놓기 설계 §5, 사용자 결정 2026-11-16). 터치 화면에서는 늘 보인다
 await runStep("order: row-end buttons show only on hover or focus, one group at a time", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);

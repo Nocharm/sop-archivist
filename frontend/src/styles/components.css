@@ -1635,44 +1635,46 @@
   /* 줄은 글 + 줄 끝 단추 묶음의 감김 줄 - 터치 화면(hover: none)에서는 묶음이 늘 보이고, 글이 폭을 채우면 글 바로 아래 제 줄로 내려간다 */
   .c-order { container: c-order / inline-size; }
   .c-order > .sheet { max-width: 760px; }
-  .c-row { position: relative; display: flex; flex-wrap: wrap; align-items: flex-start; }
+  .c-row { display: flex; flex-wrap: wrap; align-items: flex-start; }
   .c-row > .c-line { flex: 1 1 auto; min-width: 0; }
   .c-row > .c-acts { flex: none; margin-left: auto; }
   .c-acts { display: flex; gap: 2px; }
   /* ⋯ 단추는 마우스가 있고 용지 옆이 좁을 때만 - 터치 화면은 위의 늘 보이는 묶음을 쓴다 */
   .c-more { display: none; }
   /* 마우스가 있으면 줄 끝 단추는 자리를 차지하지 않고 용지 오른쪽 바깥, 줄 위 끝에 맞춰 떠 있다가 줄 호버·포커스 때만 보인다.
-     넓으면 펼치고 좁으면 ⋯ 하나(사용자 결정 2026-11-16, 끌어다 놓기 설계 §5). 잰 값(2026-11-16, 극단 자료): 묶음 한 줄 180×30, 두 줄 최소 102×56, ⋯ 30×30 */
+     넓으면 펼치고 좁으면 ⋯ 하나(사용자 결정 2026-11-16, 끌어다 놓기 설계 §5). 잰 값(2026-11-16, 극단 자료): 묶음 한 줄 180×30, 두 줄 최소 102×56, ⋯ 30×30.
+     아래 규칙은 모두 .c-order(고칠 수 있는 Order 화면에만 있는 틀) 안에서만 - 읽기 전용 C(결과물 C·검토)의 줄은 호버 바탕·다리 없이 전과 같다 */
   @media (hover: hover) {
     /* 용지는 ⋯ 자리(틈 4 + 30 + 스크롤 칸까지 2 = 36px, 그중 12px는 틀 오른쪽 여백)를 늘 남긴다 - 틀이 좁을 때만(1120 창에 고전 스크롤바) 몇 px 양보하고 자리가 있으면 760px 그대로 */
     .c-order > .sheet { max-width: min(760px, calc(100% - 24px)); }
+    .c-order .c-row { position: relative; }
     /* left 35px = .pg 오른쪽 여백 30 + 용지 테두리 1 + 틈 4 */
-    .c-row > .c-acts, .c-row > .c-more { position: absolute; top: 0; left: calc(100% + 35px); z-index: 2; margin: 0; padding: 2px; border: 1px solid var(--line-2); border-radius: var(--r-2); background: var(--raised); box-shadow: var(--shadow-1); opacity: 0; pointer-events: none; transition: opacity var(--dur-fast); }
+    .c-order .c-row > :is(.c-acts, .c-more) { position: absolute; top: 0; left: calc(100% + 35px); z-index: 2; margin: 0; padding: 2px; border: 1px solid var(--line-2); border-radius: var(--r-2); background: var(--raised); box-shadow: var(--shadow-1); opacity: 0; pointer-events: none; transition: opacity var(--dur-fast); }
+    /* 다리 - 올린 줄 오른쪽, 틈(35px)과 단추가 놓일 폭 전체를 줄의 온 높이로(단추보다 낮은 줄은 단추 높이: ⋯ 30, 두 줄 묶음 56) 그 줄에 붙인다.
+       어느 글줄에서 단추로 비스듬히 가도 호버가 끊기지 않는다. 폭: 좁으면 35 + ⋯ 30 + 1, 넓으면 35 + 묶음 최대 폭(100cqw - 754) + 1(아래 @container가 덮어쓴다 - 그래서 이 규칙이 앞에 있다).
+       문서 끝 줄: 줄 아래 여백(.pg 18 + 테두리 1 + 틀 12 = 31)과 가장 낮은 줄(26)을 더한 57px 안이라 단추·다리가 스크롤을 늘리지 않는다 */
+    .c-order .c-row:hover::after { content: ""; position: absolute; top: 0; left: 100%; z-index: 1; width: 66px; height: max(100%, 30px); }
     /* 좁은 틀 - 묶음이 두 줄로도 안 들어가면 ⋯ 하나가 같은 동작을 메뉴로 연다 */
-    .c-row > .c-acts { display: none; }
-    .c-row > .c-more { display: flex; }
+    .c-order .c-row > .c-acts { display: none; }
+    .c-order .c-row > .c-more { display: flex; }
     /* 넓은 틀 - 문턱 856px = 두 줄 묶음(102px)이 들어가는 가장 좁은 틀(760 - 12 + 4 + 102 + 2). max-width = 용지 옆 남는 폭(100cqw + 12 - 760 - 4 - 2)만큼 펴고 모자라면 두 줄로 감긴다 */
     @container c-order (min-width: 856px) {
-      .c-row > .c-acts { display: flex; flex-wrap: wrap; width: max-content; max-width: calc(100cqw - 754px); }
-      .c-row > .c-more { display: none; }
-      .c-row:hover::after { width: calc(100cqw - 718px); height: max(100%, 56px); }
+      .c-order .c-row > .c-acts { display: flex; flex-wrap: wrap; width: max-content; max-width: calc(100cqw - 754px); }
+      .c-order .c-row > .c-more { display: none; }
+      .c-order .c-row:hover::after { width: calc(100cqw - 718px); height: max(100%, 56px); }
     }
-    .c-row:is(:hover, :focus, :focus-within) > :is(.c-acts, .c-more), .c-row > .c-more:has([aria-expanded="true"]) { opacity: 1; pointer-events: auto; }
+    .c-order .c-row:is(:hover, :focus, :focus-within) > :is(.c-acts, .c-more), .c-order .c-row > .c-more:has([aria-expanded="true"]) { opacity: 1; pointer-events: auto; }
     /* 한 번에 한 줄 - 다른 줄에 올리면 고른 줄의 단추는 물러난다. 글쇠로 단추에 가 있거나 메뉴를 연 줄은 남는다(보이지 않는 포커스 금지) */
-    .pg:has(.c-row:hover) .c-row:not(:hover):not(:has(:focus-visible, [aria-expanded="true"])) > :is(.c-acts, .c-more) { opacity: 0; pointer-events: none; }
-    .c-acts > .c-mark { margin-right: 0; }
+    .c-order .pg:has(.c-row:hover) .c-row:not(:hover):not(:has(:focus-visible, [aria-expanded="true"])) > :is(.c-acts, .c-more) { opacity: 0; pointer-events: none; }
+    .c-order .c-acts > .c-mark { margin-right: 0; }
     /* 단추가 보이는 줄을 옅게 칠해 단추와 줄을 잇는다. 고른 줄(.c-row:focus)의 바탕·막대는 그대로 둔다 */
-    .c-row:is(:hover, :focus-within, :has([aria-expanded="true"])):not(:focus) { background: var(--hover); }
-    .pg:has(.c-row:hover) .c-row:not(:hover, :focus):not(:has(:focus-visible, [aria-expanded="true"])) { background: none; }
-    /* 다리 - 올린 줄 오른쪽, 틈(35px)과 단추가 놓일 폭 전체를 줄의 온 높이로(단추보다 낮은 줄은 단추 높이: ⋯ 30, 두 줄 묶음 56) 그 줄에 붙인다.
-       어느 글줄에서 단추로 비스듬히 가도 호버가 끊기지 않는다. 폭: 좁으면 35 + ⋯ 30 + 1, 넓으면 35 + 묶음 최대 폭(100cqw - 754) + 1.
-       문서 끝 줄: 줄 아래 여백(.pg 18 + 테두리 1 + 틀 12 = 31)과 가장 낮은 줄(26)을 더한 57px 안이라 단추·다리가 스크롤을 늘리지 않는다 */
-    .c-row:hover::after { content: ""; position: absolute; top: 0; left: 100%; z-index: 1; width: 66px; height: max(100%, 30px); }
+    .c-order .c-row:is(:hover, :focus-within, :has([aria-expanded="true"])):not(:focus) { background: var(--hover); }
+    .c-order .pg:has(.c-row:hover) .c-row:not(:hover, :focus):not(:has(:focus-visible, [aria-expanded="true"])) { background: none; }
   }
   /* 끄는 동안은 줄 끝 단추·줄 호버·다리를 모두 끈다(lib/box-drag.ts) - 위 보이기 규칙보다 특이도가 높아야 한다 */
-  html[data-box-drag] .c-row > :is(.c-acts, .c-more) { opacity: 0; pointer-events: none; }
-  html[data-box-drag] .c-row:not(:focus) { background: none; }
-  html[data-box-drag] .c-row::after { content: none; }
+  html[data-box-drag] .c-order .c-row > :is(.c-acts, .c-more) { opacity: 0; pointer-events: none; }
+  html[data-box-drag] .c-order .c-row:not(:focus) { background: none; }
+  html[data-box-drag] .c-order .c-row::after { content: none; }
   .c-line[data-numbered] { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; column-gap: 0.6em; }
   .c-no { font-family: var(--font-mono); font-size: 0.8em; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
   /* 줄 고르기는 마우스로만(tabIndex -1) - 전역 :focus-visible 테두리가 안 걸리므로 바탕과 왼쪽 막대로 고른 줄을 보인다 */
