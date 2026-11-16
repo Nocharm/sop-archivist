@@ -1222,6 +1222,9 @@ export function downloadExport(bundleId: number): Promise<{ blob: Blob; fileName
 /** 순서 바꾸기 요청 한 줄 - 뺀 값은 그대로 둔다. 깊이·번호 표시는 그 줄에만 붙는다(짝 상대·번역이 따라 바뀌지 않는다) */
 export interface TargetOrderItem {
   target_id: number;
+  /** 다른 칸으로 옮길 때만 - SOP 칸 키. null은 보내지 않는다(서버가 unknown_slot) */
+  slot_key?: string;
+  /** 다른 단계로 옮길 때만 - null은 "단계 없음"이라 키째 보낸다 */
   wi_step?: number | null;
   indent_level?: number;
   number_style?: NumberStyle;
@@ -1235,6 +1238,7 @@ export interface TargetOrderItemOut {
   target_id: number;
   order_index: number;
   wi_step: number | null;
+  slot_key: string | null;
   indent_level: number;
   number_style: NumberStyle;
 }

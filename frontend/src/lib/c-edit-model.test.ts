@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { NumberStyle, OutputCDoc, OutputCItem } from "./api-sop";
-import { acceptSaved, addEdit, hasUnsentEdits, numberDoc, rebaseDraft, rejectSaved, sendDraft, startDraft } from "./c-edit-model";
+import { acceptSaved, addEdit, hasUnsentEdits, numberDoc, readLocationPlace, rebaseDraft, rejectSaved, sendDraft, startDraft } from "./c-edit-model";
 
 type Section = OutputCDoc["sections"][number];
 
@@ -208,5 +208,98 @@ describe("addEdit place", () => {
     expect(numbersOf(acceptSaved(later, server).shown)).toEqual([[[4, "5.1"], [2, "5.2"], [1, "5.3"], [3, "5.4"]]]);
     const gone = doc([section("5", [line(2, "5.1"), line(1, "5.2"), line(3, "5.3")])]);
     expect(acceptSaved(later, gone).edits).toEqual([]);
+  });
+});
+
+describe("addEdit place across sections", () => {
+  const sop = startDraft(
+    doc([
+      section("6", [line(1, "6.1"), line(2, "6.2")], "procedures"),
+      section("6.1", [line(3, "6.1.1")], "procedures.procedure"),
+      section("6.2", [], "procedures.electronic_record_control"),
+      { ...section("6.3", [], "procedures.troubleshooting"), na_reason: "N/A" },
+    ]),
+  );
+  const wi = startDraft({
+    ...doc([
+      section("1", [line(1, "1.1")], "step:1:instruction"),
+      section("2", [], "step:2:instruction"),
+      section("2", [], "step:2:why"),
+      section(null, [line(2, null)], "unstepped:instruction"),
+    ]),
+    doc_type: "wi",
+  });
+  // 칸을 넘는 편집은 깊이가 필수라 기본은 모두 0
+  const cross = (ids: number[], to: string, beforeId: number | null, depths: number[] | null = ids.map(() => 0)) => ({ kind: "place" as const, locationKey: "procedures", toLocationKey: to, targetIds: ids, beforeId, depths });
+  const wiPlace = (to: string) => ({ kind: "place" as const, locationKey: "step:1:instruction", toLocationKey: to, targetIds: [1], beforeId: null, depths: [0] });
+  const toStep2 = wiPlace("step:2:instruction");
+  const toUnstepped = wiPlace("unstepped:instruction");
+
+  it("moves a block into another section before a line and renumbers both", () => {
+    expect(numbersOf(addEdit(sop, cross([2], "procedures.procedure", 3))!.shown)).toEqual([[[1, "6.1"]], [[2, "6.1.1"], [3, "6.1.2"]], [], []]);
+  });
+  it("makes the block the first lines of an empty section", () => {
+    expect(numbersOf(addEdit(sop, cross([1, 2], "procedures.electronic_record_control", null))!.shown)).toEqual([[], [[3, "6.1.1"]], [[1, "6.2.1"], [2, "6.2.2"]], []]);
+  });
+  it("sets the given depths on a block that changes section", () => {
+    const shown = addEdit(sop, cross([2], "procedures.procedure", null, [1]))!.shown;
+    expect(shown.sections[1].items.map((i) => [i.target_id, i.indent_level, i.number])).toEqual([[3, 0, "6.1.1"], [2, 1, "6.1.1.1"]]);
+  });
+  it("refuses an N/A section, a missing section, a beforeId outside the destination and a WI part change", () => {
+    expect(addEdit(sop, cross([1], "procedures.troubleshooting", null))).toBeNull();
+    expect(addEdit(sop, cross([1], "nowhere", null))).toBeNull();
+    expect(addEdit(sop, cross([1], "procedures.procedure", 2))).toBeNull();
+    expect(addEdit(wi, { kind: "place", locationKey: "step:1:instruction", toLocationKey: "step:2:why", targetIds: [1], beforeId: null, depths: [0] })).toBeNull();
+  });
+  it("refuses missing depths, a gone block line, a beforeId inside the block, duplicate or empty ids, wrong depths length and a mixed kind", () => {
+    expect(addEdit(sop, cross([1], "procedures.procedure", null, null))).toBeNull();
+    expect(addEdit(sop, cross([9], "procedures.procedure", null))).toBeNull();
+    expect(addEdit(sop, cross([1], "procedures.procedure", 1))).toBeNull();
+    expect(addEdit(sop, cross([1, 1], "procedures.procedure", null))).toBeNull();
+    expect(addEdit(sop, cross([], "procedures.procedure", null))).toBeNull();
+    expect(addEdit(sop, cross([1, 2], "procedures.procedure", null, [0]))).toBeNull();
+    expect(addEdit(wi, { ...wiPlace("procedures"), toLocationKey: "procedures" })).toBeNull();
+  });
+  it("keeps an in-section place the same with or without toLocationKey", () => {
+    const start = startDraft(doc([section("5", [line(1, "5.1"), line(2, "5.2"), line(3, "5.3"), line(4, "5.4")])]));
+    const plain = { kind: "place" as const, locationKey: "s5", targetIds: [3, 4], beforeId: 1, depths: null };
+    const withTo = { ...plain, toLocationKey: "s5" };
+    expect(addEdit(start, withTo)!.shown).toEqual(addEdit(start, plain)!.shown);
+    expect(sendDraft(addEdit(start, withTo)!).items).toEqual(sendDraft(addEdit(start, plain)!).items);
+    expect(sendDraft(addEdit(start, plain)!).items).toEqual([{ target_id: 3 }, { target_id: 4 }, { target_id: 1 }, { target_id: 2 }]);
+  });
+  it("sends the new place and the depth of every line that changed section, even an unchanged depth", () => {
+    expect(sendDraft(addEdit(sop, cross([2], "procedures.procedure", null))!).items).toEqual([
+      { target_id: 1 },
+      { target_id: 3 },
+      { target_id: 2, slot_key: "procedures.procedure", indent_level: 0 },
+    ]);
+  });
+  it("sends wi_step null, not a missing key, for the unstepped section", () => {
+    const item = sendDraft(addEdit(wi, toUnstepped)!).items.find((i) => i.target_id === 1)!;
+    expect(item).toHaveProperty("wi_step", null);
+    expect(item).toEqual({ target_id: 1, wi_step: null, indent_level: 0 });
+    expect(sendDraft(addEdit(wi, toStep2)!).items.find((i) => i.target_id === 1)).toEqual({ target_id: 1, wi_step: 2, indent_level: 0 });
+  });
+  it("re-applies a cross-section place over the server answer and drops it quietly when the destination became N/A", () => {
+    const { draft: sent } = sendDraft(addEdit(sop, { kind: "style", targetId: 3, style: "note" })!);
+    const later = addEdit(sent, cross([2], "procedures.procedure", null))!;
+    const server = doc([
+      section("6", [line(1, "6.1"), line(2, "6.2")], "procedures"),
+      section("6.1", [line(3, null)], "procedures.procedure"),
+      section("6.2", [], "procedures.electronic_record_control"),
+      { ...section("6.3", [], "procedures.troubleshooting"), na_reason: "N/A" },
+    ]);
+    const accepted = acceptSaved(later, server);
+    expect(accepted.edits).toHaveLength(1);
+    expect(accepted.shown.sections[1].items.map((i) => i.target_id)).toEqual([3, 2]);
+    const na = { ...server, sections: server.sections.map((s) => (s.location_key === "procedures.procedure" ? { ...s, na_reason: "N/A" } : s)) };
+    expect(acceptSaved(later, na)).toMatchObject({ shown: na, edits: [] });
+  });
+  it("reads the place of a section key", () => {
+    expect(readLocationPlace("purpose")).toEqual({ slot_key: "purpose" });
+    expect(readLocationPlace("step:3:why")).toEqual({ wi_step: 3, wi_part: "why" });
+    expect(readLocationPlace("unstepped:instruction")).toEqual({ wi_step: null, wi_part: "instruction" });
+    expect(readLocationPlace("path:1. A")).toBeNull();
   });
 });
