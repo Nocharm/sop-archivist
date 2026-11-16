@@ -3,8 +3,6 @@
 모든 문장은 지어낸 것이고 실제 SOP 문장이 아니다. 파일 이름은 `SYNTHETIC_`로 시작하고 DOCX 핵심 속성 title·subject에
 `SYNTHETIC`이 들어간다. 같은 입력이면 같은 바이트다(zip 항목 시각·문서 속성 시각을 고정한다).
 개발 전용이다 — 개발 의존성 python-docx와 테스트 팩토리(tests.pdf_factory)를 쓰므로 운영 이미지에서는 부르지 않는다.
-저장소 루트 `samples/`는 화면에 직접 올려 볼 이 생성기 출력의 사본이다(정답 JSON 제외). 생성기를 바꾸면 backend/에서
-`python -m scripts.synthetic_sop`으로 다시 쓴다 — 어긋나면 `test_samples_match_generator`가 실패한다.
 
 만드는 파일(out_dir 아래):
 - OLD-1·OLD-2(Eppendorf, 한/영 연달아)·OLD-3(Beckman Coulter, 한/영 따로)·OLD-4(Thermoscientific, 연달아) DOCX,
@@ -61,7 +59,6 @@ from tests.pdf_factory import build_text_pdf
 FILE_PREFIX = "SYNTHETIC_"
 EXPECTED_FILE = f"{FILE_PREFIX}expected.json"
 TOBE_FILE = f"{FILE_PREFIX}tobe.xlsx"
-SAMPLES_DIR = Path(__file__).resolve().parents[2] / "samples"  # 저장소 루트 samples/ (scripts → backend → 루트)
 BUNDLE_TITLE = "SYNTHETIC QC Centrifuge"
 # 같은 입력이면 같은 바이트 — 문서 속성 시각과 zip 항목 시각을 이 값으로 고정한다
 FIXED_TIME = datetime(2026, 1, 1, tzinfo=UTC)
@@ -702,8 +699,3 @@ def build_synthetic_bundle(out_dir: Path) -> SyntheticBundle:
     (out_dir / EXPECTED_FILE).write_text(json.dumps(expected, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return SyntheticBundle(directory=out_dir, documents=documents, tobe_file=tobe_file, expected=expected)
 
-
-if __name__ == "__main__":
-    # 정답 JSON은 화면에 올리는 파일이 아니라 사본에 남기지 않는다
-    build_synthetic_bundle(SAMPLES_DIR)
-    (SAMPLES_DIR / EXPECTED_FILE).unlink()

@@ -9,7 +9,8 @@
 // QUIET=1이면 통과한 줄을 찍지 않는다 - 실패한 줄과 마지막 한 줄(통과 수·실패 수)만 나온다.
 // 평소(변경마다)는 고친 화면만: QUIET=1 ONLY="<화면>" node scripts/pw-smoke-sop.mjs  — 전부 돌리는 것은 dev→main 정식 업데이트 전, 또는 여러 화면이 같이 쓰는 것(공용 부품·API 층·이 스크립트의 틀)을 고쳤을 때만이다(사용자 결정 2026-11-16).
 // playwright-core는 저장소 의존성이 아니다: `npm i --no-save playwright-core` (package.json 불변)
-import { mkdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -2802,10 +2803,20 @@ await runStep("documents: an Old list and a New list, with written files on thei
   check("opening the row shows the file's version and language layout", (await page.locator('[data-testid$="-written-version"]').count()) === 1 && (await page.locator('[data-testid$="-written-layout"]').count()) === 1);
 });
 
+// 합성 SOP 파일을 .shots/synthetic에 만든다 - 저장소에 사본을 두면 OS마다 PNG 압축 바이트가 달라 어긋난다
+function buildSyntheticFiles() {
+  const backend = resolve(SCRIPT_DIR, "../../backend");
+  const out = resolve(SHOT_DIR, "synthetic");
+  const python = [".venv/bin/python", ".venv/Scripts/python.exe"].map((path) => resolve(backend, path)).find(existsSync);
+  if (!python) throw new Error(`backend venv python not found under ${backend}/.venv`);
+  execFileSync(python, ["-c", "import sys; from pathlib import Path; from scripts.synthetic_sop import build_synthetic_bundle; build_synthetic_bundle(Path(sys.argv[1]))", out], { cwd: backend, stdio: "inherit" });
+  return out;
+}
+
 // 올리는 창구 하나(v1.0.31) - Old와 New 파일을 한 창에서 올린다. 앱이 파일 이름의 번호로 쪽을 먼저 고르고, New 파일은 번호가 같은 빈 줄에 붙는다.
-// 묶음을 만들 권한이 있는 사람으로 새 묶음에서 하고, 끝에 그 묶음을 지운다(저장소의 합성 샘플 파일을 쓴다)
+// 묶음을 만들 권한이 있는 사람으로 새 묶음에서 하고, 끝에 그 묶음을 지운다(올릴 파일은 backend venv로 합성 생성기를 돌려 만든다)
 await runStep("documents: one upload window takes Old and New files", { devUser: "dev.admin" }, async ({ page, takeShot }) => {
-  const samples = resolve(SCRIPT_DIR, "../../samples");
+  const samples = buildSyntheticFiles();
   const headers = { "X-Dev-User": "dev.admin", "Content-Type": "application/json" };
   const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC upload window", is_synthetic: true } })).json();
   const docs = [{ code: "SOP-01", doc_type: "sop", title: "Synthetic SOP" }, { code: "WI-05", doc_type: "wi", parent_code: "SOP-01", title: "Synthetic listed WI" }];

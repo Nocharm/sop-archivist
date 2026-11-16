@@ -52,8 +52,6 @@ npm run dev
 # API 문서(OpenAPI): backend를 띄운 뒤 http://localhost:8777/docs. 호출은 dev 헤더로 — Invoke-RestMethod -Headers @{"X-Dev-User"="qa.member"} http://localhost:8777/api/bundles
 ```
 
-화면에서 직접 올려 볼 파일은 [`samples/`](samples/README.md)에 있다(시드가 쓰는 것과 같은 합성 파일).
-
 ### AI·임베딩 서버 (선택)
 
 AI 제안은 사내 채팅 모델(`AI_*`)과 별개의 사내 임베딩 모델(`EMBED_*`, OpenAI 호환 `/embeddings`)을 쓴다. 둘 다 기본은 꺼짐이고, 꺼져 있어도 사람이 끝까지 가는 경로(업로드부터 검토 완료까지)는 그대로 돈다. SOP 원문은 이 두 주소로만 나간다. 값과 설명은 [`.env.example`](.env.example)이 전체 목록이고, 시크릿(`*_API_TOKEN`)은 커밋하지 않는다.
@@ -85,7 +83,6 @@ frontend/   # Next.js 앱(src/app 라우트, src/components, src/lib), scripts/ 
 nginx/      # 앱 리버스 프록시 설정
 scripts/    # db-backup.sh (백업 사이드카)
 ci/         # deploy.sh(GitLab 배포 Job 본체) · test-deploy.sh(가짜 docker로 배포 스크립트 검증)
-samples/    # 화면에 직접 올려 볼 합성 SOP 파일(생성기 출력 사본, 시험이 어긋남을 잡는다)
 docs/       # 문서 인덱스 docs/README.md — deploy/(배포 런북), qa/(검증 명령·감사), lessons/(시행착오), superpowers/(설계 명세·계획), history/(지난 PROGRESS·CHANGELOG)
 docker-compose.yml   # proxy · frontend · backend · db · db-backup
 .gitlab-ci.yml       # 사내 GitLab: test 3개 자동, deploy-dev 자동(dev, 테스트를 기다리지 않음), deploy-production 수동(main)

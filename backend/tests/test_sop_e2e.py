@@ -18,10 +18,7 @@ from app.sop.constants import COVER_KINDS
 from app.sop.coverage import find_coverage_problems
 from scripts.sop_demo_driver import SyntheticDriver, find_unit_by_text, iter_c_items
 from scripts.synthetic_sop import (
-    EXPECTED_FILE,
-    FILE_PREFIX,
     FIXED_ZIP_TIME,
-    SAMPLES_DIR,
     SyntheticBundle,
     build_synthetic_bundle,
 )
@@ -121,16 +118,6 @@ def test_synthetic_bundle_is_byte_identical(synthetic: SyntheticBundle, tmp_path
         assert (again.directory / path.name).read_bytes() == path.read_bytes(), path.name
     with zipfile.ZipFile(synthetic.tobe_file) as archive:  # 저장 라이브러리가 적은 지금 시각이 남지 않는다
         assert {info.date_time for info in archive.infolist()} == {FIXED_ZIP_TIME}
-
-
-def test_samples_match_generator(synthetic: SyntheticBundle) -> None:
-    samples = {path.name for path in SAMPLES_DIR.glob(f"{FILE_PREFIX}*")}
-
-    assert samples == {path.name for path in synthetic.directory.iterdir()} - {EXPECTED_FILE}
-    for name in samples:
-        assert (SAMPLES_DIR / name).read_bytes() == (synthetic.directory / name).read_bytes(), (
-            f"{name}: samples/ is stale — rerun `python -m scripts.synthetic_sop` in backend/"
-        )
 
 
 def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundle) -> None:
