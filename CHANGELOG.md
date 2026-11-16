@@ -4,6 +4,8 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
 
 ## Unreleased (dev)
 
+- **배포 메모 — AI 분류 프롬프트(`prompt.classify`)를 손으로 새 버전으로**: 시드는 키에 버전이 하나도 없을 때만 들어가므로 이미 있는 DB에는 바뀐 시드가 닿지 않는다. 시드는 이제 `context[].caption`(표·그림의 캡션)과 그림·표 단위가 근거를 캡션에서 인용한다는 것을 설명한다. 배포 뒤 관리자가 **관리 → AI guidelines → `prompt.classify` → 활성 버전 보기 → Edit as a new version** 에서 내용을 저장소의 `backend/app/sop/ai/seeds/prompt.classify.md` 전체로 바꾸고 **Save version**, 그 버전의 **Activate**를 누른다(시드에서 불러오는 단추는 없다). 그 전에도 AI는 `caption` 칸을 받지만 프롬프트가 그 칸을 설명하지 않는다.
+
 ### v1.1.4 — 2026-11-16
 
 - **Order**: 줄 어디든 눌러 끌어 같은 칸 안에서 순서를 바꾸고, 좌우로 끌어 깊이를 바꾼다. 같은 의미의 한/영 줄과 그 아래 더 깊은 줄이 함께 간다. 넣을 자리에 선이 보이고 끌려가는 표에 놓았을 때의 새 번호가 적힌다. 다른 칸 위에서는 까닭이 적히고 놓이지 않는다. Esc로 취소한다. 손잡이는 없다.

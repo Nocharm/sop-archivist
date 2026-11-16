@@ -2,6 +2,7 @@
 
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
+from types import SimpleNamespace
 from typing import NamedTuple
 
 import httpx2
@@ -12,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import engine
 from app.sop.detach import DetachReport
-from app.sop.match import MAX_BULK_MATCH, sync_new_doc_targets
+from app.sop.match import MAX_BULK_MATCH, _plan_targets, sync_new_doc_targets
 from app.sop.models import Bundle, BundleEvent, Document, TargetDoc, TargetSentence, TargetSource, Unit
 from tests.access_helpers import run_in_session, update_row
 from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
@@ -227,6 +228,23 @@ def test_written_new_doc_caption_is_a_child_of_its_figure(client: TestClient) ->
         assert (target["parent_target_id"], target["cell_row"], target["cell_col"]) == (expected_parent["id"], None, None)
     # 부모 없는 캡션 새 문장은 없다
     assert {t["new_unit_id"] for t in targets if t["parent_target_id"] is None} & captions.keys() == set()
+
+
+def test_caption_of_a_bundle_without_a_target_gets_none() -> None:
+    """묶음 단위가 새 문장을 갖지 않으면(머리말의 그림) 그 캡션도 새 문장이 없다 — 최상위 캡션 새 문장으로 떨어지지 않는다."""
+    base = {
+        "text": "", "lang": "neutral", "group_unit_id": None, "unit_row_index": None, "heading_level": None,
+        "block_row_index": None, "block_col_index": None, "n_rows": None, "n_cols": None,
+    }
+    figure = SimpleNamespace(**{**base, "id": 1, "kind": "figure", "part": "header"})
+    caption = SimpleNamespace(**{
+        **base, "id": 2, "kind": "caption", "part": "body", "text": "그림 1 합성 장비", "lang": "ko", "group_unit_id": 1,
+    })
+    sentence = SimpleNamespace(**{**base, "id": 3, "kind": "sentence", "part": "body", "text": "합성 장비를 켠다.", "lang": "ko"})
+
+    wants = _plan_targets([caption, sentence, figure])
+
+    assert [want.unit_id for want in wants] == [sentence.id]
 
 
 def test_clause_number_headings_set_level_one_without_styles(client: TestClient) -> None:

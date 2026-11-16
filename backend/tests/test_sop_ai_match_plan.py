@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 from typing import Any, TypeVar
 from unittest.mock import ANY
 
@@ -15,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.settings import settings
 from app.sop.ai import embeddings
+from app.sop.ai.match_jobs import _plan_captions
 from app.sop.ai.constants import AI_CALL_ATTEMPTS
 from app.sop.ai.jobs import JobItem, enqueue_jobs
 from app.sop.constants import AI_PRIORITY_PLAN, AI_PRIORITY_PRE_REFINE, AI_PRIORITY_USER
@@ -664,6 +666,20 @@ def test_table_caption_links_beside_the_cells_and_stays_out_of_the_table_text(cl
     assert {(table.id, table_unit), (caption.id, old_caption)} <= read_links()
     assert (caption.status, caption.change_type, caption.suggestion_id) == ("ai_suggested", "rewritten", suggestion.id)
     assert caption.id in suggestion.content["target_ids"]
+
+
+def test_captions_link_per_language_and_a_new_caption_without_an_old_one_is_new() -> None:
+    """한/영 캡션 둘은 언어마다 잇고(문서 순서가 달라도), 옛 쪽에 남은 같은 언어 캡션이 없는 새 캡션은 신규다."""
+    old_ko = SimpleNamespace(id=1, lang="ko", text="표 1 합성 조건")
+    old_en = SimpleNamespace(id=2, lang="en", text="Table 1 Synthetic conditions")
+    new_en = SimpleNamespace(id=10, lang="en", confirmed_text="Table 1 Synthetic conditions")
+    new_ko = SimpleNamespace(id=11, lang="ko", confirmed_text="표 1 합성 운전 조건")
+    new_ko_extra = SimpleNamespace(id=12, lang="ko", confirmed_text="표 1 합성 조건(계속)")
+
+    writes, links = _plan_captions([old_ko, old_en], [new_en, new_ko, new_ko_extra])
+
+    assert sorted(links) == [(10, 2), (11, 1)]
+    assert [(write.target.id, write.change_type) for write in writes] == [(10, "as_is"), (11, "rewritten"), (12, "new")]
 
 
 def test_same_grid_with_an_old_cell_left_over_is_not_as_is(client: TestClient, fake_ai: FakeAi) -> None:

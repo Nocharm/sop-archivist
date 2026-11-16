@@ -61,7 +61,7 @@ def _list_assigned_captions(snap: BundleSnapshot) -> list[UnitInfo]:
     return [
         unit for unit in snap.units.values()
         if unit.kind == CAPTION_KIND and unit.document_id in old_document_ids and unit.group_unit_id is not None
-        and snap.decisions[unit.group_unit_id].disposition == "assigned"
+        and (decision := snap.decisions.get(unit.group_unit_id)) is not None and decision.disposition == "assigned"
     ]
 
 

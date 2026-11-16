@@ -79,6 +79,7 @@ pytestmark = pytest.mark.usefixtures("clean_sop", "clean_ai_jobs")
 FIRST_SLOT = "c1"  # 임베딩이 꺼져 있으면 후보가 목록 순서 그대로라 c1은 SOP-AI의 Purpose 칸이다
 CELLS = [["합성 항목", "합성 값"], ["합성 압력", "10 bar"]]
 FIGURE_CAPTION = "그림 1 합성 장비 배치도"
+TABLE_CAPTION = "표 1 합성 운전 조건"
 MARKER = "RAW-REPLY-MARKER"
 MISSING_REWRITE_REPLY = json.dumps({
     "candidate": FIRST_SLOT, "reason": MARKER, "rule_ids": [], "evidence": [], "change_type": "tone",
@@ -629,6 +630,30 @@ def test_table_unit_copies_cells_as_is(client: TestClient, fake_ai: FakeAi) -> N
     assert read_decision(table["id"]).status == "ai_suggested"
     assert read_single_suggestion().content["rewrites"] == {"ko": [], "en": []}
     assert "| 합성 항목 | 합성 값 |" in fake_ai.requests[0]["context"][0]["table"]
+
+
+def test_classify_table_suggests_its_caption_beside_the_cells(client: TestClient, fake_ai: FakeAi) -> None:
+    """표 제안에서 칸 새 문장은 칸 좌표를 지키고, 캡션 새 문장은 칸 좌표 없이 같은 표 아래에 제안된다."""
+    bundle = make_ai_bundle(client)
+    view = upload_second_document(client, bundle.id, p(TABLE_CAPTION, "Caption") + tbl(CELLS))
+    table, caption = find_kind(view, "table"), find_unit(view, TABLE_CAPTION)
+    use_reply(fake_ai)
+    queue_units(client, bundle.id, [table["id"]])
+
+    run_jobs()
+
+    targets = get_group_by_unit(client, bundle.id, table["id"])["targets"]
+    (table_target,) = [target for target in targets if target["kind"] == "table"]
+    children = [target for target in targets if target["parent_target_id"] == table_target["id"]]
+    cells = [target for target in children if target["cell_row"] is not None]
+    (caption_target,) = [target for target in children if target["cell_row"] is None]
+    assert {(target["cell_row"], target["cell_col"]) for target in cells} == {(0, 0), (0, 1), (1, 0), (1, 1)}
+    assert (caption_target["cell_col"], caption_target["ai_text"], caption_target["source_unit_ids"]) == (
+        None, TABLE_CAPTION, [caption["id"]],
+    )
+    assert {target["status"] for target in children} == {"ai_suggested"}
+    assert "| 합성 항목 | 합성 값 |" in fake_ai.requests[0]["context"][0]["table"]
+    assert fake_ai.requests[0]["context"][0]["caption"] == TABLE_CAPTION
 
 
 @pytest.mark.parametrize("kind", ["table", "table_row"])

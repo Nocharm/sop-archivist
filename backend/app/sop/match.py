@@ -150,6 +150,8 @@ def _plan_targets(rows: Sequence[Row[Any]]) -> list[_Want]:
     )
     units = {row.id: row for row in rows}
     targeted = {row.id for row in rows if row.part not in REPEATED_PARTS and row.kind != "heading"}
+    # 묶음 단위가 새 문장을 갖지 않는 캡션은 만들지 않는다 — 최상위 캡션 새 문장은 어디에도 없다(캡션은 늘 묶음의 자식)
+    targeted -= {row.id for row in rows if row.kind == CAPTION_KIND and row.group_unit_id not in targeted}
     stack: list[tuple[int, str]] = []
     wants: list[_Want] = []
     for row, is_body in zip(rows, in_flow, strict=True):
