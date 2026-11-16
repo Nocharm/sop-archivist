@@ -121,9 +121,10 @@
     will-change: transform;
   }
   .drag-card-id { color: var(--accent); font: 600 11px/16px var(--font-mono); white-space: nowrap; }
-  .drag-card-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 글 칸은 남는 폭만 쓴다(기준 0) - 긴 메모(거절 이유)가 오면 글 칸이 먼저 줄고 메모는 표 안에서 줄을 바꾼다. 짧은 메모·메모 없음은 지금처럼 한 줄 */
+  .drag-card-text { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .drag-card-count { padding: 0 5px; border-radius: 8px; background: var(--accent); color: var(--on-accent); font: 600 10px/16px var(--font-mono); white-space: nowrap; }
-  .drag-card-note { padding-left: 8px; border-left: 1px solid var(--line-2); color: var(--ink-2); white-space: nowrap; }
+  .drag-card-note { min-width: 0; padding-left: 8px; border-left: 1px solid var(--line-2); color: var(--ink-2); }
   .drag-card[data-refused] { border: 1px dashed var(--ink-4); color: var(--ink-3); }
 
   /* 탭 패널이 바뀔 때 - 내용이 살짝 나타난다 */

@@ -416,3 +416,28 @@ def test_undo_of_a_positioned_save_removes_the_sentence_and_keeps_the_frozen_ord
     redone = client.post(f"/api/bundles/{bundle_id}/decisions/redo", json={"session": "s1"}, headers=AUTHOR)
     assert redone.status_code == 200, redone.text
     assert _texts(client, bundle_id) == [FIRST, DRAGGED, SECOND, THIRD]
+
+
+def test_an_earlier_undo_step_on_a_frozen_document_conflicts(client: TestClient) -> None:
+    """굳히기는 되돌리기 단계 밖이다 — 굳히며 순번이 바뀐 문장을 건드린 그 전 단계는 409 undo_conflict(Order에서 순서를 바꾼 뒤와 같다, 설계 §12)."""
+    bundle_id, sop_id, doc_id = _create_sop_bundle(client, "".join(p(text) for text in (FIRST, SECOND, THIRD, DRAGGED)))
+    view = get_view(client, bundle_id, doc_id)
+    ids = {}
+    for text in (FIRST, THIRD, SECOND):
+        saved = _save(client, bundle_id, sop_id, find_unit(view, text), undo={"session": "s1"})
+        assert saved.status_code == 200, saved.text
+        (target,) = saved.json()["targets"]
+        ids[text] = target["id"]
+    first_id = ids[FIRST]
+    positioned = _save(
+        client, bundle_id, sop_id, find_unit(view, DRAGGED), undo={"session": "s1"}, position={"after_target_id": first_id},
+    )
+    assert positioned.status_code == 200, positioned.text
+
+    undone = client.post(f"/api/bundles/{bundle_id}/decisions/undo", json={"session": "s1"}, headers=AUTHOR)
+    earlier = client.post(f"/api/bundles/{bundle_id}/decisions/undo", json={"session": "s1"}, headers=AUTHOR)
+
+    assert undone.status_code == 200, undone.text
+    assert earlier.status_code == 409, earlier.text
+    assert earlier.json()["detail"]["code"] == "undo_conflict"
+    assert _texts(client, bundle_id) == [FIRST, SECOND, THIRD]

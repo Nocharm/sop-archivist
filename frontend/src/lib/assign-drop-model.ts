@@ -180,7 +180,8 @@ export function listDraftLines(slots: readonly Pick<SentenceSlot, "key" | "lang"
   const ordered = [...own.filter((slot) => slot.lang === "en"), ...own.filter((slot) => slot.lang !== "en")];
   for (const slot of slots.filter((candidate) => candidate.isTranslated)) {
     if (!(texts[slot.key] ?? slot.text).trim()) continue;
-    const at = ordered.map((line) => line.sourceIds[0]).lastIndexOf(slot.sourceIds[0]);
+    // 출처 없는 번역 칸은 출처 없는 다른 줄 뒤가 아니라 끝으로 간다
+    const at = slot.sourceIds.length === 0 ? -1 : ordered.map((line) => line.sourceIds[0]).lastIndexOf(slot.sourceIds[0]);
     ordered.splice(at < 0 ? ordered.length : at + 1, 0, slot);
   }
   return ordered.map((slot) => ({ key: slot.key, lang: slot.lang, text: texts[slot.key] ?? slot.text }));

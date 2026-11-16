@@ -176,4 +176,9 @@ describe("listDraftLines", () => {
   it("skips a hand-written slot that is still empty", () => {
     expect(listDraftLines([slot("u10", "ko", "원문", [10]), slot("x10", "en", "", [10], true)], {})).toEqual([{ key: "u10", lang: "ko", text: "원문" }]);
   });
+  it("puts a translation without a source at the end, not after another line without a source", () => {
+    expect(listDraftLines([slot("n1", "ko", "출처 없음", []), slot("u10", "ko", "원문", [10]), slot("x0", "en", "Loose", [], true)], {})).toEqual([
+      { key: "n1", lang: "ko", text: "출처 없음" }, { key: "u10", lang: "ko", text: "원문" }, { key: "x0", lang: "en", text: "Loose" },
+    ]);
+  });
 });
