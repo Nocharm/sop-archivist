@@ -663,8 +663,9 @@ await runStep("assign: right-click an Old sentence to split it or change its lan
   };
   await openMenu(target.id);
   await takeShot("sop-assign-context-menu.png");
-  check("the menu has assign and edit groups", (await page.locator('[data-testid="assign-ctx-confirm"]').count()) === 1 && (await page.locator('[data-testid="assign-ctx-split"]').count()) === 1);
-  check("confirm is off with no destination", (await page.locator('[data-testid="assign-ctx-confirm"]').getAttribute("aria-disabled")) === "true");
+  check("the menu has assign and edit groups", (await page.locator('[data-testid="assign-ctx-clear"]').count()) === 1 && (await page.locator('[data-testid="assign-ctx-split"]').count()) === 1);
+  // 확정은 Enter·오른쪽 칸·그 자리 메뉴가 맡는다 - 우클릭 메뉴에는 없다
+  check("the menu has no confirm item", (await page.locator('[data-testid="assign-ctx-confirm"]').count()) === 0);
   // 언어 바꾸기
   const other = target.lang === "en" ? "ko" : "en";
   await page.locator(`[data-testid="assign-ctx-lang-${other}"]`).click();

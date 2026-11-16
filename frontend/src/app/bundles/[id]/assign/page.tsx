@@ -868,8 +868,6 @@ export default function AssignPage() {
       next: neighbor(1),
       readOnly: !canEdit,
       rowStatus: row?.status ?? "unassigned",
-      hasDestination: destination !== null,
-      isConfirmedAsIs: row?.status === "confirmed" && !hasDraftChange(draft),
       isDecided: isUnitDecided,
       hasDraft: hasUnitDraft,
       canSplit: findNearestCut(target, Math.floor(target.text.length / 2)) !== null,
@@ -1127,8 +1125,7 @@ export default function AssignPage() {
   /** 문장 하나에 대한 동작 - 우클릭 메뉴와 오른쪽 칸의 다듬기 줄이 함께 쓴다. caret은 누른 글자 자리(자를 선을 그 가까이에 놓는다) */
   function runUnitAction(target: ViewUnit, action: AssignMenuAction, lang?: "ko" | "en", caret: { blockId: number; offset: number } | null = null) {
     const table = findTableOf(target);
-    if (action === "confirm") handlePrimary();
-    else if (action === "clear") void runClear();
+    if (action === "clear") void runClear();
     else if (action === "ref_mark") setRefEntryId(target.id);
     else if (action === "ref_clear") void runUnitEdit({ type: "clear_ref", unit_id: target.id }, t("assign.ref.didReject"), target.id);
     else if (action === "split") {
@@ -1875,14 +1872,6 @@ export default function AssignPage() {
   function renderPlaceLabel(dest: Destination): { title: string; text: string } {
     const option = options.find((item) => getDestinationId(item.destination) === getDestinationId(dest));
     return { title: option?.docCode ?? "", text: option?.label ?? "" };
-  }
-
-  /** 우클릭 메뉴 확정 항목 옆의 짧은 이름 - 잇기는 New 문서 번호, 자리는 To-Be 문서 번호, 지우기·옮기기는 그 이름(옮기기는 대상 문서) */
-  function readDestinationLabel(dest: Destination): string {
-    if (dest.kind === "link") return writtenMap.get(dest.targetIds[0])?.doc_code ?? "";
-    if (dest.kind === "delete") return t("classify.deleted");
-    if (dest.kind === "move") return moveCode.trim() || t("classify.moved");
-    return renderPlaceLabel(dest).title;
   }
 
   /** 추천을 누름 - 고른 뒤 그 카드 옆에 확정 메뉴를 띄운다(고른 상자가 카드보다 위라 화면 밖일 수 있다) */
@@ -3066,7 +3055,6 @@ export default function AssignPage() {
           cover={(rowMap.get(ctxMenu.rowKey)?.unitIds ?? []).flatMap((id) => [...document.querySelectorAll<HTMLElement>(`[data-testid="assign-paper-piece-${id}"]`)])}
           click={ctxMenu.click}
           groups={ctxGroups}
-          destinationLabel={destination ? readDestinationLabel(destination) : ""}
           onPick={runCtx}
           onClose={() => setCtxMenu(null)}
         />

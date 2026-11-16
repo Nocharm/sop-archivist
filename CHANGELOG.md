@@ -4,6 +4,10 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
 
 ## Unreleased (dev)
 
+### v1.1.1 — 2026-11-16
+
+- Assign Old 문장 우클릭 메뉴에서 **Confirm** 을 뺐다 — 늘 꺼져 있어 쓰지 않았고, 확정은 <kbd>↵</kbd>·오른쪽 칸 **Decide**·그 자리 메뉴로 한다. 메뉴의 **Assignment** 묶음은 **Clear assignment** 하나다.
+
 ## v1.1.0 — 2026-11-16
 
 - **범위**: v1.0.0 뒤 dev 업데이트 v1.0.1~v1.0.37 — EQUIS 문서 번호 조회와 참조 줄(REF), 네 단계 워크플로우(Documents · Assign · Order · Outputs), 쪼개기·원문 고치기 화면을 Assign으로 합치기, Documents 개편, AI 미리 돌리기와 대기 줄 순서. 줄마다의 기록은 git 이력의 이 파일(`v1.1.0` 태그 바로 앞 커밋)에 있다.

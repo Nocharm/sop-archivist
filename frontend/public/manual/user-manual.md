@@ -464,8 +464,7 @@ Old 문장을 오른쪽 단추로 누르면(키보드는 줄을 고른 채 <kbd>
 
 | 묶음 | 항목 | 하는 일 |
 |---|---|---|
-| **Assignment** | **Confirm** | 오른쪽 칸에서 고른 보낼 곳으로 확정(옆에 보낼 곳이 흐리게). 고른 곳이 없거나 이미 확정한 그대로면 꺼진다 |
-| | **Clear assignment** | 배정을 지우고 **Unassigned** 로 |
+| **Assignment** | **Clear assignment** | 배정을 지우고 **Unassigned** 로. 확정은 메뉴에 없다 — <kbd>↵</kbd>, 오른쪽 칸 **Decide** 의 **Confirm**, 보낼 곳을 고른 뒤 뜨는 그 자리 메뉴로 한다 |
 | **Edit sentence** | **Split here** | 누른 자리 가까이에 나눌 선을 놓는다. 선을 끌거나 <kbd>←</kbd> <kbd>→</kbd>로 옮긴 뒤 선 옆 **Split here**(<kbd>S</kbd>)로 나누고, **Cancel**(<kbd>Esc</kbd>)로 거둔다. 문장을 두 번 눌러도 선이 놓인다 |
 | | **Merge with previous** · **Merge with next** | 바로 앞·뒤 문장과 한 문장으로 합친다(같은 언어끼리) |
 | | **Pair with previous (KO/EN)** · **Pair with next (KO/EN)** | 앞·뒤 문장이 다른 언어(한글 ↔ 영어)면 합치기 대신 이 항목이 나온다. 두 문장을 한/영 짝으로 맺어 한 줄로 다룬다. 이미 짝이 있는 문장과는 맺을 수 없다 |
