@@ -34,7 +34,7 @@ from app.sop.models import (
     UnitPairMember,
     UnitRef,
 )
-from app.sop.refs import REF_KINDS, is_document_number, read_ref_state
+from app.sop.refs import REF_KINDS, REF_LANG, is_document_number, read_ref_state
 from app.sop.snapshot import select_latest_extractions
 from app.sop.tobe import is_temp_match_code
 from app.sop.units import UNIT_ACTIVE
@@ -232,10 +232,21 @@ async def _collect_incoming(session: AsyncSession, bundle: Bundle, numbers: set[
     return [line for line in lines if line.number in numbers]
 
 
+async def _collect_others_confirmed(session: AsyncSession, bundle: Bundle) -> list[MapLine]:
+    """다른 Bundle(같은 종류)의 사람이 확정한 줄 전부 — 확정한 참조(언어가 REF인 Unit)와 확정한 이동. 제안은 싣지 않는다."""
+    others = and_(Document.bundle_id != bundle.id, _in_same_kind(bundle, Document.bundle_id))
+    # 언어가 REF인 줄만 읽는다 — 남의 Bundle의 다른 줄 글은 읽지 않는다
+    refs = (await session.execute(_select_ref_units(others).where(Unit.lang == REF_LANG))).all()
+    moved = (await session.execute(_select_moved_units(others))).all()
+    lines = _read_ref_lines(refs) + _read_moved_lines(moved)
+    return [line for line in lines if line.state == _CONFIRMED and _is_matchable(line.number)]
+
+
 async def collect_map_lines(session: AsyncSession, bundle: Bundle, scope: MapScope) -> list[MapLine]:
     """지도의 줄 — 이 Bundle에서 나가는 참조·이동과, 다른 Bundle에서 이 Bundle의 번호로 들어오는 참조·이동.
 
-    scope "all"도 지금은 같은 줄을 모은다(남끼리의 줄은 다음 걸음).
+    scope "all"은 여기에 같은 종류의 다른 Bundle의 확정한 줄을 모두 더한다. 남의 제안은 이 Bundle을 가리키는 것뿐이다.
+    한 줄(종류·Unit)은 한 번만 싣는다.
     """
     own = Document.bundle_id == bundle.id
     lines = _read_ref_lines((await session.execute(_select_ref_units(own))).all())
@@ -243,7 +254,12 @@ async def collect_map_lines(session: AsyncSession, bundle: Bundle, scope: MapSco
     numbers = await _load_own_numbers(session, bundle.id)
     if numbers:
         lines += await _collect_incoming(session, bundle, numbers)
-    return lines
+    if scope == "all":
+        lines += await _collect_others_confirmed(session, bundle)
+    unique: dict[tuple[str, int], MapLine] = {}
+    for line in lines:
+        unique.setdefault((line.kind, line.unit_id), line)
+    return list(unique.values())
 
 
 # --- 선으로 묶기 ---
@@ -309,12 +325,16 @@ def _pick_ends(line: MapLine, olds: dict[str, list[_Node]], targets: dict[str, l
     ]
 
 
-async def _load_old_nodes(session: AsyncSession, bundle_id: int, extra_ids: set[int]) -> dict[str, _Node]:
-    """이 Bundle의 읽힌 Old 문서 전부와, 선의 출발점인 다른 Bundle의 Old 문서."""
+async def _load_old_nodes(
+    session: AsyncSession, bundle: Bundle, scope: MapScope, extra_ids: set[int]
+) -> dict[str, _Node]:
+    """이 Bundle(범위 all이면 같은 종류의 모든 Bundle)의 읽힌 Old 문서 전부와, 그 밖에서 선의 출발점인 Old 문서."""
     columns = (Document.id, Document.bundle_id, Document.doc_code, Document.title)
     ready = (Document.side == _OLD_SIDE, Document.status == _READY)
-    rows = list((await session.execute(select(*columns).where(Document.bundle_id == bundle_id, *ready))).all())
-    rows += await select_in_chunks(session, lambda chunk: select(*columns).where(Document.id.in_(chunk), *ready), extra_ids)
+    in_scope = Document.bundle_id == bundle.id if scope == "linked" else _in_same_kind(bundle, Document.bundle_id)
+    rows = list((await session.execute(select(*columns).where(in_scope, *ready))).all())
+    missing = extra_ids - {row[0] for row in rows}
+    rows += await select_in_chunks(session, lambda chunk: select(*columns).where(Document.id.in_(chunk), *ready), missing)
     return {node.id: node for node in map(_old_node, rows)}
 
 
@@ -401,13 +421,14 @@ async def build_reference_map(session: AsyncSession, ctx: BundleContext, scope: 
     for line in lines:
         source = f"old:{line.document_id}"
         for end in _pick_ends(line, olds, targets):
-            # 자기 참조는 선이 아니고, 한쪽 끝이 이 Bundle인 선만 싣는다(남끼리의 추측은 세지 않는다)
-            if end.id == source or (line.bundle_id != bundle.id and end.bundle_id != bundle.id):
+            # 자기 참조는 선이 아니다. 남끼리의 선은 범위 all의 확정한 줄만 싣는다(남끼리의 추측은 세지 않는다)
+            between_others = line.bundle_id != bundle.id and end.bundle_id != bundle.id
+            if end.id == source or (between_others and (scope != "all" or line.state != _CONFIRMED)):
                 continue
             nodes[end.id] = end
             edges[(source, end.id, line.kind, line.state)] += 1
     sources = {int(key[0].removeprefix("old:")) for key in edges}
-    nodes.update(await _load_old_nodes(session, bundle.id, sources))
+    nodes.update(await _load_old_nodes(session, bundle, scope, sources))
     # 질의 사이에 지워졌거나 새로 생긴 문서·Bundle은 이번 지도에서 뺀다(잠그지 않는다 — 다시 읽으면 맞는다)
     nodes = {key: node for key, node in nodes.items() if node.bundle_id is None or node.bundle_id in bundle_rows}
     edges = Counter({key: count for key, count in edges.items() if key[0] in nodes and key[1] in nodes})

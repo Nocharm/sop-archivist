@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import event, select
+from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import engine
@@ -18,7 +18,18 @@ from app.models import Employee
 from app.settings import settings
 from app.sop import ref_map
 from app.sop.bundle_code import format_bundle_code
-from app.sop.models import Extraction, TargetDoc, TargetSentence, Unit, UnitDecision, UnitRef
+from app.sop.membership import BundleContext
+from app.sop.models import (
+    Bundle,
+    BundleEvent,
+    Document,
+    Extraction,
+    TargetDoc,
+    TargetSentence,
+    Unit,
+    UnitDecision,
+    UnitRef,
+)
 from app.sop.refs import is_document_number
 from app.sop.tobe import is_temp_match_code
 from tests.access_helpers import add_grant, run_in_session, update_row
@@ -58,6 +69,15 @@ from tests.sop_map_helpers import (
 pytestmark = pytest.mark.usefixtures("clean_sop")
 
 SCOPES = ("linked", "all")
+# 지도 하나를 만드는 질의 수의 상한 — Bundle 수와 무관해야 한다(설계 §7.1)
+MAX_MAP_STATEMENTS = 20
+# 응답에 실릴 수 있는 키 전부(계획의 가시성 행렬) — 여기 없는 키가 나오면 누군가 필드를 더한 것이다
+MAP_KEYS = {
+    "scope", "truncated", "bundles", "nodes", "edges", "id", "code", "title", "status", "relation", "document_count",
+    "kind", "bundle_id", "number", "doc_type", "becomes", "source", "target", "state", "lines",
+}
+P_CONFIRMED = "SOP-ABC-1020 Peer confirmed"
+P_PROPOSED = "SOP-ABC-1016 Peer proposed"
 
 
 def _edges_from(body: dict, source: str) -> list[dict]:
@@ -98,6 +118,30 @@ def _find_active_unit_id(text: str) -> int:
         return (await session.scalars(select(Unit.id).where(Unit.text == text, Unit.status == "active"))).one()
 
     return run_in_session(find)
+
+
+def _add_peer(client: TestClient, *extra_files: str) -> tuple[int, dict, list[dict]]:
+    """넷째 Bundle P(prod.member 혼자) — S를 가리키는 확정 줄 하나와 M을 가리키는 제안 줄 하나.
+
+    extra_files는 P에 더 올릴 한 줄짜리 Old 문서의 파일 이름이다. (Bundle id, 첫 Old 문서, 더 올린 문서들).
+    """
+    peer_id = create_bundle(client, title="SYNTHETIC map peer", is_synthetic=True)["id"]
+    doc = add_doc(client, peer_id, "SYNTHETIC_SOP-ABC-1030_Peer.docx", P_CONFIRMED, P_PROPOSED)
+    extras = [add_doc(client, peer_id, file_name, "Synthetic extra peer line.") for file_name in extra_files]
+    assert edit(client, peer_id, doc["id"], {
+        "type": "set_ref", "unit_id": find_line(client, peer_id, doc["id"], P_CONFIRMED)["id"], "number": "SOP-ABC-1020",
+    }).status_code == 200
+    response = set_members(client, peer_id, [("prod.member", "author")])
+    assert response.status_code == 200, response.text
+    return peer_id, doc, extras
+
+
+def _collect_keys(value: Any) -> set[str]:
+    if isinstance(value, dict):
+        return set(value) | {key for item in value.values() for key in _collect_keys(item)}
+    if isinstance(value, list):
+        return {key for item in value for key in _collect_keys(item)}
+    return set()
 
 
 def _plant_free_text_in_s() -> None:
@@ -546,3 +590,205 @@ def test_bundle_without_documents_still_opens_its_map(client: TestClient) -> Non
         "relation": "self", "document_count": 0,
     }]
     assert (body["nodes"], body["edges"]) == ([], [])
+
+
+# --- 범위 all ---
+
+
+def test_all_scope_lists_every_bundle_of_the_same_kind(client: TestClient) -> None:
+    w = World(client)
+    peer_id, peer_doc, _ = _add_peer(client)
+    p, m, s = f"old:{peer_doc['id']}", f"old:{w.m_doc['id']}", f"old:{w.s_doc['id']}"
+
+    body = get_map(client, w.v_id, scope="all")
+    assert [b["id"] for b in body["bundles"]] == [w.v_id, w.m_id, w.s_id, peer_id]
+    assert [(b["relation"], b["title"]) for b in body["bundles"] if b["id"] == peer_id] == [("summary", "")]
+    assert _node(body, p)["bundle_id"] == peer_id
+    assert _edges_from(body, p) == [{"source": p, "target": s, "kind": "ref", "state": "confirmed", "lines": 1}]
+    assert [e for e in body["edges"] if (e["source"], e["target"]) == (p, m)] == []  # 남끼리의 추측은 세지 않는다
+
+    linked = get_map(client, w.v_id)
+    assert peer_id not in {b["id"] for b in linked["bundles"]}
+    assert [n for n in linked["nodes"] if n["bundle_id"] == peer_id] == []
+    assert [e for e in linked["edges"] if p in (e["source"], e["target"])] == []
+
+
+def test_all_scope_draws_proposed_lines_only_at_this_bundle(client: TestClient) -> None:
+    """M의 제안 줄과 S의 확정 줄이 가리키는 OLD-1이 P에도 있다 — P 쪽 선은 all의 확정 줄만이고 linked에는 없다."""
+    w = World(client)
+    _, _, (twin,) = _add_peer(client, "SYNTHETIC_OLD-1_Twin.docx")
+    v, m, s, t = (f"old:{doc_id}" for doc_id in (w.v_doc["id"], w.m_doc["id"], w.s_doc["id"], twin["id"]))
+
+    body = get_map(client, w.v_id, scope="all")
+    assert _edge(body, m, v, "ref")["state"] == "proposed"
+    assert _edge(body, m, t, "ref") is None
+    assert {(e["kind"], e["state"]) for e in body["edges"] if (e["source"], e["target"]) == (s, t)} == {
+        ("ref", "confirmed"), ("moved", "confirmed"),
+    }
+
+    linked = get_map(client, w.v_id)
+    assert [e for e in linked["edges"] if t in (e["source"], e["target"]) and e["source"] != v] == []
+
+
+@pytest.mark.parametrize("guess", ["Zz-Ref-Text Synthetic", "zz-moved-sentence synthetic."])
+def test_all_scope_free_text_cannot_be_guessed_through_a_member_bundle(client: TestClient, guess: str) -> None:
+    """범위 all은 남끼리의 확정 선도 긋는다 — 작성자가 M(구성원)의 문서 번호를 S의 숨은 글로 바꿔도 S에서 선이 오지 않는다."""
+    w = World(client)
+    _plant_free_text_in_s()
+    current = get_view(client, w.m_id, w.m_doc["id"])["document"]["revision"]
+    response = client.patch(
+        f"/api/bundles/{w.m_id}/documents/{w.m_doc['id']}", json={"revision": current, "doc_code": guess}, headers=AUTHOR
+    )
+    assert response.status_code == 200, response.text
+
+    for bundle_id in (w.v_id, w.m_id):
+        response = client.get(f"/api/bundles/{bundle_id}/map", params={"scope": "all"}, headers=AUTHOR)
+        assert response.status_code == 200, response.text
+        assert _edges_from(response.json(), f"old:{w.s_doc['id']}") == []
+        assert [marker for marker in MARKERS if marker in response.text] == []
+
+
+def test_linked_scope_has_no_edge_between_two_other_bundles(client: TestClient) -> None:
+    w = World(client)
+    _add_peer(client)
+
+    body = get_map(client, w.v_id)
+    own = {node["id"] for node in body["nodes"] if node["bundle_id"] == w.v_id}
+    assert body["edges"]
+    assert [e for e in body["edges"] if e["source"] not in own and e["target"] not in own] == []
+
+
+def test_synthetic_and_real_bundles_never_share_a_map(client: TestClient) -> None:
+    w = World(client)
+    real_id = create_bundle(client, title="SYNTHETIC map real kind", is_synthetic=False)["id"]
+    real_doc = add_doc(client, real_id, "SYNTHETIC_SOP-ABC-1016_Real.docx", "OLD-1 Real line")
+    r, v, m = f"old:{real_doc['id']}", f"old:{w.v_doc['id']}", f"old:{w.m_doc['id']}"
+
+    for scope in SCOPES:
+        body = get_map(client, w.v_id, scope=scope)
+        assert real_id not in {b["id"] for b in body["bundles"]}
+        assert r not in {n["id"] for n in body["nodes"]}
+        assert [e for e in body["edges"] if r in (e["source"], e["target"])] == []
+        assert [n["id"] for n in body["nodes"] if n["number"] == "SOP-ABC-1016"] == [m]
+        assert _edge(body, v, m, "ref") is not None
+
+        own = get_map(client, real_id, scope=scope)
+        assert [b["id"] for b in own["bundles"]] == [real_id]
+        assert [n["id"] for n in own["nodes"]] == [r, "num:OLD-1"]
+        assert own["edges"] == [{"source": r, "target": "num:OLD-1", "kind": "ref", "state": "proposed", "lines": 1}]
+
+
+def test_response_carries_only_the_listed_fields(client: TestClient) -> None:
+    w = World(client)
+    _add_peer(client)
+
+    for scope in SCOPES:
+        assert _collect_keys(get_map(client, w.v_id, scope=scope)) == MAP_KEYS
+
+
+def test_no_text_of_a_non_member_bundle_leaves_the_server(
+    client: TestClient, enforce: None, demo_access: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    add_grant("user", "qa.member", permission="bundle.create")  # 권한 판정을 켠 채 World를 만든다
+    w = World(client)
+    _add_peer(client)
+
+    def check(headers: dict[str, str]) -> None:
+        for scope in SCOPES:
+            response = client.get(f"/api/bundles/{w.v_id}/map", params={"scope": scope}, headers=headers)
+            assert response.status_code == 200, response.text
+            assert [marker for marker in MARKERS if marker in response.text] == []
+
+    check(AUTHOR)
+    check(REVIEWER)
+    monkeypatch.setattr(settings, "app_sysadmins", "ops.member")
+    check(OPS)
+    monkeypatch.setattr(settings, "app_sysadmins", "")
+    add_grant("user", "ops.member", permission="bundle.admin")
+    check(OPS)
+
+    # S의 구성원에게도 이 응답에는 문장이 없다 — 자기 Bundle 제목만 실린다
+    for scope in SCOPES:
+        response = client.get(f"/api/bundles/{w.s_id}/map", params={"scope": scope}, headers=OUTSIDER)
+        assert response.status_code == 200, response.text
+        assert [marker for marker in MARKERS if marker in response.text] == ["ZZ-BUNDLE-TITLE"]
+        assert [text for text in ("Operation of UV", "Calibrate the rotor", "Balance the tubes") if text in response.text] == []
+
+
+def _count_map_statements(bundle_id: int, scope: str) -> int:
+    """구성원 판정(의존성)을 빼고 build_reference_map 하나가 낸 질의 수."""
+
+    async def build(session: AsyncSession) -> int:
+        bundle = await session.get(Bundle, bundle_id)
+        assert bundle is not None
+        ctx = BundleContext(bundle=bundle, login_id="qa.member", role="author")
+        with _record_statements() as statements:
+            await ref_map.build_reference_map(session, ctx, scope)  # type: ignore[arg-type]
+        return len(statements)
+
+    return run_in_session(build)
+
+
+def test_query_count_does_not_grow_with_bundles(client: TestClient) -> None:
+    w = World(client)
+    before = {scope: _count_map_statements(w.v_id, scope) for scope in SCOPES}
+
+    pointer = "OLD-1 Synthetic pointer line"
+    for index in range(9):
+        bundle_id = create_bundle(client, title=f"SYNTHETIC map pointer {index}", is_synthetic=True)["id"]
+        doc = add_doc(client, bundle_id, f"SYNTHETIC_SOP-ABC-{2000 + index}_Pointer.docx", pointer)
+        if index % 2:  # 절반은 확정 — 범위 all의 남의 확정 줄 길도 행을 싣는다
+            assert edit(client, bundle_id, doc["id"], {
+                "type": "set_ref", "unit_id": find_line(client, bundle_id, doc["id"], pointer)["id"], "number": "OLD-1",
+            }).status_code == 200
+    after = {scope: _count_map_statements(w.v_id, scope) for scope in SCOPES}
+
+    assert len(get_map(client, w.v_id, scope="all")["bundles"]) == 12
+    assert after == before
+    assert all(0 < count <= MAX_MAP_STATEMENTS for count in after.values()), after
+
+
+def test_reading_the_map_writes_nothing(client: TestClient) -> None:
+    w = World(client)
+    bundle_ids = (w.v_id, w.m_id, w.s_id)
+    doc_ids = (w.v_doc["id"], w.m_doc["id"], w.s_doc["id"])
+
+    async def read_state(session: AsyncSession) -> tuple[Any, ...]:
+        events = await session.scalar(select(func.count()).select_from(BundleEvent))
+        bundles = (await session.execute(
+            select(Bundle.id, Bundle.revision, Bundle.updated_at).where(Bundle.id.in_(bundle_ids)).order_by(Bundle.id)
+        )).all()
+        docs = (await session.execute(
+            select(Document.id, Document.revision).where(Document.id.in_(doc_ids)).order_by(Document.id)
+        )).all()
+        return events, [tuple(row) for row in bundles], [tuple(row) for row in docs]
+
+    before = run_in_session(read_state)
+    for scope in SCOPES:
+        get_map(client, w.v_id, scope=scope)
+        get_map(client, w.s_id, OUTSIDER, scope=scope)
+    after = run_in_session(read_state)
+
+    assert len(before[1]) == len(before[2]) == 3
+    assert after == before
+
+
+def test_map_is_cut_at_the_node_cap(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    w = World(client)
+    _add_peer(client)
+    v = f"old:{w.v_doc['id']}"
+
+    for scope in SCOPES:
+        monkeypatch.setattr(ref_map, "MAX_NODES", 2)
+        monkeypatch.setattr(ref_map, "MAX_EDGES", 10000)
+        body = get_map(client, w.v_id, scope=scope)
+        kept = [node["id"] for node in body["nodes"]]
+        assert body["truncated"] is True
+        assert len(kept) == 2 and kept[0] == v
+        assert body["edges"] and all(e["source"] in kept and e["target"] in kept for e in body["edges"])
+
+        monkeypatch.setattr(ref_map, "MAX_NODES", 2000)
+        monkeypatch.setattr(ref_map, "MAX_EDGES", 1)
+        body = get_map(client, w.v_id, scope=scope)
+        assert body["truncated"] is True
+        assert len(body["edges"]) == 1 and v in (body["edges"][0]["source"], body["edges"][0]["target"])
