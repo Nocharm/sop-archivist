@@ -2,6 +2,7 @@
 
 from app.sop.extract.docx_reader import read_docx
 from app.sop.extract.types import ExtractLimits
+from scripts.seed_sop_worst import build_captions_extreme
 from scripts.synthetic_sop import build_synthetic_bundle
 
 LIMITS = ExtractLimits(
@@ -30,3 +31,12 @@ def test_old_7_answers_cover_every_judged_unit(tmp_path):
     old7 = [a for a in expected["answers"] if a["doc"] == "OLD-7"]
     assert any(a.get("disposition") == "delete" and a["text"] == "표 9 참조." for a in old7)
     assert {"doc": "OLD-7", "op": "set_layout_table", "table_index": 3, "is_layout": True} in expected["edits"]
+
+
+def test_captions_extreme_shapes():
+    blocks = read_docx(build_captions_extreme("OLD-97"), LIMITS).blocks
+    widest = max(b.col_index for b in blocks if b.kind == "table_cell" and b.table_index == 0)
+    assert widest == 17
+    assert len({b.table_index for b in blocks if b.kind == "table_cell"}) >= 19
+    assert sum(b.kind == "figure" for b in blocks) == 16
+    assert max(len(b.text) for b in blocks if b.kind == "paragraph") > 420
