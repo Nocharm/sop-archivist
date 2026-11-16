@@ -169,6 +169,10 @@ class SyntheticAnswers:
                     self._anchors[answer["text"]] = self._anchors[spec["text"]] = answer["targets"][0]["text"]
                 elif "parent_key" not in spec:
                     self._anchors.setdefault(answer["text"], self._labels[_get_place(spec)])
+                elif "cell_row" not in spec and spec.get("source_text"):
+                    # 표·그림 분류 질의의 첫 줄은 캡션 글이다(classify._read_unit_text) — 캡션 단위 글이 묶음 정답 자리를 찾게
+                    parent = next(item for item in answer["targets"] if item["key"] == spec["parent_key"])
+                    self._anchors.setdefault(spec["source_text"], self._labels[_get_place(parent)])
 
     def embed(self, text: str) -> list[float]:
         """정답끼리 같은 벡터 — 분류 질의는 짝의 글을 줄바꿈으로 이어서 첫 줄로 찾는다. 정답이 없는 글(라벨 포함)은 자기 벡터다."""
@@ -186,10 +190,16 @@ class SyntheticAnswers:
             seen.append(unit["id"])
         return self._answers[(kind, unit["text"], seen.index(unit["id"]) + 1)]
 
+    @staticmethod
+    def _list_top_specs(answer: dict) -> list[dict]:
+        """최상위 새 문장 정답 — 표 칸·캡션 자식(parent_key)은 실제 분류가 스스로 쓰므로(_add_member_targets) 세지 않는다."""
+        return [spec for spec in answer["targets"] if not spec.get("parent_key")]
+
     def _is_simple(self, answer: dict) -> bool:
-        if answer["disposition"] != "assigned" or len(answer["targets"]) != 1:
+        specs = self._list_top_specs(answer)
+        if answer["disposition"] != "assigned" or len(specs) != 1:
             return False
-        (spec,) = answer["targets"]
+        (spec,) = specs
         return spec["key"] not in self._merged_keys and spec["lang"] == answer["lang"]
 
     def _answer_classify(self, data: dict) -> dict:
@@ -198,7 +208,7 @@ class SyntheticAnswers:
             return self._build_classify_reply(data, _DELETE_KEY, "as_is", {})
         if not all(self._is_simple(answer) for answer in answers):
             return {}
-        specs = [answer["targets"][0] for answer in answers]
+        specs = [self._list_top_specs(answer)[0] for answer in answers]
         places = {_get_place(spec) for spec in specs}
         change_types = {spec["change_type"] for spec in specs} - {"as_is"}  # 글이 같은 쪽은 서버가 그대로로 둔다
         if len(places) != 1 or len(change_types) > 1:

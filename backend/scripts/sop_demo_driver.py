@@ -365,7 +365,7 @@ class SyntheticDriver:
     def _accept_suggestion(self, content: dict, answers: dict[int, dict]) -> None:
         """제안의 묶음을 그대로 확정한다 — 글·변경 종류를 비워 보내면 서버가 제안대로 정하고, 구조 종류는 보내지 않는다. 사유만 사람이 적는다.
 
-        신규 제안은 단위가 없어 새 문장으로 묶음을 읽는다. 짝은 언어마다 묶음이 따로라 한 저장에 모은다. 표는 가짜 AI가 무효로 답해 여기 오지 않는다.
+        신규 제안은 단위가 없어 새 문장으로 묶음을 읽는다. 짝은 언어마다 묶음이 따로라 한 저장에 모은다. 표·그림의 칸·캡션 새 문장은 부모 아래로 되보낸다.
         캡션 없이 제안된 그림은 사람이 정답의 캡션 새 문장을 더해 확정한다(캡션 없는 묶음은 확정할 수 없다).
         """
         paths = [f"/groups/by-unit/{unit_id}" for unit_id in content["unit_ids"]] or [
@@ -388,6 +388,8 @@ class SyntheticDriver:
                     "key": str(target_id), "id": target_id, "revision": target["revision"], "kind": target["kind"],
                     "slot_key": target["slot_key"], "wi_step": target["wi_step"], "wi_part": target["wi_part"],
                     "source_unit_ids": target["source_unit_ids"],
+                    # 표 칸·캡션 새 문장은 부모 아래 그대로 - 부모 없이 보내면 캡션 단위를 출처로 한 최상위 문장이 된다
+                    **({"parent_key": str(target["parent_target_id"])} if target["parent_target_id"] is not None else {}),
                 }
                 for target_id, target in targets.items()
             ],

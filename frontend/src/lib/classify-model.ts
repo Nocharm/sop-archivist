@@ -483,19 +483,15 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
     const plans = planCaptions(context.captions?.get(unitId) ?? [], children, draft.captionTexts);
     for (const plan of plans) {
       if (plan.target) kept.add(plan.target.id);
+      const base = { key: `${parentKey}-cap-${plan.lang}`, ...(plan.target ? { id: plan.target.id, revision: plan.target.revision } : {}), ...place, kind: "sentence" as const, parent_key: parentKey, source_unit_ids: plan.unitId !== null ? [plan.unitId] : [] };
+      // 손대지 않은 AI 제안 캡션은 문장 칸처럼 글·종류를 비워 보낸다 - 서버가 제안 그대로 받는다(채택 판정이 사람의 고쳐 씀으로 남기지 않게)
+      if (plan.target?.status === "ai_suggested" && !plan.isEdited) {
+        targets.push(base);
+        continue;
+      }
       // 출처 없는 캡션은 종류를 보내지 않는다 - 서버가 new로 정한다
       const changeType = plan.sourceText === null ? {} : { change_type: plan.text === plan.sourceText.trim() ? ("as_is" as const) : ("rewritten" as const) };
-      targets.push({
-        key: `${parentKey}-cap-${plan.lang}`,
-        ...(plan.target ? { id: plan.target.id, revision: plan.target.revision } : {}),
-        ...place,
-        kind: "sentence",
-        lang: plan.lang,
-        text: plan.text,
-        parent_key: parentKey,
-        source_unit_ids: plan.unitId !== null ? [plan.unitId] : [],
-        ...changeType,
-      });
+      targets.push({ ...base, lang: plan.lang, text: plan.text, ...changeType });
     }
     for (const child of children) if (!kept.has(child.id)) staleCaptions.add(child.id);
   }

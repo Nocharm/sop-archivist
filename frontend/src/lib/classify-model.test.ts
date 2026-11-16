@@ -273,6 +273,21 @@ describe("caption targets under a table or figure", () => {
     expect(replaced.targets.map((target) => target.id ?? target.key)).toEqual([60, "u40-cap-ko"]);
   });
 
+  it("accepts an untouched AI caption by sending no text and no change type, and sends text once it is edited", () => {
+    const group: Group = {
+      units: [],
+      targets: [
+        makeTarget({ id: 60, kind: "figure", lang: "neutral", source_unit_ids: [40] }),
+        makeTarget({ id: 63, parent_target_id: 60, source_unit_ids: [7], status: "ai_suggested", ai_text: "그림 1 로터", revision: 2 }),
+      ],
+    };
+    const untouched = buildGroupSave(makeDraft(), ctxWithCaption(7, "ko", "그림 1 로터", group), "confirm");
+    expect(untouched.targets[1]).toEqual({ key: "u40-cap-ko", id: 63, revision: 2, target_doc_id: 6, slot_key: "scope", wi_step: null, wi_part: null, kind: "sentence", parent_key: "u40", source_unit_ids: [7] });
+
+    const edited = buildGroupSave(makeDraft({ captionTexts: { ko: "그림 1. 로터" } }), ctxWithCaption(7, "ko", "그림 1 로터", group), "confirm");
+    expect(edited.targets[1]).toMatchObject({ id: 63, text: "그림 1. 로터", change_type: "rewritten" });
+  });
+
   it("counts a typed caption as an unsaved change", () => {
     expect(hasDraftChange({ destination: null, texts: {}, changeTypes: {}, captionTexts: { ko: "로터" }, reason: null, moveCode: null })).toBe(true);
   });
