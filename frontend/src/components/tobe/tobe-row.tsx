@@ -53,12 +53,27 @@ export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, 
   const { t } = useI18n();
   const prefix = `tobe-${doc.key}`;
   const block = saved ? getDocRemoveBlock(tobe, saved) : null;
+
+  /** Edit는 펼친다(접지 않는다) - 펼친 곳의 첫 고칠 칸으로 포커스를 옮긴다. 막 펼친 곳은 처음 몇 프레임 보이지 않아(visibility) 포커스를 받을 때까지 다시 시도한다 */
+  function openToEdit() {
+    if (!open) onToggle();
+    let tries = 0;
+    const focusField = () => {
+      const field = document.querySelector<HTMLElement>(`[data-testid="${prefix}-panel"] :is(input, button, [tabindex="0"]):not(:disabled)`);
+      field?.focus();
+      if ((field === null || document.activeElement !== field) && tries < 30) {
+        tries += 1;
+        requestAnimationFrame(focusField);
+      }
+    };
+    requestAnimationFrame(focusField);
+  }
   const isWritten = doc.entrance === "match";
   // 줄에 이름을 적는 N/A 칸 - 덮인 칸도 N/A로 센다(요약의 na와 같은 집합)
   const firstNa = slots?.rows.find((row) => row.state.kind === "na" || row.state.kind === "covered");
   const actions: RowAction[] = canEdit
     ? [
-        { key: "edit", icon: Pencil, label: t("common.edit"), testId: `${prefix}-edit`, run: onToggle },
+        { key: "edit", icon: Pencil, label: t("common.edit"), testId: `${prefix}-edit`, run: openToEdit },
         { key: "remove", icon: Trash2, danger: true, label: t("tobe.removeDoc"), testId: `${prefix}-remove`, blocked: block === null ? undefined : t(REMOVE_BLOCK_KEYS[block]), run: onRemove },
       ]
     : [];

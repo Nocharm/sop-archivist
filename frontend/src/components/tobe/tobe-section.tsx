@@ -100,8 +100,11 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
   const { data, error, isLoading, reload } = useLoaded(() => getToBe(bundleId), String(bundleId));
   const showSkeleton = useDelayedFlag(isLoading && data === null);
   const reloadingRef = useRef(false);
+  // 지금 그려진 목록 - 쓰는 동안 다시 받은 목록이 왔는지 쓰기가 끝날 때 견준다
+  const latestDataRef = useRef(data);
   useEffect(() => {
     reloadingRef.current = isLoading && data !== null;
+    latestDataRef.current = data;
   }, [isLoading, data]);
   const menuRef = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -192,12 +195,15 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
   async function runWriteResult(write: () => Promise<ToBe>): Promise<{ ok: true } | { ok: false; error: unknown }> {
     if (!data) return { ok: false, error: null };
     setSaving(true);
-    // 다시 받는 중에 쓰면(거절 뒤 바로 다음 줄을 더함) 그 응답이 이 쓰기 앞의 목록으로 덮는다 - 끝나고 한 번 더 받는다
+    // 다시 받기가 이 쓰기와 겹치면(쓰기 전에 시작했거나, 쓰는 동안 다른 쓰기의 거절이 시작했다) 그 응답이 쓰기 앞의 목록을 읽었을 수 있어
+    // 이 쓰기의 결과를 덮는다 - 끝나고 한 번 더 받는다. 쓰는 동안 이미 받아 온 목록이 있으면 결과를 그 목록 위에 얹는다
     const wasReloading = reloadingRef.current;
     try {
       const next = await write();
-      setFresh({ base: data, tobe: next });
-      if (wasReloading) reload();
+      const current = latestDataRef.current ?? data;
+      const raced = wasReloading || reloadingRef.current || current !== data;
+      setFresh({ base: current, tobe: next });
+      if (raced) reload();
       // 목록이 바뀌면 개요의 숫자·다음 할 일도 바뀐다
       void loadBundle(bundleId);
       return { ok: true };

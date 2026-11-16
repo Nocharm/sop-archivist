@@ -1041,6 +1041,32 @@ await runStep("new documents: rows read in two lines, a click or Enter opens a r
   await page.keyboard.press("Enter");
   await panel(sopPrefix).waitFor({ timeout: T });
   check("Edit opens the row", (await toggleOf(sopPrefix).getAttribute("aria-expanded")) === "true");
+  const focusInPanel = () =>
+    page
+      .waitForFunction((id) => {
+        const active = document.activeElement;
+        return active instanceof HTMLInputElement && document.querySelector(`[data-testid="${id}"]`)?.contains(active) === true;
+      }, `${sopPrefix}-panel`, { timeout: 2000 })
+      .then(() => true, () => false);
+  check("Edit puts the focus in the expanded row's first field", await focusInPanel(), await page.evaluate(() => document.activeElement?.dataset.testid ?? document.activeElement?.tagName));
+  // Edit는 펼친다 - 이미 펼친 줄에서 눌러도 접지 않는다
+  await sopRow.hover();
+  await page.locator(`[data-testid="${sopPrefix}-edit"]`).click();
+  await page.waitForTimeout(400);
+  check("Edit on an open row keeps it open", (await toggleOf(sopPrefix).getAttribute("aria-expanded")) === "true" && (await panel(sopPrefix).isVisible()) && (await focusInPanel()));
+  // 화살표 단추는 아이콘만이라 올리면 뜻이 뜬다 - 줄의 제목 글을 덮지 않는다. 줄 끝 단추에 올렸을 때는 그 단추의 툴팁만 뜬다
+  await page.mouse.move(0, 0);
+  await toggleOf(sopPrefix).hover();
+  const chevTip = page.locator('[role="tooltip"]', { hasText: "Sections and steps" });
+  await chevTip.waitFor({ timeout: T });
+  const chevTipBox = await chevTip.boundingBox();
+  const sopTitleBox = await getBox(page, `${sopPrefix}-title-text`);
+  const overlapsTitle = chevTipBox.x < sopTitleBox.x + sopTitleBox.width && sopTitleBox.x < chevTipBox.x + chevTipBox.width && chevTipBox.y < sopTitleBox.y + sopTitleBox.height && sopTitleBox.y < chevTipBox.y + chevTipBox.height;
+  check("hovering the chevron names it and does not cover the title", !overlapsTitle, JSON.stringify({ chevTipBox, sopTitleBox }));
+  await page.mouse.move(0, 0);
+  await page.locator(`[data-testid="${sopPrefix}-edit"]`).hover({ force: true });
+  await page.locator('[role="tooltip"]', { hasText: "Edit" }).waitFor({ timeout: T });
+  check("hovering a row-end button shows only that button's tip", (await page.locator('[role="tooltip"]').count()) === 1, String(await page.locator('[role="tooltip"]').allTextContents()));
   await toggleOf(sopPrefix).click();
   await panel(sopPrefix).waitFor({ state: "detached", timeout: T });
   // 6. 뺄 수 없는 줄은 Remove가 꺼지고 올리면 까닭이 뜬다 - 누름으로 지우기 요청이 가지 않는다
@@ -1300,6 +1326,61 @@ await runStep("new documents: the add field says what it will add, a row shows i
     check("opening it offers Parent SOP to fix it", (await page.locator(`[data-testid="tobe-id-${ghost.id}-parent"]`).count()) === 1);
   } finally {
     await page.unroute(tobeRoute);
+  }
+});
+
+// 다시 받기가 저장 도중에 시작해(다른 칸의 거절) 저장 앞의 목록을 읽고 저장 뒤에 오면, 저장한 값이 되돌아 보였다 - 저장이 끝날 때 다시 받는 중이면 한 번 더 받는다.
+// 제목 저장(PATCH)은 1.5초 붙잡고, 그동안 다른 줄의 번호를 겹치게 고쳐 거절시킨다. 그 거절의 다시 받기(GET)는 바로 읽되 제목 저장의 응답 뒤까지 붙잡는다
+await runStep("new documents: a reload that starts during a save does not undo the save", { allowConsoleErrors: true }, async ({ page }) => {
+  const tobe = await readToBe(page, halfBundleId);
+  const sop = tobe.docs.find((doc) => doc.code === "SOP-CF");
+  const wi = tobe.docs.find((doc) => doc.doc_type === "wi" && doc.entrance === "assign");
+  const sopPrefix = `tobe-id-${sop.id}`;
+  const wiPrefix = `tobe-id-${wi.id}`;
+  await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
+  await page.locator(TOBE_ROWS).first().waitFor({ timeout: T });
+  await page.locator(`[data-testid="${sopPrefix}-toggle"]`).click();
+  await page.locator(`[data-testid="${wiPrefix}-toggle"]`).click();
+  await wait(page, `${wiPrefix}-code`);
+  const patchRoute = `**/api/bundles/${halfBundleId}/tobe/docs/${sop.id}`;
+  await page.route(patchRoute, async (route) => {
+    if (route.request().method() !== "PATCH") return route.continue();
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    return route.continue();
+  });
+  // 제목 저장의 응답이 화면에 닿고 조금 뒤 - 붙잡은 다시 받기를 그때 놓는다
+  const titleDone = page
+    .waitForResponse((response) => response.request().method() === "PATCH" && new URL(response.url()).pathname.endsWith(`/tobe/docs/${sop.id}`), { timeout: T })
+    .then(() => new Promise((resolve) => setTimeout(resolve, 300)));
+  let heldGets = 0;
+  const getRoute = `**/api/bundles/${halfBundleId}/tobe`;
+  await page.route(getRoute, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const response = await route.fetch();
+    heldGets += 1;
+    await titleDone;
+    return route.fulfill({ response });
+  });
+  const newTitle = "Smoke: saved during a reload";
+  try {
+    await page.locator(`[data-testid="${sopPrefix}-title"]`).fill(newTitle);
+    await page.keyboard.press("Enter");
+    // 제목 저장이 붙잡힌 동안 다른 줄의 번호를 SOP-CF로 - 서버가 거절하고 목록을 다시 받는다
+    await page.locator(`[data-testid="${wiPrefix}-code"]`).fill("SOP-CF");
+    await page.keyboard.press("Enter");
+    await page.locator('[data-testid="toast-error"]').first().waitFor({ timeout: T });
+    await titleDone;
+    await page.unroute(getRoute);
+    await settleToBe(page);
+    await page.waitForTimeout(500);
+    check("the reload started during the save and read before it", heldGets >= 1, String(heldGets));
+    check("the saved title is still on the row", ((await page.locator(`[data-testid="${sopPrefix}-title-text"]`).textContent()) ?? "").trim() === newTitle, await page.locator(`[data-testid="${sopPrefix}-title-text"]`).textContent());
+    check("and in the field", (await page.locator(`[data-testid="${sopPrefix}-title"]`).inputValue()) === newTitle);
+  } finally {
+    await page.unroute(patchRoute);
+    await page.unroute(getRoute);
+    await page.request.patch(`${BASE}/api/bundles/${halfBundleId}/tobe/docs/${sop.id}`, { headers: { "X-Dev-User": "qa.member", "Content-Type": "application/json" }, data: { title: sop.title } });
+    check("the title is back for the next steps", (await readToBe(page, halfBundleId)).docs.find((doc) => doc.id === sop.id).title === sop.title);
   }
 });
 

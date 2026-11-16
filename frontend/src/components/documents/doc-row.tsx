@@ -79,9 +79,12 @@ export function DocRow({ prefix, kind, isChild = false, open, onToggle, toggleLa
         }}
         {...rowData}
       >
-        <button type="button" className="doc-chev" aria-expanded={open} aria-label={toggleLabel} data-testid={`${prefix}-toggle`} onClick={onToggle}>
-          <ChevronRight size={14} strokeWidth={1.5} aria-hidden />
-        </button>
+        {/* 아이콘만 있는 단추 - 뜻은 툴팁으로도 */}
+        <Tooltip label={toggleLabel} align="start">
+          <button type="button" className="doc-chev" aria-expanded={open} aria-label={toggleLabel} data-testid={`${prefix}-toggle`} onClick={onToggle}>
+            <ChevronRight size={14} strokeWidth={1.5} aria-hidden />
+          </button>
+        </Tooltip>
         <div className="doc-id">{identity}</div>
         <div className="doc-main">
           <div className="doc-title">{title}</div>
