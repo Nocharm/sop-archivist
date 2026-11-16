@@ -878,9 +878,66 @@ await runStep("split rows of a table, then assign a row as a table", { allowCons
   await page.waitForLoadState("networkidle");
   await selectRowById(page, row.display_id);
   await pickFirstPlace(page);
-  await page.locator('[data-testid="assign-primary"]').click();
+  // 원문 캡션은 첫 행에 딸린다 - 캡션이 없는 행은 새 표라 Confirm이 꺼져 있고, 캡션을 써 넣어야 확정된다(명세 §3.4)
+  const primary = page.locator('[data-testid="assign-primary"]');
+  if (await primary.isDisabled()) {
+    await page.locator('[data-testid="assign-caption-write"]').click();
+    await page.locator('[data-testid^="assign-caption-text-"]').first().fill("SYNTHETIC row table caption");
+  }
+  await primary.click();
   await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
   check("a table row confirms as a one-row table", true);
+});
+
+await runStep("assign: a bundle without a caption cannot be confirmed until one is written", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}${path}`, { headers })).json();
+  // 데모 시드가 일부러 남긴 캡션 없는 미배정 표(OLD-7) - 캡션 단위도 써 넣은 캡션도 없다
+  const units = (await getJson("/units?limit=1000")).items;
+  const captioned = new Set(units.filter((unit) => unit.kind === "caption").map((unit) => unit.group_unit_id));
+  const table = units.find((unit) => unit.kind === "table" && unit.status === "unassigned" && !captioned.has(unit.unit_id) && !unit.has_caption_target);
+  check("the half bundle has an unassigned table without a caption", Boolean(table), table?.display_id);
+  if (!table) return;
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const pending = page.locator('[data-testid="assign-caption-pending"]');
+  await pending.waitFor({ timeout: T });
+  const countBefore = parseInt(await pending.innerText(), 10);
+  // 좁은 상단 바에서는 수만 보이고 문구는 aria-label에 있다
+  const pendingLabel = (await pending.getAttribute("aria-label")) ?? (await pending.innerText());
+  check("the top bar counts the bundles that need a caption", countBefore > 0 && pendingLabel.includes(`${countBefore} captions needed`), pendingLabel);
+  // 누를 때마다 캡션이 필요한 다음 묶음 - 그 표에 닿을 때까지
+  for (let step = 0; step <= countBefore && (await page.locator('[data-testid="assign-row-id"]').count() === 0 || !(await rowIds(page)).includes(table.display_id)); step += 1) {
+    await pending.click();
+    await page.locator('[data-testid="assign-row-id"]').waitFor({ timeout: T });
+  }
+  check("the count walks to that table", (await rowIds(page)).includes(table.display_id), await rowIds(page));
+  check("its head says Caption needed", (await page.locator(`[data-testid="assign-paper-caption-missing-${table.unit_id}"]`).count()) === 1);
+  await pickFirstPlace(page);
+  const primary = page.locator('[data-testid="assign-primary"]');
+  check("Confirm is off for a table without a caption", await primary.isDisabled());
+  await wait(page, "assign-caption-needed");
+  await page.locator('[data-testid="assign-caption-write"]').click();
+  const field = page.locator('[data-testid^="assign-caption-text-"]');
+  await field.first().waitFor({ timeout: T });
+  check("Write a caption opens one caption field", (await field.count()) === 1);
+  const text = "표 9. 회전 속도 SYNTHETIC";
+  await field.first().fill(text);
+  check("writing a caption turns Confirm on", await primary.isEnabled());
+  await takeShot("sop-assign-caption-write.png");
+  await primary.click();
+  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
+  // 남은 수가 하나 줄고, 머리 줄의 Caption needed도 사라진다(같은 규칙)
+  await page.waitForFunction((n) => Number.parseInt(document.querySelector('[data-testid="assign-caption-pending"]')?.textContent ?? "0", 10) === n - 1, countBefore, { timeout: T });
+  check("the count drops by one", true);
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-paper-caption-missing-${id}"]`) === null, table.unit_id, { timeout: T });
+  check("the head no longer says Caption needed", true);
+  check("the unit list now marks the table as captioned", (await getJson("/units?limit=1000")).items.find((unit) => unit.unit_id === table.unit_id)?.has_caption_target === true);
+  let inC = false;
+  for (const doc of (await getJson("/tobe")).docs.filter((item) => item.entrance === "assign")) {
+    if (JSON.stringify(await getJson(`/outputs/c/docs/${doc.id}?lang=ko`)).includes("회전 속도 SYNTHETIC")) inC = true;
+  }
+  check("output C carries the written caption", inC);
 });
 
 await runStep("assign: an AI split keeps both sentences when confirmed", {}, async ({ page }) => {
@@ -4003,6 +4060,44 @@ await runStep("documents: AI reads a free-form list into New rows", { devUser: "
   const left = await (await page.request.get(`${BASE}/api/bundles/${created.id}/tobe/read`, { headers })).json();
   check("the proposal is closed once it is used", left === null && (await page.locator('[data-testid="tobe-proposal"]').count()) === 0);
   await removeBundle();
+});
+
+await runStep("assign: an AI-suggested figure shows its caption and confirms with it", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = (path, body) => (body === undefined ? page.request.get(`${BASE}/api/bundles/${freshBundleId}${path}`, { headers }) : page.request.post(`${BASE}/api/bundles/${freshBundleId}${path}`, { headers, data: body }));
+  const status = await api("/ai/status");
+  if (!status.ok() || !(await status.json()).ai_enabled) {
+    console.log("  (AI is off in this backend - skipped)");
+    return;
+  }
+  // 캡션 단위가 딸린 미확정 그림 - AI 분류가 그림과 그 아래 캡션 새 문장을 함께 제안한다(첫 진입 미리 분류가 이미 했으면 그대로 쓴다)
+  const units = (await (await api("/units?limit=1000")).json()).items;
+  const caption = units.find((unit) => unit.kind === "caption" && units.some((other) => other.unit_id === unit.group_unit_id && other.kind === "figure" && ["unassigned", "ai_suggested"].includes(other.status)));
+  check("the fresh bundle has an open figure with a caption", Boolean(caption));
+  if (!caption) return;
+  const figure = units.find((unit) => unit.unit_id === caption.group_unit_id);
+  if (figure.status === "unassigned") await api("/ai/classify", { unit_ids: [figure.unit_id] });
+  for (let tries = 0; tries < 60; tries += 1) {
+    const jobs = (await (await api("/ai/status")).json()).jobs;
+    if (jobs.queued + jobs.running === 0) break;
+    await page.waitForTimeout(500);
+  }
+  const suggested = (await (await api(`/groups/by-unit/${figure.unit_id}`)).json()).targets.find((target) => target.parent_target_id !== null && target.source_unit_ids.includes(caption.unit_id));
+  check("the AI suggestion carries the caption under the figure", suggested?.status === "ai_suggested", suggested?.status);
+  if (!suggested) return;
+  await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await selectRowById(page, figure.display_id);
+  const line = page.locator(`[data-testid="assign-caption-${caption.lang}"]`);
+  await line.waitFor({ timeout: T });
+  check("the decide box shows the suggested caption", (await line.innerText()).trim() === (suggested.confirmed_text || suggested.ai_text).trim(), await line.innerText());
+  const primary = page.locator('[data-testid="assign-primary"]');
+  check("Confirm is on for a captioned figure", await primary.isEnabled());
+  await takeShot("sop-assign-ai-figure-caption.png");
+  await primary.click();
+  await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
+  const saved = (await (await api(`/groups/by-unit/${figure.unit_id}`)).json()).targets.find((target) => target.id === suggested.id);
+  check("the caption is confirmed in place under the figure", saved?.status === "confirmed" && saved.parent_target_id === suggested.parent_target_id, saved?.status);
 });
 
 // 배정 화면 첫 진입(설계 2026-11-15-ai-prepare-queue §5.2·§8) - PREPARE=1일 때만(머리말의 전제). 알림 → 상단 바 목록의 Background 줄 → 끝나면 AI suggested 수

@@ -717,6 +717,8 @@ export interface UnitRow {
   target_ids: number[];
   /** 한/영 짝(제안·확정 모두) - 문서 보기의 units[].pair_id와 같은 뜻, 짝이 없으면 null */
   pair_id: number | null;
+  /** 표·그림 단위의 새 문장 아래 캡션 새 문장이 있다 - 써 넣은 캡션(캡션 단위 없음)도 센다 */
+  has_caption_target?: boolean;
 }
 
 export interface GroupUnit {

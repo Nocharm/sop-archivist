@@ -19,6 +19,8 @@ import type {
   WiStep,
 } from "./api-sop";
 import { SLOT_KEYS } from "./api-sop";
+import { listCaptionChildren, planCaptions } from "./caption-model";
+import type { CaptionUnit } from "./caption-model";
 
 export interface ClassifyRow {
   key: string;
@@ -211,6 +213,8 @@ export interface RowDraft {
   linkChangeTypes?: Record<number, ChangeTypeInput | null>;
   /** 사람이 직접 쓰는 다른 언어 문장 칸 - 한 언어만 있는 줄에서 연다(buildSentenceSlots의 extra) */
   otherLang?: OtherLangSlot | null;
+  /** 표·그림 캡션의 언어별 글 - 캡션 단위의 고친 글, 캡션 단위가 없으면 써 넣은 캡션(caption-model planCaptions) */
+  captionTexts?: Record<string, string>;
   reason: string;
   moveCode: string;
 }
@@ -222,9 +226,9 @@ export interface OtherLangSlot {
 }
 
 /** 저장 전 변경이 있는 초안인가 - 고른 곳·고친 글·변경 종류·사유·이동 코드 중 하나라도 손댔으면 참(편집 칸만 열어 둔 것은 변경이 아니다) */
-export function hasDraftChange(draft: Pick<RowDraft, "destination" | "texts" | "changeTypes" | "linkChangeTypes"> & { reason: string | null; moveCode: string | null }): boolean {
+export function hasDraftChange(draft: Pick<RowDraft, "destination" | "texts" | "changeTypes" | "linkChangeTypes" | "captionTexts"> & { reason: string | null; moveCode: string | null }): boolean {
   if (draft.destination !== null || draft.reason !== null || draft.moveCode !== null) return true;
-  return [draft.texts, draft.changeTypes, draft.linkChangeTypes ?? {}].some((map) => Object.keys(map).length > 0);
+  return [draft.texts, draft.changeTypes, draft.linkChangeTypes ?? {}, draft.captionTexts ?? {}].some((map) => Object.keys(map).length > 0);
 }
 
 interface SourceUnit {
@@ -248,6 +252,8 @@ export interface SaveContext {
   group: Group | null;
   /** 표 단위 id → 칸 문장과 표 크기 */
   tables: Map<number, { rows: number; cols: number; cells: CellSource[] }>;
+  /** 표·행·그림 단위 id → 묶인 캡션 단위. 없으면 캡션 단위가 없는 것으로 본다(써 넣은 캡션만) */
+  captions?: Map<number, CaptionUnit[]>;
 }
 
 /**
@@ -469,6 +475,30 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
   }));
   const targets: TargetInput[] = [];
   const kept = new Set<number>();
+  // 다시 보낸 표·그림 아래에서 이번 캡션에 들지 않은 옛 캡션(캡션 단위가 붙어 밀려난 써 넣은 캡션 등) - 지운다
+  const staleCaptions = new Set<number>();
+  /** 표·그림 새 문장 아래 캡션 새 문장 - 칸 새 문장처럼 같은 자리에, 기존 것이면 id·revision을 되보낸다(F3) */
+  function pushCaptions(parentKey: string, unitId: number, place: ReturnType<typeof placeTarget>) {
+    const children = listCaptionChildren(context.group, unitId);
+    const plans = planCaptions(context.captions?.get(unitId) ?? [], children, draft.captionTexts);
+    for (const plan of plans) {
+      if (plan.target) kept.add(plan.target.id);
+      // 출처 없는 캡션은 종류를 보내지 않는다 - 서버가 new로 정한다
+      const changeType = plan.sourceText === null ? {} : { change_type: plan.text === plan.sourceText.trim() ? ("as_is" as const) : ("rewritten" as const) };
+      targets.push({
+        key: `${parentKey}-cap-${plan.lang}`,
+        ...(plan.target ? { id: plan.target.id, revision: plan.target.revision } : {}),
+        ...place,
+        kind: "sentence",
+        lang: plan.lang,
+        text: plan.text,
+        parent_key: parentKey,
+        source_unit_ids: plan.unitId !== null ? [plan.unitId] : [],
+        ...changeType,
+      });
+    }
+    for (const child of children) if (!kept.has(child.id)) staleCaptions.add(child.id);
+  }
   const isPlace = destination?.kind === "slot" || destination?.kind === "step";
   if (destination?.kind === "slot_heading") {
     // 줄의 제목·문장 단위마다 칸 제목 하나 - 글은 서버가 칸 이름으로 채운다. 출처는 이 줄의 단위만 싣는다(다른 문서의 출처는 서버가 지킨다)
@@ -506,12 +536,14 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
             cell_col: cell.col,
           });
         }
+        pushCaptions(key, unit.id, place);
         continue;
       }
       if (unit.kind === "figure") {
         const own = findOwnTarget(context.group, unit.id, "figure");
         if (own) kept.add(own.id);
         targets.push({ key, ...(own ? { id: own.id, revision: own.revision } : {}), ...place, kind: "figure", lang: "neutral", change_type: "as_is", source_unit_ids: [unit.id] });
+        pushCaptions(key, unit.id, place);
       }
     }
     for (const slot of buildSentenceSlots(context.group, active, draft.otherLang ?? null)) {
@@ -526,6 +558,10 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
   const removed: number[] = [];
   for (const target of existing) {
     if (kept.has(target.id)) continue;
+    if (staleCaptions.has(target.id)) {
+      removed.push(target.id);
+      continue;
+    }
     const touchesRow = target.source_unit_ids.some((id) => rowIds.has(id)) || (target.translation_source_unit_id !== null && rowIds.has(target.translation_source_unit_id));
     if (target.origin === "new_doc") {
       const others = target.source_unit_ids.filter((id) => !rowIds.has(id));

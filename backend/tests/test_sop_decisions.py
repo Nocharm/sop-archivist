@@ -570,6 +570,20 @@ def test_written_caption_has_no_source_and_is_new(client: TestClient) -> None:
     assert (child["parent_target_id"], child["cell_row"]) == (table_target["id"], None)
 
 
+def test_units_list_marks_bundles_with_a_caption_target(client: TestClient) -> None:
+    fx = _setup(client)
+    table, figure, _ = _find_bundles(fx)
+    targets, _ = build_as_is_targets(client, fx.bundle_id, table, fx.sop_id, slot_key="purpose")
+    written = _caption("c", fx.sop_id, "t", [], text="운전 조건", lang="ko")
+    assert save_group(client, fx.bundle_id, _body([_unit_in(table)], [*targets, written])).status_code == 200
+
+    rows = {row["unit_id"]: row for row in _list_units(client, fx.bundle_id, limit=1000)["items"]}
+
+    # 써 넣은 캡션은 출처가 없어 캡션 단위로는 보이지 않는다 - 목록이 묶음에 캡션 새 문장이 있다고 알린다
+    assert rows[table["id"]]["has_caption_target"] is True
+    assert rows[figure["id"]]["has_caption_target"] is False
+
+
 def test_written_caption_without_language_takes_it_from_the_text(client: TestClient) -> None:
     fx = _setup(client)
     table, _, _ = _find_bundles(fx)

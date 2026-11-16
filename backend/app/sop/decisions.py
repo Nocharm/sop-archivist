@@ -211,6 +211,8 @@ class UnitRowOut(BaseModel):
     # 단위 자신의 판단 행 — 묶인 칸 문장의 판단 행은 늘 미배정이다(처분은 그룹 단위가 담는다)
     decision: DecisionOut
     target_ids: list[int]
+    # 표·그림 단위의 새 문장 아래 캡션 새 문장이 있다 — 써 넣은 캡션(출처 없음)도 센다. 화면의 "캡션 필요"·남은 수가 쓴다
+    has_caption_target: bool = False
 
 
 class UnitsPageOut(BaseModel):
@@ -1540,6 +1542,7 @@ async def list_units(
         [unit.id for unit, *_ in rows],
     )
     pair_ids = {unit_id: pair_id for unit_id, pair_id in pair_rows}
+    captioned = await _find_captioned_units(session, [unit.id for unit, *_ in rows])
     items = []
     for unit, document, decision, group in rows:
         decisions = {unit.id: decision} if group is None else {unit.id: decision, group.unit_id: group}
@@ -1549,6 +1552,24 @@ async def list_units(
                 kind=unit.kind, lang=unit.lang, text=unit.text, table_id=unit.table_id, row_index=unit.row_index,
                 group_unit_id=unit.group_unit_id, pair_id=pair_ids.get(unit.id), status=get_cover_status(unit, decisions),
                 decision=DecisionOut.model_validate(decision), target_ids=target_ids.get(unit.id, []),
+                has_caption_target=unit.id in captioned,
             )
         )
     return UnitsPageOut(total=total or 0, items=items)
+
+
+async def _find_captioned_units(session: AsyncSession, unit_ids: list[int]) -> set[int]:
+    """출처 새 문장 아래 캡션 새 문장(captions.is_caption_target과 같은 꼴)이 있는 단위 — 써 넣은 캡션은 캡션 단위가 없어 화면이 이것으로 안다."""
+    caption = aliased(TargetSentence)
+    rows = await select_in_chunks(
+        session,
+        lambda chunk: select(TargetSource.unit_id)
+        .join(caption, caption.parent_target_id == TargetSource.target_id)
+        .where(
+            TargetSource.unit_id.in_(chunk), caption.kind == "sentence",
+            caption.cell_row.is_(None), caption.cell_col.is_(None),
+        )
+        .distinct(),
+        unit_ids,
+    )
+    return {unit_id for (unit_id,) in rows}
