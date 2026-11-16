@@ -117,15 +117,16 @@ function findInsertIndex(items: readonly OutputCItem[], rows: readonly RowBox[],
 /**
  * 넣을 자리(insertAt)에서 덩어리 첫 줄의 깊이 - 시작 깊이 + round(dx / 24)를 0 ~ 넣을 자리 위 가장 가까운 번호 줄 깊이 + 1로 자른다(앞 줄이 없으면 0).
  * skip은 옮기고 나면 그 자리에 없는 줄(같은 칸 안 끌기의 덩어리 자신). 서버 상한(MAX_INDENT_LEVEL)은 덩어리의 가장 깊은 줄에 건다 -
- * 첫 줄을 그만큼 덜 들여 아래 줄들이 자기 단 차이를 지킨다. 깊이가 잠긴 덩어리는 baseDepth 그대로다
+ * 첫 줄을 그만큼 덜 들여 아래 줄들이 자기 단 차이를 지킨다. 깊이가 잠긴 덩어리는 dx를 안 받고 baseDepth 그대로다 - 다만 다른 칸(isCross)에서는 그 칸의 한계도 받는다(앞 줄이 없는 자리에 깊이 2로 놓이면 번호가 비므로)
  */
-function calcDropDepth(input: { items: readonly OutputCItem[]; depths: readonly number[]; insertAt: number; skip?: (index: number) => boolean; block: DragBlock; blockDepths: readonly number[]; dx: number }): number {
+function calcDropDepth(input: { items: readonly OutputCItem[]; depths: readonly number[]; insertAt: number; skip?: (index: number) => boolean; block: DragBlock; blockDepths: readonly number[]; dx: number; isCross?: boolean }): number {
   const { items, depths, block } = input;
   let above = input.insertAt - 1;
   while (above >= 0 && (input.skip?.(above) || !isCounted(items[above]))) above -= 1;
   const deepestOffset = Math.max(...input.blockDepths) - block.baseDepth;
   const max = above < 0 ? 0 : Math.min(depths[above] + 1, MAX_INDENT_LEVEL - deepestOffset);
-  return block.isDepthLocked ? block.baseDepth : Math.max(0, Math.min(max, block.baseDepth + Math.round(input.dx / DEPTH_STEP_PX)));
+  if (block.isDepthLocked) return input.isCross ? Math.min(block.baseDepth, max) : block.baseDepth;
+  return Math.max(0, Math.min(max, block.baseDepth + Math.round(input.dx / DEPTH_STEP_PX)));
 }
 
 /** 포인터 위치(pointerY)와 좌우 이동(dx)에서 놓을 자리·깊이·그 선의 y·편집을 정한다 */
@@ -223,6 +224,13 @@ export function planCrossDrop(input: {
 }): DropPlan {
   const { source, dest, rows } = input;
   const { block } = source;
+  // 같은 칸이면 칸 안 끌기와 똑같이 - dest에 덩어리가 들어 있어 이 함수의 가정이 깨진다
+  if (input.fromKey === input.toKey) {
+    return planDrop({ locationKey: input.fromKey, items: source.items, depths: source.depths, block, rows, pointerY: input.pointerY, dx: input.dx, homeTop: input.emptyTop });
+  }
+  // 도착 칸에 없는 줄이 섞이면 beforeId를 믿을 수 없다 - 아무것도 저장하지 않는다(밖으로 친다)
+  const destIds = new Set(dest.items.map((item) => item.target_id));
+  if (rows.some((row) => !destIds.has(row.targetId))) return { beforeId: null, depth: 0, lineY: input.emptyTop, edit: null };
   const k = findInsertIndex(dest.items, rows, input.pointerY);
 
   // 그려진 마지막 줄 뒤에서는 아직 안 그려진 첫 줄 앞(없으면 칸 끝) - 덩어리 줄은 이 칸에 없다
@@ -230,13 +238,17 @@ export function planCrossDrop(input: {
   if (k < rows.length) beforeId = rows[k].targetId;
   else {
     const lastDrawn = rows.length > 0 ? dest.items.findIndex((item) => item.target_id === rows[rows.length - 1].targetId) : -1;
-    beforeId = lastDrawn + 1 < dest.items.length ? dest.items[lastDrawn + 1].target_id : null;
+    // 그려진 창이 의미 묶음을 자르면(마지막 그려진 줄과 다음 줄이 이웃한 같은 의미) 묶음 뒤로 - 묶음 안에는 놓지 않는다
+    const key = lastDrawn >= 0 ? dest.items[lastDrawn].meaning_key : null;
+    let next = lastDrawn + 1;
+    while (key !== null && next < dest.items.length && dest.items[next].meaning_key === key) next += 1;
+    beforeId = next < dest.items.length ? dest.items[next].target_id : null;
   }
   const lineY = k < rows.length ? rows[k].top - 1 : rows.length > 0 ? rows[rows.length - 1].bottom + 1 : input.emptyTop;
 
   const insertAt = beforeId === null ? dest.items.length : dest.items.findIndex((item) => item.target_id === beforeId);
   const blockDepths = source.depths.slice(block.start, block.end + 1);
-  const depth = calcDropDepth({ items: dest.items, depths: dest.depths, insertAt, block, blockDepths, dx: input.dx });
+  const depth = calcDropDepth({ items: dest.items, depths: dest.depths, insertAt, block, blockDepths, dx: input.dx, isCross: true });
   const targetIds = source.items.slice(block.start, block.end + 1).map((item) => item.target_id);
   const depths = blockDepths.map((d) => d - block.baseDepth + depth);
   return { beforeId, depth, lineY, edit: { kind: "place", locationKey: input.fromKey, toLocationKey: input.toKey, targetIds, beforeId, depths } };
