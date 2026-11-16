@@ -11,6 +11,7 @@ import { TitleLock } from "@/components/equis/title-lock";
 import { BundleLoadError } from "@/components/bundle-load-error";
 import { LayoutLabel } from "@/components/documents/layout-picto";
 import { ListReader } from "@/components/tobe/list-reader";
+import { SlotTable } from "@/components/tobe/slot-table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CommitInput } from "@/components/ui/commit-input";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
@@ -38,7 +39,6 @@ import {
   removeWiStep,
   renameWiStep,
   setNaSlot,
-  SLOT_KEYS,
   updateToBeDoc,
   type DocumentUpdateInput,
   type SopDocument,
@@ -50,8 +50,10 @@ import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { buildDownloadName } from "@/lib/download-name";
 import { hasRefreshingEquis, normalizeDocNumber } from "@/lib/equis-model";
 import { useI18n } from "@/lib/i18n";
+import { useLeaveGuard } from "@/lib/leave-guard";
+import { navigate } from "@/lib/nav-buffer";
 import { saveBlob } from "@/lib/save-file";
-import { SLOT_LABELS } from "@/lib/slot-labels";
+import { buildSlotRows, isNaEditDirty, listUsedReasons, summarizeSlots, type NaEdit, type SlotKey, type SlotRow } from "@/lib/slot-status-model";
 import { NEW_DOCUMENTS_ANCHOR } from "@/lib/stages";
 import { listEquisHints, planAddRows, readCodes } from "@/lib/tobe-add-model";
 import { createDraft, orderDocs, type DraftDoc } from "@/lib/tobe-draft";
@@ -59,9 +61,6 @@ import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useEquisPolling } from "@/lib/use-equis-polling";
 import { useLoaded } from "@/lib/use-loaded";
-
-/** 상위 칸 하나와 그 하위 칸들(slotKey가 "상위."로 시작) - 단 나눔에서 떨어지지 않게 묶는다 */
-const SLOT_GROUPS: (typeof SLOT_KEYS[number])[][] = SLOT_KEYS.filter((key) => !key.includes(".")).map((top) => SLOT_KEYS.filter((key) => key === top || key.startsWith(`${top}.`)));
 
 const CELL_INPUT = "h-7 w-full rounded-md border border-line-2 bg-surface px-1.5 text-[13px] text-ink focus:border-accent focus:outline-none disabled:border-transparent disabled:bg-transparent disabled:text-ink-2";
 
@@ -101,8 +100,10 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
   const tobe = data !== null && fresh?.base === data ? fresh.tobe : data;
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
-  // 체크만 하고 사유를 아직 적지 않은 N/A 칸("줄 키:칸 키") - 사유를 적어야 저장된다
-  const [pendingNa, setPendingNa] = useState<Set<string>>(new Set());
+  // N/A 사유 편집기 - 화면에 하나. Save N/A·Cancel(과 서버의 409)로만 닫히고 줄을 접어도 남는다
+  const [naEdit, setNaEdit] = useState<NaEdit | null>(null);
+  // 적던 사유가 있는 채 떠나려 한 주소 - 확인 창이 묻는다
+  const [leaveTo, setLeaveTo] = useState<string | null>(null);
   const [adding, setAdding] = useState("");
   // 가져오기 전에 한 번 묻는다 - 목록이 비어 있지 않으면 파일이 통째로 바꾼다
   const [pendingImport, setPendingImport] = useState<File | null>(null);
@@ -119,6 +120,9 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
   const rows = list ? orderDocs(list.docs) : [];
   const sops = list ? list.docs.filter((doc) => doc.doc_type === "sop") : [];
   const savedByCode = new Map((tobe?.docs ?? []).map((doc) => [doc.code, doc]));
+  // 다시 받은 목록에서 편집기의 문서가 사라졌거나 SOP가 아니게 됐으면 편집기를 닫는다 - 렌더 중 상태 맞추기
+  if (naEdit !== null && tobe !== null && !tobe.docs.some((doc) => `id-${doc.id}` === naEdit.docKey && doc.doc_type === "sop")) setNaEdit(null);
+  useLeaveGuard(isNaEditDirty(naEdit), setLeaveTo);
   // 줄 번호의 EQUIS 표시 - 저장된 번호로 찾는다
   const equisByCode = new Map((tobe?.docs ?? []).map((doc) => [normalizeDocNumber(doc.code), doc.equis ?? null]));
   // 조회는 저장 응답 뒤에 끝난다 - 조회 중인 줄이 있으면 조금 뒤 다시 읽는다
@@ -150,23 +154,42 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
     if (window.location.hash === `#${NEW_DOCUMENTS_ANCHOR}`) document.getElementById(NEW_DOCUMENTS_ANCHOR)?.scrollIntoView({ block: "start" });
   }, [hasDocuments, hasToBe]);
 
-  /** 줄 하나를 쓴다 - 응답의 새 목록을 바로 보이고, 거절되면 까닭을 알리고 다시 받는다(칸이 저장된 값으로 돌아간다) */
-  async function runWrite(write: () => Promise<ToBe>): Promise<boolean> {
-    if (!data) return false;
+  /** 줄 쓰기의 결과 - 거절이면 그 오류를 함께 돌려준다(알림과 다시 받기는 이 안에서 한다) */
+  async function runWriteResult(write: () => Promise<ToBe>): Promise<{ ok: true } | { ok: false; error: unknown }> {
+    if (!data) return { ok: false, error: null };
     setSaving(true);
     try {
       const next = await write();
       setFresh({ base: data, tobe: next });
       // 목록이 바뀌면 개요의 숫자·다음 할 일도 바뀐다
       void loadBundle(bundleId);
-      return true;
+      return { ok: true };
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
       reload();
-      return false;
+      return { ok: false, error: err };
     } finally {
       setSaving(false);
     }
+  }
+
+  /** 줄 하나를 쓴다 - 응답의 새 목록을 바로 보이고, 거절되면 까닭을 알리고 다시 받는다(칸이 저장된 값으로 돌아간다) */
+  async function runWrite(write: () => Promise<ToBe>): Promise<boolean> {
+    return (await runWriteResult(write)).ok;
+  }
+
+  /** 사유와 함께 N/A로 둔다. 409 slot_has_targets(그 사이 문장이 들어왔다)면 둘 곳이 없어 편집기를 닫고, 그 밖의 실패는 적던 사유를 남긴다 */
+  async function saveNa(docId: number, slotKey: SlotKey, reason: string) {
+    if (saving) return;
+    const result = await runWriteResult(() => setNaSlot(bundleId, docId, slotKey, reason));
+    if (result.ok || (result.error instanceof ApiError && result.error.rule?.code === "slot_has_targets")) setNaEdit(null);
+  }
+
+  /** N/A를 바로 지운다 - 그 칸은 빈 칸(또는 정할 칸)으로, 덮였던 하위 칸도 제 상태로 돌아간다 */
+  async function restoreNa(doc: DraftDoc, row: SlotRow) {
+    if (!(await runWrite(() => clearNaSlot(bundleId, readDocId(doc.key), row.key)))) return;
+    showToast(t("tobe.slots.restored", { number: row.number, name: row.label }));
+    setNaEdit((current) => (current !== null && current.docKey === doc.key && current.slotKey === row.key ? null : current));
   }
 
   function saveDoc(doc: DraftDoc, patch: ToBeDocPatch): Promise<boolean> {
@@ -269,72 +292,29 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
     }
   }
 
-  function setNaPending(key: string, isOn: boolean) {
-    setPendingNa((prev) => {
-      const next = new Set(prev);
-      if (isOn) next.add(key);
-      else next.delete(key);
-      return next;
-    });
-  }
-
   function renderDetail(doc: DraftDoc) {
-    if (!list) return null;
+    if (!list || !tobe) return null;
     const docId = readDocId(doc.key);
     if (doc.doc_type === "sop") {
+      // 칸 상태 표는 SOP에만 - WI는 N/A를 받지 않는다(서버 422 na_on_wi)
+      const saved = savedByCode.get(doc.code);
+      if (!saved || saved.doc_type !== "sop") return null;
+      const slotRows = buildSlotRows(tobe, saved);
       return (
-        <div className="grid gap-1 py-1" data-testid={`tobe-${doc.key}-slots`}>
-          <p className="text-xs text-ink-3">{t("tobe.naHint")}</p>
-          {/* 상위 칸과 그 하위 칸을 한 묶음으로 감싸 단이 갈라질 때 함께 움직인다 - 사유 입력은 체크한 줄 바로 아래 */}
-          <div className="grid gap-x-6 gap-y-1 [grid-template-columns:repeat(auto-fill,minmax(360px,1fr))]">
-            {SLOT_GROUPS.map((group) => (
-              <div key={group[0]} className="grid content-start gap-1">
-                {group.map((slotKey) => {
-                  const slot = list.na_slots.find((item) => item.doc_key === doc.key && item.slot_key === slotKey);
-                  const pendingKey = `${doc.key}:${slotKey}`;
-                  const isPending = slot === undefined && pendingNa.has(pendingKey);
-                  const child = slotKey.includes(".");
-                  return (
-                    <div key={slotKey} className={`grid gap-1 ${child ? "pl-5" : ""}`}>
-                      <Checkbox
-                        testId={`tobe-${doc.key}-na-${slotKey}`}
-                        checked={slot !== undefined || isPending}
-                        disabled={!canEdit}
-                        onChange={(next) => {
-                          // 체크하면 사유 칸이 열리고, 사유를 적어야 저장된다. 풀면 바로 지운다
-                          if (next) setNaPending(pendingKey, true);
-                          else if (slot) void runWrite(() => clearNaSlot(bundleId, docId, slotKey));
-                          else setNaPending(pendingKey, false);
-                        }}
-                        label={<span className={slot ? "text-ink-3" : ""}>{SLOT_LABELS[slotKey]}</span>}
-                      />
-                      {(slot || isPending) && (
-                        <CommitInput
-                          className={CELL_INPUT}
-                          testId={`tobe-${doc.key}-na-${slotKey}-reason`}
-                          placeholder={t("tobe.naReason")}
-                          value={slot?.reason ?? ""}
-                          maxLength={2000}
-                          disabled={!canEdit}
-                          autoFocus={isPending}
-                          // 사유 없이 떠나면 체크를 거둔다(이미 저장된 칸이면 사유가 돌아온다)
-                          onEmpty={() => setNaPending(pendingKey, false)}
-                          onCommit={(reason) =>
-                            runWrite(() => setNaSlot(bundleId, docId, slotKey, reason)).then((isSaved) => {
-                              // 거절됐어도(문장이 든 칸) 체크를 거둔다 - 저장되지 않은 체크가 남지 않게
-                              setNaPending(pendingKey, false);
-                              return isSaved;
-                            })
-                          }
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
-        </div>
+        <SlotTable
+          prefix={`tobe-${doc.key}`}
+          docKey={doc.key}
+          rows={slotRows}
+          summary={summarizeSlots(slotRows)}
+          isWritten={doc.entrance === "match"}
+          canEdit={canEdit}
+          saving={saving}
+          usedReasons={listUsedReasons(tobe)}
+          edit={naEdit}
+          onEdit={setNaEdit}
+          onSave={(slotKey, reason) => void saveNa(docId, slotKey, reason)}
+          onRestore={(row) => void restoreNa(doc, row)}
+        />
       );
     }
     const steps = list.wi_steps.filter((step) => step.doc_key === doc.key).sort((a, b) => a.step_no - b.step_no);
@@ -642,6 +622,12 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
                         <button type="button" className="rounded-sm px-1 hover:bg-hover" data-testid={`${prefix}-detail`} onClick={() => toggleOpen(doc.key)}>
                           {doc.doc_type === "sop" ? t("tobe.naCount", { n: naCount }) : t("tobe.stepCount", { n: stepCount })}
                         </button>
+                        {/* 접어도 적던 사유는 남는다 - 그동안 줄에서 보인다. 좁은 창(1280 미만)의 열(96px)보다 길어 줄을 바꿔 열을 넓히지 않는다 */}
+                        {naEdit?.docKey === doc.key && isNaEditDirty(naEdit) && (
+                          <span className="pill warn mt-1 flex h-auto w-fit max-w-full whitespace-normal" data-testid={`${prefix}-unsaved`}>
+                            {t("tobe.slots.unsaved")}
+                          </span>
+                        )}
                       </td>
                       {canEdit && (
                         <td className="text-right">
@@ -748,6 +734,22 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
           }}
           onProposalChanged={proposal.reload}
           onRequested={aiJobs.watch}
+        />
+      )}
+      {leaveTo !== null && (
+        <ConfirmModal
+          title={t("tobe.leaveTitle")}
+          summary={t("tobe.leaveBody")}
+          confirmLabel={t("tobe.leaveConfirm")}
+          danger
+          testId="tobe-leave"
+          onClose={() => setLeaveTo(null)}
+          onConfirm={() => {
+            const href = leaveTo;
+            setLeaveTo(null);
+            setNaEdit(null);
+            navigate(href, { immediate: true });
+          }}
         />
       )}
       {list !== null && rows.length === 0 && (

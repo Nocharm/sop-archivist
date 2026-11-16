@@ -505,7 +505,11 @@ await runStep("new documents: nested rows, N/A detail, each cell saves as you le
   const sopRow = page.locator('[data-testid$="-row"][data-testid^="tobe-id-"]').first();
   const sopKey = (await sopRow.getAttribute("data-testid")).replace("tobe-", "").replace("-row", "");
   await page.locator(`[data-testid="tobe-${sopKey}-toggle"]`).click();
-  check("troubleshooting is N/A with its reason", await page.locator(`[data-testid="tobe-${sopKey}-na-procedures.troubleshooting"]`).isChecked());
+  await wait(page, `tobe-${sopKey}-slots`);
+  check(
+    "troubleshooting is N/A with its reason",
+    (await page.locator(`[data-testid="tobe-${sopKey}-slot-procedures.troubleshooting"]`).getAttribute("data-state")) === "na" && (await getText(page, `tobe-${sopKey}-na-procedures.troubleshooting-text`)).trim() !== "",
+  );
   await takeShot("sop-tobe.png");
   const title = page.locator(`[data-testid="tobe-${sopKey}-title"]`);
   const before = await title.inputValue();
@@ -523,22 +527,24 @@ await runStep("new documents: nested rows, N/A detail, each cell saves as you le
   await page.keyboard.press("Tab");
   await settleToBe(page);
   check("leaving the cell saves it too", (await readTitle()) === before);
-  // N/A는 사유를 적어야 저장된다 - 체크만 하고 떠나면 거둔다
+  // N/A는 사유를 적어 Save N/A(Enter)로만 저장된다 - Mark N/A만으로는 아무것도 저장되지 않는다
   // 문장이 들지 않은 칸으로 한다(문장이 든 칸은 서버가 N/A를 거절한다)
-  const naBox = page.locator(`[data-testid="tobe-${sopKey}-na-document_relationships.appendices"]`);
-  const wasNa = await naBox.isChecked();
+  const appendices = `tobe-${sopKey}-na-document_relationships.appendices`;
+  const wasNa = (await page.locator(`[data-testid="tobe-${sopKey}-slot-document_relationships.appendices"]`).getAttribute("data-state")) === "na";
   if (!wasNa) {
-    await naBox.click();
-    await wait(page, `tobe-${sopKey}-na-document_relationships.appendices-reason`);
+    await page.locator(`[data-testid="tobe-${sopKey}-slot-document_relationships.appendices"]`).hover();
+    await page.locator(`[data-testid="${appendices}-mark"]`).click();
+    await wait(page, `${appendices}-reason`);
     const countNa = async () => (await readToBe(page, halfBundleId)).na_slots.filter((slot) => slot.slot_key === "document_relationships.appendices").length;
-    check("a checked N/A section is not saved before its reason", (await countNa()) === 0);
-    await page.locator(`[data-testid="tobe-${sopKey}-na-document_relationships.appendices-reason"]`).fill("Smoke: covered elsewhere");
+    check("Mark N/A saves nothing before its reason", (await countNa()) === 0);
+    await page.locator(`[data-testid="${appendices}-reason"]`).fill("Smoke: covered elsewhere");
     await page.keyboard.press("Enter");
     await settleToBe(page);
     check("the reason saves the N/A section", (await countNa()) === 1);
-    await naBox.click();
+    await page.locator(`[data-testid="tobe-${sopKey}-slot-document_relationships.appendices"]`).hover();
+    await page.locator(`[data-testid="${appendices}-restore"]`).click();
     await settleToBe(page);
-    check("unchecking removes it at once", (await countNa()) === 0);
+    check("Restore removes it at once", (await countNa()) === 0);
   }
   // 번호로 더하기 - Enter면 줄이 저장된다. 종류와 상위 SOP는 앱이 고르고 사람이 고친다
   const rowsBefore = (await readToBe(page, halfBundleId)).docs.length;
@@ -629,6 +635,260 @@ await runStep("new documents: removing a step keeps the other numbers", {}, asyn
   await removeSecond.click();
   await settleToBe(page);
   check("restored the step list", (await readNumbers()).join(",") === before.join(","));
+});
+
+// N/A 칸 상태 표(Documents 화면 설계 §8) - 칸마다 상태를 먼저 보이고, N/A는 사유와 함께 Save N/A로만 저장된다. 편집기는 화면에 하나이고 접거나 떠나도 사유가 남는다.
+// 거절 응답(409·500)이 콘솔에 찍혀 콘솔 오류를 허용한다. 만든 N/A는 끝에 API로도 지워 처음 수로 되돌린다
+// lib/api-sop.ts SLOT_KEYS와 같은 순서 - 칸 번호도 이 고정 자리에서 센다(1…7, 하위 칸 5.1)
+const SLOT_ORDER = ["purpose", "scope", "definitions", "responsibilities", "general_requirements", "general_requirements.safety", "general_requirements.operation", "procedures", "procedures.procedure", "procedures.electronic_record_control", "procedures.troubleshooting", "procedures.maintenance", "document_relationships", "document_relationships.attachments", "document_relationships.appendices"];
+const slotParent = (key) => (key.includes(".") ? key.slice(0, key.indexOf(".")) : null);
+const slotNumber = (key) => {
+  const tops = SLOT_ORDER.filter((item) => !item.includes("."));
+  const parent = slotParent(key);
+  if (parent === null) return String(tops.indexOf(key) + 1);
+  return `${tops.indexOf(parent) + 1}.${SLOT_ORDER.filter((item) => slotParent(item) === parent).indexOf(key) + 1}`;
+};
+await runStep("new documents: the section table shows each section's state and saves N/A only with a reason", { allowConsoleErrors: true }, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const start = await readToBe(page, halfBundleId);
+  const naBefore = start.na_slots.length;
+  const sop = start.docs.find((doc) => doc.doc_type === "sop");
+  const prefix = `tobe-id-${sop.id}`;
+  // …/na/…로 가는 요청 모두(메서드 · 주소)
+  const naCalls = [];
+  page.on("request", (request) => {
+    if (/\/tobe\/docs\/\d+\/na\//.test(request.url())) naCalls.push(`${request.method()} ${decodeURIComponent(new URL(request.url()).pathname)}`);
+  });
+  const countCalls = (method, key) => naCalls.filter((line) => line.startsWith(`${method} `) && (key === undefined || line.endsWith(`/na/${key}`))).length;
+  const slot = (key) => page.locator(`[data-testid="${prefix}-slot-${key}"]`);
+  const readState = (key) => slot(key).getAttribute("data-state");
+  const stateText = async (key) => ((await page.locator(`[data-testid="${prefix}-slot-${key}-state"]`).textContent()) ?? "").trim();
+  const editor = (key) => page.locator(`[data-testid="${prefix}-na-${key}-editor"]`);
+  const reason = (key) => page.locator(`[data-testid="${prefix}-na-${key}-reason"]`);
+  const button = (key, kind) => page.locator(`[data-testid="${prefix}-na-${key}-${kind}"]`);
+  const hasMark = async (key) => (await button(key, "mark").count()) === 1;
+  // 숨는 단추는 opacity만 바꾸고 전환이 있다 - 그 값이 될 때까지 기다린다
+  const waitOpacity = (testId, value) =>
+    page.waitForFunction(({ id, v }) => {
+      const el = document.querySelector(`[data-testid="${id}"]`);
+      return el !== null && Number(getComputedStyle(el).opacity) === v;
+    }, { id: testId, v: value }, { timeout: 2000 }).then(() => true, () => false);
+  const focusedTestId = () => page.evaluate(() => document.activeElement?.dataset.testid ?? null);
+  // 줄을 펼치고 펼침 전환이 끝날 때까지 - 전환 중에는 접힘 틀(overflow hidden)이 내용보다 낮아, 줄에 올리는 스크롤이 페이지 대신 그 틀을 굴린다
+  const openRow = async (rowPrefix, inner) => {
+    await page.locator(`[data-testid="${rowPrefix}-toggle"]`).click();
+    await wait(page, inner);
+    await page.waitForFunction((id) => {
+      const fold = document.querySelector(`[data-testid="${id}"]`)?.closest(".fold-inner");
+      return fold !== null && fold !== undefined && fold.clientHeight >= fold.scrollHeight;
+    }, inner, { timeout: T });
+  };
+  const countErrors = () => page.locator('[data-testid="toast-error"]').count();
+  const waitNewError = async (before) => {
+    await page.waitForFunction((n) => document.querySelectorAll('[data-testid="toast-error"]').length > n, before, { timeout: T });
+    return ((await page.locator('[data-testid="toast-error"]').last().textContent()) ?? "").trim();
+  };
+  try {
+    check("the row is the equipment SOP SOP-CF", sop.code === "SOP-CF" && sop.is_equipment_sop, sop.code);
+    await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
+    await openRow(prefix, `${prefix}-slots`);
+    // 1. 15줄 - 머리의 수는 줄들의 상태에서 센 것과 같다
+    const rows = await page.locator(`[data-testid="${prefix}-slots"] [data-slot]`).evaluateAll((els) => els.map((el) => [el.dataset.slot, el.dataset.state]));
+    check("the table has fifteen sections in the fixed order", JSON.stringify(rows.map(([key]) => key)) === JSON.stringify(SLOT_ORDER), rows.map(([key]) => key).join(","));
+    const tally = (...kinds) => rows.filter(([, state]) => kinds.includes(state)).length;
+    const summary = (await getText(page, `${prefix}-slots-summary`)).trim();
+    check("the head counts what the rows say", summary === `${tally("filled", "sub")} with sentences · ${tally("empty")} empty · ${tally("na", "covered")} N/A`, summary);
+    const decide = tally("decide");
+    const decidePill = page.locator(`[data-testid="${prefix}-slots-decide"]`);
+    check("the to-decide pill counts the sections to decide", decide > 0 && ((await decidePill.textContent()) ?? "").trim() === `${decide} to decide`, `${decide} ${await decidePill.count()}`);
+    // 2. 문장이 든 칸 - 수를 적고 단추가 없다. 자기 수가 없는 상위 칸은 "하위 칸에 있음"
+    const counts = (start.slot_counts ?? []).filter((row) => row.target_doc_id === sop.id && row.count > 0);
+    const countOf = new Map(counts.map((row) => [row.slot_key, row.count]));
+    check("the seed has sections with sentences", counts.length > 0);
+    for (const { slot_key: key, count } of counts) {
+      const state = await readState(key);
+      const text = await stateText(key);
+      const buttons = await slot(key).locator("button").count();
+      check(`${key} shows its sentences and has no button`, state === "filled" && text === (count === 1 ? "1 sentence" : `${count} sentences`) && buttons === 0, `${state} ${text} ${buttons}`);
+      const parent = slotParent(key);
+      if (parent !== null && !countOf.has(parent)) check(`${parent} holds sentences in its sub-sections`, (await readState(parent)) === "sub", await readState(parent));
+    }
+    // 3. N/A인 칸 - 사유와 Edit reason · Restore
+    const seedReason = start.na_slots.find((na) => na.code === sop.code && na.slot_key === "procedures.troubleshooting")?.reason ?? "";
+    const troubleText = await getText(page, `${prefix}-na-procedures.troubleshooting-text`);
+    check(
+      "troubleshooting is N/A with its reason, and can be edited or restored",
+      (await readState("procedures.troubleshooting")) === "na" && seedReason !== "" && troubleText.includes(seedReason.slice(0, 20)) && (await button("procedures.troubleshooting", "edit").count()) === 1 && (await button("procedures.troubleshooting", "restore").count()) === 1,
+      troubleText,
+    );
+    // 4. 정할 칸은 Mark N/A가 늘 보이고, 빈 칸은 줄에 올릴 때만
+    await page.mouse.move(0, 0);
+    for (const key of ["procedures.electronic_record_control", "procedures.maintenance"].filter((item) => !countOf.has(item))) {
+      check(`${key} is to decide with Mark N/A always shown`, (await readState(key)) === "decide" && (await stateText(key)) === "Fill or mark N/A" && (await waitOpacity(`${prefix}-na-${key}-mark`, 1)), `${await readState(key)} ${await stateText(key)}`);
+    }
+    // P: 하위 칸이 모두 비었고 Mark N/A가 그려진 상위 칸, E: P의 빈 하위 칸(끝의 것)
+    const emptyKeys = rows.filter(([, state]) => state === "empty").map(([key]) => key);
+    let parentKey = null;
+    for (const key of SLOT_ORDER) {
+      const children = SLOT_ORDER.filter((child) => slotParent(child) === key);
+      if (children.length > 0 && children.every((child) => emptyKeys.includes(child)) && (await hasMark(key))) {
+        parentKey = key;
+        break;
+      }
+    }
+    const children = SLOT_ORDER.filter((child) => slotParent(child) === parentKey);
+    const leafKey = children.at(-1);
+    const siblingKey = children[0];
+    check("the seed has an empty parent with empty sub-sections", parentKey !== null && leafKey !== siblingKey && (await hasMark(leafKey)) && (await hasMark(siblingKey)), String(parentKey));
+    const leafMark = `${prefix}-na-${leafKey}-mark`;
+    check("an empty section's Mark N/A is hidden until its row is hovered", await waitOpacity(leafMark, 0));
+    await slot(leafKey).hover();
+    check("hovering the row shows Mark N/A", await waitOpacity(leafMark, 1));
+    // 5. 사유 없이는 저장되지 않는다 - 칸을 떠나도 편집기는 그대로
+    await button(leafKey, "mark").click();
+    await editor(leafKey).waitFor({ timeout: T });
+    check("Mark N/A opens the editor with the focus in it and Save off", (await focusedTestId()) === `${prefix}-na-${leafKey}-reason` && (await button(leafKey, "save").isDisabled()), await focusedTestId());
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(300);
+    check("Enter with no reason sends nothing", countCalls("PUT") === 0, naCalls.join(" | "));
+    await page.locator('[data-testid="tobe-section"] h2').click();
+    check("leaving the editor keeps it open", (await editor(leafKey).count()) === 1);
+    // 6. 한 번에 하나 - 적는 중에 다른 칸을 열면 열린 것으로 돌아간다
+    await reason(leafKey).fill("Smoke: covered elsewhere");
+    let otherKey = null;
+    for (const key of emptyKeys) {
+      if (key !== parentKey && !children.includes(key) && (await hasMark(key))) {
+        otherKey = key;
+        break;
+      }
+    }
+    await slot(otherKey).hover();
+    await button(otherKey, "mark").click();
+    await page.waitForFunction((id) => document.activeElement?.dataset.testid === id, `${prefix}-na-${leafKey}-reason`, { timeout: 2000 }).then(() => undefined, () => undefined);
+    check(
+      "another Mark N/A keeps the one editor and asks to finish first",
+      (await editor(leafKey).count()) === 1 && (await editor(otherKey).count()) === 0 && (await getText(page, `${prefix}-na-${leafKey}-finish-first`)).trim() === "Save or cancel this reason first.",
+      otherKey,
+    );
+    check("the focus goes back to the open editor", (await focusedTestId()) === `${prefix}-na-${leafKey}-reason`, await focusedTestId());
+    // 7. 접어도 남는다
+    await page.locator(`[data-testid="${prefix}-toggle"]`).click();
+    await wait(page, `${prefix}-unsaved`);
+    check("a folded row with a reason being written says so", (await getText(page, `${prefix}-unsaved`)).trim() === "Unsaved N/A reason");
+    await openRow(prefix, `${prefix}-na-${leafKey}-reason`);
+    check("unfolding brings the reason back", (await reason(leafKey).inputValue()) === "Smoke: covered elsewhere");
+    // 8. 떠나기 전에 묻는다
+    await page.locator('[data-testid="stage-nav-assign"]').click();
+    await wait(page, "tobe-leave");
+    check("leaving with a reason being written asks first and stays", new URL(page.url()).pathname.endsWith("/documents"), page.url());
+    await page.locator('[data-testid="tobe-leave-close"]').click();
+    await page.locator('[data-testid="tobe-leave"]').waitFor({ state: "detached", timeout: T });
+    // 9. 저장은 한 번 - Enter를 연달아 두 번
+    await reason(leafKey).focus();
+    const putDone = page.waitForResponse((response) => response.request().method() === "PUT" && decodeURIComponent(response.url()).endsWith(`/na/${leafKey}`), { timeout: T });
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    const putResponse = await putDone;
+    await settleToBe(page);
+    await editor(leafKey).waitFor({ state: "detached", timeout: T });
+    check("Enter twice saves once", countCalls("PUT", leafKey) === 1 && putResponse.status() === 200, naCalls.join(" | "));
+    check("the saved section turns N/A", (await readState(leafKey)) === "na", await readState(leafKey));
+    check("the server holds one more N/A", (await readToBe(page, halfBundleId)).na_slots.length === naBefore + 1);
+    await page.reload();
+    await openRow(prefix, `${prefix}-slots`);
+    check("it is still N/A after a reload", (await readState(leafKey)) === "na");
+    // 10. 쓴 사유 칩과 Esc
+    await slot(siblingKey).hover();
+    await button(siblingKey, "mark").click();
+    await editor(siblingKey).waitFor({ timeout: T });
+    const chipText = async (index) => ((await button(siblingKey, `chip-${index}`).textContent()) ?? "").trim();
+    check("the used reasons come as chips, most used first", (await chipText(0)) === seedReason.trim() && (await chipText(1)) === "Smoke: covered elsewhere", `${await chipText(0)} | ${await chipText(1)}`);
+    await button(siblingKey, "chip-1").click();
+    check("a chip puts its reason in the box", (await reason(siblingKey).inputValue()) === "Smoke: covered elsewhere");
+    const putsBefore = countCalls("PUT");
+    await reason(siblingKey).press("Escape");
+    check(
+      "Esc closes the editor, keeps the row open and saves nothing",
+      (await editor(siblingKey).count()) === 0 && (await page.locator(`[data-testid="${prefix}-toggle"]`).getAttribute("aria-expanded")) === "true" && countCalls("PUT") === putsBefore,
+    );
+    // 11. 상위 칸이 덮는다 - 따로 N/A인 하위 칸은 제 사유 그대로
+    await slot(parentKey).hover();
+    await button(parentKey, "mark").click();
+    await reason(parentKey).fill("Smoke: no relationships");
+    await button(parentKey, "save").click();
+    await editor(parentKey).waitFor({ state: "detached", timeout: T });
+    await settleToBe(page);
+    const parentName = ((await slot(parentKey).locator(".slot-name").textContent()) ?? "").trim();
+    const coveredText = (await getText(page, `${prefix}-na-${siblingKey}-text`)).trim();
+    check("an N/A parent covers its sub-sections", (await readState(siblingKey)) === "covered" && coveredText === `Covered by ${slotNumber(parentKey)} ${parentName}`, coveredText);
+    check("a sub-section with its own N/A keeps it", (await readState(leafKey)) === "na");
+    // 12. 고치고 되돌린다
+    await slot(parentKey).hover();
+    await button(parentKey, "edit").click();
+    await editor(parentKey).waitFor({ timeout: T });
+    check("Edit reason opens the saved reason", (await reason(parentKey).inputValue()) === "Smoke: no relationships");
+    await reason(parentKey).fill("Smoke: no relationships, edited");
+    await reason(parentKey).press("Enter");
+    await editor(parentKey).waitFor({ state: "detached", timeout: T });
+    await settleToBe(page);
+    const edited = (await readToBe(page, halfBundleId)).na_slots.find((na) => na.code === sop.code && na.slot_key === parentKey);
+    check("the edited reason is saved", edited?.reason === "Smoke: no relationships, edited", edited?.reason);
+    await slot(parentKey).hover();
+    const deleteDone = page.waitForResponse((response) => response.request().method() === "DELETE" && decodeURIComponent(response.url()).endsWith(`/na/${parentKey}`), { timeout: T });
+    await button(parentKey, "restore").click();
+    const deleted = await deleteDone;
+    const restoredToast = page.locator('[data-testid="toast-ok"]', { hasText: "Restored" }).last();
+    await restoredToast.waitFor({ timeout: T });
+    const toastText = ((await restoredToast.textContent()) ?? "").trim();
+    check("Restore removes it at once and says so", deleted.status() === 200 && toastText.includes(`Restored ${slotNumber(parentKey)} ${parentName}`), toastText);
+    await settleToBe(page);
+    check("the covered sub-section is empty again", (await readState(siblingKey)) === "empty", await readState(siblingKey));
+    await slot(leafKey).hover();
+    await button(leafKey, "restore").click();
+    await settleToBe(page);
+    await page.waitForFunction((id) => document.querySelector(`[data-testid="${id}"]`)?.dataset.state === "empty", `${prefix}-slot-${leafKey}`, { timeout: T });
+    check("restoring the sub-section brings the count back", (await readToBe(page, halfBundleId)).na_slots.length === naBefore);
+    // 13. 409는 편집기를 닫고(둘 곳이 없다), 그 밖의 실패는 적던 사유를 남긴다
+    let answer = 409;
+    await page.route("**/tobe/docs/*/na/*", (route) =>
+      route.request().method() === "PUT"
+        ? route.fulfill({ status: answer, contentType: "application/json", body: JSON.stringify(answer === 409 ? { detail: { code: "slot_has_targets", slots: [] } } : { detail: "Synthetic server error" }) })
+        : route.continue(),
+    );
+    let errorsBefore = await countErrors();
+    await slot(leafKey).hover();
+    await button(leafKey, "mark").click();
+    await reason(leafKey).fill("Smoke: refused");
+    await reason(leafKey).press("Enter");
+    const conflictText = await waitNewError(errorsBefore);
+    await settleToBe(page);
+    check("a 409 says why and closes the editor", conflictText.includes("A section with new sentences cannot be N/A.") && (await editor(leafKey).count()) === 0, conflictText);
+    answer = 500;
+    errorsBefore = await countErrors();
+    await slot(leafKey).hover();
+    await button(leafKey, "mark").click();
+    await reason(leafKey).fill("Smoke: kept");
+    await reason(leafKey).press("Enter");
+    await waitNewError(errorsBefore);
+    await settleToBe(page);
+    check("any other failure keeps the editor and the reason", (await editor(leafKey).count()) === 1 && (await reason(leafKey).inputValue()) === "Smoke: kept");
+    await page.unroute("**/tobe/docs/*/na/*");
+    await button(leafKey, "cancel").click();
+    check("Cancel closes it", (await editor(leafKey).count()) === 0);
+    // WI 줄을 펼치면 단계만 있고 칸 표는 없다
+    const wi = start.docs.find((doc) => doc.doc_type === "wi");
+    await openRow(`tobe-id-${wi.id}`, `tobe-id-${wi.id}-steps`);
+    check("a WI row opens its steps and no section table", (await page.locator(`[data-testid="tobe-id-${wi.id}-slots"]`).count()) === 0);
+  } finally {
+    // 만든 N/A를 API로도 지운다(중간에 멈췄어도 처음 수로)
+    const now = await readToBe(page, halfBundleId);
+    const startKeys = new Set(start.na_slots.map((na) => `${na.code}|${na.slot_key}`));
+    for (const na of now.na_slots) {
+      const doc = now.docs.find((item) => item.code === na.code);
+      if (!startKeys.has(`${na.code}|${na.slot_key}`) && doc) await page.request.delete(`${BASE}/api/bundles/${halfBundleId}/tobe/docs/${doc.id}/na/${encodeURIComponent(na.slot_key)}`, { headers });
+    }
+    check("the N/A count is back where it started", (await readToBe(page, halfBundleId)).na_slots.length === naBefore);
+  }
 });
 
 // Assign(v0.10.0) - Old 원문 조각이 곧 목록이다. 줄은 ↑↓·J/K로 옮기고, 지금 줄은 오른쪽 머리(assign-row-id·assign-row-status)로 읽는다
