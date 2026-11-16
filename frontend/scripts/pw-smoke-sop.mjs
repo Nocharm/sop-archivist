@@ -6338,6 +6338,246 @@ await runStep("assign: Pair view reads on a read-only bundle, nothing drags", { 
   check("pressing and moving a piece starts no drag and sends nothing", cards === 0 && pairRequests === 0, `${cards} cards, ${pairRequests} requests`);
 });
 
+// 가까운 줄(끌어다 놓기 5걸음) - 한/영 연달아 문서의 평소 Old 칸에서 조각을 맞은편 언어의 조각에 놓아 짝을 맺는다. Pair view 없이 같은 규칙·같은 Undo
+await runStep("assign: drag an Old piece onto a nearby piece in the other language to pair them", {}, async ({ page }) => {
+  await installCommitCounter(page);
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const sourceOrder = (one, two) => one.pos_seq - two.pos_seq || (one.spans[0]?.[1] ?? 0) - (two.spans[0]?.[1] ?? 0) || one.id - two.id;
+  const pairOf = (view, unitId) => view.pairs.find((pair) => pair.unit_ids.includes(unitId)) ?? null;
+  const isPaired = (view, one, two) => pairOf(view, one.id) !== null && pairOf(view, one.id) === pairOf(view, two.id);
+  // 위아래로 붙은 한/영 문장 짝 줄 - 두 Unit 모두 미배정
+  const findNearPairs = (view) => {
+    const order = view.units.filter((unit) => unit.group_unit_id === null).sort(sourceOrder);
+    const isFree = (unit) => unit.kind === "sentence" && (unit.status === null || unit.status === "unassigned");
+    return view.pairs.flatMap((pair) => {
+      const members = pair.unit_ids.map((id) => order.findIndex((unit) => unit.id === id)).sort((one, two) => one - two);
+      if (members.length !== 2 || members[0] < 0 || members[1] - members[0] !== 1) return [];
+      const [one, two] = members.map((index) => order[index]);
+      if (!isFree(one) || !isFree(two) || new Set([one.lang, two.lang]).size !== 2 || ![one.lang, two.lang].every((lang) => lang === "ko" || lang === "en")) return [];
+      return [{ pair, ko: one.lang === "ko" ? one : two, en: one.lang === "en" ? one : two }];
+    });
+  };
+  const docs = await getJson("/documents");
+  const interleaved = [];
+  for (const item of docs.filter((doc) => doc.side === "old" && doc.status === "ready" && doc.language_layout === "ko_en_interleaved")) {
+    const view = await getJson(`/documents/${item.id}/view`);
+    if (view.units.some((unit) => unit.group_unit_id === null && (unit.kind === "figure" || unit.kind === "table"))) interleaved.push({ doc: item, view });
+  }
+  let picked = interleaved.find((entry) => findNearPairs(entry.view).length >= 3);
+  if (!picked && interleaved.length > 0) {
+    // 모자라면 첫 문서의 판단을 비운다 - 뒤 단계는 이 묶음을 읽지 않는다
+    await page.request.post(`${api}/decisions/reset`, { headers, data: { revision: (await getJson("")).revision, document_id: interleaved[0].doc.id } });
+    picked = { doc: interleaved[0].doc, view: await getJson(`/documents/${interleaved[0].doc.id}/view`) };
+  }
+  const near = picked ? findNearPairs(picked.view) : [];
+  check("an interleaved document with a figure or table has three nearby KO/EN sentence pairs left open", near.length >= 3, picked?.doc.doc_code ?? "none");
+  const doc = picked.doc;
+  const docPath = `/documents/${doc.id}`;
+  const readView = () => getJson(`${docPath}/view`);
+  const unpair = async (pairId) => page.request.delete(`${api}${docPath}/pairs/${pairId}?revision=${(await readView()).document.revision}`, { headers });
+  const [nearX, nearY, nearQ] = near;
+  check("the API separates x, x′ and y, y′", (await unpair(nearX.pair.id)).ok() && (await unpair(nearY.pair.id)).ok());
+  const { ko: x, en: x2 } = nearX;
+  const { ko: y, en: y2 } = nearY;
+  const { ko: q, en: q2 } = nearQ;
+  const units = (await readView()).units.filter((unit) => unit.group_unit_id === null);
+  const figure = units.find((unit) => unit.kind === "figure");
+  const table = units.find((unit) => unit.kind === "table");
+  const separate = docs.find((item) => item.side === "old" && item.status === "ready" && item.language_layout === "ko_en_separate");
+
+  // 화면이 보낸 짝 요청(page.request로 만든 자료는 세지 않는다)
+  const pairRequests = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (/\/pairs(\/\d+(\/confirm)?)?$/.test(path)) pairRequests.push({ method: request.method(), path, body: request.postData() });
+  });
+  const isPairCall = (method, pattern) => (response) => response.request().method() === method && pattern.test(new URL(response.url()).pathname);
+  const POST_PAIR = isPairCall("POST", /\/pairs$/);
+  const DELETE_PAIR = isPairCall("DELETE", /\/pairs\/\d+$/);
+
+  const pieceOf = (id) => page.locator(`[data-testid="assign-paper-piece-${id}"]`);
+  const openDoc = async (docId, unitId) => {
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${docId}"]`).click();
+    await pieceOf(unitId).waitFor({ timeout: T });
+    await page.waitForLoadState("networkidle");
+  };
+  // 조각 글의 첫 글줄 위 한 점 - 조각을 Old 칸 가운데로 굴린 뒤에 잰다(가장자리 자동 스크롤에 걸리지 않게)
+  const pointOn = async (id) => {
+    await pieceOf(id).evaluate((el) => el.scrollIntoView({ block: "center" }));
+    await page.waitForTimeout(150);
+    return page.locator(`[data-testid="assign-paper-unit-${id}"]`).first().evaluate((el) => {
+      const rect = el.getClientRects()[0];
+      return { x: rect.left + Math.min(24, rect.width / 2), y: rect.top + rect.height / 2 };
+    });
+  };
+  // 조각 상자 가운데(그림처럼 글줄이 없는 조각)
+  const centreOf = async (locator) => {
+    await locator.evaluate((el) => el.scrollIntoView({ block: "center" }));
+    await page.waitForTimeout(150);
+    const box = await locator.boundingBox();
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  };
+  const startDrag = async (fromId) => {
+    const from = await pointOn(fromId);
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x + 10, from.y, { steps: 5 });
+  };
+  const moveTo = async (point) => {
+    await page.mouse.move(point.x, point.y, { steps: 12 });
+    await page.waitForTimeout(100);
+  };
+  const moveOnto = async (toId) => moveTo(await pointOn(toId));
+  const readCard = () => page.evaluate(() => ({
+    note: document.querySelector('[data-testid="drag-card"] .drag-card-note')?.textContent ?? "",
+    refused: document.querySelector('[data-testid="drag-card"]')?.hasAttribute("data-refused") ?? false,
+    drops: document.querySelectorAll("[data-drop]").length,
+  }));
+  const toastWith = (tone, text) => page.locator(`[data-testid="toast-${tone}"]`, { hasText: text });
+  const undoIn = (toast) => toast.locator('[data-testid^="toast-action-"]');
+  const idsOf = (one, two) => [one, two].sort(sourceOrder).map((unit) => unit.display_id).join(" + ");
+  const dropAndSave = async (toastText) => {
+    const response = page.waitForResponse(POST_PAIR, { timeout: T });
+    await page.mouse.up();
+    const done = await response;
+    const toast = toastWith("ok", toastText);
+    await toast.waitFor({ timeout: T });
+    await page.waitForLoadState("networkidle");
+    return { response: done, toast };
+  };
+  const expectRefused = async (label, fromId, toId, text) => {
+    const before = { requests: pairRequests.length, pairs: JSON.stringify((await readView()).pairs) };
+    await startDrag(fromId);
+    await moveOnto(toId);
+    const card = await readCard();
+    const drop = await pieceOf(toId).getAttribute("data-drop");
+    await page.mouse.up();
+    await page.waitForTimeout(400);
+    check(`${label}: the card says why and the piece is marked refused`, card.refused && card.note === text && drop === "refused", JSON.stringify({ card, drop }));
+    check(`${label}: the drop writes nothing`, pairRequests.length === before.requests && JSON.stringify((await readView()).pairs) === before.pairs, String(pairRequests.length - before.requests));
+  };
+
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-view-two"]').click();
+  await openDoc(doc.id, x.id);
+  check("the interleaved document opens in the two-document view without Pair view", (await page.locator('[data-testid="assign-new"]').count()) === 1 && (await page.locator('[data-testid="assign-pair-view"]').count()) === 0);
+
+  // 1. 끄는 동안 - x를 x′ 위로. Old 조각들 위를 지나도 React는 다시 그리지 않는다(G11)
+  await startDrag(x.id);
+  await moveOnto(x2.id);
+  const overX2 = await readCard();
+  check("dragging x over x′ says Pair with x′", overX2.note === `Pair with ${x2.display_id}` && !overX2.refused, overX2.note);
+  check("x′ is the drop target", (await pieceOf(x2.id).getAttribute("data-drop")) === "over");
+  const wanderPoints = await page.evaluate(() => {
+    const frame = document.querySelector('[data-pane="old"] .pane-body').getBoundingClientRect();
+    const points = [];
+    for (const el of document.querySelectorAll('[data-pane="old"] .strip[data-strip-unit]')) {
+      // 점은 조각 첫 글줄 높이 - 가장자리 자동 스크롤 띠(44px) 밖이어야 한다
+      const rect = el.getBoundingClientRect();
+      const y = rect.top + Math.min(rect.height / 2, 12);
+      if (y > frame.top + 50 && y < frame.bottom - 50 && points.length < 6) points.push({ x: rect.left + 30, y });
+    }
+    return points;
+  });
+  const commitsBefore = await page.evaluate(() => window.__commits ?? -1);
+  for (let i = 0; i < 30; i += 1) {
+    const point = wanderPoints[i % wanderPoints.length];
+    await page.mouse.move(point.x + (i % 3), point.y + (i % 2));
+  }
+  const commitsAfter = await page.evaluate(() => window.__commits ?? -1);
+  check("no React commit in 30 moves over Old pieces", wanderPoints.length >= 4 && commitsBefore > 0 && commitsBefore === commitsAfter, `${wanderPoints.length} points, ${commitsBefore} -> ${commitsAfter}`);
+
+  // 2. 놓으면 바로 저장하고 Undo가 든 알림 - 두 조각이 한 카드가 된다
+  await moveOnto(x2.id);
+  const paired = await dropAndSave(`Paired ${idsOf(x, x2)}`);
+  check("the drop posts the pair [x, x′] and gets 201", paired.response.status() === 201 && JSON.stringify(JSON.parse(pairRequests.at(-1).body).unit_ids) === JSON.stringify([x.id, x2.id]), `${paired.response.status()} ${pairRequests.at(-1).body}`);
+  check("the toast carries Undo", (await undoIn(paired.toast).innerText()).trim() === "Undo");
+  check("x and x′ are one pair in the API", isPaired(await readView(), x, x2));
+  await page.waitForFunction((ids) => ids.every((id) => document.querySelector(`[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-bracket")), [x.id, x2.id], { timeout: T });
+  check("on the Old paper x and x′ are one card", (await pieceOf(x.id).getAttribute("data-bracket")) !== null && (await pieceOf(x2.id).getAttribute("data-bracket")) !== null);
+  const undone = page.waitForResponse(DELETE_PAIR, { timeout: T });
+  await undoIn(paired.toast).click();
+  check("Undo deletes the pair (200)", (await undone).status() === 200);
+  await toastWith("ok", "Separated").waitFor({ timeout: T });
+  check("x and x′ are apart again", pairOf(await readView(), x.id) === null);
+  await page.waitForLoadState("networkidle");
+  await page.waitForFunction((id) => !document.querySelector(`[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-bracket"), x.id, { timeout: T });
+
+  // 3. 반대 방향 - x′를 x에. 이 짝은 남긴다
+  await startDrag(x2.id);
+  await moveOnto(x.id);
+  check("dragging x′ over x says Pair with x", (await readCard()).note === `Pair with ${x.display_id}`);
+  const back = await dropAndSave(`Paired ${idsOf(x, x2)}`);
+  check("the drop posts [x′, x] and they are a pair again", back.response.status() === 201 && JSON.stringify(JSON.parse(pairRequests.at(-1).body).unit_ids) === JSON.stringify([x2.id, x.id]) && isPaired(await readView(), x, x2), pairRequests.at(-1).body);
+
+  // 4. 못 놓는 곳은 이유를 보이고 아무것도 쓰지 않는다
+  await expectRefused("same language (y′ → x′)", y2.id, x2.id, "A pair needs one Korean and one English sentence. Pick one in the other language.");
+  await expectRefused("onto a confirmed pair (y → x′)", y.id, x2.id, "One of these sentences is already in a confirmed pair.");
+  const qPair = pairOf(await readView(), q.id);
+  await expectRefused(`dragging a ${qPair.status} pair card (q → y′)`, q.id, y2.id, qPair.status === "confirmed" ? "One of these sentences is already in a confirmed pair." : "One of them is already in a pair. Separate it first.");
+  await startDrag(q.id);
+  await moveOnto(q2.id);
+  const overOwn = await readCard();
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  check("a pair card over its own piece marks nothing and says nothing", overOwn.drops === 0 && overOwn.note === "", JSON.stringify(overOwn));
+
+  // 5. New 칸은 그대로 잇기 - Old 조각들을 지나 이미 쓴 문서의 문장 위로. 그림·표 위는 놓을 자리 밖
+  const writtenDocIds = [...new Set((await getJson("/written-sentences")).map((row) => row.target_doc_id))];
+  const newPane = page.locator('[data-testid="assign-new"]');
+  if (!writtenDocIds.includes(Number(await newPane.getAttribute("data-doc")))) {
+    await page.locator('[data-testid="assign-new-doc"]').click();
+    await page.locator(`[data-testid="assign-new-doc-option-${writtenDocIds[0]}"]`).click();
+    await page.waitForFunction((id) => document.querySelector('[data-testid="assign-new"]')?.getAttribute("data-doc") === String(id), writtenDocIds[0], { timeout: T });
+  }
+  const line = page.locator('[data-testid="assign-new"] .pg:not([data-read-only]) .new-line[data-target]:not([data-state="picked"])').first();
+  await line.evaluate((el) => el.scrollIntoView({ block: "center" }));
+  await page.waitForTimeout(150);
+  const lineBox = await line.locator(".new-hit").boundingBox();
+  const requestsBeforeNew = pairRequests.length;
+  await startDrag(y.id);
+  await moveTo({ x: lineBox.x + Math.min(60, lineBox.width / 2), y: lineBox.y + lineBox.height / 2 });
+  const overLine = await readCard();
+  check("over a written New sentence the card still says link", overLine.note === "Link to this sentence" && (await line.getAttribute("data-drop")) === "over", overLine.note);
+  if (figure) {
+    await moveTo(await centreOf(pieceOf(figure.id)));
+    const overFigure = await readCard();
+    check("over a figure piece nothing is marked and the card says nothing", overFigure.drops === 0 && overFigure.note === "", JSON.stringify(overFigure));
+  }
+  if (table) {
+    await moveTo(await centreOf(page.locator(`[data-testid="assign-paper-unit-${table.id}"]`)));
+    const overTable = await readCard();
+    check("over a table piece nothing is marked and the card says nothing", overTable.drops === 0 && overTable.note === "", JSON.stringify(overTable));
+  }
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  check("Esc ends the drag and nothing is paired", pairRequests.length === requestsBeforeNew && pairOf(await readView(), y.id) === null);
+
+  // 6. 다른 배치에서는 조용하다 - 한/영 따로 문서의 평소 보기에서 KO 문장을 EN 문장 위로
+  const separateView = await getJson(`/documents/${separate.id}/view`);
+  const sepUnits = separateView.units.filter((unit) => unit.group_unit_id === null && unit.kind === "sentence").sort(sourceOrder);
+  const sepKo = sepUnits.find((unit) => unit.lang === "ko" && pairOf(separateView, unit.id) === null);
+  const sepEn = sepUnits.find((unit) => unit.lang === "en" && pairOf(separateView, unit.id) === null);
+  await openDoc(separate.id, sepKo.id);
+  const requestsBeforeSeparate = pairRequests.length;
+  await startDrag(sepKo.id);
+  await moveOnto(sepEn.id);
+  const overSeparate = await readCard();
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  check("in a separate-layout document an Old piece over another marks nothing and says nothing", overSeparate.drops === 0 && overSeparate.note === "", JSON.stringify(overSeparate));
+  check("and the drop sends no pair request", pairRequests.length === requestsBeforeSeparate && pairOf(await getJson(`/documents/${separate.id}/view`), sepKo.id) === null);
+
+  // 7. 뒷정리 - y·y′를 다시 맺는다(x·x′는 사람이 맺은 짝으로 남는다)
+  const repaired = await page.request.post(`${api}${docPath}/pairs`, { headers, data: { revision: (await readView()).document.revision, unit_ids: [y.id, y2.id] } });
+  check("the API pairs y and y′ again", repaired.status() === 201 && isPaired(await readView(), y, y2));
+});
+
 await runStep("new bundle in one click, locked stages, empty assign", { devUser: "dev.admin" }, async ({ page }) => {
   await page.goto(`${BASE}/`);
   await page.locator('[data-testid="bundles-new"]').click();

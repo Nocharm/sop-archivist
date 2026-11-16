@@ -57,9 +57,15 @@ export function resolvePairDrop(sources: readonly PairPiece[], target: PairPiece
   if (!TEXT_KINDS.has(target.kind) || target.group_unit_id !== null) return { kind: "none" };
   if (sources.some((unit) => !TEXT_KINDS.has(unit.kind))) return { kind: "none" };
 
+  // 여러 Unit의 줄(가까운 줄의 짝 카드)은 한 Unit만으로 맺지 않는다 - 짝 구성원이 든 줄은 거절, 아니면 놓을 자리 밖
+  if (sources.length > 1) {
+    const pairs = sources.map((unit) => ctx.pairOf(unit.id));
+    if (pairs.some((pair) => pair?.status === "confirmed")) return refuse("paired");
+    return pairs.some((pair) => pair !== undefined) ? refuse("suggested_pair") : { kind: "none" };
+  }
+
   const dragged = sources[0];
   const draggedPair = ctx.pairOf(dragged.id);
-  if (sources.length > 1 && draggedPair) return refuse(draggedPair.status === "confirmed" ? "paired" : "suggested_pair");
 
   const languageRefusal = checkLanguage(dragged) ?? checkLanguage(target);
   if (languageRefusal) return languageRefusal;
@@ -144,8 +150,9 @@ export function canUndoPair(view: { units: readonly Pick<PairUnit, "id" | "statu
   const pair = view.pairs.find((candidate) => candidate.id === pairId);
   if (!pair || pair.status !== "confirmed") return false;
   if (pair.unit_ids.length !== unitIds.length || !unitIds.every((id) => pair.unit_ids.includes(id))) return false;
+  // 다시 읽은 보기에 없는 구성원은 그사이 바뀐 것이다 - 풀지 않는다
   return pair.unit_ids.every((id) => {
-    const status = view.units.find((unit) => unit.id === id)?.status;
-    return status === null || status === undefined || status === "unassigned";
+    const unit = view.units.find((candidate) => candidate.id === id);
+    return unit !== undefined && (unit.status === null || unit.status === "unassigned");
   });
 }

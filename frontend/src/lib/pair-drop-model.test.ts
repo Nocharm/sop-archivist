@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import type { ViewUnit } from "./api-sop";
+import { getPairPickBlocker } from "./assign-context-menu-model";
 import { MESSAGES } from "./i18n-messages";
 import {
   PAIR_REFUSAL_KEYS,
@@ -7,6 +9,7 @@ import {
   listPairLinks,
   resolvePairDrop,
   type PairColumnItem,
+  type PairDrop,
   type PairDropContext,
   type PairInfo,
   type PairPiece,
@@ -48,6 +51,17 @@ describe("resolvePairDrop", () => {
     expect(resolvePairDrop([KO2, EN2], EN1, ctx(CONFIRMED))).toEqual(refused("paired"));
     expect(resolvePairDrop([KO2, EN2], EN1, ctx(SUGGESTED))).toEqual(refused("suggested_pair"));
     expect(resolvePairDrop([KO2, EN2], EN2, ctx(SUGGESTED))).toEqual({ kind: "none" });
+  });
+  it("never pairs a row of several units by one of them - a row holding a pair member is refused, any other is nowhere", () => {
+    // 첫 Unit은 짝이 없고 둘째가 짝에 들었다 - 첫 Unit만으로 맺지 않는다
+    expect(resolvePairDrop([KO1, EN2], EN1, ctx(CONFIRMED))).toEqual(refused("paired"));
+    expect(resolvePairDrop([KO1, EN2], EN1, ctx(SUGGESTED))).toEqual(refused("suggested_pair"));
+    // 구성원이 서로 다른 짝에 들었다 - 확정이 앞
+    const split: PairDropContext = { ...ctx(), pairOf: (id) => (id === 1 ? { id: 5, status: "suggested", unit_ids: [1, 99] } : id === 12 ? CONFIRMED : undefined) };
+    expect(resolvePairDrop([KO1, EN2], EN1, split)).toEqual(refused("paired"));
+    // 아무 짝도 아닌 여러 Unit의 줄 - 놓을 자리 밖(짝 카드가 아니다)
+    expect(resolvePairDrop([KO1, EN2], EN1, ctx())).toEqual({ kind: "none" });
+    expect(resolvePairDrop([KO1, KO2], EN1, ctx())).toEqual({ kind: "none" });
   });
   it("refuses a piece with no language - a reference line with its own reason", () => {
     expect(resolvePairDrop([KO1], REF, ctx())).toEqual(refused("ref_line"));
@@ -148,5 +162,36 @@ describe("canUndoPair", () => {
     expect(canUndoPair(paired("unassigned", { id: 9, status: "suggested", unit_ids: [1, 4] }), 9, [1, 4])).toBe(false);
     expect(canUndoPair(paired("confirmed"), 9, [1, 4])).toBe(false);
     expect(canUndoPair(paired("ai_suggested"), 9, [1, 4])).toBe(false);
+  });
+  it("does not when a member is missing from the view it reads", () => {
+    expect(canUndoPair({ units: [makeUnit(1, "ko")], pairs: [{ id: 9, status: "confirmed", unit_ids: [1, 4] }] }, 9, [1, 4])).toBe(false);
+  });
+});
+
+describe("resolvePairDrop never pairs what the pair menu blocks (getPairPickBlocker)", () => {
+  const viewUnit = (id: number, over: Partial<ViewUnit> = {}): ViewUnit => ({
+    id, display_id: `OLD-1-${String(id).padStart(3, "0")}`, kind: "sentence", spans: [[id, 0, 5]], text: `t${id}`, lang: "ko", table_id: null, row_index: null,
+    group_unit_id: null, status: "unassigned", pair_id: null, pos_seq: id, block_id: id, is_edited: false, can_unmerge: false, split_suggestion_id: null, ref: null, ...over,
+  });
+  const only = (id: number) => (unit: PairPiece) => unit.id === id;
+  // [메뉴가 막는 까닭, 막힌 Unit, 상태, 끌기의 판단(끄는 쪽, 놓는 쪽)]
+  const cases: [string, ViewUnit, Partial<PairDropContext>, PairDrop, PairDrop][] = [
+    ["no language", viewUnit(1, { lang: "neutral" }), {}, refused("no_language") as PairDrop, refused("no_language") as PairDrop],
+    ["a reference line", viewUnit(1, { lang: "ref" }), {}, refused("ref_line") as PairDrop, refused("ref_line") as PairDrop],
+    ["not text - a table", viewUnit(1, { kind: "table", lang: "neutral" }), {}, { kind: "none" }, { kind: "none" }],
+    ["not text - a figure", viewUnit(1, { kind: "figure", lang: "neutral" }), {}, { kind: "none" }, { kind: "none" }],
+    ["decided", viewUnit(1), { isDecided: only(1) }, refused("assigned") as PairDrop, refused("other_assigned") as PairDrop],
+    ["an unsaved pick", viewUnit(1), { hasDraft: only(1) }, refused("unsaved") as PairDrop, refused("other_unsaved") as PairDrop],
+  ];
+  it.each(cases)("%s: the menu blocks it and a drop refuses it from either end", (_, blocked, over, asSource, asTarget) => {
+    const state = { isDecided: () => false, hasDraft: () => false, ...over };
+    const partner = viewUnit(11, { lang: "en" });
+    expect(getPairPickBlocker(blocked, state)).not.toBeNull();
+    expect([resolvePairDrop([blocked], partner, ctx(undefined, over)), resolvePairDrop([partner], blocked, ctx(undefined, over))]).toEqual([asSource, asTarget]);
+  });
+  it("a unit the menu takes pairs by a drop", () => {
+    const free = viewUnit(1);
+    expect(getPairPickBlocker(free, { isDecided: () => false, hasDraft: () => false })).toBeNull();
+    expect(resolvePairDrop([free], viewUnit(11, { lang: "en" }), ctx())).toEqual({ kind: "pair", unitIds: [1, 11] });
   });
 });

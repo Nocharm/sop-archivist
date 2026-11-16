@@ -1971,7 +1971,14 @@ export default function AssignPage() {
         dragLineRef.current?.update(isStartShown ? start : null, readNewLineEnd(line, unitIds[0]));
         return { state: "ok", note: t("assign.drag.link"), target: line };
       }
-      // 이음이 아니면 보내기 - 문장 사이면 점선이 놓을 자리 선의 왼쪽 끝에 닿는다
+      // 한/영 연달아 문서의 Old 조각 위면 짝 맺기(5걸음) - 점선은 포인터까지
+      const pair = readPairAt(point, unitIds);
+      if (pair.drop.kind !== "none") {
+        dropGapRef.current?.hide();
+        dragLineRef.current?.update(isStartShown ? start : null, point);
+        return readPairHover(pair.drop, pair.target, pair.el);
+      }
+      // 이음도 짝도 아니면 보내기 - 문장 사이면 점선이 놓을 자리 선의 왼쪽 끝에 닿는다
       const send = readSendAt(point, unitIds);
       const gapEnd = showDropGap(send.drop, send.item);
       dragLineRef.current?.update(isStartShown ? start : null, gapEnd ?? point);
@@ -1983,6 +1990,10 @@ export default function AssignPage() {
       if (tree.kind !== "none") return;
       const { line, drop } = readDropAt(point);
       if (drop.kind !== "link" || line === null) {
+        // 짝 맺기는 줄을 고르지 않는다 - 저장 뒤 followUnit이 새 짝 줄을 고른다. 거절이면 아무 일도 없다
+        const pair = readPairAt(point, unitIds).drop;
+        if (pair.kind === "pair" || pair.kind === "confirm") void runPairDrop(pair);
+        if (pair.kind !== "none") return;
         applySendDrop(rowKey, readSendAt(point, unitIds).drop);
         return;
       }
@@ -2010,11 +2021,25 @@ export default function AssignPage() {
   const pairOfUnit = useMemo(() => new Map((oldView?.pairs ?? []).flatMap((pair) => pair.unit_ids.map((unitId) => [unitId, pair] as const))), [oldView]);
   /** 짝 놓기가 보는 지금 상태 - 렌더마다 한 번 짓는다(포인터가 움직일 때마다 짓지 않는다) */
   const pairDropCtx: PairDropContext = { pairOf: (unitId) => pairOfUnit.get(unitId), isDecided: isUnitDecided, hasDraft: hasUnitDraft };
-  /** 포인터 밑의 조각과 거기 놓으면 할 일 */
-  function readPairAt(source: ViewUnit, point: DragPoint): { drop: PairDrop; target: ViewUnit | undefined; el: HTMLElement | null } {
+  /** Pair view - 포인터 밑의 조각과 거기 놓으면 할 일 */
+  function readPairViewAt(source: ViewUnit, point: DragPoint): { drop: PairDrop; target: ViewUnit | undefined; el: HTMLElement | null } {
     const el = findUnderPoint(point, "[data-pair-col] .pair-piece[data-unit]");
     const target = el ? paperModel?.units.get(Number(el.dataset.unit)) : undefined;
     return { drop: resolvePairDrop([source], target, pairDropCtx), target, el };
+  }
+  /**
+   * 가까운 줄(5걸음) - 평소 Old 칸에서 포인터 밑의 가장 안쪽 조각과 거기 놓으면 할 일. 끄는 것은 줄 전부(짝 카드는 한 장)다.
+   * 한/영 연달아 문서에서만 - 그 밖의 배치에서 Old 조각 위는 지금처럼 놓을 자리 밖이다(한 언어 문서에서 "같은 언어" 거절이 번쩍이지 않게)
+   */
+  function readPairAt(point: DragPoint, unitIds: readonly number[]): { drop: PairDrop; el: HTMLElement | null; target: ViewUnit | undefined } {
+    const nowhere = { drop: { kind: "none" } as const, el: null, target: undefined };
+    if (oldView?.document.language_layout !== "ko_en_interleaved" || !paperModel) return nowhere;
+    const sources = unitIds.flatMap((id) => paperModel.units.get(id) ?? []);
+    // 줄의 Unit이 그 문서에 다 없으면 한 Unit만으로 맺게 되니 놓을 자리 밖
+    if (sources.length !== unitIds.length) return nowhere;
+    const el = findUnderPoint(point, '[data-pane="old"] :is(.cell-piece, .strip)[data-strip-unit]');
+    const target = el ? paperModel.units.get(Number(el.dataset.stripUnit)) : undefined;
+    return { drop: resolvePairDrop(sources, target, pairDropCtx), el, target };
   }
   /** 표의 메모와 테두리 - pair는 "Pair with <번호>", confirm은 "Confirm this suggested pair", refused는 이유, none은 놓을 자리 밖 */
   function readPairHover(drop: PairDrop, target: ViewUnit | undefined, el: HTMLElement | null): DragHover {
@@ -2045,11 +2070,11 @@ export default function AssignPage() {
       const start = piece ? readPairAnchor(piece, unit.lang as PairLang) : null;
       const isStartShown = start !== null && frame !== undefined && start.y >= frame.top && start.y <= frame.bottom;
       dragLineRef.current?.update(isStartShown ? start : null, point);
-      const { drop, target, el } = readPairAt(unit, point);
+      const { drop, target, el } = readPairViewAt(unit, point);
       return readPairHover(drop, target, el);
     },
     onDrop: ({ unit }, point) => {
-      const { drop } = readPairAt(unit, point);
+      const { drop } = readPairViewAt(unit, point);
       if (drop.kind === "pair" || drop.kind === "confirm") void runPairDrop(drop);
     },
     onEnd: () => {
