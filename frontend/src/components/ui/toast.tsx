@@ -12,12 +12,24 @@ import { Tooltip } from "@/components/ui/tooltip";
 // info - 실패는 아니지만 기대와 다르게 끝난 일(AI 결과가 버려짐·취소됨)
 type ToastTone = "ok" | "error" | "info";
 
+export interface ToastAction {
+  label: string;
+  run: () => void;
+}
+
+/** action - 알림 하나에 행동 하나. durationMs - 머무는 시간을 직접 정한다(없으면 getToastMs) */
+export interface ToastOptions {
+  action?: ToastAction;
+  durationMs?: number;
+}
+
 export interface Toast {
   id: string;
   tone: ToastTone;
   text: string;
   /** 오른쪽으로 빠지는 중 - 전환이 끝나면 목록에서 지운다 */
   leaving: boolean;
+  action?: ToastAction;
 }
 
 // 실패는 읽을 시간을 더 준다
@@ -25,8 +37,14 @@ const TOAST_MS: Record<ToastTone, number> = { ok: 3000, error: 7000, info: 6000 
 // 빠지는 전환 길이 - motion.css의 .toast-slot 전환(--dur-slow 두 번: 밀려 나가기 → 높이 접기)과 맞춘다
 const LEAVE_MS = 480;
 const MAX_TOASTS = 4;
+// 행동이 있는 알림은 누를 시간이 필요하다 - 실패 알림(7초)보다도 길게
+export const ACTION_TOAST_MS = 10000;
+// 포인터·포커스가 떠난 뒤 사라지기까지
+export const TOAST_RELEASE_MS = 3000;
 
 let toasts: Toast[] = [];
+// 알림마다 사라지는 타이머 - 올려 둔 동안(holdToast)은 멈추고 떠나면 다시 건다
+const fadeTimers = new Map<string, number>();
 const listeners = new Set<() => void>();
 
 function emit(): void {
@@ -43,7 +61,18 @@ export function pushToast(list: Toast[], next: Toast, max = MAX_TOASTS): Toast[]
   return [next, ...list.filter((toast) => toast.text !== next.text)].slice(0, max);
 }
 
+function clearFade(id: string): void {
+  window.clearTimeout(fadeTimers.get(id));
+  fadeTimers.delete(id);
+}
+
+function armFade(id: string, ms: number): void {
+  clearFade(id);
+  fadeTimers.set(id, window.setTimeout(() => dismissToast(id), ms));
+}
+
 export function dismissToast(id: string): void {
+  clearFade(id);
   if (!toasts.some((toast) => toast.id === id && !toast.leaving)) return;
   toasts = toasts.map((toast) => (toast.id === id ? { ...toast, leaving: true } : toast));
   emit();
@@ -53,14 +82,50 @@ export function dismissToast(id: string): void {
   }, LEAVE_MS);
 }
 
-export function showToast(text: string, tone: ToastTone = "ok"): void {
+export function getToastMs(tone: ToastTone, options?: ToastOptions): number {
+  return options?.durationMs ?? (options?.action ? Math.max(TOAST_MS[tone], ACTION_TOAST_MS) : TOAST_MS[tone]);
+}
+
+export function showToast(text: string, tone: ToastTone = "ok", options?: ToastOptions): void {
   const id = genId();
-  toasts = pushToast(toasts, { id, tone, text, leaving: false });
+  const next: Toast = { id, tone, text, leaving: false };
+  if (options?.action) next.action = options.action;
+  const before = toasts;
+  toasts = pushToast(toasts, next);
+  // 같은 글이나 넘침으로 빠진 알림의 타이머는 거둔다
+  for (const gone of before) if (!toasts.some((toast) => toast.id === gone.id)) clearFade(gone.id);
   emit();
-  window.setTimeout(() => dismissToast(id), TOAST_MS[tone]);
+  armFade(id, getToastMs(tone, options));
+}
+
+/** 지금 쌓인 알림(위가 먼저) */
+export function listToasts(): readonly Toast[] {
+  return toasts;
+}
+
+/** 닫고 행동을 한 번 돈다 - 없거나 빠지는 중이면 아무 일도 없다 */
+export function runToastAction(id: string): void {
+  const toast = toasts.find((item) => item.id === id && !item.leaving);
+  if (!toast?.action) return;
+  dismissToast(id);
+  toast.action.run();
+}
+
+export function holdToast(id: string): void {
+  clearFade(id);
+}
+
+export function releaseToast(id: string): void {
+  if (!toasts.some((toast) => toast.id === id && !toast.leaving)) return;
+  armFade(id, TOAST_RELEASE_MS);
 }
 
 const EMPTY: Toast[] = [];
+
+// 행동이 있는 알림만 포인터·포커스가 머무는 동안 사라지지 않는다
+function hoverProps(id: string) {
+  return { onPointerEnter: () => holdToast(id), onFocus: () => holdToast(id), onPointerLeave: () => releaseToast(id), onBlur: () => releaseToast(id) };
+}
 
 export function ToastHost() {
   const { t } = useI18n();
@@ -70,13 +135,18 @@ export function ToastHost() {
       {items.map((toast) => (
         <div key={toast.id} className="toast-slot" data-leaving={toast.leaving ? "" : undefined}>
           <div className="toast-clip">
-            <div role={toast.tone === "error" ? "alert" : "status"} className={`toast ${toast.tone}`} data-testid={`toast-${toast.tone}`}>
+            <div role={toast.tone === "error" ? "alert" : "status"} className={`toast ${toast.tone}`} data-testid={`toast-${toast.tone}`} {...(toast.action ? hoverProps(toast.id) : {})}>
               {toast.tone === "error" && <CircleAlert size={16} strokeWidth={1.5} className="shrink-0 text-danger" aria-hidden />}
               {toast.tone === "info" && <Info size={16} strokeWidth={1.5} className="shrink-0 text-ink-3" aria-hidden />}
               {toast.tone === "ok" && (
                 <CircleCheck size={16} strokeWidth={1.5} className="shrink-0 text-accent" aria-hidden />
               )}
               <span className="min-w-0">{toast.text}</span>
+              {toast.action && (
+                <button type="button" className="btn ghost h-6 toast-action" data-testid={`toast-action-${toast.id}`} onClick={() => runToastAction(toast.id)}>
+                  {toast.action.label}
+                </button>
+              )}
               <Tooltip label={t("common.close")} align="end">
                 <button type="button" className="btn ghost icon h-6 w-6" aria-label={t("common.close")} data-testid={`toast-close-${toast.id}`} onClick={() => dismissToast(toast.id)}>
                   <X size={14} strokeWidth={1.5} aria-hidden />
