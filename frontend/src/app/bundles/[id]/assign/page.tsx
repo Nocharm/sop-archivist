@@ -63,10 +63,12 @@ import {
   resolveDropLink,
   resolveGapDrop,
   resolveSlotDrop,
+  resolveTreeDrop,
   type AssignDrop,
   type DraftLine,
   type DropSection,
   type SendDrop,
+  type TreeDrop,
 } from "@/lib/assign-drop-model";
 import { findUnderPoint, type BoxDragConfig, type DragHover, type DragPoint } from "@/lib/box-drag";
 import { useBoxDrag } from "@/lib/use-box-drag";
@@ -1827,6 +1829,19 @@ export default function AssignPage() {
     setManualNewDoc({ key: rowKey, docId: newDocId });
     setDropPlace({ rowKey, destination, position: drop.kind === "gap" ? { placeId: getDestinationId(destination), after: drop.after } : null, menu: true });
   }
+  /** 포인터 밑의 옆 패널 All 나무 줄과 거기 놓으면 할 일 - 칸·step 줄만 받고 N/A는 거절(클릭이 받는 그대로). 칸 제목 줄은 모델이 none으로 본다 */
+  function readTreeAt(point: DragPoint): { drop: TreeDrop; row: HTMLElement | null; option: DestinationOption | undefined } {
+    const row = findUnderPoint(point, ".dest-tree .tree-row[data-place]");
+    const option = row ? options.find((candidate) => candidate.id === row.dataset.place) : undefined;
+    return { drop: resolveTreeDrop(option), row, option };
+  }
+  /** 나무 줄에 놓음 - 그 줄을 누른 것과 같다(관계 묶음이 온 뒤 클릭과 같은 pickDestination, 자리·그 자리 메뉴 없음). New 칸의 문서는 바꾸지 않는다 */
+  function applyTreeDrop(rowKey: string, destination: Destination) {
+    setChecked(new Set());
+    setCtxMenu(null);
+    selectRow(rowKey, false);
+    setDropPlace({ rowKey, destination, position: null, menu: false });
+  }
   const isOldDrag = canDragOld({ canEdit, mode, isPairPicking: pairSource !== null && pairFrom !== null, isSolo });
   /** 포인터 밑의 New 줄과 거기 놓으면 할 일 - 이번 걸음에는 이미 쓴 문서의 고를 수 있는 문장만 받는다 */
   function readDropAt(point: DragPoint): { line: HTMLElement | null; drop: AssignDrop } {
@@ -1847,7 +1862,8 @@ export default function AssignPage() {
       return key !== undefined && unitIds ? { rowKey: key, unitIds } : null;
     },
     getCard: ({ unitIds }) => buildOldDragCard(unitIds.flatMap((id) => unitMap.get(id) ?? []), (count) => t("assign.drag.units", { count })),
-    getScrollers: () => [...(panesBoxRef.current?.querySelectorAll<HTMLElement>(".pane-body") ?? [])],
+    // 옆 패널(두 문서 틀 밖)의 스크롤 칸도 넣는다 - 긴 나무가 끄는 동안 가장자리에서 스스로 스크롤하게
+    getScrollers: () => [...(panesBoxRef.current?.querySelectorAll<HTMLElement>(".pane-body") ?? []), ...document.querySelectorAll<HTMLElement>(".assign-side :is(.assign-side-body, .assign-pick)")],
     onStart: ({ unitIds }) => {
       const root = panesBoxRef.current;
       if (!root) return;
@@ -1863,12 +1879,20 @@ export default function AssignPage() {
     },
     onMove: ({ unitIds }, point) => {
       const root = panesBoxRef.current;
-      const { line, drop } = readDropAt(point);
       // 점선의 시작 - 이음 선과 같은 자리, 출발 조각이 Old 칸 화면 밖이면 감춘다
       const strip = root ? findOldStrip(root, unitIds[0]) : null;
       const frame = root?.querySelector<HTMLElement>('[data-pane="old"] .pane-body')?.getBoundingClientRect();
       const start = strip ? readOldLineStart(strip) : null;
       const isStartShown = start !== null && frame !== undefined && start.y >= frame.top && start.y <= frame.bottom;
+      // 옆 패널 나무를 먼저 본다 - 칸·step 줄이면 "→ 문서 번호 · 칸 이름", N/A면 이유. 줄 상자에 테두리
+      const tree = readTreeAt(point);
+      if (tree.drop.kind !== "none") {
+        dropGapRef.current?.hide();
+        dragLineRef.current?.update(isStartShown ? start : null, point);
+        if (tree.drop.kind === "refused") return { state: "refused", note: t(REFUSAL_KEYS[tree.drop.reason]), target: tree.row };
+        return { state: "ok", note: tree.option ? `→ ${tree.option.docCode} · ${tree.option.label}` : undefined, target: tree.row };
+      }
+      const { line, drop } = readDropAt(point);
       if (drop.kind === "link" && line !== null) {
         dropGapRef.current?.hide();
         dragLineRef.current?.update(isStartShown ? start : null, readNewLineEnd(line, unitIds[0]));
@@ -1881,6 +1905,9 @@ export default function AssignPage() {
       return readSendHover(send.drop, send.item);
     },
     onDrop: ({ rowKey, unitIds }, point) => {
+      const tree = readTreeAt(point).drop;
+      if (tree.kind === "place") applyTreeDrop(rowKey, tree.destination);
+      if (tree.kind !== "none") return;
       const { line, drop } = readDropAt(point);
       if (drop.kind !== "link" || line === null) {
         applySendDrop(rowKey, readSendAt(point, unitIds).drop);

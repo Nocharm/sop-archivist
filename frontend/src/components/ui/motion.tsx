@@ -7,6 +7,7 @@ import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type CSSP
 import { createPortal } from "react-dom";
 
 import { placeBelow, type FloatingPos } from "@/components/ui/floating";
+import { isBoxDragActive } from "@/lib/box-drag";
 import { computeFlipOffsets } from "@/lib/flip";
 
 /** 이동해 간 자리를 잠깐 번쩍인다([data-flash], components.css) - 다시 이동하면 처음부터. Assign 이동과 Order의 다른 칸 놓기가 같이 쓴다 */
@@ -256,6 +257,8 @@ export function Truncate({ text, className = "", lang, testId, revealOnFocus = f
     const host = hostRef.current;
     // 한 줄 말줄임(가로)과 카드 제목의 두 줄 자르기(세로) 둘 다 잘렸을 때만 띄운다
     if (!host || (host.scrollWidth <= host.clientWidth && host.scrollHeight <= host.clientHeight)) return;
+    // 상자를 끄는 동안은 띄우지 않는다(끌어다 놓기 G10 - Tooltip과 같다)
+    if (isBoxDragActive()) return;
     if (timerRef.current !== null) window.clearTimeout(timerRef.current);
     timerRef.current = window.setTimeout(() => setOpen(true), TIP_DELAY_MS);
   }
