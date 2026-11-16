@@ -297,8 +297,8 @@ const AUDIT_ENTRIES = [
     note: "output-a inside its frame, largest row <= 220px, expand grows only that row",
   },
   {
-    // 줄 끝 단추는 3단계(Order) 화면에만 있다 - 결과 화면의 C는 읽기 전용
-    id: "C8", ds: "worst", user: MEMBER, views: [1120],
+    // 줄 끝 단추는 3단계(Order) 화면에만 있다 - 결과 화면의 C는 읽기 전용. 묶음은 호버·포커스 때만 용지 바깥에 뜬다(1120 세로 한 칸, 2560 한 줄)
+    id: "C8", ds: "worst", user: MEMBER, views: [1120, 2560],
     path: (ids) => `/bundles/${ids.w[1]}/order`,
     open: async (page) => {
       await page.locator('[data-testid^="output-c-item-"]').first().waitFor({ timeout: T });
@@ -327,7 +327,7 @@ const AUDIT_ENTRIES = [
       let restOpacity = null;
       let hoverOpacity = null;
       const overlapOf = (row) => row.evaluate((el) => {
-        const actions = el.querySelector(".row-actions-quiet").getBoundingClientRect();
+        const actions = el.querySelector('[data-testid^="output-c-acts-"]').getBoundingClientRect();
         let worst = 0;
         for (const box of document.querySelectorAll('[data-testid^="output-c-item-"]')) {
           const b = box.getBoundingClientRect();
@@ -337,15 +337,15 @@ const AUDIT_ENTRIES = [
         }
         return Math.round(worst);
       });
-      const opacityOf = (row) => row.locator(".row-actions-quiet").evaluate((el) => Math.round(Number(getComputedStyle(el).opacity) * 100) / 100);
+      const opacityOf = (row) => row.locator('[data-testid^="output-c-acts-"]').evaluate((el) => Math.round(Number(getComputedStyle(el).opacity) * 100) / 100);
       for (let i = 0; i < total; i += 1) {
         const row = rows.nth(i);
-        if ((await row.locator(".row-actions-quiet").count()) === 0) continue;
+        if ((await row.locator('[data-testid^="output-c-acts-"]').count()) === 0) continue;
         await row.scrollIntoViewIfNeeded();
         await page.mouse.move(0, 0);
         await page.waitForTimeout(300);
-        overlap = Math.max(overlap, await overlapOf(row));
-        restOpacity ??= await opacityOf(row);
+        // 쉬는 묶음은 보이지 않아(불투명도 0) 겹침은 올렸을 때만 잰다
+        restOpacity = Math.max(restOpacity ?? 0, await opacityOf(row));
         await row.hover({ position: { x: 8, y: 4 } });
         await page.waitForTimeout(300);
         overlap = Math.max(overlap, await overlapOf(row));
@@ -353,8 +353,8 @@ const AUDIT_ENTRIES = [
       }
       return { worstGap, wrapped, overlap, restOpacity, hoverOpacity };
     },
-    expect: (value) => value.wrapped > 0 && value.worstGap <= 24 && value.overlap === 0 && value.restOpacity >= 0.4 && value.restOpacity <= 0.5 && value.hoverOpacity === 1,
-    note: "wrapped lines fill the row (right gap <= 24px); action group overlaps no text box at rest or hovered; opacity ~0.45 at rest, 1 on hover",
+    expect: (value) => value.wrapped > 0 && value.worstGap <= 24 && value.overlap === 0 && value.restOpacity === 0 && value.hoverOpacity === 1,
+    note: "wrapped lines fill the row (right gap <= 24px); hovered action group overlaps no text box; opacity 0 at rest, 1 on hover",
   },
   {
     id: "C9", ds: "worst", user: MEMBER, views: [1120],
@@ -1255,7 +1255,7 @@ const AUDIT_ENTRIES = [
         const rows = [...document.querySelectorAll('[data-testid^="output-c-row-"]')];
         let overlap = 0;
         for (const row of rows) {
-          const actions = row.querySelector(".row-actions-quiet")?.getBoundingClientRect();
+          const actions = row.querySelector('[data-testid^="output-c-acts-"]')?.getBoundingClientRect();
           if (actions && (items.some((box) => hit(actions, box)) || (more && hit(actions, more)))) overlap += 1;
         }
         const last = rows.at(-1)?.getBoundingClientRect();

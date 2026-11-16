@@ -1283,6 +1283,129 @@ await runStep("outputs: A, B, C and the Excel preview", {}, async ({ page, takeS
   await page.waitForFunction(() => document.querySelector('[data-testid="outputs-check-numbers"]')?.checked === false, null, { timeout: T });
 });
 
+// 줄 끝 단추 묶음은 호버·포커스 때만, 글 밖에 뜬다(끌어다 놓기 설계 §5, 사용자 결정 2026-11-16). 터치 화면에서는 늘 보인다
+await runStep("order: row-end buttons show only on hover or focus, one group at a time", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  // 단추 묶음과 글 상자가 있는 줄이 넷 이상인 칸 - A는 위에 이웃 줄이 있는 둘째 줄, B는 넷째 줄
+  const probeRows = () => {
+    for (const section of document.querySelectorAll('[data-testid="output-c"] section')) {
+      const ids = [...section.querySelectorAll('[data-testid^="output-c-row-"]')]
+        .filter((row) => row.querySelector('[data-testid^="output-c-acts-"]') && row.querySelector('[data-testid^="output-c-item-"]'))
+        .map((row) => row.getAttribute("data-testid").replace("output-c-row-", ""));
+      if (ids.length >= 4) return ids;
+    }
+    return null;
+  };
+  const [hit] = await findOrderDocs(page, probeRows);
+  check("Order has a section with four lines that carry buttons", Boolean(hit));
+  const [, ids] = hit;
+  const [a, b] = [ids[1], ids[3]];
+  const settle = () => page.waitForTimeout(200);
+  const shownGroups = () => page.evaluate(() => [...document.querySelectorAll('[data-testid^="output-c-acts-"]')]
+    .filter((el) => Number(getComputedStyle(el).opacity) > 0)
+    .map((el) => el.getAttribute("data-testid").replace("output-c-acts-", "")));
+  // 묶음 상자, 줄 상자, 글 상자(그 줄과 위아래 이웃 줄), 용지, 스크롤 칸
+  const measure = (id) => page.evaluate((target) => {
+    const rect = (el) => {
+      const r = el.getBoundingClientRect();
+      return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
+    };
+    const row = document.querySelector(`[data-testid="output-c-row-${target}"]`);
+    const acts = document.querySelector(`[data-testid="output-c-acts-${target}"]`);
+    const pane = row.closest(".overflow-auto, .overflow-y-auto");
+    const hit = (x, y) => Math.min(x.right, y.right) - Math.max(x.left, y.left) > 0.5 && Math.min(x.bottom, y.bottom) - Math.max(x.top, y.top) > 0.5;
+    const box = rect(acts);
+    // 그 줄은 글 상자 전체, 이웃 줄(칸 머리 포함)은 글줄마다(마지막 줄이 짧으면 그 옆 빈자리는 글이 아니다)
+    const near = [row.previousElementSibling, row.nextElementSibling].filter(Boolean);
+    const covers = hit(box, rect(row.querySelector(`[data-testid="output-c-item-${target}"]`))) || near.some((el) => (el.matches("h3") ? [el] : [...el.querySelectorAll('[data-testid^="output-c-item-"]')]).some((text) => {
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      return [...range.getClientRects()].some((r) => hit(box, r));
+    }));
+    // 스크롤 칸 오른쪽은 스크롤바 자리를 뺀 안쪽 끝
+    const paneBox = rect(pane);
+    return { box, row: rect(row), covers, sheet: rect(row.closest("article.sheet")), pane: { ...paneBox, right: paneBox.left + pane.clientWidth }, scrolls: pane.scrollWidth > pane.clientWidth };
+  }, id);
+  // 지원 폭(1120 이상)에서는 용지 오른쪽 바깥, 줄 첫 줄 높이(의미 묶음 첫 줄은 위 테두리 2px 아래)에 뜨고 스크롤 칸 안에 든다
+  const isBesideSheet = (m) => m.box.left >= m.sheet.right && m.box.right <= m.pane.right && Math.abs(m.box.top - m.row.top) <= 3;
+  const hoverAt = async (width) => {
+    await page.setViewportSize({ width, height: 720 });
+    await page.mouse.move(0, 0);
+    await rowA.scrollIntoViewIfNeeded();
+    await rowA.hover({ position: { x: 8, y: 4 } });
+    await settle();
+    return measure(a);
+  };
+  const rowA = page.locator(`[data-testid="output-c-row-${a}"]`);
+  const rowB = page.locator(`[data-testid="output-c-row-${b}"]`);
+  await rowA.scrollIntoViewIfNeeded();
+  await page.mouse.move(0, 0);
+  await settle();
+  check("no group shows at rest", (await shownGroups()).length === 0, (await shownGroups()).join(","));
+  const restHeight = (await rowA.boundingBox()).height;
+  await rowA.hover({ position: { x: 8, y: 4 } });
+  await settle();
+  const at1248 = await measure(a);
+  check("hovering a row shows its group", JSON.stringify(await shownGroups()) === JSON.stringify([a]), (await shownGroups()).join(","));
+  check("the group covers no text of its row or the neighbours", !at1248.covers, JSON.stringify(at1248.box));
+  check("hover does not change the row height", Math.abs(at1248.row.height - restHeight) < 0.5, `${restHeight} -> ${at1248.row.height}`);
+  // 1248 - 용지 옆 남는 폭(약 140px)에 두 줄로 감겨 뜬다
+  check("at 1248 the group floats beside the sheet, wrapped to fit", isBesideSheet(at1248) && at1248.box.height > 40, JSON.stringify({ box: at1248.box, row: at1248.row, sheet: at1248.sheet, pane: at1248.pane }));
+  check("no horizontal scroll at 1248", !at1248.scrolls);
+  await takeShot("sop-order-row-buttons-hover.png");
+  // 눌러 고른 줄(B)이 있어도 다른 줄에 올리면 그 줄 묶음만 보인다. 포인터가 떠나면 고른 줄의 묶음이 돌아온다
+  await rowB.click({ position: { x: 4, y: 4 } });
+  await rowA.hover({ position: { x: 8, y: 4 } });
+  await settle();
+  check("only one group shows", JSON.stringify(await shownGroups()) === JSON.stringify([a]), (await shownGroups()).join(","));
+  await page.mouse.move(0, 0);
+  await settle();
+  check("the picked row keeps its group when the pointer leaves", (await shownGroups()).includes(b), (await shownGroups()).join(","));
+  // 글쇠로 단추에 가 있는 묶음은 다른 줄에 올려도 물러나지 않는다(보이지 않는 포커스 금지)
+  // 글쇠로 옮겨 가야 :focus-visible이 된다(마우스 뒤의 focus()는 아니다) - 한 칸 뒤로 갔다가 돌아온다. 누르지 않으니 DB는 그대로
+  await page.locator(`[data-testid="output-c-move-down-${b}"]`).focus();
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Tab");
+  await rowA.hover({ position: { x: 8, y: 4 } });
+  await settle();
+  check("a keyboard-focused button keeps its group", (await shownGroups()).includes(b), (await shownGroups()).join(","));
+  await page.locator(`[data-testid="output-c-move-down-${b}"]`).blur();
+  // 넓은 창 - 용지 오른쪽 바깥에 한 줄로
+  const wide = await hoverAt(1440);
+  check("a wide window floats the group outside the sheet in one line", isBesideSheet(wide) && wide.box.height <= 32, JSON.stringify({ box: wide.box, sheet: wide.sheet, pane: wide.pane }));
+  check("the wide group covers no text", !wide.covers);
+  check("no horizontal scroll at 1440", !wide.scrolls);
+  await takeShot("sop-order-row-buttons-wide.png");
+  // 가장 좁은 지원 폭 - 용지와 스크롤 칸 사이(약 40px)에 세로 한 칸으로
+  const slim = await hoverAt(1120);
+  check("at 1120 the group floats beside the sheet as one column", isBesideSheet(slim) && slim.box.width <= 40, JSON.stringify({ box: slim.box, sheet: slim.sheet, pane: slim.pane }));
+  check("the 1120 group covers no text", !slim.covers);
+  check("no horizontal scroll at 1120", !slim.scrolls);
+  await page.setViewportSize(VIEWPORT);
+  // 터치 화면 - 호버가 없으니 묶음이 늘 보이고 글 흐름 안에 있다
+  const touch = await browser.newContext({ viewport: VIEWPORT, hasTouch: true, isMobile: true });
+  await touch.addInitScript(() => {
+    if (location.protocol !== "about:" && !window.localStorage.getItem("sopa.devUser")) window.localStorage.setItem("sopa.devUser", "qa.member");
+  });
+  try {
+    const touchPage = await touch.newPage();
+    await touchPage.goto(`${BASE}/bundles/${halfBundleId}/order`);
+    await touchPage.locator(`[data-testid="order-doc-${hit[0]}"]`).click();
+    await touchPage.locator(`[data-testid="output-c-acts-${a}"]`).waitFor({ timeout: T });
+    const touchState = await touchPage.evaluate((target) => {
+      const acts = document.querySelector(`[data-testid="output-c-acts-${target}"]`);
+      const box = acts.getBoundingClientRect();
+      const item = document.querySelector(`[data-testid="output-c-item-${target}"]`).getBoundingClientRect();
+      const covers = Math.min(box.right, item.right) - Math.max(box.left, item.left) > 0.5 && Math.min(box.bottom, item.bottom) - Math.max(box.top, item.top) > 0.5;
+      return { opacity: Number(getComputedStyle(acts).opacity), covers, hoverNone: matchMedia("(hover: none)").matches };
+    }, a);
+    check("touch devices keep the buttons visible", touchState.hoverNone && touchState.opacity === 1 && !touchState.covers, JSON.stringify(touchState));
+  } finally {
+    await touch.close();
+  }
+});
+
 await runStep("order: indent a line on C and its section number changes", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");

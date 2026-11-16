@@ -157,7 +157,20 @@ const mbtnScenes = [
   },
 }));
 
-// C 줄 끝 단추(번호 표시·들여쓰기·옮기기) - 글 뒤 같은 줄(넘치면 글 바로 아래)에 늘 흐리게 있고 줄에 올리면 또렷해진다. 줄의 가로 범위를 벗어나지 않아야 하고, 어떤 글자도 덮지 않아야 한다
+// C 줄 끝 단추(번호 표시·들여쓰기·옮기기) - 쉴 때는 보이지 않고(불투명도 0), 줄에 올리면 용지 오른쪽 바깥에 뜬다(용지 옆에 자리가 없는 틀이면 줄 오른쪽 끝의 바로 위).
+// 올린 묶음은 어떤 글자도 덮지 않고 스크롤 칸 오른쪽을 넘지 않아야 한다. 용지 안에 뜬 묶음만 줄의 가로 범위를 본다
+async function findActsPlacement(row) {
+  return row.evaluate((el) => {
+    const box = el.querySelector('[data-testid^="output-c-acts-"]').getBoundingClientRect();
+    const line = el.getBoundingClientRect();
+    const sheet = el.closest("article.sheet").getBoundingClientRect();
+    const pane = el.closest(".overflow-auto, .overflow-y-auto");
+    const paneRight = pane.getBoundingClientRect().left + pane.clientWidth;
+    const isInSheet = box.left < sheet.right;
+    return { pastPane: box.right > paneRight + 1, outsideRow: isInSheet && (box.left < line.left - 1 || box.right > line.right + 1) };
+  });
+}
+const readOpacity = (locator) => locator.evaluate((el) => Number(getComputedStyle(el).opacity));
 const outputsScene = {
   name: "outputs-c-rows",
   user: "qa.member",
@@ -172,24 +185,21 @@ const outputsScene = {
     }
     let checked = 0;
     for (const row of (await rows.all()).slice(0, 8)) {
-      const actions = row.locator(".row-actions-quiet");
+      const actions = row.locator('[data-testid^="output-c-acts-"]');
       if ((await actions.count()) === 0) continue;
       await row.scrollIntoViewIfNeeded();
-      // 가만히 있을 때(흐린 상태)와 올렸을 때(또렷한 상태) 둘 다 잰다
+      // 가만히 있을 때(보이지 않음)와 올렸을 때(뜬 상태) 둘 다 잰다
       await page.mouse.move(0, 0);
       await page.waitForTimeout(400);
-      const rest = await findCovered(actions);
-      if (rest.hits.length > 0) report(`${await row.getAttribute("data-testid")} buttons at rest (${rest.width}px)`, rest.hits.join(", "));
+      const restOpacity = await readOpacity(actions);
+      if (restOpacity > 0) report(`${await row.getAttribute("data-testid")} buttons at rest`, `opacity ${restOpacity}`);
       await row.hover({ position: { x: 8, y: 8 } });
       await page.waitForTimeout(HOVER_SETTLE_MS);
       const { hits, width } = await findCovered(actions);
       if (hits.length > 0) report(`${await row.getAttribute("data-testid")} buttons (${width}px)`, hits.join(", "));
-      const isOutside = await row.evaluate((el) => {
-        const box = el.querySelector(".row-actions-quiet").getBoundingClientRect();
-        const line = el.getBoundingClientRect();
-        return box.left < line.left - 1 || box.right > line.right + 1;
-      });
-      if (isOutside) report(`${await row.getAttribute("data-testid")} buttons`, "outside the row's horizontal extent");
+      const placement = await findActsPlacement(row);
+      if (placement.pastPane) report(`${await row.getAttribute("data-testid")} buttons`, "past the right edge of the scroll pane");
+      if (placement.outsideRow) report(`${await row.getAttribute("data-testid")} buttons`, "inside the sheet but outside the row's horizontal extent");
       checked += 1;
     }
     if (checked === 0) report("no C row with buttons", "");
@@ -333,13 +343,16 @@ const outputsReorderScene = {
     await down.dispatchEvent("click");
     await page.waitForTimeout(HOVER_SETTLE_MS);
     const row = page.locator(`[data-testid="output-c-row-${id}"]`);
-    const actions = row.locator(".row-actions-quiet");
-    const rest = await findCovered(actions);
-    if (rest.hits.length > 0) report(`moved row ${id} buttons at rest (${rest.width}px)`, rest.hits.join(", "));
+    const actions = row.locator('[data-testid^="output-c-acts-"]');
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(400);
+    const restOpacity = await readOpacity(actions);
+    if (restOpacity > 0) report(`moved row ${id} buttons at rest`, `opacity ${restOpacity}`);
     await row.hover({ position: { x: 8, y: 8 } });
     await page.waitForTimeout(HOVER_SETTLE_MS);
     const hovered = await findCovered(actions);
     if (hovered.hits.length > 0) report(`moved row ${id} buttons (${hovered.width}px)`, hovered.hits.join(", "));
+    if ((await findActsPlacement(row)).pastPane) report(`moved row ${id} buttons`, "past the right edge of the scroll pane");
     release?.();
     await page.locator('[data-testid="toast-error"]').first().waitFor({ timeout: T });
     await page.unroute("**/targets/order**");

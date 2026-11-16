@@ -1632,17 +1632,38 @@
 /* ---- 결과물 C 섹션 번호(2026-11-10): 줄 앞 번호와 깊이만큼 들여쓰기, 눌러 고른 줄(Tab으로 들이기) ---- */
 @layer components {
   .c-line { --c-indent: 1.5em; }
-  /* 줄은 글 + 줄 끝 단추 묶음의 감김 줄 - 글이 폭을 채우면 단추 묶음이 글 바로 아래 제 줄로 내려간다(높이는 호버로 변하지 않는다) */
-  .c-row { display: flex; flex-wrap: wrap; align-items: flex-start; }
+  /* 줄은 글 + 줄 끝 단추 묶음의 감김 줄 - 터치 화면(hover: none)에서는 묶음이 늘 보이고, 글이 폭을 채우면 글 바로 아래 제 줄로 내려간다 */
+  .c-order { container: c-order / inline-size; }
+  .c-row { position: relative; display: flex; flex-wrap: wrap; align-items: flex-start; }
   .c-row > .c-line { flex: 1 1 auto; min-width: 0; }
-  .c-row > .row-actions-quiet { flex: none; margin-left: auto; }
+  .c-row > .c-acts { flex: none; margin-left: auto; }
+  .c-acts { display: flex; gap: 2px; }
+  /* 마우스가 있으면 묶음은 자리를 차지하지 않고 글 밖에 떠 있다가 줄 호버·포커스 때만 보인다(사용자 결정 2026-11-16, 끌어다 놓기 설계 §5) */
+  @media (hover: hover) {
+    /* 용지 옆에 단추 한 칸도 안 들어가는 틀이면 줄 오른쪽 끝의 바로 위 - 안전망. 앱 최소 폭(.app 1120px)에서도 틀이 790px이라 지금은 닿지 않는다 */
+    .c-row > .c-acts { position: absolute; right: 0; bottom: 100%; z-index: 2; flex-wrap: wrap; margin: 0; padding: 2px; border: 1px solid var(--line-2); border-radius: var(--r-2); background: var(--raised); box-shadow: var(--shadow-1); opacity: 0; pointer-events: none; transition: opacity var(--dur-fast); }
+    .c-row:hover > .c-acts, .c-row:focus > .c-acts, .c-row:focus-within > .c-acts { opacity: 1; pointer-events: auto; }
+    /* 한 번에 한 줄 - 다른 줄에 올리면 고른 줄의 묶음은 물러난다. 글쇠로 단추에 가 있는 묶음은 남는다(보이지 않는 포커스 금지) */
+    .pg:has(.c-row:hover) .c-row:not(:hover):not(:has(:focus-visible)) > .c-acts { opacity: 0; pointer-events: none; }
+    /* 용지 오른쪽 바깥, 줄 첫 줄 높이에 - 용지와 스크롤 칸 사이 남는 폭만큼 펴고 모자라면 감긴다(1440 이상 한 줄, 1248 두 줄, 1120 한 칸 세로).
+       잰 값(2026-11-16, 극단 자료): 묶음 한 줄 180px, 단추 한 칸 세로 30px. 용지 760px의 오른쪽 끝 = 틀 내용 왼쪽 + 760, 틀 오른쪽 여백 12px(.dense --pad).
+       left 35px = .pg 오른쪽 여백 30px + 용지 테두리 1px + 틈 4px. max-width = 100cqw + 12px - 760px - 틈 4px - 스크롤 칸까지 2px.
+       문턱 784px = 세로 한 칸(30px)이 들어가는 가장 좁은 틀(760 - 12 + 4 + 30 + 2) - 1120 창의 틀 790px보다 6px 좁다 */
+    @container c-order (min-width: 784px) {
+      .c-row > .c-acts { right: auto; bottom: auto; top: 0; left: calc(100% + 35px); width: max-content; max-width: calc(100cqw - 754px); }
+      .c-acts > .c-mark { flex-wrap: wrap; margin-right: 0; }
+      /* 다리 - 줄과 묶음 사이 틈(35px)을 이어 포인터를 옮기는 동안 호버가 끊기지 않는다. 첫 단추 줄 높이만(아래 줄의 오른쪽 여백을 빼앗지 않게) */
+      .c-acts::before { content: ""; position: absolute; right: 100%; top: -2px; width: 40px; height: 34px; }
+    }
+  }
+  /* 끄는 동안은 줄 끝 단추를 모두 끈다(lib/box-drag.ts) - 위 보이기 규칙(.c-row:hover > .c-acts)보다 특이도가 높아야 한다 */
+  html[data-box-drag] .c-row > .c-acts { opacity: 0; pointer-events: none; }
   .c-line[data-numbered] { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; column-gap: 0.6em; }
   .c-no { font-family: var(--font-mono); font-size: 0.8em; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
   /* 줄 고르기는 마우스로만(tabIndex -1) - 전역 :focus-visible 테두리가 안 걸리므로 바탕과 왼쪽 막대로 고른 줄을 보인다 */
   .c-row:focus { outline: none; background: var(--accent-tint); box-shadow: inset 2px 0 0 var(--accent); }
-  .c-row:focus .row-actions-quiet { opacity: 1; }
   /* 번호 표시 세 칸 - 줄 끝 단추 높이(24px)에 맞춘 작은 눌림 단추 */
-  .c-mark { gap: 1px; padding: 1px; }
+  .c-mark { gap: 1px; margin-right: 4px; padding: 1px; }
   .c-mark button { width: 22px; height: 22px; }
   .c-mark button:disabled { cursor: default; opacity: 0.5; }
   /* 의미 묶음(2026-11-13): 같은 의미에서 나온 이웃 줄을 묶는 굵은 선 - 묶음 첫 줄 위에 긋는다(칸의 첫 줄은 칸 머리가 위에 있어 긋지 않는다) */

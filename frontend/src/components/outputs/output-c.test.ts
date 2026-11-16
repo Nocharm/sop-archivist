@@ -88,11 +88,14 @@ describe("OutputCView", () => {
     // 이미 고른 표시를 다시 눌러도 보내지 않는다
     act(() => host.querySelector<HTMLButtonElement>('[data-testid="output-c-mark-note-2"]')?.click());
     expect(onMark).toHaveBeenCalledTimes(1);
-    // 줄 끝 단추는 글 흐름 안(늘 흐리게)이라 오른쪽 예약 여백이 없다(글 폭이 줄지 않는다)
+    // 줄 끝 단추 묶음은 글 밖에 떠서(.c-acts) 오른쪽 예약 여백이 없고(글 폭이 줄지 않는다), 그 틈을 눌러도 끌기가 시작되지 않는다
     for (const id of [2, 3]) {
       expect(host.querySelector(`[data-testid="output-c-row-${id}"]`)?.className).not.toMatch(/\bpr-\[/);
-      expect(host.querySelector(`[data-testid="output-c-row-${id}"] .row-actions-quiet`)?.className).not.toContain("absolute");
+      const acts = host.querySelector(`[data-testid="output-c-row-${id}"] [data-testid="output-c-acts-${id}"]`);
+      expect(acts?.className).toBe("c-acts");
+      expect(acts?.hasAttribute("data-no-drag")).toBe(true);
     }
+    expect(host.querySelector('[data-testid="output-c"]')?.classList.contains("c-order")).toBe(true);
     unmount();
   });
 
