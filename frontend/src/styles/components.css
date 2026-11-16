@@ -1089,6 +1089,8 @@
     html:not([data-box-drag]):not([data-box-select]) .assign-panes .strip-card:has(> .strip-row > .strip[data-drag-box]:hover) > .strip-row:not([data-peek]) > .strip[data-drag-box][data-bracket="middle"] { box-shadow: -1px 0 0 var(--line-2), 1px 0 0 var(--line-2), var(--shadow-1); }
     html:not([data-box-drag]):not([data-box-select]) .assign-panes .strip-card:has(> .strip-row > .strip[data-drag-box]:hover) > .strip-row:not([data-peek]) > .strip[data-drag-box][data-bracket="bottom"] { box-shadow: -1px 0 0 var(--line-2), 1px 0 0 var(--line-2), 0 1px 0 var(--line-2), -1px 1px 0 var(--line-2), 1px 1px 0 var(--line-2), var(--shadow-1); }
   }
+  /* Alt를 누르는 동안(긁어 둔 글자가 남은 동안도) 글자 커서(G3) - 공통 규칙(motion.css)은 상자에만 걸려 조각·글 조각의 손가락 커서에 진다 */
+  html[data-box-select] .assign-panes .pg[data-strips] :is(.strip[data-drag-box], .strip[data-drag-box] .su, .strip[data-drag-box] .cell-piece) { cursor: text; }
   .assign-panes .strip[data-drag-box] { transition: box-shadow var(--dur-fast); }
   @media (prefers-reduced-motion: reduce) {
     .assign-panes .strip[data-drag-box] { transition: none; }

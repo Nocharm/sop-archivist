@@ -1687,10 +1687,10 @@ export default function AssignPage() {
       const target = event.target instanceof Element ? event.target : null;
       const box = target?.closest<HTMLElement>('[data-pane="old"] [data-drag-box]');
       if (!target || !box) return null;
-      // 누른 곳의 가장 안쪽 Unit(글 조각·표 칸 조각), 없으면 그 조각의 Unit
+      // 누른 곳의 가장 안쪽 Unit(글 조각·표 칸 조각), 없으면 그 조각의 Unit. 표에 묶인 칸 Unit은 제 줄이 없다 - 그때는 표 조각의 줄(표 전체)을 끈다
       const holder = target.closest<HTMLElement>("[data-unit], [data-strip-unit]");
       const unitId = Number(holder?.dataset.unit ?? holder?.dataset.stripUnit ?? box.dataset.stripUnit);
-      const key = rowOfUnit.get(unitId);
+      const key = rowOfUnit.get(unitId) ?? rowOfUnit.get(Number(box.dataset.stripUnit));
       const unitIds = key === undefined ? undefined : rowMap.get(key)?.unitIds;
       return key !== undefined && unitIds ? { rowKey: key, unitIds } : null;
     },
@@ -1701,9 +1701,8 @@ export default function AssignPage() {
       if (!root) return;
       for (const id of unitIds) findOldStrip(root, id)?.setAttribute("data-drag-src", "");
       // 끌기 직전에 올려 둔 조각의 이음 강조는 끄는 동안 남기지 않는다(G10) - LinkLines는 끄는 동안 올림을 읽지 않는다
-      for (const el of root.querySelectorAll<HTMLElement>("[data-link-hover], [data-mate-hover], [data-link-hot]")) {
+      for (const el of root.querySelectorAll<HTMLElement>("[data-link-hover], [data-link-hot]")) {
         delete el.dataset.linkHover;
-        delete el.dataset.mateHover;
         delete el.dataset.linkHot;
       }
       dragLineRef.current = createDragLinkLine(root);

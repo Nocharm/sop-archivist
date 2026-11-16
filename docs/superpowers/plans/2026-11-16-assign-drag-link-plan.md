@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- 작업 폴더는 워크트리 `/Users/hyeonjin/Documents/sop-archivist-dnd`, 브랜치 `feat/assign-drag-link`. 원본 체크아웃 `/Users/hyeonjin/Documents/sop-archivist`는 읽기와 venv 실행만 한다. 워크트리에 venv 링크를 만들지 않는다.
+- 작업 폴더는 이 작업의 워크트리(`<worktree>`), 브랜치 `feat/assign-drag-link`. 원본 체크아웃(`<original-checkout>`)은 읽기와 venv 실행만 한다. 워크트리에 venv 링크를 만들지 않는다.
 - **화면만 바꾼다.** backend·API·Alembic에 손대지 않는다.
 - **놓는 것은 고르는 것까지다**(반목표): 놓았다고 저장·확정되면 실패다. 저장은 지금처럼 메뉴의 Link/Confirm이나 Enter가 한다.
 - **지금의 클릭·단축키 경로는 하나도 바뀌지 않는다**(G12). `handleNewPick`·`handleOldClick`의 동작을 바꾸지 않는다.
@@ -22,11 +22,11 @@
 - 기존 시험의 기대값을 고치지 않는다. **예외 하나**: 스모크 `assign: make a unit from a dragged selection, then undo`는 글자 긁기가 Alt를 누른 동안만 되도록 바뀌므로(사용자 결정 2026-11-16, G3) 긁는 동안 `Alt`를 누르게 **입력만** 고친다. 기대값은 그대로 둔다.
 - 새 문구는 `frontend/src/lib/i18n-messages.ts`에 en·ko 둘 다. 사용 설명서 글(`frontend/public/manual/user-manual.md`)은 화면을 바꾸는 커밋에서 함께 고친다. 그림은 뽑지 않는다.
 - 커밋 메시지: `type(scope): English summary — 한국어 요약`. 커밋 전 `PROGRESS.md` 갱신. 푸시는 하지 않는다(조율하는 세션이 한다).
-- 검증 스택(이 워크트리 전용 포트): backend 8787, frontend 3787. 원본 venv의 python은 `/Users/hyeonjin/Documents/sop-archivist/backend/.venv/bin/python`. 내 것이 아닌 프로세스(다른 워크트리 `sop-archivist-tf`의 서버 등)는 죽이지 않는다.
+- 검증 스택(이 워크트리 전용 포트): backend 8787, frontend 3787. 원본 체크아웃 venv의 python은 `<original-checkout>/backend/.venv/bin/python`. 내 것이 아닌 프로세스(다른 워크트리 `sop-archivist-tf`의 서버 등)는 죽이지 않는다.
 
 ```bash
 # 워크트리 backend/ 에서
-PY=/Users/hyeonjin/Documents/sop-archivist/backend/.venv/bin/python
+PY=<original-checkout>/backend/.venv/bin/python
 DATABASE_URL=sqlite+aiosqlite:///./dnd-smoke.db AUTH_MODE=dev $PY -m scripts.reset_db
 DATABASE_URL=sqlite+aiosqlite:///./dnd-smoke.db AUTH_MODE=dev $PY -m scripts.seed_sop_demo   # 극단 자료는 seed_sop_worst
 DATABASE_URL=sqlite+aiosqlite:///./dnd-smoke.db AUTH_MODE=dev DEV_ENFORCE_PERMISSIONS=true APP_SYSADMINS=dev.admin $PY -m uvicorn app.main:app --port 8787

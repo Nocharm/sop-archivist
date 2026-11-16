@@ -159,6 +159,9 @@ export function attachBoxDrag<S>(root: HTMLElement, config: BoxDragConfig<S>): (
     if (!canStartDrag(event, target?.closest(DRAG_GUARD_SELECTOR) != null)) return;
     const source = config.pick(event);
     if (source === null) return;
+    // 누르는 동안 selectstart를 막으니 브라우저가 누름으로 하던 "고른 글자 풀기"를 여기서 한다 - 남겨 두면 고른 글자가 있는 동안 클릭을 받지 않는 화면(Paper)이 죽는다.
+    // Alt 누름은 여기까지 오지 않는다(canStartDrag) - 글자 긁기는 선택을 지킨다
+    window.getSelection()?.removeAllRanges();
     session = startSession(source, { x: event.clientX, y: event.clientY });
   }
 

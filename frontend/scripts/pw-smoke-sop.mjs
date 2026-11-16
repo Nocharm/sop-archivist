@@ -1398,6 +1398,22 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   const afterSwitch = { menu: await menu.count(), pressed: await isPressed(tId), dragged: (await pieceOf(bId).getAttribute("data-sel")) !== null, picked: await page.locator('[data-testid="assign-new"] .new-line[data-state="picked"]').count() };
   check("a drop is let go when another row is picked before its group arrives", afterSwitch.menu === 0 && !afterSwitch.pressed && !afterSwitch.dragged && afterSwitch.picked === 0, JSON.stringify(afterSwitch));
 
+  // 놓은 뒤 ↵가 저장한다(메뉴의 Confirm과 같다) - 앞 확인들이 쓰지 않는 셋째 미배정 문장을 다른 문장에 놓는다
+  const cId = shownIds.filter((id) => loose.has(id))[2];
+  const confirmTarget = Number(await page.locator(`[data-testid="assign-new"] .pg:not([data-read-only]) .new-line[data-target]:not([data-target="${tId}"]):not([data-state="picked"])`).first().getAttribute("data-target"));
+  check("the Old paper shows a third loose unassigned sentence", cId !== undefined, String(cId));
+  await dragThrough(page, await pointInUnit(cId), [await pointInLine(confirmTarget)]);
+  await page.waitForTimeout(100);
+  await page.mouse.up();
+  await menu.waitFor({ timeout: T });
+  await page.waitForTimeout(400);
+  const savedByEnter = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
+  await page.keyboard.press("Enter");
+  const enterResponse = await savedByEnter;
+  await page.waitForLoadState("networkidle");
+  const confirmedUnit = (await readUnits()).find((unit) => unit.unit_id === cId);
+  check("Enter after a drop saves the link", enterResponse.ok() && confirmedUnit?.status !== "unassigned" && (confirmedUnit?.target_ids ?? []).includes(confirmTarget), JSON.stringify({ status: confirmedUnit?.status, targets: confirmedUnit?.target_ids, confirmTarget }));
+
   // 10. 올려 둔 강조는 끄는 동안 되살아나지 않는다(G10) - 이어진 조각에 올려 맞은편 강조를 켠 채 끌고, 끄는 동안 New 칸을 굴려 이음 선이 다시 그려지게 한다.
   // 이어진 조각은 앞 단계가 같은 글로 확정한 Old 문서에 있다 - 그 문서를 연다(고른 줄이 풀리므로 맨 끝에)
   const writtenIds = new Set(written.map((row) => row.target_id));
@@ -1473,6 +1489,111 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   await page.waitForTimeout(300);
   const peekShadow = await peek.evaluate((el) => getComputedStyle(el).boxShadow);
   check("a peek piece does not lift over its dashed border", peekShadow === "none", peekShadow);
+});
+
+// 끌기 상자 위의 글자 고르기(끌어다 놓기 G3·G12) - 긁어 둔 글자가 남아도 Old 조각의 클릭·Shift+클릭은 그대로이고, Alt를 누르는 동안은 글자 커서다.
+// 표 칸 조각을 끌면 표 줄 전체가 끌린다(칸 Unit은 표에 묶여 제 줄이 없다). 저장하지 않는다
+await runStep("assign: a text selection does not deaden clicks on Old pieces, Alt shows a text cursor, a table drags from its cells", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.locator('[data-testid="assign-filter-all"]').click();
+  await page.locator('[data-pane="old"] .strip[data-strip-unit]').first().waitFor({ timeout: T });
+  // 짝 없는(줄 하나가 Unit 하나인) 글 조각 셋, 글이 넉넉한 것(조각의 Unit 번호)
+  const single = (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/units?limit=1000`, { headers })).json()).items.filter((unit) => unit.pair_id === null).map((unit) => unit.unit_id);
+  const pieces = await page.locator('[data-pane="old"] .strip[data-kind="piece"][data-drag-box]').evaluateAll((els, ids) => els.filter((el) => ids.includes(Number(el.dataset.stripUnit)) && (el.querySelector(".su")?.textContent ?? "").length > 30).slice(0, 3).map((el) => Number(el.dataset.stripUnit)), single);
+  check("the Old paper shows three text pieces", pieces.length === 3, JSON.stringify(pieces));
+  const [aId, bId, cId] = pieces;
+  const pointIn = async (id, part = 0.5) => {
+    await page.locator(`[data-testid="assign-paper-piece-${id}"]`).evaluate((el) => el.scrollIntoView({ block: "center" }));
+    await page.waitForTimeout(150);
+    return page.locator(`[data-testid="assign-paper-unit-${id}"]`).first().evaluate((el, at) => {
+      const rect = el.getClientRects()[0];
+      return { x: rect.left + Math.max(4, rect.width * at), y: rect.top + rect.height / 2 };
+    }, part);
+  };
+  const isSelected = (id) => page.evaluate((unit) => document.querySelector(`[data-testid="assign-paper-piece-${unit}"]`)?.hasAttribute("data-sel") ?? false, id);
+  const isCollapsed = () => page.evaluate(() => window.getSelection()?.isCollapsed ?? true);
+
+  // Alt를 누르는 동안 글자 커서, 떼면(고른 글자 없음) 손가락
+  const aStart = await pointIn(aId, 0);
+  await page.mouse.move(aStart.x + 20, aStart.y);
+  await page.keyboard.down("Alt");
+  await page.waitForTimeout(100);
+  const altCursor = await page.locator(`[data-testid="assign-paper-unit-${aId}"]`).first().evaluate((el) => getComputedStyle(el).cursor);
+  await page.keyboard.up("Alt");
+  await page.waitForTimeout(100);
+  const restCursor = await page.locator(`[data-testid="assign-paper-unit-${aId}"]`).first().evaluate((el) => getComputedStyle(el).cursor);
+  check("holding Alt shows a text cursor on an Old piece, and a pointer again after", altCursor === "text" && restCursor === "pointer", `${altCursor} -> ${restCursor}`);
+
+  // Alt로 A의 글자를 긁는다 - 글자로 새 Unit 막대가 뜬다
+  await page.keyboard.down("Alt");
+  await page.mouse.down();
+  await page.mouse.move(aStart.x + 140, aStart.y, { steps: 10 });
+  await page.mouse.up();
+  await page.keyboard.up("Alt");
+  await wait(page, "assign-carve");
+  check("Alt+drag selects text in an Old piece", !(await isCollapsed()));
+  // 그냥 B를 누르면 B의 줄을 고르고 긁은 글자와 막대는 사라진다
+  const bPoint = await pointIn(bId);
+  await page.mouse.click(bPoint.x, bPoint.y);
+  await page.waitForTimeout(600);
+  const afterClick = { picked: await isSelected(bId), carve: await page.locator('[data-testid="assign-carve"]').count(), collapsed: await isCollapsed() };
+  check("a plain click on another Old piece after selecting text picks its row", afterClick.picked && afterClick.carve === 0 && afterClick.collapsed, JSON.stringify(afterClick));
+  // 화면 다른 곳에 고른 글자가 있어도 Shift+클릭은 줄을 더한다
+  await page.evaluate(() => window.getSelection()?.selectAllChildren(document.querySelector('[data-testid="assign-bar"]')));
+  const selectedElsewhere = !(await isCollapsed());
+  const cPoint = await pointIn(cId);
+  await page.keyboard.down("Shift");
+  await page.mouse.click(cPoint.x, cPoint.y);
+  await page.keyboard.up("Shift");
+  const bulk = await page.locator('[data-testid="assign-bulk"]').waitFor({ timeout: 4000 }).then(() => true, () => false);
+  check("with text selected elsewhere, Shift+click on an Old piece still adds its row", selectedElsewhere && bulk, JSON.stringify({ selectedElsewhere, bulk }));
+  await page.keyboard.press("Escape");
+
+  // 표 칸 조각을 끌면 표 줄 전체 - 표 Unit 번호의 표, 표 조각이 흐려지고, 이미 쓴 문장 위에서 놓을 자리가 된다
+  let table = null;
+  for (const doc of (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json()).filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${doc.id}/view`, { headers })).json();
+    const unit = view.units.find((item) => item.kind === "table");
+    if (unit) {
+      table = { docId: doc.id, unit };
+      break;
+    }
+  }
+  check("the bundle has an Old table", table !== null);
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${table.docId}"]`).click();
+  const cell = page.locator(`[data-testid="assign-paper-piece-${table.unit.id}"] .cell-piece .su`).first();
+  await cell.waitFor({ timeout: T });
+  // New 칸을 열고 이미 쓴 문서를 띄운다
+  const firstText = await pointIn(await page.locator('[data-pane="old"] .strip[data-kind="piece"][data-drag-box]').first().getAttribute("data-strip-unit"));
+  await page.mouse.click(firstText.x, firstText.y);
+  const written = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/written-sentences`, { headers })).json();
+  const newPane = page.locator('[data-testid="assign-new"]');
+  await newPane.waitFor({ timeout: T });
+  const shownNewDoc = await newPane.getAttribute("data-doc");
+  if (!written.some((row) => String(row.target_doc_id) === shownNewDoc)) {
+    await page.locator('[data-testid="assign-new-doc"]').click();
+    await page.locator(`[data-testid="assign-new-doc-option-${written[0].target_doc_id}"]`).click();
+  }
+  const line = page.locator('[data-testid="assign-new"] .pg:not([data-read-only]) .new-line[data-target] .new-hit').first();
+  await line.waitFor({ timeout: T });
+  await cell.evaluate((el) => el.scrollIntoView({ block: "center" }));
+  await page.waitForTimeout(150);
+  const cellBox = await cell.boundingBox();
+  const lineBox = await line.boundingBox();
+  await dragThrough(page, { x: cellBox.x + 4, y: cellBox.y + cellBox.height / 2 }, [{ x: lineBox.x + 40, y: lineBox.y + lineBox.height / 2 }]);
+  await page.waitForTimeout(100);
+  const tableDrag = await page.evaluate((id) => ({
+    card: document.querySelector('[data-testid="drag-card"] .drag-card-id')?.textContent ?? null,
+    src: document.querySelector(`[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-drag-src") ?? false,
+    over: document.querySelectorAll('[data-pane="new"] [data-drop="over"]').length,
+    line: document.querySelector("svg[data-drag-line] path")?.getAttribute("d") ? true : false,
+  }), table.unit.id);
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  check("dragging a table cell piece drags the whole table row", tableDrag.card === table.unit.display_id && tableDrag.src && tableDrag.over === 1 && tableDrag.line, JSON.stringify(tableDrag));
 });
 
 // 한 언어만 잇기(v0.11.1) - Old는 한/영 짝인데 쓴 New에는 한 언어만 있는 예외. 있는 언어만 이어 확정하면 서버가 같은 저장 안에서
