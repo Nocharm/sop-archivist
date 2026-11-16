@@ -90,6 +90,22 @@ function updateChipDirections(root: HTMLElement, oldBody: HTMLElement) {
   }
 }
 
+/** 이음 선이 New 문장에 닿는 끝 - New 문단 상자 왼쪽 테두리, 출처 칩 높이. 칩이 없으면(아직 출처가 아닌 후보) 첫 줄 높이 */
+export function readNewLineEnd(newEl: HTMLElement, unitId: number): { x: number; y: number } {
+  const newRect = newEl.getBoundingClientRect();
+  const chipRect = findSourceChip(newEl, unitId)?.getBoundingClientRect();
+  return { x: newRect.left, y: chipRect ? chipRect.top + chipRect.height / 2 : readAnchorY(newRect) };
+}
+
+/** 그 New 문장과 그 Old 조각들 사이에 지금 그려진 선의 New 쪽 끝 - 선이 없으면(한 단 보기·선 끔·한쪽 끝이 스크롤 밖) null. 그 자리 메뉴가 선 끝 옆에 뜨려고 쓴다 */
+export function findDrawnLinkEnd(newEl: HTMLElement, unitIds: readonly number[]): { x: number; y: number } | null {
+  const svg = newEl.closest(".assign-panes")?.querySelector(".link-lines");
+  const targetId = newEl.dataset.target;
+  if (!svg || targetId === undefined) return null;
+  const unitId = unitIds.find((id) => svg.querySelector(`[data-link="${id}:${targetId}"]`) !== null);
+  return unitId === undefined ? null : readNewLineEnd(newEl, unitId);
+}
+
 /** New 줄에서 그 Old 조각의 출처 칩 - 접혀 있으면 "+N" 칩 */
 function findSourceChip(newLine: HTMLElement, unitId: number): HTMLElement | null {
   const chip = newLine.querySelector<HTMLElement>(`[data-src-unit="${unitId}"]`);
@@ -139,10 +155,7 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
       const oldRect = oldEl.getBoundingClientRect();
       const badgeRect = badge?.getBoundingClientRect();
       const start = { x: oldRect.right, y: badgeRect ? badgeRect.top + badgeRect.height / 2 : readAnchorY(oldRect) };
-      // 끝 - New 문단 상자 왼쪽 테두리, 출처 칩 높이. 칩이 없으면(아직 출처가 아닌 후보) 첫 줄 높이
-      const newRect = newEl.getBoundingClientRect();
-      const chipRect = findSourceChip(newEl, pair.unitId)?.getBoundingClientRect();
-      const end = { x: newRect.left, y: chipRect ? chipRect.top + chipRect.height / 2 : readAnchorY(newRect) };
+      const end = readNewLineEnd(newEl, pair.unitId);
       // 양쪽 끝이 다 보일 때만 - 한쪽이 스크롤 밖이면 선이 문서 머리나 화면 밖으로 뻗는다
       if (start.y < oldFrame.top || start.y > oldFrame.bottom || end.y < newFrame.top || end.y > newFrame.bottom) continue;
       const shift = (point: { x: number; y: number }) => ({ x: point.x - base.left, y: point.y - base.top });
@@ -239,7 +252,7 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
   return (
     <svg ref={svgRef} className="link-lines" aria-hidden data-testid="assign-link-lines">
       {lines.map((line) => (
-        <g key={line.key} data-strong={line.strong ? "" : undefined} data-draft={line.draft ? "" : undefined} data-ai={line.ai ? "" : undefined} data-stub={line.stubs ? "" : undefined}>
+        <g key={line.key} data-link={line.key} data-strong={line.strong ? "" : undefined} data-draft={line.draft ? "" : undefined} data-ai={line.ai ? "" : undefined} data-stub={line.stubs ? "" : undefined}>
           {line.stubs ? (
             line.stubs.map((stub, index) => {
               // 꼬리는 상자에서 멀어질수록 옅어진다 - 둥근 끝에서 뚝 끊기면 잘린 선처럼 보였다. 그라디언트는 g의 색(currentColor)을 따른다

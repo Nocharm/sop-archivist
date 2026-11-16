@@ -1192,6 +1192,20 @@ await runStep("assign: KO/EN pair - recommendation shows picked, in-place menu c
   const linkedLines = [found.targetId, found.partnerId].filter((id) => id !== null);
   for (const id of linkedLines) await page.locator(`[data-testid="assign-new-${id}"][data-state="picked"]`).waitFor({ timeout: T });
   check("after reload the row is confirmed and its New sentences are shown as its place", true);
+  // 이은 New 문장을 마우스로 누르면(글 오른쪽 끝) 끊기 메뉴가 누른 자리가 아니라 그 선의 New 쪽 끝(문장 왼쪽 테두리) 옆에 뜬다
+  const pickBtn = page.locator(`[data-testid="assign-new-pick-${found.targetId}"]`);
+  const pickBox = await pickBtn.boundingBox();
+  await pickBtn.click({ position: { x: pickBox.width - 6, y: Math.min(8, pickBox.height / 2) } });
+  await page.locator('[data-testid="assign-link-menu-unlink"]').waitFor({ state: "visible", timeout: T });
+  await page.waitForFunction(() => document.activeElement?.closest('[data-testid="assign-link-menu"]') !== null, null, { timeout: T });
+  const placed = await page.evaluate((id) => {
+    const line = document.querySelector(`.new-line[data-target="${id}"]`).getBoundingClientRect();
+    const menu = document.querySelector('[data-testid="assign-link-menu"]').getBoundingClientRect();
+    return { lineLeft: line.left, lineRight: line.right, menuLeft: menu.left, drawn: document.querySelector(`[data-testid="assign-link-lines"] [data-link$=":${id}"]`) !== null };
+  }, found.targetId);
+  check("the unlink menu sits at the New end of the drawn line", placed.drawn && Math.abs(placed.menuLeft - placed.lineLeft) <= 1, JSON.stringify(placed));
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="assign-link-menu"]').waitFor({ state: "detached", timeout: T });
 });
 
 // 칸 제목(제품 명세 §7.13 칸 제목) -옛 제목 짝을 SOP 칸의 칸 제목 자리로 확정하면 결과물 C와 Assign의 엮은 문서 미리 보기에서 칸 머리 옆에 "← OLD-1 §1"로 보인다. 끝에 원래 처분(지우기)으로 되돌린다
