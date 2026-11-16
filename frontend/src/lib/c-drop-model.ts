@@ -32,6 +32,25 @@ export function findDragBlock(items: readonly OutputCItem[], depths: readonly nu
   return { start, end, baseDepth, isDepthLocked };
 }
 
+/**
+ * 끄는 동안 지금 칸의 줄에서 누를 때의 덩어리를 다시 찾는다(저장 응답·다시 받기로 칸이 바뀔 수 있다).
+ * 누른 줄이 없거나 덩어리 줄이 그때와 다르면(빠짐·끼어듦·더해짐) null - 그 끌기는 놓지 않는다
+ */
+export function findLiveBlock(items: readonly OutputCItem[], depths: readonly number[], pressedId: number, blockIds: readonly number[], entrance: string): DragBlock | null {
+  const index = items.findIndex((item) => item.target_id === pressedId);
+  if (index < 0) return null;
+  const block = findDragBlock(items, depths, index, entrance);
+  const ids = items.slice(block.start, block.end + 1).map((item) => item.target_id);
+  return ids.length === blockIds.length && ids.every((id, k) => id === blockIds[k]) ? block : null;
+}
+
+/** planDrop에 넘길 줄 - 잰 줄(화면 순서) 가운데 덩어리 줄과 지금 칸에 없는 줄을 id로 뺀다. 끄는 도중 이어 그려진 덩어리 줄도 빠진다 */
+export function listDropRows(items: readonly OutputCItem[], block: DragBlock, measured: readonly RowBox[]): RowBox[] {
+  const blockIds = new Set(items.slice(block.start, block.end + 1).map((item) => item.target_id));
+  const known = new Set(items.map((item) => item.target_id));
+  return measured.filter((row) => known.has(row.targetId) && !blockIds.has(row.targetId));
+}
+
 export type DropZone = "home" | "other" | "outside";
 
 /** 종이 밖이면 outside, 끌린 줄의 칸 띠(위 10px·아래 28px 여유) 안이면 home, 그 밖의 종이 위는 other(다른 칸) */

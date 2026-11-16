@@ -1981,6 +1981,147 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page }) =
   check("the selection stays after Alt is let go and an empty press clears it", kept.selection > 0 && kept.mode && cleared.selection === 0 && !cleared.mode, JSON.stringify({ kept, cleared }));
 });
 
+// 끄는 동안 칸이 바뀐다 - 앞선 저장의 응답이 끄는 도중 닿으면 선은 새 데이터로 다시 세고 놓은 자리가 선과 같다.
+// 앞선 저장이 실패해 되돌려지며 덩어리가 바뀌면 그 끌기는 거절되고 놓아도 저장하지 않는다. 응답은 page.route로 붙잡아 끄는 도중에 푼다
+await runStep("order: a save landing mid-drag keeps the drop line and the saved order together, a rollback refuses the drag", { allowConsoleErrors: true }, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  // 첫 두 줄이 같은 의미 짝(F·R)이고, 셋째 줄 뒤에 깊이 0의 의미 묶음 첫 줄 L이 있는 짧은 칸
+  const [hit] = await findOrderDocs(page, () => {
+    for (const section of document.querySelectorAll('[data-testid="output-c"] section')) {
+      const rows = [...section.querySelectorAll("[data-drag-box]")];
+      if (rows.length < 4 || rows[1].hasAttribute("data-meaning-start")) continue;
+      const starts = rows.filter((row, index) => index > 1 && row.hasAttribute("data-meaning-start") && row.querySelector('[data-testid^="output-c-item-"]') && getComputedStyle(row.querySelector(".c-line")).paddingLeft === "0px");
+      if (starts.length === 0 || rows.at(-1).getBoundingClientRect().bottom - rows[0].getBoundingClientRect().top > 420) continue;
+      return { ids: rows.map((row) => row.dataset.flipKey), l: starts.at(-1).dataset.flipKey };
+    }
+    return null;
+  });
+  check("Order has a short section that starts with a same-meaning pair and has a later meaning group", Boolean(hit));
+  const [docId, { ids: original, l }] = hit;
+  const [first, second] = original;
+  const rowOf = (id) => page.locator(`[data-testid="output-c-row-${id}"]`);
+  const readOrder = () => page.evaluate((id) => [...(document.querySelector(`[data-testid="output-c-row-${id}"]`)?.closest("section")?.querySelectorAll("[data-drag-box]") ?? [])].map((row) => row.dataset.flipKey), l);
+  const centre = () => rowOf(first).evaluate((el) => el.scrollIntoView({ block: "center" }));
+  const pointIn = async (id) => {
+    const box = await page.locator(`[data-testid="output-c-item-${id}"]`).boundingBox();
+    return { x: box.x + Math.min(40, box.width / 2), y: box.y + 8 };
+  };
+  // 끄는 중의 상태 - 선이 그어진 줄(선 바로 아래의 덩어리 밖 줄, 없으면 칸 끝)과 덩어리 줄
+  const readDrag = () => page.evaluate(() => {
+    const line = document.querySelector('[data-testid="output-c-dropline"]');
+    const home = document.querySelector("[data-drag-home]");
+    const card = document.querySelector('[data-testid="drag-card"]');
+    const top = line.getBoundingClientRect().top;
+    const below = home && !line.hidden ? [...home.querySelectorAll("[data-drag-box]:not([data-drag-src])")].find((row) => row.getBoundingClientRect().top >= top - 1) : null;
+    return {
+      flag: document.documentElement.hasAttribute("data-box-drag"),
+      lineShown: !line.hidden,
+      before: below?.dataset.flipKey ?? null,
+      block: home ? [...home.querySelectorAll("[data-drag-src]")].map((row) => row.dataset.flipKey) : [],
+      refused: card?.hasAttribute("data-refused") ?? false,
+      note: card?.textContent ?? "",
+    };
+  });
+  const puts = [];
+  page.on("request", (request) => {
+    if (isOrderSave(request)) puts.push(request.url());
+  });
+  // 다음 저장 하나를 붙잡는다 - 돌려준 함수를 부르면 서버로 보내거나("ok") 500으로 끝낸다("fail")
+  let gate = null;
+  const holdNextSave = (mode) => {
+    let open = null;
+    const promise = new Promise((resolve) => {
+      open = resolve;
+    });
+    gate = { mode, promise };
+    return open;
+  };
+  await page.route(/\/targets\/order/, async (route) => {
+    const held = gate;
+    if (route.request().method() !== "PUT" || held === null) return route.continue();
+    gate = null;
+    await held.promise;
+    if (held.mode === "fail") await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ detail: "synthetic failure" }) });
+    else await route.continue();
+  });
+  const jiggle = async (x, y) => {
+    for (let i = 0; i < 5; i += 1) await page.mouse.move(x + i, y + (i % 2));
+  };
+
+  // 1. F를 Alt+↓로 옮긴 저장을 붙잡은 채 L을 칸 맨 위(R 위)로 끌고, 끄는 도중 그 응답을 푼다
+  await centre();
+  const openOk = holdNextSave("ok");
+  await rowOf(first).click({ position: { x: 4, y: 4 } });
+  const heldSave = waitOrderSave(page);
+  await page.keyboard.press("Alt+ArrowDown");
+  check("the held move shows at once", (await readOrder())[1] === first, JSON.stringify(await readOrder()));
+  // 두 줄이 미끄러지는(useFlip) 동안 잰 자리는 끝 자리가 아니다 - 멈춘 뒤 잰다
+  await page.waitForTimeout(600);
+  const from = await pointIn(l);
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  const target = { x: from.x, y: (await rowOf(second).boundingBox()).y + 2 };
+  await page.mouse.move(target.x, target.y, { steps: 12 });
+  const beforeLanding = await readDrag();
+  openOk();
+  check("the held save lands while dragging", (await heldSave).ok());
+  await page.waitForTimeout(200);
+  await jiggle(target.x, target.y);
+  const afterLanding = await readDrag();
+  check("the drag survives a save landing mid-drag and still shows the line", beforeLanding.lineShown && afterLanding.flag && afterLanding.lineShown && !afterLanding.refused && afterLanding.before === second, JSON.stringify({ beforeLanding, afterLanding }));
+  const dropSave = waitOrderSave(page);
+  await page.mouse.up();
+  check("the drop after the landed save saves", (await dropSave).ok());
+  await page.reload();
+  await page.locator(`[data-testid="order-doc-${docId}"]`).click();
+  await rowOf(l).waitFor({ timeout: T });
+  const saved = await readOrder();
+  const at = saved.indexOf(afterLanding.block[0]);
+  check("the saved order puts the block right above the line it was drawn at", afterLanding.block.length > 0 && JSON.stringify(saved.slice(at, at + afterLanding.block.length)) === JSON.stringify(afterLanding.block) && saved[at + afterLanding.block.length] === afterLanding.before, JSON.stringify({ saved, afterLanding }));
+  // 되돌린다 - 덩어리를 원래 다음 줄 앞(없으면 칸 끝)에 놓고 F를 Alt+↑로 한 자리 올린다
+  await centre();
+  const next = original[original.indexOf(afterLanding.block.at(-1)) + 1] ?? null;
+  const backFrom = await pointIn(l);
+  const nextBox = await rowOf(next ?? saved.at(-1)).boundingBox();
+  await page.mouse.move(backFrom.x, backFrom.y);
+  await page.mouse.down();
+  await page.mouse.move(backFrom.x, next ? nextBox.y + 2 : nextBox.y + nextBox.height + 6, { steps: 12 });
+  const back = waitOrderSave(page);
+  await page.mouse.up();
+  await back;
+  await rowOf(first).click({ position: { x: 4, y: 4 } });
+  const up = waitOrderSave(page);
+  await page.keyboard.press("Alt+ArrowUp");
+  check("the order is restored", (await up).ok() && JSON.stringify(await readOrder()) === JSON.stringify(original), JSON.stringify(await readOrder()));
+
+  // 2. F를 Alt+↓로 옮긴 저장을 붙잡은 채 F(짝 R과 한 덩어리)를 칸 끝으로 끌고, 그 저장을 실패시킨다 - 되돌려지며 덩어리 순서가 바뀌어 거절된다
+  await centre();
+  const openFail = holdNextSave("fail");
+  await rowOf(first).click({ position: { x: 4, y: 4 } });
+  const failedSave = waitOrderSave(page);
+  await page.keyboard.press("Alt+ArrowDown");
+  await page.waitForTimeout(600);
+  const fFrom = await pointIn(first);
+  const lastBox = await rowOf(original.at(-1)).boundingBox();
+  await page.mouse.move(fFrom.x, fFrom.y);
+  await page.mouse.down();
+  const end = { x: fFrom.x, y: lastBox.y + lastBox.height + 6 };
+  await page.mouse.move(end.x, end.y, { steps: 12 });
+  const beforeFailure = await readDrag();
+  openFail();
+  check("the held save fails while dragging", (await failedSave).status() === 500);
+  await page.waitForTimeout(300);
+  await jiggle(end.x, end.y);
+  const afterFailure = await readDrag();
+  check("a rollback that changes the block refuses the drag with a reason", beforeFailure.lineShown && beforeFailure.block.length >= 2 && afterFailure.flag && afterFailure.refused && afterFailure.note.includes("The lines changed while dragging") && !afterFailure.lineShown, JSON.stringify({ beforeFailure, afterFailure }));
+  const refusedPuts = puts.length;
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  check("releasing a refused drag saves nothing", puts.length === refusedPuts && JSON.stringify(await readOrder()) === JSON.stringify(original), JSON.stringify(await readOrder()));
+  await page.unroute(/\/targets\/order/);
+});
+
 await runStep("order: drag is off on a read-only bundle", { devUser: "qa.lead" }, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");

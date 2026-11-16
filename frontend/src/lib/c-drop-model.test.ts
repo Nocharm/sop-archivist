@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { OutputCItem } from "./api-sop";
-import { classifyDropZone, findDragBlock, planDrop } from "./c-drop-model";
+import { classifyDropZone, findDragBlock, findLiveBlock, listDropRows, planDrop } from "./c-drop-model";
 import { previewEdit } from "./c-edit-model";
 
 function line(id: number, extra: Partial<OutputCItem> = {}): OutputCItem {
@@ -95,5 +95,41 @@ describe("planDrop", () => {
     const long = [1, 2, 3, 4, 5, 6, 7].map((id) => line(id));
     const plan = planDrop({ ...base, items: long, depths: [0, 0, 0, 0, 0, 0, 0], rows: box([2, 3]), pointerY: 500 });
     expect(plan.beforeId).toBe(4);
+  });
+});
+
+describe("findLiveBlock", () => {
+  const items = [line(1), line(2, { meaning_key: "m" }), line(3, { meaning_key: "m" }), line(4), line(5)];
+  const depths = [0, 0, 0, 1, 0];
+  it("finds the same block again in the current lines, wherever they now sit", () => {
+    expect(findLiveBlock(items, depths, 3, [2, 3, 4], "assign")).toEqual({ start: 1, end: 3, baseDepth: 0, isDepthLocked: false });
+    const shifted = [line(9), ...items];
+    expect(findLiveBlock(shifted, [0, ...depths], 3, [2, 3, 4], "assign")).toMatchObject({ start: 2, end: 4 });
+  });
+  it("refuses when the pressed line or any block line is gone", () => {
+    expect(findLiveBlock(items.filter((item) => item.target_id !== 3), [0, 0, 1, 0], 3, [2, 3, 4], "assign")).toBeNull();
+    expect(findLiveBlock(items.filter((item) => item.target_id !== 4), [0, 0, 0, 0], 3, [2, 3, 4], "assign")).toBeNull();
+  });
+  it("refuses when the block grew or a line came between its lines", () => {
+    const grown = [...items.slice(0, 4), line(6), items[4]];
+    expect(findLiveBlock(grown, [0, 0, 0, 1, 1, 0], 3, [2, 3, 4], "assign")).toBeNull();
+    const split = [items[0], items[1], line(7, { meaning_key: "x" }), ...items.slice(2)];
+    expect(findLiveBlock(split, [0, 0, 0, 0, 1, 0], 2, [2, 3, 4], "assign")).toBeNull();
+  });
+});
+
+describe("listDropRows", () => {
+  const items = [1, 2, 3, 4, 5].map((id) => line(id));
+  const block = { start: 1, end: 2, baseDepth: 0, isDepthLocked: false };
+  it("drops the block's rows by id, even ones rendered after the drag started", () => {
+    expect(listDropRows(items, block, box([1, 2, 3, 4, 5])).map((row) => row.targetId)).toEqual([1, 4, 5]);
+  });
+  it("drops a measured row whose line is no longer in the section", () => {
+    expect(listDropRows(items, block, box([1, 8, 4, 5])).map((row) => row.targetId)).toEqual([1, 4, 5]);
+  });
+  it("gives planDrop rows that keep a drop below the last row at the right place", () => {
+    const rows = listDropRows(items, block, box([1, 2, 3, 4, 8]));
+    const plan = planDrop({ locationKey: "s", items, depths: [0, 0, 0, 0, 0], block, rows, pointerY: 500, dx: 0, homeTop: 0 });
+    expect(plan.beforeId).toBe(5);
   });
 });
