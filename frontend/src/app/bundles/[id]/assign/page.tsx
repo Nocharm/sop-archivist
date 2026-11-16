@@ -302,9 +302,10 @@ function revealElement(el: HTMLElement) {
   if (shouldRecenter(box.top, box.bottom, frame.top, frame.bottom)) el.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
 }
 
-/** Pair view 조각을 보이게 - 칸의 조각은 그려지기 전 높이를 어림하므로(content-visibility), 멀리 부드럽게 굴리면 지나가며 그려진 조각이 자라 목표가 밀려
- *  화면 밖에서 멈춘다(잰 값: 극단 자료 OLD-90에서 5,000px 모자랐다). 한 화면 넘게 떨어졌으면 바로 옮기고, 다음 프레임에 아직 밖이면 한 번 더 맞춘다 */
-function revealPairPiece(el: HTMLElement) {
+/** 칸(.pane-body) 안의 조각을 보이게 - Old 용지와 Pair view 칸이 같이 쓴다. 조각은 그려지기 전 높이를 어림하므로(content-visibility), 멀리 부드럽게 굴리면
+ *  지나가며 그려진 조각이 자라 목표가 밀려 화면 밖에서 멈춘다(잰 값, 극단 자료 OLD-90: Pair view 칸 5,000px, Pair view를 끈 뒤 Old 용지 11,000px 모자랐다).
+ *  한 화면 안이면 지금처럼(부드럽게), 더 멀면 바로 옮기고 조각 윗변이 칸 안에 두 프레임 버틸 때까지(길어도 10프레임) 다시 맞춘다 - 다시 그려진 용지는 몇 프레임에 걸쳐 자란다 */
+function revealFarElement(el: HTMLElement) {
   const pane = el.closest(".pane-body");
   if (!pane) return;
   const box = el.getBoundingClientRect();
@@ -315,11 +316,20 @@ function revealPairPiece(el: HTMLElement) {
     return;
   }
   el.scrollIntoView({ block: "center" });
-  requestAnimationFrame(() => {
-    const next = el.getBoundingClientRect();
+  let frames = 0;
+  let held = 0;
+  const check = () => {
+    if (!el.isConnected) return;
+    const top = el.getBoundingClientRect().top;
     const now = pane.getBoundingClientRect();
-    if (shouldRecenter(next.top, next.bottom, now.top, now.bottom)) el.scrollIntoView({ block: "center" });
-  });
+    if (top >= now.top && top < now.bottom) held += 1;
+    else {
+      held = 0;
+      el.scrollIntoView({ block: "center" });
+    }
+    if (held < 2 && ++frames < 10) requestAnimationFrame(check);
+  };
+  requestAnimationFrame(check);
 }
 
 // 도구 줄이 이보다 좁으면 오른쪽 단추는 아이콘만(라벨은 툴팁) - 1440 창에서 한 줄을 지킨다(한·영 모두 AI 메뉴가 있어도)
@@ -787,12 +797,8 @@ export default function AssignPage() {
 
   function scrollToUnit(unitId: number) {
     requestAnimationFrame(() => {
-      const target = document.querySelector(`[data-testid="assign-paper-unit-${unitId}"]`);
-      const pane = document.querySelector('[data-pane="old"] .pane-body');
-      if (!target || !pane) return;
-      const box = target.getBoundingClientRect();
-      const frame = pane.getBoundingClientRect();
-      if (shouldRecenter(box.top, box.bottom, frame.top, frame.bottom)) target.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      const target = document.querySelector<HTMLElement>(`[data-testid="assign-paper-unit-${unitId}"]`);
+      if (target) revealFarElement(target);
     });
   }
 
@@ -856,12 +862,24 @@ export default function AssignPage() {
     pairRestoreRef.current?.();
   }
   useEffect(() => () => pairRestoreRef.current?.(), []);
+  // Pair view 단추는 켜고 끌 때 다른 칸 머리의 다른 단추로 바뀐다(눌린 단추는 사라진다) - 단추로 바꿨으면 새로 보이는 단추로 포커스를 옮긴다
+  const focusPairToggleRef = useRef(false);
+  function togglePairViewByButton() {
+    focusPairToggleRef.current = true;
+    if (isPairView) closePairView();
+    else openPairView();
+  }
+  useEffect(() => {
+    if (!focusPairToggleRef.current) return;
+    focusPairToggleRef.current = false;
+    document.querySelector<HTMLElement>('[data-testid="assign-pair-view"]')?.focus({ preventScroll: true });
+  }, [isPairView]);
 
   // Pair view 동안 고른 줄이 바뀌면 그 줄의 조각을 칸마다 화면 안으로(이미 보이면 움직이지 않는다) - 짝의 두 끝을 한 화면에 들이는 길이다
   const revealPairRow = useEffectEvent(() => {
     for (const unitId of row?.unitIds ?? []) {
       const el = document.querySelector<HTMLElement>(`[data-testid="assign-pair-piece-${unitId}"]`);
-      if (el) revealPairPiece(el);
+      if (el) revealFarElement(el);
     }
   });
   useEffect(() => {
@@ -951,9 +969,10 @@ export default function AssignPage() {
     if (!view.single) changeView({ single: true });
   }
 
-  /** 편집·되돌리기 뒤 그 문장으로 - 다시 받은 뒤에 고른다(Old 문서면 그 문장의 줄, 한 단의 New 문서면 그 문장) */
-  function followUnit(unitId: number) {
-    if (hasSolo) setSoloFollow({ unitId, stale: soloLoad.data });
+  /** 편집·되돌리기 뒤 그 문장으로 - 다시 받은 뒤에 고른다(Old 문서면 그 문장의 줄, 한 단의 New 문서면 그 문장).
+   *  inSolo - 같은 이벤트에서 setSolo(null)로 New 문서 다듬기를 닫았으면 false를 넘긴다(이 렌더의 hasSolo는 아직 켜져 있다) */
+  function followUnit(unitId: number, inSolo = hasSolo) {
+    if (inSolo) setSoloFollow({ unitId, stale: soloLoad.data });
     else setFollow({ unitId, staleViews: viewList, staleUnits: units.data });
   }
 
@@ -2131,8 +2150,9 @@ export default function AssignPage() {
     if (!oldView || busy) return;
     // 문서와 revision은 보던 Old 문서에서 - 양 단에서 New 문장을 다듬는 중이면 shapeView는 New 문서다
     const doc = oldView.document;
-    // New 문장 다듬기를 닫아 followUnit이 Old 줄을 따라가게
+    // New 문장 다듬기를 닫고(따라갈 New 문장도 버린다) 저장 뒤 Old 줄을 따라간다 - 이 렌더의 hasSolo는 아직 켜져 있어 followUnit에 false를 넘긴다
     setSolo(null);
+    setSoloFollow(null);
     setBusy(true);
     try {
       const { pair } = drop.kind === "pair" ? await createPair(bundleId, doc.id, doc.revision, drop.unitIds) : await confirmPair(bundleId, doc.id, drop.pairId, doc.revision);
@@ -2143,7 +2163,7 @@ export default function AssignPage() {
       showToast(t(drop.kind === "pair" ? "assign.pairDrag.done" : "assign.pairDrag.confirmed", { ids }), "ok", {
         action: { label: t("common.undo"), run: () => void pairUndoRef.current(doc.id, pair.id, pair.unit_ids) },
       });
-      followUnit(pair.unit_ids[0]);
+      followUnit(pair.unit_ids[0], false);
     } catch (err) {
       showToast(humanizeApiError(err, t), "error");
     } finally {
@@ -3213,8 +3233,9 @@ export default function AssignPage() {
             count={unsourced.length}
             selected={mode === "unsourced"}
             onClick={() => {
-              // 출처 없는 New 문장은 New 칸에서 본다
+              // 출처 없는 New 문장은 New 칸에서 본다. Pair view도 끄는 길이라 다른 길과 같이 Old 자리로 돌아온다(보기를 바꾸면 changeView가 끈다)
               if (view.single) changeView({ single: false });
+              else if (isPairView) closePairView();
               setMode("unsourced");
             }}
             testId="assign-filter-unsourced"
@@ -3456,7 +3477,7 @@ export default function AssignPage() {
                 side="ko"
                 items={pairColumns.ko}
                 docLabel={oldDocOptions.find((option) => option.value === String(oldView?.document.id))?.label}
-                toggle={<PairViewToggle on onToggle={() => closePairView()} />}
+                toggle={<PairViewToggle on onToggle={togglePairViewByButton} />}
                 banner={pairBanner !== null && !isNewEdit ? pairBanner : null}
                 selectedIds={highlightIds}
                 pickedIds={pickedOld}
@@ -3564,7 +3585,7 @@ export default function AssignPage() {
                 zoom={view.zoomOld}
                 onZoom={(dir) => zoomPane("old", dir)}
                 dragBoxes={isOldDrag}
-                headExtra={canPairView ? <PairViewToggle on={false} onToggle={openPairView} /> : undefined}
+                headExtra={canPairView ? <PairViewToggle on={false} onToggle={togglePairViewByButton} /> : undefined}
               />
               {!view.single && (
               <>

@@ -10,7 +10,7 @@
 // 평소(변경마다)는 고친 화면만: QUIET=1 ONLY="<화면>" node scripts/pw-smoke-sop.mjs  — 전부 돌리는 것은 dev→main 정식 업데이트 전, 또는 여러 화면이 같이 쓰는 것(공용 부품·API 층·이 스크립트의 틀)을 고쳤을 때만이다(사용자 결정 2026-11-16).
 // playwright-core는 저장소 의존성이 아니다: `npm i --no-save playwright-core` (package.json 불변)
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -5926,6 +5926,25 @@ await runStep("assign: every way out of Pair view shows the picked piece or the 
   await page.locator('[data-testid="assign-view-two"]').click();
   await wait(page, "assign-new");
 
+  // 2b. "New without source"도 끄는 길이다 - 같은 자리로 돌아온다(렌더 중 상태 맞추기로만 꺼지면 용지가 맨 위로 돌아간다)
+  await turnOn();
+  // 단추를 눌러 켜면 포커스는 KO 칸 머리의 단추에(눌린 단추는 사라진다)
+  const isToggleFocused = (pane) => page.evaluate((pane) => document.activeElement?.getAttribute("data-testid") === "assign-pair-view" && document.activeElement.closest(`[data-testid="${pane}"]`) !== null, pane);
+  const focusClickOn = await isToggleFocused("assign-pair-ko");
+  await page.locator('[data-testid="assign-filter-unsourced"]').click();
+  await waitOff();
+  check("leaving by New without source shows the picked piece too", await isFarInView());
+  await page.locator('[data-testid="assign-filter-all"]').click();
+  // 2c. 글쇠(Space)로 켜고 끄기 - 포커스는 지금 보이는 단추에
+  await toggle.focus();
+  await page.keyboard.press("Space");
+  await wait(page, "assign-pair-en");
+  const focusKeyOn = await isToggleFocused("assign-pair-ko");
+  await page.keyboard.press("Space");
+  await waitOff();
+  const focusKeyOff = await isToggleFocused("assign-old");
+  check("toggling Pair view by its button leaves focus on the toggle now on screen (click on, Space on, Space off)", focusClickOn && focusKeyOn && focusKeyOff, `${focusClickOn} ${focusKeyOn} ${focusKeyOff}`);
+
   // 3. 고른 줄이 없으면 켜기 전 스크롤 자리로 - 다른 문서를 골랐다 돌아오면 고름이 풀린다
   const otherDoc = (await getJson("/documents")).find((item) => item.side === "old" && item.status === "ready" && item.id !== doc.id);
   for (const docId of [otherDoc.id, doc.id]) {
@@ -5997,6 +6016,61 @@ await runStep("assign: every way out of Pair view shows the picked piece or the 
   await page.waitForLoadState("networkidle");
   await page.waitForTimeout(400);
   check("Assign undo brings the sentence back", (await countUnits()) === unitsBefore);
+});
+
+// 긴 문서에서 Pair view를 끄면 끝 가까이 고른 조각이 Old 용지 화면 안에 선다 - 용지의 줄은 그려지기 전 높이를 어림해(content-visibility),
+// 멀리 부드럽게 굴리면 지나가며 자라는 줄에 밀려 수천 px 모자란 곳에서 멈췄다. 시드의 따로 배치 문서(OLD-3)는 짧아 드러나지 않으므로
+// 극단 자료 생성기(build_big, 문단 200개·Unit 400여 개)로 만든 문서를 새 묶음에 올려 보고 끝에 묶음을 지운다
+await runStep("assign: leaving Pair view on a long document shows a piece picked far down", { devUser: "dev.admin" }, async ({ page }) => {
+  const headers = { "X-Dev-User": "dev.admin" };
+  const backend = resolve(SCRIPT_DIR, "../../backend");
+  const python = process.env.BACKEND_PYTHON || [".venv/bin/python", ".venv/Scripts/python.exe"].map((path) => resolve(backend, path)).find(existsSync);
+  const file = resolve(SHOT_DIR, "SYNTHETIC_OLD-87_long_separate.docx");
+  execFileSync(python, ["-c", "import sys; from scripts.seed_sop_worst import build_big; open(sys.argv[1], 'wb').write(build_big('OLD-87', 400, False))", file], { cwd: backend, stdio: "inherit" });
+  const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC long Pair view", is_synthetic: true } })).json();
+  const api = `${BASE}/api/bundles/${created.id}`;
+  const uploaded = await page.request.post(`${api}/documents`, { headers, multipart: { side: "old", file: { name: "SYNTHETIC_OLD-87_long_separate.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: readFileSync(file) } } });
+  let doc = await uploaded.json();
+  if (doc.language_layout !== "ko_en_separate") doc = await (await page.request.patch(`${api}/documents/${doc.id}`, { headers, data: { revision: doc.revision, language_layout: "ko_en_separate" } })).json();
+  const view = await (await page.request.get(`${api}/documents/${doc.id}/view`, { headers })).json();
+  const sentences = view.units.filter((unit) => unit.group_unit_id === null && unit.kind === "sentence").sort((one, two) => one.pos_seq - two.pos_seq || (one.spans[0]?.[1] ?? 0) - (two.spans[0]?.[1] ?? 0) || one.id - two.id);
+  check("a long separate-layout document is uploaded", uploaded.status() === 201 && doc.language_layout === "ko_en_separate" && sentences.length >= 350, `${uploaded.status()} ${doc.language_layout} ${sentences.length}`);
+  const far = sentences.at(-3);
+  await page.goto(`${BASE}/bundles/${created.id}/assign`);
+  await wait(page, "assign-bar");
+  if ((await page.locator('[data-testid="assign-new"]').count()) === 0) await page.locator('[data-testid="assign-view-two"]').click();
+  const piece = page.locator(`[data-testid="assign-paper-piece-${far.id}"]`);
+  await piece.waitFor({ timeout: T });
+  await piece.evaluate((el) => el.scrollIntoView({ block: "center" }));
+  await page.waitForTimeout(300);
+  await piece.click();
+  await page.waitForFunction((want) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.includes(want), far.display_id, { timeout: T });
+  // 움직임이 멈출 때까지 기다렸다가 그 조각이 Old 칸 화면 안인가
+  const settledInView = async () => {
+    let last = -1;
+    for (let i = 0; i < 40; i += 1) {
+      await page.waitForTimeout(100);
+      const now = await page.locator('[data-pane="old"] .pane-body').evaluate((el) => el.scrollTop);
+      if (now === last) break;
+      last = now;
+    }
+    return piece.evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      const frame = el.closest(".pane-body").getBoundingClientRect();
+      return box.top >= frame.top && box.top < frame.bottom ? 0 : Math.round(box.top < frame.top ? box.top - frame.top : box.top - frame.bottom);
+    });
+  };
+  for (const [label, leave] of [["its button", () => page.locator('[data-testid="assign-pair-view"]').click()], ["Two documents", () => page.locator('[data-testid="assign-view-two"]').click()]]) {
+    await page.locator('[data-testid="assign-pair-view"]').click();
+    await wait(page, "assign-pair-en");
+    await page.waitForTimeout(400);
+    await leave();
+    await page.locator('[data-testid="assign-pair-ko"]').waitFor({ state: "detached", timeout: T });
+    const offBy = await settledInView();
+    check(`leaving by ${label} shows the piece picked far down a long document`, offBy === 0, `${offBy}px outside`);
+  }
+  const bundle = await (await page.request.get(api, { headers })).json();
+  check("the long-document bundle is removed", (await page.request.delete(`${api}?revision=${bundle.revision}`, { headers })).ok());
 });
 
 // Pair view에서 끌어 짝 맺기(끌어다 놓기 4걸음) - 조각을 맞은편 언어의 조각에 놓으면 바로 짝이 되고(제안 짝의 구성원끼리면 그 제안을 확정), 알림의 Undo가 그 짝을 푼다.
@@ -6629,6 +6703,26 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
   await page.waitForTimeout(400);
   check("in a separate-layout document an Old piece over another marks nothing and says nothing", overSeparate.drops === 0 && overSeparate.note === "", JSON.stringify(overSeparate));
   check("and the drop sends no pair request", pairRequests.length === requestsBeforeSeparate && pairOf(await getJson(`/documents/${separate.id}/view`), sepKo.id) === null);
+
+  // 6b. New 문장을 그 자리에서 다듬는 중(고른 Old 줄 없음)에 짝을 맺어도 그 짝의 줄이 골라지고 다듬기는 닫힌다. 맺은 짝은 Undo로 푼다
+  await page.reload();
+  await wait(page, "assign-bar");
+  await openDoc(doc.id, y.id);
+  if (!writtenDocIds.includes(Number(await newPane.getAttribute("data-doc")))) {
+    await page.locator('[data-testid="assign-new-doc"]').click();
+    await page.locator(`[data-testid="assign-new-doc-option-${writtenDocIds[0]}"]`).click();
+    await page.waitForFunction((id) => document.querySelector('[data-testid="assign-new"]')?.getAttribute("data-doc") === String(id), writtenDocIds[0], { timeout: T });
+  }
+  await page.locator('[data-testid="assign-new"] [data-testid^="assign-new-pick-"]').first().click();
+  await wait(page, "assign-solo");
+  await startDrag(y.id);
+  await moveOnto(y2.id);
+  const shapedDrop = await dropAndSave(`Paired ${idsOf(y, y2)}`);
+  const pickedAfterShape = await page.waitForFunction((ids) => ids.every((id) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.includes(id)), [y.display_id, y2.display_id], { timeout: T }).then(() => true, () => false);
+  check("a pair dropped while a New sentence is shaped in place picks the pair row and closes the shaping", pickedAfterShape && (await page.locator('[data-testid="assign-solo"]').count()) === 0, await page.evaluate(() => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() ?? "no row"));
+  // 짝은 API로 푼다(위 확인이 실패해 기다린 사이 알림이 사라졌어도 뒤 단계가 돈다)
+  check("the API separates y and y′ again", shapedDrop.response.status() === 201 && (await unpair(pairOf(await readView(), y.id).id)).ok());
+  await page.waitForLoadState("networkidle");
 
   // 7. 뒷정리 - y·y′를 다시 맺는다(x·x′는 사람이 맺은 짝으로 남는다)
   const repaired = await page.request.post(`${api}${docPath}/pairs`, { headers, data: { revision: (await readView()).document.revision, unit_ids: [y.id, y2.id] } });
