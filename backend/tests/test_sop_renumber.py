@@ -1,0 +1,94 @@
+"""번호·참조 읽기(renumber) 순수 함수 시험."""
+
+from app.sop.renumber import (
+    NumberToken,
+    PlaceToken,
+    find_number_tokens,
+    find_place_tokens,
+    format_caption_prefix,
+    read_caption_number,
+    replace_numbers,
+)
+
+
+def test_reads_caption_head_numbers():
+    assert read_caption_number("Fig.6 Lid lock") == NumberToken("figure", 6, 4, 5)
+    assert read_caption_number("표 1에 따라") is None
+
+
+def test_reads_caption_head_variants():
+    assert read_caption_number("표 12. 운전 조건") == NumberToken("table", 12, 2, 4)
+    assert read_caption_number("Table 3: Speeds") == NumberToken("table", 3, 6, 7)
+    assert read_caption_number("그림 2") == NumberToken("figure", 2, 3, 4)
+    assert read_caption_number("본문 표 1") is None
+
+
+def test_finds_numbered_references_in_both_languages():
+    tokens = find_number_tokens("운전 조건은 표 3을 따르고 See Figure 5 and Fig. 6.")
+    assert [(t.kind, t.number) for t in tokens] == [("table", 3), ("figure", 5), ("figure", 6)]
+
+
+def test_reference_digit_spans_cover_digits_only():
+    text = "See Fig. 6 and 표 3"
+    tokens = find_number_tokens(text)
+    assert [text[t.start : t.end] for t in tokens] == ["6", "3"]
+
+
+def test_finds_ranges_as_two_tokens():
+    for sep in ("~", "-", "–"):
+        text = f"표 1{sep}3 참조"
+        tokens = find_number_tokens(text)
+        assert [(t.kind, t.number, text[t.start : t.end]) for t in tokens] == [("table", 1, "1"), ("table", 3, "3")]
+
+
+def test_does_not_match_inside_other_words():
+    assert find_number_tokens("Portable 3 units, 표준 3종") == []
+
+
+def test_finds_place_references():
+    assert [(t.kind, t.direction) for t in find_place_tokens("회전 속도는 아래 표를 따른다. See the figure above.")] == [
+        ("table", "next"),
+        ("figure", "previous"),
+    ]
+
+
+def test_place_vocabulary_korean_and_english():
+    cases = {
+        "위 그림": ("figure", "previous"),
+        "다음 표": ("table", "next"),
+        "앞 그림": ("figure", "previous"),
+        "아래 그림": ("figure", "next"),
+        "The following table": ("table", "next"),
+        "the table below": ("table", "next"),
+        "the above figure": ("figure", "previous"),
+        "The Below Table": ("table", "next"),
+    }
+    for text, expected in cases.items():
+        tokens = find_place_tokens(text)
+        assert [(t.kind, t.direction) for t in tokens] == [expected], text
+        assert (tokens[0].start, tokens[0].end) == (0, len(text)), text
+
+
+def test_place_ignores_lookalike_words():
+    assert find_place_tokens("아래 표현은 위 표시와 다음 표준") == []
+
+
+def test_replace_numbers_changes_only_digits():
+    assert replace_numbers("See Fig. 6 and 표 3", {(9, 10): 2, (17, 18): 1}) == "See Fig. 2 and 표 1"
+
+
+def test_replace_numbers_handles_length_change():
+    assert replace_numbers("표 9 와 표 10", {(2, 3): 10, (8, 10): 9}) == "표 10 와 표 9"
+
+
+def test_format_caption_prefix():
+    assert format_caption_prefix("table", 3, "ko") == "표 3. "
+    assert format_caption_prefix("table", 3, "en") == "Table 3. "
+    assert format_caption_prefix("figure", 3, "ko") == "그림 3. "
+    assert format_caption_prefix("figure", 3, "en") == "Figure 3. "
+    assert format_caption_prefix("figure", 3, "ja") == "Figure 3. "
+
+
+def test_place_token_is_frozen_dataclass():
+    token = PlaceToken("table", "next", 0, 3)
+    assert token.direction == "next"
