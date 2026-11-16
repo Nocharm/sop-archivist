@@ -173,6 +173,65 @@ describe("attachBoxDrag", () => {
     expect(seen).toHaveBeenCalledTimes(0);
   });
 
+  it("Escape during a press that is not yet a drag is left alone, and the press can still become a drag", () => {
+    const config = attach();
+    const seen = vi.fn();
+    box.addEventListener("keydown", seen);
+    press(box);
+    move(12, 10);
+    const escape = key("keydown", "Escape", box);
+    expect(escape.defaultPrevented).toBe(false);
+    expect(seen).toHaveBeenCalledTimes(1);
+    move(30, 10);
+    expect(isBoxDragActive()).toBe(true);
+    release(30, 10);
+    expect(config.onDrop).toHaveBeenCalledTimes(1);
+  });
+
+  it("Escape during a press that is not yet a drag leaves the press a click", async () => {
+    // 앞 시험의 끌기가 남긴 click 삼키기는 타이머로 거두어진다 - 그 뒤에 누른다
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const config = attach();
+    const clicks = vi.fn();
+    document.body.addEventListener("click", clicks);
+    press(box);
+    key("keydown", "Escape", box);
+    release(11, 10);
+    box.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    document.body.removeEventListener("click", clicks);
+    expect(clicks).toHaveBeenCalledTimes(1);
+    expect(config.onEnd).toHaveBeenCalledTimes(0);
+  });
+
+  it("still ends the drag when onDrop throws, and the error surfaces", () => {
+    const failure = new Error("drop failed");
+    const config = attach({
+      onDrop: vi.fn(() => {
+        throw failure;
+      }),
+    });
+    const errors: unknown[] = [];
+    // 이벤트 리스너의 예외는 window error로 보고된다 - 시험 출력에 찍히지 않게 여기서 받는다
+    const onError = (event: ErrorEvent) => {
+      errors.push(event.error);
+      event.preventDefault();
+    };
+    window.addEventListener("error", onError);
+    press(box);
+    move(30, 10);
+    release(30, 10);
+    window.removeEventListener("error", onError);
+    expect(errors).toEqual([failure]);
+    expect(config.onEnd).toHaveBeenCalledWith("src", false);
+    expect(isBoxDragActive()).toBe(false);
+    expect(card()).toBeNull();
+    // 다음 끌기가 시작된다(엔진이 끝까지 치웠다)
+    press(box);
+    move(30, 10);
+    expect(isBoxDragActive()).toBe(true);
+    key("keydown", "Escape");
+  });
+
   it("drops, then swallows exactly one click", async () => {
     const config = attach();
     const clicks = vi.fn();

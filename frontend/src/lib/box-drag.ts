@@ -208,7 +208,8 @@ export function attachBoxDrag<S>(root: HTMLElement, config: BoxDragConfig<S>): (
     }
 
     function handleKey(event: KeyboardEvent): void {
-      if (event.key !== "Escape") return;
+      // 아직 끌기가 아닌 누름에서는 Esc를 건드리지 않는다 - 줄의 Esc(고름 놓기)·메뉴 닫기가 그대로 받고, 누름은 끌기나 클릭이 될 수 있다
+      if (event.key !== "Escape" || !on) return;
       event.preventDefault();
       event.stopPropagation();
       stop(true);
@@ -250,8 +251,12 @@ export function attachBoxDrag<S>(root: HTMLElement, config: BoxDragConfig<S>): (
       };
       window.addEventListener("click", swallow, { capture: true, once: true });
       window.setTimeout(() => window.removeEventListener("click", swallow, true), 0);
-      if (!cancelled) config.onDrop(source, last, start);
-      config.onEnd?.(source, cancelled);
+      // onDrop이 던져도 표시는 치운다 - 오류는 그대로 올라간다
+      try {
+        if (!cancelled) config.onDrop(source, last, start);
+      } finally {
+        config.onEnd?.(source, cancelled);
+      }
     }
 
     window.addEventListener("pointermove", handleMove);
