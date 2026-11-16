@@ -12,6 +12,7 @@ import type {
   NaSlot,
   TargetDoc,
   TargetInput,
+  TargetPosition,
   ToBe,
   UnitRow,
   ViewUnit,
@@ -202,6 +203,12 @@ export function readDestination(group: Group | null, unitIds: number[]): Destina
 const TABLE_KINDS: readonly string[] = ["table", "table_row"];
 const SYSTEM_PREFIX = "system:";
 
+/** 문장 사이에 놓은 자리 - placeId는 놓은 곳의 getDestinationId, after는 그 뒤에 끼울 새 문장(null이면 칸의 맨 앞) */
+export interface DropPosition {
+  placeId: string;
+  after: number | null;
+}
+
 export interface RowDraft {
   destination: Destination | null;
   /** 새 문장 칸(SentenceSlot.key)별로 사람이 고친 글자 - 고치지 않은 칸은 없다. 비우면 원문 그대로 */
@@ -213,6 +220,8 @@ export interface RowDraft {
   otherLang?: OtherLangSlot | null;
   reason: string;
   moveCode: string;
+  /** 문장 사이에 놓아 만든 초안의 자리 - 보낼 곳이 놓은 곳일 때만 저장 요청에 싣는다 */
+  position?: DropPosition | null;
 }
 
 /** 손으로 쓰는 다른 언어 문장 - 그 언어와 출처로 삼을 줄 단위 */
@@ -392,6 +401,11 @@ function readEditedText(slot: SentenceSlot, draft: RowDraft): string | null {
 }
 
 function buildSentenceTarget(slot: SentenceSlot, draft: RowDraft, place: ReturnType<typeof placeTarget>): TargetInput {
+  const target = buildSentenceBody(slot, draft, place);
+  return { ...target, ...readPosition(draft, place, slot.target) };
+}
+
+function buildSentenceBody(slot: SentenceSlot, draft: RowDraft, place: ReturnType<typeof placeTarget>): TargetInput {
   // 기존 새 문장의 글자 비교 종류(AI 제안이면 제안의 종류) - 고쳐도 사람이 따로 고르지 않으면 이것을 둔다
   const keptType = isTextChangeType(slot.target?.change_type) ? slot.target.change_type : null;
   const base = { key: slot.key, ...(slot.target ? { id: slot.target.id, revision: slot.target.revision } : {}), ...place, kind: "sentence" as const, source_unit_ids: slot.sourceIds };
@@ -423,6 +437,14 @@ function placeTarget(destination: Destination): Pick<TargetInput, "target_doc_id
   if (destination.kind === "slot") return { target_doc_id: destination.docId, slot_key: destination.slotKey, wi_step: null, wi_part: null };
   if (destination.kind === "step") return { target_doc_id: destination.docId, slot_key: null, wi_step: destination.step, wi_part: destination.part };
   throw new Error("not a placement");
+}
+
+/** 놓은 자리를 싣는 항목 - 놓은 곳이 보낼 곳 그대로이고 새로 만들거나 (문서, 칸, step, part)가 바뀌는 최상위 문장만 */
+function readPosition(draft: RowDraft, place: ReturnType<typeof placeTarget>, own?: GroupTarget | null): { position?: TargetPosition } {
+  const { destination, position } = draft;
+  if (!position || !destination || position.placeId !== getDestinationId(destination)) return {};
+  const isHere = own && own.target_doc_id === place.target_doc_id && own.slot_key === place.slot_key && own.wi_step === place.wi_step && own.wi_part === place.wi_part;
+  return isHere ? {} : { position: { after_target_id: position.after } };
 }
 
 /** 사람이 고르지 않은 연결의 변경 종류 - 같은 언어 원문과 글이 같으면 그대로, 사람이 고른 적 있으면 그 값, 아니면 고쳐 씀 */
@@ -488,7 +510,7 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
         const ref = own ? { id: own.id, revision: own.revision } : {};
         if (own) kept.add(own.id);
         const table = context.tables.get(unit.id);
-        targets.push({ key, ...ref, ...place, kind: "table", lang: "neutral", change_type: "as_is", source_unit_ids: [unit.id], grid: table ? { rows: table.rows, cols: table.cols } : null });
+        targets.push({ key, ...ref, ...place, ...readPosition(draft, place, own), kind: "table", lang: "neutral", change_type: "as_is", source_unit_ids: [unit.id], grid: table ? { rows: table.rows, cols: table.cols } : null });
         for (const cell of table?.cells ?? []) {
           const cellOwn = existing.find((target) => target.parent_target_id !== null && target.source_unit_ids.includes(cell.id));
           if (cellOwn) kept.add(cellOwn.id);
@@ -511,7 +533,7 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
       if (unit.kind === "figure") {
         const own = findOwnTarget(context.group, unit.id, "figure");
         if (own) kept.add(own.id);
-        targets.push({ key, ...(own ? { id: own.id, revision: own.revision } : {}), ...place, kind: "figure", lang: "neutral", change_type: "as_is", source_unit_ids: [unit.id] });
+        targets.push({ key, ...(own ? { id: own.id, revision: own.revision } : {}), ...place, ...readPosition(draft, place, own), kind: "figure", lang: "neutral", change_type: "as_is", source_unit_ids: [unit.id] });
       }
     }
     for (const slot of buildSentenceSlots(context.group, active, draft.otherLang ?? null)) {
