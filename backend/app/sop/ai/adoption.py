@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clock import now
 from app.sop.ai.schemas import AdoptionStats, SuggestionOut, SuggestionsPageOut
-from app.sop.captions import CAPTION_KIND
 from app.sop.detach import ORIGIN_NEW_DOC, ORIGIN_TRANSLATION
 from app.sop.errors import raise_rule
 from app.sop.groups import TABLE_UNIT_KINDS, iter_chunks, select_in_chunks
@@ -34,6 +33,7 @@ _NO_TEXT_KINDS = (*TABLE_UNIT_KINDS, "figure")  # 새 문장에 글자가 없는
 _LOCKED_PLACE: Place = (None, None, None, None)  # 입구 2 새 문장은 자리·글이 잠겨 있어 판정 재료에 넣지 않는다
 # 변경 종류까지 견주는 입구 2 모습 — 짝 하나에서 LLM이 내는 것은 종류뿐이고(설계 §7.10) 채택률이 지침을 고치는 근거다(설계 §13). 나머지는 종류가 구조에서 나온다
 _TYPED_SHAPES = ("one_to_one", "table")
+_BUNDLE_SHAPES = ("table", "figure")  # 자식(칸·캡션) 새 문장을 함께 담는 입구 2 모양 — 첫 새 문장이 묶음 새 문장이다
 
 
 @dataclass(frozen=True)
@@ -83,12 +83,12 @@ def decide_adoption(suggested: SuggestedShape, saved: SavedShape) -> str:
 
 
 def _list_matched_targets(content: Mapping[str, Any]) -> Sequence[int]:
-    """출처를 견줄 새 문장 — 제안 기록에 칸 연결이 없어 표는 표 새 문장만 본다.
+    """출처를 견줄 새 문장 — 제안 기록에 칸·캡션 연결이 없어 표·그림은 묶음 새 문장만 본다.
 
     칸 자리를 지키는 저장 검사는 그대로인 표에만 걸린다. 표 구성 변경 제안에서 사람이 칸 연결만 고친 저장은 일부러 그대로 채택으로 둔다.
     """
     target_ids = content["target_ids"]
-    return target_ids[:1] if content["shape"] == "table" else target_ids
+    return target_ids[:1] if content["shape"] in _BUNDLE_SHAPES else target_ids
 
 
 def _read_compared_type(content: Mapping[str, Any], change_type: str | None) -> str | None:
@@ -108,7 +108,7 @@ def _build_match_shape(content: Mapping[str, Any]) -> SuggestedShape:
 
 
 def _build_suggested_shape(suggestion: AiSuggestion, units: Iterable[Unit]) -> SuggestedShape:
-    """제안 기록에서 이 저장에 담긴 단위 몫만 꺼낸다. 표·그림과 칸은 기록에 글이 없고 적용 때 원문 그대로 만들어진다."""
+    """제안 기록에서 이 저장에 담긴 단위 몫만 꺼낸다. 표·그림과 칸·캡션은 기록에 글이 없고 적용 때 원문 그대로 만들어진다."""
     content = suggestion.content
     if suggestion.kind == _MATCH_KIND:
         return _build_match_shape(content)
@@ -119,8 +119,6 @@ def _build_suggested_shape(suggestion: AiSuggestion, units: Iterable[Unit]) -> S
     targets: list[TargetShape] = []
     sources_by_lang: dict[str, set[int]] = defaultdict(set)
     for unit in units:
-        if unit.kind == CAPTION_KIND:  # 분류 제안은 아직 캡션 새 문장을 만들지 않는다(Task 12) — 저장 모습과 견주지 않는다
-            continue
         if unit.group_unit_id is not None:
             targets.append(TargetShape(place, unit.text, frozenset((unit.id,))))
         elif unit.kind in _NO_TEXT_KINDS:
@@ -135,7 +133,7 @@ def _build_suggested_shape(suggestion: AiSuggestion, units: Iterable[Unit]) -> S
 def _build_saved_shape(
     plans: Sequence["_Plan"], suggestion: AiSuggestion, unit_ids: Collection[int], dispositions: Iterable[str]
 ) -> SavedShape:
-    """이 제안의 단위에서 나온 새 문장만 — 칸 새 문장은 출처가 칸 문장이라 부모 표 새 문장의 출처로 가린다. 표 아래 칸 번역은 자기 제안이 따로 있다.
+    """이 제안의 단위에서 나온 새 문장만 — 칸·캡션 새 문장은 출처가 묶인 단위라 부모 표·그림 새 문장의 출처로 가린다. 표 아래 칸 번역은 자기 제안이 따로 있다.
 
     입구 2 제안은 단위가 아니라 제안의 새 문장으로 가린다 — 사람이 출처를 바꾸거나 비운 새 문장도 판정에 들어야 한다.
     """
@@ -158,14 +156,15 @@ def _build_saved_shape(
             restructured=plan.change_type == "table_restructured",
         )
         for plan in plans
-        # 캡션 새 문장은 제안 모습에서도 빠진다(_build_suggested_shape, Task 12) — 확정에 캡션이 꼭 붙어 늘 edited가 되지 않게
-        if plan.origin != ORIGIN_TRANSLATION and not plan.is_caption and scope.intersection((plan.parent or plan).sources)
+        # 써 넣은 캡션(출처 없음)은 AI가 낼 수 없는 몫이다 — 캡션 없는 표·그림 확정에 꼭 붙어 늘 edited가 되지 않게 뺀다
+        if plan.origin != ORIGIN_TRANSLATION and not (plan.is_caption and not plan.sources)
+        and scope.intersection((plan.parent or plan).sources)
     )
     return SavedShape(frozenset(dispositions), targets)
 
 
 async def _load_units_with_cells(session: AsyncSession, unit_ids: Collection[int]) -> dict[int, list[Unit]]:
-    """단위 → 그 단위와 묶인 활성 칸 문장."""
+    """단위 → 그 단위와 묶인 활성 칸 문장·캡션."""
     rows = await select_in_chunks(
         session,
         lambda chunk: select(Unit).where(

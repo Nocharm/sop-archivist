@@ -635,14 +635,16 @@ def _settle_translation_place(plan: _Plan, by_row_id: dict[int, _Plan], state: _
     plan.doc, plan.cell_row, plan.cell_col = state.docs[places[-1].doc_id], places[-1].cell_row, places[-1].cell_col
 
 
-def _check_source_kinds(item: TargetIn, state: _State, *, is_caption: bool) -> None:
+def _check_source_kinds(item: TargetIn, state: _State, *, is_caption: bool, origin: str) -> None:
     """문장은 문장·제목·칸 문장에서, 칸 제목은 제목·문장에서, 표는 표·행 단위 하나에서, 그림은 그림 단위 하나에서 온다(R28).
 
     캡션 새 문장은 캡션 단위 하나에서 오거나 출처 없이 써 넣는다. 캡션 단위는 캡션 새 문장의 출처로만 된다(표·그림 명세 §3.2).
+    입구 2 캡션은 새 문서가 캡션으로 읽은 글이라 옛 쪽에서 캡션으로 읽히지 않은 보통 문장 하나도 출처가 된다(§3.3).
     """
     kinds = [state.units[unit_id].kind for unit_id in item.source_unit_ids]
     if is_caption or CAPTION_KIND in kinds:
-        if not is_caption or len(kinds) > 1 or any(kind != CAPTION_KIND for kind in kinds):
+        caption_sources = (CAPTION_KIND, "sentence") if origin == ORIGIN_NEW_DOC else (CAPTION_KIND,)
+        if not is_caption or len(kinds) > 1 or any(kind not in caption_sources for kind in kinds):
             raise_rule(422, "invalid_caption_target", keys=[item.key])
         return
     text_kinds = {"sentence": SENTENCE_SOURCE_KINDS, SLOT_HEADING: SLOT_HEADING_SOURCE_KINDS}.get(item.kind)
@@ -750,7 +752,7 @@ def _plan_target(item: TargetIn, state: _State) -> _Plan:
         if not item.source_unit_ids and not is_caption:  # 캡션은 출처 없이 써 넣을 수 있다(표·그림 명세 §3.4)
             _reject("sources_required", keys=keys)
         _check_location(item, doc, state)
-    _check_source_kinds(item, state, is_caption=is_caption)
+    _check_source_kinds(item, state, is_caption=is_caption, origin=origin)
     text = _resolve_text(item, row, state)
     return _Plan(
         item=item, row=row, doc=doc, origin=origin, sources=list(item.source_unit_ids),

@@ -7,7 +7,7 @@
 
 import asyncio
 from collections import Counter, defaultdict
-from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import product
 from typing import Any, Literal, NamedTuple, TypeVar
@@ -46,7 +46,7 @@ from app.sop.ai.matching import (
 from app.sop.ai.runner import AiCallFailed
 from app.sop.ai.schemas import SkippedOut
 from app.sop.ai.similarity import cosine_matrix
-from app.sop.captions import CAPTION_KIND
+from app.sop.captions import CAPTION_KIND, is_caption_target
 from app.sop.checks import check_sentence
 from app.sop.constants import AI_PRIORITY_PLAN, AI_PRIORITY_PRE_REFINE, AI_PRIORITY_USER
 from app.sop.decisions import load_cell_positions, load_table_shapes
@@ -283,7 +283,11 @@ async def _load_new_entries(
     cells = await select_in_chunks(
         session,
         lambda chunk: select(TargetSentence.parent_target_id, TargetSentence.confirmed_text)
-        .where(TargetSentence.parent_target_id.in_(chunk), TargetSentence.origin == ORIGIN_NEW_DOC)
+        .where(
+            # 표의 캡션 새 문장(칸 좌표 없음)은 옛 쪽처럼 표 글에 넣지 않는다
+            TargetSentence.parent_target_id.in_(chunk), TargetSentence.origin == ORIGIN_NEW_DOC,
+            TargetSentence.cell_row.is_not(None),
+        )
         .order_by(TargetSentence.cell_row, TargetSentence.cell_col, TargetSentence.order_index, TargetSentence.id),
         [row.id for row in open_rows if row.kind == _TABLE],
     )
@@ -408,7 +412,7 @@ async def _load_targets(session: AsyncSession, target_ids: Collection[int]) -> d
 
 
 async def _load_cell_targets(session: AsyncSession, table_ids: Collection[int]) -> dict[int, list[TargetSentence]]:
-    """표 새 문장 → 칸 새 문장(칸 순서) — 표 아래 번역 줄은 칸 새 문장이 아니다."""
+    """표·그림 새 문장 → 자식 새 문장(칸 순서) — 칸 새 문장과 캡션 새 문장(칸 좌표 없음). 표 아래 번역 줄은 입구 2 새 문장이 아니다."""
     rows = await select_in_chunks(
         session,
         lambda chunk: select(TargetSentence)
@@ -423,7 +427,7 @@ async def _load_cell_targets(session: AsyncSession, table_ids: Collection[int]) 
 
 
 async def _load_cell_units(session: AsyncSession, table_unit_ids: Collection[int]) -> dict[int, list[Unit]]:
-    """표·행 단위 → 묶인 활성 칸 문장(문서 순서) — 호출 동안 바뀐 칸도 맞게 지금 읽는다."""
+    """표·행·그림 단위 → 묶인 활성 칸 문장·캡션(문서 순서) — 호출 동안 바뀐 칸도 맞게 지금 읽는다."""
     rows = await select_in_chunks(
         session,
         lambda chunk: select(Unit)
@@ -456,11 +460,36 @@ def _iter_old_cells(unit: Unit, cells: Iterable[Unit], positions: Mapping[int, t
 
 
 def _build_cell_write(cell: TargetSentence, source: Unit | None) -> _TargetWrite:
-    """칸 새 문장의 변경 종류 — 출처가 없으면 신규, 글자가 같으면 그대로, 다르면 고쳐 씀이고 사람 저장과 같은 문장 검사를 건다."""
+    """칸·캡션 새 문장의 변경 종류 — 출처가 없으면 신규, 글자가 같으면 그대로, 다르면 고쳐 씀이고 사람 저장과 같은 문장 검사를 건다."""
     if source is None:
         return _TargetWrite(cell, "new")
     change_type = "as_is" if source.text == cell.confirmed_text else "rewritten"
     return _TargetWrite(cell, change_type, check_sentence([source.text], cell.confirmed_text))
+
+
+def _split_captions(members: Iterable[_CellT], is_caption: Callable[[_CellT], bool]) -> tuple[list[_CellT], list[_CellT]]:
+    """묶음의 자식을 (칸, 캡션)으로 — 캡션은 칸 좌표가 없어 칸 연결에 넣지 않는다."""
+    cells: list[_CellT] = []
+    captions: list[_CellT] = []
+    for member in members:
+        (captions if is_caption(member) else cells).append(member)
+    return cells, captions
+
+
+def _plan_captions(
+    old_captions: Sequence[Unit], new_captions: Sequence[TargetSentence]
+) -> tuple[list[_TargetWrite], list[tuple[int, int]]]:
+    """캡션 새 문장을 옛 묶음의 캡션 단위에 잇는다 — 언어마다 문서 순서로 짝짓고, 짝이 없는 새 캡션은 신규다(옛 쪽은 원문 그대로)."""
+    by_lang: dict[str, list[Unit]] = defaultdict(list)
+    for caption in old_captions:
+        by_lang[caption.lang].append(caption)
+    links: dict[int, Unit] = {}
+    for target in new_captions:
+        sources = by_lang.get(target.lang)
+        if sources:
+            links[target.id] = sources.pop(0)
+    writes = [_build_cell_write(target, links.get(target.id)) for target in new_captions]
+    return writes, [(target_id, source.id) for target_id, source in links.items()]
 
 
 def _plan_table(
@@ -471,8 +500,9 @@ def _plan_table(
     grid: dict[str, int],
     old_cells: Iterable[tuple[int, int, str, Unit]],
     new_cells: Sequence[TargetSentence],
+    captions: tuple[list[_TargetWrite], list[tuple[int, int]]] = ([], []),
 ) -> _Write:
-    """격자가 같으면 (행, 열, 언어, 칸 안 순서)로 칸을 잇고, 다르면 표끼리만 잇는다.
+    """격자가 같으면 (행, 열, 언어, 칸 안 순서)로 칸을 잇고, 다르면 표끼리만 잇는다. 캡션은 격자와 상관없이 언어마다 잇는다.
 
     그대로인 표는 옛 칸 문장마다 칸 새 문장이 있어야 저장되므로(table_cells_missing) 옛 칸이 남으면 격자가 같아도 표 구성 변경이다.
     """
@@ -484,17 +514,21 @@ def _plan_table(
         links = {news[key].id: olds[key] for key in olds.keys() & news.keys()}
         is_as_is = olds.keys() <= news.keys()
     change_type = "as_is" if is_as_is else "table_restructured"
+    caption_writes, caption_links = captions
     return _Write(
         entry, _TABLE, change_type, unit_ids=(unit.id,), disposition="assigned",
-        targets=(_TargetWrite(target, change_type), *(_build_cell_write(cell, links.get(cell.id)) for cell in new_cells)),
-        links=((target.id, unit.id), *((target_id, source.id) for target_id, source in links.items())),
+        targets=(
+            _TargetWrite(target, change_type), *(_build_cell_write(cell, links.get(cell.id)) for cell in new_cells),
+            *caption_writes,
+        ),
+        links=((target.id, unit.id), *((target_id, source.id) for target_id, source in links.items()), *caption_links),
     )
 
 
 async def _plan_tables(
     session: AsyncSession, groups: Sequence[MatchGroup], olds: Mapping[int, _Entry], targets: Mapping[int, TargetSentence]
 ) -> list[_Write]:
-    """표 그룹마다 칸 연결까지 정한다 — 그룹은 표끼리 1:1이다."""
+    """표 그룹마다 칸·캡션 연결까지 정한다 — 그룹은 표끼리 1:1이다."""
     if not groups:
         return []
     rows = await select_in_chunks(
@@ -502,26 +536,47 @@ async def _plan_tables(
     )
     units = {row[0].id: row[0] for row in rows}
     shapes = await load_table_shapes(session, list(units.values()))
-    cell_units = await _load_cell_units(session, units)
-    positions = await load_cell_positions(session, [cell for cells in cell_units.values() for cell in cells])
-    cell_targets = await _load_cell_targets(session, [group.target_ids[0] for group in groups])
+    members = {
+        unit_id: _split_captions(cells, lambda cell: cell.kind == CAPTION_KIND)
+        for unit_id, cells in (await _load_cell_units(session, units)).items()
+    }
+    positions = await load_cell_positions(session, [cell for cells, _ in members.values() for cell in cells])
+    children = {
+        target_id: _split_captions(cells, is_caption_target)
+        for target_id, cells in (await _load_cell_targets(session, [group.target_ids[0] for group in groups])).items()
+    }
     writes = []
     for group in groups:
         unit, target = units[group.old_ids[0]], targets[group.target_ids[0]]
         n_rows, n_cols = shapes[unit.table_id]
+        old_cells, old_captions = members.get(unit.id, ([], []))
+        new_cells, new_captions = children.get(target.id, ([], []))
         writes.append(_plan_table(
             olds[unit.id], unit, target, grid={"rows": 1 if unit.kind == "table_row" else n_rows, "cols": n_cols},
-            old_cells=_iter_old_cells(unit, cell_units[unit.id], positions), new_cells=cell_targets[target.id],
+            old_cells=_iter_old_cells(unit, old_cells, positions), new_cells=new_cells,
+            captions=_plan_captions(old_captions, new_captions),
         ))
     return writes
 
 
-def _plan_figure(group: MatchGroup, olds: Mapping[int, _Entry], targets: Mapping[int, TargetSentence]) -> _Write:
-    (unit_id,), (target_id,) = group.old_ids, group.target_ids
-    return _Write(
-        olds[unit_id], _FIGURE, "as_is", unit_ids=(unit_id,), disposition="assigned",
-        targets=(_TargetWrite(targets[target_id], "as_is"),), links=((target_id, unit_id),),
-    )
+async def _plan_figures(
+    session: AsyncSession, groups: Sequence[MatchGroup], olds: Mapping[int, _Entry], targets: Mapping[int, TargetSentence]
+) -> list[_Write]:
+    """그림 그룹마다 그림끼리 잇고 캡션 새 문장을 옛 그림의 캡션 단위에 잇는다 — 그룹은 그림끼리 1:1이고, 그림 짝은 캡션 글로 찾았다."""
+    if not groups:
+        return []
+    old_captions = await _load_cell_units(session, [group.old_ids[0] for group in groups])
+    new_captions = await _load_cell_targets(session, [group.target_ids[0] for group in groups])
+    writes = []
+    for group in groups:
+        (unit_id,), (target_id,) = group.old_ids, group.target_ids
+        caption_writes, caption_links = _plan_captions(old_captions.get(unit_id, []), new_captions.get(target_id, []))
+        writes.append(_Write(
+            olds[unit_id], _FIGURE, "as_is", unit_ids=(unit_id,), disposition="assigned",
+            targets=(_TargetWrite(targets[target_id], "as_is"), *caption_writes),
+            links=((target_id, unit_id), *caption_links),
+        ))
+    return writes
 
 
 def _plan_sentence(
@@ -829,7 +884,7 @@ class MatchPlanHandler:
         writes = [
             *sentences,
             *await _plan_tables(session, by_kind[_TABLE], loaded.olds, targets),
-            *(_plan_figure(group, loaded.olds, targets) for group in by_kind[_FIGURE]),
+            *await _plan_figures(session, by_kind[_FIGURE], loaded.olds, targets),
             *await _plan_new(session, lone_news, loaded.news, targets),
         ]
         if not await has_assign_documents(session, job.bundle_id):  # 입구 1이 있으면 분류가 받도록 미배정으로 남긴다(설계 §7.10)

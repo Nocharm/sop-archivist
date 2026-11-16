@@ -193,12 +193,40 @@ def test_new_doc_tables_figures_and_nested_paths(client: TestClient) -> None:
     assert (figure["kind"], figure["lang"], figure["confirmed_text"], figure["new_unit_id"]) == (
         "figure", "neutral", "", figure_unit["id"],
     )
-    # 캡션은 제 단위의 새 문장이다 — 그림 새 문장 아래에 잇는 것은 Task 12라 아직 보통 문장이다
+    # 캡션은 제 단위의 새 문장이고 그림 새 문장 아래 칸 좌표 없이 붙는다
     caption_unit = find_unit(view, "그림 1 합성 장비")
     assert (caption["kind"], caption["confirmed_text"], caption["new_unit_id"], caption["parent_target_id"]) == (
-        "sentence", "그림 1 합성 장비", caption_unit["id"], None,
+        "sentence", "그림 1 합성 장비", caption_unit["id"], figure["id"],
     )
+    assert (caption["cell_row"], caption["cell_col"]) == (None, None)
     assert [t["order_index"] for t in targets] == sorted(t["order_index"] for t in targets)
+
+
+def test_written_new_doc_caption_is_a_child_of_its_figure(client: TestClient) -> None:
+    """입구 2 캡션 새 문장은 표·그림 새 문장의 자식(칸 좌표 없음)이다 — 최상위 캡션 새 문장은 만들지 않는다."""
+    bundle = create_bundle(client, is_synthetic=True)
+    body = (
+        p("표 1 합성 기록", "Caption")
+        + tbl([["항목", "Item"], ["합성 값", "Synthetic value"]])
+        + f"<w:p>{make_drawing_run('image1.png')}</w:p>"
+        + p("그림 1 합성 장비", "Caption")
+    )
+    new_doc = _upload_new(client, bundle["id"], body, media={"image1.png": TINY_PNG})
+    view = get_view(client, bundle["id"], new_doc["id"])
+    captions = {unit["id"]: unit for unit in view["units"] if unit["kind"] == "caption"}
+
+    targets = _load_targets(new_doc["target_doc_id"])
+
+    by_unit = {target["new_unit_id"]: target for target in targets}
+    bundle_targets = {target["kind"]: target for target in targets if target["kind"] in ("table", "figure")}
+    assert len(captions) == 2
+    for unit_id, unit in captions.items():
+        target = by_unit[unit_id]
+        expected_parent = bundle_targets["table" if unit["text"].startswith("표") else "figure"]
+        assert (target["kind"], target["lang"], target["confirmed_text"]) == ("sentence", unit["lang"], unit["text"])
+        assert (target["parent_target_id"], target["cell_row"], target["cell_col"]) == (expected_parent["id"], None, None)
+    # 부모 없는 캡션 새 문장은 없다
+    assert {t["new_unit_id"] for t in targets if t["parent_target_id"] is None} & captions.keys() == set()
 
 
 def test_clause_number_headings_set_level_one_without_styles(client: TestClient) -> None:
@@ -508,6 +536,21 @@ def test_bulk_new_table_needs_its_cells(client: TestClient) -> None:
     assert {(t["change_type"], t["status"]) for t in _load_targets(new_doc["target_doc_id"])} == {("new", "confirmed")}
 
 
+def test_bulk_new_figure_needs_its_caption(client: TestClient) -> None:
+    """그림 새 문장도 캡션 새 문장과 한 관계 묶음이다 — 그림만 신규로 확정하면 캡션이 미배정으로 남는다."""
+    bundle = create_bundle(client, is_synthetic=True)
+    body = f"<w:p>{make_drawing_run('image1.png')}</w:p>" + p("그림 1 합성 장비", "Caption")
+    new_doc = _upload_new(client, bundle["id"], body, media={"image1.png": TINY_PNG})
+    figure, caption = _load_targets(new_doc["target_doc_id"])
+    items = [{"target_id": row["id"], "revision": row["revision"]} for row in (figure, caption)]
+
+    half = _bulk_confirm(client, bundle["id"], {"new": items[:1]})
+    whole = _bulk_confirm(client, bundle["id"], {"new": items})
+
+    assert (half.status_code, half.json()["detail"]) == (422, {"code": "not_new", "target_id": figure["id"]})
+    assert whole.status_code == 200, whole.text
+
+
 def test_bulk_confirm_request_limits_and_roles(client: TestClient) -> None:
     fx = _setup(client, p("합성 장비를 켠다."), p("합성 장비를 켠다."))
     assert set_members(client, fx.bundle_id, [("qa.member", "author"), ("qa.lead", "reviewer")]).status_code == 200
@@ -612,6 +655,28 @@ def test_unmatched_new_target_saved_alone_is_new(client: TestClient) -> None:
     assert (saved["id"], saved["change_type"], saved["status"], saved["source_unit_ids"]) == (
         target["id"], "new", "confirmed", [],
     )
+
+
+def test_old_plain_sentence_can_source_a_new_doc_caption(client: TestClient) -> None:
+    """옛 쪽에서 캡션으로 읽히지 않은 보통 문장도 입구 2 캡션 새 문장의 출처가 된다(표·그림 명세 §3.3) — 옛 캡션 단위는 아니어도 된다."""
+    caption_text = "그림 1 합성 장비 배치도"
+    fx = _setup(
+        client, p(caption_text), f"<w:p>{make_drawing_run('image1.png')}</w:p>" + p(caption_text, "Caption"),
+    )
+    plain = find_unit(fx.old_view, caption_text)
+    targets = _load_targets(fx.new_doc["target_doc_id"])
+    caption = _find_target(targets, caption_text)
+    (figure,) = [target for target in targets if target["kind"] == "figure"]
+    assert (plain["kind"], caption["parent_target_id"]) == ("sentence", figure["id"])
+
+    response = save_group(client, fx.bundle_id, {
+        "action": "confirm", "units": [_assigned(plain)],
+        "targets": [_link("f", figure, [], kind="figure"), _link("c", caption, [plain])],
+    })
+
+    assert response.status_code == 200, response.text
+    saved = {target["id"]: target for target in response.json()["targets"]}
+    assert (saved[caption["id"]]["change_type"], saved[caption["id"]]["source_unit_ids"]) == ("as_is", [plain["id"]])
 
 
 def test_match_doc_text_is_locked(client: TestClient) -> None:

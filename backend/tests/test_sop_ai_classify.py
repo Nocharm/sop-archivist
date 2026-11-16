@@ -78,6 +78,7 @@ pytestmark = pytest.mark.usefixtures("clean_sop", "clean_ai_jobs")
 
 FIRST_SLOT = "c1"  # 임베딩이 꺼져 있으면 후보가 목록 순서 그대로라 c1은 SOP-AI의 Purpose 칸이다
 CELLS = [["합성 항목", "합성 값"], ["합성 압력", "10 bar"]]
+FIGURE_CAPTION = "그림 1 합성 장비 배치도"
 MARKER = "RAW-REPLY-MARKER"
 MISSING_REWRITE_REPLY = json.dumps({
     "candidate": FIRST_SLOT, "reason": MARKER, "rule_ids": [], "evidence": [], "change_type": "tone",
@@ -660,7 +661,7 @@ def test_table_suggestion_passes_the_checks_of_a_human_save(client: TestClient, 
             for target in group["targets"]
         ],
     }
-    body["targets"] += build_missing_caption(group["targets"], table_target)  # 제안에 아직 캡션이 없다(Task 12)
+    body["targets"] += build_missing_caption(group["targets"], table_target)  # 캡션 없는 표는 사람이 캡션을 써 넣어야 확정된다
 
     response = save_group(client, bundle.id, body)
 
@@ -684,6 +685,69 @@ def test_figure_unit_becomes_figure_target(client: TestClient, fake_ai: FakeAi) 
     target = get_target(client, bundle.id, figure["id"])
     assert (target["kind"], target["lang"], target["change_type"]) == ("figure", "neutral", "as_is")
     assert (target["ai_text"], target["status"], target["source_unit_ids"]) == ("", "ai_suggested", [figure["id"]])
+
+
+def test_classify_figure_suggests_its_caption_under_the_figure(client: TestClient, fake_ai: FakeAi) -> None:
+    """캡션은 그림 새 문장 아래 칸 좌표 없는 캡션 새 문장이 되고, AI는 비어 있는 그림 글 대신 캡션을 맥락으로 받는다."""
+    bundle = make_ai_bundle(client)
+    view = upload_second_document(
+        client, bundle.id, f"<w:p>{make_drawing_run('image1.png')}</w:p>" + p(FIGURE_CAPTION, "Caption"),
+        media={"image1.png": TINY_PNG},
+    )
+    figure, caption = find_kind(view, "figure"), find_unit(view, FIGURE_CAPTION)
+    use_reply(fake_ai)
+    queue_units(client, bundle.id, [figure["id"]])
+
+    run_jobs()
+
+    targets = get_group_by_unit(client, bundle.id, figure["id"])["targets"]
+    (figure_target,) = [target for target in targets if target["kind"] == "figure"]
+    (caption_target,) = [target for target in targets if target["parent_target_id"] == figure_target["id"]]
+    assert (caption_target["kind"], caption_target["lang"], caption_target["ai_text"]) == ("sentence", caption["lang"], FIGURE_CAPTION)
+    assert (caption_target["cell_row"], caption_target["cell_col"]) == (None, None)
+    assert (caption_target["change_type"], caption_target["status"], caption_target["confirmed_text"]) == ("as_is", "ai_suggested", "")
+    assert caption_target["source_unit_ids"] == [caption["id"]]
+    assert read_single_suggestion().content["target_ids"] == [figure_target["id"], caption_target["id"]]
+    (context,) = fake_ai.requests[0]["context"]
+    assert (context["caption"], context["table"]) == (FIGURE_CAPTION, "")
+
+
+@pytest.mark.parametrize(("caption_text", "expected"), [(FIGURE_CAPTION, "as_is"), ("그림 1 고친 배치도", "edited")])
+def test_ai_suggested_figure_caption_is_compared_for_adoption(
+    client: TestClient, fake_ai: FakeAi, caption_text: str, expected: str
+) -> None:
+    """캡션 새 문장도 제안 모습과 견준다 — 캡션까지 그대로 확정하면 그대로, 캡션 글을 고치면 고침이다."""
+    bundle = make_ai_bundle(client)
+    view = upload_second_document(
+        client, bundle.id, f"<w:p>{make_drawing_run('image1.png')}</w:p>" + p(FIGURE_CAPTION, "Caption"),
+        media={"image1.png": TINY_PNG},
+    )
+    figure = find_kind(view, "figure")
+    use_reply(fake_ai)
+    queue_units(client, bundle.id, [figure["id"]])
+    run_jobs()
+    group = get_group_by_unit(client, bundle.id, figure["id"])
+    (figure_target,) = [target for target in group["targets"] if target["kind"] == "figure"]
+    body = {
+        "action": "confirm",
+        "units": [{"unit_id": figure["id"], "revision": group["units"][0]["decision"]["revision"], "disposition": "assigned"}],
+        "targets": [
+            {
+                "key": str(target["id"]), "id": target["id"], "revision": target["revision"], "kind": target["kind"],
+                "slot_key": target["slot_key"], "source_unit_ids": target["source_unit_ids"],
+                **({} if target["kind"] == "figure" else {
+                    "text": caption_text, "parent_key": str(figure_target["id"]),
+                    "change_type": "as_is" if caption_text == FIGURE_CAPTION else "rewritten",
+                }),
+            }
+            for target in group["targets"]
+        ],
+    }
+
+    response = save_group(client, bundle.id, body)
+
+    assert response.status_code == 200, response.text
+    assert read_single_suggestion().adoption == expected
 
 
 def test_wi_candidate_lands_in_the_step_and_part(client: TestClient, fake_ai: FakeAi) -> None:
@@ -1027,7 +1091,7 @@ def test_payload_carries_units_context_candidates_and_tobe(client: TestClient, f
     ]
     assert [item["unit_id"] for item in data["context"]] == [ko, en]
     assert data["context"][0]["after"] == [AI_EN_1, AI_KO_2]
-    assert set(data["context"][0]) == {"unit_id", "section", "before", "after", "table"}
+    assert set(data["context"][0]) == {"unit_id", "section", "before", "after", "table", "caption"}
     assert all(set(item) == {"key", "label"} for item in data["candidates"])
     assert data["candidates"][-1]["key"] == "delete"
     assert data["tobe"] == [

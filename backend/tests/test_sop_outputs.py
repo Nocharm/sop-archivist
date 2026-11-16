@@ -1090,8 +1090,8 @@ SUMMARY_KEYS = (
     "single_language",
 )
 # 줄 기준 — 짝이 없어 단위마다 한 줄이고 표는 칸 넷을 묶어 한 줄이다: OLD-1 10줄(그림 보류·영어 미배정) + OLD-2 5줄.
-# 한 언어 글은 두 언어 문서(ko_en_separate)의 짝 없는 문장·제목 13개다(번역 새 문장이 없다)
-PROGRESS = {"total": 15, "unassigned": 1, "ai_suggested": 0, "confirmed": 13, "on_hold": 1, "single_language": 13}
+# 한 언어 글은 두 언어 문서(ko_en_separate)의 짝 없는 문장·제목 13개와 보류(처분은 배정)한 그림의 한글 캡션 하나다(번역 새 문장이 없다)
+PROGRESS = {"total": 15, "unassigned": 1, "ai_suggested": 0, "confirmed": 13, "on_hold": 1, "single_language": 14}
 EMPTY_PROGRESS = dict.fromkeys(PROGRESS, 0)
 
 
@@ -1104,7 +1104,7 @@ def test_summary_numbers(client: TestClient) -> None:
     # 한 벌 — 판 키가 없다. 줄 15(진행 숫자와 같은 줄), 확정 13(그림 보류·영어 미배정), 배정은 삭제·이동을 포함한다
     assert summary == {
         "old_rows": 15, "assigned": 14, "no_destination": 1, "duplicate": 1, "deleted": 5, "moved": 1, "new": 1,
-        "translated": 0, "confirmed_rate": 0.8667, "single_language": 13,
+        "translated": 0, "confirmed_rate": 0.8667, "single_language": 14,
     }
     assert set(summary) == set(SUMMARY_KEYS)
     assert summary["old_rows"] == progress["total"]
@@ -1132,7 +1132,44 @@ def test_human_translation_counts_in_summary(client: TestClient) -> None:
     summary = _get_output(client, fx.bundle_id, "summary")
 
     assert (summary["translated"], summary["no_destination"], summary["duplicate"]) == (1, 0, 1)
-    assert summary["single_language"] == get_bundle(client, fx.bundle_id)["progress"]["single_language"] == 12
+    assert summary["single_language"] == get_bundle(client, fx.bundle_id)["progress"]["single_language"] == 13
+
+
+def test_single_language_counts_a_one_language_caption(client: TestClient) -> None:
+    """캡션은 묶여 있어도 한 언어뿐이면 한 언어 숫자에 든다(표·그림 명세 §3.2) — 묶음이 배정됐을 때만, 다른 언어 새 문장이 생기면 빠진다."""
+    caption_text = "그림 1 합성 장비 배치도"
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    response = put_tobe(client, bundle_id, TOBE_DOCS[:1])
+    assert response.status_code == 200, response.text
+    sop_id = response.json()["docs"][0]["id"]
+    body = p(KO_ON) + p(EN_ON) + f"<w:p>{make_drawing_run('image1.png')}</w:p>" + p(caption_text, "Caption")
+    doc = _upload_ready(client, bundle_id, build_docx(body, media={"image1.png": TINY_PNG}), OLD1_NAME)
+    view = get_view(client, bundle_id, doc["id"])
+    assert view["document"]["language_layout"] == "ko_en_interleaved"
+    figure = next(unit for unit in view["units"] if unit["kind"] == "figure")
+    caption = find_unit(view, caption_text)
+
+    def count() -> tuple[int, int]:
+        summary = _get_output(client, bundle_id, "summary")
+        return summary["single_language"], get_bundle(client, bundle_id)["progress"]["single_language"]
+
+    before = count()
+    assign_as_is(client, bundle_id, figure, sop_id, slot_key="purpose")
+    assigned = count()
+
+    async def _translate(session: AsyncSession) -> None:
+        session.add(TargetSentence(
+            bundle_id=bundle_id, target_doc_id=sop_id, slot_key="purpose", lang="en", kind="sentence",
+            confirmed_text="Figure 1 Synthetic layout", origin="translation", translation_source_unit_id=caption["id"],
+            status="confirmed",
+        ))
+        await session.commit()
+
+    run_in_session(_translate)
+
+    assert before == (0, 0)
+    assert assigned == (1, 1)
+    assert count() == (0, 0)
 
 
 def test_translated_added_counts_as_translated_and_new(client: TestClient) -> None:

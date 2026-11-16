@@ -1,4 +1,4 @@
-"""단위 맥락 — AI 분류가 단위와 함께 받는 앞뒤 단위·소속 절 제목·표 Markdown (설계 §7.8).
+"""단위 맥락 — AI 분류가 단위와 함께 받는 앞뒤 단위·소속 절 제목·표 Markdown·캡션 (설계 §7.8).
 
 질의 수는 단위 수와 상관없이 일정하다(추출 수·IN 조각 수에만 따라 는다). 글은 열 단위 select로만 읽어 지연 로드 열을 건드리지 않는다.
 """
@@ -19,7 +19,8 @@ from app.sop.ai.constants import (
     NEIGHBOR_UNITS,
 )
 from app.sop.constants import COVER_KINDS
-from app.sop.groups import TABLE_UNIT_KINDS, select_in_chunks
+from app.sop.captions import CAPTION_KIND
+from app.sop.groups import BUNDLE_UNIT_KINDS, TABLE_UNIT_KINDS, select_in_chunks
 from app.sop.models import SourceBlock, Unit
 from app.sop.units import UNIT_ACTIVE
 
@@ -28,12 +29,14 @@ _NEWLINE_RE = re.compile(r"\r\n|\r|\n")
 
 @dataclass(frozen=True)
 class UnitContext:
-    """단위 하나의 맥락 — 앞뒤 단위 글(원문 순서), 소속 절 이름, 표·표 행 단위면 칸 격자 Markdown(아니면 빈 글)."""
+    """단위 하나의 맥락 — 앞뒤 단위 글(원문 순서), 소속 절 이름, 표·표 행 단위면 칸 격자 Markdown(아니면 빈 글),
+    표·행·그림 단위면 묶인 캡션 글(문서 순서로 줄을 바꿔 잇는다, 없으면 빈 글)."""
 
     section: str
     before: tuple[str, ...]
     after: tuple[str, ...]
     table_markdown: str
+    caption: str
 
 
 def _escape_table_cell(text: str) -> str:
@@ -153,6 +156,18 @@ async def load_unit_context(session: AsyncSession, unit_ids: Sequence[int]) -> d
     # 표 하나를 쓰는 단위가 여럿(표 행 단위 여럿)이어도 표마다 한 번만 그린다
     markdown_by_table = {table_id: _render_table_context(cells) for table_id, cells in cells_by_table.items()}
 
+    # 새 추출의 그림 단위는 글이 비어 캡션이 그 그림을 말해 주는 유일한 글이다 — 캡션은 묶여 있어 이웃으로도 실리지 않는다
+    caption_rows = await select_in_chunks(
+        session,
+        lambda chunk: select(Unit.group_unit_id, Unit.text)
+        .where(Unit.group_unit_id.in_(chunk), Unit.kind == CAPTION_KIND, Unit.status == UNIT_ACTIVE)
+        .order_by(Unit.pos_seq, Unit.pos_start, Unit.id),
+        [row.id for row in unit_rows if row.kind in BUNDLE_UNIT_KINDS],
+    )
+    captions: dict[int, list[str]] = defaultdict(list)
+    for row in caption_rows:
+        captions[row.group_unit_id].append(row.text)
+
     contexts: dict[int, UnitContext] = {}
     for unit in unit_rows:
         is_table_unit = unit.kind in TABLE_UNIT_KINDS
@@ -167,5 +182,6 @@ async def load_unit_context(session: AsyncSession, unit_ids: Sequence[int]) -> d
             before=tuple(texts[neighbor_id] for neighbor_id in before),
             after=tuple(texts[neighbor_id] for neighbor_id in after),
             table_markdown=markdown_by_table.get(unit.table_id, "") if is_table_unit else "",
+            caption="\n".join(captions.get(unit.id, ())),
         )
     return contexts
