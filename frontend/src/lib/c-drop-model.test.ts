@@ -79,6 +79,18 @@ describe("planDrop", () => {
     expect(planDrop({ ...base, items: grouped, pointerY: 25 }).beforeId).toBe(4); // 묶음 중간(20) 아래 → 묶음 뒤
     expect(planDrop({ ...base, items: grouped, pointerY: 15 }).beforeId).toBe(2); // 위 → 묶음 앞(제자리)
   });
+  it("lets the block stay between a same-meaning pair it already splits", () => {
+    const split = [line(1, { meaning_key: "m1" }), line(2, { meaning_key: "m2" }), line(3, { meaning_key: "m1" })];
+    const args = { ...base, items: split, depths: [0, 0, 0], block: { start: 1, end: 1, baseDepth: 0, isDepthLocked: false }, rows: box([1, 3]), pointerY: 20 };
+    expect(planDrop({ ...args, dx: 0 })).toMatchObject({ beforeId: 3, edit: null });
+    expect(planDrop({ ...args, dx: 24 })).toMatchObject({ beforeId: 3, edit: { targetIds: [2], beforeId: 3, depths: [1] } });
+  });
+  it("still snaps out of a same-meaning pair that sits together", () => {
+    const pair = [line(1, { meaning_key: "m1" }), line(2, { meaning_key: "m1" }), line(3, { meaning_key: "m2" })];
+    const args = { ...base, items: pair, depths: [0, 0, 0], block: { start: 2, end: 2, baseDepth: 0, isDepthLocked: false }, rows: box([1, 2]) };
+    expect(planDrop({ ...args, pointerY: 15 }).beforeId).toBe(1);
+    expect(planDrop({ ...args, pointerY: 25 }).beforeId).toBeNull(); // 묶음 뒤 = 칸 끝(덩어리는 건너뛴다)
+  });
   it("drops below the last rendered row before the first unrendered one", () => {
     const long = [1, 2, 3, 4, 5, 6, 7].map((id) => line(id));
     const plan = planDrop({ ...base, items: long, depths: [0, 0, 0, 0, 0, 0, 0], rows: box([2, 3]), pointerY: 500 });

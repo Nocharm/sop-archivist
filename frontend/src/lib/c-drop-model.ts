@@ -59,13 +59,16 @@ export interface DropPlan {
 function findInsertIndex(items: readonly OutputCItem[], rows: readonly RowBox[], pointerY: number): number {
   let k = rows.filter((row) => (row.top + row.bottom) / 2 < pointerY).length;
   if (k === 0 || k >= rows.length) return k;
-  const keyOf = (row: RowBox) => items.find((item) => item.target_id === row.targetId)?.meaning_key ?? null;
+  const indexOf = (row: RowBox) => items.findIndex((item) => item.target_id === row.targetId);
+  const keyOf = (row: RowBox) => items[indexOf(row)]?.meaning_key ?? null;
+  // 이웃은 칸의 실제 순서(items)로 본다 - 끌린 덩어리가 사이에 끼어 있던 짝은 한 묶음이 아니라 그 틈이 놓을 수 있는 자리다
+  const isNeighbour = (before: RowBox, after: RowBox) => keyOf(before) === keyOf(after) && indexOf(after) === indexOf(before) + 1;
   const key = keyOf(rows[k]);
-  if (key === null || keyOf(rows[k - 1]) !== key) return k;
+  if (key === null || !isNeighbour(rows[k - 1], rows[k])) return k;
   let first = k - 1;
   let last = k;
-  while (first > 0 && keyOf(rows[first - 1]) === key) first -= 1;
-  while (last + 1 < rows.length && keyOf(rows[last + 1]) === key) last += 1;
+  while (first > 0 && isNeighbour(rows[first - 1], rows[first])) first -= 1;
+  while (last + 1 < rows.length && isNeighbour(rows[last], rows[last + 1])) last += 1;
   const groupMid = (rows[first].top + rows[last].bottom) / 2;
   k = pointerY < groupMid ? first : last + 1;
   return k;
