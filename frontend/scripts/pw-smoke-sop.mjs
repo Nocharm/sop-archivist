@@ -1554,7 +1554,7 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   await page.keyboard.press("Escape");
   await page.locator('[data-pane="old"] .cut-anchor').first().waitFor({ state: "detached", timeout: T });
 
-  // 8. 아직 쓰지 않은 문서 - 그 문장 위에는 놓을 자리가 없고 놓아도 아무 일도 없다(3걸음에서 보내기로 놓인다)
+  // 8. 아직 쓰지 않은 문서 - 그 문장은 잇는 대상이 아니다. 3걸음부터 문장 위는 보내기의 놓을 자리라 놓으면 저장 전 초안이 된다(잇기가 아니다)
   let composedLine = null;
   for (const docId of composedDocIds) {
     await openNewDoc(docId);
@@ -1570,10 +1570,27 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   await dragThrough(page, await pointInUnit(bId), [{ x: composedBox.x + Math.min(60, composedBox.width / 2), y: composedBox.y + composedBox.height / 2 }]);
   await page.waitForTimeout(100);
   const overComposed = await readMarks();
+  const composedNote = await page.evaluate(() => ({
+    note: document.querySelector('[data-testid="drag-card"] .drag-card-note')?.textContent ?? "",
+    lineDrops: document.querySelectorAll('[data-pane="new"] .new-line[data-drop]').length,
+  }));
+  // 끈 Unit은 미배정이라 어느 칸에도 문장이 없다 - "이미 이 칸에 있다" 거절이 될 수 없다
+  const bBefore = (await readUnits()).find((unit) => unit.unit_id === bId);
+  check("the dragged unit has no sentence anywhere yet", bBefore?.status === "unassigned" && bBefore.target_ids.length === 0, JSON.stringify(bBefore?.target_ids));
   await page.mouse.up();
-  await page.waitForTimeout(600);
-  check("a sentence of an unwritten document takes no drop yet", overComposed.cards === 1 && overComposed.drops === 0, JSON.stringify(overComposed));
-  check("dropping there does nothing", (await menu.count()) === 0 && (await pieceOf(aId).getAttribute("data-sel")) === "" && (await pieceOf(bId).getAttribute("data-sel")) === null);
+  check("a sentence of an unwritten document is not a link target", overComposed.cards === 1 && composedNote.lineDrops === 0 && composedNote.note.startsWith("→ "), JSON.stringify({ ...overComposed, ...composedNote }));
+  await menu.waitFor({ timeout: T });
+  check(
+    "dropping there makes an unsaved draft, not a link",
+    (await menu.isVisible()) && (await page.locator('[data-testid="assign-new-draft"]').count()) === 1 && (await page.locator('[data-testid="assign-link-menu-unsaved"]').count()) === 1 && (await pieceOf(bId).getAttribute("data-sel")) === "" && (await readUnits()).find((unit) => unit.unit_id === bId)?.status === "unassigned",
+  );
+  await page.locator('[data-testid="assign-link-menu-cancel"]').click();
+  await page.locator('[data-testid="assign-new-draft"]').waitFor({ state: "detached", timeout: T });
+  // 아래 경주는 끈 줄이 고른 줄이 아닐 때다 - 앞서처럼 다른 줄(a)을 다시 고른다
+  const aAgain = await pointInUnit(aId);
+  await page.mouse.click(aAgain.x, aAgain.y);
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-sel"), aId, { timeout: T });
+  await page.waitForLoadState("networkidle");
 
   // 놓자마자 j로 다음 줄로 옮기면 늦게 온 관계 묶음이 옮겨 간 줄에 잇기를 적용하지 않는다 - 끈 줄의 묶음 응답을 늦춰 경주를 정해 둔다
   await openNewDoc(written.find((row) => row.target_id === tId).target_doc_id);
@@ -4903,6 +4920,991 @@ await runStep("assign: cutting an assigned sentence asks once, then clears its a
   // 되돌리면 글은 한 문장으로 돌아온다
   await page.locator('[data-testid="assign-undo"]').click();
   check("Undo brings the sentence back as one", await waitUnits(before));
+});
+
+// 끌어서 보내기(끌어다 놓기 설계 §6, 3걸음) - Old 조각을 아직 쓰지 않은 New 문서(New · from Assign)의 두 문장 사이나 빈 칸에 놓으면 그 줄의 초안이 되고(저장하지 않는다),
+// Confirm 때 문장 사이면 그 자리까지 저장한다. 자리를 받은 저장은 그 문서의 순서를 굳히고(manual_order) 화면에서 되돌릴 길이 없다 - 그래서 시드 묶음을 쓰는 Assign·Order 단계가 모두 끝난 뒤에 둔다.
+// 자료는 이 단계가 API로 만든다(A·B·C를 칸 K에, P를 칸 K2에). 끝에 이 단계가 확정한 줄은 Clear(U)로 되돌린다(굳힌 순서는 남는다)
+await runStep("assign: drag an Old piece between two sentences of a New · from Assign document, Confirm saves it at that place", {}, async ({ page, takeShot }) => {
+  await installCommitCounter(page);
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const readUnits = async () => (await getJson("/units?limit=1000")).items;
+  const sop = (await getJson("/tobe")).docs.find((doc) => doc.entrance === "assign" && doc.doc_type === "sop");
+  check("the bundle has an SOP to write in Assign", sop !== undefined);
+  const readSections = async () => (await getJson(`/outputs/c/docs/${sop.id}?lang=en`)).sections;
+  const readIds = async (key) => (await readSections()).find((section) => section.location_key === key).items.map((item) => item.target_id);
+  const readItems = async (key) => (await readSections()).find((section) => section.location_key === key).items;
+  // 미배정·짝 없는 본문 문장이 가장 많은 Old 문서 - 문서 보기의 단위 순서가 원문 순서다
+  const findLoose = async () => {
+    const units = new Map((await readUnits()).map((unit) => [unit.unit_id, unit]));
+    let best = null;
+    for (const doc of (await getJson("/documents")).filter((item) => item.side === "old" && item.status === "ready")) {
+      const view = await getJson(`/documents/${doc.id}/view`);
+      const loose = view.units.map((unit) => units.get(unit.id)).filter((unit) => unit && unit.kind === "sentence" && unit.status === "unassigned" && unit.decision.disposition === "unassigned" && unit.pair_id === null);
+      if (best === null || loose.length > best.loose.length) best = { docId: doc.id, loose };
+    }
+    return best;
+  };
+  let found = await findLoose();
+  if (found.loose.length < 6) {
+    // 이 뒤의 단계는 이 묶음의 배정을 읽지 않는다 - 묶음 전체를 비우고 다시 고른다
+    await page.request.post(`${api}/decisions/reset`, { headers, data: { revision: (await getJson("")).revision } });
+    found = await findLoose();
+  }
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const pieceOf = (id) => page.locator(`[data-testid="assign-paper-piece-${id}"]`);
+  // 그 Unit의 조각이 Old 칸에 없으면 그 문서를 연다(고른 줄이 풀린다)
+  const showOldUnit = async (unit) => {
+    if ((await pieceOf(unit.unit_id).count()) > 0) return true;
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${unit.document_id}"]`).click();
+    return pieceOf(unit.unit_id).waitFor({ timeout: 4000 }).then(() => true, () => false);
+  };
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${found.docId}"]`).click();
+  await page.locator('[data-pane="old"] .strip[data-strip-unit]').first().waitFor({ timeout: T });
+  await page.waitForTimeout(600);
+  // 본문 용지에 조각이 보이는 것만(머리말·꼬리말 탭의 문장은 뺀다)
+  const loose = [];
+  for (const unit of found.loose) if ((await pieceOf(unit.unit_id).count()) > 0) loose.push(unit);
+  check("an Old document shows six loose unassigned sentences", loose.length >= 6, String(loose.length));
+  const [unitA, unitB, unitC, unitP, unitX, unitY] = loose;
+  // 칸 고르기 - 하위 칸이 없는 칸만(상위 칸에 놓는 규칙은 이 걸음이 정하지 않는다)
+  let sections = await readSections();
+  const isLeaf = (key) => !sections.some((section) => section.location_key.startsWith(`${key}.`));
+  const empties = sections.filter((section) => section.na_reason === null && section.items.length === 0 && isLeaf(section.location_key)).map((section) => section.location_key);
+  check("the SOP has three empty sections", empties.length >= 3, empties.join(","));
+  const [slotK, slotK2, slotE, spare] = empties;
+  let tobeBefore = null;
+  if (!sections.some((section) => section.na_reason !== null && section.items.length === 0)) {
+    // N/A 칸이 없으면 하나 만든다(끝에 되돌린다)
+    tobeBefore = await getJson("/tobe");
+    const pick = ({ code, title, doc_type, parent_code, is_equipment_sop, order_index }) => ({ code, title, doc_type, parent_code, is_equipment_sop, order_index });
+    await page.request.put(`${api}/tobe`, { headers, data: { revision: tobeBefore.revision, docs: tobeBefore.docs.map(pick), na_slots: [...tobeBefore.na_slots, { code: sop.code, slot_key: spare, reason: "Synthetic smoke N/A" }], wi_steps: tobeBefore.wi_steps } });
+    sections = await readSections();
+  }
+  const slotN = sections.find((section) => section.na_reason !== null && section.items.length === 0)?.location_key;
+  check("the SOP has an N/A section", slotN !== undefined);
+  // 자리 없는 저장으로 칸에 확정한다(화면의 저장과 같은 모양)
+  const saveTo = async (unit, slotKey) => {
+    const response = await page.request.post(`${api}/groups/save`, {
+      headers,
+      data: {
+        action: "confirm",
+        hold_reason: "",
+        units: [{ unit_id: unit.unit_id, revision: unit.decision.revision, disposition: "assigned", move_target_code: "", reason: "" }],
+        targets: [{ key: `u${unit.unit_id}`, target_doc_id: sop.id, slot_key: slotKey, kind: "sentence", lang: unit.lang, text: unit.text.trim(), change_type: "as_is", source_unit_ids: [unit.unit_id] }],
+        removed_target_ids: [],
+      },
+    });
+    return response.ok();
+  };
+  const setupSaved = [await saveTo(unitA, slotK), await saveTo(unitB, slotK), await saveTo(unitC, slotK), await saveTo(unitP, slotK2)];
+  const [a, b, c] = await readIds(slotK);
+  const [p] = await readIds(slotK2);
+  check("A, B and C sit in K and P in K2", setupSaved.every(Boolean) && [a, b, c, p].every((id) => id !== undefined), JSON.stringify(setupSaved));
+  await page.reload();
+  await wait(page, "assign-bar");
+  const centre = (selector) => page.locator(selector).first().evaluate((el) => el.scrollIntoView({ block: "center" }));
+  // 2걸음 단계의 도우미와 같다 - 조각 글의 첫 글줄 위 한 점, New 칸의 문서 바꾸기
+  const pointInUnit = async (id) => {
+    await centre(`[data-testid="assign-paper-piece-${id}"]`);
+    await page.waitForTimeout(150);
+    return page.locator(`[data-testid="assign-paper-unit-${id}"]`).first().evaluate((el) => {
+      const rect = el.getClientRects()[0];
+      return { x: rect.left + Math.min(24, rect.width / 2), y: rect.top + rect.height / 2 };
+    });
+  };
+  const newPane = page.locator('[data-testid="assign-new"]');
+  const openNewDoc = async (docId) => {
+    if ((await newPane.getAttribute("data-doc")) === String(docId)) return;
+    await page.locator('[data-testid="assign-new-doc"]').click();
+    await page.locator(`[data-testid="assign-new-doc-option-${docId}"]`).click();
+    await page.waitForFunction((id) => document.querySelector('[data-testid="assign-new"]')?.getAttribute("data-doc") === String(id), docId, { timeout: T });
+  };
+  // 엮은 문서의 줄 상자 - 아래 끝 가까이(묶음 아래 절반 → 그 뒤), 위 끝 가까이(위 절반 → 그 앞). 글 위 x
+  const pointInItem = async (targetId, where) => {
+    await centre(`[data-testid="assign-new-${targetId}"]`);
+    await page.waitForTimeout(150);
+    return page.evaluate(({ id, at }) => {
+      const item = document.querySelector(`[data-pane="new"] .new-item[data-row="t:${id}"]`).getBoundingClientRect();
+      const line = document.querySelector(`[data-testid="assign-new-${id}"]`).getBoundingClientRect();
+      const y = at === "bottom" ? item.bottom - 3 : at === "top" ? item.top + 3 : line.top + line.height / 2;
+      return { x: line.left + Math.min(60, line.width / 2), y };
+    }, { id: targetId, at: where });
+  };
+  const readMarks = () => page.evaluate(() => ({
+    cards: document.querySelectorAll('[data-testid="drag-card"]').length,
+    lines: document.querySelectorAll("svg[data-drag-line]").length,
+    drops: document.querySelectorAll("[data-drop]").length,
+    srcs: document.querySelectorAll("[data-drag-src]").length,
+    gap: [...document.querySelectorAll('[data-testid="assign-drop-gap"]')].filter((el) => !el.hidden).length,
+  }));
+  const readCard = () => page.evaluate(() => ({
+    note: document.querySelector('[data-testid="drag-card"] .drag-card-note')?.textContent ?? "",
+    refused: document.querySelector('[data-testid="drag-card"]')?.hasAttribute("data-refused") ?? false,
+  }));
+  const menu = page.locator('[data-testid="assign-link-menu"]');
+  const draft = page.locator('[data-testid="assign-new-draft"]');
+  // 놓기는 저장하지 않는다(반목표) - 화면이 보낸 /groups/save 요청 수(API로 만든 자료는 page.request라 세지 않는다)
+  let saveRequests = 0;
+  page.on("request", (request) => {
+    if (request.url().includes("/groups/save")) saveRequests += 1;
+  });
+  // 놓고 그 자리 메뉴가 뜰 때까지 저장 요청이 하나도 없다
+  const dropAndOpen = async (label) => {
+    const before = saveRequests;
+    await page.mouse.up();
+    await menu.waitFor({ timeout: T });
+    await page.waitForTimeout(400);
+    check(`${label}: the drop sends no save`, saveRequests === before, String(saveRequests - before));
+  };
+  // 고름이 몇 번 적용됐나 - 고른 곳 상자의 번쩍임(data-landing)과 목록에서 날아가는 그림자(.pick-ghost). 놓기 뒤따르는 click이 한 번 더 고르면 는다
+  const watchPicks = () => page.evaluate(() => {
+    window.__landings = 0;
+    window.__ghosts = 0;
+    if (window.__pickWatch) return;
+    window.__pickWatch = new MutationObserver((records) => {
+      for (const record of records) {
+        if (record.type === "attributes" && record.oldValue === null && record.target.matches('[data-testid="assign-chosen"]')) window.__landings += 1;
+        if (record.type === "childList") for (const node of record.addedNodes) if (node instanceof Element && node.matches(".pick-ghost")) window.__ghosts += 1;
+      }
+    });
+    window.__pickWatch.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-landing"], attributeOldValue: true });
+  });
+  const readPicks = () => page.evaluate(() => ({ landings: window.__landings, ghosts: window.__ghosts }));
+  const selectedPiece = () => page.evaluate(() => document.querySelector('[data-pane="old"] [data-testid^="assign-paper-piece-"][data-sel]')?.dataset.testid ?? null);
+  // 저장 요청의 최상위 새 문장 - 그 Unit이 출처인 것
+  const topItemsOf = (body, unitId) => body.targets.filter((target) => !target.parent_key && target.source_unit_ids.includes(unitId));
+  const saveAfterEnter = async () => {
+    await menu.waitFor({ timeout: T });
+    await page.waitForTimeout(500);
+    const request = page.waitForRequest((item) => item.url().includes("/groups/save") && item.method() === "POST", { timeout: T });
+    const response = page.waitForResponse((item) => item.url().includes("/groups/save"), { timeout: T });
+    await page.keyboard.press("Enter");
+    const body = (await request).postDataJSON();
+    const ok = (await response).ok();
+    await page.waitForLoadState("networkidle");
+    return { body, ok };
+  };
+  await showOldUnit(unitX);
+  await pieceOf(unitX.unit_id).waitFor({ timeout: T });
+  await openNewDoc(sop.id);
+  await page.locator(`[data-testid="assign-new-${b}"]`).waitFor({ timeout: T });
+
+  // 1. 끄는 동안 - X를 K의 A와 B 사이로. 표의 메모는 "→ 칸", 놓을 자리 선은 A 줄 상자의 아래 끝, 테두리는 없다
+  const belowA = await pointInItem(a, "bottom");
+  await dragThrough(page, await pointInUnit(unitX.unit_id), [belowA]);
+  await page.waitForTimeout(100);
+  const during = await page.evaluate((id) => {
+    const gap = document.querySelector('[data-testid="assign-drop-gap"]');
+    const item = document.querySelector(`[data-pane="new"] .new-item[data-row="t:${id}"]`).getBoundingClientRect();
+    const box = gap && !gap.hidden ? gap.getBoundingClientRect() : null;
+    return { note: document.querySelector('[data-testid="drag-card"] .drag-card-note')?.textContent ?? "", lineY: box ? box.top + box.height / 2 : null, itemBottom: item.bottom, drops: document.querySelectorAll("[data-drop]").length };
+  }, a);
+  check("between two sentences the card says where it goes", during.note.startsWith("→ "), during.note);
+  check("the drop line sits on the bottom edge of A", during.lineY !== null && Math.abs(during.lineY - during.itemBottom) <= 6, JSON.stringify(during));
+  check("no box is outlined between sentences", during.drops === 0);
+  await takeShot("sop-assign-drag-send.png");
+  const aboveB = await page.evaluate((id) => {
+    const item = document.querySelector(`[data-pane="new"] .new-item[data-row="t:${id}"]`).getBoundingClientRect();
+    return item.top + 3;
+  }, b);
+  const commitsBefore = await page.evaluate(() => window.__commits ?? -1);
+  for (let i = 0; i < 40; i += 1) await page.mouse.move(belowA.x + (i % 4) * 6, i % 2 === 0 ? belowA.y : aboveB);
+  const commitsAfter = await page.evaluate(() => window.__commits ?? -1);
+  check("no React commit while dragging over and between sentences", commitsBefore > 0 && commitsBefore === commitsAfter, `${commitsBefore} -> ${commitsAfter}`);
+
+  // 2. 놓은 뒤 - 끈 줄을 고르고 A와 B 사이에 점선 초안, 그 자리 메뉴(저장 전)
+  await page.mouse.move(belowA.x, belowA.y);
+  await watchPicks();
+  await dropAndOpen("between sentences");
+  check("dropping picks the dragged row", (await pieceOf(unitX.unit_id).getAttribute("data-sel")) === "");
+  // 뒤따르는 click이 New 줄에 닿아 한 번 더 고르거나 자리를 지우지 않는다(Review Focus 5)
+  const dropPicks = await readPicks();
+  check("right after the drop one draft stands and the pick ran once", (await draft.count()) === 1 && dropPicks.landings === 1 && dropPicks.ghosts === 0, JSON.stringify({ drafts: await draft.count(), ...dropPicks }));
+  const placed = await page.evaluate(({ first, second }) => {
+    const box = document.querySelector('[data-testid="assign-new-draft"]');
+    const itemA = document.querySelector(`[data-pane="new"] .new-item[data-row="t:${first}"]`);
+    const itemB = document.querySelector(`[data-pane="new"] .new-item[data-row="t:${second}"]`);
+    if (!box || !itemA || !itemB) return null;
+    const following = (x, y) => (x.compareDocumentPosition(y) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    const r = box.getBoundingClientRect();
+    return { dom: following(itemA, box) && following(box, itemB), y: itemA.getBoundingClientRect().bottom <= r.top + 1 && r.bottom <= itemB.getBoundingClientRect().top + 1, text: document.querySelector('[data-testid="assign-new-draft-line-0"]')?.textContent ?? "" };
+  }, { first: a, second: b });
+  check("the dotted draft sits between A and B", placed !== null && placed.dom && placed.y, JSON.stringify(placed));
+  check("the draft line reads the dragged sentence", placed !== null && placed.text.replace(/\s+/g, " ").includes(unitX.text.replace(/\s+/g, " ").trim()), placed?.text);
+  const chosen = await getText(page, "assign-chosen");
+  check("the chosen box shows that section", !(await page.locator('[data-testid="assign-chosen"]').evaluate((el) => el.classList.contains("is-empty"))) && chosen.includes(sop.code), chosen);
+  check("the in-place menu opens, not saved yet", (await page.locator('[data-testid="assign-link-menu-unsaved"]').count()) === 1);
+  check("Confirm is the primary action", (await page.locator('[data-testid="assign-primary"]').getAttribute("data-state")) === "confirm");
+  const marksAfter = await readMarks();
+  check("the drag leaves no marks behind", marksAfter.cards + marksAfter.lines + marksAfter.drops + marksAfter.srcs + marksAfter.gap === 0, JSON.stringify(marksAfter));
+  await takeShot("sop-assign-drag-send-draft.png");
+  // 3. 저장하지 않았다
+  check("dropping saves nothing", (await readUnits()).find((unit) => unit.unit_id === unitX.unit_id)?.status === "unassigned" && JSON.stringify(await readIds(slotK)) === JSON.stringify([a, b, c]));
+  // 4. Cancel이 초안을 거둔다
+  await page.locator('[data-testid="assign-link-menu-cancel"]').click();
+  await draft.waitFor({ state: "detached", timeout: T });
+  check("Cancel drops the draft", (await draft.count()) === 0 && (await page.locator('[data-testid="assign-chosen"]').evaluate((el) => el.classList.contains("is-empty"))));
+  // 5. Esc - 끄다가 문장 사이에서 취소하면 아무것도 남지 않는다
+  await dragThrough(page, await pointInUnit(unitX.unit_id), [await pointInItem(a, "bottom")]);
+  await page.waitForTimeout(100);
+  await page.keyboard.press("Escape");
+  const afterEsc = await readMarks();
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  check("Esc cancels the drag between sentences", afterEsc.cards + afterEsc.lines + afterEsc.drops + afterEsc.srcs + afterEsc.gap === 0, JSON.stringify(afterEsc));
+  check("a cancelled drag makes no draft and opens no menu", (await draft.count()) === 0 && (await menu.count()) === 0);
+
+  // 5b. 놓자마자 j로 다음 줄로 - 끈 줄의 관계 묶음 응답을 늦춰 경주를 정해 두고, 늦게 온 초안이 옮겨 간 줄에 적용되지 않는지 본다(Review Focus 5).
+  // X가 지금 고른 줄이다 - j로 X 다음 줄 R의 제 값을 읽고, Y를 골라 X가 고른 줄이 아니게 한다
+  await page.keyboard.press("j");
+  await page.waitForLoadState("networkidle");
+  await page.waitForTimeout(300);
+  const rowR = await selectedPiece();
+  const chosenR = await getText(page, "assign-chosen");
+  const yRacePoint = await pointInUnit(unitY.unit_id);
+  await page.mouse.click(yRacePoint.x, yRacePoint.y);
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-sel"), unitY.unit_id, { timeout: T });
+  await page.waitForLoadState("networkidle");
+  await openNewDoc(sop.id);
+  const lateGroup = `**/groups/by-unit/${unitX.unit_id}`;
+  let lateHits = 0;
+  await page.route(lateGroup, async (route) => {
+    lateHits += 1;
+    await new Promise((done) => setTimeout(done, 1500));
+    await route.continue();
+  });
+  const savesBeforeRace = saveRequests;
+  await dragThrough(page, await pointInUnit(unitX.unit_id), [await pointInItem(a, "bottom")]);
+  await page.waitForTimeout(100);
+  await page.mouse.up();
+  await page.keyboard.press("j");
+  await page.waitForTimeout(2500);
+  await page.unroute(lateGroup);
+  const race = { rowR, row: await selectedPiece(), chosen: await getText(page, "assign-chosen") === chosenR, drafts: await draft.count(), menu: await menu.count(), saves: saveRequests - savesBeforeRace, lateHits };
+  check("j right after a drop moves on and the late draft is not applied to that row", rowR !== null && race.row === rowR && race.chosen && race.drafts === 0 && race.menu === 0 && race.saves === 0 && lateHits > 0, JSON.stringify(race));
+  // 옮겨 간 줄이 New 칸을 그 줄의 문서로 돌렸을 수 있다
+  await openNewDoc(sop.id);
+
+  // 6. Confirm(↵) - 저장 요청이 자리를 싣고, X가 A 바로 뒤에 선다. 다시 읽어도, 화면의 줄 순서도 같다
+  await dragThrough(page, await pointInUnit(unitX.unit_id), [await pointInItem(a, "bottom")]);
+  await page.waitForTimeout(100);
+  await dropAndOpen("between sentences again");
+  const sentX = await saveAfterEnter();
+  const xItems = topItemsOf(sentX.body, unitX.unit_id);
+  check("the save carries the drop place", sentX.ok && xItems.length === 1 && JSON.stringify(xItems[0].position) === JSON.stringify({ after_target_id: a }), JSON.stringify(xItems.map((item) => item.position)));
+  const kAfterX = await readItems(slotK);
+  const x = kAfterX[1]?.target_id;
+  check("X lands right after A", kAfterX.length === 4 && kAfterX[0].target_id === a && kAfterX[1].source_unit_ids.includes(unitX.unit_id) && kAfterX[2].target_id === b && kAfterX[3].target_id === c, JSON.stringify(kAfterX.map((item) => item.target_id)));
+  await page.reload();
+  await wait(page, "assign-bar");
+  await openNewDoc(sop.id);
+  await page.locator(`[data-testid="assign-new-${x}"]`).waitFor({ timeout: T });
+  const screenK = await page.evaluate((ids) => [...document.querySelectorAll('[data-pane="new"] .new-item[data-row]')].map((el) => Number(el.dataset.row.slice(2))).filter((id) => ids.includes(id)), [a, x, b, c]);
+  check("after a reload the API and the screen keep that order", JSON.stringify(await readIds(slotK)) === JSON.stringify([a, x, b, c]) && JSON.stringify(screenK) === JSON.stringify([a, x, b, c]), JSON.stringify(screenK));
+
+  // 7. 빈 칸 - Y를 E에 놓으면 자리 없이 그 칸으로만
+  await showOldUnit(unitY);
+  await pieceOf(unitY.unit_id).waitFor({ timeout: T });
+  await centre(`[data-testid="assign-new-slot-${slotE}"]`);
+  const slotBox = await page.locator(`[data-testid="assign-new-slot-${slotE}"]`).boundingBox();
+  await dragThrough(page, await pointInUnit(unitY.unit_id), [{ x: slotBox.x + Math.min(60, slotBox.width / 2), y: slotBox.y + slotBox.height / 2 }]);
+  await page.waitForTimeout(100);
+  check("over an empty section its placeholder is outlined", (await page.locator(`[data-testid="assign-new-slot-${slotE}"]`).getAttribute("data-drop")) === "over");
+  await dropAndOpen("on an empty section");
+  check("dropping on an empty section marks it as the draft", (await page.locator(`[data-testid="assign-new-slot-${slotE}"]`).getAttribute("data-draft")) === "");
+  const sentY = await saveAfterEnter();
+  check("an empty section saves without a place", sentY.ok && sentY.body.targets.every((target) => !("position" in target)), JSON.stringify(sentY.body.targets));
+  const eItems = await readItems(slotE);
+  const y = eItems[0]?.target_id;
+  check("Y lands in E", eItems.length === 1 && eItems[0].source_unit_ids.includes(unitY.unit_id), JSON.stringify(eItems.map((item) => item.target_id)));
+
+  // 8. 못 놓는 곳 셋 - 이유를 보이고 아무것도 쓰지 않는다
+  const unitsBefore = JSON.stringify((await readUnits()).map((unit) => [unit.unit_id, unit.status]));
+  const savesBeforeRefusals = saveRequests;
+  const refusals = [];
+  // 저장 뒤 다음 줄로 옮겨 New 칸이 그 줄의 문서로 갔을 수 있다
+  await openNewDoc(sop.id);
+  await centre(`[data-testid="assign-new-slot-${slotN}"]`);
+  const naBox = await page.locator(`[data-testid="assign-new-slot-${slotN}"]`).boundingBox();
+  await dragThrough(page, await pointInUnit(unitY.unit_id), [{ x: naBox.x + Math.min(60, naBox.width / 2), y: naBox.y + naBox.height / 2 }]);
+  await page.waitForTimeout(100);
+  refusals.push({ where: "n/a", ...(await readCard()), drop: await page.locator(`[data-testid="assign-new-slot-${slotN}"]`).getAttribute("data-drop") });
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  // 확정한 X를 K의 문장 위로 - 같은 칸 안의 순서는 Order에서 바꾼다
+  await dragThrough(page, await pointInUnit(unitX.unit_id), [await pointInItem(b, "middle")]);
+  await page.waitForTimeout(100);
+  refusals.push({ where: "same", ...(await readCard()), drop: await page.locator(`[data-testid="assign-new-${b}"]`).getAttribute("data-drop") });
+  // 거절 테두리가 이웃 줄의 글·출처 칩을 덮지 않는다
+  const refusedCover = await page.evaluate((id) => {
+    const line = document.querySelector(`[data-testid="assign-new-${id}"]`);
+    const width = parseFloat(getComputedStyle(line).outlineWidth);
+    const offset = parseFloat(getComputedStyle(line).outlineOffset);
+    const outer = line.getBoundingClientRect();
+    const reach = { top: outer.top - width - offset, bottom: outer.bottom + width + offset };
+    const item = line.closest(".new-item");
+    const near = [item.previousElementSibling, item.nextElementSibling].filter((el) => el?.matches(".new-item"));
+    const hits = near.flatMap((el) => [...el.querySelectorAll(".new-text, .new-src")]).map((el) => el.getBoundingClientRect()).filter((r) => r.bottom > reach.top && r.top < reach.bottom);
+    return { width, offset, hits: hits.length };
+  }, b);
+  check("the refused outline does not cover the neighbouring lines", refusedCover.hits === 0, JSON.stringify(refusedCover));
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  const written = await getJson("/written-sentences");
+  await openNewDoc(written[0].target_doc_id);
+  // 두 문장 사이 틈(없으면 줄의 앞머리 번호 칸) - 줄 상자 안이지만 문장 상자 밖
+  const gapPoint = await page.evaluate(() => {
+    const gap = document.querySelector('[data-pane="new"] .pg:not([data-read-only]) .new-gap:not([data-pair])');
+    const lead = document.querySelector('[data-pane="new"] .pg:not([data-read-only]) .new-item .strip-lead');
+    const spot = gap ?? lead;
+    spot.scrollIntoView({ block: "center" });
+    const rect = spot.getBoundingClientRect();
+    const line = spot.closest(".new-item").querySelector(".new-line").getBoundingClientRect();
+    return gap ? { x: line.left + Math.min(60, line.width / 2), y: rect.top + rect.height / 2 } : { x: rect.left + rect.width / 2, y: rect.top + Math.min(10, rect.height / 2) };
+  });
+  await dragThrough(page, await pointInUnit(unitY.unit_id), [gapPoint]);
+  await page.waitForTimeout(100);
+  refusals.push({ where: "written", ...(await readCard()), drop: null });
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  check("over an N/A section the card refuses and says why", refusals[0].refused && refusals[0].note === "That section is N/A in the To-Be list." && refusals[0].drop === "refused", JSON.stringify(refusals[0]));
+  check("over its own section the card refuses and points to Order", refusals[1].refused && refusals[1].note === "Already in this section. Change the order in Order" && refusals[1].drop === "refused", JSON.stringify(refusals[1]));
+  check("between sentences of a written document the card refuses", refusals[2].refused && refusals[2].note === "A document that is already written takes no new sentences. Link to one of its sentences.", JSON.stringify(refusals[2]));
+  check("refused drops send no save", saveRequests === savesBeforeRefusals, String(saveRequests - savesBeforeRefusals));
+  check("refused drops make no draft, open no menu and write nothing", (await draft.count()) === 0 && (await menu.count()) === 0 && JSON.stringify((await readUnits()).map((unit) => [unit.unit_id, unit.status])) === unitsBefore && JSON.stringify(await readIds(slotK)) === JSON.stringify([a, x, b, c]));
+
+  // 9. 확정한 줄을 다른 칸의 문장 사이로 - X를 K2의 P 위 절반에 놓으면 P 앞에 초안, 저장은 그 문장을 옮기며 맨 앞 자리를 싣는다
+  await openNewDoc(sop.id);
+  await dragThrough(page, await pointInUnit(unitX.unit_id), [await pointInItem(p, "top")]);
+  await page.waitForTimeout(100);
+  await dropAndOpen("a confirmed row into another section");
+  const beforeP = await page.evaluate((id) => {
+    const box = document.querySelector('[data-testid="assign-new-draft"]');
+    const item = document.querySelector(`[data-pane="new"] .new-item[data-row="t:${id}"]`);
+    const frame = document.querySelector('[data-pane="new"] .pane-body').getBoundingClientRect();
+    if (!box || !item) return null;
+    const r = box.getBoundingClientRect();
+    return { dom: (box.compareDocumentPosition(item) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && box.nextElementSibling === item, shown: r.top >= frame.top - 1 && r.bottom <= frame.bottom + 1 };
+  }, p);
+  check("the draft stands before P and in view", beforeP !== null && beforeP.dom && beforeP.shown, JSON.stringify(beforeP));
+  const sentMove = await saveAfterEnter();
+  const moved = sentMove.body.targets.find((target) => target.id === x);
+  check("moving a confirmed sentence sends its id and the front of the section", sentMove.ok && moved !== undefined && JSON.stringify(moved.position) === JSON.stringify({ after_target_id: null }), JSON.stringify(moved));
+  check("X moves to the front of K2 and leaves K", JSON.stringify(await readIds(slotK2)) === JSON.stringify([x, p]) && JSON.stringify(await readIds(slotK)) === JSON.stringify([a, b, c]));
+
+  // 한/영 짝 줄을 문장 사이에 - 두 새 문장이 같은 자리를 싣고 그 자리에 영어 먼저 나란히 선다
+  const allUnits = await readUnits();
+  const pairMembers = new Map();
+  for (const unit of allUnits) if (unit.pair_id !== null) pairMembers.set(unit.pair_id, [...(pairMembers.get(unit.pair_id) ?? []), unit]);
+  const freePairs = [...pairMembers.values()].filter((members) => members.length === 2 && members.every((unit) => unit.kind === "sentence" && unit.status === "unassigned" && unit.decision.disposition === "unassigned") && new Set(members.map((unit) => unit.lang)).size === 2 && members.every((unit) => unit.lang === "ko" || unit.lang === "en"));
+  let pair = null;
+  for (const members of freePairs) {
+    if (await showOldUnit(members[0])) {
+      pair = members;
+      break;
+    }
+  }
+  check("an Old document shows a free KO/EN pair", pair !== null, String(freePairs.length));
+  await openNewDoc(sop.id);
+  await dragThrough(page, await pointInUnit(pair[0].unit_id), [await pointInItem(a, "bottom")]);
+  await page.waitForTimeout(100);
+  await dropAndOpen("a KO/EN pair between sentences");
+  const pairDraft = await page.evaluate(() => [...document.querySelectorAll('[data-testid^="assign-new-draft-line-"]')].map((el) => el.dataset.lang));
+  check("the pair draft shows both sentences, English first", JSON.stringify(pairDraft) === JSON.stringify(["en", "ko"]), JSON.stringify(pairDraft));
+  const sentPair = await saveAfterEnter();
+  const pairItems = sentPair.body.targets.filter((target) => !target.parent_key && target.source_unit_ids.some((id) => pair.some((unit) => unit.unit_id === id)));
+  check("both sentences of the pair carry the same place", sentPair.ok && pairItems.length === 2 && pairItems.every((item) => JSON.stringify(item.position) === JSON.stringify({ after_target_id: a })), JSON.stringify(pairItems.map((item) => item.position)));
+  await page.reload();
+  await wait(page, "assign-bar");
+  const kAfterPair = await readItems(slotK);
+  const isPairItem = (item) => item.source_unit_ids.some((id) => pair.some((unit) => unit.unit_id === id));
+  check("after a reload the pair stands together right after A, English first", kAfterPair.length === 5 && kAfterPair[0].target_id === a && isPairItem(kAfterPair[1]) && isPairItem(kAfterPair[2]) && kAfterPair[1].lang === "en" && kAfterPair[2].lang === "ko" && kAfterPair[3].target_id === b && kAfterPair[4].target_id === c, JSON.stringify(kAfterPair.map((item) => [item.target_id, item.lang])));
+
+  // 10. 클릭 길은 그대로 - 미리 보기 줄은 고르지 못하고, 나무에서 칸을 고른 저장은 자리를 싣지 않아 칸 끝에 선다(순서를 사람이 정한 문서)
+  await showOldUnit(unitY);
+  const yPoint = await pointInUnit(unitY.unit_id);
+  await page.mouse.click(yPoint.x, yPoint.y);
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-sel"), unitY.unit_id, { timeout: T });
+  await page.waitForLoadState("networkidle");
+  await openNewDoc(sop.id);
+  const chosenBefore = await getText(page, "assign-chosen");
+  const aLine = await pointInItem(a, "middle");
+  await page.mouse.click(aLine.x, aLine.y);
+  await page.waitForTimeout(400);
+  check("clicking a preview sentence picks nothing", (await getText(page, "assign-chosen")) === chosenBefore);
+  if ((await page.locator(`[data-testid="assign-tree-place-slot:${sop.id}:${slotK}"]`).count()) === 0) {
+    if ((await page.locator(`[data-testid="assign-tree-p${sop.code}"]`).count()) === 0) await page.locator('[data-testid="assign-acc-all"]').click();
+    if ((await page.locator(`[data-testid="assign-tree-p${sop.code}"]`).getAttribute("aria-expanded")) !== "true") await page.locator(`[data-testid="assign-tree-p${sop.code}"]`).click();
+  }
+  await page.locator(`[data-testid="assign-tree-place-slot:${sop.id}:${slotK}"]`).click();
+  await page.locator('[data-testid="assign-primary"][data-state="confirm"]').waitFor({ timeout: T });
+  const request = page.waitForRequest((item) => item.url().includes("/groups/save") && item.method() === "POST", { timeout: T });
+  const response = page.waitForResponse((item) => item.url().includes("/groups/save"), { timeout: T });
+  await page.locator('[data-testid="assign-primary"]').focus();
+  await page.keyboard.press("Enter");
+  const treeBody = (await request).postDataJSON();
+  const treeOk = (await response).ok();
+  await page.waitForLoadState("networkidle");
+  check("a section picked in the tree saves without a place", treeOk && treeBody.targets.every((target) => !("position" in target)), JSON.stringify(treeBody.targets));
+  const kAfterTree = await readIds(slotK);
+  check("Y stands at the end of K", kAfterTree.length === 6 && kAfterTree.at(-1) === y, JSON.stringify(kAfterTree));
+
+  // 11. 이 단계가 확정한 줄을 Clear(U)로 되돌린다
+  const clearRow = async (unit) => {
+    await showOldUnit(unit);
+    const point = await pointInUnit(unit.unit_id);
+    await page.mouse.click(point.x, point.y);
+    await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-sel"), unit.unit_id, { timeout: T });
+    await page.waitForLoadState("networkidle");
+    const cleared = page.waitForResponse((item) => item.url().includes("/decisions/clear"), { timeout: T });
+    await page.keyboard.press("u");
+    await cleared;
+    await page.waitForLoadState("networkidle");
+  };
+  for (const unit of [unitA, unitB, unitC, unitP, unitX, unitY, pair[0]]) await clearRow(unit);
+  // 짝 줄은 Unit마다 차례로 지운다 - 마지막 요청이 끝날 때까지 다시 읽는다
+  const stepUnits = [unitA, unitB, unitC, unitP, unitX, unitY, ...pair];
+  let leftUnits = new Map();
+  for (let tries = 0; tries < 20; tries += 1) {
+    leftUnits = new Map((await readUnits()).map((unit) => [unit.unit_id, unit.status]));
+    if (stepUnits.every((unit) => leftUnits.get(unit.unit_id) === "unassigned")) break;
+    await page.waitForTimeout(250);
+  }
+  check("Clear puts the rows of this step back", stepUnits.every((unit) => leftUnits.get(unit.unit_id) === "unassigned"), JSON.stringify(stepUnits.map((unit) => [unit.unit_id, leftUnits.get(unit.unit_id)])));
+  if (tobeBefore !== null) {
+    const now = await getJson("/tobe");
+    await page.request.put(`${api}/tobe`, { headers, data: { revision: now.revision, docs: now.docs.map(({ code, title, doc_type, parent_code, is_equipment_sop, order_index }) => ({ code, title, doc_type, parent_code, is_equipment_sop, order_index })), na_slots: tobeBefore.na_slots, wi_steps: now.wi_steps } });
+  }
+});
+
+await runStep("assign: drag an Old piece onto a slot in the All list, in both views, it saves like a click", {}, async ({ page, takeShot }) => {
+  await installCommitCounter(page);
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const readUnits = async () => (await getJson("/units?limit=1000")).items;
+  const statusOf = async (unit) => (await readUnits()).find((item) => item.unit_id === unit.unit_id)?.status;
+  const sop = (await getJson("/tobe")).docs.find((doc) => doc.entrance === "assign" && doc.doc_type === "sop");
+  check("the bundle has an SOP to write in Assign", sop !== undefined);
+  const readSections = async () => (await getJson(`/outputs/c/docs/${sop.id}?lang=en`)).sections;
+  const readItems = async (key) => (await readSections()).find((section) => section.location_key === key).items;
+  // 미배정·짝 없는 본문 문장이 가장 많은 Old 문서(앞 단계와 같은 고르기)
+  const findLoose = async () => {
+    const units = new Map((await readUnits()).map((unit) => [unit.unit_id, unit]));
+    let best = null;
+    for (const doc of (await getJson("/documents")).filter((item) => item.side === "old" && item.status === "ready")) {
+      const view = await getJson(`/documents/${doc.id}/view`);
+      const loose = view.units.map((unit) => units.get(unit.id)).filter((unit) => unit && unit.kind === "sentence" && unit.status === "unassigned" && unit.decision.disposition === "unassigned" && unit.pair_id === null);
+      if (best === null || loose.length > best.loose.length) best = { docId: doc.id, loose };
+    }
+    return best;
+  };
+  let found = await findLoose();
+  if (found.loose.length < 3) {
+    await page.request.post(`${api}/decisions/reset`, { headers, data: { revision: (await getJson("")).revision } });
+    found = await findLoose();
+  }
+  // 칸 K - N/A가 아니고 하위 칸이 없는 칸(상위 칸에 놓는 규칙은 이 걸음이 정하지 않는다). N - N/A 칸(없으면 만들고 끝에 되돌린다)
+  let sections = await readSections();
+  const isLeaf = (key) => !sections.some((section) => section.location_key.startsWith(`${key}.`));
+  const leaves = sections.filter((section) => section.na_reason === null && isLeaf(section.location_key));
+  const slotK = (leaves.find((section) => section.items.length === 0) ?? leaves[0])?.location_key;
+  const spare = leaves.filter((section) => section.items.length === 0).map((section) => section.location_key).find((key) => key !== slotK);
+  check("the SOP has a section to drop on", slotK !== undefined);
+  let tobeBefore = null;
+  if (!sections.some((section) => section.na_reason !== null)) {
+    tobeBefore = await getJson("/tobe");
+    const pick = ({ code, title, doc_type, parent_code, is_equipment_sop, order_index }) => ({ code, title, doc_type, parent_code, is_equipment_sop, order_index });
+    await page.request.put(`${api}/tobe`, { headers, data: { revision: tobeBefore.revision, docs: tobeBefore.docs.map(pick), na_slots: [...tobeBefore.na_slots, { code: sop.code, slot_key: spare, reason: "Synthetic smoke N/A" }], wi_steps: tobeBefore.wi_steps } });
+    sections = await readSections();
+  }
+  const slotN = sections.find((section) => section.na_reason !== null)?.location_key;
+  check("the SOP has an N/A section", slotN !== undefined);
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const pieceOf = (id) => page.locator(`[data-testid="assign-paper-piece-${id}"]`);
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${found.docId}"]`).click();
+  await page.locator('[data-pane="old"] .strip[data-strip-unit]').first().waitFor({ timeout: T });
+  await page.waitForTimeout(600);
+  const loose = [];
+  for (const unit of found.loose) if ((await pieceOf(unit.unit_id).count()) > 0) loose.push(unit);
+  check("an Old document shows two loose unassigned sentences", loose.length >= 2, String(loose.length));
+  const [unitZ, unitW] = loose;
+  const centre = (selector) => page.locator(selector).first().evaluate((el) => el.scrollIntoView({ block: "center" }));
+  const pointInUnit = async (id) => {
+    await centre(`[data-testid="assign-paper-piece-${id}"]`);
+    await page.waitForTimeout(150);
+    return page.locator(`[data-testid="assign-paper-unit-${id}"]`).first().evaluate((el) => {
+      const rect = el.getClientRects()[0];
+      return { x: rect.left + Math.min(24, rect.width / 2), y: rect.top + rect.height / 2 };
+    });
+  };
+  const selectUnit = async (unit) => {
+    const point = await pointInUnit(unit.unit_id);
+    await page.mouse.click(point.x, point.y);
+    await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-sel"), unit.unit_id, { timeout: T });
+    await page.waitForLoadState("networkidle");
+  };
+  // 나무 - All과 그 문서 마디를 펼친다(접힌 곳은 끄는 동안 펼쳐지지 않는다)
+  const placeTestId = (key) => `assign-tree-place-slot:${sop.id}:${key}`;
+  const openTree = async () => {
+    const acc = page.locator('[data-testid="assign-acc-all"]');
+    if ((await acc.getAttribute("aria-expanded")) !== "true") await acc.click();
+    const node = page.locator(`[data-testid="assign-tree-p${sop.code}"]`);
+    await node.waitFor({ timeout: T });
+    if ((await node.getAttribute("aria-expanded")) !== "true") await node.click();
+    await page.locator(`[data-testid="${placeTestId(slotK)}"]`).waitFor({ timeout: T });
+  };
+  const pointInTree = async (testId) => {
+    await centre(`[data-testid="${testId}"]`);
+    await page.waitForTimeout(150);
+    return page.locator(`[data-testid="${testId}"]`).first().evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      return { x: rect.left + Math.min(40, rect.width / 2), y: rect.top + rect.height / 2 };
+    });
+  };
+  const rowDropOf = (testId) => page.locator(`[data-testid="${testId}"]`).first().evaluate((el) => el.closest(".tree-row")?.getAttribute("data-drop") ?? null);
+  const readCard = () => page.evaluate(() => ({
+    cards: document.querySelectorAll('[data-testid="drag-card"]').length,
+    note: document.querySelector('[data-testid="drag-card"] .drag-card-note')?.textContent ?? "",
+    refused: document.querySelector('[data-testid="drag-card"]')?.hasAttribute("data-refused") ?? false,
+    drops: document.querySelectorAll("[data-drop]").length,
+  }));
+  const isChosenEmpty = () => page.locator('[data-testid="assign-chosen"]').evaluate((el) => el.classList.contains("is-empty"));
+  const linkMenu = page.locator('[data-testid="assign-link-menu"]');
+  let saveRequests = 0;
+  page.on("request", (request) => {
+    if (request.url().includes("/groups/save")) saveRequests += 1;
+  });
+  const saveByEnter = async () => {
+    const request = page.waitForRequest((item) => item.url().includes("/groups/save") && item.method() === "POST", { timeout: T });
+    const response = page.waitForResponse((item) => item.url().includes("/groups/save"), { timeout: T });
+    await page.locator('[data-testid="assign-primary"]').focus();
+    await page.keyboard.press("Enter");
+    const body = (await request).postDataJSON();
+    const ok = (await response).ok();
+    await page.waitForLoadState("networkidle");
+    return { body, ok };
+  };
+  // 고름이 몇 번 적용됐나 - 고른 곳 상자의 번쩍임(data-landing)과 나무 줄에서 날아가는 그림자(.pick-ghost). 놓기 뒤따르는 click이 나무 줄을 누르면 둘 다 는다
+  const watchPicks = () => page.evaluate(() => {
+    window.__landings = 0;
+    window.__ghosts = 0;
+    if (window.__pickWatch) return;
+    window.__pickWatch = new MutationObserver((records) => {
+      for (const record of records) {
+        if (record.type === "attributes" && record.oldValue === null && record.target.matches('[data-testid="assign-chosen"]')) window.__landings += 1;
+        if (record.type === "childList") for (const node of record.addedNodes) if (node instanceof Element && node.matches(".pick-ghost")) window.__ghosts += 1;
+      }
+    });
+    window.__pickWatch.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-landing"], attributeOldValue: true });
+  });
+  const readPicks = () => page.evaluate(() => ({ landings: window.__landings, ghosts: window.__ghosts }));
+  const selectedPiece = () => page.evaluate(() => document.querySelector('[data-pane="old"] [data-testid^="assign-paper-piece-"][data-sel]')?.dataset.testid ?? null);
+
+  // 1. 두 단 보기 - W를 골라 나무를 보이고, Z를 K 줄 위로
+  await selectUnit(unitW);
+  await openTree();
+  const kTestId = placeTestId(slotK);
+  const nTestId = placeTestId(slotN);
+  check("the N/A row is marked", (await page.locator(`[data-testid="${nTestId}"]`).evaluate((el) => el.closest(".tree-row")?.hasAttribute("data-na"))) === true);
+  const zPoint = await pointInUnit(unitZ.unit_id);
+  const kPoint = await pointInTree(kTestId);
+  // 지나갈 줄들 - K를 가운데에 둔 채 보이는 나무 줄(스크롤하지 않고 잰다). 가장자리 스크롤 띠(44px) 밖만 - 목록이 밀리면 K의 자리가 바뀐다
+  const passPoints = await page.evaluate(() => {
+    const frame = document.querySelector(".assign-side .assign-pick").getBoundingClientRect();
+    return [...document.querySelectorAll(".dest-tree .tree-row")].map((row) => row.getBoundingClientRect()).filter((rect) => rect.top >= frame.top + 50 && rect.bottom <= frame.bottom - 50).map((rect) => ({ x: rect.left + Math.min(40, rect.width / 2), y: rect.top + rect.height / 2 }));
+  });
+  check("several tree rows are in view to pass over", passPoints.length >= 3, String(passPoints.length));
+  await dragThrough(page, zPoint, [kPoint]);
+  await page.waitForTimeout(100);
+  const overK = await readCard();
+  check("over a section row in the tree it is outlined", (await rowDropOf(kTestId)) === "over");
+  check("the card says the document and section", overK.note.startsWith("→ ") && overK.note.includes(sop.code) && !overK.refused, JSON.stringify(overK));
+  await takeShot("sop-assign-drag-tree.png");
+  const commitsBefore = await page.evaluate(() => window.__commits ?? -1);
+  for (let i = 0; i < 30; i += 1) {
+    const pass = passPoints[i % passPoints.length];
+    await page.mouse.move(pass.x + (i % 3) * 5, pass.y);
+  }
+  const commitsAfter = await page.evaluate(() => window.__commits ?? -1);
+  check("no React commit while dragging over tree rows", commitsBefore > 0 && commitsBefore === commitsAfter, `${commitsBefore} -> ${commitsAfter}`);
+
+  // 2. 놓은 뒤 - Z가 골라지고 그 칸이 보낼 곳(클릭과 같다), 그 자리 메뉴는 없고 저장하지 않았다
+  await page.mouse.move(kPoint.x, kPoint.y);
+  const savesBeforeDrop = saveRequests;
+  await watchPicks();
+  await page.mouse.up();
+  await page.locator('[data-testid="assign-primary"][data-state="confirm"]').waitFor({ timeout: T });
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-sel"), unitZ.unit_id, { timeout: T });
+  await page.waitForTimeout(500);
+  const chosenK = await getText(page, "assign-chosen");
+  check("dropping on the tree picks the dragged row", (await pieceOf(unitZ.unit_id).getAttribute("data-sel")) === "" && (await pieceOf(unitW.unit_id).getAttribute("data-sel")) === null);
+  check("the chosen box shows that section", !(await isChosenEmpty()) && chosenK.includes(sop.code), chosenK);
+  check("no in-place menu opens after a tree drop", (await linkMenu.count()) === 0);
+  // 놓기 뒤따르는 click이 나무 줄을 한 번 더 누르면 번쩍임이 둘, 그림자가 하나가 된다
+  const treePicks = await readPicks();
+  check("the drop picks the section once (the click after it does not press a tree row)", treePicks.landings === 1 && treePicks.ghosts === 0, JSON.stringify(treePicks));
+  check("a tree drop saves nothing", saveRequests === savesBeforeDrop && (await statusOf(unitZ)) === "unassigned", String(saveRequests - savesBeforeDrop));
+  // 7. 클릭은 그대로 - 끌지 않고 누르면 그 줄의 칸이 보낼 곳이 되고 저장은 없다(펼침은 줄마다라 다른 줄이 골라지면 접힌다 - 다시 펼친다). 다른 칸을 눌러 바뀌는 것을 본 뒤 K로 돌아온다
+  const otherKey = leaves.map((section) => section.location_key).find((key) => key !== slotK && key !== slotN);
+  await openTree();
+  await page.locator(`[data-testid="${placeTestId(otherKey)}"]`).click();
+  await page.waitForTimeout(400);
+  const chosenOther = await getText(page, "assign-chosen");
+  check("a press without a drag on another tree row picks that section", chosenOther !== chosenK && chosenOther.includes(sop.code) && saveRequests === savesBeforeDrop, `${otherKey}: ${chosenOther}`);
+  await page.locator(`[data-testid="${kTestId}"]`).click();
+  await page.waitForTimeout(400);
+  check("pressing the dropped row again gives the same section as the drop", (await getText(page, "assign-chosen")) === chosenK && saveRequests === savesBeforeDrop);
+  const sentZ = await saveByEnter();
+  check("a tree drop saves without a place", sentZ.ok && sentZ.body.targets.every((target) => !("position" in target)), JSON.stringify(sentZ.body.targets));
+  check("Z lands in K", (await readItems(slotK)).some((item) => item.source_unit_ids.includes(unitZ.unit_id)));
+
+  // 3·4. 못 놓는 곳 - Z를 고른 채 W를 끈다. N/A 줄은 이유를, 칸 제목 줄·이미 쓴 문장 줄은 아무 표시도 없다
+  await selectUnit(unitZ);
+  await openTree();
+  const chosenZ = await getText(page, "assign-chosen");
+  const savesBeforeRefusals = saveRequests;
+  await dragThrough(page, await pointInUnit(unitW.unit_id), [await pointInTree(nTestId)]);
+  await page.waitForTimeout(100);
+  const overN = await readCard();
+  const nDrop = await rowDropOf(nTestId);
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  check("over an N/A row the card refuses and says why", overN.refused && overN.note === "That section is N/A in the To-Be list." && nDrop === "refused", JSON.stringify({ ...overN, nDrop }));
+  const quiet = [];
+  const headingId = await page.locator('[data-testid^="assign-tree-place-heading:"]').first().getAttribute("data-testid").catch(() => null);
+  if (headingId !== null) {
+    await dragThrough(page, await pointInUnit(unitW.unit_id), [await pointInTree(headingId)]);
+    await page.waitForTimeout(100);
+    quiet.push({ where: "heading", ...(await readCard()) });
+    await page.mouse.up();
+    await page.waitForTimeout(600);
+  }
+  const writtenRows = await getJson("/written-sentences");
+  const sentence = writtenRows.find((row) => row.kind === "sentence");
+  // 아래 확인이 빈 목록으로 통과하지 않게 - 시드에 둘 다 있어야 한다
+  check("the tree has a section heading row and a written sentence row to try", headingId !== null && sentence !== undefined, JSON.stringify({ headingId, sentence: sentence?.target_id ?? null }));
+  if (sentence) {
+    const node = page.locator(`[data-testid="assign-tree-w${sentence.target_doc_id}"]`);
+    if ((await node.getAttribute("aria-expanded")) !== "true") await node.click();
+    await dragThrough(page, await pointInUnit(unitW.unit_id), [await pointInTree(`assign-tree-sentence-${sentence.target_id}`)]);
+    await page.waitForTimeout(100);
+    quiet.push({ where: "sentence", ...(await readCard()) });
+    await page.mouse.up();
+    await page.waitForTimeout(600);
+  }
+  check("a heading row and a written sentence row are no drop place", quiet.length === 2 && quiet.every((entry) => entry.cards === 1 && entry.drops === 0 && !entry.refused && entry.note === ""), JSON.stringify(quiet));
+  check("refused and empty drops change nothing", (await getText(page, "assign-chosen")) === chosenZ && (await pieceOf(unitZ.unit_id).getAttribute("data-sel")) === "" && saveRequests === savesBeforeRefusals && (await statusOf(unitW)) === "unassigned" && (await linkMenu.count()) === 0, String(saveRequests - savesBeforeRefusals));
+
+  // 6. Esc - 나무 줄 위에서 취소하면 표가 사라지고 고름은 그대로
+  await dragThrough(page, await pointInUnit(unitW.unit_id), [await pointInTree(kTestId)]);
+  await page.waitForTimeout(100);
+  await page.keyboard.press("Escape");
+  const afterEsc = await readCard();
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  check("Esc over a tree row cancels the drag", afterEsc.cards === 0 && afterEsc.drops === 0 && (await getText(page, "assign-chosen")) === chosenZ, JSON.stringify(afterEsc));
+
+  // 6b. 놓자마자 j로 다음 줄로 - W의 관계 묶음 응답을 늦춰, 늦게 온 칸 고름이 옮겨 간 줄에 적용되지 않는지 본다(Review Focus 5). W 다음 줄 R의 제 값을 먼저 읽는다
+  await selectUnit(unitW);
+  await page.keyboard.press("j");
+  await page.waitForLoadState("networkidle");
+  await page.waitForTimeout(300);
+  const rowR = await selectedPiece();
+  const chosenR = await getText(page, "assign-chosen");
+  await selectUnit(unitZ);
+  await openTree();
+  const lateGroup = `**/groups/by-unit/${unitW.unit_id}`;
+  let lateHits = 0;
+  await page.route(lateGroup, async (route) => {
+    lateHits += 1;
+    await new Promise((done) => setTimeout(done, 1500));
+    await route.continue();
+  });
+  const savesBeforeRace = saveRequests;
+  await dragThrough(page, await pointInUnit(unitW.unit_id), [await pointInTree(kTestId)]);
+  await page.waitForTimeout(100);
+  await page.mouse.up();
+  await page.keyboard.press("j");
+  await page.waitForTimeout(2500);
+  await page.unroute(lateGroup);
+  const race = { rowR, row: await selectedPiece(), chosen: (await getText(page, "assign-chosen")) === chosenR, saves: saveRequests - savesBeforeRace, lateHits };
+  check("j right after a tree drop moves on and the late section is not applied to that row", rowR !== null && race.row === rowR && race.chosen && race.saves === 0 && lateHits > 0, JSON.stringify(race));
+  // 뒤 확인은 Z를 고른 채로 시작한다
+  await selectUnit(unitZ);
+
+  // 5. 한 단 보기 - New 칸이 없고 옆 패널이 놓을 곳이다
+  await page.locator('[data-testid="assign-view-one"]').click();
+  await page.locator('[data-testid="assign-new"]').waitFor({ state: "detached", timeout: T });
+  check("the one-document view has no New pane", (await page.locator('[data-testid="assign-new"]').count()) === 0);
+  await openTree();
+  // Old 용지 위에 놓으면 아무 일도 없다
+  const savesBeforeOne = saveRequests;
+  const wOnePoint = await pointInUnit(unitW.unit_id);
+  await dragThrough(page, wOnePoint, [{ x: wOnePoint.x + 40, y: wOnePoint.y + 60 }]);
+  await page.waitForTimeout(100);
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  check("dropping on the Old paper in one view does nothing", (await getText(page, "assign-chosen")) === chosenZ && (await pieceOf(unitZ.unit_id).getAttribute("data-sel")) === "" && saveRequests === savesBeforeOne);
+  await dragThrough(page, await pointInUnit(unitW.unit_id), [await pointInTree(kTestId)]);
+  await page.waitForTimeout(100);
+  check("in one view the tree row takes the drop", (await rowDropOf(kTestId)) === "over");
+  await page.mouse.up();
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-sel"), unitW.unit_id, { timeout: T });
+  await page.locator('[data-testid="assign-primary"][data-state="confirm"]').waitFor({ timeout: T });
+  await page.waitForTimeout(400);
+  check("in one view the drop picks W and that section, unsaved", (await getText(page, "assign-chosen")).includes(sop.code) && saveRequests === savesBeforeOne && (await statusOf(unitW)) === "unassigned");
+  const sentW = await saveByEnter();
+  check("in one view the save carries no place", sentW.ok && sentW.body.targets.every((target) => !("position" in target)), JSON.stringify(sentW.body.targets));
+  check("W lands in K", (await readItems(slotK)).some((item) => item.source_unit_ids.includes(unitW.unit_id)));
+  await page.locator('[data-testid="assign-view-two"]').click();
+  await page.locator('[data-testid="assign-new"]').waitFor({ timeout: T });
+
+  // 8. 이 단계가 확정한 줄을 Clear(U)로 되돌린다
+  for (const unit of [unitZ, unitW]) {
+    await selectUnit(unit);
+    const cleared = page.waitForResponse((item) => item.url().includes("/decisions/clear"), { timeout: T });
+    await page.keyboard.press("u");
+    await cleared;
+    await page.waitForLoadState("networkidle");
+  }
+  check("Clear puts Z and W back", (await statusOf(unitZ)) === "unassigned" && (await statusOf(unitW)) === "unassigned");
+  if (tobeBefore !== null) {
+    const now = await getJson("/tobe");
+    await page.request.put(`${api}/tobe`, { headers, data: { revision: now.revision, docs: now.docs.map(({ code, title, doc_type, parent_code, is_equipment_sop, order_index }) => ({ code, title, doc_type, parent_code, is_equipment_sop, order_index })), na_slots: tobeBefore.na_slots, wi_steps: now.wi_steps } });
+  }
+});
+
+// 시드에는 단계가 있는 WI가 없다 - 이 단계가 API로 WI 하나와 단계 둘을 만들고 끝에 지운다
+await runStep("assign: drag an Old piece into a WI step, on its row in the All list and between two sentences of a step", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const readUnits = async () => (await getJson("/units?limit=1000")).items;
+  const sop = (await getJson("/tobe")).docs.find((doc) => doc.entrance === "assign" && doc.doc_type === "sop");
+  const wiCode = "WI-DND-SMOKE";
+  const added = await page.request.post(`${api}/tobe/docs`, { headers, data: { code: wiCode, doc_type: "wi", parent_code: sop.code } });
+  const wi = (await added.json()).docs?.find((doc) => doc.code === wiCode);
+  check("a WI is added under the SOP", added.ok() && wi !== undefined, String(added.status()));
+  for (const title of ["Synthetic step one", "Synthetic step two"]) await page.request.post(`${api}/tobe/docs/${wi.id}/steps`, { headers, data: { title } });
+  const steps = (await getJson("/tobe")).wi_steps.filter((step) => step.code === wiCode).map((step) => step.step_no);
+  check("the WI has two steps", JSON.stringify(steps) === JSON.stringify([1, 2]), JSON.stringify(steps));
+  const readSections = async () => (await getJson(`/outputs/c/docs/${wi.id}?lang=en`)).sections;
+  const readIds = async (key) => (await readSections()).find((section) => section.location_key === key)?.items.map((item) => item.target_id) ?? [];
+  // 미배정·짝 없는 본문 문장이 가장 많은 Old 문서(앞 단계와 같은 고르기)
+  const findLoose = async () => {
+    const units = new Map((await readUnits()).map((unit) => [unit.unit_id, unit]));
+    let best = null;
+    for (const doc of (await getJson("/documents")).filter((item) => item.side === "old" && item.status === "ready")) {
+      const view = await getJson(`/documents/${doc.id}/view`);
+      const loose = view.units.map((unit) => units.get(unit.id)).filter((unit) => unit && unit.kind === "sentence" && unit.status === "unassigned" && unit.decision.disposition === "unassigned" && unit.pair_id === null);
+      if (best === null || loose.length > best.loose.length) best = { docId: doc.id, loose };
+    }
+    return best;
+  };
+  let found = await findLoose();
+  if (found.loose.length < 5) {
+    await page.request.post(`${api}/decisions/reset`, { headers, data: { revision: (await getJson("")).revision } });
+    found = await findLoose();
+  }
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  const pieceOf = (id) => page.locator(`[data-testid="assign-paper-piece-${id}"]`);
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${found.docId}"]`).click();
+  await page.locator('[data-pane="old"] .strip[data-strip-unit]').first().waitFor({ timeout: T });
+  await page.waitForTimeout(600);
+  const loose = [];
+  for (const unit of found.loose) if ((await pieceOf(unit.unit_id).count()) > 0) loose.push(unit);
+  check("an Old document shows five loose unassigned sentences", loose.length >= 5, String(loose.length));
+  const [unitI1, unitI2, unitW1, unitX, unitT] = loose;
+  // 자리 없는 저장으로 단계 칸에 확정한다 - step 1 Instruction에 I1·I2, Why에 W1
+  const saveTo = async (unit, step, part) => (await page.request.post(`${api}/groups/save`, {
+    headers,
+    data: {
+      action: "confirm",
+      hold_reason: "",
+      units: [{ unit_id: unit.unit_id, revision: unit.decision.revision, disposition: "assigned", move_target_code: "", reason: "" }],
+      targets: [{ key: `u${unit.unit_id}`, target_doc_id: wi.id, slot_key: null, wi_step: step, wi_part: part, kind: "sentence", lang: unit.lang, text: unit.text.trim(), change_type: "as_is", source_unit_ids: [unit.unit_id] }],
+      removed_target_ids: [],
+    },
+  })).ok();
+  const setupSaved = [await saveTo(unitI1, 1, "instruction"), await saveTo(unitI2, 1, "instruction"), await saveTo(unitW1, 1, "why")];
+  const [i1, i2] = await readIds("step:1:instruction");
+  const [w1] = await readIds("step:1:why");
+  check("I1 and I2 sit in step 1 Instruction and W1 in its Why", setupSaved.every(Boolean) && [i1, i2, w1].every((id) => id !== undefined), JSON.stringify(setupSaved));
+  await page.reload();
+  await wait(page, "assign-bar");
+  const centre = (selector) => page.locator(selector).first().evaluate((el) => el.scrollIntoView({ block: "center" }));
+  // 다시 받으면 Old 칸이 처음 문서로 돌아갈 수 있다 - 이 단계의 Old 문서를 다시 연다
+  const pointInUnit = async (id) => {
+    if ((await pieceOf(id).count()) === 0) {
+      await page.locator('[data-testid="assign-old-doc"]').click();
+      await page.locator(`[data-testid="assign-old-doc-option-${found.docId}"]`).click();
+      await pieceOf(id).waitFor({ timeout: T });
+    }
+    await centre(`[data-testid="assign-paper-piece-${id}"]`);
+    await page.waitForTimeout(150);
+    return page.locator(`[data-testid="assign-paper-unit-${id}"]`).first().evaluate((el) => {
+      const rect = el.getClientRects()[0];
+      return { x: rect.left + Math.min(24, rect.width / 2), y: rect.top + rect.height / 2 };
+    });
+  };
+  const selectUnit = async (unit) => {
+    const point = await pointInUnit(unit.unit_id);
+    await page.mouse.click(point.x, point.y);
+    await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-sel"), unit.unit_id, { timeout: T });
+    await page.waitForLoadState("networkidle");
+  };
+  const newPane = page.locator('[data-testid="assign-new"]');
+  const openNewDoc = async (docId) => {
+    if ((await newPane.getAttribute("data-doc")) === String(docId)) return;
+    await page.locator('[data-testid="assign-new-doc"]').click();
+    await page.locator(`[data-testid="assign-new-doc-option-${docId}"]`).click();
+    await page.waitForFunction((id) => document.querySelector('[data-testid="assign-new"]')?.getAttribute("data-doc") === String(id), docId, { timeout: T });
+  };
+  const pointInItem = async (targetId, where) => {
+    await centre(`[data-testid="assign-new-${targetId}"]`);
+    await page.waitForTimeout(150);
+    return page.evaluate(({ id, at }) => {
+      const item = document.querySelector(`[data-pane="new"] .new-item[data-row="t:${id}"]`).getBoundingClientRect();
+      const line = document.querySelector(`[data-testid="assign-new-${id}"]`).getBoundingClientRect();
+      const y = at === "bottom" ? item.bottom - 3 : at === "top" ? item.top + 3 : line.top + line.height / 2;
+      return { x: line.left + Math.min(60, line.width / 2), y };
+    }, { id: targetId, at: where });
+  };
+  const readCard = () => page.evaluate(() => ({
+    note: document.querySelector('[data-testid="drag-card"] .drag-card-note')?.textContent ?? "",
+    refused: document.querySelector('[data-testid="drag-card"]')?.hasAttribute("data-refused") ?? false,
+  }));
+  const menu = page.locator('[data-testid="assign-link-menu"]');
+  const draft = page.locator('[data-testid="assign-new-draft"]');
+  let saveRequests = 0;
+  page.on("request", (request) => {
+    if (request.url().includes("/groups/save")) saveRequests += 1;
+  });
+  const saveByEnter = async () => {
+    const request = page.waitForRequest((item) => item.url().includes("/groups/save") && item.method() === "POST", { timeout: T });
+    const response = page.waitForResponse((item) => item.url().includes("/groups/save"), { timeout: T });
+    await page.locator('[data-testid="assign-primary"]').focus();
+    await page.keyboard.press("Enter");
+    const body = (await request).postDataJSON();
+    const ok = (await response).ok();
+    await page.waitForLoadState("networkidle");
+    return { body, ok };
+  };
+  const topItemsOf = (body, unitId) => body.targets.filter((target) => !target.parent_key && target.source_unit_ids.includes(unitId));
+
+  // 1. 나무의 step 줄 - T를 step 2 Instruction 줄에 놓으면 그 줄을 누른 것과 같은 보낼 곳, 저장은 자리 없이 그 step으로
+  await selectUnit(unitX);
+  const acc = page.locator('[data-testid="assign-acc-all"]');
+  if ((await acc.getAttribute("aria-expanded")) !== "true") await acc.click();
+  const openWiNode = async () => {
+    if ((await acc.getAttribute("aria-expanded")) !== "true") await acc.click();
+    const node = page.locator(`[data-testid="assign-tree-p${wiCode}"]`);
+    await node.waitFor({ timeout: T });
+    if ((await node.getAttribute("aria-expanded")) !== "true") await node.click();
+  };
+  await openWiNode();
+  const stepRow = `assign-tree-place-step:${wi.id}:2:instruction`;
+  const whyRow = `assign-tree-place-step:${wi.id}:2:why`;
+  await page.locator(`[data-testid="${stepRow}"]`).waitFor({ timeout: T });
+  await centre(`[data-testid="${stepRow}"]`);
+  await page.waitForTimeout(150);
+  const stepPoint = await page.locator(`[data-testid="${stepRow}"]`).evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    return { x: rect.left + Math.min(40, rect.width / 2), y: rect.top + rect.height / 2 };
+  });
+  await dragThrough(page, await pointInUnit(unitT.unit_id), [stepPoint]);
+  await page.waitForTimeout(100);
+  const overStep = { ...(await readCard()), drop: await page.locator(`[data-testid="${stepRow}"]`).evaluate((el) => el.closest(".tree-row")?.getAttribute("data-drop") ?? null) };
+  check("over a step row the row is outlined and the card names the WI", overStep.drop === "over" && overStep.note.startsWith("→ ") && overStep.note.includes(wiCode) && !overStep.refused, JSON.stringify(overStep));
+  const savesBeforeStep = saveRequests;
+  await page.mouse.up();
+  await page.locator('[data-testid="assign-primary"][data-state="confirm"]').waitFor({ timeout: T });
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-sel"), unitT.unit_id, { timeout: T });
+  await page.waitForTimeout(500);
+  const chosenDrop = await getText(page, "assign-chosen");
+  check("a step-row drop picks T and that step, unsaved, no in-place menu", chosenDrop.includes(wiCode) && saveRequests === savesBeforeStep && (await menu.count()) === 0, chosenDrop);
+  // 그 줄을 누른 것과 같은 초안 - Why 줄을 누르면 바뀌고, 놓은 줄을 누르면 놓았을 때와 같다
+  await openWiNode();
+  await page.locator(`[data-testid="${whyRow}"]`).click();
+  await page.waitForTimeout(400);
+  const chosenWhy = await getText(page, "assign-chosen");
+  await page.locator(`[data-testid="${stepRow}"]`).click();
+  await page.waitForTimeout(400);
+  check("pressing the step row gives the same draft as dropping on it", chosenWhy !== chosenDrop && (await getText(page, "assign-chosen")) === chosenDrop && saveRequests === savesBeforeStep, chosenWhy);
+  const sentT = await saveByEnter();
+  const tItems = topItemsOf(sentT.body, unitT.unit_id);
+  check("a step-row drop saves to that step without a place", sentT.ok && tItems.length === 1 && tItems[0].target_doc_id === wi.id && tItems[0].wi_step === 2 && tItems[0].wi_part === "instruction" && !("position" in tItems[0]), JSON.stringify(tItems));
+  check("T lands in step 2 Instruction", (await readIds("step:2:instruction")).length === 1);
+
+  // 2. step 안 두 문장 사이 - X를 I1 아래 절반에 놓으면 I1과 I2 사이 초안, 확정하면 그 자리(다시 읽어도)
+  await openNewDoc(wi.id);
+  await page.locator(`[data-testid="assign-new-${i2}"]`).waitFor({ timeout: T });
+  await dragThrough(page, await pointInUnit(unitX.unit_id), [await pointInItem(i1, "bottom")]);
+  await page.waitForTimeout(100);
+  const overGap = await readCard();
+  check("between two sentences of a step the card says where it goes", overGap.note.startsWith("→ ") && !overGap.refused, JSON.stringify(overGap));
+  await page.mouse.up();
+  await menu.waitFor({ timeout: T });
+  await page.waitForTimeout(400);
+  const placed = await page.evaluate(({ first, second }) => {
+    const box = document.querySelector('[data-testid="assign-new-draft"]');
+    const itemA = document.querySelector(`[data-pane="new"] .new-item[data-row="t:${first}"]`);
+    const itemB = document.querySelector(`[data-pane="new"] .new-item[data-row="t:${second}"]`);
+    if (!box || !itemA || !itemB) return null;
+    const following = (x, y) => (x.compareDocumentPosition(y) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    return following(itemA, box) && following(box, itemB);
+  }, { first: i1, second: i2 });
+  check("the dotted draft sits between I1 and I2", placed === true && (await draft.count()) === 1);
+  await takeShot("sop-assign-drag-send-wi.png");
+  const sentX = await saveByEnter();
+  const xItems = topItemsOf(sentX.body, unitX.unit_id);
+  check("the save carries the place in step 1 Instruction", sentX.ok && xItems.length === 1 && xItems[0].wi_step === 1 && xItems[0].wi_part === "instruction" && JSON.stringify(xItems[0].position) === JSON.stringify({ after_target_id: i1 }), JSON.stringify(xItems));
+  const [, x] = await readIds("step:1:instruction");
+  await page.reload();
+  await wait(page, "assign-bar");
+  await openNewDoc(wi.id);
+  await page.locator(`[data-testid="assign-new-${x}"]`).waitFor({ timeout: T });
+  const screenStep = await page.evaluate((ids) => [...document.querySelectorAll('[data-pane="new"] .new-item[data-row]')].map((el) => Number(el.dataset.row.slice(2))).filter((id) => ids.includes(id)), [i1, x, i2]);
+  check("after a reload the step keeps I1, X, I2", JSON.stringify(await readIds("step:1:instruction")) === JSON.stringify([i1, x, i2]) && JSON.stringify(screenStep) === JSON.stringify([i1, x, i2]), JSON.stringify(screenStep));
+
+  // 3. 다른 부분 - 같은 step Instruction의 문장 위는 이미 든 칸이라 거절, Why의 W1 아래에 놓으면 Why로 옮기며 W1 뒤 자리를 싣는다(놓은 칸이 곧 보낼 곳이라 다른 부분의 문장을 가리키지 않는다)
+  await dragThrough(page, await pointInUnit(unitX.unit_id), [await pointInItem(i2, "middle")]);
+  await page.waitForTimeout(100);
+  const sameStep = await readCard();
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  check("over its own step part the card refuses", sameStep.refused && sameStep.note === "Already in this section. Change the order in Order" && (await draft.count()) === 0, JSON.stringify(sameStep));
+  await openNewDoc(wi.id);
+  await dragThrough(page, await pointInUnit(unitX.unit_id), [await pointInItem(w1, "bottom")]);
+  await page.waitForTimeout(100);
+  await page.mouse.up();
+  await menu.waitFor({ timeout: T });
+  await page.waitForTimeout(400);
+  const sentWhy = await saveByEnter();
+  const movedX = sentWhy.body.targets.find((target) => target.id === x);
+  check("moving X to Why sends that part and the place after W1", sentWhy.ok && movedX !== undefined && movedX.wi_step === 1 && movedX.wi_part === "why" && JSON.stringify(movedX.position) === JSON.stringify({ after_target_id: w1 }), JSON.stringify(movedX));
+  check("X now stands after W1 in Why and left Instruction", JSON.stringify(await readIds("step:1:why")) === JSON.stringify([w1, x]) && JSON.stringify(await readIds("step:1:instruction")) === JSON.stringify([i1, i2]));
+
+  // 4. 뒷정리 - 이 단계가 확정한 줄을 풀고 WI를 지운다
+  const stepUnits = [unitI1, unitI2, unitW1, unitX, unitT];
+  for (const unit of stepUnits) {
+    const now = (await readUnits()).find((item) => item.unit_id === unit.unit_id);
+    await page.request.post(`${api}/decisions/clear`, { headers, data: { unit_id: unit.unit_id, revision: now.decision.revision } });
+  }
+  const left = new Map((await readUnits()).map((unit) => [unit.unit_id, unit.status]));
+  const removed = await page.request.delete(`${api}/tobe/docs/${wi.id}`, { headers });
+  check("the step's rows are cleared and the WI is removed", stepUnits.every((unit) => left.get(unit.unit_id) === "unassigned") && removed.ok(), `${removed.status()} ${JSON.stringify(stepUnits.map((unit) => left.get(unit.unit_id)))}`);
 });
 
 await runStep("new bundle in one click, locked stages, empty assign", { devUser: "dev.admin" }, async ({ page }) => {

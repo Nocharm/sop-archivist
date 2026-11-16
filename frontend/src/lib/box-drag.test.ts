@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   attachBoxDrag,
   canStartDrag,
+  getCardLeft,
   getEdgeScrollDir,
   hasPassedThreshold,
   isBoxDragActive,
@@ -24,6 +25,10 @@ describe("drag decisions", () => {
   it("getEdgeScrollDir: within 44px of the top or bottom edge, up to 24px outside, only inside the frame's width", () => {
     const dir = (x: number, y: number) => getEdgeScrollDir({ x, y }, { left: 0, right: 800, top: 100, bottom: 500 });
     expect([dir(10, 143), dir(10, 144), dir(10, 457), dir(10, 76), dir(10, 75), dir(900, 120)]).toEqual([-1, 0, 1, -1, 0, 0]);
+  });
+  it("getCardLeft: right of the pointer, flipped to its left when the card would leave the window, never past the left edge", () => {
+    const left = (x: number, width: number) => getCardLeft(x, width, 1120);
+    expect([left(500, 300), left(806, 300), left(807, 300), left(1100, 300), left(200, 1200)]).toEqual([514, 820, 493, 786, 0]);
   });
 });
 

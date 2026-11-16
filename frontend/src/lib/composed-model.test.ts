@@ -235,3 +235,14 @@ describe("diffRows", () => {
     expect([...leaving.entries()]).toEqual([["c", ["b"]], ["", ["d"]]]);
   });
 });
+
+describe("applySavedTargets at a drop place", () => {
+  it("puts the saved sentences at the dropped place, in their saved order, instead of at the end", () => {
+    const doc = makeDoc([makeSlot("purpose", "1", "Purpose", [makeItem(1, "1.1"), makeItem(2, "1.2")])]);
+    const saved = [makeTarget({ id: 50, slot_key: "purpose", order_index: 3 }), makeTarget({ id: 51, slot_key: "purpose", order_index: 2 })];
+    const ids = (at: { sectionKey: string; after: number | null }) => applySavedTargets(doc, saved, () => "", at).sections[0].items.map((item) => item.target_id);
+    expect(ids({ sectionKey: "purpose", after: 1 })).toEqual([1, 51, 50, 2]);
+    expect(ids({ sectionKey: "purpose", after: null })).toEqual([51, 50, 1, 2]);
+    expect(ids({ sectionKey: "purpose", after: 99 })).toEqual([1, 2, 50, 51]);   // 자리의 문장이 없으면 지금처럼 끝에, 받은 순서로
+  });
+});

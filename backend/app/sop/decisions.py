@@ -68,7 +68,15 @@ from app.sop.refs import REF_LANG
 from app.sop.schemas import NO_NUL, NoNulStr
 from app.sop.segment import detect_language, has_visible_char
 from app.sop.status import get_cover_status
-from app.sop.target_placement import Arranged, NewTarget, Spot, arrange_new_targets, insert_after
+from app.sop.target_placement import (
+    Arranged,
+    NewTarget,
+    Spot,
+    arrange_new_targets,
+    freeze_order,
+    insert_after,
+    open_gap,
+)
 from app.sop.tobe import MAX_DB_INT, is_within_slot
 from app.sop.units import UNIT_ACTIVE, compute_display_id
 
@@ -103,6 +111,12 @@ class GridIn(BaseModel):
     cols: int = Field(ge=1, le=100)
 
 
+class PositionIn(BaseModel):
+    """새 문장이 칸 안에서 놓일 자리 — 그 새 문장 바로 뒤, None이면 칸의 맨 앞(끌어다 놓기 설계 §8)."""
+
+    after_target_id: DbId | None  # 기본값 없음 — 키를 빼면 형식 오류다
+
+
 class TargetIn(BaseModel):
     """새 문장 하나의 저장 뒤 모습. 기존 새 문장에서 비운(None) 문서·글자·언어·격자·칸 자리는 지금 값을 둔다.
 
@@ -128,6 +142,8 @@ class TargetIn(BaseModel):
     cell_row: CellIndex | None = None
     cell_col: CellIndex | None = None
     grid: GridIn | None = None
+    # 문장 사이에 놓은 자리 — 없으면 지금처럼(끝에 붙이거나 결과물 정렬 키). 칸이 바뀌는 최상위 문장만 받는다(_check_positions)
+    position: PositionIn | None = None
 
     @model_validator(mode="after")
     def check_id_with_revision(self) -> Self:
@@ -251,6 +267,7 @@ class _State:
     slot_headings: dict[_SlotKey, TargetSentence]  # 이 묶음의 칸 제목 전부 — (새 문서, 칸 키, 언어)마다 하나
     slot_heading_sources: dict[int, list[int]]  # 칸 제목 → 지금 출처 단위(seq 순)
     slot_heading_decisions: dict[int, UnitDecision]  # 칸 제목 출처 단위 → 판단 — 칸 제목 상태를 다시 정할 때 다른 문서 출처도 본다
+    anchors: dict[int, TargetSentence]  # 보낸 position.after_target_id가 가리키는 이 묶음의 새 문장 — 없는 id는 빠진다
 
 
 class _Place(NamedTuple):
@@ -424,6 +441,19 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
         if unit_id is not None:
             slot_heading_sources[row.id].append(unit_id)
             slot_heading_decisions[unit_id] = decision
+    anchor_ids = {
+        item.position.after_target_id for item in payload.targets if item.position is not None
+    } - {None}
+    anchors = {
+        row[0].id: row[0]
+        for row in await select_in_chunks(
+            session,
+            lambda chunk: select(TargetSentence).where(
+                TargetSentence.id.in_(chunk), TargetSentence.bundle_id == bundle_id
+            ),
+            anchor_ids,
+        )
+    }
     return _State(
         units=units, decisions=decisions, cells=cells, captions=captions, group_of=group_of, existing=existing,
         removed=set(payload.removed_target_ids), sources=sources,
@@ -446,7 +476,7 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
             )
         },
         slot_headings=slot_headings, slot_heading_sources=slot_heading_sources,
-        slot_heading_decisions=slot_heading_decisions,
+        slot_heading_decisions=slot_heading_decisions, anchors=anchors,
     )
 
 
@@ -947,6 +977,41 @@ def _check_captions(payload: GroupSaveIn, plans: list[_Plan]) -> None:
         raise_rule(422, "caption_required", keys=missing)
 
 
+def _check_positions(plans: Iterable[_Plan], by_row_id: dict[int, _Plan], state: _State) -> None:
+    """검사 12 — 문장 사이 자리(position)는 칸·문서가 바뀌는 최상위 문장(옛 단위에서 온 것)만 받고, 가리킨 새 문장은 저장 뒤에도
+    같은 문서·칸·step·part에 있어야 한다(끌어다 놓기 설계 §8).
+
+    가리킨 문장이 이 저장으로 지워지거나 그 문장도 자리를 받으면 기댈 자리가 없다 — 화면이 다시 놓게 한다.
+    """
+    for plan in plans:
+        position = plan.item.position
+        if position is None:
+            continue
+        keys = [plan.item.key]
+        if plan.is_cell or plan.item.kind == SLOT_HEADING or plan.origin != ORIGIN_UNITS:
+            _reject("position_not_allowed", keys=keys)
+        spot = _get_spot(plan)
+        row = plan.row
+        if row is not None and spot == (row.target_doc_id, row.slot_key, row.wi_step, row.wi_part):
+            _reject("position_same_place", keys=keys)
+        anchor_id = position.after_target_id
+        if anchor_id is None:  # 칸의 맨 앞
+            continue
+        anchor = state.anchors.get(anchor_id)
+        anchor_plan = by_row_id.get(anchor_id)
+        if (
+            anchor is None or anchor_id in state.removed or anchor.parent_target_id is not None
+            or anchor.kind == SLOT_HEADING or (anchor_plan is not None and anchor_plan.item.position is not None)
+        ):
+            _reject("unknown_position_target", keys=keys, target_ids=[anchor_id])
+        if anchor_plan is not None:
+            anchor_spot = _get_spot(anchor_plan)
+        else:
+            anchor_spot = (anchor.target_doc_id, anchor.slot_key, anchor.wi_step, anchor.wi_part)
+        if anchor_spot != spot:
+            _reject("position_target_elsewhere", keys=keys, target_ids=[anchor_id])
+
+
 SlotRelease = tuple[TargetSentence, list[int]]  # 이 저장의 출처를 떼어 낼 칸 제목과 남는 출처(seq 순, 비면 행을 지운다)
 
 
@@ -1074,8 +1139,11 @@ def _apply_plan(
         target.confirmed_text = plan.text
     elif plan.origin != ORIGIN_NEW_DOC:
         if target.target_doc_id != plan.doc.id:
-            # 순서를 사람이 정한 문서면 끝에, 아니면 결과물이 출처 위치로 정렬하므로 0. 새로 만드는 새 문장은 _place_new_targets가 놓는다
-            is_appended = plan.doc.manual_order and not plan.is_cell and plan.row is not None
+            # 순서를 사람이 정한 문서면 끝에, 아니면 결과물이 출처 위치로 정렬하므로 0. 새로 만드는 새 문장은 _place_new_targets가,
+            # 문장 사이 자리를 받은 문장은 _insert_positioned가 놓는다
+            is_appended = (
+                plan.doc.manual_order and not plan.is_cell and plan.row is not None and plan.item.position is None
+            )
             target.order_index = next_orders[plan.doc.id] if is_appended else 0
             if is_appended:
                 next_orders[plan.doc.id] += 1
@@ -1149,7 +1217,8 @@ async def _place_new_targets(
     anchors: dict[tuple[Spot, int], TargetSentence] = {}
     for item in arranged:
         plan = new_plans[item.key]
-        if not plan.doc.manual_order:  # 순서는 결과물의 정렬 키가 정한다
+        # 순서는 결과물의 정렬 키가 정한다. 문장 사이 자리를 받은 문장은 끝 붙이기가 끝난 뒤 _insert_positioned가 놓는다
+        if not plan.doc.manual_order or plan.item.position is not None:
             continue
         if item.after_existing_source:
             key = (_get_spot(plan), plan.sources[0])
@@ -1159,6 +1228,83 @@ async def _place_new_targets(
         else:
             plan.row.order_index = next_orders[plan.doc.id]
         next_orders[plan.doc.id] += 1
+
+
+def _list_positioned(plans: Iterable[_Plan]) -> list[_Plan]:
+    return [plan for plan in plans if plan.item.position is not None]
+
+
+async def _insert_positioned(
+    session: AsyncSession, plans: list[_Plan], placed: dict[tuple[Spot, int], list[_Plan]], state: _State
+) -> None:
+    """문장 사이 자리를 받은 문장을 그 자리에 끼운다 — 그 문서의 끝 붙이기가 모두 끝난 뒤라 받지 않은 문장은 끝에 남는다.
+
+    문서는 이미 굳었다(freeze_positioned_docs). 같은 자리·같은 앞 문장을 받은 문장들은 arrange_new_targets 순서(짝은 영어 먼저)로
+    잇는다 — 화면은 원문 순서로 보내지만 번호 표시 기본값은 영어를 첫 줄로 본다(끌어다 놓기 계획의 판단 3). 칸 안 순서만 뜻이
+    있으므로 앞 문장 뒤(맨 앞이면 그 칸의 첫 문장 자리)부터 민다.
+    """
+    if not plans:
+        return
+    await session.flush()  # 새로 만든 행의 id — 맨 앞 자리를 셀 때 아직 끼우지 않은 행을 뺀다
+    by_key = {plan.item.key: plan for plan in plans}
+    groups: dict[tuple[Spot, int | None], list[TargetSentence]] = defaultdict(list)
+    for item in arrange_new_targets([_build_new_target(plan, placed, state) for plan in plans]):
+        plan = by_key[item.key]
+        groups[(_get_spot(plan), plan.item.position.after_target_id)].append(plan.row)
+    pending = {plan.row.id for plan in plans}
+    for (spot, anchor_id), rows in groups.items():
+        doc_id, slot_key, wi_step, wi_part = spot
+        tops = (TargetSentence.target_doc_id == doc_id, TargetSentence.parent_target_id.is_(None))
+        if anchor_id is not None:
+            # 앞 묶음이 밀었을 수 있어 DB에서 다시 읽는다
+            at = await session.scalar(select(TargetSentence.order_index).where(TargetSentence.id == anchor_id)) + 1
+        else:
+            at = await session.scalar(
+                select(func.min(TargetSentence.order_index)).where(
+                    *tops, TargetSentence.kind != SLOT_HEADING, TargetSentence.slot_key == slot_key,
+                    TargetSentence.wi_step == wi_step, TargetSentence.wi_part == wi_part,
+                    TargetSentence.id.not_in(pending),
+                )
+            )
+            if at is None:  # 빈 칸
+                last = await session.scalar(select(func.max(TargetSentence.order_index)).where(*tops))
+                at = 0 if last is None else last + 1
+        await open_gap(session, doc_id, at, len(rows))
+        for index, row in enumerate(rows):
+            row.order_index = at + index
+        pending -= {row.id for row in rows}
+
+
+async def _follow_positioned_sources(session: AsyncSession, bundle_id: int, plans: list[_Plan]) -> None:
+    """자리를 받아 옮긴 문장의 남은 AI 번역을 그 문장 바로 뒤로 — 떼어 내기는 번역의 칸만 출처에 맞추고 순번은 그대로 둔다.
+
+    sweep_translations 뒤에 부른다(지운 번역은 이미 없다). 번역이 여럿이면 앞 번역 뒤에 잇는다.
+    """
+    if not plans:
+        return
+    rows = {plan.row.id: plan.row for plan in plans}
+    unit_ids = {unit_id for plan in plans for unit_id in plan.sources}
+    candidates = sorted(
+        (
+            row[0]
+            for row in await select_in_chunks(
+                session,
+                lambda chunk: select(TargetSentence).where(
+                    TargetSentence.bundle_id == bundle_id, TargetSentence.origin == ORIGIN_TRANSLATION,
+                    TargetSentence.translation_source_unit_id.in_(chunk),
+                ),
+                unit_ids,
+            )
+        ),
+        key=lambda row: (row.order_index, row.id),
+    )
+    source_of = await load_source_target_ids(session, [row.id for row in candidates])
+    anchors = dict(rows)
+    for translation in candidates:
+        source_id = source_of.get(translation.id)
+        if source_id in rows:
+            translation.order_index = await insert_after(session, anchors[source_id])
+            anchors[source_id] = translation
 
 
 async def _write_group(
@@ -1208,6 +1354,7 @@ async def _write_group(
 
     next_orders = await _load_next_orders(session, plans)
     placed = _find_placed_sources(plans)
+    positioned = _list_positioned(plans)
     # 칸 제목은 번호를 세지 않고 칸 항목도 아니라 기본 표시·순서(O10)를 받지 않는다
     new_plans = {
         plan.item.key: plan for plan in plans if plan.row is None and not plan.is_cell and plan.item.kind != SLOT_HEADING
@@ -1229,6 +1376,7 @@ async def _write_group(
             ))
         if not is_cell:
             await _place_new_targets(session, arranged, new_plans, placed, next_orders)
+            await _insert_positioned(session, positioned, placed, state)
         await session.flush()  # 칸 새 문장이 부모 id를, 출처 연결이 새 문장 id를 알아야 한다
 
     if rewritten:
@@ -1263,6 +1411,7 @@ async def _write_group(
         session, plans=plans, payload=payload, decisions=state.decisions, actor=actor, stamp=stamp
     )
     swept = await sweep_translations(session, bundle_id, changed, exempt=edited)
+    await _follow_positioned_sources(session, bundle_id, positioned)
     unit_ids = [item.unit_id for item in payload.units]
     record_event(
         session, bundle_id=bundle_id, actor=actor, action=f"group.{payload.action}",
@@ -1276,8 +1425,18 @@ async def _write_group(
 # --- 진입점 ---
 
 
-async def save_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveIn, actor: str) -> GroupOut:
-    """관계 묶음(한 요청에 여럿 가능)을 검사 1–11 순서로 모두 확인한 뒤 한 트랜잭션으로 쓴다. 커밋은 호출부가 한다.
+@dataclass
+class CheckedGroup:
+    """검사를 모두 통과한 저장 — 쓰기가 그대로 옮긴다."""
+
+    payload: GroupSaveIn
+    plans: list[_Plan]
+    releases: list[SlotRelease]
+    state: _State
+
+
+async def check_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveIn) -> CheckedGroup:
+    """관계 묶음(한 요청에 여럿 가능)을 잠그고 검사 1–12 순서로 모두 확인한다 — 쓰지 않는다. 쓰기는 save_group이 한다.
 
     검사가 쓰기 전에 모두 끝나므로 거절된 요청은 아무것도 바꾸지 않는다(낡은 revision 하나도 전체 409).
     """
@@ -1311,9 +1470,37 @@ async def save_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveIn
     _check_as_is_table_cells(plans, by_row_id, state)
     _check_duplicates(payload, plans, state)
     _check_captions(payload, plans)
+    # 모은 칸 제목에 섞여 쓰기에서 빠지는 칸 제목 항목도 자리를 실었으면 거절한다 — 그래서 모으기 전 계획 전부를 본다
+    _check_positions(by_key.values(), by_row_id, state)
     if payload.action == "hold" and not payload.hold_reason.strip():
         _reject("hold_reason_required")
-    target_ids = await _write_group(session, bundle.id, payload, plans, releases, state, actor)
+    return CheckedGroup(payload=payload, plans=plans, releases=releases, state=state)
+
+
+async def freeze_positioned_docs(session: AsyncSession, bundle: Bundle, checked: CheckedGroup, actor: str) -> None:
+    """문장 사이 자리를 받은 문서 가운데 순서를 사람이 정한 적 없는 문서의 지금 순서를 굳힌다 — 없으면 아무것도 하지 않는다.
+
+    라우터가 되돌리기 단계(record_snapshot_step) 밖에서 부른다: 단계 안에서 굳히면 되돌릴 때 순번만 굳히기 전으로 돌아가고
+    manual_order는 남아 문서가 만든 순서로 뒤섞인다(끌어다 놓기 계획 §12 열린 것 — 되돌리면 새 문장만 사라지고 굳힌 순서는 남는다).
+    """
+    docs = {plan.doc.id: plan.doc for plan in _list_positioned(checked.plans) if not plan.doc.manual_order}
+    for doc in docs.values():
+        await freeze_order(session, bundle.id, doc, actor)
+    # 되돌리기 단계의 앞 모습(dump_bundle_state)은 Core select라 자동 flush에 기대지 않고 굳힌 순번을 여기서 DB에 쓴다
+    await session.flush()
+
+
+async def save_group(session: AsyncSession, bundle: Bundle, checked: CheckedGroup, actor: str) -> GroupOut:
+    """check_group을 통과한 묶음을 한 트랜잭션으로 쓴다. 커밋은 호출부가 한다.
+
+    문장 사이 자리를 받은 저장은 순서를 바꾼 것이라 묶음 revision을 올린다 — 낡은 Order 화면의 순서 저장이 409가 되게.
+    """
+    payload = checked.payload
+    target_ids = await _write_group(
+        session, bundle.id, payload, checked.plans, checked.releases, checked.state, actor
+    )
+    if _list_positioned(checked.plans):
+        bundle.revision += 1
     unit_ids = [item.unit_id for item in payload.units]
     settled = await settle_pairs(session, bundle.id, unit_ids, actor, release=payload.release_unit_ids)
     out = await build_group_out(session, unit_ids=unit_ids, target_ids=target_ids)

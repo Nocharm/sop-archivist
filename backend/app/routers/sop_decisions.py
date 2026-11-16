@@ -25,8 +25,10 @@ from app.sop.decisions import (
     ResetOut,
     UnitDecisionRowOut,
     UnitsPageOut,
+    check_group,
     clear_unit,
     dispose_units,
+    freeze_positioned_docs,
     list_units,
     reset_assignments,
     save_group,
@@ -94,9 +96,12 @@ async def get_group_by_target(
 async def save_relation_group(
     body: GroupSaveIn, ctx: BundleContext = Depends(_require_author), session: AsyncSession = Depends(get_session)
 ) -> GroupOut:
+    checked = await check_group(session, ctx.bundle, body)
+    # 순서 굳히기는 되돌리기 단계의 앞 모습보다 먼저다 — 되돌려도 굳힌 순서는 남는다(decisions.freeze_positioned_docs)
+    await freeze_positioned_docs(session, ctx.bundle, checked, ctx.login_id)
     group = await record_snapshot_step(
         session, ctx.bundle, ctx.login_id, body.undo, body.undo.op if body.undo and body.undo.op else body.action,
-        lambda: save_group(session, ctx.bundle, body, ctx.login_id),
+        lambda: save_group(session, ctx.bundle, checked, ctx.login_id),
     )
     await session.commit()
     return group

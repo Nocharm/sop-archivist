@@ -2,6 +2,8 @@
 // Old와 같은 종이 조각: 왼쪽 밖 앞머리(절 번호 칸, 폭 = 절 깊이라 들여쓴 것처럼 읽힌다), 본문 위 줄에 출처 칩, 위 테두리 오른쪽에 올리거나 고를 때만 KO/EN 탭(짝은 모두).
 // 엮은 문서의 앞머리는 결과물 C와 같은 줄마다 자기 번호(생략·주석은 없음)이고 칸 번호는 칸 머리 줄에 남는다.
 // 점선 = 후보, 채움 = 고른 문장, 칩 = 붙은 Old 출처(누르면 Old의 그 조각으로), 왼쪽 끝 위험색 막대 = 출처 없음. 엮은 문서의 빈 칸은 옅은 자리 표시.
+// 엮은 문서의 두 문장 사이에 Old 조각을 놓았으면 그 자리에 저장 전 문장(점선 초안), 빈 칸에 놓았으면 그 자리 표시에 강조 테두리(끌어서 보내기).
+// 줄 상자(.new-item)마다 data-row(t:<id> | slot:<칸>) - 끄는 동안 놓을 자리를 이것으로 읽는다.
 // 참조 줄이 EQUIS와 어긋나면 칩 줄 끝에 작은 표시(RefMark) - 출처 없는 줄은 그 표시만 있는 칩 줄이 생긴다.
 // 칩 오른쪽 갈매기는 그 Old 조각이 왼쪽 칸 화면 위·아래 밖에 있다는 표시 - 스크롤마다 바뀌어 LinkLines가 data-dir로 단다(Old 배지와 같은 방식).
 // 줄이 새로 들어오면 펼치며 나타나고 빠지면 접히며 사라진다(확정이 곧 보이는 실시간 넣기). 표·그림은 실제 표(좌우 스크롤)·그림 이미지로 보인다(new-bundle.tsx).
@@ -20,6 +22,7 @@ import { Truncate } from "@/components/ui/motion";
 import { Select, type SelectOption } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { WrittenSentence } from "@/lib/api-sop";
+import type { DraftLine } from "@/lib/assign-drop-model";
 import { readCaretPoint } from "@/lib/caret-point";
 import { diffRows, getComposedLeadWidths, getNewRowKey, isComposedRow, isWrittenRow, readSectionNumber, type NewPaneRow } from "@/lib/composed-model";
 import { useI18n } from "@/lib/i18n";
@@ -72,6 +75,13 @@ interface NewPaneProps {
   /** 두 문서 사이 연결선 켜기·끄기 */
   linesOn: boolean;
   onToggleLines: () => void;
+  /**
+   * 문장 사이에 놓은 자리의 점선 초안(엮은 문서에서만) - anchorKey 줄 상자 바로 앞(before)이나 뒤(after)에 그린다. 그 줄이 없으면 그리지 않는다.
+   * 줄 상자가 아니라 줄 들고 남·이음 선·고르기·놓기 대상에 끼지 않는다
+   */
+  draft?: { anchorKey: string; side: "before" | "after"; lines: DraftLine[] } | null;
+  /** 고른 줄의 초안이 든 빈 칸(칸 키) - 그 자리 표시에 테두리만 단다 */
+  draftSlotKey?: string | null;
 }
 
 function readState(row: WrittenSentence, props: NewPaneProps): string | undefined {
@@ -373,7 +383,13 @@ export function NewPane(props: NewPaneProps) {
       return (
         <div className="strip-row">
           <span className="strip-lead-gap" style={{ width: getPillWidth(1) + STRIP_LEAD_EXTRA }} />
-          <p className="new-slot-empty" data-testid={`assign-new-slot-${row.key}`}>
+          <p
+            className="new-slot-empty"
+            data-slot={row.key}
+            data-na={row.na ? "" : undefined}
+            data-draft={props.draftSlotKey === row.key ? "" : undefined}
+            data-testid={`assign-new-slot-${row.key}`}
+          >
             {row.na ? t("assign.slotNa") : t("assign.slotEmpty")}
           </p>
         </div>
@@ -407,6 +423,30 @@ export function NewPane(props: NewPaneProps) {
       );
     }
     return renderSentence(row, isSectionStart, previous);
+  }
+
+  /** 놓은 자리의 점선 초안 - 기준 줄의 앞머리 폭만큼 들여 문장 상자와 왼쪽 x가 같다(빈 칸 줄의 strip-lead-gap과 같은 방식) */
+  function renderDraft(anchor: NewPaneRow, lines: DraftLine[]): ReactNode {
+    const lead = (isWrittenRow(anchor) ? (widths.get(String(anchor.target_id)) ?? getPillWidth(1)) : getPillWidth(1)) + STRIP_LEAD_EXTRA;
+    return (
+      <div className="new-draft" data-testid="assign-new-draft">
+        <div className="strip-row">
+          <span className="strip-lead-gap" style={{ width: lead }} />
+          <span className="new-draft-tag">{t("assign.unsaved")}</span>
+        </div>
+        {lines.map((line, index) => (
+          <div key={line.key} className="strip-row">
+            <span className="strip-lead-gap" style={{ width: lead }} />
+            <div className="strip new-draft-line" data-lang={line.lang} data-testid={`assign-new-draft-line-${index}`}>
+              <span lang={line.lang === "neutral" ? undefined : line.lang} className="new-text">
+                {line.text}
+              </span>
+              <LangToken lang={line.lang} className="strip-lang" />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
   }
 
   return (
@@ -451,12 +491,16 @@ export function NewPane(props: NewPaneProps) {
               const isSectionStart = row.section_path !== "" && row.section_path !== previous?.section_path;
               // 번호는 앞머리가 보일 때만 머리 글에서 뺀다 - 표·그림·빈 칸이나 짝 카드의 둘째 줄부터가 절을 열면 앞머리에 번호가 없다. 엮은 문서는 앞머리가 줄 자기 번호라 칸 번호를 머리에 남긴다
               const isNumberInLead = isSectionStart && row.kind === "sentence" && !cardTops.has(row.target_id) && !isComposedRow(row);
+              // 점선 초안은 엮은 문서에서 기준 줄(빠지는 줄이 아닌) 바로 앞이나 뒤에
+              const draftSide = props.readOnly && props.draft && !leaving && props.draft.anchorKey === key ? props.draft.side : null;
               return (
                 <Fragment key={key}>
                   {isSectionStart && renderSectionHead(row, isNumberInLead)}
-                  <div className="new-item" data-enter={presence.added.has(key) ? "" : undefined} data-leave={leaving ? "" : undefined} inert={leaving || undefined}>
+                  {draftSide === "before" && props.draft && renderDraft(row, props.draft.lines)}
+                  <div className="new-item" data-row={key} data-enter={presence.added.has(key) ? "" : undefined} data-leave={leaving ? "" : undefined} inert={leaving || undefined}>
                     <div className="new-item-inner">{renderRow(row, isSectionStart, previous)}</div>
                   </div>
+                  {draftSide === "after" && props.draft && renderDraft(row, props.draft.lines)}
                 </Fragment>
               );
             })}

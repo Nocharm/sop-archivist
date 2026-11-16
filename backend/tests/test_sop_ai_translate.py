@@ -2717,6 +2717,26 @@ def test_ai_translation_lands_right_after_its_source_in_a_manual_order_doc(clien
     assert sorted(placed, key=placed.__getitem__) == [before, source["id"], target.id, after]
 
 
+def test_a_positioned_source_takes_its_kept_translation_right_after_it(client: TestClient, fake_ai: FakeAi) -> None:
+    bundle, unit, translation = make_settled_translation(client, fake_ai)
+    ids = []
+    for text in (LONE_EN, "Synthetic trailing sentence."):
+        extra = upload(client, bundle.id, build_docx(p(text)), f"SYNTHETIC_OLD-{len(ids)}_Extra.docx")
+        assert extra.status_code == 201, extra.text
+        extra_unit = get_view(client, bundle.id, extra.json()["id"])["units"][0]
+        assign_as_is(client, bundle.id, extra_unit, bundle.sop_id, slot_key=OTHER_SLOT)
+        ids.append(get_target(client, bundle.id, extra_unit["id"])["id"])
+    source = get_target(client, bundle.id, unit["id"])
+    before, after = ids
+
+    response = save_source(client, bundle.id, unit["id"], slot_key=OTHER_SLOT, position={"after_target_id": before})
+
+    assert response.status_code == 200, response.text
+    items = read_slot_items(get_output_c(client, bundle.id, "en"), "SOP-AI", OTHER_SLOT)
+    assert [item["target_id"] for item in items] == [before, source["id"], translation.id, after]
+    assert_held(unit["id"])
+
+
 def test_moving_the_source_to_another_slot_keeps_both_marks(client: TestClient, fake_ai: FakeAi) -> None:
     bundle, unit, translation = make_settled_translation(client, fake_ai)
     source = get_target(client, bundle.id, unit["id"])
