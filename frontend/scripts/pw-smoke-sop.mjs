@@ -685,6 +685,13 @@ await runStep("assign: right-click an Old sentence to split it or change its lan
   // Shape 언어 세 칸 - 바꾸는 동안 고름이 풀리지 않고 포커스가 누른 칸에 남는다
   const back = target.lang;
   await page.evaluate(() => { window.__selDrops = 0; new MutationObserver((recs) => { for (const r of recs) if (r.oldValue !== null && !r.target.hasAttribute("data-sel")) window.__selDrops += 1; }).observe(document.querySelector('[data-pane="old"]'), { attributes: true, subtree: true, attributeFilter: ["data-sel"], attributeOldValue: true }); });
+  // 한/영 줄은 평소 KO | EN만, 세 칸에 올리면 REF까지 펼친다
+  const langWidths = () => page.locator(`[data-testid="assign-shape-lang-${target.id}"] button`).evaluateAll((els) => els.map((el) => el.getBoundingClientRect().width));
+  const restWidths = await langWidths();
+  await page.locator(`[data-testid="assign-shape-lang-${target.id}"]`).hover();
+  await page.waitForTimeout(300);
+  const openWidths = await langWidths();
+  check("the language switch shows KO | EN at rest and REF too on hover", restWidths.length === 3 && restWidths[0] > 0 && restWidths[1] > 0 && restWidths[2] === 0 && openWidths.every((w) => w >= 28), JSON.stringify({ restWidths, openWidths }));
   await page.locator(`[data-testid="assign-shape-lang-${target.id}-${back}"]`).click();
   await page.waitForFunction(async ([path, id, lang]) => (await (await fetch(path, { headers: { "X-Dev-User": "qa.member" } })).json()).units.find((unit) => unit.id === id)?.lang === lang, [`/api/bundles/${freshBundleId}/documents/${docId}/view`, target.id, back], { timeout: T });
   await page.locator(`[data-testid="assign-shape-lang-${target.id}-${back}"][aria-pressed="true"]`).waitFor({ timeout: T });

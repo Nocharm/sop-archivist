@@ -1233,7 +1233,9 @@
   /* 고른 조각·그 짝·New의 고른 줄에만 - 마우스를 올린 곳에도 뜨면 그 문장이 고른 것처럼 보였다 */
   .strip:is([data-sel], [data-partner]) > .strip-lang,
   .strip-card:has(> .strip-row > .strip[data-sel]) > .strip-row > .strip > .strip-lang,
-  .new-line:is([data-state="picked"], [data-state="focus"], :focus-within) > .strip-lang { visibility: visible; opacity: 1; transition: opacity var(--dur-fast); }
+  .new-line:is([data-state="picked"], [data-state="focus"], :focus-within) > .strip-lang,
+  /* 참조 줄(제안은 점선 REF?)은 고르지 않아도 늘 - 나누고 묶는 글이 아니라는 것을 훑어보며 알게. 바탕색은 짝 카드·이음 호버·고른 줄이 쓰고 있어 태그로 */
+  .strip-lang[data-lang="ref"] { visibility: visible; opacity: 1; transition: opacity var(--dur-fast); }
   /* 쪼개기 오른쪽 칸: 섹션 머리 한 모양(작은 라벨 + 선) */
   .insp-h { display: flex; align-items: center; gap: 4px; font-size: var(--fs-micro); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }
   .insp-h::after { content: ""; flex: 1; height: 1px; background: var(--line); }
@@ -1521,12 +1523,23 @@
   /* 1번 다듬기 - 문장마다 한 줄: 언어, 글의 앞부분, 그 문장의 도구. 꺼진 단추는 흐리고 까닭은 툴팁으로 */
   .shape-tools { display: grid; gap: 2px; padding: 0 var(--pad) 8px; border-bottom: 1px solid var(--line); }
   .shape-line { display: flex; align-items: center; gap: 6px; min-height: 28px; min-width: 0; }
-  .shape-line .btn[aria-disabled="true"] { color: var(--ink-4); cursor: not-allowed; }
-  .shape-line .btn[aria-disabled="true"]:hover { background: none; }
+  :is(.shape-line, .shape-mode-row) .btn[aria-disabled="true"] { color: var(--ink-4); cursor: not-allowed; }
+  :is(.shape-line, .shape-mode-row) .btn[aria-disabled="true"]:hover { background: none; }
   .shape-line .btn[data-on] { background: var(--accent-tint); color: var(--accent); }
+  /* 줄의 단추 - 줄에 마우스를 올리거나 포커스가 갈 때만(자를 선이 놓인 줄은 늘). 자리는 늘 차지해 드러날 때 글 폭이 바뀌지 않는다 */
+  .shape-acts { display: flex; flex: none; gap: 2px; opacity: 0; transition: opacity var(--dur-fast); }
+  .shape-line:is(:hover, :focus-within) > .shape-acts, .shape-acts:has([data-on]) { opacity: 1; }
+  @media (hover: none) { .shape-acts { opacity: 1; } }
   /* 언어 세 칸 - 눌린 칸은 그 언어 색(lang-token과 같은 색), 나머지는 흐린 글자 */
-  .shape-langs { display: inline-flex; flex: none; gap: 1px; padding: 1px; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--sunken); }
-  .shape-langs button { height: 20px; min-width: 28px; padding: 0 5px; border: 1px solid transparent; border-radius: 3px; color: var(--ink-3); font: 600 10px / 1 var(--font-mono); cursor: pointer; transition: background var(--dur-fast), color var(--dur-fast); }
+  .shape-langs { display: inline-flex; flex: none; padding: 1px; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--sunken); }
+  .shape-langs button { flex: none; max-width: 40px; height: 20px; min-width: 28px; padding: 0 5px; overflow: hidden; border: 1px solid transparent; border-radius: 3px; color: var(--ink-3); font: 600 10px / 1 var(--font-mono); cursor: pointer; transition: background var(--dur-fast), color var(--dur-fast), max-width var(--dur-fast), min-width var(--dur-fast), padding var(--dur-fast), opacity var(--dur-fast); }
+  /* 평소 한/영 줄은 KO | EN만(눌린 칸의 자리로도 언어를 읽는다), 참조 줄은 REF만 - 세 칸에 올리거나 Tab으로 들어가면 나머지가 펼쳐진다(참조 줄은 REF 왼쪽에 KO | EN).
+     줄에 올릴 때 펴면 오른쪽 단추로 가는 동안 글이 밀려 세 칸에 올릴 때만. 제안된 REF?는 늘 보이고, 올릴 수 없는 터치 화면은 늘 세 칸 */
+  @media (hover: hover) {
+    .shape-langs:not(:hover, :focus-within) button[data-lang="ref"]:not([aria-pressed="true"], [data-proposed]),
+    .shape-langs:not(:hover, :focus-within):has(button[data-lang="ref"][aria-pressed="true"]) button:not([data-lang="ref"]) { max-width: 0; min-width: 0; padding: 0; border-width: 0; opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) { .shape-langs button { transition: none; } }
   .shape-langs button:not([aria-pressed="true"], [aria-disabled="true"]):hover { background: var(--menu-hover); color: var(--ink); }
   .shape-langs button[aria-disabled="true"] { color: var(--ink-4); cursor: not-allowed; }
   .shape-langs button[aria-pressed="true"] { cursor: default; }
@@ -1535,7 +1548,8 @@
   .shape-langs button[aria-pressed="true"][data-lang="ref"] { border-color: var(--lang-ref-line); background: var(--lang-ref-bg); color: var(--lang-ref-ink); }
   .shape-langs button[data-proposed] { border: 1px dashed var(--lang-ref-line); color: var(--lang-ref-ink); }
   /* 한 문장 ↔ 한/영 짝 - 눌린 쪽이 지금 모양 */
-  .shape-mode { display: inline-flex; justify-self: start; gap: 2px; margin-top: 4px; padding: 2px; border-radius: var(--r-2); background: var(--sunken); }
+  .shape-mode-row { display: flex; align-items: center; justify-self: start; gap: 4px; margin-top: 4px; }
+  .shape-mode { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-2); background: var(--sunken); }
   .shape-mode button { height: 22px; padding: 0 8px; border-radius: var(--r-1); font-size: var(--fs-cap); color: var(--ink-3); cursor: pointer; transition: background var(--dur-fast), color var(--dur-fast); }
   .shape-mode button:not([aria-disabled="true"], [aria-pressed="true"]):hover { background: var(--menu-hover); color: var(--ink); }
   .shape-mode button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--line-2); cursor: default; }
