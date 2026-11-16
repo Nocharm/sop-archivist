@@ -14,8 +14,8 @@ import { Menu, MenuRadio } from "@/components/ui/menu";
 import { useFlip } from "@/components/ui/motion";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { EquisInfo, NumberStyle, OutputC, OutputCItem } from "@/lib/api-sop";
-import type { BoxDragConfig, DragCard } from "@/lib/box-drag";
-import { classifyDropZone, DEPTH_STEP_PX, findDragBlock, findLiveBlock, listDropRows, planDrop, type DragBlock, type DropPlan } from "@/lib/c-drop-model";
+import type { BoxDragConfig, DragCard, DragHover, DragPoint } from "@/lib/box-drag";
+import { classifyDropZone, findDragBlock, findLiveBlock, listDropRows, planDrop, type DragBlock, type DropPlan } from "@/lib/c-drop-model";
 import { previewEdit, type PlaceEdit } from "@/lib/c-edit-model";
 import { useI18n } from "@/lib/i18n";
 import { buildCLines, listMeaningStarts, type CLine } from "@/lib/output-groups";
@@ -319,14 +319,28 @@ function readCardText(item: OutputCItem): string {
   return item.text || item.ai_text || item.children.map((cell) => cell.text || cell.ai_text).join(" ");
 }
 
+/** 칸의 줄 id·깊이·번호 표시 - 저장 응답은 바뀐 것이 없어도 새 칸 객체를 만들므로 같은 칸인지는 이것으로 본다. 같으면 id·깊이로 적은 place 편집이 그대로 맞다 */
+function readSectionShape(live: LiveDrag): string {
+  return live.section.items.map((item, index) => `${item.target_id}/${live.depths[index]}/${item.number_style}`).join(",");
+}
+
+/** 깊이 한 단의 폭(px) - 글이 쓰는 --c-indent(지금 1.5em)를 그 줄의 글자 크기로 푼다. 선이 그 깊이의 줄이 시작하는 자리에서 시작하게 */
+function readIndentPx(line: Element): number {
+  const style = getComputedStyle(line);
+  const indent = style.getPropertyValue("--c-indent").trim();
+  return indent.endsWith("em") ? parseFloat(indent) * parseFloat(style.fontSize) : parseFloat(indent);
+}
+
+/** plan과 그 자리를 센 칸의 모양(shape), 표에 적을 note는 마지막 move가 같은 칸 안이었을 때만 있다 */
 interface DragFrame {
   plan: DropPlan | null;
   key: string | null;
-  section: Section | null;
+  shape: string | null;
+  note: string | undefined;
   isGone: boolean;
 }
 
-const EMPTY_FRAME: DragFrame = { plan: null, key: null, section: null, isGone: false };
+const EMPTY_FRAME: DragFrame = { plan: null, key: null, shape: null, note: undefined, isGone: false };
 
 function isInsideBox(event: PointerEvent, box: DOMRect): boolean {
   return event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
@@ -351,8 +365,8 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
   const rootRef = useRef<HTMLDivElement>(null);
   const pendingMoveRef = useRef<PendingMove | null>(null);
   const dropLineRef = useRef<HTMLDivElement>(null);
-  // 끄는 동안 프레임마다 바뀌는 값 - 상태로 두면 프레임마다 다시 그린다. plan은 마지막 move가 같은 칸 안이었을 때만 있다(놓으면 이것만 저장).
-  // section은 그 plan을 센 칸(놓을 때 칸이 바뀌었으면 놓지 않는다), isGone은 끄는 동안 덩어리가 바뀌어 이 끌기를 거절했다는 표시
+  // 끄는 동안 프레임마다 바뀌는 값 - 상태로 두면 프레임마다 다시 그린다. plan은 마지막 move가 같은 칸 안이었을 때만 있다(놓으면 이것을 저장).
+  // shape는 그 plan을 센 칸의 모양(놓을 때 다르면 놓은 자리에서 다시 센다), isGone은 끄는 동안 덩어리가 바뀌어 이 끌기를 거절했다는 표시
   const dragFrameRef = useRef<DragFrame>(EMPTY_FRAME);
   // 화면에 그려진(커밋된) C - 끄는 동안 move마다 이것을 읽어 잰 줄과 같은 데이터로 센다. 상태를 구독하지 않는다
   const dataRef = useRef(data);
@@ -416,24 +430,52 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
     }
   }
 
-  // 놓을 자리에 선을 긋고 그 자리에 놓았을 때 덩어리 첫 줄의 번호를 선 위에 적는다(저장 응답이 이긴다)
-  function drawDropLine(source: DragSource, live: LiveDrag, plan: DropPlan) {
-    const root = rootRef.current;
-    const line = dropLineRef.current;
-    if (!root || !line) return;
+  // 놓을 자리에 그 깊이의 줄이 시작하는 곳부터 선을 긋고, 그 자리에 놓았을 때 덩어리 첫 줄이 받을 번호를 표의 note로 돌려준다(저장 응답이 이긴다).
+  // 번호는 선 위에 적지 않는다 - 용지 왼쪽 여백(30px)에는 긴 번호("10.12.3 · indent")가 들어가지 않고, 줄 위에 두면 아래 줄 글을 덮는다
+  function drawDropLine(source: DragSource, live: LiveDrag, plan: DropPlan): string | undefined {
     const shown = plan.edit ? previewEdit(live.doc, plan.edit) : live.doc;
     const firstId = live.section.items[live.block.start].target_id;
     const number = shown?.sections.find((section) => section.location_key === source.locationKey)?.items.find((item) => item.target_id === firstId)?.number ?? null;
     const depthWord = plan.depth > live.block.baseDepth ? t("order.drag.indent") : plan.depth < live.block.baseDepth ? t("order.drag.outdent") : null;
-    const label = line.firstElementChild;
-    if (label) label.textContent = [number, depthWord].filter(Boolean).join(" · ");
-    const rootBox = root.getBoundingClientRect();
-    const rowBox = source.row.getBoundingClientRect();
-    const inset = plan.depth * DEPTH_STEP_PX;
-    line.style.top = `${plan.lineY - rootBox.top}px`;
-    line.style.left = `${rowBox.left - rootBox.left + inset}px`;
-    line.style.width = `${Math.max(0, rowBox.width - inset)}px`;
-    line.hidden = false;
+    const root = rootRef.current;
+    const line = dropLineRef.current;
+    if (root && line) {
+      const rootBox = root.getBoundingClientRect();
+      const rowBox = source.row.getBoundingClientRect();
+      const inset = plan.depth * readIndentPx(source.row.querySelector(".c-line") ?? source.row);
+      line.style.top = `${plan.lineY - rootBox.top}px`;
+      line.style.left = `${rowBox.left - rootBox.left + inset}px`;
+      line.style.width = `${Math.max(0, rowBox.width - inset)}px`;
+      line.hidden = false;
+    }
+    return [number !== null ? `→ ${number}` : null, depthWord].filter(Boolean).join(" · ") || undefined;
+  }
+
+  // 지금 칸에서 포인터 자리의 놓을 자리 - 끌린 줄의 칸 밖이면 그곳의 표시(다른 칸은 이유, 용지·칸 밖은 없음)
+  function planAt(source: DragSource, live: LiveDrag, point: DragPoint, start: DragPoint): { plan: DropPlan } | { hover: DragHover } {
+    const sheet = source.row.closest("article");
+    const sections = sheet ? [...sheet.querySelectorAll("section")] : [];
+    if (!sheet || sections.length === 0) return { hover: { state: "none" } };
+    const span = { top: sections[0].getBoundingClientRect().top, bottom: sections[sections.length - 1].getBoundingClientRect().bottom };
+    const zone = classifyDropZone(point, sheet.getBoundingClientRect(), source.home.getBoundingClientRect(), span);
+    if (zone !== "home") return { hover: zone === "other" ? { state: "refused", note: t("order.drag.otherSection") } : { state: "none" } };
+    // 읽기만 한다 - 칸의 그려진 줄 가운데 덩어리 줄과 지금 칸에 없는 줄을 id로 뺀 것
+    const measured = [...source.home.querySelectorAll<HTMLElement>("[data-drag-box]")].map((el) => {
+      const box = el.getBoundingClientRect();
+      return { targetId: Number(el.dataset.flipKey), top: box.top, bottom: box.bottom };
+    });
+    const blockTop = (source.home.querySelector(`[data-testid="output-c-row-${source.blockIds[0]}"]`) ?? source.row).getBoundingClientRect().top;
+    const plan = planDrop({
+      locationKey: source.locationKey,
+      items: live.section.items,
+      depths: live.depths,
+      block: live.block,
+      rows: listDropRows(live.section.items, live.block, measured),
+      pointerY: point.y,
+      dx: point.x - start.x,
+      homeTop: blockTop - 1,
+    });
+    return { plan };
   }
 
   // 읽기 전용이면 null - 줄에 data-drag-box도 없다
@@ -474,43 +516,36 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
         return { state: "refused", note: t("order.drag.changed") };
       }
       markBlockRows(source);
-      const sheet = source.row.closest("article");
-      if (!sheet) return { state: "none" };
-      const zone = classifyDropZone(point, sheet.getBoundingClientRect(), source.home.getBoundingClientRect());
-      if (zone !== "home") {
+      const result = planAt(source, live, point, start);
+      if ("hover" in result) {
         // 다른 칸·용지 밖에서 놓으면 아무 일도 없다 - 앞서 같은 칸에서 잡은 자리를 버린다
         clearDropPlan(false);
-        return zone === "other" ? { state: "refused", note: t("order.drag.otherSection") } : { state: "none" };
+        return result.hover;
       }
-      // 읽기만 한다 - 칸의 그려진 줄 가운데 덩어리 줄과 지금 칸에 없는 줄을 id로 뺀 것
-      const measured = [...source.home.querySelectorAll<HTMLElement>("[data-drag-box]")].map((el) => {
-        const box = el.getBoundingClientRect();
-        return { targetId: Number(el.dataset.flipKey), top: box.top, bottom: box.bottom };
-      });
-      const blockTop = (source.home.querySelector(`[data-testid="output-c-row-${source.blockIds[0]}"]`) ?? source.row).getBoundingClientRect().top;
-      const plan = planDrop({
-        locationKey: source.locationKey,
-        items: live.section.items,
-        depths: live.depths,
-        block: live.block,
-        rows: listDropRows(live.section.items, live.block, measured),
-        pointerY: point.y,
-        dx: point.x - start.x,
-        homeTop: blockTop - 1,
-      });
+      const { plan } = result;
       const key = `${plan.beforeId}:${plan.depth}`;
-      // 칸이 바뀌었으면(같은 자리라도 번호가 다를 수 있다) 다시 쓴다
-      const isSame = key === dragFrameRef.current.key && live.section === dragFrameRef.current.section;
-      dragFrameRef.current = { plan, key, section: live.section, isGone: false };
-      if (!isSame) drawDropLine(source, live, plan);
-      return { state: "ok" };
+      const shape = readSectionShape(live);
+      const frame = dragFrameRef.current;
+      // 자리와 칸 모양이 그대로면 선·번호도 그대로다 - 바뀌었을 때만 다시 그린다
+      const note = key === frame.key && shape === frame.shape ? frame.note : drawDropLine(source, live, plan);
+      dragFrameRef.current = { plan, key, shape, note, isGone: false };
+      return { state: "ok", note };
     },
-    onDrop: (source) => {
-      const { plan, section, isGone } = dragFrameRef.current;
-      const edit = plan?.edit;
-      if (isGone || !edit || !onPlace) return;
-      // 마지막 move 뒤에 칸이 바뀌었으면 보인 선과 저장할 자리가 다를 수 있다 - 놓지 않는다
-      if (readLiveDrag(dataRef.current, source)?.section !== section) return;
+    onDrop: (source, point, start) => {
+      const frame = dragFrameRef.current;
+      if (frame.isGone || !frame.plan || !onPlace) return;
+      // 끄는 도중 덩어리 자체가 바뀌었으면 놓지 않는다
+      const live = readLiveDrag(dataRef.current, source);
+      if (!live) return;
+      let edit = frame.plan.edit;
+      // 마지막 move 뒤에 칸 모양이 바뀌었으면(포인터를 멈춘 채 저장 응답·다시 받기가 닿았다) 놓은 자리에서 지금 칸으로 다시 센다.
+      // 그린 선은 바뀌기 전 화면의 자리라 다를 수 있다 - 포인터 밑의 화면이 바뀌었으니 지금 화면에서 포인터가 가리키는 자리를 저장한다
+      if (readSectionShape(live) !== frame.shape) {
+        const result = planAt(source, live, point, start);
+        if ("hover" in result) return;
+        edit = result.plan.edit;
+      }
+      if (!edit) return;
       // 잡은 줄이 앞(미끄러지는 동안 이웃 위로 지난다) - 칸의 그려진 줄을 모두 잰다
       const others = [...source.home.querySelectorAll<HTMLElement>("[data-drag-box]")].map((el) => el.dataset.flipKey ?? "").filter((key) => key !== String(source.targetId));
       flip.capture([String(source.targetId), ...others]);
@@ -694,12 +729,8 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
           </ul>
         </section>
       )}
-      {/* 끌 때 놓을 자리 선 - 한 번 그리고 끄는 동안은 DOM(hidden·인라인 자리·글)으로만 바꾼다 */}
-      {onPlace && (
-        <div ref={dropLineRef} className="c-dropline" hidden data-testid="output-c-dropline">
-          <span />
-        </div>
-      )}
+      {/* 끌 때 놓을 자리 선 - 한 번 그리고 끄는 동안은 DOM(hidden·인라인 자리)으로만 바꾼다. 놓을 번호는 끌리는 표에 적는다 */}
+      {onPlace && <div ref={dropLineRef} className="c-dropline" hidden data-testid="output-c-dropline" />}
     </div>
   );
 }

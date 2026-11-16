@@ -53,10 +53,20 @@ export function listDropRows(items: readonly OutputCItem[], block: DragBlock, me
 
 export type DropZone = "home" | "other" | "outside";
 
-/** 종이 밖이면 outside, 끌린 줄의 칸 띠(위 10px·아래 28px 여유) 안이면 home, 그 밖의 종이 위는 other(다른 칸) */
-export function classifyDropZone(point: { x: number; y: number }, sheet: { left: number; right: number; top: number; bottom: number }, section: { top: number; bottom: number }): DropZone {
+type Band = { top: number; bottom: number };
+
+function isInBand(y: number, band: Band): boolean {
+  return y >= band.top - SECTION_SLACK_TOP_PX && y <= band.bottom + SECTION_SLACK_BOTTOM_PX;
+}
+
+/**
+ * 종이 밖이면 outside, 끌린 줄의 칸 띠(위 10px·아래 28px 여유) 안이면 home, 칸들이 놓인 띠(sections = 그려진 첫 칸 위 ~ 마지막 칸 아래) 안의 나머지는 other(다른 칸).
+ * 첫 칸 위(문서 머리)와 마지막 칸 아래는 다른 칸이 없으니 outside
+ */
+export function classifyDropZone(point: { x: number; y: number }, sheet: { left: number; right: number; top: number; bottom: number }, section: Band, sections: Band): DropZone {
   if (point.x < sheet.left || point.x > sheet.right || point.y < sheet.top || point.y > sheet.bottom) return "outside";
-  return point.y >= section.top - SECTION_SLACK_TOP_PX && point.y <= section.bottom + SECTION_SLACK_BOTTOM_PX ? "home" : "other";
+  if (isInBand(point.y, section)) return "home";
+  return isInBand(point.y, sections) ? "other" : "outside";
 }
 
 /** 그려진 줄 하나(덩어리 줄은 뺀다) - 화면 순서, y는 pointerY와 같은 좌표계 */
@@ -122,7 +132,10 @@ export function planDrop(input: {
   const insertAt = beforeId === null ? items.length : items.findIndex((item) => item.target_id === beforeId);
   let above = insertAt - 1;
   while (above >= 0 && (inBlock(above) || !isCounted(items[above]))) above -= 1;
-  const max = above < 0 ? 0 : Math.min(depths[above] + 1, MAX_INDENT_LEVEL);
+  // 서버 상한(MAX_INDENT_LEVEL)은 덩어리의 가장 깊은 줄에 건다 - 첫 줄을 그만큼 덜 들여 아래 줄들이 자기 단 차이를 지킨다
+  const blockDepths = depths.slice(block.start, block.end + 1);
+  const deepestOffset = Math.max(...blockDepths) - block.baseDepth;
+  const max = above < 0 ? 0 : Math.min(depths[above] + 1, MAX_INDENT_LEVEL - deepestOffset);
   const depth = block.isDepthLocked ? block.baseDepth : Math.max(0, Math.min(max, block.baseDepth + Math.round(input.dx / DEPTH_STEP_PX)));
 
   const targetIds = items.slice(block.start, block.end + 1).map((item) => item.target_id);
@@ -132,7 +145,7 @@ export function planDrop(input: {
   const isSameDepth = depth === block.baseDepth;
   if (isSameOrder && isSameDepth) return { beforeId, depth, lineY, edit: null };
 
-  // 아래 덩어리 줄은 같은 만큼 옮기되 서버 상한(MAX_INDENT_LEVEL)을 넘기지 않는다
-  const shifted = isSameDepth ? null : depths.slice(block.start, block.end + 1).map((d) => Math.min(MAX_INDENT_LEVEL, d - block.baseDepth + depth));
+  // 아래 덩어리 줄은 같은 만큼 옮긴다 - 위 한계가 가장 깊은 줄도 MAX_INDENT_LEVEL 안에 둔다
+  const shifted = isSameDepth ? null : blockDepths.map((d) => d - block.baseDepth + depth);
   return { beforeId, depth, lineY, edit: { kind: "place", locationKey: input.locationKey, targetIds, beforeId, depths: shifted } };
 }

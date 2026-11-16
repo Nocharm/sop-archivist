@@ -1701,11 +1701,10 @@
   }
   /* 끄는 동안 다른 칸은 흐리게 - 놓을 수 있는 곳은 출발 칸뿐이다 */
   html[data-box-drag] .c-order section:not([data-drag-home]) { opacity: .35; }
-  /* 놓을 자리 선 - 왼쪽 끝 동그라미, 선 위에 놓았을 때의 번호 알약(빈 글이면 숨김). 자리·폭·글은 output-c.tsx가 인라인으로 쓴다 */
+  /* 놓을 자리 선 - 왼쪽 끝 동그라미. 자리·폭은 output-c.tsx가 인라인으로 쓴다(왼쪽 끝 = 그 깊이의 줄이 시작하는 곳).
+     놓았을 때의 번호는 선에 두지 않고 끌리는 표에 적는다 - 줄 위의 알약은 아래 줄 글을 덮고, 용지 왼쪽 여백(30px)에는 긴 번호가 들어가지 않는다 */
   .c-dropline { position: absolute; z-index: 3; height: 2px; border-radius: 1px; background: var(--accent); pointer-events: none; }
   .c-dropline::before { content: ""; position: absolute; top: -3px; left: -4px; box-sizing: border-box; width: 8px; height: 8px; border: 2px solid var(--accent); border-radius: 50%; background: var(--surface); }
-  .c-dropline > span { position: absolute; top: 50%; left: 10px; transform: translateY(-50%); padding: 0 5px; border-radius: 8px; background: var(--accent); color: var(--on-accent); font: 600 10px/16px var(--font-mono); white-space: nowrap; }
-  .c-dropline > span:empty { display: none; }
   /* 끄는 동안은 줄 끝 단추·줄 호버·다리를 모두 끈다(lib/box-drag.ts) - 위 보이기 규칙보다 특이도가 높아야 한다 */
   html[data-box-drag] .c-order .c-row > :is(.c-acts, .c-more) { opacity: 0; pointer-events: none; }
   html[data-box-drag] .c-order .c-row:not(:focus) { background: none; }

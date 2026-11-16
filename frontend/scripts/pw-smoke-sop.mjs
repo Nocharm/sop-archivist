@@ -1771,7 +1771,16 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page }) =
   const readPane = () => page.locator('[data-testid="output-c"]').evaluate((el) => el.closest(".overflow-auto, .overflow-y-auto").scrollTop);
   const dropLine = page.locator('[data-testid="output-c-dropline"]');
   const card = page.locator('[data-testid="drag-card"]');
-  const readLine = async () => ((await dropLine.isVisible()) ? (await dropLine.innerText()).trim() : "");
+  // 놓을 자리의 미리 센 번호는 표의 note("→ 5.1", 깊이가 바뀌면 "· indent"가 붙는다)에 적힌다
+  const cardNote = card.locator(".drag-card-note");
+  const readNote = async () => ((await cardNote.isVisible()) ? (await cardNote.innerText()).trim() : "");
+  // 선에 붙은 표시(있다면)가 덮는 글 상자 - 모든 칸의 줄 번호·글과 겹친 것
+  const readLineCover = () => page.evaluate(() => {
+    const marks = [...document.querySelectorAll('[data-testid="output-c-dropline"] *')].map((el) => el.getBoundingClientRect()).filter((box) => box.width > 0 && box.height > 0);
+    const texts = [...document.querySelectorAll('[data-testid="output-c"] [data-drag-box] :is([data-testid^="output-c-item-"], [data-testid^="output-c-number-"], td)')].map((el) => ({ id: el.getAttribute("data-testid") ?? "td", box: el.getBoundingClientRect() }));
+    const isOver = (a, b) => Math.min(a.right, b.right) - Math.max(a.left, b.left) > 0.5 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 0.5;
+    return texts.filter(({ box }) => marks.some((mark) => isOver(mark, box))).map(({ id }) => id);
+  });
   const centre = (id) => rowOf(id).evaluate((el) => el.scrollIntoView({ block: "center" }));
   // 줄 안의 한 점 - 글이 있으면 첫 글줄 위, 없으면(표) 줄 왼쪽 위
   const pointIn = async (id) => {
@@ -1805,9 +1814,11 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page }) =
   const target = { x: from.x, y: (await rowOf(first).boundingBox()).y + 2 };
   await page.mouse.move(target.x, target.y, { steps: 12 });
   await settle();
-  const lineText = await readLine();
-  check("the drag shows the flag, the card and the drop line", (await isDragging()) && (await card.isVisible()) && (await rowOf(l).getAttribute("data-drag-src")) === "" && /^\d+(\.\d+)*/.test(lineText), lineText);
-  check("the drop line shows the number the line will get", lineText === firstNumber, `${lineText} vs ${firstNumber}`);
+  const lineText = await readNote();
+  check("the drag shows the flag, the card and the drop line", (await isDragging()) && (await card.isVisible()) && (await rowOf(l).getAttribute("data-drag-src")) === "" && (await dropLine.isVisible()), lineText);
+  check("the card shows the number the line will get", lineText === `→ ${firstNumber}`, `${lineText} vs → ${firstNumber}`);
+  const covered = await readLineCover();
+  check("the drop line covers no line's number or text", covered.length === 0, JSON.stringify(covered));
   // 3. 끄는 동안 다른 호버 효과는 꺼진다(G10)
   const hoverEffects = await page.evaluate(() => ({
     groups: [...document.querySelectorAll(".c-acts, .c-more")].filter((el) => getComputedStyle(el).display !== "none" && Number(getComputedStyle(el).opacity) > 0).length,
@@ -1870,8 +1881,11 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page }) =
     await page.mouse.move(point.x, point.y);
     await page.mouse.down();
     await page.mouse.move(point.x + dx, point.y, { steps: 12 });
-    return { text: await readLine(), dragging: await isDragging() };
+    const lineLeft = (await dropLine.isVisible()) ? (await dropLine.boundingBox()).x : null;
+    return { text: await readNote(), dragging: await isDragging(), lineLeft };
   };
+  // 그 깊이의 줄이 시작하는 x - 줄 상자(.c-line) 왼쪽 + 들여쓴 만큼(padding-left)
+  const readTextStart = (id) => page.locator(`[data-testid="output-c-row-${id}"] .c-line`).evaluate((el) => el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft));
   const indentId = await page.evaluate(() => [...document.querySelectorAll('[data-testid="output-c"] [data-drag-box][data-meaning-start]')]
     .find((row) => row.querySelector('[data-testid^="output-c-indent-"]:not([disabled])') && row.querySelector('[data-testid^="output-c-number-"]') && row.querySelector('[data-testid^="output-c-item-"]'))
     ?.dataset.flipKey ?? null);
@@ -1883,6 +1897,10 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page }) =
   const indentedOk = (await indented).ok();
   const deeper = await readNumber(indentId);
   check("dragging sideways 30px indents one level", right.dragging && right.text.includes("indent") && !right.text.includes("outdent") && indentedOk && deeper.split(".").length === indentNumber.split(".").length + 1, `${right.text} | ${indentNumber} -> ${deeper}`);
+  // 끄는 동안의 선은 들여 쓴 뒤 그 줄이 시작하는 자리에서 시작한다(글의 들여쓰기 1.5em과 같은 폭)
+  await page.waitForTimeout(400);
+  const indentedStart = await readTextStart(indentId);
+  check("the drop line starts where a line of that depth starts", right.lineLeft !== null && Math.abs(right.lineLeft - indentedStart) <= 1, JSON.stringify({ lineLeft: right.lineLeft, indentedStart }));
   const left = await dragSideways(indentId, -30);
   const outdented = waitOrderSave(page);
   await page.mouse.up();
@@ -2159,6 +2177,77 @@ await runStep("order: a save landing mid-drag keeps the drop line and the saved 
   await page.mouse.up();
   await page.waitForTimeout(400);
   check("releasing a refused drag saves nothing", puts.length === refusedPuts && JSON.stringify(await readOrder()) === JSON.stringify(original), JSON.stringify(await readOrder()));
+
+  // 3. L을 칸 맨 위로 놓은 저장을 붙잡은 채 L을 원래 자리로 다시 끌어 멈춘다. 멈춘 채 앞 저장의 응답이 닿고, 움직이지 않고 놓는다 - 두 번째 놓기도 저장된다
+  await centre();
+  const openFirst = holdNextSave("ok");
+  const firstDrop = waitOrderSave(page);
+  const aFrom = await pointIn(l);
+  await page.mouse.move(aFrom.x, aFrom.y);
+  await page.mouse.down();
+  await page.mouse.move(aFrom.x, (await rowOf(first).boundingBox()).y + 2, { steps: 12 });
+  await page.mouse.up();
+  const heldOrder = await readOrder();
+  check("the first drop shows at once while its save is held", heldOrder[0] === l, JSON.stringify(heldOrder));
+  await page.waitForTimeout(600);
+  const heldBlock = heldOrder.slice(0, heldOrder.indexOf(first));
+  const home = original[original.indexOf(heldBlock.at(-1)) + 1] ?? null;
+  const bFrom = await pointIn(l);
+  const homeBox = await rowOf(home ?? heldOrder.at(-1)).boundingBox();
+  await page.mouse.move(bFrom.x, bFrom.y);
+  await page.mouse.down();
+  await page.mouse.move(bFrom.x, home ? homeBox.y + 2 : homeBox.y + homeBox.height + 6, { steps: 12 });
+  const stillDrag = await readDrag();
+  openFirst();
+  check("the held first drop lands while the second drag holds still", (await firstDrop).ok());
+  // 응답이 화면에 커밋될 때까지 기다린다 - 포인터는 움직이지 않는다
+  await page.waitForTimeout(400);
+  const secondDrop = page.waitForResponse((response) => isOrderSave(response.request()), { timeout: 3000 }).catch(() => null);
+  await page.mouse.up();
+  const secondSaved = await secondDrop;
+  check("releasing without moving after the save landed saves the second drop", stillDrag.lineShown && stillDrag.before === home && secondSaved?.ok() === true, JSON.stringify({ stillDrag, home, saved: secondSaved?.status() ?? null }));
+  await page.reload();
+  await page.locator(`[data-testid="order-doc-${docId}"]`).click();
+  await rowOf(l).waitFor({ timeout: T });
+  check("after a reload the second drop persisted (the order is back)", JSON.stringify(await readOrder()) === JSON.stringify(original), JSON.stringify(await readOrder()));
+
+  // 4. F를 Alt+↓로 옮긴 저장(덩어리 L과 무관)을 붙잡은 채 L을 칸 맨 위로 끌어 멈추고, 멈춘 채 그 저장을 실패시킨다 - 칸 모양이 바뀌어 놓은 자리에서 다시 센다.
+  //    포인터는 여전히 칸 첫 줄의 위쪽 절반 위라 L 덩어리는 칸 맨 위(되돌아온 F 앞)에 저장된다
+  await centre();
+  const openRollback = holdNextSave("fail");
+  await rowOf(first).click({ position: { x: 4, y: 4 } });
+  const rolledBack = waitOrderSave(page);
+  await page.keyboard.press("Alt+ArrowDown");
+  await page.waitForTimeout(600);
+  const cFrom = await pointIn(l);
+  await page.mouse.move(cFrom.x, cFrom.y);
+  await page.mouse.down();
+  await page.mouse.move(cFrom.x, (await rowOf(second).boundingBox()).y + 2, { steps: 12 });
+  const beforeRollback = await readDrag();
+  openRollback();
+  check("the held unrelated save fails while the drag holds still", (await rolledBack).status() === 500);
+  await page.waitForTimeout(400);
+  const replanned = page.waitForResponse((response) => isOrderSave(response.request()), { timeout: 3000 }).catch(() => null);
+  await page.mouse.up();
+  const replannedSave = await replanned;
+  check("releasing without moving after the shape changed plans again and saves", beforeRollback.lineShown && beforeRollback.before === second && replannedSave?.ok() === true, JSON.stringify({ beforeRollback, saved: replannedSave?.status() ?? null }));
+  await page.reload();
+  await page.locator(`[data-testid="order-doc-${docId}"]`).click();
+  await rowOf(l).waitFor({ timeout: T });
+  const replannedOrder = await readOrder();
+  const lBlock = replannedOrder.slice(0, replannedOrder.indexOf(first));
+  check("the block was saved at the top of the section, above the rolled-back first line", lBlock[0] === l && JSON.stringify(replannedOrder.slice(lBlock.length)) === JSON.stringify(original.filter((id) => !lBlock.includes(id))), JSON.stringify(replannedOrder));
+  // 되돌린다 - 덩어리를 원래 다음 줄 앞(없으면 칸 끝)에
+  await centre();
+  const lNext = original[original.indexOf(lBlock.at(-1)) + 1] ?? null;
+  const dFrom = await pointIn(l);
+  const lNextBox = await rowOf(lNext ?? replannedOrder.at(-1)).boundingBox();
+  await page.mouse.move(dFrom.x, dFrom.y);
+  await page.mouse.down();
+  await page.mouse.move(dFrom.x, lNext ? lNextBox.y + 2 : lNextBox.y + lNextBox.height + 6, { steps: 12 });
+  const restored = waitOrderSave(page);
+  await page.mouse.up();
+  check("the order is restored again", (await restored).ok() && JSON.stringify(await readOrder()) === JSON.stringify(original), JSON.stringify(await readOrder()));
   await page.unroute(/\/targets\/order/);
 });
 

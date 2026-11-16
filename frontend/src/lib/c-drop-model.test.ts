@@ -30,9 +30,19 @@ describe("findDragBlock", () => {
   });
 });
 
-it("classifyDropZone: home inside the section band (10px above, 28px below), other elsewhere on the sheet, outside off the sheet", () => {
-  const zone = (x: number, y: number) => classifyDropZone({ x, y }, { left: 100, right: 860, top: 0, bottom: 2000 }, { top: 300, bottom: 500 });
-  expect([zone(200, 290), zone(200, 289), zone(200, 528), zone(200, 529), zone(99, 400), zone(200, 2001)]).toEqual(["home", "other", "home", "other", "outside", "outside"]);
+describe("classifyDropZone", () => {
+  const sheet = { left: 100, right: 860, top: 0, bottom: 2000 };
+  it("home inside the section band (10px above, 28px below), other elsewhere among the sections, outside off the sheet", () => {
+    const zone = (x: number, y: number) => classifyDropZone({ x, y }, sheet, { top: 300, bottom: 500 }, { top: 100, bottom: 900 });
+    expect([zone(200, 290), zone(200, 289), zone(200, 528), zone(200, 529), zone(99, 400), zone(200, 2001)]).toEqual(["home", "other", "home", "other", "outside", "outside"]);
+  });
+  it("treats the sheet above the first section and below the last one as outside - there is no other section there", () => {
+    const zone = (y: number) => classifyDropZone({ x: 200, y }, sheet, { top: 300, bottom: 500 }, { top: 100, bottom: 900 });
+    expect([zone(90), zone(89), zone(928), zone(929), zone(1500)]).toEqual(["other", "outside", "other", "outside", "outside"]);
+    // 끌린 줄의 칸이 마지막 칸이면 그 아래 여유 띠 밖은 바로 outside
+    const last = (y: number) => classifyDropZone({ x: 200, y }, sheet, { top: 700, bottom: 900 }, { top: 100, bottom: 900 });
+    expect([last(928), last(929)]).toEqual(["home", "outside"]);
+  });
 });
 
 describe("planDrop", () => {
@@ -55,6 +65,21 @@ describe("planDrop", () => {
     const noted = items.map((item) => (item.target_id === 3 ? { ...item, number_style: "note" as const } : item));
     expect(planDrop({ ...base, items: noted, depths: [0, 2, 9, 0, 0], pointerY: 45, dx: 240 }).depth).toBe(3);
     expect(planDrop({ ...base, depths: [0, 0, 9, 0, 0], pointerY: 45, dx: 480 }).depth).toBe(9);
+  });
+  it("caps the block's first line so its deepest line stays within MAX_INDENT_LEVEL and keeps the offsets inside the block", () => {
+    // 덩어리 = 줄 1(8)·줄 2(9), 줄 3(9) 뒤로 한 단 들이려 한다 - 첫 줄은 9 - 1 = 8까지, 아래 줄은 한 단 깊이를 지킨다
+    const plan = planDrop({ ...base, depths: [8, 9, 9, 0, 0], block: { start: 0, end: 1, baseDepth: 8, isDepthLocked: false }, rows: box([3, 4, 5]), pointerY: 25, dx: 24 });
+    expect(plan).toMatchObject({ depth: 8, edit: { targetIds: [1, 2], beforeId: 4, depths: null } });
+    const deep = planDrop({ ...base, depths: [7, 8, 9, 0, 0], block: { start: 0, end: 1, baseDepth: 7, isDepthLocked: false }, rows: box([3, 4, 5]), pointerY: 25, dx: 48 });
+    expect(deep).toMatchObject({ depth: 8, edit: { depths: [8, 9] } });
+  });
+  it("outdents a block whose base depth is above 0", () => {
+    const plan = planDrop({ ...base, depths: [0, 1, 2, 0, 0], block: { start: 2, end: 2, baseDepth: 2, isDepthLocked: false }, rows: box([1, 2, 4, 5]), pointerY: 35, dx: -24 });
+    expect(plan).toMatchObject({ beforeId: 4, depth: 1, edit: { targetIds: [3], beforeId: 4, depths: [1] } });
+  });
+  it("drops before a row when the pointer is exactly on its midline", () => {
+    // 줄 3의 칸은 20..40, 중간선 30 - 그 위에 정확히 있으면 줄 3 앞
+    expect(planDrop({ ...base, pointerY: 30 })).toMatchObject({ beforeId: 3, lineY: 19 });
   });
   it("does not count the block's own lines as the line above when limiting depth", () => {
     // 줄 1(깊이 3)을 줄 2 앞(제자리)에 놓는다 - 앞 번호 줄이 자기 자신뿐이라 한계는 0
