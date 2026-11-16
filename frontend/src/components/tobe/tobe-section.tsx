@@ -1,28 +1,21 @@
 // New 문서 목록(새로 만들 SOP·WI) - Documents 화면의 Old 문서 목록 아래에 놓인다. 줄을 번호로 더하고, 칸마다 바로 저장한다(초안·Save 없음).
-// SOP는 칸 N/A(사유), WI는 단계를 줄 아래에서 편다. 이미 쓴 파일은 그 줄에 붙어 보인다. Excel 템플릿 내려받기·가져오기는 메뉴에 있다.
-// EQUIS가 아는 값(종류·장비 번호)은 줄에 작은 제안으로 뜨고 사람이 눌러 넣는다 - 자동으로 바꾸지 않는다.
+// 줄은 두 줄로 읽고(ToBeRow), 누르면 펼친 곳(ToBePanel)에서 고친다 - SOP는 칸 상태 표, WI는 단계. 이미 쓴 파일은 그 줄에 붙어 보인다. Excel 템플릿 내려받기·가져오기는 메뉴에 있다.
+// EQUIS가 아는 값(종류·장비 번호)은 펼친 곳의 그 칸 옆에 작은 제안으로 뜨고 사람이 눌러 넣는다 - 자동으로 바꾸지 않는다.
 "use client";
 
-import { ChevronRight, Download, Eye, FileUp, ListTree, MoreHorizontal, Plus, Sparkles, Trash2 } from "lucide-react";
+import { Download, FileUp, ListTree, MoreHorizontal, Plus, Sparkles } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState, type ClipboardEvent } from "react";
 
-import { EquisStatus } from "@/components/equis/equis-status";
-import { TitleLock } from "@/components/equis/title-lock";
 import { BundleLoadError } from "@/components/bundle-load-error";
-import { LayoutLabel } from "@/components/documents/layout-picto";
 import { ListReader } from "@/components/tobe/list-reader";
 import { SlotTable } from "@/components/tobe/slot-table";
-import { Checkbox } from "@/components/ui/checkbox";
-import { CommitInput } from "@/components/ui/commit-input";
+import { ToBePanel } from "@/components/tobe/tobe-panel";
+import { ToBeRow } from "@/components/tobe/tobe-row";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Menu } from "@/components/ui/menu";
-import { MorphButton } from "@/components/ui/morph-button";
-import { CollapseRow, Truncate } from "@/components/ui/motion";
-import { Select } from "@/components/ui/select";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
-import { VersionInput } from "@/components/ui/version-input";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import {
@@ -33,7 +26,6 @@ import {
   getToBe,
   getToBeRead,
   importToBe,
-  LANGUAGE_LAYOUTS,
   refreshEquis,
   removeToBeDoc,
   removeWiStep,
@@ -93,6 +85,10 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
   const canEdit = bundle?.my_role === "author" && bundle.status === "in_progress";
   const { data, error, isLoading, reload } = useLoaded(() => getToBe(bundleId), String(bundleId));
   const showSkeleton = useDelayedFlag(isLoading && data === null);
+  const reloadingRef = useRef(false);
+  useEffect(() => {
+    reloadingRef.current = isLoading && data !== null;
+  }, [isLoading, data]);
   const menuRef = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   // 줄 하나를 저장한 응답 - 다시 받은 목록이 올 때까지 이쪽이 더 새롭다(받은 목록이 바뀌면 저절로 버려진다)
@@ -158,9 +154,12 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
   async function runWriteResult(write: () => Promise<ToBe>): Promise<{ ok: true } | { ok: false; error: unknown }> {
     if (!data) return { ok: false, error: null };
     setSaving(true);
+    // 다시 받는 중에 쓰면(거절 뒤 바로 다음 줄을 더함) 그 응답이 이 쓰기 앞의 목록으로 덮는다 - 끝나고 한 번 더 받는다
+    const wasReloading = reloadingRef.current;
     try {
       const next = await write();
       setFresh({ base: data, tobe: next });
+      if (wasReloading) reload();
       // 목록이 바뀌면 개요의 숫자·다음 할 일도 바뀐다
       void loadBundle(bundleId);
       return { ok: true };
@@ -292,68 +291,31 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
     }
   }
 
-  function renderDetail(doc: DraftDoc) {
-    if (!list || !tobe) return null;
+  /** SOP의 칸 상태 표 - WI는 N/A를 받지 않는다(서버 422 na_on_wi) */
+  function renderSections(doc: DraftDoc) {
+    if (!tobe) return null;
+    const saved = savedByCode.get(doc.code);
+    if (!saved || saved.doc_type !== "sop") return null;
     const docId = readDocId(doc.key);
-    if (doc.doc_type === "sop") {
-      // 칸 상태 표는 SOP에만 - WI는 N/A를 받지 않는다(서버 422 na_on_wi)
-      const saved = savedByCode.get(doc.code);
-      if (!saved || saved.doc_type !== "sop") return null;
-      const slotRows = buildSlotRows(tobe, saved);
-      return (
-        <SlotTable
-          prefix={`tobe-${doc.key}`}
-          docKey={doc.key}
-          rows={slotRows}
-          summary={summarizeSlots(slotRows)}
-          isWritten={doc.entrance === "match"}
-          canEdit={canEdit}
-          saving={saving}
-          usedReasons={listUsedReasons(tobe)}
-          edit={naEdit}
-          onEdit={setNaEdit}
-          onSave={(slotKey, reason) => void saveNa(docId, slotKey, reason)}
-          onRestore={(row) => void restoreNa(doc, row)}
-        />
-      );
-    }
-    const steps = list.wi_steps.filter((step) => step.doc_key === doc.key).sort((a, b) => a.step_no - b.step_no);
+    const slotRows = buildSlotRows(tobe, saved);
     return (
-      <div className="grid gap-1 py-1" data-testid={`tobe-${doc.key}-steps`}>
-        {steps.map((step) => (
-          // 마지막 칸은 단계 지우기 단추가 라벨까지 펼쳐질 폭 - 펼쳐져도 단계 이름 입력을 덮지 않는다
-          <div key={step.step_no} className="grid grid-cols-[48px_minmax(0,1fr)_128px] items-center gap-2">
-            {/* 서버의 단계 번호 그대로 - 결과물 C·Excel과 같은 번호다 */}
-            <span className="stg-n justify-self-end" aria-hidden>
-              {step.step_no}
-            </span>
-            <CommitInput
-              className={CELL_INPUT}
-              testId={`tobe-${doc.key}-step-${step.step_no}`}
-              value={step.title}
-              maxLength={500}
-              placeholder={t("tobe.stepTitle")}
-              disabled={!canEdit}
-              onCommit={(title) => runWrite(() => renameWiStep(bundleId, docId, step.step_no, title))}
-            />
-            {canEdit && (
-              <span className="mbtn-set justify-self-end">
-                <MorphButton icon={Trash2} tone="danger" label={t("tobe.removeStep")} testId={`tobe-${doc.key}-remove-step-${step.step_no}`} onClick={() => void runWrite(() => removeWiStep(bundleId, docId, step.step_no))} />
-              </span>
-            )}
-          </div>
-        ))}
-        {canEdit && (
-          <button type="button" className="btn ghost h-7 justify-self-start" data-testid={`tobe-${doc.key}-add-step`} disabled={saving} onClick={() => void runWrite(() => addWiStep(bundleId, docId, ""))}>
-            <Plus size={14} strokeWidth={1.5} aria-hidden />
-            {t("tobe.addStep")}
-          </button>
-        )}
-      </div>
+      <SlotTable
+        prefix={`tobe-${doc.key}`}
+        docKey={doc.key}
+        rows={slotRows}
+        summary={summarizeSlots(slotRows)}
+        isWritten={doc.entrance === "match"}
+        canEdit={canEdit}
+        saving={saving}
+        usedReasons={listUsedReasons(tobe)}
+        edit={naEdit}
+        onEdit={setNaEdit}
+        onSave={(slotKey, reason) => void saveNa(docId, slotKey, reason)}
+        onRestore={(row) => void restoreNa(doc, row)}
+      />
     );
   }
 
-  const colSpan = canEdit ? 8 : 7;
   return (
     <section className="dense flex flex-col border-t border-line bg-surface" aria-labelledby={NEW_DOCUMENTS_ANCHOR} data-testid="tobe-section">
       {/* 화면 제목 밑줄은 화면에 한 번만 쓴다 - 영역 머리는 밑줄 없이 */}
@@ -361,6 +323,11 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
         <h2 id={NEW_DOCUMENTS_ANCHOR} className="page-title scroll-mt-4">
           {t("documents.tobeTitle")}
         </h2>
+        {list !== null && (
+          <span className="count" data-testid="tobe-count">
+            {rows.length}
+          </span>
+        )}
         <span className="text-xs text-ink-3">{t("documents.tobeLead")}</span>
         <span className="flex-1" />
         {/* 저장 중 - 칸마다 바로 저장하므로 단추 대신 작은 표시만 */}
@@ -441,272 +408,98 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
       {error !== null && data === null ? (
         <BundleLoadError error={error} onRetry={reload} testId="tobe" />
       ) : (
-        <table className="dtable tobe-table border-t border-line" data-testid="tobe-list">
-          <thead>
-            <tr>
-              <th className="w-8" aria-label={t("tobe.details")} />
-              <th className="w-[164px] min-w-[164px] max-[1279px]:w-40 max-[1279px]:min-w-[160px]">{t("tobe.colCode")}</th>
-              <th className="min-w-[196px] max-[1279px]:min-w-[156px]">{t("tobe.colTitle")}</th>
-              <th className="w-24">{t("tobe.colType")}</th>
-              <th className="w-[168px] min-w-[168px] max-[1279px]:w-[160px] max-[1279px]:min-w-[160px]">{t("tobe.colParent")}</th>
-              <th className="w-[184px] max-[1279px]:w-[164px]">{t("tobe.colWritten")}</th>
-              <th className="w-28 max-[1279px]:w-16 max-[1279px]:whitespace-normal">{t("tobe.colEquipment")}</th>
-              <th className="w-32 max-[1279px]:w-24">{t("tobe.colDetail")}</th>
-              {/* 빼기 단추가 라벨까지 펼쳐질 폭을 미리 잡는다 - 펼쳐져도 옆 칸(세부)의 글자를 덮지 않는다 */}
-              {canEdit && <th className="w-[108px] min-w-[108px] max-[1279px]:w-[100px] max-[1279px]:min-w-[100px]" aria-label={t("common.delete")} />}
-            </tr>
-          </thead>
-          <tbody>
-            {list === null
+        <>
+          <div className="doc-list border-t border-line" data-testid="tobe-list">
+            {list === null || tobe === null
               ? showSkeleton &&
                 Array.from({ length: 4 }, (_, index) => (
-                  <tr key={index}>
-                    {[16, 120, 300, 60, 100, 60, 40, 80].map((width, cell) => (
-                      <td key={cell}>
-                        <span className="sk h-5" style={{ width }} />
-                      </td>
-                    ))}
-                  </tr>
+                  <div key={index} className="doc-row" aria-hidden>
+                    <span />
+                    <span className="sk h-5 w-[140px]" />
+                    <span className="grid gap-1.5">
+                      <span className="sk h-5" style={{ width: 300 }} />
+                      <span className="sk h-4" style={{ width: 180 }} />
+                    </span>
+                    <span />
+                  </div>
                 ))
-              : rows.flatMap(({ doc, depth }) => {
-                  const isMatch = doc.entrance === "match";
+              : rows.map(({ doc, depth }) => {
                   const written = findFile(doc.code);
-                  const isOpen = open.has(doc.key);
-                  const naCount = list.na_slots.filter((slot) => slot.doc_key === doc.key).length;
-                  const stepCount = list.wi_steps.filter((step) => step.doc_key === doc.key).length;
-                  const prefix = `tobe-${doc.key}`;
+                  const saved = savedByCode.get(doc.code);
+                  const steps = list.wi_steps.filter((step) => step.doc_key === doc.key).sort((a, b) => a.step_no - b.step_no);
+                  const docId = readDocId(doc.key);
                   const equis = equisByCode.get(normalizeDocNumber(doc.code)) ?? null;
-                  // EQUIS에 있는 번호의 제목은 EQUIS가 정한다 - 다른 값을 보내도 서버가 EQUIS 이름으로 되돌린다
-                  const isTitleLocked = equis?.title_locked === true;
-                  const hints = canEdit ? listEquisHints(doc, equis) : [];
-                  const codeInput = (
-                    <CommitInput
-                      className={`${CELL_INPUT} min-w-0 font-mono`}
-                      testId={`${prefix}-code`}
-                      value={doc.code}
-                      maxLength={100}
-                      placeholder={t("tobe.codePlaceholder")}
-                      ariaLabel={t("tobe.colCode")}
-                      // 쓴 파일이 붙은 줄의 번호는 그 파일의 번호다
-                      disabled={!canEdit || isMatch}
-                      // 번호는 비울 수 없다 - 비우고 떠나면 저장된 번호로 돌아간다
-                      onEmpty={() => undefined}
-                      onCommit={(code) => saveDoc(doc, { code })}
-                    />
-                  );
-                  const titleInput = (
-                    <CommitInput className={`${CELL_INPUT} min-w-0 text-ellipsis`} testId={`${prefix}-title`} value={doc.title} maxLength={500} ariaLabel={t("tobe.colTitle")} disabled={!canEdit || isTitleLocked} onCommit={(title) => saveDoc(doc, { title })} />
-                  );
-                  const row = (
-                    <tr key={doc.key} data-testid={`${prefix}-row`}>
-                      <td>
-                        <Tooltip label={t("tobe.details")}>
-                          <button type="button" className="btn ghost icon h-6 w-6" aria-expanded={isOpen} aria-label={t("tobe.details")} data-testid={`${prefix}-toggle`} onClick={() => toggleOpen(doc.key)}>
-                            <ChevronRight size={14} strokeWidth={1.5} aria-hidden className={`transition-transform duration-[var(--dur-base)] ${isOpen ? "rotate-90" : ""}`} />
-                          </button>
-                        </Tooltip>
-                      </td>
-                      <td className={depth === 1 ? "pl-4" : undefined}>
-                        {equis ? (
-                          // 좁은 칸이라 아이콘만 둔다 - 글은 툴팁과 펼친 정보에 있다
-                          <span className="flex items-center gap-1">
-                            {codeInput}
-                            <EquisStatus equis={equis} testId={`${prefix}-equis`} compact canEdit={canEdit} onRefresh={() => void handleEquisRefresh(doc.code)} />
-                          </span>
-                        ) : (
-                          codeInput
-                        )}
-                      </td>
-                      <td>
-                        {isTitleLocked ? (
-                          <span className="flex items-center gap-1">
-                            {titleInput}
-                            <TitleLock testId={`${prefix}-title-lock`} />
-                          </span>
-                        ) : (
-                          titleInput
-                        )}
-                        {/* EQUIS가 아는 값 - 줄과 다를 때만 뜨고, 눌러야 들어간다 */}
-                        {hints.length > 0 && (
-                          <span className="mt-1 flex flex-wrap gap-1">
-                            {hints.map((hint) =>
-                              hint.kind === "type" ? (
-                                <button key="type" type="button" className="equis-hint" data-testid={`${prefix}-hint-type`} onClick={() => void saveDoc(doc, { doc_type: "sop" })}>
-                                  <span className="src-badge">EQUIS</span>
-                                  {t("tobe.hint.type")}
-                                </button>
-                              ) : (
-                                <button key="equipment" type="button" className="equis-hint" data-testid={`${prefix}-hint-equipment`} onClick={() => void saveDoc(doc, { is_equipment_sop: true })}>
-                                  <span className="src-badge">EQUIS</span>
-                                  {t("tobe.hint.equipment", { tag: hint.tag })}
-                                </button>
-                              ),
-                            )}
-                          </span>
-                        )}
-                      </td>
-                      <td>
-                        <Select
-                          testId={`${prefix}-type`}
-                          ariaLabel={t("tobe.colType")}
-                          size="sm"
-                          className="w-full"
-                          value={doc.doc_type}
-                          disabled={!canEdit || isMatch}
-                          options={[
-                            { value: "sop", label: "SOP" },
-                            { value: "wi", label: "WI" },
-                          ]}
-                          onChange={(next) => changeType(doc, next)}
+                  return (
+                    <ToBeRow
+                      key={doc.key}
+                      doc={doc}
+                      isChild={depth === 1}
+                      tobe={tobe}
+                      saved={saved}
+                      written={written}
+                      equis={equis}
+                      stepCount={steps.length}
+                      canEdit={canEdit}
+                      open={open.has(doc.key)}
+                      onToggle={() => toggleOpen(doc.key)}
+                      hasUnsavedNa={naEdit?.docKey === doc.key && isNaEditDirty(naEdit)}
+                      onRemove={() => void runWrite(() => removeToBeDoc(bundleId, docId))}
+                      onEquisRefresh={() => void handleEquisRefresh(doc.code)}
+                      panel={() => (
+                        <ToBePanel
+                          doc={doc}
+                          sops={sops}
+                          steps={steps}
+                          written={written}
+                          // EQUIS가 아는 값 - 줄과 다를 때만 뜨고, 눌러야 들어간다
+                          hints={canEdit ? listEquisHints(doc, equis) : []}
+                          // EQUIS에 있는 번호의 제목은 EQUIS가 정한다 - 다른 값을 보내도 서버가 EQUIS 이름으로 되돌린다
+                          isTitleLocked={equis?.title_locked === true}
+                          canEdit={canEdit}
+                          saving={saving}
+                          saveDoc={(patch) => saveDoc(doc, patch)}
+                          changeType={(next) => changeType(doc, next)}
+                          onAddStep={() => void runWrite(() => addWiStep(bundleId, docId, ""))}
+                          onRenameStep={(stepNo, title) => runWrite(() => renameWiStep(bundleId, docId, stepNo, title))}
+                          onRemoveStep={(stepNo) => void runWrite(() => removeWiStep(bundleId, docId, stepNo))}
+                          file={file}
+                          sections={renderSections(doc)}
                         />
-                      </td>
-                      <td>
-                        {doc.doc_type === "wi" ? (
-                          <Select
-                            testId={`${prefix}-parent`}
-                            ariaLabel={t("tobe.colParent")}
-                            size="sm"
-                            mono
-                            width={148}
-                            value={doc.parent_key ?? ""}
-                            disabled={!canEdit}
-                            options={sops.map((sop) => ({ value: sop.key, label: sop.code.trim() || t("tobe.noCode"), tip: sop.code.trim() || t("tobe.noCode") }))}
-                            onChange={(next) => {
-                              const parent = sops.find((sop) => sop.key === next);
-                              if (parent) void saveDoc(doc, { parent_code: parent.code });
-                            }}
-                          />
-                        ) : (
-                          <span className="text-ink-4">–</span>
-                        )}
-                      </td>
-                      <td>
-                        {written ? (
-                          // 쓴 파일은 이 줄에 붙어 있다 - 따로 줄을 만들지 않는다. 버전·언어 배치는 줄을 펼치면 있다
-                          <span className="flex w-[168px] min-w-0 items-center gap-0.5 max-[1279px]:w-[152px]" data-testid={`${prefix}-written`}>
-                            <Truncate className="min-w-0 flex-1 font-mono text-xs text-ink-2" text={written.file_name} />
-                            <span className="row-actions-quiet flex flex-none gap-0.5">
-                              <Tooltip label={t("documents.preview")} align="end">
-                                <button type="button" className="btn ghost icon h-6 w-6" aria-label={t("documents.preview")} data-testid={`${prefix}-written-preview`} onClick={() => file.onPreview(written)}>
-                                  <Eye size={16} strokeWidth={1.5} aria-hidden />
-                                </button>
-                              </Tooltip>
-                              <Tooltip label={t("documents.download")} align="end">
-                                <button type="button" className="btn ghost icon h-6 w-6" aria-label={t("documents.download")} data-testid={`${prefix}-written-download`} onClick={() => file.onDownload(written)}>
-                                  <Download size={16} strokeWidth={1.5} aria-hidden />
-                                </button>
-                              </Tooltip>
-                              {canEdit && (
-                                <Tooltip label={t("tobe.deleteWritten")} align="end">
-                                  <button type="button" className="btn ghost icon h-6 w-6 text-danger" aria-label={t("tobe.deleteWritten")} data-testid={`${prefix}-written-delete`} onClick={() => file.onDelete(written)}>
-                                    <Trash2 size={16} strokeWidth={1.5} aria-hidden />
-                                  </button>
-                                </Tooltip>
-                              )}
-                            </span>
-                          </span>
-                        ) : (
-                          <span className="text-ink-4" data-testid={`${prefix}-not-written`}>
-                            {t("tobe.notWritten")}
-                          </span>
-                        )}
-                      </td>
-                      <td>
-                        {doc.doc_type === "sop" ? (
-                          <Checkbox className="mt-1.5" testId={`${prefix}-equipment`} ariaLabel={t("tobe.colEquipment")} checked={doc.is_equipment_sop} disabled={!canEdit} onChange={(next) => void saveDoc(doc, { is_equipment_sop: next })} />
-                        ) : (
-                          <span className="text-ink-4">–</span>
-                        )}
-                      </td>
-                      <td className="whitespace-nowrap text-ink-2">
-                        <button type="button" className="rounded-sm px-1 hover:bg-hover" data-testid={`${prefix}-detail`} onClick={() => toggleOpen(doc.key)}>
-                          {doc.doc_type === "sop" ? t("tobe.naCount", { n: naCount }) : t("tobe.stepCount", { n: stepCount })}
-                        </button>
-                        {/* 접어도 적던 사유는 남는다 - 그동안 줄에서 보인다. 좁은 창(1280 미만)의 열(96px)보다 길어 줄을 바꿔 열을 넓히지 않는다 */}
-                        {naEdit?.docKey === doc.key && isNaEditDirty(naEdit) && (
-                          <span className="pill warn mt-1 flex h-auto w-fit max-w-full whitespace-normal" data-testid={`${prefix}-unsaved`}>
-                            {t("tobe.slots.unsaved")}
-                          </span>
-                        )}
-                      </td>
-                      {canEdit && (
-                        <td className="text-right">
-                          <span className="row-actions mbtn-set">
-                            {isMatch ? (
-                              <Tooltip label={t("tobe.matchLocked")} align="end">
-                                <MorphButton icon={Trash2} tone="danger" label={t("tobe.removeDoc")} testId={`${prefix}-remove`} disabled />
-                              </Tooltip>
-                            ) : (
-                              <MorphButton icon={Trash2} tone="danger" label={t("tobe.removeDoc")} testId={`${prefix}-remove`} onClick={() => void runWrite(() => removeToBeDoc(bundleId, readDocId(doc.key)))} />
-                            )}
-                          </span>
-                        </td>
                       )}
-                    </tr>
-                  );
-                  return [
-                    row,
-                    <CollapseRow key={`${doc.key}-detail`} open={isOpen} colSpan={colSpan} className="bg-sunken">
-                      {written && (
-                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pb-1 pt-1.5 text-xs" data-testid={`${prefix}-written-detail`}>
-                          <span className="text-ink-3">{t("tobe.colWritten")}</span>
-                          <span className="inline-flex items-center gap-1.5">
-                            <span className="text-ink-3">{t("documents.colVersion")}</span>
-                            <VersionInput value={written.doc_version} disabled={!canEdit} testId={`${prefix}-written-version`} onCommit={(doc_version) => void file.onSave(written, { doc_version }).catch(() => undefined)} />
-                          </span>
-                          <span className="inline-flex items-center gap-1.5">
-                            <span className="text-ink-3">{t("documents.colLayout")}</span>
-                            <Select
-                              testId={`${prefix}-written-layout`}
-                              ariaLabel={t("documents.colLayout")}
-                              size="sm"
-                              value={written.language_layout}
-                              disabled={!canEdit}
-                              options={LANGUAGE_LAYOUTS.map((layout) => ({ value: layout, label: <LayoutLabel layout={layout} label={t(`layoutKind.${layout}`)} />, tip: t(`layoutKind.${layout}`) }))}
-                              onChange={(next) => void file.onSave(written, { language_layout: next }).catch(() => undefined)}
-                            />
-                          </span>
-                        </div>
-                      )}
-                      {renderDetail(doc)}
-                    </CollapseRow>,
-                  ];
-                })}
-            {/* 번호로 더하기 - 번호를 적고 Enter면 그 줄이 저장된다. 여러 줄을 붙여 넣으면 줄마다 하나씩 더한다 */}
-            {list !== null && canEdit && (
-              <tr data-testid="tobe-add-row">
-                <td />
-                <td colSpan={colSpan - 1}>
-                  <form
-                    className="flex items-center gap-2"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void addCodes(adding);
-                    }}
-                  >
-                    <input
-                      // 줄의 번호 칸과 같은 폭 - 칸이 표 끝까지 늘어나지 않게
-                      className={`${CELL_INPUT} max-w-[152px] flex-none font-mono`}
-                      data-testid="tobe-add-code"
-                      value={adding}
-                      maxLength={100}
-                      placeholder={t("tobe.addPlaceholder")}
-                      aria-label={t("tobe.addDoc")}
-                      disabled={saving}
-                      onChange={(event) => setAdding(event.target.value)}
-                      onPaste={handleAddPaste}
                     />
-                    <button type="submit" className="btn h-7" data-testid="tobe-add" disabled={saving || adding.trim() === ""}>
-                      <Plus size={14} strokeWidth={1.5} aria-hidden />
-                      {t("tobe.addDoc")}
-                    </button>
-                    <span className="text-xs text-ink-3">{t("tobe.addHint")}</span>
-                  </form>
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+                  );
+                })}
+          </div>
+          {/* 번호로 더하기 - 번호를 적고 Enter면 그 줄이 저장된다. 여러 줄을 붙여 넣으면 줄마다 하나씩 더한다 */}
+          {list !== null && canEdit && (
+            <form
+              className="flex items-center gap-2 border-b border-line px-[var(--pad)] py-2"
+              data-testid="tobe-add-row"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void addCodes(adding);
+              }}
+            >
+              <input
+                // 줄의 번호 칸과 같은 폭 - 칸이 줄 끝까지 늘어나지 않게
+                className={`${CELL_INPUT} max-w-[152px] flex-none font-mono`}
+                data-testid="tobe-add-code"
+                value={adding}
+                maxLength={100}
+                placeholder={t("tobe.addPlaceholder")}
+                aria-label={t("tobe.addDoc")}
+                disabled={saving}
+                onChange={(event) => setAdding(event.target.value)}
+                onPaste={handleAddPaste}
+              />
+              <button type="submit" className="btn h-7" data-testid="tobe-add" disabled={saving || adding.trim() === ""}>
+                <Plus size={14} strokeWidth={1.5} aria-hidden />
+                {t("tobe.addDoc")}
+              </button>
+              <span className="text-xs text-ink-3">{t("tobe.addHint")}</span>
+            </form>
+          )}
+        </>
       )}
       {pendingImport !== null && (
         <ConfirmModal

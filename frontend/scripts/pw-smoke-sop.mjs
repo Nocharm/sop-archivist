@@ -499,7 +499,7 @@ const readToBe = async (page, bundleId) => (await page.request.get(`${BASE}/api/
 await runStep("new documents: nested rows, N/A detail, each cell saves as you leave it", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
   await page.locator('[data-testid$="-row"][data-testid^="tobe-id-"]').first().waitFor({ timeout: T });
-  const codes = await page.locator('[data-testid$="-code"][data-testid^="tobe-id-"]').evaluateAll((els) => els.map((el) => el.value));
+  const codes = await page.locator('[data-testid$="-code-text"][data-testid^="tobe-id-"]').evaluateAll((els) => els.map((el) => (el.textContent ?? "").trim()));
   check("SOP first, its WIs under it", codes[0] === "SOP-CF" && codes.slice(1).every((code) => code.startsWith("WI-")), codes.join(","));
   check("there is no Save button and no draft bar", (await page.locator('[data-testid="tobe-save"], [data-testid="tobe-dirty"]').count()) === 0);
   const sopRow = page.locator('[data-testid$="-row"][data-testid^="tobe-id-"]').first();
@@ -558,7 +558,9 @@ await runStep("new documents: nested rows, N/A detail, each cell saves as you le
   await page.keyboard.press("Enter");
   await page.locator('[data-testid="toast-error"]').first().waitFor({ timeout: T });
   check("a number already on the list is refused in words", (await getText(page, "toast-error")).includes("Already on the list"));
-  // 번호를 고쳐도 같은 줄이다(줄 id가 그대로)
+  // 번호를 고쳐도 같은 줄이다(줄 id가 그대로) - 번호 칸은 줄을 펼친 곳에 있다
+  await page.locator(`[data-testid="tobe-id-${added.id}-toggle"]`).click();
+  await wait(page, `tobe-id-${added.id}-code`);
   await page.locator(`[data-testid="tobe-id-${added.id}-code"]`).fill("WI-98");
   await page.keyboard.press("Enter");
   await settleToBe(page);
@@ -574,10 +576,11 @@ await runStep("new documents: nested rows, N/A detail, each cell saves as you le
   await page.keyboard.press("Enter");
   await settleToBe(page);
   const marked = (await readToBe(page, halfBundleId)).docs.find((doc) => doc.code === "SOP-97");
+  await page.locator(`[data-testid="tobe-id-${marked.id}-toggle"]`).click();
+  await wait(page, `tobe-id-${marked.id}-equipment`);
   await page.locator(`[data-testid="tobe-id-${marked.id}-equipment"]`).click();
   await settleToBe(page);
-  await page.locator(`[data-testid="tobe-id-${marked.id}-type"]`).click();
-  await page.locator(`[data-testid="tobe-id-${marked.id}-type-option-wi"]`).click();
+  await page.locator(`[data-testid="tobe-id-${marked.id}-type-wi"]`).click();
   await settleToBe(page);
   const markedAfter = (await readToBe(page, halfBundleId)).docs.find((doc) => doc.id === marked.id);
   check("an equipment SOP turns into a WI and the mark goes off with it", markedAfter.doc_type === "wi" && markedAfter.is_equipment_sop === false, JSON.stringify({ type: markedAfter.doc_type, equipment: markedAfter.is_equipment_sop }));
@@ -889,6 +892,218 @@ await runStep("new documents: the section table shows each section's state and s
     }
     check("the N/A count is back where it started", (await readToBe(page, halfBundleId)).na_slots.length === naBefore);
   }
+});
+
+// New 목록의 두 줄 줄(Documents 화면 설계 §4·§6) - 줄은 글자로 읽고, 누르거나 Enter로 펼친 곳에서 고친다. 줄 끝 단추는 올리거나 포커스가 들어올 때만 보이고 좁은 틀에서는 ⋯ 메뉴 하나다
+const TOBE_ROWS = '[data-testid="tobe-list"] [data-testid^="tobe-id-"][data-testid$="-row"]';
+// API 목록의 보이는 순서(SOP마다 그 아래 WI, 부모 없는 WI는 끝) - 화면의 orderDocs와 따로 센다
+const orderToBe = (docs) => {
+  const sops = docs.filter((doc) => doc.doc_type === "sop");
+  const sopCodes = new Set(sops.map((doc) => doc.code));
+  return [
+    ...sops.flatMap((sop) => [{ doc: sop, child: false }, ...docs.filter((doc) => doc.doc_type === "wi" && doc.parent_code === sop.code).map((doc) => ({ doc, child: true }))]),
+    ...docs.filter((doc) => doc.doc_type === "wi" && !sopCodes.has(doc.parent_code)).map((doc) => ({ doc, child: false })),
+  ];
+};
+// 숨는 단추는 opacity만 바꾸고 전환이 있다 - 그 값이 될 때까지 기다린다
+const waitOpacityOf = (page, testId, value) =>
+  page.waitForFunction(({ id, v }) => {
+    const el = document.querySelector(`[data-testid="${id}"]`);
+    return el !== null && Number(getComputedStyle(el).opacity) === v;
+  }, { id: testId, v: value }, { timeout: 2000 }).then(() => true, () => false);
+const blurAll = (page) => page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
+
+await runStep("new documents: rows read in two lines, a click or Enter opens a row, row-end buttons show on hover or focus", {}, async ({ page }) => {
+  const tobe = await readToBe(page, halfBundleId);
+  const deletes = [];
+  page.on("request", (request) => {
+    if (request.method() === "DELETE" && /\/tobe\/docs\/\d+$/.test(new URL(request.url()).pathname)) deletes.push(request.url());
+  });
+  await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
+  await page.locator(TOBE_ROWS).first().waitFor({ timeout: T });
+  // 1. 표가 아니라 줄 상자 - 줄 수, 머리의 수, 순서, 종류와 들임
+  const expected = orderToBe(tobe.docs);
+  check("the New list is not a table", (await page.locator('[data-testid="tobe-list"] table').count()) === 0);
+  check("one row per document, and the head counts them", (await page.locator(TOBE_ROWS).count()) === tobe.docs.length && (await getText(page, "tobe-count")).trim() === String(tobe.docs.length), await getText(page, "tobe-count").catch(() => "no count"));
+  const shown = await page.locator('[data-testid="tobe-list"] [data-testid$="-code-text"]').evaluateAll((els) => els.map((el) => (el.textContent ?? "").trim()));
+  check("the numbers read in order, each SOP with its WIs under it", JSON.stringify(shown) === JSON.stringify(expected.map(({ doc }) => doc.code)), shown.join(","));
+  const kinds = await page.locator(TOBE_ROWS).evaluateAll((els) => els.map((el) => `${el.dataset.kind}${el.hasAttribute("data-child") ? "+child" : ""}`));
+  check("SOP rows are sop, the WIs under them are nested wi rows", JSON.stringify(kinds) === JSON.stringify(expected.map(({ doc, child }) => `${doc.doc_type}${child ? "+child" : ""}`)), kinds.join(","));
+  // 2. 줄에는 고치는 칸이 없다
+  check("a closed row has no field to edit", (await page.locator('[data-testid="tobe-list"] .doc-row :is(input, select)').count()) === 0);
+  // 3. 펼치기 - 제목 글을 누르면 열리고 다시 누르면 닫힌다. Enter로 열고 Space로 닫는다(쪽은 그대로)
+  const sop = expected[0].doc;
+  const sopPrefix = `tobe-id-${sop.id}`;
+  const panel = (prefix) => page.locator(`[data-testid="${prefix}-panel"]`);
+  const toggleOf = (prefix) => page.locator(`[data-testid="${prefix}-toggle"]`);
+  await page.locator(`[data-testid="${sopPrefix}-title-text"]`).click();
+  await panel(sopPrefix).waitFor({ timeout: T });
+  check("clicking the row's title opens it", (await panel(sopPrefix).isVisible()) && (await toggleOf(sopPrefix).getAttribute("aria-expanded")) === "true");
+  await page.locator(`[data-testid="${sopPrefix}-title-text"]`).click();
+  await panel(sopPrefix).waitFor({ state: "detached", timeout: T });
+  check("clicking it again closes it", (await toggleOf(sopPrefix).getAttribute("aria-expanded")) === "false");
+  const sopRow = page.locator(`[data-testid="${sopPrefix}-row"]`);
+  await sopRow.focus();
+  const scrollBefore = await page.evaluate(() => window.scrollY);
+  await page.keyboard.press("Enter");
+  await panel(sopPrefix).waitFor({ timeout: T });
+  check("Enter on the row opens it", (await toggleOf(sopPrefix).getAttribute("aria-expanded")) === "true");
+  await page.keyboard.press(" ");
+  await panel(sopPrefix).waitFor({ state: "detached", timeout: T });
+  check("Space closes it and does not scroll the page", (await toggleOf(sopPrefix).getAttribute("aria-expanded")) === "false" && (await page.evaluate(() => window.scrollY)) === scrollBefore);
+  const second = expected[1].doc;
+  await toggleOf(sopPrefix).click();
+  await toggleOf(`tobe-id-${second.id}`).click();
+  await panel(`tobe-id-${second.id}`).waitFor({ timeout: T });
+  check("several rows can stay open", (await page.locator('[data-testid="tobe-list"] [data-testid$="-panel"]').count()) === 2);
+  await toggleOf(sopPrefix).click();
+  await toggleOf(`tobe-id-${second.id}`).click();
+  await page.locator('[data-testid="tobe-list"] [data-testid$="-panel"]').first().waitFor({ state: "detached", timeout: T });
+  // 4. 글자를 긁은 것은 펼침이 아니다
+  const titleBox = await getBox(page, `${sopPrefix}-title-text`);
+  await page.mouse.move(titleBox.x + 4, titleBox.y + titleBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(titleBox.x + 64, titleBox.y + titleBox.height / 2, { steps: 6 });
+  await page.mouse.up();
+  const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+  await page.waitForTimeout(400);
+  check("selecting the title's text does not open the row", selected !== "" && (await page.locator('[data-testid="tobe-list"] [data-testid$="-panel"]').count()) === 0, JSON.stringify(selected));
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
+  // 5. 줄 끝 단추 - 평소 숨고, 올리거나 Tab으로 들어오면 보인다. 오른쪽 끝이 줄마다 같다
+  await blurAll(page);
+  await page.mouse.move(0, 0);
+  check("row-end buttons are hidden at rest", await waitOpacityOf(page, `${sopPrefix}-acts`, 0));
+  await sopRow.hover();
+  check("hovering the row shows them", await waitOpacityOf(page, `${sopPrefix}-acts`, 1));
+  await page.mouse.move(0, 0);
+  check("leaving the row hides them again", await waitOpacityOf(page, `${sopPrefix}-acts`, 0));
+  await sopRow.focus();
+  for (let i = 0; i < 8 && (await page.evaluate(() => document.activeElement?.dataset.testid ?? "")) !== `${sopPrefix}-edit`; i += 1) await page.keyboard.press("Tab");
+  check("Tab reaches Edit and shows the buttons", (await page.evaluate(() => document.activeElement?.dataset.testid ?? "")) === `${sopPrefix}-edit` && (await waitOpacityOf(page, `${sopPrefix}-acts`, 1)));
+  const rights = await page.locator('[data-testid="tobe-list"] [data-testid$="-acts"]').evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().right)));
+  check("every row's buttons end at the same right edge", rights.length === tobe.docs.length && Math.max(...rights) - Math.min(...rights) <= 1, rights.join(","));
+  await page.keyboard.press("Enter");
+  await panel(sopPrefix).waitFor({ timeout: T });
+  check("Edit opens the row", (await toggleOf(sopPrefix).getAttribute("aria-expanded")) === "true");
+  await toggleOf(sopPrefix).click();
+  await panel(sopPrefix).waitFor({ state: "detached", timeout: T });
+  // 6. 뺄 수 없는 줄은 Remove가 꺼지고 올리면 까닭이 뜬다 - 누름으로 지우기 요청이 가지 않는다
+  const readTip = async (testId) => {
+    await page.mouse.move(0, 0);
+    await page.locator(`[data-testid="${testId}"]`).hover({ force: true });
+    const tip = page.locator('[role="tooltip"]').last();
+    await tip.waitFor({ timeout: T });
+    return ((await tip.textContent()) ?? "").trim();
+  };
+  // 시드의 SOP는 문장도 있어 그 까닭이 먼저다 - 문장 없이 WI만 거느린 SOP를 API로 잠깐 더한다(끝에 지운다)
+  const apiHeaders = { "X-Dev-User": "qa.member", "Content-Type": "application/json" };
+  const addDoc = (data) => page.request.post(`${BASE}/api/bundles/${halfBundleId}/tobe/docs`, { headers: apiHeaders, data });
+  await addDoc({ code: "SOP-96", doc_type: "sop", parent_code: null });
+  await addDoc({ code: "WI-96", doc_type: "wi", parent_code: "SOP-96" });
+  const withExtra = await readToBe(page, halfBundleId);
+  const extraSop = withExtra.docs.find((doc) => doc.code === "SOP-96");
+  const extraWi = withExtra.docs.find((doc) => doc.code === "WI-96");
+  try {
+    await page.reload();
+    await page.locator(`[data-testid="tobe-id-${extraSop.id}-row"]`).waitFor({ timeout: T });
+    const parentRemove = page.locator(`[data-testid="tobe-id-${extraSop.id}-remove"]`);
+    check("an SOP with WIs under it cannot be removed, and says why", (await parentRemove.isDisabled()) && (await readTip(`tobe-id-${extraSop.id}-remove`)) === "WIs sit under this SOP. Delete them first.");
+    const counted = new Set((tobe.sentence_counts ?? []).map((row) => row.target_doc_id));
+    const busyWi = tobe.docs.find((doc) => doc.doc_type === "wi" && doc.entrance === "assign" && counted.has(doc.id));
+    check("the seed has a WI that holds sentences", busyWi !== undefined);
+    const busyRemove = page.locator(`[data-testid="tobe-id-${busyWi.id}-remove"]`);
+    check("a WI with sentences cannot be removed, and says why", (await busyRemove.isDisabled()) && (await readTip(`tobe-id-${busyWi.id}-remove`)) === "Sentences are assigned here. Clear them first.");
+    await parentRemove.click({ force: true });
+    await busyRemove.click({ force: true });
+    await page.waitForTimeout(300);
+    check("pressing a disabled Remove sends no delete", deletes.length === 0 && (await readToBe(page, halfBundleId)).docs.length === withExtra.docs.length, deletes.join(" | "));
+  } finally {
+    for (const doc of [extraWi, extraSop]) if (doc) await page.request.delete(`${BASE}/api/bundles/${halfBundleId}/tobe/docs/${doc.id}`, { headers: apiHeaders });
+    check("the extra SOP and WI are gone again", (await readToBe(page, halfBundleId)).docs.length === tobe.docs.length);
+  }
+  await page.reload();
+  await sopRow.waitFor({ timeout: T });
+  // 7. 좁은 틀 - 묶음 대신 ⋯ 하나가 같은 일을 메뉴로 한다. 앱 틀은 1120px 아래로 줄지 않아(.app min-width) 창을 줄여서는 목록 틀이 문턱(880px)보다 좁아지지 않는다 -
+  //    목록 틀의 폭만 문턱 아래로 묶어 컨테이너 질의를 본다(문턱이 바뀌면 이 폭도 맞춘다)
+  const narrow = await page.addStyleTag({ content: '[data-testid="tobe-list"] { max-width: 860px; }' });
+  try {
+    await page.mouse.move(0, 0);
+    check("a narrow list hides the button group", (await sopRow.evaluate((row) => getComputedStyle(row.querySelector(".doc-acts")).display)) === "none");
+    await sopRow.hover();
+    check("hovering shows the ⋯ button", await waitOpacityOf(page, `${sopPrefix}-more`, 1));
+    await page.locator(`[data-testid="${sopPrefix}-more"]`).click();
+    await wait(page, `${sopPrefix}-more-menu`);
+    check(
+      "the menu holds Edit and Remove",
+      (await page.locator(`[data-testid="${sopPrefix}-more-menu"] [data-testid="${sopPrefix}-edit-item"]`).count()) === 1 && (await page.locator(`[data-testid="${sopPrefix}-more-menu"] [data-testid="${sopPrefix}-remove-item"]`).count()) === 1,
+    );
+    await page.mouse.move(0, 0);
+    check("the ⋯ button stays while its menu is open", await waitOpacityOf(page, `${sopPrefix}-more`, 1));
+    await page.keyboard.press("Escape");
+    await page.locator(`[data-testid="${sopPrefix}-more-menu"]`).waitFor({ state: "detached", timeout: T });
+    check("Esc closes the menu", true);
+    await sopRow.hover();
+    await page.locator(`[data-testid="${sopPrefix}-more"]`).click();
+    await wait(page, `${sopPrefix}-more-menu`);
+    await page.locator('[data-testid="tobe-section"] h2').click();
+    await page.locator(`[data-testid="${sopPrefix}-more-menu"]`).waitFor({ state: "detached", timeout: T });
+    check("a click outside closes the menu", true);
+    await sopRow.hover();
+    await page.locator(`[data-testid="${sopPrefix}-more"]`).click();
+    await page.locator(`[data-testid="${sopPrefix}-edit-item"]`).click();
+    await panel(sopPrefix).waitFor({ timeout: T });
+    check("Edit in the menu opens the row", (await toggleOf(sopPrefix).getAttribute("aria-expanded")) === "true");
+    await toggleOf(sopPrefix).click();
+    await panel(sopPrefix).waitFor({ state: "detached", timeout: T });
+  } finally {
+    await narrow.evaluate((tag) => tag.remove());
+  }
+  // 8. 펼친 곳에서 고친다 - WI의 상위 SOP와 종류, 쓴 파일이 붙은 줄은 번호와 종류가 잠긴다
+  const wi = expected.find(({ doc }) => doc.doc_type === "wi" && doc.entrance === "assign").doc;
+  const wiPrefix = `tobe-id-${wi.id}`;
+  await toggleOf(wiPrefix).click();
+  await wait(page, `${wiPrefix}-parent`);
+  check("an open WI shows its parent SOP and its type", (await getText(page, `${wiPrefix}-parent`)).includes(wi.parent_code) && (await page.locator(`[data-testid="${wiPrefix}-type-wi"]`).getAttribute("aria-pressed")) === "true");
+  const writtenDoc = tobe.docs.find((doc) => doc.entrance === "match");
+  if (writtenDoc) {
+    const writtenPrefix = `tobe-id-${writtenDoc.id}`;
+    await toggleOf(writtenPrefix).click();
+    await wait(page, `${writtenPrefix}-code`);
+    check(
+      "a row with a written file keeps its number and type locked",
+      (await page.locator(`[data-testid="${writtenPrefix}-code"]`).isDisabled()) && (await page.locator(`[data-testid="${writtenPrefix}-type-sop"]`).isDisabled()) && (await page.locator(`[data-testid="${writtenPrefix}-type-wi"]`).isDisabled()),
+    );
+  }
+});
+
+// 읽기 전용(검토자 · 검토 대기 묶음) - 줄은 펼쳐지고 값은 글자로만 보인다. 고치는 칸 · 줄 끝 단추 · 칸 표의 단추 · 등록 칸이 없다
+await runStep("new documents: a reviewer reads the rows and the section table, nothing edits", { devUser: "qa.lead" }, async ({ page }) => {
+  await page.goto(`${BASE}/`);
+  await wait(page, "bundles-list");
+  const review = page.locator('[data-testid^="bundles-row-"]', { hasText: "검토 대기" });
+  const reviewId = Number((await review.getAttribute("data-testid")).replace("bundles-row-", ""));
+  const tobe = (await (await page.request.get(`${BASE}/api/bundles/${reviewId}/tobe`, { headers: { "X-Dev-User": "qa.lead" } })).json());
+  await page.goto(`${BASE}/bundles/${reviewId}/documents`);
+  await page.locator(TOBE_ROWS).first().waitFor({ timeout: T });
+  const sop = tobe.docs.find((doc) => doc.doc_type === "sop");
+  const wi = tobe.docs.find((doc) => doc.doc_type === "wi" && doc.parent_code === sop.code);
+  const sopPrefix = `tobe-id-${sop.id}`;
+  const wiPrefix = `tobe-id-${wi.id}`;
+  await page.locator(`[data-testid="${sopPrefix}-title-text"]`).click();
+  await wait(page, `${sopPrefix}-slots`);
+  await page.locator(`[data-testid="${wiPrefix}-row"]`).click();
+  await wait(page, `${wiPrefix}-code`);
+  check("rows open for a reviewer", (await page.locator(`[data-testid="${sopPrefix}-toggle"]`).getAttribute("aria-expanded")) === "true" && (await page.locator(`[data-testid="${wiPrefix}-toggle"]`).getAttribute("aria-expanded")) === "true");
+  const list = page.locator('[data-testid="tobe-list"]');
+  check("no field to edit anywhere in the list", (await list.locator('input, select, [role="checkbox"]').count()) === 0);
+  check("no row-end buttons", (await list.locator('[data-testid$="-acts"], [data-testid$="-more"], [data-testid$="-remove"], [data-testid$="-edit"]').count()) === 0);
+  check("the section table has no N/A buttons", (await page.locator(`[data-testid="${sopPrefix}-slots"]`).locator('button[data-testid$="-mark"], button[data-testid$="-edit"], button[data-testid$="-restore"]').count()) === 0);
+  check("no add field", (await page.locator('[data-testid="tobe-add-row"]').count()) === 0);
+  check(
+    "number, title, type and parent read as text",
+    (await getText(page, `${wiPrefix}-code`)).trim() === wi.code && (await getText(page, `${wiPrefix}-title`)).trim() === wi.title.trim() && (await getText(page, `${wiPrefix}-type`)).trim() === "WI" && (await getText(page, `${wiPrefix}-parent`)).trim() === sop.code,
+    `${await getText(page, `${wiPrefix}-code`)} | ${await getText(page, `${wiPrefix}-type`)} | ${await getText(page, `${wiPrefix}-parent`)}`,
+  );
 });
 
 // Assign(v0.10.0) - Old 원문 조각이 곧 목록이다. 줄은 ↑↓·J/K로 옮기고, 지금 줄은 오른쪽 머리(assign-row-id·assign-row-status)로 읽는다
@@ -7029,7 +7244,11 @@ await runStep("documents: an Old list and a New list, with written files on thei
   check("a written file shows on its New row", (await cell.innerText()).includes(file.file_name.slice(0, 12)));
   check("rows without a file say so", (await page.locator('[data-testid$="-not-written"]').count()) === tobe.docs.filter((doc) => doc.document_id === null).length);
   await takeShot("sop-documents-two-lists.png");
-  await cell.locator('[data-testid$="-written-preview"]').click();
+  // 미리 보기는 그 줄을 펼친 곳의 Written file 묶음에 있다
+  const writtenRow = page.locator('[data-testid="tobe-list"] [data-testid$="-row"]').filter({ has: page.locator('[data-testid$="-written"]:not([data-testid$="-not-written"])') }).first();
+  const writtenPrefix = (await writtenRow.getAttribute("data-testid")).replace(/-row$/, "");
+  await page.locator(`[data-testid="${writtenPrefix}-toggle"]`).click();
+  await page.locator(`[data-testid="${writtenPrefix}-written-preview"]`).click();
   await wait(page, "documents-preview-split");
   check("the file's preview opens from the row", true);
   await page.keyboard.press("Escape");
@@ -7039,9 +7258,8 @@ await runStep("documents: an Old list and a New list, with written files on thei
   await wait(page, "tobe-more-menu");
   check("the Excel template and import sit in the menu", (await page.locator('[data-testid="tobe-template"]').count()) === 1 && (await page.locator('[data-testid="tobe-import"]').count()) === 1);
   await page.keyboard.press("Escape");
-  // 줄을 펼치면 그 파일의 버전과 언어 배치가 있다
-  await cell.locator("xpath=ancestor::tr").locator('[data-testid$="-toggle"]').click();
-  await page.locator('[data-testid$="-written-detail"]').first().waitFor({ timeout: T });
+  // 펼친 줄에 그 파일의 버전과 언어 배치가 있다
+  await page.locator(`[data-testid="${writtenPrefix}-written-detail"]`).waitFor({ timeout: T });
   check("opening the row shows the file's version and language layout", (await page.locator('[data-testid$="-written-version"]').count()) === 1 && (await page.locator('[data-testid$="-written-layout"]').count()) === 1);
 });
 
@@ -7161,8 +7379,8 @@ await runStep("documents: AI reads a free-form list into New rows", { devUser: "
   check("the picked rows are on the New list with kind, parent and title", after.docs.length === 4 && byCode["WI-QC-0301"]?.parent_code === "SOP-QC-0300" && byCode["QC-0400"]?.doc_type === "sop" && byCode["SOP-QC-0300"]?.title === "Synthetic cold storage", JSON.stringify(after.docs.map((doc) => [doc.code, doc.doc_type, doc.parent_code])));
   check("the WI's steps came with it", after.wi_steps.filter((item) => item.code === "WI-QC-0301").length > 0);
   // 목록은 창이 닫힌 뒤 다시 받는다 - 넷째 줄이 그려질 때까지 기다린다
-  await page.locator('[data-testid^="tobe-id-"][data-testid$="-code"]').nth(3).waitFor({ timeout: T });
-  const shownCodes = await page.locator('[data-testid^="tobe-id-"][data-testid$="-code"]').evaluateAll((cells) => cells.map((cell) => cell.value ?? cell.textContent));
+  await page.locator('[data-testid^="tobe-id-"][data-testid$="-code-text"]').nth(3).waitFor({ timeout: T });
+  const shownCodes = await page.locator('[data-testid^="tobe-id-"][data-testid$="-code-text"]').evaluateAll((cells) => cells.map((cell) => cell.value ?? cell.textContent));
   check("the new rows show on the list without a reload", ["SOP-QC-0300", "WI-QC-0301", "QC-0400"].every((code) => shownCodes.includes(code)), shownCodes.join(","));
   const left = await (await page.request.get(`${BASE}/api/bundles/${created.id}/tobe/read`, { headers })).json();
   check("the proposal is closed once it is used", left === null && (await page.locator('[data-testid="tobe-proposal"]').count()) === 0);
