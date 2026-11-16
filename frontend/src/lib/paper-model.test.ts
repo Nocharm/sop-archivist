@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewPartGroup, ViewUnit } from "./api-sop";
-import { buildContourPath, buildPaperModel, buildPaperTabs, buildRows, listPartSheets, canSplitAt, clampSplitAt, getGapMerge, getMergeBlocker, resolveCutDrag, getMarks, getTags, readWarningText, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
+import { buildPaperModel, buildPaperTabs, buildRows, listPartSheets, canSplitAt, clampSplitAt, getGapMerge, getMergeBlocker, resolveCutDrag, getMarks, getTags, readWarningText, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -111,33 +111,6 @@ function makeSplitUnit(over: Partial<ViewUnit> = {}): ViewUnit {
     ...over,
   };
 }
-
-describe("buildContourPath", () => {
-  it("draws one padded box for a single line", () => {
-    expect(buildContourPath([{ left: 10, right: 110, top: 20, bottom: 40 }])).toBe("M6,18 H114 V42 H6 V18 Z");
-  });
-
-  it("walks down the right edges and back up the left edges across lines", () => {
-    const path = buildContourPath([
-      { left: 60, right: 300, top: 0, bottom: 20 },
-      { left: 0, right: 180, top: 24, bottom: 44 },
-    ]);
-    // 줄 사이 경계는 가운데(22)로 맞춘다
-    expect(path).toBe("M56,-2 H304 V22 H184 V46 H-4 V22 H56 V-2 Z");
-  });
-
-  it("merges rects that sit on the same line", () => {
-    const path = buildContourPath([
-      { left: 0, right: 50, top: 0, bottom: 20 },
-      { left: 50, right: 120, top: 1, bottom: 20 },
-    ]);
-    expect(path).toBe("M-4,-2 H124 V22 H-4 V-2 Z");
-  });
-
-  it("returns an empty path without rects", () => {
-    expect(buildContourPath([])).toBe("");
-  });
-});
 
 describe("shouldRecenter", () => {
   it("leaves a unit alone in the middle band", () => {

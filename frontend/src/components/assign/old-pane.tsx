@@ -100,7 +100,6 @@ export function OldPane(props: OldPaneProps) {
         onCutNudge={props.onCutNudge}
         renderAtCut={props.cut ? props.renderAtCut : undefined}
         figureSource={props.figureSource}
-        contour
         strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join }}
         renderUnitActions={props.renderUnitActions}
         testId="assign-paper"

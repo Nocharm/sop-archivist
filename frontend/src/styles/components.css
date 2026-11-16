@@ -1051,9 +1051,6 @@
 @layer components {
   .pg { position: relative; }
   /* 윤곽 선택을 쓰면 밑줄 대신 윤곽 */
-  .pg[data-contour] .su[data-sel] { text-decoration: none; box-shadow: none; background: none; }
-  .sel-contour { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 1; }
-  .sel-contour path { fill: color-mix(in oklab, var(--accent) 7%, transparent); stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; }
 
   /* Unit 하나 = 종이 조각 하나(2026-11-10). 용지 바탕을 걷고 조각마다 종이를 그린다 - 확인 여부와 상관없이 처음부터 나뉘어 있다 */
   .sheet:has(> .pg[data-strips]) { background: none; border: 0; box-shadow: none; }
@@ -1077,6 +1074,9 @@
   /* 짝 Unit - 이웃한 짝은 구성원 수와 상관없이 틈 없이 붙여 한 카드(줄 사이는 점선 한 줄). 바탕은 아주 옅게. 고른 단위의 짝(data-partner)·이어진 맞은편(data-link-hover)은 카드에 강조 테두리(아래 .strip::after) */
   .pg[data-strips] .strip[data-bracket], .pg[data-strips] .strip[data-partner]:not([data-bracket]), .cell-piece[data-partner] { background: color-mix(in oklab, var(--accent) 4%, var(--paper)); }
   .cell-piece[data-partner] { box-shadow: inset 2px 0 0 var(--accent); }
+  .cell-piece[data-sel] { outline: 2px solid var(--accent); outline-offset: -2px; }
+  /* 조각에 테두리가 있으니 글줄 밑 막대는 겹친다 - 조각 종이에서는 뺀다 */
+  .pg[data-strips] .su[data-sel] { background-image: none; }
 
   /* 필터 접기(Assign Old) - 엿보기 조각은 필터 밖이라 바탕을 가라앉히고 점선, 그림자 없음. 곁은 한 줄 판(앞머리 옅게 + 말줄임 작은 글), 먼 구간은 점선 묶음 한 줄.
      한 줄 판 글은 명세의 --ink-4가 라이트에서 4.2:1이라 4.5:1을 넘는 --ink-3(약 5.6:1) - 작은 글자·앞머리 옅음으로 충분히 물러난다 */
@@ -1187,8 +1187,9 @@
   .strip-lead-gap { flex: none; }
   /* 카드 강조 테두리 - 조각 바깥 2px. 짝 카드(.strip-card, 줄 수와 상관없이)는 한 줄이라도 강조면 모든 줄에 두르되 맞닿는 쪽은 열어 한 테두리로 읽힌다(줄마다 그림자 고리를 두면 사이에 선이 생긴다) */
   .strip-card { display: contents; }
-  .pg[data-strips] .strip-lead + .strip:is([data-partner], [data-link-hover])::after,
-  .strip-card:has(> .strip-row > .strip:is([data-partner], [data-link-hover])) > .strip-row > .strip-lead + .strip::after { content: ""; position: absolute; inset: var(--ring-inset, -2px); border: solid var(--accent); border-width: var(--ring-bw, 2px); border-radius: var(--ring-r, calc(var(--r-1) + 2px)); pointer-events: none; }
+  /* 고른 조각(문단)과 그 짝에 두른다. 맞은편 강조(data-link-hover)는 바탕만 - 마우스를 올린 곳이 고른 것처럼 보이지 않게 */
+  .pg[data-strips] .strip-lead + .strip:is([data-sel], [data-partner])::after,
+  .strip-card:has(> .strip-row > .strip:is([data-sel], [data-partner])) > .strip-row > .strip-lead + .strip::after { content: ""; position: absolute; inset: var(--ring-inset, -2px); border: solid var(--accent); border-width: var(--ring-bw, 2px); border-radius: var(--ring-r, calc(var(--r-1) + 2px)); pointer-events: none; }
   /* 보류 칩 - 글 첫머리, 글자와 같은 줄에 앉는다 */
   .pg[data-strips] p > .schip:first-child { margin-right: 6px; vertical-align: 1px; }
   .pg[data-strips] .strip-hold { display: flex; margin-bottom: 4px; }
@@ -1229,9 +1230,9 @@
   .strip-lang { position: absolute; top: -8px; right: 9px; z-index: 2; visibility: hidden; opacity: 0; transition: opacity var(--dur-fast), visibility 0s var(--dur-fast); }
   .assign-pane .strip-lang { right: 30px; }
   .strip-lang:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .strip-row:hover > .strip > .strip-lang,
-  .strip:is([data-sel], [data-partner], [data-mate-hover]) > .strip-lang,
-  .strip-card:has(> .strip-row:hover, > .strip-row > .strip[data-sel]) > .strip-row > .strip > .strip-lang,
+  /* 고른 조각·그 짝·New의 고른 줄에만 - 마우스를 올린 곳에도 뜨면 그 문장이 고른 것처럼 보였다 */
+  .strip:is([data-sel], [data-partner]) > .strip-lang,
+  .strip-card:has(> .strip-row > .strip[data-sel]) > .strip-row > .strip > .strip-lang,
   .new-line:is([data-state="picked"], [data-state="focus"], :focus-within) > .strip-lang { visibility: visible; opacity: 1; transition: opacity var(--dur-fast); }
   /* 쪼개기 오른쪽 칸: 섹션 머리 한 모양(작은 라벨 + 선) */
   .insp-h { display: flex; align-items: center; gap: 4px; font-size: var(--fs-micro); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }
@@ -1523,9 +1524,16 @@
   .shape-line .btn[aria-disabled="true"] { color: var(--ink-4); cursor: not-allowed; }
   .shape-line .btn[aria-disabled="true"]:hover { background: none; }
   .shape-line .btn[data-on] { background: var(--accent-tint); color: var(--accent); }
-  .shape-lang { flex: none; cursor: pointer; }
-  .shape-lang[aria-disabled="true"] { cursor: not-allowed; }
-  .shape-lang:not([aria-disabled="true"]):hover { box-shadow: 0 0 0 1px currentColor; }
+  /* 언어 세 칸 - 눌린 칸은 그 언어 색(lang-token과 같은 색), 나머지는 흐린 글자 */
+  .shape-langs { display: inline-flex; flex: none; gap: 1px; padding: 1px; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--sunken); }
+  .shape-langs button { height: 20px; min-width: 28px; padding: 0 5px; border: 1px solid transparent; border-radius: 3px; color: var(--ink-3); font: 600 10px / 1 var(--font-mono); cursor: pointer; transition: background var(--dur-fast), color var(--dur-fast); }
+  .shape-langs button:not([aria-pressed="true"], [aria-disabled="true"]):hover { background: var(--menu-hover); color: var(--ink); }
+  .shape-langs button[aria-disabled="true"] { color: var(--ink-4); cursor: not-allowed; }
+  .shape-langs button[aria-pressed="true"] { cursor: default; }
+  .shape-langs button[aria-pressed="true"][data-lang="ko"] { border-color: var(--lang-ko-line); background: var(--lang-ko-bg); color: var(--lang-ko-ink); }
+  .shape-langs button[aria-pressed="true"][data-lang="en"] { border-color: var(--lang-en-line); background: var(--lang-en-bg); color: var(--lang-en-ink); }
+  .shape-langs button[aria-pressed="true"][data-lang="ref"] { border-color: var(--lang-ref-line); background: var(--lang-ref-bg); color: var(--lang-ref-ink); }
+  .shape-langs button[data-proposed] { border: 1px dashed var(--lang-ref-line); color: var(--lang-ref-ink); }
   /* 한 문장 ↔ 한/영 짝 - 눌린 쪽이 지금 모양 */
   .shape-mode { display: inline-flex; justify-self: start; gap: 2px; margin-top: 4px; padding: 2px; border-radius: var(--r-2); background: var(--sunken); }
   .shape-mode button { height: 22px; padding: 0 8px; border-radius: var(--r-1); font-size: var(--fs-cap); color: var(--ink-3); cursor: pointer; transition: background var(--dur-fast), color var(--dur-fast); }

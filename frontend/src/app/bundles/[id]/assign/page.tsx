@@ -935,7 +935,8 @@ export default function AssignPage() {
   }
 
   /** 편집 한 번 - 끝나면 원문 보기·단위를 다시 받고 followId(없으면 새로 생긴 첫 단위)의 줄을 고른다. confirm은 확인 창에서 다시 보낼 때만 켠다 */
-  async function runUnitEdit(op: EditOp, okText: string, followId: number | null, confirm = false) {
+  /** thenLang - 참조 줄을 푼 뒤 그 문장을 이 언어로(Shape 언어 세 칸에서 참조 줄의 KO·EN) */
+  async function runUnitEdit(op: EditOp, okText: string, followId: number | null, confirm = false, thenLang: "ko" | "en" | null = null) {
     if (!shapeView || busy) return;
     setBusy(true);
     let isAsking = false;
@@ -943,13 +944,22 @@ export default function AssignPage() {
       // 자르기·합치기·언어 바꾸기 모두 Assign 기록에 넣는다(설계 §4.4) - 서버는 Split 편집 기록 번호만 가리킨다
       const undo = buildUndo({ focus_unit_id: op.type === "split" ? op.unit_id : (followId ?? undefined) });
       const result = await editUnits(bundleId, shapeView.document.id, shapeView.document.revision, op, confirm, undo);
+      let revision = result.document_revision;
+      // 참조를 풀면 서버가 그 전 언어로 돌린다 - 고른 언어와 다를 때만 한 번 더 바꾼다
+      if (thenLang !== null && op.type === "clear_ref") {
+        const restored = (await getDocumentView(bundleId, shapeView.document.id)).units.find((unit) => unit.id === op.unit_id);
+        if (restored && restored.lang !== thenLang) {
+          revision = (await editUnits(bundleId, shapeView.document.id, revision, { type: "set_language", unit_ids: [op.unit_id], lang: thenLang }, false, buildUndo({ focus_unit_id: op.unit_id }))).document_revision;
+        }
+      }
       // 문서가 바뀌지 않은 편집(참조 제안 물리기)은 서버도 단계를 남기지 않는다
-      if (result.document_revision !== shapeView.document.revision) markRecorded();
+      if (revision !== shapeView.document.revision) markRecorded();
       setRefEntryId(null);
       cutLine.clear();
       setCutUnitId(null);
-      // 고친 줄의 Unit은 은퇴했을 수 있다 - 다시 받는 동안 그 Unit의 묶음·후보를 부르지 않게 고름을 비우고, 새 줄이 생기면 follow가 고른다
-      setSelectedKey(null);
+      // 고친 줄의 Unit은 은퇴했을 수 있다 - 다시 받는 동안 그 Unit의 묶음·후보를 부르지 않게 고름을 비우고, 새 줄이 생기면 follow가 고른다.
+      // 제자리에서 바뀌는 편집(언어·참조)은 Unit이 그대로라 고름을 두어 고른 표시·오른쪽 칸·포커스가 깜빡이지 않게 한다
+      if (op.type !== "set_language" && op.type !== "set_ref" && op.type !== "clear_ref") setSelectedKey(null);
       showToast(okText);
       const next = result.created_unit_ids[0] ?? followId;
       if (next !== null && next !== undefined) followUnit(next);
@@ -1156,6 +1166,7 @@ export default function AssignPage() {
     } else if (action === "table_rows" && table) void runUnitEdit({ type: "split_table_rows", table_unit_id: table.id }, t("split.didSplit"), null);
     else if (action === "table_merge" && table && table.table_id !== null) void runUnitEdit({ type: "merge_table_rows", table_id: table.table_id }, t("split.didMerge"), null);
     else if (action === "table_layout" && table && table.table_id !== null) void runUnitEdit({ type: "set_layout_table", table_id: table.table_id, is_layout: true }, t("common.saved"), null);
+    else if (action === "lang" && lang && target.lang === "ref") void runUnitEdit({ type: "clear_ref", unit_id: target.id }, t("common.saved"), target.id, false, lang);
     else if (action === "lang" && lang) void runUnitEdit({ type: "set_language", unit_ids: [target.id], lang }, t("common.saved"), target.id);
   }
 

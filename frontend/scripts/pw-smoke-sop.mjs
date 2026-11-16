@@ -674,6 +674,23 @@ await runStep("assign: right-click an Old sentence to split it or change its lan
   // 고친 뒤 화면이 원문을 다시 받아 그 줄을 다시 고른다 - 그 전에 메뉴를 열면 줄을 다시 고를 때 메뉴가 닫힌다
   await page.waitForLoadState("networkidle");
   await wait(page, "assign-row-id");
+  // 고른 조각은 문단 테두리, 마우스만 올린 조각에는 테두리·언어 칩이 없다(올린 곳이 고른 것처럼 보이지 않게)
+  const ringOf = (selector) => page.evaluate((sel) => { const el = document.querySelector(sel); return el ? getComputedStyle(el, "::after").borderTopWidth : null; }, selector);
+  check("the selected piece gets a paragraph border", (await ringOf(`[data-testid="assign-paper-piece-${target.id}"]`)) === "2px");
+  const neighbor = (await viewUnits()).find((unit) => unit.kind === "sentence" && unit.id !== target.id && unit.pair_id === null && unit.lang !== "ref");
+  const neighborPiece = page.locator(`[data-testid="assign-paper-piece-${neighbor.id}"]`);
+  await neighborPiece.hover();
+  await page.waitForTimeout(300);
+  check("a hovered piece shows no border and no language chip", (await ringOf(`[data-testid="assign-paper-piece-${neighbor.id}"]`)) !== "2px" && (await page.locator(`[data-testid="assign-paper-piece-${neighbor.id}"] > .strip-lang`).evaluate((el) => getComputedStyle(el).visibility)) === "hidden");
+  // Shape 언어 세 칸 - 바꾸는 동안 고름이 풀리지 않고 포커스가 누른 칸에 남는다
+  const back = target.lang;
+  await page.evaluate(() => { window.__selDrops = 0; new MutationObserver((recs) => { for (const r of recs) if (r.oldValue !== null && !r.target.hasAttribute("data-sel")) window.__selDrops += 1; }).observe(document.querySelector('[data-pane="old"]'), { attributes: true, subtree: true, attributeFilter: ["data-sel"], attributeOldValue: true }); });
+  await page.locator(`[data-testid="assign-shape-lang-${target.id}-${back}"]`).click();
+  await page.waitForFunction(async ([path, id, lang]) => (await (await fetch(path, { headers: { "X-Dev-User": "qa.member" } })).json()).units.find((unit) => unit.id === id)?.lang === lang, [`/api/bundles/${freshBundleId}/documents/${docId}/view`, target.id, back], { timeout: T });
+  await page.locator(`[data-testid="assign-shape-lang-${target.id}-${back}"][aria-pressed="true"]`).waitFor({ timeout: T });
+  await page.waitForLoadState("networkidle");
+  check("the Shape language buttons change the language without dropping the selection", (await page.evaluate(() => window.__selDrops)) === 0);
+  check("focus stays on the pressed language button", (await page.evaluate(() => document.activeElement?.getAttribute("data-testid"))) === `assign-shape-lang-${target.id}-${back}`);
   // 여기서 나누기 - 선을 놓고 Split here
   const before = (await viewUnits()).length;
   await openMenu(target.id);
