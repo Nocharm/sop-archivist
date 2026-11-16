@@ -34,7 +34,7 @@ def test_old_7_answers_cover_every_judged_unit(tmp_path):
 
 
 def test_captions_extreme_shapes():
-    blocks = read_docx(build_captions_extreme("OLD-97"), LIMITS).blocks
+    blocks = read_docx(build_captions_extreme("OLD-89"), LIMITS).blocks
     widest = max(b.col_index for b in blocks if b.kind == "table_cell" and b.table_index == 0)
     assert widest == 17
     assert len({b.table_index for b in blocks if b.kind == "table_cell"}) >= 19

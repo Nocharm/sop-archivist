@@ -314,7 +314,7 @@ class WorstSeeder:
         add("big1", "SYNTHETIC_OLD-90_BIG_합성_대형_문서_Big_Document v12.3.docx", build_big("OLD-90", 330, True))
         add("big2", "SYNTHETIC_OLD-91_BIG_second_big_document_for_unassigned_units.docx", build_big("OLD-91", 260, False))
         add("tables", "SYNTHETIC_OLD-92_wide_and_long_tables_넓은표_긴표.docx", build_tables("OLD-92"))
-        add("captions", "SYNTHETIC_OLD-97_captions_extreme_캡션_극단.docx", build_captions_extreme("OLD-97"))
+        add("captions", "SYNTHETIC_OLD-89_captions_extreme_캡션_극단.docx", build_captions_extreme("OLD-89"))
         ko_name = "SYNTHETIC_OLD-93_" + "공백없는아주긴한국어파일이름" * 16
         add("koname", ko_name[:250] + ".docx", build_small("OLD-93"))
         en_name = "SYNTHETIC_OLD-94_" + "VeryLongEnglishFileNameWithoutAnySpaces_" * 6
