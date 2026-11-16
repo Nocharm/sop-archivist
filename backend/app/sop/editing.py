@@ -1,4 +1,4 @@
-"""쪼개기 편집 — 나누기·합치기·경계 옮기기·골라 만들기·언어 바꾸기·표 행 나누기·다시 합치기·레이아웃 표 바꾸기와 서버 쪽
+"""쪼개기 편집 — 나누기·합치기·경계 옮기기·골라 만들기·언어 바꾸기·표 행 나누기·다시 합치기·레이아웃 표 바꾸기·캡션 붙이기·떼기와 서버 쪽
 선형 되돌리기·다시 하기, 경계 확인 표시 (스펙 §6.4, §7.5).
 
 단위는 제자리에서 바뀌지 않는다: 편집은 옛 단위를 은퇴시키고 새 단위를 만들며, 되돌리기는 은퇴한 단위를 원래 ID로 되살린다.
@@ -30,7 +30,7 @@ from app.sop.detach import (
 )
 from app.sop.errors import raise_rule
 from app.sop.events import record_event
-from app.sop.groups import TABLE_UNIT_KINDS, iter_chunks, select_in_chunks
+from app.sop.groups import BUNDLE_UNIT_KINDS, TABLE_UNIT_KINDS, iter_chunks, select_in_chunks
 from app.sop.match import sync_new_doc_targets
 from app.sop.models import (
     Document,
@@ -69,7 +69,8 @@ EDIT_UNDONE = "undone"
 # 단위 집합은 그대로라 되돌릴 때 표시만 거꾸로 돌린다(payload: unit_ids·confirmed)
 BOUNDARY_OPS = ("boundary", "check_all")
 # 글자 범위를 고칠 수 있는 단위 — 그림·표·행은 범위를 나누거나 잇지 않는다
-TEXT_KINDS = ("sentence", "heading", "cell_sentence")
+TEXT_KINDS = ("sentence", "heading", "cell_sentence", CAPTION_KIND)
+CAPTIONABLE_KINDS = ("sentence", "heading")  # 캡션으로 붙일 수 있는 글 단위
 PAIR_LANGS = {"ko", "en"}  # 짝의 두 쪽 — 한쪽이 비면 짝을 지운다
 MAX_EDIT_UNITS = 2000  # 합치기·언어 바꾸기가 한 번에 고르는 단위 수 상한
 
@@ -138,6 +139,21 @@ class SetLayoutTableOp(BaseModel):
     is_layout: bool
 
 
+class AttachCaptionOp(BaseModel):
+    """묶이지 않은 글 단위(문장·제목, REF 아님)를 바로 이웃한 표·행·그림 단위의 캡션으로 — 같은 범위·언어의 캡션 단위가 된다."""
+
+    type: Literal["attach_caption"]
+    unit_id: DbId
+    bundle_unit_id: DbId
+
+
+class DetachCaptionOp(BaseModel):
+    """캡션 단위를 같은 범위·언어의 묶이지 않은 문장 단위로."""
+
+    type: Literal["detach_caption"]
+    unit_id: DbId
+
+
 class SetRefOp(BaseModel):
     """글 단위를 참조 줄(REF)로 — 번호는 그 단위의 글 안에 있어야 한다. 이미 REF면 번호만 고친다."""
 
@@ -155,7 +171,7 @@ class ClearRefOp(BaseModel):
 
 EditOp = Annotated[
     SplitOp | MergeOp | UnmergeOp | MoveBoundaryOp | CarveOp | SetLanguageOp | SplitTableRowsOp
-    | MergeTableRowsOp | SetLayoutTableOp | SetRefOp | ClearRefOp,
+    | MergeTableRowsOp | SetLayoutTableOp | AttachCaptionOp | DetachCaptionOp | SetRefOp | ClearRefOp,
     Field(discriminator="type"),
 ]
 
@@ -223,6 +239,7 @@ class _Draft:
 
 
 Move = tuple[int | None, int | None]  # 칸 문장의 (지금 묶음, 바꿀 묶음)
+Shape = tuple[tuple[Span, ...], str, int | None]  # 단위의 (범위, 종류, 묶음) — 이것이 같으면 같은 단위다
 
 
 @dataclass
@@ -237,22 +254,23 @@ class _Change:
     regroup: dict[int, Move] = field(default_factory=dict)
     # 원문 표 → (지금 is_layout, 바꿀 is_layout)
     layouts: dict[int, tuple[bool, bool]] = field(default_factory=dict)
-    # 은퇴시킬 단위들의 범위 — 앞으로 가는 편집만 채운다(is_unchanged가 새 단위 범위와 견준다)
-    retired_spans: list[tuple[Span, ...]] = field(default_factory=list)
+    # 은퇴시킬 단위들의 (범위, 종류, 묶음) — 앞으로 가는 편집만 채운다(is_unchanged가 새 단위의 것과 견준다)
+    retired_shapes: list[Shape] = field(default_factory=list)
 
     def list_regrouped_cells(self) -> list[int]:
         return sorted({*self.regroup, *(cell_id for draft in self.drafts for cell_id in draft.cells)})
 
     def is_unchanged(self) -> bool:
-        """새 단위들의 범위가 은퇴시킬 단위들의 범위와 (모음으로) 같고 언어·칸 묶음·표 표시도 그대로면 바뀌는 게 없다.
+        """새 단위들의 (범위, 종류, 묶음)이 은퇴시킬 단위들의 것과 (모음으로) 같고 언어·칸 묶음·표 표시도 그대로면 바뀌는 게 없다.
 
         경계를 처음 자리나 사이 빈 글자에 다시 놓거나 단위 하나의 범위를 그대로 골라 만든 경우다 — 단위는 범위 그 자체라
-        (스펙 §6.4) 같은 범위를 새 ID로 다시 만들면 표시 ID가 바뀌고 확정 판단이 이유 없이 떼어진다. 표·행 단위는 범위가
-        없어 범위로는 견줄 수 없으므로 묶음·표 표시가 바뀌면 바뀐 것이다.
+        (스펙 §6.4) 같은 범위를 새 ID로 다시 만들면 표시 ID가 바뀌고 확정 판단이 이유 없이 떼어진다. 캡션 붙이기·떼기는
+        범위가 그대로여도 종류·묶음이 바뀐다. 표·행 단위는 범위가 없어 범위로는 견줄 수 없으므로 묶음·표 표시가 바뀌면 바뀐 것이다.
         """
         if self.revive or self.langs or self.layouts or self.list_regrouped_cells():
             return False
-        return Counter(tuple(draft.spans) for draft in self.drafts) == Counter(self.retired_spans)
+        drafts = Counter((tuple(draft.spans), draft.kind, draft.group_unit_id) for draft in self.drafts)
+        return drafts == Counter(self.retired_shapes)
 
 
 def _build_replacement(units: Iterable[Unit], drafts: list[_Draft]) -> _Change:
@@ -260,7 +278,7 @@ def _build_replacement(units: Iterable[Unit], drafts: list[_Draft]) -> _Change:
     replaced = list(units)
     return _Change(
         retire=sorted(unit.id for unit in replaced), drafts=drafts,
-        retired_spans=[tuple(to_spans(unit.spans)) for unit in replaced],
+        retired_shapes=[(tuple(to_spans(unit.spans)), unit.kind, unit.group_unit_id) for unit in replaced],
     )
 
 
@@ -341,11 +359,21 @@ def _get_texts(blocks: Mapping[int, _Block]) -> dict[int, str]:
     return {block_id: block.text for block_id, block in blocks.items()}
 
 
+def _ensure_mergeable(units: Sequence[Unit]) -> None:
+    """칸 문장·캡션은 같은 묶음(또는 모두 묶음 없음)의 같은 종류끼리만 — 다른 묶음과 합치면 처분을 따를 곳이 둘이 된다."""
+    kinds = {unit.kind for unit in units}
+    for bound_kind in ("cell_sentence", CAPTION_KIND):
+        if bound_kind in kinds and (kinds != {bound_kind} or len({unit.group_unit_id for unit in units}) > 1):
+            raise_rule(422, "cannot_merge", unit_ids=[unit.id for unit in units])
+
+
 def _decide_merged_kind(units: Iterable[Unit]) -> str:
-    """합친 단위의 종류 — 칸 문장끼리면 칸 문장, 아니면 하나라도 문장이면 문장, 모두 제목이면 제목."""
+    """합친 단위의 종류 — 칸 문장끼리면 칸 문장, 캡션끼리면 캡션, 아니면 하나라도 문장이면 문장, 모두 제목이면 제목."""
     kinds = {unit.kind for unit in units}
     if "cell_sentence" in kinds:
         return "cell_sentence"
+    if kinds == {CAPTION_KIND}:
+        return CAPTION_KIND
     return "sentence" if "sentence" in kinds else "heading"
 
 
@@ -368,10 +396,7 @@ async def _plan_merge(session: AsyncSession, extraction_id: ExtractionId, op: Me
     ensure_unique_units(op.unit_ids)
     units = sorted((await load_active_units(session, extraction_id, op.unit_ids)).values(), key=_get_position)
     _ensure_text_kinds(units)
-    kinds = {unit.kind for unit in units}
-    # 칸 문장은 같은 표·행 그룹(또는 모두 그룹 없음)끼리만 — 다른 그룹과 합치면 처분을 따를 곳이 둘이 된다
-    if "cell_sentence" in kinds and (kinds != {"cell_sentence"} or len({unit.group_unit_id for unit in units}) > 1):
-        raise_rule(422, "cannot_merge", unit_ids=[unit.id for unit in units])
+    _ensure_mergeable(units)
     langs = {unit.lang for unit in units}
     blocks = await _load_unit_blocks(session, extraction_id, units)
     spans = sorted(
@@ -471,6 +496,8 @@ async def _plan_carve(session: AsyncSession, extraction_id: ExtractionId, op: Ca
     )
     hit_ids = [unit_id for unit_id, spans in rows if overlaps(to_spans(spans), op.block_id, start, end)]
     units = sorted((await load_active_units(session, extraction_id, hit_ids)).values(), key=_get_position)
+    # 붙인 캡션은 문단 안 다른 문장과 한 블록에 있을 수 있다 — 골라 만든 조각이 묶음 둘에 걸치지 않게 합치기와 같이 막는다
+    _ensure_mergeable(units)
     blocks = await _load_unit_blocks(session, extraction_id, units)
     texts, seqs = _get_texts(blocks), {block_id: item.seq for block_id, item in blocks.items()}
     drafts = []
@@ -584,11 +611,15 @@ def _build_group_draft(
 
 
 async def _plan_split_table_rows(session: AsyncSession, extraction_id: ExtractionId, op: SplitTableRowsOp) -> _Change:
-    """표 단위를 은퇴시키고 칸 문장이 있는 행마다 행 단위를 만들어 칸 문장을 자기 행(칸 블록의 행, R33)에 묶는다."""
+    """표 단위를 은퇴시키고 칸 문장이 있는 행마다 행 단위를 만들어 칸 문장을 자기 행(칸 블록의 행, R33)에 묶는다.
+
+    캡션은 행이 없어 가장 앞 행 단위로 옮긴다.
+    """
     table_unit = (await load_active_units(session, extraction_id, [op.table_unit_id]))[op.table_unit_id]
     if table_unit.kind != "table":
         raise_rule(422, "invalid_unit_kind", unit_ids=[table_unit.id])
-    cells = await _load_grouped_cells(session, [table_unit.id])
+    members = await _load_grouped_cells(session, [table_unit.id])
+    cells = [member for member in members if member.kind != CAPTION_KIND]
     if not cells:  # 행 단위가 하나도 없으면 표가 처분할 곳 없이 사라진다
         raise_rule(422, "empty_table", unit_id=table_unit.id)
     blocks = await _load_unit_blocks(session, extraction_id, cells)
@@ -599,6 +630,8 @@ async def _plan_split_table_rows(session: AsyncSession, extraction_id: Extractio
     by_row: dict[int, dict[int, int | None]] = defaultdict(dict)
     for cell in cells:
         by_row[cell.row_index][cell.id] = cell.group_unit_id
+    first_row = by_row[min(by_row)]
+    first_row.update((member.id, member.group_unit_id) for member in members if member.kind == CAPTION_KIND)
     first_seqs = await _load_first_cell_seqs(session, extraction_id, table_unit.table_id)
     drafts = [
         _build_group_draft("table_row", table_unit.table_id, row, first_seqs[row], row_cells)
@@ -688,6 +721,59 @@ async def _plan_set_layout_table(session: AsyncSession, extraction_id: Extractio
     return change
 
 
+async def _find_bundle_neighbors(session: AsyncSession, extraction_id: ExtractionId, bundle: Unit) -> set[int]:
+    """원문 순서로 묶음 바로 앞·뒤의 활성 단위 — 묶음과 그 묶인 단위(칸 문장·캡션)는 건너뛴다."""
+    rows = (
+        await session.execute(
+            select(Unit.id, Unit.group_unit_id, Unit.pos_seq, Unit.pos_start)
+            .where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE)
+            .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
+        )
+    ).all()
+    inside = [n for n, (unit_id, group_unit_id, _, _) in enumerate(rows) if bundle.id in (unit_id, group_unit_id)]
+    first, last = min(inside), max(inside)
+    return {rows[n].id for n in (first - 1, last + 1) if 0 <= n < len(rows)}
+
+
+async def _plan_attach_caption(session: AsyncSession, extraction_id: ExtractionId, op: AttachCaptionOp) -> _Change:
+    """글 단위를 은퇴시키고 같은 범위·언어의 캡션 단위를 그 묶음에 묶어 만든다 — 묶음마다 언어당 캡션 하나."""
+    units = await load_active_units(session, extraction_id, [op.unit_id, op.bundle_unit_id])
+    unit, bundle = units[op.unit_id], units[op.bundle_unit_id]
+    if unit.kind not in CAPTIONABLE_KINDS or unit.group_unit_id is not None or unit.lang == REF_LANG:
+        raise_rule(422, "invalid_unit_kind", unit_ids=[unit.id])
+    if bundle.kind not in BUNDLE_UNIT_KINDS:
+        raise_rule(422, "invalid_unit_kind", unit_ids=[bundle.id])
+    if unit.id not in await _find_bundle_neighbors(session, extraction_id, bundle):
+        raise_rule(422, "caption_not_adjacent", unit_ids=[unit.id, bundle.id])
+    taken = await session.scalar(
+        select(Unit.id).where(
+            Unit.group_unit_id == bundle.id, Unit.status == UNIT_ACTIVE, Unit.kind == CAPTION_KIND,
+            Unit.lang == unit.lang,
+        ).limit(1)
+    )
+    if taken is not None:
+        raise_rule(422, "caption_exists", unit_ids=[taken])
+    caption = _Draft(
+        kind=CAPTION_KIND, spans=to_spans(unit.spans), text=unit.text, lang=unit.lang, table_id=None, row_index=None,
+        group_unit_id=bundle.id, pos_seq=unit.pos_seq, pos_start=unit.pos_start,
+    )
+    return _build_replacement([unit], [caption])
+
+
+async def _plan_detach_caption(session: AsyncSession, extraction_id: ExtractionId, op: DetachCaptionOp) -> _Change:
+    """캡션 단위를 은퇴시키고 같은 범위·언어의 묶이지 않은 문장 단위를 만든다.
+
+    0020이 옮긴 옛 그림 캡션은 그림 블록 위에 있다 — 떼면 그림 블록 글이 따로 도는 문장이 되므로 막는다.
+    """
+    unit = (await load_active_units(session, extraction_id, [op.unit_id]))[op.unit_id]
+    if unit.kind != CAPTION_KIND:
+        raise_rule(422, "invalid_unit_kind", unit_ids=[unit.id])
+    blocks = await _load_unit_blocks(session, extraction_id, [unit])
+    if any(blocks[span[0]].kind == "figure" for span in to_spans(unit.spans)):
+        raise_rule(422, "caption_in_figure_block", unit_ids=[unit.id])
+    return _build_replacement([unit], [_build_sentence_from(unit)])
+
+
 async def _plan(session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: EditOp) -> _Change:
     match op:
         case SplitOp():
@@ -708,6 +794,10 @@ async def _plan(session: AsyncSession, document_id: int, extraction_id: Extracti
             return await _plan_merge_table_rows(session, extraction_id, op)
         case SetLayoutTableOp():
             return await _plan_set_layout_table(session, extraction_id, op)
+        case AttachCaptionOp():
+            return await _plan_attach_caption(session, extraction_id, op)
+        case DetachCaptionOp():
+            return await _plan_detach_caption(session, extraction_id, op)
         case SetRefOp():
             return await _plan_set_ref(session, extraction_id, op)
         case ClearRefOp():

@@ -22,7 +22,7 @@ from app.sop.models import (
 )
 from app.sop.segment import build_unit_text
 from tests.access_helpers import run_in_session, update_row
-from tests.docx_factory import build_docx, p, tbl
+from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
 from tests.sop_helpers import (
     AUTHOR,
     REVIEWER,
@@ -555,6 +555,152 @@ def test_unwrap_table_turns_its_caption_into_a_sentence(client: TestClient) -> N
     _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
     revived = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), caption_text)
     assert (revived["id"], revived["kind"], revived["group_unit_id"]) == (caption["id"], "caption", table["id"])
+
+
+# ── 캡션 ──────────────────────────────────────────────────────────────────────
+
+BEFORE_TABLE, AFTER_TABLE, FAR = "합성 표 앞 문장이다.", "합성 표 뒤 문장이다.", "합성 먼 문장이다."
+FIGURE_CAPTION = "그림 1. 로터 구조 (Figure 1. Rotor layout)"
+
+
+def _setup_table_with_neighbors(client: TestClient) -> tuple[Fixture, dict]:
+    fx = _setup(client, p(HEADING) + p(BEFORE_TABLE) + tbl([["합성 칸이다."]]) + p(AFTER_TABLE) + p(FAR))
+    return fx, next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+
+
+def _setup_figure(client: TestClient) -> tuple[Fixture, dict, dict]:
+    """그림 하나와 그 아래 한/영 한 줄 캡션, 그 뒤 문장 하나."""
+    body = p(HEADING) + f"<w:p>{make_drawing_run('image1.png')}</w:p>" + p(FIGURE_CAPTION, "Caption") + p(RECORD)
+    bundle = create_bundle(client, is_synthetic=True)
+    assert put_tobe(client, bundle["id"], TOBE_DOCS).status_code == 200
+    doc = _upload_ready(client, bundle["id"], build_docx(body, media={"image1.png": TINY_PNG}), OLD_NAME)
+    view = get_view(client, bundle["id"], doc["id"])
+    figure = next(unit for unit in view["units"] if unit["kind"] == "figure")
+    caption = find_unit(view, FIGURE_CAPTION)
+    assert (caption["kind"], caption["group_unit_id"]) == ("caption", figure["id"])
+    return Fixture(bundle["id"], 0, doc, view), figure, caption
+
+
+def _attach(client: TestClient, fx: Fixture, unit: dict, bundle: dict) -> httpx2.Response:
+    op = {"type": "attach_caption", "unit_id": unit["id"], "bundle_unit_id": bundle["id"]}
+    return _edit(client, fx.bundle_id, fx.doc["id"], op)
+
+
+def _detach(client: TestClient, fx: Fixture, unit: dict, **kwargs: int) -> httpx2.Response:
+    return _edit(client, fx.bundle_id, fx.doc["id"], {"type": "detach_caption", "unit_id": unit["id"]}, **kwargs)
+
+
+def _created_units(client: TestClient, fx: Fixture, result: dict) -> list[dict]:
+    units = {unit["id"]: unit for unit in get_view(client, fx.bundle_id, fx.doc["id"])["units"]}
+    return [units[unit_id] for unit_id in result["created_unit_ids"]]
+
+
+def test_attach_a_neighbor_sentence_as_caption_and_undo(client: TestClient) -> None:
+    fx, table = _setup_table_with_neighbors(client)
+    sentence = find_unit(fx.view, BEFORE_TABLE)
+
+    result = _ok(_attach(client, fx, sentence, table))
+
+    (caption,) = _created_units(client, fx, result)
+    assert (caption["kind"], caption["group_unit_id"], caption["spans"]) == ("caption", table["id"], sentence["spans"])
+    assert (caption["lang"], result["retired_unit_ids"]) == (sentence["lang"], [sentence["id"]])
+    assert _find_coverage_problems(get_view(client, fx.bundle_id, fx.doc["id"])) == []
+    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
+    assert _load_statuses(sentence["id"], caption["id"]) == ["active", "retired"]
+
+
+def test_attach_rejects_a_far_sentence(client: TestClient) -> None:
+    fx, table = _setup_table_with_neighbors(client)
+
+    assert _code(_attach(client, fx, find_unit(fx.view, FAR), table)) == (422, "caption_not_adjacent")
+
+
+def test_attach_rejects_a_second_caption_in_the_same_language(client: TestClient) -> None:
+    fx, table = _setup_table_with_neighbors(client)
+    _ok(_attach(client, fx, find_unit(fx.view, BEFORE_TABLE), table))
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+
+    assert _code(_attach(client, fx, find_unit(view, AFTER_TABLE), table)) == (422, "caption_exists")
+
+
+def test_detach_turns_caption_back_into_a_sentence(client: TestClient) -> None:
+    fx, _, caption = _setup_figure(client)
+
+    result = _ok(_detach(client, fx, caption))
+
+    (sentence,) = _created_units(client, fx, result)
+    assert (sentence["kind"], sentence["group_unit_id"]) == ("sentence", None)
+    assert (sentence["spans"], sentence["lang"]) == (caption["spans"], caption["lang"])
+    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
+    assert _load_statuses(caption["id"], sentence["id"]) == ["active", "retired"]
+
+
+def test_detach_legacy_figure_block_caption_is_rejected(client: TestClient) -> None:
+    """0020이 옮긴 캡션은 그림 블록 위에 있다 — 떼면 그림 블록 글이 문장이 되어 버리므로 막는다."""
+    fx, figure, caption = _setup_figure(client)
+    figure_block_id = figure["spans"][0][0] if figure["spans"] else figure["block_id"]
+    update_row(SourceBlock, figure_block_id, text=FIGURE_CAPTION)
+    update_row(Unit, caption["id"], spans=[[figure_block_id, 0, len(FIGURE_CAPTION)]])
+
+    response = _detach(client, fx, caption, revision=fx.view["document"]["revision"])
+
+    assert _code(response) == (422, "caption_in_figure_block")
+
+
+def test_split_caption_keeps_both_pieces_on_the_bundle(client: TestClient) -> None:
+    fx, figure, caption = _setup_figure(client)
+
+    result = _ok(_split(client, fx, caption, FIGURE_CAPTION.index("(Figure")))
+
+    created = _created_units(client, fx, result)
+    assert [(unit["kind"], unit["group_unit_id"]) for unit in created] == [
+        ("caption", figure["id"]), ("caption", figure["id"]),
+    ]
+    assert {unit["lang"] for unit in created} == {"ko", "en"}
+
+
+def test_merge_caption_with_plain_sentence_is_rejected(client: TestClient) -> None:
+    fx, _, caption = _setup_figure(client)
+
+    assert _code(_merge(client, fx, caption, find_unit(fx.view, RECORD))) == (422, "cannot_merge")
+
+
+def test_split_table_rows_moves_caption_to_first_row(client: TestClient) -> None:
+    caption_text = "표 7. 기록 양식"
+    fx = _setup(client, p(HEADING) + p(caption_text, "Caption") + tbl([["합성 칸 하나."], ["합성 칸 둘."]]))
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+    caption = find_unit(fx.view, caption_text)
+
+    _ok(_edit(client, fx.bundle_id, fx.doc["id"], {"type": "split_table_rows", "table_unit_id": table["id"]}))
+
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    rows = sorted((unit for unit in view["units"] if unit["kind"] == "table_row"), key=lambda unit: unit["row_index"])
+    assert find_unit(view, caption_text)["group_unit_id"] == rows[0]["id"]
+    _ok(_edit(client, fx.bundle_id, fx.doc["id"], {"type": "merge_table_rows", "table_id": table["table_id"]}))
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    merged = next(unit for unit in view["units"] if unit["kind"] == "table")
+    assert (find_unit(view, caption_text)["id"], find_unit(view, caption_text)["group_unit_id"]) == (
+        caption["id"], merged["id"],
+    )
+    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
+    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
+    assert find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), caption_text)["group_unit_id"] == table["id"]
+
+
+def test_rewrap_table_leaves_the_former_caption_a_sentence(client: TestClient) -> None:
+    """레이아웃 → 데이터로 다시 감싸도 캡션을 저절로 붙이지 않는다 — 사람이 붙이기로 고른다."""
+    caption_text = "표 7. 기록 양식"
+    fx = _setup(client, p(HEADING) + p(caption_text, "Caption") + tbl([["합성 칸이다."]]))
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+    for is_layout in (True, False):
+        op = {"type": "set_layout_table", "table_id": table["table_id"], "is_layout": is_layout}
+        _ok(_edit(client, fx.bundle_id, fx.doc["id"], op))
+
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    rewrapped = next(unit for unit in view["units"] if unit["kind"] == "table")
+    sentence = find_unit(view, caption_text)
+    assert (sentence["kind"], sentence["group_unit_id"]) == ("sentence", None)
+    _ok(_attach(client, fx, sentence, rewrapped))
 
 
 # ── 되돌리기·다시 하기 ────────────────────────────────────────────────────────
