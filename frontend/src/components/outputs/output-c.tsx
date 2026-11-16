@@ -1,6 +1,7 @@
 // 결과물 C 한 벌 - 새 문서를 칸·단계 순서로 미리 본다. 칸마다 두 언어 문장이 C 순서대로 한 목록이고, 같은 의미에서 나온 이웃 문장은 굵은 선으로 묶인다.
 // 결과물 화면과 검토 화면이 같이 쓴다. 확정 전 새 문장은 점선. 문서 머리 오른쪽에 그 번호의 EQUIS 표시(읽기 전용, EQUIS가 꺼져 있으면 없다). 긴 C는 줄(문서 머리·칸 머리·문장) 단위로 이어 그린다.
 // 위·아래로 옮기면 두 줄이 미끄러지며 자리를 바꾸고(useFlip), 옮긴 줄이 아직 그리지 않은 구간으로 가면 거기까지 그린 뒤 그 줄을 따라 스크롤한다.
+// 고칠 수 있는 Order에서는 줄을 끌어 칸 안의 덩어리를 옮기고 좌우로 깊이를 바꾼다(lib/c-drop-model.ts) - 끄는 동안의 표시는 DOM으로만 한다.
 "use client";
 
 import { ArrowDown, ArrowUp, FileStack, IndentDecrease, IndentIncrease, Italic, List, ListOrdered, ListTree, MoreHorizontal, type LucideIcon } from "lucide-react";
@@ -13,14 +14,19 @@ import { Menu, MenuRadio } from "@/components/ui/menu";
 import { useFlip } from "@/components/ui/motion";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { EquisInfo, NumberStyle, OutputC, OutputCItem } from "@/lib/api-sop";
+import type { BoxDragConfig } from "@/lib/box-drag";
+import { classifyDropZone, DEPTH_STEP_PX, findDragBlock, planDrop, type DragBlock, type DropPlan } from "@/lib/c-drop-model";
+import { previewEdit, type PlaceEdit } from "@/lib/c-edit-model";
 import { useI18n } from "@/lib/i18n";
 import { buildCLines, listMeaningStarts, type CLine } from "@/lib/output-groups";
 import { shouldRecenter } from "@/lib/paper-model";
 import { canChangeDepth, canChangeStyle, canIndent, getSectionDepths, isCounted, NUMBER_STYLES, readIndentKey, type IndentDir } from "@/lib/section-number";
 import { canMoveTarget, readMoveKey, type MoveDir } from "@/lib/target-order";
+import { useBoxDrag } from "@/lib/use-box-drag";
 import { useProgressiveList } from "@/lib/use-progressive-list";
 
-type Section = OutputC["docs"][number]["sections"][number];
+type Doc = OutputC["docs"][number];
+type Section = Doc["sections"][number];
 
 /** 순서 바꾸기 - 결과물 화면에서 작성자에게만 넘긴다. 검토 화면은 넘기지 않아 단추가 없다 */
 export type MoveTarget = (targetDocId: number, locationKey: string, targetId: number, dir: MoveDir) => void;
@@ -28,6 +34,8 @@ export type MoveTarget = (targetDocId: number, locationKey: string, targetId: nu
 export type IndentTarget = (targetDocId: number, targetId: number, depth: number) => void;
 /** 번호 표시 바꾸기 - 그 줄에만 붙는다(짝 상대·번역이 따라 바뀌지 않는다). 검토 화면은 넘기지 않는다 */
 export type MarkTarget = (targetDocId: number, targetId: number, style: NumberStyle) => void;
+/** 끌어 놓기 - 칸 안의 덩어리를 한 자리로(깊이도 함께) 옮긴다. 넘길 때만 줄이 끌린다(검토·결과물 화면은 넘기지 않는다) */
+export type PlaceTarget = (targetDocId: number, edit: PlaceEdit) => void;
 
 /** 글꼴을 고르는 lang 속성 - 언어가 없는 단위(표 틀·그림)는 감싼 쪽을 따른다 */
 function readLangAttr(lang: string): string | undefined {
@@ -277,11 +285,33 @@ interface PendingMove {
   refocus: "button" | "row" | null;
 }
 
+/** 끄는 줄 - 누를 때의 문서·칸을 들고 간다(놓기 편집과 미리 센 번호가 같은 문서에서 나오게) */
+interface DragSource {
+  doc: Doc;
+  section: Section;
+  depths: readonly number[];
+  block: DragBlock;
+  targetId: number;
+  row: HTMLElement;
+  home: HTMLElement;
+}
+
+/** 표의 글 한 줄 - 그림은 표시, 표는 칸 글을 잇는다 */
+function readCardText(item: OutputCItem): string {
+  if (item.kind === "figure") return "[Figure]";
+  return item.text || item.ai_text || item.children.map((cell) => cell.text || cell.ai_text).join(" ");
+}
+
+function isInsideBox(event: PointerEvent, box: DOMRect): boolean {
+  return event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
+}
+
 interface OutputCViewProps {
   data: OutputC;
   onMove?: MoveTarget;
   onIndent?: IndentTarget;
   onMark?: MarkTarget;
+  onPlace?: PlaceTarget;
   /** 이어 그리기를 처음 묶음으로 되돌리는 키 - 다시 받은 C(라벨 언어·바깥 revision)일 때만 바꾼다. 저장 응답으로 맞춘 C는 그린 구간을 그대로 둔다 */
   resetKey?: string;
   /** 비었을 때 갈 곳(To-Be) - 고칠 수 있는 화면에서만 준다 */
@@ -290,10 +320,13 @@ interface OutputCViewProps {
   equis?: ReadonlyMap<string, EquisInfo>;
 }
 
-export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", tobeHref, equis }: OutputCViewProps) {
+export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey = "c", tobeHref, equis }: OutputCViewProps) {
   const { t } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
   const pendingMoveRef = useRef<PendingMove | null>(null);
+  const dropLineRef = useRef<HTMLDivElement>(null);
+  // 끄는 동안 프레임마다 바뀌는 값 - 상태로 두면 프레임마다 다시 그린다. plan은 마지막 move가 같은 칸 안이었을 때만 있다(놓으면 이것만 저장)
+  const dragFrameRef = useRef<{ plan: DropPlan | null; key: string | null }>({ plan: null, key: null });
   // 마지막으로 옮긴 줄 - 그 줄까지는 늘 그린다(아직 그리지 않은 구간으로 옮겨도 보이게)
   const [followId, setFollowId] = useState<number | null>(null);
   const lines = useMemo(() => buildCLines(data), [data]);
@@ -337,6 +370,115 @@ export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", to
     setFollowId(item.target_id);
     onMove(docId, section.location_key, item.target_id, dir);
   }
+
+  function clearDropPlan() {
+    dragFrameRef.current = { plan: null, key: null };
+    if (dropLineRef.current) dropLineRef.current.hidden = true;
+  }
+
+  // 놓을 자리에 선을 긋고 그 자리에 놓았을 때 덩어리 첫 줄의 번호를 선 위에 적는다(저장 응답이 이긴다)
+  function drawDropLine(source: DragSource, plan: DropPlan) {
+    const root = rootRef.current;
+    const line = dropLineRef.current;
+    if (!root || !line) return;
+    const shown = plan.edit ? previewEdit(source.doc, plan.edit) : source.doc;
+    const firstId = source.section.items[source.block.start].target_id;
+    const number = shown?.sections.find((section) => section.location_key === source.section.location_key)?.items.find((item) => item.target_id === firstId)?.number ?? null;
+    const depthWord = plan.depth > source.block.baseDepth ? t("order.drag.indent") : plan.depth < source.block.baseDepth ? t("order.drag.outdent") : null;
+    const label = line.firstElementChild;
+    if (label) label.textContent = [number, depthWord].filter(Boolean).join(" · ");
+    const rootBox = root.getBoundingClientRect();
+    const rowBox = source.row.getBoundingClientRect();
+    const inset = plan.depth * DEPTH_STEP_PX;
+    line.style.top = `${plan.lineY - rootBox.top}px`;
+    line.style.left = `${rowBox.left - rootBox.left + inset}px`;
+    line.style.width = `${Math.max(0, rowBox.width - inset)}px`;
+    line.hidden = false;
+  }
+
+  // 읽기 전용이면 null - 줄에 data-drag-box도 없다
+  const dragConfig: BoxDragConfig<DragSource> = {
+    pick: (event) => {
+      const row = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-drag-box]") : null;
+      const home = row?.closest<HTMLElement>("section");
+      // 다리(::after)를 누르면 줄 상자 밖인데도 그 줄이 잡힌다 - 단추를 몇 px 빗나간 누름이 끌기가 되지 않게 줄 상자 안만 받는다
+      if (!row || !home || !isInsideBox(event, row.getBoundingClientRect())) return null;
+      const targetId = Number(row.dataset.flipKey);
+      for (const doc of data.docs) {
+        for (const section of doc.sections) {
+          const index = section.items.findIndex((item) => item.target_id === targetId);
+          if (index < 0) continue;
+          const depths = getSectionDepths(section);
+          return { doc, section, depths, block: findDragBlock(section.items, depths, index, doc.entrance), targetId, row, home };
+        }
+      }
+      return null;
+    },
+    getCard: ({ section, block, targetId }) => {
+      const size = block.end - block.start + 1;
+      const item = section.items.find((line) => line.target_id === targetId);
+      return { id: section.items[block.start].number ?? "", text: item ? readCardText(item) : "", count: size > 1 ? t("order.drag.lines", { count: size }) : null };
+    },
+    getScrollers: () => {
+      const pane = rootRef.current?.closest<HTMLElement>(".overflow-auto, .overflow-y-auto");
+      return pane ? [pane] : [];
+    },
+    onStart: ({ section, block, home }) => {
+      for (const item of section.items.slice(block.start, block.end + 1)) {
+        home.querySelector(`[data-testid="output-c-row-${item.target_id}"]`)?.setAttribute("data-drag-src", "");
+      }
+      home.setAttribute("data-drag-home", "");
+    },
+    onMove: (source, point, start) => {
+      const sheet = source.row.closest("article");
+      if (!sheet) return { state: "none" };
+      const zone = classifyDropZone(point, sheet.getBoundingClientRect(), source.home.getBoundingClientRect());
+      if (zone !== "home") {
+        // 다른 칸·용지 밖에서 놓으면 아무 일도 없다 - 앞서 같은 칸에서 잡은 자리를 버린다
+        clearDropPlan();
+        return zone === "other" ? { state: "refused", note: t("order.drag.otherSection") } : { state: "none" };
+      }
+      // 읽기만 한다 - 칸의 그려진 줄 가운데 끌리는 덩어리를 뺀 것
+      const rows = [...source.home.querySelectorAll<HTMLElement>("[data-drag-box]:not([data-drag-src])")].map((el) => {
+        const box = el.getBoundingClientRect();
+        return { targetId: Number(el.dataset.flipKey), top: box.top, bottom: box.bottom };
+      });
+      const blockTop = (source.home.querySelector("[data-drag-src]") ?? source.row).getBoundingClientRect().top;
+      const plan = planDrop({
+        locationKey: source.section.location_key,
+        items: source.section.items,
+        depths: source.depths,
+        block: source.block,
+        rows,
+        pointerY: point.y,
+        dx: point.x - start.x,
+        homeTop: blockTop - 1,
+      });
+      const key = `${plan.beforeId}:${plan.depth}`;
+      const isSame = key === dragFrameRef.current.key;
+      dragFrameRef.current = { plan, key };
+      if (!isSame) drawDropLine(source, plan);
+      return { state: "ok" };
+    },
+    onDrop: (source) => {
+      const edit = dragFrameRef.current.plan?.edit;
+      if (!edit || !onPlace) return;
+      // 잡은 줄이 앞(미끄러지는 동안 이웃 위로 지난다) - 칸의 그려진 줄을 모두 잰다
+      const others = [...source.home.querySelectorAll<HTMLElement>("[data-drag-box]")].map((el) => el.dataset.flipKey ?? "").filter((key) => key !== String(source.targetId));
+      flip.capture([String(source.targetId), ...others]);
+      // dir은 단추 포커스에만 쓰인다 - 놓은 줄은 고른 채로 남는다
+      pendingMoveRef.current = { targetId: source.targetId, dir: 1, refocus: "row" };
+      setFollowId(source.targetId);
+      onPlace(source.doc.target_doc_id, edit);
+    },
+    onEnd: ({ home }) => {
+      for (const el of home.querySelectorAll("[data-drag-src]")) el.removeAttribute("data-drag-src");
+      home.removeAttribute("data-drag-home");
+      clearDropPlan();
+    },
+  };
+  // 빈 C는 root를 그리지 않는다 - 문서가 생기면 다시 붙도록 조건에 넣는다
+  useBoxDrag(rootRef, onPlace && data.docs.length > 0 ? dragConfig : null);
 
   if (data.docs.length === 0) {
     return (
@@ -437,6 +579,8 @@ export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", to
                           tabIndex={-1}
                           // 줄 끝 단추는 호버·포커스 때만 용지 옆에 뜬다 - 넓으면 묶음(.c-acts), 좁으면 ⋯ 하나(.c-more). 자리를 차지하지 않아 글 폭과 줄 높이가 그대로다
                           className="hover-row c-row"
+                          // 끌 수 있는 줄 - 단추(data-no-drag)를 뺀 줄 어디든 눌러 끈다
+                          data-drag-box={onPlace ? "" : undefined}
                           data-meaning-start={meaningStart}
                           data-flip-key={item.target_id}
                           data-testid={`output-c-row-${item.target_id}`}
@@ -501,6 +645,12 @@ export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", to
             ))}
           </ul>
         </section>
+      )}
+      {/* 끌 때 놓을 자리 선 - 한 번 그리고 끄는 동안은 DOM(hidden·인라인 자리·글)으로만 바꾼다 */}
+      {onPlace && (
+        <div ref={dropLineRef} className="c-dropline" hidden data-testid="output-c-dropline">
+          <span />
+        </div>
       )}
     </div>
   );

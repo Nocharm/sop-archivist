@@ -1310,6 +1310,23 @@ await runStep("outputs: read-only C rows keep their rest look on hover", {}, asy
   }
 });
 
+// 결과물 화면의 C는 읽기 전용 - 작성자라도 줄이 끌리지 않는다(G13)
+await runStep("outputs: read-only C rows do not start a drag", {}, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
+  await page.locator('[data-testid="outputs-tab-c"]').click();
+  const row = page.locator('[data-testid="output-c"] [data-testid^="output-c-row-"]').nth(1);
+  await row.waitFor({ timeout: T });
+  check("read-only C rows are not drag boxes and have no drop line", (await page.locator("[data-drag-box]").count()) === 0 && (await page.locator('[data-testid="output-c-dropline"]').count()) === 0);
+  await row.scrollIntoViewIfNeeded();
+  const box = await row.boundingBox();
+  await page.mouse.move(box.x + 20, box.y + 6);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 20, box.y + 26, { steps: 5 });
+  const state = await page.evaluate(() => ({ flag: document.documentElement.hasAttribute("data-box-drag"), cards: document.querySelectorAll('[data-testid="drag-card"]').length }));
+  await page.mouse.up();
+  check("pressing and moving on a read-only C row starts no drag", !state.flag && state.cards === 0, JSON.stringify(state));
+});
+
 // 줄 끝 단추 묶음은 호버·포커스 때만, 글 밖에 뜬다(끌어다 놓기 설계 §5, 사용자 결정 2026-11-16). 터치 화면에서는 늘 보인다
 await runStep("order: row-end buttons show only on hover or focus, one group at a time", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
@@ -1668,6 +1685,316 @@ await runStep("order: a depth-locked line (an already-written document) can be p
   const back = waitOrderSave(page);
   await page.keyboard.press("Alt+ArrowUp");
   check("and moves back", (await back).ok() && (await readOrder()).indexOf(id) === start);
+});
+
+// 줄을 끌어 칸 안에서 옮기고 좌우로 깊이를 바꾼다(끌어다 놓기 설계 §4·§5). 마우스는 걸음으로 움직인다(dragTo는 쓰지 않는다). 바꾼 순서·깊이는 단계 안에서 되돌린다
+await runStep("order: drag a line to reorder and indent", {}, async ({ page }) => {
+  // React 커밋 수 - 끄는 동안 다시 그리지 않는지 본다(G11). renderers·onScheduleFiberRoot는 개발 서버의 React Refresh가 읽는다
+  await page.addInitScript(() => {
+    const renderers = new Map();
+    window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
+      renderers,
+      supportsFiber: true,
+      inject(internals) {
+        renderers.set(renderers.size + 1, internals);
+        return renderers.size;
+      },
+      onScheduleFiberRoot() {},
+      onCommitFiberUnmount() {},
+      onCommitFiberRoot() { window.__commits = (window.__commits ?? 0) + 1; },
+      onPostCommitFiberRoot() {},
+      checkDCE() {},
+    };
+  });
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  // 줄 넷 이상인 칸 - 첫 줄 F와, 칸의 첫 줄이 아닌 마지막 의미 묶음의 첫 줄 L(깊이 0, 번호·글이 있다). 둘이 한 화면에 든다
+  const probe = () => {
+    const isPlain = (row) => row.querySelector('[data-testid^="output-c-number-"]') && row.querySelector('[data-testid^="output-c-item-"]');
+    for (const section of document.querySelectorAll('[data-testid="output-c"] section')) {
+      const rows = [...section.querySelectorAll("[data-drag-box]")];
+      if (rows.length < 4 || !isPlain(rows[0])) continue;
+      const starts = rows.filter((row, index) => index > 0 && row.hasAttribute("data-meaning-start") && isPlain(row) && getComputedStyle(row.querySelector(".c-line")).paddingLeft === "0px");
+      if (starts.length === 0 || rows.at(-1).getBoundingClientRect().bottom - rows[0].getBoundingClientRect().top > 420) continue;
+      return { ids: rows.map((row) => row.dataset.flipKey), l: starts.at(-1).dataset.flipKey };
+    }
+    return null;
+  };
+  const [hit] = await findOrderDocs(page, probe);
+  check("Order has a short section with four lines and a later meaning group", Boolean(hit));
+  const [docId, { ids: original, l }] = hit;
+  const first = original[0];
+  const rowOf = (id) => page.locator(`[data-testid="output-c-row-${id}"]`);
+  const readOrder = (anchor) => page.evaluate((id) => [...(document.querySelector(`[data-testid="output-c-row-${id}"]`)?.closest("section")?.querySelectorAll("[data-drag-box]") ?? [])].map((row) => row.dataset.flipKey), anchor);
+  const readNumber = async (id) => (await page.locator(`[data-testid="output-c-number-${id}"]`).innerText()).trim();
+  const isDragging = () => page.evaluate(() => document.documentElement.hasAttribute("data-box-drag"));
+  const readPane = () => page.locator('[data-testid="output-c"]').evaluate((el) => el.closest(".overflow-auto, .overflow-y-auto").scrollTop);
+  const dropLine = page.locator('[data-testid="output-c-dropline"]');
+  const card = page.locator('[data-testid="drag-card"]');
+  const readLine = async () => ((await dropLine.isVisible()) ? (await dropLine.innerText()).trim() : "");
+  const centre = (id) => rowOf(id).evaluate((el) => el.scrollIntoView({ block: "center" }));
+  // 줄 안의 한 점 - 글이 있으면 첫 글줄 위, 없으면(표) 줄 왼쪽 위
+  const pointIn = async (id) => {
+    const text = page.locator(`[data-testid="output-c-item-${id}"]`);
+    const box = (await text.count()) > 0 ? await text.boundingBox() : await rowOf(id).boundingBox();
+    return { x: box.x + Math.min(40, box.width / 2), y: box.y + 8 };
+  };
+  const puts = [];
+  page.on("request", (request) => {
+    if (isOrderSave(request)) puts.push(request.url());
+  });
+  const settle = () => page.waitForTimeout(200);
+
+  // 1. 바깥 누름으로 닫히는 메뉴는 줄을 눌러도 닫힌다 - pointerdown을 막지 않는다(G2)
+  await centre(first);
+  const firstNumber = await readNumber(first);
+  await page.locator('[data-testid="top-bar-user"]').click();
+  await wait(page, "user-menu-manual");
+  await page.evaluate(() => {
+    window.__clicks = 0;
+    document.addEventListener("click", () => {
+      window.__clicks += 1;
+    });
+  });
+  const from = await pointIn(l);
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x, from.y + 10, { steps: 5 });
+  check("an open menu still closes on the press", (await page.locator('[data-testid="user-menu-manual"]').count()) === 0);
+  // 2. 칸 첫 줄 위로 - 표시·표·선, 선 위 번호는 놓았을 때 L이 받을 번호(칸의 첫 번호)
+  const target = { x: from.x, y: (await rowOf(first).boundingBox()).y + 2 };
+  await page.mouse.move(target.x, target.y, { steps: 12 });
+  await settle();
+  const lineText = await readLine();
+  check("the drag shows the flag, the card and the drop line", (await isDragging()) && (await card.isVisible()) && (await rowOf(l).getAttribute("data-drag-src")) === "" && /^\d+(\.\d+)*/.test(lineText), lineText);
+  check("the drop line shows the number the line will get", lineText === firstNumber, `${lineText} vs ${firstNumber}`);
+  // 3. 끄는 동안 다른 호버 효과는 꺼진다(G10)
+  const hoverEffects = await page.evaluate(() => ({
+    groups: [...document.querySelectorAll(".c-acts, .c-more")].filter((el) => getComputedStyle(el).display !== "none" && Number(getComputedStyle(el).opacity) > 0).length,
+    tips: document.querySelectorAll(".tip").length,
+  }));
+  check("hover effects are off while dragging", hoverEffects.groups === 0 && hoverEffects.tips === 0, JSON.stringify(hoverEffects));
+  // 4. 같은 칸 안에서 더 움직여도 React는 다시 그리지 않는다(G11)
+  const commitsBefore = await page.evaluate(() => window.__commits ?? -1);
+  for (let i = 0; i < 20; i += 1) await page.mouse.move(target.x + (i % 5), target.y + (i % 3));
+  const commitsAfter = await page.evaluate(() => window.__commits ?? -1);
+  check("no React commit while dragging", commitsBefore > 0 && commitsBefore === commitsAfter, `${commitsBefore} -> ${commitsAfter}`);
+  // 5. 칸 첫 줄 위에서 놓으면 새 순서가 저장되고 번호를 다시 센다
+  const paneBefore = await readPane();
+  const saved = waitOrderSave(page);
+  await page.mouse.up();
+  const dropped = await readOrder(l);
+  check("dropping above the first line saves the new order", (await saved).ok() && dropped[0] === l && (await readNumber(l)) === firstNumber && (await readNumber(first)) !== firstNumber, JSON.stringify(dropped));
+  // 6. 놓은 줄은 고른 채로, 끌기는 끝났고 화면은 뛰지 않았다. 긁힌 글자도 없다
+  const after = await page.evaluate(() => ({
+    active: document.activeElement?.getAttribute("data-testid") ?? "",
+    flag: document.documentElement.hasAttribute("data-box-drag"),
+    cards: document.querySelectorAll('[data-testid="drag-card"]').length,
+    marks: document.querySelectorAll("[data-drag-src], [data-drag-home]").length,
+    selection: getSelection().toString(),
+  }));
+  check("the dropped line is picked and the drag is over", after.active === `output-c-row-${l}` && !after.flag && after.cards === 0 && after.marks === 0 && (await dropLine.isHidden()) && after.selection === "" && Math.abs((await readPane()) - paneBefore) < 2, JSON.stringify(after));
+  // 7. 놓은 자리의 click 한 번은 삼키고 다음 click은 그대로 간다(G5)
+  const swallowed = await page.evaluate(() => window.__clicks);
+  await settle();
+  const lBox = await rowOf(l).boundingBox();
+  await page.mouse.click(lBox.x + 4, lBox.y + 4);
+  check("the click after the drop is swallowed", swallowed === 0 && (await page.evaluate(() => window.__clicks)) === 1, `${swallowed} then ${await page.evaluate(() => window.__clicks)}`);
+  // 8. 새로 고쳐도 옮긴 순서가 남아 있다
+  await page.reload();
+  await page.locator(`[data-testid="order-doc-${docId}"]`).click();
+  await rowOf(l).waitFor({ timeout: T });
+  const reloaded = await readOrder(l);
+  check("after a reload the new order persisted", reloaded[0] === l && reloaded.length === original.length, JSON.stringify(reloaded));
+  // 9. 움직임 줄이기 - 되돌리는 놓기는 미끄러지지 않고 바로 선다. 덩어리를 원래 다음 줄 앞(없으면 칸 끝)에 놓아 순서를 되돌린다
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await centre(first);
+  const block = reloaded.slice(0, reloaded.indexOf(first));
+  const next = original[original.indexOf(block.at(-1)) + 1] ?? null;
+  const backFrom = await pointIn(l);
+  const nextBox = await rowOf(next ?? reloaded.at(-1)).boundingBox();
+  await page.mouse.move(backFrom.x, backFrom.y);
+  await page.mouse.down();
+  await page.mouse.move(backFrom.x, next ? nextBox.y + 2 : nextBox.y + nextBox.height + 6, { steps: 12 });
+  const back = waitOrderSave(page);
+  await page.mouse.up();
+  const motion = await rowOf(l).evaluate((el) => ({ transform: el.style.transform, transition: el.style.transition, duration: getComputedStyle(el).transitionDuration }));
+  check("reduced motion moves at once", motion.transform === "" && motion.transition === "" && motion.duration.split(",").every((part) => part.trim() === "0s"), JSON.stringify(motion));
+  check("dragging the block back restores the order", (await back).ok() && JSON.stringify(await readOrder(l)) === JSON.stringify(original), JSON.stringify(await readOrder(l)));
+  await page.emulateMedia({ reducedMotion: null });
+
+  // 10. 제자리에서 좌우로 30px - 한 단 들여 쓰고 저장, 다시 왼쪽으로 끌어 되돌린다
+  const dragSideways = async (id, dx) => {
+    await rowOf(id).scrollIntoViewIfNeeded();
+    const point = await pointIn(id);
+    await page.mouse.move(point.x, point.y);
+    await page.mouse.down();
+    await page.mouse.move(point.x + dx, point.y, { steps: 12 });
+    return { text: await readLine(), dragging: await isDragging() };
+  };
+  const indentId = await page.evaluate(() => [...document.querySelectorAll('[data-testid="output-c"] [data-drag-box][data-meaning-start]')]
+    .find((row) => row.querySelector('[data-testid^="output-c-indent-"]:not([disabled])') && row.querySelector('[data-testid^="output-c-number-"]') && row.querySelector('[data-testid^="output-c-item-"]'))
+    ?.dataset.flipKey ?? null);
+  check("a line whose depth may change exists", indentId !== null);
+  const indentNumber = await readNumber(indentId);
+  const right = await dragSideways(indentId, 30);
+  const indented = waitOrderSave(page);
+  await page.mouse.up();
+  const indentedOk = (await indented).ok();
+  const deeper = await readNumber(indentId);
+  check("dragging sideways 30px indents one level", right.dragging && right.text.includes("indent") && !right.text.includes("outdent") && indentedOk && deeper.split(".").length === indentNumber.split(".").length + 1, `${right.text} | ${indentNumber} -> ${deeper}`);
+  const left = await dragSideways(indentId, -30);
+  const outdented = waitOrderSave(page);
+  await page.mouse.up();
+  check("dragging 30px back outdents it and saves", left.text.includes("outdent") && (await outdented).ok() && (await readNumber(indentId)) === indentNumber, `${left.text} | ${await readNumber(indentId)}`);
+
+  // 11. 깊이가 잠긴 줄(이미 쓴 문서 WI-04) - 같은 몸짓은 아무것도 바꾸지 않는다
+  const [locked] = await findOrderDocs(page, () => {
+    if (document.querySelector('[data-testid="output-c"] article header span.font-mono')?.textContent !== "WI-04") return null;
+    for (const section of document.querySelectorAll('[data-testid="output-c"] section')) {
+      const rows = [...section.querySelectorAll("[data-drag-box]")];
+      if (rows.length >= 3) return rows[1].dataset.flipKey;
+    }
+    return null;
+  });
+  check("the already-written document WI-04 has a section with three lines", Boolean(locked));
+  const lockedId = locked[1];
+  const padding = () => page.locator(`[data-testid="output-c-row-${lockedId}"] .c-line`).evaluate((el) => getComputedStyle(el).paddingLeft);
+  const lockedPadding = await padding();
+  const lockedPuts = puts.length;
+  const lockedDrag = await dragSideways(lockedId, 30);
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  check("on a depth-locked line the same gesture changes nothing", lockedDrag.dragging && !lockedDrag.text.includes("indent") && puts.length === lockedPuts && (await padding()) === lockedPadding, JSON.stringify({ lockedDrag, puts: puts.length - lockedPuts }));
+
+  // 12. 다른 칸 위로 - 앞서 같은 칸에서 놓을 자리를 잡았어도 표에 이유를 적고, 놓으면 아무것도 저장하지 않는다(G7·G8)
+  const [pairHit] = await findOrderDocs(page, () => {
+    const sections = [...document.querySelectorAll('[data-testid="output-c"] section')];
+    for (let i = 0; i + 1 < sections.length; i += 1) {
+      const rows = [...sections[i].querySelectorAll("[data-drag-box]")];
+      const other = sections[i + 1].querySelector("[data-drag-box]");
+      if (rows.length < 2 || !other || !rows.at(-1).hasAttribute("data-meaning-start")) continue;
+      if (other.getBoundingClientRect().bottom - rows[0].getBoundingClientRect().top > 420) continue;
+      return { first: rows[0].dataset.flipKey, source: rows.at(-1).dataset.flipKey, other: other.dataset.flipKey };
+    }
+    return null;
+  });
+  check("a section with two lines sits right above another section", Boolean(pairHit));
+  const pair = pairHit[1];
+  await centre(pair.first);
+  const pairOrder = await readOrder(pair.first);
+  const sp = await pointIn(pair.source);
+  await page.mouse.move(sp.x, sp.y);
+  await page.mouse.down();
+  await page.mouse.move(sp.x, (await rowOf(pair.first).boundingBox()).y + 2, { steps: 12 });
+  const validFirst = await dropLine.isVisible();
+  const otherBox = await rowOf(pair.other).boundingBox();
+  await page.mouse.move(sp.x, otherBox.y + otherBox.height / 2, { steps: 12 });
+  const refusal = await page.evaluate((otherId) => {
+    const dragCard = document.querySelector('[data-testid="drag-card"]');
+    const otherSection = document.querySelector(`[data-testid="output-c-row-${otherId}"]`).closest("section");
+    return { refused: dragCard?.hasAttribute("data-refused") ?? false, text: dragCard?.textContent ?? "", opacity: Number(getComputedStyle(otherSection).opacity) };
+  }, pair.other);
+  check("another section refuses with a reason", validFirst && refusal.refused && refusal.text.includes("Another section") && (await dropLine.isHidden()) && refusal.opacity < 1, JSON.stringify({ validFirst, ...refusal }));
+  const refusalPuts = puts.length;
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  check("releasing over another section saves nothing", puts.length === refusalPuts && JSON.stringify(await readOrder(pair.first)) === JSON.stringify(pairOrder), JSON.stringify(await readOrder(pair.first)));
+
+  // 13. 끄다가 Esc - 끌기만 취소된다. 저장 없음, 누른 줄은 고른 채, 단추 위에서 떼도 뒤따르는 click은 단추를 누르지 않는다(Review Focus 2)
+  await page.evaluate(() => {
+    window.__buttonClicks = 0;
+    document.addEventListener("click", (event) => {
+      if (event.target instanceof Element && event.target.closest("button")) window.__buttonClicks += 1;
+    }, true);
+  });
+  const ep = await pointIn(pair.source);
+  await page.mouse.move(ep.x, ep.y);
+  await page.mouse.down();
+  await page.mouse.move(ep.x, (await rowOf(pair.first).boundingBox()).y + 2, { steps: 12 });
+  const escStarted = (await isDragging()) && (await dropLine.isVisible());
+  const escPuts = puts.length;
+  await page.keyboard.press("Escape");
+  await settle();
+  const downButton = await page.locator(`[data-testid="output-c-move-down-${pair.first}"]`).boundingBox();
+  await page.mouse.move(downButton.x + downButton.width / 2, downButton.y + downButton.height / 2, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  const escState = await page.evaluate(() => ({
+    flag: document.documentElement.hasAttribute("data-box-drag"),
+    cards: document.querySelectorAll('[data-testid="drag-card"]').length,
+    active: document.activeElement?.getAttribute("data-testid") ?? "",
+    buttonClicks: window.__buttonClicks,
+  }));
+  check("Esc cancels", escStarted && !escState.flag && escState.cards === 0 && puts.length === escPuts && JSON.stringify(await readOrder(pair.first)) === JSON.stringify(pairOrder) && escState.active === `output-c-row-${pair.source}`, JSON.stringify(escState));
+  check("the click after Esc presses no button", escState.buttonClicks === 0, String(escState.buttonClicks));
+
+  // 14. 단추 묶음의 여백, 줄 상자 바로 바깥의 다리에서 누르고 움직여도 끌리지 않는다(Review Focus 1)
+  await page.mouse.move(0, 0);
+  await rowOf(pair.first).hover({ position: { x: 8, y: 4 } });
+  await settle();
+  const acts = await page.locator(`[data-testid="output-c-acts-${pair.first}"]`).boundingBox();
+  await page.mouse.move(acts.x + 1, acts.y + 1);
+  await page.mouse.down();
+  await page.mouse.move(acts.x + 1, acts.y + 21, { steps: 5 });
+  const padDrag = await isDragging();
+  await page.mouse.up();
+  check("a press on the action group padding does not drag", !padDrag);
+  const rowBox = await rowOf(pair.first).boundingBox();
+  const bridge = { x: rowBox.x + rowBox.width + 10, y: rowBox.y + 6 };
+  await page.mouse.move(rowBox.x + rowBox.width - 4, bridge.y);
+  await page.mouse.move(bridge.x, bridge.y, { steps: 3 });
+  const bridgeRow = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest("[data-drag-box]")?.dataset.flipKey ?? null, bridge);
+  await page.mouse.down();
+  await page.mouse.move(bridge.x, bridge.y + 20, { steps: 5 });
+  const bridgeDrag = await isDragging();
+  await page.mouse.up();
+  await page.mouse.move(rowBox.x + 40, rowBox.y + 30, { steps: 5 });
+  const pendingDrag = await isDragging();
+  check("a press in the bridge just outside the row neither drags nor leaves a pending press", bridgeRow === pair.first && !bridgeDrag && !pendingDrag, JSON.stringify({ bridgeRow, bridgeDrag, pendingDrag }));
+
+  // 15. Alt를 누른 채 줄 글 위를 긁으면 글자가 골라지고 줄은 끌리지 않는다. Alt를 떼도 선택은 남고, 빈 곳을 누르면 풀린다(G3)
+  const altId = await page.evaluate(() => [...document.querySelectorAll('[data-testid="output-c"] [data-drag-box] [data-testid^="output-c-item-"]')].find((el) => el.getBoundingClientRect().width > 120)?.closest("[data-drag-box]").dataset.flipKey ?? null);
+  check("a line with enough text to select exists", altId !== null);
+  await rowOf(altId).scrollIntoViewIfNeeded();
+  const altOrder = await readOrder(altId);
+  const altPuts = puts.length;
+  await page.keyboard.down("Alt");
+  const altMode = await page.evaluate(() => document.documentElement.hasAttribute("data-box-select"));
+  const textBox = await page.locator(`[data-testid="output-c-item-${altId}"]`).boundingBox();
+  await page.mouse.move(textBox.x + 4, textBox.y + 8);
+  await page.mouse.down();
+  let altDragged = false;
+  for (let i = 1; i <= 6; i += 1) {
+    await page.mouse.move(textBox.x + 4 + i * 10, textBox.y + 8);
+    if (await isDragging()) altDragged = true;
+  }
+  await page.mouse.up();
+  const altSelected = await page.evaluate(() => getSelection().toString().length);
+  await page.waitForTimeout(300);
+  check("Alt selects text instead of dragging", altMode && !altDragged && altSelected > 0 && puts.length === altPuts && JSON.stringify(await readOrder(altId)) === JSON.stringify(altOrder), JSON.stringify({ altMode, altDragged, altSelected }));
+  await page.keyboard.up("Alt");
+  const kept = await page.evaluate(() => ({ selection: getSelection().toString().length, mode: document.documentElement.hasAttribute("data-box-select") }));
+  const sheetBox = await page.locator('[data-testid="output-c"] article.sheet').first().boundingBox();
+  await page.mouse.click(sheetBox.x - 6, sheetBox.y + 40);
+  const cleared = await page.evaluate(() => ({ selection: getSelection().toString().length, mode: document.documentElement.hasAttribute("data-box-select") }));
+  check("the selection stays after Alt is let go and an empty press clears it", kept.selection > 0 && kept.mode && cleared.selection === 0 && !cleared.mode, JSON.stringify({ kept, cleared }));
+});
+
+await runStep("order: drag is off on a read-only bundle", { devUser: "qa.lead" }, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  const row = page.locator('[data-testid^="output-c-row-"]').nth(1);
+  await row.waitFor({ timeout: T });
+  check("the reviewer has no edit buttons", (await page.locator('[data-testid^="output-c-move-"]').count()) === 0);
+  check("rows are not drag boxes and there is no drag help", (await page.locator("[data-drag-box]").count()) === 0 && (await page.locator('[data-testid="order-drag-help"]').count()) === 0);
+  const box = await row.boundingBox();
+  await page.mouse.move(box.x + 20, box.y + 6);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 20, box.y + 26, { steps: 5 });
+  const state = await page.evaluate(() => ({ flag: document.documentElement.hasAttribute("data-box-drag"), cards: document.querySelectorAll('[data-testid="drag-card"]').length }));
+  await page.mouse.up();
+  check("no drag starts", !state.flag && state.cards === 0, JSON.stringify(state));
 });
 
 await runStep("order: a move chosen from the narrow-frame menu keeps focus on that line's ⋯ button", {}, async ({ page }) => {

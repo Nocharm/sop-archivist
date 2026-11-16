@@ -1633,7 +1633,8 @@
 @layer components {
   .c-line { --c-indent: 1.5em; }
   /* 줄은 글 + 줄 끝 단추 묶음의 감김 줄 - 터치 화면(hover: none)에서는 묶음이 늘 보이고, 글이 폭을 채우면 글 바로 아래 제 줄로 내려간다 */
-  .c-order { container: c-order / inline-size; }
+  /* position - 끌 때 놓을 자리 선(.c-dropline)의 기준 */
+  .c-order { container: c-order / inline-size; position: relative; }
   .c-order > .sheet { max-width: 760px; }
   .c-row { display: flex; flex-wrap: wrap; align-items: flex-start; }
   .c-row > .c-line { flex: 1 1 auto; min-width: 0; }
@@ -1670,7 +1671,20 @@
     /* 단추가 보이는 줄을 옅게 칠해 단추와 줄을 잇는다. 고른 줄(.c-row:focus)의 바탕·막대는 그대로 둔다 */
     .c-order .c-row:is(:hover, :focus-within, :has([aria-expanded="true"])):not(:focus) { background: var(--hover); }
     .c-order .pg:has(.c-row:hover) .c-row:not(:hover, :focus):not(:has(:focus-visible, [aria-expanded="true"])) { background: none; }
+    /* 끌 수 있는 줄은 올리면 살짝 들린다(끌어다 놓기 설계 G9) - 바탕은 위 규칙 그대로, 테두리 대신 고리라 줄 높이가 변하지 않는다. 고른 줄의 막대·바탕은 건드리지 않는다 */
+    html:not([data-box-drag]):not([data-box-select]) .c-order .c-row[data-drag-box]:hover:not(:focus) { box-shadow: 0 0 0 1px var(--line-2), var(--shadow-1); }
   }
+  .c-row[data-drag-box] { border-radius: var(--r-1); transition: background-color var(--dur-fast), box-shadow var(--dur-fast); }
+  @media (prefers-reduced-motion: reduce) {
+    .c-row[data-drag-box] { transition: none; }
+  }
+  /* 끄는 동안 다른 칸은 흐리게 - 놓을 수 있는 곳은 출발 칸뿐이다 */
+  html[data-box-drag] .c-order section:not([data-drag-home]) { opacity: .35; }
+  /* 놓을 자리 선 - 왼쪽 끝 동그라미, 선 위에 놓았을 때의 번호 알약(빈 글이면 숨김). 자리·폭·글은 output-c.tsx가 인라인으로 쓴다 */
+  .c-dropline { position: absolute; z-index: 3; height: 2px; border-radius: 1px; background: var(--accent); pointer-events: none; }
+  .c-dropline::before { content: ""; position: absolute; top: -3px; left: -4px; box-sizing: border-box; width: 8px; height: 8px; border: 2px solid var(--accent); border-radius: 50%; background: var(--surface); }
+  .c-dropline > span { position: absolute; top: 50%; left: 10px; transform: translateY(-50%); padding: 0 5px; border-radius: 8px; background: var(--accent); color: var(--on-accent); font: 600 10px/16px var(--font-mono); white-space: nowrap; }
+  .c-dropline > span:empty { display: none; }
   /* 끄는 동안은 줄 끝 단추·줄 호버·다리를 모두 끈다(lib/box-drag.ts) - 위 보이기 규칙보다 특이도가 높아야 한다 */
   html[data-box-drag] .c-order .c-row > :is(.c-acts, .c-more) { opacity: 0; pointer-events: none; }
   html[data-box-drag] .c-order .c-row:not(:focus) { background: none; }
@@ -1678,7 +1692,7 @@
   .c-line[data-numbered] { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; column-gap: 0.6em; }
   .c-no { font-family: var(--font-mono); font-size: 0.8em; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
   /* 줄 고르기는 마우스로만(tabIndex -1) - 전역 :focus-visible 테두리가 안 걸리므로 바탕과 왼쪽 막대로 고른 줄을 보인다 */
-  .c-row:focus { outline: none; background: var(--accent-tint); box-shadow: inset 2px 0 0 var(--accent); }
+  .c-row:focus { outline: none; background: var(--accent-tint); box-shadow: inset 2px 0 0 var(--accent); border-top-left-radius: 0; border-bottom-left-radius: 0; }
   /* 번호 표시 세 칸 - 줄 끝 단추 높이(24px)에 맞춘 작은 눌림 단추 */
   .c-mark { gap: 1px; margin-right: 4px; padding: 1px; }
   .c-mark button { width: 22px; height: 22px; }
