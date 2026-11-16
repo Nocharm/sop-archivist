@@ -6931,7 +6931,8 @@ await runStep("assign: drag an Old piece onto a nearby piece in the other langua
   await moveTo(await centreOf(pieceOf(figure.id)));
   const overFigure = await readCard();
   check("over a figure piece nothing is marked and the card says nothing", overFigure.drops === 0 && overFigure.note === "", JSON.stringify(overFigure));
-  await moveTo(await centreOf(page.locator(`[data-testid="assign-paper-unit-${table.id}"]`)));
+  // 표 묶음에는 표 자체의 assign-paper-unit 손잡이가 없다(머리 줄) - 조각 상자 가운데(칸 문장 위)
+  await moveTo(await centreOf(pieceOf(table.id)));
   const overTable = await readCard();
   check("over a table piece nothing is marked and the card says nothing", overTable.drops === 0 && overTable.note === "", JSON.stringify(overTable));
   await page.keyboard.press("Escape");
