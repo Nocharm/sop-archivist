@@ -81,6 +81,8 @@ export function previewEdit(doc: OutputCDoc, edit: CEdit): OutputCDoc | null {
     const items = doc.sections[sectionIndex]?.items ?? [];
     const block = edit.targetIds.map((id) => items.find((item) => item.target_id === id));
     const picked = new Set(edit.targetIds);
+    // 겹친 줄·빈 묶음·길이가 다른 depths는 문서를 망가뜨리거나 undefined 깊이를 쓴다
+    if (picked.size === 0 || picked.size !== edit.targetIds.length || (edit.depths && edit.depths.length !== edit.targetIds.length)) return null;
     if (sectionIndex < 0 || block.some((item) => !item) || (edit.beforeId !== null && (picked.has(edit.beforeId) || !items.some((item) => item.target_id === edit.beforeId)))) return null;
     const placed = block.map((item, k) => (edit.depths && edit.depths[k] !== item!.indent_level ? { ...item!, indent_level: edit.depths[k] } : item!));
     const rest = items.filter((item) => !picked.has(item.target_id));
