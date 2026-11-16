@@ -163,6 +163,15 @@ export function listLinkMenuItems(state: { picked: boolean; linked: boolean; con
   return state.hasTarget ? ["link", "close"] : [];
 }
 
+/**
+ * Confirm을 막는 까닭(메시지 키) - 결정 칸의 Confirm 단추·↵·그 자리 메뉴(끌어 놓은 초안 포함)가 같은 순서로 쓴다.
+ * 참조 번호 확인이 먼저, 그다음 캡션 없는 표·그림(서버 caption_required 전에 멈춘다). 막지 않으면 null.
+ */
+export function readConfirmBlockKey(gates: { isRefGate: boolean; isCaptionGate: boolean }): "assign.ref.checkFirst" | "assign.caption.needed" | null {
+  if (gates.isRefGate) return "assign.ref.checkFirst";
+  return gates.isCaptionGate ? "assign.caption.needed" : null;
+}
+
 /** 끊은 뒤 남는 고름 - 끊는 문장과 그 한/영 짝 문장을 함께 뺀다(짝 한쪽만 남기면 다음 고름이 짝을 다시 붙인다) */
 export function listUnlinkRemainder(targetIds: number[], targetId: number, written: Map<number, WrittenSentence>): number[] {
   const partner = written.get(targetId)?.partner_target_id ?? null;

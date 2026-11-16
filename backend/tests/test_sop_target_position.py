@@ -14,6 +14,7 @@ from tests.docx_factory import build_docx, p
 from tests.sop_helpers import (
     AUTHOR,
     assign_as_is,
+    build_as_is_targets,
     find_unit,
     get_bundle,
     get_group_by_unit,
@@ -441,3 +442,46 @@ def test_an_earlier_undo_step_on_a_frozen_document_conflicts(client: TestClient)
     assert earlier.status_code == 409, earlier.text
     assert earlier.json()["detail"]["code"] == "undo_conflict"
     assert _texts(client, bundle_id) == [FIRST, SECOND, THIRD]
+
+
+def _setup_table_between_sentences(client: TestClient) -> tuple:
+    """옛 문서의 표(캡션 단위 없음)와 purpose 칸에 확정해 둔 두 문장 — (픽스처, 표 단위, 표+칸 새 문장 항목, 앞 문장 id, 뒤 문장 id)."""
+    fx = _setup_sop_and_wi(client)
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+    # 보이는 순서는 옛 문서 순서 — RECORDS가 STORAGE 앞이다
+    (first,) = assign_as_is(client, fx.bundle_id, find_unit(fx.view, RECORDS), fx.sop_id, slot_key="purpose")["targets"]
+    (second,) = assign_as_is(client, fx.bundle_id, find_unit(fx.view, STORAGE), fx.sop_id, slot_key="purpose")["targets"]
+    targets, _ = build_as_is_targets(client, fx.bundle_id, table, fx.sop_id, slot_key="purpose")
+    return fx, table, targets, first["id"], second["id"]
+
+
+def test_a_positioned_table_keeps_its_cells_and_caption_under_it(client: TestClient) -> None:
+    """끌어 놓은 표는 칸 새 문장·캡션 새 문장을 그대로 아래에 두고 같은 칸으로 간다 — 자식은 순서를 받지 않고 부모를 따른다."""
+    fx, table, targets, first_id, second_id = _setup_table_between_sentences(client)
+    targets[0]["position"] = {"after_target_id": first_id}
+    caption = _target("cap", fx.sop_id, [], parent_key="t", slot_key="purpose", text="합성 표", lang="ko")
+
+    response = save_group(client, fx.bundle_id, _body([_unit_in(table)], [*targets, caption]))
+
+    assert response.status_code == 200, response.text
+    rows = [row for row in read_rows(TargetSentence) if row.bundle_id == fx.bundle_id]
+    (table_row,) = [row for row in rows if row.kind == "table"]
+    children = [row for row in rows if row.parent_target_id == table_row.id]
+    assert len(children) == len(targets)  # 칸 새 문장(len - 1) + 캡션 하나
+    assert {(row.target_doc_id, row.slot_key) for row in children} == {(fx.sop_id, "purpose")}
+    assert [row.confirmed_text for row in children if row.cell_row is None] == ["합성 표"]
+    tops = sorted((row for row in rows if row.parent_target_id is None and row.slot_key == "purpose"), key=lambda row: row.order_index)
+    assert [row.id for row in tops] == [first_id, table_row.id, second_id]
+
+
+def test_a_caption_child_cannot_carry_a_position(client: TestClient) -> None:
+    fx, table, targets, first_id, _ = _setup_table_between_sentences(client)
+    caption = _target(
+        "cap", fx.sop_id, [], parent_key="t", slot_key="purpose", text="합성 표", lang="ko",
+        position={"after_target_id": first_id},
+    )
+
+    response = save_group(client, fx.bundle_id, _body([_unit_in(table)], [*targets, caption]))
+
+    assert (response.status_code, response.json()["detail"]["reason"]) == (422, "position_not_allowed")
+    assert not [row for row in read_rows(TargetSentence) if row.bundle_id == fx.bundle_id and row.kind == "table"]

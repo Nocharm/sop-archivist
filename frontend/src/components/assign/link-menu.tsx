@@ -23,6 +23,8 @@ interface LinkMenuProps {
   items: LinkMenuItem[];
   /** 고르기만 하고 저장하지 않았다 */
   isUnsaved: boolean;
+  /** Confirm을 막는 까닭 - 있으면 Confirm이 꺼지고 메뉴 머리에 까닭이 적힌다(결정 칸 Confirm과 같은 막기) */
+  confirmBlock?: string | null;
   busy: boolean;
   onAction: (item: LinkMenuItem) => void;
   onClose: () => void;
@@ -32,7 +34,7 @@ interface LinkMenuProps {
 const FOCUS_DELAY_MS = 400;
 const ITEM_SELECTOR = "[role=menuitem]:not(:disabled)";
 
-export function LinkMenu({ anchor, cover = [], offset, lineUnits = [], items, isUnsaved, busy, onAction, onClose }: LinkMenuProps) {
+export function LinkMenu({ anchor, cover = [], offset, lineUnits = [], items, isUnsaved, confirmBlock = null, busy, onAction, onClose }: LinkMenuProps) {
   const { t } = useI18n();
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -156,11 +158,16 @@ export function LinkMenu({ anchor, cover = [], offset, lineUnits = [], items, is
           {t("assign.unsaved")}
         </span>
       )}
+      {confirmBlock && items.includes("confirm") && (
+        <span className="link-menu-note" data-testid="assign-link-menu-blocked">
+          {confirmBlock}
+        </span>
+      )}
       <span className="link-menu-row">
         {items.map((item) => {
           const { label, Icon, className, kbd } = look[item];
           return (
-            <button key={item} type="button" role="menuitem" className={className} disabled={busy && item !== "close"} data-testid={`assign-link-menu-${item}`} onClick={() => onAction(item)}>
+            <button key={item} type="button" role="menuitem" className={className} disabled={(busy && item !== "close") || (item === "confirm" && confirmBlock !== null)} data-testid={`assign-link-menu-${item}`} onClick={() => onAction(item)}>
               <Icon size={14} strokeWidth={1.5} aria-hidden />
               {label}
               {kbd && <kbd>{kbd}</kbd>}

@@ -134,6 +134,7 @@ import {
   listUnsourced,
   mergeGroups,
   pickNearby,
+  readConfirmBlockKey,
   stepZoom,
   type LinkMenuItem,
   type Recommendation,
@@ -989,6 +990,8 @@ export default function AssignPage() {
   const isRefGate = row !== null && row.status !== "confirmed" && rowViewUnits.some(isRefPending);
   // 새 문서 자리로 보내는 표·그림에 캡션이 없으면 Confirm이 꺼진다(명세 §3.4) - 캡션은 Edit and confirm에서 써 넣는다
   const isCaptionGateOn = row !== null && paperModel !== null && oldView?.document.id === row.documentId && isCaptionGate(row, destination, paperModel.units, draft, groupData);
+  // Confirm을 막는 까닭 - 결정 칸 단추의 툴팁과 그 자리 메뉴(끌어 놓은 초안 포함)가 같은 답을 쓴다
+  const confirmBlockKey = readConfirmBlockKey({ isRefGate, isCaptionGate: isCaptionGateOn });
   // 오른쪽 칸 1번(다듬기) - 고른 줄의 문장마다 할 수 있는 일. 우클릭 메뉴와 같은 답이다. 고칠 수 없는 사람에게는 줄을 보이지 않는다
   // 표·그림 줄이면 그 묶음의 캡션도 문장처럼 한 줄씩(언어 세 칸·자르기·캡션 떼기) - 용지 순서대로(캡션이 위면 위에)
   const rowBundleSpan = new Set(rowViewUnits.filter((unit) => isBundleKind(unit.kind)).map((unit) => unit.id));
@@ -2661,7 +2664,7 @@ export default function AssignPage() {
 
   // 확정 단추 - 결정 칸 맨 아래 늘 같은 자리의 가장 큰 단추. 고른 곳이 없으면 흐리게 꺼지고 까닭은 툴팁(↵는 위 목록의 첫 후보로 간다)
   const confirmButton = (
-    <Tooltip label={t(destination !== null && isRefGate ? "assign.ref.checkFirst" : destination !== null && isCaptionGateOn ? "assign.caption.needed" : "assign.why.pickFirst")} suppressed={(destination !== null && !isRefGate && !isCaptionGateOn) || !row}>
+    <Tooltip label={t((destination !== null ? confirmBlockKey : null) ?? "assign.why.pickFirst")} suppressed={(destination !== null && confirmBlockKey === null) || !row}>
       <button type="button" className="btn pri assign-confirm" data-testid="assign-primary" data-state={primaryState} disabled={!canEdit || !row || busy || !destination || isRefGate || isCaptionGateOn} onClick={handlePrimary}>
         <span className="stack">
           <span data-on={primaryState !== "save" ? "" : undefined}>
@@ -3493,7 +3496,7 @@ export default function AssignPage() {
         </aside>
       </div>
       {menu && menuItems.length > 0 && (
-        <LinkMenu key={menu.seq} anchor={menu.anchor} cover={readMenuCover(menu.anchor, rowMap.get(menu.rowKey)?.unitIds ?? [])} offset={menu.offset} lineUnits={rowMap.get(menu.rowKey)?.unitIds ?? []} items={menuItems} isUnsaved={menuItems.includes("cancel")} busy={busy} onAction={runMenu} onClose={() => setMenu(null)} />
+        <LinkMenu key={menu.seq} anchor={menu.anchor} cover={readMenuCover(menu.anchor, rowMap.get(menu.rowKey)?.unitIds ?? [])} offset={menu.offset} lineUnits={rowMap.get(menu.rowKey)?.unitIds ?? []} items={menuItems} isUnsaved={menuItems.includes("cancel")} confirmBlock={confirmBlockKey ? t(confirmBlockKey) : null} busy={busy} onAction={runMenu} onClose={() => setMenu(null)} />
       )}
       {ctxMenu && ctxGroups && (
         <AssignContextMenu

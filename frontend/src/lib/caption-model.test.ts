@@ -59,6 +59,14 @@ describe("isCaptionGate", () => {
     expect(isCaptionGate(figureRow, placeDest, units({ 9: { kind: "sentence" } }), undefined)).toBe(false);
     expect(isCaptionGate(figureRow, { kind: "link", targetIds: [70] }, units({ 9: { kind: "figure" } }), undefined)).toBe(false);
   });
+
+  it("gates a table dropped between two sentences the same as a clicked slot - the drop only adds a position", () => {
+    const tableRow: ClassifyRow = { ...figureRow, key: "u8", unitIds: [8] };
+    const dropped = { captionTexts: {}, position: { placeId: "slot:6:scope", after: 70 } };
+    expect(isCaptionGate(tableRow, placeDest, units({ 8: { kind: "table" } }), dropped)).toBe(true);
+    expect(isCaptionGate(tableRow, placeDest, units({ 8: { kind: "table" }, 12: { kind: "caption", group_unit_id: 8, text: "표 1" } }), dropped)).toBe(false);
+    expect(isCaptionGate(tableRow, placeDest, units({ 8: { kind: "table" } }), { ...dropped, captionTexts: { ko: "운전 조건" } })).toBe(false);
+  });
 });
 
 describe("listCaptionSources", () => {
