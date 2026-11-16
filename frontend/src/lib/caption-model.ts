@@ -17,6 +17,16 @@ export function isCaptionNeeded({ hasCaption, disposition, isLinkedToWritten }: 
   return disposition !== "delete" && disposition !== "move_external";
 }
 
+/** 이미 쓴 New 문서 쪽 묶음인가 - 혼자 연 그 문서의 단위이거나 그 문서에 이은 묶음(입구 2). 머리 줄과 위쪽 줄 수가 같은 판단을 쓴다 */
+export function makeIsLinkedToWritten(writtenDocUnitIds: ReadonlySet<number>, linked: { has(unitId: number): boolean }): (unitId: number) => boolean {
+  return (unitId) => writtenDocUnitIds.has(unitId) || linked.has(unitId);
+}
+
+/** 묶음 하나의 Caption needed - 묶인 캡션 단위나 캡션 새 문장(써 넣은 것 포함, has_caption_target)이 있으면 캡션이 있다. 머리 줄과 위쪽 줄 수가 같은 입력으로 */
+export function isBundleCaptionNeeded(unit: Pick<UnitRow, "has_caption_target" | "decision"> | undefined, hasBoundCaption: boolean, isLinkedToWritten: boolean): boolean {
+  return isCaptionNeeded({ hasCaption: hasBoundCaption || unit?.has_caption_target === true, disposition: unit?.decision.disposition, isLinkedToWritten });
+}
+
 /** 캡션을 받는 묶음 단위 - 표·행·그림 */
 const BUNDLE_KINDS: readonly string[] = ["table", "table_row", "figure"];
 
@@ -152,8 +162,7 @@ export function listCaptionPendingRowKeys(rows: readonly ClassifyRow[], units: R
       row.unitIds.some((id) => {
         const unit = units.get(id);
         if (!unit || !isBundleKind(unit.kind)) return false;
-        const hasCaption = captioned.has(id) || unit.has_caption_target === true;
-        return isCaptionNeeded({ hasCaption, disposition: unit.decision.disposition, isLinkedToWritten: isLinkedToWritten(id) });
+        return isBundleCaptionNeeded(unit, captioned.has(id), isLinkedToWritten(id));
       }),
     )
     .map((row) => row.key);

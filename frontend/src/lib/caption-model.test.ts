@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Group, GroupTarget, UnitRow, ViewUnit } from "./api-sop";
-import { isCaptionGate, isCaptionNeeded, listCaptionFields, listCaptionPendingRowKeys, listCaptionSources, pickCaptionLang } from "./caption-model";
+import { isBundleCaptionNeeded, isCaptionGate, isCaptionNeeded, listCaptionFields, listCaptionPendingRowKeys, listCaptionSources, makeIsLinkedToWritten, pickCaptionLang } from "./caption-model";
 import type { ClassifyRow, Destination } from "./classify-model";
 
 describe("isCaptionNeeded", () => {
@@ -126,5 +126,19 @@ describe("listCaptionPendingRowKeys", () => {
       [8, unitRow(8, { kind: "figure" })],
     ]);
     expect(listCaptionPendingRowKeys([1, 2, 4, 5, 6, 7, 8].map(row), map, (id) => id === 8)).toEqual(["u1", "u6"]);
+  });
+
+  it("uses one rule for the counter and the head row: the units of a written document opened alone and bundles linked to one are exempt", () => {
+    const map = new Map([[1, unitRow(1, { kind: "table" })], [2, unitRow(2, { kind: "figure" })], [5, unitRow(5, { kind: "table", has_caption_target: true })]]);
+    const isLinkedToWritten = makeIsLinkedToWritten(new Set([90]), new Set([2]));
+    expect([1, 2, 5, 90].map(isLinkedToWritten)).toEqual([false, true, false, true]);
+    // 위쪽 줄 수에 든 묶음과 머리 줄에 Caption needed를 띄우는 묶음이 같다
+    const counted = listCaptionPendingRowKeys([1, 2, 5].map(row), map, isLinkedToWritten);
+    const flagged = [1, 2, 5].filter((id) => isBundleCaptionNeeded(map.get(id), false, isLinkedToWritten(id))).map((id) => `u${id}`);
+    expect(counted).toEqual(["u1"]);
+    expect(flagged).toEqual(counted);
+    // 혼자 연 New 문서의 단위는 목록(unitMap)에 없어도 캡션을 묻지 않는다
+    expect(isBundleCaptionNeeded(undefined, false, isLinkedToWritten(90))).toBe(false);
+    expect(isBundleCaptionNeeded(map.get(1), true, false)).toBe(false);
   });
 });
