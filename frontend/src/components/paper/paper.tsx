@@ -8,6 +8,7 @@
 import { BookMarked, ChevronsDownUp, Ellipsis, FoldVertical, FolderCheck, ImageIcon, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles, type LucideIcon } from "lucide-react";
 import { Fragment, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
+import { BundleHead } from "@/components/paper/bundle-head";
 import { FigureImage } from "@/components/paper/figure-image";
 import { LangToken } from "@/components/paper/lang-token";
 import { StripLead, STRIP_LEAD_EXTRA } from "@/components/paper/strip-lead";
@@ -18,7 +19,7 @@ import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
 import { readCaretPoint } from "@/lib/caret-point";
 import { useI18n } from "@/lib/i18n";
 import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
-import { buildRows, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, resolvePickUnit, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
+import { buildRows, getBundleHeader, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, resolvePickUnit, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
 
@@ -578,51 +579,52 @@ export function Paper({
     });
   }
 
-  function renderTable(item: Extract<PaperItem, { type: "table" }>): ReactNode {
-    const tableUnit = item.unitId === null ? null : model.units.get(item.unitId);
+  /** 표·그림 조각 위 머리 줄 - 묶음 단위가 있을 때만(행으로 나눈 표는 행마다 단위라 없다) */
+  function renderBundleHead(row: Extract<PaperRow, { type: "table" | "figure" }>, unit: ViewUnit | undefined): ReactNode {
+    if (!unit) return null;
+    return <BundleHead head={getBundleHeader(row, model)} selected={unit.id === selectedId || (highlightIds?.has(unit.id) ?? false)} testId={testId} />;
+  }
+
+  function renderTable(item: Extract<PaperItem, { type: "table" }>, head: ReactNode = null): ReactNode {
     return (
-      <div className="grid gap-1">
-        {tableUnit && (
-          // 표 전체를 한 단위로 고르는 손잡이 - 글자 없이 선만 보인다(용지에 앱 글자를 넣지 않는다)
-          <button
-            type="button"
-            className="ptbl-cap h-2.5 p-0"
-            aria-label={tableUnit.display_id}
-            data-unit={tableUnit.id}
-            data-testid={`${testId}-unit-${tableUnit.id}`}
-            data-sel={tableUnit.id === selectedId || highlightIds?.has(tableUnit.id) ? "" : undefined}
-            onClick={(event) => onUnitClick(tableUnit.id, null, event)}
-          />
-        )}
-        <table className="ptbl">
-          <tbody>
-            {item.rows.map((row, rowIndex) => (
-              <tr key={rowIndex}>
-                {row.map((cell) => (
-                  <td key={cell.id} colSpan={cell.grid_span} rowSpan={cell.row_span}>
-                    {renderCell(cell)}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-1">
+        {head}
+        {/* 가로 스크롤은 표만 - 조각 상자가 스크롤하면 위 테두리의 종류 표시가 잘린다 */}
+        <div className="ptbl-scroll">
+          <table className="ptbl">
+            <tbody>
+              {item.rows.map((row, rowIndex) => (
+                <tr key={rowIndex}>
+                  {row.map((cell) => (
+                    <td key={cell.id} colSpan={cell.grid_span} rowSpan={cell.row_span}>
+                      {renderCell(cell)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     );
   }
 
-  function renderFigure(block: ViewBlock): ReactNode {
+  /** 그림 - 그림 블록 글(옛 추출 캡션)은 머리 줄에도 보이지만 아래 글은 Alt 긁기·나누기 자리라 남긴다 */
+  function renderFigure(block: ViewBlock, head: ReactNode = null): ReactNode {
     return (
-      <figure className="pfig">
-        {figureSource && block.has_image ? (
-          <FigureImage bundleId={figureSource.bundleId} docId={figureSource.docId} blockId={block.id} />
-        ) : (
-          <span className="pfig-box" aria-hidden>
-            <ImageIcon size={28} strokeWidth={1.5} />
-          </span>
-        )}
-        <p data-block={block.id}>{renderBlockText(block)}</p>
-      </figure>
+      <>
+        {head}
+        <figure className="pfig">
+          {figureSource && block.has_image ? (
+            <FigureImage bundleId={figureSource.bundleId} docId={figureSource.docId} blockId={block.id} />
+          ) : (
+            <span className="pfig-box" aria-hidden>
+              <ImageIcon size={28} strokeWidth={1.5} />
+            </span>
+          )}
+          <p data-block={block.id}>{renderBlockText(block)}</p>
+        </figure>
+      </>
     );
   }
 
@@ -685,9 +687,9 @@ export function Paper({
             </div>
           )}
           {row.type === "table"
-            ? renderTable(row.item)
+            ? renderTable(row.item, renderBundleHead(row, unit))
             : row.type === "figure"
-              ? renderFigure(row.block)
+              ? renderFigure(row.block, renderBundleHead(row, unit))
               : row.parts.map((part, partIndex) => {
                   const skip = partIndex === 0 ? readHiddenPrefix(part.block, unit) : 0;
                   return (
@@ -881,7 +883,7 @@ export function Paper({
     const element = event.target as HTMLElement;
     if (element.closest("button, a, input, [role='slider']")) return;
     const holder = element.closest<HTMLElement>("[data-strip-unit]") ?? element.closest(".strip-lead")?.parentElement?.querySelector<HTMLElement>(":scope > .strip[data-strip-unit]");
-    // 표 안에서 칸 조각을 비껴 누른 것(칸 여백·칸 사이 틈)으로 표 전체를 고르지 않는다 - 표 전체는 표 위 손잡이·표 밖 여백으로(묶음째 고르는 화면은 표 전체)
+    // 표 안에서 칸 조각을 비껴 누른 것(칸 여백·칸 사이 틈)으로 표 전체를 고르지 않는다 - 표 전체는 머리 줄(BundleHead)·표 밖 여백으로(묶음째 고르는 화면은 표 전체)
     if (!pickWholeBundle && holder?.dataset.kind === "table" && element.closest("table")) return;
     if (holder) onUnitClick(Number(holder.dataset.stripUnit), null, event);
   }

@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewPartGroup, ViewUnit } from "./api-sop";
-import { buildPaperModel, buildPaperTabs, buildRows, listPartSheets, canSplitAt, clampSplitAt, getGapMerge, getMergeBlocker, resolveCutDrag, getMarks, getTags, readWarningText, resolvePickUnit, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
+import { buildPaperModel, buildPaperTabs, buildRows, listPartSheets, canSplitAt, clampSplitAt, getBundleHeader, getGapMerge, getMergeBlocker, resolveCutDrag, getMarks, getTags, readWarningText, resolvePickUnit, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -201,6 +201,29 @@ describe("buildRows", () => {
     const rows = buildRows(model.body, model.segments);
     expect(rows.map((row) => row.type)).toEqual(["piece", "figure"]);
     expect(rows[0].type === "piece" && rows[0].unitId).toBeNull();
+  });
+});
+
+describe("getBundleHeader", () => {
+  const view = makeView(
+    [
+      makeBlock(1, 0, "열1", { kind: "table_cell", table_id: 7, row_index: 0, col_index: 0 }),
+      makeBlock(2, 1, "열2", { kind: "table_cell", table_id: 7, row_index: 0, col_index: 1 }),
+      makeBlock(3, 2, "a", { kind: "table_cell", table_id: 7, row_index: 1, col_index: 0 }),
+      makeBlock(4, 3, "b", { kind: "table_cell", table_id: 7, row_index: 1, col_index: 1 }),
+      makeBlock(5, 4, "그림 1 로터", { kind: "figure" }),
+    ],
+    [makeUnit(20, [], "", { kind: "table", table_id: 7, pos_seq: 0 }), makeUnit(21, [[5, 0, 7]], "그림 1 로터", { kind: "figure" })],
+  );
+  view.tables = [{ id: 7, table_index: 0, parent_table_id: null, part: "body", n_rows: 2, n_cols: 2, is_layout: false }];
+  const model = buildPaperModel(view);
+  const rows = buildRows(model.body, model.segments);
+  const tableRow = rows.find((row) => row.type === "table")!;
+  const figureRow = rows.find((row) => row.type === "figure")!;
+
+  it("previews the first row of a table and the block text of a figure", () => {
+    expect(getBundleHeader(tableRow, model)).toEqual({ kind: "table", unitId: 20, displayId: "D-20", preview: "열1 · 열2" });
+    expect(getBundleHeader(figureRow, model)).toMatchObject({ kind: "figure", unitId: 21, displayId: "D-21", preview: "그림 1 로터" });
   });
 });
 

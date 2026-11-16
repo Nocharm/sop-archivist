@@ -636,25 +636,19 @@
   .su[data-cut] { background-image: none; }
   .su[data-done] { color: color-mix(in oklab, var(--paper-ink) 62%, var(--paper)); }
   .ptbl { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 22px; }
-  /* 한 단 보기(옛 원문 고치기 자리)에서는 칸마다 16ch는 지켜 열이 많은 표가 글자 한 줄 폭으로 찌그러지지 않게 한다. max-content는 쓰지 않는다(긴 칸이 표를 3,000px 넘게 민다) - 넘치면 표를 감싼 조각이 가로로 스크롤한다 */
+  /* 한 단 보기(옛 원문 고치기 자리)에서는 칸마다 16ch는 지켜 열이 많은 표가 글자 한 줄 폭으로 찌그러지지 않게 한다. max-content는 쓰지 않는다(긴 칸이 표를 3,000px 넘게 민다) - 넘치면 표를 감싼 .ptbl-scroll이 가로로 스크롤한다 */
   .assign-panes[data-single] .ptbl { width: auto; min-width: 100%; }
   .assign-panes[data-single] .ptbl td { min-width: 16ch; }
   .ptbl td { border: 1px solid var(--line-2); padding: 3px 8px; text-align: left; vertical-align: top; }
-  .ptbl-cap {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-    font-family: var(--font-ui);
-    font-size: var(--fs-cap);
-    line-height: var(--lh-cap);
-    color: var(--ink-3);
-    padding: 2px 4px;
-    border-radius: var(--r-1);
-    text-align: left;
-  }
-  .ptbl-cap:hover { background: var(--hover); }
-  .ptbl-cap[data-sel] { color: var(--ink); box-shadow: inset 0 -2px 0 var(--accent); }
+  .ptbl-scroll { min-width: 0; overflow-x: auto; }
+  /* 표·그림 머리 줄(components/paper/bundle-head.tsx) - 종류 표시는 .strip-lang 자리(조각 위 테두리), 줄에는 미리보기 한 줄 + 오른쪽 흐린 표시 ID. 골라진 테두리는 조각 상자(.strip[data-sel])가 그린다 */
+  /* 위 2px - 종류 표시(위 테두리에서 7px 내려온다)와 오른쪽 끝 표시 ID가 겹치지 않게 */
+  .bundle-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; margin-top: 2px; padding: 0 4px; border-radius: var(--r-1); font-family: var(--font-ui); font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-2); }
+  .bundle-head:hover { background: var(--hover); }
+  .bundle-head[data-sel] { color: var(--ink); }
+  .bundle-head-label { flex: none; color: var(--ink-3); }
+  .bundle-head-text { flex: 1 1 auto; }
+  .bundle-head-id { flex: none; margin-left: auto; font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--ink-3); }
   .pfig { display: grid; gap: 6px; justify-items: start; }
   .pfig-box {
     display: grid;
@@ -1067,8 +1061,9 @@
   .pg[data-strips] .strip[data-strip-unit], .pg[data-strips] .strip-row:has(> .strip[data-strip-unit]) > .strip-lead, .cell-piece[data-strip-unit] { cursor: pointer; }
   /* :where로 낮춘 우선순위 - 고른 문장 윤곽(배경 없음)·Ctrl로 고른 바탕(data-pick)이 이긴다 */
   :where(.pg[data-strips] .strip-row:hover > .strip[data-strip-unit]:not([data-kind="table"]), .cell-piece[data-strip-unit]:hover) .su { background-color: var(--hover); }
-  .pg[data-strips] .strip[data-kind="table"] { padding-left: var(--pg-pad-l); padding-right: var(--pg-pad-r); overflow-x: auto; }
-  .pg[data-strips] .strip[data-kind="figure"] { overflow-x: auto; }
+  /* 표·그림 조각은 스크롤하지 않는다 - 위 테두리의 종류 표시(.strip-lang)가 잘린다. 넓은 표는 .ptbl-scroll, 넓은 그림은 .pfig가 가로로 스크롤한다 */
+  .pg[data-strips] .strip[data-kind="table"] { padding-left: var(--pg-pad-l); padding-right: var(--pg-pad-r); }
+  .pg[data-strips] .pfig { overflow-x: auto; }
   .pg[data-strips] .strip > p { margin-block: 0; }
   .pg[data-strips] .pg-edge { display: grid; padding: 0; border: 0; }
   /* 짝 Unit - 이웃한 짝은 구성원 수와 상관없이 틈 없이 붙여 한 카드(줄 사이는 점선 한 줄). 바탕은 아주 옅게. 고른 단위의 짝(data-partner)·이어진 맞은편(data-link-hover)은 카드에 강조 테두리(아래 .strip::after) */
@@ -1235,7 +1230,9 @@
   .strip-card:has(> .strip-row > .strip[data-sel]) > .strip-row > .strip > .strip-lang,
   .new-line:is([data-state="picked"], [data-state="focus"], :focus-within) > .strip-lang,
   /* 참조 줄(제안은 점선 REF?)은 고르지 않아도 늘 - 나누고 묶는 글이 아니라는 것을 훑어보며 알게. 바탕색은 짝 카드·이음 호버·고른 줄이 쓰고 있어 태그로 */
-  .strip-lang[data-lang="ref"] { visibility: visible; opacity: 1; transition: opacity var(--dur-fast); }
+  .strip-lang[data-lang="ref"],
+  /* 표·그림 종류 표시(TABLE/FIGURE)도 늘 - 묶음이라는 것을 훑어보며 알게 */
+  .strip-lang[data-lang="bundle"] { visibility: visible; opacity: 1; transition: opacity var(--dur-fast); }
   /* 쪼개기 오른쪽 칸: 섹션 머리 한 모양(작은 라벨 + 선) */
   .insp-h { display: flex; align-items: center; gap: 4px; font-size: var(--fs-micro); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }
   .insp-h::after { content: ""; flex: 1; height: 1px; background: var(--line); }

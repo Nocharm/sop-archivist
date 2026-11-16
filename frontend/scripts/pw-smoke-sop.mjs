@@ -547,7 +547,7 @@ await runStep("assign: legend first, place, delete with reason, edit, clear, bul
 await runStep("assign: H holds a unit without a destination, with a reason typed in", {}, async ({ page }) => {
   await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
   await wait(page, "assign-bar");
-  const unit = page.locator('[data-testid="assign-old"] [data-testid^="assign-paper-unit-"]:not(.ptbl-cap)').nth(2);
+  const unit = page.locator('[data-testid="assign-old"] [data-testid^="assign-paper-unit-"]').nth(2);
   await unit.waitFor({ timeout: T });
   await unit.click();
   await wait(page, "assign-row-id");
@@ -810,7 +810,9 @@ await runStep("assign: table rows from the right-click menu, then undo", {}, asy
     await page.locator('[data-testid="assign-old-doc"]').click();
     await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
   }
-  const target = (await pieceOf(holder.id).count()) > 0 || cell === null ? pieceOf(holder.id) : pieceOf(cell.id);
+  // 통째인 표는 머리 줄을 우클릭한다(칸 위가 아니라 표 전체), 행으로 나눈 표는 머리 줄이 없어 칸 문장으로
+  const headOf = (unitId) => page.locator(`[data-testid="assign-paper-head-${unitId}"]`).first();
+  const target = (await headOf(holder.id).count()) > 0 ? headOf(holder.id) : (await pieceOf(holder.id).count()) > 0 || cell === null ? pieceOf(holder.id) : pieceOf(cell.id);
   await target.waitFor({ timeout: T });
   await target.scrollIntoViewIfNeeded();
   await target.click({ button: "right" });

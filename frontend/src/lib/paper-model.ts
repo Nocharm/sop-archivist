@@ -217,6 +217,24 @@ export type PaperRow =
   | { type: "table"; key: string; item: Extract<PaperItem, { type: "table" }> }
   | { type: "figure"; key: string; block: ViewBlock; unitId: number | null };
 
+export interface BundleHeader {
+  kind: "table" | "figure";
+  unitId: number | null;
+  displayId: string;
+  /** 머리 줄 한 줄 미리보기 - 표는 첫 행 칸 글, 그림은 그림 블록 글(옛 추출 캡션) */
+  preview: string;
+}
+
+/** 표·그림 줄 → 머리 줄(TABLE/FIGURE 표시·미리보기·표시 ID) */
+export function getBundleHeader(row: Extract<PaperRow, { type: "table" | "figure" }>, model: PaperModel): BundleHeader {
+  const unitId = row.type === "table" ? row.item.unitId : row.unitId;
+  const displayId = unitId === null ? "" : (model.units.get(unitId)?.display_id ?? "");
+  if (row.type === "figure") return { kind: "figure", unitId, displayId, preview: row.block.text };
+  const firstRow = row.item.rows[0] ?? [];
+  const preview = firstRow.map((cell) => cell.text.trim()).filter(Boolean).join(" · ");
+  return { kind: "table", unitId, displayId, preview };
+}
+
 /** 용지 내용 → 조각 줄. 한 문단의 문장들·Shift+Enter 줄도 단위마다 따로 놓고, 한 단위가 이어진 문단에 걸치면 한 조각으로 둔다 */
 export function buildRows(items: readonly PaperItem[], segments: ReadonlyMap<number, Segment[]>): PaperRow[] {
   const rows: PaperRow[] = [];
