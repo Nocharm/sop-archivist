@@ -347,10 +347,36 @@
   .doc-title { display: grid; grid-template-columns: minmax(0, max-content) auto; justify-content: start; align-items: start; column-gap: 4px; padding-top: 2px; font-weight: 600; }
   .doc-title-empty { color: var(--ink-4); font-weight: 400; }
   /* 딸린 정보 줄은 한 줄 - 모자라면 잘리고(줄어드는 순서는 다음 걸음), 파일 이름은 가운데가 줄어든다 */
-  .doc-meta { display: flex; flex-wrap: nowrap; align-items: center; gap: 12px; overflow: hidden; white-space: nowrap; font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-3); }
+  .doc-meta { container: doc-meta / inline-size; display: flex; flex-wrap: nowrap; align-items: center; gap: 12px; overflow: hidden; white-space: nowrap; font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-3); }
+  /* "n of 15" · N/A n · 정할 칸 · Not written 은 줄지 않는다 */
   .doc-meta > * { flex: none; }
-  .doc-meta > .doc-meta-file { display: inline-flex; flex: 0 1 auto; align-items: center; gap: 6px; min-width: 0; }
+  /* 파일 이름은 폭으로 줄어든다(가운데 말줄임) - 96px 아래로는 줄지 않는다. 이름을 감싼 툴팁 자리가 min-width를 0으로 두므로 줄의 칸(grid 트랙)이 최소를 지킨다 */
+  .doc-meta > .doc-meta-file { display: inline-grid; flex: 0 1 auto; grid-template-columns: minmax(96px, max-content); grid-auto-flow: column; align-items: center; column-gap: 6px; min-width: min-content; }
   .doc-meta-tag { display: inline-flex; align-items: center; gap: 4px; }
+  /* 딸린 정보 줄의 알약은 줄 높이(18px)를 넘지 않는다 - 알약이 있는 줄과 없는 줄의 높이가 같다 */
+  .doc-meta .pill { height: 18px; line-height: 16px; }
+  .doc-meta .equis-hint { align-items: center; padding-block: 0; line-height: 16px; }
+  /* 첫 N/A 칸 이름은 문턱 전에도 자리가 모자라면 말줄임으로 먼저 줄어든다(1120 창의 장비 SOP 줄이 37px 넘쳤다, 잰 값 2026-11-17). 알약은 줄지 않는다 */
+  .doc-meta > .meta-na { display: inline-flex; flex: 0 1 auto; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
+  .meta-na > .pill { flex: none; }
+  .meta-na-name { display: inline-flex; min-width: 0; white-space: pre; }
+  .meta-na-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* 칸 상태 막대(slot-bar.tsx) - 눈금 15개, 하위 칸은 낮다. 상태는 모양으로도 갈린다: 문장 있음은 채움, 빈 칸은 테두리만, N/A는 빗금, 정할 칸은 호박색 테두리와 위의 점.
+     높이 16px = 눈금 12px + 점 자리 4px(딸린 정보 줄 18px 안) */
+  .slot-bar { display: inline-flex; align-items: flex-end; gap: 2px; height: 16px; }
+  .slot-bar > i { position: relative; width: 5px; height: 12px; border-radius: 1px; background: var(--ink-3); }
+  .slot-bar > i[data-child] { height: 8px; }
+  .slot-bar > i[data-state="empty"] { background: none; box-shadow: inset 0 0 0 1px var(--line-2); }
+  .slot-bar > i:is([data-state="na"], [data-state="covered"]) { background: repeating-linear-gradient(-45deg, var(--ink-4) 0 1px, transparent 1px 3px); box-shadow: inset 0 0 0 1px var(--ink-4); }
+  .slot-bar > i[data-state="decide"] { background: none; box-shadow: inset 0 0 0 1.5px var(--warn-fill); }
+  .slot-bar > i[data-state="decide"]::before { content: ""; position: absolute; top: -4px; left: 1px; width: 3px; height: 3px; border-radius: 50%; background: var(--warn-fill); }
+  /* 좁아지는 차례: 첫 N/A 칸 이름 → Equipment SOP 글자(아이콘만) → 막대. 문턱은 시작값(Task 7에서 영 · 한 극단 줄을 재서 정한다) */
+  @container doc-meta (max-width: 560px) { .meta-na-name { display: none; } }
+  @container doc-meta (max-width: 480px) { .meta-eq-text { display: none; } }
+  @container doc-meta (max-width: 400px) { .slot-bar { display: none; } }
+  /* 부모를 못 찾은 WI 묶음의 머리 - 목록 끝 */
+  .doc-loose { display: flex; align-items: center; gap: 8px; padding: 8px var(--pad) 4px calc(var(--pad) + 34px); border-bottom: 1px solid var(--line); font-size: var(--fs-cap); line-height: var(--lh-cap); font-weight: 600; color: var(--ink-2); }
+  .doc-step-count { font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-3); white-space: nowrap; }
   .file-name { display: inline-flex; min-width: 0; max-width: 100%; font-family: var(--font-mono); }
   .file-name-head { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .file-name-tail { flex: none; white-space: pre; }

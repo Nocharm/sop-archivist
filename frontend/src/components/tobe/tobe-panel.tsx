@@ -14,7 +14,8 @@ import { MorphButton } from "@/components/ui/morph-button";
 import { Select } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
 import { VersionInput } from "@/components/ui/version-input";
-import { LANGUAGE_LAYOUTS, type DocumentUpdateInput, type SopDocument, type ToBeDocPatch } from "@/lib/api-sop";
+import { LANGUAGE_LAYOUTS, type DocumentUpdateInput, type SopDocument, type TargetDoc, type ToBe, type ToBeDocPatch } from "@/lib/api-sop";
+import { getStepCount, getStepRemoveBlock } from "@/lib/destination-manage-model";
 import { useI18n } from "@/lib/i18n";
 import type { EquisHint } from "@/lib/tobe-add-model";
 import type { DraftDoc, DraftStep } from "@/lib/tobe-draft";
@@ -23,6 +24,10 @@ const CELL_INPUT = "h-7 w-full rounded-md border border-line-2 bg-surface px-1.5
 
 interface ToBePanelProps {
   doc: DraftDoc;
+  /** 단계마다 든 문장 수(sentence_counts)를 읽는다 */
+  tobe: ToBe;
+  /** 저장된 줄 - 없으면(있어서는 안 된다) 단계의 문장 수를 0으로 읽는다 */
+  saved: TargetDoc | undefined;
   /** 상위 SOP로 고를 수 있는 줄 - 목록 순서 */
   sops: readonly DraftDoc[];
   steps: readonly DraftStep[];
@@ -48,7 +53,7 @@ interface ToBePanelProps {
   sections: ReactNode;
 }
 
-export function ToBePanel({ doc, sops, steps, written, hints, isTitleLocked, canEdit, saving, saveDoc, changeType, onAddStep, onRenameStep, onRemoveStep, file, sections }: ToBePanelProps) {
+export function ToBePanel({ doc, tobe, saved, sops, steps, written, hints, isTitleLocked, canEdit, saving, saveDoc, changeType, onAddStep, onRenameStep, onRemoveStep, file, sections }: ToBePanelProps) {
   const { t } = useI18n();
   const prefix = `tobe-${doc.key}`;
   // 쓴 파일이 붙은 줄의 번호와 종류는 그 파일의 것이다
@@ -56,6 +61,7 @@ export function ToBePanel({ doc, sops, steps, written, hints, isTitleLocked, can
   const typeHint = hints.find((hint) => hint.kind === "type");
   const equipmentHint = hints.find((hint) => hint.kind === "equipment");
   const parentCode = sops.find((sop) => sop.key === doc.parent_key)?.code.trim() || t("tobe.noCode");
+  const readStepCount = (stepNo: number) => (saved ? getStepCount(tobe, saved.id, stepNo) : 0);
 
   return (
     <div className="doc-panel-grid">
@@ -251,11 +257,19 @@ export function ToBePanel({ doc, sops, steps, written, hints, isTitleLocked, can
                     {step.title}
                   </span>
                 )}
-                {canEdit && (
-                  <span className="mbtn-set justify-self-end">
-                    <MorphButton icon={Trash2} tone="danger" label={t("tobe.removeStep")} testId={`${prefix}-remove-step-${step.step_no}`} onClick={() => onRemoveStep(step.step_no)} />
-                  </span>
-                )}
+                {/* 문장이 든 단계는 수를 적고 빼기 단추를 두지 않는다 - 둘은 같은 자리에 갈마든다 */}
+                <span className="flex items-center justify-end gap-2">
+                  {readStepCount(step.step_no) > 0 && (
+                    <span className="doc-step-count" data-testid={`${prefix}-step-${step.step_no}-count`}>
+                      {readStepCount(step.step_no) === 1 ? t("tobe.slots.sentenceOne") : t("tobe.slots.sentences", { n: readStepCount(step.step_no) })}
+                    </span>
+                  )}
+                  {canEdit && (saved === undefined || getStepRemoveBlock(tobe, saved, step.step_no) === null) && (
+                    <span className="mbtn-set">
+                      <MorphButton icon={Trash2} tone="danger" label={t("tobe.removeStep")} testId={`${prefix}-remove-step-${step.step_no}`} onClick={() => onRemoveStep(step.step_no)} />
+                    </span>
+                  )}
+                </span>
               </div>
             ))}
             {canEdit && (

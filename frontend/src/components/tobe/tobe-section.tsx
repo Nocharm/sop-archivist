@@ -4,7 +4,7 @@
 "use client";
 
 import { Download, FileUp, ListTree, MoreHorizontal, Plus, Sparkles } from "lucide-react";
-import { useEffect, useEffectEvent, useRef, useState, type ClipboardEvent } from "react";
+import { Fragment, useEffect, useEffectEvent, useRef, useState, type ClipboardEvent } from "react";
 
 import { BundleLoadError } from "@/components/bundle-load-error";
 import { ListReader } from "@/components/tobe/list-reader";
@@ -15,6 +15,8 @@ import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Menu } from "@/components/ui/menu";
 import { showToast } from "@/components/ui/toast";
+import { useDelegatedTip } from "@/components/ui/delegated-tip";
+import { flashElement } from "@/components/ui/motion";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -45,9 +47,9 @@ import { useI18n } from "@/lib/i18n";
 import { useLeaveGuard } from "@/lib/leave-guard";
 import { navigate } from "@/lib/nav-buffer";
 import { saveBlob } from "@/lib/save-file";
-import { buildSlotRows, isNaEditDirty, listUsedReasons, summarizeSlots, type NaEdit, type SlotKey, type SlotRow } from "@/lib/slot-status-model";
+import { buildSlotRows, isNaEditDirty, listUsedReasons, summarizeSlots, type NaEdit, type SlotKey, type SlotRow, type SlotSummary } from "@/lib/slot-status-model";
 import { NEW_DOCUMENTS_ANCHOR } from "@/lib/stages";
-import { listEquisHints, planAddRows, readCodes } from "@/lib/tobe-add-model";
+import { ADD_PREVIEW_KEYS, describeAdd, listEquisHints, planAddRows, readCodes, type AddPreview } from "@/lib/tobe-add-model";
 import { createDraft, orderDocs, type DraftDoc } from "@/lib/tobe-draft";
 import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
@@ -59,6 +61,18 @@ const CELL_INPUT = "h-7 w-full rounded-md border border-line-2 bg-surface px-1.5
 /** 409 revision_conflict - 보낸 revision이 서버 것보다 낡았다 */
 function isRevisionConflict(err: unknown): boolean {
   return err instanceof ApiError && err.rule?.code === "revision_conflict";
+}
+
+/** 등록 미리 보기 문구의 값 */
+function readPreviewVars(preview: Exclude<AddPreview, { kind: "none" }>): Record<string, string | number> {
+  switch (preview.kind) {
+    case "wi":
+      return { code: preview.code, parent: preview.parent };
+    case "many":
+      return { n: preview.n };
+    default:
+      return { code: preview.code };
+  }
 }
 
 /** 화면 키("id-<줄 id>")에서 줄 id */
@@ -101,6 +115,13 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
   // 적던 사유가 있는 채 떠나려 한 주소 - 확인 창이 묻는다
   const [leaveTo, setLeaveTo] = useState<string | null>(null);
   const [adding, setAdding] = useState("");
+  const addInputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  // 방금 번호로 더한 마지막 줄 - 그려진 뒤 잠깐 강조하고 보이게 한다. seq는 같은 번호를 다시 더해도(빼고 다시) 한 번씩 강조하게
+  const [justAdded, setJustAdded] = useState<{ code: string; seq: number } | null>(null);
+  const flashedSeqRef = useRef(0);
+  // 칸 상태 막대의 눈금 툴팁 - 목록 틀 하나가 맡는다
+  const barTip = useDelegatedTip();
   // 가져오기 전에 한 번 묻는다 - 목록이 비어 있지 않으면 파일이 통째로 바꾼다
   const [pendingImport, setPendingImport] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -114,6 +135,9 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
 
   const list = tobe ? createDraft(tobe) : null;
   const rows = list ? orderDocs(list.docs) : [];
+  // 부모를 못 찾은 WI - orderDocs가 끝에 모아 둔다
+  const looseCount = rows.filter(({ doc, depth }) => doc.doc_type === "wi" && depth === 0).length;
+  const addPreview = describeAdd(adding, tobe?.docs ?? []);
   const sops = list ? list.docs.filter((doc) => doc.doc_type === "sop") : [];
   const savedByCode = new Map((tobe?.docs ?? []).map((doc) => [doc.code, doc]));
   // 다시 받은 목록에서 편집기의 문서가 사라졌거나 SOP가 아니게 됐으면 편집기를 닫는다 - 렌더 중 상태 맞추기
@@ -151,6 +175,18 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
     if (!hasDocuments || !hasToBe) return;
     if (window.location.hash === `#${NEW_DOCUMENTS_ANCHOR}`) document.getElementById(NEW_DOCUMENTS_ANCHOR)?.scrollIntoView({ block: "start" });
   }, [hasDocuments, hasToBe]);
+
+  // 더한 줄이 목록에 그려진 뒤(커밋 뒤) 강조하고 창 밖이면 그쪽으로 스크롤한다. 포커스는 번호 칸에 둔다(저장하는 동안 꺼졌던 칸이라 포커스를 잃었다)
+  const addedId = justAdded === null ? null : (tobe?.docs.find((doc) => doc.code === justAdded.code)?.id ?? null);
+  useEffect(() => {
+    if (justAdded === null || addedId === null || flashedSeqRef.current === justAdded.seq) return;
+    const row = listRef.current?.querySelector<HTMLElement>(`[data-testid="tobe-id-${addedId}-row"]`);
+    if (!row) return;
+    flashedSeqRef.current = justAdded.seq;
+    flashElement(row);
+    row.scrollIntoView({ block: "nearest" });
+    addInputRef.current?.focus();
+  }, [justAdded, addedId]);
 
   /** 줄 쓰기의 결과 - 거절이면 그 오류를 함께 돌려준다(알림과 다시 받기는 이 안에서 한다) */
   async function runWriteResult(write: () => Promise<ToBe>): Promise<{ ok: true } | { ok: false; error: unknown }> {
@@ -253,6 +289,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
     }
     if (added > 0) {
       setAdding("");
+      setJustAdded((prev) => ({ code: plan.rows[added - 1].code, seq: (prev?.seq ?? 0) + 1 }));
       showToast(plan.skipped.length > 0 ? t("tobe.addedSkipped", { n: added, skipped: plan.skipped.length }) : t("tobe.added", { n: added }));
     }
   }
@@ -303,18 +340,15 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
   }
 
   /** SOP의 칸 상태 표 - WI는 N/A를 받지 않는다(서버 422 na_on_wi) */
-  function renderSections(doc: DraftDoc) {
-    if (!tobe) return null;
-    const saved = savedByCode.get(doc.code);
-    if (!saved || saved.doc_type !== "sop") return null;
+  function renderSections(doc: DraftDoc, slots: { rows: readonly SlotRow[]; summary: SlotSummary } | null) {
+    if (!tobe || slots === null) return null;
     const docId = readDocId(doc.key);
-    const slotRows = buildSlotRows(tobe, saved);
     return (
       <SlotTable
         prefix={`tobe-${doc.key}`}
         docKey={doc.key}
-        rows={slotRows}
-        summary={summarizeSlots(slotRows)}
+        rows={slots.rows}
+        summary={slots.summary}
         isWritten={doc.entrance === "match"}
         canEdit={canEdit}
         saving={saving}
@@ -420,7 +454,45 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
         <BundleLoadError error={error} onRetry={reload} testId="tobe" />
       ) : (
         <>
-          <div className="doc-list border-t border-line" data-testid="tobe-list">
+          {/* 번호로 더하기 - 목록 머리 바로 아래. 적는 동안 무엇이 더해질지(planAddRows의 결과 그대로) 옆에 적는다. Enter면 그 줄이 저장되고, 여러 줄을 붙여 넣으면 줄마다 하나씩 더한다 */}
+          {list !== null && canEdit && (
+            <form
+              className="tobe-add flex flex-wrap items-center gap-x-2 gap-y-1 px-[var(--pad)] py-2"
+              data-testid="tobe-add-row"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void addCodes(adding);
+              }}
+            >
+              <input
+                ref={addInputRef}
+                // 줄의 번호 칸과 같은 폭 - 칸이 줄 끝까지 늘어나지 않게
+                className={`${CELL_INPUT} max-w-[152px] flex-none font-mono`}
+                data-testid="tobe-add-code"
+                value={adding}
+                maxLength={100}
+                placeholder={t("tobe.addPlaceholder")}
+                aria-label={t("tobe.addDoc")}
+                disabled={saving}
+                onChange={(event) => setAdding(event.target.value)}
+                onPaste={handleAddPaste}
+                // Add가 꺼져 있어도(이미 있는 번호) Enter는 지금처럼 알림으로 답한다 - 꺼진 제출 단추는 Enter 제출을 막는다
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+                  event.preventDefault();
+                  void addCodes(adding);
+                }}
+              />
+              <button type="submit" className="btn h-7" data-testid="tobe-add" disabled={saving || addPreview.kind === "none" || addPreview.kind === "taken"}>
+                <Plus size={14} strokeWidth={1.5} aria-hidden />
+                {t("tobe.addDoc")}
+              </button>
+              <span className={`min-w-0 text-xs ${addPreview.kind === "none" ? "text-ink-3" : "text-ink-2"}`} aria-live="polite" data-testid="tobe-add-preview">
+                {addPreview.kind === "none" ? t("tobe.addHint") : t(ADD_PREVIEW_KEYS[addPreview.kind], readPreviewVars(addPreview))}
+              </span>
+            </form>
+          )}
+          <div ref={listRef} className="doc-list border-t border-line" data-testid="tobe-list" {...barTip.handlers}>
             {list === null || tobe === null
               ? showSkeleton &&
                 Array.from({ length: 4 }, (_, index) => (
@@ -434,13 +506,19 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
                     <span />
                   </div>
                 ))
-              : rows.map(({ doc, depth }) => {
+              : rows.map(({ doc, depth }, index) => {
                   const written = findFile(doc.code);
                   const saved = savedByCode.get(doc.code);
                   const steps = list.wi_steps.filter((step) => step.doc_key === doc.key).sort((a, b) => a.step_no - b.step_no);
                   const docId = readDocId(doc.key);
                   const equis = equisByCode.get(normalizeDocNumber(doc.code)) ?? null;
-                  return (
+                  const hints = canEdit ? listEquisHints(doc, equis) : [];
+                  // SOP 줄의 칸 15개 - 줄과 펼친 곳의 표가 같은 값을 쓴다(줄마다 한 번)
+                  const slotRows = saved !== undefined && saved.doc_type === "sop" ? buildSlotRows(tobe, saved) : null;
+                  const slots = slotRows === null ? null : { rows: slotRows, summary: summarizeSlots(slotRows) };
+                  const isLoose = doc.doc_type === "wi" && depth === 0;
+                  const isFirstLoose = isLoose && index === rows.length - looseCount;
+                  const row = (
                     <ToBeRow
                       key={doc.key}
                       doc={doc}
@@ -450,6 +528,9 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
                       written={written}
                       equis={equis}
                       stepCount={steps.length}
+                      slots={slots}
+                      hintCount={hints.length}
+                      noParent={isLoose}
                       canEdit={canEdit}
                       open={open.has(doc.key)}
                       onToggle={() => toggleOpen(doc.key)}
@@ -459,11 +540,13 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
                       panel={() => (
                         <ToBePanel
                           doc={doc}
+                          tobe={tobe}
+                          saved={saved}
                           sops={sops}
                           steps={steps}
                           written={written}
                           // EQUIS가 아는 값 - 줄과 다를 때만 뜨고, 눌러야 들어간다
-                          hints={canEdit ? listEquisHints(doc, equis) : []}
+                          hints={hints}
                           // EQUIS에 있는 번호의 제목은 EQUIS가 정한다 - 다른 값을 보내도 서버가 EQUIS 이름으로 되돌린다
                           isTitleLocked={equis?.title_locked === true}
                           canEdit={canEdit}
@@ -474,42 +557,26 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
                           onRenameStep={(stepNo, title) => runWrite(() => renameWiStep(bundleId, docId, stepNo, title))}
                           onRemoveStep={(stepNo) => void runWrite(() => removeWiStep(bundleId, docId, stepNo))}
                           file={file}
-                          sections={renderSections(doc)}
+                          sections={renderSections(doc, slots)}
                         />
                       )}
                     />
                   );
+                  // 부모를 못 찾은 WI는 목록 끝에 모인다(orderDocs) - 그 첫 줄 앞에 묶음 머리
+                  return isFirstLoose ? (
+                    <Fragment key={doc.key}>
+                      <div className="doc-loose" data-testid="tobe-loose">
+                        {t("tobe.row.noParent")}
+                        <span className="count">{looseCount}</span>
+                      </div>
+                      {row}
+                    </Fragment>
+                  ) : (
+                    row
+                  );
                 })}
           </div>
-          {/* 번호로 더하기 - 번호를 적고 Enter면 그 줄이 저장된다. 여러 줄을 붙여 넣으면 줄마다 하나씩 더한다 */}
-          {list !== null && canEdit && (
-            <form
-              className="flex items-center gap-2 border-b border-line px-[var(--pad)] py-2"
-              data-testid="tobe-add-row"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void addCodes(adding);
-              }}
-            >
-              <input
-                // 줄의 번호 칸과 같은 폭 - 칸이 줄 끝까지 늘어나지 않게
-                className={`${CELL_INPUT} max-w-[152px] flex-none font-mono`}
-                data-testid="tobe-add-code"
-                value={adding}
-                maxLength={100}
-                placeholder={t("tobe.addPlaceholder")}
-                aria-label={t("tobe.addDoc")}
-                disabled={saving}
-                onChange={(event) => setAdding(event.target.value)}
-                onPaste={handleAddPaste}
-              />
-              <button type="submit" className="btn h-7" data-testid="tobe-add" disabled={saving || adding.trim() === ""}>
-                <Plus size={14} strokeWidth={1.5} aria-hidden />
-                {t("tobe.addDoc")}
-              </button>
-              <span className="text-xs text-ink-3">{t("tobe.addHint")}</span>
-            </form>
-          )}
+          {barTip.node}
         </>
       )}
       {pendingImport !== null && (
