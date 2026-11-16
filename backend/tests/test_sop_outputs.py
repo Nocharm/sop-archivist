@@ -1221,6 +1221,131 @@ def test_reorder_targets_rejects(client: TestClient) -> None:
     )
 
 
+def _load_places(target_doc_id: int) -> dict[int, tuple[str | None, int, int]]:
+    """새 문서의 모든 새 문장(칸 새 문장 포함) — id → (칸, 깊이, revision)."""
+
+    async def _load(session: AsyncSession) -> dict[int, tuple[str | None, int, int]]:
+        rows = await session.scalars(select(TargetSentence).where(TargetSentence.target_doc_id == target_doc_id))
+        return {row.id: (row.slot_key, row.indent_level, row.revision) for row in rows}
+
+    return run_in_session(_load)
+
+
+def _items_in(doc: dict, key: str) -> list[dict]:
+    """C 문서의 그 location_key 칸 items."""
+    return next(section["items"] for section in doc["sections"] if section["location_key"] == key)
+
+
+def _order_body(client: TestClient, fx: Fixture, doc_index: int, doc_id: int, edits: dict[int, dict]) -> dict:
+    """그 문서의 지금 순서 그대로, edits의 줄에만 필드를 더한 순서 저장 본문."""
+    items = [{"target_id": t, **edits.get(t, {})} for t in _list_top_target_ids(client, fx.bundle_id, doc_index)]
+    return {"revision": get_bundle(client, fx.bundle_id)["revision"], "target_doc_id": doc_id, "items": items}
+
+
+def test_reorder_moves_a_line_to_another_slot(client: TestClient) -> None:
+    fx = _setup(client)
+    sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
+    (duplicate,) = _items_in(sop, "responsibilities")
+    target_id = duplicate["target_id"]
+    body = _order_body(client, fx, 0, fx.sop_id, {target_id: {"slot_key": "procedures.procedure", "indent_level": 0}})
+    before = _load_places(fx.sop_id)[target_id]
+
+    response = _put_order(client, fx.bundle_id, body)
+
+    assert response.status_code == 200, response.text
+    out = next(i for i in response.json()["items"] if i["target_id"] == target_id)
+    assert out["slot_key"] == "procedures.procedure"
+    sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
+    assert _items_in(sop, "responsibilities") == []
+    # 칸 번호는 SLOT_KEYS 고정 자리 — procedures = 6, procedures.procedure = 6.1
+    assert [(i["target_id"], i["number"]) for i in _items_in(sop, "procedures.procedure")] == [(target_id, "6.1.1")]
+    assert _load_places(fx.sop_id)[target_id] == ("procedures.procedure", 0, before[2] + 1)
+    assert response.json()["doc"] == sop
+    events = client.get(f"/api/bundles/{fx.bundle_id}/events", headers=AUTHOR).json()
+    assert (events[0]["action"], events[0]["target_ids"]) == ("targets.reorder", [fx.sop_id])
+
+
+def test_reorder_slot_move_takes_the_table_cells_and_resets_an_unsent_depth(client: TestClient) -> None:
+    fx = _setup(client)
+    sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
+    line_id = _items_in(sop, "general_requirements.operation")[-1]["target_id"]
+    (table,) = _items_in(sop, "general_requirements")
+    table_id, cell_ids = table["target_id"], [cell["target_id"] for cell in table["children"]]
+    assert _put_order(client, fx.bundle_id, _order_body(client, fx, 0, fx.sop_id, {line_id: {"indent_level": 1}})).status_code == 200
+    before = _load_places(fx.sop_id)
+    assert before[line_id][:2] == ("general_requirements.operation", 1)
+
+    edits = {line_id: {"slot_key": "purpose"}, table_id: {"slot_key": "definitions", "indent_level": 2}}
+    response = _put_order(client, fx.bundle_id, _order_body(client, fx, 0, fx.sop_id, edits))
+
+    assert response.status_code == 200, response.text
+    places = _load_places(fx.sop_id)
+    assert places[line_id][:2] == ("purpose", 0)  # 보내지 않은 깊이는 step 옮기기처럼 0
+    assert places[table_id][:2] == ("definitions", 2)  # 보낸 깊이는 그 값
+    assert {places[c][0] for c in cell_ids} == {"definitions"}  # 칸 새 문장이 표를 따른다
+    assert all(places[c][2] == before[c][2] + 1 for c in [table_id, line_id, *cell_ids])
+    sop = response.json()["doc"]
+    assert [i["target_id"] for i in _items_in(sop, "definitions")] == [table_id]
+    assert [i["target_id"] for i in _items_in(sop, "general_requirements")] == []
+    assert sop == _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
+
+
+def test_reorder_slot_move_rejects(client: TestClient) -> None:
+    fx = _setup(client)
+    cases = {
+        "unknown": (0, fx.sop_id, "nope", "unknown_slot"),
+        "null": (0, fx.sop_id, None, "unknown_slot"),
+        "na": (0, fx.sop_id, "scope", "na_slot"),
+        "na_parent": (0, fx.sop_id, "document_relationships.appendices", "na_slot"),
+        "wi": (1, fx.wi_id, "purpose", "slot_not_allowed"),
+    }
+    revision = get_bundle(client, fx.bundle_id)["revision"]
+    places = {doc_id: _load_places(doc_id) for doc_id in (fx.sop_id, fx.wi_id, fx.match_id)}
+    for name, (doc_index, doc_id, slot_key, code) in cases.items():
+        first = _list_top_target_ids(client, fx.bundle_id, doc_index)[0]
+
+        response = _put_order(client, fx.bundle_id, _order_body(client, fx, doc_index, doc_id, {first: {"slot_key": slot_key}}))
+
+        assert (response.status_code, response.json()["detail"]) == (422, {"code": code, "target_ids": [first]}), name
+        assert get_bundle(client, fx.bundle_id)["revision"] == revision, name
+        assert {d: _load_places(d) for d in places} == places, name
+
+
+def test_reorder_slot_move_rejects_a_line_of_an_already_written_document(client: TestClient) -> None:
+    fx = _setup(client)
+    first = _list_top_target_ids(client, fx.bundle_id, 2)[0]
+
+    async def _make_own_origin(session: AsyncSession) -> None:
+        await session.execute(update(TargetSentence).where(TargetSentence.id == first).values(origin="units"))
+        await session.commit()
+
+    run_in_session(_make_own_origin)  # 입구 2 줄은 늘 new_doc이라 출처 규칙만으로도 거절된다 — 입구 규칙만 보려고 출처를 바꾼다
+    written = _get_output(client, fx.bundle_id, "outputs/c")["docs"][2]
+    assert written["entrance"] == "match"
+    assert next(i for s in written["sections"] for i in s["items"] if i["target_id"] == first)["origin"] == "units"
+    revision = get_bundle(client, fx.bundle_id)["revision"]
+
+    response = _put_order(client, fx.bundle_id, _order_body(client, fx, 2, fx.match_id, {first: {"slot_key": "purpose"}}))
+
+    assert (response.status_code, response.json()["detail"]) == (422, {"code": "slot_not_allowed", "target_ids": [first]})
+    assert get_bundle(client, fx.bundle_id)["revision"] == revision
+
+
+def test_reorder_same_slot_keeps_depth_and_revision(client: TestClient) -> None:
+    fx = _setup(client)
+    sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
+    (line,) = _items_in(sop, "responsibilities")
+    line_id = line["target_id"]
+    assert _put_order(client, fx.bundle_id, _order_body(client, fx, 0, fx.sop_id, {line_id: {"indent_level": 1}})).status_code == 200
+    before = _load_places(fx.sop_id)[line_id]
+    assert before[:2] == ("responsibilities", 1)
+
+    response = _put_order(client, fx.bundle_id, _order_body(client, fx, 0, fx.sop_id, {line_id: {"slot_key": "responsibilities"}}))
+
+    assert response.status_code == 200, response.text
+    assert _load_places(fx.sop_id)[line_id] == before  # 지금 칸을 보내도 옮김이 아니다 — 깊이도 줄 revision도 그대로
+
+
 # ── 큰 묶음의 질의 수 ─────────────────────────────────────────────────────────
 
 

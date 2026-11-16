@@ -6,7 +6,7 @@
 import asyncio
 import logging
 from collections import Counter, defaultdict
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from typing import Annotated, Literal, NoReturn
 
 from fastapi import APIRouter, Depends, Path, Query, Response
@@ -21,14 +21,14 @@ from app.equis.view import EquisOut, build_equis_out
 from app.routers.sop_documents import build_content_disposition
 from app.sop import sheet_model
 from app.sop.ai.guidelines import get_rules_version_label
-from app.sop.constants import MAX_INDENT_LEVEL, MEMBER_ROLES, SLOT_HEADING, NumberStyle
+from app.sop.constants import MAX_INDENT_LEVEL, MEMBER_ROLES, SLOT_HEADING, SLOT_KEYS, NumberStyle
 from app.sop.decisions import DbId
 from app.sop.detach import ORIGIN_NEW_DOC, ORIGIN_TRANSLATION, load_source_target_ids, sweep_translations
 from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
 from app.sop.excel_export import ExportMeta, build_workbook
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
-from app.sop.models import Bundle, TargetDoc, TargetSentence, WiStep
+from app.sop.models import Bundle, TargetDoc, TargetDocNaSlot, TargetSentence, WiStep
 from app.sop.outputs import (
     ARow,
     CDoc,
@@ -45,7 +45,7 @@ from app.sop.outputs import (
 )
 from app.sop.sheet_model import WorkbookModel, build_equis_key, build_workbook_model, limit_preview
 from app.sop.snapshot import BundleSnapshot, list_confirmer_ids, load_bundle_snapshot, load_people_names
-from app.sop.tobe import MAX_DB_INT
+from app.sop.tobe import MAX_DB_INT, is_within_slot
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/bundles", tags=["sop-outputs"])
@@ -61,6 +61,8 @@ class OrderItemIn(BaseModel):
     target_id: DbId
     # 보낸 경우에만 바꾼다 — null은 "단계 없음"으로 옮긴다는 뜻이라 생략과 다르다(model_fields_set으로 가린다)
     wi_step: DbId | None = None
+    # 보낸 경우에만 바꾼다 — SOP 줄을 다른 칸으로 옮긴다. wi_step과 달리 null도 "칸 없음"이 아니라 모르는 칸(422 unknown_slot)이다
+    slot_key: str | None = Field(default=None, max_length=100)
     # 들여쓰기 깊이 — 보낸 경우에만 바꾼다(null도 바꾸지 않음). 앞줄보다 깊은 값도 받는다(결과물이 셀 때 눌러 읽는다)
     indent_level: int | None = Field(default=None, ge=0, le=MAX_INDENT_LEVEL)
     # 번호 표시 — 보낸 경우에만 바꾼다(null도 바꾸지 않음). 이 줄만 바꾼다(짝 상대·번역은 따라 바뀌지 않는다)
@@ -78,6 +80,7 @@ class OrderItemOut(BaseModel):
     target_id: int
     order_index: int
     wi_step: int | None
+    slot_key: str | None
     indent_level: int
     number_style: str
 
@@ -233,6 +236,55 @@ async def get_export_preview(
     return limit_preview(model, sheet_model.MAX_PREVIEW_ROWS)
 
 
+async def _check_translation_moves(
+    session: AsyncSession, tops: dict[int, TargetSentence], moves: Mapping[int, object]
+) -> list[int]:
+    """옮기는 번역의 id를 돌려준다 — 번역의 자리는 출처와 함께 같은 값으로만 옮긴다(스펙 §7.9, 저장 decisions.py와 같은 잠금). 아니면 422 translation_locked."""
+    translations = [target_id for target_id in moves if tops[target_id].origin == ORIGIN_TRANSLATION]
+    source_ids = await load_source_target_ids(session, translations)
+    astray = sorted(
+        target_id for target_id in translations
+        if source_ids[target_id] not in moves or moves[source_ids[target_id]] != moves[target_id]
+    )
+    if astray:
+        raise_rule(422, "translation_locked", target_ids=astray)
+    return translations
+
+
+async def _check_slot_moves(
+    session: AsyncSession, doc: TargetDoc, tops: dict[int, TargetSentence], items: list[OrderItemIn]
+) -> dict[int, str]:
+    """다른 칸으로 옮기는 줄(새 문장 → 칸)을 돌려준다 — 보냈고 지금 칸과 다를 때만. 쓰기 전에 검사만 한다.
+
+    입구 1 SOP의 사람이 쓴 줄만 칸을 옮긴다(slot_not_allowed). 칸은 SLOT_KEYS 안(unknown_slot), 그 문서에서 N/A가 아닌 칸(na_slot,
+    상위 칸 N/A는 하위 칸도 덮는다 — 저장 decisions._check_location과 같은 규칙)이어야 한다.
+    """
+    requested = {
+        item.target_id: item.slot_key
+        for item in items
+        if "slot_key" in item.model_fields_set and item.slot_key != tops[item.target_id].slot_key
+    }
+    if not requested:
+        return {}
+    locked = sorted(
+        target_id for target_id in requested
+        if doc.doc_type != "sop" or doc.entrance == "match" or tops[target_id].origin == ORIGIN_NEW_DOC
+    )
+    if locked:
+        raise_rule(422, "slot_not_allowed", target_ids=locked)
+    unknown = sorted(target_id for target_id, slot_key in requested.items() if slot_key not in SLOT_KEYS)
+    if unknown:
+        raise_rule(422, "unknown_slot", target_ids=unknown)
+    na_keys = list(await session.scalars(select(TargetDocNaSlot.slot_key).where(TargetDocNaSlot.target_doc_id == doc.id)))
+    na = sorted(
+        target_id for target_id, slot_key in requested.items()
+        if any(is_within_slot(str(slot_key), na_key) for na_key in na_keys)
+    )
+    if na:
+        raise_rule(422, "na_slot", target_ids=na)
+    return {target_id: str(slot_key) for target_id, slot_key in requested.items()}
+
+
 async def _check_indents(
     session: AsyncSession,
     doc: TargetDoc,
@@ -242,7 +294,7 @@ async def _check_indents(
 ) -> dict[int, int]:
     """바뀌는 깊이(새 문장 → 깊이)를 돌려준다 — 깊이가 바뀌는 출처의 번역도 출처의 새 깊이로 싣는다. 쓰기 전에 검사만 한다.
 
-    다른 단계로 옮기는 줄(moved_ids)은 깊이를 보내지 않았으면 0으로 돌린다 — 깊이는 그 칸 앞뒤 줄에 기댄 값이라
+    다른 단계·칸으로 옮기는 줄(moved_ids)은 깊이를 보내지 않았으면 0으로 돌린다 — 깊이는 그 칸 앞뒤 줄에 기댄 값이라
     저장 경로(decisions._apply_plan)와 같은 규칙이다. 번역은 여기서 0으로 돌리지 않고 출처를 따른다.
 
     입구 2 문서는 번호를 새로 매기지 않으므로 깊이를 받지 않는다(422 indent_not_allowed). 번역의 깊이는 출처를 따라 잠겨 있어
@@ -296,7 +348,7 @@ def _check_number_styles(doc: TargetDoc, tops: dict[int, TargetSentence], items:
 async def reorder_targets(
     session: AsyncSession, bundle: Bundle, payload: TargetOrderIn, actor: str
 ) -> TargetOrderSaved:
-    """새 문서 하나의 새 문장 순서(와 WI 단계·들여쓰기·번호 표시)를 사람이 정한다 — 이후 그 문서는 order_index 순이고 새로 들어오는 새 문장은 끝에 붙는다.
+    """새 문서 하나의 새 문장 순서(와 WI 단계·SOP 칸·들여쓰기·번호 표시)를 사람이 정한다 — 이후 그 문서는 order_index 순이고 새로 들어오는 새 문장은 끝에 붙는다.
 
     목록은 칸 새 문장이 아닌 새 문장 전부를 한 번씩 담아야 한다(빠진 새 문장의 자리를 지어내지 않게). 검사를 모두 마친 뒤에 쓴다.
     """
@@ -326,21 +378,15 @@ async def reorder_targets(
     locked = sorted(target_id for target_id in moves if doc.doc_type != "wi" or tops[target_id].origin == ORIGIN_NEW_DOC)
     if locked:
         raise_rule(422, "wi_step_not_allowed", target_ids=locked)
-    # 번역의 단계는 출처와 함께 같은 단계로만 옮긴다(스펙 §7.9) — 저장(decisions.py)과 같은 잠금이다
-    translations = [target_id for target_id in moves if tops[target_id].origin == ORIGIN_TRANSLATION]
-    source_ids = await load_source_target_ids(session, translations)
-    astray = sorted(
-        target_id for target_id in translations
-        if source_ids[target_id] not in moves or moves[source_ids[target_id]] != moves[target_id]
-    )
-    if astray:
-        raise_rule(422, "translation_locked", target_ids=astray)
+    translations = await _check_translation_moves(session, tops, moves)
     if moves:
         declared = set(await session.scalars(select(WiStep.step_no).where(WiStep.target_doc_id == doc.id)))
         undeclared = sorted(target_id for target_id, step in moves.items() if step is not None and step not in declared)
         if undeclared:
             raise_rule(422, "unknown_wi_step", target_ids=undeclared)
-    indents = await _check_indents(session, doc, tops, payload.items, moves.keys())
+    slot_moves = await _check_slot_moves(session, doc, tops, payload.items)
+    translations += await _check_translation_moves(session, tops, slot_moves)
+    indents = await _check_indents(session, doc, tops, payload.items, moves.keys() | slot_moves.keys())
     number_styles = _check_number_styles(doc, tops, payload.items)
 
     cells: dict[int, list[TargetSentence]] = defaultdict(list)
@@ -355,10 +401,13 @@ async def reorder_targets(
     for target_id, style in number_styles.items():
         tops[target_id].number_style = style
     moved: list[int] = []
-    for target_id, step in moves.items():
+    for target_id in moves.keys() | slot_moves.keys():
         # 칸 새 문장은 표와 같은 자리에 있다(관계 묶음 저장 검사 7) — 자리가 바뀐 새 문장은 revision을 올려 낡은 저장을 막는다
         for target in (tops[target_id], *cells.get(target_id, [])):
-            target.wi_step = step
+            if target_id in moves:
+                target.wi_step = moves[target_id]
+            if target_id in slot_moves:
+                target.slot_key = slot_moves[target_id]
             target.revision += 1
             moved.append(target.id)
     # 함께 옮긴 번역은 자리를 사람이 정한 것이고, 출처만 옮기면 쓸어 낸다
@@ -376,7 +425,8 @@ async def reorder_targets(
         items=[
             OrderItemOut(
                 target_id=target_id, order_index=tops[target_id].order_index, wi_step=tops[target_id].wi_step,
-                indent_level=tops[target_id].indent_level, number_style=tops[target_id].number_style,
+                slot_key=tops[target_id].slot_key, indent_level=tops[target_id].indent_level,
+                number_style=tops[target_id].number_style,
             )
             for target_id in sent if target_id not in swept
         ],

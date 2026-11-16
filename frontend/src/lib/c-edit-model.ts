@@ -4,8 +4,24 @@ import type { NumberStyle, OutputCDoc, OutputCItem, TargetOrderItem } from "./ap
 import { numberLines } from "./section-number";
 import type { MoveDir } from "./target-order";
 
-/** 칸 안의 줄 묶음(targetIds, 이 순서로)을 beforeId 줄 앞(null이면 칸 끝)으로 옮긴다. depths가 있으면 targetIds와 같은 순서의 새 indent_level */
-export type PlaceEdit = { kind: "place"; locationKey: string; targetIds: readonly number[]; beforeId: number | null; depths: readonly number[] | null };
+/**
+ * 줄 묶음(targetIds, 이 순서로)을 beforeId 줄 앞(null이면 칸 끝)으로 옮긴다. locationKey는 묶음이 지금 있는 칸,
+ * toLocationKey가 있고 다르면 그 칸(도착 칸)으로 옮기며 beforeId는 도착 칸의 줄이다. depths가 있으면 targetIds와 같은 순서의 새 indent_level
+ * (칸을 넘을 때는 필수 - 서버가 자리 바뀐 줄의 깊이를 0으로 돌리므로 화면이 다른 값을 보이지 않게)
+ */
+export type PlaceEdit = { kind: "place"; locationKey: string; toLocationKey?: string; targetIds: readonly number[]; beforeId: number | null; depths: readonly number[] | null };
+
+/** 칸 키가 가리키는 서버의 자리 - SOP 칸은 slot_key, WI는 단계(null=단계 없음)와 부분(instruction·why) */
+export type LocationPlace = { slot_key: string } | { wi_step: number | null; wi_part: string };
+
+/** 칸 키의 자리 - 번호 없는 입구 2 문서 칸(path:)은 옮길 수 없어 null */
+export function readLocationPlace(locationKey: string): LocationPlace | null {
+  const step = /^step:(\d+):(.+)$/.exec(locationKey);
+  if (step) return { wi_step: Number(step[1]), wi_part: step[2] };
+  if (locationKey.startsWith("unstepped:")) return { wi_step: null, wi_part: locationKey.slice("unstepped:".length) };
+  if (locationKey.startsWith("path:")) return null;
+  return { slot_key: locationKey };
+}
 
 export type CEdit =
   | { kind: "move"; locationKey: string; targetId: number; dir: MoveDir }
@@ -64,6 +80,31 @@ function updateLine(doc: OutputCDoc, targetId: number, update: (item: OutputCIte
   return { ...doc, sections };
 }
 
+/** 칸을 넘는 place - 출발 칸에서 덩어리를 빼 도착 칸의 beforeId 앞(null이면 끝)에 넣고 두 칸을 다시 센다. 서버가 받지 않을 모양이면 null */
+function previewCrossPlace(doc: OutputCDoc, edit: PlaceEdit, toKey: string): OutputCDoc | null {
+  const from = doc.sections.findIndex((section) => section.location_key === edit.locationKey);
+  const to = doc.sections.findIndex((section) => section.location_key === toKey);
+  if (from < 0 || to < 0 || doc.sections[to].na_reason !== null || !edit.depths) return null;
+  const picked = new Set(edit.targetIds);
+  if (picked.size === 0 || picked.size !== edit.targetIds.length || edit.depths.length !== edit.targetIds.length) return null;
+  const fromPlace = readLocationPlace(edit.locationKey);
+  const toPlace = readLocationPlace(toKey);
+  if (!fromPlace || !toPlace || "slot_key" in fromPlace !== "slot_key" in toPlace) return null;
+  if ("wi_part" in fromPlace && "wi_part" in toPlace && fromPlace.wi_part !== toPlace.wi_part) return null;
+  const block = edit.targetIds.map((id) => doc.sections[from].items.find((item) => item.target_id === id));
+  const target = doc.sections[to].items;
+  if (block.some((item) => !item) || (edit.beforeId !== null && (picked.has(edit.beforeId) || !target.some((item) => item.target_id === edit.beforeId)))) return null;
+  const depths = edit.depths;
+  const placed = block.map((item, k) => (depths[k] !== item!.indent_level ? { ...item!, indent_level: depths[k] } : item!));
+  const at = edit.beforeId === null ? target.length : target.findIndex((item) => item.target_id === edit.beforeId);
+  const sections = doc.sections.map((section, s) => {
+    if (s === from) return { ...section, items: section.items.filter((item) => !picked.has(item.target_id)) };
+    if (s === to) return { ...section, items: [...target.slice(0, at), ...placed, ...target.slice(at)] };
+    return section;
+  });
+  return numberDoc({ ...doc, sections });
+}
+
 /** 편집 하나를 얹고 번호를 다시 센 문서 - 칸 끝을 넘는 옮김이나 없는 줄이면 null. 미리 보기에도 쓴다 */
 export function previewEdit(doc: OutputCDoc, edit: CEdit): OutputCDoc | null {
   if (edit.kind === "move") {
@@ -76,6 +117,7 @@ export function previewEdit(doc: OutputCDoc, edit: CEdit): OutputCDoc | null {
     [moved[index], moved[next]] = [moved[next], moved[index]];
     return numberDoc({ ...doc, sections: doc.sections.map((section, s) => (s === sectionIndex ? { ...section, items: moved } : section)) });
   }
+  if (edit.kind === "place" && edit.toLocationKey !== undefined && edit.toLocationKey !== edit.locationKey) return previewCrossPlace(doc, edit, edit.toLocationKey);
   if (edit.kind === "place") {
     const sectionIndex = doc.sections.findIndex((section) => section.location_key === edit.locationKey);
     const items = doc.sections[sectionIndex]?.items ?? [];
@@ -111,13 +153,18 @@ export function addEdit(draft: DocDraft, edit: CEdit): DocDraft | null {
  * 같은 값을 빼야 서버가 그대로 둔다 - 출처를 따라 바뀐 번역 깊이를 낡은 값으로 되보내면 422 translation_locked다.
  */
 export function sendDraft(draft: DocDraft): { draft: DocDraft; items: TargetOrderItem[] } {
-  const saved = new Map(draft.saved.sections.flatMap((section) => section.items).map((item) => [item.target_id, item]));
-  const items = draft.shown.sections.flatMap((section) =>
+  const saved = new Map(draft.saved.sections.flatMap((section) => section.items.map((item) => [item.target_id, { item, key: section.location_key }] as const)));
+  const items: TargetOrderItem[] = draft.shown.sections.flatMap((section) =>
     section.items.map((item) => {
-      const before = saved.get(item.target_id);
+      const was = saved.get(item.target_id);
+      const before = was?.item;
+      // 칸이 바뀐 줄은 새 자리와 깊이를 늘 싣는다 - 깊이를 빼면 서버가 자리 바뀐 줄을 0으로 돌리고, wi_step null은 키가 있어야 "단계 없음"이다
+      const place = was && was.key !== section.location_key ? readLocationPlace(section.location_key) : null;
       return {
         target_id: item.target_id,
-        ...(before && before.indent_level !== item.indent_level ? { indent_level: item.indent_level } : {}),
+        ...(place ? ("slot_key" in place ? { slot_key: place.slot_key } : { wi_step: place.wi_step }) : {}),
+        ...(place ? { indent_level: item.indent_level } : {}),
+        ...(!place && before && before.indent_level !== item.indent_level ? { indent_level: item.indent_level } : {}),
         ...(before && before.number_style !== item.number_style ? { number_style: item.number_style } : {}),
       };
     }),

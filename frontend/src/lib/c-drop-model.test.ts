@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { OutputCItem } from "./api-sop";
-import { classifyDropZone, findDragBlock, findLiveBlock, listDropRows, planDrop } from "./c-drop-model";
+import { findDragBlock, findEnterRefusal, findDropSection, findDropSectionByKey, findLeaveRefusal, findLiveBlock, listDropRows, planCrossDrop, planDrop } from "./c-drop-model";
 import { previewEdit } from "./c-edit-model";
 
 function line(id: number, extra: Partial<OutputCItem> = {}): OutputCItem {
@@ -27,21 +27,6 @@ describe("findDragBlock", () => {
     const pair = [line(1, { meaning_key: "m" }), line(2, { meaning_key: "m", origin: "translation" })];
     expect(findDragBlock(pair, [0, 0], 0, "assign").isDepthLocked).toBe(true);
     expect(findDragBlock(items, depths, 3, "match").isDepthLocked).toBe(true);
-  });
-});
-
-describe("classifyDropZone", () => {
-  const sheet = { left: 100, right: 860, top: 0, bottom: 2000 };
-  it("home inside the section band (10px above, 28px below), other elsewhere among the sections, outside off the sheet", () => {
-    const zone = (x: number, y: number) => classifyDropZone({ x, y }, sheet, { top: 300, bottom: 500 }, { top: 100, bottom: 900 });
-    expect([zone(200, 290), zone(200, 289), zone(200, 528), zone(200, 529), zone(99, 400), zone(200, 2001)]).toEqual(["home", "other", "home", "other", "outside", "outside"]);
-  });
-  it("treats the sheet above the first section and below the last one as outside - there is no other section there", () => {
-    const zone = (y: number) => classifyDropZone({ x: 200, y }, sheet, { top: 300, bottom: 500 }, { top: 100, bottom: 900 });
-    expect([zone(90), zone(89), zone(928), zone(929), zone(1500)]).toEqual(["other", "outside", "other", "outside", "outside"]);
-    // 끌린 줄의 칸이 마지막 칸이면 그 아래 여유 띠 밖은 바로 outside
-    const last = (y: number) => classifyDropZone({ x: 200, y }, sheet, { top: 700, bottom: 900 }, { top: 100, bottom: 900 });
-    expect([last(928), last(929)]).toEqual(["home", "outside"]);
   });
 });
 
@@ -156,5 +141,210 @@ describe("listDropRows", () => {
     const rows = listDropRows(items, block, box([1, 2, 3, 4, 8]));
     const plan = planDrop({ locationKey: "s", items, depths: [0, 0, 0, 0, 0], block, rows, pointerY: 500, dx: 0, homeTop: 0 });
     expect(plan.beforeId).toBe(5);
+  });
+});
+
+describe("listDropRows for a destination", () => {
+  it("keeps every known row when there is no block, and still drops rows that are not in the section", () => {
+    const items = [1, 2, 3].map((id) => line(id));
+    expect(listDropRows(items, null, box([1, 8, 2, 3])).map((row) => row.targetId)).toEqual([1, 2, 3]);
+  });
+});
+
+describe("findDropSectionByKey", () => {
+  const sheet = { left: 0, right: 800, top: 0, bottom: 2000 };
+  const sections = [
+    { key: "purpose", band: { top: 100, bottom: 200 } },
+    { key: "scope", band: { top: 260, bottom: 300 } },
+    { key: "responsibilities", band: { top: 320, bottom: 500 } },
+  ];
+  it("decides home by the section key, whatever element drew it", () => {
+    // 끄는 도중 다시 그려진 출발 칸도 키가 같으면 출발 칸 - 다른 칸(planCrossDrop)으로 넘기지 않는다
+    expect(findDropSectionByKey({ x: 50, y: 150 }, sheet, sections, "purpose")).toEqual({ index: 0, isHome: true });
+    expect(findDropSectionByKey({ x: 50, y: 400 }, sheet, sections, "purpose")).toEqual({ index: 2, isHome: false });
+  });
+  it("keeps the home band first by key where two bands overlap", () => {
+    // y 312는 scope 아래 여유와 responsibilities 위 여유가 겹친다 - 출발 칸 키가 이긴다
+    expect(findDropSectionByKey({ x: 50, y: 312 }, sheet, sections, "scope")).toEqual({ index: 1, isHome: true });
+    expect(findDropSectionByKey({ x: 50, y: 312 }, sheet, sections, "purpose")).toEqual({ index: 2, isHome: false });
+  });
+  it("never reports home when the home section is not drawn", () => {
+    expect(findDropSectionByKey({ x: 50, y: 150 }, sheet, sections, "definitions")).toEqual({ index: 0, isHome: false });
+    expect(findDropSectionByKey({ x: 50, y: 240 }, sheet, sections, "definitions")).toBeNull();
+  });
+});
+
+describe("findDropSection", () => {
+  const sheet = { left: 0, right: 800, top: 0, bottom: 2000 };
+  const bands = [{ top: 100, bottom: 200 }, { top: 260, bottom: 300 }, { top: 320, bottom: 500 }];
+  it("keeps the home band first and gives an overlap of two other bands to the lower one", () => {
+    expect(findDropSection({ x: 50, y: 220 }, sheet, bands, 0)).toBe(0);
+    expect(findDropSection({ x: 50, y: 305 }, sheet, bands, 0)).toBe(1);
+    expect(findDropSection({ x: 50, y: 315 }, sheet, bands, 0)).toBe(2);
+    expect(findDropSection({ x: 50, y: 325 }, sheet, bands, 1)).toBe(1);
+  });
+  it("is outside off the sheet, above the first band and below the last one", () => {
+    expect(findDropSection({ x: 900, y: 150 }, sheet, bands, 0)).toBeNull();
+    expect(findDropSection({ x: 50, y: 80 }, sheet, bands, 0)).toBeNull();
+    expect(findDropSection({ x: 50, y: 530 }, sheet, bands, 0)).toBeNull();
+  });
+  it("is outside in a gap that belongs to no band", () => {
+    // 칸 0은 ~228, 칸 1은 250부터 - 그 사이 240은 어느 칸도 아니다
+    expect(findDropSection({ x: 50, y: 240 }, sheet, bands, 2)).toBeNull();
+    expect(findDropSection({ x: 50, y: 240 }, sheet, bands, 0)).toBeNull();
+  });
+  it("lets the home section's own margins win over a neighbour's band", () => {
+    // y 310은 칸 1 여유(~328)와 칸 2 여유(310~)가 겹치지만 출발 칸이 1이면 1, 2이면 2
+    expect(findDropSection({ x: 50, y: 312 }, sheet, bands, 1)).toBe(1);
+    expect(findDropSection({ x: 50, y: 312 }, sheet, bands, 2)).toBe(2);
+    // 칸 0 아래 여유(228) 안에서 칸 0이 출발이면 칸 0, 위 10px 여유는 칸 1이 출발일 때 칸 1
+    expect(findDropSection({ x: 50, y: 225 }, sheet, bands, 0)).toBe(0);
+    expect(findDropSection({ x: 50, y: 252 }, sheet, bands, 1)).toBe(1);
+  });
+});
+
+describe("cross-section refusals", () => {
+  const home = { start: 0, end: 0, baseDepth: 0, isDepthLocked: false };
+  it("refuses an N/A section, another document, another WI part and an unmappable section, and lets the same part of another step in", () => {
+    const to = (location_key: string, na_reason: string | null = null) => ({ location_key, na_reason });
+    expect(findEnterRefusal("purpose", to("document_relationships.attachments", "x"), true)).toBe("na");
+    expect(findEnterRefusal("purpose", to("scope"), false)).toBe("otherDoc");
+    expect(findEnterRefusal("step:1:instruction", to("step:2:why"), true)).toBe("otherPart");
+    expect(findEnterRefusal("purpose", to("path:1/2"), true)).toBe("otherPart");
+    expect(findEnterRefusal("purpose", to("step:1:why"), true)).toBe("otherPart");
+    expect(findEnterRefusal("step:1:instruction", to("unstepped:instruction"), true)).toBeNull();
+    expect(findEnterRefusal("purpose", to("scope"), true)).toBeNull();
+  });
+  it("checks N/A before another document", () => {
+    expect(findEnterRefusal("purpose", { location_key: "scope", na_reason: "x" }, false)).toBe("na");
+  });
+  it("refuses a written document's block", () => {
+    expect(findLeaveRefusal("match", [line(1)], { ...home, isDepthLocked: true })).toBe("written");
+  });
+  it("refuses a block that leaves an AI translation of its meaning behind", () => {
+    const items = [line(1, { meaning_key: "old:a" }), line(2, { meaning_key: "old:a", origin: "translation" })];
+    expect(findLeaveRefusal("assign", items, home)).toBe("translation");
+    expect(findLeaveRefusal("assign", items, { start: 1, end: 1, baseDepth: 0, isDepthLocked: true })).toBe("translation");
+    const apart = [...items, line(3), line(4, { meaning_key: "old:a" })];
+    expect(findLeaveRefusal("assign", apart, { start: 0, end: 1, baseDepth: 0, isDepthLocked: true })).toBe("translation");
+    expect(findLeaveRefusal("assign", [line(5, { origin: "translation" })], { ...home, isDepthLocked: true })).toBe("translation");
+  });
+  it("lets a block leave when it holds the whole group with its translation", () => {
+    const items = [line(1, { meaning_key: "old:a" }), line(2, { meaning_key: "old:a", origin: "translation" })];
+    expect(findLeaveRefusal("assign", items, { start: 0, end: 1, baseDepth: 0, isDepthLocked: true })).toBeNull();
+    // 번역 없는 의미 묶음은 덩어리가 일부만 가져가도 걸리지 않는다
+    expect(findLeaveRefusal("assign", [line(1), line(2)], home)).toBeNull();
+  });
+  it("refuses a group whose only lines are translations - the server cannot find the source among the moved lines", () => {
+    const items = [line(1, { meaning_key: "old:a", origin: "translation" })];
+    expect(findLeaveRefusal("assign", items, { ...home, isDepthLocked: true })).toBe("translation");
+  });
+  it("checks that the block may leave before anything about the destination", () => {
+    expect(findLeaveRefusal("match", [line(1, { meaning_key: "old:a", origin: "translation" })], { ...home, isDepthLocked: true })).toBe("written");
+  });
+});
+
+describe("planCrossDrop", () => {
+  const unlocked = { start: 0, end: 0, baseDepth: 0, isDepthLocked: false };
+  const empty = { fromKey: "s5", toKey: "s6", source: { items: [line(1)], depths: [0], block: unlocked }, dest: { items: [] as OutputCItem[], depths: [] as number[] }, rows: [] as ReturnType<typeof box>, pointerY: 50, dx: 0, emptyTop: 40 };
+  const dest3 = [line(10), line(11), line(12)];
+  const into = (extra: Partial<Parameters<typeof planCrossDrop>[0]> = {}) => planCrossDrop({ ...empty, dest: { items: dest3, depths: [0, 1, 0] }, rows: box([10, 11, 12]), ...extra });
+  it("makes the block the first lines of an empty section at depth 0 whatever the sideways move", () => {
+    const plan = planCrossDrop({ ...empty, dx: 96 });
+    expect(plan).toMatchObject({ beforeId: null, depth: 0, lineY: 40 });
+    expect(plan.edit).toEqual({ kind: "place", locationKey: "s5", toLocationKey: "s6", targetIds: [1], beforeId: null, depths: [0] });
+  });
+  it("drops at the top, in the middle and at the end of a rendered destination", () => {
+    expect(into({ pointerY: 5 })).toMatchObject({ beforeId: 10, lineY: -1, depth: 0 });
+    expect(into({ pointerY: 45 })).toMatchObject({ beforeId: 12, lineY: 39 });
+    expect(into({ pointerY: 200 })).toMatchObject({ beforeId: null, lineY: 61 });
+  });
+  it("drops below the last rendered row before the first unrendered line, not at the section's end", () => {
+    const long = [10, 11, 12, 13, 14].map((id) => line(id));
+    const plan = into({ dest: { items: long, depths: [0, 0, 0, 0, 0] }, rows: box([10, 11, 12]), pointerY: 500 });
+    expect(plan.beforeId).toBe(13);
+    expect(plan.edit).toMatchObject({ beforeId: 13, toLocationKey: "s6" });
+  });
+  it("gives depth 0 at the destination's top and limits it to the numbered line above plus one", () => {
+    const block = { start: 0, end: 1, baseDepth: 1, isDepthLocked: false };
+    const source = { items: [line(1), line(2)], depths: [1, 2], block };
+    // 앞줄 없음(맨 위): dx +48이어도 0, 아래 줄은 단 차이를 지켜 [0, 1]
+    const top = into({ source, pointerY: 5, dx: 48 });
+    expect(top).toMatchObject({ depth: 0, edit: { depths: [0, 1] } });
+    // 줄 11(깊이 1) 아래: 한계 2, dx +48 → 시작 1 + 2 = 3 → 2, 아래 줄 [2, 3]
+    const below = into({ source, pointerY: 45, dx: 48 });
+    expect(below).toMatchObject({ beforeId: 12, depth: 2, edit: { depths: [2, 3] } });
+    // 줄 10(깊이 0) 아래: 한계 1
+    expect(into({ source, pointerY: 15, dx: 48 })).toMatchObject({ depth: 1, edit: { depths: [1, 2] } });
+  });
+  it("skips unnumbered lines above and keeps the block's deepest line within MAX_INDENT_LEVEL", () => {
+    const noted = [line(10), line(11, { number_style: "note" })];
+    expect(into({ dest: { items: noted, depths: [3, 9] }, rows: box([10, 11]), pointerY: 500, dx: 240 }).depth).toBe(4);
+    const block = { start: 0, end: 1, baseDepth: 0, isDepthLocked: false };
+    const deep = into({ source: { items: [line(1), line(2)], depths: [0, 2], block }, dest: { items: [line(10)], depths: [9] }, rows: box([10]), pointerY: 500, dx: 480 });
+    expect(deep).toMatchObject({ depth: 7, edit: { depths: [7, 9] } });
+  });
+  it("clamps a locked pair to the destination's rule without applying dx, keeping the offsets inside the block", () => {
+    // 원문(2) + 번역(2) + 아래 줄(3): 깊이가 잠겨 dx는 안 먹지만 도착 칸 한계는 받는다
+    const block = { start: 0, end: 2, baseDepth: 2, isDepthLocked: true };
+    const source = { items: [line(1, { meaning_key: "old:a" }), line(2, { meaning_key: "old:a", origin: "translation" }), line(3)], depths: [2, 2, 3], block };
+    const emptyDest = planCrossDrop({ ...empty, source, dx: 96 });
+    expect(emptyDest).toMatchObject({ depth: 0, edit: { targetIds: [1, 2, 3], depths: [0, 0, 1] } });
+    const underZero = planCrossDrop({ ...empty, source, dest: { items: [line(10)], depths: [0] }, rows: box([10]), pointerY: 500, dx: 96 });
+    expect(underZero).toMatchObject({ depth: 1, edit: { depths: [1, 1, 2] } });
+    const underThree = planCrossDrop({ ...empty, source, dest: { items: [line(10)], depths: [3] }, rows: box([10]), pointerY: 500, dx: 96 });
+    expect(underThree).toMatchObject({ depth: 2, edit: { depths: [2, 2, 3] } });
+    expect(planCrossDrop({ ...empty, source, dest: { items: [line(10), line(11)], depths: [0, 1] }, rows: box([10, 11]), pointerY: 5, dx: -96 })).toMatchObject({ depth: 0, edit: { depths: [0, 0, 1] } });
+  });
+  it("snaps to the edge of a meaning group in the destination", () => {
+    const grouped = [line(10), line(11, { meaning_key: "old:k" }), line(12, { meaning_key: "old:k" }), line(13)];
+    const dest = { items: grouped, depths: [0, 0, 0, 0] };
+    const rows = box([10, 11, 12, 13]);
+    // 묶음은 20..60, 중간선 40: 위쪽은 묶음 앞(11), 아래쪽은 묶음 뒤(13), 묶음 안 줄 사이 경계(40)가 아니라
+    expect(into({ dest, rows, pointerY: 45 }).beforeId).toBe(13);
+    expect(into({ dest, rows, pointerY: 35 }).beforeId).toBe(11);
+  });
+  it("agrees with previewEdit on the number the first line gets", () => {
+    const sec = (key: string, number: string, items: OutputCItem[]) => ({ location_key: key, label: key, number, na_reason: null, heading_note: "", items });
+    const a = line(1);
+    const b = line(2);
+    const c = line(3);
+    const doc = { target_doc_id: 7, code: "C", title: "T", doc_type: "sop", parent_code: null, entrance: "assign", sections: [sec("procedures", "6", [a, b]), sec("procedures.procedure", "6.1", [c])] };
+    const plan = planCrossDrop({ fromKey: "procedures", toKey: "procedures.procedure", source: { items: [a, b], depths: [0, 0], block: { start: 1, end: 1, baseDepth: 0, isDepthLocked: false } }, dest: { items: [c], depths: [0] }, rows: box([3]), pointerY: 5, dx: 0, emptyTop: 0 });
+    expect(plan.beforeId).toBe(3);
+    const shown = previewEdit(doc as never, plan.edit!)!;
+    expect(shown.sections[1].items.map((item) => [item.target_id, item.number])).toEqual([[2, "6.1.1"], [3, "6.1.2"]]);
+  });
+});
+
+describe("planCrossDrop guards", () => {
+  const unlocked = { start: 1, end: 1, baseDepth: 0, isDepthLocked: false };
+  const home = [1, 2, 3, 4].map((id) => line(id));
+  const homeArgs = { source: { items: home, depths: [0, 0, 0, 0], block: unlocked }, rows: box([1, 3, 4]), dx: 0, emptyTop: 7 };
+  it("delegates to planDrop when the destination is the home section", () => {
+    for (const pointerY of [45, 5, 500]) {
+      const cross = planCrossDrop({ ...homeArgs, fromKey: "s5", toKey: "s5", dest: { items: home, depths: [0, 0, 0, 0] }, pointerY });
+      const same = planDrop({ locationKey: "s5", items: home, depths: [0, 0, 0, 0], block: unlocked, rows: homeArgs.rows, pointerY, dx: 0, homeTop: 7 });
+      expect(cross).toEqual(same);
+      expect(cross.edit && "toLocationKey" in cross.edit).toBeFalsy();
+    }
+    // 실제로 옮기는 경우와 제자리가 둘 다 들어 있다
+    expect(planDrop({ locationKey: "s5", items: home, depths: [0, 0, 0, 0], block: unlocked, rows: homeArgs.rows, pointerY: 500, dx: 0, homeTop: 7 }).edit).not.toBeNull();
+    expect(planDrop({ locationKey: "s5", items: home, depths: [0, 0, 0, 0], block: unlocked, rows: homeArgs.rows, pointerY: 15, dx: 0, homeTop: 7 }).edit).toBeNull();
+  });
+  it("saves nothing when a row is not in the destination's items", () => {
+    const plan = planCrossDrop({ ...homeArgs, fromKey: "s5", toKey: "s6", dest: { items: [line(10), line(11)], depths: [0, 0] }, rows: box([10, 99]), pointerY: 30 });
+    expect(plan.edit).toBeNull();
+    expect(plan.beforeId).toBeNull();
+  });
+  it("lands after the whole meaning group when the rendered window cuts it", () => {
+    const dest = [line(10), line(11, { meaning_key: "old:k" }), line(12, { meaning_key: "old:k" }), line(13, { meaning_key: "old:k" }), line(14)];
+    const args = { ...homeArgs, fromKey: "s5", toKey: "s6", dest: { items: dest, depths: [0, 0, 0, 0, 0] } };
+    // 그려진 줄은 10·11·12, 13부터 안 그려졌다 - 12 아래로 놓아도 묶음(11~13) 뒤인 14 앞
+    expect(planCrossDrop({ ...args, rows: box([10, 11, 12]), pointerY: 500 }).beforeId).toBe(14);
+    // 묶음이 칸 끝까지 가면 칸 끝
+    expect(planCrossDrop({ ...args, dest: { items: dest.slice(0, 4), depths: [0, 0, 0, 0] }, rows: box([10, 11, 12]), pointerY: 500 }).beforeId).toBeNull();
+    // 이어지지 않으면 안 그려진 첫 줄 앞 그대로
+    expect(planCrossDrop({ ...args, dest: { items: [line(10), line(11, { meaning_key: "old:k" }), line(12)], depths: [0, 0, 0] }, rows: box([10, 11]), pointerY: 500 }).beforeId).toBe(12);
   });
 });
