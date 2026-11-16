@@ -17,7 +17,7 @@ import { useI18n } from "@/lib/i18n";
 import { buildCLines, listMeaningStarts, type CLine } from "@/lib/output-groups";
 import { shouldRecenter } from "@/lib/paper-model";
 import { canChangeDepth, canChangeStyle, canIndent, getSectionDepths, isCounted, NUMBER_STYLES, readIndentKey, type IndentDir } from "@/lib/section-number";
-import { canMoveTarget, type MoveDir } from "@/lib/target-order";
+import { canMoveTarget, readMoveKey, type MoveDir } from "@/lib/target-order";
 import { useProgressiveList } from "@/lib/use-progressive-list";
 
 type Section = OutputC["docs"][number]["sections"][number];
@@ -133,7 +133,7 @@ function RowButtons({ items, item, onMove, indent, onMark }: RowButtonsProps) {
           </Tooltip>
         ))}
       {([-1, 1] as const).map((dir) => (
-        <Tooltip key={dir} label={t(dir < 0 ? "outputs.moveUp" : "outputs.moveDown")} align="end">
+        <Tooltip key={dir} label={t(dir < 0 ? "outputs.moveUpTip" : "outputs.moveDownTip")} align="end">
           <button
             type="button"
             className="btn ghost icon h-6 w-6"
@@ -270,11 +270,11 @@ function CMore({ sentinelRef }: { sentinelRef: (node: Element | null) => void })
   );
 }
 
-/** 옮긴 줄 - 다음 커밋에서 그 줄을 따라 스크롤하고, 누른 단추에 포커스가 있었으면 다시 둔다 */
+/** 옮긴 줄 - 다음 커밋에서 그 줄을 따라 스크롤하고, 포커스가 있던 곳(누른 단추·줄 자신)에 다시 둔다. null이면 건드리지 않는다(⋯ 메뉴는 닫히며 ⋯ 단추로 돌린다) */
 interface PendingMove {
   targetId: number;
   dir: MoveDir;
-  refocus: boolean;
+  refocus: "button" | "row" | null;
 }
 
 interface OutputCViewProps {
@@ -307,7 +307,10 @@ export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", to
     pendingMoveRef.current = null;
     const row = move && rootRef.current?.querySelector<HTMLElement>(`[data-testid="output-c-row-${move.targetId}"]`);
     if (!move || !row) return;
-    if (move.refocus) {
+    if (move.refocus === "row") {
+      // 글쇠로 옮겼으면 고른 줄이 그대로 고른 채로 남는다
+      row.focus({ preventScroll: true });
+    } else if (move.refocus === "button") {
       // 줄이 DOM에서 옮겨지면 포커스가 빠진다 - 같은 단추에, 칸 끝에 닿아 꺼졌으면 반대 단추에 둔다
       const [same, other] = move.dir < 0 ? ["up", "down"] : ["down", "up"];
       const button = row.querySelector<HTMLButtonElement>(`[data-testid="output-c-move-${same}-${move.targetId}"]`);
@@ -324,7 +327,7 @@ export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", to
   });
   const flip = useFlip(rootRef);
 
-  function handleMove(docId: number, section: Section, index: number, dir: MoveDir, refocus: boolean) {
+  function handleMove(docId: number, section: Section, index: number, dir: MoveDir, refocus: PendingMove["refocus"]) {
     const item = section.items[index];
     const neighbor = section.items[index + dir];
     if (!onMove || !neighbor) return;
@@ -425,21 +428,29 @@ export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", to
                         item,
                         indent,
                         onMark: onMark && canChangeStyle(doc.entrance) ? (style) => onMark(doc.target_doc_id, item.target_id, style) : null,
-                        onMove: (dir, refocus) => handleMove(doc.target_doc_id, section, index, dir, refocus),
+                        onMove: (dir, refocus) => handleMove(doc.target_doc_id, section, index, dir, refocus ? "button" : null),
                       };
                       return (
                         <div
                           key={item.target_id}
-                          // 줄을 눌러 고르면 Tab·Shift+Tab이 들이고 내어 쓴다. 탭 순서에는 넣지 않고(-1) Esc로 놓아 Tab이 페이지 이동을 빼앗지 않게 한다
-                          tabIndex={indent ? -1 : undefined}
+                          // 줄을 눌러 고르면 Alt+↑·↓가 한 자리 옮기고, 깊이를 바꿀 수 있는 줄은 Tab·Shift+Tab이 들이고 내어 쓴다. 탭 순서에는 넣지 않고(-1) Esc로 놓아 Tab이 페이지 이동을 빼앗지 않게 한다
+                          tabIndex={-1}
                           // 줄 끝 단추는 호버·포커스 때만 용지 옆에 뜬다 - 넓으면 묶음(.c-acts), 좁으면 ⋯ 하나(.c-more). 자리를 차지하지 않아 글 폭과 줄 높이가 그대로다
                           className="hover-row c-row"
                           data-meaning-start={meaningStart}
                           data-flip-key={item.target_id}
                           data-testid={`output-c-row-${item.target_id}`}
                           onKeyDown={(event) => {
-                            if (!indent || event.target !== event.currentTarget) return;
+                            // 줄 끝 단추·메뉴 안에서 올라온 글쇠는 그 요소의 몫이다
+                            if (event.target !== event.currentTarget) return;
                             if (event.key === "Escape") event.currentTarget.blur();
+                            const move = readMoveKey(event, { canUp: canMoveTarget(section.items, item.target_id, -1), canDown: canMoveTarget(section.items, item.target_id, 1) });
+                            if (move !== null) {
+                              event.preventDefault();
+                              handleMove(doc.target_doc_id, section, index, move, "row");
+                              return;
+                            }
+                            if (!indent) return;
                             // 바꿀 수 있을 때만 Tab을 가로챈다 - 아니면 포커스가 평소대로 다음 요소로 간다. 저장 중에도 바뀜은 화면에 먼저 얹는다
                             const dir = readIndentKey(event, { canOut: indent.canOut, canIn: indent.canIn, busy: false });
                             if (dir === null) return;

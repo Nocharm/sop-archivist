@@ -1567,6 +1567,140 @@ await runStep("order: indent a line on C and its section number changes", {}, as
   check("Shift+Tab on the picked row outdents it back", (await number.innerText()).trim() === before);
 });
 
+await runStep("order: Alt+ArrowDown moves the picked line and keeps it picked", {}, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  const [hit] = await findOrderDocs(page, () => {
+    for (const section of document.querySelectorAll('[data-testid="output-c"] section')) {
+      const ids = [...section.querySelectorAll('[data-testid^="output-c-row-"]')].map((row) => row.getAttribute("data-testid").replace("output-c-row-", ""));
+      if (ids.length >= 4) return ids;
+    }
+    return null;
+  });
+  check("a section with four lines exists", Boolean(hit));
+  const ids = hit[1];
+  const id = ids[0];
+  const rowSel = `[data-testid="output-c-row-${id}"]`;
+  const readOrder = () => page.evaluate((first) => [...(document.querySelector(`[data-testid="output-c-row-${first}"]`)?.closest("section")?.querySelectorAll('[data-testid^="output-c-row-"]') ?? [])].map((row) => row.getAttribute("data-testid").replace("output-c-row-", "")), id);
+  const activeRow = () => page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? "");
+  const pane = () => page.evaluate((sel) => document.querySelector(sel)?.closest(".overflow-auto, .overflow-y-auto")?.scrollTop ?? 0, rowSel);
+  const start = (await readOrder()).indexOf(id);
+  const puts = [];
+  const onRequest = (request) => {
+    if (isOrderSave(request)) puts.push(request.url());
+  };
+  page.on("request", onRequest);
+  // 1. 줄을 눌러 고른 뒤 Alt+↓ - 한 자리, 고른 채로
+  await page.locator(rowSel).click({ position: { x: 4, y: 4 } });
+  const scrollBefore = await pane();
+  const moved = waitOrderSave(page);
+  await page.keyboard.press("Alt+ArrowDown");
+  check("the move saves", (await moved).ok());
+  check("the line moved one place", (await readOrder()).indexOf(id) === start + 1, JSON.stringify(await readOrder()));
+  check("the line stays picked", (await activeRow()) === `output-c-row-${id}`, await activeRow());
+  check("the screen did not jump", Math.abs((await pane()) - scrollBefore) < 80, `${scrollBefore} -> ${await pane()}`);
+  // 2. 단추에 포커스가 있을 때의 Alt+↑·↓는 아무 일도 없다
+  await page.locator(rowSel).hover();
+  await page.locator(`[data-testid="output-c-move-down-${id}"]`).focus();
+  const putsBefore = puts.length;
+  await page.keyboard.press("Alt+ArrowDown");
+  await page.waitForTimeout(500);
+  check("Alt+ArrowDown on a row button does nothing", puts.length === putsBefore && (await readOrder()).indexOf(id) === start + 1);
+  // 3. 되돌린다 - 위로, 그리고 칸 맨 위 줄의 Alt+↑는 막히지 않고 아무 일도 없다
+  await page.locator(rowSel).click({ position: { x: 4, y: 4 } });
+  const back = waitOrderSave(page);
+  await page.keyboard.press("Alt+ArrowUp");
+  check("Alt+ArrowUp moves it back", (await back).ok() && (await readOrder()).indexOf(id) === start);
+  check("it is still picked after moving up", (await activeRow()) === `output-c-row-${id}`);
+  const top = (await readOrder())[0];
+  await page.locator(`[data-testid="output-c-row-${top}"]`).click({ position: { x: 4, y: 4 } });
+  const topPuts = puts.length;
+  const defaultPrevented = await page.evaluate((topId) => new Promise((done) => {
+    const row = document.querySelector(`[data-testid="output-c-row-${topId}"]`);
+    row.addEventListener("keydown", (event) => queueMicrotask(() => done(event.defaultPrevented)), { once: true });
+    row.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", altKey: true, bubbles: true, cancelable: true }));
+  }), top);
+  await page.waitForTimeout(400);
+  check("Alt+ArrowUp on the first line of a section does nothing and is not swallowed", puts.length === topPuts && defaultPrevented === false);
+  // 4. Esc가 고름을 놓는다
+  await page.keyboard.press("Escape");
+  check("Esc lets go of the line", (await activeRow()) !== `output-c-row-${top}`);
+  page.off("request", onRequest);
+});
+
+await runStep("order: a depth-locked line (an already-written document) can be picked, moved and is not indented by Tab", {}, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  const [hit] = await findOrderDocs(page, () => {
+    if (document.querySelector('[data-testid="output-c"] article header span.font-mono')?.textContent !== "WI-04") return null;
+    for (const section of document.querySelectorAll('[data-testid="output-c"] section')) {
+      const ids = [...section.querySelectorAll('[data-testid^="output-c-row-"]')].map((row) => row.getAttribute("data-testid").replace("output-c-row-", ""));
+      if (ids.length >= 3) return ids;
+    }
+    return null;
+  });
+  check("the already-written document WI-04 has a section with three lines", Boolean(hit));
+  const ids = hit[1];
+  const id = ids[0];
+  const rowSel = `[data-testid="output-c-row-${id}"]`;
+  const readOrder = () => page.evaluate((first) => [...(document.querySelector(`[data-testid="output-c-row-${first}"]`)?.closest("section")?.querySelectorAll('[data-testid^="output-c-row-"]') ?? [])].map((row) => row.getAttribute("data-testid").replace("output-c-row-", "")), id);
+  const activeRow = () => page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? "");
+  check("the line has no indent button", (await page.locator(`[data-testid="output-c-indent-${id}"]`).count()) === 0);
+  const start = (await readOrder()).indexOf(id);
+  await page.locator(rowSel).click({ position: { x: 4, y: 4 } });
+  check("a depth-locked line can be picked", (await activeRow()) === `output-c-row-${id}`, await activeRow());
+  const padding = () => page.locator(`${rowSel} .c-line`).evaluate((el) => getComputedStyle(el).paddingLeft);
+  const paddingBefore = await padding();
+  let saved = false;
+  const onRequest = (request) => {
+    if (isOrderSave(request)) saved = true;
+  };
+  page.on("request", onRequest);
+  await page.keyboard.press("Tab");
+  await page.waitForTimeout(400);
+  check("Tab does not indent it and moves focus on as the browser would", !saved && (await padding()) === paddingBefore && (await activeRow()) !== `output-c-row-${id}`, await activeRow());
+  page.off("request", onRequest);
+  await page.locator(rowSel).click({ position: { x: 4, y: 4 } });
+  const moved = waitOrderSave(page);
+  await page.keyboard.press("Alt+ArrowDown");
+  check("Alt+ArrowDown moves a depth-locked line", (await moved).ok() && (await readOrder()).indexOf(id) === start + 1, JSON.stringify(await readOrder()));
+  check("it stays picked", (await activeRow()) === `output-c-row-${id}`);
+  const back = waitOrderSave(page);
+  await page.keyboard.press("Alt+ArrowUp");
+  check("and moves back", (await back).ok() && (await readOrder()).indexOf(id) === start);
+});
+
+await runStep("order: a move chosen from the narrow-frame menu keeps focus on that line's ⋯ button", {}, async ({ page }) => {
+  await page.setViewportSize({ width: 760, height: 900 });
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  const [hit] = await findOrderDocs(page, () => {
+    for (const section of document.querySelectorAll('[data-testid="output-c"] section')) {
+      const ids = [...section.querySelectorAll('[data-testid^="output-c-row-"]')].map((row) => row.getAttribute("data-testid").replace("output-c-row-", ""));
+      if (ids.length >= 3) return ids;
+    }
+    return null;
+  });
+  check("a section with three lines exists", Boolean(hit));
+  const id = hit[1][0];
+  const rowSel = `[data-testid="output-c-row-${id}"]`;
+  const readOrder = () => page.evaluate((first) => [...(document.querySelector(`[data-testid="output-c-row-${first}"]`)?.closest("section")?.querySelectorAll('[data-testid^="output-c-row-"]') ?? [])].map((row) => row.getAttribute("data-testid").replace("output-c-row-", "")), id);
+  const activeId = () => page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? "");
+  const start = (await readOrder()).indexOf(id);
+  await page.locator(rowSel).hover();
+  await page.locator(`[data-testid="output-c-menu-${id}"]`).click();
+  const moved = waitOrderSave(page);
+  await page.locator(`[data-testid="output-c-menu-down-${id}"]`).click();
+  check("the menu move saves", (await moved).ok());
+  await page.waitForTimeout(400);
+  check("the line moved one place", (await readOrder()).indexOf(id) === start + 1);
+  check("focus is on the moved line's ⋯ button", (await activeId()) === `output-c-menu-${id}`, await activeId());
+  await page.locator(`[data-testid="output-c-menu-${id}"]`).click();
+  const back = waitOrderSave(page);
+  await page.locator(`[data-testid="output-c-menu-up-${id}"]`).click();
+  check("and moves back", (await back).ok() && (await readOrder()).indexOf(id) === start);
+});
+
 await runStep("order: mark a line as a note on C, the count continues and the note is italic", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
