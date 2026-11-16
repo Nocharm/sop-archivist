@@ -211,6 +211,7 @@ async def _load_bundle_children(
         lambda chunk: select(
             TargetSentence.id, TargetSentence.parent_target_id, TargetSentence.cell_row, TargetSentence.cell_col, TargetSentence.lang,
             TargetSentence.confirmed_text, TargetSentence.ai_text, TargetSentence.status, TargetSentence.kind,
+        # id 순은 덩이 안에서만이지만 덩이는 부모 id로 나누므로 한 부모의 자식은 한 덩이에 다 있다 — 같은 언어 캡션은 id 순으로 잇는다
         ).where(TargetSentence.parent_target_id.in_(chunk)).order_by(TargetSentence.id),
         [target.id for target in bundle_targets],
     )

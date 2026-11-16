@@ -27,7 +27,6 @@ from tests.sop_helpers import (
     upload,
 )
 from tests.test_sop_outputs import (
-    CAPTION,
     DUPLICATE,
     MERGED,
     RECORDS_EN,
@@ -107,7 +106,7 @@ def test_output_c_numbers_slots_steps_and_lines(client: TestClient) -> None:
     assert _read_numbers(wi) == [
         ("step:1:instruction", "1", [(SPLIT_A, "1.1")]),
         ("step:1:why", "1", [(DUPLICATE, "1.2")]),
-        ("step:2:instruction", "2", [(SPLIT_B, "2.1"), (CAPTION, "2.2")]),  # 그림은 캡션 글
+        ("step:2:instruction", "2", [(SPLIT_B, "2.1"), ("figure", "2.2")]),
         ("step:2:why", "2", []),
     ]
     # 입구 2 문서는 번호를 새로 매기지 않는다

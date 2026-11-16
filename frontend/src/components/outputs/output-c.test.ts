@@ -64,10 +64,18 @@ describe("OutputCView", () => {
     unmount();
   });
 
-  it("shows a figure's caption instead of [Figure], and the marker only without one", () => {
-    const items = [makeItem({ target_id: 20, kind: "figure", lang: "neutral", text: "그림 2. 로터 장착 위치" }), makeItem({ target_id: 21, kind: "figure", lang: "neutral" })];
+  it("shows a figure's caption lines with their own status instead of [Figure], and the marker only without one", () => {
+    const captions = [
+      makeItem({ target_id: 22, text: "그림 2. 로터 장착 위치", status: "confirmed" }),
+      makeItem({ target_id: 23, lang: "en", ai_text: "Figure 2. Rotor mounting" }),
+    ];
+    const items = [makeItem({ target_id: 20, kind: "figure", lang: "neutral", status: "confirmed", children: captions }), makeItem({ target_id: 21, kind: "figure", lang: "neutral" })];
     const { host, unmount } = render({ data: makeOutput(items) });
-    expect(host.querySelector('[data-testid="output-c-item-20"]')?.textContent).toBe("그림 2. 로터 장착 위치");
+    const lines = [...host.querySelectorAll('[data-testid="output-c-item-20"] [data-testid^="output-c-caption-"]')];
+    expect(lines.map((line) => [line.textContent, line.classList.contains("border-dashed")])).toEqual([
+      ["그림 2. 로터 장착 위치", false],
+      ["Figure 2. Rotor mounting", true],
+    ]);
     expect(host.querySelector('[data-testid="output-c-item-21"]')?.textContent).toBe("[Figure]");
     unmount();
   });

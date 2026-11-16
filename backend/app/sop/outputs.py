@@ -131,7 +131,9 @@ class CItem(BaseModel):
     cell_col: int | None
     # 표·그림 새 문장의 자식 — 캡션 새 문장(한국어·영어 순)이 먼저, 그다음 칸 새 문장(행·열 순)
     children: list["CItem"]
-    caption: str | None = None  # 표·그림 새 문장의 캡션 글(_pick_caption_text), 없거나 표·그림이 아니면 None
+    # 표·그림 새 문장의 캡션 글(_pick_caption_text — 확정 글이 없으면 AI 글), 없거나 표·그림이 아니면 None. 미리 보기 글(끌기 카드)용이고,
+    # 줄마다의 확정·AI 글·상태는 캡션 자식이 싣는다
+    caption: str | None = None
 
 
 class CSection(BaseModel):
@@ -1032,12 +1034,11 @@ def _pick_caption_text(index: _Index, bundle_target: TargetInfo) -> str | None:
 
 
 def _build_item(ctx: _CContext, target: TargetInfo) -> CItem:
-    """C 항목 하나 — 그림은 [Figure] 대신 캡션 글을 text로 싣는다. 표·그림의 캡션 새 문장은 칸 앞의 자식이기도 하다(화면이 표 위 캡션 줄로 그린다)."""
+    """C 항목 하나 — 표·그림의 캡션 새 문장은 칸 앞의 자식이다(칸 문장처럼 줄마다 확정 글·AI 글·상태를 싣는다). text는 그 새 문장 자기 글."""
     index = ctx.index
     caption = _pick_caption_text(index, target) if target.kind in ("table", "figure") else None
     return CItem(
-        target_id=target.id, kind=target.kind, lang=target.lang,
-        text=(caption or target.confirmed_text) if target.kind == "figure" else target.confirmed_text, ai_text=target.ai_text,
+        target_id=target.id, kind=target.kind, lang=target.lang, text=target.confirmed_text, ai_text=target.ai_text,
         change_type=target.change_type, status=target.status, source_note=_format_source_note(index, target, ctx.labels),
         origin=target.origin, meaning_key=_format_meaning_key(ctx, target),
         number=ctx.numbers.get(target.id), indent_level=target.indent_level,

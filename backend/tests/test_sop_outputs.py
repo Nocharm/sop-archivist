@@ -926,7 +926,7 @@ def test_output_c_one_list_per_slot(client: TestClient) -> None:
     assert [_section_items(section) for section in wi["sections"]] == [
         [(SPLIT_A, "split", "confirmed", "← OLD-1 §5.1 (split)")],
         [(DUPLICATE, "as_is", "confirmed", "← OLD-1 §5.1")],
-        [(SPLIT_B, "split", "confirmed", "← OLD-1 §5.1 (split)"), (CAPTION, "as_is", "on_hold", "← OLD-1 §5.1")],
+        [(SPLIT_B, "split", "confirmed", "← OLD-1 §5.1 (split)"), ("", "as_is", "on_hold", "← OLD-1 §5.1")],
         [],
     ]
     # 입구 2 문서는 절 경로가 처음 나온 순서로 칸을 만든다
@@ -1151,9 +1151,12 @@ def test_output_c_figure_text_is_its_caption(client: TestClient) -> None:
 
     sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
 
+    # 그림의 글은 캡션 자식(줄마다 자기 확정 글·상태)과 caption 한 글 — 그림 새 문장 자기 글(text)은 비어 있다
     figure = _find_item(sop, "figure")
-    assert (figure["text"], figure["caption"]) == (FIGURE_CAPTION, FIGURE_CAPTION)
-    assert [(child["text"], child["cell_row"]) for child in figure["children"]] == [(FIGURE_CAPTION, None)]
+    assert (figure["text"], figure["caption"]) == ("", FIGURE_CAPTION)
+    assert [(child["text"], child["status"], child["cell_row"]) for child in figure["children"]] == [
+        (FIGURE_CAPTION, "confirmed", None),
+    ]
 
 
 def test_output_c_table_caption_comes_before_cells(client: TestClient) -> None:
@@ -1362,7 +1365,7 @@ def test_reorder_targets_sets_manual_order(client: TestClient) -> None:
     unassigned = find_unit(fx.old1, UNASSIGNED_EN)
     assign_as_is(client, fx.bundle_id, unassigned, fx.wi_id, wi_step=1, wi_part="instruction")
     wi = _get_output(client, fx.bundle_id, "outputs/c")["docs"][1]
-    assert [item["text"] for item in wi["sections"][0]["items"]] == [CAPTION, SPLIT_A, UNASSIGNED_EN]
+    assert [item["text"] for item in wi["sections"][0]["items"]] == ["", SPLIT_A, UNASSIGNED_EN]
 
     stale = _put_order(client, fx.bundle_id, {"revision": revision, "target_doc_id": fx.wi_id, "items": items})
     assert (stale.status_code, stale.json()["detail"]["code"]) == (409, "revision_conflict")
