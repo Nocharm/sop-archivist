@@ -75,6 +75,8 @@ interface OldPaneProps {
   onZoom: (dir: "+" | "-") => void;
   /** 조각을 끌 수 있다(끌어서 잇기) - 끄면 글자가 지금처럼 그냥 긁힌다 */
   dragBoxes?: boolean;
+  /** 머리의 확대 단추 바로 앞에 그린다 - 한/영 따로 문서의 Pair view 단추 */
+  headExtra?: ReactNode;
 }
 
 export function OldPane(props: OldPaneProps) {
@@ -126,6 +128,7 @@ export function OldPane(props: OldPaneProps) {
         <span className="tag" data-testid="assign-old-tag">{props.docTag}</span>
         <span className="pane-sub">{props.docTitle}</span>
         <span className="flex-1" />
+        {props.headExtra}
         <PaneZoom value={props.zoom} onStep={props.onZoom} testId="assign-old-zoom" />
       </div>
       {props.partKeys.length > 1 && (

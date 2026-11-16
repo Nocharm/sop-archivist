@@ -9,8 +9,10 @@ const T = 15000;
 
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 
-async function auditPage(page) {
-  return page.evaluate(() => {
+// fadedWithin - 이 선택자에 맞는 흐린 조상(opacity < 1) 안의 글은 글과 그 바탕을 함께 조상 바깥 바탕 위에 섞어 잰다(Pair view의 흐린 줄·라벨 단추).
+// 다른 장면과 다른 조상은 지금 계산 그대로 - 쉴 때 흐린 칸 머리 단추(확대 값 등)는 이 감사가 원래 재지 않던 것이다
+async function auditPage(page, { fadedWithin = null } = {}) {
+  return page.evaluate((fadedWithin) => {
     // oklch·color-mix 같은 값을 sRGB로 - 1×1 캔버스에 칠해 읽는다
     const canvas = document.createElement("canvas");
     canvas.width = canvas.height = 1;
@@ -58,8 +60,22 @@ async function auditPage(page) {
       // Excel 미리보기의 되풀이 값은 일부러 흐린 회색(--sheet-faint, 사용자 결정 O6·O7)이다 - 대비는 결과물 보고에 따로 적는다
       if (el.closest('[data-testid="export-preview-sheet"] td')?.style.color === "var(--sheet-faint)") continue;
       if (Number(getComputedStyle(el.closest("*")).opacity) < 1 || el.closest("button:disabled")) continue;
-      const fg = blend(toRgba(style.color), findBackground(el));
-      const bg = findBackground(el);
+      let fg = blend(toRgba(style.color), findBackground(el));
+      let bg = findBackground(el);
+      let faded = null;
+      let alpha = 1;
+      for (let node = el.parentElement; fadedWithin && node; node = node.parentElement) {
+        const opacity = Number(getComputedStyle(node).opacity);
+        if (opacity < 1 && node.matches(fadedWithin)) {
+          alpha *= opacity;
+          faded = node;
+        }
+      }
+      if (faded) {
+        const outer = findBackground(faded.parentElement);
+        fg = blend([...fg, alpha], outer);
+        bg = blend([...bg, alpha], outer);
+      }
       const [hi, lo] = [getLuminance(fg), getLuminance(bg)].sort((a, b) => b - a);
       const ratio = (hi + 0.05) / (lo + 0.05);
       const size = parseFloat(style.fontSize);
@@ -68,7 +84,7 @@ async function auditPage(page) {
       if (ratio < need) failures.push(`${ratio.toFixed(2)} < ${need}  "${node.textContent.trim().slice(0, 40)}"  <${el.tagName.toLowerCase()} ${el.getAttribute("data-testid") ?? el.className.toString().slice(0, 40)}>`);
     }
     return failures;
-  });
+  }, fadedWithin);
 }
 
 let total = 0;
@@ -118,6 +134,39 @@ for (const theme of ["light", "dark"]) {
     await line.locator(".new-hit").click();
     // 그 자리 메뉴(확정·취소)까지 뜬 상태로 잰다 - 늦게 뜨므로 보일 때까지 기다린다
     await page.locator('[data-testid="assign-link-menu-confirm"]').waitFor({ state: "visible", timeout: T });
+  }
+  async function openPairViewWithToast(page) {
+    const headers = { "X-Dev-User": "qa.member" };
+    const docs = await (await page.request.get(`${BASE}/api/bundles/${id}/documents`, { headers })).json();
+    const doc = docs.find((item) => item.side === "old" && item.status === "ready" && item.language_layout === "ko_en_separate");
+    const view = await (await page.request.get(`${BASE}/api/bundles/${id}/documents/${doc.id}/view`, { headers })).json();
+    const sentences = view.units.filter((unit) => unit.group_unit_id === null && unit.kind === "sentence");
+    const [ko1, ko2] = sentences.filter((unit) => unit.lang === "ko");
+    const [en1, en2] = sentences.filter((unit) => unit.lang === "en");
+    const relang = new Map([[ko2.id, { lang: "neutral" }], [en2.id, { lang: "ref", ref: { state: "confirmed", number: "SOP-ABC-1016" } }]]);
+    await page.route(`**/api/bundles/${id}/documents/${doc.id}/view`, async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      await route.fulfill({ response, json: { ...body, pairs: [], units: body.units.map((unit) => ({ ...unit, pair_id: null, ...relang.get(unit.id) })) } });
+    });
+    await page.route(`**/api/bundles/${id}/documents/${doc.id}/pairs`, (route) => route.fulfill({ status: 201, json: { pair: { id: 999999, unit_ids: [ko1.id, en1.id], status: "confirmed", source: "human" } } }));
+    // 처음 그릴 때 이미 받은 원문 보기는 가로채지 못한다 - 다시 받는다
+    await page.reload();
+    await page.locator('[data-testid="assign-bar"]').waitFor({ timeout: T });
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
+    await page.locator('[data-testid="assign-pair-view"]').click();
+    await page.locator('[data-testid="assign-pair-en"]').waitFor({ timeout: T });
+    await page.locator(`[data-testid="assign-pair-piece-${en2.id}"][data-dim]`).waitFor({ timeout: T });
+    const from = await page.locator(`[data-testid="assign-pair-piece-${ko1.id}"]`).boundingBox();
+    const to = await page.locator(`[data-testid="assign-pair-piece-${en1.id}"]`).boundingBox();
+    await page.mouse.move(from.x + 30, from.y + 10);
+    await page.mouse.down();
+    await page.mouse.move(from.x + 50, from.y + 10, { steps: 5 });
+    await page.mouse.move(to.x + 30, to.y + 10, { steps: 12 });
+    await page.mouse.up();
+    await page.locator('[data-testid^="toast-action-"]').waitFor({ timeout: T });
+    await page.unroute(`**/api/bundles/${id}/documents/${doc.id}/pairs`);
   }
   async function markManualPieces(page) {
     const firstId = (await page.locator('[data-testid^="manual-toc-"]').first().getAttribute("data-testid")).replace("manual-toc-", "");
@@ -209,6 +258,9 @@ for (const theme of ["light", "dark"]) {
     ["outputs-ai", `/bundles/${aiId}/outputs`, '[data-testid="outputs-tab-c"]', async (page) => { await page.locator('[data-testid="outputs-tab-c"]').click(); await page.locator('[data-testid="output-c"]').waitFor({ timeout: T }); }],
     // 상단 바 AI 작업 목록을 연 상태 - 시드의 AI 제안 단계가 남긴 끝난 요청이 보인다
     ["ai-jobs", `/bundles/${aiId}`, '[data-testid="top-bar-ai"]', async (page) => { await page.locator('[data-testid="top-bar-ai"]').click(); await page.locator('[data-testid^="ai-jobs-request-"]').first().waitFor({ timeout: T }); }],
+    // Pair view(한/영 따로 문서)의 흐린 줄(언어 없는 Unit - 흐린 조상까지 섞어 잰다)과 알림의 Undo. 시드의 따로 문서(OLD-3)에는 언어 없는 Unit이 없어
+    // 원문 보기 응답에서 두 Unit의 언어를 바꿔 그리고, 짝 저장은 가짜 응답으로 돌려 DB를 바꾸지 않는다
+    ["assign-pair-view", `/bundles/${id}/assign`, '[data-testid="assign-bar"]', openPairViewWithToast, { fadedWithin: ".pair-piece, .pane-toggle.has-label" }],
     ["manual", "/manual", '[data-testid^="manual-unit-"]'],
     // 읽음 표시의 세 모양을 함께 본다 - 첫 조각은 글이 바뀐 것(Updated), 둘째는 방금 읽은 것(Read), 나머지는 Unread
     ["manual-marked", "/manual", '[data-testid^="manual-unit-"]', markManualPieces],
@@ -225,7 +277,7 @@ for (const theme of ["light", "dark"]) {
     console.log("FAIL audit did not flag the low-contrast probe");
     total += 1;
   }
-  for (const [name, path, ready, prep] of screens) {
+  for (const [name, path, ready, prep, options] of screens) {
     await page.goto(`${BASE}${path}`);
     await page.locator(ready).first().waitFor({ timeout: T });
     if (prep) {
@@ -233,7 +285,7 @@ for (const theme of ["light", "dark"]) {
       await page.waitForLoadState("networkidle");
     }
     await page.waitForTimeout(300);
-    const failures = await auditPage(page);
+    const failures = await auditPage(page, options);
     total += failures.length;
     console.log(`${failures.length === 0 ? "PASS" : "FAIL"} ${theme} ${name}${failures.length ? `\n    ${failures.slice(0, 8).join("\n    ")}` : ""}`);
   }

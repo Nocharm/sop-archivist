@@ -497,6 +497,11 @@ export function createPair(bundleId: number, docId: number, revision: number, un
   return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs`, { method: "POST", body: JSON.stringify({ revision, unit_ids: unitIds }) });
 }
 
+/** 제안 짝(코드·AI)을 그대로 확정한다 - 이미 확정이면 서버는 아무것도 쓰지 않는다 */
+export function confirmPair(bundleId: number, docId: number, pairId: number, revision: number): Promise<PairResult> {
+  return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}/confirm`, { method: "POST", body: JSON.stringify({ revision }) });
+}
+
 export function deletePair(bundleId: number, docId: number, pairId: number, revision: number): Promise<PairResult> {
   return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}?revision=${revision}`, { method: "DELETE" });
 }
