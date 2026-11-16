@@ -29,6 +29,8 @@ import { MoveTargetField } from "@/components/assign/move-target-field";
 import { runPickFlight, type FlightSource } from "@/components/assign/pick-flight";
 import { NewPane, NewPaneEmpty } from "@/components/assign/new-pane";
 import { OldPane } from "@/components/assign/old-pane";
+import { PairColumn, PairViewToggle } from "@/components/assign/pair-column";
+import { PairLines, readPairAnchor } from "@/components/assign/pair-lines";
 import { PaneDivider } from "@/components/assign/pane-divider";
 import { RecentRemarks, REMARK_MAX_LENGTH, RemarkModal } from "@/components/assign/remark-modal";
 import { ResetMenu } from "@/components/assign/reset-menu";
@@ -81,6 +83,7 @@ import {
   addToBeDoc,
   addWiStep,
   bulkDecide,
+  confirmPair,
   createPair,
   deletePair,
   editUnits,
@@ -184,6 +187,7 @@ import { buildIdenticalBatches } from "@/lib/match-model";
 import { navigate } from "@/lib/nav-buffer";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, listPartSheets, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
+import { buildPairColumns, canUndoPair, listPairLinks, PAIR_REFUSAL_KEYS, resolvePairDrop, type PairDrop, type PairDropContext, type PairLang } from "@/lib/pair-drop-model";
 import { SLOT_LABELS } from "@/lib/slot-labels";
 import { EDIT_ORIGINAL_PARAM, getNewDocumentsHref, getStageHref } from "@/lib/stages";
 import { useAiJobs } from "@/lib/use-ai-jobs";
@@ -227,6 +231,9 @@ const RETIRING_OPS: ReadonlySet<string> = new Set(["cut", "carve", "merge", "unm
 
 // 한 단으로 연 New 문서에서 연 우클릭 메뉴의 줄 키 자리 - 그 문서에는 줄이 없다
 const SOLO_ROW_KEY = "solo";
+
+// Pair view를 끈 뒤 스크롤 자리 맞추기를 멈추는 사람의 입력 - 굴림(휠·스크롤 막대 누름)·글쇠가 이긴다
+const PAIR_RESTORE_STOPS = ["wheel", "pointerdown", "keydown", "touchstart"] as const;
 
 /** 배정이 걸려 서버가 되물은 편집 - 확인하면 같은 일을 confirm을 켜고 다시 보낸다 */
 type ConfirmedEdit =
@@ -293,6 +300,36 @@ function revealElement(el: HTMLElement) {
   const box = el.getBoundingClientRect();
   const frame = pane.getBoundingClientRect();
   if (shouldRecenter(box.top, box.bottom, frame.top, frame.bottom)) el.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+}
+
+/** 칸(.pane-body) 안의 조각을 보이게 - Old 용지와 Pair view 칸이 같이 쓴다. 조각은 그려지기 전 높이를 어림하므로(content-visibility), 멀리 부드럽게 굴리면
+ *  지나가며 그려진 조각이 자라 목표가 밀려 화면 밖에서 멈춘다(잰 값, 극단 자료 OLD-90: Pair view 칸 5,000px, Pair view를 끈 뒤 Old 용지 11,000px 모자랐다).
+ *  한 화면 안이면 지금처럼(부드럽게), 더 멀면 바로 옮기고 조각 윗변이 칸 안에 두 프레임 버틸 때까지(길어도 10프레임) 다시 맞춘다 - 다시 그려진 용지는 몇 프레임에 걸쳐 자란다 */
+function revealFarElement(el: HTMLElement) {
+  const pane = el.closest(".pane-body");
+  if (!pane) return;
+  const box = el.getBoundingClientRect();
+  const frame = pane.getBoundingClientRect();
+  if (!shouldRecenter(box.top, box.bottom, frame.top, frame.bottom)) return;
+  if (box.bottom > frame.top - frame.height && box.top < frame.bottom + frame.height) {
+    revealElement(el);
+    return;
+  }
+  el.scrollIntoView({ block: "center" });
+  let frames = 0;
+  let held = 0;
+  const check = () => {
+    if (!el.isConnected) return;
+    const top = el.getBoundingClientRect().top;
+    const now = pane.getBoundingClientRect();
+    if (top >= now.top && top < now.bottom) held += 1;
+    else {
+      held = 0;
+      el.scrollIntoView({ block: "center" });
+    }
+    if (held < 2 && ++frames < 10) requestAnimationFrame(check);
+  };
+  requestAnimationFrame(check);
 }
 
 // 도구 줄이 이보다 좁으면 오른쪽 단추는 아이콘만(라벨은 툴팁) - 1440 창에서 한 줄을 지킨다(한·영 모두 AI 메뉴가 있어도)
@@ -537,6 +574,18 @@ export default function AssignPage() {
   const soloView = hasSolo && soloLoad.data?.document.id === solo.docId ? soloLoad.data : null;
   const oldView = isSolo ? soloView : viewOf(row?.documentId ?? manualOldDoc ?? oldDocIds[0]);
   const paperModel = useMemo(() => (oldView ? buildPaperModel(oldView) : null), [oldView]);
+  // Pair view - 한/영 따로 문서를 KO | EN 두 칸으로 편 문서 id. 이 화면을 연 동안만 기억한다(새로 고치면 꺼져 있다).
+  // 다른 문서·한 단의 New 문서 원문·출처 없는 New로 가면 꺼진다(렌더 중 상태 맞추기 - dropLink와 같은 짜임)
+  const [pairViewDoc, setPairViewDoc] = useState<number | null>(null);
+  const canPairView = mode === "old" && !hasSolo && oldView?.document.language_layout === "ko_en_separate";
+  const isPairView = canPairView && pairViewDoc === oldView?.document.id;
+  if (oldView && pairViewDoc !== null && !isPairView) setPairViewDoc(null);
+  const pairColumns = useMemo(() => (isPairView && oldView ? buildPairColumns(oldView) : null), [isPairView, oldView]);
+  const pairLinks = useMemo(() => (pairColumns ? listPairLinks(pairColumns) : []), [pairColumns]);
+  // 켜기 전 Old 용지의 스크롤 자리 - 고른 줄 없이 끄면 이리로 돌아간다
+  const pairScrollRef = useRef(0);
+  // 고른 줄 없이 끈 뒤 그 자리로 되풀이해 맞추는 중이면 그 멈춤 함수
+  const pairRestoreRef = useRef<(() => void) | null>(null);
   // 본문·머리말·꼬리말 탭 - 고른 조각이 다른 탭에 있으면 그 탭으로 가고, 사람이 고른 탭은 그 줄에서 그대로 둔다
   const partKeys = useMemo(() => (paperModel ? (["body", "header", "footer"] as const).filter((key) => paperModel[key].length > 0) : []), [paperModel]);
   const paperTabs = useMemo(() => (oldView && paperModel ? buildPaperTabs(oldView, paperModel) : null), [oldView, paperModel]);
@@ -634,6 +683,8 @@ export default function AssignPage() {
   const [view, setView] = useState(readAssignView);
   const paneSlide = usePaneSlide(view.single);
   function changeView(patch: Partial<typeof view>) {
+    // 보기 단추(한 단·양 단)·세로선 끝까지 접기는 Pair view를 끄고 눌린 보기로 간다 - 다시 그려진 Old 용지는 고른 조각(없으면 켜기 전 자리)을 보인다
+    if (patch.single !== undefined && isPairView) closePairView();
     // 한 단 ↔ 양 단 - 바꾸기 전 Old 용지의 자리를 재 둔다(바뀐 뒤 그 자리에서 미끄러져 온다)
     if (patch.single !== undefined && patch.single !== view.single) paneSlide.capture();
     // 양 단으로 펴면 한 단으로 연 New 문서는 닫힌다(양 단의 왼쪽은 늘 Old 문서다). 한 단으로 접으면 New 칸에서 고르던 문장은 그 문서를 한 단으로 연 것이 된다
@@ -746,12 +797,8 @@ export default function AssignPage() {
 
   function scrollToUnit(unitId: number) {
     requestAnimationFrame(() => {
-      const target = document.querySelector(`[data-testid="assign-paper-unit-${unitId}"]`);
-      const pane = document.querySelector('[data-pane="old"] .pane-body');
-      if (!target || !pane) return;
-      const box = target.getBoundingClientRect();
-      const frame = pane.getBoundingClientRect();
-      if (shouldRecenter(box.top, box.bottom, frame.top, frame.bottom)) target.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      const target = document.querySelector<HTMLElement>(`[data-testid="assign-paper-unit-${unitId}"]`);
+      if (target) revealFarElement(target);
     });
   }
 
@@ -763,6 +810,83 @@ export default function AssignPage() {
     setCarvePick(null);
     window.getSelection()?.removeAllRanges();
   }
+
+  /** Pair view를 켠다 - 용지의 도구(나눌 선·긁은 글자·떠 있는 메뉴)는 거둔다. 짝 고르는 중이면 그대로 둔다(띠가 KO 칸 위로 옮겨 간다) */
+  function openPairView() {
+    if (!oldView) return;
+    cutLine.clear();
+    clearCarve();
+    setMenu(null);
+    setCtxMenu(null);
+    stopPairRestore();
+    pairScrollRef.current = document.querySelector<HTMLElement>('[data-pane="old"] .pane-body')?.scrollTop ?? 0;
+    setPairViewDoc(oldView.document.id);
+  }
+
+  /** Pair view를 끈다 - 다시 그려진 Old 용지에서 고른 줄의 조각을 보이고, 고른 줄이 없으면 켜기 전 스크롤 자리로.
+   *  unitId - 보일 조각(나누기는 나눌 문장). 끄는 길은 모두 여기를 지난다(단추·V·보기 단추·세로선 접기·New 칸으로 보내기·나누기). Old 자리로 뛰는 길(jumpToOld·다른 문서의 줄 고르기)은 그 길이 스크롤하니 상태만 끈다 */
+  function closePairView(unitId: number | undefined = row?.unitIds[0]) {
+    setPairViewDoc(null);
+    if (unitId !== undefined) {
+      scrollToUnit(unitId);
+      return;
+    }
+    // 다시 그려진 용지는 몇 프레임에 걸쳐 높이가 자란다(첫 프레임에 맞추면 그때의 끝에 걸린다, 잰 값) - 자리가 두 프레임 버틸 때까지(길어도 30프레임) 다시 맞춘다.
+    // 한 단처럼 용지가 짧아져 그 자리까지 못 가면 끝까지
+    // 되풀이는 다시 켜기·화면 떠나기·사람의 굴림·누름·글쇠에서 멈춘다 - 다시 켠 KO 칸도 같은 선택자에 걸려 용지의 자리를 받는다
+    stopPairRestore();
+    const top = pairScrollRef.current;
+    let frames = 0;
+    let held = 0;
+    let frame = 0;
+    const stop = () => {
+      cancelAnimationFrame(frame);
+      for (const type of PAIR_RESTORE_STOPS) window.removeEventListener(type, stop, true);
+      if (pairRestoreRef.current === stop) pairRestoreRef.current = null;
+    };
+    const restore = () => {
+      const pane = document.querySelector<HTMLElement>('[data-pane="old"] .pane-body');
+      if (pane) {
+        const want = Math.min(top, pane.scrollHeight - pane.clientHeight);
+        held = Math.abs(pane.scrollTop - want) <= 1 ? held + 1 : 0;
+        if (held === 0) pane.scrollTop = want;
+      }
+      if (held < 2 && ++frames < 30) frame = requestAnimationFrame(restore);
+      else stop();
+    };
+    for (const type of PAIR_RESTORE_STOPS) window.addEventListener(type, stop, { capture: true, passive: true });
+    pairRestoreRef.current = stop;
+    frame = requestAnimationFrame(restore);
+  }
+  function stopPairRestore() {
+    pairRestoreRef.current?.();
+  }
+  useEffect(() => () => pairRestoreRef.current?.(), []);
+  // Pair view 단추는 켜고 끌 때 다른 칸 머리의 다른 단추로 바뀐다(눌린 단추는 사라진다) - 단추로 바꿨으면 새로 보이는 단추로 포커스를 옮긴다
+  const focusPairToggleRef = useRef(false);
+  function togglePairViewByButton() {
+    focusPairToggleRef.current = true;
+    if (isPairView) closePairView();
+    else openPairView();
+  }
+  useEffect(() => {
+    if (!focusPairToggleRef.current) return;
+    focusPairToggleRef.current = false;
+    document.querySelector<HTMLElement>('[data-testid="assign-pair-view"]')?.focus({ preventScroll: true });
+  }, [isPairView]);
+
+  // Pair view 동안 고른 줄이 바뀌면 그 줄의 조각을 칸마다 화면 안으로(이미 보이면 움직이지 않는다) - 짝의 두 끝을 한 화면에 들이는 길이다
+  const revealPairRow = useEffectEvent(() => {
+    for (const unitId of row?.unitIds ?? []) {
+      const el = document.querySelector<HTMLElement>(`[data-testid="assign-pair-piece-${unitId}"]`);
+      if (el) revealFarElement(el);
+    }
+  });
+  useEffect(() => {
+    if (!isPairView || activeKey === null) return;
+    const frame = requestAnimationFrame(() => revealPairRow());
+    return () => cancelAnimationFrame(frame);
+  }, [isPairView, activeKey]);
   // 떨어진 문장과 한/영 짝 맺기 - 메뉴에서 시작하면 다음에 누르는 문장이 짝이 된다(Esc로 거둔다). 문서를 바꾸면 버려진다.
   // 셋 이상이면 Shift+클릭으로 모으고(picked) 마지막 문장을 그냥 누르거나 줄의 단추로 맺는다
   const [pairFrom, setPairFrom] = useState<{ docId: number; unitId: number; picked: number[] } | null>(null);
@@ -845,9 +969,10 @@ export default function AssignPage() {
     if (!view.single) changeView({ single: true });
   }
 
-  /** 편집·되돌리기 뒤 그 문장으로 - 다시 받은 뒤에 고른다(Old 문서면 그 문장의 줄, 한 단의 New 문서면 그 문장) */
-  function followUnit(unitId: number) {
-    if (hasSolo) setSoloFollow({ unitId, stale: soloLoad.data });
+  /** 편집·되돌리기 뒤 그 문장으로 - 다시 받은 뒤에 고른다(Old 문서면 그 문장의 줄, 한 단의 New 문서면 그 문장).
+   *  inSolo - 같은 이벤트에서 setSolo(null)로 New 문서 다듬기를 닫았으면 false를 넘긴다(이 렌더의 hasSolo는 아직 켜져 있다) */
+  function followUnit(unitId: number, inSolo = hasSolo) {
+    if (inSolo) setSoloFollow({ unitId, stale: soloLoad.data });
     else setFollow({ unitId, staleViews: viewList, staleUnits: units.data });
   }
 
@@ -1167,7 +1292,8 @@ export default function AssignPage() {
   }
 
   function splitAtCut() {
-    if (!cutUnit || cutLine.at === null) return;
+    // Pair view에는 용지(나눌 선)가 없다 - 보이지 않는 자리에서 자르지 않는다
+    if (!cutUnit || cutLine.at === null || isPairView) return;
     void runUnitEdit({ type: "split", unit_id: cutUnit.id, at: cutLine.at }, t("split.didSplit"), null);
   }
 
@@ -1192,8 +1318,13 @@ export default function AssignPage() {
     else if (action === "ref_mark") setRefEntryId(target.id);
     else if (action === "ref_clear") void runUnitEdit({ type: "clear_ref", unit_id: target.id }, t("assign.ref.didReject"), target.id);
     else if (action === "split") {
+      // Pair view에는 용지가 없어 선이 보이지 않는다 - 끄고(고른 조각이 Old 용지에 보인다) 그 용지에 선을 놓는다
+      if (isPairView) {
+        closePairView(target.id);
+        if (cutLine.placeNear(target, caret)) setCutUnitId(target.id);
+      }
       // 이미 그 문장에 선이 있으면 바로 나누고, 없으면 누른 자리(키보드면 가운데) 가까이에 선을 놓는다 - 끌거나 ←→로 옮긴 뒤 Split here
-      if (cutUnit?.id === target.id && cutLine.at !== null) splitAtCut();
+      else if (cutUnit?.id === target.id && cutLine.at !== null) splitAtCut();
       else if (isNewEdit && solo && !written.some((item) => item.new_unit_id === target.id && item.text === target.text)) {
         // New 칸의 줄에 그 문장의 글이 그대로 있지 않으면(표 칸 등) 그 자리에 선을 그릴 수 없다 - 한 단으로 열어 원문에서 자른다
         setSolo({ ...solo, unitId: target.id, inPlace: false });
@@ -1670,6 +1801,7 @@ export default function AssignPage() {
 
   /** Old 조각의 연결 배지를 누름 - 고름·메뉴는 그대로 두고 오른쪽 칸을 그 문장으로 보내 번쩍이게만 한다 */
   function showInNew(targetId: number) {
+    if (isPairView) closePairView();
     const docId = writtenMap.get(targetId)?.target_doc_id;
     if (docId !== undefined) setManualNewDoc({ key: toggleKey, docId });
     if (view.single) changeView({ single: false });
@@ -1678,6 +1810,7 @@ export default function AssignPage() {
 
   /** New 문장의 "← 출처" 칩을 누름 - 그 출처 줄을 고르고(다른 Old 문서면 그 문서로) Old의 그 조각으로 간다 */
   function jumpToOld(unitId: number, targetId: number) {
+    setPairViewDoc(null);
     const key = rowOfUnit.get(unitId);
     const docId = writtenMap.get(targetId)?.target_doc_id;
     if (!key) return;
@@ -1898,7 +2031,14 @@ export default function AssignPage() {
         dragLineRef.current?.update(isStartShown ? start : null, readNewLineEnd(line, unitIds[0]));
         return { state: "ok", note: t("assign.drag.link"), target: line };
       }
-      // 이음이 아니면 보내기 - 문장 사이면 점선이 놓을 자리 선의 왼쪽 끝에 닿는다
+      // 한/영 연달아 문서의 Old 조각 위면 짝 맺기(5걸음) - 점선은 포인터까지
+      const pair = readPairAt(point, unitIds);
+      if (pair.drop.kind !== "none") {
+        dropGapRef.current?.hide();
+        dragLineRef.current?.update(isStartShown ? start : null, point);
+        return readPairHover(pair.drop, pair.target, pair.el);
+      }
+      // 이음도 짝도 아니면 보내기 - 문장 사이면 점선이 놓을 자리 선의 왼쪽 끝에 닿는다
       const send = readSendAt(point, unitIds);
       const gapEnd = showDropGap(send.drop, send.item);
       dragLineRef.current?.update(isStartShown ? start : null, gapEnd ?? point);
@@ -1910,6 +2050,10 @@ export default function AssignPage() {
       if (tree.kind !== "none") return;
       const { line, drop } = readDropAt(point);
       if (drop.kind !== "link" || line === null) {
+        // 짝 맺기는 줄을 고르지 않는다 - 저장 뒤 followUnit이 새 짝 줄을 고른다. 거절이면 아무 일도 없다
+        const pair = readPairAt(point, unitIds).drop;
+        if (pair.kind === "pair" || pair.kind === "confirm") void runPairDrop(pair);
+        if (pair.kind !== "none") return;
         applySendDrop(rowKey, readSendAt(point, unitIds).drop);
         return;
       }
@@ -1930,8 +2074,127 @@ export default function AssignPage() {
       dropGapRef.current = null;
     },
   };
-  // 두 문서 틀은 불러온 뒤에야 그려진다 - 그려지면 다시 붙도록 조건에 넣는다
-  useBoxDrag(panesBoxRef, isOldDrag && ready && rows.length > 0 ? dragConfig : null);
+  // 두 문서 틀은 불러온 뒤에야 그려진다 - 그려지면 다시 붙도록 조건에 넣는다. Pair view에서는 짝 끌기만 붙는다(KO 칸도 data-pane="old"라 둘이 한 누름을 다투지 않게)
+  useBoxDrag(panesBoxRef, isOldDrag && ready && rows.length > 0 && !isPairView ? dragConfig : null);
+
+  // --- Pair view 끌기(끌어다 놓기 4걸음) - 조각을 맞은편 언어의 조각에 놓아 짝 맺기·제안 확정. 바로 저장하고 알림의 Undo가 푼다 ---
+  const pairOfUnit = useMemo(() => new Map((oldView?.pairs ?? []).flatMap((pair) => pair.unit_ids.map((unitId) => [unitId, pair] as const))), [oldView]);
+  /** 짝 놓기가 보는 지금 상태 - 렌더마다 한 번 짓는다(포인터가 움직일 때마다 짓지 않는다) */
+  const pairDropCtx: PairDropContext = { pairOf: (unitId) => pairOfUnit.get(unitId), isDecided: isUnitDecided, hasDraft: hasUnitDraft };
+  /** Pair view - 포인터 밑의 조각과 거기 놓으면 할 일 */
+  function readPairViewAt(source: ViewUnit, point: DragPoint): { drop: PairDrop; target: ViewUnit | undefined; el: HTMLElement | null } {
+    const el = findUnderPoint(point, "[data-pair-col] .pair-piece[data-unit]");
+    const target = el ? paperModel?.units.get(Number(el.dataset.unit)) : undefined;
+    return { drop: resolvePairDrop([source], target, pairDropCtx), target, el };
+  }
+  /**
+   * 가까운 줄(5걸음) - 평소 Old 칸에서 포인터 밑의 가장 안쪽 조각과 거기 놓으면 할 일. 끄는 것은 줄 전부(짝 카드는 한 장)다.
+   * 한/영 연달아 문서에서만 - 그 밖의 배치에서 Old 조각 위는 지금처럼 놓을 자리 밖이다(한 언어 문서에서 "같은 언어" 거절이 번쩍이지 않게)
+   */
+  function readPairAt(point: DragPoint, unitIds: readonly number[]): { drop: PairDrop; el: HTMLElement | null; target: ViewUnit | undefined } {
+    const nowhere = { drop: { kind: "none" } as const, el: null, target: undefined };
+    if (oldView?.document.language_layout !== "ko_en_interleaved" || !paperModel) return nowhere;
+    const sources = unitIds.flatMap((id) => paperModel.units.get(id) ?? []);
+    // 줄의 Unit이 그 문서에 다 없으면 한 Unit만으로 맺게 되니 놓을 자리 밖
+    if (sources.length !== unitIds.length) return nowhere;
+    const el = findUnderPoint(point, '[data-pane="old"] :is(.cell-piece, .strip)[data-strip-unit]');
+    const target = el ? paperModel.units.get(Number(el.dataset.stripUnit)) : undefined;
+    return { drop: resolvePairDrop(sources, target, pairDropCtx), el, target };
+  }
+  /** 표의 메모와 테두리 - pair는 "Pair with <번호>", confirm은 "Confirm this suggested pair", refused는 이유, none은 놓을 자리 밖 */
+  function readPairHover(drop: PairDrop, target: ViewUnit | undefined, el: HTMLElement | null): DragHover {
+    if (drop.kind === "pair") return { state: "ok", note: t("assign.pairDrag.pair", { id: target?.display_id ?? "" }), target: el };
+    if (drop.kind === "confirm") return { state: "ok", note: t("assign.pairDrag.confirm"), target: el };
+    if (drop.kind === "refused") return { state: "refused", note: t(PAIR_REFUSAL_KEYS[drop.reason]), target: el };
+    return { state: "none" };
+  }
+  const findPairPiece = (root: ParentNode, unitId: number) => root.querySelector<HTMLElement>(`[data-pair-col] .pair-piece[data-unit="${unitId}"]`);
+  const pairDragConfig: BoxDragConfig<{ unit: ViewUnit }> = {
+    pick: (event) => {
+      const el = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-pair-col] .pair-piece[data-drag-box]") : null;
+      const unit = el ? paperModel?.units.get(Number(el.dataset.unit)) : undefined;
+      return unit ? { unit } : null;
+    },
+    getCard: ({ unit }) => buildOldDragCard([unit], (count) => t("assign.drag.units", { count })),
+    getScrollers: () => [...(panesBoxRef.current?.querySelectorAll<HTMLElement>(".pane-body") ?? [])],
+    onStart: ({ unit }) => {
+      const root = panesBoxRef.current;
+      if (!root) return;
+      findPairPiece(root, unit.id)?.setAttribute("data-drag-src", "");
+      dragLineRef.current = createDragLinkLine(root);
+    },
+    onMove: ({ unit }, point) => {
+      // 점선은 출발 조각의 짝 선 자리에서 포인터까지 - 출발 조각이 제 칸 화면 밖이면 감춘다(2걸음과 같다)
+      const piece = panesBoxRef.current ? findPairPiece(panesBoxRef.current, unit.id) : null;
+      const frame = piece?.closest(".pane-body")?.getBoundingClientRect();
+      const start = piece ? readPairAnchor(piece, unit.lang as PairLang) : null;
+      const isStartShown = start !== null && frame !== undefined && start.y >= frame.top && start.y <= frame.bottom;
+      dragLineRef.current?.update(isStartShown ? start : null, point);
+      const { drop, target, el } = readPairViewAt(unit, point);
+      return readPairHover(drop, target, el);
+    },
+    onDrop: ({ unit }, point) => {
+      const { drop } = readPairViewAt(unit, point);
+      if (drop.kind === "pair" || drop.kind === "confirm") void runPairDrop(drop);
+    },
+    onEnd: () => {
+      for (const el of panesBoxRef.current?.querySelectorAll("[data-drag-src]") ?? []) el.removeAttribute("data-drag-src");
+      dragLineRef.current?.remove();
+      dragLineRef.current = null;
+    },
+  };
+  useBoxDrag(panesBoxRef, isPairView && isOldDrag && ready ? pairDragConfig : null);
+
+  /** 놓아서 맺기·확정 - 바로 저장하고 Undo가 든 알림을 띄운다. busy면 버린다 */
+  async function runPairDrop(drop: Extract<PairDrop, { kind: "pair" | "confirm" }>) {
+    if (!oldView || busy) return;
+    // 문서와 revision은 보던 Old 문서에서 - 양 단에서 New 문장을 다듬는 중이면 shapeView는 New 문서다
+    const doc = oldView.document;
+    // New 문장 다듬기를 닫고(따라갈 New 문장도 버린다) 저장 뒤 Old 줄을 따라간다 - 이 렌더의 hasSolo는 아직 켜져 있어 followUnit에 false를 넘긴다
+    setSolo(null);
+    setSoloFollow(null);
+    setBusy(true);
+    try {
+      const { pair } = drop.kind === "pair" ? await createPair(bundleId, doc.id, doc.revision, drop.unitIds) : await confirmPair(bundleId, doc.id, drop.pairId, doc.revision);
+      if (pair === null) return;
+      setSelectedKey(null);
+      // 알림은 같은 글이면 앞의 것을 지운다 - 번호를 적어 잇달아 맺어도 알림마다 제 Undo가 남게
+      const ids = pair.unit_ids.flatMap((unitId) => unitMap.get(unitId)?.display_id ?? []).join(" + ");
+      showToast(t(drop.kind === "pair" ? "assign.pairDrag.done" : "assign.pairDrag.confirmed", { ids }), "ok", {
+        action: { label: t("common.undo"), run: () => void pairUndoRef.current(doc.id, pair.id, pair.unit_ids) },
+      });
+      followUnit(pair.unit_ids[0], false);
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+    } finally {
+      reloadAfterEdit();
+      setBusy(false);
+    }
+  }
+
+  /** 알림의 Undo - 다시 읽어 그 짝이 같은 Unit들로 확정된 채이고 판단이 없을 때만 푼다. 아니면 아무것도 쓰지 않고 알린다. 알림의 단추는 한 번뿐이라 busy로 막지 않는다 */
+  async function undoPairDrop(docId: number, pairId: number, unitIds: readonly number[]) {
+    try {
+      const fresh = await getDocumentView(bundleId, docId);
+      if (!canUndoPair(fresh, pairId, unitIds)) {
+        showToast(t("assign.pairDrag.undoStale"), "info");
+        return;
+      }
+      await deletePair(bundleId, docId, pairId, fresh.document.revision);
+      showToast(t("split.pairRemoved"));
+      setSelectedKey(null);
+      followUnit(unitIds[0]);
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+    } finally {
+      reloadAfterEdit();
+    }
+  }
+  // 알림은 화면을 넘어 남는다 - 콜백이 그 렌더의 함수를 붙들지 않게 가장 최근의 것을 미러한다(use-box-drag의 최신 config와 같은 짜임)
+  const pairUndoRef = useRef(undoPairDrop);
+  useEffect(() => {
+    pairUndoRef.current = undoPairDrop;
+  });
 
   /** 짝 고르기를 맺는다 - 처음 문장과 고른 문장들이 한 짝이 된다. 맺을 수 없으면 까닭을 알리고 고르던 것을 그대로 둔다 */
   function finishPairPick(pickedIds: number[]) {
@@ -2070,7 +2333,11 @@ export default function AssignPage() {
       if (cutLine.at !== null) cutLine.clear();
       else if (isNewEdit) setSolo(null);
       else setChecked(new Set());
-    } else if (key === "v") changeView({ single: !view.single });
+    } else if (key === "v") {
+      // Pair view 동안은 보기를 바꾸지 않고 Pair view만 끈다 - 켜기 전 보기로 돌아간다
+      if (isPairView) closePairView();
+      else changeView({ single: !view.single });
+    }
     else if (key === "s" && canEdit && hasSolo && cutLine.at !== null) splitAtCut();
     else if ((key === "arrowleft" || key === "arrowright") && canEdit && isNewEdit && cutLine.at !== null) cutLine.nudge(key === "arrowleft" ? -1 : 1);
     else if (!canEdit || !row) return;
@@ -2966,8 +3233,9 @@ export default function AssignPage() {
             count={unsourced.length}
             selected={mode === "unsourced"}
             onClick={() => {
-              // 출처 없는 New 문장은 New 칸에서 본다
+              // 출처 없는 New 문장은 New 칸에서 본다. Pair view도 끄는 길이라 다른 길과 같이 Old 자리로 돌아온다(보기를 바꾸면 changeView가 끈다)
               if (view.single) changeView({ single: false });
+              else if (isPairView) closePairView();
               setMode("unsourced");
             }}
             testId="assign-filter-unsourced"
@@ -3201,7 +3469,40 @@ export default function AssignPage() {
               }
             />
           ) : (
-            <div ref={setPanes} className="assign-panes" data-single={view.single ? "" : undefined} style={{ "--split": `${view.split * 100}%` }}>
+            <div ref={setPanes} className="assign-panes" data-single={view.single && !isPairView ? "" : undefined} data-pair-view={isPairView ? "" : undefined} style={{ "--split": `${view.split * 100}%` }}>
+              {pairColumns ? (
+              // Pair view - Old 칸·New 칸·이음 선 자리에 KO 칸 | 세로선 | EN 칸 | 짝 선. 세로선(폭)과 확대(왼쪽 Old 값, 오른쪽 New 값)는 그대로 쓴다
+              <>
+              <PairColumn
+                side="ko"
+                items={pairColumns.ko}
+                docLabel={oldDocOptions.find((option) => option.value === String(oldView?.document.id))?.label}
+                toggle={<PairViewToggle on onToggle={togglePairViewByButton} />}
+                banner={pairBanner !== null && !isNewEdit ? pairBanner : null}
+                selectedIds={highlightIds}
+                pickedIds={pickedOld}
+                statusOf={(unitId) => unitMap.get(unitId)?.status}
+                canDrag={isOldDrag}
+                onUnitClick={handleOldClick}
+                zoom={view.zoomOld}
+                onZoom={(dir) => zoomPane("old", dir)}
+              />
+              <PaneDivider value={view.split} onCommit={(ratio) => changeView({ split: ratio })} onCollapse={() => changeView({ single: true })} />
+              <PairColumn
+                side="en"
+                items={pairColumns.en}
+                selectedIds={highlightIds}
+                pickedIds={pickedOld}
+                statusOf={(unitId) => unitMap.get(unitId)?.status}
+                canDrag={isOldDrag}
+                onUnitClick={handleOldClick}
+                zoom={view.zoomNew}
+                onZoom={(dir) => zoomPane("new", dir)}
+              />
+              <PairLines links={pairLinks} focusIds={highlightIds} />
+              </>
+              ) : (
+              <>
               <OldPane
                 docOptions={paperDocOptions}
                 docId={String(oldView?.document.id ?? solo?.docId ?? "")}
@@ -3284,6 +3585,7 @@ export default function AssignPage() {
                 zoom={view.zoomOld}
                 onZoom={(dir) => zoomPane("old", dir)}
                 dragBoxes={isOldDrag}
+                headExtra={canPairView ? <PairViewToggle on={false} onToggle={togglePairViewByButton} /> : undefined}
               />
               {!view.single && (
               <>
@@ -3328,6 +3630,8 @@ export default function AssignPage() {
                   />
                   <LinkLines pairs={linkPairs} focusUnits={highlightIds} focusTargets={liveDoc ? new Set([...pickedNew, ...liveDoc.targetIds]) : pickedNew} visible={view.lines} />
                 </>
+              )}
+              </>
               )}
               </>
               )}
