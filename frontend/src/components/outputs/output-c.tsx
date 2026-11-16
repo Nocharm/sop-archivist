@@ -768,7 +768,8 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
                     )}
                   </h3>
                   {section.na_reason !== null ? (
-                    <p className="text-ink-3">N/A · {section.na_reason}</p>
+                    // 끄는 동안 칸이 흐려져도 이 줄은 그대로다(components.css) - 왜 못 놓는지를 그 칸에서 읽는다
+                    <p className="text-ink-3" data-na-reason="">N/A · {section.na_reason}</p>
                   ) : section.items.length === 0 ? (
                     // 줄이 없는 칸 - 끌어 온 덩어리를 받으면 그 칸의 첫 줄들이 된다(놓을 선은 이 표시 위에 긋는다)
                     <p className="text-ink-4" data-testid={`output-c-empty-${doc.target_doc_id}-${section.location_key}`}>

@@ -153,10 +153,17 @@ const readDragMarks = (page) => page.evaluate(() => ({
   marks: document.querySelectorAll("[data-drag-src], [data-drag-home], [data-drag-seen], [data-drag-closed], [data-drag-sheet], [data-drag-locked], [data-drop]").length,
   lineShown: document.querySelector('[data-testid="output-c-dropline"]')?.hidden === false,
 }));
-// 칸 하나의 상태 - 흐림(opacity)과 올린 칸 테두리(data-drop)
+// 칸 하나의 상태 - 흐림(칸 머리에 닿는 opacity를 용지까지 곱한 값), N/A 사유 줄의 흐림, 올린 칸 테두리(data-drop).
+// 흐림은 칸이 아니라 칸 안 요소에 걸린다(N/A 사유 줄은 빼고) - 그래서 머리에서 잰다
 const readSectionState = (page, key) => page.evaluate((k) => {
   const section = document.querySelector(`[data-testid="output-c"] section[data-location-key="${CSS.escape(k)}"]`);
-  return section ? { opacity: Number(getComputedStyle(section).opacity), drop: section.dataset.drop ?? null } : null;
+  const readOpacity = (el) => {
+    let value = 1;
+    for (let node = el; node && node.dataset?.testid !== "output-c"; node = node.parentElement) value *= Number(getComputedStyle(node).opacity);
+    return Math.round(value * 100) / 100;
+  };
+  const reason = section?.querySelector("[data-na-reason]");
+  return section ? { opacity: readOpacity(section.querySelector("h3")), reasonOpacity: reason ? readOpacity(reason) : null, drop: section.dataset.drop ?? null } : null;
 }, key);
 // 올린 칸의 테두리(outline)가 그 칸의 글자와 놓을 선에 닿지 않나 - 테두리 띠는 칸 상자를 outline-offset만큼 넓힌 안쪽 선부터 굵기만큼 더 넓힌 바깥 선까지.
 // 글자(칸 머리·줄 번호·줄 글·표 칸·빈 칸 "–"·N/A 줄을 글자 범위로 잰다)와 선·선의 동그라미(::before)마다 띠까지의 여유(px)를 재 가장 작은 값을 돌려준다
@@ -197,8 +204,43 @@ const readOutlineFit = (page, key) => page.evaluate((k) => {
   const round = (value) => Math.round(value * 10) / 10;
   return { drop: section.dataset.drop, offset, width, texts: texts.length, textClear: texts.length ? round(Math.min(...texts.map(clearance))) : null, marks: marks.length, markClear: marks.length ? round(Math.min(...marks.map(clearance))) : null };
 }, key);
-// 1px 넘게 떨어져야 닿지 않은 것이다. 놓을 수 있는 칸(over)에는 선이 그어져 있어야 한다
-const isOutlineClear = (fit) => fit !== null && fit.texts > 0 && fit.textClear >= 1 && (fit.drop !== "over" || (fit.marks === 2 && fit.markClear >= 1));
+// 글자와는 1px 넘게, 선·동그라미와는 2px 넘게 떨어져야 한다(1px 틈은 화면 배율에 따라 붙어 보인다). 놓을 수 있는 칸(over)에는 선이 그어져 있어야 한다
+const isOutlineClear = (fit) => fit !== null && fit.texts > 0 && fit.textClear >= 1 && (fit.drop !== "over" || (fit.marks === 2 && fit.markClear >= 2));
+// 고른 줄의 왼쪽 막대(줄 box-shadow 가운데 --accent 색 층이 보이는 띠)와 그 줄 번호 첫 글자 사이(px) - 음수면 막대가 글자를 덮는다.
+// 위 층(앞에 적힌 층)이 덮는 곳은 뺀다. 고른 줄이 아니거나 번호·막대가 없으면 clear null과 그 까닭.
+// 줄의 box-shadow는 호버 고리에서 넘어오는 동안 바뀌므로(.c-row[data-drag-box] transition) 그 줄의 전환이 끝난 뒤에 잰다
+const readBarClear = async (page, id) => {
+  await page.waitForFunction((rowId) => (document.querySelector(`[data-testid="output-c-row-${rowId}"]`)?.getAnimations() ?? []).length === 0, id, { timeout: 2000 });
+  return readBarNow(page, id);
+};
+const readBarNow = (page, id) => page.evaluate((rowId) => {
+  const row = document.querySelector(`[data-testid="output-c-row-${rowId}"]`);
+  const num = document.querySelector(`[data-testid="output-c-number-${rowId}"]`);
+  if (!row || !num?.firstChild) return { clear: null, why: "no row or number" };
+  if (document.activeElement !== row) return { clear: null, why: `focus on ${document.activeElement?.dataset.testid ?? document.activeElement?.tagName}` };
+  const probe = document.createElement("i");
+  probe.style.color = "var(--accent)";
+  row.append(probe);
+  const accent = getComputedStyle(probe).color;
+  probe.remove();
+  // 층은 "색 x y 흐림 퍼짐 [inset]" - 색 안의 쉼표는 괄호 밖에서만 나눈다
+  const layers = getComputedStyle(row).boxShadow.split(/,(?![^(]*\))/).map((part) => {
+    const m = part.trim().match(/^(.*\))\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+([\d.]+)px\s+(-?[\d.]+)px(\s+inset)?$/);
+    return m ? { color: m[1], x: Number(m[2]), inset: Boolean(m[6]) } : null;
+  });
+  const at = layers.findIndex((layer) => layer?.color === accent);
+  if (at < 0) return { clear: null, why: "no accent layer", shadow: getComputedStyle(row).boxShadow };
+  const left = row.getBoundingClientRect().left;
+  const bar = layers[at];
+  // 안쪽 막대는 줄 왼쪽 끝부터 x만큼, 바깥 막대는 x부터 줄 왼쪽 끝까지 - 그중 위 바깥 층이 덮는 오른쪽은 빠진다
+  const covers = layers.slice(0, at).filter((layer) => layer && !layer.inset && layer.x < 0).map((layer) => layer.x);
+  const right = bar.inset ? left + bar.x : left + Math.max(bar.x, Math.min(0, ...covers));
+  const range = document.createRange();
+  range.setStart(num.firstChild, 0);
+  range.setEnd(num.firstChild, 1);
+  const glyph = range.getBoundingClientRect();
+  return { clear: Math.round((glyph.left - right) * 10) / 10, number: num.textContent.trim(), shadow: getComputedStyle(row).boxShadow };
+}, id);
 // 칸 안의 놓을 점 - 줄이 있으면 마지막 줄 아래 끝 바로 위(칸 끝), 없으면 빈 칸 표시("–")·N/A 사유 줄의 가운데
 const pointInSectionEnd = (page, key) => page.evaluate((k) => {
   const section = document.querySelector(`[data-testid="output-c"] section[data-location-key="${CSS.escape(k)}"]`);
@@ -2090,6 +2132,7 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page, tak
   check("the refused outline clears the N/A section's heading and reason", isOutlineClear(naFit), JSON.stringify(naFit));
   await takeShot("order-xsec-refused-na.png");
   check("an N/A section refuses with a reason", validFirst && refusal.refused && refusal.text.includes("That section is N/A in the To-Be list.") && (await dropLine.isHidden()) && refusal.section?.opacity < 1 && refusal.section?.drop === "refused", JSON.stringify({ validFirst, ...refusal }));
+  check("the dimmed N/A section keeps its N/A reason line undimmed", refusal.section?.reasonOpacity === 1, JSON.stringify(refusal.section));
   const refusalPuts = puts.length;
   await page.mouse.up();
   await page.waitForTimeout(400);
@@ -2245,6 +2288,8 @@ await runStep("order: drag a block into another section, a sub-slot and an empty
   check("over another section the card shows the number the line will get there", !overR.card.refused && overR.card.note === `→ ${expectedBetween}` && overR.section?.drop === "over" && overR.section.opacity === 1 && overR.home?.opacity === 1, JSON.stringify(overR));
   const fitR = await readOutlineFit(page, r.key);
   check("the outline of a section with lines clears its heading, numbers, text and the drop line", isOutlineClear(fitR), JSON.stringify(fitR));
+  const barDragged = await readBarClear(page, lead);
+  check("while dragging, the pressed row's left bar clears its number", barDragged.clear !== null && barDragged.clear >= 1, JSON.stringify(barDragged));
   const firstSave = waitOrderSave(page);
   await page.mouse.up();
   const flashedFirst = await waitFlash(page, lead);
@@ -2323,6 +2368,8 @@ await runStep("order: drag a block into another section, a sub-slot and an empty
   await page.locator(`[data-testid="output-c-row-${b.first}"]`).scrollIntoViewIfNeeded();
   await page.locator(`[data-testid="output-c-row-${b.first}"]`).click({ position: { x: 4, y: 4 } });
   const keyPuts = puts.length;
+  const barAtRest = await readBarClear(page, b.first);
+  check("a selected row's left bar clears its number", barAtRest.clear !== null && barAtRest.clear >= 1, JSON.stringify(barAtRest));
   await page.keyboard.press("Alt+ArrowUp");
   await page.waitForTimeout(400);
   check("Move up and Alt+ArrowUp stop at the top of the section", upDisabled && puts.length === keyPuts && (await readRowKey(page, b.first)) === b.key, JSON.stringify({ upDisabled, puts: puts.length - keyPuts }));
