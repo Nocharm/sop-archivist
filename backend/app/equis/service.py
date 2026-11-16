@@ -4,7 +4,6 @@
 """
 
 import logging
-import re
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 
@@ -20,6 +19,7 @@ from app.equis.rules import DocFacts, normalize_number, resolve_number
 from app.settings import settings
 from app.sop.events import record_event
 from app.sop.models import Bundle, Document, EquisLookup, TargetDoc
+from app.sop.tobe import is_temp_match_code
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,6 @@ REF_LOOKUPS_PER_READ = 10
 # 제목을 EQUIS 이름으로 맞춘 기록의 행위자
 SYSTEM_ACTOR = "system:equis"
 
-_TEMP_CODE = re.compile(r"NEW-\d+")  # 번호 없는 올린 새 문서에 앱이 붙이는 임시 번호(tobe.temp_match_code)
 _EDITABLE_STATUS = "in_progress"
 
 
@@ -49,7 +48,7 @@ def _to_aware(value: datetime) -> datetime:
 def needs_lookup(code: str) -> bool:
     """EQUIS에 물을 번호인지 — 빈 번호, 앱의 임시 번호, 문서 번호 꼴이 아닌 글은 묻지 않는다."""
     number = normalize_number(code)
-    return bool(number) and _TEMP_CODE.fullmatch(number) is None and is_sendable_number(number)
+    return bool(number) and not is_temp_match_code(number) and is_sendable_number(number)
 
 
 def is_in_flight(lookup: EquisLookup, now: datetime) -> bool:

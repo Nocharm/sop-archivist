@@ -19,7 +19,9 @@ REF_REJECTED = "rejected"
 REF_KINDS = ("sentence", "heading", "cell_sentence")
 
 # 문서 번호 꼴(파일 이름에서 번호를 읽는 규칙과 같다, `filename.py`) — 영문 대문자 머리 + 하이픈 마디 + 숫자 끝
-_NUMBER = r"[A-Z]{2,}(?:-[A-Z0-9]{1,8})*-\d{1,6}(?![A-Za-z0-9])"
+_NUMBER_BODY = r"[A-Z]{2,}(?:-[A-Z0-9]{1,8})*-\d{1,6}"
+_NUMBER = rf"{_NUMBER_BODY}(?![A-Za-z0-9])"
+_DOCUMENT_NUMBER = re.compile(_NUMBER_BODY)
 # 줄 맨 앞의 번호만 제안한다 — 글머리 기호나 항목 번호는 건너뛴다. 문장 가운데의 번호는 사람이 직접 표시한다
 _LEADING_NUMBER = re.compile(rf"\s*(?:[-–•·*▪◦]\s*|\(?\d{{1,3}}[.)]\s*|\d+(?:\.\d+)+\s+)?({_NUMBER})")
 
@@ -28,6 +30,11 @@ _LEADING_NUMBER = re.compile(rf"\s*(?:[-–•·*▪◦]\s*|\(?\d{{1,3}}[.)]\s*|
 class RefState:
     state: Literal["proposed", "confirmed"]
     number: str
+
+
+def is_document_number(number: str) -> bool:
+    """글 전체가 문서 번호 꼴인가 — 다듬지 않고 본다(빈칸·소문자가 섞이면 아니다). 참조 지도가 남에게 보일 번호를 거른다."""
+    return _DOCUMENT_NUMBER.fullmatch(number) is not None
 
 
 def find_leading_number(text: str) -> str | None:
