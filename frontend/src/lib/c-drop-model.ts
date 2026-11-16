@@ -51,8 +51,6 @@ export function listDropRows(items: readonly OutputCItem[], block: DragBlock | n
   return measured.filter((row) => known.has(row.targetId) && !blockIds.has(row.targetId));
 }
 
-export type DropZone = "home" | "other" | "outside";
-
 export type Band = { top: number; bottom: number };
 
 function isInBand(y: number, band: Band): boolean {
@@ -60,18 +58,8 @@ function isInBand(y: number, band: Band): boolean {
 }
 
 /**
- * 종이 밖이면 outside, 끌린 줄의 칸 띠(위 10px·아래 28px 여유) 안이면 home, 칸들이 놓인 띠(sections = 그려진 첫 칸 위 ~ 마지막 칸 아래) 안의 나머지는 other(다른 칸).
- * 첫 칸 위(문서 머리)와 마지막 칸 아래는 다른 칸이 없으니 outside
- */
-export function classifyDropZone(point: { x: number; y: number }, sheet: { left: number; right: number; top: number; bottom: number }, section: Band, sections: Band): DropZone {
-  if (point.x < sheet.left || point.x > sheet.right || point.y < sheet.top || point.y > sheet.bottom) return "outside";
-  if (isInBand(point.y, section)) return "home";
-  return isInBand(point.y, sections) ? "other" : "outside";
-}
-
-/**
  * 포인터 아래 칸의 인덱스 - 종이 밖이거나 어느 칸의 띠(위 10px·아래 28px 여유)도 아니면(첫 칸 위·마지막 칸 아래·칸 사이 빈틈) null.
- * 출발 칸(homeIndex)의 띠가 먼저고, 그 밖에서 여유 띠가 겹치면 아래 칸이다. classifyDropZone은 같은 칸 안 끌기가 쓰는 예전 판정이라 그대로 둔다
+ * 출발 칸(homeIndex)의 띠가 먼저고, 그 밖에서 여유 띠가 겹치면 아래 칸이다.
  */
 export function findDropSection(point: { x: number; y: number }, sheet: { left: number; right: number; top: number; bottom: number }, bands: readonly Band[], homeIndex: number): number | null {
   if (point.x < sheet.left || point.x > sheet.right || point.y < sheet.top || point.y > sheet.bottom) return null;

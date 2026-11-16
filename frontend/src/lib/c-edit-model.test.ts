@@ -258,7 +258,10 @@ describe("addEdit place across sections", () => {
     expect(addEdit(sop, cross([1, 1], "procedures.procedure", null))).toBeNull();
     expect(addEdit(sop, cross([], "procedures.procedure", null))).toBeNull();
     expect(addEdit(sop, cross([1, 2], "procedures.procedure", null, [0]))).toBeNull();
-    expect(addEdit(wi, { ...wiPlace("procedures"), toLocationKey: "procedures" })).toBeNull();
+    // 한 문서에 SOP 칸과 WI 칸이 함께 있는 자료 - 도착 칸이 있어 종류 검사만 null을 만든다
+    const mixed = startDraft({ ...doc([section("1", [line(1, "1.1")], "step:1:instruction"), section("6", [line(2, "6.1")], "procedures")]), doc_type: "wi" });
+    expect(addEdit(mixed, { ...wiPlace("procedures") })).toBeNull();
+    expect(addEdit(mixed, { kind: "place", locationKey: "procedures", toLocationKey: "step:1:instruction", targetIds: [2], beforeId: null, depths: [0] })).toBeNull();
   });
   it("keeps an in-section place the same with or without toLocationKey", () => {
     const start = startDraft(doc([section("5", [line(1, "5.1"), line(2, "5.2"), line(3, "5.3"), line(4, "5.4")])]));

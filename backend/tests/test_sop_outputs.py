@@ -1298,7 +1298,6 @@ def test_reorder_slot_move_rejects(client: TestClient) -> None:
         "na": (0, fx.sop_id, "scope", "na_slot"),
         "na_parent": (0, fx.sop_id, "document_relationships.appendices", "na_slot"),
         "wi": (1, fx.wi_id, "purpose", "slot_not_allowed"),
-        "written": (2, fx.match_id, "purpose", "slot_not_allowed"),
     }
     revision = get_bundle(client, fx.bundle_id)["revision"]
     places = {doc_id: _load_places(doc_id) for doc_id in (fx.sop_id, fx.wi_id, fx.match_id)}
@@ -1310,6 +1309,26 @@ def test_reorder_slot_move_rejects(client: TestClient) -> None:
         assert (response.status_code, response.json()["detail"]) == (422, {"code": code, "target_ids": [first]}), name
         assert get_bundle(client, fx.bundle_id)["revision"] == revision, name
         assert {d: _load_places(d) for d in places} == places, name
+
+
+def test_reorder_slot_move_rejects_a_line_of_an_already_written_document(client: TestClient) -> None:
+    fx = _setup(client)
+    first = _list_top_target_ids(client, fx.bundle_id, 2)[0]
+
+    async def _make_own_origin(session: AsyncSession) -> None:
+        await session.execute(update(TargetSentence).where(TargetSentence.id == first).values(origin="units"))
+        await session.commit()
+
+    run_in_session(_make_own_origin)  # 입구 2 줄은 늘 new_doc이라 출처 규칙만으로도 거절된다 — 입구 규칙만 보려고 출처를 바꾼다
+    written = _get_output(client, fx.bundle_id, "outputs/c")["docs"][2]
+    assert written["entrance"] == "match"
+    assert next(i for s in written["sections"] for i in s["items"] if i["target_id"] == first)["origin"] == "units"
+    revision = get_bundle(client, fx.bundle_id)["revision"]
+
+    response = _put_order(client, fx.bundle_id, _order_body(client, fx, 2, fx.match_id, {first: {"slot_key": "purpose"}}))
+
+    assert (response.status_code, response.json()["detail"]) == (422, {"code": "slot_not_allowed", "target_ids": [first]})
+    assert get_bundle(client, fx.bundle_id)["revision"] == revision
 
 
 def test_reorder_same_slot_keeps_depth_and_revision(client: TestClient) -> None:

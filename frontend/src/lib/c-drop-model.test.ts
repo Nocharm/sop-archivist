@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { OutputCItem } from "./api-sop";
-import { classifyDropZone, findDragBlock, findEnterRefusal, findDropSection, findDropSectionByKey, findLeaveRefusal, findLiveBlock, listDropRows, planCrossDrop, planDrop } from "./c-drop-model";
+import { findDragBlock, findEnterRefusal, findDropSection, findDropSectionByKey, findLeaveRefusal, findLiveBlock, listDropRows, planCrossDrop, planDrop } from "./c-drop-model";
 import { previewEdit } from "./c-edit-model";
 
 function line(id: number, extra: Partial<OutputCItem> = {}): OutputCItem {
@@ -27,21 +27,6 @@ describe("findDragBlock", () => {
     const pair = [line(1, { meaning_key: "m" }), line(2, { meaning_key: "m", origin: "translation" })];
     expect(findDragBlock(pair, [0, 0], 0, "assign").isDepthLocked).toBe(true);
     expect(findDragBlock(items, depths, 3, "match").isDepthLocked).toBe(true);
-  });
-});
-
-describe("classifyDropZone", () => {
-  const sheet = { left: 100, right: 860, top: 0, bottom: 2000 };
-  it("home inside the section band (10px above, 28px below), other elsewhere among the sections, outside off the sheet", () => {
-    const zone = (x: number, y: number) => classifyDropZone({ x, y }, sheet, { top: 300, bottom: 500 }, { top: 100, bottom: 900 });
-    expect([zone(200, 290), zone(200, 289), zone(200, 528), zone(200, 529), zone(99, 400), zone(200, 2001)]).toEqual(["home", "other", "home", "other", "outside", "outside"]);
-  });
-  it("treats the sheet above the first section and below the last one as outside - there is no other section there", () => {
-    const zone = (y: number) => classifyDropZone({ x: 200, y }, sheet, { top: 300, bottom: 500 }, { top: 100, bottom: 900 });
-    expect([zone(90), zone(89), zone(928), zone(929), zone(1500)]).toEqual(["other", "outside", "other", "outside", "outside"]);
-    // 끌린 줄의 칸이 마지막 칸이면 그 아래 여유 띠 밖은 바로 outside
-    const last = (y: number) => classifyDropZone({ x: 200, y }, sheet, { top: 700, bottom: 900 }, { top: 100, bottom: 900 });
-    expect([last(928), last(929)]).toEqual(["home", "outside"]);
   });
 });
 
