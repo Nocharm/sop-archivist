@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { placeAbove, type FloatingPos } from "@/components/ui/floating";
+import { isBoxDragActive } from "@/lib/box-drag";
 
 const SHOW_DELAY_MS = 150;
 
@@ -40,6 +41,7 @@ export function Tooltip({ label, children, align = "center", suppressed = false 
   }, []);
 
   function show() {
+    if (isBoxDragActive()) return;
     if (timerRef.current !== null) window.clearTimeout(timerRef.current);
     timerRef.current = window.setTimeout(() => setOpen(true), SHOW_DELAY_MS);
   }

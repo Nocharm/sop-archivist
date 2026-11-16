@@ -20,6 +20,7 @@ import { ReviewBar } from "@/components/review/review-bar";
 import { ReviewReturnNote } from "@/components/review-return-note";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
+import { InfoTip } from "@/components/ui/info-tip";
 import { BundleLoadError } from "@/components/bundle-load-error";
 import { LoadMoreRows } from "@/components/ui/load-more";
 import { showToast } from "@/components/ui/toast";
@@ -468,6 +469,8 @@ export function OutputsWorkspace({ mode }: { mode: OutputsMode }) {
           <h1 className="page-title ul">{t(isOrder ? "order.title" : "stage.outputs")}</h1>
           <ReadOnlyNote bundle={bundle} testId={isOrder ? "order" : "outputs"} />
           {isOrder && <span className="min-w-0 text-xs text-ink-3">{t("order.lead")}</span>}
+          {/* 끌기·Alt 글자 긁기 도움말 - 끌 수 있을 때만 */}
+          {canEditC && <InfoTip text={t("order.dragHelp")} testId="order-drag-help" />}
           {!isOrder && (
           <div className="ml-2 flex gap-0.5 rounded-md bg-sunken p-0.5" role="tablist">
             {(["a", "b", "c"] as const).map((item) => (
@@ -572,6 +575,7 @@ export function OutputsWorkspace({ mode }: { mode: OutputsMode }) {
                 onMove={canEditC ? (docId, locationKey, targetId, dir) => editC(docId, { kind: "move", locationKey, targetId, dir }) : undefined}
                 onIndent={canEditC ? (docId, targetId, depth) => editC(docId, { kind: "indent", targetId, depth }) : undefined}
                 onMark={canEditC ? (docId, targetId, style) => editC(docId, { kind: "style", targetId, style }) : undefined}
+                onPlace={canEditC ? (docId, edit) => editC(docId, edit) : undefined}
                 tobeHref={canEdit ? getNewDocumentsHref(bundleId) : undefined}
                 equis={equisByNode} />
             </>

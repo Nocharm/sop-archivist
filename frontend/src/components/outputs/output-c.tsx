@@ -1,25 +1,32 @@
 // 결과물 C 한 벌 - 새 문서를 칸·단계 순서로 미리 본다. 칸마다 두 언어 문장이 C 순서대로 한 목록이고, 같은 의미에서 나온 이웃 문장은 굵은 선으로 묶인다.
 // 결과물 화면과 검토 화면이 같이 쓴다. 확정 전 새 문장은 점선. 문서 머리 오른쪽에 그 번호의 EQUIS 표시(읽기 전용, EQUIS가 꺼져 있으면 없다). 긴 C는 줄(문서 머리·칸 머리·문장) 단위로 이어 그린다.
 // 위·아래로 옮기면 두 줄이 미끄러지며 자리를 바꾸고(useFlip), 옮긴 줄이 아직 그리지 않은 구간으로 가면 거기까지 그린 뒤 그 줄을 따라 스크롤한다.
+// 고칠 수 있는 Order에서는 줄을 끌어 칸 안의 덩어리를 옮기고 좌우로 깊이를 바꾼다(lib/c-drop-model.ts) - 끄는 동안의 표시는 DOM으로만 한다.
 "use client";
 
-import { ArrowDown, ArrowUp, FileStack, IndentDecrease, IndentIncrease, Italic, List, ListOrdered, ListTree, type LucideIcon } from "lucide-react";
+import { ArrowDown, ArrowUp, FileStack, IndentDecrease, IndentIncrease, Italic, List, ListOrdered, ListTree, MoreHorizontal, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { EquisStatus } from "@/components/equis/equis-status";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Menu, MenuRadio } from "@/components/ui/menu";
 import { useFlip } from "@/components/ui/motion";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { EquisInfo, NumberStyle, OutputC, OutputCItem } from "@/lib/api-sop";
+import type { BoxDragConfig, DragCard, DragHover, DragPoint } from "@/lib/box-drag";
+import { classifyDropZone, findDragBlock, findLiveBlock, listDropRows, planDrop, type DragBlock, type DropPlan } from "@/lib/c-drop-model";
+import { previewEdit, type PlaceEdit } from "@/lib/c-edit-model";
 import { useI18n } from "@/lib/i18n";
 import { buildCLines, listMeaningStarts, type CLine } from "@/lib/output-groups";
 import { shouldRecenter } from "@/lib/paper-model";
 import { canChangeDepth, canChangeStyle, canIndent, getSectionDepths, isCounted, NUMBER_STYLES, readIndentKey, type IndentDir } from "@/lib/section-number";
-import { canMoveTarget, type MoveDir } from "@/lib/target-order";
+import { canMoveTarget, readMoveKey, type MoveDir } from "@/lib/target-order";
+import { useBoxDrag } from "@/lib/use-box-drag";
 import { useProgressiveList } from "@/lib/use-progressive-list";
 
-type Section = OutputC["docs"][number]["sections"][number];
+type Doc = OutputC["docs"][number];
+type Section = Doc["sections"][number];
 
 /** 순서 바꾸기 - 결과물 화면에서 작성자에게만 넘긴다. 검토 화면은 넘기지 않아 단추가 없다 */
 export type MoveTarget = (targetDocId: number, locationKey: string, targetId: number, dir: MoveDir) => void;
@@ -27,6 +34,8 @@ export type MoveTarget = (targetDocId: number, locationKey: string, targetId: nu
 export type IndentTarget = (targetDocId: number, targetId: number, depth: number) => void;
 /** 번호 표시 바꾸기 - 그 줄에만 붙는다(짝 상대·번역이 따라 바뀌지 않는다). 검토 화면은 넘기지 않는다 */
 export type MarkTarget = (targetDocId: number, targetId: number, style: NumberStyle) => void;
+/** 끌어 놓기 - 칸 안의 덩어리를 한 자리로(깊이도 함께) 옮긴다. 넘길 때만 줄이 끌린다(검토·결과물 화면은 넘기지 않는다) */
+export type PlaceTarget = (targetDocId: number, edit: PlaceEdit) => void;
 
 /** 글꼴을 고르는 lang 속성 - 언어가 없는 단위(표 틀·그림)는 감싼 쪽을 따른다 */
 function readLangAttr(lang: string): string | undefined {
@@ -90,10 +99,11 @@ interface RowButtonsProps {
 function RowButtons({ items, item, onMove, indent, onMark }: RowButtonsProps) {
   const { t } = useI18n();
   return (
-    <span className="row-actions-quiet flex gap-0.5" style={{ fontFamily: "var(--font-ui)" }}>
+    // data-no-drag - 단추 사이 틈을 눌러도 줄 끌기가 시작되지 않는다
+    <span className="c-acts" data-no-drag data-testid={`output-c-acts-${item.target_id}`} style={{ fontFamily: "var(--font-ui)" }}>
       {onMark && (
         // 세 칸 눌림 단추 - 떠 있는 메뉴를 쓰지 않아 옆 글자를 덮지 않는다. 아이콘만 있으니 툴팁이 뜻을 알려 준다
-        <span className="view-toggle c-mark mr-1" role="group" aria-label={t("outputs.markGroup")} data-testid={`output-c-mark-${item.target_id}`}>
+        <span className="view-toggle c-mark" role="group" aria-label={t("outputs.markGroup")} data-testid={`output-c-mark-${item.target_id}`}>
           {NUMBER_STYLES.map((style) => {
             const Icon = MARK_ICONS[style];
             return (
@@ -131,7 +141,7 @@ function RowButtons({ items, item, onMove, indent, onMark }: RowButtonsProps) {
           </Tooltip>
         ))}
       {([-1, 1] as const).map((dir) => (
-        <Tooltip key={dir} label={t(dir < 0 ? "outputs.moveUp" : "outputs.moveDown")} align="end">
+        <Tooltip key={dir} label={t(dir < 0 ? "outputs.moveUpTip" : "outputs.moveDownTip")} align="end">
           <button
             type="button"
             className="btn ghost icon h-6 w-6"
@@ -144,6 +154,85 @@ function RowButtons({ items, item, onMove, indent, onMark }: RowButtonsProps) {
           </button>
         </Tooltip>
       ))}
+    </span>
+  );
+}
+
+/** 용지 옆 자리가 좁을 때 묶음 대신 보이는 ⋯ 단추 - 같은 일곱 동작을 이름 붙은 메뉴 항목으로 연다. 어느 쪽을 보일지는 CSS(.c-order 틀 폭)가 정한다 */
+function RowMenu({ items, item, onMove, indent, onMark }: RowButtonsProps) {
+  const { t } = useI18n();
+  const anchorRef = useRef<HTMLButtonElement>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  // 줄의 다른 단추처럼 끝에 줄 id - 메뉴는 output-c-menu-list-<id>, 항목은 output-c-menu-<동작>-<id>
+  const testIdOf = (part: string) => `output-c-menu-${part}${item.target_id}`;
+  // 고르면 닫고 실행한다 - 닫힌 메뉴가 포커스를 ⋯ 단추로 돌려 같은 줄에서 이어 고칠 수 있다
+  function run(action: () => void) {
+    setIsOpen(false);
+    action();
+  }
+  return (
+    <span className="c-more" data-no-drag style={{ fontFamily: "var(--font-ui)" }}>
+      <Tooltip label={t("outputs.lineActions")} suppressed={isOpen} align="end">
+        <button
+          ref={anchorRef}
+          type="button"
+          className="btn ghost icon h-6 w-6"
+          aria-haspopup="menu"
+          aria-expanded={isOpen}
+          aria-label={t("outputs.lineActions")}
+          data-testid={testIdOf("")}
+          onClick={() => setIsOpen((prev) => !prev)}
+        >
+          <MoreHorizontal size={14} strokeWidth={1.5} aria-hidden />
+        </button>
+      </Tooltip>
+      {isOpen && (
+        <Menu anchorRef={anchorRef} onClose={() => setIsOpen(false)} testId={testIdOf("list-")} label={t("outputs.lineActions")} align="end">
+          {onMark && (
+            <>
+              <div className="menu-label">{t("outputs.markGroup")}</div>
+              {NUMBER_STYLES.map((style) => (
+                <MenuRadio key={style} checked={item.number_style === style} testId={testIdOf(`${style}-`)} onSelect={() => run(() => {
+                  if (item.number_style !== style) onMark(style);
+                })}>
+                  {t(MARK_KEYS[style].label)}
+                </MenuRadio>
+              ))}
+              <div className="menu-sep" role="separator" />
+            </>
+          )}
+          {indent &&
+            ([-1, 1] as const).map((dir) => (
+              <button
+                key={`i${dir}`}
+                type="button"
+                role="menuitem"
+                className="menu-item"
+                data-testid={testIdOf(dir < 0 ? "outdent-" : "indent-")}
+                disabled={!(dir < 0 ? indent.canOut : indent.canIn)}
+                onClick={() => run(() => indent.onIndent(dir))}
+              >
+                {dir < 0 ? <IndentDecrease size={14} strokeWidth={1.5} aria-hidden /> : <IndentIncrease size={14} strokeWidth={1.5} aria-hidden />}
+                {t(dir < 0 ? "outputs.outdent" : "outputs.indent")}
+              </button>
+            ))}
+          {([-1, 1] as const).map((dir) => (
+            <button
+              key={dir}
+              type="button"
+              role="menuitem"
+              className="menu-item"
+              data-testid={testIdOf(dir < 0 ? "up-" : "down-")}
+              disabled={!canMoveTarget(items, item.target_id, dir)}
+              // 포커스는 닫힌 메뉴가 ⋯ 단추로 돌린다 - 옮긴 줄의 위·아래 단추에 다시 두지 않는다
+              onClick={() => run(() => onMove(dir, false))}
+            >
+              {dir < 0 ? <ArrowUp size={14} strokeWidth={1.5} aria-hidden /> : <ArrowDown size={14} strokeWidth={1.5} aria-hidden />}
+              {t(dir < 0 ? "outputs.moveUp" : "outputs.moveDown")}
+            </button>
+          ))}
+        </Menu>
+      )}
     </span>
   );
 }
@@ -189,11 +278,72 @@ function CMore({ sentinelRef }: { sentinelRef: (node: Element | null) => void })
   );
 }
 
-/** 옮긴 줄 - 다음 커밋에서 그 줄을 따라 스크롤하고, 누른 단추에 포커스가 있었으면 다시 둔다 */
+/** 옮긴 줄 - 다음 커밋에서 그 줄을 따라 스크롤하고, 포커스가 있던 곳(누른 단추·줄 자신)에 다시 둔다. null이면 건드리지 않는다(⋯ 메뉴는 닫히며 ⋯ 단추로 돌린다) */
 interface PendingMove {
   targetId: number;
   dir: MoveDir;
-  refocus: boolean;
+  refocus: "button" | "row" | null;
+}
+
+/** 끄는 줄 - 누른 줄과 그때의 덩어리 줄 id만 들고 간다. 칸의 줄은 move마다 지금 데이터에서 다시 읽는다(저장 응답·다시 받기로 바뀔 수 있다) */
+interface DragSource {
+  docId: number;
+  locationKey: string;
+  targetId: number;
+  blockIds: readonly number[];
+  card: DragCard;
+  row: HTMLElement;
+  home: HTMLElement;
+}
+
+/** 지금 데이터의 그 칸과 덩어리 - 누른 줄이나 덩어리 줄이 그때와 다르면 null(그 끌기는 놓지 않는다) */
+interface LiveDrag {
+  doc: Doc;
+  section: Section;
+  depths: readonly number[];
+  block: DragBlock;
+}
+
+function readLiveDrag(data: OutputC, source: DragSource): LiveDrag | null {
+  const doc = data.docs.find((item) => item.target_doc_id === source.docId);
+  const section = doc?.sections.find((item) => item.location_key === source.locationKey);
+  if (!doc || !section) return null;
+  const depths = getSectionDepths(section);
+  const block = findLiveBlock(section.items, depths, source.targetId, source.blockIds, doc.entrance);
+  return block && { doc, section, depths, block };
+}
+
+/** 표의 글 한 줄 - 그림은 표시, 표는 칸 글을 잇는다 */
+function readCardText(item: OutputCItem): string {
+  if (item.kind === "figure") return "[Figure]";
+  return item.text || item.ai_text || item.children.map((cell) => cell.text || cell.ai_text).join(" ");
+}
+
+/** 칸의 줄 id·깊이·번호 표시 - 저장 응답은 바뀐 것이 없어도 새 칸 객체를 만들므로 같은 칸인지는 이것으로 본다. 같으면 id·깊이로 적은 place 편집이 그대로 맞다 */
+function readSectionShape(live: LiveDrag): string {
+  return live.section.items.map((item, index) => `${item.target_id}/${live.depths[index]}/${item.number_style}`).join(",");
+}
+
+/** 깊이 한 단의 폭(px) - 글이 쓰는 --c-indent(지금 1.5em)를 그 줄의 글자 크기로 푼다. 선이 그 깊이의 줄이 시작하는 자리에서 시작하게 */
+function readIndentPx(line: Element): number {
+  const style = getComputedStyle(line);
+  const indent = style.getPropertyValue("--c-indent").trim();
+  return indent.endsWith("em") ? parseFloat(indent) * parseFloat(style.fontSize) : parseFloat(indent);
+}
+
+/** plan과 그 자리를 센 칸의 모양(shape), 표에 적을 note는 마지막 move가 같은 칸 안이었을 때만 있다 */
+interface DragFrame {
+  plan: DropPlan | null;
+  key: string | null;
+  shape: string | null;
+  note: string | undefined;
+  isGone: boolean;
+}
+
+const EMPTY_FRAME: DragFrame = { plan: null, key: null, shape: null, note: undefined, isGone: false };
+
+function isInsideBox(event: PointerEvent, box: DOMRect): boolean {
+  return event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
 }
 
 interface OutputCViewProps {
@@ -201,6 +351,7 @@ interface OutputCViewProps {
   onMove?: MoveTarget;
   onIndent?: IndentTarget;
   onMark?: MarkTarget;
+  onPlace?: PlaceTarget;
   /** 이어 그리기를 처음 묶음으로 되돌리는 키 - 다시 받은 C(라벨 언어·바깥 revision)일 때만 바꾼다. 저장 응답으로 맞춘 C는 그린 구간을 그대로 둔다 */
   resetKey?: string;
   /** 비었을 때 갈 곳(To-Be) - 고칠 수 있는 화면에서만 준다 */
@@ -209,10 +360,19 @@ interface OutputCViewProps {
   equis?: ReadonlyMap<string, EquisInfo>;
 }
 
-export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", tobeHref, equis }: OutputCViewProps) {
+export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey = "c", tobeHref, equis }: OutputCViewProps) {
   const { t } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
   const pendingMoveRef = useRef<PendingMove | null>(null);
+  const dropLineRef = useRef<HTMLDivElement>(null);
+  // 끄는 동안 프레임마다 바뀌는 값 - 상태로 두면 프레임마다 다시 그린다. plan은 마지막 move가 같은 칸 안이었을 때만 있다(놓으면 이것을 저장).
+  // shape는 그 plan을 센 칸의 모양(놓을 때 다르면 놓은 자리에서 다시 센다), isGone은 끄는 동안 덩어리가 바뀌어 이 끌기를 거절했다는 표시
+  const dragFrameRef = useRef<DragFrame>(EMPTY_FRAME);
+  // 화면에 그려진(커밋된) C - 끄는 동안 move마다 이것을 읽어 잰 줄과 같은 데이터로 센다. 상태를 구독하지 않는다
+  const dataRef = useRef(data);
+  useLayoutEffect(() => {
+    dataRef.current = data;
+  });
   // 마지막으로 옮긴 줄 - 그 줄까지는 늘 그린다(아직 그리지 않은 구간으로 옮겨도 보이게)
   const [followId, setFollowId] = useState<number | null>(null);
   const lines = useMemo(() => buildCLines(data), [data]);
@@ -226,7 +386,10 @@ export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", to
     pendingMoveRef.current = null;
     const row = move && rootRef.current?.querySelector<HTMLElement>(`[data-testid="output-c-row-${move.targetId}"]`);
     if (!move || !row) return;
-    if (move.refocus) {
+    if (move.refocus === "row") {
+      // 글쇠로 옮겼으면 고른 줄이 그대로 고른 채로 남는다
+      row.focus({ preventScroll: true });
+    } else if (move.refocus === "button") {
       // 줄이 DOM에서 옮겨지면 포커스가 빠진다 - 같은 단추에, 칸 끝에 닿아 꺼졌으면 반대 단추에 둔다
       const [same, other] = move.dir < 0 ? ["up", "down"] : ["down", "up"];
       const button = row.querySelector<HTMLButtonElement>(`[data-testid="output-c-move-${same}-${move.targetId}"]`);
@@ -243,7 +406,7 @@ export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", to
   });
   const flip = useFlip(rootRef);
 
-  function handleMove(docId: number, section: Section, index: number, dir: MoveDir, refocus: boolean) {
+  function handleMove(docId: number, section: Section, index: number, dir: MoveDir, refocus: PendingMove["refocus"]) {
     const item = section.items[index];
     const neighbor = section.items[index + dir];
     if (!onMove || !neighbor) return;
@@ -253,6 +416,152 @@ export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", to
     setFollowId(item.target_id);
     onMove(docId, section.location_key, item.target_id, dir);
   }
+
+  function clearDropPlan(isGone: boolean) {
+    dragFrameRef.current = { ...EMPTY_FRAME, isGone };
+    if (dropLineRef.current) dropLineRef.current.hidden = true;
+  }
+
+  // 덩어리 줄은 id로 흐리게 - 끄는 도중 이어 그려진 줄도 move마다 붙인다
+  function markBlockRows(source: DragSource) {
+    for (const id of source.blockIds) {
+      const row = source.home.querySelector(`[data-testid="output-c-row-${id}"]`);
+      if (row && !row.hasAttribute("data-drag-src")) row.setAttribute("data-drag-src", "");
+    }
+  }
+
+  // 놓을 자리에 그 깊이의 줄이 시작하는 곳부터 선을 긋고, 그 자리에 놓았을 때 덩어리 첫 줄이 받을 번호를 표의 note로 돌려준다(저장 응답이 이긴다).
+  // 번호는 선 위에 적지 않는다 - 용지 왼쪽 여백(30px)에는 긴 번호("10.12.3 · indent")가 들어가지 않고, 줄 위에 두면 아래 줄 글을 덮는다
+  function drawDropLine(source: DragSource, live: LiveDrag, plan: DropPlan): string | undefined {
+    const shown = plan.edit ? previewEdit(live.doc, plan.edit) : live.doc;
+    const firstId = live.section.items[live.block.start].target_id;
+    const number = shown?.sections.find((section) => section.location_key === source.locationKey)?.items.find((item) => item.target_id === firstId)?.number ?? null;
+    const depthWord = plan.depth > live.block.baseDepth ? t("order.drag.indent") : plan.depth < live.block.baseDepth ? t("order.drag.outdent") : null;
+    const root = rootRef.current;
+    const line = dropLineRef.current;
+    if (root && line) {
+      const rootBox = root.getBoundingClientRect();
+      const rowBox = source.row.getBoundingClientRect();
+      const inset = plan.depth * readIndentPx(source.row.querySelector(".c-line") ?? source.row);
+      line.style.top = `${plan.lineY - rootBox.top}px`;
+      line.style.left = `${rowBox.left - rootBox.left + inset}px`;
+      line.style.width = `${Math.max(0, rowBox.width - inset)}px`;
+      line.hidden = false;
+    }
+    return [number !== null ? `→ ${number}` : null, depthWord].filter(Boolean).join(" · ") || undefined;
+  }
+
+  // 지금 칸에서 포인터 자리의 놓을 자리 - 끌린 줄의 칸 밖이면 그곳의 표시(다른 칸은 이유, 용지·칸 밖은 없음)
+  function planAt(source: DragSource, live: LiveDrag, point: DragPoint, start: DragPoint): { plan: DropPlan } | { hover: DragHover } {
+    const sheet = source.row.closest("article");
+    const sections = sheet ? [...sheet.querySelectorAll("section")] : [];
+    if (!sheet || sections.length === 0) return { hover: { state: "none" } };
+    const span = { top: sections[0].getBoundingClientRect().top, bottom: sections[sections.length - 1].getBoundingClientRect().bottom };
+    const zone = classifyDropZone(point, sheet.getBoundingClientRect(), source.home.getBoundingClientRect(), span);
+    if (zone !== "home") return { hover: zone === "other" ? { state: "refused", note: t("order.drag.otherSection") } : { state: "none" } };
+    // 읽기만 한다 - 칸의 그려진 줄 가운데 덩어리 줄과 지금 칸에 없는 줄을 id로 뺀 것
+    const measured = [...source.home.querySelectorAll<HTMLElement>("[data-drag-box]")].map((el) => {
+      const box = el.getBoundingClientRect();
+      return { targetId: Number(el.dataset.flipKey), top: box.top, bottom: box.bottom };
+    });
+    const blockTop = (source.home.querySelector(`[data-testid="output-c-row-${source.blockIds[0]}"]`) ?? source.row).getBoundingClientRect().top;
+    const plan = planDrop({
+      locationKey: source.locationKey,
+      items: live.section.items,
+      depths: live.depths,
+      block: live.block,
+      rows: listDropRows(live.section.items, live.block, measured),
+      pointerY: point.y,
+      dx: point.x - start.x,
+      homeTop: blockTop - 1,
+    });
+    return { plan };
+  }
+
+  // 읽기 전용이면 null - 줄에 data-drag-box도 없다
+  const dragConfig: BoxDragConfig<DragSource> = {
+    pick: (event) => {
+      const row = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-drag-box]") : null;
+      const home = row?.closest<HTMLElement>("section");
+      // 다리(::after)를 누르면 줄 상자 밖인데도 그 줄이 잡힌다 - 단추를 몇 px 빗나간 누름이 끌기가 되지 않게 줄 상자 안만 받는다
+      if (!row || !home || !isInsideBox(event, row.getBoundingClientRect())) return null;
+      const targetId = Number(row.dataset.flipKey);
+      for (const doc of dataRef.current.docs) {
+        for (const section of doc.sections) {
+          const index = section.items.findIndex((item) => item.target_id === targetId);
+          if (index < 0) continue;
+          const block = findDragBlock(section.items, getSectionDepths(section), index, doc.entrance);
+          const blockIds = section.items.slice(block.start, block.end + 1).map((item) => item.target_id);
+          const card = { id: section.items[block.start].number ?? "", text: readCardText(section.items[index]), count: blockIds.length > 1 ? t("order.drag.lines", { count: blockIds.length }) : null };
+          return { docId: doc.target_doc_id, locationKey: section.location_key, targetId, blockIds, card, row, home };
+        }
+      }
+      return null;
+    },
+    getCard: ({ card }) => card,
+    getScrollers: () => {
+      const pane = rootRef.current?.closest<HTMLElement>(".overflow-auto, .overflow-y-auto");
+      return pane ? [pane] : [];
+    },
+    onStart: (source) => {
+      dragFrameRef.current = EMPTY_FRAME;
+      markBlockRows(source);
+      source.home.setAttribute("data-drag-home", "");
+    },
+    onMove: (source, point, start) => {
+      const live = dragFrameRef.current.isGone ? null : readLiveDrag(dataRef.current, source);
+      if (!live) {
+        // 끄는 동안 누른 줄·덩어리 줄이 바뀌었다(저장 응답·다시 받기) - 그린 선과 저장할 자리가 어긋나므로 이 끌기는 끝까지 놓지 않는다
+        clearDropPlan(true);
+        return { state: "refused", note: t("order.drag.changed") };
+      }
+      markBlockRows(source);
+      const result = planAt(source, live, point, start);
+      if ("hover" in result) {
+        // 다른 칸·용지 밖에서 놓으면 아무 일도 없다 - 앞서 같은 칸에서 잡은 자리를 버린다
+        clearDropPlan(false);
+        return result.hover;
+      }
+      const { plan } = result;
+      const key = `${plan.beforeId}:${plan.depth}`;
+      const shape = readSectionShape(live);
+      const frame = dragFrameRef.current;
+      // 자리와 칸 모양이 그대로면 선·번호도 그대로다 - 바뀌었을 때만 다시 그린다
+      const note = key === frame.key && shape === frame.shape ? frame.note : drawDropLine(source, live, plan);
+      dragFrameRef.current = { plan, key, shape, note, isGone: false };
+      return { state: "ok", note };
+    },
+    onDrop: (source, point, start) => {
+      const frame = dragFrameRef.current;
+      if (frame.isGone || !frame.plan || !onPlace) return;
+      // 끄는 도중 덩어리 자체가 바뀌었으면 놓지 않는다
+      const live = readLiveDrag(dataRef.current, source);
+      if (!live) return;
+      let edit = frame.plan.edit;
+      // 마지막 move 뒤에 칸 모양이 바뀌었으면(포인터를 멈춘 채 저장 응답·다시 받기가 닿았다) 놓은 자리에서 지금 칸으로 다시 센다.
+      // 그린 선은 바뀌기 전 화면의 자리라 다를 수 있다 - 포인터 밑의 화면이 바뀌었으니 지금 화면에서 포인터가 가리키는 자리를 저장한다
+      if (readSectionShape(live) !== frame.shape) {
+        const result = planAt(source, live, point, start);
+        if ("hover" in result) return;
+        edit = result.plan.edit;
+      }
+      if (!edit) return;
+      // 잡은 줄이 앞(미끄러지는 동안 이웃 위로 지난다) - 칸의 그려진 줄을 모두 잰다
+      const others = [...source.home.querySelectorAll<HTMLElement>("[data-drag-box]")].map((el) => el.dataset.flipKey ?? "").filter((key) => key !== String(source.targetId));
+      flip.capture([String(source.targetId), ...others]);
+      // dir은 단추 포커스에만 쓰인다 - 놓은 줄은 고른 채로 남는다
+      pendingMoveRef.current = { targetId: source.targetId, dir: 1, refocus: "row" };
+      setFollowId(source.targetId);
+      onPlace(source.docId, edit);
+    },
+    onEnd: ({ home }) => {
+      for (const el of home.querySelectorAll("[data-drag-src]")) el.removeAttribute("data-drag-src");
+      home.removeAttribute("data-drag-home");
+      clearDropPlan(false);
+    },
+  };
+  // 빈 C는 root를 그리지 않는다 - 문서가 생기면 다시 붙도록 조건에 넣는다
+  useBoxDrag(rootRef, onPlace && data.docs.length > 0 ? dragConfig : null);
 
   if (data.docs.length === 0) {
     return (
@@ -273,11 +582,12 @@ export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", to
     );
   }
   return (
-    <div ref={rootRef} className="grid gap-6 p-[var(--pad)]" data-testid="output-c">
+    // c-order - 줄 끝 단추가 용지 옆에 뜨는 틀. 용지 폭 상한은 CSS가 정한다(단추 한 칸 자리를 늘 남긴다)
+    <div ref={rootRef} className={`grid gap-6 p-[var(--pad)] ${onMove ? "c-order" : ""}`} data-testid="output-c">
       {blocks.map(({ doc, sections }, blockIndex) => {
         const docEquis = equis?.get(`target:${doc.target_doc_id}`);
         return (
-        <article key={doc.target_doc_id} className="sheet mx-0 max-w-[760px]">
+        <article key={doc.target_doc_id} className={`sheet mx-0 ${onMove ? "" : "max-w-[760px]"}`}>
           {/* 줄마다 자기 언어(lang)로 글꼴을 고른다 - 한 칸에 두 언어가 섞인다 */}
           <div className="pg">
             <header className="flex items-baseline gap-2 border-b border-line pb-2" style={{ fontFamily: "var(--font-ui)" }}>
@@ -338,19 +648,36 @@ export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", to
                               onIndent: (dir: IndentDir) => onIndent(doc.target_doc_id, item.target_id, depths[index] + dir),
                             }
                           : null;
+                      const actions: RowButtonsProps = {
+                        items: section.items,
+                        item,
+                        indent,
+                        onMark: onMark && canChangeStyle(doc.entrance) ? (style) => onMark(doc.target_doc_id, item.target_id, style) : null,
+                        onMove: (dir, refocus) => handleMove(doc.target_doc_id, section, index, dir, refocus ? "button" : null),
+                      };
                       return (
                         <div
                           key={item.target_id}
-                          // 줄을 눌러 고르면 Tab·Shift+Tab이 들이고 내어 쓴다. 탭 순서에는 넣지 않고(-1) Esc로 놓아 Tab이 페이지 이동을 빼앗지 않게 한다
-                          tabIndex={indent ? -1 : undefined}
-                          // 줄 끝 단추는 글 뒤 같은 flex 줄에 둔다(.c-row) - 글이 폭을 채우면 아래로 감겨 겹치지 않고, 늘 흐리게 보여 호버로 높이가 변하지 않는다
+                          // 줄을 눌러 고르면 Alt+↑·↓가 한 자리 옮기고, 깊이를 바꿀 수 있는 줄은 Tab·Shift+Tab이 들이고 내어 쓴다. 탭 순서에는 넣지 않고(-1) Esc로 놓아 Tab이 페이지 이동을 빼앗지 않게 한다
+                          tabIndex={-1}
+                          // 줄 끝 단추는 호버·포커스 때만 용지 옆에 뜬다 - 넓으면 묶음(.c-acts), 좁으면 ⋯ 하나(.c-more). 자리를 차지하지 않아 글 폭과 줄 높이가 그대로다
                           className="hover-row c-row"
+                          // 끌 수 있는 줄 - 단추(data-no-drag)를 뺀 줄 어디든 눌러 끈다
+                          data-drag-box={onPlace ? "" : undefined}
                           data-meaning-start={meaningStart}
                           data-flip-key={item.target_id}
                           data-testid={`output-c-row-${item.target_id}`}
                           onKeyDown={(event) => {
-                            if (!indent || event.target !== event.currentTarget) return;
+                            // 줄 끝 단추·메뉴 안에서 올라온 글쇠는 그 요소의 몫이다
+                            if (event.target !== event.currentTarget) return;
                             if (event.key === "Escape") event.currentTarget.blur();
+                            const move = readMoveKey(event, { canUp: canMoveTarget(section.items, item.target_id, -1), canDown: canMoveTarget(section.items, item.target_id, 1) });
+                            if (move !== null) {
+                              event.preventDefault();
+                              handleMove(doc.target_doc_id, section, index, move, "row");
+                              return;
+                            }
+                            if (!indent) return;
                             // 바꿀 수 있을 때만 Tab을 가로챈다 - 아니면 포커스가 평소대로 다음 요소로 간다. 저장 중에도 바뀜은 화면에 먼저 얹는다
                             const dir = readIndentKey(event, { canOut: indent.canOut, canIn: indent.canIn, busy: false });
                             if (dir === null) return;
@@ -359,12 +686,8 @@ export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", to
                           }}
                         >
                           {line}
-                          <RowButtons
-                            items={section.items}
-                            item={item}
-                            indent={indent}
-                            onMark={onMark && canChangeStyle(doc.entrance) ? (style) => onMark(doc.target_doc_id, item.target_id, style) : null}
-                            onMove={(dir, refocus) => handleMove(doc.target_doc_id, section, index, dir, refocus)} />
+                          <RowButtons {...actions} />
+                          <RowMenu {...actions} />
                         </div>
                       );
                     })
@@ -406,6 +729,8 @@ export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", to
           </ul>
         </section>
       )}
+      {/* 끌 때 놓을 자리 선 - 한 번 그리고 끄는 동안은 DOM(hidden·인라인 자리)으로만 바꾼다. 놓을 번호는 끌리는 표에 적는다 */}
+      {onPlace && <div ref={dropLineRef} className="c-dropline" hidden data-testid="output-c-dropline" />}
     </div>
   );
 }

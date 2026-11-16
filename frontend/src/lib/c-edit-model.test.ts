@@ -160,3 +160,53 @@ describe("rebaseDraft", () => {
     expect(rebaseDraft(settled, doc([section("5", [line(2, "5.1"), line(1, "5.2"), line(3, "5.3")])]))).toEqual({ draft: null, dropped: false });
   });
 });
+
+describe("addEdit place", () => {
+  const start = startDraft(doc([section("5", [line(1, "5.1"), line(2, "5.2"), line(3, "5.3"), line(4, "5.4")])]));
+  const place = (targetIds: number[], beforeId: number | null, depths: number[] | null = null) => ({ kind: "place" as const, locationKey: "s5", targetIds, beforeId, depths });
+
+  it("moves a block before another line and renumbers", () => {
+    expect(numbersOf(addEdit(start, place([3, 4], 1))!.shown)).toEqual([[[3, "5.1"], [4, "5.2"], [1, "5.3"], [2, "5.4"]]]);
+  });
+  it("moves to the end of the section when beforeId is null and sets the given depths", () => {
+    expect(numbersOf(addEdit(start, place([1], null, [1]))!.shown)).toEqual([[[2, "5.1"], [3, "5.2"], [4, "5.3"], [1, "5.3.1"]]]);
+  });
+  it("returns null for a no-op, a missing line, a beforeId inside the block and another section", () => {
+    expect(addEdit(start, place([2], 3))).toBeNull();
+    expect(addEdit(start, place([9], 1))).toBeNull();
+    expect(addEdit(start, place([1, 2], 2))).toBeNull();
+    expect(addEdit(start, { ...place([1], null), locationKey: "s9" })).toBeNull();
+  });
+  it("returns null for duplicate or empty targetIds", () => {
+    expect(addEdit(start, place([1, 1], null))).toBeNull();
+    expect(addEdit(start, place([], 1))).toBeNull();
+  });
+  it("returns null when depths does not match targetIds in length", () => {
+    expect(addEdit(start, place([1, 2], null, [1]))).toBeNull();
+    expect(addEdit(start, place([1], null, [1, 1]))).toBeNull();
+  });
+  it("returns null when beforeId is not in an existing section", () => {
+    expect(addEdit(start, place([1], 99))).toBeNull();
+  });
+  it("keeps a depth-only change in place as a real edit", () => {
+    expect(numbersOf(addEdit(start, place([2], 3, [1]))!.shown)).toEqual([[[1, "5.1"], [2, "5.1.1"], [3, "5.2"], [4, "5.3"]]]);
+    const last = addEdit(start, place([4], null, [1]))!.shown;
+    expect(numbersOf(last)).toEqual([[[1, "5.1"], [2, "5.2"], [3, "5.3"], [4, "5.3.1"]]]);
+    expect(last.sections[0].items[3].indent_level).toBe(1);
+  });
+  it("returns null for a block already at the end with no depths", () => {
+    expect(addEdit(start, place([3, 4], null))).toBeNull();
+  });
+  it("sends the whole new order and only the depths that changed", () => {
+    const { items } = sendDraft(addEdit(start, place([1], null, [1]))!);
+    expect(items).toEqual([{ target_id: 2 }, { target_id: 3 }, { target_id: 4 }, { target_id: 1, indent_level: 1 }]);
+  });
+  it("re-applies a place made after sending and drops it when a block line is gone", () => {
+    const { draft: sent } = sendDraft(addEdit(start, { kind: "move", locationKey: "s5", targetId: 1, dir: 1 })!);
+    const later = addEdit(sent, place([4], 2))!;
+    const server = doc([section("5", [line(2, "5.1"), line(1, "5.2"), line(3, "5.3"), line(4, "5.4")])]);
+    expect(numbersOf(acceptSaved(later, server).shown)).toEqual([[[4, "5.1"], [2, "5.2"], [1, "5.3"], [3, "5.4"]]]);
+    const gone = doc([section("5", [line(2, "5.1"), line(1, "5.2"), line(3, "5.3")])]);
+    expect(acceptSaved(later, gone).edits).toEqual([]);
+  });
+});

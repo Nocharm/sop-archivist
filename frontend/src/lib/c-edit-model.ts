@@ -4,10 +4,14 @@ import type { NumberStyle, OutputCDoc, OutputCItem, TargetOrderItem } from "./ap
 import { numberLines } from "./section-number";
 import type { MoveDir } from "./target-order";
 
+/** 칸 안의 줄 묶음(targetIds, 이 순서로)을 beforeId 줄 앞(null이면 칸 끝)으로 옮긴다. depths가 있으면 targetIds와 같은 순서의 새 indent_level */
+export type PlaceEdit = { kind: "place"; locationKey: string; targetIds: readonly number[]; beforeId: number | null; depths: readonly number[] | null };
+
 export type CEdit =
   | { kind: "move"; locationKey: string; targetId: number; dir: MoveDir }
   | { kind: "indent"; targetId: number; depth: number }
-  | { kind: "style"; targetId: number; style: NumberStyle };
+  | { kind: "style"; targetId: number; style: NumberStyle }
+  | PlaceEdit;
 
 /** saved = 마지막으로 받은 서버 문서, shown = 그 위에 edits를 얹은 화면 문서. sentCount = 날아가는 요청에 실린 앞쪽 편집 수 */
 export interface DocDraft {
@@ -60,8 +64,8 @@ function updateLine(doc: OutputCDoc, targetId: number, update: (item: OutputCIte
   return { ...doc, sections };
 }
 
-/** 편집 하나를 얹고 번호를 다시 센 문서 - 칸 끝을 넘는 옮김이나 없는 줄이면 null */
-function applyEdit(doc: OutputCDoc, edit: CEdit): OutputCDoc | null {
+/** 편집 하나를 얹고 번호를 다시 센 문서 - 칸 끝을 넘는 옮김이나 없는 줄이면 null. 미리 보기에도 쓴다 */
+export function previewEdit(doc: OutputCDoc, edit: CEdit): OutputCDoc | null {
   if (edit.kind === "move") {
     const sectionIndex = doc.sections.findIndex((section) => section.location_key === edit.locationKey);
     const items = doc.sections[sectionIndex]?.items ?? [];
@@ -70,6 +74,22 @@ function applyEdit(doc: OutputCDoc, edit: CEdit): OutputCDoc | null {
     if (index < 0 || next < 0 || next >= items.length) return null;
     const moved = [...items];
     [moved[index], moved[next]] = [moved[next], moved[index]];
+    return numberDoc({ ...doc, sections: doc.sections.map((section, s) => (s === sectionIndex ? { ...section, items: moved } : section)) });
+  }
+  if (edit.kind === "place") {
+    const sectionIndex = doc.sections.findIndex((section) => section.location_key === edit.locationKey);
+    const items = doc.sections[sectionIndex]?.items ?? [];
+    const block = edit.targetIds.map((id) => items.find((item) => item.target_id === id));
+    const picked = new Set(edit.targetIds);
+    // 겹친 줄·빈 묶음·길이가 다른 depths는 문서를 망가뜨리거나 undefined 깊이를 쓴다
+    if (picked.size === 0 || picked.size !== edit.targetIds.length || (edit.depths && edit.depths.length !== edit.targetIds.length)) return null;
+    if (sectionIndex < 0 || block.some((item) => !item) || (edit.beforeId !== null && (picked.has(edit.beforeId) || !items.some((item) => item.target_id === edit.beforeId)))) return null;
+    const placed = block.map((item, k) => (edit.depths && edit.depths[k] !== item!.indent_level ? { ...item!, indent_level: edit.depths[k] } : item!));
+    const rest = items.filter((item) => !picked.has(item.target_id));
+    const at = edit.beforeId === null ? rest.length : rest.findIndex((item) => item.target_id === edit.beforeId);
+    const moved = [...rest.slice(0, at), ...placed, ...rest.slice(at)];
+    // 제자리(순서·깊이가 그대로)는 편집이 아니다 - 저장을 줄에 넣지 않게
+    if (moved.every((item, k) => item === items[k])) return null;
     return numberDoc({ ...doc, sections: doc.sections.map((section, s) => (s === sectionIndex ? { ...section, items: moved } : section)) });
   }
   const changed =
@@ -82,7 +102,7 @@ function applyEdit(doc: OutputCDoc, edit: CEdit): OutputCDoc | null {
 
 /** 화면 문서에 편집을 얹는다 - 칸 끝이거나 없는 줄이면 null */
 export function addEdit(draft: DocDraft, edit: CEdit): DocDraft | null {
-  const shown = applyEdit(draft.shown, edit);
+  const shown = previewEdit(draft.shown, edit);
   return shown && { ...draft, shown, edits: [...draft.edits, edit] };
 }
 
@@ -110,7 +130,7 @@ export function acceptSaved(draft: DocDraft, doc: OutputCDoc): DocDraft {
   let shown = doc;
   const edits: CEdit[] = [];
   for (const edit of draft.edits.slice(draft.sentCount)) {
-    const next = applyEdit(shown, edit);
+    const next = previewEdit(shown, edit);
     if (!next) continue;
     shown = next;
     edits.push(edit);

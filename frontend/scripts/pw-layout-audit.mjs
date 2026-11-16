@@ -297,8 +297,8 @@ const AUDIT_ENTRIES = [
     note: "output-a inside its frame, largest row <= 220px, expand grows only that row",
   },
   {
-    // 줄 끝 단추는 3단계(Order) 화면에만 있다 - 결과 화면의 C는 읽기 전용
-    id: "C8", ds: "worst", user: MEMBER, views: [1120],
+    // 줄 끝 단추는 3단계(Order) 화면에만 있다 - 결과 화면의 C는 읽기 전용. 호버·포커스 때만 용지 바깥에 뜬다(1120 ⋯ 하나, 2560 한 줄 묶음)
+    id: "C8", ds: "worst", user: MEMBER, views: [1120, 2560],
     path: (ids) => `/bundles/${ids.w[1]}/order`,
     open: async (page) => {
       await page.locator('[data-testid^="output-c-item-"]').first().waitFor({ timeout: T });
@@ -326,8 +326,10 @@ const AUDIT_ENTRIES = [
       let overlap = 0;
       let restOpacity = null;
       let hoverOpacity = null;
+      const modes = new Set();
+      // 보이는 쪽(넓으면 묶음 .c-acts, 좁으면 ⋯ .c-more)을 잰다
       const overlapOf = (row) => row.evaluate((el) => {
-        const actions = el.querySelector(".row-actions-quiet").getBoundingClientRect();
+        const actions = [...el.querySelectorAll(":scope > .c-acts, :scope > .c-more")].find((node) => getComputedStyle(node).display !== "none").getBoundingClientRect();
         let worst = 0;
         for (const box of document.querySelectorAll('[data-testid^="output-c-item-"]')) {
           const b = box.getBoundingClientRect();
@@ -337,24 +339,29 @@ const AUDIT_ENTRIES = [
         }
         return Math.round(worst);
       });
-      const opacityOf = (row) => row.locator(".row-actions-quiet").evaluate((el) => Math.round(Number(getComputedStyle(el).opacity) * 100) / 100);
+      const shownOf = (row) => row.evaluate((el) => {
+        const shown = [...el.querySelectorAll(":scope > .c-acts, :scope > .c-more")].find((node) => getComputedStyle(node).display !== "none");
+        return { mode: shown.classList.contains("c-more") ? "more" : "group", opacity: Math.round(Number(getComputedStyle(shown).opacity) * 100) / 100 };
+      });
       for (let i = 0; i < total; i += 1) {
         const row = rows.nth(i);
-        if ((await row.locator(".row-actions-quiet").count()) === 0) continue;
+        if ((await row.locator('[data-testid^="output-c-acts-"]').count()) === 0) continue;
         await row.scrollIntoViewIfNeeded();
         await page.mouse.move(0, 0);
         await page.waitForTimeout(300);
-        overlap = Math.max(overlap, await overlapOf(row));
-        restOpacity ??= await opacityOf(row);
+        // 쉬는 단추는 보이지 않아(불투명도 0) 겹침은 올렸을 때만 잰다
+        restOpacity = Math.max(restOpacity ?? 0, (await shownOf(row)).opacity);
         await row.hover({ position: { x: 8, y: 4 } });
         await page.waitForTimeout(300);
         overlap = Math.max(overlap, await overlapOf(row));
-        hoverOpacity ??= await opacityOf(row);
+        const shown = await shownOf(row);
+        modes.add(shown.mode);
+        hoverOpacity = Math.min(hoverOpacity ?? 1, shown.opacity);
       }
-      return { worstGap, wrapped, overlap, restOpacity, hoverOpacity };
+      return { worstGap, wrapped, overlap, restOpacity, hoverOpacity, modes: [...modes].join("/") };
     },
-    expect: (value) => value.wrapped > 0 && value.worstGap <= 24 && value.overlap === 0 && value.restOpacity >= 0.4 && value.restOpacity <= 0.5 && value.hoverOpacity === 1,
-    note: "wrapped lines fill the row (right gap <= 24px); action group overlaps no text box at rest or hovered; opacity ~0.45 at rest, 1 on hover",
+    expect: (value) => value.wrapped > 0 && value.worstGap <= 24 && value.overlap === 0 && value.restOpacity === 0 && value.hoverOpacity === 1 && (value.modes === "more" || value.modes === "group"),
+    note: "wrapped lines fill the row (right gap <= 24px); the hovered group or more button overlaps no text box; opacity 0 at rest, 1 on hover; one mode per width",
   },
   {
     id: "C9", ds: "worst", user: MEMBER, views: [1120],
@@ -1239,7 +1246,8 @@ const AUDIT_ENTRIES = [
     note: "W1 Assign tree: slot heading items fit their box, tree does not overflow, chosen slot heading card reads 'Slot heading' and fits",
   },
   {
-    // C13: W1 결과물 C를 이어 그리는 끝 - 끝 표지(output-c-more) 앞 줄들의 줄 끝 단추가 글 상자·끝 표지를 덮지 않고, 이어 그린 뒤에도 그렇다
+    // C13: W1 결과물 C를 이어 그리는 끝 - 마지막 줄이 끝 표지(output-c-more) 위에 있고, 이어 그리면 줄이 는다.
+    // 결과 화면의 C는 읽기 전용이라 줄 끝 단추가 없다 - 단추 겹침은 Order 화면에서 잰다(C8, 겹침 감사의 outputs-c-rows·outputs-c-end-rows)
     id: "C13", ds: "worst", user: MEMBER, views: [1120, 1920],
     path: (ids) => `/bundles/${ids.w[1]}/outputs`,
     open: async (page) => {
@@ -1249,17 +1257,11 @@ const AUDIT_ENTRIES = [
     },
     measure: async (page) => {
       const measureEdge = () => page.evaluate(() => {
-        const hit = (a, b) => Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 0.5 && Math.min(a.right, b.right) - Math.max(a.left, b.left) > 0.5;
         const more = document.querySelector('[data-testid="output-c-more"]')?.getBoundingClientRect() ?? null;
-        const items = [...document.querySelectorAll('[data-testid^="output-c-item-"]')].map((el) => el.getBoundingClientRect());
         const rows = [...document.querySelectorAll('[data-testid^="output-c-row-"]')];
-        let overlap = 0;
-        for (const row of rows) {
-          const actions = row.querySelector(".row-actions-quiet")?.getBoundingClientRect();
-          if (actions && (items.some((box) => hit(actions, box)) || (more && hit(actions, more)))) overlap += 1;
-        }
         const last = rows.at(-1)?.getBoundingClientRect();
-        return { rows: rows.length, overlap, lastAboveMore: !more || !last || last.bottom <= more.top + 0.5 };
+        // 읽기 전용 C에 줄 끝 단추가 생기면 알 수 있게 센다(있으면 안 된다)
+        return { rows: rows.length, buttons: document.querySelectorAll('[data-testid="output-c"] :is(.c-acts, .c-more)').length, lastAboveMore: !more || !last || last.bottom <= more.top + 0.5 };
       });
       const first = await measureEdge();
       await page.locator('[data-testid="output-c-more"]').scrollIntoViewIfNeeded();
@@ -1269,8 +1271,8 @@ const AUDIT_ENTRIES = [
       const title = await page.locator('[data-testid="top-bar-bundle-title"]').evaluate((el) => el.textContent.slice(0, 12));
       return { title, first, second };
     },
-    expect: (value) => value.title === "SYNTHETIC W1" && value.second.rows > value.first.rows && value.first.overlap === 0 && value.second.overlap === 0 && value.first.lastAboveMore && value.second.lastAboveMore,
-    note: "W1 output C: row buttons cover no text box or the end marker before and after the next rows are drawn",
+    expect: (value) => value.title === "SYNTHETIC W1" && value.second.rows > value.first.rows && value.first.buttons === 0 && value.second.buttons === 0 && value.first.lastAboveMore && value.second.lastAboveMore,
+    note: "W1 output C (read-only, no row buttons): the last row sits above the end marker before and after the next rows are drawn",
   },
   {
     // N1: Assign New 칸의 엮은 문서 - 칸 머리의 칸 제목 출처가 길어도(여러 옛 문서) 칸 이름을 덮지 않고 한 줄에서 말줄임된다.

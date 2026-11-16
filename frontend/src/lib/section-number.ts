@@ -57,7 +57,7 @@ export function getSectionDepths(section: Pick<Section, "number" | "items">): nu
  * 내어쓰기는 0보다 깊을 때만. 입구 2 문서(번호를 새로 매기지 않음)와 AI 번역 줄(출처를 따라감)은 깊이를 따로 바꾸지 않는다(canChangeDepth).
  */
 /** backend app/sop/constants.py MAX_INDENT_LEVEL과 같은 값 - 넘기면 API가 422로 거절한다 */
-const MAX_INDENT_LEVEL = 9;
+export const MAX_INDENT_LEVEL = 9;
 
 export function canIndent(depths: readonly number[], counted: readonly boolean[], index: number, dir: IndentDir): boolean {
   const depth = depths[index];
