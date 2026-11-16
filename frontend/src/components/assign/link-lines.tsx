@@ -6,6 +6,7 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { findLinkPartners, pickDrawnLinks, type LinkPair } from "@/lib/assign-model";
+import { isBoxDragActive } from "@/lib/box-drag";
 import { getLinkDirection, type LinkDirection } from "@/lib/link-direction-model";
 import { buildLinkPath, buildLinkStubs, isFarLink, type LinkStub } from "@/lib/link-route-model";
 
@@ -90,6 +91,13 @@ function updateChipDirections(root: HTMLElement, oldBody: HTMLElement) {
   }
 }
 
+/** 이음 선이 Old 조각에서 나가는 자리 - 조각 오른쪽 끝, 연결 배지(조각 오른쪽 아래) 높이. 배지가 없으면(고르는 중인 이음) 첫 줄 높이 */
+export function readOldLineStart(oldEl: HTMLElement): { x: number; y: number } {
+  const oldRect = oldEl.getBoundingClientRect();
+  const badgeRect = oldEl.querySelector<HTMLElement>("[data-link-badge]")?.getBoundingClientRect();
+  return { x: oldRect.right, y: badgeRect ? badgeRect.top + badgeRect.height / 2 : readAnchorY(oldRect) };
+}
+
 /** 이음 선이 New 문장에 닿는 끝 - New 문단 상자 왼쪽 테두리, 출처 칩 높이. 칩이 없으면(아직 출처가 아닌 후보) 첫 줄 높이 */
 export function readNewLineEnd(newEl: HTMLElement, unitId: number): { x: number; y: number } {
   const newRect = newEl.getBoundingClientRect();
@@ -150,11 +158,7 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
       const newEl = findNewLine(root, pair.targetId);
       if (!oldEl || !newEl) continue;
       // 두 끝 모두 상자 바깥 테두리 - 선이 배지·칩을 찌르지 않고 그 높이에서 상자에 닿는다
-      // 시작 - Old 조각 오른쪽 끝, 연결 배지(조각 오른쪽 아래) 높이. 배지가 없으면(고르는 중인 이음) 첫 줄 높이
-      const badge = oldEl.querySelector<HTMLElement>("[data-link-badge]");
-      const oldRect = oldEl.getBoundingClientRect();
-      const badgeRect = badge?.getBoundingClientRect();
-      const start = { x: oldRect.right, y: badgeRect ? badgeRect.top + badgeRect.height / 2 : readAnchorY(oldRect) };
+      const start = readOldLineStart(oldEl);
       const end = readNewLineEnd(newEl, pair.unitId);
       // 양쪽 끝이 다 보일 때만 - 한쪽이 스크롤 밖이면 선이 문서 머리나 화면 밖으로 뻗는다
       if (start.y < oldFrame.top || start.y > oldFrame.bottom || end.y < newFrame.top || end.y > newFrame.bottom) continue;
@@ -200,7 +204,19 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
   useEffect(() => {
     const root = svgRef.current?.parentElement;
     if (!root) return;
+    // 이번 끌기에서 올림을 이미 거뒀나 - 끌기마다 한 번만 상태를 바꾼다
+    let isDragCleared = false;
     const handleOver = (event: PointerEvent) => {
+      // 끄는 동안에는 올림을 읽지 않는다(끌어다 놓기 설계 G10). 끌기 직전의 올림은 첫 pointerover에서 한 번 거둔다 -
+      // 남겨 두면 그 조각의 선이 진한 채이고, 끄는 동안 선을 다시 재어 그리면(스크롤·창 크기) 맞은편 강조가 되살아난다
+      if (isBoxDragActive()) {
+        if (!isDragCleared) {
+          isDragCleared = true;
+          setHover(null);
+        }
+        return;
+      }
+      isDragCleared = false;
       const next = readHover(event.target);
       setHover((prev) => (prev?.side === next?.side && prev?.id === next?.id ? prev : next));
     };

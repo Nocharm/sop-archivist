@@ -7,7 +7,7 @@
 import { ArrowDown, ArrowUp, BookMarked, Check, Circle, CircleCheck, CircleDashed, CirclePause, Columns2, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, Redo2, RefreshCw, Sparkles, Square, SquarePlus, Trash2, TriangleAlert, Undo2, WandSparkles, X, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { Fragment, useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 
 import { AssignContextMenu } from "@/components/assign/assign-context-menu";
 import { AssignHelp } from "@/components/assign/assign-help";
@@ -20,7 +20,8 @@ import { ShapeTools, type ShapeLine } from "@/components/assign/shape-tools";
 import { SplitSuggestionCard } from "@/components/assign/split-suggestion";
 import { SplitUnitActions } from "@/components/split/split-unit-actions";
 import { LinkChoice } from "@/components/assign/link-choice";
-import { findNewLine, findOldStrip, LinkLines } from "@/components/assign/link-lines";
+import { createDragLinkLine, type DragLinkLine } from "@/components/assign/drag-link-line";
+import { findNewLine, findOldStrip, LinkLines, readNewLineEnd, readOldLineStart } from "@/components/assign/link-lines";
 import { LinkMenu } from "@/components/assign/link-menu";
 import { LinkBadge } from "@/components/assign/link-badge";
 import { MoveTargetField } from "@/components/assign/move-target-field";
@@ -47,6 +48,9 @@ import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
+import { buildOldDragCard, canDragOld, findAssignDrop, resolveDropLink, type AssignDrop } from "@/lib/assign-drop-model";
+import { findUnderPoint, type BoxDragConfig, type DragPoint } from "@/lib/box-drag";
+import { useBoxDrag } from "@/lib/use-box-drag";
 import { findLastStep } from "@/lib/destination-manage-model";
 import { listAckWarnings } from "@/lib/missing-warnings-model";
 import { findSplitBlock, readSplitOffsets } from "@/lib/split-ai-tabs-model";
@@ -406,11 +410,13 @@ export default function AssignPage() {
   // 그 자리 메뉴와 이동 - 이동은 고른 줄·열린 문서가 다시 그려진 뒤에 그 자리를 찾는다
   const [menu, setMenu] = useState<MenuState | null>(null);
   const menuSeq = useRef(0);
-  function openMenu(anchor: HTMLElement, event: MouseEvent | null, rowKey: string, targetId: number | null) {
+  /** at은 누른 자리를 이미 잰 것(요소 기준) - 끌어 놓은 자리처럼 클릭 이벤트가 없을 때 */
+  function openMenu(anchor: HTMLElement, event: MouseEvent | null, rowKey: string, targetId: number | null, at: { x: number; y: number } | null = null) {
     menuSeq.current += 1;
-    setMenu({ seq: menuSeq.current, anchor, offset: readMenuOffset(anchor, event), rowKey, targetId });
+    setMenu({ seq: menuSeq.current, anchor, offset: at ?? readMenuOffset(anchor, event), rowKey, targetId });
   }
-  const [jump, setJump] = useState<{ side: "old" | "new"; id: number; targetId: number; rowKey: string; quiet?: boolean } | null>(null);
+  // at - 끌어 놓은 자리(그 줄 기준). 있으면 메뉴가 클릭으로 연 것처럼 이음 선 끝에 뜬다. 키보드·"→ 간 곳" 이동에는 없다
+  const [jump, setJump] = useState<{ side: "old" | "new"; id: number; targetId: number; rowKey: string; quiet?: boolean; at?: { x: number; y: number } } | null>(null);
   // 고른 줄이 어떤 길로든 바뀌면(↑↓·저장 뒤 다음 줄·짝 풀림·문서 바꾸기) 메뉴를 닫는다 - 다른 줄에서 낡은 메뉴가 되살아나지 않게(렌더 중 상태 맞추기)
   if (menu !== null && menu.rowKey !== activeKey) setMenu(null);
   // Old 문장 우클릭 메뉴 - 누른 Unit, 그 줄 상자, 누른 자리와 글자 자리(키보드로 열었으면 없음). 고른 줄이 바뀌면 닫는다
@@ -617,6 +623,15 @@ export default function AssignPage() {
     changeView({ [name]: stepZoom(view[name], dir) });
   }
   const panesRef = usePaneZoom(zoomPane);
+  // 같은 틀을 끌기 층도 쓴다(끌어서 잇기) - 확대 훅은 콜백 ref라 틀 요소를 따로 들고 있는다
+  const panesBoxRef = useRef<HTMLDivElement | null>(null);
+  const setPanes = useCallback(
+    (el: HTMLDivElement | null) => {
+      panesBoxRef.current = el;
+      panesRef(el);
+    },
+    [panesRef],
+  );
 
   // --- AI 요청 ---
   async function askAiScope(kind: AiKind, body: AiScope & { direction?: "ko_to_en" | "en_to_ko" }) {
@@ -1641,11 +1656,89 @@ export default function AssignPage() {
       }
       revealElement(el);
       flashElement(el);
-      if (!jump.quiet) openMenu(el, null, jump.rowKey, jump.targetId);
+      if (!jump.quiet) openMenu(el, null, jump.rowKey, jump.targetId, jump.at ?? null);
       setJump(null);
     });
     return () => cancelAnimationFrame(frame);
   }, [jump]);
+
+  // --- 끌어서 잇기(끌어다 놓기 설계 §6) - Old 조각을 이미 쓴 New 문장에 놓으면 클릭과 같은 상태가 된다(그 줄 고름 · 그 문장 고름 · 그 자리 메뉴, 저장은 하지 않는다) ---
+  // 놓은 줄의 관계 묶음이 와야 클릭과 같은 판단을 한다 - 그때까지 들고 있다가 렌더 중에 푼다(그 사이 다른 줄을 고르면 버린다). 메뉴는 jump 이펙트가 그 문장을 찾아 띄운다.
+  // at(놓은 자리, 그 줄 기준)을 메뉴에 넘겨 클릭으로 연 것처럼 이음 선 끝에 뜨게 한다(사용자 결정 v1.1.1 - 놓기는 그 문장 클릭과 같다)
+  const [dropLink, setDropLink] = useState<{ rowKey: string; targetId: number; at: { x: number; y: number } } | null>(null);
+  if (dropLink !== null && activeKey !== dropLink.rowKey) setDropLink(null);
+  else if (dropLink !== null && !groupPending) {
+    setDropLink(null);
+    const { rowKey: dropKey, targetId, at } = dropLink;
+    const action = resolveDropLink({ draftDestination: draft.destination, savedDestination, targetId });
+    if (action === "menu_only" || pickNewSentence(targetId, false)) setJump({ side: "new", id: targetId, targetId, rowKey: dropKey, at });
+  }
+  // 끄는 동안 따라오는 점선 - React 상태가 아니다
+  const dragLineRef = useRef<DragLinkLine | null>(null);
+  const isOldDrag = canDragOld({ canEdit, mode, isPairPicking: pairSource !== null && pairFrom !== null, isSolo });
+  /** 포인터 밑의 New 줄과 거기 놓으면 할 일 - 이번 걸음에는 이미 쓴 문서의 고를 수 있는 문장만 받는다 */
+  function readDropAt(point: DragPoint): { line: HTMLElement | null; drop: AssignDrop } {
+    const line = findUnderPoint(point, '[data-pane="new"] .new-line[data-target]');
+    const hit = line ? { targetId: Number(line.dataset.target), isReadOnly: line.closest(".pg[data-read-only]") !== null, hasPickButton: line.querySelector("button.new-hit") !== null } : null;
+    return { line, drop: findAssignDrop(hit) };
+  }
+  const dragConfig: BoxDragConfig<{ rowKey: string; unitIds: number[] }> = {
+    pick: (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const box = target?.closest<HTMLElement>('[data-pane="old"] [data-drag-box]');
+      if (!target || !box) return null;
+      // 누른 곳의 가장 안쪽 Unit(글 조각·표 칸 조각), 없으면 그 조각의 Unit. 표에 묶인 칸 Unit은 제 줄이 없다 - 그때는 표 조각의 줄(표 전체)을 끈다
+      const holder = target.closest<HTMLElement>("[data-unit], [data-strip-unit]");
+      const unitId = Number(holder?.dataset.unit ?? holder?.dataset.stripUnit ?? box.dataset.stripUnit);
+      const key = rowOfUnit.get(unitId) ?? rowOfUnit.get(Number(box.dataset.stripUnit));
+      const unitIds = key === undefined ? undefined : rowMap.get(key)?.unitIds;
+      return key !== undefined && unitIds ? { rowKey: key, unitIds } : null;
+    },
+    getCard: ({ unitIds }) => buildOldDragCard(unitIds.flatMap((id) => unitMap.get(id) ?? []), (count) => t("assign.drag.units", { count })),
+    getScrollers: () => [...(panesBoxRef.current?.querySelectorAll<HTMLElement>(".pane-body") ?? [])],
+    onStart: ({ unitIds }) => {
+      const root = panesBoxRef.current;
+      if (!root) return;
+      for (const id of unitIds) findOldStrip(root, id)?.setAttribute("data-drag-src", "");
+      // 끌기 직전에 올려 둔 조각의 이음 강조는 끄는 동안 남기지 않는다(G10) - LinkLines는 끄는 동안 올림을 읽지 않는다
+      for (const el of root.querySelectorAll<HTMLElement>("[data-link-hover], [data-link-hot]")) {
+        delete el.dataset.linkHover;
+        delete el.dataset.linkHot;
+      }
+      dragLineRef.current = createDragLinkLine(root);
+    },
+    onMove: ({ unitIds }, point) => {
+      const root = panesBoxRef.current;
+      const { line, drop } = readDropAt(point);
+      // 점선의 시작 - 이음 선과 같은 자리, 출발 조각이 Old 칸 화면 밖이면 감춘다
+      const strip = root ? findOldStrip(root, unitIds[0]) : null;
+      const frame = root?.querySelector<HTMLElement>('[data-pane="old"] .pane-body')?.getBoundingClientRect();
+      const start = strip ? readOldLineStart(strip) : null;
+      const isStartShown = start !== null && frame !== undefined && start.y >= frame.top && start.y <= frame.bottom;
+      const isLink = drop.kind === "link" && line !== null;
+      dragLineRef.current?.update(isStartShown ? start : null, isLink ? readNewLineEnd(line, unitIds[0]) : point);
+      return isLink ? { state: "ok", note: t("assign.drag.link"), target: line } : { state: "none" };
+    },
+    onDrop: ({ rowKey }, point) => {
+      const { line, drop } = readDropAt(point);
+      if (drop.kind !== "link" || line === null) return;
+      const lineRect = line.getBoundingClientRect();
+      setChecked(new Set());
+      setCtxMenu(null);
+      selectRow(rowKey, false);
+      // 다른 줄을 골라도 New 칸은 놓은 문서에 둔다 - "→ 간 곳"과 같이(그 줄의 추천 문서로 넘어갔다 돌아오지 않게)
+      const docId = writtenMap.get(drop.targetId)?.target_doc_id;
+      if (docId !== undefined) setManualNewDoc({ key: rowKey, docId });
+      setDropLink({ rowKey, targetId: drop.targetId, at: { x: point.x - lineRect.left, y: point.y - lineRect.top } });
+    },
+    onEnd: () => {
+      for (const el of panesBoxRef.current?.querySelectorAll("[data-drag-src]") ?? []) el.removeAttribute("data-drag-src");
+      dragLineRef.current?.remove();
+      dragLineRef.current = null;
+    },
+  };
+  // 두 문서 틀은 불러온 뒤에야 그려진다 - 그려지면 다시 붙도록 조건에 넣는다
+  useBoxDrag(panesBoxRef, isOldDrag && ready && rows.length > 0 ? dragConfig : null);
 
   /** 짝 고르기를 맺는다 - 처음 문장과 고른 문장들이 한 짝이 된다. 맺을 수 없으면 까닭을 알리고 고르던 것을 그대로 둔다 */
   function finishPairPick(pickedIds: number[]) {
@@ -2915,7 +3008,7 @@ export default function AssignPage() {
               }
             />
           ) : (
-            <div ref={panesRef} className="assign-panes" data-single={view.single ? "" : undefined} style={{ "--split": `${view.split * 100}%` }}>
+            <div ref={setPanes} className="assign-panes" data-single={view.single ? "" : undefined} style={{ "--split": `${view.split * 100}%` }}>
               <OldPane
                 docOptions={paperDocOptions}
                 docId={String(oldView?.document.id ?? solo?.docId ?? "")}
@@ -2997,6 +3090,7 @@ export default function AssignPage() {
                 figureSource={oldView ? { bundleId, docId: oldView.document.id } : undefined}
                 zoom={view.zoomOld}
                 onZoom={(dir) => zoomPane("old", dir)}
+                dragBoxes={isOldDrag}
               />
               {!view.single && (
               <>
