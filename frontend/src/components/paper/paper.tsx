@@ -124,8 +124,8 @@ interface PaperProps {
     renderPills?: (unitId: number) => ReactNode;
     /** Assign - 필터 접기. matchIds는 필터를 걸 때의 목록(스냅숏), 없으면 전부 그린다 */
     fold?: { matchIds: ReadonlySet<number>; open: FoldOpen; onOpenChange: (next: FoldOpen) => void };
-    /** Assign - 캡션이 없어도 "Caption needed"를 띄우지 않을 묶음(이미 쓴 New 문서에 이은 표·그림 - 캡션을 그 문서가 정한다) */
-    isCaptionExempt?: (unitId: number) => boolean;
+    /** Assign - 머리 줄에 "Caption needed"를 띄울 묶음(lib/caption-model isCaptionNeeded). 없으면 캡션이 없는 묶음 모두 */
+    isCaptionNeeded?: (unitId: number, hasCaption: boolean) => boolean;
   };
   /** strips에서 고른 조각의 글 바로 아래 줄(확인·짝 풀기 등 단추) - 조각 상자가 펼쳐지며 밀려 내려오고, 고름이 옮겨 가면 접힌다 */
   renderUnitActions?: (unitId: number) => ReactNode;
@@ -604,8 +604,10 @@ export function Paper({
           ))}
         </span>
       );
-    const isMissing = captions.length === 0 && !(strips?.isCaptionExempt?.(unit.id) ?? false);
-    return <BundleHead head={getBundleHeader(row, model)} selected={unit.id === selectedId || (highlightIds?.has(unit.id) ?? false)} testId={testId} caption={caption} captionMissing={isMissing} />;
+    const isMissing = strips?.isCaptionNeeded ? strips.isCaptionNeeded(unit.id, captions.length > 0) : captions.length === 0;
+    // 캡션 단위를 바로 고른 때(짝 고르기·나눌 선)도 펼친 채 - 나눌 선 아래에서 다시 접히지 않게
+    const isSelected = unit.id === selectedId || (highlightIds?.has(unit.id) ?? false) || captions.some((piece) => piece.unitId !== null && piece.unitId === selectedId);
+    return <BundleHead head={getBundleHeader(row, model)} selected={isSelected} testId={testId} caption={caption} captionMissing={isMissing} />;
   }
 
   function renderTable(item: Extract<PaperItem, { type: "table" }>, head: ReactNode = null): ReactNode {
@@ -632,8 +634,8 @@ export function Paper({
     );
   }
 
-  /** 그림 - 머리 줄이 있으면 그림 블록 글(옛 추출 캡션)은 머리 줄의 캡션으로만 읽힌다(두 번 보이지 않게). 머리 줄이 없는 용지만 아래에 둔다 */
-  function renderFigure(block: ViewBlock, head: ReactNode = null): ReactNode {
+  /** 그림 - 그림 블록 글(옛 추출 캡션)이 머리 줄의 캡션으로 읽히면(hideText) 아래에 다시 두지 않는다 */
+  function renderFigure(block: ViewBlock, head: ReactNode = null, hideText = false): ReactNode {
     return (
       <>
         {head}
@@ -645,7 +647,7 @@ export function Paper({
               <ImageIcon size={28} strokeWidth={1.5} />
             </span>
           )}
-          {head === null && <p data-block={block.id}>{renderBlockText(block)}</p>}
+          {!hideText && <p data-block={block.id}>{renderBlockText(block)}</p>}
         </figure>
       </>
     );
@@ -712,7 +714,7 @@ export function Paper({
           {row.type === "table"
             ? renderTable(row.item, renderBundleHead(row, unit))
             : row.type === "figure"
-              ? renderFigure(row.block, renderBundleHead(row, unit))
+              ? renderFigure(row.block, renderBundleHead(row, unit), (row.captions?.length ?? 0) > 0 || row.block.text.trim() === "")
               : row.parts.map((part, partIndex) => {
                   const skip = partIndex === 0 ? readHiddenPrefix(part.block, unit) : 0;
                   return (
@@ -968,6 +970,7 @@ export function Paper({
         ref={pageRef}
         className="pg"
         data-strips={strips ? "" : undefined}
+        data-whole-bundle={pickWholeBundle ? "" : undefined}
         data-dragging={isDragging ? "" : undefined}
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}

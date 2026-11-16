@@ -1438,8 +1438,8 @@ const AUDIT_ENTRIES = [
       await page.waitForTimeout(SETTLE_MS);
       return { before, after: await read() };
     },
-    expect: (value) => value.before !== null && value.after !== null && value.before.lines === 2 && value.after.lines > 2 && value.before.headSpill <= 0 && value.after.headSpill <= 0 && value.before.pageScroll === 0,
-    note: "Assign old head row: a 420-char caption stays at two lines, opens fully when the table is picked, and never spills its strip",
+    expect: (value) => value.before !== null && value.after !== null && value.before.lines === 2 && value.after.lines > 2 && value.before.headSpill <= 0 && value.after.headSpill <= 0 && value.before.pageScroll === 0 && value.after.pageScroll === 0,
+    note: "Assign old head row: a 420-char caption stays at two lines, opens fully when the table is picked, never spills its strip, and no page scroll before or after the pick",
   },
 ];
 

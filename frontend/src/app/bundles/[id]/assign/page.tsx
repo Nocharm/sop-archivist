@@ -94,6 +94,7 @@ import {
   type ViewUnit,
   type WrittenSentence,
 } from "@/lib/api-sop";
+import { isCaptionNeeded } from "@/lib/caption-model";
 import { applySavedTargets, buildComposedRows, isWrittenRow, listHeadingNotes, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
 import {
   addPartnerTargets,
@@ -2957,8 +2958,8 @@ export default function AssignPage() {
                 warnBlockIds={warnBlockIds}
                 statusOf={(unitId) => unitMap.get(unitId)?.status}
                 renderNote={placeOf}
-                // 이미 쓴 New 문서에 이은 표·그림(입구 2)은 캡션을 그 문서가 정한다 - 서버도 캡션을 요구하지 않는다
-                isCaptionExempt={(unitId) => linkedTargets.has(unitId)}
+                // 삭제·이동한 묶음, 이미 쓴 New 문서(혼자 연 문서)의 묶음과 그 문서에 이은 묶음(입구 2 - 캡션을 그 문서가 정한다)은 캡션이 필요 없다
+                isCaptionNeeded={(unitId, hasCaption) => isCaptionNeeded({ hasCaption, disposition: unitMap.get(unitId)?.decision.disposition, isLinkedToWritten: isSolo || linkedTargets.has(unitId) })}
                 renderPills={(unitId) => {
                   const targets = linkedTargets.get(unitId);
                   return targets ? <LinkBadge unitId={unitId} targets={targets} currentDocId={newDocId} onJump={(_unitId, targetId) => showInNew(targetId)} /> : null;

@@ -1063,6 +1063,8 @@
   .pg[data-strips] .strip[data-strip-unit], .pg[data-strips] .strip-row:has(> .strip[data-strip-unit]) > .strip-lead, .cell-piece[data-strip-unit] { cursor: pointer; }
   /* :where로 낮춘 우선순위 - 고른 문장 윤곽(배경 없음)·Ctrl로 고른 바탕(data-pick)이 이긴다 */
   :where(.pg[data-strips] .strip-row:hover > .strip[data-strip-unit]:not([data-kind="table"]), .cell-piece[data-strip-unit]:hover) .su { background-color: var(--hover); }
+  /* 묶음째 고르는 화면(Assign 배정)은 표 어디에 올려도(머리 줄·캡션·칸) 누르면 표 전체가 골라지니 표 전체의 글을 같이 칠한다 - 캡션이나 칸 하나만 칠하면 그것만 골라질 것처럼 보인다 */
+  :where(.pg[data-strips][data-whole-bundle] .strip-row:hover > .strip[data-strip-unit][data-kind="table"]) .su { background-color: var(--hover); }
   /* 표·그림 조각은 스크롤하지 않는다 - 위 테두리의 종류 표시(.strip-lang)가 잘린다. 넓은 표는 .ptbl-scroll, 넓은 그림은 .pfig가 가로로 스크롤한다 */
   .pg[data-strips] .strip[data-kind="table"] { padding-left: var(--pg-pad-l); padding-right: var(--pg-pad-r); }
   .pg[data-strips] .pfig { overflow-x: auto; }
