@@ -55,10 +55,16 @@ def _get_location_key(spec: dict) -> str:
 
 
 def _list_expected_c_items(expected: dict) -> list[tuple]:
-    """결과물 C에 나올 새 문장 — 같은 key는 하나, 두 언어와 중립 모두(한 벌), 입구 2 신규 포함."""
+    """결과물 C에 나올 새 문장 — 같은 key는 하나, 두 언어와 중립 모두(한 벌), 입구 2 신규 포함. 그림은 [Figure] 대신 캡션 글이다."""
     specs = {spec["key"]: spec for answer in expected["answers"] for spec in answer["targets"]}
+    captions = {
+        spec["parent_key"]: spec["text"] for spec in specs.values() if "parent_key" in spec and "cell_row" not in spec
+    }
     items = [
-        (spec["code"], _get_location_key(spec), spec["kind"], spec.get("text", ""), spec["change_type"])
+        (
+            spec["code"], _get_location_key(spec), spec["kind"],
+            captions.get(spec["key"], "") if spec["kind"] == "figure" else spec.get("text", ""), spec["change_type"],
+        )
         for spec in specs.values()
     ]
     items += [

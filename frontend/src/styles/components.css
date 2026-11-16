@@ -1499,6 +1499,9 @@
   /* 엮은 문서의 표·그림 - 앞머리(자기 번호) 오른쪽 남은 폭을 채워 문장 상자와 같은 x에서 시작한다 */
   .pg .strip-row > :is(.new-block, .new-bundle) { flex: 1 1 0; min-width: 0; }
   .pg .new-bundle { margin: 4px 0; }
+  /* 표·그림 위 캡션 줄 - 여러 언어 캡션은 줄바꿈으로 이어 온다. 캡션이 없으면 흐린 "Caption needed" */
+  .pg .new-bundle-cap { margin: 0 0 4px; white-space: pre-line; }
+  .pg .new-bundle-cap[data-missing] { font: var(--fs-cap) / var(--lh-cap) var(--font-ui); color: var(--ink-3); }
 
   .assign-side { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-left: 1px solid var(--line); background: var(--surface); }
   /* 오른쪽 패널 - 위에서 아래로 일하는 순서: 머리(이 Unit·검사·확정한 사람) → ① 보낼 곳(이곳만 스크롤) → ② 결정 칸(아래에 붙음, 맨 끝 확정).

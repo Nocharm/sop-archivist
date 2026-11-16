@@ -256,7 +256,9 @@ def test_output_a_rows_follow_line_rules(client: TestClient) -> None:
         (9, "cell", d1("Item"), "sop", "SOP-NEW", "as_is", None),
         (9, "cell", d1("합성 값"), "sop", "SOP-NEW", "as_is", None),
         (9, "cell", d1("Synthetic value"), "sop", "SOP-NEW", "as_is", None),
+        # 그림 줄 뒤에 딸린 캡션 단위 줄 — 같은 묶음
         (10, "unit", figure, "wi", "WI-01", "as_is", None),
+        (10, "caption", d1(CAPTION), "wi", "WI-01", "as_is", None),
         (11, "unit", d2(OLD2_HEADINGS[0]), "delete", "", "deleted", None),
         (12, "unit", d2(OLD2_HEADINGS[1]), "delete", "", "deleted", None),
         (13, "unit", d2(MERGE_2), "sop", "SOP-NEW", "merged", f"G-{d1(MERGE_1)}"),
@@ -516,8 +518,9 @@ def test_figure_and_data_table_once(client: TestClient) -> None:
     table_group = _group_lines(rows, table["display_id"])
     assert [line["row_kind"] for line in table_group] == ["table", "cell", "cell", "cell", "cell"]
     assert [line["source_text"] for line in table_group[1:]] == [text for row in PAIR_TABLE for text in row]
-    (figure_line,) = _group_lines(rows, figure["display_id"])
+    figure_line, caption_line = _group_lines(rows, figure["display_id"])
     assert (figure_line["row_kind"], figure_line["source_text"]) == ("unit", CAPTION)
+    assert (caption_line["row_kind"], caption_line["display_id"]) == ("caption", find_unit(fx.view, CAPTION)["display_id"])
     assert Counter(row["display_id"] for row in rows)[figure["display_id"]] == 1
 
 
@@ -908,8 +911,9 @@ def test_output_c_one_list_per_slot(client: TestClient) -> None:
     assert [(cell["text"], cell["cell_row"], cell["cell_col"], cell["children"]) for cell in cells] == [
         ("항목", 0, 0, []), ("Item", 0, 1, []), ("합성 값", 1, 0, []), ("Synthetic value", 1, 1, []),
     ]
-    # 캡션 없는 표라 확정하며 써 넣은 캡션 — 칸 좌표 없는 자식이다(자식 사이 자리는 Task 13이 정한다)
-    assert [child["text"] for child in table["children"] if child["cell_row"] is None] == [WRITTEN_CAPTION]
+    # 캡션 없는 표라 확정하며 써 넣은 캡션 — 칸 좌표 없는 자식이고 칸보다 먼저 온다
+    assert [child["text"] for child in table["children"][:1] if child["cell_row"] is None] == [WRITTEN_CAPTION]
+    assert table["caption"] == WRITTEN_CAPTION
     table_unit = _unit_of_kind(fx.old1, "table")
     assert {cell["meaning_key"] for cell in cells} == {table["meaning_key"]} == {f"old:-{table_unit['id']}"}
     assert sum(len(section["items"]) for section in sop["sections"]) == 4
@@ -922,7 +926,7 @@ def test_output_c_one_list_per_slot(client: TestClient) -> None:
     assert [_section_items(section) for section in wi["sections"]] == [
         [(SPLIT_A, "split", "confirmed", "← OLD-1 §5.1 (split)")],
         [(DUPLICATE, "as_is", "confirmed", "← OLD-1 §5.1")],
-        [(SPLIT_B, "split", "confirmed", "← OLD-1 §5.1 (split)"), ("", "as_is", "on_hold", "← OLD-1 §5.1")],
+        [(SPLIT_B, "split", "confirmed", "← OLD-1 §5.1 (split)"), (CAPTION, "as_is", "on_hold", "← OLD-1 §5.1")],
         [],
     ]
     # 입구 2 문서는 절 경로가 처음 나온 순서로 칸을 만든다
@@ -1004,10 +1008,10 @@ def test_composed_doc_carries_both_languages_in_c_order(client: TestClient) -> N
         (MERGED, "ko", merged_sources), (RECORDS_EN, "en", [find_unit(fx.old2, RECORDS_EN)["id"]]),
     ])
     assert sections["general_requirements.operation"]["label"] == "General Requirements › Operation"
-    # 보류한 그림은 고친 글이 없어 출처 원문(캡션)을 보인다
+    # 보류한 그림은 글이 없고(그림 단위 글자도 비었다) 딸린 캡션 새 문장의 글을 caption으로 싣는다
     (step2,) = [section for section in wi["sections"] if section["location_key"] == "step:2:instruction"]
-    assert [(item["text"], item["status"], item["source_unit_ids"]) for item in step2["items"]] == [
-        (SPLIT_B, "confirmed", [find_unit(fx.old1, SPLIT_SOURCE)["id"]]), (CAPTION, "on_hold", [figure_id]),
+    assert [(item["text"], item["status"], item["source_unit_ids"], item["caption"]) for item in step2["items"]] == [
+        (SPLIT_B, "confirmed", [find_unit(fx.old1, SPLIT_SOURCE)["id"]], None), ("", "on_hold", [figure_id], CAPTION),
     ]
 
 
@@ -1069,6 +1073,117 @@ def test_bundle_table_grows_past_a_stale_grid() -> None:
 
     assert (table.rows, table.cols) == (2, 3)
     assert [cell.target_id for cell in table.cells] == [1, 2]
+
+
+# ── 캡션 글 ───────────────────────────────────────────────────────────────────
+
+
+TABLE_CAPTION = "표 3. 운전 조건"
+TABLE_CAPTION_EN = "Table 3. Operating conditions"
+FIGURE_CAPTION = "그림 2. 로터 장착 위치"
+CAPTION_TABLE = [["항목", "값", "단위"], ["온도", "25", "℃"], ["압력", "1", "bar"]]
+CAPTIONS_BODY = (
+    p("1. 절차", "Heading1") + p(TABLE_CAPTION, "Caption") + tbl(CAPTION_TABLE)
+    + f"<w:p>{make_drawing_run('image1.png')}</w:p>" + p(FIGURE_CAPTION, "Caption")
+)
+
+
+class CaptionFixture(NamedTuple):
+    bundle_id: int
+    sop_id: int
+    view: dict
+
+
+def _setup_captions(client: TestClient) -> CaptionFixture:
+    """캡션이 딸린 3×3 표와 그림을 원문 그대로 SOP 일반 요구 사항에 확정한 묶음."""
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    response = put_tobe(client, bundle_id, TOBE_DOCS)
+    assert response.status_code == 200, response.text
+    sop_id = next(doc["id"] for doc in response.json()["docs"] if doc["code"] == "SOP-NEW")
+    doc = _upload_ready(
+        client, bundle_id, build_docx(CAPTIONS_BODY, media={"image1.png": TINY_PNG}), "SYNTHETIC_OLD-1_Captions.docx",
+    )
+    view = get_view(client, bundle_id, doc["id"])
+    for kind in ("table", "figure"):
+        assign_as_is(client, bundle_id, _unit_of_kind(view, kind), sop_id, slot_key="general_requirements")
+    return CaptionFixture(bundle_id, sop_id, view)
+
+
+def _find_item(doc: dict, kind: str) -> dict:
+    return next(item for section in doc["sections"] for item in section["items"] if item["kind"] == kind)
+
+
+def _add_en_table_caption(fx: CaptionFixture, table_target_id: int) -> None:
+    """표 아래 영어 캡션 하나(AI 글만) — 여러 언어 캡션은 한국어·영어 순으로 잇는다."""
+
+    async def _insert(session: AsyncSession) -> None:
+        session.add(TargetSentence(
+            bundle_id=fx.bundle_id, target_doc_id=fx.sop_id, slot_key="general_requirements", lang="en", kind="sentence",
+            ai_text=TABLE_CAPTION_EN, origin="units", change_type="new", status="ai_suggested", parent_target_id=table_target_id,
+        ))
+        await session.commit()
+
+    run_in_session(_insert)
+
+
+def test_output_a_table_source_shows_original_caption(client: TestClient) -> None:
+    fx = _setup_captions(client)
+    table, figure = _unit_of_kind(fx.view, "table"), _unit_of_kind(fx.view, "figure")
+
+    rows = _get_output(client, fx.bundle_id, "outputs/a", "ko")
+
+    # 옛 문서 칸은 원문 캡션 글(표는 뒤에 크기), 캡션 단위는 표·그림 줄 바로 뒤에 캡션 줄로
+    table_group = _group_lines(rows, table["display_id"])
+    assert [line["row_kind"] for line in table_group] == ["table", "caption"] + ["cell"] * 9
+    assert table_group[0]["source_text"] == f"{TABLE_CAPTION} [3×3]"
+    caption = table_group[1]
+    assert (caption["source_text"], caption["confirmed_text"], caption["location"]["place"]) == (
+        TABLE_CAPTION, TABLE_CAPTION, "문단",
+    )
+    figure_group = _group_lines(rows, figure["display_id"])
+    assert [line["row_kind"] for line in figure_group] == ["unit", "caption"]
+    assert [line["source_text"] for line in figure_group] == [FIGURE_CAPTION, FIGURE_CAPTION]
+    assert figure_group[1]["confirmed_text"] == FIGURE_CAPTION
+
+
+def test_output_c_figure_text_is_its_caption(client: TestClient) -> None:
+    fx = _setup_captions(client)
+
+    sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
+
+    figure = _find_item(sop, "figure")
+    assert (figure["text"], figure["caption"]) == (FIGURE_CAPTION, FIGURE_CAPTION)
+    assert [(child["text"], child["cell_row"]) for child in figure["children"]] == [(FIGURE_CAPTION, None)]
+
+
+def test_output_c_table_caption_comes_before_cells(client: TestClient) -> None:
+    fx = _setup_captions(client)
+    sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
+    _add_en_table_caption(fx, _find_item(sop, "table")["target_id"])
+
+    sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
+
+    table = _find_item(sop, "table")
+    assert table["caption"] == f"{TABLE_CAPTION}\n{TABLE_CAPTION_EN}"
+    children = [(child["text"] or child["ai_text"], child["cell_row"], child["cell_col"]) for child in table["children"]]
+    assert children == [
+        (TABLE_CAPTION, None, None), (TABLE_CAPTION_EN, None, None),
+        *[(text, row, col) for row, line in enumerate(CAPTION_TABLE) for col, text in enumerate(line)],
+    ]
+
+
+def test_composed_and_written_items_carry_caption(client: TestClient) -> None:
+    fx = _setup_captions(client)
+    sop = _get_output(client, fx.bundle_id, f"outputs/c/docs/{fx.sop_id}", "en")
+    _add_en_table_caption(fx, _find_item(sop, "table")["target_id"])
+
+    sop = _get_output(client, fx.bundle_id, f"outputs/c/docs/{fx.sop_id}", "en")
+
+    # 캡션은 표 격자에 끼지 않고 caption 한 글로(여러 언어는 한국어·영어 순, 확정 글이 없으면 AI 글)
+    table, figure = _find_item(sop, "table"), _find_item(sop, "figure")
+    assert table["caption"] == f"{TABLE_CAPTION}\n{TABLE_CAPTION_EN}"
+    assert [cell["text"] for cell in table["table"]["cells"]] == [text for line in CAPTION_TABLE for text in line]
+    assert figure["caption"] == FIGURE_CAPTION
 
 
 def test_composed_doc_rejects_other_bundles_and_outsiders(client: TestClient) -> None:
@@ -1247,7 +1362,7 @@ def test_reorder_targets_sets_manual_order(client: TestClient) -> None:
     unassigned = find_unit(fx.old1, UNASSIGNED_EN)
     assign_as_is(client, fx.bundle_id, unassigned, fx.wi_id, wi_step=1, wi_part="instruction")
     wi = _get_output(client, fx.bundle_id, "outputs/c")["docs"][1]
-    assert [item["text"] for item in wi["sections"][0]["items"]] == ["", SPLIT_A, UNASSIGNED_EN]
+    assert [item["text"] for item in wi["sections"][0]["items"]] == [CAPTION, SPLIT_A, UNASSIGNED_EN]
 
     stale = _put_order(client, fx.bundle_id, {"revision": revision, "target_doc_id": fx.wi_id, "items": items})
     assert (stale.status_code, stale.json()["detail"]["code"]) == (409, "revision_conflict")

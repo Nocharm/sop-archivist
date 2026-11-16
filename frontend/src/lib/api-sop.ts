@@ -956,6 +956,8 @@ export interface WrittenSentence {
   table?: BundleTable | null;
   /** 그림 줄이고 출처 그림에 이미지가 있으면 그 블록 */
   figure?: BundleFigure | null;
+  /** 표·그림 줄의 캡션 글(여러 언어는 한국어·영어 순 줄바꿈), 없으면 null */
+  caption?: string | null;
 }
 
 /** New 칸 표 줄의 칸 새 문장 - 글은 확정 글, 없으면 AI 글 */
@@ -1053,7 +1055,8 @@ export interface OutputARow {
   /** 묶음 번호(1부터) - 묶음의 모든 줄에 같은 값 */
   row_no: number;
   is_group_start: boolean;
-  row_kind: "unit" | "table" | "cell" | "translation" | "new";
+  /** caption - 표·그림 줄 바로 뒤의 캡션 단위 줄 */
+  row_kind: "unit" | "table" | "caption" | "cell" | "translation" | "new";
   old_doc_code: string;
   old_doc_version: string;
   location: OutputLocation;
@@ -1113,7 +1116,10 @@ export interface OutputCItem {
   number_style: NumberStyle;
   cell_row: number | null;
   cell_col: number | null;
+  /** 표·그림의 자식 - 캡션 새 문장(칸 좌표 없음, 한국어·영어 순)이 먼저, 그다음 칸 새 문장(행·열 순) */
   children: OutputCItem[];
+  /** 표·그림의 캡션 글(그림은 text도 이 글), 없으면 null */
+  caption?: string | null;
 }
 
 export interface OutputC {
@@ -1175,6 +1181,8 @@ export interface ComposedItem {
   source_unit_ids: number[];
   table?: BundleTable | null;
   figure?: BundleFigure | null;
+  /** 표·그림 줄의 캡션 글(결과물 C와 같은 규칙), 없으면 null */
+  caption?: string | null;
 }
 
 export interface ComposedSection {

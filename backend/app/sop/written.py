@@ -21,6 +21,7 @@ from app.equis.view import EquisOut, build_equis_out
 from app.sop.ai.constants import CANDIDATE_MIN_EMBED, CANDIDATE_MIN_TEXT, CANDIDATE_LIMIT
 from app.sop.ai.embeddings import load_cached_vectors
 from app.sop.ai.similarity import build_text_bigrams, compare_bigrams
+from app.sop.captions import is_caption_target, join_caption_texts
 from app.sop.errors import raise_rule
 from app.sop.groups import select_in_chunks
 from app.sop.models import (
@@ -75,6 +76,7 @@ class WrittenSentenceOut(BaseModel):
     ref_issue: Literal["number", "title"] | None = None
     table: BundleTableOut | None = None  # 표 줄이면 칸 새 문장 격자
     figure: BundleFigureOut | None = None  # 그림 줄이고 이 문장이 온 그림에 이미지가 있으면 그 블록
+    caption: str | None = None  # 표·그림 줄의 캡션 글(outputs._pick_caption_text와 같은 규칙), 없으면 None
 
 
 class NewCandidateOut(BaseModel):
@@ -157,7 +159,7 @@ async def list_written_sentences(session: AsyncSession, bundle_id: int) -> list[
     partners = await _find_partner_targets(session, {target.new_unit_id: target.id for target, _ in rows if target.new_unit_id})
     refs = await _find_refs(session, [target for target, _ in rows], sources)
     lookups = await equis_service.load_lookups(session, [ref.number for ref in refs.values()])
-    tables = await _load_tables(session, [target for target, _ in rows if target.kind == "table"])
+    tables, captions = await _load_bundle_children(session, [target for target, _ in rows if target.kind in ("table", "figure")])
     figures = await _find_figure_blocks(session, {
         target.id: [target.new_unit_id] if target.new_unit_id else sources.get(target.id, [])
         for target, _ in rows if target.kind == "figure"
@@ -186,31 +188,43 @@ async def list_written_sentences(session: AsyncSession, bundle_id: int) -> list[
             ref_issue=None if ref is None else _check_ref(target.confirmed_text, ref, lookups.get(ref.number), now),
             table=tables.get(target.id),
             figure=figures.get(target.id),
+            caption=captions.get(target.id),
         )
         for target, code in rows
         for ref in [refs.get(target.id)]
     ]
 
 
-async def _load_tables(session: AsyncSession, table_targets: Sequence[TargetSentence]) -> dict[int, BundleTableOut]:
-    """표 새 문장마다 칸 새 문장 격자(표 새 문장 id → 표) — 질의는 표가 있을 때만 한 번이다."""
-    if not table_targets:
-        return {}
+async def _load_bundle_children(
+    session: AsyncSession, bundle_targets: Sequence[TargetSentence]
+) -> tuple[dict[int, BundleTableOut], dict[int, str]]:
+    """표·그림 새 문장의 자식 — (표 새 문장 id → 칸 새 문장 격자, 표·그림 새 문장 id → 캡션 글). 질의는 표·그림이 있을 때만 한 번이다.
+
+    캡션 새 문장은 칸이 아니라 격자에 넣지 않고 캡션 글로 잇는다(outputs._pick_caption_text와 같은 규칙).
+    """
+    if not bundle_targets:
+        return {}, {}
     cells: dict[int, list[BundleCellOut]] = defaultdict(list)
+    captions: dict[int, list[tuple[str, str]]] = defaultdict(list)
     cell_rows = await select_in_chunks(
         session,
         lambda chunk: select(
             TargetSentence.id, TargetSentence.parent_target_id, TargetSentence.cell_row, TargetSentence.cell_col, TargetSentence.lang,
-            TargetSentence.confirmed_text, TargetSentence.ai_text, TargetSentence.status,
-        ).where(TargetSentence.parent_target_id.in_(chunk)),
-        [target.id for target in table_targets],
+            TargetSentence.confirmed_text, TargetSentence.ai_text, TargetSentence.status, TargetSentence.kind,
+        ).where(TargetSentence.parent_target_id.in_(chunk)).order_by(TargetSentence.id),
+        [target.id for target in bundle_targets],
     )
     for row in cell_rows:
+        text = row.confirmed_text or row.ai_text
+        if is_caption_target(row):
+            captions[row.parent_target_id].append((row.lang, text))
+            continue
         cells[row.parent_target_id].append(BundleCellOut(
-            target_id=row.id, row=row.cell_row or 0, col=row.cell_col or 0, lang=row.lang, text=row.confirmed_text or row.ai_text,
-            status=row.status,
+            target_id=row.id, row=row.cell_row or 0, col=row.cell_col or 0, lang=row.lang, text=text, status=row.status,
         ))
-    return {target.id: build_bundle_table(target.grid, cells[target.id]) for target in table_targets}
+    tables = {target.id: build_bundle_table(target.grid, cells[target.id]) for target in bundle_targets if target.kind == "table"}
+    joined = {target_id: join_caption_texts(texts) for target_id, texts in captions.items()}
+    return tables, {target_id: text for target_id, text in joined.items() if text is not None}
 
 
 async def _find_figure_blocks(session: AsyncSession, units_by_target: dict[int, list[int]]) -> dict[int, BundleFigureOut]:

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { BundleCell, BundleTable, ComposedDoc, ComposedItem, ComposedSection, GroupTarget, WrittenSentence } from "@/lib/api-sop";
+import type { BundleCell, BundleTable, ComposedDoc, ComposedItem, ComposedSection, GroupTarget, OutputCItem, WrittenSentence } from "@/lib/api-sop";
 import {
   applySavedTargets,
   buildComposedRows,
@@ -12,6 +12,7 @@ import {
   listHeadingNotes,
   readSectionNumber,
   removeClearedUnits,
+  splitCTable,
 } from "@/lib/composed-model";
 import { getPillWidth } from "@/lib/strip-pill-model";
 
@@ -69,6 +70,23 @@ describe("groupTableCells", () => {
   });
 });
 
+describe("splitCTable", () => {
+  it("takes caption children out of the grid and stacks a translated cell in its own position", () => {
+    const item = (target_id: number, cell_row: number | null, cell_col: number | null): OutputCItem => ({
+      target_id, kind: "sentence", lang: "ko", text: String(target_id), ai_text: "", change_type: null, status: "confirmed", source_note: "",
+      origin: "units", meaning_key: null, number: null, indent_level: 0, number_style: "numbered", cell_row, cell_col, children: [],
+    });
+
+    const { captions, grid } = splitCTable([item(1, null, null), item(2, 0, 0), item(3, 0, 0), item(4, 1, 1)]);
+
+    expect(captions.map((caption) => caption.target_id)).toEqual([1]);
+    expect(grid.map((cols) => cols.map((cells) => cells.map((cell) => cell.item.target_id)))).toEqual([
+      [[2, 3], []],
+      [[], [4]],
+    ]);
+  });
+});
+
 describe("buildComposedRows", () => {
   it("lists sentences in section order and one placeholder per empty section", () => {
     const rows = buildComposedRows(makeDoc());
@@ -95,12 +113,15 @@ describe("buildComposedRows", () => {
   it("carries a table's cells and a figure's image block onto the row", () => {
     const table: BundleTable = { rows: 1, cols: 2, cells: [makeCell(11, 0, 0, "a"), makeCell(12, 0, 1, "b")] };
     const figure = { document_id: 3, block_id: 30 };
-    const doc = makeDoc([makeSlot("5.1", "5.1", "Procedure", [{ ...makeItem(1, "5.1.1", "table"), table }, { ...makeItem(2, "5.1.2", "figure"), figure }, makeItem(3, "5.1.3")])]);
+    const doc = makeDoc([
+      makeSlot("5.1", "5.1", "Procedure", [{ ...makeItem(1, "5.1.1", "table"), table }, { ...makeItem(2, "5.1.2", "figure"), figure, caption: "그림 2. 로터" }, makeItem(3, "5.1.3")]),
+    ]);
 
     const rows = buildComposedRows(doc);
 
-    expect(rows[0]).toMatchObject({ kind: "table", table, figure: null });
-    expect(rows[1]).toMatchObject({ kind: "figure", table: null, figure });
+    // 캡션 글도 줄에 싣는다 - 없으면 null(New 칸이 쓰지 않은 문서에서 "Caption needed"를 보인다)
+    expect(rows[0]).toMatchObject({ kind: "table", table, figure: null, caption: null });
+    expect(rows[1]).toMatchObject({ kind: "figure", table: null, figure, caption: "그림 2. 로터" });
     expect(rows[2]).toMatchObject({ table: null, figure: null });
   });
 

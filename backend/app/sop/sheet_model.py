@@ -80,7 +80,7 @@ INFO_NAMES = (
     "Synthetic data",
 )
 _LABELS = LABELS["en"]
-_MARKERS = {"table": "[Table]", "figure": "[Figure]"}
+_MARKERS = {"table": "[Table]", "figure": "[Figure]"}  # 캡션 글이 없는 표·그림 줄에만
 _NO_WRAP_KINDS = ("status", "plain")  # 상태 줄·제목·이름 칸은 옆 칸으로 넘쳐 보이게 접지 않는다
 
 
@@ -313,9 +313,12 @@ def _make_c_texts(values: Mapping[int, str]) -> list[str]:
 
 
 def _list_c_item_lines(item: CItem, depth: int) -> Iterator[tuple[list[str], tuple[int, ...]]]:
-    """새 문장 한 줄과, 표 새 문장이면 그 칸 새 문장들(한 단계 더 들여쓴 열) — (칸 글, 기울일 열(1부터)). 주석 줄은 항목·AI 글을 기울인다."""
+    """새 문장 한 줄과, 표 새 문장이면 그 칸 새 문장들(한 단계 더 들여쓴 열) — (칸 글, 기울일 열(1부터)). 주석 줄은 항목·AI 글을 기울인다.
+
+    표·그림 줄은 [Table]·[Figure] 대신 캡션 글이라 표 줄이 곧 표 앞의 캡션 줄이다 — 캡션 자식(칸 좌표 없음)은 칸 줄로 다시 쓰지 않는다.
+    """
     values = {
-        C_ITEM + depth: item.text or _MARKERS.get(item.kind, ""),
+        C_ITEM + depth: item.text or item.caption or _MARKERS.get(item.kind, ""),
         C_AI: item.ai_text,
         C_CHANGE: _LABELS.change_types.get(item.change_type or "", ""),
         C_STATUS: _LABELS.statuses.get(item.status, item.status),
@@ -328,7 +331,8 @@ def _list_c_item_lines(item: CItem, depth: int) -> Iterator[tuple[list[str], tup
     italic = (C_ITEM + depth + 1, C_AI + 1) if item.number_style == NUMBER_NOTE else ()
     yield _make_c_texts(values), italic
     for child in item.children:
-        yield from _list_c_item_lines(child, depth + 1)
+        if child.cell_row is not None:
+            yield from _list_c_item_lines(child, depth + 1)
 
 
 def _append_c_lines(rows: list[SheetRow], texts: list[str], starts: bool, italic: Collection[int] = ()) -> None:

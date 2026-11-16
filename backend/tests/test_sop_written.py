@@ -91,6 +91,8 @@ def test_written_sentences_carry_table_cells_and_figure_block(client: TestClient
     # 그림 줄은 이 문장이 온 새 문서 단위의 그림 블록
     assert rows["figure"]["figure"] == {"document_id": new_doc["id"], "block_id": figure_unit["block_id"]}
     assert (rows["table"]["figure"], rows["figure"]["table"]) == (None, None)
+    # 캡션은 칸이 아니라 caption 한 글로 — 캡션 없는 표는 None
+    assert (rows["figure"]["caption"], rows["table"]["caption"]) == ("그림 1 합성 장비", None)
 
 
 def test_written_sentences_reports_partner_target(client: TestClient) -> None:

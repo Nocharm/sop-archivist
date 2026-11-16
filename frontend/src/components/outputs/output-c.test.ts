@@ -41,6 +41,37 @@ describe("OutputCView", () => {
     unmount();
   });
 
+  it("puts the table caption line before the table and keeps a translated cell in its own column", () => {
+    const table = makeItem({
+      target_id: 10,
+      kind: "table",
+      lang: "neutral",
+      status: "confirmed",
+      caption: "표 3. 운전 조건",
+      children: [
+        makeItem({ target_id: 12, text: "표 3. 운전 조건", status: "confirmed" }),
+        makeItem({ target_id: 13, text: "항목", status: "confirmed", cell_row: 0, cell_col: 0 }),
+        makeItem({ target_id: 15, lang: "en", ai_text: "Item", cell_row: 0, cell_col: 0 }),
+        makeItem({ target_id: 14, text: "값", status: "confirmed", cell_row: 0, cell_col: 1 }),
+      ],
+    });
+    const { host, unmount } = render({ data: makeOutput([table]) });
+    const caption = host.querySelector('[data-testid="output-c-caption-12"]');
+    expect(caption?.textContent).toBe("표 3. 운전 조건");
+    expect(caption?.compareDocumentPosition(host.querySelector("table")!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    // 칸 번역은 같은 칸 안에 줄로 - 둘째 열이 밀리지 않는다
+    expect([...host.querySelectorAll("td")].map((td) => [...td.children].map((line) => line.textContent))).toEqual([["항목", "Item"], ["값"]]);
+    unmount();
+  });
+
+  it("shows a figure's caption instead of [Figure], and the marker only without one", () => {
+    const items = [makeItem({ target_id: 20, kind: "figure", lang: "neutral", text: "그림 2. 로터 장착 위치" }), makeItem({ target_id: 21, kind: "figure", lang: "neutral" })];
+    const { host, unmount } = render({ data: makeOutput(items) });
+    expect(host.querySelector('[data-testid="output-c-item-20"]')?.textContent).toBe("그림 2. 로터 장착 위치");
+    expect(host.querySelector('[data-testid="output-c-item-21"]')?.textContent).toBe("[Figure]");
+    unmount();
+  });
+
   it("numbers lines and sections, and Tab on a picked row indents one level at most", () => {
     const items = [makeItem({ target_id: 1, lang: "en", text: "A", status: "confirmed", number: "2.1" }), makeItem({ target_id: 2, text: "나", status: "confirmed", number: "2.2" })];
     const onIndent = vi.fn();

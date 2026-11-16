@@ -1365,7 +1365,17 @@ await runStep("assign: the New pane shows a real table and figure", {}, async ({
   const cells = await tableBox.locator("table.ptbl td [data-cell-target]").allInnerTexts();
   const expected = expectedCells.map((cell) => cell.text);
   check("the table row draws its cells as a table", tdCount === rows * cols && cells.length === expected.length && cells.every((text, index) => text.trim() === expected[index].trim()), `${tdCount} td, ${cells.length}/${expected.length}`);
-  check("the table sits in a side-scrolling box", await tableBox.evaluate((el) => el.classList.contains("ptbl-scroll") && getComputedStyle(el).overflowX === "auto"));
+  check("the table sits in a side-scrolling box", await tableBox.locator(".ptbl-scroll").evaluate((el) => getComputedStyle(el).overflowX === "auto"));
+  // 캡션 줄은 표·그림 위 - 서버 caption 그대로(여러 언어는 줄바꿈), 없으면 쓰지 않은 문서라 "Caption needed"
+  const readCaptionLine = async (box, item) => {
+    const line = box.locator(":scope > .new-bundle-cap");
+    const ok = (await line.count()) === 1 && (await line.evaluate((el) => el.nextElementSibling !== null)) && (item.caption ? (await line.innerText()).trim() === item.caption.trim() : (await line.getAttribute("data-missing")) !== null);
+    return { ok, detail: item.caption ?? "missing" };
+  };
+  for (const [label, box, item] of [["table", tableBox, found.table], ["figure", page.locator(`[data-testid="assign-new-${found.figure.target_id}"]`), found.figure]]) {
+    const { ok, detail } = await readCaptionLine(box, item);
+    check(`the ${label} row shows its caption line above it`, ok, detail);
+  }
   const figureBox = page.locator(`[data-testid="assign-new-${found.figure.target_id}"]`);
   await figureBox.scrollIntoViewIfNeeded({ timeout: T });
   const image = figureBox.locator("img");
@@ -1379,6 +1389,13 @@ await runStep("outputs: A, B, C and the Excel preview", {}, async ({ page, takeS
   await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
   await wait(page, "output-c");
   check("C shows the new documents", (await getText(page, "output-c")).includes("SOP-CF"));
+  // 표는 캡션 줄이 표 앞, 그림은 [Figure] 대신 캡션 글(캡션 있는 표·그림이 데모에 있다)
+  const captionBeforeTable = await page.evaluate(() => [...document.querySelectorAll('[data-testid^="output-c-caption-"]')].some((el) => {
+    let next = el.nextElementSibling;
+    while (next?.matches('[data-testid^="output-c-caption-"]')) next = next.nextElementSibling;
+    return next?.classList.contains("ptbl-scroll") ?? false;
+  }));
+  check("C puts a table caption line before its table", captionBeforeTable);
   check("no edition toggle on the outputs screen", (await page.locator('[data-testid^="outputs-lang"]').count()) === 0);
   await takeShot("sop-outputs-c.png");
   await page.locator('[data-testid="outputs-tab-a"]').click();

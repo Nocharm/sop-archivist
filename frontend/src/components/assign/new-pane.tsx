@@ -387,7 +387,15 @@ export function NewPane(props: NewPaneProps) {
             {t("assign.newTable")}
           </p>
         ) : (
-          <NewBundle kind={row.kind} table={row.table} figure={row.figure} bundleId={props.bundleId} testId={`assign-new-${row.target_id}`} />
+          <NewBundle
+            kind={row.kind}
+            table={row.table}
+            figure={row.figure}
+            caption={row.caption}
+            captionRequired={isComposedRow(row)}
+            bundleId={props.bundleId}
+            testId={`assign-new-${row.target_id}`}
+          />
         );
       if (!isComposedRow(row)) return block;
       // 엮은 문서의 표·그림도 결과물 C처럼 번호를 센다 - 앞머리에 자기 번호를 두어 문장 번호가 건너뛴 까닭이 보이게

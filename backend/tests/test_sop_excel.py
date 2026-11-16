@@ -51,7 +51,7 @@ from tests.sop_helpers import (
     set_members,
     upload,
 )
-from tests.test_sop_outputs import DUPLICATE, DUPLICATE_REASON
+from tests.test_sop_outputs import DUPLICATE, DUPLICATE_REASON, FIGURE_CAPTION, TABLE_CAPTION, _setup_captions
 from tests.test_sop_outputs import _setup as _setup_outputs_bundle
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
@@ -318,10 +318,10 @@ def test_sheet_c_indents_docs_slots_items_and_tails(client: TestClient) -> None:
     keep_row = rows[responsibilities + 1]
     assert (keep_row[number_col], keep_row[item_col], keep_row[10]) == ("4.1", KEEP, "← OLD-1")
 
-    table_row = rows.index(next(row for row in rows if row[item_col] == "[Table]"))
+    # 표 줄은 [Table] 대신 캡션 글(확정하며 써 넣은 캡션) — 캡션은 칸 줄로 다시 나오지 않는다
+    table_row = rows.index(next(row for row in rows if row[item_col] == WRITTEN_CAPTION))
     assert rows[table_row][number_col] == "5.1"
-    # 확정하며 써 넣은 캡션은 칸 줄이 아니다(캡션 줄의 자리는 Task 13이 정한다)
-    cells = [row for row in rows[table_row + 1 : table_row + 6] if row[cell_col] != WRITTEN_CAPTION]
+    cells = rows[table_row + 1 : table_row + 5]
     assert [(row[cell_col], row[5]) for row in cells] == [
         ("항목", "R 1 C 1"), ("값", "R 1 C 2"), ("합성 값", "R 2 C 1"), ("합성 결과", "R 2 C 2"),
     ]
@@ -338,6 +338,21 @@ def test_sheet_c_indents_docs_slots_items_and_tails(client: TestClient) -> None:
     number_a_col = _find_column(sheet_a, "No.")
     keep_a = _find_a_line(sheet_a, find_unit(fx.view, KEEP)["display_id"])
     assert keep_a[number_a_col - 1].value == "4.1"
+
+
+def test_excel_c_writes_caption_text_not_marker(client: TestClient) -> None:
+    fx = _setup_captions(client)
+
+    rows = [[cell.value for cell in row] for row in _load(client, fx.bundle_id)["C New documents"].iter_rows(min_row=3)]
+
+    item_col, cell_col = 3, 4
+    assert not [row for row in rows if row[item_col] in ("[Table]", "[Figure]")]
+    table_row = rows.index(next(row for row in rows if row[item_col] == TABLE_CAPTION))
+    # 캡션 줄 = 표 줄이고 그 아래는 칸 줄만(3×3)
+    assert [row[cell_col] for row in rows[table_row + 1 : table_row + 10]] == [
+        "항목", "값", "단위", "온도", "25", "℃", "압력", "1", "bar",
+    ]
+    assert rows[table_row + 10][item_col] == FIGURE_CAPTION
 
 
 # ── 함께 쓰는 칸·테두리·확정률 ───────────────────────────────────────────────
