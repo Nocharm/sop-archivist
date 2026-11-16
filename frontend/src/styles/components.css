@@ -1482,6 +1482,14 @@
   .new-hit.is-static { cursor: default; }
   /* 엮은 문서의 빈 칸 - 받을 자리만 옅게(앞머리 폭만큼 들여 문장 상자와 같은 x) */
   .pg .new-slot-empty { flex: 1 1 0; min-width: 0; margin: 0; padding: 4px var(--pg-pad-l); border: 1px dashed var(--line); border-radius: var(--r-1); color: var(--ink-3); font: var(--fs-cap) / var(--lh-cap) var(--font-ui); }
+  /* 고른 줄의 초안이 든 빈 칸(끌어 놓았거나 나무에서 고름) - 점선 그대로 색만 강조 */
+  .pg .new-slot-empty[data-draft] { border-color: var(--accent); }
+  /* 문장 사이에 끌어 놓은 저장 전 문장(점선 초안) - 후보 줄과 같은 점선의 문장 상자, 언어 탭은 늘. 줄 상자(.new-item)가 아니라 고르기·이음 선·놓기에 끼지 않는다 */
+  .new-draft { margin: 4px 0; }
+  .new-draft > .strip-row + .strip-row { margin-top: 4px; }
+  .new-draft-tag { margin-bottom: 4px; color: var(--ink-3); font: var(--fs-cap) / var(--lh-cap) var(--font-ui); }
+  .pg[data-strips] .new-draft-line { outline: 1.5px dashed var(--accent); outline-offset: -1.5px; box-shadow: none; }
+  .new-draft-line > .strip-lang { visibility: visible; opacity: 1; }
   /* New 칸 실시간 넣기 - 들어온 줄은 높이가 자라며 드러나고, 빠진 줄은 접히며 사라진다(높이는 grid 0fr↔1fr, 움직임 줄이기면 토큰이 0이라 바로) */
   .new-item { display: grid; grid-template-rows: 1fr; }
   .new-item-inner { min-height: 0; }

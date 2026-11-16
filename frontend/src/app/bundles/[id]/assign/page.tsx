@@ -21,6 +21,7 @@ import { SplitSuggestionCard } from "@/components/assign/split-suggestion";
 import { SplitUnitActions } from "@/components/split/split-unit-actions";
 import { LinkChoice } from "@/components/assign/link-choice";
 import { createDragLinkLine, type DragLinkLine } from "@/components/assign/drag-link-line";
+import { createDropGapLine, type DropGapLine } from "@/components/assign/drop-gap-line";
 import { findNewLine, findOldStrip, LinkLines, readNewLineEnd, readOldLineStart } from "@/components/assign/link-lines";
 import { LinkMenu } from "@/components/assign/link-menu";
 import { LinkBadge } from "@/components/assign/link-badge";
@@ -48,8 +49,26 @@ import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
-import { buildOldDragCard, canDragOld, findAssignDrop, resolveDropLink, type AssignDrop } from "@/lib/assign-drop-model";
-import { findUnderPoint, type BoxDragConfig, type DragPoint } from "@/lib/box-drag";
+import {
+  buildDropSections,
+  buildOldDragCard,
+  canDragOld,
+  findAssignDrop,
+  findDropBlock,
+  getSectionKey,
+  isPositionLive,
+  listDraftLines,
+  readSectionDestination,
+  REFUSAL_KEYS,
+  resolveDropLink,
+  resolveGapDrop,
+  resolveSlotDrop,
+  type AssignDrop,
+  type DraftLine,
+  type DropSection,
+  type SendDrop,
+} from "@/lib/assign-drop-model";
+import { findUnderPoint, type BoxDragConfig, type DragHover, type DragPoint } from "@/lib/box-drag";
 import { useBoxDrag } from "@/lib/use-box-drag";
 import { findLastStep } from "@/lib/destination-manage-model";
 import { listAckWarnings } from "@/lib/missing-warnings-model";
@@ -98,7 +117,7 @@ import {
   type ViewUnit,
   type WrittenSentence,
 } from "@/lib/api-sop";
-import { applySavedTargets, buildComposedRows, isWrittenRow, listHeadingNotes, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
+import { applySavedTargets, buildComposedRows, formatSectionPath, isWrittenRow, listHeadingNotes, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
 import {
   addPartnerTargets,
   buildLinkPairs,
@@ -152,6 +171,7 @@ import {
   type ClassifyRow,
   type Destination,
   type DestinationOption,
+  type DropPosition,
   type RowDraft,
 } from "@/lib/classify-model";
 import { formatKst } from "@/lib/datetime";
@@ -255,6 +275,8 @@ function readMenuOffset(anchor: HTMLElement, event: MouseEvent | null): { x: num
 
 /** 그 자리 메뉴가 덮지 않을 상자 - New 문장이면 함께 골라지는 짝 문장 전부, Old 조각이면 그 줄의 조각 전부 */
 function readMenuCover(anchor: HTMLElement, rowUnitIds: number[]): HTMLElement[] {
+  // 놓은 자리의 점선 초안·빈 칸 자리 표시 - 그 상자 옆에 띄운다(Old 조각까지 덮지 않으려 하면 메뉴가 초안에서 멀어진다)
+  if (anchor.matches(".new-draft, .new-slot-empty")) return [anchor];
   if (anchor.matches(".new-line")) {
     const group = anchor.getAttribute("data-pair-group");
     return group ? [...document.querySelectorAll<HTMLElement>(`.new-line[data-pair-group="${CSS.escape(group)}"]`)] : [anchor];
@@ -699,6 +721,26 @@ export default function AssignPage() {
   const saveUnits = rowUnits.map((unit) => ({ id: unit.unit_id, kind: unit.kind, lang: unit.lang, text: unit.text, revision: unit.decision.revision }));
   // 새 문장 칸 - AI가 나눈 문장은 칸 여럿, 합친 문장은 칸 하나다
   const slots = buildSentenceSlots(groupData, saveUnits, draft.otherLang ?? null);
+
+  // 지금 줄의 초안이 열린 엮은 문서의 칸이면 New 칸에 그린다 - 문장 사이에 놓은 자리면 점선 초안, 자리 없이 빈 칸이면 그 자리 표시의 테두리
+  const draftPlace = draft.destination?.kind === "slot" || draft.destination?.kind === "step" ? draft.destination : null;
+  const draftSectionKey = getSectionKey(draftPlace);
+  const draftSection = isComposedDoc && composedDoc && draftPlace && draftPlace.docId === composedDoc.target_doc_id ? (composedDoc.sections.find((section) => section.location_key === draftSectionKey) ?? null) : null;
+  const draftPosition = draft.position && draftPlace && draft.position.placeId === getDestinationId(draftPlace) ? draft.position : null;
+  // 다시 읽은 문서에서 그 자리의 문장이 사라졌으면 자리만 버린다 - 칸 초안으로 남는다(렌더 중 상태 맞추기)
+  if (draftPosition && composedDoc && draftSectionKey !== null && draftPlace?.docId === composedDoc.target_doc_id && !isPositionLive(buildDropSections(composedDoc.sections, (unitId) => rowOfUnit.get(unitId)), draftSectionKey, draftPosition.after)) {
+    setDraft({ position: null });
+  }
+  let newDraft: { anchorKey: string; side: "before" | "after"; lines: DraftLine[] } | null = null;
+  let draftSlotKey: string | null = null;
+  if (draftSection && draftPosition && draftSection.items.length > 0) {
+    // 표·그림 Unit은 글 대신 그 종류 한 줄
+    const blockLines: DraftLine[] = rowUnits.flatMap((unit) =>
+      unit.kind === "table" || unit.kind === "table_row" ? [{ key: `b${unit.unit_id}`, lang: "neutral" as const, text: t("split.table") }] : unit.kind === "figure" ? [{ key: `b${unit.unit_id}`, lang: "neutral" as const, text: t("assign.newFigure") }] : [],
+    );
+    const anchor = draftPosition.after !== null ? { anchorKey: `t:${draftPosition.after}`, side: "after" as const } : { anchorKey: `t:${draftSection.items[0].target_id}`, side: "before" as const };
+    newDraft = { ...anchor, lines: [...listDraftLines(slots, draft.texts), ...blockLines] };
+  } else if (draftSection && draftSection.items.length === 0) draftSlotKey = draftSection.location_key;
 
   function scrollToUnit(unitId: number) {
     requestAnimationFrame(() => {
@@ -1284,6 +1326,9 @@ export default function AssignPage() {
       const context = { units: saveUnits, group: saveGroupData, tables: buildTables() };
       const body = buildGroupSave({ ...draft, destination, reason, moveCode }, context, action, action === "hold" ? reason.trim() : "");
       const leftovers = body.release_unit_ids ?? [];
+      // 끌어 놓은 자리를 실은 저장이면 미리 고침도 그 자리에 넣는다 - 끝에 넣으면 다시 읽을 때 줄이 뛴다
+      const sectionKey = getSectionKey(destination);
+      const at = draft.position && sectionKey !== null && body.targets.some((target) => target.position !== undefined) ? { sectionKey, after: draft.position.after } : null;
       const op = pickSaveOp({ action, destinationKind: destination?.kind ?? null, savedLinkIds: savedDestination?.kind === "link" ? savedDestination.targetIds : [], nextLinkIds: linkIds });
       const saved = await saveGroup(bundleId, body, buildUndo({ op, focus_unit_id: row.unitIds[0] }));
       markRecorded();
@@ -1293,7 +1338,7 @@ export default function AssignPage() {
       const isSplit = applyPairSettle(row, saved, leftovers) && leftovers.length > 0;
       // 다음 미확정 줄로 - 지금 줄은 거르기 자리에 남는다. 남는 쪽을 풀었으면 남은 문장의 줄이 다음이다
       const next = action === "confirm" && !isSplit ? findNextOpen(listKeys, rowMap, row.key) : null;
-      if (action === "confirm") showSent(row, saved, next ?? row.key);
+      if (action === "confirm") showSent(row, saved, next ?? row.key, at);
       dropDraft(row.key);
       if (isSplit) setSplitRow({ from: row.key, unit: leftovers[0] });
       if (next) selectRow(next);
@@ -1322,9 +1367,9 @@ export default function AssignPage() {
 
   /**
    * 확정한 곳을 오른쪽 칸에 바로 보인다 - 그 문서로 옮기고(다음 줄에서도, 손으로 고른 문서가 없을 때), 엮은 문서면 저장 응답으로 칸에 미리 넣는다.
-   * 그 문장이 그려지면 NewPane이 화면에 들이고, 잇는 선은 진하게 그린다
+   * 그 문장이 그려지면 NewPane이 화면에 들이고, 잇는 선은 진하게 그린다. at은 저장이 실은 놓은 자리(칸 끝 대신 그 자리에 넣는다)
    */
-  function showSent(savedRow: ClassifyRow, saved: Group, nextKey: string) {
+  function showSent(savedRow: ClassifyRow, saved: Group, nextKey: string, at: { sectionKey: string; after: number | null } | null) {
     const docId = destination?.kind === "slot" || destination?.kind === "step" ? destination.docId : destination?.kind === "link" ? (writtenMap.get(destination.targetIds[0])?.target_doc_id ?? null) : null;
     if (docId === null || !destination) return;
     const isMine = (target: Group["targets"][number]) => target.source_unit_ids.some((id) => savedRow.unitIds.includes(id)) || (target.translation_source_unit_id !== null && savedRow.unitIds.includes(target.translation_source_unit_id));
@@ -1333,7 +1378,7 @@ export default function AssignPage() {
     if (composed.data?.target_doc_id === docId) {
       const textOf = (unitIds: number[]) => unitIds.map((id) => unitMap.get(id)?.text ?? "").join(" ");
       // 앞 저장의 미리 고침 위에 얹는다 - 다시 읽기가 오기 전에 연달아 확정해도 앞 문장이 빠지지 않게
-      setComposedPatch({ base: composed.data, doc: applySavedTargets(composedDoc ?? composed.data, saved.targets, textOf) });
+      setComposedPatch({ base: composed.data, doc: applySavedTargets(composedDoc ?? composed.data, saved.targets, textOf, at) });
     }
   }
 
@@ -1561,7 +1606,8 @@ export default function AssignPage() {
     const linkTypes: Record<number, ChangeTypeInput | null> = {};
     // AI가 이어 둔 문장을 다시 고르면 기본은 제안 그대로 받기
     if (next.kind === "link") for (const id of next.targetIds) if (writtenMap.get(id)?.status === "ai_suggested") linkTypes[id] = null;
-    setDraft({ destination: next.kind === "link" ? { kind: "link", targetIds: addPartnerTargets(next.targetIds, writtenMap) } : next, linkChangeTypes: linkTypes });
+    // 보낼 곳을 다시 고르면 끌어 놓은 자리는 버린다
+    setDraft({ destination: next.kind === "link" ? { kind: "link", targetIds: addPartnerTargets(next.targetIds, writtenMap) } : next, linkChangeTypes: linkTypes, position: null });
     setPickSeq((seq) => seq + 1);
   }
 
@@ -1673,8 +1719,112 @@ export default function AssignPage() {
     const action = resolveDropLink({ draftDestination: draft.destination, savedDestination, targetId });
     if (action === "menu_only" || pickNewSentence(targetId, false)) setJump({ side: "new", id: targetId, targetId, rowKey: dropKey, at });
   }
+  // --- 끌어서 보내기(3걸음) - New · from Assign 문서의 두 문장 사이·빈 칸에 놓으면 그 줄의 초안이 된다(저장은 하지 않는다). 잇기와 같이 관계 묶음이 온 뒤 렌더 중에 푼다 ---
+  // position은 문장 사이에 놓은 자리(없으면 빈 칸 - 클릭과 같은 pickDestination). menu면 이어서 점선 초안(빈 칸이면 그 자리 표시)에 그 자리 메뉴를 띄운다
+  const [dropPlace, setDropPlace] = useState<{ rowKey: string; destination: Destination; position: DropPosition | null; menu: boolean } | null>(null);
+  const [draftMenu, setDraftMenu] = useState<{ rowKey: string } | null>(null);
+  if (dropPlace !== null && activeKey !== dropPlace.rowKey) setDropPlace(null);
+  else if (dropPlace !== null && !groupPending) {
+    setDropPlace(null);
+    if (dropPlace.position === null) pickDestination(dropPlace.destination);
+    else {
+      setDraft({ destination: dropPlace.destination, position: dropPlace.position, linkChangeTypes: {} });
+      setPickSeq((seq) => seq + 1);
+    }
+    if (dropPlace.menu) setDraftMenu({ rowKey: dropPlace.rowKey });
+  }
+  // 놓은 뒤 - 점선 초안(없으면 초안이 든 빈 칸 자리 표시)이 그려지면 보이게 하고 번쩍인 뒤 그 옆에 메뉴(jump 이펙트와 같은 짜임)
+  useEffect(() => {
+    if (!draftMenu) return;
+    let tries = 0;
+    let frame = requestAnimationFrame(function step() {
+      const el = document.querySelector<HTMLElement>('[data-testid="assign-new-draft"]') ?? document.querySelector<HTMLElement>(".new-slot-empty[data-draft]");
+      if (!el) {
+        tries += 1;
+        if (tries < 60) frame = requestAnimationFrame(step);
+        else setDraftMenu(null);
+        return;
+      }
+      revealElement(el);
+      flashElement(el);
+      openMenu(el, null, draftMenu.rowKey, null);
+      setDraftMenu(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [draftMenu]);
   // 끄는 동안 따라오는 점선 - React 상태가 아니다
   const dragLineRef = useRef<DragLinkLine | null>(null);
+  // 끄는 동안 엮은 문서의 놓을 자리 선과 칸 목록 - 끌기마다 한 번(그 사이 문서가 바뀌면 다시) 짓는다. React 상태가 아니다
+  const dropGapRef = useRef<DropGapLine | null>(null);
+  const dropSectionsRef = useRef<{ doc: ComposedDoc; sections: DropSection[] } | null>(null);
+  function readDropSections(): DropSection[] {
+    if (!isComposedDoc || !composedDoc) return [];
+    if (dropSectionsRef.current?.doc !== composedDoc) dropSectionsRef.current = { doc: composedDoc, sections: buildDropSections(composedDoc.sections, (unitId) => rowOfUnit.get(unitId)) };
+    return dropSectionsRef.current.sections;
+  }
+  /** 포인터 밑의 New 칸 줄 상자와 거기 놓으면 보낼 곳 - 엮은 문서는 문장 사이(의미 묶음 상자의 중간선으로 앞·뒤)·빈 칸, 이미 쓴 문서는 문장 상자 밖이면 거절 */
+  function readSendAt(point: DragPoint, dragUnitIds: readonly number[]): { drop: SendDrop; item: HTMLElement | null } {
+    const item = findUnderPoint(point, '[data-pane="new"] .new-item[data-row]:not([data-leave])');
+    if (!item) return { drop: { kind: "none" }, item: null };
+    if (!item.closest(".pg[data-read-only]")) return { drop: findUnderPoint(point, ".new-line, .new-block") ? { kind: "none" } : { kind: "refused", reason: "written_doc" }, item };
+    const key = item.dataset.row ?? "";
+    const sections = readDropSections();
+    if (key.startsWith("slot:")) {
+      const section = sections.find((candidate) => candidate.key === key.slice("slot:".length));
+      return { drop: section ? resolveSlotDrop(section) : { kind: "none" }, item };
+    }
+    const hoverId = Number(key.slice("t:".length));
+    const section = sections.find((candidate) => candidate.items.some((entry) => entry.targetId === hoverId));
+    const block = section ? findDropBlock(section, hoverId) : null;
+    if (!section || !block) return { drop: { kind: "none" }, item };
+    const sheet = item.parentElement;
+    const first = sheet?.querySelector(`.new-item[data-row="t:${block.firstId}"]:not([data-leave])`) ?? item;
+    const last = sheet?.querySelector(`.new-item[data-row="t:${block.lastId}"]:not([data-leave])`) ?? item;
+    const middle = (first.getBoundingClientRect().top + last.getBoundingClientRect().bottom) / 2;
+    return { drop: resolveGapDrop(section, hoverId, point.y < middle, dragUnitIds), item };
+  }
+  /** 문장 사이의 놓을 자리 선 - 기준 줄 상자의 그 변, 왼쪽 끝·폭은 그 줄의 문장 상자. New 칸 화면 밖이면 감춘다. 그은 선의 왼쪽 끝(따라오는 점선이 닿는 곳)을 돌려준다 */
+  function showDropGap(drop: SendDrop, item: HTMLElement | null): DragPoint | null {
+    const edgeItem = drop.kind === "gap" ? item?.parentElement?.querySelector(`.new-item[data-row="t:${drop.edge.targetId}"]:not([data-leave])`) : null;
+    const box = edgeItem?.querySelector(".new-line, .new-block")?.getBoundingClientRect();
+    const frame = edgeItem?.closest(".pane-body")?.getBoundingClientRect();
+    if (drop.kind !== "gap" || !edgeItem || !box || !frame) {
+      dropGapRef.current?.hide();
+      return null;
+    }
+    const rect = edgeItem.getBoundingClientRect();
+    const y = drop.edge.side === "top" ? rect.top : rect.bottom;
+    if (y < frame.top || y > frame.bottom) {
+      dropGapRef.current?.hide();
+      return null;
+    }
+    dropGapRef.current?.show({ left: box.left, top: y, width: box.width });
+    return { x: box.left, y };
+  }
+  /** 보내기의 표 메모와 테두리 - 문장 사이·빈 칸은 "→ 칸 머리 글", 거절은 이유(N/A는 그 자리 표시, 같은 칸은 올린 줄의 문장 상자에 테두리) */
+  function readSendHover(drop: SendDrop, item: HTMLElement | null): DragHover {
+    if (drop.kind === "gap" || drop.kind === "slot") {
+      const section = composedDoc?.sections.find((candidate) => candidate.location_key === drop.sectionKey);
+      const note = section ? `→ ${formatSectionPath(section.number, section.label)}` : undefined;
+      return drop.kind === "slot" ? { state: "ok", note, target: item?.querySelector<HTMLElement>(".new-slot-empty") } : { state: "ok", note };
+    }
+    if (drop.kind === "refused") {
+      const target = drop.reason === "written_doc" ? null : (item?.querySelector<HTMLElement>(".new-slot-empty, .new-line, .new-block") ?? null);
+      return { state: "refused", note: t(REFUSAL_KEYS[drop.reason]), target };
+    }
+    return { state: "none" };
+  }
+  /** 문장 사이·빈 칸에 놓음 - 잇기와 같은 줄 고르기 뒤 초안 적용은 관계 묶음이 온 뒤(dropPlace) */
+  function applySendDrop(rowKey: string, drop: SendDrop) {
+    if ((drop.kind !== "gap" && drop.kind !== "slot") || newDocId === null) return;
+    const destination = readSectionDestination(newDocId, drop.sectionKey);
+    if (destination === null) return;
+    setChecked(new Set());
+    setCtxMenu(null);
+    selectRow(rowKey, false);
+    setManualNewDoc({ key: rowKey, docId: newDocId });
+    setDropPlace({ rowKey, destination, position: drop.kind === "gap" ? { placeId: getDestinationId(destination), after: drop.after } : null, menu: true });
+  }
   const isOldDrag = canDragOld({ canEdit, mode, isPairPicking: pairSource !== null && pairFrom !== null, isSolo });
   /** 포인터 밑의 New 줄과 거기 놓으면 할 일 - 이번 걸음에는 이미 쓴 문서의 고를 수 있는 문장만 받는다 */
   function readDropAt(point: DragPoint): { line: HTMLElement | null; drop: AssignDrop } {
@@ -1706,6 +1856,8 @@ export default function AssignPage() {
         delete el.dataset.linkHot;
       }
       dragLineRef.current = createDragLinkLine(root);
+      dropGapRef.current = createDropGapLine(root);
+      dropSectionsRef.current = null;
     },
     onMove: ({ unitIds }, point) => {
       const root = panesBoxRef.current;
@@ -1715,13 +1867,23 @@ export default function AssignPage() {
       const frame = root?.querySelector<HTMLElement>('[data-pane="old"] .pane-body')?.getBoundingClientRect();
       const start = strip ? readOldLineStart(strip) : null;
       const isStartShown = start !== null && frame !== undefined && start.y >= frame.top && start.y <= frame.bottom;
-      const isLink = drop.kind === "link" && line !== null;
-      dragLineRef.current?.update(isStartShown ? start : null, isLink ? readNewLineEnd(line, unitIds[0]) : point);
-      return isLink ? { state: "ok", note: t("assign.drag.link"), target: line } : { state: "none" };
+      if (drop.kind === "link" && line !== null) {
+        dropGapRef.current?.hide();
+        dragLineRef.current?.update(isStartShown ? start : null, readNewLineEnd(line, unitIds[0]));
+        return { state: "ok", note: t("assign.drag.link"), target: line };
+      }
+      // 이음이 아니면 보내기 - 문장 사이면 점선이 놓을 자리 선의 왼쪽 끝에 닿는다
+      const send = readSendAt(point, unitIds);
+      const gapEnd = showDropGap(send.drop, send.item);
+      dragLineRef.current?.update(isStartShown ? start : null, gapEnd ?? point);
+      return readSendHover(send.drop, send.item);
     },
-    onDrop: ({ rowKey }, point) => {
+    onDrop: ({ rowKey, unitIds }, point) => {
       const { line, drop } = readDropAt(point);
-      if (drop.kind !== "link" || line === null) return;
+      if (drop.kind !== "link" || line === null) {
+        applySendDrop(rowKey, readSendAt(point, unitIds).drop);
+        return;
+      }
       const lineRect = line.getBoundingClientRect();
       setChecked(new Set());
       setCtxMenu(null);
@@ -1735,6 +1897,8 @@ export default function AssignPage() {
       for (const el of panesBoxRef.current?.querySelectorAll("[data-drag-src]") ?? []) el.removeAttribute("data-drag-src");
       dragLineRef.current?.remove();
       dragLineRef.current = null;
+      dropGapRef.current?.remove();
+      dropGapRef.current = null;
     },
   };
   // 두 문서 틀은 불러온 뒤에야 그려진다 - 그려지면 다시 붙도록 조건에 넣는다
@@ -2717,7 +2881,7 @@ export default function AssignPage() {
       void runSave("confirm");
     } else if (item === "cancel") {
       // 고름을 되돌린다 - 저장된 곳(없으면 빈 고름)으로
-      setDraft({ destination: null, linkChangeTypes: {} });
+      setDraft({ destination: null, linkChangeTypes: {}, position: null });
       setMenu(null);
     } else if (item === "link" && targetId !== null) {
       // 고른 뒤 같은 메뉴가 확정·취소로 바뀐다
@@ -3130,6 +3294,8 @@ export default function AssignPage() {
                     onZoom={(dir) => zoomPane("new", dir)}
                     linesOn={view.lines}
                     onToggleLines={() => changeView({ lines: !view.lines })}
+                    draft={newDraft}
+                    draftSlotKey={draftSlotKey}
                   />
                   <LinkLines pairs={linkPairs} focusUnits={highlightIds} focusTargets={liveDoc ? new Set([...pickedNew, ...liveDoc.targetIds]) : pickedNew} visible={view.lines} />
                 </>
