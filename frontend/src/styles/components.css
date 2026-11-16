@@ -1423,6 +1423,8 @@
   @container (max-width: 320px) { .pane-toggle.has-label > span { display: none; } }
   /* 세로선을 가장 왼쪽(30%)까지 끌면 아이콘만 남겨도 머리가 넘쳤다 - New 칸 머리처럼 문서 고르기가 줄어 말줄임한다 */
   .pane-head:has(.pane-toggle.has-label) > .select-trigger { flex-shrink: 1; }
+  /* 문서 번호가 이름이다 - 제목이 먼저 제 폭을 다 내주고(줄어드는 몫이 폭 × flex-shrink라 크게 둔다) 그래도 모자랄 때만 번호가 줄어든다(잰 값: 1120·1248·1440 반반에서 번호가 잘렸다) */
+  .pane-head:has(.pane-toggle.has-label) > .pane-sub { flex-shrink: 1000; }
 
   /* Pair view - 한/영 따로 문서의 한 언어 Unit을 원문 순서로 편 조각 목록. 용지와 같은 폭 상한으로 세로선 쪽에 붙는다(.sheet와 같은 방향) */
   .pair-list { display: flex; flex-direction: column; gap: 4px; width: 100%; max-width: calc(860px * var(--z, 1)); }

@@ -648,8 +648,8 @@ export default function AssignPage() {
   const [view, setView] = useState(readAssignView);
   const paneSlide = usePaneSlide(view.single);
   function changeView(patch: Partial<typeof view>) {
-    // 보기 단추(한 단·양 단)·세로선 끝까지 접기는 Pair view를 끄고 눌린 보기로 간다
-    if (patch.single !== undefined) setPairViewDoc(null);
+    // 보기 단추(한 단·양 단)·세로선 끝까지 접기는 Pair view를 끄고 눌린 보기로 간다 - 다시 그려진 Old 용지는 고른 조각(없으면 켜기 전 자리)을 보인다
+    if (patch.single !== undefined && isPairView) closePairView();
     // 한 단 ↔ 양 단 - 바꾸기 전 Old 용지의 자리를 재 둔다(바뀐 뒤 그 자리에서 미끄러져 온다)
     if (patch.single !== undefined && patch.single !== view.single) paneSlide.capture();
     // 양 단으로 펴면 한 단으로 연 New 문서는 닫힌다(양 단의 왼쪽은 늘 Old 문서다). 한 단으로 접으면 New 칸에서 고르던 문장은 그 문서를 한 단으로 연 것이 된다
@@ -791,19 +791,29 @@ export default function AssignPage() {
     setPairViewDoc(oldView.document.id);
   }
 
-  /** Pair view를 끈다(단추·V) - 다시 그려진 Old 용지에서 고른 줄의 조각을 보이고, 고른 줄이 없으면 켜기 전 스크롤 자리로 */
-  function closePairView() {
+  /** Pair view를 끈다 - 다시 그려진 Old 용지에서 고른 줄의 조각을 보이고, 고른 줄이 없으면 켜기 전 스크롤 자리로.
+   *  unitId - 보일 조각(나누기는 나눌 문장). 끄는 길은 모두 여기를 지난다(단추·V·보기 단추·세로선 접기·New 칸으로 보내기·나누기). Old 자리로 뛰는 길(jumpToOld·다른 문서의 줄 고르기)은 그 길이 스크롤하니 상태만 끈다 */
+  function closePairView(unitId: number | undefined = row?.unitIds[0]) {
     setPairViewDoc(null);
-    const unitId = row?.unitIds[0];
     if (unitId !== undefined) {
       scrollToUnit(unitId);
       return;
     }
+    // 다시 그려진 용지는 몇 프레임에 걸쳐 높이가 자란다(첫 프레임에 맞추면 그때의 끝에 걸린다, 잰 값) - 자리가 두 프레임 버틸 때까지(길어도 30프레임) 다시 맞춘다.
+    // 한 단처럼 용지가 짧아져 그 자리까지 못 가면 끝까지
     const top = pairScrollRef.current;
-    requestAnimationFrame(() => {
+    let frames = 0;
+    let held = 0;
+    const restore = () => {
       const pane = document.querySelector<HTMLElement>('[data-pane="old"] .pane-body');
-      if (pane) pane.scrollTop = top;
-    });
+      if (pane) {
+        const want = Math.min(top, pane.scrollHeight - pane.clientHeight);
+        held = Math.abs(pane.scrollTop - want) <= 1 ? held + 1 : 0;
+        if (held === 0) pane.scrollTop = want;
+      }
+      if (held < 2 && ++frames < 30) requestAnimationFrame(restore);
+    };
+    requestAnimationFrame(restore);
   }
 
   // Pair view 동안 고른 줄이 바뀌면 그 줄의 조각을 칸마다 화면 안으로(이미 보이면 움직이지 않는다) - 짝의 두 끝을 한 화면에 들이는 길이다
@@ -1222,7 +1232,8 @@ export default function AssignPage() {
   }
 
   function splitAtCut() {
-    if (!cutUnit || cutLine.at === null) return;
+    // Pair view에는 용지(나눌 선)가 없다 - 보이지 않는 자리에서 자르지 않는다
+    if (!cutUnit || cutLine.at === null || isPairView) return;
     void runUnitEdit({ type: "split", unit_id: cutUnit.id, at: cutLine.at }, t("split.didSplit"), null);
   }
 
@@ -1247,8 +1258,13 @@ export default function AssignPage() {
     else if (action === "ref_mark") setRefEntryId(target.id);
     else if (action === "ref_clear") void runUnitEdit({ type: "clear_ref", unit_id: target.id }, t("assign.ref.didReject"), target.id);
     else if (action === "split") {
+      // Pair view에는 용지가 없어 선이 보이지 않는다 - 끄고(고른 조각이 Old 용지에 보인다) 그 용지에 선을 놓는다
+      if (isPairView) {
+        closePairView(target.id);
+        if (cutLine.placeNear(target, caret)) setCutUnitId(target.id);
+      }
       // 이미 그 문장에 선이 있으면 바로 나누고, 없으면 누른 자리(키보드면 가운데) 가까이에 선을 놓는다 - 끌거나 ←→로 옮긴 뒤 Split here
-      if (cutUnit?.id === target.id && cutLine.at !== null) splitAtCut();
+      else if (cutUnit?.id === target.id && cutLine.at !== null) splitAtCut();
       else if (isNewEdit && solo && !written.some((item) => item.new_unit_id === target.id && item.text === target.text)) {
         // New 칸의 줄에 그 문장의 글이 그대로 있지 않으면(표 칸 등) 그 자리에 선을 그릴 수 없다 - 한 단으로 열어 원문에서 자른다
         setSolo({ ...solo, unitId: target.id, inPlace: false });
@@ -1725,7 +1741,7 @@ export default function AssignPage() {
 
   /** Old 조각의 연결 배지를 누름 - 고름·메뉴는 그대로 두고 오른쪽 칸을 그 문장으로 보내 번쩍이게만 한다 */
   function showInNew(targetId: number) {
-    setPairViewDoc(null);
+    if (isPairView) closePairView();
     const docId = writtenMap.get(targetId)?.target_doc_id;
     if (docId !== undefined) setManualNewDoc({ key: toggleKey, docId });
     if (view.single) changeView({ single: false });
@@ -3374,7 +3390,7 @@ export default function AssignPage() {
                 side="ko"
                 items={pairColumns.ko}
                 docLabel={oldDocOptions.find((option) => option.value === String(oldView?.document.id))?.label}
-                toggle={<PairViewToggle on onToggle={closePairView} />}
+                toggle={<PairViewToggle on onToggle={() => closePairView()} />}
                 banner={pairBanner !== null && !isNewEdit ? pairBanner : null}
                 selectedIds={highlightIds}
                 pickedIds={pickedOld}

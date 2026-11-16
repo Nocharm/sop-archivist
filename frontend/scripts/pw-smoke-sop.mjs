@@ -5752,9 +5752,10 @@ await runStep("assign: Pair view opens a KO | EN document in two columns and giv
   check("a confirmed pair is a solid line", confirmedLine.status === "confirmed" && confirmedLine.dash === "none", JSON.stringify(confirmedLine));
   check("both pieces carry the confirmed pair bar", (await pairPiece(a.id).getAttribute("data-pair")) === "confirmed" && (await pairPiece(a2.id).getAttribute("data-pair")) === "confirmed");
   await pairPiece(a.id).click();
-  await page.locator(`[data-testid="assign-pair-piece-${a2.id}"][data-sel]`).waitFor({ timeout: T });
-  await page.locator(`[data-testid="assign-pair-lines"] g[data-pair-link="${a.id}:${a2.id}"][data-strong]`).waitFor({ timeout: T });
-  check("picking a picks its partner too and darkens their line", true);
+  const isShown = (selector) => page.locator(selector).waitFor({ timeout: T }).then(() => true, () => false);
+  const partnerPicked = await isShown(`[data-testid="assign-pair-piece-${a2.id}"][data-sel]`);
+  const lineStrong = await isShown(`[data-testid="assign-pair-lines"] g[data-pair-link="${a.id}:${a2.id}"][data-strong]`);
+  check("picking a picks its partner too and darkens their line", partnerPicked && lineStrong, JSON.stringify({ partnerPicked, lineStrong }));
 
   // 6. 제안 짝은 회색 점선 - 응답을 바꿔 그린다
   patchView = (body) => ({ ...body, pairs: body.pairs.map((pair) => (pair.unit_ids.includes(a.id) ? { ...pair, status: "suggested" } : pair)) });
@@ -5842,6 +5843,131 @@ await runStep("assign: Pair view opens a KO | EN document in two columns and giv
   await page.unroute(isDocView);
   for (const pair of (await readView()).pairs) await unpair(pair.id);
   check("the step leaves the document without pairs", (await readView()).pairs.length === 0);
+});
+
+// Pair view를 끄는 길은 모두 같은 자리로 돌아온다(계획 판단 5) - 고른 줄이 있으면 Old 용지에 그 조각이 보이고, 없으면 켜기 전 스크롤 자리.
+// 그리고 Pair view에서 Split을 누르면 먼저 끄고 용지에 나눌 선을 놓는다 - 보이지 않는 자리에서 자르지 않는다. 나눈 것은 Assign 되돌리기로 거둔다
+await runStep("assign: every way out of Pair view shows the picked piece or the old scroll, and Split turns it off first", { allowConsoleErrors: true }, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const doc = (await getJson("/documents")).find((item) => item.side === "old" && item.status === "ready" && item.language_layout === "ko_en_separate");
+  await page.request.post(`${api}/decisions/reset`, { headers, data: { revision: (await getJson("")).revision, document_id: doc.id } });
+  const sourceOrder = (one, two) => one.pos_seq - two.pos_seq || (one.spans[0]?.[1] ?? 0) - (two.spans[0]?.[1] ?? 0) || one.id - two.id;
+  const view = await getJson(`/documents/${doc.id}/view`);
+  // 용지 맨 아래쪽의 영어 문장(한/영 따로 문서는 영어가 뒤에 온다) - 켜기 전에 그 자리까지 굴러 있어야 끈 뒤 돌아왔는지가 보인다
+  const enSentences = view.units.filter((unit) => unit.group_unit_id === null && unit.kind === "sentence" && unit.lang === "en" && unit.text.includes(" ")).sort(sourceOrder);
+  let far = null;
+  let paperPiece = null;
+  const toggle = page.locator('[data-testid="assign-pair-view"]');
+  const turnOn = async () => {
+    await toggle.click();
+    await wait(page, "assign-pair-en");
+  };
+  const waitOff = () => page.locator('[data-testid="assign-pair-ko"]').waitFor({ state: "detached", timeout: T });
+  // 끈 뒤 그 조각이 Old 칸 화면 안에 들어오나(부드러운 스크롤이 끝날 때까지 기다린다)
+  const isFarInView = () => page.waitForFunction((id) => {
+    const el = document.querySelector(`[data-testid="assign-paper-piece-${id}"]`);
+    const pane = el?.closest(".pane-body");
+    if (!el || !pane) return false;
+    const box = el.getBoundingClientRect();
+    const frame = pane.getBoundingClientRect();
+    return box.top >= frame.top && box.top < frame.bottom;
+  }, far.id, { timeout: T }).then(() => true, () => false);
+  const oldScroll = () => page.locator('[data-pane="old"] .pane-body').evaluate((el) => el.scrollTop);
+  const foldByDivider = async () => {
+    const panes = await page.locator(".assign-panes").boundingBox();
+    const divider = await page.locator('[data-testid="assign-divider"]').boundingBox();
+    await page.mouse.move(divider.x + divider.width / 2, divider.y + divider.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(panes.x + panes.width - 8, divider.y + divider.height / 2, { steps: 6 });
+    await page.mouse.up();
+  };
+
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
+  await page.locator('[data-pane="old"] [data-testid^="assign-paper-piece-"]').first().waitFor({ timeout: T });
+  // 본문 탭에 그려진 것 중 마지막(머리말·꼬리말 탭의 문장은 뺀다)
+  const shownIds = new Set(await page.locator('[data-pane="old"] [data-testid^="assign-paper-piece-"]').evaluateAll((els) => els.map((el) => Number(el.getAttribute("data-testid").replace("assign-paper-piece-", "")))));
+  far = enSentences.filter((unit) => shownIds.has(unit.id)).at(-1);
+  paperPiece = page.locator(`[data-testid="assign-paper-piece-${far.id}"]`);
+
+  // 1. 고른 줄이 용지 아래쪽 - Two documents로 끄면 그 조각이 보인다
+  await paperPiece.evaluate((el) => el.scrollIntoView({ block: "center" }));
+  await paperPiece.click();
+  await page.waitForFunction((want) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() === want, far.display_id, { timeout: T });
+  const farBelow = await paperPiece.evaluate((el) => {
+    const pane = el.closest(".pane-body");
+    return el.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop - pane.clientHeight;
+  });
+  check("the far piece sits below the paper's first screen", farBelow > 0, String(farBelow));
+  await turnOn();
+  await page.locator('[data-testid="assign-view-two"]').click();
+  await waitOff();
+  check("leaving by Two documents shows the picked piece on the Old paper", await isFarInView());
+
+  // 2. 세로선을 끝까지 끌어 접어도 같다(한 단으로 간다)
+  await turnOn();
+  await foldByDivider();
+  await waitOff();
+  check("leaving by folding the divider shows the picked piece too", (await page.locator('[data-testid="assign-view-one"]').getAttribute("aria-pressed")) === "true" && (await isFarInView()));
+  await page.locator('[data-testid="assign-view-two"]').click();
+  await wait(page, "assign-new");
+
+  // 3. 고른 줄이 없으면 켜기 전 스크롤 자리로 - 다른 문서를 골랐다 돌아오면 고름이 풀린다
+  const otherDoc = (await getJson("/documents")).find((item) => item.side === "old" && item.status === "ready" && item.id !== doc.id);
+  for (const docId of [otherDoc.id, doc.id]) {
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${docId}"]`).click();
+    await page.waitForFunction((id) => document.querySelector('[data-testid="assign-old-doc"]')?.getAttribute("data-value") === String(id), docId, { timeout: T });
+  }
+  await page.waitForFunction(() => (document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() ?? "–") === "–", null, { timeout: T });
+  await page.locator('[data-pane="old"] .pane-body').evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await page.waitForTimeout(200);
+  const before = await oldScroll();
+  await turnOn();
+  await page.locator('[data-testid="assign-view-two"]').click();
+  await waitOff();
+  await page.waitForTimeout(300);
+  const afterTwo = await oldScroll();
+  check("with no row picked, Two documents gives back the scroll from before", before > 100 && Math.abs(afterTwo - before) <= 2, `${before} -> ${afterTwo}`);
+  await turnOn();
+  await page.locator('[data-testid="assign-view-one"]').click();
+  await waitOff();
+  await page.waitForTimeout(300);
+  // 한 단은 용지가 넓어 짧아진다 - 그 자리까지 못 가면 끝까지
+  const oneMax = await page.locator('[data-pane="old"] .pane-body').evaluate((el) => el.scrollHeight - el.clientHeight);
+  const afterOne = await oldScroll();
+  check("and so does One document (or its end, when the wider paper is shorter)", Math.abs(afterOne - Math.min(before, oneMax)) <= 2, `${before} -> ${afterOne} (max ${oneMax})`);
+  await page.locator('[data-testid="assign-view-two"]').click();
+  await wait(page, "assign-new");
+
+  // 4. Split - Pair view에서 누르면 먼저 끄고 용지의 그 문장에 선을 놓는다. 나누지는 않는다. 다음 S가 나눈다
+  const countUnits = async () => (await getJson("/units?limit=1000")).items.length;
+  const unitsBefore = await countUnits();
+  await paperPiece.evaluate((el) => el.scrollIntoView({ block: "center" }));
+  await paperPiece.click();
+  await page.waitForFunction((want) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.trim() === want, far.display_id, { timeout: T });
+  await turnOn();
+  await page.locator(`[data-testid="assign-shape-line-${far.id}"]`).hover();
+  await page.locator(`[data-testid="assign-shape-split-${far.id}"]`).click();
+  await waitOff();
+  await wait(page, "assign-cut-run");
+  const handle = await page.locator(`[data-testid="assign-paper-piece-${far.id}"] .cut-handle`).count();
+  check("Split in Pair view turns it off and places the cut on that sentence, in view", handle === 1 && (await isFarInView()), String(handle));
+  await page.waitForTimeout(400);
+  check("placing the cut splits nothing", (await countUnits()) === unitsBefore);
+  const splitDone = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith(`/documents/${doc.id}/edits`), { timeout: T });
+  await page.keyboard.press("s");
+  check("S then splits as usual", (await splitDone).ok());
+  await page.waitForLoadState("networkidle");
+  check("the sentence became two units", (await countUnits()) === unitsBefore + 1);
+  await page.locator('[data-testid="assign-undo"]:not([disabled])').click();
+  await page.waitForLoadState("networkidle");
+  await page.waitForTimeout(400);
+  check("Assign undo brings the sentence back", (await countUnits()) === unitsBefore);
 });
 
 // Pair view에서 끌어 짝 맺기(끌어다 놓기 4걸음) - 조각을 맞은편 언어의 조각에 놓으면 바로 짝이 되고(제안 짝의 구성원끼리면 그 제안을 확정), 알림의 Undo가 그 짝을 푼다.
