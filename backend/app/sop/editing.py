@@ -68,6 +68,7 @@ EDIT_UNDONE = "undone"
 # 경계 확인 표시만 바꾼 옛 기록 - 확인 동작은 없어졌지만(v1.0.18) 이미 쌓인 기록은 되돌리기 줄에 남아 있어 계속 돌린다.
 # 단위 집합은 그대로라 되돌릴 때 표시만 거꾸로 돌린다(payload: unit_ids·confirmed)
 BOUNDARY_OPS = ("boundary", "check_all")
+CAPTION_OPS = ("attach_caption", "detach_caption")  # 묶음의 묶인 단위를 바꾸는 편집 — 판단이 있는 묶음을 떼어 낸다
 # 글자 범위를 고칠 수 있는 단위 — 그림·표·행은 범위를 나누거나 잇지 않는다
 TEXT_KINDS = ("sentence", "heading", "cell_sentence", CAPTION_KIND)
 CAPTIONABLE_KINDS = ("sentence", "heading")  # 캡션으로 붙일 수 있는 글 단위
@@ -256,6 +257,8 @@ class _Change:
     layouts: dict[int, tuple[bool, bool]] = field(default_factory=dict)
     # 은퇴시킬 단위들의 (범위, 종류, 묶음) — 앞으로 가는 편집만 채운다(is_unchanged가 새 단위의 것과 견준다)
     retired_shapes: list[Shape] = field(default_factory=list)
+    # 캡션 붙이기·떼기로 묶인 단위가 바뀌는 묶음 — 판단이 있으면 다시 묶인 칸처럼 확인을 묻고 떼어 낸다
+    bundles: list[int] = field(default_factory=list)
 
     def list_regrouped_cells(self) -> list[int]:
         return sorted({*self.regroup, *(cell_id for draft in self.drafts for cell_id in draft.cells)})
@@ -513,7 +516,30 @@ async def _plan_set_language(session: AsyncSession, extraction_id: ExtractionId,
     units = await load_active_units(session, extraction_id, op.unit_ids)
     _ensure_text_kinds(units.values())
     changes = {unit_id: (unit.lang, op.lang) for unit_id, unit in sorted(units.items()) if unit.lang != op.lang}
+    await _ensure_one_caption_per_language(session, [units[unit_id] for unit_id in changes], op.lang)
     return _Change(langs=changes)
+
+
+async def _ensure_one_caption_per_language(session: AsyncSession, changing: Sequence[Unit], lang: str) -> None:
+    """언어를 바꿀 캡션의 묶음에 그 언어 캡션이 둘 이상 되면 422 caption_exists — 붙이기와 같은 묶음당 언어 하나 규칙."""
+    bundle_ids = {unit.group_unit_id for unit in changing if unit.kind == CAPTION_KIND}
+    if not bundle_ids:
+        return
+    changing_ids = {unit.id for unit in changing}
+    rows = await select_in_chunks(
+        session,
+        lambda chunk: select(Unit.id, Unit.group_unit_id, Unit.lang).where(
+            Unit.group_unit_id.in_(chunk), Unit.status == UNIT_ACTIVE, Unit.kind == CAPTION_KIND
+        ),
+        bundle_ids,
+    )
+    by_bundle: dict[int, list[int]] = defaultdict(list)
+    for unit_id, group_unit_id, unit_lang in rows:
+        if unit_id in changing_ids or unit_lang == lang:
+            by_bundle[group_unit_id].append(unit_id)
+    clashing = sorted(unit_id for unit_ids in by_bundle.values() if len(unit_ids) > 1 for unit_id in unit_ids)
+    if clashing:
+        raise_rule(422, "caption_exists", unit_ids=clashing)
 
 
 async def _plan_set_ref(session: AsyncSession, extraction_id: ExtractionId, op: SetRefOp) -> _Change:
@@ -721,8 +747,10 @@ async def _plan_set_layout_table(session: AsyncSession, extraction_id: Extractio
     return change
 
 
-async def _find_bundle_neighbors(session: AsyncSession, extraction_id: ExtractionId, bundle: Unit) -> set[int]:
-    """원문 순서로 묶음 바로 앞·뒤의 활성 단위 — 묶음과 그 묶인 단위(칸 문장·캡션)는 건너뛴다."""
+async def _find_bundle_neighbors(
+    session: AsyncSession, extraction_id: ExtractionId, bundle_ids: Collection[int]
+) -> set[int]:
+    """원문 순서로 묶음들 바로 앞·뒤의 활성 단위 — 묶음과 그 묶인 단위(칸 문장·캡션)는 건너뛴다."""
     rows = (
         await session.execute(
             select(Unit.id, Unit.group_unit_id, Unit.pos_seq, Unit.pos_start)
@@ -730,21 +758,30 @@ async def _find_bundle_neighbors(session: AsyncSession, extraction_id: Extractio
             .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
         )
     ).all()
-    inside = [n for n, (unit_id, group_unit_id, _, _) in enumerate(rows) if bundle.id in (unit_id, group_unit_id)]
+    inside = [
+        n for n, (unit_id, group_unit_id, _, _) in enumerate(rows) if unit_id in bundle_ids or group_unit_id in bundle_ids
+    ]
     first, last = min(inside), max(inside)
     return {rows[n].id for n in (first - 1, last + 1) if 0 <= n < len(rows)}
 
 
 async def _plan_attach_caption(session: AsyncSession, extraction_id: ExtractionId, op: AttachCaptionOp) -> _Change:
-    """글 단위를 은퇴시키고 같은 범위·언어의 캡션 단위를 그 묶음에 묶어 만든다 — 묶음마다 언어당 캡션 하나."""
+    """글 단위를 은퇴시키고 같은 범위·언어의 캡션 단위를 그 묶음에 묶어 만든다 — 묶음마다 언어당 캡션 하나.
+
+    행으로 나눈 표는 행 단위 모두가 한 묶음 자리다 — 표 앞·뒤 이웃을 붙이고 캡션은 가장 앞 행에 둔다(행 나누기와 같다).
+    """
     units = await load_active_units(session, extraction_id, [op.unit_id, op.bundle_unit_id])
     unit, bundle = units[op.unit_id], units[op.bundle_unit_id]
     if unit.kind not in CAPTIONABLE_KINDS or unit.group_unit_id is not None or unit.lang == REF_LANG:
         raise_rule(422, "invalid_unit_kind", unit_ids=[unit.id])
     if bundle.kind not in BUNDLE_UNIT_KINDS:
         raise_rule(422, "invalid_unit_kind", unit_ids=[bundle.id])
-    if unit.id not in await _find_bundle_neighbors(session, extraction_id, bundle):
-        raise_rule(422, "caption_not_adjacent", unit_ids=[unit.id, bundle.id])
+    span_ids = [bundle.id]
+    if bundle.kind == "table_row":
+        rows = await _load_table_units(session, extraction_id, bundle.table_id, ["table_row"])
+        bundle, span_ids = rows[0], [row.id for row in rows]
+    if unit.id not in await _find_bundle_neighbors(session, extraction_id, span_ids):
+        raise_rule(422, "caption_not_adjacent", unit_ids=[unit.id, op.bundle_unit_id])
     taken = await session.scalar(
         select(Unit.id).where(
             Unit.group_unit_id == bundle.id, Unit.status == UNIT_ACTIVE, Unit.kind == CAPTION_KIND,
@@ -757,7 +794,9 @@ async def _plan_attach_caption(session: AsyncSession, extraction_id: ExtractionI
         kind=CAPTION_KIND, spans=to_spans(unit.spans), text=unit.text, lang=unit.lang, table_id=None, row_index=None,
         group_unit_id=bundle.id, pos_seq=unit.pos_seq, pos_start=unit.pos_start,
     )
-    return _build_replacement([unit], [caption])
+    change = _build_replacement([unit], [caption])
+    change.bundles = [bundle.id]
+    return change
 
 
 async def _plan_detach_caption(session: AsyncSession, extraction_id: ExtractionId, op: DetachCaptionOp) -> _Change:
@@ -771,7 +810,9 @@ async def _plan_detach_caption(session: AsyncSession, extraction_id: ExtractionI
     blocks = await _load_unit_blocks(session, extraction_id, [unit])
     if any(blocks[span[0]].kind == "figure" for span in to_spans(unit.spans)):
         raise_rule(422, "caption_in_figure_block", unit_ids=[unit.id])
-    return _build_replacement([unit], [_build_sentence_from(unit)])
+    change = _build_replacement([unit], [_build_sentence_from(unit)])
+    change.bundles = [unit.group_unit_id]
+    return change
 
 
 async def _plan(session: AsyncSession, document_id: int, extraction_id: ExtractionId, op: EditOp) -> _Change:
@@ -977,7 +1018,7 @@ async def _find_new_doc_targets(session: AsyncSession, unit_ids: Collection[int]
 
 
 def _merge_reports(first: DetachReport, second: DetachReport) -> DetachReport:
-    """새 문장 쪽 떼어 내기(R32)와 다시 맞추기 결과를 하나로 — 나중에 지운 새 문장은 보류 목록에서 뺀다."""
+    """떼어 내기 결과 둘을 하나로(새 문서 R32 떼어 내기와 다시 맞추기, 옛 문서 은퇴와 캡션 묶음) — 나중에 지운 새 문장은 보류 목록에서 뺀다."""
     deleted = {*first.deleted_target_ids, *second.deleted_target_ids}
     return DetachReport(
         reset_unit_ids=sorted({*first.reset_unit_ids, *second.reset_unit_ids}),
@@ -1012,10 +1053,13 @@ async def _write_change(
         if decided:
             raise_rule(409, "unit_has_decision", unit_ids=decided)
     regrouped = change.list_regrouped_cells()
-    if change.retire or regrouped:
-        needing = await find_units_needing_confirm(session, [*change.retire, *regrouped])
+    decided_bundles: list[int] = []
+    if change.retire or regrouped or change.bundles:
+        needing = await find_units_needing_confirm(session, [*change.retire, *regrouped, *change.bundles])
         if needing and not confirm:
             raise_rule(409, "confirm_required", unit_ids=needing)
+        # 캡션이 바뀐 묶음은 판단이 있을 때만 떼어 낸다 — 확정 새 문장에 바뀐 캡션이 빠지거나 남지 않게
+        decided_bundles = sorted(set(needing) & set(change.bundles))
     await _fill_unknown_languages(session, document, extraction_id, change)
     await _set_status(session, change.retire, UNIT_ACTIVE, UNIT_RETIRED)
     await _set_status(session, change.revive, UNIT_RETIRED, UNIT_ACTIVE)
@@ -1029,10 +1073,10 @@ async def _write_change(
     detach = None
     if document.side == "new":
         reset = None
-        if change.regroup:
+        if change.regroup or decided_bundles:
             reset = await detach_targets(
                 session, bundle_id=document.bundle_id,
-                target_ids=await _find_new_doc_targets(session, [*change.retire, *change.regroup]),
+                target_ids=await _find_new_doc_targets(session, [*change.retire, *change.regroup, *decided_bundles]),
             )
         await _apply_regroup(session, change.regroup)
         await _apply_layouts(session, change.layouts)
@@ -1048,6 +1092,11 @@ async def _write_change(
                 session, bundle_id=document.bundle_id, unit_ids=[*change.retire, *change.regroup],
                 cause="retired" if change.retire else "regrouped", actor=actor,
             )
+        if decided_bundles:
+            regrouped_report = await detach_units(
+                session, bundle_id=document.bundle_id, unit_ids=decided_bundles, cause="regrouped", actor=actor
+            )
+            detach = regrouped_report if detach is None else _merge_reports(detach, regrouped_report)
         await _apply_regroup(session, change.regroup)
         await _apply_layouts(session, change.layouts)
     if change.layouts:
@@ -1067,7 +1116,9 @@ def _record(
     session: AsyncSession, document: Document, action: str, op: str, result: EditResult, change: _Change, actor: str
 ) -> None:
     """작업 기록 — 대상은 은퇴한·활성이 된·언어가 바뀐·다시 묶인 단위, 사유 칸에 편집 종류(split 등)."""
-    unit_ids = sorted({*result.created_unit_ids, *result.retired_unit_ids, *change.langs, *change.regroup})
+    unit_ids = sorted(
+        {*result.created_unit_ids, *result.retired_unit_ids, *change.langs, *change.regroup, *change.bundles}
+    )
     record_event(
         session, bundle_id=document.bundle_id, actor=actor, action=action, target_type="unit", target_ids=unit_ids,
         reason=op,
@@ -1118,6 +1169,16 @@ async def apply_edit(
     return result
 
 
+async def _find_caption_bundles(session: AsyncSession, unit_ids: Collection[int]) -> list[int]:
+    """캡션 단위들이 묶인 묶음 — 은퇴한 캡션도 묶음을 그대로 갖고 있어 되돌리기·다시 하기가 붙이기·떼기의 묶음을 찾는다."""
+    rows = await select_in_chunks(
+        session,
+        lambda chunk: select(Unit.group_unit_id).where(Unit.id.in_(chunk), Unit.kind == CAPTION_KIND),
+        unit_ids,
+    )
+    return sorted({row[0] for row in rows if row[0] is not None})
+
+
 def _orient(before_after: Sequence[T], *, backwards: bool) -> tuple[T, T]:
     """기록된 (전, 후) 값 — 되돌리기면 (후, 전)."""
     before, after = before_after
@@ -1158,6 +1219,8 @@ async def _step_edit(
             boundary_unit_ids=unit_ids, confirmed=confirmed,
         )
     change = _replay(edit, backwards=backwards)
+    if edit.op in CAPTION_OPS:
+        change.bundles = await _find_caption_bundles(session, [*change.retire, *change.revive])
     result = await _write_change(
         session, document, await get_latest_extraction_id(session, document.id), change, confirm=confirm, actor=actor
     )

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop.constants import COVER_KINDS, SYSTEM_HOLD_RELATED_CHANGED
 from app.sop.coverage import find_coverage_problems
+from app.sop.refs import REF_LANG
 from app.sop.models import (
     Bundle,
     Extraction,
@@ -26,7 +27,9 @@ from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
 from tests.sop_helpers import (
     AUTHOR,
     REVIEWER,
+    WRITTEN_CAPTION,
     assign_as_is,
+    build_as_is_targets,
     create_bundle,
     find_unit,
     get_view,
@@ -561,6 +564,7 @@ def test_unwrap_table_turns_its_caption_into_a_sentence(client: TestClient) -> N
 
 BEFORE_TABLE, AFTER_TABLE, FAR = "합성 표 앞 문장이다.", "합성 표 뒤 문장이다.", "합성 먼 문장이다."
 FIGURE_CAPTION = "그림 1. 로터 구조 (Figure 1. Rotor layout)"
+TABLE_CAPTION = "표 7. 기록 양식"
 
 
 def _setup_table_with_neighbors(client: TestClient) -> tuple[Fixture, dict]:
@@ -572,13 +576,14 @@ def _setup_figure(client: TestClient) -> tuple[Fixture, dict, dict]:
     """그림 하나와 그 아래 한/영 한 줄 캡션, 그 뒤 문장 하나."""
     body = p(HEADING) + f"<w:p>{make_drawing_run('image1.png')}</w:p>" + p(FIGURE_CAPTION, "Caption") + p(RECORD)
     bundle = create_bundle(client, is_synthetic=True)
-    assert put_tobe(client, bundle["id"], TOBE_DOCS).status_code == 200
+    tobe = put_tobe(client, bundle["id"], TOBE_DOCS)
+    assert tobe.status_code == 200, tobe.text
     doc = _upload_ready(client, bundle["id"], build_docx(body, media={"image1.png": TINY_PNG}), OLD_NAME)
     view = get_view(client, bundle["id"], doc["id"])
     figure = next(unit for unit in view["units"] if unit["kind"] == "figure")
     caption = find_unit(view, FIGURE_CAPTION)
     assert (caption["kind"], caption["group_unit_id"]) == ("caption", figure["id"])
-    return Fixture(bundle["id"], 0, doc, view), figure, caption
+    return Fixture(bundle["id"], tobe.json()["docs"][0]["id"], doc, view), figure, caption
 
 
 def _attach(client: TestClient, fx: Fixture, unit: dict, bundle: dict) -> httpx2.Response:
@@ -586,7 +591,7 @@ def _attach(client: TestClient, fx: Fixture, unit: dict, bundle: dict) -> httpx2
     return _edit(client, fx.bundle_id, fx.doc["id"], op)
 
 
-def _detach(client: TestClient, fx: Fixture, unit: dict, **kwargs: int) -> httpx2.Response:
+def _detach(client: TestClient, fx: Fixture, unit: dict, **kwargs: int | bool) -> httpx2.Response:
     return _edit(client, fx.bundle_id, fx.doc["id"], {"type": "detach_caption", "unit_id": unit["id"]}, **kwargs)
 
 
@@ -607,6 +612,79 @@ def test_attach_a_neighbor_sentence_as_caption_and_undo(client: TestClient) -> N
     assert _find_coverage_problems(get_view(client, fx.bundle_id, fx.doc["id"])) == []
     _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
     assert _load_statuses(sentence["id"], caption["id"]) == ["active", "retired"]
+
+
+@pytest.mark.parametrize("case", ["ref", "bound", "not_a_bundle"])
+def test_attach_refuses_wrong_units(client: TestClient, case: str) -> None:
+    fx, table = _setup_table_with_neighbors(client)
+    sentence, bundle = find_unit(fx.view, BEFORE_TABLE), table
+    if case == "ref":
+        update_row(Unit, sentence["id"], lang=REF_LANG)
+    elif case == "bound":
+        sentence = find_unit(fx.view, "합성 칸이다.")  # 표에 묶인 칸 문장
+    else:
+        bundle = find_unit(fx.view, AFTER_TABLE)
+
+    assert _code(_attach(client, fx, sentence, bundle)) == (422, "invalid_unit_kind")
+
+
+def test_attach_on_a_confirmed_bundle_needs_confirm_and_detaches_it(client: TestClient) -> None:
+    fx = _setup(client, p(HEADING) + p(TABLE_CAPTION, "Caption") + tbl([["합성 칸이다."]]) + p(ENGLISH))
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+    assign_as_is(client, fx.bundle_id, table, fx.sop_id, slot_key="purpose")
+    english = find_unit(fx.view, ENGLISH)
+
+    refused = _attach(client, fx, english, table)
+
+    assert _code(refused) == (409, "confirm_required")
+    assert table["id"] in refused.json()["detail"]["unit_ids"]
+    op = {"type": "attach_caption", "unit_id": english["id"], "bundle_unit_id": table["id"]}
+    result = _ok(_edit(client, fx.bundle_id, fx.doc["id"], op, confirm=True))
+    assert table["id"] in result["detach"]["reset_unit_ids"]
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    assert find_unit(view, ENGLISH)["kind"] == "caption"
+    assert next(unit for unit in view["units"] if unit["id"] == table["id"])["status"] == "unassigned"
+    assert _find_coverage_problems(view) == []
+    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
+
+
+def test_detach_from_a_bundle_confirmed_with_a_written_caption_needs_confirm(client: TestClient) -> None:
+    """캡션 단위를 쓰지 않고 써 넣은 캡션으로 확정한 묶음도 묶인 캡션이 바뀌면 떼어 낸다."""
+    fx = _setup(client, p(HEADING) + p(TABLE_CAPTION, "Caption") + tbl([["합성 칸이다."]]))
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+    caption = find_unit(fx.view, TABLE_CAPTION)
+    targets, caption_ids = build_as_is_targets(client, fx.bundle_id, table, fx.sop_id, slot_key="purpose")
+    assert caption_ids == [caption["id"]]
+    written = {
+        "key": "caption", "target_doc_id": fx.sop_id, "slot_key": "purpose", "parent_key": "t", "lang": "en",
+        "text": WRITTEN_CAPTION, "source_unit_ids": [],
+    }
+    body = {
+        "action": "confirm", "units": [{"unit_id": table["id"], "revision": 1, "disposition": "assigned"}],
+        "targets": [*targets, written],
+    }
+    assert save_group(client, fx.bundle_id, body).status_code == 200
+
+    assert _code(_detach(client, fx, caption)) == (409, "confirm_required")
+    result = _ok(_detach(client, fx, caption, confirm=True))
+    assert table["id"] in result["detach"]["reset_unit_ids"]
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    assert next(unit for unit in view["units"] if unit["id"] == table["id"])["status"] == "unassigned"
+    assert _find_coverage_problems(view) == []
+
+
+def test_attach_after_the_last_row_goes_to_the_first_row(client: TestClient) -> None:
+    """행으로 나눈 표의 캡션은 가장 앞 행에 산다 — 마지막 행 뒤 문장을 어느 행에 붙여도 첫 행 캡션이 된다."""
+    fx = _setup(client, p(HEADING) + tbl([["합성 칸 하나."], ["합성 칸 둘."]]) + p(AFTER_TABLE))
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+    _ok(_edit(client, fx.bundle_id, fx.doc["id"], {"type": "split_table_rows", "table_unit_id": table["id"]}))
+    view = get_view(client, fx.bundle_id, fx.doc["id"])
+    rows = sorted((unit for unit in view["units"] if unit["kind"] == "table_row"), key=lambda unit: unit["row_index"])
+
+    _ok(_attach(client, fx, find_unit(view, AFTER_TABLE), rows[-1]))
+
+    caption = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), AFTER_TABLE)
+    assert (caption["kind"], caption["group_unit_id"]) == ("caption", rows[0]["id"])
 
 
 def test_attach_rejects_a_far_sentence(client: TestClient) -> None:
@@ -657,6 +735,21 @@ def test_split_caption_keeps_both_pieces_on_the_bundle(client: TestClient) -> No
         ("caption", figure["id"]), ("caption", figure["id"]),
     ]
     assert {unit["lang"] for unit in created} == {"ko", "en"}
+    assert _find_coverage_problems(get_view(client, fx.bundle_id, fx.doc["id"])) == []
+    _ok(_step(client, fx.bundle_id, fx.doc["id"], "undo"))
+    revived = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), FIGURE_CAPTION)
+    assert (revived["id"], revived["kind"], revived["group_unit_id"]) == (caption["id"], "caption", figure["id"])
+
+
+def test_set_language_refuses_a_second_caption_in_one_language(client: TestClient) -> None:
+    """나누기는 같은 언어 조각 둘을 남길 수 있지만(계획대로) 언어 바꾸기로 묶음당 언어 하나를 깨지는 않는다."""
+    fx, _, caption = _setup_figure(client)
+    result = _ok(_split(client, fx, caption, FIGURE_CAPTION.index("(Figure")))
+    korean = next(unit for unit in _created_units(client, fx, result) if unit["lang"] == "ko")
+
+    response = _set_language(client, fx.bundle_id, fx.doc["id"], [korean], "en")
+
+    assert _code(response) == (422, "caption_exists")
 
 
 def test_merge_caption_with_plain_sentence_is_rejected(client: TestClient) -> None:
