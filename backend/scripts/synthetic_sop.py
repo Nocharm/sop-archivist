@@ -29,7 +29,8 @@ expected.json 형식:
     `kind`(sentence·table·figure), `lang`, `text`(확정 글자, 표·그림은 없음), `change_type`(결과물의 변경 종류 — 나눔·합침은 구조로
     정해지므로 요청에는 싣지 않는다), 표는 `grid`. 칸 새 문장은 `parent_key`·`cell_row`·`cell_col`·`source_text`(출처 칸 문장 글자,
     표 답과 같은 문서)를 갖는다. 캡션 새 문장은 `parent_key`가 있고 `cell_row`가 없으며 `source_text`(출처 캡션 단위 글자, 없으면
-    출처 없는 캡션)를 갖는다.
+    출처 없는 캡션 — 써 넣은 캡션, 변경 종류 new)를 갖는다. 배정한 표·그림은 캡션이 있어야 확정되므로 표·그림 답마다 캡션 새 문장이 있다.
+  - `demo_unassigned`(true면 데모 시드의 "분류 절반" 묶음에서 저장하지 않고 미배정으로 둔다 — 캡션 없는 표가 화면 스모크에 남게).
 - `match`: 입구 2. `identical_count`(같은 글자 후보 수), `new_texts`([{doc, text, lang, section_path}] — 짝 없는 새 문장, 신규).
 - `omitted`: {doc, text, occurrence} — 일부러 남기는 누락. answers에도 들어 있고(혼자인 group) 검토 요청 거절을 본 뒤 저장한다.
 
@@ -168,6 +169,14 @@ def _match(section_path: str, text: str, change_type: str, *, code: str = MATCH_
 def _target(code: str, location: dict, text: str, change_type: str, lang: str, *, key: str | None = None) -> dict:
     target = {"code": code, **location, "kind": "sentence", "lang": lang, "text": text, "change_type": change_type}
     return target if key is None else {"key": key, **target}
+
+
+def _caption_target(location: dict, parent_key: str, text: str, lang: str, *, source: bool) -> dict:
+    """표·그림 새 문장(parent_key) 아래 캡션 새 문장 — source면 같은 글자의 캡션 단위를 그대로, 아니면 출처 없이 써 넣는다."""
+    target = {**location, "parent_key": parent_key, "kind": "sentence", "lang": lang, "text": text}
+    if source:
+        return {**target, "change_type": "as_is", "source_text": text}
+    return {**target, "change_type": "new"}
 
 
 class _AnswerSheet:
@@ -403,13 +412,12 @@ def _build_old_1(sheet: _AnswerSheet) -> tuple[bytes, list[dict]]:
         ),
     )
     document.add_picture(BytesIO(_draw_figure()), width=Inches(1.6))
-    figure_target = {
-        "code": "WI-01", "wi_step": 3, "wi_part": "instruction", "kind": "figure", "lang": "neutral",
-        "change_type": "as_is",
-    }
-    # 그림 단위는 글이 없고 캡션 문단은 그림에 묶인 캡션 단위라 답이 없다(그림 답의 처분을 따른다)
-    add(doc, "", "neutral", figure_target, kind="figure")
-    document.add_paragraph("그림 1. 로터 장착 위치 (Figure 1. Rotor mounting position)", style="Caption")
+    figure_location = {"code": "WI-01", "wi_step": 3, "wi_part": "instruction"}
+    figure_target = {"key": "t-figure-1", **figure_location, "kind": "figure", "lang": "neutral", "change_type": "as_is"}
+    figure_caption = "그림 1. 로터 장착 위치 (Figure 1. Rotor mounting position)"
+    # 그림 단위는 글이 없고 캡션 문단은 그림에 묶인 캡션 단위라 답이 없다(그림 답의 처분을 따르고, 그림 답의 캡션 새 문장이 잇는다)
+    add(doc, "", "neutral", figure_target, _caption_target(figure_location, "t-figure-1", figure_caption, "ko", source=True), kind="figure")
+    document.add_paragraph(figure_caption, style="Caption")
     table_ko, table_en = "운전 조건은 아래 표를 따른다.", "Run conditions are given in the table below."
     _add_paragraphs(
         document,
@@ -430,7 +438,9 @@ def _build_old_1(sheet: _AnswerSheet) -> tuple[bytes, list[dict]]:
         "key": "t-table-1", **location, "kind": "table", "lang": "neutral", "change_type": "as_is",
         "grid": {"rows": len(rows), "cols": len(rows[0])},
     }
-    add(doc, "", "neutral", table_target, *cells, kind="table")
+    # 원문에 캡션이 없는 표 — 확정하려면 캡션을 써 넣는다
+    written = _caption_target(location, "t-table-1", "표 1. 운전 조건 (Table 1. Run conditions)", "ko", source=False)
+    add(doc, "", "neutral", table_target, *cells, written, kind="table")
     _add_table(document, rows)
     _add_paragraphs(
         document,
@@ -627,13 +637,16 @@ def _build_old_7(sheet: _AnswerSheet) -> tuple[bytes, list[dict]]:
     doc, add = "OLD-7", sheet.add
     document = _new_docx(doc, "Tables Figures Captions")
     location = {"code": SOP_CODE, "slot_key": "procedures.procedure"}
-    table_keys = itertools.count(1)
+    table_keys, figure_keys = itertools.count(1), itertools.count(1)
 
     def add_sentence(text: str, lang: str) -> str:
         return add(doc, text, lang, _sop("procedures.procedure", text, "as_is", lang))
 
-    def add_data_table(rows: list[list[str]]) -> None:
-        """표 하나와 그 칸 답 — 칸 글자는 표 단위가 먹는다(OLD-1 표와 같은 꼴). 드라이버가 칸 출처를 글자로 찾으니 칸 글자는 문서 안에서 겹치지 않게 한다."""
+    def add_data_table(rows: list[list[str]], caption: str, caption_lang: str, *, written: bool = False) -> None:
+        """표 하나와 그 칸·캡션 답 — 칸 글자는 표 단위가 먹는다(OLD-1 표와 같은 꼴). 드라이버가 칸 출처를 글자로 찾으니 칸 글자는 문서 안에서 겹치지 않게 한다.
+
+        written이면 원문에 캡션이 없는 표라 캡션을 써 넣고, 데모 시드의 "분류 절반" 묶음에서는 미배정으로 둔다(캡션 필수 스모크용).
+        """
         key = f"t-old7-table-{next(table_keys)}"
         cells = [
             {
@@ -647,29 +660,37 @@ def _build_old_7(sheet: _AnswerSheet) -> tuple[bytes, list[dict]]:
             "key": key, **location, "kind": "table", "lang": "neutral", "change_type": "as_is",
             "grid": {"rows": len(rows), "cols": len(rows[0])},
         }
-        add(doc, "", "neutral", table_target, *cells, kind="table")
+        caption_target = _caption_target(location, key, caption, caption_lang, source=not written)
+        extra = {"demo_unassigned": True} if written else {}
+        add(doc, "", "neutral", table_target, *cells, caption_target, kind="table", **extra)
         _add_table(document, rows)
 
-    def add_figure() -> None:
-        figure_target = {**location, "kind": "figure", "lang": "neutral", "change_type": "as_is"}
-        add(doc, "", "neutral", figure_target, kind="figure")
+    def add_figure(caption: str, caption_lang: str) -> None:
+        key = f"t-old7-figure-{next(figure_keys)}"
+        figure_target = {"key": key, **location, "kind": "figure", "lang": "neutral", "change_type": "as_is"}
+        caption_target = _caption_target(location, key, caption, caption_lang, source=True)
+        add(doc, "", "neutral", figure_target, caption_target, kind="figure")
 
     document.add_paragraph(add_sentence("1. 표와 그림 Tables and figures", "ko"), style="Heading 1")
     # 앞 캡션(Caption 스타일) + 표, 원문 번호가 3
-    document.add_paragraph("표 3. 운전 조건 (Table 3. Operating conditions)", style="Caption")
-    add_data_table([["Program", "Speed", "Time"], ["P1", "3,000 rpm", "5 min"], ["P2", "14,000 rpm", "10 min"]])
+    first_caption = "표 3. 운전 조건 (Table 3. Operating conditions)"
+    document.add_paragraph(first_caption, style="Caption")
+    add_data_table([["Program", "Speed", "Time"], ["P1", "3,000 rpm", "5 min"], ["P2", "14,000 rpm", "10 min"]], first_caption, "ko")
     # 표 + 뒤 캡션, 스타일 없는 글 꼴
-    add_data_table([["Rotor", "Limit"], ["F-45-30-11", "14,500 rpm"]])
+    add_data_table([["Rotor", "Limit"], ["F-45-30-11", "14,500 rpm"]], "Table 4: Rotor limits", "en")
     document.add_paragraph("Table 4: Rotor limits")
-    # 캡션 없는 표 — 데모 시드에서 배정하지 않고 둔다(뒤 단계의 캡션 필수 규칙 시험용)
+    # 캡션 없는 표 — 정답은 캡션을 써 넣어 확정하고, 데모 시드의 분류 절반 묶음에서는 배정하지 않고 둔다(캡션 필수 규칙 화면 시험용)
     document.add_paragraph(add_sentence("회전 속도는 아래 표를 따른다.", "ko"))
-    add_data_table([["Type", "Run speed", "Run time"], ["S-20", "12,000 rpm", "15 min"]])
+    add_data_table(
+        [["Type", "Run speed", "Run time"], ["S-20", "12,000 rpm", "15 min"]], "표 5. 회전 속도 (Table 5. Run speed)", "ko",
+        written=True,
+    )
     # 그림 + 뒤 캡션(스타일 없음), 그림 + 앞 캡션(띄어쓰기 없는 변형)
     document.add_picture(BytesIO(_draw_figure()), width=Inches(1.6))
-    add_figure()
+    add_figure("그림 5. 로터 장착 (Figure 5. Rotor mounting)", "ko")
     document.add_paragraph("그림 5. 로터 장착 (Figure 5. Rotor mounting)")
     document.add_paragraph("Fig.6 Lid lock")
-    add_figure()
+    add_figure("Fig.6 Lid lock", "en")
     document.add_picture(BytesIO(_draw_figure()), width=Inches(1.6))
     # 참조 문장 — 마지막은 문서에 없는 표 9를 가리켜 지운다
     for text, lang in (

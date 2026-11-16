@@ -229,7 +229,7 @@ class _State:
     units: dict[int, Unit]  # 보낸 단위와 그 칸 문장(U*)
     decisions: dict[int, UnitDecision]  # 보낸 단위의 판단
     cells: dict[int, list[int]]  # 표·행 단위 → 묶인 활성 칸 문장
-    captions: dict[int, list[int]]  # 표·행·그림 단위 → 묶인 활성 캡션 — 캡션 새 문장 검사는 Task 10
+    captions: dict[int, list[int]]  # 표·행·그림 단위 → 묶인 활성 캡션
     group_of: dict[int, int]  # 묶인 칸 문장·캡션 → 표·행·그림 단위
     existing: dict[int, TargetSentence]  # 보낸 기존 새 문장과 지울 새 문장
     removed: set[int]  # 지울 새 문장
@@ -278,7 +278,8 @@ class _Plan:
     cell_row: int | None
     cell_col: int | None
     parent: "_Plan | None" = None
-    is_cell: bool = False
+    is_cell: bool = False  # 표·그림 새 문장 아래 자식(칸·캡션) — 순서·번호에 들지 않고 부모를 따른다
+    is_caption: bool = False  # 칸 좌표 없는 자식 문장(captions.is_caption_target과 같은 꼴)
     change_type: str | None = None
     # 칸 제목만 — 저장 뒤 출처 전부(다른 문서 출처 포함, seq 순). None이면 sources다(_resolve_slot_headings)
     link_sources: list[int] | None = None
@@ -634,9 +635,16 @@ def _settle_translation_place(plan: _Plan, by_row_id: dict[int, _Plan], state: _
     plan.doc, plan.cell_row, plan.cell_col = state.docs[places[-1].doc_id], places[-1].cell_row, places[-1].cell_col
 
 
-def _check_source_kinds(item: TargetIn, state: _State) -> None:
-    """문장은 문장·제목·칸 문장에서, 칸 제목은 제목·문장에서, 표는 표·행 단위 하나에서, 그림은 그림 단위 하나에서 온다(R28)."""
+def _check_source_kinds(item: TargetIn, state: _State, *, is_caption: bool) -> None:
+    """문장은 문장·제목·칸 문장에서, 칸 제목은 제목·문장에서, 표는 표·행 단위 하나에서, 그림은 그림 단위 하나에서 온다(R28).
+
+    캡션 새 문장은 캡션 단위 하나에서 오거나 출처 없이 써 넣는다. 캡션 단위는 캡션 새 문장의 출처로만 된다(표·그림 명세 §3.2).
+    """
     kinds = [state.units[unit_id].kind for unit_id in item.source_unit_ids]
+    if is_caption or CAPTION_KIND in kinds:
+        if not is_caption or len(kinds) > 1 or any(kind != CAPTION_KIND for kind in kinds):
+            raise_rule(422, "invalid_caption_target", keys=[item.key])
+        return
     text_kinds = {"sentence": SENTENCE_SOURCE_KINDS, SLOT_HEADING: SLOT_HEADING_SOURCE_KINDS}.get(item.kind)
     if text_kinds is not None:
         if any(kind not in text_kinds for kind in kinds):
@@ -669,6 +677,8 @@ def _resolve_lang(item: TargetIn, row: TargetSentence | None, state: _State, tex
         return item.lang
     if row is not None and row.lang != NEUTRAL:
         return row.lang
+    if not item.source_unit_ids:  # 써 넣은 캡션 — 출처 언어가 없어 글자로 판정한다
+        return detect_language(text) or NEUTRAL
     langs = {state.units[unit_id].lang for unit_id in item.source_unit_ids}
     if len(langs) == 1:
         return langs.pop()
@@ -728,58 +738,75 @@ def _plan_target(item: TargetIn, state: _State) -> _Plan:
     doc = state.docs.get(doc_id)
     if doc is None:
         _reject("unknown_target_doc", keys=keys)
+    cell_row = item.cell_row if item.cell_row is not None else (row.cell_row if row is not None else None)
+    cell_col = item.cell_col if item.cell_col is not None else (row.cell_col if row is not None else None)
+    has_parent = item.parent_key is not None or (row is not None and row.parent_target_id is not None)
+    is_caption = item.kind == "sentence" and has_parent and cell_row is None and cell_col is None
     if row is not None and origin == ORIGIN_NEW_DOC:
         _check_locked(item, row)
     elif origin != ORIGIN_TRANSLATION:  # 번역의 자리는 출처를 봐야 해서 모든 계획이 선 뒤에 본다(_settle_translation_place)
         if doc.entrance == "match":
             _reject("match_doc_new_target", keys=keys)
-        if not item.source_unit_ids:
+        if not item.source_unit_ids and not is_caption:  # 캡션은 출처 없이 써 넣을 수 있다(표·그림 명세 §3.4)
             _reject("sources_required", keys=keys)
         _check_location(item, doc, state)
-    _check_source_kinds(item, state)
+    _check_source_kinds(item, state, is_caption=is_caption)
     text = _resolve_text(item, row, state)
     return _Plan(
         item=item, row=row, doc=doc, origin=origin, sources=list(item.source_unit_ids),
         lang=_resolve_lang(item, row, state, text), text=text, grid=_resolve_grid(item, row),
-        cell_row=item.cell_row if item.cell_row is not None else (row.cell_row if row is not None else None),
-        cell_col=item.cell_col if item.cell_col is not None else (row.cell_col if row is not None else None),
+        cell_row=cell_row, cell_col=cell_col, is_caption=is_caption,
     )
+
+
+def _reject_child(plan: _Plan) -> NoReturn:
+    """칸 새 문장은 관계 묶음 거절(invalid_cell_target), 캡션 새 문장은 따로 된 규칙 코드다 — 화면이 까닭 문구를 따로 보인다."""
+    if plan.is_caption:
+        raise_rule(422, "invalid_caption_target", keys=[plan.item.key])
+    _reject("invalid_cell_target", keys=[plan.item.key])
 
 
 def _link_cell_target(plan: _Plan, by_key: dict[str, _Plan], state: _State) -> None:
     """검사 7 — 칸 새 문장은 같은 요청의 표 새 문장 아래, 같은 새 문서·자리, 격자 안, 출처는 그 표 단위에 묶인 칸 문장 하나.
 
+    캡션 새 문장은 표·그림 새 문장 아래, 같은 새 문서·자리, 칸 좌표 없이, 출처는 그 묶음 단위에 묶인 캡션 단위 하나이거나
+    없다(써 넣은 캡션, 표·그림 명세 §3.4). 칸 새 문장처럼 순서·번호에 들지 않고 부모를 따른다.
     기존 칸 새 문장의 부모는 바뀌지 않는다. 입구 2 칸 새 문장은 구조가 새 문서 그대로라 parent_key를 비워도 된다.
     칸 번역도 자리가 정해져 있어 비워도 되지만, 함께 지워질 표 아래에는 남을 수 없다(부모를 지우면 DB CASCADE로 같이 사라진다).
     """
     item, row = plan.item, plan.row
-    keys = [item.key]
     current_parent = row.parent_target_id if row is not None else None
     if item.parent_key is None:
         is_kept = plan.origin == ORIGIN_NEW_DOC or (
             plan.origin == ORIGIN_TRANSLATION and current_parent not in state.removed
         )
         if current_parent is not None and not is_kept:
-            _reject("invalid_cell_target", keys=keys)
+            _reject_child(plan)
         plan.is_cell = current_parent is not None
         if not plan.is_cell and (plan.cell_row is not None or plan.cell_col is not None):
-            _reject("invalid_cell_target", keys=keys)
+            _reject_child(plan)
         return
     parent = by_key.get(item.parent_key)
-    if parent is None or parent.item.kind != "table" or item.kind != "sentence" or parent.doc.id != plan.doc.id:
-        _reject("invalid_cell_target", keys=keys)
+    parent_kinds = ("table", "figure") if plan.is_caption else ("table",)
+    if parent is None or parent.item.kind not in parent_kinds or item.kind != "sentence" or parent.doc.id != plan.doc.id:
+        _reject_child(plan)
     if row is not None and (parent.row is None or parent.row.id != current_parent):
-        _reject("invalid_cell_target", keys=keys)
-    if plan.cell_row is None or plan.cell_col is None or parent.grid is None:
-        _reject("invalid_cell_target", keys=keys)
-    if plan.cell_row >= parent.grid["rows"] or plan.cell_col >= parent.grid["cols"]:
-        _reject("invalid_cell_target", keys=keys)
+        _reject_child(plan)
+    if not plan.is_caption:
+        if plan.cell_row is None or plan.cell_col is None or parent.grid is None:
+            _reject_child(plan)
+        if plan.cell_row >= parent.grid["rows"] or plan.cell_col >= parent.grid["cols"]:
+            _reject_child(plan)
     if plan.origin not in (ORIGIN_NEW_DOC, ORIGIN_TRANSLATION):
         location = (item.slot_key, item.wi_step, item.wi_part)
         parent_location = (parent.item.slot_key, parent.item.wi_step, parent.item.wi_part)
-        table_unit_id = parent.sources[0] if parent.sources else None
-        if location != parent_location or len(plan.sources) != 1 or state.group_of.get(plan.sources[0]) != table_unit_id:
-            _reject("invalid_cell_target", keys=keys)
+        bundle_unit_id = parent.sources[0] if parent.sources else None
+        # 캡션은 출처가 없어도 된다(써 넣은 캡션) — 출처 수는 _check_source_kinds가 하나 이하로 봤다
+        is_sourced = len(plan.sources) == 1 or (plan.is_caption and not plan.sources)
+        if location != parent_location or not is_sourced or any(
+            state.group_of.get(unit_id) != bundle_unit_id for unit_id in plan.sources
+        ):
+            _reject_child(plan)
     plan.parent, plan.is_cell = parent, True
 
 
@@ -852,7 +879,8 @@ def _check_as_is_table(plan: _Plan, by_row_id: dict[int, _Plan], state: _State) 
         if plan.grid != {"rows": 1 if unit.kind == "table_row" else n_rows, "cols": n_cols}:
             _reject("grid_mismatch", keys=keys)
     parent = _find_parent_plan(plan, by_row_id)
-    if parent is None or parent.change_type != "as_is" or len(plan.sources) != 1:
+    # 캡션은 칸 자리가 없다 — 그대로인 표의 모양과 무관하다
+    if parent is None or plan.is_caption or parent.change_type != "as_is" or len(plan.sources) != 1:
         return
     table_unit = state.units[parent.sources[0]]
     if state.group_of.get(plan.sources[0]) != table_unit.id:  # 입구 2 칸 새 문장이 칸 아닌 문장과 짝지어진 경우
@@ -893,6 +921,26 @@ def _check_duplicates(payload: GroupSaveIn, plans: list[_Plan], state: _State) -
     )
     if offenders:
         _reject("duplicate_without_reason", unit_ids=offenders)
+
+
+def _check_captions(payload: GroupSaveIn, plans: list[_Plan]) -> None:
+    """확정은 배정한 단위를 출처로 둔 표·그림 새 문장마다 캡션 새 문장이 하나 이상 있어야 한다(표·그림 명세 §3.4).
+
+    캡션은 자동으로 묶인 것·붙인 것·써 넣은 것 모두 센다. 보류는 캡션 없이 둘 수 있고, 삭제·이동은 새 문장이 없어 걸리지 않는다.
+    입구 2 표·그림은 새 문서 원문 그대로라(캡션을 써 넣을 수 없다, match_doc_new_target) 보지 않는다.
+    """
+    if payload.action != "confirm":
+        return
+    assigned = {item.unit_id for item in payload.units if item.disposition == "assigned"}
+    by_row_id = {plan.row.id: plan for plan in plans if plan.row is not None}
+    captioned = {id(_find_parent_plan(plan, by_row_id)) for plan in plans if plan.is_caption}
+    missing = [
+        plan.item.key for plan in plans
+        if plan.item.kind in ("table", "figure") and plan.origin == ORIGIN_UNITS
+        and assigned & set(plan.sources) and id(plan) not in captioned
+    ]
+    if missing:
+        raise_rule(422, "caption_required", keys=missing)
 
 
 SlotRelease = tuple[TargetSentence, list[int]]  # 이 저장의 출처를 떼어 낼 칸 제목과 남는 출처(seq 순, 비면 행을 지운다)
@@ -1258,6 +1306,7 @@ async def save_group(session: AsyncSession, bundle: Bundle, payload: GroupSaveIn
         _check_as_is_table(plan, by_row_id, state)
     _check_as_is_table_cells(plans, by_row_id, state)
     _check_duplicates(payload, plans, state)
+    _check_captions(payload, plans)
     if payload.action == "hold" and not payload.hold_reason.strip():
         _reject("hold_reason_required")
     target_ids = await _write_group(session, bundle.id, payload, plans, releases, state, actor)

@@ -158,7 +158,8 @@ def _build_saved_shape(
             restructured=plan.change_type == "table_restructured",
         )
         for plan in plans
-        if plan.origin != ORIGIN_TRANSLATION and scope.intersection((plan.parent or plan).sources)
+        # 캡션 새 문장은 제안 모습에서도 빠진다(_build_suggested_shape, Task 12) — 확정에 캡션이 꼭 붙어 늘 edited가 되지 않게
+        if plan.origin != ORIGIN_TRANSLATION and not plan.is_caption and scope.intersection((plan.parent or plan).sources)
     )
     return SavedShape(frozenset(dispositions), targets)
 

@@ -27,6 +27,7 @@ from tests.sop_helpers import (
     ADMIN,
     AUTHOR,
     REVIEWER,
+    WRITTEN_CAPTION,
     assign_as_is,
     create_bundle,
     find_unit,
@@ -720,6 +721,7 @@ def test_output_a_table_lines_for_rows_empty_tables_and_dropped_cells(client: Te
         _target("t", sop_id, [second_row], slot_key="procedures.procedure", kind="table", grid={"rows": 1, "cols": 1},
                 change_type="table_restructured"),
         _target("c", sop_id, [kept], slot_key="procedures.procedure", parent_key="t", cell_row=0, cell_col=0),
+        _target("cap", sop_id, [], slot_key="procedures.procedure", parent_key="t", text="합성 표 둘째 행", lang="ko"),
     ])
     d = partial(_display, view)
 
@@ -902,11 +904,14 @@ def test_output_c_one_list_per_slot(client: TestClient) -> None:
     assert (table["kind"], table["lang"], table["change_type"], table["source_note"], table["origin"]) == (
         "table", "neutral", "as_is", "← OLD-1 §5.1", "units",
     )
-    assert [(cell["text"], cell["cell_row"], cell["cell_col"], cell["children"]) for cell in table["children"]] == [
+    cells = [child for child in table["children"] if child["cell_row"] is not None]
+    assert [(cell["text"], cell["cell_row"], cell["cell_col"], cell["children"]) for cell in cells] == [
         ("항목", 0, 0, []), ("Item", 0, 1, []), ("합성 값", 1, 0, []), ("Synthetic value", 1, 1, []),
     ]
+    # 캡션 없는 표라 확정하며 써 넣은 캡션 — 칸 좌표 없는 자식이다(자식 사이 자리는 Task 13이 정한다)
+    assert [child["text"] for child in table["children"] if child["cell_row"] is None] == [WRITTEN_CAPTION]
     table_unit = _unit_of_kind(fx.old1, "table")
-    assert {cell["meaning_key"] for cell in table["children"]} == {table["meaning_key"]} == {f"old:-{table_unit['id']}"}
+    assert {cell["meaning_key"] for cell in cells} == {table["meaning_key"]} == {f"old:-{table_unit['id']}"}
     assert sum(len(section["items"]) for section in sop["sections"]) == 4
 
     # WI는 선언 단계 순으로 단계마다 Instruction·Why, 단계 없는 칸은 없을 때 싣지 않는다
@@ -1215,6 +1220,31 @@ def _list_top_target_ids(client: TestClient, bundle_id: int, doc_index: int) -> 
     """결과물 C 한 문서의 칸 새 문장이 아닌 새 문장 id — 한 벌이라 두 언어가 한 목록에, 순서대로."""
     doc = _get_output(client, bundle_id, "outputs/c")["docs"][doc_index]
     return [item["target_id"] for section in doc["sections"] for item in section["items"]]
+
+
+def test_figure_target_reorders_between_sentences_like_a_sentence(client: TestClient) -> None:
+    """표·그림 새 문장은 문장과 같은 순서 목록으로 문장 사이에 놓이고, 캡션은 칸 새 문장처럼 부모를 따른다(표·그림 명세 §4.3)."""
+    fx = _setup(client)
+    wi = _get_output(client, fx.bundle_id, "outputs/c", "ko")["docs"][1]
+    (split_a,), (duplicate,), (split_b, figure), () = [section["items"] for section in wi["sections"]]
+    (caption,) = figure["children"]  # 보류한 그림에도 딸린 캡션 단위의 캡션 새 문장이 그림 아래 자식이다
+    revision = get_bundle(client, fx.bundle_id)["revision"]
+    items = [
+        {"target_id": duplicate["target_id"]},
+        {"target_id": split_b["target_id"]},
+        {"target_id": figure["target_id"]},
+        {"target_id": split_a["target_id"], "wi_step": 2},
+    ]
+    body = {"revision": revision, "target_doc_id": fx.wi_id, "items": items}
+
+    with_caption = _put_order(client, fx.bundle_id, {**body, "items": [*items, {"target_id": caption["target_id"]}]})
+    response = _put_order(client, fx.bundle_id, body)
+
+    assert with_caption.json()["detail"]["unknown_target_ids"] == [caption["target_id"]]  # 순서 목록에 들지 않는다
+    assert response.status_code == 200, response.text
+    step_2 = _get_output(client, fx.bundle_id, "outputs/c", "ko")["docs"][1]["sections"][2]["items"]
+    assert [item["target_id"] for item in step_2] == [split_b["target_id"], figure["target_id"], split_a["target_id"]]
+    assert [(child["target_id"], child["text"]) for child in step_2[1]["children"]] == [(caption["target_id"], CAPTION)]
 
 
 def test_reorder_returns_the_doc_as_c_shows_it(client: TestClient) -> None:

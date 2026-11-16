@@ -66,6 +66,7 @@ from tests.sop_helpers import (
     AUTHOR,
     REVIEWER,
     assign_as_is,
+    build_missing_caption,
     find_unit,
     get_group_by_unit,
     get_view,
@@ -659,6 +660,7 @@ def test_table_suggestion_passes_the_checks_of_a_human_save(client: TestClient, 
             for target in group["targets"]
         ],
     }
+    body["targets"] += build_missing_caption(group["targets"], table_target)  # 제안에 아직 캡션이 없다(Task 12)
 
     response = save_group(client, bundle.id, body)
 

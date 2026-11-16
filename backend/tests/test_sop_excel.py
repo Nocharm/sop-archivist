@@ -40,6 +40,7 @@ from tests.sop_helpers import (
     AUTHOR,
     OUTSIDER,
     REVIEWER,
+    WRITTEN_CAPTION,
     assign_as_is,
     create_bundle,
     find_unit,
@@ -319,7 +320,8 @@ def test_sheet_c_indents_docs_slots_items_and_tails(client: TestClient) -> None:
 
     table_row = rows.index(next(row for row in rows if row[item_col] == "[Table]"))
     assert rows[table_row][number_col] == "5.1"
-    cells = rows[table_row + 1 : table_row + 5]
+    # 확정하며 써 넣은 캡션은 칸 줄이 아니다(캡션 줄의 자리는 Task 13이 정한다)
+    cells = [row for row in rows[table_row + 1 : table_row + 6] if row[cell_col] != WRITTEN_CAPTION]
     assert [(row[cell_col], row[5]) for row in cells] == [
         ("항목", "R 1 C 1"), ("값", "R 1 C 2"), ("합성 값", "R 2 C 1"), ("합성 결과", "R 2 C 2"),
     ]

@@ -14,7 +14,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from app.routers.admin import KstDatetime
-from app.sop.captions import CAPTION_KIND
+from app.sop.captions import CAPTION_KIND, is_caption_target
 from app.sop.constants import COVER_KINDS, NUMBER_NOTE, NUMBERED, SLOT_HEADING, SLOT_KEYS, WI_PARTS
 from app.sop.groups import TABLE_UNIT_KINDS, build_group_ids, collapse_table_members
 from app.sop.output_labels import LABELS, OutputLabels
@@ -1208,6 +1208,7 @@ def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> 
                     text=cell.confirmed_text or cell.ai_text, status=cell.status,
                 )
                 for cell in index.children.get(target.id, [])
+                if not is_caption_target(cell)  # 캡션은 칸이 아니다 — 격자 (0, 0)에 겹쳐 그리지 않는다
             ]
             table = build_bundle_table(target.grid, cells)
         figure = _find_figure_block(snap, [target.new_unit_id] if target.new_unit_id else sources) if target.kind == "figure" else None

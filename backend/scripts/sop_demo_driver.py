@@ -183,11 +183,12 @@ class SyntheticDriver:
                 self.save_group(answers, revisions)
 
     def save_entrance1_half(self) -> None:
-        """입구 1 답을 앞에서부터 절반 넘게 쌓일 때까지 group 단위로 저장한다 — 입구 2 문서의 답은 건드리지 않는다."""
+        """입구 1 답을 앞에서부터 절반 넘게 쌓일 때까지 group 단위로 저장한다 — 입구 2 문서의 답과 미배정으로 둘 답은 건드리지 않는다."""
         match_docs = self._find_match_docs()
         groups = [
             answers for answers in self._group_answers().values()
             if not {answer["doc"] for answer in answers} & match_docs
+            and not any(answer.get("demo_unassigned") for answer in answers)
         ]
         revisions = self.load_decision_revisions()
         total = sum(len(answers) for answers in groups)
@@ -286,8 +287,7 @@ class SyntheticDriver:
         if spec["kind"] == "table":
             item["grid"] = spec["grid"]
         if "parent_key" in spec and "cell_row" not in spec:  # 캡션 새 문장 — 출처는 같은 문서의 캡션 단위, 없으면 써 넣은 캡션
-            item = {"key": spec["key"], "kind": "sentence", "lang": spec["lang"], "text": spec["text"],
-                    "parent_key": spec["parent_key"], "source_unit_ids": []}
+            item.update(lang=spec["lang"], parent_key=spec["parent_key"])
             if "source_text" in spec:
                 caption = find_unit_by_text(self.views[answer["doc"]], spec["source_text"], 1, ("caption",))
                 item["source_unit_ids"] = [caption["id"]]
@@ -366,6 +366,7 @@ class SyntheticDriver:
         """제안의 묶음을 그대로 확정한다 — 글·변경 종류를 비워 보내면 서버가 제안대로 정하고, 구조 종류는 보내지 않는다. 사유만 사람이 적는다.
 
         신규 제안은 단위가 없어 새 문장으로 묶음을 읽는다. 짝은 언어마다 묶음이 따로라 한 저장에 모은다. 표는 가짜 AI가 무효로 답해 여기 오지 않는다.
+        캡션 없이 제안된 그림은 사람이 정답의 캡션 새 문장을 더해 확정한다(캡션 없는 묶음은 확정할 수 없다).
         """
         paths = [f"/groups/by-unit/{unit_id}" for unit_id in content["unit_ids"]] or [
             f"/groups/by-target/{target_id}" for target_id in content["target_ids"]
@@ -391,8 +392,24 @@ class SyntheticDriver:
                 for target_id, target in targets.items()
             ],
         }
+        body["targets"] += self._build_missing_captions(targets, answers)
         response = save_group(self.client, self.bundle_id, body, self.headers)
         assert response.status_code == 200, response.text
+
+    def _build_missing_captions(self, targets: dict[int, dict], answers: dict[int, dict]) -> list[dict]:
+        """캡션 새 문장이 아래에 없는 표·그림 새 문장마다 그 단위 정답의 캡션 새 문장 — parent_key는 그 새 문장의 key(id)다."""
+        captioned = {target["parent_target_id"] for target in targets.values() if target["cell_row"] is None}
+        missing = []
+        for target_id, target in targets.items():
+            if target["kind"] not in ("table", "figure") or target_id in captioned:
+                continue
+            (unit_id,) = target["source_unit_ids"]
+            answer = answers[unit_id]
+            missing += [
+                {**self._build_target(spec, answer), "parent_key": str(target_id)}
+                for spec in answer["targets"] if "parent_key" in spec and "cell_row" not in spec
+            ]
+        return missing
 
     def settle_remaining(self) -> None:
         """AI가 끝내지 못한 답을 정답대로 저장한다 — 보류는 확정이 지우고, 입구 2 같은 글자 후보와 남은 신규도 여기서 확정한다."""

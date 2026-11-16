@@ -145,7 +145,7 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
     addressed += [
         find_unit_by_text(run.views[answer["doc"]], spec["source_text"], 1, ("cell_sentence",))["id"]
         for answer in expected["answers"] if answer.get("kind") == "table"
-        for spec in answer["targets"] if "parent_key" in spec
+        for spec in answer["targets"] if "cell_row" in spec  # 캡션 새 문장(칸 좌표 없음)은 아래 캡션 단위가 맡는다
     ]
     # 표·그림에 묶인 캡션은 답이 없고 묶음 답의 처분을 따른다
     bundle_ids = {run.find_answer_unit(answer)["id"] for answer in expected["answers"] if answer.get("kind")}

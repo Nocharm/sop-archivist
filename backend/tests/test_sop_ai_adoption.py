@@ -47,6 +47,7 @@ from tests.sop_helpers import (
     OUTSIDER,
     REVIEWER,
     assign_as_is,
+    build_missing_caption,
     find_unit,
     get_group_by_unit,
     get_view,
@@ -167,7 +168,7 @@ def save_table(
             "unit_id": table_id, "revision": group["units"][0]["decision"]["revision"], "disposition": "assigned",
             "reason": "합성 사유" if is_reshaped else "",
         }],
-        "targets": [table_fields, *targets],
+        "targets": [table_fields, *targets, *build_missing_caption(group["targets"], table_target)],
     })
 
 
