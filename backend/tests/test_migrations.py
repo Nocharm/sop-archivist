@@ -1,5 +1,6 @@
 """Alembic migrations — upgrade works from any cwd, and models never drift from revisions."""
 
+import json
 import pathlib
 from typing import Any
 
@@ -255,3 +256,252 @@ def test_0019_gives_existing_jobs_user_priority(tmp_path: pathlib.Path) -> None:
         assert (row.priority, bool(row.background)) == (1, False)
     finally:
         engine.dispose()
+
+
+# --- 0020: 옛 그림 캡션을 캡션 단위·캡션 새 문장으로 ---
+
+_CAPTION = "그림 1 로터"
+
+
+def _downgrade_to(db_path: pathlib.Path, revision: str) -> Config:
+    config = Config(str(pathlib.Path(__file__).resolve().parent.parent / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", _async_url(db_path))
+    config.attributes["configure_logger"] = False
+    run_migrations(_async_url(db_path))
+    command.downgrade(config, revision)
+    return config
+
+
+def _insert_row(conn: Any, table: str, **values: Any) -> int:
+    columns = ", ".join(values)
+    params = ", ".join(f":{name}" for name in values)
+    return conn.execute(text(f"INSERT INTO {table} ({columns}) VALUES ({params}) RETURNING id"), values).scalar_one()
+
+
+def _insert_document(conn: Any, side: str, extractor_versions: tuple[str, ...]) -> tuple[int, list[int]]:
+    """문서 하나와 추출들(뒤가 최신) — 추출마다 단락 블록(seq 0)과 캡션을 품은 그림 블록(seq 1)."""
+    now = "2026-11-10 09:00:00"
+    document_id = _insert_row(
+        conn, "documents", bundle_id=1, side=side, file_name=f"SYNTHETIC_{side}.docx", file_format="docx",
+        size_bytes=1, sha256=side[0] * 64, doc_code=f"{side.upper()}-1", doc_version="1.0", title="", status="ready",
+        language_layout="ko_only", status_reason="", revision=1, uploaded_by="qa.member", uploaded_at=now,
+    )
+    extraction_ids = []
+    for version in extractor_versions:
+        extraction_id = _insert_row(
+            conn, "extractions", document_id=document_id, extractor_version=version, created_at=now,
+            aux_status="ok", aux_detail="",
+        )
+        for seq, kind, body in ((0, "paragraph", "운전 전 점검한다."), (1, "figure", _CAPTION)):
+            _insert_row(
+                conn, "source_blocks", extraction_id=extraction_id, seq=seq, part="body", kind=kind, text=body,
+                xml_path=f"/p[{seq}]", page_basis="estimated", section_label="", grid_span=1, row_span=1, flags="[]",
+            )
+        extraction_ids.append(extraction_id)
+    return document_id, extraction_ids
+
+
+def _insert_unit(conn: Any, extraction_id: int, local_no: int, kind: str, body: str, lang: str, seq: int) -> int:
+    block_id = conn.execute(
+        text("SELECT id FROM source_blocks WHERE extraction_id = :e AND seq = :s"), {"e": extraction_id, "s": seq}
+    ).scalar_one()
+    return _insert_row(
+        conn, "units", extraction_id=extraction_id, local_no=local_no, kind=kind,
+        spans=f"[[{block_id}, 0, {len(body)}]]", text=body, lang=lang, status="active", boundary_confirmed=False,
+        pos_seq=seq, pos_start=0,
+    )
+
+
+def _insert_target(conn: Any, target_doc_id: int, kind: str, body: str, status: str, **extra: Any) -> int:
+    values = {
+        "bundle_id": 1, "target_doc_id": target_doc_id, "wi_step": 1, "wi_part": "instruction", "section_path": "",
+        "order_index": 0, "indent_level": 0, "number_style": "numbered", "lang": "ko", "kind": kind,
+        "confirmed_text": body if status == "confirmed" else "", "ai_text": "", "change_type": "as_is",
+        "origin": "units", "status": status, "hold_reason": "", "remark": "", "warnings": "[]", "revision": 1,
+        "updated_at": "2026-11-10 09:00:00",
+    }
+    if status == "confirmed":
+        values |= {"confirmed_by": "qa.member", "confirmed_at": "2026-11-10 09:00:00"}
+    return _insert_row(conn, "target_sentences", **(values | extra))
+
+
+def _insert_old_bundle(conn: Any) -> dict[str, int]:
+    """0019 모양의 묶음 — 옛 문서(추출 2)의 문장·그림(글 = 캡션)을 WI 한 단계에 그대로 보내 모두 확정했다."""
+    now = "2026-11-10 09:00:00"
+    conn.execute(text(
+        "INSERT INTO bundles (id, title, description, status, is_synthetic, semantic_checks, revision, created_by,"
+        " created_at, updated_at) VALUES (1, 'SYNTHETIC', '', 'in_progress', 1, '{}', 1, 'qa.member', :now, :now)"
+    ), {"now": now})
+    target_doc_id = _insert_row(
+        conn, "target_docs", bundle_id=1, code="WI-01", title="", doc_type="wi", entrance="assign",
+        is_equipment_sop=False, order_index=0, manual_order=False,
+    )
+    conn.execute(text("INSERT INTO wi_steps (target_doc_id, step_no, title) VALUES (:d, 1, '운전')"), {"d": target_doc_id})
+    _, (extraction_id,) = _insert_document(conn, "old", ("2",))
+    sentence_id = _insert_unit(conn, extraction_id, 1, "sentence", "운전 전 점검한다.", "ko", 0)
+    figure_id = _insert_unit(conn, extraction_id, 2, "figure", _CAPTION, "neutral", 1)
+    for unit_id in (sentence_id, figure_id):
+        conn.execute(text(
+            "INSERT INTO unit_decisions (unit_id, bundle_id, disposition, move_target_code, reason, status, hold_reason,"
+            " confirmed_by, confirmed_at, revision, updated_at)"
+            " VALUES (:u, 1, 'assigned', '', '', 'confirmed', '', 'qa.member', :now, 1, :now)"
+        ), {"u": unit_id, "now": now})
+    sentence_target_id = _insert_target(conn, target_doc_id, "sentence", "운전 전 점검한다.", "confirmed")
+    figure_target_id = _insert_target(conn, target_doc_id, "figure", "", "confirmed", order_index=1)
+    for target_id, unit_id in ((sentence_target_id, sentence_id), (figure_target_id, figure_id)):
+        conn.execute(text("INSERT INTO target_sources (target_id, unit_id, seq) VALUES (:t, :u, 0)"),
+                     {"t": target_id, "u": unit_id})
+    return {"target_doc_id": target_doc_id, "extraction_id": extraction_id, "figure_id": figure_id,
+            "figure_target_id": figure_target_id}
+
+
+def _read_outputs(db_path: pathlib.Path) -> tuple[Any, list[Any], list[list[str]]]:
+    """앱 코드로 읽은 검토 조건·결과물 C 항목·Excel C 시트 글."""
+    import asyncio
+    from datetime import UTC, datetime
+
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+    from app.sop.excel_export import ExportMeta
+    from app.sop.outputs import build_output_c
+    from app.sop.review import evaluate_readiness
+    from app.sop.sheet_model import SHEET_NAMES, build_workbook_model
+    from app.sop.snapshot import load_bundle_snapshot
+
+    async def _load() -> Any:
+        engine = create_async_engine(_async_url(db_path))
+        try:
+            async with AsyncSession(engine) as session:
+                return await load_bundle_snapshot(session, 1)
+        finally:
+            await engine.dispose()
+
+    snap = asyncio.run(_load())
+    readiness = evaluate_readiness(snap, semantic_checks={}, unacked_missing_text=0, reviewer_count=1)
+    items = [item for doc in build_output_c(snap, "ko").docs for section in doc.sections for item in section.items]
+    meta = ExportMeta(exported_by="qa.member", exported_at=datetime(2026, 11, 16, tzinfo=UTC), guideline_version="")
+    sheet = next(sheet for sheet in build_workbook_model(snap, meta, {}).sheets if sheet.name == SHEET_NAMES[2])
+    return readiness, items, [[cell.text for cell in row.cells] for row in sheet.rows]
+
+
+def test_0020_moves_figure_caption_to_its_own_unit_and_target(tmp_path: pathlib.Path) -> None:
+    # 올리기 전에 확정한 그림 — 이행 뒤에도 그림 새 문장·판단은 그대로, 캡션은 제 단위·새 문장으로 결과물 C·Excel에 나온다
+    db_path = tmp_path / "captions.db"
+    config = _downgrade_to(db_path, "0019")
+    engine = _create_fk_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            ids = _insert_old_bundle(conn)
+        readiness_before, items_before, _ = _read_outputs(db_path)
+
+        command.upgrade(config, "0020")
+
+        with engine.connect() as conn:
+            figure_row = conn.execute(text("SELECT spans, text FROM units WHERE id = :id"), {"id": ids["figure_id"]}).one()
+            caption_row = conn.execute(text(
+                "SELECT id, kind, group_unit_id, text, lang, local_no, pos_seq FROM units WHERE kind = 'caption'"
+            )).one()
+            child = conn.execute(text(
+                "SELECT id, parent_target_id, confirmed_text, ai_text, status, change_type, lang, wi_step, wi_part,"
+                " new_unit_id FROM target_sentences WHERE parent_target_id IS NOT NULL"
+            )).one()
+            child_sources = conn.execute(
+                text("SELECT unit_id, seq FROM target_sources WHERE target_id = :id"), {"id": child.id}
+            ).all()
+            figure_target = conn.execute(
+                text("SELECT status, confirmed_text, change_type FROM target_sentences WHERE id = :id"),
+                {"id": ids["figure_target_id"]},
+            ).one()
+            decision_of_figure = conn.execute(
+                text("SELECT status, disposition FROM unit_decisions WHERE unit_id = :id"), {"id": ids["figure_id"]}
+            ).one()
+            decision_of_caption = conn.execute(
+                text("SELECT bundle_id, status, disposition FROM unit_decisions WHERE unit_id = :id"),
+                {"id": caption_row.id},
+            ).one()
+        readiness_after, items, sheet_rows = _read_outputs(db_path)
+    finally:
+        engine.dispose()
+
+    assert figure_row.spans == "[]" and figure_row.text == ""
+    assert caption_row.kind == "caption" and caption_row.group_unit_id == ids["figure_id"]
+    assert (caption_row.text, caption_row.lang, caption_row.local_no, caption_row.pos_seq) == (_CAPTION, "ko", 3, 1)
+    assert child.parent_target_id == ids["figure_target_id"] and child.status == "confirmed"
+    assert (child.confirmed_text, child.ai_text, child.change_type, child.lang) == (_CAPTION, _CAPTION, "as_is", "ko")
+    assert (child.wi_step, child.wi_part, child.new_unit_id) == (1, "instruction", None)
+    assert [tuple(row) for row in child_sources] == [(caption_row.id, 0)]
+    assert tuple(figure_target) == ("confirmed", "", "as_is")  # 그림 새 문장은 그대로
+    assert tuple(decision_of_figure) == ("confirmed", "assigned")  # 그림 판단은 그대로
+    assert tuple(decision_of_caption) == (1, "unassigned", "unassigned")  # 캡션 상태는 그림의 판단을 따른다
+    assert readiness_after == readiness_before
+    assert [item.children for item in items_before if item.kind == "figure"] == [[]]  # 이행 앞 C에는 캡션 줄이 없었다
+    (figure_item,) = [item for item in items if item.kind == "figure"]
+    assert [child.text for child in figure_item.children] == [_CAPTION]
+    assert any(_CAPTION in row for row in sheet_rows)
+
+
+def test_0020_covers_entrance_two_and_earlier_extractions(tmp_path: pathlib.Path) -> None:
+    # 입구 2 새 문서의 그림은 판단 행 없이 new_unit_id로 잇고, 최신이 아닌 추출의 그림도 옮긴다
+    db_path = tmp_path / "captions_new.db"
+    config = _downgrade_to(db_path, "0019")
+    engine = _create_fk_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            ids = _insert_old_bundle(conn)
+            _, (old_extraction_id, new_extraction_id) = _insert_document(conn, "new", ("1", "2"))
+            earlier_figure_id = _insert_unit(conn, old_extraction_id, 1, "figure", "Figure 1 Rotor", "neutral", 1)
+            new_figure_id = _insert_unit(conn, new_extraction_id, 4, "figure", "Figure 1 Rotor", "neutral", 1)
+            _insert_target(
+                conn, ids["target_doc_id"], "figure", "", "ai_suggested", origin="new_doc", new_unit_id=new_figure_id,
+                change_type=None,
+            )
+
+        command.upgrade(config, "0020")
+
+        with engine.connect() as conn:
+            captions = {
+                row.group_unit_id: row for row in conn.execute(text(
+                    "SELECT id, group_unit_id, lang, local_no FROM units WHERE kind = 'caption'"
+                ))
+            }
+            child = conn.execute(text(
+                "SELECT new_unit_id, status, confirmed_text, ai_text, origin FROM target_sentences"
+                " WHERE parent_target_id IS NOT NULL AND origin = 'new_doc'"
+            )).one()
+            new_side_decisions = conn.execute(text(
+                "SELECT count(*) FROM unit_decisions WHERE unit_id IN (:a, :b)"
+            ), {"a": captions[earlier_figure_id].id, "b": captions[new_figure_id].id}).scalar()
+    finally:
+        engine.dispose()
+
+    assert set(captions) == {ids["figure_id"], earlier_figure_id, new_figure_id}
+    assert (captions[new_figure_id].lang, captions[new_figure_id].local_no) == ("en", 5)
+    assert captions[earlier_figure_id].local_no == 2
+    assert tuple(child) == (captions[new_figure_id].id, "ai_suggested", "", "Figure 1 Rotor", "new_doc")
+    assert new_side_decisions == 0
+
+
+def test_0020_downgrade_puts_caption_back_into_figure(tmp_path: pathlib.Path) -> None:
+    db_path = tmp_path / "captions_down.db"
+    config = _downgrade_to(db_path, "0019")
+    engine = _create_fk_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            ids = _insert_old_bundle(conn)
+            before = conn.execute(text("SELECT spans, text FROM units WHERE id = :id"), {"id": ids["figure_id"]}).one()
+        command.upgrade(config, "0020")
+
+        command.downgrade(config, "0019")
+
+        with engine.connect() as conn:
+            after = conn.execute(text("SELECT spans, text FROM units WHERE id = :id"), {"id": ids["figure_id"]}).one()
+            leftovers = conn.execute(text(
+                "SELECT (SELECT count(*) FROM units WHERE kind = 'caption'),"
+                " (SELECT count(*) FROM target_sentences WHERE parent_target_id IS NOT NULL),"
+                " (SELECT count(*) FROM unit_decisions), (SELECT count(*) FROM target_sources)"
+            )).one()
+    finally:
+        engine.dispose()
+
+    assert (after.text, json.loads(after.spans)) == (before.text, json.loads(before.spans))
+    assert tuple(leftovers) == (0, 0, 2, 2)
