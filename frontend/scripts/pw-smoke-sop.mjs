@@ -1293,6 +1293,13 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   check("no React commit while dragging over a sentence", commitsBefore > 0 && commitsBefore === commitsAfter, `${commitsBefore} -> ${commitsAfter}`);
 
   // 4. 놓으면 클릭과 같은 상태 - 끈 줄을 고르고 그 문장을 고르고 그 자리 메뉴(저장 전), 끌기 표시는 모두 치운다
+  // 놓은 뒤 뒤따르는 click이 그 문장 단추에 닿아 고름을 다시 뒤집지 않는지 - 놓은 뒤 그 단추의 aria-pressed가 바뀐 값을 모두 적는다
+  await page.evaluate((t) => {
+    window.__pressFlips = [];
+    new MutationObserver((records) => {
+      for (const record of records) if (record.target.getAttribute("data-testid") === `assign-new-pick-${t}`) window.__pressFlips.push(record.target.getAttribute("aria-pressed"));
+    }).observe(document.querySelector('[data-testid="assign-new"]'), { attributes: true, subtree: true, attributeFilter: ["aria-pressed"] });
+  }, tId);
   await page.mouse.up();
   await menu.waitFor({ timeout: T });
   check("dropping picks the dragged row", (await pieceOf(bId).getAttribute("data-sel")) === "" && (await pieceOf(aId).getAttribute("data-sel")) === null);
@@ -1308,6 +1315,8 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
     return menu.evaluate((el) => ({ top: parseFloat(el.style.top), left: parseFloat(el.style.left) }));
   };
   const dropPlace = await readMenuPlace();
+  const pressFlips = await page.evaluate(() => window.__pressFlips);
+  check("the click after a drop does not flip the pick back", (await isPressed(tId)) && pressFlips.length === 1 && pressFlips[0] === "true", JSON.stringify(pressFlips));
   // 6. 메뉴의 Cancel이 고름을 거둔다(클릭으로 고른 때와 같다)
   await page.locator('[data-testid="assign-link-menu-cancel"]').click();
   await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-new-pick-${id}"]`)?.getAttribute("aria-pressed") === "false", tId, { timeout: T });
@@ -1340,6 +1349,17 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   await page.mouse.up();
   await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-sel"), aId, { timeout: T });
   check("a press without moving still picks the row, with no card", cardsOnPress === 0 && (await page.locator('[data-testid="drag-card"]').count()) === 0);
+  // 끌기를 쓴 뒤에도 두 번 누르기는 그 조각에 나눌 자리를 세운다(4px 안의 누름은 지금의 클릭이다) - 글 가운데를 두 번 누르고 Esc로 거둔다
+  const twice = await page.locator(`[data-testid="assign-paper-unit-${aId}"]`).first().evaluate((el) => {
+    const rect = el.getClientRects()[0];
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  });
+  await page.mouse.dblclick(twice.x, twice.y);
+  // 나눌 자리 표시(.cut-anchor)는 폭이 0이라 "보임"이 아니다 - 붙었는지만 본다
+  const cutShown = await page.locator(`[data-testid="assign-paper-piece-${aId}"] .cut-anchor`).waitFor({ state: "attached", timeout: 4000 }).then(() => true, () => false);
+  check("after a drag, a double press still sets a cut in the Old piece", cutShown && (await page.locator('[data-testid="drag-card"]').count()) === 0);
+  await page.keyboard.press("Escape");
+  await page.locator('[data-pane="old"] .cut-anchor').first().waitFor({ state: "detached", timeout: T });
 
   // 8. 아직 쓰지 않은 문서 - 그 문장 위에는 놓을 자리가 없고 놓아도 아무 일도 없다(3걸음에서 보내기로 놓인다)
   let composedLine = null;
@@ -1361,6 +1381,22 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   await page.waitForTimeout(600);
   check("a sentence of an unwritten document takes no drop yet", overComposed.cards === 1 && overComposed.drops === 0, JSON.stringify(overComposed));
   check("dropping there does nothing", (await menu.count()) === 0 && (await pieceOf(aId).getAttribute("data-sel")) === "" && (await pieceOf(bId).getAttribute("data-sel")) === null);
+
+  // 놓자마자 j로 다음 줄로 옮기면 늦게 온 관계 묶음이 옮겨 간 줄에 잇기를 적용하지 않는다 - 끈 줄의 묶음 응답을 늦춰 경주를 정해 둔다
+  await openNewDoc(written.find((row) => row.target_id === tId).target_doc_id);
+  const lateGroup = `**/groups/by-unit/${bId}`;
+  await page.route(lateGroup, async (route) => {
+    await new Promise((done) => setTimeout(done, 1500));
+    await route.continue();
+  });
+  await dragThrough(page, await pointInUnit(bId), [await pointInLine(tId)]);
+  await page.waitForTimeout(100);
+  await page.mouse.up();
+  await page.keyboard.press("j");
+  await page.waitForTimeout(2500);
+  await page.unroute(lateGroup);
+  const afterSwitch = { menu: await menu.count(), pressed: await isPressed(tId), dragged: (await pieceOf(bId).getAttribute("data-sel")) !== null, picked: await page.locator('[data-testid="assign-new"] .new-line[data-state="picked"]').count() };
+  check("a drop is let go when another row is picked before its group arrives", afterSwitch.menu === 0 && !afterSwitch.pressed && !afterSwitch.dragged && afterSwitch.picked === 0, JSON.stringify(afterSwitch));
 
   // 10. 올려 둔 강조는 끄는 동안 되살아나지 않는다(G10) - 이어진 조각에 올려 맞은편 강조를 켠 채 끌고, 끄는 동안 New 칸을 굴려 이음 선이 다시 그려지게 한다.
   // 이어진 조각은 앞 단계가 같은 글로 확정한 Old 문서에 있다 - 그 문서를 연다(고른 줄이 풀리므로 맨 끝에)
@@ -1394,6 +1430,49 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   check("hovering a linked piece marks the sentence it links to", hoverMarks > 0, String(hoverMarks));
   check("no link highlight while dragging, even after the lines redraw", redrew && leaked.card === 1 && leaked.marks === 0, JSON.stringify({ redrew, ...leaked }));
   await page.setViewportSize(VIEWPORT);
+
+  // 11. 들림(G9) - 한/영 짝 카드는 한 장으로 끌리니 아래 줄에 올려도 카드 전체가 고리 하나로 들린다(윗줄은 네 변, 아래 줄은 위 변 없이).
+  // 엿보기 조각(필터 밖, 점선 테두리)은 들지 않는다 - 점선 바로 바깥에 실선 고리가 겹친다. 값은 계산된 box-shadow로 본다(고리 = 퍼짐 1px)
+  const readShadow = (selector) => page.locator(selector).first().evaluate((el) => getComputedStyle(el).boxShadow);
+  // 짝이 있는 Old 문서를 모두 보이게 연다
+  let pairDoc = null;
+  for (const doc of (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json()).filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${doc.id}/view`, { headers })).json();
+    if (view.pairs.length > 0) {
+      pairDoc = { id: doc.id, unitId: view.pairs[0].unit_ids[0] };
+      break;
+    }
+  }
+  await page.locator('[data-testid="assign-filter-all"]').click();
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${pairDoc.id}"]`).click();
+  await pieceOf(pairDoc.unitId).waitFor({ timeout: T });
+  const cardRows = page.locator('[data-pane="old"] .strip-card > .strip-row > .strip[data-drag-box]');
+  check("the Old document shows a KO/EN pair card", (await cardRows.count()) >= 2);
+  const cardTop = await cardRows.first().evaluate((el) => el.dataset.testid);
+  const cardBottom = await cardRows.first().evaluate((el) => [...el.closest(".strip-card").querySelectorAll(":scope > .strip-row > .strip")].at(-1).dataset.testid);
+  await centre(`[data-testid="${cardTop}"]`);
+  await page.waitForTimeout(150);
+  const bottomBox = await page.locator(`[data-testid="${cardBottom}"]`).boundingBox();
+  await page.mouse.move(bottomBox.x + 40, bottomBox.y + bottomBox.height / 2);
+  await page.waitForTimeout(300);
+  const lift = { top: await readShadow(`[data-testid="${cardTop}"]`), bottom: await readShadow(`[data-testid="${cardBottom}"]`) };
+  check("hovering a pair card's lower row lifts the whole card with one ring", lift.top.includes("0px 0px 0px 1px") && !lift.bottom.includes("0px 0px 0px 1px") && lift.bottom.includes("0px 1px 0px 0px"), JSON.stringify(lift));
+  // 다른 상태 거르기 - 접힌 줄이 생기는 필터를 고르고 접힌 줄 하나를 엿보기로 연다
+  for (const filter of ["unassigned", "on_hold", "confirmed"]) {
+    if ((await page.locator('[data-pane="old"] .fold-line').count()) > 0) break;
+    await page.locator(`[data-testid="assign-filter-${filter}"]`).click();
+    await page.waitForTimeout(300);
+  }
+  await page.locator('[data-pane="old"] .fold-line').first().click();
+  const peek = page.locator('[data-pane="old"] .strip-row[data-peek] > .strip[data-drag-box]').first();
+  await peek.waitFor({ timeout: T });
+  await peek.evaluate((el) => el.scrollIntoView({ block: "center" }));
+  const peekBox = await peek.boundingBox();
+  await page.mouse.move(peekBox.x + 40, peekBox.y + peekBox.height / 2);
+  await page.waitForTimeout(300);
+  const peekShadow = await peek.evaluate((el) => getComputedStyle(el).boxShadow);
+  check("a peek piece does not lift over its dashed border", peekShadow === "none", peekShadow);
 });
 
 // 한 언어만 잇기(v0.11.1) - Old는 한/영 짝인데 쓴 New에는 한 언어만 있는 예외. 있는 언어만 이어 확정하면 서버가 같은 저장 안에서

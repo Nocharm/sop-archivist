@@ -1079,10 +1079,15 @@
   /* 조각에 테두리가 있으니 글줄 밑 막대는 겹친다 - 조각 종이에서는 뺀다 */
   .pg[data-strips] .su[data-sel] { background-image: none; }
   /* Assign Old 조각 끌기(끌어다 놓기 설계 G9·G10, 상자는 lib/box-drag.ts). 올리면 Order 줄과 같은 고리·그림자로 살짝 들린다.
-     짝 카드의 줄(data-bracket)은 들지 않는다 - 고리가 맞닿은 줄 쪽에서 점선 구분선 바로 위에 실선을 하나 더 긋는다(잰 값: 위·아래 줄의 맞닿는 변 1px, 카드를 고르면 강조 테두리 .strip::after도 그 변은 열려 있어 덮지 않는다).
-     외톨이 조각은 골라도 둔다 - 고리(테두리 바깥 1px)가 강조 테두리 띠(바깥 2px) 안에 네 변 모두 들어 두 겹으로 보이지 않는다 */
+     외톨이 조각은 골라도 둔다 - 고리(테두리 바깥 1px)가 강조 테두리 띠(바깥 2px) 안에 네 변 모두 들어 두 겹으로 보이지 않는다.
+     짝 카드는 한 장으로 끌리니 어느 줄에 올려도 카드 전체가 고리 하나로 들린다. 줄마다 고리를 두르면 아래 줄의 위 변이 윗줄 끝 1px에 실선을 그어 점선 구분선 위에 선이 겹친다 -
+     맨 윗줄만 네 변을 두르고(아래 변은 다음 줄에 덮인다), 가운데·아래 줄은 위 변 없이 좌우(와 아래) 1px를 비낀 그림자로 긋는다(잰 값: 1:1·1:2 카드, 구분선 위 0px).
+     엿보기 조각(data-peek)은 들지 않는다 - 점선 테두리 바로 바깥에 실선 고리와 그림자가 겹쳐 그려진다 */
   @media (hover: hover) {
-    html:not([data-box-drag]):not([data-box-select]) .assign-panes .strip[data-drag-box]:not([data-bracket]):hover { box-shadow: 0 0 0 1px var(--line-2), var(--shadow-1); }
+    html:not([data-box-drag]):not([data-box-select]) .assign-panes .strip-row:not([data-peek]) > .strip[data-drag-box]:not([data-bracket]):hover,
+    html:not([data-box-drag]):not([data-box-select]) .assign-panes .strip-card:has(> .strip-row > .strip[data-drag-box]:hover) > .strip-row:not([data-peek]) > .strip[data-drag-box][data-bracket="top"] { box-shadow: 0 0 0 1px var(--line-2), var(--shadow-1); }
+    html:not([data-box-drag]):not([data-box-select]) .assign-panes .strip-card:has(> .strip-row > .strip[data-drag-box]:hover) > .strip-row:not([data-peek]) > .strip[data-drag-box][data-bracket="middle"] { box-shadow: -1px 0 0 var(--line-2), 1px 0 0 var(--line-2), var(--shadow-1); }
+    html:not([data-box-drag]):not([data-box-select]) .assign-panes .strip-card:has(> .strip-row > .strip[data-drag-box]:hover) > .strip-row:not([data-peek]) > .strip[data-drag-box][data-bracket="bottom"] { box-shadow: -1px 0 0 var(--line-2), 1px 0 0 var(--line-2), 0 1px 0 var(--line-2), -1px 1px 0 var(--line-2), 1px 1px 0 var(--line-2), var(--shadow-1); }
   }
   .assign-panes .strip[data-drag-box] { transition: box-shadow var(--dur-fast); }
   @media (prefers-reduced-motion: reduce) {
