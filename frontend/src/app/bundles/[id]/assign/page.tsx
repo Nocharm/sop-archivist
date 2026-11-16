@@ -42,7 +42,7 @@ import { ClampText } from "@/components/ui/clamp-text";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { BundleLoadError } from "@/components/bundle-load-error";
-import { Truncate } from "@/components/ui/motion";
+import { flashElement, Truncate } from "@/components/ui/motion";
 import { showToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api";
@@ -256,14 +256,6 @@ function readMenuCover(anchor: HTMLElement, rowUnitIds: number[]): HTMLElement[]
     return group ? [...document.querySelectorAll<HTMLElement>(`.new-line[data-pair-group="${CSS.escape(group)}"]`)] : [anchor];
   }
   return rowUnitIds.flatMap((id) => [...document.querySelectorAll<HTMLElement>(`[data-testid="assign-paper-piece-${id}"]`)]);
-}
-
-/** 이동해 간 자리를 잠깐 번쩍인다 - 다시 이동하면 처음부터 */
-function flashElement(el: HTMLElement) {
-  delete el.dataset.flash;
-  void el.offsetWidth; // 애니메이션을 다시 시작하게 스타일을 한 번 계산시킨다
-  el.dataset.flash = "";
-  window.setTimeout(() => delete el.dataset.flash, 1300);
 }
 
 /** 이동해 간 자리를 보이게 - 이미 화면 안이면 움직이지 않는다 */

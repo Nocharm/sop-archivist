@@ -1,4 +1,4 @@
-// 움직임 부품 - 접기·펼치기, 내용이 바뀐 자리의 쉬머, 라벨에 따라 폭이 바뀌는 단추의 모핑, 넘치는 글의 말줄임과 호버 툴팁, 목록 자리 바꿈(FLIP).
+// 움직임 부품 - 접기·펼치기, 내용이 바뀐 자리의 쉬머, 라벨에 따라 폭이 바뀌는 단추의 모핑, 넘치는 글의 말줄임과 호버 툴팁, 목록 자리 바꿈(FLIP), 옮겨 간 자리 번쩍임.
 // 값은 tokens(--dur-*, --ease-*)를 쓰고, 움직임 줄이기 설정에서는 토큰이 0이 되어 바로 바뀐다.
 "use client";
 
@@ -8,6 +8,14 @@ import { createPortal } from "react-dom";
 
 import { placeBelow, type FloatingPos } from "@/components/ui/floating";
 import { computeFlipOffsets } from "@/lib/flip";
+
+/** 이동해 간 자리를 잠깐 번쩍인다([data-flash], components.css) - 다시 이동하면 처음부터. Assign 이동과 Order의 다른 칸 놓기가 같이 쓴다 */
+export function flashElement(el: HTMLElement): void {
+  delete el.dataset.flash;
+  void el.offsetWidth; // 애니메이션을 다시 시작하게 스타일을 한 번 계산시킨다
+  el.dataset.flash = "";
+  window.setTimeout(() => delete el.dataset.flash, 1300);
+}
 
 // 줄마다 마지막으로 건 FLIP 순번 - 앞선 움직임의 끝 알림이 늦게 와서 새 움직임의 스타일을 지우지 않게
 const flipRuns = new WeakMap<HTMLElement, number>();
