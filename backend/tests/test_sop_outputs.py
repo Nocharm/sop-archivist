@@ -1005,6 +1005,28 @@ def test_composed_doc_carries_both_languages_in_c_order(client: TestClient) -> N
     ]
 
 
+def test_composed_doc_carries_table_cells_and_figure_block(client: TestClient) -> None:
+    fx = _setup(client)
+    figure_unit = next(unit for unit in fx.old1["units"] if unit["kind"] == "figure")
+
+    sop = _get_output(client, fx.bundle_id, f"outputs/c/docs/{fx.sop_id}", "en")
+    wi = _get_output(client, fx.bundle_id, f"outputs/c/docs/{fx.wi_id}", "en")
+
+    # 표 줄은 칸 새 문장을 격자 그대로 싣는다(원문 그대로 보낸 표라 확정 글 = 원문 칸 글)
+    table = next(item for section in sop["sections"] for item in section["items"] if item["kind"] == "table")
+    assert (table["table"]["rows"], table["table"]["cols"]) == (2, 2)
+    assert [(cell["row"], cell["col"], cell["text"]) for cell in table["table"]["cells"]] == [
+        (0, 0, "항목"), (0, 1, "Item"), (1, 0, "합성 값"), (1, 1, "Synthetic value"),
+    ]
+    assert table["figure"] is None
+    # 그림 줄은 출처 단위의 그림 블록 - 보류여도 이미지는 보인다
+    figure = next(item for section in wi["sections"] for item in section["items"] if item["kind"] == "figure")
+    assert figure["figure"] == {"document_id": fx.old1["document"]["id"], "block_id": figure_unit["block_id"]}
+    assert figure["table"] is None
+    sentence = next(item for section in sop["sections"] for item in section["items"] if item["kind"] == "sentence")
+    assert (sentence["table"], sentence["figure"]) == (None, None)
+
+
 def test_composed_doc_rejects_other_bundles_and_outsiders(client: TestClient) -> None:
     fx = _setup(client)
     other = create_bundle(client)["id"]

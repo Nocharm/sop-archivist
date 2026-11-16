@@ -1093,6 +1093,41 @@ def build_output_c(snap: BundleSnapshot, lang: Lang) -> COutput:
 # --- Assign New 칸의 쓰는 중 문서 ---
 
 
+class BundleCellOut(BaseModel):
+    """표 줄의 칸 새 문장 하나 — 글은 확정 글, 없으면 AI 글(결과물 C 표 칸과 같은 규칙)."""
+
+    row: int
+    col: int
+    lang: str
+    text: str
+    status: str
+
+
+class BundleTableOut(BaseModel):
+    """New 칸이 그리는 표 — 격자 크기와 칸 새 문장(행·열 순)."""
+
+    rows: int
+    cols: int
+    cells: list[BundleCellOut]
+
+
+class BundleFigureOut(BaseModel):
+    """New 칸이 그리는 그림 — 이미지를 받을 문서와 블록(figures/{block_id})."""
+
+    document_id: int
+    block_id: int
+
+
+def build_bundle_table(grid: dict[str, int] | None, cells: list[BundleCellOut]) -> BundleTableOut:
+    """칸 새 문장들을 표 하나로 — 격자는 표 새 문장의 grid, 없으면(옛 자료) 칸 자리에서 센다."""
+    cells = sorted(cells, key=lambda cell: (cell.row, cell.col))
+    if grid is not None:
+        return BundleTableOut(rows=grid["rows"], cols=grid["cols"], cells=cells)
+    rows = max((cell.row + 1 for cell in cells), default=0)
+    cols = max((cell.col + 1 for cell in cells), default=0)
+    return BundleTableOut(rows=rows, cols=cols, cells=cells)
+
+
 class ComposedItem(BaseModel):
     target_id: int
     kind: str
@@ -1103,6 +1138,8 @@ class ComposedItem(BaseModel):
     number: str | None  # 그 문장 자기 번호(칸마다 한 줄, 생략·주석은 None)
     # 출처 단위 — 번역은 번역 출처 단위(Old 쪽으로 잇는 선과 칩이 쓴다)
     source_unit_ids: list[int]
+    table: BundleTableOut | None = None  # 표 줄이면 칸 새 문장 격자
+    figure: BundleFigureOut | None = None  # 그림 줄이고 출처 그림에 이미지가 있으면 그 블록
 
 
 class ComposedSection(BaseModel):
@@ -1123,10 +1160,22 @@ class ComposedDoc(BaseModel):
     sections: list[ComposedSection]
 
 
+def _find_figure_block(snap: BundleSnapshot, unit_ids: list[int]) -> BundleFigureOut | None:
+    """그림 새 문장이 보일 이미지 — 출처 단위 중 첫 그림 블록이고 이미지가 있는 것. 없으면 None(화면은 자리 상자)."""
+    for unit_id in unit_ids:
+        unit = snap.units.get(unit_id)
+        if unit is None:
+            continue
+        block = snap.blocks[unit.block_id]
+        if block.kind == "figure" and block.has_image:
+            return BundleFigureOut(document_id=unit.document_id, block_id=block.id)
+    return None
+
+
 def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> ComposedDoc | None:
     """새 문서 하나를 지금까지의 배정으로 — 결과물 C와 같은 칸·순서(_plan_sections)에 두 언어 새 문장을 함께 싣는다.
 
-    Assign 화면의 New 칸이 아직 쓰지 않은 문서를 미리 보이는 데 쓴다. 칸 새 문장(표 칸)은 표 줄에 딸려 따로 싣지 않는다.
+    Assign 화면의 New 칸이 아직 쓰지 않은 문서를 미리 보이는 데 쓴다. 칸 새 문장(표 칸)은 따로 줄로 싣지 않고 표 줄의 table에 격자로 싣는다.
     번호는 결과물 C와 같은 한 줄 세기이고, 칸 제목은 항목이 아니라 C처럼 칸 머리의 출처(heading_note)로 싣는다.
     lang은 라벨 언어만 고른다. 문서가 묶음에 없으면 None.
     """
@@ -1142,10 +1191,21 @@ def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> 
         if not sources and target.translation_source_unit_id in snap.units:
             sources = [target.translation_source_unit_id]
         text = target.confirmed_text or target.ai_text or " ".join(snap.units[uid].text for uid in sources if uid in snap.units)
+        table = None
+        if target.kind == "table":
+            cells = [
+                BundleCellOut(
+                    row=cell.cell_row or 0, col=cell.cell_col or 0, lang=cell.lang,
+                    text=cell.confirmed_text or cell.ai_text, status=cell.status,
+                )
+                for cell in index.children.get(target.id, [])
+            ]
+            table = build_bundle_table(target.grid, cells)
+        figure = _find_figure_block(snap, [target.new_unit_id] if target.new_unit_id else sources) if target.kind == "figure" else None
         return ComposedItem(
             target_id=target.id, kind=target.kind, lang=target.lang, text=text, status=target.status,
             change_type=target.change_type, number=numbers.get(target.id),
-            source_unit_ids=sources,
+            source_unit_ids=sources, table=table, figure=figure,
         )
 
     sections = [

@@ -73,6 +73,18 @@ describe("buildComposedRows", () => {
     ]);
   });
 
+  it("carries a table's cells and a figure's image block onto the row", () => {
+    const table = { rows: 1, cols: 2, cells: [{ row: 0, col: 0, lang: "ko" as const, text: "a", status: "confirmed" as const }, { row: 0, col: 1, lang: "en" as const, text: "b", status: "confirmed" as const }] };
+    const figure = { document_id: 3, block_id: 30 };
+    const doc = makeDoc([makeSlot("5.1", "5.1", "Procedure", [{ ...makeItem(1, "5.1.1", "table"), table }, { ...makeItem(2, "5.1.2", "figure"), figure }, makeItem(3, "5.1.3")])]);
+
+    const rows = buildComposedRows(doc);
+
+    expect(rows[0]).toMatchObject({ kind: "table", table, figure: null });
+    expect(rows[1]).toMatchObject({ kind: "figure", table: null, figure });
+    expect(rows[2]).toMatchObject({ table: null, figure: null });
+  });
+
   it("tells composed rows from already-written sentences", () => {
     const written: WrittenSentence = {
       target_id: 9, target_doc_id: 7, doc_code: "SOP-CF", section_path: "1. Purpose", order_index: 0, lang: "en", kind: "sentence",

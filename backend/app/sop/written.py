@@ -27,6 +27,7 @@ from app.sop.models import (
     EquisLookup,
     Extraction,
     Document,
+    SourceBlock,
     TargetDoc,
     TargetSentence,
     TargetSource,
@@ -34,6 +35,7 @@ from app.sop.models import (
     UnitPairMember,
     UnitRef,
 )
+from app.sop.outputs import BundleCellOut, BundleFigureOut, BundleTableOut, build_bundle_table
 from app.sop.refs import REF_LANG, check_ref_text, find_leading_number, read_ref_state
 
 Basis = Literal["embedding", "text"]
@@ -71,6 +73,8 @@ class WrittenSentenceOut(BaseModel):
     # 참조 줄인데 이 문장의 번호나 이름이 EQUIS와 다르다 — 작은 주의. 참조 줄이 아니거나 견줄 값이 없으면 null
     # (EQUIS가 모르는 번호·폐기한 문서는 여기 싣지 않는다 — ref.equis의 state·retired로 보인다)
     ref_issue: Literal["number", "title"] | None = None
+    table: BundleTableOut | None = None  # 표 줄이면 칸 새 문장 격자
+    figure: BundleFigureOut | None = None  # 그림 줄이고 이 문장이 온 그림에 이미지가 있으면 그 블록
 
 
 class NewCandidateOut(BaseModel):
@@ -153,6 +157,11 @@ async def list_written_sentences(session: AsyncSession, bundle_id: int) -> list[
     partners = await _find_partner_targets(session, {target.new_unit_id: target.id for target, _ in rows if target.new_unit_id})
     refs = await _find_refs(session, [target for target, _ in rows], sources)
     lookups = await equis_service.load_lookups(session, [ref.number for ref in refs.values()])
+    tables = await _load_tables(session, [target for target, _ in rows if target.kind == "table"])
+    figures = await _find_figure_blocks(session, {
+        target.id: [target.new_unit_id] if target.new_unit_id else sources.get(target.id, [])
+        for target, _ in rows if target.kind == "figure"
+    })
     now = clock.now()
     return [
         WrittenSentenceOut(
@@ -175,10 +184,70 @@ async def list_written_sentences(session: AsyncSession, bundle_id: int) -> list[
                 number=ref.number, equis=build_equis_out(ref.number, "new", "", lookups, now)
             ),
             ref_issue=None if ref is None else _check_ref(target.confirmed_text, ref, lookups.get(ref.number), now),
+            table=tables.get(target.id),
+            figure=figures.get(target.id),
         )
         for target, code in rows
         for ref in [refs.get(target.id)]
     ]
+
+
+async def _load_tables(session: AsyncSession, table_targets: Sequence[TargetSentence]) -> dict[int, BundleTableOut]:
+    """표 새 문장마다 칸 새 문장 격자(표 새 문장 id → 표) — 질의는 표가 있을 때만 한 번이다."""
+    if not table_targets:
+        return {}
+    cells: dict[int, list[BundleCellOut]] = defaultdict(list)
+    cell_rows = await select_in_chunks(
+        session,
+        lambda chunk: select(
+            TargetSentence.parent_target_id, TargetSentence.cell_row, TargetSentence.cell_col, TargetSentence.lang,
+            TargetSentence.confirmed_text, TargetSentence.ai_text, TargetSentence.status,
+        ).where(TargetSentence.parent_target_id.in_(chunk)),
+        [target.id for target in table_targets],
+    )
+    for row in cell_rows:
+        cells[row.parent_target_id].append(BundleCellOut(
+            row=row.cell_row or 0, col=row.cell_col or 0, lang=row.lang, text=row.confirmed_text or row.ai_text,
+            status=row.status,
+        ))
+    return {target.id: build_bundle_table(target.grid, cells[target.id]) for target in table_targets}
+
+
+async def _find_figure_blocks(session: AsyncSession, units_by_target: dict[int, list[int]]) -> dict[int, BundleFigureOut]:
+    """그림 새 문장마다 보일 이미지(새 문장 id → 블록) — 단위 중 첫 그림 블록이고 이미지가 있는 것(outputs._find_figure_block).
+
+    단위의 블록은 스냅숏과 같다: 첫 범위의 블록, 범위가 없으면(캡션 없는 그림) 자리(pos_seq)의 블록.
+    """
+    unit_ids = {unit_id for ids in units_by_target.values() for unit_id in ids}
+    if not unit_ids:
+        return {}
+    units = {
+        row.id: row
+        for row in await select_in_chunks(
+            session,
+            lambda chunk: select(Unit.id, Unit.spans, Unit.extraction_id, Unit.pos_seq, Extraction.document_id)
+            .join(Extraction, Extraction.id == Unit.extraction_id)
+            .where(Unit.id.in_(chunk)),
+            unit_ids,
+        )
+    }
+    figure_rows = await select_in_chunks(
+        session,
+        lambda chunk: select(SourceBlock.id, SourceBlock.extraction_id, SourceBlock.seq).where(
+            SourceBlock.extraction_id.in_(chunk), SourceBlock.kind == "figure", SourceBlock.image_part.is_not(None)
+        ),
+        {unit.extraction_id for unit in units.values()},
+    )
+    figure_ids = {row.id for row in figure_rows}
+    figure_by_seq = {(row.extraction_id, row.seq): row.id for row in figure_rows}
+    found: dict[int, BundleFigureOut] = {}
+    for target_id, ids in units_by_target.items():
+        for unit in (units[unit_id] for unit_id in ids if unit_id in units):
+            block_id = unit.spans[0][0] if unit.spans else figure_by_seq.get((unit.extraction_id, unit.pos_seq))
+            if block_id in figure_ids:
+                found[target_id] = BundleFigureOut(document_id=unit.document_id, block_id=block_id)
+                break
+    return found
 
 
 async def _find_refs(

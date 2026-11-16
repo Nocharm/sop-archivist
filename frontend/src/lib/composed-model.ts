@@ -66,6 +66,8 @@ export function buildComposedRows(doc: ComposedDoc): Array<ComposedRow | EmptySl
         status: item.status,
         change_type: item.change_type,
         source_unit_ids: item.source_unit_ids,
+        table: item.table ?? null,
+        figure: item.figure ?? null,
         partner_target_id: null,
         remark: "",
         revision: 0,

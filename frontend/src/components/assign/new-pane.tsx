@@ -4,12 +4,13 @@
 // 점선 = 후보, 채움 = 고른 문장, 칩 = 붙은 Old 출처(누르면 Old의 그 조각으로), 왼쪽 끝 위험색 막대 = 출처 없음. 엮은 문서의 빈 칸은 옅은 자리 표시.
 // 참조 줄이 EQUIS와 어긋나면 칩 줄 끝에 작은 표시(RefMark) - 출처 없는 줄은 그 표시만 있는 칩 줄이 생긴다.
 // 칩 오른쪽 갈매기는 그 Old 조각이 왼쪽 칸 화면 위·아래 밖에 있다는 표시 - 스크롤마다 바뀌어 LinkLines가 data-dir로 단다(Old 배지와 같은 방식).
-// 줄이 새로 들어오면 펼치며 나타나고 빠지면 접히며 사라진다(확정이 곧 보이는 실시간 넣기). 표·그림은 이번 화면에서 잇지 않아 회색 상자로만 보인다(설계 §2).
+// 줄이 새로 들어오면 펼치며 나타나고 빠지면 접히며 사라진다(확정이 곧 보이는 실시간 넣기). 표·그림은 실제 표(좌우 스크롤)·그림 이미지로 보인다(new-bundle.tsx).
 "use client";
 
 import { ChevronDown, ChevronUp, FilePlus2, Scissors, Spline } from "lucide-react";
 import { Fragment, useEffect, useEffectEvent, useRef, useState, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
+import { NewBundle } from "@/components/assign/new-bundle";
 import { PaneZoom } from "@/components/assign/pane-zoom";
 import { RefMark } from "@/components/assign/ref-mark";
 import { LangToken } from "@/components/paper/lang-token";
@@ -26,6 +27,8 @@ import { readWrittenRefMark } from "@/lib/ref-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionPill, getTabWidths } from "@/lib/strip-pill-model";
 
 interface NewPaneProps {
+  /** 그림 이미지를 받을 묶음 */
+  bundleId: number;
   docOptions: SelectOption<string>[];
   docId: string;
   onDocChange: (docId: string) => void;
@@ -377,11 +380,15 @@ export function NewPane(props: NewPaneProps) {
       );
     }
     if (row.kind !== "sentence") {
-      const block = (
-        <p className="new-block" data-testid={`assign-new-${row.target_id}`}>
-          {row.kind === "table" ? t("assign.newTable") : t("assign.newFigure")}
-        </p>
-      );
+      // 실제 표·그림 - 저장 직후 미리 넣은 표 줄은 칸 격자가 아직 없어 서버를 다시 읽을 때까지 글자 자리 표시
+      const block =
+        row.kind === "table" && !row.table ? (
+          <p className="new-block" data-testid={`assign-new-${row.target_id}`}>
+            {t("assign.newTable")}
+          </p>
+        ) : (
+          <NewBundle kind={row.kind} table={row.table} figure={row.figure} bundleId={props.bundleId} testId={`assign-new-${row.target_id}`} />
+        );
       if (!isComposedRow(row)) return block;
       // 엮은 문서의 표·그림도 결과물 C처럼 번호를 센다 - 앞머리에 자기 번호를 두어 문장 번호가 건너뛴 까닭이 보이게
       return (

@@ -1337,6 +1337,40 @@ await runStep("assign: an old heading confirmed as a slot heading shows on C and
   check("its decision is deleted and confirmed again", after.decision.disposition === "delete" && after.decision.status === "confirmed", JSON.stringify(after.decision));
 });
 
+await runStep("assign: the New pane shows a real table and figure", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}${path}`, { headers })).json();
+  // 표와 그림을 함께 받은 아직 쓰지 않은 문서를 서버 미리 보기에서 찾는다
+  let found = null;
+  for (const doc of (await getJson("/tobe")).docs.filter((item) => item.entrance === "assign")) {
+    const items = (await getJson(`/outputs/c/docs/${doc.id}?lang=en`)).sections.flatMap((section) => section.items);
+    const table = items.find((item) => item.kind === "table" && item.table);
+    const figure = items.find((item) => item.kind === "figure" && item.figure);
+    if (table && figure) {
+      found = { doc, table, figure };
+      break;
+    }
+  }
+  check("the bundle has a composed document with a table and a figure", Boolean(found), found ? `${found.doc.code} t${found.table.target_id} f${found.figure.target_id}` : "none");
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.locator('[data-testid="assign-new-doc"]').click();
+  await page.locator(`[data-testid="assign-new-doc-option-${found.doc.id}"]`).click();
+  const tableBox = page.locator(`[data-testid="assign-new-${found.table.target_id}"]`);
+  await tableBox.scrollIntoViewIfNeeded({ timeout: T });
+  const cells = await tableBox.locator("table.ptbl td").allInnerTexts();
+  const expected = found.table.table.cells.map((cell) => cell.text);
+  check("the table row draws its cells as a table", cells.length === expected.length && cells.every((text, index) => text.trim() === expected[index].trim()), `${cells.length}/${expected.length}`);
+  check("the table sits in a side-scrolling box", await tableBox.evaluate((el) => el.classList.contains("ptbl-scroll") && getComputedStyle(el).overflowX === "auto"));
+  const figureBox = page.locator(`[data-testid="assign-new-${found.figure.target_id}"]`);
+  await figureBox.scrollIntoViewIfNeeded({ timeout: T });
+  const image = figureBox.locator("img");
+  await image.waitFor({ timeout: T });
+  check("the figure row shows the image", await image.evaluate((el) => el.complete && el.naturalWidth > 0));
+  check("no text placeholder is left for them", (await page.locator('[data-pane="new"] .new-block').count()) === 0);
+  await takeShot("sop-assign-new-table-figure.png");
+});
+
 await runStep("outputs: A, B, C and the Excel preview", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
   await wait(page, "output-c");

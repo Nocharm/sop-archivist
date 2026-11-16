@@ -3016,6 +3016,7 @@ export default function AssignPage() {
               ) : (
                 <>
                   <NewPane
+                    bundleId={bundleId}
                     docOptions={newDocOptions}
                     docId={String(newDocId)}
                     onDocChange={(value) => setManualNewDoc({ key: toggleKey, docId: Number(value) })}

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.sop.models import TargetSentence
 from app.sop.written import WrittenRow, rank_new_candidates
 from tests.access_helpers import run_in_session
-from tests.docx_factory import build_docx, p
+from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
 from tests.sop_helpers import AUTHOR, OUTSIDER, create_bundle, find_unit, get_view, put_tobe, save_group, upload
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
@@ -68,6 +68,29 @@ def test_written_sentences_lists_match_doc_sentences_in_order(client: TestClient
     assert len({row["target_doc_id"] for row in rows}) == 1
     assert rows[0]["target_doc_id"] == new_doc["target_doc_id"]
     assert all(row["source_unit_ids"] == [] and row["kind"] == "sentence" for row in rows)
+
+
+def test_written_sentences_carry_table_cells_and_figure_block(client: TestClient) -> None:
+    bundle = create_bundle(client, is_synthetic=True)
+    assert put_tobe(client, bundle["id"], TOBE_DOCS).status_code == 200
+    body = tbl([["합성 항목", "합성 값"]]) + f"<w:p>{make_drawing_run('image1.png')}</w:p>" + p("그림 1 합성 장비", "Caption")
+    new_doc = _upload_ready(
+        client, bundle["id"], build_docx(body, media={"image1.png": TINY_PNG}), "SYNTHETIC_SOP-W_Written.docx",
+        side="new", doc_type="sop",
+    )
+    view = get_view(client, bundle["id"], new_doc["id"])
+    figure_unit = next(unit for unit in view["units"] if unit["kind"] == "figure")
+
+    rows = {row["kind"]: row for row in _list_written(client, bundle["id"])}
+
+    # 표 줄은 칸 새 문장을 격자 그대로(입구 2 칸 글은 원문 그대로 확정 글이다)
+    assert (rows["table"]["table"]["rows"], rows["table"]["table"]["cols"]) == (1, 2)
+    assert [(cell["row"], cell["col"], cell["text"]) for cell in rows["table"]["table"]["cells"]] == [
+        (0, 0, "합성 항목"), (0, 1, "합성 값"),
+    ]
+    # 그림 줄은 이 문장이 온 새 문서 단위의 그림 블록
+    assert rows["figure"]["figure"] == {"document_id": new_doc["id"], "block_id": figure_unit["block_id"]}
+    assert (rows["table"]["figure"], rows["figure"]["table"]) == (None, None)
 
 
 def test_written_sentences_reports_partner_target(client: TestClient) -> None:

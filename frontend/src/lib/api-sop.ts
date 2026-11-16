@@ -952,6 +952,32 @@ export interface WrittenSentence {
   ref?: { number: string; equis: EquisInfo | null } | null;
   /** 참조 줄인데 이 문장의 번호(number)나 이름(title)이 EQUIS와 다르다 - 작은 주의. 참조 줄이 아니거나 견줄 것이 없으면 null */
   ref_issue?: "number" | "title" | null;
+  /** 표 줄이면 칸 새 문장 격자 */
+  table?: BundleTable | null;
+  /** 그림 줄이고 출처 그림에 이미지가 있으면 그 블록 */
+  figure?: BundleFigure | null;
+}
+
+/** New 칸 표 줄의 칸 새 문장 - 글은 확정 글, 없으면 AI 글 */
+export interface BundleCell {
+  row: number;
+  col: number;
+  lang: UnitLang;
+  text: string;
+  status: CoverStatus;
+}
+
+/** New 칸이 그리는 표 - 격자 크기와 칸 새 문장(행·열 순) */
+export interface BundleTable {
+  rows: number;
+  cols: number;
+  cells: BundleCell[];
+}
+
+/** New 칸이 그리는 그림 - 이미지를 받을 문서와 블록(getFigureImage) */
+export interface BundleFigure {
+  document_id: number;
+  block_id: number;
 }
 
 /** Old 단위 하나에 가까운 이미 쓴 문서 문장 - 유사도는 확률로 보이지 않는다 */
@@ -1145,6 +1171,8 @@ export interface ComposedItem {
   number: string | null;
   /** 출처 Old 단위 - 번역은 번역 출처 단위 */
   source_unit_ids: number[];
+  table?: BundleTable | null;
+  figure?: BundleFigure | null;
 }
 
 export interface ComposedSection {

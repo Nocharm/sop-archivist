@@ -88,6 +88,7 @@ class BlockInfo:
     table_index: int | None  # 표 칸·칸 안 그림이면 그 표의 순번(0부터)
     row_index: int | None
     col_index: int | None
+    has_image: bool  # 그림 이미지(figures/{block_id})를 받을 수 있는지 — New 칸이 그림을 그릴지 정한다
 
 
 @dataclass(frozen=True)
@@ -229,7 +230,7 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
             select(
                 SourceBlock.id, SourceBlock.extraction_id, SourceBlock.seq, SourceBlock.part, SourceBlock.kind,
                 SourceBlock.page, SourceBlock.page_basis, SourceBlock.section_label, SourceBlock.table_id,
-                SourceBlock.row_index, SourceBlock.col_index,
+                SourceBlock.row_index, SourceBlock.col_index, SourceBlock.image_part.is_not(None).label("has_image"),
             ).where(SourceBlock.extraction_id.in_(extraction_ids))
         )
     ).all()
@@ -238,7 +239,7 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
             id=row.id, part=row.part, kind=row.kind, page=row.page, page_basis=row.page_basis,
             section_label=row.section_label,
             table_index=tables[row.table_id].table_index if row.table_id is not None else None,
-            row_index=row.row_index, col_index=row.col_index,
+            row_index=row.row_index, col_index=row.col_index, has_image=bool(row.has_image),
         )
         for row in block_rows
     }
