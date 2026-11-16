@@ -80,8 +80,9 @@ export function ShapeTools({ lines, cutUnitId, busy, onAction, mode, onMode }: S
       <span className="shape-langs" role="group" aria-label={t("split.menu.lang")} data-testid={`assign-shape-lang-${unit.id}`}>
         {LANGS.map((lang) => {
           const isCurrent = unit.lang === lang;
-          const reason = !isCurrent && item?.reasonKey ? t(item.reasonKey) : null;
-          const isOff = !isCurrent && (!item?.enabled || busy);
+          const reasonKey = isCurrent ? undefined : (item?.reasonKey ?? item?.langReasons?.[lang]);
+          const reason = reasonKey ? t(reasonKey) : null;
+          const isOff = !isCurrent && (!item?.enabled || reason !== null || busy);
           const label = lang === "ref" ? t("assign.ctx.refMark") : t("assign.shape.langTo", { lang: lang.toUpperCase() });
           return (
             <Tooltip key={lang} label={reason ?? (isCurrent ? t("split.menu.why.alreadyLang") : label)} align="start">

@@ -221,7 +221,7 @@ describe("captions from the Assign menu", () => {
     expect(find(ctx({ nextBundle: table, listCaptionLangs: () => ["en"] }), "caption_attach_next").enabled).toBe(true);
     expect(find(ctx({ target: table, table, prev: sentence, next: null, hasDraft: (unit) => unit.id === 1 }), "caption_attach_prev").reasonKey).toBe("assign.ctx.why.neighborUnsaved");
     expect(find(ctx({ nextBundle: table, hasDraft: (unit) => unit.id === 2 }), "caption_attach_next").reasonKey).toBe("assign.ctx.why.unsaved");
-    expect(find(ctx({ nextBundle: table, hasDraft: (unit) => unit.id === 10 }), "caption_attach_next").reasonKey).toBe("assign.ctx.why.neighborUnsaved");
+    expect(find(ctx({ nextBundle: table, hasDraft: (unit) => unit.id === 10 }), "caption_attach_next").reasonKey).toBe("assign.ctx.why.bundleUnsaved");
   });
 
   it("asks before attaching to an assigned bundle instead of refusing (the server asks once)", () => {
@@ -232,6 +232,19 @@ describe("captions from the Assign menu", () => {
     expect(find(ctx({ target: caption }), "caption_detach").enabled).toBe(true);
     expect(find(ctx({ target: caption, hasDraft: () => true }), "caption_detach").reasonKey).toBe("assign.ctx.why.unsaved");
     expect(find(ctx({ target: caption, readOnly: true }), "caption_detach").reasonKey).toBe("assign.ctx.why.readOnly");
+  });
+
+  it("will not detach a caption that sits inside an old figure block: dimmed in the menu, hidden in Shape", () => {
+    const fixed = ctx({ target: caption, isFixedCaption: (unit) => unit.id === 11 });
+    expect(find(fixed, "caption_detach").reasonKey).toBe("assign.ctx.why.captionInFigure");
+    expect(listShapeLineItems(caption, buildAssignMenu(fixed).edit, false).map((item) => item.action)).toEqual(["split"]);
+  });
+
+  it("will not change a caption to a language another caption of its bundle already has, nor make it a reference", () => {
+    const withEn = ctx({ target: caption, captionBundle: table, listCaptionLangs: () => ["ko", "en"] });
+    expect(find(withEn, "lang").langReasons).toEqual({ en: "assign.ctx.why.captionExists", ref: "assign.ctx.why.captionNoRef" });
+    expect(find(withEn, "lang").enabled).toBe(true);
+    expect(find(ctx({ target: caption, captionBundle: table, listCaptionLangs: () => ["ko"] }), "lang").langReasons).toEqual({ ref: "assign.ctx.why.captionNoRef" });
   });
 
   it("keeps the sentence tools on a caption but no joins, pairing or reference", () => {

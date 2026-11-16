@@ -90,6 +90,7 @@ export function AssignContextMenu({ anchor, cover, click, groups, onPick, onClos
           current={item.lang}
           disabledReason={item.reasonKey ? t(item.reasonKey) : null}
           currentReason={t("split.menu.why.alreadyLang")}
+          optionReasons={item.langReasons ? Object.fromEntries(Object.entries(item.langReasons).map(([lang, key]) => [lang, t(key)])) : undefined}
           onPick={(lang) => onPick("lang", lang)}
           testId="assign-ctx-lang"
         />

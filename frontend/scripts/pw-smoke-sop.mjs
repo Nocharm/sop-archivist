@@ -902,6 +902,7 @@ await runStep("assign: attach and detach a caption from Shape", {}, async ({ pag
   let doc = null;
   let sentence = null;
   let figure = null;
+  let after = null;
   for (const candidate of (await getJson("/documents")).filter((item) => item.side === "old" && item.status === "ready")) {
     const view = await getJson(`/documents/${candidate.id}/view`);
     if (!view.units.some((unit) => unit.id === table.unit_id)) continue;
@@ -909,6 +910,8 @@ await runStep("assign: attach and detach a caption from Shape", {}, async ({ pag
     const first = ordered.findIndex((unit) => unit.id === table.unit_id || unit.group_unit_id === table.unit_id);
     doc = candidate;
     sentence = ordered[first - 1] ?? null;
+    const last = ordered.findLastIndex((unit) => unit.id === table.unit_id || unit.group_unit_id === table.unit_id);
+    after = ordered[last + 1] ?? null;
     figure = view.units.find((unit) => unit.kind === "figure") ?? null;
   }
   check("a free sentence sits right above the table", sentence !== null && sentence.kind === "sentence" && sentence.group_unit_id === null, sentence?.text);
@@ -935,7 +938,9 @@ await runStep("assign: attach and detach a caption from Shape", {}, async ({ pag
   await selectRowById(page, table.display_id);
   const tableLine = page.locator(`[data-testid="assign-shape-line-${table.unit_id}"]`);
   await tableLine.waitFor({ timeout: T });
-  check("Shape offers no attach below when a figure follows the table", (await page.locator(`[data-testid="assign-shape-caption_attach_next-${table.unit_id}"]`).count()) === 0);
+  // 표 뒤가 묶이지 않은 글이 아니면(데모에서는 그림) 아래 붙이기 단추가 없다
+  const canAttachBelow = after !== null && (after.kind === "sentence" || after.kind === "heading") && after.group_unit_id === null && after.lang !== "ref";
+  check("Shape offers attach below only when free text follows the table", (await page.locator(`[data-testid="assign-shape-caption_attach_next-${table.unit_id}"]`).count()) === (canAttachBelow ? 1 : 0), after?.kind);
   await tableLine.hover();
   const attach = page.locator(`[data-testid="assign-shape-caption_attach_prev-${table.unit_id}"]`);
   check("Shape offers Attach the sentence above as caption", (await attach.getAttribute("aria-label")) === "Attach the sentence above as caption", await attach.getAttribute("aria-label"));
@@ -953,6 +958,7 @@ await runStep("assign: attach and detach a caption from Shape", {}, async ({ pag
   await captionLine.waitFor({ timeout: T });
   check("the caption has its own Shape line with KO | EN | REF", (await page.locator(`[data-testid="assign-shape-lang-${caption.id}"] button`).count()) === 3);
   await captionLine.hover();
+  check("a caption cannot become a reference line (REF is off)", (await page.locator(`[data-testid="assign-shape-lang-${caption.id}-ref"]`).getAttribute("aria-disabled")) === "true");
   await takeShot("sop-assign-caption-shape.png");
   await page.locator(`[data-testid="assign-shape-caption_detach-${caption.id}"]`).click();
   await page.locator('[data-testid="toast-ok"]', { hasText: "Caption detached" }).first().waitFor({ timeout: T });

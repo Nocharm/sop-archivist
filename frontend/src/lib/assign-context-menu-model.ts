@@ -22,6 +22,8 @@ export interface AssignMenuItem {
   lang?: ViewUnit["lang"];
   /** 대상에 따라 이름이 바뀌는 항목의 문구 키 - 없으면 그 일의 기본 이름 */
   labelKey?: string;
+  /** 언어 줄에서 그 언어 칸만 꺼진 까닭 - 캡션은 묶음마다 언어당 하나라 다른 캡션이 가진 언어, 캡션은 참조 줄이 될 수 없다 */
+  langReasons?: Partial<Record<"ko" | "en" | "ref", string>>;
 }
 
 export interface AssignMenuGroups {
@@ -53,6 +55,10 @@ export interface AssignMenuContext {
   nextBundle?: ViewUnit | null;
   /** 묶음에 이미 있는 캡션의 언어 - 묶음마다 언어당 캡션 하나(서버 caption_exists) */
   listCaptionLangs?: (bundle: ViewUnit) => readonly string[];
+  /** 옛 이행(0020)이 그림 블록 위에 둔 캡션 - 떼면 그림 글이 문장이 되어 서버가 막는다(caption_in_figure_block) */
+  isFixedCaption?: (unit: ViewUnit) => boolean;
+  /** 캡션 대상의 묶음 - 다른 언어 캡션이 있는지 본다 */
+  captionBundle?: ViewUnit | null;
 }
 
 const EDITABLE_KINDS = new Set(["sentence", "heading", "cell_sentence", "caption"]);
@@ -141,7 +147,7 @@ function buildCaptionAttach(ctx: AssignMenuContext, side: "prev" | "next", text:
   const [own, other] = ctx.target.id === bundle.id ? [bundle, text] : [text, bundle];
   const reason = ctx.readOnly ? why("readOnly")
     : ctx.hasDraft(own) ? why("unsaved")
-    : ctx.hasDraft(other) ? why("neighborUnsaved")
+    : ctx.hasDraft(other) ? why(other.id === bundle.id ? "bundleUnsaved" : "neighborUnsaved")
     : (ctx.listCaptionLangs?.(bundle) ?? []).includes(text.lang) ? why("captionExists") : null;
   return { ...build(`caption_attach_${side}`, reason), labelKey };
 }
@@ -176,8 +182,12 @@ export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
   if (BUNDLE_KINDS.has(ctx.target.kind)) return { assign: [build("clear", clearReason)], edit: [...buildTableItems(ctx), ...buildBundleCaptionItems(ctx)] };
   // 캡션은 나누기·언어(한/영 한 줄 캡션을 나눠 언어를 따로)와 떼기만 - 떼기는 묶음을 바꾸니 배정이 있으면 서버가 묻는다
   if (ctx.target.kind === "caption") {
-    const detachReason = ctx.readOnly ? why("readOnly") : ctx.hasDraft(ctx.target) ? why("unsaved") : null;
-    return { assign: [build("clear", clearReason)], edit: [splitItem, langItem, build("caption_detach", detachReason)] };
+    const detachReason = ctx.readOnly ? why("readOnly") : ctx.isFixedCaption?.(ctx.target) ? why("captionInFigure") : ctx.hasDraft(ctx.target) ? why("unsaved") : null;
+    // 같은 묶음의 다른 캡션이 가진 언어로는 바꿀 수 없다(서버 caption_exists), 캡션은 참조 줄이 되지 않는다
+    const taken = ctx.captionBundle ? (ctx.listCaptionLangs?.(ctx.captionBundle) ?? []) : [];
+    const langReasons: AssignMenuItem["langReasons"] = { ref: why("captionNoRef") };
+    for (const lang of ["ko", "en"] as const) if (lang !== ctx.target.lang && taken.includes(lang)) langReasons[lang] = why("captionExists");
+    return { assign: [build("clear", clearReason)], edit: [splitItem, { ...langItem, langReasons }, build("caption_detach", detachReason)] };
   }
   return {
     assign: [build("clear", clearReason)],
@@ -236,7 +246,7 @@ const SHAPE_LINE_ACTIONS: ReadonlySet<AssignMenuAction> = new Set([
 // 다듬기 줄에서 꺼 둔 채 보이지도 않는 까닭 - 그 자리에서는 풀 길이 없는 모양 탓이다(옆에 문장이 없다·이미 짝·글이 아니다).
 // 저장 전·배정처럼 먼저 할 일이 있는 까닭은 꺼 둔 채 보여 툴팁으로 알린다. 우클릭 메뉴는 그대로 다 보인다
 const SHAPE_HIDDEN_REASONS: ReadonlySet<string> = new Set([
-  why("nothingToSplit"), why("noNeighbor"), why("neighborNotText"), why("notText"),
+  why("captionInFigure"), why("nothingToSplit"), why("noNeighbor"), why("neighborNotText"), why("notText"),
   "split.menu.why.alreadyPaired", "split.menu.why.noLanguage", "split.menu.why.notText",
   ...Object.values(MERGE_BLOCKER_KEYS),
 ]);

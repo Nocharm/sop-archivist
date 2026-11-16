@@ -879,6 +879,13 @@ export default function AssignPage() {
     return [...shapeModel.units.values()].filter((unit) => unit.kind === "caption" && unit.group_unit_id !== null && span.has(unit.group_unit_id)).map((unit) => unit.lang);
   }
 
+  /** 옛 이행(0020)이 그림 블록 위에 둔 캡션인가 - 떼면 그림 글이 문장이 되어 서버가 막는다(caption_in_figure_block) */
+  function isFixedCaption(unit: ViewUnit): boolean {
+    if (unit.kind !== "caption" || !shapeView) return false;
+    const figureBlocks = new Set(shapeView.blocks.filter((block) => block.kind === "figure").map((block) => block.id));
+    return unit.spans.some(([blockId]) => figureBlocks.has(blockId));
+  }
+
   /** 용지 순서로 바로 앞·뒤 단위 - 묶음은 칸 문장·캡션까지 한 덩어리로 보고 그 앞·뒤(캡션으로 붙일 글을 찾는 자리) */
   function findNeighbors(target: ViewUnit): { prev: ViewUnit | null; next: ViewUnit | null } {
     if (!shapeTabs || !shapeModel) return { prev: null, next: null };
@@ -905,6 +912,8 @@ export default function AssignPage() {
       prevBundle: findBundleOf(prev),
       nextBundle: findBundleOf(next),
       listCaptionLangs,
+      isFixedCaption,
+      captionBundle: target.kind === "caption" ? findBundleOf(target) : null,
       readOnly: !canEdit,
       rowStatus: row?.status ?? "unassigned",
       isDecided: isUnitDecided,
