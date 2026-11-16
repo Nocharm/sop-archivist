@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DocumentView, ViewBlock, ViewPartGroup, ViewUnit } from "./api-sop";
-import { buildContourPath, buildPaperModel, buildPaperTabs, buildRows, listPartSheets, canSplitAt, clampSplitAt, getGapMerge, getMergeBlocker, resolveCutDrag, getMarks, getTags, readWarningText, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
+import { buildContourPath, buildPaperModel, buildPaperTabs, buildRows, listPartSheets, canSplitAt, clampSplitAt, getGapMerge, getMergeBlocker, resolveCutDrag, getActsShift, getMarks, getTags, readWarningText, shouldRecenter, toBlockOffset, toUnitOffset } from "./paper-model";
 
 function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlock> = {}): ViewBlock {
   return {
@@ -147,6 +147,22 @@ describe("shouldRecenter", () => {
   it("recenters near the bottom or above the top", () => {
     expect(shouldRecenter(700, 730, 0, 900)).toBe(true);
     expect(shouldRecenter(60, 90, 0, 900)).toBe(true);
+  });
+});
+
+describe("getActsShift", () => {
+  it("keeps the group at the row when it fits above the content end", () => {
+    expect(getActsShift(200, 180, 0, 1000)).toBe(0);
+  });
+
+  it("lifts a group near the content end just enough to end there", () => {
+    // 줄 900 + 묶음 180 = 1080 - 내용 끝 1000을 80 넘는다
+    expect(getActsShift(900, 180, 0, 1000)).toBe(-80);
+  });
+
+  it("never lifts the group above the content top", () => {
+    // 내용이 묶음보다 짧으면 위 끝에 맞추고 아래로 남는 것은 둔다
+    expect(getActsShift(60, 180, 20, 150)).toBe(-40);
   });
 });
 

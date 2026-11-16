@@ -1382,6 +1382,20 @@ await runStep("order: row-end buttons show only on hover or focus, one group at 
   check("at 1120 the group floats beside the sheet as one column", isBesideSheet(slim) && slim.box.width <= 40, JSON.stringify({ box: slim.box, sheet: slim.sheet, pane: slim.pane }));
   check("the 1120 group covers no text", !slim.covers);
   check("no horizontal scroll at 1120", !slim.scrolls);
+  // 문서 끝 줄 - 세로 한 칸 묶음이 내용 아래로 늘어지지 않고 위로 올라간다(스크롤 높이가 그대로)
+  const lastRow = page.locator('[data-testid^="output-c-row-"]:has([data-testid^="output-c-acts-"])').last();
+  await lastRow.scrollIntoViewIfNeeded();
+  await page.mouse.move(0, 0);
+  await settle();
+  const scrollHeight = () => page.locator('[data-testid="output-c"]').evaluate((el) => el.closest(".overflow-auto, .overflow-y-auto").scrollHeight);
+  const restScroll = await scrollHeight();
+  await lastRow.hover({ position: { x: 8, y: 4 } });
+  await settle();
+  check("hovering the last row does not grow the scroll area", (await scrollHeight()) === restScroll, `${restScroll} -> ${await scrollHeight()}`);
+  // 스크롤바가 두꺼운 창(Windows 고전 스크롤바 17px)처럼 틀이 좁아도 용지가 몇 px 양보해 묶음은 용지 옆에 남는다 - 헤드리스는 스크롤바를 숨기므로 틀 폭을 줄여 흉내 낸다
+  await page.addStyleTag({ content: '[data-testid="output-c"] { width: 756px; }' });
+  const squeezed = await hoverAt(1120);
+  check("a narrow frame shrinks the sheet a little and keeps the group beside it", isBesideSheet(squeezed) && squeezed.sheet.width < 760 && !squeezed.covers, JSON.stringify({ box: squeezed.box, sheet: squeezed.sheet }));
   await page.setViewportSize(VIEWPORT);
   // 터치 화면 - 호버가 없으니 묶음이 늘 보이고 글 흐름 안에 있다
   const touch = await browser.newContext({ viewport: VIEWPORT, hasTouch: true, isMobile: true });

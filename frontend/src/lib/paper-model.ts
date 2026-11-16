@@ -203,6 +203,12 @@ export function shouldRecenter(unitTop: number, unitBottom: number, viewTop: num
   return unitTop < viewTop + height / 6 || unitBottom > viewBottom - height / 3;
 }
 
+/** 줄 옆에 뜬 단추 묶음을 위로 올릴 거리(0 이하, px) - 묶음 아래 끝이 내용 끝을 넘어 스크롤을 늘리지 않게 올리되, 내용 위 끝보다 위로는 가지 않는다 */
+export function getActsShift(rowTop: number, actsHeight: number, contentTop: number, contentBottom: number): number {
+  const up = Math.min(0, contentBottom - (rowTop + actsHeight));
+  return Math.max(up, Math.min(0, contentTop - rowTop));
+}
+
 /** 문단 앞 글자 태그 - 언어(중립은 없음)와 보류 */
 export function getTags(unit: ViewUnit): { lang: "KO" | "EN" | null; hold: boolean } {
   const lang = unit.lang === "ko" ? "KO" : unit.lang === "en" ? "EN" : null;

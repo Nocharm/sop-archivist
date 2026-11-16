@@ -1634,27 +1634,26 @@
   .c-line { --c-indent: 1.5em; }
   /* 줄은 글 + 줄 끝 단추 묶음의 감김 줄 - 터치 화면(hover: none)에서는 묶음이 늘 보이고, 글이 폭을 채우면 글 바로 아래 제 줄로 내려간다 */
   .c-order { container: c-order / inline-size; }
+  .c-order > .sheet { max-width: 760px; }
   .c-row { position: relative; display: flex; flex-wrap: wrap; align-items: flex-start; }
   .c-row > .c-line { flex: 1 1 auto; min-width: 0; }
   .c-row > .c-acts { flex: none; margin-left: auto; }
   .c-acts { display: flex; gap: 2px; }
-  /* 마우스가 있으면 묶음은 자리를 차지하지 않고 글 밖에 떠 있다가 줄 호버·포커스 때만 보인다(사용자 결정 2026-11-16, 끌어다 놓기 설계 §5) */
+  /* 마우스가 있으면 묶음은 자리를 차지하지 않고 용지 오른쪽 바깥, 줄 첫 줄 높이에 떠 있다가 줄 호버·포커스 때만 보인다(사용자 결정 2026-11-16, 끌어다 놓기 설계 §5).
+     남는 폭만큼 펴고 모자라면 감긴다(1440 이상 한 줄 180px, 1248 두 줄, 1120 세로 한 칸 30px - 잰 값 2026-11-16, 극단 자료) */
   @media (hover: hover) {
-    /* 용지 옆에 단추 한 칸도 안 들어가는 틀이면 줄 오른쪽 끝의 바로 위 - 안전망. 앱 최소 폭(.app 1120px)에서도 틀이 790px이라 지금은 닿지 않는다 */
-    .c-row > .c-acts { position: absolute; right: 0; bottom: 100%; z-index: 2; flex-wrap: wrap; margin: 0; padding: 2px; border: 1px solid var(--line-2); border-radius: var(--r-2); background: var(--raised); box-shadow: var(--shadow-1); opacity: 0; pointer-events: none; transition: opacity var(--dur-fast); }
-    .c-row:hover > .c-acts, .c-row:focus > .c-acts, .c-row:focus-within > .c-acts { opacity: 1; pointer-events: auto; }
+    /* 용지는 세로 한 칸 자리(틈 4 + 30 + 스크롤 칸까지 2 = 36px, 그중 12px는 틀 오른쪽 여백)를 늘 남긴다 - 틀이 좁을 때만(1120 창에 고전 스크롤바) 몇 px 양보하고 자리가 있으면 760px 그대로 */
+    .c-order > .sheet { max-width: min(760px, calc(100% - 24px)); }
+    /* left 35px = .pg 오른쪽 여백 30 + 용지 테두리 1 + 틈 4. max-width = 용지 옆 남는 폭(100cqw + 12 - 용지 폭 - 4 - 2), 용지가 양보하면 30px.
+       --acts-shift(0 이하)는 줄을 올릴 때 output-c.tsx가 정한다 - 문서 끝 줄의 세로 묶음이 내용 아래로 늘어져 스크롤을 늘리지 않게 위로 올린다.
+       쉬는 묶음은 한 줄 높이(30px)로 잘라 둔다 - 보이지 않는 세로 묶음도 스크롤 영역에 들기 때문(숨겨도 Tab이 닿아야 해서 display: none은 쓰지 않는다) */
+    .c-row > .c-acts { position: absolute; top: var(--acts-shift, 0px); left: calc(100% + 35px); z-index: 2; flex-wrap: wrap; width: max-content; max-width: max(30px, calc(100cqw - 754px)); max-height: 30px; overflow-y: clip; margin: 0; padding: 2px; border: 1px solid var(--line-2); border-radius: var(--r-2); background: var(--raised); box-shadow: var(--shadow-1); opacity: 0; pointer-events: none; transition: opacity var(--dur-fast), max-height 0s linear var(--dur-fast); }
+    .c-row:hover > .c-acts, .c-row:focus > .c-acts, .c-row:focus-within > .c-acts { max-height: 400px; overflow-y: visible; opacity: 1; pointer-events: auto; transition: opacity var(--dur-fast); }
     /* 한 번에 한 줄 - 다른 줄에 올리면 고른 줄의 묶음은 물러난다. 글쇠로 단추에 가 있는 묶음은 남는다(보이지 않는 포커스 금지) */
     .pg:has(.c-row:hover) .c-row:not(:hover):not(:has(:focus-visible)) > .c-acts { opacity: 0; pointer-events: none; }
-    /* 용지 오른쪽 바깥, 줄 첫 줄 높이에 - 용지와 스크롤 칸 사이 남는 폭만큼 펴고 모자라면 감긴다(1440 이상 한 줄, 1248 두 줄, 1120 한 칸 세로).
-       잰 값(2026-11-16, 극단 자료): 묶음 한 줄 180px, 단추 한 칸 세로 30px. 용지 760px의 오른쪽 끝 = 틀 내용 왼쪽 + 760, 틀 오른쪽 여백 12px(.dense --pad).
-       left 35px = .pg 오른쪽 여백 30px + 용지 테두리 1px + 틈 4px. max-width = 100cqw + 12px - 760px - 틈 4px - 스크롤 칸까지 2px.
-       문턱 784px = 세로 한 칸(30px)이 들어가는 가장 좁은 틀(760 - 12 + 4 + 30 + 2) - 1120 창의 틀 790px보다 6px 좁다 */
-    @container c-order (min-width: 784px) {
-      .c-row > .c-acts { right: auto; bottom: auto; top: 0; left: calc(100% + 35px); width: max-content; max-width: calc(100cqw - 754px); }
-      .c-acts > .c-mark { flex-wrap: wrap; margin-right: 0; }
-      /* 다리 - 줄과 묶음 사이 틈(35px)을 이어 포인터를 옮기는 동안 호버가 끊기지 않는다. 첫 단추 줄 높이만(아래 줄의 오른쪽 여백을 빼앗지 않게) */
-      .c-acts::before { content: ""; position: absolute; right: 100%; top: -2px; width: 40px; height: 34px; }
-    }
+    .c-acts > .c-mark { flex-wrap: wrap; margin-right: 0; }
+    /* 다리 - 줄과 묶음 사이 틈(35px)을 이어 포인터를 옮기는 동안 호버가 끊기지 않는다. 첫 단추 줄 높이만(아래 줄의 오른쪽 여백을 빼앗지 않게) */
+    .c-acts::before { content: ""; position: absolute; right: 100%; top: -2px; width: 40px; height: 34px; }
   }
   /* 끄는 동안은 줄 끝 단추를 모두 끈다(lib/box-drag.ts) - 위 보이기 규칙(.c-row:hover > .c-acts)보다 특이도가 높아야 한다 */
   html[data-box-drag] .c-row > .c-acts { opacity: 0; pointer-events: none; }

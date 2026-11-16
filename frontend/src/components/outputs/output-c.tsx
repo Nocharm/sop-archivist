@@ -14,7 +14,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import type { EquisInfo, NumberStyle, OutputC, OutputCItem } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import { buildCLines, listMeaningStarts, type CLine } from "@/lib/output-groups";
-import { shouldRecenter } from "@/lib/paper-model";
+import { getActsShift, shouldRecenter } from "@/lib/paper-model";
 import { canChangeDepth, canChangeStyle, canIndent, getSectionDepths, isCounted, NUMBER_STYLES, readIndentKey, type IndentDir } from "@/lib/section-number";
 import { canMoveTarget, type MoveDir } from "@/lib/target-order";
 import { useProgressiveList } from "@/lib/use-progressive-list";
@@ -149,6 +149,23 @@ function RowButtons({ items, item, onMove, indent, onMark }: RowButtonsProps) {
   );
 }
 
+/** 줄을 올리거나 포커스할 때 - 용지 옆 단추 묶음이 내용 끝 아래로 늘어지면 위로 올린다(--acts-shift). 쉬는 묶음은 CSS가 한 줄 높이로 잘라 두므로 감긴 높이는 마지막 단추로 잰다 */
+function placeRowActs(row: HTMLElement) {
+  const acts = row.querySelector<HTMLElement>(".c-acts");
+  const last = acts?.lastElementChild;
+  const root = row.closest<HTMLElement>(".c-order");
+  const pane = row.closest<HTMLElement>(".overflow-auto, .overflow-y-auto");
+  if (!acts || !last || !root || !pane) return;
+  const box = acts.getBoundingClientRect();
+  const style = getComputedStyle(acts);
+  const height = last.getBoundingClientRect().bottom - box.top + parseFloat(style.paddingBottom) + parseFloat(style.borderBottomWidth);
+  const rootBox = root.getBoundingClientRect();
+  // 내용이 스크롤 칸보다 짧으면 칸의 보이는 아래 끝까지는 스크롤을 늘리지 않는다
+  const contentBottom = Math.max(rootBox.bottom, pane.getBoundingClientRect().top + pane.clientTop + pane.clientHeight);
+  const shift = getActsShift(row.getBoundingClientRect().top + row.clientTop, height, rootBox.top, contentBottom);
+  acts.style.setProperty("--acts-shift", `${shift}px`);
+}
+
 /** 줄 앞 섹션 번호 - 깊이만큼 들여 그린다. 번호가 없는 칸(입구 2 문서·단계 없는 WI)도 깊이는 그린다 */
 function NumberedLine({ item, depth, children }: { item: OutputCItem; depth: number; children: ReactNode }) {
   return (
@@ -274,12 +291,12 @@ export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", to
     );
   }
   return (
-    // c-order - 줄 끝 단추를 띄울 자리를 이 틀의 폭으로 고른다(container query)
+    // c-order - 줄 끝 단추가 용지 옆에 뜨는 틀. 용지 폭 상한은 CSS가 정한다(단추 한 칸 자리를 늘 남긴다)
     <div ref={rootRef} className={`grid gap-6 p-[var(--pad)] ${onMove ? "c-order" : ""}`} data-testid="output-c">
       {blocks.map(({ doc, sections }, blockIndex) => {
         const docEquis = equis?.get(`target:${doc.target_doc_id}`);
         return (
-        <article key={doc.target_doc_id} className="sheet mx-0 max-w-[760px]">
+        <article key={doc.target_doc_id} className={`sheet mx-0 ${onMove ? "" : "max-w-[760px]"}`}>
           {/* 줄마다 자기 언어(lang)로 글꼴을 고른다 - 한 칸에 두 언어가 섞인다 */}
           <div className="pg">
             <header className="flex items-baseline gap-2 border-b border-line pb-2" style={{ fontFamily: "var(--font-ui)" }}>
@@ -350,6 +367,8 @@ export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", to
                           data-meaning-start={meaningStart}
                           data-flip-key={item.target_id}
                           data-testid={`output-c-row-${item.target_id}`}
+                          onPointerEnter={(event) => placeRowActs(event.currentTarget)}
+                          onFocus={(event) => placeRowActs(event.currentTarget)}
                           onKeyDown={(event) => {
                             if (!indent || event.target !== event.currentTarget) return;
                             if (event.key === "Escape") event.currentTarget.blur();
