@@ -27,6 +27,9 @@ describe("readMoveKey", () => {
     expect(readMoveKey(key({ key: "ArrowDown" }), { canUp: true, canDown: true })).toBe(1);
     expect(readMoveKey(key(), { canUp: false, canDown: true })).toBeNull();
     expect(readMoveKey(key({ key: "ArrowDown" }), { canUp: true, canDown: false })).toBeNull();
+    // 한쪽만 열린 줄(칸 맨 아래·맨 위)에서도 열린 쪽은 읽는다
+    expect(readMoveKey(key(), { canUp: true, canDown: false })).toBe(-1);
+    expect(readMoveKey(key({ key: "ArrowDown" }), { canUp: false, canDown: true })).toBe(1);
     expect(readMoveKey(key({ altKey: false }), { canUp: true, canDown: true })).toBeNull();
     expect(readMoveKey(key({ shiftKey: true }), { canUp: true, canDown: true })).toBeNull();
     expect(readMoveKey(key({ ctrlKey: true }), { canUp: true, canDown: true })).toBeNull();

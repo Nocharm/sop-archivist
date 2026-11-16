@@ -1640,22 +1640,36 @@ await runStep("order: Alt+ArrowDown moves the picked line and keeps it picked", 
   const rowSel = `[data-testid="output-c-row-${id}"]`;
   const readOrder = () => page.evaluate((first) => [...(document.querySelector(`[data-testid="output-c-row-${first}"]`)?.closest("section")?.querySelectorAll('[data-testid^="output-c-row-"]') ?? [])].map((row) => row.getAttribute("data-testid").replace("output-c-row-", "")), id);
   const activeRow = () => page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? "");
-  const pane = () => page.evaluate((sel) => document.querySelector(sel)?.closest(".overflow-auto, .overflow-y-auto")?.scrollTop ?? 0, rowSel);
+  // 줄 자리를 스크롤 칸 기준으로 - 칸이 없으면 null(검사가 실패한다)
+  const readPlace = (nextId) => page.evaluate(({ sel, nextSel }) => {
+    const row = document.querySelector(sel);
+    const pane = row?.closest(".overflow-auto, .overflow-y-auto");
+    if (!pane) return null;
+    const paneTop = pane.getBoundingClientRect().top;
+    const box = row.getBoundingClientRect();
+    const next = nextSel ? document.querySelector(nextSel)?.getBoundingClientRect() : null;
+    return { top: box.top - paneTop, height: box.height, nextBottom: next ? next.bottom - paneTop : null };
+  }, { sel: rowSel, nextSel: nextId ? `[data-testid="output-c-row-${nextId}"]` : null });
   const start = (await readOrder()).indexOf(id);
   const puts = [];
   const onRequest = (request) => {
     if (isOrderSave(request)) puts.push(request.url());
   };
   page.on("request", onRequest);
-  // 1. 줄을 눌러 고른 뒤 Alt+↓ - 한 자리, 고른 채로
+  // 1. 줄을 눌러 고른 뒤 Alt+↓ - 한 자리, 고른 채로. 줄을 칸 가운데에 두어 가장자리 따라가기(shouldRecenter)가 끼지 않게 한다
+  await page.locator(rowSel).evaluate((el) => el.scrollIntoView({ block: "center" }));
   await page.locator(rowSel).click({ position: { x: 4, y: 4 } });
-  const scrollBefore = await pane();
+  // 한 자리 내리면 줄의 위 끝은 이웃 줄의 아래 끝에서 자기 높이만큼 위에 선다 - 화면이 뛰지 않으면 칸 기준 그 자리다
+  const placeBefore = await readPlace((await readOrder())[start + 1]);
   const moved = waitOrderSave(page);
   await page.keyboard.press("Alt+ArrowDown");
   check("the move saves", (await moved).ok());
   check("the line moved one place", (await readOrder()).indexOf(id) === start + 1, JSON.stringify(await readOrder()));
   check("the line stays picked", (await activeRow()) === `output-c-row-${id}`, await activeRow());
-  check("the screen did not jump", Math.abs((await pane()) - scrollBefore) < 80, `${scrollBefore} -> ${await pane()}`);
+  await page.waitForTimeout(600); // 미끄러짐(useFlip)이 끝난 자리를 잰다
+  const placeAfter = await readPlace(null);
+  const expectedTop = placeBefore ? placeBefore.nextBottom - placeBefore.height : null;
+  check("the screen did not jump", placeBefore !== null && placeAfter !== null && Math.abs(placeAfter.top - expectedTop) <= 8, JSON.stringify({ placeBefore, placeAfter, expectedTop }));
   // 2. 단추에 포커스가 있을 때의 Alt+↑·↓는 아무 일도 없다
   await page.locator(rowSel).hover();
   await page.locator(`[data-testid="output-c-move-down-${id}"]`).focus();
@@ -1713,9 +1727,18 @@ await runStep("order: a depth-locked line (an already-written document) can be p
     if (isOrderSave(request)) saved = true;
   };
   page.on("request", onRequest);
+  // 브라우저가 Tab으로 갈 다음 요소 - 줄 뒤(줄 안의 단추 포함) 문서 순서로 첫 탭 가능한 요소에 표시를 단다
+  const expectedNext = await page.evaluate((sel) => {
+    const row = document.querySelector(sel);
+    const next = [...document.querySelectorAll("a[href], button, input, select, textarea, [tabindex]")].find((el) => el.tabIndex >= 0 && !el.disabled && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden" && row.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
+    next?.setAttribute("data-smoke-next", "");
+    return next ? next.getAttribute("data-testid") ?? next.tagName : null;
+  }, rowSel);
   await page.keyboard.press("Tab");
   await page.waitForTimeout(400);
-  check("Tab does not indent it and moves focus on as the browser would", !saved && (await padding()) === paddingBefore && (await activeRow()) !== `output-c-row-${id}`, await activeRow());
+  const landed = await page.evaluate(() => ({ next: document.activeElement?.hasAttribute("data-smoke-next") ?? false, active: document.activeElement?.getAttribute("data-testid") ?? document.activeElement?.tagName ?? "" }));
+  await page.evaluate(() => document.querySelector("[data-smoke-next]")?.removeAttribute("data-smoke-next"));
+  check("Tab does not indent it and moves focus to the next focusable element", !saved && (await padding()) === paddingBefore && expectedNext !== null && landed.next, JSON.stringify({ expectedNext, ...landed }));
   page.off("request", onRequest);
   await page.locator(rowSel).click({ position: { x: 4, y: 4 } });
   const moved = waitOrderSave(page);
