@@ -198,7 +198,7 @@ const EMPTY_DRAFT: PageDraft = { destination: null, texts: {}, changeTypes: {}, 
 const NO_NUMBERS: ReadonlySet<number> = new Set();
 
 /** 되돌리면 단위가 은퇴할 수 있는 편집 - 그 줄을 고른 채 다시 받으면 없는 단위의 묶음을 부르게 된다 */
-const RETIRING_OPS: ReadonlySet<string> = new Set(["cut", "carve", "merge", "unmerge", "split_table_rows", "merge_table_rows", "set_layout_table"]);
+const RETIRING_OPS: ReadonlySet<string> = new Set(["cut", "carve", "merge", "unmerge", "split_table_rows", "merge_table_rows", "set_layout_table", "attach_caption", "detach_caption"]);
 
 // 한 단으로 연 New 문서에서 연 우클릭 메뉴의 줄 키 자리 - 그 문서에는 줄이 없다
 const SOLO_ROW_KEY = "solo";
@@ -858,17 +858,53 @@ export default function AssignPage() {
     return holder !== null && (holder.kind === "table" || holder.kind === "table_row") ? holder : null;
   }
 
+  /** 그 단위가 속한 묶음(표·행·그림) - 묶음이면 그 단위, 칸 문장·캡션이면 묶인 묶음, 아니면 null */
+  function findBundleOf(unit: ViewUnit | null): ViewUnit | null {
+    if (!unit || !shapeModel) return null;
+    if (isBundleKind(unit.kind)) return unit;
+    const holder = unit.group_unit_id !== null ? shapeModel.units.get(unit.group_unit_id) : undefined;
+    return holder && isBundleKind(holder.kind) ? holder : null;
+  }
+
+  /** 묶음 자리의 단위 id - 행으로 나눈 표는 모든 행이 한 자리다(서버 _find_bundle_neighbors와 같다) */
+  function listBundleSpan(bundle: ViewUnit): Set<number> {
+    if (bundle.kind !== "table_row" || !shapeModel) return new Set([bundle.id]);
+    return new Set([...shapeModel.units.values()].filter((unit) => unit.kind === "table_row" && unit.table_id === bundle.table_id).map((unit) => unit.id));
+  }
+
+  /** 묶음에 이미 있는 캡션의 언어 - 행으로 나눈 표의 캡션은 첫 행에 딸린다 */
+  function listCaptionLangs(bundle: ViewUnit): string[] {
+    if (!shapeModel) return [];
+    const span = listBundleSpan(bundle);
+    return [...shapeModel.units.values()].filter((unit) => unit.kind === "caption" && unit.group_unit_id !== null && span.has(unit.group_unit_id)).map((unit) => unit.lang);
+  }
+
+  /** 용지 순서로 바로 앞·뒤 단위 - 묶음은 칸 문장·캡션까지 한 덩어리로 보고 그 앞·뒤(캡션으로 붙일 글을 찾는 자리) */
+  function findNeighbors(target: ViewUnit): { prev: ViewUnit | null; next: ViewUnit | null } {
+    if (!shapeTabs || !shapeModel) return { prev: null, next: null };
+    const order = shapeTabs.order;
+    const isBundle = isBundleKind(target.kind);
+    const span = isBundle ? listBundleSpan(target) : new Set([target.id]);
+    const inside = order.flatMap((id, index) => {
+      const unit = shapeModel.units.get(id);
+      return unit && (span.has(id) || (isBundle && unit.group_unit_id !== null && span.has(unit.group_unit_id))) ? [index] : [];
+    });
+    if (inside.length === 0) return { prev: null, next: null };
+    return { prev: shapeModel.units.get(order[Math.min(...inside) - 1]) ?? null, next: shapeModel.units.get(order[Math.max(...inside) + 1]) ?? null };
+  }
+
   /** 그 단위에 할 수 있는 일과 못 하는 까닭 - 우클릭 메뉴와 오른쪽 칸의 다듬기 줄이 같은 답을 쓴다 */
   function buildUnitMenu(target: ViewUnit): AssignMenuGroups | null {
     if (!shapeTabs || !shapeModel) return null;
-    const order = shapeTabs.order;
-    const at = order.indexOf(target.id);
-    const neighbor = (step: number) => (at < 0 ? null : (shapeModel.units.get(order[at + step]) ?? null));
+    const { prev, next } = findNeighbors(target);
     const table = findTableOf(target);
     return buildAssignMenu({
       target,
-      prev: neighbor(-1),
-      next: neighbor(1),
+      prev,
+      next,
+      prevBundle: findBundleOf(prev),
+      nextBundle: findBundleOf(next),
+      listCaptionLangs,
       readOnly: !canEdit,
       rowStatus: row?.status ?? "unassigned",
       isDecided: isUnitDecided,
@@ -894,7 +930,12 @@ export default function AssignPage() {
   // 새 문서 자리로 보내는 표·그림에 캡션이 없으면 Confirm이 꺼진다(명세 §3.4) - 캡션은 Edit and confirm에서 써 넣는다
   const isCaptionGateOn = row !== null && paperModel !== null && oldView?.document.id === row.documentId && isCaptionGate(row, destination, paperModel.units, draft, groupData);
   // 오른쪽 칸 1번(다듬기) - 고른 줄의 문장마다 할 수 있는 일. 우클릭 메뉴와 같은 답이다. 고칠 수 없는 사람에게는 줄을 보이지 않는다
-  const shapeLines: ShapeLine[] = canEdit && mode === "old" ? rowViewUnits.flatMap((unit) => { const menu = buildUnitMenu(unit); return menu ? [{ unit, items: menu.edit }] : []; }) : [];
+  // 표·그림 줄이면 그 묶음의 캡션도 문장처럼 한 줄씩(언어 세 칸·자르기·캡션 떼기) - 용지 순서대로(캡션이 위면 위에)
+  const rowBundleSpan = new Set(rowViewUnits.filter((unit) => isBundleKind(unit.kind)).map((unit) => unit.id));
+  const rowCaptionUnits = hasSolo || rowBundleSpan.size === 0 ? [] : [...(paperModel?.units.values() ?? [])].filter((unit) => unit.kind === "caption" && unit.group_unit_id !== null && rowBundleSpan.has(unit.group_unit_id));
+  const shapeOrder = shapeTabs?.order ?? [];
+  const shapeUnits = rowCaptionUnits.length === 0 ? rowViewUnits : [...rowViewUnits, ...rowCaptionUnits].sort((a, b) => shapeOrder.indexOf(a.id) - shapeOrder.indexOf(b.id));
+  const shapeLines: ShapeLine[] = canEdit && mode === "old" ? shapeUnits.flatMap((unit) => { const menu = buildUnitMenu(unit); return menu ? [{ unit, items: menu.edit }] : []; }) : [];
   // 고른 줄이 한/영 짝이거나 합친 한 문장이면 둘 사이를 바꾸는 전환을 다듬기에 둔다
   const shapeMode = shapeLines.length > 0 ? planShapeMode(rowViewUnits, shapeTabs?.order ?? [], hasUnitDraft) : null;
   const stepBase = shapeLines.length > 0 ? 1 : 0;
@@ -1181,6 +1222,14 @@ export default function AssignPage() {
     } else if (action === "table_rows" && table) void runUnitEdit({ type: "split_table_rows", table_unit_id: table.id }, t("split.didSplit"), null);
     else if (action === "table_merge" && table && table.table_id !== null) void runUnitEdit({ type: "merge_table_rows", table_id: table.table_id }, t("split.didMerge"), null);
     else if (action === "table_layout" && table && table.table_id !== null) void runUnitEdit({ type: "set_layout_table", table_id: table.table_id, is_layout: true }, t("common.saved"), null);
+    else if (action === "caption_attach_prev" || action === "caption_attach_next") {
+      // 같은 일, 대상에 따라 짝이 바뀐다 - 묶음 대상이면 이웃 글을, 글 대상이면 이웃 묶음에 붙인다. 붙인 뒤 묶음 줄을 고른다
+      const neighbor = findNeighbors(target)[action === "caption_attach_prev" ? "prev" : "next"];
+      const isBundle = isBundleKind(target.kind);
+      const text = isBundle ? neighbor : target;
+      const holder = isBundle ? target : findBundleOf(neighbor);
+      if (text && holder) void runUnitEdit({ type: "attach_caption", unit_id: text.id, bundle_unit_id: holder.id }, t("assign.ctx.didAttachCaption"), holder.id);
+    } else if (action === "caption_detach" && target.group_unit_id !== null) void runUnitEdit({ type: "detach_caption", unit_id: target.id }, t("assign.ctx.didDetachCaption"), target.group_unit_id);
     else if (action === "lang" && lang && target.lang === "ref") void runUnitEdit({ type: "clear_ref", unit_id: target.id }, t("common.saved"), target.id, false, lang);
     else if (action === "lang" && lang) void runUnitEdit({ type: "set_language", unit_ids: [target.id], lang }, t("common.saved"), target.id);
   }

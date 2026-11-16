@@ -443,6 +443,10 @@ export type EditOp =
   | { type: "split_table_rows"; table_unit_id: number }
   | { type: "merge_table_rows"; table_id: number }
   | { type: "set_layout_table"; table_id: number; is_layout: boolean }
+  /** 바로 이웃한 묶이지 않은 글 단위를 표·행·그림의 캡션으로 - 묶음마다 언어당 하나(caption_exists), 판단이 있는 묶음이면 서버가 묻는다 */
+  | { type: "attach_caption"; unit_id: number; bundle_unit_id: number }
+  /** 캡션을 같은 자리·언어의 묶이지 않은 문장으로 */
+  | { type: "detach_caption"; unit_id: number }
   /** 참조 줄로 - 번호는 그 단위의 글 안에 있어야 한다. 이미 참조 줄이면 번호만 고친다 */
   | { type: "set_ref"; unit_id: number; number: string }
   /** 참조 아님 - 참조 줄이면 그 전 언어로 돌리고, 제안뿐이었으면 다시 제안하지 않는다 */

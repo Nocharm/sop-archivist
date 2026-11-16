@@ -889,6 +889,86 @@ await runStep("split rows of a table, then assign a row as a table", { allowCons
   check("a table row confirms as a one-row table", true);
 });
 
+// 캡션 없는 표 바로 앞 문장을 Shape에서 붙였다 떼고, 되돌리기 두 번으로 처음대로 둔다 - 다음 단계가 같은 표에 캡션을 써 넣는다
+await runStep("assign: attach and detach a caption from Shape", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}${path}`, { headers })).json();
+  const units = (await getJson("/units?limit=1000")).items;
+  const captioned = new Set(units.filter((unit) => unit.kind === "caption").map((unit) => unit.group_unit_id));
+  const table = units.find((unit) => unit.kind === "table" && unit.status === "unassigned" && !captioned.has(unit.unit_id) && !unit.has_caption_target);
+  check("the half bundle has an unassigned table without a caption", Boolean(table), table?.display_id);
+  if (!table) return;
+  // 그 표가 든 Old 문서와 표 바로 앞 단위(칸 문장·캡션은 표 자리로 친다)
+  let doc = null;
+  let sentence = null;
+  let figure = null;
+  for (const candidate of (await getJson("/documents")).filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await getJson(`/documents/${candidate.id}/view`);
+    if (!view.units.some((unit) => unit.id === table.unit_id)) continue;
+    const ordered = [...view.units].filter((unit) => unit.kind !== "table_row" || unit.spans.length > 0).sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0) || a.id - b.id);
+    const first = ordered.findIndex((unit) => unit.id === table.unit_id || unit.group_unit_id === table.unit_id);
+    doc = candidate;
+    sentence = ordered[first - 1] ?? null;
+    figure = view.units.find((unit) => unit.kind === "figure") ?? null;
+  }
+  check("a free sentence sits right above the table", sentence !== null && sentence.kind === "sentence" && sentence.group_unit_id === null, sentence?.text);
+  if (!doc || !sentence) return;
+  const captionsOf = async () => (await getJson(`/documents/${doc.id}/view`)).units.filter((unit) => unit.kind === "caption" && unit.group_unit_id === table.unit_id);
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await selectRowById(page, table.display_id);
+  // 우클릭도 같은 항목 - 글에서는 "아래 표의 캡션으로 쓰기", 그림에서는 문장 메뉴가 아닌 묶음 메뉴(언어 줄 없음)
+  const sentencePiece = page.locator(`[data-testid="assign-paper-unit-${sentence.id}"]`).first();
+  await sentencePiece.scrollIntoViewIfNeeded();
+  await sentencePiece.click({ button: "right" });
+  await wait(page, "assign-ctx-caption_attach_next");
+  check("right-click on the sentence offers Use as caption of the table below", (await page.locator('[data-testid="assign-ctx-caption_attach_next"]').innerText()).includes("Use as caption of the table below"));
+  await page.keyboard.press("Escape");
+  if (figure) {
+    const figurePiece = page.locator(`[data-testid="assign-paper-piece-${figure.id}"]`).first();
+    await figurePiece.scrollIntoViewIfNeeded();
+    await figurePiece.click({ button: "right" });
+    await wait(page, "assign-ctx-menu");
+    check("right-click on a figure opens the bundle menu, not the sentence menu", (await page.locator('[data-testid="assign-ctx-lang"], [data-testid="assign-ctx-split"]').count()) === 0);
+    await page.keyboard.press("Escape");
+  }
+  await selectRowById(page, table.display_id);
+  const tableLine = page.locator(`[data-testid="assign-shape-line-${table.unit_id}"]`);
+  await tableLine.waitFor({ timeout: T });
+  check("Shape offers no attach below when a figure follows the table", (await page.locator(`[data-testid="assign-shape-caption_attach_next-${table.unit_id}"]`).count()) === 0);
+  await tableLine.hover();
+  const attach = page.locator(`[data-testid="assign-shape-caption_attach_prev-${table.unit_id}"]`);
+  check("Shape offers Attach the sentence above as caption", (await attach.getAttribute("aria-label")) === "Attach the sentence above as caption", await attach.getAttribute("aria-label"));
+  await attach.click();
+  await page.locator('[data-testid="toast-ok"]', { hasText: "Caption attached" }).first().waitFor({ timeout: T });
+  const [caption] = await captionsOf();
+  check("the sentence becomes the table's caption", caption?.text === sentence.text, caption?.text);
+  if (!caption) return;
+  const head = page.locator(`[data-testid="assign-paper-caption-${table.unit_id}"]`);
+  await head.waitFor({ timeout: T });
+  check("the table head shows the sentence as its caption", (await head.innerText()).includes(sentence.text.slice(0, 10)), await head.innerText());
+  check("Caption needed is gone", (await page.locator(`[data-testid="assign-paper-caption-missing-${table.unit_id}"]`).count()) === 0);
+  // 캡션은 Shape에서 문장처럼 한 줄 - 언어 세 칸과 떼기 단추
+  const captionLine = page.locator(`[data-testid="assign-shape-line-${caption.id}"]`);
+  await captionLine.waitFor({ timeout: T });
+  check("the caption has its own Shape line with KO | EN | REF", (await page.locator(`[data-testid="assign-shape-lang-${caption.id}"] button`).count()) === 3);
+  await captionLine.hover();
+  await takeShot("sop-assign-caption-shape.png");
+  await page.locator(`[data-testid="assign-shape-caption_detach-${caption.id}"]`).click();
+  await page.locator('[data-testid="toast-ok"]', { hasText: "Caption detached" }).first().waitFor({ timeout: T });
+  await page.locator(`[data-testid="assign-paper-caption-missing-${table.unit_id}"]`).waitFor({ timeout: T });
+  check("after Detach caption the head says Caption needed again", (await captionsOf()).length === 0);
+  // 되돌리기 - 떼기를 되돌리면 캡션이 돌아오고, 붙이기까지 되돌리면 처음처럼 캡션이 없다
+  await page.waitForLoadState("networkidle");
+  await page.locator('[data-testid="assign-undo"]').click();
+  await head.waitFor({ timeout: T });
+  check("Undo brings the caption back", (await captionsOf()).length === 1);
+  await page.waitForLoadState("networkidle");
+  await page.locator('[data-testid="assign-undo"]').click();
+  await page.locator(`[data-testid="assign-paper-caption-missing-${table.unit_id}"]`).waitFor({ timeout: T });
+  check("Undo again leaves the table without a caption, as it was", (await captionsOf()).length === 0);
+});
+
 await runStep("assign: a bundle without a caption cannot be confirmed until one is written", {}, async ({ page, takeShot }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}${path}`, { headers })).json();
