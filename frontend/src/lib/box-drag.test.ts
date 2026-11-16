@@ -209,6 +209,64 @@ describe("attachBoxDrag", () => {
     target.remove();
   });
 
+  it("blur mid-drag cancels it and swallows the following click", async () => {
+    const config = attach();
+    const clicks = vi.fn();
+    document.body.addEventListener("click", clicks);
+    press(box);
+    move(30, 10);
+    window.dispatchEvent(new Event("blur"));
+    expect(config.onEnd).toHaveBeenCalledTimes(1);
+    expect(config.onEnd).toHaveBeenCalledWith("src", true);
+    expect(config.onDrop).toHaveBeenCalledTimes(0);
+    expect(isBoxDragActive()).toBe(false);
+    expect(card()).toBeNull();
+    box.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    document.body.removeEventListener("click", clicks);
+    expect(clicks).toHaveBeenCalledTimes(0);
+    release(30, 10);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(config.onEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it("the document turning hidden mid-drag cancels it", () => {
+    const config = attach();
+    press(box);
+    move(30, 10);
+    const hidden = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    document.dispatchEvent(new Event("visibilitychange"));
+    hidden.mockRestore();
+    expect(config.onEnd).toHaveBeenCalledWith("src", true);
+    expect(isBoxDragActive()).toBe(false);
+    expect(card()).toBeNull();
+  });
+
+  it("blur or hiding before the threshold just drops the press", () => {
+    const config = attach();
+    press(box);
+    window.dispatchEvent(new Event("blur"));
+    move(30, 10);
+    expect(isBoxDragActive()).toBe(false);
+    expect(config.onStart).toHaveBeenCalledTimes(0);
+    expect(config.onEnd).toHaveBeenCalledTimes(0);
+  });
+
+  it("detach mid-drag cancels once and leaves no flag, card or listener", () => {
+    const config = attach();
+    press(box);
+    move(30, 10);
+    detach!();
+    detach = null;
+    expect(config.onEnd).toHaveBeenCalledTimes(1);
+    expect(config.onEnd).toHaveBeenCalledWith("src", true);
+    expect(isBoxDragActive()).toBe(false);
+    expect(card()).toBeNull();
+    move(50, 10);
+    release(50, 10);
+    expect(config.onDrop).toHaveBeenCalledTimes(0);
+    expect(card()).toBeNull();
+  });
+
   it("marks Alt select mode and keeps it while text is selected", () => {
     attach();
     key("keydown", "Alt");

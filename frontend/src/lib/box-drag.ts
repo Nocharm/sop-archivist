@@ -219,11 +219,17 @@ export function attachBoxDrag<S>(root: HTMLElement, config: BoxDragConfig<S>): (
       stop(false);
     };
     const handleCancel = () => stop(true);
+    // Alt-Tab이나 포커스 가로채기 뒤에는 pointerup이 오지 않는다 - 취소하지 않으면 user-select: none과 grabbing이 남는다
+    const handleHide = () => {
+      if (document.visibilityState === "hidden") stop(true);
+    };
 
     function stop(cancelled: boolean): void {
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", handleUp);
       window.removeEventListener("pointercancel", handleCancel);
+      window.removeEventListener("blur", handleCancel);
+      document.removeEventListener("visibilitychange", handleHide);
       window.removeEventListener("keydown", handleKey, true);
       window.removeEventListener("selectstart", block, true);
       window.removeEventListener("dragstart", block, true);
@@ -251,6 +257,8 @@ export function attachBoxDrag<S>(root: HTMLElement, config: BoxDragConfig<S>): (
     window.addEventListener("pointermove", handleMove);
     window.addEventListener("pointerup", handleUp);
     window.addEventListener("pointercancel", handleCancel);
+    window.addEventListener("blur", handleCancel);
+    document.addEventListener("visibilitychange", handleHide);
     window.addEventListener("keydown", handleKey, true);
     window.addEventListener("selectstart", block, true);
     window.addEventListener("dragstart", block, true);
