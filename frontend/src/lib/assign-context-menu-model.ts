@@ -187,7 +187,12 @@ export function buildAssignMenu(ctx: AssignMenuContext): AssignMenuGroups {
     const taken = ctx.captionBundle ? (ctx.listCaptionLangs?.(ctx.captionBundle) ?? []) : [];
     const langReasons: AssignMenuItem["langReasons"] = { ref: why("captionNoRef") };
     for (const lang of ["ko", "en"] as const) if (lang !== ctx.target.lang && taken.includes(lang)) langReasons[lang] = why("captionExists");
-    return { assign: [build("clear", clearReason)], edit: [splitItem, { ...langItem, langReasons }, build("caption_detach", detachReason)] };
+    // 나눈 두 조각도 캡션이다 - 한/영 한 줄 캡션을 한글·영어로 나누는 것만 된다(같은 언어 둘·다른 캡션과 겹침은 서버 caption_exists, split)
+    const others = [...taken];
+    others.splice(others.indexOf(ctx.target.lang), 1);
+    const isPairSplit = hasBothScripts(ctx.target.text) && !others.some((lang) => lang === "ko" || lang === "en");
+    const captionSplit = isPairSplit ? splitItem : build("split", retireReason ?? why("captionSplitOneLang"));
+    return { assign: [build("clear", clearReason)], edit: [captionSplit, { ...langItem, langReasons }, build("caption_detach", detachReason)] };
   }
   return {
     assign: [build("clear", clearReason)],

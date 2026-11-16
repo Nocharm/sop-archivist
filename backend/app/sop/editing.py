@@ -391,7 +391,25 @@ async def _plan_split(session: AsyncSession, extraction_id: ExtractionId, op: Sp
     left, right = cut_spans(spans, *located, _get_texts(blocks))
     if not left or not right:
         raise_rule(422, "empty_part", unit_id=unit.id)
-    return _build_replacement([unit], [_build_draft(unit, left, blocks), _build_draft(unit, right, blocks)])
+    drafts = [_build_draft(unit, left, blocks), _build_draft(unit, right, blocks)]
+    if unit.kind == CAPTION_KIND:
+        await _ensure_caption_split_languages(session, unit, [draft.lang for draft in drafts])
+    return _build_replacement([unit], drafts)
+
+
+async def _ensure_caption_split_languages(session: AsyncSession, unit: Unit, langs: list[str]) -> None:
+    """캡션을 나눈 두 조각도 캡션이라 묶음당 언어 하나 규칙을 지켜야 한다 — 같은 언어 둘이 되거나 묶음의 다른 캡션과 언어가 겹치면
+    422 caption_exists(reason split). 그대로 두면 묶음 저장이 같은 언어 캡션 둘을 받아 저장할 수 없다. 한/영 한 줄 캡션을 나누는 것만 된다."""
+    others = set(
+        await session.scalars(
+            select(Unit.lang).where(
+                Unit.group_unit_id == unit.group_unit_id, Unit.status == UNIT_ACTIVE, Unit.kind == CAPTION_KIND,
+                Unit.id != unit.id,
+            )
+        )
+    )
+    if len(set(langs)) < len(langs) or others & set(langs):
+        raise_rule(422, "caption_exists", unit_ids=[unit.id], reason="split")
 
 
 async def _plan_merge(session: AsyncSession, extraction_id: ExtractionId, op: MergeOp) -> _Change:

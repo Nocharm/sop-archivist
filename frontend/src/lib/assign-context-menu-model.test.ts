@@ -247,6 +247,17 @@ describe("captions from the Assign menu", () => {
     expect(find(ctx({ target: caption, captionBundle: table, listCaptionLangs: () => ["ko"] }), "lang").langReasons).toEqual({ ref: "assign.ctx.why.captionNoRef" });
   });
 
+  it("splits a caption only between its Korean and English text, and only when no other caption has either language", () => {
+    const bilingual = { ...caption, text: "표 1. 운전 조건 Table 1. Run conditions" };
+    expect(find(ctx({ target: bilingual, captionBundle: table, listCaptionLangs: () => ["ko"] }), "split").enabled).toBe(true);
+    // 한 언어뿐인 캡션은 나누면 같은 언어 캡션 둘이 된다 - 꺼 두고(다듬기에도 흐리게 보인다) 까닭을 단다
+    const oneLang = ctx({ target: { ...caption, text: "표 1. 운전 조건" }, captionBundle: table, listCaptionLangs: () => ["ko"] });
+    expect(find(oneLang, "split").reasonKey).toBe("assign.ctx.why.captionSplitOneLang");
+    expect(listShapeLineItems(caption, buildAssignMenu(oneLang).edit, false).map((item) => item.action)).toContain("split");
+    // 묶음에 영어 캡션이 따로 있으면 한/영 캡션을 나눈 영어 조각이 겹친다
+    expect(find(ctx({ target: bilingual, captionBundle: table, listCaptionLangs: () => ["ko", "en"] }), "split").reasonKey).toBe("assign.ctx.why.captionSplitOneLang");
+  });
+
   it("keeps the sentence tools on a caption but no joins, pairing or reference", () => {
     expect(buildAssignMenu(ctx({ target: caption })).edit.map((item) => item.action)).toEqual(["split", "lang", "caption_detach"]);
   });

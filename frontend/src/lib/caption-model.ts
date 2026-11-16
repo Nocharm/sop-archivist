@@ -33,6 +33,8 @@ export interface CaptionUnit {
 
 /** 묶음 캡션 하나 - 캡션 단위가 출처이거나, 출처 없이 써 넣은 글(unitId null) */
 export interface CaptionSource {
+  /** 고친 글 초안(captionTexts)의 키 - getCaptionTextKey */
+  key: string;
   unitId: number | null;
   lang: UnitLang;
   text: string;
@@ -49,6 +51,20 @@ export interface CaptionPlan extends CaptionSource {
 
 type CaptionDraft = Pick<RowDraft, "captionTexts"> | undefined;
 
+/**
+ * 캡션 글 초안(RowDraft.captionTexts)의 키 - 캡션 단위가 있으면 그 단위(같은 언어 캡션이 둘이거나 줄에 묶음이 여럿이어도 겹치지 않게),
+ * 써 넣은 캡션은 묶음과 언어(묶음마다 언어당 하나).
+ */
+export function getCaptionTextKey(bundleId: number, unitId: number | null, lang: string): string {
+  return unitId !== null ? `u${unitId}` : `w${bundleId}:${lang}`;
+}
+
+/** 이 묶음에 써 넣는 캡션 초안의 언어들 */
+function listWrittenDraftLangs(bundleId: number, captionTexts: Readonly<Record<string, string>>): UnitLang[] {
+  const prefix = `w${bundleId}:`;
+  return Object.keys(captionTexts).filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length) as UnitLang);
+}
+
 /** 묶음 단위의 표·그림 새 문장(줄로 만든 것) 아래 캡션 새 문장 - 칸 좌표가 없는 자식 문장(서버 captions.is_caption_target) */
 export function listCaptionChildren(group: Group | null, bundleId: number): GroupTarget[] {
   const targets = group?.targets ?? [];
@@ -61,21 +77,23 @@ export function listCaptionChildren(group: Group | null, bundleId: number): Grou
  * 저장할 캡션들. 캡션 단위가 있으면 단위마다 하나(글은 사람이 고친 글, 비웠거나 안 고쳤으면 지금 캡션 새 문장의 글, 없으면 원문).
  * 캡션 단위가 없으면 써 넣은 캡션 - 저장된 것과 이번에 쓴 언어마다 하나, 글이 빈 것은 뺀다.
  */
-export function planCaptions(units: readonly CaptionUnit[], children: readonly GroupTarget[], captionTexts: Readonly<Record<string, string>> = {}): CaptionPlan[] {
+export function planCaptions(bundleId: number, units: readonly CaptionUnit[], children: readonly GroupTarget[], captionTexts: Readonly<Record<string, string>> = {}): CaptionPlan[] {
   if (units.length > 0) {
     return units.map((unit) => {
+      const key = getCaptionTextKey(bundleId, unit.id, unit.lang);
       const target = children.find((child) => child.source_unit_ids.includes(unit.id)) ?? null;
       const current = target ? target.confirmed_text || target.ai_text || unit.text : unit.text;
-      const edited = (captionTexts[unit.lang] ?? "").trim();
-      return { unitId: unit.id, lang: unit.lang, text: edited || current.trim(), target, sourceText: unit.text, isEdited: edited !== "" };
+      const edited = (captionTexts[key] ?? "").trim();
+      return { key, unitId: unit.id, lang: unit.lang, text: edited || current.trim(), target, sourceText: unit.text, isEdited: edited !== "" };
     });
   }
   const written = children.filter((child) => child.source_unit_ids.length === 0);
-  const langs = [...new Set([...written.map((child) => child.lang), ...(Object.keys(captionTexts) as UnitLang[])])];
+  const langs = [...new Set([...written.map((child) => child.lang), ...listWrittenDraftLangs(bundleId, captionTexts)])];
   return langs
     .map((lang) => {
+      const key = getCaptionTextKey(bundleId, null, lang);
       const target = written.find((child) => child.lang === lang) ?? null;
-      return { unitId: null, lang, text: (captionTexts[lang] ?? target?.confirmed_text ?? "").trim(), target, sourceText: null, isEdited: captionTexts[lang] !== undefined };
+      return { key, unitId: null, lang, text: (captionTexts[key] ?? target?.confirmed_text ?? "").trim(), target, sourceText: null, isEdited: captionTexts[key] !== undefined };
     })
     .filter((plan) => plan.text !== "");
 }
@@ -86,7 +104,7 @@ function listBoundCaptions(bundleId: number, units: Iterable<ViewUnit>): ViewUni
 
 /** 묶음의 캡션 출처 - 묶인 캡션 단위(고친 글), 단위가 없으면 써 넣은 글(unitId null) */
 export function listCaptionSources(bundle: ViewUnit, units: readonly ViewUnit[], draft: CaptionDraft, group: Group | null = null): CaptionSource[] {
-  return planCaptions(listBoundCaptions(bundle.id, units), listCaptionChildren(group, bundle.id), draft?.captionTexts).map(({ unitId, lang, text }) => ({ unitId, lang, text }));
+  return planCaptions(bundle.id, listBoundCaptions(bundle.id, units), listCaptionChildren(group, bundle.id), draft?.captionTexts).map(({ key, unitId, lang, text }) => ({ key, unitId, lang, text }));
 }
 
 /** 캡션을 써 넣을 언어 - 묶음 바로 앞 한국어·영어 글 단위의 언어, 없으면 한국어 */
@@ -103,10 +121,13 @@ export function listCaptionFields(bundle: ViewUnit, units: readonly ViewUnit[], 
   const texts = draft?.captionTexts ?? {};
   const bound = listBoundCaptions(bundle.id, units);
   const children = listCaptionChildren(group, bundle.id);
-  if (bound.length > 0) return planCaptions(bound, children).map(({ unitId, lang, text }) => ({ unitId, lang, text: texts[lang] ?? text }));
+  if (bound.length > 0) return planCaptions(bundle.id, bound, children).map(({ key, unitId, lang, text }) => ({ key, unitId, lang, text: texts[key] ?? text }));
   const written = children.filter((child) => child.source_unit_ids.length === 0);
-  const langs = [...new Set([...(written.length > 0 ? written.map((child) => child.lang) : [pickCaptionLang(bundle, units)]), ...(Object.keys(texts) as UnitLang[])])];
-  return langs.map((lang) => ({ unitId: null, lang, text: texts[lang] ?? written.find((child) => child.lang === lang)?.confirmed_text ?? "" }));
+  const langs = [...new Set([...(written.length > 0 ? written.map((child) => child.lang) : [pickCaptionLang(bundle, units)]), ...listWrittenDraftLangs(bundle.id, texts)])];
+  return langs.map((lang) => {
+    const key = getCaptionTextKey(bundle.id, null, lang);
+    return { key, unitId: null, lang, text: texts[key] ?? written.find((child) => child.lang === lang)?.confirmed_text ?? "" };
+  });
 }
 
 /** Confirm을 막는가 - 새 문서 자리로 보내는 줄의 표·행·그림에 캡션이 하나도 없다. 삭제·이동·보류·입구 2 잇기는 막지 않는다 */
@@ -115,7 +136,7 @@ export function isCaptionGate(row: ClassifyRow, destination: Destination | null,
   return row.unitIds.some((id) => {
     const unit = units.get(id);
     if (!unit || !isBundleKind(unit.kind)) return false;
-    return planCaptions(listBoundCaptions(id, units.values()), listCaptionChildren(group, id), draft?.captionTexts).length === 0;
+    return planCaptions(id, listBoundCaptions(id, units.values()), listCaptionChildren(group, id), draft?.captionTexts).length === 0;
   });
 }
 

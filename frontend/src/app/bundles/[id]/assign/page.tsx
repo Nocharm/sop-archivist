@@ -2432,7 +2432,7 @@ export default function AssignPage() {
     <>
       {editing
         ? captionFields.map((field, index) => (
-            <label key={field.lang} className="grid gap-1">
+            <label key={field.key} className="grid gap-1">
               <span className="flex items-center gap-1.5 text-xs text-ink-2">
                 <LangToken lang={field.lang} />
                 {t(field.unitId === null ? "assign.caption.write" : "assign.caption.label")}
@@ -2444,14 +2444,14 @@ export default function AssignPage() {
                 style={{ fontFamily: field.lang === "en" ? "var(--font-source-en)" : "var(--font-source)" }}
                 data-testid={`assign-caption-text-${field.lang}`}
                 value={field.text}
-                onChange={(event) => setDraft({ captionTexts: { ...(draft.captionTexts ?? {}), [field.lang]: event.target.value } }, true)}
+                onChange={(event) => setDraft({ captionTexts: { ...(draft.captionTexts ?? {}), [field.key]: event.target.value } }, true)}
               />
             </label>
           ))
         : captionFields
             .filter((field) => field.text.trim())
             .map((field) => (
-              <div key={field.lang} className="chosen-line">
+              <div key={field.key} className="chosen-line">
                 <LangToken lang={field.lang} />
                 <span className="min-w-0 flex-1 text-[13px] leading-5 text-ink" style={{ fontFamily: field.lang === "en" ? "var(--font-source-en)" : "var(--font-source)" }}>
                   <Truncate text={field.text} lang={field.lang === "neutral" ? undefined : field.lang} testId={`assign-caption-${field.lang}`} />

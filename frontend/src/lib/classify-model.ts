@@ -220,7 +220,7 @@ export interface RowDraft {
   linkChangeTypes?: Record<number, ChangeTypeInput | null>;
   /** 사람이 직접 쓰는 다른 언어 문장 칸 - 한 언어만 있는 줄에서 연다(buildSentenceSlots의 extra) */
   otherLang?: OtherLangSlot | null;
-  /** 표·그림 캡션의 언어별 글 - 캡션 단위의 고친 글, 캡션 단위가 없으면 써 넣은 캡션(caption-model planCaptions) */
+  /** 표·그림 캡션의 글 - 키는 caption-model getCaptionTextKey(캡션 단위의 고친 글은 단위, 써 넣은 캡션은 묶음·언어) */
   captionTexts?: Record<string, string>;
   reason: string;
   moveCode: string;
@@ -502,10 +502,10 @@ export function buildGroupSave(draft: RowDraft, context: SaveContext, action: "c
   /** 표·그림 새 문장 아래 캡션 새 문장 - 칸 새 문장처럼 같은 자리에, 기존 것이면 id·revision을 되보낸다(F3) */
   function pushCaptions(parentKey: string, unitId: number, place: ReturnType<typeof placeTarget>) {
     const children = listCaptionChildren(context.group, unitId);
-    const plans = planCaptions(context.captions?.get(unitId) ?? [], children, draft.captionTexts);
+    const plans = planCaptions(unitId, context.captions?.get(unitId) ?? [], children, draft.captionTexts);
     for (const plan of plans) {
       if (plan.target) kept.add(plan.target.id);
-      const base = { key: `${parentKey}-cap-${plan.lang}`, ...(plan.target ? { id: plan.target.id, revision: plan.target.revision } : {}), ...place, kind: "sentence" as const, parent_key: parentKey, source_unit_ids: plan.unitId !== null ? [plan.unitId] : [] };
+      const base = { key: `${parentKey}-cap-${plan.unitId ?? plan.lang}`, ...(plan.target ? { id: plan.target.id, revision: plan.target.revision } : {}), ...place, kind: "sentence" as const, parent_key: parentKey, source_unit_ids: plan.unitId !== null ? [plan.unitId] : [] };
       // 손대지 않은 AI 제안 캡션은 문장 칸처럼 글·종류를 비워 보낸다 - 서버가 제안 그대로 받는다(채택 판정이 사람의 고쳐 씀으로 남기지 않게)
       if (plan.target?.status === "ai_suggested" && !plan.isEdited) {
         targets.push(base);

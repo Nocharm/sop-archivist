@@ -48,14 +48,14 @@ describe("isCaptionGate", () => {
   it("gates confirm for an assigned figure without any caption", () => {
     expect(isCaptionGate(figureRow, placeDest, units({ 9: { kind: "figure" } }), undefined)).toBe(true);
     expect(isCaptionGate(figureRow, deleteDest, units({ 9: { kind: "figure" } }), undefined)).toBe(false);
-    expect(isCaptionGate(figureRow, placeDest, units({ 9: { kind: "figure" } }), draftWith({ captionTexts: { ko: "로터" } }))).toBe(false);
+    expect(isCaptionGate(figureRow, placeDest, units({ 9: { kind: "figure" } }), draftWith({ captionTexts: { "w9:ko": "로터" } }))).toBe(false);
   });
 
   it("lets a figure with a bound caption unit or a saved written caption through, and ignores sentences and links", () => {
     expect(isCaptionGate(figureRow, placeDest, units({ 9: { kind: "figure" }, 10: { kind: "caption", group_unit_id: 9, text: "그림 1" } }), undefined)).toBe(false);
     const group: Group = { units: [], targets: [makeTarget({ id: 50, kind: "figure", source_unit_ids: [9] }), makeTarget({ id: 51, parent_target_id: 50, confirmed_text: "쓴 캡션" })] };
     expect(isCaptionGate(figureRow, placeDest, units({ 9: { kind: "figure" } }), undefined, group)).toBe(false);
-    expect(isCaptionGate(figureRow, placeDest, units({ 9: { kind: "figure" } }), draftWith({ captionTexts: { ko: "   " } }))).toBe(true);
+    expect(isCaptionGate(figureRow, placeDest, units({ 9: { kind: "figure" } }), draftWith({ captionTexts: { "w9:ko": "   " } }))).toBe(true);
     expect(isCaptionGate(figureRow, placeDest, units({ 9: { kind: "sentence" } }), undefined)).toBe(false);
     expect(isCaptionGate(figureRow, { kind: "link", targetIds: [70] }, units({ 9: { kind: "figure" } }), undefined)).toBe(false);
   });
@@ -65,7 +65,7 @@ describe("isCaptionGate", () => {
     const dropped = { captionTexts: {}, position: { placeId: "slot:6:scope", after: 70 } };
     expect(isCaptionGate(tableRow, placeDest, units({ 8: { kind: "table" } }), dropped)).toBe(true);
     expect(isCaptionGate(tableRow, placeDest, units({ 8: { kind: "table" }, 12: { kind: "caption", group_unit_id: 8, text: "표 1" } }), dropped)).toBe(false);
-    expect(isCaptionGate(tableRow, placeDest, units({ 8: { kind: "table" } }), { ...dropped, captionTexts: { ko: "운전 조건" } })).toBe(false);
+    expect(isCaptionGate(tableRow, placeDest, units({ 8: { kind: "table" } }), { ...dropped, captionTexts: { "w8:ko": "운전 조건" } })).toBe(false);
   });
 });
 
@@ -73,15 +73,15 @@ describe("listCaptionSources", () => {
   const view = [makeUnit(9, { kind: "table" }), makeUnit(10, { kind: "caption", group_unit_id: 9, lang: "ko", text: "표 1. 운전 조건" }), makeUnit(11, { kind: "caption", group_unit_id: 9, lang: "en", text: "Table 1. Run" })];
 
   it("reads bound caption units, with the text the person rewrote", () => {
-    expect(listCaptionSources(view[0], view, draftWith({ captionTexts: { en: "Table 1. Run conditions" } }))).toEqual([
-      { unitId: 10, lang: "ko", text: "표 1. 운전 조건" },
-      { unitId: 11, lang: "en", text: "Table 1. Run conditions" },
+    expect(listCaptionSources(view[0], view, draftWith({ captionTexts: { u11: "Table 1. Run conditions" } }))).toEqual([
+      { key: "u10", unitId: 10, lang: "ko", text: "표 1. 운전 조건" },
+      { key: "u11", unitId: 11, lang: "en", text: "Table 1. Run conditions" },
     ]);
   });
 
   it("takes a written caption without a source when the bundle has no caption unit", () => {
     const bare = [makeUnit(9, { kind: "figure" })];
-    expect(listCaptionSources(bare[0], bare, draftWith({ captionTexts: { ko: " 로터 " } }))).toEqual([{ unitId: null, lang: "ko", text: "로터" }]);
+    expect(listCaptionSources(bare[0], bare, draftWith({ captionTexts: { "w9:ko": " 로터 " } }))).toEqual([{ key: "w9:ko", unitId: null, lang: "ko", text: "로터" }]);
     expect(listCaptionSources(bare[0], bare, undefined)).toEqual([]);
   });
 });
@@ -89,13 +89,18 @@ describe("listCaptionSources", () => {
 describe("listCaptionFields", () => {
   it("opens one Write a caption field in the language of the sentence before the bundle", () => {
     const view = [makeUnit(1, { lang: "en", text: "See below." }), makeUnit(2, { kind: "figure", lang: "neutral" })];
-    expect(listCaptionFields(view[1], view, undefined)).toEqual([{ unitId: null, lang: "en", text: "" }]);
+    expect(listCaptionFields(view[1], view, undefined)).toEqual([{ key: "w2:en", unitId: null, lang: "en", text: "" }]);
     expect(pickCaptionLang(makeUnit(2, { kind: "figure" }), [makeUnit(2, { kind: "figure" })])).toBe("ko");
   });
 
   it("keeps a field for each bound caption language, even while it is emptied", () => {
     const view = [makeUnit(9, { kind: "table" }), makeUnit(10, { kind: "caption", group_unit_id: 9, lang: "ko", text: "표 1" })];
-    expect(listCaptionFields(view[0], view, draftWith({ captionTexts: { ko: "" } }))).toEqual([{ unitId: 10, lang: "ko", text: "" }]);
+    expect(listCaptionFields(view[0], view, draftWith({ captionTexts: { u10: "" } }))).toEqual([{ key: "u10", unitId: 10, lang: "ko", text: "" }]);
+  });
+
+  it("keeps two same-language caption units apart - each keeps its own edited text", () => {
+    const view = [makeUnit(9, { kind: "table" }), makeUnit(10, { kind: "caption", group_unit_id: 9, lang: "ko", text: "표 1." }), makeUnit(11, { kind: "caption", group_unit_id: 9, lang: "ko", text: "운전 조건" })];
+    expect(listCaptionSources(view[0], view, draftWith({ captionTexts: { u11: "운전 조건표" } })).map((source) => [source.key, source.text])).toEqual([["u10", "표 1."], ["u11", "운전 조건표"]]);
   });
 });
 

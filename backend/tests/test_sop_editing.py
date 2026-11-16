@@ -742,7 +742,7 @@ def test_split_caption_keeps_both_pieces_on_the_bundle(client: TestClient) -> No
 
 
 def test_set_language_refuses_a_second_caption_in_one_language(client: TestClient) -> None:
-    """나누기는 같은 언어 조각 둘을 남길 수 있지만(계획대로) 언어 바꾸기로 묶음당 언어 하나를 깨지는 않는다."""
+    """한/영으로 나눈 캡션의 한글 조각을 영어로 바꾸면 묶음당 언어 하나를 깬다."""
     fx, _, caption = _setup_figure(client)
     result = _ok(_split(client, fx, caption, FIGURE_CAPTION.index("(Figure")))
     korean = next(unit for unit in _created_units(client, fx, result) if unit["lang"] == "ko")
@@ -750,6 +750,18 @@ def test_set_language_refuses_a_second_caption_in_one_language(client: TestClien
     response = _set_language(client, fx.bundle_id, fx.doc["id"], [korean], "en")
 
     assert _code(response) == (422, "caption_exists")
+
+
+def test_split_caption_into_one_language_is_rejected(client: TestClient) -> None:
+    """같은 언어 조각 둘은 둘 다 캡션이라 묶음 저장이 같은 언어 캡션 둘을 받게 된다 — 나누기에서 막는다(caption_exists, split)."""
+    fx, figure, caption = _setup_figure(client)
+
+    response = _split(client, fx, caption, FIGURE_CAPTION.index("로터"))
+
+    assert _code(response) == (422, "caption_exists")
+    assert response.json()["detail"]["reason"] == "split"
+    kept = find_unit(get_view(client, fx.bundle_id, fx.doc["id"]), FIGURE_CAPTION)
+    assert (kept["id"], kept["group_unit_id"]) == (caption["id"], figure["id"])
 
 
 def test_merge_caption_with_plain_sentence_is_rejected(client: TestClient) -> None:
