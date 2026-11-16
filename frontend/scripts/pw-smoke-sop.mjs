@@ -1514,7 +1514,9 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   check("Cancel in the menu drops the pick", !(await isPressed(tId)));
   // 놓은 뒤의 메뉴는 그 문장을 같은 자리에서 눌렀을 때와 같은 곳(이음 선 끝)에 뜬다 - 끈 줄은 고른 채다
   check("the dragged row stays picked after Cancel", (await pieceOf(bId).getAttribute("data-sel")) === "");
-  await page.mouse.click(onto.x, onto.y);
+  // 놓은 뒤·Cancel 뒤에 New 칸이 굴렀을 수 있다 - 낡은 좌표를 누르면 같은 문장의 다른 점이라 메뉴 자리가 다르다. 그 문장을 다시 가운데 두고 같은 점을 누른다
+  const ontoNow = await pointInLine(tId);
+  await page.mouse.click(ontoNow.x, ontoNow.y);
   await menu.waitFor({ timeout: T });
   const clickPlace = await readMenuPlace();
   check("the menu after a drop opens where a click on that sentence opens it", Math.abs(dropPlace.top - clickPlace.top) <= 2 && Math.abs(dropPlace.left - clickPlace.left) <= 2, `drop ${JSON.stringify(dropPlace)} click ${JSON.stringify(clickPlace)}`);
@@ -1586,11 +1588,16 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   await page.keyboard.press("j");
   await page.waitForTimeout(2500);
   await page.unroute(lateGroup);
-  const afterSwitch = { menu: await menu.count(), pressed: await isPressed(tId), dragged: (await pieceOf(bId).getAttribute("data-sel")) !== null, picked: await page.locator('[data-testid="assign-new"] .new-line[data-state="picked"]').count() };
+  // 옮겨 간 줄의 추천 문서가 다르면 New 칸이 그 문서로 넘어가 놓았던 문장이 없다 - 없으면 골라지지 않은 것이다
+  const isShownPressed = async (id) => (await page.locator(`[data-testid="assign-new-pick-${id}"]`).count()) > 0 && (await isPressed(id));
+  const afterSwitch = { menu: await menu.count(), pressed: await isShownPressed(tId), dragged: (await pieceOf(bId).getAttribute("data-sel")) !== null, picked: await page.locator('[data-testid="assign-new"] .new-line[data-state="picked"]').count() };
   check("a drop is let go when another row is picked before its group arrives", afterSwitch.menu === 0 && !afterSwitch.pressed && !afterSwitch.dragged && afterSwitch.picked === 0, JSON.stringify(afterSwitch));
 
-  // 놓은 뒤 ↵가 저장한다(메뉴의 Confirm과 같다) - 앞 확인들이 쓰지 않는 셋째 미배정 문장을 다른 문장에 놓는다
-  const cId = shownIds.filter((id) => loose.has(id))[2];
+  // 놓은 뒤 ↵가 저장한다(메뉴의 Confirm과 같다) - 앞 확인들이 쓰지 않는 셋째 미배정 문장을 다른 문장에 놓는다(New 칸이 넘어갔으면 놓았던 문서로 되돌린다)
+  await openNewDoc(written.find((row) => row.target_id === tId).target_doc_id);
+  // 참조 줄(REF)은 번호를 받기 전에는 확정되지 않는다 - 시드에 따라 셋째 미배정 문장이 참조 줄일 수 있어 건너뛰고, 없으면 저장하지 않은 첫 문장(aId - 뒤에서 쓰지 않는다)
+  const refIds = new Set(await page.locator('[data-pane="old"] [data-lang="ref"][data-testid^="assign-paper-lang-"]').evaluateAll((els) => els.map((el) => Number(el.dataset.testid.replace("assign-paper-lang-", "")))));
+  const cId = shownIds.filter((id) => loose.has(id)).slice(2).find((id) => !refIds.has(id)) ?? aId;
   const confirmTarget = Number(await page.locator(`[data-testid="assign-new"] .pg:not([data-read-only]) .new-line[data-target]:not([data-target="${tId}"]):not([data-state="picked"])`).first().getAttribute("data-target"));
   check("the Old paper shows a third loose unassigned sentence", cId !== undefined, String(cId));
   await dragThrough(page, await pointInUnit(cId), [await pointInLine(confirmTarget)]);
@@ -2873,14 +2880,15 @@ await runStep("order: drag a block into another section, a sub-slot and an empty
   await installCommitCounter(page);
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
-  // A = 줄이 있는 첫 칸, R = 줄 넷 이상에 둘째 의미 묶음이 있는 칸, B = 줄이 있는 하위 칸(키에 "."), E = B 아래 150px 넘게 떨어진 N/A 아닌 빈 하위 칸
+  // A = 줄이 한 의미 묶음뿐인(첫 줄을 끌면 칸의 줄이 모두 가는) 첫 칸, R = 줄 넷 이상에 둘째 의미 묶음이 있는 칸, B = 줄이 있는 하위 칸(키에 "."), E = B 아래 150px 넘게 떨어진 N/A 아닌 빈 하위 칸.
+  // A가 한 묶음이어야 하는 까닭 - 앞 단계(캡션 없는 표 확정)가 첫 칸 맨 앞에 표를 더하면 그 칸은 표와 한/영 짝 두 덩어리가 된다
   const [hit] = await findOrderDocs(page, () => {
     const sheet = document.querySelector('[data-testid="output-c"] article[data-doc-id]');
     if (!sheet || sheet.querySelector("header .tag")?.textContent !== "SOP") return null;
     const sections = [...sheet.querySelectorAll("section[data-location-key]")];
     const rowsOf = (section) => [...section.querySelectorAll("[data-drag-box]")];
     const numberOf = (section) => section.querySelector("h3 .font-mono")?.textContent.trim() ?? null;
-    const a = sections.find((section) => rowsOf(section).length >= 2);
+    const a = sections.find((section) => rowsOf(section).length >= 2 && !rowsOf(section).some((row, i) => i > 0 && row.hasAttribute("data-meaning-start")));
     const r = sections.find((section) => section !== a && rowsOf(section).length >= 4 && rowsOf(section).some((row, i) => i > 0 && row.hasAttribute("data-meaning-start")));
     const b = sections.find((section) => section.dataset.locationKey.includes(".") && rowsOf(section).length >= 1);
     if (!a || !r || !b || sections.indexOf(a) > sections.indexOf(r) || sections.indexOf(r) > sections.indexOf(b)) return null;
@@ -3124,7 +3132,8 @@ await runStep("order: a drop into another section while a save is in flight is r
     if (!sheet || sheet.querySelector("header .tag")?.textContent !== "SOP") return null;
     const sections = [...sheet.querySelectorAll("section[data-location-key]")];
     const rowsOf = (section) => [...section.querySelectorAll("[data-drag-box]")];
-    const [a, s] = sections.filter((section) => rowsOf(section).length >= 2);
+    // A·S는 줄이 한 의미 묶음뿐인 칸 - 앞 단계가 첫 칸에 표를 더하면 그 칸은 두 덩어리다(위 단계와 같은 까닭)
+    const [a, s] = sections.filter((section) => rowsOf(section).length >= 2 && !rowsOf(section).some((row, i) => i > 0 && row.hasAttribute("data-meaning-start")));
     const r = sections.find((section) => rowsOf(section).length >= 4 && rowsOf(section).some((row, i) => i > 0 && row.hasAttribute("data-meaning-start")));
     if (!a || !s || !r || r === a || r === s) return null;
     return {
@@ -3409,7 +3418,9 @@ await runStep("order: a save landing mid-drag keeps the drop line and the saved 
   const above = await page.evaluate((id) => {
     const home = document.querySelector(`[data-testid="output-c-row-${id}"]`).closest("section");
     const sections = [...home.closest("article").querySelectorAll("section[data-location-key]")];
-    const source = sections.slice(0, sections.indexOf(home)).find((section) => section.querySelector("[data-drag-box]"));
+    // 줄이 한 의미 묶음뿐인 칸 - 앞 단계(캡션 없는 표 확정)가 첫 칸 맨 앞에 표를 더하면 그 칸은 두 덩어리다
+    const isOneBlock = (section) => ![...section.querySelectorAll("[data-drag-box]")].some((row, i) => i > 0 && row.hasAttribute("data-meaning-start"));
+    const source = sections.slice(0, sections.indexOf(home)).find((section) => section.querySelector("[data-drag-box]") && isOneBlock(section));
     return source ? { key: source.dataset.locationKey, ids: [...source.querySelectorAll("[data-drag-box]")].map((row) => row.dataset.flipKey) } : null;
   }, first);
   check("a section with lines sits above it", above !== null);
@@ -3497,11 +3508,12 @@ await runStep("order: mark a line as a note on C, the count continues and the no
     for (const section of document.querySelectorAll('[data-testid="output-c"] section')) {
       const rows = [...section.querySelectorAll('[data-testid^="output-c-row-"]')].map((row) => {
         const id = row.getAttribute("data-testid").replace("output-c-row-", "");
-        return { id, number: row.querySelector(`[data-testid="output-c-number-${id}"]`)?.textContent?.trim() ?? null, markable: !!row.querySelector(`[data-testid="output-c-mark-note-${id}"]`) };
+        // 글 줄만(output-c-item) - 표 줄은 기울임을 표에 싣는다
+        return { id, number: row.querySelector(`[data-testid="output-c-number-${id}"]`)?.textContent?.trim() ?? null, markable: !!row.querySelector(`[data-testid="output-c-mark-note-${id}"]`), isText: !!row.querySelector(`[data-testid="output-c-item-${id}"]`) };
       });
       for (let i = 0; i + 1 < rows.length; i += 1) {
         const [x, y] = [rows[i], rows[i + 1]];
-        if (x.markable && x.number && y.number && x.number.split(".").length === y.number.split(".").length) return { x: x.id, y: y.id, xNumber: x.number, yNumber: y.number };
+        if (x.markable && x.isText && x.number && y.number && x.number.split(".").length === y.number.split(".").length) return { x: x.id, y: y.id, xNumber: x.number, yNumber: y.number };
       }
     }
     return null;
