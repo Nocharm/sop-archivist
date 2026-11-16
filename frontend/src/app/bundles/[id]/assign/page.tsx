@@ -410,11 +410,13 @@ export default function AssignPage() {
   // 그 자리 메뉴와 이동 - 이동은 고른 줄·열린 문서가 다시 그려진 뒤에 그 자리를 찾는다
   const [menu, setMenu] = useState<MenuState | null>(null);
   const menuSeq = useRef(0);
-  function openMenu(anchor: HTMLElement, event: MouseEvent | null, rowKey: string, targetId: number | null) {
+  /** at은 누른 자리를 이미 잰 것(요소 기준) - 끌어 놓은 자리처럼 클릭 이벤트가 없을 때 */
+  function openMenu(anchor: HTMLElement, event: MouseEvent | null, rowKey: string, targetId: number | null, at: { x: number; y: number } | null = null) {
     menuSeq.current += 1;
-    setMenu({ seq: menuSeq.current, anchor, offset: readMenuOffset(anchor, event), rowKey, targetId });
+    setMenu({ seq: menuSeq.current, anchor, offset: at ?? readMenuOffset(anchor, event), rowKey, targetId });
   }
-  const [jump, setJump] = useState<{ side: "old" | "new"; id: number; targetId: number; rowKey: string; quiet?: boolean } | null>(null);
+  // at - 끌어 놓은 자리(그 줄 기준). 있으면 메뉴가 클릭으로 연 것처럼 이음 선 끝에 뜬다. 키보드·"→ 간 곳" 이동에는 없다
+  const [jump, setJump] = useState<{ side: "old" | "new"; id: number; targetId: number; rowKey: string; quiet?: boolean; at?: { x: number; y: number } } | null>(null);
   // 고른 줄이 어떤 길로든 바뀌면(↑↓·저장 뒤 다음 줄·짝 풀림·문서 바꾸기) 메뉴를 닫는다 - 다른 줄에서 낡은 메뉴가 되살아나지 않게(렌더 중 상태 맞추기)
   if (menu !== null && menu.rowKey !== activeKey) setMenu(null);
   // Old 문장 우클릭 메뉴 - 누른 Unit, 그 줄 상자, 누른 자리와 글자 자리(키보드로 열었으면 없음). 고른 줄이 바뀌면 닫는다
@@ -1654,21 +1656,22 @@ export default function AssignPage() {
       }
       revealElement(el);
       flashElement(el);
-      if (!jump.quiet) openMenu(el, null, jump.rowKey, jump.targetId);
+      if (!jump.quiet) openMenu(el, null, jump.rowKey, jump.targetId, jump.at ?? null);
       setJump(null);
     });
     return () => cancelAnimationFrame(frame);
   }, [jump]);
 
   // --- 끌어서 잇기(끌어다 놓기 설계 §6) - Old 조각을 이미 쓴 New 문장에 놓으면 클릭과 같은 상태가 된다(그 줄 고름 · 그 문장 고름 · 그 자리 메뉴, 저장은 하지 않는다) ---
-  // 놓은 줄의 관계 묶음이 와야 클릭과 같은 판단을 한다 - 그때까지 들고 있다가 렌더 중에 푼다(그 사이 다른 줄을 고르면 버린다). 메뉴는 jump 이펙트가 그 문장을 찾아 띄운다
-  const [dropLink, setDropLink] = useState<{ rowKey: string; targetId: number } | null>(null);
+  // 놓은 줄의 관계 묶음이 와야 클릭과 같은 판단을 한다 - 그때까지 들고 있다가 렌더 중에 푼다(그 사이 다른 줄을 고르면 버린다). 메뉴는 jump 이펙트가 그 문장을 찾아 띄운다.
+  // at(놓은 자리, 그 줄 기준)을 메뉴에 넘겨 클릭으로 연 것처럼 이음 선 끝에 뜨게 한다(사용자 결정 v1.1.1 - 놓기는 그 문장 클릭과 같다)
+  const [dropLink, setDropLink] = useState<{ rowKey: string; targetId: number; at: { x: number; y: number } } | null>(null);
   if (dropLink !== null && activeKey !== dropLink.rowKey) setDropLink(null);
   else if (dropLink !== null && !groupPending) {
     setDropLink(null);
-    const { rowKey: dropKey, targetId } = dropLink;
+    const { rowKey: dropKey, targetId, at } = dropLink;
     const action = resolveDropLink({ draftDestination: draft.destination, savedDestination, targetId });
-    if (action === "menu_only" || pickNewSentence(targetId, false)) setJump({ side: "new", id: targetId, targetId, rowKey: dropKey });
+    if (action === "menu_only" || pickNewSentence(targetId, false)) setJump({ side: "new", id: targetId, targetId, rowKey: dropKey, at });
   }
   // 끄는 동안 따라오는 점선 - React 상태가 아니다
   const dragLineRef = useRef<DragLinkLine | null>(null);
@@ -1718,15 +1721,16 @@ export default function AssignPage() {
       return isLink ? { state: "ok", note: t("assign.drag.link"), target: line } : { state: "none" };
     },
     onDrop: ({ rowKey }, point) => {
-      const { drop } = readDropAt(point);
-      if (drop.kind !== "link") return;
+      const { line, drop } = readDropAt(point);
+      if (drop.kind !== "link" || line === null) return;
+      const lineRect = line.getBoundingClientRect();
       setChecked(new Set());
       setCtxMenu(null);
       selectRow(rowKey, false);
       // 다른 줄을 골라도 New 칸은 놓은 문서에 둔다 - "→ 간 곳"과 같이(그 줄의 추천 문서로 넘어갔다 돌아오지 않게)
       const docId = writtenMap.get(drop.targetId)?.target_doc_id;
       if (docId !== undefined) setManualNewDoc({ key: rowKey, docId });
-      setDropLink({ rowKey, targetId: drop.targetId });
+      setDropLink({ rowKey, targetId: drop.targetId, at: { x: point.x - lineRect.left, y: point.y - lineRect.top } });
     },
     onEnd: () => {
       for (const el of panesBoxRef.current?.querySelectorAll("[data-drag-src]") ?? []) el.removeAttribute("data-drag-src");

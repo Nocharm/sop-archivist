@@ -1302,10 +1302,24 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   check("the drag leaves no marks behind", marks.cards + marks.lines + marks.drops + marks.srcs === 0, JSON.stringify(marks));
   // 5. 저장하지 않았다
   check("dropping saves nothing", (await readUnits()).find((unit) => unit.unit_id === bId)?.status === "unassigned");
+  // 메뉴 자리 - 늦게 뜨는 움직임이 끝나고 이음 선 끝에 맞춘 뒤의 자리(style의 top·left)
+  const readMenuPlace = async () => {
+    await page.waitForTimeout(900);
+    return menu.evaluate((el) => ({ top: parseFloat(el.style.top), left: parseFloat(el.style.left) }));
+  };
+  const dropPlace = await readMenuPlace();
   // 6. 메뉴의 Cancel이 고름을 거둔다(클릭으로 고른 때와 같다)
   await page.locator('[data-testid="assign-link-menu-cancel"]').click();
   await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-new-pick-${id}"]`)?.getAttribute("aria-pressed") === "false", tId, { timeout: T });
   check("Cancel in the menu drops the pick", !(await isPressed(tId)));
+  // 놓은 뒤의 메뉴는 그 문장을 같은 자리에서 눌렀을 때와 같은 곳(이음 선 끝)에 뜬다 - 끈 줄은 고른 채다
+  check("the dragged row stays picked after Cancel", (await pieceOf(bId).getAttribute("data-sel")) === "");
+  await page.mouse.click(onto.x, onto.y);
+  await menu.waitFor({ timeout: T });
+  const clickPlace = await readMenuPlace();
+  check("the menu after a drop opens where a click on that sentence opens it", Math.abs(dropPlace.top - clickPlace.top) <= 2 && Math.abs(dropPlace.left - clickPlace.left) <= 2, `drop ${JSON.stringify(dropPlace)} click ${JSON.stringify(clickPlace)}`);
+  await page.locator('[data-testid="assign-link-menu-cancel"]').click();
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-new-pick-${id}"]`)?.getAttribute("aria-pressed") === "false", tId, { timeout: T });
 
   // 7. Esc - 끄다가 문장 위에서 취소하면 표가 사라지고 아무것도 고르지 않는다
   await dragThrough(page, await pointInUnit(bId), [await pointInLine(tId)]);
@@ -1347,6 +1361,39 @@ await runStep("assign: drag an Old piece onto a written New sentence, it links l
   await page.waitForTimeout(600);
   check("a sentence of an unwritten document takes no drop yet", overComposed.cards === 1 && overComposed.drops === 0, JSON.stringify(overComposed));
   check("dropping there does nothing", (await menu.count()) === 0 && (await pieceOf(aId).getAttribute("data-sel")) === "" && (await pieceOf(bId).getAttribute("data-sel")) === null);
+
+  // 10. 올려 둔 강조는 끄는 동안 되살아나지 않는다(G10) - 이어진 조각에 올려 맞은편 강조를 켠 채 끌고, 끄는 동안 New 칸을 굴려 이음 선이 다시 그려지게 한다.
+  // 이어진 조각은 앞 단계가 같은 글로 확정한 Old 문서에 있다 - 그 문서를 연다(고른 줄이 풀리므로 맨 끝에)
+  const writtenIds = new Set(written.map((row) => row.target_id));
+  const linked = (await readUnits()).find((unit) => unit.target_ids.some((id) => writtenIds.has(id)));
+  check("a piece is linked to a written sentence", linked !== undefined);
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${linked.document_id}"]`).click();
+  await pieceOf(linked.unit_id).waitFor({ timeout: T });
+  const partner = written.find((row) => linked.target_ids.includes(row.target_id));
+  await openNewDoc(partner.target_doc_id);
+  await centre(`[data-testid="assign-new-${partner.target_id}"]`);
+  const linkedPoint = await pointInUnit(linked.unit_id);
+  await page.mouse.move(linkedPoint.x, linkedPoint.y);
+  await page.waitForTimeout(300);
+  const hoverMarks = await page.locator(".assign-panes [data-link-hover]").count();
+  const paneBox = await page.locator('[data-testid="assign-new"] .pane-body').boundingBox();
+  await dragThrough(page, linkedPoint, [{ x: paneBox.x + paneBox.width / 2, y: paneBox.y + paneBox.height / 2 }]);
+  // 창 폭을 바꾸면 이음 선을 다시 재어 그린다(New 문서가 짧으면 굴릴 것이 없다)
+  const commitsBeforeRedraw = await page.evaluate(() => window.__commits ?? -1);
+  await page.setViewportSize({ width: 1180, height: 720 });
+  await page.waitForTimeout(500);
+  const redrew = (await page.evaluate(() => window.__commits ?? -1)) > commitsBeforeRedraw;
+  const leaked = await page.evaluate(() => ({
+    card: document.querySelectorAll('[data-testid="drag-card"]').length,
+    marks: document.querySelectorAll(".assign-panes [data-link-hover], .assign-panes [data-link-hot]").length,
+  }));
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  check("hovering a linked piece marks the sentence it links to", hoverMarks > 0, String(hoverMarks));
+  check("no link highlight while dragging, even after the lines redraw", redrew && leaked.card === 1 && leaked.marks === 0, JSON.stringify({ redrew, ...leaked }));
+  await page.setViewportSize(VIEWPORT);
 });
 
 // 한 언어만 잇기(v0.11.1) - Old는 한/영 짝인데 쓴 New에는 한 언어만 있는 예외. 있는 언어만 이어 확정하면 서버가 같은 저장 안에서

@@ -204,9 +204,19 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
   useEffect(() => {
     const root = svgRef.current?.parentElement;
     if (!root) return;
+    // 이번 끌기에서 올림을 이미 거뒀나 - 끌기마다 한 번만 상태를 바꾼다
+    let isDragCleared = false;
     const handleOver = (event: PointerEvent) => {
-      // 끄는 동안에는 올림을 읽지 않는다(끌어다 놓기 설계 G10) - 강조가 켜지지 않고 끄는 동안 다시 그리지도 않는다
-      if (isBoxDragActive()) return;
+      // 끄는 동안에는 올림을 읽지 않는다(끌어다 놓기 설계 G10). 끌기 직전의 올림은 첫 pointerover에서 한 번 거둔다 -
+      // 남겨 두면 그 조각의 선이 진한 채이고, 끄는 동안 선을 다시 재어 그리면(스크롤·창 크기) 맞은편 강조가 되살아난다
+      if (isBoxDragActive()) {
+        if (!isDragCleared) {
+          isDragCleared = true;
+          setHover(null);
+        }
+        return;
+      }
+      isDragCleared = false;
       const next = readHover(event.target);
       setHover((prev) => (prev?.side === next?.side && prev?.id === next?.id ? prev : next));
     };
