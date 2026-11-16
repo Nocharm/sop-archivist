@@ -1,7 +1,7 @@
 // 원문 용지 - 블록을 원문 순서대로 그리고 단위마다 누를 수 있는 조각을 둔다. 용지 안에는 추출한 글자만 둔다(앱 라벨 금지).
 // 글자 조각마다 data-start(블록 안 위치)를 달아, 누른 자리·끌어 고른 범위를 블록 위치로 되돌린다.
 // strips(Split·Assign)에서는 단위 하나가 종이 한 조각이다 - 확인과 상관없이 처음부터 떨어져 있고, 조각 왼쪽 밖에 앞머리(절 번호 칸, StripLead)를, 이웃한 짝은 구성원 수와 상관없이 한 카드(.strip-card)로, 보류는 글 첫머리에 상태 칩을, 오른쪽 끝에 아이콘 표시를 둔다. 절 첫 블록 글 앞의 절 번호는 번호 칸과 겹치니 그리지 않는다(표시만).
-// 고른 단위는 글자 영역의 가장 바깥 윤곽 하나로 감싼다(contour). 앞머리 번호 칸·아이콘 표시는 포인터·포커스 툴팁으로 뜻을 알린다.
+// 고른 조각은 조각(문단) 테두리로 보인다(CSS .strip[data-sel]). 앞머리 번호 칸·아이콘 표시는 포인터·포커스 툴팁으로 뜻을 알린다.
 // strips.fold(Assign 필터)가 있으면 맞는 조각만 제 모양, 곁은 한 줄 판, 먼 구간은 묶음 한 줄로 접는다(paper-fold-model.ts) - 한 줄 판·묶음은 단추라 눌러도 조각을 고르지 않는다.
 "use client";
 
@@ -18,7 +18,7 @@ import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
 import { readCaretPoint } from "@/lib/caret-point";
 import { useI18n } from "@/lib/i18n";
 import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
-import { buildContourPath, buildRows, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
+import { buildRows, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
 
@@ -121,8 +121,6 @@ interface PaperProps {
     /** Assign - 필터 접기. matchIds는 필터를 걸 때의 목록(스냅숏), 없으면 전부 그린다 */
     fold?: { matchIds: ReadonlySet<number>; open: FoldOpen; onOpenChange: (next: FoldOpen) => void };
   };
-  /** 고른 단위를 밑줄 대신 바깥 윤곽으로 감싼다 */
-  contour?: boolean;
   /** strips에서 고른 조각의 글 바로 아래 줄(확인·짝 풀기 등 단추) - 조각 상자가 펼쳐지며 밀려 내려오고, 고름이 옮겨 가면 접힌다 */
   renderUnitActions?: (unitId: number) => ReactNode;
   /** 나눌 선 자리에 붙는 것(나누기 팝업) - 선을 끄는 동안에는 그리지 않는다 */
@@ -186,7 +184,6 @@ export function Paper({
   testId,
   sheetTestId,
   strips,
-  contour = false,
   renderUnitActions,
   renderAtCut,
   onCutDrag,
@@ -198,11 +195,8 @@ export function Paper({
   const pageRef = useRef<HTMLDivElement>(null);
   // 첫 누름 때 누른 조각과 그 높이 - 고르자마자 곁 틈이 벌어져 글이 밀려도 두 번 누름(나눌 자리)을 처음 누른 글자로 되돌린다
   const pressRef = useRef<{ el: HTMLElement; top: number } | null>(null);
-  const [contourPath, setContourPath] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const tip = useDelegatedTip();
-  // 언어 칩을 함께 보이는 떨어진 짝 조각 - 지금 올린 단위와 표시를 단 요소(markHoverMates)
-  const mateHoverRef = useRef<{ unitId: number | null; els: HTMLElement[] }>({ unitId: null, els: [] });
   const hasStrips = strips !== undefined;
   // 단추 줄을 그리는 조각 - 지금 고른 것과 바로 전에 고른 것(접히는 동안). 수천 조각마다 접기 부품을 두지 않는다
   const [actionIds, setActionIds] = useState({ current: selectedId, previous: null as number | null });
@@ -325,52 +319,6 @@ export function Paper({
     }
     return map;
   }, [hasStrips, items, model]);
-
-  // 고른 단위의 바깥 윤곽 - 그린 뒤 글자 상자를 재서 SVG path로. 창·글꼴이 바뀌면 다시 잰다
-  useEffect(() => {
-    const page = pageRef.current;
-    if (!contour || !page) return;
-    const measure = () => {
-      const base = page.getBoundingClientRect();
-      const rects =
-        selectedId === null
-          ? []
-          : Array.from(page.querySelectorAll<HTMLElement>(`.su[data-unit="${selectedId}"] [data-start]`)).flatMap((piece) =>
-              Array.from(piece.getClientRects()).map((rect) => ({ left: rect.left - base.left, right: rect.right - base.left, top: rect.top - base.top, bottom: rect.bottom - base.top })),
-            );
-      setContourPath(buildContourPath(rects.filter((rect) => rect.right - rect.left > 0.5)));
-    };
-    let frame = requestAnimationFrame(measure);
-    const observer = new ResizeObserver(() => requestAnimationFrame(measure));
-    observer.observe(page);
-    // 단추 줄이 접히고 펼쳐지거나 틈이 벌어지는 동안 글이 움직인다 - 위아래가 상쇄돼 용지 높이가 그대로면 ResizeObserver가 울리지 않으니 전환 동안 프레임마다 잰다
-    let running = 0;
-    const tick = () => {
-      measure();
-      if (running > 0) frame = requestAnimationFrame(tick);
-    };
-    const isLayoutTransition = (event: TransitionEvent) => event.propertyName === "grid-template-rows" || event.propertyName === "height";
-    const handleRun = (event: TransitionEvent) => {
-      if (!isLayoutTransition(event)) return;
-      running += 1;
-      if (running === 1) frame = requestAnimationFrame(tick);
-    };
-    const handleEnd = (event: TransitionEvent) => {
-      if (!isLayoutTransition(event)) return;
-      running = Math.max(0, running - 1);
-      if (running === 0) measure();
-    };
-    page.addEventListener("transitionrun", handleRun);
-    page.addEventListener("transitionend", handleEnd);
-    page.addEventListener("transitioncancel", handleEnd);
-    return () => {
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-      page.removeEventListener("transitionrun", handleRun);
-      page.removeEventListener("transitionend", handleEnd);
-      page.removeEventListener("transitioncancel", handleEnd);
-    };
-  }, [contour, selectedId, model, cut, items]);
 
   // 나눌 선이 글 시작 가까이면 가운데 맞춤 팝업이 용지 왼쪽 밖으로 나가 옆 목록에 가려진다 - 용지 안으로 밀어 넣는다(화살표는 선에 남는다)
   useLayoutEffect(() => {
@@ -967,33 +915,6 @@ export function Paper({
     if ((shiftClickPicks || !onRangeSelect) && event.shiftKey && (event.target as HTMLElement).closest(".su[data-unit]")) event.preventDefault();
   }
 
-  /** 떨어진 짝 구성원도 언어 칩을 보이게 - 올린 줄의 짝 조각에 data-mate-hover를 직접 단다(이웃한 짝 카드는 CSS가 맡는다).
-   *  React 상태로 두면 큰 문서에서 포인터가 지날 때마다 용지 전체가 다시 그려진다 */
-  function markHoverMates(unitId: number | null) {
-    if (mateHoverRef.current.unitId === unitId) return;
-    for (const el of mateHoverRef.current.els) delete el.dataset.mateHover;
-    const els: HTMLElement[] = [];
-    for (const mate of unitId === null ? [] : (matesOf.get(unitId) ?? [])) {
-      const el = pageRef.current?.querySelector<HTMLElement>(`.strip[data-strip-unit="${mate.id}"]`);
-      if (!el) continue;
-      el.dataset.mateHover = "";
-      els.push(el);
-    }
-    mateHoverRef.current = { unitId, els };
-  }
-
-  function handlePointerOver(event: ReactPointerEvent<HTMLDivElement>) {
-    tip.handlers.onPointerOver(event);
-    if (!strips) return;
-    const strip = (event.target as HTMLElement).closest(".strip-row")?.querySelector<HTMLElement>(":scope > .strip[data-strip-unit]");
-    markHoverMates(strip ? Number(strip.dataset.stripUnit) : null);
-  }
-
-  function handlePointerOut(event: ReactPointerEvent<HTMLDivElement>) {
-    tip.handlers.onPointerOut(event);
-    if (!(event.relatedTarget instanceof Node) || !pageRef.current?.contains(event.relatedTarget)) markHoverMates(null);
-  }
-
   function handleMouseUp() {
     if (!onRangeSelect) return;
     const selection = window.getSelection();
@@ -1013,7 +934,6 @@ export function Paper({
         ref={pageRef}
         className="pg"
         data-strips={strips ? "" : undefined}
-        data-contour={contour ? "" : undefined}
         data-dragging={isDragging ? "" : undefined}
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
@@ -1021,14 +941,7 @@ export function Paper({
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
         {...tip.handlers}
-        onPointerOver={handlePointerOver}
-        onPointerOut={handlePointerOut}
       >
-        {contour && contourPath && (
-          <svg className="sel-contour" aria-hidden>
-            <path d={contourPath} />
-          </svg>
-        )}
         {strips ? (
           sections.map((section, index) => {
             const content = strips.fold ? renderFolded(foldCells[index] ?? [], strips.fold) : renderRows(section.rows);

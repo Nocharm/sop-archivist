@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ViewUnit } from "./api-sop";
-import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuContext } from "./assign-context-menu-model";
+import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, listShapeLineItems, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuContext } from "./assign-context-menu-model";
 import { findNearestCut } from "./paper-model";
 
 function makeUnit(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
@@ -33,8 +33,6 @@ function ctx(over: Partial<AssignMenuContext> = {}): AssignMenuContext {
     next: makeUnit(3),
     readOnly: false,
     rowStatus: "unassigned",
-    hasDestination: false,
-    isConfirmedAsIs: false,
     isDecided: () => false,
     hasDraft: () => false,
     canSplit: true,
@@ -53,19 +51,13 @@ function find(context: AssignMenuContext, action: AssignMenuAction) {
 describe("buildAssignMenu", () => {
   it("groups assign actions before edit actions", () => {
     const groups = buildAssignMenu(ctx());
-    expect(groups.assign.map((item) => item.action)).toEqual(["confirm", "clear"]);
+    expect(groups.assign.map((item) => item.action)).toEqual(["clear"]);
     expect(groups.edit.map((item) => item.action)).toEqual(["split", "merge_prev", "merge_next", "pair_pick", "lang", "ref_mark"]);
   });
 
   it("enables every edit on an unassigned sentence with same-language neighbours", () => {
     const { edit } = buildAssignMenu(ctx());
     expect(edit.every((item) => item.enabled)).toBe(true);
-  });
-
-  it("needs a destination to confirm, and nothing new to confirm on a confirmed row", () => {
-    expect(find(ctx(), "confirm").reasonKey).toBe("assign.ctx.why.noDestination");
-    expect(find(ctx({ hasDestination: true }), "confirm").enabled).toBe(true);
-    expect(find(ctx({ hasDestination: true, isConfirmedAsIs: true }), "confirm").reasonKey).toBe("assign.ctx.why.alreadyConfirmed");
   });
 
   it("cancels an assignment only when there is one", () => {
@@ -98,7 +90,7 @@ describe("buildAssignMenu", () => {
 
   it("does not edit tables or figures, and read-only blocks everything", () => {
     expect(find(ctx({ target: makeUnit(2, { kind: "figure" }) }), "lang").reasonKey).toBe("assign.ctx.why.notText");
-    const readOnly = buildAssignMenu(ctx({ readOnly: true, hasDestination: true, rowStatus: "confirmed" }));
+    const readOnly = buildAssignMenu(ctx({ readOnly: true, rowStatus: "confirmed" }));
     expect([...readOnly.assign, ...readOnly.edit].every((item) => item.reasonKey === "assign.ctx.why.readOnly")).toBe(true);
   });
 
@@ -293,5 +285,45 @@ describe("planShapeMode (One sentence | KO/EN pair in the Shape step)", () => {
   it("waits for an unsaved choice on the line", () => {
     const pair = [makeUnit(1, { pair_id: 7 }), makeUnit(2, { lang: "en", pair_id: 7 })];
     expect(planShapeMode(pair, [1, 2], (unit) => unit.id === 2)).toEqual({ current: "pair", reasonKey: "assign.ctx.why.unsaved" });
+  });
+});
+
+describe("listShapeLineItems (buttons on a Shape line)", () => {
+  const actions = (unit: ViewUnit, context: AssignMenuContext, isPairRow = false) => listShapeLineItems(unit, buildAssignMenu(context).edit, isPairRow).map((item) => item.action);
+
+  it("keeps only what can be done there, not joins with no neighbour or with its own partner", () => {
+    const ko = makeUnit(2, { pair_id: 7 });
+    const en = makeUnit(3, { lang: "en", pair_id: 7 });
+
+    expect(actions(ko, ctx({ target: ko, prev: null, next: en }), true)).toEqual(["split"]);
+    expect(actions(en, ctx({ target: en, prev: ko, next: makeUnit(4, { lang: "en" }) }), true)).toEqual(["split", "merge_next"]);
+  });
+
+  it("hides pairing with its own partner on an assigned pair row too", () => {
+    const ko = makeUnit(2, { pair_id: 7 });
+    const en = makeUnit(3, { lang: "en", pair_id: 7 });
+    const assigned = { isDecided: () => true, rowStatus: "confirmed" as const };
+
+    expect(find(ctx({ target: ko, prev: null, next: en, ...assigned }), "pair_next").reasonKey).toBe("split.menu.why.alreadyPaired");
+    expect(actions(ko, ctx({ target: ko, prev: null, next: en, ...assigned }), true)).toEqual(["split"]);
+  });
+
+  it("shows Separate on the line only when the row is not a KO/EN pair row", () => {
+    const ko = makeUnit(2, { pair_id: 7 });
+
+    expect(actions(ko, ctx({ target: ko, prev: null, next: null }))).toContain("unpair");
+    expect(actions(ko, ctx({ target: ko, prev: null, next: null }), true)).not.toContain("unpair");
+  });
+
+  it("keeps a button greyed out when something must be done first", () => {
+    const items = listShapeLineItems(makeUnit(2), buildAssignMenu(ctx({ hasDraft: (unit) => unit.id === 3 })).edit, false);
+
+    expect(items.find((item) => item.action === "merge_next")).toMatchObject({ enabled: false, reasonKey: "assign.ctx.why.neighborUnsaved" });
+  });
+
+  it("has no buttons on a reference line", () => {
+    const ref = makeUnit(2, { lang: "ref", ref: { state: "confirmed", number: "SOP-A-1" } });
+
+    expect(actions(ref, ctx({ target: ref, prev: makeUnit(1, { lang: "ref" }) }))).toEqual([]);
   });
 });

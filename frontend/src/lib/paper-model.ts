@@ -153,50 +153,6 @@ export function readWarningText(detail: Record<string, unknown>): string {
 
 // ── Split 개편(2026-11-09): 선택 윤곽, 가운데 스크롤, 태그·표시, 이웃 합치기 ──
 
-export interface LineRect {
-  left: number;
-  right: number;
-  top: number;
-  bottom: number;
-}
-
-// 같은 줄로 보는 위쪽 차이(px) - 한 줄 안의 글자 조각들은 top이 거의 같다
-const SAME_LINE_PX = 4;
-
-/** 고른 단위의 가장 바깥 윤곽 하나 - 줄 상자를 합치고, 오른쪽 가장자리를 따라 내려갔다 왼쪽을 따라 올라오는 SVG path */
-export function buildContourPath(rects: readonly LineRect[], padX = 4, padY = 2): string {
-  const lines: LineRect[] = [];
-  for (const rect of [...rects].sort((a, b) => a.top - b.top || a.left - b.left)) {
-    const last = lines[lines.length - 1];
-    if (last && Math.abs(last.top - rect.top) < SAME_LINE_PX) {
-      last.left = Math.min(last.left, rect.left);
-      last.right = Math.max(last.right, rect.right);
-      last.bottom = Math.max(last.bottom, rect.bottom);
-    } else {
-      lines.push({ ...rect });
-    }
-  }
-  if (lines.length === 0) return "";
-  const padded = lines.map((line) => ({ left: line.left - padX, right: line.right + padX, top: line.top - padY, bottom: line.bottom + padY }));
-  // 줄 사이 경계를 가운데로 맞춰 윤곽에 틈이 생기지 않게
-  for (let i = 0; i < padded.length - 1; i += 1) {
-    const mid = (padded[i].bottom + padded[i + 1].top) / 2;
-    padded[i].bottom = mid;
-    padded[i + 1].top = mid;
-  }
-  const first = padded[0];
-  const last = padded[padded.length - 1];
-  const parts = [`M${first.left},${first.top}`, `H${first.right}`];
-  padded.forEach((line, i) => {
-    parts.push(`V${line.bottom}`);
-    if (i < padded.length - 1) parts.push(`H${padded[i + 1].right}`);
-  });
-  parts.push(`H${last.left}`);
-  for (let i = padded.length - 1; i > 0; i -= 1) parts.push(`V${padded[i].top}`, `H${padded[i - 1].left}`);
-  parts.push(`V${first.top}`, "Z");
-  return parts.join(" ");
-}
-
 /** 고른 단위가 화면 위 1/6 위로, 또는 아래 1/3 아래로 가면 가운데로 다시 맞춘다 */
 export function shouldRecenter(unitTop: number, unitBottom: number, viewTop: number, viewBottom: number): boolean {
   const height = viewBottom - viewTop;

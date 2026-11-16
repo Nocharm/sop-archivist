@@ -1,4 +1,4 @@
-// Assign 그 자리 메뉴 - 추천·New 문장을 누른 곳 옆이나 이동해 간 조각 옆에 뜬다. 마우스를 멀리 옮기지 않고 확정·취소·잇기·끊기를 고른다.
+// Assign 그 자리 메뉴 - 추천을 누른 곳 옆, New 문장이면 이음 선이 닿는 끝 옆(선이 없으면 누른 곳), 이동해 간 조각 옆에 뜬다. 마우스를 멀리 옮기지 않고 확정·취소·잇기·끊기를 고른다.
 // Split의 "Split here" 상자처럼 조금 늦게 보인다(바로 다음 동작을 가리지 않게). 누른 요소를 따라 스크롤에 함께 움직인다.
 "use client";
 
@@ -9,7 +9,8 @@ import { createPortal } from "react-dom";
 import { isTopEscLayer, popEscLayer, pushEscLayer } from "@/components/ui/floating";
 import type { LinkMenuItem } from "@/lib/assign-model";
 import { useI18n } from "@/lib/i18n";
-import { placeLinkMenu } from "@/lib/link-menu-place";
+import { findDrawnLinkEnd } from "@/components/assign/link-lines";
+import { placeLinkMenu, placeLinkMenuAtLineEnd } from "@/lib/link-menu-place";
 
 interface LinkMenuProps {
   anchor: HTMLElement;
@@ -17,6 +18,8 @@ interface LinkMenuProps {
   cover?: HTMLElement[];
   /** 누른 자리(요소 기준). null이면 요소 아래 왼쪽 - 이동해 와서 포인터가 먼 곳에 있을 때 */
   offset: { x: number; y: number } | null;
+  /** 고른 줄의 Old 조각 - New 문장을 마우스로 눌렀고 그 조각과의 선이 그려져 있으면 메뉴를 선 끝 옆에 놓는다 */
+  lineUnits?: readonly number[];
   items: LinkMenuItem[];
   /** 고르기만 하고 저장하지 않았다 */
   isUnsaved: boolean;
@@ -29,7 +32,7 @@ interface LinkMenuProps {
 const FOCUS_DELAY_MS = 400;
 const ITEM_SELECTOR = "[role=menuitem]:not(:disabled)";
 
-export function LinkMenu({ anchor, cover = [], offset, items, isUnsaved, busy, onAction, onClose }: LinkMenuProps) {
+export function LinkMenu({ anchor, cover = [], offset, lineUnits = [], items, isUnsaved, busy, onAction, onClose }: LinkMenuProps) {
   const { t } = useI18n();
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -52,7 +55,10 @@ export function LinkMenu({ anchor, cover = [], offset, items, isUnsaved, busy, o
     // 세로 자리는 덮지 않을 상자를 모두 합친 테두리 기준 - 함께 골라진 짝 문장을 가리지 않게(Old 우클릭 메뉴와 같은 방식)
     const boxes = [rect, ...cover.filter((el) => el !== anchor && el.isConnected).map((el) => el.getBoundingClientRect())];
     const row = { top: Math.min(...boxes.map((item) => item.top)), bottom: Math.max(...boxes.map((item) => item.bottom)), left: rect.left };
-    const { top, left } = placeLinkMenu(row, offset ? rect.left + offset.x : null, box, { width: window.innerWidth, height: window.innerHeight }, offset ? rect.top + offset.y : null);
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    // 키보드·이동으로 열었으면(offset 없음) 선을 찾지 않는다 - 그때는 줄 왼쪽 아래 그대로
+    const end = offset && anchor.matches(".new-line") ? findDrawnLinkEnd(anchor, lineUnits) : null;
+    const { top, left } = end ? placeLinkMenuAtLineEnd(row, end, box, viewport) : placeLinkMenu(row, offset ? rect.left + offset.x : null, box, viewport, offset ? rect.top + offset.y : null);
     setPos((prev) => (prev && prev.top === top && prev.left === left ? prev : { top, left }));
   });
 
@@ -70,6 +76,8 @@ export function LinkMenu({ anchor, cover = [], offset, items, isUnsaved, busy, o
     const focusTimer = window.setTimeout(focusFirst, FOCUS_DELAY_MS);
     // 화면이 바쁘면 등장 애니메이션이 늦게 시작해 400ms에 아직 숨어 있을 수 있다 - 그때는 포커스가 안 들어가므로 다 나타난 뒤에 한 번 더
     menuEl?.addEventListener("animationend", focusFirst);
+    // 고른 직후에는 새 이음 선이 아직 안 그려졌을 수 있다 - 숨어 있던 메뉴가 나타나는 순간 한 번 더 재서 선 끝에 맞춘다
+    menuEl?.addEventListener("animationstart", schedule);
     const handleDown = (event: PointerEvent) => {
       if (!menuEl?.contains(event.target as Node)) requestClose();
     };
@@ -86,6 +94,7 @@ export function LinkMenu({ anchor, cover = [], offset, items, isUnsaved, busy, o
       cancelAnimationFrame(frame);
       window.clearTimeout(focusTimer);
       menuEl?.removeEventListener("animationend", focusFirst);
+      menuEl?.removeEventListener("animationstart", schedule);
       popEscLayer(layer);
       window.removeEventListener("scroll", schedule, true);
       window.removeEventListener("resize", schedule);

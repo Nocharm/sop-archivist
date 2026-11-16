@@ -9,7 +9,8 @@
 // QUIET=1이면 통과한 줄을 찍지 않는다 - 실패한 줄과 마지막 한 줄(통과 수·실패 수)만 나온다.
 // 평소(변경마다)는 고친 화면만: QUIET=1 ONLY="<화면>" node scripts/pw-smoke-sop.mjs  — 전부 돌리는 것은 dev→main 정식 업데이트 전, 또는 여러 화면이 같이 쓰는 것(공용 부품·API 층·이 스크립트의 틀)을 고쳤을 때만이다(사용자 결정 2026-11-16).
 // playwright-core는 저장소 의존성이 아니다: `npm i --no-save playwright-core` (package.json 불변)
-import { mkdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -663,8 +664,9 @@ await runStep("assign: right-click an Old sentence to split it or change its lan
   };
   await openMenu(target.id);
   await takeShot("sop-assign-context-menu.png");
-  check("the menu has assign and edit groups", (await page.locator('[data-testid="assign-ctx-confirm"]').count()) === 1 && (await page.locator('[data-testid="assign-ctx-split"]').count()) === 1);
-  check("confirm is off with no destination", (await page.locator('[data-testid="assign-ctx-confirm"]').getAttribute("aria-disabled")) === "true");
+  check("the menu has assign and edit groups", (await page.locator('[data-testid="assign-ctx-clear"]').count()) === 1 && (await page.locator('[data-testid="assign-ctx-split"]').count()) === 1);
+  // 확정은 Enter·오른쪽 칸·그 자리 메뉴가 맡는다 - 우클릭 메뉴에는 없다
+  check("the menu has no confirm item", (await page.locator('[data-testid="assign-ctx-confirm"]').count()) === 0);
   // 언어 바꾸기
   const other = target.lang === "en" ? "ko" : "en";
   await page.locator(`[data-testid="assign-ctx-lang-${other}"]`).click();
@@ -673,6 +675,30 @@ await runStep("assign: right-click an Old sentence to split it or change its lan
   // 고친 뒤 화면이 원문을 다시 받아 그 줄을 다시 고른다 - 그 전에 메뉴를 열면 줄을 다시 고를 때 메뉴가 닫힌다
   await page.waitForLoadState("networkidle");
   await wait(page, "assign-row-id");
+  // 고른 조각은 문단 테두리, 마우스만 올린 조각에는 테두리·언어 칩이 없다(올린 곳이 고른 것처럼 보이지 않게)
+  const ringOf = (selector) => page.evaluate((sel) => { const el = document.querySelector(sel); return el ? getComputedStyle(el, "::after").borderTopWidth : null; }, selector);
+  check("the selected piece gets a paragraph border", (await ringOf(`[data-testid="assign-paper-piece-${target.id}"]`)) === "2px");
+  const neighbor = (await viewUnits()).find((unit) => unit.kind === "sentence" && unit.id !== target.id && unit.pair_id === null && unit.lang !== "ref");
+  const neighborPiece = page.locator(`[data-testid="assign-paper-piece-${neighbor.id}"]`);
+  await neighborPiece.hover();
+  await page.waitForTimeout(300);
+  check("a hovered piece shows no border and no language chip", (await ringOf(`[data-testid="assign-paper-piece-${neighbor.id}"]`)) !== "2px" && (await page.locator(`[data-testid="assign-paper-piece-${neighbor.id}"] > .strip-lang`).evaluate((el) => getComputedStyle(el).visibility)) === "hidden");
+  // Shape 언어 세 칸 - 바꾸는 동안 고름이 풀리지 않고 포커스가 누른 칸에 남는다
+  const back = target.lang;
+  await page.evaluate(() => { window.__selDrops = 0; new MutationObserver((recs) => { for (const r of recs) if (r.oldValue !== null && !r.target.hasAttribute("data-sel")) window.__selDrops += 1; }).observe(document.querySelector('[data-pane="old"]'), { attributes: true, subtree: true, attributeFilter: ["data-sel"], attributeOldValue: true }); });
+  // 한/영 줄은 평소 KO | EN만, 세 칸에 올리면 REF까지 펼친다
+  const langWidths = () => page.locator(`[data-testid="assign-shape-lang-${target.id}"] button`).evaluateAll((els) => els.map((el) => el.getBoundingClientRect().width));
+  const restWidths = await langWidths();
+  await page.locator(`[data-testid="assign-shape-lang-${target.id}"]`).hover();
+  await page.waitForTimeout(300);
+  const openWidths = await langWidths();
+  check("the language switch shows KO | EN at rest and REF too on hover", restWidths.length === 3 && restWidths[0] > 0 && restWidths[1] > 0 && restWidths[2] === 0 && openWidths.every((w) => w >= 28), JSON.stringify({ restWidths, openWidths }));
+  await page.locator(`[data-testid="assign-shape-lang-${target.id}-${back}"]`).click();
+  await page.waitForFunction(async ([path, id, lang]) => (await (await fetch(path, { headers: { "X-Dev-User": "qa.member" } })).json()).units.find((unit) => unit.id === id)?.lang === lang, [`/api/bundles/${freshBundleId}/documents/${docId}/view`, target.id, back], { timeout: T });
+  await page.locator(`[data-testid="assign-shape-lang-${target.id}-${back}"][aria-pressed="true"]`).waitFor({ timeout: T });
+  await page.waitForLoadState("networkidle");
+  check("the Shape language buttons change the language without dropping the selection", (await page.evaluate(() => window.__selDrops)) === 0);
+  check("focus stays on the pressed language button", (await page.evaluate(() => document.activeElement?.getAttribute("data-testid"))) === `assign-shape-lang-${target.id}-${back}`);
   // 여기서 나누기 - 선을 놓고 Split here
   const before = (await viewUnits()).length;
   await openMenu(target.id);
@@ -1191,6 +1217,20 @@ await runStep("assign: KO/EN pair - recommendation shows picked, in-place menu c
   const linkedLines = [found.targetId, found.partnerId].filter((id) => id !== null);
   for (const id of linkedLines) await page.locator(`[data-testid="assign-new-${id}"][data-state="picked"]`).waitFor({ timeout: T });
   check("after reload the row is confirmed and its New sentences are shown as its place", true);
+  // 이은 New 문장을 마우스로 누르면(글 오른쪽 끝) 끊기 메뉴가 누른 자리가 아니라 그 선의 New 쪽 끝(문장 왼쪽 테두리) 옆에 뜬다
+  const pickBtn = page.locator(`[data-testid="assign-new-pick-${found.targetId}"]`);
+  const pickBox = await pickBtn.boundingBox();
+  await pickBtn.click({ position: { x: pickBox.width - 6, y: Math.min(8, pickBox.height / 2) } });
+  await page.locator('[data-testid="assign-link-menu-unlink"]').waitFor({ state: "visible", timeout: T });
+  await page.waitForFunction(() => document.activeElement?.closest('[data-testid="assign-link-menu"]') !== null, null, { timeout: T });
+  const placed = await page.evaluate((id) => {
+    const line = document.querySelector(`.new-line[data-target="${id}"]`).getBoundingClientRect();
+    const menu = document.querySelector('[data-testid="assign-link-menu"]').getBoundingClientRect();
+    return { lineLeft: line.left, lineRight: line.right, menuLeft: menu.left, drawn: document.querySelector(`[data-testid="assign-link-lines"] [data-link$=":${id}"]`) !== null };
+  }, found.targetId);
+  check("the unlink menu sits at the New end of the drawn line", placed.drawn && Math.abs(placed.menuLeft - placed.lineLeft) <= 1, JSON.stringify(placed));
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="assign-link-menu"]').waitFor({ state: "detached", timeout: T });
 });
 
 // 칸 제목(제품 명세 §7.13 칸 제목) -옛 제목 짝을 SOP 칸의 칸 제목 자리로 확정하면 결과물 C와 Assign의 엮은 문서 미리 보기에서 칸 머리 옆에 "← OLD-1 §1"로 보인다. 끝에 원래 처분(지우기)으로 되돌린다
@@ -3626,10 +3666,20 @@ await runStep("documents: an Old list and a New list, with written files on thei
   check("opening the row shows the file's version and language layout", (await page.locator('[data-testid$="-written-version"]').count()) === 1 && (await page.locator('[data-testid$="-written-layout"]').count()) === 1);
 });
 
+// 합성 SOP 파일을 .shots/synthetic에 만든다 - 저장소에 사본을 두면 OS마다 PNG 압축 바이트가 달라 어긋난다
+function buildSyntheticFiles() {
+  const backend = resolve(SCRIPT_DIR, "../../backend");
+  const out = resolve(SHOT_DIR, "synthetic");
+  const python = [".venv/bin/python", ".venv/Scripts/python.exe"].map((path) => resolve(backend, path)).find(existsSync);
+  if (!python) throw new Error(`backend venv python not found under ${backend}/.venv`);
+  execFileSync(python, ["-c", "import sys; from pathlib import Path; from scripts.synthetic_sop import build_synthetic_bundle; build_synthetic_bundle(Path(sys.argv[1]))", out], { cwd: backend, stdio: "inherit" });
+  return out;
+}
+
 // 올리는 창구 하나(v1.0.31) - Old와 New 파일을 한 창에서 올린다. 앱이 파일 이름의 번호로 쪽을 먼저 고르고, New 파일은 번호가 같은 빈 줄에 붙는다.
-// 묶음을 만들 권한이 있는 사람으로 새 묶음에서 하고, 끝에 그 묶음을 지운다(저장소의 합성 샘플 파일을 쓴다)
+// 묶음을 만들 권한이 있는 사람으로 새 묶음에서 하고, 끝에 그 묶음을 지운다(올릴 파일은 backend venv로 합성 생성기를 돌려 만든다)
 await runStep("documents: one upload window takes Old and New files", { devUser: "dev.admin" }, async ({ page, takeShot }) => {
-  const samples = resolve(SCRIPT_DIR, "../../samples");
+  const samples = buildSyntheticFiles();
   const headers = { "X-Dev-User": "dev.admin", "Content-Type": "application/json" };
   const created = await (await page.request.post(`${BASE}/api/bundles`, { headers, data: { title: "SYNTHETIC upload window", is_synthetic: true } })).json();
   const docs = [{ code: "SOP-01", doc_type: "sop", title: "Synthetic SOP" }, { code: "WI-05", doc_type: "wi", parent_code: "SOP-01", title: "Synthetic listed WI" }];

@@ -1,7 +1,7 @@
 """AI 복합 문장 나누기 — 단위 하나의 글을 조각으로 자르게 해 나눌 글자 위치(`SplitOp.at`)를 제안한다, 요청 범위 고르기와 load·compute·apply (설계 §7.11, 규칙 R03).
 
-제안은 위치만 기록한다. 단위·판단·새 문장은 어디에도 쓰지 않아 단위는 미배정 그대로고, 나누기는 사람이 위치를 받아들여 나누기 편집(§7.5)을 해야 일어난다.
-그래서 낡음은 단위가 살아 있는 미배정이고 글이 그대로인지만 본다. 응답은 정해진 필드만 읽어 검사하고 무효 제안에는 응답 원문을 남기지 않는다.
+제안은 위치만 기록한다. 단위·판단·새 문장은 어디에도 쓰지 않아 판단은 그대로고, 나누기는 사람이 위치를 받아들여 나누기 편집(§7.5)을 해야 일어난다.
+그래서 낡음은 단위가 살아 있고 사람이 정하지 않았고(미배정·AI 분류 제안) 글이 그대로인지만 본다. 응답은 정해진 필드만 읽어 검사하고 무효 제안에는 응답 원문을 남기지 않는다.
 """
 
 import hashlib
@@ -13,8 +13,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import Row, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.sop.ai.apply import add_suggestion, can_receive_suggestion, load_fresh_decisions, load_open_decisions
-from app.sop.ai.classify import AiWarning, build_warning, check_rule_ids, load_input_refs, load_latest_extractions
+from app.sop.ai.apply import add_suggestion, can_receive_suggestion, load_open_decisions
+from app.sop.ai.classify import CLASSIFY_KIND, AiWarning, build_warning, check_rule_ids, load_input_refs, load_latest_extractions
 from app.sop.ai.constants import MAX_SPLIT_PARTS, MIN_SPLIT_CHARS
 from app.sop.ai.context import UnitContext, load_unit_context
 from app.sop.ai.guidelines import RULES_KEY, GuidelineRef, format_guideline_versions, load_active_guidelines
@@ -28,7 +28,9 @@ from app.sop.segment import has_visible_char, trim_blank_range
 from app.sop.units import UNIT_ACTIVE
 
 SPLIT_KIND = "split"
-_KINDS: tuple[str, ...] = ()  # 나누기 제안은 판단 위에 쓰지 않아 다시 받을 수 있는 AI 제안이 없다 — 미배정만 받는다
+# 나누기 제안은 판단을 쓰지 않아 AI 분류 제안 위에서도 물을 수 있다 — 배정 화면 첫 진입이 거의 모든 줄을 미리 분류해
+# 미배정만 받으면 줄 요청·문서 요청이 대부분 건너뛰었다. 사람이 확정·보류한 줄은 자르면 배정이 풀리니 받지 않는다
+_KINDS: tuple[str, ...] = (CLASSIFY_KIND,)
 _PROMPT_KEY = "prompt.split"
 _FEATURE = "sop.split"
 _SPLIT_UNIT_KINDS = ("sentence", "cell_sentence")  # 제목·그림·표는 문장이 아니라 나누기 후보가 아니다
@@ -87,8 +89,10 @@ async def _load_scope_rows(
         select(
             Unit.id, Unit.extraction_id, Unit.kind, Unit.group_unit_id, Unit.pos_seq, Unit.pos_start,
             func.length(Unit.text).label("n_chars"), UnitDecision.status, UnitDecision.disposition,
+            AiSuggestion.kind.label("suggestion_kind"),
         )
         .join(UnitDecision, UnitDecision.unit_id == Unit.id)
+        .outerjoin(AiSuggestion, AiSuggestion.id == UnitDecision.suggestion_id)
         .where(Unit.extraction_id.in_(list(extraction_ids)), Unit.status == UNIT_ACTIVE)
     )
     if unit_ids:
@@ -127,7 +131,7 @@ def _find_skip_reason(
         return "not_splittable"  # 제목·그림·표는 나누기 편집도 받지 않는다 — 문서 범위는 이런 단위를 읽지 않는다
     if row.group_unit_id is not None:
         return "bound_cell"  # 칸 문장의 처분은 그룹 단위가 담는다 — 문서 범위는 이런 칸을 읽지 않는다
-    if not can_receive_suggestion(row.status, row.disposition, None, _KINDS):
+    if not can_receive_suggestion(row.status, row.disposition, row.suggestion_kind, _KINDS):
         return "not_unassigned"
     if row.id in queued:
         return "already_queued"
@@ -141,7 +145,7 @@ def _find_skip_reason(
 async def select_split_items(
     session: AsyncSession, bundle_id: int, *, document_id: int | None, unit_ids: Sequence[int] | None
 ) -> tuple[list[JobItem], list[SkippedOut]]:
-    """요청 범위를 작업 줄로 — 옛 문서 최신 추출의 묶이지 않은 문장·칸 문장 중 미배정만 받고 단위 하나에 작업 하나다(설계 §7.11).
+    """요청 범위를 작업 줄로 — 옛 문서 최신 추출의 묶이지 않은 문장·칸 문장 중 사람이 정하지 않은 것(미배정·AI 분류 제안)만 받고 단위 하나에 작업 하나다(설계 §7.11).
 
     문서 범위는 열린 나누기 제안이 있는 문장을 already_suggested로, 문턱보다 짧은 문장을 too_short로 알린다. 제목·표·묶인 칸은 후보가 아니라
     알리지 않는다 — 건너뜀 목록은 사람이 볼 사유만 싣는다. 고른 단위는 묶인 칸이면 bound_cell, 제목·그림·표면 not_splittable로 단위마다 알리고
@@ -242,11 +246,11 @@ def _add_result(session: AsyncSession, job: AiJob, loaded: _Loaded, verdict: _Ve
 
 
 async def _is_stale(session: AsyncSession, job: AiJob) -> bool:
-    """호출 동안 단위가 은퇴했거나 판단이 달라졌거나(미배정이 아니거나) 글이 바뀌었으면 위치를 쓸 수 없다."""
-    decisions = await load_fresh_decisions(
-        session, unit_ids=job.unit_ids, snapshot=job.input_snapshot["revisions"], kinds=_KINDS
-    )
-    if decisions is None:
+    """호출 동안 단위가 은퇴했거나 사람이 정했거나 글이 바뀌었으면 위치를 쓸 수 없다.
+
+    판단 revision은 보지 않는다 — 위치는 글자에만 기대고, 함께 도는 미리 분류가 AI 제안을 다시 써 revision을 올려도 위치는 그대로 맞다.
+    """
+    if await load_open_decisions(session, unit_ids=job.unit_ids, kinds=_KINDS) is None:
         return True
     unit = await session.get_one(Unit, job.unit_ids[0])
     return _hash_text(unit.text) != job.input_snapshot["hashes"][str(unit.id)]

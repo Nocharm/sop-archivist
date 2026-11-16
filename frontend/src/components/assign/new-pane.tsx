@@ -8,7 +8,7 @@
 "use client";
 
 import { ChevronDown, ChevronUp, FilePlus2, Scissors, Spline } from "lucide-react";
-import { Fragment, useEffect, useEffectEvent, useRef, useState, type FocusEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useEffectEvent, useRef, useState, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { PaneZoom } from "@/components/assign/pane-zoom";
 import { RefMark } from "@/components/assign/ref-mark";
@@ -161,7 +161,6 @@ export function NewPane(props: NewPaneProps) {
   const { t } = useI18n();
   const [openSources, setOpenSources] = useState<ReadonlySet<number>>(new Set());
   const paneRef = useRef<HTMLElement>(null);
-  const matesRef = useRef<HTMLElement[]>([]);
   // 엮은 문서만 - 이미 쓴 문서의 문장은 원래 있던 줄이라 들어오는 움직임을 쓰지 않는다
   const enterKeys = props.readOnly && props.live ? props.live.targetIds.map((id) => `t:${id}`) : [];
   const presence = useRowPresence(props.rows, props.rowsKey, enterKeys);
@@ -279,17 +278,6 @@ export function NewPane(props: NewPaneProps) {
         <RefMark row={row} />
       </span>
     );
-  }
-
-  /** 올리거나 포커스한 줄의 짝 구성원 모두에 언어 탭을 보이게 - data-mate-hover를 직접 단다(Old 용지와 같은 방식, 포인터가 지날 때마다 다시 그리지 않게) */
-  function markMates(target: EventTarget | null) {
-    const line = target instanceof Element ? target.closest<HTMLElement>(".new-line[data-pair-group]") : null;
-    const group = line?.dataset.pairGroup;
-    const els = group ? [...(paneRef.current?.querySelectorAll<HTMLElement>(`.new-line[data-pair-group="${group}"]`) ?? [])] : [];
-    if (els.length === matesRef.current.length && els.every((el, index) => el === matesRef.current[index])) return;
-    for (const el of matesRef.current) delete el.dataset.mateHover;
-    for (const el of els) el.dataset.mateHover = "";
-    matesRef.current = els;
   }
 
   /** 문장 한 줄(앞 틈 포함) */
@@ -440,10 +428,6 @@ export function NewPane(props: NewPaneProps) {
             data-strips=""
             data-dragging={isCutDragging ? "" : undefined}
             data-read-only={props.readOnly ? "" : undefined}
-            onPointerOver={(event: ReactPointerEvent<HTMLDivElement>) => markMates(event.target)}
-            onPointerLeave={() => markMates(null)}
-            onFocus={(event: FocusEvent<HTMLDivElement>) => markMates(event.target)}
-            onBlur={() => markMates(null)}
           >
             {shown.map(({ row, leaving }, index) => {
               const previous = shown[index - 1]?.row;
