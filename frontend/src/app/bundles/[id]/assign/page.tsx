@@ -2965,8 +2965,8 @@ export default function AssignPage() {
                 activePart={activePart}
                 sheets={oldView && paperModel && activePart !== "body" ? listPartSheets(oldView, paperModel, activePart) : null}
                 onPartChange={(part) => setManualPart({ key: activeKey ?? "", part })}
-                // 짝 고르는 중에는 칸 문장끼리도 짝을 맺으니 묶음으로 올리지 않는다
-                pickWholeBundle={!(pairSource && pairFrom && !isNewEdit)}
+                // 묶음째 고르는 것은 배정 때만 - 짝 고르기(칸 문장끼리도 짝을 맺는다)와 쓴 New 문서 다듬기(배정이 없다)는 칸 문장을 그대로 고른다
+                pickWholeBundle={!isSolo && !(pairSource && pairFrom && !isNewEdit)}
                 onUnitClick={handleOldClick}
                 onUnitContextMenu={(unitId, at, caret) => openCtxMenu(unitId, at, caret)}
                 onUnitDoubleClick={canEdit ? handleOldDoubleClick : undefined}

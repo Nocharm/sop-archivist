@@ -102,7 +102,7 @@ interface PaperProps {
   onRangeSelect?: (range: { blockId: number; start: number; end: number }) => void;
   /** Shift+클릭이 여럿 고르기인 화면(Assign) - 끌어 고르기(onRangeSelect)를 함께 써도 Shift+클릭이 글자 선택을 늘리지 않게 한다 */
   shiftClickPicks?: boolean;
-  /** 표·그림 어디를 눌러도 묶음 전체를 고른다(Assign) - 칸 문장·칸 틈을 눌러도 표 단위로 부른다. Alt 누름은 글자 고르기라 고르지 않는다. 없으면 칸 문장을 그대로(Split) */
+  /** 표·그림 어디를 눌러도 묶음 전체를 고른다(Assign 배정) - 칸 문장·칸 틈·칸 표시를 눌러도 표 단위로 부른다. Alt 누름은 글자 고르기라 고르지 않는다. 끄면 칸 문장을 그대로 고른다(한/영 짝 고르기, 쓴 New 문서 다듬기) */
   pickWholeBundle?: boolean;
   /** 그림을 받을 묶음·문서 - 없으면 그림 자리 상자만 */
   figureSource?: { bundleId: number; docId: number };
@@ -873,7 +873,8 @@ export function Paper({
     // 조각 끝 아이콘을 눌러도 그 단위를 고른다
     const mark = (event.target as HTMLElement).closest<HTMLElement>("[data-mark-unit]");
     if (mark) {
-      onUnitClick(Number(mark.dataset.markUnit), null, event);
+      const unitId = Number(mark.dataset.markUnit);
+      onUnitClick(pickWholeBundle ? resolvePickUnit(unitId, model.units) : unitId, null, event);
       return;
     }
     // 글자 밖 조각 상자(여백·보류 칩·왼쪽 앞머리)를 눌러도 그 단위를 고른다 - 상자 안 단추·손잡이는 제 동작을 한다
