@@ -1452,18 +1452,24 @@ async function measureWideTables(page) {
       const frame = box?.parentElement;
       return box && frame ? box.getBoundingClientRect().right - frame.getBoundingClientRect().right : 0;
     })));
+    const wideBox = wide?.closest(".ptbl-scroll");
     return {
       docX: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+      viewport: window.innerWidth,
       wideRow: wide ? Math.round(Math.max(...[...wide.rows].map((row) => row.getBoundingClientRect().height))) : null,
-      wideScrolls: wide ? wide.closest(".ptbl-scroll")?.scrollWidth > wide.closest(".ptbl-scroll")?.clientWidth : null,
+      wideScrolls: wideBox ? wideBox.scrollWidth > wideBox.clientWidth : null,
+      // 스크롤 상자 없이 그려진 표 - 넘치면 조각·용지를 민다
+      unwrapped: tables.filter((table) => !table.closest(".ptbl-scroll")).length,
       cell600,
       boxOut,
     };
   });
 }
 
+// 1120에서는 18열 표가 반드시 상자 안에서 가로로 스크롤한다(넓은 창은 다 들어갈 수도 있다)
 function isWideTableOk(value) {
-  return value.docX === false && value.wideRow !== null && value.wideRow <= 66 && value.cell600 !== null && value.cell600.width <= value.cell600.limit + 1 && value.cell600.width >= value.cell600.limit * 0.9 && value.boxOut <= 1;
+  return value.docX === false && value.unwrapped === 0 && value.wideRow !== null && value.wideRow <= 66 && (value.viewport > 1120 || value.wideScrolls === true)
+    && value.cell600 !== null && value.cell600.width <= value.cell600.limit + 1 && value.cell600.width >= value.cell600.limit * 0.9 && value.boxOut <= 1;
 }
 // B5는 새(문서 0개) Bundle이면 되므로 mid에서도 W7로 한 번 더 잰다(W7은 같은 DB에 있다)
 AUDIT_ENTRIES.push({ ...AUDIT_ENTRIES.find((entry) => entry.id === "B5"), ds: "mid" });

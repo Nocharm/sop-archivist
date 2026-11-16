@@ -56,8 +56,8 @@ function CItemView({ item }: { item: OutputCItem }) {
     const rows = new Map<number, OutputCItem[]>();
     for (const cell of item.children) rows.set(cell.cell_row ?? 0, [...(rows.get(cell.cell_row ?? 0) ?? []), cell]);
     return (
-      // 넓은 표는 좌우로 스크롤한다. data-no-drag - 스크롤 막대를 끌면 줄 끌기가 아니라 스크롤이다(줄은 번호·여백을 잡아 끈다)
-      <div className="ptbl-scroll my-1" data-no-drag>
+      // 넓은 표는 좌우로 스크롤한다 - 표 안을 눌러도 줄이 끌리고, 스크롤 막대 누름만 끌기에서 빠진다(lib/box-drag.ts isOnHorizontalScrollbar)
+      <div className="ptbl-scroll my-1">
         <table className={`ptbl ${isNote ? "italic" : ""}`}>
           <tbody>
             {[...rows.entries()].sort((a, b) => a[0] - b[0]).map(([index, cells]) => (
