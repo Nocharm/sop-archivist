@@ -956,7 +956,7 @@ def _check_positions(plans: Iterable[_Plan], by_row_id: dict[int, _Plan], state:
             _reject("position_target_elsewhere", keys=keys, target_ids=[anchor_id])
 
 
-SlotRelease =tuple[TargetSentence, list[int]]  # 이 저장의 출처를 떼어 낼 칸 제목과 남는 출처(seq 순, 비면 행을 지운다)
+SlotRelease = tuple[TargetSentence, list[int]]  # 이 저장의 출처를 떼어 낼 칸 제목과 남는 출처(seq 순, 비면 행을 지운다)
 
 
 def _resolve_slot_headings(plans: list[_Plan], state: _State) -> tuple[list[_Plan], list[SlotRelease]]:
@@ -1429,6 +1429,8 @@ async def freeze_positioned_docs(session: AsyncSession, bundle: Bundle, checked:
     docs = {plan.doc.id: plan.doc for plan in _list_positioned(checked.plans) if not plan.doc.manual_order}
     for doc in docs.values():
         await freeze_order(session, bundle.id, doc, actor)
+    # 되돌리기 단계의 앞 모습(dump_bundle_state)은 Core select라 자동 flush에 기대지 않고 굳힌 순번을 여기서 DB에 쓴다
+    await session.flush()
 
 
 async def save_group(session: AsyncSession, bundle: Bundle, checked: CheckedGroup, actor: str) -> GroupOut:

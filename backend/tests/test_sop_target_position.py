@@ -7,7 +7,7 @@ import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
-from app.sop.models import TargetDoc, TargetSentence
+from app.sop.models import DecisionStep, TargetDoc, TargetSentence
 from tests.access_helpers import run_in_session
 from tests.ai_fixtures import read_rows
 from tests.docx_factory import build_docx, p
@@ -250,6 +250,115 @@ def test_position_rejections_write_nothing(client: TestClient, case: str, reason
     assert _is_manual_order(sop_id) is False
     assert get_bundle(client, bundle_id)["revision"] == revision
     assert _count_reorders(client, bundle_id) == 0
+
+
+def _read_top_orders(target_doc_id: int) -> dict[int, int]:
+    return {
+        row.id: row.order_index
+        for row in read_rows(TargetSentence) if row.target_doc_id == target_doc_id and row.parent_target_id is None
+    }
+
+
+def test_position_at_the_front_of_an_empty_slot_goes_after_the_document_end(client: TestClient) -> None:
+    bundle_id, sop_id, view, ids = _setup(client)
+
+    response = _save(
+        client, bundle_id, sop_id, find_unit(view, DRAGGED), slot_key=OTHER_SLOT, position={"after_target_id": None}
+    )
+
+    assert response.status_code == 200, response.text
+    (dragged,) = [target["id"] for target in response.json()["targets"]]
+    assert (_texts(client, bundle_id), _texts(client, bundle_id, OTHER_SLOT)) == ([FIRST, SECOND, THIRD], [DRAGGED])
+    assert _is_manual_order(sop_id)
+    assert _read_top_orders(sop_id) == {ids[FIRST]: 0, ids[SECOND]: 1, ids[THIRD]: 2, dragged: 3}  # 굳힌 최댓값 + 1
+
+
+def test_position_without_after_target_id_is_a_validation_error(client: TestClient) -> None:
+    bundle_id, sop_id, view, _ = _setup(client)
+    revision = get_bundle(client, bundle_id)["revision"]
+
+    response = _save(client, bundle_id, sop_id, find_unit(view, DRAGGED), position={})
+
+    assert response.status_code == 422, response.text
+    assert [error["loc"][-1] for error in response.json()["detail"]] == ["after_target_id"]
+    assert (_texts(client, bundle_id), _is_manual_order(sop_id)) == ([FIRST, SECOND, THIRD], False)
+    assert get_bundle(client, bundle_id)["revision"] == revision
+
+
+def test_a_rejected_positioned_save_records_no_undo_step(client: TestClient) -> None:
+    bundle_id, sop_id, view, _ = _setup(client)
+    revision = get_bundle(client, bundle_id)["revision"]
+
+    response = _save(
+        client, bundle_id, sop_id, find_unit(view, DRAGGED), undo={"session": "s1"},
+        position={"after_target_id": 999_999},
+    )
+
+    assert _reason(response) == "unknown_position_target"
+    assert [step for step in read_rows(DecisionStep) if step.bundle_id == bundle_id] == []
+    assert (_texts(client, bundle_id), _is_manual_order(sop_id)) == ([FIRST, SECOND, THIRD], False)
+    assert get_bundle(client, bundle_id)["revision"] == revision
+    assert _count_reorders(client, bundle_id) == 0
+
+
+@pytest.mark.parametrize("case", ["deleted_in_this_save", "slot_heading", "positioned_in_this_save"])
+def test_unknown_position_target_cases(client: TestClient, case: str) -> None:
+    bundle_id, sop_id, view, ids = _setup(client)
+    dragged, late = find_unit(view, DRAGGED), find_unit(view, LATE)
+    if case == "deleted_in_this_save":
+        second = find_unit(view, SECOND)
+        anchor_id = ids[SECOND]
+        body = {
+            "action": "confirm",
+            "units": [
+                _unit_entry(client, bundle_id, dragged),
+                {**_unit_entry(client, bundle_id, second), "disposition": "delete", "reason": "Synthetic reason"},
+            ],
+            "targets": [{
+                "key": "t", "target_doc_id": sop_id, "slot_key": PAIR_SLOT, "source_unit_ids": [dragged["id"]],
+                "position": {"after_target_id": anchor_id},
+            }],
+            "removed_target_ids": [anchor_id],
+        }
+    elif case == "slot_heading":
+        heading = _save(client, bundle_id, sop_id, late, kind="slot_heading")
+        assert heading.status_code == 200, heading.text
+        (anchor_id,) = [target["id"] for target in heading.json()["targets"]]
+        body = {
+            "action": "confirm",
+            "units": [_unit_entry(client, bundle_id, dragged)],
+            "targets": [{
+                "key": "t", "target_doc_id": sop_id, "slot_key": PAIR_SLOT, "source_unit_ids": [dragged["id"]],
+                "position": {"after_target_id": anchor_id},
+            }],
+        }
+    else:
+        assert _save(client, bundle_id, sop_id, dragged, slot_key=OTHER_SLOT).status_code == 200
+        (moved,) = get_group_by_unit(client, bundle_id, dragged["id"])["targets"]
+        anchor_id = moved["id"]
+        body = {
+            "action": "confirm",
+            "units": [_unit_entry(client, bundle_id, unit) for unit in (dragged, late)],
+            "targets": [
+                {
+                    "key": "d", "id": moved["id"], "revision": moved["revision"], "target_doc_id": sop_id,
+                    "slot_key": PAIR_SLOT, "source_unit_ids": [dragged["id"]],
+                    "position": {"after_target_id": ids[FIRST]},
+                },
+                {
+                    "key": "t", "target_doc_id": sop_id, "slot_key": PAIR_SLOT, "source_unit_ids": [late["id"]],
+                    "position": {"after_target_id": anchor_id},
+                },
+            ],
+        }
+    revision = get_bundle(client, bundle_id)["revision"]
+
+    response = save_group(client, bundle_id, body)
+
+    assert _reason(response) == "unknown_position_target"
+    assert (response.json()["detail"]["keys"], response.json()["detail"]["target_ids"]) == (["t"], [anchor_id])
+    assert (_texts(client, bundle_id), _is_manual_order(sop_id)) == ([FIRST, SECOND, THIRD], False)
+    assert get_bundle(client, bundle_id)["revision"] == revision
 
 
 def test_position_in_a_wi_step_and_across_documents(client: TestClient) -> None:
