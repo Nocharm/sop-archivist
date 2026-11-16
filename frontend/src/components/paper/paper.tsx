@@ -138,6 +138,8 @@ interface PaperProps {
   onUnitDoubleClick?: (unitId: number, at: { blockId: number; offset: number } | null) => void;
   /** 문장 줄을 우클릭하거나 메뉴 글쇠를 눌렀다 - 주면 브라우저 메뉴 대신 이 콜백이 불린다(Split) */
   onUnitContextMenu?: (unitId: number, at: { x: number; y: number }, caret: { blockId: number; offset: number } | null) => void;
+  /** Unit이 있는 조각을 끌 수 있는 상자로(data-drag-box, lib/box-drag.ts) - 끌기는 화면이 붙인다. 표 칸 조각은 표 조각이 감싸 따로 달지 않는다 */
+  dragBoxes?: boolean;
 }
 
 /** 화면 좌표 → 블록 위치. 글자 조각 요소의 data-start에 글자 노드 안 위치를 더한다 */
@@ -197,6 +199,7 @@ export function Paper({
   onCutNudge,
   onUnitDoubleClick,
   onUnitContextMenu,
+  dragBoxes = false,
 }: PaperProps) {
   const { t } = useI18n();
   const pageRef = useRef<HTMLDivElement>(null);
@@ -703,6 +706,7 @@ export function Paper({
           data-partner={unit !== undefined && partnerIds?.has(unit.id) ? "" : undefined}
           data-bracket={bracket}
           data-strip-unit={unitId ?? undefined}
+          data-drag-box={dragBoxes && unitId !== null ? "" : undefined}
           data-testid={`${testId}-piece-${unitId ?? row.key}`}
         >
           {/* 표·그림의 보류 칩 - 표 위 제 줄(data-start 밖)이라 표를 덮지 않고, 눌러도 조각 상자를 누른 것으로 그 단위를 고른다 */}

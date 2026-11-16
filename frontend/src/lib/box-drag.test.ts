@@ -126,6 +126,29 @@ describe("attachBoxDrag", () => {
     expect([fire("selectstart"), fire("dragstart")]).toEqual([false, false]);
   });
 
+  it("a plain press clears an existing text selection (the browser would, but selectstart is blocked); Alt and unpicked presses keep it", () => {
+    const select = () => {
+      const range = document.createRange();
+      range.selectNodeContents(box.querySelector("p")!);
+      window.getSelection()!.removeAllRanges();
+      window.getSelection()!.addRange(range);
+    };
+    attach({ pick: vi.fn((event: PointerEvent): string | null => (event.target instanceof Element && event.target.closest("p") ? "src" : null)) });
+    select();
+    press(box, 10, 10, { altKey: true });
+    release(10, 10);
+    expect(window.getSelection()!.isCollapsed).toBe(false);
+    press(box.querySelector("button")!);
+    release(10, 10);
+    expect(window.getSelection()!.isCollapsed).toBe(false);
+    press(box);
+    release(10, 10);
+    expect(window.getSelection()!.isCollapsed).toBe(false);
+    press(box.querySelector("p")!);
+    expect(window.getSelection()!.rangeCount).toBe(0);
+    release(10, 10);
+  });
+
   it("an Alt press neither starts a drag nor blocks selectstart", () => {
     const config = attach();
     press(box, 10, 10, { altKey: true });

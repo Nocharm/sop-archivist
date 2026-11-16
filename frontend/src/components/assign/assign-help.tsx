@@ -27,6 +27,8 @@ export function AssignHelp() {
     [t("assign.help.keyClear"), <kbd key="clear">U</kbd>],
     [t("assign.help.keyShift"), <kbd key="shift">Shift + {t("assign.help.click")}</kbd>],
     [t("assign.help.keyCtrl"), <kbd key="ctrl">Ctrl + {t("assign.help.click")}</kbd>],
+    [t("assign.help.keyDrag"), <kbd key="drag">{t("assign.help.drag")}</kbd>],
+    [t("assign.help.keyAltDrag"), <kbd key="alt-drag">Alt + {t("assign.help.drag")}</kbd>],
     [t("assign.help.keyZoom"), <kbd key="zoom">Ctrl + {t("assign.help.wheel")}</kbd>],
     [t("assign.help.keyView"), <kbd key="view">V</kbd>],
     [t("assign.help.keyUndo"), <kbd key="undo">Ctrl Z</kbd>],

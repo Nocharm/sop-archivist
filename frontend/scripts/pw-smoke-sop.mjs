@@ -100,6 +100,180 @@ async function findOrderDocs(page, probe, limit = 1) {
   return found;
 }
 
+// --- Order 끌기 장면이 같이 쓰는 도우미 ---
+
+// React 커밋 수 - 끄는 동안 다시 그리지 않는지 본다(G11). renderers·onScheduleFiberRoot는 개발 서버의 React Refresh가 읽는다
+async function installCommitCounter(page) {
+  await page.addInitScript(() => {
+    const renderers = new Map();
+    window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
+      renderers,
+      supportsFiber: true,
+      inject(internals) {
+        renderers.set(renderers.size + 1, internals);
+        return renderers.size;
+      },
+      onScheduleFiberRoot() {},
+      onCommitFiberUnmount() {},
+      onCommitFiberRoot() { window.__commits = (window.__commits ?? 0) + 1; },
+      onPostCommitFiberRoot() {},
+      checkDCE() {},
+    };
+  });
+}
+// 줄 안의 한 점 - 글이 있으면 첫 글줄 위, 없으면(표) 줄 왼쪽 위. 앞선 놓기의 미끄러짐·따라가는 스크롤이 멈춘 뒤에 잰다(움직이는 중에 재면 다른 줄을 누른다)
+async function pointInRow(page, id) {
+  const text = page.locator(`[data-testid="output-c-item-${id}"]`);
+  const target = (await text.count()) > 0 ? text : page.locator(`[data-testid="output-c-row-${id}"]`);
+  let box = await target.boundingBox();
+  for (let i = 0; i < 20; i += 1) {
+    await page.waitForTimeout(100);
+    const next = await target.boundingBox();
+    if (Math.abs(next.y - box.y) < 0.5 && Math.abs(next.x - box.x) < 0.5) break;
+    box = next;
+  }
+  return { x: box.x + Math.min(40, box.width / 2), y: box.y + 8 };
+}
+// 열린 C에서 그 칸의 줄 순서(그려진 줄)
+const readSectionIds = (page, key) => page.evaluate((k) => [...(document.querySelector(`[data-testid="output-c"] section[data-location-key="${CSS.escape(k)}"]`)?.querySelectorAll("[data-drag-box]") ?? [])].map((row) => row.dataset.flipKey), key);
+// 그 줄이 든 칸의 키
+const readRowKey = (page, id) => page.evaluate((rowId) => document.querySelector(`[data-testid="output-c-row-${rowId}"]`)?.closest("section")?.dataset.locationKey ?? null, id);
+const readRowNumber = (page, id) => page.evaluate((rowId) => document.querySelector(`[data-testid="output-c-number-${rowId}"]`)?.textContent.trim() ?? null, id);
+// 끌리는 표 - 거절 표시, 이유·번호(note), 글 전체, 끌리는 덩어리 줄(src)
+const readDragCard = (page) => page.evaluate(() => {
+  const card = document.querySelector('[data-testid="drag-card"]');
+  const note = card?.querySelector(".drag-card-note");
+  const src = [...document.querySelectorAll("[data-drag-src]")].map((row) => row.dataset.flipKey);
+  return { shown: Boolean(card), refused: card?.hasAttribute("data-refused") ?? false, note: note && !note.hidden ? note.textContent.trim() : "", text: card?.textContent ?? "", src };
+});
+// 끌기가 남긴 표시 - 끝나면 모두 0이어야 한다
+const readDragMarks = (page) => page.evaluate(() => ({
+  flag: document.documentElement.hasAttribute("data-box-drag"),
+  cards: document.querySelectorAll('[data-testid="drag-card"]').length,
+  marks: document.querySelectorAll("[data-drag-src], [data-drag-home], [data-drag-seen], [data-drag-closed], [data-drag-sheet], [data-drag-locked], [data-drop]").length,
+  lineShown: document.querySelector('[data-testid="output-c-dropline"]')?.hidden === false,
+}));
+// 칸 하나의 상태 - 흐림(칸 머리에 닿는 opacity를 용지까지 곱한 값), N/A 사유 줄의 흐림, 올린 칸 테두리(data-drop).
+// 흐림은 칸이 아니라 칸 안 요소에 걸린다(N/A 사유 줄은 빼고) - 그래서 머리에서 잰다
+const readSectionState = (page, key) => page.evaluate((k) => {
+  const section = document.querySelector(`[data-testid="output-c"] section[data-location-key="${CSS.escape(k)}"]`);
+  const readOpacity = (el) => {
+    let value = 1;
+    for (let node = el; node && node.dataset?.testid !== "output-c"; node = node.parentElement) value *= Number(getComputedStyle(node).opacity);
+    return Math.round(value * 100) / 100;
+  };
+  const reason = section?.querySelector("[data-na-reason]");
+  return section ? { opacity: readOpacity(section.querySelector("h3")), reasonOpacity: reason ? readOpacity(reason) : null, drop: section.dataset.drop ?? null } : null;
+}, key);
+// 올린 칸의 테두리(outline)가 그 칸의 글자와 놓을 선에 닿지 않나 - 테두리 띠는 칸 상자를 outline-offset만큼 넓힌 안쪽 선부터 굵기만큼 더 넓힌 바깥 선까지.
+// 글자(칸 머리·줄 번호·줄 글·표 칸·빈 칸 "–"·N/A 줄을 글자 범위로 잰다)와 선·선의 동그라미(::before)마다 띠까지의 여유(px)를 재 가장 작은 값을 돌려준다
+// (안쪽 선 안이면 안쪽 선까지, 바깥 선 밖이면 바깥 선까지 - 음수면 띠에 걸친다). 테두리가 없으면 null, 잰 글자가 없으면 texts 0으로 실패한다
+const readOutlineFit = (page, key) => page.evaluate((k) => {
+  const section = document.querySelector(`[data-testid="output-c"] section[data-location-key="${CSS.escape(k)}"]`);
+  if (!section?.dataset.drop) return null;
+  const style = getComputedStyle(section);
+  const offset = parseFloat(style.outlineOffset);
+  const width = parseFloat(style.outlineWidth);
+  const box = section.getBoundingClientRect();
+  const grow = (r, d) => ({ left: r.left - d, top: r.top - d, right: r.right + d, bottom: r.bottom + d });
+  const inner = grow(box, offset);
+  const outer = grow(box, offset + width);
+  const clearance = (r) => Math.max(
+    Math.min(r.left - inner.left, inner.right - r.right, r.top - inner.top, inner.bottom - r.bottom),
+    Math.max(outer.left - r.right, r.left - outer.right, outer.top - r.bottom, r.top - outer.bottom),
+  );
+  const texts = [];
+  for (const el of section.querySelectorAll('h3, [data-testid^="output-c-number-"], [data-testid^="output-c-item-"], [data-testid^="output-c-empty-"], h3 + p, td')) {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!node.textContent.trim()) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      for (const rect of range.getClientRects()) if (rect.width > 0 && rect.height > 0) texts.push(rect);
+    }
+  }
+  const line = document.querySelector('[data-testid="output-c-dropline"]');
+  const marks = [];
+  if (line && !line.hidden) {
+    const lineBox = line.getBoundingClientRect();
+    const dot = getComputedStyle(line, "::before");
+    const left = lineBox.left + parseFloat(dot.left);
+    const top = lineBox.top + parseFloat(dot.top);
+    marks.push(lineBox, { left, top, right: left + parseFloat(dot.width), bottom: top + parseFloat(dot.height) });
+  }
+  const round = (value) => Math.round(value * 10) / 10;
+  return { drop: section.dataset.drop, offset, width, texts: texts.length, textClear: texts.length ? round(Math.min(...texts.map(clearance))) : null, marks: marks.length, markClear: marks.length ? round(Math.min(...marks.map(clearance))) : null };
+}, key);
+// 글자와는 1px 넘게, 선·동그라미와는 2px 넘게 떨어져야 한다(1px 틈은 화면 배율에 따라 붙어 보인다). 놓을 수 있는 칸(over)에는 선이 그어져 있어야 한다
+const isOutlineClear = (fit) => fit !== null && fit.texts > 0 && fit.textClear >= 1 && (fit.drop !== "over" || (fit.marks === 2 && fit.markClear >= 2));
+// 고른 줄의 왼쪽 막대(줄 box-shadow 가운데 --accent 색 층이 보이는 띠)와 그 줄 번호 첫 글자 사이(px) - 음수면 막대가 글자를 덮는다.
+// 위 층(앞에 적힌 층)이 덮는 곳은 뺀다. 고른 줄이 아니거나 번호·막대가 없으면 clear null과 그 까닭.
+// 줄의 box-shadow는 호버 고리에서 넘어오는 동안 바뀌므로(.c-row[data-drag-box] transition) 그 줄의 전환이 끝난 뒤에 잰다
+const readBarClear = async (page, id) => {
+  await page.waitForFunction((rowId) => (document.querySelector(`[data-testid="output-c-row-${rowId}"]`)?.getAnimations() ?? []).length === 0, id, { timeout: 2000 });
+  return readBarNow(page, id);
+};
+const readBarNow = (page, id) => page.evaluate((rowId) => {
+  const row = document.querySelector(`[data-testid="output-c-row-${rowId}"]`);
+  const num = document.querySelector(`[data-testid="output-c-number-${rowId}"]`);
+  if (!row || !num?.firstChild) return { clear: null, why: "no row or number" };
+  if (document.activeElement !== row) return { clear: null, why: `focus on ${document.activeElement?.dataset.testid ?? document.activeElement?.tagName}` };
+  const probe = document.createElement("i");
+  probe.style.color = "var(--accent)";
+  row.append(probe);
+  const accent = getComputedStyle(probe).color;
+  probe.remove();
+  // 층은 "색 x y 흐림 퍼짐 [inset]" - 색 안의 쉼표는 괄호 밖에서만 나눈다
+  const layers = getComputedStyle(row).boxShadow.split(/,(?![^(]*\))/).map((part) => {
+    const m = part.trim().match(/^(.*\))\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+([\d.]+)px\s+(-?[\d.]+)px(\s+inset)?$/);
+    return m ? { color: m[1], x: Number(m[2]), inset: Boolean(m[6]) } : null;
+  });
+  const at = layers.findIndex((layer) => layer?.color === accent);
+  if (at < 0) return { clear: null, why: "no accent layer", shadow: getComputedStyle(row).boxShadow };
+  const left = row.getBoundingClientRect().left;
+  const bar = layers[at];
+  // 안쪽 막대는 줄 왼쪽 끝부터 x만큼, 바깥 막대는 x부터 줄 왼쪽 끝까지 - 그중 위 바깥 층이 덮는 오른쪽은 빠진다
+  const covers = layers.slice(0, at).filter((layer) => layer && !layer.inset && layer.x < 0).map((layer) => layer.x);
+  const right = bar.inset ? left + bar.x : left + Math.max(bar.x, Math.min(0, ...covers));
+  const range = document.createRange();
+  range.setStart(num.firstChild, 0);
+  range.setEnd(num.firstChild, 1);
+  const glyph = range.getBoundingClientRect();
+  return { clear: Math.round((glyph.left - right) * 10) / 10, number: num.textContent.trim(), shadow: getComputedStyle(row).boxShadow };
+}, id);
+// 칸 안의 놓을 점 - 줄이 있으면 마지막 줄 아래 끝 바로 위(칸 끝), 없으면 빈 칸 표시("–")·N/A 사유 줄의 가운데
+const pointInSectionEnd = (page, key) => page.evaluate((k) => {
+  const section = document.querySelector(`[data-testid="output-c"] section[data-location-key="${CSS.escape(k)}"]`);
+  const rows = section.querySelectorAll("[data-drag-box]");
+  if (rows.length > 0) {
+    const box = rows[rows.length - 1].getBoundingClientRect();
+    return { x: box.left + 40, y: box.bottom - 3 };
+  }
+  const box = section.querySelector("h3 + p").getBoundingClientRect();
+  return { x: box.left + 40, y: box.top + box.height / 2 };
+}, key);
+// 줄을 틀 위쪽(틀 위 + offset px)에 둔다 - 아래 칸들이 같은 화면에 들고, 가장자리 자동 스크롤 띠(44px) 밖이다
+const scrollRowToTop = (page, id, offset = 90) => page.evaluate(({ rowId, gap }) => {
+  const row = document.querySelector(`[data-testid="output-c-row-${rowId}"]`);
+  const pane = row.closest(".overflow-auto, .overflow-y-auto");
+  pane.scrollTop += row.getBoundingClientRect().top - pane.getBoundingClientRect().top - gap;
+}, { rowId: id, gap: offset });
+// 누르고 문턱을 넘긴 뒤 점들을 차례로 지나간다(사람처럼 여러 걸음)
+async function dragThrough(page, from, points) {
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x, from.y + 10, { steps: 5 });
+  for (const point of points) await page.mouse.move(point.x, point.y, { steps: 12 });
+}
+// 다시 받아 같은 문서를 연다
+async function reopenOrderDoc(page, docId, rowId) {
+  await page.reload();
+  await page.locator(`[data-testid="order-doc-${docId}"]`).click();
+  await page.locator(`[data-testid="output-c-row-${rowId}"]`).waitFor({ timeout: T });
+}
+// 놓은 직후 그 줄이 번쩍이나(data-flash는 1.3초 뒤 빠진다)
+const waitFlash = (page, id) => page.waitForFunction((rowId) => document.querySelector(`[data-testid="output-c-row-${rowId}"]`)?.hasAttribute("data-flash"), id, { timeout: 1200 }).then(() => true, () => false);
+
 // --- 시나리오 ---
 
 let halfBundleId = null;
@@ -1226,6 +1400,393 @@ await runStep("assign: written New document - identical, link by clicking, split
   check("an unsourced New sentence is marked new", true);
 });
 
+// 끌어서 잇기(끌어다 놓기 설계 §6, 2걸음) - Old 조각을 이미 쓴 New 문장에 놓으면 클릭으로 이을 때와 같은 상태(그 줄 고름 · 그 문장 고름 · 그 자리 메뉴)가 되고 저장은 하지 않는다.
+// 마우스는 걸음으로 움직인다(dragTo는 쓰지 않는다). 저장하지 않으므로 되돌릴 것이 없다
+await runStep("assign: drag an Old piece onto a written New sentence, it links like a click", {}, async ({ page, takeShot }) => {
+  await installCommitCounter(page);
+  const headers = { "X-Dev-User": "qa.member" };
+  const readUnits = async () => (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/units?limit=1000`, { headers })).json()).items;
+  const written = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/written-sentences`, { headers })).json();
+  const writtenDocIds = [...new Set(written.map((row) => row.target_doc_id))];
+  const composedDocIds = (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/tobe`, { headers })).json()).docs.filter((doc) => doc.entrance === "assign").map((doc) => doc.id);
+  // 짝 없는 미배정 문장 - 줄 하나가 Unit 하나다
+  const loose = new Map((await readUnits()).filter((unit) => unit.status === "unassigned" && unit.kind === "sentence" && unit.pair_id === null).map((unit) => [unit.unit_id, unit]));
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.locator('[data-pane="old"] .strip[data-strip-unit]').first().waitFor({ timeout: T });
+  const shownIds = await page.locator('[data-pane="old"] .strip[data-strip-unit]').evaluateAll((els) => els.map((el) => Number(el.dataset.stripUnit)));
+  const [aId, bId] = shownIds.filter((id) => loose.has(id));
+  check("the Old paper shows two loose unassigned sentences", aId !== undefined && bId !== undefined, `${aId} ${bId}`);
+  const pieceOf = (id) => page.locator(`[data-testid="assign-paper-piece-${id}"]`);
+  const centre = (selector) => page.locator(selector).first().evaluate((el) => el.scrollIntoView({ block: "center" }));
+  // 조각 글의 첫 글줄 위 한 점 - 앞머리·배지·줄 끝 표시를 비켜 글 위를 누른다
+  const pointInUnit = async (id) => {
+    await centre(`[data-testid="assign-paper-piece-${id}"]`);
+    await page.waitForTimeout(150);
+    return page.locator(`[data-testid="assign-paper-unit-${id}"]`).first().evaluate((el) => {
+      const rect = el.getClientRects()[0];
+      return { x: rect.left + Math.min(24, rect.width / 2), y: rect.top + rect.height / 2 };
+    });
+  };
+  const pointInLine = async (id) => {
+    await centre(`[data-testid="assign-new-${id}"]`);
+    await page.waitForTimeout(150);
+    const box = await page.locator(`[data-testid="assign-new-${id}"] .new-hit`).boundingBox();
+    return { x: box.x + Math.min(60, box.width / 2), y: box.y + box.height / 2 };
+  };
+  const newPane = page.locator('[data-testid="assign-new"]');
+  const openNewDoc = async (docId) => {
+    if ((await newPane.getAttribute("data-doc")) === String(docId)) return;
+    await page.locator('[data-testid="assign-new-doc"]').click();
+    await page.locator(`[data-testid="assign-new-doc-option-${docId}"]`).click();
+    await page.waitForFunction((id) => document.querySelector('[data-testid="assign-new"]')?.getAttribute("data-doc") === String(id), docId, { timeout: T });
+  };
+  const readMarks = () => page.evaluate(() => ({
+    cards: document.querySelectorAll('[data-testid="drag-card"]').length,
+    lines: document.querySelectorAll("svg[data-drag-line]").length,
+    drops: document.querySelectorAll("[data-drop]").length,
+    srcs: document.querySelectorAll("[data-drag-src]").length,
+  }));
+  const isPressed = async (id) => (await page.locator(`[data-testid="assign-new-pick-${id}"]`).getAttribute("aria-pressed")) === "true";
+  const menu = page.locator('[data-testid="assign-link-menu"]');
+
+  // 1. 다른 줄을 먼저 골라 둔다 - 끄는 줄은 지금 고른 줄이 아니다
+  const aPoint = await pointInUnit(aId);
+  await page.mouse.click(aPoint.x, aPoint.y);
+  await page.waitForLoadState("networkidle");
+  check("clicking a piece picks its row first", (await pieceOf(aId).getAttribute("data-sel")) === "");
+  await newPane.waitFor({ timeout: T });
+  const shownDoc = Number(await newPane.getAttribute("data-doc"));
+  await openNewDoc(writtenDocIds.includes(shownDoc) ? shownDoc : writtenDocIds[0]);
+  const tId = Number(await page.locator('[data-testid="assign-new"] .pg:not([data-read-only]) .new-line[data-target]:not([data-state="picked"])').first().getAttribute("data-target"));
+
+  // 2. 끄는 동안 - 표 한 장, 놓을 문장 테두리와 표의 메모, 따라오는 점선, 흐린 출발 조각
+  const from = await pointInUnit(bId);
+  const onto = await pointInLine(tId);
+  await dragThrough(page, from, [onto]);
+  await page.waitForTimeout(100);
+  const during = await page.evaluate(({ b, t }) => ({
+    card: document.querySelector('[data-testid="drag-card"]')?.textContent ?? null,
+    note: document.querySelector('[data-testid="drag-card"] .drag-card-note')?.textContent ?? "",
+    drop: document.querySelector(`[data-testid="assign-new-${t}"]`)?.getAttribute("data-drop") ?? null,
+    line: document.querySelector("svg[data-drag-line] path")?.getAttribute("d") ?? "",
+    src: document.querySelector(`[data-testid="assign-paper-piece-${b}"]`)?.hasAttribute("data-drag-src") ?? false,
+  }), { b: bId, t: tId });
+  check("dragging an Old piece shows a card with its unit id", during.card !== null && during.card.includes(loose.get(bId).display_id), during.card);
+  check("over a written sentence the line is marked and the card says link", during.drop === "over" && during.note === "Link to this sentence", JSON.stringify({ drop: during.drop, note: during.note }));
+  check("a draft line follows from the piece", during.line.length > 0);
+  check("the dragged piece stays dimmed in place", during.src);
+  await takeShot("sop-assign-drag-link.png");
+  // 3. 문장 위를 여러 걸음 지나도 React는 다시 그리지 않는다(G11)
+  const commitsBefore = await page.evaluate(() => window.__commits ?? -1);
+  for (let i = 0; i < 12; i += 1) await page.mouse.move(onto.x + (i % 4) * 6, onto.y + (i % 3) - 1);
+  const commitsAfter = await page.evaluate(() => window.__commits ?? -1);
+  check("no React commit while dragging over a sentence", commitsBefore > 0 && commitsBefore === commitsAfter, `${commitsBefore} -> ${commitsAfter}`);
+
+  // 4. 놓으면 클릭과 같은 상태 - 끈 줄을 고르고 그 문장을 고르고 그 자리 메뉴(저장 전), 끌기 표시는 모두 치운다
+  // 놓은 뒤 뒤따르는 click이 그 문장 단추에 닿아 고름을 다시 뒤집지 않는지 - 놓은 뒤 그 단추의 aria-pressed가 바뀐 값을 모두 적는다
+  await page.evaluate((t) => {
+    window.__pressFlips = [];
+    new MutationObserver((records) => {
+      for (const record of records) if (record.target.getAttribute("data-testid") === `assign-new-pick-${t}`) window.__pressFlips.push(record.target.getAttribute("aria-pressed"));
+    }).observe(document.querySelector('[data-testid="assign-new"]'), { attributes: true, subtree: true, attributeFilter: ["aria-pressed"] });
+  }, tId);
+  await page.mouse.up();
+  await menu.waitFor({ timeout: T });
+  check("dropping picks the dragged row", (await pieceOf(bId).getAttribute("data-sel")) === "" && (await pieceOf(aId).getAttribute("data-sel")) === null);
+  check("dropping picks the sentence", await isPressed(tId));
+  check("the in-place menu opens, not saved yet", (await page.locator('[data-testid="assign-link-menu-unsaved"]').count()) === 1);
+  const marks = await readMarks();
+  check("the drag leaves no marks behind", marks.cards + marks.lines + marks.drops + marks.srcs === 0, JSON.stringify(marks));
+  // 5. 저장하지 않았다
+  check("dropping saves nothing", (await readUnits()).find((unit) => unit.unit_id === bId)?.status === "unassigned");
+  // 메뉴 자리 - 늦게 뜨는 움직임이 끝나고 이음 선 끝에 맞춘 뒤의 자리(style의 top·left)
+  const readMenuPlace = async () => {
+    await page.waitForTimeout(900);
+    return menu.evaluate((el) => ({ top: parseFloat(el.style.top), left: parseFloat(el.style.left) }));
+  };
+  const dropPlace = await readMenuPlace();
+  const pressFlips = await page.evaluate(() => window.__pressFlips);
+  check("the click after a drop does not flip the pick back", (await isPressed(tId)) && pressFlips.length === 1 && pressFlips[0] === "true", JSON.stringify(pressFlips));
+  // 6. 메뉴의 Cancel이 고름을 거둔다(클릭으로 고른 때와 같다)
+  await page.locator('[data-testid="assign-link-menu-cancel"]').click();
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-new-pick-${id}"]`)?.getAttribute("aria-pressed") === "false", tId, { timeout: T });
+  check("Cancel in the menu drops the pick", !(await isPressed(tId)));
+  // 놓은 뒤의 메뉴는 그 문장을 같은 자리에서 눌렀을 때와 같은 곳(이음 선 끝)에 뜬다 - 끈 줄은 고른 채다
+  check("the dragged row stays picked after Cancel", (await pieceOf(bId).getAttribute("data-sel")) === "");
+  await page.mouse.click(onto.x, onto.y);
+  await menu.waitFor({ timeout: T });
+  const clickPlace = await readMenuPlace();
+  check("the menu after a drop opens where a click on that sentence opens it", Math.abs(dropPlace.top - clickPlace.top) <= 2 && Math.abs(dropPlace.left - clickPlace.left) <= 2, `drop ${JSON.stringify(dropPlace)} click ${JSON.stringify(clickPlace)}`);
+  await page.locator('[data-testid="assign-link-menu-cancel"]').click();
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-new-pick-${id}"]`)?.getAttribute("aria-pressed") === "false", tId, { timeout: T });
+
+  // 7. Esc - 끄다가 문장 위에서 취소하면 표가 사라지고 아무것도 고르지 않는다
+  await dragThrough(page, await pointInUnit(bId), [await pointInLine(tId)]);
+  await page.waitForTimeout(100);
+  const overBeforeEsc = await page.locator(`[data-testid="assign-new-${tId}"]`).getAttribute("data-drop");
+  await page.keyboard.press("Escape");
+  const afterEsc = await readMarks();
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  check("Esc cancels the drag over a sentence", overBeforeEsc === "over" && afterEsc.cards + afterEsc.lines + afterEsc.drops + afterEsc.srcs === 0, JSON.stringify(afterEsc));
+  check("a cancelled drag picks nothing and opens no menu", !(await isPressed(tId)) && (await menu.count()) === 0);
+
+  // 9. 클릭은 그대로 - 움직이지 않고 누르면 표 없이 그 줄을 고른다
+  const press = await pointInUnit(aId);
+  await page.mouse.move(press.x, press.y);
+  await page.mouse.down();
+  const cardsOnPress = await page.locator('[data-testid="drag-card"]').count();
+  await page.mouse.up();
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-sel"), aId, { timeout: T });
+  check("a press without moving still picks the row, with no card", cardsOnPress === 0 && (await page.locator('[data-testid="drag-card"]').count()) === 0);
+  // 끌기를 쓴 뒤에도 두 번 누르기는 그 조각에 나눌 자리를 세운다(4px 안의 누름은 지금의 클릭이다) - 글 가운데를 두 번 누르고 Esc로 거둔다
+  const twice = await page.locator(`[data-testid="assign-paper-unit-${aId}"]`).first().evaluate((el) => {
+    const rect = el.getClientRects()[0];
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  });
+  await page.mouse.dblclick(twice.x, twice.y);
+  // 나눌 자리 표시(.cut-anchor)는 폭이 0이라 "보임"이 아니다 - 붙었는지만 본다
+  const cutShown = await page.locator(`[data-testid="assign-paper-piece-${aId}"] .cut-anchor`).waitFor({ state: "attached", timeout: 4000 }).then(() => true, () => false);
+  check("after a drag, a double press still sets a cut in the Old piece", cutShown && (await page.locator('[data-testid="drag-card"]').count()) === 0);
+  await page.keyboard.press("Escape");
+  await page.locator('[data-pane="old"] .cut-anchor').first().waitFor({ state: "detached", timeout: T });
+
+  // 8. 아직 쓰지 않은 문서 - 그 문장 위에는 놓을 자리가 없고 놓아도 아무 일도 없다(3걸음에서 보내기로 놓인다)
+  let composedLine = null;
+  for (const docId of composedDocIds) {
+    await openNewDoc(docId);
+    const line = page.locator('[data-testid="assign-new"] .pg[data-read-only] .new-line[data-target]').first();
+    if (await line.waitFor({ timeout: 4000 }).then(() => true, () => false)) {
+      composedLine = Number(await line.getAttribute("data-target"));
+      break;
+    }
+  }
+  check("an unwritten New document with sentences opens", composedLine !== null, composedDocIds.join(","));
+  await centre(`[data-testid="assign-new-${composedLine}"]`);
+  const composedBox = await page.locator(`[data-testid="assign-new-${composedLine}"]`).boundingBox();
+  await dragThrough(page, await pointInUnit(bId), [{ x: composedBox.x + Math.min(60, composedBox.width / 2), y: composedBox.y + composedBox.height / 2 }]);
+  await page.waitForTimeout(100);
+  const overComposed = await readMarks();
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  check("a sentence of an unwritten document takes no drop yet", overComposed.cards === 1 && overComposed.drops === 0, JSON.stringify(overComposed));
+  check("dropping there does nothing", (await menu.count()) === 0 && (await pieceOf(aId).getAttribute("data-sel")) === "" && (await pieceOf(bId).getAttribute("data-sel")) === null);
+
+  // 놓자마자 j로 다음 줄로 옮기면 늦게 온 관계 묶음이 옮겨 간 줄에 잇기를 적용하지 않는다 - 끈 줄의 묶음 응답을 늦춰 경주를 정해 둔다
+  await openNewDoc(written.find((row) => row.target_id === tId).target_doc_id);
+  const lateGroup = `**/groups/by-unit/${bId}`;
+  await page.route(lateGroup, async (route) => {
+    await new Promise((done) => setTimeout(done, 1500));
+    await route.continue();
+  });
+  await dragThrough(page, await pointInUnit(bId), [await pointInLine(tId)]);
+  await page.waitForTimeout(100);
+  await page.mouse.up();
+  await page.keyboard.press("j");
+  await page.waitForTimeout(2500);
+  await page.unroute(lateGroup);
+  const afterSwitch = { menu: await menu.count(), pressed: await isPressed(tId), dragged: (await pieceOf(bId).getAttribute("data-sel")) !== null, picked: await page.locator('[data-testid="assign-new"] .new-line[data-state="picked"]').count() };
+  check("a drop is let go when another row is picked before its group arrives", afterSwitch.menu === 0 && !afterSwitch.pressed && !afterSwitch.dragged && afterSwitch.picked === 0, JSON.stringify(afterSwitch));
+
+  // 놓은 뒤 ↵가 저장한다(메뉴의 Confirm과 같다) - 앞 확인들이 쓰지 않는 셋째 미배정 문장을 다른 문장에 놓는다
+  const cId = shownIds.filter((id) => loose.has(id))[2];
+  const confirmTarget = Number(await page.locator(`[data-testid="assign-new"] .pg:not([data-read-only]) .new-line[data-target]:not([data-target="${tId}"]):not([data-state="picked"])`).first().getAttribute("data-target"));
+  check("the Old paper shows a third loose unassigned sentence", cId !== undefined, String(cId));
+  await dragThrough(page, await pointInUnit(cId), [await pointInLine(confirmTarget)]);
+  await page.waitForTimeout(100);
+  await page.mouse.up();
+  await menu.waitFor({ timeout: T });
+  await page.waitForTimeout(400);
+  const savedByEnter = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
+  await page.keyboard.press("Enter");
+  const enterResponse = await savedByEnter;
+  await page.waitForLoadState("networkidle");
+  const confirmedUnit = (await readUnits()).find((unit) => unit.unit_id === cId);
+  check("Enter after a drop saves the link", enterResponse.ok() && confirmedUnit?.status !== "unassigned" && (confirmedUnit?.target_ids ?? []).includes(confirmTarget), JSON.stringify({ status: confirmedUnit?.status, targets: confirmedUnit?.target_ids, confirmTarget }));
+
+  // 10. 올려 둔 강조는 끄는 동안 되살아나지 않는다(G10) - 이어진 조각에 올려 맞은편 강조를 켠 채 끌고, 끄는 동안 New 칸을 굴려 이음 선이 다시 그려지게 한다.
+  // 이어진 조각은 앞 단계가 같은 글로 확정한 Old 문서에 있다 - 그 문서를 연다(고른 줄이 풀리므로 맨 끝에)
+  const writtenIds = new Set(written.map((row) => row.target_id));
+  const linked = (await readUnits()).find((unit) => unit.target_ids.some((id) => writtenIds.has(id)));
+  check("a piece is linked to a written sentence", linked !== undefined);
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${linked.document_id}"]`).click();
+  await pieceOf(linked.unit_id).waitFor({ timeout: T });
+  const partner = written.find((row) => linked.target_ids.includes(row.target_id));
+  await openNewDoc(partner.target_doc_id);
+  await centre(`[data-testid="assign-new-${partner.target_id}"]`);
+  const linkedPoint = await pointInUnit(linked.unit_id);
+  await page.mouse.move(linkedPoint.x, linkedPoint.y);
+  await page.waitForTimeout(300);
+  const hoverMarks = await page.locator(".assign-panes [data-link-hover]").count();
+  const paneBox = await page.locator('[data-testid="assign-new"] .pane-body').boundingBox();
+  await dragThrough(page, linkedPoint, [{ x: paneBox.x + paneBox.width / 2, y: paneBox.y + paneBox.height / 2 }]);
+  // 창 폭을 바꾸면 이음 선을 다시 재어 그린다(New 문서가 짧으면 굴릴 것이 없다)
+  const commitsBeforeRedraw = await page.evaluate(() => window.__commits ?? -1);
+  await page.setViewportSize({ width: 1180, height: 720 });
+  await page.waitForTimeout(500);
+  const redrew = (await page.evaluate(() => window.__commits ?? -1)) > commitsBeforeRedraw;
+  const leaked = await page.evaluate(() => ({
+    card: document.querySelectorAll('[data-testid="drag-card"]').length,
+    marks: document.querySelectorAll(".assign-panes [data-link-hover], .assign-panes [data-link-hot]").length,
+  }));
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  check("hovering a linked piece marks the sentence it links to", hoverMarks > 0, String(hoverMarks));
+  check("no link highlight while dragging, even after the lines redraw", redrew && leaked.card === 1 && leaked.marks === 0, JSON.stringify({ redrew, ...leaked }));
+  await page.setViewportSize(VIEWPORT);
+
+  // 11. 들림(G9) - 한/영 짝 카드는 한 장으로 끌리니 아래 줄에 올려도 카드 전체가 고리 하나로 들린다(윗줄은 네 변, 아래 줄은 위 변 없이).
+  // 엿보기 조각(필터 밖, 점선 테두리)은 들지 않는다 - 점선 바로 바깥에 실선 고리가 겹친다. 값은 계산된 box-shadow로 본다(고리 = 퍼짐 1px)
+  const readShadow = (selector) => page.locator(selector).first().evaluate((el) => getComputedStyle(el).boxShadow);
+  // 짝이 있는 Old 문서를 모두 보이게 연다
+  let pairDoc = null;
+  for (const doc of (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json()).filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${doc.id}/view`, { headers })).json();
+    if (view.pairs.length > 0) {
+      pairDoc = { id: doc.id, unitId: view.pairs[0].unit_ids[0] };
+      break;
+    }
+  }
+  await page.locator('[data-testid="assign-filter-all"]').click();
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${pairDoc.id}"]`).click();
+  await pieceOf(pairDoc.unitId).waitFor({ timeout: T });
+  const cardRows = page.locator('[data-pane="old"] .strip-card > .strip-row > .strip[data-drag-box]');
+  check("the Old document shows a KO/EN pair card", (await cardRows.count()) >= 2);
+  const cardTop = await cardRows.first().evaluate((el) => el.dataset.testid);
+  const cardBottom = await cardRows.first().evaluate((el) => [...el.closest(".strip-card").querySelectorAll(":scope > .strip-row > .strip")].at(-1).dataset.testid);
+  await centre(`[data-testid="${cardTop}"]`);
+  await page.waitForTimeout(150);
+  const bottomBox = await page.locator(`[data-testid="${cardBottom}"]`).boundingBox();
+  await page.mouse.move(bottomBox.x + 40, bottomBox.y + bottomBox.height / 2);
+  await page.waitForTimeout(300);
+  const lift = { top: await readShadow(`[data-testid="${cardTop}"]`), bottom: await readShadow(`[data-testid="${cardBottom}"]`) };
+  check("hovering a pair card's lower row lifts the whole card with one ring", lift.top.includes("0px 0px 0px 1px") && !lift.bottom.includes("0px 0px 0px 1px") && lift.bottom.includes("0px 1px 0px 0px"), JSON.stringify(lift));
+  // 다른 상태 거르기 - 접힌 줄이 생기는 필터를 고르고 접힌 줄 하나를 엿보기로 연다
+  for (const filter of ["unassigned", "on_hold", "confirmed"]) {
+    if ((await page.locator('[data-pane="old"] .fold-line').count()) > 0) break;
+    await page.locator(`[data-testid="assign-filter-${filter}"]`).click();
+    await page.waitForTimeout(300);
+  }
+  await page.locator('[data-pane="old"] .fold-line').first().click();
+  const peek = page.locator('[data-pane="old"] .strip-row[data-peek] > .strip[data-drag-box]').first();
+  await peek.waitFor({ timeout: T });
+  await peek.evaluate((el) => el.scrollIntoView({ block: "center" }));
+  const peekBox = await peek.boundingBox();
+  await page.mouse.move(peekBox.x + 40, peekBox.y + peekBox.height / 2);
+  await page.waitForTimeout(300);
+  const peekShadow = await peek.evaluate((el) => getComputedStyle(el).boxShadow);
+  check("a peek piece does not lift over its dashed border", peekShadow === "none", peekShadow);
+});
+
+// 끌기 상자 위의 글자 고르기(끌어다 놓기 G3·G12) - 긁어 둔 글자가 남아도 Old 조각의 클릭·Shift+클릭은 그대로이고, Alt를 누르는 동안은 글자 커서다.
+// 표 칸 조각을 끌면 표 줄 전체가 끌린다(칸 Unit은 표에 묶여 제 줄이 없다). 저장하지 않는다
+await runStep("assign: a text selection does not deaden clicks on Old pieces, Alt shows a text cursor, a table drags from its cells", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.locator('[data-testid="assign-filter-all"]').click();
+  await page.locator('[data-pane="old"] .strip[data-strip-unit]').first().waitFor({ timeout: T });
+  // 짝 없는(줄 하나가 Unit 하나인) 글 조각 셋, 글이 넉넉한 것(조각의 Unit 번호)
+  const single = (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/units?limit=1000`, { headers })).json()).items.filter((unit) => unit.pair_id === null).map((unit) => unit.unit_id);
+  const pieces = await page.locator('[data-pane="old"] .strip[data-kind="piece"][data-drag-box]').evaluateAll((els, ids) => els.filter((el) => ids.includes(Number(el.dataset.stripUnit)) && (el.querySelector(".su")?.textContent ?? "").length > 30).slice(0, 3).map((el) => Number(el.dataset.stripUnit)), single);
+  check("the Old paper shows three text pieces", pieces.length === 3, JSON.stringify(pieces));
+  const [aId, bId, cId] = pieces;
+  const pointIn = async (id, part = 0.5) => {
+    await page.locator(`[data-testid="assign-paper-piece-${id}"]`).evaluate((el) => el.scrollIntoView({ block: "center" }));
+    await page.waitForTimeout(150);
+    return page.locator(`[data-testid="assign-paper-unit-${id}"]`).first().evaluate((el, at) => {
+      const rect = el.getClientRects()[0];
+      return { x: rect.left + Math.max(4, rect.width * at), y: rect.top + rect.height / 2 };
+    }, part);
+  };
+  const isSelected = (id) => page.evaluate((unit) => document.querySelector(`[data-testid="assign-paper-piece-${unit}"]`)?.hasAttribute("data-sel") ?? false, id);
+  const isCollapsed = () => page.evaluate(() => window.getSelection()?.isCollapsed ?? true);
+
+  // Alt를 누르는 동안 글자 커서, 떼면(고른 글자 없음) 손가락
+  const aStart = await pointIn(aId, 0);
+  await page.mouse.move(aStart.x + 20, aStart.y);
+  await page.keyboard.down("Alt");
+  await page.waitForTimeout(100);
+  const altCursor = await page.locator(`[data-testid="assign-paper-unit-${aId}"]`).first().evaluate((el) => getComputedStyle(el).cursor);
+  await page.keyboard.up("Alt");
+  await page.waitForTimeout(100);
+  const restCursor = await page.locator(`[data-testid="assign-paper-unit-${aId}"]`).first().evaluate((el) => getComputedStyle(el).cursor);
+  check("holding Alt shows a text cursor on an Old piece, and a pointer again after", altCursor === "text" && restCursor === "pointer", `${altCursor} -> ${restCursor}`);
+
+  // Alt로 A의 글자를 긁는다 - 글자로 새 Unit 막대가 뜬다
+  await page.keyboard.down("Alt");
+  await page.mouse.down();
+  await page.mouse.move(aStart.x + 140, aStart.y, { steps: 10 });
+  await page.mouse.up();
+  await page.keyboard.up("Alt");
+  await wait(page, "assign-carve");
+  check("Alt+drag selects text in an Old piece", !(await isCollapsed()));
+  // 그냥 B를 누르면 B의 줄을 고르고 긁은 글자와 막대는 사라진다
+  const bPoint = await pointIn(bId);
+  await page.mouse.click(bPoint.x, bPoint.y);
+  await page.waitForTimeout(600);
+  const afterClick = { picked: await isSelected(bId), carve: await page.locator('[data-testid="assign-carve"]').count(), collapsed: await isCollapsed() };
+  check("a plain click on another Old piece after selecting text picks its row", afterClick.picked && afterClick.carve === 0 && afterClick.collapsed, JSON.stringify(afterClick));
+  // 화면 다른 곳에 고른 글자가 있어도 Shift+클릭은 줄을 더한다
+  await page.evaluate(() => window.getSelection()?.selectAllChildren(document.querySelector('[data-testid="assign-bar"]')));
+  const selectedElsewhere = !(await isCollapsed());
+  const cPoint = await pointIn(cId);
+  await page.keyboard.down("Shift");
+  await page.mouse.click(cPoint.x, cPoint.y);
+  await page.keyboard.up("Shift");
+  const bulk = await page.locator('[data-testid="assign-bulk"]').waitFor({ timeout: 4000 }).then(() => true, () => false);
+  check("with text selected elsewhere, Shift+click on an Old piece still adds its row", selectedElsewhere && bulk, JSON.stringify({ selectedElsewhere, bulk }));
+  await page.keyboard.press("Escape");
+
+  // 표 칸 조각을 끌면 표 줄 전체 - 표 Unit 번호의 표, 표 조각이 흐려지고, 이미 쓴 문장 위에서 놓을 자리가 된다
+  let table = null;
+  for (const doc of (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json()).filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${doc.id}/view`, { headers })).json();
+    const unit = view.units.find((item) => item.kind === "table");
+    if (unit) {
+      table = { docId: doc.id, unit };
+      break;
+    }
+  }
+  check("the bundle has an Old table", table !== null);
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${table.docId}"]`).click();
+  const cell = page.locator(`[data-testid="assign-paper-piece-${table.unit.id}"] .cell-piece .su`).first();
+  await cell.waitFor({ timeout: T });
+  // New 칸을 열고 이미 쓴 문서를 띄운다
+  const firstText = await pointIn(await page.locator('[data-pane="old"] .strip[data-kind="piece"][data-drag-box]').first().getAttribute("data-strip-unit"));
+  await page.mouse.click(firstText.x, firstText.y);
+  const written = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/written-sentences`, { headers })).json();
+  const newPane = page.locator('[data-testid="assign-new"]');
+  await newPane.waitFor({ timeout: T });
+  const shownNewDoc = await newPane.getAttribute("data-doc");
+  if (!written.some((row) => String(row.target_doc_id) === shownNewDoc)) {
+    await page.locator('[data-testid="assign-new-doc"]').click();
+    await page.locator(`[data-testid="assign-new-doc-option-${written[0].target_doc_id}"]`).click();
+  }
+  const line = page.locator('[data-testid="assign-new"] .pg:not([data-read-only]) .new-line[data-target] .new-hit').first();
+  await line.waitFor({ timeout: T });
+  await cell.evaluate((el) => el.scrollIntoView({ block: "center" }));
+  await page.waitForTimeout(150);
+  const cellBox = await cell.boundingBox();
+  const lineBox = await line.boundingBox();
+  await dragThrough(page, { x: cellBox.x + 4, y: cellBox.y + cellBox.height / 2 }, [{ x: lineBox.x + 40, y: lineBox.y + lineBox.height / 2 }]);
+  await page.waitForTimeout(100);
+  const tableDrag = await page.evaluate((id) => ({
+    card: document.querySelector('[data-testid="drag-card"] .drag-card-id')?.textContent ?? null,
+    src: document.querySelector(`[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-drag-src") ?? false,
+    over: document.querySelectorAll('[data-pane="new"] [data-drop="over"]').length,
+    line: document.querySelector("svg[data-drag-line] path")?.getAttribute("d") ? true : false,
+  }), table.unit.id);
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  check("dragging a table cell piece drags the whole table row", tableDrag.card === table.unit.display_id && tableDrag.src && tableDrag.over === 1 && tableDrag.line, JSON.stringify(tableDrag));
+});
+
 // 한 언어만 잇기(v0.11.1) - Old는 한/영 짝인데 쓴 New에는 한 언어만 있는 예외. 있는 언어만 이어 확정하면 서버가 같은 저장 안에서
 // 짝을 풀고(release_unit_ids - 화면이 짝 풀기를 따로 부르지 않는다) 남은 문장이 제 줄이 되어 사람이 삭제(Remark)나 보류로 끝낸다
 await runStep("assign: a one-language link on a KO/EN pair row unpairs it and leaves the other sentence open", {}, async ({ page, takeShot }) => {
@@ -1997,24 +2558,8 @@ await runStep("order: a depth-locked line (an already-written document) can be p
 });
 
 // 줄을 끌어 칸 안에서 옮기고 좌우로 깊이를 바꾼다(끌어다 놓기 설계 §4·§5). 마우스는 걸음으로 움직인다(dragTo는 쓰지 않는다). 바꾼 순서·깊이는 단계 안에서 되돌린다
-await runStep("order: drag a line to reorder and indent", {}, async ({ page }) => {
-  // React 커밋 수 - 끄는 동안 다시 그리지 않는지 본다(G11). renderers·onScheduleFiberRoot는 개발 서버의 React Refresh가 읽는다
-  await page.addInitScript(() => {
-    const renderers = new Map();
-    window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
-      renderers,
-      supportsFiber: true,
-      inject(internals) {
-        renderers.set(renderers.size + 1, internals);
-        return renderers.size;
-      },
-      onScheduleFiberRoot() {},
-      onCommitFiberUnmount() {},
-      onCommitFiberRoot() { window.__commits = (window.__commits ?? 0) + 1; },
-      onPostCommitFiberRoot() {},
-      checkDCE() {},
-    };
-  });
+await runStep("order: drag a line to reorder and indent", {}, async ({ page, takeShot }) => {
+  await installCommitCounter(page);
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   // 줄 넷 이상인 칸 - 첫 줄 F와, 칸의 첫 줄이 아닌 마지막 의미 묶음의 첫 줄 L(깊이 0, 번호·글이 있다). 둘이 한 화면에 든다
@@ -2194,7 +2739,38 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page }) =
   await page.waitForTimeout(400);
   check("on a depth-locked line the same gesture changes nothing", lockedDrag.dragging && !lockedDrag.text.includes("indent") && puts.length === lockedPuts && (await padding()) === lockedPadding, JSON.stringify({ lockedDrag, puts: puts.length - lockedPuts }));
 
-  // 12. 다른 칸 위로 - 앞서 같은 칸에서 놓을 자리를 잡았어도 표에 이유를 적고, 놓으면 아무것도 저장하지 않는다(G7·G8)
+  // 12. N/A 칸 위로(데모 시드 SOP-CF의 6.3 Troubleshooting) - 앞서 같은 칸에서 놓을 자리를 잡았어도 표에 이유를 적고, 놓으면 아무것도 저장하지 않는다(G7·G8).
+  //     출발은 N/A 칸 위쪽에서 줄이 있는 가장 가까운 칸(같은 시드의 5.1 Safety)
+  const [naHit] = await findOrderDocs(page, () => {
+    const sheet = document.querySelector('[data-testid="output-c"] article[data-doc-id]');
+    const na = sheet?.querySelector("section[data-na]");
+    if (!na) return null;
+    const sections = [...sheet.querySelectorAll("section[data-location-key]")];
+    const above = sections.slice(0, sections.indexOf(na)).reverse().find((section) => section.querySelector("[data-drag-box]"));
+    const rows = above ? [...above.querySelectorAll("[data-drag-box]")] : [];
+    return rows.length > 0 ? { na: na.dataset.locationKey, first: rows[0].dataset.flipKey, source: rows.at(-1).dataset.flipKey } : null;
+  });
+  check("a document has an N/A section below a section with lines", Boolean(naHit));
+  const naCase = naHit[1];
+  await scrollRowToTop(page, naCase.first, 120);
+  const naOrder = await readOrder(naCase.first);
+  const np = await pointIn(naCase.source);
+  await page.mouse.move(np.x, np.y);
+  await page.mouse.down();
+  await page.mouse.move(np.x, (await rowOf(naCase.first).boundingBox()).y + 2, { steps: 12 });
+  const validFirst = await dropLine.isVisible();
+  await page.mouse.move(np.x, (await pointInSectionEnd(page, naCase.na)).y, { steps: 12 });
+  const refusal = { ...(await readDragCard(page)), section: await readSectionState(page, naCase.na) };
+  const naFit = await readOutlineFit(page, naCase.na);
+  check("the refused outline clears the N/A section's heading and reason", isOutlineClear(naFit), JSON.stringify(naFit));
+  await takeShot("order-xsec-refused-na.png");
+  check("an N/A section refuses with a reason", validFirst && refusal.refused && refusal.text.includes("That section is N/A in the To-Be list.") && (await dropLine.isHidden()) && refusal.section?.opacity < 1 && refusal.section?.drop === "refused", JSON.stringify({ validFirst, ...refusal }));
+  check("the dimmed N/A section keeps its N/A reason line undimmed", refusal.section?.reasonOpacity === 1, JSON.stringify(refusal.section));
+  const refusalPuts = puts.length;
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  check("releasing over an N/A section saves nothing", puts.length === refusalPuts && JSON.stringify(await readOrder(naCase.first)) === JSON.stringify(naOrder), JSON.stringify(await readOrder(naCase.first)));
+
   const [pairHit] = await findOrderDocs(page, () => {
     const sections = [...document.querySelectorAll('[data-testid="output-c"] section')];
     for (let i = 0; i + 1 < sections.length; i += 1) {
@@ -2210,23 +2786,6 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page }) =
   const pair = pairHit[1];
   await centre(pair.first);
   const pairOrder = await readOrder(pair.first);
-  const sp = await pointIn(pair.source);
-  await page.mouse.move(sp.x, sp.y);
-  await page.mouse.down();
-  await page.mouse.move(sp.x, (await rowOf(pair.first).boundingBox()).y + 2, { steps: 12 });
-  const validFirst = await dropLine.isVisible();
-  const otherBox = await rowOf(pair.other).boundingBox();
-  await page.mouse.move(sp.x, otherBox.y + otherBox.height / 2, { steps: 12 });
-  const refusal = await page.evaluate((otherId) => {
-    const dragCard = document.querySelector('[data-testid="drag-card"]');
-    const otherSection = document.querySelector(`[data-testid="output-c-row-${otherId}"]`).closest("section");
-    return { refused: dragCard?.hasAttribute("data-refused") ?? false, text: dragCard?.textContent ?? "", opacity: Number(getComputedStyle(otherSection).opacity) };
-  }, pair.other);
-  check("another section refuses with a reason", validFirst && refusal.refused && refusal.text.includes("Another section") && (await dropLine.isHidden()) && refusal.opacity < 1, JSON.stringify({ validFirst, ...refusal }));
-  const refusalPuts = puts.length;
-  await page.mouse.up();
-  await page.waitForTimeout(400);
-  check("releasing over another section saves nothing", puts.length === refusalPuts && JSON.stringify(await readOrder(pair.first)) === JSON.stringify(pairOrder), JSON.stringify(await readOrder(pair.first)));
 
   // 13. 끄다가 Esc - 끌기만 취소된다. 저장 없음, 누른 줄은 고른 채, 단추 위에서 떼도 뒤따르는 click은 단추를 누르지 않는다(Review Focus 2)
   await page.evaluate(() => {
@@ -2306,6 +2865,333 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page }) =
   await page.mouse.click(sheetBox.x - 6, sheetBox.y + 40);
   const cleared = await page.evaluate(() => ({ selection: getSelection().toString().length, mode: document.documentElement.hasAttribute("data-box-select") }));
   check("the selection stays after Alt is let go and an empty press clears it", kept.selection > 0 && kept.mode && cleared.selection === 0 && !cleared.mode, JSON.stringify({ kept, cleared }));
+});
+
+// 같은 문서의 다른 칸으로 - 데모 시드 SOP-CF(아직 쓰지 않은 SOP): 1 Purpose의 의미 짝(덩어리)을 4 Responsibilities의 두 의미 묶음 사이로,
+// 하위 칸 5.1 General Requirements › Safety의 끝으로, 빈 칸 6.1 Procedures › Procedure로 옮긴 뒤 같은 길을 되짚어(Responsibilities를 거쳐) 빈 Purpose로 되돌린다
+await runStep("order: drag a block into another section, a sub-slot and an empty section", {}, async ({ page, takeShot }) => {
+  await installCommitCounter(page);
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  // A = 줄이 있는 첫 칸, R = 줄 넷 이상에 둘째 의미 묶음이 있는 칸, B = 줄이 있는 하위 칸(키에 "."), E = B 아래 150px 넘게 떨어진 N/A 아닌 빈 하위 칸
+  const [hit] = await findOrderDocs(page, () => {
+    const sheet = document.querySelector('[data-testid="output-c"] article[data-doc-id]');
+    if (!sheet || sheet.querySelector("header .tag")?.textContent !== "SOP") return null;
+    const sections = [...sheet.querySelectorAll("section[data-location-key]")];
+    const rowsOf = (section) => [...section.querySelectorAll("[data-drag-box]")];
+    const numberOf = (section) => section.querySelector("h3 .font-mono")?.textContent.trim() ?? null;
+    const a = sections.find((section) => rowsOf(section).length >= 2);
+    const r = sections.find((section) => section !== a && rowsOf(section).length >= 4 && rowsOf(section).some((row, i) => i > 0 && row.hasAttribute("data-meaning-start")));
+    const b = sections.find((section) => section.dataset.locationKey.includes(".") && rowsOf(section).length >= 1);
+    if (!a || !r || !b || sections.indexOf(a) > sections.indexOf(r) || sections.indexOf(r) > sections.indexOf(b)) return null;
+    const e = sections.find((section) => section.dataset.locationKey.includes(".") && !section.hasAttribute("data-na") && rowsOf(section).length === 0 && section.querySelector('[data-testid^="output-c-empty-"]') && section.getBoundingClientRect().top - b.getBoundingClientRect().bottom > 100);
+    // 좁은 틀에서 잴 빈 하위 칸(B 바로 뒤의 것)과 N/A 칸
+    const nextEmpty = sections.slice(sections.indexOf(b) + 1).find((section) => section.dataset.locationKey.includes(".") && !section.hasAttribute("data-na") && rowsOf(section).length === 0);
+    const na = sheet.querySelector("section[data-na]");
+    if (!e || !nextEmpty || !na) return null;
+    const between = rowsOf(r).find((row, i) => i > 0 && row.hasAttribute("data-meaning-start"));
+    return {
+      a: { key: a.dataset.locationKey, number: numberOf(a), ids: rowsOf(a).map((row) => row.dataset.flipKey) },
+      r: { key: r.dataset.locationKey, ids: rowsOf(r).map((row) => row.dataset.flipKey), between: between.dataset.flipKey },
+      b: { key: b.dataset.locationKey, number: numberOf(b), first: rowsOf(b)[0].dataset.flipKey },
+      e: { key: e.dataset.locationKey, number: numberOf(e) },
+      nextEmpty: nextEmpty.dataset.locationKey,
+      na: na.dataset.locationKey,
+    };
+  });
+  check("an SOP has a section, a later section with two meaning groups, a sub-slot with lines, empty sub-slots and an N/A section", Boolean(hit));
+  const [docId, { a, r, b, e, nextEmpty, na }] = hit;
+  // 덩어리 = A의 첫 줄을 누르면 함께 가는 줄(데모 시드에서는 A의 두 줄 - 같은 의미의 한/영 짝)
+  const lead = a.ids[0];
+  const puts = [];
+  const bodies = [];
+  page.on("request", (request) => {
+    if (!isOrderSave(request)) return;
+    puts.push(request.url());
+    bodies.push(request.postDataJSON());
+  });
+  const readNoteNumber = (note) => note.replace(/^→ /, "");
+
+  // 1. A의 덩어리를 R의 두 의미 묶음 사이로 - 표에 R에서 받을 번호(둘째 묶음 첫 줄의 지금 번호), 놓으면 하나 저장, 그 칸에서 그 번호, 놓은 줄이 번쩍인다
+  const expectedBetween = await readRowNumber(page, r.between);
+  await scrollRowToTop(page, lead);
+  const rBetween = await page.locator(`[data-testid="output-c-row-${r.between}"]`).boundingBox();
+  await dragThrough(page, await pointInRow(page, lead), [{ x: rBetween.x + 40, y: rBetween.y + 2 }]);
+  const overR = { card: await readDragCard(page), section: await readSectionState(page, r.key), home: await readSectionState(page, a.key) };
+  check("over another section the card shows the number the line will get there", !overR.card.refused && overR.card.note === `→ ${expectedBetween}` && overR.section?.drop === "over" && overR.section.opacity === 1 && overR.home?.opacity === 1, JSON.stringify(overR));
+  const fitR = await readOutlineFit(page, r.key);
+  check("the outline of a section with lines clears its heading, numbers, text and the drop line", isOutlineClear(fitR), JSON.stringify(fitR));
+  const barDragged = await readBarClear(page, lead);
+  check("while dragging, the pressed row's left bar clears its number", barDragged.clear !== null && barDragged.clear >= 1, JSON.stringify(barDragged));
+  const firstSave = waitOrderSave(page);
+  await page.mouse.up();
+  const flashedFirst = await waitFlash(page, lead);
+  check("dropping it saves once and the line lands between the groups with that number", (await firstSave).ok() && puts.length === 1 && (await readRowKey(page, lead)) === r.key && (await readRowNumber(page, lead)) === expectedBetween && flashedFirst, JSON.stringify({ puts: puts.length, key: await readRowKey(page, lead), number: await readRowNumber(page, lead), flashedFirst }));
+  check("the saved request carries the new slot and the depth of every moved line", a.ids.every((id) => bodies[0]?.items.some((item) => String(item.target_id) === id && item.slot_key === r.key && "indent_level" in item)), JSON.stringify(bodies[0]?.items.filter((item) => a.ids.includes(String(item.target_id)))));
+  check("the drag left no marks", Object.values(await readDragMarks(page)).every((value) => !value), JSON.stringify(await readDragMarks(page)));
+  await reopenOrderDoc(page, docId, lead);
+  const rAfter = await readSectionIds(page, r.key);
+  const at = rAfter.indexOf(r.between);
+  check("after a reload the block is still between the two groups", (await readRowKey(page, lead)) === r.key && JSON.stringify(rAfter.slice(at - a.ids.length, at)) === JSON.stringify(a.ids), JSON.stringify(rAfter));
+
+  // 2. 하위 칸 B의 끝으로 - B 위를 20번 움직여도 React는 다시 그리지 않는다(G11). 표는 B에서 받을 번호
+  await scrollRowToTop(page, lead, 120);
+  const bEnd = await pointInSectionEnd(page, b.key);
+  await dragThrough(page, await pointInRow(page, lead), [bEnd]);
+  const overB = await readDragCard(page);
+  const fitB = await readOutlineFit(page, b.key);
+  check("the outline of a sub-slot clears its heading, numbers, text and the drop line", isOutlineClear(fitB), JSON.stringify(fitB));
+  await takeShot("order-xsec-note.png");
+  const commitsBefore = await page.evaluate(() => window.__commits ?? -1);
+  for (let i = 0; i < 20; i += 1) await page.mouse.move(bEnd.x + (i % 5), bEnd.y - (i % 3));
+  const commitsAfter = await page.evaluate(() => window.__commits ?? -1);
+  check("no React commit while dragging over another section", commitsBefore > 0 && commitsBefore === commitsAfter, `${commitsBefore} -> ${commitsAfter}`);
+  const subSave = waitOrderSave(page);
+  await page.mouse.up();
+  const flashedSub = await waitFlash(page, lead);
+  // 미끄러짐(--dur-slow 240ms)이 끝나고 테두리가 아직 진할 때(처음 35%)
+  await page.waitForTimeout(300);
+  await takeShot("order-xsec-landed.png");
+  check("dropping into a sub-slot moves it there with the number the card showed", overB.src.includes(lead) && overB.note.startsWith(`→ ${b.number}.`) && (await subSave).ok() && (await readRowKey(page, lead)) === b.key && (await readRowNumber(page, lead)) === readNoteNumber(overB.note) && flashedSub, JSON.stringify({ overB, key: await readRowKey(page, lead), number: await readRowNumber(page, lead), flashedSub }));
+
+  // 3. 빈 칸 E로 - 표는 E의 첫 번호, 놓으면 그 칸의 첫 줄들이 되고 다시 받아도 남는다
+  await scrollRowToTop(page, lead, 120);
+  await dragThrough(page, await pointInRow(page, lead), [await pointInSectionEnd(page, e.key)]);
+  const overE = { card: await readDragCard(page), section: await readSectionState(page, e.key), lineShown: (await readDragMarks(page)).lineShown };
+  const fitE = await readOutlineFit(page, e.key);
+  check("the outline of an empty section clears its heading, the dash and the drop line", isOutlineClear(fitE), JSON.stringify(fitE));
+  await takeShot("order-xsec-empty.png");
+  check("over an empty section the card shows its first number and the line is drawn", overE.card.src.includes(lead) && overE.card.note === `→ ${e.number}.1` && overE.section?.drop === "over" && overE.lineShown, JSON.stringify(overE));
+  const emptySave = waitOrderSave(page);
+  await page.mouse.up();
+  check("dropping into an empty section saves", (await emptySave).ok());
+  await reopenOrderDoc(page, docId, lead);
+  check("after a reload the block is the empty section's first lines", JSON.stringify(await readSectionIds(page, e.key)) === JSON.stringify(a.ids) && (await readRowNumber(page, lead)) === `${e.number}.1`, JSON.stringify({ ids: await readSectionIds(page, e.key), number: await readRowNumber(page, lead) }));
+
+  // 4. 되돌린다 - E에서 R의 두 묶음 사이로, 거기서 빈 A로(한 화면에 든 칸끼리)
+  await scrollRowToTop(page, r.between, 100);
+  const backPoint = await page.locator(`[data-testid="output-c-row-${r.between}"]`).boundingBox();
+  const viaR = waitOrderSave(page);
+  await dragThrough(page, await pointInRow(page, lead), [{ x: backPoint.x + 40, y: backPoint.y + 2 }]);
+  await page.mouse.up();
+  check("on the way back the block lands between the groups again", (await viaR).ok() && (await readRowKey(page, lead)) === r.key, String(await readRowKey(page, lead)));
+  // 빈 A는 R 바로 위 - 덩어리 줄을 틀 아래쪽에 두면(스크롤이 0에서 멈춰도) 둘이 한 화면에 든다
+  await scrollRowToTop(page, lead, 450);
+  const toA = waitOrderSave(page);
+  await dragThrough(page, await pointInRow(page, lead), [await pointInSectionEnd(page, a.key)]);
+  const overA = await readDragCard(page);
+  await page.mouse.up();
+  check("the block goes back into the empty first section", overA.note === `→ ${a.number}.1` && (await toA).ok(), JSON.stringify(overA));
+  await reopenOrderDoc(page, docId, lead);
+  check("after a reload both sections are as they were", JSON.stringify(await readSectionIds(page, a.key)) === JSON.stringify(a.ids) && JSON.stringify(await readSectionIds(page, r.key)) === JSON.stringify(r.ids), JSON.stringify({ a: await readSectionIds(page, a.key), r: await readSectionIds(page, r.key) }));
+
+  // 5. 다른 칸 위에서 Esc - 저장 없음, 표시는 모두 치워지고 줄은 그대로
+  await scrollRowToTop(page, r.ids[0], 120);
+  const escPuts = puts.length;
+  await dragThrough(page, await pointInRow(page, r.ids[0]), [await pointInSectionEnd(page, b.key)]);
+  const escOver = await readSectionState(page, b.key);
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  const escMarks = await readDragMarks(page);
+  check("Esc over another section cancels and cleans up", escOver?.drop === "over" && puts.length === escPuts && Object.values(escMarks).every((value) => !value) && JSON.stringify(await readSectionIds(page, r.key)) === JSON.stringify(r.ids), JSON.stringify({ escOver, escMarks, puts: puts.length - escPuts }));
+
+  // 6. 단추와 글쇠는 칸 끝에서 멈춘다 - B 첫 줄의 Move up은 꺼져 있고, 고른 채 Alt+↑도 아무것도 저장하지 않는다
+  const upDisabled = await page.locator(`[data-testid="output-c-move-up-${b.first}"]`).isDisabled();
+  await page.locator(`[data-testid="output-c-row-${b.first}"]`).scrollIntoViewIfNeeded();
+  await page.locator(`[data-testid="output-c-row-${b.first}"]`).click({ position: { x: 4, y: 4 } });
+  const keyPuts = puts.length;
+  const barAtRest = await readBarClear(page, b.first);
+  check("a selected row's left bar clears its number", barAtRest.clear !== null && barAtRest.clear >= 1, JSON.stringify(barAtRest));
+  await page.keyboard.press("Alt+ArrowUp");
+  await page.waitForTimeout(400);
+  check("Move up and Alt+ArrowUp stop at the top of the section", upDisabled && puts.length === keyPuts && (await readRowKey(page, b.first)) === b.key, JSON.stringify({ upDisabled, puts: puts.length - keyPuts }));
+
+  // 7. 좁은 틀(900)·다크에서도 테두리가 글자와 선에 닿지 않는다 - 줄이 있는 칸(A), 줄이 있는 하위 칸(B), 빈 하위 칸, 거절(N/A 칸). 모두 Esc로 끝내 저장하지 않는다
+  await page.evaluate(() => window.localStorage.setItem("sopa.theme", "dark"));
+  await page.setViewportSize({ width: 900, height: 720 });
+  await reopenOrderDoc(page, docId, lead);
+  const narrowPuts = puts.length;
+  const narrow = { dark: await page.evaluate(() => document.documentElement.getAttribute("data-theme") === "dark"), fits: {} };
+  const measureOver = async (from, keys, shot) => {
+    await dragThrough(page, await pointInRow(page, from), []);
+    for (const key of keys) {
+      await page.mouse.move((await pointInRow(page, from)).x, (await pointInSectionEnd(page, key)).y, { steps: 12 });
+      narrow.fits[key] = await readOutlineFit(page, key);
+    }
+    if (shot) await takeShot(shot);
+    await page.keyboard.press("Escape");
+    await page.mouse.up();
+  };
+  await scrollRowToTop(page, r.ids[0], 300);
+  await measureOver(r.ids[0], [a.key], null);
+  await scrollRowToTop(page, r.ids[0], 60);
+  await measureOver(r.ids[0], [b.key, nextEmpty], "order-xsec-narrow-dark.png");
+  await scrollRowToTop(page, b.first, 60);
+  await measureOver(b.first, [na], null);
+  await page.waitForTimeout(300);
+  check("at 900 in dark the outline clears the text and the drop line (lines, sub-slot, empty sub-slot, refused N/A)", narrow.dark && Object.keys(narrow.fits).length === 4 && Object.values(narrow.fits).every(isOutlineClear) && narrow.fits[na]?.drop === "refused" && puts.length === narrowPuts, JSON.stringify(narrow));
+});
+
+// WI는 같은 부분끼리만 - 데모 시드 WI-01: Step 2 · Instruction의 의미 짝을 Step 3 · Instruction(줄 하나)의 끝으로. 지나는 길의 Step 2 · Why 위에서는 거절된다.
+// 되돌릴 때는 빈 Step 2 · Instruction으로
+await runStep("order: drag a WI line to another step", {}, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  // 줄이 있는 step:N:instruction, 그 바로 뒤의 step:N:why, 줄이 있는 다른 step:M:instruction
+  const [hit] = await findOrderDocs(page, () => {
+    const sections = [...document.querySelectorAll('[data-testid="output-c"] section[data-location-key]')];
+    const rowsOf = (section) => [...section.querySelectorAll("[data-drag-box]")];
+    for (let i = 0; i + 2 < sections.length; i += 1) {
+      const from = /^step:(\d+):instruction$/.exec(sections[i].dataset.locationKey);
+      const why = sections[i + 1].dataset.locationKey;
+      if (!from || why !== `step:${from[1]}:why` || rowsOf(sections[i]).length === 0) continue;
+      const to = sections.slice(i + 2).find((section) => /^step:\d+:instruction$/.test(section.dataset.locationKey) && rowsOf(section).length > 0);
+      if (!to) continue;
+      return { from: sections[i].dataset.locationKey, why, to: to.dataset.locationKey, ids: rowsOf(sections[i]).map((row) => row.dataset.flipKey), toStep: Number(to.dataset.locationKey.split(":")[1]) };
+    }
+    return null;
+  });
+  check("a WI has a step instruction with lines, its why, and a later step instruction with lines", Boolean(hit));
+  const [docId, wi] = hit;
+  const lead = wi.ids[0];
+  const bodies = [];
+  page.on("request", (request) => {
+    if (isOrderSave(request)) bodies.push(request.postDataJSON());
+  });
+  await scrollRowToTop(page, lead);
+  const from = await pointInRow(page, lead);
+  await dragThrough(page, from, [await pointInSectionEnd(page, wi.why)]);
+  const overWhy = { card: await readDragCard(page), section: await readSectionState(page, wi.why) };
+  const whyFit = await readOutlineFit(page, wi.why);
+  check("over the other part (Why) the drag is refused with its reason", overWhy.card.refused && overWhy.card.text.includes("Instruction or Why: change it in Assign") && overWhy.section?.drop === "refused" && isOutlineClear(whyFit), JSON.stringify({ ...overWhy, whyFit }));
+  await page.mouse.move(from.x, (await pointInSectionEnd(page, wi.to)).y, { steps: 12 });
+  const overTo = await readDragCard(page);
+  // 받을 수 없는 다른 부분(Why)은 그 위에 있지 않아도 끄는 내내 흐리고, 받는 칸은 흐리지 않다
+  const dimmed = { why: await readSectionState(page, wi.why), to: await readSectionState(page, wi.to) };
+  check("while dragging, the other part (Why) is dimmed and the target step is not", overWhy.section?.opacity < 1 && dimmed.why?.opacity < 1 && dimmed.why.drop === null && dimmed.to?.opacity === 1, JSON.stringify({ overWhy: overWhy.section, ...dimmed }));
+  const saved = waitOrderSave(page);
+  await page.mouse.up();
+  const savedOk = (await saved).ok();
+  const whyAfter = await readSectionState(page, wi.why);
+  check("after the drop the other part is no longer dimmed and no marks are left", whyAfter?.opacity === 1 && (await readDragMarks(page)).marks === 0, JSON.stringify({ whyAfter, marks: await readDragMarks(page) }));
+  const moved = bodies[0]?.items.filter((item) => wi.ids.includes(String(item.target_id))) ?? [];
+  check("dropping into another step's instruction sends the new step and depth", !overTo.refused && overTo.note.startsWith(`→ ${wi.toStep}.`) && savedOk && moved.length === wi.ids.length && moved.every((item) => item.wi_step === wi.toStep && "indent_level" in item), JSON.stringify({ overTo, moved }));
+  await reopenOrderDoc(page, docId, lead);
+  check("after a reload the lines are in the other step", (await readRowKey(page, lead)) === wi.to && JSON.stringify((await readSectionIds(page, wi.to)).slice(-wi.ids.length)) === JSON.stringify(wi.ids), JSON.stringify(await readSectionIds(page, wi.to)));
+  // 되돌린다 - 비어 있는 원래 칸으로
+  await scrollRowToTop(page, lead, 300);
+  const back = waitOrderSave(page);
+  await dragThrough(page, await pointInRow(page, lead), [await pointInSectionEnd(page, wi.from)]);
+  await page.mouse.up();
+  await back;
+  await reopenOrderDoc(page, docId, lead);
+  check("dragging back restores the step", JSON.stringify(await readSectionIds(page, wi.from)) === JSON.stringify(wi.ids), JSON.stringify(await readSectionIds(page, wi.from)));
+});
+
+// 이미 쓴 문서의 줄은 자기 칸을 떠나지 못한다 - 데모 시드 WI-04(이미 쓴 WI, 칸 셋 1. Preparation · 2. Operation · 3. After use). 데모 시드에 이미 쓴 SOP는 없다
+await runStep("order: a written document's block cannot leave its section", {}, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  const [hit] = await findOrderDocs(page, () => {
+    if (document.querySelector('[data-testid="output-c"] article header span.font-mono')?.textContent !== "WI-04") return null;
+    const sections = [...document.querySelectorAll('[data-testid="output-c"] section[data-location-key]')].filter((section) => section.querySelector("[data-drag-box]"));
+    return sections.length >= 2 ? { from: sections[0].querySelector("[data-drag-box]").dataset.flipKey, fromKey: sections[0].dataset.locationKey, to: sections[1].dataset.locationKey } : null;
+  });
+  check("the already-written WI-04 has two sections with lines", Boolean(hit));
+  const [, written] = hit;
+  const order = await readSectionIds(page, written.fromKey);
+  const puts = [];
+  page.on("request", (request) => {
+    if (isOrderSave(request)) puts.push(request.url());
+  });
+  await scrollRowToTop(page, written.from);
+  await dragThrough(page, await pointInRow(page, written.from), [await pointInSectionEnd(page, written.to)]);
+  const over = { card: await readDragCard(page), section: await readSectionState(page, written.to), locked: await page.evaluate(() => document.querySelectorAll("[data-drag-locked]").length) };
+  check("over another section the written block is refused with the step reason and the other sections are dimmed", over.card.refused && over.card.text.includes("Only sentences written here for a WI can change step.") && over.section?.drop === "refused" && over.section.opacity < 1 && over.locked === 1, JSON.stringify(over));
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  check("releasing it saves nothing", puts.length === 0 && JSON.stringify(await readSectionIds(page, written.fromKey)) === JSON.stringify(order), JSON.stringify({ puts: puts.length, order: await readSectionIds(page, written.fromKey) }));
+});
+
+// 저장이 날아가는 동안 다른 칸에 놓기 - 데모 시드 SOP-CF: 4 Responsibilities의 둘째 묶음 첫 줄을 Alt+↓로 옮긴 저장을 붙잡은 채 1 Purpose의 덩어리를 2 Scope 끝에 놓는다.
+// 둘째 저장은 첫 응답 뒤에 나가고 둘 다 남는다. 끝에 둘 다 되돌린다
+await runStep("order: a drop into another section while a save is in flight is re-applied after it", {}, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  const [hit] = await findOrderDocs(page, () => {
+    const sheet = document.querySelector('[data-testid="output-c"] article[data-doc-id]');
+    if (!sheet || sheet.querySelector("header .tag")?.textContent !== "SOP") return null;
+    const sections = [...sheet.querySelectorAll("section[data-location-key]")];
+    const rowsOf = (section) => [...section.querySelectorAll("[data-drag-box]")];
+    const [a, s] = sections.filter((section) => rowsOf(section).length >= 2);
+    const r = sections.find((section) => rowsOf(section).length >= 4 && rowsOf(section).some((row, i) => i > 0 && row.hasAttribute("data-meaning-start")));
+    if (!a || !s || !r || r === a || r === s) return null;
+    return {
+      a: { key: a.dataset.locationKey, ids: rowsOf(a).map((row) => row.dataset.flipKey) },
+      s: { key: s.dataset.locationKey, ids: rowsOf(s).map((row) => row.dataset.flipKey) },
+      r: { key: r.dataset.locationKey, ids: rowsOf(r).map((row) => row.dataset.flipKey), mover: rowsOf(r).find((row, i) => i > 0 && row.hasAttribute("data-meaning-start")).dataset.flipKey },
+    };
+  });
+  check("an SOP has two sections with lines and a section with two meaning groups", Boolean(hit));
+  const [docId, { a, s, r }] = hit;
+  const lead = a.ids[0];
+  // 요청·응답이 오간 차례
+  const events = [];
+  page.on("request", (request) => {
+    if (isOrderSave(request)) events.push("request");
+  });
+  page.on("response", (response) => {
+    if (isOrderSave(response.request())) events.push(`response ${response.status()}`);
+  });
+  let release = null;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  let holdOnce = true;
+  await page.route(/\/targets\/order/, async (route) => {
+    if (route.request().method() !== "PUT" || !holdOnce) return route.continue();
+    holdOnce = false;
+    await held;
+    await route.continue();
+  });
+  await page.locator(`[data-testid="output-c-row-${r.mover}"]`).scrollIntoViewIfNeeded();
+  await page.locator(`[data-testid="output-c-row-${r.mover}"]`).click({ position: { x: 4, y: 4 } });
+  const firstSave = waitOrderSave(page);
+  await page.keyboard.press("Alt+ArrowDown");
+  // 옮긴 줄을 따라가는 스크롤이 멈춘 뒤 덩어리 줄을 틀 위쪽에 둔다
+  await page.waitForTimeout(600);
+  await scrollRowToTop(page, lead);
+  await dragThrough(page, await pointInRow(page, lead), [await pointInSectionEnd(page, s.key)]);
+  const over = await readDragCard(page);
+  await page.mouse.up();
+  const shown = await readRowKey(page, lead);
+  await page.waitForTimeout(300);
+  const whileHeld = [...events];
+  let saveResponses = 0;
+  const secondSave = page.waitForResponse((response) => isOrderSave(response.request()) && (saveResponses += 1) === 2, { timeout: T });
+  release();
+  check("the first save lands", (await firstSave).ok());
+  const second = await secondSave;
+  await page.waitForTimeout(300);
+  check("the drop shows at once and its save waits for the first response", !over.refused && shown === s.key && JSON.stringify(whileHeld) === JSON.stringify(["request"]) && JSON.stringify(events) === JSON.stringify(["request", "response 200", "request", "response 200"]) && second.ok(), JSON.stringify({ over, shown, whileHeld, events }));
+  await page.unroute(/\/targets\/order/);
+  await reopenOrderDoc(page, docId, lead);
+  const rIds = await readSectionIds(page, r.key);
+  check("after a reload both changes persisted", JSON.stringify((await readSectionIds(page, s.key)).slice(-a.ids.length)) === JSON.stringify(a.ids) && rIds.indexOf(r.mover) === r.ids.indexOf(r.mover) + 1, JSON.stringify({ s: await readSectionIds(page, s.key), r: rIds }));
+  // 되돌린다 - 덩어리를 빈 첫 칸으로, 옮긴 줄은 Alt+↑로
+  await scrollRowToTop(page, s.ids[0], 200);
+  const back = waitOrderSave(page);
+  await dragThrough(page, await pointInRow(page, lead), [await pointInSectionEnd(page, a.key)]);
+  await page.mouse.up();
+  await back;
+  await page.locator(`[data-testid="output-c-row-${r.mover}"]`).scrollIntoViewIfNeeded();
+  await page.locator(`[data-testid="output-c-row-${r.mover}"]`).click({ position: { x: 4, y: 4 } });
+  const up = waitOrderSave(page);
+  await page.keyboard.press("Alt+ArrowUp");
+  await up;
+  await reopenOrderDoc(page, docId, lead);
+  check("both changes are undone", JSON.stringify(await readSectionIds(page, a.key)) === JSON.stringify(a.ids) && JSON.stringify(await readSectionIds(page, r.key)) === JSON.stringify(r.ids), JSON.stringify({ a: await readSectionIds(page, a.key), r: await readSectionIds(page, r.key) }));
 });
 
 // 끄는 동안 칸이 바뀐다 - 앞선 저장의 응답이 끄는 도중 닿으면 선은 새 데이터로 다시 세고 놓은 자리가 선과 같다.
@@ -2517,6 +3403,42 @@ await runStep("order: a save landing mid-drag keeps the drop line and the saved 
   const restored = waitOrderSave(page);
   await page.mouse.up();
   check("the order is restored again", (await restored).ok() && JSON.stringify(await readOrder()) === JSON.stringify(original), JSON.stringify(await readOrder()));
+
+  // 5. 다른 칸에서 끌어 온 덩어리 - F를 Alt+↓로 옮긴 저장을 붙잡은 채 위쪽 칸(데모 시드 SOP-CF의 1 Purpose)의 덩어리를 이 칸 첫 줄(옮겨 온 R)의 위쪽 절반에 대고 멈추고,
+  //    멈춘 채 그 저장을 실패시킨다 - 도착 칸의 모양이 바뀌어 놓은 자리에서 다시 센다. 포인터 밑은 되돌아온 F라 덩어리는 칸 맨 위(F 앞)에 저장된다(낡은 자리면 짝 F·R 사이)
+  const above = await page.evaluate((id) => {
+    const home = document.querySelector(`[data-testid="output-c-row-${id}"]`).closest("section");
+    const sections = [...home.closest("article").querySelectorAll("section[data-location-key]")];
+    const source = sections.slice(0, sections.indexOf(home)).find((section) => section.querySelector("[data-drag-box]"));
+    return source ? { key: source.dataset.locationKey, ids: [...source.querySelectorAll("[data-drag-box]")].map((row) => row.dataset.flipKey) } : null;
+  }, first);
+  check("a section with lines sits above it", above !== null);
+  const openDestRollback = holdNextSave("fail");
+  await rowOf(first).click({ position: { x: 4, y: 4 } });
+  const destRolledBack = waitOrderSave(page);
+  await page.keyboard.press("Alt+ArrowDown");
+  // 옮긴 줄을 따라가는 스크롤이 멈춘 뒤 위쪽 칸의 덩어리 줄을 틀 위쪽에 둔다
+  await page.waitForTimeout(600);
+  await scrollRowToTop(page, above.ids[0], 120);
+  await dragThrough(page, await pointIn(above.ids[0]), [{ x: (await pointIn(above.ids[0])).x, y: (await rowOf(second).boundingBox()).y + 2 }]);
+  const beforeDestRollback = await readDragCard(page);
+  openDestRollback();
+  check("the held save in the destination fails while the drag holds still", (await destRolledBack).status() === 500);
+  await page.waitForTimeout(400);
+  const crossReplanned = page.waitForResponse((response) => isOrderSave(response.request()), { timeout: 3000 }).catch(() => null);
+  await page.mouse.up();
+  const crossReplannedSave = await crossReplanned;
+  check("releasing without moving after the destination changed plans again and saves", !beforeDestRollback.refused && beforeDestRollback.note.startsWith("→ ") && crossReplannedSave?.ok() === true, JSON.stringify({ beforeDestRollback, saved: crossReplannedSave?.status() ?? null }));
+  await reopenOrderDoc(page, docId, l);
+  check("the block was saved at the top of the destination, above the rolled-back first line", JSON.stringify(await readOrder()) === JSON.stringify([...above.ids, ...original]), JSON.stringify(await readOrder()));
+  // 되돌린다 - 덩어리를 비어 있는 원래 칸으로
+  await scrollRowToTop(page, above.ids[0], 400);
+  const crossBack = waitOrderSave(page);
+  await dragThrough(page, await pointIn(above.ids[0]), [await pointInSectionEnd(page, above.key)]);
+  await page.mouse.up();
+  await crossBack;
+  await reopenOrderDoc(page, docId, l);
+  check("both sections are restored", JSON.stringify(await readOrder()) === JSON.stringify(original) && JSON.stringify(await readSectionIds(page, above.key)) === JSON.stringify(above.ids), JSON.stringify({ r: await readOrder(), above: await readSectionIds(page, above.key) }));
   await page.unroute(/\/targets\/order/);
 });
 
@@ -3667,10 +4589,13 @@ await runStep("assign: make a unit from a dragged selection, then undo", {}, asy
   await span.waitFor({ timeout: T });
   await span.scrollIntoViewIfNeeded();
   const box = await span.boundingBox();
+  // Old 조각은 끌어서 잇는 상자라 글자는 Alt를 누른 동안만 긁힌다(끌어다 놓기 설계 G3)
   await page.mouse.move(box.x + 2, box.y + 10);
+  await page.keyboard.down("Alt");
   await page.mouse.down();
   await page.mouse.move(box.x + 150, box.y + 10, { steps: 10 });
   await page.mouse.up();
+  await page.keyboard.up("Alt");
   await wait(page, "assign-carve");
   const picked = (await getText(page, "assign-carve-text")).trim();
   check("the bar above the paper shows the picked text", picked.length > 0 && unit.text.startsWith(picked), picked);

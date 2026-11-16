@@ -73,6 +73,8 @@ interface OldPaneProps {
   figureSource?: { bundleId: number; docId: number };
   zoom: number;
   onZoom: (dir: "+" | "-") => void;
+  /** 조각을 끌 수 있다(끌어서 잇기) - 끄면 글자가 지금처럼 그냥 긁힌다 */
+  dragBoxes?: boolean;
 }
 
 export function OldPane(props: OldPaneProps) {
@@ -107,6 +109,7 @@ export function OldPane(props: OldPaneProps) {
         figureSource={props.figureSource}
         strips={{ statusOf: props.statusOf, renderNote: props.renderNote, renderPills: props.renderPills, fold: props.fold, join: props.join, isCaptionNeeded: props.isCaptionNeeded }}
         renderUnitActions={props.renderUnitActions}
+        dragBoxes={props.dragBoxes}
         testId="assign-paper"
       />
     );
