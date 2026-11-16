@@ -92,3 +92,30 @@ def test_format_caption_prefix():
 def test_place_token_is_frozen_dataclass():
     token = PlaceToken("table", "next", 0, 3)
     assert token.direction == "next"
+
+
+def _refs(text: str) -> list[tuple[str, int, str]]:
+    return [(t.kind, t.number, text[t.start : t.end]) for t in find_number_tokens(text)]
+
+
+def test_compound_numbers_yield_no_tokens():
+    for text in ("Table 3.2", "Fig. 6-2", "Table 3-1", "Figure 4–2 shows"):
+        assert find_number_tokens(text) == [], text
+
+
+def test_spaced_dash_is_not_a_range():
+    assert _refs("Table 5 - 10 mm") == [("table", 5, "5")]
+
+
+def test_dash_range_needs_no_spaces_and_increasing_numbers():
+    assert _refs("표 1-3") == [("table", 1, "1"), ("table", 3, "3")]
+    assert _refs("표 1 ~ 3") == [("table", 1, "1"), ("table", 3, "3")]
+
+
+def test_trailing_period_still_a_reference():
+    assert _refs("see Fig. 6.") == [("figure", 6, "6")]
+
+
+def test_korean_compounds_are_not_references():
+    assert find_number_tokens("도표 3, 일정표 3, 시간표 2") == []
+    assert _refs("(표 3) 참조") == [("table", 3, "3")]

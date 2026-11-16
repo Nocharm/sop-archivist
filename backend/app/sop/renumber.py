@@ -6,18 +6,23 @@ from dataclasses import dataclass
 from typing import Literal
 
 CaptionKind = Literal["table", "figure"]
+Direction = Literal["next", "previous"]
 
 # 캡션 머리: 숫자 바로 뒤에 조사가 오면("표 1에") 캡션이 아니다. 알려진 틈 "표 1 에 따라"는 그대로 둔다.
 _CAPTION_TAIL = r"(?=$|[\s.:)\-–—])"
 FIGURE_CAPTION_RE = re.compile(r"^(?:그림|Figure|Fig)\s*\.?\s*(\d+)" + _CAPTION_TAIL)
 TABLE_CAPTION_RE = re.compile(r"^(?:표|Table)\s*\.?\s*(\d+)" + _CAPTION_TAIL)
 
-# 본문 참조: 영문 단어 안("Portable 3")은 거르고, 조사가 붙어도("표 3을") 참조로 잡는다. "1~3" 범위는 둘째 숫자도 잡는다.
+# 본문 참조: 영문 단어 안("Portable 3")·한글 합성어("도표 3")는 거르고, 조사가 붙어도("표 3을") 참조로 잡는다.
+# 숫자 뒤 꼬리(범위·복합 번호)는 코드가 따로 판정한다.
 _REF_RE = re.compile(
-    r"(?<![A-Za-z])(?:(?P<table>표|Table)|(?P<figure>그림|Figure|Fig))\s*\.?\s*(?P<a>\d+)"
-    r"(?:\s*[~\-–]\s*(?P<b>\d+))?",
+    r"(?:(?<![가-힣])(?P<ko_table>표)|(?<![가-힣])(?P<ko_figure>그림)"
+    r"|(?<![A-Za-z])(?P<en_table>Table)|(?<![A-Za-z])(?P<en_figure>Figure|Fig))\s*\.?\s*(?P<a>\d+)",
     re.IGNORECASE,
 )
+_TILDE_RANGE_RE = re.compile(r"\s*~\s*(\d+)")
+_DASH_RANGE_RE = re.compile(r"[-–](\d+)")  # 공백 없는 줄표만 범위 후보
+_COMPOUND_TAIL_RE = re.compile(r"[.\-–]\d")  # "3-1"·"3.2" 같은 복합 번호
 
 # 위치 참조 어휘는 작게 — 표준·표현·표시·그림자 같은 낱말은 거른다.
 _KO_PLACE_RE = re.compile(
@@ -28,8 +33,8 @@ _EN_PLACE_RES = (
     re.compile(r"\bthe\s+(?P<kind>table|figure)\s+(?P<dir>above|below)\b", re.IGNORECASE),
     re.compile(r"\bthe\s+(?P<dir>above|below)\s+(?P<kind>table|figure)\b", re.IGNORECASE),
 )
-_KO_DIRECTIONS = {"아래": "next", "다음": "next", "위": "previous", "앞": "previous"}
-_EN_DIRECTIONS = {"above": "previous", "below": "next"}
+_KO_DIRECTIONS: dict[str, Direction] = {"아래": "next", "다음": "next", "위": "previous", "앞": "previous"}
+_EN_DIRECTIONS: dict[str, Direction] = {"above": "previous", "below": "next"}
 
 
 @dataclass(frozen=True)
@@ -43,7 +48,7 @@ class NumberToken:
 @dataclass(frozen=True)
 class PlaceToken:
     kind: CaptionKind
-    direction: Literal["next", "previous"]  # 아래 표·the following table → next, 위 그림·the figure above → previous
+    direction: Direction  # 아래 표·the following table → next, 위 그림·the figure above → previous
     start: int  # 구절 전체
     end: int
 
@@ -58,13 +63,27 @@ def read_caption_number(text: str) -> NumberToken | None:
 
 
 def find_number_tokens(text: str) -> list[NumberToken]:
-    """글 안 어디든 표·그림 번호 참조를 읽는다(범위는 양 끝 둘)."""
+    """글 안 어디든 표·그림 번호 참조를 읽는다.
+
+    "~" 범위와 공백 없는 증가 줄표 범위("1-3")는 양 끝 둘, "3-1"·"3.2" 같은 복합 번호는 토큰 없음.
+    """
     tokens: list[NumberToken] = []
     for match in _REF_RE.finditer(text):
-        kind: CaptionKind = "table" if match.group("table") else "figure"
-        for group in ("a", "b"):
-            if match.group(group) is not None:
-                tokens.append(NumberToken(kind, int(match.group(group)), match.start(group), match.end(group)))
+        kind: CaptionKind = "table" if match.group("ko_table") or match.group("en_table") else "figure"
+        first = int(match.group("a"))
+        rest = match.end("a")
+        second = None
+        if (tilde := _TILDE_RANGE_RE.match(text, rest)) is not None:
+            second = tilde
+        elif (dash := _DASH_RANGE_RE.match(text, rest)) is not None:
+            if int(dash.group(1)) <= first:
+                continue  # "Table 3-1" — 복합 번호
+            second = dash
+        elif _COMPOUND_TAIL_RE.match(text, rest) is not None:
+            continue
+        tokens.append(NumberToken(kind, first, match.start("a"), match.end("a")))
+        if second is not None:
+            tokens.append(NumberToken(kind, int(second.group(1)), second.start(1), second.end(1)))
     return tokens
 
 
@@ -73,18 +92,21 @@ def find_place_tokens(text: str) -> list[PlaceToken]:
     tokens: list[PlaceToken] = []
     for match in _KO_PLACE_RE.finditer(text):
         kind: CaptionKind = "table" if match.group("table") else "figure"
-        tokens.append(PlaceToken(kind, _KO_DIRECTIONS[match.group("dir")], match.start(), match.end()))  # type: ignore[arg-type]
+        tokens.append(PlaceToken(kind, _KO_DIRECTIONS[match.group("dir")], match.start(), match.end()))
     for pattern in _EN_PLACE_RES:
         for match in pattern.finditer(text):
-            kind = match.group("kind").lower()  # type: ignore[assignment]
+            kind = "table" if match.group("kind").lower() == "table" else "figure"
             word = match.groupdict().get("dir")
-            direction = _EN_DIRECTIONS[word.lower()] if word else "next"
-            tokens.append(PlaceToken(kind, direction, match.start(), match.end()))  # type: ignore[arg-type]
+            direction: Direction = _EN_DIRECTIONS[word.lower()] if word else "next"
+            tokens.append(PlaceToken(kind, direction, match.start(), match.end()))
     return sorted(tokens, key=lambda token: token.start)
 
 
 def replace_numbers(text: str, changes: Mapping[tuple[int, int], int]) -> str:
-    """(start, end) 숫자 자리를 새 번호로 바꾼다 — 뒤에서부터 바꿔 앞쪽 자리가 밀리지 않게 한다."""
+    """(start, end) 숫자 자리를 새 번호로 바꾼다 — 뒤에서부터 바꿔 앞쪽 자리가 밀리지 않게 한다.
+
+    키는 find_number_tokens·read_caption_number가 준 숫자 span이어야 한다.
+    """
     for start, end in sorted(changes, reverse=True):
         text = text[:start] + str(changes[(start, end)]) + text[end:]
     return text
