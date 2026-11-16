@@ -3,18 +3,19 @@
 // 위·아래로 옮기면 두 줄이 미끄러지며 자리를 바꾸고(useFlip), 옮긴 줄이 아직 그리지 않은 구간으로 가면 거기까지 그린 뒤 그 줄을 따라 스크롤한다.
 "use client";
 
-import { ArrowDown, ArrowUp, FileStack, IndentDecrease, IndentIncrease, Italic, List, ListOrdered, ListTree, type LucideIcon } from "lucide-react";
+import { ArrowDown, ArrowUp, FileStack, IndentDecrease, IndentIncrease, Italic, List, ListOrdered, ListTree, MoreHorizontal, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { EquisStatus } from "@/components/equis/equis-status";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Menu, MenuRadio } from "@/components/ui/menu";
 import { useFlip } from "@/components/ui/motion";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { EquisInfo, NumberStyle, OutputC, OutputCItem } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import { buildCLines, listMeaningStarts, type CLine } from "@/lib/output-groups";
-import { getActsShift, shouldRecenter } from "@/lib/paper-model";
+import { shouldRecenter } from "@/lib/paper-model";
 import { canChangeDepth, canChangeStyle, canIndent, getSectionDepths, isCounted, NUMBER_STYLES, readIndentKey, type IndentDir } from "@/lib/section-number";
 import { canMoveTarget, type MoveDir } from "@/lib/target-order";
 import { useProgressiveList } from "@/lib/use-progressive-list";
@@ -149,21 +150,83 @@ function RowButtons({ items, item, onMove, indent, onMark }: RowButtonsProps) {
   );
 }
 
-/** 줄을 올리거나 포커스할 때 - 용지 옆 단추 묶음이 내용 끝 아래로 늘어지면 위로 올린다(--acts-shift). 쉬는 묶음은 CSS가 한 줄 높이로 잘라 두므로 감긴 높이는 마지막 단추로 잰다 */
-function placeRowActs(row: HTMLElement) {
-  const acts = row.querySelector<HTMLElement>(".c-acts");
-  const last = acts?.lastElementChild;
-  const root = row.closest<HTMLElement>(".c-order");
-  const pane = row.closest<HTMLElement>(".overflow-auto, .overflow-y-auto");
-  if (!acts || !last || !root || !pane) return;
-  const box = acts.getBoundingClientRect();
-  const style = getComputedStyle(acts);
-  const height = last.getBoundingClientRect().bottom - box.top + parseFloat(style.paddingBottom) + parseFloat(style.borderBottomWidth);
-  const rootBox = root.getBoundingClientRect();
-  // 내용이 스크롤 칸보다 짧으면 칸의 보이는 아래 끝까지는 스크롤을 늘리지 않는다
-  const contentBottom = Math.max(rootBox.bottom, pane.getBoundingClientRect().top + pane.clientTop + pane.clientHeight);
-  const shift = getActsShift(row.getBoundingClientRect().top + row.clientTop, height, rootBox.top, contentBottom);
-  acts.style.setProperty("--acts-shift", `${shift}px`);
+/** 용지 옆 자리가 좁을 때 묶음 대신 보이는 ⋯ 단추 - 같은 일곱 동작을 이름 붙은 메뉴 항목으로 연다. 어느 쪽을 보일지는 CSS(.c-order 틀 폭)가 정한다 */
+function RowMenu({ items, item, onMove, indent, onMark }: RowButtonsProps) {
+  const { t } = useI18n();
+  const anchorRef = useRef<HTMLButtonElement>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  // 줄의 다른 단추처럼 끝에 줄 id - 메뉴는 output-c-menu-list-<id>, 항목은 output-c-menu-<동작>-<id>
+  const testIdOf = (part: string) => `output-c-menu-${part}${item.target_id}`;
+  // 고르면 닫고 실행한다 - 닫힌 메뉴가 포커스를 ⋯ 단추로 돌려 같은 줄에서 이어 고칠 수 있다
+  function run(action: () => void) {
+    setIsOpen(false);
+    action();
+  }
+  return (
+    <span className="c-more" data-no-drag style={{ fontFamily: "var(--font-ui)" }}>
+      <Tooltip label={t("outputs.lineActions")} suppressed={isOpen} align="end">
+        <button
+          ref={anchorRef}
+          type="button"
+          className="btn ghost icon h-6 w-6"
+          aria-haspopup="menu"
+          aria-expanded={isOpen}
+          aria-label={t("outputs.lineActions")}
+          data-testid={testIdOf("")}
+          onClick={() => setIsOpen((prev) => !prev)}
+        >
+          <MoreHorizontal size={14} strokeWidth={1.5} aria-hidden />
+        </button>
+      </Tooltip>
+      {isOpen && (
+        <Menu anchorRef={anchorRef} onClose={() => setIsOpen(false)} testId={testIdOf("list-")} label={t("outputs.lineActions")} align="end">
+          {onMark && (
+            <>
+              <div className="menu-label">{t("outputs.markGroup")}</div>
+              {NUMBER_STYLES.map((style) => (
+                <MenuRadio key={style} checked={item.number_style === style} testId={testIdOf(`${style}-`)} onSelect={() => run(() => {
+                  if (item.number_style !== style) onMark(style);
+                })}>
+                  {t(MARK_KEYS[style].label)}
+                </MenuRadio>
+              ))}
+              <div className="menu-sep" role="separator" />
+            </>
+          )}
+          {indent &&
+            ([-1, 1] as const).map((dir) => (
+              <button
+                key={`i${dir}`}
+                type="button"
+                role="menuitem"
+                className="menu-item"
+                data-testid={testIdOf(dir < 0 ? "outdent-" : "indent-")}
+                disabled={!(dir < 0 ? indent.canOut : indent.canIn)}
+                onClick={() => run(() => indent.onIndent(dir))}
+              >
+                {dir < 0 ? <IndentDecrease size={14} strokeWidth={1.5} aria-hidden /> : <IndentIncrease size={14} strokeWidth={1.5} aria-hidden />}
+                {t(dir < 0 ? "outputs.outdent" : "outputs.indent")}
+              </button>
+            ))}
+          {([-1, 1] as const).map((dir) => (
+            <button
+              key={dir}
+              type="button"
+              role="menuitem"
+              className="menu-item"
+              data-testid={testIdOf(dir < 0 ? "up-" : "down-")}
+              disabled={!canMoveTarget(items, item.target_id, dir)}
+              // 포커스는 닫힌 메뉴가 ⋯ 단추로 돌린다 - 옮긴 줄의 위·아래 단추에 다시 두지 않는다
+              onClick={() => run(() => onMove(dir, false))}
+            >
+              {dir < 0 ? <ArrowUp size={14} strokeWidth={1.5} aria-hidden /> : <ArrowDown size={14} strokeWidth={1.5} aria-hidden />}
+              {t(dir < 0 ? "outputs.moveUp" : "outputs.moveDown")}
+            </button>
+          ))}
+        </Menu>
+      )}
+    </span>
+  );
 }
 
 /** 줄 앞 섹션 번호 - 깊이만큼 들여 그린다. 번호가 없는 칸(입구 2 문서·단계 없는 WI)도 깊이는 그린다 */
@@ -357,18 +420,23 @@ export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", to
                               onIndent: (dir: IndentDir) => onIndent(doc.target_doc_id, item.target_id, depths[index] + dir),
                             }
                           : null;
+                      const actions: RowButtonsProps = {
+                        items: section.items,
+                        item,
+                        indent,
+                        onMark: onMark && canChangeStyle(doc.entrance) ? (style) => onMark(doc.target_doc_id, item.target_id, style) : null,
+                        onMove: (dir, refocus) => handleMove(doc.target_doc_id, section, index, dir, refocus),
+                      };
                       return (
                         <div
                           key={item.target_id}
                           // 줄을 눌러 고르면 Tab·Shift+Tab이 들이고 내어 쓴다. 탭 순서에는 넣지 않고(-1) Esc로 놓아 Tab이 페이지 이동을 빼앗지 않게 한다
                           tabIndex={indent ? -1 : undefined}
-                          // 줄 끝 단추 묶음은 호버·포커스 때만 글 밖에 뜬다(.c-acts) - 자리를 차지하지 않아 글 폭과 줄 높이가 그대로다
+                          // 줄 끝 단추는 호버·포커스 때만 용지 옆에 뜬다 - 넓으면 묶음(.c-acts), 좁으면 ⋯ 하나(.c-more). 자리를 차지하지 않아 글 폭과 줄 높이가 그대로다
                           className="hover-row c-row"
                           data-meaning-start={meaningStart}
                           data-flip-key={item.target_id}
                           data-testid={`output-c-row-${item.target_id}`}
-                          onPointerEnter={(event) => placeRowActs(event.currentTarget)}
-                          onFocus={(event) => placeRowActs(event.currentTarget)}
                           onKeyDown={(event) => {
                             if (!indent || event.target !== event.currentTarget) return;
                             if (event.key === "Escape") event.currentTarget.blur();
@@ -380,12 +448,8 @@ export function OutputCView({ data, onMove, onIndent, onMark, resetKey = "c", to
                           }}
                         >
                           {line}
-                          <RowButtons
-                            items={section.items}
-                            item={item}
-                            indent={indent}
-                            onMark={onMark && canChangeStyle(doc.entrance) ? (style) => onMark(doc.target_doc_id, item.target_id, style) : null}
-                            onMove={(dir, refocus) => handleMove(doc.target_doc_id, section, index, dir, refocus)} />
+                          <RowButtons {...actions} />
+                          <RowMenu {...actions} />
                         </div>
                       );
                     })

@@ -1302,17 +1302,18 @@ await runStep("order: row-end buttons show only on hover or focus, one group at 
   const [, ids] = hit;
   const [a, b] = [ids[1], ids[3]];
   const settle = () => page.waitForTimeout(200);
-  const shownGroups = () => page.evaluate(() => [...document.querySelectorAll('[data-testid^="output-c-acts-"]')]
-    .filter((el) => Number(getComputedStyle(el).opacity) > 0)
-    .map((el) => el.getAttribute("data-testid").replace("output-c-acts-", "")));
-  // 묶음 상자, 줄 상자, 글 상자(그 줄과 위아래 이웃 줄), 용지, 스크롤 칸
+  // 보이는 줄 끝 단추(넓으면 묶음 .c-acts, 좁으면 ⋯ .c-more)가 있는 줄 id
+  const shownGroups = () => page.evaluate(() => [...document.querySelectorAll('[data-testid^="output-c-row-"] > :is(.c-acts, .c-more)')]
+    .filter((el) => getComputedStyle(el).display !== "none" && Number(getComputedStyle(el).opacity) > 0)
+    .map((el) => el.parentElement.getAttribute("data-testid").replace("output-c-row-", "")));
+  // 보이는 단추 상자(묶음 또는 ⋯), 줄 상자, 글 상자(그 줄과 위아래 이웃 줄), 용지, 스크롤 칸
   const measure = (id) => page.evaluate((target) => {
     const rect = (el) => {
       const r = el.getBoundingClientRect();
       return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
     };
     const row = document.querySelector(`[data-testid="output-c-row-${target}"]`);
-    const acts = document.querySelector(`[data-testid="output-c-acts-${target}"]`);
+    const acts = [...row.querySelectorAll(":scope > .c-acts, :scope > .c-more")].find((el) => getComputedStyle(el).display !== "none");
     const pane = row.closest(".overflow-auto, .overflow-y-auto");
     const hit = (x, y) => Math.min(x.right, y.right) - Math.max(x.left, y.left) > 0.5 && Math.min(x.bottom, y.bottom) - Math.max(x.top, y.top) > 0.5;
     const box = rect(acts);
@@ -1325,10 +1326,41 @@ await runStep("order: row-end buttons show only on hover or focus, one group at 
     }));
     // 스크롤 칸 오른쪽은 스크롤바 자리를 뺀 안쪽 끝
     const paneBox = rect(pane);
-    return { box, row: rect(row), covers, sheet: rect(row.closest("article.sheet")), pane: { ...paneBox, right: paneBox.left + pane.clientWidth }, scrolls: pane.scrollWidth > pane.clientWidth };
+    return { box, mode: acts.classList.contains("c-more") ? "more" : "group", row: rect(row), covers, sheet: rect(row.closest("article.sheet")), pane: { ...paneBox, right: paneBox.left + pane.clientWidth }, scrolls: pane.scrollWidth > pane.clientWidth };
   }, id);
-  // 지원 폭(1120 이상)에서는 용지 오른쪽 바깥, 줄 첫 줄 높이(의미 묶음 첫 줄은 위 테두리 2px 아래)에 뜨고 스크롤 칸 안에 든다
+  // 용지 오른쪽 바깥, 줄 위 끝(의미 묶음 첫 줄은 위 테두리 2px 아래)에 뜨고 스크롤 칸 안에 든다
   const isBesideSheet = (m) => m.box.left >= m.sheet.right && m.box.right <= m.pane.right && Math.abs(m.box.top - m.row.top) <= 3;
+  // 실제 마우스를 걸음으로 옮긴다(click()처럼 단추로 바로 뛰지 않는다) - 줄의 마지막 글줄 오른쪽 끝에서 목표 단추 가운데까지, 걸음마다 그 줄이 호버 상태인지 본다
+  const walkTo = async (rowId, targetSelector) => {
+    const from = await page.locator(`[data-testid="output-c-item-${rowId}"]`).evaluate((el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const lines = [...range.getClientRects()];
+      const last = lines.at(-1);
+      return { x: last.right - 4, y: (last.top + last.bottom) / 2, lines: new Set(lines.map((r) => Math.round(r.top))).size };
+    });
+    await page.mouse.move(from.x, from.y);
+    await settle();
+    const target = await page.locator(targetSelector).boundingBox();
+    const to = { x: target.x + target.width / 2, y: target.y + target.height / 2 };
+    const STEPS = 24;
+    let lost = 0;
+    for (let i = 1; i <= STEPS; i += 1) {
+      await page.mouse.move(from.x + ((to.x - from.x) * i) / STEPS, from.y + ((to.y - from.y) * i) / STEPS);
+      if (!(await page.locator(`[data-testid="output-c-row-${rowId}"]`).evaluate((el) => el.matches(":hover")))) lost += 1;
+    }
+    return { lines: from.lines, lost };
+  };
+  // 누른 것이 단추에 닿았는지 - 창 캡처 단계에서 받고 멈춘다(React까지 가지 않으니 DB는 그대로)
+  const armLanding = (selector) => page.evaluate((sel) => {
+    window.__landed = false;
+    window.addEventListener("click", (event) => {
+      if (event.target instanceof Element && event.target.closest(sel)) {
+        window.__landed = true;
+        event.stopPropagation();
+      }
+    }, { capture: true, once: true });
+  }, selector);
   const hoverAt = async (width) => {
     await page.setViewportSize({ width, height: 720 });
     await page.mouse.move(0, 0);
@@ -1350,15 +1382,40 @@ await runStep("order: row-end buttons show only on hover or focus, one group at 
   check("hovering a row shows its group", JSON.stringify(await shownGroups()) === JSON.stringify([a]), (await shownGroups()).join(","));
   check("the group covers no text of its row or the neighbours", !at1248.covers, JSON.stringify(at1248.box));
   check("hover does not change the row height", Math.abs(at1248.row.height - restHeight) < 0.5, `${restHeight} -> ${at1248.row.height}`);
-  // 1248 - 용지 옆 남는 폭(약 140px)에 두 줄로 감겨 뜬다
-  check("at 1248 the group floats beside the sheet, wrapped to fit", isBesideSheet(at1248) && at1248.box.height > 40, JSON.stringify({ box: at1248.box, row: at1248.row, sheet: at1248.sheet, pane: at1248.pane }));
+  // 1248 - 용지 옆 남는 폭(약 140px)에 묶음이 두 줄로 감겨 뜬다
+  check("at 1248 the group floats beside the sheet, wrapped to fit", at1248.mode === "group" && isBesideSheet(at1248) && at1248.box.height > 40, JSON.stringify({ box: at1248.box, row: at1248.row, sheet: at1248.sheet, pane: at1248.pane }));
   check("no horizontal scroll at 1248", !at1248.scrolls);
+  const rowBackground = (locator) => locator.evaluate((el) => getComputedStyle(el).backgroundColor);
+  check("the hovered row is highlighted", (await rowBackground(rowA)) !== "rgba(0, 0, 0, 0)", await rowBackground(rowA));
   await takeShot("sop-order-row-buttons-hover.png");
+  // 문서 끝 줄 - 두 줄 묶음이 내용 아래로 늘어져 스크롤을 늘리지 않는다
+  const scrollHeight = () => page.locator('[data-testid="output-c"]').evaluate((el) => el.closest(".overflow-auto, .overflow-y-auto").scrollHeight);
+  const lastRow = page.locator('[data-testid^="output-c-row-"]:has([data-testid^="output-c-acts-"])').last();
+  await lastRow.scrollIntoViewIfNeeded();
+  await page.mouse.move(0, 0);
+  await settle();
+  const restScroll = await scrollHeight();
+  await lastRow.hover({ position: { x: 8, y: 4 } });
+  await settle();
+  check("hovering the last row does not grow the scroll area", (await scrollHeight()) === restScroll, `${restScroll} -> ${await scrollHeight()}`);
+  // 여러 줄로 감긴 줄의 마지막 글줄에서 묶음 둘째 줄의 단추까지 마우스로 가도 묶음이 사라지지 않고 누름이 닿는다
+  // 시드 글이 짧으면 A의 글을 길게 바꿔(화면에서만) 세 줄로 감기게 한다
+  await rowA.scrollIntoViewIfNeeded();
+  await page.locator(`[data-testid="output-c-item-${a}"]`).evaluate((el) => { el.textContent = "SYNTHETIC long line for the reach check. ".repeat(6); });
+  const reachDown = `[data-testid="output-c-move-down-${a}"]`;
+  const walk1248 = await walkTo(a, reachDown);
+  await armLanding(reachDown);
+  await page.mouse.down();
+  await page.mouse.up();
+  check("from the last line of a wrapped row the mouse reaches the group's second line", walk1248.lines >= 2 && walk1248.lost === 0 && (await page.evaluate(() => window.__landed)), JSON.stringify(walk1248));
   // 눌러 고른 줄(B)이 있어도 다른 줄에 올리면 그 줄 묶음만 보인다. 포인터가 떠나면 고른 줄의 묶음이 돌아온다
   await rowB.click({ position: { x: 4, y: 4 } });
+  await settle();
+  const pickedLook = await rowBackground(rowB);
   await rowA.hover({ position: { x: 8, y: 4 } });
   await settle();
   check("only one group shows", JSON.stringify(await shownGroups()) === JSON.stringify([a]), (await shownGroups()).join(","));
+  check("the picked row keeps its own tint while another row is hovered", (await rowBackground(rowB)) === pickedLook && pickedLook !== "rgba(0, 0, 0, 0)", `${pickedLook} -> ${await rowBackground(rowB)}`);
   await page.mouse.move(0, 0);
   await settle();
   check("the picked row keeps its group when the pointer leaves", (await shownGroups()).includes(b), (await shownGroups()).join(","));
@@ -1377,25 +1434,65 @@ await runStep("order: row-end buttons show only on hover or focus, one group at 
   check("the wide group covers no text", !wide.covers);
   check("no horizontal scroll at 1440", !wide.scrolls);
   await takeShot("sop-order-row-buttons-wide.png");
-  // 가장 좁은 지원 폭 - 용지와 스크롤 칸 사이(약 40px)에 세로 한 칸으로
+  // 넓은 창에서도 감긴 줄의 마지막 글줄에서 한 줄 묶음의 끝 단추까지 닿는다
+  const walk1440 = await walkTo(a, reachDown);
+  await armLanding(reachDown);
+  await page.mouse.down();
+  await page.mouse.up();
+  check("at 1440 the mouse reaches the one-line group from the last line", walk1440.lost === 0 && (await page.evaluate(() => window.__landed)), JSON.stringify(walk1440));
+  // 가장 좁은 지원 폭 - 묶음이 두 줄로도 안 들어가 ⋯ 하나가 용지 옆에 뜬다
   const slim = await hoverAt(1120);
-  check("at 1120 the group floats beside the sheet as one column", isBesideSheet(slim) && slim.box.width <= 40, JSON.stringify({ box: slim.box, sheet: slim.sheet, pane: slim.pane }));
-  check("the 1120 group covers no text", !slim.covers);
+  check("at 1120 a single more button floats beside the sheet", slim.mode === "more" && isBesideSheet(slim) && slim.box.width <= 32, JSON.stringify({ mode: slim.mode, box: slim.box, sheet: slim.sheet, pane: slim.pane }));
+  check("the 1120 more button covers no text", !slim.covers);
   check("no horizontal scroll at 1120", !slim.scrolls);
-  // 문서 끝 줄 - 세로 한 칸 묶음이 내용 아래로 늘어지지 않고 위로 올라간다(스크롤 높이가 그대로)
-  const lastRow = page.locator('[data-testid^="output-c-row-"]:has([data-testid^="output-c-acts-"])').last();
-  await lastRow.scrollIntoViewIfNeeded();
-  await page.mouse.move(0, 0);
+  // ⋯ 단추 output-c-menu-<id>, 메뉴 output-c-menu-list-<id>, 항목 output-c-menu-<동작>-<id>
+  const moreButton = page.locator(`[data-testid="output-c-menu-${a}"]`);
+  const walk1120 = await walkTo(a, `[data-testid="output-c-menu-${a}"]`);
+  await page.mouse.down();
+  await page.mouse.up();
+  const menu = page.locator(`[data-testid="output-c-menu-list-${a}"]`);
+  await menu.waitFor({ timeout: T });
+  check("from the last line of a wrapped row the mouse reaches the more button and opens its menu", walk1120.lost === 0 && (await menu.isVisible()), JSON.stringify(walk1120));
+  // 메뉴 항목은 묶음 단추와 같은 일곱 동작 - 지금 번호 표시에 표시가 있고, 꺼짐은 묶음 단추와 같다
+  const menuState = await page.evaluate((id) => {
+    const disabled = (sel) => document.querySelector(sel)?.disabled ?? null;
+    const itemOf = (action) => `[data-testid="output-c-menu-${action}-${id}"]`;
+    const item = document.querySelector(`[data-testid="output-c-item-${id}"]`);
+    // 묶음에 있는 단추만큼 - 번호 표시를 못 바꾸는 줄(이미 쓴 문서)·깊이를 못 바꾸는 줄(AI 번역)은 그 항목도 없다
+    const expected = [
+      ...(document.querySelector(`[data-testid="output-c-mark-${id}"]`) ? ["numbered", "omitted", "note"] : []),
+      ...(document.querySelector(`[data-testid="output-c-indent-${id}"]`) ? ["outdent", "indent"] : []),
+      "up",
+      "down",
+    ];
+    return {
+      expected,
+      checked: document.querySelector(itemOf(item.dataset.numberStyle))?.getAttribute("aria-checked"),
+      items: [...document.querySelectorAll(`[data-testid="output-c-menu-list-${id}"] [role^="menuitem"]`)].map((el) => el.getAttribute("data-testid").replace("output-c-menu-", "").replace(`-${id}`, "")),
+      same: ["outdent", "indent"].every((key) => disabled(itemOf(key)) === disabled(`[data-testid="output-c-${key}-${id}"]`))
+        && ["up", "down"].every((key) => disabled(itemOf(key)) === disabled(`[data-testid="output-c-move-${key}-${id}"]`)),
+    };
+  }, a);
+  check("the menu lists the group's actions with the current number style marked", menuState.expected.length === 7 && JSON.stringify(menuState.items) === JSON.stringify(menuState.expected) && menuState.checked === "true" && menuState.same, JSON.stringify(menuState));
+  check("the row whose menu is open stays highlighted", (await rowBackground(rowA)) !== "rgba(0, 0, 0, 0)");
+  await takeShot("sop-order-row-more-menu.png");
+  await page.keyboard.press("Escape");
   await settle();
-  const scrollHeight = () => page.locator('[data-testid="output-c"]').evaluate((el) => el.closest(".overflow-auto, .overflow-y-auto").scrollHeight);
-  const restScroll = await scrollHeight();
-  await lastRow.hover({ position: { x: 8, y: 4 } });
-  await settle();
-  check("hovering the last row does not grow the scroll area", (await scrollHeight()) === restScroll, `${restScroll} -> ${await scrollHeight()}`);
-  // 스크롤바가 두꺼운 창(Windows 고전 스크롤바 17px)처럼 틀이 좁아도 용지가 몇 px 양보해 묶음은 용지 옆에 남는다 - 헤드리스는 스크롤바를 숨기므로 틀 폭을 줄여 흉내 낸다
-  await page.addStyleTag({ content: '[data-testid="output-c"] { width: 756px; }' });
+  check("Esc closes the menu and returns focus to the more button", (await menu.count()) === 0 && (await moreButton.evaluate((el) => el === document.activeElement)));
+  // 메뉴로 번호 표시를 바꾸고 되돌린다 - 저장되고 닫힌 메뉴는 포커스를 ⋯ 단추로 돌린다
+  await moreButton.click();
+  const marked = waitOrderSave(page);
+  await page.locator(`[data-testid="output-c-menu-omitted-${a}"]`).click();
+  check("a menu item runs its action and saves", (await marked).ok() && (await page.locator(`[data-testid="output-c-item-${a}"]`).getAttribute("data-number-style")) === "omitted");
+  await moreButton.click();
+  const unmarked = waitOrderSave(page);
+  await page.locator(`[data-testid="output-c-menu-numbered-${a}"]`).click();
+  check("the menu puts the number style back", (await unmarked).ok() && (await page.locator(`[data-testid="output-c-item-${a}"]`).getAttribute("data-number-style")) === "numbered");
+  // 스크롤바가 두꺼운 창(Windows 고전 스크롤바 17px 둘)처럼 틀 내용 폭이 756px로 좁아도 용지가 몇 px 양보해 ⋯는 용지 옆에 남는다.
+  // 헤드리스는 스크롤바를 숨기므로 틀 폭을 줄여 흉내 낸다 - width는 테두리 상자라 내용 756 = 780 - 좌우 여백 12×2
+  await page.addStyleTag({ content: '[data-testid="output-c"] { width: 780px; }' });
   const squeezed = await hoverAt(1120);
-  check("a narrow frame shrinks the sheet a little and keeps the group beside it", isBesideSheet(squeezed) && squeezed.sheet.width < 760 && !squeezed.covers, JSON.stringify({ box: squeezed.box, sheet: squeezed.sheet }));
+  check("a narrow frame shrinks the sheet a little and keeps the more button beside it", squeezed.mode === "more" && isBesideSheet(squeezed) && squeezed.sheet.width < 760 && !squeezed.covers, JSON.stringify({ box: squeezed.box, sheet: squeezed.sheet }));
   await page.setViewportSize(VIEWPORT);
   // 터치 화면 - 호버가 없으니 묶음이 늘 보이고 글 흐름 안에 있다
   const touch = await browser.newContext({ viewport: VIEWPORT, hasTouch: true, isMobile: true });

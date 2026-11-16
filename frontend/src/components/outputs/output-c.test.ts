@@ -99,6 +99,44 @@ describe("OutputCView", () => {
     unmount();
   });
 
+  it("opens the same actions from the more button as labelled menu items, disabled where the buttons are", () => {
+    const items = [
+      makeItem({ target_id: 1, text: "가", status: "confirmed", number: "2.1" }),
+      makeItem({ target_id: 2, text: "나", status: "confirmed", number: "2.2" }),
+    ];
+    const onMove = vi.fn();
+    const onIndent = vi.fn();
+    const onMark = vi.fn();
+    const { host, unmount } = render({ data: makeOutput(items), onMove, onIndent, onMark });
+    document.body.append(host);
+    const more = host.querySelector<HTMLButtonElement>('[data-testid="output-c-menu-1"]');
+    // ⋯는 아이콘만 있어 이름을 aria-label로 갖고, 그 틈을 눌러도 끌기가 시작되지 않는다
+    expect(more?.getAttribute("aria-label")).toBe("Line actions");
+    expect(more?.closest(".c-more")?.hasAttribute("data-no-drag")).toBe(true);
+    act(() => more?.click());
+    const menu = document.querySelector('[data-testid="output-c-menu-list-1"]');
+    expect([...(menu?.querySelectorAll('[role^="menuitem"]') ?? [])].map((el) => el.textContent)).toEqual(["Numbered", "No number", "Note", "Outdent", "Indent", "Move up", "Move down"]);
+    expect(menu?.querySelector('[data-testid="output-c-menu-numbered-1"]')?.getAttribute("aria-checked")).toBe("true");
+    // 첫 줄 - 내어쓰기·들여쓰기·위로는 단추처럼 막히고 아래로만 된다
+    for (const key of ["outdent", "indent", "up"]) expect(menu?.querySelector<HTMLButtonElement>(`[data-testid="output-c-menu-${key}-1"]`)?.disabled).toBe(true);
+    act(() => menu?.querySelector<HTMLButtonElement>('[data-testid="output-c-menu-down-1"]')?.click());
+    expect(onMove).toHaveBeenCalledWith(1, "scope", 1, 1);
+    // 고르면 메뉴가 닫힌다 - 다시 열어 번호 표시를 바꾸고, 이미 고른 표시는 보내지 않는다
+    expect(document.querySelector('[data-testid="output-c-menu-list-1"]')).toBeNull();
+    act(() => more?.click());
+    act(() => document.querySelector<HTMLButtonElement>('[data-testid="output-c-menu-numbered-1"]')?.click());
+    expect(onMark).not.toHaveBeenCalled();
+    act(() => more?.click());
+    act(() => document.querySelector<HTMLButtonElement>('[data-testid="output-c-menu-note-1"]')?.click());
+    expect(onMark).toHaveBeenCalledWith(1, 1, "note");
+    // 둘째 줄은 들일 수 있다
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="output-c-menu-2"]')?.click());
+    act(() => document.querySelector<HTMLButtonElement>('[data-testid="output-c-menu-indent-2"]')?.click());
+    expect(onIndent).toHaveBeenCalledWith(1, 2, 1);
+    unmount();
+    host.remove();
+  });
+
   it("locks the depth of an AI translation but lets its number style and a person's other-language sentence change", () => {
     const items = [
       makeItem({ target_id: 1, lang: "en", text: "Check", status: "confirmed", number: "2.1", meaning_key: "old:3" }),
