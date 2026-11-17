@@ -15,6 +15,7 @@ import { DestCard } from "@/components/assign/dest-card";
 import { DestinationAccordion, type AccordionSection } from "@/components/assign/destination-accordion";
 import { DestinationTree, type DestinationManage } from "@/components/assign/destination-tree";
 import { MissingWarnings } from "@/components/assign/missing-warnings";
+import { CaptionRefList, type CaptionRefEntry } from "@/components/assign/caption-ref-list";
 import { RefCard } from "@/components/assign/ref-card";
 import { ShapeTools, type ShapeLine } from "@/components/assign/shape-tools";
 import { SplitSuggestionCard } from "@/components/assign/split-suggestion";
@@ -106,6 +107,7 @@ import {
   removeWiStep,
   saveGroup,
   undoDecision,
+  updateCaptionRef,
   type AiSuggestion,
   type ChangeTypeInput,
   type ComposedDoc,
@@ -122,6 +124,7 @@ import {
   type ViewUnit,
   type WrittenSentence,
 } from "@/lib/api-sop";
+import { listRefCandidates } from "@/lib/caption-ref-model";
 import { isBundleCaptionNeeded, isBundleKind, isCaptionGate, listCaptionFields, listCaptionPendingRowKeys, makeIsLinkedToWritten, type CaptionUnit } from "@/lib/caption-model";
 import { applySavedTargets, buildComposedRows, formatSectionPath, isWrittenRow, listHeadingNotes, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
 import {
@@ -1123,6 +1126,9 @@ export default function AssignPage() {
   const rowCaptionUnits = hasSolo || rowBundleSpan.size === 0 ? [] : [...(paperModel?.units.values() ?? [])].filter((unit) => unit.kind === "caption" && unit.group_unit_id !== null && rowBundleSpan.has(unit.group_unit_id));
   const shapeOrder = shapeTabs?.order ?? [];
   const shapeUnits = rowCaptionUnits.length === 0 ? rowViewUnits : [...rowViewUnits, ...rowCaptionUnits].sort((a, b) => shapeOrder.indexOf(a.id) - shapeOrder.indexOf(b.id));
+  // 고른 줄의 글(캡션 포함)이 가리키는 표·그림 - 단위마다의 참조를 한 카드에. 다시 이을 후보는 같은 문서의 표·그림 묶음
+  const rowCaptionRefs: CaptionRefEntry[] = shapeUnits.flatMap((unit) => unit.caption_refs.map((ref) => ({ ref, from: unit })));
+  const refCandidates = rowCaptionRefs.length > 0 && shapeModel !== null ? [...listRefCandidates("table", shapeModel.units), ...listRefCandidates("figure", shapeModel.units)] : [];
   const shapeLines: ShapeLine[] = canEdit && mode === "old" ? shapeUnits.flatMap((unit) => { const menu = buildUnitMenu(unit); return menu ? [{ unit, items: menu.edit }] : []; }) : [];
   // 고른 줄이 한/영 짝이거나 합친 한 문장이면 둘 사이를 바꾸는 전환을 다듬기에 둔다
   const shapeMode = shapeLines.length > 0 ? planShapeMode(rowViewUnits, shapeTabs?.order ?? [], hasUnitDraft) : null;
@@ -1227,6 +1233,21 @@ export default function AssignPage() {
     } catch (err) {
       const isLinked = err instanceof ApiError && err.rule?.code === "confirm_required";
       showToast(isLinked ? t("assign.ctx.why.assigned") : humanizeApiError(err, t), "error");
+    } finally {
+      reloadAfterEdit();
+      setBusy(false);
+    }
+  }
+
+  /** 표·그림 참조를 떼거나 다시 잇는다 - 단위는 그대로라 고름을 두고 보기만 다시 받는다. 편집 기록(되돌리기)에는 들어가지 않는다 */
+  async function runCaptionRefChange(refId: number, change: { state: "detached" } | { target_unit_id: number }, okText: string) {
+    if (!shapeView || busy) return;
+    setBusy(true);
+    try {
+      await updateCaptionRef(bundleId, shapeView.document.id, refId, { revision: shapeView.document.revision, ...change });
+      showToast(okText);
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
     } finally {
       reloadAfterEdit();
       setBusy(false);
@@ -3100,6 +3121,17 @@ export default function AssignPage() {
             onReject={() => void runUnitEdit({ type: "clear_ref", unit_id: rowRefUnit.id }, t("assign.ref.didReject"), rowRefUnit.id)}
             onClose={() => setRefEntryId(null)}
             onNext={selectNextRef}
+          />
+        )}
+        {rowCaptionRefs.length > 0 && shapeModel && (
+          <CaptionRefList
+            refs={rowCaptionRefs}
+            units={shapeModel.units}
+            candidates={refCandidates}
+            canEdit={canEdit && mode === "old"}
+            busy={busy}
+            onDetach={(refId) => void runCaptionRefChange(refId, { state: "detached" }, t("assign.captionRef.didDetach"))}
+            onRelink={(refId, unitId) => void runCaptionRefChange(refId, { target_unit_id: unitId }, t("assign.captionRef.didRelink"))}
           />
         )}
         {rowSplitUnit && rowSplit && (

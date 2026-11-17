@@ -15,7 +15,7 @@ function makeBlock(id: number, seq: number, text: string, extra: Partial<ViewBlo
 function makeUnit(id: number, spans: Array<[number, number, number]>, text: string, extra: Partial<ViewUnit> = {}): ViewUnit {
   return {
     id, display_id: `D-${id}`, kind: "sentence", spans, text, lang: "en", table_id: null, row_index: null, group_unit_id: null,
-    status: "unassigned", pair_id: null, pos_seq: spans[0]?.[0] ?? 0, block_id: spans[0]?.[0] ?? 0, is_edited: false, can_unmerge: false, split_suggestion_id: null, ref: null, ...extra,
+    status: "unassigned", pair_id: null, pos_seq: spans[0]?.[0] ?? 0, block_id: spans[0]?.[0] ?? 0, is_edited: false, can_unmerge: false, split_suggestion_id: null, ref: null, caption_refs: [], ...extra,
   };
 }
 
@@ -108,7 +108,7 @@ function makeSplitUnit(over: Partial<ViewUnit> = {}): ViewUnit {
     pos_seq: 1,
     block_id: 10,
     is_edited: false, can_unmerge: false,
-    split_suggestion_id: null, ref: null,
+    split_suggestion_id: null, ref: null, caption_refs: [],
     ...over,
   };
 }

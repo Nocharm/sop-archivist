@@ -266,4 +266,14 @@ describe("OutputCView", () => {
     expect(rows[0].textContent).toContain("가\nA");
     unmount();
   });
+  it("puts the renumber chip only on a caption line that has text, like the New pane", () => {
+    const renumber = { from_label: "표 4", to_label: "표 1" };
+    const empty = makeItem({ target_id: 31, kind: "table", lang: "neutral", renumber, children: [makeItem({ target_id: 32 }), makeItem({ target_id: 33, cell_row: 0, cell_col: 0, text: "가" })] });
+    const filled = makeItem({ target_id: 41, kind: "table", lang: "neutral", renumber, children: [makeItem({ target_id: 42 }), makeItem({ target_id: 43, lang: "en", text: "Table 1. Limits" }), makeItem({ target_id: 44, cell_row: 0, cell_col: 0, text: "나" })] });
+    const { host, unmount } = render({ data: makeOutput([empty, filled]) });
+    expect(host.querySelector('[data-testid="output-c-renumber-31"]')).toBeNull();
+    const chip = host.querySelector('[data-testid="output-c-renumber-41"]');
+    expect(chip?.closest('[data-testid^="output-c-caption-"]')?.getAttribute("data-testid")).toBe("output-c-caption-43");
+    unmount();
+  });
 });

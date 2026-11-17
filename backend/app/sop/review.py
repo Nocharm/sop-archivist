@@ -5,7 +5,7 @@
 
 import asyncio
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Literal
 
 from pydantic import BaseModel
@@ -19,7 +19,7 @@ from app.sop.errors import check_revision, raise_rule
 from app.sop.events import record_event
 from app.sop.membership import ensure_editable, lock_bundle
 from app.sop.models import Bundle, BundleMember
-from app.sop.outputs import build_review_facts
+from app.sop.outputs import CaptionRefWarning, build_review_facts
 from app.sop.snapshot import (
     BundleSnapshot,
     count_unacked_missing_text,
@@ -95,6 +95,14 @@ def _list_equipment_notices(snap: BundleSnapshot) -> list[Issue]:
         if empty:
             notices.append({"code": "equipment_sop_empty_slots", "doc_code": doc.code, "slot_keys": empty})
     return notices
+
+
+def _list_caption_ref_notices(warnings: Iterable[CaptionRefWarning]) -> list[Issue]:
+    """표·그림 참조 경고를 코드마다 알림 하나로 — 참조 원문 단위 id(겹치지 않게, id 순). 막지 않는다(제품 명세 §5)."""
+    unit_ids: dict[str, set[int]] = {}
+    for warning in warnings:
+        unit_ids.setdefault(warning.code, set()).add(warning.unit_id)
+    return [{"code": code, "count": len(ids), "unit_ids": sorted(ids)} for code, ids in unit_ids.items()]
 
 
 def _pick_next_action(snap: BundleSnapshot, codes: set[str]) -> NextAction:
@@ -177,6 +185,7 @@ def evaluate_readiness(
     warned = sum(bool(target.warnings) for target in snap.targets.values())
     if warned:
         notices.append({"code": "sentence_warnings", "count": warned})
+    notices += _list_caption_ref_notices(facts.caption_ref_warnings)
     return Readiness(
         ready=not blockers,
         blockers=blockers,

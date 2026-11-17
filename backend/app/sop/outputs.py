@@ -14,6 +14,13 @@ from typing import Literal
 from pydantic import BaseModel
 
 from app.routers.admin import KstDatetime
+from app.sop.caption_ref_rules import (
+    REF_LINKED,
+    index_caption_groups,
+    match_covering_units,
+    pick_table_unit_id,
+    resolve_numbered_group,
+)
 from app.sop.captions import CAPTION_KIND, get_caption_lang_rank, is_caption_target, join_caption_texts
 from app.sop.constants import COVER_KINDS, NUMBER_NOTE, NUMBERED, SLOT_HEADING, SLOT_KEYS, WI_PARTS
 from app.sop.groups import TABLE_UNIT_KINDS, build_group_ids, collapse_table_members
@@ -25,8 +32,16 @@ from app.sop.output_rows import (
     get_meaning_key,
     get_new_meaning_key,
 )
+from app.sop.renumber import (
+    find_caption_number,
+    find_number_tokens,
+    format_caption_prefix,
+    has_caption_head,
+    replace_numbers,
+)
 from app.sop.snapshot import (
     BundleSnapshot,
+    CaptionRefInfo,
     DocumentInfo,
     TargetDocInfo,
     TargetInfo,
@@ -110,6 +125,13 @@ class FlowGraph(BaseModel):
     edges: list[FlowEdge]
 
 
+class RenumberOut(BaseModel):
+    """표·그림 줄의 번호 바뀜 — 원문 번호가 없으면 from_label이 빈 글."""
+
+    from_label: str
+    to_label: str
+
+
 class CItem(BaseModel):
     target_id: int
     kind: str
@@ -134,6 +156,7 @@ class CItem(BaseModel):
     # 표·그림 새 문장의 캡션 글(_pick_caption_text — 확정 글이 없으면 AI 글), 없거나 표·그림이 아니면 None. 미리 보기 글(끌기 카드)용이고,
     # 줄마다의 확정·AI 글·상태는 캡션 자식이 싣는다
     caption: str | None = None
+    renumber: RenumberOut | None = None  # 표·그림 줄의 번호가 바뀌면 원문 → 새 번호(Renumbering.changes, Assign New 칸과 같은 값)
 
 
 class CSection(BaseModel):
@@ -511,6 +534,229 @@ def number_targets(index: _Index, labels: OutputLabels) -> dict[int, str]:
     return numbers
 
 
+# --- 표·그림 번호 다시 매기기 ---
+
+BUNDLE_TARGET_KINDS = ("table", "figure")
+CaptionRefCode = Literal[
+    "caption_ref_broken", "caption_ref_order", "caption_ref_unresolved", "caption_ref_ambiguous", "caption_ref_text_changed",
+]
+
+
+@dataclass(frozen=True)
+class CaptionRefWarning:
+    code: CaptionRefCode
+    target_id: int | None  # 참조 새 문장(있으면)
+    unit_id: int  # 참조 원문 단위
+
+
+@dataclass(frozen=True)
+class Renumbering:
+    numbers: Mapping[int, int]  # 표·그림 새 문장 id → 새 번호(새 문서마다, 종류마다, C 순서로 1부터)
+    texts: Mapping[int, str]  # 새 문장 id → 결과물에 쓸 글(바뀐 것만 — 캡션 새 문장과 참조 새 문장)
+    # 표·그림 새 문장 id → ("표 1", "표 3"), 같으면 키 없음, 번호 없는 캡션에 머리 번호를 붙였으면 ("", "표 3"), 캡션이 없으면 키 없음
+    changes: Mapping[int, tuple[str, str]]
+    warnings: tuple[CaptionRefWarning, ...]
+
+
+def _format_bundle_label(kind: str, number: int, labels: OutputLabels) -> str:
+    return labels.table_template.format(table=number) if kind == "table" else f"{labels.figure} {number}"
+
+
+@dataclass(frozen=True)
+class _RefLookup:
+    """참조 대상 찾기 색인 — 스냅숏 단위를 한 번만 훑는다."""
+
+    table_units: Mapping[int, list[UnitInfo]]  # 표 id → 표·행 단위
+    figure_units: Mapping[int, int]  # 그림 블록 id → 그림 단위 id
+    # 문서 → (종류, 캡션 번호) → 그 캡션이 달린 묶음 단위들(caption_ref_rules.index_caption_groups)
+    heads: Mapping[int, Mapping[tuple[str, int], set[int]]]
+
+
+def _build_ref_lookup(snap: BundleSnapshot) -> _RefLookup:
+    table_units: dict[int, list[UnitInfo]] = defaultdict(list)
+    figure_units: dict[int, int] = {}
+    by_doc: dict[int, list[UnitInfo]] = defaultdict(list)
+    for unit in sorted(snap.units.values(), key=lambda unit: unit.id):
+        by_doc[unit.document_id].append(unit)
+        if unit.kind in TABLE_UNIT_KINDS and unit.table_id is not None:
+            table_units[unit.table_id].append(unit)
+        elif unit.kind == "figure":
+            figure_units.setdefault(unit.block_id, unit.id)  # 그림 단위의 자리 블록이 곧 그림 블록이다
+    heads = {doc_id: index_caption_groups(units) for doc_id, units in by_doc.items()}
+    return _RefLookup(table_units, figure_units, heads)
+
+
+def _find_ref_group(lookup: _RefLookup, ref: CaptionRefInfo, document_id: int) -> int | CaptionRefCode:
+    """참조가 가리키는 옛 묶음 단위 id, 정할 수 없으면 경고 코드.
+
+    대상이 저장돼 있으면 표는 표 단위(행이면 가장 작은 행 — caption_ref_rules.pick_table_unit_id), 그림은 그 블록의 그림 단위다.
+    대상 없이 남은 번호 참조는 문서 보기 카드와 같은 규칙(caption_ref_rules.resolve_numbered_group)으로 그 문서에서 가린다 —
+    없으면 unresolved, 둘 이상이면 ambiguous, 하나면(올린 뒤 캡션을 붙였다) 그 묶음.
+    """
+    if ref.target_table_id is not None:
+        unit_id = pick_table_unit_id(ref.target_table_id, lookup.table_units.get(ref.target_table_id, ()))
+        return unit_id if unit_id is not None else "caption_ref_broken"
+    if ref.target_block_id is not None:
+        return lookup.figure_units.get(ref.target_block_id, "caption_ref_broken")
+    if ref.number is None:
+        return "caption_ref_unresolved"
+    return resolve_numbered_group(lookup.heads.get(document_id, {}), ref.kind, ref.number)
+
+
+def _is_place_in_order(tops: Sequence[TargetInfo], referring: TargetInfo, bundle: TargetInfo, *, is_next: bool) -> bool:
+    """자리 참조("아래 표")의 묶음이 새 문서에서 읽는 사람이 찾을 자리인가 — 참조 새 문장 뒤(앞)의 가장 가까운 같은 종류 묶음.
+
+    올릴 때 자리 참조를 잇는 규칙(caption_refs.build_ref_drafts — 바로 뒤·앞의 같은 종류 묶음)과 같다. 칸 문장·캡션은 표의 자리로 잰다.
+    """
+    top_id = referring.parent_target_id or referring.id
+    position = next((n for n, top in enumerate(tops) if top.id == top_id), None)
+    if position is None:
+        return True
+    side = tops[position + 1:] if is_next else list(reversed(tops[:position]))
+    nearest = next((top for top in side if top.kind == bundle.kind), None)
+    return nearest is not None and nearest.id == bundle.id
+
+
+def build_renumbering(index: _Index, labels: OutputLabels) -> Renumbering:
+    """새 문서(SOP·WI)마다 결과물 C 순서로 표·그림을 따로 1부터 다시 세고, 캡션과 이어진 참조 문장의 번호를 그 값으로 바꾼 글(제품 명세 §5).
+
+    규칙 계산이고(AI 아님) 확정 글(DB)은 바꾸지 않는다 — 결과물·화면이 texts를 덮어 보인다. KO·EN 판 모두 같은 번호다.
+    참조는 출처 단위(번역은 번역 출처) 범위 안의 linked 참조만 보고, 바꾸지 못하는 참조는 경고(막지 않음)로 남긴다.
+    새 문장이 없는(지운·미배정) 참조 문장은 경고하지 않는다.
+    """
+    snap = index.snap
+    numbers: dict[int, int] = {}
+    tops_by_doc: dict[int, list[TargetInfo]] = {}
+    for doc in index.doc_order:
+        tops = [target for plan in _plan_sections(index, doc, labels) for target in plan.targets]
+        tops_by_doc[doc.id] = tops
+        counts: Counter[str] = Counter()
+        for target in tops:
+            if target.kind in BUNDLE_TARGET_KINDS:
+                counts[target.kind] += 1
+                numbers[target.id] = counts[target.kind]
+
+    edits: dict[int, dict[tuple[int, int], int]] = defaultdict(dict)  # 새 문장 → 숫자 자리 → 새 번호
+    prefixes: dict[int, str] = {}
+    changes: dict[int, tuple[str, str]] = {}
+    for bundle_id, number in numbers.items():
+        kind = snap.targets[bundle_id].kind
+        original: int | None = None
+        prefixed = False
+        for child in index.children.get(bundle_id, []):
+            if not is_caption_target(child):
+                continue
+            text = child.confirmed_text or child.ai_text
+            # 머리 번호, 머리가 없으면 첫 그 종류 번호("<표 3> 운전 조건") — 복합 번호 머리("Table 3-1.")는 다시 매기지 않는다
+            head = find_caption_number(text, kind)
+            if head is None:
+                if text and not has_caption_head(text):  # 번호 없이 쓴 캡션은 캡션 언어로 머리 번호를 붙인다(중립·그 밖은 한국어)
+                    prefixes[child.id] = format_caption_prefix(kind, number, "en" if child.lang == "en" else "ko")
+                    prefixed = True
+                continue
+            if original is None:
+                original = head.number
+            # 캡션 안의 같은 번호 다른 언어 표기("표 3. … (Table 3. …)")도 자기 번호다
+            same = [token for token in find_number_tokens(text) if (token.kind, token.number) == (head.kind, head.number)]
+            edits[child.id].update({(token.start, token.end): number for token in (head, *same)})
+        after = _format_bundle_label(kind, number, labels)
+        if original is not None and original != number:
+            changes[bundle_id] = (_format_bundle_label(kind, original, labels), after)
+        elif original is None and prefixed:  # 캡션이 아예 없는 표·그림(입구 2 등)은 붙인 번호가 없어 싣지 않는다
+            changes[bundle_id] = ("", after)
+
+    warnings = _follow_references(index, numbers, tops_by_doc, edits)
+    texts: dict[int, str] = {}
+    for target_id in edits.keys() | prefixes.keys():
+        target = snap.targets[target_id]
+        base = target.confirmed_text or target.ai_text
+        text = prefixes.get(target_id, "") + replace_numbers(base, edits.get(target_id, {}))
+        if text != base:
+            texts[target_id] = text
+    return Renumbering(numbers=numbers, texts=texts, changes=changes, warnings=warnings)
+
+
+def _follow_references(
+    index: _Index, numbers: Mapping[int, int], tops_by_doc: Mapping[int, list[TargetInfo]],
+    edits: dict[int, dict[tuple[int, int], int]],
+) -> tuple[CaptionRefWarning, ...]:
+    """참조 새 문장마다 이어진 참조의 대상 묶음을 같은 새 문서에서 찾아 숫자 자리를 edits에 더하고, 못 하면 경고를 돌려준다."""
+    snap = index.snap
+    # 뗀 참조도 모은다 — 자기 경고는 없지만 합친 새 문장에서 같은 번호 토큰을 나눠 쓰면 바꾸기를 막는다
+    covering = match_covering_units(snap.caption_refs, snap.units.values())
+    refs_by_unit: dict[int, list[CaptionRefInfo]] = defaultdict(list)
+    for ref in snap.caption_refs:
+        if ref.id in covering:
+            refs_by_unit[covering[ref.id]].append(ref)
+    lookup = _build_ref_lookup(snap)
+    bundle_targets: dict[tuple[int, int], list[TargetInfo]] = defaultdict(list)  # (새 문서, 옛 묶음 단위) → 표·그림 새 문장
+    for doc_id, tops in tops_by_doc.items():
+        for top in tops:
+            if top.id in numbers:
+                for unit_id in top.source_unit_ids:
+                    bundle_targets[(doc_id, unit_id)].append(top)
+
+    warnings: list[CaptionRefWarning] = []
+    # (참조 단위, 참조, 새 문서) → 글이 있는 새 문장마다 (id, 그 참조의 토큰이 있는가)
+    token_checks: dict[tuple[int, int, int], list[tuple[int, bool]]] = defaultdict(list)
+    for target in sorted(snap.targets.values(), key=lambda target: target.id):
+        if target.kind in (*BUNDLE_TARGET_KINDS, SLOT_HEADING):
+            continue
+        unit_ids = target.source_unit_ids
+        if not unit_ids and target.translation_source_unit_id in snap.units:
+            unit_ids = (target.translation_source_unit_id,)
+        source_refs = [(unit_id, ref) for unit_id in unit_ids for ref in refs_by_unit.get(unit_id, ())]
+        refs = [(unit_id, ref) for unit_id, ref in source_refs if ref.state == REF_LINKED]
+        if not refs:
+            continue
+        tops = tops_by_doc.get(target.target_doc_id, [])
+
+        def warn(code: CaptionRefCode, unit_id: int, target_id: int = target.id) -> None:
+            warnings.append(CaptionRefWarning(code, target_id, unit_id))
+
+        resolved: list[tuple[int, CaptionRefInfo, int, TargetInfo]] = []
+        for unit_id, ref in refs:
+            group = _find_ref_group(lookup, ref, snap.units[unit_id].document_id)
+            if isinstance(group, str):
+                warn(group, unit_id)
+                continue
+            found = bundle_targets.get((target.target_doc_id, group), [])
+            if len(found) != 1:
+                warn("caption_ref_broken" if not found else "caption_ref_ambiguous", unit_id)
+                continue
+            resolved.append((unit_id, ref, group, found[0]))
+        # 합친 새 문장의 같은 (종류, 번호) 토큰은 출처 참조 모두의 것 — 모두 같은 묶음 하나로 풀릴 때만 바꾼다.
+        # 못 푼 참조(경고가 났다)와 뗀 참조는 None으로 들어가 막는다
+        bundle_of = {ref.id: bundle.id for _, ref, _, bundle in resolved}
+        bundles_by_number: dict[tuple[str, int], set[int | None]] = defaultdict(set)
+        for _, ref in source_refs:
+            if ref.number is not None:
+                bundles_by_number[(ref.kind, ref.number)].add(bundle_of.get(ref.id))
+        text = target.confirmed_text or target.ai_text
+        tokens = find_number_tokens(text)
+        for unit_id, ref, group, bundle in resolved:
+            if ref.number is None:
+                # 저장된 자리 참조에는 방향이 없다 — 원문에서 묶음이 참조 문장보다 뒤면 "아래"(올릴 때 그 방향으로 이었다)
+                is_next = snap.units[group].order_key > snap.units[unit_id].order_key
+                if not _is_place_in_order(tops, target, bundle, is_next=is_next):
+                    warn("caption_ref_order", unit_id)
+                continue
+            if bundles_by_number[(ref.kind, ref.number)] != {bundle.id}:
+                warn("caption_ref_ambiguous", unit_id)
+                continue
+            if not text:  # 아직 글이 없는 새 문장은 바꿀 것도 경고할 것도 없다
+                continue
+            spans = [(token.start, token.end) for token in tokens if (token.kind, token.number) == (ref.kind, ref.number)]
+            token_checks[(unit_id, ref.id, target.target_doc_id)].append((target.id, bool(spans)))
+            if spans:
+                edits[target.id].update(dict.fromkeys(spans, numbers[bundle.id]))
+    # 한 단위를 한 새 문서의 새 문장 여럿으로 나누면 토큰은 그중 하나에만 있다 — 그 문서의 어느 글에도 없을 때만 경고한다
+    for (unit_id, _, _), checks in token_checks.items():
+        if not any(found for _, found in checks):
+            warnings.append(CaptionRefWarning("caption_ref_text_changed", checks[0][0], unit_id))
+    return tuple(dict.fromkeys(warnings))
+
+
 def _group_dests(index: _Index, unit: UnitInfo) -> list[tuple[TargetDocInfo, list[TargetInfo], bool]]:
     """단위의 보낸 곳 — 새 문서마다 (문서, 그 문서의 새 문장, 자기 새 문장인가), 결과물 C 문서 순서.
 
@@ -627,6 +873,14 @@ def _format_source_text(index: _Index, unit: UnitInfo, labels: OutputLabels) -> 
     return labels.table_source_template.format(table=table.table_index + 1, rows=rows, cols=table.n_cols)
 
 
+def _get_shown_texts(target: TargetInfo, texts: Mapping[int, str]) -> tuple[str, str]:
+    """결과물에 쓸 (확정 글, AI 글) — 다시 매긴 글(Renumbering.texts)은 그 글이 나온 쪽(확정 글, 없으면 AI 글)에 싣는다."""
+    text = texts.get(target.id)
+    if text is None:
+        return target.confirmed_text, target.ai_text
+    return (text, target.ai_text) if target.confirmed_text else (target.confirmed_text, text)
+
+
 @dataclass(frozen=True)
 class _Dest:
     kind: str
@@ -667,7 +921,7 @@ def _format_locations(targets: list[TargetInfo], labels: OutputLabels) -> str:
 
 def _describe_dest(
     index: _Index, doc: TargetDocInfo, targets: list[TargetInfo], is_own: bool, labels: OutputLabels,
-    number_of: NumberOf,
+    number_of: NumberOf, texts: Mapping[int, str],
 ) -> _Dest:
     if is_own:
         # 사람이 쓴 다른 언어 문장(변경 종류 translated)은 같은 묶음의 번역 줄로 뺀다 — 단위 줄의 ①②는 자기 언어(중립)·합침 새 문장만
@@ -684,10 +938,11 @@ def _describe_dest(
     change_types = {target.change_type or "" for target in targets}
     # 한 새 문서 안에서 여러 새 문장으로 간 것은 나눔이다(스펙 §6.9) — 합침과 섞이면 나눔으로 적는다
     change_type = change_types.pop() if len(change_types) == 1 else "split"
+    shown_texts = [_get_shown_texts(target, texts) for target in targets]
     return _Dest(
         doc.doc_type, doc.code, doc.title, location, number, all(_is_note(index, target) for target in targets),
-        _number_lines([target.confirmed_text for target in targets]),
-        _number_lines([target.ai_text for target in targets]),
+        _number_lines([confirmed for confirmed, _ in shown_texts]),
+        _number_lines([ai for _, ai in shown_texts]),
         change_type, [warning for target in targets for warning in target.warnings],
     )
 
@@ -717,6 +972,7 @@ class _AContext:
     translations: dict[int, list[TargetInfo]]
     # 옛 단위 → 그 줄 뒤의 Translated · Added 새 문장(입구 2 한쪽만 맞춘 짝의 출처 없는 쪽)
     added: dict[int, list[TargetInfo]]
+    texts: Mapping[int, str]  # 다시 매긴 글(Renumbering.texts) — 새 문장 칸만 쓴다, 옛 문서 칸은 원문 번호 그대로
 
 
 @dataclass(frozen=True)
@@ -741,7 +997,7 @@ def _build_unit_rows(
     document = snap.documents[unit.document_id]
     # 칸 제목은 같은 새 문서의 문장과 ①②로 섞지 않고 따로 한 줄이다(변경 종류 Slot heading, 제품 명세 §7.13 칸 제목)
     dests = [
-        _describe_dest(index, doc, part, is_own, ctx.labels, ctx.number_of)
+        _describe_dest(index, doc, part, is_own, ctx.labels, ctx.number_of, ctx.texts)
         for doc, targets, is_own in _group_dests(index, unit)
         for part in (
             [target for target in targets if target.kind == SLOT_HEADING],
@@ -784,6 +1040,7 @@ def _build_target_row(
     doc = index.snap.target_docs[target.target_doc_id]
     unit = index.snap.units.get(source_id) if source_id is not None else None
     document = index.snap.documents[unit.document_id] if unit else None
+    confirmed_text, ai_text = _get_shown_texts(target, ctx.texts)
     return ARow(
         row_no=slot.row_no, is_group_start=False, row_kind=row_kind,
         old_doc_code=_format_doc_code(document) if document else "",
@@ -792,7 +1049,7 @@ def _build_target_row(
         display_id=unit.display_id if unit else "", source_text="",
         dest_kind=doc.doc_type, dest_doc_code=doc.code, dest_doc_title=doc.title,
         dest_location=_format_target_location(target, ctx.labels), dest_number=ctx.number_of(target),
-        dest_is_note=_is_note(index, target), confirmed_text=target.confirmed_text, ai_text=target.ai_text,
+        dest_is_note=_is_note(index, target), confirmed_text=confirmed_text, ai_text=ai_text,
         change_type=change_type, remark=slot.remark, status=target.status,
         confirmed_by=format_confirmer(target.confirmed_by, ctx.people), confirmed_at=target.confirmed_at,
         group_id=index.target_groups.get(target.parent_target_id or target.id), warnings=list(target.warnings),
@@ -890,7 +1147,8 @@ def _build_a_groups(index: _Index, labels: OutputLabels, people: Mapping[str, st
         return numbers.get(target.id, "")
 
     added, new_groups = _split_new_targets(snap, _list_new_targets(index, labels))
-    ctx = _AContext(index, labels, get_number, people, _index_translations(snap), added)
+    texts = build_renumbering(index, labels).texts
+    ctx = _AContext(index, labels, get_number, people, _index_translations(snap), added, texts)
     groups: list[list[ARow]] = []
     placed: set[int] = set()
     for meaning in build_meaning_rows(snap):
@@ -1011,6 +1269,8 @@ class _CContext:
     added: dict[int, list[TargetInfo]]
     # Translated · Added 새 문장 → A에서 그 줄이 드는 옛 단위(맞춘 쪽 출처 중 원문에서 가장 앞)
     added_anchor: dict[int, int]
+    texts: Mapping[int, str]  # 다시 매긴 글(Renumbering.texts)
+    changes: Mapping[int, tuple[str, str]]  # 표·그림 번호 바뀜(Renumbering.changes)
 
 
 def _format_meaning_key(ctx: _CContext, target: TargetInfo) -> str | None:
@@ -1029,13 +1289,13 @@ def _format_meaning_key(ctx: _CContext, target: TargetInfo) -> str | None:
     return None
 
 
-def _pick_caption_text(index: _Index, bundle_target: TargetInfo) -> str | None:
-    """표·그림 새 문장의 캡션 글 — 캡션 새 문장마다 확정 글, 없으면 AI 글. 여러 언어면 한국어·영어 순 줄바꿈 이음, 없으면 None.
+def _pick_caption_text(index: _Index, bundle_target: TargetInfo, texts: Mapping[int, str]) -> str | None:
+    """표·그림 새 문장의 캡션 글 — 캡션 새 문장마다 다시 매긴 글(texts), 없으면 확정 글, 그것도 없으면 AI 글.
 
-    번호는 원문 그대로다(다시 매기기는 Renumbering이 덮는다).
+    여러 언어면 한국어·영어 순 줄바꿈 이음, 없으면 None.
     """
     return join_caption_texts(
-        (child.lang, child.confirmed_text or child.ai_text)
+        (child.lang, texts.get(child.id) or child.confirmed_text or child.ai_text)
         for child in index.children.get(bundle_target.id, [])
         if is_caption_target(child)
     )
@@ -1044,14 +1304,17 @@ def _pick_caption_text(index: _Index, bundle_target: TargetInfo) -> str | None:
 def _build_item(ctx: _CContext, target: TargetInfo) -> CItem:
     """C 항목 하나 — 표·그림의 캡션 새 문장은 칸 앞의 자식이다(칸 문장처럼 줄마다 확정 글·AI 글·상태를 싣는다). text는 그 새 문장 자기 글."""
     index = ctx.index
-    caption = _pick_caption_text(index, target) if target.kind in ("table", "figure") else None
+    caption = _pick_caption_text(index, target, ctx.texts) if target.kind in BUNDLE_TARGET_KINDS else None
+    text, ai_text = _get_shown_texts(target, ctx.texts)
+    change = ctx.changes.get(target.id)
     return CItem(
-        target_id=target.id, kind=target.kind, lang=target.lang, text=target.confirmed_text, ai_text=target.ai_text,
+        target_id=target.id, kind=target.kind, lang=target.lang, text=text, ai_text=ai_text,
         change_type=target.change_type, status=target.status, source_note=_format_source_note(index, target, ctx.labels),
         origin=target.origin, meaning_key=_format_meaning_key(ctx, target),
         number=ctx.numbers.get(target.id), indent_level=target.indent_level,
         number_style=_get_number_style(index, target), cell_row=target.cell_row,
         cell_col=target.cell_col, children=[_build_item(ctx, child) for child in index.children.get(target.id, [])], caption=caption,
+        renumber=RenumberOut(from_label=change[0], to_label=change[1]) if change else None,
     )
 
 
@@ -1072,9 +1335,11 @@ def _build_c_context(snap: BundleSnapshot, labels: OutputLabels) -> _CContext:
     """결과물 C 계산 재료 — 묶음 전체의 색인·번호·Translated · Added 자리. 문서 하나만 지어도 번호는 묶음 전체에서 센다."""
     index = _build_index(snap)
     added, _ = _split_new_targets(snap, _list_new_targets(index, labels))
+    renumbering = build_renumbering(index, labels)
     return _CContext(
         index=index, labels=labels, numbers=number_targets(index, labels), added=added,
         added_anchor={target.id: unit_id for unit_id, targets in added.items() for target in targets},
+        texts=renumbering.texts, changes=renumbering.changes,
     )
 
 
@@ -1180,6 +1445,7 @@ class ComposedItem(BaseModel):
     table: BundleTableOut | None = None  # 표 줄이면 칸 새 문장 격자
     figure: BundleFigureOut | None = None  # 그림 줄이고 출처 그림에 이미지가 있으면 그 블록
     caption: str | None = None  # 표·그림 줄의 캡션 글(결과물 C와 같은 _pick_caption_text), 없으면 None — New 칸이 표·그림 위에 보인다
+    renumber: RenumberOut | None = None  # 표·그림 줄의 번호가 바뀌면 원문 → 새 번호(Renumbering.changes), 같으면 None
 
 
 class ComposedSection(BaseModel):
@@ -1225,12 +1491,13 @@ def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> 
     labels = LABELS[lang]
     index = _build_index(snap)
     numbers = number_targets(index, labels)
+    renumbering = build_renumbering(index, labels)
 
     def build_item(target: TargetInfo) -> ComposedItem:
         sources = list(target.source_unit_ids)
         if not sources and target.translation_source_unit_id in snap.units:
             sources = [target.translation_source_unit_id]
-        text = target.confirmed_text or target.ai_text or " ".join(
+        text = renumbering.texts.get(target.id) or target.confirmed_text or target.ai_text or " ".join(
             snap.units[uid].text for uid in sources if uid in snap.units
         )
         table = None
@@ -1245,11 +1512,13 @@ def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> 
             ]
             table = build_bundle_table(target.grid, cells)
         figure = _find_figure_block(snap, [target.new_unit_id] if target.new_unit_id else sources) if target.kind == "figure" else None
+        change = renumbering.changes.get(target.id)
         return ComposedItem(
             target_id=target.id, kind=target.kind, lang=target.lang, text=text, status=target.status,
             change_type=target.change_type, number=numbers.get(target.id),
             source_unit_ids=sources, table=table, figure=figure,
-            caption=_pick_caption_text(index, target) if target.kind in ("table", "figure") else None,
+            caption=_pick_caption_text(index, target, renumbering.texts) if target.kind in BUNDLE_TARGET_KINDS else None,
+            renumber=RenumberOut(from_label=change[0], to_label=change[1]) if change else None,
         )
 
     sections = [
@@ -1304,6 +1573,7 @@ def build_summary(snap: BundleSnapshot) -> Summary:
 class ReviewFacts:
     row_status_counts: Counter[str]  # 줄 상태 → 줄 수 (진행 숫자와 같은 규칙 — 짝 하나·짝 없는 단위 하나가 한 줄)
     duplicate_unit_ids: list[int]  # 서로 다른 새 문서 둘 이상으로 간 판단 단위(칸 문장은 표·행 단위로 접는다), id 순
+    caption_ref_warnings: tuple[CaptionRefWarning, ...] = ()  # 표·그림 참조 경고(build_renumbering) — 막지 않는다
 
 
 def build_review_facts(snap: BundleSnapshot) -> ReviewFacts:
@@ -1311,4 +1581,7 @@ def build_review_facts(snap: BundleSnapshot) -> ReviewFacts:
     index = _build_index(snap)
     counts = Counter(row.status for row in build_meaning_rows(snap))
     duplicates = {_get_decision_unit_id(unit) for unit in index.old_units if len(_group_dests(index, unit)) >= 2}
-    return ReviewFacts(row_status_counts=counts, duplicate_unit_ids=sorted(duplicates))
+    return ReviewFacts(
+        row_status_counts=counts, duplicate_unit_ids=sorted(duplicates),
+        caption_ref_warnings=build_renumbering(index, LABELS["en"]).warnings,  # 경고는 라벨 언어와 무관하다
+    )

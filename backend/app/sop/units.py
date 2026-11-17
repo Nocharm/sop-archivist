@@ -80,6 +80,10 @@ async def create_initial_units(session: AsyncSession, document: Document, extrac
         await session.execute(
             insert(UnitDecision), [{"unit_id": unit_id, "bundle_id": document.bundle_id} for unit_id in unit_ids]
         )
+        # 옛 문서의 표·그림 참조를 잇는다 — caption_refs → units 순환 import라 여기서 부른다
+        from app.sop.caption_refs import detect_caption_refs
+
+        await detect_caption_refs(session, extraction.id)
     else:
         # match → detach → groups → units로 이어지는 순환 import라 여기서 부른다
         from app.sop.match import create_new_doc_targets

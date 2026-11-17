@@ -9,6 +9,7 @@ import Link from "next/link";
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { EquisStatus } from "@/components/equis/equis-status";
+import { RenumberMark } from "@/components/paper/renumber-mark";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Menu, MenuRadio } from "@/components/ui/menu";
 import { flashElement, useFlip } from "@/components/ui/motion";
@@ -64,15 +65,18 @@ const MARK_KEYS: Record<NumberStyle, { label: string; tip: string }> = {
   note: { label: "outputs.markNote", tip: "outputs.markNoteTip" },
 };
 
-/** 표·그림의 캡션 줄 - 확정 글이 없으면 AI 글, 확정 전이면 점선(문장과 같은 규칙). 줄마다 자기 상태를 따른다 */
-function CaptionLines({ captions, isNote }: { captions: readonly OutputCItem[]; isNote: boolean }) {
-  return captions.map((caption) => (
+/** 표·그림의 캡션 줄 - 확정 글이 없으면 AI 글, 확정 전이면 점선(문장과 같은 규칙). 줄마다 자기 상태를 따른다.
+ * 이 새 문서에서 번호를 다시 매겼으면 글이 있는 첫 줄 앞에 "표 3 → 표 1"(Assign New 칸과 같은 표시 - 빈 캡션에는 없다) */
+function CaptionLines({ captions, isNote, owner }: { captions: readonly OutputCItem[]; isNote: boolean; owner: OutputCItem }) {
+  const chipIndex = captions.findIndex((caption) => caption.text || caption.ai_text);
+  return captions.map((caption, index) => (
     <p
       key={caption.target_id}
       className={`${caption.status === "confirmed" ? "" : "rounded-sm border border-dashed border-line-2 px-1"} ${isNote ? "italic" : ""}`}
       lang={readLangAttr(caption.lang)}
       data-testid={`output-c-caption-${caption.target_id}`}
     >
+      {index === chipIndex && owner.renumber &&<RenumberMark change={owner.renumber} testId={`output-c-renumber-${owner.target_id}`} />}
       {caption.text || caption.ai_text}
     </p>
   ));
@@ -86,7 +90,7 @@ function CItemView({ item }: { item: OutputCItem }) {
     return (
       <>
         {/* 캡션 줄은 표 앞 */}
-        <CaptionLines captions={captions} isNote={isNote} />
+        <CaptionLines captions={captions} isNote={isNote} owner={item} />
         {/* 넓은 표는 좌우로 스크롤한다 - 표 안을 눌러도 줄이 끌리고, 스크롤 막대 누름만 끌기에서 빠진다(lib/box-drag.ts isOnHorizontalScrollbar) */}
         <div className="ptbl-scroll my-1">
           <table className={`ptbl ${isNote ? "italic" : ""}`}>
@@ -116,7 +120,7 @@ function CItemView({ item }: { item: OutputCItem }) {
   if (captions.length > 0) {
     return (
       <div data-testid={`output-c-item-${item.target_id}`} data-number-style={item.number_style}>
-        <CaptionLines captions={captions} isNote={isNote} />
+        <CaptionLines captions={captions} isNote={isNote} owner={item} />
       </div>
     );
   }

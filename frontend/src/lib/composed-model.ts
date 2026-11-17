@@ -1,7 +1,7 @@
 // Assign New 칸의 아직 쓰지 않은 문서 - 서버가 결과물 C 규칙으로 엮은 문서(ComposedDoc)를 New 칸 줄로 펴고,
 // 저장 응답으로 서버 다시 읽기 전에 미리 고친다(칸 끝에 넣기·지우기). 순서·번호는 다시 읽은 서버 값이 정한다.
 // 줄 앞머리에는 결과물 C와 같은 그 줄 자기 번호("5.1.1", 생략·주석은 없음)를 두고, 칸 번호는 칸 머리 줄에 남긴다.
-import type { ComposedDoc, ComposedItem, GroupTarget, OutputCItem, WrittenSentence } from "@/lib/api-sop";
+import type { ComposedDoc, ComposedItem, GroupTarget, OutputCItem, RenumberChange, WrittenSentence } from "@/lib/api-sop";
 import { getPillWidth, getSectionLevel } from "@/lib/strip-pill-model";
 
 /** 아무것도 받지 않은 칸 - 옅은 자리 표시. key는 칸 키라 칸이 차고 비어도 같은 줄로 읽힌다 */
@@ -16,6 +16,8 @@ export interface EmptySlotRow {
 /** 엮은 문서의 줄 - number는 결과물 C의 그 줄 자기 번호(서버 number_targets), 생략·주석 줄과 저장 직후 미리 넣은 줄은 null */
 export interface ComposedRow extends WrittenSentence {
   number: string | null;
+  /** 표·그림 줄의 다시 매긴 번호(결과물 C와 같은 값) - 바뀌지 않았으면 null */
+  renumber: RenumberChange | null;
 }
 
 export type NewPaneRow = WrittenSentence | ComposedRow | EmptySlotRow;
@@ -73,6 +75,7 @@ export function buildComposedRows(doc: ComposedDoc): Array<ComposedRow | EmptySl
         remark: "",
         revision: 0,
         number: item.number,
+        renumber: item.renumber ?? null,
       });
     });
   }

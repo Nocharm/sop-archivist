@@ -16,6 +16,7 @@ from openpyxl import load_workbook
 from app.settings import settings
 from app.sop.constants import COVER_KINDS
 from app.sop.coverage import find_coverage_problems
+from app.sop.renumber import find_number_tokens, read_caption_number
 from scripts.sop_demo_driver import SyntheticDriver, find_unit_by_text, iter_c_items
 from scripts.synthetic_sop import (
     FIXED_ZIP_TIME,
@@ -54,15 +55,26 @@ def _get_location_key(spec: dict) -> str:
     return f"step:{spec['wi_step']}:{spec['wi_part']}"
 
 
+def _mask_numbers(text: str) -> str:
+    """표·그림 번호 자리를 '#'로 — 결과물은 새 문서마다 다시 매긴 번호라(outputs.build_renumbering) 정답의 원문 번호와 글만 견준다."""
+    head = read_caption_number(text)
+    spans = {(token.start, token.end) for token in find_number_tokens(text)}
+    if head is not None:
+        spans.add((head.start, head.end))
+    for start, end in sorted(spans, reverse=True):
+        text = f"{text[:start]}#{text[end:]}"
+    return text
+
+
 def _list_expected_c_items(expected: dict) -> list[tuple]:
-    """결과물 C에 나올 새 문장 — 같은 key는 하나, 두 언어와 중립 모두(한 벌), 입구 2 신규 포함."""
+    """결과물 C에 나올 새 문장 — 같은 key는 하나, 두 언어와 중립 모두(한 벌), 입구 2 신규 포함. 표·그림 번호는 가린다."""
     specs = {spec["key"]: spec for answer in expected["answers"] for spec in answer["targets"]}
     items = [
-        (spec["code"], _get_location_key(spec), spec["kind"], spec.get("text", ""), spec["change_type"])
+        (spec["code"], _get_location_key(spec), spec["kind"], _mask_numbers(spec.get("text", "")), spec["change_type"])
         for spec in specs.values()
     ]
     items += [
-        (spec["doc"], f"path:{spec['section_path']}", "sentence", spec["text"], "new")
+        (spec["doc"], f"path:{spec['section_path']}", "sentence", _mask_numbers(spec["text"]), "new")
         for spec in expected["match"]["new_texts"]
     ]
     return sorted(items)
@@ -70,7 +82,7 @@ def _list_expected_c_items(expected: dict) -> list[tuple]:
 
 def _list_c_items(output_c: dict) -> list[tuple]:
     return sorted(
-        (doc["code"], item["location_key"], item["kind"], item["text"], item["change_type"])
+        (doc["code"], item["location_key"], item["kind"], _mask_numbers(item["text"]), item["change_type"])
         for doc in output_c["docs"]
         for item in iter_c_items(doc)
     )
@@ -194,6 +206,9 @@ def test_end_to_end_both_entrances(client: TestClient, synthetic: SyntheticBundl
     # B 간선 합 = A 옛 묶음마다 보낸 새 문서 수(없으면 처분 노드 하나)
     assert sum(edge["count"] for edge in outputs["b"]["edges"]) == sum(max(1, len(docs)) for docs in old_groups.values())
     assert _list_c_items(outputs["c"]) == _list_expected_c_items(expected)
+    # OLD-7의 그림 5·6은 SOP-CF의 첫·둘째 그림 — 캡션과 참조 문장이 다시 매긴 번호로 나온다
+    c_texts = {item["text"] for doc in outputs["c"]["docs"] for item in iter_c_items(doc)}
+    assert {"Fig.2 Lid lock", "See Figure 1 for the mounting position."} <= c_texts
     assert len(outputs["c"]["deleted"]) == summary["deleted"]
     assert {moved["move_target_code"] for moved in outputs["c"]["moved"]} == {"SOP-QC-99999"}
 

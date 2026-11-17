@@ -171,7 +171,7 @@ describe("canUndoPair", () => {
 describe("resolvePairDrop never pairs what the pair menu blocks (getPairPickBlocker)", () => {
   const viewUnit = (id: number, over: Partial<ViewUnit> = {}): ViewUnit => ({
     id, display_id: `OLD-1-${String(id).padStart(3, "0")}`, kind: "sentence", spans: [[id, 0, 5]], text: `t${id}`, lang: "ko", table_id: null, row_index: null,
-    group_unit_id: null, status: "unassigned", pair_id: null, pos_seq: id, block_id: id, is_edited: false, can_unmerge: false, split_suggestion_id: null, ref: null, ...over,
+    group_unit_id: null, status: "unassigned", pair_id: null, pos_seq: id, block_id: id, is_edited: false, can_unmerge: false, split_suggestion_id: null, ref: null, caption_refs: [], ...over,
   });
   const only = (id: number) => (unit: PairPiece) => unit.id === id;
   // [메뉴가 막는 까닭, 막힌 Unit, 상태, 끌기의 판단(끄는 쪽, 놓는 쪽)]
