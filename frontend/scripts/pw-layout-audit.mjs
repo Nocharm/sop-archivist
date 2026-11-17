@@ -69,7 +69,7 @@ export async function isInViewport(page, selector) {
 // ---------- 항목 ----------
 
 const MEMBER = "qa.member";
-const ADMIN_TABS = ["access", "directory", "batch", "ai", "bundles", "guidelines"];
+const ADMIN_TABS = ["access", "directory", "batch", "ai", "bundles", "guidelines", "outline"];
 
 // X0: 어느 화면에서도 문서가 가로로 넘치지 않는다(가로 스크롤이 생기지 않는다)
 const sceneUrls = (bundle) => ["", "/documents", "/assign?edit=first", "/assign", "/order", "/outputs", "/history"].map((tail) => `/bundles/${bundle}${tail}`);

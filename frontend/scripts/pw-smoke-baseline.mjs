@@ -591,7 +591,7 @@ await runStep("admin leftovers as qa.lead", { devUser: "qa.lead" }, async ({ pag
   await findById(page, "effective-picker-search").fill("dev.admin");
   await findById(page, "effective-picker-option-dev.admin").click();
   await wait(page, "effective-sysadmin");
-  check("a system administrator is explained and holds all seven permissions", (await findByPrefix(page, "effective-perm-").count()) === 7);
+  check("a system administrator is explained and holds all eight permissions", (await findByPrefix(page, "effective-perm-").count()) === 8);
   check("a known, active sysadmin gets no directory note", (await countById(page, "effective-sysadmin-note")) === 0);
 
   // 디렉터리에 아직 없는 부트스트랩 sysadmin(APP_SYSADMINS) - 백엔드는 known=false여도 권한 전부를 돌려준다. dev.admin은 실제 응답을 쓰려고 로그인 ID를 따로 잡는다.
@@ -609,6 +609,37 @@ await runStep("admin leftovers as qa.lead", { devUser: "qa.lead" }, async ({ pag
   check("the note is neutral and never says it holds no permissions", bootstrapText.includes("Not in the employee directory yet.") && !bootstrapText.includes("holds no permissions") && (await countById(page, "effective-unknown")) === 0, bootstrapText.replace(/\s+/g, " "));
   check("all four permission rows are still listed, in catalog order", (await findByPrefix(page, "effective-perm-").count()) === 4 && (await countById(page, "effective-none")) === 0 && bootstrapText.indexOf("Manage permissions") < bootstrapText.indexOf("Run directory sync"), bootstrapText.replace(/\s+/g, " "));
   await takeShot("baseline-admin-lookup-bootstrap.png");
+});
+
+// 표준 골격(Outline) - sysadmin에게만 탭이 보이고, 제목 하나를 고쳐 저장하면 다시 읽어도 남는다. 끝에 원래 제목으로 되돌린다
+await runStep("admin outline as dev.admin", { devUser: "dev.admin" }, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/admin?tab=outline`);
+  await wait(page, "admin-outline-table");
+  const numbers = await page.locator('[data-testid^="admin-outline-row-"][data-testid$="-number"]').allTextContents();
+  check("the outline lists numbered items from 1", numbers.length > 0 && numbers[0] === "1", numbers.join(" "));
+  const save = page.locator('[data-testid="admin-outline-save"]');
+  check("Save is off until something changes", await save.isDisabled());
+  const firstRow = page.locator('[data-testid^="admin-outline-row-"][data-testid$="-title-en"]').first();
+  const original = await firstRow.inputValue();
+  const isOutlinePut = (response) => response.url().includes("/api/admin/outline") && response.request().method() === "PUT";
+  const putTitle = async (title) => {
+    await firstRow.fill(title);
+    const saved = page.waitForResponse(isOutlinePut, { timeout: T });
+    await save.click();
+    return (await saved).status();
+  };
+  check("an edited title saves", (await putTitle(`${original} smoke`)) === 200);
+  await takeShot("admin-outline.png");
+  await page.reload();
+  await wait(page, "admin-outline-table");
+  check("the saved title is still there after a reload", (await firstRow.inputValue()) === `${original} smoke`, await firstRow.inputValue());
+  check("the title goes back", (await putTitle(original)) === 200);
+});
+
+await runStep("admin outline is hidden without the permission", { devUser: "qa.lead" }, async ({ page }) => {
+  await page.goto(`${BASE}/admin`);
+  await wait(page, "admin-tab-access");
+  check("no Outline tab for a user without outline.manage", (await page.locator('[data-testid="admin-tab-outline"]').count()) === 0);
 });
 
 // 15) 사용 설명서 - 로그인 전에 받은 조각 링크가 로그인 뒤 같은 조각으로 돌아오고, 읽음 표시가 읽은 양에 잡히며, 상단 바 도움말이 지금 화면을 설명하는 조각을 가리킨다

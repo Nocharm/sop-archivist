@@ -12,7 +12,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-17-template-fit-design.md` §6 작업 1, 부록 A. 기준 코드는 `dev` v1.1.24(`fa20953`) — 설계의 v1.1.18 뒤에 v1.1.23(하위 칸이 있는 칸의 직접 줄은 번호 없음)이 들어왔다.
 
-**상태:** 사용자 확인 2026-11-17("확인받을 것" 1–5 · 7–9는 권한 대로, 6번 부록 안 번호는 스텝 4 전에 원본 확인). 스텝 1 · 2 끝남.
+**상태:** 사용자 확인 2026-11-17("확인받을 것" 1–5 · 7–9는 권한 대로, 6번 부록 안 번호는 스텝 4 전에 원본 확인). 스텝 1 · 2 · 3 끝남.
 
 ## Global Constraints
 
@@ -237,11 +237,11 @@ interface OutlineItem {            // ToBe.outline_items: OutlineItem[]
 - `async def replace_outline_standard(session, items: list[OutlineStandardItemIn]) -> None` — 거절은 422 `outline_invalid`에 사유: `bad_key` · `duplicate_key` · `missing_parent`(부모가 없거나 자기 뒤) · `bad_kind` · `children_under_leaf`(`general` · `auto_list` 아래 하위) · `empty`(항목 0개). i18n `rule.outline_invalid.<사유>`.
 - 프런트 `getOutlineStandard()` · `putOutlineStandard(items)`.
 
-- [ ] **Step 1: 실패하는 시험** — `test_admin_requires_permission`(403), `test_admin_get_returns_seed`, `test_admin_put_replaces_and_orders`, `test_admin_rejects_bad_key`(`"A b"`, `"a:b"`, `"step"`은 통과 · `"a."`는 거절), `test_admin_rejects_missing_parent`, `test_admin_edit_applies_to_new_docs_only`(표준에 항목을 더한 뒤 — 전에 만든 SOP는 15줄, 새 SOP는 16줄).
-- [ ] **Step 2: 구현 (backend)** — `routers/sop_guidelines.py`의 권한 의존성 방식을 따른다.
-- [ ] **Step 3: 화면** — `guidelines-panel.tsx`의 부품(`useLoaded`, `PanelTitle`, `showToast`, `humanizeApiError`)으로 표 하나: 번호(계산) · 키 · 영어 제목 · 한글 제목 · 종류 · 필수 · 기본 표시 · 하위 머리말 · 권장 이름. 줄 더하기 · 빼기 · 위아래 옮기기 · **Save**. 머리에 "Applies to documents created after saving"(ko "저장한 뒤에 만드는 문서부터 적용됩니다"). 시험 ID `admin-panel-outline`, `admin-outline-row-<key>`, `admin-outline-save`.
-- [ ] **Step 4: 확인** — backend 한 파일 + 전체, 프런트 lint · tsc · vitest, 스모크는 Admin 단계에 Outline 탭 열기 · 제목 하나 고쳐 저장 · 다시 읽기를 더해 그 단계만.
-- [ ] **Step 5: 설명서 글 · PROGRESS → 커밋 → 스텝 diff 검토 → `feat/outline`**
+- [x] **Step 1: 실패하는 시험** — `test_admin_requires_permission`(403), `test_admin_get_returns_seed`, `test_admin_put_replaces_and_orders`, `test_admin_rejects_bad_key`(`"A b"`, `"a:b"`, `"step"`은 통과 · `"a."`는 거절), `test_admin_rejects_missing_parent`, `test_admin_edit_applies_to_new_docs_only`(표준에 항목을 더한 뒤 — 전에 만든 SOP는 15줄, 새 SOP는 16줄).
+- [x] **Step 2: 구현 (backend)** — `routers/sop_guidelines.py`의 권한 의존성 방식을 따른다.
+- [x] **Step 3: 화면** — `guidelines-panel.tsx`의 부품(`useLoaded`, `PanelTitle`, `showToast`, `humanizeApiError`)으로 표 하나: 번호(계산) · 키 · 영어 제목 · 한글 제목 · 종류 · 필수 · 기본 표시 · 하위 머리말 · 권장 이름. 줄 더하기 · 빼기 · 위아래 옮기기 · **Save**. 머리에 "Applies to documents created after saving"(ko "저장한 뒤에 만드는 문서부터 적용됩니다"). 시험 ID `admin-panel-outline`, `admin-outline-row-<key>`, `admin-outline-save`.
+- [x] **Step 4: 확인** — backend 한 파일 + 전체, 프런트 lint · tsc · vitest, 스모크는 Admin 단계에 Outline 탭 열기 · 제목 하나 고쳐 저장 · 다시 읽기를 더해 그 단계만.
+- [x] **Step 5: 설명서 글 · PROGRESS → 커밋 → 스텝 diff 검토 → `feat/outline`**
 
 ---
 

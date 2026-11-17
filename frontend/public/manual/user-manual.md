@@ -926,6 +926,7 @@ AI는 제안만 합니다. 사람이 줄마다 확인해 확정하기 전에는 
 | **Manage AI guidelines** | `guideline.manage` | AI 지침을 고치고 켠다 |
 | **Manage AI** | `ai.admin` | AI 연결을 시험하고 사용량을 본다 |
 | **Manage permissions** | `permission.manage` | 역할과 권한을 준다 |
+| **Manage SOP outline** | `outline.manage` | 새 SOP가 처음에 갖는 표준 항목을 고친다 |
 | **Run directory sync** | `directory.sync` | 직원·부서 정보를 다시 받아 온다 |
 | **View system status** | `system.view` | 배치 작업과 시스템 상태를 본다 |
 
@@ -945,9 +946,29 @@ AI는 제안만 합니다. 사람이 줄마다 확인해 확정하기 전에는 
 | **AI** | **Test connection** 으로 연결을 시험하고 **Daily usage** 로 사용량을 본다 |
 | **Bundles** | 모든 Bundle의 목록과 관리. 구성원 단추는 카드에서 맨 아래 줄 오른쪽 끝에 있고, 누르면 창 머리가 "멤버 — 코드 제목"으로 열립니다(긴 제목은 두 줄까지, 초점을 두면 전체가 툴팁으로 보임) |
 | **AI guidelines** | AI에 주는 지침. **Edit as a new version** 으로 고쳐 **Save version** 으로 저장한다 |
+| **Outline** | 새 SOP가 처음에 갖는 표준 항목(SOP의 칸)의 순서·제목·종류. 아래 [표준 골격](#admin-outline)을 본다 |
 
 > [!WARNING]
 > AI 지침은 저장만으로는 바뀌지 않습니다. **Activate** 를 눌러야 그 버전을 AI가 씁니다.
+
+### 표준 골격 {#admin-outline}
+
+**Outline** 은 새 SOP 문서를 만들 때 복사해 가는 표준 항목의 목록입니다. 표의 한 줄이 항목 하나이고, 맨 앞 번호는 새 문서에서 그 항목이 받을 번호를 순서대로 미리 센 것입니다.
+
+| 칸 | 적는 것 |
+|---|---|
+| **Key** | 항목의 이름표. 영문 소문자·숫자·`_`만 쓰고 글자로 시작한다. 점을 찍으면 하위 항목이다(`부모.하위`). 새로 더한 줄에서만 적을 수 있고, 저장한 키는 문서가 가리키고 있어 바꿀 수 없다 |
+| **Title** | 위 칸에 **English title**, 아래 칸에 **Korean title** |
+| **Kind** | **General**(문장을 받고 번호를 센다), **Category table**(문장을 받고 하위 항목은 번호 없는 범주다), **Named sub-items**(문서마다 하위 항목을 선언한다), **Group**(하위 항목만 둔다), **Auto list**(앱이 채운다). 그 아래 **Required** 는 꼭 있어야 하는 항목인지다 |
+| **Default mark** | 그 항목에 놓이는 줄의 기본 번호 표시 |
+| **Sub-items** | **Child prefix**(비우면 하위 번호가 6.1, 6.2처럼 붙고, Appendix처럼 낱말을 적으면 Appendix 1, Appendix 2가 된다)와 **Suggested names**(문서가 하위 항목을 선언할 때 권하는 이름. 쉼표로 나눈다) |
+
+- **Add item** 은 맨 끝에 최상위 항목을 더합니다. 줄 끝의 단추는 차례로 **Add sub-item**(그 항목 아래에 더하기), **Move up** · **Move down**(같은 부모 안에서 한 자리 옮기기. 하위 항목은 부모를 따라간다), **Remove**(하위 항목이 있으면 함께 뺀다)입니다. **General** 과 **Auto list** 항목에는 하위 항목을 둘 수 없습니다.
+- 고친 것은 **Save** 를 눌러야 저장됩니다. **Discard changes** 는 저장하지 않은 것을 모두 버립니다.
+- 저장할 수 없는 곳이 있으면 **Save** 가 꺼지고, 단추 줄 아래에 까닭이 빨간 글로 나오며 그 줄의 번호 자리에 경고 표시가 뜹니다.
+
+> [!NOTE]
+> 저장한 뒤에 만드는 문서부터 적용됩니다. 이미 만든 문서의 칸은 바뀌지 않습니다.
 
 ## 문제 해결 {#faq}
 
