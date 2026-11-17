@@ -41,6 +41,17 @@ export function getEdgeKey(edge: MapEdge): string {
   return `${edge.source}>${edge.target}:${edge.kind}:${edge.state}`;
 }
 
+/** 글자 그대로의 순서 - 마지막 동점 깨기(서버 순서에 기대지 않는다) */
+function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** 두 끝 마디가 모두 있는 선만 - 표·요약·배치가 같은 선을 본다 */
+function listWholeEdges(data: Pick<RefMap, "nodes" | "edges">): MapEdge[] {
+  const ids = new Set(data.nodes.map((node) => node.id));
+  return data.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target));
+}
+
 /** 숫자를 수로 읽는 자연 정렬 - 빈 번호는 끝 */
 export function compareNumbers(a: string, b: string): number {
   if (a === b) return 0;
@@ -52,7 +63,7 @@ export function compareNumbers(a: string, b: string): number {
 /** 거르기를 건 지도 - 선이 사라지면 그 선에만 기대던 마디·Bundle도 함께 빠진다 */
 export function buildMapView(data: RefMap, filters: MapFilters): MapView {
   const selfId = findSelfId(data);
-  const edges = data.edges.filter((edge) => (!filters.proposedOnly || edge.state === "proposed") && (filters.showMoved || edge.kind !== "moved"));
+  const edges = listWholeEdges(data).filter((edge) => (!filters.proposedOnly || edge.state === "proposed") && (filters.showMoved || edge.kind !== "moved"));
   const touched = new Set<string>();
   for (const edge of edges) {
     touched.add(edge.source);
@@ -102,7 +113,7 @@ export function listMapRows(view: MapView): MapRow[] {
     });
     groupOf.set(getEdgeKey(edge), group);
   }
-  rows.sort((a, b) => groupOf.get(a.key)! - groupOf.get(b.key)! || compareNumbers(a.from.number, b.from.number) || compareNumbers(a.to.number, b.to.number) || LABEL_ORDER[a.label] - LABEL_ORDER[b.label]);
+  rows.sort((a, b) => groupOf.get(a.key)! - groupOf.get(b.key)! || compareNumbers(a.from.number, b.from.number) || compareNumbers(a.to.number, b.to.number) || LABEL_ORDER[a.label] - LABEL_ORDER[b.label] || compareText(a.key, b.key));
   return rows;
 }
 
@@ -124,8 +135,9 @@ export function summarizeSelf(data: RefMap): SelfSummary {
   const citedDocs = new Set<string>();
   const noOwner = new Set<string>();
   const citedByBundles = new Set<number | null>();
-  const summary: SelfSummary = { citesLines: 0, citesDocs: 0, citedByLines: 0, citedByBundles: 0, toCheck: 0, noOwner: 0, hasEdges: data.edges.length > 0 };
-  for (const edge of data.edges) {
+  const edges = listWholeEdges(data);
+  const summary: SelfSummary = { citesLines: 0, citesDocs: 0, citedByLines: 0, citedByBundles: 0, toCheck: 0, noOwner: 0, hasEdges: edges.length > 0 };
+  for (const edge of edges) {
     if (isSelf(edge.source)) {
       summary.citesLines += edge.lines;
       citedDocs.add(edge.target);
@@ -165,7 +177,7 @@ export interface NodeDetail {
 }
 
 function compareLinks(a: NodeLink, b: NodeLink): number {
-  return compareNumbers(a.number, b.number) || LABEL_ORDER[a.label] - LABEL_ORDER[b.label];
+  return compareNumbers(a.number, b.number) || LABEL_ORDER[a.label] - LABEL_ORDER[b.label] || compareText(a.nodeId, b.nodeId);
 }
 
 export function describeNode(data: RefMap, nodeId: string): NodeDetail | null {

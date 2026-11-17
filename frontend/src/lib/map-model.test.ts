@@ -195,4 +195,74 @@ describe("map-model", () => {
     expect(getLaneKey(12)).toBe("12");
     expect(getLaneKey(null)).toBe("none");
   });
+
+  it("drops an edge whose source is not among the nodes, for every consumer", () => {
+    const data: RefMap = { ...MAP, edges: [...EDGES, makeEdge("old:999", "old:101", "ref", "proposed", 1)] };
+    const view = buildMapView(data, DEFAULT_FILTERS);
+    expect(view.edges.map(getEdgeKey)).toEqual(EDGES.map(getEdgeKey));
+    expect(listMapRows(view)).toHaveLength(6);
+    expect(summarizeSelf(data)).toEqual(summarizeSelf(MAP));
+  });
+
+  it("drops an edge whose target is not among the nodes, for every consumer", () => {
+    const data: RefMap = { ...MAP, edges: [...EDGES, makeEdge("old:101", "old:998", "ref", "proposed", 1)] };
+    const view = buildMapView(data, DEFAULT_FILTERS);
+    expect(view.edges.map(getEdgeKey)).toEqual(EDGES.map(getEdgeKey));
+    expect(listMapRows(view)).toHaveLength(6);
+    expect(summarizeSelf(data)).toEqual(summarizeSelf(MAP));
+  });
+
+  it("handles an empty map", () => {
+    const data: RefMap = { scope: "linked", truncated: false, bundles: [], nodes: [], edges: [] };
+    const view = buildMapView(data, DEFAULT_FILTERS);
+    expect([view.selfId, view.bundles, view.nodes, view.edges]).toEqual([-1, [], [], []]);
+    expect(listMapRows(view)).toEqual([]);
+    expect(describeNode(data, "old:101")).toBeNull();
+    expect(listCollapsedAtStart(data)).toEqual([]);
+  });
+
+  it("handles a map with only this bundle and no edges", () => {
+    const data: RefMap = { ...MAP, bundles: [BUNDLES[0]], nodes: NODES.slice(0, 4), edges: [] };
+    const view = buildMapView(data, DEFAULT_FILTERS);
+    expect(view.bundles.map((b) => b.id)).toEqual([12]);
+    expect(view.nodes).toHaveLength(4);
+    expect(listMapRows(view)).toEqual([]);
+    const detail = describeNode(data, "old:101");
+    expect([detail?.relation, detail?.cites, detail?.citedBy]).toEqual(["self", [], []]);
+    expect(listCollapsedAtStart(data)).toEqual([]);
+  });
+
+  it("handles a map without this bundle", () => {
+    const data: RefMap = {
+      ...MAP,
+      bundles: [BUNDLES[1], BUNDLES[2]],
+      nodes: NODES.slice(4, 7),
+      edges: [makeEdge("old:160", "old:140", "ref", "confirmed", 1)],
+    };
+    const view = buildMapView(data, DEFAULT_FILTERS);
+    expect(view.selfId).toBe(-1);
+    expect(view.nodes.map((n) => n.id)).toEqual(["old:140", "old:160"]);
+    expect(view.bundles.map((b) => b.id)).toEqual([15, 18]);
+    expect(listMapRows(view).map((r) => [r.key, r.pickId])).toEqual([["old:160>old:140:ref:confirmed", "old:140"]]);
+    expect(describeNode(data, "old:160")?.relation).toBe("summary");
+    expect(listCollapsedAtStart(data)).toEqual(["15", "18"]);
+  });
+
+  it("keeps only this bundle's documents when a filter removes every edge", () => {
+    const view = buildMapView({ ...MAP, edges: EDGES.filter((e) => e.state === "confirmed") }, { ...DEFAULT_FILTERS, proposedOnly: true });
+    expect(view.edges).toEqual([]);
+    expect(view.nodes.map((n) => n.id)).toEqual(["old:101", "old:102", "old:110", "old:199"]);
+    expect(view.bundles.map((b) => b.id)).toEqual([12]);
+    expect(listMapRows(view)).toEqual([]);
+  });
+
+  it("orders rows and links of two documents with the same number the same whatever the server order", () => {
+    const twin = makeNode("old:105", "old", 12, "OLD-1");
+    const edges = [makeEdge("old:105", "old:140", "ref", "confirmed", 1), makeEdge("old:101", "old:140", "ref", "confirmed", 1)];
+    for (const order of [edges, [...edges].reverse()]) {
+      const data: RefMap = { ...MAP, nodes: [...NODES, twin], edges: order };
+      expect(listMapRows(buildMapView(data, DEFAULT_FILTERS)).map((r) => r.key)).toEqual(["old:101>old:140:ref:confirmed", "old:105>old:140:ref:confirmed"]);
+      expect(describeNode(data, "old:140")?.citedBy.map((l) => l.nodeId)).toEqual(["old:101", "old:105"]);
+    }
+  });
 });
