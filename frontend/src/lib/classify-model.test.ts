@@ -244,6 +244,61 @@ describe("save keeps AI suggestions as they are", () => {
   });
 });
 
+describe("caption targets under a table or figure", () => {
+  const FIGURE = [{ id: 40, kind: "figure", lang: "neutral" as const, text: "", revision: 1 }];
+  const ctxWithCaption = (id: number, lang: "ko" | "en", text: string, group: Group | null = null) => ({ units: FIGURE, group, tables: new Map(), captions: new Map([[40, [{ id, lang, text }]]]) });
+
+  it("sends caption targets under the figure target", () => {
+    const save = buildGroupSave(makeDraft(), ctxWithCaption(7, "ko", "그림 1 로터"), "confirm");
+    expect(save.targets).toContainEqual(expect.objectContaining({ parent_key: "u40", source_unit_ids: [7], lang: "ko" }));
+    // 캡션은 칸이 아니다 - 칸 좌표를 싣지 않는다
+    expect(save.targets[1]).toEqual({ key: "u40-cap-7", target_doc_id: 6, slot_key: "scope", wi_step: null, wi_part: null, kind: "sentence", lang: "ko", text: "그림 1 로터", parent_key: "u40", source_unit_ids: [7], change_type: "as_is" });
+  });
+
+  it("marks a rewritten caption and keeps the existing caption target's id and revision", () => {
+    const group: Group = { units: [], targets: [makeTarget({ id: 60, kind: "figure", lang: "neutral", source_unit_ids: [40] }), makeTarget({ id: 61, parent_target_id: 60, source_unit_ids: [7], revision: 3, confirmed_text: "그림 1 로터" })] };
+    const save = buildGroupSave(makeDraft({ captionTexts: { u7: "그림 1. 로터 조립" } }), ctxWithCaption(7, "ko", "그림 1 로터", group), "confirm");
+    expect(save.targets.find((target) => target.parent_key === "u40")).toMatchObject({ id: 61, revision: 3, text: "그림 1. 로터 조립", change_type: "rewritten" });
+    expect(save.removed_target_ids).toEqual([]);
+  });
+
+  it("sends a written caption without a source or change type, and drops an old written one that a caption unit replaced", () => {
+    const written = buildGroupSave(makeDraft({ captionTexts: { "w40:en": " Rotor " } }), { units: FIGURE, group: null, tables: new Map() }, "confirm");
+    expect(written.targets[1]).toEqual(expect.objectContaining({ key: "u40-cap-en", lang: "en", text: "Rotor", source_unit_ids: [], parent_key: "u40" }));
+    expect(written.targets[1]).not.toHaveProperty("change_type");
+
+    const group: Group = { units: [], targets: [makeTarget({ id: 60, kind: "figure", lang: "neutral", source_unit_ids: [40] }), makeTarget({ id: 62, parent_target_id: 60, source_unit_ids: [], confirmed_text: "옛 캡션" })] };
+    const replaced = buildGroupSave(makeDraft(), ctxWithCaption(7, "ko", "그림 1", group), "confirm");
+    expect(replaced.removed_target_ids).toEqual([62]);
+    expect(replaced.targets.map((target) => target.id ?? target.key)).toEqual([60, "u40-cap-7"]);
+  });
+
+  it("accepts an untouched AI caption by sending no text and no change type, and sends text once it is edited", () => {
+    const group: Group = {
+      units: [],
+      targets: [
+        makeTarget({ id: 60, kind: "figure", lang: "neutral", source_unit_ids: [40] }),
+        makeTarget({ id: 63, parent_target_id: 60, source_unit_ids: [7], status: "ai_suggested", ai_text: "그림 1 로터", revision: 2 }),
+      ],
+    };
+    const untouched = buildGroupSave(makeDraft(), ctxWithCaption(7, "ko", "그림 1 로터", group), "confirm");
+    expect(untouched.targets[1]).toEqual({ key: "u40-cap-7", id: 63, revision: 2, target_doc_id: 6, slot_key: "scope", wi_step: null, wi_part: null, kind: "sentence", parent_key: "u40", source_unit_ids: [7] });
+
+    const edited = buildGroupSave(makeDraft({ captionTexts: { u7: "그림 1. 로터" } }), ctxWithCaption(7, "ko", "그림 1 로터", group), "confirm");
+    expect(edited.targets[1]).toMatchObject({ id: 63, text: "그림 1. 로터", change_type: "rewritten" });
+  });
+
+  it("keys each caption target by its caption unit, so two same-language captions do not collide", () => {
+    const ctx = { units: FIGURE, group: null, tables: new Map(), captions: new Map([[40, [{ id: 7, lang: "ko" as const, text: "그림 1." }, { id: 8, lang: "ko" as const, text: "로터" }]]]) };
+    const save = buildGroupSave(makeDraft({ captionTexts: { u8: "로터 조립" } }), ctx, "confirm");
+    expect(save.targets.slice(1).map((target) => [target.key, target.text])).toEqual([["u40-cap-7", "그림 1."], ["u40-cap-8", "로터 조립"]]);
+  });
+
+  it("counts a typed caption as an unsaved change", () => {
+    expect(hasDraftChange({ destination: null, texts: {}, changeTypes: {}, captionTexts: { ko: "로터" }, reason: null, moveCode: null })).toBe(true);
+  });
+});
+
 describe("table rows and step-less WIs", () => {
   it("saves a row unit from 'split into rows' as a one-row table with row-relative cells", () => {
     const units = [{ id: 30, kind: "table_row", lang: "neutral" as const, text: "", revision: 1 }];

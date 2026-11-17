@@ -31,6 +31,12 @@ export function canStartDrag(press: Pick<PointerEvent, "button" | "altKey" | "ct
   return press.button === 0 && !press.altKey && !press.ctrlKey && press.pointerType === "mouse" && !isGuarded;
 }
 
+/** 가로로 넘치는 상자(넓은 표 등)의 가로 스크롤 막대를 눌렀나 - 막대 누름은 그 상자가 target이고 자리는 글 상자(client) 아래다. 막대만 빼고 상자 안은 그대로 끈다 */
+export function isOnHorizontalScrollbar(el: Element | null, clientY: number): boolean {
+  if (!el || el.scrollWidth <= el.clientWidth) return false;
+  return clientY > el.getBoundingClientRect().top + el.clientTop + el.clientHeight;
+}
+
 export function hasPassedThreshold(dx: number, dy: number): boolean {
   return Math.hypot(dx, dy) >= DRAG_THRESHOLD_PX;
 }
@@ -163,7 +169,7 @@ export function attachBoxDrag<S>(root: HTMLElement, config: BoxDragConfig<S>): (
     const target = event.target instanceof Element ? event.target : null;
     if (event.altKey && target?.closest(DRAG_BOX_SELECTOR)) altPressedOnBox = true;
     if (dragLive || session) return;
-    if (!canStartDrag(event, target?.closest(DRAG_GUARD_SELECTOR) != null)) return;
+    if (!canStartDrag(event, target?.closest(DRAG_GUARD_SELECTOR) != null || isOnHorizontalScrollbar(target, event.clientY))) return;
     const source = config.pick(event);
     if (source === null) return;
     // 누르는 동안 selectstart를 막으니 브라우저가 누름으로 하던 "고른 글자 풀기"를 여기서 한다 - 남겨 두면 고른 글자가 있는 동안 클릭을 받지 않는 화면(Paper)이 죽는다.

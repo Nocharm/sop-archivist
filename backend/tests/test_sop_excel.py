@@ -40,6 +40,7 @@ from tests.sop_helpers import (
     AUTHOR,
     OUTSIDER,
     REVIEWER,
+    WRITTEN_CAPTION,
     assign_as_is,
     create_bundle,
     find_unit,
@@ -50,7 +51,15 @@ from tests.sop_helpers import (
     set_members,
     upload,
 )
-from tests.test_sop_outputs import DUPLICATE, DUPLICATE_REASON
+from tests.test_sop_outputs import (
+    DUPLICATE,
+    DUPLICATE_REASON,
+    FIGURE_CAPTION,
+    TABLE_CAPTION,
+    TABLE_CAPTION_EN,
+    _add_en_table_caption,
+    _setup_captions,
+)
 from tests.test_sop_outputs import _setup as _setup_outputs_bundle
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
@@ -317,9 +326,11 @@ def test_sheet_c_indents_docs_slots_items_and_tails(client: TestClient) -> None:
     keep_row = rows[responsibilities + 1]
     assert (keep_row[number_col], keep_row[item_col], keep_row[10]) == ("4.1", KEEP, "← OLD-1")
 
-    table_row = rows.index(next(row for row in rows if row[item_col] == "[Table]"))
+    # 표 줄은 [Table] 대신 확정한 캡션 글(확정하며 써 넣은 캡션), 그 아래 캡션 줄이 칸 줄보다 먼저
+    table_row = rows.index(next(row for row in rows if row[item_col] == WRITTEN_CAPTION))
     assert rows[table_row][number_col] == "5.1"
-    cells = rows[table_row + 1 : table_row + 5]
+    assert (rows[table_row + 1][cell_col], rows[table_row + 1][5]) == (WRITTEN_CAPTION, "Caption")
+    cells = rows[table_row + 2 : table_row + 6]
     assert [(row[cell_col], row[5]) for row in cells] == [
         ("항목", "R 1 C 1"), ("값", "R 1 C 2"), ("합성 값", "R 2 C 1"), ("합성 결과", "R 2 C 2"),
     ]
@@ -336,6 +347,30 @@ def test_sheet_c_indents_docs_slots_items_and_tails(client: TestClient) -> None:
     number_a_col = _find_column(sheet_a, "No.")
     keep_a = _find_a_line(sheet_a, find_unit(fx.view, KEEP)["display_id"])
     assert keep_a[number_a_col - 1].value == "4.1"
+
+
+def test_excel_c_writes_caption_text_not_marker(client: TestClient) -> None:
+    fx = _setup_captions(client)
+    sop = client.get(f"/api/bundles/{fx.bundle_id}/outputs/c", headers=AUTHOR).json()["docs"][0]
+    table_id = next(item for s in sop["sections"] for item in s["items"] if item["kind"] == "table")["target_id"]
+    _add_en_table_caption(fx, table_id)  # 영어 캡션은 AI 글만 — 표 줄 항목 칸에는 들지 않는다
+
+    rows = [[cell.value for cell in row] for row in _load(client, fx.bundle_id)["C New documents"].iter_rows(min_row=3)]
+
+    item_col, cell_col, position_col, ai_col, status_col = 3, 4, 5, 7, 9
+    assert not [row for row in rows if row[item_col] in ("[Table]", "[Figure]")]
+    table_row = rows.index(next(row for row in rows if row[item_col] == TABLE_CAPTION))
+    # 캡션 줄은 칸 줄처럼 제 확정 글·AI 글·상태를 싣고 칸 줄 앞에 온다
+    captions = rows[table_row + 1 : table_row + 3]
+    assert [(row[cell_col], row[position_col], row[ai_col], row[status_col]) for row in captions] == [
+        (TABLE_CAPTION, "Caption", None, "Confirmed"), (None, "Caption", TABLE_CAPTION_EN, "AI suggested"),
+    ]
+    assert [row[cell_col] for row in rows[table_row + 3 : table_row + 12]] == [
+        "항목", "값", "단위", "온도", "25", "℃", "압력", "1", "bar",
+    ]
+    figure_row = table_row + 12
+    assert rows[figure_row][item_col] == FIGURE_CAPTION
+    assert (rows[figure_row + 1][cell_col], rows[figure_row + 1][position_col]) == (FIGURE_CAPTION, "Caption")
 
 
 # ── 함께 쓰는 칸·테두리·확정률 ───────────────────────────────────────────────

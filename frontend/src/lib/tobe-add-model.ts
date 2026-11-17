@@ -30,7 +30,7 @@ export interface AddPlan {
 type Listed = Pick<TargetDoc, "code" | "doc_type">;
 
 /** 번호가 종류를 말하는가 - "SOP-…"·"WI-…"로 시작하면 그 종류, 아니면 null */
-function readTypeFromCode(code: string): TargetDocType | null {
+export function readTypeFromCode(code: string): TargetDocType | null {
   const head = code.toUpperCase();
   if (/^SOP(?![A-Z])/.test(head)) return "sop";
   if (/^WI(?![A-Z])/.test(head)) return "wi";
@@ -62,6 +62,36 @@ export function planAddRows(codes: readonly string[], listed: readonly Listed[])
   }
   return { rows, skipped };
 }
+
+export type AddPreview =
+  | { kind: "none" } // 적은 번호가 없다
+  | { kind: "sop"; code: string }
+  | { kind: "wi"; code: string; parent: string }
+  | { kind: "sopFallback"; code: string } // 번호는 WI인데 목록에 SOP가 없어 SOP로 더한다
+  | { kind: "taken"; code: string } // 더할 줄이 없다 - 첫 번호가 이미 있다
+  | { kind: "many"; n: number }; // 더할 줄이 둘 이상
+
+/** 등록 칸에 적은 글이 무엇을 더하는가 - planAddRows(readCodes(text), listed)의 결과를 그대로 읽는다 */
+export function describeAdd(text: string, listed: readonly Listed[]): AddPreview {
+  const codes = readCodes(text);
+  if (codes.length === 0) return { kind: "none" };
+  const { rows } = planAddRows(codes, listed);
+  if (rows.length === 0) return { kind: "taken", code: codes[0] };
+  if (rows.length > 1) return { kind: "many", n: rows.length };
+  const [row] = rows;
+  if (row.doc_type === "wi" && row.parent_code !== null) return { kind: "wi", code: row.code, parent: row.parent_code };
+  // 번호가 WI라고 말하는데 SOP로 들어간 줄만 알린다 - 번호만으론 종류를 모르는 줄은 처음부터 SOP다
+  if (readTypeFromCode(row.code) === "wi") return { kind: "sopFallback", code: row.code };
+  return { kind: "sop", code: row.code };
+}
+
+export const ADD_PREVIEW_KEYS: Readonly<Record<Exclude<AddPreview["kind"], "none">, string>> = {
+  sop: "tobe.add.sop",
+  wi: "tobe.add.wi",
+  sopFallback: "tobe.add.sopFallback",
+  taken: "tobe.add.taken",
+  many: "tobe.add.many",
+};
 
 export type EquisHint =
   /** EQUIS가 이 문서를 SOP라고 한다 - 줄의 종류가 WI다 */

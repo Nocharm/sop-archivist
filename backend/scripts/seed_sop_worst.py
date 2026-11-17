@@ -1,7 +1,7 @@
 """로컬 극단 자료 시드 — 화면이 무너지는 자리를 찾는 배치 감사용 합성 자료를 앱 API로 만든다. 로컬 전용, 운영 실행 금지.
 
 reset_db → seed_sop_demo 위에 얹는다(데모 묶음 1~4는 "mid" 자료로 그대로 둔다). 만드는 것:
-W1 극단 묶음(제목 146자·설명 900자·멤버 5명·372 Unit 문서·넓은/긴 표·파일 이름 246/255자·6쪽 PDF·거절 파일 4개·To-Be 58개·긴 사유·검토 흐름 한 바퀴),
+W1 극단 묶음(제목 146자·설명 900자·멤버 5명·372 Unit 문서·넓은/긴 표·18열 표·표 16개·그림 16개 캡션 문서·파일 이름 246/255자·6쪽 PDF·거절 파일 4개·To-Be 58개·긴 사유·검토 흐름 한 바퀴),
 W2 검토 대기(제목 200자)·W3 되돌아옴·W4 완료·W5 다시 열림·W6 검토 직전, W7 문서 없는 묶음, 극단 제목의 가벼운 묶음 36개(11개는 이상한 제목, 25개는 `SYNTHETIC light NN`),
 참조 지도용으로 서로 가리키는 묶음 8개(`SYNTHETIC M1 map` … `M8`, Old 문서 104개 — M1은 qa.member·qa.lead, M2~M5는 qa.member,
 M6~M8은 prod.member 혼자), 관리 화면용 역할 10개·부여·지침 버전. 모든 글은 합성이다.
@@ -167,6 +167,43 @@ def build_tables(code: str) -> bytes:
         tall.cell(r, 1).text = f"합성 점검 항목 {r + 1}을 확인한다."
         tall.cell(r, 2).text = f"Synthetic check item {r + 1} is verified." if r % 9 else long_text(400, "en")
     doc.add_paragraph("표 뒤의 마지막 합성 문장이다.")
+    return _save_docx(doc)
+
+
+def build_captions_extreme(code: str) -> bytes:
+    """18열 넓은 표(앞 캡션 문단 420자)·번갈아 놓인 표 16개·그림 16개와 참조 문단·칸마다 600자 표·캡션 없는 2x2 레이아웃 표."""
+    from io import BytesIO
+
+    from docx.shared import Inches
+
+    from scripts.synthetic_sop import _draw_figure
+
+    doc = _new_docx(code)
+    doc.add_heading("1. 캡션 극단 Caption extremes", level=1)
+    doc.add_paragraph("표 1. " + long_text(420, "ko"))
+    wide = doc.add_table(rows=5, cols=18)
+    for r in range(5):
+        for c in range(18):
+            wide.cell(r, c).text = f"열{c + 1} Col {c + 1}" if r == 0 else f"값 {r}-{c} value {r * 18 + c}"
+    for n in range(2, 18):  # 표와 그림을 번갈아, 번호는 종류마다 2부터
+        doc.add_paragraph(f"표 {n}. 합성 표 {n}")
+        table = doc.add_table(rows=3, cols=3)
+        for r in range(3):
+            for c in range(3):
+                table.cell(r, c).text = f"표{n} 칸 {r}-{c} cell {n * 9 + r * 3 + c}"
+        doc.add_paragraph(f"표 {n}을 참조한다. See Figure {n}.")
+        doc.add_picture(BytesIO(_draw_figure()), width=Inches(1.6))
+        doc.add_paragraph(f"그림 {n}. 합성 그림 {n}")
+        doc.add_paragraph(f"그림 {n}을 참조한다. See Table {n}.")
+    folded = doc.add_table(rows=2, cols=3)  # 접힘 폭 시험 — 칸마다 600자
+    for r in range(2):
+        for c in range(3):
+            folded.cell(r, c).text = long_text(600, "ko" if (r + c) % 2 == 0 else "en")
+    layout = doc.add_table(rows=2, cols=2)  # 캡션 없는 레이아웃 표
+    texts = ["운영자는 합성 점검표를 확인한다.", "The operator reviews the synthetic checklist."]
+    for r in range(2):
+        for c in range(2):
+            layout.cell(r, c).text = texts[c]
     return _save_docx(doc)
 
 
@@ -426,6 +463,7 @@ class WorstSeeder:
         add("big1", "SYNTHETIC_OLD-90_BIG_합성_대형_문서_Big_Document v12.3.docx", build_big("OLD-90", 330, True))
         add("big2", "SYNTHETIC_OLD-91_BIG_second_big_document_for_unassigned_units.docx", build_big("OLD-91", 260, False))
         add("tables", "SYNTHETIC_OLD-92_wide_and_long_tables_넓은표_긴표.docx", build_tables("OLD-92"))
+        add("captions", "SYNTHETIC_OLD-89_captions_extreme_캡션_극단.docx", build_captions_extreme("OLD-89"))
         ko_name = "SYNTHETIC_OLD-93_" + "공백없는아주긴한국어파일이름" * 16
         add("koname", ko_name[:250] + ".docx", build_small("OLD-93"))
         en_name = "SYNTHETIC_OLD-94_" + "VeryLongEnglishFileNameWithoutAnySpaces_" * 6
@@ -496,6 +534,8 @@ class WorstSeeder:
         for unit in text_units[-8:]:  # 끝의 극단 문단
             try_assign(unit, locations[3])
         for unit in [u for u in get_view(self.client, bundle_id, extras["tables"]["id"], AUTHOR)["units"] if u["kind"] == "table"]:
+            try_assign(unit, locations[5])
+        for unit in [u for u in get_view(self.client, bundle_id, extras["captions"]["id"], AUTHOR)["units"] if u["kind"] == "table"][:3]:  # 18열 표 포함 — 뒤의 배치 감사가 결과물 C에서 연다
             try_assign(unit, locations[5])
         for key in ("pdf", "small0", "small1", "koname", "enname"):
             sentences = [u for u in get_view(self.client, bundle_id, extras[key]["id"], AUTHOR)["units"] if u["kind"] in ("sentence", "heading")]

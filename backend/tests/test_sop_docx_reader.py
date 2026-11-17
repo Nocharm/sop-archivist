@@ -443,13 +443,16 @@ def test_docx_figure_with_caption() -> None:
 
     blocks = _read(body, media={"image1.png": TINY_PNG})
 
+    # 캡션 문단은 제 블록으로 남고 그림 블록을 가리킨다 — 그림 블록 글은 비운다
     assert [(b.kind, b.text) for b in blocks] == [
         ("paragraph", "앞 문단"),
-        ("figure", "그림 1 로터"),
+        ("figure", ""),
+        ("paragraph", "그림 1 로터"),
         ("paragraph", "뒤 문단"),
     ]
     assert blocks[1].image_part == "word/media/image1.png"
     assert blocks[1].xml_path == "document/body/p[2]"
+    assert blocks[2].flags == (f"caption_of:{blocks[1].seq}",)
 
 
 def test_docx_figure_takes_caption_from_previous_paragraph() -> None:
@@ -461,12 +464,44 @@ def test_docx_figure_takes_caption_from_previous_paragraph() -> None:
 
     blocks = _read(body, media={"image1.png": TINY_PNG})
 
-    # 그림 문단의 다른 글자는 그 문단 블록으로 먼저 나오고, 다음 문단이 캡션이 아니면 앞 문단을 캡션으로 묶는다
+    # 그림 문단의 다른 글자는 그 문단 블록으로 먼저 나오고, 다음 문단이 캡션이 아니면 앞 문단을 캡션으로 잇는다
     assert [(b.kind, b.text) for b in blocks] == [
+        ("paragraph", "Figure 2 Pump"),
         ("paragraph", "설명 "),
-        ("figure", "Figure 2 Pump"),
+        ("figure", ""),
         ("paragraph", "뒤 문단"),
     ]
+    assert blocks[0].flags == (f"caption_of:{blocks[2].seq}",)
+    assert not any(f.startswith("caption_of:") for b in blocks[1:] for f in b.flags)
+
+
+def test_docx_table_caption_before_table_is_linked() -> None:
+    blocks = _read(p("표 3. 운전 조건", "Caption") + tbl([["a", "b"]]) + p("뒤"))
+    first_cell = next(b for b in blocks if b.kind == "table_cell")
+    assert (blocks[0].kind, blocks[0].text) == ("paragraph", "표 3. 운전 조건")
+    assert f"caption_of:{first_cell.seq}" in blocks[0].flags
+
+
+def test_docx_table_caption_after_table_by_text() -> None:
+    blocks = _read(tbl([["a"]]) + p("Table 4: Rotor limits"))
+    assert any(f.startswith("caption_of:") for f in blocks[-1].flags)
+
+
+def test_docx_table_caption_ignores_particle_after_number() -> None:
+    blocks = _read(p("표 1에 따라 운전한다.") + tbl([["a"]]))
+    assert not any(f.startswith("caption_of:") for f in blocks[0].flags)
+
+
+def test_docx_fig_variants_are_figure_captions() -> None:
+    for text in ("Fig.6 Lid lock", "Fig 6 Lid lock", "그림6 뚜껑"):
+        blocks = _read(p(text) + f"<w:p>{make_drawing_run('image1.png')}</w:p>", media={"image1.png": TINY_PNG})
+        figure = next(b for b in blocks if b.kind == "figure")
+        assert figure.text == "" and f"caption_of:{figure.seq}" in blocks[0].flags
+
+
+def test_docx_figure_caption_text_is_not_a_table_caption() -> None:
+    blocks = _read(p("그림 2 펌프") + tbl([["a"]]))
+    assert not any(f.startswith("caption_of:") for f in blocks[0].flags)
 
 
 def test_docx_vml_picture_is_figure() -> None:
@@ -844,3 +879,24 @@ def test_extract_result_survives_pickle() -> None:
     # 추출 자식 프로세스가 결과를 피클로 넘긴다 — 여기서는 방금 만든 자기 객체만 왕복한다
     assert pickle.loads(pickle.dumps(result)) == result
     assert pickle.loads(pickle.dumps(rejected)).code == "tracked_changes"
+
+
+def test_docx_caption_paragraph_links_to_one_bundle_only() -> None:
+    # 두 표 사이 캡션은 먼저 만난 표(바로 앞 → 바로 뒤 순으로 보는 첫 표의 뒤)가 갖고, 둘째 표는 캡션 없이 시작한다
+    blocks = _read(tbl([["a"]]) + p("Table 1 Limits") + tbl([["b"]]))
+
+    caption = next(b for b in blocks if b.kind == "paragraph")
+    first_cells = [b.seq for b in blocks if b.kind == "table_cell"]
+    assert caption.flags == (f"caption_of:{first_cells[0]}",)
+
+
+def test_docx_cell_table_and_cell_figure_take_no_caption() -> None:
+    inner = tbl([["안"]])
+    body = (
+        f"<w:tbl><w:tblGrid><w:gridCol/></w:tblGrid><w:tr><w:tc>{p('표 1 안쪽')}{inner}"
+        f"{p('그림 2 칸')}<w:p>{make_drawing_run('image1.png')}</w:p></w:tc></w:tr></w:tbl>"
+    )
+
+    blocks = _read(body, media={"image1.png": TINY_PNG})
+
+    assert not any(f.startswith("caption_of:") for b in blocks for f in b.flags)

@@ -38,6 +38,7 @@ from app.sop.ai.jobs import JobItem, cap_job_items, ensure_units_found, find_act
 from app.sop.ai.llm import AiStr, build_messages, call_llm, ensure_llm_enabled, parse_reply
 from app.sop.ai.runner import AiCallFailed
 from app.sop.ai.schemas import SkippedOut, SkipReason
+from app.sop.captions import CAPTION_KIND
 from app.sop.checks import MAX_WARNING_VALUE_LEN, check_sentence
 from app.sop.decisions import (
     NEUTRAL,
@@ -290,8 +291,8 @@ def check_rule_ids(
 
 
 def _read_unit_text(unit: Unit, context: UnitContext) -> str:
-    """단위의 글 — 표·행 단위는 자기 글이 없어 표 Markdown이 그 글이다."""
-    return unit.text or context.table_markdown
+    """단위의 글 — 표·행 단위는 자기 글이 없어 표 Markdown이 그 글이고, 표·그림은 캡션이 앞에 붙는다(새 추출의 그림 단위는 글이 비었다)."""
+    return "\n".join(text for text in (context.caption, unit.text or context.table_markdown) if text)
 
 
 def _build_query(loaded: _Loaded) -> str:
@@ -324,6 +325,7 @@ def _build_payload(loaded: _Loaded, ranked: Sequence[Candidate]) -> dict[str, ob
                 "before": list(loaded.contexts[unit.id].before),
                 "after": list(loaded.contexts[unit.id].after),
                 "table": loaded.contexts[unit.id].table_markdown,
+                "caption": loaded.contexts[unit.id].caption,
             }
             for unit in loaded.units
         ],
@@ -439,27 +441,33 @@ async def _load_next_order(session: AsyncSession, target_doc_id: int) -> int:
     return (current if current is not None else -1) + 1
 
 
-async def _add_cell_targets(
-    session: AsyncSession, job: AiJob, candidate: Candidate, suggestion_id: int, table_unit: Unit, table_target: TargetSentence
+async def _add_member_targets(
+    session: AsyncSession, job: AiJob, candidate: Candidate, suggestion_id: int, bundle_unit: Unit, bundle_target: TargetSentence
 ) -> list[tuple[TargetSentence, list[Unit]]]:
-    """묶인 활성 칸마다 칸 글자 그대로의 칸 새 문장 — 지금 읽어 호출 동안 바뀐 칸도 맞는다. 행 단위의 칸 좌표는 그 행 기준이다."""
+    """묶인 활성 단위마다 글자 그대로의 자식 새 문장 — 칸 문장은 칸 좌표를 갖고(행 단위는 그 행 기준), 캡션은 칸 좌표 없는 캡션 새 문장이다.
+
+    지금 읽어 호출 동안 바뀐 칸·캡션도 맞는다. 사람 저장처럼 캡션은 그 단위의 언어를 갖는다(captions.is_caption_target).
+    """
     rows = await session.scalars(
         select(Unit)
-        .where(Unit.group_unit_id == table_unit.id, Unit.status == UNIT_ACTIVE)
+        .where(Unit.group_unit_id == bundle_unit.id, Unit.status == UNIT_ACTIVE)
         .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
     )
-    cells = list(rows)
-    positions = await load_cell_positions(session, cells)
-    first_row = (table_unit.row_index or 0) if table_unit.kind == "table_row" else 0
+    members = list(rows)
+    positions = await load_cell_positions(session, [member for member in members if member.kind != CAPTION_KIND])
+    first_row = (bundle_unit.row_index or 0) if bundle_unit.kind == "table_row" else 0
     placed = []
-    for cell in cells:
-        row_index, col_index = positions[cell.id]
+    for member in members:
+        cell: dict[str, int] = {}
+        if member.kind != CAPTION_KIND:
+            row_index, col_index = positions[member.id]
+            cell = {"cell_row": row_index - first_row, "cell_col": col_index}
         target = _build_target(
-            job, candidate, suggestion_id, kind="sentence", lang=cell.lang, ai_text=cell.text, change_type="as_is",
-            parent_target_id=table_target.id, cell_row=row_index - first_row, cell_col=col_index,
+            job, candidate, suggestion_id, kind="sentence", lang=member.lang, ai_text=member.text, change_type="as_is",
+            parent_target_id=bundle_target.id, **cell,
         )
         session.add(target)
-        placed.append((target, [cell]))
+        placed.append((target, [member]))
     return placed
 
 
@@ -508,7 +516,7 @@ async def _write_targets(
     warnings: Sequence[AiWarning],
     doc: TargetDocInfo,
 ) -> list[int]:
-    """새 문장과 출처를 쓰고 id를 돌려준다 — 칸 새 문장은 표 새 문장 id가 생긴 뒤에 쓴다."""
+    """새 문장과 출처를 쓰고 id를 돌려준다 — 칸·캡션 새 문장은 표·그림 새 문장 id가 생긴 뒤에 쓴다."""
     orders = count(await _load_next_order(session, doc.id)) if doc.manual_order else repeat(0)
     placed: list[tuple[TargetSentence, list[Unit]]] = []
 
@@ -530,7 +538,7 @@ async def _write_targets(
 
     table_units = [unit for unit in units if unit.kind in TABLE_UNIT_KINDS]
     shapes = await load_table_shapes(session, table_units)
-    tables: list[tuple[Unit, TargetSentence]] = []
+    bundles: list[tuple[Unit, TargetSentence]] = []  # 칸·캡션 새 문장을 아래에 둘 표·그림
     for unit in table_units:
         n_rows, n_cols = shapes[unit.table_id]
         target = _build_target(
@@ -539,7 +547,7 @@ async def _write_targets(
             order_index=next(orders), warnings=list(warnings),
         )
         placed.append((target, [unit]))
-        tables.append((unit, target))
+        bundles.append((unit, target))
 
     for unit in units:
         if unit.kind == "figure":
@@ -548,11 +556,12 @@ async def _write_targets(
                 order_index=next(orders), warnings=list(warnings),
             )
             placed.append((target, [unit]))
+            bundles.append((unit, target))
 
     session.add_all(target for target, _ in placed)
-    await session.flush()  # 칸 새 문장이 부모 id를, 출처 연결이 새 문장 id를 알아야 한다
-    for unit, target in tables:
-        placed += await _add_cell_targets(session, job, candidate, suggestion_id, unit, target)
+    await session.flush()  # 칸·캡션 새 문장이 부모 id를, 출처 연결이 새 문장 id를 알아야 한다
+    for unit, target in bundles:
+        placed += await _add_member_targets(session, job, candidate, suggestion_id, unit, target)
     await session.flush()
     await session.execute(
         insert(TargetSource),

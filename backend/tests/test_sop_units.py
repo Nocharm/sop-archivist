@@ -90,17 +90,20 @@ def test_upload_creates_units_with_full_coverage(client: TestClient) -> None:
     units = view["units"]
     assert [unit["kind"] for unit in units] == [
         "heading", "heading", "sentence", "sentence", "sentence", "sentence",
-        "table", "cell_sentence", "cell_sentence", "cell_sentence", "cell_sentence", "figure",
+        "table", "cell_sentence", "cell_sentence", "cell_sentence", "cell_sentence", "figure", "caption",
     ]
     block_texts = {block["id"]: block["text"] for block in view["blocks"]}
     assert find_coverage_problems(block_texts, [unit["spans"] for unit in units if unit["kind"] in COVER_KINDS]) == []
     assert {unit["status"] for unit in units} == {"unassigned"}
     assert [unit["display_id"] for unit in units] == [f"OLD-1-{n:03d}" for n in range(1, len(units) + 1)]
-    assert [unit["lang"] for unit in units] == ["ko", "en", "ko", "ko", "en", "en", "neutral", "ko", "en", "ko", "en", "neutral"]
+    assert [unit["lang"] for unit in units] == ["ko", "en", "ko", "ko", "en", "en", "neutral", "ko", "en", "ko", "en", "neutral", "ko"]
     table = units[6]
     assert {unit["group_unit_id"] for unit in units[7:11]} == {table["id"]}
     assert (table["spans"], table["text"]) == ([], "")
-    assert find_unit(view, "그림 1 합성 장비")["kind"] == "figure"
+    figure = units[11]
+    caption = find_unit(view, "그림 1 합성 장비")
+    assert (figure["kind"], figure["text"]) == ("figure", "")
+    assert (caption["kind"], caption["group_unit_id"]) == ("caption", figure["id"])
     # 연달아: 표에 묶인 칸 문장과 중립 단위는 건너뛰고 이웃한 한글·영어 덩어리를 짝으로 제안한다
     assert _get_pair_texts(view) == [
         ("suggested", ["1. 목적", "1. Purpose"]),
@@ -122,8 +125,25 @@ def test_upload_creates_units_with_full_coverage(client: TestClient) -> None:
     assert all(unit["block_id"] == unit["spans"][0][0] for unit in units if unit["spans"])
     assert all(block_by_id[unit["block_id"]]["seq"] == unit["pos_seq"] for unit in units)
     assert block_by_id[table["block_id"]]["text"] == "항목"
-    assert units[-1]["block_id"] == figure_block["id"]
+    assert figure["block_id"] == figure_block["id"]
     run_in_session(lambda session: verify_document_coverage(session, doc["id"]))  # 버그 가드가 조용하다
+
+
+
+def test_caption_units_keep_coverage(client: TestClient) -> None:
+    body = p("표 3. 운전 조건 (Table 3. Operating conditions)", "Caption") + tbl([["a", "b"]]) + p("뒤 문장이다.")
+    bundle = create_bundle(client)
+    doc = _upload_ready(client, bundle["id"], build_docx(body), OLD_NAME)
+
+    view = get_view(client, bundle["id"], doc["id"])
+
+    units = view["units"]
+    caption = find_unit(view, "표 3. 운전 조건 (Table 3. Operating conditions)")
+    table = next(unit for unit in units if unit["kind"] == "table")
+    assert (caption["kind"], caption["group_unit_id"]) == ("caption", table["id"])
+    block_texts = {block["id"]: block["text"] for block in view["blocks"]}
+    assert find_coverage_problems(block_texts, [unit["spans"] for unit in units if unit["kind"] in COVER_KINDS]) == []
+    run_in_session(lambda session: verify_document_coverage(session, doc["id"]))
 
 
 def test_view_is_for_members_only(client: TestClient) -> None:
@@ -185,7 +205,7 @@ def test_new_doc_units_have_no_decisions(client: TestClient) -> None:
 
     view = get_view(client, bundle["id"], doc["id"])
 
-    assert len(view["units"]) == 12
+    assert len(view["units"]) == 13
     assert {unit["status"] for unit in view["units"]} == {None}
     assert _count_decisions(doc["extraction"]["id"]) == 0
     assert [unit["display_id"] for unit in view["units"]][:2] == ["SOP-NEW-1-001", "SOP-NEW-1-002"]

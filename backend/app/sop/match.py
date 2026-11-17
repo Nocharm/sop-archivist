@@ -13,6 +13,7 @@ from sqlalchemy.orm import aliased
 
 from app.clock import now
 from app.sop.ai.adoption import adopt_suggestions
+from app.sop.captions import CAPTION_KIND
 from app.sop.checks import check_sentence
 from app.sop.decision_steps import UndoMetaIn
 from app.sop.decisions import NEUTRAL, SENTENCE_SOURCE_KINDS, DbId
@@ -103,13 +104,16 @@ class _Want:
     text: str
     grid: dict[str, int] | None
     section_path: str
-    group_unit_id: int | None  # 묶인 칸 문장이면 그 표·행 단위(그 단위도 새 문장을 가질 때만)
+    group_unit_id: int | None  # 묶인 칸 문장·캡션이면 그 표·행·그림 단위(그 단위도 새 문장을 가질 때만)
     cell_row: int | None
     cell_col: int | None
 
 
 def _build_want(row: Row[Any], rank: int, path: str, units: dict[int, Row[Any]], targeted: set[int]) -> _Want:
-    """표·그림은 언어 중립에 글자 없음, 묶인 칸 문장은 칸 자리를 갖는다. 그룹 단위가 새 문장을 갖지 않으면 보통 문장이다."""
+    """표·그림은 언어 중립에 글자 없음, 묶인 칸 문장은 칸 자리를, 캡션은 칸 좌표 없이 부모만 갖는다(captions.is_caption_target).
+
+    그룹 단위가 새 문장을 갖지 않으면 보통 문장이다.
+    """
     kind, lang, text, grid = "sentence", row.lang, row.text, None
     group_unit_id = cell_row = cell_col = None
     if row.kind in TABLE_UNIT_KINDS:
@@ -119,10 +123,12 @@ def _build_want(row: Row[Any], rank: int, path: str, units: dict[int, Row[Any]],
     elif row.kind == "figure":
         kind, lang, text = "figure", NEUTRAL, ""
     elif row.group_unit_id in targeted:
-        group = units[row.group_unit_id]
-        # 행 단위에 묶인 칸은 그 행 기준 좌표다
-        first_row = (group.unit_row_index or 0) if group.kind == "table_row" else 0
-        group_unit_id, cell_row, cell_col = row.group_unit_id, row.block_row_index - first_row, row.block_col_index
+        group_unit_id = row.group_unit_id
+        if row.kind != CAPTION_KIND:
+            group = units[row.group_unit_id]
+            # 행 단위에 묶인 칸은 그 행 기준 좌표다
+            first_row = (group.unit_row_index or 0) if group.kind == "table_row" else 0
+            cell_row, cell_col = row.block_row_index - first_row, row.block_col_index
     return _Want(row.id, rank, kind, lang, text, grid, path, group_unit_id, cell_row, cell_col)
 
 
@@ -144,6 +150,8 @@ def _plan_targets(rows: Sequence[Row[Any]]) -> list[_Want]:
     )
     units = {row.id: row for row in rows}
     targeted = {row.id for row in rows if row.part not in REPEATED_PARTS and row.kind != "heading"}
+    # 묶음 단위가 새 문장을 갖지 않는 캡션은 만들지 않는다 — 최상위 캡션 새 문장은 어디에도 없다(캡션은 늘 묶음의 자식)
+    targeted -= {row.id for row in rows if row.kind == CAPTION_KIND and row.group_unit_id not in targeted}
     stack: list[tuple[int, str]] = []
     wants: list[_Want] = []
     for row, is_body in zip(rows, in_flow, strict=True):
@@ -389,7 +397,7 @@ class _BulkState:
     targets: dict[int, TargetSentence]  # 요청한 새 문장 중 이 묶음 것
     sourced_unit_ids: set[int]  # 요청한 단위 중 어느 새 문장의 출처인 것
     sourced_target_ids: set[int]  # 요청한 새 문장 중 출처가 있는 것
-    children: dict[int, set[int]]  # 신규로 요청한 표 새 문장 → 그 칸 새 문장
+    children: dict[int, set[int]]  # 신규로 요청한 표·그림 새 문장 → 그 칸·캡션 새 문장
 
 
 def _find_duplicates(values: list[int]) -> list[int]:
@@ -426,14 +434,17 @@ async def _load_bulk_state(
     sourced_targets = await select_in_chunks(
         session, lambda chunk: select(TargetSource.target_id).where(TargetSource.target_id.in_(chunk)), target_ids
     )
-    tables = [item.target_id for item in payload.new if item.target_id in targets and targets[item.target_id].kind == "table"]
+    bundles = [
+        item.target_id for item in payload.new
+        if item.target_id in targets and targets[item.target_id].kind in ("table", "figure")
+    ]
     children: dict[int, set[int]] = defaultdict(set)
     for child_id, parent_id in await select_in_chunks(
         session,
         lambda chunk: select(TargetSentence.id, TargetSentence.parent_target_id).where(
             TargetSentence.parent_target_id.in_(chunk)
         ),
-        tables,
+        bundles,
     ):
         children[parent_id].add(child_id)
     return _BulkState(
@@ -488,7 +499,7 @@ def _check_bulk_items(payload: BulkMatchIn, state: _BulkState) -> None:
     listed = {item.target_id for item in payload.new}
     for item in payload.new:
         target = state.targets.get(item.target_id)
-        # 표와 칸은 한 관계 묶음이라 함께 담아야 한다(관계 묶음 저장의 닫힘과 같은 이유)
+        # 표·그림과 그 칸·캡션은 한 관계 묶음이라 함께 담아야 한다(관계 묶음 저장의 닫힘과 같은 이유)
         is_new = (
             target is not None and target.origin == ORIGIN_NEW_DOC and target.id not in state.sourced_target_ids
             and (target.parent_target_id is None or target.parent_target_id in listed)

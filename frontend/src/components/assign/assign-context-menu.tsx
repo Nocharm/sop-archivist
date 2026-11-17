@@ -3,7 +3,7 @@
 // 자리는 그 자리 메뉴와 같은 규칙(placeLinkMenu) - 그 줄의 조각들(한/영 짝이면 둘 다) 아래(모자라면 위)에 놓아 다룰 문장을 가리지 않는다.
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, BookMarked, BookX, Eraser, LayoutList, Link2, MousePointerClick, Rows3, Scissors, Table2, Unlink, type LucideIcon } from "lucide-react";
+import { ArrowDownToLine, ArrowUpToLine, BookMarked, BookX, CaptionsOff, Eraser, LayoutList, Link2, MousePointerClick, PanelBottom, PanelTop, Rows3, Scissors, Table2, Unlink, type LucideIcon } from "lucide-react";
 import { useRef } from "react";
 
 import { Menu } from "@/components/ui/menu";
@@ -29,6 +29,10 @@ export const ASSIGN_ACTION_ICONS: Record<Exclude<AssignMenuAction, "lang">, Luci
   table_rows: Rows3,
   table_merge: Table2,
   table_layout: LayoutList,
+  // 캡션 자리(위·아래)를 그린 아이콘 - 글을 묶음 위(아래) 캡션 줄로
+  caption_attach_prev: PanelTop,
+  caption_attach_next: PanelBottom,
+  caption_detach: CaptionsOff,
 };
 
 export const ASSIGN_ACTION_LABELS: Record<Exclude<AssignMenuAction, "lang">, string> = {
@@ -46,6 +50,10 @@ export const ASSIGN_ACTION_LABELS: Record<Exclude<AssignMenuAction, "lang">, str
   table_rows: "split.splitRows",
   table_merge: "split.mergeRows",
   table_layout: "split.layoutTable",
+  // 묶음 대상의 이름 - 글 대상이면 항목의 labelKey("위 표의 캡션으로 쓰기")가 대신한다
+  caption_attach_prev: "assign.ctx.captionAttachPrev",
+  caption_attach_next: "assign.ctx.captionAttachNext",
+  caption_detach: "assign.ctx.captionDetach",
 };
 
 const KEYS: Partial<Record<AssignMenuAction, string>> = { clear: "U" };
@@ -82,13 +90,14 @@ export function AssignContextMenu({ anchor, cover, click, groups, onPick, onClos
           current={item.lang}
           disabledReason={item.reasonKey ? t(item.reasonKey) : null}
           currentReason={t("split.menu.why.alreadyLang")}
+          optionReasons={item.langReasons ? Object.fromEntries(Object.entries(item.langReasons).map(([lang, key]) => [lang, t(key)])) : undefined}
           onPick={(lang) => onPick("lang", lang)}
           testId="assign-ctx-lang"
         />
       );
     }
     const Icon = ASSIGN_ACTION_ICONS[item.action];
-    const label = t(ASSIGN_ACTION_LABELS[item.action]);
+    const label = t(item.labelKey ?? ASSIGN_ACTION_LABELS[item.action]);
     const reason = item.reasonKey ? t(item.reasonKey) : null;
     return (
       <button

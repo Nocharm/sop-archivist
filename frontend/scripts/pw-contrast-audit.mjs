@@ -182,6 +182,15 @@ for (const theme of ["light", "dark"]) {
     ["overview", `/bundles/${id}`, '[data-testid="overview-gate-units"]'],
     ["documents", `/bundles/${id}/documents`, '[data-testid$="-row"][data-testid^="documents-"]'],
     ["tobe", `/bundles/${id}/documents`, '[data-testid$="-row"][data-testid^="tobe-"]'],
+    // SOP 줄 하나를 펼친 상태 - 칸 상태 표(상태 글 · Empty · N/A 칩 · 사유 · 정할 칸)와 줄의 요약 글
+    ["tobe-open", `/bundles/${id}/documents`, '[data-testid$="-row"][data-testid^="tobe-"]', async (page) => {
+      const tobe = await (await page.request.get(`${BASE}/api/bundles/${id}/tobe`, { headers: { "X-Dev-User": "qa.member" } })).json();
+      const sop = tobe.docs.find((doc) => doc.doc_type === "sop" && doc.entrance === "assign");
+      await page.locator(`[data-testid="tobe-id-${sop.id}-toggle"]`).click();
+      await page.locator(`[data-testid="tobe-id-${sop.id}-slots"]`).waitFor({ timeout: T });
+      // 펼침 전환이 끝난 뒤(접힌 동안은 visibility로 숨는다)
+      await page.waitForTimeout(400);
+    }],
     ["assign", `/bundles/${id}/assign`, '[data-testid="assign-help"]'],
     // 고른 조각 - 올리거나 고를 때만 보이는 KO/EN 탭(짝이면 둘 다)의 글자 대비를 잰다. 탭이 다 드러난(opacity 1) 뒤에
     ["assign-selected", `/bundles/${id}/assign`, '[data-testid^="assign-paper-unit-"]', async (page) => {
@@ -240,6 +249,16 @@ for (const theme of ["light", "dark"]) {
       await page.locator(`[data-testid="assign-new-doc-option-${sop.id}"]`).click();
       await page.locator('[data-testid^="assign-new-heading-note-"]').first().waitFor({ timeout: T });
       await page.unroute("**/outputs/c/docs/**");
+    }],
+    // 표·그림 머리 줄의 경고색 Caption needed - 분류 절반에서 미배정으로 남긴 OLD-7의 캡션 없는 표
+    ["assign-caption-needed", `/bundles/${id}/assign`, '[data-testid="assign-bar"]', async (page) => {
+      const docs = await (await page.request.get(`${BASE}/api/bundles/${id}/documents`, { headers: { "X-Dev-User": "qa.member" } })).json();
+      const doc = docs.find((item) => item.side === "old" && item.doc_code === "OLD-7");
+      await page.locator('[data-testid="assign-old-doc"]').click();
+      await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
+      const missing = page.locator('[data-testid^="assign-paper-caption-missing-"]').first();
+      await missing.waitFor({ timeout: T });
+      await missing.scrollIntoViewIfNeeded();
     }],
     // 검토는 결과 화면 위의 검토 띠다 - 앞의 outputs-a 장면이 A 탭을 골라 두어 C로 돌아온다
     ["review", `/bundles/${id}/outputs`, '[data-testid="review"]', async (page) => { await page.locator('[data-testid="outputs-tab-c"]').click(); await page.locator('[data-testid="output-c"]').waitFor({ timeout: T }); }],

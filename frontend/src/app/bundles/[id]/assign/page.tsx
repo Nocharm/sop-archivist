@@ -4,7 +4,7 @@
 // 보기는 둘이다 - 양 단(Old ‖ New)과 한 단(Old 문서 하나만 넓게, 설계 2026-11-15-assign-merge-documents-design.md §3.1). 한 단에서는 New 칸·세로선·연결선을 그리지 않는다.
 "use client";
 
-import { ArrowDown, ArrowUp, BookMarked, Check, Circle, CircleCheck, CircleDashed, CirclePause, Columns2, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, Redo2, RefreshCw, Sparkles, Square, SquarePlus, Trash2, TriangleAlert, Undo2, WandSparkles, X, type LucideIcon } from "lucide-react";
+import { ArrowDown, ArrowUp, BookMarked, Captions, Check, Circle, CircleCheck, CircleDashed, CirclePause, Columns2, ExternalLink, FileCheck2, FilePen, FileUp, FolderOutput, Inbox, Link2, ListFilter, ListTree, Locate, MapPin, MoveRight, Redo2, RefreshCw, Sparkles, Square, SquarePlus, Trash2, TriangleAlert, Undo2, WandSparkles, X, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Fragment, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
@@ -122,6 +122,7 @@ import {
   type ViewUnit,
   type WrittenSentence,
 } from "@/lib/api-sop";
+import { isBundleCaptionNeeded, isBundleKind, isCaptionGate, listCaptionFields, listCaptionPendingRowKeys, makeIsLinkedToWritten, type CaptionUnit } from "@/lib/caption-model";
 import { applySavedTargets, buildComposedRows, formatSectionPath, isWrittenRow, listHeadingNotes, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
 import {
   addPartnerTargets,
@@ -136,6 +137,7 @@ import {
   listUnsourced,
   mergeGroups,
   pickNearby,
+  readConfirmBlockKey,
   stepZoom,
   type LinkMenuItem,
   type Recommendation,
@@ -186,7 +188,7 @@ import { useLeaveGuard } from "@/lib/leave-guard";
 import { buildIdenticalBatches } from "@/lib/match-model";
 import { navigate } from "@/lib/nav-buffer";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
-import { buildPaperModel, buildPaperTabs, findNearestCut, listPartSheets, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
+import { buildPaperModel, buildPaperTabs, findNearestCut, listPartSheets, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
 import { buildPairColumns, canUndoPair, listPairLinks, PAIR_REFUSAL_KEYS, resolvePairDrop, type PairDrop, type PairDropContext, type PairLang } from "@/lib/pair-drop-model";
 import { SLOT_LABELS } from "@/lib/slot-labels";
 import { EDIT_ORIGINAL_PARAM, getNewDocumentsHref, getStageHref } from "@/lib/stages";
@@ -227,7 +229,7 @@ const EMPTY_DRAFT: PageDraft = { destination: null, texts: {}, changeTypes: {}, 
 const NO_NUMBERS: ReadonlySet<number> = new Set();
 
 /** 되돌리면 단위가 은퇴할 수 있는 편집 - 그 줄을 고른 채 다시 받으면 없는 단위의 묶음을 부르게 된다 */
-const RETIRING_OPS: ReadonlySet<string> = new Set(["cut", "carve", "merge", "unmerge", "split_table_rows", "merge_table_rows", "set_layout_table"]);
+const RETIRING_OPS: ReadonlySet<string> = new Set(["cut", "carve", "merge", "unmerge", "split_table_rows", "merge_table_rows", "set_layout_table", "attach_caption", "detach_caption"]);
 
 // 한 단으로 연 New 문서에서 연 우클릭 메뉴의 줄 키 자리 - 그 문서에는 줄이 없다
 const SOLO_ROW_KEY = "solo";
@@ -1033,17 +1035,62 @@ export default function AssignPage() {
     return holder !== null && (holder.kind === "table" || holder.kind === "table_row") ? holder : null;
   }
 
+  /** 그 단위가 속한 묶음(표·행·그림) - 묶음이면 그 단위, 칸 문장·캡션이면 묶인 묶음, 아니면 null */
+  function findBundleOf(unit: ViewUnit | null): ViewUnit | null {
+    if (!unit || !shapeModel) return null;
+    if (isBundleKind(unit.kind)) return unit;
+    const holder = unit.group_unit_id !== null ? shapeModel.units.get(unit.group_unit_id) : undefined;
+    return holder && isBundleKind(holder.kind) ? holder : null;
+  }
+
+  /** 묶음 자리의 단위 id - 행으로 나눈 표는 모든 행이 한 자리다(서버 _find_bundle_neighbors와 같다) */
+  function listBundleSpan(bundle: ViewUnit): Set<number> {
+    if (bundle.kind !== "table_row" || !shapeModel) return new Set([bundle.id]);
+    return new Set([...shapeModel.units.values()].filter((unit) => unit.kind === "table_row" && unit.table_id === bundle.table_id).map((unit) => unit.id));
+  }
+
+  /** 묶음에 이미 있는 캡션의 언어 - 행으로 나눈 표의 캡션은 첫 행에 딸린다 */
+  function listCaptionLangs(bundle: ViewUnit): string[] {
+    if (!shapeModel) return [];
+    const span = listBundleSpan(bundle);
+    return [...shapeModel.units.values()].filter((unit) => unit.kind === "caption" && unit.group_unit_id !== null && span.has(unit.group_unit_id)).map((unit) => unit.lang);
+  }
+
+  /** 옛 이행(0020)이 그림 블록 위에 둔 캡션인가 - 떼면 그림 글이 문장이 되어 서버가 막는다(caption_in_figure_block) */
+  function isFixedCaption(unit: ViewUnit): boolean {
+    if (unit.kind !== "caption" || !shapeView) return false;
+    const figureBlocks = new Set(shapeView.blocks.filter((block) => block.kind === "figure").map((block) => block.id));
+    return unit.spans.some(([blockId]) => figureBlocks.has(blockId));
+  }
+
+  /** 용지 순서로 바로 앞·뒤 단위 - 묶음은 칸 문장·캡션까지 한 덩어리로 보고 그 앞·뒤(캡션으로 붙일 글을 찾는 자리) */
+  function findNeighbors(target: ViewUnit): { prev: ViewUnit | null; next: ViewUnit | null } {
+    if (!shapeTabs || !shapeModel) return { prev: null, next: null };
+    const order = shapeTabs.order;
+    const isBundle = isBundleKind(target.kind);
+    const span = isBundle ? listBundleSpan(target) : new Set([target.id]);
+    const inside = order.flatMap((id, index) => {
+      const unit = shapeModel.units.get(id);
+      return unit && (span.has(id) || (isBundle && unit.group_unit_id !== null && span.has(unit.group_unit_id))) ? [index] : [];
+    });
+    if (inside.length === 0) return { prev: null, next: null };
+    return { prev: shapeModel.units.get(order[Math.min(...inside) - 1]) ?? null, next: shapeModel.units.get(order[Math.max(...inside) + 1]) ?? null };
+  }
+
   /** 그 단위에 할 수 있는 일과 못 하는 까닭 - 우클릭 메뉴와 오른쪽 칸의 다듬기 줄이 같은 답을 쓴다 */
   function buildUnitMenu(target: ViewUnit): AssignMenuGroups | null {
     if (!shapeTabs || !shapeModel) return null;
-    const order = shapeTabs.order;
-    const at = order.indexOf(target.id);
-    const neighbor = (step: number) => (at < 0 ? null : (shapeModel.units.get(order[at + step]) ?? null));
+    const { prev, next } = findNeighbors(target);
     const table = findTableOf(target);
     return buildAssignMenu({
       target,
-      prev: neighbor(-1),
-      next: neighbor(1),
+      prev,
+      next,
+      prevBundle: findBundleOf(prev),
+      nextBundle: findBundleOf(next),
+      listCaptionLangs,
+      isFixedCaption,
+      captionBundle: target.kind === "caption" ? findBundleOf(target) : null,
       readOnly: !canEdit,
       rowStatus: row?.status ?? "unassigned",
       isDecided: isUnitDecided,
@@ -1066,12 +1113,25 @@ export default function AssignPage() {
   // 저장 전 고름이 있어도 번호 확인은 된다 - 보낼 곳을 먼저 고른 사람이 확인 때문에 고름을 버리지 않게(단위가 바뀌지 않는 편집이다)
   const refBlocked = rowRefUnit !== null && isUnitDecided(rowRefUnit) ? t("assign.ctx.why.assigned") : null;
   const isRefGate = row !== null && row.status !== "confirmed" && rowViewUnits.some(isRefPending);
+  // 새 문서 자리로 보내는 표·그림에 캡션이 없으면 Confirm이 꺼진다(명세 §3.4) - 캡션은 Edit and confirm에서 써 넣는다
+  const isCaptionGateOn = row !== null && paperModel !== null && oldView?.document.id === row.documentId && isCaptionGate(row, destination, paperModel.units, draft, groupData);
+  // Confirm을 막는 까닭 - 결정 칸 단추의 툴팁과 그 자리 메뉴(끌어 놓은 초안 포함)가 같은 답을 쓴다
+  const confirmBlockKey = readConfirmBlockKey({ isRefGate, isCaptionGate: isCaptionGateOn });
   // 오른쪽 칸 1번(다듬기) - 고른 줄의 문장마다 할 수 있는 일. 우클릭 메뉴와 같은 답이다. 고칠 수 없는 사람에게는 줄을 보이지 않는다
-  const shapeLines: ShapeLine[] = canEdit && mode === "old" ? rowViewUnits.flatMap((unit) => { const menu = buildUnitMenu(unit); return menu ? [{ unit, items: menu.edit }] : []; }) : [];
+  // 표·그림 줄이면 그 묶음의 캡션도 문장처럼 한 줄씩(언어 세 칸·자르기·캡션 떼기) - 용지 순서대로(캡션이 위면 위에)
+  const rowBundleSpan = new Set(rowViewUnits.filter((unit) => isBundleKind(unit.kind)).map((unit) => unit.id));
+  const rowCaptionUnits = hasSolo || rowBundleSpan.size === 0 ? [] : [...(paperModel?.units.values() ?? [])].filter((unit) => unit.kind === "caption" && unit.group_unit_id !== null && rowBundleSpan.has(unit.group_unit_id));
+  const shapeOrder = shapeTabs?.order ?? [];
+  const shapeUnits = rowCaptionUnits.length === 0 ? rowViewUnits : [...rowViewUnits, ...rowCaptionUnits].sort((a, b) => shapeOrder.indexOf(a.id) - shapeOrder.indexOf(b.id));
+  const shapeLines: ShapeLine[] = canEdit && mode === "old" ? shapeUnits.flatMap((unit) => { const menu = buildUnitMenu(unit); return menu ? [{ unit, items: menu.edit }] : []; }) : [];
   // 고른 줄이 한/영 짝이거나 합친 한 문장이면 둘 사이를 바꾸는 전환을 다듬기에 둔다
   const shapeMode = shapeLines.length > 0 ? planShapeMode(rowViewUnits, shapeTabs?.order ?? [], hasUnitDraft) : null;
   const stepBase = shapeLines.length > 0 ? 1 : 0;
   const refPendingIds = (shapeTabs?.order ?? []).filter((id) => isRefPending(shapeModel?.units.get(id)) && (hasSolo || rowOfUnit.has(id)));
+  // 캡션이 필요한 표·그림의 줄 - 머리 줄의 Caption needed와 같은 규칙(lib/caption-model). 위쪽 줄에 남은 수, 누르면 다음 줄
+  // 캡션이 필요 없는 묶음(이미 쓴 New 문서를 혼자 연 동안의 그 문서 단위, 그 문서에 이은 묶음) - 위쪽 줄 수와 머리 줄이 같은 판단을 쓴다
+  const isLinkedToWritten = useMemo(() => makeIsLinkedToWritten(new Set(isSolo ? (soloView?.units.map((unit) => unit.id) ?? []) : []), linkedTargets), [isSolo, soloView, linkedTargets]);
+  const captionPendingKeys = useMemo(() => listCaptionPendingRowKeys(rows, unitMap, isLinkedToWritten), [rows, unitMap, isLinkedToWritten]);
   // 그 줄의 번호에 대한 EQUIS 표시와 새 문장에 쓸 제안 - 참조 카드와 결정 칸의 새 문장이 같은 답을 쓴다. 조회가 도는 동안은 조금 뒤 다시 읽는다
   const rowRefMark = rowRefUnit?.ref ?? null;
   const refDetail = useLoaded<UnitRefDetail | null>(
@@ -1291,6 +1351,14 @@ export default function AssignPage() {
     goToUnit(refPendingIds[(current + 1) % refPendingIds.length]);
   }
 
+  /** 캡션이 필요한 다음 표·그림 줄로 - 문서 순서로 지금 줄 다음, 끝이면 처음으로 돈다 */
+  function selectNextCaption() {
+    if (captionPendingKeys.length === 0) return;
+    const next = captionPendingKeys[(captionPendingKeys.indexOf(activeKey ?? "") + 1) % captionPendingKeys.length];
+    const unitId = rowMap.get(next)?.unitIds[0];
+    if (unitId !== undefined) goToUnit(unitId);
+  }
+
   function splitAtCut() {
     // Pair view에는 용지(나눌 선)가 없다 - 보이지 않는 자리에서 자르지 않는다
     if (!cutUnit || cutLine.at === null || isPairView) return;
@@ -1350,6 +1418,14 @@ export default function AssignPage() {
     } else if (action === "table_rows" && table) void runUnitEdit({ type: "split_table_rows", table_unit_id: table.id }, t("split.didSplit"), null);
     else if (action === "table_merge" && table && table.table_id !== null) void runUnitEdit({ type: "merge_table_rows", table_id: table.table_id }, t("split.didMerge"), null);
     else if (action === "table_layout" && table && table.table_id !== null) void runUnitEdit({ type: "set_layout_table", table_id: table.table_id, is_layout: true }, t("common.saved"), null);
+    else if (action === "caption_attach_prev" || action === "caption_attach_next") {
+      // 같은 일, 대상에 따라 짝이 바뀐다 - 묶음 대상이면 이웃 글을, 글 대상이면 이웃 묶음에 붙인다. 붙인 뒤 묶음 줄을 고른다
+      const neighbor = findNeighbors(target)[action === "caption_attach_prev" ? "prev" : "next"];
+      const isBundle = isBundleKind(target.kind);
+      const text = isBundle ? neighbor : target;
+      const holder = isBundle ? target : findBundleOf(neighbor);
+      if (text && holder) void runUnitEdit({ type: "attach_caption", unit_id: text.id, bundle_unit_id: holder.id }, t("assign.ctx.didAttachCaption"), holder.id);
+    } else if (action === "caption_detach" && target.group_unit_id !== null) void runUnitEdit({ type: "detach_caption", unit_id: target.id }, t("assign.ctx.didDetachCaption"), target.group_unit_id);
     else if (action === "lang" && lang && target.lang === "ref") void runUnitEdit({ type: "clear_ref", unit_id: target.id }, t("common.saved"), target.id, false, lang);
     else if (action === "lang" && lang) void runUnitEdit({ type: "set_language", unit_ids: [target.id], lang }, t("common.saved"), target.id);
   }
@@ -1404,6 +1480,18 @@ export default function AssignPage() {
     return tables;
   }
 
+  /** 줄의 표·행·그림에 묶인 캡션 단위 - 저장 요청의 캡션 새 문장 출처(buildTables의 칸 문장과 같은 길) */
+  function buildCaptions(): Map<number, CaptionUnit[]> {
+    const captions = new Map<number, CaptionUnit[]>();
+    const source = viewOf(row?.documentId);
+    if (!source || !row) return captions;
+    for (const unitId of row.unitIds) {
+      const units = source.units.filter((item) => item.kind === "caption" && item.group_unit_id === unitId);
+      if (units.length > 0) captions.set(unitId, units.map((item) => ({ id: item.id, lang: item.lang, text: item.text })));
+    }
+    return captions;
+  }
+
   /**
    * 묶음 저장 응답의 짝 정리를 화면에 반영한다 - 짝은 서버가 같은 저장 안에서 확정하거나 푼다(제품 명세 §6.5).
    * 푼 짝이 있을 때만 원문 보기를 다시 받는다 - 줄은 보기의 짝에서 나온다. 확정만 됐으면 줄이 그대로이고 이 화면은 짝 상태도 문서 revision도 쓰지 않는다.
@@ -1440,6 +1528,11 @@ export default function AssignPage() {
       showToast(t("assign.ref.checkFirst"), "error");
       return;
     }
+    if (action === "confirm" && isCaptionGateOn) {
+      // 캡션 없는 표·그림 - 단추는 꺼져 있고, ↵·메뉴 확정도 같은 까닭으로 멈춘다
+      showToast(t("assign.caption.needed"), "error");
+      return;
+    }
     const reason = reasonOverride ?? reasonNow;
     // 대상 문서를 먼저 본다 - 사유 창을 거친 뒤에 다시 막히지 않게
     if (destination?.kind === "move" && !moveCode.trim()) {
@@ -1456,7 +1549,7 @@ export default function AssignPage() {
     setBusy(true);
     try {
       // 고친 칸만 글을 보낸다 - 손대지 않은 AI 제안은 글·종류를 비워 보내 제안 그대로 받는다
-      const context = { units: saveUnits, group: saveGroupData, tables: buildTables() };
+      const context = { units: saveUnits, group: saveGroupData, tables: buildTables(), captions: buildCaptions() };
       const body = buildGroupSave({ ...draft, destination, reason, moveCode }, context, action, action === "hold" ? reason.trim() : "");
       const leftovers = body.release_unit_ids ?? [];
       // 끌어 놓은 자리를 실은 저장이면 미리 고침도 그 자리에 넣는다 - 끝에 넣으면 다시 읽을 때 줄이 뛴다
@@ -1987,9 +2080,10 @@ export default function AssignPage() {
       const target = event.target instanceof Element ? event.target : null;
       const box = target?.closest<HTMLElement>('[data-pane="old"] [data-drag-box]');
       if (!target || !box) return null;
-      // 누른 곳의 가장 안쪽 Unit(글 조각·표 칸 조각), 없으면 그 조각의 Unit. 표에 묶인 칸 Unit은 제 줄이 없다 - 그때는 표 조각의 줄(표 전체)을 끈다
+      // 누른 곳의 가장 안쪽 Unit(글 조각·표 칸 조각·캡션), 없으면 그 조각의 Unit. 묶음에 든 칸·캡션은 누를 때처럼 그 묶음으로 올린다(resolvePickUnit) - 끄는 것과 누르면 골라지는 것이 같다
       const holder = target.closest<HTMLElement>("[data-unit], [data-strip-unit]");
-      const unitId = Number(holder?.dataset.unit ?? holder?.dataset.stripUnit ?? box.dataset.stripUnit);
+      const pressedId = Number(holder?.dataset.unit ?? holder?.dataset.stripUnit ?? box.dataset.stripUnit);
+      const unitId = paperModel ? resolvePickUnit(pressedId, paperModel.units) : pressedId;
       const key = rowOfUnit.get(unitId) ?? rowOfUnit.get(Number(box.dataset.stripUnit));
       const unitIds = key === undefined ? undefined : rowMap.get(key)?.unitIds;
       return key !== undefined && unitIds ? { rowKey: key, unitIds } : null;
@@ -2244,7 +2338,7 @@ export default function AssignPage() {
       selectSolo(unitId);
       return;
     }
-    const key = rowOfUnit.get(unitId);
+    const key = findRowKey(unitId);
     if (!key) return;
     if (keys.shiftKey && canEdit) {
       setChecked((prev) => {
@@ -2601,10 +2695,60 @@ export default function AssignPage() {
     );
   }
 
+  // 표·그림 줄의 캡션 칸 - 캡션 언어마다 하나, 캡션이 없으면 Write a caption 칸 하나(lib/caption-model listCaptionFields)
+  const captionFields = oldView ? rowViewUnits.filter((unit) => isBundleKind(unit.kind)).flatMap((unit) => listCaptionFields(unit, oldView.units, draft, groupData)) : [];
+  const captionLines = (
+    <>
+      {editing
+        ? captionFields.map((field, index) => (
+            <label key={field.key} className="grid gap-1">
+              <span className="flex items-center gap-1.5 text-xs text-ink-2">
+                <LangToken lang={field.lang} />
+                {t(field.unitId === null ? "assign.caption.write" : "assign.caption.label")}
+              </span>
+              <textarea
+                ref={index === 0 ? firstTextRef : undefined}
+                lang={field.lang === "neutral" ? undefined : field.lang}
+                className="min-h-[48px] w-full resize-y rounded-md border border-focus bg-surface px-2.5 py-2 text-[14px] leading-[24px] outline-none focus-visible:outline-none"
+                style={{ fontFamily: field.lang === "en" ? "var(--font-source-en)" : "var(--font-source)" }}
+                data-testid={`assign-caption-text-${field.lang}`}
+                value={field.text}
+                onChange={(event) => setDraft({ captionTexts: { ...(draft.captionTexts ?? {}), [field.key]: event.target.value } }, true)}
+              />
+            </label>
+          ))
+        : captionFields
+            .filter((field) => field.text.trim())
+            .map((field) => (
+              <div key={field.key} className="chosen-line">
+                <LangToken lang={field.lang} />
+                <span className="min-w-0 flex-1 text-[13px] leading-5 text-ink" style={{ fontFamily: field.lang === "en" ? "var(--font-source-en)" : "var(--font-source)" }}>
+                  <Truncate text={field.text} lang={field.lang === "neutral" ? undefined : field.lang} testId={`assign-caption-${field.lang}`} />
+                </span>
+              </div>
+            ))}
+      {/* 캡션이 없어 Confirm이 꺼졌다 - 까닭과 써 넣을 길(Edit and confirm)을 같은 자리에 */}
+      {isCaptionGateOn && !editing && (
+        <span className="flex min-w-0 items-center gap-1.5 text-xs font-semibold text-st-hold" data-testid="assign-caption-needed">
+          <TriangleAlert size={13} strokeWidth={1.75} className="flex-none" aria-hidden />
+          <span className="min-w-0 flex-1">{t("assign.caption.needed")}</span>
+          {canEdit && (
+            <button type="button" className="btn h-6 px-1.5 text-xs" data-testid="assign-caption-write" disabled={busy} onClick={startEdit}>
+              <FilePen size={13} strokeWidth={1.5} aria-hidden />
+              {t("assign.caption.write")}
+            </button>
+          )}
+        </span>
+      )}
+    </>
+  );
   const newSentences = (
     <div className="grid gap-2" data-testid="assign-new-sentences">
-      {rowUnits.some((unit) => unit.kind === "table" || unit.kind === "table_row" || unit.kind === "figure") ? (
-        <p className="rounded-md border border-line-2 px-3 py-2 text-ink-2">{t(rowUnits.some((unit) => unit.kind === "figure") ? "classify.figureAsIs" : "classify.tableAsIs")}</p>
+      {rowUnits.some((unit) => isBundleKind(unit.kind)) ? (
+        <>
+          <p className="rounded-md border border-line-2 px-3 py-2 text-ink-2">{t(rowUnits.some((unit) => unit.kind === "figure") ? "classify.figureAsIs" : "classify.tableAsIs")}</p>
+          {captionLines}
+        </>
       ) : (
         slots.map((slot, index) => {
           const text = draft.texts[slot.key] ?? slot.text;
@@ -2789,8 +2933,8 @@ export default function AssignPage() {
 
   // 확정 단추 - 결정 칸 맨 아래 늘 같은 자리의 가장 큰 단추. 고른 곳이 없으면 흐리게 꺼지고 까닭은 툴팁(↵는 위 목록의 첫 후보로 간다)
   const confirmButton = (
-    <Tooltip label={t(destination !== null && isRefGate ? "assign.ref.checkFirst" : "assign.why.pickFirst")} suppressed={(destination !== null && !isRefGate) || !row}>
-      <button type="button" className="btn pri assign-confirm" data-testid="assign-primary" data-state={primaryState} disabled={!canEdit || !row || busy || !destination || isRefGate} onClick={handlePrimary}>
+    <Tooltip label={t((destination !== null ? confirmBlockKey : null) ?? "assign.why.pickFirst")} suppressed={(destination !== null && confirmBlockKey === null) || !row}>
+      <button type="button" className="btn pri assign-confirm" data-testid="assign-primary" data-state={primaryState} disabled={!canEdit || !row || busy || !destination || isRefGate || isCaptionGateOn} onClick={handlePrimary}>
         <span className="stack">
           <span data-on={primaryState !== "save" ? "" : undefined}>
             {t("classify.confirm")} <kbd>↵</kbd>
@@ -3318,6 +3462,15 @@ export default function AssignPage() {
             </button>
           </Tooltip>
         )}
+        {/* 캡션이 필요한 표·그림 수 - 누르면 다음 묶음으로 간다(Edit and confirm에서 캡션을 써 넣는다) */}
+        {canEdit && captionPendingKeys.length > 0 && (
+          <Tooltip label={t("assign.caption.next")}>
+            <button type="button" className="pill warn h-7 cursor-pointer whitespace-nowrap" aria-label={isBarCompact ? t("assign.caption.pendingCount", { n: captionPendingKeys.length }) : undefined} data-testid="assign-caption-pending" onClick={selectNextCaption}>
+              <Captions size={13} strokeWidth={1.6} aria-hidden />
+              {isBarCompact ? captionPendingKeys.length : t("assign.caption.pendingCount", { n: captionPendingKeys.length })}
+            </button>
+          </Tooltip>
+        )}
         {/* 누락 의심 경고 - 확인이 남아 있을 때만 보인다(검토 요청 조건). 원문 자리를 보거나 그 자리에서 확인한다 */}
         <MissingWarnings
           bundleId={bundleId}
@@ -3536,6 +3689,8 @@ export default function AssignPage() {
                 warnBlockIds={warnBlockIds}
                 statusOf={(unitId) => unitMap.get(unitId)?.status}
                 renderNote={placeOf}
+                // 삭제·이동한 묶음, 이미 쓴 New 문서(혼자 연 문서)의 묶음과 그 문서에 이은 묶음(입구 2 - 캡션을 그 문서가 정한다)은 캡션이 필요 없다
+                isCaptionNeeded={(unitId, hasCaption) => isBundleCaptionNeeded(unitMap.get(unitId), hasCaption, isLinkedToWritten(unitId))}
                 renderPills={(unitId) => {
                   const targets = linkedTargets.get(unitId);
                   return targets ? <LinkBadge unitId={unitId} targets={targets} currentDocId={newDocId} onJump={(_unitId, targetId) => showInNew(targetId)} /> : null;
@@ -3544,6 +3699,8 @@ export default function AssignPage() {
                 activePart={activePart}
                 sheets={oldView && paperModel && activePart !== "body" ? listPartSheets(oldView, paperModel, activePart) : null}
                 onPartChange={(part) => setManualPart({ key: activeKey ?? "", part })}
+                // 묶음째 고르는 것은 배정 때만 - 짝 고르기(칸 문장끼리도 짝을 맺는다)와 쓴 New 문서 다듬기(배정이 없다)는 칸 문장을 그대로 고른다
+                pickWholeBundle={!isSolo && !(pairSource && pairFrom && !isNewEdit)}
                 onUnitClick={handleOldClick}
                 onUnitContextMenu={(unitId, at, caret) => openCtxMenu(unitId, at, caret)}
                 onUnitDoubleClick={canEdit ? handleOldDoubleClick : undefined}
@@ -3595,6 +3752,7 @@ export default function AssignPage() {
               ) : (
                 <>
                   <NewPane
+                    bundleId={bundleId}
                     docOptions={newDocOptions}
                     docId={String(newDocId)}
                     onDocChange={(value) => setManualNewDoc({ key: toggleKey, docId: Number(value) })}
@@ -3644,7 +3802,7 @@ export default function AssignPage() {
         </aside>
       </div>
       {menu && menuItems.length > 0 && (
-        <LinkMenu key={menu.seq} anchor={menu.anchor} cover={readMenuCover(menu.anchor, rowMap.get(menu.rowKey)?.unitIds ?? [])} offset={menu.offset} lineUnits={rowMap.get(menu.rowKey)?.unitIds ?? []} items={menuItems} isUnsaved={menuItems.includes("cancel")} busy={busy} onAction={runMenu} onClose={() => setMenu(null)} />
+        <LinkMenu key={menu.seq} anchor={menu.anchor} cover={readMenuCover(menu.anchor, rowMap.get(menu.rowKey)?.unitIds ?? [])} offset={menu.offset} lineUnits={rowMap.get(menu.rowKey)?.unitIds ?? []} items={menuItems} isUnsaved={menuItems.includes("cancel")} confirmBlock={confirmBlockKey ? t(confirmBlockKey) : null} busy={busy} onAction={runMenu} onClose={() => setMenu(null)} />
       )}
       {ctxMenu && ctxGroups && (
         <AssignContextMenu

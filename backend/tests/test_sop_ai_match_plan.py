@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 from typing import Any, TypeVar
 from unittest.mock import ANY
 
@@ -15,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.settings import settings
 from app.sop.ai import embeddings
+from app.sop.ai.match_jobs import _plan_captions
 from app.sop.ai.constants import AI_CALL_ATTEMPTS
 from app.sop.ai.jobs import JobItem, enqueue_jobs
 from app.sop.constants import AI_PRIORITY_PLAN, AI_PRIORITY_PRE_REFINE, AI_PRIORITY_USER
@@ -647,6 +649,39 @@ def test_different_shape_table_suggests_restructured(client: TestClient, fake_ai
     assert {(row.status, row.change_type, row.suggestion_id) for row in cells} == {("ai_suggested", "new", suggestion.id)}
 
 
+def test_table_caption_links_beside_the_cells_and_stays_out_of_the_table_text(client: TestClient, fake_ai: FakeAi) -> None:
+    """캡션 새 문장은 칸 좌표 없이 표 아래에 있고 옛 표의 캡션에 이어진다 — 캡션 글이 달라도 칸이 같으면 표는 그대로다."""
+    bundle = make_match_bundle(
+        client, p("표 1 합성 조건", "Caption") + tbl(CELLS), p("표 1 합성 운전 조건", "Caption") + tbl(CELLS)
+    )
+    view = get_view(client, bundle.id, bundle.old_document_id)
+    table_unit, old_caption = find_kind(view, "table")["id"], find_kind(view, "caption")["id"]
+
+    plan(client, bundle.id)
+
+    suggestion = read_suggestion("table")
+    (table,) = read_kind("table")
+    (caption,) = [row for row in read_rows(TargetSentence) if row.parent_target_id == table.id and row.cell_row is None]
+    assert table.change_type == "as_is"
+    assert {(table.id, table_unit), (caption.id, old_caption)} <= read_links()
+    assert (caption.status, caption.change_type, caption.suggestion_id) == ("ai_suggested", "rewritten", suggestion.id)
+    assert caption.id in suggestion.content["target_ids"]
+
+
+def test_captions_link_per_language_and_a_new_caption_without_an_old_one_is_new() -> None:
+    """한/영 캡션 둘은 언어마다 잇고(문서 순서가 달라도), 옛 쪽에 남은 같은 언어 캡션이 없는 새 캡션은 신규다."""
+    old_ko = SimpleNamespace(id=1, lang="ko", text="표 1 합성 조건")
+    old_en = SimpleNamespace(id=2, lang="en", text="Table 1 Synthetic conditions")
+    new_en = SimpleNamespace(id=10, lang="en", confirmed_text="Table 1 Synthetic conditions")
+    new_ko = SimpleNamespace(id=11, lang="ko", confirmed_text="표 1 합성 운전 조건")
+    new_ko_extra = SimpleNamespace(id=12, lang="ko", confirmed_text="표 1 합성 조건(계속)")
+
+    writes, links = _plan_captions([old_ko, old_en], [new_en, new_ko, new_ko_extra])
+
+    assert sorted(links) == [(10, 2), (11, 1)]
+    assert [(write.target.id, write.change_type) for write in writes] == [(10, "as_is"), (11, "rewritten"), (12, "new")]
+
+
 def test_same_grid_with_an_old_cell_left_over_is_not_as_is(client: TestClient, fake_ai: FakeAi) -> None:
     """옛 칸 문장이 남으면 그대로로 확정할 수 없다(table_cells_missing) — 격자가 같아도 표 구성 변경이다."""
     two_sentences = [CELLS[0], [f"{CELLS[1][0]}. {EXTRA_CELL}", CELLS[1][1]]]
@@ -702,16 +737,42 @@ def test_figures_pair_as_is_without_llm(client: TestClient, fake_ai: FakeAi) -> 
 
     suggestion = read_suggestion("figure")
     (figure,) = read_kind("figure")
-    assert read_links() == {(figure.id, unit)}
+    (caption,) = [row for row in read_rows(TargetSentence) if row.parent_target_id == figure.id]
+    old_caption = find_unit(get_view(client, bundle.id, bundle.old_document_id), CAPTION)["id"]
+    # 캡션 새 문장은 그림 아래 자식이고 옛 그림의 캡션 단위에 함께 이어진다
+    assert read_links() == {(figure.id, unit), (caption.id, old_caption)}
     assert (figure.status, figure.change_type, figure.suggestion_id) == ("ai_suggested", "as_is", suggestion.id)
+    assert (caption.status, caption.change_type, caption.suggestion_id) == ("ai_suggested", "as_is", suggestion.id)
     assert figure.confirmed_text == ""
     decision = read_decision(unit)
     assert (decision.status, decision.disposition) == ("ai_suggested", "assigned")
     assert suggestion.content == {
-        "unit_ids": [unit], "target_ids": [figure.id], "shape": "figure", "change_type": "as_is", "reason": "",
-        "rule_ids": [], "retrieval": "no_index", "provisional": False,
+        "unit_ids": [unit], "target_ids": [figure.id, caption.id], "shape": "figure", "change_type": "as_is",
+        "reason": "", "rule_ids": [], "retrieval": "no_index", "provisional": False,
     }
     assert fake_ai.requests == [] and read_jobs() == []
+
+
+def test_confirming_a_figure_pair_with_its_caption_is_adopted_as_is(client: TestClient, fake_ai: FakeAi) -> None:
+    """그림 제안은 그림 새 문장의 출처로 채택을 본다 — 제안대로 캡션까지 이어 확정하면 그대로다."""
+    bundle = make_match_bundle(client, make_figure(CAPTION), make_figure(CAPTION), media=MEDIA)
+    view = get_view(client, bundle.id, bundle.old_document_id)
+    unit, old_caption = find_kind(view, "figure")["id"], find_unit(view, CAPTION)["id"]
+    plan(client, bundle.id)
+    (figure,) = read_kind("figure")
+    (caption,) = [row for row in read_rows(TargetSentence) if row.parent_target_id == figure.id]
+
+    response = save_group(client, bundle.id, {
+        "action": "confirm",
+        "units": [{"unit_id": unit, "revision": read_decision(unit).revision, "disposition": "assigned"}],
+        "targets": [
+            {"key": "f", "id": figure.id, "revision": figure.revision, "kind": "figure", "source_unit_ids": [unit]},
+            {"key": "c", "id": caption.id, "revision": caption.revision, "source_unit_ids": [old_caption]},
+        ],
+    })
+
+    assert response.status_code == 200, response.text
+    assert read_suggestion("figure").adoption == "as_is"
 
 
 def test_figures_with_other_captions_do_not_pair(client: TestClient, fake_ai: FakeAi) -> None:
@@ -720,7 +781,11 @@ def test_figures_with_other_captions_do_not_pair(client: TestClient, fake_ai: Fa
     plan(client, bundle.id)
 
     assert read_links() == set()
-    assert read_suggestion("new").content["target_ids"] == [read_kind("figure")[0].id]
+    # 새 문서의 캡션 새 문장은 그림 아래 자식이라 그림과 한 신규 제안이다
+    (figure,) = read_kind("figure")
+    (caption,) = [row for row in read_rows(TargetSentence) if row.parent_target_id == figure.id]
+    new_groups = [row.content["target_ids"] for row in read_rows(AiSuggestion) if row.content["shape"] == "new"]
+    assert new_groups == [[figure.id, caption.id]]
 
 
 # --- 점수 ---
