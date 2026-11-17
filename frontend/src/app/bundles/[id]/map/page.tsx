@@ -107,7 +107,7 @@ export default function MapPage() {
   let main: ReactNode;
   if (!data || !mapView) {
     main = loaded.error !== null ? <LoadError error={loaded.error} onRetry={loaded.reload} testId="map" /> : <MapSkeleton />;
-  } else if (scope === "linked" && self?.document_count === 0) {
+  } else if (scope === "linked" && self?.document_count === 0 && mapView.edges.length === 0) {
     main = (
       <EmptyState
         icon={Files}

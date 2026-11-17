@@ -8226,6 +8226,14 @@ await runStep("map: a non-member sees numbers only, on screen and in the respons
   check("the response carries no other bundle's title and no sentence", leaked.length === 0, leaked.join(","));
   await openMapList(page);
   const map = JSON.parse(body);
+  // 남의 Bundle의 확인 안 된 줄(REF?)은 오지 않는다 - 응답과 화면 둘 다. 데모 6번은 prod.member 혼자라 1~5번이 모두 summary다
+  const summaryIds = new Set(map.bundles.filter((bundle) => bundle.relation === "summary").map((bundle) => bundle.id));
+  const bundleOfNode = new Map(map.nodes.map((node) => [node.id, node.bundle_id]));
+  check("the seed gives this viewer bundles they are not a member of", summaryIds.size > 0, String(summaryIds.size));
+  const hiddenProposed = map.edges.filter((edge) => edge.state === "proposed" && summaryIds.has(bundleOfNode.get(edge.source)));
+  check("no unconfirmed line comes from a bundle the viewer is not a member of", hiddenProposed.length === 0, JSON.stringify(hiddenProposed.slice(0, 2)));
+  const confirmedFromOthers = map.edges.filter((edge) => edge.state === "confirmed" && summaryIds.has(bundleOfNode.get(edge.source)));
+  check("confirmed lines from those bundles do come", confirmedFromOthers.length > 0, String(confirmedFromOthers.length));
   const old1 = findNodeIds(map, "OLD-1").filter((id) => map.nodes.find((node) => node.id === id).bundle_id !== docBundleId);
   const row = page.locator(old1.map((id) => `[data-testid^="map-row-"][data-target="${id}"]`).join(", ")).first();
   await row.click();
