@@ -35,6 +35,7 @@ from tests.sop_helpers import (
     set_members,
     upload,
 )
+from tests.test_sop_outputs import DELETE_REASON, REF_TABLE_3, TABLE_3, _bulk, _bundle_unit, _setup_old_7
 from tests.test_sop_progress import _expected_rows
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
@@ -854,3 +855,21 @@ def test_creating_a_bundle_skips_the_readiness_computation(client: TestClient) -
     # 스냅숏만 읽는 표 — target_sentences는 진행 숫자(한 언어 글 세기)도 하위 질의로 보므로 기준에서 뺀다
     snapshot_tables = ("FROM source_blocks", "FROM target_docs")
     assert not [statement for statement in statements if any(table in statement for table in snapshot_tables)]
+
+
+def test_review_notices_carry_caption_ref_warnings(client: TestClient) -> None:
+    """참조 문장은 남았는데 표 3을 지웠다 — 막지 않는 알림 하나, 글자 없는 스냅숏도 같은 판정."""
+    fx = _setup_old_7(client)
+    _bulk(client, fx.bundle_id, "delete", [_bundle_unit(fx, TABLE_3)], DELETE_REASON)
+    ref = find_unit(fx.view, REF_TABLE_3)
+    assign_as_is(client, fx.bundle_id, ref, fx.sop_id, slot_key="general_requirements")
+
+    readiness = _get_readiness(client, fx.bundle_id)
+    full, _ = run_in_session(partial(_load_snapshot, bundle_id=fx.bundle_id, include_text=True))
+    bare, bare_sql = run_in_session(partial(_load_snapshot, bundle_id=fx.bundle_id, include_text=False))
+
+    assert {"code": "caption_ref_broken", "count": 1, "unit_ids": [ref["id"]]} in readiness["notices"]
+    assert not any(str(blocker["code"]).startswith("caption_ref") for blocker in readiness["blockers"])
+    options = {"semantic_checks": ALL_CHECKED, "unacked_missing_text": 0, "reviewer_count": 1}
+    assert evaluate_readiness(bare, **options) == evaluate_readiness(full, **options)
+    assert bare_sql.count("FROM caption_refs") == 1
