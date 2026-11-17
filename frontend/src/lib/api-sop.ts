@@ -1335,3 +1335,50 @@ export function requestClassify(bundleId: number, unitIds: number[]): Promise<{ 
 export function getFigureImage(bundleId: number, docId: number, blockId: number): Promise<Blob> {
   return apiFetchBlob(`/bundles/${bundleId}/documents/${docId}/figures/${blockId}`);
 }
+
+// --- 참조 지도 (GET /bundles/{id}/map, 서버 app/sop/ref_map.py의 MapOut) ---
+
+export type MapScope = "linked" | "all";
+export type MapRelation = "self" | "member" | "summary";
+export interface MapBundle {
+  id: number;
+  code: string;
+  /** summary면 빈 글 - 구성원이 아닌 Bundle의 제목은 응답에 없다 */
+  title: string;
+  status: BundleStatus;
+  relation: MapRelation;
+  document_count: number;
+}
+export interface MapBecomes {
+  /** 임시 번호면 빈 글 */
+  code: string;
+  title: string;
+  doc_type: "sop" | "wi";
+}
+export interface MapNode {
+  id: string;
+  kind: "old" | "target" | "num";
+  bundle_id: number | null;
+  number: string;
+  title: string;
+  doc_type: "sop" | "wi" | null;
+  becomes: MapBecomes[];
+}
+export interface MapEdge {
+  source: string;
+  target: string;
+  kind: "ref" | "moved";
+  state: "confirmed" | "proposed";
+  lines: number;
+}
+export interface RefMap {
+  scope: MapScope;
+  truncated: boolean;
+  bundles: MapBundle[];
+  nodes: MapNode[];
+  edges: MapEdge[];
+}
+
+export function getRefMap(bundleId: number, scope: MapScope): Promise<RefMap> {
+  return apiFetch<RefMap>(`/bundles/${bundleId}/map?scope=${scope}`);
+}
