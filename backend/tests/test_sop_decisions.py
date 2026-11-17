@@ -1259,7 +1259,8 @@ def test_units_list_filters_and_pages(client: TestClient) -> None:
     assert (row["unit_id"], row["document_id"], row["display_id"], row["text"]) == (
         unit["id"], fx.doc["id"], unit["display_id"], STORAGE,
     )
-    assert (row["decision"]["disposition"], len(row["target_ids"])) == ("assigned", 1)
+    assert (row["decision"]["disposition"], len(row["target_ids"]), row["target_doc_ids"]) == ("assigned", 1, [fx.sop_id])
+    assert all(r["target_doc_ids"] == [] for r in everything["items"] if r["unit_id"] != unit["id"])
     assert [r["unit_id"] for r in in_sop["items"]] == [unit["id"]]
     assert english["total"] == len(english["items"]) > 0 and {r["lang"] for r in english["items"]} == {"en"}
     assert page["total"] == everything["total"]

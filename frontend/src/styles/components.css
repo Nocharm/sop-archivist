@@ -1867,6 +1867,38 @@
   .assign-confirm { width: 100%; height: 40px; font-size: 14px; }
   .assign-alt { height: 30px; min-width: 0; gap: 4px; padding: 0 6px; font-size: var(--fs-cap); font-weight: 400; width: 100%; }
   .assign-alt > :not(svg, kbd) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* Old 문서 대시보드 - 문서 고르기 옆 단추에서 뜨는 상자(1.2.0 피드백 6번). 색은 상태 칩과 같은 값 */
+  .doc-dash {
+    position: fixed;
+    z-index: 55;
+    width: min(340px, calc(100vw - 16px));
+    padding: 14px 16px;
+    background: var(--raised);
+    color: var(--ink);
+    border: 1px solid var(--line-2);
+    border-radius: var(--r-3);
+    box-shadow: var(--shadow-2);
+    font-size: var(--fs-ui);
+    line-height: var(--lh-ui);
+    animation: menu-in var(--dur-base) var(--ease-enter);
+  }
+  .doc-dash-title { margin: 0; font-weight: 600; }
+  .doc-dash-sub { overflow: hidden; color: var(--ink-3); font-size: var(--fs-cap); text-overflow: ellipsis; white-space: nowrap; }
+  .doc-dash-big { display: flex; align-items: baseline; gap: 6px; margin-top: 10px; }
+  .doc-dash-big b { font-size: 22px; font-variant-numeric: tabular-nums; }
+  .doc-dash-bar { display: flex; height: 8px; margin: 6px 0 8px; overflow: hidden; border-radius: 2px; background: var(--sunken); }
+  .doc-dash-legend { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 12px; color: var(--ink-2); font-size: var(--fs-cap); font-variant-numeric: tabular-nums; }
+  .doc-dash-legend i { display: inline-block; width: 8px; height: 8px; margin-right: 5px; border-radius: 2px; }
+  .doc-dash-sec { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .doc-dash-k { margin-bottom: 4px; color: var(--ink-3); font-size: var(--fs-micro); line-height: var(--lh-micro); }
+  .doc-dash-kv { display: flex; flex-wrap: wrap; gap: 4px 14px; font-variant-numeric: tabular-nums; }
+  .doc-dash-kv b { margin-left: 4px; font-weight: 600; }
+  .doc-dash-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .doc-dash-chip { padding: 1px 6px; border: 1px solid var(--line); border-radius: var(--r-1); font-size: var(--fs-cap); font-variant-numeric: tabular-nums; }
+  .doc-dash-chip:hover { background: var(--hover); }
+  .doc-dash-dl { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 12px; }
+  .doc-dash-dl small { margin-bottom: 6px; color: var(--ink-3); font-size: var(--fs-cap); }
+  .doc-dash-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
   /* 위쪽 줄의 확인할 것 - 아이콘 + 수, 올리거나 포커스하면 이름(data-words)이 옆으로 펼쳐진다. 이름은 ::after라 글자 수(innerText)에 들지 않는다 */
   .pending-count { height: 28px; cursor: pointer; white-space: nowrap; }
   .pending-count::after { content: attr(data-words); display: inline-block; max-width: 0; margin-left: -4px; overflow: hidden; vertical-align: bottom; opacity: 0; transition: max-width var(--dur-base) var(--ease-move), opacity var(--dur-base); }

@@ -47,6 +47,7 @@ from app.sop.ai.match_jobs import PLAN_ORIGIN_UPLOAD, enqueue_auto_plan
 from app.sop.ai.split import load_open_split_suggestion_ids
 from app.sop.filename import parse_file_name
 from app.sop.errors import check_revision, raise_rule
+from app.sop.excel_export import build_export_file_name
 from app.sop.events import record_event
 from app.sop.ingest import get_max_file_bytes, ingest_upload
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
@@ -65,6 +66,7 @@ from app.sop.models import (
     UnitPairMember,
     UnitRef,
 )
+from app.sop.paragraph_excel import build_paragraph_rows, build_paragraph_workbook, load_unit_lines, make_sheet_name
 from app.sop.part_groups import build_part_groups, get_part_group_key
 from app.sop.pairs import (
     PairIn,
@@ -93,6 +95,7 @@ _FILE_MEDIA_TYPES = {
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "pdf": "application/pdf",
 }
+_XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 # 브라우저가 그대로 그리는 래스터 그림만 그 형식으로 낸다 — SVG 등은 스크립트를 담을 수 있어 내려받기 형식으로 낸다
 _IMAGE_MEDIA_TYPES = {
     "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif",
@@ -828,6 +831,47 @@ async def download_document_file(
         media_type=_FILE_MEDIA_TYPES[document.file_format],
         headers={"Content-Disposition": build_content_disposition(document.file_name)},
     )
+
+
+async def _respond_paragraphs(
+    session: AsyncSession, bundle_id: int, documents: Sequence[Document], include_tables: bool, file_title: str
+) -> Response:
+    """문서마다 시트 하나인 문단 Excel 응답 — 시트 이름은 문서 번호(없으면 제목)."""
+    taken: set[str] = set()
+    sheets = [
+        (make_sheet_name(document.doc_code or document.title, taken),
+         build_paragraph_rows(await load_unit_lines(session, document), include_tables))
+        for document in documents
+    ]
+    content = await asyncio.to_thread(build_paragraph_workbook, sheets)
+    headers = {"Content-Disposition": build_content_disposition(build_export_file_name(bundle_id, file_title, now()))}
+    return Response(content=content, media_type=_XLSX_MEDIA_TYPE, headers=headers)
+
+
+@router.get("/{bundle_id}/documents/{doc_id}/paragraphs.xlsx")
+async def download_document_paragraphs(
+    doc_id: IdPath,
+    tables: bool = Query(True),
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """문서 하나의 문단 Excel — 쪼갠 단위 한 줄씩 한 열(Assign 문서 대시보드). tables=false면 표 칸 문장을 뺀다."""
+    document = await _get_document(session, ctx.bundle.id, doc_id)
+    title = f"{document.doc_code or document.title}_paragraphs"
+    return await _respond_paragraphs(session, ctx.bundle.id, [document], tables, title)
+
+
+@router.get("/{bundle_id}/old-paragraphs.xlsx")
+async def download_old_paragraphs(
+    tables: bool = Query(True),
+    ctx: BundleContext = Depends(_require_member),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Bundle의 Old 문서 모두의 문단 Excel — 올린 순서대로 문서마다 시트 하나."""
+    documents = (await session.scalars(
+        select(Document).where(Document.bundle_id == ctx.bundle.id, Document.side == "old").order_by(Document.id)
+    )).all()
+    return await _respond_paragraphs(session, ctx.bundle.id, documents, tables, "Old_paragraphs")
 
 
 @router.get("/{bundle_id}/documents/{doc_id}/figures/{block_id}")

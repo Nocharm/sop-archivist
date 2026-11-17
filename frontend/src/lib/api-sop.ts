@@ -784,6 +784,8 @@ export interface UnitRow {
   status: CoverStatus;
   decision: Decision;
   target_ids: number[];
+  /** 그 새 문장들이 있는 New 문서(target_docs) - Assign 문서 대시보드가 받는 New 문서를 센다 */
+  target_doc_ids: number[];
   /** 한/영 짝(제안·확정 모두) - 문서 보기의 units[].pair_id와 같은 뜻, 짝이 없으면 null */
   pair_id: number | null;
   /** 표·그림 단위의 새 문장 아래 캡션 새 문장이 있다 - 써 넣은 캡션(캡션 단위 없음)도 센다 */
@@ -1347,6 +1349,12 @@ export function getExportPreview(bundleId: number): Promise<WorkbookPreview> {
 /** 묶음당 파일 하나 - 판(lang)이 없다. 저장 이름은 서버가 짓는다(Content-Disposition) */
 export function downloadExport(bundleId: number): Promise<{ blob: Blob; fileName: string | null }> {
   return apiFetchBlobWithName(`/bundles/${bundleId}/export.xlsx`);
+}
+
+/** 문단 Excel - 쪼갠 단위 한 줄씩 한 열(docId가 null이면 Old 문서 모두, 문서마다 시트). tables=false면 표를 뺀다 */
+export function downloadParagraphs(bundleId: number, docId: number | null, tables: boolean): Promise<{ blob: Blob; fileName: string | null }> {
+  const path = docId === null ? `/bundles/${bundleId}/old-paragraphs.xlsx` : `/bundles/${bundleId}/documents/${docId}/paragraphs.xlsx`;
+  return apiFetchBlobWithName(`${path}?tables=${tables}`);
 }
 
 /** 순서 바꾸기 요청 한 줄 - 뺀 값은 그대로 둔다. 깊이·번호 표시는 그 줄에만 붙는다(짝 상대·번역이 따라 바뀌지 않는다) */

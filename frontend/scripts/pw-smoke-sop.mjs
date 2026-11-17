@@ -2346,6 +2346,28 @@ await runStep("assign: a reference line asks for its number before it can be dec
   check("Not a reference removes the card and the count", isCountGone);
 });
 
+await runStep("assign: the document dashboard counts the Old document and downloads its paragraphs", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-dash");
+  await page.locator('[data-testid="assign-dash"]').hover();
+  await wait(page, "assign-dash-panel");
+  const [confirmed, total] = ((await getText(page, "assign-dash-confirmed")).match(/\d+/g) ?? []).map(Number);
+  const statusSum = (await page.locator('[data-testid^="assign-dash-status-"]').allInnerTexts()).reduce((sum, text) => sum + Number(text.match(/\d+$/)?.[0] ?? NaN), 0);
+  check("dashboard counts the document's rows by status", total > 0 && statusSum === total && confirmed <= total, `${confirmed}/${total} sum ${statusSum}`);
+  // 상자 안으로 옮겨도 닫히지 않는다
+  await page.locator('[data-testid="assign-dash-download-doc"]').hover();
+  await page.waitForTimeout(400);
+  check("dashboard stays open while the pointer is inside", await page.locator('[data-testid="assign-dash-panel"]').isVisible());
+  await page.locator('[data-testid="assign-dash-download-doc"]').click();
+  await wait(page, "assign-dash-pick-doc");
+  await takeShot("sop-assign-dashboard.png");
+  const [download] = await Promise.all([page.waitForEvent("download", { timeout: T }), page.locator('[data-testid="assign-dash-no-tables-doc"]').click()]);
+  check("paragraph Excel is named after the document", /_paragraphs_\d{8}-\d{4}\.xlsx$/.test(download.suggestedFilename()), download.suggestedFilename());
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="assign-dash-panel"]').waitFor({ state: "detached", timeout: T });
+  check("Esc closes the dashboard", (await page.locator('[data-testid="assign-dash-panel"]').count()) === 0);
+});
+
 await runStep("assign: move picks its target doc from the dropdown", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
   await wait(page, "assign-bar");
