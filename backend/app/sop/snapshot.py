@@ -182,7 +182,7 @@ class BundleSnapshot:
     target_docs: dict[int, TargetDocInfo]
 
 
-def _select_latest_extractions(*conditions: ColumnElement[bool]) -> Select[Any]:
+def select_latest_extractions(*conditions: ColumnElement[bool]) -> Select[Any]:
     """문서마다 가장 새 추출 id — 다시 추출하면 이전 추출은 읽기 전용으로 남으므로 결과물은 최신 추출만 본다(설계 §6.3).
 
     바깥 질의도 Document·Extraction을 조인하므로 자동 상관(correlate)을 끈다 — 켜 두면 문서 행마다의 하위 질의가 된다.
@@ -433,7 +433,7 @@ def _select_old_units(bundle_ids: Collection[int], *columns: Any) -> Select[Any]
         .outerjoin(UnitPairMember, UnitPairMember.unit_id == Unit.id)
         .where(
             in_bundles, Document.side == "old", Unit.status == UNIT_ACTIVE,
-            Unit.extraction_id.in_(_select_latest_extractions(in_bundles)),
+            Unit.extraction_id.in_(select_latest_extractions(in_bundles)),
         )
     )
 
@@ -506,7 +506,7 @@ async def count_unacked_missing_text(session: AsyncSession, bundle_id: int) -> i
         select(func.count())
         .select_from(ExtractionWarning)
         .where(
-            ExtractionWarning.extraction_id.in_(_select_latest_extractions(Document.bundle_id == bundle_id)),
+            ExtractionWarning.extraction_id.in_(select_latest_extractions(Document.bundle_id == bundle_id)),
             ExtractionWarning.needs_ack.is_(True),
             ExtractionWarning.acked_at.is_(None),
         )

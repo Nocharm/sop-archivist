@@ -1,8 +1,10 @@
-"""로컬 데모 시드 — 합성 SOP 묶음 네 개를 서로 다른 단계로 앱 API에 만든다. 로컬 개발 전용, 운영 실행 금지.
+"""로컬 데모 시드 — 합성 SOP 묶음 네 개를 서로 다른 단계로, 그 뒤에 참조 지도용 묶음 둘을 앱 API에 만든다. 로컬 개발 전용, 운영 실행 금지.
 
 단계: 1 쪼개기 직후(업로드·언어 배치·편집까지), 2 분류 절반(입구 1 답의 절반 저장), 3 검토 대기(전부 저장 후 검토 요청),
 4 AI 제안(가짜 AI의 분류·입구 2 짝 제안까지, 확정하지 않는다 — 합성 응답이고 실제 모델이 아니다).
 작성자 qa.member, 검토자 qa.lead. 앱 API를 TestClient로 그대로 불러(X-Dev-User) 화면이 쓰는 경로와 로직을 두 벌 두지 않는다.
+지도용: 5 UV 분광광도계(qa.member 작성자·qa.lead 검토자 — 작성자에게 구성원 Bundle), 6 문서 관리(끝에 prod.member 혼자 —
+작성자에게 남의 Bundle). 단계 Bundle 넷의 OLD-1이 5번 문서 번호를, 단계 2·3의 이동 줄이 6번 New 문서를 가리키고 5·6번이 OLD-1~3을 가리킨다.
 이미 같은 제목 묶음이 있으면 그 묶음은 건너뛰어 여러 번 돌려도 같은 결과다. 끝에 묶음별 상태·진행 숫자만 찍고 원문 글자는 찍지 않는다.
 
 개발 전용이다 — 합성 생성기가 개발 의존성 python-docx와 테스트 팩토리(tests.pdf_factory)를 쓰고, 합성 파일은 임시 디렉터리에
@@ -18,7 +20,7 @@
 import asyncio
 import sys
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,9 +32,21 @@ from app.settings import settings
 from app.sop.ai.runner import run_jobs_until_idle
 from scripts.reset_db import count_hr_rows, should_refuse_reset
 from scripts.sop_demo_driver import SyntheticDriver
-from scripts.synthetic_sop import SyntheticBundle, build_synthetic_bundle
+from scripts.synthetic_sop import MOVE_TARGET_CODE, SyntheticBundle, build_synthetic_bundle
+from tests.docx_factory import build_docx, p
 from tests.fake_ai import SyntheticAnswers, fake_ai_session
-from tests.sop_helpers import AUTHOR
+from tests.sop_helpers import (
+    AUTHOR,
+    OUTSIDER,
+    assign_as_is,
+    create_bundle,
+    find_unit,
+    get_bundle,
+    get_view,
+    put_tobe,
+    set_members,
+    upload,
+)
 
 PROGRESS_KEYS = ("total", "confirmed", "ai_suggested", "on_hold", "unassigned", "single_language")  # 출력하는 진행 숫자
 
@@ -99,10 +113,128 @@ def drive_stage(client: TestClient, synthetic: SyntheticBundle, stage: DemoStage
         raise
 
 
-def _list_bundles(client: TestClient) -> list[dict]:
-    response = client.get("/api/bundles", headers=AUTHOR)
+def _list_bundles(client: TestClient, headers: dict[str, str] = AUTHOR) -> list[dict]:
+    response = client.get("/api/bundles", headers=headers)
     assert response.status_code == 200, response.text
     return response.json()
+
+
+# --- 참조 지도용 Bundle(5·6번) ---
+
+MAP_UV_TITLE = "SYNTHETIC 5 UV 분광광도계"
+MAP_DOC_TITLE = "SYNTHETIC 6 문서 관리"
+# 5번 Old 문서(SOP-ABC-1016)의 줄 — 단계 Bundle의 문서 번호로 시작하는 참조 줄 둘(OLD-1은 그대로 두어 REF?, OLD-2는 확인)과 보낼 줄 둘
+UV_REF_PROPOSED = "OLD-1 Operation of the QC centrifuge"
+UV_REF_CONFIRMED = "OLD-2 Rotor cleaning"
+UV_TO_SOP = "Warm up the lamp for thirty minutes before reading."
+UV_TO_WI = "Check the lamp hours on the display."
+# 6번 Old 문서(SOP-ABC-1020)의 줄 — OLD-1은 확인, OLD-3은 그대로
+DOC_REF_CONFIRMED = "OLD-1 Operation of the QC centrifuge"
+DOC_REF_PROPOSED = "OLD-3 Synthetic separate layout"
+DOC_TO_SOP = "Keep the calibration certificate with the record."
+
+
+def build_tobe_doc(code: str, title: str, doc_type: str = "sop", parent_code: str | None = None) -> dict:
+    return {"code": code, "title": title, "doc_type": doc_type, "parent_code": parent_code}
+
+
+def put_tobe_codes(
+    client: TestClient, bundle_id: int, docs: list[dict], wi_steps: Iterable[dict] = ()
+) -> dict[str, int]:
+    """To-Be 목록을 통째로 쓰고 코드 → New 문서 id를 돌려준다."""
+    response = put_tobe(client, bundle_id, docs, wi_steps=wi_steps)
+    assert response.status_code == 200, response.text
+    return {doc["code"]: doc["id"] for doc in response.json()["docs"]}
+
+
+def upload_old_doc(client: TestClient, bundle_id: int, file_name: str, lines: Iterable[str]) -> dict:
+    """줄마다 문단 하나인 합성 Old 문서를 올리고 문서 응답을 돌려준다 — 읽기까지 끝나야 줄을 다룰 수 있다."""
+    response = upload(client, bundle_id, build_docx("".join(p(line) for line in lines)), file_name)
+    assert response.status_code == 201, response.text
+    doc = response.json()
+    assert doc["status"] == "ready", doc["status"]
+    return doc
+
+
+def find_line(client: TestClient, bundle_id: int, doc_id: int, text: str) -> dict:
+    return find_unit(get_view(client, bundle_id, doc_id), text)
+
+
+def confirm_ref(client: TestClient, bundle_id: int, doc_id: int, text: str, number: str) -> None:
+    """글이 text인 줄을 번호 number의 참조 줄로 확인한다 — Assign에서 사람이 번호를 고른 것과 같은 편집."""
+    view = get_view(client, bundle_id, doc_id)
+    op = {"type": "set_ref", "unit_id": find_unit(view, text)["id"], "number": number}
+    body = {"revision": view["document"]["revision"], "confirm": False, "op": op}
+    response = client.post(f"/api/bundles/{bundle_id}/documents/{doc_id}/edits", json=body, headers=AUTHOR)
+    assert response.status_code == 200, response.text
+
+
+def delete_bundle(client: TestClient, bundle_id: int) -> None:
+    """만들다 만 Bundle을 지운다 — 제목만 남으면 다음 실행이 "이미 있다"며 건너뛴다."""
+    revision = get_bundle(client, bundle_id)["revision"]
+    response = client.delete(f"/api/bundles/{bundle_id}", params={"revision": revision}, headers=AUTHOR)
+    assert response.status_code == 204, response.text
+
+
+def _build_uv_bundle(client: TestClient, bundle_id: int) -> None:
+    response = set_members(client, bundle_id, [("qa.member", "author"), ("qa.lead", "reviewer")])
+    assert response.status_code == 200, response.text
+    tobe = put_tobe_codes(
+        client, bundle_id,
+        [build_tobe_doc("SOP-UV", "SYNTHETIC UV spectrophotometer"),
+         build_tobe_doc("WI-11", "SYNTHETIC UV lamp check", "wi", "SOP-UV")],
+        wi_steps=[{"code": "WI-11", "step_no": 1, "title": "Check the lamp"}],
+    )
+    lines = (UV_REF_PROPOSED, UV_REF_CONFIRMED, UV_TO_SOP, UV_TO_WI)
+    doc_id = upload_old_doc(client, bundle_id, "SYNTHETIC_SOP-ABC-1016_UV_spectrophotometer.docx", lines)["id"]
+    confirm_ref(client, bundle_id, doc_id, UV_REF_CONFIRMED, "OLD-2")
+    to_sop = find_line(client, bundle_id, doc_id, UV_TO_SOP)
+    assign_as_is(client, bundle_id, to_sop, tobe["SOP-UV"], slot_key="procedures.procedure")
+    to_wi = find_line(client, bundle_id, doc_id, UV_TO_WI)
+    assign_as_is(client, bundle_id, to_wi, tobe["WI-11"], wi_step=1, wi_part="instruction")
+
+
+def _build_doc_bundle(client: TestClient, bundle_id: int) -> None:
+    tobe = put_tobe_codes(client, bundle_id, [build_tobe_doc(MOVE_TARGET_CODE, "SYNTHETIC equipment calibration")])
+    lines = (DOC_REF_CONFIRMED, DOC_REF_PROPOSED, DOC_TO_SOP)
+    doc_id = upload_old_doc(client, bundle_id, "SYNTHETIC_SOP-ABC-1020_Document_control.docx", lines)["id"]
+    confirm_ref(client, bundle_id, doc_id, DOC_REF_CONFIRMED, "OLD-1")
+    to_sop = find_line(client, bundle_id, doc_id, DOC_TO_SOP)
+    assign_as_is(client, bundle_id, to_sop, tobe[MOVE_TARGET_CODE], slot_key="purpose")
+    # 마지막에 작성자를 뺀다 — qa.member에게 남의 Bundle(summary)이 된다
+    response = set_members(client, bundle_id, [("prod.member", "author")])
+    assert response.status_code == 200, response.text
+
+
+@dataclass(frozen=True)
+class MapBundle:
+    title: str
+    lister: dict[str, str]  # 이 Bundle이 목록에 보이는 사람 — 있는지 볼 때 쓴다(6번은 끝에 작성자가 빠진다)
+    build: Callable[[TestClient, int], None]  # 작성자가 만든 빈 Bundle을 채운다
+
+
+MAP_BUNDLES = (
+    MapBundle(MAP_UV_TITLE, AUTHOR, _build_uv_bundle),
+    MapBundle(MAP_DOC_TITLE, OUTSIDER, _build_doc_bundle),
+)
+
+
+def seed_map_bundles(client: TestClient) -> dict[str, str]:
+    """지도용 Bundle을 만들고 제목 → "created"|"skipped". 단계 Bundle 넷 뒤에 불러 id가 5·6이 되게 한다."""
+    outcomes: dict[str, str] = {}
+    for bundle in MAP_BUNDLES:
+        if any(row["title"] == bundle.title for row in _list_bundles(client, bundle.lister)):
+            outcomes[bundle.title] = "skipped"
+            continue
+        print(f"seeding  {bundle.title}", flush=True)
+        bundle_id = create_bundle(client, title=bundle.title, is_synthetic=True)["id"]
+        try:
+            bundle.build(client, bundle_id)
+        except Exception:
+            delete_bundle(client, bundle_id)
+            raise
+        outcomes[bundle.title] = "created"
+    return outcomes
 
 
 def _print_summary(client: TestClient, outcomes: dict[str, str]) -> None:
@@ -128,7 +260,10 @@ def _seed_demo() -> None:
                     print(f"seeding  {stage.title}", flush=True)
                     drive_stage(client, synthetic, stage)
                     outcomes[stage.title] = "created"
+        map_outcomes = seed_map_bundles(client)
         _print_summary(client, outcomes)
+        for title, outcome in map_outcomes.items():
+            print(f"{title}  {outcome}")
 
 
 async def main() -> int:

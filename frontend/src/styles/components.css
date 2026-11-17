@@ -1034,9 +1034,9 @@
 
 /* ---- 개요 개편(2026-11-09): 단계 레일 History·잠금, 다음 할 일 배지, 오른쪽 상자, 검토 조건 카드, 작업 기록 ---- */
 @layer components {
-  /* History는 레일 맨 아래(상단 탭에서는 끝) */
-  :root[data-shell="rail"] .stg[data-stage="history"] { margin-top: auto; }
-  :root:not([data-shell="rail"]) .stg[data-stage="history"] { margin-left: auto; }
+  /* 번호 없는 보는 화면 Map · History는 레일 아래(상단 탭에서는 끝) - 첫째인 Map이 둘을 민다 */
+  :root[data-shell="rail"] .stg[data-stage="map"] { margin-top: auto; }
+  :root:not([data-shell="rail"]) .stg[data-stage="map"] { margin-left: auto; }
   .stg[aria-disabled="true"] { cursor: not-allowed; opacity: 0.55; }
 
   /* 다음 할 일 아이콘 - 화면이 열릴 때 한 번 위로 올라오며 자리를 잡고 멈춘다(정지 상태가 완성된 그림) */

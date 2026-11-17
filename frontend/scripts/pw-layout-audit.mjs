@@ -14,9 +14,11 @@
 //
 // ids 지도 모양(seed가 만든 제목 접두로 Bundle 목록 API와 문서 목록 API를 훑어 만든다):
 //   {
-//     mid:   { 1..4: 데모 묶음 id }                 // "SYNTHETIC 1 …" ~ "SYNTHETIC 4 …"(쪼개기 직후·분류 절반·검토 대기·AI 제안)
+//     mid:   { 1..5: 데모 묶음 id }                 // "SYNTHETIC 1 …" ~ "SYNTHETIC 4 …"(쪼개기 직후·분류 절반·검토 대기·AI 제안) · 5 지도용 UV 분광광도계
+//                                                  // (데모 6 문서 관리는 prod.member 혼자라 qa.member 목록에 없다)
 //     w:     { 1..7: 극단 묶음 id }                 // W1 worst · W2 in-review · W3 returned · W4 done · W5 reopened · W6 ready · W7 empty
-//     light: number[]                              // 위 11개 말고 qa.member에게 보이는 나머지 36개(극단 제목 11 + "SYNTHETIC light NN" 25)
+//     m:     { 1..8: 지도용 묶음 id }               // "SYNTHETIC M1 map" ~ "M8" — qa.member가 구성원인 M1~M5만 값이 있다(M6~M8은 prod.member 혼자)
+//     light: number[]                              // 위 mid·w·m 말고 qa.member에게 보이는 나머지 36개(극단 제목 11 + "SYNTHETIC light NN" 25)
 //     docs:  { big, tables, longName, longNameEn, pdf, failed, captions }   // W1의 문서 id — 372 Unit 문서 · 14열 표+120행 표 문서 · 이름 246자 ko · 255자 en · 6쪽 PDF · 거절된 docx · 18열 표+600자 칸 표 캡션 문서
 //   }
 import { mkdirSync } from "node:fs";
@@ -1531,11 +1533,13 @@ async function loadIds() {
   };
   const bundles = await getJson("/api/bundles");
   const findByPrefix = (prefix) => bundles.find((b) => b.title.startsWith(prefix))?.id;
-  const ids = { mid: {}, w: {}, light: [], docs: {} };
-  for (let n = 1; n <= 4; n += 1) ids.mid[n] = findByPrefix(`SYNTHETIC ${n} `);
+  const ids = { mid: {}, w: {}, m: {}, light: [], docs: {} };
+  for (let n = 1; n <= 5; n += 1) ids.mid[n] = findByPrefix(`SYNTHETIC ${n} `);
   const wPrefixes = ["W1 worst", "W2 in-review", "W3 returned", "W4 done", "W5 reopened", "W6 ready", "W7 empty"];
   wPrefixes.forEach((name, i) => { ids.w[i + 1] = findByPrefix(`SYNTHETIC ${name}`); });
-  const known = new Set([...Object.values(ids.mid), ...Object.values(ids.w)]);
+  // 지도용 M1~M8 — qa.member가 구성원인 M1~M5만 목록에 있다(M6~M8은 undefined)
+  for (let n = 1; n <= 8; n += 1) ids.m[n] = findByPrefix(`SYNTHETIC M${n} map`);
+  const known = new Set([...Object.values(ids.mid), ...Object.values(ids.w), ...Object.values(ids.m)]);
   ids.light = bundles.filter((b) => !known.has(b.id)).map((b) => b.id).sort((a, b) => a - b);
   if (ids.w[1]) {
     const documents = await getJson(`/api/bundles/${ids.w[1]}/documents`);
@@ -1548,8 +1552,12 @@ async function loadIds() {
 
 function checkIds(ids) {
   const missing = DS === "mid"
-    ? [1, 2, 3, 4].filter((n) => !ids.mid[n]).map((n) => `mid ${n}`)
-    : [...[1, 2, 3, 4, 5, 6, 7].filter((n) => !ids.w[n]).map((n) => `w ${n}`), ...Object.entries(ids.docs).filter(([, v]) => !v).map(([k]) => `docs.${k}`)];
+    ? [1, 2, 3, 4, 5].filter((n) => !ids.mid[n]).map((n) => `mid ${n}`)
+    : [
+      ...[1, 2, 3, 4, 5, 6, 7].filter((n) => !ids.w[n]).map((n) => `w ${n}`),
+      ...(ids.m[1] ? [] : ["m 1"]),
+      ...Object.entries(ids.docs).filter(([, v]) => !v).map(([k]) => `docs.${k}`),
+    ];
   if (missing.length > 0) throw new Error(`seed data not found (${missing.join(", ")}) - run scripts.seed_sop_demo and scripts.seed_sop_worst on this DB first`);
 }
 

@@ -1,5 +1,6 @@
 """새 문서(To-Be) 목록 — 입력·출력 스키마, 읽기, 검사하며 저장하기(API와 Excel 가져오기가 공용), 올린 새 문서의 목록 줄."""
 
+import re
 from collections import Counter
 from collections.abc import Collection
 from typing import TYPE_CHECKING, Annotated, Literal
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
 from app.clock import now
+from app.equis.rules import normalize_number
 from app.sop.constants import SLOT_HEADING, SLOT_KEYS, TARGET_DOC_TYPES
 from app.sop.errors import raise_rule
 from app.sop.events import record_event
@@ -723,6 +725,14 @@ async def ensure_code_free(session: AsyncSession, bundle_id: int, code: str) -> 
 def temp_match_code(document_id: int) -> str:
     """번호 없는 새 문서의 목록 번호 — 번호를 지어내지 않고, 사람이 문서 번호를 고칠 때까지 쓰는 임시 번호."""
     return f"NEW-{document_id}"
+
+
+_TEMP_MATCH_CODE = re.compile(r"NEW-\d+")
+
+
+def is_temp_match_code(code: str) -> bool:
+    """앱이 붙인 임시 번호(NEW-<숫자>)인가 — 앞뒤 빈칸·대소문자를 가리지 않는다. 지어낸 번호라 조회하거나 남에게 보이지 않는다."""
+    return _TEMP_MATCH_CODE.fullmatch(normalize_number(code)) is not None
 
 
 async def add_match_doc(

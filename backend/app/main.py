@@ -23,6 +23,7 @@ from app.routers import sop_decisions as sop_decisions_router
 from app.routers import sop_documents as sop_documents_router
 from app.routers import sop_equis as sop_equis_router
 from app.routers import sop_guidelines as sop_guidelines_router
+from app.routers import sop_map as sop_map_router
 from app.routers import sop_outputs as sop_outputs_router
 from app.routers import sop_tobe as sop_tobe_router
 from app.settings import settings
@@ -77,6 +78,7 @@ app.include_router(sop_bundles_router.router)
 app.include_router(sop_tobe_router.router)
 app.include_router(sop_documents_router.router)
 app.include_router(sop_equis_router.router)
+app.include_router(sop_map_router.router)
 app.include_router(sop_decisions_router.router)
 app.include_router(sop_decisions_router.remarks_router)
 app.include_router(sop_outputs_router.router)

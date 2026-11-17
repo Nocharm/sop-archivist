@@ -1,5 +1,5 @@
 // SOP 화면 스모크(Playwright + 시스템 Chrome) - 묶음 목록, 개요, 단계 이동(레일·상단 탭), 배치 메뉴, 첫 페인트 전 설정.
-// 전제: backend/에서 reset_db → seed_sop_demo(합성 묶음 4개) 직후, backend 8777 + frontend 3777. 고친 값은 시나리오 안에서 되돌린다.
+// 전제: backend/에서 reset_db → seed_sop_demo(합성 묶음 4개 + 지도용 2개) 직후, backend 8777 + frontend 3777. 고친 값은 시나리오 안에서 되돌린다.
 // AI 나눔 확정 시나리오는 backend가 AI를 켜고 가짜 AI(FAKE_AI_SPLIT=1 node scripts/fake-ai-server.mjs)를 볼 때만 돈다 - 꺼져 있으면 건너뛴다.
 // PREPARE=1이면 "배정 화면 첫 진입 미리 분류" 시나리오 하나만 돈다(나머지는 건너뛴다). 전제: reset_db → seed_sop_demo 직후(시드는 AI_AUTO_PREPARE=false),
 // 가짜 AI(node scripts/fake-ai-server.mjs)를 보는 backend를 AI_ENABLED=true AI_AUTO_PREPARE=true로 띄운다. 이 backend에서는 작성자가 배정 화면에 들어갈 때마다
@@ -8077,6 +8077,203 @@ await runStep(PREPARE_STEP, {}, async ({ page, takeShot }) => {
   await page.waitForFunction(() => Number(document.querySelector('[data-testid="assign-filter-ai_suggested"] .schip-n')?.textContent ?? 0) > 0, null, { timeout: 30000 });
   check("AI suggested tab count is above zero", true, await page.locator('[data-testid="assign-filter-ai_suggested"] .schip-n').textContent());
   await takeShot("sop-assign-prepare-done.png");
+});
+
+// --- Map(참조 지도, 설계 2026-11-17) - 읽기만 하는 화면. 데모 Bundle 1~4가 같은 번호(OLD-1…6)를 지녀 한 번호의 선이 넷으로 퍼지므로
+// 수를 박지 않고 같은 사람으로 받은 GET …/map 응답과 화면을 견준다 ---
+
+async function findBundleId(page, title) {
+  await page.goto(`${BASE}/`);
+  const row = page.locator('[data-testid^="bundles-row-"]', { hasText: title });
+  await row.first().waitFor({ timeout: T });
+  return Number((await row.first().getAttribute("data-testid")).replace("bundles-row-", ""));
+}
+async function openMap(page, bundleId) {
+  await page.goto(`${BASE}/bundles/${bundleId}/map`);
+  await wait(page, "map-side-summary");
+}
+// Map · List 단추가 생긴 뒤(Task 7)에도 같은 단계가 List를 본다
+async function openMapList(page) {
+  const toggle = page.locator('[data-testid="map-view-list"]');
+  if ((await toggle.count()) > 0) await toggle.click();
+}
+async function readMapApi(page, bundleId, user, scope = "linked") {
+  const response = await page.request.get(`${BASE}/api/bundles/${bundleId}/map?scope=${scope}`, { headers: { "X-Dev-User": user } });
+  return response.json();
+}
+const mapRows = (page) => page.locator('[data-testid^="map-row-"]');
+const countMapRows = (page) => mapRows(page).count();
+// 줄 수가 n이 될 때까지 - 거르기·찾기는 늦춘 값(useDeferredValue)으로 그린다
+const waitMapRows = (page, n) => page.waitForFunction((count) => document.querySelectorAll('[data-testid^="map-row-"]').length === count, n, { timeout: T });
+const findNodeIds = (map, number) => map.nodes.filter((node) => node.number === number).map((node) => node.id);
+
+await runStep("map: the rail opens Map and the List shows this bundle's references", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}`);
+  await wait(page, "stage-nav-map");
+  const order = await page.locator('[data-testid="stage-nav"] .stg').evaluateAll((items) => items.map((item) => item.dataset.stage));
+  check("the rail lists Map right before History, History last", order.at(-2) === "map" && order.at(-1) === "history", order.join(","));
+  const boxes = await page.locator('[data-testid="stage-nav"] .stg').evaluateAll((items) => items.map((item) => item.getBoundingClientRect().top));
+  const mapBox = await getBox(page, "stage-nav-map");
+  const historyBox = await getBox(page, "stage-nav-history");
+  check("Map sits above History and History stays at the bottom", mapBox.y < historyBox.y && historyBox.y >= Math.max(...boxes) - 0.5, JSON.stringify({ map: mapBox.y, history: historyBox.y }));
+  await page.locator('[data-testid="stage-nav-map"]').click();
+  await page.waitForURL(/\/map$/, { timeout: T });
+  await openMapList(page);
+  await wait(page, "map-side-summary");
+  check("Map is the current step", (await page.locator('[data-testid="stage-nav-map"]').getAttribute("aria-current")) === "page");
+  const map = await readMapApi(page, halfBundleId, "qa.member");
+  await waitMapRows(page, map.edges.length);
+  check("the List has one row per edge of the response", (await countMapRows(page)) === map.edges.length, `${await countMapRows(page)} vs ${map.edges.length}`);
+  const selfOld1 = map.nodes.find((node) => node.number === "OLD-1" && node.bundle_id === halfBundleId).id;
+  const uvIds = findNodeIds(map, "SOP-ABC-1016");
+  const row = page.locator(`[data-testid^="map-row-"][data-source="${selfOld1}"]`).filter({ hasText: "SOP-ABC-1016" });
+  check("a row goes From OLD-1 To SOP-ABC-1016", (await row.count()) > 0 && uvIds.includes(await row.first().getAttribute("data-target")));
+  const selfId = map.bundles.find((bundle) => bundle.relation === "self").id;
+  const bundleOf = new Map(map.nodes.map((node) => [node.id, node.bundle_id]));
+  const citesLines = map.edges.filter((edge) => bundleOf.get(edge.source) === selfId).reduce((sum, edge) => sum + edge.lines, 0);
+  const summary = await getText(page, "map-side-summary");
+  check("the side panel sums the lines this bundle cites", summary.includes(`${citesLines} lines`), `${citesLines} | ${summary}`);
+  await takeShot("sop-map-list.png");
+});
+
+await runStep("map: filters, search and scope on the List", {}, async ({ page }) => {
+  await openMap(page, halfBundleId);
+  await openMapList(page);
+  const map = await readMapApi(page, halfBundleId, "qa.member");
+  await waitMapRows(page, map.edges.length);
+  const total = map.edges.length;
+  const labels = () => mapRows(page).evaluateAll((rows) => rows.map((row) => row.dataset.label));
+  await page.locator('[data-testid="map-filter-proposed"]').click();
+  await waitMapRows(page, map.edges.filter((edge) => edge.state === "proposed").length);
+  const proposed = await labels();
+  check("REF? only leaves proposed rows only", proposed.length > 0 && proposed.every((label) => label === "proposed"), proposed.join(","));
+  await page.locator('[data-testid="map-filter-proposed"]').click();
+  await waitMapRows(page, total);
+  check("turning it off brings every row back", (await countMapRows(page)) === total);
+  await page.locator('[data-testid="map-filter-moved"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="map-filter-moved"]')?.getAttribute("aria-pressed") === "false");
+  check("hiding Moved to leaves no moved row", (await labels()).every((label) => label !== "moved"));
+  await page.locator('[data-testid="map-filter-moved"]').click();
+  await waitMapRows(page, total);
+
+  await page.locator('[data-testid="map-search"]').fill("abc-1016");
+  await page.waitForFunction(() => Array.from(document.querySelectorAll('[data-testid^="map-row-"]')).every((row) => row.textContent.includes("SOP-ABC-1016")), null, { timeout: T });
+  check("search keeps only the rows with that number", (await countMapRows(page)) > 0 && (await countMapRows(page)) < total + 1);
+  await page.locator('[data-testid="map-search"]').press("Enter");
+  await wait(page, "map-side-number");
+  check("Enter selects the matching document", (await getText(page, "map-side-number")).trim() === "SOP-ABC-1016", await getText(page, "map-side-number"));
+  await page.locator('[data-testid="map-search"]').fill("zz-nothing");
+  await wait(page, "map-empty-filtered");
+  check("nothing matches and Search all Bundles is offered", await page.locator('[data-testid="map-search-all"]').isVisible());
+  await page.locator('[data-testid="map-empty-clear"]').click();
+  await waitMapRows(page, total);
+  check("Clear filters brings every row back and empties the search", (await page.locator('[data-testid="map-search"]').inputValue()) === "");
+
+  const allResponse = page.waitForResponse((response) => response.url().includes(`/api/bundles/${halfBundleId}/map?scope=all`), { timeout: T });
+  await page.locator('[data-testid="map-scope-all"]').click();
+  const all = await (await allResponse).json();
+  await waitMapRows(page, all.edges.length);
+  check("All Bundles asks the server and lists its edges", (await countMapRows(page)) === all.edges.length && all.scope === "all", `${await countMapRows(page)} vs ${all.edges.length}`);
+  check("All Bundles is pressed", (await page.locator('[data-testid="map-scope-all"]').getAttribute("aria-pressed")) === "true");
+
+  await page.locator(".map-toolbar .page-title").click();
+  await page.keyboard.press("/");
+  check("/ moves the focus to the search", await page.evaluate(() => document.activeElement?.getAttribute("data-testid") === "map-search"));
+});
+
+await runStep("map: selecting a document shows what it becomes; a member bundle opens in Assign", {}, async ({ page, takeShot }) => {
+  const uvId = await findBundleId(page, "UV 분광광도계");
+  await openMap(page, halfBundleId);
+  await openMapList(page);
+  const map = await readMapApi(page, halfBundleId, "qa.member");
+  const selfOld1 = map.nodes.find((node) => node.number === "OLD-1" && node.bundle_id === halfBundleId).id;
+  const uvDoc = map.nodes.find((node) => node.number === "SOP-ABC-1016" && node.bundle_id === uvId);
+  const uvBundle = map.bundles.find((bundle) => bundle.id === uvId);
+  const row = page.locator(`[data-testid^="map-row-"][data-source="${selfOld1}"][data-target="${uvDoc.id}"]`).first();
+  await row.click();
+  await wait(page, "map-side-node");
+  check("the owner reads Other Bundle · member", (await getText(page, "map-side-owner")).trim() === "Other Bundle · member", await getText(page, "map-side-owner"));
+  const bundleText = await getText(page, "map-side-bundle");
+  check("the Bundle line has the code and the title", bundleText.includes(uvBundle.code) && bundleText.includes("UV 분광광도계"), bundleText);
+  const becomes = await getText(page, "map-side-becomes");
+  check("Becomes lists SOP-UV and WI-11, and may still change", becomes.includes("SOP-UV") && becomes.includes("WI-11") && becomes.includes("May change until the Bundle is Review complete"), becomes);
+  const docId = uvDoc.id.replace("old:", "");
+  const href = await page.locator('[data-testid="map-side-open-assign"]').getAttribute("href");
+  check("Open in Assign points at that document in that bundle", href === `/bundles/${uvId}/assign?edit=${docId}`, href);
+  await takeShot("sop-map-side.png");
+  await page.keyboard.press("Escape");
+  await wait(page, "map-side-summary");
+  check("Esc clears the selection", (await page.locator('[data-testid="map-side-node"]').count()) === 0);
+  await row.click();
+  await wait(page, "map-side-node");
+  await page.locator('[data-testid="map-side-clear"]').click();
+  await wait(page, "map-side-summary");
+  check("Clear selection clears it", (await page.locator('[data-testid="map-side-node"]').count()) === 0);
+  await row.click();
+  await page.locator('[data-testid="map-side-open-assign"]').click();
+  await wait(page, "assign-bar");
+  await page.waitForURL((url) => url.pathname === `/bundles/${uvId}/assign` && !url.searchParams.has("edit"), { timeout: T });
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-old"] .pane-head')?.textContent?.includes("SOP-ABC-1016"), null, { timeout: T });
+  check("Assign opens that document and drops edit from the address", true);
+});
+
+await runStep("map: a non-member sees numbers only, on screen and in the response", { devUser: "prod.member" }, async ({ page }) => {
+  const docBundleId = await findBundleId(page, "문서 관리");
+  const responsePromise = page.waitForResponse((response) => response.url().includes(`/api/bundles/${docBundleId}/map`), { timeout: T });
+  await openMap(page, docBundleId);
+  const body = await (await responsePromise).text();
+  const leaked = ["쪼개기 직후", "분류 절반", "검토 대기", "Operation of UV", "Operation of the QC"].filter((text) => body.includes(text));
+  check("the response carries no other bundle's title and no sentence", leaked.length === 0, leaked.join(","));
+  await openMapList(page);
+  const map = JSON.parse(body);
+  // 남의 Bundle의 확인 안 된 줄(REF?)은 오지 않는다 - 응답과 화면 둘 다. 데모 6번은 prod.member 혼자라 1~5번이 모두 summary다
+  const summaryIds = new Set(map.bundles.filter((bundle) => bundle.relation === "summary").map((bundle) => bundle.id));
+  const bundleOfNode = new Map(map.nodes.map((node) => [node.id, node.bundle_id]));
+  check("the seed gives this viewer bundles they are not a member of", summaryIds.size > 0, String(summaryIds.size));
+  const hiddenProposed = map.edges.filter((edge) => edge.state === "proposed" && summaryIds.has(bundleOfNode.get(edge.source)));
+  check("no unconfirmed line comes from a bundle the viewer is not a member of", hiddenProposed.length === 0, JSON.stringify(hiddenProposed.slice(0, 2)));
+  const confirmedFromOthers = map.edges.filter((edge) => edge.state === "confirmed" && summaryIds.has(bundleOfNode.get(edge.source)));
+  check("confirmed lines from those bundles do come", confirmedFromOthers.length > 0, String(confirmedFromOthers.length));
+  const old1 = findNodeIds(map, "OLD-1").filter((id) => map.nodes.find((node) => node.id === id).bundle_id !== docBundleId);
+  const row = page.locator(old1.map((id) => `[data-testid^="map-row-"][data-target="${id}"]`).join(", ")).first();
+  await row.click();
+  await wait(page, "map-side-node");
+  check("the owner reads Other Bundle · summary only", (await getText(page, "map-side-owner")).trim() === "Other Bundle · summary only", await getText(page, "map-side-owner"));
+  const bundleText = (await getText(page, "map-side-bundle")).trim();
+  check("the Bundle line is the code alone", /^BND-\d+$/.test(bundleText) && !/[가-힣]/.test(bundleText), bundleText);
+  check("there is no way into that bundle", (await page.locator('[data-testid="map-side-open-assign"]').count()) === 0);
+  check("the panel says why", await page.locator('[data-testid="map-side-not-member"]').isVisible());
+});
+
+await runStep("map: a sysadmin who is not a member cannot open it, and losing access clears the screen", { devUser: "dev.admin", allowConsoleErrors: true }, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/map`);
+  await wait(page, "map-missing");
+  const denied = await page.request.get(`${BASE}/api/bundles/${halfBundleId}/map`, { headers: { "X-Dev-User": "dev.admin" } });
+  check("a sysadmin who is not a member gets 404", denied.status() === 404, String(denied.status()));
+  check("the screen says the bundle is not there", await page.locator('[data-testid="map-missing"]').isVisible());
+  // 같은 창에서 작성자로 바꿔 지도를 연 뒤, 구성원에서 빠진 것처럼 다음 읽기를 404로 돌려준다
+  await page.evaluate(() => window.localStorage.setItem("sopa.devUser", "qa.member"));
+  await openMap(page, halfBundleId);
+  await openMapList(page);
+  await wait(page, "map-row-0");
+  await page.route("**/api/bundles/*/map*", (route) => route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":{"code":"bundle_not_found"}}' }));
+  await page.locator('[data-testid="map-refresh"]').click();
+  await wait(page, "map-missing");
+  check("Read again after losing access clears the map", (await countMapRows(page)) === 0 && (await page.locator('[data-testid="map-side"]').count()) === 0);
+});
+
+await runStep("map: a reviewer on a bundle in review reads the same map", { devUser: "qa.lead" }, async ({ page }) => {
+  const reviewId = await findBundleId(page, "검토 대기");
+  await openMap(page, reviewId);
+  await openMapList(page);
+  const map = await readMapApi(page, reviewId, "qa.lead");
+  await waitMapRows(page, map.edges.length);
+  const controls = ["map-search", "map-scope-linked", "map-scope-all", "map-filter-proposed", "map-filter-moved", "map-refresh"];
+  const counts = await Promise.all(controls.map((id) => page.locator(`[data-testid="${id}"]`).count()));
+  check("the reviewer has the same toolbar", counts.every((count) => count === 1), counts.join(","));
+  check("the List shows the reviewer's edges", (await countMapRows(page)) === map.edges.length, `${await countMapRows(page)} vs ${map.edges.length}`);
+  const inputs = await page.locator('[data-testid="map"] input, [data-testid="map"] textarea, [data-testid="map"] select').evaluateAll((els) => els.map((el) => el.dataset.testid));
+  check("nothing to save: the only input is the search", inputs.length === 1 && inputs[0] === "map-search", inputs.join(","));
 });
 
 await browser.close();

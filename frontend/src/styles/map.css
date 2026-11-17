@@ -1,0 +1,51 @@
+/* 참조 지도(/bundles/[id]/map, components/map/) - 내 것은 강조 파랑, 남의 Bundle 것은 --peer-* 무채색. 색만으로 가르지 않고 소유 표시 글자를 함께 쓴다. 색은 토큰만 쓴다. */
+
+@layer components {
+  /* 틀: 도구 줄 | (본문 · 옆 칸). 쪽은 스크롤하지 않고 본문과 옆 칸이 따로 스크롤한다 */
+  .map-screen { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; min-height: 420px; background: var(--surface); }
+  .map-body { display: grid; grid-template-columns: minmax(0, 1fr) clamp(280px, 24vw, 420px); min-height: 0; }
+  .map-main { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; }
+  .map-scroll { min-height: 0; min-width: 0; overflow: auto; }
+  .map-side { min-width: 0; min-height: 0; overflow-y: auto; border-left: 1px solid var(--line); background: var(--surface); }
+
+  .map-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-height: 52px; padding: 8px var(--pad); border-bottom: 1px solid var(--line); }
+  .map-search { width: clamp(180px, 18vw, 280px); }
+  /* 범위 두 단추는 글자 단추 - 기본 view-toggle 단추는 아이콘 폭(26px)이다 */
+  .view-toggle.map-scope button { width: auto; padding: 0 8px; font-size: var(--fs-cap); white-space: nowrap; }
+  .map-search-input:focus-visible { outline: none; }
+
+  .map-notice { padding: 6px var(--pad); border-bottom: 1px solid var(--line); background: var(--sunken); font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-2); }
+
+  /* 표 - 열 폭을 정해 긴 번호·제목이 옆 열을 밀지 않는다(ui-review 10번) */
+  .map-table { table-layout: fixed; }
+  .map-table .map-no { font-family: var(--font-mono); font-size: var(--fs-cap); color: var(--ink); overflow-wrap: anywhere; }
+  .map-table .map-sub { color: var(--ink-3); font-size: var(--fs-cap); line-height: var(--lh-cap); }
+  .map-table tbody tr[aria-selected="true"] td { background: var(--sel-bg); }
+
+  /* 소유 표시 - 이 Bundle은 강조, 남의 것은 무채색, 어느 Bundle에도 없으면 점선 */
+  .map-owner { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border: 1px solid transparent; border-radius: var(--r-1); font-size: var(--fs-cap); line-height: 18px; white-space: nowrap; }
+  .map-owner[data-o="self"] { background: var(--accent-tint); color: var(--accent); border-color: var(--accent-line); }
+  .map-owner[data-o="member"],
+  .map-owner[data-o="summary"] { background: var(--peer-bg); color: var(--peer-ink); border-color: var(--peer-line); }
+  .map-owner[data-o="none"] { border: 1px dashed var(--ink-4); color: var(--ink-2); }
+
+  /* 옆 칸 */
+  .map-side-inner { display: grid; align-content: start; gap: 14px; padding: 14px 16px 20px; }
+  .map-side-h { font-size: var(--fs-cap); line-height: var(--lh-cap); font-weight: 600; color: var(--ink-3); }
+  .map-side-num { font-family: var(--font-mono); font-size: 15px; line-height: 20px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+  .map-side-title { color: var(--ink-2); overflow-wrap: anywhere; }
+  .map-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 12px; margin: 0; font-size: var(--fs-ui); line-height: var(--lh-ui); }
+  .map-facts dt { color: var(--ink-3); font-size: var(--fs-cap); }
+  .map-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+  .map-becomes { display: grid; gap: 4px; }
+  .map-becomes li { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .map-becomes[data-tentative] { color: var(--ink-3); }
+  .map-links { display: grid; gap: 2px; }
+  .map-link { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 4px 6px; border-radius: var(--r-1); text-align: left; cursor: pointer; transition: background var(--dur-fast); }
+  .map-link:hover { background: var(--hover); }
+  .map-link-no { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: var(--fs-cap); color: var(--ink); overflow-wrap: anywhere; }
+  .map-link-n { flex: none; font-size: var(--fs-cap); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .map-legend { display: grid; gap: 6px; }
+  .map-legend li { display: flex; align-items: center; gap: 8px; font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-2); }
+  .map-legend svg { flex: none; color: var(--ink-2); }
+}
