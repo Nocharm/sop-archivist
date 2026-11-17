@@ -9,8 +9,6 @@ import type {
   Group,
   GroupSaveInput,
   GroupTarget,
-  NaSlot,
-  TargetDoc,
   TargetInput,
   TargetPosition,
   ToBe,
@@ -19,7 +17,6 @@ import type {
   WiPart,
   WiStep,
 } from "./api-sop";
-import { SLOT_KEYS } from "./api-sop";
 import { listCaptionChildren, planCaptions } from "./caption-model";
 import type { CaptionUnit } from "./caption-model";
 
@@ -107,7 +104,8 @@ export interface DestinationOption {
   label: string;
   /** N/A 칸 - 보이지만 고를 수 없다 */
   disabled: boolean;
-  depth: 0 | 1;
+  /** 나무의 들여쓰기 단 - SOP 칸은 골격 항목의 수준(최상위 0, 둘로 정해져 있지 않다), WI 자리는 0 */
+  depth: number;
 }
 
 export function getDestinationId(destination: Destination): string {
@@ -125,29 +123,36 @@ export function getDestinationId(destination: Destination): string {
   }
 }
 
-/** To-Be 목록 → 메뉴 항목. SOP는 칸, WI는 단계마다 Instruction·Why(단계가 없으면 단계 없는 Instruction·Why). 입구 2 문서는 이 화면의 보낼 곳이 아니다 */
-export function buildDestinationOptions(tobe: ToBe, slotLabels: Record<string, string>): DestinationOption[] {
+/**
+ * To-Be 목록 → 메뉴 항목. SOP는 그 문서 골격에서 문장을 직접 받는 칸(is_assignable, 뺀 항목 제외)을 골격 순서대로,
+ * WI는 단계마다 Instruction·Why(단계가 없으면 단계 없는 Instruction·Why). 입구 2 문서는 이 화면의 보낼 곳이 아니다.
+ * 칸 이름은 그 항목의 이름만이다(조상 이름은 붙이지 않는다 - 나무가 depth로 위계를 보인다)
+ */
+export function buildDestinationOptions(tobe: ToBe): DestinationOption[] {
   const options: DestinationOption[] = [];
-  const isNa = (doc: TargetDoc, slotKey: string) =>
-    tobe.na_slots.some((slot: NaSlot) => slot.code === doc.code && (slot.slot_key === slotKey || slotKey.startsWith(`${slot.slot_key}.`)));
   for (const doc of [...tobe.docs].sort((a, b) => a.order_index - b.order_index || a.id - b.id)) {
     if (doc.entrance !== "assign") continue;
     if (doc.doc_type === "sop") {
-      for (const slotKey of SLOT_KEYS) {
+      const items = tobe.outline_items.filter((item) => item.code === doc.code && !item.is_removed);
+      const parents = new Map(items.map((item) => [item.key, item.parent_key]));
+      const naKeys = new Set(tobe.na_slots.filter((slot) => slot.code === doc.code).map((slot) => slot.slot_key));
+      // N/A는 그 칸과 그 아래 전부를 막는다 - 부모를 따라 끝까지 올라가며 본다(배정할 수 없는 상위 항목의 N/A도 같다)
+      const isNa = (slotKey: string): boolean => {
+        for (let key: string | null = slotKey; key !== null; key = parents.get(key) ?? null) if (naKeys.has(key)) return true;
+        return false;
+      };
+      for (const item of items) {
+        if (!item.is_assignable) continue;
+        const slotKey = item.key;
+        const disabled = isNa(slotKey);
+        const place = { docCode: doc.code, label: item.title_en, depth: item.level };
         // N/A가 아닌 칸마다 칸 줄 바로 앞에 칸 제목 자리를 둔다
-        if (!isNa(doc, slotKey)) {
+        if (!disabled) {
           const heading: Destination = { kind: "slot_heading", docId: doc.id, slotKey };
-          options.push({ id: getDestinationId(heading), destination: heading, docCode: doc.code, label: slotLabels[slotKey] ?? slotKey, disabled: false, depth: slotKey.includes(".") ? 1 : 0 });
+          options.push({ ...place, id: getDestinationId(heading), destination: heading, disabled: false });
         }
         const destination: Destination = { kind: "slot", docId: doc.id, slotKey };
-        options.push({
-          id: getDestinationId(destination),
-          destination,
-          docCode: doc.code,
-          label: slotLabels[slotKey] ?? slotKey,
-          disabled: isNa(doc, slotKey),
-          depth: slotKey.includes(".") ? 1 : 0,
-        });
+        options.push({ ...place, id: getDestinationId(destination), destination, disabled });
       }
     } else {
       const steps = tobe.wi_steps.filter((step: WiStep) => step.code === doc.code).sort((a, b) => a.step_no - b.step_no);

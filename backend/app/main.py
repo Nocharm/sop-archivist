@@ -29,6 +29,7 @@ from app.routers import sop_tobe as sop_tobe_router
 from app.settings import settings
 from app.sop.ai.guidelines import seed_guidelines
 from app.sop.ai.runner import requeue_running_jobs, run_ai_worker
+from app.sop.outline import seed_outline_standard
 
 
 @asynccontextmanager
@@ -38,6 +39,10 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     # 지침·프롬프트의 첫 버전 — 버전이 없는 키만 저장소 시드 파일로 만든다(운영·dev 모두, AI가 꺼져 있어도 Excel 정보 시트가 읽는다)
     async with SessionLocal() as session:
         await seed_guidelines(session)
+    # SOP 표준 골격의 첫 내용 — 표가 비었을 때만 넣는다(새 SOP 문서가 이것을 복사해 간다)
+    async with SessionLocal() as session:
+        await seed_outline_standard(session)
+        await session.commit()
     # dev 모드만 가짜 부서·사용자를 시드한다 — 실 인증(keycloak)은 HR 동기화로 채운 실제 디렉터리를 쓴다.
     if settings.resolved_auth_mode() == "dev":
         async with SessionLocal() as session:

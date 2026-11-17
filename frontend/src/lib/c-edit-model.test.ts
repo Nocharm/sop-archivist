@@ -1,8 +1,9 @@
 // 결과물 C 문서 하나의 낙관적 편집 - 화면에서 먼저 바꾸고 번호를 미리 세며, 저장 응답이 오면 그 위에 남은 편집을 다시 얹는다.
 import { describe, expect, it } from "vitest";
 
-import type { NumberStyle, OutputCDoc, OutputCItem } from "./api-sop";
+import type { NumberStyle, OutputCDoc, OutputCItem, SectionOutline } from "./api-sop";
 import { acceptSaved, addEdit, hasUnsentEdits, numberDoc, readLocationPlace, rebaseDraft, rejectSaved, sendDraft, startDraft } from "./c-edit-model";
+import { makeSectionOutline } from "./outline-fixture";
 
 type Section = OutputCDoc["sections"][number];
 
@@ -10,8 +11,9 @@ function line(id: number, number: string | null, extra: Partial<OutputCItem> = {
   return { target_id: id, kind: "sentence", lang: "ko", text: `t${id}`, ai_text: "", change_type: null, status: "confirmed", source_note: "", origin: "units", meaning_key: null, number, indent_level: 0, number_style: "numbered", cell_row: null, cell_col: null, children: [], ...extra };
 }
 
-function section(number: string | null, items: OutputCItem[], key = `s${number}`): Section {
-  return { location_key: key, label: key, number, na_reason: null, heading_note: "", items };
+/** outline은 그 절이 골격에서 받은 값 - 기본은 줄을 세는 칸, 하위 칸을 선언하는 칸은 { counts_lines: false } */
+function section(number: string | null, items: OutputCItem[], key = `s${number}`, outline: Partial<SectionOutline> = {}): Section {
+  return { ...makeSectionOutline(outline), location_key: key, label: key, number, na_reason: null, heading_note: "", items };
 }
 
 function doc(sections: Section[]): OutputCDoc {
@@ -59,7 +61,7 @@ describe("numberDoc in a section with sub sections", () => {
     const table = line(3, "5.3", { kind: "table", lang: "neutral", children: [line(31, "5.3")] });
     const sop = doc([
       section("4", [line(9, null)], "responsibilities"),
-      section("5", [line(1, "5.1"), line(2, "5.2", { indent_level: 1 }), table], "general_requirements"),
+      section("5", [line(1, "5.1"), line(2, "5.2", { indent_level: 1 }), table], "general_requirements", { counts_lines: false }),
       section("5.1", [line(4, null), line(5, null, { indent_level: 1 })], "general_requirements.safety"),
     ]);
     const shown = numberDoc(sop);
@@ -71,9 +73,19 @@ describe("numberDoc in a section with sub sections", () => {
   });
 
   it("numbers a direct line again once it moves into a sub section", () => {
-    const sop = startDraft(doc([section("6", [line(1, null), line(2, null)], "procedures"), section("6.1", [line(3, "6.1.1")], "procedures.procedure")]));
+    const sop = startDraft(doc([section("6", [line(1, null), line(2, null)], "procedures", { counts_lines: false }), section("6.1", [line(3, "6.1.1")], "procedures.procedure")]));
     const moved = addEdit(sop, { kind: "place", locationKey: "procedures", toLocationKey: "procedures.procedure", targetIds: [2], beforeId: null, depths: [0] });
     expect(numbersOf(moved!.shown)).toEqual([[[1, null]], [[3, "6.1.1"], [2, "6.1.2"]]]);
+  });
+
+  it("reads the rule from each section, so a middle level of three counts nothing and the bottom level counts", () => {
+    // 세 수준: 6(줄을 세지 않음) › 6.1(하위 칸을 선언해 역시 세지 않음) › 6.1.1(센다) - 칸 키의 점 수로는 가를 수 없다
+    const sop = doc([
+      section("6", [line(1, "6.1")], "a", { kind: "named_children", counts_lines: false }),
+      section("6.1", [line(2, "6.1.1")], "a.b", { kind: "named_children", level: 1, counts_lines: false }),
+      section("6.1.1", [line(3, null), line(4, null, { indent_level: 1 })], "a.b.c", { level: 2 }),
+    ]);
+    expect(numbersOf(numberDoc(sop))).toEqual([[[1, null]], [[2, null]], [[3, "6.1.1.1"], [4, "6.1.1.1.1"]]]);
   });
 });
 

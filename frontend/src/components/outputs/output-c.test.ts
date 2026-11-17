@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { OutputC, OutputCItem } from "@/lib/api-sop";
 import { addEdit, startDraft } from "@/lib/c-edit-model";
 import { LangProvider } from "@/lib/i18n";
+import { makeSectionOutline } from "@/lib/outline-fixture";
 import type { MoveDir } from "@/lib/target-order";
 
 import { OutputCView } from "./output-c";
@@ -20,7 +21,7 @@ function makeItem(extra: Partial<OutputCItem>): OutputCItem {
 
 function makeOutput(items: OutputCItem[], extra: Partial<Section> = {}): OutputC {
   return {
-    docs: [{ target_doc_id: 1, code: "SOP-1", title: "T", doc_type: "sop", parent_code: null, entrance: "assign", sections: [{ location_key: "scope", label: "Scope", number: "2", na_reason: null, heading_note: "", items, ...extra }] }],
+    docs: [{ target_doc_id: 1, code: "SOP-1", title: "T", doc_type: "sop", parent_code: null, entrance: "assign", sections: [{ ...makeSectionOutline(), location_key: "scope", label: "Scope", number: "2", na_reason: null, heading_note: "", items, ...extra }] }],
     deleted: [],
     moved: [],
   };
@@ -196,14 +197,15 @@ describe("OutputCView", () => {
     host.remove();
   });
 
-  it("offers no Numbered choice on a line placed directly in a section with sub sections, and shows it as No number", () => {
+  it("offers no Numbered choice on a line placed directly in a section that does not count lines, and shows it as No number", () => {
     const items = [
       makeItem({ target_id: 1, text: "가", status: "confirmed", indent_level: 0 }),
       makeItem({ target_id: 2, text: "나", status: "confirmed", indent_level: 1 }),
       makeItem({ target_id: 3, text: "주석", status: "confirmed", number_style: "note" }),
     ];
     const onMark = vi.fn();
-    const data = makeOutput(items, { location_key: "general_requirements", label: "General Requirements", number: "5" });
+    // 어느 칸이 그런지는 서버가 절에 싣는다(counts_lines) - 화면은 칸 키로 풀지 않는다
+    const data = makeOutput(items, { location_key: "general_requirements", label: "General Requirements", number: "5", kind: "named_children", counts_lines: false });
     const { host, unmount } = render({ data, onMove: () => {}, onIndent: () => {}, onMark });
     document.body.append(host);
     expect(host.querySelector('[data-testid="output-c-number-1"]')).toBeNull();

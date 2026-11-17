@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { OutputCItem } from "./api-sop";
 import { findDragBlock, findEnterRefusal, findDropSection, findDropSectionByKey, findLeaveRefusal, findLiveBlock, listDropRows, planCrossDrop, planDrop } from "./c-drop-model";
 import { previewEdit } from "./c-edit-model";
+import { makeSectionOutline } from "./outline-fixture";
 
 function line(id: number, extra: Partial<OutputCItem> = {}): OutputCItem {
   return { target_id: id, kind: "sentence", lang: "ko", text: `t${id}`, ai_text: "", change_type: null, status: "confirmed", source_note: "", origin: "units", meaning_key: null, number: null, indent_level: 0, number_style: "numbered", cell_row: null, cell_col: null, children: [], ...extra };
@@ -32,7 +33,7 @@ describe("findDragBlock", () => {
 
 describe("planDrop", () => {
   const items = [1, 2, 3, 4, 5].map((id) => line(id));
-  const base = { locationKey: "s5", items, depths: [0, 0, 0, 0, 0], block: { start: 0, end: 0, baseDepth: 0, isDepthLocked: false }, rows: box([2, 3, 4, 5]), dx: 0, homeTop: 0 };
+  const base = { locationKey: "s5", countsLines: true, items, depths: [0, 0, 0, 0, 0], block: { start: 0, end: 0, baseDepth: 0, isDepthLocked: false }, rows: box([2, 3, 4, 5]), dx: 0, homeTop: 0 };
   it("inserts by row midlines, with no edit when the block lands where it was or is alone in its section", () => {
     expect(planDrop({ ...base, pointerY: 45 })).toMatchObject({ beforeId: 4, lineY: 39, edit: { targetIds: [1], beforeId: 4, depths: null } });
     expect(planDrop({ ...base, pointerY: 200 })).toMatchObject({ beforeId: null, lineY: 81 });
@@ -51,9 +52,9 @@ describe("planDrop", () => {
     expect(planDrop({ ...base, items: noted, depths: [0, 2, 9, 0, 0], pointerY: 45, dx: 240 }).depth).toBe(3);
     expect(planDrop({ ...base, depths: [0, 0, 9, 0, 0], pointerY: 45, dx: 480 }).depth).toBe(9);
   });
-  it("keeps depth 0 in a section with sub sections - its lines take no number, so none sets a limit", () => {
+  it("keeps depth 0 in a section that does not count lines - its lines take no number, so none sets a limit", () => {
     expect(planDrop({ ...base, pointerY: 45, dx: 100 }).depth).toBe(1);
-    expect(planDrop({ ...base, locationKey: "general_requirements", pointerY: 45, dx: 100 }).depth).toBe(0);
+    expect(planDrop({ ...base, countsLines: false, pointerY: 45, dx: 100 }).depth).toBe(0);
   });
   it("caps the block's first line so its deepest line stays within MAX_INDENT_LEVEL and keeps the offsets inside the block", () => {
     // 덩어리 = 줄 1(8)·줄 2(9), 줄 3(9) 뒤로 한 단 들이려 한다 - 첫 줄은 9 - 1 = 8까지, 아래 줄은 한 단 깊이를 지킨다
@@ -80,7 +81,7 @@ describe("planDrop", () => {
   it("changes only the depth when the block stays in place", () => {
     const plan = planDrop({ ...base, items: items.map((item) => item), depths: [0, 0, 0, 0, 0], block: { start: 1, end: 1, baseDepth: 0, isDepthLocked: false }, rows: box([1, 3, 4, 5]), pointerY: 15, dx: 24 });
     expect(plan.edit).toMatchObject({ targetIds: [2], beforeId: 3, depths: [1] });
-    expect(previewEdit({ target_doc_id: 7, code: "C", title: "T", doc_type: "sop", parent_code: null, entrance: "assign", sections: [{ location_key: "s5", label: "s5", number: "5", na_reason: null, heading_note: "", items }] }, plan.edit!)).not.toBeNull();
+    expect(previewEdit({ target_doc_id: 7, code: "C", title: "T", doc_type: "sop", parent_code: null, entrance: "assign", sections: [{ ...makeSectionOutline(), location_key: "s5", label: "s5", number: "5", na_reason: null, heading_note: "", items }] }, plan.edit!)).not.toBeNull();
     // 깊이도 그대로면 제자리
     expect(planDrop({ ...base, block: { start: 1, end: 1, baseDepth: 0, isDepthLocked: false }, rows: box([1, 3, 4, 5]), pointerY: 15, dx: 0 }).edit).toBeNull();
   });
@@ -143,7 +144,7 @@ describe("listDropRows", () => {
   });
   it("gives planDrop rows that keep a drop below the last row at the right place", () => {
     const rows = listDropRows(items, block, box([1, 2, 3, 4, 8]));
-    const plan = planDrop({ locationKey: "s", items, depths: [0, 0, 0, 0, 0], block, rows, pointerY: 500, dx: 0, homeTop: 0 });
+    const plan = planDrop({ locationKey: "s", countsLines: true, items, depths: [0, 0, 0, 0, 0], block, rows, pointerY: 500, dx: 0, homeTop: 0 });
     expect(plan.beforeId).toBe(5);
   });
 });
@@ -250,9 +251,9 @@ describe("cross-section refusals", () => {
 
 describe("planCrossDrop", () => {
   const unlocked = { start: 0, end: 0, baseDepth: 0, isDepthLocked: false };
-  const empty = { fromKey: "s5", toKey: "s6", source: { items: [line(1)], depths: [0], block: unlocked }, dest: { items: [] as OutputCItem[], depths: [] as number[] }, rows: [] as ReturnType<typeof box>, pointerY: 50, dx: 0, emptyTop: 40 };
+  const empty = { fromKey: "s5", toKey: "s6", source: { countsLines: true, items: [line(1)], depths: [0], block: unlocked }, dest: { countsLines: true, items: [] as OutputCItem[], depths: [] as number[] }, rows: [] as ReturnType<typeof box>, pointerY: 50, dx: 0, emptyTop: 40 };
   const dest3 = [line(10), line(11), line(12)];
-  const into = (extra: Partial<Parameters<typeof planCrossDrop>[0]> = {}) => planCrossDrop({ ...empty, dest: { items: dest3, depths: [0, 1, 0] }, rows: box([10, 11, 12]), ...extra });
+  const into = (extra: Partial<Parameters<typeof planCrossDrop>[0]> = {}) => planCrossDrop({ ...empty, dest: { countsLines: true, items: dest3, depths: [0, 1, 0] }, rows: box([10, 11, 12]), ...extra });
   it("makes the block the first lines of an empty section at depth 0 whatever the sideways move", () => {
     const plan = planCrossDrop({ ...empty, dx: 96 });
     expect(plan).toMatchObject({ beforeId: null, depth: 0, lineY: 40 });
@@ -265,13 +266,13 @@ describe("planCrossDrop", () => {
   });
   it("drops below the last rendered row before the first unrendered line, not at the section's end", () => {
     const long = [10, 11, 12, 13, 14].map((id) => line(id));
-    const plan = into({ dest: { items: long, depths: [0, 0, 0, 0, 0] }, rows: box([10, 11, 12]), pointerY: 500 });
+    const plan = into({ dest: { countsLines: true, items: long, depths: [0, 0, 0, 0, 0] }, rows: box([10, 11, 12]), pointerY: 500 });
     expect(plan.beforeId).toBe(13);
     expect(plan.edit).toMatchObject({ beforeId: 13, toLocationKey: "s6" });
   });
   it("gives depth 0 at the destination's top and limits it to the numbered line above plus one", () => {
     const block = { start: 0, end: 1, baseDepth: 1, isDepthLocked: false };
-    const source = { items: [line(1), line(2)], depths: [1, 2], block };
+    const source = { countsLines: true, items: [line(1), line(2)], depths: [1, 2], block };
     // 앞줄 없음(맨 위): dx +48이어도 0, 아래 줄은 단 차이를 지켜 [0, 1]
     const top = into({ source, pointerY: 5, dx: 48 });
     expect(top).toMatchObject({ depth: 0, edit: { depths: [0, 1] } });
@@ -283,45 +284,45 @@ describe("planCrossDrop", () => {
   });
   it("skips unnumbered lines above and keeps the block's deepest line within MAX_INDENT_LEVEL", () => {
     const noted = [line(10), line(11, { number_style: "note" })];
-    expect(into({ dest: { items: noted, depths: [3, 9] }, rows: box([10, 11]), pointerY: 500, dx: 240 }).depth).toBe(4);
+    expect(into({ dest: { countsLines: true, items: noted, depths: [3, 9] }, rows: box([10, 11]), pointerY: 500, dx: 240 }).depth).toBe(4);
     const block = { start: 0, end: 1, baseDepth: 0, isDepthLocked: false };
-    const deep = into({ source: { items: [line(1), line(2)], depths: [0, 2], block }, dest: { items: [line(10)], depths: [9] }, rows: box([10]), pointerY: 500, dx: 480 });
+    const deep = into({ source: { countsLines: true, items: [line(1), line(2)], depths: [0, 2], block }, dest: { countsLines: true, items: [line(10)], depths: [9] }, rows: box([10]), pointerY: 500, dx: 480 });
     expect(deep).toMatchObject({ depth: 7, edit: { depths: [7, 9] } });
   });
-  it("drops at depth 0 into a section with sub sections, keeping the offsets inside the block", () => {
+  it("drops at depth 0 into a section that does not count lines, keeping the offsets inside the block", () => {
     const block = { start: 0, end: 1, baseDepth: 1, isDepthLocked: false };
-    const source = { items: [line(1), line(2)], depths: [1, 2], block };
+    const source = { countsLines: true, items: [line(1), line(2)], depths: [1, 2], block };
     // 줄 11(깊이 1) 아래라도 그 칸의 줄은 번호를 세지 않아 한계가 없다 - 같은 자리가 번호 칸이면 2다
     expect(into({ source, pointerY: 45, dx: 48 }).depth).toBe(2);
-    expect(into({ source, toKey: "procedures", pointerY: 45, dx: 48 })).toMatchObject({ beforeId: 12, depth: 0, edit: { toLocationKey: "procedures", depths: [0, 1] } });
+    expect(into({ source, toKey: "procedures", dest: { countsLines: false, items: dest3, depths: [0, 1, 0] }, pointerY: 45, dx: 48 })).toMatchObject({ beforeId: 12, depth: 0, edit: { toLocationKey: "procedures", depths: [0, 1] } });
   });
   it("clamps a locked pair to the destination's rule without applying dx, keeping the offsets inside the block", () => {
     // 원문(2) + 번역(2) + 아래 줄(3): 깊이가 잠겨 dx는 안 먹지만 도착 칸 한계는 받는다
     const block = { start: 0, end: 2, baseDepth: 2, isDepthLocked: true };
-    const source = { items: [line(1, { meaning_key: "old:a" }), line(2, { meaning_key: "old:a", origin: "translation" }), line(3)], depths: [2, 2, 3], block };
+    const source = { countsLines: true, items: [line(1, { meaning_key: "old:a" }), line(2, { meaning_key: "old:a", origin: "translation" }), line(3)], depths: [2, 2, 3], block };
     const emptyDest = planCrossDrop({ ...empty, source, dx: 96 });
     expect(emptyDest).toMatchObject({ depth: 0, edit: { targetIds: [1, 2, 3], depths: [0, 0, 1] } });
-    const underZero = planCrossDrop({ ...empty, source, dest: { items: [line(10)], depths: [0] }, rows: box([10]), pointerY: 500, dx: 96 });
+    const underZero = planCrossDrop({ ...empty, source, dest: { countsLines: true, items: [line(10)], depths: [0] }, rows: box([10]), pointerY: 500, dx: 96 });
     expect(underZero).toMatchObject({ depth: 1, edit: { depths: [1, 1, 2] } });
-    const underThree = planCrossDrop({ ...empty, source, dest: { items: [line(10)], depths: [3] }, rows: box([10]), pointerY: 500, dx: 96 });
+    const underThree = planCrossDrop({ ...empty, source, dest: { countsLines: true, items: [line(10)], depths: [3] }, rows: box([10]), pointerY: 500, dx: 96 });
     expect(underThree).toMatchObject({ depth: 2, edit: { depths: [2, 2, 3] } });
-    expect(planCrossDrop({ ...empty, source, dest: { items: [line(10), line(11)], depths: [0, 1] }, rows: box([10, 11]), pointerY: 5, dx: -96 })).toMatchObject({ depth: 0, edit: { depths: [0, 0, 1] } });
+    expect(planCrossDrop({ ...empty, source, dest: { countsLines: true, items: [line(10), line(11)], depths: [0, 1] }, rows: box([10, 11]), pointerY: 5, dx: -96 })).toMatchObject({ depth: 0, edit: { depths: [0, 0, 1] } });
   });
   it("snaps to the edge of a meaning group in the destination", () => {
     const grouped = [line(10), line(11, { meaning_key: "old:k" }), line(12, { meaning_key: "old:k" }), line(13)];
-    const dest = { items: grouped, depths: [0, 0, 0, 0] };
+    const dest = { countsLines: true, items: grouped, depths: [0, 0, 0, 0] };
     const rows = box([10, 11, 12, 13]);
     // 묶음은 20..60, 중간선 40: 위쪽은 묶음 앞(11), 아래쪽은 묶음 뒤(13), 묶음 안 줄 사이 경계(40)가 아니라
     expect(into({ dest, rows, pointerY: 45 }).beforeId).toBe(13);
     expect(into({ dest, rows, pointerY: 35 }).beforeId).toBe(11);
   });
   it("agrees with previewEdit on the number the first line gets", () => {
-    const sec = (key: string, number: string, items: OutputCItem[]) => ({ location_key: key, label: key, number, na_reason: null, heading_note: "", items });
+    const sec = (key: string, number: string, items: OutputCItem[], countsLines = true) => ({ ...makeSectionOutline({ counts_lines: countsLines }), location_key: key, label: key, number, na_reason: null, heading_note: "", items });
     const a = line(1);
     const b = line(2);
     const c = line(3);
-    const doc = { target_doc_id: 7, code: "C", title: "T", doc_type: "sop", parent_code: null, entrance: "assign", sections: [sec("procedures", "6", [a, b]), sec("procedures.procedure", "6.1", [c])] };
-    const plan = planCrossDrop({ fromKey: "procedures", toKey: "procedures.procedure", source: { items: [a, b], depths: [0, 0], block: { start: 1, end: 1, baseDepth: 0, isDepthLocked: false } }, dest: { items: [c], depths: [0] }, rows: box([3]), pointerY: 5, dx: 0, emptyTop: 0 });
+    const doc = { target_doc_id: 7, code: "C", title: "T", doc_type: "sop", parent_code: null, entrance: "assign", sections: [sec("procedures", "6", [a, b], false), sec("procedures.procedure", "6.1", [c])] };
+    const plan = planCrossDrop({ fromKey: "procedures", toKey: "procedures.procedure", source: { countsLines: false, items: [a, b], depths: [0, 0], block: { start: 1, end: 1, baseDepth: 0, isDepthLocked: false } }, dest: { countsLines: true, items: [c], depths: [0] }, rows: box([3]), pointerY: 5, dx: 0, emptyTop: 0 });
     expect(plan.beforeId).toBe(3);
     const shown = previewEdit(doc as never, plan.edit!)!;
     expect(shown.sections[1].items.map((item) => [item.target_id, item.number])).toEqual([[2, "6.1.1"], [3, "6.1.2"]]);
@@ -331,31 +332,31 @@ describe("planCrossDrop", () => {
 describe("planCrossDrop guards", () => {
   const unlocked = { start: 1, end: 1, baseDepth: 0, isDepthLocked: false };
   const home = [1, 2, 3, 4].map((id) => line(id));
-  const homeArgs = { source: { items: home, depths: [0, 0, 0, 0], block: unlocked }, rows: box([1, 3, 4]), dx: 0, emptyTop: 7 };
+  const homeArgs = { source: { countsLines: true, items: home, depths: [0, 0, 0, 0], block: unlocked }, rows: box([1, 3, 4]), dx: 0, emptyTop: 7 };
   it("delegates to planDrop when the destination is the home section", () => {
     for (const pointerY of [45, 5, 500]) {
-      const cross = planCrossDrop({ ...homeArgs, fromKey: "s5", toKey: "s5", dest: { items: home, depths: [0, 0, 0, 0] }, pointerY });
-      const same = planDrop({ locationKey: "s5", items: home, depths: [0, 0, 0, 0], block: unlocked, rows: homeArgs.rows, pointerY, dx: 0, homeTop: 7 });
+      const cross = planCrossDrop({ ...homeArgs, fromKey: "s5", toKey: "s5", dest: { countsLines: true, items: home, depths: [0, 0, 0, 0] }, pointerY });
+      const same = planDrop({ locationKey: "s5", countsLines: true, items: home, depths: [0, 0, 0, 0], block: unlocked, rows: homeArgs.rows, pointerY, dx: 0, homeTop: 7 });
       expect(cross).toEqual(same);
       expect(cross.edit && "toLocationKey" in cross.edit).toBeFalsy();
     }
     // 실제로 옮기는 경우와 제자리가 둘 다 들어 있다
-    expect(planDrop({ locationKey: "s5", items: home, depths: [0, 0, 0, 0], block: unlocked, rows: homeArgs.rows, pointerY: 500, dx: 0, homeTop: 7 }).edit).not.toBeNull();
-    expect(planDrop({ locationKey: "s5", items: home, depths: [0, 0, 0, 0], block: unlocked, rows: homeArgs.rows, pointerY: 15, dx: 0, homeTop: 7 }).edit).toBeNull();
+    expect(planDrop({ locationKey: "s5", countsLines: true, items: home, depths: [0, 0, 0, 0], block: unlocked, rows: homeArgs.rows, pointerY: 500, dx: 0, homeTop: 7 }).edit).not.toBeNull();
+    expect(planDrop({ locationKey: "s5", countsLines: true, items: home, depths: [0, 0, 0, 0], block: unlocked, rows: homeArgs.rows, pointerY: 15, dx: 0, homeTop: 7 }).edit).toBeNull();
   });
   it("saves nothing when a row is not in the destination's items", () => {
-    const plan = planCrossDrop({ ...homeArgs, fromKey: "s5", toKey: "s6", dest: { items: [line(10), line(11)], depths: [0, 0] }, rows: box([10, 99]), pointerY: 30 });
+    const plan = planCrossDrop({ ...homeArgs, fromKey: "s5", toKey: "s6", dest: { countsLines: true, items: [line(10), line(11)], depths: [0, 0] }, rows: box([10, 99]), pointerY: 30 });
     expect(plan.edit).toBeNull();
     expect(plan.beforeId).toBeNull();
   });
   it("lands after the whole meaning group when the rendered window cuts it", () => {
     const dest = [line(10), line(11, { meaning_key: "old:k" }), line(12, { meaning_key: "old:k" }), line(13, { meaning_key: "old:k" }), line(14)];
-    const args = { ...homeArgs, fromKey: "s5", toKey: "s6", dest: { items: dest, depths: [0, 0, 0, 0, 0] } };
+    const args = { ...homeArgs, fromKey: "s5", toKey: "s6", dest: { countsLines: true, items: dest, depths: [0, 0, 0, 0, 0] } };
     // 그려진 줄은 10·11·12, 13부터 안 그려졌다 - 12 아래로 놓아도 묶음(11~13) 뒤인 14 앞
     expect(planCrossDrop({ ...args, rows: box([10, 11, 12]), pointerY: 500 }).beforeId).toBe(14);
     // 묶음이 칸 끝까지 가면 칸 끝
-    expect(planCrossDrop({ ...args, dest: { items: dest.slice(0, 4), depths: [0, 0, 0, 0] }, rows: box([10, 11, 12]), pointerY: 500 }).beforeId).toBeNull();
+    expect(planCrossDrop({ ...args, dest: { countsLines: true, items: dest.slice(0, 4), depths: [0, 0, 0, 0] }, rows: box([10, 11, 12]), pointerY: 500 }).beforeId).toBeNull();
     // 이어지지 않으면 안 그려진 첫 줄 앞 그대로
-    expect(planCrossDrop({ ...args, dest: { items: [line(10), line(11, { meaning_key: "old:k" }), line(12)], depths: [0, 0, 0] }, rows: box([10, 11]), pointerY: 500 }).beforeId).toBe(12);
+    expect(planCrossDrop({ ...args, dest: { countsLines: true, items: [line(10), line(11, { meaning_key: "old:k" }), line(12)], depths: [0, 0, 0] }, rows: box([10, 11]), pointerY: 500 }).beforeId).toBe(12);
   });
 });

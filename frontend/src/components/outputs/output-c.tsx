@@ -625,6 +625,7 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
       const blockTop = (target.querySelector(`[data-testid="output-c-row-${source.blockIds[0]}"]`) ?? findRow(sheet, source)).getBoundingClientRect().top;
       const plan = planDrop({
         locationKey: live.section.location_key,
+        countsLines: live.section.counts_lines,
         items: live.section.items,
         depths: live.depths,
         block: live.block,
@@ -646,8 +647,8 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
     const plan = planCrossDrop({
       fromKey: live.section.location_key,
       toKey: dest.location_key,
-      source: { items: live.section.items, depths: live.depths, block: live.block },
-      dest: { items: dest.items, depths: getSectionDepths(dest) },
+      source: { countsLines: live.section.counts_lines, items: live.section.items, depths: live.depths, block: live.block },
+      dest: { countsLines: dest.counts_lines, items: dest.items, depths: getSectionDepths(dest) },
       rows: listDropRows(dest.items, null, measureRows(target)),
       pointerY: point.y,
       dx: point.x - start.x,
@@ -853,7 +854,7 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
                         item,
                         indent,
                         onMark: onMark && canChangeStyle(doc.entrance) ? (style) => onMark(doc.target_doc_id, item.target_id, style) : null,
-                        mark: readStyleChoices(section.location_key, item.number_style),
+                        mark: readStyleChoices(section, item.number_style),
                         onMove: (dir, refocus) => handleMove(doc.target_doc_id, section, index, dir, refocus ? "button" : null),
                       };
                       return (

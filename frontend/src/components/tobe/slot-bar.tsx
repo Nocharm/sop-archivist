@@ -1,4 +1,4 @@
-// SOP 줄의 칸 상태 막대(Documents 화면 설계 §6) - 칸 15개의 눈금. 장식이라 aria-hidden이고 뜻은 옆의 글이 말한다.
+// SOP 줄의 칸 상태 막대(Documents 화면 설계 §6) - 그 문서 골격의 칸마다 눈금 하나. 장식이라 aria-hidden이고 뜻은 옆의 글이 말한다.
 // 상태는 모양으로도 갈린다(채움 · 테두리 · 빗금 · 호박색 테두리와 점). 눈금의 툴팁은 목록 틀에 건 useDelegatedTip이 data-tip을 읽어 띄운다.
 "use client";
 
@@ -35,7 +35,7 @@ export function SlotBar({ rows, testId }: { rows: readonly SlotRow[]; testId: st
   return (
     <span className="slot-bar" aria-hidden="true" data-testid={testId}>
       {rows.map((row) => (
-        <i key={row.key} data-state={row.state.kind} data-child={row.isChild ? "" : undefined} data-tip={`${row.number} ${row.label} · ${describe(row)}`} />
+        <i key={row.key} data-state={row.state.kind} data-child={row.level > 0 ? "" : undefined} data-tip={`${row.number} ${row.label} · ${describe(row)}`} />
       ))}
     </span>
   );

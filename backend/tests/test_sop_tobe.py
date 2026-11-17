@@ -178,7 +178,8 @@ def test_new_bundle_has_an_empty_tobe_list(client: TestClient) -> None:
     bundle = create_bundle(client)
 
     assert _get_tobe(client, bundle["id"]) == {
-        "revision": 1, "docs": [], "na_slots": [], "wi_steps": [], "sentence_counts": [], "slot_counts": [],
+        "revision": 1, "docs": [], "na_slots": [], "wi_steps": [], "outline_items": [], "sentence_counts": [],
+        "slot_counts": [],
     }
 
 
@@ -308,7 +309,8 @@ def test_tobe_rejects_bad_lists(client: TestClient, expected_code: str, docs, na
     assert response.json()["detail"]["code"] == expected_code
     # 거절된 요청은 아무것도 남기지 않는다
     assert _get_tobe(client, bundle["id"]) == {
-        "revision": 1, "docs": [], "na_slots": [], "wi_steps": [], "sentence_counts": [], "slot_counts": [],
+        "revision": 1, "docs": [], "na_slots": [], "wi_steps": [], "outline_items": [], "sentence_counts": [],
+        "slot_counts": [],
     }
 
 

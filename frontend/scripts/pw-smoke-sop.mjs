@@ -895,7 +895,7 @@ await runStep("new documents: removing a step keeps the other numbers", {}, asyn
 
 // N/A 칸 상태 표(Documents 화면 설계 §8) - 칸마다 상태를 먼저 보이고, N/A는 사유와 함께 Save N/A로만 저장된다. 편집기는 화면에 하나이고 접거나 떠나도 사유가 남는다.
 // 거절 응답(409·500)이 콘솔에 찍혀 콘솔 오류를 허용한다. 만든 N/A는 끝에 API로도 지워 처음 수로 되돌린다
-// lib/api-sop.ts SLOT_KEYS와 같은 순서 - 칸 번호도 이 고정 자리에서 센다(1…7, 하위 칸 5.1)
+// 표준 골격(옛 15칸, backend outline.LEGACY_OUTLINE)과 같은 순서 - 칸 번호도 이 자리에서 센다(1…7, 하위 칸 5.1)
 const SLOT_ORDER = ["purpose", "scope", "definitions", "responsibilities", "general_requirements", "general_requirements.safety", "general_requirements.operation", "procedures", "procedures.procedure", "procedures.electronic_record_control", "procedures.troubleshooting", "procedures.maintenance", "document_relationships", "document_relationships.attachments", "document_relationships.appendices"];
 const slotParent = (key) => (key.includes(".") ? key.slice(0, key.indexOf(".")) : null);
 const slotNumber = (key) => {

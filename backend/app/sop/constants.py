@@ -24,6 +24,12 @@ CHANGE_TYPES = (
 TARGET_DOC_TYPES = ("sop", "wi")
 ENTRANCES = ("assign", "match")
 WI_PARTS = ("instruction", "why")
+# SOP 골격 항목의 종류 — 직접 줄을 받는지·세는지·하위를 두는지를 가른다(outline.DocOutline이 읽는다)
+OutlineKind = Literal["general", "category_table", "named_children", "auto_list", "group"]
+OUTLINE_KINDS: tuple[OutlineKind, ...] = get_args(OutlineKind)
+OutlineOrigin = Literal["standard", "declared", "custom"]  # 문서 사본 항목이 온 곳: 표준에서 복사 | 문서가 선언 | 사용자 항목
+OUTLINE_ORIGINS: tuple[OutlineOrigin, ...] = get_args(OutlineOrigin)
+# 옛 고정 15칸 — 지금은 표준 골격의 첫 내용(outline.LEGACY_OUTLINE)의 재료와 시험 값으로만 쓴다. 칸은 문서의 골격 사본에서 읽는다
 SLOT_KEYS = (
     "purpose", "scope", "definitions", "responsibilities",
     "general_requirements", "general_requirements.safety", "general_requirements.operation",

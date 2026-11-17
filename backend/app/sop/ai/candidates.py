@@ -14,7 +14,7 @@ import numpy as np
 from app.sop.ai.constants import CANDIDATE_TOP_K, MAX_TEXT_CANDIDATES
 from app.sop.ai.embeddings import EmbeddingUnavailable, UnavailableReason, embed_texts
 from app.sop.ai.similarity import build_text_bigrams, compare_bigrams, cosine_matrix, top_k_indices
-from app.sop.constants import SLOT_KEYS, WI_PARTS
+from app.sop.constants import WI_PARTS
 from app.sop.snapshot import TargetDocInfo
 from app.sop.tobe import is_within_slot
 
@@ -23,7 +23,8 @@ Retrieval = Literal["embedding", "embedding_failed", "no_index"]  # 후보를 �
 # 임베딩이 꺼진 것(색인 없음)과 호출이 끝내 실패한 것(검색 실패)은 같은 폴백이어도 다른 상태로 남긴다
 RETRIEVAL_OF_UNAVAILABLE: dict[UnavailableReason, Retrieval] = {"disabled": "no_index", "failed": "embedding_failed"}
 
-# 칸 키 → (이름, 넣는 것). 도메인 문서 §2 — 하위 칸은 이름 앞에 상위 칸을 붙이고(라벨만 봐도 어느 칸인지 보이게), 문서가 비워 둔 "넣는 것"은 비운다
+# 칸 키 → (이름, 넣는 것). 도메인 문서 §2 — 하위 칸은 이름 앞에 상위 칸을 붙이고(라벨만 봐도 어느 칸인지 보이게), 문서가 비워 둔 "넣는 것"은 비운다.
+# 어느 칸을 후보로 낼지는 문서의 골격 사본이 정하고, 여기는 그 칸의 안내 글만 준다(없는 키는 골격의 라벨만 보인다)
 SLOT_GUIDE: dict[str, tuple[str, str]] = {
     "purpose": ("Purpose", "절차가 필요한 이유, 관리 목적"),
     "scope": ("Scope", "적용 대상(공정, 장비, 시스템, 부서)"),
@@ -70,10 +71,13 @@ def _name_of(doc: TargetDocInfo) -> str:
 
 def _list_sop_places(doc: TargetDocInfo) -> Iterator[_Place]:
     head = _name_of(doc)
-    for slot_key in SLOT_KEYS:
+    for item in doc.outline.items:
+        slot_key = item.key
+        if not doc.outline.is_assignable(slot_key):
+            continue
         if any(is_within_slot(slot_key, na_slot) for na_slot in doc.na_slots):  # 상위 칸 N/A는 하위 칸도 덮는다
             continue
-        name, guide = SLOT_GUIDE[slot_key]
+        name, guide = SLOT_GUIDE.get(slot_key, (doc.outline.get_label(slot_key), ""))
         yield slot_key, None, None, (f"{head} / {name}: {guide}" if guide else f"{head} / {name}")
 
 

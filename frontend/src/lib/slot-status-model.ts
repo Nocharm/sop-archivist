@@ -1,9 +1,10 @@
-// New 목록 줄의 SOP 칸 15개를 상태 표로 읽는 순수 모델 - 여섯 상태·요약·쓴 사유·사유 편집기 하나. 화면은 이 결과를 그리기만 한다.
+// New 목록 줄의 SOP 칸을 상태 표로 읽는 순수 모델 - 여섯 상태·요약·쓴 사유·사유 편집기 하나. 화면은 이 결과를 그리기만 한다.
+// 칸 목록·번호·이름·위계는 서버가 준 그 문서의 골격(ToBe.outline_items)에서 읽는다 - 문서마다 다를 수 있고 수준이 둘로 정해져 있지 않다.
 // 설계: docs/superpowers/specs/2026-11-17-documents-screen-design.md
-import { SLOT_KEYS, type SlotCount, type TargetDoc, type ToBe } from "./api-sop";
-import { SLOT_LABELS } from "./slot-labels";
+import type { SlotCount, TargetDoc, ToBe } from "./api-sop";
 
-export type SlotKey = (typeof SLOT_KEYS)[number];
+/** 칸 키 - 그 문서 골격 항목의 키. 문서마다 달라 고정 목록으로 좁히지 않는다 */
+export type SlotKey = string;
 
 /** backend constants.EQUIPMENT_SLOT_KEYS와 같은 값 - 장비 SOP에서 채우거나 N/A로 남겨야 하는 세 칸 */
 export const EQUIPMENT_SLOT_KEYS: readonly SlotKey[] = [
@@ -12,58 +13,22 @@ export const EQUIPMENT_SLOT_KEYS: readonly SlotKey[] = [
   "procedures.maintenance",
 ];
 
-/** 칸의 상위 칸 - 하위 칸("a.b")이 아니면 null */
-export function getSlotParent(key: SlotKey): SlotKey | null {
-  const dot = key.indexOf(".");
-  return dot < 0 ? null : (key.slice(0, dot) as SlotKey);
-}
-
-/** 칸 번호 - SLOT_KEYS의 고정 자리(backend outputs._build_slot_numbers와 같은 규칙): 1…7, 하위 칸은 5.1 */
-export const SLOT_NUMBERS: Readonly<Record<SlotKey, string>> = (() => {
-  const numbers = {} as Record<SlotKey, string>;
-  const childCounts = new Map<SlotKey, number>();
-  let top = 0;
-  for (const key of SLOT_KEYS) {
-    const parent = getSlotParent(key);
-    if (parent === null) {
-      top += 1;
-      numbers[key] = String(top);
-    } else {
-      const next = (childCounts.get(parent) ?? 0) + 1;
-      childCounts.set(parent, next);
-      numbers[key] = `${numbers[parent]}.${next}`;
-    }
-  }
-  return numbers;
-})();
-
-/**
- * 하위 칸이 있는 칸인가(지금은 5·6·7) - backend outputs.has_sub_slots와 같은 규칙. 이 칸에 직접 놓인 줄은 번호가 없다(5 칸의 첫 줄이 5.1이면
- * 하위 칸 제목 "5.1 Safety"와 번호가 겹친다). 칸 번호가 고정 자리라 하위 칸이 N/A여도 같고, SOP 칸 키가 아닌 칸(WI 단계·입구 2 절 경로)은 false
- */
-export function hasSubSlots(key: string): boolean {
-  return SLOT_KEYS.some((slotKey) => slotKey.startsWith(`${key}.`));
-}
-
-/** 표의 두 단 - 경계는 5.2와 6 사이로 고정이다 */
-export const SLOT_COLUMNS: readonly [readonly SlotKey[], readonly SlotKey[]] = (() => {
-  const split = SLOT_KEYS.indexOf("procedures");
-  return [SLOT_KEYS.slice(0, split), SLOT_KEYS.slice(split)];
-})();
-
 export type SlotState =
   | { kind: "na"; reason: string } // 1 그 칸에 N/A가 저장돼 있다
-  | { kind: "covered"; by: SlotKey } // 2 상위 칸이 N/A다
+  | { kind: "covered"; by: SlotKey } // 2 상위 칸(가장 가까운 조상)이 N/A다
   | { kind: "filled"; count: number } // 3 그 칸의 count > 0
-  | { kind: "sub"; count: number } // 4 상위 칸, 자기 0, 하위 칸 count의 합 > 0
+  | { kind: "sub"; count: number } // 4 상위 칸, 자기 0, 하위 칸(그 아래 전부) count의 합 > 0
   | { kind: "decide" } // 5 장비 SOP의 세 칸이고 위 넷이 아니다
   | { kind: "empty" }; // 6 그 밖
 
 export interface SlotRow {
   key: SlotKey;
+  /** 번호 없는 항목은 빈 글 */
   number: string;
+  /** 그 항목의 이름만(조상 이름은 붙이지 않는다 - 표가 들여쓰기로 위계를 보인다) */
   label: string;
-  isChild: boolean;
+  /** 최상위 0 */
+  level: number;
   state: SlotState;
   /** Mark N/A를 그릴 칸 - decide·empty이고 칸 제목이 이어져 있지 않다 */
   canMarkNa: boolean;
@@ -78,36 +43,47 @@ export interface SlotSummary {
   decide: number;
 }
 
-const KNOWN_KEYS: ReadonlySet<string> = new Set(SLOT_KEYS);
-
-/** 그 문서의 칸별 수 - 모르는 키와 다른 문서의 줄은 읽지 않는다. 이미 쓴 문서(match)는 수를 읽지 않는다 */
+/** 그 문서의 칸별 수 - 다른 문서의 줄은 읽지 않는다(골격에 없는 키는 찾는 칸이 없어 쓰이지 않는다). 이미 쓴 문서(match)는 수를 읽지 않는다 */
 function readCounts(tobe: ToBe, doc: TargetDoc): Map<string, SlotCount> {
   const counts = new Map<string, SlotCount>();
   if (doc.entrance === "match") return counts;
   for (const row of tobe.slot_counts ?? []) {
-    if (row.target_doc_id === doc.id && KNOWN_KEYS.has(row.slot_key)) counts.set(row.slot_key, row);
+    if (row.target_doc_id === doc.id) counts.set(row.slot_key, row);
   }
   return counts;
 }
 
-/** SOP 한 줄의 칸 15개, SLOT_KEYS 순서. 이미 쓴 문서(entrance "match")는 수를 읽지 않는다(3·4번 상태와 headingLinked가 없다) */
+/**
+ * SOP 한 줄의 칸 - 그 문서의 골격 항목(뺀 항목 제외)을 서버가 준 순서대로. 이미 쓴 문서(entrance "match")는 수를 읽지 않는다(3·4번 상태와 headingLinked가 없다).
+ * 상위 칸은 parent_key를 따라 끝까지 본다 - N/A는 가장 가까운 N/A 조상이 덮고, 하위 칸의 수는 그 아래 전부를 더한다
+ */
 export function buildSlotRows(tobe: ToBe, doc: TargetDoc): SlotRow[] {
+  const items = tobe.outline_items.filter((item) => item.code === doc.code && !item.is_removed);
   const counts = readCounts(tobe, doc);
   const reasons = new Map<string, string>();
   for (const na of tobe.na_slots) if (na.code === doc.code) reasons.set(na.slot_key, na.reason);
 
-  return SLOT_KEYS.map((key) => {
-    const parent = getSlotParent(key);
-    const children = SLOT_KEYS.filter((other) => getSlotParent(other) === key);
+  const parents = new Map(items.map((item) => [item.key, item.parent_key]));
+  /** 조상 키 - 가까운 것부터 */
+  const listAncestors = (key: string): string[] => {
+    const ancestors: string[] = [];
+    for (let parent = parents.get(key) ?? null; parent !== null; parent = parents.get(parent) ?? null) ancestors.push(parent);
+    return ancestors;
+  };
+
+  return items.map((item) => {
+    const { key } = item;
+    const coveredBy = listAncestors(key).find((ancestor) => reasons.has(ancestor));
+    const below = items.filter((other) => listAncestors(other.key).includes(key));
     const own = counts.get(key);
     const ownCount = own?.count ?? 0;
-    const subCount = children.reduce((sum, child) => sum + (counts.get(child)?.count ?? 0), 0);
-    const headings = (own?.heading_count ?? 0) + children.reduce((sum, child) => sum + (counts.get(child)?.heading_count ?? 0), 0);
+    const subCount = below.reduce((sum, child) => sum + (counts.get(child.key)?.count ?? 0), 0);
+    const headings = (own?.heading_count ?? 0) + below.reduce((sum, child) => sum + (counts.get(child.key)?.heading_count ?? 0), 0);
 
     // 상태는 표의 순서대로 먼저 맞는 것
     let state: SlotState;
     if (reasons.has(key)) state = { kind: "na", reason: reasons.get(key) ?? "" };
-    else if (parent !== null && reasons.has(parent)) state = { kind: "covered", by: parent };
+    else if (coveredBy !== undefined) state = { kind: "covered", by: coveredBy };
     else if (ownCount > 0) state = { kind: "filled", count: ownCount };
     else if (subCount > 0) state = { kind: "sub", count: subCount };
     else if (doc.is_equipment_sop && EQUIPMENT_SLOT_KEYS.includes(key)) state = { kind: "decide" };
@@ -115,11 +91,28 @@ export function buildSlotRows(tobe: ToBe, doc: TargetDoc): SlotRow[] {
 
     const open = state.kind === "decide" || state.kind === "empty";
     const headingLinked = open && headings > 0;
-    return { key, number: SLOT_NUMBERS[key], label: SLOT_LABELS[key], isChild: parent !== null, state, canMarkNa: open && !headingLinked, headingLinked };
+    return { key, number: item.number ?? "", label: item.title_en, level: item.level, state, canMarkNa: open && !headingLinked, headingLinked };
   });
 }
 
-/** filled = 3·4번, na = 1·2번. 네 수의 합은 늘 15 */
+/**
+ * 표의 두 단 - 최상위 칸 앞에서만 가른다(하위 칸은 상위 칸과 같은 단에 남는다). 최상위에 procedures가 있으면 그 앞이고(15칸 골격의 5.2와 6 사이 -
+ * 화면이 익숙한 자리를 지킨다), 없으면 줄 수의 가운데에 가장 가까운 최상위 칸 앞이다(같은 거리면 뒤쪽 - 왼쪽 단이 길다). 가를 곳이 없으면 오른쪽 단이 빈다
+ */
+export function splitSlotColumns(rows: readonly SlotRow[]): [SlotRow[], SlotRow[]] {
+  const pinned = rows.findIndex((row) => row.level === 0 && row.key === "procedures");
+  let split = rows.length;
+  if (pinned > 0) split = pinned;
+  else {
+    const middle = rows.length / 2;
+    rows.forEach((row, index) => {
+      if (row.level === 0 && index > 0 && Math.abs(index - middle) <= Math.abs(split - middle)) split = index;
+    });
+  }
+  return [rows.slice(0, split), rows.slice(split)];
+}
+
+/** filled = 3·4번, na = 1·2번. 네 수의 합은 늘 칸 수 */
 export function summarizeSlots(rows: readonly SlotRow[]): SlotSummary {
   const summary: SlotSummary = { filled: 0, empty: 0, na: 0, decide: 0 };
   for (const { state } of rows) {

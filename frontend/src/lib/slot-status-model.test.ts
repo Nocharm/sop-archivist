@@ -1,8 +1,9 @@
 // New 목록 칸 상태 모델 - 여섯 상태의 순서, N/A를 둘 수 있는 칸, 요약, 쓴 사유, 사유 편집기 하나.
 import { describe, expect, it } from "vitest";
 
-import { SLOT_KEYS, type SlotCount, type TargetDoc, type ToBe } from "./api-sop";
-import { SLOT_COLUMNS, SLOT_NUMBERS, buildSlotRows, canUndoRestore, hasSubSlots, isNaEditDirty, listUsedReasons, openNaEdit, summarizeSlots, type NaEdit } from "./slot-status-model";
+import type { SlotCount, TargetDoc, ToBe } from "./api-sop";
+import { LEGACY_KEYS, makeDeepOutline, makeLegacyOutline, makeOutline } from "./outline-fixture";
+import { buildSlotRows, canUndoRestore, isNaEditDirty, listUsedReasons, openNaEdit, splitSlotColumns, summarizeSlots, type NaEdit } from "./slot-status-model";
 
 function makeDoc(patch: Partial<TargetDoc> = {}): TargetDoc {
   return { id: 12, code: "SOP-CF", title: "", doc_type: "sop", parent_code: null, entrance: "assign", is_equipment_sop: true, order_index: 1, document_id: null, ...patch };
@@ -22,6 +23,7 @@ const tobe: ToBe = {
     { code: "SOP-CF", slot_key: "document_relationships.appendices", reason: "own" },
   ],
   wi_steps: [],
+  outline_items: makeLegacyOutline("SOP-CF"),
   slot_counts: [
     makeCount("purpose", 2, 0),
     makeCount("scope", 0, 1),
@@ -93,23 +95,106 @@ describe("summarizeSlots", () => {
   });
 });
 
-describe("slot places", () => {
-  it("numbers the sections from their fixed places", () => {
-    expect(SLOT_KEYS.map((key) => SLOT_NUMBERS[key])).toEqual(["1", "2", "3", "4", "5", "5.1", "5.2", "6", "6.1", "6.2", "6.3", "6.4", "7", "7.1", "7.2"]);
-    expect(SLOT_COLUMNS[0].at(-1)).toBe("general_requirements.operation");
-    expect(SLOT_COLUMNS[1][0]).toBe("procedures");
+describe("rows from the document's outline", () => {
+  it("takes the order, number, name and level from the outline items of that document", () => {
+    const rows = buildSlotRows(tobe, sop);
+    expect(rows.map((row) => row.key)).toEqual(LEGACY_KEYS);
+    expect(rows.map((row) => row.number)).toEqual(["1", "2", "3", "4", "5", "5.1", "5.2", "6", "6.1", "6.2", "6.3", "6.4", "7", "7.1", "7.2"]);
+    expect(rows.map((row) => row.level)).toEqual([0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1]);
+    // 이름은 그 항목의 것만 - 조상 이름을 붙인 label("General requirements › Safety")이 아니다
+    expect(rows.filter((row) => row.number.startsWith("5")).map((row) => row.label)).toEqual(["General requirements", "Safety", "Operation"]);
   });
 
-  it("knows which sections have sub sections, from the key list", () => {
-    expect(SLOT_KEYS.filter(hasSubSlots)).toEqual(["general_requirements", "procedures", "document_relationships"]);
-    // SOP 칸 키가 아닌 칸(WI 단계·입구 2 절 경로)은 아니다
-    expect(["step:1:instruction", "unstepped:why", "path:procedures"].some(hasSubSlots)).toBe(false);
+  it("leaves out removed items and the items of another document", () => {
+    const other = makeLegacyOutline("SOP-XX", { purpose: { title_en: "Other" } });
+    const removed = makeLegacyOutline("SOP-CF", { "procedures.maintenance": { is_removed: true } });
+    const rows = buildSlotRows({ ...tobe, outline_items: [...other, ...removed] }, sop);
+    expect(rows).toHaveLength(14);
+    expect(rows.some((row) => row.key === "procedures.maintenance" || row.label === "Other")).toBe(false);
+  });
+
+  it("has no rows for a document without an outline", () => {
+    expect(buildSlotRows({ ...tobe, outline_items: [] }, sop)).toEqual([]);
+  });
+
+  it("shows an item without a number as an empty number", () => {
+    const rows = buildSlotRows({ ...tobe, outline_items: makeLegacyOutline("SOP-CF", { scope: { number: null } }) }, sop);
+    expect(rows[1]).toMatchObject({ key: "scope", number: "" });
+  });
+});
+
+describe("a three-level outline", () => {
+  const deep: ToBe = { ...tobe, na_slots: [], slot_counts: [], outline_items: makeDeepOutline("SOP-CF") };
+  const statesOf = (response: ToBe) => Object.fromEntries(buildSlotRows(response, sop).map((row) => [row.key, row.state]));
+
+  it("reads level 2 and numbers it under its parent", () => {
+    expect(buildSlotRows(deep, sop).map((row) => [row.key, row.number, row.level])).toEqual([["a", "1", 0], ["a.b", "1.1", 1], ["a.b.c", "1.1.1", 2], ["z", "2", 0]]);
+  });
+
+  it("covers every level under an N/A ancestor, naming the nearest N/A one", () => {
+    const top = statesOf({ ...deep, na_slots: [{ code: "SOP-CF", slot_key: "a", reason: "r" }] });
+    expect(top["a.b"]).toEqual({ kind: "covered", by: "a" });
+    expect(top["a.b.c"]).toEqual({ kind: "covered", by: "a" });
+    expect(top.z).toEqual({ kind: "empty" });
+
+    const both = statesOf({ ...deep, na_slots: [{ code: "SOP-CF", slot_key: "a", reason: "r" }, { code: "SOP-CF", slot_key: "a.b", reason: "mid" }] });
+    expect(both["a.b"]).toEqual({ kind: "na", reason: "mid" });
+    expect(both["a.b.c"]).toEqual({ kind: "covered", by: "a.b" });
+
+    const mid = statesOf({ ...deep, na_slots: [{ code: "SOP-CF", slot_key: "a.b", reason: "mid" }] });
+    expect(mid.a).toEqual({ kind: "empty" });
+    expect(mid["a.b.c"]).toEqual({ kind: "covered", by: "a.b" });
+  });
+
+  it("counts everything below a section, not only its direct sub-sections", () => {
+    const filled = statesOf({ ...deep, slot_counts: [makeCount("a.b.c", 2, 0)] });
+    expect(filled.a).toEqual({ kind: "sub", count: 2 });
+    expect(filled["a.b"]).toEqual({ kind: "sub", count: 2 });
+    expect(filled["a.b.c"]).toEqual({ kind: "filled", count: 2 });
+
+    // 두 수준 아래의 칸 제목 연결도 맨 위 칸의 N/A를 막는다
+    const linked = new Map(buildSlotRows({ ...deep, slot_counts: [makeCount("a.b.c", 0, 1)] }, sop).map((row) => [row.key, row]));
+    expect(linked.get("a")).toMatchObject({ headingLinked: true, canMarkNa: false });
+    expect(linked.get("z")).toMatchObject({ headingLinked: false, canMarkNa: true });
+  });
+});
+
+describe("splitSlotColumns", () => {
+  const keysOf = (response: ToBe) => splitSlotColumns(buildSlotRows(response, sop)).map((column) => column.map((row) => row.key));
+
+  it("splits the 15 sections before Procedures, between 5.2 and 6", () => {
+    const [left, right] = keysOf(tobe);
+    expect(left.at(-1)).toBe("general_requirements.operation");
+    expect(right[0]).toBe("procedures");
+    expect([...left, ...right]).toEqual(LEGACY_KEYS);
+  });
+
+  it("splits before the top-level section nearest the middle when there is no Procedures, keeping sub-sections with their parent", () => {
+    // 줄 7개의 가운데(3.5)에 가까운 최상위 칸은 c(자리 4) - b의 하위 칸은 b와 같은 단에 남는다
+    const outline = makeOutline("SOP-CF", [["a", "A"], ["b", "B"], ["b.x", "X"], ["b.y", "Y"], ["c", "C"], ["c.x", "X"], ["d", "D"]]);
+    expect(keysOf({ ...tobe, outline_items: outline })).toEqual([["a", "b", "b.x", "b.y"], ["c", "c.x", "d"]]);
+    // 같은 거리면 뒤쪽 - 왼쪽 단이 길다
+    const five = makeOutline("SOP-CF", [["a", "A"], ["b", "B"], ["c", "C"], ["d", "D"], ["e", "E"]]);
+    expect(keysOf({ ...tobe, outline_items: five })).toEqual([["a", "b", "c"], ["d", "e"]]);
+  });
+
+  it("never splits inside a section, however deep", () => {
+    expect(keysOf({ ...tobe, outline_items: makeDeepOutline("SOP-CF") })).toEqual([["a", "a.b", "a.b.c"], ["z"]]);
+    // 최상위 칸이 하나면 가를 곳이 없다 - 오른쪽 단이 빈다
+    const single = makeOutline("SOP-CF", [["a", "A"], ["a.b", "B"], ["a.b.c", "C"]]);
+    expect(keysOf({ ...tobe, outline_items: single })).toEqual([["a", "a.b", "a.b.c"], []]);
+    expect(splitSlotColumns([])).toEqual([[], []]);
+  });
+
+  it("does not treat a sub-section named procedures as the split point", () => {
+    const outline = makeOutline("SOP-CF", [["a", "A"], ["a.procedures", "P"], ["b", "B"], ["c", "C"]]);
+    expect(keysOf({ ...tobe, outline_items: outline })).toEqual([["a", "a.procedures"], ["b", "c"]]);
   });
 });
 
 describe("listUsedReasons", () => {
   function withReasons(reasons: string[]): ToBe {
-    return { ...tobe, na_slots: reasons.map((reason, index) => ({ code: "SOP-CF", slot_key: SLOT_KEYS[index], reason })) };
+    return { ...tobe, na_slots: reasons.map((reason, index) => ({ code: "SOP-CF", slot_key: LEGACY_KEYS[index], reason })) };
   }
 
   it("lists the reasons used most, one per text", () => {
@@ -139,7 +224,7 @@ describe("the one N/A editor", () => {
 });
 
 describe("canUndoRestore", () => {
-  const restored: ToBe = { revision: 1, docs: [makeDoc({ id: 1 })], na_slots: [{ code: "SOP-CF", slot_key: "document_relationships", reason: "r" }], wi_steps: [] };
+  const restored: ToBe = { revision: 1, docs: [makeDoc({ id: 1 })], na_slots: [{ code: "SOP-CF", slot_key: "document_relationships", reason: "r" }], wi_steps: [], outline_items: [] };
   it("undoes only while the row is still an SOP and the slot has no N/A saved", () => {
     expect(canUndoRestore(restored, 1, "scope")).toBe(true);
     // 상위 칸만 N/A인 하위 칸 - 그 칸 자체에는 저장된 N/A가 없다

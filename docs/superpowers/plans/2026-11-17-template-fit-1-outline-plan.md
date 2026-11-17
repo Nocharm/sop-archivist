@@ -12,7 +12,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-17-template-fit-design.md` §6 작업 1, 부록 A. 기준 코드는 `dev` v1.1.24(`fa20953`) — 설계의 v1.1.18 뒤에 v1.1.23(하위 칸이 있는 칸의 직접 줄은 번호 없음)이 들어왔다.
 
-**상태:** 사용자 확인 전(아래 "확인받을 것"). 확인 뒤 걸음 1부터.
+**상태:** 사용자 확인 2026-11-17("확인받을 것" 1–5 · 7–9는 권한 대로, 6번 부록 안 번호는 스텝 4 전에 원본 확인). 스텝 1 끝남.
 
 ## Global Constraints
 
@@ -25,13 +25,13 @@
 - 모델을 바꾸면 Alembic 리비전(배포 런타임 Python 3.11, `batch_alter_table`). 아래 번호(0022–0024)는 지금 머리 `0021` 기준이다. `dev`를 합쳐 왔을 때 `dev`에 새 리비전이 있으면 이쪽 리비전의 번호와 `down_revision`을 그 뒤로 민다(머리가 둘이면 기동이 죽는다).
 - 새 권한은 3곳(backend `catalog.py` ↔ frontend `access.ts` ↔ i18n en·ko), 새 거절 코드는 `rule.<code>` en·ko.
 - 화면·동작·라벨을 바꾸는 커밋에서 `frontend/public/manual/user-manual.md` 글을 함께 고친다(그림은 다음 MINOR).
-- **이 세션의 작업은 `dev`에 합치지 않는다(사용자 결정 2026-11-17).** 모음 브랜치 `feat/outline`에 쌓고, 필요할 때 `dev`를 `feat/outline`으로 합쳐 오고, 마지막 마무리 때 한 번 `dev`에 합친다. 걸음마다 걸음 브랜치 `feat/outline-<n>-<이름>`을 `feat/outline`에서 따서 그 걸음의 diff만 검토해 `feat/outline`에 합친다.
-- PATCH(`npm version patch --no-git-tag-version`) · `CHANGELOG.md`는 마지막에 `dev`에 합칠 때 한 번. `PROGRESS.md`는 걸음마다 적고 합칠 때 한 항목으로 줄인다. 푸시는 GitHub `origin`에만.
+- **이 세션의 작업은 `dev`에 합치지 않는다(사용자 결정 2026-11-17).** 모음 브랜치 `feat/outline`에 쌓고, 필요할 때 `dev`를 `feat/outline`으로 합쳐 오고, 마지막 마무리 때 한 번 `dev`에 합친다. 스텝마다 스텝 브랜치 `feat/outline-<n>-<이름>`을 `feat/outline`에서 따서 그 스텝의 diff만 검토해 `feat/outline`에 합친다.
+- PATCH(`npm version patch --no-git-tag-version`) · `CHANGELOG.md`는 마지막에 `dev`에 합칠 때 한 번. `PROGRESS.md`는 스텝마다 적고 합칠 때 한 항목으로 줄인다. 푸시는 GitHub `origin`에만.
 - 커밋 전: backend `ruff check app/ tests/` · `pytest tests/ -q -n auto`, frontend `npm run lint && npx tsc --noEmit -p tsconfig.json && npx vitest run`.
 
-## 걸음과 브랜치
+## 스텝과 브랜치
 
-| # | 걸음 브랜치 | 한 문장 | 화면에서 보이는 것 | Alembic |
+| # | 스텝 브랜치 | 한 문장 | 화면에서 보이는 것 | Alembic |
 |---|---|---|---|---|
 | 1 | `feat/outline-1-bullet` | 줄 번호 표시에 글머리 기호를 더한다 | Order 화면의 표시 단추에 "•" | 0022 |
 | 2 | `feat/outline-2-doc-copy` | 15칸을 DB 골격과 문서 사본으로 옮기고 모든 코드가 사본에서 읽는다 | 화면은 그대로(전체 스모크로 확인) | 0023 |
@@ -40,9 +40,9 @@
 | 5 | `feat/outline-5-declare` | 6장 절차·9장 부록·5장 범주를 문서마다 선언한다 | To-Be 패널의 선언 목록, Excel `SOP 절차` 시트 | – |
 | 6 | `feat/outline-6-deviation` | 표준에서 벗어나면 사유를 남기고 빈 필수 항목을 경고한다 | "표준과 다름" 표시, "비어 있음" 경고 | – |
 
-모음 브랜치 `feat/outline`(워크트리 `sop-archivist-template`)에서 걸음 브랜치를 차례로 따고, 걸음이 끝나면 그 걸음의 diff만 검토해 `feat/outline`에 합친다. `dev`를 합쳐 오는 때: 걸음을 시작하기 전, 그리고 `dev`에 이 계획이 고치는 파일(아래 File Structure)을 건드린 머지가 들어왔을 때. 마지막에 `feat/outline` → `dev`는 전체를 다시 검토하지 않고 `dev`를 합친 뒤의 시험과 전체 스모크로 본다.
+모음 브랜치 `feat/outline`(워크트리 `sop-archivist-template`)에서 스텝 브랜치를 차례로 따고, 스텝이 끝나면 그 스텝의 diff만 검토해 `feat/outline`에 합친다. `dev`를 합쳐 오는 때: 스텝을 시작하기 전, 그리고 `dev`에 이 계획이 고치는 파일(아래 File Structure)을 건드린 머지가 들어왔을 때. 마지막에 `feat/outline` → `dev`는 전체를 다시 검토하지 않고 `dev`를 합친 뒤의 시험과 전체 스모크로 본다.
 
-Assign 화면(`assign/page.tsx`)은 걸음 2에서 한 줄(목적지 목록 만들기)만 고치고, 선언 UI는 To-Be 패널에만 둔다 — 진행 중인 `feat/assign-ai-focus`, 1.2.0 피드백 8번(가상화)과 겹치지 않게.
+Assign 화면(`assign/page.tsx`)은 스텝 2에서 한 줄(목적지 목록 만들기)만 고치고, 선언 UI는 To-Be 패널에만 둔다 — 진행 중인 `feat/assign-ai-focus`, 1.2.0 피드백 8번(가상화)과 겹치지 않게.
 
 ## 확인받을 것 (설계 §9와 계획하다 찾은 빈 곳)
 
@@ -61,17 +61,17 @@ Assign 화면(`assign/page.tsx`)은 걸음 2에서 한 줄(목적지 목록 만�
 
 ## Review Focus
 
-1. 표준을 고치기 전에 만든 문서는 사본이 그대로다(걸음 3 `test_admin_edit_applies_to_new_docs_only`).
-2. 마이그레이션 뒤 되돌리기 — 옛 키가 든 판단 단계(`DecisionStep.before/after`)를 되돌려도 줄이 새 키 자리에 놓인다(걸음 4 `test_migration_rewrites_keys_in_json`).
-3. 확정 줄이 있는 절차의 이름·순서를 바꿔도 연결·확정은 그대로이고 번호와 칸 제목 글만 따라간다(걸음 5 `test_rename_and_reorder_keep_confirmed_lines`).
-4. 관리자가 넣은 키에 `:`이나 대문자·빈칸이 있으면 거절한다(걸음 3 `test_admin_rejects_bad_key`).
-5. 문서 종류를 SOP → WI → SOP로 바꾸면 사본이 지워졌다 다시 생긴다(걸음 2 `test_doc_type_change_drops_and_recopies_outline`).
+1. 표준을 고치기 전에 만든 문서는 사본이 그대로다(스텝 3 `test_admin_edit_applies_to_new_docs_only`).
+2. 마이그레이션 뒤 되돌리기 — 옛 키가 든 판단 단계(`DecisionStep.before/after`)를 되돌려도 줄이 새 키 자리에 놓인다(스텝 4 `test_migration_rewrites_keys_in_json`).
+3. 확정 줄이 있는 절차의 이름·순서를 바꿔도 연결·확정은 그대로이고 번호와 칸 제목 글만 따라간다(스텝 5 `test_rename_and_reorder_keep_confirmed_lines`).
+4. 관리자가 넣은 키에 `:`이나 대문자·빈칸이 있으면 거절한다(스텝 3 `test_admin_rejects_bad_key`).
+5. 문서 종류를 SOP → WI → SOP로 바꾸면 사본이 지워졌다 다시 생긴다(스텝 2 `test_doc_type_change_drops_and_recopies_outline`).
 
 ---
 
 ## File Structure
 
-| 파일 | 책임 | 걸음 |
+| 파일 | 책임 | 스텝 |
 |---|---|---|
 | `backend/app/sop/outline.py` (새) | 골격 값 객체 `DocOutline`(찾기·부모·번호·수준·배정 가능·줄 세기), 표준 시드, 문서 사본 만들기·읽기 | 2, 4 |
 | `backend/app/sop/outline_edit.py` (새) | 문서 사본의 선언·이름·순서·빼기·벗어남 규칙 | 5, 6 |
@@ -97,15 +97,15 @@ Assign 화면(`assign/page.tsx`)은 걸음 2에서 한 줄(목적지 목록 만�
 **Interfaces:**
 - Produces: `NUMBER_BULLET = "bullet"`; `NUMBER_STYLES = ("numbered", "omitted", "note", "bullet")`. 글머리 기호 줄은 세지 않는다(생략과 같은 깊이 규칙). 결과물 C 줄의 `number`는 `null`이고 화면이 "•"를 그린다. 결과물 A · Excel의 `No.`는 그 절의 번호다.
 
-- [ ] **Step 1: 실패하는 시험** — `test_sop_numbering.py`
+- [x] **Step 1: 실패하는 시험** — `test_sop_numbering.py`
   - `test_bullet_line_is_not_counted`: `purpose`에 표시 `[numbered, bullet, numbered]` → 줄 번호 `["1.1", None, "1.2"]`.
   - `test_bullet_row_shows_section_number_in_output_a`: 같은 자료의 결과물 A에서 글머리 기호 줄의 `dest_number == "1"`.
   - `test_migrations.py::test_0022_accepts_bullet`: 올린 DB에 `number_style='bullet'` 줄을 넣을 수 있고 `'dots'`는 CHECK로 막힌다.
-- [ ] **Step 2: 돌려서 실패 확인** — `.venv/bin/python -m pytest tests/test_sop_numbering.py tests/test_migrations.py -q`
-- [ ] **Step 3: 구현** — 상수 · 리비전 · `number_targets`(bullet은 `isCounted` 아님) · A 행의 번호 대체 · C 시트는 번호 칸에 "•".
-- [ ] **Step 4: 프런트** — `NumberStyle`에 `"bullet"`, `NUMBER_STYLES`에 더하고 vitest `readStyleChoices`가 넷을 내놓는지(하위 칸이 있는 칸은 `numbered`만 뺀 셋). 표시 단추에 아이콘 + 호버 설명(en "Bullet" / ko "글머리 기호"), 줄 머리에 "•".
-- [ ] **Step 5: 확인** — backend 전체 시험, 프런트 lint · tsc · vitest, Order 화면 스모크(`QUIET=1 ONLY="order:" node scripts/pw-smoke-sop.mjs` — 접두사는 스크립트의 Order 단계 이름으로 맞춘다).
-- [ ] **Step 6: 설명서 글 · PROGRESS → 커밋 → 걸음 diff 검토 → `feat/outline`**
+- [x] **Step 2: 돌려서 실패 확인** — `.venv/bin/python -m pytest tests/test_sop_numbering.py tests/test_migrations.py -q`
+- [x] **Step 3: 구현** — 상수 · 리비전 · `number_targets`(bullet은 `isCounted` 아님) · A 행의 번호 대체 · C 시트는 번호 칸에 "•".
+- [x] **Step 4: 프런트** — `NumberStyle`에 `"bullet"`, `NUMBER_STYLES`에 더하고 vitest `readStyleChoices`가 넷을 내놓는지(하위 칸이 있는 칸은 `numbered`만 뺀 셋). 표시 단추에 아이콘 + 호버 설명(en "Bullet" / ko "글머리 기호"), 줄 머리에 "•".
+- [x] **Step 5: 확인** — backend 전체 시험, 프런트 lint · tsc · vitest, Order 화면 스모크(`QUIET=1 ONLY="order:" node scripts/pw-smoke-sop.mjs` — 접두사는 스크립트의 Order 단계 이름으로 맞춘다).
+- [x] **Step 6: 설명서 글 · PROGRESS → 커밋 → 스텝 diff 검토 → `feat/outline`**
 
 ---
 
@@ -142,17 +142,17 @@ class TargetDocOutlineItem(Base):     # target_doc_outline_items, PK (target_doc
     #   + is_removed: bool(기본 False) + deviation_reason: str | None(Text)
 ```
 
-종류의 뜻(걸음 2에서 정하고 걸음 4에서 다 쓴다):
+종류의 뜻(스텝 2에서 정하고 스텝 4에서 다 쓴다):
 
 | 종류 | 직접 배정 | 직접 줄 세기 | 하위 |
 |---|---|---|---|
-| `general` | 됨 | 줄의 표시대로 | 없음(사용자 항목은 걸음 6) |
+| `general` | 됨 | 줄의 표시대로 | 없음(사용자 항목은 스텝 6) |
 | `category_table` | 됨(범주 없는 항목) | 안 셈 | 범주 — 번호 없는 제목 |
 | `named_children` | 됨(머리 글) | 안 셈 | 선언한 절 — `부모.n` 또는 `child_prefix n.` |
 | `group` | 안 됨 | – | 하위만 |
 | `auto_list` | 안 됨 | – | 없음(앱이 채움) |
 
-걸음 2의 표준은 `SLOT_KEYS` 15개이고 5 · 6 · 7은 `named_children`(지금처럼 직접 줄을 받되 세지 않는다), 나머지는 `general`, 모두 `is_required=True` · `default_style="numbered"` · `origin="standard"`. 제목은 `SLOT_LABELS`의 마지막 조각.
+스텝 2의 표준은 `SLOT_KEYS` 15개이고 5 · 6 · 7은 `named_children`(지금처럼 직접 줄을 받되 세지 않는다), 나머지는 `general`, 모두 `is_required=True` · `default_style="numbered"` · `origin="standard"`. 제목은 `SLOT_LABELS`의 마지막 조각.
 
 **Interfaces — `outline.py`**
 
@@ -221,7 +221,7 @@ interface OutlineItem {            // ToBe.outline_items: OutlineItem[]
   - `classify-model.ts`: `buildDestinationOptions(tobe)`(라벨 인자 삭제, `is_assignable`만, `depth: number` = `level`), `isNa`는 `parent_key`를 따라 올라간다.
   - 시험 값: 기존 시험의 고정 절에 `counts_lines` · `level`을 더하고, 3수준 골격(`a` · `a.b` · `a.b.c`)으로 깊이 2가 나오는 경우를 하나씩 더한다.
 - [ ] **Step 6: 확인** — backend 전체, 프런트 lint · tsc · vitest · `npm run build`(경고 0). API 층과 공용 모델을 고쳤으니 **전체 스모크**(`node scripts/pw-smoke-sop.mjs`) — 시험 ID(`…-slot-<key>`, `assign-tree-place-slot:<doc>:<key>`)는 키가 그대로라 바뀌지 않는다.
-- [ ] **Step 7: `plan2-ai.md` API 계약 블록 · `backend/CLAUDE.md` · `frontend/CLAUDE.md`의 칸 설명 · PROGRESS → 커밋 → 걸음 diff 검토 → `feat/outline`**
+- [ ] **Step 7: `plan2-ai.md` API 계약 블록 · `backend/CLAUDE.md` · `frontend/CLAUDE.md`의 칸 설명 · PROGRESS → 커밋 → 스텝 diff 검토 → `feat/outline`**
 
 ---
 
@@ -241,7 +241,7 @@ interface OutlineItem {            // ToBe.outline_items: OutlineItem[]
 - [ ] **Step 2: 구현 (backend)** — `routers/sop_guidelines.py`의 권한 의존성 방식을 따른다.
 - [ ] **Step 3: 화면** — `guidelines-panel.tsx`의 부품(`useLoaded`, `PanelTitle`, `showToast`, `humanizeApiError`)으로 표 하나: 번호(계산) · 키 · 영어 제목 · 한글 제목 · 종류 · 필수 · 기본 표시 · 하위 머리말 · 권장 이름. 줄 더하기 · 빼기 · 위아래 옮기기 · **Save**. 머리에 "Applies to documents created after saving"(ko "저장한 뒤에 만드는 문서부터 적용됩니다"). 시험 ID `admin-panel-outline`, `admin-outline-row-<key>`, `admin-outline-save`.
 - [ ] **Step 4: 확인** — backend 한 파일 + 전체, 프런트 lint · tsc · vitest, 스모크는 Admin 단계에 Outline 탭 열기 · 제목 하나 고쳐 저장 · 다시 읽기를 더해 그 단계만.
-- [ ] **Step 5: 설명서 글 · PROGRESS → 커밋 → 걸음 diff 검토 → `feat/outline`**
+- [ ] **Step 5: 설명서 글 · PROGRESS → 커밋 → 스텝 diff 검토 → `feat/outline`**
 
 ---
 
@@ -276,7 +276,7 @@ interface OutlineItem {            // ToBe.outline_items: OutlineItem[]
 | `appendices` | 9 | Appendices | named_children (`child_prefix="Appendix"`) | ✓ | numbered |
 
 - `general_requirements.suggestions`: Safety, Account, Qualification, Equipment, Work, Excursion/Alarm, Material, Training, Record, Quality, Caution, Data Management.
-- `procedures.suggestions`: Electronic Record Control, Troubleshooting, Maintenance(화면은 장비 SOP일 때만 띄운다 — 걸음 5).
+- `procedures.suggestions`: Electronic Record Control, Troubleshooting, Maintenance(화면은 장비 SOP일 때만 띄운다 — 스텝 5).
 - 새 SOP의 사본에는 `procedures.p1`("Procedure 1", `origin="declared"`)을 함께 넣는다(설계 #11).
 - 선언한 하위 항목의 기본 표시: 6장 절차 · 부록은 `numbered`, 5장 범주는 `bullet`.
 
@@ -323,7 +323,7 @@ LEGACY_KEY_MAP = {
 }
 ```
 
-1. `outline_standard_items`를 비우고 템플릿 줄을 넣는다(개발 스택에서 걸음 3으로 고친 표준은 사라진다 — 운영에는 아직 없다).
+1. `outline_standard_items`를 비우고 템플릿 줄을 넣는다(개발 스택에서 스텝 3으로 고친 표준은 사라진다 — 운영에는 아직 없다).
 2. SOP 문서마다 사본을 템플릿으로 다시 만든다. 그 문서의 `target_sentences.slot_key` · `target_doc_na_slots.slot_key`에 쓰인 옛 하위 키는 선언 항목으로 살린다: `general_requirements.safety`("Safety") · `.work`("Work") · `procedures.procedure`("Procedure") · `.electronic_record_control`("Electronic Record Control") · `.troubleshooting`("Troubleshooting") · `.maintenance`("Maintenance") · `appendices.a1`("Appendix 1"). 6장에 선언 항목이 하나도 없으면 `procedures.p1`.
 3. `LEGACY_KEY_MAP`으로 `target_sentences.slot_key`, `target_doc_na_slots.slot_key`, 그리고 JSON 안의 `slot_key`(`decision_steps.before` · `after`, `unit_decision_history.snapshot`, `ai_suggestions.content`)를 바꾼다. JSON은 파이썬에서 읽어 고쳐 쓴다(sqlite · postgres 공통).
 4. 옮긴 뒤 자리의 기본 표시가 `bullet`인 줄 가운데 `number_style='numbered'`인 것을 `bullet`로(확인받을 것 7).
@@ -344,9 +344,9 @@ LEGACY_KEY_MAP = {
 - [ ] **Step 3: 실패하는 시험 — AI 후보** (`test_sop_ai_candidates.py`) — `test_match_rule_slot_table`(위 표의 줄마다 한 경우), `test_candidates_skip_group_and_auto_list`, `test_candidates_skip_na_items`(지금 시험을 새 키로).
 - [ ] **Step 4: 구현** — `TEMPLATE_OUTLINE` · 종류 규칙 · `number_outline` · 기본 표시 · `slot_not_assignable` · 자동 목록 · 장비 알림 삭제 · 후보 · 리비전.
 - [ ] **Step 5: 합성 자료와 기존 시험** — `synthetic_sop.py`의 `_sop(slot_key, …)` 값과 `tobe_na_slots`, 시드 스크립트, `fake_ai.py`, 시험 도우미, 위 시험 파일의 키를 새 키로. `test_sop_outputs.py`의 `location_key == list(SLOT_KEYS)`는 템플릿 키 목록으로.
-- [ ] **Step 6: 프런트** — N/A 표는 걸음 2에서 이미 서버 골격을 읽는다. 여기서는 장비 "decide" 상태 삭제, 범주 줄(번호 없는 제목) · `group` · `auto_list` 줄의 모양(배정 단추 없음, 자동 목록은 WI 번호 · 제목), 결과물 C의 자동 목록 절, 스모크의 `SLOT_ORDER` · 박힌 키 · 번호 기대값. vitest: `slot-status-model.test.ts`(템플릿 골격으로 줄 수 · 수준 · 번호), `classify-model.test.ts`(`group`은 목적지 목록에 없다).
+- [ ] **Step 6: 프런트** — N/A 표는 스텝 2에서 이미 서버 골격을 읽는다. 여기서는 장비 "decide" 상태 삭제, 범주 줄(번호 없는 제목) · `group` · `auto_list` 줄의 모양(배정 단추 없음, 자동 목록은 WI 번호 · 제목), 결과물 C의 자동 목록 절, 스모크의 `SLOT_ORDER` · 박힌 키 · 번호 기대값. vitest: `slot-status-model.test.ts`(템플릿 골격으로 줄 수 · 수준 · 번호), `classify-model.test.ts`(`group`은 목적지 목록에 없다).
 - [ ] **Step 7: 확인** — backend 전체, 프런트 lint · tsc · vitest · build, 로컬 DB 다시 만들기(`scripts.reset_db` → `seed_sop_demo`) 뒤 **전체 스모크**. 옛 자료가 든 로컬 `dev.db`가 있으면 그대로 올려(기동 때 `upgrade head`) To-Be · Assign · Order 화면이 열리는지 본다.
-- [ ] **Step 8: 문서(도메인 §2 메모, 제품 명세 §6.6 · §7.13, Documents 화면 설계) · 설명서 글 · PROGRESS → 커밋 → 걸음 diff 검토 → `feat/outline`**
+- [ ] **Step 8: 문서(도메인 §2 메모, 제품 명세 §6.6 · §7.13, Documents 화면 설계) · 설명서 글 · PROGRESS → 커밋 → 스텝 diff 검토 → `feat/outline`**
 
 ---
 
@@ -370,7 +370,7 @@ async def patch_outline_item(session, bundle, doc_id, key, body, actor) -> None
 async def remove_outline_item(session, bundle, doc_id, key, actor) -> None
 ```
 
-- 이 걸음에서는 부모가 `named_children` · `category_table`일 때만(선언). 그 밖의 부모는 422 `outline_parent_not_declarable`. 표준 항목의 이름 · 빼기는 422 `outline_standard_item`(걸음 6에서 사유와 함께 풀린다).
+- 이 스텝에서는 부모가 `named_children` · `category_table`일 때만(선언). 그 밖의 부모는 422 `outline_parent_not_declarable`. 표준 항목의 이름 · 빼기는 422 `outline_standard_item`(스텝 6에서 사유와 함께 풀린다).
 - 없는 키 404 `outline_item_not_found`. 줄이나 칸 제목이 있는 항목을 지우면 409 `slot_has_targets`(지금 코드). 같은 부모 아래 같은 영어 제목(대소문자 무시)은 422 `duplicate_outline_title`.
 - 이름을 바꾸면 그 항목의 칸 제목 줄(`kind='slot_heading'`)의 글도 같은 트랜잭션에서 새 라벨로 바꾼다. 순서를 바꿔도 키는 그대로다 — 번호만 따라간다.
 - To-Be `revision`을 올리고 기존 작업 기록 방식(`apply_tobe`가 남기는 것)을 따른다.
@@ -382,7 +382,7 @@ async def remove_outline_item(session, bundle, doc_id, key, actor) -> None
 - [ ] **Step 3: 구현 (backend)**
 - [ ] **Step 4: 화면** — `ToBePanel`의 SOP 갈래(`sections` 위)에 묶음 셋: **Procedures (6)** · **Appendices (9)** · **Categories (5)**. 줄마다 번호 · 영어 제목 · 한글 제목(`CommitInput`) · 줄 수 · 지우기(줄이 있으면 숨긴다 — WI 단계의 `getStepRemoveBlock`과 같은 판단), 끝에 더하기. 범주와 장비 SOP의 절차에는 권장 이름 칩(이미 쓴 이름은 뺀다). 시험 ID `${prefix}-outline-<key>`, `-outline-add-<parentKey>`, `-outline-chip-<parentKey>-<i>`. 순서 바꾸기는 위 · 아래 단추(호버 · 포커스에만 보이는 줄 끝 단추).
 - [ ] **Step 5: 확인** — backend 전체, 프런트 lint · tsc · vitest, Documents(To-Be) 스모크 단계에 "절차 더하기 → 이름 → Assign 나무에 6.2가 보임 → 지우기"를 더해 그 단계만.
-- [ ] **Step 6: 설명서 글 · PROGRESS → 커밋 → 걸음 diff 검토 → `feat/outline`**
+- [ ] **Step 6: 설명서 글 · PROGRESS → 커밋 → 스텝 diff 검토 → `feat/outline`**
 
 ---
 
@@ -395,7 +395,7 @@ async def remove_outline_item(session, bundle, doc_id, key, actor) -> None
 **Interfaces:**
 - `NewOutlineItemIn` · `OutlineItemPatchIn`에 `reason: str = ""`, 그리고 `OutlineItemPatchIn.is_removed?: bool`.
 - 사유가 필요한 것(비면 422 `deviation_reason_required`): ① 선언할 수 없는 부모 아래나 최상위에 항목 더하기(`origin="custom"`, 종류 `general`, 기본 표시는 부모의 것) ② 표준 항목의 제목 바꾸기 ③ 필수 표준 항목 빼기(`is_removed=True` — 줄이 있으면 409 `slot_has_targets`, 하위까지 함께 빠진다). 되살리기(`is_removed=False`)와 제목을 표준으로 되돌리기는 사유를 지운다.
-- 선택 항목(7.1.x)을 빼는 것, N/A 표시, 선언(걸음 5)은 벗어남이 아니다.
+- 선택 항목(7.1.x)을 빼는 것, N/A 표시, 선언(스텝 5)은 벗어남이 아니다.
 - 응답: `OutlineItem.is_deviation: boolean`(위 ①②③), `sections[].deviation_reason: string | null`, `sections[].is_empty_required: boolean`(필수 · 배정 가능하거나 `group`인데 자기와 하위에 줄이 없고 N/A도 아님 — `auto_list`는 자식 WI가 없을 때).
 - 빠진 항목은 절 목록에 없고 번호를 세지 않는다(뒤 장이 당겨진다 — 확인받을 것 9).
 - 검토: 빈 필수 항목과 벗어남은 알림(notice)일 뿐이다. 검토 요청을 막는 검사에 넣지 않는다.
@@ -404,7 +404,7 @@ async def remove_outline_item(session, bundle, doc_id, key, actor) -> None
 - [ ] **Step 2: 구현 (backend)** — C 시트에 "표준과 다름" 사유 칸 하나(`heading_note` 옆).
 - [ ] **Step 3: 화면** — N/A 표의 줄에 **Differs from standard** 표시(아이콘 + 호버에 사유), 문서 목록 줄에 벗어남 수, 결과물 C · New 칸 절 머리에 같은 표시와 **Empty**(ko "비어 있음") 경고. 표준 항목의 제목 고치기 · 빼기 · 되살리기와 사용자 항목 더하기는 N/A 표의 줄 끝 단추 + 사유 입력(N/A 사유 편집기 `NaEdit`의 부품을 쓴다).
 - [ ] **Step 4: 확인** — backend 전체, 프런트 lint · tsc · vitest, To-Be · Order 스모크 단계에 "항목 빼기(사유) → 번호 당겨짐 → 되살리기"를 더해 그 단계만.
-- [ ] **Step 5: 설명서 글 · PROGRESS → 커밋 → 걸음 diff 검토 → `feat/outline`**
+- [ ] **Step 5: 설명서 글 · PROGRESS → 커밋 → 스텝 diff 검토 → `feat/outline`**
 
 ---
 

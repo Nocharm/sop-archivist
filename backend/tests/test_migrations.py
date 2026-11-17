@@ -14,6 +14,8 @@ from sqlalchemy import Column, Engine, Integer, MetaData, Table, create_engine, 
 from sqlalchemy.exc import IntegrityError
 
 from app.db import Base, run_migrations
+from app.sop.constants import SLOT_KEYS
+from app.sop.outline import LEGACY_OUTLINE
 
 
 def _async_url(db_path: pathlib.Path) -> str:
@@ -367,24 +369,28 @@ def _read_outputs(db_path: pathlib.Path) -> tuple[Any, list[Any], list[list[str]
     from app.sop.outputs import build_output_c
     from app.sop.review import evaluate_readiness
     from app.sop.sheet_model import SHEET_NAMES, build_workbook_model
-    from app.sop.models import CaptionRef
+    from app.sop.models import CaptionRef, TargetDocOutlineItem
     from app.sop.snapshot import load_bundle_snapshot
 
     async def _load() -> Any:
         engine = create_async_engine(_async_url(db_path))
         try:
-            # 앱 코드는 head 스키마를 읽는다 — 0021 앞 리비전에서는 빈 caption_refs 표를 잠시 두고 읽은 뒤 지운다
+            # 앱 코드는 head 스키마를 읽는다 — 그 표가 생기기 앞 리비전(caption_refs는 0021, 골격 사본은 0023)에서는 빈 표를 잠시 두고 읽은 뒤 지운다
             async with engine.begin() as conn:
-                created = not await conn.run_sync(lambda sync: sync.dialect.has_table(sync, CaptionRef.__tablename__))
-                if created:
-                    await conn.run_sync(CaptionRef.__table__.create)
+                created = [
+                    model.__table__
+                    for model in (CaptionRef, TargetDocOutlineItem)
+                    if not await conn.run_sync(lambda sync, name=model.__tablename__: sync.dialect.has_table(sync, name))
+                ]
+                for table in created:
+                    await conn.run_sync(table.create)
             try:
                 async with AsyncSession(engine) as session:
                     return await load_bundle_snapshot(session, 1)
             finally:
-                if created:
-                    async with engine.begin() as conn:
-                        await conn.run_sync(CaptionRef.__table__.drop)
+                async with engine.begin() as conn:
+                    for table in created:
+                        await conn.run_sync(table.drop)
         finally:
             await engine.dispose()
 
@@ -687,3 +693,106 @@ def test_caption_refs_index_their_foreign_keys(tmp_path: pathlib.Path) -> None:
         engine.dispose()
 
     assert {("extraction_id",), ("block_id",), ("target_table_id",), ("target_block_id",)} <= indexed
+
+
+# --- 0023: SOP 골격 표와 기존 SOP 문서의 사본 ---
+
+_OUTLINE_COLUMNS = (
+    "key", "order_index", "title_en", "title_ko", "kind", "is_required", "default_style", "child_prefix", "origin",
+    "is_removed", "deviation_reason",
+)
+
+
+def test_0023_backfills_sop_docs(tmp_path: pathlib.Path) -> None:
+    # 0023 이전의 SOP 문서는 그때의 고정 15칸을 사본으로 받고 WI는 받지 않는다 — 리비전이 얼려 둔 목록이 앱의 첫 표준과 같다
+    db_path = tmp_path / "outline.db"
+    config = _downgrade_to(db_path, "0022")
+    engine = _create_fk_engine(db_path)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO bundles (id, title, description, status, is_synthetic, semantic_checks, revision, created_by,"
+                " created_at, updated_at) VALUES (1, 'SYNTHETIC', '', 'in_progress', 1, '{}', 1, 'qa.member',"
+                " '2026-11-10 09:00:00', '2026-11-10 09:00:00')"
+            ))
+            sop_id = _insert_row(
+                conn, "target_docs", bundle_id=1, code="SOP-01", title="", doc_type="sop", entrance="match",
+                is_equipment_sop=False, order_index=0, manual_order=False,
+            )
+            wi_id = _insert_row(
+                conn, "target_docs", bundle_id=1, code="WI-01", title="", doc_type="wi", parent_id=sop_id,
+                entrance="assign", is_equipment_sop=False, order_index=1, manual_order=False,
+            )
+
+        command.upgrade(config, "0023")
+
+        with engine.begin() as conn:
+            rows = conn.execute(text(
+                f"SELECT target_doc_id, {', '.join(_OUTLINE_COLUMNS)} FROM target_doc_outline_items"
+                " ORDER BY target_doc_id, order_index"
+            )).all()
+            standard_count = conn.execute(text("SELECT COUNT(*) FROM outline_standard_items")).scalar()
+            # 문서를 지우면 사본도 함께 지워진다(FK CASCADE)
+            conn.execute(text("DELETE FROM target_docs WHERE id = :id"), {"id": wi_id})
+            conn.execute(text("DELETE FROM target_docs WHERE id = :id"), {"id": sop_id})
+            left = conn.execute(text("SELECT COUNT(*) FROM target_doc_outline_items")).scalar()
+    finally:
+        engine.dispose()
+
+    assert {row.target_doc_id for row in rows} == {sop_id}
+    assert [row.key for row in rows] == list(SLOT_KEYS)
+    expected = [tuple(getattr(item, column) for column in _OUTLINE_COLUMNS) for item in LEGACY_OUTLINE]
+    assert [
+        (*row[1:6], bool(row.is_required), *row[7:10], bool(row.is_removed), row.deviation_reason) for row in rows
+    ] == expected
+    assert standard_count == 0  # 표준 표는 앱이 기동 때 시드한다
+    assert left == 0
+
+
+def test_outline_checks_hold_in_migrated_db(tmp_path: pathlib.Path) -> None:
+    # 0023의 CHECK를 마이그레이션된 DB에 직접 부딪쳐 본다 — compare_metadata는 CHECK 차이를 못 잡는다
+    db_path = tmp_path / "outline_checks.db"
+    run_migrations(_async_url(db_path))
+    engine = create_engine(_sync_url(db_path))  # FK를 켜지 않아 문서 행 없이 사본 한 행만 넣는다
+    standard = {
+        "key": "purpose", "order_index": 0, "title_en": "Purpose", "title_ko": "", "kind": "general",
+        "is_required": True, "default_style": "bullet", "child_prefix": "", "suggestions": "[]",
+    }
+    doc_item = {
+        **{name: value for name, value in standard.items() if name != "suggestions"},
+        "target_doc_id": 1, "origin": "declared", "is_removed": False,
+    }
+    try:
+        with engine.begin() as conn:
+            _insert_values(conn, "outline_standard_items", standard)
+            _insert_values(conn, "target_doc_outline_items", doc_item)
+        for table, row, bad in (
+            ("outline_standard_items", standard, {"key": "scope", "kind": "chapter"}),
+            ("outline_standard_items", standard, {"key": "scope", "default_style": "dots"}),
+            ("target_doc_outline_items", doc_item, {"key": "scope", "kind": "chapter"}),
+            ("target_doc_outline_items", doc_item, {"key": "scope", "default_style": "dots"}),
+            ("target_doc_outline_items", doc_item, {"key": "scope", "origin": "imported"}),
+        ):
+            with pytest.raises(IntegrityError), engine.begin() as conn:
+                _insert_values(conn, table, {**row, **bad})
+        inspector = inspect(engine)
+        check_names = {
+            table: {ck["name"] for ck in inspector.get_check_constraints(table)}
+            for table in ("outline_standard_items", "target_doc_outline_items")
+        }
+    finally:
+        engine.dispose()
+
+    assert check_names == {
+        "outline_standard_items": {"ck_outline_standard_items_kind", "ck_outline_standard_items_default_style"},
+        "target_doc_outline_items": {
+            "ck_target_doc_outline_items_kind", "ck_target_doc_outline_items_default_style",
+            "ck_target_doc_outline_items_origin",
+        },
+    }
+
+
+def _insert_values(conn: Any, table: str, values: dict[str, Any]) -> None:
+    columns = ", ".join(values)
+    params = ", ".join(f":{name}" for name in values)
+    conn.execute(text(f"INSERT INTO {table} ({columns}) VALUES ({params})"), values)

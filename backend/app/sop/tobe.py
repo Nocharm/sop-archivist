@@ -2,7 +2,7 @@
 
 import re
 from collections import Counter
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from typing import TYPE_CHECKING, Annotated, Literal
 
 from pydantic import BaseModel, BeforeValidator, Field, StringConstraints
@@ -12,7 +12,7 @@ from sqlalchemy.orm import InstrumentedAttribute
 
 from app.clock import now
 from app.equis.rules import normalize_number
-from app.sop.constants import SLOT_HEADING, SLOT_KEYS, TARGET_DOC_TYPES
+from app.sop.constants import SLOT_HEADING, TARGET_DOC_TYPES, NumberStyle, OutlineKind, OutlineOrigin
 from app.sop.errors import raise_rule
 from app.sop.events import record_event
 from app.sop.models import (
@@ -20,8 +20,16 @@ from app.sop.models import (
     Document,
     TargetDoc,
     TargetDocNaSlot,
+    TargetDocOutlineItem,
     TargetSentence,
     WiStep,
+)
+from app.sop.outline import (
+    DocOutline,
+    copy_standard_to_doc,
+    get_parent_key,
+    load_doc_outlines,
+    load_standard_outline,
 )
 from app.sop.schemas import NO_NUL
 
@@ -84,15 +92,57 @@ class TargetDocOut(BaseModel):
     document_id: int | None
 
 
+class OutlineItemOut(BaseModel):
+    """SOP 문서 골격 사본의 한 항목 — 화면이 칸 목록·번호·배정할 수 있는 자리를 이것으로 그린다(고정 목록을 두지 않는다)."""
+
+    code: str  # 새 문서 번호 — 목록의 다른 줄(N/A·단계)과 같은 키
+    key: str
+    parent_key: str | None
+    level: int  # 위계 깊이 — 최상위 0
+    number: str | None
+    title_en: str
+    title_ko: str
+    label: str  # 상위부터 이은 제목("General Requirements › Safety")
+    kind: OutlineKind
+    is_required: bool
+    default_style: NumberStyle
+    is_assignable: bool
+    counts_lines: bool  # 직접 놓인 줄에 번호를 세는가
+    origin: OutlineOrigin
+    is_removed: bool
+    deviation_reason: str | None
+
+
 class ToBeOut(BaseModel):
     revision: int
     docs: list[TargetDocOut]
     na_slots: list[NaSlotIn]
     wi_steps: list[WiStepIn]
+    # SOP 문서마다 골격 사본의 항목 — 문서 순서, 그 안은 골격 순서(부모 바로 뒤에 하위). WI는 항목이 없다
+    outline_items: list[OutlineItemOut] = []
+
+
+def _build_outline_items(code: str, outline: DocOutline) -> list[OutlineItemOut]:
+    return [
+        OutlineItemOut(
+            code=code, key=item.key, parent_key=get_parent_key(item.key), level=outline.get_level(item.key),
+            number=outline.get_number(item.key), title_en=item.title_en, title_ko=item.title_ko,
+            label=outline.get_label(item.key), kind=item.kind, is_required=item.is_required,
+            default_style=item.default_style, is_assignable=outline.is_assignable(item.key),
+            counts_lines=outline.counts_lines(item.key), origin=item.origin, is_removed=item.is_removed,
+            deviation_reason=item.deviation_reason,
+        )
+        for item in outline.items
+    ]
+
+
+def _get_outline_position(outline: DocOutline, key: str, default: int) -> int:
+    """골격 순서에서 그 키의 자리 — 골격에 없는 키는 default."""
+    return next((position for position, item in enumerate(outline.items) if item.key == key), default)
 
 
 async def build_tobe_out(session: AsyncSession, bundle: Bundle) -> ToBeOut:
-    """묶음의 To-Be 목록을 쿼리 세 번(문서·N/A·단계)으로 읽는다. 문서는 (순서, id)순, 나머지는 문서 순서를 따른다."""
+    """묶음의 To-Be 목록을 쿼리 네 번(문서·골격·N/A·단계)으로 읽는다. 문서는 (순서, id)순, 나머지는 문서 순서를 따른다."""
     doc_rows = (
         await session.execute(
             select(TargetDoc, Document.id)
@@ -113,18 +163,24 @@ async def build_tobe_out(session: AsyncSession, bundle: Bundle) -> ToBeOut:
         for doc, document_id in doc_rows
     ]
 
-    slot_position = {key: position for position, key in enumerate(SLOT_KEYS)}
+    outlines = await load_doc_outlines(session, list(code_by_id))
     na_rows = await _load_na_rows(session, list(code_by_id))
     na_slots = [
         NaSlotIn(code=code_by_id[row.target_doc_id], slot_key=row.slot_key, reason=row.reason)
-        for row in sorted(na_rows, key=lambda r: (doc_position[r.target_doc_id], slot_position.get(r.slot_key, 0)))
+        for row in sorted(
+            na_rows,
+            key=lambda r: (doc_position[r.target_doc_id], _get_outline_position(outlines[r.target_doc_id], r.slot_key, 0)),
+        )
     ]
     step_rows = await _load_step_rows(session, list(code_by_id))
     wi_steps = [
         WiStepIn(code=code_by_id[row.target_doc_id], step_no=row.step_no, title=row.title)
         for row in sorted(step_rows, key=lambda r: (doc_position[r.target_doc_id], r.step_no))
     ]
-    return ToBeOut(revision=bundle.revision, docs=docs, na_slots=na_slots, wi_steps=wi_steps)
+    outline_items = [item for doc in docs for item in _build_outline_items(doc.code, outlines[doc.id])]
+    return ToBeOut(
+        revision=bundle.revision, docs=docs, na_slots=na_slots, wi_steps=wi_steps, outline_items=outline_items
+    )
 
 
 async def _load_na_rows(session: AsyncSession, doc_ids: Collection[int]) -> list[TargetDocNaSlot]:
@@ -215,11 +271,13 @@ async def count_targets_by_slot(session: AsyncSession, target_doc_ids: Collectio
         for doc_id, slot_key, count, heading_count in rows
         if count or heading_count
     ]
-    # SLOT_KEYS에 없는 키는 있어서는 안 되는 자료지만 막힘 판단이 서버와 같도록 싣고 끝에 둔다
+    # 문서 골격에 없는 키는 있어서는 안 되는 자료지만 막힘 판단이 서버와 같도록 싣고 끝에 둔다
+    outlines = await load_doc_outlines(session, target_doc_ids)
     return sorted(
         counts,
         key=lambda row: (
-            row.target_doc_id, SLOT_KEYS.index(row.slot_key) if row.slot_key in SLOT_KEYS else len(SLOT_KEYS),
+            row.target_doc_id,
+            _get_outline_position(outlines[row.target_doc_id], row.slot_key, len(outlines[row.target_doc_id].items)),
         ),
     )
 
@@ -228,9 +286,15 @@ async def count_targets_by_slot(session: AsyncSession, target_doc_ids: Collectio
 
 
 def _check_list_rules(
-    payload: "ToBeIn | ParsedWorkbook", existing: list[TargetDoc], code_by_id: dict[int, str]
+    payload: "ToBeIn | ParsedWorkbook",
+    existing: list[TargetDoc],
+    code_by_id: dict[int, str],
+    get_outline: Callable[[str], DocOutline],
 ) -> dict[str, str]:
-    """요청 내용만으로 가려지는 422 규칙을 모두 검사하고, 저장 뒤 목록의 {문서 번호: 종류}를 돌려준다."""
+    """요청 내용만으로 가려지는 422 규칙을 모두 검사하고, 저장 뒤 목록의 {문서 번호: 종류}를 돌려준다.
+
+    get_outline은 문서 번호 → 저장 뒤 그 SOP 문서가 가질 골격(N/A 칸 키가 그 안에 있어야 한다).
+    """
     counts = Counter(item.code for item in payload.docs)
     duplicates = sorted(code for code, count in counts.items() if count > 1)
     if duplicates:
@@ -263,7 +327,7 @@ def _check_list_rules(
             raise_rule(422, "unknown_doc", doc_code=row.code)
         if final_types[row.code] != "sop":
             raise_rule(422, "na_on_wi", doc_code=row.code)
-        if row.slot_key not in SLOT_KEYS:
+        if get_outline(row.code).find(row.slot_key) is None:
             raise_rule(422, "unknown_slot", doc_code=row.code, slot_key=row.slot_key)
         if (row.code, row.slot_key) in seen_slots:
             raise_rule(422, "duplicate_na_slot", doc_code=row.code, slot_key=row.slot_key)
@@ -333,7 +397,10 @@ async def _write_docs(
     by_code: dict[str, TargetDoc],
     removed_ids: set[int],
 ) -> tuple[dict[str, TargetDoc], set[int]]:
-    """문서 줄을 만들고 고치고 지운다. 저장 뒤 {문서 번호: 문서}(지운 문서 포함)와 바뀐 문서 id를 돌려준다."""
+    """문서 줄을 만들고 고치고 지운다. 저장 뒤 {문서 번호: 문서}(지운 문서 포함)와 바뀐 문서 id를 돌려준다.
+
+    골격 사본은 SOP에만 있다 — 새 SOP는 표준을 복사해 받고, WI로 바뀌면 사본을 지우고, SOP로 바뀌면 지금 표준을 다시 복사한다.
+    """
     created = {
         item.code: TargetDoc(
             bundle_id=bundle.id, code=item.code, doc_type=item.doc_type, entrance="assign", title=item.title,
@@ -344,10 +411,17 @@ async def _write_docs(
     }
     session.add_all(created.values())
     await session.flush()  # 부모 번호를 id로 풀려면 새 문서의 id가 필요하다
+    for doc in created.values():
+        if doc.doc_type == "sop":
+            await copy_standard_to_doc(session, doc.id)
     docs_by_code = {**by_code, **created}
     changed = {doc.id for doc in created.values()}
     for item in items:
         doc = docs_by_code[item.code]
+        if doc.doc_type != item.doc_type:  # 종류가 바뀐 기존 문서 — 문장이 없는 문서만 여기까지 온다(doc_has_targets)
+            await session.execute(delete(TargetDocOutlineItem).where(TargetDocOutlineItem.target_doc_id == doc.id))
+            if item.doc_type == "sop":
+                await copy_standard_to_doc(session, doc.id)
         fields = {
             "title": item.title,
             "doc_type": item.doc_type,
@@ -443,7 +517,15 @@ async def apply_tobe(
     existing = list(await session.scalars(select(TargetDoc).where(TargetDoc.bundle_id == bundle.id)))
     by_code = {doc.code: doc for doc in existing}
     code_by_id = {doc.id: doc.code for doc in existing}
-    final_types = _check_list_rules(payload, existing, code_by_id)
+    # SOP로 남는 문서는 자기 사본, 새로 생기거나 SOP로 바뀌는 문서는 지금 표준을 받는다
+    outlines = await load_doc_outlines(session, [doc.id for doc in existing if doc.doc_type == "sop"])
+    standard = await load_standard_outline(session)
+
+    def get_outline(code: str) -> DocOutline:
+        doc = by_code.get(code)
+        return outlines[doc.id] if doc is not None and doc.id in outlines else standard
+
+    final_types = _check_list_rules(payload, existing, code_by_id, get_outline)
 
     listed = {item.code: item for item in payload.docs}
     removed = [doc for doc in existing if doc.entrance == "assign" and doc.code not in listed]
@@ -744,6 +826,8 @@ async def add_match_doc(
     )
     session.add(doc)
     await session.flush()  # 문서가 가리킬 id가 필요하다
+    if doc_type == "sop":  # 입구와 상관없이 SOP는 골격 사본을 갖는다 — 파일을 지워 배정 줄로 돌아가도 칸이 있다
+        await copy_standard_to_doc(session, doc.id)
     bundle.revision += 1
     return doc
 

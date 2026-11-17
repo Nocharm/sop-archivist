@@ -21,7 +21,7 @@ from app.equis.view import EquisOut, build_equis_out
 from app.routers.sop_documents import build_content_disposition
 from app.sop import sheet_model
 from app.sop.ai.guidelines import get_rules_version_label
-from app.sop.constants import MAX_INDENT_LEVEL, MEMBER_ROLES, SLOT_HEADING, SLOT_KEYS, NumberStyle
+from app.sop.constants import MAX_INDENT_LEVEL, MEMBER_ROLES, SLOT_HEADING, NumberStyle
 from app.sop.decisions import DbId
 from app.sop.detach import ORIGIN_NEW_DOC, ORIGIN_TRANSLATION, load_source_target_ids, sweep_translations
 from app.sop.errors import check_revision, raise_rule
@@ -29,6 +29,7 @@ from app.sop.events import record_event
 from app.sop.excel_export import ExportMeta, build_workbook
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
 from app.sop.models import Bundle, TargetDoc, TargetDocNaSlot, TargetSentence, WiStep
+from app.sop.outline import load_doc_outlines
 from app.sop.outputs import (
     ARow,
     CDoc,
@@ -256,7 +257,7 @@ async def _check_slot_moves(
 ) -> dict[int, str]:
     """다른 칸으로 옮기는 줄(새 문장 → 칸)을 돌려준다 — 보냈고 지금 칸과 다를 때만. 쓰기 전에 검사만 한다.
 
-    입구 1 SOP의 사람이 쓴 줄만 칸을 옮긴다(slot_not_allowed). 칸은 SLOT_KEYS 안(unknown_slot), 그 문서에서 N/A가 아닌 칸(na_slot,
+    입구 1 SOP의 사람이 쓴 줄만 칸을 옮긴다(slot_not_allowed). 칸은 그 문서의 골격 사본 안(unknown_slot), 그 문서에서 N/A가 아닌 칸(na_slot,
     상위 칸 N/A는 하위 칸도 덮는다 — 저장 decisions._check_location과 같은 규칙)이어야 한다.
     """
     requested = {
@@ -272,7 +273,10 @@ async def _check_slot_moves(
     )
     if locked:
         raise_rule(422, "slot_not_allowed", target_ids=locked)
-    unknown = sorted(target_id for target_id, slot_key in requested.items() if slot_key not in SLOT_KEYS)
+    outline = (await load_doc_outlines(session, [doc.id]))[doc.id]
+    unknown = sorted(
+        target_id for target_id, slot_key in requested.items() if slot_key is None or outline.find(slot_key) is None
+    )
     if unknown:
         raise_rule(422, "unknown_slot", target_ids=unknown)
     na_keys = list(await session.scalars(select(TargetDocNaSlot.slot_key).where(TargetDocNaSlot.target_doc_id == doc.id)))

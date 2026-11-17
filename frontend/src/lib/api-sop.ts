@@ -589,11 +589,46 @@ export interface SlotCount {
   heading_count: number;
 }
 
+/** 골격 항목의 종류 - backend app/sop/models.py OUTLINE_KINDS와 같은 값. 직접 배정·줄 세기는 서버가 is_assignable·counts_lines로 풀어 준다 */
+export type OutlineKind = "general" | "category_table" | "named_children" | "auto_list" | "group";
+
+/**
+ * SOP 문서 하나의 골격 항목(칸) - 표준 골격을 문서마다 복사한 것이라 문서마다 다를 수 있다. 화면은 칸 목록을 따로 갖지 않고 이것만 읽는다.
+ * 한 문서의 항목은 위계 순서로 온다(부모 바로 뒤에 하위). 수준은 둘로 정해져 있지 않다(level 0부터)
+ */
+export interface OutlineItem {
+  /** 새 문서 코드 - NaSlot.code·WiStep.code와 같은 키 */
+  code: string;
+  /** 점으로 위계를 적은 키("procedures.maintenance") - 자리 키(slot_key·location_key)와 같은 값 */
+  key: string;
+  parent_key: string | null;
+  level: number;
+  /** "5"·"5.1" - 번호 없는 항목은 null */
+  number: string | null;
+  title_en: string;
+  title_ko: string;
+  /** 조상까지 이은 이름 "General Requirements › Safety" */
+  label: string;
+  kind: OutlineKind;
+  is_required: boolean;
+  default_style: NumberStyle;
+  /** 문장을 직접 받는 항목인가 - 아니면 보낼 곳 목록에 없다 */
+  is_assignable: boolean;
+  /** 직접 놓인 줄에 번호를 세는가 - false면 줄의 표시와 상관없이 번호가 없다(하위 항목 번호와 겹치므로) */
+  counts_lines: boolean;
+  origin: "standard" | "declared" | "custom";
+  /** 이 문서에서 뺀 항목 - 화면은 그리지 않는다 */
+  is_removed: boolean;
+  deviation_reason: string | null;
+}
+
 export interface ToBe {
   revision: number;
   docs: TargetDoc[];
   na_slots: NaSlot[];
   wi_steps: WiStep[];
+  /** SOP 문서마다의 골격 항목 - 문서(code)별로 위계 순서. WI는 항목이 없다 */
+  outline_items: OutlineItem[];
   /** 문장이 든 자리만 실린다 - 배정 화면이 지울 수 없는 문서·단계의 지우기 단추를 잠근다 */
   sentence_counts?: PlaceCount[];
   /** 문장이나 칸 제목이 든 SOP 칸만 실린다 - N/A 칸 상태 표가 N/A로 둘 수 없는 칸을 가린다 */
@@ -606,25 +641,6 @@ export interface ToBeInput {
   na_slots: NaSlot[];
   wi_steps: WiStep[];
 }
-
-/** SOP 칸 - backend constants.SLOT_KEYS와 같은 값·순서. 점이 있으면 하위 칸 */
-export const SLOT_KEYS = [
-  "purpose",
-  "scope",
-  "definitions",
-  "responsibilities",
-  "general_requirements",
-  "general_requirements.safety",
-  "general_requirements.operation",
-  "procedures",
-  "procedures.procedure",
-  "procedures.electronic_record_control",
-  "procedures.troubleshooting",
-  "procedures.maintenance",
-  "document_relationships",
-  "document_relationships.attachments",
-  "document_relationships.appendices",
-] as const;
 
 export function getToBe(bundleId: number): Promise<ToBe> {
   return apiFetch<ToBe>(`/bundles/${bundleId}/tobe`);
@@ -1156,6 +1172,16 @@ export interface FlowGraph {
 /** 줄 번호 표시 - backend app/sop/constants.py NumberStyle과 같은 값 */
 export type NumberStyle = "numbered" | "bullet" | "omitted" | "note";
 
+/** 결과물 C·Assign New 칸의 절이 골격에서 받아 오는 것 - 화면이 칸 키로 규칙을 다시 풀지 않는다 */
+export interface SectionOutline {
+  /** 골격 항목의 종류 - WI 단계·입구 2 문서의 절(path:)은 null */
+  kind: OutlineKind | null;
+  level: number;
+  /** 이 절에 직접 놓인 줄에 번호를 세는가(OutlineItem.counts_lines) */
+  counts_lines: boolean;
+  default_style: NumberStyle;
+}
+
 export interface OutputCItem {
   target_id: number;
   kind: string;
@@ -1198,7 +1224,7 @@ export interface OutputC {
      * number: SOP 칸 번호(5.1)·WI 단계 번호(3), 번호가 없는 칸은 null.
      * heading_note: 칸 제목에 이은 옛 제목 "← OLD-1 §5", 없으면 빈 글 - 칸 제목은 items에 넣지 않는다
      */
-    sections: Array<{ location_key: string; label: string; number: string | null; na_reason: string | null; heading_note: string; items: OutputCItem[] }>;
+    sections: Array<SectionOutline & { location_key: string; label: string; number: string | null; na_reason: string | null; heading_note: string; items: OutputCItem[] }>;
   }>;
   /** 삭제·이동은 옛 줄마다 한 번 - 짝이면 표시 ID·원문이 줄바꿈으로 이어진다 */
   deleted: Array<{ display_id: string; doc_code: string; section: string; source_text: string; reason: string }>;
@@ -1251,7 +1277,7 @@ export interface ComposedItem {
   renumber?: RenumberChange | null;
 }
 
-export interface ComposedSection {
+export interface ComposedSection extends SectionOutline {
   location_key: string;
   label: string;
   number: string | null;

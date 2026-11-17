@@ -7,7 +7,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 
 
 import { Tooltip } from "@/components/ui/tooltip";
 import { useI18n } from "@/lib/i18n";
-import { openNaEdit, SLOT_COLUMNS, type NaEdit, type SlotKey, type SlotRow, type SlotSummary } from "@/lib/slot-status-model";
+import { openNaEdit, splitSlotColumns, type NaEdit, type SlotKey, type SlotRow, type SlotSummary } from "@/lib/slot-status-model";
 
 interface SlotTableProps {
   /** `tobe-id-<줄 id>` */
@@ -228,7 +228,17 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
     const coveredBy = row.state.kind === "covered" ? byKey.get(row.state.by) : undefined;
     const isReasonOpen = openReasons.has(key);
     return (
-      <div key={key} className="slot-row" data-slot={key} data-state={row.state.kind} data-child={row.isChild ? "" : undefined} data-editing={isEditing ? "" : undefined} data-testid={`${prefix}-slot-${key}`}>
+      <div
+        key={key}
+        className="slot-row"
+        data-slot={key}
+        data-state={row.state.kind}
+        data-child={row.level > 0 ? "" : undefined}
+        // 하위 칸의 들여쓰기 24px은 CSS(data-child)가 건다 - 그보다 깊은 수준만 단마다 24px씩 더 들인다
+        style={row.level > 1 ? { "--slot-indent": `${row.level * 24}px` } : undefined}
+        data-editing={isEditing ? "" : undefined}
+        data-testid={`${prefix}-slot-${key}`}
+      >
         <span className="slot-num">{row.number}</span>
         <span className="slot-name">{row.label}</span>
         <span className="slot-state" data-testid={`${prefix}-slot-${key}-state`}>
@@ -273,14 +283,15 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
         )}
       </div>
       <div className="slot-cols">
-        {SLOT_COLUMNS.map((column) => (
-          <div key={column[0]} className="slot-col">
-            {column.map((key) => {
-              const row = byKey.get(key);
-              return row ? renderRow(row) : null;
-            })}
-          </div>
-        ))}
+        {/* 가를 곳이 없는 골격(최상위 칸 하나)은 오른쪽 단이 비어 그리지 않는다 */}
+        {splitSlotColumns(rows).map(
+          (column) =>
+            column.length > 0 && (
+              <div key={column[0].key} className="slot-col">
+                {column.map(renderRow)}
+              </div>
+            ),
+        )}
       </div>
       <p className="slot-help">{t("tobe.slots.help")}</p>
     </div>
