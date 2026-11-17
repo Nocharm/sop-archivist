@@ -176,6 +176,37 @@ describe("OutputCView", () => {
     host.remove();
   });
 
+  it("offers no Numbered choice on a line placed directly in a section with sub sections, and shows it as No number", () => {
+    const items = [
+      makeItem({ target_id: 1, text: "가", status: "confirmed", indent_level: 0 }),
+      makeItem({ target_id: 2, text: "나", status: "confirmed", indent_level: 1 }),
+      makeItem({ target_id: 3, text: "주석", status: "confirmed", number_style: "note" }),
+    ];
+    const onMark = vi.fn();
+    const data = makeOutput(items, { location_key: "general_requirements", label: "General Requirements", number: "5" });
+    const { host, unmount } = render({ data, onMove: () => {}, onIndent: () => {}, onMark });
+    document.body.append(host);
+    expect(host.querySelector('[data-testid="output-c-number-1"]')).toBeNull();
+    // 쓸 수 없는 번호 단추는 숨기고, 번호로 저장된 줄은 번호 생략이 눌린 것으로 보인다 - 주석은 주석 그대로
+    const pressed = (id: number) => [...host.querySelectorAll(`[data-testid="output-c-mark-${id}"] button`)].map((el) => [el.getAttribute("aria-label"), el.getAttribute("aria-pressed")]);
+    expect(pressed(1)).toEqual([["No number", "true"], ["Note", "false"]]);
+    expect(pressed(3)).toEqual([["No number", "false"], ["Note", "true"]]);
+    // 번호를 세는 줄이 없어 저장된 깊이와 상관없이 맨 바깥에 그리고 들이거나 내어 쓸 수 없다
+    expect(host.querySelector<HTMLElement>('[data-testid="output-c-row-2"] .c-line')?.style.paddingLeft).toBe("calc(0 * var(--c-indent))");
+    for (const key of ["indent", "outdent"]) expect(host.querySelector<HTMLButtonElement>(`[data-testid="output-c-${key}-2"]`)?.disabled).toBe(true);
+    // ⋯ 메뉴도 같은 두 가지만
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="output-c-menu-1"]')?.click());
+    const menu = document.querySelector('[data-testid="output-c-menu-list-1"]');
+    expect([...(menu?.querySelectorAll('[role="menuitemradio"]') ?? [])].map((el) => [el.textContent, el.getAttribute("aria-checked")])).toEqual([["No number", "true"], ["Note", "false"]]);
+    // 눌린 것으로 보여도 저장값은 번호라, 번호 생략을 고르면 그 값을 저장한다
+    act(() => menu?.querySelector<HTMLButtonElement>('[data-testid="output-c-menu-omitted-1"]')?.click());
+    expect(onMark).toHaveBeenCalledWith(1, 1, "omitted");
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="output-c-mark-note-2"]')?.click());
+    expect(onMark).toHaveBeenLastCalledWith(1, 2, "note");
+    unmount();
+    host.remove();
+  });
+
   it("locks the depth of an AI translation but lets its number style and a person's other-language sentence change", () => {
     const items = [
       makeItem({ target_id: 1, lang: "en", text: "Check", status: "confirmed", number: "2.1", meaning_key: "old:3" }),

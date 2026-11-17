@@ -36,7 +36,7 @@ import { splitCTable } from "@/lib/composed-model";
 import { useI18n } from "@/lib/i18n";
 import { buildCLines, listMeaningStarts, type CLine } from "@/lib/output-groups";
 import { shouldRecenter } from "@/lib/paper-model";
-import { canChangeDepth, canChangeStyle, canIndent, getSectionDepths, isCounted, NUMBER_STYLES, readIndentKey, type IndentDir } from "@/lib/section-number";
+import { canChangeDepth, canChangeStyle, canIndent, getSectionDepths, listCounted, readIndentKey, readStyleChoices, type IndentDir } from "@/lib/section-number";
 import { canMoveTarget, readMoveKey, type MoveDir } from "@/lib/target-order";
 import { useBoxDrag } from "@/lib/use-box-drag";
 import { useProgressiveList } from "@/lib/use-progressive-list";
@@ -145,27 +145,30 @@ interface RowButtonsProps {
   indent: { canOut: boolean; canIn: boolean; onIndent: (dir: IndentDir) => void } | null;
   /** 번호 표시를 바꿀 수 없는 줄(입구 2 문서)이면 없다 */
   onMark: ((style: NumberStyle) => void) | null;
+  /** 그 칸의 줄이 고를 수 있는 표시와 눌린 것으로 보일 표시 - 하위 칸이 있는 칸의 줄은 번호를 내놓지 않고 번호로 저장된 줄을 생략으로 보인다 */
+  mark: ReturnType<typeof readStyleChoices>;
 }
 
 // 저장하는 동안에도 단추는 켜져 있다 - 바뀜은 화면에 먼저 얹고 저장은 뒤에서 한 번에 하나씩 보낸다
-function RowButtons({ items, item, onMove, indent, onMark }: RowButtonsProps) {
+function RowButtons({ items, item, onMove, indent, onMark, mark }: RowButtonsProps) {
   const { t } = useI18n();
   return (
     // data-no-drag - 단추 사이 틈을 눌러도 줄 끌기가 시작되지 않는다
     <span className="c-acts" data-no-drag data-testid={`output-c-acts-${item.target_id}`} style={{ fontFamily: "var(--font-ui)" }}>
       {onMark && (
-        // 세 칸 눌림 단추 - 떠 있는 메뉴를 쓰지 않아 옆 글자를 덮지 않는다. 아이콘만 있으니 툴팁이 뜻을 알려 준다
+        // 눌림 단추 묶음(보통 셋) - 떠 있는 메뉴를 쓰지 않아 옆 글자를 덮지 않는다. 아이콘만 있으니 툴팁이 뜻을 알려 준다
         <span className="view-toggle c-mark" role="group" aria-label={t("outputs.markGroup")} data-testid={`output-c-mark-${item.target_id}`}>
-          {NUMBER_STYLES.map((style) => {
+          {mark.choices.map((style) => {
             const Icon = MARK_ICONS[style];
             return (
               <Tooltip key={style} label={t(MARK_KEYS[style].tip)} align="end">
                 <button
                   type="button"
-                  aria-pressed={item.number_style === style}
+                  aria-pressed={mark.pressed === style}
                   aria-label={t(MARK_KEYS[style].label)}
                   data-testid={`output-c-mark-${style}-${item.target_id}`}
                   onClick={() => {
+                    // 저장값과 견준다 - 눌린 것으로 보이는 생략도 저장값이 번호면 그 값을 저장한다
                     if (item.number_style !== style) onMark(style);
                   }}
                 >
@@ -211,7 +214,7 @@ function RowButtons({ items, item, onMove, indent, onMark }: RowButtonsProps) {
 }
 
 /** 용지 옆 자리가 좁을 때 묶음 대신 보이는 ⋯ 단추 - 같은 일곱 동작을 이름 붙은 메뉴 항목으로 연다. 어느 쪽을 보일지는 CSS(.c-order 틀 폭)가 정한다 */
-function RowMenu({ items, item, onMove, indent, onMark }: RowButtonsProps) {
+function RowMenu({ items, item, onMove, indent, onMark, mark }: RowButtonsProps) {
   const { t } = useI18n();
   const anchorRef = useRef<HTMLButtonElement>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -243,8 +246,8 @@ function RowMenu({ items, item, onMove, indent, onMark }: RowButtonsProps) {
           {onMark && (
             <>
               <div className="menu-label">{t("outputs.markGroup")}</div>
-              {NUMBER_STYLES.map((style) => (
-                <MenuRadio key={style} checked={item.number_style === style} testId={testIdOf(`${style}-`)} onSelect={() => run(() => {
+              {mark.choices.map((style) => (
+                <MenuRadio key={style} checked={mark.pressed === style} testId={testIdOf(`${style}-`)} onSelect={() => run(() => {
                   if (item.number_style !== style) onMark(style);
                 })}>
                   {t(MARK_KEYS[style].label)}
@@ -791,7 +794,7 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
               const section = doc.sections[sectionIndex];
               // 깊이·의미 선은 칸 전체 줄로 센다 - 아직 그리지 않은 줄도 앞줄 기준에 든다
               const depths = getSectionDepths(section);
-              const counted = section.items.map(isCounted);
+              const counted = listCounted(section);
               const starts = listMeaningStarts(section.items);
               return (
                 <section key={section.location_key} className="grid gap-1" data-location-key={section.location_key} data-na={section.na_reason !== null ? "" : undefined}>
@@ -843,6 +846,7 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
                         item,
                         indent,
                         onMark: onMark && canChangeStyle(doc.entrance) ? (style) => onMark(doc.target_doc_id, item.target_id, style) : null,
+                        mark: readStyleChoices(section.location_key, item.number_style),
                         onMove: (dir, refocus) => handleMove(doc.target_doc_id, section, index, dir, refocus ? "button" : null),
                       };
                       return (

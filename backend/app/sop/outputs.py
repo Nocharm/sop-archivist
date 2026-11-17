@@ -247,7 +247,8 @@ class _Index:
 class _SectionPlan:
     key: str
     label: str
-    number: str | None  # 줄 번호의 머리 — 같은 번호의 칸(WI 한 단계의 Instruction·Why)은 줄 번호를 이어 센다
+    # 줄 번호의 머리 — 같은 번호의 칸(WI 한 단계의 Instruction·Why)은 줄 번호를 이어 센다. 하위 칸이 있는 칸은 줄을 세지 않아 칸 제목의 번호로만 쓴다
+    number: str | None
     na_reason: str | None
     targets: list[TargetInfo]  # 칸 새 문장이 아닌 새 문장(두 언어 모두), 칸 안 순서 — 칸 제목은 빠진다
     keep_empty: bool  # SOP 칸·선언 단계는 비어도 싣고, 단계 없음·절 경로 칸은 새 문장이 있을 때만
@@ -487,6 +488,14 @@ def _build_slot_numbers() -> dict[str, str]:
 SLOT_NUMBERS = _build_slot_numbers()
 
 
+def has_sub_slots(slot_key: str) -> bool:
+    """하위 칸이 있는 칸인가(지금은 5·6·7) — 이 칸에 직접 놓인 줄은 번호가 없다(number_targets).
+
+    SLOT_KEYS에서 읽는다. 칸 번호가 고정 자리라, 그 문서에서 하위 칸이 N/A여도 답은 같다.
+    """
+    return any(key.startswith(f"{slot_key}.") for key in SLOT_KEYS)
+
+
 def number_lines(base: str, depths: Sequence[int | None]) -> list[str | None]:
     """칸 번호 base 아래 줄 번호 — 깊이 d 줄은 base 뒤에 d + 1 마디(5 → 5.1, 5.2, 5.2.1).
 
@@ -515,14 +524,17 @@ def number_targets(index: _Index, labels: OutputLabels) -> dict[int, str]:
 
     번호 생략·주석 줄은 번호가 없고 세지 않는다. 표 칸 새 문장은 표의 번호를 따른다(표가 번호가 없으면 칸도 없다).
     입구 2 문서·단계 없는 WI 칸은 번호가 없다. 칸 제목은 세지 않고 칸 번호가 곧 그 번호다(제품 명세 §7.13 칸 제목 — 결과물 A의 No.).
+    하위 칸이 있는 칸(has_sub_slots)에 직접 놓인 줄은 저장된 표시·깊이와 상관없이 번호가 없고 세지 않는다(사용자 결정 2026-11-17) —
+    세면 5 칸의 첫 줄이 5.1이 되어 하위 칸 제목 "5.1 Safety"와 번호가 겹친다. 저장값은 건드리지 않아 하위 칸으로 옮기면 다시 센다.
     """
     numbers: dict[int, str] = {}
     for doc in index.doc_order:
         runs: dict[str, list[TargetInfo]] = {}
         for plan in _plan_sections(index, doc, labels):
             if plan.number is not None:
-                runs.setdefault(plan.number, []).extend(plan.targets)
                 numbers.update(dict.fromkeys((heading.id for heading in plan.headings), plan.number))
+                if not has_sub_slots(plan.key):
+                    runs.setdefault(plan.number, []).extend(plan.targets)
         for base, targets in runs.items():
             depths = [target.indent_level if target.number_style == NUMBERED else None for target in targets]
             for target, number in zip(targets, number_lines(base, depths), strict=True):

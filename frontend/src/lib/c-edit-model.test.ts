@@ -54,6 +54,29 @@ describe("addEdit", () => {
   });
 });
 
+describe("numberDoc in a section with sub sections", () => {
+  it("gives no number to lines placed directly in it, whatever their style and depth, and leaves the sub section alone", () => {
+    const table = line(3, "5.3", { kind: "table", lang: "neutral", children: [line(31, "5.3")] });
+    const sop = doc([
+      section("4", [line(9, null)], "responsibilities"),
+      section("5", [line(1, "5.1"), line(2, "5.2", { indent_level: 1 }), table], "general_requirements"),
+      section("5.1", [line(4, null), line(5, null, { indent_level: 1 })], "general_requirements.safety"),
+    ]);
+    const shown = numberDoc(sop);
+    // 하위 칸이 없는 칸(4)은 그대로 세고, 하위 칸의 줄은 5.1.1부터다
+    expect(numbersOf(shown)).toEqual([[[9, "4.1"]], [[1, null], [2, null], [3, null]], [[4, "5.1.1"], [5, "5.1.1.1"]]]);
+    expect(shown.sections[1].items[2].children.map((c) => c.number)).toEqual([null]);
+    // 저장된 표시와 깊이는 건드리지 않는다
+    expect(shown.sections[1].items.map((i) => [i.number_style, i.indent_level])).toEqual([["numbered", 0], ["numbered", 1], ["numbered", 0]]);
+  });
+
+  it("numbers a direct line again once it moves into a sub section", () => {
+    const sop = startDraft(doc([section("6", [line(1, null), line(2, null)], "procedures"), section("6.1", [line(3, "6.1.1")], "procedures.procedure")]));
+    const moved = addEdit(sop, { kind: "place", locationKey: "procedures", toLocationKey: "procedures.procedure", targetIds: [2], beforeId: null, depths: [0] });
+    expect(numbersOf(moved!.shown)).toEqual([[[1, null]], [[3, "6.1.1"], [2, "6.1.2"]]]);
+  });
+});
+
 describe("sendDraft", () => {
   it("sends the whole order and only the depth and style that differ from the saved doc", () => {
     const start = startDraft(doc([section("5", [line(1, "5.1"), line(2, "5.2"), line(3, "5.3")]), section("6", [line(4, "6.1", { indent_level: 2 })])]));
@@ -212,9 +235,10 @@ describe("addEdit place", () => {
 });
 
 describe("addEdit place across sections", () => {
+  // 출발 칸은 줄을 세는 칸(4) - 하위 칸이 있는 칸(6)에 직접 놓인 줄은 번호가 없다(위 numberDoc 시험)
   const sop = startDraft(
     doc([
-      section("6", [line(1, "6.1"), line(2, "6.2")], "procedures"),
+      section("4", [line(1, "4.1"), line(2, "4.2")], "responsibilities"),
       section("6.1", [line(3, "6.1.1")], "procedures.procedure"),
       section("6.2", [], "procedures.electronic_record_control"),
       { ...section("6.3", [], "procedures.troubleshooting"), na_reason: "N/A" },
@@ -230,13 +254,13 @@ describe("addEdit place across sections", () => {
     doc_type: "wi",
   });
   // 칸을 넘는 편집은 깊이가 필수라 기본은 모두 0
-  const cross = (ids: number[], to: string, beforeId: number | null, depths: number[] | null = ids.map(() => 0)) => ({ kind: "place" as const, locationKey: "procedures", toLocationKey: to, targetIds: ids, beforeId, depths });
+  const cross = (ids: number[], to: string, beforeId: number | null, depths: number[] | null = ids.map(() => 0)) => ({ kind: "place" as const, locationKey: "responsibilities", toLocationKey: to, targetIds: ids, beforeId, depths });
   const wiPlace = (to: string) => ({ kind: "place" as const, locationKey: "step:1:instruction", toLocationKey: to, targetIds: [1], beforeId: null, depths: [0] });
   const toStep2 = wiPlace("step:2:instruction");
   const toUnstepped = wiPlace("unstepped:instruction");
 
   it("moves a block into another section before a line and renumbers both", () => {
-    expect(numbersOf(addEdit(sop, cross([2], "procedures.procedure", 3))!.shown)).toEqual([[[1, "6.1"]], [[2, "6.1.1"], [3, "6.1.2"]], [], []]);
+    expect(numbersOf(addEdit(sop, cross([2], "procedures.procedure", 3))!.shown)).toEqual([[[1, "4.1"]], [[2, "6.1.1"], [3, "6.1.2"]], [], []]);
   });
   it("makes the block the first lines of an empty section", () => {
     expect(numbersOf(addEdit(sop, cross([1, 2], "procedures.electronic_record_control", null))!.shown)).toEqual([[], [[3, "6.1.1"]], [[1, "6.2.1"], [2, "6.2.2"]], []]);
@@ -288,7 +312,7 @@ describe("addEdit place across sections", () => {
     const { draft: sent } = sendDraft(addEdit(sop, { kind: "style", targetId: 3, style: "note" })!);
     const later = addEdit(sent, cross([2], "procedures.procedure", null))!;
     const server = doc([
-      section("6", [line(1, "6.1"), line(2, "6.2")], "procedures"),
+      section("4", [line(1, "4.1"), line(2, "4.2")], "responsibilities"),
       section("6.1", [line(3, null)], "procedures.procedure"),
       section("6.2", [], "procedures.electronic_record_control"),
       { ...section("6.3", [], "procedures.troubleshooting"), na_reason: "N/A" },

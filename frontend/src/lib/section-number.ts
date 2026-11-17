@@ -1,8 +1,12 @@
 // 결과물 C 섹션 번호(들여쓰기·번호 표시) - 줄마다 보이는 깊이, 들여/내어쓰기를 할 수 있는지, 깊이·표시 단추를 둘 줄인지 정한다.
 // 번호 자체는 서버(outputs.number_lines)가 칸의 두 언어 문장을 한 줄로 세어 매긴다. 화면은 그 번호에서 깊이를 읽어 그리고, 서버와 같은 상한(앞 번호 줄 깊이 + 1)을 넘지 않게 막는다.
 // numberLines는 그 서버 함수의 사본이다 - 순서·깊이·표시를 바꾼 뒤 저장 응답이 오기 전에만 번호를 미리 센다(응답의 번호가 늘 이긴다). 서버 규칙을 바꾸면 함께 고친다.
+// 어느 줄을 세는지(서버 outputs.number_targets)의 사본은 c-edit-model.numberDoc이다.
 // 번호 생략·주석 줄은 번호가 없고 세지 않는다 - 깊이 상한도 앞 "번호 줄"만 본다(서버와 같은 규칙). 깊이·표시는 바꾼 그 줄에만 붙는다(짝 상대에 옮기지 않는다).
+// 하위 칸이 있는 칸(slot-status-model.hasSubSlots - 서버 outputs.has_sub_slots의 사본)에 직접 놓인 줄은 저장된 표시와 상관없이 번호가 없고 세지 않는다.
+// 이 파일에서 그 규칙을 읽는 곳은 listCounted(세는 줄)와 readStyleChoices(표시 단추) 둘이다.
 import type { NumberStyle, OutputC, OutputCItem } from "./api-sop";
+import { hasSubSlots } from "./slot-status-model";
 
 export type IndentDir = -1 | 1;
 
@@ -11,9 +15,25 @@ type Section = OutputC["docs"][number]["sections"][number];
 /** 고를 수 있는 번호 표시 - 화면 단추 순서이기도 하다. backend app/sop/constants.py NUMBER_STYLES와 같은 값 */
 export const NUMBER_STYLES: readonly NumberStyle[] = ["numbered", "omitted", "note"];
 
-/** 번호를 세는 줄인가 - 생략·주석 줄은 세지 않고 다음 번호 줄이 이어 센다 */
+/** 번호를 세는 표시인가 - 생략·주석 줄은 세지 않고 다음 번호 줄이 이어 센다. 칸까지 본 답은 listCounted */
 export function isCounted(item: Pick<OutputCItem, "number_style">): boolean {
   return item.number_style === "numbered";
+}
+
+/** 칸의 줄마다 번호를 세는가 - 하위 칸이 있는 칸의 줄은 표시와 상관없이 세지 않는다(깊이 상한에도 끼지 않는다) */
+export function listCounted(section: { location_key: string; items: readonly Pick<OutputCItem, "number_style">[] }): boolean[] {
+  const isNumbered = !hasSubSlots(section.location_key);
+  return section.items.map((item) => isNumbered && isCounted(item));
+}
+
+/**
+ * 그 칸의 줄에 보일 번호 표시 단추 - choices는 고를 수 있는 표시(단추 순서), pressed는 눌린 것으로 보일 표시.
+ * 하위 칸이 있는 칸의 줄은 번호를 받지 않아 번호(numbered)를 내놓지 않고(쓸 수 없는 단추는 숨긴다), 번호로 저장된 줄은 생략으로 보인다.
+ * 저장값은 그대로다 - 하위 칸으로 옮기면 다시 번호 줄이고, 여기서 생략·주석을 고르면 그 값을 저장한다.
+ */
+export function readStyleChoices(locationKey: string, style: NumberStyle): { choices: readonly NumberStyle[]; pressed: NumberStyle } {
+  if (!hasSubSlots(locationKey)) return { choices: NUMBER_STYLES, pressed: style };
+  return { choices: NUMBER_STYLES.filter((choice) => choice !== "numbered"), pressed: style === "numbered" ? "omitted" : style };
 }
 
 /**
@@ -37,16 +57,18 @@ export function numberLines(base: string, depths: readonly (number | null)[]): (
  * 칸 안 줄마다 지금 보이는 깊이. 번호가 있으면 번호 마디 수에서 읽고(칸 번호 5.1 아래 5.1.2.1 = 깊이 1),
  * 번호가 없는 줄(생략·주석 줄, 단계 없는 WI·입구 2 문서의 칸)은 저장값을 서버와 같은 규칙으로 눌러 읽는다 - 첫 번호 줄 앞은 0,
  * 그 뒤는 앞 번호 줄 깊이 + 1까지. 생략·주석 줄은 다음 줄의 상한에 끼지 않는다. 0으로 그리면 사람이 정한 들여쓰기가 사라진다.
+ * 하위 칸이 있는 칸은 세는 줄이 없어(listCounted) 모든 줄이 0이다 - 번호 줄이 하나도 없는 칸의 생략·주석 줄과 같다.
  */
-export function getSectionDepths(section: Pick<Section, "number" | "items">): number[] {
+export function getSectionDepths(section: Pick<Section, "location_key" | "number" | "items">): number[] {
   const baseParts = section.number === null ? 0 : section.number.split(".").length;
+  const counted = listCounted(section);
   const depths: number[] = [];
   let previous: number | null = null;
-  for (const item of section.items) {
+  for (const [index, item] of section.items.entries()) {
     const fromNumber = section.number !== null && item.number !== null ? Math.max(0, item.number.split(".").length - baseParts - 1) : null;
     const depth: number = fromNumber ?? Math.max(0, Math.min(item.indent_level, previous === null ? 0 : previous + 1));
     depths.push(depth);
-    if (isCounted(item)) previous = depth;
+    if (counted[index]) previous = depth;
   }
   return depths;
 }
