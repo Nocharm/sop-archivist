@@ -631,11 +631,13 @@ await runStep("documents: Old rows read in two lines, expand to edit, delete pro
     const body = await response.json();
     return route.fulfill({ response, json: body.map((doc) => (doc.id === first.id ? { ...doc, equis: SYNTHETIC_EQUIS } : doc)) });
   });
-  const squeeze = await page.addStyleTag({ content: '[data-testid="documents-list"] { max-width: 820px; } [data-testid="documents-list"] .doc-meta { max-width: 220px; }' });
+  // 좁히는 스타일은 다시 읽은 뒤에 넣는다 - 다시 읽으면 넣어 둔 style 태그가 사라진다
+  let squeeze = null;
   try {
     await page.reload();
     const marker = page.locator(`[data-testid="${prefix}-equis"]`);
     await marker.waitFor({ timeout: T });
+    squeeze = await page.addStyleTag({ content: '[data-testid="documents-list"] { max-width: 820px; } [data-testid="documents-list"] .doc-meta { max-width: 220px; }' });
     const hidden = await page.waitForFunction((id) => {
       const meta = document.querySelector(`[data-testid="documents-${id}-row"] .doc-meta`);
       const text = document.querySelector(`[data-testid="documents-${id}-equis"] .equis-text`);
@@ -648,7 +650,7 @@ await runStep("documents: Old rows read in two lines, expand to edit, delete pro
     const tip = page.locator('[role="tooltip"]', { hasText: name });
     check("focusing it shows its text as a tooltip", await tip.waitFor({ timeout: 2000 }).then(() => true, () => false));
   } finally {
-    await squeeze.evaluate((tag) => tag.remove());
+    if (squeeze !== null) await squeeze.evaluate((tag) => tag.remove());
     await page.unroute(docsRoute);
   }
   // 8. 제목은 링크다 - 그 문서가 Assign 한 단 보기로 열린다
