@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import { SLOT_KEYS, type SlotCount, type TargetDoc, type ToBe } from "./api-sop";
-import { SLOT_COLUMNS, SLOT_NUMBERS, buildSlotRows, isNaEditDirty, listUsedReasons, openNaEdit, summarizeSlots, type NaEdit } from "./slot-status-model";
+import { SLOT_COLUMNS, SLOT_NUMBERS, buildSlotRows, canUndoRestore, isNaEditDirty, listUsedReasons, openNaEdit, summarizeSlots, type NaEdit } from "./slot-status-model";
 
 function makeDoc(patch: Partial<TargetDoc> = {}): TargetDoc {
   return { id: 12, code: "SOP-CF", title: "", doc_type: "sop", parent_code: null, entrance: "assign", is_equipment_sop: true, order_index: 1, document_id: null, ...patch };
@@ -129,5 +129,19 @@ describe("the one N/A editor", () => {
     expect(openNaEdit({ ...typing, refused: true }, { docKey: "SOP-CF", slotKey: "purpose", saved: "" })).toEqual({ ...typing, refused: false });
     expect(isNaEditDirty({ ...typing, text: " r1 ", saved: "r1" })).toBe(false);
     expect(isNaEditDirty(null)).toBe(false);
+  });
+});
+
+describe("canUndoRestore", () => {
+  const restored: ToBe = { revision: 1, docs: [makeDoc({ id: 1 })], na_slots: [{ code: "SOP-CF", slot_key: "document_relationships", reason: "r" }], wi_steps: [] };
+  it("undoes only while the row is still an SOP and the slot has no N/A saved", () => {
+    expect(canUndoRestore(restored, 1, "scope")).toBe(true);
+    // 상위 칸만 N/A인 하위 칸 - 그 칸 자체에는 저장된 N/A가 없다
+    expect(canUndoRestore(restored, 1, "document_relationships.appendices")).toBe(true);
+  });
+  it("leaves it alone after the slot is N/A again, the row is gone or became a WI", () => {
+    expect(canUndoRestore({ ...restored, na_slots: [...restored.na_slots, { code: "SOP-CF", slot_key: "scope", reason: "again" }] }, 1, "scope")).toBe(false);
+    expect(canUndoRestore(restored, 2, "scope")).toBe(false);
+    expect(canUndoRestore({ ...restored, docs: [makeDoc({ id: 1, doc_type: "wi", parent_code: "SOP-X" })] }, 1, "scope")).toBe(false);
   });
 });
