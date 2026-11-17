@@ -39,9 +39,12 @@ interface DrawnLine {
 // 조각 첫 줄 가운데쯤에 선을 붙인다 - 긴 조각의 한가운데로 가면 어느 줄인지 흐려진다(px)
 const FIRST_LINE_Y = 13;
 
-/** Old 조각 하나의 종이 조각(표 칸은 칸 조각) */
+/** Old 조각 하나의 종이 조각(표 칸은 칸 조각). 표·그림 단위는 제 글자 조각(data-unit)이 없다(머리 줄은 조각 상자로 고른다) - 그때는 그 단위의 조각 상자 */
 export function findOldStrip(root: ParentNode, unitId: number): HTMLElement | null {
-  return root.querySelector<HTMLElement>(`[data-pane="old"] [data-unit="${unitId}"]`)?.closest<HTMLElement>(".strip, .cell-piece") ?? null;
+  return (
+    root.querySelector<HTMLElement>(`[data-pane="old"] [data-unit="${unitId}"]`)?.closest<HTMLElement>(".strip, .cell-piece") ??
+    root.querySelector<HTMLElement>(`[data-pane="old"] .strip[data-strip-unit="${unitId}"]`)
+  );
 }
 
 export function findNewLine(root: ParentNode, targetId: number): HTMLElement | null {

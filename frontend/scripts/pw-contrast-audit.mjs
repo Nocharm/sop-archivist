@@ -250,6 +250,16 @@ for (const theme of ["light", "dark"]) {
       await page.locator('[data-testid^="assign-new-heading-note-"]').first().waitFor({ timeout: T });
       await page.unroute("**/outputs/c/docs/**");
     }],
+    // 표·그림 머리 줄의 경고색 Caption needed - 분류 절반에서 미배정으로 남긴 OLD-7의 캡션 없는 표
+    ["assign-caption-needed", `/bundles/${id}/assign`, '[data-testid="assign-bar"]', async (page) => {
+      const docs = await (await page.request.get(`${BASE}/api/bundles/${id}/documents`, { headers: { "X-Dev-User": "qa.member" } })).json();
+      const doc = docs.find((item) => item.side === "old" && item.doc_code === "OLD-7");
+      await page.locator('[data-testid="assign-old-doc"]').click();
+      await page.locator(`[data-testid="assign-old-doc-option-${doc.id}"]`).click();
+      const missing = page.locator('[data-testid^="assign-paper-caption-missing-"]').first();
+      await missing.waitFor({ timeout: T });
+      await missing.scrollIntoViewIfNeeded();
+    }],
     // 검토는 결과 화면 위의 검토 띠다 - 앞의 outputs-a 장면이 A 탭을 골라 두어 C로 돌아온다
     ["review", `/bundles/${id}/outputs`, '[data-testid="review"]', async (page) => { await page.locator('[data-testid="outputs-tab-c"]').click(); await page.locator('[data-testid="output-c"]').waitFor({ timeout: T }); }],
     ["assign-ai", `/bundles/${aiId}/assign`, '[data-testid="assign-bar"]', async (page) => { await page.locator('[data-testid="assign-filter-ai_suggested"]').click(); await page.keyboard.press("j"); await page.locator('[data-testid="assign-rec-0"]').waitFor({ timeout: T }); }],

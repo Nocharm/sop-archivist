@@ -109,13 +109,13 @@ def test_unit_context_has_neighbors_section_and_table(view: dict) -> None:
     contexts = _load([unit["id"] for unit in view["units"]])
 
     # 가운데 문장 — 앞뒤 이웃은 원문 순서이고, 소속 절은 가장 가까운 제목이며, 표 단위가 아니라 표 칸은 비어 있다
-    assert contexts[middle["id"]] == UnitContext(section=SECTION, before=(a, b), after=(d, e), table_markdown="")
+    assert contexts[middle["id"]] == UnitContext(section=SECTION, before=(a, b), after=(d, e), table_markdown="", caption="")
     # 문서 끝에서는 있는 만큼만 — 표 칸 문장도 읽는 순서의 이웃이다
-    assert contexts[heading["id"]] == UnitContext(section=SECTION, before=(), after=(a, b), table_markdown="")
+    assert contexts[heading["id"]] == UnitContext(section=SECTION, before=(), after=(a, b), table_markdown="", caption="")
     assert contexts[last["id"]].before == ("c", f) and contexts[last["id"]].after == ()
     assert contexts[last_before_table["id"]].after == ("항목", "값")
     # 표 단위 — 칸 격자가 Markdown이 되고, 자기 칸 문장은 이웃이 아니라 표 앞뒤 문장이 이웃이다
-    assert contexts[table["id"]] == UnitContext(section=SECTION, before=(d, e), after=(f, g), table_markdown=TABLE_MARKDOWN)
+    assert contexts[table["id"]] == UnitContext(section=SECTION, before=(d, e), after=(f, g), table_markdown=TABLE_MARKDOWN, caption="")
 
 
 def test_table_row_unit_gets_the_same_table_markdown(view: dict, client: TestClient) -> None:
@@ -176,8 +176,8 @@ def test_context_query_count_does_not_grow_with_units(view: dict) -> None:
     with _count_queries() as many:
         _load(all_ids)
 
-    # 질의는 종류마다 한 번이다(단위·순서·이웃 글·첫 블록 절·표 칸) — 단위당 질의가 아니다
-    assert len(many) == len(few) == 5
+    # 질의는 종류마다 한 번이다(단위·순서·이웃 글·첫 블록 절·표 칸·캡션) — 단위당 질의가 아니다
+    assert len(many) == len(few) == 6
 
 
 def test_context_reads_ids_in_chunks(view: dict, monkeypatch: pytest.MonkeyPatch) -> None:

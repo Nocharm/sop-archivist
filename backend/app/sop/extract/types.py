@@ -4,7 +4,8 @@ from dataclasses import dataclass
 
 # 추출 규칙이 바뀌면 올린다 — 같은 파일의 예전 추출과 새 추출을 구별하는 근거(extractions.extractor_version)
 # 2: Word 자동 번호를 글 앞에 써 넣고 머리말·꼬리말에 구역 표시(section_ref)를 남긴다 — 1로 뽑은 추출은 번호·표시가 없다
-EXTRACTOR_VERSION = "2"
+# 3: 캡션 문단을 그림 블록 글로 넣지 않고 제 문단 블록으로 남겨 caption_of 표시로 그림·표를 가리킨다 — 표 캡션도 찾는다
+EXTRACTOR_VERSION = "3"
 
 
 @dataclass(frozen=True)

@@ -177,6 +177,25 @@ describe("attachBoxDrag", () => {
     expect(config.pick).toHaveBeenCalledTimes(0);
   });
 
+  it("a wide table drags from its cells but not from its horizontal scrollbar strip", () => {
+    // 넓은 표 상자: 글 상자 높이 80px(위 0), 그 아래 막대. jsdom은 배치를 하지 않아 크기를 넣어 준다
+    const scroller = document.createElement("div");
+    scroller.innerHTML = "<table><tbody><tr><td>cell</td></tr></tbody></table>";
+    box.append(scroller);
+    Object.defineProperties(scroller, { scrollWidth: { value: 900 }, clientWidth: { value: 300 }, clientHeight: { value: 80 }, clientTop: { value: 0 } });
+    scroller.getBoundingClientRect = () => DOMRect.fromRect({ x: 0, y: 0, width: 300, height: 92 });
+    const config = attach();
+    press(scroller, 10, 86);
+    move(30, 86);
+    expect(isBoxDragActive()).toBe(false);
+    release(30, 86);
+    expect(config.pick).toHaveBeenCalledTimes(0);
+    press(scroller.querySelector("td")!, 10, 40);
+    move(30, 40);
+    expect(isBoxDragActive()).toBe(true);
+    release(30, 40);
+  });
+
   it("does not start when pick returns null", () => {
     attach({ pick: () => null });
     press(box);

@@ -11,9 +11,10 @@ from typing import Any
 from pydantic import BaseModel
 from sqlalchemy import ColumnElement, Select, and_, case, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import defer
+from sqlalchemy.orm import aliased, defer
 
 from app.models import Employee
+from app.sop.captions import CAPTION_KIND
 from app.sop.detach import UNASSIGNED
 from app.sop.errors import raise_rule
 from app.sop.groups import build_unit_order_key
@@ -88,6 +89,7 @@ class BlockInfo:
     table_index: int | None  # 표 칸·칸 안 그림이면 그 표의 순번(0부터)
     row_index: int | None
     col_index: int | None
+    has_image: bool  # 그림 이미지(figures/{block_id})를 받을 수 있는지 — New 칸이 그림을 그릴지 정한다
 
 
 @dataclass(frozen=True)
@@ -229,7 +231,7 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
             select(
                 SourceBlock.id, SourceBlock.extraction_id, SourceBlock.seq, SourceBlock.part, SourceBlock.kind,
                 SourceBlock.page, SourceBlock.page_basis, SourceBlock.section_label, SourceBlock.table_id,
-                SourceBlock.row_index, SourceBlock.col_index,
+                SourceBlock.row_index, SourceBlock.col_index, SourceBlock.image_part.is_not(None).label("has_image"),
             ).where(SourceBlock.extraction_id.in_(extraction_ids))
         )
     ).all()
@@ -238,7 +240,7 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
             id=row.id, part=row.part, kind=row.kind, page=row.page, page_basis=row.page_basis,
             section_label=row.section_label,
             table_index=tables[row.table_id].table_index if row.table_id is not None else None,
-            row_index=row.row_index, col_index=row.col_index,
+            row_index=row.row_index, col_index=row.col_index, has_image=bool(row.has_image),
         )
         for row in block_rows
     }
@@ -409,7 +411,7 @@ async def load_target_docs(session: AsyncSession, bundle_id: int) -> dict[int, T
 class RowProgress(BaseModel):
     """줄(짝 하나·짝 없는 판단 단위 하나) 상태별 수 — 배정 화면의 줄과 같은 규칙. 묶인 칸 문장은 표·행 줄에 들어 세지 않는다.
 
-    single_language는 줄이 아니라 단위 수다 — 두 언어 문서에서 짝도 다른 언어 새 문장도 없는 글(문장·제목).
+    single_language는 줄이 아니라 단위 수다 — 두 언어 문서에서 짝도 다른 언어 새 문장도 없는 글(문장·제목, 배정한 묶음의 캡션).
     """
 
     total: int = 0
@@ -420,20 +422,28 @@ class RowProgress(BaseModel):
     single_language: int = 0
 
 
-def _select_judged_units(bundle_ids: Collection[int], *columns: Any) -> Select[Any]:
-    """묶음들의 판단 단위(옛 문서·활성·최신 추출·묶이지 않은 단위, 판단 행 있음)에 짝 구성원을 바깥 조인한 질의."""
+def _select_old_units(bundle_ids: Collection[int], *columns: Any) -> Select[Any]:
+    """묶음들의 옛 문서·활성·최신 추출 단위에 짝 구성원을 바깥 조인한 질의."""
     in_bundles = Document.bundle_id.in_(list(bundle_ids))
     return (
         select(*columns)
         .select_from(Unit)
         .join(Extraction, Extraction.id == Unit.extraction_id)
         .join(Document, Document.id == Extraction.document_id)
-        .join(UnitDecision, UnitDecision.unit_id == Unit.id)
         .outerjoin(UnitPairMember, UnitPairMember.unit_id == Unit.id)
         .where(
-            in_bundles, Document.side == "old", Unit.status == UNIT_ACTIVE, Unit.group_unit_id.is_(None),
+            in_bundles, Document.side == "old", Unit.status == UNIT_ACTIVE,
             Unit.extraction_id.in_(_select_latest_extractions(in_bundles)),
         )
+    )
+
+
+def _select_judged_units(bundle_ids: Collection[int], *columns: Any) -> Select[Any]:
+    """묶음들의 판단 단위(옛 문서·활성·최신 추출·묶이지 않은 단위, 판단 행 있음)에 짝 구성원을 바깥 조인한 질의."""
+    return (
+        _select_old_units(bundle_ids, *columns)
+        .join(UnitDecision, UnitDecision.unit_id == Unit.id)
+        .where(Unit.group_unit_id.is_(None))
     )
 
 
@@ -470,11 +480,18 @@ async def load_bundle_progress(session: AsyncSession, bundle_ids: Collection[int
         .where(TargetSource.unit_id == Unit.id, TargetSentence.id == TargetSource.target_id)
         .where(_is_other_language(TargetSentence.lang)),
     )
+    # 묶이지 않은 글 단위와, 판단이 배정인 묶음에 딸린 캡션(output_rows.count_single_language와 같은 규칙)
+    group_decision = aliased(UnitDecision)
+    is_counted_kind = or_(
+        and_(Unit.group_unit_id.is_(None), Unit.kind.in_(SINGLE_LANGUAGE_KINDS)),
+        and_(Unit.kind == CAPTION_KIND, group_decision.disposition == "assigned"),
+    )
     for bundle_id, count in await session.execute(
-        _select_judged_units(bundle_ids, Document.bundle_id, func.count())
+        _select_old_units(bundle_ids, Document.bundle_id, func.count())
+        .outerjoin(group_decision, group_decision.unit_id == Unit.group_unit_id)
         .where(
             # 참조 줄(REF)은 한 줄뿐인 글이라 짝이 없어도 세지 않는다
-            UnitPairMember.pair_id.is_(None), Unit.kind.in_(SINGLE_LANGUAGE_KINDS), Unit.lang != REF_LANG,
+            UnitPairMember.pair_id.is_(None), is_counted_kind, Unit.lang != REF_LANG,
             Document.language_layout.in_(TWO_LANGUAGE_LAYOUTS), ~has_other_language_target,
         )
         .group_by(Document.bundle_id)

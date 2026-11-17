@@ -14,6 +14,7 @@ import {
   isRecommendationPicked,
   listCoConfirmed,
   listLinkMenuItems,
+  readConfirmBlockKey,
   listSiblingPlaces,
   listUnlinkRemainder,
   listUnsourced,
@@ -327,5 +328,13 @@ describe("listUnlinkRemainder", () => {
     ]);
     expect(listUnlinkRemainder([71, 72, 73], 71, written)).toEqual([73]);
     expect(listUnlinkRemainder([73], 73, written)).toEqual([]);
+  });
+});
+
+describe("readConfirmBlockKey", () => {
+  it("names the reference check first, then the missing caption, and nothing when confirm is free", () => {
+    expect(readConfirmBlockKey({ isRefGate: true, isCaptionGate: true })).toBe("assign.ref.checkFirst");
+    expect(readConfirmBlockKey({ isRefGate: false, isCaptionGate: true })).toBe("assign.caption.needed");
+    expect(readConfirmBlockKey({ isRefGate: false, isCaptionGate: false })).toBeNull();
   });
 });

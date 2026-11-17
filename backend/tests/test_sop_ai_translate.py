@@ -47,6 +47,7 @@ from tests.sop_helpers import (
     AUTHOR,
     REVIEWER,
     assign_as_is,
+    build_missing_caption,
     find_unit,
     get_group_by_unit,
     get_view,
@@ -206,7 +207,7 @@ def save_table_as_read(
     return save_group(client, bundle_id, {
         "action": "confirm",
         "units": [{"unit_id": unit_id, "revision": decision["revision"], "disposition": "assigned", "reason": reason}],
-        "targets": targets,
+        "targets": [*targets, *build_missing_caption(group["targets"], table)],
     })
 
 

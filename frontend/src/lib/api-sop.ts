@@ -320,7 +320,7 @@ export function deleteDocument(bundleId: number, docId: number, revision: number
 
 // --- 원문 보기와 쪼개기 편집 ---
 
-export type UnitKind = "sentence" | "heading" | "figure" | "table" | "table_row" | "cell_sentence";
+export type UnitKind = "sentence" | "heading" | "figure" | "table" | "table_row" | "cell_sentence" | "caption";
 /** ref는 참조 줄(다른 문서를 번호로 가리키는 글) - 한/영 짝이 없다 */
 export type UnitLang = "ko" | "en" | "ref" | "neutral";
 /** 참조 줄 상태 - proposed는 앱의 제안(사람이 번호를 확인하기 전), confirmed는 REF로 확정된 것 */
@@ -443,6 +443,10 @@ export type EditOp =
   | { type: "split_table_rows"; table_unit_id: number }
   | { type: "merge_table_rows"; table_id: number }
   | { type: "set_layout_table"; table_id: number; is_layout: boolean }
+  /** 바로 이웃한 묶이지 않은 글 단위를 표·행·그림의 캡션으로 - 묶음마다 언어당 하나(caption_exists), 판단이 있는 묶음이면 서버가 묻는다 */
+  | { type: "attach_caption"; unit_id: number; bundle_unit_id: number }
+  /** 캡션을 같은 자리·언어의 묶이지 않은 문장으로 */
+  | { type: "detach_caption"; unit_id: number }
   /** 참조 줄로 - 번호는 그 단위의 글 안에 있어야 한다. 이미 참조 줄이면 번호만 고친다 */
   | { type: "set_ref"; unit_id: number; number: string }
   /** 참조 아님 - 참조 줄이면 그 전 언어로 돌리고, 제안뿐이었으면 다시 제안하지 않는다 */
@@ -732,6 +736,8 @@ export interface UnitRow {
   target_ids: number[];
   /** 한/영 짝(제안·확정 모두) - 문서 보기의 units[].pair_id와 같은 뜻, 짝이 없으면 null */
   pair_id: number | null;
+  /** 표·그림 단위의 새 문장 아래 캡션 새 문장이 있다 - 써 넣은 캡션(캡션 단위 없음)도 센다 */
+  has_caption_target?: boolean;
 }
 
 export interface GroupUnit {
@@ -974,6 +980,36 @@ export interface WrittenSentence {
   ref?: { number: string; equis: EquisInfo | null } | null;
   /** 참조 줄인데 이 문장의 번호(number)나 이름(title)이 EQUIS와 다르다 - 작은 주의. 참조 줄이 아니거나 견줄 것이 없으면 null */
   ref_issue?: "number" | "title" | null;
+  /** 표 줄이면 칸 새 문장 격자 */
+  table?: BundleTable | null;
+  /** 그림 줄이고 출처 그림에 이미지가 있으면 그 블록 */
+  figure?: BundleFigure | null;
+  /** 표·그림 줄의 캡션 글(여러 언어는 한국어·영어 순 줄바꿈), 없으면 null */
+  caption?: string | null;
+}
+
+/** New 칸 표 줄의 칸 새 문장 - 글은 확정 글, 없으면 AI 글 */
+export interface BundleCell {
+  /** 칸 새 문장 id - 칸 번역은 같은 (row, col)에 하나 더 있다 */
+  target_id: number;
+  row: number;
+  col: number;
+  lang: UnitLang;
+  text: string;
+  status: CoverStatus;
+}
+
+/** New 칸이 그리는 표 - 격자 크기와 칸 새 문장(행·열 순) */
+export interface BundleTable {
+  rows: number;
+  cols: number;
+  cells: BundleCell[];
+}
+
+/** New 칸이 그리는 그림 - 이미지를 받을 문서와 블록(getFigureImage) */
+export interface BundleFigure {
+  document_id: number;
+  block_id: number;
 }
 
 /** Old 단위 하나에 가까운 이미 쓴 문서 문장 - 유사도는 확률로 보이지 않는다 */
@@ -1047,7 +1083,8 @@ export interface OutputARow {
   /** 묶음 번호(1부터) - 묶음의 모든 줄에 같은 값 */
   row_no: number;
   is_group_start: boolean;
-  row_kind: "unit" | "table" | "cell" | "translation" | "new";
+  /** caption - 표·그림 줄 바로 뒤의 캡션 단위 줄 */
+  row_kind: "unit" | "table" | "caption" | "cell" | "translation" | "new";
   old_doc_code: string;
   old_doc_version: string;
   location: OutputLocation;
@@ -1107,7 +1144,10 @@ export interface OutputCItem {
   number_style: NumberStyle;
   cell_row: number | null;
   cell_col: number | null;
+  /** 표·그림의 자식 - 캡션 새 문장(칸 좌표 없음, 한국어·영어 순)이 먼저, 그다음 칸 새 문장(행·열 순) */
   children: OutputCItem[];
+  /** 표·그림의 캡션 글(그림은 text도 이 글), 없으면 null */
+  caption?: string | null;
 }
 
 export interface OutputC {
@@ -1167,6 +1207,10 @@ export interface ComposedItem {
   number: string | null;
   /** 출처 Old 단위 - 번역은 번역 출처 단위 */
   source_unit_ids: number[];
+  table?: BundleTable | null;
+  figure?: BundleFigure | null;
+  /** 표·그림 줄의 캡션 글(결과물 C와 같은 규칙), 없으면 null */
+  caption?: string | null;
 }
 
 export interface ComposedSection {
