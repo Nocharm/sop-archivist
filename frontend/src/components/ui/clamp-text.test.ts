@@ -43,4 +43,17 @@ describe("ClampText", () => {
     expect(view.state.commits).toBe(0);
     view.unmount();
   });
+
+  it("lets its tooltip host shrink in a flex line only when asked", () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    act(() => root.render(createElement("div", null, createElement(ClampText, { text: "a", testId: "fixed" }), createElement(ClampText, { text: "b", testId: "shrinks", shrinks: true }))));
+    const classOf = (testId: string) => host.querySelector(`[data-testid="${testId}"]`)?.parentElement?.className ?? "";
+
+    expect(classOf("fixed")).toContain("shrink-0");
+    expect(classOf("shrinks")).toContain("min-w-0");
+    expect(classOf("shrinks")).not.toContain("shrink-0");
+    act(() => root.unmount());
+  });
 });

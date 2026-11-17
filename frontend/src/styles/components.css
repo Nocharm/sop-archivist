@@ -336,7 +336,7 @@
   .doc-item:has(> .doc-row[data-child]):not(:has(+ .doc-item > .doc-row[data-child])) > .doc-panel::before { content: none; }
   .doc-row[data-child] + .doc-panel { position: relative; }
   /* 올림 바탕 - 끄는 동안은 끈다(다음 계획의 끌기) */
-  :where(html:not([data-box-drag])) .doc-row:hover { background: var(--hover); }
+  :where(html:not([data-box-drag])) .doc-row:not([data-fixed]):hover { background: var(--hover); }
   /* WI 줄을 SOP 줄에 끌기(Documents 화면 설계 §7, tobe-section.tsx). 끌 수 있는 줄만 올리면 살짝 들린다(끌어다 놓기 G9 - Order 줄과 같은 고리라 줄 높이가 변하지 않는다) */
   @media (hover: hover) {
     html:not([data-box-drag]):not([data-box-select]) .doc-row[data-drag-box]:hover { box-shadow: 0 0 0 1px var(--line-2), var(--shadow-1); }
@@ -361,16 +361,23 @@
   .doc-code { min-width: 0; font-family: var(--font-mono); font-size: 12.5px; line-height: 18px; color: var(--ink); }
   /* Old 줄의 식별 - 한 열에 번호 줄과 버전 줄(작은 mono). 빈 번호는 흐린 글, 받지 못한 파일은 펼치지 않아 커서가 손가락이 아니다 */
   .doc-row[data-kind="old"] > .doc-id { grid-template-columns: minmax(0, 1fr); row-gap: 3px; }
+  /* 번호 · 버전은 ClampText shrinks - 툴팁 자리까지 줄어 긴 값이 제 줄을 차지하고 그 폭에서 두 줄로 접혀 잘린다, 옆 칩은 다음 줄로 */
   .doc-id-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; }
-  /* 번호를 감싼 툴팁 자리는 줄지 않는다(shrink-0) - 긴 번호는 제 줄을 차지하고 그 폭에서 두 줄로 접혀 잘린다, 옆 칩은 다음 줄로 */
-  .doc-id-line > span:has(> .doc-code) { flex-shrink: 1; min-width: 0; }
   .doc-id-empty { color: var(--ink-4); font-size: var(--fs-cap); line-height: 18px; }
   .doc-ver { font-family: var(--font-mono); font-size: var(--fs-micro); line-height: 16px; color: var(--ink-3); }
+  .doc-ver-text { min-width: 0; }
   .doc-ver .pill { height: 18px; line-height: 16px; font-family: var(--font-ui); }
   .doc-row[data-fixed] { cursor: default; }
-  /* Old 제목의 링크 - 줄 글과 같은 자리 · 굵기, 올리면 밑줄 */
+  /* 단추가 없는 줄(읽기 전용의 받지 못한 파일)도 단추 자리를 비워 상태가 다른 줄과 같은 x에 선다 - 넓으면 묶음 폭, 좁으면 ⋯ 폭 */
+  .doc-acts-space { display: inline-block; width: 24px; }
+  @container doc-list (min-width: 840px) {
+    .doc-acts-space { width: var(--doc-acts-w); }
+  }
+  /* Old 제목의 링크 - 줄 글과 같은 자리 · 굵기, 올리면 밑줄. 두 줄 상자(overflow: hidden)가 링크의 테두리를 자르므로 포커스 테두리는 그 상자에 그린다(New 줄의 제목 상자와 같은 자리) */
   .doc-title-link { color: inherit; border-radius: var(--r-1); }
   .doc-title-link:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+  .doc-title-link:focus-visible { outline: none; }
+  .clamp-2:has(> .doc-title-link:focus-visible) { outline: 2px solid var(--focus); outline-offset: 1px; border-radius: var(--r-1); }
   /* 받지 못한 파일의 까닭 - 딸린 정보 줄 아래 한 줄, 공백 없는 글도 줄 안에서 접힌다 */
   .doc-why { font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--danger-ink); overflow-wrap: anywhere; }
   .doc-main { display: grid; gap: 2px; min-width: 0; }

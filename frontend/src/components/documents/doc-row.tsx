@@ -55,9 +55,11 @@ interface DocRowProps {
   flipKey?: string;
   /** 거짓이면 펼치지 않는다(받지 못한 파일) - 화살표 단추 없이 그 자리를 비워 둔다 */
   expandable?: boolean;
+  /** 단추가 없어도 그 자리를 비워 둔다 - 같은 목록의 다른 줄에 단추가 있을 수 있을 때(Old 목록의 읽기 전용) 상태가 같은 x에 선다 */
+  reserveActions?: boolean;
 }
 
-export function DocRow({ prefix, kind, isChild = false, open, onToggle, toggleLabel, identity, title, meta, below, state, actions, panel, rowData, flipKey, expandable = true }: DocRowProps) {
+export function DocRow({ prefix, kind, isChild = false, open, onToggle, toggleLabel, identity, title, meta, below, state, actions, panel, rowData, flipKey, expandable = true, reserveActions = false }: DocRowProps) {
   const { t } = useI18n();
   const moreRef = useRef<HTMLButtonElement>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -108,6 +110,7 @@ export function DocRow({ prefix, kind, isChild = false, open, onToggle, toggleLa
         </div>
         <div className="doc-end">
           {state !== undefined && <span className="doc-state">{state}</span>}
+          {actions.length === 0 && reserveActions && <span className="doc-acts-space" aria-hidden />}
           {actions.length > 0 && (
             <>
               <span className="doc-acts" data-no-drag data-testid={`${prefix}-acts`}>

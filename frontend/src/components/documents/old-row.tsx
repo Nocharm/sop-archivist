@@ -70,19 +70,22 @@ export function OldRow({ document, bundleId, canEdit, isReading, open, onToggle,
       onToggle={onToggle}
       toggleLabel={t("documents.details")}
       expandable={canExpandOld(document)}
+      reserveActions
       identity={
         <>
+          {/* 받지 못한 파일은 번호 · 버전이 없다(설계 §5) - 줄 없는 New 파일의 표시만 남는다 */}
           <span className="doc-id-line">
-            {document.doc_code === "" ? (
-              <span className="doc-id-empty" data-testid={`${prefix}-code-text`}>
-                {t("documents.noNumber")}
-              </span>
-            ) : (
-              <ClampText text={document.doc_code} className="doc-code" testId={`${prefix}-code-text`} />
-            )}
+            {isRead &&
+              (document.doc_code === "" ? (
+                <span className="doc-id-empty" data-testid={`${prefix}-code-text`}>
+                  {t("documents.noNumber")}
+                </span>
+              ) : (
+                <ClampText text={document.doc_code} className="doc-code" testId={`${prefix}-code-text`} shrinks />
+              ))}
             {/* AI 제안은 빈 번호 바로 옆 - 누르면 저장되고, 펼친 곳에서 다른 값을 적어 고칠 수도 있다 */}
-            {canEdit && !document.doc_code && document.ai_meta?.doc_code && <AiSuggestChip value={document.ai_meta.doc_code} testId={`${prefix}-code-ai`} onAccept={() => accept({ doc_code: document.ai_meta?.doc_code ?? "" })} />}
-            {isReading && (
+            {isRead && canEdit && !document.doc_code && document.ai_meta?.doc_code && <AiSuggestChip value={document.ai_meta.doc_code} testId={`${prefix}-code-ai`} onAccept={() => accept({ doc_code: document.ai_meta?.doc_code ?? "" })} />}
+            {isRead && isReading && (
               <Tooltip label={t("documents.aiReading")}>
                 <span className="inline-flex text-st-ai" tabIndex={0} role="img" aria-label={t("documents.aiReading")} data-testid={`${prefix}-ai-reading`}>
                   <Loader2 size={14} strokeWidth={1.5} className="animate-spin" aria-hidden />
@@ -104,7 +107,8 @@ export function OldRow({ document, bundleId, canEdit, isReading, open, onToggle,
                   {t("documents.noVersion")}
                 </span>
               ) : (
-                <span data-testid={`${prefix}-version-text`}>v{document.doc_version}</span>
+                // 서버는 50자까지 받는다 - 번호처럼 두 줄에서 자르고 전체는 툴팁(Tab은 펼친 곳의 칸이 받는다)
+                <ClampText text={`v${document.doc_version}`} className="doc-ver-text" testId={`${prefix}-version-text`} tabbable={false} shrinks />
               )}
               {/* 비어 있으면 EQUIS의 지금 판을 제안한다 - 이 칸은 올린 파일의 판이라 자동으로 넣지 않는다("지금 판이 아님" 판정이 뜻을 잃는다) */}
               {canEdit && !document.doc_version && !document.ai_meta?.doc_version && equis?.current?.version && (

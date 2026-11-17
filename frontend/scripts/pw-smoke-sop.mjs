@@ -429,7 +429,7 @@ await runStep("documents: Old rows read in two lines, expand to edit, delete pro
     (await page.locator(OLD_ROWS).count()) === expected.length && (await getText(page, "documents-old-count")).trim() === String(expected.length),
     `${await page.locator(OLD_ROWS).count()} rows, head ${await getText(page, "documents-old-count").catch(() => "none")}, api ${expected.length}`,
   );
-  check("a closed row has no field to edit", (await page.locator('[data-testid="documents-list"] :is(input, select)').count()) === 0);
+  check("a closed row has no field to edit", (await page.locator(`[data-testid="documents-list"] :is(input, select, [role='combobox'])`).count()) === 0);
   // 정상 상태는 글자 없이 아이콘(aria-label "Ready"/"Checked", data-state="ok"), 예외만 글자 알약
   const okStatus = page.locator('[data-testid^="documents-"][data-testid$="-status"][data-state="ok"]').first();
   check("extraction status icon reads Ready", (await okStatus.getAttribute("aria-label")) === "Ready");
@@ -494,7 +494,7 @@ await runStep("documents: Old rows read in two lines, expand to edit, delete pro
   await page.waitForFunction(([id, value]) => document.querySelector(`[data-testid="documents-${id}-version"]`)?.value === value, [docId, before], { timeout: T });
   await toggle.click();
   await panel.waitFor({ state: "detached", timeout: T });
-  // 5. 줄 끝 단추 - 평소 숨고, 올리거나 Tab으로 들어오면 보인다. 오른쪽 끝이 줄마다 같다
+  // 4. 줄 끝 단추 - 평소 숨고, 올리거나 Tab으로 들어오면 보인다. 오른쪽 끝이 줄마다 같다
   await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
   await page.mouse.move(0, 0);
   check("row-end buttons are hidden at rest", await opacityBecomes(`${prefix}-acts`, 0));
@@ -537,7 +537,7 @@ await runStep("documents: Old rows read in two lines, expand to edit, delete pro
   } finally {
     await narrow.evaluate((tag) => tag.remove());
   }
-  // 6. 빈 값과 받지 못한 파일(Review Focus 4) - 목록 응답을 바꿔 다시 읽는다
+  // 5. 빈 값과 받지 못한 파일(Review Focus 4) - 목록 응답을 바꿔 다시 읽는다
   const docsRoute = "**/api/bundles/*/documents";
   // 빈 값은 읽힌 문서에서만 줄에 버전 자리가 있다 - 읽힌 Old 문서 하나와 다른 Old 문서 하나
   const olds = apiDocs.filter((doc) => doc.side === "old");
@@ -573,13 +573,85 @@ await runStep("documents: Old rows read in two lines, expand to edit, delete pro
     const refusedButtons = await page.locator(`[data-testid="${refusedPrefix}-acts"] button`).evaluateAll((els) => els.map((el) => el.dataset.testid));
     check("its only row-end button is Delete", JSON.stringify(refusedButtons) === JSON.stringify([`${refusedPrefix}-delete`]), refusedButtons.join(","));
     check("it ends with a Rejected pill", (await textOf(`${refusedPrefix}-status`)) === "Rejected", await textOf(`${refusedPrefix}-status`));
+    check("it shows no number and no version", (await page.locator(`[data-testid="${refusedPrefix}-code-text"], [data-testid="${refusedPrefix}-version-text"]`).count()) === 0);
     await page.locator(`[data-testid="${refusedPrefix}-reason"]`).click();
     await page.waitForTimeout(400);
     check("pressing it does not open anything", (await page.locator(`[data-testid="${refusedPrefix}-panel"]`).count()) === 0);
   } finally {
     await page.unroute(docsRoute);
   }
-  // 4. 제목은 링크다 - 그 문서가 Assign 한 단 보기로 열린다
+  // 6. 긴 번호(100자, 설계 §5) - 식별 자리 안에서 두 줄로 접혀 잘리고 제목 자리를 밀지 않는다. API로 바꾸고 끝에 되돌린다
+  const longTarget = olds.find((doc) => doc.status === "ready" && doc.id !== first.id) ?? first;
+  const jsonHeaders = { "X-Dev-User": "qa.member", "Content-Type": "application/json" };
+  const docUrl = `${BASE}/api/bundles/${halfBundleId}/documents/${longTarget.id}`;
+  const readTarget = async () => (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers: jsonHeaders })).json()).find((doc) => doc.id === longTarget.id);
+  const longCode = `SOP-${"LONGNUMBER".repeat(10)}`.slice(0, 100);
+  const beforeLong = await readTarget();
+  const patchedLong = await (await page.request.patch(docUrl, { headers: jsonHeaders, data: { revision: beforeLong.revision, doc_code: longCode } })).json();
+  try {
+    check("the API took the 100-character number", patchedLong.doc_code === longCode, String(patchedLong.doc_code));
+    await page.reload();
+    const longPrefix = `documents-${longTarget.id}`;
+    await page.locator(`[data-testid="${longPrefix}-code-text"]`).waitFor({ timeout: T });
+    const fit = await page.evaluate((longId) => {
+      const rows = [...document.querySelectorAll('[data-testid="documents-list"] .doc-row')];
+      const longRow = rows.find((row) => row.dataset.testid === `documents-${longId}-row`);
+      // 견줄 보통 줄 - 긴 번호가 아닌 다른 줄(받지 못한 줄도 화살표 자리를 비워 제목이 같은 x다)
+      const normalRow = rows.find((row) => row !== longRow);
+      const code = document.querySelector(`[data-testid="documents-${longId}-code-text"]`).getBoundingClientRect();
+      const column = longRow.querySelector(".doc-id").getBoundingClientRect();
+      return {
+        codeRight: code.right,
+        columnRight: column.right,
+        codeHeight: code.height,
+        titleLeft: longRow.querySelector(".doc-title").getBoundingClientRect().left,
+        normalTitleLeft: normalRow ? normalRow.querySelector(".doc-title").getBoundingClientRect().left : null,
+      };
+    }, longTarget.id);
+    check(
+      "a 100-character number stays inside the identity column, at most two lines, and does not push the title",
+      fit.normalTitleLeft !== null && fit.codeRight <= fit.columnRight + 0.5 && fit.codeHeight <= 2 * 18 + 1 && Math.abs(fit.titleLeft - fit.normalTitleLeft) <= 1,
+      JSON.stringify(fit),
+    );
+  } finally {
+    const current = await readTarget();
+    await page.request.patch(docUrl, { headers: jsonHeaders, data: { revision: current.revision, doc_code: beforeLong.doc_code } });
+    check("the number is put back", (await readTarget()).doc_code === beforeLong.doc_code);
+  }
+  // 7. 좁은 줄의 EQUIS 표시 - 딸린 정보 줄이 4단계까지 줄어 글자가 숨어도 단추에 이름이 있고 포커스하면 툴팁으로 뜬다.
+  //    로컬은 EQUIS가 꺼져 있을 수 있어 첫 줄에 합성 표시를 얹고, 틀과 딸린 정보 줄을 좁혀 줄어드는 단계를 끝까지 올린다
+  const SYNTHETIC_EQUIS = {
+    state: "found", refreshing: false, verdict: "ok", reasons: [], notes: [], current: { version: "14.0", status: "Effective", effective_date: "2025-09-17", retired_date: "" },
+    in_progress: [], retired: null, number: first.doc_code || "SOP-SYN-1", trail: [], ambiguous: [], name: "Synthetic Name", subtype: "", owning_department: "",
+    plant: "", area: "", legacy_numbers: [], equipment_tag: "", doc_url: null, title_locked: false, fetched_at: null,
+  };
+  await page.route(docsRoute, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const response = await route.fetch();
+    const body = await response.json();
+    return route.fulfill({ response, json: body.map((doc) => (doc.id === first.id ? { ...doc, equis: SYNTHETIC_EQUIS } : doc)) });
+  });
+  const squeeze = await page.addStyleTag({ content: '[data-testid="documents-list"] { max-width: 820px; } [data-testid="documents-list"] .doc-meta { max-width: 220px; }' });
+  try {
+    await page.reload();
+    const marker = page.locator(`[data-testid="${prefix}-equis"]`);
+    await marker.waitFor({ timeout: T });
+    const hidden = await page.waitForFunction((id) => {
+      const meta = document.querySelector(`[data-testid="documents-${id}-row"] .doc-meta`);
+      const text = document.querySelector(`[data-testid="documents-${id}-equis"] .equis-text`);
+      return meta?.dataset.fit === "4" && text !== null && getComputedStyle(text).display === "none";
+    }, docId, { timeout: T }).then(() => true, () => false);
+    check("a squeezed meta line hides the EQUIS text", hidden);
+    const name = (await marker.getAttribute("aria-label")) ?? "";
+    check("the icon-only EQUIS marker keeps its name", name !== "", name);
+    await marker.focus();
+    const tip = page.locator('[role="tooltip"]', { hasText: name });
+    check("focusing it shows its text as a tooltip", await tip.waitFor({ timeout: 2000 }).then(() => true, () => false));
+  } finally {
+    await squeeze.evaluate((tag) => tag.remove());
+    await page.unroute(docsRoute);
+  }
+  // 8. 제목은 링크다 - 그 문서가 Assign 한 단 보기로 열린다
   await page.reload();
   await firstRow.waitFor({ timeout: T });
   await page.locator(`[data-testid="${prefix}-title"]`).click();
@@ -611,6 +683,7 @@ await runStep("documents: a reviewer reads Old rows, nothing edits", { devUser: 
   check("no field to edit anywhere in the Old list", (await list.locator("input, select, [role='combobox']").count()) === 0);
   check("number and version read as text", ((await getText(page, `${prefix}-code`)).trim() === (ready.doc_code || "No number")) && ((await getText(page, `${prefix}-version`)).trim() === (ready.doc_version || "No version")));
   check("no Delete", (await list.locator('[data-testid$="-delete"]').count()) === 0);
+  check("no AI or EQUIS suggestion chips", (await list.locator('[data-testid$="-code-ai"], [data-testid$="-version-ai"], [data-testid$="-version-equis"]').count()) === 0);
   check("Preview and Download stay", (await list.locator(`[data-testid="${prefix}-preview"]`).count()) === 1 && (await list.locator(`[data-testid="${prefix}-download"]`).count()) === 1);
   check("no Upload button", (await page.locator('[data-testid="documents-upload"]').count()) === 0);
 });
