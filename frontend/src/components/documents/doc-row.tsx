@@ -53,14 +53,16 @@ interface DocRowProps {
   rowData?: Readonly<Record<`data-${string}`, string | undefined>>;
   /** 자리 바꿈(useFlip)의 키 - 줄과 펼친 곳이 함께 움직이게 바깥 상자에 단다 */
   flipKey?: string;
+  /** 거짓이면 펼치지 않는다(받지 못한 파일) - 화살표 단추 없이 그 자리를 비워 둔다 */
+  expandable?: boolean;
 }
 
-export function DocRow({ prefix, kind, isChild = false, open, onToggle, toggleLabel, identity, title, meta, below, state, actions, panel, rowData, flipKey }: DocRowProps) {
+export function DocRow({ prefix, kind, isChild = false, open, onToggle, toggleLabel, identity, title, meta, below, state, actions, panel, rowData, flipKey, expandable = true }: DocRowProps) {
   const { t } = useI18n();
   const moreRef = useRef<HTMLButtonElement>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const metaRef = useMetaFit<HTMLDivElement>(META_FIT_LEVELS);
-  const openProps = getRowOpenProps(onToggle);
+  const openProps = expandable ? getRowOpenProps(onToggle) : null;
 
   // 고르면 닫고 실행한다 - 닫힌 메뉴가 포커스를 ⋯ 단추로 돌린다
   function runFromMenu(action: RowAction) {
@@ -75,21 +77,27 @@ export function DocRow({ prefix, kind, isChild = false, open, onToggle, toggleLa
         data-kind={kind}
         data-child={isChild ? "" : undefined}
         data-testid={`${prefix}-row`}
-        tabIndex={openProps.tabIndex}
-        onKeyDown={openProps.onKeyDown}
+        data-fixed={openProps === null ? "" : undefined}
+        tabIndex={openProps?.tabIndex}
+        onKeyDown={openProps?.onKeyDown}
         // 줄 안의 단추·링크·입력에서 누른 것과 글자를 긁고 뗀 것은 펼침이 아니다. 포털로 뜬 메뉴의 누름도 React 트리로 올라오므로 DOM 안의 것만 본다
         onClick={(event) => {
-          if (!event.currentTarget.contains(event.target as Node)) return;
+          if (openProps === null || !event.currentTarget.contains(event.target as Node)) return;
           if (shouldRowToggle(event.target, (window.getSelection()?.toString() ?? "") !== "")) openProps.onClick();
         }}
         {...rowData}
       >
-        {/* 아이콘만 있는 단추 - 뜻은 툴팁으로도 */}
-        <Tooltip label={toggleLabel} align="start">
-          <button type="button" className="doc-chev" aria-expanded={open} aria-label={toggleLabel} data-testid={`${prefix}-toggle`} onClick={onToggle}>
-            <ChevronRight size={14} strokeWidth={1.5} aria-hidden />
-          </button>
-        </Tooltip>
+        {openProps === null ? (
+          // 빈 화살표 자리 - 줄의 글이 다른 줄과 같은 x에서 시작한다
+          <span aria-hidden />
+        ) : (
+          // 아이콘만 있는 단추 - 뜻은 툴팁으로도
+          <Tooltip label={toggleLabel} align="start">
+            <button type="button" className="doc-chev" aria-expanded={open} aria-label={toggleLabel} data-testid={`${prefix}-toggle`} onClick={onToggle}>
+              <ChevronRight size={14} strokeWidth={1.5} aria-hidden />
+            </button>
+          </Tooltip>
+        )}
         <div className="doc-id">{identity}</div>
         <div className="doc-main">
           <div className="doc-title">{title}</div>
@@ -169,7 +177,7 @@ export function DocRow({ prefix, kind, isChild = false, open, onToggle, toggleLa
           )}
         </div>
       </div>
-      <Collapse open={open} className="doc-panel" testId={`${prefix}-panel`}>
+      <Collapse open={open && expandable} className="doc-panel" testId={`${prefix}-panel`}>
         {panel}
       </Collapse>
     </div>

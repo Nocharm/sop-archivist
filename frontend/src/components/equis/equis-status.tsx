@@ -46,7 +46,7 @@ export function EquisStatus({ equis, testId, compact = false, canEdit, onRefresh
     return (
       <span className={`inline-flex h-4 shrink-0 items-center gap-1 text-[11px] leading-4 ${tone}`} role="status" aria-label={label.text} data-testid={testId}>
         <Loader2 size={12} strokeWidth={1.5} className="animate-spin" aria-hidden />
-        {!compact && label.text}
+        {!compact && <span className="equis-text">{label.text}</span>}
       </span>
     );
   }
@@ -64,7 +64,7 @@ export function EquisStatus({ equis, testId, compact = false, canEdit, onRefresh
     >
       <Icon size={12} strokeWidth={1.5} className="shrink-0" aria-hidden />
       {/* 좁은 칸에서는 글이 말줄임된다 - 전체는 눌러 펼친 정보에 있다 */}
-      {!compact && <span className="truncate">{label.text}</span>}
+      {!compact && <span className="equis-text truncate">{label.text}</span>}
     </button>
   );
 

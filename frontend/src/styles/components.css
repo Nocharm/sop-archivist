@@ -320,6 +320,9 @@
      --doc-id-w: New 줄은 종류 표 + 14자 번호(SOP-CDO-111334) + EQUIS 아이콘이 한 줄에 드는 폭 - 166px부터 한 줄(160px은 두 줄, en · ko 같다, 잰 값 2026-11-17)에 여유 6px.
      --doc-acts-w: 단추 둘(24 × 2 + 틈 2) + 여유 2 */
   .doc-list { container: doc-list / inline-size; --doc-id-w: 172px; --doc-acts-w: 52px; }
+  /* Old 목록(old-row.tsx) - 식별 자리는 번호 줄 + 버전 줄이라 종류 표 · EQUIS 아이콘이 없어 14자 번호가 드는 164px(설계 §4의 시작값, 극단 자료로 아직 재지 않았다).
+     단추 자리는 셋(24 × 3 + 틈 2 × 2) + 여유 4 */
+  .docs-old > .doc-list { --doc-id-w: 164px; --doc-acts-w: 80px; }
   .count { font-size: var(--fs-cap); color: var(--ink-3); font-variant-numeric: tabular-nums; }
   .doc-row { position: relative; display: grid; grid-template-columns: 24px var(--doc-id-w) minmax(0, 1fr) auto; column-gap: 10px; align-items: start; padding: 9px var(--pad); border-bottom: 1px solid var(--line); cursor: pointer; }
   .doc-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -345,8 +348,9 @@
   /* 끄는 동안(G10)은 줄 끝 단추와 줄 안의 단추·링크·입력을 끈다 - 줄 상자는 놓을 곳이라 받는다. 위의 보이기 규칙보다 특이도가 높아야 한다 */
   html[data-box-drag] .doc-list :is(.doc-acts, .doc-more) { opacity: 0; pointer-events: none; }
   html[data-box-drag] .doc-list :is(button, a, input, select) { pointer-events: none; }
-  /* 화면 틀의 data-parent-drag - SOP 줄 말고 전부(Old 목록 · WI 줄 · 펼친 곳 · 등록 칸)를 흐린다(Order와 같은 0.35). 거절 테두리(점선)가 걸린 줄은 또렷하게 남긴다 */
-  [data-parent-drag] :is(.docs-old, .doc-row:not([data-kind="sop"]):not([data-drop]), .doc-panel, .doc-add) { opacity: .35; }
+  /* 화면 틀의 data-parent-drag - SOP 줄 말고 전부(Old 목록 · WI 줄 · 펼친 곳 · 등록 칸)를 흐린다(Order와 같은 0.35). 거절 테두리(점선)가 걸린 줄은 또렷하게 남긴다.
+     Old 목록은 묶음(.docs-old)째 한 번만 흐린다 - 그 안의 줄 · 펼친 곳까지 흐리면 0.35 × 0.35가 된다 */
+  [data-parent-drag] :is(.docs-old, .doc-row:not([data-kind="sop"], [data-kind="old"], [data-drop]), .doc-row:not([data-kind="old"]) + .doc-panel, .doc-add) { opacity: .35; }
   .doc-chev { display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--r-1); background: none; color: var(--ink-3); cursor: pointer; }
   .doc-chev:hover { background: var(--hover); color: var(--ink); }
   .doc-chev > svg { transition: transform var(--dur-base); }
@@ -355,6 +359,20 @@
   .doc-id { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; column-gap: 6px; min-width: 0; padding-top: 3px; }
   .doc-kind { flex: none; height: 18px; padding: 0 5px; border: 1px solid var(--line-2); border-radius: var(--r-1); color: var(--ink-2); font-size: var(--fs-micro); font-weight: 600; line-height: 16px; }
   .doc-code { min-width: 0; font-family: var(--font-mono); font-size: 12.5px; line-height: 18px; color: var(--ink); }
+  /* Old 줄의 식별 - 한 열에 번호 줄과 버전 줄(작은 mono). 빈 번호는 흐린 글, 받지 못한 파일은 펼치지 않아 커서가 손가락이 아니다 */
+  .doc-row[data-kind="old"] > .doc-id { grid-template-columns: minmax(0, 1fr); row-gap: 3px; }
+  .doc-id-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; }
+  /* 번호를 감싼 툴팁 자리는 줄지 않는다(shrink-0) - 긴 번호는 제 줄을 차지하고 그 폭에서 두 줄로 접혀 잘린다, 옆 칩은 다음 줄로 */
+  .doc-id-line > span:has(> .doc-code) { flex-shrink: 1; min-width: 0; }
+  .doc-id-empty { color: var(--ink-4); font-size: var(--fs-cap); line-height: 18px; }
+  .doc-ver { font-family: var(--font-mono); font-size: var(--fs-micro); line-height: 16px; color: var(--ink-3); }
+  .doc-ver .pill { height: 18px; line-height: 16px; font-family: var(--font-ui); }
+  .doc-row[data-fixed] { cursor: default; }
+  /* Old 제목의 링크 - 줄 글과 같은 자리 · 굵기, 올리면 밑줄 */
+  .doc-title-link { color: inherit; border-radius: var(--r-1); }
+  .doc-title-link:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+  /* 받지 못한 파일의 까닭 - 딸린 정보 줄 아래 한 줄, 공백 없는 글도 줄 안에서 접힌다 */
+  .doc-why { font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--danger-ink); overflow-wrap: anywhere; }
   .doc-main { display: grid; gap: 2px; min-width: 0; }
   .doc-main > * { min-width: 0; }
   /* 제목은 두 줄까지(ClampText), 잠겼으면 그 뒤에 자물쇠 */
@@ -381,6 +399,8 @@
   .doc-meta:is([data-fit="2"], [data-fit="3"], [data-fit="4"]) .meta-eq-text { display: none; }
   .doc-meta:is([data-fit="3"], [data-fit="4"]) > .doc-meta-file { flex-shrink: 1; }
   .doc-meta[data-fit="4"] .slot-bar { display: none; }
+  /* Old 줄(설계 §5): 파일 이름이 먼저 줄고(3단계) 그래도 넘치면 EQUIS 표시가 아이콘만 남는다(4단계). 언어 배치는 줄지 않는다 */
+  .doc-meta[data-fit="4"] .equis-text { display: none; }
   /* 칸 상태 막대(slot-bar.tsx) - 눈금 15개, 하위 칸은 낮다. 상태는 모양으로도 갈린다: 문장 있음은 채움, 빈 칸은 테두리만, N/A는 빗금, 정할 칸은 호박색 테두리와 위의 점.
      높이 16px = 눈금 12px + 점 자리 4px(딸린 정보 줄 18px 안) */
   .slot-bar { display: inline-flex; align-items: flex-end; gap: 2px; height: 16px; }
