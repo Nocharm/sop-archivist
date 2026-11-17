@@ -9669,6 +9669,163 @@ await runStep("map: a document picked in the List shows on the map with its lane
   check("and brings the picked document into view", true);
 });
 
+// --- 줄 문장(3걸음) - 문장은 그 줄이 든 Bundle의 구성원에게만 온다. 수를 박지 않고 같은 사람으로 받은 GET …/map/lines 응답과 화면을 견준다 ---
+async function readLinesApi(page, bundleId, user, node, scope = "linked") {
+  const query = new URLSearchParams({ node, scope });
+  const response = await page.request.get(`${BASE}/api/bundles/${bundleId}/map/lines?${query}`, { headers: { "X-Dev-User": user } });
+  return response.text();
+}
+const isLinesResponse = (response, node, scope) => {
+  const url = new URL(response.url());
+  return url.pathname.endsWith("/map/lines") && url.searchParams.get("node") === node && url.searchParams.get("scope") === scope;
+};
+const lineLabel = (item) => (item.kind === "moved" ? "moved" : item.state);
+const lineTestId = (line, side) => `map-line-${line.unit_id}-${side === "out" ? line.target : line.source}`;
+const listSentenceIds = (page) => page.locator('[data-testid="map-side"] .map-sentence').evaluateAll((items) => items.map((item) => item.dataset.testid));
+const waitLinesRead = (page) => page.waitForFunction(() => document.querySelector('[data-testid^="map-lines-loading-"]') === null, null, { timeout: T });
+
+/** 옆 칸이 응답과 같은가 - 문장 줄은 응답의 줄과 하나씩, 가려진 줄은 그 선 아래 수 한 줄이고 그 선 밑에는 문장이 없다 */
+async function checkSideMatchesLines(page, lines, label) {
+  for (const side of ["out", "in"]) {
+    const list = page.locator(`[data-testid="map-lines-${side}"]`);
+    for (const line of lines[side]) {
+      const item = list.locator(`[data-testid="${lineTestId(line, side)}"]`);
+      const text = (await item.count()) > 0 ? await item.first().textContent() : "";
+      check(`${label}: the ${side} sentence ${line.display_id} shows its ID and text`, text.includes(line.display_id) && text.includes(line.text.slice(0, 40)), text);
+    }
+    const shown = (await list.count()) > 0 ? await list.locator(".map-sentence").count() : 0;
+    check(`${label}: the ${side} list has exactly the response's sentences`, shown === lines[side].length, `${shown} vs ${lines[side].length}`);
+    for (const group of lines[`withheld_${side}`]) {
+      const counterpart = side === "out" ? group.target : group.source;
+      const note = page.locator(`[data-testid="map-lines-hidden-${side}-${counterpart}-${lineLabel(group)}"]`);
+      const text = (await note.count()) > 0 ? (await note.first().textContent()).trim() : "";
+      check(`${label}: a hidden ${side} line from ${counterpart} reads its count`, text === `${group.lines} lines hidden · you are not a member of that Bundle`, text);
+      const under = (await note.count()) > 0 ? await note.first().locator("xpath=..").locator(".map-sentence").count() : -1;
+      check(`${label}: no sentence under that hidden line`, under === 0, String(under));
+    }
+  }
+}
+
+await runStep("map: a member bundle's lines show their sentences, other bundles' lines only their count", {}, async ({ page, takeShot }) => {
+  await openMap(page, halfBundleId);
+  await waitMapWorld(page);
+  const map = await readMapApi(page, halfBundleId, "qa.member");
+  const old1 = map.nodes.find((node) => node.number === "OLD-1" && node.bundle_id === halfBundleId).id;
+  const memberIds = new Set(map.bundles.filter((bundle) => bundle.relation !== "summary").map((bundle) => bundle.id));
+  const bundleOf = new Map(map.nodes.map((node) => [node.id, node.bundle_id]));
+  const responsePromise = page.waitForResponse((response) => isLinesResponse(response, old1, "linked"), { timeout: T });
+  await mapNode(page, old1).click();
+  const response = await responsePromise;
+  check("picking a document asks for its lines", response.status() === 200, String(response.status()));
+  const body = await readLinesApi(page, halfBundleId, "qa.member", old1);
+  const lines = JSON.parse(body);
+  check("the screen's response and the API agree for the same user", (await response.text()) === body);
+  await waitLinesRead(page);
+  check("this document has sentences of its own", lines.out.length > 0, String(lines.out.length));
+  check("every sentence comes from a bundle the viewer is a member of", [...lines.out, ...lines.in].every((line) => memberIds.has(line.bundle_id)));
+  check("the member UV bundle's line comes with its text", lines.in.some((line) => line.text.startsWith("OLD-1 Operation of the QC centrifuge")), JSON.stringify(lines.in.map((line) => line.display_id)));
+  check("the non-member bundle's confirmed line comes as a count", lines.withheld_in.some((group) => !memberIds.has(bundleOf.get(group.source))), JSON.stringify(lines.withheld_in));
+  await checkSideMatchesLines(page, lines, "member");
+
+  // 문장 줄은 읽기 전용이다 - 글을 자르지 않고, Tab 자리도 툴팁도 없다(누르는 길은 다음 걸음의 줄 끝 단추)
+  const first = page.locator(`[data-testid="${lineTestId(lines.out[0], "out")}"]`);
+  check("a sentence shows its text in full, without a tab stop", (await first.textContent()).includes(lines.out[0].text) && (await first.getAttribute("tabindex")) === null);
+  check("no sentence is a tab stop", (await page.locator('[data-testid="map-side"] .map-sentence[tabindex]').count()) === 0);
+  await takeShot("sop-map-lines.png");
+
+  const allPromise = page.waitForResponse((r) => isLinesResponse(r, old1, "all"), { timeout: T });
+  await page.locator('[data-testid="map-scope-all"]').click();
+  check("All Bundles asks for the lines again with scope=all", (await allPromise).status() === 200);
+});
+
+await runStep("map: a non-member gets counts, not sentences — on screen and in the response", { devUser: "prod.member" }, async ({ page }) => {
+  const docBundleId = await findBundleId(page, "문서 관리");
+  await openMap(page, docBundleId);
+  await waitMapWorld(page);
+  const map = await readMapApi(page, docBundleId, "prod.member");
+  const nodeById = new Map(map.nodes.map((node) => [node.id, node]));
+  const foreign = ["Operation of UV", "Rotor cleaning"];
+
+  // ⓐ 이 Bundle의 확정 참조가 가리키는 남의 Bundle의 OLD-1 - 그 문서의 줄은 남의 것이라 문장으로 오지 않고, 가리키는 줄(이 Bundle 것)만 글과 함께
+  const toOld1 = map.edges.find((edge) => nodeById.get(edge.source)?.bundle_id === docBundleId && nodeById.get(edge.target)?.number === "OLD-1" && nodeById.get(edge.target)?.bundle_id !== docBundleId);
+  check("the seed gives a confirmed line from this bundle to another bundle's OLD-1", toOld1 !== undefined);
+  const promiseA = page.waitForResponse((response) => isLinesResponse(response, toOld1.target, "linked"), { timeout: T });
+  await mapNode(page, toOld1.target).click();
+  const bodyA = await (await promiseA).text();
+  const linesA = JSON.parse(bodyA);
+  check("that document's own lines do not come as sentences", linesA.out.length === 0, String(linesA.out.length));
+  check("the lines pointing at it are this bundle's, with text", linesA.in.length > 0 && linesA.in.every((line) => line.bundle_id === docBundleId), JSON.stringify(linesA.in.map((line) => line.bundle_id)));
+  await waitLinesRead(page);
+  await checkSideMatchesLines(page, linesA, "non-member A");
+  check("the panel still says this is not a member bundle", await page.locator('[data-testid="map-side-not-member"]').isVisible());
+
+  // ⓑ 이 Bundle의 New 문서로 보낸(Moved to) 남의 Old 문서 - 나가는 줄은 수만
+  const moved = map.edges.find((edge) => edge.kind === "moved" && nodeById.get(edge.target)?.kind === "target" && nodeById.get(edge.target)?.bundle_id === docBundleId && nodeById.get(edge.source)?.bundle_id !== docBundleId);
+  check("the seed gives a moved line from another bundle to this bundle's New document", moved !== undefined);
+  const promiseB = page.waitForResponse((response) => isLinesResponse(response, moved.source, "linked"), { timeout: T });
+  await mapNode(page, moved.source).click();
+  const bodyB = await (await promiseB).text();
+  const linesB = JSON.parse(bodyB);
+  const hiddenOut = linesB.withheld_out.reduce((sum, group) => sum + group.lines, 0);
+  check("the other bundle's outgoing lines come as a count only", linesB.out.length === 0 && hiddenOut >= 1, `${linesB.out.length} sentences, ${hiddenOut} hidden`);
+  await waitLinesRead(page);
+  check("the screen says the lines are hidden", (await page.locator('[data-testid^="map-lines-hidden-out-"]').count()) > 0);
+  check("and shows no sentence under Cites", (await page.locator('[data-testid="map-lines-out"] .map-sentence').count()) === 0);
+
+  const leaked = foreign.filter((text) => bodyA.includes(text) || bodyB.includes(text));
+  check("neither response carries another bundle's sentence", leaked.length === 0, leaked.join(","));
+  const panel = await getText(page, "map-side");
+  check("nor does the side panel", foreign.every((text) => !panel.includes(text)), panel.slice(0, 200));
+});
+
+await runStep("map: picking another document before the lines arrive never shows the first one's lines", {}, async ({ page }) => {
+  await openMap(page, halfBundleId);
+  await waitMapWorld(page);
+  const map = await readMapApi(page, halfBundleId, "qa.member");
+  const own = map.nodes.filter((node) => node.kind === "old" && node.bundle_id === halfBundleId);
+  const a = own.find((node) => node.number === "OLD-1");
+  const b = own.find((node) => node.id !== a.id);
+  const sentenceIds = (lines) => [...lines.out.map((line) => lineTestId(line, "out")), ...lines.in.map((line) => lineTestId(line, "in"))];
+  const idsA = sentenceIds(JSON.parse(await readLinesApi(page, halfBundleId, "qa.member", a.id)));
+  const idsB = new Set(sentenceIds(JSON.parse(await readLinesApi(page, halfBundleId, "qa.member", b.id))));
+  const onlyA = idsA.filter((id) => !idsB.has(id));
+  check("the first document has sentences the second does not", onlyA.length > 0, String(onlyA.length));
+  // 첫 요청만 1.5초 늦춘다
+  let delayed = false;
+  await page.route("**/api/bundles/*/map/lines*", async (route) => {
+    if (!delayed) {
+      delayed = true;
+      await new Promise((done) => setTimeout(done, 1500));
+    }
+    await route.continue();
+  });
+  await mapNode(page, a.id).click();
+  await mapNode(page, b.id).click();
+  await page.waitForTimeout(2000);
+  const shown = await listSentenceIds(page);
+  check("the panel is the second document", (await getText(page, "map-side-number")).trim() === b.number, await getText(page, "map-side-number"));
+  check("every sentence on screen belongs to the second document's lines", shown.every((id) => idsB.has(id)), shown.filter((id) => !idsB.has(id)).join(","));
+  check("none of the first document's sentences is left", onlyA.every((id) => !shown.includes(id)));
+  await page.unroute("**/api/bundles/*/map/lines*");
+});
+
+await runStep("map: when the lines cannot be read the map stays", { allowConsoleErrors: true }, async ({ page }) => {
+  await openMap(page, halfBundleId);
+  await waitMapWorld(page);
+  const map = await readMapApi(page, halfBundleId, "qa.member");
+  const old1 = map.nodes.find((node) => node.number === "OLD-1" && node.bundle_id === halfBundleId).id;
+  await page.route("**/api/bundles/*/map/lines*", (route) => route.fulfill({ status: 500, contentType: "application/json", body: "{}" }));
+  await mapNode(page, old1).click();
+  await wait(page, "map-lines-error");
+  check("a line says the lines could not be read", (await getText(page, "map-lines-error")).includes("Could not read the lines."), await getText(page, "map-lines-error"));
+  check("the document facts and the map stay", (await page.locator('[data-testid="map-side-number"]').isVisible()) && (await page.locator('[data-testid="map-world"]').isVisible()));
+  check("no sentence is shown", (await listSentenceIds(page)).length === 0);
+  await page.unroute("**/api/bundles/*/map/lines*");
+  await page.locator('[data-testid="map-lines-retry"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="map-side"] .map-sentence') !== null, null, { timeout: T });
+  check("Retry brings the sentences and clears the error", (await page.locator('[data-testid="map-lines-error"]').count()) === 0);
+});
+
 await browser.close();
 console.log(failures === 0 ? `\nALL PASS (${passes})` : `\n${failures} check(s) FAILED, ${passes} passed`);
 process.exit(failures === 0 ? 0 : 1);

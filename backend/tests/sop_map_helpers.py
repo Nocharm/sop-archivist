@@ -63,6 +63,15 @@ def get_map(client: TestClient, bundle_id: int, headers: dict[str, str] = AUTHOR
     return response.json()
 
 
+def get_lines(
+    client: TestClient, bundle_id: int, node: str, headers: dict[str, str] = AUTHOR, scope: str = "linked"
+) -> dict:
+    """그 마디의 줄 문장(`…/map/lines`) — 200을 단언한다."""
+    response = client.get(f"/api/bundles/{bundle_id}/map/lines", params={"node": node, "scope": scope}, headers=headers)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 def edit(client: TestClient, bundle_id: int, doc_id: int, op: dict) -> httpx2.Response:
     """쪼개기 편집 하나(set_ref·clear_ref 등) — 보기의 문서 revision으로 보낸다."""
     body = {"revision": get_view(client, bundle_id, doc_id)["document"]["revision"], "confirm": False, "op": op}

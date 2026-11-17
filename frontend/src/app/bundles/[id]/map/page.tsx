@@ -9,16 +9,18 @@ import { useDeferredValue, useEffect, useEffectEvent, useLayoutEffect, useMemo, 
 
 import { BundleLoadError } from "@/components/bundle-load-error";
 import { CANVAS_PAD, MapCanvas, revealMapNode } from "@/components/map/map-canvas";
+import type { SideLinesState } from "@/components/map/map-lines";
 import { listShownRows, MapList } from "@/components/map/map-list";
 import { MapSide } from "@/components/map/map-side";
 import { MapToolbar } from "@/components/map/map-toolbar";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LoadError } from "@/components/ui/load-error";
 import { Tooltip } from "@/components/ui/tooltip";
-import { getRefMap, type MapScope } from "@/lib/api-sop";
+import { getMapLines, getRefMap, type MapScope } from "@/lib/api-sop";
 import { isBundleUnavailable } from "@/lib/api-errors";
 import { useI18n } from "@/lib/i18n";
 import { fitZoom, getZoomScroll, layoutMap, listMapOrder, stepZoom, ZOOM_MAX, ZOOM_MIN } from "@/lib/map-layout";
+import { pickCurrentLines } from "@/lib/map-lines-model";
 import { buildMapView, DEFAULT_FILTERS, getLaneKey, listCollapsedAtStart, type MapFilters, type MapView } from "@/lib/map-model";
 import { getStageHref } from "@/lib/stages";
 import { useLoaded } from "@/lib/use-loaded";
@@ -63,6 +65,27 @@ export default function MapPage() {
   if (lostAccess && !blocked) setBlocked(true);
   if (blocked && !lostAccess && !loaded.isLoading && loaded.error === null) setBlocked(false);
   const data = blocked ? null : loaded.data;
+
+  // 고른 문서의 줄 문장 - 고를 때 · 범위를 바꿀 때 · 다시 읽을 때 받는다. 늦게 온 앞 문서의 응답은 그리지 않는다(pickCurrentLines)
+  const lines = useLoaded(() => (selectedId === null ? Promise.resolve(null) : getMapLines(bundleId, selectedId, scope)), `${bundleId}:${scope}:${selectedId ?? ""}`);
+  // 문장 읽기가 403·404면 접근을 잃은 것이다 - 지도를 다시 읽어 위의 길(앞서 받은 지도를 그리지 않기)을 탄다. 같은 실패에는 한 번만
+  const [linesLostFor, setLinesLostFor] = useState<unknown>(null);
+  if (isBundleUnavailable(lines.error) && lines.error !== linesLostFor) {
+    setLinesLostFor(lines.error);
+    loaded.reload();
+  }
+  const sideLines: SideLinesState = {
+    data: lines.error === null ? pickCurrentLines(lines.data, selectedId, lines.isLoading) : null,
+    isLoading: selectedId !== null && lines.isLoading,
+    error: lines.error,
+    onRetry: lines.reload,
+  };
+
+  /** 지도와 고른 문서의 문장을 함께 다시 읽는다 */
+  function reloadAll() {
+    loaded.reload();
+    lines.reload();
+  }
 
   // 범위 all은 이 Bundle과 이어지지 않은 줄기를 접은 채 시작한다(계획 판단 26). 렌더 중에 맞춘다 - 이펙트 안에서 동기로 상태를 바꾸지 않는다
   if (data && data.scope !== seededScope) {
@@ -199,7 +222,7 @@ export default function MapPage() {
   if (lostAccess) {
     return (
       <div className="map-screen" data-testid="map">
-        <BundleLoadError error={loaded.error} onRetry={loaded.reload} testId="map" />
+        <BundleLoadError error={loaded.error} onRetry={reloadAll} testId="map" />
       </div>
     );
   }
@@ -275,7 +298,7 @@ export default function MapPage() {
         onFilters={setFilters}
         onSearchEnter={selectNextMatch}
         onSearchAll={() => setScope("all")}
-        onRefresh={loaded.reload}
+        onRefresh={reloadAll}
       >
         <div className="view-toggle map-views" role="group" aria-label={t("map.view.label")}>
           {VIEWS.map((item) => (
@@ -321,7 +344,7 @@ export default function MapPage() {
           {isCanvas ? main : <div className="map-scroll">{main}</div>}
         </div>
         <aside className="map-side" data-testid="map-side" aria-label={t("map.title")}>
-          {data ? <MapSide data={data} selectedId={selectedId} onPick={pickNode} onClear={() => setSelectedId(null)} /> : <MapSkeleton />}
+          {data ? <MapSide data={data} selectedId={selectedId} lines={sideLines} onPick={pickNode} onClear={() => setSelectedId(null)} /> : <MapSkeleton />}
         </aside>
       </div>
     </div>

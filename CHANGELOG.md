@@ -4,6 +4,13 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
 
 ## Unreleased (dev)
 
+### v1.1.17 — 2026-11-17
+
+- **Map(참조 지도) 3걸음 — 문장 보기**: 지도나 **List** 에서 문서를 고르면 오른쪽 칸의 **Cites** · **Cited by** 줄마다 그 선을 이루는 줄의 문장이 표시 ID와 함께 보인다(문장은 300자까지, 읽기만 한다). **Read again** 은 지도와 문장을 함께 다시 읽는다.
+- **누가 무엇을 보나**(서버가 응답에서부터 지킨다 — 사용자 규칙 "문장은 그 묶음 구성원만 본다"): 문장은 그 줄이 든 Bundle의 구성원에게만 온다. 내가 구성원이 아닌 Bundle의 줄은 선마다 "N lines hidden · you are not a member of that Bundle"로 수만 보이고 — 문장 · 표시 ID · 위치는 오지 않는다 — 그 Bundle의 확인 안 된 참조(**REF?**)는 보이지도 세지도 않는다. sysadmin · `bundle.admin`도 구성원이 아니면 같다. Bundle에서 빠지면 다음 읽기부터 그 Bundle의 문장이 오지 않는다.
+- **서버**: `GET /api/bundles/{id}/map/lines?node=&scope=linked|all`(읽기 전용). 어떤 줄이 있는지는 지도와 같은 규칙 하나(`collect_map_lines`)에서 나오고, 문장은 구성원 표를 SQL에서 조인한 질의로만 읽는다. 선마다 문장 줄 + 가려진 수 = 지도의 줄 수. 새 권한 · env · 마이그레이션 없음.
+- 알려진 한계: 줄 끝의 **Open in Assign**(그 줄을 고른 채 Assign 열기)은 다음 걸음이다. 지도가 상한(마디 2000 · 선 10000)에서 잘리면 잘린 선의 줄은 오른쪽 칸에 그리지 않는다. 긴 문장이 많은 문서와 좁은 창에서의 확인은 프런트 다듬기 때 한다.
+
 ### v1.1.16 — 2026-11-17
 
 - **Documents · Old 목록이 두 줄 줄이 됐다**: 넓은 표 대신 New 목록과 같은 줄 상자다. 줄은 글자로 읽는다 — 왼쪽에 문서 번호와 그 아래 버전, 가운데 제목(누르면 그 문서의 Assign)과 딸린 정보 한 줄(언어 배치 · 파일 이름 · EQUIS), 오른쪽에 상태(예외만 알약)와 올리거나 포커스할 때의 **Preview** · **Download** · **Delete**. 고치기는 줄을 누르거나 <kbd>Enter</kbd>로 펼친 곳에서 한다(번호 · 버전 · 제목 · 언어 배치, 경고 전체, EQUIS). 빈 값은 **No number** · **No version** · **No title** 로 적는다.
