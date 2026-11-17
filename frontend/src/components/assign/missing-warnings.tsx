@@ -6,9 +6,9 @@ import { Check, Locate, Scissors, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
+import { PendingTrigger } from "@/components/assign/pending-count";
 import { Modal } from "@/components/modal";
 import { showToast } from "@/components/ui/toast";
-import { Tooltip } from "@/components/ui/tooltip";
 import { humanizeApiError } from "@/lib/api-errors";
 import { ackWarning, type SopDocument } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
@@ -20,15 +20,13 @@ interface MissingWarningsProps {
   bundleId: number;
   docs: readonly SopDocument[];
   canEdit: boolean;
-  /** 좁은 줄 - 이름을 접고 수만 보인다 */
-  compact: boolean;
   /** 이 화면에서 그 자리를 보일 수 있으면 보이고 true - 못 보이면(New 문서, 단위 없는 자리) false */
   onShow: (item: AckWarning) => boolean;
   /** 확인이 저장된 뒤 - 문서 목록을 다시 받는다 */
   onChanged: () => void;
 }
 
-export function MissingWarnings({ bundleId, docs, canEdit, compact, onShow, onChanged }: MissingWarningsProps) {
+export function MissingWarnings({ bundleId, docs, canEdit, onShow, onChanged }: MissingWarningsProps) {
   const { t } = useI18n();
   const items = listAckWarnings(docs);
   const pending = countPendingWarnings(items);
@@ -54,12 +52,8 @@ export function MissingWarnings({ bundleId, docs, canEdit, compact, onShow, onCh
   return (
     <>
       {pending > 0 && (
-        <Tooltip label={t("assign.warnings.tip")} suppressed={isOpen}>
-          <button type="button" className="btn h-7 text-st-hold" aria-label={compact ? label : undefined} data-testid="assign-warnings" onClick={() => setIsOpen(true)}>
-            <TriangleAlert size={14} strokeWidth={1.5} aria-hidden />
-            {compact ? pending : label}
-          </button>
-        </Tooltip>
+        // 다른 확인할 것과 같은 모양 - 아이콘 + 수, 올리면 이름이 펼쳐진다(긴 설명은 창 안에)
+        <PendingTrigger icon={TriangleAlert} tone="warn" count={pending} words={t("assign.pending.warnings")} label={label} onClick={() => setIsOpen(true)} testId="assign-warnings" />
       )}
       {isOpen && (
         <Modal title={t("split.warnings")} onClose={() => setIsOpen(false)} isBusy={busyId !== null} testId="assign-warnings-modal">

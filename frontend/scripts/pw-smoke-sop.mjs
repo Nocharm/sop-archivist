@@ -2310,8 +2310,10 @@ await runStep("assign: hold an unassigned unit without a destination", {}, async
 await runStep("assign: a reference line asks for its number before it can be decided", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${freshBundleId}/assign`);
   await wait(page, "assign-bar");
-  // 위쪽 줄의 남은 수를 누르면 확인이 남은 참조 줄로 간다(합성 문서 7절의 한 줄)
+  // 위쪽 줄의 남은 수를 누르면 확인이 남은 참조 줄 목록이 뜨고, Next가 그 줄로 간다(합성 문서 7절의 한 줄)
   await page.locator('[data-testid="assign-ref-pending"]').click();
+  check("the reference count opens the list of lines to check", (await page.locator('[data-testid^="assign-ref-pending-item-"]').count()) >= 1);
+  await page.locator('[data-testid="assign-ref-pending-next"]').click();
   await wait(page, "assign-ref");
   check("the pill goes to the proposed reference line", (await getText(page, "assign-ref-title")) === "Reference line?" && (await getText(page, "assign-ref-number")).includes("SOP-ABC-1016"), await getText(page, "assign-ref-number"));
   check("the paper marks the proposal", (await page.locator('.strip-lang[data-proposed]').count()) === 1);
@@ -2707,6 +2709,7 @@ await runStep("assign: a bundle without a caption cannot be confirmed until one 
   // 누를 때마다 캡션이 필요한 다음 묶음 - 그 표에 닿을 때까지
   for (let step = 0; step <= countBefore && (await page.locator('[data-testid="assign-row-id"]').count() === 0 || !(await rowIds(page)).includes(table.display_id)); step += 1) {
     await pending.click();
+    await page.locator('[data-testid="assign-caption-pending-next"]').click();
     await page.locator('[data-testid="assign-row-id"]').waitFor({ timeout: T });
   }
   check("the count walks to that table", (await rowIds(page)).includes(table.display_id), await rowIds(page));
@@ -2842,13 +2845,18 @@ await runStep("assign: one document wide, then two again", {}, async ({ page, ta
 
 await runStep("assign: written New document - identical, link by clicking, split with Ctrl, zoom, width, mark new", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
-  await wait(page, "assign-identical");
+  // 같은 글 일괄 확정은 더보기(⋯) 메뉴 맨 위에 있다
+  await wait(page, "assign-more");
+  await page.waitForLoadState("networkidle");
+  await page.locator('[data-testid="assign-more"]').click();
   await page.locator('[data-testid="assign-identical"]').click();
   // 여러 줄을 한 번에 확정하므로 확인 창을 거친다
   await page.locator('[data-testid="assign-identical-modal-confirm"]').click();
   await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
-  await page.locator('[data-testid="assign-identical"]').waitFor({ state: "detached", timeout: T });
-  check("identical matches confirm together", true);
+  await page.locator('[data-testid="assign-more"]').click();
+  await page.locator('[data-testid="assign-more-list"]').waitFor({ timeout: T });
+  check("identical matches confirm together", (await page.locator('[data-testid="assign-identical"]').count()) === 0);
+  await page.keyboard.press("Escape");
   // 쓴 문서의 문장에 잇기 - 원문에서 직접 누른다
   // 비슷한 New 문장 후보(점선)가 있는 Old 조각까지 옮긴다
   await page.locator('[data-testid="assign-filter-unassigned"]').click();
@@ -5715,9 +5723,9 @@ await runStep("assign: a status filter folds the Old paper", {}, async ({ page, 
 
 await runStep("assign: reset a document, then the whole bundle, after a dry-run count", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
-  await wait(page, "assign-reset");
+  await wait(page, "assign-more");
   const before = await progressDone(page);
-  await page.locator('[data-testid="assign-reset"]').click();
+  await page.locator('[data-testid="assign-more"]').click();
   await page.locator('[data-testid="assign-reset-document"]').click();
   // 확인 창이 먼저 dry_run으로 센 건수를 보이고, 그때까지 확정 단추를 막는다
   await wait(page, "assign-reset-counts");
@@ -5728,14 +5736,14 @@ await runStep("assign: reset a document, then the whole bundle, after a dry-run 
   await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
   await page.waitForFunction((done) => Number(document.querySelector('[data-testid="assign-progress"]')?.textContent?.split("/")[0]) < done, before, { timeout: T });
   check("resetting the document lowers the progress", true);
-  await page.locator('[data-testid="assign-reset"]').click();
+  await page.locator('[data-testid="assign-more"]').click();
   await page.locator('[data-testid="assign-reset-bundle"]').click();
   await wait(page, "assign-reset-counts");
   await page.locator('[data-testid="assign-reset-modal-confirm"]').click();
   await page.waitForFunction(() => document.querySelector('[data-testid="assign-progress"]')?.textContent?.trim().startsWith("0"), null, { timeout: T });
   check("resetting the whole bundle leaves nothing confirmed", true);
   // 다시 열면 지울 것이 없다고 말하고 확정 단추를 막는다
-  await page.locator('[data-testid="assign-reset"]').click();
+  await page.locator('[data-testid="assign-more"]').click();
   await page.locator('[data-testid="assign-reset-bundle"]').click();
   await wait(page, "assign-reset-nothing");
   check("nothing left to reset disables the confirm button", await page.locator('[data-testid="assign-reset-modal-confirm"]').isDisabled());
@@ -5795,7 +5803,7 @@ await runStep("assign: AI split suggestions - ask for the whole document, apply 
   const freshId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
   await page.goto(`${BASE}/bundles/${freshId}/assign`);
   await wait(page, "assign-bar");
-  await page.locator('[data-testid="assign-ai-menu"]').click();
+  await page.locator('[data-testid="assign-more"]').click();
   const wholeDoc = page.locator('[role="menuitem"]', { hasText: "AI split whole document" });
   check("the AI menu offers the whole-document split", (await wholeDoc.count()) === 1);
   await wholeDoc.click();
@@ -5803,6 +5811,7 @@ await runStep("assign: AI split suggestions - ask for the whole document, apply 
   const pill = page.locator('[data-testid="assign-split-pending"]');
   await pill.waitFor({ timeout: 90000 });
   await pill.click();
+  await page.locator('[data-testid="assign-split-pending-next"]').click();
   await wait(page, "assign-split-suggestion");
   const pieces = await page.locator('[data-testid^="assign-split-piece-"]').count();
   check("the card previews the pieces", pieces >= 2, String(pieces));

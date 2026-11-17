@@ -1859,6 +1859,12 @@
   .assign-confirm { width: 100%; height: 40px; font-size: 14px; }
   .assign-alt { height: 30px; min-width: 0; gap: 4px; padding: 0 6px; font-size: var(--fs-cap); font-weight: 400; width: 100%; }
   .assign-alt > :not(svg, kbd) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* 위쪽 줄의 확인할 것 - 아이콘 + 수, 올리거나 포커스하면 이름(data-words)이 옆으로 펼쳐진다. 이름은 ::after라 글자 수(innerText)에 들지 않는다 */
+  .pending-count { height: 28px; cursor: pointer; white-space: nowrap; }
+  .pending-count::after { content: attr(data-words); display: inline-block; max-width: 0; margin-left: -4px; overflow: hidden; vertical-align: bottom; opacity: 0; transition: max-width var(--dur-base) var(--ease-move), opacity var(--dur-base); }
+  .pending-count:hover::after, .pending-count:focus-visible::after { max-width: 14em; margin-left: 0; opacity: 1; }
+  .pending-row { display: flex; align-items: baseline; gap: 10px; width: 100%; padding: 6px 8px; border-radius: var(--r-1); text-align: left; font-size: 13px; line-height: 19px; }
+  .pending-row:hover, .pending-row:focus-visible { background: var(--menu-hover); box-shadow: inset 2px 0 0 var(--accent); border-radius: 0 var(--r-1) var(--r-1) 0; outline: none; }
   /* 변경 종류 세 칸 토글(그대로 · 말투 · 고쳐 씀) - 눌린 칸은 강조 바탕, 고를 수 없는 칸은 흐리게. AI 제안 칸은 오른쪽 위 ✦ */
   .kind-toggle { display: inline-flex; flex: none; padding: 1px; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--surface); }
   .kind-toggle-btn { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 22px; border-radius: calc(var(--r-1) - 1px); color: var(--ink-3); }
