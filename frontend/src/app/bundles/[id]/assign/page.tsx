@@ -2527,8 +2527,15 @@ export default function AssignPage() {
     });
     if (target.kind === "row") {
       selectRow(target.rowKey, false);
-      // 이펙트에서 바꾼 상태는 누름과 달리 다음 작업에서 그려진다 - 다른 문서의 줄이면 그 용지가 그려진 뒤에 조각을 찾도록 한 프레임 미룬다
-      requestAnimationFrame(() => scrollToUnit(target.unitId));
+      // 이펙트에서 바꾼 상태는 누름과 달리 다음 작업에서 그려진다 - 다른 문서의 줄이면 그 용지가 그려진 뒤에 조각을 찾도록 두 프레임 미룬다.
+      // 표 · 표 행으로 옮긴 줄은 글 조각(unit)이 없어 조각 상자(piece)로 간다 - scrollToUnit은 글 조각만 찾는다
+      const { unitId } = target;
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          const el = document.querySelector<HTMLElement>(`[data-testid="assign-paper-unit-${unitId}"]`) ?? document.querySelector<HTMLElement>(`[data-testid="assign-paper-piece-${unitId}"]`);
+          if (el) revealFarElement(el);
+        }),
+      );
     } else if (target.kind === "document") {
       setSolo(null);
       setManualOldDoc(target.docId);

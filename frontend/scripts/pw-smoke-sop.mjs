@@ -9931,7 +9931,11 @@ await runStep("map: keyboard only", {}, async ({ page }) => {
   await page.locator('[data-testid="map-search"]').focus();
   await page.keyboard.type("+0");
   await page.keyboard.press("ArrowDown");
-  check("typing + 0 and arrows in the search does not move the map", (await readZoom(page)) === zoomBefore && (await readActive(page)) === "map-search", `${await readZoom(page)} ${await readActive(page)}`);
+  const activeAfter = await readActive(page);
+  // "+0"에 맞는 문서가 없어 늦춘 찾기가 걸리면 지도 대신 "맞는 것 없음"이 뜨고 배율 글자가 사라진다 - 찾기를 비워 지도를 되살린 뒤 배율을 읽는다
+  await page.locator('[data-testid="map-search"]').fill("");
+  await wait(page, "map-zoom-value");
+  check("typing + 0 and arrows in the search does not move the map", (await readZoom(page)) === zoomBefore && activeAfter === "map-search", `${await readZoom(page)} ${activeAfter}`);
 });
 
 await runStep("map: the map stays one Tab stop wherever the focus moved, and its edges do not scroll", {}, async ({ page }) => {
