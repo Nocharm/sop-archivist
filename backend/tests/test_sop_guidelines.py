@@ -105,10 +105,18 @@ def _get_key(client: TestClient, key: str) -> dict:
 # --- 시드 ---
 
 
+# 도메인 문서의 "> 메모(…)" 인용 단락 — 앱이 규칙과 다르게 가는 점을 사람에게 적어 둔 것이라 AI 규칙 시드에는 싣지 않는다.
+# AI 규칙 글은 바꾸지 않는다는 결정(템플릿 맞춤 설계 D6)과 도메인 문서에 메모를 다는 결정(같은 설계 §6 작업 1 #10·#14)을 함께 지킨다
+_APP_MEMO = re.compile(r"\n> 메모\(.*\n(?:> .*\n)*")
+
+
 def test_rules_seed_matches_the_domain_document() -> None:
     seed = (SEEDS_DIR / "rules.md").read_text(encoding="utf-8")
+    document = (REPO_ROOT / "docs/domain/restructuring-rules.md").read_text(encoding="utf-8")
 
-    assert seed == (REPO_ROOT / "docs/domain/restructuring-rules.md").read_text(encoding="utf-8")
+    # 메모 단락을 뺀 나머지는 바이트까지 같다
+    assert seed == _APP_MEMO.sub("", document)
+    assert "> 메모(" not in seed
 
 
 def test_every_guideline_key_has_a_seed_file() -> None:

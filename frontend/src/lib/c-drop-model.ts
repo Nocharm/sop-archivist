@@ -1,5 +1,5 @@
 // Order 화면 줄 끌기의 순수 모델 - 함께 움직일 덩어리, 포인터가 놓을 수 있는 칸 위인지, 놓을 자리·깊이와 그에 맞는 place 편집을 정한다.
-import type { OutputCItem } from "./api-sop";
+import type { OutlineKind, OutputCItem } from "./api-sop";
 import { readLocationPlace, type PlaceEdit } from "./c-edit-model";
 import { canChangeDepth, listCounted, MAX_INDENT_LEVEL } from "./section-number";
 
@@ -176,16 +176,18 @@ export function planDrop(input: {
   return { beforeId, depth, lineY, edit: { kind: "place", locationKey: input.locationKey, targetIds, beforeId, depths: shifted } };
 }
 
-export type EnterRefusal = "na" | "otherDoc" | "otherPart";
+export type EnterRefusal = "na" | "otherDoc" | "notAssignable" | "otherPart";
 export type LeaveRefusal = "written" | "translation";
 
 /**
- * 덩어리가 도착 칸에 들어갈 수 있나 - N/A 칸, 다른 문서, 서버가 받는 자리가 없거나(path: 칸) 종류가 다른 칸·다른 WI 부분(Instruction↔Why)이면 사유.
- * 같은 부분의 다른 step이나 단계 없는 칸은 들어간다. 검사 순서는 N/A → 다른 문서 → 자리
+ * 덩어리가 도착 칸에 들어갈 수 있나 - N/A 칸, 다른 문서, 문장을 받지 않는 절(묶음 · 앱이 채우는 목록 - 서버 422 slot_not_assignable),
+ * 서버가 받는 자리가 없거나(path: 칸) 종류가 다른 칸·다른 WI 부분(Instruction↔Why)이면 사유.
+ * 같은 부분의 다른 step이나 단계 없는 칸은 들어간다. 검사 순서는 N/A → 다른 문서 → 문장을 받지 않는 절 → 자리
  */
-export function findEnterRefusal(fromKey: string, to: { location_key: string; na_reason: string | null }, isSameDoc: boolean): EnterRefusal | null {
+export function findEnterRefusal(fromKey: string, to: { location_key: string; na_reason: string | null; kind: OutlineKind | null }, isSameDoc: boolean): EnterRefusal | null {
   if (to.na_reason !== null) return "na";
   if (!isSameDoc) return "otherDoc";
+  if (to.kind === "group" || to.kind === "auto_list") return "notAssignable";
   const fromPlace = readLocationPlace(fromKey);
   const toPlace = readLocationPlace(to.location_key);
   if (!fromPlace || !toPlace || "slot_key" in fromPlace !== "slot_key" in toPlace) return "otherPart";

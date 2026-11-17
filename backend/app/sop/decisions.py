@@ -74,8 +74,10 @@ from app.sop.target_placement import (
     Spot,
     arrange_new_targets,
     freeze_order,
+    get_default_style,
     insert_after,
     open_gap,
+    restyle_moved,
 )
 from app.sop.tobe import MAX_DB_INT, is_within_slot
 from app.sop.units import UNIT_ACTIVE, compute_display_id
@@ -595,7 +597,10 @@ def _check_dispositions(payload: GroupSaveIn, state: _State) -> None:
 
 
 def _check_location(item: TargetIn, doc: TargetDoc, state: _State) -> None:
-    """SOP는 N/A가 아닌 칸(상위 칸 N/A는 하위 칸도 덮는다, R8), WI는 부분과 선언된 단계(또는 단계 없음). 칸 제목은 SOP에만 있다."""
+    """SOP는 줄을 받는 종류의 N/A가 아닌 칸(상위 칸 N/A는 하위 칸도 덮는다, R8), WI는 부분과 선언된 단계(또는 단계 없음). 칸 제목은 SOP에만 있다.
+
+    묶음 제목(group)과 자동 목록(auto_list) 항목에는 줄도 칸 제목도 놓지 못한다(slot_not_assignable).
+    """
     keys = [item.key]
     if item.kind == SLOT_HEADING and doc.doc_type != "sop":
         _reject("slot_heading_not_allowed", keys=keys)
@@ -604,6 +609,8 @@ def _check_location(item: TargetIn, doc: TargetDoc, state: _State) -> None:
             _reject("invalid_location", keys=keys)
         if item.slot_key is None or state.outlines[doc.id].find(item.slot_key) is None:
             _reject("unknown_slot", keys=keys)
+        if not state.outlines[doc.id].is_assignable(item.slot_key):
+            _reject("slot_not_assignable", keys=keys)
         if any(is_within_slot(item.slot_key, na_slot) for na_slot in state.na_slots.get(doc.id, ())):
             _reject("na_slot", keys=keys)
         return
@@ -1153,6 +1160,12 @@ def _apply_plan(
         place = (plan.doc.id, plan.item.slot_key, plan.item.wi_step, plan.item.wi_part)
         if place != (target.target_doc_id, target.slot_key, target.wi_step, target.wi_part):
             target.indent_level = 0  # 깊이는 그 칸 앞뒤 줄에 기댄 값이라 다른 칸으로 가면 맨 바깥에서 다시 시작한다
+            # 기존 줄을 다른 절로 옮기면 번호 ↔ 글머리 기호만 도착한 절의 기본으로 바꾼다. 새 줄은 _place_new_targets가 정하고,
+            # 표 칸·캡션은 표의 표시를 따르며 칸 제목은 표시가 없다
+            if plan.row is not None and not plan.is_cell and plan.item.kind != SLOT_HEADING:
+                target.number_style = restyle_moved(
+                    target.number_style, state.outlines[plan.doc.id], plan.item.slot_key
+                )
         target.target_doc_id = plan.doc.id
         target.slot_key, target.wi_step, target.wi_part = plan.item.slot_key, plan.item.wi_step, plan.item.wi_part
         target.kind, target.lang, target.confirmed_text, target.grid = plan.item.kind, plan.lang, plan.text, plan.grid
@@ -1200,6 +1213,7 @@ def _build_new_target(plan: _Plan, placed: dict[tuple[Spot, int], list[_Plan]], 
         key=plan.item.key, place=spot, meaning=state.pair_of.get(source_unit_id, -source_unit_id), lang=plan.lang,
         source_unit_id=source_unit_id, is_translation=plan.change_type == "translated",
         source_placed=(spot, source_unit_id) in placed,
+        default_style=get_default_style(state.outlines[plan.doc.id], spot[1]),
     )
 
 
@@ -1213,7 +1227,8 @@ async def _place_new_targets(
     """새로 만든 새 문장에 기본 표시를 쓰고, 순서를 사람이 정한 문서면 받은 순서대로 끝에 붙이거나 나중 번역을 기존 출처 바로 뒤에 끼운다.
 
     끼우면 출처 뒤 새 문장이 한 칸씩 밀려 그 문서의 최댓값도 하나 늘므로 다음 끝자리도 하나 민다. 한 출처 뒤에 번역이 둘 오면 앞
-    번역 뒤에 잇는다. 기존 새 문장을 다른 칸으로 옮기는 저장은 여기 오지 않는다 — 사람이 고른 표시를 덮지 않는다(제품 명세 §7.13 섹션 번호, O10).
+    번역 뒤에 잇는다. 기존 새 문장을 다른 칸으로 옮기는 저장은 여기 오지 않는다 — 그쪽은 _apply_plan이 번호 ↔ 글머리 기호만 도착한 절의
+    기본으로 바꾸고 생략·주석은 그대로 둔다(제품 명세 §7.13 섹션 번호, O10).
     """
     for item in arranged:
         new_plans[item.key].row.number_style = item.number_style

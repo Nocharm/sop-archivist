@@ -14,7 +14,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop import tobe_excel
-from app.sop.constants import SLOT_KEYS
 from app.sop.models import Bundle, Document, TargetDoc, TargetDocNaSlot, TargetSentence
 from app.sop.tobe import is_within_slot
 from app.sop.tobe_excel import parse_tobe_workbook
@@ -22,10 +21,12 @@ from tests.access_helpers import run_in_session, update_row
 from tests.docx_factory import build_docx, p, tbl
 from tests.sop_helpers import (
     AUTHOR,
+    NEW_SOP_KEYS,
     OUTSIDER,
     REVIEWER,
     assign_as_is,
     create_bundle,
+    declare_outline_item,
     find_unit,
     get_bundle,
     get_view,
@@ -76,7 +77,7 @@ def _sample_list() -> tuple[list[dict], list[dict], list[dict]]:
         _doc("WI-01", "wi", title="First WI", parent="SOP-NEW", order=1),
         _doc("WI-02", "wi", title="Second WI", parent="SOP-NEW", order=2),
     ]
-    na_slots = [_na("SOP-NEW", "procedures.troubleshooting", "No faults expected")]
+    na_slots = [_na("SOP-NEW", "attachments", "No attachments expected")]
     wi_steps = [_step("WI-01", 1, "Prepare"), _step("WI-01", 2)]
     return docs, na_slots, wi_steps
 
@@ -342,13 +343,13 @@ def test_tobe_rejects_malformed_input_with_the_default_422(client: TestClient, b
     ("slot_key", "slot", "expected"),
     [
         ("procedures", "procedures", True),
-        ("procedures.procedure", "procedures", True),
-        ("procedures.maintenance", "procedures", True),
-        ("procedures.procedure", "procedures.procedure", True),
+        ("procedures.p1", "procedures", True),
+        ("document_relationships.associated_documents.form", "document_relationships", True),
+        ("procedures.p1", "procedures.p1", True),
         ("purpose", "procedures", False),
-        ("procedures", "procedures.procedure", False),  # 하위 칸의 N/A는 상위 칸을 덮지 않는다
+        ("procedures", "procedures.p1", False),  # 하위 칸의 N/A는 상위 칸을 덮지 않는다
         ("procedures_extra", "procedures", False),  # 접두 글자만 같은 다른 칸
-        ("general_requirements.safety", "general_requirements.operation", False),
+        ("general_requirements.safety", "general_requirements.work", False),
     ],
 )
 def test_na_on_a_slot_covers_its_sub_slots_only(slot_key: str, slot: str, expected: bool) -> None:
@@ -365,7 +366,7 @@ def test_tobe_rejects_changes_under_targets(client: TestClient) -> None:
     uploaded = upload(client, bundle["id"], build_docx(body), "SYNTHETIC_OLD-1_Tobe.docx")
     assert uploaded.status_code == 201, uploaded.text
     view = get_view(client, bundle["id"], uploaded.json()["id"])
-    assign_as_is(client, bundle["id"], find_unit(view, "합성 첫 문장이다."), ids["SOP-A"], slot_key="procedures.maintenance")
+    assign_as_is(client, bundle["id"], find_unit(view, "합성 첫 문장이다."), ids["SOP-A"], slot_key="procedures.p1")
     assign_as_is(
         client, bundle["id"], find_unit(view, "합성 둘째 문장이다."), ids["WI-A"], wi_step=1, wi_part="instruction"
     )
@@ -375,8 +376,8 @@ def test_tobe_rejects_changes_under_targets(client: TestClient) -> None:
     cases = [
         (put_tobe(client, bundle["id"], docs[:2], wi_steps=steps), {"code": "doc_has_targets", "codes": ["SOP-B"]}),
         (
-            put_tobe(client, bundle["id"], docs, na_slots=[_na("SOP-A", "procedures.maintenance")], wi_steps=steps),
-            {"code": "slot_has_targets", "slots": [{"doc_code": "SOP-A", "slot_key": "procedures.maintenance"}]},
+            put_tobe(client, bundle["id"], docs, na_slots=[_na("SOP-A", "procedures.p1")], wi_steps=steps),
+            {"code": "slot_has_targets", "slots": [{"doc_code": "SOP-A", "slot_key": "procedures.p1"}]},
         ),
         # 상위 칸 N/A는 하위 칸에 든 문장도 막는다
         (
@@ -1261,7 +1262,7 @@ def test_slot_counts_count_the_items_each_sop_slot_holds(client: TestClient) -> 
     assign_as_is(client, bundle_id, find_unit(view, "합성 첫 문장이다."), ids["SOP-A"], slot_key="purpose")
     assign_as_is(
         client, bundle_id, find_unit(view, "합성 둘째 문장이다."), ids["SOP-A"],
-        slot_key="procedures.maintenance", hold_reason="Synthetic: check",
+        slot_key="procedures.p1", hold_reason="Synthetic: check",
     )
     assign_as_is(client, bundle_id, find_unit(view, "합성 셋째 문장이다."), ids["WI-A"], wi_step=1, wi_part="instruction")
     assign_as_is(client, bundle_id, table, ids["SOP-A"], slot_key="scope")
@@ -1273,7 +1274,7 @@ def test_slot_counts_count_the_items_each_sop_slot_holds(client: TestClient) -> 
     assert tobe["slot_counts"] == [
         {"target_doc_id": ids["SOP-A"], "slot_key": "purpose", "count": 1, "heading_count": 0},
         {"target_doc_id": ids["SOP-A"], "slot_key": "scope", "count": 1, "heading_count": 0},
-        {"target_doc_id": ids["SOP-A"], "slot_key": "procedures.maintenance", "count": 1, "heading_count": 0},
+        {"target_doc_id": ids["SOP-A"], "slot_key": "procedures.p1", "count": 1, "heading_count": 0},
     ]
     # sentence_counts의 모양은 그대로다 - SOP는 문서마다 한 줄, WI는 단계마다(값은 지금 있는 시험 둘이 지킨다)
     assert [(row["target_doc_id"], row["wi_step"]) for row in tobe["sentence_counts"]] == [
@@ -1293,9 +1294,9 @@ def test_a_slot_heading_counts_apart_and_still_blocks_na(client: TestClient) -> 
 
     tobe = _get_tobe(client, fx.bundle_id)
 
-    assert _slot_rows(tobe, fx.sop_id) == [("procedures.procedure", 0, 2)]
+    assert _slot_rows(tobe, fx.sop_id) == [("procedures.p1", 0, 2)]
     base = f"/api/bundles/{fx.bundle_id}/tobe/docs/{fx.sop_id}/na"
-    for slot_key in ("procedures.procedure", "procedures"):
+    for slot_key in ("procedures.p1", "procedures"):
         refused = client.put(f"{base}/{slot_key}", json={"reason": "Synthetic: not needed"}, headers=AUTHOR)
         assert refused.status_code == 409, refused.text
         assert refused.json()["detail"]["code"] == "slot_has_targets"
@@ -1370,6 +1371,7 @@ def test_slot_counts_mark_exactly_the_slots_na_refuses(client: TestClient) -> No
         name="SYNTHETIC_OLD-3_Slots.docx",
     )
     (table,) = [unit for unit in view["units"] if unit["kind"] == "table"]
+    declare_outline_item(client, fx.sop_id, "general_requirements.safety", "Safety")
     assign_as_is(client, fx.bundle_id, find_unit(view, "합성 목적 문장이다."), fx.sop_id, slot_key="purpose")
     assign_as_is(
         client, fx.bundle_id, find_unit(view, "합성 안전 문장이다."), fx.sop_id, slot_key="general_requirements.safety"
@@ -1381,8 +1383,11 @@ def test_slot_counts_mark_exactly_the_slots_na_refuses(client: TestClient) -> No
     counted_rows = [row for row in _get_tobe(client, fx.bundle_id)["slot_counts"] if row["target_doc_id"] == fx.sop_id]
     refused: set[str] = set()
     counted: set[str] = set()
-    for key in SLOT_KEYS:
+    for key in (*NEW_SOP_KEYS, "general_requirements.safety"):  # 묶음 제목(7·7.1)도 N/A로 둘 수 있다
         response = client.put(f"{base}/{key}", json={"reason": "Synthetic: probe"}, headers=AUTHOR)
+        if key == "document_relationships.work_instructions":  # 자동 목록은 N/A로 두지 못한다 — 줄 수와 상관없는 거절
+            assert (response.status_code, response.json()["detail"]["code"]) == (422, "slot_not_assignable")
+            continue
         if response.status_code == 409:
             refused.add(key)
         else:
@@ -1393,6 +1398,6 @@ def test_slot_counts_mark_exactly_the_slots_na_refuses(client: TestClient) -> No
 
     expected = {
         "purpose", "definitions", "general_requirements", "general_requirements.safety",
-        "procedures", "procedures.procedure",
+        "procedures", "procedures.p1",
     }
     assert refused == counted == expected

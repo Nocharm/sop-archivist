@@ -68,23 +68,38 @@ describe("resolveDropLink", () => {
   });
 });
 
-const PURPOSE: DropSection = { key: "purpose", isNa: false, items: [
+const PURPOSE: DropSection = { key: "purpose", isNa: false, isAssignable: true, items: [
   { targetId: 1, groupKey: "u10", sourceUnitIds: [10] },
   { targetId: 2, groupKey: "u20", sourceUnitIds: [20] },   // 짝 줄 u20의 두 문장
   { targetId: 3, groupKey: "u20", sourceUnitIds: [21] },
   { targetId: 4, groupKey: null, sourceUnitIds: [] },
 ] };
-const SCOPE_NA: DropSection = { key: "scope", isNa: true, items: [] };
-const ROLES: DropSection = { key: "roles", isNa: false, items: [] };
+const SCOPE_NA: DropSection = { key: "scope", isNa: true, isAssignable: true, items: [] };
+const ROLES: DropSection = { key: "roles", isNa: false, isAssignable: true, items: [] };
+// 문장을 받지 않는 절 - 묶음(7 · 7.1)과 앱이 채우는 목록(7.2)
+const DOCS_GROUP: DropSection = { key: "document_relationships", isNa: false, isAssignable: false, items: [] };
+const WI_LIST: DropSection = { key: "document_relationships.work_instructions", isNa: false, isAssignable: false, items: [] };
 
 describe("buildDropSections", () => {
   it("keys each line by the Old row of its first source unit", () => {
     const item = (target_id: number, source_unit_ids: number[]) => ({ target_id, kind: "sentence" as const, lang: "en" as const, text: "", status: "confirmed" as const, change_type: "as_is" as const, number: null, source_unit_ids });
     const rowKeyOf = (id: number) => ({ 10: "u10", 20: "u20", 21: "u20" } as Record<number, string>)[id];
     expect(buildDropSections([
-      { location_key: "purpose", na_reason: null, items: [item(1, [10]), item(2, [20]), item(3, [21]), item(4, [])] },
-      { location_key: "scope", na_reason: "Synthetic", items: [] },
+      { location_key: "purpose", na_reason: null, kind: "general", items: [item(1, [10]), item(2, [20]), item(3, [21]), item(4, [])] },
+      { location_key: "scope", na_reason: "Synthetic", kind: "general", items: [] },
     ], rowKeyOf)).toEqual([PURPOSE, SCOPE_NA]);
+  });
+  it("marks group and auto-list sections as taking no sentences, and every other kind as taking them", () => {
+    const section = (location_key: string, kind: "general" | "category_table" | "named_children" | "group" | "auto_list" | null) => ({ location_key, na_reason: null, kind, items: [] });
+    const built = buildDropSections([
+      section("document_relationships", "group"),
+      section("document_relationships.work_instructions", "auto_list"),
+      section("general_requirements", "category_table"),
+      section("procedures", "named_children"),
+      section("step:1:instruction", null),
+    ], () => undefined);
+    expect(built.slice(0, 2)).toEqual([DOCS_GROUP, WI_LIST]);
+    expect(built.slice(2).map((item) => item.isAssignable)).toEqual([true, true, true]);
   });
 });
 
@@ -119,6 +134,11 @@ describe("resolveSlotDrop", () => {
   it("takes an empty slot without a position and refuses an N/A one", () => {
     expect(resolveSlotDrop(ROLES)).toEqual({ kind: "slot", sectionKey: "roles" });
     expect(resolveSlotDrop(SCOPE_NA)).toEqual({ kind: "refused", reason: "na_slot" });
+  });
+  it("refuses a group and the auto list, and names N/A first when such a section is N/A", () => {
+    expect(resolveSlotDrop(DOCS_GROUP)).toEqual({ kind: "refused", reason: "not_assignable" });
+    expect(resolveSlotDrop(WI_LIST)).toEqual({ kind: "refused", reason: "not_assignable" });
+    expect(resolveSlotDrop({ ...DOCS_GROUP, isNa: true })).toEqual({ kind: "refused", reason: "na_slot" });
   });
 });
 

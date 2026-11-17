@@ -1,46 +1,51 @@
-// New 목록 줄의 SOP 칸을 상태 표로 읽는 순수 모델 - 여섯 상태·요약·쓴 사유·사유 편집기 하나. 화면은 이 결과를 그리기만 한다.
-// 칸 목록·번호·이름·위계는 서버가 준 그 문서의 골격(ToBe.outline_items)에서 읽는다 - 문서마다 다를 수 있고 수준이 둘로 정해져 있지 않다.
+// New 목록 줄의 SOP 칸을 상태 표로 읽는 순수 모델 - 일곱 상태·요약·쓴 사유·사유 편집기 하나. 화면은 이 결과를 그리기만 한다.
+// 칸 목록·번호·이름·위계·종류는 서버가 준 그 문서의 골격(ToBe.outline_items)에서 읽는다 - 문서마다 다를 수 있고 수준이 둘로 정해져 있지 않다.
 // 설계: docs/superpowers/specs/2026-11-17-documents-screen-design.md
 import type { SlotCount, TargetDoc, ToBe } from "./api-sop";
 
 /** 칸 키 - 그 문서 골격 항목의 키. 문서마다 달라 고정 목록으로 좁히지 않는다 */
 export type SlotKey = string;
 
-/** backend constants.EQUIPMENT_SLOT_KEYS와 같은 값 - 장비 SOP에서 채우거나 N/A로 남겨야 하는 세 칸 */
-export const EQUIPMENT_SLOT_KEYS: readonly SlotKey[] = [
-  "procedures.electronic_record_control",
-  "procedures.troubleshooting",
-  "procedures.maintenance",
-];
-
 export type SlotState =
   | { kind: "na"; reason: string } // 1 그 칸에 N/A가 저장돼 있다
   | { kind: "covered"; by: SlotKey } // 2 상위 칸(가장 가까운 조상)이 N/A다
   | { kind: "filled"; count: number } // 3 그 칸의 count > 0
   | { kind: "sub"; count: number } // 4 상위 칸, 자기 0, 하위 칸(그 아래 전부) count의 합 > 0
-  | { kind: "decide" } // 5 장비 SOP의 세 칸이고 위 넷이 아니다
-  | { kind: "empty" }; // 6 그 밖
+  | { kind: "auto" } // 5 앱이 채우는 목록(auto_list) - 문장을 받지 않는다
+  | { kind: "group" } // 6 하위만 묶는 항목(group)이고 그 아래에 문장이 없다 - 상태 글이 없다
+  | { kind: "empty" }; // 7 그 밖(문장을 받는 칸이 비었다)
 
 export interface SlotRow {
   key: SlotKey;
-  /** 번호 없는 항목은 빈 글 */
+  /** 이름 앞에 적는 번호 - 번호 없는 항목(범주 · 비어서 내보내지 않는 선택 항목)과 번호를 적지 않는 항목(부록 - shows_number false)은 빈 글. 이름과 이을 때는 formatSlotName을 쓴다 */
   number: string;
-  /** 그 항목의 이름만(조상 이름은 붙이지 않는다 - 표가 들여쓰기로 위계를 보인다) */
+  /** 그 항목의 이름만(조상 이름은 붙이지 않는다 - 표가 들여쓰기로 위계를 보인다). 부록은 번호가 든 이름 "Appendix 2. 제목" */
   label: string;
   /** 최상위 0 */
   level: number;
+  /** 문장을 직접 받는 칸인가 - 묶음(group)과 앱이 채우는 목록(auto_list)은 아니다. 요약의 채운 칸 · 빈 칸 · 전체는 이 칸만 센다 */
+  isAssignable: boolean;
   state: SlotState;
-  /** Mark N/A를 그릴 칸 - decide·empty이고 칸 제목이 이어져 있지 않다 */
+  /** Mark N/A를 그릴 칸 - empty·group이고 칸 제목이 이어져 있지 않다(앱이 채우는 목록은 N/A로 두지 않는다) */
   canMarkNa: boolean;
   /** 문장은 없는데 그 칸이나 하위 칸의 칸 제목에 옛 제목이 이어져 있다(서버가 N/A를 막는다) */
   headingLinked: boolean;
 }
 
 export interface SlotSummary {
+  /** 문장을 받는 칸 가운데 3·4번 */
   filled: number;
+  /** 문장을 받는 칸 가운데 7번 */
   empty: number;
+  /** 1·2번인 줄 전부 - 문장을 받지 않는 줄도 표에 N/A로 보이므로 함께 센다(표의 N/A 표시 수와 같다) */
   na: number;
-  decide: number;
+  /** 문장을 받는 칸의 수 */
+  total: number;
+}
+
+/** "번호 이름" - 번호 없는 항목은 이름만. 빈 번호가 글 앞에 빈칸을 남기지 않게 번호와 이름은 여기서만 잇는다 */
+export function formatSlotName(row: Pick<SlotRow, "number" | "label">): string {
+  return row.number === "" ? row.label : `${row.number} ${row.label}`;
 }
 
 /** 그 문서의 칸별 수 - 다른 문서의 줄은 읽지 않는다(골격에 없는 키는 찾는 칸이 없어 쓰이지 않는다). 이미 쓴 문서(match)는 수를 읽지 않는다 */
@@ -86,18 +91,21 @@ export function buildSlotRows(tobe: ToBe, doc: TargetDoc): SlotRow[] {
     else if (coveredBy !== undefined) state = { kind: "covered", by: coveredBy };
     else if (ownCount > 0) state = { kind: "filled", count: ownCount };
     else if (subCount > 0) state = { kind: "sub", count: subCount };
-    else if (doc.is_equipment_sop && EQUIPMENT_SLOT_KEYS.includes(key)) state = { kind: "decide" };
+    else if (item.kind === "auto_list") state = { kind: "auto" };
+    else if (item.kind === "group") state = { kind: "group" };
     else state = { kind: "empty" };
 
-    const open = state.kind === "decide" || state.kind === "empty";
+    const open = state.kind === "empty" || state.kind === "group";
     const headingLinked = open && headings > 0;
-    return { key, number: item.number ?? "", label: item.title_en, level: item.level, state, canMarkNa: open && !headingLinked, headingLinked };
+    // 번호를 적지 않는 항목(부록)은 번호 칸을 비우고 번호가 든 이름(label)을 적는다 - "1 Appendix 1. …"처럼 번호가 겹치지 않게
+    const [number, label] = item.shows_number ? [item.number ?? "", item.title_en] : ["", item.label];
+    return { key, number, label, level: item.level, isAssignable: item.is_assignable, state, canMarkNa: open && !headingLinked, headingLinked };
   });
 }
 
 /**
- * 표의 두 단 - 최상위 칸 앞에서만 가른다(하위 칸은 상위 칸과 같은 단에 남는다). 최상위에 procedures가 있으면 그 앞이고(15칸 골격의 5.2와 6 사이 -
- * 화면이 익숙한 자리를 지킨다), 없으면 줄 수의 가운데에 가장 가까운 최상위 칸 앞이다(같은 거리면 뒤쪽 - 왼쪽 단이 길다). 가를 곳이 없으면 오른쪽 단이 빈다
+ * 표의 두 단 - 최상위 칸 앞에서만 가른다(하위 칸은 상위 칸과 같은 단에 남는다). 최상위에 procedures가 있으면 그 앞이고(템플릿 골격의 1–5장 | 6–9장 -
+ * 선언한 절차·부록이 늘어도 가르는 자리가 그대로다), 없으면 줄 수의 가운데에 가장 가까운 최상위 칸 앞이다(같은 거리면 뒤쪽 - 왼쪽 단이 길다). 가를 곳이 없으면 오른쪽 단이 빈다
  */
 export function splitSlotColumns(rows: readonly SlotRow[]): [SlotRow[], SlotRow[]] {
   const pinned = rows.findIndex((row) => row.level === 0 && row.key === "procedures");
@@ -112,13 +120,14 @@ export function splitSlotColumns(rows: readonly SlotRow[]): [SlotRow[], SlotRow[
   return [rows.slice(0, split), rows.slice(split)];
 }
 
-/** filled = 3·4번, na = 1·2번. 네 수의 합은 늘 칸 수 */
+/** 채운 칸 · 빈 칸 · 전체는 문장을 받는 칸만, N/A는 그 표시가 붙은 줄 전부 */
 export function summarizeSlots(rows: readonly SlotRow[]): SlotSummary {
-  const summary: SlotSummary = { filled: 0, empty: 0, na: 0, decide: 0 };
-  for (const { state } of rows) {
-    if (state.kind === "filled" || state.kind === "sub") summary.filled += 1;
-    else if (state.kind === "na" || state.kind === "covered") summary.na += 1;
-    else if (state.kind === "decide") summary.decide += 1;
+  const summary: SlotSummary = { filled: 0, empty: 0, na: 0, total: 0 };
+  for (const { state, isAssignable } of rows) {
+    if (isAssignable) summary.total += 1;
+    if (state.kind === "na" || state.kind === "covered") summary.na += 1;
+    else if (!isAssignable) continue;
+    else if (state.kind === "filled" || state.kind === "sub") summary.filled += 1;
     else summary.empty += 1;
   }
   return summary;

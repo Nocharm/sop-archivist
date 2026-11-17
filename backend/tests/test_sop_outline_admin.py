@@ -13,11 +13,10 @@ from sqlalchemy import delete, inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import SessionLocal
-from app.sop.constants import SLOT_KEYS
-from app.sop.models import OutlineStandardItem, TargetDocOutlineItem
-from app.sop.outline import LEGACY_OUTLINE
+from app.sop.models import OutlineStandardItem
+from app.sop.outline import TEMPLATE_OUTLINE, load_doc_outlines
 from tests.access_helpers import add_grant, run_in_session
-from tests.sop_helpers import ADMIN, AUTHOR, create_bundle, put_tobe
+from tests.sop_helpers import ADMIN, AUTHOR, NEW_SOP_KEYS, create_bundle, put_tobe
 
 OUTLINE = "/api/admin/outline"
 NOBODY = {"X-Dev-User": "dev.admin"}  # enforce 모드에서 데모 부여가 없는 사람
@@ -77,13 +76,10 @@ def _read_standard() -> list[tuple[str, int]]:
 
 
 def _load_doc_outline_keys(target_doc_id: int) -> list[str]:
+    """문서 사본의 키 — 골격 순서(부모 바로 뒤에 하위)."""
     async def _load(session: AsyncSession) -> list[str]:
-        rows = await session.scalars(
-            select(TargetDocOutlineItem.key)
-            .where(TargetDocOutlineItem.target_doc_id == target_doc_id)
-            .order_by(TargetDocOutlineItem.order_index)
-        )
-        return list(rows)
+        outline = (await load_doc_outlines(session, [target_doc_id]))[target_doc_id]
+        return [item.key for item in outline.items]
 
     return run_in_session(_load)
 
@@ -122,15 +118,24 @@ def test_admin_requires_permission(client: TestClient) -> None:
 def test_admin_get_returns_seed(client: TestClient) -> None:
     items = _get_items(client)
 
-    assert [item["key"] for item in items] == list(SLOT_KEYS)
-    assert len(items) == 15
+    # 기본 표준은 회사 SOP 템플릿 1–9장이다 — 첫 절차(Procedure 1)는 표준이 아니라 새 문서의 사본에만 생긴다
+    assert [item["key"] for item in items] == [item.key for item in TEMPLATE_OUTLINE]
+    assert len(items) == 16
     assert all(set(item) == ITEM_KEYS for item in items)  # order_index는 싣지 않는다 — 순서가 곧 자리다
-    assert [(item["title_en"], item["kind"], item["default_style"]) for item in items] == [
-        (item.title_en, item.kind, item.default_style) for item in LEGACY_OUTLINE
+    assert [(item["title_en"], item["kind"], item["is_required"], item["default_style"]) for item in items] == [
+        (item.title_en, item.kind, item.is_required, item.default_style) for item in TEMPLATE_OUTLINE
     ]
     assert items[4] == {
-        "key": "general_requirements", "title_en": "General Requirements", "title_ko": "", "kind": "named_children",
-        "is_required": True, "default_style": "numbered", "child_prefix": "", "suggestions": [],
+        "key": "general_requirements", "title_en": "General Requirements", "title_ko": "", "kind": "category_table",
+        "is_required": True, "default_style": "bullet", "child_prefix": "",
+        "suggestions": [
+            "Safety", "Account", "Qualification", "Equipment", "Work", "Excursion/Alarm", "Material", "Training",
+            "Record", "Quality", "Caution", "Data Management",
+        ],
+    }
+    assert items[-1] == {
+        "key": "appendices", "title_en": "Appendices", "title_ko": "", "kind": "named_children", "is_required": True,
+        "default_style": "numbered", "child_prefix": "Appendix", "suggestions": [],
     }
 
 
@@ -159,7 +164,7 @@ def test_admin_put_replaces_and_orders(client: TestClient) -> None:
         "named_children", "Appendix", ["Safety", "Quality"],
     )
     assert _get_items(client) == saved
-    # 옛 15칸 가운데 목록에 없는 것은 지워지고 자리는 0부터 다시 매긴다
+    # 전에 있던 표준 항목 가운데 목록에 없는 것은 지워지고 자리는 0부터 다시 매긴다
     assert _read_standard() == [("scope", 0), ("purpose", 1), ("purpose.detail", 2)]
 
 
@@ -283,7 +288,7 @@ def test_admin_edit_applies_to_new_docs_only(client: TestClient) -> None:
     created = put_tobe(client, bundle["id"], [{"code": "SOP-1", "title": "", "doc_type": "sop", "parent_code": None}])
     assert created.status_code == 200, created.text
     old_doc_id = created.json()["docs"][0]["id"]
-    assert _load_doc_outline_keys(old_doc_id) == list(SLOT_KEYS)
+    assert _load_doc_outline_keys(old_doc_id) == list(NEW_SOP_KEYS)
 
     response = _put(client, [*_get_items(client), _item("records", title_en="Records")])
     assert response.status_code == 200, response.text
@@ -291,13 +296,30 @@ def test_admin_edit_applies_to_new_docs_only(client: TestClient) -> None:
     added = client.post(f"/api/bundles/{bundle['id']}/tobe/docs", json={"code": "SOP-2", "doc_type": "sop"}, headers=AUTHOR)
     assert added.status_code == 201, added.text
     new_doc_id = next(doc["id"] for doc in added.json()["docs"] if doc["code"] == "SOP-2")
-    assert len(_load_doc_outline_keys(old_doc_id)) == 15  # 전에 만든 문서의 사본은 그대로다
-    assert _load_doc_outline_keys(new_doc_id) == [*SLOT_KEYS, "records"]
+    assert len(_load_doc_outline_keys(old_doc_id)) == 17  # 전에 만든 문서의 사본은 그대로다(표준 16 + 첫 절차)
+    assert _load_doc_outline_keys(new_doc_id) == [*NEW_SOP_KEYS, "records"]
     by_code = {
         code: [item for item in added.json()["outline_items"] if item["code"] == code] for code in ("SOP-1", "SOP-2")
     }
-    assert len(by_code["SOP-1"]) == 15
-    assert len(by_code["SOP-2"]) == 16
+    assert len(by_code["SOP-1"]) == 17
+    assert len(by_code["SOP-2"]) == 18
     assert (by_code["SOP-2"][-1]["key"], by_code["SOP-2"][-1]["number"], by_code["SOP-2"][-1]["title_en"]) == (
-        "records", "8", "Records",
+        "records", "10", "Records",
     )
+
+
+def test_first_procedure_is_added_only_to_an_empty_declaring_procedures_item(client: TestClient) -> None:
+    def create_sop(code: str) -> int:
+        bundle = create_bundle(client, is_synthetic=True)
+        created = put_tobe(client, bundle["id"], [{"code": code, "title": "", "doc_type": "sop", "parent_code": None}])
+        assert created.status_code == 200, created.text
+        return created.json()["docs"][0]["id"]
+
+    # 표준이 6장에 이미 절을 두었거나 6장이 하위를 선언하는 종류가 아니면 "Procedure 1"을 지어 넣지 않는다
+    filled = [_item("procedures", kind="named_children"), _item("procedures.cleaning")]
+    assert _put(client, filled).status_code == 200
+    assert _load_doc_outline_keys(create_sop("SOP-1")) == ["procedures", "procedures.cleaning"]
+    assert _put(client, [_item("procedures", kind="general"), _item("scope")]).status_code == 200
+    assert _load_doc_outline_keys(create_sop("SOP-2")) == ["procedures", "scope"]
+    assert _put(client, [_item("procedures", kind="named_children"), _item("scope")]).status_code == 200
+    assert _load_doc_outline_keys(create_sop("SOP-3")) == ["procedures", "procedures.p1", "scope"]

@@ -211,8 +211,8 @@ describe("findDropSection", () => {
 describe("cross-section refusals", () => {
   const home = { start: 0, end: 0, baseDepth: 0, isDepthLocked: false };
   it("refuses an N/A section, another document, another WI part and an unmappable section, and lets the same part of another step in", () => {
-    const to = (location_key: string, na_reason: string | null = null) => ({ location_key, na_reason });
-    expect(findEnterRefusal("purpose", to("document_relationships.attachments", "x"), true)).toBe("na");
+    const to = (location_key: string, na_reason: string | null = null) => ({ location_key, na_reason, kind: location_key.includes(":") ? null : ("general" as const) });
+    expect(findEnterRefusal("purpose", to("attachments", "x"), true)).toBe("na");
     expect(findEnterRefusal("purpose", to("scope"), false)).toBe("otherDoc");
     expect(findEnterRefusal("step:1:instruction", to("step:2:why"), true)).toBe("otherPart");
     expect(findEnterRefusal("purpose", to("path:1/2"), true)).toBe("otherPart");
@@ -221,7 +221,17 @@ describe("cross-section refusals", () => {
     expect(findEnterRefusal("purpose", to("scope"), true)).toBeNull();
   });
   it("checks N/A before another document", () => {
-    expect(findEnterRefusal("purpose", { location_key: "scope", na_reason: "x" }, false)).toBe("na");
+    expect(findEnterRefusal("purpose", { location_key: "scope", na_reason: "x", kind: "general" }, false)).toBe("na");
+  });
+  it("refuses a group and the auto list, which take no sentences, and lets the other kinds in", () => {
+    const to = (location_key: string, kind: "general" | "category_table" | "named_children" | "group" | "auto_list", na_reason: string | null = null) => ({ location_key, na_reason, kind });
+    expect(findEnterRefusal("purpose", to("document_relationships", "group"), true)).toBe("notAssignable");
+    expect(findEnterRefusal("purpose", to("document_relationships.work_instructions", "auto_list"), true)).toBe("notAssignable");
+    expect(findEnterRefusal("purpose", to("general_requirements", "category_table"), true)).toBeNull();
+    expect(findEnterRefusal("purpose", to("procedures", "named_children"), true)).toBeNull();
+    // N/A와 다른 문서가 먼저다
+    expect(findEnterRefusal("purpose", to("document_relationships", "group", "x"), true)).toBe("na");
+    expect(findEnterRefusal("purpose", to("document_relationships", "group"), false)).toBe("otherDoc");
   });
   it("refuses a written document's block", () => {
     expect(findLeaveRefusal("match", [line(1)], { ...home, isDepthLocked: true })).toBe("written");

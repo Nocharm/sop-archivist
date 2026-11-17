@@ -1,4 +1,5 @@
 // SOP 한 줄의 칸 상태 표(New 목록의 펼친 곳) - 칸마다 지금 상태(문장 수·Empty·N/A)를 먼저 보이고 하는 일(Mark N/A·Edit reason·Restore)을 단추로 둔다.
+// 문장을 받지 않는 줄은 상태가 다르다 - 하위만 묶는 항목은 하위의 문장 수만(없으면 빈 자리), 앱이 채우는 목록은 그 설명만 있고 N/A 단추가 없다.
 // 사유 편집기는 화면에 하나다(ToBeSection의 naEdit) - Save N/A·Cancel로만 닫히고, 칸을 떠나거나 줄을 접어도 적던 사유는 남는다.
 // 설계: docs/superpowers/specs/2026-11-17-documents-screen-design.md §8
 "use client";
@@ -7,7 +8,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 
 
 import { Tooltip } from "@/components/ui/tooltip";
 import { useI18n } from "@/lib/i18n";
-import { openNaEdit, splitSlotColumns, type NaEdit, type SlotKey, type SlotRow, type SlotSummary } from "@/lib/slot-status-model";
+import { formatSlotName, openNaEdit, splitSlotColumns, type NaEdit, type SlotKey, type SlotRow, type SlotSummary } from "@/lib/slot-status-model";
 
 interface SlotTableProps {
   /** `tobe-id-<줄 id>` */
@@ -128,8 +129,12 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
             </span>
           </Tooltip>
         );
-      case "decide":
-        return <span className="pill warn">{t("tobe.slots.fill")}</span>;
+      case "auto":
+        // 설명은 문장이라 줄 아래 글로 둔다(상태 열에 두면 그 단의 이름 열이 좁아진다). 이미 쓴 SOP는 이 절도 파일을 따른다
+        return isWritten ? <span className="text-ink-3">{t("tobe.slots.fromFile")}</span> : null;
+      case "group":
+        // 하위만 묶는 항목 - 그 아래에 문장이 없으면 적을 상태가 없다
+        return null;
       case "empty":
         return <span className="text-ink-3">{isWritten ? t("tobe.slots.fromFile") : t("tobe.slots.empty")}</span>;
       case "na":
@@ -154,9 +159,9 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
       );
     }
     if (!row.canMarkNa) return null;
-    // 정할 칸은 다음 할 일이라 늘 보이고, 빈 칸은 줄에 올리거나 포커스가 갈 때만
+    // 줄에 올리거나 포커스가 갈 때만
     return (
-      <button type="button" className={`btn ghost slot-btn ${row.state.kind === "decide" ? "" : "slot-hover"}`} data-testid={`${prefix}-na-${key}-mark`} onClick={() => openEditor(row)}>
+      <button type="button" className="btn ghost slot-btn slot-hover" data-testid={`${prefix}-na-${key}-mark`} onClick={() => openEditor(row)}>
         {t("tobe.slots.mark")}
       </button>
     );
@@ -254,7 +259,12 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
         )}
         {coveredBy && (
           <span className="slot-note" data-testid={`${prefix}-na-${key}-text`}>
-            {t("tobe.slots.covered", { number: coveredBy.number, name: coveredBy.label })}
+            {t("tobe.slots.covered", { name: formatSlotName(coveredBy) })}
+          </span>
+        )}
+        {row.state.kind === "auto" && !isWritten && (
+          <span className="slot-note" data-testid={`${prefix}-slot-${key}-auto-note`}>
+            {t("tobe.slots.autoList")}
           </span>
         )}
         {/* 칸 제목에 옛 제목이 이어진 칸 - 서버가 N/A를 막으므로 단추 대신 까닭(문장이라 단추 열이 아니라 줄 아래 글로 둔다) */}
@@ -276,11 +286,6 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
           {/* 이미 쓴 SOP는 문장 수를 세지 않는다 - "0 with sentences"는 거짓이라 N/A 수만 */}
           {isWritten ? t("tobe.row.na", { n: summary.na }) : t("tobe.slots.summary", { filled: summary.filled, empty: summary.empty, na: summary.na })}
         </span>
-        {summary.decide > 0 && (
-          <span className="pill warn" data-testid={`${prefix}-slots-decide`}>
-            {t("tobe.slots.decide", { n: summary.decide })}
-          </span>
-        )}
       </div>
       <div className="slot-cols">
         {/* 가를 곳이 없는 골격(최상위 칸 하나)은 오른쪽 단이 비어 그리지 않는다 */}

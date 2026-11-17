@@ -11,14 +11,15 @@ from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
-from app.sop.constants import MAX_INDENT_LEVEL, SLOT_KEYS
-from app.sop.outline import LEGACY_OUTLINE, DocOutline
+from app.sop.constants import MAX_INDENT_LEVEL
 from app.sop.outputs import number_lines
 from tests.docx_factory import build_docx, p
 from tests.sop_helpers import (
     AUTHOR,
     assign_as_is,
+    build_sop_outline,
     create_bundle,
+    declare_outline_item,
     find_unit,
     get_bundle,
     get_group_by_unit,
@@ -46,9 +47,15 @@ from tests.test_sop_outputs import (
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
 
-# 새 SOP 문서가 받는 골격(표준의 첫 내용 = 옛 15칸)과 그 칸 번호
-OUTLINE = DocOutline(LEGACY_OUTLINE)
-SLOT_NUMBERS = {item.key: OUTLINE.get_number(item.key) for item in OUTLINE.items}
+ASSOCIATED = "document_relationships.associated_documents"
+QRA = f"{ASSOCIATED}.quality_risk_assessment"
+# 새 SOP 문서가 내보내는 절과 그 번호 — 기본 표준(회사 템플릿 1–9장)과 첫 절차. 비어 있는 선택 항목(7.1.x)은 내보내지 않는다
+NEW_SOP_NUMBERS = {
+    "purpose": "1", "scope": "2", "definitions": "3", "responsibilities": "4", "general_requirements": "5",
+    "procedures": "6", "procedures.p1": "6.1", "document_relationships": "7", ASSOCIATED: "7.1",
+    "document_relationships.work_instructions": "7.2", "document_relationships.references": "7.3",
+    "attachments": "8", "appendices": "9",
+}
 
 
 @pytest.mark.parametrize(
@@ -70,16 +77,157 @@ def test_number_lines(depths: list[int], expected: list[str]) -> None:
     assert number_lines("5", depths) == expected
 
 
-def test_slot_numbers_follow_the_fixed_slot_positions() -> None:
-    assert list(SLOT_NUMBERS) == list(SLOT_KEYS)
-    assert SLOT_NUMBERS == {
-        "purpose": "1", "scope": "2", "definitions": "3", "responsibilities": "4",
-        "general_requirements": "5", "general_requirements.safety": "5.1", "general_requirements.operation": "5.2",
-        "procedures": "6", "procedures.procedure": "6.1", "procedures.electronic_record_control": "6.2",
-        "procedures.troubleshooting": "6.3", "procedures.maintenance": "6.4",
-        "document_relationships": "7", "document_relationships.attachments": "7.1",
-        "document_relationships.appendices": "7.2",
+def _read_section_numbers(client: TestClient, bundle_id: int, doc_index: int = 0) -> dict[str, str | None]:
+    """결과물 C 한 문서의 절 키 → 절 번호(절 순서대로)."""
+    doc = _get_output(client, bundle_id, "outputs/c")["docs"][doc_index]
+    return {section["location_key"]: section["number"] for section in doc["sections"]}
+
+
+def test_template_chapter_numbers(client: TestClient) -> None:
+    bundle_id, _sop_id, _doc_id = _create_sop_bundle(client, p("Describe the synthetic purpose."))
+
+    numbers = _read_section_numbers(client, bundle_id)
+
+    assert (numbers["purpose"], numbers["attachments"], numbers["appendices"]) == ("1", "8", "9")
+    assert numbers["document_relationships.references"] == "7.3"
+    assert numbers == NEW_SOP_NUMBERS
+    # To-Be 목록의 골격 항목도 같은 번호다(내보내지 않는 선택 항목은 번호가 없다)
+    tobe = client.get(f"/api/bundles/{bundle_id}/tobe", headers=AUTHOR).json()
+    assert {item["key"]: item["number"] for item in tobe["outline_items"] if item["number"] is not None} == numbers
+
+
+def test_empty_optional_items_are_skipped(client: TestClient) -> None:
+    line = "Assess the synthetic risk."
+    bundle_id, sop_id, doc_id = _create_sop_bundle(client, p(line))
+    assign_as_is(client, bundle_id, find_unit(get_view(client, bundle_id, doc_id), line), sop_id, slot_key=QRA)
+
+    numbers = _read_section_numbers(client, bundle_id)
+
+    # 7.1.x는 남은 항목끼리 센다 — QRA만 있으면 7.1.4가 아니라 7.1.1이고 나머지 셋은 절 목록에 없다
+    assert numbers[QRA] == "7.1.1"
+    assert [key for key in numbers if key.startswith(f"{ASSOCIATED}.")] == [QRA]
+    assert numbers == {**NEW_SOP_NUMBERS, QRA: "7.1.1"}
+    assert _read_slot_lines(client, bundle_id, QRA) == [(line, None, "bullet")]
+    tobe = client.get(f"/api/bundles/{bundle_id}/tobe", headers=AUTHOR).json()
+    assert {item["key"]: item["number"] for item in tobe["outline_items"] if item["key"].startswith(f"{ASSOCIATED}.")} == {
+        f"{ASSOCIATED}.form": None, f"{ASSOCIATED}.visual_aid": None, f"{ASSOCIATED}.training_material": None,
+        QRA: "7.1.1",
     }
+
+
+def test_an_optional_item_marked_na_is_emitted_and_counted(client: TestClient) -> None:
+    bundle_id, sop_id, _doc_id = _create_sop_bundle(client, p("Describe the synthetic purpose."))
+    form = f"{ASSOCIATED}.form"
+    marked = client.put(
+        f"/api/bundles/{bundle_id}/tobe/docs/{sop_id}/na/{form}", json={"reason": "Synthetic: no forms"}, headers=AUTHOR
+    )
+    assert marked.status_code == 200, marked.text
+
+    sop = _get_output(client, bundle_id, "outputs/c")["docs"][0]
+
+    sections = {section["location_key"]: section for section in sop["sections"]}
+    assert (sections[form]["number"], sections[form]["na_reason"]) == ("7.1.1", "Synthetic: no forms")
+    assert {item["key"]: item["number"] for item in marked.json()["outline_items"] if item["key"] == form} == {form: "7.1.1"}
+
+
+def test_procedure_lines_are_numbered(client: TestClient) -> None:
+    first, second = "Start the synthetic unit.", "Check the synthetic display."
+    bundle_id, sop_id, doc_id = _create_sop_bundle(client, p(first) + p(second))
+    view = get_view(client, bundle_id, doc_id)
+    ids = [
+        assign_as_is(client, bundle_id, find_unit(view, text), sop_id, slot_key="procedures.p1")["targets"][0]["id"]
+        for text in (first, second)
+    ]
+    body = {
+        "revision": get_bundle(client, bundle_id)["revision"], "target_doc_id": sop_id,
+        "items": [{"target_id": ids[0]}, {"target_id": ids[1], "indent_level": 1}],
+    }
+    assert _put_order(client, bundle_id, body).status_code == 200
+
+    # 절차의 줄은 그 절 번호 아래로 센다 — 깊이 0은 6.1.1, 깊이 1은 6.1.1.1
+    assert _read_slot_lines(client, bundle_id, "procedures.p1") == [
+        (first, "6.1.1", "numbered"), (second, "6.1.1.1", "numbered"),
+    ]
+
+
+def test_appendix_restarts_from_its_number(client: TestClient) -> None:
+    first, second, deeper = "List the synthetic alarms.", "List the synthetic rotors.", "Note the synthetic limits."
+    bundle_id, sop_id, doc_id = _create_sop_bundle(client, p(first) + p(second) + p(deeper) + p("Describe the synthetic purpose."))
+    declare_outline_item(client, sop_id, "appendices.a1", "Alarm list")
+    declare_outline_item(client, sop_id, "appendices.a2", "Rotor table")
+    view = get_view(client, bundle_id, doc_id)
+    assign_as_is(client, bundle_id, find_unit(view, first), sop_id, slot_key="appendices.a1")
+    ids = [
+        assign_as_is(client, bundle_id, find_unit(view, text), sop_id, slot_key="appendices.a2")["targets"][0]["id"]
+        for text in (second, deeper)
+    ]
+    assign_as_is(client, bundle_id, find_unit(view, "Describe the synthetic purpose."), sop_id, slot_key="purpose")
+    order = _list_top_target_ids(client, bundle_id, 0)
+    body = {
+        "revision": get_bundle(client, bundle_id)["revision"], "target_doc_id": sop_id,
+        "items": [{"target_id": t, **({"indent_level": 1} if t == ids[1] else {})} for t in order],
+    }
+    assert _put_order(client, bundle_id, body).status_code == 200
+
+    sop = _get_output(client, bundle_id, "outputs/c")["docs"][0]
+
+    sections = {section["location_key"]: section for section in sop["sections"]}
+    # 부록은 부모 번호(9) 없이 1, 2 … 이고 라벨은 "Appendix n. 이름"
+    assert [(sections[key]["number"], sections[key]["label"]) for key in ("appendices", "appendices.a1", "appendices.a2")] == [
+        ("9", "Appendices"), ("1", "Appendix 1. Alarm list"), ("2", "Appendix 2. Rotor table"),
+    ]
+    # 부록 안의 줄은 그 부록 번호에서 다시 센다 — 둘째 부록의 첫 줄은 2.1(1장의 줄과 섞어 세지 않는다)
+    assert _read_slot_lines(client, bundle_id, "appendices.a1") == [(first, "1.1", "numbered")]
+    assert _read_slot_lines(client, bundle_id, "appendices.a2") == [(second, "2.1", "numbered"), (deeper, "2.1.1", "numbered")]
+    rows = {row["confirmed_text"]: row for row in _get_output(client, bundle_id, "outputs/a")}
+    assert (rows[second]["dest_location"], rows[second]["dest_number"]) == ("Appendix 2. Rotor table", "2.1")
+    assert rows["Describe the synthetic purpose."]["dest_number"] == "1"  # 1장의 글머리 기호 줄
+
+
+def test_sections_with_the_same_number_are_counted_apart(client: TestClient) -> None:
+    # 부록 1의 번호 "1"은 1장의 번호와 글자가 같다 — 줄은 절마다 따로 센다(이어 세는 것은 WI 한 단계의 Instruction·Why뿐)
+    purpose, first, second = "Describe the synthetic purpose.", "List the synthetic alarms.", "List the synthetic rotors."
+    bundle_id, sop_id, doc_id = _create_sop_bundle(client, p(purpose) + p(first) + p(second))
+    declare_outline_item(client, sop_id, "appendices.a1", "Alarm list")
+    view = get_view(client, bundle_id, doc_id)
+    (purpose_target,) = assign_as_is(client, bundle_id, find_unit(view, purpose), sop_id, slot_key="purpose")["targets"]
+    for text in (first, second):
+        assign_as_is(client, bundle_id, find_unit(view, text), sop_id, slot_key="appendices.a1")
+    ids = _list_top_target_ids(client, bundle_id, 0)
+    _put_styles(client, bundle_id, sop_id, ids, {purpose_target["id"]: "numbered"})
+
+    sop = _get_output(client, bundle_id, "outputs/c")["docs"][0]
+
+    sections = {section["location_key"]: section for section in sop["sections"]}
+    assert (sections["purpose"]["number"], sections["appendices.a1"]["number"]) == ("1", "1")
+    assert _read_slot_lines(client, bundle_id, "purpose") == [(purpose, "1.1", "numbered")]
+    assert _read_slot_lines(client, bundle_id, "appendices.a1") == [(first, "1.1", "numbered"), (second, "1.2", "numbered")]
+    rows = {row["confirmed_text"]: row["dest_number"] for row in _get_output(client, bundle_id, "outputs/a")}
+    assert rows == {purpose: "1.1", first: "1.1", second: "1.2"}
+
+
+def test_category_lines_are_bullets_under_five(client: TestClient) -> None:
+    safety, loose = "Wear the synthetic gloves.", "Keep the synthetic area clear."
+    bundle_id, sop_id, doc_id = _create_sop_bundle(client, p(safety) + p(loose))
+    declare_outline_item(client, sop_id, "general_requirements.safety", "Safety")
+    view = get_view(client, bundle_id, doc_id)
+    assign_as_is(client, bundle_id, find_unit(view, safety), sop_id, slot_key="general_requirements.safety")
+    assign_as_is(client, bundle_id, find_unit(view, loose), sop_id, slot_key="general_requirements")  # 범주 없는 항목
+
+    sop = _get_output(client, bundle_id, "outputs/c")["docs"][0]
+
+    sections = {section["location_key"]: section for section in sop["sections"]}
+    category = sections["general_requirements.safety"]
+    # 범주는 번호 없는 제목이고 그 줄은 글머리 기호다 — 줄 번호가 없다
+    assert (category["number"], category["label"], category["level"]) == (None, "General Requirements › Safety", 1)
+    assert [(item["text"], item["number"], item["number_style"]) for item in category["items"]] == [(safety, None, "bullet")]
+    assert _read_slot_lines(client, bundle_id, "general_requirements") == [(loose, None, "bullet")]
+    # 결과물 A의 No.는 가장 가까운 번호 있는 절(5)
+    rows = {row["confirmed_text"]: row for row in _get_output(client, bundle_id, "outputs/a")}
+    assert (rows[safety]["dest_number"], rows[loose]["dest_number"]) == ("5", "5")
+    tobe = client.get(f"/api/bundles/{bundle_id}/tobe", headers=AUTHOR).json()
+    (item,) = [item for item in tobe["outline_items"] if item["key"] == "general_requirements.safety"]
+    assert (item["number"], item["is_assignable"], item["default_style"]) == (None, True, "bullet")
 
 
 def _read_numbers(doc: dict) -> list[tuple[str, str | None, list[tuple[str, str | None]]]]:
@@ -100,13 +248,16 @@ def test_output_c_numbers_slots_steps_and_lines(client: TestClient) -> None:
 
     sop, wi, match = output["docs"]
     sop_numbers = {key: (number, items) for key, number, items in _read_numbers(sop)}
-    # N/A 칸(scope·document_relationships)도 자기 번호를 지켜 다른 칸 번호가 밀리지 않는다
-    assert {key: number for key, (number, _) in sop_numbers.items()} == SLOT_NUMBERS
-    assert sop_numbers["responsibilities"][1] == [(DUPLICATE, "4.1")]
-    # 하위 칸이 있는 칸(5)에 직접 놓인 표는 번호가 없다 — 5.1은 하위 칸 제목의 번호다
+    # N/A 칸(scope·document_relationships)도 자기 번호를 지켜 다른 칸 번호가 밀리지 않는다. 범주(Work)는 번호 없는 제목이다
+    assert {key: number for key, (number, _) in sop_numbers.items()} == {
+        **NEW_SOP_NUMBERS, "general_requirements.work": None,
+    }
+    assert list(sop_numbers)[4:6] == ["general_requirements", "general_requirements.work"]
+    # 1–5장의 줄은 글머리 기호가 기본이라 번호가 없다
+    assert sop_numbers["responsibilities"][1] == [(DUPLICATE, None)]
+    # 범주 표(5)에 직접 놓인 표도, 범주의 줄도 번호가 없다
     assert sop_numbers["general_requirements"][1] == [("table", None)]
-    # 한 칸의 한글·영어 문장을 C 순서대로 한 줄로 센다
-    assert sop_numbers["general_requirements.operation"][1] == [(MERGED, "5.2.1"), (RECORDS_EN, "5.2.2")]
+    assert sop_numbers["general_requirements.work"][1] == [(MERGED, None), (RECORDS_EN, None)]
     # 표 칸은 언어와 무관하게 표를 따른다 — 표가 번호가 없으니 칸도 없다(번호 있는 표는 아래 하위 칸 시험)
     (table,) = next(section["items"] for section in sop["sections"] if section["location_key"] == "general_requirements")
     assert [cell["number"] for cell in table["children"] if cell["cell_row"] is not None] == [None] * 4
@@ -153,8 +304,9 @@ def test_indent_changes_numbers_in_outputs_a_and_c(client: TestClient) -> None:
     d1 = partial(_display, fx.old1)
     (split_row,) = by_display[d1(SPLIT_SOURCE)]
     assert split_row["dest_number"] == "① 1.1\n② 2.1"
+    # SOP 4장의 줄은 글머리 기호라 No.가 그 절의 번호(4)다
     assert [(row["dest_doc_code"], row["dest_number"]) for row in by_display[d1(DUPLICATE)]] == [
-        ("SOP-NEW", "4.1"), ("WI-01", "1.1.1"),
+        ("SOP-NEW", "4"), ("WI-01", "1.1.1"),
     ]
     (figure_row,) = by_display[_display_of_kind(fx.old1, "figure")]
     assert figure_row["dest_number"] == "2.1.1"
@@ -281,7 +433,7 @@ def test_omitted_and_note_lines_take_no_number_in_outputs_a_and_c(client: TestCl
     assert (split_row["dest_number"], split_row["dest_is_note"]) == ("① 1.1\n② ", False)
     duplicate_rows = [row for row in rows if row["display_id"] == d1(DUPLICATE)]
     assert [(row["dest_doc_code"], row["dest_number"], row["dest_is_note"]) for row in duplicate_rows] == [
-        ("SOP-NEW", "4.1", False), ("WI-01", "", True),
+        ("SOP-NEW", "4", False), ("WI-01", "", True),
     ]
     (figure_row,) = [row for row in rows if row["display_id"] == _display_of_kind(fx.old1, "figure")]
     assert figure_row["dest_number"] == "2.1"
@@ -378,9 +530,9 @@ def test_excel_leaves_unnumbered_cells_empty_and_italicizes_notes(client: TestCl
     number_col, item_col = _find_header(sheet_c, "No."), _find_header(sheet_c, "Item")
     rows = {row[item_col - 1].value: row for row in sheet_c.iter_rows(min_row=3) if row[item_col - 1].value}
     assert (rows[SPLIT_A][number_col - 1].value, rows[SPLIT_A][item_col - 1].font.i) == ("1.1", False)
-    # 주석 줄 — 번호 칸이 비고 항목 글이 기울어 있다
+    # 주석 줄 — 번호 칸이 비고 항목 글이 기울어 있다(SOP 4장의 같은 글은 글머리 기호 줄)
     note_rows = [row for row in sheet_c.iter_rows(min_row=3) if row[item_col - 1].value == DUPLICATE]
-    assert [(row[number_col - 1].value, row[item_col - 1].font.i) for row in note_rows] == [("4.1", False), (None, True)]
+    assert [(row[number_col - 1].value, row[item_col - 1].font.i) for row in note_rows] == [("•", False), (None, True)]
     # 생략 줄 — 번호 칸만 비고 기울이지 않는다
     assert (rows[SPLIT_B][number_col - 1].value, rows[SPLIT_B][item_col - 1].font.i) == (None, False)
 
@@ -391,7 +543,7 @@ def test_excel_leaves_unnumbered_cells_empty_and_italicizes_notes(client: TestCl
         (row[dest_code_col - 1].value, row[a_number_col - 1].value, row[confirmed_col - 1].font.i)
         for row in sheet_a.iter_rows(min_row=3) if row[confirmed_col - 1].value == DUPLICATE
     ]
-    assert duplicate_rows == [("SOP-NEW", "4.1", False), ("WI-01", None, True)]
+    assert duplicate_rows == [("SOP-NEW", "4", False), ("WI-01", None, True)]
 
 
 def _find_header(sheet: Worksheet, header: str) -> int:
@@ -403,7 +555,7 @@ PAIRED = [
     ("합성 시료를 넣는다.", "Load the synthetic sample."),
     ("합성 결과를 적는다.", "Record the synthetic result."),
 ]
-PAIR_SLOT = "procedures.procedure"
+PAIR_SLOT = "procedures.p1"  # 새 SOP에 저절로 있는 첫 절차(6.1) — 번호가 기본인 절
 
 
 def _create_sop_bundle(client: TestClient, body: str) -> tuple[int, int, int]:
@@ -621,44 +773,122 @@ def test_later_human_translation_lands_after_its_source_omitted(client: TestClie
     ]
 
 
+def _move_by_save(client: TestClient, bundle_id: int, unit: dict, slot_key: str) -> None:
+    """단위의 기존 새 문장 하나를 관계 묶음 저장으로 다른 절에 옮긴다."""
+    group = get_group_by_unit(client, bundle_id, unit["id"])
+    (member,), (current,) = group["units"], group["targets"]
+    response = save_group(client, bundle_id, {
+        "action": "confirm",
+        "units": [{"unit_id": unit["id"], "revision": member["decision"]["revision"], "disposition": "assigned"}],
+        "targets": [{
+            "key": "t", "id": current["id"], "revision": current["revision"], "slot_key": slot_key,
+            "source_unit_ids": [unit["id"]],
+        }],
+    })
+    assert response.status_code == 200, response.text
+
+
 def test_moving_an_existing_target_keeps_its_mark(client: TestClient) -> None:
     bundle_id, sop_id, doc_id = _create_sop_bundle(client, p(LEAD_EN))
     unit = find_unit(get_view(client, bundle_id, doc_id), LEAD_EN)
     (target,) = assign_as_is(client, bundle_id, unit, sop_id, slot_key=PAIR_SLOT)["targets"]
     _put_styles(client, bundle_id, sop_id, [target["id"]], {target["id"]: "note"})
-    (member,) = get_group_by_unit(client, bundle_id, unit["id"])["units"]
-    (current,) = get_group_by_unit(client, bundle_id, unit["id"])["targets"]
 
-    response = save_group(client, bundle_id, {
-        "action": "confirm",
-        "units": [{"unit_id": unit["id"], "revision": member["decision"]["revision"], "disposition": "assigned"}],
-        "targets": [{
-            "key": "t", "id": current["id"], "revision": current["revision"], "slot_key": "scope",
-            "source_unit_ids": [unit["id"]],
-        }],
-    })
+    _move_by_save(client, bundle_id, unit, "scope")
 
-    assert response.status_code == 200, response.text
+    # 주석·생략은 그 줄의 성격이라 다른 절로 가도 그대로다
     assert _read_slot_lines(client, bundle_id, "scope") == [(LEAD_EN, None, "note")]
 
 
-# ── 하위 칸이 있는 칸에 직접 놓인 줄(제품 명세 §7.13 섹션 번호, 사용자 결정 2026-11-17) ──────────────
+def test_new_lines_take_the_default_mark_of_their_item(client: TestClient) -> None:
+    ko, en = PAIRED[0]
+    bundle_id, sop_id, doc_id = _create_sop_bundle(client, p(LEAD_EN) + p(TAIL_EN) + p(ko) + p(en))
+    view = get_view(client, bundle_id, doc_id)
 
-PARENT_SLOT, SUB_SLOT = "general_requirements", "general_requirements.safety"
-PARENT_HEAD = "5. General requirements"
+    assign_as_is(client, bundle_id, find_unit(view, LEAD_EN), sop_id, slot_key="purpose")
+    assign_as_is(client, bundle_id, find_unit(view, TAIL_EN), sop_id, slot_key=PAIR_SLOT)
+    units = _pair_units(client, bundle_id, doc_id, ko, en)
+    revisions = {unit["id"]: get_group_by_unit(client, bundle_id, unit["id"])["units"][0]["decision"]["revision"] for unit in units}
+    saved = save_group(client, bundle_id, {
+        "action": "confirm",
+        "units": [{"unit_id": unit["id"], "revision": revisions[unit["id"]], "disposition": "assigned"} for unit in units],
+        "targets": [
+            {"key": unit["lang"], "target_doc_id": sop_id, "slot_key": "scope", "source_unit_ids": [unit["id"]]}
+            for unit in units
+        ],
+    })
+    assert saved.status_code == 200, saved.text
+
+    # 글머리 기호가 기본인 절(1·2장)의 새 줄은 글머리 기호, 번호가 기본인 절차의 새 줄은 번호
+    assert _read_slot_lines(client, bundle_id, "purpose") == [(LEAD_EN, None, "bullet")]
+    assert _read_slot_lines(client, bundle_id, PAIR_SLOT) == [(TAIL_EN, "6.1.1", "numbered")]
+    # 함께 놓이는 짝은 영어만 그 절의 기본 표시를 받고 한글은 생략이다(지금 규칙 그대로)
+    assert _read_slot_lines(client, bundle_id, "scope") == [(en, None, "bullet"), (ko, None, "omitted")]
+
+
+def test_moving_an_existing_target_takes_the_default_mark_of_its_new_item(client: TestClient) -> None:
+    bundle_id, sop_id, doc_id = _create_sop_bundle(client, p(LEAD_EN) + p(TAIL_EN))
+    view = get_view(client, bundle_id, doc_id)
+    lead, tail = find_unit(view, LEAD_EN), find_unit(view, TAIL_EN)
+    assign_as_is(client, bundle_id, lead, sop_id, slot_key=PAIR_SLOT)  # 번호
+    assign_as_is(client, bundle_id, tail, sop_id, slot_key="scope")  # 글머리 기호
+
+    _move_by_save(client, bundle_id, lead, "scope")
+    _move_by_save(client, bundle_id, tail, PAIR_SLOT)
+
+    # 번호 ↔ 글머리 기호는 도착한 절의 기본으로 바뀐다
+    assert _read_slot_lines(client, bundle_id, "scope") == [(LEAD_EN, None, "bullet")]
+    assert _read_slot_lines(client, bundle_id, PAIR_SLOT) == [(TAIL_EN, "6.1.1", "numbered")]
+
+
+def test_reorder_to_another_item_takes_its_default_mark_unless_a_mark_is_sent(client: TestClient) -> None:
+    bundle_id, sop_id, doc_id = _create_sop_bundle(client, p(LEAD_EN) + p(TAIL_EN) + p(TOP_LINE))
+    view = get_view(client, bundle_id, doc_id)
+    ids = {
+        text: assign_as_is(client, bundle_id, find_unit(view, text), sop_id, slot_key=PAIR_SLOT)["targets"][0]["id"]
+        for text in (LEAD_EN, TAIL_EN, TOP_LINE)
+    }
+    _put_styles(client, bundle_id, sop_id, list(ids.values()), {ids[TAIL_EN]: "omitted"})
+    edits = {
+        ids[LEAD_EN]: {"slot_key": "purpose"},  # 번호 → 도착한 절의 기본(글머리 기호)
+        ids[TAIL_EN]: {"slot_key": "purpose"},  # 생략은 그대로
+        ids[TOP_LINE]: {"slot_key": "purpose", "number_style": "note"},  # 함께 보낸 표시가 먼저다
+    }
+    body = {
+        "revision": get_bundle(client, bundle_id)["revision"], "target_doc_id": sop_id,
+        "items": [{"target_id": target_id, **edits[target_id]} for target_id in ids.values()],
+    }
+
+    response = _put_order(client, bundle_id, body)
+
+    assert response.status_code == 200, response.text
+    assert {item["target_id"]: item["number_style"] for item in response.json()["items"]} == {
+        ids[LEAD_EN]: "bullet", ids[TAIL_EN]: "omitted", ids[TOP_LINE]: "note",
+    }
+    assert _read_slot_lines(client, bundle_id, "purpose") == [
+        (LEAD_EN, None, "bullet"), (TAIL_EN, None, "omitted"), (TOP_LINE, None, "note"),
+    ]
+
+
+# ── 하위 항목을 선언하는 절에 직접 놓인 줄(제품 명세 §7.13 섹션 번호, 사용자 결정 2026-11-17) ──────────────
+
+PARENT_SLOT, SUB_SLOT = "procedures", "procedures.p1"  # 6장의 머리 글과 첫 절차(6.1)
+PARENT_HEAD = "6. Procedures"
 DIRECT_A, DIRECT_B = "Keep the synthetic area clear.", "Report every synthetic incident."
 SUB_A, SUB_B = "Wear the synthetic gloves.", "Lock the synthetic cabinet."
 TOP_LINE = "Describe the synthetic purpose."
 
 
-def test_slots_with_sub_slots_do_not_count_direct_lines() -> None:
-    assert [key for key in SLOT_KEYS if not OUTLINE.counts_lines(key)] == [
-        "general_requirements", "procedures", "document_relationships",
+def test_items_that_declare_children_do_not_count_direct_lines() -> None:
+    outline = build_sop_outline()
+
+    assert [item.key for item in outline.items if outline.is_assignable(item.key) and not outline.counts_lines(item.key)] == [
+        "general_requirements", "procedures", "appendices",
     ]
 
 
 def _setup_parent_slot(client: TestClient) -> tuple[int, int, dict[str, int]]:
-    """SOP 하나 — 5 칸에 직접 두 줄, 하위 칸 5.1에 두 줄, 하위 칸 없는 1 칸에 한 줄. (묶음, SOP, 글 → 새 문장 id)."""
+    """SOP 하나 — 6장에 직접 두 줄, 첫 절차 6.1에 두 줄, 1장에 한 줄. (묶음, SOP, 글 → 새 문장 id)."""
     slots = {DIRECT_A: PARENT_SLOT, DIRECT_B: PARENT_SLOT, SUB_A: SUB_SLOT, SUB_B: SUB_SLOT, TOP_LINE: "purpose"}
     bundle_id, sop_id, doc_id = _create_sop_bundle(client, "".join(p(text) for text in slots))
     view = get_view(client, bundle_id, doc_id)
@@ -676,15 +906,15 @@ def test_lines_directly_in_a_slot_with_sub_slots_take_no_number(client: TestClie
     assert _read_slot_lines(client, bundle_id, PARENT_SLOT) == [
         (DIRECT_A, None, "numbered"), (DIRECT_B, None, "numbered"),
     ]
-    # 하위 칸의 줄은 5.1.1부터 — 상위 칸에 직접 놓인 줄이 밀지 않는다
-    assert _read_slot_lines(client, bundle_id, SUB_SLOT) == [(SUB_A, "5.1.1", "numbered"), (SUB_B, "5.1.2", "numbered")]
-    # 하위 칸이 없는 칸(1–4)에 직접 놓인 줄은 그대로 센다
-    assert _read_slot_lines(client, bundle_id, "purpose") == [(TOP_LINE, "1.1", "numbered")]
-    # 결과물 A의 No.도 같은 값이다
+    # 절차의 줄은 6.1.1부터 — 6장에 직접 놓인 줄이 밀지 않는다
+    assert _read_slot_lines(client, bundle_id, SUB_SLOT) == [(SUB_A, "6.1.1", "numbered"), (SUB_B, "6.1.2", "numbered")]
+    # 1장의 줄은 글머리 기호라 번호가 없다
+    assert _read_slot_lines(client, bundle_id, "purpose") == [(TOP_LINE, None, "bullet")]
+    # 결과물 A의 No.도 같은 값이다 — 글머리 기호 줄은 그 절의 번호
     numbers = {
         row["confirmed_text"]: row["dest_number"] for row in _get_output(client, bundle_id, "outputs/a")
     }
-    assert numbers == {DIRECT_A: "", DIRECT_B: "", SUB_A: "5.1.1", SUB_B: "5.1.2", TOP_LINE: "1.1"}
+    assert numbers == {DIRECT_A: "", DIRECT_B: "", SUB_A: "6.1.1", SUB_B: "6.1.2", TOP_LINE: "1"}
 
 
 def test_a_direct_line_is_numbered_again_by_its_saved_style_in_a_sub_slot(client: TestClient) -> None:
@@ -714,24 +944,24 @@ def test_a_direct_line_is_numbered_again_by_its_saved_style_in_a_sub_slot(client
     ])
     assert _read_slot_lines(client, bundle_id, PARENT_SLOT) == [(DIRECT_A, None, "numbered")]
     assert _read_slot_lines(client, bundle_id, SUB_SLOT) == [
-        (SUB_A, "5.1.1", "numbered"), (SUB_B, "5.1.2", "numbered"), (DIRECT_B, "5.1.2.1", "numbered"),
+        (SUB_A, "6.1.1", "numbered"), (SUB_B, "6.1.2", "numbered"), (DIRECT_B, "6.1.2.1", "numbered"),
     ]
 
 
-def test_a_table_directly_in_a_slot_with_sub_slots_gives_its_cells_no_number(client: TestClient) -> None:
-    fx = _setup(client)  # 표가 5 칸에 직접 놓여 있다
-    (table,) = _items_in(_get_output(client, fx.bundle_id, "outputs/c")["docs"][0], PARENT_SLOT)
+def test_a_table_directly_in_the_category_table_gives_its_cells_no_number(client: TestClient) -> None:
+    fx = _setup(client)  # 표가 5장(범주 표)에 직접 놓여 있다 — 글머리 기호가 기본이다
+    (table,) = _items_in(_get_output(client, fx.bundle_id, "outputs/c")["docs"][0], "general_requirements")
 
-    assert (table["number"], table["number_style"]) == (None, "numbered")
-    assert {(child["number"], child["number_style"]) for child in table["children"]} == {(None, "numbered")}
+    assert (table["number"], table["number_style"]) == (None, "bullet")
+    assert {(child["number"], child["number_style"]) for child in table["children"]} == {(None, "bullet")}
 
-    # 하위 칸으로 옮긴 표는 번호를 받고 칸은 그 번호를 따른다
+    # 절차로 옮긴 표는 번호 줄이 되고 칸은 그 번호를 따른다
     edits = {table["target_id"]: {"slot_key": SUB_SLOT, "indent_level": 0}}
     response = _put_order(client, fx.bundle_id, _order_body(client, fx, 0, fx.sop_id, edits))
     assert response.status_code == 200, response.text
     (table,) = _items_in(_get_output(client, fx.bundle_id, "outputs/c")["docs"][0], SUB_SLOT)
-    assert table["number"] == "5.1.1"
-    assert [cell["number"] for cell in table["children"] if cell["cell_row"] is not None] == ["5.1.1"] * 4
+    assert (table["number"], table["number_style"]) == ("6.1.1", "numbered")
+    assert [cell["number"] for cell in table["children"] if cell["cell_row"] is not None] == ["6.1.1"] * 4
 
 
 def test_slot_heading_of_a_slot_with_sub_slots_keeps_the_slot_number(client: TestClient) -> None:
@@ -754,4 +984,21 @@ def test_slot_heading_of_a_slot_with_sub_slots_keeps_the_slot_number(client: Tes
     rows = {row["unit_id"]: row for row in _get_output(client, bundle_id, "outputs/a")}
 
     # 칸 제목의 번호는 칸 번호 그대로, 그 칸에 직접 놓인 줄만 번호가 없다
-    assert (rows[head["id"]]["dest_number"], rows[line["id"]]["dest_number"]) == ("5", "")
+    assert (rows[head["id"]]["dest_number"], rows[line["id"]]["dest_number"]) == ("6", "")
+
+
+def test_reorder_keeps_a_sent_mark_even_when_it_equals_the_stored_one(client: TestClient) -> None:
+    # 옮긴 뒤 표시를 도로 고른 줄 — 지금 값과 같은 표시를 실어 보내도 도착 칸의 기본 표시(번호)로 바뀌지 않는다
+    bundle_id, sop_id, doc_id = _create_sop_bundle(client, p(LEAD_EN))
+    view = get_view(client, bundle_id, doc_id)
+    target_id = assign_as_is(client, bundle_id, find_unit(view, LEAD_EN), sop_id, slot_key="purpose")["targets"][0]["id"]
+    assert _read_slot_lines(client, bundle_id, "purpose") == [(LEAD_EN, None, "bullet")]
+
+    response = _put_order(client, bundle_id, {
+        "revision": get_bundle(client, bundle_id)["revision"], "target_doc_id": sop_id,
+        "items": [{"target_id": target_id, "slot_key": "procedures.p1", "number_style": "bullet"}],
+    })
+
+    assert response.status_code == 200, response.text
+    assert response.json()["items"][0]["number_style"] == "bullet"
+

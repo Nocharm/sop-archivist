@@ -51,7 +51,7 @@ import { navigate } from "@/lib/nav-buffer";
 import { PARENT_REFUSAL_KEYS, buildParentCard, canDragParent, canUndoParentMove, resolveParentDrop } from "@/lib/parent-drop-model";
 import { getRevealScrollTop, readUntransformedBox } from "@/lib/reveal-scroll";
 import { saveBlob } from "@/lib/save-file";
-import { buildSlotRows, canUndoRestore, isNaEditDirty, listUsedReasons, summarizeSlots, type NaEdit, type SlotKey, type SlotRow, type SlotSummary } from "@/lib/slot-status-model";
+import { buildSlotRows, canUndoRestore, formatSlotName, isNaEditDirty, listUsedReasons, summarizeSlots, type NaEdit, type SlotKey, type SlotRow, type SlotSummary } from "@/lib/slot-status-model";
 import { NEW_DOCUMENTS_ANCHOR } from "@/lib/stages";
 import { ADD_PREVIEW_KEYS, describeAdd, listEquisHints, planAddRows, readCodes, type AddPreview } from "@/lib/tobe-add-model";
 import { createDraft, orderDocs, type DraftDoc } from "@/lib/tobe-draft";
@@ -271,7 +271,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
     setNaEdit(next);
   }
 
-  /** N/A를 바로 지운다 - 그 칸은 빈 칸(또는 정할 칸)으로, 덮였던 하위 칸도 제 상태로 돌아간다. 알림의 Undo가 지우기 전의 사유로 다시 저장한다 */
+  /** N/A를 바로 지운다 - 그 칸은 빈 칸으로, 덮였던 하위 칸도 제 상태로 돌아간다. 알림의 Undo가 지우기 전의 사유로 다시 저장한다 */
   async function restoreNa(doc: DraftDoc, row: SlotRow) {
     if (writesRef.current > 0) return;
     const docId = readDocId(doc.key);
@@ -280,7 +280,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
     if (!(await runWrite(() => clearNaSlot(bundleId, docId, row.key)))) return;
     // 알림은 같은 글이면 앞의 것을 지운다 - 문서 번호를 적어 두 SOP의 같은 칸을 잇달아 되돌려도 알림마다 제 Undo가 남게
     const restoredIn = bundleId;
-    showToast(t("tobe.slots.restored", { number: row.number, name: row.label, code: doc.code }), "ok", {
+    showToast(t("tobe.slots.restored", { name: formatSlotName(row), code: doc.code }), "ok", {
       action: { label: t("common.undo"), run: () => void naUndoRef.current(restoredIn, docId, row.key, reason) },
     });
     setNaEdit((current) => (current !== null && current.docKey === doc.key && current.slotKey === row.key ? null : current));
@@ -681,7 +681,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
                   const docId = readDocId(doc.key);
                   const equis = equisByCode.get(normalizeDocNumber(doc.code)) ?? null;
                   const hints = canEdit ? listEquisHints(doc, equis) : [];
-                  // SOP 줄의 칸 15개 - 줄과 펼친 곳의 표가 같은 값을 쓴다(줄마다 한 번)
+                  // SOP 줄의 칸(그 문서 골격의 항목) - 줄과 펼친 곳의 표가 같은 값을 쓴다(줄마다 한 번)
                   const slotRows = saved !== undefined && saved.doc_type === "sop" ? buildSlotRows(tobe, saved) : null;
                   const slots = slotRows === null ? null : { rows: slotRows, summary: summarizeSlots(slotRows) };
                   const isLoose = doc.doc_type === "wi" && depth === 0;

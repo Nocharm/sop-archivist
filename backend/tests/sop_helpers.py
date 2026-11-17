@@ -4,11 +4,65 @@ from collections.abc import Iterable
 
 import httpx2
 from fastapi.testclient import TestClient
+from sqlalchemy import select
+
+from app.db import SessionLocal
+from app.sop.models import TargetDocOutlineItem
+from app.sop.outline import (
+    TEMPLATE_OUTLINE,
+    DocOutline,
+    OutlineItemInfo,
+    build_declared_item,
+    build_new_doc_items,
+    get_parent_key,
+)
 
 AUTHOR = {"X-Dev-User": "qa.member"}
 REVIEWER = {"X-Dev-User": "qa.lead"}
 OUTSIDER = {"X-Dev-User": "prod.member"}
 ADMIN = {"X-Dev-User": "dev.admin"}
+
+# 새 SOP 문서가 받는 골격의 키(기본 표준 = 회사 템플릿, 그리고 첫 절차) — 골격 순서
+NEW_SOP_KEYS = tuple(item.key for item in DocOutline(build_new_doc_items(TEMPLATE_OUTLINE)).items)
+
+
+def build_sop_outline(declared: Iterable[tuple[str, str]] = ()) -> DocOutline:
+    """새 SOP 문서가 받는 골격에 선언 항목 (키, 영문 제목)을 형제 끝에 더한 값 객체 — DB 없이 골격을 쓰는 시험용."""
+    items: list[OutlineItemInfo] = build_new_doc_items(TEMPLATE_OUTLINE)
+    for position, (key, title_en) in enumerate(declared, start=1):
+        parent = next(item for item in items if item.key == get_parent_key(key))
+        items.append(build_declared_item(parent, key, title_en, order_index=position))
+    return DocOutline(items)
+
+
+def declare_outline_item(client: TestClient, target_doc_id: int, key: str, title_en: str) -> None:
+    """SOP 문서의 골격 사본에 선언 항목(6장 절차·9장 부록·5장 범주) 하나를 DB에 바로 넣는다 — 부모는 키의 마지막 점 앞, 자리는 형제 끝.
+
+    문서마다 선언하는 API는 표준 골격 계획 스텝 5에서 생긴다. 그때까지 시험과 시드가 선언 항목을 만드는 한 곳이다(묶음 revision은
+    올리지 않는다). 앱의 이벤트 루프에서 돌려(client.portal) 앱과 같은 연결 풀을 쓴다 — client는 `with TestClient(app)` 안의 것이어야 한다.
+    """
+    async def _insert() -> None:
+        async with SessionLocal() as session:
+            rows = list(
+                await session.scalars(
+                    select(TargetDocOutlineItem).where(TargetDocOutlineItem.target_doc_id == target_doc_id)
+                )
+            )
+            parent_key = get_parent_key(key)
+            parent = next(row for row in rows if row.key == parent_key)
+            siblings = [row.order_index for row in rows if get_parent_key(row.key) == parent_key]
+            item = build_declared_item(parent, key, title_en, order_index=max(siblings, default=-1) + 1)
+            session.add(
+                TargetDocOutlineItem(
+                    target_doc_id=target_doc_id, key=item.key, order_index=item.order_index, title_en=item.title_en,
+                    title_ko=item.title_ko, kind=item.kind, is_required=item.is_required,
+                    default_style=item.default_style, child_prefix=item.child_prefix, origin=item.origin,
+                )
+            )
+            await session.commit()
+
+    assert client.portal is not None, "declare_outline_item needs a TestClient inside its context manager"
+    client.portal.call(_insert)
 
 
 def create_bundle(

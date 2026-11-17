@@ -20,6 +20,7 @@ from tests.sop_helpers import (
     assign_as_is,
     build_as_is_targets,
     create_bundle,
+    declare_outline_item,
     find_unit,
     get_group_by_unit,
     get_view,
@@ -76,11 +77,12 @@ def _upload_ready(client: TestClient, bundle_id: int, data: bytes, name: str, **
 
 
 def _setup(client: TestClient) -> Fixture:
-    """To-Be(SOP 하나 — procedures·scope N/A, 그 아래 WI 하나 — 1단계)와 옛 문서 하나를 올린 묶음."""
+    """To-Be(SOP 하나 — procedures·scope N/A, 5장 범주 Work 선언, 그 아래 WI 하나 — 1단계)와 옛 문서 하나를 올린 묶음."""
     bundle = create_bundle(client, is_synthetic=True)
     response = put_tobe(client, bundle["id"], TOBE_DOCS, na_slots=NA_SLOTS, wi_steps=WI_STEPS)
     assert response.status_code == 200, response.text
     codes = {doc["code"]: doc["id"] for doc in response.json()["docs"]}
+    declare_outline_item(client, codes["SOP-NEW"], "general_requirements.work", "Work")
     data = build_docx(OLD_BODY, headers=OLD_HEADERS, media={"image1.png": TINY_PNG})
     doc = _upload_ready(client, bundle["id"], data, OLD_NAME)
     return Fixture(bundle["id"], codes["SOP-NEW"], codes["WI-01"], doc, get_view(client, bundle["id"], doc["id"]))
@@ -107,7 +109,7 @@ def _reason(response: httpx2.Response) -> str:
 def _merge(client: TestClient, fx: Fixture, first: dict, second: dict, doc_id: int | None = None) -> dict:
     """두 단위를 SOP 한 문장으로 합쳐 확정한다."""
     target = _target(
-        "merged", doc_id or fx.sop_id, [first, second], slot_key="general_requirements.operation",
+        "merged", doc_id or fx.sop_id, [first, second], slot_key="general_requirements.work",
         text="합성 장비를 5분간 예열하고 기록은 보관한다.", change_type="rewritten",
     )
     response = save_group(client, fx.bundle_id, _body([_unit_in(first), _unit_in(second)], [target]))
@@ -256,7 +258,7 @@ def test_group_must_be_closed(client: TestClient) -> None:
     fx = _setup(client)
     first, second = find_unit(fx.view, WARM_UP), find_unit(fx.view, RECORDS)
     target = _merge(client, fx, first, second)["targets"][0]
-    existing = {"key": "t", "id": target["id"], "revision": 1, "slot_key": "general_requirements.operation",
+    existing = {"key": "t", "id": target["id"], "revision": 1, "slot_key": "general_requirements.work",
                 "change_type": "rewritten"}
 
     # 합친 문장의 한 출처만 보내면 그 문장의 다른 출처가 묶음 밖에 남는다
@@ -276,8 +278,8 @@ def test_group_save_with_one_stale_revision_changes_nothing(client: TestClient) 
     target = _merge(client, fx, first, second)["targets"][0]
     # 다른 작성자가 둘을 나눠 다시 저장하려는데 둘째 단위의 revision만 낡았다
     split = [
-        _target("a", fx.sop_id, [first], slot_key="general_requirements.operation"),
-        _target("b", fx.sop_id, [second], slot_key="general_requirements.operation"),
+        _target("a", fx.sop_id, [first], slot_key="general_requirements.work"),
+        _target("b", fx.sop_id, [second], slot_key="general_requirements.work"),
     ]
 
     response = save_group(
@@ -300,8 +302,12 @@ def test_group_save_with_one_stale_revision_changes_nothing(client: TestClient) 
     ("place", "location", "reason"),
     [
         ("sop", {"slot_key": "scope"}, "na_slot"),
-        ("sop", {"slot_key": "procedures.maintenance"}, "na_slot"),  # 상위 칸 N/A는 하위 칸도 덮는다
+        ("sop", {"slot_key": "procedures.p1"}, "na_slot"),  # 상위 칸 N/A는 하위 칸도 덮는다
         ("sop", {"slot_key": "nope"}, "unknown_slot"),
+        # 묶음 제목(7·7.1)과 자동 목록(7.2)은 줄을 받지 않는다
+        ("sop", {"slot_key": "document_relationships"}, "slot_not_assignable"),
+        ("sop", {"slot_key": "document_relationships.associated_documents"}, "slot_not_assignable"),
+        ("sop", {"slot_key": "document_relationships.work_instructions"}, "slot_not_assignable"),
         ("sop", {"slot_key": "purpose", "wi_part": "instruction"}, "invalid_location"),
         ("wi", {"wi_step": 9, "wi_part": "instruction"}, "unknown_wi_step"),
         ("wi", {"wi_step": 1}, "wi_part_required"),

@@ -9,6 +9,7 @@ import type {
   Group,
   GroupSaveInput,
   GroupTarget,
+  OutlineItem,
   TargetInput,
   TargetPosition,
   ToBe,
@@ -123,8 +124,13 @@ export function getDestinationId(destination: Destination): string {
   }
 }
 
+/** 나무·메뉴에 적는 칸 이름 - 그 항목의 이름만. 번호를 따로 적지 않는 항목(부록 - shows_number false)은 번호가 든 이름 "Appendix 2. 제목" */
+function readPlaceName(item: OutlineItem): string {
+  return item.shows_number ? item.title_en : item.label;
+}
+
 /**
- * To-Be 목록 → 메뉴 항목. SOP는 그 문서 골격에서 문장을 직접 받는 칸(is_assignable, 뺀 항목 제외)을 골격 순서대로,
+ * To-Be 목록 → 메뉴 항목. SOP는 그 문서 골격에서 문장을 직접 받는 칸(is_assignable, 뺀 항목 제외 - 묶음과 앱이 채우는 목록은 보낼 곳이 아니다)을 골격 순서대로,
  * WI는 단계마다 Instruction·Why(단계가 없으면 단계 없는 Instruction·Why). 입구 2 문서는 이 화면의 보낼 곳이 아니다.
  * 칸 이름은 그 항목의 이름만이다(조상 이름은 붙이지 않는다 - 나무가 depth로 위계를 보인다)
  */
@@ -145,7 +151,7 @@ export function buildDestinationOptions(tobe: ToBe): DestinationOption[] {
         if (!item.is_assignable) continue;
         const slotKey = item.key;
         const disabled = isNa(slotKey);
-        const place = { docCode: doc.code, label: item.title_en, depth: item.level };
+        const place = { docCode: doc.code, label: readPlaceName(item), depth: item.level };
         // N/A가 아닌 칸마다 칸 줄 바로 앞에 칸 제목 자리를 둔다
         if (!disabled) {
           const heading: Destination = { kind: "slot_heading", docId: doc.id, slotKey };
@@ -184,6 +190,50 @@ export function isPlaceOption(option: Pick<DestinationOption, "destination">): b
 /** 나무에 보일 항목 - 칸 제목 자리는 줄이 칸 제목을 받을 수 있을 때만 */
 export function listTreeOptions(options: DestinationOption[], canPickHeading: boolean): DestinationOption[] {
   return canPickHeading ? options : options.filter(isPlaceOption);
+}
+
+/**
+ * 나무의 줄 - 보낼 곳(place)이거나, 문장을 받지 않는 상위 항목(묶음)의 이름 줄(heading).
+ * 이름 줄은 보낼 곳이 아니다: 고를 수 없고 끌어 놓을 수도 없다(보낼 곳 목록 DestinationOption에는 들어 있지 않다)
+ */
+export type TreeRow =
+  | { kind: "place"; option: DestinationOption }
+  | { kind: "heading"; id: string; docCode: string; label: string; depth: number; isNa: boolean };
+
+/**
+ * 나무에 그릴 줄 - 보낼 곳 사이에, 문장을 받지 않는 조상 항목(7 Document Relationships › 7.1 Associated Documents)의 이름 줄을 그 아래 첫 칸 앞에 끼운다.
+ * 하위 칸이 제 자리를 잃지 않게 하는 것이라, 아래에 보낼 곳이 하나도 없는 항목과 앱이 채우는 목록은 줄이 없다
+ */
+export function listTreeRows(tobe: ToBe, options: readonly DestinationOption[]): TreeRow[] {
+  const outlines = new Map<string, Map<string, OutlineItem>>();
+  for (const item of tobe.outline_items) {
+    if (item.is_removed) continue;
+    if (!outlines.has(item.code)) outlines.set(item.code, new Map());
+    outlines.get(item.code)?.set(item.key, item);
+  }
+  const naKeys = new Set(tobe.na_slots.map((slot) => `${slot.code}\n${slot.slot_key}`));
+  const shown = new Set<string>();
+  const rows: TreeRow[] = [];
+  for (const option of options) {
+    const { destination } = option;
+    if (destination.kind === "slot" || destination.kind === "slot_heading") {
+      const items = outlines.get(option.docCode);
+      const findParent = (key: string): OutlineItem | undefined => items?.get(items.get(key)?.parent_key ?? "");
+      // 조상 - 가까운 것부터 모아, 바깥 항목부터 그리려고 뒤집는다
+      const ancestors: OutlineItem[] = [];
+      for (let item = findParent(destination.slotKey); item !== undefined; item = findParent(item.key)) ancestors.push(item);
+      ancestors.reverse();
+      ancestors.forEach((item, index) => {
+        const id = `group:${destination.docId}:${item.key}`;
+        if (item.is_assignable || shown.has(id)) return;
+        shown.add(id);
+        const isNa = ancestors.slice(0, index + 1).some((above) => naKeys.has(`${option.docCode}\n${above.key}`));
+        rows.push({ kind: "heading", id, docCode: option.docCode, label: readPlaceName(item), depth: item.level, isNa });
+      });
+    }
+    rows.push({ kind: "place", option });
+  }
+  return rows;
 }
 
 /** 저장된 판단·새 문장에서 지금 보낼 곳을 읽는다. 여러 곳이면 첫 새 문장 기준 */

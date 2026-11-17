@@ -605,9 +605,11 @@ export interface OutlineItem {
   level: number;
   /** "5"·"5.1" - 번호 없는 항목은 null */
   number: string | null;
+  /** 번호를 이름 앞에 적는가 - 머리말을 쓰는 부모의 하위(부록)만 false: 이름(label "Appendix 2. …")에 번호가 이미 들어 있어 label만 적는다. number("2")는 줄 번호의 머리로 그대로 쓴다 */
+  shows_number: boolean;
   title_en: string;
   title_ko: string;
-  /** 조상까지 이은 이름 "General Requirements › Safety" */
+  /** 조상까지 이은 이름 "General Requirements › Safety" - 부록은 "Appendix n. 제목" */
   label: string;
   kind: OutlineKind;
   is_required: boolean;
@@ -1174,14 +1176,24 @@ export interface FlowGraph {
 /** 줄 번호 표시 - backend app/sop/constants.py NumberStyle과 같은 값 */
 export type NumberStyle = "numbered" | "bullet" | "omitted" | "note";
 
+/** 앱이 채우는 목록 절(auto_list)의 한 줄 - 그 SOP의 자식 WI. 사람이 고치지 않는다 */
+export interface AutoItem {
+  code: string;
+  title: string;
+}
+
 /** 결과물 C·Assign New 칸의 절이 골격에서 받아 오는 것 - 화면이 칸 키로 규칙을 다시 풀지 않는다 */
 export interface SectionOutline {
-  /** 골격 항목의 종류 - WI 단계·입구 2 문서의 절(path:)은 null */
+  /** 골격 항목의 종류 - WI 단계·입구 2 문서의 절(path:)은 null. group·auto_list 절은 문장을 받지 않는다(items가 늘 비어 있다) */
   kind: OutlineKind | null;
   level: number;
   /** 이 절에 직접 놓인 줄에 번호를 세는가(OutlineItem.counts_lines) */
   counts_lines: boolean;
   default_style: NumberStyle;
+  /** 절 머리에 번호를 적는가(OutlineItem.shows_number) - 부록만 false이고 머리는 label만 적는다. 그때도 절의 number는 줄 번호의 머리다. WI 단계·path: 절은 true */
+  shows_number: boolean;
+  /** 앱이 채우는 목록 절(auto_list)의 줄 - To-Be 순서. 그 밖의 절은 빈 배열 */
+  auto_items: AutoItem[];
 }
 
 export interface OutputCItem {

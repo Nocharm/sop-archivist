@@ -29,22 +29,14 @@ OutlineKind = Literal["general", "category_table", "named_children", "auto_list"
 OUTLINE_KINDS: tuple[OutlineKind, ...] = get_args(OutlineKind)
 OutlineOrigin = Literal["standard", "declared", "custom"]  # 문서 사본 항목이 온 곳: 표준에서 복사 | 문서가 선언 | 사용자 항목
 OUTLINE_ORIGINS: tuple[OutlineOrigin, ...] = get_args(OutlineOrigin)
-# 옛 고정 15칸 — 지금은 표준 골격의 첫 내용(outline.LEGACY_OUTLINE)의 재료와 시험 값으로만 쓴다. 칸은 문서의 골격 사본에서 읽는다
-SLOT_KEYS = (
-    "purpose", "scope", "definitions", "responsibilities",
-    "general_requirements", "general_requirements.safety", "general_requirements.operation",
-    "procedures", "procedures.procedure", "procedures.electronic_record_control",
-    "procedures.troubleshooting", "procedures.maintenance",
-    "document_relationships", "document_relationships.attachments", "document_relationships.appendices",
-)
-EQUIPMENT_SLOT_KEYS = ("procedures.electronic_record_control", "procedures.troubleshooting", "procedures.maintenance")
 SEMANTIC_CHECK_KEYS = ("numbers", "conditions", "tables", "figures")
 SYSTEM_HOLD_RELATED_CHANGED = "system:related_unit_changed"  # 화면은 "관련 단위가 바뀜"으로 보인다
 MAX_PAIR_SIDE = 3  # 한/영 짝 한쪽 최대 단위 수(작은 다대다)
 # 새 문장 들여쓰기 최대 깊이 — 9면 칸 번호 아래로 열 단계(6.1.1 … 6.1.1.1.1.1.1.1.1.1)까지. 순서 바꾸기 입력의 상한이다
 MAX_INDENT_LEVEL = 9
 # 새 문장 번호 표시 — 번호(기본) | 번호 생략 | 주석(번호 없이 기울임) | 글머리 기호. 번호가 아닌 줄은 번호를 받지 않고 다음 번호 줄이 이어 센다.
-# 글머리 기호 줄만 결과물 A·Excel의 No.에 그 칸의 번호를 적는다(outputs.number_bullets). 값은 8자까지다(target_sentences.number_style)
+# 글머리 기호 줄은 결과물 A·Excel의 No.에 그 절(번호 없는 범주면 가장 가까운 번호 있는 상위 절)의 번호를 적는다(outputs.number_bullets).
+# 값은 8자까지다(target_sentences.number_style). SOP 줄의 기본값은 놓인 골격 항목의 default_style이다(target_placement)
 NumberStyle = Literal["numbered", "omitted", "note", "bullet"]
 NUMBER_STYLES: tuple[NumberStyle, ...] = get_args(NumberStyle)
 NUMBERED, NUMBER_OMITTED, NUMBER_NOTE, NUMBER_BULLET = NUMBER_STYLES

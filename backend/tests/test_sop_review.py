@@ -429,39 +429,16 @@ def test_next_action_puts_versions_after_documents(client: TestClient) -> None:
 # --- 알림 ---
 
 
-def test_equipment_notice_does_not_block(client: TestClient) -> None:
-    na_slots = [{"code": "SOP-EQ", "slot_key": "procedures.maintenance", "reason": "Synthetic: not applicable"}]
-    fx = _make_ready(client, docs=[EQUIPMENT_DOC], na_slots=na_slots)
+def test_equipment_sop_has_no_fixed_sections_to_fill(client: TestClient) -> None:
+    # 장비 SOP에 따로 채우거나 N/A로 둘 고정 자리가 없다 — 빈 절차가 있어도 알림이 없고 검토 요청도 그대로 된다
+    fx = _make_ready(client, docs=[EQUIPMENT_DOC])
 
     readiness = _get_readiness(client, fx.bundle_id)
     requested = _request(client, fx.bundle_id)
 
-    expected = [
-        {
-            "code": "equipment_sop_empty_slots", "doc_code": "SOP-EQ",
-            "slot_keys": ["procedures.electronic_record_control", "procedures.troubleshooting"],
-        }
-    ]
-    assert (readiness["ready"], readiness["blockers"], readiness["notices"]) == (True, [], expected)
+    assert (readiness["ready"], readiness["blockers"], readiness["notices"]) == (True, [], [])
     assert requested.status_code == 200, requested.text
     assert requested.json()["status"] == "in_review"
-
-
-def test_equipment_notice_skips_filled_and_not_applicable_slots(client: TestClient) -> None:
-    filled = _setup(client, docs=[EQUIPMENT_DOC])
-    _confirm(client, filled, KO_1, slot_key="procedures.troubleshooting")
-    parent_na = [{"code": "SOP-EQ", "slot_key": "procedures", "reason": "Synthetic: no procedures"}]
-    covered = _setup(client, docs=[EQUIPMENT_DOC], na_slots=parent_na)
-    plain = _setup(client)
-
-    assert _get_readiness(client, filled.bundle_id)["notices"] == [
-        {
-            "code": "equipment_sop_empty_slots", "doc_code": "SOP-EQ",
-            "slot_keys": ["procedures.electronic_record_control", "procedures.maintenance"],
-        }
-    ]
-    assert _get_readiness(client, covered.bundle_id)["notices"] == []  # 상위 칸 N/A가 하위 칸을 덮는다
-    assert _get_readiness(client, plain.bundle_id)["notices"] == []  # 장비 SOP가 아니면 알리지 않는다
 
 
 def test_sentence_warnings_notice_counts_sentences(client: TestClient) -> None:

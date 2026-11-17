@@ -42,6 +42,12 @@ describe("addEdit", () => {
     expect(numbersOf(numberDoc(wi))).toEqual([[[1, "3.1"]], [[2, "3.2"]], [[3, null]]]);
   });
 
+  it("numbers the first appendix on its own, not as a run with chapter 1", () => {
+    // 1장과 첫 부록은 번호가 둘 다 "1"이다 - 부록(머리에 번호를 적지 않는 절)은 따로 세어 1.1부터다
+    const sop = doc([section("1", [line(1, null), line(2, null)], "purpose"), section("1", [line(3, null)], "appendices.a1", { shows_number: false })]);
+    expect(numbersOf(numberDoc(sop))).toEqual([[[1, "1.1"], [2, "1.2"]], [[3, "1.1"]]]);
+  });
+
   it("indents and marks one line, skipping omitted and note lines and giving table cells the table number", () => {
     const table = line(3, "5.3", { kind: "table", lang: "neutral", children: [line(31, "5.3"), line(32, "5.3")] });
     const start = startDraft(doc([section("5", [line(1, "5.1"), line(2, "5.2"), table])]));
@@ -299,6 +305,42 @@ describe("addEdit place across sections", () => {
     expect(addEdit(mixed, { ...wiPlace("procedures") })).toBeNull();
     expect(addEdit(mixed, { kind: "place", locationKey: "procedures", toLocationKey: "step:1:instruction", targetIds: [2], beforeId: null, depths: [0] })).toBeNull();
   });
+  it("refuses a section that takes no sentences: a group or the auto list", () => {
+    const start = startDraft(doc([
+      section("1", [line(1, "1.1")], "purpose"),
+      section("7", [], "document_relationships", { kind: "group", counts_lines: false }),
+      section("7.2", [], "document_relationships.work_instructions", { kind: "auto_list", counts_lines: false, auto_items: [{ code: "WI-1", title: "T" }] }),
+      section("7.3", [], "document_relationships.references"),
+    ]));
+    const to = (key: string) => ({ kind: "place" as const, locationKey: "purpose", toLocationKey: key, targetIds: [1], beforeId: null, depths: [0] });
+    expect(addEdit(start, to("document_relationships"))).toBeNull();
+    expect(addEdit(start, to("document_relationships.work_instructions"))).toBeNull();
+    expect(addEdit(start, to("document_relationships.references"))).not.toBeNull();
+  });
+  it("turns Numbered and Bullet into the destination section's default mark, and leaves No number and Note alone", () => {
+    // 템플릿 골격 - 1장은 글머리 기호, 6.1 절차는 번호가 기본이다
+    const marks: NumberStyle[] = ["bullet", "omitted", "note"];
+    const start = startDraft(doc([
+      section("1", marks.map((style, index) => line(index + 1, null, { number_style: style })), "purpose", { default_style: "bullet" }),
+      section("6.1", [line(4, "6.1.1"), line(5, "6.1.2")], "procedures.p1"),
+    ]));
+    const into = addEdit(start, { kind: "place", locationKey: "purpose", toLocationKey: "procedures.p1", targetIds: [1, 2, 3], beforeId: 5, depths: [0, 0, 0] })!;
+    // 글머리 기호 줄만 번호 줄이 되어 6.1.2를 받고, 뒤의 줄이 6.1.3으로 밀린다
+    expect(into.shown.sections[1].items.map((i) => [i.target_id, i.number_style, i.number])).toEqual([[4, "numbered", "6.1.1"], [1, "numbered", "6.1.2"], [2, "omitted", null], [3, "note", null], [5, "numbered", "6.1.3"]]);
+    // 바뀐 표시는 요청에 실린다 - 서버가 같은 규칙으로 바꾸므로 같은 값이다
+    expect(sendDraft(into).items.find((item) => item.target_id === 1)).toEqual({ target_id: 1, slot_key: "procedures.p1", indent_level: 0, number_style: "numbered" });
+    // 칸이 바뀐 줄은 표시가 그대로여도 싣는다 - 표시 없는 옮김은 서버가 도착 칸의 기본으로 바꾼다
+    expect(sendDraft(into).items.find((item) => item.target_id === 2)).toEqual({ target_id: 2, slot_key: "procedures.p1", indent_level: 0, number_style: "omitted" });
+    // 번호 줄을 글머리 기호가 기본인 칸으로 - 번호가 없어지고 남은 줄이 당겨 센다
+    const back = addEdit(start, { kind: "place", locationKey: "procedures.p1", toLocationKey: "purpose", targetIds: [4], beforeId: null, depths: [0] })!;
+    expect(back.shown.sections[0].items.at(-1)).toMatchObject({ target_id: 4, number_style: "bullet", number: null });
+    expect(back.shown.sections[1].items.map((i) => [i.target_id, i.number])).toEqual([[5, "6.1.1"]]);
+  });
+  it("keeps the mark of a line that moves to another WI step", () => {
+    const start = startDraft({ ...doc([section("1", [line(1, null, { number_style: "bullet" })], "step:1:instruction"), section("2", [], "step:2:instruction", { default_style: "numbered" })]), doc_type: "wi" });
+    const moved = addEdit(start, { kind: "place", locationKey: "step:1:instruction", toLocationKey: "step:2:instruction", targetIds: [1], beforeId: null, depths: [0] })!;
+    expect(moved.shown.sections[1].items[0]).toMatchObject({ target_id: 1, number_style: "bullet", number: null });
+  });
   it("keeps an in-section place the same with or without toLocationKey", () => {
     const start = startDraft(doc([section("5", [line(1, "5.1"), line(2, "5.2"), line(3, "5.3"), line(4, "5.4")])]));
     const plain = { kind: "place" as const, locationKey: "s5", targetIds: [3, 4], beforeId: 1, depths: null };
@@ -307,18 +349,18 @@ describe("addEdit place across sections", () => {
     expect(sendDraft(addEdit(start, withTo)!).items).toEqual(sendDraft(addEdit(start, plain)!).items);
     expect(sendDraft(addEdit(start, plain)!).items).toEqual([{ target_id: 3 }, { target_id: 4 }, { target_id: 1 }, { target_id: 2 }]);
   });
-  it("sends the new place and the depth of every line that changed section, even an unchanged depth", () => {
+  it("sends the new place, the depth and the mark of every line that changed section, even when unchanged", () => {
     expect(sendDraft(addEdit(sop, cross([2], "procedures.procedure", null))!).items).toEqual([
       { target_id: 1 },
       { target_id: 3 },
-      { target_id: 2, slot_key: "procedures.procedure", indent_level: 0 },
+      { target_id: 2, slot_key: "procedures.procedure", indent_level: 0, number_style: "numbered" },
     ]);
   });
   it("sends wi_step null, not a missing key, for the unstepped section", () => {
     const item = sendDraft(addEdit(wi, toUnstepped)!).items.find((i) => i.target_id === 1)!;
     expect(item).toHaveProperty("wi_step", null);
-    expect(item).toEqual({ target_id: 1, wi_step: null, indent_level: 0 });
-    expect(sendDraft(addEdit(wi, toStep2)!).items.find((i) => i.target_id === 1)).toEqual({ target_id: 1, wi_step: 2, indent_level: 0 });
+    expect(item).toEqual({ target_id: 1, wi_step: null, indent_level: 0, number_style: "numbered" });
+    expect(sendDraft(addEdit(wi, toStep2)!).items.find((i) => i.target_id === 1)).toEqual({ target_id: 1, wi_step: 2, indent_level: 0, number_style: "numbered" });
   });
   it("re-applies a cross-section place over the server answer and drops it quietly when the destination became N/A", () => {
     const { draft: sent } = sendDraft(addEdit(sop, { kind: "style", targetId: 3, style: "note" })!);

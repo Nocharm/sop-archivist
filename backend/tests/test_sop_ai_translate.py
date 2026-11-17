@@ -2542,8 +2542,10 @@ def test_indenting_the_source_carries_a_confirmed_translation_without_a_hold(cli
     bundle, unit, translation = make_settled_translation(client, fake_ai)
     source = get_target(client, bundle.id, unit["id"])
 
+    # 1장의 줄은 글머리 기호가 기본이다 — 번호를 세는 모습을 보려고 출처를 번호 줄로 함께 바꾼다
     response = put_order(
-        client, bundle.id, bundle.sop_id, [{"target_id": source["id"], "indent_level": 2}, {"target_id": translation.id}]
+        client, bundle.id, bundle.sop_id,
+        [{"target_id": source["id"], "indent_level": 2, "number_style": "numbered"}, {"target_id": translation.id}],
     )
 
     assert response.status_code == 200, response.text
@@ -2676,7 +2678,7 @@ def test_translation_mark_can_differ_from_its_source(client: TestClient, fake_ai
 
     assert response.status_code == 200, response.text
     assert load_translation(unit["id"]).number_style == "numbered"
-    assert read_source_style(source["id"]) == "numbered"
+    assert read_source_style(source["id"]) == "bullet"  # 출처는 그 절(1장)의 기본 표시 그대로다
 
 
 def test_source_change_does_not_overwrite_translation_mark(client: TestClient, fake_ai: FakeAi) -> None:
@@ -2763,7 +2765,7 @@ def test_new_ai_translation_is_omitted(client: TestClient, fake_ai: FakeAi) -> N
     translation = translate(client, fake_ai, bundle.id, unit["id"])
 
     assert translation.number_style == "omitted"
-    assert read_source_style(get_target(client, bundle.id, unit["id"])["id"]) == "numbered"
+    assert read_source_style(get_target(client, bundle.id, unit["id"])["id"]) == "bullet"  # 출처는 그 절(1장)의 기본 표시
 
 
 def test_a_new_translation_starts_at_its_source_depth(client: TestClient, fake_ai: FakeAi) -> None:
