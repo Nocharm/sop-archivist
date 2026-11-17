@@ -9,7 +9,7 @@
 
 import { ArrowRight, FileText, Loader2, Upload, X } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { AiSuggestChip } from "@/components/documents/ai-suggest-chip";
 import { DocStatusPill, getDocReason } from "@/components/documents/doc-status";
@@ -43,7 +43,6 @@ import { useBoxDrag } from "@/lib/use-box-drag";
 import { useLoaded } from "@/lib/use-loaded";
 
 interface UploadRow {
-  name: string;
   side: UploadSide;
   state: "waiting" | "uploading" | "done" | "error";
   document?: SopDocument;
@@ -111,16 +110,29 @@ export function UploadModal({ bundleId, initialFiles = [], onClose, onUploaded, 
   // 줄이 든 묶음 - 올린 뒤에는 보낸 쪽 그대로다(올라간 Old 문서의 번호가 앱이 고르는 쪽을 뒤집지 않게)
   const sides = rows?.map((row) => row.side) ?? plans.map((plan) => plan.side);
 
-  function patchPicked(index: number, patch: Partial<PickedFile>) {
-    setPicked((prev) => prev.map((item, at) => (at === index ? { ...item, ...patch } : item)));
+  // 줄은 자리가 아니라 id로 고친다 - 그사이 다른 줄이 빠져도 엉뚱한 파일을 건드리지 않는다
+  function patchPicked(id: string, patch: Partial<PickedFile>) {
+    setPicked((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
   }
 
+  // 단추로 쪽을 바꾸면 줄이 다른 묶음으로 옮겨 가며 다시 그려져 눌린 단추가 사라진다 - 포커스가 창 밖으로 떨어지지 않게
+  // 옮겨 간 줄의 같은 단추로 돌려놓고 보이는 곳으로 올린다(끌기와 같은 일을 자판으로도 잇달아 할 수 있게, G12)
+  const refocusRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const testId = refocusRef.current;
+    refocusRef.current = null;
+    const button = testId ? groupsRef.current?.querySelector<HTMLElement>(`[data-testid="${testId}"]`) : null;
+    if (!button) return;
+    button.focus({ preventScroll: true });
+    button.closest(".upload-item")?.scrollIntoView({ block: "nearest" });
+  }, [picked]);
+
   /** 끄는 줄을 그 자리에 놓으면 바뀔 쪽과 그 묶음 상자 - 제 묶음 위나 묶음 밖이면 null */
-  function findSideDrop(id: string, point: DragPoint): { index: number; side: UploadSide; zone: HTMLElement } | null {
+  function findSideDrop(id: string, point: DragPoint): { side: UploadSide; zone: HTMLElement } | null {
     const index = picked.findIndex((item) => item.id === id);
     const zone = findUnderPoint(point, ZONE_SELECTOR);
     const side = index < 0 ? null : resolveSideDrop(plans[index].side, readZoneSide(zone));
-    return zone && side ? { index, side, zone } : null;
+    return zone && side ? { side, zone } : null;
   }
 
   // 줄을 끌어 다른 묶음에 놓는다(설계 §9) - 창 안의 고르기일 뿐 저장이 아니고 거절도 없다. 끄는 동안의 표시는 DOM 속성뿐이다(G11)
@@ -146,7 +158,7 @@ export function UploadModal({ bundleId, initialFiles = [], onClose, onUploaded, 
     },
     onDrop: ({ id }, point) => {
       const drop = findSideDrop(id, point);
-      if (drop) patchPicked(drop.index, { side: drop.side });
+      if (drop) patchPicked(id, { side: drop.side });
     },
     // 취소 때도 - 창이 닫히며 끊긴 끌기도 치우게 문서 전체에서 찾는다
     onEnd: () => {
@@ -168,8 +180,12 @@ export function UploadModal({ bundleId, initialFiles = [], onClose, onUploaded, 
       }
       frameRef.current?.toggleAttribute("data-file-drag", isDragging);
     }
-    // 끌려온 파일 아래의 묶음 - 놓기 이벤트의 target이 포인터 아래 요소다
-    const findZone = (event: DragEvent) => (event.target instanceof Element ? event.target.closest<HTMLElement>(ZONE_SELECTOR) : null);
+    // 끌려온 파일 아래의 묶음 - 놓기 이벤트의 target이 포인터 아래 요소다(글자 위에서는 글자 마디가 올 수 있어 그 부모로 본다)
+    function findZone(event: DragEvent) {
+      const target = event.target;
+      const el = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
+      return el?.closest<HTMLElement>(ZONE_SELECTOR) ?? null;
+    }
     // 파일을 끄는 것만 받는다 - 글자나 링크를 끄는 것은 그대로 둔다
     const hasFiles = (event: DragEvent) => event.dataTransfer?.types.includes("Files") ?? false;
 
@@ -226,7 +242,7 @@ export function UploadModal({ bundleId, initialFiles = [], onClose, onUploaded, 
 
   async function handleUpload() {
     const queue = picked.map((item, index) => ({ ...item, side: plans[index].side, plan: plans[index].plan }));
-    setRows(queue.map((item): UploadRow => ({ name: item.file.name, side: item.side, state: "waiting" })));
+    setRows(queue.map((item): UploadRow => ({ side: item.side, state: "waiting" })));
     // 동시에 올리면 서버 파싱 자리(최대 2)를 다투므로 차례로 올린다 - Old 묶음의 위에서 아래, 그다음 New 묶음
     for (const index of listUploadOrder(queue.map((item) => item.side))) {
       const item = queue[index];
@@ -318,7 +334,7 @@ export function UploadModal({ bundleId, initialFiles = [], onClose, onUploaded, 
             { value: "sop", label: "SOP" },
             { value: "wi", label: "WI" },
           ]}
-          onChange={(docType) => patchPicked(index, { docType, parentCode: docType === "wi" ? item.parentCode : "" })}
+          onChange={(docType) => patchPicked(item.id, { docType, parentCode: docType === "wi" ? item.parentCode : "" })}
         />
         {code !== "" && <span className="font-mono text-xs text-ink">{code}</span>}
         {item.docType === "wi" &&
@@ -332,7 +348,7 @@ export function UploadModal({ bundleId, initialFiles = [], onClose, onUploaded, 
                 mono
                 value={item.parentCode}
                 options={[{ value: "", label: t("upload.pickParent") }, ...sopCodes.map((sop) => ({ value: sop, label: sop }))]}
-                onChange={(parentCode) => patchPicked(index, { parentCode })}
+                onChange={(parentCode) => patchPicked(item.id, { parentCode })}
               />
             </>
           ) : (
@@ -445,14 +461,23 @@ export function UploadModal({ bundleId, initialFiles = [], onClose, onUploaded, 
             {/* Old | New - 눌린 쪽이 올라갈 곳이다. 줄을 끌어 놓는 것과 같은 결과다(G12) */}
             <span className="view-toggle upload-side" role="group" aria-label={t("upload.side")}>
               {SIDES.map((side) => (
-                <button key={side} type="button" aria-pressed={plans[index].side === side} data-testid={`upload-side-${index}-${side}`} onClick={() => patchPicked(index, { side })}>
+                <button
+                  key={side}
+                  type="button"
+                  aria-pressed={plans[index].side === side}
+                  data-testid={`upload-side-${index}-${side}`}
+                  onClick={() => {
+                    refocusRef.current = `upload-side-${index}-${side}`;
+                    patchPicked(item.id, { side });
+                  }}
+                >
                   {t(`upload.side.${side}`)}
                 </button>
               ))}
             </span>
             <span className="upload-item-remove">
               <Tooltip label={t("upload.remove")} align="end">
-                <button type="button" className="btn ghost icon h-6 w-6" aria-label={t("upload.remove")} data-testid={`upload-remove-${index}`} onClick={() => setPicked((prev) => prev.filter((_, at) => at !== index))}>
+                <button type="button" className="btn ghost icon h-6 w-6" aria-label={t("upload.remove")} data-testid={`upload-remove-${index}`} onClick={() => setPicked((prev) => prev.filter((other) => other.id !== item.id))}>
                   <X size={14} strokeWidth={1.5} aria-hidden />
                 </button>
               </Tooltip>

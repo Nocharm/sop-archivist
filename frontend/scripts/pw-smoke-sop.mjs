@@ -8886,8 +8886,12 @@ await runStep("documents: the upload window sorts files into Old and New groups,
     await page.locator('[data-testid="upload-side-2-old"]').click();
     await waitGroup(2, "old");
     check("the Old button does what the drag does", (await note(2)) === "Adds WI-04 to Old documents", await note(2));
-    await page.locator('[data-testid="upload-side-2-new"]').click();
+    // 자판으로 - 줄이 다른 묶음으로 옮겨 가도(다시 그려진다) 포커스가 그 줄의 같은 단추에 남아 잇달아 누를 수 있다
+    await page.locator('[data-testid="upload-side-2-new"]').focus();
+    await page.keyboard.press("Enter");
     await waitGroup(2, "new");
+    const focused = await page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? null);
+    check("pressing New from the keyboard keeps focus on that button in the moved row", focused === "upload-side-2-new", String(focused));
 
     // 6. 올리기 단추가 꺼지는 때 - 새 줄이 생기는 WI는 상위 SOP를 골라야 한다(지금 규칙)
     await page.locator('[data-testid="upload-kind-2"]').click();
@@ -8947,7 +8951,14 @@ await runStep("documents: the upload window sorts files into Old and New groups,
     await page.dispatchEvent('[data-testid="upload-group-new"]', "drop", { dataTransfer: toAny });
     await page.waitForTimeout(300);
     check("the same file dropped again adds no row and stays where it was", (await rowCount()) === 6 && (await groupOf(5)) === "old", String(await rowCount()));
-    check("the browser did not open the dropped file", page.url() === url, page.url());
+    // 스크립트가 보낸 놓기는 브라우저가 파일을 열지 않는다 - 창이 끌기와 놓기를 가져갔는지(preventDefault)를 직접 본다
+    const taken = await page.evaluate(() => {
+      const data = new DataTransfer();
+      data.items.add(new File(["x"], "dropped-any.docx"));
+      const title = document.querySelector('[data-testid="upload"] h2');
+      return ["dragover", "drop"].map((type) => !title.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: data })));
+    });
+    check("the window takes the file drag and the drop, so the browser does not open the file", taken.every(Boolean) && page.url() === url && (await rowCount()) === 6, `${taken} | ${page.url()}`);
 
     // 9. 많은 파일 - 묶음 영역만 스크롤하고 아래 단추는 창 안에 남는다
     await input.setInputFiles(Array.from({ length: 30 }, (_, at) => bundle.made(`SYNTHETIC_many-${String(at + 1).padStart(2, "0")}.docx`)));
@@ -8967,7 +8978,7 @@ await runStep("documents: the upload window sorts files into Old and New groups,
 });
 
 // 올리는 국면 - 묶음과 줄이 제자리에 남고 줄의 아랫줄이 Waiting → Reading → 결과로 바뀐다. 차례는 Old 묶음 다음 New 묶음.
-// 받지 못한 파일을 일부러 올리므로(내용이 docx가 아니다) 콘솔 오류는 세지 않는다
+// 요청이 실패하는 줄을 일부러 만들므로(올리기 응답 하나를 500으로 바꾼다) 콘솔 오류는 세지 않는다
 await runStep("documents: uploading keeps each row in its group and shows Waiting, Reading and the result", { devUser: "dev.admin", allowConsoleErrors: true }, async ({ page }) => {
   const bundle = await openUploadBundle(page, "SYNTHETIC upload results");
   const docsRoute = `**/api/bundles/${bundle.id}/documents`;
@@ -8979,13 +8990,19 @@ await runStep("documents: uploading keeps each row in its group and shows Waitin
   try {
     await page.goto(`${BASE}/bundles/${bundle.id}/documents`);
     await bundle.openWindow();
-    // 0 OLD-6(Old) · 1 WI-05(New, 목록 줄에 붙는다) · 2 내용이 docx가 아닌 파일(번호가 없어 Old)
-    await page.locator('[data-testid="upload-files"]').setInputFiles([bundle.sample(UPLOAD_SAMPLES.old6), bundle.sample(UPLOAD_SAMPLES.wi05), bundle.made("SYNTHETIC_broken.docx", "SYNTHETIC: this is not a Word file")]);
+    // 0 OLD-6(Old) · 1 WI-05(New, 목록 줄에 붙는다) · 2 내용이 docx가 아닌 파일(번호가 없어 Old) · 3 요청이 실패할 파일(Old)
+    await page.locator('[data-testid="upload-files"]').setInputFiles([
+      bundle.sample(UPLOAD_SAMPLES.old6),
+      bundle.sample(UPLOAD_SAMPLES.wi05),
+      bundle.made("SYNTHETIC_broken.docx", "SYNTHETIC: this is not a Word file"),
+      bundle.made("SYNTHETIC_refused.docx"),
+    ]);
     await page.waitForFunction(() => document.querySelector('[data-testid="upload-side-1-new"]')?.getAttribute("aria-pressed") === "true", null, { timeout: T });
-    // 올리기 요청을 1.2초씩 늦춘다 - 읽는 중인 줄과 기다리는 줄을 볼 틈
+    // 올리기 요청을 1.2초씩 늦춘다 - 읽는 중인 줄과 기다리는 줄을 볼 틈. 줄 3의 요청은 서버에 보내지 않고 500으로 답한다
     await page.route(docsRoute, async (route) => {
       if (route.request().method() !== "POST") return route.continue();
       await new Promise((done) => setTimeout(done, 1200));
+      if (route.request().postDataBuffer()?.includes("SYNTHETIC_refused.docx")) return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ detail: "synthetic failure" }) });
       return route.continue();
     });
     // 줄이 읽는 중이 되는 차례를 적어 둔다
@@ -9003,23 +9020,39 @@ await runStep("documents: uploading keeps each row in its group and shows Waitin
     // 1. 올리는 동안
     await page.locator('[data-testid="upload-submit"]').click();
     await page.locator('[data-testid="upload-row-0-state"][data-state="uploading"]').waitFor({ timeout: T });
-    const during = [await stateOf(0), await stateOf(2), await stateOf(1)].join(" | ");
-    check("the first Old row reads Reading and the rest wait", during === "uploading:Reading | waiting:Waiting | waiting:Waiting", during);
-    const groups = [await groupOfRow(0), await groupOfRow(1), await groupOfRow(2)].join(",");
+    const during = [await stateOf(0), await stateOf(2), await stateOf(3), await stateOf(1)].join(" | ");
+    check("the first Old row reads Reading and the rest wait", during === "uploading:Reading | waiting:Waiting | waiting:Waiting | waiting:Waiting", during);
+    const groups = [await groupOfRow(0), await groupOfRow(1), await groupOfRow(2), await groupOfRow(3)].join(",");
     check(
       "the frame turns into the results and each row stays in its group",
-      (await page.locator('[data-testid="upload-results"]').count()) === 1 && (await page.locator('[data-testid="upload-picked"]').count()) === 0 && groups === "old,new,old",
+      (await page.locator('[data-testid="upload-results"]').count()) === 1 && (await page.locator('[data-testid="upload-picked"]').count()) === 0 && groups === "old,new,old,old",
       groups,
     );
+    // 올리는 동안 놓은 파일 - 받지 않되 브라우저가 열지 못하게 막기는 한다(열리면 올리던 것이 끊긴다)
+    const midDrop = await page.evaluate(() => {
+      const data = new DataTransfer();
+      data.items.add(new File(["x"], "dropped-late.docx"));
+      const zone = document.querySelector('[data-testid="upload-group-old"]');
+      return ["dragover", "drop"].map((type) => !zone.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: data })));
+    });
+    check("a file dropped while uploading is blocked and adds no row", midDrop.every(Boolean) && (await page.locator('[data-testid="upload"] .upload-item').count()) === 4 && (await page.locator("[data-drop], [data-file-drag]").count()) === 0, String(midDrop));
     check("rows no longer drag, switch side or come out, and no file can be chosen", (await page.locator('[data-testid="upload"] [data-drag-box], [data-testid^="upload-side-"], [data-testid^="upload-remove-"], [data-testid="upload-pick"]').count()) === 0);
     const isCloseOff = await page.locator('[data-testid="upload-done"]').isDisabled();
     await page.keyboard.press("Escape");
     check("Close is off and Esc does not close the window while a file is read", isCloseOff && (await page.locator('[data-testid="upload"]').count()) === 1);
 
-    // 2. 차례 - Old 묶음의 위에서 아래(줄 0 · 2), 그다음 New 묶음(줄 1)
+    // 2. 차례 - Old 묶음의 위에서 아래(줄 0 · 2 · 3), 그다음 New 묶음(줄 1)
     await page.locator('[data-testid="upload-done"]:not([disabled])').waitFor({ timeout: 120000 });
     const order = await page.evaluate(() => window.__uploadingOrder);
-    check("the Old group uploads first from the top, then the New group", JSON.stringify(order) === "[0,2,1]", JSON.stringify(order));
+    check("the Old group uploads first from the top, then the New group", JSON.stringify(order) === "[0,2,3,1]", JSON.stringify(order));
+    // 요청이 실패한 줄은 제 줄에만 까닭을 남기고, 그 뒤의 줄(줄 1)은 그대로 올라간다
+    const failed = page.locator('[data-testid="upload-row-3-reason"]');
+    const failedText = (await failed.count()) === 1 ? (await failed.innerText()).trim() : "";
+    check(
+      "a request that fails marks only its own row and the rows after it still upload",
+      (await state(3).getAttribute("data-state")) === "error" && failedText !== "" && (await groupOfRow(3)) === "old" && (await state(1).getAttribute("data-state")) === "done" && (await state(2).getAttribute("data-state")) === "done",
+      `${await state(3).getAttribute("data-state")} | ${failedText}`,
+    );
 
     // 3. 끝난 뒤 - 읽힌 Old는 그 자리에서 고치고, New는 붙은 줄의 번호, 받지 못한 파일은 까닭과 함께 제 묶음에 남는다(Review Focus 5)
     const code = (await getText(page, "upload-row-0-code")).trim();
