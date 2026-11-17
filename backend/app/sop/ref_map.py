@@ -242,11 +242,11 @@ async def _collect_others_confirmed(session: AsyncSession, bundle: Bundle) -> li
     return [line for line in lines if line.state == _CONFIRMED and _is_matchable(line.number)]
 
 
-async def collect_map_lines(session: AsyncSession, bundle: Bundle, scope: MapScope) -> list[MapLine]:
-    """지도의 줄 — 이 Bundle에서 나가는 참조·이동과, 다른 Bundle에서 이 Bundle의 번호로 들어오는 참조·이동.
+async def _collect_candidate_lines(session: AsyncSession, bundle: Bundle, scope: MapScope) -> list[MapLine]:
+    """선이 될 수 있는 줄(후보) — 이 Bundle에서 나가는 참조·이동과, 다른 Bundle에서 이 Bundle의 번호로 들어오는 참조·이동.
 
-    scope "all"은 여기에 같은 종류의 다른 Bundle의 확정한 줄을 모두 더한다. 남의 제안은 이 Bundle을 가리키는 것뿐이다.
-    한 줄(종류·Unit)은 한 번만 싣는다.
+    scope "all"은 여기에 같은 종류의 다른 Bundle의 확정한 줄을 모두 더한다. 한 줄(종류·Unit)은 한 번만 싣는다.
+    후보일 뿐이다 — 선이 되는 줄은 거르기를 모두 지난 `collect_map_lines`의 것만이다.
     """
     own = Document.bundle_id == bundle.id
     lines = _read_ref_lines((await session.execute(_select_ref_units(own))).all())
@@ -266,7 +266,9 @@ async def collect_map_lines(session: AsyncSession, bundle: Bundle, scope: MapSco
 
 
 @dataclass(frozen=True)
-class _Node:
+class MapNode:
+    """응답 마디가 되기 전의 마디 — Old 문서 · 줄이 가리키는 New 문서(target) · 어느 Bundle에도 없는 번호(num)."""
+
     id: str
     kind: Literal["old", "target", "num"]
     bundle_id: int | None
@@ -276,17 +278,17 @@ class _Node:
     key: int  # 문서 id(num은 0) — 정렬용
 
 
-def _old_node(row: Row[Any]) -> _Node:
+def _old_node(row: Row[Any]) -> MapNode:
     doc_id, bundle_id, doc_code, title = row
-    return _Node(f"old:{doc_id}", "old", bundle_id, doc_code, title, None, doc_id)
+    return MapNode(f"old:{doc_id}", "old", bundle_id, doc_code, title, None, doc_id)
 
 
 async def _resolve_numbers(
     session: AsyncSession, bundle: Bundle, numbers: set[str]
-) -> tuple[dict[str, list[_Node]], dict[str, list[_Node]]]:
+) -> tuple[dict[str, list[MapNode]], dict[str, list[MapNode]]]:
     """번호마다 맞는 읽힌 Old 문서와 New 문서(임시 번호 빼고) — 같은 종류의 모든 Bundle에서."""
-    olds: dict[str, list[_Node]] = defaultdict(list)
-    targets: dict[str, list[_Node]] = defaultdict(list)
+    olds: dict[str, list[MapNode]] = defaultdict(list)
+    targets: dict[str, list[MapNode]] = defaultdict(list)
     old_rows = await select_in_chunks(
         session,
         lambda chunk: select(Document.id, Document.bundle_id, Document.doc_code, Document.title).where(
@@ -307,12 +309,12 @@ async def _resolve_numbers(
     for target_id, bundle_id, code, title, doc_type in target_rows:
         if not is_temp_match_code(code):
             targets[normalize_number(code)].append(
-                _Node(f"target:{target_id}", "target", bundle_id, code, title, doc_type, target_id)
+                MapNode(f"target:{target_id}", "target", bundle_id, code, title, doc_type, target_id)
             )
     return olds, targets
 
 
-def _pick_ends(line: MapLine, olds: dict[str, list[_Node]], targets: dict[str, list[_Node]]) -> list[_Node]:
+def _pick_ends(line: MapLine, olds: dict[str, list[MapNode]], targets: dict[str, list[MapNode]]) -> list[MapNode]:
     """줄의 번호가 닿는 마디 — 참조는 Old 먼저, 이동은 New 먼저, 둘 다 없으면 num. 맞춰 볼 수 없는 번호의 줄은 버린다.
 
     번호 꼴을 문서와 맞추기 전에 본다 — 자유 입력 글이 번호처럼 남에게 보이지도, 남의 문서 번호와 맞아 선이 되지도 않게.
@@ -321,13 +323,58 @@ def _pick_ends(line: MapLine, olds: dict[str, list[_Node]], targets: dict[str, l
         return []
     first, second = (olds, targets) if line.kind == "ref" else (targets, olds)
     return first.get(line.number) or second.get(line.number) or [
-        _Node(f"num:{line.number}", "num", None, line.number, "", None, 0)
+        MapNode(f"num:{line.number}", "num", None, line.number, "", None, 0)
     ]
+
+
+@dataclass(frozen=True)
+class MapLink:
+    """선 하나에 드는 줄 하나 — 줄과 그 줄이 닿는 끝 마디. 선의 출발은 늘 `old:<line.document_id>`다."""
+
+    line: MapLine
+    end: MapNode
+
+
+async def load_member_bundle_ids(session: AsyncSession, login_id: str) -> set[int]:
+    """보는 사람이 구성원인 Bundle — 다른 Bundle과의 관계와 제안 줄을 쓸지가 이것 하나로 정해진다(권한은 보지 않는다)."""
+    return set(await session.scalars(select(BundleMember.bundle_id).where(BundleMember.login_id == login_id)))
+
+
+async def collect_map_lines(
+    session: AsyncSession, bundle: Bundle, member_of: set[int], scope: MapScope
+) -> list[MapLink]:
+    """지도의 선을 이루는 줄 — 지도(`build_reference_map`)도 줄 문장 API도 이것만 부른다. 선과 줄 수는 이 결과를 센 것이다.
+
+    member_of는 보는 사람의 `load_member_bundle_ids`다. 줄마다 거는 거르기(한 곳에만 둔다):
+    - 같은 종류: 모든 질의가 `_in_same_kind`로 보는 Bundle과 합성/실제가 같은 Bundle만 읽는다.
+    - 제안 줄은 그 줄의 Bundle이 이 Bundle이거나 보는 사람이 구성원인 Bundle일 때만 — 제안은 아무도 확인하지 않은 문장 글에서
+      나온다. 구성원이 아닌 Bundle은 확정한 참조·이동만 낸다(남의 문장 첫머리를 번호로 맞혀 보지 못하게).
+    - 번호 꼴(`_pick_ends`): 문서 번호 꼴이고 임시 번호가 아닌 번호만 마디와 맞춘다.
+    - 자기 참조는 선이 아니다.
+    - 양 끝이 모두 이 Bundle 밖인 줄은 범위 all의 확정한 줄만.
+    """
+    visible = member_of | {bundle.id}
+    candidates = [
+        line for line in await _collect_candidate_lines(session, bundle, scope)
+        if line.state == _CONFIRMED or line.bundle_id in visible
+    ]
+    olds, targets = await _resolve_numbers(
+        session, bundle, {line.number for line in candidates if _is_matchable(line.number)}
+    )
+    links: list[MapLink] = []
+    for line in candidates:
+        source = f"old:{line.document_id}"
+        for end in _pick_ends(line, olds, targets):
+            between_others = line.bundle_id != bundle.id and end.bundle_id != bundle.id
+            if end.id == source or (between_others and (scope != "all" or line.state != _CONFIRMED)):
+                continue
+            links.append(MapLink(line, end))
+    return links
 
 
 async def _load_old_nodes(
     session: AsyncSession, bundle: Bundle, scope: MapScope, extra_ids: set[int]
-) -> dict[str, _Node]:
+) -> dict[str, MapNode]:
     """이 Bundle(범위 all이면 같은 종류의 모든 Bundle)의 읽힌 Old 문서 전부와, 그 밖에서 선의 출발점인 Old 문서."""
     columns = (Document.id, Document.bundle_id, Document.doc_code, Document.title)
     ready = (Document.side == _OLD_SIDE, Document.status == _READY)
@@ -379,8 +426,8 @@ async def _count_documents(session: AsyncSession, bundle_ids: set[int]) -> dict[
 
 
 def _cap(
-    nodes: dict[str, _Node], edges: Counter[tuple[str, str, str, str]], bundle_id: int
-) -> tuple[list[_Node], list[tuple[tuple[str, str, str, str], int]], bool]:
+    nodes: dict[str, MapNode], edges: Counter[tuple[str, str, str, str]], bundle_id: int
+) -> tuple[list[MapNode], list[tuple[tuple[str, str, str, str], int]], bool]:
     """상한에서 자른다 — 이 Bundle의 마디 → 이 Bundle과 선으로 이어진 마디 → 나머지, 선은 두 끝이 남은 것만(계획 판단 7)."""
 
     def touches(key: tuple[str, str, str, str]) -> bool:
@@ -388,7 +435,7 @@ def _cap(
 
     linked = {end for key in edges if touches(key) for end in key[:2]}
 
-    def rank(node: _Node) -> tuple[Any, ...]:
+    def rank(node: MapNode) -> tuple[Any, ...]:
         group = 0 if node.bundle_id == bundle_id else 1 if node.id in linked else 2
         return (group, node.bundle_id is None, node.bundle_id or 0, _KIND_ORDER[node.kind], node.key, node.number)
 
@@ -412,26 +459,24 @@ async def build_reference_map(session: AsyncSession, ctx: BundleContext, scope: 
             select(Bundle.id, Bundle.title, Bundle.status).where(Bundle.is_synthetic == bundle.is_synthetic)
         )
     }
-    member_of = set(await session.scalars(select(BundleMember.bundle_id).where(BundleMember.login_id == ctx.login_id)))
+    member_of = await load_member_bundle_ids(session, ctx.login_id)
 
-    lines = await collect_map_lines(session, bundle, scope)
-    olds, targets = await _resolve_numbers(session, bundle, {line.number for line in lines if _is_matchable(line.number)})
-    nodes: dict[str, _Node] = {}
+    nodes: dict[str, MapNode] = {}
     edges: Counter[tuple[str, str, str, str]] = Counter()
-    for line in lines:
-        source = f"old:{line.document_id}"
-        for end in _pick_ends(line, olds, targets):
-            # 자기 참조는 선이 아니다. 남끼리의 선은 범위 all의 확정한 줄만 싣는다(남끼리의 추측은 세지 않는다)
-            between_others = line.bundle_id != bundle.id and end.bundle_id != bundle.id
-            if end.id == source or (between_others and (scope != "all" or line.state != _CONFIRMED)):
-                continue
-            nodes[end.id] = end
-            edges[(source, end.id, line.kind, line.state)] += 1
+    for link in await collect_map_lines(session, bundle, member_of, scope):
+        nodes[link.end.id] = link.end
+        edges[(f"old:{link.line.document_id}", link.end.id, link.line.kind, link.line.state)] += 1
     sources = {int(key[0].removeprefix("old:")) for key in edges}
     nodes.update(await _load_old_nodes(session, bundle, scope, sources))
     # 질의 사이에 지워졌거나 새로 생긴 문서·Bundle은 이번 지도에서 뺀다(잠그지 않는다 — 다시 읽으면 맞는다)
     nodes = {key: node for key, node in nodes.items() if node.bundle_id is None or node.bundle_id in bundle_rows}
     edges = Counter({key: count for key, count in edges.items() if key[0] in nodes and key[1] in nodes})
+    # 선이 빠져 매달릴 곳이 없어진 마디도 뺀다 — 선 없이 서는 것은 이 Bundle(범위 all이면 모든 Bundle)의 Old 문서뿐이다
+    ends = {end for key in edges for end in key[:2]}
+    nodes = {
+        key: node for key, node in nodes.items()
+        if key in ends or (node.kind == "old" and (scope == "all" or node.bundle_id == bundle.id))
+    }
 
     kept, kept_edges, truncated = _cap(nodes, edges, bundle.id)
     bundle_ids = {bundle.id} | {node.bundle_id for node in kept if node.bundle_id is not None}
@@ -468,7 +513,7 @@ async def build_reference_map(session: AsyncSession, ctx: BundleContext, scope: 
     return out
 
 
-def _build_node_out(node: _Node, becomes: dict[int, list[MapBecomesOut]]) -> MapNodeOut:
+def _build_node_out(node: MapNode, becomes: dict[int, list[MapBecomesOut]]) -> MapNodeOut:
     return MapNodeOut(
         id=node.id, kind=node.kind, bundle_id=node.bundle_id, number=node.number, title=node.title,
         doc_type=node.doc_type, becomes=becomes.get(node.key, []) if node.kind == "old" else [],

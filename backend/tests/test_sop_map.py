@@ -4,6 +4,7 @@
 """
 
 import re
+from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -33,6 +34,7 @@ from app.sop.models import (
 from app.sop.refs import is_document_number
 from app.sop.tobe import is_temp_match_code
 from tests.access_helpers import add_grant, run_in_session, update_row
+from tests.docx_factory import build_docx, p
 from tests.sop_helpers import (
     ADMIN,
     AUTHOR,
@@ -44,6 +46,7 @@ from tests.sop_helpers import (
     get_view,
     put_tobe,
     set_members,
+    upload,
 )
 from tests.sop_map_helpers import (
     M_EXTRA,
@@ -76,8 +79,11 @@ MAP_KEYS = {
     "scope", "truncated", "bundles", "nodes", "edges", "id", "code", "title", "status", "relation", "document_count",
     "kind", "bundle_id", "number", "doc_type", "becomes", "source", "target", "state", "lines",
 }
-P_CONFIRMED = "SOP-ABC-1020 Peer confirmed"
-P_PROPOSED = "SOP-ABC-1016 Peer proposed"
+P_CONFIRMED = "SOP-ABC-1020 ZZ-PEER-CONFIRMED synthetic"
+P_PROPOSED = "SOP-ABC-1016 ZZ-PEER-PROPOSED synthetic"
+# 범위 all만 실어 오는 P의 문장 표시 글자 — 구성원 아닌 사람의 응답에 나오면 안 된다
+PEER_MARKERS = ("ZZ-PEER-CONFIRMED", "ZZ-PEER-PROPOSED", "ZZ-PEER-EXTRA")
+HPLC_LINE = "HPLC-02 ZZ-HPLC-SENTENCE synthetic"
 
 
 def _edges_from(body: dict, source: str) -> list[dict]:
@@ -127,7 +133,7 @@ def _add_peer(client: TestClient, *extra_files: str) -> tuple[int, dict, list[di
     """
     peer_id = create_bundle(client, title="SYNTHETIC map peer", is_synthetic=True)["id"]
     doc = add_doc(client, peer_id, "SYNTHETIC_SOP-ABC-1030_Peer.docx", P_CONFIRMED, P_PROPOSED)
-    extras = [add_doc(client, peer_id, file_name, "Synthetic extra peer line.") for file_name in extra_files]
+    extras = [add_doc(client, peer_id, file_name, "ZZ-PEER-EXTRA synthetic line.") for file_name in extra_files]
     assert edit(client, peer_id, doc["id"], {
         "type": "set_ref", "unit_id": find_line(client, peer_id, doc["id"], P_CONFIRMED)["id"], "number": "SOP-ABC-1020",
     }).status_code == 200
@@ -259,11 +265,16 @@ def test_relation_follows_membership_not_permissions(
     add_grant("user", "qa.member", permission="bundle.create")
     w = World(client)
     expected = get_map(client, w.v_id)
+    # M의 제안 줄(M_REF → V)은 M의 구성원에게만 선이 된다 — ops.member는 M의 구성원이 아니다(Fix round 1 판정)
+    m_proposed = {"source": f"old:{w.m_doc['id']}", "target": f"old:{w.v_doc['id']}", "kind": "ref", "state": "proposed",
+                  "lines": 1}
+    assert m_proposed in expected["edges"]
+    expected_edges = [edge for edge in expected["edges"] if edge != m_proposed]
 
     def check_ops() -> None:
         body = get_map(client, w.v_id, OPS)
         assert [(b["relation"], b["title"]) for b in body["bundles"]] == [("self", V_TITLE), ("summary", ""), ("summary", "")]
-        assert (body["nodes"], body["edges"]) == (expected["nodes"], expected["edges"])
+        assert (body["nodes"], body["edges"]) == (expected["nodes"], expected_edges)
 
     check_ops()
     add_grant("user", "ops.member", permission="bundle.admin")
@@ -691,13 +702,14 @@ def test_no_text_of_a_non_member_bundle_leaves_the_server(
 ) -> None:
     add_grant("user", "qa.member", permission="bundle.create")  # 권한 판정을 켠 채 World를 만든다
     w = World(client)
-    _add_peer(client)
+    _add_peer(client, "SYNTHETIC_OLD-1_Twin.docx")  # P는 범위 all만 실어 온다 — P의 문장에도 표시 글자를 심었다
+    markers = (*MARKERS, *PEER_MARKERS)
 
     def check(headers: dict[str, str]) -> None:
         for scope in SCOPES:
             response = client.get(f"/api/bundles/{w.v_id}/map", params={"scope": scope}, headers=headers)
             assert response.status_code == 200, response.text
-            assert [marker for marker in MARKERS if marker in response.text] == []
+            assert [marker for marker in markers if marker in response.text] == []
 
     check(AUTHOR)
     check(REVIEWER)
@@ -711,7 +723,7 @@ def test_no_text_of_a_non_member_bundle_leaves_the_server(
     for scope in SCOPES:
         response = client.get(f"/api/bundles/{w.s_id}/map", params={"scope": scope}, headers=OUTSIDER)
         assert response.status_code == 200, response.text
-        assert [marker for marker in MARKERS if marker in response.text] == ["ZZ-BUNDLE-TITLE"]
+        assert [marker for marker in markers if marker in response.text] == ["ZZ-BUNDLE-TITLE"]
         assert [text for text in ("Operation of UV", "Calibrate the rotor", "Balance the tubes") if text in response.text] == []
 
 
@@ -764,13 +776,18 @@ def test_reading_the_map_writes_nothing(client: TestClient) -> None:
         return events, [tuple(row) for row in bundles], [tuple(row) for row in docs]
 
     before = run_in_session(read_state)
-    for scope in SCOPES:
-        get_map(client, w.v_id, scope=scope)
-        get_map(client, w.s_id, OUTSIDER, scope=scope)
+    with _record_statements() as statements:
+        for scope in SCOPES:
+            get_map(client, w.v_id, scope=scope)
+            get_map(client, w.s_id, OUTSIDER, scope=scope)
     after = run_in_session(read_state)
 
     assert len(before[1]) == len(before[2]) == 3
     assert after == before
+    # 요청이 낸 질의는 모두 잠그지 않는 SELECT다(의존성의 구성원 판정 포함)
+    assert statements
+    assert [sql for sql, _ in statements if not sql.lstrip().upper().startswith("SELECT")] == []
+    assert [sql for sql, _ in statements if "FOR UPDATE" in sql.upper() or "FOR SHARE" in sql.upper()] == []
 
 
 def test_map_is_cut_at_the_node_cap(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -792,3 +809,112 @@ def test_map_is_cut_at_the_node_cap(client: TestClient, monkeypatch: pytest.Monk
         body = get_map(client, w.v_id, scope=scope)
         assert body["truncated"] is True
         assert len(body["edges"]) == 1 and v in (body["edges"][0]["source"], body["edges"][0]["target"])
+
+
+# --- 줄과 선이 한 규칙 · 제안 줄은 구성원에게만 (Fix round 1) ---
+
+
+def _expand_links(bundle_id: int, login_id: str, scope: str) -> Counter[tuple[str, str, str, str]]:
+    """collect_map_lines가 돌려준 (줄, 끝 마디)를 선의 열쇠로 센다."""
+
+    async def collect(session: AsyncSession) -> Counter[tuple[str, str, str, str]]:
+        bundle = await session.get(Bundle, bundle_id)
+        assert bundle is not None
+        member_of = await ref_map.load_member_bundle_ids(session, login_id)
+        links = await ref_map.collect_map_lines(session, bundle, member_of, scope)  # type: ignore[arg-type]
+        return Counter((f"old:{link.line.document_id}", link.end.id, link.line.kind, link.line.state) for link in links)
+
+    return run_in_session(collect)
+
+
+def test_map_lines_match_the_edges(client: TestClient) -> None:
+    """문장 API가 다시 쓸 줄(collect_map_lines)은 지도의 선과 줄 수에 꼭 맞는다 — 줄 규칙을 두 번 쓰지 않는다."""
+    w = World(client)
+    _add_peer(client, "SYNTHETIC_OLD-1_Twin.docx")  # 셋째 Bundle의 같은 번호 · 남끼리의 확정 선 · 남의 제안 줄
+
+    for bundle_id, login_id, headers in (
+        (w.v_id, "qa.member", AUTHOR), (w.v_id, "ops.member", OPS), (w.m_id, "qa.member", AUTHOR),
+        (w.s_id, "prod.member", OUTSIDER),
+    ):
+        for scope in SCOPES:
+            body = get_map(client, bundle_id, headers, scope)
+            assert body["truncated"] is False and body["edges"]
+            edges = Counter({(e["source"], e["target"], e["kind"], e["state"]): e["lines"] for e in body["edges"]})
+            assert _expand_links(bundle_id, login_id, scope) == edges, (bundle_id, login_id, scope)
+
+
+def _upload_as(client: TestClient, bundle_id: int, headers: dict[str, str], file_name: str, *lines: str) -> dict:
+    response = upload(client, bundle_id, build_docx("".join(p(text) for text in lines)), file_name, headers=headers)
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_unconfirmed_lines_count_only_for_members_of_their_bundle(client: TestClient) -> None:
+    """S의 숨은 문장이 HPLC-02로 시작한다. S의 구성원이 아닌 작성자가 자기 New 문서 번호를 HPLC-02로 바꿔도 답이 없다.
+
+    맞힌 번호(HPLC-02)와 틀린 번호(HPLC-03)의 응답은 자기 문서 번호 말고는 글자까지 같다. S의 확정 줄은 그대로 보이고,
+    S의 구성원이 되면 제안 선도 보인다.
+    """
+    w = World(client)
+    hplc = _upload_as(client, w.s_id, OUTSIDER, "SYNTHETIC_SOP-ABC-1021_Hplc.docx", HPLC_LINE)
+    h, v, s = f"old:{hplc['id']}", f"old:{w.v_doc['id']}", f"old:{w.s_doc['id']}"
+    proposed = [{"source": h, "target": f"target:{w.v_sop}", "kind": "ref", "state": "proposed", "lines": 1}]
+
+    bodies: dict[tuple[str, str], str] = {}
+    for guess in ("HPLC-02", "HPLC-03"):
+        update_row(TargetDoc, w.v_sop, code=guess)
+        for scope in SCOPES:
+            response = client.get(f"/api/bundles/{w.v_id}/map", params={"scope": scope}, headers=AUTHOR)
+            assert response.status_code == 200, response.text
+            assert _edges_from(response.json(), h) == []
+            assert "ZZ-HPLC" not in response.text
+            bodies[(guess, scope)] = response.text
+    for scope in SCOPES:
+        assert bodies[("HPLC-03", scope)].replace("HPLC-03", "HPLC-02") == bodies[("HPLC-02", scope)]
+
+    assert _edge(get_map(client, w.v_id), s, v, "ref")["state"] == "confirmed"  # 확정 줄은 구성원 아닌 사람에게도 선이다
+
+    update_row(TargetDoc, w.v_sop, code="HPLC-02")
+    response = set_members(client, w.s_id, [("prod.member", "author"), ("qa.member", "author")], headers=OUTSIDER)
+    assert response.status_code == 200, response.text
+    for scope in SCOPES:
+        assert _edges_from(get_map(client, w.v_id, scope=scope), h) == proposed
+
+
+def test_end_nodes_without_an_edge_are_dropped(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """질의 사이에 출발 문서가 지워지면 그 선이 빠진다 — 그 선에만 매달린 num 마디도 남지 않는다.
+
+    한 요청 안의 동시 삭제는 시험에서 일으킬 수 없어, Old 마디를 읽는 단계가 그 문서를 못 본 것으로 흉내 낸다.
+    """
+    w = World(client)
+    extra = add_doc(client, w.v_id, "SYNTHETIC_OLD-7_Extra.docx", "SOP-ZZ-405 Synthetic missing document")
+    vanished = f"old:{extra['id']}"
+    assert _edges_from(get_map(client, w.v_id), vanished) == [
+        {"source": vanished, "target": "num:SOP-ZZ-405", "kind": "ref", "state": "proposed", "lines": 1},
+    ]
+    load_old_nodes = ref_map._load_old_nodes
+
+    async def load_without_extra(*args: Any, **kwargs: Any) -> Any:
+        nodes = await load_old_nodes(*args, **kwargs)
+        nodes.pop(vanished, None)
+        return nodes
+
+    monkeypatch.setattr(ref_map, "_load_old_nodes", load_without_extra)
+    for scope in SCOPES:
+        body = get_map(client, w.v_id, scope=scope)
+        ids = {node["id"] for node in body["nodes"]}
+        assert vanished not in ids and "num:SOP-ZZ-405" not in ids
+        assert "num:SOP-ZZ-404" in ids  # 선이 남은 num 마디는 그대로다
+
+
+def test_non_members_get_document_titles_but_not_bundle_titles(client: TestClient) -> None:
+    """지금 정한 그대로를 박는다 — 구성원 아닌 Bundle의 Old 문서 제목(기본값은 파일 이름의 나머지)은 실리고 Bundle 제목은 안 실린다."""
+    w = World(client)
+    peer_id, peer_doc, _ = _add_peer(client)
+
+    response = client.get(f"/api/bundles/{w.v_id}/map", params={"scope": "all"}, headers=AUTHOR)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert _node(body, f"old:{peer_doc['id']}")["title"] == peer_doc["title"] == "SYNTHETIC Peer"
+    assert [b["title"] for b in body["bundles"] if b["id"] == peer_id] == [""]
+    assert "SYNTHETIC map peer" not in response.text
