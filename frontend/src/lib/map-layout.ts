@@ -186,6 +186,30 @@ export function layoutMap(view: MapView, collapsed: ReadonlySet<string>): MapLay
   };
 }
 
+/** 접힘과 무관한 지도 순서(줄기 순서 → 줄기 안 순서) - 찾기의 Enter가 이 순서로 돈다 */
+export function listMapOrder(view: MapView): string[] {
+  return layoutMap(view, new Set()).lanes.flatMap((lane) => lane.nodeIds);
+}
+
+/** 그린 선으로 마디마다 이어진 마디와 맞닿은 선 열쇠 - 올리기·고르기 강조가 쓴다(그리지 않은 선은 없다) */
+export function listNeighbors(edges: readonly LaidEdge[]): Map<string, { nodes: Set<string>; edges: Set<string> }> {
+  const neighbors = new Map<string, { nodes: Set<string>; edges: Set<string> }>();
+  const add = (own: string, far: string, key: string) => {
+    let entry = neighbors.get(own);
+    if (!entry) {
+      entry = { nodes: new Set(), edges: new Set() };
+      neighbors.set(own, entry);
+    }
+    entry.nodes.add(far);
+    entry.edges.add(key);
+  };
+  for (const edge of edges) {
+    add(edge.source, edge.target, edge.key);
+    add(edge.target, edge.source, edge.key);
+  }
+  return neighbors;
+}
+
 // 확대 배율 범위·한 걸음, ZOOM_FAR 아래면 마디의 둘째 줄을 감춘다. FIT_MARGIN은 Fit all의 칸 여백(px)
 export const ZOOM_MIN = 0.5,
   ZOOM_MAX = 1.5,

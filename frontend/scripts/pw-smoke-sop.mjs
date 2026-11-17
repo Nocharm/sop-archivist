@@ -8276,6 +8276,253 @@ await runStep("map: a reviewer on a bundle in review reads the same map", { devU
   check("nothing to save: the only input is the search", inputs.length === 1 && inputs[0] === "map-search", inputs.join(","));
 });
 
+// --- 지도 그리기(줄기·마디·선) - 수는 같은 사람으로 받은 응답과 견준다 ---
+const mapNodes = (page) => page.locator('[data-testid^="map-node-"]');
+const mapNode = (page, id) => page.locator(`[data-testid="map-node-${id}"]`);
+const waitMapWorld = (page) => wait(page, "map-world");
+// 응답에서 그 Bundle의 마디에 닿는 선 - 접힌 줄기는 그 선을 그리지 않는다
+const countLaneEdges = (map, bundleId) => {
+  const bundleOf = new Map(map.nodes.map((node) => [node.id, node.bundle_id]));
+  return map.edges.filter((edge) => bundleOf.get(edge.source) === bundleId || bundleOf.get(edge.target) === bundleId).length;
+};
+// 응답에서 그 마디와 이어진 마디·선
+const findNeighbours = (map, id) => {
+  const edges = map.edges.filter((edge) => edge.source === id || edge.target === id);
+  return { edges, nodes: [...new Set(edges.map((edge) => (edge.source === id ? edge.target : edge.source)))] };
+};
+// 토큰을 임시 요소에 칠해 푼 색
+const resolveColor = (page, token) =>
+  page.evaluate((name) => {
+    const probe = document.createElement("div");
+    probe.style.backgroundColor = `var(${name})`;
+    document.body.append(probe);
+    const value = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return value;
+  }, token);
+const readStyle = (locator, prop) => locator.evaluate((el, name) => getComputedStyle(el)[name], prop);
+// 그 요소의 상자가 지도 칸 안에 다 들어 있나 - 부드러운 스크롤이 끝날 때까지 기다린다
+const waitInsideCanvas = (page, testId) =>
+  page.waitForFunction(
+    (id) => {
+      const el = document.querySelector(`[data-testid="${id}"]`);
+      const frame = document.querySelector('[data-testid="map-canvas"]');
+      if (!el || !frame) return false;
+      const a = el.getBoundingClientRect();
+      const b = frame.getBoundingClientRect();
+      return a.left >= b.left - 0.5 && a.right <= b.right + 0.5 && a.top >= b.top - 0.5 && a.bottom <= b.bottom + 0.5;
+    },
+    testId,
+    { timeout: T },
+  );
+
+await runStep("map: lanes, documents and lines draw, and another bundle's work is graphite", {}, async ({ page, takeShot }) => {
+  const uvId = await findBundleId(page, "UV 분광광도계");
+  await openMap(page, halfBundleId);
+  await waitMapWorld(page);
+  check("the map is the default view", (await page.locator('[data-testid="map-view-map"]').getAttribute("aria-pressed")) === "true");
+  const map = await readMapApi(page, halfBundleId, "qa.member");
+  const hasNone = map.nodes.some((node) => node.kind === "num");
+  const lanes = await page.locator(".map-lane").count();
+  check("one lane per bundle of the response, plus Not in any Bundle when a number has no bundle", lanes === map.bundles.length + (hasNone ? 1 : 0), `${lanes} vs ${map.bundles.length}+${hasNone}`);
+  check("one document per node of the response", (await mapNodes(page).count()) === map.nodes.length, `${await mapNodes(page).count()} vs ${map.nodes.length}`);
+  check("one line per edge of the response", (await page.locator(".map-edge").count()) === map.edges.length, `${await page.locator(".map-edge").count()} vs ${map.edges.length}`);
+  const self = map.bundles.find((bundle) => bundle.relation === "self");
+  const selfHead = await page.locator(`[data-testid="map-lane-${halfBundleId}"] .map-lane-head`).innerText();
+  check("this bundle's lane names its code", selfHead.includes(self.code) && selfHead.includes("This Bundle"), selfHead);
+  const selfNode = page.locator(`.map-node[data-lane="${halfBundleId}"]`).first();
+  const uvNode = page.locator(`.map-node[data-lane="${uvId}"]`).first();
+  check("the UV bundle has a lane with documents", (await uvNode.count()) === 1);
+  const [selfBar, uvBar] = await Promise.all([readStyle(selfNode, "borderLeftColor"), readStyle(uvNode, "borderLeftColor")]);
+  check("this bundle's bar and another bundle's bar differ", selfBar !== uvBar, `${selfBar} | ${uvBar}`);
+  const peerBg = await resolveColor(page, "--peer-bg");
+  check("another bundle's document sits on --peer-bg", (await readStyle(uvNode, "backgroundColor")) === peerBg, `${await readStyle(uvNode, "backgroundColor")} vs ${peerBg}`);
+  check("the bar side of a document is square, the other side round", (await readStyle(selfNode, "borderTopLeftRadius")) === "0px" && (await readStyle(selfNode, "borderTopRightRadius")) !== "0px");
+  const box = await selfNode.boundingBox();
+  const hit = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest(".map-node")?.getAttribute("data-node") ?? null, [box.x + box.width / 2, box.y + box.height / 2]);
+  check("a line never covers a document (the document is under its own centre)", hit === (await selfNode.getAttribute("data-node")), String(hit));
+  await takeShot("sop-map-drawn.png");
+  await page.locator('[data-testid="map-view-list"]').click();
+  await wait(page, "map-list");
+  check("List shows the table instead of the map", (await page.locator('[data-testid="map-world"]').count()) === 0);
+  await page.locator('[data-testid="map-view-map"]').click();
+  await waitMapWorld(page);
+  check("Map brings the map back", (await page.locator('[data-testid="map-list"]').count()) === 0);
+});
+
+await runStep("map: hovering lights the neighbours without a React commit; selecting opens the side panel", {}, async ({ page }) => {
+  await installCommitCounter(page);
+  await openMap(page, halfBundleId);
+  await waitMapWorld(page);
+  const map = await readMapApi(page, halfBundleId, "qa.member");
+  const old1 = map.nodes.find((node) => node.number === "OLD-1" && node.bundle_id === halfBundleId).id;
+  const near = findNeighbours(map, old1);
+  const world = page.locator('[data-testid="map-world"]');
+  await mapNode(page, old1).hover();
+  await page.waitForFunction(() => document.querySelector('[data-testid="map-world"]')?.hasAttribute("data-hot"), null, { timeout: T });
+  const onNodes = await page.locator(".map-node[data-on]").evaluateAll((els) => els.map((el) => el.dataset.node));
+  check("hovering OLD-1 marks it and its neighbours", onNodes.includes(old1) && near.nodes.every((id) => onNodes.includes(id)), `${onNodes.length} vs ${near.nodes.length + 1}`);
+  check("and exactly the lines that touch it", (await page.locator(".map-edge[data-on]").count()) === near.edges.length, `${await page.locator(".map-edge[data-on]").count()} vs ${near.edges.length}`);
+  const far = map.nodes.find((node) => node.id !== old1 && !near.nodes.includes(node.id));
+  if (far) {
+    await page.waitForFunction((id) => Number(getComputedStyle(document.querySelector(`[data-testid="map-node-${id}"]`)).opacity) < 1, far.id, { timeout: T });
+    check("the other documents dim", true);
+  }
+  // 툴팁이 한 번 떴다 사라지는 커밋을 앞에서 치우고 센다
+  await page.locator(".map-toolbar .page-title").hover();
+  await page.waitForTimeout(300);
+  const centres = await mapNodes(page).evaluateAll((els) => {
+    const frame = document.querySelector('[data-testid="map-canvas"]').getBoundingClientRect();
+    return els
+      .map((el) => el.getBoundingClientRect())
+      .filter((r) => r.top >= frame.top && r.bottom <= frame.bottom && r.left >= frame.left && r.right <= frame.right)
+      .slice(0, 20)
+      .map((r) => [r.left + r.width / 2, r.top + r.height / 2]);
+  });
+  for (const [x, y] of centres.slice(0, 3)) await page.mouse.move(x, y);
+  await page.locator(".map-toolbar .page-title").hover();
+  await page.waitForTimeout(300);
+  const before = await page.evaluate(() => window.__commits ?? 0);
+  for (const [x, y] of centres) {
+    await page.mouse.move(x, y);
+    await page.waitForTimeout(50);
+  }
+  const after = await page.evaluate(() => window.__commits ?? 0);
+  check("passing over documents commits nothing", centres.length >= 5 && after === before, `${centres.length} documents, ${after - before} commits`);
+
+  await mapNode(page, old1).hover();
+  await page.waitForFunction(() => document.querySelector('[role="tooltip"]')?.textContent?.includes("OLD-1"), null, { timeout: T });
+  check("resting on a document shows its full number in a tooltip", true);
+  await page.locator(".map-toolbar .page-title").hover();
+  await page.waitForFunction(() => document.querySelector('[role="tooltip"]') === null, null, { timeout: T });
+  await mapNode(page, old1).focus();
+  await page.waitForFunction(() => document.querySelector('[role="tooltip"]')?.textContent?.includes("OLD-1"), null, { timeout: T });
+  check("the keyboard focus shows it too", true);
+
+  await mapNode(page, old1).click();
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="map-node-${id}"]`)?.getAttribute("aria-pressed") === "true", old1, { timeout: T });
+  check("clicking selects the document with a 2px accent border", (await readStyle(mapNode(page, old1), "borderTopWidth")) === "2px");
+  check("the side panel shows its number", (await getText(page, "map-side-number")).trim() === "OLD-1", await getText(page, "map-side-number"));
+  const other = near.nodes.find((id) => id !== old1) ?? far?.id;
+  if (other) await mapNode(page, other).hover();
+  const stillOn = await page.locator(".map-node[data-on]").evaluateAll((els) => els.map((el) => el.dataset.node));
+  check("hovering another document keeps the selection's emphasis", (await world.getAttribute("data-hot")) === null && stillOn.includes(old1) && near.nodes.every((id) => stillOn.includes(id)), stillOn.join(","));
+  await mapNode(page, old1).click();
+  await wait(page, "map-side-summary");
+  check("clicking it again clears the selection", (await mapNode(page, old1).getAttribute("aria-pressed")) === "false");
+  await mapNode(page, old1).click();
+  await wait(page, "map-side-node");
+  const canvasBox = await getBox(page, "map-canvas");
+  await page.mouse.click(canvasBox.x + 6, canvasBox.y + 6);
+  await wait(page, "map-side-summary");
+  check("clicking the background clears it", (await page.locator('[data-testid="map-side-node"]').count()) === 0);
+
+  await mapNode(page, old1).click();
+  await wait(page, "map-side-node");
+  const link = page.locator('[data-testid^="map-side-link-"]').first();
+  const linkId = (await link.getAttribute("data-testid")).match(/^map-side-link-(.+)-(confirmed|proposed|moved)$/)[1];
+  await link.click();
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="map-node-${id}"]`)?.getAttribute("aria-pressed") === "true", linkId, { timeout: T });
+  await waitInsideCanvas(page, `map-node-${linkId}`);
+  check("a side panel link selects that document and brings it into view", true);
+});
+
+await runStep("map: a summary-only lane shows a lock and a code, never a name", { devUser: "prod.member" }, async ({ page }) => {
+  const docBundleId = await findBundleId(page, "문서 관리");
+  await openMap(page, docBundleId);
+  await waitMapWorld(page);
+  const map = await readMapApi(page, docBundleId, "prod.member");
+  const summary = map.bundles.filter((bundle) => bundle.relation === "summary");
+  check("the viewer sees bundles they are not a member of", summary.length > 0, String(summary.length));
+  for (const bundle of summary) {
+    check(`lane ${bundle.code} has a lock`, (await page.locator(`[data-testid="map-lane-lock-${bundle.id}"]`).count()) === 1);
+    const head = (await page.locator(`[data-testid="map-lane-${bundle.id}"] .map-lane-head`).innerText()).replace(/\s+/g, " ").trim();
+    const allowed = [bundle.code, "Other Bundle · summary only", `${bundle.document_count} documents`];
+    const rest = allowed.reduce((text, part) => text.replace(part, ""), head).trim();
+    const statuses = ["In progress", "In review", "Review complete"];
+    check(`lane ${bundle.code} says the code, owner, status and count only`, allowed.every((part) => head.includes(part)) && statuses.includes(rest) && !/[가-힣]/.test(head), head);
+  }
+  await page.locator(`[data-testid="map-lane-lock-${summary[0].id}"]`).hover();
+  await page.waitForFunction(() => document.querySelector('[role="tooltip"]')?.textContent === "You are not a member. Numbers, titles and status only.", null, { timeout: T });
+  check("the lock explains itself", true);
+});
+
+await runStep("map: collapse a lane; \"more documents\" switches to All Bundles with that lane open", {}, async ({ page }) => {
+  const uvId = await findBundleId(page, "UV 분광광도계");
+  await openMap(page, halfBundleId);
+  await waitMapWorld(page);
+  const map = await readMapApi(page, halfBundleId, "qa.member");
+  const edgesBefore = await page.locator(".map-edge").count();
+  const toggle = page.locator(`[data-testid="map-lane-toggle-${uvId}"]`);
+  await toggle.click();
+  await page.waitForFunction((id) => document.querySelectorAll(`.map-node[data-lane="${id}"]`).length === 0, uvId, { timeout: T });
+  check("a collapsed lane draws no documents and says so", (await toggle.getAttribute("aria-expanded")) === "false" && (await page.locator(`[data-testid="map-lane-${uvId}"]`).getAttribute("data-collapsed")) !== null);
+  const lost = countLaneEdges(map, uvId);
+  check("and drops exactly the lines that touched it", (await page.locator(".map-edge").count()) === edgesBefore - lost, `${await page.locator(".map-edge").count()} vs ${edgesBefore} - ${lost}`);
+  await toggle.click();
+  await page.waitForFunction(([id, n]) => document.querySelectorAll(".map-edge").length === n && document.querySelectorAll(`.map-node[data-lane="${id}"]`).length > 0, [uvId, edgesBefore], { timeout: T });
+  check("expanding brings it back", (await toggle.getAttribute("aria-expanded")) === "true");
+});
+
+await runStep("map: \"more documents\" opens All Bundles with that lane open and unlinked lanes collapsed", { devUser: "prod.member" }, async ({ page }) => {
+  const docBundleId = await findBundleId(page, "문서 관리");
+  await openMap(page, docBundleId);
+  await waitMapWorld(page);
+  const map = await readMapApi(page, docBundleId, "prod.member");
+  const shownOld = (id) => map.nodes.filter((node) => node.kind === "old" && node.bundle_id === id).length;
+  const lane = map.bundles.find((bundle) => bundle.relation !== "self" && bundle.document_count > shownOld(bundle.id));
+  check("some other lane hides documents in this scope", lane !== undefined);
+  if (!lane) return;
+  const more = page.locator(`[data-testid="map-lane-more-${lane.id}"]`);
+  check("its last row says how many more", (await more.innerText()).trim() === `${lane.document_count - shownOld(lane.id)} more documents`, await more.innerText());
+  const allResponse = page.waitForResponse((response) => response.url().includes(`/api/bundles/${docBundleId}/map?scope=all`), { timeout: T });
+  await more.click();
+  const all = await (await allResponse).json();
+  await page.waitForFunction(() => document.querySelector('[data-testid="map-scope-all"]')?.getAttribute("aria-pressed") === "true", null, { timeout: T });
+  check("All Bundles is pressed", true);
+  await page.waitForFunction(([id, n]) => document.querySelectorAll(`.map-node[data-lane="${id}"][data-kind="old"]`).length === n, [lane.id, lane.document_count], { timeout: T });
+  check("that lane opens with all its Old documents", (await page.locator(`[data-testid="map-lane-${lane.id}"]`).getAttribute("data-collapsed")) === null);
+  // 이 Bundle과 선으로 이어지지 않은 줄기는 접힌 채 시작한다(listCollapsedAtStart와 같은 셈)
+  const bundleOf = new Map(all.nodes.map((node) => [node.id, node.bundle_id]));
+  const linked = new Set();
+  for (const edge of all.edges) {
+    if (bundleOf.get(edge.source) === docBundleId) linked.add(bundleOf.get(edge.target));
+    if (bundleOf.get(edge.target) === docBundleId) linked.add(bundleOf.get(edge.source));
+  }
+  const unlinked = all.bundles.filter((bundle) => bundle.id !== docBundleId && bundle.id !== lane.id && !linked.has(bundle.id));
+  const collapsedFlags = await Promise.all(unlinked.map((bundle) => page.locator(`[data-testid="map-lane-${bundle.id}"]`).getAttribute("data-collapsed")));
+  check("lanes not linked to this bundle start collapsed", unlinked.length > 0 && collapsedFlags.every((flag) => flag !== null), unlinked.map((bundle) => bundle.code).join(","));
+});
+
+await runStep("map: REF? only and search dim the map", {}, async ({ page }) => {
+  await openMap(page, halfBundleId);
+  await waitMapWorld(page);
+  const map = await readMapApi(page, halfBundleId, "qa.member");
+  await page.locator('[data-testid="map-filter-proposed"]').click();
+  await page.waitForFunction((n) => document.querySelectorAll(".map-edge").length === n, map.edges.filter((edge) => edge.state === "proposed").length, { timeout: T });
+  const labels = await page.locator(".map-edge").evaluateAll((els) => els.map((el) => el.dataset.label));
+  check("REF? only leaves proposed lines only", labels.length > 0 && labels.every((label) => label === "proposed"), labels.join(","));
+  await page.locator('[data-testid="map-filter-proposed"]').click();
+  await page.waitForFunction((n) => document.querySelectorAll(".map-edge").length === n, map.edges.length, { timeout: T });
+
+  const matchIds = map.nodes.filter((node) => node.number.toLowerCase().includes("abc-1016") || node.title.toLowerCase().includes("abc-1016")).map((node) => node.id);
+  check("the response has a document matching abc-1016", matchIds.length > 0);
+  // 맞는 문서가 든 줄기를 먼저 접어 둔다 - Enter가 그 줄기를 펴야 한다
+  const matchLanes = [...new Set(map.nodes.filter((node) => matchIds.includes(node.id)).map((node) => (node.bundle_id === null ? "none" : String(node.bundle_id))))].filter((key) => key !== String(halfBundleId));
+  for (const key of matchLanes) await page.locator(`[data-testid="map-lane-toggle-${key}"]`).click();
+  await page.locator('[data-testid="map-search"]').fill("abc-1016");
+  await page.waitForFunction(() => document.querySelector('[data-testid="map-world"]')?.hasAttribute("data-find"), null, { timeout: T });
+  await page.locator('[data-testid="map-search"]').press("Enter");
+  await wait(page, "map-side-number");
+  const picked = await page.locator('.map-node[aria-pressed="true"]').getAttribute("data-node");
+  check("Enter selects a matching document and opens its collapsed lane", matchIds.includes(picked) && (await getText(page, "map-side-number")).toLowerCase().includes("abc-1016"), String(picked));
+  await waitInsideCanvas(page, `map-node-${picked}`);
+  const matched = await page.locator(".map-node[data-match]").evaluateAll((els) => els.map((el) => el.dataset.node));
+  check("matching documents are marked", matched.length > 0 && matched.every((id) => matchIds.includes(id)) && matched.includes(picked), matched.join(","));
+  const dimmed = await page.locator(".map-node:not([data-match])").first().evaluate((el) => Number(getComputedStyle(el).opacity));
+  check("the rest dims", dimmed < 1, String(dimmed));
+});
+
 await browser.close();
 console.log(failures === 0 ? `\nALL PASS (${passes})` : `\n${failures} check(s) FAILED, ${passes} passed`);
 process.exit(failures === 0 ? 0 : 1);

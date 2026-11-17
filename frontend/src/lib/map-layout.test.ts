@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { MapBundle, MapEdge, MapNode, RefMap } from "./api-sop";
 import { BUNDLES, EDGES, makeEdge, makeNode, MAP, NODES } from "./map-fixture";
 import { buildMapView, DEFAULT_FILTERS } from "./map-model";
-import { fitZoom, GAP_Y, keepPoint, LANE_W, layoutMap, type MapLayout, MORE_H, NODE_H, NODE_W, stepZoom } from "./map-layout";
+import { fitZoom, GAP_Y, keepPoint, LANE_W, layoutMap, listMapOrder, listNeighbors, type MapLayout, MORE_H, NODE_H, NODE_W, stepZoom } from "./map-layout";
 
 const NONE: ReadonlySet<string> = new Set();
 
@@ -251,6 +251,46 @@ describe("map-layout", () => {
     }
     // 범위 all은 Old 문서 192개를 모두 놓는다
     expect(layoutOf(makeLargeMap("all")).nodes.size).toBeGreaterThanOrEqual(192);
+  });
+
+  it("lays out a large map with collapsed lanes without overlap or broken paths", () => {
+    const data = makeLargeMap("all");
+    const view = buildMapView(data, DEFAULT_FILTERS);
+    const open = layoutMap(view, NONE);
+    const layout = layoutMap(view, new Set(["3", "7", "none"]));
+    expect(findOverlap(layout)).toBeNull();
+    expect(layout.edges.every((e) => !e.d.includes("NaN") && !e.d.includes("Infinity") && Number.isFinite(e.dot.x) && Number.isFinite(e.dot.y))).toBe(true);
+    const hidden = new Set(view.nodes.filter((node) => node.bundle_id === 3 || node.bundle_id === 7 || node.bundle_id === null).map((node) => node.id));
+    for (const key of ["3", "7", "none"]) expect([laneOf(layout, key).nodeIds, laneOf(layout, key).height]).toEqual([[], 50]);
+    expect([...layout.nodes.keys()].some((id) => hidden.has(id))).toBe(false);
+    expect(layout.edges.some((e) => hidden.has(e.source) || hidden.has(e.target))).toBe(false);
+    expect(layout.edges.length).toBeGreaterThan(0);
+    expect(layout.lanes.map((l) => l.x)).toEqual(open.lanes.map((l) => l.x));
+    expect(layout.width).toBe(open.width);
+  });
+
+  it("leaves out a document whose bundle is not listed, and its edges, without a lane for it", () => {
+    const stray = makeNode("old:900", "old", 99, "STRAY-1");
+    const layout = layoutOf({ ...MAP, nodes: [...NODES, stray], edges: [...EDGES, makeEdge("old:101", "old:900", "ref", "confirmed", 1), makeEdge("old:900", "old:140", "ref", "confirmed", 1)] });
+    expect(layout.nodes.has("old:900")).toBe(false);
+    expect(layout.lanes.map((l) => l.key)).toEqual(["12", "18", "15", "none"]);
+    expect(layout.edges.some((e) => e.source === "old:900" || e.target === "old:900")).toBe(false);
+    expect(layout.edges).toHaveLength(EDGES.length);
+  });
+
+  it("lists every document in map order, collapsed lanes included", () => {
+    const view = buildMapView(MAP, DEFAULT_FILTERS);
+    expect(listMapOrder(view)).toEqual(["old:101", "old:102", "old:110", "old:199", "old:160", "target:77", "old:140", "num:SOP-ZZ-404"]);
+  });
+
+  it("lists each document's neighbours and touching edges from the drawn edges", () => {
+    const neighbors = listNeighbors(layoutOf().edges);
+    expect([...neighbors.get("old:101")!.nodes].sort()).toEqual(["old:102", "old:140", "old:160"]);
+    expect([...neighbors.get("old:101")!.edges].sort()).toEqual(["old:101>old:102:ref:confirmed", "old:101>old:140:ref:confirmed", "old:101>old:140:ref:proposed", "old:160>old:101:ref:confirmed"]);
+    expect([...neighbors.get("target:77")!.nodes]).toEqual(["old:102"]);
+    expect(neighbors.has("old:199")).toBe(false);
+    const collapsed = listNeighbors(layoutOf(MAP, new Set(["18"])).edges);
+    expect([...collapsed.get("old:101")!.nodes].sort()).toEqual(["old:102", "old:140"]);
   });
 
   it("steps and fits the zoom", () => {

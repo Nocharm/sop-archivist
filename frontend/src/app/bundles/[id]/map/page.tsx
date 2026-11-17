@@ -5,10 +5,11 @@
 import { Files } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useDeferredValue, useEffect, useEffectEvent, useMemo, useState, type ReactNode } from "react";
+import { useDeferredValue, useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { BundleLoadError } from "@/components/bundle-load-error";
-import { listShownRows, MapList } from "@/components/map/map-list";
+import { MapCanvas, revealMapNode } from "@/components/map/map-canvas";
+import { MapList } from "@/components/map/map-list";
 import { MapSide } from "@/components/map/map-side";
 import { MapToolbar } from "@/components/map/map-toolbar";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -16,9 +17,12 @@ import { LoadError } from "@/components/ui/load-error";
 import { getRefMap, type MapScope } from "@/lib/api-sop";
 import { isBundleUnavailable } from "@/lib/api-errors";
 import { useI18n } from "@/lib/i18n";
-import { buildMapView, DEFAULT_FILTERS, type MapFilters, type MapView } from "@/lib/map-model";
+import { layoutMap, listMapOrder } from "@/lib/map-layout";
+import { buildMapView, DEFAULT_FILTERS, getLaneKey, listCollapsedAtStart, type MapFilters, type MapView } from "@/lib/map-model";
 import { getStageHref } from "@/lib/stages";
 import { useLoaded } from "@/lib/use-loaded";
+
+const VIEWS = ["map", "list"] as const;
 
 function MapSkeleton() {
   return (
@@ -34,10 +38,18 @@ export default function MapPage() {
   const { t } = useI18n();
   const bundleId = Number(useParams<{ id: string }>().id);
   const [scope, setScope] = useState<MapScope>("linked");
-  // Task 7이 "map"으로 바꾸고 Map · List 단추를 더한다
-  const [view] = useState<"map" | "list">("list");
+  // 들어올 때마다 지도에서 시작한다 - 보기·범위·거르기를 기억하지 않는다(설계 §6.7)
+  const [view, setView] = useState<"map" | "list">("map");
   const [filters, setFilters] = useState<MapFilters>(DEFAULT_FILTERS);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+  // "문서 N개 더"를 누른 줄기 - 범위 all의 자료가 오면 그 줄기만 편 채 접힘을 채운다
+  const [pendingLane, setPendingLane] = useState<string | null>(null);
+  // 접힘을 채운 자료의 범위 - 범위를 바꾼 뒤 처음 온 자료에서만 다시 채우고, 다시 읽기에서는 사람이 접고 편 것을 지킨다
+  const [seededScope, setSeededScope] = useState<MapScope | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // 펴는 줄기의 마디가 그려진 뒤 보이게 할 마디
+  const pendingRevealRef = useRef<string | null>(null);
   const loaded = useLoaded(() => getRefMap(bundleId, scope), `${bundleId}:${scope}`);
 
   // 접근을 잃으면(403·404) 다시 읽어 성공할 때까지 앞서 받은 지도를 그리지 않는다 - useLoaded는 실패해도 앞 자료를 남긴다(계획 판단 29)
@@ -47,11 +59,19 @@ export default function MapPage() {
   if (blocked && !lostAccess && !loaded.isLoading && loaded.error === null) setBlocked(false);
   const data = blocked ? null : loaded.data;
 
+  // 범위 all은 이 Bundle과 이어지지 않은 줄기를 접은 채 시작한다(계획 판단 26). 렌더 중에 맞춘다 - 이펙트 안에서 동기로 상태를 바꾸지 않는다
+  if (data && data.scope !== seededScope) {
+    setSeededScope(data.scope);
+    setCollapsed(new Set(data.scope === "all" ? listCollapsedAtStart(data, pendingLane) : []));
+    setPendingLane(null);
+  }
+
   const query = useDeferredValue(filters.query);
   const mapView = useMemo<MapView | null>(
     () => (data ? buildMapView(data, { proposedOnly: filters.proposedOnly, showMoved: filters.showMoved, query }) : null),
     [data, filters.proposedOnly, filters.showMoved, query],
   );
+  const layout = useMemo(() => (mapView ? layoutMap(mapView, collapsed) : null), [mapView, collapsed]);
 
   // 범위·거르기를 바꿔 고른 문서가 보이지 않게 되면 고름을 푼다(계획 판단 27). 옆 칸에서 고른 숨은 문서는 그대로 둔다 - 보이는 지도가 바뀔 때만 본다
   const [checkedView, setCheckedView] = useState<MapView | null>(mapView);
@@ -71,25 +91,49 @@ export default function MapPage() {
     return () => window.removeEventListener("keydown", handleKey);
   }, []);
 
-  // Enter - 보이는 줄 순서로 맞는 문서를 차례로 고른다(끝이면 처음으로). 줄이 없는 맞는 문서는 그 뒤에
+  // 펴는 줄기의 마디는 다음 렌더에 생긴다 - 그려진 뒤에 보이게 한다
+  useEffect(() => {
+    const nodeId = pendingRevealRef.current;
+    if (nodeId === null || !scrollRef.current) return;
+    pendingRevealRef.current = null;
+    revealMapNode(scrollRef.current, nodeId);
+  });
+
+  /** 그 문서를 고르고 지도에서 보이게 한다 - 접힌 줄기에 있으면 먼저 편다 */
+  function pickNode(nodeId: string) {
+    setSelectedId(nodeId);
+    const node = view === "map" ? mapView?.nodes.find((item) => item.id === nodeId) : undefined;
+    if (!node) return;
+    const laneKey = getLaneKey(node.bundle_id);
+    if (collapsed.has(laneKey)) {
+      const next = new Set(collapsed);
+      next.delete(laneKey);
+      setCollapsed(next);
+      pendingRevealRef.current = nodeId;
+    } else if (scrollRef.current) {
+      revealMapNode(scrollRef.current, nodeId);
+    }
+  }
+
+  function toggleLane(laneKey: string) {
+    const next = new Set(collapsed);
+    if (!next.delete(laneKey)) next.add(laneKey);
+    setCollapsed(next);
+  }
+
+  // "문서 N개 더" - 범위를 All Bundles로 바꾸고 그 줄기를 편 채 연다(계획 판단 26)
+  function openMore(laneKey: string) {
+    setPendingLane(laneKey);
+    setScope("all");
+  }
+
+  // Enter - 지도 순서(줄기 순서 → 줄기 안 순서)로 맞는 문서를 차례로 고른다(끝이면 처음으로). 접힌 줄기의 문서면 그 줄기를 편다
   function selectNextMatch() {
     if (!mapView || !mapView.hasQuery) return;
-    const order: string[] = [];
-    const seen = new Set<string>();
-    const add = (id: string) => {
-      if (mapView.matches.has(id) && !seen.has(id)) {
-        seen.add(id);
-        order.push(id);
-      }
-    };
-    for (const row of listShownRows(mapView)) {
-      add(row.from.id);
-      add(row.to.id);
-    }
-    for (const node of mapView.nodes) add(node.id);
+    const order = listMapOrder(mapView).filter((id) => mapView.matches.has(id));
     if (order.length === 0) return;
     const at = selectedId === null ? -1 : order.indexOf(selectedId);
-    setSelectedId(order[(at + 1) % order.length]);
+    pickNode(order[(at + 1) % order.length]);
   }
 
   if (lostAccess) {
@@ -105,6 +149,8 @@ export default function MapPage() {
   const canSearchAll = scope === "linked" && mapView !== null && mapView.hasQuery && mapView.matches.size === 0;
 
   let main: ReactNode;
+  // 지도는 제 스크롤 칸(map-canvas)을 가진다 - 표·빈 상태만 바깥 스크롤 칸에 둔다
+  let isCanvas = false;
   if (!data || !mapView) {
     main = loaded.error !== null ? <LoadError error={loaded.error} onRetry={loaded.reload} testId="map" /> : <MapSkeleton />;
   } else if (scope === "linked" && self?.document_count === 0 && mapView.edges.length === 0) {
@@ -119,6 +165,20 @@ export default function MapPage() {
             {t("stage.documents")}
           </Link>
         }
+      />
+    );
+  } else if (view === "map" && layout) {
+    isCanvas = true;
+    main = (
+      <MapCanvas
+        view={mapView}
+        layout={layout}
+        zoom={1}
+        selectedId={selectedId}
+        onSelect={setSelectedId}
+        onToggleLane={toggleLane}
+        onMore={openMore}
+        scrollRef={scrollRef}
       />
     );
   } else {
@@ -138,7 +198,15 @@ export default function MapPage() {
         onSearchEnter={selectNextMatch}
         onSearchAll={() => setScope("all")}
         onRefresh={loaded.reload}
-      />
+      >
+        <div className="view-toggle map-views" role="group" aria-label={t("map.title")}>
+          {VIEWS.map((item) => (
+            <button key={item} type="button" aria-pressed={view === item} data-testid={`map-view-${item}`} onClick={() => setView(item)}>
+              {t(`map.view.${item}`)}
+            </button>
+          ))}
+        </div>
+      </MapToolbar>
       <div className="map-body">
         <div className="map-main">
           <div>
@@ -149,10 +217,10 @@ export default function MapPage() {
             )}
             {data && loaded.error !== null && <LoadError error={loaded.error} onRetry={loaded.reload} testId="map" compact />}
           </div>
-          <div className="map-scroll">{main}</div>
+          {isCanvas ? main : <div className="map-scroll">{main}</div>}
         </div>
         <aside className="map-side" data-testid="map-side" aria-label={t("map.title")}>
-          {data ? <MapSide data={data} selectedId={selectedId} onPick={setSelectedId} onClear={() => setSelectedId(null)} /> : <MapSkeleton />}
+          {data ? <MapSide data={data} selectedId={selectedId} onPick={pickNode} onClear={() => setSelectedId(null)} /> : <MapSkeleton />}
         </aside>
       </div>
     </div>

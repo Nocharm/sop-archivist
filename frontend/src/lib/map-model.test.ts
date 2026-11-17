@@ -4,11 +4,13 @@ import { BUNDLES, EDGES, makeEdge, makeNode, MAP, NODES } from "./map-fixture";
 import {
   buildMapView,
   compareNumbers,
+  countNodeLines,
   DEFAULT_FILTERS,
   describeNode,
   formatBecomes,
   getEdgeKey,
   getEdgeLabel,
+  getEdgeSides,
   getLaneKey,
   listCollapsedAtStart,
   listMapRows,
@@ -224,5 +226,25 @@ describe("map-model", () => {
       expect(listMapRows(buildMapView(data, DEFAULT_FILTERS)).map((r) => r.key)).toEqual(["old:101>old:140:ref:confirmed", "old:105>old:140:ref:confirmed"]);
       expect(describeNode(data, "old:140")?.citedBy.map((l) => l.nodeId)).toEqual(["old:101", "old:105"]);
     }
+  });
+
+  it("tells each edge's side: out of this bundle, into it, or between others", () => {
+    const peer = makeEdge("old:140", "old:160", "ref", "confirmed", 1);
+    const sides = getEdgeSides(buildMapView({ ...MAP, edges: [...EDGES, peer] }, DEFAULT_FILTERS));
+    expect(sides.get("old:101>old:140:ref:proposed")).toBe("out");
+    expect(sides.get("old:101>old:102:ref:confirmed")).toBe("out");
+    expect(sides.get("old:160>old:101:ref:confirmed")).toBe("in");
+    expect(sides.get(getEdgeKey(peer))).toBe("peer");
+    expect(sides.size).toBe(EDGES.length + 1);
+  });
+
+  it("counts the lines each document cites and is cited by in the shown map", () => {
+    const counts = countNodeLines(buildMapView(MAP, DEFAULT_FILTERS));
+    expect(counts.get("old:101")).toEqual({ cites: 4, citedBy: 3 });
+    expect(counts.get("old:102")).toEqual({ cites: 2, citedBy: 1 });
+    expect(counts.get("old:140")).toEqual({ cites: 0, citedBy: 3 });
+    expect(counts.get("old:199")).toEqual({ cites: 0, citedBy: 0 });
+    const proposed = countNodeLines(buildMapView(MAP, { ...DEFAULT_FILTERS, proposedOnly: true }));
+    expect(proposed.get("old:101")).toEqual({ cites: 1, citedBy: 0 });
   });
 });
