@@ -113,6 +113,13 @@ class FlowGraph(BaseModel):
     edges: list[FlowEdge]
 
 
+class RenumberOut(BaseModel):
+    """표·그림 줄의 번호 바뀜 — 원문 번호가 없으면 from_label이 빈 글."""
+
+    from_label: str
+    to_label: str
+
+
 class CItem(BaseModel):
     target_id: int
     kind: str
@@ -137,6 +144,7 @@ class CItem(BaseModel):
     # 표·그림 새 문장의 캡션 글(_pick_caption_text — 확정 글이 없으면 AI 글), 없거나 표·그림이 아니면 None. 미리 보기 글(끌기 카드)용이고,
     # 줄마다의 확정·AI 글·상태는 캡션 자식이 싣는다
     caption: str | None = None
+    renumber: RenumberOut | None = None  # 표·그림 줄의 번호가 바뀌면 원문 → 새 번호(Renumbering.changes, Assign New 칸과 같은 값)
 
 
 class CSection(BaseModel):
@@ -520,13 +528,6 @@ BUNDLE_TARGET_KINDS = ("table", "figure")
 CaptionRefCode = Literal[
     "caption_ref_broken", "caption_ref_order", "caption_ref_unresolved", "caption_ref_ambiguous", "caption_ref_text_changed",
 ]
-
-
-class RenumberOut(BaseModel):
-    """표·그림 줄의 번호 바뀜 — 원문 번호가 없으면 from_label이 빈 글."""
-
-    from_label: str
-    to_label: str
 
 
 @dataclass(frozen=True)
@@ -1258,6 +1259,7 @@ class _CContext:
     # Translated · Added 새 문장 → A에서 그 줄이 드는 옛 단위(맞춘 쪽 출처 중 원문에서 가장 앞)
     added_anchor: dict[int, int]
     texts: Mapping[int, str]  # 다시 매긴 글(Renumbering.texts)
+    changes: Mapping[int, tuple[str, str]]  # 표·그림 번호 바뀜(Renumbering.changes)
 
 
 def _format_meaning_key(ctx: _CContext, target: TargetInfo) -> str | None:
@@ -1293,6 +1295,7 @@ def _build_item(ctx: _CContext, target: TargetInfo) -> CItem:
     index = ctx.index
     caption = _pick_caption_text(index, target, ctx.texts) if target.kind in BUNDLE_TARGET_KINDS else None
     text, ai_text = _get_shown_texts(target, ctx.texts)
+    change = ctx.changes.get(target.id)
     return CItem(
         target_id=target.id, kind=target.kind, lang=target.lang, text=text, ai_text=ai_text,
         change_type=target.change_type, status=target.status, source_note=_format_source_note(index, target, ctx.labels),
@@ -1300,6 +1303,7 @@ def _build_item(ctx: _CContext, target: TargetInfo) -> CItem:
         number=ctx.numbers.get(target.id), indent_level=target.indent_level,
         number_style=_get_number_style(index, target), cell_row=target.cell_row,
         cell_col=target.cell_col, children=[_build_item(ctx, child) for child in index.children.get(target.id, [])], caption=caption,
+        renumber=RenumberOut(from_label=change[0], to_label=change[1]) if change else None,
     )
 
 
@@ -1320,10 +1324,11 @@ def _build_c_context(snap: BundleSnapshot, labels: OutputLabels) -> _CContext:
     """결과물 C 계산 재료 — 묶음 전체의 색인·번호·Translated · Added 자리. 문서 하나만 지어도 번호는 묶음 전체에서 센다."""
     index = _build_index(snap)
     added, _ = _split_new_targets(snap, _list_new_targets(index, labels))
+    renumbering = build_renumbering(index, labels)
     return _CContext(
         index=index, labels=labels, numbers=number_targets(index, labels), added=added,
         added_anchor={target.id: unit_id for unit_id, targets in added.items() for target in targets},
-        texts=build_renumbering(index, labels).texts,
+        texts=renumbering.texts, changes=renumbering.changes,
     )
 
 

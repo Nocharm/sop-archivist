@@ -23,7 +23,7 @@ describe("isCaptionNeeded", () => {
 function makeUnit(id: number, extra: Partial<ViewUnit> = {}): ViewUnit {
   return {
     id, display_id: `D-${id}`, kind: "sentence", spans: [], text: "", lang: "ko", table_id: null, row_index: null, group_unit_id: null, status: "unassigned",
-    pair_id: null, pos_seq: id, block_id: id, is_edited: false, can_unmerge: false, split_suggestion_id: null, ref: null, ...extra,
+    pair_id: null, pos_seq: id, block_id: id, is_edited: false, can_unmerge: false, split_suggestion_id: null, ref: null, caption_refs: [], ...extra,
   };
 }
 

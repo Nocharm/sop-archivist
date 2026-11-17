@@ -2123,6 +2123,96 @@ await runStep("assign: the New pane shows a real table and figure", {}, async ({
   await takeShot("sop-assign-new-table-figure.png");
 });
 
+// 원문 글의 "표 3"은 올릴 때 그 표에 이어진다 - 고른 줄의 참조 카드가 대상을 보이고, 떼고 다시 이으면 처음 상태로 돌아온다
+await runStep("assign: a table reference shows its target and can be detached and linked again", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const getJson = async (path) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}${path}`, { headers })).json();
+  let found = null;
+  for (const doc of (await getJson("/documents")).filter((item) => item.side === "old" && item.status === "ready")) {
+    const view = await getJson(`/documents/${doc.id}/view`);
+    const unit = view.units.find((item) => item.caption_refs.some((ref) => ref.kind === "table" && ref.number === 3 && ref.target_unit_id !== null && ref.state === "linked"));
+    if (unit) {
+      found = { doc, unit, ref: unit.caption_refs.find((ref) => ref.kind === "table" && ref.number === 3), units: view.units };
+      break;
+    }
+  }
+  check("an old sentence refers to table 3", found !== null);
+  if (!found) return;
+  const target = found.units.find((unit) => unit.id === found.ref.target_unit_id);
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.locator('[data-testid="assign-old-doc"]').click();
+  await page.locator(`[data-testid="assign-old-doc-option-${found.doc.id}"]`).click();
+  await page.waitForLoadState("networkidle");
+  await selectRowById(page, found.unit.display_id);
+  const line = page.locator(`[data-testid="assign-caption-ref-${found.ref.id}"]`);
+  await line.waitFor({ timeout: T });
+  check("the card shows the reference in the sentence's language", (await getText(page, `assign-caption-ref-label-${found.ref.id}`)).trim() === "표 3", await getText(page, `assign-caption-ref-label-${found.ref.id}`));
+  check("the card shows the linked table", (await getText(page, `assign-caption-ref-target-${found.ref.id}`)).trim() === target.display_id, target.display_id);
+  // 줄 끝 단추는 줄에 올렸을 때만 보인다
+  const actions = line.locator(".row-actions");
+  const restOpacity = await actions.evaluate((el) => getComputedStyle(el).opacity);
+  await line.hover();
+  await page.waitForFunction((id) => getComputedStyle(document.querySelector(`[data-testid="assign-caption-ref-${id}"] .row-actions`)).opacity === "1", found.ref.id, { timeout: T });
+  check("row-end buttons show on hover only", restOpacity === "0", restOpacity);
+  await takeShot("sop-assign-caption-ref.png");
+  await page.locator(`[data-testid="assign-caption-ref-detach-${found.ref.id}"]`).click();
+  await page.locator(`[data-testid="assign-caption-ref-${found.ref.id}"][data-state="detached"]`).waitFor({ timeout: T });
+  check("detaching keeps the line as not followed", (await getText(page, `assign-caption-ref-target-${found.ref.id}`)).trim() === "Not followed");
+  await line.hover();
+  await page.locator(`[data-testid="assign-caption-ref-link-${found.ref.id}"]`).click();
+  await page.locator(`[data-testid="assign-caption-ref-${found.ref.id}"][data-state="linked"]`).waitFor({ timeout: T });
+  const saved = (await getJson(`/documents/${found.doc.id}/view`)).units.find((unit) => unit.id === found.unit.id).caption_refs.find((ref) => ref.id === found.ref.id);
+  check("linking again saves the same table by a person", saved.state === "linked" && saved.target_unit_id === target.id && saved.origin === "human", JSON.stringify(saved));
+});
+
+// 결과물은 새 문서마다 표·그림 번호를 1부터 다시 매기고 이은 참조도 따라간다(저장 글은 원문 번호 그대로) - 검토 대기 묶음은 OLD-7을 SOP에 모두 보냈다
+await runStep("outputs: renumbered table and figure captions with a reference", { storage: { "sopa.lang": "ko" } }, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const getJson = async (path) => (await page.request.get(`${BASE}/api${path}`, { headers })).json();
+  const bundles = await getJson("/bundles");
+  const review = bundles.find((bundle) => bundle.title.includes("검토 대기"));
+  const sop = (await getJson(`/bundles/${review.id}/tobe`)).docs.find((doc) => doc.code === "SOP-CF");
+  const items = (await getJson(`/bundles/${review.id}/outputs/c/docs/${sop.id}?lang=ko`)).sections.flatMap((section) => section.items);
+  const table = items.find((item) => item.kind === "table" && item.renumber?.from_label === "표 3");
+  const figure = items.find((item) => item.kind === "figure" && item.renumber !== null);
+  check("the SOP renumbers OLD-7's table 3 to table 1 and its figures", table?.renumber?.to_label === "표 1" && Boolean(figure), JSON.stringify([table?.renumber, figure?.renumber]));
+  if (!table || !figure) return;
+  await page.goto(`${BASE}/bundles/${review.id}/assign`);
+  await wait(page, "assign-bar");
+  await page.locator('[data-testid="assign-new-doc"]').click();
+  await page.locator(`[data-testid="assign-new-doc-option-${sop.id}"]`).click();
+  const mark = page.locator(`[data-testid="assign-new-${table.target_id}-renumber"]`);
+  await mark.scrollIntoViewIfNeeded({ timeout: T });
+  // 화면 밖 줄은 그리기를 미뤄(content-visibility) innerText가 비어 올 수 있다 - 글은 textContent로 읽는다
+  const readText = async (testId) => ((await page.locator(`[data-testid="${testId}"]`).first().textContent()) ?? "").trim();
+  const tableMark = await readText(`assign-new-${table.target_id}-renumber`);
+  check("the New pane shows 표 3 → 표 1 before the caption", tableMark === "표 3 → 표 1", tableMark);
+  check("the New pane caption has the new number", (await readText(`assign-new-${table.target_id}-caption`)).includes("표 1. 운전 조건"));
+  const figureMark = await readText(`assign-new-${figure.target_id}-renumber`);
+  check("the New pane marks the renumbered figure too", figureMark === `${figure.renumber.from_label} → ${figure.renumber.to_label}`, figureMark);
+  await takeShot("sop-assign-new-renumber.png");
+  await page.goto(`${BASE}/bundles/${review.id}/outputs`);
+  await wait(page, "output-c");
+  const cMark = page.locator(`[data-testid="output-c-renumber-${table.target_id}"]`);
+  await cMark.scrollIntoViewIfNeeded({ timeout: T });
+  check("C marks the renumbered table the same way", (await cMark.innerText()).trim() === "표 3 → 표 1", await cMark.innerText());
+  const cText = await getText(page, "output-c");
+  check("C shows the renumbered caption", cText.includes("표 1. 운전 조건"));
+  check("C shows the reference following the new number", cText.includes("운전 조건은 표 1을 따른다."));
+  await takeShot("sop-outputs-c-renumber.png");
+  // 참조 경고는 막지 않고 개요의 알림으로 - 데모의 AI 제안 묶음에 하나 이상 있다
+  const ai = bundles.find((bundle) => bundle.title.includes("AI 제안"));
+  const notices = (await getJson(`/bundles/${ai.id}/review/readiness`)).notices.filter((notice) => notice.code.startsWith("caption_ref_"));
+  check("the AI bundle has a reference warning", notices.length > 0, JSON.stringify(notices.map((notice) => notice.code)));
+  await page.goto(`${BASE}/bundles/${ai.id}`);
+  for (const notice of notices) {
+    await wait(page, `overview-notice-${notice.code}`);
+    const text = await getText(page, `overview-notice-${notice.code}`);
+    check(`the overview words ${notice.code} as a reference warning`, text.includes("참조") && text.includes(String(notice.count)) && !text.includes("검사 경고"), text);
+  }
+});
+
 await runStep("outputs: A, B, C and the Excel preview", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
   await wait(page, "output-c");

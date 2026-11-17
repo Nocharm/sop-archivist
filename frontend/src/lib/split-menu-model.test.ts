@@ -19,7 +19,7 @@ function makeUnit(id: number, over: Partial<ViewUnit> = {}): ViewUnit {
     pos_seq: id,
     block_id: 1,
     is_edited: false, can_unmerge: false,
-    split_suggestion_id: null, ref: null,
+    split_suggestion_id: null, ref: null, caption_refs: [],
     ...over,
   };
 }

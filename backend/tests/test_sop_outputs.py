@@ -1958,6 +1958,19 @@ def test_composed_doc_shows_renumbered_caption_and_change(client: TestClient) ->
     assert table["renumber"] == {"from_label": "표 4", "to_label": "표 1"}
 
 
+def test_output_c_item_carries_the_same_renumber(client: TestClient) -> None:
+    fx = _setup_old_7(client)
+    assign_as_is(client, fx.bundle_id, _bundle_unit(fx, TABLE_4), fx.sop_id, slot_key=GENERAL)
+
+    response = client.get(f"/api/bundles/{fx.bundle_id}/outputs/c", params={"lang": "en"}, headers=AUTHOR)
+
+    assert response.status_code == 200, response.text
+    items = [item for doc in response.json()["docs"] for section in doc["sections"] for item in section["items"]]
+    table = next(item for item in items if item["kind"] == "table")
+    assert table["renumber"] == {"from_label": "Table 4", "to_label": "Table 1"}
+    assert all(item["renumber"] is None for item in items if item["kind"] == "sentence")
+
+
 def _upload_small(client: TestClient, body: str, name: str) -> RenumberFixture:
     bundle_id = create_bundle(client, is_synthetic=True)["id"]
     sop_id = put_tobe(client, bundle_id, TOBE_DOCS).json()["docs"][0]["id"]

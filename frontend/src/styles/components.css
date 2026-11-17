@@ -1602,6 +1602,9 @@
   /* 표·그림 위 캡션 줄 - 여러 언어 캡션은 줄바꿈으로 이어 온다. 캡션이 없으면 흐린 "Caption needed" */
   .pg .new-bundle-cap { margin: 0 0 4px; white-space: pre-line; }
   .pg .new-bundle-cap[data-missing] { font: var(--fs-cap) / var(--lh-cap) var(--font-ui); color: var(--ink-3); }
+  /* 캡션 앞 다시 매긴 번호("표 3 → 표 1") - 원문 글이 아니라 화면 표시라 용지 글꼴과 다른 작은 고정폭 칩. 캡션 글과 한 줄에 놓인다.
+     .pg 쪽 선택자는 영어 캡션 안에서 .pg :lang(en) 글꼴(같은 특이도, 앞에 있음)을 이긴다 */
+  .renumber-mark, .pg .renumber-mark { display: inline-block; margin-right: 6px; padding: 0 5px; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--sunken); font: 500 11px / 18px var(--font-mono); color: var(--ink-2); white-space: nowrap; vertical-align: 1px; }
 
   .assign-side { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-left: 1px solid var(--line); background: var(--surface); }
   /* 오른쪽 패널 - 위에서 아래로 일하는 순서: 머리(이 Unit·검사·확정한 사람) → ① 보낼 곳(이곳만 스크롤) → ② 결정 칸(아래에 붙음, 맨 끝 확정).
