@@ -11,6 +11,7 @@ describe("getPageWidth", () => {
     ["/bundles/1/split", "default"],
     ["/bundles/1/history", "wide"],
     ["/bundles/1/assign", "desk"],
+    ["/bundles/1/map", "desk"],
     ["/bundles/1/outputs", "default"],
     ["/bundles/1/review", "default"],
     ["/account", "default"],

@@ -73,6 +73,7 @@ SOP Archivist는 품질 조직의 SOP Restructuring T/F가 옛 GMP SOP를 새 SO
 - 기존 로그인과 관리자 화면이 깨지지 않아야 한다. `frontend/scripts/pw-smoke-baseline.mjs`가 쓰는 `top-bar-*` 식별자는 그대로 둔다.
 - raw hex는 토큰 파일 밖에서 쓰지 않는다. 틴트는 흰색이 아니라 표면색과 섞는다. 글자색(`-ink`)과 채움색(`-fill`)을 나눠 쓴다.
 - 다크는 토큰만 바꾼다. 화면 코드가 테마를 분기하지 않는다.
+- `--peer-*`(남의 Bundle의 작업 — 참조 지도) 넷은 잉크·표면에서 나와 다크 값을 따로 두지 않는다.
 
 ## 6. 글꼴
 
@@ -136,7 +137,7 @@ SOP Archivist는 품질 조직의 SOP Restructuring T/F가 옛 GMP SOP를 새 SO
 
 **공통 상단 막대 44px**, `--chrome` 배경. 왼쪽부터 워드마크(강조 700, 16/24, `--brand-ink`, 묶음 목록으로 이동), 버전, 구분선, 묶음 제목, Synthetic data 표시, 빈 공간, 사용자 이름과 부서, 배치 버튼, 언어 버튼, 관리, 로그아웃이다.
 
-**왼쪽 레일(기본)** 72px, `--chrome` 배경. 항목은 60 × 54px이고 아이콘이나 번호 위, 11px 라벨 아래다. 순서는 Overview, Documents, 1 Split, 2 To-Be, 3 Classify, 3 Match, 4 Outputs, Review다. 현재 항목은 `--hl` 번호 칸과 `--chrome-hover` 배경으로 표시한다. 묶음 목록 화면에서는 숨긴다.
+**왼쪽 레일(기본)** 72px, `--chrome` 배경. 항목은 60 × 54px이고 아이콘이나 번호 위, 11px 라벨 아래다. 순서는 Overview, Documents, 1 Split, 2 To-Be, 3 Classify, 3 Match, 4 Outputs, Review다. 현재 항목은 `--hl` 번호 칸과 `--chrome-hover` 배경으로 표시한다. 묶음 목록 화면에서는 숨긴다. 번호 없는 보는 화면 Map · History는 레일 아래에 모은다(2026-11-17).
 
 **상단 2단** 단계 막대 38px + 선 1px. 항목과 순서는 같고 현재 항목은 번호 칸과 밑줄로 표시한다. 선택해도 굵기를 바꾸지 않는다. 글자 폭이 달라져 옆 탭이 밀리기 때문이다.
 

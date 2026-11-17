@@ -2,7 +2,7 @@
 
 import type { NextAction } from "./api-sop";
 
-export type StageKey = "overview" | "documents" | "assign" | "order" | "outputs" | "history";
+export type StageKey = "overview" | "documents" | "assign" | "order" | "outputs" | "map" | "history";
 
 /** Documents 화면 안 New 문서 목록(옛 To-Be 화면)의 자리 - 옛 주소 /tobe도 여기로 넘긴다 */
 export const NEW_DOCUMENTS_ANCHOR = "new-documents";
@@ -28,6 +28,8 @@ export const STAGES: readonly Stage[] = [
   { key: "order", path: "/order", step: 3, ready: true },
   // 4단계 - 결과물과 검토. 검토 요청·완료·되돌림은 이 화면 위의 검토 띠에 있다(옛 /review는 여기로 넘긴다, B4)
   { key: "outputs", path: "/outputs", step: 4, ready: true },
+  // 번호 없는 보는 화면 - 문서 사이 참조와 후속 문서(참조 지도). 내 문서가 없어도 남의 문서를 찾아볼 수 있어 잠그지 않는다
+  { key: "map", path: "/map", ready: true },
   // 레일 맨 아래 - 작업 기록 전체(개요 Activity의 "모두 보기")
   { key: "history", path: "/history", ready: true },
 ];
