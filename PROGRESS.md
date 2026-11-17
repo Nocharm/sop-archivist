@@ -4,6 +4,11 @@
 
 ## 2026-11-17
 
+- **관리자가 표준 골격을 고친다(`feat/outline-3-admin`, 표준 골격 계획 스텝 3)** — 새 권한 `outline.manage`(3곳 + Admin 탭), `GET`·`PUT /api/admin/outline`(목록을 통째로 바꾼다, 거절은 422 `outline_invalid`에 사유 여섯), Admin의 **Outline** 탭. 표준을 바꿔도 이미 만든 문서의 사본은 그대로이고 그 뒤에 만드는 SOP부터 새 표준을 받는다(시험 `test_admin_edit_applies_to_new_docs_only`).
+  - 계획과 다른 곳: 표는 열 10개 대신 7개(제목 한·영, 종류·필수, 하위 머리말·권장 이름을 한 칸에 쌓았다). 하위 항목 칸은 그 종류가 쓸 때만 보인다. 기존 항목의 키는 고칠 수 없다(문서가 가리킨다). 저장에 판(revision)이 없어 둘이 함께 고치면 나중 저장이 이긴다 — 관리자 한두 명이 드물게 쓰는 화면이라 그대로 뒀다.
+  - 확인: backend 2,804 · vitest 1,280 · lint · tsc. 화면은 1440 · 1120에서 직접 봤다 — 1120에서는 표가 틀 안에서 옆으로 밀려 줄 끝 단추가 가려져, 단추 칸을 오른쪽에 붙였다(그래도 1120에서는 하위 항목 칸이 단추 밑으로 들어가 옆으로 밀어야 보인다 — 프런트 다듬기 때 열 폭을 다시 잰다). 기본 스모크(`pw-smoke-baseline.mjs`)에 Outline 두 단계를 더했고 통과. 그 스모크의 다른 실패 둘(`unknown employee`의 403 콘솔 오류, `admin ops panels as ops.member` 시간 초과)은 이 스텝이 고친 곳이 아니고 원인은 보지 않았다.
+  - 전체 스모크에서 본 것(스텝 1 · 2 탓이 아님을 `dev` 코드로 같은 조건에서 돌려 확인): `order: a move chosen from the narrow-frame menu…`와 `review:` 세 단계는 앞 단계가 남긴 상태·시간에 따라 `dev` 코드에서도 실패한다 — 앞의 것은 스크롤 뒤 다른 줄에 마우스가 올라가 ⋯가 숨는 것, 뒤의 것은 마지막 의미 확인(figures) 저장이 끝나기 전에 화면을 떠나는 것으로 보인다. 스모크를 따로 고칠 일이다.
+
 - **15칸을 DB 골격과 문서 사본으로(`feat/outline-2-doc-copy`, 표준 골격 계획 스텝 2)** — 동작은 그대로 두고 읽는 쪽만 바꿨다. 표준 `outline_standard_items`(기동 때 비어 있으면 옛 15칸으로 시드)와 문서 사본 `target_doc_outline_items`(Alembic `0023`, 기존 SOP 문서는 리비전 안에 얼려 둔 15칸으로 채운다)를 두고, 칸의 순서·번호·라벨·부모·줄 세기를 `outline.DocOutline`이 답한다. backend의 `SLOT_NUMBERS`·`has_sub_slots`와 frontend의 `SLOT_KEYS` 사본·`slot-labels.ts`·`hasSubSlots`는 없앴다. To-Be 응답에 `outline_items`, 결과물 C·새 문서 절에 `kind`·`level`·`counts_lines`·`default_style`이 실린다(API 계약 블록).
   - 계획과 다른 곳: 줄을 세는지(`counts_lines`)는 골격 항목이 아닌 절(WI 단계·단계 없는 WI·이미 쓴 문서)에서 늘 참이다 — 옛 화면 규칙이 그랬고, 거짓이면 들여쓰기 상한이 달라진다. 보낼 곳 이름은 `label`이 아니라 `title_en`(지금 화면처럼 "Safety"). `apply_tobe`가 쓰기 전에 표준을 읽어(`load_standard_outline`) 같은 요청에서 만든 SOP도 `unknown_slot` 검사 순서가 그대로다. 화면에서 달라진 것 하나: To-Be 표와 Assign 나무의 칸 이름이 서버 제목을 써서 "General requirements" → "General Requirements"(결과물 C·템플릿과 같은 표기).
   - 확인: backend 2,763 · vitest 1,234 · build 경고 0. 전체 스모크는 스텝 1 코드와 같은 결과(1,427 통과, 5 실패 — Order 좁은 창 ⋯ 메뉴 1 · review 3 · 지도 비구성원 1, 두 코드에서 같은 단계가 실패한다). 첫 실행에서만 나온 Assign 2건은 다시 돌리니 사라졌다(흔들림). 자료가 쌓인 0022 DB에 `0023`을 올려 SOP 6개 모두 사본 15줄, WI는 0을 봤다. PostgreSQL에서는 리비전을 돌려 보지 못했다(코드만 읽음).

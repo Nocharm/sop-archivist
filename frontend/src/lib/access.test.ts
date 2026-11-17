@@ -39,6 +39,10 @@ describe("access", () => {
     expect(canSeeAdmin({ ...BASE_ME, permissions: ["bundle.create"] })).toBe(false);
   });
 
+  it("admin opens for the outline permission", () => {
+    expect(canSeeAdmin({ ...BASE_ME, permissions: ["outline.manage"] })).toBe(true);
+  });
+
   it("admin hidden without permissions", () => {
     expect(canSeeAdmin({ ...BASE_ME, permissions: [] })).toBe(false);
   });
@@ -56,6 +60,7 @@ describe("access", () => {
       "bundle.create",
       "bundle.admin",
       "guideline.manage",
+      "outline.manage",
     ]);
   });
 

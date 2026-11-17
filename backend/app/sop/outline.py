@@ -3,22 +3,33 @@
 칸을 아는 코드는 모두 문서의 사본(DocOutline)에서 읽는다 — 고정 목록을 다시 쓰지 않는다. 위계는 키의 점으로 적는다(부모 = 마지막 점 앞).
 """
 
+import re
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from typing import Annotated
 
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.sop.constants import NUMBERED, SLOT_KEYS
+from app.sop.constants import NUMBERED, OUTLINE_KINDS, SLOT_KEYS, NumberStyle
+from app.sop.errors import raise_rule
 from app.sop.models import OutlineStandardItem, TargetDocOutlineItem
+from app.sop.schemas import NO_NUL
 
 KIND_GENERAL = "general"
 KIND_NAMED_CHILDREN = "named_children"
 ORIGIN_STANDARD = "standard"
 # 직접 줄을 받는 종류 — group은 하위만 두고 auto_list는 앱이 채운다
 ASSIGNABLE_KINDS = (KIND_GENERAL, "category_table", KIND_NAMED_CHILDREN)
+# 하위 항목을 두지 않는 종류 — 표준을 고칠 때 이 종류 아래에 항목을 달지 못한다
+LEAF_KINDS = (KIND_GENERAL, "auto_list")
 LABEL_SEPARATOR = " › "  # 라벨에서 상위와 하위 제목 사이("General Requirements › Safety")
+# 항목 키의 꼴 — 점으로 위계를 적고 ":"을 쓰지 않는다(프런트가 자리 키를 ":"으로 가른다). frontend lib/outline-admin-model.ts와 같은 값
+KEY_PATTERN = re.compile(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*")
+MAX_KEY_CHARS = 100  # outline_standard_items.key 열의 길이
+MAX_STANDARD_ITEMS = 500  # 한 번에 받는 표준 항목 수 상한 — 요청 하나가 표를 끝없이 키우지 않게
 
 
 def get_parent_key(key: str) -> str | None:
@@ -156,10 +167,74 @@ async def seed_outline_standard(session: AsyncSession) -> None:
     await session.flush()
 
 
-async def _load_standard_rows(session: AsyncSession) -> list[OutlineStandardItem]:
+async def load_standard_rows(session: AsyncSession) -> list[OutlineStandardItem]:
     """지금 표준 골격의 줄 — 표가 비어 있으면 먼저 시드한다(기동 시드를 거치지 않은 DB에서도 문서가 골격 없이 생기지 않게)."""
     await seed_outline_standard(session)
     return list(await session.scalars(select(OutlineStandardItem).order_by(OutlineStandardItem.order_index)))
+
+
+class OutlineStandardItemIn(BaseModel):
+    """관리자가 보내는 표준 항목 한 줄 — 순서는 목록에서의 자리다(order_index를 받지 않는다).
+
+    key·kind의 꼴은 여기서 막지 않고 replace_outline_standard가 사유를 붙여 거절한다(화면이 사유마다 문구를 보인다).
+    """
+
+    key: str
+    title_en: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200), NO_NUL]
+    title_ko: Annotated[str, StringConstraints(strip_whitespace=True, max_length=200), NO_NUL] = ""
+    kind: str
+    is_required: bool = True
+    default_style: NumberStyle = NUMBERED
+    child_prefix: Annotated[str, StringConstraints(strip_whitespace=True, max_length=40), NO_NUL] = ""
+    suggestions: list[
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200), NO_NUL]
+    ] = Field(default_factory=list, max_length=50)
+
+
+def _check_standard_items(items: Sequence[OutlineStandardItemIn]) -> None:
+    """표준 목록의 꼴 — 어긋나면 422 outline_invalid{reason, index(걸린 줄의 자리)}. 부모는 자기보다 앞에 있어야 한다."""
+    if not items:
+        raise_rule(422, "outline_invalid", reason="empty")
+    kinds: dict[str, str] = {}
+    for index, item in enumerate(items):
+        if len(item.key) > MAX_KEY_CHARS or KEY_PATTERN.fullmatch(item.key) is None:
+            raise_rule(422, "outline_invalid", reason="bad_key", index=index)
+        if item.key in kinds:
+            raise_rule(422, "outline_invalid", reason="duplicate_key", index=index)
+        if item.kind not in OUTLINE_KINDS:
+            raise_rule(422, "outline_invalid", reason="bad_kind", index=index)
+        parent_key = get_parent_key(item.key)
+        if parent_key is not None:
+            if parent_key not in kinds:
+                raise_rule(422, "outline_invalid", reason="missing_parent", index=index)
+            if kinds[parent_key] in LEAF_KINDS:
+                raise_rule(422, "outline_invalid", reason="children_under_leaf", index=index)
+        kinds[item.key] = item.kind
+
+
+async def replace_outline_standard(session: AsyncSession, items: list[OutlineStandardItemIn]) -> None:
+    """표준 골격을 보낸 목록으로 통째로 바꾼다(순서 = 목록 순서) — 커밋은 호출부가 한다.
+
+    이미 만든 문서의 사본(target_doc_outline_items)은 건드리지 않는다. 바꾼 표준은 그 뒤에 만드는 SOP 문서부터 복사된다.
+    """
+    _check_standard_items(items)
+    rows = {row.key: row for row in await session.scalars(select(OutlineStandardItem))}
+    for position, item in enumerate(items):
+        row = rows.pop(item.key, None)
+        if row is None:
+            row = OutlineStandardItem(key=item.key)
+            session.add(row)
+        row.order_index = position
+        row.title_en = item.title_en
+        row.title_ko = item.title_ko
+        row.kind = item.kind
+        row.is_required = item.is_required
+        row.default_style = item.default_style
+        row.child_prefix = item.child_prefix
+        row.suggestions = list(item.suggestions)
+    for row in rows.values():  # 목록에서 빠진 항목
+        await session.delete(row)
+    await session.flush()
 
 
 async def load_standard_outline(session: AsyncSession) -> DocOutline:
@@ -171,7 +246,7 @@ async def load_standard_outline(session: AsyncSession) -> DocOutline:
                 default_style=row.default_style, child_prefix=row.child_prefix, order_index=row.order_index,
                 origin=ORIGIN_STANDARD, is_removed=False, deviation_reason=None,
             )
-            for row in await _load_standard_rows(session)
+            for row in await load_standard_rows(session)
         ]
     )
 
@@ -184,7 +259,7 @@ async def copy_standard_to_doc(session: AsyncSession, target_doc_id: int) -> Non
             title_ko=row.title_ko, kind=row.kind, is_required=row.is_required, default_style=row.default_style,
             child_prefix=row.child_prefix, origin=ORIGIN_STANDARD,
         )
-        for row in await _load_standard_rows(session)
+        for row in await load_standard_rows(session)
     )
     await session.flush()
 

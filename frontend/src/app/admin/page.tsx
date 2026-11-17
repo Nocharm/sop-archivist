@@ -1,7 +1,7 @@
 // 관리 화면 - 왼쪽 세로 메뉴(권한 아래 역할·부여·기록·조회를 펼쳐 둔다)와 오른쪽 본문. 권한 없는 탭은 렌더하지 않고, 탭이 하나도 없으면 홈으로 보낸다.
 "use client";
 
-import { Activity, Bot, FolderKanban, RefreshCw, ScrollText, ShieldCheck, type LucideIcon } from "lucide-react";
+import { Activity, Bot, FolderKanban, ListTree, RefreshCw, ScrollText, ShieldCheck, type LucideIcon } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 
@@ -14,11 +14,12 @@ import { BatchRunsPanel } from "@/components/admin/batch-runs-panel";
 import { BundlesPanel } from "@/components/admin/bundles-panel";
 import { GuidelinesPanel } from "@/components/admin/guidelines-panel";
 import { HrSyncPanel } from "@/components/admin/hr-sync-panel";
+import { OutlinePanel } from "@/components/admin/outline-panel";
 import { hasPermission, type PermissionKey } from "@/lib/access";
 import { useI18n } from "@/lib/i18n";
 import { useMe } from "@/lib/session";
 
-type AdminTabKey = "access" | "directory" | "batch" | "ai" | "bundles" | "guidelines";
+type AdminTabKey = "access" | "directory" | "batch" | "ai" | "bundles" | "guidelines" | "outline";
 type AccessSubKey = "roles" | "grants" | "audit" | "lookup";
 
 interface AdminTab {
@@ -35,6 +36,7 @@ const ADMIN_TABS: AdminTab[] = [
   { key: "ai", permission: "ai.admin", Icon: Bot },
   { key: "bundles", permission: "bundle.admin", Icon: FolderKanban },
   { key: "guidelines", permission: "guideline.manage", Icon: ScrollText },
+  { key: "outline", permission: "outline.manage", Icon: ListTree },
 ];
 
 const ACCESS_SUBS: AccessSubKey[] = ["roles", "grants", "audit", "lookup"];
@@ -131,6 +133,7 @@ function AdminContent() {
           {activeTab.key === "ai" && <AiPanel />}
           {activeTab.key === "bundles" && <BundlesPanel />}
           {activeTab.key === "guidelines" && <GuidelinesPanel />}
+          {activeTab.key === "outline" && <OutlinePanel />}
         </div>
       </div>
     </div>
