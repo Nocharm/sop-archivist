@@ -408,6 +408,7 @@ export function NewPane(props: NewPaneProps) {
             table={row.table}
             figure={row.figure}
             caption={row.caption}
+            renumber={isComposedRow(row) ? row.renumber : null}
             captionRequired={isComposedRow(row)}
             bundleId={props.bundleId}
             testId={`assign-new-${row.target_id}`}

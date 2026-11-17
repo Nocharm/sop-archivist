@@ -26,6 +26,7 @@ from app.sop.extract.types import (
     ExtractLimits,
     ExtractResult,
 )
+from app.sop.renumber import FIGURE_CAPTION_RE, TABLE_CAPTION_RE  # 캡션 머리 정규식은 renumber 한 벌
 from app.sop.segment import has_visible_char  # 빈 글자 판정은 쪼개기·커버리지와 하나를 쓴다
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -63,8 +64,6 @@ _CLAUSE_LINE_RE = re.compile(r"^\s*\d+(\.\d+)*\.?\s*$")
 # 구역 이름으로 쓸 앞머리 조항 번호 — 번호만 있는 줄("5.1")도 번호가 되도록 끝($)도 받는다
 _LABEL_NUMBER_RE = re.compile(r"(\d+(?:\.\d+)*)\.?(?:\s|$)")
 # 캡션 머리 — 번호 바로 뒤는 끝·공백·구두점만 받아 "표 1에 따라"처럼 조사가 붙은 참조 문장을 거른다
-_FIGURE_CAPTION_RE = re.compile(r"^(?:그림|Figure|Fig)\s*\.?\s*\d+(?=$|[\s.:)\-–—])")
-_TABLE_CAPTION_RE = re.compile(r"^(?:표|Table)\s*\.?\s*\d+(?=$|[\s.:)\-–—])")
 _LEVEL_REF_RE = re.compile(r"%([1-9])")  # lvlText 안의 수준 자리("%1.%2")
 MAX_NUMBER_LEVELS = 9  # Word 목록 수준 수(ilvl 0~8)
 PLAIN_BULLET = "•"
@@ -1039,7 +1038,7 @@ def _fit_xml_path(path: str) -> str:
 
 def _is_caption(record: _ParaRecord, kind: Literal["figure", "table"]) -> bool:
     """그 종류의 캡션 꼴인지 — 캡션 스타일이거나 그 종류의 머리면 캡션, 다른 종류의 머리면 아니다."""
-    own, other = (_FIGURE_CAPTION_RE, _TABLE_CAPTION_RE) if kind == "figure" else (_TABLE_CAPTION_RE, _FIGURE_CAPTION_RE)
+    own, other = (FIGURE_CAPTION_RE, TABLE_CAPTION_RE) if kind == "figure" else (TABLE_CAPTION_RE, FIGURE_CAPTION_RE)
     if record.caption_for is not None or record.has_figure or not has_visible_char(record.text):
         return False
     if own.match(record.text) is not None:

@@ -4,7 +4,7 @@
 
 from collections import defaultdict
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
@@ -14,12 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, defer
 
 from app.models import Employee
+from app.sop.caption_ref_rules import REF_LINKED, match_covering_units
 from app.sop.captions import CAPTION_KIND
 from app.sop.detach import UNASSIGNED
 from app.sop.errors import raise_rule
 from app.sop.groups import build_unit_order_key
 from app.sop.models import (
     Bundle,
+    CaptionRef,
     Document,
     Extraction,
     ExtractionWarning,
@@ -106,6 +108,22 @@ class UnitInfo:
     order_key: tuple[int, ...]
     # 자리 블록 — 첫 범위의 블록, 범위가 없는 표·행·캡션 없는 그림은 자리(pos_seq)의 블록(R18)
     block_id: int
+    spans: tuple[tuple[int, int, int], ...] = ()  # (블록 id, 시작, 끝) — 표·그림 참조 자리를 덮는 단위를 찾는다
+
+
+@dataclass(frozen=True)
+class CaptionRefInfo:
+    """옛 문서 글 안의 표·그림 참조 하나(caption_refs 행) — 자리는 블록 좌표, 대상은 표 id 또는 그림 블록 id(둘 다 없으면 대상 없음)."""
+
+    id: int
+    block_id: int
+    start: int
+    end: int
+    kind: str  # table | figure
+    number: int | None  # 원문 번호 — 자리 참조("아래 표")는 None
+    target_table_id: int | None
+    target_block_id: int | None
+    state: str  # linked | detached
 
 
 @dataclass(frozen=True)
@@ -180,6 +198,7 @@ class BundleSnapshot:
     pair_of: dict[int, int]  # 활성 단위 id → 짝 id — 짝이 없는 단위는 키가 없다(한 짝 = 한 줄)
     targets: dict[int, TargetInfo]
     target_docs: dict[int, TargetDocInfo]
+    caption_refs: tuple[CaptionRefInfo, ...] = ()  # 옛·새 문서 최신 추출의 참조 전부(떼어 낸 것 포함), 블록·시작 순
 
 
 def select_latest_extractions(*conditions: ColumnElement[bool]) -> Select[Any]:
@@ -201,6 +220,8 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
 
     include_text=False면 단위 글자와 새 문장의 확정·AI 글자를 DB에서 읽지 않고 빈 글로 채운다(원문 전체를 싣지 않고 구조·상태만
     필요한 검토 요청 조건용). 그 필드는 미적재 열이라 같은 세션에서 읽으면 안 되므로, 글자가 필요한 결과물은 기본값을 쓴다.
+    다만 이어진(linked) 참조가 있으면 참조 경고(outputs.build_renumbering)가 같은 판정을 내도록 캡션 단위 글과 참조 문장을
+    출처로 둔 새 문장 글만 질의 두 번으로 더 읽는다 — 참조 수만큼이고 원문 전체가 아니다.
 
     표마다 따로 읽으므로 먼저 묶음 행에 공유 잠금(FOR SHARE)을 건다 — 쓰기는 모두 같은 행을 FOR UPDATE로 먼저 잠그므로
     Postgres READ COMMITTED에서도 질의들이 한 시점을 본다(sqlite는 잠금 구문이 없다). 잠금은 트랜잭션 끝까지 가므로 읽기 전용
@@ -257,7 +278,24 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
             lang=unit.lang, text=unit.text if include_text else "", group_unit_id=unit.group_unit_id, table_id=unit.table_id,
             row_index=unit.row_index, order_key=build_unit_order_key(document, unit),
             block_id=unit.spans[0][0] if unit.spans else block_by_seq[(unit.extraction_id, unit.pos_seq)],
+            spans=tuple((block_id, start, end) for block_id, start, end in unit.spans),
         )
+    caption_refs = tuple(
+        CaptionRefInfo(
+            id=ref.id, block_id=ref.block_id, start=ref.start, end=ref.end, kind=ref.kind, number=ref.number,
+            target_table_id=ref.target_table_id, target_block_id=ref.target_block_id, state=ref.state,
+        )
+        for ref in await session.scalars(
+            select(CaptionRef)
+            .where(CaptionRef.extraction_id.in_(extraction_ids))
+            .order_by(CaptionRef.block_id, CaptionRef.start)
+        )
+    )
+    referring_unit_ids: set[int] = set()
+    if not include_text and any(ref.state == REF_LINKED for ref in caption_refs):
+        units = await _fill_caption_texts(session, units)
+        linked = [ref for ref in caption_refs if ref.state == REF_LINKED]
+        referring_unit_ids = set(match_covering_units(linked, units.values()).values())
 
     decisions = {
         decision.unit_id: DecisionInfo(
@@ -299,9 +337,19 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
         units=units,
         decisions=decisions,
         pair_of=pair_of,
-        targets=await _load_targets(session, bundle_id, units.keys(), include_text),
+        targets=await _load_targets(session, bundle_id, units.keys(), include_text, referring_unit_ids),
         target_docs=await load_target_docs(session, bundle_id),
+        caption_refs=caption_refs,
     )
+
+
+async def _fill_caption_texts(session: AsyncSession, units: dict[int, UnitInfo]) -> dict[int, UnitInfo]:
+    """글자 없이 읽은 단위 중 캡션 단위에만 글을 채운다 — 캡션 머리 번호로 참조를 판정한다(질의 한 번)."""
+    caption_ids = [unit.id for unit in units.values() if unit.kind == CAPTION_KIND]
+    if not caption_ids:
+        return units
+    texts = dict((await session.execute(select(Unit.id, Unit.text).where(Unit.id.in_(caption_ids)))).tuples().all())
+    return {unit_id: replace(unit, text=texts.get(unit_id, "")) for unit_id, unit in units.items()}
 
 
 def list_confirmer_ids(snap: BundleSnapshot) -> set[str]:
@@ -341,9 +389,12 @@ async def _load_documents(session: AsyncSession, bundle_id: int) -> tuple[list[D
 
 
 async def _load_targets(
-    session: AsyncSession, bundle_id: int, unit_ids: Collection[int], include_text: bool
+    session: AsyncSession, bundle_id: int, unit_ids: Collection[int], include_text: bool,
+    referring_unit_ids: Collection[int] = (),
 ) -> dict[int, TargetInfo]:
     """새 문장과 출처(출처 순서) — 출처는 스냅숏 단위만 남긴다.
+
+    include_text=False여도 referring_unit_ids(참조 문장 단위)를 출처나 번역 출처로 둔 새 문장의 확정·AI 글은 읽는다(질의 한 번).
 
     질의마다 따로 읽으므로 그 사이에 커밋된 쪼개기 편집이 새 단위를 출처로 이을 수 있다. 그런 연결은 다음 조회에 보이고,
     이번 결과물은 읽은 단위만으로 계산한다(없는 단위를 가리켜 결과물 전체가 실패하지 않게).
@@ -362,7 +413,20 @@ async def _load_targets(
         target_statement = target_statement.options(
             defer(TargetSentence.confirmed_text), defer(TargetSentence.ai_text), defer(TargetSentence.remark)
         )
-    return {
+    ref_texts: dict[int, tuple[str, str]] = {}
+    if not include_text and referring_unit_ids:
+        referring = sorted(referring_unit_ids)
+        sourced = select(TargetSource.target_id).where(TargetSource.unit_id.in_(referring))
+        ref_texts = {
+            target_id: (confirmed, ai)
+            for target_id, confirmed, ai in await session.execute(
+                select(TargetSentence.id, TargetSentence.confirmed_text, TargetSentence.ai_text).where(
+                    TargetSentence.bundle_id == bundle_id,
+                    or_(TargetSentence.id.in_(sourced), TargetSentence.translation_source_unit_id.in_(referring)),
+                )
+            )
+        }
+    targets = {
         target.id: TargetInfo(
             id=target.id, target_doc_id=target.target_doc_id, slot_key=target.slot_key, wi_step=target.wi_step,
             wi_part=target.wi_part, section_path=target.section_path, order_index=target.order_index,
@@ -376,6 +440,10 @@ async def _load_targets(
         )
         for target in await session.scalars(target_statement)
     }
+    for target_id, (confirmed, ai) in ref_texts.items():
+        if target_id in targets:
+            targets[target_id] = replace(targets[target_id], confirmed_text=confirmed, ai_text=ai)
+    return targets
 
 
 async def load_target_docs(session: AsyncSession, bundle_id: int) -> dict[int, TargetDocInfo]:

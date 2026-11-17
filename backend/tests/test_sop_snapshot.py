@@ -220,3 +220,29 @@ def test_snapshot_reads_layout_and_remark(client: TestClient) -> None:
     assert [target.remark for target in full.targets.values()] == ["Synthetic remark"]
     light = run_in_session(lambda session: _load(False, session))
     assert [target.remark for target in light.targets.values()] == [""]
+
+
+def test_snapshot_reads_caption_refs_and_unit_spans_in_one_query(client: TestClient) -> None:
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    body = "".join(p(f"표 {n}. 합성 표 {n}", "Caption") + tbl([[f"합성 칸 {n}"]]) for n in range(1, 6))
+    body += "".join(p(f"합성 값은 표 {n}을 따른다.") for n in range(1, 6))
+    response = upload(client, bundle_id, build_docx(body), "SYNTHETIC_OLD-1_Refs.docx")
+    assert response.status_code == 201, response.text
+
+    statements: list[str] = []
+
+    def _record(_conn: object, _cursor: object, statement: str, *_args: object) -> None:
+        statements.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", _record)
+    try:
+        snap = run_in_session(lambda session: snapshot.load_bundle_snapshot(session, bundle_id))
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", _record)
+
+    assert sum("FROM caption_refs" in statement for statement in statements) == 1
+    refs = sorted((ref.kind, ref.number, ref.state) for ref in snap.caption_refs)
+    assert refs == [("table", n, "linked") for n in range(1, 6)]
+    assert all(ref.target_table_id is not None for ref in snap.caption_refs)
+    sentence = next(unit for unit in snap.units.values() if unit.text == "합성 값은 표 1을 따른다.")
+    assert sentence.spans == ((sentence.block_id, 0, len(sentence.text)),)

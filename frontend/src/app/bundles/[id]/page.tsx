@@ -82,6 +82,15 @@ const NEXT_ICONS: Record<NextAction, LucideIcon> = {
 // 검토 요청 조건 카드를 Fail·Pass 묶음마다 몇 개까지 먼저 보일지
 const GATES_PREVIEW = 3;
 
+// 표·그림 참조 경고(막지 않음, backend review.py) - 코드마다 문구. 이 밖의 알림 코드는 문장 검사 경고 문구로 센다
+const CAPTION_REF_NOTICE_KEYS: Partial<Record<string, string>> = {
+  caption_ref_broken: "notice.captionRefBroken",
+  caption_ref_order: "notice.captionRefOrder",
+  caption_ref_unresolved: "notice.captionRefUnresolved",
+  caption_ref_ambiguous: "notice.captionRefAmbiguous",
+  caption_ref_text_changed: "notice.captionRefTextChanged",
+};
+
 function sumCounts(issues: ReadinessIssue[], prefix: string): number {
   return issues.filter((issue) => issue.code.startsWith(prefix)).reduce((total, issue) => total + (issue.count ?? 0), 0);
 }
@@ -436,7 +445,7 @@ function ReviewGate({ bundle, readiness, onRequestReview, onAddReviewer }: Revie
             <Info size={16} strokeWidth={1.5} className="mt-[3px] text-ink-3" aria-hidden />
             {notice.code === "equipment_sop_empty_slots"
               ? t("notice.equipmentSlots", { doc: String(notice.doc_code ?? "") })
-              : t("notice.sentenceWarnings", { n: notice.count ?? 0 })}
+              : t(CAPTION_REF_NOTICE_KEYS[notice.code] ?? "notice.sentenceWarnings", { n: notice.count ?? 0 })}
           </p>
         ),
       )}

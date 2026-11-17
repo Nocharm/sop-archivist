@@ -402,6 +402,30 @@ export interface ViewUnit {
   split_suggestion_id: number | null;
   /** 참조 줄 제안·확정 - 참조가 아니면 null */
   ref: UnitRefMark | null;
+  /** 이 단위의 글이 가리키는 표·그림("표 3"·"아래 표") - 캡션 자기 머리 번호는 빠진다 */
+  caption_refs: ViewCaptionRef[];
+}
+
+/** 표·그림 참조 하나 - number가 null이면 위치 참조("아래 표"), target_unit_id는 이은 표·그림 묶음 단위(못 찾으면 null) */
+export interface ViewCaptionRef {
+  id: number;
+  kind: "table" | "figure";
+  number: number | null;
+  target_unit_id: number | null;
+  state: "linked" | "detached";
+  /** auto(올릴 때 잡음) | human(사람이 고침) */
+  origin: string;
+}
+
+export interface CaptionRefResult {
+  document_revision: number;
+  ref: ViewCaptionRef;
+}
+
+/** 표·그림 번호 바뀜 - 원문 번호가 없어 머리 번호를 붙였으면 from_label이 빈 글 */
+export interface RenumberChange {
+  from_label: string;
+  to_label: string;
 }
 
 /** 고른 단위의 참조 상태와 그 번호의 EQUIS 표시 - 참조가 아니면 state가 null */
@@ -504,6 +528,16 @@ export function confirmPair(bundleId: number, docId: number, pairId: number, rev
 
 export function deletePair(bundleId: number, docId: number, pairId: number, revision: number): Promise<PairResult> {
   return apiFetch<PairResult>(`${buildDocPath(bundleId, docId)}/pairs/${pairId}?revision=${revision}`, { method: "DELETE" });
+}
+
+/** 표·그림 참조를 떼거나 다시 잇는다 - target_unit_id를 주면 그 묶음에 잇는다(state 생략 = linked) */
+export function updateCaptionRef(
+  bundleId: number,
+  docId: number,
+  refId: number,
+  body: { revision: number; state?: "linked" | "detached"; target_unit_id?: number },
+): Promise<CaptionRefResult> {
+  return apiFetch<CaptionRefResult>(`${buildDocPath(bundleId, docId)}/caption-refs/${refId}`, { method: "PATCH", body: JSON.stringify(body) });
 }
 
 export function ackWarning(bundleId: number, warningId: number, note = ""): Promise<ExtractionWarning> {
@@ -1148,6 +1182,8 @@ export interface OutputCItem {
   children: OutputCItem[];
   /** 표·그림의 캡션 글(그림은 text도 이 글), 없으면 null */
   caption?: string | null;
+  /** 새 문서에서 다시 매긴 표·그림 번호 - 같으면 null */
+  renumber?: RenumberChange | null;
 }
 
 export interface OutputC {
@@ -1211,6 +1247,8 @@ export interface ComposedItem {
   figure?: BundleFigure | null;
   /** 표·그림 줄의 캡션 글(결과물 C와 같은 규칙), 없으면 null */
   caption?: string | null;
+  /** 새 문서에서 다시 매긴 표·그림 번호 - 같으면 null */
+  renumber?: RenumberChange | null;
 }
 
 export interface ComposedSection {
