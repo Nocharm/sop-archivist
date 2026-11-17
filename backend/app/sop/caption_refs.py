@@ -10,6 +10,12 @@ from pydantic import BaseModel, model_validator
 from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.sop.caption_ref_rules import (
+    REF_LINKED,
+    REF_TEXT_KINDS,
+    match_covering_units,
+    pick_table_unit_id,
+)
 from app.sop.captions import CAPTION_KIND
 from app.sop.decisions import DbId
 from app.sop.errors import raise_rule
@@ -19,8 +25,6 @@ from app.sop.models import Bundle, CaptionRef, Document, SourceBlock, Unit
 from app.sop.renumber import find_number_tokens, find_place_tokens, read_caption_number
 from app.sop.units import UNIT_ACTIVE, get_latest_extraction_id
 
-REF_TEXT_KINDS = ("sentence", "heading", "cell_sentence", CAPTION_KIND)
-REF_LINKED, REF_DETACHED = "linked", "detached"
 ORIGIN_AUTO, ORIGIN_HUMAN = "auto", "human"
 _FIGURE_KIND = "figure"
 _TABLE_KIND = "table"
@@ -173,17 +177,10 @@ async def _load_block_seqs(session: AsyncSession, block_ids: Iterable[int]) -> d
 
 
 def _pick_target_unit(refs_target: tuple[int | None, int | None], bundles: Sequence[Unit], seq_of: Mapping[int, int]) -> int | None:
-    """대상 표·그림 블록에 해당하는 활성 묶음 단위 — 표는 표 단위(행으로 나눴으면 가장 작은 행), 그림은 그 블록의 그림 단위."""
+    """대상 표·그림 블록에 해당하는 활성 묶음 단위 — 표는 pick_table_unit_id, 그림은 그 블록의 그림 단위."""
     table_id, block_id = refs_target
     if table_id is not None:
-        tables = [unit for unit in bundles if unit.kind == _TABLE_KIND and unit.table_id == table_id]
-        if tables:
-            return tables[0].id
-        rows = sorted(
-            (unit for unit in bundles if unit.kind == "table_row" and unit.table_id == table_id),
-            key=lambda unit: (unit.row_index if unit.row_index is not None else 0, unit.id),
-        )
-        return rows[0].id if rows else None
+        return pick_table_unit_id(table_id, bundles)
     if block_id is not None and block_id in seq_of:
         figures = [unit for unit in bundles if unit.kind == _FIGURE_KIND and unit.pos_seq == seq_of[block_id]]
         return figures[0].id if figures else None
@@ -208,26 +205,7 @@ async def build_caption_ref_outs(
 
 def find_covering_unit_ids(refs: Sequence[CaptionRef], units: Iterable[Unit]) -> dict[int, int]:
     """참조 id → 그 자리(시작 글자)를 덮는 활성 글 단위 id — 나누기·합치기 뒤에도 참조 문장을 따라간다. 캡션 자기 머리 번호 참조는 뺀다."""
-    units_list = list(units)
-    spans: dict[int, list[tuple[int, int, int]]] = defaultdict(list)
-    for unit in units_list:
-        if unit.status == UNIT_ACTIVE and unit.kind in REF_TEXT_KINDS:
-            for block_id, start, end in unit.spans:
-                spans[block_id].append((start, end, unit.id))
-    heads = {
-        unit.id: read_caption_number(unit.text)
-        for unit in units_list if unit.kind == CAPTION_KIND and unit.status == UNIT_ACTIVE
-    }
-    covering: dict[int, int] = {}
-    for ref in refs:
-        for start, end, unit_id in spans.get(ref.block_id, ()):
-            if start <= ref.start < end:
-                head = heads.get(unit_id)
-                # 올린 뒤 캡션이 된 문장의 머리 번호는 참조가 아니다 — 올릴 때만 잡은 행을 읽을 때 거른다
-                if head is None or (ref.kind, ref.number) != (head.kind, head.number):
-                    covering[ref.id] = unit_id
-                break
-    return covering
+    return match_covering_units(refs, [unit for unit in units if unit.status == UNIT_ACTIVE])
 
 
 async def update_caption_ref(

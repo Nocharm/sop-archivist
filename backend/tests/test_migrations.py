@@ -366,13 +366,24 @@ def _read_outputs(db_path: pathlib.Path) -> tuple[Any, list[Any], list[list[str]
     from app.sop.outputs import build_output_c
     from app.sop.review import evaluate_readiness
     from app.sop.sheet_model import SHEET_NAMES, build_workbook_model
+    from app.sop.models import CaptionRef
     from app.sop.snapshot import load_bundle_snapshot
 
     async def _load() -> Any:
         engine = create_async_engine(_async_url(db_path))
         try:
-            async with AsyncSession(engine) as session:
-                return await load_bundle_snapshot(session, 1)
+            # 앱 코드는 head 스키마를 읽는다 — 0021 앞 리비전에서는 빈 caption_refs 표를 잠시 두고 읽은 뒤 지운다
+            async with engine.begin() as conn:
+                created = not await conn.run_sync(lambda sync: sync.dialect.has_table(sync, CaptionRef.__tablename__))
+                if created:
+                    await conn.run_sync(CaptionRef.__table__.create)
+            try:
+                async with AsyncSession(engine) as session:
+                    return await load_bundle_snapshot(session, 1)
+            finally:
+                if created:
+                    async with engine.begin() as conn:
+                        await conn.run_sync(CaptionRef.__table__.drop)
         finally:
             await engine.dispose()
 
