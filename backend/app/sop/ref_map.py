@@ -352,8 +352,11 @@ async def collect_map_lines(
     - 번호 꼴(`_pick_ends`): 문서 번호 꼴이고 임시 번호가 아닌 번호만 마디와 맞춘다.
     - 자기 참조는 선이 아니다.
     - 양 끝이 모두 이 Bundle 밖인 줄은 범위 all의 확정한 줄만.
+
+    닫힌 쪽으로: member_of에 이 Bundle이 없으면(구성원 확인 없이 불렸으면) 이 Bundle의 제안 줄도 내지 않는다.
+    돌려주는 줄에는 보는 사람이 구성원이 아닌 Bundle의 확정 줄(unit_id 포함)도 있다 — 줄 문장 API는 그런 줄의 글을 싣지 않는다.
     """
-    visible = member_of | {bundle.id}
+    visible = member_of
     candidates = [
         line for line in await _collect_candidate_lines(session, bundle, scope)
         if line.state == _CONFIRMED or line.bundle_id in visible

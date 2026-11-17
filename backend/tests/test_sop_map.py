@@ -827,6 +827,24 @@ def _expand_links(bundle_id: int, login_id: str, scope: str) -> Counter[tuple[st
     return run_in_session(collect)
 
 
+def test_map_lines_fail_closed_without_membership(client: TestClient) -> None:
+    """구성원 확인 없이 불리면(member_of가 비면) 제안 줄은 하나도 내지 않는다 — 이 Bundle의 것도."""
+    w = World(client)
+
+    async def collect(session: AsyncSession) -> tuple[set[str], set[str]]:
+        bundle = await session.get(Bundle, w.v_id)
+        assert bundle is not None
+        member_of = await ref_map.load_member_bundle_ids(session, "qa.member")
+        assert w.v_id in member_of  # 진짜 구성원의 집합에는 보는 Bundle이 들어 있다
+        as_member = await ref_map.collect_map_lines(session, bundle, member_of, "all")
+        without = await ref_map.collect_map_lines(session, bundle, set(), "all")
+        return {link.line.state for link in as_member}, {link.line.state for link in without}
+
+    as_member, without = run_in_session(collect)
+    assert "proposed" in as_member
+    assert "proposed" not in without
+
+
 def test_map_lines_match_the_edges(client: TestClient) -> None:
     """문장 API가 다시 쓸 줄(collect_map_lines)은 지도의 선과 줄 수에 꼭 맞는다 — 줄 규칙을 두 번 쓰지 않는다."""
     w = World(client)
