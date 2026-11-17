@@ -147,6 +147,7 @@ import {
   type Recommendation,
 } from "@/lib/assign-model";
 import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
+import { resolveLineParam } from "@/lib/assign-line-param";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { describeDecisionStep, getAssignUndoKey, pickSaveOp } from "@/lib/decision-step-model";
@@ -195,7 +196,7 @@ import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, listPartSheets, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
 import { buildPairColumns, canUndoPair, listPairLinks, PAIR_REFUSAL_KEYS, resolvePairDrop, type PairDrop, type PairDropContext, type PairLang } from "@/lib/pair-drop-model";
 import { SLOT_LABELS } from "@/lib/slot-labels";
-import { EDIT_ORIGINAL_PARAM, getNewDocumentsHref, getStageHref } from "@/lib/stages";
+import { ASSIGN_DOC_PARAM, ASSIGN_UNIT_PARAM, EDIT_ORIGINAL_PARAM, getNewDocumentsHref, getStageHref } from "@/lib/stages";
 import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useAiPrepare } from "@/lib/use-ai-prepare";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
@@ -346,7 +347,11 @@ export default function AssignPage() {
   const { bundle } = useBundle(bundleId);
   const canEdit = bundle?.my_role === "author" && bundle.status === "in_progress";
   // 옛 "원문 고치기" 주소(?edit=문서 id 또는 first) - 그 화면은 없어졌다. 그 문서를 한 단으로 열고 주소에서 값을 뗀다(아래 openEditParam)
-  const editParam = useSearchParams().get(EDIT_ORIGINAL_PARAM);
+  const searchParams = useSearchParams();
+  const editParam = searchParams.get(EDIT_ORIGINAL_PARAM);
+  // 참조 지도의 줄에서 온 주소(?doc=문서 id&unit=Unit id) - 그 줄을 고르고 주소에서 값을 뗀다(아래 openLineParam). edit이 같이 있으면 edit이 이긴다
+  const lineDocParam = searchParams.get(ASSIGN_DOC_PARAM);
+  const lineUnitParam = searchParams.get(ASSIGN_UNIT_PARAM);
   const router = useRouter();
 
   // --- 데이터 ---
@@ -2510,6 +2515,45 @@ export default function AssignPage() {
   useEffect(() => {
     if (editParam !== null && hasDocs) openEditParam(editParam);
   }, [editParam, hasDocs]);
+
+  // 참조 지도의 줄에서 들어옴 - 그 Unit이 든 줄을 고르고 그 조각으로 간다. 보기(한 단·양 단)는 바꾸지 않는다(edit과 달리 줄을 가리킬 뿐이다).
+  // 그 줄이 그사이 사라졌으면(쪼개기 편집·다른 문서의 Unit) 문서만 열고 알린다. 이 Bundle의 읽힌 Old 문서가 아니면 아무 일도 없다. 어느 쪽이든 주소에서 값을 뗀다
+  const openLineParam = useEffectEvent((docParam: string, unitParam: string | null) => {
+    const lineUnits = (viewList ?? []).flatMap((item) => item.units.map((unit) => ({ docId: item.document.id, groupId: unit.group_unit_id, id: unit.id })));
+    const target = resolveLineParam({
+      doc: docParam,
+      unit: unitParam,
+      oldDocIds,
+      docOfUnit: (unitId) => lineUnits.find((unit) => unit.id === unitId)?.docId,
+      // 칸 문장은 묶인 표·행의 줄이다 - 편집 뒤 따라가기(follow)와 같은 식
+      findRowKey: (unitId) => {
+        const groupId = lineUnits.find((unit) => unit.id === unitId)?.groupId ?? null;
+        return rowOfUnit.get(unitId) ?? (groupId !== null ? rowOfUnit.get(groupId) : undefined);
+      },
+    });
+    if (target.kind === "row") {
+      selectRow(target.rowKey, false);
+      // 이펙트에서 바꾼 상태는 누름과 달리 다음 작업에서 그려진다 - 다른 문서의 줄이면 그 용지가 그려진 뒤에 조각을 찾도록 두 프레임 미룬다.
+      // 표 · 표 행으로 옮긴 줄은 글 조각(unit)이 없어 조각 상자(piece)로 간다 - scrollToUnit은 글 조각만 찾는다
+      const { unitId } = target;
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          const el = document.querySelector<HTMLElement>(`[data-testid="assign-paper-unit-${unitId}"]`) ?? document.querySelector<HTMLElement>(`[data-testid="assign-paper-piece-${unitId}"]`);
+          if (el) revealFarElement(el);
+        }),
+      );
+    } else if (target.kind === "document") {
+      setSolo(null);
+      setManualOldDoc(target.docId);
+      setSelectedKey(null);
+      if (target.isGone) showToast(t("map.assign.gone"));
+    }
+    router.replace(getStageHref(bundleId, "assign"), { scroll: false });
+  });
+  // 용지가 그려진 뒤에(ready) 한 번 - 그 전에는 갈 조각이 화면에 없다
+  useEffect(() => {
+    if (lineDocParam !== null && editParam === null && ready) openLineParam(lineDocParam, lineUnitParam);
+  }, [lineDocParam, lineUnitParam, editParam, ready]);
 
   // 출처 없는 New 문장을 고르면 New 원문이 그 문장을 보이게. Old 줄을 바꿀 때는 New 칸을 움직이지 않는다(1.2.0 피드백) - 추천 카드를 누를 때만 그리로 간다
   const newFocusId = focusNew;

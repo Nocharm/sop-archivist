@@ -2,6 +2,7 @@
 // 응답(서버가 그 문서를 C 모양으로 돌려준다)이 오면 그 문서를 서버 값으로 맞춘 뒤 보낸 뒤에 누른 편집만 다시 얹는다. 실패하면 저장 안 된 편집을 모두 버린다.
 import type { NumberStyle, OutputCDoc, OutputCItem, TargetOrderItem } from "./api-sop";
 import { numberLines } from "./section-number";
+import { hasSubSlots } from "./slot-status-model";
 import type { MoveDir } from "./target-order";
 
 /**
@@ -47,13 +48,14 @@ function setLineNumber(item: OutputCItem, number: string | null): OutputCItem {
 }
 
 /**
- * 줄 번호만 다시 센다(서버 outputs.number_targets와 같은 규칙) - 칸 번호가 같은 칸끼리 한 줄(WI 한 단계의 Instruction·Why),
+ * 줄 번호만 다시 센다(서버 outputs.number_targets의 사본 - 서버 규칙을 바꾸면 함께 고친다) - 칸 번호가 같은 칸끼리 한 줄(WI 한 단계의 Instruction·Why),
  * 번호 생략·주석 줄은 null, 표 칸은 표의 번호, 번호 없는 칸(입구 2 문서·단계 없는 WI)은 null.
+ * 하위 칸이 있는 칸(hasSubSlots)에 직접 놓인 줄도 표시·깊이와 상관없이 null이고 세지 않는다 - 세면 하위 칸 제목 번호(5.1)와 겹친다.
  */
 export function numberDoc(doc: OutputCDoc): OutputCDoc {
   const runs = new Map<string, Array<[number, number]>>();
   doc.sections.forEach((section, sectionIndex) => {
-    if (section.number === null) return;
+    if (section.number === null || hasSubSlots(section.location_key)) return;
     const run = runs.get(section.number) ?? [];
     section.items.forEach((_, itemIndex) => run.push([sectionIndex, itemIndex]));
     runs.set(section.number, run);

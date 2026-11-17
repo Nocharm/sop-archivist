@@ -12,7 +12,7 @@ from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
 from app.sop.constants import MAX_INDENT_LEVEL, SLOT_KEYS
-from app.sop.outputs import SLOT_NUMBERS, number_lines
+from app.sop.outputs import SLOT_NUMBERS, has_sub_slots, number_lines
 from tests.docx_factory import build_docx, p
 from tests.sop_helpers import (
     AUTHOR,
@@ -36,7 +36,9 @@ from tests.test_sop_outputs import (
     _display,
     _display_of_kind,
     _get_output,
+    _items_in,
     _list_top_target_ids,
+    _order_body,
     _put_order,
     _setup,
 )
@@ -96,12 +98,13 @@ def test_output_c_numbers_slots_steps_and_lines(client: TestClient) -> None:
     # N/A 칸(scope·document_relationships)도 자기 번호를 지켜 다른 칸 번호가 밀리지 않는다
     assert {key: number for key, (number, _) in sop_numbers.items()} == SLOT_NUMBERS
     assert sop_numbers["responsibilities"][1] == [(DUPLICATE, "4.1")]
-    assert sop_numbers["general_requirements"][1] == [("table", "5.1")]
+    # 하위 칸이 있는 칸(5)에 직접 놓인 표는 번호가 없다 — 5.1은 하위 칸 제목의 번호다
+    assert sop_numbers["general_requirements"][1] == [("table", None)]
     # 한 칸의 한글·영어 문장을 C 순서대로 한 줄로 센다
     assert sop_numbers["general_requirements.operation"][1] == [(MERGED, "5.2.1"), (RECORDS_EN, "5.2.2")]
-    # 표 칸은 언어와 무관하게 표의 번호를 따른다
+    # 표 칸은 언어와 무관하게 표를 따른다 — 표가 번호가 없으니 칸도 없다(번호 있는 표는 아래 하위 칸 시험)
     (table,) = next(section["items"] for section in sop["sections"] if section["location_key"] == "general_requirements")
-    assert [cell["number"] for cell in table["children"] if cell["cell_row"] is not None] == ["5.1"] * 4
+    assert [cell["number"] for cell in table["children"] if cell["cell_row"] is not None] == [None] * 4
     # WI는 단계 번호 아래로 Instruction·Why를 이어 센다
     assert _read_numbers(wi) == [
         ("step:1:instruction", "1", [(SPLIT_A, "1.1")]),
@@ -604,3 +607,118 @@ def test_moving_an_existing_target_keeps_its_mark(client: TestClient) -> None:
 
     assert response.status_code == 200, response.text
     assert _read_slot_lines(client, bundle_id, "scope") == [(LEAD_EN, None, "note")]
+
+
+# ── 하위 칸이 있는 칸에 직접 놓인 줄(제품 명세 §7.13 섹션 번호, 사용자 결정 2026-11-17) ──────────────
+
+PARENT_SLOT, SUB_SLOT = "general_requirements", "general_requirements.safety"
+PARENT_HEAD = "5. General requirements"
+DIRECT_A, DIRECT_B = "Keep the synthetic area clear.", "Report every synthetic incident."
+SUB_A, SUB_B = "Wear the synthetic gloves.", "Lock the synthetic cabinet."
+TOP_LINE = "Describe the synthetic purpose."
+
+
+def test_has_sub_slots_reads_the_slot_key_list() -> None:
+    assert [key for key in SLOT_KEYS if has_sub_slots(key)] == [
+        "general_requirements", "procedures", "document_relationships",
+    ]
+
+
+def _setup_parent_slot(client: TestClient) -> tuple[int, int, dict[str, int]]:
+    """SOP 하나 — 5 칸에 직접 두 줄, 하위 칸 5.1에 두 줄, 하위 칸 없는 1 칸에 한 줄. (묶음, SOP, 글 → 새 문장 id)."""
+    slots = {DIRECT_A: PARENT_SLOT, DIRECT_B: PARENT_SLOT, SUB_A: SUB_SLOT, SUB_B: SUB_SLOT, TOP_LINE: "purpose"}
+    bundle_id, sop_id, doc_id = _create_sop_bundle(client, "".join(p(text) for text in slots))
+    view = get_view(client, bundle_id, doc_id)
+    ids = {}
+    for text, slot_key in slots.items():
+        (target,) = assign_as_is(client, bundle_id, find_unit(view, text), sop_id, slot_key=slot_key)["targets"]
+        ids[text] = target["id"]
+    return bundle_id, sop_id, ids
+
+
+def test_lines_directly_in_a_slot_with_sub_slots_take_no_number(client: TestClient) -> None:
+    bundle_id, _sop_id, _ids = _setup_parent_slot(client)
+
+    # 번호만 없다 — 저장된 표시(번호)는 그대로다
+    assert _read_slot_lines(client, bundle_id, PARENT_SLOT) == [
+        (DIRECT_A, None, "numbered"), (DIRECT_B, None, "numbered"),
+    ]
+    # 하위 칸의 줄은 5.1.1부터 — 상위 칸에 직접 놓인 줄이 밀지 않는다
+    assert _read_slot_lines(client, bundle_id, SUB_SLOT) == [(SUB_A, "5.1.1", "numbered"), (SUB_B, "5.1.2", "numbered")]
+    # 하위 칸이 없는 칸(1–4)에 직접 놓인 줄은 그대로 센다
+    assert _read_slot_lines(client, bundle_id, "purpose") == [(TOP_LINE, "1.1", "numbered")]
+    # 결과물 A의 No.도 같은 값이다
+    numbers = {
+        row["confirmed_text"]: row["dest_number"] for row in _get_output(client, bundle_id, "outputs/a")
+    }
+    assert numbers == {DIRECT_A: "", DIRECT_B: "", SUB_A: "5.1.1", SUB_B: "5.1.2", TOP_LINE: "1.1"}
+
+
+def test_a_direct_line_is_numbered_again_by_its_saved_style_in_a_sub_slot(client: TestClient) -> None:
+    bundle_id, sop_id, ids = _setup_parent_slot(client)
+
+    def put(items: list[dict]) -> dict[int, tuple[str, int, str]]:
+        body = {"revision": get_bundle(client, bundle_id)["revision"], "target_doc_id": sop_id, "items": items}
+        response = _put_order(client, bundle_id, body)
+        assert response.status_code == 200, response.text
+        return {
+            item["target_id"]: (item["slot_key"], item["indent_level"], item["number_style"])
+            for item in response.json()["items"]
+        }
+
+    # 깊이를 줘도 번호가 없고, 저장한 깊이·표시는 그대로 남는다
+    order = [ids[text] for text in (TOP_LINE, DIRECT_A, DIRECT_B, SUB_A, SUB_B)]
+    saved = put([{"target_id": t, **({"indent_level": 1} if t == ids[DIRECT_B] else {})} for t in order])
+    assert saved[ids[DIRECT_B]] == (PARENT_SLOT, 1, "numbered")
+    assert _read_slot_lines(client, bundle_id, PARENT_SLOT) == [
+        (DIRECT_A, None, "numbered"), (DIRECT_B, None, "numbered"),
+    ]
+
+    # 하위 칸으로 옮기면 저장된 표시로 다시 센다(깊이는 칸을 옮길 때 보낸 값 — 보내지 않으면 서버가 0으로 돌린다)
+    moved = [ids[text] for text in (TOP_LINE, DIRECT_A, SUB_A, SUB_B, DIRECT_B)]
+    put([
+        {"target_id": t, **({"slot_key": SUB_SLOT, "indent_level": 1} if t == ids[DIRECT_B] else {})} for t in moved
+    ])
+    assert _read_slot_lines(client, bundle_id, PARENT_SLOT) == [(DIRECT_A, None, "numbered")]
+    assert _read_slot_lines(client, bundle_id, SUB_SLOT) == [
+        (SUB_A, "5.1.1", "numbered"), (SUB_B, "5.1.2", "numbered"), (DIRECT_B, "5.1.2.1", "numbered"),
+    ]
+
+
+def test_a_table_directly_in_a_slot_with_sub_slots_gives_its_cells_no_number(client: TestClient) -> None:
+    fx = _setup(client)  # 표가 5 칸에 직접 놓여 있다
+    (table,) = _items_in(_get_output(client, fx.bundle_id, "outputs/c")["docs"][0], PARENT_SLOT)
+
+    assert (table["number"], table["number_style"]) == (None, "numbered")
+    assert {(child["number"], child["number_style"]) for child in table["children"]} == {(None, "numbered")}
+
+    # 하위 칸으로 옮긴 표는 번호를 받고 칸은 그 번호를 따른다
+    edits = {table["target_id"]: {"slot_key": SUB_SLOT, "indent_level": 0}}
+    response = _put_order(client, fx.bundle_id, _order_body(client, fx, 0, fx.sop_id, edits))
+    assert response.status_code == 200, response.text
+    (table,) = _items_in(_get_output(client, fx.bundle_id, "outputs/c")["docs"][0], SUB_SLOT)
+    assert table["number"] == "5.1.1"
+    assert [cell["number"] for cell in table["children"] if cell["cell_row"] is not None] == ["5.1.1"] * 4
+
+
+def test_slot_heading_of_a_slot_with_sub_slots_keeps_the_slot_number(client: TestClient) -> None:
+    bundle_id, sop_id, doc_id = _create_sop_bundle(client, p(PARENT_HEAD, "Heading1") + p(DIRECT_A))
+    view = get_view(client, bundle_id, doc_id)
+    head, line = find_unit(view, PARENT_HEAD), find_unit(view, DIRECT_A)
+    assert head["kind"] == "heading"
+    (member,) = get_group_by_unit(client, bundle_id, head["id"])["units"]
+    response = save_group(client, bundle_id, {
+        "action": "confirm",
+        "units": [{"unit_id": head["id"], "revision": member["decision"]["revision"], "disposition": "assigned"}],
+        "targets": [{
+            "key": "h", "kind": "slot_heading", "target_doc_id": sop_id, "slot_key": PARENT_SLOT,
+            "source_unit_ids": [head["id"]],
+        }],
+    })
+    assert response.status_code == 200, response.text
+    assign_as_is(client, bundle_id, line, sop_id, slot_key=PARENT_SLOT)
+
+    rows = {row["unit_id"]: row for row in _get_output(client, bundle_id, "outputs/a")}
+
+    # 칸 제목의 번호는 칸 번호 그대로, 그 칸에 직접 놓인 줄만 번호가 없다
+    assert (rows[head["id"]]["dest_number"], rows[line["id"]]["dest_number"]) == ("5", "")

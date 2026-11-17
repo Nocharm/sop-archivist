@@ -3479,7 +3479,9 @@ await runStep("assign: KO/EN pair - recommendation shows picked, in-place menu c
   if (!card) return;
   await card.click();
   // 짝 문장이 더해져도 고른 표시가 켜진다(예전에는 ID 비교라 영영 꺼져 있었다)
-  check("the recommendation shows as picked on a KO/EN pair row", (await card.getAttribute("aria-pressed")) === "true");
+  // 고른 표시는 다음 그리기에서 붙는다 - 바로 읽으면 가끔 놓친다
+  const isPicked = await card.locator('[data-testid$="-pending"]').waitFor({ timeout: T }).then(() => true, () => false);
+  check("the recommendation shows as picked on a KO/EN pair row", isPicked && (await card.getAttribute("aria-pressed")) === "true");
   check("the card says it is not saved yet", (await card.locator('[data-testid$="-pending"]').count()) === 1);
   if (found.partnerId !== null) check("both New sentences of the pair are picked", (await page.locator(`[data-testid="assign-new-pick-${found.partnerId}"]`).getAttribute("aria-pressed")) === "true");
   // 카드 옆 확정 메뉴는 없다(1.2.0 피드백) - 포커스가 결정 칸의 Confirm으로 가서 Enter가 확정한다
@@ -5187,6 +5189,72 @@ await runStep("order: mark a line as a note on C, the count continues and the no
   check("the Numbered mark saves", (await unmarked).ok());
   check("Numbered brings the number back", (await page.locator(`[data-testid="output-c-number-${pair.x}"]`).innerText()).trim() === pair.xNumber);
   check("the next line gets its number back", (await page.locator(`[data-testid="output-c-number-${pair.y}"]`).innerText()).trim() === pair.yNumber);
+});
+
+// 하위 칸이 있는 칸(5 General Requirements)에 직접 놓인 줄은 번호가 없고 Numbered를 내놓지 않는다 - 하위 칸 Safety의 줄은 5.1.1부터다(제품 명세 §7.13 섹션 번호).
+// 자료는 이 단계가 API로 만든다 - SOP의 번호 줄 둘을 순서 저장으로 5 칸과 5.1 칸의 맨 앞에 옮기고, 끝에 처음 순서·칸·깊이로 되돌린다(그 문서의 굳힌 순서는 남는다)
+await runStep("order: a line placed directly in a slot with sub slots has no number", {}, async ({ page }) => {
+  const PARENT = "general_requirements";
+  const SUB = "general_requirements.safety";
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const listLines = (doc) => doc.sections.flatMap((section) => section.items.map((item) => ({ ...item, key: section.location_key })));
+  // 옮겨도 딸려 가는 것이 없는 번호 줄 - AI 번역(자리가 출처를 따라 잠긴다)과 그 출처는 뺀다. 의미 묶음에 혼자인 줄을 먼저 고른다
+  const pickFree = (doc) => {
+    const lines = listLines(doc);
+    const withKey = (key) => lines.filter((line) => line.meaning_key === key);
+    const free = lines.filter((line) => line.kind === "sentence" && line.origin === "units" && line.number_style === "numbered" && !(line.meaning_key !== null && withKey(line.meaning_key).some((other) => other.origin === "translation")));
+    const alone = free.filter((line) => line.meaning_key === null || withKey(line.meaning_key).length === 1);
+    return alone.length >= 2 ? alone : free;
+  };
+  const isOpen = (doc, key) => doc.sections.some((section) => section.location_key === key && section.na_reason === null);
+  const doc = (await getJson("/outputs/c?lang=en")).docs.find((item) => item.doc_type === "sop" && item.entrance === "assign" && isOpen(item, PARENT) && isOpen(item, SUB) && pickFree(item).length >= 2);
+  check("an SOP has General Requirements and Safety open and two numbered lines to move", doc !== undefined);
+  if (!doc) return;
+  const [direct, sub] = pickFree(doc);
+  const before = listLines(doc);
+  const put = async (items) => page.request.put(`${api}/targets/order`, { headers, data: { revision: (await getJson("")).revision, target_doc_id: doc.target_doc_id, items } });
+  const moved = new Set([direct.target_id, sub.target_id]);
+  try {
+    // 목록의 맨 앞에 두면 그 칸의 첫 줄이다 - Safety의 첫 번호 줄이라 5.1.1
+    const arranged = await put([
+      { target_id: direct.target_id, slot_key: PARENT, indent_level: 0 },
+      { target_id: sub.target_id, slot_key: SUB, indent_level: 0 },
+      ...before.filter((line) => !moved.has(line.target_id)).map((line) => ({ target_id: line.target_id })),
+    ]);
+    check("the order save puts one line in General Requirements and one in Safety", arranged.ok(), `${arranged.status()} ${arranged.ok() ? "" : await arranged.text()}`);
+    await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+    await wait(page, "output-c");
+    await page.locator(`[data-testid="order-doc-${doc.target_doc_id}"]`).click();
+    const rowOf = (id) => page.locator(`[data-testid="output-c-row-${id}"]`);
+    // 긴 문서는 나눠 그린다 - 두 줄이 그려질 때까지 이어 그리기 표지를 화면에 들인다
+    const more = page.locator('[data-testid="output-c-more"]');
+    for (let i = 0; i < 40 && ((await rowOf(direct.target_id).count()) === 0 || (await rowOf(sub.target_id).count()) === 0) && (await more.count()) > 0; i += 1) {
+      await more.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(100);
+    }
+    await rowOf(direct.target_id).waitFor({ timeout: T });
+    await rowOf(sub.target_id).waitFor({ timeout: T });
+    const readMarks = (id) => page.locator(`[data-testid="output-c-mark-${id}"] button`).evaluateAll((buttons) => buttons.map((button) => `${button.getAttribute("data-testid").split("-")[3]}:${button.getAttribute("aria-pressed")}`));
+
+    check("the line sits directly in General Requirements", (await readRowKey(page, direct.target_id)) === PARENT, await readRowKey(page, direct.target_id));
+    check("it shows no number", (await readRowNumber(page, direct.target_id)) === null, await readRowNumber(page, direct.target_id));
+    await rowOf(direct.target_id).hover();
+    const directMarks = await readMarks(direct.target_id);
+    check("it offers No number and Note only, with No number shown as picked", JSON.stringify(directMarks) === JSON.stringify(["omitted:true", "note:false"]), JSON.stringify(directMarks));
+    // 머리 번호는 5 그대로다(5.1이 아니다)
+    check("the section heading keeps its number 5", /^5(?![.\d])/.test((await getText(page, `output-c-section-${doc.target_doc_id}-${PARENT}`)).trim()), await getText(page, `output-c-section-${doc.target_doc_id}-${PARENT}`));
+
+    check("the line in Safety is numbered 5.1.1", (await readRowKey(page, sub.target_id)) === SUB && (await readRowNumber(page, sub.target_id)) === "5.1.1", `${await readRowKey(page, sub.target_id)} ${await readRowNumber(page, sub.target_id)}`);
+    await rowOf(sub.target_id).hover();
+    const subMarks = await readMarks(sub.target_id);
+    check("and still offers Numbered, shown as picked", JSON.stringify(subMarks) === JSON.stringify(["numbered:true", "omitted:false", "note:false"]), JSON.stringify(subMarks));
+  } finally {
+    // 처음 순서·칸·깊이로 되돌린다 - 아래 단계와 다시 돌리기가 같은 문서를 본다
+    const restored = await put(before.map((line) => ({ target_id: line.target_id, ...(moved.has(line.target_id) ? { slot_key: line.key, indent_level: line.indent_level } : {}) })));
+    check("the two lines go back to their own sections", restored.ok(), `${restored.status()}`);
+  }
 });
 
 // 순서 바꾸기는 화면에서 먼저 자리를 바꾸고 저장은 뒤에서 한 번에 하나씩 보낸다(제품 명세 §7.13 C 순서 바꾸기). 실패하면 되돌리고 알림을 띄운다
@@ -9881,7 +9949,11 @@ await runStep("map: keyboard only", {}, async ({ page }) => {
   await page.locator('[data-testid="map-search"]').focus();
   await page.keyboard.type("+0");
   await page.keyboard.press("ArrowDown");
-  check("typing + 0 and arrows in the search does not move the map", (await readZoom(page)) === zoomBefore && (await readActive(page)) === "map-search", `${await readZoom(page)} ${await readActive(page)}`);
+  const activeAfter = await readActive(page);
+  // "+0"에 맞는 문서가 없어 늦춘 찾기가 걸리면 지도 대신 "맞는 것 없음"이 뜨고 배율 글자가 사라진다 - 찾기를 비워 지도를 되살린 뒤 배율을 읽는다
+  await page.locator('[data-testid="map-search"]').fill("");
+  await wait(page, "map-zoom-value");
+  check("typing + 0 and arrows in the search does not move the map", (await readZoom(page)) === zoomBefore && activeAfter === "map-search", `${await readZoom(page)} ${activeAfter}`);
 });
 
 await runStep("map: the map stays one Tab stop wherever the focus moved, and its edges do not scroll", {}, async ({ page }) => {
@@ -10110,6 +10182,170 @@ await runStep("map: when the lines cannot be read the map stays", { allowConsole
   await page.locator('[data-testid="map-lines-retry"]').click();
   await page.waitForFunction(() => document.querySelector('[data-testid="map-side"] .map-sentence') !== null, null, { timeout: T });
   check("Retry brings the sentences and clears the error", (await page.locator('[data-testid="map-lines-error"]').count()) === 0);
+});
+
+// --- 줄 하나를 Assign에서 열기(줄 끝의 Open in Assign, 주소 ?doc=&unit=) - 문서 id·Unit id·표시 ID는 같은 사람으로 받은 응답에서 읽는다 ---
+const lineOpenTestId = (line, side) => `map-line-open-${line.unit_id}-${side === "out" ? line.target : line.source}`;
+const readActiveTestId = (page) => page.evaluate(() => document.activeElement?.dataset.testid ?? "");
+// 줄 끝 단추를 감싼 자리의 opacity가 그 값이 될 때까지 - 숨김은 opacity만 바꾸고 전환이 있다
+const lineOpenOpacityBecomes = (page, openId, value) =>
+  page
+    .waitForFunction(
+      ([id, v]) => {
+        const el = document.querySelector(`[data-testid="${id}"]`)?.closest(".map-sentence-open");
+        return el != null && Number(getComputedStyle(el).opacity) === v;
+      },
+      [openId, value],
+      { timeout: T },
+    )
+    .then(() => true, () => false);
+// 그 Bundle의 Old 문서에서 나가는 첫 줄(자기 Bundle의 줄이라 늘 문장으로 온다)
+async function findOwnLine(page, bundleId, user) {
+  const map = await readMapApi(page, bundleId, user);
+  for (const node of map.nodes.filter((item) => item.kind === "old" && item.bundle_id === bundleId)) {
+    const lines = JSON.parse(await readLinesApi(page, bundleId, user, node.id));
+    if (lines.out.length > 0) return lines.out[0];
+  }
+  return null;
+}
+// Assign이 그 줄을 고른 채 떴나 - 주소에서 값이 떼이고, 오른쪽 칸의 줄 ID에 그 표시 ID가 있고, 그 조각이 Old 칸 안에 보인다
+async function checkAssignOnLine(page, bundleId, line, label) {
+  await wait(page, "assign-bar");
+  await page.waitForURL((url) => url.pathname === `/bundles/${bundleId}/assign` && url.search === "", { timeout: T });
+  check(`${label}: the address is left without doc and unit`, true);
+  await page.waitForFunction((id) => document.querySelector('[data-testid="assign-row-id"]')?.textContent?.includes(id), line.display_id, { timeout: T });
+  check(`${label}: the row with that line is picked`, (await rowIds(page)).includes(line.display_id), await rowIds(page));
+  await page.waitForFunction(
+    (id) => {
+      const el = document.querySelector(`[data-testid="assign-old"] [data-testid="assign-paper-unit-${id}"]`);
+      const frame = el?.closest(".pane-body");
+      if (!el || !frame) return false;
+      const a = el.getBoundingClientRect();
+      const b = frame.getBoundingClientRect();
+      return a.height > 0 && a.bottom > b.top && a.top < b.bottom;
+    },
+    line.unit_id,
+    { timeout: T },
+  );
+  check(`${label}: its piece is inside the Old pane`, true);
+}
+
+await runStep("map: a line opens in Assign with that row picked", {}, async ({ page }) => {
+  const uvId = await findBundleId(page, "UV 분광광도계");
+  const map = await readMapApi(page, halfBundleId, "qa.member");
+  const old1 = map.nodes.find((node) => node.number === "OLD-1" && node.bundle_id === halfBundleId).id;
+  // 지도에서 OLD-1을 골라 그 문서의 줄을 받는다
+  const pickOld1 = async () => {
+    await openMap(page, halfBundleId);
+    await waitMapWorld(page);
+    const responsePromise = page.waitForResponse((response) => isLinesResponse(response, old1, "linked"), { timeout: T });
+    await mapNode(page, old1).click();
+    const lines = JSON.parse(await (await responsePromise).text());
+    await waitLinesRead(page);
+    return lines;
+  };
+  const lines = await pickOld1();
+  const own = lines.out[0];
+  check("OLD-1 has a line of this bundle", own !== undefined && own.bundle_id === halfBundleId, JSON.stringify(own ?? null));
+  const openId = lineOpenTestId(own, "out");
+  const open = page.locator(`[data-testid="${openId}"]`).first();
+
+  // 단추는 응답에 실린 줄에만 - 문장 줄마다 하나, 가려진 줄에는 없다
+  const sentences = await page.locator('[data-testid="map-side"] .map-sentence').count();
+  check("every sentence row ends with one Open in Assign", sentences === lines.out.length + lines.in.length && (await page.locator('[data-testid="map-side"] .map-sentence [data-testid^="map-line-open-"]').count()) === sentences, String(sentences));
+  check("the only links in the two lists are those", (await page.locator('[data-testid="map-lines-out"] a, [data-testid="map-lines-in"] a').count()) === sentences);
+  check("a hidden line has no link", (await page.locator('[data-testid^="map-lines-hidden-"] a').count()) === 0);
+  check("the link is the address of that line", (await open.getAttribute("href")) === `/bundles/${halfBundleId}/assign?doc=${own.document_id}&unit=${own.unit_id}`, await open.getAttribute("href"));
+  check("it is named Open in Assign", (await open.getAttribute("aria-label")) === "Open in Assign", await open.getAttribute("aria-label"));
+
+  // 줄에 올리거나 Tab으로 닿으면 보인다 - 글을 덮지 않고 제 열에 있다
+  check("the button is hidden at rest", await lineOpenOpacityBecomes(page, openId, 0));
+  await page.locator(`[data-testid="map-lines-out"] [data-testid="map-side-link-${own.target}-${lineLabel(own)}"]`).focus();
+  await page.keyboard.press("Tab");
+  check("Tab from the line's row reaches its Open in Assign", (await readActiveTestId(page)) === openId, await readActiveTestId(page));
+  check("focus shows it", await lineOpenOpacityBecomes(page, openId, 1));
+  await page.locator('[role="tooltip"]', { hasText: "Open in Assign" }).waitFor({ timeout: T });
+  check("and its name comes up as a tooltip on focus", true);
+  await open.blur();
+  check("it hides again without focus", await lineOpenOpacityBecomes(page, openId, 0));
+  const row = page.locator(`[data-testid="${lineTestId(own, "out")}"]`).first();
+  await row.locator(".map-sentence-text").hover();
+  check("hovering the sentence shows it", await lineOpenOpacityBecomes(page, openId, 1));
+  const textBox = await row.locator(".map-sentence-text").boundingBox();
+  const openBox = await open.boundingBox();
+  check("the button sits to the right of the text, not over it", openBox.x >= textBox.x + textBox.width - 0.5, JSON.stringify({ text: textBox, open: openBox }));
+
+  // 누르면 그 Bundle의 Assign이 그 줄을 고른 채 뜬다. 보기(한 단·양 단)는 그대로다 - 새 창이라 기억된 것이 없어 양 단
+  await open.click();
+  await checkAssignOnLine(page, halfBundleId, own, "own line");
+  check("the view stays two documents", (await page.locator('[data-testid="assign-new"]').count()) > 0 && (await page.locator(".assign-panes").getAttribute("data-single")) === null);
+
+  // 구성원인 다른 Bundle(UV)의 줄 - 그 Bundle의 Assign이 뜬다
+  const again = await pickOld1();
+  const peer = again.in.find((line) => line.bundle_id === uvId);
+  check("a line of the member UV bundle points at OLD-1", peer !== undefined, JSON.stringify(again.in.map((line) => line.bundle_id)));
+  const peerOpen = page.locator(`[data-testid="${lineOpenTestId(peer, "in")}"]`).first();
+  check("its link goes to the bundle that holds the line", (await peerOpen.getAttribute("href")) === `/bundles/${uvId}/assign?doc=${peer.document_id}&unit=${peer.unit_id}`, await peerOpen.getAttribute("href"));
+  await peerOpen.click();
+  await checkAssignOnLine(page, uvId, peer, "member bundle's line");
+
+  // 검토자(읽기 전용)도 같은 주소로 그 줄을 고른다 - 확정 단추는 눌리지 않는다
+  await page.evaluate(() => window.localStorage.setItem("sopa.devUser", "qa.lead"));
+  const reviewId = await findBundleId(page, "검토 대기");
+  const reviewLine = await findOwnLine(page, reviewId, "qa.lead");
+  check("the bundle in review has a line to open", reviewLine !== null);
+  await page.goto(`${BASE}/bundles/${reviewId}/assign?doc=${reviewLine.document_id}&unit=${reviewLine.unit_id}`);
+  await checkAssignOnLine(page, reviewId, reviewLine, "reviewer");
+  const primary = page.locator('[data-testid="assign-primary"]');
+  check("the reviewer cannot confirm", (await primary.count()) === 0 || (await primary.first().isDisabled()));
+});
+
+await runStep("map: an address for a line that is gone opens the document and says so", {}, async ({ page }) => {
+  const uvId = await findBundleId(page, "UV 분광광도계");
+  const readOldDocs = async (bundleId) => (await (await page.request.get(`${BASE}/api/bundles/${bundleId}/documents`, { headers: { "X-Dev-User": "qa.member" } })).json()).filter((doc) => doc.side === "old" && doc.status === "ready");
+  const oldDocs = await readOldDocs(halfBundleId);
+  const [first, second = first, third = first] = oldDocs;
+  const foreignDoc = (await readOldDocs(uvId))[0];
+  const assignPath = `/bundles/${halfBundleId}/assign`;
+  const waitClean = () => page.waitForURL((url) => url.pathname === assignPath && url.search === "", { timeout: T });
+  const waitOldDoc = (doc) => page.waitForFunction((label) => document.querySelector('[data-testid="assign-old"] .pane-head')?.textContent?.includes(label), doc.doc_code || doc.file_name, { timeout: T });
+  const goneToast = () => page.locator('[data-testid="toast-ok"]', { hasText: "That line has changed. The document is open instead." });
+  const countRowIds = () => page.locator('[data-testid="assign-row-id"]').count();
+
+  // 사라진 Unit - 문서만 열리고 알림이 뜬다. 보기는 바꾸지 않는다
+  await page.goto(`${BASE}${assignPath}?doc=${second.id}&unit=2147483000`);
+  await goneToast().first().waitFor({ timeout: T });
+  check("a unit that is not there says the line has changed", true);
+  await waitOldDoc(second);
+  await waitClean();
+  check("the document is open, with no row picked and both documents on screen", (await countRowIds()) === 0 && (await page.locator('[data-testid="assign-new"]').count()) > 0);
+
+  // 다른 문서의 Unit도 같다
+  const ownLine = await findOwnLine(page, halfBundleId, "qa.member");
+  const otherDoc = oldDocs.find((doc) => doc.id !== ownLine?.document_id);
+  if (ownLine && otherDoc) {
+    await page.goto(`${BASE}${assignPath}?doc=${otherDoc.id}&unit=${ownLine.unit_id}`);
+    await goneToast().first().waitFor({ timeout: T });
+    await waitOldDoc(otherDoc);
+    await waitClean();
+    check("a unit of another document opens the named document only", (await countRowIds()) === 0);
+  }
+
+  // 이 Bundle의 Old 문서가 아닌 값 - 알림 없이 평소의 Assign이고 값만 떼인다
+  for (const [label, query] of [["another bundle's document", `doc=${foreignDoc.id}&unit=1`], ["letters", "doc=abc&unit=x"]]) {
+    await page.goto(`${BASE}${assignPath}?${query}`);
+    await wait(page, "assign-bar");
+    await waitClean();
+    await waitOldDoc(first);
+    check(`${label}: the usual Assign, no notice, no row picked`, (await goneToast().count()) === 0 && (await countRowIds()) === 0, query);
+  }
+
+  // edit이 같이 오면 edit이 이긴다 - 그 문서가 한 단으로 열린다(지금 동작 그대로)
+  await page.goto(`${BASE}${assignPath}?edit=${third.id}&doc=${second.id}&unit=1`);
+  await waitClean();
+  await page.waitForFunction(() => document.querySelector(".assign-panes")?.hasAttribute("data-single"), null, { timeout: T });
+  await waitOldDoc(third);
+  check("with edit in the address, edit wins: that document opens wide and nothing says a line changed", (await goneToast().count()) === 0 && (await countRowIds()) === 0);
 });
 
 await browser.close();
