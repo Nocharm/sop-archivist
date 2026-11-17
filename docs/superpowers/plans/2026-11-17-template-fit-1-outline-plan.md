@@ -12,7 +12,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-17-template-fit-design.md` §6 작업 1, 부록 A. 기준 코드는 `dev` v1.1.24(`fa20953`) — 설계의 v1.1.18 뒤에 v1.1.23(하위 칸이 있는 칸의 직접 줄은 번호 없음)이 들어왔다.
 
-**상태:** 사용자 확인 2026-11-17("확인받을 것" 1–5 · 7–9는 권한 대로, 6번 부록 안 번호는 스텝 4 전에 원본 확인). 스텝 1 끝남.
+**상태:** 사용자 확인 2026-11-17("확인받을 것" 1–5 · 7–9는 권한 대로, 6번 부록 안 번호는 스텝 4 전에 원본 확인). 스텝 1 · 2 끝남.
 
 ## Global Constraints
 
@@ -200,28 +200,28 @@ interface OutlineItem {            // ToBe.outline_items: OutlineItem[]
 //   level: number; counts_lines: boolean; default_style: NumberStyle;
 ```
 
-- [ ] **Step 1: `test_sop_outline.py` — 값 객체** (실패 먼저)
+- [x] **Step 1: `test_sop_outline.py` — 값 객체** (실패 먼저)
   - `test_legacy_outline_matches_slot_keys`: `[i.key for i in DocOutline(LEGACY_OUTLINE).items] == list(SLOT_KEYS)`.
   - `test_numbers_follow_order`: `get_number("purpose") == "1"`, `"procedures.troubleshooting"` → `"6.3"`, `"document_relationships.appendices"` → `"7.2"`.
   - `test_named_children_do_not_count_direct_lines`: `counts_lines("procedures") is False`, `counts_lines("procedures.procedure") is True`.
   - `test_three_levels`: `a` · `a.b` · `a.b.c`로 `get_level("a.b.c") == 2`, `is_within("a.b.c", "a") is True`, `get_parent_key("a.b.c") == "a.b"`.
-- [ ] **Step 2: 모델 · 리비전 0023** — 표 둘을 만들고, 리비전 파일 안에 **얼려 둔** 15칸 목록으로 `doc_type='sop'`인 기존 `target_docs`마다 사본을 넣는다(앱 코드를 import하지 않는다). `test_migrations.py::test_0023_backfills_sop_docs`: 0022까지 올린 DB에 SOP 1 · WI 1을 넣고 올리면 SOP에만 15줄.
-- [ ] **Step 3: 시드와 사본** — `seed_outline_standard`를 lifespan과 시험 설비(`seed_guidelines`를 부르는 곳)에 넣는다. `tobe.apply_tobe`가 SOP 문서 줄을 새로 넣을 때 `copy_standard_to_doc`, 종류가 WI로 바뀌면 사본을 지우고 SOP로 바뀌면 다시 복사한다. 시험: `test_new_sop_doc_gets_outline_copy`, `test_wi_doc_has_no_outline`, `test_doc_type_change_drops_and_recopies_outline`.
-- [ ] **Step 4: 읽는 쪽 바꾸기 (backend)** — 아래를 문서 사본 읽기로 바꾼다. 응답 글·번호·순서는 그대로여야 한다(기존 시험이 증거).
+- [x] **Step 2: 모델 · 리비전 0023** — 표 둘을 만들고, 리비전 파일 안에 **얼려 둔** 15칸 목록으로 `doc_type='sop'`인 기존 `target_docs`마다 사본을 넣는다(앱 코드를 import하지 않는다). `test_migrations.py::test_0023_backfills_sop_docs`: 0022까지 올린 DB에 SOP 1 · WI 1을 넣고 올리면 SOP에만 15줄.
+- [x] **Step 3: 시드와 사본** — `seed_outline_standard`를 lifespan과 시험 설비(`seed_guidelines`를 부르는 곳)에 넣는다. `tobe.apply_tobe`가 SOP 문서 줄을 새로 넣을 때 `copy_standard_to_doc`, 종류가 WI로 바뀌면 사본을 지우고 SOP로 바뀌면 다시 복사한다. 시험: `test_new_sop_doc_gets_outline_copy`, `test_wi_doc_has_no_outline`, `test_doc_type_change_drops_and_recopies_outline`.
+- [x] **Step 4: 읽는 쪽 바꾸기 (backend)** — 아래를 문서 사본 읽기로 바꾼다. 응답 글·번호·순서는 그대로여야 한다(기존 시험이 증거).
   - `snapshot.TargetDocInfo.outline: DocOutline`(SOP가 아니면 빈 골격).
   - `outputs._plan_sections` SOP 갈래: `doc.outline.items` 순서. `_SectionPlan`에 `kind` · `level` · `counts_lines` · `default_style`. `SLOT_NUMBERS` · `_build_slot_numbers` · `has_sub_slots` 삭제. `_find_na_reason`은 조상을 끝까지 본다. `_format_target_location`과 칸 제목 글(`decisions.py:730`)은 `outline.get_label(key)`.
   - `unknown_slot` 검사 3곳(`tobe._check_list_rules`, `decisions._check_location`, `sop_outputs._check_slot_moves`)은 그 문서의 `outline.find(key)`.
   - `tobe.count_targets_by_slot` · `build_tobe_out`의 순서는 사본의 순서. `ToBeOut.outline_items` 추가.
   - `ai/candidates._list_sop_places`: 사본에서 `is_assignable`인 항목을 순서대로(후보 수 · 순서 · 라벨이 지금과 같다 — `test_sop_ai_candidates.py`).
   - `constants.SLOT_KEYS`는 `LEGACY_OUTLINE`의 재료와 시험 값으로만 남는다.
-- [ ] **Step 5: 읽는 쪽 바꾸기 (frontend)** — 실패하는 vitest 먼저.
+- [x] **Step 5: 읽는 쪽 바꾸기 (frontend)** — 실패하는 vitest 먼저.
   - `slot-status-model.ts`: `type SlotKey = string`. `buildSlotRows(tobe, doc)`는 `tobe.outline_items`에서 그 문서 줄을 읽는다. `SlotRow.level: number`(`isChild` 대신). `SLOT_NUMBERS` · `getSlotParent` · `hasSubSlots` · `KNOWN_KEYS` 삭제. `SLOT_COLUMNS` 대신 `splitSlotColumns(rows): [SlotRow[], SlotRow[]]`(최상위 항목 기준으로 반을 가른다 — 15칸에서는 지금처럼 `procedures` 앞).
   - `section-number.ts`: `listCounted(section)`은 `section.counts_lines`, `readStyleChoices(section, style)`(첫 인자가 절).
   - `c-edit-model.ts` `numberDoc`: `section.counts_lines`.
   - `classify-model.ts`: `buildDestinationOptions(tobe)`(라벨 인자 삭제, `is_assignable`만, `depth: number` = `level`), `isNa`는 `parent_key`를 따라 올라간다.
   - 시험 값: 기존 시험의 고정 절에 `counts_lines` · `level`을 더하고, 3수준 골격(`a` · `a.b` · `a.b.c`)으로 깊이 2가 나오는 경우를 하나씩 더한다.
-- [ ] **Step 6: 확인** — backend 전체, 프런트 lint · tsc · vitest · `npm run build`(경고 0). API 층과 공용 모델을 고쳤으니 **전체 스모크**(`node scripts/pw-smoke-sop.mjs`) — 시험 ID(`…-slot-<key>`, `assign-tree-place-slot:<doc>:<key>`)는 키가 그대로라 바뀌지 않는다.
-- [ ] **Step 7: `plan2-ai.md` API 계약 블록 · `backend/CLAUDE.md` · `frontend/CLAUDE.md`의 칸 설명 · PROGRESS → 커밋 → 스텝 diff 검토 → `feat/outline`**
+- [x] **Step 6: 확인** — backend 전체, 프런트 lint · tsc · vitest · `npm run build`(경고 0). API 층과 공용 모델을 고쳤으니 **전체 스모크**(`node scripts/pw-smoke-sop.mjs`) — 시험 ID(`…-slot-<key>`, `assign-tree-place-slot:<doc>:<key>`)는 키가 그대로라 바뀌지 않는다.
+- [x] **Step 7: `plan2-ai.md` API 계약 블록 · `backend/CLAUDE.md` · `frontend/CLAUDE.md`의 칸 설명 · PROGRESS → 커밋 → 스텝 diff 검토 → `feat/outline`**
 
 ---
 
