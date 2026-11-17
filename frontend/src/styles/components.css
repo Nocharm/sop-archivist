@@ -1859,6 +1859,17 @@
   .assign-confirm { width: 100%; height: 40px; font-size: 14px; }
   .assign-alt { height: 30px; min-width: 0; gap: 4px; padding: 0 6px; font-size: var(--fs-cap); font-weight: 400; width: 100%; }
   .assign-alt > :not(svg, kbd) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* 변경 종류 세 칸 토글(그대로 · 말투 · 고쳐 씀) - 눌린 칸은 강조 바탕, 고를 수 없는 칸은 흐리게. AI 제안 칸은 오른쪽 위 ✦ */
+  .kind-toggle { display: inline-flex; flex: none; padding: 1px; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--surface); }
+  .kind-toggle-btn { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 22px; border-radius: calc(var(--r-1) - 1px); color: var(--ink-3); }
+  .kind-toggle-btn:not(:disabled):hover { background: var(--hover); color: var(--ink); }
+  .kind-toggle-btn[aria-checked="true"] { background: var(--accent); color: var(--on-accent); }
+  .kind-toggle-btn[aria-checked="true"]:not(:disabled):hover { background: var(--accent); color: var(--on-accent); }
+  .kind-toggle-btn:disabled { color: var(--ink-4); cursor: not-allowed; }
+  .kind-toggle-btn[aria-checked="true"]:disabled { background: var(--accent-tint); color: var(--accent); }
+  .kind-toggle-ai { position: absolute; top: 1px; right: 1px; color: var(--st-ai-ink); }
+  .kind-toggle-btn[aria-checked="true"] .kind-toggle-ai { color: currentColor; }
+  .kind-chip { display: inline-flex; flex: none; align-items: center; gap: 4px; height: 24px; padding: 0 6px; border: 1px solid var(--line-2); border-radius: var(--r-1); font-size: 12px; color: var(--ink-2); }
   /* Remark 한 줄 - 이름 · 글(두 줄까지) · 최근 Remark 단추. 첫 줄 높이를 28px 단추에 맞추고, 글 오른쪽 위 연필 자리는 늘 비워 둔다(글을 덮지 않게) */
   .assign-remark { display: flex; align-items: flex-start; gap: 8px; min-width: 0; min-height: 28px; }
   .remark-body { position: relative; flex: 1 1 0; min-width: 0; padding: 4px 26px 4px 0; }

@@ -2216,11 +2216,17 @@ await runStep("assign: legend first, place, delete with reason, edit, clear, bul
     await page.waitForTimeout(200);
   }
   await pickFirstPlace(page);
+  // 고쳐 쓰기는 고른 곳 상자 문장 줄의 연필(아직 안 쓴 문서의 칸일 때만) - E와 같다
+  check("a slot shows the rewrite pencil on its sentence line", (await page.locator('[data-testid="assign-edit"]').count()) === 1);
   await page.keyboard.press("e");
   const textarea = page.locator('textarea[data-testid^="assign-text-"]').first();
   await textarea.fill("Smoke: rewritten sentence");
   await page.locator('[data-testid^="assign-slot-change-"]').first().waitFor({ timeout: T });
   check("an edited sentence asks for a change type", true);
+  const kindButton = (kind) => page.locator(`[data-testid^="assign-slot-change-"][data-testid$="-${kind}"]`).first();
+  check("a rewritten sentence cannot be As is", await kindButton("as_is").isDisabled());
+  await kindButton("tone").click();
+  check("Tone is picked by its icon", (await kindButton("tone").getAttribute("aria-checked")) === "true");
   await page.keyboard.press("Escape");
   // 비우기
   await selectRowById(page, firstIds.split(" · ")[0]);
@@ -2228,6 +2234,7 @@ await runStep("assign: legend first, place, delete with reason, edit, clear, bul
   await page.keyboard.press("u");
   await page.waitForFunction(() => document.querySelector('[data-testid="assign-row-status"]')?.textContent?.includes("Unassigned"), null, { timeout: T });
   check("U clears the unit", true);
+  check("Unassign hides once nothing is assigned", (await page.locator('[data-testid="assign-clear"]').count()) === 0);
   // 일괄 - Shift+클릭으로 여럿(All이라 용지 전부 - 필터를 걸면 맞지 않는 조각은 접힌다)
   await page.locator('[data-testid="assign-filter-all"]').click();
   const units = page.locator('[data-testid^="assign-paper-unit-"]');

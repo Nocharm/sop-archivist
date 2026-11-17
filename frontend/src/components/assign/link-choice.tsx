@@ -4,8 +4,8 @@
 
 import { Fragment, type ReactNode } from "react";
 
+import { ChangeKindChip, ChangeKindToggle, type TextChangeKind } from "@/components/assign/change-kind-toggle";
 import { LangToken } from "@/components/paper/lang-token";
-import { Select } from "@/components/ui/select";
 import { Truncate } from "@/components/ui/motion";
 import type { ChangeTypeInput, WrittenSentence } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
@@ -26,9 +26,9 @@ interface LinkChoiceProps {
   renderNote?: (row: WrittenSentence) => ReactNode;
 }
 
-const KINDS: ChangeTypeInput[] = ["as_is", "tone", "rewritten"];
-/** AI 제안 그대로 받기(null)의 고르기 값 */
-const AI_VALUE = "ai";
+function readTextKind(value: string | null | undefined): TextChangeKind | null {
+  return value === "as_is" || value === "tone" || value === "rewritten" ? value : null;
+}
 
 export function LinkChoice({ rows, changeTypes, aiPending, translatedIds, defaults, auto, mergedWith, onChange, renderNote }: LinkChoiceProps) {
   const { t } = useI18n();
@@ -36,10 +36,8 @@ export function LinkChoice({ rows, changeTypes, aiPending, translatedIds, defaul
     <div className="grid gap-1.5">
       {rows.map((row) => {
         const current = row.target_id in changeTypes ? changeTypes[row.target_id] : aiPending.has(row.target_id) ? null : defaults[row.target_id];
-        const options = [
-          ...(aiPending.has(row.target_id) ? [{ value: AI_VALUE, label: t("assign.changeAi", { type: row.change_type ? t(`change.${row.change_type}`) : "–" }) }] : []),
-          ...KINDS.map((kind) => ({ value: kind, label: t(`change.${kind}`) })),
-        ];
+        // 아직 받지 않은 AI 연결(null)은 AI가 고른 종류가 눌린 채 ✦ - 그 칸을 다시 누르면 AI 제안 그대로(null)로 남는다
+        const aiKind = aiPending.has(row.target_id) ? readTextKind(row.change_type) : null;
         return (
           <Fragment key={row.target_id}>
             <div className="chosen-line" data-testid={`assign-link-${row.target_id}`}>
@@ -48,21 +46,15 @@ export function LinkChoice({ rows, changeTypes, aiPending, translatedIds, defaul
                 <Truncate text={row.text} lang={row.lang === "neutral" ? undefined : row.lang} />
               </span>
               {translatedIds.has(row.target_id) ? (
-                <span className="flex-none text-xs text-ink-2" data-testid={`assign-change-${row.target_id}-translated`}>
-                  {t("change.translated")}
-                </span>
+                <ChangeKindChip kind="translated" testId={`assign-change-${row.target_id}-translated`} />
               ) : (
                 auto === null && (
-                  <span className="flex-none">
-                    <Select
-                      testId={`assign-change-${row.target_id}`}
-                      ariaLabel={t("assign.changeType")}
-                      size="sm"
-                      value={current ?? AI_VALUE}
-                      options={options}
-                      onChange={(next) => onChange(row.target_id, next === AI_VALUE ? null : (KINDS.find((kind) => kind === next) ?? null))}
-                    />
-                  </span>
+                  <ChangeKindToggle
+                    testId={`assign-change-${row.target_id}`}
+                    value={current === null ? aiKind : readTextKind(current)}
+                    aiKind={aiKind}
+                    onChange={(kind) => onChange(row.target_id, kind === aiKind && current === null ? null : kind)}
+                  />
                 )
               )}
             </div>
