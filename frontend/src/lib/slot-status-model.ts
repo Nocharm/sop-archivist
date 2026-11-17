@@ -134,6 +134,13 @@ export function listUsedReasons(tobe: ToBe, limit = 3): string[] {
   return [...tally.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([reason]) => reason);
 }
 
+/** Restore의 Undo - 그 줄이 아직 SOP이고 그 칸에 저장된 N/A가 없을 때만(상위 칸만 N/A인 하위 칸은 되돌린다) */
+export function canUndoRestore(tobe: ToBe, docId: number, slotKey: string): boolean {
+  const doc = tobe.docs.find((item) => item.id === docId);
+  if (doc === undefined || doc.doc_type !== "sop") return false;
+  return !tobe.na_slots.some((na) => na.code === doc.code && na.slot_key === slotKey);
+}
+
 /** 열려 있는 사유 편집기 - 화면에 하나. saved는 그 칸에 저장된 사유(새로 여는 칸은 "") */
 export interface NaEdit {
   docKey: string;
