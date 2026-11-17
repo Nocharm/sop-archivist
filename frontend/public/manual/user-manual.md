@@ -476,6 +476,7 @@ Old Unit마다 새 문서의 어디로 갈지 정하고 확정하는 단계입�
 - Old Unit 아래 "간 곳"(문서 아이콘이 붙은 글)을 누르면 New 문서의 그 문장으로, New 문장 위의 출처 칩을 누르면 Old의 그 Unit으로 갑니다. New 문서가 닫혀 있거나 다른 문서면 열고 갑니다. 간 자리는 잠깐 테두리가 번쩍입니다.
 - Old 줄에 없는 언어의 New 문장도 이을 수 있습니다. 그 줄의 Unit이 출처가 되고 변경 종류는 **Translated** 로 적힙니다(고르지 않습니다). New 문장 하나를 고르면 New 문서에서 짝인 다른 언어 문장도 늘 함께 골라집니다 — 빼려면 그 문장을 <kbd>Ctrl</kbd>을 누른 채 다시 누릅니다.
 - 추천이나 New 문장을 누르거나 이렇게 이동하면 그 옆에 작은 메뉴가 조금 늦게 뜹니다. 메뉴는 이은 줄의 글 아래(자리가 모자라면 위)에 놓여 그 줄을 가리지 않습니다. 가로는 누른 곳을 따라가되, New 문장을 눌러 잇거나 끊을 때는 두 문서 사이 선이 그 문장에 닿는 끝(문장 왼쪽 테두리)에 맞춰 떠서 어느 연결을 확정·끊는지 보입니다(선이 안 보이면 누른 곳). 마우스를 멀리 옮기지 않고 여기서 고릅니다.
+- **Map** 의 문장 줄 끝에 있는 **Open in Assign** 으로 들어오면 그 줄이 골라진 채 열리고 Old 문서가 그 조각으로 옮겨 갑니다([Map](#map)).
 
 | 메뉴가 뜬 때 | 항목 |
 |---|---|
@@ -802,14 +803,14 @@ Bundle을 건너 어느 문서가 어느 문서를 가리키는지, 그 문서�
 - 찾기 칸(<kbd>/</kbd>로 바로 갑니다)에 문서 번호나 제목의 일부를 넣으면 지도에서는 맞는 문서만 진하고 나머지는 흐려지며, **List** 에는 그 문서가 든 줄만 남습니다. <kbd>Enter</kbd>를 누를 때마다 맞는 다음 문서를 보고 있는 순서로 골라 오른쪽 칸에 엽니다 — 지도에서는 줄기 순서, 줄기 안 순서이고(접힌 줄기의 문서면 그 줄기를 펴고 그 문서가 보이게 옮깁니다), **List** 에서는 줄 순서입니다. **Linked to this Bundle** 에서 맞는 것이 없으면 **Search all Bundles** 가 나타나 같은 글로 모든 Bundle에서 찾습니다. 맞는 것이 하나도 없으면 지도와 **List** 자리 모두 **Nothing matches** 가 뜨고, **Clear filters** 로 찾기와 거르기를 지웁니다.
 - 지도는 들어올 때와 **Read again** 을 누를 때만 읽습니다. 그사이 다른 사람이 고친 것은 **Read again** 으로 봅니다.
 - **List** 에서 줄을 누르거나 줄에 초점을 두고 <kbd>Enter</kbd>를 누르면 맞은편 문서가 오른쪽 칸에 열립니다 — 소유 표시, 번호, 제목, **Bundle**, **Status**, **Becomes**, 그 문서가 가리키는 문서와 그 문서를 가리키는 곳의 줄 수. 그 목록의 줄을 누르면 그 문서로 옮겨 갑니다. 이 Bundle이나 내가 구성원인 Bundle의 Old 문서면 **Open in Assign** 으로 그 Bundle의 Assign에서 그 문서를 엽니다. <kbd>Esc</kbd>나 **Clear selection** 으로 고름을 풉니다.
-- 문서를 고르면 오른쪽 칸의 가리키는 문서(Cites)와 가리켜지는 곳(Cited by) 목록의 줄마다 그 아래에 그 선에 든 문장(표시 ID와 글)이 보입니다. 글은 300자까지 그대로 보이고(더 긴 글은 끝에 …), 읽기만 하는 줄이라 눌러도 아무 일이 없습니다. 문장은 그 줄이 든 Bundle의 구성원에게만 보입니다 — 이 Bundle과 내가 구성원인 Bundle의 줄은 문장으로, 그 밖의 Bundle의 확인한 줄(확인한 참조와 **Moved to**)은 그 줄 아래 "N lines hidden · you are not a member of that Bundle" 한 줄로 수만 보이고, 그 밖의 Bundle의 확인 전 줄(**REF?**)은 보이지도 세지도 않습니다. 한쪽 목록에 문장이 200줄을 넘으면 끝에 "N more lines"가 붙습니다. 문장은 문서를 고를 때, 범위를 바꿀 때, **Read again** 을 누를 때 읽습니다. 읽지 못하면 목록 위에 **Could not read the lines.** 와 다시 시도가 뜨고, 지도와 요약은 그대로입니다.
+- 문서를 고르면 오른쪽 칸의 가리키는 문서(Cites)와 가리켜지는 곳(Cited by) 목록의 줄마다 그 아래에 그 선에 든 문장(표시 ID와 글)이 보입니다. 글은 300자까지 그대로 보이고(더 긴 글은 끝에 …), 문장 줄 자체는 읽기만 하는 줄입니다. 문장 줄 끝에는 **Open in Assign**(화살표 단추 — 줄에 올리거나 Tab으로 닿으면 보이고, 이름은 툴팁으로 뜹니다)이 있어, 누르면 그 줄이 든 Bundle의 Assign이 그 줄을 고른 채 열립니다(한 단·양 단 보기는 쓰던 그대로입니다). 그 줄이 그사이 쪼개기 편집으로 바뀌었으면 문서만 열리고 "That line has changed. The document is open instead." 알림이 뜹니다. 문장은 그 줄이 든 Bundle의 구성원에게만 보입니다 — 이 Bundle과 내가 구성원인 Bundle의 줄은 문장으로, 그 밖의 Bundle의 확인한 줄(확인한 참조와 **Moved to**)은 그 줄 아래 "N lines hidden · you are not a member of that Bundle" 한 줄로 수만 보이고, 그 밖의 Bundle의 확인 전 줄(**REF?**)은 보이지도 세지도 않습니다. 한쪽 목록에 문장이 200줄을 넘으면 끝에 "N more lines"가 붙습니다. 문장은 문서를 고를 때, 범위를 바꿀 때, **Read again** 을 누를 때 읽습니다. 읽지 못하면 목록 위에 **Could not read the lines.** 와 다시 시도가 뜨고, 지도와 요약은 그대로입니다.
 - 아무것도 고르지 않았으면 오른쪽 칸에 이 Bundle의 요약(가리키는 줄과 문서 수, 가리켜지는 줄과 Bundle 수, 확인하지 않은 참조 번호 수, 어느 Bundle에도 없는 문서 수)과 선 모양 풀이가 보입니다. 이 Bundle을 다른 문서와 잇는 줄이 없으면 **No references yet** 이 뜹니다.
 - 선은 문서 번호 꼴(영문자로 시작해 영문자·숫자 마디를 하이픈으로 잇고 숫자로 끝나는 번호, 예: `SOP-ABC-1016`)인 번호끼리만 맞춰 긋습니다 — 이 Bundle 안에서도 같아서 번호가 그 꼴이 아닌 문서(양식 번호 `QP 07`, `SOP-CF` 같은)는 다른 문서의 선을 받지 않고(그 문서의 줄이 번호 꼴인 다른 문서를 가리키면 그 선은 그어집니다), 번호 없이 올린 New 문서의 임시 번호(`NEW-…`)는 맞추지 않습니다.
 - 합성 Bundle과 실제 Bundle은 서로의 지도에 나오지 않습니다.
 
 ### 남의 Bundle은 어디까지 보이나 {#map-visibility}
 
-- 문서마다 소유 표시가 붙습니다. **This Bundle** 은 지금 연 Bundle, **Other Bundle · member** 는 내가 구성원인 Bundle입니다. **Other Bundle · summary only** 는 Bundle 이름 대신 코드(`BND-0018`)만 보이고, 문서 번호·제목·상태·바뀔 문서·줄 수만 보입니다. 문장을 보려면 그 Bundle의 구성원이어야 합니다. 관리자 권한이 있어도 구성원이 아니면 같습니다 — 서버가 그 Bundle의 문장을 보내지 않고, 그 줄은 "N lines hidden · you are not a member of that Bundle"로 수만 옵니다. 구성원이 아닌 Bundle의 문서에는 **Open in Assign** 이 없습니다.
+- 문서마다 소유 표시가 붙습니다. **This Bundle** 은 지금 연 Bundle, **Other Bundle · member** 는 내가 구성원인 Bundle입니다. **Other Bundle · summary only** 는 Bundle 이름 대신 코드(`BND-0018`)만 보이고, 문서 번호·제목·상태·바뀔 문서·줄 수만 보입니다. 문장을 보려면 그 Bundle의 구성원이어야 합니다. 관리자 권한이 있어도 구성원이 아니면 같습니다 — 서버가 그 Bundle의 문장을 보내지 않고, 그 줄은 "N lines hidden · you are not a member of that Bundle"로 수만 옵니다. 구성원이 아닌 Bundle의 문서에는 **Open in Assign** 이 없고, 가려진 줄에도 줄 끝의 **Open in Assign** 이 없습니다.
 - **Not in any Bundle** 은 어느 Bundle도 올리지 않은 번호입니다. 누군가 가리키지만 아무도 재구성하지 않는 문서라, 그 번호를 쓴 Bundle끼리 누가 맡을지 정해야 합니다.
 - 확인 전 참조(**REF?**)는 이 Bundle의 줄과, 내가 구성원인 Bundle의 줄 가운데 이 Bundle의 문서를 가리키는 것만 선이 됩니다. 구성원이 아닌 Bundle에서는 사람이 확인한 참조와 확정한 **Moved to** 만 선으로 나옵니다.
 - 모든 Bundle의 문서 번호·제목·상태·바뀔 문서는 어느 Bundle의 구성원이든 봅니다(Old 문서의 제목은 보통 올린 파일 이름에서 번호를 뺀 나머지입니다). Bundle 이름과 문장은 그 Bundle의 구성원만 봅니다.

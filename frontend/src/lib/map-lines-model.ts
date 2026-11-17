@@ -1,6 +1,7 @@
 /** 참조 지도 옆 칸의 줄 문장 - 선(맞은편 마디 · 상태)마다 그 선의 문장과 가려진 줄 수를 붙이는 순수 모델(설계 2026-11-17 참조 지도 §6.8 · §7.2) */
 import type { MapLine, MapLines, MapWithheld } from "./api-sop";
 import { getEdgeLabel, type NodeLink } from "./map-model";
+import { getAssignLineHref } from "./stages";
 
 export type LineSide = "out" | "in";
 
@@ -38,6 +39,11 @@ export function attachLines(links: readonly NodeLink[], lines: MapLines | null, 
     if (row) row.withheld += item.lines;
   }
   return { rows, more: side === "out" ? lines.more_out : lines.more_in };
+}
+
+/** 그 줄을 고른 채 여는 Assign 주소 - 줄이 든 Bundle의 것이다(응답에 실린 줄은 그 Bundle의 구성원에게만 온다) */
+export function getLineHref(line: MapLine): string {
+  return getAssignLineHref(line.bundle_id, line.document_id, line.unit_id);
 }
 
 /** 지금 고른 마디의 응답일 때만 쓴다 - 읽는 중이거나 앞 마디의 응답이면 null(앞 문서의 문장이 새 문서 아래에 남아 보이지 않게) */

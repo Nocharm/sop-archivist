@@ -2,11 +2,13 @@
 // 그 밖의 줄은 "줄 N개 가려짐 · 요약만" 한 줄로 수만 적는다. 화면은 받은 것만 그린다(가리는 것은 서버다).
 "use client";
 
-import { RefreshCw } from "lucide-react";
+import { ArrowUpRight, RefreshCw } from "lucide-react";
+import Link from "next/link";
 
+import { Tooltip } from "@/components/ui/tooltip";
 import type { MapLines } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
-import type { LineSide, LinkLines } from "@/lib/map-lines-model";
+import { getLineHref, type LineSide, type LinkLines } from "@/lib/map-lines-model";
 
 /** 옆 칸이 받는 줄 문장의 상태 - data는 지금 고른 문서의 응답일 때만(pickCurrentLines) */
 export interface SideLinesState {
@@ -28,10 +30,19 @@ export function LinkSentences({ row, side }: { row: LinkLines; side: LineSide })
           {lines.map((line) => {
             const counterpart = side === "out" ? line.target : line.source;
             return (
-              // 글은 자르지 않고 다 보인다(서버가 300자에서 자른다) - 툴팁도 Tab 자리도 없는 읽기 전용 줄이다. 누르는 길은 다음 걸음의 줄 끝 단추
+              // 글은 자르지 않고 다 보인다(서버가 300자에서 자른다) - 줄 자체는 읽기 전용이고 누르는 길은 줄 끝 단추 하나다.
+              // 단추는 응답에 실린 줄에만 있다(그 줄이 든 Bundle의 구성원이라는 뜻) - 가려진 줄에는 주소도 단추도 없다.
+              // 줄마다 주소가 달라 미리 받기(prefetch)를 끈다 - 켜 두면 보이는 줄 수만큼 요청이 나간다
               <li key={line.unit_id} className="map-sentence" data-testid={`map-line-${line.unit_id}-${counterpart}`}>
                 <span className="map-sentence-id">{line.display_id}</span>
                 <span className="map-sentence-text">{line.text_truncated ? `${line.text}…` : line.text}</span>
+                <span className="map-sentence-open">
+                  <Tooltip label={t("map.side.openAssign")} align="end">
+                    <Link href={getLineHref(line)} prefetch={false} className="btn ghost icon h-6 w-6" aria-label={t("map.side.openAssign")} data-testid={`map-line-open-${line.unit_id}-${counterpart}`}>
+                      <ArrowUpRight size={14} strokeWidth={1.5} aria-hidden />
+                    </Link>
+                  </Tooltip>
+                </span>
               </li>
             );
           })}
