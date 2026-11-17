@@ -47,6 +47,31 @@ export function findOldStrip(root: ParentNode, unitId: number): HTMLElement | nu
   );
 }
 
+/**
+ * 재기 한 번 동안 쓰는 Old 조각 찾기 - findOldStrip과 같은 답을 처음 물을 때 한 번 훑어 모아 둔다.
+ * 칩·배지마다 findOldStrip을 부르면 그때마다 문서 전체를 뒤져, 1,300문단 문서에서 호버 한 번의 JS 대부분이 여기였다
+ */
+function buildOldStripIndex(root: ParentNode): (unitId: number) => HTMLElement | null {
+  let first: Map<number, HTMLElement | null> | null = null;
+  let fallback: Map<number, HTMLElement> | null = null;
+  return (unitId) => {
+    if (!first || !fallback) {
+      first = new Map();
+      fallback = new Map();
+      for (const el of root.querySelectorAll<HTMLElement>('[data-pane="old"] [data-unit]')) {
+        const id = Number(el.dataset.unit);
+        if (!first.has(id)) first.set(id, el.closest<HTMLElement>(".strip, .cell-piece"));
+      }
+      for (const strip of root.querySelectorAll<HTMLElement>('[data-pane="old"] .strip[data-strip-unit]')) {
+        const id = Number(strip.dataset.stripUnit);
+        if (!fallback.has(id)) fallback.set(id, strip);
+      }
+    }
+    return first.get(unitId) ?? fallback.get(unitId) ?? null;
+  };
+}
+
+/** root가 New 칸이면 그 칸 안만 뒤진다 - 문서 전체(Old 용지 수만 노드)를 훑지 않게 재기에서는 New 칸을 넘긴다 */
 export function findNewLine(root: ParentNode, targetId: number): HTMLElement | null {
   return root.querySelector<HTMLElement>(`[data-pane="new"] .new-line[data-target="${targetId}"]`);
 }
@@ -65,33 +90,37 @@ function readAnchorY(rect: DOMRect): number {
 }
 
 /** 연결 배지마다 이어진 New 문장이 오른쪽 칸 화면 안·위·아래·다른 문서 중 어디인지 data-dir로 단다 - 열린 문서의 문장이 하나라도 보이면 보임 */
-function updateBadgeDirections(root: HTMLElement, newBody: HTMLElement) {
-  const currentDoc = Number(newBody.closest<HTMLElement>("[data-pane]")?.dataset.doc);
+// 두 방향 표시 모두 위치를 다 읽은 뒤에 쓴다 - 읽기 사이에 data-dir을 쓰면 다음 읽기가 문서 전체 배치를 다시 계산시킨다
+function updateBadgeDirections(root: HTMLElement, newPane: HTMLElement, newBody: HTMLElement) {
+  const currentDoc = Number(newPane.dataset.doc);
   const frame = newBody.getBoundingClientRect();
   const view = { docId: currentDoc, scrollTop: newBody.scrollTop, height: newBody.clientHeight };
+  const next: Array<[HTMLElement, LinkDirection]> = [];
   for (const badge of root.querySelectorAll<HTMLElement>("[data-pane=\"old\"] [data-link-badge]")) {
     const refs = (badge.dataset.targets ?? "").split(",").map((part) => part.split(":").map(Number));
     const here = refs.filter(([docId]) => docId === currentDoc);
     let dir: LinkDirection = refs[0] ? getLinkDirection({ docId: refs[0][0], top: 0, bottom: 0 }, view) : "none";
     if (here.length > 0) {
       const dirs = here.flatMap(([, targetId]) => {
-        const rect = findNewLine(root, targetId)?.getBoundingClientRect();
+        const rect = findNewLine(newPane, targetId)?.getBoundingClientRect();
         return rect ? [getLinkDirection({ docId: currentDoc, top: rect.top - frame.top + view.scrollTop, bottom: rect.bottom - frame.top + view.scrollTop }, view)] : [];
       });
       dir = dirs.includes("visible") ? "visible" : (dirs[0] ?? "none");
     }
-    if (badge.dataset.dir !== dir) badge.dataset.dir = dir;
+    next.push([badge, dir]);
   }
+  for (const [badge, dir] of next) if (badge.dataset.dir !== dir) badge.dataset.dir = dir;
 }
 
 /** New 출처 칩마다 그 Old 조각이 왼쪽 칸 화면 안·위·아래 중 어디인지 data-dir로 단다 - 칩 오른쪽 갈매기. 조각이 그려져 있지 않으면(다른 Old 문서) none */
-function updateChipDirections(root: HTMLElement, oldBody: HTMLElement) {
+function updateChipDirections(newPane: HTMLElement, oldBody: HTMLElement, findOld: (unitId: number) => HTMLElement | null) {
   const frame = oldBody.getBoundingClientRect();
-  for (const chip of root.querySelectorAll<HTMLElement>("[data-pane=\"new\"] [data-src-unit]")) {
-    const rect = findOldStrip(root, Number(chip.dataset.srcUnit))?.getBoundingClientRect();
-    const dir: LinkDirection = !rect ? "none" : rect.bottom < frame.top ? "above" : rect.top > frame.bottom ? "below" : "visible";
-    if (chip.dataset.dir !== dir) chip.dataset.dir = dir;
+  const next: Array<[HTMLElement, LinkDirection]> = [];
+  for (const chip of newPane.querySelectorAll<HTMLElement>("[data-src-unit]")) {
+    const rect = findOld(Number(chip.dataset.srcUnit))?.getBoundingClientRect();
+    next.push([chip, !rect ? "none" : rect.bottom < frame.top ? "above" : rect.top > frame.bottom ? "below" : "visible"]);
   }
+  for (const [chip, dir] of next) if (chip.dataset.dir !== dir) chip.dataset.dir = dir;
 }
 
 /** 이음 선이 Old 조각에서 나가는 자리 - 조각 오른쪽 끝, 연결 배지(조각 오른쪽 아래) 높이. 배지가 없으면(고르는 중인 이음) 첫 줄 높이 */
@@ -133,17 +162,26 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
   // 이음이 바뀔 때만 크기 관찰을 다시 건다 - 부모가 매 렌더 새 배열을 넘겨도
   const pairsKey = pairs.map((pair) => `${pair.unitId}:${pair.targetId}${pair.draft ? "d" : ""}`).join(",");
 
+  // 다음 재기에서 방향 표시도 다시 다나 - 올린 조각만 바뀐 재기는 선만 다시 긋는다(방향은 스크롤·크기·화면 내용으로만 바뀐다)
+  const directionsRef = useRef(true);
+
   const measure = useEffectEvent(() => {
     frameRef.current = 0;
+    const withDirections = directionsRef.current;
+    directionsRef.current = false;
     const root = svgRef.current?.parentElement;
     const oldBody = root?.querySelector<HTMLElement>("[data-pane=\"old\"] .pane-body");
     const newBody = root?.querySelector<HTMLElement>("[data-pane=\"new\"] .pane-body");
-    if (!root || !oldBody || !newBody) {
+    const newPane = newBody?.closest<HTMLElement>("[data-pane]");
+    if (!root || !oldBody || !newBody || !newPane) {
       setLines((prev) => (prev.length === 0 ? prev : []));
       return;
     }
-    updateBadgeDirections(root, newBody);
-    updateChipDirections(root, oldBody);
+    const findOld = buildOldStripIndex(root);
+    if (withDirections) {
+      updateBadgeDirections(root, newPane, newBody);
+      updateChipDirections(newPane, oldBody, findOld);
+    }
     if (!visible) {
       setLines((prev) => (prev.length === 0 ? prev : []));
       return;
@@ -157,8 +195,8 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
     if (hover?.side === "new") targets.add(hover.id);
     const next: DrawnLine[] = [];
     for (const pair of pickDrawnLinks(pairs, units, targets)) {
-      const oldEl = findOldStrip(root, pair.unitId);
-      const newEl = findNewLine(root, pair.targetId);
+      const oldEl = findOld(pair.unitId);
+      const newEl = findNewLine(newPane, pair.targetId);
       if (!oldEl || !newEl) continue;
       // 두 끝 모두 상자 바깥 테두리 - 선이 배지·칩을 찌르지 않고 그 높이에서 상자에 닿는다
       const start = readOldLineStart(oldEl);
@@ -174,7 +212,8 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
     setLines((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
   });
 
-  const schedule = useEffectEvent(() => {
+  const schedule = useEffectEvent((withDirections: boolean) => {
+    if (withDirections) directionsRef.current = true;
     if (frameRef.current === 0) frameRef.current = requestAnimationFrame(() => measure());
   });
 
@@ -182,7 +221,7 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
   useEffect(() => {
     const root = svgRef.current?.parentElement;
     if (!root) return;
-    const onChange = () => schedule();
+    const onChange = () => schedule(true);
     const observer = new ResizeObserver(onChange);
     observer.observe(root);
     for (const el of root.querySelectorAll(".pane-body, .pane-body > *")) observer.observe(el);
@@ -200,8 +239,14 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
     };
   }, [pairsKey]);
 
-  // 화면이 다시 그려질 때마다(고른 줄·문서·확대가 바뀌었을 수 있다) 한 번 다시 잰다
-  useEffect(() => schedule());
+  // 화면이 다시 그려질 때마다(고른 줄·문서·확대가 바뀌었을 수 있다) 한 번 다시 잰다 - 받은 값은 그대로이고 올린 조각만 바뀐 그리기면 선만
+  const lastDrawRef = useRef<{ pairs: LinkPair[]; focusUnits: ReadonlySet<number>; focusTargets: ReadonlySet<number>; visible: boolean; hover: Hover | null } | null>(null);
+  useEffect(() => {
+    const prev = lastDrawRef.current;
+    const isHoverOnly = prev !== null && prev.hover !== hover && prev.pairs === pairs && prev.focusUnits === focusUnits && prev.focusTargets === focusTargets && prev.visible === visible;
+    lastDrawRef.current = { pairs, focusUnits, focusTargets, visible, hover };
+    schedule(!isHoverOnly);
+  });
 
   // 마우스를 올린 조각 - 바뀔 때만 상태를 고친다
   useEffect(() => {
@@ -232,7 +277,9 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
     };
   }, []);
 
-  // 맞은편 강조 - 조각이 다시 그려지면 표시가 사라질 수 있어 화면이 다시 그려질 때마다 맞춘다
+  // 맞은편 강조 - 조각이 다시 그려지면 표시가 사라질 수 있어 화면이 다시 그려질 때마다 맞춘다. 단 요소는 ref에 두고 다음에 그것만 거둔다
+  const markedRef = useRef<ReadonlySet<HTMLElement>>(new Set());
+  const hotRef = useRef<ReadonlySet<HTMLElement>>(new Set());
   useEffect(() => {
     const root = svgRef.current?.parentElement;
     if (!root) return;
@@ -240,11 +287,13 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
     // 진해진 선의 두 끝 표시(Old 연결 배지·New 출처 칩)도 올린 모양으로 - 어느 칩이 어느 배지와 이어졌는지 함께 읽힌다
     const hot = new Set<HTMLElement>();
     if (hover) {
+      const findOld = buildOldStripIndex(root);
+      const newPane = root.querySelector<HTMLElement>('[data-pane="new"]') ?? root;
       for (const id of findLinkPartners(pairs, hover.side, hover.id)) {
         const unitId = hover.side === "old" ? hover.id : id;
         const targetId = hover.side === "old" ? id : hover.id;
-        const oldEl = findOldStrip(root, unitId);
-        const newEl = findNewLine(root, targetId);
+        const oldEl = findOld(unitId);
+        const newEl = findNewLine(newPane, targetId);
         const el = hover.side === "old" ? newEl : oldEl;
         if (el) marked.add(el);
         const badge = oldEl?.querySelector<HTMLElement>("[data-link-badge]");
@@ -253,20 +302,23 @@ export function LinkLines({ pairs, focusUnits, focusTargets, visible }: LinkLine
         if (chip) hot.add(chip);
       }
     }
-    for (const el of root.querySelectorAll<HTMLElement>("[data-link-hover]")) if (!marked.has(el)) delete el.dataset.linkHover;
+    // 지난번에 단 것만 거둔다 - 문서 전체에서 표시를 찾으면 그릴 때마다 Old 용지(수만 노드)를 훑는다
+    for (const el of markedRef.current) if (!marked.has(el)) delete el.dataset.linkHover;
     for (const el of marked) el.dataset.linkHover = "";
-    for (const el of root.querySelectorAll<HTMLElement>("[data-link-hot]")) if (!hot.has(el)) delete el.dataset.linkHot;
+    for (const el of hotRef.current) if (!hot.has(el)) delete el.dataset.linkHot;
     for (const el of hot) el.dataset.linkHot = "";
+    markedRef.current = marked;
+    hotRef.current = hot;
   });
 
   // 끝날 때 표시를 지운다 - New 문서를 닫아도 Old 조각에 강조가 남지 않게
-  useEffect(() => {
-    const root = svgRef.current?.parentElement;
-    return () => {
-      for (const el of root?.querySelectorAll<HTMLElement>("[data-link-hover]") ?? []) delete el.dataset.linkHover;
-      for (const el of root?.querySelectorAll<HTMLElement>("[data-link-hot]") ?? []) delete el.dataset.linkHot;
-    };
-  }, []);
+  useEffect(
+    () => () => {
+      for (const el of markedRef.current) delete el.dataset.linkHover;
+      for (const el of hotRef.current) delete el.dataset.linkHot;
+    },
+    [],
+  );
 
   return (
     <svg ref={svgRef} className="link-lines" aria-hidden data-testid="assign-link-lines">
