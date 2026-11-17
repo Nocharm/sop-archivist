@@ -60,6 +60,15 @@ export function getEditOriginalHref(bundleId: number, docId: number): string {
   return `${getStageHref(bundleId, "assign")}?${EDIT_ORIGINAL_PARAM}=${docId}`;
 }
 
+/** 줄 하나를 고른 채 배정 화면을 여는 주소 값 둘 - 그 줄의 Old 문서 id와 Unit id(참조 지도의 줄 끝 단추). 배정 화면이 읽은 뒤 주소에서 뗀다 */
+export const ASSIGN_DOC_PARAM = "doc";
+export const ASSIGN_UNIT_PARAM = "unit";
+
+/** 그 Bundle의 배정 화면을 그 줄(Unit이 든 줄)을 고른 채 여는 주소 - 보기(한 단·양 단)는 바꾸지 않는다 */
+export function getAssignLineHref(bundleId: number, docId: number, unitId: number): string {
+  return `${getStageHref(bundleId, "assign")}?${ASSIGN_DOC_PARAM}=${docId}&${ASSIGN_UNIT_PARAM}=${unitId}`;
+}
+
 export function getStageHref(bundleId: number, key: StageKey): string {
   const stage = STAGES.find((item) => item.key === key);
   return `/bundles/${bundleId}${stage?.path ?? ""}`;

@@ -50,10 +50,16 @@
   .map-link-n { flex: none; font-size: var(--fs-cap); color: var(--ink-3); font-variant-numeric: tabular-nums; }
   /* 줄(선) 아래의 문장 - 그 줄에 딸린 것이 보이게 왼쪽 선 하나로 묶는다 */
   .map-sentences { display: grid; gap: 1px; margin: 2px 0 4px 12px; padding-left: 6px; border-left: 1px solid var(--line); }
-  /* 읽기 전용 줄 - 누를 것처럼 보이지 않게 호버 바탕을 두지 않는다 */
-  .map-sentence { display: grid; gap: 1px; min-width: 0; padding: 3px 6px; font-size: var(--fs-cap); line-height: var(--lh-cap); }
-  .map-sentence-id { font-family: var(--font-mono); color: var(--ink-3); overflow-wrap: anywhere; }
-  .map-sentence-text { color: var(--ink); overflow-wrap: anywhere; }
+  /* 읽기 전용 줄 - 누를 것처럼 보이지 않게 호버 바탕을 두지 않는다. 글(표시 ID · 문장)은 첫 열, 줄 끝 단추는 제 열 - 단추 자리를 늘 비워 글을 덮지 않는다 */
+  .map-sentence { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1px 6px; min-width: 0; padding: 3px 6px; font-size: var(--fs-cap); line-height: var(--lh-cap); }
+  .map-sentence-id { grid-column: 1; font-family: var(--font-mono); color: var(--ink-3); overflow-wrap: anywhere; }
+  .map-sentence-text { grid-column: 1; color: var(--ink); overflow-wrap: anywhere; }
+  /* 줄 끝의 Open in Assign - 줄에 올리거나 Tab으로 닿으면 보인다(.doc-acts와 같은 짜임: 숨김은 opacity만이라 Tab 자리는 늘 있고, 올릴 수 없는 화면에서는 늘 보인다) */
+  .map-sentence-open { grid-column: 2; grid-row: 1 / span 2; align-self: start; display: inline-flex; }
+  @media (hover: hover) {
+    .map-sentence-open { opacity: 0; transition: opacity var(--dur-fast); }
+    .map-sentence:is(:hover, :focus-within) .map-sentence-open { opacity: 1; }
+  }
   .map-withheld { margin: 0 0 4px 18px; font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-3); }
   .map-legend { display: grid; gap: 6px; }
   .map-legend li { display: flex; align-items: center; gap: 8px; font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-2); }

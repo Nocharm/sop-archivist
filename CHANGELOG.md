@@ -4,6 +4,11 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
 
 ## Unreleased (dev)
 
+### v1.1.24 — 2026-11-17
+
+- **참조 지도의 줄에서 Assign의 그 줄로(Map)**: 옆 칸의 문장 줄 끝에 **Open in Assign** 이 생겼다(줄에 올리거나 포커스가 가면 보인다). 누르면 그 Bundle의 Assign이 그 줄을 고른 채 열리고 보기(한 단 · 양 단)는 그대로다. 가려진 줄(구성원이 아닌 Bundle)에는 단추가 없다.
+- **줄 주소 `?doc=&unit=`(Assign)**: 그 줄이 그사이 바뀌었으면 문서만 열리고 "That line has changed. The document is open instead." 알림이 뜬다. 읽은 뒤 주소에서 값을 뗀다. `?edit=` 은 지금 동작 그대로다.
+
 ### v1.1.23 — 2026-11-17
 
 - **하위 칸이 있는 칸에 직접 놓인 줄은 번호가 없다(결과물 번호)**: 5 General Requirements · 6 Procedures · 7 Document Relationships에 직접 놓인 줄이 5.1, 5.2…를 받아 하위 칸 제목(5.1 Safety)과 번호가 겹치던 것을 고쳤다. 이런 줄은 번호를 받지 않고 세지도 않는다(결과물 A · C, Excel, Assign의 엮은 문서 미리 보기 모두). 칸 번호와 하위 칸의 줄(5.1.1…)은 그대로다.

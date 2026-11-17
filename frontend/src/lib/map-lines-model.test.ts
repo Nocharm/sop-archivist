@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { MapLine, MapLines } from "./api-sop";
-import { attachLines, pickCurrentLines } from "./map-lines-model";
+import { attachLines, getLineHref, pickCurrentLines } from "./map-lines-model";
 import type { NodeLink } from "./map-model";
 
 const LINKS: NodeLink[] = [
@@ -103,5 +103,11 @@ describe("pickCurrentLines", () => {
     expect(pickCurrentLines(lines, "old:101", true)).toBeNull();
     expect(pickCurrentLines(lines, null, false)).toBeNull();
     expect(pickCurrentLines(null, "old:101", false)).toBeNull();
+  });
+});
+
+describe("getLineHref", () => {
+  it("links a line to its row in Assign, in the bundle that holds the line", () => {
+    expect(getLineHref(makeLine(7301, { bundle_id: 15, document_id: 140 }))).toBe("/bundles/15/assign?doc=140&unit=7301");
   });
 });
