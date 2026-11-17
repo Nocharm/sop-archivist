@@ -136,10 +136,11 @@ def build_ref_drafts(blocks: Mapping[int, tuple[int, str]], units: Iterable[Unit
 def _find_numbered_target(
     captions: Sequence[Unit], by_id: Mapping[int, Unit], block_id_by_seq: Mapping[int, int]
 ) -> _Target | None:
-    """같은 (종류, 번호) 캡션이 하나일 때만 그 캡션의 묶음 — 둘 이상이면 어느 것인지 모른다."""
-    if len(captions) != 1 or captions[0].group_unit_id not in by_id:
+    """같은 (종류, 번호) 캡션이 달린 묶음이 정확히 하나일 때만 그 묶음 — 언어마다 캡션이 따로여도 묶음은 하나다."""
+    group_ids = {caption.group_unit_id for caption in captions if caption.group_unit_id in by_id}
+    if len(group_ids) != 1:
         return None
-    return _get_group_target(by_id[captions[0].group_unit_id], block_id_by_seq)
+    return _get_group_target(by_id[group_ids.pop()], block_id_by_seq)
 
 
 async def detect_caption_refs(session: AsyncSession, extraction_id: int) -> int:
@@ -206,17 +207,25 @@ async def build_caption_ref_outs(
 
 
 def find_covering_unit_ids(refs: Sequence[CaptionRef], units: Iterable[Unit]) -> dict[int, int]:
-    """참조 id → 그 자리(시작 글자)를 덮는 활성 글 단위 id — 나누기·합치기 뒤에도 참조 문장을 따라간다."""
+    """참조 id → 그 자리(시작 글자)를 덮는 활성 글 단위 id — 나누기·합치기 뒤에도 참조 문장을 따라간다. 캡션 자기 머리 번호 참조는 뺀다."""
+    units_list = list(units)
     spans: dict[int, list[tuple[int, int, int]]] = defaultdict(list)
-    for unit in units:
+    for unit in units_list:
         if unit.status == UNIT_ACTIVE and unit.kind in REF_TEXT_KINDS:
             for block_id, start, end in unit.spans:
                 spans[block_id].append((start, end, unit.id))
+    heads = {
+        unit.id: read_caption_number(unit.text)
+        for unit in units_list if unit.kind == CAPTION_KIND and unit.status == UNIT_ACTIVE
+    }
     covering: dict[int, int] = {}
     for ref in refs:
         for start, end, unit_id in spans.get(ref.block_id, ()):
             if start <= ref.start < end:
-                covering[ref.id] = unit_id
+                head = heads.get(unit_id)
+                # 올린 뒤 캡션이 된 문장의 머리 번호는 참조가 아니다 — 올릴 때만 잡은 행을 읽을 때 거른다
+                if head is None or (ref.kind, ref.number) != (head.kind, head.number):
+                    covering[ref.id] = unit_id
                 break
     return covering
 

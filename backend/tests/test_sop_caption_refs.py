@@ -1,13 +1,15 @@
 """표·그림 참조 연결 — 올릴 때 잡은 번호·자리 참조, 나눈 뒤 따라가기, 사람이 다시 잇기·떼기, 종류가 다른 대상 거절."""
 
 import pathlib
+from types import SimpleNamespace
 
 import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
+from app.sop.caption_refs import build_ref_drafts
 from scripts.synthetic_sop import build_synthetic_bundle
-from tests.docx_factory import build_docx, p
+from tests.docx_factory import build_docx, p, tbl
 from tests.sop_helpers import AUTHOR, REVIEWER, create_bundle, find_unit, get_view, upload
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
@@ -145,4 +147,68 @@ def test_missing_ref_is_404_and_reviewer_cannot_edit(client: TestClient, tmp_pat
     missing = _patch(client, bundle_id, doc["id"], 999_999_999, {"state": "detached"})
     assert (missing.status_code, missing.json()["detail"]["code"]) == (404, "caption_ref_not_found")
     denied = _patch(client, bundle_id, doc["id"], ref["id"], {"state": "detached"}, headers=REVIEWER)
-    assert denied.status_code in (403, 404), denied.text
+    assert (denied.status_code, denied.json()["detail"]["code"]) == (404, "bundle_not_found")  # 멤버가 아니면 묶음이 보이지 않는다
+
+
+def _setup_table(client: TestClient, body: str) -> tuple[int, dict, dict]:
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    response = upload(client, bundle_id, build_docx(body), "SYNTHETIC_OLD-1_Refs.docx")
+    assert response.status_code == 201, response.text
+    doc = response.json()
+    return bundle_id, doc, get_view(client, bundle_id, doc["id"])
+
+
+def test_separate_ko_and_en_captions_still_link_to_their_one_table() -> None:
+    # 추출기는 묶음마다 캡션 하나만 만들지만 편집으로 언어마다 캡션이 따로 생긴다 — 묶음 수로 세어야 모호하지 않다
+    blocks = {1: (0, "운전 조건은 표 3을 따른다. Table 3 applies."), 2: (1, "표 3 운전"), 3: (2, "Table 3 Operation")}
+
+    def unit(unit_id: int, kind: str, spans: list, text: str, **extra: object) -> SimpleNamespace:
+        values = {"id": unit_id, "kind": kind, "spans": spans, "text": text, "status": "active", "table_id": None,
+                  "group_unit_id": None, "pos_seq": 0, "pos_start": 0} | extra
+        return SimpleNamespace(**values)
+
+    units = [
+        unit(10, "sentence", [[1, 0, 14]], "운전 조건은 표 3을 따른다."),
+        unit(11, "sentence", [[1, 15, 36]], "Table 3 applies."),
+        unit(20, "table", [], "", table_id=7, pos_seq=1, pos_start=-1),
+        unit(21, "caption", [[2, 0, 7]], "표 3 운전", group_unit_id=20, pos_seq=1),
+        unit(22, "caption", [[3, 0, 17]], "Table 3 Operation", group_unit_id=20, pos_seq=2),
+    ]
+    drafts = build_ref_drafts(blocks, units)
+    assert [(d.kind, d.number, d.target_table_id) for d in drafts] == [("table", 3, 7), ("table", 3, 7)]
+
+
+def test_sentence_attached_as_caption_loses_its_own_head_reference(client: TestClient) -> None:
+    bundle_id, doc, view = _setup_table(client, p("표 6 기존", "Caption") + tbl([["합성 칸 하나."]]) + p("Table 5 Test results"))
+    sentence = find_unit(view, "Table 5 Test results")
+    assert sentence["kind"] == "sentence" and _only(sentence["caption_refs"])["number"] == 5
+    table = next(unit for unit in view["units"] if unit["kind"] == "table")
+
+    result = client.post(
+        f"/api/bundles/{bundle_id}/documents/{doc['id']}/edits",
+        json={"revision": view["document"]["revision"], "confirm": False,
+              "op": {"type": "attach_caption", "unit_id": sentence["id"], "bundle_unit_id": table["id"]}},
+        headers=AUTHOR,
+    )
+    assert result.status_code == 200, result.text
+    after = get_view(client, bundle_id, doc["id"])
+    caption = find_unit(after, "Table 5 Test results")
+    assert caption["kind"] == "caption"
+    assert caption["text"] == "Table 5 Test results" and caption["caption_refs"] == []
+
+
+def test_ref_to_a_row_split_table_targets_the_first_row(client: TestClient) -> None:
+    body = p("표 3. 운전 조건", "Caption") + tbl([["합성 칸 하나."], ["합성 칸 둘."]]) + p("운전 조건은 표 3을 따른다.")
+    bundle_id, doc, view = _setup_table(client, body)
+    table = next(unit for unit in view["units"] if unit["kind"] == "table")
+    result = client.post(
+        f"/api/bundles/{bundle_id}/documents/{doc['id']}/edits",
+        json={"revision": view["document"]["revision"], "confirm": False,
+              "op": {"type": "split_table_rows", "table_unit_id": table["id"]}},
+        headers=AUTHOR,
+    )
+    assert result.status_code == 200, result.text
+    after = get_view(client, bundle_id, doc["id"])
+    first_row = min((u for u in after["units"] if u["kind"] == "table_row"), key=lambda u: u["row_index"])
+    ref = _only(find_unit(after, "운전 조건은 표 3을 따른다.")["caption_refs"])
+    assert ref["target_unit_id"] == first_row["id"]

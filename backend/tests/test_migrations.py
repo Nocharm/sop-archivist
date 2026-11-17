@@ -556,6 +556,17 @@ def test_0021_backfills_references_for_old_documents(tmp_path: pathlib.Path) -> 
                 text="표 3. 운전", lang="ko", group_unit_id=table_unit, status="active", boundary_confirmed=False,
                 pos_seq=3, pos_start=0,
             )
+            # 언어마다 따로 단 캡션 — 같은 묶음이면 모호하지 않다
+            english_block = _insert_row(
+                conn, "source_blocks", extraction_id=latest, seq=4, part="body", kind="paragraph",
+                text="Table 3 Run", xml_path="/p[4]", page_basis="estimated", section_label="", grid_span=1,
+                row_span=1, flags="[]",
+            )
+            _insert_row(
+                conn, "units", extraction_id=latest, local_no=5, kind="caption", spans=f"[[{english_block}, 0, 11]]",
+                text="Table 3 Run", lang="en", group_unit_id=table_unit, status="active", boundary_confirmed=False,
+                pos_seq=4, pos_start=0,
+            )
 
         command.upgrade(config, "0021")
 

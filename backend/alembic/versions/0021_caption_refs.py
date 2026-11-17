@@ -230,8 +230,9 @@ def _build_refs(conn: Any, extraction_id: int) -> list[dict[str, Any]]:
                     continue
                 same = captions.get((kind, number), [])
                 target = None
-                if len(same) == 1 and same[0].group_unit_id in by_id:
-                    target = _get_target(by_id[same[0].group_unit_id], block_id_by_seq)
+                group_ids = {caption.group_unit_id for caption in same if caption.group_unit_id in by_id}
+                if len(group_ids) == 1:  # 언어마다 캡션이 따로여도 묶음은 하나
+                    target = _get_target(by_id[group_ids.pop()], block_id_by_seq)
                 add(block_id, span_start + start, span_start + end, kind, number, target)
             for kind, direction, start, end in _find_place_tokens(text):
                 position = (seq, span_start + start)
