@@ -212,3 +212,65 @@ def test_ref_to_a_row_split_table_targets_the_first_row(client: TestClient) -> N
     first_row = min((u for u in after["units"] if u["kind"] == "table_row"), key=lambda u: u["row_index"])
     ref = _only(find_unit(after, "운전 조건은 표 3을 따른다.")["caption_refs"])
     assert ref["target_unit_id"] == first_row["id"]
+
+
+def _draft_unit(unit_id: int, kind: str, spans: list, text: str, **extra: object) -> SimpleNamespace:
+    values = {"id": unit_id, "kind": kind, "spans": spans, "text": text, "status": "active", "table_id": None,
+              "group_unit_id": None, "pos_seq": 0, "pos_start": 0} | extra
+    return SimpleNamespace(**values)
+
+
+def test_compound_caption_head_is_not_a_link_target() -> None:
+    # "Table 3-1"은 3장 1번 표 — 본문 "Table 3"이 거기에 이어지면 안 된다
+    blocks = {1: (0, "See Table 3."), 2: (1, "Table 3-1. Flow rates")}
+    units = [
+        _draft_unit(10, "sentence", [[1, 0, 12]], "See Table 3."),
+        _draft_unit(20, "table", [], "", table_id=7, pos_seq=2, pos_start=-1),
+        _draft_unit(21, "caption", [[2, 0, 21]], "Table 3-1. Flow rates", group_unit_id=20, pos_seq=1),
+    ]
+    drafts = build_ref_drafts(blocks, units)
+    assert [(d.block_id, d.number, d.target_table_id) for d in drafts] == [(1, 3, None)]
+
+
+def test_bracketed_caption_number_links_and_is_not_its_own_reference() -> None:
+    blocks = {1: (0, "운전 조건은 표 3을 따른다."), 2: (1, "<표 3> 운전 조건")}
+    units = [
+        _draft_unit(10, "sentence", [[1, 0, 15]], "운전 조건은 표 3을 따른다."),
+        _draft_unit(20, "table", [], "", table_id=7, pos_seq=2, pos_start=-1),
+        _draft_unit(21, "caption", [[2, 0, 10]], "<표 3> 운전 조건", group_unit_id=20, pos_seq=1),
+    ]
+    drafts = build_ref_drafts(blocks, units)
+    assert [(d.block_id, d.number, d.target_table_id) for d in drafts] == [(1, 3, 7)]
+
+
+def test_place_reference_finds_a_row_split_table() -> None:
+    # 행으로 나눈 표는 표 단위가 없다 — 행들이 그 표 하나의 자리다
+    blocks = {1: (0, "회전 속도는 아래 표를 따른다."), 2: (5, "값은 위 표와 같다.")}
+    units = [
+        _draft_unit(10, "sentence", [[1, 0, 16]], "회전 속도는 아래 표를 따른다."),
+        _draft_unit(30, "table_row", [], "", table_id=7, row_index=0, pos_seq=2, pos_start=-1),
+        _draft_unit(31, "table_row", [], "", table_id=7, row_index=1, pos_seq=3, pos_start=-1),
+        _draft_unit(11, "sentence", [[2, 0, 10]], "값은 위 표와 같다.", pos_seq=5),
+    ]
+    drafts = build_ref_drafts(blocks, units)
+    assert [(d.block_id, d.number, d.target_table_id) for d in drafts] == [(1, None, 7), (2, None, 7)]
+
+
+def test_attached_caption_resolves_a_target_less_reference_in_the_view(client: TestClient) -> None:
+    # 올릴 때는 "Table 3" 캡션이 없어 대상 없이 남았다 — 뒤에 캡션을 달면 카드도 결과물처럼 그 표를 보인다
+    body = p("Rotor values follow Table 3.") + p("표 6 기존", "Caption") + tbl([["합성 칸 하나."]]) + p("Table 3 Test results")
+    bundle_id, doc, view = _setup_table(client, body)
+    assert _only(find_unit(view, "Rotor values follow Table 3.")["caption_refs"])["target_unit_id"] is None
+    sentence = find_unit(view, "Table 3 Test results")
+    table = next(unit for unit in view["units"] if unit["kind"] == "table")
+    result = client.post(
+        f"/api/bundles/{bundle_id}/documents/{doc['id']}/edits",
+        json={"revision": view["document"]["revision"], "confirm": False,
+              "op": {"type": "attach_caption", "unit_id": sentence["id"], "bundle_unit_id": table["id"]}},
+        headers=AUTHOR,
+    )
+    assert result.status_code == 200, result.text
+
+    after = get_view(client, bundle_id, doc["id"])
+
+    assert _only(find_unit(after, "Rotor values follow Table 3.")["caption_refs"])["target_unit_id"] == table["id"]

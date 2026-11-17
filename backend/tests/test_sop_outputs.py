@@ -2064,3 +2064,145 @@ def test_unlinked_number_in_the_same_sentence_stays(client: TestClient) -> None:
     ref_target = _target_of(snap, ref["id"])
     assert renum.texts[ref_target] == "합성 값은 표 1 및 표 9를 따른다."
     assert _codes(renum) == [("caption_ref_unresolved", ref_target, ref["id"])]  # 표 9는 원문에 없다
+
+
+def _upload_with_figure(client: TestClient, body: str, name: str) -> RenumberFixture:
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    sop_id = put_tobe(client, bundle_id, TOBE_DOCS).json()["docs"][0]["id"]
+    doc = _upload_ready(client, bundle_id, build_docx(body, media={"image1.png": TINY_PNG}), name)
+    return RenumberFixture(bundle_id, sop_id, 0, get_view(client, bundle_id, doc["id"]))
+
+
+def _figure_unit(fx: RenumberFixture) -> dict:
+    return next(unit for unit in fx.view["units"] if unit["kind"] == "figure")
+
+
+def test_compound_caption_heads_are_left_alone(client: TestClient) -> None:
+    # "Table 3-1"·"표 3.2"·"Fig. 4.1"은 장·절 번호 — 머리 3으로 읽어 "Table 1-1"로 바꾸면 안 된다
+    fx = _upload_with_figure(client, (
+        p("Table 3-1. Flow rates", "Caption") + tbl([["가", "나"]]) + p("표 3.2 운전 조건", "Caption") + tbl([["다", "라"]])
+        + f"<w:p>{make_drawing_run('image1.png')}</w:p>" + p("Fig. 4.1 Pump", "Caption") + p("Flow follows Table 3.")
+    ), "SYNTHETIC_OLD-1_Compound.docx")
+    units = [_bundle_unit(fx, caption) for caption in ("Table 3-1. Flow rates", "표 3.2 운전 조건")] + [_figure_unit(fx)]
+    for unit in units:
+        assign_as_is(client, fx.bundle_id, unit, fx.sop_id, slot_key=GENERAL)
+    ref = find_unit(fx.view, "Flow follows Table 3.")
+    assign_as_is(client, fx.bundle_id, ref, fx.sop_id, slot_key=GENERAL)
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    bundles = [_target_of(snap, unit["id"]) for unit in units]
+    assert all(bundle in renum.numbers for bundle in bundles)  # 세기는 한다
+    assert not {bundle for bundle in bundles} & renum.changes.keys()
+    assert not {_caption_target_of(snap, bundle) for bundle in bundles} & renum.texts.keys()
+    # 본문 "Table 3"은 "Table 3-1" 캡션에 이어지지 않는다
+    ref_target = _target_of(snap, ref["id"])
+    assert _codes(renum) == [("caption_ref_unresolved", ref_target, ref["id"])]
+    assert ref_target not in renum.texts
+
+
+def test_bracketed_caption_renumbers_its_own_number_without_a_prefix(client: TestClient) -> None:
+    fx = _upload_with_figure(client, (
+        p("표 1. 합성 첫 표", "Caption") + tbl([["가", "나"]]) + p("<표 3> 운전 조건", "Caption") + tbl([["다", "라"]])
+        + f"<w:p>{make_drawing_run('image1.png')}</w:p>" + p("[그림 2] 배관도", "Caption") + p("운전 조건은 표 3을 따른다.")
+    ), "SYNTHETIC_OLD-1_Bracketed.docx")
+    units = [_bundle_unit(fx, caption) for caption in ("표 1. 합성 첫 표", "<표 3> 운전 조건")] + [_figure_unit(fx)]
+    for unit in units:
+        assign_as_is(client, fx.bundle_id, unit, fx.sop_id, slot_key=GENERAL)
+    ref = find_unit(fx.view, "운전 조건은 표 3을 따른다.")
+    assign_as_is(client, fx.bundle_id, ref, fx.sop_id, slot_key=GENERAL)
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    _, table, figure = (_target_of(snap, unit["id"]) for unit in units)
+    assert renum.texts[_caption_target_of(snap, table)] == "<표 2> 운전 조건"
+    assert renum.texts[_caption_target_of(snap, figure)] == "[그림 1] 배관도"
+    assert renum.changes[table] == ("표 3", "표 2") and renum.changes[figure] == ("그림 2", "그림 1")
+    # 본문 "표 3"은 올릴 때 "<표 3>" 캡션의 표에 이어져 같은 번호를 따라간다
+    assert renum.texts[_target_of(snap, ref["id"])] == "운전 조건은 표 2을 따른다."
+    assert renum.warnings == ()
+
+
+def test_reference_follows_a_caption_attached_after_upload(client: TestClient) -> None:
+    fx = _upload_small(client, (
+        p("Rotor values follow Table 3.") + p("표 6 기존", "Caption") + tbl([["합성 칸 하나."]]) + p("Table 3 Test results")
+    ), "SYNTHETIC_OLD-1_LateCaption.docx")
+    table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
+    doc_id = fx.view["document"]["id"]
+    result = client.post(
+        f"/api/bundles/{fx.bundle_id}/documents/{doc_id}/edits",
+        json={"revision": fx.view["document"]["revision"], "confirm": False,
+              "op": {"type": "attach_caption", "unit_id": find_unit(fx.view, "Table 3 Test results")["id"],
+                     "bundle_unit_id": table["id"]}},
+        headers=AUTHOR,
+    )
+    assert result.status_code == 200, result.text
+    view = get_view(client, fx.bundle_id, doc_id)
+    ref = find_unit(view, "Rotor values follow Table 3.")
+    assert ref["caption_refs"][0]["target_unit_id"] == table["id"]  # 문서 보기 카드도 같은 표를 보인다
+    assign_as_is(client, fx.bundle_id, next(u for u in view["units"] if u["id"] == table["id"]), fx.sop_id, slot_key=GENERAL)
+    assign_as_is(client, fx.bundle_id, ref, fx.sop_id, slot_key=GENERAL)
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    assert renum.texts[_target_of(snap, ref["id"])] == "Rotor values follow Table 1."
+    assert renum.warnings == ()
+
+
+MERGE_BODY = (
+    p("표 3. 합성 첫 표", "Caption") + tbl([["가", "나"]]) + p("표 4. 합성 둘째 표", "Caption") + tbl([["다", "라"]])
+    + p("합성 값은 표 3을 본다.") + p("합성 한계도 표 3을 본다.")
+)
+
+
+def _merge_two_refs(client: TestClient, fx: RenumberFixture, first: dict, second: dict) -> None:
+    _save(client, fx.bundle_id, [_unit_in(first), _unit_in(second)], [
+        _target("m", fx.sop_id, [first, second], slot_key=GENERAL, lang="ko", text="합성 값과 한계는 표 3을 본다.",
+                change_type="rewritten"),
+    ])
+
+
+def test_merged_sentence_with_a_broken_same_number_reference_is_left(client: TestClient) -> None:
+    """합친 새 문장의 "표 3" 토큰은 두 출처의 것 — 하나가 지운 표를 가리키면 다른 하나의 번호를 그 토큰에 쓰지 않는다."""
+    fx = _upload_small(client, MERGE_BODY, "SYNTHETIC_OLD-1_MergedBroken.docx")
+    doc_id = fx.view["document"]["id"]
+    first, second = find_unit(fx.view, "합성 값은 표 3을 본다."), find_unit(fx.view, "합성 한계도 표 3을 본다.")
+    second_table = _bundle_unit(fx, "표 4. 합성 둘째 표")
+    revision = get_view(client, fx.bundle_id, doc_id)["document"]["revision"]
+    relinked = client.patch(
+        f"/api/bundles/{fx.bundle_id}/documents/{doc_id}/caption-refs/{second['caption_refs'][0]['id']}",
+        json={"revision": revision, "target_unit_id": second_table["id"]}, headers=AUTHOR,
+    )
+    assert relinked.status_code == 200, relinked.text
+    _bulk(client, fx.bundle_id, "delete", [second_table], DELETE_REASON)
+    assign_as_is(client, fx.bundle_id, _bundle_unit(fx, "표 3. 합성 첫 표"), fx.sop_id, slot_key=GENERAL)
+    _merge_two_refs(client, fx, first, second)
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    merged = _target_of(snap, first["id"])
+    assert sorted(_codes(renum)) == [
+        ("caption_ref_ambiguous", merged, first["id"]), ("caption_ref_broken", merged, second["id"]),
+    ]
+    assert merged not in renum.texts
+
+
+def test_merged_sentence_with_a_detached_same_number_reference_is_left(client: TestClient) -> None:
+    """뗀 참조는 자기 경고는 없지만, 합친 문장에서 같은 토큰을 나눠 쓰면 다른 참조의 번호로 바꾸지 못하게 막는다."""
+    fx = _upload_small(client, MERGE_BODY, "SYNTHETIC_OLD-1_MergedDetached.docx")
+    doc_id = fx.view["document"]["id"]
+    first, second = find_unit(fx.view, "합성 값은 표 3을 본다."), find_unit(fx.view, "합성 한계도 표 3을 본다.")
+    revision = get_view(client, fx.bundle_id, doc_id)["document"]["revision"]
+    detached = client.patch(
+        f"/api/bundles/{fx.bundle_id}/documents/{doc_id}/caption-refs/{second['caption_refs'][0]['id']}",
+        json={"revision": revision, "state": "detached"}, headers=AUTHOR,
+    )
+    assert detached.status_code == 200, detached.text
+    assign_as_is(client, fx.bundle_id, _bundle_unit(fx, "표 3. 합성 첫 표"), fx.sop_id, slot_key=GENERAL)
+    _merge_two_refs(client, fx, first, second)
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    merged = _target_of(snap, first["id"])
+    assert _codes(renum) == [("caption_ref_ambiguous", merged, first["id"])]
+    assert merged not in renum.texts

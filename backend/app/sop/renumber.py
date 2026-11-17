@@ -53,13 +53,42 @@ class PlaceToken:
     end: int
 
 
-def read_caption_number(text: str) -> NumberToken | None:
-    """캡션 머리("표 1."·"Fig.6")의 번호 — 머리가 아니면 None."""
+def _match_caption_head(text: str) -> tuple[CaptionKind, re.Match[str]] | None:
     for kind, pattern in (("table", TABLE_CAPTION_RE), ("figure", FIGURE_CAPTION_RE)):
         match = pattern.match(text)
         if match is not None:
-            return NumberToken(kind, int(match.group(1)), match.start(1), match.end(1))
+            return kind, match
     return None
+
+
+def has_caption_head(text: str) -> bool:
+    """캡션 머리 꼴인지 — 복합 번호("Table 3-1")·다른 종류 머리도 머리다. 머리가 있는 캡션에는 머리 번호를 붙이지 않는다."""
+    return _match_caption_head(text) is not None
+
+
+def read_caption_number(text: str) -> NumberToken | None:
+    """캡션 머리("표 1."·"Fig.6")의 번호 — 머리가 아니거나 복합 번호("Table 3-1."·"표 3.2")면 None.
+
+    복합 번호는 장·절 번호라 다시 매길 번호가 아니다(캡션 꼴 판정은 정규식 그대로라 여전히 캡션이다).
+    """
+    head = _match_caption_head(text)
+    if head is None:
+        return None
+    kind, match = head
+    if _COMPOUND_TAIL_RE.match(text, match.end(1)) is not None:
+        return None
+    return NumberToken(kind, int(match.group(1)), match.start(1), match.end(1))
+
+
+def find_caption_number(text: str, kind: CaptionKind | None) -> NumberToken | None:
+    """캡션의 자기 번호 — 그 종류의 머리 번호, 머리가 없으면 글 안의 첫 그 종류 번호("<표 3> 운전 조건").
+
+    머리가 있는데 복합 번호이거나 다른 종류면 None. kind(묶음 종류)를 모르면 머리만 본다.
+    """
+    if has_caption_head(text) or kind is None:
+        head = read_caption_number(text)
+        return head if head is not None and (kind is None or head.kind == kind) else None
+    return next((token for token in find_number_tokens(text) if token.kind == kind), None)
 
 
 def find_number_tokens(text: str) -> list[NumberToken]:

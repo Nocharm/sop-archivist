@@ -109,6 +109,9 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("pk_caption_refs")),
     )
     op.create_index(op.f("ix_caption_refs_extraction_id"), "caption_refs", ["extraction_id"], unique=False)
+    op.create_index(op.f("ix_caption_refs_block_id"), "caption_refs", ["block_id"], unique=False)
+    op.create_index(op.f("ix_caption_refs_target_table_id"), "caption_refs", ["target_table_id"], unique=False)
+    op.create_index(op.f("ix_caption_refs_target_block_id"), "caption_refs", ["target_block_id"], unique=False)
     conn = op.get_bind()
     latest = (
         sa.select(sa.func.max(_extractions.c.id)).join(_documents, _documents.c.id == _extractions.c.document_id)
@@ -122,6 +125,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
+    op.drop_index(op.f("ix_caption_refs_target_block_id"), table_name="caption_refs")
+    op.drop_index(op.f("ix_caption_refs_target_table_id"), table_name="caption_refs")
+    op.drop_index(op.f("ix_caption_refs_block_id"), table_name="caption_refs")
     op.drop_index(op.f("ix_caption_refs_extraction_id"), table_name="caption_refs")
     op.drop_table("caption_refs")
 
@@ -131,12 +137,26 @@ def _read_spans(value: Any) -> list[Any]:
     return json.loads(value) if isinstance(value, str) else (value or [])
 
 
-def _read_caption_number(text: str) -> tuple[str, int] | None:
-    for kind, pattern in (("table", _TABLE_CAPTION_RE), ("figure", _FIGURE_CAPTION_RE)):
+def _read_caption_number(text: str, kind: str | None) -> tuple[str, int] | None:
+    """캡션 자기 번호(renumber.find_caption_number) — 그 종류의 머리 번호, 머리가 없으면 첫 그 종류 번호.
+
+    복합 번호 머리("Table 3-1")·다른 종류 머리는 번호 없음. kind(묶음 종류)를 모르면 머리만 본다.
+    """
+    for head_kind, pattern in (("table", _TABLE_CAPTION_RE), ("figure", _FIGURE_CAPTION_RE)):
         match = pattern.match(text)
         if match is not None:
-            return kind, int(match.group(1))
-    return None
+            if _COMPOUND_TAIL_RE.match(text, match.end(1)) is not None or kind not in (None, head_kind):
+                return None
+            return head_kind, int(match.group(1))
+    if kind is None:
+        return None
+    return next(((k, n) for k, n, _, _ in _find_number_tokens(text) if k == kind), None)
+
+
+def _get_bundle_kind(unit_kind: str) -> str | None:
+    if unit_kind in _TABLE_UNIT_KINDS:
+        return "table"
+    return "figure" if unit_kind == "figure" else None
 
 
 def _find_number_tokens(text: str) -> list[tuple[str, int, int, int]]:
@@ -194,19 +214,27 @@ def _build_refs(conn: Any, extraction_id: int) -> list[dict[str, Any]]:
         sa.select(_units).where(_units.c.extraction_id == extraction_id, _units.c.status == _ACTIVE)
     ).all()
     by_id = {unit.id: unit for unit in units}
-    captions: dict[tuple[str, int], list[Any]] = defaultdict(list)
+    heads: dict[int, tuple[str, int]] = {}
+    captions: dict[tuple[str, int], set[int]] = defaultdict(set)  # (종류, 캡션 번호) → 묶음 단위 ids
     for unit in units:
-        head = _read_caption_number(unit.text) if unit.kind in _CAPTION_KINDS else None
+        if unit.kind not in _CAPTION_KINDS:
+            continue
+        group = by_id.get(unit.group_unit_id) if unit.group_unit_id is not None else None
+        head = _read_caption_number(unit.text, _get_bundle_kind(group.kind) if group is not None else None)
         if head is not None:
-            captions[head].append(unit)
+            heads[unit.id] = head
+            if group is not None:
+                captions[head].add(group.id)
+    # 자리 참조 대상 — 행으로 나눈 표는 가장 앞 행이 그 표 하나의 자리다
     groups: dict[str, list[Any]] = {"table": [], "figure": []}
-    for unit in units:
-        if unit.kind in groups:
-            groups[unit.kind].append(unit)
-    keys: dict[str, list[tuple[int, int]]] = {}
-    for kind, members in groups.items():
-        members.sort(key=lambda unit: (unit.pos_seq, unit.pos_start, unit.id))
-        keys[kind] = [(unit.pos_seq, unit.pos_start) for unit in members]
+    seen_tables: set[int] = set()
+    for unit in sorted(units, key=lambda unit: (unit.pos_seq, unit.pos_start, unit.id)):
+        if unit.kind == "figure":
+            groups["figure"].append(unit)
+        elif unit.kind in _TABLE_UNIT_KINDS and unit.table_id not in seen_tables:
+            seen_tables.add(unit.table_id)
+            groups["table"].append(unit)
+    keys = {kind: [(unit.pos_seq, unit.pos_start) for unit in members] for kind, members in groups.items()}
 
     rows: list[dict[str, Any]] = []
 
@@ -221,18 +249,17 @@ def _build_refs(conn: Any, extraction_id: int) -> list[dict[str, Any]]:
     for unit in units:
         if unit.kind not in _TEXT_KINDS:
             continue
-        head = _read_caption_number(unit.text) if unit.kind in _CAPTION_KINDS else None
+        head = heads.get(unit.id)
         for block_id, span_start, span_end in _read_spans(unit.spans):
             seq, block_text = blocks[block_id]
             text = block_text[span_start:span_end]
             for kind, number, start, end in _find_number_tokens(text):
                 if head == (kind, number):
                     continue
-                same = captions.get((kind, number), [])
+                group_ids = captions.get((kind, number), set())
                 target = None
-                group_ids = {caption.group_unit_id for caption in same if caption.group_unit_id in by_id}
                 if len(group_ids) == 1:  # 언어마다 캡션이 따로여도 묶음은 하나
-                    target = _get_target(by_id[group_ids.pop()], block_id_by_seq)
+                    target = _get_target(by_id[next(iter(group_ids))], block_id_by_seq)
                 add(block_id, span_start + start, span_start + end, kind, number, target)
             for kind, direction, start, end in _find_place_tokens(text):
                 position = (seq, span_start + start)

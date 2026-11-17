@@ -14,7 +14,13 @@ from typing import Literal
 from pydantic import BaseModel
 
 from app.routers.admin import KstDatetime
-from app.sop.caption_ref_rules import REF_LINKED, match_covering_units, pick_table_unit_id
+from app.sop.caption_ref_rules import (
+    REF_LINKED,
+    index_caption_groups,
+    match_covering_units,
+    pick_table_unit_id,
+    resolve_numbered_group,
+)
 from app.sop.captions import CAPTION_KIND, get_caption_lang_rank, is_caption_target, join_caption_texts
 from app.sop.constants import COVER_KINDS, NUMBER_NOTE, NUMBERED, SLOT_HEADING, SLOT_KEYS, WI_PARTS
 from app.sop.groups import TABLE_UNIT_KINDS, build_group_ids, collapse_table_members
@@ -26,7 +32,13 @@ from app.sop.output_rows import (
     get_meaning_key,
     get_new_meaning_key,
 )
-from app.sop.renumber import find_number_tokens, format_caption_prefix, read_caption_number, replace_numbers
+from app.sop.renumber import (
+    find_caption_number,
+    find_number_tokens,
+    format_caption_prefix,
+    has_caption_head,
+    replace_numbers,
+)
 from app.sop.snapshot import (
     BundleSnapshot,
     CaptionRefInfo,
@@ -556,22 +568,21 @@ class _RefLookup:
 
     table_units: Mapping[int, list[UnitInfo]]  # 표 id → 표·행 단위
     figure_units: Mapping[int, int]  # 그림 블록 id → 그림 단위 id
-    heads: Mapping[tuple[int, str, int], set[int]]  # (문서, 종류, 캡션 머리 번호) → 그 캡션이 달린 묶음 단위들
+    # 문서 → (종류, 캡션 번호) → 그 캡션이 달린 묶음 단위들(caption_ref_rules.index_caption_groups)
+    heads: Mapping[int, Mapping[tuple[str, int], set[int]]]
 
 
 def _build_ref_lookup(snap: BundleSnapshot) -> _RefLookup:
     table_units: dict[int, list[UnitInfo]] = defaultdict(list)
     figure_units: dict[int, int] = {}
-    heads: dict[tuple[int, str, int], set[int]] = defaultdict(set)
+    by_doc: dict[int, list[UnitInfo]] = defaultdict(list)
     for unit in sorted(snap.units.values(), key=lambda unit: unit.id):
+        by_doc[unit.document_id].append(unit)
         if unit.kind in TABLE_UNIT_KINDS and unit.table_id is not None:
             table_units[unit.table_id].append(unit)
         elif unit.kind == "figure":
             figure_units.setdefault(unit.block_id, unit.id)  # 그림 단위의 자리 블록이 곧 그림 블록이다
-        elif unit.kind == CAPTION_KIND and unit.group_unit_id is not None:
-            head = read_caption_number(unit.text)
-            if head is not None:
-                heads[(unit.document_id, head.kind, head.number)].add(unit.group_unit_id)
+    heads = {doc_id: index_caption_groups(units) for doc_id, units in by_doc.items()}
     return _RefLookup(table_units, figure_units, heads)
 
 
@@ -579,8 +590,8 @@ def _find_ref_group(lookup: _RefLookup, ref: CaptionRefInfo, document_id: int) -
     """참조가 가리키는 옛 묶음 단위 id, 정할 수 없으면 경고 코드.
 
     대상이 저장돼 있으면 표는 표 단위(행이면 가장 작은 행 — caption_ref_rules.pick_table_unit_id), 그림은 그 블록의 그림 단위다.
-    대상 없이 남은 번호 참조는 그 문서에서 같은 (종류, 번호) 캡션이 달린 묶음 수로 가린다 — 없으면 unresolved, 둘 이상이면
-    ambiguous, 하나면(올린 뒤 캡션을 붙였다) 그 묶음.
+    대상 없이 남은 번호 참조는 문서 보기 카드와 같은 규칙(caption_ref_rules.resolve_numbered_group)으로 그 문서에서 가린다 —
+    없으면 unresolved, 둘 이상이면 ambiguous, 하나면(올린 뒤 캡션을 붙였다) 그 묶음.
     """
     if ref.target_table_id is not None:
         unit_id = pick_table_unit_id(ref.target_table_id, lookup.table_units.get(ref.target_table_id, ()))
@@ -589,10 +600,7 @@ def _find_ref_group(lookup: _RefLookup, ref: CaptionRefInfo, document_id: int) -
         return lookup.figure_units.get(ref.target_block_id, "caption_ref_broken")
     if ref.number is None:
         return "caption_ref_unresolved"
-    groups = lookup.heads.get((document_id, ref.kind, ref.number), set())
-    if not groups:
-        return "caption_ref_unresolved"
-    return next(iter(groups)) if len(groups) == 1 else "caption_ref_ambiguous"
+    return resolve_numbered_group(lookup.heads.get(document_id, {}), ref.kind, ref.number)
 
 
 def _is_place_in_order(tops: Sequence[TargetInfo], referring: TargetInfo, bundle: TargetInfo, *, is_next: bool) -> bool:
@@ -639,13 +647,12 @@ def build_renumbering(index: _Index, labels: OutputLabels) -> Renumbering:
             if not is_caption_target(child):
                 continue
             text = child.confirmed_text or child.ai_text
-            head = read_caption_number(text)
+            # 머리 번호, 머리가 없으면 첫 그 종류 번호("<표 3> 운전 조건") — 복합 번호 머리("Table 3-1.")는 다시 매기지 않는다
+            head = find_caption_number(text, kind)
             if head is None:
-                if text:  # 번호 없이 쓴 캡션은 캡션 언어로 머리 번호를 붙인다(중립·그 밖은 한국어)
+                if text and not has_caption_head(text):  # 번호 없이 쓴 캡션은 캡션 언어로 머리 번호를 붙인다(중립·그 밖은 한국어)
                     prefixes[child.id] = format_caption_prefix(kind, number, "en" if child.lang == "en" else "ko")
                     prefixed = True
-                continue
-            if head.kind != kind:
                 continue
             if original is None:
                 original = head.number
@@ -675,10 +682,10 @@ def _follow_references(
 ) -> tuple[CaptionRefWarning, ...]:
     """참조 새 문장마다 이어진 참조의 대상 묶음을 같은 새 문서에서 찾아 숫자 자리를 edits에 더하고, 못 하면 경고를 돌려준다."""
     snap = index.snap
-    linked = [ref for ref in snap.caption_refs if ref.state == REF_LINKED]
-    covering = match_covering_units(linked, snap.units.values())
+    # 뗀 참조도 모은다 — 자기 경고는 없지만 합친 새 문장에서 같은 번호 토큰을 나눠 쓰면 바꾸기를 막는다
+    covering = match_covering_units(snap.caption_refs, snap.units.values())
     refs_by_unit: dict[int, list[CaptionRefInfo]] = defaultdict(list)
-    for ref in linked:
+    for ref in snap.caption_refs:
         if ref.id in covering:
             refs_by_unit[covering[ref.id]].append(ref)
     lookup = _build_ref_lookup(snap)
@@ -698,7 +705,8 @@ def _follow_references(
         unit_ids = target.source_unit_ids
         if not unit_ids and target.translation_source_unit_id in snap.units:
             unit_ids = (target.translation_source_unit_id,)
-        refs = [(unit_id, ref) for unit_id in unit_ids for ref in refs_by_unit.get(unit_id, ())]
+        source_refs = [(unit_id, ref) for unit_id in unit_ids for ref in refs_by_unit.get(unit_id, ())]
+        refs = [(unit_id, ref) for unit_id, ref in source_refs if ref.state == REF_LINKED]
         if not refs:
             continue
         tops = tops_by_doc.get(target.target_doc_id, [])
@@ -717,10 +725,13 @@ def _follow_references(
                 warn("caption_ref_broken" if not found else "caption_ref_ambiguous", unit_id)
                 continue
             resolved.append((unit_id, ref, group, found[0]))
-        bundles_by_number: dict[tuple[str, int], set[int]] = defaultdict(set)
-        for _, ref, _, bundle in resolved:
+        # 합친 새 문장의 같은 (종류, 번호) 토큰은 출처 참조 모두의 것 — 모두 같은 묶음 하나로 풀릴 때만 바꾼다.
+        # 못 푼 참조(경고가 났다)와 뗀 참조는 None으로 들어가 막는다
+        bundle_of = {ref.id: bundle.id for _, ref, _, bundle in resolved}
+        bundles_by_number: dict[tuple[str, int], set[int | None]] = defaultdict(set)
+        for _, ref in source_refs:
             if ref.number is not None:
-                bundles_by_number[(ref.kind, ref.number)].add(bundle.id)
+                bundles_by_number[(ref.kind, ref.number)].add(bundle_of.get(ref.id))
         text = target.confirmed_text or target.ai_text
         tokens = find_number_tokens(text)
         for unit_id, ref, group, bundle in resolved:
@@ -730,7 +741,7 @@ def _follow_references(
                 if not _is_place_in_order(tops, target, bundle, is_next=is_next):
                     warn("caption_ref_order", unit_id)
                 continue
-            if len(bundles_by_number[(ref.kind, ref.number)]) > 1:
+            if bundles_by_number[(ref.kind, ref.number)] != {bundle.id}:
                 warn("caption_ref_ambiguous", unit_id)
                 continue
             if not text:  # 아직 글이 없는 새 문장은 바꿀 것도 경고할 것도 없다

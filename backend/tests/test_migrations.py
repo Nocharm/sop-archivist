@@ -598,3 +598,91 @@ def test_0021_backfills_references_for_old_documents(tmp_path: pathlib.Path) -> 
         (latest, block_id, number_start, number_start + 1, "table", 3, table_id, None, "linked", "auto"),
         (latest, block_id, place_start, place_start + len("아래 표"), "table", None, table_id, None, "linked", "auto"),
     ]
+
+
+def test_0021_backfill_freezes_caption_number_and_row_split_rules(tmp_path: pathlib.Path) -> None:
+    # 얼린 규칙: 복합 번호 머리("Table 3-1")는 잇지 않고, 괄호 캡션("<표 5>")은 그 번호로 잇고, 행으로 나눈 표도 자리 참조 대상이다
+    db_path = tmp_path / "caption_refs_rules.db"
+    config = _downgrade_to(db_path, "0020")
+    engine = _create_fk_engine(db_path)
+    sentence = "아래 표를 보고 Table 3 및 표 5를 따른다."
+    block = {"part": "body", "page_basis": "estimated", "section_label": "", "grid_span": 1, "row_span": 1, "flags": "[]"}
+    unit = {"status": "active", "boundary_confirmed": False}
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO bundles (id, title, description, status, is_synthetic, semantic_checks, revision,"
+                " created_by, created_at, updated_at) VALUES (1, 'SYNTHETIC', '', 'in_progress', 1, '{}', 1,"
+                " 'qa.member', '2026-11-10 09:00:00', '2026-11-10 09:00:00')"
+            ))
+            _, (extraction,) = _insert_document(conn, "old", ("3",))
+            conn.execute(text("UPDATE source_blocks SET text = :t WHERE extraction_id = :e AND seq = 0"), {"t": sentence, "e": extraction})
+            conn.execute(
+                text("UPDATE source_blocks SET kind = 'paragraph', text = 'Table 3-1. Flow' WHERE extraction_id = :e AND seq = 1"),
+                {"e": extraction},
+            )
+            _insert_unit(conn, extraction, 1, "sentence", sentence, "en", 0)
+            split = _insert_row(
+                conn, "source_tables", extraction_id=extraction, table_index=0, part="body", xml_path="/tbl[0]",
+                n_rows=2, n_cols=1, is_layout=False,
+            )
+            other = _insert_row(
+                conn, "source_tables", extraction_id=extraction, table_index=1, part="body", xml_path="/tbl[1]",
+                n_rows=1, n_cols=1, is_layout=False,
+            )
+            for seq, row in ((2, 0), (3, 1)):
+                _insert_row(conn, "source_blocks", extraction_id=extraction, seq=seq, kind="table_cell", text="값",
+                            xml_path=f"/tbl[0]/r{row}", table_id=split, row_index=row, col_index=0, **block)
+            caption_block = _insert_row(conn, "source_blocks", extraction_id=extraction, seq=4, kind="paragraph",
+                                        text="<표 5> 운전", xml_path="/p[4]", **block)
+            _insert_row(conn, "source_blocks", extraction_id=extraction, seq=5, kind="table_cell", text="값",
+                        xml_path="/tbl[1]/c", table_id=other, row_index=0, col_index=0, **block)
+            first_row = _insert_row(
+                conn, "units", extraction_id=extraction, local_no=2, kind="table_row", spans="[]", text="",
+                lang="neutral", table_id=split, row_index=0, pos_seq=2, pos_start=-1, **unit,
+            )
+            _insert_row(
+                conn, "units", extraction_id=extraction, local_no=3, kind="table_row", spans="[]", text="",
+                lang="neutral", table_id=split, row_index=1, pos_seq=3, pos_start=-1, **unit,
+            )
+            compound_block = conn.execute(
+                text("SELECT id FROM source_blocks WHERE extraction_id = :e AND seq = 1"), {"e": extraction}
+            ).scalar_one()
+            _insert_row(
+                conn, "units", extraction_id=extraction, local_no=4, kind="caption", spans=f"[[{compound_block}, 0, 15]]",
+                text="Table 3-1. Flow", lang="en", group_unit_id=first_row, pos_seq=1, pos_start=0, **unit,
+            )
+            other_unit = _insert_row(
+                conn, "units", extraction_id=extraction, local_no=5, kind="table", spans="[]", text="", lang="neutral",
+                table_id=other, pos_seq=5, pos_start=-1, **unit,
+            )
+            _insert_row(
+                conn, "units", extraction_id=extraction, local_no=6, kind="caption", spans=f"[[{caption_block}, 0, 8]]",
+                text="<표 5> 운전", lang="ko", group_unit_id=other_unit, pos_seq=4, pos_start=0, **unit,
+            )
+
+        command.upgrade(config, "0021")
+
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT start, kind, number, target_table_id FROM caption_refs ORDER BY start")).all()
+    finally:
+        engine.dispose()
+
+    assert [tuple(row) for row in rows] == [
+        (0, "table", None, split),
+        (sentence.index("3"), "table", 3, None),
+        (sentence.index("5"), "table", 5, other),
+    ]
+
+
+def test_caption_refs_index_their_foreign_keys(tmp_path: pathlib.Path) -> None:
+    # 블록·표를 지우면 CASCADE가 caption_refs를 FK로 찾는다 — 색인이 없으면 PG가 표 전체를 훑는다
+    db_path = tmp_path / "caption_ref_indexes.db"
+    run_migrations(_async_url(db_path))
+    engine = create_engine(_sync_url(db_path))
+    try:
+        indexed = {tuple(index["column_names"]) for index in inspect(engine).get_indexes("caption_refs")}
+    finally:
+        engine.dispose()
+
+    assert {("extraction_id",), ("block_id",), ("target_table_id",), ("target_block_id",)} <= indexed

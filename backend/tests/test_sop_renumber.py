@@ -4,8 +4,10 @@ from app.sop.renumber import (
     NumberToken,
     PlaceToken,
     find_number_tokens,
+    find_caption_number,
     find_place_tokens,
     format_caption_prefix,
+    has_caption_head,
     read_caption_number,
     replace_numbers,
 )
@@ -119,3 +121,27 @@ def test_trailing_period_still_a_reference():
 def test_korean_compounds_are_not_references():
     assert find_number_tokens("도표 3, 일정표 3, 시간표 2") == []
     assert _refs("(표 3) 참조") == [("table", 3, "3")]
+
+
+def test_compound_caption_heads_have_no_number():
+    # "Table 3-1"은 3장 1번 표 — 머리 3으로 읽으면 결과물이 "Table 1-1"로 바꾼다
+    for text in ("Table 3-1. Flow rates", "표 3.2 운전 조건", "Fig. 4.1 Pump", "그림 2–3 배관"):
+        assert read_caption_number(text) is None, text
+        assert has_caption_head(text), text
+        assert find_caption_number(text, "table") is None and find_caption_number(text, "figure") is None, text
+    assert read_caption_number("Table 3. 1단계 조건") == NumberToken("table", 3, 6, 7)  # 띄운 숫자는 복합 번호가 아니다
+
+
+def test_bracketed_caption_number_is_the_first_own_kind_token():
+    assert not has_caption_head("<표 3> 운전 조건")
+    assert find_caption_number("<표 3> 운전 조건", "table") == NumberToken("table", 3, 3, 4)
+    assert find_caption_number("[그림 2] 배관도 (표 5 참조)", "figure") == NumberToken("figure", 2, 4, 5)
+    assert find_caption_number("[그림 2] 배관도", "table") is None
+    assert find_caption_number("운전 조건", "table") is None
+
+
+def test_caption_number_takes_the_head_of_its_own_kind_only():
+    assert find_caption_number("표 3. 운전 (Table 3)", "table") == NumberToken("table", 3, 2, 3)
+    assert find_caption_number("Figure 2 shows Table 4", "table") is None  # 다른 종류 머리 — 본문 토큰으로 넘어가지 않는다
+    assert find_caption_number("<표 3> 운전", None) is None  # 묶음 종류를 모르면 머리만 본다
+    assert find_caption_number("표 3. 운전", None) == NumberToken("table", 3, 2, 3)

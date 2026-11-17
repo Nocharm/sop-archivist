@@ -653,7 +653,7 @@ class CaptionRef(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     extraction_id: Mapped[int] = mapped_column(ForeignKey("extractions.id", ondelete="CASCADE"), index=True)
-    block_id: Mapped[int] = mapped_column(ForeignKey("source_blocks.id", ondelete="CASCADE"))
+    block_id: Mapped[int] = mapped_column(ForeignKey("source_blocks.id", ondelete="CASCADE"), index=True)
     # 블록 안 토큰 범위 — 번호 참조는 숫자 글자, 자리 참조는 구 전체
     start: Mapped[int] = mapped_column(Integer)
     end: Mapped[int] = mapped_column(Integer)
@@ -661,10 +661,10 @@ class CaptionRef(Base):
     number: Mapped[int | None] = mapped_column(Integer, default=None)  # 원문 번호 — 자리 참조는 None
     # 표 참조의 대상 표, 그림 참조의 대상 그림 블록 — 둘 다 None이면 대상 없이 연결만 있다
     target_table_id: Mapped[int | None] = mapped_column(
-        ForeignKey("source_tables.id", ondelete="CASCADE"), default=None
+        ForeignKey("source_tables.id", ondelete="CASCADE"), default=None, index=True
     )
     target_block_id: Mapped[int | None] = mapped_column(
-        ForeignKey("source_blocks.id", ondelete="CASCADE"), default=None
+        ForeignKey("source_blocks.id", ondelete="CASCADE"), default=None, index=True
     )
     state: Mapped[str] = mapped_column(String(8), default="linked")  # linked | detached
     origin: Mapped[str] = mapped_column(String(5), default="auto")  # auto | human

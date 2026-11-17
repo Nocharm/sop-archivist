@@ -66,8 +66,9 @@ const MARK_KEYS: Record<NumberStyle, { label: string; tip: string }> = {
 };
 
 /** 표·그림의 캡션 줄 - 확정 글이 없으면 AI 글, 확정 전이면 점선(문장과 같은 규칙). 줄마다 자기 상태를 따른다.
- * 이 새 문서에서 번호를 다시 매겼으면 첫 줄 앞에 "표 3 → 표 1"(Assign New 칸과 같은 표시) */
+ * 이 새 문서에서 번호를 다시 매겼으면 글이 있는 첫 줄 앞에 "표 3 → 표 1"(Assign New 칸과 같은 표시 - 빈 캡션에는 없다) */
 function CaptionLines({ captions, isNote, owner }: { captions: readonly OutputCItem[]; isNote: boolean; owner: OutputCItem }) {
+  const chipIndex = captions.findIndex((caption) => caption.text || caption.ai_text);
   return captions.map((caption, index) => (
     <p
       key={caption.target_id}
@@ -75,7 +76,7 @@ function CaptionLines({ captions, isNote, owner }: { captions: readonly OutputCI
       lang={readLangAttr(caption.lang)}
       data-testid={`output-c-caption-${caption.target_id}`}
     >
-      {index === 0 && owner.renumber && <RenumberMark change={owner.renumber} testId={`output-c-renumber-${owner.target_id}`} />}
+      {index === chipIndex && owner.renumber &&<RenumberMark change={owner.renumber} testId={`output-c-renumber-${owner.target_id}`} />}
       {caption.text || caption.ai_text}
     </p>
   ));

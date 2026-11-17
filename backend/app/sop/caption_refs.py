@@ -1,7 +1,6 @@
 """표·그림 참조 연결 — 올릴 때 원문 글의 "표 3"·"아래 표"를 대상 표·그림 묶음에 잇고, 사람이 다시 잇거나 뗀다."""
 
 from bisect import bisect_left, bisect_right
-from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
@@ -13,8 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.sop.caption_ref_rules import (
     REF_LINKED,
     REF_TEXT_KINDS,
+    index_caption_groups,
     match_covering_units,
     pick_table_unit_id,
+    read_caption_numbers,
+    resolve_numbered_group,
 )
 from app.sop.captions import CAPTION_KIND
 from app.sop.decisions import DbId
@@ -22,7 +24,7 @@ from app.sop.errors import raise_rule
 from app.sop.events import record_event
 from app.sop.groups import BUNDLE_UNIT_KINDS, TABLE_UNIT_KINDS
 from app.sop.models import Bundle, CaptionRef, Document, SourceBlock, Unit
-from app.sop.renumber import find_number_tokens, find_place_tokens, read_caption_number
+from app.sop.renumber import find_number_tokens, find_place_tokens
 from app.sop.units import UNIT_ACTIVE, get_latest_extraction_id
 
 ORIGIN_AUTO, ORIGIN_HUMAN = "auto", "human"
@@ -87,39 +89,39 @@ def _get_group_target(group: Unit, block_id_by_seq: Mapping[int, int]) -> _Targe
 def build_ref_drafts(blocks: Mapping[int, tuple[int, str]], units: Iterable[Unit]) -> list[RefDraft]:
     """활성 단위의 범위 글자에서 번호·자리 참조를 찾아 대상과 함께 돌려준다 — DB를 쓰지 않는 순수 계산.
 
-    blocks는 블록 id → (seq, 글). 번호 참조는 같은 (종류, 번호) 캡션 단위가 정확히 하나일 때만 그 묶음에 잇고,
-    없거나 둘 이상이면 대상 없이 연결만 남긴다(경고는 결과물 쪽). 캡션 단위 자기 머리 번호와 같은 번호 표기는 참조가 아니다.
+    blocks는 블록 id → (seq, 글). 번호 참조는 같은 (종류, 번호) 캡션이 달린 묶음이 정확히 하나일 때만 그 묶음에 잇고
+    (caption_ref_rules.resolve_numbered_group), 없거나 둘 이상이면 대상 없이 연결만 남긴다(경고는 결과물 쪽).
+    캡션 자기 번호(복합 번호 머리는 번호 없음, 괄호 캡션은 첫 그 종류 번호)와 같은 번호 표기는 참조가 아니다.
     """
     active = [unit for unit in units if unit.status == UNIT_ACTIVE]
     by_id = {unit.id: unit for unit in active}
     block_id_by_seq = {seq: block_id for block_id, (seq, _) in blocks.items()}
-    captions: dict[tuple[str, int], list[Unit]] = defaultdict(list)
-    for unit in active:
-        head = read_caption_number(unit.text) if unit.kind == CAPTION_KIND else None
-        if head is not None:
-            captions[(head.kind, head.number)].append(unit)
-    # 자리 참조의 대상 — 종류마다 (pos_seq, pos_start) 순으로 늘어놓은 묶음
+    heads = read_caption_numbers(active)
+    caption_groups = index_caption_groups(active)
+    # 자리 참조의 대상 — 종류마다 (pos_seq, pos_start) 순으로 늘어놓은 묶음. 행으로 나눈 표는 가장 앞 행이 그 표 하나의 자리다
     groups: dict[str, list[Unit]] = {_TABLE_KIND: [], _FIGURE_KIND: []}
-    for unit in active:
-        if unit.kind in groups:
-            groups[unit.kind].append(unit)
-    keys: dict[str, list[tuple[int, int]]] = {}
-    for kind, members in groups.items():
-        members.sort(key=lambda unit: (unit.pos_seq, unit.pos_start, unit.id))
-        keys[kind] = [(unit.pos_seq, unit.pos_start) for unit in members]
+    seen_tables: set[int] = set()
+    for unit in sorted(active, key=lambda unit: (unit.pos_seq, unit.pos_start, unit.id)):
+        if unit.kind == _FIGURE_KIND:
+            groups[_FIGURE_KIND].append(unit)
+        elif unit.kind in TABLE_UNIT_KINDS and unit.table_id not in seen_tables:
+            seen_tables.add(unit.table_id)
+            groups[_TABLE_KIND].append(unit)
+    keys = {kind: [(unit.pos_seq, unit.pos_start) for unit in members] for kind, members in groups.items()}
 
     drafts: list[RefDraft] = []
     for unit in active:
         if unit.kind not in REF_TEXT_KINDS:
             continue
-        head = read_caption_number(unit.text) if unit.kind == CAPTION_KIND else None
+        head = heads.get(unit.id)
         for block_id, span_start, span_end in unit.spans:
             seq, block_text = blocks[block_id]
             text = block_text[span_start:span_end]
             for token in find_number_tokens(text):
                 if head is not None and (token.kind, token.number) == (head.kind, head.number):
                     continue
-                target = _find_numbered_target(captions.get((token.kind, token.number), ()), by_id, block_id_by_seq)
+                group = resolve_numbered_group(caption_groups, token.kind, token.number)
+                target = _get_group_target(by_id[group], block_id_by_seq) if isinstance(group, int) else None
                 drafts.append(RefDraft(
                     block_id, span_start + token.start, span_start + token.end, token.kind, token.number,
                     target.table_id if target else None, target.block_id if target else None,
@@ -135,16 +137,6 @@ def build_ref_drafts(blocks: Mapping[int, tuple[int, str]], units: Iterable[Unit
                     target.table_id if target else None, target.block_id if target else None,
                 ))
     return drafts
-
-
-def _find_numbered_target(
-    captions: Sequence[Unit], by_id: Mapping[int, Unit], block_id_by_seq: Mapping[int, int]
-) -> _Target | None:
-    """같은 (종류, 번호) 캡션이 달린 묶음이 정확히 하나일 때만 그 묶음 — 언어마다 캡션이 따로여도 묶음은 하나다."""
-    group_ids = {caption.group_unit_id for caption in captions if caption.group_unit_id in by_id}
-    if len(group_ids) != 1:
-        return None
-    return _get_group_target(by_id[group_ids.pop()], block_id_by_seq)
 
 
 async def detect_caption_refs(session: AsyncSession, extraction_id: int) -> int:
@@ -190,14 +182,25 @@ def _pick_target_unit(refs_target: tuple[int | None, int | None], bundles: Seque
 async def build_caption_ref_outs(
     session: AsyncSession, refs: Sequence[CaptionRef], units: Iterable[Unit]
 ) -> list[CaptionRefOut]:
-    """참조 행들의 응답 — 대상은 지금 활성인 묶음 단위 id로 푼다. units는 그 추출의 활성 단위(묶음 종류만 쓴다)."""
-    bundles = [unit for unit in units if unit.kind in BUNDLE_UNIT_KINDS and unit.status == UNIT_ACTIVE]
+    """참조 행들의 응답 — 대상은 지금 활성인 묶음 단위 id로 푼다. units는 그 추출의 활성 단위(묶음과 캡션).
+
+    대상 없이 남은 번호 참조는 결과물과 같은 규칙(resolve_numbered_group)으로 지금 캡션에서 푼다 — 올린 뒤 캡션을 달았으면 그 묶음.
+    """
+    active = [unit for unit in units if unit.status == UNIT_ACTIVE]
+    bundles = [unit for unit in active if unit.kind in BUNDLE_UNIT_KINDS]
+    caption_groups = index_caption_groups(active)
     seq_of = await _load_block_seqs(session, (ref.target_block_id for ref in refs if ref.target_block_id is not None))
+
+    def pick_target(ref: CaptionRef) -> int | None:
+        if ref.target_table_id is None and ref.target_block_id is None and ref.number is not None:
+            group = resolve_numbered_group(caption_groups, ref.kind, ref.number)
+            return group if isinstance(group, int) else None
+        return _pick_target_unit((ref.target_table_id, ref.target_block_id), bundles, seq_of)
+
     return [
         CaptionRefOut(
-            id=ref.id, kind=ref.kind, number=ref.number,
-            target_unit_id=_pick_target_unit((ref.target_table_id, ref.target_block_id), bundles, seq_of),
-            state=ref.state, origin=ref.origin,
+            id=ref.id, kind=ref.kind, number=ref.number, target_unit_id=pick_target(ref), state=ref.state,
+            origin=ref.origin,
         )
         for ref in refs
     ]
@@ -242,6 +245,9 @@ async def update_caption_ref(
     )
     await session.flush()
     units = (await session.scalars(
-        select(Unit).where(Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.kind.in_(BUNDLE_UNIT_KINDS))
+        select(Unit).where(
+            Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE,
+            Unit.kind.in_((*BUNDLE_UNIT_KINDS, CAPTION_KIND)),
+        )
     )).all()
     return (await build_caption_ref_outs(session, [ref], units))[0]
