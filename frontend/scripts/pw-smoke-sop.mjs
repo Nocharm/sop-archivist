@@ -1599,7 +1599,12 @@ await runStep("new documents: drag a WI onto another SOP to change its parent, U
     );
     const dims = { x: await opacityOf(row(x)), old: await opacityOf(page.locator(".docs-old")), sopCf: await opacityOf(row(sopCf)), sopDrag: await opacityOf(row(sopDrag)) };
     check("other WI rows and the Old list dim, SOP rows stay clear", dims.x < 1 && dims.old < 1 && dims.sopCf === 1 && dims.sopDrag === 1, JSON.stringify(dims));
-    check("the hovered row's buttons stay hidden while dragging", (await waitOpacity(`tobe-id-${sopDrag.id}-acts`, 0)) && (await waitOpacity(`tobe-id-${sopDrag.id}-more`, 0)));
+    // ⋯의 testid는 단추에 있고 숨김(opacity)은 그 겉 .doc-more에 걸린다 - 겉 상자를 잰다
+    const isMoreHidden = await page.waitForFunction((id) => {
+      const wrap = document.querySelector(`[data-testid="${id}"]`)?.closest(".doc-more");
+      return wrap != null && Number(getComputedStyle(wrap).opacity) === 0;
+    }, `tobe-id-${sopDrag.id}-more`, { timeout: 2000 }).then(() => true, () => false);
+    check("the hovered row's buttons stay hidden while dragging", (await waitOpacity(`tobe-id-${sopDrag.id}-acts`, 0)) && isMoreHidden);
 
     // 4. 못 놓는 곳은 이유를 말한다 - 그 밖은 표시도 메모도 없다
     await moveOver(row(x));
