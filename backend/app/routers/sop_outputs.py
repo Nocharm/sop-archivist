@@ -29,7 +29,7 @@ from app.sop.events import record_event
 from app.sop.excel_export import ExportMeta, build_workbook
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
 from app.sop.models import Bundle, TargetDoc, TargetDocNaSlot, TargetSentence, WiStep
-from app.sop.outline import load_doc_outlines
+from app.sop.outline import DocOutline, load_doc_outlines
 from app.sop.outputs import (
     ARow,
     CDoc,
@@ -46,6 +46,7 @@ from app.sop.outputs import (
 )
 from app.sop.sheet_model import WorkbookModel, build_equis_key, build_workbook_model, limit_preview
 from app.sop.snapshot import BundleSnapshot, list_confirmer_ids, load_bundle_snapshot, load_people_names
+from app.sop.target_placement import restyle_moved
 from app.sop.tobe import MAX_DB_INT, is_within_slot
 
 logger = logging.getLogger(__name__)
@@ -253,12 +254,13 @@ async def _check_translation_moves(
 
 
 async def _check_slot_moves(
-    session: AsyncSession, doc: TargetDoc, tops: dict[int, TargetSentence], items: list[OrderItemIn]
+    session: AsyncSession, doc: TargetDoc, outline: DocOutline, tops: dict[int, TargetSentence], items: list[OrderItemIn]
 ) -> dict[int, str]:
     """다른 칸으로 옮기는 줄(새 문장 → 칸)을 돌려준다 — 보냈고 지금 칸과 다를 때만. 쓰기 전에 검사만 한다.
 
-    입구 1 SOP의 사람이 쓴 줄만 칸을 옮긴다(slot_not_allowed). 칸은 그 문서의 골격 사본 안(unknown_slot), 그 문서에서 N/A가 아닌 칸(na_slot,
-    상위 칸 N/A는 하위 칸도 덮는다 — 저장 decisions._check_location과 같은 규칙)이어야 한다.
+    입구 1 SOP의 사람이 쓴 줄만 칸을 옮긴다(slot_not_allowed). 칸은 그 문서의 골격 사본 안(unknown_slot)의 줄을 받는 종류(slot_not_assignable —
+    묶음 제목·자동 목록은 받지 않는다), 그 문서에서 N/A가 아닌 칸(na_slot, 상위 칸 N/A는 하위 칸도 덮는다 — 저장 decisions._check_location과
+    같은 규칙)이어야 한다.
     """
     requested = {
         item.target_id: item.slot_key
@@ -273,12 +275,14 @@ async def _check_slot_moves(
     )
     if locked:
         raise_rule(422, "slot_not_allowed", target_ids=locked)
-    outline = (await load_doc_outlines(session, [doc.id]))[doc.id]
     unknown = sorted(
         target_id for target_id, slot_key in requested.items() if slot_key is None or outline.find(slot_key) is None
     )
     if unknown:
         raise_rule(422, "unknown_slot", target_ids=unknown)
+    closed = sorted(target_id for target_id, slot_key in requested.items() if not outline.is_assignable(str(slot_key)))
+    if closed:
+        raise_rule(422, "slot_not_assignable", target_ids=closed)
     na_keys = list(await session.scalars(select(TargetDocNaSlot.slot_key).where(TargetDocNaSlot.target_doc_id == doc.id)))
     na = sorted(
         target_id for target_id, slot_key in requested.items()
@@ -337,7 +341,8 @@ def _check_number_styles(doc: TargetDoc, tops: dict[int, TargetSentence], items:
 
     표시는 그 문장에만 속한다 — 한/영 짝 상대도 번역도 따라 바뀌지 않고, 번역도 출처와 다른 표시를 가질 수 있다.
     입구 2 문서는 번호를 새로 매기지 않으므로 422 number_style_not_allowed다.
-    다른 칸·단계로 옮겨도 표시는 그대로다 — 깊이와 달리 앞뒤 줄에 기대지 않는 그 줄 자체의 성격이다.
+    WI 단계를 옮겨도 표시는 그대로다 — 깊이와 달리 앞뒤 줄에 기대지 않는 그 줄 자체의 성격이다. SOP의 다른 절로 옮기는 줄만
+    reorder_targets가 번호 ↔ 글머리 기호를 도착한 절의 기본으로 바꾼다(target_placement.restyle_moved).
     """
     requested = {
         item.target_id: item.number_style
@@ -388,10 +393,19 @@ async def reorder_targets(
         undeclared = sorted(target_id for target_id, step in moves.items() if step is not None and step not in declared)
         if undeclared:
             raise_rule(422, "unknown_wi_step", target_ids=undeclared)
-    slot_moves = await _check_slot_moves(session, doc, tops, payload.items)
+    outline = (await load_doc_outlines(session, [doc.id]))[doc.id]
+    slot_moves = await _check_slot_moves(session, doc, outline, tops, payload.items)
     translations += await _check_translation_moves(session, tops, slot_moves)
     indents = await _check_indents(session, doc, tops, payload.items, moves.keys() | slot_moves.keys())
     number_styles = _check_number_styles(doc, tops, payload.items)
+    # 다른 절로 옮기는 줄은 번호 ↔ 글머리 기호를 도착한 절의 기본으로 바꾼다(생략·주석은 그대로) — 같은 요청이 표시를 실어 보냈으면
+    # 그 값이 먼저다. 지금 값과 같은 표시를 보낸 것도 "이 표시로 둔다"는 뜻이다(옮긴 뒤 표시를 도로 고른 줄 — 화면은 옮긴 줄의 표시를 늘 싣는다)
+    styled = {item.target_id for item in payload.items if item.number_style is not None}
+    for target_id, slot_key in slot_moves.items():
+        if target_id not in styled:
+            style = restyle_moved(tops[target_id].number_style, outline, slot_key)
+            if style != tops[target_id].number_style:
+                number_styles[target_id] = style
 
     cells: dict[int, list[TargetSentence]] = defaultdict(list)
     for row in rows:

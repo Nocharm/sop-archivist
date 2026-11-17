@@ -9,10 +9,16 @@ import pytest
 
 from app.settings import settings
 from app.sop.ai import embeddings
-from app.sop.ai.candidates import DELETE_CANDIDATE, SLOT_GUIDE, Candidate, list_candidates, rank_candidates
+from app.sop.ai.candidates import (
+    DELETE_CANDIDATE,
+    RULE_SLOT_GUIDE,
+    Candidate,
+    list_candidates,
+    match_rule_slot,
+    rank_candidates,
+)
 from app.sop.ai.constants import AI_CALL_ATTEMPTS, CANDIDATE_TOP_K, MAX_TEXT_CANDIDATES
-from app.sop.constants import SLOT_KEYS
-from app.sop.outline import EMPTY_OUTLINE, LEGACY_OUTLINE, DocOutline
+from app.sop.outline import EMPTY_OUTLINE
 from app.sop.snapshot import TargetDocInfo
 from tests.ai_fixtures import clean_embedding_cache  # noqa: F401 -- 픽스처는 아래 usefixtures가 이름으로 찾는다
 from tests.ai_helpers import (
@@ -22,12 +28,18 @@ from tests.ai_helpers import (
     record_bigram_counts,
     vector_for,
 )
+from tests.sop_helpers import NEW_SOP_KEYS, build_sop_outline
 
 pytestmark = pytest.mark.usefixtures("clean_embedding_cache", "clean_ai_usage")
 
 SOP_TITLE = "Synthetic SOP"
 WI_TITLE = "Synthetic WI"
 LOGIN_ID = "ops.member"
+ASSOCIATED = "document_relationships.associated_documents"
+# 줄을 받지 않는 항목 — 묶음 제목(7·7.1)과 자동 목록(7.2)은 후보가 아니다
+CLOSED_KEYS = ("document_relationships", ASSOCIATED, "document_relationships.work_instructions")
+# 새 SOP가 내놓는 후보의 칸 — 골격 순서
+CANDIDATE_KEYS = [key for key in NEW_SOP_KEYS if key not in CLOSED_KEYS]
 
 
 def _doc(
@@ -40,8 +52,9 @@ def _doc(
     order_index: int | None = None,
     na_slots: dict[str, str] | None = None,
     steps: tuple[tuple[int, str], ...] = (),
+    declared: Sequence[tuple[str, str]] = (),
 ) -> TargetDocInfo:
-    """합성 새 문서 정보 — 제목·순서 열은 따로 주지 않으면 종류별 기본 제목과 id를 따른다."""
+    """합성 새 문서 정보 — 제목·순서 열은 따로 주지 않으면 종류별 기본 제목과 id를 따른다. SOP는 새 문서의 골격에 declared(키, 영문 제목)를 더해 받는다."""
     return TargetDocInfo(
         id=doc_id,
         code=f"DOC-{doc_id}",
@@ -54,7 +67,7 @@ def _doc(
         manual_order=False,
         na_slots=na_slots or {},
         steps=steps,
-        outline=DocOutline(LEGACY_OUTLINE) if doc_type == "sop" else EMPTY_OUTLINE,
+        outline=build_sop_outline(declared) if doc_type == "sop" else EMPTY_OUTLINE,
     )
 
 
@@ -73,7 +86,7 @@ def _unit(text: str) -> np.ndarray:
 
 def _fake_candidates(count: int) -> list[Candidate]:
     return [
-        Candidate(f"c{index + 1}", 1, SLOT_KEYS[0], None, None, f"Synthetic doc {index + 1} / slot") for index in range(count)
+        Candidate(f"c{index + 1}", 1, "purpose", None, None, f"Synthetic doc {index + 1} / slot") for index in range(count)
     ]
 
 
@@ -83,30 +96,82 @@ def embed_off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "embed_enabled", False)
 
 
-def test_slot_guide_covers_every_slot_key() -> None:
-    assert set(SLOT_GUIDE) == set(SLOT_KEYS)
+def test_rule_slot_guide_keeps_the_rule_ids_of_the_seven_slots() -> None:
+    # AI 규칙 글(seeds/rules.md)의 칸 ID 그대로다 — 규칙 글은 바꾸지 않고 후보 배선만 골격을 따른다
+    assert list(RULE_SLOT_GUIDE) == [
+        "S1", "S2", "S3", "S4", "S5", "S5.1", "S5.2", "S6", "S6.1", "S6.2", "S6.3", "S6.4", "S7", "S7.1", "S7.2",
+    ]
 
 
-def test_candidates_list_every_sop_slot_with_a_label() -> None:
-    candidates = list_candidates([_doc(1)])
+def test_match_rule_slot_table() -> None:
+    outline = build_sop_outline([
+        ("general_requirements.safety", "Safety"), ("general_requirements.work", " work "),
+        ("general_requirements.account", "Account"),
+        ("procedures.erc", "Electronic Record Control (Audit Trail)"), ("procedures.fix", "TROUBLESHOOTING guide"),
+        ("procedures.upkeep", "Preventive maintenance"), ("procedures.run", "Operation"),
+        ("appendices.a1", "Alarm list"),
+    ])
 
-    assert _slot_keys_of(candidates) == list(SLOT_KEYS)
-    assert [candidate.key for candidate in candidates] == [f"c{index + 1}" for index in range(len(SLOT_KEYS))]
+    assert {item.key: match_rule_slot(outline, item.key) for item in outline.items} == {
+        "purpose": "S1", "scope": "S2", "definitions": "S3", "responsibilities": "S4",
+        "general_requirements": "S5",
+        "general_requirements.safety": "S5.1", "general_requirements.work": "S5.2",  # 제목으로 댄다(대소문자·빈칸 무시)
+        "general_requirements.account": "S5",  # 그 밖의 범주
+        "procedures": "S6",  # 머리 글
+        "procedures.p1": "S6.1", "procedures.run": "S6.1",  # 그 밖의 절차
+        "procedures.erc": "S6.2", "procedures.fix": "S6.3", "procedures.upkeep": "S6.4",  # 제목에 든 말로
+        "document_relationships": None, ASSOCIATED: None, "document_relationships.work_instructions": None,
+        f"{ASSOCIATED}.form": "S7", f"{ASSOCIATED}.visual_aid": "S7", f"{ASSOCIATED}.training_material": "S7",
+        f"{ASSOCIATED}.quality_risk_assessment": "S7", "document_relationships.references": "S7",
+        "attachments": "S7.1",
+        "appendices": "S7.2", "appendices.a1": "S7.2",
+    }
+    assert match_rule_slot(outline, "no_such_item") is None
+
+
+def test_candidates_list_every_assignable_item_with_a_label() -> None:
+    declared = [("general_requirements.safety", "Safety"), ("appendices.a1", "Alarm list")]
+
+    candidates = list_candidates([_doc(1, declared=declared)])
+
+    keys = [key for key in NEW_SOP_KEYS if key not in CLOSED_KEYS]
+    keys.insert(keys.index("general_requirements") + 1, "general_requirements.safety")
+    assert _slot_keys_of(candidates) == [*keys, "appendices.a1"]  # 골격 순서
+    assert [candidate.key for candidate in candidates] == [f"c{index + 1}" for index in range(len(candidates))]
     assert all(candidate.target_doc_id == 1 and candidate.wi_step is None and candidate.wi_part is None for candidate in candidates)
+    # 라벨은 "문서 / 골격 라벨: 안내" — 안내는 그 항목이 대응하는 규칙 칸의 것이고, 비면 콜론이 없다
     by_slot = {candidate.slot_key: candidate.label for candidate in candidates}
     assert by_slot["purpose"] == f"{SOP_TITLE} / Purpose: 절차가 필요한 이유, 관리 목적"
-    assert by_slot["general_requirements.safety"] == f"{SOP_TITLE} / General Requirements > 안전(Safety)"  # 넣는 것이 비면 콜론이 없다
+    assert by_slot["general_requirements"] == f"{SOP_TITLE} / General Requirements: 이 SOP의 모든 절차에 공통인 요구사항"
+    assert by_slot["general_requirements.safety"] == f"{SOP_TITLE} / General Requirements › Safety"
+    assert by_slot["procedures.p1"] == f"{SOP_TITLE} / Procedures › Procedure 1"
+    assert by_slot[f"{ASSOCIATED}.form"] == f"{SOP_TITLE} / Document Relationships › Associated Documents › Form: 관련 문서 맵핑"
+    assert by_slot["document_relationships.references"] == f"{SOP_TITLE} / Document Relationships › References: 관련 문서 맵핑"
+    assert by_slot["attachments"] == f"{SOP_TITLE} / Attachments"
+    assert by_slot["appendices.a1"] == f"{SOP_TITLE} / Appendix 1. Alarm list"
+    # 그 자리에 놓이는 줄의 기본 번호 표시를 함께 든다(분류가 새 문장에 쓴다)
+    styles = {candidate.slot_key: candidate.default_style for candidate in candidates}
+    assert (styles["purpose"], styles["procedures.p1"], styles["appendices.a1"]) == ("bullet", "numbered", "numbered")
 
 
-def test_candidates_skip_na_slots_and_their_children() -> None:
-    sop = _doc(1, na_slots={"procedures": "합성 사유", "general_requirements.safety": "합성 사유"})
+def test_candidates_skip_group_and_auto_list() -> None:
+    slot_keys = _slot_keys_of(list_candidates([_doc(1)]))
+
+    assert slot_keys == CANDIDATE_KEYS
+    assert not set(slot_keys) & set(CLOSED_KEYS)
+    assert f"{ASSOCIATED}.form" in slot_keys and "document_relationships.references" in slot_keys  # 그 아래 줄을 받는 항목은 후보다
+
+
+def test_candidates_skip_na_items() -> None:
+    declared = [("general_requirements.safety", "Safety"), ("general_requirements.work", "Work")]
+    sop = _doc(1, declared=declared, na_slots={"procedures": "합성 사유", "general_requirements.safety": "합성 사유"})
 
     slot_keys = _slot_keys_of(list_candidates([sop]))
 
     assert not any(key is not None and key.startswith("procedures") for key in slot_keys)  # 상위 칸 N/A는 하위 칸도 덮는다
     assert "general_requirements.safety" not in slot_keys
-    assert "general_requirements" in slot_keys and "general_requirements.operation" in slot_keys  # 하위 칸 N/A는 상위를 덮지 않는다
-    assert len(slot_keys) == len(SLOT_KEYS) - 5 - 1  # procedures와 하위 넷, 그리고 safety
+    assert "general_requirements" in slot_keys and "general_requirements.work" in slot_keys  # 하위 칸 N/A는 상위를 덮지 않는다
+    assert len(slot_keys) == len(CANDIDATE_KEYS) + 2 - 2 - 1  # 범주 둘을 더하고, procedures와 첫 절차, 그리고 safety를 뺀다
 
 
 def test_candidates_use_declared_wi_steps() -> None:
@@ -159,7 +224,7 @@ def test_match_documents_are_not_candidates() -> None:
     candidates = list_candidates(docs)
 
     assert {candidate.target_doc_id for candidate in candidates} == {3}
-    assert len(candidates) == len(SLOT_KEYS)
+    assert len(candidates) == len(CANDIDATE_KEYS)
 
 
 def test_candidate_keys_follow_document_order_not_input_order() -> None:
@@ -203,7 +268,7 @@ def test_rank_breaks_embedding_ties_by_list_order(monkeypatch: pytest.MonkeyPatc
     enable_embed(monkeypatch)
     install_embed_transport(monkeypatch)
     candidates = _fake_candidates(5)
-    twin = Candidate("c6", 1, SLOT_KEYS[1], None, None, candidates[3].label)  # 같은 글은 같은 벡터라 점수가 같다
+    twin = Candidate("c6", 1, "scope", None, None, candidates[3].label)  # 같은 글은 같은 벡터라 점수가 같다
     candidates.append(twin)
 
     ranked, retrieval = _rank(candidates[3].label, candidates)
@@ -223,8 +288,8 @@ def test_rank_without_embeddings_returns_all_when_few() -> None:
 
 def test_rank_without_embeddings_narrows_by_text_when_many() -> None:
     # 앞의 후보는 글이 모두 같아 점수가 같고, 질의와 같은 글을 가진 후보 하나가 맨 뒤에 있다
-    others = [Candidate(f"c{index + 1}", 1, SLOT_KEYS[0], None, None, "무관한 합성 라벨") for index in range(MAX_TEXT_CANDIDATES + 4)]
-    target = Candidate("c25", 1, SLOT_KEYS[1], None, None, "합성 장비의 전원을 켜는 칸")
+    others = [Candidate(f"c{index + 1}", 1, "purpose", None, None, "무관한 합성 라벨") for index in range(MAX_TEXT_CANDIDATES + 4)]
+    target = Candidate("c25", 1, "scope", None, None, "합성 장비의 전원을 켜는 칸")
     candidates = [*others, target]
 
     ranked, retrieval = _rank(target.label, candidates)

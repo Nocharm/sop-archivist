@@ -367,11 +367,14 @@ def _build_c_sheet(snap: BundleSnapshot) -> Sheet:
         rows.append(_make_row("doc", _make_c_texts({C_DOC: heading}), bold=(C_DOC + 1,)))
         for section in doc.sections:
             values = {C_SECTION: section.label, C_SOURCE: section.heading_note}
-            if section.number is not None:
+            if section.number is not None and section.shows_number:  # 부록은 라벨("Appendix 1. 이름")에 번호가 들어 있다
                 values[C_NUMBER] = section.number
             if section.na_reason is not None:
                 values |= {C_STATUS: "N/A", C_REASON: section.na_reason}
             rows.append(_make_row("section", _make_c_texts(values), bold=(C_SECTION + 1,)))
+            for auto in section.auto_items:  # 자동 목록 절(7.2 Work Instructions) — 앱이 채운 자식 WI, 배정한 줄이 아니다
+                text = f"{auto.code} · {auto.title}" if auto.title else auto.code
+                _append_c_lines(rows, _make_c_texts({C_ITEM: text}), True)
             previous_key: str | None = None
             for index, item in enumerate(section.items):
                 # 칸의 첫 항목·묶음 키가 없는 항목(고아 번역)·키가 바뀐 항목이 새 묶음을 연다 — 표 칸은 표 묶음 안이다

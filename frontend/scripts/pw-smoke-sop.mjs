@@ -204,7 +204,7 @@ const readOutlineFit = (page, key) => page.evaluate((k) => {
     Math.max(outer.left - r.right, r.left - outer.right, outer.top - r.bottom, r.top - outer.bottom),
   );
   const texts = [];
-  for (const el of section.querySelectorAll('h3, [data-testid^="output-c-number-"], [data-testid^="output-c-item-"], [data-testid^="output-c-empty-"], h3 + p, td')) {
+  for (const el of section.querySelectorAll('h3, [data-testid^="output-c-number-"], [data-testid^="output-c-bullet-"], [data-testid^="output-c-item-"], [data-testid^="output-c-empty-"], h3 + p, td')) {
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       if (!node.textContent.trim()) continue;
@@ -228,6 +228,7 @@ const readOutlineFit = (page, key) => page.evaluate((k) => {
 // 글자와는 1px 넘게, 선·동그라미와는 2px 넘게 떨어져야 한다(1px 틈은 화면 배율에 따라 붙어 보인다). 놓을 수 있는 칸(over)에는 선이 그어져 있어야 한다
 const isOutlineClear = (fit) => fit !== null && fit.texts > 0 && fit.textClear >= 1 && (fit.drop !== "over" || (fit.marks === 2 && fit.markClear >= 2));
 // 고른 줄의 왼쪽 막대(줄 box-shadow 가운데 --accent 색 층이 보이는 띠)와 그 줄 번호 첫 글자 사이(px) - 음수면 막대가 글자를 덮는다.
+// 글머리 기호 줄은 번호 자리의 기호(•)로 잰다(템플릿 골격의 1–5 · 7 · 8장 줄은 글머리 기호다).
 // 위 층(앞에 적힌 층)이 덮는 곳은 뺀다. 고른 줄이 아니거나 번호·막대가 없으면 clear null과 그 까닭.
 // 줄의 box-shadow는 호버 고리에서 넘어오는 동안 바뀌므로(.c-row[data-drag-box] transition) 그 줄의 전환이 끝난 뒤에 잰다
 const readBarClear = async (page, id) => {
@@ -236,7 +237,7 @@ const readBarClear = async (page, id) => {
 };
 const readBarNow = (page, id) => page.evaluate((rowId) => {
   const row = document.querySelector(`[data-testid="output-c-row-${rowId}"]`);
-  const num = document.querySelector(`[data-testid="output-c-number-${rowId}"]`);
+  const num = document.querySelector(`[data-testid="output-c-number-${rowId}"], [data-testid="output-c-bullet-${rowId}"]`);
   if (!row || !num?.firstChild) return { clear: null, why: "no row or number" };
   if (document.activeElement !== row) return { clear: null, why: `focus on ${document.activeElement?.dataset.testid ?? document.activeElement?.tagName}` };
   const probe = document.createElement("i");
@@ -781,20 +782,20 @@ await runStep("new documents: nested rows, N/A detail, each cell saves as you le
   await settleToBe(page);
   check("leaving the cell saves it too", (await readTitle()) === before);
   // N/A는 사유를 적어 Save N/A(Enter)로만 저장된다 - Mark N/A만으로는 아무것도 저장되지 않는다
-  // 문장이 들지 않은 칸으로 한다(문장이 든 칸은 서버가 N/A를 거절한다)
-  const appendices = `tobe-${sopKey}-na-document_relationships.appendices`;
-  const wasNa = (await page.locator(`[data-testid="tobe-${sopKey}-slot-document_relationships.appendices"]`).getAttribute("data-state")) === "na";
+  // 문장이 들지 않은 칸으로 한다(문장이 든 칸은 서버가 N/A를 거절한다) - 9장 Appendices(합성 SOP는 부록이 없다)
+  const appendices = `tobe-${sopKey}-na-appendices`;
+  const wasNa = (await page.locator(`[data-testid="tobe-${sopKey}-slot-appendices"]`).getAttribute("data-state")) === "na";
   if (!wasNa) {
-    await page.locator(`[data-testid="tobe-${sopKey}-slot-document_relationships.appendices"]`).hover();
+    await page.locator(`[data-testid="tobe-${sopKey}-slot-appendices"]`).hover();
     await page.locator(`[data-testid="${appendices}-mark"]`).click();
     await wait(page, `${appendices}-reason`);
-    const countNa = async () => (await readToBe(page, halfBundleId)).na_slots.filter((slot) => slot.slot_key === "document_relationships.appendices").length;
+    const countNa = async () => (await readToBe(page, halfBundleId)).na_slots.filter((slot) => slot.slot_key === "appendices").length;
     check("Mark N/A saves nothing before its reason", (await countNa()) === 0);
     await page.locator(`[data-testid="${appendices}-reason"]`).fill("Smoke: covered elsewhere");
     await page.keyboard.press("Enter");
     await settleToBe(page);
     check("the reason saves the N/A section", (await countNa()) === 1);
-    await page.locator(`[data-testid="tobe-${sopKey}-slot-document_relationships.appendices"]`).hover();
+    await page.locator(`[data-testid="tobe-${sopKey}-slot-appendices"]`).hover();
     await page.locator(`[data-testid="${appendices}-restore"]`).click();
     await settleToBe(page);
     check("Restore removes it at once", (await countNa()) === 0);
@@ -895,15 +896,19 @@ await runStep("new documents: removing a step keeps the other numbers", {}, asyn
 
 // N/A 칸 상태 표(Documents 화면 설계 §8) - 칸마다 상태를 먼저 보이고, N/A는 사유와 함께 Save N/A로만 저장된다. 편집기는 화면에 하나이고 접거나 떠나도 사유가 남는다.
 // 거절 응답(409·500)이 콘솔에 찍혀 콘솔 오류를 허용한다. 만든 N/A는 끝에 API로도 지워 처음 수로 되돌린다
-// 표준 골격(옛 15칸, backend outline.LEGACY_OUTLINE)과 같은 순서 - 칸 번호도 이 자리에서 센다(1…7, 하위 칸 5.1)
-const SLOT_ORDER = ["purpose", "scope", "definitions", "responsibilities", "general_requirements", "general_requirements.safety", "general_requirements.operation", "procedures", "procedures.procedure", "procedures.electronic_record_control", "procedures.troubleshooting", "procedures.maintenance", "document_relationships", "document_relationships.attachments", "document_relationships.appendices"];
-const slotParent = (key) => (key.includes(".") ? key.slice(0, key.indexOf(".")) : null);
-const slotNumber = (key) => {
-  const tops = SLOT_ORDER.filter((item) => !item.includes("."));
-  const parent = slotParent(key);
-  if (parent === null) return String(tops.indexOf(key) + 1);
-  return `${tops.indexOf(parent) + 1}.${SLOT_ORDER.filter((item) => slotParent(item) === parent).indexOf(key) + 1}`;
-};
+// 회사 SOP 템플릿의 아홉 장(backend outline.TEMPLATE_OUTLINE의 최상위 항목). 그 아래 항목(범주 · 절차 · 부록)은 문서마다 달라
+// 번호 · 위계와 함께 서버가 준 그 문서의 골격(ToBe.outline_items)에서 읽는다 - 화면도 같은 값을 그린다
+const TEMPLATE_CHAPTERS = ["purpose", "scope", "definitions", "responsibilities", "general_requirements", "procedures", "document_relationships", "attachments", "appendices"];
+const ASSOCIATED_KEY = "document_relationships.associated_documents";
+const WI_LIST_KEY = "document_relationships.work_instructions";
+/** 그 SOP의 골격 항목 - 뺀 항목 제외, 서버 순서(부모 바로 뒤에 하위) */
+const readOutline = (tobe, code) => tobe.outline_items.filter((item) => item.code === code && !item.is_removed);
+/** 이름 앞에 적는 번호 - 번호 없는 항목(범주 등)과 번호를 따로 적지 않는 항목(부록 - shows_number false)은 빈 글 */
+const slotNumber = (item) => (item.shows_number ? (item.number ?? "") : "");
+/** "번호 이름" - 번호 없는 항목은 이름만, 부록은 번호가 든 이름(label "Appendix n. 제목")만. 화면의 formatSlotName과 같은 글 */
+const slotName = (item) => (item.shows_number ? [item.number, item.title_en].filter(Boolean).join(" ") : item.label);
+/** 결과물 C · 엮은 문서의 절이 문장을 받는가 - 하위만 묶는 절(group)과 앱이 채우는 절(auto_list)은 줄이 없어도 빈 칸이 아니다(서버 422 slot_not_assignable) */
+const takesLines = (section) => section.kind !== "group" && section.kind !== "auto_list";
 // 일부러 거절당하는 저장(409 · 500)은 따로 아래 단계에 둔다 - 이 단계는 콘솔 오류를 허용하지 않는다
 await runStep("new documents: the section table shows each section's state and saves N/A only with a reason", {}, async ({ page }) => {
   const headers = { "X-Dev-User": "qa.member" };
@@ -911,6 +916,10 @@ await runStep("new documents: the section table shows each section's state and s
   const naBefore = start.na_slots.length;
   const sop = start.docs.find((doc) => doc.doc_type === "sop");
   const prefix = `tobe-id-${sop.id}`;
+  const outline = readOutline(start, sop.code);
+  const slotKeys = outline.map((item) => item.key);
+  const itemOf = new Map(outline.map((item) => [item.key, item]));
+  const slotParent = (key) => itemOf.get(key)?.parent_key ?? null;
   // 다른 SOP 줄 - 접힌 줄에 적던 사유가 있을 때 그 줄의 Mark N/A를 누른다(끝에 지운다)
   await page.request.post(`${BASE}/api/bundles/${halfBundleId}/tobe/docs`, { headers: { ...headers, "Content-Type": "application/json" }, data: { code: "SOP-95", doc_type: "sop", parent_code: null } });
   const otherSop = (await readToBe(page, halfBundleId)).docs.find((doc) => doc.code === "SOP-95");
@@ -947,15 +956,25 @@ await runStep("new documents: the section table shows each section's state and s
     check("the row is the equipment SOP SOP-CF", sop.code === "SOP-CF" && sop.is_equipment_sop, sop.code);
     await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
     await openRow(prefix, `${prefix}-slots`);
-    // 1. 15줄 - 머리의 수는 줄들의 상태에서 센 것과 같다
+    // 1. 템플릿 골격 - 최상위는 아홉 장이고, 표의 줄은 서버가 준 그 문서의 골격 그대로다(순서 · 번호 · 들여쓰기). 머리의 수는 줄들의 상태에서 센 것과 같다
     const rows = await page.locator(`[data-testid="${prefix}-slots"] [data-slot]`).evaluateAll((els) => els.map((el) => [el.dataset.slot, el.dataset.state]));
-    check("the table has fifteen sections in the fixed order", JSON.stringify(rows.map(([key]) => key)) === JSON.stringify(SLOT_ORDER), rows.map(([key]) => key).join(","));
-    const tally = (...kinds) => rows.filter(([, state]) => kinds.includes(state)).length;
+    const tops = outline.filter((item) => item.level === 0).map((item) => item.key);
+    check("the outline has the template's nine chapters in order", JSON.stringify(tops) === JSON.stringify(TEMPLATE_CHAPTERS), tops.join(","));
+    check("the table lists the document's outline in the server's order", JSON.stringify(rows.map(([key]) => key)) === JSON.stringify(slotKeys), rows.map(([key]) => key).join(","));
+    const shownNumbers = await page.locator(`[data-testid="${prefix}-slots"] [data-slot] .slot-num`).evaluateAll((els) => els.map((el) => (el.textContent ?? "").trim()));
+    check("each row shows the server's number, and none where there is none", JSON.stringify(shownNumbers) === JSON.stringify(outline.map(slotNumber)), shownNumbers.join(","));
+    const categories = outline.filter((item) => item.parent_key === "general_requirements");
+    check("the seed has a category under chapter 5, without a number", categories.length > 0 && categories.every((item) => item.number === null && item.level === 1), JSON.stringify(categories.map((item) => [item.key, item.number])));
+    // 하위 칸은 24px, 그 아래 수준(7.1.x)은 한 단 더 들인다
+    const indentOf = (key) => page.locator(`[data-testid="${prefix}-slot-${key}"] .slot-name`).evaluate((el) => parseFloat(getComputedStyle(el).marginLeft));
+    const indents = [await indentOf("document_relationships"), await indentOf(ASSOCIATED_KEY), await indentOf(`${ASSOCIATED_KEY}.form`)];
+    check("sub-sections indent one step per level", JSON.stringify(indents) === JSON.stringify([0, 24, 48]), indents.join(","));
+    // 문장 있는 칸 · 빈 칸은 문장을 받는 칸만 세고, N/A는 그 표시가 붙은 줄 전부
+    const assignable = new Set(outline.filter((item) => item.is_assignable).map((item) => item.key));
+    const tally = (...kinds) => rows.filter(([key, state]) => assignable.has(key) && kinds.includes(state)).length;
+    const naRows = rows.filter(([, state]) => state === "na" || state === "covered").length;
     const summary = (await getText(page, `${prefix}-slots-summary`)).trim();
-    check("the head counts what the rows say", summary === `${tally("filled", "sub")} with sentences · ${tally("empty")} empty · ${tally("na", "covered")} N/A`, summary);
-    const decide = tally("decide");
-    const decidePill = page.locator(`[data-testid="${prefix}-slots-decide"]`);
-    check("the to-decide pill counts the sections to decide", decide > 0 && ((await decidePill.textContent()) ?? "").trim() === `${decide} to decide`, `${decide} ${await decidePill.count()}`);
+    check("the head counts what the rows say", summary === `${tally("filled", "sub")} with sentences · ${tally("empty")} empty · ${naRows} N/A`, summary);
     // 2. 문장이 든 칸 - 수를 적고 단추가 없다. 자기 수가 없는 상위 칸은 "하위 칸에 있음"
     const counts = (start.slot_counts ?? []).filter((row) => row.target_doc_id === sop.id && row.count > 0);
     const countOf = new Map(counts.map((row) => [row.slot_key, row.count]));
@@ -976,22 +995,34 @@ await runStep("new documents: the section table shows each section's state and s
       (await readState("procedures.troubleshooting")) === "na" && seedReason !== "" && troubleText.includes(seedReason.slice(0, 20)) && (await button("procedures.troubleshooting", "edit").count()) === 1 && (await button("procedures.troubleshooting", "restore").count()) === 1,
       troubleText,
     );
-    // 4. 정할 칸은 Mark N/A가 늘 보이고, 빈 칸은 줄에 올릴 때만
-    await page.mouse.move(0, 0);
-    for (const key of ["procedures.electronic_record_control", "procedures.maintenance"].filter((item) => !countOf.has(item))) {
-      check(`${key} is to decide with Mark N/A always shown`, (await readState(key)) === "decide" && (await stateText(key)) === "Fill or mark N/A" && (await waitOpacity(`${prefix}-na-${key}-mark`, 1)), `${await readState(key)} ${await stateText(key)}`);
+    // 4. 문장을 받지 않는 줄 - 하위만 묶는 칸(7 · 7.1)은 하위의 문장 수만 보이고(없으면 상태 자리가 빈다), 앱이 채우는 칸(7.2)은 설명만 있고 Mark N/A가 없다
+    const countBelow = (key) => counts.filter((row) => row.slot_key.startsWith(`${key}.`)).reduce((sum, row) => sum + row.count, 0);
+    for (const key of ["document_relationships", ASSOCIATED_KEY]) {
+      const below = countBelow(key);
+      check(
+        `${key} only groups its sub-sections: it shows their sentences or nothing`,
+        itemOf.get(key)?.kind === "group" && (await readState(key)) === (below > 0 ? "sub" : "group") && (await stateText(key)) === (below > 0 ? `${below} in sub-sections` : ""),
+        `${itemOf.get(key)?.kind} ${await readState(key)} "${await stateText(key)}" ${below}`,
+      );
     }
-    // P: 하위 칸이 모두 비었고 Mark N/A가 그려진 상위 칸, E: P의 빈 하위 칸(끝의 것)
+    check(
+      "the work-instruction list is filled by the app: a note, no state and no Mark N/A",
+      itemOf.get(WI_LIST_KEY)?.kind === "auto_list" && (await readState(WI_LIST_KEY)) === "auto" && (await stateText(WI_LIST_KEY)) === "" && (await getText(page, `${prefix}-slot-${WI_LIST_KEY}-auto-note`)).trim() === "Filled from this SOP's work instructions" && !(await hasMark(WI_LIST_KEY)),
+      `${itemOf.get(WI_LIST_KEY)?.kind} ${await readState(WI_LIST_KEY)} "${await stateText(WI_LIST_KEY)}"`,
+    );
+    // 빈 칸의 Mark N/A는 줄에 올릴 때만
+    await page.mouse.move(0, 0);
+    // P: 하위 칸이 모두 비었고 Mark N/A가 그려진 상위 칸(합성 SOP에서는 7.1 Associated Documents와 그 아래 선택 항목 넷), E: P의 빈 하위 칸(끝의 것)
     const emptyKeys = rows.filter(([, state]) => state === "empty").map(([key]) => key);
     let parentKey = null;
-    for (const key of SLOT_ORDER) {
-      const children = SLOT_ORDER.filter((child) => slotParent(child) === key);
+    for (const key of slotKeys) {
+      const children = slotKeys.filter((child) => slotParent(child) === key);
       if (children.length > 0 && children.every((child) => emptyKeys.includes(child)) && (await hasMark(key))) {
         parentKey = key;
         break;
       }
     }
-    const children = SLOT_ORDER.filter((child) => slotParent(child) === parentKey);
+    const children = slotKeys.filter((child) => slotParent(child) === parentKey);
     const leafKey = children.at(-1);
     const siblingKey = children[0];
     check("the seed has an empty parent with empty sub-sections", parentKey !== null && leafKey !== siblingKey && (await hasMark(leafKey)) && (await hasMark(siblingKey)), String(parentKey));
@@ -1100,9 +1131,10 @@ await runStep("new documents: the section table shows each section's state and s
     await button(parentKey, "save").click();
     await editor(parentKey).waitFor({ state: "detached", timeout: T });
     await settleToBe(page);
-    const parentName = ((await slot(parentKey).locator(".slot-name").textContent()) ?? "").trim();
+    // 상위 칸의 "번호 이름"은 지금 서버 골격에서 읽는다(번호 없는 칸이면 이름만 - 글에 빈칸이 남지 않는다)
+    const parentLabel = slotName(readOutline(await readToBe(page, halfBundleId), sop.code).find((item) => item.key === parentKey));
     const coveredText = (await getText(page, `${prefix}-na-${siblingKey}-text`)).trim();
-    check("an N/A parent covers its sub-sections", (await readState(siblingKey)) === "covered" && coveredText === `Covered by ${slotNumber(parentKey)} ${parentName}`, coveredText);
+    check("an N/A parent covers its sub-sections", (await readState(siblingKey)) === "covered" && coveredText === `Covered by ${parentLabel}`, `${coveredText} | ${parentLabel}`);
     check("a sub-section with its own N/A keeps it", (await readState(leafKey)) === "na");
     // 12. 고치고 되돌린다
     await slot(parentKey).hover();
@@ -1122,7 +1154,7 @@ await runStep("new documents: the section table shows each section's state and s
     const restoredToast = page.locator('[data-testid="toast-ok"]', { hasText: "Restored" }).last();
     await restoredToast.waitFor({ timeout: T });
     const toastText = ((await restoredToast.textContent()) ?? "").trim();
-    check("Restore removes it at once and says so", deleted.status() === 200 && toastText.includes(`Restored ${slotNumber(parentKey)} ${parentName}`), toastText);
+    check("Restore removes it at once and says so", deleted.status() === 200 && toastText.includes(`Restored ${parentLabel} in ${sop.code}`), toastText);
     await settleToBe(page);
     check("the covered sub-section is empty again", (await readState(siblingKey)) === "empty", await readState(siblingKey));
     await slot(leafKey).hover();
@@ -1448,7 +1480,7 @@ await runStep("new documents: a reviewer reads the rows and the section table, n
   );
 });
 
-// 등록 칸과 줄의 칸 상태 요약(Documents 화면 설계 §6) - 번호 칸은 목록 머리 바로 아래에서 무엇을 더할지 미리 적고, SOP 줄은 칸 15개의 막대와 요약 글, 단계는 문장 수를 보인다
+// 등록 칸과 줄의 칸 상태 요약(Documents 화면 설계 §6) - 번호 칸은 목록 머리 바로 아래에서 무엇을 더할지 미리 적고, SOP 줄은 칸 상태 막대(문장을 받는 칸마다 눈금 하나)와 요약 글, 단계는 문장 수를 보인다
 await runStep("new documents: the add field says what it will add, a row shows its sections at a glance", {}, async ({ page }) => {
   const tobe = await readToBe(page, halfBundleId);
   const apiHeaders = { "X-Dev-User": "qa.member" };
@@ -1531,35 +1563,39 @@ await runStep("new documents: the add field says what it will add, a row shows i
   }
   await page.reload();
   await page.locator(TOBE_ROWS).first().waitFor({ timeout: T });
-  // 4. 칸 상태 막대 - 장식(aria-hidden)이고 눈금 15개가 펼친 표의 칸 상태와 같은 순서다. 눈금에 올리면 칸 이름이 뜬다
+  // 4. 칸 상태 막대 - 장식(aria-hidden)이고, 문장을 받는 칸마다 눈금 하나가 펼친 표의 그 칸 상태와 같은 순서다(묶음 7 · 7.1과 앱이 채우는 7.2는 눈금이 없다). 눈금에 올리면 칸 이름이 뜬다
   const sop = tobe.docs.find((doc) => doc.code === "SOP-CF");
   const sopPrefix = `tobe-id-${sop.id}`;
+  const outline = readOutline(tobe, sop.code);
+  const placeKeys = new Set(outline.filter((item) => item.is_assignable).map((item) => item.key));
+  // 합성 SOP의 N/A 칸 - 선언한 절차 Troubleshooting(6장의 절차라 "6.n Troubleshooting")
+  const troubleName = slotName(outline.find((item) => item.key === "procedures.troubleshooting"));
+  check("the seed's N/A procedure has a number under chapter 6", /^6\.\d+ Troubleshooting$/.test(troubleName), troubleName);
   const bar = page.locator(`[data-testid="${sopPrefix}-bar"]`);
   check("the bar is decoration for screen readers", (await bar.getAttribute("aria-hidden")) === "true");
   const ticks = await bar.locator("i").evaluateAll((els) => els.map((el) => el.dataset.state));
   await page.locator(`[data-testid="${sopPrefix}-toggle"]`).click();
   await wait(page, `${sopPrefix}-slots`);
-  const states = await page.locator(`[data-testid="${sopPrefix}-slots"] [data-slot]`).evaluateAll((els) => els.map((el) => el.dataset.state));
-  check("fifteen ticks in the section table's order and states", ticks.length === 15 && JSON.stringify(ticks) === JSON.stringify(states), `${ticks.join(",")} | ${states.join(",")}`);
-  const troubleshootingAt = await page.locator(`[data-testid="${sopPrefix}-slots"] [data-slot]`).evaluateAll((els) => els.findIndex((el) => el.dataset.slot === "procedures.troubleshooting"));
+  const tableRows = await page.locator(`[data-testid="${sopPrefix}-slots"] [data-slot]`).evaluateAll((els) => els.map((el) => [el.dataset.slot, el.dataset.state]));
+  const placeRows = tableRows.filter(([key]) => placeKeys.has(key));
+  const states = placeRows.map(([, state]) => state);
+  check("one tick per section that takes sentences, in the section table's order and states", placeKeys.size < tableRows.length && ticks.length === placeKeys.size && JSON.stringify(ticks) === JSON.stringify(states), `${ticks.join(",")} | ${states.join(",")}`);
+  const troubleshootingAt = placeRows.findIndex(([key]) => key === "procedures.troubleshooting");
   await page.mouse.move(0, 0);
   await bar.locator("i").nth(troubleshootingAt).hover();
   const tip = page.locator('[data-testid="paper-tip"]');
   await tip.waitFor({ timeout: T });
-  check("hovering a tick names the section", ((await tip.textContent()) ?? "").includes("6.3 Troubleshooting"), await tip.textContent());
-  // 5. 요약 글 - 표에서 센 수와 같다
+  check("hovering a tick names the section", ((await tip.textContent()) ?? "").includes(troubleName), await tip.textContent());
+  // 5. 요약 글 - 표에서 센 수와 같다. 채운 칸과 전체는 문장을 받는 칸만, N/A는 그 표시가 붙은 줄 전부
   const filled = states.filter((state) => state === "filled" || state === "sub").length;
-  const na = states.filter((state) => state === "na" || state === "covered").length;
-  const decide = states.filter((state) => state === "decide").length;
+  const na = tableRows.filter(([, state]) => state === "na" || state === "covered").length;
   const textOf = async (testId) => ((await page.locator(`[data-testid="${testId}"]`).textContent()) ?? "").trim();
-  check("the row counts the filled sections", (await textOf(`${sopPrefix}-filled`)) === `${filled} of 15 sections filled`, await textOf(`${sopPrefix}-filled`));
+  check("the row counts the filled sections", (await textOf(`${sopPrefix}-filled`)) === `${filled} of ${placeKeys.size} sections filled`, await textOf(`${sopPrefix}-filled`));
   const naSummary = await textOf(`${sopPrefix}-na-summary`);
-  check("the row counts N/A and names the first one", naSummary.includes(`N/A ${na}`) && naSummary.includes("6.3 Troubleshooting"), naSummary);
-  const decideCount = await page.locator(`[data-testid="${sopPrefix}-decide"]`).count();
-  check("the row counts the sections to decide", decide === 0 ? decideCount === 0 : (await textOf(`${sopPrefix}-decide`)) === `${decide} to decide`, `${decide} | ${decideCount}`);
+  check("the row counts N/A and names the first one", naSummary.includes(`N/A ${na}`) && naSummary.includes(troubleName), naSummary);
   // 첫 N/A 칸 이름 - 다 보이면 툴팁이 없고, 말줄임으로 줄었으면 전체 이름이 툴팁으로 뜬다(줄인 폭은 주입한다)
   const naName = page.locator(`[data-testid="${sopPrefix}-na-name"]`);
-  const nameTip = page.locator('[role="tooltip"]').filter({ hasText: "6.3 Troubleshooting" });
+  const nameTip = page.locator('[role="tooltip"]').filter({ hasText: troubleName });
   await naName.hover();
   await page.waitForTimeout(400);
   check("a first N/A name shown in full has no tooltip", (await nameTip.count()) === 0);
@@ -2040,7 +2076,8 @@ await runStep("new documents: drag a WI onto another SOP to change its parent, U
     const cleared = page.waitForResponse((response) => response.request().method() === "DELETE" && decodeURIComponent(response.url()).endsWith("/na/procedures.troubleshooting"), { timeout: T });
     await page.locator(`[data-testid="${prefix}-na-procedures.troubleshooting-restore"]`).click();
     await cleared;
-    const restoredToast = toastFor("ok", "Restored 6.3 Troubleshooting in SOP-CF");
+    // 알림의 칸 이름은 서버 골격의 "번호 이름"(선언한 절차 Troubleshooting - 6장의 둘째 절차)
+    const restoredToast = toastFor("ok", `Restored ${slotName(readOutline(start, "SOP-CF").find((item) => item.key === "procedures.troubleshooting"))} in SOP-CF`);
     await restoredToast.waitFor({ timeout: T });
     check("Restore says so with an Undo", (await restoredToast.locator('[data-testid^="toast-action-"]').count()) === 1);
     const naSaved = page.waitForResponse((response) => response.request().method() === "PUT" && decodeURIComponent(response.url()).endsWith("/na/procedures.troubleshooting"), { timeout: T });
@@ -3589,6 +3626,15 @@ await runStep("assign: an old heading confirmed as a slot heading shows on C and
   await selectRowById(page, headingRow.display_id);
   await page.locator('[data-testid="assign-acc-all"]').click();
   await page.locator(`[data-testid="assign-tree-p${sop.code}"]`).click();
+  // 하위만 묶는 칸(7 Document Relationships)은 나무에 이름 줄로만 있다 - 단추가 아니고 놓을 자리(data-place)도 아니다. 앱이 채우는 7.2는 나무에 없다
+  const groupRow = page.locator(`[data-testid="assign-tree-heading-group:${sop.id}:document_relationships"]`);
+  check(
+    "a section that only groups sub-sections is a plain heading row in the tree, and the work-instruction list is not there",
+    (await groupRow.count()) === 1 &&
+      (await groupRow.evaluate((el) => el.tagName !== "BUTTON" && el.closest("[data-place]") === null)) &&
+      (await page.locator(`[data-testid="assign-tree-place-slot:${sop.id}:document_relationships"], [data-testid="assign-tree-place-slot:${sop.id}:${WI_LIST_KEY}"]`).count()) === 0 &&
+      (await page.locator(`[data-testid="assign-tree-place-slot:${sop.id}:document_relationships.references"]`).count()) === 1,
+  );
   const headingPlace = page.locator(`[data-testid^="assign-tree-place-heading:${sop.id}:"]:not([disabled])`).first();
   const slotKey = (await headingPlace.getAttribute("data-testid")).split(":").at(-1);
   await headingPlace.click();
@@ -3604,7 +3650,8 @@ await runStep("assign: an old heading confirmed as a slot heading shows on C and
   // 엮은 문서 미리 보기 - 문서 고르기에서 그 "not written" 문서를 연다
   await page.locator('[data-testid="assign-new-doc"]').click();
   await page.locator(`[data-testid="assign-new-doc-option-${sop.id}"]`).click();
-  const paneNote = page.locator(`[data-testid="assign-new-heading-note-${section.number}"]`);
+  // 번호 없는 절(5장의 범주)은 머리 글이 키다
+  const paneNote = page.locator(`[data-testid="assign-new-heading-note-${section.number ?? section.label}"]`);
   await paneNote.waitFor({ timeout: T });
   check("the composed New pane shows the same note after the slot name", ((await paneNote.textContent()) ?? "").trim() === section.heading_note, await paneNote.textContent());
   await takeShot("sop-assign-slot-heading.png");
@@ -3809,6 +3856,37 @@ await runStep("outputs: A, B, C and the Excel preview", {}, async ({ page, takeS
   check("meaning check saves", true);
   await page.locator('[data-testid="outputs-check-numbers"]').click();
   await page.waitForFunction(() => document.querySelector('[data-testid="outputs-check-numbers"]')?.checked === false, null, { timeout: T });
+});
+
+// 템플릿 골격의 문장을 받지 않는 절(Order 화면의 C) - 하위만 묶는 절은 머리만, 7.2 Work Instructions는 그 SOP의 자식 WI가 읽기만 하는 줄로, 5장의 범주는 번호 없는 머리로 그린다.
+// 기대값은 서버 C에서 읽는다(자식 WI의 번호 · 제목, 절의 이름)
+await runStep("order: C draws a group as its heading only, the work-instruction list read-only and a category without a number", {}, async ({ page }) => {
+  const c = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/outputs/c?lang=en`, { headers: { "X-Dev-User": "qa.member" } })).json();
+  const doc = c.docs.find((item) => item.doc_type === "sop" && item.entrance === "assign");
+  const group = doc?.sections.find((section) => section.kind === "group" && section.na_reason === null);
+  const auto = doc?.sections.find((section) => section.kind === "auto_list" && section.na_reason === null);
+  const category = doc?.sections.find((section) => section.number === null && section.location_key.startsWith("general_requirements."));
+  check("the SOP has a group section, the work-instruction list at 7.2 and a category", Boolean(group && auto && category) && auto?.location_key === WI_LIST_KEY && auto.number === "7.2", JSON.stringify(doc?.sections.map((section) => [section.location_key, section.kind, section.number])));
+  if (!group || !auto || !category) return;
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  await page.locator(`[data-testid="order-doc-${doc.target_doc_id}"]`).click();
+  const headOf = (key) => page.locator(`[data-testid="output-c-section-${doc.target_doc_id}-${key}"]`);
+  // 긴 문서는 나눠 그린다 - 7.2가 그려질 때까지 이어 그리기 표지를 화면에 들인다
+  const more = page.locator('[data-testid="output-c-more"]');
+  for (let i = 0; i < 60 && (await headOf(auto.location_key).count()) === 0 && (await more.count()) > 0; i += 1) {
+    await more.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(100);
+  }
+  await headOf(auto.location_key).waitFor({ timeout: T });
+  const sectionOf = (key) => page.locator(`[data-testid="output-c"] section[data-location-key="${key}"]`);
+  check("a group section is its heading and nothing else", (await sectionOf(group.location_key).evaluate((el) => el.children.length)) === 1 && (await page.locator(`[data-testid="output-c-empty-${doc.target_doc_id}-${group.location_key}"]`).count()) === 0);
+  const list = page.locator(`[data-testid="output-c-auto-${doc.target_doc_id}-${auto.location_key}"]`);
+  const shown = await list.locator("li").evaluateAll((els) => els.map((el) => (el.textContent ?? "").trim()));
+  const expected = auto.auto_items.length > 0 ? auto.auto_items.map((item) => (item.title !== "" ? `${item.code} — ${item.title}` : item.code)) : ["No work instructions yet"];
+  check("the work-instruction list shows the SOP's WIs as code — title", auto.auto_items.length > 0 && JSON.stringify(shown) === JSON.stringify(expected), `${JSON.stringify(shown)} | ${JSON.stringify(expected)}`);
+  check("its lines cannot be dragged and carry no buttons", (await list.locator("[data-drag-box], button").count()) === 0 && (await sectionOf(auto.location_key).locator("[data-drag-box]").count()) === 0);
+  check("a category heading has its name and no number", (await headOf(category.location_key).locator(".font-mono").count()) === 0 && ((await headOf(category.location_key).textContent()) ?? "").trim().startsWith(category.label), await headOf(category.location_key).textContent());
 });
 
 // 결과물 C는 읽기 전용이라 줄 끝 단추가 없다 - Order의 호버 바탕·다리(::after)가 새어 들지 않고 줄에 올려도 가로 스크롤이 늘지 않는다
@@ -4051,15 +4129,19 @@ await runStep("order: row-end buttons show only on hover or focus, one group at 
   await page.keyboard.press("Escape");
   await settle();
   check("Esc closes the menu and returns focus to the more button", (await menu.count()) === 0 && (await moreButton.evaluate((el) => el === document.activeElement)));
-  // 메뉴로 번호 표시를 바꾸고 되돌린다 - 저장되고 닫힌 메뉴는 포커스를 ⋯ 단추로 돌린다
+  // 메뉴로 번호 표시를 바꾸고 되돌린다 - 저장되고 닫힌 메뉴는 포커스를 ⋯ 단추로 돌린다.
+  // 그 줄의 처음 표시로 되돌린다 - 템플릿 골격에서는 칸마다 기본 표시가 달라(1–5 · 7 · 8장은 글머리 기호) 번호로 돌려놓으면 자료가 바뀐다
+  const readStyle = () => page.locator(`[data-testid="output-c-item-${a}"]`).getAttribute("data-number-style");
+  const styleBefore = await readStyle();
+  const styleOther = styleBefore === "omitted" ? "note" : "omitted";
   await moreButton.click();
   const marked = waitOrderSave(page);
-  await page.locator(`[data-testid="output-c-menu-omitted-${a}"]`).click();
-  check("a menu item runs its action and saves", (await marked).ok() && (await page.locator(`[data-testid="output-c-item-${a}"]`).getAttribute("data-number-style")) === "omitted");
+  await page.locator(`[data-testid="output-c-menu-${styleOther}-${a}"]`).click();
+  check("a menu item runs its action and saves", (await marked).ok() && (await readStyle()) === styleOther, `${styleBefore} -> ${await readStyle()}`);
   await moreButton.click();
   const unmarked = waitOrderSave(page);
-  await page.locator(`[data-testid="output-c-menu-numbered-${a}"]`).click();
-  check("the menu puts the number style back", (await unmarked).ok() && (await page.locator(`[data-testid="output-c-item-${a}"]`).getAttribute("data-number-style")) === "numbered");
+  await page.locator(`[data-testid="output-c-menu-${styleBefore}-${a}"]`).click();
+  check("the menu puts the number style back", (await unmarked).ok() && (await readStyle()) === styleBefore, `${styleOther} -> ${await readStyle()}`);
   // 스크롤바가 두꺼운 창(Windows 고전 스크롤바 17px 둘)처럼 틀 내용 폭이 756px로 좁아도 용지가 몇 px 양보해 ⋯는 용지 옆에 남는다.
   // 헤드리스는 스크롤바를 숨기므로 틀 폭을 줄여 흉내 낸다 - width는 테두리 상자라 내용 756 = 780 - 좌우 여백 12×2
   await page.addStyleTag({ content: '[data-testid="output-c"] { width: 780px; }' });
@@ -4092,9 +4174,12 @@ await runStep("order: row-end buttons show only on hover or focus, one group at 
 await runStep("order: indent a line on C and its section number changes", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
-  // 들일 수 있는 첫 줄(앞줄이 있고 번호가 있는 줄)
-  const button = page.locator('[data-testid^="output-c-indent-"]:not([disabled])').first();
-  const targetId = (await button.getAttribute("data-testid")).replace("output-c-indent-", "");
+  // 들일 수 있는 첫 줄(앞줄이 있고 번호가 있는 줄) - SOP의 내용은 대부분 글머리 기호라 번호 줄이 있는 문서(WI나 절차가 든 SOP)를 찾아 연다
+  const [indentHit] = await findOrderDocs(page, () => document.querySelector('[data-testid^="output-c-indent-"]:not([disabled])')?.getAttribute("data-testid").replace("output-c-indent-", "") ?? null);
+  check("a document has a line that can be indented", Boolean(indentHit));
+  if (!indentHit) return;
+  const targetId = indentHit[1];
+  const button = page.locator(`[data-testid="output-c-indent-${targetId}"]`);
   const number = page.locator(`[data-testid="output-c-number-${targetId}"]`);
   const before = (await number.innerText()).trim();
   await page.locator(`[data-testid="output-c-row-${targetId}"]`).hover();
@@ -4420,8 +4505,8 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page, tak
   await page.waitForTimeout(400);
   check("on a depth-locked line the same gesture changes nothing", lockedDrag.dragging && !lockedDrag.text.includes("indent") && puts.length === lockedPuts && (await padding()) === lockedPadding, JSON.stringify({ lockedDrag, puts: puts.length - lockedPuts }));
 
-  // 12. N/A 칸 위로(데모 시드 SOP-CF의 6.3 Troubleshooting) - 앞서 같은 칸에서 놓을 자리를 잡았어도 표에 이유를 적고, 놓으면 아무것도 저장하지 않는다(G7·G8).
-  //     출발은 N/A 칸 위쪽에서 줄이 있는 가장 가까운 칸(같은 시드의 5.1 Safety)
+  // 12. N/A 칸 위로(데모 시드 SOP-CF의 절차 Troubleshooting) - 앞서 같은 칸에서 놓을 자리를 잡았어도 표에 이유를 적고, 놓으면 아무것도 저장하지 않는다(G7·G8).
+  //     출발은 N/A 칸 위쪽에서 줄이 있는 가장 가까운 칸(같은 시드의 첫 절차)
   const [naHit] = await findOrderDocs(page, () => {
     const sheet = document.querySelector('[data-testid="output-c"] article[data-doc-id]');
     const na = sheet?.querySelector("section[data-na]");
@@ -4549,12 +4634,14 @@ await runStep("order: drag a line to reorder and indent", {}, async ({ page, tak
 });
 
 // 같은 문서의 다른 칸으로 - 데모 시드 SOP-CF(아직 쓰지 않은 SOP): 1 Purpose의 의미 짝(덩어리)을 4 Responsibilities의 두 의미 묶음 사이로,
-// 하위 칸 5.1 General Requirements › Safety의 끝으로, 빈 칸 6.1 Procedures › Procedure로 옮긴 뒤 같은 길을 되짚어(Responsibilities를 거쳐) 빈 Purpose로 되돌린다
+// 하위 칸(5장의 범주 General Requirements › Safety)의 끝으로, 그 아래의 빈 칸(템플릿 골격에서는 8 Attachments나 9 Appendices)으로 옮긴 뒤 같은 길을 되짚어(Responsibilities를 거쳐) 빈 Purpose로 되돌린다.
+// 1–5 · 7 · 8장의 줄은 글머리 기호라 번호가 없다 - 표의 note는 그 칸에서 받을 번호이고, 번호를 받지 않는 줄이면 칸 이름이다(noteFor)
 await runStep("order: drag a block into another section, a sub-slot and an empty section", {}, async ({ page, takeShot }) => {
   await installCommitCounter(page);
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
-  // A = 줄이 한 의미 묶음뿐인(첫 줄을 끌면 칸의 줄이 모두 가는) 첫 칸, R = 줄 넷 이상에 둘째 의미 묶음이 있는 칸, B = 줄이 있는 하위 칸(키에 "."), E = B 아래 150px 넘게 떨어진 N/A 아닌 빈 하위 칸.
+  // A = 줄이 한 의미 묶음뿐인(첫 줄을 끌면 칸의 줄이 모두 가는) 첫 칸, R = 줄 넷 이상에 둘째 의미 묶음이 있는 칸, B = 줄이 있는 하위 칸(키에 "."), E = B 아래 100px 넘게 떨어진 N/A 아닌 빈 칸.
+  // 빈 칸은 빈 칸 표시("–")가 있는 칸만이다 - 하위만 묶는 칸(7 · 7.1)과 앱이 채우는 칸(7.2)은 줄이 없어도 줄을 받지 않는다.
   // A가 한 묶음이어야 하는 까닭 - 앞 단계(캡션 없는 표 확정)가 첫 칸 맨 앞에 표를 더하면 그 칸은 표와 한/영 짝 두 덩어리가 된다
   const [hit] = await findOrderDocs(page, () => {
     const sheet = document.querySelector('[data-testid="output-c"] article[data-doc-id]');
@@ -4562,27 +4649,32 @@ await runStep("order: drag a block into another section, a sub-slot and an empty
     const sections = [...sheet.querySelectorAll("section[data-location-key]")];
     const rowsOf = (section) => [...section.querySelectorAll("[data-drag-box]")];
     const numberOf = (section) => section.querySelector("h3 .font-mono")?.textContent.trim() ?? null;
+    // 칸 머리의 이름 - 번호(span)와 칸 제목 출처(span)를 뺀 글
+    const labelOf = (section) => [...section.querySelector("h3").childNodes].filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent).join("").trim();
+    const isEmpty = (section) => !section.hasAttribute("data-na") && rowsOf(section).length === 0 && section.querySelector('[data-testid^="output-c-empty-"]') !== null;
     const a = sections.find((section) => rowsOf(section).length >= 2 && !rowsOf(section).some((row, i) => i > 0 && row.hasAttribute("data-meaning-start")));
     const r = sections.find((section) => section !== a && rowsOf(section).length >= 4 && rowsOf(section).some((row, i) => i > 0 && row.hasAttribute("data-meaning-start")));
     const b = sections.find((section) => section.dataset.locationKey.includes(".") && rowsOf(section).length >= 1);
     if (!a || !r || !b || sections.indexOf(a) > sections.indexOf(r) || sections.indexOf(r) > sections.indexOf(b)) return null;
-    const e = sections.find((section) => section.dataset.locationKey.includes(".") && !section.hasAttribute("data-na") && rowsOf(section).length === 0 && section.querySelector('[data-testid^="output-c-empty-"]') && section.getBoundingClientRect().top - b.getBoundingClientRect().bottom > 100);
-    // 좁은 틀에서 잴 빈 하위 칸(B 바로 뒤의 것)과 N/A 칸
-    const nextEmpty = sections.slice(sections.indexOf(b) + 1).find((section) => section.dataset.locationKey.includes(".") && !section.hasAttribute("data-na") && rowsOf(section).length === 0);
+    const e = sections.find((section) => isEmpty(section) && section.getBoundingClientRect().top - b.getBoundingClientRect().bottom > 100);
+    // 좁은 틀에서 잴 빈 칸(B 뒤의 첫 것)과 N/A 칸
+    const nextEmpty = sections.slice(sections.indexOf(b) + 1).find(isEmpty);
     const na = sheet.querySelector("section[data-na]");
     if (!e || !nextEmpty || !na) return null;
     const between = rowsOf(r).find((row, i) => i > 0 && row.hasAttribute("data-meaning-start"));
     return {
-      a: { key: a.dataset.locationKey, number: numberOf(a), ids: rowsOf(a).map((row) => row.dataset.flipKey) },
-      r: { key: r.dataset.locationKey, ids: rowsOf(r).map((row) => row.dataset.flipKey), between: between.dataset.flipKey },
-      b: { key: b.dataset.locationKey, number: numberOf(b), first: rowsOf(b)[0].dataset.flipKey },
-      e: { key: e.dataset.locationKey, number: numberOf(e) },
+      a: { key: a.dataset.locationKey, number: numberOf(a), label: labelOf(a), ids: rowsOf(a).map((row) => row.dataset.flipKey) },
+      r: { key: r.dataset.locationKey, label: labelOf(r), ids: rowsOf(r).map((row) => row.dataset.flipKey), between: between.dataset.flipKey },
+      b: { key: b.dataset.locationKey, number: numberOf(b), label: labelOf(b), first: rowsOf(b)[0].dataset.flipKey },
+      e: { key: e.dataset.locationKey, number: numberOf(e), label: labelOf(e) },
       nextEmpty: nextEmpty.dataset.locationKey,
       na: na.dataset.locationKey,
     };
   });
-  check("an SOP has a section, a later section with two meaning groups, a sub-slot with lines, empty sub-slots and an N/A section", Boolean(hit));
+  check("an SOP has a section, a later section with two meaning groups, a sub-slot with lines, empty sections and an N/A section", Boolean(hit));
   const [docId, { a, r, b, e, nextEmpty, na }] = hit;
+  // 표의 note - 그 칸에서 받은 번호, 번호 없는 줄(글머리 기호 · 생략 · 주석, 범주의 줄)이면 칸 이름
+  const noteFor = (number, section) => `→ ${number ?? section.label}`;
   // 덩어리 = A의 첫 줄을 누르면 함께 가는 줄(데모 시드에서는 A의 두 줄 - 같은 의미의 한/영 짝)
   const lead = a.ids[0];
   const puts = [];
@@ -4592,15 +4684,14 @@ await runStep("order: drag a block into another section, a sub-slot and an empty
     puts.push(request.url());
     bodies.push(request.postDataJSON());
   });
-  const readNoteNumber = (note) => note.replace(/^→ /, "");
 
-  // 1. A의 덩어리를 R의 두 의미 묶음 사이로 - 표에 R에서 받을 번호(둘째 묶음 첫 줄의 지금 번호), 놓으면 하나 저장, 그 칸에서 그 번호, 놓은 줄이 번쩍인다
+  // 1. A의 덩어리를 R의 두 의미 묶음 사이로 - 표에 R에서 받을 번호(둘째 묶음 첫 줄의 지금 번호, 번호 없는 줄이면 칸 이름), 놓으면 하나 저장, 그 칸에서 그 번호, 놓은 줄이 번쩍인다
   const expectedBetween = await readRowNumber(page, r.between);
   await scrollRowToTop(page, lead);
   const rBetween = await page.locator(`[data-testid="output-c-row-${r.between}"]`).boundingBox();
   await dragThrough(page, await pointInRow(page, lead), [{ x: rBetween.x + 40, y: rBetween.y + 2 }]);
   const overR = { card: await readDragCard(page), section: await readSectionState(page, r.key), home: await readSectionState(page, a.key) };
-  check("over another section the card shows the number the line will get there", !overR.card.refused && overR.card.note === `→ ${expectedBetween}` && overR.section?.drop === "over" && overR.section.opacity === 1 && overR.home?.opacity === 1, JSON.stringify(overR));
+  check("over another section the card shows the number the line will get there, or the section's name for a line without a number", !overR.card.refused && overR.card.note === noteFor(expectedBetween, r) && overR.section?.drop === "over" && overR.section.opacity === 1 && overR.home?.opacity === 1, JSON.stringify(overR));
   const fitR = await readOutlineFit(page, r.key);
   check("the outline of a section with lines clears its heading, numbers, text and the drop line", isOutlineClear(fitR), JSON.stringify(fitR));
   const barDragged = await readBarClear(page, lead);
@@ -4634,21 +4725,24 @@ await runStep("order: drag a block into another section, a sub-slot and an empty
   // 미끄러짐(--dur-slow 240ms)이 끝나고 테두리가 아직 진할 때(처음 35%)
   await page.waitForTimeout(300);
   await takeShot("order-xsec-landed.png");
-  check("dropping into a sub-slot moves it there with the number the card showed", overB.src.includes(lead) && overB.note.startsWith(`→ ${b.number}.`) && (await subSave).ok() && (await readRowKey(page, lead)) === b.key && (await readRowNumber(page, lead)) === readNoteNumber(overB.note) && flashedSub, JSON.stringify({ overB, key: await readRowKey(page, lead), number: await readRowNumber(page, lead), flashedSub }));
+  // 놓인 줄이 번호를 받았으면 표의 note가 그 번호(B의 번호 아래)였고, 번호 없는 줄이면(범주의 글머리 기호 줄) B의 이름이었다
+  const landedB = await readRowNumber(page, lead);
+  check("dropping into a sub-slot moves it there with what the card showed", overB.src.includes(lead) && overB.note === noteFor(landedB, b) && (landedB === null || (b.number !== null && landedB.startsWith(`${b.number}.`))) && (await subSave).ok() && (await readRowKey(page, lead)) === b.key && flashedSub, JSON.stringify({ overB, b, key: await readRowKey(page, lead), number: landedB, flashedSub }));
 
-  // 3. 빈 칸 E로 - 표는 E의 첫 번호, 놓으면 그 칸의 첫 줄들이 되고 다시 받아도 남는다
+  // 3. 빈 칸 E로 - 표는 E의 첫 번호(번호 없는 줄이면 E의 이름), 놓으면 그 칸의 첫 줄들이 되고 다시 받아도 남는다
   await scrollRowToTop(page, lead, 120);
   await dragThrough(page, await pointInRow(page, lead), [await pointInSectionEnd(page, e.key)]);
   const overE = { card: await readDragCard(page), section: await readSectionState(page, e.key), lineShown: (await readDragMarks(page)).lineShown };
   const fitE = await readOutlineFit(page, e.key);
   check("the outline of an empty section clears its heading, the dash and the drop line", isOutlineClear(fitE), JSON.stringify(fitE));
   await takeShot("order-xsec-empty.png");
-  check("over an empty section the card shows its first number and the line is drawn", overE.card.src.includes(lead) && overE.card.note === `→ ${e.number}.1` && overE.section?.drop === "over" && overE.lineShown, JSON.stringify(overE));
   const emptySave = waitOrderSave(page);
   await page.mouse.up();
   check("dropping into an empty section saves", (await emptySave).ok());
   await reopenOrderDoc(page, docId, lead);
-  check("after a reload the block is the empty section's first lines", JSON.stringify(await readSectionIds(page, e.key)) === JSON.stringify(a.ids) && (await readRowNumber(page, lead)) === `${e.number}.1`, JSON.stringify({ ids: await readSectionIds(page, e.key), number: await readRowNumber(page, lead) }));
+  const landedE = await readRowNumber(page, lead);
+  check("over an empty section the card shows its first number, or its name for a line without a number, and the line is drawn", overE.card.src.includes(lead) && overE.card.note === noteFor(landedE, e) && (landedE === null || landedE === `${e.number}.1`) && overE.section?.drop === "over" && overE.lineShown, JSON.stringify({ overE, e, number: landedE }));
+  check("after a reload the block is the empty section's first lines", JSON.stringify(await readSectionIds(page, e.key)) === JSON.stringify(a.ids), JSON.stringify({ ids: await readSectionIds(page, e.key), number: landedE }));
 
   // 4. 되돌린다 - E에서 R의 두 묶음 사이로, 거기서 빈 A로(한 화면에 든 칸끼리)
   await scrollRowToTop(page, r.between, 100);
@@ -4663,8 +4757,10 @@ await runStep("order: drag a block into another section, a sub-slot and an empty
   await dragThrough(page, await pointInRow(page, lead), [await pointInSectionEnd(page, a.key)]);
   const overA = await readDragCard(page);
   await page.mouse.up();
-  check("the block goes back into the empty first section", overA.note === `→ ${a.number}.1` && (await toA).ok(), JSON.stringify(overA));
+  const backSaved = (await toA).ok();
   await reopenOrderDoc(page, docId, lead);
+  const landedA = await readRowNumber(page, lead);
+  check("the block goes back into the empty first section", overA.note === noteFor(landedA, a) && (landedA === null || landedA === `${a.number}.1`) && backSaved, JSON.stringify({ overA, a, number: landedA }));
   check("after a reload both sections are as they were", JSON.stringify(await readSectionIds(page, a.key)) === JSON.stringify(a.ids) && JSON.stringify(await readSectionIds(page, r.key)) === JSON.stringify(r.ids), JSON.stringify({ a: await readSectionIds(page, a.key), r: await readSectionIds(page, r.key) }));
 
   // 5. 다른 칸 위에서 Esc - 저장 없음, 표시는 모두 치워지고 줄은 그대로
@@ -5177,8 +5273,8 @@ await runStep("order: a move chosen from the narrow-frame menu keeps focus on th
 await runStep("order: mark a line as a note on C, the count continues and the note is italic", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
-  // 같은 칸에서 같은 깊이로 이어지는 번호 줄 둘(X, Y) - X를 주석으로 바꾸면 Y가 X의 번호를 이어 받는다
-  const pair = await page.evaluate(() => {
+  // 같은 칸에서 같은 깊이로 이어지는 번호 줄 둘(X, Y) - X를 주석으로 바꾸면 Y가 X의 번호를 이어 받는다. 번호 줄이 있는 문서를 찾아 연다
+  const [pairHit] = await findOrderDocs(page, () => {
     for (const section of document.querySelectorAll('[data-testid="output-c"] section')) {
       const rows = [...section.querySelectorAll('[data-testid^="output-c-row-"]')].map((row) => {
         const id = row.getAttribute("data-testid").replace("output-c-row-", "");
@@ -5192,7 +5288,9 @@ await runStep("order: mark a line as a note on C, the count continues and the no
     }
     return null;
   });
+  const pair = pairHit ? pairHit[1] : null;
   check("C has two numbered lines in a row to mark", pair !== null);
+  if (!pair) return;
   await page.locator(`[data-testid="output-c-row-${pair.x}"]`).hover();
   const marked = waitOrderSave(page);
   await page.locator(`[data-testid="output-c-mark-note-${pair.x}"]`).click();
@@ -5213,39 +5311,42 @@ await runStep("order: mark a line as a note on C, the count continues and the no
   check("the next line gets its number back", (await page.locator(`[data-testid="output-c-number-${pair.y}"]`).innerText()).trim() === pair.yNumber);
 });
 
-// 하위 칸이 있는 칸(5 General Requirements)에 직접 놓인 줄은 번호가 없고 Numbered를 내놓지 않는다 - 하위 칸 Safety의 줄은 5.1.1부터다(제품 명세 §7.13 섹션 번호).
-// 자료는 이 단계가 API로 만든다 - SOP의 번호 줄 둘을 순서 저장으로 5 칸과 5.1 칸의 맨 앞에 옮기고, 끝에 처음 순서·칸·깊이로 되돌린다(그 문서의 굳힌 순서는 남는다)
+// 하위 절을 두는 칸(6 Procedures)에 직접 놓인 줄은 번호가 없고 Numbered를 내놓지 않는다 - 그 아래 첫 절차(6.1)의 줄은 6.1.1부터다(제품 명세 §7.13 섹션 번호).
+// 6장으로 본다 - 5장의 범주는 번호가 없고 줄이 글머리 기호라 번호를 볼 수 없다. 6장과 그 절차는 기본 표시가 번호라 옮긴 줄의 표시도 그대로다.
+// 자료는 이 단계가 API로 만든다 - SOP의 번호 줄 둘을 순서 저장으로 6 칸과 6.1 칸의 맨 앞에 옮기고, 끝에 처음 순서·칸·깊이로 되돌린다(그 문서의 굳힌 순서는 남는다)
 await runStep("order: a line placed directly in a slot with sub slots has no number", {}, async ({ page }) => {
-  const PARENT = "general_requirements";
-  const SUB = "general_requirements.safety";
+  const PARENT = "procedures";
   const headers = { "X-Dev-User": "qa.member" };
   const api = `${BASE}/api/bundles/${halfBundleId}`;
   const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
   const listLines = (doc) => doc.sections.flatMap((section) => section.items.map((item) => ({ ...item, key: section.location_key })));
-  // 옮겨도 딸려 가는 것이 없는 번호 줄 - AI 번역(자리가 출처를 따라 잠긴다)과 그 출처는 뺀다. 의미 묶음에 혼자인 줄을 먼저 고른다
+  // 옮겨도 딸려 가는 것이 없는 번호·글머리 기호 줄(6장으로 옮기면 도착 칸의 기본 표시인 번호가 된다) - AI 번역(자리가 출처를 따라 잠긴다)과 그 출처는 뺀다. 의미 묶음에 혼자인 줄을 먼저 고른다
   const pickFree = (doc) => {
     const lines = listLines(doc);
     const withKey = (key) => lines.filter((line) => line.meaning_key === key);
-    const free = lines.filter((line) => line.kind === "sentence" && line.origin === "units" && line.number_style === "numbered" && !(line.meaning_key !== null && withKey(line.meaning_key).some((other) => other.origin === "translation")));
+    const free = lines.filter((line) => line.kind === "sentence" && line.origin === "units" && (line.number_style === "numbered" || line.number_style === "bullet") && !(line.meaning_key !== null && withKey(line.meaning_key).some((other) => other.origin === "translation")));
     const alone = free.filter((line) => line.meaning_key === null || withKey(line.meaning_key).length === 1);
     return alone.length >= 2 ? alone : free;
   };
   const isOpen = (doc, key) => doc.sections.some((section) => section.location_key === key && section.na_reason === null);
-  const doc = (await getJson("/outputs/c?lang=en")).docs.find((item) => item.doc_type === "sop" && item.entrance === "assign" && isOpen(item, PARENT) && isOpen(item, SUB) && pickFree(item).length >= 2);
-  check("an SOP has General Requirements and Safety open and two numbered lines to move", doc !== undefined);
+  // 첫 절차(6.1) - 키는 문서마다 선언한 것이라(새 SOP는 procedures.p1, 합성 SOP는 선언한 절차) 그 문서의 C에서 읽는다
+  const findFirstProcedure = (item) => item.sections.find((section) => section.number === "6.1" && section.na_reason === null && section.location_key.startsWith(`${PARENT}.`))?.location_key;
+  const doc = (await getJson("/outputs/c?lang=en")).docs.find((item) => item.doc_type === "sop" && item.entrance === "assign" && isOpen(item, PARENT) && findFirstProcedure(item) !== undefined && pickFree(item).length >= 2);
+  check("an SOP has Procedures and its first procedure open and two numbered lines to move", doc !== undefined);
   if (!doc) return;
+  const SUB = findFirstProcedure(doc);
   const [direct, sub] = pickFree(doc);
   const before = listLines(doc);
   const put = async (items) => page.request.put(`${api}/targets/order`, { headers, data: { revision: (await getJson("")).revision, target_doc_id: doc.target_doc_id, items } });
   const moved = new Set([direct.target_id, sub.target_id]);
   try {
-    // 목록의 맨 앞에 두면 그 칸의 첫 줄이다 - Safety의 첫 번호 줄이라 5.1.1
+    // 목록의 맨 앞에 두면 그 칸의 첫 줄이다 - 첫 절차의 첫 번호 줄이라 6.1.1
     const arranged = await put([
       { target_id: direct.target_id, slot_key: PARENT, indent_level: 0 },
       { target_id: sub.target_id, slot_key: SUB, indent_level: 0 },
       ...before.filter((line) => !moved.has(line.target_id)).map((line) => ({ target_id: line.target_id })),
     ]);
-    check("the order save puts one line in General Requirements and one in Safety", arranged.ok(), `${arranged.status()} ${arranged.ok() ? "" : await arranged.text()}`);
+    check("the order save puts one line in Procedures and one in its first procedure", arranged.ok(), `${arranged.status()} ${arranged.ok() ? "" : await arranged.text()}`);
     await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
     await wait(page, "output-c");
     await page.locator(`[data-testid="order-doc-${doc.target_doc_id}"]`).click();
@@ -5260,15 +5361,15 @@ await runStep("order: a line placed directly in a slot with sub slots has no num
     await rowOf(sub.target_id).waitFor({ timeout: T });
     const readMarks = (id) => page.locator(`[data-testid="output-c-mark-${id}"] button`).evaluateAll((buttons) => buttons.map((button) => `${button.getAttribute("data-testid").split("-")[3]}:${button.getAttribute("aria-pressed")}`));
 
-    check("the line sits directly in General Requirements", (await readRowKey(page, direct.target_id)) === PARENT, await readRowKey(page, direct.target_id));
+    check("the line sits directly in Procedures", (await readRowKey(page, direct.target_id)) === PARENT, await readRowKey(page, direct.target_id));
     check("it shows no number", (await readRowNumber(page, direct.target_id)) === null, await readRowNumber(page, direct.target_id));
     await rowOf(direct.target_id).hover();
     const directMarks = await readMarks(direct.target_id);
     check("it offers Bullet, No number and Note only, with No number shown as picked", JSON.stringify(directMarks) === JSON.stringify(["bullet:false", "omitted:true", "note:false"]), JSON.stringify(directMarks));
-    // 머리 번호는 5 그대로다(5.1이 아니다)
-    check("the section heading keeps its number 5", /^5(?![.\d])/.test((await getText(page, `output-c-section-${doc.target_doc_id}-${PARENT}`)).trim()), await getText(page, `output-c-section-${doc.target_doc_id}-${PARENT}`));
+    // 머리 번호는 6 그대로다(6.1이 아니다)
+    check("the section heading keeps its number 6", /^6(?![.\d])/.test((await getText(page, `output-c-section-${doc.target_doc_id}-${PARENT}`)).trim()), await getText(page, `output-c-section-${doc.target_doc_id}-${PARENT}`));
 
-    check("the line in Safety is numbered 5.1.1", (await readRowKey(page, sub.target_id)) === SUB && (await readRowNumber(page, sub.target_id)) === "5.1.1", `${await readRowKey(page, sub.target_id)} ${await readRowNumber(page, sub.target_id)}`);
+    check("the line in the first procedure is numbered 6.1.1", (await readRowKey(page, sub.target_id)) === SUB && (await readRowNumber(page, sub.target_id)) === "6.1.1", `${await readRowKey(page, sub.target_id)} ${await readRowNumber(page, sub.target_id)}`);
     await rowOf(sub.target_id).hover();
     const subMarks = await readMarks(sub.target_id);
     check("and still offers Numbered, shown as picked", JSON.stringify(subMarks) === JSON.stringify(["numbered:true", "bullet:false", "omitted:false", "note:false"]), JSON.stringify(subMarks));
@@ -6699,7 +6800,8 @@ await runStep("assign: drag an Old piece between two sentences of a New · from 
   // 칸 고르기 - 하위 칸이 없는 칸만(상위 칸에 놓는 규칙은 이 걸음이 정하지 않는다)
   let sections = await readSections();
   const isLeaf = (key) => !sections.some((section) => section.location_key.startsWith(`${key}.`));
-  const empties = sections.filter((section) => section.na_reason === null && section.items.length === 0 && isLeaf(section.location_key)).map((section) => section.location_key);
+  // 문장을 받는 칸만 - 묶음(7 · 7.1)과 앱이 채우는 7.2는 줄이 없어도 놓을 곳이 아니다
+  const empties = sections.filter((section) => takesLines(section) && section.na_reason === null && section.items.length === 0 && isLeaf(section.location_key)).map((section) => section.location_key);
   check("the SOP has three empty sections", empties.length >= 3, empties.join(","));
   const [slotK, slotK2, slotE, spare] = empties;
   let tobeBefore = null;
@@ -7097,7 +7199,7 @@ await runStep("assign: drag an Old piece onto a slot in the All list, in both vi
   // 칸 K - N/A가 아니고 하위 칸이 없는 칸(상위 칸에 놓는 규칙은 이 걸음이 정하지 않는다). N - N/A 칸(없으면 만들고 끝에 되돌린다)
   let sections = await readSections();
   const isLeaf = (key) => !sections.some((section) => section.location_key.startsWith(`${key}.`));
-  const leaves = sections.filter((section) => section.na_reason === null && isLeaf(section.location_key));
+  const leaves = sections.filter((section) => takesLines(section) && section.na_reason === null && isLeaf(section.location_key));
   const slotK = (leaves.find((section) => section.items.length === 0) ?? leaves[0])?.location_key;
   const spare = leaves.filter((section) => section.items.length === 0).map((section) => section.location_key).find((key) => key !== slotK);
   check("the SOP has a section to drop on", slotK !== undefined);
@@ -8165,7 +8267,7 @@ await runStep("assign: Pair view - drag a piece onto its partner to pair or conf
   // c′를 칸에 확정한다(화면의 저장과 같은 모양)
   const sop = (await getJson("/tobe")).docs.find((item) => item.entrance === "assign" && item.doc_type === "sop");
   const sections = (await getJson(`/outputs/c/docs/${sop.id}?lang=en`)).sections;
-  const slot = sections.find((section) => section.na_reason === null && !sections.some((other) => other.location_key.startsWith(`${section.location_key}.`)));
+  const slot = sections.find((section) => takesLines(section) && section.na_reason === null && !sections.some((other) => other.location_key.startsWith(`${section.location_key}.`)));
   const c2Row = (await getJson("/units?limit=1000")).items.find((unit) => unit.unit_id === c2.id);
   const assigned = await page.request.post(`${api}/groups/save`, {
     headers,

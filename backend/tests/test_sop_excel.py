@@ -309,8 +309,8 @@ def test_sheet_c_indents_docs_slots_items_and_tails(client: TestClient) -> None:
         na_slots=[{"code": "SOP-NEW", "slot_key": "scope", "reason": na_reason}],
     )
     table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
-    # 하위 칸에 둔다 — 하위 칸이 있는 칸(5)에 직접 놓인 줄은 번호가 없다
-    assign_as_is(client, fx.bundle_id, table, fx.sop_id, slot_key="general_requirements.safety")
+    # 번호를 세는 절(첫 절차 6.1)에 둔다 — 1–5장의 줄은 글머리 기호가 기본이라 번호가 없다
+    assign_as_is(client, fx.bundle_id, table, fx.sop_id, slot_key="procedures.p1")
     assign_as_is(client, fx.bundle_id, find_unit(fx.view, KEEP), fx.sop_id, slot_key="responsibilities")
     dropped = find_unit(fx.view, DROP)
     _bulk(client, fx.bundle_id, "move_external", dropped, moved_reason, move_target_code="SOP-OTHER-1")
@@ -326,11 +326,11 @@ def test_sheet_c_indents_docs_slots_items_and_tails(client: TestClient) -> None:
     responsibilities = rows.index(next(row for row in rows if row[slot_col] == "Responsibilities"))
     assert rows[responsibilities][number_col] == "4"
     keep_row = rows[responsibilities + 1]
-    assert (keep_row[number_col], keep_row[item_col], keep_row[10]) == ("4.1", KEEP, "← OLD-1")
+    assert (keep_row[number_col], keep_row[item_col], keep_row[10]) == ("•", KEEP, "← OLD-1")  # 4장의 줄은 글머리 기호
 
     # 표 줄은 [Table] 대신 확정한 캡션 글(확정하며 써 넣은 캡션), 그 아래 캡션 줄이 칸 줄보다 먼저
     table_row = rows.index(next(row for row in rows if row[item_col] == WRITTEN_CAPTION_OUT))
-    assert rows[table_row][number_col] == "5.1.1"
+    assert rows[table_row][number_col] == "6.1.1"
     assert (rows[table_row + 1][cell_col], rows[table_row + 1][5]) == (WRITTEN_CAPTION_OUT, "Caption")
     cells = rows[table_row + 2 : table_row + 6]
     assert [(row[cell_col], row[5]) for row in cells] == [
@@ -348,7 +348,30 @@ def test_sheet_c_indents_docs_slots_items_and_tails(client: TestClient) -> None:
     sheet_a = workbook["A Comparison"]
     number_a_col = _find_column(sheet_a, "No.")
     keep_a = _find_a_line(sheet_a, find_unit(fx.view, KEEP)["display_id"])
-    assert keep_a[number_a_col - 1].value == "4.1"
+    assert keep_a[number_a_col - 1].value == "4"  # 글머리 기호 줄의 No.는 그 절의 번호
+
+
+def test_sheet_c_lists_child_wis_under_the_work_instructions_section(client: TestClient) -> None:
+    fx = _setup_outputs_bundle(client)  # SOP-NEW 아래 WI-01이 있고, 7장은 N/A다
+    slot_col, number_col, item_col = 1, 2, 3
+
+    def read_section() -> tuple[list[list[object]], int]:
+        rows = [[cell.value for cell in row] for row in _load(client, fx.bundle_id)["C New documents"].iter_rows(min_row=3)]
+        return rows, rows.index(next(row for row in rows if row[slot_col] == "Document Relationships › Work Instructions"))
+
+    # 7장의 N/A가 7.2를 덮는 동안에는 WI 줄이 없다 — 다음 줄이 곧 7.3 절이다
+    rows, section = read_section()
+    assert (rows[section][number_col], rows[section + 1][item_col], rows[section + 1][number_col]) == ("7.2", None, "7.3")
+
+    sop_id = next(doc["id"] for doc in client.get(f"/api/bundles/{fx.bundle_id}/tobe", headers=AUTHOR).json()["docs"] if doc["doc_type"] == "sop")
+    restored = client.delete(f"/api/bundles/{fx.bundle_id}/tobe/docs/{sop_id}/na/document_relationships", headers=AUTHOR)
+    assert restored.status_code == 200, restored.text
+
+    # N/A를 되돌리면 자동 목록 절(7.2)이 앱이 채운 자식 WI를 항목 칸에 싣는다(번호·출처 없이)
+    rows, section = read_section()
+    assert (rows[section][number_col], rows[section + 1][item_col], rows[section + 1][number_col]) == (
+        "7.2", "WI-01 · Synthetic WI", None,
+    )
 
 
 def test_excel_c_writes_caption_text_not_marker(client: TestClient) -> None:

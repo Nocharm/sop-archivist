@@ -15,7 +15,7 @@ import type { EquisInfo, SopDocument, TargetDoc, ToBe } from "@/lib/api-sop";
 import { isBoxDragActive } from "@/lib/box-drag";
 import { getDocRemoveBlock } from "@/lib/destination-manage-model";
 import { useI18n } from "@/lib/i18n";
-import type { SlotRow, SlotSummary } from "@/lib/slot-status-model";
+import { formatSlotName, type SlotRow, type SlotSummary } from "@/lib/slot-status-model";
 import type { DraftDoc } from "@/lib/tobe-draft";
 
 const REMOVE_BLOCK_KEYS = {
@@ -35,7 +35,7 @@ interface ToBeRowProps {
   written: SopDocument | null;
   equis: EquisInfo | null;
   stepCount: number;
-  /** SOP 줄의 칸 15개와 그 요약(목록이 줄마다 한 번 센다) - WI는 null */
+  /** SOP 줄의 칸(그 문서 골격의 항목)과 그 요약(목록이 줄마다 한 번 센다) - WI는 null */
   slots: { rows: readonly SlotRow[]; summary: SlotSummary } | null;
   /** EQUIS가 아는 값의 제안 수 - 고칠 수 있을 때만 센다 */
   hintCount: number;
@@ -120,11 +120,11 @@ export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, 
       }
       meta={
         <>
-          {/* 이미 쓴 SOP는 칸이 파일의 절을 따라 문장 수를 세지 않는다 - 막대와 "n of 15" 없이 N/A · 정할 칸만 */}
+          {/* 이미 쓴 SOP는 칸이 파일의 절을 따라 문장 수를 세지 않는다 - 막대와 "n of m" 없이 N/A만. 전체(m)는 문장을 받는 칸의 수다 */}
           {slots !== null && !isWritten && (
             <>
               <SlotBar rows={slots.rows} testId={`${prefix}-bar`} />
-              <span data-testid={`${prefix}-filled`}>{t("tobe.row.filled", { filled: slots.summary.filled, total: slots.rows.length })}</span>
+              <span data-testid={`${prefix}-filled`}>{t("tobe.row.filled", { filled: slots.summary.filled, total: slots.summary.total })}</span>
             </>
           )}
           {slots !== null && firstNa !== undefined && (
@@ -133,7 +133,7 @@ export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, 
               {/* 자리가 모자라면 칸 이름이 말줄임으로 줄고 "+k"는 남는다 */}
               <span className="meta-na-name">
                 {/* 말줄임으로 줄었을 때만 전체 이름을 툴팁으로(포커스로도 닿는다) */}
-                <Tooltip label={`${firstNa.number} ${firstNa.label}`} suppressed={!isNaNameCut} align="start" shrinks>
+                <Tooltip label={formatSlotName(firstNa)} suppressed={!isNaNameCut} align="start" shrinks>
                   <span
                     className="meta-na-label"
                     tabIndex={0}
@@ -144,16 +144,11 @@ export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, 
                     }}
                     onFocus={(event) => checkNaNameCut(event.currentTarget)}
                   >
-                    {firstNa.number} {firstNa.label}
+                    {formatSlotName(firstNa)}
                   </span>
                 </Tooltip>
                 {slots.summary.na > 1 && <span className="flex-none">{` +${slots.summary.na - 1}`}</span>}
               </span>
-            </span>
-          )}
-          {slots !== null && slots.summary.decide > 0 && (
-            <span className="pill warn" data-testid={`${prefix}-decide`}>
-              {t("tobe.slots.decide", { n: slots.summary.decide })}
             </span>
           )}
           {written ? (

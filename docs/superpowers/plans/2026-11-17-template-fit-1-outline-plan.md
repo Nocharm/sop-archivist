@@ -12,7 +12,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-17-template-fit-design.md` §6 작업 1, 부록 A. 기준 코드는 `dev` v1.1.24(`fa20953`) — 설계의 v1.1.18 뒤에 v1.1.23(하위 칸이 있는 칸의 직접 줄은 번호 없음)이 들어왔다.
 
-**상태:** 사용자 확인 2026-11-17("확인받을 것" 1–5 · 7–9는 권한 대로, 6번 부록 안 번호는 스텝 4 전에 원본 확인). 스텝 1 · 2 · 3 끝남.
+**상태:** 사용자 확인 2026-11-17("확인받을 것" 1–5 · 7–9는 권한 대로, 6번 부록 안 번호는 스텝 4 전에 원본 확인). 스텝 1 · 2 · 3 · 4 끝남(`feat/outline`에 합침, `dev`에는 아직). 다음은 스텝 5 — 그 앞에 "글머리 기호 줄 들여쓰기"를 한 스텝으로 넣을지 사용자와 정한다(`PROGRESS.md` 스텝 4 항목의 남은 것 ②).
 
 ## Global Constraints
 
@@ -329,7 +329,7 @@ LEGACY_KEY_MAP = {
 4. 옮긴 뒤 자리의 기본 표시가 `bullet`인 줄 가운데 `number_style='numbered'`인 것을 `bullet`로(확인받을 것 7).
 5. `downgrade`는 표준 · 사본을 15칸으로 되돌리고 키를 거꾸로 바꾼다(선언 항목의 내용은 가까운 옛 칸으로).
 
-- [ ] **Step 1: 실패하는 시험 — 번호** (`test_sop_numbering.py`, `test_sop_outline.py`)
+- [x] **Step 1: 실패하는 시험 — 번호** (`test_sop_numbering.py`, `test_sop_outline.py`)
   - `test_template_chapter_numbers`: 새 SOP의 절 번호가 `purpose` 1 … `attachments` 8 · `appendices` 9, `document_relationships.references` 7.3.
   - `test_empty_optional_items_are_skipped`: 7.1.x 가운데 `quality_risk_assessment`에만 줄이 있으면 그 절의 번호가 `"7.1.1"`, 나머지 셋은 절 목록에 없다.
   - `test_procedure_lines_are_numbered`: `procedures.p1`의 줄 둘(깊이 0 · 1) → `"6.1.1"`, `"6.1.1.1"`.
@@ -337,16 +337,16 @@ LEGACY_KEY_MAP = {
   - `test_category_lines_are_bullets_under_five`: 범주 Safety의 줄 — `number is None`, 결과물 A `dest_number == "5"`, 절 번호 `None`.
   - `test_group_and_auto_list_reject_lines`: `document_relationships`와 `….work_instructions`에 배정 → 422 `slot_not_assignable`.
   - `test_auto_list_shows_child_wis`: 7.2 절의 `auto_items`가 자식 WI 둘의 코드 · 제목.
-- [ ] **Step 2: 실패하는 시험 — 마이그레이션** (`test_migrations.py`)
+- [x] **Step 2: 실패하는 시험 — 마이그레이션** (`test_migrations.py`)
   - `test_0024_moves_legacy_keys`: 0023 상태의 SOP에 옛 키 9종의 줄과 N/A(`procedures.maintenance`)를 넣고 올리면 — `LEGACY_KEY_MAP`대로 옮겨지고, `procedures.maintenance`는 N/A를 지닌 선언 항목이고, `procedures`에 직접 놓인 줄은 그대로다(확인받을 것 5).
   - `test_migration_rewrites_keys_in_json`: `decision_steps.before`와 `ai_suggestions.content`의 `document_relationships.attachments` → `attachments`.
   - `test_0024_turns_numbered_into_bullets`: `purpose`의 `numbered` 줄 → `bullet`, `procedures.procedure`의 줄은 `numbered` 그대로.
-- [ ] **Step 3: 실패하는 시험 — AI 후보** (`test_sop_ai_candidates.py`) — `test_match_rule_slot_table`(위 표의 줄마다 한 경우), `test_candidates_skip_group_and_auto_list`, `test_candidates_skip_na_items`(지금 시험을 새 키로).
-- [ ] **Step 4: 구현** — `TEMPLATE_OUTLINE` · 종류 규칙 · `number_outline` · 기본 표시 · `slot_not_assignable` · 자동 목록 · 장비 알림 삭제 · 후보 · 리비전.
-- [ ] **Step 5: 합성 자료와 기존 시험** — `synthetic_sop.py`의 `_sop(slot_key, …)` 값과 `tobe_na_slots`, 시드 스크립트, `fake_ai.py`, 시험 도우미, 위 시험 파일의 키를 새 키로. `test_sop_outputs.py`의 `location_key == list(SLOT_KEYS)`는 템플릿 키 목록으로.
-- [ ] **Step 6: 프런트** — N/A 표는 스텝 2에서 이미 서버 골격을 읽는다. 여기서는 장비 "decide" 상태 삭제, 범주 줄(번호 없는 제목) · `group` · `auto_list` 줄의 모양(배정 단추 없음, 자동 목록은 WI 번호 · 제목), 결과물 C의 자동 목록 절, 스모크의 `SLOT_ORDER` · 박힌 키 · 번호 기대값. vitest: `slot-status-model.test.ts`(템플릿 골격으로 줄 수 · 수준 · 번호), `classify-model.test.ts`(`group`은 목적지 목록에 없다).
-- [ ] **Step 7: 확인** — backend 전체, 프런트 lint · tsc · vitest · build, 로컬 DB 다시 만들기(`scripts.reset_db` → `seed_sop_demo`) 뒤 **전체 스모크**. 옛 자료가 든 로컬 `dev.db`가 있으면 그대로 올려(기동 때 `upgrade head`) To-Be · Assign · Order 화면이 열리는지 본다.
-- [ ] **Step 8: 문서(도메인 §2 메모, 제품 명세 §6.6 · §7.13, Documents 화면 설계) · 설명서 글 · PROGRESS → 커밋 → 스텝 diff 검토 → `feat/outline`**
+- [x] **Step 3: 실패하는 시험 — AI 후보** (`test_sop_ai_candidates.py`) — `test_match_rule_slot_table`(위 표의 줄마다 한 경우), `test_candidates_skip_group_and_auto_list`, `test_candidates_skip_na_items`(지금 시험을 새 키로).
+- [x] **Step 4: 구현** — `TEMPLATE_OUTLINE` · 종류 규칙 · `number_outline` · 기본 표시 · `slot_not_assignable` · 자동 목록 · 장비 알림 삭제 · 후보 · 리비전.
+- [x] **Step 5: 합성 자료와 기존 시험** — `synthetic_sop.py`의 `_sop(slot_key, …)` 값과 `tobe_na_slots`, 시드 스크립트, `fake_ai.py`, 시험 도우미, 위 시험 파일의 키를 새 키로. `test_sop_outputs.py`의 `location_key == list(SLOT_KEYS)`는 템플릿 키 목록으로.
+- [x] **Step 6: 프런트** — N/A 표는 스텝 2에서 이미 서버 골격을 읽는다. 여기서는 장비 "decide" 상태 삭제, 범주 줄(번호 없는 제목) · `group` · `auto_list` 줄의 모양(배정 단추 없음, 자동 목록은 WI 번호 · 제목), 결과물 C의 자동 목록 절, 스모크의 `SLOT_ORDER` · 박힌 키 · 번호 기대값. vitest: `slot-status-model.test.ts`(템플릿 골격으로 줄 수 · 수준 · 번호), `classify-model.test.ts`(`group`은 목적지 목록에 없다).
+- [x] **Step 7: 확인** — backend 전체, 프런트 lint · tsc · vitest · build, 로컬 DB 다시 만들기(`scripts.reset_db` → `seed_sop_demo`) 뒤 **전체 스모크**. 옛 자료가 든 로컬 `dev.db`가 있으면 그대로 올려(기동 때 `upgrade head`) To-Be · Assign · Order 화면이 열리는지 본다.
+- [x] **Step 8: 문서(도메인 §2 메모, 제품 명세 §6.6 · §7.13, Documents 화면 설계) · 설명서 글 · PROGRESS → 커밋 → 스텝 diff 검토 → `feat/outline`**
 
 ---
 

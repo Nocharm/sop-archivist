@@ -128,7 +128,7 @@ import {
 } from "@/lib/api-sop";
 import { listRefCandidates } from "@/lib/caption-ref-model";
 import { isBundleCaptionNeeded, isBundleKind, isCaptionGate, listCaptionFields, listCaptionPendingRowKeys, makeIsLinkedToWritten, type CaptionUnit } from "@/lib/caption-model";
-import { applySavedTargets, buildComposedRows, formatSectionPath, isWrittenRow, listHeadingNotes, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
+import { applySavedTargets, buildComposedRows, isWrittenRow, listHeadingNotes, readSectionHead, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
 import {
   addPartnerTargets,
   buildLinkPairs,
@@ -167,6 +167,7 @@ import {
   isHeadingSourceUnit,
   isPlaceOption,
   listTreeOptions,
+  listTreeRows,
   isSentenceUnit,
   isTextChangeType,
   isTranslationOf,
@@ -2100,7 +2101,7 @@ export default function AssignPage() {
   function readSendHover(drop: SendDrop, item: HTMLElement | null): DragHover {
     if (drop.kind === "gap" || drop.kind === "slot") {
       const section = composedDoc?.sections.find((candidate) => candidate.location_key === drop.sectionKey);
-      const note = section ? `→ ${formatSectionPath(section.number, section.label)}` : undefined;
+      const note = section ? `→ ${readSectionHead(section)}` : undefined;
       return drop.kind === "slot" ? { state: "ok", note, target: item?.querySelector<HTMLElement>(".new-slot-empty") } : { state: "ok", note };
     }
     if (drop.kind === "refused") {
@@ -2806,7 +2807,7 @@ export default function AssignPage() {
   const accSections: AccordionSection[] = [
     { key: "rec", icon: Sparkles, title: t("assign.acc.rec"), count: recommendations.length, body: recommendations.length === 0 ? <p className="text-xs text-ink-3">{t("assign.acc.none")}</p> : recommendations.map(renderRecommendation) },
     { key: "near", icon: Locate, title: t("assign.acc.near"), count: nearLinks.length + nearPlaces.length, body: renderNearby() },
-    { key: "all", icon: ListTree, title: t("assign.acc.all"), count: written.length + options.filter(isPlaceOption).length, body: <DestinationTree written={written} options={treeOptions} tobeHref={getNewDocumentsHref(bundleId)} onPickLink={pickNewSentence} onPickPlace={pickDestination} manage={placeManage} /> },
+    { key: "all", icon: ListTree, title: t("assign.acc.all"), count: written.length + options.filter(isPlaceOption).length, body: <DestinationTree written={written} rows={tobeData ? listTreeRows(tobeData, treeOptions) : []} tobeHref={getNewDocumentsHref(bundleId)} onPickLink={pickNewSentence} onPickPlace={pickDestination} manage={placeManage} /> },
     {
       key: "move",
       icon: MoveRight,

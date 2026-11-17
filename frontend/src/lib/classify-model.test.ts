@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Decision, DocumentView, Group, GroupTarget, ToBe, UnitRow, ViewUnit } from "./api-sop";
+import { listSiblingPlaces } from "./assign-model";
 import {
   buildDestinationOptions,
   buildGroupSave,
@@ -15,6 +16,7 @@ import {
   hasRowLanguage,
   isPlaceOption,
   listTreeOptions,
+  listTreeRows,
   isSentenceUnit,
   isTranslationOf,
   listLinkLeftovers,
@@ -27,7 +29,7 @@ import {
   stepInList,
 } from "./classify-model";
 import type { Destination } from "./classify-model";
-import { LEGACY_KEYS, makeDeepOutline, makeLegacyOutline } from "./outline-fixture";
+import { makeDeepOutline, makeTemplateOutline, TEMPLATE_PLACE_KEYS } from "./outline-fixture";
 
 function makeViewUnit(id: number, lang: "ko" | "en", pos: number): ViewUnit {
   return {
@@ -95,13 +97,16 @@ const TOBE: ToBe = {
   ],
   na_slots: [{ code: "SOP-CF", slot_key: "procedures", reason: "x" }],
   wi_steps: [{ code: "WI-01", step_no: 1, title: "Load" }],
-  outline_items: makeLegacyOutline("SOP-CF"),
+  outline_items: makeTemplateOutline("SOP-CF"),
 };
+
+const DOCS = "document_relationships";
+const ASSOCIATED = `${DOCS}.associated_documents`;
 
 describe("destinations", () => {
   it("lists SOP slots, WI step parts, and greys out N/A including children", () => {
     const options = buildDestinationOptions(TOBE);
-    expect(options.find((option) => option.id === "slot:6:procedures.maintenance")?.disabled).toBe(true);
+    expect(options.find((option) => option.id === "slot:6:procedures.p1")?.disabled).toBe(true);
     expect(options.find((option) => option.id === "slot:6:purpose")?.disabled).toBe(false);
     expect(options.filter((option) => option.docCode === "WI-01").map((option) => option.id)).toEqual(["step:7:1:instruction", "step:7:1:why"]);
     expect(options.some((option) => option.docCode === "WI-04")).toBe(false);
@@ -109,28 +114,40 @@ describe("destinations", () => {
 
   it("lists the SOP places in the outline's order with the item's own name and level", () => {
     const places = buildDestinationOptions({ ...TOBE, na_slots: [] }).filter((option) => option.destination.kind === "slot");
-    expect(places.map((option) => option.id)).toEqual(LEGACY_KEYS.map((key) => `slot:6:${key}`));
-    expect(places.map((option) => option.depth)).toEqual([0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1]);
-    // 이름은 그 항목의 것만 - 나무가 depth로 위계를 보이므로 "General requirements › Safety"로 적지 않는다
-    expect(places.slice(4, 7).map((option) => option.label)).toEqual(["General requirements", "Safety", "Operation"]);
+    expect(places.map((option) => option.id)).toEqual(TEMPLATE_PLACE_KEYS.map((key) => `slot:6:${key}`));
+    // 7.1의 항목은 두 단 아래다(7 › 7.1 › Form)
+    expect(places.map((option) => option.depth)).toEqual([0, 0, 0, 0, 0, 1, 1, 0, 1, 2, 2, 2, 2, 1, 0, 0, 1]);
+    // 이름은 그 항목의 것만 - 나무가 depth로 위계를 보이므로 "General Requirements › Safety"로 적지 않는다
+    expect(places.slice(4, 7).map((option) => option.label)).toEqual(["General Requirements", "Safety", "Work"]);
+  });
+
+  it("names an appendix place by its label, which carries its number", () => {
+    // 나무는 번호를 적지 않는다 - 부록(shows_number false)만 번호가 든 이름 "Appendix 1. …"으로 적어 어느 부록인지 보인다
+    const options = buildDestinationOptions({ ...TOBE, na_slots: [] }).filter((option) => option.id.endsWith(":appendices.a1"));
+    expect(options.map((option) => [option.destination.kind, option.label])).toEqual([["slot_heading", "Appendix 1. Alarm list"], ["slot", "Appendix 1. Alarm list"]]);
   });
 
   it("offers only the items that take sentences directly, and none that the document removed", () => {
-    const outline = makeLegacyOutline("SOP-CF", {
-      general_requirements: { kind: "group", is_assignable: false },
-      scope: { is_removed: true },
-    });
-    const ids = buildDestinationOptions({ ...TOBE, na_slots: [], outline_items: outline }).map((option) => option.id);
-    expect(ids.some((id) => id.endsWith(":general_requirements") || id.endsWith(":scope"))).toBe(false);
-    expect(ids).toContain("slot:6:general_requirements.safety");
-    expect(ids).toContain("heading:6:general_requirements.safety");
+    const outline = makeTemplateOutline("SOP-CF", { scope: { is_removed: true } });
+    const options = buildDestinationOptions({ ...TOBE, na_slots: [], outline_items: outline });
+    const ids = options.map((option) => option.id);
+    // 묶음(7 · 7.1)과 앱이 채우는 목록(7.2)은 보낼 곳도 칸 제목 자리도 아니다
+    for (const key of [DOCS, ASSOCIATED, `${DOCS}.work_instructions`, "scope"]) {
+      expect(ids).not.toContain(`slot:6:${key}`);
+      expect(ids).not.toContain(`heading:6:${key}`);
+    }
+    expect(ids).toContain(`slot:6:${ASSOCIATED}.form`);
+    expect(ids).toContain(`heading:6:${ASSOCIATED}.form`);
+    // 가까운 곳(같은 문서의 다른 칸)도 보낼 곳 목록만 읽으므로 묶음이 끼지 않는다
+    const near = listSiblingPlaces(options, { kind: "slot", docId: 6, slotKey: "procedures.p1" }, 100);
+    expect(near.map((option) => (option.destination.kind === "slot" ? option.destination.slotKey : ""))).toEqual(TEMPLATE_PLACE_KEYS.filter((key) => key !== "scope" && key !== "procedures.p1"));
   });
 
   it("reads each SOP from its own outline", () => {
     const second = { ...TOBE.docs[0], id: 9, code: "SOP-B", order_index: 5 };
-    const tobe: ToBe = { ...TOBE, docs: [...TOBE.docs, second], na_slots: [], outline_items: [...makeLegacyOutline("SOP-CF"), ...makeDeepOutline("SOP-B")] };
+    const tobe: ToBe = { ...TOBE, docs: [...TOBE.docs, second], na_slots: [], outline_items: [...makeTemplateOutline("SOP-CF"), ...makeDeepOutline("SOP-B")] };
     const places = buildDestinationOptions(tobe).filter((option) => option.destination.kind === "slot");
-    expect(places.filter((option) => option.docCode === "SOP-CF")).toHaveLength(15);
+    expect(places.filter((option) => option.docCode === "SOP-CF")).toHaveLength(17);
     expect(places.filter((option) => option.docCode === "SOP-B").map((option) => option.id)).toEqual(["slot:9:a", "slot:9:a.b", "slot:9:a.b.c", "slot:9:z"]);
     // 골격이 없는 SOP(응답에 항목이 없다)는 보낼 칸이 없다
     expect(buildDestinationOptions({ ...tobe, outline_items: [] }).filter((option) => option.destination.kind === "slot")).toEqual([]);
@@ -165,6 +182,60 @@ describe("destinations in a three-level outline", () => {
     expect(placesOf(deep([], grouped)).map((option) => [option.id, option.depth])).toEqual([["slot:6:a", 0], ["slot:6:a.b.c", 2], ["slot:6:z", 0]]);
     expect(placesOf(deep(["a"], grouped)).map((option) => option.disabled)).toEqual([true, true, false]);
     expect(placesOf(deep(["a.b"], grouped)).map((option) => option.disabled)).toEqual([false, true, false]);
+  });
+});
+
+describe("tree rows", () => {
+  const open: ToBe = { ...TOBE, na_slots: [] };
+  /** 줄을 짧게 - 보낼 곳은 그 id, 묶음 이름 줄은 [id, 이름, 들여쓰기, N/A] */
+  const read = (tobe: ToBe, canPickHeading = false) =>
+    listTreeRows(tobe, listTreeOptions(buildDestinationOptions(tobe), canPickHeading)).map((row) => (row.kind === "place" ? row.option.id : [row.id, row.label, row.depth, row.isNa]));
+
+  it("puts a plain heading row for each group above its first place, so 7.1's items keep their context", () => {
+    const rows = read(open);
+    const from = rows.indexOf("slot:6:procedures.p1");
+    expect(rows.slice(from, from + 8)).toEqual([
+      "slot:6:procedures.p1",
+      [`group:6:${DOCS}`, "Document Relationships", 0, false],
+      [`group:6:${ASSOCIATED}`, "Associated Documents", 1, false],
+      `slot:6:${ASSOCIATED}.form`,
+      `slot:6:${ASSOCIATED}.visual_aid`,
+      `slot:6:${ASSOCIATED}.training_material`,
+      `slot:6:${ASSOCIATED}.quality_risk_assessment`,
+      // 앱이 채우는 목록(7.2 Work Instructions)은 줄이 없다 - 7.1 다음이 바로 7.3이다
+      `slot:6:${DOCS}.references`,
+    ]);
+    // 이름 줄은 묶음 둘뿐이고, 보낼 곳은 그대로 다 있다(WI 자리 포함)
+    expect(rows.filter((row) => typeof row !== "string")).toHaveLength(2);
+    expect(rows.filter((row) => typeof row === "string")).toEqual(buildDestinationOptions(open).filter(isPlaceOption).map((option) => option.id));
+  });
+
+  it("puts the heading rows above the section-title place too, once", () => {
+    const rows = read(open, true);
+    const at = rows.findIndex((row) => typeof row !== "string" && row[0] === `group:6:${ASSOCIATED}`);
+    expect(rows.slice(at - 1, at + 3)).toEqual([
+      [`group:6:${DOCS}`, "Document Relationships", 0, false],
+      [`group:6:${ASSOCIATED}`, "Associated Documents", 1, false],
+      `heading:6:${ASSOCIATED}.form`,
+      `slot:6:${ASSOCIATED}.form`,
+    ]);
+    expect(rows.filter((row) => typeof row !== "string")).toHaveLength(2);
+  });
+
+  it("marks a heading row N/A when it or a section above it is N/A", () => {
+    const headingsOf = (naKey: string) => read({ ...open, na_slots: [{ code: "SOP-CF", slot_key: naKey, reason: "x" }] }).filter((row) => typeof row !== "string").map((row) => row[3]);
+    expect(headingsOf(DOCS)).toEqual([true, true]);
+    expect(headingsOf(ASSOCIATED)).toEqual([false, true]);
+    expect(headingsOf("purpose")).toEqual([false, false]);
+  });
+
+  it("has no heading row for a group with no place under it, and keeps each document's rows apart", () => {
+    // 7.1의 항목을 모두 뺀 문서 - 7.1은 그릴 하위가 없어 이름 줄도 없다(7은 7.3이 남아 있다)
+    const removed = Object.fromEntries(["form", "visual_aid", "training_material", "quality_risk_assessment"].map((name) => [`${ASSOCIATED}.${name}`, { is_removed: true }]));
+    const second = { ...TOBE.docs[0], id: 9, code: "SOP-B", order_index: 5 };
+    const tobe: ToBe = { ...open, docs: [...TOBE.docs, second], outline_items: [...makeTemplateOutline("SOP-CF", removed), ...makeTemplateOutline("SOP-B")] };
+    const headings = read(tobe).filter((row) => typeof row !== "string").map((row) => row[0]);
+    expect(headings).toEqual([`group:6:${DOCS}`, `group:9:${DOCS}`, `group:9:${ASSOCIATED}`]);
   });
 });
 
@@ -816,8 +887,8 @@ describe("slot heading destination", () => {
   it("offers a slot heading place right before each SOP section that is not N/A, none for WI", () => {
     const tobe: ToBe = { ...TOBE, na_slots: [{ code: "SOP-CF", slot_key: "scope", reason: "x" }] };
     const ids = buildDestinationOptions(tobe).map((option) => option.id);
-    expect(ids).toContain("heading:6:procedures.procedure");
-    expect(ids.indexOf("heading:6:procedures.procedure")).toBe(ids.indexOf("slot:6:procedures.procedure") - 1);
+    expect(ids).toContain("heading:6:procedures.p1");
+    expect(ids.indexOf("heading:6:procedures.p1")).toBe(ids.indexOf("slot:6:procedures.p1") - 1);
     expect(ids.some((id) => id.startsWith("heading:6:scope"))).toBe(false);
     expect(ids.some((id) => id.startsWith("heading:7"))).toBe(false);
   });

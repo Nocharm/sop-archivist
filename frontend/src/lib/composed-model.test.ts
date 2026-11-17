@@ -94,7 +94,24 @@ describe("buildComposedRows", () => {
 
     expect(rows.map(getNewRowKey)).toEqual(["t:1", "slot:scope", "slot:step:1:instruction"]);
     expect(rows[0]).toMatchObject({ section_path: "1. Purpose", doc_code: "SOP-CF", source_unit_ids: [10], lang: "ko" });
-    expect(rows[1]).toMatchObject({ kind: "empty", section_path: "2. Scope", na: true });
+    expect(rows[1]).toMatchObject({ kind: "empty", section_path: "2. Scope", na: true, fixed: null, autoItems: [] });
+  });
+
+  it("marks the sections that take no sentences: a group is a heading only, the auto list carries the SOP's work instructions", () => {
+    const section = (location_key: string, number: string | null, label: string, outline: Parameters<typeof makeSectionOutline>[0] = {}): ComposedSection => ({ ...makeSectionOutline(outline), location_key, label, number, na_reason: null, heading_note: "", items: [] });
+    const wis = [{ code: "WI-CF-01", title: "Rotor change" }];
+    const rows = buildComposedRows(makeDoc([
+      section("general_requirements.safety", null, "General Requirements › Safety", { level: 1 }),
+      section("document_relationships", "7", "Document Relationships", { kind: "group", counts_lines: false }),
+      section("document_relationships.work_instructions", "7.2", "Document Relationships › Work Instructions", { kind: "auto_list", counts_lines: false, level: 1, auto_items: wis }),
+    ]));
+
+    // 범주는 번호 없이 이름만이 칸 머리 글이다
+    expect(rows.map((row) => [row.section_path, row.kind === "empty" ? row.fixed : "", row.kind === "empty" ? row.autoItems : []])).toEqual([
+      ["General Requirements › Safety", null, []],
+      ["7. Document Relationships", "group", []],
+      ["7.2. Document Relationships › Work Instructions", "auto", wis],
+    ]);
   });
 
   it("carries each item's own output C number while the slot header keeps the slot number", () => {
@@ -175,6 +192,20 @@ describe("getComposedLeadWidths", () => {
     expect(widths.get("3")).toBe(getPillWidth(3));
     expect(widths.get("6")).toBe(getPillWidth(4));
     expect(widths.get("7")).toBe(getPillWidth(1));
+  });
+
+  it("heads an appendix with its label alone, and still sizes its lines under the appendix number", () => {
+    // 부록은 이름에 번호가 들어 있어 머리에 번호를 따로 적지 않는다(shows_number false) - 줄 번호의 머리는 그대로 number "2"다
+    const appendix: ComposedSection = { ...makeSlot("appendices.a2", "2", "Appendix 2. Alarm list", [makeItem(1, null), makeItem(2, "2.1")]), shows_number: false, heading_note: "← OLD-1 §9" };
+    const doc = makeDoc([makeSlot("scope", "2", "Scope", [makeItem(3, null)]), appendix]);
+
+    const rows = buildComposedRows(doc);
+
+    expect(rows.map((row) => row.section_path)).toEqual(["2. Scope", "Appendix 2. Alarm list", "Appendix 2. Alarm list"]);
+    expect(listHeadingNotes(doc).get("Appendix 2. Alarm list")).toBe("← OLD-1 §9");
+    // 칸을 여는 번호 없는 줄은 그 칸 첫 깊이(2.1의 깊이)의 폭 - 머리 글에서 번호를 읽었다면 1단 폭이 된다
+    expect(getComposedLeadWidths(rows).get("1")).toBe(getPillWidth(2));
+    expect(getComposedLeadWidths(rows).get("2")).toBe(getPillWidth(2));
   });
 });
 

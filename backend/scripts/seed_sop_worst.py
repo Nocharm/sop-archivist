@@ -411,7 +411,7 @@ class WorstSeeder:
             sop_codes.append(code)
             if i % 6 == 1:
                 nas.append({"code": code, "slot_key": "definitions", "reason": self.long_reason})
-                nas.append({"code": code, "slot_key": "document_relationships.appendices", "reason": "합성 사유: 해당 없음"})
+                nas.append({"code": code, "slot_key": "appendices", "reason": "합성 사유: 해당 없음"})
         for i in range(22):
             code = f"SYN-WI-{i + 1:04d}" if i % 4 else ("SYN-WI-" + "VERYLONGWORKINSTRUCTIONCODE-" * 3 + f"{i:04d}")[:100]
             title = [f"합성 WI 제목 {i}", long_text(450, "en"), "합성공백없는WI제목" * 40, ""][i % 4][:500]
@@ -432,7 +432,8 @@ class WorstSeeder:
         na_set = {(n["code"], n["slot_key"]) for n in tobe["na_slots"]}
         locations: list[tuple[int, dict]] = []
         for code in sop_codes:
-            for slot in ("purpose", "scope", "definitions", "responsibilities", "general_requirements.safety", "procedures.procedure"):
+            # 새 SOP가 받는 골격(템플릿 + 첫 절차)에 있는 자리만 — 5장은 범주 없는 항목으로, 6장은 첫 절차로
+            for slot in ("purpose", "scope", "definitions", "responsibilities", "general_requirements", "procedures.p1"):
                 if (code, slot) not in na_set:
                     locations.append((driver.tobe_ids[code], {"slot_key": slot}))
         for step in tobe["wi_steps"]:

@@ -419,6 +419,7 @@ function measureRows(section: HTMLElement): RowBox[] {
 /** 다른 칸에 못 놓는 사유의 표 문구 - 서버 거절 코드가 있으면 그 문구(G7). 이미 쓴 문서는 SOP·WI가 서버 코드가 다르다 */
 function readRefusalKey(refusal: EnterRefusal | LeaveRefusal, docType: string): string {
   if (refusal === "na") return "rule.na_slot";
+  if (refusal === "notAssignable") return "rule.slot_not_assignable";
   if (refusal === "written") return docType === "wi" ? "rule.wi_step_not_allowed" : "rule.slot_not_allowed";
   if (refusal === "translation") return "order.drag.keepTranslation";
   if (refusal === "otherPart") return "order.drag.otherPart";
@@ -807,7 +808,8 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
               return (
                 <section key={section.location_key} className="grid gap-1" data-location-key={section.location_key} data-na={section.na_reason !== null ? "" : undefined}>
                   <h3 className="text-[13px] font-semibold text-ink-2" style={{ fontFamily: "var(--font-ui)" }} data-testid={`output-c-section-${doc.target_doc_id}-${section.location_key}`}>
-                    {section.number !== null && <span className="mr-1.5 font-mono">{section.number}</span>}
+                    {/* 부록은 이름("Appendix 2. 제목")에 번호가 들어 있어 번호를 따로 적지 않는다(shows_number) - 줄 번호의 머리는 그대로 section.number다 */}
+                    {section.number !== null && section.shows_number && <span className="mr-1.5 font-mono">{section.number}</span>}
                     {section.label}
                     {/* 칸 제목으로 간 옛 제목 - 칸 항목이 아니라 머리 옆에 흐리게. 길면 감긴다 */}
                     {section.heading_note !== "" && (
@@ -819,7 +821,19 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
                   {section.na_reason !== null ? (
                     // 끄는 동안 칸이 흐려져도 이 줄은 그대로다(components.css) - 왜 못 놓는지를 그 칸에서 읽는다
                     <p className="text-ink-3" data-na-reason="">N/A · {section.na_reason}</p>
-                  ) : section.items.length === 0 ? (
+                  ) : section.kind === "auto_list" ? (
+                    // 앱이 채우는 목록(그 SOP의 자식 WI) - 읽기만 하는 줄이라 끌기·순서·표시 단추가 없고, 줄을 받지도 않는다(findEnterRefusal).
+                    // 하위만 묶는 절(group)은 그 아래 갈래처럼 머리만 그린다 - 줄을 받지 않아 빈 칸 표시("–")도 없다
+                    <ul className="m-0 grid list-none gap-0.5 p-0 text-ink-2" data-testid={`output-c-auto-${doc.target_doc_id}-${section.location_key}`}>
+                      {section.auto_items.length === 0 && <li className="text-ink-4">{t("outputs.autoEmpty")}</li>}
+                      {section.auto_items.map((auto) => (
+                        <li key={auto.code} className="[overflow-wrap:anywhere]">
+                          <span className="font-mono">{auto.code}</span>
+                          {auto.title !== "" && ` — ${auto.title}`}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : section.kind === "group" ? null : section.items.length === 0 ? (
                     // 줄이 없는 칸 - 끌어 온 덩어리를 받으면 그 칸의 첫 줄들이 된다(놓을 선은 이 표시 위에 긋는다)
                     <p className="text-ink-4" data-testid={`output-c-empty-${doc.target_doc_id}-${section.location_key}`}>
                       –

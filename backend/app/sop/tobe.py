@@ -25,11 +25,14 @@ from app.sop.models import (
     WiStep,
 )
 from app.sop.outline import (
+    KIND_AUTO_LIST,
     DocOutline,
     copy_standard_to_doc,
     get_parent_key,
+    list_emitted_keys,
     load_doc_outlines,
     load_standard_outline,
+    number_outline,
 )
 from app.sop.schemas import NO_NUL
 
@@ -108,6 +111,7 @@ class OutlineItemOut(BaseModel):
     default_style: NumberStyle
     is_assignable: bool
     counts_lines: bool  # 직접 놓인 줄에 번호를 세는가
+    shows_number: bool  # 제목 앞에 번호를 따로 적는가 — 라벨에 번호가 든 부록("Appendix 1. 이름")만 거짓
     origin: OutlineOrigin
     is_removed: bool
     deviation_reason: str | None
@@ -122,14 +126,16 @@ class ToBeOut(BaseModel):
     outline_items: list[OutlineItemOut] = []
 
 
-def _build_outline_items(code: str, outline: DocOutline) -> list[OutlineItemOut]:
+def _build_outline_items(code: str, outline: DocOutline, numbers: dict[str, str | None]) -> list[OutlineItemOut]:
+    """골격 사본의 항목 전부 — 번호(numbers)는 결과물이 내보낼 항목끼리 센 값이라, 비어 있는 선택 항목과 번호 없는 항목(범주)은 None이다."""
     return [
         OutlineItemOut(
             code=code, key=item.key, parent_key=get_parent_key(item.key), level=outline.get_level(item.key),
-            number=outline.get_number(item.key), title_en=item.title_en, title_ko=item.title_ko,
-            label=outline.get_label(item.key), kind=item.kind, is_required=item.is_required,
+            number=numbers.get(item.key), title_en=item.title_en, title_ko=item.title_ko,
+            label=outline.get_label(item.key, numbers), kind=item.kind, is_required=item.is_required,
             default_style=item.default_style, is_assignable=outline.is_assignable(item.key),
-            counts_lines=outline.counts_lines(item.key), origin=item.origin, is_removed=item.is_removed,
+            counts_lines=outline.counts_lines(item.key), shows_number=outline.shows_number(item.key),
+            origin=item.origin, is_removed=item.is_removed,
             deviation_reason=item.deviation_reason,
         )
         for item in outline.items
@@ -141,8 +147,25 @@ def _get_outline_position(outline: DocOutline, key: str, default: int) -> int:
     return next((position for position, item in enumerate(outline.items) if item.key == key), default)
 
 
+async def _load_used_slot_keys(session: AsyncSession, doc_ids: Collection[int]) -> dict[int, set[str]]:
+    """문서별로 줄이나 칸 제목이 놓인 골격 항목 키 — 내보낼 항목(outline.list_emitted_keys)의 재료이고 결과물(outputs._build_index)과 같은 기준이다."""
+    used: dict[int, set[str]] = {doc_id: set() for doc_id in doc_ids}
+    if doc_ids:
+        rows = await session.execute(
+            select(TargetSentence.target_doc_id, TargetSentence.slot_key)
+            .where(TargetSentence.target_doc_id.in_(doc_ids), TargetSentence.slot_key.is_not(None))
+            .distinct()
+        )
+        for doc_id, slot_key in rows:
+            used[doc_id].add(slot_key)
+    return used
+
+
 async def build_tobe_out(session: AsyncSession, bundle: Bundle) -> ToBeOut:
-    """묶음의 To-Be 목록을 쿼리 네 번(문서·골격·N/A·단계)으로 읽는다. 문서는 (순서, id)순, 나머지는 문서 순서를 따른다."""
+    """묶음의 To-Be 목록을 쿼리 다섯 번(문서·골격·N/A·단계·줄이 놓인 항목)으로 읽는다. 문서는 (순서, id)순, 나머지는 문서 순서를 따른다.
+
+    골격 항목의 번호·라벨은 결과물 C와 같은 값이다 — 비어 있고 N/A도 아닌 선택 항목은 번호가 없고 세지 않는다.
+    """
     doc_rows = (
         await session.execute(
             select(TargetDoc, Document.id)
@@ -177,7 +200,22 @@ async def build_tobe_out(session: AsyncSession, bundle: Bundle) -> ToBeOut:
         WiStepIn(code=code_by_id[row.target_doc_id], step_no=row.step_no, title=row.title)
         for row in sorted(step_rows, key=lambda r: (doc_position[r.target_doc_id], r.step_no))
     ]
-    outline_items = [item for doc in docs for item in _build_outline_items(doc.code, outlines[doc.id])]
+    used_keys = await _load_used_slot_keys(session, [doc.id for doc in docs if outlines[doc.id].items])
+    na_keys: dict[int, set[str]] = {}
+    for row in na_rows:
+        na_keys.setdefault(row.target_doc_id, set()).add(row.slot_key)
+    outline_items = [
+        item
+        for doc in docs
+        for item in _build_outline_items(
+            doc.code,
+            outlines[doc.id],
+            number_outline(
+                outlines[doc.id],
+                list_emitted_keys(outlines[doc.id], used_keys.get(doc.id, ()), na_keys.get(doc.id, ())),
+            ),
+        )
+    ]
     return ToBeOut(
         revision=bundle.revision, docs=docs, na_slots=na_slots, wi_steps=wi_steps, outline_items=outline_items
     )
@@ -327,8 +365,12 @@ def _check_list_rules(
             raise_rule(422, "unknown_doc", doc_code=row.code)
         if final_types[row.code] != "sop":
             raise_rule(422, "na_on_wi", doc_code=row.code)
-        if get_outline(row.code).find(row.slot_key) is None:
+        item = get_outline(row.code).find(row.slot_key)
+        if item is None:
             raise_rule(422, "unknown_slot", doc_code=row.code, slot_key=row.slot_key)
+        # N/A는 줄을 받지 않는 묶음 제목(7·7.1)에도 둘 수 있고 하위를 덮는다. 앱이 채우는 자동 목록(7.2)만 사람이 N/A로 두지 못한다
+        if item.kind == KIND_AUTO_LIST:
+            raise_rule(422, "slot_not_assignable", doc_code=row.code, slot_key=row.slot_key)
         if (row.code, row.slot_key) in seen_slots:
             raise_rule(422, "duplicate_na_slot", doc_code=row.code, slot_key=row.slot_key)
         seen_slots.add((row.code, row.slot_key))
@@ -346,7 +388,7 @@ def _check_list_rules(
 
 
 def is_within_slot(slot_key: str, slot: str) -> bool:
-    """slot_key가 slot 자신이거나 그 하위 칸(`procedures` → `procedures.procedure`)인가 — 상위 칸 N/A는 하위 칸도 덮는다."""
+    """slot_key가 slot 자신이거나 그 하위 칸(`procedures` → `procedures.p1`)인가 — 상위 칸 N/A는 하위 칸도 덮는다."""
     return slot_key == slot or slot_key.startswith(f"{slot}.")
 
 

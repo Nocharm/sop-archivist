@@ -63,17 +63,19 @@ export interface DropItem {
   sourceUnitIds: readonly number[];
 }
 
-/** 엮은 문서의 한 칸 - key는 ComposedSection.location_key */
+/** 엮은 문서의 한 칸 - key는 ComposedSection.location_key. isAssignable은 문장을 받는 절인가(묶음 · 앱이 채우는 목록은 아니다, 서버 422 slot_not_assignable) */
 export interface DropSection {
   key: string;
   isNa: boolean;
+  isAssignable: boolean;
   items: DropItem[];
 }
 
-export function buildDropSections(sections: readonly Pick<ComposedSection, "location_key" | "na_reason" | "items">[], rowKeyOf: (unitId: number) => string | undefined): DropSection[] {
+export function buildDropSections(sections: readonly Pick<ComposedSection, "location_key" | "na_reason" | "kind" | "items">[], rowKeyOf: (unitId: number) => string | undefined): DropSection[] {
   return sections.map((section) => ({
     key: section.location_key,
     isNa: section.na_reason !== null,
+    isAssignable: section.kind !== "group" && section.kind !== "auto_list",
     items: section.items.map((item) => ({
       targetId: item.target_id,
       groupKey: item.source_unit_ids.length > 0 ? (rowKeyOf(item.source_unit_ids[0]) ?? null) : null,
@@ -101,11 +103,12 @@ export function findDropBlock(section: DropSection, hoverId: number): DropBlock 
   return { firstId: section.items[first].targetId, lastId: section.items[last].targetId };
 }
 
-export type SendRefusal = "na_slot" | "written_doc" | "same_slot";
+export type SendRefusal = "na_slot" | "not_assignable" | "written_doc" | "same_slot";
 
-/** 거절 문구 키 - na_slot·written_doc은 서버 거절과 같은 문구를 쓴다 */
+/** 거절 문구 키 - na_slot·not_assignable·written_doc은 서버 거절과 같은 문구를 쓴다 */
 export const REFUSAL_KEYS: Record<SendRefusal, string> = {
   na_slot: "rule.invalid_group.na_slot",
+  not_assignable: "rule.slot_not_assignable",
   written_doc: "rule.invalid_group.match_doc_new_target",
   same_slot: "assign.drag.sameSlot",
 };
@@ -128,9 +131,11 @@ export function resolveGapDrop(section: DropSection, hoverId: number, isUpperHal
   return { kind: "gap", sectionKey: section.key, after: before >= 0 ? section.items[before].targetId : null, edge: { targetId: block.firstId, side: "top" } };
 }
 
-/** 엮은 문서의 빈 칸 */
-export function resolveSlotDrop(section: Pick<DropSection, "key" | "isNa">): SendDrop {
-  return section.isNa ? { kind: "refused", reason: "na_slot" } : { kind: "slot", sectionKey: section.key };
+/** 엮은 문서의 줄 없는 절 - 빈 칸은 받고, N/A 칸과 문장을 받지 않는 절(묶음 · 앱이 채우는 목록)은 거절한다. N/A가 먼저다 */
+export function resolveSlotDrop(section: Pick<DropSection, "key" | "isNa" | "isAssignable">): SendDrop {
+  if (section.isNa) return { kind: "refused", reason: "na_slot" };
+  if (!section.isAssignable) return { kind: "refused", reason: "not_assignable" };
+  return { kind: "slot", sectionKey: section.key };
 }
 
 export type TreeDrop = { kind: "place"; destination: Destination } | { kind: "refused"; reason: "na_slot" } | { kind: "none" };

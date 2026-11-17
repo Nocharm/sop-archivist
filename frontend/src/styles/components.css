@@ -387,7 +387,7 @@
   .doc-title-empty { color: var(--ink-4); font-weight: 400; }
   /* 딸린 정보 줄은 한 줄 - 모자라면 정해진 순서로 줄어든다(아래 data-fit), 파일 이름은 가운데가 줄어든다 */
   .doc-meta { display: flex; flex-wrap: nowrap; align-items: center; gap: 12px; overflow: hidden; white-space: nowrap; font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-3); }
-  /* "n of 15" · N/A n · 정할 칸 · Not written 은 줄지 않는다 */
+  /* "n of m" · N/A n · Not written 은 줄지 않는다 */
   .doc-meta > * { flex: none; }
   /* 파일 이름은 3단계부터 폭으로 줄어든다(가운데 말줄임) - 96px 아래로는 줄지 않는다. 이름을 감싼 툴팁 자리가 min-width를 0으로 두므로 줄의 칸(grid 트랙)이 최소를 지킨다 */
   .doc-meta > .doc-meta-file { display: inline-grid; grid-template-columns: minmax(96px, max-content); grid-auto-flow: column; align-items: center; column-gap: 6px; min-width: min-content; }
@@ -408,15 +408,13 @@
   .doc-meta[data-fit="4"] .slot-bar { display: none; }
   /* Old 줄(설계 §5): 파일 이름이 먼저 줄고(3단계) 그래도 넘치면 EQUIS 표시가 아이콘만 남는다(4단계). 언어 배치는 줄지 않는다 */
   .doc-meta[data-fit="4"] .equis-text { display: none; }
-  /* 칸 상태 막대(slot-bar.tsx) - 눈금 15개, 하위 칸은 낮다. 상태는 모양으로도 갈린다: 문장 있음은 채움, 빈 칸은 테두리만, N/A는 빗금, 정할 칸은 호박색 테두리와 위의 점.
-     높이 16px = 눈금 12px + 점 자리 4px(딸린 정보 줄 18px 안) */
+  /* 칸 상태 막대(slot-bar.tsx) - 문장을 받는 칸마다 눈금 하나, 하위 칸은 낮다. 상태는 모양으로도 갈린다: 문장 있음은 채움, 빈 칸은 테두리만, N/A는 빗금.
+     높이 16px은 딸린 정보 줄(18px) 안이고 눈금(12px)은 바닥에 붙는다 */
   .slot-bar { display: inline-flex; align-items: flex-end; gap: 2px; height: 16px; }
-  .slot-bar > i { position: relative; width: 5px; height: 12px; border-radius: 1px; background: var(--ink-3); }
+  .slot-bar > i { width: 5px; height: 12px; border-radius: 1px; background: var(--ink-3); }
   .slot-bar > i[data-child] { height: 8px; }
   .slot-bar > i[data-state="empty"] { background: none; box-shadow: inset 0 0 0 1px var(--line-2); }
   .slot-bar > i:is([data-state="na"], [data-state="covered"]) { background: repeating-linear-gradient(-45deg, var(--ink-4) 0 1px, transparent 1px 3px); box-shadow: inset 0 0 0 1px var(--ink-4); }
-  .slot-bar > i[data-state="decide"] { background: none; box-shadow: inset 0 0 0 1.5px var(--warn-fill); }
-  .slot-bar > i[data-state="decide"]::before { content: ""; position: absolute; top: -4px; left: 1px; width: 3px; height: 3px; border-radius: 50%; background: var(--warn-fill); }
   /* 부모를 못 찾은 WI 묶음의 머리 - 목록 끝 */
   .doc-loose { display: flex; align-items: center; gap: 8px; padding: 8px var(--pad) 4px calc(var(--pad) + 34px); border-bottom: 1px solid var(--line); font-size: var(--fs-cap); line-height: var(--lh-cap); font-weight: 600; color: var(--ink-2); }
   .doc-step-count { font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-3); white-space: nowrap; }
@@ -454,7 +452,7 @@
   .doc-field-wide { grid-column: 1 / -1; }
   .view-toggle.doc-type button { width: auto; padding: 0 10px; font-size: var(--fs-cap); }
   .view-toggle.doc-type button:disabled { cursor: not-allowed; }
-  /* New 목록 SOP의 칸 상태 표(Documents 화면 설계 §8) - 두 단(1~5.2 | 6~7.2)이고 틀이 좁으면 한 단으로 접힌다.
+  /* New 목록 SOP의 칸 상태 표(Documents 화면 설계 §8) - 두 단(1~5장 | 6~9장)이고 틀이 좁으면 한 단으로 접힌다.
      줄: 번호 · 이름 · 상태 · 단추 자리, 사유·까닭·편집기는 그 줄 아래 둘째 열부터 끝까지 */
   .slot-table { display: grid; gap: 6px; padding: 6px 0 8px; }
   .slot-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
@@ -464,7 +462,7 @@
   /* 단 하나가 열을 정하고 줄은 그 열을 나눠 쓴다(subgrid) - 단추가 없는 줄과 있는 줄의 상태 글이 같은 자리에 선다 */
   .slot-col { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto auto; column-gap: 8px; align-content: start; }
   .slot-row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; row-gap: 2px; min-height: 32px; padding: 3px 0; border-bottom: 1px solid var(--line); }
-  /* 하위 칸은 이름과 그 아래 글을 24px 들인다(번호 열은 그대로) */
+  /* 하위 칸은 이름과 그 아래 글을 24px 들인다(번호 열은 그대로). 더 깊은 수준(7.1.x)은 줄이 단마다 24px씩 더 들인다(slot-table.tsx의 인라인 값) */
   .slot-row[data-child] { --slot-indent: 24px; }
   /* 편집 중인 줄 - 왼쪽 2px 막대(줄에 둥근 모서리가 없어 막대 쪽이 직각이다). 번호는 막대에서 6px 떨어진다 */
   .slot-row[data-editing] { box-shadow: inset 2px 0 0 var(--accent); }
@@ -1742,6 +1740,8 @@
   .pg .new-slot-empty { flex: 1 1 0; min-width: 0; margin: 0; padding: 4px var(--pg-pad-l); border: 1px dashed var(--line); border-radius: var(--r-1); color: var(--ink-3); font: var(--fs-cap) / var(--lh-cap) var(--font-ui); }
   /* 고른 줄의 초안이 든 빈 칸(끌어 놓았거나 나무에서 고름) - 점선 그대로 색만 강조 */
   .pg .new-slot-empty[data-draft] { border-color: var(--accent); }
+  /* 엮은 문서의 앱이 채우는 목록(자식 WI) - 읽기만 하는 줄이라 받을 자리의 점선 테두리가 없다(같은 들여쓰기, 긴 제목은 줄 안에서 접힌다) */
+  .pg .new-auto { flex: 1 1 0; display: grid; gap: 2px; min-width: 0; margin: 0; padding: 2px var(--pg-pad-l); list-style: none; color: var(--ink-2); font: var(--fs-cap) / var(--lh-cap) var(--font-ui); overflow-wrap: anywhere; }
   /* 문장 사이에 끌어 놓은 저장 전 문장(점선 초안) - 후보 줄과 같은 점선의 문장 상자, 언어 탭은 늘. 줄 상자(.new-item)가 아니라 고르기·이음 선·놓기에 끼지 않는다 */
   .new-draft { margin: 4px 0; }
   .new-draft > .strip-row + .strip-row { margin-top: 4px; }
@@ -1990,6 +1990,8 @@
   .tree-leaf { display: block; width: 100%; padding: 4px 8px; border-radius: var(--r-1); font-size: var(--fs-cap); line-height: 17px; color: var(--ink-2); text-align: left; cursor: pointer; }
   .tree-leaf:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
   .tree-leaf:disabled { color: var(--ink-4); cursor: not-allowed; }
+  /* 문장을 받지 않는 상위 항목(묶음)의 이름 줄 - 보낼 곳 줄과 같은 상자·들여쓰기(인라인 padding-left)이되 단추가 아니라 올림 바탕이 없다 */
+  .tree-heading { margin: 0; padding: 4px 8px; font-size: var(--fs-cap); line-height: 17px; font-weight: 600; color: var(--ink-3); }
   /* 보낼 곳 더하기·지우기(작성자) - 지우기 단추는 줄 끝에 늘 제자리로 흐리게 있고, 줄에 올리거나 포커스하면 또렷해진다(줄 폭이 변하지 않는다) */
   .tree-row { display: flex; min-width: 0; align-items: center; gap: 2px; }
   .tree-row > .tree-node, .tree-row > .tree-leaf { flex: 1; min-width: 0; width: auto; }

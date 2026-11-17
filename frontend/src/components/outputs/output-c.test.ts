@@ -330,3 +330,79 @@ describe("OutputCView", () => {
     unmount();
   });
 });
+
+describe("OutputCView sections that take no sentences", () => {
+  const base = makeOutput([]).docs[0];
+  function makeSection(location_key: string, number: string | null, label: string, extra: Partial<Section> = {}): Section {
+    return { ...makeSectionOutline({ default_style: "bullet" }), location_key, label, number, na_reason: null, heading_note: "", items: [], ...extra };
+  }
+  const WI_LIST = "document_relationships.work_instructions";
+  const sections: Section[] = [
+    makeSection("general_requirements.safety", null, "General Requirements › Safety", { level: 1, items: [makeItem({ target_id: 1, text: "보호구", status: "confirmed", number_style: "bullet" })] }),
+    makeSection("document_relationships", "7", "Document Relationships", { kind: "group", counts_lines: false }),
+    makeSection(WI_LIST, "7.2", "Document Relationships › Work Instructions", {
+      kind: "auto_list",
+      level: 1,
+      counts_lines: false,
+      auto_items: [{ code: "WI-CF-01", title: "Rotor change" }, { code: "WI-CF-02", title: "" }],
+    }),
+    makeSection("document_relationships.references", "7.3", "Document Relationships › References", { level: 1 }),
+  ];
+  const data: OutputC = { docs: [{ ...base, sections }], deleted: [], moved: [] };
+  const edit = { onMove: () => {}, onIndent: () => {}, onMark: () => {}, onPlace: () => {} };
+  const find = (host: HTMLElement, testId: string) => host.querySelector(`[data-testid="${testId}"]`);
+
+  it("lists the SOP's work instructions as read-only lines under the auto-list heading", () => {
+    const { host, unmount } = render({ data, ...edit });
+    const list = find(host, `output-c-auto-1-${WI_LIST}`);
+    expect([...(list?.querySelectorAll("li") ?? [])].map((item) => item.textContent)).toEqual(["WI-CF-01 — Rotor change", "WI-CF-02"]);
+    // 끌 상자도 줄 끝 단추도 없고, 빈 칸 표시("–")로 그리지도 않는다
+    expect(list?.querySelector("[data-drag-box], button")).toBeNull();
+    expect(find(host, `output-c-empty-1-${WI_LIST}`)).toBeNull();
+    expect(find(host, `output-c-section-1-${WI_LIST}`)?.textContent).toBe("7.2Document Relationships › Work Instructions");
+    unmount();
+  });
+
+  it("says so when the SOP has no work instructions yet", () => {
+    const empty: OutputC = { ...data, docs: [{ ...base, sections: [makeSection(WI_LIST, "7.2", "Work Instructions", { kind: "auto_list", counts_lines: false })] }] };
+    const { host, unmount } = render({ data: empty });
+    expect(find(host, `output-c-auto-1-${WI_LIST}`)?.textContent).toBe("No work instructions yet");
+    unmount();
+  });
+
+  it("draws a group as its heading only, and an empty section that takes sentences with the empty mark", () => {
+    const { host, unmount } = render({ data, ...edit });
+    const group = host.querySelector('section[data-location-key="document_relationships"]');
+    expect(group?.children).toHaveLength(1);
+    expect(find(host, "output-c-section-1-document_relationships")?.textContent).toBe("7Document Relationships");
+    expect(find(host, "output-c-empty-1-document_relationships")).toBeNull();
+    expect(find(host, "output-c-empty-1-document_relationships.references")).not.toBeNull();
+    unmount();
+  });
+
+  it("shows an N/A group with its reason like any other section", () => {
+    const na: OutputC = { ...data, docs: [{ ...base, sections: [makeSection("document_relationships", "7", "Document Relationships", { kind: "group", counts_lines: false, na_reason: "No related documents" })] }] };
+    const { host, unmount } = render({ data: na });
+    expect(host.querySelector("[data-na-reason]")?.textContent).toBe("N/A · No related documents");
+    unmount();
+  });
+
+  it("titles a category section without a number and draws its lines as bullets", () => {
+    const { host, unmount } = render({ data });
+    expect(find(host, "output-c-section-1-general_requirements.safety")?.textContent).toBe("General Requirements › Safety");
+    expect(find(host, "output-c-bullet-1")).not.toBeNull();
+    expect(find(host, "output-c-number-1")).toBeNull();
+    unmount();
+  });
+
+  it("heads an appendix with its label alone while its lines keep the appendix number", () => {
+    // 부록의 이름에 번호가 들어 있다 - 머리에 번호를 또 적으면 "1Appendix 1. …"이 된다
+    const appendix = makeSection("appendices.a1", "1", "Appendix 1. Alarm list", { shows_number: false, default_style: "numbered", items: [makeItem({ target_id: 5, text: "경보", status: "confirmed", number: "1.1" })] });
+    const numbered = makeSection("purpose", "1", "Purpose");
+    const { host, unmount } = render({ data: { ...data, docs: [{ ...base, sections: [numbered, appendix] }] } });
+    expect(find(host, "output-c-section-1-appendices.a1")?.textContent).toBe("Appendix 1. Alarm list");
+    expect(find(host, "output-c-section-1-purpose")?.textContent).toBe("1Purpose");
+    expect(find(host, "output-c-number-5")?.textContent).toBe("1.1");
+    unmount();
+  });
+});

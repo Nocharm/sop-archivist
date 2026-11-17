@@ -16,6 +16,7 @@ from tests.sop_helpers import (
     AUTHOR,
     assign_as_is,
     create_bundle,
+    declare_outline_item,
     find_unit,
     get_bundle,
     get_group_by_unit,
@@ -33,7 +34,7 @@ pytestmark = pytest.mark.usefixtures("clean_sop")
 KO_HEAD, EN_HEAD = "5. 절차", "5. Procedure"
 OLD1_KO, OLD1_EN = "합성 장비를 켠다.", "Turn on the synthetic unit."
 OLD2_KO, OLD2_EN = "합성 시료를 넣는다.", "Load the synthetic sample."
-SLOT, LABEL = "procedures.procedure", "Procedures › Procedure"
+SLOT, LABEL = "procedures.p1", "Procedures › Procedure 1"  # 새 SOP에 저절로 있는 첫 절차(6.1)
 TOBE_DOCS = [
     {"code": "SOP-NEW", "title": "Synthetic SOP", "doc_type": "sop", "parent_code": None},
     {"code": "WI-01", "title": "Synthetic WI", "doc_type": "wi", "parent_code": "SOP-NEW"},
@@ -446,23 +447,32 @@ def test_clearing_the_holding_doc_confirms_the_shared_slot_heading(client: TestC
     assert (ko["status"], ko["hold_reason"]) == ("confirmed", "")
 
 
-def test_a_slot_with_only_a_slot_heading_is_still_an_empty_equipment_slot(client: TestClient) -> None:
-    """장비 SOP의 빈 Procedures 하위 칸 알림 — 칸 제목은 칸 항목이 아니라 칸을 채우지 않는다(제품 명세 §7.13 칸 제목)."""
+def test_a_slot_heading_alone_keeps_an_optional_item_and_a_category_takes_the_chapter_number(client: TestClient) -> None:
+    """칸 제목만 이어도 선택 항목(7.1.x)은 결과물에 나오고(출처가 조용히 빠지지 않게), 번호 없는 범주의 칸 제목은 No.에 5를 적는다."""
     bundle_id = create_bundle(client, is_synthetic=True)["id"]
-    equipment = [{**TOBE_DOCS[0], "is_equipment_sop": True}]
-    response = put_tobe(client, bundle_id, equipment)
+    response = put_tobe(client, bundle_id, TOBE_DOCS[:1])
     assert response.status_code == 200, response.text
     sop_id = response.json()["docs"][0]["id"]
-    old1 = _upload_view(client, bundle_id, p(KO_HEAD, "Heading1") + p(OLD1_KO), "SYNTHETIC_OLD-1_SlotHeading.docx")
-    ko = find_unit(old1, KO_HEAD)
-    heading = _heading("h", sop_id, ko, slot_key="procedures.maintenance")
-    assert save_group(client, bundle_id, _body([_unit_in(ko)], [heading])).status_code == 200
+    declare_outline_item(client, sop_id, "general_requirements.safety", "Safety")
+    old1 = _upload_view(
+        client, bundle_id, p(KO_HEAD, "Heading1") + p(OLD1_KO) + p(EN_HEAD, "Heading1"), "SYNTHETIC_OLD-1_SlotHeading.docx"
+    )
+    ko, en = find_unit(old1, KO_HEAD), find_unit(old1, EN_HEAD)
+    form = "document_relationships.associated_documents.form"
+    # 묶음 제목(7장)에는 칸 제목도 잇지 못한다
+    group = _heading("ko", sop_id, ko, slot_key="document_relationships")
+    assert _reason(save_group(client, bundle_id, _body([_unit_in(ko)], [group]))) == "slot_not_assignable"
+    headings = [_heading("ko", sop_id, ko, slot_key=form), _heading("en", sop_id, en, slot_key="general_requirements.safety")]
+    saved = save_group(client, bundle_id, _body([_unit_in(ko), _unit_in(en)], headings))
+    assert saved.status_code == 200, saved.text
 
-    notices = [notice for notice in _readiness(client, bundle_id)["notices"] if notice["code"] == "equipment_sop_empty_slots"]
+    sop = _get_output(client, bundle_id, "outputs/c")["docs"][0]
+    rows = {row["unit_id"]: row for row in _get_output(client, bundle_id, "outputs/a")}
 
-    assert [notice["slot_keys"] for notice in notices] == [
-        ["procedures.electronic_record_control", "procedures.troubleshooting", "procedures.maintenance"],
-    ]
+    sections = {section["location_key"]: section for section in sop["sections"]}
+    assert (sections[form]["number"], sections[form]["items"], sections[form]["heading_note"]) == ("7.1.1", [], "← OLD-1 §5")
+    assert (rows[ko["id"]]["dest_number"], rows[en["id"]]["dest_number"]) == ("7.1.1", "5")
+    assert rows[en["id"]]["dest_location"] == "General Requirements › Safety"
 
 
 def test_moving_to_another_slot_heading_leaves_the_shared_one(client: TestClient) -> None:

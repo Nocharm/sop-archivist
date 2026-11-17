@@ -189,7 +189,7 @@ def _build_uv_bundle(client: TestClient, bundle_id: int) -> None:
     doc_id = upload_old_doc(client, bundle_id, "SYNTHETIC_SOP-ABC-1016_UV_spectrophotometer.docx", lines)["id"]
     confirm_ref(client, bundle_id, doc_id, UV_REF_CONFIRMED, "OLD-2")
     to_sop = find_line(client, bundle_id, doc_id, UV_TO_SOP)
-    assign_as_is(client, bundle_id, to_sop, tobe["SOP-UV"], slot_key="procedures.procedure")
+    assign_as_is(client, bundle_id, to_sop, tobe["SOP-UV"], slot_key="procedures.p1")
     to_wi = find_line(client, bundle_id, doc_id, UV_TO_WI)
     assign_as_is(client, bundle_id, to_wi, tobe["WI-11"], wi_step=1, wi_part="instruction")
 
