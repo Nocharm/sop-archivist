@@ -2,7 +2,7 @@
 // 움직이기는 스크롤이다(휠·트랙패드·스크롤 막대·터치, 바탕 끌기 use-map-pan). 지도 위의 Ctrl(⌘)+휠은 확대(use-map-zoom). 바탕(마디·단추가 아닌 곳)을 누르면 고름을 푼다.
 "use client";
 
-import type { MouseEvent, RefObject } from "react";
+import { useRef, type MouseEvent, type PointerEvent, type RefObject } from "react";
 
 import { useMapPan } from "@/components/map/use-map-pan";
 import { useMapZoom } from "@/components/map/use-map-zoom";
@@ -12,6 +12,7 @@ import { flashElement } from "@/components/ui/motion";
 import { useI18n } from "@/lib/i18n";
 import type { MapLayout } from "@/lib/map-layout";
 import type { MapView } from "@/lib/map-model";
+import { isBackgroundClick } from "@/lib/map-pointer";
 
 /** 스크롤 칸 안쪽 여백(px) - Fit all의 칸 여백(FIT_MARGIN 32)의 한쪽 몫 */
 export const CANVAS_PAD = 16;
@@ -51,9 +52,18 @@ export function MapCanvas({ view, layout, zoom, selectedId, onSelect, onToggleLa
   useMapPan(scrollRef);
   useMapZoom(scrollRef, zoom, onZoom);
 
+  // 누른 곳 - 마디에서 누르고 밖에서 뗀 click은 공통 조상(바탕)으로 오므로 누른 곳까지 바탕일 때만 고름을 푼다
+  const pressRef = useRef<EventTarget | null>(null);
+
+  function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
+    pressRef.current = event.target;
+    tip.handlers.onPointerDown();
+  }
+
   function handleClick(event: MouseEvent<HTMLDivElement>) {
-    if (event.target instanceof Element && event.target.closest(".map-node, button, a")) return;
-    onSelect(null);
+    const press = pressRef.current;
+    pressRef.current = null;
+    if (isBackgroundClick(press, event.target)) onSelect(null);
   }
 
   return (
@@ -67,6 +77,7 @@ export function MapCanvas({ view, layout, zoom, selectedId, onSelect, onToggleLa
       tabIndex={-1}
       style={{ padding: CANVAS_PAD }}
       {...tip.handlers}
+      onPointerDown={handlePointerDown}
       onClick={handleClick}
     >
       <div className="map-sizer" data-testid="map-sizer" style={{ width: layout.width * zoom, height: layout.height * zoom }}>

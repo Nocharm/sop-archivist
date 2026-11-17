@@ -2,14 +2,14 @@
 // 남의 Bundle은 서버가 요약만 보낸다(설계 2026-11-17 참조 지도 §5) - 화면은 받은 것만 그린다. 고치는 일은 Assign에서 한다.
 "use client";
 
-import { Files, Maximize, ZoomIn, ZoomOut } from "lucide-react";
+import { Files, Maximize, SearchX, ZoomIn, ZoomOut } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useDeferredValue, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { BundleLoadError } from "@/components/bundle-load-error";
 import { CANVAS_PAD, MapCanvas, revealMapNode } from "@/components/map/map-canvas";
-import { MapList } from "@/components/map/map-list";
+import { listShownRows, MapList } from "@/components/map/map-list";
 import { MapSide } from "@/components/map/map-side";
 import { MapToolbar } from "@/components/map/map-toolbar";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -104,10 +104,9 @@ export default function MapPage() {
     revealMapNode(scrollRef.current, nodeId);
   });
 
-  /** 그 문서를 고르고 지도에서 보이게 한다 - 접힌 줄기에 있으면 먼저 편다 */
-  function pickNode(nodeId: string) {
-    setSelectedId(nodeId);
-    const node = view === "map" ? mapView?.nodes.find((item) => item.id === nodeId) : undefined;
+  /** 지도에서 그 문서가 보이게 한다 - 접힌 줄기에 있으면 먼저 펴고, 지도가 아직 그려지지 않았으면(List에서 넘어올 때) 그려진 뒤에 */
+  function showInMap(nodeId: string, isDrawn: boolean) {
+    const node = mapView?.nodes.find((item) => item.id === nodeId);
     if (!node) return;
     const laneKey = getLaneKey(node.bundle_id);
     if (collapsed.has(laneKey)) {
@@ -115,9 +114,24 @@ export default function MapPage() {
       next.delete(laneKey);
       setCollapsed(next);
       pendingRevealRef.current = nodeId;
-    } else if (scrollRef.current) {
+    } else if (isDrawn && scrollRef.current) {
       revealMapNode(scrollRef.current, nodeId);
+    } else {
+      pendingRevealRef.current = nodeId;
     }
+  }
+
+  /** 그 문서를 고르고 지도에서 보이게 한다 */
+  function pickNode(nodeId: string) {
+    setSelectedId(nodeId);
+    if (view === "map") showInMap(nodeId, true);
+  }
+
+  // List에서 고른 문서는 Map으로 넘어올 때 그 줄기를 펴고 보이게 한다
+  function switchView(next: "map" | "list") {
+    if (next === view) return;
+    setView(next);
+    if (next === "map" && selectedId !== null) showInMap(selectedId, false);
   }
 
   useLayoutEffect(() => {
@@ -155,10 +169,28 @@ export default function MapPage() {
     setScope("all");
   }
 
-  // Enter - 지도 순서(줄기 순서 → 줄기 안 순서)로 맞는 문서를 차례로 고른다(끝이면 처음으로). 접힌 줄기의 문서면 그 줄기를 편다
+  /** List의 보이는 줄 순서로 맞는 문서(줄의 From · To 차례), 줄이 없는 맞는 문서는 그 뒤에 */
+  function listRowMatchOrder(shown: MapView): string[] {
+    const order: string[] = [];
+    const seen = new Set<string>();
+    const add = (id: string) => {
+      if (shown.matches.has(id) && !seen.has(id)) {
+        seen.add(id);
+        order.push(id);
+      }
+    };
+    for (const row of listShownRows(shown)) {
+      add(row.from.id);
+      add(row.to.id);
+    }
+    for (const node of shown.nodes) add(node.id);
+    return order;
+  }
+
+  // Enter - 보고 있는 순서로 맞는 문서를 차례로 고른다(끝이면 처음으로): 지도는 줄기 순서 → 줄기 안 순서(접힌 줄기의 문서면 그 줄기를 편다), List는 줄 순서
   function selectNextMatch() {
     if (!mapView || !mapView.hasQuery) return;
-    const order = listMapOrder(mapView).filter((id) => mapView.matches.has(id));
+    const order = view === "map" ? listMapOrder(mapView).filter((id) => mapView.matches.has(id)) : listRowMatchOrder(mapView);
     if (order.length === 0) return;
     const at = selectedId === null ? -1 : order.indexOf(selectedId);
     pickNode(order[(at + 1) % order.length]);
@@ -175,6 +207,8 @@ export default function MapPage() {
   const self = data?.bundles.find((bundle) => bundle.relation === "self");
   const isFiltered = filters.proposedOnly || !filters.showMoved || (mapView?.hasQuery ?? false);
   const canSearchAll = scope === "linked" && mapView !== null && mapView.hasQuery && mapView.matches.size === 0;
+  // 지도에 맞는 것이 없다 - 찾는 중이면 맞는 문서가 없을 때, 거르기만이면 남은 선이 없을 때
+  const isMapUnmatched = mapView !== null && (mapView.hasQuery ? mapView.matches.size === 0 : isFiltered && mapView.edges.length === 0);
 
   let main: ReactNode;
   // 지도는 제 스크롤 칸(map-canvas)을 가진다 - 표·빈 상태만 바깥 스크롤 칸에 둔다
@@ -192,6 +226,20 @@ export default function MapPage() {
           <Link href={getStageHref(bundleId, "documents")} className="btn" data-testid="map-empty-docs-go">
             {t("stage.documents")}
           </Link>
+        }
+      />
+    );
+  } else if (view === "map" && isMapUnmatched) {
+    // 찾기·거르기에 맞는 것이 없으면 흐린 지도 대신 List와 같은 말과 단추(설계 §6.9)
+    main = (
+      <EmptyState
+        icon={SearchX}
+        title={t("map.empty.filtered")}
+        testId="map-empty-filtered"
+        action={
+          <button type="button" className="btn" data-testid="map-empty-clear" onClick={() => setFilters(DEFAULT_FILTERS)}>
+            {t("map.empty.clear")}
+          </button>
         }
       />
     );
@@ -229,14 +277,15 @@ export default function MapPage() {
         onSearchAll={() => setScope("all")}
         onRefresh={loaded.reload}
       >
-        <div className="view-toggle map-views" role="group" aria-label={t("map.title")}>
+        <div className="view-toggle map-views" role="group" aria-label={t("map.view.label")}>
           {VIEWS.map((item) => (
-            <button key={item} type="button" aria-pressed={view === item} data-testid={`map-view-${item}`} onClick={() => setView(item)}>
+            <button key={item} type="button" aria-pressed={view === item} data-testid={`map-view-${item}`} onClick={() => switchView(item)}>
               {t(`map.view.${item}`)}
             </button>
           ))}
         </div>
-        {view === "map" && (
+        {/* 그린 지도가 있을 때만 - 빈 상태·맞는 것 없음 위에는 확대할 것이 없다 */}
+        {isCanvas && (
           <div className="map-zoom">
             <Tooltip label={t("map.zoom.out")}>
               <button type="button" className="btn icon ghost" aria-label={t("map.zoom.out")} data-testid="map-zoom-out" disabled={zoom <= ZOOM_MIN} onClick={() => changeZoom(stepZoom(zoom, -1), null)}>
@@ -252,7 +301,7 @@ export default function MapPage() {
               </button>
             </Tooltip>
             <Tooltip label={t("map.zoom.fit")}>
-              <button type="button" className="btn icon ghost" aria-label={t("map.zoom.fit")} data-testid="map-zoom-fit" disabled={!layout} onClick={fitAll}>
+              <button type="button" className="btn icon ghost" aria-label={t("map.zoom.fit")} data-testid="map-zoom-fit" onClick={fitAll}>
                 <Maximize size={16} strokeWidth={1.5} aria-hidden />
               </button>
             </Tooltip>

@@ -117,6 +117,7 @@
   .map-edge[data-label="moved"] { stroke-dasharray: 9 3 2 3; }
   .map-edge-dot { fill: var(--peer-fill); opacity: .5; transition: opacity var(--dur-fast); }
   .map-edge-dot[data-k="out"] { fill: var(--accent); }
+  .map-edge-dot[data-label="proposed"][data-k="out"] { fill: var(--lang-ref-ink); }
   .map-edge-dot[data-k="peer"] { opacity: .3; }
 
   /* 올리기(data-hot)·고르기(data-focus) - 이어진 것만 진하게, 나머지는 흐리게. 찾는 중(data-find)이면 맞지 않는 마디가 흐리다 */

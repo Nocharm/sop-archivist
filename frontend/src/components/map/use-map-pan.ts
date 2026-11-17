@@ -17,6 +17,8 @@ interface Press {
   left: number;
   top: number;
   isPanning: boolean;
+  /** Esc로 끌기를 거둔 뒤 아직 놓지 않았다 - 놓을 때 따라오는 click을 삼킨다 */
+  isCancelled: boolean;
 }
 
 /** 놓은 뒤 따라오는 click 한 번을 캡처 단계에서 삼킨다 - 그 click이 바탕 누르기(고름 풀기)가 되지 않게. click이 오지 않으면 다음 틱에 거둔다 */
@@ -41,21 +43,23 @@ export function useMapPan(scrollRef: RefObject<HTMLElement | null>): void {
         el.scrollLeft = press.left;
         el.scrollTop = press.top;
       }
-      if (press.isPanning) {
-        delete el.dataset.pan;
-        if (el.hasPointerCapture(press.pointerId)) el.releasePointerCapture(press.pointerId);
-      }
+      delete el.dataset.pan;
+      if (el.hasPointerCapture(press.pointerId)) el.releasePointerCapture(press.pointerId);
       press = null;
       window.removeEventListener("keydown", handleKey, true);
     };
 
-    // Esc는 처음 자리로 돌린다 - 지도의 다른 Esc(고름 풀기)까지 가지 않게 캡처에서 멈춘다
+    // Esc는 처음 자리로 돌린다 - 지도의 다른 Esc(고름 풀기)까지 가지 않게 캡처에서 멈춘다.
+    // 누름은 놓을 때까지 쥐고 있다(포인터 캡처도) - 놓을 때의 click이 바탕 누르기가 되어 고름을 풀지 않게 그때 삼킨다
     const handleKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || !press?.isPanning) return;
       event.preventDefault();
       event.stopPropagation();
-      finish(true);
-      swallowNextClick();
+      el.scrollLeft = press.left;
+      el.scrollTop = press.top;
+      delete el.dataset.pan;
+      press.isPanning = false;
+      press.isCancelled = true;
     };
 
     const handleDown = (event: PointerEvent) => {
@@ -65,7 +69,7 @@ export function useMapPan(scrollRef: RefObject<HTMLElement | null>): void {
       // 스크롤 막대 위의 누름은 막대에 맡긴다
       const rect = el.getBoundingClientRect();
       if (event.clientX - rect.left - el.clientLeft >= el.clientWidth || event.clientY - rect.top - el.clientTop >= el.clientHeight) return;
-      press = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: el.scrollLeft, top: el.scrollTop, isPanning: false };
+      press = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: el.scrollLeft, top: el.scrollTop, isPanning: false, isCancelled: false };
       window.addEventListener("keydown", handleKey, true);
     };
 
@@ -76,6 +80,7 @@ export function useMapPan(scrollRef: RefObject<HTMLElement | null>): void {
         finish(false);
         return;
       }
+      if (press.isCancelled) return;
       const dx = event.clientX - press.x;
       const dy = event.clientY - press.y;
       if (!press.isPanning) {
@@ -90,9 +95,9 @@ export function useMapPan(scrollRef: RefObject<HTMLElement | null>): void {
 
     const handleUp = (event: PointerEvent) => {
       if (!press || event.pointerId !== press.pointerId) return;
-      const wasPanning = press.isPanning;
+      const shouldSwallow = press.isPanning || press.isCancelled;
       finish(false);
-      if (wasPanning) swallowNextClick();
+      if (shouldSwallow) swallowNextClick();
     };
 
     const handleCancel = (event: PointerEvent) => {

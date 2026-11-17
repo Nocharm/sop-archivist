@@ -10,7 +10,7 @@ import { BundleStatusPill } from "@/components/status";
 import type { MapBundle, MapNode } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import { LANE_HEAD, LANE_W, listNeighbors, MORE_H, NODE_H, NODE_W, stepZoom, ZOOM_FAR, type LaidLane, type MapLayout } from "@/lib/map-layout";
-import { getEntryFocus, getLaneFocus, getMapKeyAction, readLaneFocus, type MapFocus } from "@/lib/map-keys";
+import { getLaneFocus, getMapKeyAction, getTabStop, isMapMoveKey, readLaneFocus, type MapFocus } from "@/lib/map-keys";
 import { countNodeLines, formatBecomes, getEdgeKey, getEdgeLabel, getEdgeSides, type MapView } from "@/lib/map-model";
 import { truncateMiddle } from "@/lib/truncate-middle";
 
@@ -74,11 +74,9 @@ function getOwner(bundle: MapBundle | undefined): Owner {
 interface LaneHeadProps {
   lane: LaidLane;
   bundle: MapBundle | undefined;
-  /** 지도 안의 Tab 자리 하나가 이 줄기의 접기 단추인가(움직이는 tabindex) */
-  isEntry: boolean;
 }
 
-function LaneHead({ lane, bundle, isEntry }: LaneHeadProps) {
+function LaneHead({ lane, bundle }: LaneHeadProps) {
   const { t } = useI18n();
   const owner = getOwner(bundle);
   // 구성원이 아닌 Bundle은 제목이 오지 않는다(빈 글) - 코드만 적고 다른 무엇으로도 채우지 않는다
@@ -104,7 +102,8 @@ function LaneHead({ lane, bundle, isEntry }: LaneHeadProps) {
           aria-expanded={!lane.collapsed}
           aria-label={toggleLabel}
           data-tip={toggleLabel}
-          tabIndex={isEntry ? 0 : -1}
+          // Tab 자리 하나는 세계가 DOM에서 단다(applyTabStop)
+          tabIndex={-1}
         >
           <Chevron size={14} strokeWidth={1.5} aria-hidden />
         </button>
@@ -139,8 +138,21 @@ export const MapWorld = memo(function MapWorld({ view, layout, zoom, selectedId,
   const sides = useMemo(() => getEdgeSides(view), [view]);
   const lineCounts = useMemo(() => countNodeLines(view), [view]);
   const neighbors = useMemo(() => listNeighbors(layout.edges), [layout]);
-  // 움직이는 tabindex - 지도 안의 Tab 자리는 이것 하나다(고른 마디, 없으면 이 Bundle의 첫 마디, 그것도 없으면 첫 줄기 머리)
-  const entry = getEntryFocus(layout, selectedId);
+  // 마지막으로 포커스한 마디·머리 - 지도 안의 Tab 자리 하나가 따라간다(움직이는 tabindex)
+  const lastFocusRef = useRef<MapFocus | null>(null);
+
+  // Tab 자리(tabIndex 0)는 DOM에서 하나만 단다 - 렌더는 늘 -1이라 React가 손으로 단 값을 되돌리지 않고, 포커스가 옮길 때마다 다시 그리지 않는다
+  function applyTabStop() {
+    const world = worldRef.current;
+    if (!world) return;
+    const stop = getTabStop(layout, lastFocusRef.current, selectedId);
+    const target = stop === null ? null : findFocusEl(world, stop);
+    for (const el of world.querySelectorAll<HTMLElement>('[tabindex="0"]')) if (el !== target) el.tabIndex = -1;
+    if (target) target.tabIndex = 0;
+  }
+
+  // 그린 것·고름이 바뀌면(접힘·거르기·다시 읽기) 그 자리가 아직 있는지 보고 다시 단다
+  useLayoutEffect(() => applyTabStop());
 
   // 고른 마디의 이웃 강조 - 고름이나 그린 것이 바뀔 때마다 맞추고, 남은 올리기 강조는 거둔다
   useLayoutEffect(() => {
@@ -167,6 +179,15 @@ export const MapWorld = memo(function MapWorld({ view, layout, zoom, selectedId,
     showHot(nodeId);
   }
 
+  function handleFocus(event: FocusEvent<HTMLDivElement>) {
+    const focus = readFocus(event.target);
+    if (focus !== null && focus !== lastFocusRef.current) {
+      lastFocusRef.current = focus;
+      applyTabStop();
+    }
+    handleOver(event);
+  }
+
   function handleOut(event: PointerEvent<HTMLDivElement> | FocusEvent<HTMLDivElement>) {
     const from = readNodeId(event.target);
     // 같은 마디 안에서 옮겨 간 것은 나간 것이 아니다
@@ -180,8 +201,10 @@ export const MapWorld = memo(function MapWorld({ view, layout, zoom, selectedId,
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const world = worldRef.current;
     if (!world) return;
-    const action = getMapKeyAction(event.key, readFocus(event.target) ?? "", layout);
-    // 지도 끝에서의 화살표는 null - 포커스와 고름을 그대로 둔다
+    const focus = readFocus(event.target);
+    const action = getMapKeyAction(event.key, focus ?? "", layout);
+    // 옮기는 글쇠는 옮길 곳이 없어도(지도 끝 - null) 막는다: 칸이 스크롤해 포커스한 마디가 밀려나지 않게. 포커스와 고름은 그대로다
+    if (focus !== null && isMapMoveKey(event.key)) event.preventDefault();
     if (action === null || action.kind === "select" || action.kind === "toggle") return;
     event.preventDefault();
     if (action.kind === "focus") {
@@ -251,7 +274,7 @@ export const MapWorld = memo(function MapWorld({ view, layout, zoom, selectedId,
         data-match={view.matches.has(node.id) ? "" : undefined}
         aria-label={label}
         aria-pressed={isSelected}
-        tabIndex={node.id === entry ? 0 : -1}
+        tabIndex={-1}
         style={{ left: laid.x - lane.x, top: laid.y, width: NODE_W, height: NODE_H }}
       >
         <span className="map-node-row">
@@ -282,7 +305,7 @@ export const MapWorld = memo(function MapWorld({ view, layout, zoom, selectedId,
       style={{ width: layout.width, height: layout.height, transform: `scale(${zoom})` }}
       onPointerOver={handleOver}
       onPointerOut={handleOut}
-      onFocus={handleOver}
+      onFocus={handleFocus}
       onBlur={handleOut}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
@@ -300,7 +323,7 @@ export const MapWorld = memo(function MapWorld({ view, layout, zoom, selectedId,
             data-collapsed={lane.collapsed ? "" : undefined}
             style={{ left: lane.x, width: LANE_W, height: lane.height }}
           >
-            <LaneHead lane={lane} bundle={bundle} isEntry={entry === getLaneFocus(lane.key)} />
+            <LaneHead lane={lane} bundle={bundle} />
             {lane.nodeIds.map((id) => {
               const node = nodeById.get(id);
               return node ? renderNode(node, lane) : null;
@@ -328,7 +351,7 @@ export const MapWorld = memo(function MapWorld({ view, layout, zoom, selectedId,
           return (
             <g key={laid.key}>
               <path className="map-edge" d={laid.d} data-edge={laid.key} data-k={side} data-label={getEdgeLabel(edge)} />
-              <circle className="map-edge-dot" cx={laid.dot.x} cy={laid.dot.y} r={DOT_R} data-edge={laid.key} data-k={side} />
+              <circle className="map-edge-dot" cx={laid.dot.x} cy={laid.dot.y} r={DOT_R} data-edge={laid.key} data-k={side} data-label={getEdgeLabel(edge)} />
             </g>
           );
         })}
