@@ -50,10 +50,10 @@
   .map-link-n { flex: none; font-size: var(--fs-cap); color: var(--ink-3); font-variant-numeric: tabular-nums; }
   /* 줄(선) 아래의 문장 - 그 줄에 딸린 것이 보이게 왼쪽 선 하나로 묶는다 */
   .map-sentences { display: grid; gap: 1px; margin: 2px 0 4px 12px; padding-left: 6px; border-left: 1px solid var(--line); }
-  .map-sentence { display: grid; gap: 1px; min-width: 0; padding: 3px 6px; border-radius: var(--r-1); font-size: var(--fs-cap); line-height: var(--lh-cap); }
-  .map-sentence:hover { background: var(--hover); }
+  /* 읽기 전용 줄 - 누를 것처럼 보이지 않게 호버 바탕을 두지 않는다 */
+  .map-sentence { display: grid; gap: 1px; min-width: 0; padding: 3px 6px; font-size: var(--fs-cap); line-height: var(--lh-cap); }
   .map-sentence-id { font-family: var(--font-mono); color: var(--ink-3); overflow-wrap: anywhere; }
-  .map-sentence-text { color: var(--ink); }
+  .map-sentence-text { color: var(--ink); overflow-wrap: anywhere; }
   .map-withheld { margin: 0 0 4px 18px; font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-3); }
   .map-legend { display: grid; gap: 6px; }
   .map-legend li { display: flex; align-items: center; gap: 8px; font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-2); }

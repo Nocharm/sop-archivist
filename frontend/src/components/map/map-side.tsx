@@ -9,7 +9,6 @@ import { useMemo } from "react";
 import { LinkSentences, SideLinesError, SideLinesFoot, type SideLinesState } from "@/components/map/map-lines";
 import { BECOMES_EMPTY_KEY, EDGE_PILL } from "@/components/map/map-list";
 import { BundleStatusPill } from "@/components/status";
-import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import type { MapRelation, RefMap } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
 import { attachLines, type LineSide } from "@/lib/map-lines-model";
@@ -127,7 +126,6 @@ function SelfSummary({ data }: { data: RefMap }) {
 
 export function MapSide({ data, selectedId, lines, onPick, onClear }: MapSideProps) {
   const { t } = useI18n();
-  const tip = useDelegatedTip();
   const detail = useMemo(() => (selectedId === null ? null : describeNode(data, selectedId)), [data, selectedId]);
   if (!detail) return <SelfSummary data={data} />;
 
@@ -136,8 +134,7 @@ export function MapSide({ data, selectedId, lines, onPick, onClear }: MapSidePro
   // 읽지 못했으면 문장·쉬머 대신 알림 한 줄 - 앞서 받은 문장을 그리지 않는다
   const shown: SideLinesState = lines.error === null ? lines : { ...lines, data: null, isLoading: false };
   return (
-    <div className="map-side-inner" data-testid="map-side-node" {...tip.handlers}>
-      {tip.node}
+    <div className="map-side-inner" data-testid="map-side-node">
       <div className="grid justify-items-start gap-1.5">
         <OwnerMark owner={relation ?? "none"} />
         <p className="map-side-num" data-testid="map-side-number">

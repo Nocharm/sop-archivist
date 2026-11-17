@@ -535,12 +535,13 @@ List의 열 이름과 선의 상태는 상태 이름처럼 ko에서도 영어로
 
 **3걸음 문장에서 정한 것**(`feat/map-lines` — 7.2절과 다르면 이쪽이 지금 동작이다. 줄의 Open in Assign은 다음 브랜치)
 
-- **응답**: `GET /api/bundles/{id}/map/lines?node=<마디 id>&scope=linked|all` → `{node, out, in, withheld_out, withheld_in, more_out, more_in}`. `out`·`in`의 문장 줄은 `{bundle_id, document_id, unit_id, display_id, kind, state, number, source, target, text, text_truncated}`(두 목록 모두 `source`·`target`), 가려진 줄은 **선마다 한 항목** `{source, target, kind, state, lines}` — 7.2의 `hidden_out`·`hidden_in`(한쪽의 수 하나)을 선 단위로 바꿨다. 한 선(맞은편 마디 · 상태)의 줄은 모두 한 문서의 것이라 그 선 밑에 "줄 N개 가려짐"을 바로 적을 수 있고, 가려진 항목에는 요약의 선이 이미 낸 값만 있다(글 · 표시 ID · Unit id · 원문 자리 · 번호 없음). 선마다 문장 줄 수 + 가려진 `lines` = 지도의 `lines`.
+- **응답**: `GET /api/bundles/{id}/map/lines?node=<마디 id>&scope=linked|all` → `{node, out, in, withheld_out, withheld_in, more_out, more_in}`. `out`·`in`의 문장 줄은 `{bundle_id, document_id, unit_id, display_id, kind, state, number, source, target, text, text_truncated}`(두 목록 모두 `source`·`target`), 가려진 줄은 **선마다 한 항목** `{source, target, kind, state, lines}` — 7.2의 `hidden_out`·`hidden_in`(한쪽의 수 하나)을 선 단위로 바꿨다. 한 선(맞은편 마디 · 상태)의 줄은 모두 한 문서의 것이라 그 선 밑에 "줄 N개 가려짐 · 그 Bundle의 구성원이 아닙니다"를 바로 적을 수 있고, 가려진 항목에는 요약이 그 보는 사람에게 이미 준 마디 id와 선의 값만 있다(글 · 표시 ID · Unit id · 원문 자리 없음 — `target`이 `num:<번호>`이면 그 번호는 요약의 `num` 마디로 이미 나간 확정 참조 번호다). 선마다 문장 줄 수 + 가려진 `lines` = 지도의 `lines`.
 - **줄은 지도와 같은 함수에서**: `collect_map_lines`(같은 보는 사람 · 같은 범위)를 그 마디로 좁힌다 — 나가는 줄은 출발 마디가, 들어오는 줄은 끝 마디가 그 마디인 것. 그래서 지도에 없는 마디(없는 문서 · 다른 종류 · 다른 범위 · 번호 꼴이 아니거나 문서가 있는 `num:`)는 따로 묻지 않아도 빈 200이고, 마디 id로 DB를 묻지 않는다(정수 범위 밖의 id도 그대로 빈 답).
 - **남의 Bundle의 확인 안 된 줄은 가려진 줄로도 오지 않는다**(1걸음 결정 그대로 — 지도가 그 줄을 세지 않는다). 가려지는 것은 구성원이 아닌 Bundle의 확정 참조 · 확정 이동뿐이다.
 - **글은 `load_line_texts` 하나**: `bundle_members`(그 문서의 Bundle, 요청한 사람)를 안쪽 조인한 질의라 구성원이 아닌 Bundle의 글은 질의 결과로 오지 않는다. 글은 DB에서 301자까지만 읽는다. 질의가 돌려주지 않았거나 문서 · Bundle이 줄과 다른 Unit의 줄은 가려진 줄로 센다(닫힌 쪽으로). 7.2의 "구성원이 아닌 Bundle의 글은 DB에서 읽지도 않는다"는 1걸음의 들어오는 줄 좁히기(v1.1.14)로 확정 참조 줄만 남았다 — 확정 참조 줄을 번호로 고르는 질의가 그 줄의 글 열을 함께 읽는다(응답 · 로그로는 나가지 않는다).
 - **상한**: 문장 줄만 한쪽 200줄(`more_*`), 가려진 줄은 선 수만큼이라 세지 않는다. 글 300자(`text_truncated`).
 - **순서**: 문장 줄은 (Bundle id, 문서 id, 원문 순서, 종류, 맞은편 마디), 가려진 줄은 (출발, 도착, 종류, 상태)의 글자 순.
+- **알고 둔 한계 — 요약의 상한을 걸지 않는다**: 줄 문장 읽기는 요약의 마디 · 선 상한(`MAX_NODES` 2000 · `MAX_EDGES` 10000)을 적용하지 않아, 잘린 지도(`truncated`)에서는 요약이 뺀 선의 줄도 돌려줄 수 있다. 옆 칸은 요약에 있는 줄(맞은편 · 상태)에만 붙이므로(`attachLines`) 그리지 않고, 그 줄도 같은 접근 규칙을 지난 것이다(구성원인 Bundle의 문장, 그 밖은 확정 줄의 수와 id뿐). 서버는 고치지 않았다.
 
 ## 11. 구현에 맡기는 것
 

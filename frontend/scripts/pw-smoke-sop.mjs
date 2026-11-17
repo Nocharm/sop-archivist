@@ -9450,7 +9450,7 @@ async function checkSideMatchesLines(page, lines, label) {
       const counterpart = side === "out" ? group.target : group.source;
       const note = page.locator(`[data-testid="map-lines-hidden-${side}-${counterpart}-${lineLabel(group)}"]`);
       const text = (await note.count()) > 0 ? (await note.first().textContent()).trim() : "";
-      check(`${label}: a hidden ${side} line from ${counterpart} reads its count`, text === `${group.lines} lines hidden · summary only`, text);
+      check(`${label}: a hidden ${side} line from ${counterpart} reads its count`, text === `${group.lines} lines hidden · you are not a member of that Bundle`, text);
       const under = (await note.count()) > 0 ? await note.first().locator("xpath=..").locator(".map-sentence").count() : -1;
       check(`${label}: no sentence under that hidden line`, under === 0, String(under));
     }
@@ -9478,10 +9478,10 @@ await runStep("map: a member bundle's lines show their sentences, other bundles'
   check("the non-member bundle's confirmed line comes as a count", lines.withheld_in.some((group) => !memberIds.has(bundleOf.get(group.source))), JSON.stringify(lines.withheld_in));
   await checkSideMatchesLines(page, lines, "member");
 
-  const first = lines.out[0];
-  await page.locator(`[data-testid="${lineTestId(first, "out")}"]`).hover();
-  await page.locator('[role="tooltip"]', { hasText: first.text.slice(0, 30) }).first().waitFor({ timeout: T });
-  check("hovering a sentence shows its whole text in a tooltip", true);
+  // 문장 줄은 읽기 전용이다 - 글을 자르지 않고, Tab 자리도 툴팁도 없다(누르는 길은 다음 걸음의 줄 끝 단추)
+  const first = page.locator(`[data-testid="${lineTestId(lines.out[0], "out")}"]`);
+  check("a sentence shows its text in full, without a tab stop", (await first.textContent()).includes(lines.out[0].text) && (await first.getAttribute("tabindex")) === null);
+  check("no sentence is a tab stop", (await page.locator('[data-testid="map-side"] .map-sentence[tabindex]').count()) === 0);
   await takeShot("sop-map-lines.png");
 
   const allPromise = page.waitForResponse((r) => isLinesResponse(r, old1, "all"), { timeout: T });

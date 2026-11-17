@@ -27,12 +27,11 @@ export function LinkSentences({ row, side }: { row: LinkLines; side: LineSide })
         <ul className="map-sentences">
           {lines.map((line) => {
             const counterpart = side === "out" ? line.target : line.source;
-            const text = line.text_truncated ? `${line.text}…` : line.text;
             return (
-              // 두 줄에서 자른 글 전체는 툴팁으로 - 포인터와 키보드 포커스 모두(옆 칸이 data-tip을 맡는다)
-              <li key={line.unit_id} className="map-sentence" tabIndex={0} data-tip={text} data-testid={`map-line-${line.unit_id}-${counterpart}`}>
+              // 글은 자르지 않고 다 보인다(서버가 300자에서 자른다) - 툴팁도 Tab 자리도 없는 읽기 전용 줄이다. 누르는 길은 다음 걸음의 줄 끝 단추
+              <li key={line.unit_id} className="map-sentence" data-testid={`map-line-${line.unit_id}-${counterpart}`}>
                 <span className="map-sentence-id">{line.display_id}</span>
-                <span className="map-sentence-text clamp-2">{text}</span>
+                <span className="map-sentence-text">{line.text_truncated ? `${line.text}…` : line.text}</span>
               </li>
             );
           })}

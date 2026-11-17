@@ -1376,6 +1376,35 @@ def test_linked_scope_leaves_out_lines_between_two_other_bundles(client: TestCli
     assert get_lines(client, w.v_id, s, scope="all")["withheld_in"] == [_withheld(p, s, "ref")]
 
 
+def test_leaving_a_bundle_withholds_its_text_on_the_next_read(client: TestClient) -> None:
+    """V·M의 구성원이 M의 문장을 본 뒤 M에서 빠지면 같은 요청에 M의 글이 한 글자도 없다 — 확정 줄은 수만, 제안 줄은 아예 없다."""
+    w = World(client)
+    confirmed_line = "OLD-1 ZZ-M-CONFIRMED synthetic"
+    m_confirmed = add_doc(client, w.m_id, "SYNTHETIC_SOP-ABC-1031_Confirmed.docx", confirmed_line)
+    assert edit(client, w.m_id, m_confirmed["id"], {
+        "type": "set_ref", "unit_id": find_line(client, w.m_id, m_confirmed["id"], confirmed_line)["id"], "number": "OLD-1",
+    }).status_code == 200
+    v, m, mc = f"old:{w.v_doc['id']}", f"old:{w.m_doc['id']}", f"old:{m_confirmed['id']}"
+
+    for scope in SCOPES:
+        body = get_lines(client, w.v_id, v, scope=scope)
+        assert {(row["source"], row["state"], row["text"]) for row in body["in"] if row["bundle_id"] == w.m_id} == {
+            (m, "proposed", M_REF), (mc, "confirmed", confirmed_line),
+        }
+
+    response = set_members(client, w.m_id, [("qa.lead", "reviewer"), ("ops.member", "author")])
+    assert response.status_code == 200, response.text
+
+    for scope in SCOPES:
+        response = client.get(_lines_url(w.v_id), params={"node": v, "scope": scope}, headers=AUTHOR)
+        assert response.status_code == 200, response.text
+        assert [text for text in ("ZZ-M-CONFIRMED", M_REF) if text in response.text] == []
+        body = response.json()
+        assert [row for row in body["in"] if row["bundle_id"] == w.m_id] == []
+        assert _withheld(mc, v, "ref") in body["withheld_in"]
+        assert [row for row in body["withheld_in"] if row["source"] == m] == []  # M의 제안 줄은 수로도 없다
+
+
 def test_reading_lines_writes_nothing(client: TestClient) -> None:
     w = World(client)
     bundle_ids = (w.v_id, w.m_id, w.s_id)
