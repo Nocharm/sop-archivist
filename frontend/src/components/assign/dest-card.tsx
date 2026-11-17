@@ -16,11 +16,24 @@ interface DestCardProps {
   pending?: ReactNode;
   testId: string;
   onClick: (event: MouseEvent<HTMLButtonElement>) => void;
+  /** 포인터를 올리거나 포커스가 오면 true, 떠나면 false - New 칸의 그 자리를 같이 밝힌다 */
+  onHover?: (on: boolean) => void;
 }
 
-export function DestCard({ icon: Icon, tone = "place", title, text, foot, pressed, pending, testId, onClick }: DestCardProps) {
+export function DestCard({ icon: Icon, tone = "place", title, text, foot, pressed, pending, testId, onClick, onHover }: DestCardProps) {
   return (
-    <button type="button" className="dest-card" data-tone={tone} aria-pressed={pressed} data-testid={testId} onClick={onClick}>
+    <button
+      type="button"
+      className="dest-card"
+      data-tone={tone}
+      aria-pressed={pressed}
+      data-testid={testId}
+      onClick={onClick}
+      onPointerEnter={onHover && (() => onHover(true))}
+      onPointerLeave={onHover && (() => onHover(false))}
+      onFocus={onHover && (() => onHover(true))}
+      onBlur={onHover && (() => onHover(false))}
+    >
       <span className="dest-card-icon" aria-hidden>
         <Icon size={14} strokeWidth={1.6} />
       </span>

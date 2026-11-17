@@ -1585,7 +1585,8 @@
   /* 가운데 선 기준 대칭 - 스크롤 막대는 두 문서 모두 바깥쪽(Old는 rtl로 왼쪽), 안쪽 여백은 같은 값, 용지는 선 쪽에 붙인다(확대가 달라도 선과의 간격이 같다) */
   .assign-panes [data-pane="old"] .pane-body { direction: rtl; padding: 10px 10px 24px 4px; }
   .assign-panes [data-pane="old"] .pane-body > * { direction: ltr; }
-  .assign-panes [data-pane="new"] .pane-body { padding: 10px 4px 24px 10px; }
+  /* 옆에서 들어오는 문서(new-slide-*)가 잠깐 가로 스크롤 막대를 띄우지 않게 */
+  .assign-panes [data-pane="new"] .pane-body { padding: 10px 4px 24px 10px; overflow-x: hidden; }
   .assign-panes [data-pane="old"] .sheet { margin-inline: auto 0; }
   .assign-panes [data-pane="new"] .sheet { margin-inline: 0 auto; }
   /* 한 단 보기 - Old 문서 하나만 가운데에 넓게. 세로선이 없으니 스크롤 막대는 보통 자리(오른쪽)로 */
@@ -1758,6 +1759,13 @@
   .new-srcs { position: relative; z-index: 1; display: flex; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 6px; }
   .pg[data-strips] .new-line[data-state="candidate"] { outline: 1.5px dashed var(--accent); outline-offset: -1.5px; }
   .pg[data-strips] .new-line[data-state="picked"] { background: var(--accent-tint); box-shadow: var(--shadow-1), inset 0 0 0 1.5px var(--accent); }
+  /* 추천 카드 ↔ New 상자 - 한쪽에 올리면 다른 쪽도 밝다(1.2.0 피드백). page가 data-rec-hover를 붙였다 뗀다(Old↔New 선의 data-link-hover와 따로) */
+  .pg[data-strips] :is(.new-line, .new-block, .new-slot-empty)[data-rec-hover] { background: var(--accent-tint); box-shadow: var(--shadow-1), inset 0 0 0 2px var(--accent); }
+  /* 문서를 바꾸면 새 문서가 옆에서 들어온다 - 뒤 문서는 오른쪽에서, 앞 문서는 왼쪽에서(움직임 줄이기면 시간이 0) */
+  .assign-pane .sheet[data-slide="next"] { animation: new-slide-next var(--dur-base) var(--ease-enter); }
+  .assign-pane .sheet[data-slide="prev"] { animation: new-slide-prev var(--dur-base) var(--ease-enter); }
+  @keyframes new-slide-next { from { opacity: 0; transform: translateX(48px); } }
+  @keyframes new-slide-prev { from { opacity: 0; transform: translateX(-48px); } }
   /* Old 조각을 끌어 올린 문장(끌어서 잇기) - 공통 테두리(motion.css, -1px)는 바깥 1px가 짝 카드 이웃 줄의 위 점선을 덮는다(틈 0, 잰 값). 상자 안 2px로 들인다 -
      출처 칩과는 5px 떨어진다. 후보 줄의 점선 테두리(위 규칙)를 이기도록 테두리 전부를 다시 적는다 */
   .pg[data-strips] .new-line[data-drop="over"] { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -1919,7 +1927,8 @@
   .dest-acc-body { display: grid; gap: 6px; padding: 0 var(--pad) 12px; }
 
   .dest-card { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; width: 100%; padding: 9px 10px; border: 1px solid var(--line-2); border-radius: var(--r-3); background: var(--surface); text-align: left; cursor: pointer; transition: border-color var(--dur-fast), background var(--dur-fast); }
-  .dest-card:hover { border-color: var(--accent); }
+  .dest-card:is(:hover, [data-rec-hover]) { border-color: var(--accent); }
+  .dest-card[data-rec-hover] { background: var(--accent-tint); }
   .dest-card[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-tint); }
   .dest-card-icon { display: grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-1); background: var(--sunken); color: var(--ink-2); }
   .dest-card[data-tone="link"] .dest-card-icon { color: var(--accent); }

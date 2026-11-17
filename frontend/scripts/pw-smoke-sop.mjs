@@ -41,6 +41,17 @@ const check = (name, ok, detail = "") => {
   console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? ` - ${String(detail).replace(/\s+/g, " ").trim()}` : ""}`);
 };
 
+/** 첫 잇기 추천 카드의 New 문서를 New 칸에 연다 - New 칸은 Old 줄을 따라가지 않는다(1.2.0 피드백) */
+async function showLinkCardDoc(page) {
+  const code = await page.locator('.dest-card[data-tone="link"] .dest-card-title b').first().innerText({ timeout: 500 }).catch(() => null);
+  const picker = page.locator('[data-testid="assign-new-doc"]');
+  if (!code || (await picker.count()) === 0 || (await picker.innerText()).includes(code)) return;
+  await picker.click();
+  await page.locator('[data-testid^="assign-new-doc-option-"]', { hasText: code }).first().click();
+  // 그 문서의 후보 점선이 그려질 때까지 - 기다리지 않으면 다음 줄로 넘어가 예전(New 칸이 줄을 따라가던 때)과 다른 줄을 잇는다
+  await page.locator('[data-testid="assign-new"] .new-line[data-state="candidate"]').first().waitFor({ timeout: 3000 }).catch(() => {});
+}
+
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 
 async function runStep(name, { devUser = "qa.member", storage = {}, allowConsoleErrors = false } = {}, run) {
@@ -2826,10 +2837,11 @@ await runStep("assign: one document wide, then two again", {}, async ({ page, ta
   await page.locator('[data-testid="assign-view-two"]').blur();
   await page.keyboard.press("v");
   await page.locator('[data-testid="assign-new"]').waitFor({ state: "detached", timeout: T });
-  // 출처 없는 New 문장은 New 칸에서 보므로 양 단으로 편다
-  await page.locator('[data-testid="assign-filter-unsourced"]').click();
+  // 출처 없는 New 거르기는 New 칸 머리에 있어 한 단에서는 보이지 않는다(1.2.0 피드백) - V로 양 단으로 돌아온다
+  check("New without source is not shown in one-document view", (await page.locator('[data-testid="assign-filter-unsourced"]').count()) === 0);
+  await page.keyboard.press("v");
   await wait(page, "assign-new");
-  check("New without source opens both documents", (await page.locator('[data-testid="assign-view-two"]').getAttribute("aria-pressed")) === "true");
+  check("V brings both documents back", (await page.locator('[data-testid="assign-view-two"]').getAttribute("aria-pressed")) === "true");
   // 세로선을 오른쪽 끝까지 끌어 놓으면 한 단
   const panes = await page.locator(".assign-panes").boundingBox();
   const divider = await page.locator('[data-testid="assign-divider"]').boundingBox();
@@ -2891,6 +2903,8 @@ await runStep("assign: written New document - identical, link by clicking, split
     await page.waitForTimeout(150);
     while (openCandidateRequests > 0) await page.waitForTimeout(50);
     await page.waitForTimeout(100);
+    // New 칸은 줄을 따라가지 않는다(1.2.0 피드백) - 예전처럼 줄마다 첫 잇기 카드의 문서를 손으로 연다
+    await showLinkCardDoc(page);
   }
   // 누르면 후보가 아니라 고른 문장이 된다 - 같은 줄을 계속 가리키게 testid로 붙잡는다
   const firstLine = page.locator(`[data-testid="${await candidate.first().getAttribute("data-testid")}"]`);
@@ -3468,16 +3482,15 @@ await runStep("assign: KO/EN pair - recommendation shows picked, in-place menu c
   check("the recommendation shows as picked on a KO/EN pair row", (await card.getAttribute("aria-pressed")) === "true");
   check("the card says it is not saved yet", (await card.locator('[data-testid$="-pending"]').count()) === 1);
   if (found.partnerId !== null) check("both New sentences of the pair are picked", (await page.locator(`[data-testid="assign-new-pick-${found.partnerId}"]`).getAttribute("aria-pressed")) === "true");
-  await wait(page, "assign-link-menu-confirm");
-  await page.locator('[data-testid="assign-link-menu-confirm"]').waitFor({ state: "visible", timeout: T });
-  check("the in-place menu says the pick is not saved", (await page.locator('[data-testid="assign-link-menu-unsaved"]').count()) === 1);
-  await takeShot("sop-assign-menu-confirm.png");
-  // 메뉴는 380ms에 보이고 400ms에 첫 항목으로 포커스를 옮긴다 - 그 사이에 누르면 Enter가 아직 추천 카드에 간다
-  await page.waitForFunction(() => document.activeElement?.getAttribute("data-testid") === "assign-link-menu-confirm", null, { timeout: T });
+  // 카드 옆 확정 메뉴는 없다(1.2.0 피드백) - 포커스가 결정 칸의 Confirm으로 가서 Enter가 확정한다
+  await page.waitForFunction(() => document.activeElement?.getAttribute("data-testid") === "assign-primary", null, { timeout: T });
+  check("picking a card opens no in-place menu", (await page.locator("[data-link-menu]").count()) === 0);
+  const isShown = await page.waitForFunction((id) => document.querySelector(`[data-pane="new"] [data-testid="assign-new-${id}"]`) !== null, found.targetId, { timeout: T }).then(() => true, () => false);
+  check("the New pane moves to the card's sentence", isShown);
   const saved = page.waitForResponse((response) => response.url().includes("/groups/save"), { timeout: T });
   await page.keyboard.press("Enter");
   const savedResponse = await saved;
-  check("Enter in the menu saves the link", savedResponse.ok(), savedResponse.ok() ? "" : (await savedResponse.text()).slice(0, 300));
+  check("Enter after picking a card saves the link", savedResponse.ok(), savedResponse.ok() ? "" : (await savedResponse.text()).slice(0, 300));
   await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
   await page.waitForLoadState("networkidle");
   const after = new Map((await getJson("/written-sentences")).map((row) => [row.target_id, row]));
@@ -3517,6 +3530,9 @@ await runStep("assign: KO/EN pair - recommendation shows picked, in-place menu c
   await wait(page, "assign-pick-prompt");
   await selectRowById(page, found.unit.display_id);
   await page.waitForFunction(() => document.querySelector('[data-testid="assign-row-status"]')?.textContent?.includes("Confirmed"), null, { timeout: T });
+  // New 칸은 줄을 따라가지 않는다(1.2.0 피드백) - "간 곳"으로 그 문서를 연다
+  await page.locator(`[data-testid="assign-note-${found.unit.id}"]`).click();
+  await page.locator('[data-testid="assign-link-menu-close"]').click();
   const linkedLines = [found.targetId, found.partnerId].filter((id) => id !== null);
   for (const id of linkedLines) await page.locator(`[data-testid="assign-new-${id}"][data-state="picked"]`).waitFor({ timeout: T });
   check("after reload the row is confirmed and its New sentences are shown as its place", true);
@@ -7702,10 +7718,10 @@ await runStep("assign: every way out of Pair view shows the picked piece or the 
   // 단추를 눌러 켜면 포커스는 KO 칸 머리의 단추에(눌린 단추는 사라진다)
   const isToggleFocused = (pane) => page.evaluate((pane) => document.activeElement?.getAttribute("data-testid") === "assign-pair-view" && document.activeElement.closest(`[data-testid="${pane}"]`) !== null, pane);
   const focusClickOn = await isToggleFocused("assign-pair-ko");
-  await page.locator('[data-testid="assign-filter-unsourced"]').click();
+  // New without source는 New 칸 머리에 있어 Pair view 동안은 보이지 않는다(1.2.0 피드백) - 끄는 길이 아니다
+  check("New without source is not shown in Pair view", (await page.locator('[data-testid="assign-filter-unsourced"]').count()) === 0);
+  await page.keyboard.press("v");
   await waitOff();
-  check("leaving by New without source shows the picked piece too", await isFarInView());
-  await page.locator('[data-testid="assign-filter-all"]').click();
   // 2c. 글쇠(Space)로 켜고 끄기 - 포커스는 지금 보이는 단추에
   await toggle.focus();
   await page.keyboard.press("Space");
