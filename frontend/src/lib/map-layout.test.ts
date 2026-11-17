@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { MapBundle, MapEdge, MapNode, RefMap } from "./api-sop";
 import { BUNDLES, EDGES, makeEdge, makeNode, MAP, NODES } from "./map-fixture";
 import { buildMapView, DEFAULT_FILTERS } from "./map-model";
-import { fitZoom, GAP_Y, keepPoint, LANE_W, layoutMap, listMapOrder, listNeighbors, type MapLayout, MORE_H, NODE_H, NODE_W, stepZoom } from "./map-layout";
+import { fitZoom, GAP_Y, getZoomScroll, keepPoint, LANE_W, layoutMap, listMapOrder, listNeighbors, type MapLayout, MORE_H, NODE_H, NODE_W, stepZoom } from "./map-layout";
 
 const NONE: ReadonlySet<string> = new Set();
 
@@ -303,5 +303,16 @@ describe("map-layout", () => {
     expect(fitZoom({ width: 730, height: 600 }, { width: 200, height: 120 })).toBe(1);
     expect(fitZoom({ width: 730, height: 600 }, { width: 0, height: 0 })).toBe(1);
     expect(keepPoint(200, 100, 1, 1.1)).toBeCloseTo(230);
+  });
+
+  it("keeps the world point under the anchor when the zoom changes inside a padded frame", () => {
+    const next = getZoomScroll({ left: 0, top: 0 }, { x: 100, y: 50 }, 16, 1, 1.5);
+    expect(next.left).toBeCloseTo(42);
+    expect(next.top).toBeCloseTo(17);
+    // 포인터 밑 세계 자리: 앞 (0 + 100 - 16) / 1 = 84, 뒤 (42 + 100 - 16) / 1.5 = 84
+    expect((next.left + 100 - 16) / 1.5).toBeCloseTo(84);
+    expect(getZoomScroll({ left: 300, top: 120 }, { x: 200, y: 100 }, 16, 1.2, 1.2)).toEqual({ left: 300, top: 120 });
+    // 줄이다 앞 끝을 넘으면 0에서 멈춘다
+    expect(getZoomScroll({ left: 0, top: 0 }, { x: 100, y: 50 }, 16, 1.5, 1)).toEqual({ left: 0, top: 0 });
   });
 });

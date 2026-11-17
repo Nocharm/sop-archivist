@@ -1,9 +1,11 @@
 // 참조 지도의 겉 상자 - 스크롤 칸 · 크기 상자(확대한 세계의 크기) · 세계. 위임 툴팁은 여기에만 두고 세계(map-world)는 따로 떼어 툴팁이 떠도 다시 그려지지 않는다.
-// 움직이기는 스크롤이다(휠·트랙패드·스크롤 막대·터치). 바탕(마디·단추가 아닌 곳)을 누르면 고름을 푼다.
+// 움직이기는 스크롤이다(휠·트랙패드·스크롤 막대·터치, 바탕 끌기 use-map-pan). 지도 위의 Ctrl(⌘)+휠은 확대(use-map-zoom). 바탕(마디·단추가 아닌 곳)을 누르면 고름을 푼다.
 "use client";
 
 import type { MouseEvent, RefObject } from "react";
 
+import { useMapPan } from "@/components/map/use-map-pan";
+import { useMapZoom } from "@/components/map/use-map-zoom";
 import { MapWorld } from "@/components/map/map-world";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import { flashElement } from "@/components/ui/motion";
@@ -22,6 +24,9 @@ interface MapCanvasProps {
   onSelect(nodeId: string | null): void;
   onToggleLane(laneKey: string): void;
   onMore(laneKey: string): void;
+  /** anchor는 칸 왼쪽 위 기준의 기준점 - null이면 칸 가운데 */
+  onZoom(next: number, anchor: { x: number; y: number } | null): void;
+  onFit(): void;
   scrollRef: RefObject<HTMLDivElement | null>;
 }
 
@@ -40,9 +45,11 @@ export function revealMapNode(scroller: HTMLElement, nodeId: string): void {
   flashElement(el);
 }
 
-export function MapCanvas({ view, layout, zoom, selectedId, onSelect, onToggleLane, onMore, scrollRef }: MapCanvasProps) {
+export function MapCanvas({ view, layout, zoom, selectedId, onSelect, onToggleLane, onMore, onZoom, onFit, scrollRef }: MapCanvasProps) {
   const { t } = useI18n();
   const tip = useDelegatedTip();
+  useMapPan(scrollRef);
+  useMapZoom(scrollRef, zoom, onZoom);
 
   function handleClick(event: MouseEvent<HTMLDivElement>) {
     if (event.target instanceof Element && event.target.closest(".map-node, button, a")) return;
@@ -56,12 +63,14 @@ export function MapCanvas({ view, layout, zoom, selectedId, onSelect, onToggleLa
       data-testid="map-canvas"
       role="group"
       aria-label={t("map.canvas.label")}
+      // Tab 자리가 아니다 - 지도 안의 Tab 자리는 세계의 마디 하나다(브라우저가 스크롤 칸을 저절로 Tab 자리로 삼지 않게 -1)
+      tabIndex={-1}
       style={{ padding: CANVAS_PAD }}
       {...tip.handlers}
       onClick={handleClick}
     >
       <div className="map-sizer" data-testid="map-sizer" style={{ width: layout.width * zoom, height: layout.height * zoom }}>
-        <MapWorld view={view} layout={layout} zoom={zoom} selectedId={selectedId} onSelect={onSelect} onToggleLane={onToggleLane} onMore={onMore} />
+        <MapWorld view={view} layout={layout} zoom={zoom} selectedId={selectedId} onSelect={onSelect} onToggleLane={onToggleLane} onMore={onMore} onZoom={onZoom} onFit={onFit} />
       </div>
       {tip.node}
     </div>

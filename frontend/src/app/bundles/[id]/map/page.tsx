@@ -2,22 +2,23 @@
 // 남의 Bundle은 서버가 요약만 보낸다(설계 2026-11-17 참조 지도 §5) - 화면은 받은 것만 그린다. 고치는 일은 Assign에서 한다.
 "use client";
 
-import { Files } from "lucide-react";
+import { Files, Maximize, ZoomIn, ZoomOut } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useDeferredValue, useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
+import { useDeferredValue, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { BundleLoadError } from "@/components/bundle-load-error";
-import { MapCanvas, revealMapNode } from "@/components/map/map-canvas";
+import { CANVAS_PAD, MapCanvas, revealMapNode } from "@/components/map/map-canvas";
 import { MapList } from "@/components/map/map-list";
 import { MapSide } from "@/components/map/map-side";
 import { MapToolbar } from "@/components/map/map-toolbar";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LoadError } from "@/components/ui/load-error";
+import { Tooltip } from "@/components/ui/tooltip";
 import { getRefMap, type MapScope } from "@/lib/api-sop";
 import { isBundleUnavailable } from "@/lib/api-errors";
 import { useI18n } from "@/lib/i18n";
-import { layoutMap, listMapOrder } from "@/lib/map-layout";
+import { fitZoom, getZoomScroll, layoutMap, listMapOrder, stepZoom, ZOOM_MAX, ZOOM_MIN } from "@/lib/map-layout";
 import { buildMapView, DEFAULT_FILTERS, getLaneKey, listCollapsedAtStart, type MapFilters, type MapView } from "@/lib/map-model";
 import { getStageHref } from "@/lib/stages";
 import { useLoaded } from "@/lib/use-loaded";
@@ -47,7 +48,11 @@ export default function MapPage() {
   const [pendingLane, setPendingLane] = useState<string | null>(null);
   // 접힘을 채운 자료의 범위 - 범위를 바꾼 뒤 처음 온 자료에서만 다시 채우고, 다시 읽기에서는 사람이 접고 편 것을 지킨다
   const [seededScope, setSeededScope] = useState<MapScope | null>(null);
+  // 들어올 때마다 100% - 기억하지 않는다
+  const [zoom, setZoom] = useState(1);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // 확대를 바꾼 뒤 맞출 스크롤 - 바뀐 크기가 그려진 뒤(useLayoutEffect) 기준점 밑의 세계 자리를 되돌린다
+  const pendingZoomRef = useRef<{ from: number; to: number; anchor: { x: number; y: number }; left: number; top: number } | null>(null);
   // 펴는 줄기의 마디가 그려진 뒤 보이게 할 마디
   const pendingRevealRef = useRef<string | null>(null);
   const loaded = useLoaded(() => getRefMap(bundleId, scope), `${bundleId}:${scope}`);
@@ -115,6 +120,29 @@ export default function MapPage() {
     }
   }
 
+  useLayoutEffect(() => {
+    const pending = pendingZoomRef.current;
+    const el = scrollRef.current;
+    if (!pending || !el) return;
+    pendingZoomRef.current = null;
+    const next = getZoomScroll({ left: pending.left, top: pending.top }, pending.anchor, CANVAS_PAD, pending.from, pending.to);
+    el.scrollLeft = next.left;
+    el.scrollTop = next.top;
+  }, [zoom]);
+
+  /** 확대를 바꾼다 - 단추·글쇠는 칸 가운데를, 휠은 포인터 자리를 지킨다 */
+  function changeZoom(next: number, anchor: { x: number; y: number } | null) {
+    if (next === zoom) return;
+    const el = scrollRef.current;
+    if (el) pendingZoomRef.current = { from: zoom, to: next, anchor: anchor ?? { x: el.clientWidth / 2, y: el.clientHeight / 2 }, left: el.scrollLeft, top: el.scrollTop };
+    setZoom(next);
+  }
+
+  function fitAll() {
+    const el = scrollRef.current;
+    if (el && layout) changeZoom(fitZoom({ width: el.clientWidth, height: el.clientHeight }, layout), null);
+  }
+
   function toggleLane(laneKey: string) {
     const next = new Set(collapsed);
     if (!next.delete(laneKey)) next.add(laneKey);
@@ -173,11 +201,13 @@ export default function MapPage() {
       <MapCanvas
         view={mapView}
         layout={layout}
-        zoom={1}
+        zoom={zoom}
         selectedId={selectedId}
         onSelect={setSelectedId}
         onToggleLane={toggleLane}
         onMore={openMore}
+        onZoom={changeZoom}
+        onFit={fitAll}
         scrollRef={scrollRef}
       />
     );
@@ -206,6 +236,28 @@ export default function MapPage() {
             </button>
           ))}
         </div>
+        {view === "map" && (
+          <div className="map-zoom">
+            <Tooltip label={t("map.zoom.out")}>
+              <button type="button" className="btn icon ghost" aria-label={t("map.zoom.out")} data-testid="map-zoom-out" disabled={zoom <= ZOOM_MIN} onClick={() => changeZoom(stepZoom(zoom, -1), null)}>
+                <ZoomOut size={16} strokeWidth={1.5} aria-hidden />
+              </button>
+            </Tooltip>
+            <span className="map-zoom-value" data-testid="map-zoom-value">
+              {Math.round(zoom * 100)}%
+            </span>
+            <Tooltip label={t("map.zoom.in")}>
+              <button type="button" className="btn icon ghost" aria-label={t("map.zoom.in")} data-testid="map-zoom-in" disabled={zoom >= ZOOM_MAX} onClick={() => changeZoom(stepZoom(zoom, 1), null)}>
+                <ZoomIn size={16} strokeWidth={1.5} aria-hidden />
+              </button>
+            </Tooltip>
+            <Tooltip label={t("map.zoom.fit")}>
+              <button type="button" className="btn icon ghost" aria-label={t("map.zoom.fit")} data-testid="map-zoom-fit" disabled={!layout} onClick={fitAll}>
+                <Maximize size={16} strokeWidth={1.5} aria-hidden />
+              </button>
+            </Tooltip>
+          </div>
+        )}
       </MapToolbar>
       <div className="map-body">
         <div className="map-main">

@@ -7,8 +7,18 @@ export type MapKeyAction = { kind: "focus"; id: MapFocus } | { kind: "select" } 
 
 const LANE_PREFIX = "lane:";
 
+/** 줄기 머리(접기 단추)의 포커스 자리 */
+export function getLaneFocus(laneKey: string): MapFocus {
+  return `${LANE_PREFIX}${laneKey}`;
+}
+
+/** 줄기 머리 자리면 그 줄기 열쇠, 마디면 null */
+export function readLaneFocus(focus: MapFocus): string | null {
+  return focus.startsWith(LANE_PREFIX) ? focus.slice(LANE_PREFIX.length) : null;
+}
+
 function getHeadFocus(lane: LaidLane): MapFocus {
-  return `${LANE_PREFIX}${lane.key}`;
+  return getLaneFocus(lane.key);
 }
 
 function makeFocus(id: string | undefined): MapKeyAction | null {

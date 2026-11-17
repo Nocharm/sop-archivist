@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MAP } from "./map-fixture";
-import { getEntryFocus, getMapKeyAction, type MapFocus } from "./map-keys";
+import { getEntryFocus, getLaneFocus, getMapKeyAction, type MapFocus, readLaneFocus } from "./map-keys";
 import { layoutMap, type MapLayout } from "./map-layout";
 import { buildMapView, DEFAULT_FILTERS } from "./map-model";
 
@@ -101,5 +101,12 @@ describe("map-keys", () => {
     const noSelfDocs = layoutMap(buildMapView({ ...MAP, nodes: MAP.nodes.filter((n) => n.bundle_id !== 12), edges: [] }, DEFAULT_FILTERS), new Set());
     expect(getEntryFocus(noSelfDocs, null)).toBe("lane:12");
     expect(getEntryFocus(layoutMap(buildMapView({ ...MAP, bundles: [], nodes: [], edges: [] }, DEFAULT_FILTERS), new Set()), null)).toBeNull();
+  });
+
+  it("names a lane head's focus and reads the lane back, a document's focus is not a lane", () => {
+    expect(getLaneFocus("18")).toBe("lane:18");
+    expect(readLaneFocus(getLaneFocus("none"))).toBe("none");
+    expect(readLaneFocus("old:101")).toBeNull();
+    expect(press("Enter", getLaneFocus("18"))).toEqual({ kind: "toggle", laneKey: "18" });
   });
 });

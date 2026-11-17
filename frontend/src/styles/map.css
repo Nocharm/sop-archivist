@@ -14,6 +14,8 @@
   .view-toggle.map-scope button,
   .view-toggle.map-views button { width: auto; padding: 0 8px; font-size: var(--fs-cap); white-space: nowrap; }
   .map-search-input:focus-visible { outline: none; }
+  .map-zoom { display: inline-flex; align-items: center; gap: 2px; }
+  .map-zoom-value { min-width: 40px; text-align: center; font-size: var(--fs-cap); color: var(--ink-2); font-variant-numeric: tabular-nums; }
 
   .map-notice { padding: 6px var(--pad); border-bottom: 1px solid var(--line); background: var(--sunken); font-size: var(--fs-cap); line-height: var(--lh-cap); color: var(--ink-2); }
 
@@ -52,6 +54,10 @@
 
   /* 지도 - 스크롤 칸 › 크기 상자(확대한 세계의 크기) › 세계(확대 1의 좌표, scale로 키운다). 층: 줄기 바탕 < 선(SVG 한 장) < 마디·줄기 머리 */
   .map-canvas { position: relative; min-width: 0; min-height: 0; overflow: auto; background: var(--surface); }
+  .map-canvas:focus-visible { outline-offset: -2px; }
+  /* 바탕을 끄는 동안(use-map-pan) - 잡은 손 커서, 글자는 긁히지 않는다(pointerdown에서 preventDefault를 부르지 않으므로 CSS로 막는다) */
+  .map-canvas[data-pan] { cursor: grabbing; user-select: none; }
+  .map-canvas[data-pan] .map-node { cursor: grabbing; }
   .map-sizer { position: relative; }
   .map-world { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
   .map-edges { position: absolute; top: 0; left: 0; z-index: 1; overflow: visible; pointer-events: none; }

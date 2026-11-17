@@ -234,3 +234,9 @@ export function fitZoom(frame: { width: number; height: number }, world: { width
 export function keepPoint(scroll: number, pointer: number, from: number, to: number): number {
   return ((scroll + pointer) * to) / from - pointer;
 }
+
+/** 확대를 바꾼 뒤의 스크롤 위치 - anchor(칸 왼쪽 위 기준 좌표) 밑의 세계 자리를 그대로 둔다. pad는 스크롤 칸 안쪽 여백(세계가 그만큼 밀려 있다) */
+export function getZoomScroll(scroll: { left: number; top: number }, anchor: { x: number; y: number }, pad: number, from: number, to: number): { left: number; top: number } {
+  if (from === to) return scroll;
+  return { left: Math.max(0, keepPoint(scroll.left, anchor.x - pad, from, to)), top: Math.max(0, keepPoint(scroll.top, anchor.y - pad, from, to)) };
+}

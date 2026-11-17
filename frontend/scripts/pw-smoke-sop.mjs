@@ -8523,6 +8523,239 @@ await runStep("map: REF? only and search dim the map", {}, async ({ page }) => {
   check("the rest dims", dimmed < 1, String(dimmed));
 });
 
+// --- 확대 · Fit all · 바탕 끌기 · 글쇠 ---
+const readZoom = async (page) => (await getText(page, "map-zoom-value")).trim();
+const waitZoom = (page, value) => page.waitForFunction((text) => document.querySelector('[data-testid="map-zoom-value"]')?.textContent?.trim() === text, value, { timeout: T });
+const readSizer = (page) => page.locator('[data-testid="map-sizer"]').evaluate((el) => ({ width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height }));
+const readScroll = (page) => page.locator('[data-testid="map-canvas"]').evaluate((el) => ({ left: el.scrollLeft, top: el.scrollTop, maxLeft: el.scrollWidth - el.clientWidth, maxTop: el.scrollHeight - el.clientHeight }));
+// 단추가 꺼질 때까지(또는 n번) 누른다 - 꺼진 단추를 누르면 Playwright가 켜지기를 기다린다
+async function pressZoom(page, testId, times) {
+  for (let i = 0; i < times; i++) {
+    const button = page.locator(`[data-testid="${testId}"]`);
+    if (await button.isDisabled()) return;
+    const before = await readZoom(page);
+    await button.click();
+    await page.waitForFunction((text) => document.querySelector('[data-testid="map-zoom-value"]')?.textContent?.trim() !== text, before, { timeout: T });
+  }
+}
+// 포커스가 선 요소의 testid
+const readActive = (page) => page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? null);
+const waitActiveInsideCanvas = (page) =>
+  page.waitForFunction(
+    () => {
+      const el = document.activeElement;
+      const frame = document.querySelector('[data-testid="map-canvas"]');
+      if (!el || !frame || !frame.contains(el)) return false;
+      const a = el.getBoundingClientRect();
+      const b = frame.getBoundingClientRect();
+      return a.left >= b.left - 0.5 && a.right <= b.right + 0.5 && a.top >= b.top - 0.5 && a.bottom <= b.bottom + 0.5;
+    },
+    null,
+    { timeout: T },
+  );
+
+await runStep("map: zoom buttons, Ctrl+wheel, Fit all and dragging the background", {}, async ({ page }) => {
+  await openMap(page, halfBundleId);
+  await waitMapWorld(page);
+  check("the map opens at 100%", (await readZoom(page)) === "100%", await readZoom(page));
+  const start = await readSizer(page);
+  await pressZoom(page, "map-zoom-in", 2);
+  await waitZoom(page, "120%");
+  const bigger = await readSizer(page);
+  check("two Zoom in clicks make it 120% and the world 1.2 times as wide", Math.abs(bigger.width - start.width * 1.2) <= 1, `${bigger.width} vs ${start.width * 1.2}`);
+  await pressZoom(page, "map-zoom-in", 5);
+  check("Zoom in stops at 150% and turns off", (await readZoom(page)) === "150%" && (await page.locator('[data-testid="map-zoom-in"]').isDisabled()), await readZoom(page));
+  await pressZoom(page, "map-zoom-out", 8);
+  await waitZoom(page, "70%");
+  check("below 75% the titles hide", (await page.locator('[data-testid="map-world"]').getAttribute("data-far")) !== null && !(await page.locator(".map-node-title").first().isVisible()));
+  await pressZoom(page, "map-zoom-out", 5);
+  check("Zoom out stops at 50% and turns off", (await readZoom(page)) === "50%" && (await page.locator('[data-testid="map-zoom-out"]').isDisabled()), await readZoom(page));
+
+  await page.locator('[data-testid="map-zoom-fit"]').click();
+  await page.waitForTimeout(100);
+  const fitted = await readSizer(page);
+  const frame = await page.locator('[data-testid="map-canvas"]').evaluate((el) => ({ width: el.clientWidth, height: el.clientHeight }));
+  check("Fit all fits the world into the frame, or stops at 50%", (fitted.width <= frame.width && fitted.height <= frame.height) || (await readZoom(page)) === "50%", `${JSON.stringify(fitted)} in ${JSON.stringify(frame)} at ${await readZoom(page)}`);
+
+  // Ctrl+휠 - 스크롤이 생기는 배율에서, 칸 위쪽 가운데의 마디 위에서 한 칸 키운다
+  while ((await readZoom(page)) !== "130%") {
+    const value = Number((await readZoom(page)).replace("%", ""));
+    await pressZoom(page, value < 130 ? "map-zoom-in" : "map-zoom-out", 1);
+  }
+  await page.locator('[data-testid="map-canvas"]').evaluate((el) => {
+    el.scrollLeft = (el.scrollWidth - el.clientWidth) / 2;
+  });
+  const target = await page.evaluate(() => {
+    const frameBox = document.querySelector('[data-testid="map-canvas"]').getBoundingClientRect();
+    const centre = frameBox.left + frameBox.width / 2;
+    const tops = Array.from(document.querySelectorAll(".map-node"))
+      .map((el) => ({ id: el.dataset.node, r: el.getBoundingClientRect() }))
+      .filter(({ r }) => r.left >= frameBox.left && r.right <= frameBox.right && r.top >= frameBox.top && r.bottom <= frameBox.bottom);
+    tops.sort((a, b) => a.r.top - b.r.top || Math.abs(a.r.left + a.r.width / 2 - centre) - Math.abs(b.r.left + b.r.width / 2 - centre));
+    const pick = tops[0];
+    return pick ? { id: pick.id, x: pick.r.left + pick.r.width / 2, y: pick.r.top + pick.r.height / 2 } : null;
+  });
+  check("there is a document to zoom on", target !== null);
+  if (target) {
+    await page.mouse.move(target.x, target.y);
+    await page.keyboard.down("Control");
+    await page.mouse.wheel(0, -100);
+    await page.keyboard.up("Control");
+    await waitZoom(page, "140%");
+    const after = await page.locator(`[data-testid="map-node-${target.id}"]`).boundingBox();
+    check("Ctrl+wheel zooms in and keeps the document under the pointer", after.x <= target.x && target.x <= after.x + after.width && after.y <= target.y && target.y <= after.y + after.height, `${JSON.stringify(after)} vs ${target.x},${target.y}`);
+  }
+  // 지도 밖(옆 칸)의 Ctrl+휠 - 브라우저 확대가 시험 창을 키우지 않게 합성 이벤트로 보낸다
+  await page.locator('[data-testid="map-side"]').evaluate((el) => el.dispatchEvent(new WheelEvent("wheel", { ctrlKey: true, deltaY: -200, bubbles: true, cancelable: true })));
+  await page.waitForTimeout(100);
+  check("Ctrl+wheel outside the map leaves the zoom alone", (await readZoom(page)) === "140%", await readZoom(page));
+
+  // 바탕 끌기 - 150%에서 고른 문서를 둔 채 끈다
+  await pressZoom(page, "map-zoom-in", 5);
+  const map = await readMapApi(page, halfBundleId, "qa.member");
+  const old1 = map.nodes.find((node) => node.number === "OLD-1" && node.bundle_id === halfBundleId).id;
+  await page.locator('[data-testid="map-canvas"]').evaluate((el) => {
+    el.scrollLeft = 0;
+    el.scrollTop = 0;
+  });
+  await mapNode(page, old1).click();
+  await wait(page, "map-side-node");
+  // 첫 두 줄기 사이의 틈, 줄기 머리 아래 - 마디도 단추도 아닌 바탕
+  const gap = await page.evaluate(() => {
+    const lanes = Array.from(document.querySelectorAll(".map-lane")).map((el) => el.getBoundingClientRect());
+    if (lanes.length < 2) return null;
+    const x = (lanes[0].right + lanes[1].left) / 2;
+    const y = lanes[0].top + 120;
+    const hit = document.elementFromPoint(x, y);
+    return hit && !hit.closest(".map-node, button, .map-lane-head") ? { x, y } : null;
+  });
+  check("there is background between two lanes", gap !== null);
+  if (gap) {
+    const before = await readScroll(page);
+    await page.mouse.move(gap.x, gap.y);
+    await page.mouse.down();
+    await page.mouse.move(gap.x - 60, gap.y - 40, { steps: 4 });
+    await page.mouse.move(gap.x - 120, gap.y - 80, { steps: 4 });
+    await page.mouse.up();
+    const after = await readScroll(page);
+    const wantLeft = Math.min(before.left + 120, before.maxLeft);
+    const wantTop = Math.min(before.top + 80, before.maxTop);
+    check("dragging the background scrolls by the same distance", Math.abs(after.left - wantLeft) <= 1 && Math.abs(after.top - wantTop) <= 1 && after.left > before.left, `${JSON.stringify(after)} want ${wantLeft},${wantTop}`);
+    check("letting go does not change the selection", (await mapNode(page, old1).getAttribute("aria-pressed")) === "true" && (await page.locator('[data-testid="map-side-node"]').count()) === 1);
+
+    const still = await readScroll(page);
+    const spot = await page.evaluate(() => {
+      const lanes = Array.from(document.querySelectorAll(".map-lane")).map((el) => el.getBoundingClientRect());
+      const frameBox = document.querySelector('[data-testid="map-canvas"]').getBoundingClientRect();
+      for (let i = 0; i + 1 < lanes.length; i++) {
+        const x = (lanes[i].right + lanes[i + 1].left) / 2;
+        const y = Math.max(lanes[i].top + 120, frameBox.top + 20);
+        const hit = document.elementFromPoint(x, y);
+        if (x > frameBox.left && x < frameBox.right && hit && !hit.closest(".map-node, button, .map-lane-head")) return { x, y };
+      }
+      return null;
+    });
+    if (spot) {
+      await page.mouse.move(spot.x, spot.y);
+      await page.mouse.down();
+      await page.mouse.move(spot.x - 2, spot.y - 2);
+      await page.mouse.up();
+      const small = await readScroll(page);
+      check("moving 3px and letting go does not scroll", small.left === still.left && small.top === still.top, `${JSON.stringify(small)} vs ${JSON.stringify(still)}`);
+    }
+    // 끌어 옮긴 뒤라 OLD-1이 칸 왼쪽 밖에 있을 수 있다 - 처음 자리로 돌려 놓고 마디 위에서 끈다
+    await page.locator('[data-testid="map-canvas"]').evaluate((el) => {
+      el.scrollLeft = 0;
+      el.scrollTop = 0;
+    });
+    const nodeBox = await mapNode(page, old1).boundingBox();
+    if (nodeBox) {
+      const from = await readScroll(page);
+      await page.mouse.move(nodeBox.x + nodeBox.width / 2, nodeBox.y + nodeBox.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(nodeBox.x + nodeBox.width / 2 - 120, nodeBox.y + nodeBox.height / 2 - 80, { steps: 6 });
+      await page.mouse.up();
+      const to = await readScroll(page);
+      check("a drag that starts on a document does not scroll", to.left === from.left && to.top === from.top, `${JSON.stringify(to)} vs ${JSON.stringify(from)}`);
+    }
+  }
+});
+
+await runStep("map: keyboard only", {}, async ({ page }) => {
+  await openMap(page, halfBundleId);
+  await waitMapWorld(page);
+  const selfNodes = await page.locator(`.map-node[data-lane="${halfBundleId}"]`).evaluateAll((els) => els.map((el) => el.dataset.node));
+  check("this bundle has at least two documents", selfNodes.length >= 2, String(selfNodes.length));
+  await page.locator('[data-testid="map-search"]').focus();
+  let entered = null;
+  for (let i = 0; i < 30 && entered === null; i++) {
+    await page.keyboard.press("Tab");
+    entered = await page.evaluate(() => (document.querySelector('[data-testid="map-canvas"]')?.contains(document.activeElement) ? document.activeElement.getAttribute("data-node") ?? document.activeElement.getAttribute("data-testid") : null));
+  }
+  check("Tab from the search enters the map on this bundle's first document", entered === selfNodes[0], String(entered));
+  await page.keyboard.press("Tab");
+  check("one more Tab leaves the map: it is a single Tab stop", !(await page.evaluate(() => document.querySelector('[data-testid="map-canvas"]').contains(document.activeElement))), String(await readActive(page)));
+  await page.keyboard.press("Shift+Tab");
+  check("Shift+Tab comes back to the same document", (await readActive(page)) === `map-node-${selfNodes[0]}`, String(await readActive(page)));
+
+  await page.keyboard.press("ArrowDown");
+  check("ArrowDown moves to the next document in the lane", (await readActive(page)) === `map-node-${selfNodes[1]}`, String(await readActive(page)));
+  await waitActiveInsideCanvas(page);
+  await page.keyboard.press("ArrowRight");
+  const across = await page.evaluate(() => document.activeElement?.closest(".map-lane")?.getAttribute("data-testid"));
+  check("ArrowRight moves to the next lane", across !== null && across !== `map-lane-${halfBundleId}`, String(across));
+  await waitActiveInsideCanvas(page);
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("End");
+  check("End goes to the last document of the lane", (await readActive(page)) === `map-node-${selfNodes.at(-1)}`, String(await readActive(page)));
+  await waitActiveInsideCanvas(page);
+  await page.keyboard.press("Home");
+  check("Home goes to the first", (await readActive(page)) === `map-node-${selfNodes[0]}`, String(await readActive(page)));
+  await page.keyboard.press("ArrowUp");
+  check("ArrowUp at the top reaches the lane's Collapse button", (await readActive(page)) === `map-lane-toggle-${halfBundleId}`, String(await readActive(page)));
+  await page.keyboard.press("ArrowUp");
+  check("ArrowUp on the head stays there", (await readActive(page)) === `map-lane-toggle-${halfBundleId}`, String(await readActive(page)));
+
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await wait(page, "map-side-node");
+  const number = (await page.locator(`[data-testid="map-node-${selfNodes[0]}"]`).getAttribute("data-tip")).split("\n")[0];
+  check("Enter selects the focused document", (await getText(page, "map-side-number")).trim() === number, `${await getText(page, "map-side-number")} vs ${number}`);
+  await page.keyboard.press("Escape");
+  await wait(page, "map-side-summary");
+  check("Esc clears it", (await page.locator('[data-testid="map-side-node"]').count()) === 0);
+
+  await page.keyboard.press("Home");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("Enter");
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="map-lane-toggle-${id}"]`)?.getAttribute("aria-expanded") === "false", halfBundleId, { timeout: T });
+  check("Enter on the head collapses the lane", true);
+  await page.keyboard.press("Enter");
+  await page.waitForFunction((id) => document.querySelector(`[data-testid="map-lane-toggle-${id}"]`)?.getAttribute("aria-expanded") === "true", halfBundleId, { timeout: T });
+  await page.keyboard.press("ArrowDown");
+
+  await page.keyboard.press("+");
+  await waitZoom(page, "110%");
+  await page.keyboard.press("-");
+  await waitZoom(page, "100%");
+  const fitsAtOne = await page.evaluate(() => {
+    const sizer = document.querySelector('[data-testid="map-sizer"]').getBoundingClientRect();
+    const frame = document.querySelector('[data-testid="map-canvas"]');
+    return sizer.width <= frame.clientWidth - 32 && sizer.height <= frame.clientHeight - 32;
+  });
+  await page.keyboard.press("0");
+  if (!fitsAtOne) await page.waitForFunction(() => document.querySelector('[data-testid="map-zoom-value"]')?.textContent?.trim() !== "100%", null, { timeout: T });
+  check("+ - 0 change the zoom from the keyboard", true, await readZoom(page));
+  await waitActiveInsideCanvas(page);
+  check("the focused document stays inside the map", true);
+
+  const zoomBefore = await readZoom(page);
+  await page.locator('[data-testid="map-search"]').focus();
+  await page.keyboard.type("+0");
+  await page.keyboard.press("ArrowDown");
+  check("typing + 0 and arrows in the search does not move the map", (await readZoom(page)) === zoomBefore && (await readActive(page)) === "map-search", `${await readZoom(page)} ${await readActive(page)}`);
+});
+
 await browser.close();
 console.log(failures === 0 ? `\nALL PASS (${passes})` : `\n${failures} check(s) FAILED, ${passes} passed`);
 process.exit(failures === 0 ? 0 : 1);
