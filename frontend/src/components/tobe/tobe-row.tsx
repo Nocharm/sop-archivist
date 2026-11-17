@@ -12,6 +12,7 @@ import { SlotBar } from "@/components/tobe/slot-bar";
 import { ClampText } from "@/components/ui/clamp-text";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { EquisInfo, SopDocument, TargetDoc, ToBe } from "@/lib/api-sop";
+import { isBoxDragActive } from "@/lib/box-drag";
 import { getDocRemoveBlock } from "@/lib/destination-manage-model";
 import { useI18n } from "@/lib/i18n";
 import type { SlotRow, SlotSummary } from "@/lib/slot-status-model";
@@ -137,7 +138,10 @@ export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, 
                     className="meta-na-label"
                     tabIndex={0}
                     data-testid={`${prefix}-na-name`}
-                    onPointerEnter={(event) => checkNaNameCut(event.currentTarget)}
+                    // 끄는 동안 지나가는 줄에서는 재지 않는다(끌어다 놓기 G11 - 포인터가 움직일 때마다 다시 그리지 않는다)
+                    onPointerEnter={(event) => {
+                      if (!isBoxDragActive()) checkNaNameCut(event.currentTarget);
+                    }}
                     onFocus={(event) => checkNaNameCut(event.currentTarget)}
                   >
                     {firstNa.number} {firstNa.label}

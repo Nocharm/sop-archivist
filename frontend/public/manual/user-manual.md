@@ -247,7 +247,7 @@ Bundle은 함께 재구성할 문서 묶음입니다. Old SOP 여러 편과 새�
 - 뺄 수 없는 줄은 **Remove** 가 꺼져 있고, 올리면 까닭이 뜹니다 — 쓴 파일이 붙은 줄, 문장을 배정한 줄, 아래에 WI가 있는 SOP.
 - **줄을 누르거나 <kbd>Enter</kbd>로 펼치면 고치는 칸이 나옵니다.** 다시 누르거나 <kbd>Space</kbd>로 접습니다. 여러 줄을 함께 펼쳐 둘 수 있고, 줄의 글자를 긁어 고르는 것은 펼침으로 치지 않습니다.
 
-WI의 상위 SOP는 끌어서도 바꿉니다. WI 줄을 잡아(올리면 줄이 살짝 들립니다) 다른 SOP 줄에 놓으면 그 SOP 아래로 옮겨 가고 바로 저장됩니다. 끄는 동안 따라오는 표에 "Parent SOP: SOP-PH"처럼 놓으면 생기는 일이 적히고, SOP 줄 말고는 흐려집니다. WI 줄과 지금 상위인 SOP 줄에는 놓이지 않고 표에 까닭("A WI cannot be a parent", "Already under this SOP")이 적힙니다. 줄이 아닌 곳에 놓거나 <kbd>Esc</kbd>를 누르면 아무 일도 없습니다. 옮긴 뒤 뜨는 알림의 **Undo** 로 10초 안에 되돌립니다 — 그사이 다른 사람이 그 줄을 다시 옮겼거나 지웠으면 되돌리지 않고 "The list changed after that. Nothing was undone."이 뜹니다. 같은 일을 펼친 곳의 **Parent SOP** 에서도 합니다. 줄의 글자를 긁어 고르려면 <kbd>Alt</kbd>를 누른 채 끕니다. 저장하는 동안과 읽기 전용 Bundle에서는 줄이 끌리지 않습니다.
+WI의 상위 SOP는 끌어서도 바꿉니다. WI 줄을 잡아(올리면 줄이 살짝 들립니다) 다른 SOP 줄에 놓으면 그 SOP 아래로 옮겨 가고 바로 저장됩니다. 끄는 동안 따라오는 표에 "Parent SOP: SOP-PH"처럼 놓으면 생기는 일이 적히고, SOP 줄 말고는 흐려집니다. WI 줄과 지금 상위인 SOP 줄에는 놓이지 않고 표에 까닭("A WI cannot be a parent", "Already under this SOP")이 적힙니다. 줄이 아닌 곳에 놓거나 <kbd>Esc</kbd>를 누르면 아무 일도 없습니다. 옮긴 뒤 뜨는 알림의 **Undo** 로 10초 안에 되돌립니다 — 그사이 다른 사람이 그 줄을 다시 옮겼거나 지웠으면 되돌리지 않고 "The list changed after that. Nothing was undone."이 뜹니다. 상위 SOP를 찾지 못한 WI(**No parent SOP**)를 옮긴 알림에는 되돌릴 앞의 SOP가 없어 **Undo** 가 없습니다. 같은 일을 펼친 곳의 **Parent SOP** 에서도 합니다. 줄의 글자를 긁어 고르려면 <kbd>Alt</kbd>를 누른 채 끕니다. 저장하는 동안과 읽기 전용 Bundle에서는 줄이 끌리지 않습니다. 목록에 SOP가 하나뿐이면 놓을 곳이 없어 끌리지 않습니다(상위 SOP를 찾지 못한 WI만 그 SOP로 끌립니다).
 
 펼친 곳의 왼쪽 **Document** 에서 고칩니다.
 

@@ -49,6 +49,7 @@ import { useI18n } from "@/lib/i18n";
 import { useLeaveGuard } from "@/lib/leave-guard";
 import { navigate } from "@/lib/nav-buffer";
 import { PARENT_REFUSAL_KEYS, buildParentCard, canDragParent, canUndoParentMove, resolveParentDrop } from "@/lib/parent-drop-model";
+import { getRevealScrollTop, readUntransformedBox } from "@/lib/reveal-scroll";
 import { saveBlob } from "@/lib/save-file";
 import { buildSlotRows, canUndoRestore, isNaEditDirty, listUsedReasons, summarizeSlots, type NaEdit, type SlotKey, type SlotRow, type SlotSummary } from "@/lib/slot-status-model";
 import { NEW_DOCUMENTS_ANCHOR } from "@/lib/stages";
@@ -205,14 +206,20 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
     addInputRef.current?.focus();
   }, [justAdded, addedId]);
 
-  // 끌어 옮긴 줄이 새 자리에 그려진 뒤(커밋 뒤) 강조하고 창 밖이면 그쪽으로 스크롤한다
+  // 끌어 옮긴 줄이 새 자리에 그려진 뒤(커밋 뒤) 강조하고 창 밖이면 그쪽으로 스크롤한다.
+  // 그 줄은 지금 옛 자리에서 미끄러져 오는 중이라(useFlip의 translateY) scrollIntoView는 옛 자리로 스크롤한다 - 미끄러짐을 되돌린 제자리로 정한다
   useEffect(() => {
     if (moved === null || flashedMoveRef.current === moved.seq) return;
     const row = listRef.current?.querySelector<HTMLElement>(`.doc-row[data-doc="${CSS.escape(moved.key)}"]`);
     if (!row) return;
     flashedMoveRef.current = moved.seq;
     flashElement(row);
-    row.scrollIntoView({ block: "nearest" });
+    const scroller = row.closest<HTMLElement>(".frame-view, .overflow-auto, .overflow-y-auto");
+    if (!scroller) return;
+    const transform = getComputedStyle(row.closest("[data-flip-key]") ?? row).transform;
+    const shiftY = transform === "none" ? 0 : new DOMMatrixReadOnly(transform).m42;
+    const next = getRevealScrollTop(scroller.getBoundingClientRect(), readUntransformedBox(row.getBoundingClientRect(), shiftY), scroller.scrollTop);
+    if (next !== null) scroller.scrollTop = next;
   }, [moved]);
 
   /** 줄 쓰기의 결과 - 거절이면 그 오류를 함께 돌려준다(알림과 다시 받기는 이 안에서 한다). beforeApply는 응답을 얹기 바로 전에 한 번(자리 재기) */
@@ -271,27 +278,39 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
     // Restore는 N/A 칸에만 있다 - 사유는 지우기 전에 읽어 둔다
     const reason = row.state.kind === "na" ? row.state.reason : "";
     if (!(await runWrite(() => clearNaSlot(bundleId, docId, row.key)))) return;
-    showToast(t("tobe.slots.restored", { number: row.number, name: row.label }), "ok", {
-      action: { label: t("common.undo"), run: () => void naUndoRef.current(docId, row.key, reason) },
+    // 알림은 같은 글이면 앞의 것을 지운다 - 문서 번호를 적어 두 SOP의 같은 칸을 잇달아 되돌려도 알림마다 제 Undo가 남게
+    const restoredIn = bundleId;
+    showToast(t("tobe.slots.restored", { number: row.number, name: row.label, code: doc.code }), "ok", {
+      action: { label: t("common.undo"), run: () => void naUndoRef.current(restoredIn, docId, row.key, reason) },
     });
     setNaEdit((current) => (current !== null && current.docKey === doc.key && current.slotKey === row.key ? null : current));
   }
 
-  /** Restore의 Undo - 다시 읽어 그 줄이 아직 SOP이고 그 칸이 N/A가 아닐 때만 지우기 전의 사유로 저장한다. 그사이 문장이 들어왔으면 서버가 409로 거절한다 */
-  async function undoRestore(docId: number, slotKey: SlotKey, reason: string) {
+  /** Undo의 다시 읽기와 쓰기 - 진행 중인 쓰기로 세어 그동안 끌기 · Restore · N/A 저장이 시작되지 않게 한다(늦은 Undo가 그 사이의 놓기를 덮지 않게) */
+  async function runUndo(forBundle: number, undo: () => Promise<void>) {
+    writesRef.current += 1;
     try {
-      const fresh = await getToBe(bundleId);
+      await undo();
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+    } finally {
+      writesRef.current -= 1;
+      reload();
+      void loadBundle(forBundle);
+    }
+  }
+
+  /** Restore의 Undo - 다시 읽어 그 줄이 아직 SOP이고 그 칸이 N/A가 아닐 때만 지우기 전의 사유로 저장한다. 그사이 문장이 들어왔으면 서버가 409로 거절한다.
+   * forBundle은 Restore한 Bundle - 알림은 화면을 넘어 남으므로 지금 그려진 Bundle이 아닐 수 있다 */
+  function undoRestore(forBundle: number, docId: number, slotKey: SlotKey, reason: string) {
+    return runUndo(forBundle, async () => {
+      const fresh = await getToBe(forBundle);
       if (!canUndoRestore(fresh, docId, slotKey)) {
         showToast(t("tobe.undoStale"), "info");
         return;
       }
-      await setNaSlot(bundleId, docId, slotKey, reason);
-    } catch (err) {
-      showToast(humanizeApiError(err, t), "error");
-    } finally {
-      reload();
-      void loadBundle(bundleId);
-    }
+      await setNaSlot(forBundle, docId, slotKey, reason);
+    });
   }
 
   /** 놓아서 상위 SOP를 바꾼다 - 바로 저장하고 Undo가 든 알림을 띄운다. 다른 줄 쓰기가 돌면 버린다(그동안은 끌기도 시작되지 않는다) */
@@ -308,26 +327,23 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
     setMoved((prev) => ({ key: doc.key, seq: (prev?.seq ?? 0) + 1 }));
     // 알림은 같은 글이면 앞의 것을 지운다 - 번호를 적어 잇달아 옮겨도 알림마다 제 Undo가 남게
     const text = t("tobe.drag.moved", { wi: doc.code, sop: parent.code });
+    const movedIn = bundleId;
     if (previous === null) showToast(text);
-    else showToast(text, "ok", { action: { label: t("common.undo"), run: () => void parentUndoRef.current(docId, doc.code, parent.code, previous) } });
+    else showToast(text, "ok", { action: { label: t("common.undo"), run: () => void parentUndoRef.current(movedIn, docId, doc.code, parent.code, previous) } });
   }
 
-  /** 알림의 Undo - 다시 읽어 그 줄이 아직 놓았던 SOP 아래의 WI일 때만 앞의 부모로 저장한다. 아니면 쓰지 않고 알린다(남이 바꾼 것을 덮지 않는다). 알림의 단추는 한 번뿐이라 saving으로 막지 않는다 */
-  async function undoParentMove(docId: number, wiCode: string, movedTo: string, previous: string) {
-    try {
-      const fresh = await getToBe(bundleId);
+  /** 알림의 Undo - 다시 읽어 그 줄이 아직 놓았던 SOP 아래의 WI일 때만 앞의 부모로 저장한다. 아니면 쓰지 않고 알린다(남이 바꾼 것을 덮지 않는다).
+   * 알림의 단추는 한 번뿐이라 진행 중인 쓰기로 막지 않는다. forBundle은 놓은 Bundle */
+  function undoParentMove(forBundle: number, docId: number, wiCode: string, movedTo: string, previous: string) {
+    return runUndo(forBundle, async () => {
+      const fresh = await getToBe(forBundle);
       if (!canUndoParentMove(fresh, docId, movedTo)) {
         showToast(t("tobe.undoStale"), "info");
         return;
       }
-      await updateToBeDoc(bundleId, docId, { parent_code: previous });
+      await updateToBeDoc(forBundle, docId, { parent_code: previous });
       showToast(t("tobe.drag.moved", { wi: wiCode, sop: previous }));
-    } catch (err) {
-      showToast(humanizeApiError(err, t), "error");
-    } finally {
-      reload();
-      void loadBundle(bundleId);
-    }
+    });
   }
   // 알림은 화면을 넘어 남는다 - 콜백이 그 렌더의 함수를 붙들지 않게 가장 최근의 것을 미러한다(use-box-drag의 최신 config와 같은 짜임)
   const parentUndoRef = useRef(undoParentMove);

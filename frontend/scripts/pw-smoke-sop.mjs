@@ -1780,7 +1780,7 @@ await runStep("new documents: drag a WI onto another SOP to change its parent, U
     const cleared = page.waitForResponse((response) => response.request().method() === "DELETE" && decodeURIComponent(response.url()).endsWith("/na/procedures.troubleshooting"), { timeout: T });
     await page.locator(`[data-testid="${prefix}-na-procedures.troubleshooting-restore"]`).click();
     await cleared;
-    const restoredToast = toastFor("ok", "Restored 6.3 Troubleshooting");
+    const restoredToast = toastFor("ok", "Restored 6.3 Troubleshooting in SOP-CF");
     await restoredToast.waitFor({ timeout: T });
     check("Restore says so with an Undo", (await restoredToast.locator('[data-testid^="toast-action-"]').count()) === 1);
     const naSaved = page.waitForResponse((response) => response.request().method() === "PUT" && decodeURIComponent(response.url()).endsWith("/na/procedures.troubleshooting"), { timeout: T });
@@ -1800,6 +1800,69 @@ await runStep("new documents: drag a WI onto another SOP to change its parent, U
     if (sopDrag) await page.request.delete(`${api}/tobe/docs/${sopDrag.id}`, { headers });
     const end = await readToBe(page, halfBundleId);
     check("the WIs are back under SOP-CF and SOP-DRAG is gone", [w, x].every((doc) => !doc || end.docs.find((item) => item.id === doc.id)?.parent_code === "SOP-CF") && !end.docs.some((doc) => doc.code === "SOP-DRAG"));
+  }
+});
+
+// 긴 목록에서 위의 WI를 아래 끝 SOP로 끌어(가장자리 자동 스크롤) 놓으면 그 줄은 새 자리에서 보인다 - 미끄러지는 중의 옛 자리로 화면을 끌고 올라가지 않는다.
+// SOP 둘과 그 사이 WI 12개는 API로 만들고 끝에 지운다
+await runStep("new documents: a WI dragged far down a long list stays in view where it lands", { allowConsoleErrors: true }, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const jsonHeaders = { ...headers, "Content-Type": "application/json" };
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const isLongDoc = (doc) => doc.code.startsWith("WI-LONG-") || doc.code.startsWith("SOP-LONG-");
+  const frameScroll = () => page.evaluate(() => document.querySelector(".frame-view")?.scrollTop ?? -1);
+  try {
+    const post = (data) => page.request.post(`${api}/tobe/docs`, { headers: jsonHeaders, data });
+    await post({ code: "SOP-LONG-A", doc_type: "sop", parent_code: null });
+    for (let i = 1; i <= 12; i += 1) await post({ code: `WI-LONG-${String(i).padStart(2, "0")}`, doc_type: "wi", parent_code: "SOP-LONG-A" });
+    await post({ code: "SOP-LONG-B", doc_type: "sop", parent_code: null });
+    const tobe = await readToBe(page, halfBundleId);
+    const byCode = (code) => tobe.docs.find((doc) => doc.code === code);
+    const [sopA, moving, sopB] = [byCode("SOP-LONG-A"), byCode("WI-LONG-01"), byCode("SOP-LONG-B")];
+    const rowOf = (doc) => page.locator(`[data-testid="tobe-id-${doc.id}-row"]`);
+    await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
+    await page.locator(TOBE_ROWS).first().waitFor({ timeout: T });
+    // SOP-LONG-A를 창 위쪽에 둔다 - 끌 줄은 가장자리 띠 밖이고 SOP-LONG-B는 창 아래 밖이다
+    await rowOf(sopA).evaluate((el) => {
+      const pane = el.closest(".frame-view");
+      pane.scrollTop += el.getBoundingClientRect().top - 120;
+    });
+    const startBox = await rowOf(sopB).boundingBox();
+    check("the target SOP starts below the window", startBox.y > VIEWPORT.height, JSON.stringify(startBox));
+    const title = await page.locator(`[data-testid="tobe-id-${moving.id}-title-text"]`).boundingBox();
+    const from = { x: title.x + Math.min(title.width * 0.3, 40), y: title.y + title.height / 2 };
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x, from.y + 10, { steps: 5 });
+    await page.locator('[data-testid="drag-card"]').waitFor({ timeout: T });
+    // 창 아래 가장자리(자동 스크롤 띠 44px 안)에 멈춰 앱 틀이 끝까지 내려가게 한다
+    await page.mouse.move(from.x, VIEWPORT.height - 12, { steps: 10 });
+    await page.waitForFunction(() => {
+      const pane = document.querySelector(".frame-view");
+      return pane !== null && pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 1;
+    }, null, { timeout: T });
+    const targetBox = await rowOf(sopB).boundingBox();
+    await page.mouse.move(from.x, targetBox.y + Math.min(targetBox.height / 2, 24), { steps: 6 });
+    const note = await page.locator('[data-testid="drag-card"] .drag-card-note').evaluate((el) => (el.hidden ? null : (el.textContent ?? "").trim()));
+    check("auto-scroll brought SOP-LONG-B under the pointer", note === "Parent SOP: SOP-LONG-B", note);
+    const scrollAtDrop = await frameScroll();
+    const saved = page.waitForResponse((response) => response.request().method() === "PATCH" && new URL(response.url()).pathname.endsWith(`/tobe/docs/${moving.id}`), { timeout: T });
+    await page.mouse.up();
+    check("the drop saves", (await saved).status() === 200);
+    await settleToBe(page);
+    // 미끄러짐(--dur-slow)과 스크롤이 끝난 뒤
+    await page.waitForTimeout(800);
+    const landed = await rowOf(moving).boundingBox();
+    const scrollAfter = await frameScroll();
+    check("the moved row is inside the window where it landed", landed !== null && landed.y >= 44 && landed.y + landed.height <= VIEWPORT.height, JSON.stringify(landed));
+    check("the view did not jump back toward the row's old place", scrollAfter >= scrollAtDrop - 80, `${scrollAtDrop} -> ${scrollAfter}`);
+  } finally {
+    await page.mouse.up();
+    // WI부터 지운다 - 아래에 WI가 있는 SOP는 지울 수 없다
+    const now = await readToBe(page, halfBundleId);
+    const made = now.docs.filter(isLongDoc).sort((a, b) => (a.doc_type === b.doc_type ? 0 : a.doc_type === "wi" ? -1 : 1));
+    for (const doc of made) await page.request.delete(`${api}/tobe/docs/${doc.id}`, { headers });
+    check("the long-list rows are gone again", !(await readToBe(page, halfBundleId)).docs.some(isLongDoc));
   }
 });
 
