@@ -8964,8 +8964,18 @@ await runStep("map: REF? only and search dim the map", {}, async ({ page }) => {
   await waitInsideCanvas(page, `map-node-${picked}`);
   const matched = await page.locator(".map-node[data-match]").evaluateAll((els) => els.map((el) => el.dataset.node));
   check("matching documents are marked", matched.length > 0 && matched.every((id) => matchIds.includes(id)) && matched.includes(picked), matched.join(","));
-  const dimmed = await page.locator(".map-node:not([data-match])").first().evaluate((el) => Number(getComputedStyle(el).opacity));
-  check("the rest dims", dimmed < 1, String(dimmed));
+  // 흐림은 전환(opacity)이라 끝나기를 기다려 잰다 - 맞지 않는 마디 전부
+  const isRestDimmed = await page.waitForFunction(() => {
+    const rest = [...document.querySelectorAll(".map-node:not([data-match])")];
+    return rest.length > 0 && rest.every((el) => Number(getComputedStyle(el).opacity) < 1);
+  }, null, { timeout: 2000 }).then(() => true, () => false);
+  const notDimmed = isRestDimmed ? "" : await page.evaluate(() => {
+    const world = document.querySelector('[data-testid="map-world"]');
+    const marks = world === null ? "no world" : [...world.attributes].map((attr) => attr.name).filter((name) => name.startsWith("data-")).join(" ");
+    const rest = [...document.querySelectorAll(".map-node:not([data-match])")].filter((el) => Number(getComputedStyle(el).opacity) >= 1);
+    return `${marks} | ${rest.map((el) => `${el.dataset.node}${el.matches(":hover") ? ":hover" : ""}${el === document.activeElement ? ":focus" : ""}`).join(",")}`;
+  });
+  check("the rest dims", isRestDimmed, notDimmed);
 
   // 맞는 것이 없으면 지도 자리에도 Nothing matches와 Clear filters(설계 §6.9) - 흐린 지도만 남기지 않는다
   await page.locator('[data-testid="map-search"]').fill("zz-nothing");
