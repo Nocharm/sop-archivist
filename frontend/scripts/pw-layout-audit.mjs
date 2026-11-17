@@ -74,7 +74,6 @@ const ADMIN_TABS = ["access", "directory", "batch", "ai", "bundles", "guidelines
 // X0: 어느 화면에서도 문서가 가로로 넘치지 않는다(가로 스크롤이 생기지 않는다)
 const sceneUrls = (bundle) => ["", "/documents", "/assign?edit=first", "/assign", "/order", "/outputs", "/history"].map((tail) => `/bundles/${bundle}${tail}`);
 const PLAIN_SCENES = ["/", "/manual", "/account"];
-const BASELINE_C10E = 177; // 변경 전에 잰 값으로 채운다
 // C3: 분류 절반 묶음의 첫 SOP(SOP-CF)를 펼친 칸 상태 표의 높이 - 1920에서 잰 339px(en · ko, 2026-11-17)에 글꼴 차이 여유 21px
 const C3_MAX_HEIGHT = 360;
 const AUDIT_ENTRIES = [
@@ -785,22 +784,19 @@ const AUDIT_ENTRIES = [
     note: "2560: bundle list, Documents, History = 1600; Edit original (inside Assign) = 1920; overview, account, manual = 1280",
   },
   {
-    // C7b: 1920에서 Documents 제목 열(칸) 폭 >= 420px
+    // C7b: 1920에서 Documents Old 줄의 제목 자리(.doc-title) 폭 >= 420px
     id: "C7b", ds: "worst", user: MEMBER, views: [1920],
     path: (ids) => `/bundles/${ids.w[1]}/documents`,
-    // 같은 컨텍스트의 앞선 항목이 카드 보기를 기억시켰을 수 있어 표 보기로 못 박고 다시 읽는다
     open: async (page) => {
-      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
-      await page.reload({ waitUntil: "networkidle" });
-      await page.locator('td [data-testid^="documents-"][data-testid$="-title"]').first().waitFor({ timeout: T });
+      await page.locator('[data-testid="documents-list"] .doc-row .doc-title').first().waitFor({ timeout: T });
       await page.waitForTimeout(1000);
     },
     measure: (page) => page.evaluate(() => {
-      const cell = document.querySelector('td [data-testid^="documents-"][data-testid$="-title"]')?.closest("td");
-      return cell ? Math.round(cell.getBoundingClientRect().width) : -1;
+      const title = document.querySelector('[data-testid="documents-list"] .doc-row .doc-title');
+      return title ? Math.round(title.getBoundingClientRect().width) : -1;
     }),
     expect: (value) => value >= 420,
-    note: "1920 Documents (W1): title column cell width >= 420px",
+    note: "1920 Documents (W1): Old row title box (.doc-title) width >= 420px",
   },
   // ---- Task 11: 관리 화면 나머지와 창 ----
   {
@@ -1052,45 +1048,44 @@ const AUDIT_ENTRIES = [
   },
   // ---- Task 13: Documents 정상 상태 아이콘·늘 보이는 흐린 단추 (C10) ----
   {
-    // C10a: 좁은 표(1120)에서 뒤쪽 칸이 한 줄이다 - 모든 줄에서 칸 높이 <= 40px, 단추 묶음 오른쪽 끝 x가 줄마다 같다(±1px), 경고 칩 숫자가 보인다
+    // C10a: 1120에서 Old 줄이 틀 안이다 - 모든 줄이 넘치지 않고(scrollWidth <= clientWidth) 목록 틀 안, 딸린 정보 줄이 한 줄(18px), 줄 끝 단추 자리의 오른쪽 끝 x가 줄마다 같다(±1px), 경고 칩 숫자가 보인다
     id: "C10a", ds: "worst", user: MEMBER, views: [1120],
     path: (ids) => `/bundles/${ids.w[1]}/documents`,
     open: async (page) => {
-      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
-      await page.reload({ waitUntil: "networkidle" });
-      await page.locator('td [data-testid^="documents-"][data-testid$="-title"]').first().waitFor({ timeout: T });
+      await page.locator('[data-testid="documents-list"] .doc-row').first().waitFor({ timeout: T });
       await page.waitForTimeout(1000);
     },
     measure: (page) => page.evaluate(() => {
-      const rows = [...document.querySelectorAll('[data-testid="documents-list"] tbody tr')].filter((row) => row.querySelector(".row-actions-quiet"));
-      // 칸 안 내용의 높이(td는 제목이 여러 줄이면 줄 높이를 따라 커진다)
-      const heights = rows.map((row) => row.querySelector(".row-actions-quiet").parentElement.getBoundingClientRect().height);
-      const rights = rows.map((row) => row.querySelector(".row-actions-quiet").getBoundingClientRect().right);
-      const chips = [...document.querySelectorAll('[data-testid^="documents-"][data-testid$="-warnings"]')].filter((el) => el.closest("td")?.querySelector(".row-actions-quiet"));
+      const list = document.querySelector('[data-testid="documents-list"]');
+      const listRight = list.getBoundingClientRect().right;
+      const rows = [...list.querySelectorAll(".doc-row")];
+      const overflowing = rows.filter((row) => row.scrollWidth > row.clientWidth || row.getBoundingClientRect().right > listRight + 0.5).length;
+      const metaHeights = rows.map((row) => row.querySelector(".doc-meta")?.getBoundingClientRect().height ?? 0);
+      const rights = [...list.querySelectorAll('[data-testid$="-acts"]')].map((el) => el.getBoundingClientRect().right);
+      const chips = [...list.querySelectorAll('.doc-row [data-testid^="documents-"][data-testid$="-warnings"]')];
       return {
         rows: rows.length,
-        maxCell: Math.round(Math.max(0, ...heights)),
-        rightSpread: Math.round((Math.max(...rights) - Math.min(...rights)) * 10) / 10,
+        overflowing,
+        maxMeta: Math.round(Math.max(0, ...metaHeights)),
+        rightSpread: rights.length === 0 ? -1 : Math.round((Math.max(...rights) - Math.min(...rights)) * 10) / 10,
         chips: chips.length,
         chipsWithDigit: chips.filter((el) => /\d/.test(el.textContent ?? "")).length,
       };
     }),
-    expect: (value) => value.rows > 0 && value.maxCell <= 40 && value.rightSpread <= 1 && value.chips > 0 && value.chips === value.chipsWithDigit,
-    note: "1120 Documents (W1): trail cell height <= 40px in every row, action group right edge identical (+-1px), warning chip shows its count",
+    expect: (value) => value.rows > 0 && value.overflowing === 0 && value.maxMeta <= 18 && value.rightSpread >= 0 && value.rightSpread <= 1 && value.chips > 0 && value.chips === value.chipsWithDigit,
+    note: "1120 Documents (W1): every Old row inside the list frame without overflow, meta line one line (<= 18px), row-end button group right edge identical (+-1px), warning chip shows its count",
   },
   {
-    // C10b: 단추 묶음은 평소 opacity .45, 줄 호버 때 1, Tab으로 단추에 들어가도 1(보통 1440 표)
+    // C10b: 줄 끝 단추 묶음은 평소 opacity 0, 줄 호버 때 1, 단추에 포커스가 있어도 1(보통 1440, Documents 화면 설계 §4)
     id: "C10b", ds: "mid", user: MEMBER, views: [1440],
     path: (ids) => `/bundles/${ids.mid[2]}/documents`,
     open: async (page) => {
-      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
-      await page.reload({ waitUntil: "networkidle" });
-      await page.locator('[data-testid="documents-list"] tbody tr').first().waitFor({ timeout: T });
+      await page.locator('[data-testid="documents-list"] .doc-row').first().waitFor({ timeout: T });
       await page.waitForTimeout(800);
     },
     measure: async (page) => {
-      const row = page.locator('[data-testid="documents-list"] tbody tr', { has: page.locator(".row-actions-quiet") }).first();
-      const group = row.locator(".row-actions-quiet").first();
+      const row = page.locator('[data-testid="documents-list"] .doc-row', { has: page.locator(".doc-acts") }).first();
+      const group = row.locator(".doc-acts").first();
       const opacity = () => group.evaluate((el) => Number(getComputedStyle(el).opacity));
       await page.mouse.move(0, 0);
       await page.waitForTimeout(400);
@@ -1104,17 +1099,15 @@ const AUDIT_ENTRIES = [
       const focus = await opacity();
       return { rest, hover, focus };
     },
-    expect: (value) => Math.abs(value.rest - 0.45) < 0.02 && value.hover === 1 && value.focus === 1,
-    note: "Documents row actions: opacity .45 at rest, 1 on row hover, 1 when a button has focus",
+    expect: (value) => value.rest === 0 && value.hover === 1 && value.focus === 1,
+    note: "Documents Old row-end buttons: opacity 0 at rest, 1 on row hover, 1 when a button has focus",
   },
   {
-    // C10c: 거절된 줄의 읽기 전용 제목도 편집되는 제목과 같은 왼쪽 x와 굵기(W1)
+    // C10c: 받지 못한 줄(펼치지 않아 화살표가 없다)의 제목 글도 보통 줄의 제목 글과 같은 왼쪽 x와 굵기(W1)
     id: "C10c", ds: "worst", user: MEMBER, views: [1440],
     path: (ids) => `/bundles/${ids.w[1]}/documents`,
     open: async (page) => {
-      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
-      await page.reload({ waitUntil: "networkidle" });
-      await page.locator('td [data-testid^="documents-"][data-testid$="-title"]').first().waitFor({ timeout: T });
+      await page.locator('[data-testid="documents-list"] .doc-row .doc-title').first().waitFor({ timeout: T });
       await page.waitForTimeout(1000);
     },
     measure: async (page) => page.evaluate(() => {
@@ -1127,23 +1120,22 @@ const AUDIT_ENTRIES = [
         range.selectNodeContents(node);
         return { left: Math.round(range.getBoundingClientRect().left * 10) / 10, weight: getComputedStyle(node.parentElement).fontWeight };
       };
-      const reason = document.querySelector('[data-testid$="-reason"]');
-      const rejected = reason?.closest("tr")?.querySelector('[data-testid$="-title"]');
-      const normal = [...document.querySelectorAll('td [data-testid^="documents-"][data-testid$="-title"]')].find((el) => !el.closest("tr")?.querySelector('[data-testid$="-reason"]') && (el.value ?? el.textContent));
+      // 빈 제목(No title, 보통 굵기)은 견주지 않는다
+      const rows = [...document.querySelectorAll('[data-testid="documents-list"] .doc-row')].filter((row) => !row.querySelector(".doc-title .doc-title-empty"));
+      const rejected = rows.find((row) => row.querySelector('[data-testid$="-reason"]'))?.querySelector(".doc-title");
+      const normal = rows.find((row) => !row.querySelector('[data-testid$="-reason"]'))?.querySelector(".doc-title");
       if (!rejected || !normal) return { missing: true };
-      const readValue = (el) => (el.tagName === "INPUT" ? { left: el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft) + parseFloat(getComputedStyle(el).borderLeftWidth), weight: getComputedStyle(el).fontWeight } : textLeft(el));
-      return { rejected: readValue(rejected), normal: readValue(normal) };
+      const left = { rejected: textLeft(rejected), normal: textLeft(normal) };
+      return left.rejected && left.normal ? left : { missing: true };
     }),
     expect: (value) => !value.missing && Math.abs(value.rejected.left - value.normal.left) <= 1 && value.rejected.weight === value.normal.weight,
-    note: "rejected row title text left x equals normal row title text left x, same font-weight",
+    note: "rejected Old row title text left x equals normal Old row title text left x, same font-weight",
   },
   {
     // C10d: 정상 상태 아이콘에 포커스하면 툴팁이 뜨고(Ready), aria-label이 비어 있지 않다. 글자 알약이 아니라 아이콘이다
     id: "C10d", ds: "mid", user: MEMBER, views: [1440],
     path: (ids) => `/bundles/${ids.mid[2]}/documents`,
     open: async (page) => {
-      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
-      await page.reload({ waitUntil: "networkidle" });
       await page.locator('[data-testid$="-status"]').first().waitFor({ timeout: T });
     },
     measure: async (page) => {
@@ -1157,30 +1149,6 @@ const AUDIT_ENTRIES = [
     },
     expect: (value) => value.aria.length > 0 && value.text === "" && value.tip.includes("Ready"),
     note: "normal status icon: non-empty aria-label, no text, focus shows 'Ready' tooltip",
-  },
-  {
-    // C10e: 보통 1440에서 상태 + 보조 검사 열 폭의 합(th)이 이전 기준보다 좁다. 기준은 변경 전에 잰 값(BASELINE)
-    id: "C10e", ds: "mid", user: MEMBER, views: [1440],
-    path: (ids) => `/bundles/${ids.mid[2]}/documents`,
-    open: async (page) => {
-      await page.evaluate(() => localStorage.setItem("sopa.listView.documents", "table"));
-      await page.reload({ waitUntil: "networkidle" });
-      await page.locator('[data-testid="documents-list"] thead th').first().waitFor({ timeout: T });
-      await page.waitForTimeout(800);
-    },
-    measure: (page) => page.evaluate(() => {
-      const ths = [...document.querySelectorAll('[data-testid="documents-list"] thead th')];
-      const widths = ths.map((th) => th.getBoundingClientRect().width);
-      const cellsOf = (tid) => [...document.querySelector('[data-testid="documents-list"] tbody tr [data-testid$="-' + tid + '"]').closest("tr").children];
-      const rowCells = cellsOf("status");
-      const iStatus = rowCells.findIndex((td) => td.querySelector('[data-testid$="-status"]'));
-      const iAux = rowCells.findIndex((td) => td.querySelector('[data-testid$="-aux"]'));
-      const iTitle = rowCells.findIndex((td) => td.querySelector('[data-testid$="-title"]'));
-      const heads = ths.map((th) => th.textContent.trim());
-      return { sum: Math.round(widths[iStatus] + widths[iAux]), title: Math.round(widths[iTitle]), heads: heads.join("|") };
-    }),
-    expect: (value) => value.sum < BASELINE_C10E,
-    note: "1440 Documents (mid): extraction + aux column widths sum is narrower than the pre-change baseline",
   },
   // ---- 결과물 한 벌: Excel 미리보기 창 · 칸 제목 · 긴 C의 끝 표지 · 개요 검토 조건 아홉 줄 ----
   {

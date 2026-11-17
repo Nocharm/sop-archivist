@@ -36,7 +36,9 @@ function describe(version: EquisVersion): string {
 export function EquisStatus({ equis, testId, compact = false, canEdit, onRefresh, onUseCurrentNumber }: EquisStatusProps) {
   const { t } = useI18n();
   const anchorRef = useRef<HTMLButtonElement>(null);
+  const textRef = useRef<HTMLSpanElement>(null);
   const [open, setOpen] = useState(false);
+  const [isTextHidden, setIsTextHidden] = useState(false);
   const label = formatEquisLabel(equis, t);
   const Icon = ICONS[label.icon];
   const tone = TONES[label.tone];
@@ -46,9 +48,14 @@ export function EquisStatus({ equis, testId, compact = false, canEdit, onRefresh
     return (
       <span className={`inline-flex h-4 shrink-0 items-center gap-1 text-[11px] leading-4 ${tone}`} role="status" aria-label={label.text} data-testid={testId}>
         <Loader2 size={12} strokeWidth={1.5} className="animate-spin" aria-hidden />
-        {!compact && label.text}
+        {!compact && <span className="equis-text">{label.text}</span>}
       </span>
     );
+  }
+
+  // 글자는 좁은 줄에서 CSS가 숨긴다(.equis-text, 문서 목록의 딸린 정보 줄) - 툴팁은 150ms 뒤에 뜨므로 올리거나 포커스할 때 재면 된다(ClampText와 같다)
+  function checkTextHidden() {
+    setIsTextHidden(textRef.current !== null && textRef.current.getClientRects().length === 0);
   }
 
   const trigger = (
@@ -56,15 +63,22 @@ export function EquisStatus({ equis, testId, compact = false, canEdit, onRefresh
       ref={anchorRef}
       type="button"
       className={`inline-flex h-4 min-w-0 items-center gap-1 rounded-sm text-[11px] leading-4 hover:underline ${tone}`}
-      aria-label={compact ? label.text : undefined}
+      // 글자가 숨으면 아이콘만 남는다 - 이름은 늘 단다(보이는 글자와 같은 글이라 읽히는 이름은 그대로다)
+      aria-label={label.text}
       aria-haspopup="dialog"
       aria-expanded={open}
       data-testid={testId}
       onClick={() => setOpen((value) => !value)}
+      onPointerEnter={compact ? undefined : checkTextHidden}
+      onFocus={compact ? undefined : checkTextHidden}
     >
       <Icon size={12} strokeWidth={1.5} className="shrink-0" aria-hidden />
       {/* 좁은 칸에서는 글이 말줄임된다 - 전체는 눌러 펼친 정보에 있다 */}
-      {!compact && <span className="truncate">{label.text}</span>}
+      {!compact && (
+        <span ref={textRef} className="equis-text truncate">
+          {label.text}
+        </span>
+      )}
     </button>
   );
 
@@ -75,7 +89,10 @@ export function EquisStatus({ equis, testId, compact = false, canEdit, onRefresh
           {trigger}
         </Tooltip>
       ) : (
-        trigger
+        // 글자가 보이는 동안은 툴팁을 띄우지 않는다 - 툴팁 자리가 줄어들어(shrinks) 글자의 말줄임이 그대로다
+        <Tooltip label={label.text} suppressed={open || !isTextHidden} shrinks>
+          {trigger}
+        </Tooltip>
       )}
       {!compact && canEdit && onRefresh && label.icon === "failed" && (
         <button type="button" className="btn ghost h-5 px-1.5 text-[11px]" data-testid={`${testId}-retry`} onClick={onRefresh}>

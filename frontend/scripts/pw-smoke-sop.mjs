@@ -407,45 +407,287 @@ await runStep("outputs: the review bar tells the author what is left", {}, async
   check("See what is left opens the conditions on Overview", true);
 });
 
-await runStep("documents list, inline edit and delete prompt", {}, async ({ page, takeShot }) => {
+// Old 목록의 두 줄 줄(Documents 화면 설계 §4·§5) - 줄은 글자로 읽고, 누르거나 Enter로 펼친 곳에서 고친다. 제목은 Assign 한 단 보기로 가는 링크, 줄 끝 단추는 올리거나 포커스가 들어올 때만
+await runStep("documents: Old rows read in two lines, expand to edit, delete prompt", {}, async ({ page, takeShot }) => {
+  const OLD_ROWS = '[data-testid="documents-list"] [data-testid^="documents-"][data-testid$="-row"]';
+  const LAYOUT_NAMES = { ko_en_interleaved: "KO/EN interleaved", ko_en_separate: "KO/EN separate", en_only: "English only", ko_only: "Korean only" };
+  // 숨는 단추는 opacity만 바꾸고 전환이 있다 - 그 값이 될 때까지 기다린다(뒤 단계의 waitOpacityOf는 이 단계 뒤에 선언된다)
+  const opacityBecomes = (testId, value) =>
+    page.waitForFunction(({ id, v }) => {
+      const el = document.querySelector(`[data-testid="${id}"]`);
+      return el !== null && Number(getComputedStyle(el).opacity) === v;
+    }, { id: testId, v: value }, { timeout: 2000 }).then(() => true, () => false);
+  const apiDocs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers: { "X-Dev-User": "qa.member" } })).json();
+  const expected = [...apiDocs.filter((doc) => doc.side === "old"), ...apiDocs.filter((doc) => doc.side === "new" && doc.target_doc_id === null)];
   await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
-  await page.locator('[data-testid$="-row"][data-testid^="documents-"]').first().waitFor({ timeout: T });
+  await page.locator(OLD_ROWS).first().waitFor({ timeout: T });
   check("documents is the current step", (await page.locator('[data-testid="stage-nav-documents"]').getAttribute("aria-current")) === "page");
-  const list = await getText(page, "documents-list");
+  // 1. 표가 아니다 - 줄 수와 머리의 수, 닫힌 줄에는 고치는 칸이 없다
+  check("the Old list is not a table", (await page.locator('[data-testid="documents-list"] table').count()) === 0);
+  check(
+    "one row per Old document (and New file without a row), and the head counts them",
+    (await page.locator(OLD_ROWS).count()) === expected.length && (await getText(page, "documents-old-count")).trim() === String(expected.length),
+    `${await page.locator(OLD_ROWS).count()} rows, head ${await getText(page, "documents-old-count").catch(() => "none")}, api ${expected.length}`,
+  );
+  check("a closed row has no field to edit", (await page.locator(`[data-testid="documents-list"] :is(input, select, [role='combobox'])`).count()) === 0);
   // 정상 상태는 글자 없이 아이콘(aria-label "Ready"/"Checked", data-state="ok"), 예외만 글자 알약
   const okStatus = page.locator('[data-testid^="documents-"][data-testid$="-status"][data-state="ok"]').first();
   check("extraction status icon reads Ready", (await okStatus.getAttribute("aria-label")) === "Ready");
+  // 2. 줄의 값 - 첫 읽힌 문서
+  const first = expected.find((doc) => doc.status === "ready");
+  const docId = first.id;
+  const prefix = `documents-${docId}`;
+  const firstRow = page.locator(`[data-testid="${prefix}-row"]`);
+  const textOf = async (testId) => ((await page.locator(`[data-testid="${testId}"]`).first().textContent()) ?? "").trim();
+  check(
+    "the row reads the number, the version, the language layout and the file",
+    (await textOf(`${prefix}-code-text`)) === (first.doc_code || "No number") &&
+      (await textOf(`${prefix}-version-text`)) === (first.doc_version ? `v${first.doc_version}` : "No version") &&
+      (await textOf(`${prefix}-layout-text`)) === LAYOUT_NAMES[first.language_layout] &&
+      (await textOf(`${prefix}-file`)) === first.file_name,
+    `${await textOf(`${prefix}-code-text`)} | ${await textOf(`${prefix}-version-text`)} | ${await textOf(`${prefix}-layout-text`)} | ${await textOf(`${prefix}-file`)}`,
+  );
+  // 3. 펼치기 - 딸린 정보 글을 누르면 열리고 다시 누르면 닫힌다. Enter로도 열고 닫힌다
+  const panel = page.locator(`[data-testid="${prefix}-panel"]`);
+  const toggle = page.locator(`[data-testid="${prefix}-toggle"]`);
+  await page.locator(`[data-testid="${prefix}-layout-text"]`).click();
+  await panel.waitFor({ timeout: T });
+  check("clicking the row's meta line opens it, the chevron reads Details", (await panel.isVisible()) && (await toggle.getAttribute("aria-label")) === "Details" && (await toggle.getAttribute("aria-expanded")) === "true");
+  await page.locator(`[data-testid="${prefix}-layout-text"]`).click();
+  await panel.waitFor({ state: "detached", timeout: T });
+  check("clicking it again closes it", (await toggle.getAttribute("aria-expanded")) === "false");
+  await firstRow.focus();
+  await page.keyboard.press("Enter");
+  await panel.waitFor({ timeout: T });
+  check("Enter on the row opens it", (await toggle.getAttribute("aria-expanded")) === "true");
+  await page.keyboard.press("Enter");
+  await panel.waitFor({ state: "detached", timeout: T });
+  check("Enter again closes it", (await toggle.getAttribute("aria-expanded")) === "false");
+  await toggle.click();
+  await panel.waitFor({ timeout: T });
+  // 보조 검사의 정상 아이콘은 펼친 곳에 있다(줄에는 예외만)
+  const list = await getText(page, "documents-list");
   const okAux = page.locator('[data-testid^="documents-"][data-testid$="-aux"][data-state="ok"]');
   check("aux check label", (await okAux.count()) > 0 ? (await okAux.first().getAttribute("aria-label")) === "Checked" : list.includes("Aux check unavailable"), list);
-  const firstRow = page.locator('[data-testid$="-row"][data-testid^="documents-"]').first();
-  const docId = (await firstRow.getAttribute("data-testid")).replace("documents-", "").replace("-row", "");
-  // 버전 칸 - 숫자와 점만 받고, 위 단추는 소수점 아래가 0이면 앞자리를 올린다
-  const version = page.locator(`[data-testid="documents-${docId}-version"]`);
+  // 버전 칸 - 숫자와 점만 받고, 위 단추는 소수점 아래가 0이면 앞자리를 올린다. 줄의 버전 글이 따라 바뀐다
+  const version = page.locator(`[data-testid="${prefix}-version"]`);
   const before = await version.inputValue();
   const rowY = (await firstRow.boundingBox()).y;
   await version.fill("v2.9a");
   check("version keeps only digits and a dot", (await version.inputValue()) === "2.9", await version.inputValue());
   await version.press("Enter");
   await page.locator('[data-testid="toast-ok"]').first().waitFor({ timeout: T });
-  await page.locator(`[data-testid="documents-${docId}-version-up"]`).click();
+  await page.locator(`[data-testid="${prefix}-version-up"]`).click();
   await page.waitForFunction((id) => document.querySelector(`[data-testid="documents-${id}-version"]`)?.value === "2.10", docId, { timeout: T });
   check("version up moves the minor number", true);
   check("row did not move while editing", Math.abs((await firstRow.boundingBox()).y - rowY) < 1);
+  const followed = await page.waitForFunction((id) => document.querySelector(`[data-testid="documents-${id}-version-text"]`)?.textContent?.trim() === "v2.10", docId, { timeout: T }).then(() => true, () => false);
+  check("the row's version follows the saved value", followed, await textOf(`${prefix}-version-text`));
   await takeShot("sop-documents.png");
   // 되돌린다 - 원래 빈 값이면 x로 비운다
-  await firstRow.hover();
-  if (before === "") await page.locator(`[data-testid="documents-${docId}-version-clear"]`).click();
+  await version.hover();
+  if (before === "") await page.locator(`[data-testid="${prefix}-version-clear"]`).click();
   else {
     await version.fill(before);
     await version.press("Enter");
   }
   await page.waitForFunction(([id, value]) => document.querySelector(`[data-testid="documents-${id}-version"]`)?.value === value, [docId, before], { timeout: T });
-  await page.locator(`[data-testid="documents-${docId}-delete"]`).click();
+  await toggle.click();
+  await panel.waitFor({ state: "detached", timeout: T });
+  // 4. 줄 끝 단추 - 평소 숨고, 올리거나 Tab으로 들어오면 보인다. 오른쪽 끝이 줄마다 같다
+  await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
+  await page.mouse.move(0, 0);
+  check("row-end buttons are hidden at rest", await opacityBecomes(`${prefix}-acts`, 0));
+  await firstRow.hover();
+  check("hovering the row shows them", await opacityBecomes(`${prefix}-acts`, 1));
+  await page.mouse.move(0, 0);
+  check("leaving the row hides them again", await opacityBecomes(`${prefix}-acts`, 0));
+  await firstRow.focus();
+  for (let i = 0; i < 12 && (await page.evaluate(() => document.activeElement?.dataset.testid ?? "")) !== `${prefix}-preview`; i += 1) await page.keyboard.press("Tab");
+  check("Tab reaches Preview and shows the buttons", (await page.evaluate(() => document.activeElement?.dataset.testid ?? "")) === `${prefix}-preview` && (await opacityBecomes(`${prefix}-acts`, 1)));
+  const rights = await page.locator('[data-testid="documents-list"] [data-testid$="-acts"]').evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().right)));
+  check("every row's buttons end at the same right edge", rights.length > 0 && Math.max(...rights) - Math.min(...rights) <= 1, rights.join(","));
+  await page.mouse.move(0, 0);
+  await firstRow.hover();
+  await page.locator(`[data-testid="${prefix}-delete"]`).click();
   await wait(page, "delete-document");
   await takeShot("sop-documents-delete.png");
   await page.keyboard.press("Escape");
   await page.locator('[data-testid="delete-document"]').waitFor({ state: "detached", timeout: T });
   check("delete prompt closes with Esc", true);
+  // 좁은 틀 - 묶음 대신 ⋯ 하나가 같은 일을 메뉴로 한다. 앱 틀은 1120px 아래로 줄지 않아(.app min-width) 창을 줄여서는 목록 틀이 문턱(840px)보다 좁아지지 않는다 -
+  // New 목록 단계처럼 목록 틀의 폭만 문턱 아래로 묶어 컨테이너 질의를 본다(문턱이 바뀌면 이 폭도 맞춘다)
+  const narrow = await page.addStyleTag({ content: '[data-testid="documents-list"] { max-width: 820px; }' });
+  try {
+    await page.mouse.move(0, 0);
+    check("a narrow list hides the button group", (await firstRow.evaluate((row) => getComputedStyle(row.querySelector(".doc-acts")).display)) === "none");
+    await firstRow.hover();
+    await page.locator(`[data-testid="${prefix}-more"]`).click();
+    await wait(page, `${prefix}-more-menu`);
+    const menu = page.locator(`[data-testid="${prefix}-more-menu"]`);
+    check(
+      "the menu holds Preview, Download and Delete",
+      (await menu.locator(`[data-testid="${prefix}-preview-item"]`).count()) === 1 && (await menu.locator(`[data-testid="${prefix}-download-item"]`).count()) === 1 && (await menu.locator(`[data-testid="${prefix}-delete-item"]`).count()) === 1,
+    );
+    await page.locator(`[data-testid="${prefix}-delete-item"]`).click();
+    await wait(page, "delete-document");
+    check("Delete in the menu opens the delete prompt", true);
+    await page.keyboard.press("Escape");
+    await page.locator('[data-testid="delete-document"]').waitFor({ state: "detached", timeout: T });
+  } finally {
+    await narrow.evaluate((tag) => tag.remove());
+  }
+  // 5. 빈 값과 받지 못한 파일(Review Focus 4) - 목록 응답을 바꿔 다시 읽는다
+  const docsRoute = "**/api/bundles/*/documents";
+  // 빈 값은 읽힌 문서에서만 줄에 버전 자리가 있다 - 읽힌 Old 문서 하나와 다른 Old 문서 하나
+  const olds = apiDocs.filter((doc) => doc.side === "old");
+  const blank = olds.find((doc) => doc.status === "ready");
+  const refused = olds.find((doc) => doc.id !== blank.id);
+  await page.route(docsRoute, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const response = await route.fetch();
+    const body = await response.json();
+    const patched = body.map((doc) => {
+      if (doc.id === blank.id) return { ...doc, doc_code: "", doc_version: "", title: "", ai_meta: null, equis: null };
+      if (doc.id === refused.id) return { ...doc, status: "rejected", status_reason: "no_text_layer", extraction: null };
+      return doc;
+    });
+    return route.fulfill({ response, json: patched });
+  });
+  try {
+    await page.reload();
+    const blankRow = page.locator(`[data-testid="documents-${blank.id}-row"]`);
+    await blankRow.waitFor({ timeout: T });
+    check(
+      "an Old document with nothing filled reads No number, No version and No title",
+      (await textOf(`documents-${blank.id}-code-text`)) === "No number" &&
+        (await textOf(`documents-${blank.id}-version-text`)) === "No version" &&
+        (await page.locator(`[data-testid="documents-${blank.id}-version-text"]`).evaluate((el) => el.classList.contains("pill"))) &&
+        (await textOf(`documents-${blank.id}-title`)) === "No title",
+      `${await textOf(`documents-${blank.id}-code-text`)} | ${await textOf(`documents-${blank.id}-version-text`)} | ${await textOf(`documents-${blank.id}-title`)}`,
+    );
+    check("that row does not overflow", await blankRow.evaluate((row) => row.scrollWidth <= row.clientWidth));
+    const refusedPrefix = `documents-${refused.id}`;
+    check("a refused file has no chevron", (await page.locator(`[data-testid="${refusedPrefix}-toggle"]`).count()) === 0);
+    check("its reason shows under the row", (await textOf(`${refusedPrefix}-reason`)) !== "");
+    const refusedButtons = await page.locator(`[data-testid="${refusedPrefix}-acts"] button`).evaluateAll((els) => els.map((el) => el.dataset.testid));
+    check("its only row-end button is Delete", JSON.stringify(refusedButtons) === JSON.stringify([`${refusedPrefix}-delete`]), refusedButtons.join(","));
+    check("it ends with a Rejected pill", (await textOf(`${refusedPrefix}-status`)) === "Rejected", await textOf(`${refusedPrefix}-status`));
+    check("it shows no number and no version", (await page.locator(`[data-testid="${refusedPrefix}-code-text"], [data-testid="${refusedPrefix}-version-text"]`).count()) === 0);
+    await page.locator(`[data-testid="${refusedPrefix}-reason"]`).click();
+    await page.waitForTimeout(400);
+    check("pressing it does not open anything", (await page.locator(`[data-testid="${refusedPrefix}-panel"]`).count()) === 0);
+  } finally {
+    await page.unroute(docsRoute);
+  }
+  // 6. 긴 번호(100자, 설계 §5) - 식별 자리 안에서 두 줄로 접혀 잘리고 제목 자리를 밀지 않는다. API로 바꾸고 끝에 되돌린다
+  const longTarget = olds.find((doc) => doc.status === "ready" && doc.id !== first.id) ?? first;
+  const jsonHeaders = { "X-Dev-User": "qa.member", "Content-Type": "application/json" };
+  const docUrl = `${BASE}/api/bundles/${halfBundleId}/documents/${longTarget.id}`;
+  const readTarget = async () => (await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers: jsonHeaders })).json()).find((doc) => doc.id === longTarget.id);
+  const longCode = `SOP-${"LONGNUMBER".repeat(10)}`.slice(0, 100);
+  const beforeLong = await readTarget();
+  const patchedLong = await (await page.request.patch(docUrl, { headers: jsonHeaders, data: { revision: beforeLong.revision, doc_code: longCode } })).json();
+  try {
+    check("the API took the 100-character number", patchedLong.doc_code === longCode, String(patchedLong.doc_code));
+    await page.reload();
+    const longPrefix = `documents-${longTarget.id}`;
+    await page.locator(`[data-testid="${longPrefix}-code-text"]`).waitFor({ timeout: T });
+    const fit = await page.evaluate((longId) => {
+      const rows = [...document.querySelectorAll('[data-testid="documents-list"] .doc-row')];
+      const longRow = rows.find((row) => row.dataset.testid === `documents-${longId}-row`);
+      // 견줄 보통 줄 - 긴 번호가 아닌 다른 줄(받지 못한 줄도 화살표 자리를 비워 제목이 같은 x다)
+      const normalRow = rows.find((row) => row !== longRow);
+      const code = document.querySelector(`[data-testid="documents-${longId}-code-text"]`).getBoundingClientRect();
+      const column = longRow.querySelector(".doc-id").getBoundingClientRect();
+      return {
+        codeRight: code.right,
+        columnRight: column.right,
+        codeHeight: code.height,
+        titleLeft: longRow.querySelector(".doc-title").getBoundingClientRect().left,
+        normalTitleLeft: normalRow ? normalRow.querySelector(".doc-title").getBoundingClientRect().left : null,
+      };
+    }, longTarget.id);
+    check(
+      "a 100-character number stays inside the identity column, at most two lines, and does not push the title",
+      fit.normalTitleLeft !== null && fit.codeRight <= fit.columnRight + 0.5 && fit.codeHeight <= 2 * 18 + 1 && Math.abs(fit.titleLeft - fit.normalTitleLeft) <= 1,
+      JSON.stringify(fit),
+    );
+  } finally {
+    const current = await readTarget();
+    await page.request.patch(docUrl, { headers: jsonHeaders, data: { revision: current.revision, doc_code: beforeLong.doc_code } });
+    check("the number is put back", (await readTarget()).doc_code === beforeLong.doc_code);
+  }
+  // 7. 좁은 줄의 EQUIS 표시 - 딸린 정보 줄이 4단계까지 줄어 글자가 숨어도 단추에 이름이 있고 포커스하면 툴팁으로 뜬다.
+  //    로컬은 EQUIS가 꺼져 있을 수 있어 첫 줄에 합성 표시를 얹고, 틀과 딸린 정보 줄을 좁혀 줄어드는 단계를 끝까지 올린다
+  const SYNTHETIC_EQUIS = {
+    state: "found", refreshing: false, verdict: "ok", reasons: [], notes: [], current: { version: "14.0", status: "Effective", effective_date: "2025-09-17", retired_date: "" },
+    in_progress: [], retired: null, number: first.doc_code || "SOP-SYN-1", trail: [], ambiguous: [], name: "Synthetic Name", subtype: "", owning_department: "",
+    plant: "", area: "", legacy_numbers: [], equipment_tag: "", doc_url: null, title_locked: false, fetched_at: null,
+  };
+  await page.route(docsRoute, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const response = await route.fetch();
+    const body = await response.json();
+    return route.fulfill({ response, json: body.map((doc) => (doc.id === first.id ? { ...doc, equis: SYNTHETIC_EQUIS } : doc)) });
+  });
+  // 좁히는 스타일은 다시 읽은 뒤에 넣는다 - 다시 읽으면 넣어 둔 style 태그가 사라진다
+  let squeeze = null;
+  try {
+    await page.reload();
+    const marker = page.locator(`[data-testid="${prefix}-equis"]`);
+    await marker.waitFor({ timeout: T });
+    squeeze = await page.addStyleTag({ content: '[data-testid="documents-list"] { max-width: 820px; } [data-testid="documents-list"] .doc-meta { max-width: 220px; }' });
+    const hidden = await page.waitForFunction((id) => {
+      const meta = document.querySelector(`[data-testid="documents-${id}-row"] .doc-meta`);
+      const text = document.querySelector(`[data-testid="documents-${id}-equis"] .equis-text`);
+      return meta?.dataset.fit === "4" && text !== null && getComputedStyle(text).display === "none";
+    }, docId, { timeout: T }).then(() => true, () => false);
+    check("a squeezed meta line hides the EQUIS text", hidden);
+    const name = (await marker.getAttribute("aria-label")) ?? "";
+    check("the icon-only EQUIS marker keeps its name", name !== "", name);
+    await marker.focus();
+    const tip = page.locator('[role="tooltip"]', { hasText: name });
+    check("focusing it shows its text as a tooltip", await tip.waitFor({ timeout: 2000 }).then(() => true, () => false));
+  } finally {
+    if (squeeze !== null) await squeeze.evaluate((tag) => tag.remove());
+    await page.unroute(docsRoute);
+  }
+  // 8. 제목은 링크다 - 그 문서가 Assign 한 단 보기로 열린다
+  await page.reload();
+  await firstRow.waitFor({ timeout: T });
+  await page.locator(`[data-testid="${prefix}-title"]`).click();
+  await page.waitForURL(/\/assign/, { timeout: T });
+  await page.waitForFunction(() => document.querySelector(".assign-panes")?.hasAttribute("data-single"), null, { timeout: T });
+  check("the title opens the document in the one-document view", (await getText(page, "assign-old-tag")) === "Old" && (await page.locator('[data-testid="assign-new"]').count()) === 0);
+  // 뒤 단계들은 양 단에서 시작한다
+  await page.locator('[data-testid="assign-view-two"]').click();
+  await wait(page, "assign-new");
+  await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
+  await firstRow.waitFor({ timeout: T });
+});
+
+// 읽기 전용(검토자 · 검토 대기 묶음) - Old 줄은 펼쳐지고 값은 글자로만 보인다. 고치는 칸 · 지우기 · 올리기가 없고 미리 보기 · 내려받기는 남는다
+await runStep("documents: a reviewer reads Old rows, nothing edits", { devUser: "qa.lead" }, async ({ page }) => {
+  await page.goto(`${BASE}/`);
+  await wait(page, "bundles-list");
+  const review = page.locator('[data-testid^="bundles-row-"]', { hasText: "검토 대기" });
+  const reviewId = Number((await review.getAttribute("data-testid")).replace("bundles-row-", ""));
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${reviewId}/documents`, { headers: { "X-Dev-User": "qa.lead" } })).json();
+  const ready = docs.find((doc) => doc.side === "old" && doc.status === "ready");
+  const prefix = `documents-${ready.id}`;
+  await page.goto(`${BASE}/bundles/${reviewId}/documents`);
+  await wait(page, `${prefix}-row`);
+  await page.locator(`[data-testid="${prefix}-layout-text"]`).click();
+  await wait(page, `${prefix}-panel`);
+  check("an Old row opens for a reviewer", (await page.locator(`[data-testid="${prefix}-toggle"]`).getAttribute("aria-expanded")) === "true");
+  const list = page.locator('[data-testid="documents-list"]');
+  check("no field to edit anywhere in the Old list", (await list.locator("input, select, [role='combobox']").count()) === 0);
+  check("number and version read as text", ((await getText(page, `${prefix}-code`)).trim() === (ready.doc_code || "No number")) && ((await getText(page, `${prefix}-version`)).trim() === (ready.doc_version || "No version")));
+  check("no Delete", (await list.locator('[data-testid$="-delete"]').count()) === 0);
+  check("no AI or EQUIS suggestion chips", (await list.locator('[data-testid$="-code-ai"], [data-testid$="-version-ai"], [data-testid$="-version-equis"]').count()) === 0);
+  check("Preview and Download stay", (await list.locator(`[data-testid="${prefix}-preview"]`).count()) === 1 && (await list.locator(`[data-testid="${prefix}-download"]`).count()) === 1);
+  check("no Upload button", (await page.locator('[data-testid="documents-upload"]').count()) === 0);
 });
 
 await runStep("old Edit original addresses open the document in the one-document view", {}, async ({ page, takeShot }) => {
@@ -1599,6 +1841,13 @@ await runStep("new documents: drag a WI onto another SOP to change its parent, U
     );
     const dims = { x: await opacityOf(row(x)), old: await opacityOf(page.locator(".docs-old")), sopCf: await opacityOf(row(sopCf)), sopDrag: await opacityOf(row(sopDrag)) };
     check("other WI rows and the Old list dim, SOP rows stay clear", dims.x < 1 && dims.old < 1 && dims.sopCf === 1 && dims.sopDrag === 1, JSON.stringify(dims));
+    // Old 줄은 목록 묶음(.docs-old)째 한 번만 흐린다 - 줄 자신까지 흐리면 0.35 × 0.35가 된다. 조상까지 곱한 실제 불투명도를 잰다
+    const oldRowOpacity = await page.locator('[data-testid="documents-list"] .doc-row[data-kind="old"]').first().evaluate((el) => {
+      let opacity = 1;
+      for (let node = el; node; node = node.parentElement) opacity *= Number(getComputedStyle(node).opacity);
+      return opacity;
+    });
+    check("an Old row dims once, as much as one dimming", Math.abs(oldRowOpacity - 0.35) < 0.01, String(oldRowOpacity));
     // ⋯의 testid는 단추에 있고 숨김(opacity)은 그 겉 .doc-more에 걸린다 - 겉 상자를 잰다
     const isMoreHidden = await page.waitForFunction((id) => {
       const wrap = document.querySelector(`[data-testid="${id}"]`)?.closest(".doc-more");
