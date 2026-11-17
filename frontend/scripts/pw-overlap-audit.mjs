@@ -93,7 +93,6 @@ async function auditHover(page, selector, report) {
 }
 
 const mbtnScenes = [
-  { name: "documents", user: "qa.member", url: `/bundles/${BUNDLE}/documents`, ready: '[data-testid$="-delete"]', buttons: '.row-actions-quiet button:not(:disabled)' },
   { name: "tobe-steps", user: "qa.member", url: `/bundles/${BUNDLE}/documents`, ready: '[data-testid="tobe-list"]', prepare: async (page) => {
     for (const toggle of await page.locator('[data-testid^="tobe-"][data-testid$="-toggle"]').all()) await toggle.click();
     await page.locator('[data-testid*="-remove-step-"]').first().waitFor({ timeout: T });
@@ -420,18 +419,19 @@ const exportPreviewScene = {
   },
 };
 
-// New 목록 줄 끝 단추(Documents 화면 설계 §4) - 쉴 때는 보이지 않고 줄에 올리면 줄 안 오른쪽 끝에 뜬다(넓으면 묶음, 좁으면 ⋯).
-// 올린 줄의 단추 자리는 그 줄의 제목 · 딸린 정보 글을 덮지 않고, 오른쪽 끝이 줄마다 같다(±1px). LONG=1이면 제목 · 딸린 정보 글을 길게 바꿔 본다
-const tobeRowActsScene = {
-  name: "tobe-row-acts",
+// Documents 두 목록의 줄 끝 단추(Documents 화면 설계 §4) - 쉴 때는 보이지 않고 줄에 올리면 줄 안 오른쪽 끝에 뜬다(넓으면 묶음, 좁으면 ⋯).
+// 올린 줄의 단추 자리는 그 줄의 제목 · 딸린 정보 글을 덮지 않고, 오른쪽 끝이 줄마다 같다(±1px). LONG=1이면 제목 글을 길게 바꿔 본다.
+// 목록마다 제목 글의 testid가 다르다 - New 줄은 `-title-text`, Old 줄은 제목 링크 `-title`
+const makeRowActsScene = (name, listTestId, titleSuffix) => ({
+  name,
   user: "qa.member",
   run: async (page, report) => {
     await page.goto(`${BASE}/bundles/${BUNDLE}/documents`);
-    const rows = page.locator('[data-testid="tobe-list"] .doc-row[data-testid]');
+    const rows = page.locator(`[data-testid="${listTestId}"] .doc-row[data-testid]`);
     await rows.first().waitFor({ timeout: T });
     await page.waitForTimeout(400);
     if (LONG) {
-      await page.locator('[data-testid="tobe-list"] [data-testid$="-title-text"]').evaluateAll((els) => els.slice(0, 6).forEach((el) => { el.textContent = "SYNTHETIC very long document title that keeps going and going across the whole column width and wraps onto a second line"; }));
+      await page.locator(`[data-testid="${listTestId}"] .doc-row [data-testid$="${titleSuffix}"]`).evaluateAll((els) => els.slice(0, 6).forEach((el) => { el.textContent = "SYNTHETIC very long document title that keeps going and going across the whole column width and wraps onto a second line"; }));
     }
     const rights = new Set();
     for (const row of (await rows.all()).slice(0, 6)) {
@@ -463,9 +463,11 @@ const tobeRowActsScene = {
       rights.add(placed.right);
       await page.mouse.move(0, 0);
     }
-    if (Math.max(...rights) - Math.min(...rights) > 1) report("tobe-row-acts", `right edges differ: ${[...rights].join(", ")}`);
+    if (Math.max(...rights) - Math.min(...rights) > 1) report(name, `right edges differ: ${[...rights].join(", ")}`);
   },
-};
+});
+const tobeRowActsScene = makeRowActsScene("tobe-row-acts", "tobe-list", "-title-text");
+const oldRowActsScene = makeRowActsScene("documents-row-acts", "documents-list", "-title");
 
 // 엮은 문서 미리 보기(아직 안 쓴 SOP)의 칸 제목 출처 - 칸 이름 뒤에서 말줄임하고 칸 이름을 덮지 않는다. 출처 글은 응답에 넣어 길게 그린다(DB는 그대로)
 const composedHeadingScene = {
@@ -552,7 +554,7 @@ const bundleHeadScene = {
   },
 };
 
-const scenes = [...mbtnScenes, tobeRowActsScene, outputsScene, outputsEndRowsScene, outputsReorderScene, exportPreviewScene, composedHeadingScene, linkMenuScene, aiJobsScene, bundleHeadScene].filter((scene) => !only || only.includes(scene.name));
+const scenes = [...mbtnScenes, tobeRowActsScene, oldRowActsScene, outputsScene, outputsEndRowsScene, outputsReorderScene, exportPreviewScene, composedHeadingScene, linkMenuScene, aiJobsScene, bundleHeadScene].filter((scene) => !only || only.includes(scene.name));
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 let problems = 0;
 let runs = 0;
