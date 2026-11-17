@@ -227,6 +227,8 @@ class UnitRowOut(BaseModel):
     # 단위 자신의 판단 행 — 묶인 칸 문장의 판단 행은 늘 미배정이다(처분은 그룹 단위가 담는다)
     decision: DecisionOut
     target_ids: list[int]
+    # 그 새 문장들이 있는 New 문서(target_docs) — 겹치지 않게 id 순. Assign 문서 대시보드가 받는 New 문서를 센다
+    target_doc_ids: list[int] = []
     # 표·그림 단위의 새 문장 아래 캡션 새 문장이 있다 — 써 넣은 캡션(출처 없음)도 센다. 화면의 "캡션 필요"·남은 수가 쓴다
     has_caption_target: bool = False
 
@@ -1715,14 +1717,17 @@ async def list_units(
         )
     ).all()
     target_ids: dict[int, list[int]] = defaultdict(list)
+    target_doc_ids: dict[int, set[int]] = defaultdict(set)
     if rows:
         links = await session.execute(
-            select(TargetSource.unit_id, TargetSource.target_id)
+            select(TargetSource.unit_id, TargetSource.target_id, TargetSentence.target_doc_id)
+            .join(TargetSentence, TargetSentence.id == TargetSource.target_id)
             .where(TargetSource.unit_id.in_([unit.id for unit, *_ in rows]))
             .order_by(TargetSource.target_id)
         )
-        for unit_id, target_id in links:
+        for unit_id, target_id, target_doc_id in links:
             target_ids[unit_id].append(target_id)
+            target_doc_ids[unit_id].add(target_doc_id)
     pair_rows = await select_in_chunks(
         session,
         lambda chunk: select(UnitPairMember.unit_id, UnitPairMember.pair_id).where(UnitPairMember.unit_id.in_(chunk)),
@@ -1739,6 +1744,7 @@ async def list_units(
                 kind=unit.kind, lang=unit.lang, text=unit.text, table_id=unit.table_id, row_index=unit.row_index,
                 group_unit_id=unit.group_unit_id, pair_id=pair_ids.get(unit.id), status=get_cover_status(unit, decisions),
                 decision=DecisionOut.model_validate(decision), target_ids=target_ids.get(unit.id, []),
+                target_doc_ids=sorted(target_doc_ids.get(unit.id, ())),
                 has_caption_target=unit.id in captioned,
             )
         )

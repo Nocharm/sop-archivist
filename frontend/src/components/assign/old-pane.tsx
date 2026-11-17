@@ -77,6 +77,8 @@ interface OldPaneProps {
   dragBoxes?: boolean;
   /** 머리의 확대 단추 바로 앞에 그린다 - 한/영 따로 문서의 Pair view 단추 */
   headExtra?: ReactNode;
+  /** 문서 고르기 바로 옆 - 문서 대시보드 단추 */
+  docDash?: ReactNode;
 }
 
 export function OldPane(props: OldPaneProps) {
@@ -125,6 +127,7 @@ export function OldPane(props: OldPaneProps) {
         ) : (
           <span className="pane-title">{props.docOptions[0]?.label}</span>
         )}
+        {props.docDash}
         <span className="tag" data-testid="assign-old-tag">{props.docTag}</span>
         <span className="pane-sub">{props.docTitle}</span>
         <span className="flex-1" />

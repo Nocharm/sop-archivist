@@ -32,6 +32,7 @@ import { LinkBadge } from "@/components/assign/link-badge";
 import { MoveTargetField } from "@/components/assign/move-target-field";
 import { runPickFlight, type FlightSource } from "@/components/assign/pick-flight";
 import { NewPane, NewPaneEmpty } from "@/components/assign/new-pane";
+import { DocDashboard } from "@/components/assign/doc-dashboard";
 import { OldPane } from "@/components/assign/old-pane";
 import { PairColumn, PairViewToggle } from "@/components/assign/pair-column";
 import { PairLines, readPairAnchor } from "@/components/assign/pair-lines";
@@ -186,6 +187,7 @@ import {
   type DropPosition,
   type RowDraft,
 } from "@/lib/classify-model";
+import { buildDocDashboard } from "@/lib/doc-dashboard-model";
 import { formatKst } from "@/lib/datetime";
 import { useI18n } from "@/lib/i18n";
 import { genId } from "@/lib/id";
@@ -1137,6 +1139,13 @@ export default function AssignPage() {
   // 캡션이 필요 없는 묶음(이미 쓴 New 문서를 혼자 연 동안의 그 문서 단위, 그 문서에 이은 묶음) - 위쪽 줄 수와 머리 줄이 같은 판단을 쓴다
   const isLinkedToWritten = useMemo(() => makeIsLinkedToWritten(new Set(isSolo ? (soloView?.units.map((unit) => unit.id) ?? []) : []), linkedTargets), [isSolo, soloView, linkedTargets]);
   const captionPendingKeys = useMemo(() => listCaptionPendingRowKeys(rows, unitMap, isLinkedToWritten), [rows, unitMap, isLinkedToWritten]);
+  // Old 칸 문서 대시보드의 수 - 배정 줄이 없는 문서(혼자 연 이미 쓴 New 문서)는 내려받기만 보인다
+  const dashDocId = oldView?.document.id ?? null;
+  const docDashboard = useMemo(() => {
+    if (dashDocId === null || isSolo) return null;
+    const codes = new Map<number, string>([...written.map((item): [number, string] => [item.target_doc_id, item.doc_code]), ...(tobeData?.docs ?? []).map((doc): [number, string] => [doc.id, doc.code])]);
+    return buildDocDashboard(rows, dashDocId, unitMap, (id) => codes.get(id) ?? "");
+  }, [dashDocId, isSolo, rows, unitMap, written, tobeData]);
   // 그 줄의 번호에 대한 EQUIS 표시와 새 문장에 쓸 제안 - 참조 카드와 결정 칸의 새 문장이 같은 답을 쓴다. 조회가 도는 동안은 조금 뒤 다시 읽는다
   const rowRefMark = rowRefUnit?.ref ?? null;
   const refDetail = useLoaded<UnitRefDetail | null>(
@@ -1921,6 +1930,13 @@ export default function AssignPage() {
     // New 칸의 그 문장으로 가는 길이라 한 단이면 양 단으로 편다
     if (view.single) changeView({ single: false });
     setJump({ side: "new", id: targetId, targetId, rowKey: key });
+  }
+
+  /** 문서 대시보드의 받는 New 문서를 누름 - 그 문서를 New 칸에 연다 */
+  function openNewDoc(docId: number) {
+    if (isPairView) closePairView();
+    setManualNewDoc({ key: toggleKey, docId });
+    if (view.single) changeView({ single: false });
   }
 
   /** Old 조각의 연결 배지를 누름 - 고름·메뉴는 그대로 두고 오른쪽 칸을 그 문장으로 보내 번쩍이게만 한다 */
@@ -3782,6 +3798,19 @@ export default function AssignPage() {
                 docId={String(oldView?.document.id ?? solo?.docId ?? "")}
                 docTitle={oldView?.document.title ?? ""}
                 docTag={isSolo ? t("assign.writtenTag") : "Old"}
+                docDash={
+                  oldView ? (
+                    <DocDashboard
+                      bundleId={bundleId}
+                      docId={oldView.document.id}
+                      docLabel={oldView.document.doc_code || oldView.document.file_name}
+                      docTitle={oldView.document.title}
+                      stats={docDashboard}
+                      bundleLine={{ done, total: rows.length, refs: refPendingIds.length, captions: captionPendingKeys.length }}
+                      onOpenDoc={openNewDoc}
+                    />
+                  ) : undefined
+                }
                 onDocChange={(value) => {
                   if (writtenFiles.some((file) => file.fileId === Number(value))) {
                     openSolo(Number(value));
