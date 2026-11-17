@@ -27,6 +27,7 @@ import {
   stepInList,
 } from "./classify-model";
 import type { Destination } from "./classify-model";
+import { LEGACY_KEYS, makeDeepOutline, makeLegacyOutline } from "./outline-fixture";
 
 function makeViewUnit(id: number, lang: "ko" | "en", pos: number): ViewUnit {
   return {
@@ -94,15 +95,76 @@ const TOBE: ToBe = {
   ],
   na_slots: [{ code: "SOP-CF", slot_key: "procedures", reason: "x" }],
   wi_steps: [{ code: "WI-01", step_no: 1, title: "Load" }],
+  outline_items: makeLegacyOutline("SOP-CF"),
 };
 
 describe("destinations", () => {
   it("lists SOP slots, WI step parts, and greys out N/A including children", () => {
-    const options = buildDestinationOptions(TOBE, {});
+    const options = buildDestinationOptions(TOBE);
     expect(options.find((option) => option.id === "slot:6:procedures.maintenance")?.disabled).toBe(true);
     expect(options.find((option) => option.id === "slot:6:purpose")?.disabled).toBe(false);
     expect(options.filter((option) => option.docCode === "WI-01").map((option) => option.id)).toEqual(["step:7:1:instruction", "step:7:1:why"]);
     expect(options.some((option) => option.docCode === "WI-04")).toBe(false);
+  });
+
+  it("lists the SOP places in the outline's order with the item's own name and level", () => {
+    const places = buildDestinationOptions({ ...TOBE, na_slots: [] }).filter((option) => option.destination.kind === "slot");
+    expect(places.map((option) => option.id)).toEqual(LEGACY_KEYS.map((key) => `slot:6:${key}`));
+    expect(places.map((option) => option.depth)).toEqual([0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1]);
+    // 이름은 그 항목의 것만 - 나무가 depth로 위계를 보이므로 "General requirements › Safety"로 적지 않는다
+    expect(places.slice(4, 7).map((option) => option.label)).toEqual(["General requirements", "Safety", "Operation"]);
+  });
+
+  it("offers only the items that take sentences directly, and none that the document removed", () => {
+    const outline = makeLegacyOutline("SOP-CF", {
+      general_requirements: { kind: "group", is_assignable: false },
+      scope: { is_removed: true },
+    });
+    const ids = buildDestinationOptions({ ...TOBE, na_slots: [], outline_items: outline }).map((option) => option.id);
+    expect(ids.some((id) => id.endsWith(":general_requirements") || id.endsWith(":scope"))).toBe(false);
+    expect(ids).toContain("slot:6:general_requirements.safety");
+    expect(ids).toContain("heading:6:general_requirements.safety");
+  });
+
+  it("reads each SOP from its own outline", () => {
+    const second = { ...TOBE.docs[0], id: 9, code: "SOP-B", order_index: 5 };
+    const tobe: ToBe = { ...TOBE, docs: [...TOBE.docs, second], na_slots: [], outline_items: [...makeLegacyOutline("SOP-CF"), ...makeDeepOutline("SOP-B")] };
+    const places = buildDestinationOptions(tobe).filter((option) => option.destination.kind === "slot");
+    expect(places.filter((option) => option.docCode === "SOP-CF")).toHaveLength(15);
+    expect(places.filter((option) => option.docCode === "SOP-B").map((option) => option.id)).toEqual(["slot:9:a", "slot:9:a.b", "slot:9:a.b.c", "slot:9:z"]);
+    // 골격이 없는 SOP(응답에 항목이 없다)는 보낼 칸이 없다
+    expect(buildDestinationOptions({ ...tobe, outline_items: [] }).filter((option) => option.destination.kind === "slot")).toEqual([]);
+  });
+});
+
+describe("destinations in a three-level outline", () => {
+  const deep = (naKeys: string[], patches: Parameters<typeof makeDeepOutline>[1] = {}): ToBe => ({
+    ...TOBE,
+    na_slots: naKeys.map((slot_key) => ({ code: "SOP-CF", slot_key, reason: "x" })),
+    outline_items: makeDeepOutline("SOP-CF", patches),
+  });
+  const placesOf = (tobe: ToBe) => buildDestinationOptions(tobe).filter((option) => option.destination.kind === "slot");
+
+  it("indents by level, two deep", () => {
+    expect(placesOf(deep([])).map((option) => [option.id, option.depth, option.label])).toEqual([
+      ["slot:6:a", 0, "A"], ["slot:6:a.b", 1, "B"], ["slot:6:a.b.c", 2, "C"], ["slot:6:z", 0, "Z"],
+    ]);
+  });
+
+  it("greys out every level under an N/A section and offers no heading place there", () => {
+    const options = buildDestinationOptions(deep(["a"]));
+    expect(options.filter((option) => option.disabled).map((option) => option.id)).toEqual(["slot:6:a", "slot:6:a.b", "slot:6:a.b.c"]);
+    expect(options.filter((option) => option.destination.kind === "slot_heading").map((option) => option.id)).toEqual(["heading:6:z"]);
+    // 가운데 수준만 N/A면 그 아래만 막힌다
+    expect(placesOf(deep(["a.b"])).map((option) => option.disabled)).toEqual([false, true, true, false]);
+  });
+
+  it("follows parent_key through an ancestor that is not a place itself", () => {
+    // a.b는 하위만 묶는 항목(group)이라 목록에 없다 - 그래도 a의 N/A는 a.b를 거쳐 a.b.c까지 닿는다
+    const grouped = { "a.b": { kind: "group", is_assignable: false } } as const;
+    expect(placesOf(deep([], grouped)).map((option) => [option.id, option.depth])).toEqual([["slot:6:a", 0], ["slot:6:a.b.c", 2], ["slot:6:z", 0]]);
+    expect(placesOf(deep(["a"], grouped)).map((option) => option.disabled)).toEqual([true, true, false]);
+    expect(placesOf(deep(["a.b"], grouped)).map((option) => option.disabled)).toEqual([false, true, false]);
   });
 });
 
@@ -310,7 +372,7 @@ describe("table rows and step-less WIs", () => {
 
   it("offers Instruction and Why without a step for a WI with no steps, and reads it back", () => {
     const tobe: ToBe = { ...TOBE, wi_steps: [] };
-    const ids = buildDestinationOptions(tobe, {}).filter((option) => option.docCode === "WI-01").map((option) => option.id);
+    const ids = buildDestinationOptions(tobe).filter((option) => option.docCode === "WI-01").map((option) => option.id);
     expect(ids).toEqual(["step:7:none:instruction", "step:7:none:why"]);
     const group: Group = { units: [], targets: [makeTarget({ id: 90, target_doc_id: 7, slot_key: null, wi_step: null, wi_part: "why" })] };
     const destination = readDestination(group, [10]);
@@ -753,7 +815,7 @@ describe("slot heading destination", () => {
 
   it("offers a slot heading place right before each SOP section that is not N/A, none for WI", () => {
     const tobe: ToBe = { ...TOBE, na_slots: [{ code: "SOP-CF", slot_key: "scope", reason: "x" }] };
-    const ids = buildDestinationOptions(tobe, {}).map((option) => option.id);
+    const ids = buildDestinationOptions(tobe).map((option) => option.id);
     expect(ids).toContain("heading:6:procedures.procedure");
     expect(ids.indexOf("heading:6:procedures.procedure")).toBe(ids.indexOf("slot:6:procedures.procedure") - 1);
     expect(ids.some((id) => id.startsWith("heading:6:scope"))).toBe(false);
@@ -798,7 +860,7 @@ describe("slot heading destination", () => {
   });
 
   it("counts the same places whether or not the row can pick a slot heading", () => {
-    const options = buildDestinationOptions(TOBE, {});
+    const options = buildDestinationOptions(TOBE);
     const withHeadings = listTreeOptions(options, true);
     const without = listTreeOptions(options, false);
     expect(withHeadings.length).toBeGreaterThan(without.length);

@@ -195,7 +195,6 @@ import { navigate } from "@/lib/nav-buffer";
 import { EMPTY_FOLD_OPEN, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildPaperModel, buildPaperTabs, findNearestCut, listPartSheets, resolvePickUnit, shouldRecenter, type PaperTabKey } from "@/lib/paper-model";
 import { buildPairColumns, canUndoPair, listPairLinks, PAIR_REFUSAL_KEYS, resolvePairDrop, type PairDrop, type PairDropContext, type PairLang } from "@/lib/pair-drop-model";
-import { SLOT_LABELS } from "@/lib/slot-labels";
 import { ASSIGN_DOC_PARAM, ASSIGN_UNIT_PARAM, EDIT_ORIGINAL_PARAM, getNewDocumentsHref, getStageHref } from "@/lib/stages";
 import { useAiJobs } from "@/lib/use-ai-jobs";
 import { useAiPrepare } from "@/lib/use-ai-prepare";
@@ -403,7 +402,7 @@ export default function AssignPage() {
   const rows = useMemo(() => (viewList ? buildRows(viewList, unitMap) : []), [viewList, unitMap]);
   const rowMap = new Map(rows.map((row) => [row.key, row]));
   const rowOfUnit = new Map(rows.flatMap((row) => row.unitIds.map((id) => [id, row.key] as const)));
-  const options = useMemo(() => (tobeData ? buildDestinationOptions(tobeData, SLOT_LABELS) : []), [tobeData]);
+  const options = useMemo(() => (tobeData ? buildDestinationOptions(tobeData) : []), [tobeData]);
   const ready = viewList !== null && units.data !== null && tobeData !== null && writtenList.data !== null;
   const showSkeleton = useDelayedFlag(!ready && docs.error === null);
   const unsourced = listUnsourced(written);

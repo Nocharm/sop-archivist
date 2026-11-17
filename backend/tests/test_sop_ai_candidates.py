@@ -12,6 +12,7 @@ from app.sop.ai import embeddings
 from app.sop.ai.candidates import DELETE_CANDIDATE, SLOT_GUIDE, Candidate, list_candidates, rank_candidates
 from app.sop.ai.constants import AI_CALL_ATTEMPTS, CANDIDATE_TOP_K, MAX_TEXT_CANDIDATES
 from app.sop.constants import SLOT_KEYS
+from app.sop.outline import EMPTY_OUTLINE, LEGACY_OUTLINE, DocOutline
 from app.sop.snapshot import TargetDocInfo
 from tests.ai_fixtures import clean_embedding_cache  # noqa: F401 -- 픽스처는 아래 usefixtures가 이름으로 찾는다
 from tests.ai_helpers import (
@@ -53,6 +54,7 @@ def _doc(
         manual_order=False,
         na_slots=na_slots or {},
         steps=steps,
+        outline=DocOutline(LEGACY_OUTLINE) if doc_type == "sop" else EMPTY_OUTLINE,
     )
 
 

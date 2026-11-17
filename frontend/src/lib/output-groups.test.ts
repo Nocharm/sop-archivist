@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { OutputARow, OutputC, OutputCItem } from "./api-sop";
+import { makeSectionOutline } from "./outline-fixture";
 import { buildAScreenLines, buildCLines, listMeaningStarts } from "./output-groups";
 
 function row(rowNo: number, isGroupStart: boolean, destKind: string, destDocCode: string): OutputARow {
@@ -32,7 +33,7 @@ describe("buildCLines", () => {
   function item(id: number): OutputCItem {
     return { target_id: id, kind: "sentence", lang: "ko", text: "", ai_text: "", change_type: null, status: "confirmed", source_note: "", origin: "units", meaning_key: null, number: null, indent_level: 0, number_style: "numbered", cell_row: null, cell_col: null, children: [] };
   }
-  const section = (key: string, items: OutputCItem[], naReason: string | null = null) => ({ location_key: key, label: key, number: null, na_reason: naReason, heading_note: "", items });
+  const section = (key: string, items: OutputCItem[], naReason: string | null = null) => ({ ...makeSectionOutline(), location_key: key, label: key, number: null, na_reason: naReason, heading_note: "", items });
   const doc = (id: number, sections: ReturnType<typeof section>[]) => ({ target_doc_id: id, code: `D${id}`, title: "", doc_type: "sop", parent_code: null, entrance: "assign", sections });
 
   it("lists documents, then sections, then lines, and keeps an empty or N/A section as one line", () => {

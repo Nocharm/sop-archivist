@@ -83,7 +83,7 @@ async def _build_tobe_view(
     slot_counts = await count_targets_by_slot(session, [doc.id for doc in tobe.docs])
     return ToBeViewOut(
         revision=tobe.revision, docs=docs, na_slots=tobe.na_slots, wi_steps=tobe.wi_steps,
-        sentence_counts=sentence_counts, slot_counts=slot_counts,
+        outline_items=tobe.outline_items, sentence_counts=sentence_counts, slot_counts=slot_counts,
     )
 
 

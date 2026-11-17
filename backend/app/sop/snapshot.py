@@ -36,6 +36,7 @@ from app.sop.models import (
     UnitPairMember,
     WiStep,
 )
+from app.sop.outline import DocOutline, load_doc_outlines
 from app.sop.refs import REF_LANG
 from app.sop.status import ROW_STATUS_ORDER
 from app.sop.units import UNIT_ACTIVE, compute_display_id
@@ -183,6 +184,7 @@ class TargetDocInfo:
     manual_order: bool
     na_slots: dict[str, str]  # 칸 키 → N/A 사유
     steps: tuple[tuple[int, str], ...]  # (단계 번호, 제목) 번호 순
+    outline: DocOutline  # 이 문서의 골격 사본 — SOP가 아니면 빈 골격
 
 
 @dataclass(frozen=True)
@@ -447,7 +449,7 @@ async def _load_targets(
 
 
 async def load_target_docs(session: AsyncSession, bundle_id: int) -> dict[int, TargetDocInfo]:
-    """묶음의 새 문서 전부와 칸 N/A·WI 단계 — 스냅숏이 쓰고 AI 후보 만들기도 직접 읽는다(질의 세 번)."""
+    """묶음의 새 문서 전부와 칸 N/A·WI 단계·골격 사본 — 스냅숏이 쓰고 AI 후보 만들기도 직접 읽는다(질의 네 번)."""
     na_slots: dict[int, dict[str, str]] = defaultdict(dict)
     for doc_id, slot_key, reason in await session.execute(
         select(TargetDocNaSlot.target_doc_id, TargetDocNaSlot.slot_key, TargetDocNaSlot.reason)
@@ -463,13 +465,16 @@ async def load_target_docs(session: AsyncSession, bundle_id: int) -> dict[int, T
         .order_by(WiStep.target_doc_id, WiStep.step_no)
     ):
         steps[doc_id].append((step_no, title))
+    docs = list(await session.scalars(select(TargetDoc).where(TargetDoc.bundle_id == bundle_id)))
+    outlines = await load_doc_outlines(session, [doc.id for doc in docs])
     return {
         doc.id: TargetDocInfo(
             id=doc.id, code=doc.code, title=doc.title, doc_type=doc.doc_type, parent_id=doc.parent_id,
             entrance=doc.entrance, is_equipment_sop=doc.is_equipment_sop, order_index=doc.order_index,
             manual_order=doc.manual_order, na_slots=dict(na_slots.get(doc.id, {})), steps=tuple(steps.get(doc.id, ())),
+            outline=outlines[doc.id],
         )
-        for doc in await session.scalars(select(TargetDoc).where(TargetDoc.bundle_id == bundle_id))
+        for doc in docs
     }
 
 

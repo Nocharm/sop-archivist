@@ -22,6 +22,7 @@ from app.dev_users import seed_demo_access, seed_dev_directory
 from app.models import AccessGrant, Department, Employee, Role, RolePermission
 from app.sop.ai.guidelines import seed_guidelines
 from app.sop.models import GuidelineVersion
+from app.sop.outline import seed_outline_standard
 
 _ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
 
@@ -69,6 +70,7 @@ async def main() -> int:
         async with SessionLocal() as session:
             # 지침은 앱 lifespan도 시드하지만 떠 있는 백엔드는 다시 돌지 않는다 — 비워 두면 재시작 전까지 export.xlsx가 500이다
             await seed_guidelines(session)
+            await seed_outline_standard(session)  # 커밋은 아래 시드가 함께 한다
             await seed_dev_directory(session)
             await seed_demo_access(session)
             counts = {

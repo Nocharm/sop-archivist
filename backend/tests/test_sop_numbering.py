@@ -1,4 +1,4 @@
-"""섹션 번호 — 칸 번호(SLOT_KEYS 고정 자리)와 들여쓰기 깊이로 세는 순수 함수, 결과물 A·C의 번호, 순서 바꾸기의 깊이 저장·거절.
+"""섹션 번호 — 칸 번호(문서 골격의 순서)와 들여쓰기 깊이로 세는 순수 함수, 결과물 A·C의 번호, 순서 바꾸기의 깊이 저장·거절.
 
 묶음은 결과물 시험(test_sop_outputs)의 픽스처를 그대로 쓴다 — SOP·WI·입구 2 문서와 표·그림·나눔·중복 배정이 다 있다.
 """
@@ -12,7 +12,8 @@ from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
 from app.sop.constants import MAX_INDENT_LEVEL, SLOT_KEYS
-from app.sop.outputs import SLOT_NUMBERS, has_sub_slots, number_lines
+from app.sop.outline import LEGACY_OUTLINE, DocOutline
+from app.sop.outputs import number_lines
 from tests.docx_factory import build_docx, p
 from tests.sop_helpers import (
     AUTHOR,
@@ -44,6 +45,10 @@ from tests.test_sop_outputs import (
 )
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
+
+# 새 SOP 문서가 받는 골격(표준의 첫 내용 = 옛 15칸)과 그 칸 번호
+OUTLINE = DocOutline(LEGACY_OUTLINE)
+SLOT_NUMBERS = {item.key: OUTLINE.get_number(item.key) for item in OUTLINE.items}
 
 
 @pytest.mark.parametrize(
@@ -646,8 +651,8 @@ SUB_A, SUB_B = "Wear the synthetic gloves.", "Lock the synthetic cabinet."
 TOP_LINE = "Describe the synthetic purpose."
 
 
-def test_has_sub_slots_reads_the_slot_key_list() -> None:
-    assert [key for key in SLOT_KEYS if has_sub_slots(key)] == [
+def test_slots_with_sub_slots_do_not_count_direct_lines() -> None:
+    assert [key for key in SLOT_KEYS if not OUTLINE.counts_lines(key)] == [
         "general_requirements", "procedures", "document_relationships",
     ]
 

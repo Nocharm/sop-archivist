@@ -4,7 +4,12 @@
 
 ## 2026-11-17
 
-- **글머리 기호 표시(`feat/outline-1-bullet`, 표준 골격 계획 걸음 1)** — 번호 표시에 `bullet`을 더했다(Alembic `0022`가 CHECK를 넓힌다). 템플릿은 6장·부록 말고는 내용이 글머리 기호라, 골격을 바꾸기 전에 표시부터 둔다. 글머리 기호 줄은 세지 않고, 결과물 C에서는 번호 자리에 •, 결과물 A·Excel A의 `No.`에는 놓인 칸의 번호(`outputs.number_bullets` — 줄 번호 `number_targets`와 따로 둬 C의 번호 칸에 섞이지 않는다), Excel C의 `No.`는 •. 단추 순서는 Numbered · Bullet · No number · Note. Assign의 New 칸은 그대로다(번호 없는 줄로 보인다). 확인: backend 2,746 · vitest 1,216 · Order 스모크 226 통과, 화면 한 장으로 기호 크기를 본문 크기로 고쳤다.
+- **15칸을 DB 골격과 문서 사본으로(`feat/outline-2-doc-copy`, 표준 골격 계획 스텝 2)** — 동작은 그대로 두고 읽는 쪽만 바꿨다. 표준 `outline_standard_items`(기동 때 비어 있으면 옛 15칸으로 시드)와 문서 사본 `target_doc_outline_items`(Alembic `0023`, 기존 SOP 문서는 리비전 안에 얼려 둔 15칸으로 채운다)를 두고, 칸의 순서·번호·라벨·부모·줄 세기를 `outline.DocOutline`이 답한다. backend의 `SLOT_NUMBERS`·`has_sub_slots`와 frontend의 `SLOT_KEYS` 사본·`slot-labels.ts`·`hasSubSlots`는 없앴다. To-Be 응답에 `outline_items`, 결과물 C·새 문서 절에 `kind`·`level`·`counts_lines`·`default_style`이 실린다(API 계약 블록).
+  - 계획과 다른 곳: 줄을 세는지(`counts_lines`)는 골격 항목이 아닌 절(WI 단계·단계 없는 WI·이미 쓴 문서)에서 늘 참이다 — 옛 화면 규칙이 그랬고, 거짓이면 들여쓰기 상한이 달라진다. 보낼 곳 이름은 `label`이 아니라 `title_en`(지금 화면처럼 "Safety"). `apply_tobe`가 쓰기 전에 표준을 읽어(`load_standard_outline`) 같은 요청에서 만든 SOP도 `unknown_slot` 검사 순서가 그대로다. 화면에서 달라진 것 하나: To-Be 표와 Assign 나무의 칸 이름이 서버 제목을 써서 "General requirements" → "General Requirements"(결과물 C·템플릿과 같은 표기).
+  - 확인: backend 2,763 · vitest 1,234 · build 경고 0. 전체 스모크는 스텝 1 코드와 같은 결과(1,427 통과, 5 실패 — Order 좁은 창 ⋯ 메뉴 1 · review 3 · 지도 비구성원 1, 두 코드에서 같은 단계가 실패한다). 첫 실행에서만 나온 Assign 2건은 다시 돌리니 사라졌다(흔들림). 자료가 쌓인 0022 DB에 `0023`을 올려 SOP 6개 모두 사본 15줄, WI는 0을 봤다. PostgreSQL에서는 리비전을 돌려 보지 못했다(코드만 읽음).
+  - 검토에서 남긴 것(낮음, 고치지 않음): To-Be 응답마다 골격 질의 3번과 SOP 하나에 약 5.7 KB가 실린다 — SOP가 수십 개인 Bundle에서 느려지면 `outline_items`를 따로 읽는 길을 둔다. `copy_standard_to_doc`은 문서마다 질의 둘이라 Excel로 SOP를 많이 만들 때 묶을 수 있다.
+
+- **글머리 기호 표시(`feat/outline-1-bullet`, 표준 골격 계획 스텝 1)** — 번호 표시에 `bullet`을 더했다(Alembic `0022`가 CHECK를 넓힌다). 템플릿은 6장·부록 말고는 내용이 글머리 기호라, 골격을 바꾸기 전에 표시부터 둔다. 글머리 기호 줄은 세지 않고, 결과물 C에서는 번호 자리에 •, 결과물 A·Excel A의 `No.`에는 놓인 칸의 번호(`outputs.number_bullets` — 줄 번호 `number_targets`와 따로 둬 C의 번호 칸에 섞이지 않는다), Excel C의 `No.`는 •. 단추 순서는 Numbered · Bullet · No number · Note. Assign의 New 칸은 그대로다(번호 없는 줄로 보인다). 확인: backend 2,746 · vitest 1,216 · Order 스모크 226 통과, 화면 한 장으로 기호 크기를 본문 크기로 고쳤다.
 
 - **표준 골격(작업 1) 계획(`feat/outline`, 계획 `2026-11-17-template-fit-1-outline-plan.md`, 사용자 확인 전)** — 칸 순서·번호·부모 찾기가 backend·frontend 스무 군데쯤에서 고정 목록과 키의 점에 기대고 있어, 먼저 지금 15칸을 문서 사본으로 옮겨 읽는 쪽만 바꾸고(동작 그대로) 그다음 내용을 템플릿으로 바꾸는 순서로 잡았다. 키의 점 위계는 남긴다(접두사로 부모를 찾는 코드가 그대로 산다). 사용자 결정: 이 세션의 작업은 `dev`에 합치지 않고 `feat/outline`에 쌓았다가 마지막에 한 번 합친다.
 

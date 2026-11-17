@@ -14,6 +14,7 @@ import pytest
 
 from app.settings import settings
 from app.sop.ai.candidates import list_candidates
+from app.sop.outline import EMPTY_OUTLINE, LEGACY_OUTLINE, DocOutline
 from app.sop.snapshot import TargetDocInfo
 from scripts.synthetic_sop import TOBE_DOCS, TOBE_STEPS
 from tests.ai_helpers import (
@@ -134,6 +135,8 @@ def _build_place_labels(expected: dict) -> dict[_Place, str]:
             id=ids[code], code=code, title=title, doc_type=doc_type.lower(), parent_id=ids.get(parent), entrance="assign",
             is_equipment_sop=equipment == "Y", order_index=ids[code], manual_order=False, na_slots=na_slots[code],
             steps=tuple((step_no, name) for wi_code, step_no, name in TOBE_STEPS if wi_code == code),
+            # 합성 묶음의 SOP는 표준의 첫 내용(옛 15칸)을 복사해 받는다
+            outline=DocOutline(LEGACY_OUTLINE) if doc_type.lower() == "sop" else EMPTY_OUTLINE,
         )
         for code, title, doc_type, parent, equipment in TOBE_DOCS
     ]

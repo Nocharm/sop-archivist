@@ -120,11 +120,11 @@ function findInsertIndex(items: readonly OutputCItem[], rows: readonly RowBox[],
  * 넣을 자리(insertAt)에서 덩어리 첫 줄의 깊이 - 시작 깊이 + round(dx / 24)를 0 ~ 넣을 자리 위 가장 가까운 번호 줄 깊이 + 1로 자른다(앞 줄이 없으면 0).
  * skip은 옮기고 나면 그 자리에 없는 줄(같은 칸 안 끌기의 덩어리 자신). 서버 상한(MAX_INDENT_LEVEL)은 덩어리의 가장 깊은 줄에 건다 -
  * 첫 줄을 그만큼 덜 들여 아래 줄들이 자기 단 차이를 지킨다. 깊이가 잠긴 덩어리는 dx를 안 받고 baseDepth 그대로다 - 다만 다른 칸(isCross)에서는 그 칸의 한계도 받는다(앞 줄이 없는 자리에 깊이 2로 놓이면 번호가 비므로).
- * locationKey는 놓는 칸 - 하위 칸이 있는 칸은 세는 줄이 없어(listCounted) 어느 자리든 0이다
+ * countsLines는 놓는 칸의 값(절의 counts_lines) - 줄을 세지 않는 칸은 세는 줄이 없어(listCounted) 어느 자리든 0이다
  */
-function calcDropDepth(input: { locationKey: string; items: readonly OutputCItem[]; depths: readonly number[]; insertAt: number; skip?: (index: number) => boolean; block: DragBlock; blockDepths: readonly number[]; dx: number; isCross?: boolean }): number {
+function calcDropDepth(input: { countsLines: boolean; items: readonly OutputCItem[]; depths: readonly number[]; insertAt: number; skip?: (index: number) => boolean; block: DragBlock; blockDepths: readonly number[]; dx: number; isCross?: boolean }): number {
   const { items, depths, block } = input;
-  const counted = listCounted({ location_key: input.locationKey, items });
+  const counted = listCounted({ counts_lines: input.countsLines, items });
   let above = input.insertAt - 1;
   while (above >= 0 && (input.skip?.(above) || !counted[above])) above -= 1;
   const deepestOffset = Math.max(...input.blockDepths) - block.baseDepth;
@@ -136,6 +136,8 @@ function calcDropDepth(input: { locationKey: string; items: readonly OutputCItem
 /** 포인터 위치(pointerY)와 좌우 이동(dx)에서 놓을 자리·깊이·그 선의 y·편집을 정한다 */
 export function planDrop(input: {
   locationKey: string;
+  /** 그 칸이 줄을 세는가(절의 counts_lines) */
+  countsLines: boolean;
   items: readonly OutputCItem[];
   depths: readonly number[];
   block: DragBlock;
@@ -160,7 +162,7 @@ export function planDrop(input: {
 
   const insertAt = beforeId === null ? items.length : items.findIndex((item) => item.target_id === beforeId);
   const blockDepths = depths.slice(block.start, block.end + 1);
-  const depth = calcDropDepth({ locationKey: input.locationKey, items, depths, insertAt, skip: inBlock, block, blockDepths, dx: input.dx });
+  const depth = calcDropDepth({ countsLines: input.countsLines, items, depths, insertAt, skip: inBlock, block, blockDepths, dx: input.dx });
 
   const targetIds = items.slice(block.start, block.end + 1).map((item) => item.target_id);
   const rest = items.filter((_, index) => !inBlock(index));
@@ -219,8 +221,8 @@ export function findLeaveRefusal(entrance: string, items: readonly OutputCItem[]
 export function planCrossDrop(input: {
   fromKey: string;
   toKey: string;
-  source: { items: readonly OutputCItem[]; depths: readonly number[]; block: DragBlock };
-  dest: { items: readonly OutputCItem[]; depths: readonly number[] };
+  source: { countsLines: boolean; items: readonly OutputCItem[]; depths: readonly number[]; block: DragBlock };
+  dest: { countsLines: boolean; items: readonly OutputCItem[]; depths: readonly number[] };
   rows: readonly RowBox[];
   pointerY: number;
   dx: number;
@@ -230,7 +232,7 @@ export function planCrossDrop(input: {
   const { block } = source;
   // 같은 칸이면 칸 안 끌기와 똑같이 - dest에 덩어리가 들어 있어 이 함수의 가정이 깨진다
   if (input.fromKey === input.toKey) {
-    return planDrop({ locationKey: input.fromKey, items: source.items, depths: source.depths, block, rows, pointerY: input.pointerY, dx: input.dx, homeTop: input.emptyTop });
+    return planDrop({ locationKey: input.fromKey, countsLines: source.countsLines, items: source.items, depths: source.depths, block, rows, pointerY: input.pointerY, dx: input.dx, homeTop: input.emptyTop });
   }
   // 도착 칸에 없는 줄이 섞이면 beforeId를 믿을 수 없다 - 아무것도 저장하지 않는다(밖으로 친다)
   const destIds = new Set(dest.items.map((item) => item.target_id));
@@ -252,7 +254,7 @@ export function planCrossDrop(input: {
 
   const insertAt = beforeId === null ? dest.items.length : dest.items.findIndex((item) => item.target_id === beforeId);
   const blockDepths = source.depths.slice(block.start, block.end + 1);
-  const depth = calcDropDepth({ locationKey: input.toKey, items: dest.items, depths: dest.depths, insertAt, block, blockDepths, dx: input.dx, isCross: true });
+  const depth = calcDropDepth({ countsLines: dest.countsLines, items: dest.items, depths: dest.depths, insertAt, block, blockDepths, dx: input.dx, isCross: true });
   const targetIds = source.items.slice(block.start, block.end + 1).map((item) => item.target_id);
   const depths = blockDepths.map((d) => d - block.baseDepth + depth);
   return { beforeId, depth, lineY, edit: { kind: "place", locationKey: input.fromKey, toLocationKey: input.toKey, targetIds, beforeId, depths } };

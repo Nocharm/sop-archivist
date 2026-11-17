@@ -17,7 +17,7 @@ from app.sop.ai.adoption import record_group_adoption, record_unit_adoption, rej
 from app.sop.ai.apply import clear_previous_suggestion
 from app.sop.captions import CAPTION_KIND
 from app.sop.checks import check_sentence
-from app.sop.constants import SLOT_HEADING, SLOT_KEYS
+from app.sop.constants import SLOT_HEADING
 from app.sop.decision_steps import UndoMetaIn
 from app.sop.detach import (
     AI_SUGGESTED,
@@ -45,7 +45,6 @@ from app.sop.groups import (
     select_in_chunks,
 )
 from app.sop.membership import ensure_editable, lock_bundle
-from app.sop.output_labels import SLOT_LABELS
 from app.sop.models import (
     AiJob,
     Bundle,
@@ -63,6 +62,7 @@ from app.sop.models import (
     UnitPairMember,
     WiStep,
 )
+from app.sop.outline import DocOutline, load_doc_outlines
 from app.sop.pair_settle import settle_pairs
 from app.sop.refs import REF_LANG
 from app.sop.schemas import NO_NUL, NoNulStr
@@ -259,6 +259,7 @@ class _State:
     component_units: set[int]
     component_targets: set[int]
     docs: dict[int, TargetDoc]
+    outlines: dict[int, DocOutline]  # 새 문서 → 골격 사본(SOP가 아니면 빈 골격)
     na_slots: dict[int, list[str]]
     steps: dict[int, set[int]]
     table_shapes: dict[int, tuple[int, int]]  # 원문 표 id → (행 수, 열 수)
@@ -462,7 +463,7 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
         },
         translation_texts={unit_id: text for unit_id, text in translation_rows},
         member_unit_ids=member_unit_ids, component_units=component_units, component_targets=component_targets,
-        docs=docs, na_slots=na_slots, steps=steps,
+        docs=docs, outlines=await load_doc_outlines(session, docs), na_slots=na_slots, steps=steps,
         table_shapes=await load_table_shapes(session, [units[unit_id] for unit_id in bundle_unit_ids if units[unit_id].kind in TABLE_UNIT_KINDS]),
         cell_positions=await load_cell_positions(session, [units[cell_id] for ids in cells.values() for cell_id in ids]),
         pair_of={
@@ -599,7 +600,7 @@ def _check_location(item: TargetIn, doc: TargetDoc, state: _State) -> None:
     if doc.doc_type == "sop":
         if item.wi_step is not None or item.wi_part is not None:
             _reject("invalid_location", keys=keys)
-        if item.slot_key not in SLOT_KEYS:
+        if item.slot_key is None or state.outlines[doc.id].find(item.slot_key) is None:
             _reject("unknown_slot", keys=keys)
         if any(is_within_slot(item.slot_key, na_slot) for na_slot in state.na_slots.get(doc.id, ())):
             _reject("na_slot", keys=keys)
@@ -719,15 +720,15 @@ def _resolve_lang(item: TargetIn, row: TargetSentence | None, state: _State, tex
     return detect_language(text) or state.units[item.source_unit_ids[0]].lang
 
 
-def _resolve_text(item: TargetIn, row: TargetSentence | None, state: _State) -> str:
+def _resolve_text(item: TargetIn, row: TargetSentence | None, doc: TargetDoc, state: _State) -> str:
     """확정 글자 — 비운 새 새 문장에 출처가 하나면 원문 그대로(그대로 보내기, 스펙 §7.7). 표·그림은 글자가 없다.
 
     비운 기존 새 문장은 지금 글을 두고, 아직 확정 글이 없는 AI 새 문장이면 제안 글로 확정한다.
-    칸 제목은 칸 이름이고 사람이 고치지 않는다 — 비우거나 칸 이름 그대로 보내야 한다(칸 키는 _check_location이 먼저 봤다).
+    칸 제목은 그 문서 골격의 칸 이름이고 사람이 고치지 않는다 — 비우거나 칸 이름 그대로 보내야 한다(칸 키는 _check_location이 먼저 봤다).
     """
     keys = [item.key]
     if item.kind == SLOT_HEADING:
-        label = SLOT_LABELS[item.slot_key]
+        label = state.outlines[doc.id].get_label(item.slot_key)
         if item.text and item.text != label:
             _reject("slot_heading_text_locked", keys=keys)
         return label
@@ -785,7 +786,7 @@ def _plan_target(item: TargetIn, state: _State) -> _Plan:
             _reject("sources_required", keys=keys)
         _check_location(item, doc, state)
     _check_source_kinds(item, state, is_caption=is_caption, origin=origin)
-    text = _resolve_text(item, row, state)
+    text = _resolve_text(item, row, doc, state)
     return _Plan(
         item=item, row=row, doc=doc, origin=origin, sources=list(item.source_unit_ids),
         lang=_resolve_lang(item, row, state, text), text=text, grid=_resolve_grid(item, row),

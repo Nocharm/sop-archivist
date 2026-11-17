@@ -270,7 +270,7 @@ WI의 상위 SOP는 끌어서도 바꿉니다. WI 줄을 잡아(올리면 줄이
 | **Doc no.** · **Title** | 새 문서의 번호와 제목 |
 | **Type** | SOP · WI 두 칸 단추. WI로 바꾸면 목록의 첫 SOP 아래로 가고, 상위 SOP를 옆 칸에서 바꿉니다 |
 | **Parent SOP** | WI가 속한 SOP의 번호(WI 줄에만) |
-| **Equipment SOP** | 장비 SOP면 켭니다(SOP 줄에만). 장비 SOP에 있어야 하는 절차 칸("Electronic record control" · "Troubleshooting" · "Maintenance" — 전자 기록 관리 · 문제 해결 · 유지 보수)이 비어 있으면 **Overview** 에 알려 줍니다. 검토 요청을 막지는 않습니다 |
+| **Equipment SOP** | 장비 SOP면 켭니다(SOP 줄에만). 장비 SOP에 있어야 하는 절차 칸("Electronic Record Control" · "Troubleshooting" · "Maintenance" — 전자 기록 관리 · 문제 해결 · 유지 보수)이 비어 있으면 **Overview** 에 알려 줍니다. 검토 요청을 막지는 않습니다 |
 | **Written file** | 이미 써서 올린 파일(있을 때만). 붙어 있으면 Old Unit을 그 파일의 문장에 잇고, **Not written** 이면 Old Unit을 칸에 보내 새 문장을 만듭니다 |
 
 오른쪽에는 SOP면 **Sections**(칸 상태 표), WI면 **Steps** 가 있습니다([칸과 단계](#tobe-slots)). 검토 중이거나 끝난 Bundle, 검토자에게는 줄이 펼쳐지기만 하고 값은 글자로 보입니다 — 고치는 칸, **Edit** · **Remove**, 번호를 적는 칸이 없습니다.
@@ -290,9 +290,9 @@ WI의 상위 SOP는 끌어서도 바꿉니다. WI 줄을 잡아(올리면 줄이
 - 이 SOP에 없는 칸은 빈 칸에 올려 **Mark N/A** 를 누릅니다. 그 줄 아래에 사유 칸이 열립니다(사유는 결과물에 "N/A · 사유"로 찍힙니다). **Save N/A**(<kbd>Enter</kbd>)로 저장하고 **Cancel**(<kbd>Esc</kbd>)로 닫습니다. 사유가 비어 있으면 저장되지 않고, 칸을 떠나도 사유 칸은 닫히지 않습니다. **Used in this Bundle** 의 칩을 누르면 이 Bundle에서 이미 쓴 사유가 들어갑니다(많이 쓴 순으로 셋까지).
 - 사유 칸은 한 번에 하나만 열립니다. 사유를 적는 중에 다른 칸의 **Mark N/A** 를 누르면 지금 사유 칸으로 돌아가(그 줄을 접어 두었으면 다시 펼쳐집니다) "Save or cancel this reason first."가 뜹니다.
 - N/A 칸에 올리면 **Edit reason**(같은 사유 칸이 저장된 사유를 담아 열립니다)과 **Restore**(바로 되돌립니다)가 나옵니다. **Restore** 뒤에 뜨는 알림의 **Undo** 로 지우기 전의 사유를 되살립니다(그사이 그 칸이 다시 N/A가 됐으면 되돌리지 않습니다). 긴 사유는 두 줄에서 잘리고, 사유를 누르면 다 펴집니다.
-- 상위 칸을 N/A로 두면 하위 칸이 함께 덮여 **N/A** 와 "Covered by 7 Document relationships"가 보입니다. 상위 칸을 되돌리면 하위 칸도 제 상태로 돌아갑니다(따로 N/A로 둔 하위 칸은 N/A로 남습니다).
+- 상위 칸을 N/A로 두면 하위 칸이 함께 덮여 **N/A** 와 "Covered by 7 Document Relationships"가 보입니다. 상위 칸을 되돌리면 하위 칸도 제 상태로 돌아갑니다(따로 N/A로 둔 하위 칸은 N/A로 남습니다).
 - 문장이 든 칸(하위 칸 포함)과 칸 제목에 Old 제목이 이어진 칸에는 단추가 없습니다 — N/A로 두려면 **Assign** 에서 먼저 비웁니다(칸 제목이 이어진 칸에는 그 까닭이 흐린 글로 적힙니다).
-- 장비 SOP의 세 칸("Electronic record control" · "Troubleshooting" · "Maintenance" — 전자 기록 관리 · 문제 해결 · 유지 보수)이 비어 있으면 **Fill or mark N/A** 로 표시되고, 그 칸의 **Mark N/A** 는 늘 보입니다.
+- 장비 SOP의 세 칸("Electronic Record Control" · "Troubleshooting" · "Maintenance" — 전자 기록 관리 · 문제 해결 · 유지 보수)이 비어 있으면 **Fill or mark N/A** 로 표시되고, 그 칸의 **Mark N/A** 는 늘 보입니다.
 - 이미 쓴 SOP(쓴 파일이 붙은 줄)는 칸이 파일의 절을 따르므로 문장 수 대신 **From the file** 로 보이고, 머리에는 N/A 칸 수만 적힙니다. N/A로 두기와 되돌리기는 그대로 됩니다.
 - WI는 **Add step** 으로 단계를 더하고 **Step title** 을 적습니다. **Remove step** 으로 뺍니다. 단계 번호는 자동으로 다시 매기지 않습니다. 문장이 든 단계는 이름 옆에 문장 수("3 sentences")가 적히고 **Remove step** 이 없습니다 — 빼려면 **Assign** 에서 먼저 비웁니다.
 - 이미 문장을 배정한 문서·칸·단계는 뺄 수 없습니다. 먼저 **Assign** 에서 배정을 풉니다.

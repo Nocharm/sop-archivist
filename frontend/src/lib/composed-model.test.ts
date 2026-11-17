@@ -14,6 +14,7 @@ import {
   removeClearedUnits,
   splitCTable,
 } from "@/lib/composed-model";
+import { makeSectionOutline } from "@/lib/outline-fixture";
 import { getPillWidth } from "@/lib/strip-pill-model";
 
 function makeDoc(sections?: ComposedSection[]): ComposedDoc {
@@ -24,15 +25,15 @@ function makeDoc(sections?: ComposedSection[]): ComposedDoc {
     doc_type: "sop",
     entrance: "assign",
     sections: sections ?? [
-      { location_key: "purpose", label: "Purpose", number: "1", na_reason: null, heading_note: "", items: [{ target_id: 1, kind: "sentence", lang: "ko", text: "목적", status: "confirmed", change_type: "as_is", number: "1.1", source_unit_ids: [10] }] },
-      { location_key: "scope", label: "Scope", number: "2", na_reason: "Synthetic", heading_note: "", items: [] },
-      { location_key: "step:1:instruction", label: "Step 1 · Instruction", number: "1", na_reason: null, heading_note: "", items: [] },
+      { ...makeSectionOutline(), location_key: "purpose", label: "Purpose", number: "1", na_reason: null, heading_note: "", items: [{ target_id: 1, kind: "sentence", lang: "ko", text: "목적", status: "confirmed", change_type: "as_is", number: "1.1", source_unit_ids: [10] }] },
+      { ...makeSectionOutline(), location_key: "scope", label: "Scope", number: "2", na_reason: "Synthetic", heading_note: "", items: [] },
+      { ...makeSectionOutline({ kind: null }), location_key: "step:1:instruction", label: "Step 1 · Instruction", number: "1", na_reason: null, heading_note: "", items: [] },
     ],
   };
 }
 
 function makeSection(number: string, label: string, headingNote: string): ComposedSection {
-  return { location_key: `slot:${number}`, label, number, na_reason: null, heading_note: headingNote, items: [] };
+  return { ...makeSectionOutline(), location_key: `slot:${number}`, label, number, na_reason: null, heading_note: headingNote, items: [] };
 }
 
 function makeItem(targetId: number, number: string | null, kind: ComposedItem["kind"] = "sentence"): ComposedItem {
@@ -44,7 +45,7 @@ function makeCell(targetId: number, row: number, col: number, text: string, lang
 }
 
 function makeSlot(locationKey: string, number: string | null, label: string, items: ComposedItem[]): ComposedSection {
-  return { location_key: locationKey, label, number, na_reason: null, heading_note: "", items };
+  return { ...makeSectionOutline(), location_key: locationKey, label, number, na_reason: null, heading_note: "", items };
 }
 
 function makeTarget(fields: Partial<GroupTarget>): GroupTarget {
