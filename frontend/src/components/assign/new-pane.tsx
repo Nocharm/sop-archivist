@@ -72,6 +72,8 @@ interface NewPaneProps {
   onCutDrag?: (at: number | "start" | "end") => void;
   /** 칸 머리 아래 한 줄 - 짝 고르는 중 같은 안내 */
   banner?: ReactNode;
+  /** 칸 머리의 문서 이름 뒤 - New 문서에 거는 거르기(출처 없는 New) */
+  headExtra?: ReactNode;
   /** 두 문서 사이 연결선 켜기·끄기 */
   linesOn: boolean;
   onToggleLines: () => void;
@@ -177,6 +179,13 @@ export function NewPane(props: NewPaneProps) {
   // 엮은 문서만 - 이미 쓴 문서의 문장은 원래 있던 줄이라 들어오는 움직임을 쓰지 않는다
   const enterKeys = props.readOnly && props.live ? props.live.targetIds.map((id) => `t:${id}`) : [];
   const presence = useRowPresence(props.rows, props.rowsKey, enterKeys);
+  // 문서를 바꾸면 새 문서가 옆에서 들어온다 - 문서 목록에서 뒤 문서면 오른쪽에서, 앞 문서면 왼쪽에서(렌더 중 상태 맞추기)
+  const [slide, setSlide] = useState<{ docId: string; dir: "next" | "prev" | null }>({ docId: props.docId, dir: null });
+  if (slide.docId !== props.docId) {
+    const from = props.docOptions.findIndex((option) => option.value === slide.docId);
+    const to = props.docOptions.findIndex((option) => option.value === props.docId);
+    setSlide({ docId: props.docId, dir: from < 0 || to < 0 ? null : to > from ? "next" : "prev" });
+  }
   // 그릴 줄 - 지금 줄 사이사이에 빠지는 줄을 제자리(바로 뒤에 남은 줄 앞)에 끼운다
   const shown: Array<{ row: NewPaneRow; leaving: boolean }> = [];
   for (const row of props.rows) {
@@ -461,6 +470,7 @@ export function NewPane(props: NewPaneProps) {
         <span className="tag" data-testid="assign-new-tag">
           {props.tag}
         </span>
+        {props.headExtra}
         <span className="flex-1" />
         {props.onEditOriginal && (
           <Tooltip label={t("assign.openSplitTip")}>
@@ -478,7 +488,7 @@ export function NewPane(props: NewPaneProps) {
       </div>
       {props.banner}
       <div className="pane-body">
-        <div className="sheet">
+        <div className="sheet" key={props.docId} data-slide={slide.dir ?? undefined}>
           <div
             className="pg new-sheet"
             data-strips=""

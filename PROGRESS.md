@@ -4,6 +4,7 @@
 
 ## 2026-11-17
 
+- **Assign 추천 카드 ↔ New 칸(v1.1.25, `feat/assign-ai-focus`)** — 1.2.0 피드백 5번, 실제 화면 지금/시안 비교로 정했다. "AI 제안만 보기"는 **AI suggested** 거르기 접기가 이미 그 일이라 새 토글은 만들지 않고(사용자: "있는 거로 충분"), New 문서에 거는 **New without source** 칩만 New 칸 머리로 옮겼다(한 단 · Pair view에서는 New 칸이 없어 안 보인다). New 칸 문서는 `heldNewDoc`로 붙잡아 Old 줄을 바꿔도 그대로 두고(줄을 따라 추천 문서로 넘어가던 `autoNewDoc`과 줄 바꿀 때 New 스크롤을 뺐다), `pickDestination`이 고른 곳의 문서로 옮긴다. 카드 클릭은 `openMenu` 대신 그 자리로 보이기 · 번쩍임 + Confirm 포커스(카드에 포커스가 남으면 ↵가 카드를 다시 누른다). 카드 ↔ New 상자 호버는 다시 그리지 않으려 DOM 표시 `data-rec-hover`로 — `data-link-hover`는 Old↔New 선 호버가 이미 쓰던 이름이라 겹치면 서로 지웠다. 문서 바꿈 넘기기는 `.sheet`를 문서로 key 해 `data-slide` 애니메이션(LinkLines가 `animationend`에 다시 잰다). 스모크는 New 칸이 줄을 따라간다고 기대던 곳(쓴 문서 잇기 · 한/영 짝 다시 불러오기)을 손으로 문서를 열게 바꿨다 — 그러지 않으면 뒤 단계(끌어서 잇기)가 참조 줄을 끌어 저장되지 않았다.
 - **회사 템플릿·실사례 맞춤 설계를 저장소에(`docs/superpowers/specs/2026-11-17-template-fit-design.md`, 미구현)** — 사용자가 브레인스토밍으로 확정한 설계(작업 1–7)를 그대로 넣었다. 원본 템플릿·실사례는 저장소 밖이라 작업 세션은 부록 A–F만 본다. 기준 코드가 v1.1.18이라 그 뒤 바뀐 것과 어긋나는 곳이 하나 있다 — v1.1.23의 "하위 칸이 있는 칸의 직접 줄은 번호 없음"(`has_sub_slots` · `hasSubSlots` · `listCounted`)은 작업 1에서 골격 항목 종류(묶음 제목 · 이름 붙인 하위 절 · 범주 표)로 바뀌어야 하고, 옛 6 칸에 직접 놓인 줄의 새 자리는 설계의 마이그레이션 표에 없어 작업 1 계획에서 정한다.
   - 나란히 할 때 겹치는 곳: Alembic 리비전 번호(작업 1 · 2a · 3 · 4 · 5 · 7이 모두 리비전을 만든다 — 번호는 `dev`에 합칠 때 매기고 나중에 합치는 쪽이 `down_revision`을 고친다), `outputs.py` · `section-number.ts`(작업 1 → 4 → 7은 차례로), `docx_reader.py`와 추출기 버전(작업 2 · 3은 한 줄로), `assign/page.tsx` · `new-pane.tsx`(작업 1 · 2c · 3 · 7과 1.2.0 피드백 5 · 8번).
 
