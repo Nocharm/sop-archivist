@@ -4003,14 +4003,14 @@ await runStep("order: row-end buttons show only on hover or focus, one group at 
   const menu = page.locator(`[data-testid="output-c-menu-list-${a}"]`);
   await menu.waitFor({ timeout: T });
   check("from the last line of a wrapped row the mouse reaches the more button and opens its menu", walk1120.lost === 0 && (await menu.isVisible()), JSON.stringify(walk1120));
-  // 메뉴 항목은 묶음 단추와 같은 일곱 동작 - 지금 번호 표시에 표시가 있고, 꺼짐은 묶음 단추와 같다
+  // 메뉴 항목은 묶음 단추와 같은 여덟 동작 - 지금 번호 표시에 표시가 있고, 꺼짐은 묶음 단추와 같다
   const menuState = await page.evaluate((id) => {
     const disabled = (sel) => document.querySelector(sel)?.disabled ?? null;
     const itemOf = (action) => `[data-testid="output-c-menu-${action}-${id}"]`;
     const item = document.querySelector(`[data-testid="output-c-item-${id}"]`);
     // 묶음에 있는 단추만큼 - 번호 표시를 못 바꾸는 줄(이미 쓴 문서)·깊이를 못 바꾸는 줄(AI 번역)은 그 항목도 없다
     const expected = [
-      ...(document.querySelector(`[data-testid="output-c-mark-${id}"]`) ? ["numbered", "omitted", "note"] : []),
+      ...(document.querySelector(`[data-testid="output-c-mark-${id}"]`) ? ["numbered", "bullet", "omitted", "note"] : []),
       ...(document.querySelector(`[data-testid="output-c-indent-${id}"]`) ? ["outdent", "indent"] : []),
       "up",
       "down",
@@ -4023,7 +4023,7 @@ await runStep("order: row-end buttons show only on hover or focus, one group at 
         && ["up", "down"].every((key) => disabled(itemOf(key)) === disabled(`[data-testid="output-c-move-${key}-${id}"]`)),
     };
   }, a);
-  check("the menu lists the group's actions with the current number style marked", menuState.expected.length === 7 && JSON.stringify(menuState.items) === JSON.stringify(menuState.expected) && menuState.checked === "true" && menuState.same, JSON.stringify(menuState));
+  check("the menu lists the group's actions with the current number style marked", menuState.expected.length === 8 && JSON.stringify(menuState.items) === JSON.stringify(menuState.expected) && menuState.checked === "true" && menuState.same, JSON.stringify(menuState));
   check("the row whose menu is open stays highlighted", (await rowBackground(rowA)) !== "rgba(0, 0, 0, 0)");
   await takeShot("sop-order-row-more-menu.png");
   await page.keyboard.press("Escape");
@@ -5242,14 +5242,14 @@ await runStep("order: a line placed directly in a slot with sub slots has no num
     check("it shows no number", (await readRowNumber(page, direct.target_id)) === null, await readRowNumber(page, direct.target_id));
     await rowOf(direct.target_id).hover();
     const directMarks = await readMarks(direct.target_id);
-    check("it offers No number and Note only, with No number shown as picked", JSON.stringify(directMarks) === JSON.stringify(["omitted:true", "note:false"]), JSON.stringify(directMarks));
+    check("it offers Bullet, No number and Note only, with No number shown as picked", JSON.stringify(directMarks) === JSON.stringify(["bullet:false", "omitted:true", "note:false"]), JSON.stringify(directMarks));
     // 머리 번호는 5 그대로다(5.1이 아니다)
     check("the section heading keeps its number 5", /^5(?![.\d])/.test((await getText(page, `output-c-section-${doc.target_doc_id}-${PARENT}`)).trim()), await getText(page, `output-c-section-${doc.target_doc_id}-${PARENT}`));
 
     check("the line in Safety is numbered 5.1.1", (await readRowKey(page, sub.target_id)) === SUB && (await readRowNumber(page, sub.target_id)) === "5.1.1", `${await readRowKey(page, sub.target_id)} ${await readRowNumber(page, sub.target_id)}`);
     await rowOf(sub.target_id).hover();
     const subMarks = await readMarks(sub.target_id);
-    check("and still offers Numbered, shown as picked", JSON.stringify(subMarks) === JSON.stringify(["numbered:true", "omitted:false", "note:false"]), JSON.stringify(subMarks));
+    check("and still offers Numbered, shown as picked", JSON.stringify(subMarks) === JSON.stringify(["numbered:true", "bullet:false", "omitted:false", "note:false"]), JSON.stringify(subMarks));
   } finally {
     // 처음 순서·칸·깊이로 되돌린다 - 아래 단계와 다시 돌리기가 같은 문서를 본다
     const restored = await put(before.map((line) => ({ target_id: line.target_id, ...(moved.has(line.target_id) ? { slot_key: line.key, indent_level: line.indent_level } : {}) })));

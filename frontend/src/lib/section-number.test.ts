@@ -101,15 +101,17 @@ describe("listCounted", () => {
 });
 
 describe("readStyleChoices", () => {
-  it("offers all three styles and presses the stored one where lines are numbered", () => {
-    expect(readStyleChoices("general_requirements.safety", "numbered")).toEqual({ choices: ["numbered", "omitted", "note"], pressed: "numbered" });
-    expect(readStyleChoices("purpose", "note")).toEqual({ choices: ["numbered", "omitted", "note"], pressed: "note" });
+  it("offers all four styles and presses the stored one where lines are numbered", () => {
+    expect(readStyleChoices("general_requirements.safety", "numbered")).toEqual({ choices: ["numbered", "bullet", "omitted", "note"], pressed: "numbered" });
+    expect(readStyleChoices("purpose", "note")).toEqual({ choices: ["numbered", "bullet", "omitted", "note"], pressed: "note" });
+    expect(readStyleChoices("purpose", "bullet").pressed).toBe("bullet");
   });
 
   it("hides Numbered in a section with sub sections and shows a line stored as numbered as No number", () => {
-    expect(readStyleChoices("general_requirements", "numbered")).toEqual({ choices: ["omitted", "note"], pressed: "omitted" });
-    expect(readStyleChoices("general_requirements", "omitted")).toEqual({ choices: ["omitted", "note"], pressed: "omitted" });
-    expect(readStyleChoices("general_requirements", "note")).toEqual({ choices: ["omitted", "note"], pressed: "note" });
+    expect(readStyleChoices("general_requirements", "numbered")).toEqual({ choices: ["bullet", "omitted", "note"], pressed: "omitted" });
+    expect(readStyleChoices("general_requirements", "omitted")).toEqual({ choices: ["bullet", "omitted", "note"], pressed: "omitted" });
+    expect(readStyleChoices("general_requirements", "note")).toEqual({ choices: ["bullet", "omitted", "note"], pressed: "note" });
+    expect(readStyleChoices("general_requirements", "bullet").pressed).toBe("bullet");
   });
 });
 

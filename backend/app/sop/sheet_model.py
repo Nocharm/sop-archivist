@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from app.equis.view import EquisOut
 from app.sop.captions import join_caption_texts
-from app.sop.constants import NUMBER_NOTE
+from app.sop.constants import NUMBER_BULLET, NUMBER_NOTE
 from app.sop.excel_export import ExportMeta, build_export_file_name, clean_cell_text, format_kst, split_cell_text
 from app.sop.flow_image import draw_flow_png
 from app.sop.output_labels import LABELS
@@ -82,6 +82,7 @@ INFO_NAMES = (
 )
 _LABELS = LABELS["en"]
 _MARKERS = {"table": "[Table]", "figure": "[Figure]"}  # 확정한 캡션 글이 없는 표·그림 줄에만
+_BULLET = "•"  # 글머리 기호 줄의 No. 칸(C 시트) — 화면의 줄 머리와 같은 기호
 _CAPTION_POSITION = "Caption"  # 캡션 줄의 Cell position 칸 — 칸 줄의 "R 1 C 1" 자리
 _NO_WRAP_KINDS = ("status", "plain")  # 상태 줄·제목·이름 칸은 옆 칸으로 넘쳐 보이게 접지 않는다
 
@@ -332,6 +333,8 @@ def _list_c_item_lines(item: CItem, depth: int) -> Iterator[tuple[list[str], tup
     }
     if depth == 0 and item.number is not None:  # 표 칸은 표의 번호라 표 줄에만 적는다
         values[C_NUMBER] = item.number
+    elif depth == 0 and item.number_style == NUMBER_BULLET:
+        values[C_NUMBER] = _BULLET
     if item.cell_row is not None and item.cell_col is not None:
         values[C_POSITION] = f"R {item.cell_row + 1} C {item.cell_col + 1}"
     elif depth > 0:  # 표·그림 아래 칸 좌표 없는 자식 = 캡션 줄

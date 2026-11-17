@@ -4,6 +4,8 @@
 
 ## 2026-11-17
 
+- **글머리 기호 표시(`feat/outline-1-bullet`, 표준 골격 계획 걸음 1)** — 번호 표시에 `bullet`을 더했다(Alembic `0022`가 CHECK를 넓힌다). 템플릿은 6장·부록 말고는 내용이 글머리 기호라, 골격을 바꾸기 전에 표시부터 둔다. 글머리 기호 줄은 세지 않고, 결과물 C에서는 번호 자리에 •, 결과물 A·Excel A의 `No.`에는 놓인 칸의 번호(`outputs.number_bullets` — 줄 번호 `number_targets`와 따로 둬 C의 번호 칸에 섞이지 않는다), Excel C의 `No.`는 •. 단추 순서는 Numbered · Bullet · No number · Note. Assign의 New 칸은 그대로다(번호 없는 줄로 보인다). 확인: backend 2,746 · vitest 1,216 · Order 스모크 226 통과, 화면 한 장으로 기호 크기를 본문 크기로 고쳤다.
+
 - **표준 골격(작업 1) 계획(`feat/outline`, 계획 `2026-11-17-template-fit-1-outline-plan.md`, 사용자 확인 전)** — 칸 순서·번호·부모 찾기가 backend·frontend 스무 군데쯤에서 고정 목록과 키의 점에 기대고 있어, 먼저 지금 15칸을 문서 사본으로 옮겨 읽는 쪽만 바꾸고(동작 그대로) 그다음 내용을 템플릿으로 바꾸는 순서로 잡았다. 키의 점 위계는 남긴다(접두사로 부모를 찾는 코드가 그대로 산다). 사용자 결정: 이 세션의 작업은 `dev`에 합치지 않고 `feat/outline`에 쌓았다가 마지막에 한 번 합친다.
 
 - **Assign 추천 카드 ↔ New 칸(v1.1.25, `feat/assign-ai-focus`)** — 1.2.0 피드백 5번, 실제 화면 지금/시안 비교로 정했다. "AI 제안만 보기"는 **AI suggested** 거르기 접기가 이미 그 일이라 새 토글은 만들지 않고(사용자: "있는 거로 충분"), New 문서에 거는 **New without source** 칩만 New 칸 머리로 옮겼다(한 단 · Pair view에서는 New 칸이 없어 안 보인다). New 칸 문서는 `heldNewDoc`로 붙잡아 Old 줄을 바꿔도 그대로 두고(줄을 따라 추천 문서로 넘어가던 `autoNewDoc`과 줄 바꿀 때 New 스크롤을 뺐다), `pickDestination`이 고른 곳의 문서로 옮긴다. 카드 클릭은 `openMenu` 대신 그 자리로 보이기 · 번쩍임 + Confirm 포커스(카드에 포커스가 남으면 ↵가 카드를 다시 누른다). 카드 ↔ New 상자 호버는 다시 그리지 않으려 DOM 표시 `data-rec-hover`로 — `data-link-hover`는 Old↔New 선 호버가 이미 쓰던 이름이라 겹치면 서로 지웠다. 문서 바꿈 넘기기는 `.sheet`를 문서로 key 해 `data-slide` 애니메이션(LinkLines가 `animationend`에 다시 잰다). 스모크는 New 칸이 줄을 따라간다고 기대던 곳(쓴 문서 잇기 · 한/영 짝 다시 불러오기)을 손으로 문서를 열게 바꿨다 — 그러지 않으면 뒤 단계(끌어서 잇기)가 참조 줄을 끌어 저장되지 않았다.

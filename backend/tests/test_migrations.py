@@ -145,7 +145,7 @@ def test_access_grant_constraints_hold_in_migrated_db(tmp_path: pathlib.Path) ->
 
 
 def test_target_number_style_check_holds_in_migrated_db(tmp_path: pathlib.Path) -> None:
-    # 0011이 더한 CHECK를 마이그레이션된 DB에 직접 부딪쳐 본다 — 지난 행은 server_default로 번호 줄이다
+    # 0011이 더하고 0022가 넓힌 CHECK를 마이그레이션된 DB에 직접 부딪쳐 본다 — 지난 행은 server_default로 번호 줄이다
     db_path = tmp_path / "number_style.db"
     run_migrations(_async_url(db_path))
     engine = create_engine(_sync_url(db_path))  # FK를 켜지 않아 부모 행 없이 새 문장 한 행만 넣는다
@@ -165,6 +165,7 @@ def test_target_number_style_check_holds_in_migrated_db(tmp_path: pathlib.Path) 
             )
             assert conn.execute(text("SELECT number_style FROM target_sentences WHERE id = 1")).scalar() == "numbered"
             conn.execute(text("UPDATE target_sentences SET number_style = 'note' WHERE id = 1"))
+            conn.execute(text("UPDATE target_sentences SET number_style = 'bullet' WHERE id = 1"))  # 0022가 더한 값
         with pytest.raises(IntegrityError), engine.begin() as conn:
             conn.execute(text("UPDATE target_sentences SET number_style = 'hidden' WHERE id = 1"))
         check_names = {ck["name"] for ck in inspect(engine).get_check_constraints("target_sentences")}

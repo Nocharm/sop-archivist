@@ -13,7 +13,7 @@ export type IndentDir = -1 | 1;
 type Section = OutputC["docs"][number]["sections"][number];
 
 /** 고를 수 있는 번호 표시 - 화면 단추 순서이기도 하다. backend app/sop/constants.py NUMBER_STYLES와 같은 값 */
-export const NUMBER_STYLES: readonly NumberStyle[] = ["numbered", "omitted", "note"];
+export const NUMBER_STYLES: readonly NumberStyle[] = ["numbered", "bullet", "omitted", "note"];
 
 /** 번호를 세는 표시인가 - 생략·주석 줄은 세지 않고 다음 번호 줄이 이어 센다. 칸까지 본 답은 listCounted */
 export function isCounted(item: Pick<OutputCItem, "number_style">): boolean {

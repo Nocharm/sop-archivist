@@ -289,6 +289,34 @@ def test_omitted_and_note_lines_take_no_number_in_outputs_a_and_c(client: TestCl
     ]
 
 
+def test_bullet_lines_take_no_number_and_show_their_section_number_in_a(client: TestClient) -> None:
+    fx = _setup(client)
+    wi = _get_output(client, fx.bundle_id, "outputs/c", "ko")["docs"][1]
+    (split_a,), (duplicate,), (split_b, figure), () = [section["items"] for section in wi["sections"]]
+    ids = [split_a["target_id"], duplicate["target_id"], split_b["target_id"], figure["target_id"]]
+
+    styles = _put_styles(client, fx.bundle_id, fx.wi_id, ids, {split_b["target_id"]: "bullet"})
+
+    assert styles[split_b["target_id"]] == "bullet"
+    # 결과물 C — 글머리 기호 줄은 번호가 없고 세지 않아 다음 번호 줄이 2.1이다
+    wi = _get_output(client, fx.bundle_id, "outputs/c", "ko")["docs"][1]
+    assert [[(item["number"], item["number_style"]) for item in section["items"]] for section in wi["sections"]] == [
+        [("1.1", "numbered")], [("1.2", "numbered")], [(None, "bullet"), ("2.1", "numbered")], [],
+    ]
+    # 결과물 A — 글머리 기호 줄의 No.는 놓인 칸(2단계)의 번호다. 번호 생략 줄은 빈칸이다(위 시험)
+    rows = _get_output(client, fx.bundle_id, "outputs/a", "ko")
+    (split_row,) = [row for row in rows if row["display_id"] == _display(fx.old1, SPLIT_SOURCE)]
+    assert (split_row["dest_number"], split_row["dest_is_note"]) == ("① 1.1\n② 2", False)
+
+    # Excel C 시트 — No. 칸에 기호
+    response = client.get(f"/api/bundles/{fx.bundle_id}/export.xlsx", headers=AUTHOR)
+    assert response.status_code == 200, response.text
+    sheet_c = load_workbook(BytesIO(response.content))["C New documents"]
+    number_col, item_col = _find_header(sheet_c, "No."), _find_header(sheet_c, "Item")
+    rows_c = {row[item_col - 1].value: row for row in sheet_c.iter_rows(min_row=3) if row[item_col - 1].value}
+    assert (rows_c[SPLIT_B][number_col - 1].value, rows_c[SPLIT_B][item_col - 1].font.i) == ("•", False)
+
+
 def test_a_marked_table_carries_its_mark_to_its_cells(client: TestClient) -> None:
     fx = _setup(client)
     sop = _get_output(client, fx.bundle_id, "outputs/c", "ko")["docs"][0]
