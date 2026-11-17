@@ -20,6 +20,7 @@ import { RefCard } from "@/components/assign/ref-card";
 import { ShapeTools, type ShapeLine } from "@/components/assign/shape-tools";
 import { SplitSuggestionCard } from "@/components/assign/split-suggestion";
 import { SplitUnitActions } from "@/components/split/split-unit-actions";
+import { ChangeKindChip, ChangeKindToggle } from "@/components/assign/change-kind-toggle";
 import { LinkChoice } from "@/components/assign/link-choice";
 import { createDragLinkLine, type DragLinkLine } from "@/components/assign/drag-link-line";
 import { createDropGapLine, type DropGapLine } from "@/components/assign/drop-gap-line";
@@ -204,7 +205,7 @@ import { useEquisPolling } from "@/lib/use-equis-polling";
 import { useLoaded } from "@/lib/use-loaded";
 import { usePaneSlide } from "@/lib/use-pane-slide";
 import { usePaneZoom, type PaneKey, type ZoomDir } from "@/lib/use-pane-zoom";
-import { Select, type SelectOption } from "@/components/ui/select";
+import { type SelectOption } from "@/components/ui/select";
 
 type Filter = ClassifyFilter;
 const FILTERS: Filter[] = ["unassigned", "ai_suggested", "on_hold", "confirmed", "all"];
@@ -2718,6 +2719,18 @@ export default function AssignPage() {
 
   // 표·그림 줄의 캡션 칸 - 캡션 언어마다 하나, 캡션이 없으면 Write a caption 칸 하나(lib/caption-model listCaptionFields)
   const captionFields = oldView ? rowViewUnits.filter((unit) => isBundleKind(unit.kind)).flatMap((unit) => listCaptionFields(unit, oldView.units, draft, groupData)) : [];
+  // 고쳐 쓰기 연필 - 아직 안 쓴 문서의 칸으로 보낼 때만, 고쳐 쓰는 중이 아닐 때 문장 줄마다(E와 같다)
+  function renderEditPencil(testId: string) {
+    if (!canEdit || !isPlace || editing) return null;
+    return (
+      <Tooltip label={t("assign.rewriteKey")} align="end">
+        <button type="button" className="btn ghost h-6 w-6 flex-none justify-center p-0" aria-label={t("classify.editConfirm")} data-testid={testId} disabled={busy} onClick={startEdit}>
+          <FilePen size={13} strokeWidth={1.5} aria-hidden />
+        </button>
+      </Tooltip>
+    );
+  }
+
   const captionLines = (
     <>
       {editing
@@ -2746,6 +2759,7 @@ export default function AssignPage() {
                 <span className="min-w-0 flex-1 text-[13px] leading-5 text-ink" style={{ fontFamily: field.lang === "en" ? "var(--font-source-en)" : "var(--font-source)" }}>
                   <Truncate text={field.text} lang={field.lang === "neutral" ? undefined : field.lang} testId={`assign-caption-${field.lang}`} />
                 </span>
+                {renderEditPencil(`assign-edit-caption-${field.lang}`)}
               </div>
             ))}
       {/* 캡션이 없어 Confirm이 꺼졌다 - 까닭과 써 넣을 길(Edit and confirm)을 같은 자리에 */}
@@ -2777,22 +2791,20 @@ export default function AssignPage() {
           const structural = readSlotKind(slot, slots);
           const changed = slot.sourceText !== null && text.trim() !== "" && text.trim() !== slot.sourceText.trim();
           const keptType = isTextChangeType(slot.target?.change_type) ? slot.target.change_type : null;
-          const changeSelect = (
-            <Select
+          // 원문과 같은 글은 그대로만, 고친 글은 말투 · 고쳐 씀만 고를 수 있다(그대로는 서버가 글 비교로 정한다)
+          const changeToggle = (
+            <ChangeKindToggle
               testId={`assign-slot-change-${slot.key}`}
-              ariaLabel={t("classify.changeType")}
-              size="sm"
-              value={draft.changeTypes[slot.key] ?? keptType ?? "rewritten"}
+              value={changed ? (draft.changeTypes[slot.key] ?? keptType ?? "rewritten") : "as_is"}
+              disabledKinds={changed ? { as_is: t("assign.why.textChanged") } : { tone: t("assign.why.rewriteFirst"), rewritten: t("assign.why.rewriteFirst") }}
               disabled={!canEdit}
-              options={[
-                { value: "tone", label: t("change.tone") },
-                { value: "rewritten", label: t("change.rewritten") },
-              ]}
-              onChange={(next) => setDraft({ changeTypes: { ...draft.changeTypes, [slot.key]: next } })}
+              onChange={(next) => {
+                if (next !== "as_is") setDraft({ changeTypes: { ...draft.changeTypes, [slot.key]: next } });
+              }}
             />
           );
           const refAdvice = renderRefAdvice(slot.key, slot.lang, slot.sourceIds, text);
-          // 읽기 보기는 문장마다 한 줄(언어 · 글 · 끝에 변경 종류) - 결정 칸을 낮게 두어 위 목록이 늘 보이게. 전체 글은 올리면 툴팁, 고치기는 Edit and confirm
+          // 읽기 보기는 문장마다 한 줄(언어 · 글 · 고쳐 쓰기 연필 · 끝에 변경 종류) - 결정 칸을 낮게 두어 위 목록이 늘 보이게. 전체 글은 올리면 툴팁
           if (!editing) {
             return (
               <Fragment key={slot.key}>
@@ -2801,13 +2813,8 @@ export default function AssignPage() {
                   <span className="min-w-0 flex-1 text-[13px] leading-5 text-ink" style={{ fontFamily: slot.lang === "en" ? "var(--font-source-en)" : "var(--font-source)" }}>
                     <Truncate text={text || "_"} lang={slot.lang === "neutral" ? undefined : slot.lang} testId={`assign-text-${slot.key}`} />
                   </span>
-                  {structural ? (
-                    <span className="flex-none text-xs text-ink-2" data-testid={`assign-slot-kind-${slot.key}`}>
-                      {t(`change.${structural}`)}
-                    </span>
-                  ) : (
-                    changed && <span className="flex-none">{changeSelect}</span>
-                  )}
+                  {renderEditPencil(index === 0 ? "assign-edit" : `assign-edit-${slot.key}`)}
+                  {structural ? <ChangeKindChip kind={structural} testId={`assign-slot-kind-${slot.key}`} /> : changeToggle}
                 </div>
                 {refAdvice}
               </Fragment>
@@ -2826,21 +2833,11 @@ export default function AssignPage() {
                   onChange={(event) => setDraft({ texts: { ...draft.texts, [slot.key]: event.target.value } }, true)}
                 />
               </div>
-              {/* 고쳐 쓰는 동안은 변경 종류 줄의 자리를 미리 잡는다 - 글이 원문과 달라지는 순간 아래가 밀리지 않게(To-Be 사유 칸과 같은 방식) */}
-              {structural ? (
-                <span className="text-xs text-ink-2" data-testid={`assign-slot-kind-${slot.key}`}>
-                  {t("classify.changeType")} · {t(`change.${structural}`)}
-                </span>
-              ) : (
-                <span className="flex h-7 items-center gap-2 text-xs text-ink-2">
-                  {changed && (
-                    <>
-                      {t("classify.changeType")}
-                      {changeSelect}
-                    </>
-                  )}
-                </span>
-              )}
+              {/* 고쳐 쓰는 동안도 변경 종류는 같은 세 칸 - 글이 원문과 달라지면 말투 · 고쳐 씀이 켜진다 */}
+              <span className="flex h-7 items-center gap-2 text-xs text-ink-2">
+                {t("classify.changeType")}
+                {structural ? <ChangeKindChip kind={structural} testId={`assign-slot-kind-${slot.key}`} /> : changeToggle}
+              </span>
               {refAdvice}
             </div>
           );
@@ -2969,24 +2966,19 @@ export default function AssignPage() {
   );
 
   const canClear = row !== null && row.status !== "unassigned";
-  // 확정 말고 다른 길 셋 - 결정 칸 머리에 조용히 두어 고른 곳·Remark·확정 사이에 끼지 않게(확정 위에 Clear가 있으면 넘쳐 누르기 쉽다).
-  // 칸 폭은 Edit and confirm이 라벨만큼, 나머지 둘이 남은 폭을 나눈다. 셋이 글쇠 표시까지 들어가지 않는 폭에서는 글쇠 표시를 뺀다 - 단축키는 Help에 있다
-  const actions = (
-    <div className="@container grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)] gap-1.5" data-testid="assign-actions">
-      <Tooltip label={t("assign.why.editPlace")} suppressed={isPlace || !row}>
-        <button type="button" className="btn assign-alt" data-testid="assign-edit" disabled={!canEdit || !isPlace || editing || busy} onClick={startEdit}>
-          <FilePen size={13} strokeWidth={1.5} aria-hidden />
-          {t("classify.editConfirm")} <kbd className="@max-[290px]:hidden">E</kbd>
-        </button>
-      </Tooltip>
-      <button type="button" className="btn assign-alt" data-testid="assign-hold" disabled={!canEdit || !row || busy} onClick={() => void runSave("hold")}>
-        {t("classify.hold")} <kbd className="@max-[290px]:hidden">H</kbd>
+  // 확정 말고 다른 길 - 결정 칸 머리에 조용히 둔다(확정 위에 두면 넘쳐 누르기 쉽다). 고쳐 쓰기는 고른 곳 상자의 문장 줄 연필로 옮겼고,
+  // 배정 취소는 배정이 있을 때만 보인다(쓸 수 없는 단추는 숨긴다 - 1.2.0 피드백). 좁은 폭에서는 글쇠 표시를 뺀다 - 단축키는 Help에 있다
+  const actions = canEdit && row && (
+    <div className="@container flex gap-1.5" data-testid="assign-actions">
+      <button type="button" className="btn assign-alt flex-1" data-testid="assign-hold" disabled={busy} onClick={() => void runSave("hold")}>
+        {t("classify.hold")} <kbd className="@max-[200px]:hidden">H</kbd>
       </button>
-      <Tooltip label={canClear ? t("classify.clear") : t("assign.why.nothingToClear")}>
-        <button type="button" className="btn assign-alt" aria-label={t("classify.clear")} data-testid="assign-clear" disabled={!canEdit || !canClear || busy} onClick={() => void runClear()}>
-          {t("assign.clearShort")} <kbd className="@max-[290px]:hidden">U</kbd>
+      {canClear && (
+        <button type="button" className="btn assign-alt flex-1" data-testid="assign-clear" disabled={busy} onClick={() => void runClear()}>
+          <Undo2 size={13} strokeWidth={1.5} aria-hidden />
+          {t("classify.clear")} <kbd className="@max-[200px]:hidden">U</kbd>
         </button>
-      </Tooltip>
+      )}
     </div>
   );
 
