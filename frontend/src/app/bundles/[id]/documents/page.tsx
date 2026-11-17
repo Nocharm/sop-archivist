@@ -361,6 +361,8 @@ export default function DocumentsPage() {
     <div
       className="dense relative flex min-h-full flex-col bg-surface"
       data-testid="documents-drop"
+      // New 목록에서 WI 줄을 끄는 동안 이 틀에 data-parent-drag가 붙고 CSS가 SOP 줄 말고 전부를 흐린다(tobe-section.tsx)
+      data-parent-drag-root=""
       // 화면 아무 데나 파일을 놓으면 올리기 창이 그 파일을 담아 열린다(창이 이미 열려 있으면 받지 않는다)
       onDragOver={canDrop ? handleDragOver : undefined}
       onDragLeave={canDrop ? () => setIsDropping(false) : undefined}
@@ -405,7 +407,7 @@ export default function DocumentsPage() {
           }
         />
       ) : (
-        <div ref={hostRef}>
+        <div ref={hostRef} className="docs-old">
         {/* 목록 둘 - 지금 있는 문서(Old)와 만들 문서(New, 아래). 머리 모양이 같다 */}
         <div className="flex min-h-[44px] items-center gap-2 border-b border-line px-[var(--pad)] py-2">
           <h2 className="page-title" data-testid="documents-old-title">

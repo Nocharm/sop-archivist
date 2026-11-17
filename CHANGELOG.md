@@ -4,6 +4,13 @@ SOP Archivist 서비스 버전 기록. 단일 소스는 `frontend/package.json` 
 
 ## Unreleased (dev)
 
+### v1.1.12 — 2026-11-17
+
+- **Documents · WI를 SOP에 끌어 상위 SOP 바꾸기**: New 목록의 WI 줄을 다른 SOP 줄에 끌어 놓으면 그 SOP가 상위 SOP가 되고 바로 저장된다(줄 상자 전체가 끌린다 — 손잡이 없음, 4px 전에 떼면 지금처럼 펼치기, 글자 긁기는 <kbd>Alt</kbd>, <kbd>Esc</kbd>로 취소). 끄는 동안 SOP 줄만 또렷하고, 놓을 수 없는 곳(WI 줄 · 지금의 상위 SOP)은 카드에 까닭을 적고 아무것도 쓰지 않는다. 옮긴 줄은 새 자리로 미끄러져 잠깐 강조되고 화면 안으로 온다. 펼친 곳의 **Parent SOP** 칸은 그대로 쓸 수 있다. 저장 중 · 읽기 전용(검토자, 검토 대기 · 완료 Bundle) · SOP가 하나뿐일 때는 끌리지 않는다.
+- **알림의 Undo**: 옮긴 알림("WI-… moved under SOP-…")의 **Undo** 가 앞의 상위 SOP로 되돌린다. 목록을 다시 읽어 그 줄이 놓았던 그대로일 때만 되돌리고, 그사이 달라졌으면 "The list changed after that. Nothing was undone."만 알린다(남이 바꾼 것을 덮지 않는다). 상위 SOP를 찾지 못하던 WI를 옮긴 알림에는 **Undo** 가 없다.
+- **Restore의 Undo**: N/A 칸 상태 표의 **Restore** 알림("Restored 6.3 Troubleshooting in SOP-…")에도 **Undo** 가 붙어 지우기 전 사유로 다시 N/A가 된다(그 칸이 그사이 바뀌지 않았을 때만).
+- 서버 변경 없음(지금의 `PATCH …/tobe/docs/{id}` · N/A `PUT`). 극단 자료(긴 목록 · 긴 제목)와 좁은 · 넓은 창에서의 확인은 프런트 다듬기 때 한다.
+
 ### v1.1.11 — 2026-11-17
 
 - **Map(참조 지도) 1걸음 — 요약과 목록**: Bundle 레일에 **Map** 이 생겼다(History 앞, 문서가 없어도 열린다). 이 Bundle의 문서가 어느 문서를 참조하고(**REF**), 어디로 옮겨지고(**Moved to**), 무엇으로 바뀌는지(**Becomes**)를 Bundle을 넘어 모아 **List** 표로 보인다. 도구 줄에서 찾기(<kbd>/</kbd>), 범위(**Linked to this Bundle** · **All Bundles**), **REF? only** · **Moved to** 거르기, **Read again**. 줄을 고르면 옆 칸에 그 문서의 소유 Bundle · 상태 · 바뀔 문서 · 가리키는/가리켜지는 줄 수와 **Open in Assign**(열 수 있는 Bundle만)이 뜬다. 지도 그림(줄기·마디·선)은 다음 걸음이다.
