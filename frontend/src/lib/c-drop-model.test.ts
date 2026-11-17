@@ -51,6 +51,10 @@ describe("planDrop", () => {
     expect(planDrop({ ...base, items: noted, depths: [0, 2, 9, 0, 0], pointerY: 45, dx: 240 }).depth).toBe(3);
     expect(planDrop({ ...base, depths: [0, 0, 9, 0, 0], pointerY: 45, dx: 480 }).depth).toBe(9);
   });
+  it("keeps depth 0 in a section with sub sections - its lines take no number, so none sets a limit", () => {
+    expect(planDrop({ ...base, pointerY: 45, dx: 100 }).depth).toBe(1);
+    expect(planDrop({ ...base, locationKey: "general_requirements", pointerY: 45, dx: 100 }).depth).toBe(0);
+  });
   it("caps the block's first line so its deepest line stays within MAX_INDENT_LEVEL and keeps the offsets inside the block", () => {
     // 덩어리 = 줄 1(8)·줄 2(9), 줄 3(9) 뒤로 한 단 들이려 한다 - 첫 줄은 9 - 1 = 8까지, 아래 줄은 한 단 깊이를 지킨다
     const plan = planDrop({ ...base, depths: [8, 9, 9, 0, 0], block: { start: 0, end: 1, baseDepth: 8, isDepthLocked: false }, rows: box([3, 4, 5]), pointerY: 25, dx: 24 });
@@ -283,6 +287,13 @@ describe("planCrossDrop", () => {
     const block = { start: 0, end: 1, baseDepth: 0, isDepthLocked: false };
     const deep = into({ source: { items: [line(1), line(2)], depths: [0, 2], block }, dest: { items: [line(10)], depths: [9] }, rows: box([10]), pointerY: 500, dx: 480 });
     expect(deep).toMatchObject({ depth: 7, edit: { depths: [7, 9] } });
+  });
+  it("drops at depth 0 into a section with sub sections, keeping the offsets inside the block", () => {
+    const block = { start: 0, end: 1, baseDepth: 1, isDepthLocked: false };
+    const source = { items: [line(1), line(2)], depths: [1, 2], block };
+    // 줄 11(깊이 1) 아래라도 그 칸의 줄은 번호를 세지 않아 한계가 없다 - 같은 자리가 번호 칸이면 2다
+    expect(into({ source, pointerY: 45, dx: 48 }).depth).toBe(2);
+    expect(into({ source, toKey: "procedures", pointerY: 45, dx: 48 })).toMatchObject({ beforeId: 12, depth: 0, edit: { toLocationKey: "procedures", depths: [0, 1] } });
   });
   it("clamps a locked pair to the destination's rule without applying dx, keeping the offsets inside the block", () => {
     // 원문(2) + 번역(2) + 아래 줄(3): 깊이가 잠겨 dx는 안 먹지만 도착 칸 한계는 받는다

@@ -309,7 +309,8 @@ def test_sheet_c_indents_docs_slots_items_and_tails(client: TestClient) -> None:
         na_slots=[{"code": "SOP-NEW", "slot_key": "scope", "reason": na_reason}],
     )
     table = next(unit for unit in fx.view["units"] if unit["kind"] == "table")
-    assign_as_is(client, fx.bundle_id, table, fx.sop_id, slot_key="general_requirements")
+    # 하위 칸에 둔다 — 하위 칸이 있는 칸(5)에 직접 놓인 줄은 번호가 없다
+    assign_as_is(client, fx.bundle_id, table, fx.sop_id, slot_key="general_requirements.safety")
     assign_as_is(client, fx.bundle_id, find_unit(fx.view, KEEP), fx.sop_id, slot_key="responsibilities")
     dropped = find_unit(fx.view, DROP)
     _bulk(client, fx.bundle_id, "move_external", dropped, moved_reason, move_target_code="SOP-OTHER-1")
@@ -329,7 +330,7 @@ def test_sheet_c_indents_docs_slots_items_and_tails(client: TestClient) -> None:
 
     # 표 줄은 [Table] 대신 확정한 캡션 글(확정하며 써 넣은 캡션), 그 아래 캡션 줄이 칸 줄보다 먼저
     table_row = rows.index(next(row for row in rows if row[item_col] == WRITTEN_CAPTION_OUT))
-    assert rows[table_row][number_col] == "5.1"
+    assert rows[table_row][number_col] == "5.1.1"
     assert (rows[table_row + 1][cell_col], rows[table_row + 1][5]) == (WRITTEN_CAPTION_OUT, "Caption")
     cells = rows[table_row + 2 : table_row + 6]
     assert [(row[cell_col], row[5]) for row in cells] == [

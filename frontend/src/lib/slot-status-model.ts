@@ -37,6 +37,14 @@ export const SLOT_NUMBERS: Readonly<Record<SlotKey, string>> = (() => {
   return numbers;
 })();
 
+/**
+ * 하위 칸이 있는 칸인가(지금은 5·6·7) - backend outputs.has_sub_slots와 같은 규칙. 이 칸에 직접 놓인 줄은 번호가 없다(5 칸의 첫 줄이 5.1이면
+ * 하위 칸 제목 "5.1 Safety"와 번호가 겹친다). 칸 번호가 고정 자리라 하위 칸이 N/A여도 같고, SOP 칸 키가 아닌 칸(WI 단계·입구 2 절 경로)은 false
+ */
+export function hasSubSlots(key: string): boolean {
+  return SLOT_KEYS.some((slotKey) => slotKey.startsWith(`${key}.`));
+}
+
 /** 표의 두 단 - 경계는 5.2와 6 사이로 고정이다 */
 export const SLOT_COLUMNS: readonly [readonly SlotKey[], readonly SlotKey[]] = (() => {
   const split = SLOT_KEYS.indexOf("procedures");

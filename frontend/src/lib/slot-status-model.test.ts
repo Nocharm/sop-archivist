@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import { SLOT_KEYS, type SlotCount, type TargetDoc, type ToBe } from "./api-sop";
-import { SLOT_COLUMNS, SLOT_NUMBERS, buildSlotRows, canUndoRestore, isNaEditDirty, listUsedReasons, openNaEdit, summarizeSlots, type NaEdit } from "./slot-status-model";
+import { SLOT_COLUMNS, SLOT_NUMBERS, buildSlotRows, canUndoRestore, hasSubSlots, isNaEditDirty, listUsedReasons, openNaEdit, summarizeSlots, type NaEdit } from "./slot-status-model";
 
 function makeDoc(patch: Partial<TargetDoc> = {}): TargetDoc {
   return { id: 12, code: "SOP-CF", title: "", doc_type: "sop", parent_code: null, entrance: "assign", is_equipment_sop: true, order_index: 1, document_id: null, ...patch };
@@ -98,6 +98,12 @@ describe("slot places", () => {
     expect(SLOT_KEYS.map((key) => SLOT_NUMBERS[key])).toEqual(["1", "2", "3", "4", "5", "5.1", "5.2", "6", "6.1", "6.2", "6.3", "6.4", "7", "7.1", "7.2"]);
     expect(SLOT_COLUMNS[0].at(-1)).toBe("general_requirements.operation");
     expect(SLOT_COLUMNS[1][0]).toBe("procedures");
+  });
+
+  it("knows which sections have sub sections, from the key list", () => {
+    expect(SLOT_KEYS.filter(hasSubSlots)).toEqual(["general_requirements", "procedures", "document_relationships"]);
+    // SOP 칸 키가 아닌 칸(WI 단계·입구 2 절 경로)은 아니다
+    expect(["step:1:instruction", "unstepped:why", "path:procedures"].some(hasSubSlots)).toBe(false);
   });
 });
 

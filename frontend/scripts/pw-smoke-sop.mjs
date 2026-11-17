@@ -5192,6 +5192,70 @@ await runStep("order: mark a line as a note on C, the count continues and the no
   check("the next line gets its number back", (await page.locator(`[data-testid="output-c-number-${pair.y}"]`).innerText()).trim() === pair.yNumber);
 });
 
+// 하위 칸이 있는 칸(5 General Requirements)에 직접 놓인 줄은 번호가 없고 Numbered를 내놓지 않는다 - 하위 칸 Safety의 줄은 5.1.1부터다(제품 명세 §7.13 섹션 번호).
+// 자료는 이 단계가 API로 만든다 - SOP의 번호 줄 둘을 순서 저장으로 5 칸과 5.1 칸의 맨 앞에 옮기고, 끝에 처음 순서·칸·깊이로 되돌린다(그 문서의 굳힌 순서는 남는다)
+await runStep("order: a line placed directly in a slot with sub slots has no number", {}, async ({ page }) => {
+  const PARENT = "general_requirements";
+  const SUB = "general_requirements.safety";
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const listLines = (doc) => doc.sections.flatMap((section) => section.items.map((item) => ({ ...item, key: section.location_key })));
+  // 옮겨도 딸려 가는 것이 없는 번호 줄 - AI 번역(자리가 출처를 따라 잠긴다)과 그 출처는 뺀다. 의미 묶음에 혼자인 줄을 먼저 고른다
+  const pickFree = (doc) => {
+    const lines = listLines(doc);
+    const withKey = (key) => lines.filter((line) => line.meaning_key === key);
+    const free = lines.filter((line) => line.kind === "sentence" && line.origin === "units" && line.number_style === "numbered" && !(line.meaning_key !== null && withKey(line.meaning_key).some((other) => other.origin === "translation")));
+    const alone = free.filter((line) => line.meaning_key === null || withKey(line.meaning_key).length === 1);
+    return alone.length >= 2 ? alone : free;
+  };
+  const isOpen = (doc, key) => doc.sections.some((section) => section.location_key === key && section.na_reason === null);
+  const doc = (await getJson("/outputs/c?lang=en")).docs.find((item) => item.doc_type === "sop" && item.entrance === "assign" && isOpen(item, PARENT) && isOpen(item, SUB) && pickFree(item).length >= 2);
+  check("an SOP has General Requirements and Safety open and two numbered lines to move", doc !== undefined);
+  const [direct, sub] = pickFree(doc);
+  const before = listLines(doc);
+  const put = async (items) => page.request.put(`${api}/targets/order`, { headers, data: { revision: (await getJson("")).revision, target_doc_id: doc.target_doc_id, items } });
+  const moved = new Set([direct.target_id, sub.target_id]);
+  try {
+    // 목록의 맨 앞에 두면 그 칸의 첫 줄이다 - Safety의 첫 번호 줄이라 5.1.1
+    const arranged = await put([
+      { target_id: direct.target_id, slot_key: PARENT, indent_level: 0 },
+      { target_id: sub.target_id, slot_key: SUB, indent_level: 0 },
+      ...before.filter((line) => !moved.has(line.target_id)).map((line) => ({ target_id: line.target_id })),
+    ]);
+    check("the order save puts one line in General Requirements and one in Safety", arranged.ok(), `${arranged.status()} ${arranged.ok() ? "" : await arranged.text()}`);
+    await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+    await wait(page, "output-c");
+    await page.locator(`[data-testid="order-doc-${doc.target_doc_id}"]`).click();
+    const rowOf = (id) => page.locator(`[data-testid="output-c-row-${id}"]`);
+    // 긴 문서는 나눠 그린다 - 두 줄이 그려질 때까지 이어 그리기 표지를 화면에 들인다
+    const more = page.locator('[data-testid="output-c-more"]');
+    for (let i = 0; i < 40 && ((await rowOf(direct.target_id).count()) === 0 || (await rowOf(sub.target_id).count()) === 0) && (await more.count()) > 0; i += 1) {
+      await more.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(100);
+    }
+    await rowOf(direct.target_id).waitFor({ timeout: T });
+    await rowOf(sub.target_id).waitFor({ timeout: T });
+    const readMarks = (id) => page.locator(`[data-testid="output-c-mark-${id}"] button`).evaluateAll((buttons) => buttons.map((button) => `${button.getAttribute("data-testid").split("-")[3]}:${button.getAttribute("aria-pressed")}`));
+
+    check("the line sits directly in General Requirements", (await readRowKey(page, direct.target_id)) === PARENT, await readRowKey(page, direct.target_id));
+    check("it shows no number", (await readRowNumber(page, direct.target_id)) === null, await readRowNumber(page, direct.target_id));
+    await rowOf(direct.target_id).hover();
+    const directMarks = await readMarks(direct.target_id);
+    check("it offers No number and Note only, with No number shown as picked", JSON.stringify(directMarks) === JSON.stringify(["omitted:true", "note:false"]), JSON.stringify(directMarks));
+    check("the section heading keeps its number 5", ((await getText(page, `output-c-section-${doc.target_doc_id}-${PARENT}`)).trim()).startsWith("5"), await getText(page, `output-c-section-${doc.target_doc_id}-${PARENT}`));
+
+    check("the line in Safety is numbered 5.1.1", (await readRowKey(page, sub.target_id)) === SUB && (await readRowNumber(page, sub.target_id)) === "5.1.1", `${await readRowKey(page, sub.target_id)} ${await readRowNumber(page, sub.target_id)}`);
+    await rowOf(sub.target_id).hover();
+    const subMarks = await readMarks(sub.target_id);
+    check("and still offers Numbered, shown as picked", JSON.stringify(subMarks) === JSON.stringify(["numbered:true", "omitted:false", "note:false"]), JSON.stringify(subMarks));
+  } finally {
+    // 처음 순서·칸·깊이로 되돌린다 - 아래 단계와 다시 돌리기가 같은 문서를 본다
+    const restored = await put(before.map((line) => ({ target_id: line.target_id, ...(moved.has(line.target_id) ? { slot_key: line.key, indent_level: line.indent_level } : {}) })));
+    check("the two lines go back to their own sections", restored.ok(), `${restored.status()}`);
+  }
+});
+
 // 순서 바꾸기는 화면에서 먼저 자리를 바꾸고 저장은 뒤에서 한 번에 하나씩 보낸다(제품 명세 §7.13 C 순서 바꾸기). 실패하면 되돌리고 알림을 띄운다
 await runStep("order: C reorder moves at once, saves one request at a time and rolls back a failed save", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
