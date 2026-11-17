@@ -22,6 +22,8 @@ import { SplitSuggestionCard } from "@/components/assign/split-suggestion";
 import { SplitUnitActions } from "@/components/split/split-unit-actions";
 import { ChangeKindChip, ChangeKindToggle } from "@/components/assign/change-kind-toggle";
 import { LinkChoice } from "@/components/assign/link-choice";
+import { AssignMoreMenu } from "@/components/assign/more-menu";
+import { PendingCount, type PendingItem } from "@/components/assign/pending-count";
 import { createDragLinkLine, type DragLinkLine } from "@/components/assign/drag-link-line";
 import { createDropGapLine, type DropGapLine } from "@/components/assign/drop-gap-line";
 import { findNewLine, findOldStrip, LinkLines, readNewLineEnd, readOldLineStart } from "@/components/assign/link-lines";
@@ -35,14 +37,12 @@ import { PairColumn, PairViewToggle } from "@/components/assign/pair-column";
 import { PairLines, readPairAnchor } from "@/components/assign/pair-lines";
 import { PaneDivider } from "@/components/assign/pane-divider";
 import { RecentRemarks, REMARK_MAX_LENGTH, RemarkLine, RemarkModal } from "@/components/assign/remark-modal";
-import { ResetMenu } from "@/components/assign/reset-menu";
 import { ResetModal, type ResetScope } from "@/components/assign/reset-modal";
-import { AiAskMenu, type AiAskItem } from "@/components/manage/ai-ask-menu";
+import { type AiAskItem } from "@/components/manage/ai-ask-menu";
 import { Modal } from "@/components/modal";
 import { ReadOnlyNote } from "@/components/read-only-note";
 import { CutPop } from "@/components/paper/cut-pop";
 import { LangToken } from "@/components/paper/lang-token";
-import { SourceFontMenu } from "@/components/paper/source-font-menu";
 import { FilterChip, UnitStatusChip } from "@/components/status";
 import { ClampText } from "@/components/ui/clamp-text";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
@@ -337,9 +337,6 @@ function revealFarElement(el: HTMLElement) {
   };
   requestAnimationFrame(check);
 }
-
-// 도구 줄이 이보다 좁으면 오른쪽 단추는 아이콘만(라벨은 툴팁) - 1440 창에서 한 줄을 지킨다(한·영 모두 AI 메뉴가 있어도)
-const BAR_COMPACT_BELOW = 1200;
 
 export default function AssignPage() {
   const { t, lang: uiLang } = useI18n();
@@ -742,14 +739,6 @@ export default function AssignPage() {
   const flightRef = useRef<FlightSource | null>(null);
   // Remark 창을 닫은 뒤 포커스를 둘 단추(testid) - 창이 여는 곳으로 되돌린 뒤에 옮겨 ↵가 바로 확정이 되게
   const focusAfterRef = useRef<string | null>(null);
-  const [barEl, setBarEl] = useState<HTMLDivElement | null>(null);
-  const [isBarCompact, setIsBarCompact] = useState(false);
-  useEffect(() => {
-    if (!barEl) return;
-    const observer = new ResizeObserver(([entry]) => setIsBarCompact(entry.contentRect.width < BAR_COMPACT_BELOW));
-    observer.observe(barEl);
-    return () => observer.disconnect();
-  }, [barEl]);
   const firstTextRef = useRef<HTMLTextAreaElement>(null);
   const [busy, setBusy] = useState(false);
   // 배정이 걸린 문장을 자르거나 합치려 할 때 - 서버가 409 confirm_required로 물으면 확인을 받아 배정을 풀며 다시 보낸다(원문 고치기와 같은 규칙, 설계 2026-11-15 §3.5)
@@ -1359,8 +1348,16 @@ export default function AssignPage() {
   }
 
   /** 다음 나누기 제안이 붙은 줄로 - 용지 순서로 지금 줄 다음, 끝이면 처음으로 돈다 */
+  // AI 나누기 제안이 붙은 줄 - 용지 순서. 위쪽 줄의 수와 목록 창이 쓴다
+  const splitPendingIds = (paperTabs?.order ?? []).filter((id) => splitByUnit.has(id) && (hasSolo || rowOfUnit.has(id)));
+  /** 확인할 것 목록 창의 한 줄 - 표시 ID와 글 앞부분 */
+  function readPendingItem(unitId: number): PendingItem {
+    const unit = unitMap.get(unitId);
+    return { unitId, label: unit?.display_id ?? String(unitId), text: unit?.text ?? "" };
+  }
+
   function selectNextSplit() {
-    const ids = (paperTabs?.order ?? []).filter((id) => splitByUnit.has(id) && (hasSolo || rowOfUnit.has(id)));
+    const ids = splitPendingIds;
     if (ids.length === 0) return;
     const current = ids.findIndex((id) => (hasSolo ? soloUnits.some((unit) => unit.id === id) : rowOfUnit.get(id) === activeKey));
     goToUnit(ids[(current + 1) % ids.length]);
@@ -3355,7 +3352,7 @@ export default function AssignPage() {
   const done = countDone(rows);
   const identicalCount = identical.data?.length ?? 0;
   const bar = (
-    <div ref={setBarEl} className="assign-bar" data-testid="assign-bar">
+    <div className="assign-bar" data-testid="assign-bar">
       <div className="flex flex-wrap gap-1" role="tablist" data-testid="assign-filters">
         {FILTERS.filter((item) => item !== "ai_suggested" || counts.ai_suggested > 0).map((item) => {
           return (
@@ -3435,49 +3432,33 @@ export default function AssignPage() {
             </button>
           </span>
         )}
-        {canEdit && (identical.data?.length ?? 0) > 0 && (
-          <Tooltip label={t("assign.identical", { n: identicalCount })} suppressed={!isBarCompact}>
-            <button type="button" className="btn h-7" data-testid="assign-identical" aria-label={isBarCompact ? t("assign.identical", { n: identicalCount }) : undefined} disabled={busy} onClick={() => setConfirmingIdentical(true)}>
-              <Link2 size={14} strokeWidth={1.5} aria-hidden />
-              {isBarCompact ? identicalCount : t("assign.identical", { n: identicalCount })}
-            </button>
-          </Tooltip>
+        {/* 확인할 것 - 아이콘 + 수(올리면 이름), 누르면 그 줄 목록 창. 누락 경고는 문서별 확인 창 */}
+        {aiOn && splitPendingIds.length > 0 && (
+          <PendingCount icon={WandSparkles} tone="ai" words={t("assign.pending.split")} label={t("ai.pendingCount", { n: splitPendingIds.length })} items={splitPendingIds.map(readPendingItem)} onGo={goToUnit} onNext={selectNextSplit} testId="assign-split-pending" />
         )}
-        {canEdit && <ResetMenu compact={isBarCompact} document={oldView ? { id: oldView.document.id, label: oldView.document.doc_code || oldView.document.file_name } : null} disabled={busy} onPick={setResetScope} />}
-        {aiOn && canEdit && <AiAskMenu compact={isBarCompact} items={aiMenuItems} label={t("ai.more")} testId="assign-ai-menu" disabled={busy} />}
-        {/* 정하지 않은 AI 나누기 제안 수 - 누르면 다음 제안이 붙은 줄로 간다(오른쪽 칸에서 적용·거절) */}
-        {aiOn && splitByUnit.size > 0 && (
-          <Tooltip label={t("ai.nextSuggestion")}>
-            <button type="button" className="pill ai h-7 cursor-pointer whitespace-nowrap" aria-label={isBarCompact ? t("ai.pendingCount", { n: splitByUnit.size }) : undefined} data-testid="assign-split-pending" onClick={selectNextSplit}>
-              <WandSparkles size={13} strokeWidth={1.6} aria-hidden />
-              {isBarCompact ? splitByUnit.size : t("ai.pendingCount", { n: splitByUnit.size })}
-            </button>
-          </Tooltip>
-        )}
-        {/* 확인이 남은 참조 줄 수 - 누르면 다음 줄로 간다(오른쪽 칸 카드에서 번호를 확인하거나 물린다) */}
         {canEdit && refPendingIds.length > 0 && (
-          <Tooltip label={t("assign.ref.next")}>
-            <button type="button" className="pill ref h-7 cursor-pointer whitespace-nowrap" aria-label={isBarCompact ? t("assign.ref.pendingCount", { n: refPendingIds.length }) : undefined} data-testid="assign-ref-pending" onClick={selectNextRef}>
-              <BookMarked size={13} strokeWidth={1.6} aria-hidden />
-              {isBarCompact ? refPendingIds.length : t("assign.ref.pendingCount", { n: refPendingIds.length })}
-            </button>
-          </Tooltip>
+          <PendingCount icon={BookMarked} tone="ref" words={t("assign.pending.ref")} label={t("assign.ref.pendingCount", { n: refPendingIds.length })} items={refPendingIds.map(readPendingItem)} onGo={goToUnit} onNext={selectNextRef} testId="assign-ref-pending" />
         )}
-        {/* 캡션이 필요한 표·그림 수 - 누르면 다음 묶음으로 간다(Edit and confirm에서 캡션을 써 넣는다) */}
         {canEdit && captionPendingKeys.length > 0 && (
-          <Tooltip label={t("assign.caption.next")}>
-            <button type="button" className="pill warn h-7 cursor-pointer whitespace-nowrap" aria-label={isBarCompact ? t("assign.caption.pendingCount", { n: captionPendingKeys.length }) : undefined} data-testid="assign-caption-pending" onClick={selectNextCaption}>
-              <Captions size={13} strokeWidth={1.6} aria-hidden />
-              {isBarCompact ? captionPendingKeys.length : t("assign.caption.pendingCount", { n: captionPendingKeys.length })}
-            </button>
-          </Tooltip>
+          <PendingCount
+            icon={Captions}
+            tone="warn"
+            words={t("assign.pending.caption")}
+            label={t("assign.caption.pendingCount", { n: captionPendingKeys.length })}
+            items={captionPendingKeys.flatMap((key) => {
+              const unitId = rowMap.get(key)?.unitIds[0];
+              return unitId === undefined ? [] : [readPendingItem(unitId)];
+            })}
+            onGo={goToUnit}
+            onNext={selectNextCaption}
+            testId="assign-caption-pending"
+          />
         )}
         {/* 누락 의심 경고 - 확인이 남아 있을 때만 보인다(검토 요청 조건). 원문 자리를 보거나 그 자리에서 확인한다 */}
         <MissingWarnings
           bundleId={bundleId}
           docs={docs.data ?? []}
           canEdit={canEdit}
-          compact={isBarCompact}
           onShow={(item) => {
             const unit = item.warning.block_id === null ? undefined : viewOf(item.docId)?.units.find((candidate) => candidate.block_id === item.warning.block_id);
             const key = unit ? rowOfUnit.get(unit.id) : undefined;
@@ -3495,7 +3476,15 @@ export default function AssignPage() {
             void loadBundle(bundleId);
           }}
         />
-        <SourceFontMenu />
+        <AssignMoreMenu
+          canEdit={canEdit}
+          disabled={busy}
+          identicalCount={identicalCount}
+          onIdentical={() => setConfirmingIdentical(true)}
+          aiItems={aiOn ? aiMenuItems : []}
+          resetDocument={oldView ? { id: oldView.document.id, label: oldView.document.doc_code || oldView.document.file_name } : null}
+          onReset={setResetScope}
+        />
       </div>
     </div>
   );

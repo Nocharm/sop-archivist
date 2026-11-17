@@ -505,7 +505,10 @@ const AUDIT_ENTRIES = [
     },
     measure: async (page) => {
       // AI 꺼진 backend에는 AI 메뉴가 없어 C11과 같은 값을 재게 되므로 통과로 세지 않고 건너뛴다
-      if ((await page.getByTestId("assign-ai-menu").count()) === 0) return { skip: "assign-ai-menu absent (AI-off backend)" };
+      await page.getByTestId("assign-more").click();
+      const hasAi = (await page.locator('[data-testid^="assign-ai-menu-"]').count()) > 0;
+      await page.keyboard.press("Escape");
+      if (!hasAi) return { skip: "AI items absent from the More menu (AI-off backend)" };
       return page.getByTestId("assign-bar").evaluate((bar) => Math.round(bar.getBoundingClientRect().height));
     },
     expect: (value) => value <= 80,
