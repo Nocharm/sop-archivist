@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import engine
 from app.models import Employee
 from app.sop.constants import SLOT_KEYS
-from app.sop.models import TargetSentence, UnitDecision, UnitPair, UnitPairMember
+from app.sop.models import TargetSentence, TargetSource, UnitDecision, UnitPair, UnitPairMember
 from app.sop.output_labels import LABELS
 from app.sop.outputs import BundleCellOut, Lang, Renumbering, _build_index, build_bundle_table, build_renumbering
 from app.sop.snapshot import BundleSnapshot, load_bundle_snapshot
@@ -1956,3 +1956,98 @@ def test_composed_doc_shows_renumbered_caption_and_change(client: TestClient) ->
     table = _find_item(response.json(), "table")
     assert table["caption"] == "Table 1: Rotor limits"
     assert table["renumber"] == {"from_label": "표 4", "to_label": "표 1"}
+
+
+def _upload_small(client: TestClient, body: str, name: str) -> RenumberFixture:
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    sop_id = put_tobe(client, bundle_id, TOBE_DOCS).json()["docs"][0]["id"]
+    doc = _upload_ready(client, bundle_id, build_docx(body), name)
+    return RenumberFixture(bundle_id, sop_id, 0, get_view(client, bundle_id, doc["id"]))
+
+
+def _add_empty_target(fx: RenumberFixture, unit_id: int) -> int:
+    """글이 아직 없는 AI 제안 새 문장 하나를 unit에서 — 글이 없으니 참조를 판정할 것이 없다."""
+
+    async def _insert(session: AsyncSession) -> int:
+        target = TargetSentence(
+            bundle_id=fx.bundle_id, target_doc_id=fx.sop_id, slot_key=GENERAL, lang="ko", kind="sentence",
+            ai_text="", origin="units", change_type="rewritten", status="ai_suggested",
+        )
+        session.add(target)
+        await session.flush()
+        session.add(TargetSource(target_id=target.id, unit_id=unit_id, seq=0))
+        await session.commit()
+        return target.id
+
+    return run_in_session(_insert)
+
+
+def test_split_reference_warns_only_when_no_piece_keeps_the_token(client: TestClient) -> None:
+    fx = _setup_old_7(client)
+    assign_as_is(client, fx.bundle_id, _bundle_unit(fx, TABLE_3), fx.sop_id, slot_key=GENERAL)
+    ref = find_unit(fx.view, REF_TABLE_3)
+    _save(client, fx.bundle_id, [_unit_in(ref)], [
+        _target("a", fx.sop_id, [ref], slot_key=GENERAL, lang="ko", text="운전 조건은 표 3을 따른다.", change_type="rewritten"),
+        _target("b", fx.sop_id, [ref], slot_key=GENERAL, lang="ko", text="조건을 지킨다.", change_type="rewritten"),
+    ])
+    empty = _add_empty_target(fx, ref["id"])
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    pieces = {target.confirmed_text: target.id for target in snap.targets.values() if ref["id"] in target.source_unit_ids}
+    assert renum.texts[pieces["운전 조건은 표 3을 따른다."]] == "운전 조건은 표 1을 따른다."
+    assert pieces["조건을 지킨다."] not in renum.texts and empty not in renum.texts
+    assert renum.warnings == ()
+
+
+def test_reference_without_text_yet_does_not_warn(client: TestClient) -> None:
+    fx = _setup_old_7(client)
+    assign_as_is(client, fx.bundle_id, _bundle_unit(fx, TABLE_3), fx.sop_id, slot_key=GENERAL)
+    _add_empty_target(fx, find_unit(fx.view, REF_TABLE_3)["id"])
+
+    _, renum = _renumber(fx.bundle_id)
+
+    assert renum.warnings == ()
+
+
+def test_reference_inside_a_table_cell_follows_the_new_number(client: TestClient) -> None:
+    fx = _upload_small(client, (
+        p("표 3. 합성 첫 표", "Caption") + tbl([["가", "나"]])
+        + p("표 4. 합성 둘째 표", "Caption") + tbl([["표 3 참조", "라"]])
+    ), "SYNTHETIC_OLD-1_CellRef.docx")
+    for caption in ("표 3. 합성 첫 표", "표 4. 합성 둘째 표"):
+        assign_as_is(client, fx.bundle_id, _bundle_unit(fx, caption), fx.sop_id, slot_key=GENERAL)
+    cell = find_unit(fx.view, "표 3 참조")
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    assert renum.texts[_target_of(snap, cell["id"])] == "표 1 참조"
+    assert renum.warnings == ()
+
+
+def test_english_labels_carry_the_same_numbers(client: TestClient) -> None:
+    fx = _setup_old_7(client)
+    units = _assign_main_four(client, fx)
+
+    _, ko = _renumber(fx.bundle_id, "ko")
+    snap, en = _renumber(fx.bundle_id, "en")
+
+    table3 = _target_of(snap, units[TABLE_3]["id"])
+    assert en.numbers == ko.numbers and en.texts == ko.texts
+    assert en.changes[table3] == ("Table 3", "Table 1")
+    assert en.changes[_target_of(snap, units[FIGURE_6]["id"])] == ("Figure 6", "Figure 2")
+
+
+def test_unlinked_number_in_the_same_sentence_stays(client: TestClient) -> None:
+    fx = _upload_small(client, (
+        p("표 3. 합성 표", "Caption") + tbl([["가", "나"]]) + p("합성 값은 표 3 및 표 9를 따른다.")
+    ), "SYNTHETIC_OLD-1_Unrelated.docx")
+    assign_as_is(client, fx.bundle_id, _bundle_unit(fx, "표 3. 합성 표"), fx.sop_id, slot_key=GENERAL)
+    ref = find_unit(fx.view, "합성 값은 표 3 및 표 9를 따른다.")
+    assign_as_is(client, fx.bundle_id, ref, fx.sop_id, slot_key=GENERAL)
+
+    snap, renum = _renumber(fx.bundle_id)
+
+    ref_target = _target_of(snap, ref["id"])
+    assert renum.texts[ref_target] == "합성 값은 표 1 및 표 9를 따른다."
+    assert _codes(renum) == [("caption_ref_unresolved", ref_target, ref["id"])]  # 표 9는 원문에 없다

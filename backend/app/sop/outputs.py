@@ -689,6 +689,8 @@ def _follow_references(
                     bundle_targets[(doc_id, unit_id)].append(top)
 
     warnings: list[CaptionRefWarning] = []
+    # (참조 단위, 참조, 새 문서) → 글이 있는 새 문장마다 (id, 그 참조의 토큰이 있는가)
+    token_checks: dict[tuple[int, int, int], list[tuple[int, bool]]] = defaultdict(list)
     for target in sorted(snap.targets.values(), key=lambda target: target.id):
         if target.kind in (*BUNDLE_TARGET_KINDS, SLOT_HEADING):
             continue
@@ -730,11 +732,16 @@ def _follow_references(
             if len(bundles_by_number[(ref.kind, ref.number)]) > 1:
                 warn("caption_ref_ambiguous", unit_id)
                 continue
-            spans = [(token.start, token.end) for token in tokens if (token.kind, token.number) == (ref.kind, ref.number)]
-            if not spans:
-                warn("caption_ref_text_changed", unit_id)
+            if not text:  # 아직 글이 없는 새 문장은 바꿀 것도 경고할 것도 없다
                 continue
-            edits[target.id].update(dict.fromkeys(spans, numbers[bundle.id]))
+            spans = [(token.start, token.end) for token in tokens if (token.kind, token.number) == (ref.kind, ref.number)]
+            token_checks[(unit_id, ref.id, target.target_doc_id)].append((target.id, bool(spans)))
+            if spans:
+                edits[target.id].update(dict.fromkeys(spans, numbers[bundle.id]))
+    # 한 단위를 한 새 문서의 새 문장 여럿으로 나누면 토큰은 그중 하나에만 있다 — 그 문서의 어느 글에도 없을 때만 경고한다
+    for (unit_id, _, _), checks in token_checks.items():
+        if not any(found for _, found in checks):
+            warnings.append(CaptionRefWarning("caption_ref_text_changed", checks[0][0], unit_id))
     return tuple(dict.fromkeys(warnings))
 
 
