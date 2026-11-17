@@ -33,7 +33,7 @@ import { OldPane } from "@/components/assign/old-pane";
 import { PairColumn, PairViewToggle } from "@/components/assign/pair-column";
 import { PairLines, readPairAnchor } from "@/components/assign/pair-lines";
 import { PaneDivider } from "@/components/assign/pane-divider";
-import { RecentRemarks, REMARK_MAX_LENGTH, RemarkModal } from "@/components/assign/remark-modal";
+import { RecentRemarks, REMARK_MAX_LENGTH, RemarkLine, RemarkModal } from "@/components/assign/remark-modal";
 import { ResetMenu } from "@/components/assign/reset-menu";
 import { ResetModal, type ResetScope } from "@/components/assign/reset-modal";
 import { AiAskMenu, type AiAskItem } from "@/components/manage/ai-ask-menu";
@@ -2993,36 +2993,20 @@ export default function AssignPage() {
   // 지금 고른 곳에 꼭 필요한 Remark(지우기·옮기기·두 문서) - 비어 있으면 Remark 줄이 경고 색이 되고 쓰기 단추가 다음 할 일로 강조된다
   const remarkNeed = row && destination ? readReasonNeed("confirm") : null;
   const isRemarkMissing = remarkNeed !== null && !reasonNow.trim();
-  // Remark 한 줄 - 이름 · 지금 글(한 줄, 넘치면 올렸을 때 전체) · 쓰기 단추. 글은 창에서 쓴다.
-  // 꼭 필요한데 비었으면 이름 자리에 경고 아이콘과 "…에는 필수"(좁은 패널에서도 한 줄에 들어가게 이름은 뺀다 - 옆 단추가 Write remark)
+  // Remark 한 줄(RemarkLine) - 꼭 필요한데 비었으면 글 자리가 경고 "…에는 필수"로 바뀌고 연필이 강조된 채 늘 보인다
   const remarkRow = (
-    <div className="assign-remark" data-need={isRemarkMissing ? "" : undefined}>
-      {isRemarkMissing ? (
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs font-semibold text-st-hold" data-testid="assign-reason">
-          <TriangleAlert size={13} strokeWidth={1.75} className="flex-none" aria-hidden />
-          <Truncate text={t(`remark.need.${remarkNeed}`)} />
-        </span>
-      ) : (
-        <>
-          <span className="flex-none text-xs text-ink-3">{t("classify.reason")}</span>
-          <span className="min-w-0 flex-1">
-            {reasonNow ? (
-              <Truncate text={reasonNow} className="text-[13px] leading-5 text-ink" testId="assign-reason" />
-            ) : (
-              <span className="block text-xs leading-5 text-ink-3" data-testid="assign-reason">
-                –
-              </span>
-            )}
-          </span>
-        </>
-      )}
-      {canEdit && (
-        <button type="button" className={`btn h-7 flex-none gap-1 px-2 text-xs ${isRemarkMissing ? "is-warn" : "font-normal"}`} data-testid="assign-reason-edit" disabled={!row} onClick={() => setRemarkEdit({ kind: "row", need: isRemarkMissing ? remarkNeed : null, then: null })}>
-          <FilePen size={13} strokeWidth={1.5} aria-hidden />
-          {t(reasonNow ? "remark.edit" : "remark.write")}
-        </button>
-      )}
-    </div>
+    <RemarkLine
+      text={reasonNow}
+      emptyLabel="–"
+      needMessage={isRemarkMissing ? t(`remark.need.${remarkNeed}`) : null}
+      canEdit={canEdit}
+      disabled={!row}
+      onEdit={() => setRemarkEdit({ kind: "row", need: isRemarkMissing ? remarkNeed : null, then: null })}
+      onPick={(text) => setDraft({ reason: text })}
+      reloadKey={unitsKey}
+      testId="assign-reason"
+      editTestId="assign-reason-edit"
+    />
   );
 
   // 머리 아래 한 줄 - 결정 전에 볼 것(검사 결과·확정한 사람)
@@ -3177,24 +3161,17 @@ export default function AssignPage() {
               <div className="assign-decide" data-testid="assign-decide">
                 <div className="assign-decide-body">
                   {renderStep(2, t("assign.step.decide"))}
-                  <div className="assign-remark">
-                    <span className="flex-none text-xs text-ink-3">{t("classify.reason")}</span>
-                    <span className="min-w-0 flex-1">
-                      {(newRemarks[target.target_id] ?? target.remark) ? (
-                        <Truncate text={newRemarks[target.target_id] ?? target.remark} className="text-[13px] leading-5 text-ink" testId="assign-new-remark" />
-                      ) : (
-                        <span className="block truncate text-xs leading-5 text-ink-3" data-testid="assign-new-remark">
-                          {t("assign.optional")}
-                        </span>
-                      )}
-                    </span>
-                    {canEdit && (
-                      <button type="button" className="btn h-7 flex-none gap-1 px-2 text-xs font-normal" data-testid="assign-new-remark-edit" onClick={() => setRemarkEdit({ kind: "new", targetId: target.target_id })}>
-                        <FilePen size={13} strokeWidth={1.5} aria-hidden />
-                        {t((newRemarks[target.target_id] ?? target.remark) ? "remark.edit" : "remark.write")}
-                      </button>
-                    )}
-                  </div>
+                  <RemarkLine
+                    text={newRemarks[target.target_id] ?? target.remark}
+                    emptyLabel={t("assign.optional")}
+                    needMessage={null}
+                    canEdit={canEdit}
+                    onEdit={() => setRemarkEdit({ kind: "new", targetId: target.target_id })}
+                    onPick={(text) => setNewRemarks((prev) => ({ ...prev, [target.target_id]: text }))}
+                    reloadKey={unitsKey}
+                    testId="assign-new-remark"
+                    editTestId="assign-new-remark-edit"
+                  />
                 </div>
                 <button type="button" className="btn pri assign-confirm" data-testid="assign-mark-new" disabled={!canEdit || busy} onClick={markNew}>
                   {t("assign.markNew")}

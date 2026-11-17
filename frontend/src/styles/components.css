@@ -1829,7 +1829,13 @@
   .assign-confirm { width: 100%; height: 40px; font-size: 14px; }
   .assign-alt { height: 30px; min-width: 0; gap: 4px; padding: 0 6px; font-size: var(--fs-cap); font-weight: 400; width: 100%; }
   .assign-alt > :not(svg, kbd) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .assign-remark { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 28px; }
+  /* Remark 한 줄 - 이름 · 글(두 줄까지) · 최근 Remark 단추. 첫 줄 높이를 28px 단추에 맞추고, 글 오른쪽 위 연필 자리는 늘 비워 둔다(글을 덮지 않게) */
+  .assign-remark { display: flex; align-items: flex-start; gap: 8px; min-width: 0; min-height: 28px; }
+  .remark-body { position: relative; flex: 1 1 0; min-width: 0; padding: 4px 26px 4px 0; }
+  .remark-edit { position: absolute; top: 2px; right: 0; opacity: 0; transition: opacity var(--dur-fast); }
+  .remark-body:hover .remark-edit, .remark-body:focus-within .remark-edit, .remark-body[data-empty] .remark-edit, .assign-remark[data-need] .remark-edit { opacity: 1; }
+  .remark-recent-split { display: flex; flex: 0 1 auto; min-width: 0; max-width: 34%; }
+  .remark-menu-item { height: auto; min-height: var(--ctl); max-width: 320px; padding-block: 5px; font-size: 12px; line-height: 18px; }
   .btn.is-warn { border-color: var(--st-hold-line); background: var(--st-hold-tint); color: var(--st-hold-ink); font-weight: 600; }
   .btn.is-warn:not(:disabled):hover { border-color: var(--st-hold-ink); }
   .chosen-box { display: grid; gap: 6px; padding: 8px 10px; border: 1.5px solid var(--accent); border-radius: var(--r-3); background: var(--accent-tint); }

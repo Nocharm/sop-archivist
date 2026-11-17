@@ -2272,6 +2272,13 @@ await runStep("assign: H holds a unit without a destination, with a reason typed
   await page.locator('[data-testid="assign-remark-modal-text"]').fill("");
   await page.locator('[data-testid="assign-remark-modal-confirm"]').click();
   check("a cleared reason stays empty", (await page.locator('[data-testid="assign-reason"]').textContent()) === "–");
+  // 결정 칸의 최근 Remark 단추 - 맨 앞 글을 창 없이 바로 채우고, 옆 화살표가 이전 글 목록을 연다
+  await page.locator('[data-testid="assign-reason-recent"]').click();
+  check("the recent-remark button fills the reason", ((await page.locator('[data-testid="assign-reason"]').textContent()) ?? "–") !== "–");
+  await page.locator('[data-testid="assign-reason-history"]').click();
+  await wait(page, "assign-reason-history-list");
+  await page.locator('[data-testid="assign-reason-history-0"]').click();
+  check("picking from the history closes the list", (await page.locator('[data-testid="assign-reason-history-list"]').count()) === 0);
 });
 
 

@@ -1,11 +1,13 @@
-// Assign Remark - 사유는 창에서 쓴다. 칸 아래에 내가 최근에 쓴 사유(모든 Bundle, 같은 글은 한 번)를 5개, 더 보기로 10개까지 보이고 누르면 칸을 채운다.
+// Assign Remark - 결정 칸의 한 줄(RemarkLine)은 최근 사유를 바로 채우고, 새 글은 창에서 쓴다. 창의 칸 아래에는 내가 최근에 쓴 사유(모든 Bundle, 같은 글은 한 번)를 5개, 더 보기로 10개까지 보이고 누르면 칸을 채운다.
 // 삭제·이동·보류처럼 사유가 꼭 있어야 하는 저장에서는 저장이 이 창을 먼저 열고, 확인하면 저장을 이어 간다(required).
 "use client";
 
-import { Check, ChevronDown, ChevronUp, History, X } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { Check, ChevronDown, ChevronUp, FilePen, History, TriangleAlert, X } from "lucide-react";
+import { useRef, useState, type ReactNode } from "react";
 
 import { Modal } from "@/components/modal";
+import { ClampText } from "@/components/ui/clamp-text";
+import { Menu } from "@/components/ui/menu";
 import { Tooltip } from "@/components/ui/tooltip";
 import { listRecentRemarks } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
@@ -49,6 +51,110 @@ export function RecentRemarks({ onPick, testId }: RecentRemarksProps) {
           {isMore ? <ChevronUp size={13} strokeWidth={1.5} aria-hidden /> : <ChevronDown size={13} strokeWidth={1.5} aria-hidden />}
           {isMore ? t("remark.less") : t("remark.more", { n: items.length - SHOWN })}
         </button>
+      )}
+    </div>
+  );
+}
+
+interface RemarkLineProps {
+  text: string;
+  /** 비었을 때 보일 글("–"·"선택") */
+  emptyLabel: string;
+  /** 지금 고른 곳에 꼭 필요한데 비었을 때의 까닭 - 글 자리에 경고로 보이고 연필이 늘 보인다 */
+  needMessage: string | null;
+  canEdit: boolean;
+  disabled?: boolean;
+  onEdit: () => void;
+  /** 최근 Remark를 누르면 창을 거치지 않고 바로 채운다 */
+  onPick: (text: string) => void;
+  /** 바뀌면 최근 Remark를 다시 불러온다(저장 뒤 맨 앞 항목이 방금 쓴 글이 되게) */
+  reloadKey: number;
+  testId: string;
+  editTestId: string;
+}
+
+/**
+ * 결정 칸의 Remark 한 줄 - 이름 · 지금 글(두 줄까지, 넘치면 올렸을 때 전체, 오른쪽 위 연필은 올리거나 포커스일 때) ·
+ * 맨 끝 최근 Remark 단추(맨 앞 글을 바로 채우고, 옆 화살표로 이전 것을 고른다). 글을 새로 쓰는 일은 창에서 한다.
+ */
+export function RemarkLine({ text, emptyLabel, needMessage, canEdit, disabled = false, onEdit, onPick, reloadKey, testId, editTestId }: RemarkLineProps) {
+  const { t } = useI18n();
+  const recent = useLoaded(() => listRecentRemarks(10), `recent-remarks-${reloadKey}`);
+  const [isListOpen, setIsListOpen] = useState(false);
+  const listRef = useRef<HTMLButtonElement>(null);
+  const items = recent.data ?? [];
+  const latest = items[0]?.text;
+  const editLabel = t(text ? "remark.edit" : "remark.write");
+  return (
+    <div className="assign-remark" data-need={needMessage !== null ? "" : undefined}>
+      <span className="flex-none text-xs leading-7 text-ink-3">{t("classify.reason")}</span>
+      <div className="remark-body" data-empty={text ? undefined : ""}>
+        {needMessage !== null ? (
+          <span className="flex min-w-0 items-start gap-1.5 text-xs font-semibold leading-5 text-st-hold" data-testid={testId}>
+            <TriangleAlert size={13} strokeWidth={1.75} className="mt-[3px] flex-none" aria-hidden />
+            <span className="clamp-2">{needMessage}</span>
+          </span>
+        ) : text ? (
+          <ClampText text={text} className="text-[13px] leading-5 text-ink" testId={testId} />
+        ) : (
+          <span className="block text-xs leading-5 text-ink-3" data-testid={testId}>
+            {emptyLabel}
+          </span>
+        )}
+        {canEdit && (
+          <span className="remark-edit">
+            <Tooltip label={editLabel} align="end">
+              <button type="button" className={`btn h-6 w-6 justify-center p-0 ${needMessage !== null ? "is-warn" : "ghost"}`} aria-label={editLabel} data-testid={editTestId} disabled={disabled} onClick={onEdit}>
+                <FilePen size={13} strokeWidth={1.5} aria-hidden />
+              </button>
+            </Tooltip>
+          </span>
+        )}
+      </div>
+      {canEdit && latest !== undefined && (
+        <div className="remark-recent-split">
+          <Tooltip label={t("remark.pickRecent", { text: latest })} align="end" suppressed={isListOpen} shrinks>
+            <button type="button" className="btn h-7 min-w-0 gap-1 rounded-r-none px-2 text-xs font-normal" data-testid={`${testId}-recent`} disabled={disabled} onClick={() => onPick(latest)}>
+              <History size={13} strokeWidth={1.5} className="flex-none" aria-hidden />
+              <span className="truncate">{latest}</span>
+            </button>
+          </Tooltip>
+          <Tooltip label={t("remark.history")} align="end" suppressed={isListOpen}>
+            <button
+              ref={listRef}
+              type="button"
+              className="btn h-7 w-6 justify-center rounded-l-none border-l-0 p-0"
+              aria-label={t("remark.history")}
+              aria-haspopup="menu"
+              aria-expanded={isListOpen}
+              data-testid={`${testId}-history`}
+              disabled={disabled}
+              onClick={() => setIsListOpen((value) => !value)}
+            >
+              <ChevronDown size={13} strokeWidth={1.5} aria-hidden />
+            </button>
+          </Tooltip>
+          {isListOpen && (
+            <Menu anchorRef={listRef} onClose={() => setIsListOpen(false)} testId={`${testId}-history-list`} align="end" label={t("remark.recent")}>
+              <div className="menu-label">{t("remark.recent")}</div>
+              {items.map((item, index) => (
+                <button
+                  key={item.text}
+                  type="button"
+                  role="menuitem"
+                  className="menu-item remark-menu-item"
+                  data-testid={`${testId}-history-${index}`}
+                  onClick={() => {
+                    setIsListOpen(false);
+                    onPick(item.text);
+                  }}
+                >
+                  <span className="clamp-2">{item.text}</span>
+                </button>
+              ))}
+            </Menu>
+          )}
+        </div>
       )}
     </div>
   );
