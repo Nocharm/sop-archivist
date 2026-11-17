@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { MapBundle, MapEdge, MapNode, RefMap } from "./api-sop";
 import { BUNDLES, EDGES, makeEdge, makeNode, MAP, NODES } from "./map-fixture";
 import { buildMapView, DEFAULT_FILTERS } from "./map-model";
-import { fitZoom, GAP_Y, keepPoint, LANE_W, layoutMap, type MapLayout, MORE_H, NODE_H, NODE_W, stepZoom } from "./map-layout";
+import { fitZoom, GAP_Y, getZoomScroll, keepPoint, LANE_W, layoutMap, listMapOrder, listNeighbors, type MapLayout, MORE_H, NODE_H, NODE_W, stepZoom } from "./map-layout";
 
 const NONE: ReadonlySet<string> = new Set();
 
@@ -253,6 +253,46 @@ describe("map-layout", () => {
     expect(layoutOf(makeLargeMap("all")).nodes.size).toBeGreaterThanOrEqual(192);
   });
 
+  it("lays out a large map with collapsed lanes without overlap or broken paths", () => {
+    const data = makeLargeMap("all");
+    const view = buildMapView(data, DEFAULT_FILTERS);
+    const open = layoutMap(view, NONE);
+    const layout = layoutMap(view, new Set(["3", "7", "none"]));
+    expect(findOverlap(layout)).toBeNull();
+    expect(layout.edges.every((e) => !e.d.includes("NaN") && !e.d.includes("Infinity") && Number.isFinite(e.dot.x) && Number.isFinite(e.dot.y))).toBe(true);
+    const hidden = new Set(view.nodes.filter((node) => node.bundle_id === 3 || node.bundle_id === 7 || node.bundle_id === null).map((node) => node.id));
+    for (const key of ["3", "7", "none"]) expect([laneOf(layout, key).nodeIds, laneOf(layout, key).height]).toEqual([[], 50]);
+    expect([...layout.nodes.keys()].some((id) => hidden.has(id))).toBe(false);
+    expect(layout.edges.some((e) => hidden.has(e.source) || hidden.has(e.target))).toBe(false);
+    expect(layout.edges.length).toBeGreaterThan(0);
+    expect(layout.lanes.map((l) => l.x)).toEqual(open.lanes.map((l) => l.x));
+    expect(layout.width).toBe(open.width);
+  });
+
+  it("leaves out a document whose bundle is not listed, and its edges, without a lane for it", () => {
+    const stray = makeNode("old:900", "old", 99, "STRAY-1");
+    const layout = layoutOf({ ...MAP, nodes: [...NODES, stray], edges: [...EDGES, makeEdge("old:101", "old:900", "ref", "confirmed", 1), makeEdge("old:900", "old:140", "ref", "confirmed", 1)] });
+    expect(layout.nodes.has("old:900")).toBe(false);
+    expect(layout.lanes.map((l) => l.key)).toEqual(["12", "18", "15", "none"]);
+    expect(layout.edges.some((e) => e.source === "old:900" || e.target === "old:900")).toBe(false);
+    expect(layout.edges).toHaveLength(EDGES.length);
+  });
+
+  it("lists every document in map order, collapsed lanes included", () => {
+    const view = buildMapView(MAP, DEFAULT_FILTERS);
+    expect(listMapOrder(view)).toEqual(["old:101", "old:102", "old:110", "old:199", "old:160", "target:77", "old:140", "num:SOP-ZZ-404"]);
+  });
+
+  it("lists each document's neighbours and touching edges from the drawn edges", () => {
+    const neighbors = listNeighbors(layoutOf().edges);
+    expect([...neighbors.get("old:101")!.nodes].sort()).toEqual(["old:102", "old:140", "old:160"]);
+    expect([...neighbors.get("old:101")!.edges].sort()).toEqual(["old:101>old:102:ref:confirmed", "old:101>old:140:ref:confirmed", "old:101>old:140:ref:proposed", "old:160>old:101:ref:confirmed"]);
+    expect([...neighbors.get("target:77")!.nodes]).toEqual(["old:102"]);
+    expect(neighbors.has("old:199")).toBe(false);
+    const collapsed = listNeighbors(layoutOf(MAP, new Set(["18"])).edges);
+    expect([...collapsed.get("old:101")!.nodes].sort()).toEqual(["old:102", "old:140"]);
+  });
+
   it("steps and fits the zoom", () => {
     expect(stepZoom(1, 1)).toBe(1.1);
     expect(stepZoom(1.5, 1)).toBe(1.5);
@@ -263,5 +303,16 @@ describe("map-layout", () => {
     expect(fitZoom({ width: 730, height: 600 }, { width: 200, height: 120 })).toBe(1);
     expect(fitZoom({ width: 730, height: 600 }, { width: 0, height: 0 })).toBe(1);
     expect(keepPoint(200, 100, 1, 1.1)).toBeCloseTo(230);
+  });
+
+  it("keeps the world point under the anchor when the zoom changes inside a padded frame", () => {
+    const next = getZoomScroll({ left: 0, top: 0 }, { x: 100, y: 50 }, 16, 1, 1.5);
+    expect(next.left).toBeCloseTo(42);
+    expect(next.top).toBeCloseTo(17);
+    // 포인터 밑 세계 자리: 앞 (0 + 100 - 16) / 1 = 84, 뒤 (42 + 100 - 16) / 1.5 = 84
+    expect((next.left + 100 - 16) / 1.5).toBeCloseTo(84);
+    expect(getZoomScroll({ left: 300, top: 120 }, { x: 200, y: 100 }, 16, 1.2, 1.2)).toEqual({ left: 300, top: 120 });
+    // 줄이다 앞 끝을 넘으면 0에서 멈춘다
+    expect(getZoomScroll({ left: 0, top: 0 }, { x: 100, y: 50 }, 16, 1.5, 1)).toEqual({ left: 0, top: 0 });
   });
 });
