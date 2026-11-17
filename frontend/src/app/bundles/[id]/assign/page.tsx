@@ -264,9 +264,11 @@ async function loadRowCandidates(bundleId: number, unitIds: number[]): Promise<N
   return lists.flat().filter((item) => !seen.has(item.target_id) && seen.add(item.target_id));
 }
 
-/** 고른 곳에서 New 원문을 열 이미 쓴 문서 */
-function findLinkDoc(destination: Destination | null, written: Map<number, WrittenSentence>): number | null {
-  return destination?.kind === "link" ? (written.get(destination.targetIds[0])?.target_doc_id ?? null) : null;
+/** 고른 곳이 가리키는 New 문서(To-Be 문서 id) - 잇기는 그 문장의 문서, 칸·step은 그 문서, 삭제·이동은 없다 */
+function findDestinationDoc(destination: Destination | null, written: Map<number, WrittenSentence>): number | null {
+  if (destination === null) return null;
+  if (destination.kind === "link") return written.get(destination.targetIds[0])?.target_doc_id ?? null;
+  return "docId" in destination ? destination.docId : null;
 }
 
 /** Remark 창 - 고른 줄의 사유(저장이 사유를 요구해 열었으면 확인 뒤 그 저장을 잇는다) 또는 출처 없는 New 문장의 Remark */
@@ -665,12 +667,13 @@ export default function AssignPage() {
   // 방금 확정해 보낸 곳 - 확정 뒤 고른 줄(key)에 있는 동안만 오른쪽 칸을 그 문서에 두고 그 문장을 잇는 선을 진하게. 손으로 고른 문서가 먼저, 다른 줄로 옮기면 평소대로
   const [liveNew, setLiveNew] = useState<{ key: string; docId: number; targetIds: number[]; seq: number } | null>(null);
   const toggleKey = mode === "unsourced" ? "unsourced" : (activeKey ?? "");
-  const topLink = recommendations.find((rec) => rec.destination.kind === "link")?.destination ?? null;
-  // 칸에 확정한 줄은 그 문서를 연다 - 이어 둔 문서가 없을 때 추천보다 먼저
-  const savedPlaceDoc = savedDestination?.kind === "slot" || savedDestination?.kind === "step" ? savedDestination.docId : null;
-  const autoNewDoc = mode === "unsourced" ? (writtenMap.get(focusNew ?? -1)?.target_doc_id ?? null) : (findLinkDoc(destination, writtenMap) ?? savedPlaceDoc ?? findLinkDoc(topLink, writtenMap));
+  const unsourcedDoc = mode === "unsourced" ? (writtenMap.get(focusNew ?? -1)?.target_doc_id ?? null) : null;
   const liveDoc = liveNew?.key === toggleKey ? liveNew : null;
-  const newDocId = (manualNewDoc?.key === toggleKey ? manualNewDoc.docId : null) ?? liveDoc?.docId ?? autoNewDoc ?? writtenDocs[0]?.[0] ?? composedDocs[0]?.id ?? null;
+  // 지금 New 칸에 띄운 문서 - Old 줄을 바꿔도 그대로 둔다(1.2.0 피드백). 추천 카드·나무 항목·New 문장 고르기·끌어 놓기처럼 사람이 고른 곳으로만 옮긴다
+  const [heldNewDoc, setHeldNewDoc] = useState<number | null>(null);
+  const isNewDocOpen = (docId: number | null) => docId !== null && (writtenDocs.some(([id]) => id === docId) || composedDocs.some((doc) => doc.id === docId));
+  const newDocId = (manualNewDoc?.key === toggleKey ? manualNewDoc.docId : null) ?? liveDoc?.docId ?? unsourcedDoc ?? (isNewDocOpen(heldNewDoc) ? heldNewDoc : null) ?? writtenDocs[0]?.[0] ?? composedDocs[0]?.id ?? null;
+  if (newDocId !== null && newDocId !== heldNewDoc) setHeldNewDoc(newDocId);
   const isComposedDoc = newDocId !== null && !writtenDocs.some(([docId]) => docId === newDocId);
   // 이미 쓴 New 문서의 올린 파일(문서) id - 원문 고치기를 그 문서로 연다
   const newFileId = (tobeData?.docs ?? []).find((doc) => doc.id === newDocId)?.document_id ?? null;
@@ -1860,6 +1863,9 @@ export default function AssignPage() {
     // 보낼 곳을 다시 고르면 끌어 놓은 자리는 버린다
     setDraft({ destination: next.kind === "link" ? { kind: "link", targetIds: addPartnerTargets(next.targetIds, writtenMap) } : next, linkChangeTypes: linkTypes, position: null });
     setPickSeq((seq) => seq + 1);
+    // 고른 곳의 New 문서로 칸을 옮긴다 - Old 줄을 바꾸는 것만으로는 옮기지 않으니 여기가 따라가는 길이다
+    const docId = findDestinationDoc(next, writtenMap);
+    if (docId !== null && docId !== newDocId && isNewDocOpen(docId)) setManualNewDoc({ key: toggleKey, docId });
   }
 
   /** New 문장 고르기 - 고른 곳이 바뀌었으면 true */
@@ -2549,10 +2555,8 @@ export default function AssignPage() {
     if (lineDocParam !== null && editParam === null && ready) openLineParam(lineDocParam, lineUnitParam);
   }, [lineDocParam, lineUnitParam, editParam, ready]);
 
-  // New 원문은 고른 문장(없으면 후보)이 보이게 - 줄을 바꾸거나 고를 때
-  // 엮은 문서는 고른 줄이 들어간 문장(그 문서의 후보·이음은 없다)
-  const composedFocusId = isComposedDoc ? (newRows.filter(isWrittenRow).find((item) => item.source_unit_ids.some((id) => row?.unitIds.includes(id)))?.target_id ?? null) : null;
-  const newFocusId = mode === "unsourced" ? focusNew : isComposedDoc ? composedFocusId : (linkIds[0] ?? [...candidateIds][0] ?? null);
+  // 출처 없는 New 문장을 고르면 New 원문이 그 문장을 보이게. Old 줄을 바꿀 때는 New 칸을 움직이지 않는다(1.2.0 피드백) - 추천 카드를 누를 때만 그리로 간다
+  const newFocusId = focusNew;
   useEffect(() => {
     if (newFocusId === null || newDocId === null) return;
     const frame = requestAnimationFrame(() => document.querySelector(`[data-testid="assign-new-${newFocusId}"]`)?.scrollIntoView({ block: "nearest" }));
@@ -2609,11 +2613,72 @@ export default function AssignPage() {
     return { title: option?.docCode ?? "", text: option?.label ?? "" };
   }
 
-  /** 추천을 누름 - 고른 뒤 그 카드 옆에 확정 메뉴를 띄운다(고른 상자가 카드보다 위라 화면 밖일 수 있다) */
-  function pickRecommendation(rec: Recommendation, event: MouseEvent<HTMLButtonElement>) {
+  /** 추천을 누름 - 고르고 New 칸을 그 자리로 옮긴다(다른 문서면 넘긴다). 확정은 결정 칸의 Confirm 하나 - 카드 옆 확정 메뉴는 띄우지 않는다(1.2.0 피드백).
+   *  포커스는 Confirm으로 - 카드에 남으면 ↵가 확정 대신 카드를 다시 누른다 */
+  function pickRecommendation(rec: Recommendation) {
     pickDestination(rec.destination);
-    if (row) openMenu(event.currentTarget, event, row.key, null);
+    markRecHover([]);
+    setRevealPick({ destination: rec.destination, rowKey: activeKey });
+    requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="assign-primary"]')?.focus({ preventScroll: true }));
   }
+
+  /** 고른 곳이 New 칸에 그려진 상자 - 잇기는 그 문장(짝 포함), 엮은 문서의 칸·step은 그 칸의 줄(비었으면 빈 칸 자리). 지금 칸에 없으면 빈 목록 */
+  function listDestinationEls(dest: Destination): HTMLElement[] {
+    const find = (id: number) => document.querySelector<HTMLElement>(`[data-pane="new"] [data-testid="assign-new-${id}"]`);
+    let els: (HTMLElement | null)[] = [];
+    if (dest.kind === "link") els = addPartnerTargets(dest.targetIds, writtenMap).map(find);
+    else if ("docId" in dest && composedDoc?.target_doc_id === dest.docId) {
+      const key = dest.kind === "step" ? getSectionKey(dest) : dest.slotKey;
+      const section = composedDoc.sections.find((item) => item.location_key === key);
+      if (section && section.items.length > 0) els = section.items.map((item) => find(item.target_id));
+      else if (section) els = [document.querySelector<HTMLElement>(`[data-pane="new"] [data-testid="assign-new-slot-${CSS.escape(section.location_key)}"]`)];
+    }
+    return els.filter((el): el is HTMLElement => el !== null);
+  }
+
+  /** 추천 카드 ↔ New 상자를 같이 밝힌다 - 표시만 붙였다 뗀다(호버마다 화면을 다시 그리지 않게, 긴 문서) */
+  function markRecHover(els: HTMLElement[]) {
+    for (const el of document.querySelectorAll("[data-rec-hover]")) el.removeAttribute("data-rec-hover");
+    for (const el of els) el.setAttribute("data-rec-hover", "");
+  }
+
+  // New 문장에 포인터를 올리면 그 문장을 가리키는 추천 카드를 밝힌다. 카드에서 붙인 표시는 카드가 뗀다(그 사이 여기서 지우지 않게)
+  const newHoverMarked = useRef(false);
+  const markNewHover = useEffectEvent((target: EventTarget | null) => {
+    const el = target instanceof Element ? target.closest<HTMLElement>('[data-pane="new"] :is(.new-line[data-target], .new-block, .new-slot-empty)') : null;
+    if (!el) {
+      if (newHoverMarked.current) markRecHover([]);
+      newHoverMarked.current = false;
+      return;
+    }
+    newHoverMarked.current = true;
+    const cards = recommendations.flatMap((rec, index) => {
+      const els = listDestinationEls(rec.destination);
+      return els.includes(el) ? [...els, document.querySelector<HTMLElement>(`[data-testid="assign-rec-${index}"]`)] : [];
+    });
+    markRecHover(cards.filter((item): item is HTMLElement => item !== null && item !== el));
+  });
+  useEffect(() => {
+    const onOver = (event: PointerEvent) => markNewHover(event.target);
+    document.addEventListener("pointerover", onOver);
+    return () => document.removeEventListener("pointerover", onOver);
+  }, []);
+
+  // 누른 추천의 자리로 New 칸을 옮긴 뒤 - 그 자리가 그려지면(다른 문서·엮은 문서는 받아 온 뒤) 보이게 하고 번쩍인다. 다른 줄을 고르면 버린다
+  const [revealPick, setRevealPick] = useState<{ destination: Destination; rowKey: string | null } | null>(null);
+  if (revealPick !== null && revealPick.rowKey !== activeKey) setRevealPick(null);
+  const showPicked = useEffectEvent(() => {
+    const el = revealPick ? listDestinationEls(revealPick.destination)[0] : undefined;
+    if (!el) return;
+    revealElement(el);
+    flashElement(el);
+    setRevealPick(null);
+  });
+  useEffect(() => {
+    if (!revealPick) return;
+    const frame = requestAnimationFrame(() => showPicked());
+    return () => cancelAnimationFrame(frame);
+  }, [revealPick, newDocId, composedDoc, written]);
 
   function renderRecommendation(rec: Recommendation, index: number) {
     const pressed = isRecommendationPicked(draft.destination, rec.destination, writtenMap);
@@ -2644,7 +2709,8 @@ export default function AssignPage() {
           pressed={pressed}
           pending={pending}
           testId={`assign-rec-${index}`}
-          onClick={(event) => pickRecommendation(rec, event)}
+          onClick={() => pickRecommendation(rec)}
+          onHover={(on) => markRecHover(on ? listDestinationEls(rec.destination) : [])}
         />
       );
     }
@@ -2666,7 +2732,8 @@ export default function AssignPage() {
           pressed={pressed}
           pending={pending}
           testId={`assign-rec-${index}`}
-          onClick={(event) => pickRecommendation(rec, event)}
+          onClick={() => pickRecommendation(rec)}
+          onHover={(on) => markRecHover(on ? listDestinationEls(rec.destination) : [])}
         />
       );
     }
@@ -2690,7 +2757,8 @@ export default function AssignPage() {
         pressed={pressed}
         pending={pending}
         testId={`assign-rec-${index}`}
-        onClick={(event) => pickRecommendation(rec, event)}
+        onClick={() => pickRecommendation(rec)}
+          onHover={(on) => markRecHover(on ? listDestinationEls(rec.destination) : [])}
       />
     );
   }
@@ -3413,6 +3481,21 @@ export default function AssignPage() {
     );
   }
 
+  // 출처 없는 New 문장 거르기 - New 문서에 거는 거르기라 New 칸 머리에 둔다(1.2.0 피드백, 한 단·Pair view에서는 New 칸이 없어 보이지 않는다). Old 거르기 칩을 누르면 풀린다
+  const unsourcedChip =
+    written.length > 0 ? (
+      <span role="tablist" aria-label={t("assign.filterUnsourced")} className="flex">
+        <FilterChip
+          tone="danger"
+          label={t("assign.filterUnsourced")}
+          count={unsourced.length}
+          selected={mode === "unsourced"}
+          onClick={() => setMode("unsourced")}
+          testId="assign-filter-unsourced"
+          icon={TriangleAlert}
+        />
+      </span>
+    ) : null;
   const done = countDone(rows);
   const identicalCount = identical.data?.length ?? 0;
   const bar = (
@@ -3432,22 +3515,6 @@ export default function AssignPage() {
             />
           );
         })}
-        {written.length > 0 && (
-          <FilterChip
-            tone="danger"
-            label={t("assign.filterUnsourced")}
-            count={unsourced.length}
-            selected={mode === "unsourced"}
-            onClick={() => {
-              // 출처 없는 New 문장은 New 칸에서 본다. Pair view도 끄는 길이라 다른 길과 같이 Old 자리로 돌아온다(보기를 바꾸면 changeView가 끈다)
-              if (view.single) changeView({ single: false });
-              else if (isPairView) closePairView();
-              setMode("unsourced");
-            }}
-            testId="assign-filter-unsourced"
-            icon={TriangleAlert}
-          />
-        )}
       </div>
       <span className="text-xs tabular-nums text-ink-3" data-testid="assign-progress">
         {t("assign.progress", { done, total: rows.length })}
@@ -3839,6 +3906,7 @@ export default function AssignPage() {
                     onToggleLines={() => changeView({ lines: !view.lines })}
                     draft={newDraft}
                     draftSlotKey={draftSlotKey}
+                    headExtra={unsourcedChip}
                   />
                   <LinkLines pairs={linkPairs} focusUnits={highlightIds} focusTargets={liveDoc ? new Set([...pickedNew, ...liveDoc.targetIds]) : pickedNew} visible={view.lines} />
                 </>
