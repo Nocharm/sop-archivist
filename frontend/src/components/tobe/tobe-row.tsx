@@ -2,7 +2,7 @@
 "use client";
 
 import { Pencil, Trash2, Wrench } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { DocRow, type RowAction } from "@/components/documents/doc-row";
 import { FileName } from "@/components/documents/file-name";
@@ -10,6 +10,7 @@ import { EquisStatus } from "@/components/equis/equis-status";
 import { TitleLock } from "@/components/equis/title-lock";
 import { SlotBar } from "@/components/tobe/slot-bar";
 import { ClampText } from "@/components/ui/clamp-text";
+import { Tooltip } from "@/components/ui/tooltip";
 import type { EquisInfo, SopDocument, TargetDoc, ToBe } from "@/lib/api-sop";
 import { getDocRemoveBlock } from "@/lib/destination-manage-model";
 import { useI18n } from "@/lib/i18n";
@@ -53,6 +54,11 @@ export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, 
   const { t } = useI18n();
   const prefix = `tobe-${doc.key}`;
   const block = saved ? getDocRemoveBlock(tobe, saved) : null;
+  // 첫 N/A 칸 이름이 말줄임으로 줄었는지 - 툴팁은 150ms 뒤에 뜨므로 올리거나 포커스할 때 재면 된다(ClampText와 같다)
+  const [isNaNameCut, setIsNaNameCut] = useState(false);
+  function checkNaNameCut(element: HTMLElement) {
+    setIsNaNameCut(element.scrollWidth > element.clientWidth);
+  }
 
   /** Edit는 펼친다(접지 않는다) - 펼친 곳의 첫 고칠 칸으로 포커스를 옮긴다. 막 펼친 곳은 처음 몇 프레임 보이지 않아(visibility) 포커스를 받을 때까지 다시 시도한다 */
   function openToEdit() {
@@ -123,9 +129,18 @@ export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, 
               <span className="pill quiet">{t("tobe.row.na", { n: slots.summary.na })}</span>
               {/* 자리가 모자라면 칸 이름이 말줄임으로 줄고 "+k"는 남는다 */}
               <span className="meta-na-name">
-                <span className="meta-na-label">
-                  {firstNa.number} {firstNa.label}
-                </span>
+                {/* 말줄임으로 줄었을 때만 전체 이름을 툴팁으로(포커스로도 닿는다) */}
+                <Tooltip label={`${firstNa.number} ${firstNa.label}`} suppressed={!isNaNameCut} align="start" shrinks>
+                  <span
+                    className="meta-na-label"
+                    tabIndex={0}
+                    data-testid={`${prefix}-na-name`}
+                    onPointerEnter={(event) => checkNaNameCut(event.currentTarget)}
+                    onFocus={(event) => checkNaNameCut(event.currentTarget)}
+                  >
+                    {firstNa.number} {firstNa.label}
+                  </span>
+                </Tooltip>
                 {slots.summary.na > 1 && <span className="flex-none">{` +${slots.summary.na - 1}`}</span>}
               </span>
             </span>

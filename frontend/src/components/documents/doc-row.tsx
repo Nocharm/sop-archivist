@@ -10,6 +10,10 @@ import { Collapse } from "@/components/ui/motion";
 import { Tooltip } from "@/components/ui/tooltip";
 import { useI18n } from "@/lib/i18n";
 import { getRowOpenProps, shouldRowToggle } from "@/lib/row-open";
+import { useMetaFit } from "@/lib/use-meta-fit";
+
+// 딸린 정보 줄이 넘칠 때 줄어드는 단계 수 - 단계마다 하는 일은 components.css의 .doc-meta[data-fit]
+const META_FIT_LEVELS = 4;
 
 export interface RowAction {
   key: string;
@@ -55,6 +59,7 @@ export function DocRow({ prefix, kind, isChild = false, open, onToggle, toggleLa
   const { t } = useI18n();
   const moreRef = useRef<HTMLButtonElement>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const metaRef = useMetaFit<HTMLDivElement>(META_FIT_LEVELS);
   const openProps = getRowOpenProps(onToggle);
 
   // 고르면 닫고 실행한다 - 닫힌 메뉴가 포커스를 ⋯ 단추로 돌린다
@@ -88,7 +93,9 @@ export function DocRow({ prefix, kind, isChild = false, open, onToggle, toggleLa
         <div className="doc-id">{identity}</div>
         <div className="doc-main">
           <div className="doc-title">{title}</div>
-          <div className="doc-meta">{meta}</div>
+          <div ref={metaRef} className="doc-meta">
+            {meta}
+          </div>
           {below}
         </div>
         <div className="doc-end">

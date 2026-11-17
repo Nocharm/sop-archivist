@@ -113,6 +113,8 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
   const tobe = data !== null && fresh?.base === data ? fresh.tobe : data;
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
+  // 진행 중인 쓰기 수 - saving은 다시 그린 뒤에야 닿아, 같은 작업 안의 두 번째 Enter·누름(N/A 저장 · Restore · 번호 더하기)은 이 값으로 막는다
+  const writesRef = useRef(0);
   // N/A 사유 편집기 - 화면에 하나. Save N/A·Cancel(과 서버의 409)로만 닫히고 줄을 접어도 남는다
   const [naEdit, setNaEdit] = useState<NaEdit | null>(null);
   // 적던 사유가 있는 채 떠나려 한 주소 - 확인 창이 묻는다
@@ -194,6 +196,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
   /** 줄 쓰기의 결과 - 거절이면 그 오류를 함께 돌려준다(알림과 다시 받기는 이 안에서 한다) */
   async function runWriteResult(write: () => Promise<ToBe>): Promise<{ ok: true } | { ok: false; error: unknown }> {
     if (!data) return { ok: false, error: null };
+    writesRef.current += 1;
     setSaving(true);
     // 다시 받기가 이 쓰기와 겹치면(쓰기 전에 시작했거나, 쓰는 동안 다른 쓰기의 거절이 시작했다) 그 응답이 쓰기 앞의 목록을 읽었을 수 있어
     // 이 쓰기의 결과를 덮는다 - 끝나고 한 번 더 받는다. 쓰는 동안 이미 받아 온 목록이 있으면 결과를 그 목록 위에 얹는다
@@ -212,6 +215,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
       reload();
       return { ok: false, error: err };
     } finally {
+      writesRef.current -= 1;
       setSaving(false);
     }
   }
@@ -223,7 +227,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
 
   /** 사유와 함께 N/A로 둔다. 409 slot_has_targets(그 사이 문장이 들어왔다)면 둘 곳이 없어 편집기를 닫고, 그 밖의 실패는 적던 사유를 남긴다 */
   async function saveNa(docId: number, slotKey: SlotKey, reason: string) {
-    if (saving) return;
+    if (writesRef.current > 0) return;
     const result = await runWriteResult(() => setNaSlot(bundleId, docId, slotKey, reason));
     if (!result.ok && !(result.error instanceof ApiError && result.error.rule?.code === "slot_has_targets")) return;
     // 저장하는 사이 Esc로 닫고 다른 칸에 적기 시작했으면 그 편집기는 두고, 저장한 칸의 편집기만 닫는다
@@ -239,6 +243,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
 
   /** N/A를 바로 지운다 - 그 칸은 빈 칸(또는 정할 칸)으로, 덮였던 하위 칸도 제 상태로 돌아간다 */
   async function restoreNa(doc: DraftDoc, row: SlotRow) {
+    if (writesRef.current > 0) return;
     if (!(await runWrite(() => clearNaSlot(bundleId, readDocId(doc.key), row.key)))) return;
     showToast(t("tobe.slots.restored", { number: row.number, name: row.label }));
     setNaEdit((current) => (current !== null && current.docKey === doc.key && current.slotKey === row.key ? null : current));
@@ -281,7 +286,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
 
   /** 번호로 줄을 더한다 - 여러 번호(붙여 넣은 줄들)면 하나씩 차례로. 이미 있는 번호는 건너뛰고 몇 개였는지 알린다 */
   async function addCodes(text: string) {
-    if (!tobe || saving) return;
+    if (!tobe || writesRef.current > 0) return;
     const plan = planAddRows(readCodes(text), tobe.docs);
     if (plan.rows.length === 0) {
       if (plan.skipped.length > 0) showToast(t("tobe.addSkippedOnly", { n: plan.skipped.length }), "error");
@@ -310,6 +315,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
 
   async function handleImport(picked: File) {
     if (!tobe) return;
+    writesRef.current += 1;
     setSaving(true);
     try {
       await importToBe(bundleId, picked, tobe.revision);
@@ -321,6 +327,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
       // revision이 밀려 거절됐으면 최신을 불러와야 다시 고른 파일이 같은 이유로 또 거절되지 않는다
       if (isRevisionConflict(err)) reload();
     } finally {
+      writesRef.current -= 1;
       setSaving(false);
       setPendingImport(null);
       if (fileRef.current) fileRef.current.value = "";
@@ -361,7 +368,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
         usedReasons={listUsedReasons(tobe)}
         edit={naEdit}
         onEdit={editNa}
-        onSave={(slotKey, reason) => void saveNa(docId, slotKey, reason)}
+        onSave={(slotKey, reason) => saveNa(docId, slotKey, reason)}
         onRestore={(row) => void restoreNa(doc, row)}
       />
     );
@@ -463,7 +470,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
           {/* 번호로 더하기 - 목록 머리 바로 아래. 적는 동안 무엇이 더해질지(planAddRows의 결과 그대로) 옆에 적는다. Enter면 그 줄이 저장되고, 여러 줄을 붙여 넣으면 줄마다 하나씩 더한다 */}
           {list !== null && canEdit && (
             <form
-              className="tobe-add flex flex-wrap items-center gap-x-2 gap-y-1 px-[var(--pad)] py-2"
+              className="flex flex-wrap items-center gap-x-2 gap-y-1 px-[var(--pad)] py-2"
               data-testid="tobe-add-row"
               onSubmit={(event) => {
                 event.preventDefault();

@@ -23,7 +23,7 @@ interface SlotTableProps {
   /** 화면에 하나 - 이 문서의 것일 때만 그린다 */
   edit: NaEdit | null;
   onEdit: (next: NaEdit | null) => void;
-  onSave: (slotKey: SlotKey, reason: string) => void;
+  onSave: (slotKey: SlotKey, reason: string) => Promise<void>;
   onRestore: (row: SlotRow) => void;
 }
 
@@ -39,6 +39,8 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
   // 바로 전 그림에서 편집기가 열려 있던 칸 - 닫힐 때 포커스를 그 칸의 다음 할 일로 옮긴다
   const lastEditKeyRef = useRef<SlotKey | null>(null);
   const editingKey = myEdit?.slotKey ?? null;
+  // 저장 중 - saving은 다시 그린 뒤에야 닿아, 같은 작업 안의 두 번째 Enter·누름은 이 값으로 막는다
+  const submittingRef = useRef(false);
 
   // 적는 중에 다른 칸을 열려 하면 열려 있는 편집기로 포커스를 돌린다(누른 단추가 포커스를 가져간 뒤라 이펙트에서).
   // 접혀 있던 줄이 다시 펼쳐졌으면 접힘 전환이 보이게 할 때까지(visibility) 포커스를 받지 못한다 - 받을 때까지 몇 프레임 다시 시도한다
@@ -83,12 +85,23 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
     });
   }
 
+  async function submit(current: NaEdit) {
+    const reason = current.text.trim();
+    if (reason === "" || saving || submittingRef.current) return;
+    submittingRef.current = true;
+    try {
+      await onSave(current.slotKey, reason);
+    } finally {
+      submittingRef.current = false;
+    }
+  }
+
   function handleReasonKey(event: KeyboardEvent<HTMLInputElement>, current: NaEdit) {
     // 한글 조합 중의 Enter는 글자를 끝내는 것이다
     if (event.nativeEvent.isComposing) return;
     if (event.key === "Enter") {
       event.preventDefault();
-      if (current.text.trim() !== "" && !saving) onSave(current.slotKey, current.text.trim());
+      void submit(current);
     }
   }
 
@@ -191,7 +204,7 @@ export function SlotTable({ prefix, docKey, rows, summary, isWritten, canEdit, s
           </div>
         )}
         <div className="flex flex-wrap items-center gap-2">
-          <button type="button" className="btn pri h-7" data-testid={`${prefix}-na-${key}-save`} disabled={current.text.trim() === "" || saving} onClick={() => onSave(key, current.text.trim())}>
+          <button type="button" className="btn pri h-7" data-testid={`${prefix}-na-${key}-save`} disabled={current.text.trim() === "" || saving} onClick={() => void submit(current)}>
             {t("tobe.slots.save")}
             <kbd>↵</kbd>
           </button>

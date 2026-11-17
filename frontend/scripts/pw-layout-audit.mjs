@@ -73,6 +73,8 @@ const ADMIN_TABS = ["access", "directory", "batch", "ai", "bundles", "guidelines
 const sceneUrls = (bundle) => ["", "/documents", "/assign?edit=first", "/assign", "/order", "/outputs", "/history"].map((tail) => `/bundles/${bundle}${tail}`);
 const PLAIN_SCENES = ["/", "/manual", "/account"];
 const BASELINE_C10E = 177; // 변경 전에 잰 값으로 채운다
+// C3: 분류 절반 묶음의 첫 SOP(SOP-CF)를 펼친 칸 상태 표의 높이 - 1920에서 잰 339px(en · ko, 2026-11-17)에 글꼴 차이 여유 21px
+const C3_MAX_HEIGHT = 360;
 const AUDIT_ENTRIES = [
   {
     id: "X0", ds: "mid", user: MEMBER, views: [1120, 1920],
@@ -179,23 +181,34 @@ const AUDIT_ENTRIES = [
   {
     id: "A1", ds: "worst", user: MEMBER, views: [1120, 1920],
     path: (ids) => `/bundles/${ids.w[1]}/documents`,
-    measure: (page) => page.locator('[data-testid="tobe-list"]').evaluate((table) => {
-      const code = table.querySelector("thead th:nth-child(2)").getBoundingClientRect().width;
-      return { fits: table.getBoundingClientRect().right <= window.innerWidth + 1 && document.documentElement.scrollWidth <= window.innerWidth + 1, code: Math.round(code) };
+    open: (page) => page.locator('[data-testid="tobe-list"] .doc-row[data-testid]').first().waitFor({ timeout: T }),
+    measure: (page) => page.locator('[data-testid="tobe-list"]').evaluate((list) => {
+      const box = list.getBoundingClientRect();
+      const rows = [...list.querySelectorAll(".doc-row[data-testid]")];
+      const inside = rows.every((row) => {
+        const rect = row.getBoundingClientRect();
+        return rect.left >= box.left - 0.5 && rect.right <= box.right + 0.5 && row.scrollWidth <= row.clientWidth + 1;
+      });
+      const idW = Math.min(...rows.map((row) => row.querySelector(".doc-id").getBoundingClientRect().width));
+      return { rows: rows.length, fits: rows.length > 0 && inside && box.right <= window.innerWidth + 1 && document.documentElement.scrollWidth <= window.innerWidth + 1, idW: Math.round(idW) };
     }),
-    expect: (value) => value.fits && value.code >= 160,
-    note: "tobe-list stays inside the frame and the doc-code column is >= 160px",
+    expect: (value) => value.fits && value.idW >= 172,
+    note: "every tobe-list row stays inside the list frame without sideways scroll, and the identity column (--doc-id-w) is >= 172px - 14-char number one line from 166px (measured 2026-11-17)",
   },
   {
     id: "C3", ds: "mid", user: MEMBER, views: [1920],
     path: (ids) => `/bundles/${ids.mid[2]}/documents`,
     open: async (page) => {
       await page.locator('[data-testid^="tobe-"][data-testid$="-toggle"]').first().click();
+      await page.locator('[data-testid^="tobe-"][data-testid$="-slots"]').first().waitFor({ timeout: T });
       await page.waitForTimeout(500);
     },
-    measure: (page) => page.locator('[data-testid^="tobe-"][data-testid$="-slots"]').first().evaluate((el) => Math.round(el.getBoundingClientRect().height)),
-    expect: (value) => value > 0 && value <= 280,
-    note: "one expanded SOP's N/A slots block <= 280px at 1920",
+    measure: (page) => page.locator('[data-testid^="tobe-"][data-testid$="-slots"]').first().evaluate((el) => ({
+      columns: new Set([...el.querySelectorAll(".slot-col")].map((col) => Math.round(col.getBoundingClientRect().left))).size,
+      height: Math.round(el.getBoundingClientRect().height),
+    })),
+    expect: (value) => value.columns === 2 && value.height > 0 && value.height <= C3_MAX_HEIGHT,
+    note: `one expanded SOP's Sections table is two columns at 1920 and <= ${C3_MAX_HEIGHT}px tall (measured 339px, 2026-11-17)`,
   },
   {
     id: "Focus2", ds: "worst", user: "dev.admin", views: [1120],
