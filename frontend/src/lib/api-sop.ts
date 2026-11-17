@@ -1436,3 +1436,46 @@ export interface RefMap {
 export function getRefMap(bundleId: number, scope: MapScope): Promise<RefMap> {
   return apiFetch<RefMap>(`/bundles/${bundleId}/map?scope=${scope}`);
 }
+
+// --- 참조 지도의 줄 문장 (GET /bundles/{id}/map/lines, 서버 ref_map.py의 MapLinesOut) ---
+
+/** 보는 사람이 그 줄이 든 Bundle의 구성원일 때만 오는 줄 하나 */
+export interface MapLine {
+  bundle_id: number;
+  document_id: number;
+  unit_id: number;
+  display_id: string;
+  kind: "ref" | "moved";
+  state: "confirmed" | "proposed";
+  number: string;
+  /** 그 줄의 문서 마디(old:<document_id>) */
+  source: string;
+  /** 그 줄이 닿는 마디 */
+  target: string;
+  /** 300자까지 */
+  text: string;
+  text_truncated: boolean;
+}
+/** 구성원이 아닌 Bundle의 줄 - 선 하나에 든 줄 수만(글·표시 ID·Unit id 없음) */
+export interface MapWithheld {
+  source: string;
+  target: string;
+  kind: "ref" | "moved";
+  state: "confirmed" | "proposed";
+  lines: number;
+}
+export interface MapLines {
+  /** 요청한 마디 id 그대로 */
+  node: string;
+  out: MapLine[];
+  in: MapLine[];
+  withheld_out: MapWithheld[];
+  withheld_in: MapWithheld[];
+  /** 한쪽 200줄을 넘어 싣지 않은 문장 줄 수 */
+  more_out: number;
+  more_in: number;
+}
+
+export function getMapLines(bundleId: number, node: string, scope: MapScope): Promise<MapLines> {
+  return apiFetch<MapLines>(`/bundles/${bundleId}/map/lines?${new URLSearchParams({ node, scope })}`);
+}

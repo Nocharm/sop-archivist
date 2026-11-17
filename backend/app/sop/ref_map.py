@@ -1,18 +1,19 @@
-"""참조 지도 — 이 Bundle의 Old 문서가 가리키는 문서와 그 문서를 가리키는 문서를 번호와 줄 수로 모은다(설계 2026-11-17 참조 지도 §4·§7.1).
+"""참조 지도 — 이 Bundle의 Old 문서가 가리키는 문서와 그 문서를 가리키는 문서를 번호와 줄 수로 모은다(설계 2026-11-17 참조 지도 §4·§7).
 
-읽기만 한다 — 잠그지 않고 아무것도 쓰지 않는다. 응답에는 문장을 담는 필드가 없다: 남의 Bundle에서 실리는 것은 문서 번호·제목,
-Bundle 코드·상태·문서 수, 후속 문서, 선의 줄 수뿐이고 Bundle 제목은 그 Bundle 구성원에게만 싣는다(계획 판단 1).
-줄을 모으는 단계(`collect_map_lines`)와 선으로 묶는 단계(`build_reference_map`)를 갈라 둔다 — 문장 API가 같은 줄을 다시 쓴다.
+읽기만 한다 — 잠그지 않고 아무것도 쓰지 않는다. 요약(`build_reference_map`)에는 문장을 담는 필드가 없다: 남의 Bundle에서 실리는 것은
+문서 번호·제목, Bundle 코드·상태·문서 수, 후속 문서, 선의 줄 수뿐이고 Bundle 제목은 그 Bundle 구성원에게만 싣는다(계획 판단 1).
+줄을 모으는 단계(`collect_map_lines`)와 선으로 묶는 단계(`build_reference_map`)를 갈라 둔다 — 줄 문장(`build_node_lines`)이 같은 줄을
+다시 쓰고, 글은 그 줄이 든 Bundle의 구성원에게만 싣는다(`load_line_texts` — SQL에서 bundle_members 조인).
 """
 
 import logging
 import time
 from collections import Counter, defaultdict
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import ColumnElement, Row, Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
@@ -37,13 +38,18 @@ from app.sop.models import (
 from app.sop.refs import REF_KINDS, REF_LANG, is_document_number, read_ref_state
 from app.sop.snapshot import select_latest_extractions
 from app.sop.tobe import is_temp_match_code
-from app.sop.units import UNIT_ACTIVE
+from app.sop.units import UNIT_ACTIVE, format_display_id
 
 logger = logging.getLogger(__name__)
 
 MapScope = Literal["linked", "all"]
 MAX_NODES = 2000  # 응답의 마디 상한 — 넘으면 이 Bundle 것과 이어진 것부터 채우고 truncated
 MAX_EDGES = 10000  # 응답의 선 상한
+MAX_LINE_TEXT = 300  # 줄 문장 글의 상한(자) — 넘으면 자르고 text_truncated. 극단 자료의 1,800자 문단
+MAX_LINES_PER_SIDE = 200  # 한쪽(out·in)에 싣는 문장 줄 수 — 넘는 수는 more_*. 가려진 줄은 선마다 한 항목이라 세지 않는다
+# 줄 문장 API의 마디 id 꼴 — 요약이 내는 id(old:<문서 id> · target:<New 문서 id> · num:<번호>)만. 꼴이 틀리면 422
+NODE_PATTERN = r"^(?:old:[0-9]{1,10}|target:[0-9]{1,10}|num:[^\x00]{1,100})$"
+NODE_MAX_LENGTH = 104
 # 표시 없는 줄을 번호로 거르는 LIKE를 한 질의에 묶는 수 — 늘리면 질의 수가 줄고 조건 하나가 길어진다
 LIKE_NUMBERS_PER_QUERY = 50
 
@@ -533,4 +539,141 @@ def _build_node_out(node: MapNode, becomes: dict[int, list[MapBecomesOut]]) -> M
     return MapNodeOut(
         id=node.id, kind=node.kind, bundle_id=node.bundle_id, number=node.number, title=node.title,
         doc_type=node.doc_type, becomes=becomes.get(node.key, []) if node.kind == "old" else [],
+    )
+
+
+# --- 줄 문장 (설계 §7.2) ---
+
+
+class MapLineOut(BaseModel):
+    """보는 사람이 그 줄이 든 Bundle의 구성원일 때만 싣는 줄 하나 — 사유·새 문장·파일 이름은 누구에게도 없다."""
+
+    bundle_id: int
+    document_id: int
+    unit_id: int
+    display_id: str
+    kind: Literal["ref", "moved"]
+    state: Literal["confirmed", "proposed"]
+    number: str
+    source: str  # 그 줄의 문서 마디(old:<document_id>)
+    target: str  # 그 줄이 닿는 마디
+    text: str  # MAX_LINE_TEXT자까지
+    text_truncated: bool
+
+
+class MapWithheldOut(BaseModel):
+    """구성원이 아닌 Bundle의 줄 — 선 하나(출발·도착·종류·상태)에 든 줄 수만. 글·표시 ID·Unit id·자리는 없다(요약이 이미 낸 값뿐)."""
+
+    source: str
+    target: str
+    kind: Literal["ref", "moved"]
+    state: Literal["confirmed", "proposed"]
+    lines: int
+
+
+class MapLinesOut(BaseModel):
+    node: str
+    out: list[MapLineOut]
+    incoming: list[MapLineOut] = Field(serialization_alias="in")
+    withheld_out: list[MapWithheldOut]
+    withheld_in: list[MapWithheldOut]
+    more_out: int
+    more_in: int
+
+
+@dataclass(frozen=True)
+class LineText:
+    """줄 문장 한 줄의 글과 자리 — load_line_texts가 구성원인 Bundle의 Unit에 대해서만 만든다."""
+
+    bundle_id: int
+    document_id: int
+    display_id: str
+    pos: tuple[int, int, int]  # 원문 순서(pos_seq, pos_start, unit id)
+    text: str  # MAX_LINE_TEXT + 1자까지 — 넘었는지 알 수 있게 한 자 더 읽는다
+
+
+async def load_line_texts(session: AsyncSession, login_id: str, unit_ids: Collection[int]) -> dict[int, LineText]:
+    """줄의 글·표시 ID — 요청한 사람이 그 문서의 Bundle 구성원인 Unit만 돌려준다.
+
+    구성원 판정은 SQL의 안쪽 조인(bundle_members — 그 문서의 Bundle, 요청한 사람)이다: 구성원이 아닌 Bundle의 글은 질의 결과로
+    오지 않는다. 글을 응답에 싣는 길은 이 함수 하나다. 글은 MAX_LINE_TEXT + 1자까지만 DB에서 잘라 읽는다.
+    """
+
+    def build(chunk: list[int]) -> Select[Any]:
+        return (
+            select(
+                Unit.id, Unit.local_no, Unit.pos_seq, Unit.pos_start, func.substr(Unit.text, 1, MAX_LINE_TEXT + 1),
+                Document.id, Document.bundle_id, Document.doc_code,
+            )
+            .select_from(Unit)
+            .join(Extraction, Extraction.id == Unit.extraction_id)
+            .join(Document, Document.id == Extraction.document_id)
+            .join(BundleMember, and_(BundleMember.bundle_id == Document.bundle_id, BundleMember.login_id == login_id))
+            .where(Unit.id.in_(chunk), Unit.status == UNIT_ACTIVE)
+        )
+
+    texts: dict[int, LineText] = {}
+    for unit_id, local_no, pos_seq, pos_start, text, doc_id, bundle_id, doc_code in await select_in_chunks(
+        session, build, unit_ids
+    ):
+        texts[unit_id] = LineText(
+            bundle_id, doc_id, format_display_id(doc_code, doc_id, local_no), (pos_seq, pos_start, unit_id), text or ""
+        )
+    return texts
+
+
+def _split_side(
+    links: list[MapLink], member_of: set[int], texts: dict[int, LineText]
+) -> tuple[list[MapLineOut], list[MapWithheldOut], int]:
+    """한쪽의 줄을 문장 줄(구성원인 Bundle, 글이 온 것)과 가려진 줄(선마다 수)로 가르고 문장 줄을 상한에서 자른다.
+
+    닫힌 쪽으로: 그 줄의 Bundle이 구성원 집합에 없거나, 글 질의가 그 Unit을 돌려주지 않았거나, 돌려준 Unit의 문서·Bundle이
+    줄과 다르면 가려진 줄로 센다 — 글이 응답에 실리는 조건은 셋 모두다.
+    """
+    shown: list[tuple[tuple[Any, ...], MapLineOut]] = []
+    withheld: Counter[tuple[str, str, str, str]] = Counter()
+    for link in links:
+        line, end = link.line, link.end
+        source = f"old:{line.document_id}"
+        found = texts.get(line.unit_id) if line.bundle_id in member_of else None
+        if found is None or (found.bundle_id, found.document_id) != (line.bundle_id, line.document_id):
+            withheld[(source, end.id, line.kind, line.state)] += 1
+            continue
+        shown.append(((line.bundle_id, line.document_id, found.pos, line.kind, end.id), MapLineOut(
+            bundle_id=line.bundle_id, document_id=line.document_id, unit_id=line.unit_id, display_id=found.display_id,
+            kind=line.kind, state=line.state, number=line.number, source=source, target=end.id,
+            text=found.text[:MAX_LINE_TEXT], text_truncated=len(found.text) > MAX_LINE_TEXT,
+        )))
+    shown.sort(key=lambda item: item[0])
+    rows = [row for _, row in shown[:MAX_LINES_PER_SIDE]]
+    hidden = [
+        MapWithheldOut(source=source, target=target, kind=kind, state=state, lines=count)  # type: ignore[arg-type]
+        for (source, target, kind, state), count in sorted(withheld.items())
+    ]
+    return rows, hidden, len(shown) - len(rows)
+
+
+async def build_node_lines(session: AsyncSession, ctx: BundleContext, node: str, scope: MapScope) -> MapLinesOut:
+    """고른 마디의 줄 — 지도와 같은 줄(`collect_map_lines`)을 그 마디로 좁힌다. 줄 규칙을 두 번 쓰지 않는다.
+
+    out은 그 마디에서 나가는 줄, in은 그 마디로 들어오는 줄이다. 지도에 없는 마디(없는 문서·다른 종류·다른 범위·꼴만 맞는 num)는
+    줄이 없어 빈 응답이다 — 있는지 없는지를 응답으로 가르지 않는다. 마디 id로 DB를 따로 묻지 않는다.
+    """
+    started = time.perf_counter()
+    member_of = await load_member_bundle_ids(session, ctx.login_id)
+    links = await collect_map_lines(session, ctx.bundle, member_of, scope)
+    out_links = [link for link in links if f"old:{link.line.document_id}" == node]
+    in_links = [link for link in links if link.end.id == node]
+    readable = {link.line.unit_id for link in [*out_links, *in_links] if link.line.bundle_id in member_of}
+    texts = await load_line_texts(session, ctx.login_id, readable) if readable else {}
+    out_rows, withheld_out, more_out = _split_side(out_links, member_of, texts)
+    in_rows, withheld_in, more_in = _split_side(in_links, member_of, texts)
+    logger.info("reference map lines built", extra={
+        "scope": scope, "shown": len(out_rows) + len(in_rows),
+        "withheld": sum(row.lines for row in [*withheld_out, *withheld_in]),
+        "elapsed_ms": round((time.perf_counter() - started) * 1000),
+    })
+    return MapLinesOut(
+        node=node, out=out_rows, incoming=in_rows, withheld_out=withheld_out, withheld_in=withheld_in,
+        more_out=more_out, more_in=more_in,
     )

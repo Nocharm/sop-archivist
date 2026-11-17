@@ -42,6 +42,7 @@ from tests.sop_helpers import (
     REVIEWER,
     assign_as_is,
     create_bundle,
+    find_unit,
     get_group_by_unit,
     get_view,
     put_tobe,
@@ -50,11 +51,13 @@ from tests.sop_helpers import (
 )
 from tests.sop_map_helpers import (
     M_EXTRA,
+    M_REF,
     M_TITLE,
     MARKERS,
     MOVED_OK,
     OPS,
     PLAIN,
+    REF_DC,
     REF_NONE,
     REF_UV,
     S_MOVED,
@@ -65,6 +68,7 @@ from tests.sop_map_helpers import (
     add_doc,
     edit,
     find_line,
+    get_lines,
     get_map,
     move_out,
 )
@@ -962,3 +966,473 @@ def test_non_members_get_document_titles_but_not_bundle_titles(client: TestClien
     assert _node(body, f"old:{peer_doc['id']}")["title"] == peer_doc["title"] == "SYNTHETIC Peer"
     assert [b["title"] for b in body["bundles"] if b["id"] == peer_id] == [""]
     assert "SYNTHETIC map peer" not in response.text
+
+
+# --- 줄 문장 API `…/map/lines` (3걸음) — 문장은 그 줄이 든 Bundle의 구성원에게만 ---
+
+# 응답에 실릴 수 있는 키 전부 — 마디·목록 · 문장 줄 · 가려진 줄(선 하나에 든 줄 수만)
+LINES_KEYS = {"node", "out", "in", "withheld_out", "withheld_in", "more_out", "more_in"}
+LINE_KEYS = {
+    "bundle_id", "document_id", "unit_id", "display_id", "kind", "state", "number", "source", "target", "text",
+    "text_truncated",
+}
+WITHHELD_KEYS = {"source", "target", "kind", "state", "lines"}
+EMPTY_LINES = {"out": [], "in": [], "withheld_out": [], "withheld_in": [], "more_out": 0, "more_in": 0}
+# 줄 문장 하나를 만드는 질의 수의 상한 — 지도와 같은 줄 모으기 + 구성원 + 글 하나
+MAX_LINE_STATEMENTS = 20
+
+
+def _line_row(
+    client: TestClient, bundle_id: int, doc: dict, text: str, kind: str, state: str, number: str, target: str,
+    headers: dict[str, str] = AUTHOR,
+) -> dict:
+    """구성원에게 실리는 문장 줄 하나 — Unit id·표시 ID는 그 문서 보기(구성원 headers)에서 읽는다."""
+    unit = find_unit(get_view(client, bundle_id, doc["id"], headers), text)
+    return {
+        "bundle_id": bundle_id, "document_id": doc["id"], "unit_id": unit["id"], "display_id": unit["display_id"],
+        "kind": kind, "state": state, "number": number, "source": f"old:{doc['id']}", "target": target, "text": text,
+        "text_truncated": False,
+    }
+
+
+def _withheld(source: str, target: str, kind: str, state: str = "confirmed", lines: int = 1) -> dict:
+    return {"source": source, "target": target, "kind": kind, "state": state, "lines": lines}
+
+
+def _sort_withheld(rows: list[dict]) -> list[dict]:
+    """서버가 가려진 줄을 싣는 순서 — (출발, 도착, 종류, 상태)의 글자 순."""
+    return sorted(rows, key=lambda row: (row["source"], row["target"], row["kind"], row["state"]))
+
+
+def _lines_url(bundle_id: int) -> str:
+    return f"/api/bundles/{bundle_id}/map/lines"
+
+
+def _all_line_nodes(client: TestClient, bundle_id: int, headers: dict[str, str], extra: tuple[str, ...]) -> list[str]:
+    """그 사람의 범위 all 지도의 모든 마디와 extra."""
+    return [node["id"] for node in get_map(client, bundle_id, headers, "all")["nodes"]] + list(extra)
+
+
+def test_member_lines_come_with_text(client: TestClient) -> None:
+    """V·M의 구성원(qa.member)이 V의 문서를 고르면: V의 줄과 M의 줄은 글과 함께, S(구성원 아님)의 줄은 선마다 줄 수만.
+
+    자기 참조(REF_SELF)·번호 꼴이 아닌 이동(MOVED_FREE)·참조가 아닌 줄(PLAIN)은 줄이 아니고, 이동 줄에 사유가 없다.
+    """
+    w = World(client)
+    v, m, s, st = f"old:{w.v_doc['id']}", f"old:{w.m_doc['id']}", f"old:{w.s_doc['id']}", f"target:{w.s_sop}"
+
+    body = get_lines(client, w.v_id, v)
+
+    assert body == {
+        "node": v,
+        "out": [
+            _line_row(client, w.v_id, w.v_doc, REF_UV, "ref", "proposed", "SOP-ABC-1016", m),
+            _line_row(client, w.v_id, w.v_doc, REF_DC, "ref", "confirmed", "SOP-ABC-1020", s),
+            _line_row(client, w.v_id, w.v_doc, REF_NONE, "ref", "proposed", "SOP-ZZ-404", "num:SOP-ZZ-404"),
+            _line_row(client, w.v_id, w.v_doc, MOVED_OK, "moved", "confirmed", "SOP-QC-99999", st),
+        ],
+        "in": [_line_row(client, w.m_id, w.m_doc, M_REF, "ref", "proposed", "OLD-1", v)],
+        "withheld_out": [],
+        "withheld_in": [_withheld(s, v, "moved"), _withheld(s, v, "ref")],
+        "more_out": 0, "more_in": 0,
+    }
+
+
+def test_lines_require_membership_and_an_active_account(
+    client: TestClient, enforce: None, demo_access: None, clean_directory: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    add_grant("user", "qa.member", permission="bundle.create")  # 권한 판정을 켠 채 World를 만든다
+    w = World(client)
+    params = {"node": f"old:{w.v_doc['id']}"}
+    not_found = (404, {"detail": {"code": "bundle_not_found"}})
+
+    def call(bundle_id: int = w.v_id, headers: dict[str, str] | None = None, query: dict | None = None) -> tuple[int, dict]:
+        response = client.get(_lines_url(bundle_id), params=query or params, headers=headers or {})
+        return response.status_code, response.json()
+
+    assert call(headers=OUTSIDER) == not_found  # S만의 구성원
+    assert call(headers=OUTSIDER, query={"node": "old:abc"}) == not_found  # 꼴 검사보다 구성원 판정이 먼저다
+    monkeypatch.setattr(settings, "app_sysadmins", "dev.admin")
+    assert call(headers=ADMIN) == not_found
+    monkeypatch.setattr(settings, "app_sysadmins", "")
+    add_grant("user", "dev.admin", permission="bundle.admin")
+    assert call(headers=ADMIN) == not_found
+    assert call() == not_found  # dev 모드에서 헤더가 없으면 DEV_USER(dev.admin)다
+    assert call(w.s_id + 1000, AUTHOR) == not_found
+    update_row(Employee, "qa.lead", active=False)
+    assert call(headers=REVIEWER) == (403, {"detail": {"code": "inactive_account"}})
+    monkeypatch.setattr(settings, "auth_mode", "keycloak")
+    assert client.get(_lines_url(w.v_id), params=params).status_code == 401
+
+
+def test_author_and_reviewer_get_the_same_lines(client: TestClient) -> None:
+    w = World(client)
+    nodes = (f"old:{w.v_doc['id']}", f"old:{w.m_doc['id']}", f"old:{w.s_doc['id']}", f"target:{w.s_sop}", "num:SOP-ZZ-404")
+
+    for scope in SCOPES:
+        for node in nodes:
+            query = {"node": node, "scope": scope}
+            author = client.get(_lines_url(w.v_id), params=query, headers=AUTHOR)
+            reviewer = client.get(_lines_url(w.v_id), params=query, headers=REVIEWER)
+            assert author.status_code == reviewer.status_code == 200
+            assert author.text == reviewer.text
+
+
+def test_lines_of_a_non_member_bundle_are_withheld(client: TestClient) -> None:
+    """S의 문서를 고르면 S의 줄은 선마다 줄 수만 온다(글·표시 ID·Unit id 없이). V의 줄은 그대로 글과 함께.
+
+    S의 구성원(prod.member)이 S의 지도에서 보면 거꾸로 — S의 줄은 글과 함께(사유 없이), V의 줄이 줄 수만.
+    """
+    w = World(client)
+    v, s, st = f"old:{w.v_doc['id']}", f"old:{w.s_doc['id']}", f"target:{w.s_sop}"
+
+    response = client.get(_lines_url(w.v_id), params={"node": s}, headers=AUTHOR)
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        **EMPTY_LINES, "node": s,
+        "withheld_out": [_withheld(s, v, "moved"), _withheld(s, v, "ref")],
+        "in": [_line_row(client, w.v_id, w.v_doc, REF_DC, "ref", "confirmed", "SOP-ABC-1020", s)],
+    }
+    assert [marker for marker in MARKERS if marker in response.text] == []
+    assert get_lines(client, w.v_id, st) == {
+        **EMPTY_LINES, "node": st,
+        "in": [_line_row(client, w.v_id, w.v_doc, MOVED_OK, "moved", "confirmed", "SOP-QC-99999", st)],
+    }
+
+    response = client.get(_lines_url(w.s_id), params={"node": s}, headers=OUTSIDER)
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        **EMPTY_LINES, "node": s,
+        "out": [
+            _line_row(client, w.s_id, w.s_doc, S_REF, "ref", "confirmed", "OLD-1", v, OUTSIDER),
+            _line_row(client, w.s_id, w.s_doc, S_MOVED, "moved", "confirmed", "OLD-1", v, OUTSIDER),
+        ],
+        "withheld_in": [_withheld(v, s, "ref")],
+    }
+    assert "ZZ-REASON" not in response.text and "Document control" not in response.text  # 사유 · V의 문장
+
+
+def test_admins_who_are_not_members_get_no_text(
+    client: TestClient, enforce: None, demo_access: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ops.member는 V만의 구성원이다 — 권한이 많아도 S의 줄은 줄 수만, M의 제안 줄은 아예 없다(M의 구성원이 아니다)."""
+    add_grant("user", "qa.member", permission="bundle.create")
+    w = World(client)
+    v, m, s = f"old:{w.v_doc['id']}", f"old:{w.m_doc['id']}", f"old:{w.s_doc['id']}"
+
+    def check_ops() -> None:
+        response = client.get(_lines_url(w.v_id), params={"node": v}, headers=OPS)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert (body["in"], body["withheld_in"]) == ([], [_withheld(s, v, "moved"), _withheld(s, v, "ref")])
+        assert [marker for marker in (*MARKERS, M_REF) if marker in response.text] == []
+        body = get_lines(client, w.v_id, m, OPS)  # M의 문서: 나가는 줄(M의 제안)은 없고, 들어오는 줄은 V의 줄이라 글과 함께
+        assert (body["out"], body["withheld_out"]) == ([], [])
+        assert [row["text"] for row in body["in"]] == [REF_UV]
+
+    check_ops()
+    add_grant("user", "ops.member", permission="bundle.admin")
+    check_ops()
+    monkeypatch.setattr(settings, "app_sysadmins", "ops.member")
+    check_ops()
+
+
+def test_no_sentence_of_a_non_member_bundle_for_any_node(
+    client: TestClient, enforce: None, demo_access: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S·P의 구성원이 아닌 보는 사람 넷 × 범위 둘 × 마디 전부: 응답 본문에 S·P의 글이 한 글자도 없고, 문장 줄은 모두 구성원인 Bundle 것."""
+    add_grant("user", "qa.member", permission="bundle.create")
+    w = World(client)
+    _, peer_doc, _ = _add_peer(client, "SYNTHETIC_OLD-1_Twin.docx")
+    markers = (*MARKERS, *PEER_MARKERS)
+    extra = (
+        f"old:{w.s_doc['id']}", f"target:{w.s_sop}", f"old:{peer_doc['id']}", "num:OLD-1", "num:ZZ-REF-TEXT",
+        "num:SOP-ABC-1020",
+    )
+
+    def check(headers: dict[str, str], member_of: set[int]) -> None:
+        for scope in SCOPES:
+            for node in _all_line_nodes(client, w.v_id, headers, extra):
+                response = client.get(_lines_url(w.v_id), params={"node": node, "scope": scope}, headers=headers)
+                assert response.status_code == 200, response.text
+                body = response.json()
+                # 마디 id는 보낸 값 그대로 돌아온다(num:ZZ-REF-TEXT) — 그 한 곳을 뺀 본문에서 찾는다
+                assert body["node"] == node
+                rest = response.text.replace(f'"node":"{node}"', "", 1)
+                assert [marker for marker in markers if marker in rest] == [], (node, scope)
+                assert {row["bundle_id"] for row in body["out"] + body["in"]} <= member_of, (node, scope)
+
+    check(AUTHOR, {w.v_id, w.m_id})
+    check(REVIEWER, {w.v_id, w.m_id})
+    add_grant("user", "ops.member", permission="bundle.admin")
+    check(OPS, {w.v_id})
+    monkeypatch.setattr(settings, "app_sysadmins", "ops.member")
+    check(OPS, {w.v_id})
+
+
+def test_lines_carry_only_the_listed_fields(client: TestClient) -> None:
+    w = World(client)
+    _add_peer(client)
+    v, s = f"old:{w.v_doc['id']}", f"old:{w.s_doc['id']}"
+
+    for scope in SCOPES:
+        for node in (v, s):
+            body = get_lines(client, w.v_id, node, scope=scope)
+            assert set(body) == LINES_KEYS
+            assert all(set(row) == LINE_KEYS for row in body["out"] + body["in"])
+            assert all(set(row) == WITHHELD_KEYS for row in body["withheld_out"] + body["withheld_in"])
+        assert _collect_keys(get_lines(client, w.v_id, v, scope=scope)) == LINES_KEYS | LINE_KEYS | WITHHELD_KEYS
+
+
+def test_line_rows_add_up_to_the_edges(client: TestClient) -> None:
+    """어느 보는 사람·범위·마디에서든 선마다: 그 선의 문장 줄 수 + 가려진 줄 수 == 지도의 lines. 지도에 없는 선의 줄은 없다."""
+    w = World(client)
+    _add_peer(client, "SYNTHETIC_OLD-1_Twin.docx")
+
+    for bundle_id, headers in ((w.v_id, AUTHOR), (w.v_id, OPS), (w.m_id, AUTHOR), (w.s_id, OUTSIDER)):
+        for scope in SCOPES:
+            edges = Counter({
+                (e["source"], e["target"], e["kind"], e["state"]): e["lines"] for e in get_map(client, bundle_id, headers, scope)["edges"]
+            })
+            for node in [n["id"] for n in get_map(client, bundle_id, headers, scope)["nodes"]]:
+                body = get_lines(client, bundle_id, node, headers, scope)
+                assert (body["more_out"], body["more_in"]) == (0, 0)
+                counted: Counter[tuple[str, str, str, str]] = Counter()
+                for side, own in (("out", "source"), ("in", "target")):
+                    for row in body[side]:
+                        assert row[own] == node
+                        counted[(row["source"], row["target"], row["kind"], row["state"])] += 1
+                    for row in body[f"withheld_{side}"]:
+                        assert row[own] == node and row["lines"] > 0
+                        counted[(row["source"], row["target"], row["kind"], row["state"])] += row["lines"]
+                touching = Counter({key: count for key, count in edges.items() if node in key[:2]})
+                assert counted == touching, (bundle_id, headers, scope, node)
+
+
+def test_unconfirmed_lines_of_a_non_member_bundle_are_absent_and_cannot_be_guessed(client: TestClient) -> None:
+    """S의 확인 안 된 줄(HPLC-02로 시작)은 S의 구성원이 아닌 사람에게 가려진 줄로도 오지 않는다 — 아예 없다.
+
+    작성자가 자기 New 문서 번호를 HPLC-02(맞힘)와 HPLC-03(틀림)으로 바꿔 물어도 응답은 글자까지 같다. S의 구성원이 되면 글과 함께 온다.
+    """
+    w = World(client)
+    hplc = _upload_as(client, w.s_id, OUTSIDER, "SYNTHETIC_SOP-ABC-1021_Hplc.docx", HPLC_LINE)
+    target = f"target:{w.v_sop}"
+    nodes = (target, f"old:{hplc['id']}", f"old:{w.v_doc['id']}", f"old:{w.s_doc['id']}", "num:HPLC-02", "num:HPLC-03")
+
+    bodies: dict[tuple[str, str, str], str] = {}
+    for guess in ("HPLC-02", "HPLC-03"):
+        update_row(TargetDoc, w.v_sop, code=guess)
+        for scope in SCOPES:
+            for node in nodes:
+                response = client.get(_lines_url(w.v_id), params={"node": node, "scope": scope}, headers=AUTHOR)
+                assert response.status_code == 200, response.text
+                assert "ZZ-HPLC" not in response.text
+                bodies[(guess, scope, node)] = response.text
+            assert get_lines(client, w.v_id, target, scope=scope) == {**EMPTY_LINES, "node": target}
+    for scope in SCOPES:
+        for node in nodes:
+            assert bodies[("HPLC-03", scope, node)] == bodies[("HPLC-02", scope, node)], (scope, node)
+
+    update_row(TargetDoc, w.v_sop, code="HPLC-02")
+    response = set_members(client, w.s_id, [("prod.member", "author"), ("qa.member", "author")], headers=OUTSIDER)
+    assert response.status_code == 200, response.text
+    for scope in SCOPES:
+        assert get_lines(client, w.v_id, target, scope=scope)["in"] == [
+            _line_row(client, w.s_id, hplc, HPLC_LINE, "ref", "proposed", "HPLC-02", target),
+        ]
+
+
+def test_text_query_joins_bundle_members_in_sql(client: TestClient) -> None:
+    """글을 싣는 질의(load_line_texts)는 구성원인 Bundle의 Unit만 돌려준다 — 파이썬 거르기가 아니라 SQL 조인으로."""
+    World(client)
+    s_ref, ref_uv = _find_active_unit_id(S_REF), _find_active_unit_id(REF_UV)
+
+    async def load(session: AsyncSession) -> tuple[set[int], set[int], list[str]]:
+        as_author = await ref_map.load_line_texts(session, "qa.member", [s_ref, ref_uv])
+        with _record_statements() as statements:
+            as_outsider = await ref_map.load_line_texts(session, "prod.member", [s_ref, ref_uv])
+        return set(as_author), set(as_outsider), [sql for sql, _ in statements]
+
+    as_author, as_outsider, statements = run_in_session(load)
+    assert as_author == {ref_uv}
+    assert as_outsider == {s_ref}
+    assert len(statements) == 1 and "bundle_members" in statements[0]
+
+
+def test_lines_fail_closed_when_the_text_query_returns_nothing(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """글 질의가 돌려주지 않은 Unit의 줄(그 사이 구성원에서 빠짐 등)은 가려진 줄로 센다 — 글 없이, 줄 수는 그대로."""
+    w = World(client)
+    v, m, s, st = f"old:{w.v_doc['id']}", f"old:{w.m_doc['id']}", f"old:{w.s_doc['id']}", f"target:{w.s_sop}"
+
+    async def load_nothing(*_args: Any) -> dict:
+        return {}
+
+    monkeypatch.setattr(ref_map, "load_line_texts", load_nothing)
+    response = client.get(_lines_url(w.v_id), params={"node": v}, headers=AUTHOR)
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        **EMPTY_LINES, "node": v,
+        "withheld_out": _sort_withheld([
+            _withheld(v, "num:SOP-ZZ-404", "ref", "proposed"), _withheld(v, m, "ref", "proposed"),
+            _withheld(v, s, "ref"), _withheld(v, st, "moved"),
+        ]),
+        "withheld_in": _sort_withheld([_withheld(m, v, "ref", "proposed"), _withheld(s, v, "moved"), _withheld(s, v, "ref")]),
+    }
+    assert "SOP-ABC-1016 Operation" not in response.text and "Operation of the centrifuge" not in response.text
+
+
+def test_nodes_outside_the_map_answer_like_unknown_nodes(client: TestClient) -> None:
+    """없는 마디·지도에 없는 마디·다른 종류(합성/실제)의 마디·번호 꼴이 아니거나 임시인 num은 모두 빈 200 — 있는지 없는지를 가르지 않는다."""
+    w = World(client)
+    _, peer_doc, _ = _add_peer(client)
+    real_id = create_bundle(client, title="SYNTHETIC map real kind", is_synthetic=False)["id"]
+    real_doc = add_doc(client, real_id, "SYNTHETIC_SOP-ABC-1016_Real.docx", "OLD-1 Real line")
+    spin = "Spin the samples at 3000 rpm before reading."
+    spin_doc = add_doc(client, w.v_id, "SYNTHETIC_OLD-7_Spin.docx", spin)
+    assert edit(client, w.v_id, spin_doc["id"], {
+        "type": "set_ref", "unit_id": find_line(client, w.v_id, spin_doc["id"], spin)["id"],
+        "number": "SPIN THE SAMPLES AT 3000 RPM",
+    }).status_code == 200
+
+    nodes = (
+        "old:999999", "old:9999999999", "target:999999", "target:9999999999", "num:SOP-NOBODY-1", "num:OLD-1",
+        "num:ZZ-REF-TEXT", "num:SPIN THE SAMPLES AT 3000 RPM", "num:NEW-12", f"old:{real_doc['id']}",
+    )
+    for scope in SCOPES:
+        for node in nodes:
+            assert get_lines(client, w.v_id, node, scope=scope) == {**EMPTY_LINES, "node": node}, (node, scope)
+        # 실제 종류 Bundle에서 합성 Bundle의 문서를 물어도 같다
+        assert get_lines(client, real_id, f"old:{w.v_doc['id']}", scope=scope) == {**EMPTY_LINES, "node": f"old:{w.v_doc['id']}"}
+    # P의 문서는 범위 all의 지도에만 있다 — linked에서는 없는 마디와 같다
+    p = f"old:{peer_doc['id']}"
+    assert get_lines(client, w.v_id, p) == {**EMPTY_LINES, "node": p}
+    assert get_lines(client, w.v_id, p, scope="all")["withheld_out"] != []
+
+
+@pytest.mark.parametrize(
+    "node",
+    ["", "old:", "old:abc", "old:-1", "old:12345678901", "target:1.5", "num:", "num:" + "A" * 101, "x:1", "old:1 ",
+     "num:A\x00B", "old:1\n", "OLD:1"],
+)
+def test_malformed_node_is_422(client: TestClient, node: str) -> None:
+    w = World(client)
+    assert client.get(_lines_url(w.v_id), params={"node": node}, headers=AUTHOR).status_code == 422
+
+
+def test_missing_node_or_unknown_scope_is_422(client: TestClient) -> None:
+    w = World(client)
+    assert client.get(_lines_url(w.v_id), headers=AUTHOR).status_code == 422
+    query = {"node": f"old:{w.v_doc['id']}", "scope": "everything"}
+    assert client.get(_lines_url(w.v_id), params=query, headers=AUTHOR).status_code == 422
+
+
+def test_odd_characters_in_a_num_node_do_not_break(client: TestClient) -> None:
+    w = World(client)
+    node = "num:SOP/1&2#3 가%_"
+    assert get_lines(client, w.v_id, node) == {**EMPTY_LINES, "node": node}
+
+
+def test_text_is_cut_at_300_chars(client: TestClient) -> None:
+    w = World(client)
+    long_line = "SOP-ABC-1016 " + "long " * 360
+    doc = add_doc(client, w.v_id, "SYNTHETIC_OLD-7_Long.docx", long_line)
+
+    (row,) = get_lines(client, w.v_id, f"old:{doc['id']}")["out"]
+    assert len(row["text"]) == ref_map.MAX_LINE_TEXT == 300
+    assert row["text"] == long_line[:300] and row["text_truncated"] is True
+
+
+def test_lines_are_capped_per_side(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    w = World(client)
+    v = f"old:{w.v_doc['id']}"
+    monkeypatch.setattr(ref_map, "MAX_LINES_PER_SIDE", 2)
+
+    body = get_lines(client, w.v_id, v)
+
+    assert [row["text"] for row in body["out"]] == [REF_UV, REF_DC]  # 원문 순서의 앞 둘
+    assert body["more_out"] == 2
+    assert (len(body["in"]), body["more_in"], len(body["withheld_in"])) == (1, 0, 2)  # 가려진 줄은 상한에 들지 않는다
+
+
+def test_moved_pair_is_one_line(client: TestClient) -> None:
+    w = World(client)
+    ko, en = "원심분리기 덮개를 닫는다.", "Close the lid of the centrifuge."
+    pair_doc = add_doc(client, w.v_id, "SYNTHETIC_OLD-7_Pair.docx", ko, en)
+    move_out(client, w.v_id, [find_line(client, w.v_id, pair_doc["id"], ko), find_line(client, w.v_id, pair_doc["id"], en)], "SOP-QC-99999")
+
+    body = get_lines(client, w.v_id, f"old:{pair_doc['id']}")
+
+    assert [(row["unit_id"], row["text"], row["kind"]) for row in body["out"]] == [
+        (find_line(client, w.v_id, pair_doc["id"], ko)["id"], ko, "moved"),
+    ]
+
+
+def test_linked_scope_leaves_out_lines_between_two_other_bundles(client: TestClient) -> None:
+    w = World(client)
+    _, peer_doc, _ = _add_peer(client)
+    s, p = f"old:{w.s_doc['id']}", f"old:{peer_doc['id']}"
+
+    assert get_lines(client, w.v_id, s)["withheld_in"] == []
+    assert get_lines(client, w.v_id, s, scope="all")["withheld_in"] == [_withheld(p, s, "ref")]
+
+
+def test_reading_lines_writes_nothing(client: TestClient) -> None:
+    w = World(client)
+    bundle_ids = (w.v_id, w.m_id, w.s_id)
+    doc_ids = (w.v_doc["id"], w.m_doc["id"], w.s_doc["id"])
+
+    async def read_state(session: AsyncSession) -> tuple[Any, ...]:
+        events = await session.scalar(select(func.count()).select_from(BundleEvent))
+        bundles = (await session.execute(
+            select(Bundle.id, Bundle.revision, Bundle.updated_at).where(Bundle.id.in_(bundle_ids)).order_by(Bundle.id)
+        )).all()
+        docs = (await session.execute(
+            select(Document.id, Document.revision).where(Document.id.in_(doc_ids)).order_by(Document.id)
+        )).all()
+        return events, [tuple(row) for row in bundles], [tuple(row) for row in docs]
+
+    before = run_in_session(read_state)
+    with _record_statements() as statements:
+        for scope in SCOPES:
+            get_lines(client, w.v_id, f"old:{w.v_doc['id']}", scope=scope)
+            get_lines(client, w.s_id, f"old:{w.s_doc['id']}", OUTSIDER, scope=scope)
+    after = run_in_session(read_state)
+
+    assert after == before
+    assert statements
+    assert [sql for sql, _ in statements if not sql.lstrip().upper().startswith("SELECT")] == []
+    assert [sql for sql, _ in statements if "FOR UPDATE" in sql.upper() or "FOR SHARE" in sql.upper()] == []
+
+
+def _count_line_statements(bundle_id: int, node: str, scope: str) -> int:
+    """구성원 판정(의존성)을 빼고 build_node_lines 하나가 낸 질의 수."""
+
+    async def build(session: AsyncSession) -> int:
+        bundle = await session.get(Bundle, bundle_id)
+        assert bundle is not None
+        ctx = BundleContext(bundle=bundle, login_id="qa.member", role="author")
+        with _record_statements() as statements:
+            await ref_map.build_node_lines(session, ctx, node, scope)  # type: ignore[arg-type]
+        return len(statements)
+
+    return run_in_session(build)
+
+
+def test_line_query_count_does_not_grow_with_bundles(client: TestClient) -> None:
+    w = World(client)
+    v = f"old:{w.v_doc['id']}"
+    before = {scope: _count_line_statements(w.v_id, v, scope) for scope in SCOPES}
+
+    pointer = "OLD-1 Synthetic pointer line"
+    for index in range(9):
+        bundle_id = create_bundle(client, title=f"SYNTHETIC map pointer {index}", is_synthetic=True)["id"]
+        doc = add_doc(client, bundle_id, f"SYNTHETIC_SOP-ABC-{2000 + index}_Pointer.docx", pointer)
+        if index % 2:
+            assert edit(client, bundle_id, doc["id"], {
+                "type": "set_ref", "unit_id": find_line(client, bundle_id, doc["id"], pointer)["id"], "number": "OLD-1",
+            }).status_code == 200
+    after = {scope: _count_line_statements(w.v_id, v, scope) for scope in SCOPES}
+
+    assert len(get_lines(client, w.v_id, v, scope="all")["in"]) == 10  # M의 줄 + 새 Bundle 9개(qa.member가 만들어 구성원이다)
+    assert after == before
+    assert all(0 < count <= MAX_LINE_STATEMENTS for count in after.values()), after

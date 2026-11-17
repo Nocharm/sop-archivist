@@ -40,7 +40,12 @@ MAX_REPORTED_PROBLEMS = 5  # 커버리지 예외 메시지에 싣는 문제 수 
 
 def compute_display_id(document: Document, unit: Unit) -> str:
     """화면·결과물용 표시 ID — 문서 번호(없으면 D{문서 id})와 추출 안 순번."""
-    return f"{document.doc_code or f'D{document.id}'}-{unit.local_no:03d}"
+    return format_display_id(document.doc_code, document.id, unit.local_no)
+
+
+def format_display_id(doc_code: str | None, doc_id: int, local_no: int) -> str:
+    """compute_display_id의 꼴을 값으로 — ORM 객체 없이 열만 읽는 질의(참조 지도의 줄 문장)가 같은 꼴을 쓴다."""
+    return f"{doc_code or f'D{doc_id}'}-{local_no:03d}"
 
 
 async def create_initial_units(session: AsyncSession, document: Document, extraction: Extraction) -> None:
