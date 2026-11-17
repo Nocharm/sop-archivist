@@ -34,6 +34,7 @@ PREPARE=1 BASE_URL=http://localhost:3777 node scripts/pw-smoke-sop.mjs   # 배�
 #   backend를 아래 가짜 AI로 AI_ENABLED=true AI_AUTO_PREPARE=true로 띄운다(다른 단계는 이 backend에서 전제가 깨져 건너뛴다). 끝에 DB가 바뀐다 — 다시 돌리려면 reset_db부터
 BASE_URL=http://localhost:3777 node scripts/pw-contrast-audit.mjs   # 14화면 × 라이트·다크, 4.5:1
 DS=worst BASE_URL=http://localhost:3787 node scripts/pw-layout-audit.mjs   # 배치 감사(DB 불변): seed_sop_demo(DS=mid)·seed_sop_worst(DS=worst)를 얹은 DB의 backend 8787/frontend 3787에서. ONLY=항목 id·WIDTHS·LANGS·THEMES, 실패는 종료 코드 1과 ../.shots/layout-<id>-<width>.png (docs/lessons/browser-verification.md)
+BASE_URL=http://localhost:3806 BUNDLE=<묶음 id> DOCS=<Old 문서 id,…> node scripts/pw-perf-assign.mjs   # Assign 긴 문서 프레임 비용(가만히·호버·스크롤·고르기, CPU 4배 느리게). 운영 빌드(next build → next start)에 대고, 처방은 INJECT=<css>로 주입해 전·후를 같이 잰다. TRACE·PROFILE=scroll|hover|click (docs/superpowers/specs/2026-11-17-assign-long-doc-design.md)
 BASE_URL=http://localhost:3777 node scripts/pw-overlap-audit.mjs    # 겹침 감사(seed 직후, DB 불변): 모핑 단추·C 줄 끝 단추·그 자리 메뉴·AI 작업 목록과 알림이 옆 글자를 덮는지, 1280·1920 × EN·KO. 긴 글은 LONG=1, 다크는 THEMES=light,dark
 BASE_URL=http://localhost:3777 node scripts/pw-manual-shots.mjs     # 시스템 설명서(docs/manual/) 화면 그림·번호 위치 다시 뽑기 — reset_db → seed_sop_demo 직후, 끝에 묶음 3을 검토 완료로 바꾼다
 MANUAL=app BASE_URL=http://localhost:3777 node scripts/pw-manual-shots.mjs   # 사용 설명서(/manual) 그림 17장을 frontend/public/manual/img/에 — 1120x720, 번호 표시 없음, DB를 바꾸지 않는다. 위 줄보다 먼저 돌린다(위 줄이 묶음 3을 바꾼다)
