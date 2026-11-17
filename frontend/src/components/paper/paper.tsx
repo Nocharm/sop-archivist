@@ -6,7 +6,7 @@
 "use client";
 
 import { BookMarked, ChevronsDownUp, Ellipsis, FoldVertical, FolderCheck, ImageIcon, Link2, Scissors, Sparkles, TriangleAlert, WandSparkles, type LucideIcon } from "lucide-react";
-import { Fragment, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, memo, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { BundleHead } from "@/components/paper/bundle-head";
 import { FigureImage } from "@/components/paper/figure-image";
@@ -18,6 +18,7 @@ import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import type { ViewBlock, ViewUnit } from "@/lib/api-sop";
 import { readCaretPoint } from "@/lib/caret-point";
 import { useI18n } from "@/lib/i18n";
+import { pickNearChunks, sliceCards } from "@/lib/paper-chunk-model";
 import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/lib/paper-fold-model";
 import { buildRows, foldCaptionRows, getBundleHeader, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, resolvePickUnit, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
@@ -64,6 +65,43 @@ function listRowUnitIds(row: PaperRow, segments: ReadonlyMap<number, Segment[]>)
 interface FoldCell {
   item: FoldItem;
   rows: PaperRow[];
+}
+
+/** 한 부분(머리말·본문·꼬리말)의 카드와 그 덩어리 - index는 덩어리로 그리는 부분들을 넘어 문서 순서(.strip-chunk 순서)이고, 덩어리로 나누지 않으면 -1 */
+interface CardGroup {
+  index: number;
+  start: number;
+  cards: PaperRow[][];
+  unitIds: ReadonlySet<number>;
+}
+
+interface PaperChunkProps {
+  /** 이번에 다시 그린다 - 화면 가까이 있거나 고른(방금 고른) 줄이 들었다 */
+  live: boolean;
+  /** 하나라도 바뀌면 먼 덩어리도 다시 그린다 - 줄 구성·글말처럼 화면 밖 DOM도 맞아야 하는 것 */
+  deps: readonly unknown[];
+  render: () => ReactNode;
+}
+
+/**
+ * 긴 문서의 카드 덩어리 - 화면에서 먼 덩어리는 Paper가 다시 그려도 지난 모습 그대로 둔다. 고르기·호버로 Paper가 그려질 때마다 수천 조각을 다시 그리던 것을 화면 가까운 덩어리로 줄인다.
+ * 먼 덩어리는 화면 밖이라 지난 모습이 보이지 않고, 가까워지면(live) 그 그리기에서 맞춘다. 줄은 DOM에 그대로 있어 찾기(Ctrl+F)·줄 데려오기·누르기(용지가 위임으로 듣는다)는 지금과 같다.
+ * 덩어리 상자는 브라우저도 화면 밖이면 통째로 건너뛴다(CSS .strip-chunk content-visibility)
+ */
+const PaperChunk = memo(
+  function PaperChunk({ render }: PaperChunkProps) {
+    return <div className="strip-chunk">{render()}</div>;
+  },
+  // 얼리기는 이미 먼 덩어리만 - 가까웠다가 멀어지는 그리기는 한 번 더 그려 그때의 상태(고름 풀림 등)를 담고 언다
+  (prev, next) => !prev.live && !next.live && prev.deps.length === next.deps.length && prev.deps.every((value, index) => value === next.deps[index]),
+);
+
+/** 용지를 굴리는 가장 가까운 조상 - 없으면 창 */
+function findScrollParent(element: HTMLElement): HTMLElement | null {
+  for (let current = element.parentElement; current; current = current.parentElement) {
+    if (/(auto|scroll|overlay)/.test(getComputedStyle(current).overflowY)) return current;
+  }
+  return null;
 }
 
 /** 줄이 놓인 첫 블록의 절 번호 - 표는 없다 */
@@ -255,6 +293,67 @@ export function Paper({
     const order = sections.flatMap((section) => section.rows.map((row) => readRowUnitId(row) ?? -1));
     return getCardTops(order, brackets);
   }, [sections, brackets]);
+  // 부분마다 카드와 덩어리 - 긴 부분만 덩어리로 나눈다(paper-chunk-model, PaperChunk)
+  const cardGroups = useMemo(() => {
+    let nextIndex = 0;
+    return sections.map((section) => {
+      const cards: PaperRow[][] = [];
+      for (const row of section.rows) {
+        if (cards.length > 0 && cardTops.has(readRowUnitId(row) ?? -1)) cards[cards.length - 1].push(row);
+        else cards.push([row]);
+      }
+      const { isChunked, slices } = sliceCards(cards.length);
+      const groups: CardGroup[] = slices.map(({ start, count }) => {
+        const slice = cards.slice(start, start + count);
+        const unitIds = new Set(slice.flatMap((card) => card.flatMap((row) => listRowUnitIds(row, model.segments))));
+        return { index: isChunked ? nextIndex++ : -1, start, cards: slice, unitIds };
+      });
+      return { cards, groups, isChunked };
+    });
+  }, [sections, cardTops, model]);
+  const chunkCount = cardGroups.reduce((sum, section) => sum + (section.isChunked ? section.groups.length : 0), 0);
+  // 화면 가까이(위아래 한 화면씩 더) 있는 덩어리 번호 범위 - 재기 전(null)에는 모두 가깝다고 본다
+  const [nearChunks, setNearChunks] = useState<{ from: number; to: number } | null>(null);
+  useEffect(() => {
+    const page = pageRef.current;
+    if (!page || chunkCount === 0) return;
+    const scroller = findScrollParent(page);
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const view = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+      const { from, to } = pickNearChunks(Array.from(page.querySelectorAll<HTMLElement>(".strip-chunk"), (chunk) => chunk.getBoundingClientRect()), view);
+      setNearChunks((prev) => (prev?.from === from && prev.to === to ? prev : { from, to }));
+    };
+    const schedule = () => {
+      if (frame === 0) frame = requestAnimationFrame(measure);
+    };
+    schedule();
+    const target = scroller ?? window;
+    target.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    // 확대·폭 바꿈으로 줄 높이가 바뀌면 덩어리 자리도 바뀐다
+    const observer = new ResizeObserver(schedule);
+    observer.observe(page);
+    return () => {
+      target.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [chunkCount]);
+  // 고른 줄과 방금 고른 줄(단추 줄이 접히는 동안)이 든 덩어리 - 그 앞뒤 덩어리도 함께 그린다(덩어리 첫 틈이 앞 덩어리 끝 줄의 고름을 따른다)
+  const liveChunkIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const section of cardGroups) {
+      if (!section.isChunked) continue;
+      for (const group of section.groups) {
+        if ([selectedId, actionIds.previous].some((id) => id !== null && group.unitIds.has(id))) for (const index of [group.index - 1, group.index, group.index + 1]) ids.add(index);
+      }
+    }
+    return ids;
+  }, [cardGroups, selectedId, actionIds.previous]);
+
   // 고른 조각 곁 틈을 벌릴 조각 - 이웃한 짝은 한 카드라 고른 줄이 카드 어디에 있든 카드 위아래가 같이 벌어진다
   const selectedBlock = useMemo(() => {
     const ids = new Set<number>();
@@ -767,17 +866,26 @@ export function Paper({
     return rows.length > 1 ? <div className="strip-card">{content}</div> : content;
   }
 
-  function renderRows(rows: PaperRow[]): ReactNode {
-    const cards: PaperRow[][] = [];
-    for (const row of rows) {
-      if (cards.length > 0 && cardTops.has(readRowUnitId(row) ?? -1)) cards[cards.length - 1].push(row);
-      else cards.push([row]);
-    }
-    return cards.map((card, index) => (
-      <Fragment key={card[0].key}>
-        {index > 0 && renderGap(cards[index - 1][cards[index - 1].length - 1], card[0])}
-        {renderCard(card)}
-      </Fragment>
+  function renderRows(sectionIndex: number): ReactNode {
+    const { cards, groups, isChunked } = cardGroups[sectionIndex];
+    const renderCards = (group: CardGroup) =>
+      group.cards.map((card, offset) => {
+        const index = group.start + offset;
+        return (
+          <Fragment key={card[0].key}>
+            {index > 0 && renderGap(cards[index - 1][cards[index - 1].length - 1], card[0])}
+            {renderCard(card)}
+          </Fragment>
+        );
+      });
+    if (!isChunked) return groups.length > 0 ? renderCards(groups[0]) : null;
+    return groups.map((group) => (
+      <PaperChunk
+        key={group.cards[0][0].key}
+        live={nearChunks === null || (group.index >= nearChunks.from && group.index <= nearChunks.to) || liveChunkIds.has(group.index)}
+        deps={[cardGroups, t, testId, dragBoxes, pickWholeBundle]}
+        render={() => renderCards(group)}
+      />
     ));
   }
 
@@ -985,7 +1093,7 @@ export function Paper({
       >
         {strips ? (
           sections.map((section, index) => {
-            const content = strips.fold ? renderFolded(foldCells[index] ?? [], strips.fold) : renderRows(section.rows);
+            const content = strips.fold ? renderFolded(foldCells[index] ?? [], strips.fold) : renderRows(index);
             return section.edge === null ? (
               <Fragment key="body">{content}</Fragment>
             ) : (
