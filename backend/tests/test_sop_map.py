@@ -899,6 +899,32 @@ def test_unconfirmed_lines_count_only_for_members_of_their_bundle(client: TestCl
         assert _edges_from(get_map(client, w.v_id, scope=scope), h) == proposed
 
 
+def test_unconfirmed_text_of_a_non_member_bundle_is_never_fetched(client: TestClient) -> None:
+    """S의 확인 안 된 줄(HPLC-02로 시작)은 S의 구성원이 아닌 사람의 요청에서는 질의 결과에도 오지 않는다.
+
+    선으로는 이미 안 나가지만(`collect_map_lines`), 읽은 뒤 버리면 남의 문장 글이 서버 안에서 읽히고 걸린 시간이 답이 된다.
+    S의 확정 줄은 그대로 오고, S의 구성원이면 제안 줄도 온다.
+    """
+    w = World(client)
+    hplc = _upload_as(client, w.s_id, OUTSIDER, "SYNTHETIC_SOP-ABC-1021_Hplc.docx", HPLC_LINE)
+    update_row(TargetDoc, w.v_sop, code="HPLC-02")
+
+    async def collect(session: AsyncSession) -> tuple[list[ref_map.MapLine], list[ref_map.MapLine]]:
+        bundle = await session.get(Bundle, w.v_id)
+        assert bundle is not None
+        member_of = await ref_map.load_member_bundle_ids(session, "qa.member")
+        assert w.s_id not in member_of
+        as_outsider = await ref_map._collect_candidate_lines(session, bundle, member_of, "all")
+        as_member = await ref_map._collect_candidate_lines(session, bundle, member_of | {w.s_id}, "all")
+        return as_outsider, as_member
+
+    as_outsider, as_member = run_in_session(collect)
+    from_s = [line for line in as_outsider if line.bundle_id == w.s_id]
+    assert from_s and all(line.state == "confirmed" for line in from_s)
+    assert not any(line.document_id == hplc["id"] for line in as_outsider)
+    assert any(line.document_id == hplc["id"] and line.state == "proposed" for line in as_member)
+
+
 def test_end_nodes_without_an_edge_are_dropped(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """질의 사이에 출발 문서가 지워지면 그 선이 빠진다 — 그 선에만 매달린 num 마디도 남지 않는다.
 
