@@ -480,7 +480,8 @@ export default function AssignPage() {
     setMenu({ seq: menuSeq.current, anchor, offset: at ?? readMenuOffset(anchor, event), rowKey, targetId });
   }
   // at - 끌어 놓은 자리(그 줄 기준). 있으면 메뉴가 클릭으로 연 것처럼 이음 선 끝에 뜬다. 키보드·"→ 간 곳" 이동에는 없다
-  const [jump, setJump] = useState<{ side: "old" | "new"; id: number; targetId: number; rowKey: string; quiet?: boolean; at?: { x: number; y: number } } | null>(null);
+  // confirm - 끌어 놓아 고른 것이라 그 자리 메뉴 대신 바로 확정한다(1.2.0 피드백). 막는 까닭이 있으면 메뉴가 까닭과 함께 뜬다
+  const [jump, setJump] = useState<{ side: "old" | "new"; id: number; targetId: number; rowKey: string; quiet?: boolean; at?: { x: number; y: number }; confirm?: boolean } | null>(null);
   // 고른 줄이 어떤 길로든 바뀌면(↑↓·저장 뒤 다음 줄·짝 풀림·문서 바꾸기) 메뉴를 닫는다 - 다른 줄에서 낡은 메뉴가 되살아나지 않게(렌더 중 상태 맞추기)
   if (menu !== null && menu.rowKey !== activeKey) setMenu(null);
   // Old 문장 우클릭 메뉴 - 누른 Unit, 그 줄 상자, 누른 자리와 글자 자리(키보드로 열었으면 없음). 고른 줄이 바뀌면 닫는다
@@ -1949,7 +1950,8 @@ export default function AssignPage() {
       }
       revealElement(el);
       flashElement(el);
-      if (!jump.quiet) openMenu(el, null, jump.rowKey, jump.targetId, jump.at ?? null);
+      if (jump.confirm) settleDrop(el, jump.rowKey, jump.targetId, jump.at ?? null);
+      else if (!jump.quiet) openMenu(el, null, jump.rowKey, jump.targetId, jump.at ?? null);
       setJump(null);
     });
     return () => cancelAnimationFrame(frame);
@@ -1964,11 +1966,15 @@ export default function AssignPage() {
     setDropLink(null);
     const { rowKey: dropKey, targetId, at } = dropLink;
     const action = resolveDropLink({ draftDestination: draft.destination, savedDestination, targetId });
-    if (action === "menu_only" || pickNewSentence(targetId, false)) setJump({ side: "new", id: targetId, targetId, rowKey: dropKey, at });
+    // 이미 이은 문장(끊기 메뉴)은 그대로 메뉴, 새로 고른 것은 바로 확정
+    if (action === "menu_only") setJump({ side: "new", id: targetId, targetId, rowKey: dropKey, at });
+    else if (pickNewSentence(targetId, false)) setJump({ side: "new", id: targetId, targetId, rowKey: dropKey, at, confirm: true });
   }
   // --- 끌어서 보내기(3걸음) - New · from Assign 문서의 두 문장 사이·빈 칸에 놓으면 그 줄의 초안이 된다(저장은 하지 않는다). 잇기와 같이 관계 묶음이 온 뒤 렌더 중에 푼다 ---
   // position은 문장 사이에 놓은 자리(없으면 빈 칸 - 클릭과 같은 pickDestination). menu면 이어서 점선 초안(빈 칸이면 그 자리 표시)에 그 자리 메뉴를 띄운다
   const [dropPlace, setDropPlace] = useState<{ rowKey: string; destination: Destination; position: DropPosition | null; menu: boolean } | null>(null);
+  // 나무 줄에 놓은 뒤 - 그 칸이 보낼 곳이 된 다음 렌더에서 바로 확정한다
+  const [treeConfirm, setTreeConfirm] = useState<string | null>(null);
   const [draftMenu, setDraftMenu] = useState<{ rowKey: string } | null>(null);
   if (dropPlace !== null && activeKey !== dropPlace.rowKey) setDropPlace(null);
   else if (dropPlace !== null && !groupPending) {
@@ -1979,7 +1985,9 @@ export default function AssignPage() {
       setPickSeq((seq) => seq + 1);
     }
     if (dropPlace.menu) setDraftMenu({ rowKey: dropPlace.rowKey });
+    else setTreeConfirm(dropPlace.rowKey);
   }
+  if (treeConfirm !== null && treeConfirm !== activeKey) setTreeConfirm(null);
   // 메뉴를 띄우기 전에 다른 줄을 고르면 버린다 - 그 줄의 초안 자리 표시를 대신 찾아 번쩍이지 않게
   if (draftMenu !== null && draftMenu.rowKey !== activeKey) setDraftMenu(null);
   // 놓은 뒤 - 점선 초안(없으면 초안이 든 빈 칸 자리 표시)이 그려지면 보이게 하고 번쩍인 뒤 그 옆에 메뉴(jump 이펙트와 같은 짜임)
@@ -1996,11 +2004,23 @@ export default function AssignPage() {
       }
       revealElement(el);
       flashElement(el);
-      openMenu(el, null, draftMenu.rowKey, null);
+      settleDrop(el, draftMenu.rowKey, null, null);
       setDraftMenu(null);
     });
     return () => cancelAnimationFrame(frame);
   }, [draftMenu]);
+  /** 끌어 놓은 고름 - 막는 까닭(참조 번호 · 캡션)이 없으면 바로 확정하고, 있으면 그 자리 메뉴가 까닭을 보인다. 사유가 필요하면 확정이 사유 창을 연다 */
+  const settleDrop = useEffectEvent((el: HTMLElement, rowKey: string, targetId: number | null, at: { x: number; y: number } | null) => {
+    if (confirmBlockKey === null) void runSave("confirm");
+    else openMenu(el, null, rowKey, targetId, at);
+  });
+  const confirmTreeDrop = useEffectEvent(() => {
+    setTreeConfirm(null);
+    if (confirmBlockKey === null) void runSave("confirm");
+  });
+  useEffect(() => {
+    if (treeConfirm !== null) confirmTreeDrop();
+  }, [treeConfirm]);
   // 끄는 동안 따라오는 점선 - React 상태가 아니다
   const dragLineRef = useRef<DragLinkLine | null>(null);
   // 끄는 동안 엮은 문서의 놓을 자리 선과 칸 목록 - 끌기마다 한 번(그 사이 문서가 바뀌면 다시) 짓는다. React 상태가 아니다
