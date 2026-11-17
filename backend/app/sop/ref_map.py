@@ -205,12 +205,20 @@ def _in_same_kind(bundle: Bundle, column: Any) -> ColumnElement[bool]:
     return column.in_(select(Bundle.id).where(Bundle.is_synthetic == bundle.is_synthetic))
 
 
-async def _collect_incoming(session: AsyncSession, bundle: Bundle, numbers: set[str]) -> list[MapLine]:
-    """다른 Bundle(같은 종류)에서 이 Bundle의 번호를 가리키는 줄 — 표시한 참조, 표시 없는 줄, 이동의 세 길."""
+async def _collect_incoming(
+    session: AsyncSession, bundle: Bundle, numbers: set[str], member_of: set[int]
+) -> list[MapLine]:
+    """다른 Bundle(같은 종류)에서 이 Bundle의 번호를 가리키는 줄 — 표시한 참조, 표시 없는 줄, 이동의 세 길.
+
+    보는 사람이 구성원이 아닌 Bundle에서는 확정한 참조(언어가 REF인 줄)만 읽는다 — 그 밖의 줄은 선이 되지 못하는데
+    (`collect_map_lines`) 읽은 뒤 버리면 남의 문장 글이 질의 결과로 오고, 맞는 글이 있을 때만 일이 늘어 걸린 시간이 답이 된다.
+    """
     others = and_(Document.bundle_id != bundle.id, _in_same_kind(bundle, Document.bundle_id))
+    peers = sorted(member_of - {bundle.id})
+    readable = or_(Unit.lang == REF_LANG, Document.bundle_id.in_(peers)) if peers else Unit.lang == REF_LANG
     found: dict[int, Row[Any]] = {}
     marked = await select_in_chunks(
-        session, lambda chunk: _select_ref_units(others).where(UnitRef.number.in_(chunk)), numbers
+        session, lambda chunk: _select_ref_units(others).where(readable, UnitRef.number.in_(chunk)), numbers
     )
     for row in marked:
         found[row[0].id] = row
@@ -218,7 +226,9 @@ async def _collect_incoming(session: AsyncSession, bundle: Bundle, numbers: set[
     patterns = sorted(number for number in numbers if is_document_number(number))
     for start in range(0, len(patterns), LIKE_NUMBERS_PER_QUERY):
         chunk = patterns[start:start + LIKE_NUMBERS_PER_QUERY]
-        statement = _select_ref_units(others).where(or_(*(Unit.text.like(f"%{number}%") for number in chunk)))
+        statement = _select_ref_units(others).where(
+            readable, or_(*(Unit.text.like(f"%{number}%") for number in chunk))
+        )
         for row in (await session.execute(statement)).all():
             found.setdefault(row[0].id, row)
     moved = await select_in_chunks(
@@ -242,18 +252,21 @@ async def _collect_others_confirmed(session: AsyncSession, bundle: Bundle) -> li
     return [line for line in lines if line.state == _CONFIRMED and _is_matchable(line.number)]
 
 
-async def _collect_candidate_lines(session: AsyncSession, bundle: Bundle, scope: MapScope) -> list[MapLine]:
+async def _collect_candidate_lines(
+    session: AsyncSession, bundle: Bundle, member_of: set[int], scope: MapScope
+) -> list[MapLine]:
     """선이 될 수 있는 줄(후보) — 이 Bundle에서 나가는 참조·이동과, 다른 Bundle에서 이 Bundle의 번호로 들어오는 참조·이동.
 
     scope "all"은 여기에 같은 종류의 다른 Bundle의 확정한 줄을 모두 더한다. 한 줄(종류·Unit)은 한 번만 싣는다.
     후보일 뿐이다 — 선이 되는 줄은 거르기를 모두 지난 `collect_map_lines`의 것만이다.
+    member_of(보는 사람이 구성원인 Bundle)는 들어오는 줄을 읽는 범위를 정한다(`_collect_incoming`).
     """
     own = Document.bundle_id == bundle.id
     lines = _read_ref_lines((await session.execute(_select_ref_units(own))).all())
     lines += _read_moved_lines((await session.execute(_select_moved_units(own))).all())
     numbers = await _load_own_numbers(session, bundle.id)
     if numbers:
-        lines += await _collect_incoming(session, bundle, numbers)
+        lines += await _collect_incoming(session, bundle, numbers, member_of)
     if scope == "all":
         lines += await _collect_others_confirmed(session, bundle)
     unique: dict[tuple[str, int], MapLine] = {}
@@ -358,7 +371,7 @@ async def collect_map_lines(
     """
     visible = member_of
     candidates = [
-        line for line in await _collect_candidate_lines(session, bundle, scope)
+        line for line in await _collect_candidate_lines(session, bundle, member_of, scope)
         if line.state == _CONFIRMED or line.bundle_id in visible
     ]
     olds, targets = await _resolve_numbers(
