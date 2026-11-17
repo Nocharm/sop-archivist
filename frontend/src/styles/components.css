@@ -334,6 +334,19 @@
   .doc-row[data-child] + .doc-panel { position: relative; }
   /* 올림 바탕 - 끄는 동안은 끈다(다음 계획의 끌기) */
   :where(html:not([data-box-drag])) .doc-row:hover { background: var(--hover); }
+  /* WI 줄을 SOP 줄에 끌기(Documents 화면 설계 §7, tobe-section.tsx). 끌 수 있는 줄만 올리면 살짝 들린다(끌어다 놓기 G9 - Order 줄과 같은 고리라 줄 높이가 변하지 않는다) */
+  @media (hover: hover) {
+    html:not([data-box-drag]):not([data-box-select]) .doc-row[data-drag-box]:hover { box-shadow: 0 0 0 1px var(--line-2), var(--shadow-1); }
+  }
+  .doc-row[data-drag-box] { transition: box-shadow var(--dur-fast); }
+  @media (prefers-reduced-motion: reduce) {
+    .doc-row[data-drag-box] { transition: none; }
+  }
+  /* 끄는 동안(G10)은 줄 끝 단추와 줄 안의 단추·링크·입력을 끈다 - 줄 상자는 놓을 곳이라 받는다. 위의 보이기 규칙보다 특이도가 높아야 한다 */
+  html[data-box-drag] .doc-list :is(.doc-acts, .doc-more) { opacity: 0; pointer-events: none; }
+  html[data-box-drag] .doc-list :is(button, a, input, select) { pointer-events: none; }
+  /* 화면 틀의 data-parent-drag - SOP 줄 말고 전부(Old 목록 · WI 줄 · 펼친 곳 · 등록 칸)를 흐린다(Order와 같은 0.35). 거절 테두리(점선)가 걸린 줄은 또렷하게 남긴다 */
+  [data-parent-drag] :is(.docs-old, .doc-row:not([data-kind="sop"]):not([data-drop]), .doc-panel, .doc-add) { opacity: .35; }
   .doc-chev { display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--r-1); background: none; color: var(--ink-3); cursor: pointer; }
   .doc-chev:hover { background: var(--hover); color: var(--ink); }
   .doc-chev > svg { transition: transform var(--dur-base); }

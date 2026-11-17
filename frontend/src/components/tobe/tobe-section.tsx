@@ -1,6 +1,7 @@
 // New 문서 목록(새로 만들 SOP·WI) - Documents 화면의 Old 문서 목록 아래에 놓인다. 줄을 번호로 더하고, 칸마다 바로 저장한다(초안·Save 없음).
 // 줄은 두 줄로 읽고(ToBeRow), 누르면 펼친 곳(ToBePanel)에서 고친다 - SOP는 칸 상태 표, WI는 단계. 이미 쓴 파일은 그 줄에 붙어 보인다. Excel 템플릿 내려받기·가져오기는 메뉴에 있다.
 // EQUIS가 아는 값(종류·장비 번호)은 펼친 곳의 그 칸 옆에 작은 제안으로 뜨고 사람이 눌러 넣는다 - 자동으로 바꾸지 않는다.
+// WI 줄은 끌어 다른 SOP 줄에 놓으면 그 SOP 아래로 옮겨 바로 저장되고, 알림의 Undo가 앞의 부모로 되돌린다(설계 §7). Restore의 알림도 Undo를 지닌다(§8).
 "use client";
 
 import { Download, FileUp, ListTree, MoreHorizontal, Plus, Sparkles } from "lucide-react";
@@ -16,7 +17,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Menu } from "@/components/ui/menu";
 import { showToast } from "@/components/ui/toast";
 import { useDelegatedTip } from "@/components/ui/delegated-tip";
-import { flashElement } from "@/components/ui/motion";
+import { flashElement, useFlip } from "@/components/ui/motion";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
@@ -39,6 +40,7 @@ import {
   type ToBe,
   type ToBeDocPatch,
 } from "@/lib/api-sop";
+import { findUnderPoint, type BoxDragConfig, type DragPoint } from "@/lib/box-drag";
 import { getBundleLabel } from "@/lib/bundle-label";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
 import { buildDownloadName } from "@/lib/download-name";
@@ -46,12 +48,14 @@ import { hasRefreshingEquis, normalizeDocNumber } from "@/lib/equis-model";
 import { useI18n } from "@/lib/i18n";
 import { useLeaveGuard } from "@/lib/leave-guard";
 import { navigate } from "@/lib/nav-buffer";
+import { PARENT_REFUSAL_KEYS, buildParentCard, canDragParent, canUndoParentMove, resolveParentDrop } from "@/lib/parent-drop-model";
 import { saveBlob } from "@/lib/save-file";
-import { buildSlotRows, isNaEditDirty, listUsedReasons, summarizeSlots, type NaEdit, type SlotKey, type SlotRow, type SlotSummary } from "@/lib/slot-status-model";
+import { buildSlotRows, canUndoRestore, isNaEditDirty, listUsedReasons, summarizeSlots, type NaEdit, type SlotKey, type SlotRow, type SlotSummary } from "@/lib/slot-status-model";
 import { NEW_DOCUMENTS_ANCHOR } from "@/lib/stages";
 import { ADD_PREVIEW_KEYS, describeAdd, listEquisHints, planAddRows, readCodes, type AddPreview } from "@/lib/tobe-add-model";
 import { createDraft, orderDocs, type DraftDoc } from "@/lib/tobe-draft";
 import { useAiJobs } from "@/lib/use-ai-jobs";
+import { useBoxDrag } from "@/lib/use-box-drag";
 import { useDelayedFlag } from "@/lib/use-delayed-flag";
 import { useEquisPolling } from "@/lib/use-equis-polling";
 import { useLoaded } from "@/lib/use-loaded";
@@ -125,6 +129,11 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
   // 방금 번호로 더한 마지막 줄 - 그려진 뒤 잠깐 강조하고 보이게 한다. seq는 같은 번호를 다시 더해도(빼고 다시) 한 번씩 강조하게
   const [justAdded, setJustAdded] = useState<{ code: string; seq: number } | null>(null);
   const flashedSeqRef = useRef(0);
+  // 끌어 상위 SOP를 바꾼 줄 - 새 자리에 그려진 뒤 잠깐 강조한다. seq는 같은 줄을 다시 옮겨도 한 번씩
+  const [moved, setMoved] = useState<{ key: string; seq: number } | null>(null);
+  const flashedMoveRef = useRef(0);
+  // 상위 SOP가 바뀐 뒤 줄들이 새 자리로 미끄러진다 - 목록 틀이 끌기의 root이자 자리 바꿈의 틀이다
+  const flip = useFlip(listRef);
   // 칸 상태 막대의 눈금 툴팁 - 목록 틀 하나가 맡는다
   const barTip = useDelegatedTip();
   // 가져오기 전에 한 번 묻는다 - 목록이 비어 있지 않으면 파일이 통째로 바꾼다
@@ -144,6 +153,9 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
   const looseCount = rows.filter(({ doc, depth }) => doc.doc_type === "wi" && depth === 0).length;
   const addPreview = describeAdd(adding, tobe?.docs ?? []);
   const sops = list ? list.docs.filter((doc) => doc.doc_type === "sop") : [];
+  const docsByKey = new Map((list?.docs ?? []).map((doc) => [doc.key, doc]));
+  // 줄마다 끌 수 있는지(canDragParent)에 쓰는 값
+  const dragState = { canEdit, saving, sopKeys: sops.map((sop) => sop.key) };
   const savedByCode = new Map((tobe?.docs ?? []).map((doc) => [doc.code, doc]));
   // 다시 받은 목록에서 편집기의 문서가 사라졌거나 SOP가 아니게 됐으면 편집기를 닫는다 - 렌더 중 상태 맞추기
   if (naEdit !== null && tobe !== null && !tobe.docs.some((doc) => `id-${doc.id}` === naEdit.docKey && doc.doc_type === "sop")) setNaEdit(null);
@@ -193,8 +205,18 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
     addInputRef.current?.focus();
   }, [justAdded, addedId]);
 
-  /** 줄 쓰기의 결과 - 거절이면 그 오류를 함께 돌려준다(알림과 다시 받기는 이 안에서 한다) */
-  async function runWriteResult(write: () => Promise<ToBe>): Promise<{ ok: true } | { ok: false; error: unknown }> {
+  // 끌어 옮긴 줄이 새 자리에 그려진 뒤(커밋 뒤) 강조하고 창 밖이면 그쪽으로 스크롤한다
+  useEffect(() => {
+    if (moved === null || flashedMoveRef.current === moved.seq) return;
+    const row = listRef.current?.querySelector<HTMLElement>(`.doc-row[data-doc="${CSS.escape(moved.key)}"]`);
+    if (!row) return;
+    flashedMoveRef.current = moved.seq;
+    flashElement(row);
+    row.scrollIntoView({ block: "nearest" });
+  }, [moved]);
+
+  /** 줄 쓰기의 결과 - 거절이면 그 오류를 함께 돌려준다(알림과 다시 받기는 이 안에서 한다). beforeApply는 응답을 얹기 바로 전에 한 번(자리 재기) */
+  async function runWriteResult(write: () => Promise<ToBe>, options?: { beforeApply?: () => void }): Promise<{ ok: true } | { ok: false; error: unknown }> {
     if (!data) return { ok: false, error: null };
     writesRef.current += 1;
     setSaving(true);
@@ -205,6 +227,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
       const next = await write();
       const current = latestDataRef.current ?? data;
       const raced = wasReloading || reloadingRef.current || current !== data;
+      options?.beforeApply?.();
       setFresh({ base: current, tobe: next });
       if (raced) reload();
       // 목록이 바뀌면 개요의 숫자·다음 할 일도 바뀐다
@@ -241,13 +264,128 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
     setNaEdit(next);
   }
 
-  /** N/A를 바로 지운다 - 그 칸은 빈 칸(또는 정할 칸)으로, 덮였던 하위 칸도 제 상태로 돌아간다 */
+  /** N/A를 바로 지운다 - 그 칸은 빈 칸(또는 정할 칸)으로, 덮였던 하위 칸도 제 상태로 돌아간다. 알림의 Undo가 지우기 전의 사유로 다시 저장한다 */
   async function restoreNa(doc: DraftDoc, row: SlotRow) {
     if (writesRef.current > 0) return;
-    if (!(await runWrite(() => clearNaSlot(bundleId, readDocId(doc.key), row.key)))) return;
-    showToast(t("tobe.slots.restored", { number: row.number, name: row.label }));
+    const docId = readDocId(doc.key);
+    // Restore는 N/A 칸에만 있다 - 사유는 지우기 전에 읽어 둔다
+    const reason = row.state.kind === "na" ? row.state.reason : "";
+    if (!(await runWrite(() => clearNaSlot(bundleId, docId, row.key)))) return;
+    showToast(t("tobe.slots.restored", { number: row.number, name: row.label }), "ok", {
+      action: { label: t("common.undo"), run: () => void naUndoRef.current(docId, row.key, reason) },
+    });
     setNaEdit((current) => (current !== null && current.docKey === doc.key && current.slotKey === row.key ? null : current));
   }
+
+  /** Restore의 Undo - 다시 읽어 그 줄이 아직 SOP이고 그 칸이 N/A가 아닐 때만 지우기 전의 사유로 저장한다. 그사이 문장이 들어왔으면 서버가 409로 거절한다 */
+  async function undoRestore(docId: number, slotKey: SlotKey, reason: string) {
+    try {
+      const fresh = await getToBe(bundleId);
+      if (!canUndoRestore(fresh, docId, slotKey)) {
+        showToast(t("tobe.undoStale"), "info");
+        return;
+      }
+      await setNaSlot(bundleId, docId, slotKey, reason);
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+    } finally {
+      reload();
+      void loadBundle(bundleId);
+    }
+  }
+
+  /** 놓아서 상위 SOP를 바꾼다 - 바로 저장하고 Undo가 든 알림을 띄운다. 다른 줄 쓰기가 돌면 버린다(그동안은 끌기도 시작되지 않는다) */
+  async function moveParent(doc: DraftDoc, parent: DraftDoc) {
+    if (writesRef.current > 0) return;
+    const docId = readDocId(doc.key);
+    // 되돌릴 앞의 부모 - 부모를 못 찾은 WI는 없어 Undo를 주지 않는다(서버가 부모 없는 WI를 받지 않는다)
+    const previous = doc.parent_key === null ? null : (docsByKey.get(doc.parent_key)?.code ?? null);
+    const result = await runWriteResult(() => updateToBeDoc(bundleId, docId, { parent_code: parent.code }), {
+      // 옮긴 줄이 첫째라 미끄러지는 동안 이웃 위로 지나간다
+      beforeApply: () => flip.capture([doc.key, ...rows.map((row) => row.doc.key).filter((key) => key !== doc.key)]),
+    });
+    if (!result.ok) return;
+    setMoved((prev) => ({ key: doc.key, seq: (prev?.seq ?? 0) + 1 }));
+    // 알림은 같은 글이면 앞의 것을 지운다 - 번호를 적어 잇달아 옮겨도 알림마다 제 Undo가 남게
+    const text = t("tobe.drag.moved", { wi: doc.code, sop: parent.code });
+    if (previous === null) showToast(text);
+    else showToast(text, "ok", { action: { label: t("common.undo"), run: () => void parentUndoRef.current(docId, doc.code, parent.code, previous) } });
+  }
+
+  /** 알림의 Undo - 다시 읽어 그 줄이 아직 놓았던 SOP 아래의 WI일 때만 앞의 부모로 저장한다. 아니면 쓰지 않고 알린다(남이 바꾼 것을 덮지 않는다). 알림의 단추는 한 번뿐이라 saving으로 막지 않는다 */
+  async function undoParentMove(docId: number, wiCode: string, movedTo: string, previous: string) {
+    try {
+      const fresh = await getToBe(bundleId);
+      if (!canUndoParentMove(fresh, docId, movedTo)) {
+        showToast(t("tobe.undoStale"), "info");
+        return;
+      }
+      await updateToBeDoc(bundleId, docId, { parent_code: previous });
+      showToast(t("tobe.drag.moved", { wi: wiCode, sop: previous }));
+    } catch (err) {
+      showToast(humanizeApiError(err, t), "error");
+    } finally {
+      reload();
+      void loadBundle(bundleId);
+    }
+  }
+  // 알림은 화면을 넘어 남는다 - 콜백이 그 렌더의 함수를 붙들지 않게 가장 최근의 것을 미러한다(use-box-drag의 최신 config와 같은 짜임)
+  const parentUndoRef = useRef(undoParentMove);
+  const naUndoRef = useRef(undoRestore);
+  useEffect(() => {
+    parentUndoRef.current = undoParentMove;
+    naUndoRef.current = undoRestore;
+  });
+
+  /** 포인터 아래 New 줄 상자와 그 문서 - 목록 틀 밖(Old 목록 등)이거나 줄 상자가 아니면(펼친 곳 · 등록 칸 · 빈 곳) null */
+  function findDropRow(point: DragPoint): { el: HTMLElement; doc: DraftDoc } | null {
+    const el = findUnderPoint(point, ".doc-row[data-doc]");
+    const doc = el && listRef.current?.contains(el) ? docsByKey.get(el.dataset.doc ?? "") : undefined;
+    return el && doc ? { el, doc } : null;
+  }
+
+  // WI 줄을 SOP 줄에 끈다(설계 §7) - 끄는 동안의 표시는 DOM 속성뿐이다(G11): 끄는 줄 data-drag-src, 화면 틀 data-parent-drag, 놓을 줄은 끌기 층이 다는 data-drop
+  const parentDrag: BoxDragConfig<{ key: string }> = {
+    pick: (event) => {
+      const el = event.target instanceof Element ? event.target.closest<HTMLElement>(".doc-row[data-drag-box]") : null;
+      const doc = el ? docsByKey.get(el.dataset.doc ?? "") : undefined;
+      // 저장이 도는 사이(다시 그리기 전)에도 끌지 않는다 - 응답 순서가 엇갈려 낡은 목록이 얹히지 않게
+      if (!doc || writesRef.current > 0 || !canDragParent(doc, dragState)) return null;
+      return { key: doc.key };
+    },
+    getCard: ({ key }) => buildParentCard(docsByKey.get(key) ?? { code: "", title: "" }, t("tobe.row.noTitle")),
+    // Documents 화면의 스크롤 칸은 앱 틀(main.frame-view)이다
+    getScrollers: () => {
+      const pane = listRef.current?.closest<HTMLElement>(".frame-view, .overflow-auto, .overflow-y-auto");
+      return pane ? [pane] : [];
+    },
+    onStart: ({ key }) => {
+      listRef.current?.querySelector(`.doc-row[data-doc="${CSS.escape(key)}"]`)?.setAttribute("data-drag-src", "");
+      listRef.current?.closest("[data-parent-drag-root]")?.setAttribute("data-parent-drag", "");
+    },
+    onMove: ({ key }, point) => {
+      const source = docsByKey.get(key);
+      const target = findDropRow(point);
+      if (!source || !target) return { state: "none" };
+      const drop = resolveParentDrop(source, target.doc);
+      if (drop.kind === "move") return { state: "ok", note: t("tobe.drag.parent", { code: drop.parentCode }), target: target.el };
+      if (drop.kind === "refused") return { state: "refused", note: t(PARENT_REFUSAL_KEYS[drop.reason]), target: target.el };
+      return { state: "none" };
+    },
+    // 놓은 자리에서 다시 판단한다 - 마지막 move 뒤에 목록이 바뀌었을 수 있다
+    onDrop: ({ key }, point) => {
+      const source = docsByKey.get(key);
+      const target = findDropRow(point);
+      if (source && target && resolveParentDrop(source, target.doc).kind === "move") void moveParent(source, target.doc);
+    },
+    // 취소 때도 - 화면이 사라지며 끊긴 끌기도 치우게 문서 전체에서 찾는다
+    onEnd: () => {
+      for (const el of document.querySelectorAll(".doc-row[data-drag-src]")) el.removeAttribute("data-drag-src");
+      document.querySelector("[data-parent-drag]")?.removeAttribute("data-parent-drag");
+    },
+  };
+  // 끌 수 있는 줄이 하나도 없으면(읽기 전용 · 저장 중 · SOP가 하나뿐) 붙이지 않는다
+  useBoxDrag(listRef, rows.some(({ doc }) => canDragParent(doc, dragState)) ? parentDrag : null);
 
   function saveDoc(doc: DraftDoc, patch: ToBeDocPatch): Promise<boolean> {
     return runWrite(() => updateToBeDoc(bundleId, readDocId(doc.key), patch));
@@ -470,7 +608,8 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
           {/* 번호로 더하기 - 목록 머리 바로 아래. 적는 동안 무엇이 더해질지(planAddRows의 결과 그대로) 옆에 적는다. Enter면 그 줄이 저장되고, 여러 줄을 붙여 넣으면 줄마다 하나씩 더한다 */}
           {list !== null && canEdit && (
             <form
-              className="flex flex-wrap items-center gap-x-2 gap-y-1 px-[var(--pad)] py-2"
+              // doc-add - WI 줄을 끄는 동안 흐려지는 곳(components.css)
+              className="doc-add flex flex-wrap items-center gap-x-2 gap-y-1 px-[var(--pad)] py-2"
               data-testid="tobe-add-row"
               onSubmit={(event) => {
                 event.preventDefault();
@@ -545,6 +684,7 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
                       hintCount={hints.length}
                       noParent={isLoose}
                       canEdit={canEdit}
+                      draggable={canDragParent(doc, dragState)}
                       open={open.has(doc.key)}
                       onToggle={() => toggleOpen(doc.key)}
                       hasUnsavedNa={naEdit?.docKey === doc.key && isNaEditDirty(naEdit)}

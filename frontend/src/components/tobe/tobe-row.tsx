@@ -41,6 +41,8 @@ interface ToBeRowProps {
   /** 상위 SOP를 못 찾은 WI(있어서는 안 되는 자료) */
   noParent: boolean;
   canEdit: boolean;
+  /** 끌어 상위 SOP를 바꿀 수 있는 WI 줄 - 줄 상자 전체가 끌 상자가 된다(canDragParent) */
+  draggable: boolean;
   open: boolean;
   onToggle: () => void;
   /** 접어도 남은, 저장하지 않은 N/A 사유가 이 줄에 있다 */
@@ -50,7 +52,7 @@ interface ToBeRowProps {
   panel: () => ReactNode;
 }
 
-export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, slots, hintCount, noParent, canEdit, open, onToggle, hasUnsavedNa, onRemove, onEquisRefresh, panel }: ToBeRowProps) {
+export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, slots, hintCount, noParent, canEdit, draggable, open, onToggle, hasUnsavedNa, onRemove, onEquisRefresh, panel }: ToBeRowProps) {
   const { t } = useI18n();
   const prefix = `tobe-${doc.key}`;
   const block = saved ? getDocRemoveBlock(tobe, saved) : null;
@@ -194,6 +196,9 @@ export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, 
       }
       actions={actions}
       panel={panel}
+      // data-doc은 끌기가 놓을 자리(줄 상자)를 찾는 키, flipKey는 상위 SOP가 바뀐 뒤 줄과 펼친 곳이 함께 미끄러지는 키
+      rowData={{ "data-doc": doc.key, "data-drag-box": draggable ? "" : undefined }}
+      flipKey={doc.key}
     />
   );
 }
