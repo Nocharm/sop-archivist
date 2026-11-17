@@ -1,20 +1,25 @@
-// 참조 지도의 옆 칸 - 고른 것이 없으면 이 Bundle의 요약과 범례, 고르면 그 문서의 소유·Bundle·상태·바뀔 문서와 가리키는·가리켜지는 줄 수.
-// 이 계획은 문장 대신 줄 수를 적는다(계획 판단 17) - 문장은 다음 계획이 Cites · Cited by 줄 아래에 넣는다.
+// 참조 지도의 옆 칸 - 고른 것이 없으면 이 Bundle의 요약과 범례, 고르면 그 문서의 소유·Bundle·상태·바뀔 문서와 가리키는·가리켜지는 줄.
+// 줄(맞은편 번호 · 상태 · 줄 수) 아래에 그 줄의 문장을 붙인다 - 문장은 그 줄이 든 Bundle의 구성원에게만 서버가 보낸다(map-lines).
 "use client";
 
 import { ArrowRight, X } from "lucide-react";
 import Link from "next/link";
 import { useMemo } from "react";
 
+import { LinkSentences, SideLinesError, SideLinesFoot, type SideLinesState } from "@/components/map/map-lines";
 import { BECOMES_EMPTY_KEY, EDGE_PILL } from "@/components/map/map-list";
 import { BundleStatusPill } from "@/components/status";
+import { useDelegatedTip } from "@/components/ui/delegated-tip";
 import type { MapRelation, RefMap } from "@/lib/api-sop";
 import { useI18n } from "@/lib/i18n";
+import { attachLines, type LineSide } from "@/lib/map-lines-model";
 import { describeNode, summarizeSelf, type EdgeLabel, type NodeLink } from "@/lib/map-model";
 
 interface MapSideProps {
   data: RefMap;
   selectedId: string | null;
+  /** 고른 문서의 줄 문장 */
+  lines: SideLinesState;
   onPick(nodeId: string): void;
   onClear(): void;
 }
@@ -52,24 +57,36 @@ function Legend() {
   );
 }
 
-function LinkList({ links, testId, title, onPick }: { links: NodeLink[]; testId: string; title: string; onPick(nodeId: string): void }) {
+interface LinkListProps {
+  links: NodeLink[];
+  side: LineSide;
+  testId: string;
+  title: string;
+  lines: SideLinesState;
+  onPick(nodeId: string): void;
+}
+
+function LinkList({ links, side, testId, title, lines, onPick }: LinkListProps) {
   const { t } = useI18n();
+  const { rows, more } = attachLines(links, lines.data, side);
   return (
     <section className="grid gap-1.5" data-testid={testId}>
       <h2 className="map-side-h">{title}</h2>
       {links.length > 0 && (
-        <ul className="map-links">
-          {links.map((link) => (
-            <li key={`${link.nodeId}:${link.label}`}>
-              <button type="button" className="map-link" data-testid={`map-side-link-${link.nodeId}-${link.label}`} onClick={() => onPick(link.nodeId)}>
-                <span className="map-link-no">{link.number || t("map.node.noNumber")}</span>
-                <span className={EDGE_PILL[link.label]}>{t(`map.edge.${link.label}`)}</span>
-                <span className="map-link-n">{t("map.lines.count", { n: link.lines })}</span>
+        <ul className="map-links" data-testid={`map-lines-${side}`}>
+          {rows.map((row) => (
+            <li key={`${row.link.nodeId}:${row.link.label}`}>
+              <button type="button" className="map-link" data-testid={`map-side-link-${row.link.nodeId}-${row.link.label}`} onClick={() => onPick(row.link.nodeId)}>
+                <span className="map-link-no">{row.link.number || t("map.node.noNumber")}</span>
+                <span className={EDGE_PILL[row.link.label]}>{t(`map.edge.${row.link.label}`)}</span>
+                <span className="map-link-n">{t("map.lines.count", { n: row.link.lines })}</span>
               </button>
+              <LinkSentences row={row} side={side} />
             </li>
           ))}
         </ul>
       )}
+      {links.length > 0 && <SideLinesFoot side={side} isLoading={lines.isLoading} more={more} />}
     </section>
   );
 }
@@ -108,15 +125,19 @@ function SelfSummary({ data }: { data: RefMap }) {
   );
 }
 
-export function MapSide({ data, selectedId, onPick, onClear }: MapSideProps) {
+export function MapSide({ data, selectedId, lines, onPick, onClear }: MapSideProps) {
   const { t } = useI18n();
+  const tip = useDelegatedTip();
   const detail = useMemo(() => (selectedId === null ? null : describeNode(data, selectedId)), [data, selectedId]);
   if (!detail) return <SelfSummary data={data} />;
 
   const { node, bundle, relation, becomesState, tentative, cites, citedBy, assignHref } = detail;
   const emptyKey = BECOMES_EMPTY_KEY[becomesState];
+  // 읽지 못했으면 문장·쉬머 대신 알림 한 줄 - 앞서 받은 문장을 그리지 않는다
+  const shown: SideLinesState = lines.error === null ? lines : { ...lines, data: null, isLoading: false };
   return (
-    <div className="map-side-inner" data-testid="map-side-node">
+    <div className="map-side-inner" data-testid="map-side-node" {...tip.handlers}>
+      {tip.node}
       <div className="grid justify-items-start gap-1.5">
         <OwnerMark owner={relation ?? "none"} />
         <p className="map-side-num" data-testid="map-side-number">
@@ -166,8 +187,9 @@ export function MapSide({ data, selectedId, onPick, onClear }: MapSideProps) {
           </>
         )}
       </dl>
-      {node.kind === "old" && <LinkList links={cites} testId="map-side-cites" title={t("map.side.cites", { n: sumLines(cites) })} onPick={onPick} />}
-      <LinkList links={citedBy} testId="map-side-cited-by" title={t("map.side.citedBy", { n: sumLines(citedBy) })} onPick={onPick} />
+      {lines.error !== null && (cites.length > 0 || citedBy.length > 0) && <SideLinesError onRetry={lines.onRetry} />}
+      {node.kind === "old" && <LinkList links={cites} side="out" testId="map-side-cites" title={t("map.side.cites", { n: sumLines(cites) })} lines={shown} onPick={onPick} />}
+      <LinkList links={citedBy} side="in" testId="map-side-cited-by" title={t("map.side.citedBy", { n: sumLines(citedBy) })} lines={shown} onPick={onPick} />
       {assignHref && (
         <Link href={assignHref} className="btn justify-self-start" data-testid="map-side-open-assign">
           {t("map.side.openAssign")}
