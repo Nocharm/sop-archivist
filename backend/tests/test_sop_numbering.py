@@ -674,7 +674,7 @@ def test_a_direct_line_is_numbered_again_by_its_saved_style_in_a_sub_slot(client
         (DIRECT_A, None, "numbered"), (DIRECT_B, None, "numbered"),
     ]
 
-    # 하위 칸으로 옮기면 저장된 표시와 깊이로 다시 센다
+    # 하위 칸으로 옮기면 저장된 표시로 다시 센다(깊이는 칸을 옮길 때 보낸 값 — 보내지 않으면 서버가 0으로 돌린다)
     moved = [ids[text] for text in (TOP_LINE, DIRECT_A, SUB_A, SUB_B, DIRECT_B)]
     put([
         {"target_id": t, **({"slot_key": SUB_SLOT, "indent_level": 1} if t == ids[DIRECT_B] else {})} for t in moved

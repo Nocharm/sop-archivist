@@ -5193,6 +5193,7 @@ await runStep("order: a line placed directly in a slot with sub slots has no num
   const isOpen = (doc, key) => doc.sections.some((section) => section.location_key === key && section.na_reason === null);
   const doc = (await getJson("/outputs/c?lang=en")).docs.find((item) => item.doc_type === "sop" && item.entrance === "assign" && isOpen(item, PARENT) && isOpen(item, SUB) && pickFree(item).length >= 2);
   check("an SOP has General Requirements and Safety open and two numbered lines to move", doc !== undefined);
+  if (!doc) return;
   const [direct, sub] = pickFree(doc);
   const before = listLines(doc);
   const put = async (items) => page.request.put(`${api}/targets/order`, { headers, data: { revision: (await getJson("")).revision, target_doc_id: doc.target_doc_id, items } });
@@ -5224,7 +5225,8 @@ await runStep("order: a line placed directly in a slot with sub slots has no num
     await rowOf(direct.target_id).hover();
     const directMarks = await readMarks(direct.target_id);
     check("it offers No number and Note only, with No number shown as picked", JSON.stringify(directMarks) === JSON.stringify(["omitted:true", "note:false"]), JSON.stringify(directMarks));
-    check("the section heading keeps its number 5", ((await getText(page, `output-c-section-${doc.target_doc_id}-${PARENT}`)).trim()).startsWith("5"), await getText(page, `output-c-section-${doc.target_doc_id}-${PARENT}`));
+    // 머리 번호는 5 그대로다(5.1이 아니다)
+    check("the section heading keeps its number 5", /^5(?![.\d])/.test((await getText(page, `output-c-section-${doc.target_doc_id}-${PARENT}`)).trim()), await getText(page, `output-c-section-${doc.target_doc_id}-${PARENT}`));
 
     check("the line in Safety is numbered 5.1.1", (await readRowKey(page, sub.target_id)) === SUB && (await readRowNumber(page, sub.target_id)) === "5.1.1", `${await readRowKey(page, sub.target_id)} ${await readRowNumber(page, sub.target_id)}`);
     await rowOf(sub.target_id).hover();
