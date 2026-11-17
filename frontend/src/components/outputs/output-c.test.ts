@@ -106,6 +106,26 @@ describe("OutputCView", () => {
     unmount();
   });
 
+  it("draws a bullet in the number place of a bullet line and offers Bullet next to Numbered", () => {
+    const items = [
+      makeItem({ target_id: 1, text: "가", status: "confirmed", number: "2.1" }),
+      makeItem({ target_id: 2, text: "항목", status: "confirmed", number: null, number_style: "bullet" }),
+      makeItem({ target_id: 3, text: "생략", status: "confirmed", number: null, number_style: "omitted" }),
+    ];
+    const onMark = vi.fn();
+    const { host, unmount } = render({ data: makeOutput(items), onMove: () => {}, onIndent: () => {}, onMark });
+    expect(host.querySelector('[data-testid="output-c-number-2"]')).toBeNull();
+    expect(host.querySelector('[data-testid="output-c-bullet-2"]')?.textContent).toBe("•");
+    // 번호 생략 줄에는 기호도 없다
+    expect(host.querySelector('[data-testid="output-c-bullet-3"]')).toBeNull();
+    expect(host.querySelector('[data-testid="output-c-mark-bullet-2"]')?.getAttribute("aria-pressed")).toBe("true");
+    const group = [...host.querySelectorAll('[data-testid="output-c-mark-1"] button')].map((button) => button.getAttribute("data-testid"));
+    expect(group).toEqual(["output-c-mark-numbered-1", "output-c-mark-bullet-1", "output-c-mark-omitted-1", "output-c-mark-note-1"]);
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="output-c-mark-bullet-1"]')?.click());
+    expect(onMark).toHaveBeenCalledWith(1, 1, "bullet");
+    unmount();
+  });
+
   it("shows a note in italics without a number, indents it, and sends a mark change for that line only", () => {
     const items = [
       makeItem({ target_id: 1, text: "가", status: "confirmed", number: "2.1" }),
@@ -154,7 +174,7 @@ describe("OutputCView", () => {
     expect(more?.closest(".c-more")?.hasAttribute("data-no-drag")).toBe(true);
     act(() => more?.click());
     const menu = document.querySelector('[data-testid="output-c-menu-list-1"]');
-    expect([...(menu?.querySelectorAll('[role^="menuitem"]') ?? [])].map((el) => el.textContent)).toEqual(["Numbered", "No number", "Note", "Outdent", "Indent", "Move up", "Move down"]);
+    expect([...(menu?.querySelectorAll('[role^="menuitem"]') ?? [])].map((el) => el.textContent)).toEqual(["Numbered", "Bullet", "No number", "Note", "Outdent", "Indent", "Move up", "Move down"]);
     expect(menu?.querySelector('[data-testid="output-c-menu-numbered-1"]')?.getAttribute("aria-checked")).toBe("true");
     // 첫 줄 - 내어쓰기·들여쓰기·위로는 단추처럼 막히고 아래로만 된다
     for (const key of ["outdent", "indent", "up"]) expect(menu?.querySelector<HTMLButtonElement>(`[data-testid="output-c-menu-${key}-1"]`)?.disabled).toBe(true);
@@ -189,15 +209,15 @@ describe("OutputCView", () => {
     expect(host.querySelector('[data-testid="output-c-number-1"]')).toBeNull();
     // 쓸 수 없는 번호 단추는 숨기고, 번호로 저장된 줄은 번호 생략이 눌린 것으로 보인다 - 주석은 주석 그대로
     const pressed = (id: number) => [...host.querySelectorAll(`[data-testid="output-c-mark-${id}"] button`)].map((el) => [el.getAttribute("aria-label"), el.getAttribute("aria-pressed")]);
-    expect(pressed(1)).toEqual([["No number", "true"], ["Note", "false"]]);
-    expect(pressed(3)).toEqual([["No number", "false"], ["Note", "true"]]);
+    expect(pressed(1)).toEqual([["Bullet", "false"], ["No number", "true"], ["Note", "false"]]);
+    expect(pressed(3)).toEqual([["Bullet", "false"], ["No number", "false"], ["Note", "true"]]);
     // 번호를 세는 줄이 없어 저장된 깊이와 상관없이 맨 바깥에 그리고 들이거나 내어 쓸 수 없다
     expect(host.querySelector<HTMLElement>('[data-testid="output-c-row-2"] .c-line')?.style.paddingLeft).toBe("calc(0 * var(--c-indent))");
     for (const key of ["indent", "outdent"]) expect(host.querySelector<HTMLButtonElement>(`[data-testid="output-c-${key}-2"]`)?.disabled).toBe(true);
-    // ⋯ 메뉴도 같은 두 가지만
+    // ⋯ 메뉴도 같은 세 가지만
     act(() => host.querySelector<HTMLButtonElement>('[data-testid="output-c-menu-1"]')?.click());
     const menu = document.querySelector('[data-testid="output-c-menu-list-1"]');
-    expect([...(menu?.querySelectorAll('[role="menuitemradio"]') ?? [])].map((el) => [el.textContent, el.getAttribute("aria-checked")])).toEqual([["No number", "true"], ["Note", "false"]]);
+    expect([...(menu?.querySelectorAll('[role="menuitemradio"]') ?? [])].map((el) => [el.textContent, el.getAttribute("aria-checked")])).toEqual([["Bullet", "false"], ["No number", "true"], ["Note", "false"]]);
     // 눌린 것으로 보여도 저장값은 번호라, 번호 생략을 고르면 그 값을 저장한다
     act(() => menu?.querySelector<HTMLButtonElement>('[data-testid="output-c-menu-omitted-1"]')?.click());
     expect(onMark).toHaveBeenCalledWith(1, 1, "omitted");

@@ -1154,7 +1154,7 @@ export interface FlowGraph {
 }
 
 /** 줄 번호 표시 - backend app/sop/constants.py NumberStyle과 같은 값 */
-export type NumberStyle = "numbered" | "omitted" | "note";
+export type NumberStyle = "numbered" | "bullet" | "omitted" | "note";
 
 export interface OutputCItem {
   target_id: number;

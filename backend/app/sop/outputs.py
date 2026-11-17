@@ -22,7 +22,7 @@ from app.sop.caption_ref_rules import (
     resolve_numbered_group,
 )
 from app.sop.captions import CAPTION_KIND, get_caption_lang_rank, is_caption_target, join_caption_texts
-from app.sop.constants import COVER_KINDS, NUMBER_NOTE, NUMBERED, SLOT_HEADING, SLOT_KEYS, WI_PARTS
+from app.sop.constants import COVER_KINDS, NUMBER_BULLET, NUMBER_NOTE, NUMBERED, SLOT_HEADING, SLOT_KEYS, WI_PARTS
 from app.sop.groups import TABLE_UNIT_KINDS, build_group_ids, collapse_table_members
 from app.sop.output_labels import LABELS, OutputLabels
 from app.sop.output_rows import (
@@ -522,7 +522,7 @@ def number_targets(index: _Index, labels: OutputLabels) -> dict[int, str]:
     """새 문장 → 섹션 번호(제품 명세 §7.13 섹션 번호 세는 법). 한 칸(WI는 같은 단계의 Instruction·Why를 이어)의 칸 새 문장이 아닌 새 문장 전부를
     언어를 가리지 않고 결과물 C 순서대로 한 줄로 센다.
 
-    번호 생략·주석 줄은 번호가 없고 세지 않는다. 표 칸 새 문장은 표의 번호를 따른다(표가 번호가 없으면 칸도 없다).
+    번호 생략·주석·글머리 기호 줄은 번호가 없고 세지 않는다. 표 칸 새 문장은 표의 번호를 따른다(표가 번호가 없으면 칸도 없다).
     입구 2 문서·단계 없는 WI 칸은 번호가 없다. 칸 제목은 세지 않고 칸 번호가 곧 그 번호다(제품 명세 §7.13 칸 제목 — 결과물 A의 No.).
     하위 칸이 있는 칸(has_sub_slots)에 직접 놓인 줄은 저장된 표시·깊이와 상관없이 번호가 없고 세지 않는다(사용자 결정 2026-11-17) —
     세면 5 칸의 첫 줄이 5.1이 되어 하위 칸 제목 "5.1 Safety"와 번호가 겹친다. 저장값은 건드리지 않아 하위 칸으로 옮기면 다시 센다.
@@ -543,6 +543,22 @@ def number_targets(index: _Index, labels: OutputLabels) -> dict[int, str]:
                 numbers[target.id] = number
                 for child in index.children.get(target.id, []):
                     numbers[child.id] = number
+    return numbers
+
+
+def number_bullets(index: _Index, labels: OutputLabels) -> dict[int, str]:
+    """글머리 기호 새 문장(과 그 표 칸) → 놓인 칸의 번호. 결과물 A·Excel의 No.에만 쓴다 — 줄 번호가 없어도 어느 절의 항목인지는 적는다.
+
+    결과물 C의 줄 번호(number_targets)에는 넣지 않는다(화면이 번호 자리에 기호를 그린다). 번호 없는 칸(입구 2 문서·단계 없는 WI)의 줄은 없다.
+    """
+    numbers: dict[int, str] = {}
+    for doc in index.doc_order:
+        for plan in _plan_sections(index, doc, labels):
+            if plan.number is None:
+                continue
+            for target in plan.targets:
+                if target.number_style == NUMBER_BULLET:
+                    numbers.update(dict.fromkeys((target.id, *(child.id for child in index.children.get(target.id, []))), plan.number))
     return numbers
 
 
@@ -1153,7 +1169,7 @@ def _split_new_targets(
 def _build_a_groups(index: _Index, labels: OutputLabels, people: Mapping[str, str]) -> list[list[ARow]]:
     """결과물 A의 묶음 — 의미 묶음 순서(output_rows)의 옛 문서 줄, 그 뒤 고아 번역, 끝에 입구 2 신규 묶음. 요약의 번역 숫자도 이것을 센다."""
     snap = index.snap
-    numbers = number_targets(index, labels)
+    numbers = {**number_bullets(index, labels), **number_targets(index, labels)}
 
     def get_number(target: TargetInfo) -> str:
         return numbers.get(target.id, "")

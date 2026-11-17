@@ -4,7 +4,7 @@
 // 고칠 수 있는 Order에서는 줄을 끌어 덩어리를 칸 안이나 같은 문서의 다른 칸으로 옮기고 좌우로 깊이를 바꾼다(lib/c-drop-model.ts) - 끄는 동안의 표시는 DOM으로만 한다.
 "use client";
 
-import { ArrowDown, ArrowUp, FileStack, IndentDecrease, IndentIncrease, Italic, List, ListOrdered, ListTree, MoreHorizontal, type LucideIcon } from "lucide-react";
+import { ArrowDown, ArrowUp, Dot, FileStack, IndentDecrease, IndentIncrease, Italic, List, ListOrdered, ListTree, MoreHorizontal, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
@@ -58,9 +58,10 @@ function readLangAttr(lang: string): string | undefined {
   return lang === "ko" || lang === "en" ? lang : undefined;
 }
 
-const MARK_ICONS: Record<NumberStyle, LucideIcon> = { numbered: ListOrdered, omitted: List, note: Italic };
+const MARK_ICONS: Record<NumberStyle, LucideIcon> = { numbered: ListOrdered, bullet: Dot, omitted: List, note: Italic };
 const MARK_KEYS: Record<NumberStyle, { label: string; tip: string }> = {
   numbered: { label: "outputs.markNumbered", tip: "outputs.markNumberedTip" },
+  bullet: { label: "outputs.markBullet", tip: "outputs.markBulletTip" },
   omitted: { label: "outputs.markOmitted", tip: "outputs.markOmittedTip" },
   note: { label: "outputs.markNote", tip: "outputs.markNoteTip" },
 };
@@ -156,7 +157,7 @@ function RowButtons({ items, item, onMove, indent, onMark, mark }: RowButtonsPro
     // data-no-drag - 단추 사이 틈을 눌러도 줄 끌기가 시작되지 않는다
     <span className="c-acts" data-no-drag data-testid={`output-c-acts-${item.target_id}`} style={{ fontFamily: "var(--font-ui)" }}>
       {onMark && (
-        // 눌림 단추 묶음(보통 셋) - 떠 있는 메뉴를 쓰지 않아 옆 글자를 덮지 않는다. 아이콘만 있으니 툴팁이 뜻을 알려 준다
+        // 눌림 단추 묶음(보통 넷) - 떠 있는 메뉴를 쓰지 않아 옆 글자를 덮지 않는다. 아이콘만 있으니 툴팁이 뜻을 알려 준다
         <span className="view-toggle c-mark" role="group" aria-label={t("outputs.markGroup")} data-testid={`output-c-mark-${item.target_id}`}>
           {mark.choices.map((style) => {
             const Icon = MARK_ICONS[style];
@@ -292,13 +293,19 @@ function RowMenu({ items, item, onMove, indent, onMark, mark }: RowButtonsProps)
   );
 }
 
-/** 줄 앞 섹션 번호 - 깊이만큼 들여 그린다. 번호가 없는 칸(입구 2 문서·단계 없는 WI)도 깊이는 그린다 */
+/** 줄 앞 섹션 번호 - 깊이만큼 들여 그린다. 번호가 없는 칸(입구 2 문서·단계 없는 WI)도 깊이는 그린다. 글머리 기호 줄은 번호 자리에 기호 */
 function NumberedLine({ item, depth, children }: { item: OutputCItem; depth: number; children: ReactNode }) {
+  const isBullet = item.number === null && item.number_style === "bullet";
   return (
-    <div className="c-line" data-numbered={item.number !== null ? "" : undefined} style={{ paddingLeft: `calc(${depth} * var(--c-indent))` }}>
+    <div className="c-line" data-numbered={item.number !== null ? "" : undefined} data-bullet={isBullet ? "" : undefined} style={{ paddingLeft: `calc(${depth} * var(--c-indent))` }}>
       {item.number !== null && (
         <span className="c-no" data-testid={`output-c-number-${item.target_id}`}>
           {item.number}
+        </span>
+      )}
+      {isBullet && (
+        <span className="c-no c-no-bullet" aria-hidden data-testid={`output-c-bullet-${item.target_id}`}>
+          •
         </span>
       )}
       <div className="min-w-0">{children}</div>
