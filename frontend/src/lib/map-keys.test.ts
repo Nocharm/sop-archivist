@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MAP } from "./map-fixture";
-import { getEntryFocus, getMapKeyAction, type MapFocus } from "./map-keys";
+import { getEntryFocus, getLaneFocus, getMapKeyAction, getTabStop, isMapMoveKey, type MapFocus, readLaneFocus } from "./map-keys";
 import { layoutMap, type MapLayout } from "./map-layout";
 import { buildMapView, DEFAULT_FILTERS } from "./map-model";
 
@@ -101,5 +101,30 @@ describe("map-keys", () => {
     const noSelfDocs = layoutMap(buildMapView({ ...MAP, nodes: MAP.nodes.filter((n) => n.bundle_id !== 12), edges: [] }, DEFAULT_FILTERS), new Set());
     expect(getEntryFocus(noSelfDocs, null)).toBe("lane:12");
     expect(getEntryFocus(layoutMap(buildMapView({ ...MAP, bundles: [], nodes: [], edges: [] }, DEFAULT_FILTERS), new Set()), null)).toBeNull();
+  });
+
+  it("keeps the single Tab stop on the last focused document or head while it is still drawn", () => {
+    expect(getTabStop(LAYOUT, "old:140", null)).toBe("old:140");
+    expect(getTabStop(LAYOUT, "old:140", "old:102")).toBe("old:140");
+    expect(getTabStop(LAYOUT, "lane:18", "old:102")).toBe("lane:18");
+    // 마지막 포커스가 없거나 더는 그려지지 않으면(접힘·거르기·다시 읽기) 고른 마디, 그다음 이 Bundle의 첫 마디
+    expect(getTabStop(LAYOUT, null, "old:102")).toBe("old:102");
+    expect(getTabStop(FOLDED, "old:160", "old:102")).toBe("old:102");
+    expect(getTabStop(FOLDED, "old:160", null)).toBe("old:101");
+    expect(getTabStop(FOLDED, "lane:18", null)).toBe("lane:18");
+    expect(getTabStop(LAYOUT, "lane:99", null)).toBe("old:101");
+    expect(getTabStop(LAYOUT, "old:999", null)).toBe("old:101");
+  });
+
+  it("knows the keys that move inside the map, so the canvas never scrolls on them", () => {
+    for (const key of ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"]) expect(isMapMoveKey(key)).toBe(true);
+    for (const key of ["Enter", " ", "Escape", "+", "0", "a", "PageDown"]) expect(isMapMoveKey(key)).toBe(false);
+  });
+
+  it("names a lane head's focus and reads the lane back, a document's focus is not a lane", () => {
+    expect(getLaneFocus("18")).toBe("lane:18");
+    expect(readLaneFocus(getLaneFocus("none"))).toBe("none");
+    expect(readLaneFocus("old:101")).toBeNull();
+    expect(press("Enter", getLaneFocus("18"))).toEqual({ kind: "toggle", laneKey: "18" });
   });
 });

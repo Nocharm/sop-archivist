@@ -78,6 +78,29 @@ export function buildMapView(data: RefMap, filters: MapFilters): MapView {
   return { scope: data.scope, selfId, bundles, nodes, edges, hasQuery: query !== "", matches };
 }
 
+/** 선의 자리 - 이 Bundle에서 나가면 out, 아니고 이 Bundle로 들어오면 in, 남끼리면 peer(지도가 선의 색·굵기를 가른다) */
+export type EdgeSide = "out" | "in" | "peer";
+
+/** 보이는 선마다(선 열쇠 → 자리) */
+export function getEdgeSides(view: MapView): Map<string, EdgeSide> {
+  const bundleOf = new Map(view.nodes.map((node) => [node.id, node.bundle_id]));
+  return new Map(
+    view.edges.map((edge) => [getEdgeKey(edge), bundleOf.get(edge.source) === view.selfId ? "out" : bundleOf.get(edge.target) === view.selfId ? "in" : "peer"]),
+  );
+}
+
+/** 보이는 지도에서 마디마다 가리키는 줄 수와 가리켜지는 줄 수 - 마디의 접근 이름에 쓴다 */
+export function countNodeLines(view: MapView): Map<string, { cites: number; citedBy: number }> {
+  const counts = new Map(view.nodes.map((node) => [node.id, { cites: 0, citedBy: 0 }]));
+  for (const edge of view.edges) {
+    const source = counts.get(edge.source);
+    const target = counts.get(edge.target);
+    if (source) source.cites += edge.lines;
+    if (target) target.citedBy += edge.lines;
+  }
+  return counts;
+}
+
 export interface MapRow {
   key: string;
   from: MapNode;
