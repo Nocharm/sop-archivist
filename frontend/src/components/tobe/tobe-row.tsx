@@ -159,7 +159,8 @@ export function ToBeRow({ doc, isChild, tobe, saved, written, equis, stepCount, 
             <span data-testid={`${prefix}-not-written`}>{t("tobe.notWritten")}</span>
           )}
           {doc.doc_type === "sop" && doc.is_equipment_sop && (
-            <span className="doc-meta-tag" data-testid={`${prefix}-equipment-tag`}>
+            // 좁아지면 글자가 숨고 아이콘만 남는다 - 그때도 무엇인지 알 수 있게 툴팁과 이름을 늘 단다
+            <span className="doc-meta-tag" role="img" aria-label={t("tobe.colEquipment")} data-tip={t("tobe.colEquipment")} data-testid={`${prefix}-equipment-tag`}>
               <Wrench size={12} strokeWidth={1.5} aria-hidden />
               <span className="meta-eq-text">{t("tobe.colEquipment")}</span>
             </span>

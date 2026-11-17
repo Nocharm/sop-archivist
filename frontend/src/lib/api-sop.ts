@@ -547,7 +547,7 @@ export interface PlaceCount {
   count: number;
 }
 
-/** 문장이나 칸 제목이 든 SOP 칸 - count는 결과물 C가 그 칸의 줄로 그리는 수, heading_count는 칸 제목에 이은 옛 제목 수 */
+/** 문장이나 칸 제목이 든 SOP 칸 - count는 그 칸의 최상위 항목 수(표 칸 문장·캡션 같은 딸린 줄은 뺀다. 결과물 C는 캡션 줄도 그리므로 C의 줄 수와 다를 수 있다), heading_count는 칸 제목에 이은 옛 제목 수 */
 export interface SlotCount {
   target_doc_id: number;
   slot_key: string;

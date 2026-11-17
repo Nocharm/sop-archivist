@@ -189,7 +189,7 @@ async def count_targets_by_step(session: AsyncSession, target_doc_ids: Collectio
 class SlotCountOut(BaseModel):
     target_doc_id: int
     slot_key: str
-    count: int  # 칸 항목 수 — 칸 새 문장(parent_target_id가 있는 줄)과 칸 제목은 빼고, 언어마다 따로, 상태를 가리지 않는다
+    count: int  # 칸 항목 수 — 딸린 줄(parent_target_id가 있는 줄: 표 칸 새 문장·캡션)과 칸 제목은 빼고, 언어마다 따로, 상태를 가리지 않는다
     heading_count: int  # 그 칸 제목에 이은 옛 제목 수
 
 
