@@ -1,5 +1,5 @@
 // SOP 화면 스모크(Playwright + 시스템 Chrome) - 묶음 목록, 개요, 단계 이동(레일·상단 탭), 배치 메뉴, 첫 페인트 전 설정.
-// 전제: backend/에서 reset_db → seed_sop_demo(합성 묶음 4개) 직후, backend 8777 + frontend 3777. 고친 값은 시나리오 안에서 되돌린다.
+// 전제: backend/에서 reset_db → seed_sop_demo(합성 묶음 4개 + 지도용 2개) 직후, backend 8777 + frontend 3777. 고친 값은 시나리오 안에서 되돌린다.
 // AI 나눔 확정 시나리오는 backend가 AI를 켜고 가짜 AI(FAKE_AI_SPLIT=1 node scripts/fake-ai-server.mjs)를 볼 때만 돈다 - 꺼져 있으면 건너뛴다.
 // PREPARE=1이면 "배정 화면 첫 진입 미리 분류" 시나리오 하나만 돈다(나머지는 건너뛴다). 전제: reset_db → seed_sop_demo 직후(시드는 AI_AUTO_PREPARE=false),
 // 가짜 AI(node scripts/fake-ai-server.mjs)를 보는 backend를 AI_ENABLED=true AI_AUTO_PREPARE=true로 띄운다. 이 backend에서는 작성자가 배정 화면에 들어갈 때마다
