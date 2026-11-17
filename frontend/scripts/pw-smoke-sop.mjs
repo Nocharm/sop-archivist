@@ -287,7 +287,7 @@ const waitFlash = (page, id) => page.waitForFunction((rowId) => document.querySe
 // --- 시나리오 ---
 
 let halfBundleId = null;
-// 방금 올린 합성 묶음("쪼개기 직후") - 옛 주소 단계가 찾아 두고 뒤 단계들이 쓴다
+// 방금 올린 합성 묶음("쪼개기 직후") - 첫 단계가 찾아 두고 뒤 단계들이 쓴다
 let freshBundleId = null;
 
 await runStep("bundle list", {}, async ({ page, takeShot }) => {
@@ -300,6 +300,9 @@ await runStep("bundle list", {}, async ({ page, takeShot }) => {
   check("role is shown", text.includes("Author"), text);
   const half = page.locator('[data-testid^="bundles-row-"]', { hasText: "분류 절반" });
   halfBundleId = Number((await half.getAttribute("data-testid")).replace("bundles-row-", ""));
+  // ONLY로 고른 단계(Assign 등)도 쓰니 이 단계에서 잡는다
+  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
+  freshBundleId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
   const listApi = await page.request.get(`${BASE}/api/bundles`, { headers: { "X-Dev-User": "qa.member" } });
   const listed = (await listApi.json()).find((bundle) => bundle.id === halfBundleId);
   check("half-classified row shows confirmed / total rows", (await getText(page, `bundles-confirmed-${halfBundleId}`)).includes(`/ ${listed.progress.total}`), String(listed.progress.total));
@@ -446,9 +449,6 @@ await runStep("documents list, inline edit and delete prompt", {}, async ({ page
 });
 
 await runStep("old Edit original addresses open the document in the one-document view", {}, async ({ page, takeShot }) => {
-  await page.goto(`${BASE}/`);
-  const fresh = page.locator('[data-testid^="bundles-row-"]', { hasText: "쪼개기 직후" });
-  freshBundleId = Number((await fresh.getAttribute("data-testid")).replace("bundles-row-", ""));
   const docs = await (await page.request.get(`${BASE}/api/bundles/${freshBundleId}/documents`, { headers: { "X-Dev-User": "qa.member" } })).json();
   const oldDocs = docs.filter((doc) => doc.side === "old" && doc.status === "ready");
   const newDoc = docs.find((doc) => doc.side === "new" && doc.status === "ready");
@@ -499,13 +499,17 @@ const readToBe = async (page, bundleId) => (await page.request.get(`${BASE}/api/
 await runStep("new documents: nested rows, N/A detail, each cell saves as you leave it", { allowConsoleErrors: true }, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
   await page.locator('[data-testid$="-row"][data-testid^="tobe-id-"]').first().waitFor({ timeout: T });
-  const codes = await page.locator('[data-testid$="-code"][data-testid^="tobe-id-"]').evaluateAll((els) => els.map((el) => el.value));
+  const codes = await page.locator('[data-testid$="-code-text"][data-testid^="tobe-id-"]').evaluateAll((els) => els.map((el) => (el.textContent ?? "").trim()));
   check("SOP first, its WIs under it", codes[0] === "SOP-CF" && codes.slice(1).every((code) => code.startsWith("WI-")), codes.join(","));
   check("there is no Save button and no draft bar", (await page.locator('[data-testid="tobe-save"], [data-testid="tobe-dirty"]').count()) === 0);
   const sopRow = page.locator('[data-testid$="-row"][data-testid^="tobe-id-"]').first();
   const sopKey = (await sopRow.getAttribute("data-testid")).replace("tobe-", "").replace("-row", "");
   await page.locator(`[data-testid="tobe-${sopKey}-toggle"]`).click();
-  check("troubleshooting is N/A with its reason", await page.locator(`[data-testid="tobe-${sopKey}-na-procedures.troubleshooting"]`).isChecked());
+  await wait(page, `tobe-${sopKey}-slots`);
+  check(
+    "troubleshooting is N/A with its reason",
+    (await page.locator(`[data-testid="tobe-${sopKey}-slot-procedures.troubleshooting"]`).getAttribute("data-state")) === "na" && (await getText(page, `tobe-${sopKey}-na-procedures.troubleshooting-text`)).trim() !== "",
+  );
   await takeShot("sop-tobe.png");
   const title = page.locator(`[data-testid="tobe-${sopKey}-title"]`);
   const before = await title.inputValue();
@@ -523,22 +527,24 @@ await runStep("new documents: nested rows, N/A detail, each cell saves as you le
   await page.keyboard.press("Tab");
   await settleToBe(page);
   check("leaving the cell saves it too", (await readTitle()) === before);
-  // N/A는 사유를 적어야 저장된다 - 체크만 하고 떠나면 거둔다
+  // N/A는 사유를 적어 Save N/A(Enter)로만 저장된다 - Mark N/A만으로는 아무것도 저장되지 않는다
   // 문장이 들지 않은 칸으로 한다(문장이 든 칸은 서버가 N/A를 거절한다)
-  const naBox = page.locator(`[data-testid="tobe-${sopKey}-na-document_relationships.appendices"]`);
-  const wasNa = await naBox.isChecked();
+  const appendices = `tobe-${sopKey}-na-document_relationships.appendices`;
+  const wasNa = (await page.locator(`[data-testid="tobe-${sopKey}-slot-document_relationships.appendices"]`).getAttribute("data-state")) === "na";
   if (!wasNa) {
-    await naBox.click();
-    await wait(page, `tobe-${sopKey}-na-document_relationships.appendices-reason`);
+    await page.locator(`[data-testid="tobe-${sopKey}-slot-document_relationships.appendices"]`).hover();
+    await page.locator(`[data-testid="${appendices}-mark"]`).click();
+    await wait(page, `${appendices}-reason`);
     const countNa = async () => (await readToBe(page, halfBundleId)).na_slots.filter((slot) => slot.slot_key === "document_relationships.appendices").length;
-    check("a checked N/A section is not saved before its reason", (await countNa()) === 0);
-    await page.locator(`[data-testid="tobe-${sopKey}-na-document_relationships.appendices-reason"]`).fill("Smoke: covered elsewhere");
+    check("Mark N/A saves nothing before its reason", (await countNa()) === 0);
+    await page.locator(`[data-testid="${appendices}-reason"]`).fill("Smoke: covered elsewhere");
     await page.keyboard.press("Enter");
     await settleToBe(page);
     check("the reason saves the N/A section", (await countNa()) === 1);
-    await naBox.click();
+    await page.locator(`[data-testid="tobe-${sopKey}-slot-document_relationships.appendices"]`).hover();
+    await page.locator(`[data-testid="${appendices}-restore"]`).click();
     await settleToBe(page);
-    check("unchecking removes it at once", (await countNa()) === 0);
+    check("Restore removes it at once", (await countNa()) === 0);
   }
   // 번호로 더하기 - Enter면 줄이 저장된다. 종류와 상위 SOP는 앱이 고르고 사람이 고친다
   const rowsBefore = (await readToBe(page, halfBundleId)).docs.length;
@@ -552,7 +558,9 @@ await runStep("new documents: nested rows, N/A detail, each cell saves as you le
   await page.keyboard.press("Enter");
   await page.locator('[data-testid="toast-error"]').first().waitFor({ timeout: T });
   check("a number already on the list is refused in words", (await getText(page, "toast-error")).includes("Already on the list"));
-  // 번호를 고쳐도 같은 줄이다(줄 id가 그대로)
+  // 번호를 고쳐도 같은 줄이다(줄 id가 그대로) - 번호 칸은 줄을 펼친 곳에 있다
+  await page.locator(`[data-testid="tobe-id-${added.id}-toggle"]`).click();
+  await wait(page, `tobe-id-${added.id}-code`);
   await page.locator(`[data-testid="tobe-id-${added.id}-code"]`).fill("WI-98");
   await page.keyboard.press("Enter");
   await settleToBe(page);
@@ -568,10 +576,11 @@ await runStep("new documents: nested rows, N/A detail, each cell saves as you le
   await page.keyboard.press("Enter");
   await settleToBe(page);
   const marked = (await readToBe(page, halfBundleId)).docs.find((doc) => doc.code === "SOP-97");
+  await page.locator(`[data-testid="tobe-id-${marked.id}-toggle"]`).click();
+  await wait(page, `tobe-id-${marked.id}-equipment`);
   await page.locator(`[data-testid="tobe-id-${marked.id}-equipment"]`).click();
   await settleToBe(page);
-  await page.locator(`[data-testid="tobe-id-${marked.id}-type"]`).click();
-  await page.locator(`[data-testid="tobe-id-${marked.id}-type-option-wi"]`).click();
+  await page.locator(`[data-testid="tobe-id-${marked.id}-type-wi"]`).click();
   await settleToBe(page);
   const markedAfter = (await readToBe(page, halfBundleId)).docs.find((doc) => doc.id === marked.id);
   check("an equipment SOP turns into a WI and the mark goes off with it", markedAfter.doc_type === "wi" && markedAfter.is_equipment_sop === false, JSON.stringify({ type: markedAfter.doc_type, equipment: markedAfter.is_equipment_sop }));
@@ -629,6 +638,827 @@ await runStep("new documents: removing a step keeps the other numbers", {}, asyn
   await removeSecond.click();
   await settleToBe(page);
   check("restored the step list", (await readNumbers()).join(",") === before.join(","));
+});
+
+// N/A 칸 상태 표(Documents 화면 설계 §8) - 칸마다 상태를 먼저 보이고, N/A는 사유와 함께 Save N/A로만 저장된다. 편집기는 화면에 하나이고 접거나 떠나도 사유가 남는다.
+// 거절 응답(409·500)이 콘솔에 찍혀 콘솔 오류를 허용한다. 만든 N/A는 끝에 API로도 지워 처음 수로 되돌린다
+// lib/api-sop.ts SLOT_KEYS와 같은 순서 - 칸 번호도 이 고정 자리에서 센다(1…7, 하위 칸 5.1)
+const SLOT_ORDER = ["purpose", "scope", "definitions", "responsibilities", "general_requirements", "general_requirements.safety", "general_requirements.operation", "procedures", "procedures.procedure", "procedures.electronic_record_control", "procedures.troubleshooting", "procedures.maintenance", "document_relationships", "document_relationships.attachments", "document_relationships.appendices"];
+const slotParent = (key) => (key.includes(".") ? key.slice(0, key.indexOf(".")) : null);
+const slotNumber = (key) => {
+  const tops = SLOT_ORDER.filter((item) => !item.includes("."));
+  const parent = slotParent(key);
+  if (parent === null) return String(tops.indexOf(key) + 1);
+  return `${tops.indexOf(parent) + 1}.${SLOT_ORDER.filter((item) => slotParent(item) === parent).indexOf(key) + 1}`;
+};
+// 일부러 거절당하는 저장(409 · 500)은 따로 아래 단계에 둔다 - 이 단계는 콘솔 오류를 허용하지 않는다
+await runStep("new documents: the section table shows each section's state and saves N/A only with a reason", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const start = await readToBe(page, halfBundleId);
+  const naBefore = start.na_slots.length;
+  const sop = start.docs.find((doc) => doc.doc_type === "sop");
+  const prefix = `tobe-id-${sop.id}`;
+  // 다른 SOP 줄 - 접힌 줄에 적던 사유가 있을 때 그 줄의 Mark N/A를 누른다(끝에 지운다)
+  await page.request.post(`${BASE}/api/bundles/${halfBundleId}/tobe/docs`, { headers: { ...headers, "Content-Type": "application/json" }, data: { code: "SOP-95", doc_type: "sop", parent_code: null } });
+  const otherSop = (await readToBe(page, halfBundleId)).docs.find((doc) => doc.code === "SOP-95");
+  // …/na/…로 가는 요청 모두(메서드 · 주소)
+  const naCalls = [];
+  page.on("request", (request) => {
+    if (/\/tobe\/docs\/\d+\/na\//.test(request.url())) naCalls.push(`${request.method()} ${decodeURIComponent(new URL(request.url()).pathname)}`);
+  });
+  const countCalls = (method, key) => naCalls.filter((line) => line.startsWith(`${method} `) && (key === undefined || line.endsWith(`/na/${key}`))).length;
+  const slot = (key) => page.locator(`[data-testid="${prefix}-slot-${key}"]`);
+  const readState = (key) => slot(key).getAttribute("data-state");
+  const stateText = async (key) => ((await page.locator(`[data-testid="${prefix}-slot-${key}-state"]`).textContent()) ?? "").trim();
+  const editor = (key) => page.locator(`[data-testid="${prefix}-na-${key}-editor"]`);
+  const reason = (key) => page.locator(`[data-testid="${prefix}-na-${key}-reason"]`);
+  const button = (key, kind) => page.locator(`[data-testid="${prefix}-na-${key}-${kind}"]`);
+  const hasMark = async (key) => (await button(key, "mark").count()) === 1;
+  // 숨는 단추는 opacity만 바꾸고 전환이 있다 - 그 값이 될 때까지 기다린다
+  const waitOpacity = (testId, value) =>
+    page.waitForFunction(({ id, v }) => {
+      const el = document.querySelector(`[data-testid="${id}"]`);
+      return el !== null && Number(getComputedStyle(el).opacity) === v;
+    }, { id: testId, v: value }, { timeout: 2000 }).then(() => true, () => false);
+  const focusedTestId = () => page.evaluate(() => document.activeElement?.dataset.testid ?? null);
+  // 줄을 펼치고 펼침 전환이 끝날 때까지 - 전환 중에는 접힘 틀(overflow hidden)이 내용보다 낮아, 줄에 올리는 스크롤이 페이지 대신 그 틀을 굴린다
+  const openRow = async (rowPrefix, inner) => {
+    await page.locator(`[data-testid="${rowPrefix}-toggle"]`).click();
+    await wait(page, inner);
+    await page.waitForFunction((id) => {
+      const fold = document.querySelector(`[data-testid="${id}"]`)?.closest(".fold-inner");
+      return fold !== null && fold !== undefined && fold.clientHeight >= fold.scrollHeight;
+    }, inner, { timeout: T });
+  };
+  try {
+    check("the row is the equipment SOP SOP-CF", sop.code === "SOP-CF" && sop.is_equipment_sop, sop.code);
+    await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
+    await openRow(prefix, `${prefix}-slots`);
+    // 1. 15줄 - 머리의 수는 줄들의 상태에서 센 것과 같다
+    const rows = await page.locator(`[data-testid="${prefix}-slots"] [data-slot]`).evaluateAll((els) => els.map((el) => [el.dataset.slot, el.dataset.state]));
+    check("the table has fifteen sections in the fixed order", JSON.stringify(rows.map(([key]) => key)) === JSON.stringify(SLOT_ORDER), rows.map(([key]) => key).join(","));
+    const tally = (...kinds) => rows.filter(([, state]) => kinds.includes(state)).length;
+    const summary = (await getText(page, `${prefix}-slots-summary`)).trim();
+    check("the head counts what the rows say", summary === `${tally("filled", "sub")} with sentences · ${tally("empty")} empty · ${tally("na", "covered")} N/A`, summary);
+    const decide = tally("decide");
+    const decidePill = page.locator(`[data-testid="${prefix}-slots-decide"]`);
+    check("the to-decide pill counts the sections to decide", decide > 0 && ((await decidePill.textContent()) ?? "").trim() === `${decide} to decide`, `${decide} ${await decidePill.count()}`);
+    // 2. 문장이 든 칸 - 수를 적고 단추가 없다. 자기 수가 없는 상위 칸은 "하위 칸에 있음"
+    const counts = (start.slot_counts ?? []).filter((row) => row.target_doc_id === sop.id && row.count > 0);
+    const countOf = new Map(counts.map((row) => [row.slot_key, row.count]));
+    check("the seed has sections with sentences", counts.length > 0);
+    for (const { slot_key: key, count } of counts) {
+      const state = await readState(key);
+      const text = await stateText(key);
+      const buttons = await slot(key).locator("button").count();
+      check(`${key} shows its sentences and has no button`, state === "filled" && text === (count === 1 ? "1 sentence" : `${count} sentences`) && buttons === 0, `${state} ${text} ${buttons}`);
+      const parent = slotParent(key);
+      if (parent !== null && !countOf.has(parent)) check(`${parent} holds sentences in its sub-sections`, (await readState(parent)) === "sub", await readState(parent));
+    }
+    // 3. N/A인 칸 - 사유와 Edit reason · Restore
+    const seedReason = start.na_slots.find((na) => na.code === sop.code && na.slot_key === "procedures.troubleshooting")?.reason ?? "";
+    const troubleText = await getText(page, `${prefix}-na-procedures.troubleshooting-text`);
+    check(
+      "troubleshooting is N/A with its reason, and can be edited or restored",
+      (await readState("procedures.troubleshooting")) === "na" && seedReason !== "" && troubleText.includes(seedReason.slice(0, 20)) && (await button("procedures.troubleshooting", "edit").count()) === 1 && (await button("procedures.troubleshooting", "restore").count()) === 1,
+      troubleText,
+    );
+    // 4. 정할 칸은 Mark N/A가 늘 보이고, 빈 칸은 줄에 올릴 때만
+    await page.mouse.move(0, 0);
+    for (const key of ["procedures.electronic_record_control", "procedures.maintenance"].filter((item) => !countOf.has(item))) {
+      check(`${key} is to decide with Mark N/A always shown`, (await readState(key)) === "decide" && (await stateText(key)) === "Fill or mark N/A" && (await waitOpacity(`${prefix}-na-${key}-mark`, 1)), `${await readState(key)} ${await stateText(key)}`);
+    }
+    // P: 하위 칸이 모두 비었고 Mark N/A가 그려진 상위 칸, E: P의 빈 하위 칸(끝의 것)
+    const emptyKeys = rows.filter(([, state]) => state === "empty").map(([key]) => key);
+    let parentKey = null;
+    for (const key of SLOT_ORDER) {
+      const children = SLOT_ORDER.filter((child) => slotParent(child) === key);
+      if (children.length > 0 && children.every((child) => emptyKeys.includes(child)) && (await hasMark(key))) {
+        parentKey = key;
+        break;
+      }
+    }
+    const children = SLOT_ORDER.filter((child) => slotParent(child) === parentKey);
+    const leafKey = children.at(-1);
+    const siblingKey = children[0];
+    check("the seed has an empty parent with empty sub-sections", parentKey !== null && leafKey !== siblingKey && (await hasMark(leafKey)) && (await hasMark(siblingKey)), String(parentKey));
+    const leafMark = `${prefix}-na-${leafKey}-mark`;
+    check("an empty section's Mark N/A is hidden until its row is hovered", await waitOpacity(leafMark, 0));
+    await slot(leafKey).hover();
+    check("hovering the row shows Mark N/A", await waitOpacity(leafMark, 1));
+    // 5. 사유 없이는 저장되지 않는다 - 칸을 떠나도 편집기는 그대로
+    await button(leafKey, "mark").click();
+    await editor(leafKey).waitFor({ timeout: T });
+    check("Mark N/A opens the editor with the focus in it and Save off", (await focusedTestId()) === `${prefix}-na-${leafKey}-reason` && (await button(leafKey, "save").isDisabled()), await focusedTestId());
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(300);
+    check("Enter with no reason sends nothing", countCalls("PUT") === 0, naCalls.join(" | "));
+    await page.locator('[data-testid="tobe-section"] h2').click();
+    check("leaving the editor keeps it open", (await editor(leafKey).count()) === 1);
+    // 6. 한 번에 하나 - 적는 중에 다른 칸을 열면 열린 것으로 돌아간다
+    await reason(leafKey).fill("Smoke: covered elsewhere");
+    let otherKey = null;
+    for (const key of emptyKeys) {
+      if (key !== parentKey && !children.includes(key) && (await hasMark(key))) {
+        otherKey = key;
+        break;
+      }
+    }
+    await slot(otherKey).hover();
+    await button(otherKey, "mark").click();
+    await page.waitForFunction((id) => document.activeElement?.dataset.testid === id, `${prefix}-na-${leafKey}-reason`, { timeout: 2000 }).then(() => undefined, () => undefined);
+    check(
+      "another Mark N/A keeps the one editor and asks to finish first",
+      (await editor(leafKey).count()) === 1 && (await editor(otherKey).count()) === 0 && (await getText(page, `${prefix}-na-${leafKey}-finish-first`)).trim() === "Save or cancel this reason first.",
+      otherKey,
+    );
+    check("the focus goes back to the open editor", (await focusedTestId()) === `${prefix}-na-${leafKey}-reason`, await focusedTestId());
+    // 7. 접어도 남는다
+    await page.locator(`[data-testid="${prefix}-toggle"]`).click();
+    await wait(page, `${prefix}-unsaved`);
+    check("a folded row with a reason being written says so", (await getText(page, `${prefix}-unsaved`)).trim() === "Unsaved N/A reason");
+    await openRow(prefix, `${prefix}-na-${leafKey}-reason`);
+    check("unfolding brings the reason back", (await reason(leafKey).inputValue()) === "Smoke: covered elsewhere");
+    // 7b. 접힌 줄에 적던 사유가 있는 채 다른 SOP 줄의 Mark N/A - 그 줄이 다시 펼쳐지고 편집기로 돌아간다(설계 §8). 아무것도 보내지 않는다
+    await page.locator(`[data-testid="${prefix}-toggle"]`).click();
+    await wait(page, `${prefix}-unsaved`);
+    const otherPrefix = `tobe-id-${otherSop.id}`;
+    await openRow(otherPrefix, `${otherPrefix}-slots`);
+    await page.locator(`[data-testid="${otherPrefix}-slot-purpose"]`).hover();
+    await page.locator(`[data-testid="${otherPrefix}-na-purpose-mark"]`).click();
+    await page.waitForFunction((id) => document.activeElement?.dataset.testid === id, `${prefix}-na-${leafKey}-reason`, { timeout: T }).then(() => undefined, () => undefined);
+    check(
+      "Mark N/A in another SOP row reopens the folded row and asks to finish first",
+      (await page.locator(`[data-testid="${prefix}-toggle"]`).getAttribute("aria-expanded")) === "true" &&
+        (await page.locator(`[data-testid="${prefix}-na-${leafKey}-finish-first"]`).isVisible()) &&
+        (await page.locator(`[data-testid="${otherPrefix}-na-purpose-editor"]`).count()) === 0,
+    );
+    check("the focus is in the folded row's reason, which kept its text, and nothing was sent", (await focusedTestId()) === `${prefix}-na-${leafKey}-reason` && (await reason(leafKey).inputValue()) === "Smoke: covered elsewhere" && countCalls("PUT") === 0, await focusedTestId());
+    await page.locator(`[data-testid="${otherPrefix}-toggle"]`).click();
+    await page.locator(`[data-testid="${otherPrefix}-panel"]`).waitFor({ state: "detached", timeout: T });
+    // 8. 떠나기 전에 묻는다
+    await page.locator('[data-testid="stage-nav-assign"]').click();
+    await wait(page, "tobe-leave");
+    check("leaving with a reason being written asks first and stays", new URL(page.url()).pathname.endsWith("/documents"), page.url());
+    await page.locator('[data-testid="tobe-leave-close"]').click();
+    await page.locator('[data-testid="tobe-leave"]').waitFor({ state: "detached", timeout: T });
+    // 9. 저장은 한 번 - Enter를 연달아 두 번
+    await reason(leafKey).focus();
+    const putDone = page.waitForResponse((response) => response.request().method() === "PUT" && decodeURIComponent(response.url()).endsWith(`/na/${leafKey}`), { timeout: T });
+    // 두 번을 한 작업 안에서 보낸다 - 둘째가 첫 저장의 다시 그리기 전에 닿는다(따로 누르면 기계가 바쁠 때만 그렇게 된다)
+    await page.evaluate(() => {
+      for (let i = 0; i < 2; i += 1) document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true }));
+    });
+    const putResponse = await putDone;
+    await settleToBe(page);
+    await editor(leafKey).waitFor({ state: "detached", timeout: T });
+    check("Enter twice saves once", countCalls("PUT", leafKey) === 1 && putResponse.status() === 200, naCalls.join(" | "));
+    check("the saved section turns N/A", (await readState(leafKey)) === "na", await readState(leafKey));
+    check("after saving, the focus is on that section's Edit reason", (await focusedTestId()) === `${prefix}-na-${leafKey}-edit`, await focusedTestId());
+    check("the server holds one more N/A", (await readToBe(page, halfBundleId)).na_slots.length === naBefore + 1);
+    await page.reload();
+    await openRow(prefix, `${prefix}-slots`);
+    check("it is still N/A after a reload", (await readState(leafKey)) === "na");
+    // 10. 쓴 사유 칩과 Esc
+    await slot(siblingKey).hover();
+    await button(siblingKey, "mark").click();
+    await editor(siblingKey).waitFor({ timeout: T });
+    const chipText = async (index) => ((await button(siblingKey, `chip-${index}`).textContent()) ?? "").trim();
+    check("the used reasons come as chips, most used first", (await chipText(0)) === seedReason.trim() && (await chipText(1)) === "Smoke: covered elsewhere", `${await chipText(0)} | ${await chipText(1)}`);
+    await button(siblingKey, "chip-1").click();
+    check("a chip puts its reason in the box", (await reason(siblingKey).inputValue()) === "Smoke: covered elsewhere");
+    const putsBefore = countCalls("PUT");
+    await reason(siblingKey).press("Escape");
+    check(
+      "Esc closes the editor, keeps the row open and saves nothing",
+      (await editor(siblingKey).count()) === 0 && (await page.locator(`[data-testid="${prefix}-toggle"]`).getAttribute("aria-expanded")) === "true" && countCalls("PUT") === putsBefore,
+    );
+    check("after Esc, the focus is on that section's Mark N/A", (await focusedTestId()) === `${prefix}-na-${siblingKey}-mark`, await focusedTestId());
+    // Esc는 편집기 어디에서나 - 칩에 포커스가 있어도 닫힌다
+    await button(siblingKey, "mark").click();
+    await editor(siblingKey).waitFor({ timeout: T });
+    await button(siblingKey, "chip-0").focus();
+    await page.keyboard.press("Escape");
+    check("Esc from a chip closes the editor too", (await editor(siblingKey).count()) === 0 && (await focusedTestId()) === `${prefix}-na-${siblingKey}-mark`, await focusedTestId());
+    // 11. 상위 칸이 덮는다 - 따로 N/A인 하위 칸은 제 사유 그대로
+    await slot(parentKey).hover();
+    await button(parentKey, "mark").click();
+    await reason(parentKey).fill("Smoke: no relationships");
+    await button(parentKey, "save").click();
+    await editor(parentKey).waitFor({ state: "detached", timeout: T });
+    await settleToBe(page);
+    const parentName = ((await slot(parentKey).locator(".slot-name").textContent()) ?? "").trim();
+    const coveredText = (await getText(page, `${prefix}-na-${siblingKey}-text`)).trim();
+    check("an N/A parent covers its sub-sections", (await readState(siblingKey)) === "covered" && coveredText === `Covered by ${slotNumber(parentKey)} ${parentName}`, coveredText);
+    check("a sub-section with its own N/A keeps it", (await readState(leafKey)) === "na");
+    // 12. 고치고 되돌린다
+    await slot(parentKey).hover();
+    await button(parentKey, "edit").click();
+    await editor(parentKey).waitFor({ timeout: T });
+    check("Edit reason opens the saved reason", (await reason(parentKey).inputValue()) === "Smoke: no relationships");
+    await reason(parentKey).fill("Smoke: no relationships, edited");
+    await reason(parentKey).press("Enter");
+    await editor(parentKey).waitFor({ state: "detached", timeout: T });
+    await settleToBe(page);
+    const edited = (await readToBe(page, halfBundleId)).na_slots.find((na) => na.code === sop.code && na.slot_key === parentKey);
+    check("the edited reason is saved", edited?.reason === "Smoke: no relationships, edited", edited?.reason);
+    await slot(parentKey).hover();
+    const deleteDone = page.waitForResponse((response) => response.request().method() === "DELETE" && decodeURIComponent(response.url()).endsWith(`/na/${parentKey}`), { timeout: T });
+    await button(parentKey, "restore").click();
+    const deleted = await deleteDone;
+    const restoredToast = page.locator('[data-testid="toast-ok"]', { hasText: "Restored" }).last();
+    await restoredToast.waitFor({ timeout: T });
+    const toastText = ((await restoredToast.textContent()) ?? "").trim();
+    check("Restore removes it at once and says so", deleted.status() === 200 && toastText.includes(`Restored ${slotNumber(parentKey)} ${parentName}`), toastText);
+    await settleToBe(page);
+    check("the covered sub-section is empty again", (await readState(siblingKey)) === "empty", await readState(siblingKey));
+    await slot(leafKey).hover();
+    // 두 번 누름을 한 작업 안에서 보낸다 - 지우기는 한 번만 간다
+    await button(leafKey, "restore").evaluate((el) => {
+      el.click();
+      el.click();
+    });
+    await settleToBe(page);
+    await page.waitForFunction((id) => document.querySelector(`[data-testid="${id}"]`)?.dataset.state === "empty", `${prefix}-slot-${leafKey}`, { timeout: T });
+    check("restoring the sub-section brings the count back", (await readToBe(page, halfBundleId)).na_slots.length === naBefore);
+    check("Restore pressed twice in one go removes once", countCalls("DELETE", leafKey) === 1, naCalls.join(" | "));
+    // WI 줄을 펼치면 단계만 있고 칸 표는 없다
+    const wi = start.docs.find((doc) => doc.doc_type === "wi");
+    await openRow(`tobe-id-${wi.id}`, `tobe-id-${wi.id}-steps`);
+    check("a WI row opens its steps and no section table", (await page.locator(`[data-testid="tobe-id-${wi.id}-slots"]`).count()) === 0);
+  } finally {
+    // 만든 N/A를 API로도 지운다(중간에 멈췄어도 처음 수로)
+    const now = await readToBe(page, halfBundleId);
+    const startKeys = new Set(start.na_slots.map((na) => `${na.code}|${na.slot_key}`));
+    for (const na of now.na_slots) {
+      const doc = now.docs.find((item) => item.code === na.code);
+      if (!startKeys.has(`${na.code}|${na.slot_key}`) && doc) await page.request.delete(`${BASE}/api/bundles/${halfBundleId}/tobe/docs/${doc.id}/na/${encodeURIComponent(na.slot_key)}`, { headers });
+    }
+    check("the N/A count is back where it started", (await readToBe(page, halfBundleId)).na_slots.length === naBefore);
+    if (otherSop) await page.request.delete(`${BASE}/api/bundles/${halfBundleId}/tobe/docs/${otherSop.id}`, { headers });
+    check("the extra SOP is gone again", (await readToBe(page, halfBundleId)).docs.length === start.docs.length);
+  }
+});
+
+// 거절된 N/A 저장 - 409 slot_has_targets(그 사이 문장이 들어왔다)는 둘 곳이 없어 편집기를 닫고, 그 밖의 실패는 적던 사유를 남긴다.
+// 거절 응답이 콘솔에 찍혀 이 단계만 콘솔 오류를 허용한다
+await runStep("new documents: a refused N/A save closes the editor, any other failure keeps the reason", { allowConsoleErrors: true }, async ({ page }) => {
+  const start = await readToBe(page, halfBundleId);
+  const sop = start.docs.find((doc) => doc.doc_type === "sop");
+  const prefix = `tobe-id-${sop.id}`;
+  await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
+  await page.locator(`[data-testid="${prefix}-toggle"]`).click();
+  await wait(page, `${prefix}-slots`);
+  await page.waitForFunction((id) => {
+    const fold = document.querySelector(`[data-testid="${id}"]`)?.closest(".fold-inner");
+    return fold !== null && fold !== undefined && fold.clientHeight >= fold.scrollHeight;
+  }, `${prefix}-slots`, { timeout: T });
+  // Mark N/A가 그려진 빈 칸 하나
+  const key = await page.locator(`[data-testid="${prefix}-slots"] [data-slot][data-state="empty"]`).evaluateAll((rows, p) => rows.map((row) => row.dataset.slot).find((k) => document.querySelector(`[data-testid="${p}-na-${k}-mark"]`) !== null), prefix);
+  check("the seed has an empty section to mark", Boolean(key), String(key));
+  const slot = page.locator(`[data-testid="${prefix}-slot-${key}"]`);
+  const button = (kind) => page.locator(`[data-testid="${prefix}-na-${key}-${kind}"]`);
+  const editor = page.locator(`[data-testid="${prefix}-na-${key}-editor"]`);
+  const reason = page.locator(`[data-testid="${prefix}-na-${key}-reason"]`);
+  const countErrors = () => page.locator('[data-testid="toast-error"]').count();
+  const waitNewError = async (before) => {
+    await page.waitForFunction((n) => document.querySelectorAll('[data-testid="toast-error"]').length > n, before, { timeout: T });
+    return ((await page.locator('[data-testid="toast-error"]').last().textContent()) ?? "").trim();
+  };
+  let answer = 409;
+  await page.route("**/tobe/docs/*/na/*", (route) =>
+    route.request().method() === "PUT"
+      ? route.fulfill({ status: answer, contentType: "application/json", body: JSON.stringify(answer === 409 ? { detail: { code: "slot_has_targets", slots: [] } } : { detail: "Synthetic server error" }) })
+      : route.continue(),
+  );
+  try {
+    let errorsBefore = await countErrors();
+    await slot.hover();
+    await button("mark").click();
+    await reason.fill("Smoke: refused");
+    await reason.press("Enter");
+    const conflictText = await waitNewError(errorsBefore);
+    await settleToBe(page);
+    check("a 409 says why and closes the editor", conflictText.includes("A section with new sentences cannot be N/A.") && (await editor.count()) === 0, conflictText);
+    answer = 500;
+    errorsBefore = await countErrors();
+    await slot.hover();
+    await button("mark").click();
+    await reason.fill("Smoke: kept");
+    await reason.press("Enter");
+    await waitNewError(errorsBefore);
+    await settleToBe(page);
+    check("any other failure keeps the editor and the reason", (await editor.count()) === 1 && (await reason.inputValue()) === "Smoke: kept");
+    await button("cancel").click();
+    check("Cancel closes it and puts the focus on Mark N/A", (await editor.count()) === 0 && (await page.evaluate(() => document.activeElement?.dataset.testid ?? null)) === `${prefix}-na-${key}-mark`);
+  } finally {
+    await page.unroute("**/tobe/docs/*/na/*");
+    check("no N/A was saved", (await readToBe(page, halfBundleId)).na_slots.length === start.na_slots.length);
+  }
+});
+
+// New 목록의 두 줄 줄(Documents 화면 설계 §4·§6) - 줄은 글자로 읽고, 누르거나 Enter로 펼친 곳에서 고친다. 줄 끝 단추는 올리거나 포커스가 들어올 때만 보이고 좁은 틀에서는 ⋯ 메뉴 하나다
+const TOBE_ROWS = '[data-testid="tobe-list"] [data-testid^="tobe-id-"][data-testid$="-row"]';
+// API 목록의 보이는 순서(SOP마다 그 아래 WI, 부모 없는 WI는 끝) - 화면의 orderDocs와 따로 센다
+const orderToBe = (docs) => {
+  const sops = docs.filter((doc) => doc.doc_type === "sop");
+  const sopCodes = new Set(sops.map((doc) => doc.code));
+  return [
+    ...sops.flatMap((sop) => [{ doc: sop, child: false }, ...docs.filter((doc) => doc.doc_type === "wi" && doc.parent_code === sop.code).map((doc) => ({ doc, child: true }))]),
+    ...docs.filter((doc) => doc.doc_type === "wi" && !sopCodes.has(doc.parent_code)).map((doc) => ({ doc, child: false })),
+  ];
+};
+// 숨는 단추는 opacity만 바꾸고 전환이 있다 - 그 값이 될 때까지 기다린다
+const waitOpacityOf = (page, testId, value) =>
+  page.waitForFunction(({ id, v }) => {
+    const el = document.querySelector(`[data-testid="${id}"]`);
+    return el !== null && Number(getComputedStyle(el).opacity) === v;
+  }, { id: testId, v: value }, { timeout: 2000 }).then(() => true, () => false);
+const blurAll = (page) => page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
+
+await runStep("new documents: rows read in two lines, a click or Enter opens a row, row-end buttons show on hover or focus", {}, async ({ page }) => {
+  const tobe = await readToBe(page, halfBundleId);
+  const deletes = [];
+  page.on("request", (request) => {
+    if (request.method() === "DELETE" && /\/tobe\/docs\/\d+$/.test(new URL(request.url()).pathname)) deletes.push(request.url());
+  });
+  await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
+  await page.locator(TOBE_ROWS).first().waitFor({ timeout: T });
+  // 1. 표가 아니라 줄 상자 - 줄 수, 머리의 수, 순서, 종류와 들임
+  const expected = orderToBe(tobe.docs);
+  check("the New list is not a table", (await page.locator('[data-testid="tobe-list"] table').count()) === 0);
+  check("one row per document, and the head counts them", (await page.locator(TOBE_ROWS).count()) === tobe.docs.length && (await getText(page, "tobe-count")).trim() === String(tobe.docs.length), await getText(page, "tobe-count").catch(() => "no count"));
+  const shown = await page.locator('[data-testid="tobe-list"] [data-testid$="-code-text"]').evaluateAll((els) => els.map((el) => (el.textContent ?? "").trim()));
+  check("the numbers read in order, each SOP with its WIs under it", JSON.stringify(shown) === JSON.stringify(expected.map(({ doc }) => doc.code)), shown.join(","));
+  const kinds = await page.locator(TOBE_ROWS).evaluateAll((els) => els.map((el) => `${el.dataset.kind}${el.hasAttribute("data-child") ? "+child" : ""}`));
+  check("SOP rows are sop, the WIs under them are nested wi rows", JSON.stringify(kinds) === JSON.stringify(expected.map(({ doc, child }) => `${doc.doc_type}${child ? "+child" : ""}`)), kinds.join(","));
+  // 2. 줄에는 고치는 칸이 없다
+  check("a closed row has no field to edit", (await page.locator('[data-testid="tobe-list"] .doc-row :is(input, select)').count()) === 0);
+  // 3. 펼치기 - 제목 글을 누르면 열리고 다시 누르면 닫힌다. Enter로 열고 Space로 닫는다(쪽은 그대로)
+  const sop = expected[0].doc;
+  const sopPrefix = `tobe-id-${sop.id}`;
+  const panel = (prefix) => page.locator(`[data-testid="${prefix}-panel"]`);
+  const toggleOf = (prefix) => page.locator(`[data-testid="${prefix}-toggle"]`);
+  await page.locator(`[data-testid="${sopPrefix}-title-text"]`).click();
+  await panel(sopPrefix).waitFor({ timeout: T });
+  check("clicking the row's title opens it", (await panel(sopPrefix).isVisible()) && (await toggleOf(sopPrefix).getAttribute("aria-expanded")) === "true");
+  await page.locator(`[data-testid="${sopPrefix}-title-text"]`).click();
+  await panel(sopPrefix).waitFor({ state: "detached", timeout: T });
+  check("clicking it again closes it", (await toggleOf(sopPrefix).getAttribute("aria-expanded")) === "false");
+  const sopRow = page.locator(`[data-testid="${sopPrefix}-row"]`);
+  await sopRow.focus();
+  const scrollBefore = await page.evaluate(() => window.scrollY);
+  await page.keyboard.press("Enter");
+  await panel(sopPrefix).waitFor({ timeout: T });
+  check("Enter on the row opens it", (await toggleOf(sopPrefix).getAttribute("aria-expanded")) === "true");
+  await page.keyboard.press(" ");
+  await panel(sopPrefix).waitFor({ state: "detached", timeout: T });
+  check("Space closes it and does not scroll the page", (await toggleOf(sopPrefix).getAttribute("aria-expanded")) === "false" && (await page.evaluate(() => window.scrollY)) === scrollBefore);
+  const second = expected[1].doc;
+  await toggleOf(sopPrefix).click();
+  await toggleOf(`tobe-id-${second.id}`).click();
+  await panel(`tobe-id-${second.id}`).waitFor({ timeout: T });
+  check("several rows can stay open", (await page.locator('[data-testid="tobe-list"] [data-testid$="-panel"]').count()) === 2);
+  await toggleOf(sopPrefix).click();
+  await toggleOf(`tobe-id-${second.id}`).click();
+  await page.locator('[data-testid="tobe-list"] [data-testid$="-panel"]').first().waitFor({ state: "detached", timeout: T });
+  // 4. 글자를 긁은 것은 펼침이 아니다
+  const titleBox = await getBox(page, `${sopPrefix}-title-text`);
+  await page.mouse.move(titleBox.x + 4, titleBox.y + titleBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(titleBox.x + 64, titleBox.y + titleBox.height / 2, { steps: 6 });
+  await page.mouse.up();
+  const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+  await page.waitForTimeout(400);
+  check("selecting the title's text does not open the row", selected !== "" && (await page.locator('[data-testid="tobe-list"] [data-testid$="-panel"]').count()) === 0, JSON.stringify(selected));
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
+  // 5. 줄 끝 단추 - 평소 숨고, 올리거나 Tab으로 들어오면 보인다. 오른쪽 끝이 줄마다 같다
+  await blurAll(page);
+  await page.mouse.move(0, 0);
+  check("row-end buttons are hidden at rest", await waitOpacityOf(page, `${sopPrefix}-acts`, 0));
+  await sopRow.hover();
+  check("hovering the row shows them", await waitOpacityOf(page, `${sopPrefix}-acts`, 1));
+  await page.mouse.move(0, 0);
+  check("leaving the row hides them again", await waitOpacityOf(page, `${sopPrefix}-acts`, 0));
+  await sopRow.focus();
+  for (let i = 0; i < 8 && (await page.evaluate(() => document.activeElement?.dataset.testid ?? "")) !== `${sopPrefix}-edit`; i += 1) await page.keyboard.press("Tab");
+  check("Tab reaches Edit and shows the buttons", (await page.evaluate(() => document.activeElement?.dataset.testid ?? "")) === `${sopPrefix}-edit` && (await waitOpacityOf(page, `${sopPrefix}-acts`, 1)));
+  const rights = await page.locator('[data-testid="tobe-list"] [data-testid$="-acts"]').evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().right)));
+  check("every row's buttons end at the same right edge", rights.length === tobe.docs.length && Math.max(...rights) - Math.min(...rights) <= 1, rights.join(","));
+  await page.keyboard.press("Enter");
+  await panel(sopPrefix).waitFor({ timeout: T });
+  check("Edit opens the row", (await toggleOf(sopPrefix).getAttribute("aria-expanded")) === "true");
+  const focusInPanel = () =>
+    page
+      .waitForFunction((id) => {
+        const active = document.activeElement;
+        return active instanceof HTMLInputElement && document.querySelector(`[data-testid="${id}"]`)?.contains(active) === true;
+      }, `${sopPrefix}-panel`, { timeout: 2000 })
+      .then(() => true, () => false);
+  check("Edit puts the focus in the expanded row's first field", await focusInPanel(), await page.evaluate(() => document.activeElement?.dataset.testid ?? document.activeElement?.tagName));
+  // Edit는 펼친다 - 이미 펼친 줄에서 눌러도 접지 않는다
+  await sopRow.hover();
+  await page.locator(`[data-testid="${sopPrefix}-edit"]`).click();
+  await page.waitForTimeout(400);
+  check("Edit on an open row keeps it open", (await toggleOf(sopPrefix).getAttribute("aria-expanded")) === "true" && (await panel(sopPrefix).isVisible()) && (await focusInPanel()));
+  // 화살표 단추는 아이콘만이라 올리면 뜻이 뜬다 - 줄의 제목 글을 덮지 않는다. 줄 끝 단추에 올렸을 때는 그 단추의 툴팁만 뜬다
+  await page.mouse.move(0, 0);
+  await toggleOf(sopPrefix).hover();
+  const chevTip = page.locator('[role="tooltip"]', { hasText: "Sections and steps" });
+  await chevTip.waitFor({ timeout: T });
+  const chevTipBox = await chevTip.boundingBox();
+  const sopTitleBox = await getBox(page, `${sopPrefix}-title-text`);
+  const overlapsTitle = chevTipBox.x < sopTitleBox.x + sopTitleBox.width && sopTitleBox.x < chevTipBox.x + chevTipBox.width && chevTipBox.y < sopTitleBox.y + sopTitleBox.height && sopTitleBox.y < chevTipBox.y + chevTipBox.height;
+  check("hovering the chevron names it and does not cover the title", !overlapsTitle, JSON.stringify({ chevTipBox, sopTitleBox }));
+  await page.mouse.move(0, 0);
+  await page.locator(`[data-testid="${sopPrefix}-edit"]`).hover({ force: true });
+  await page.locator('[role="tooltip"]', { hasText: "Edit" }).waitFor({ timeout: T });
+  check("hovering a row-end button shows only that button's tip", (await page.locator('[role="tooltip"]').count()) === 1, String(await page.locator('[role="tooltip"]').allTextContents()));
+  await toggleOf(sopPrefix).click();
+  await panel(sopPrefix).waitFor({ state: "detached", timeout: T });
+  // 6. 뺄 수 없는 줄은 Remove가 꺼지고 올리면 까닭이 뜬다 - 누름으로 지우기 요청이 가지 않는다
+  const readTip = async (testId) => {
+    await page.mouse.move(0, 0);
+    await page.locator(`[data-testid="${testId}"]`).hover({ force: true });
+    const tip = page.locator('[role="tooltip"]').last();
+    await tip.waitFor({ timeout: T });
+    return ((await tip.textContent()) ?? "").trim();
+  };
+  // 시드의 SOP는 문장도 있어 그 까닭이 먼저다 - 문장 없이 WI만 거느린 SOP를 API로 잠깐 더한다(끝에 지운다)
+  const apiHeaders = { "X-Dev-User": "qa.member", "Content-Type": "application/json" };
+  const addDoc = (data) => page.request.post(`${BASE}/api/bundles/${halfBundleId}/tobe/docs`, { headers: apiHeaders, data });
+  await addDoc({ code: "SOP-96", doc_type: "sop", parent_code: null });
+  await addDoc({ code: "WI-96", doc_type: "wi", parent_code: "SOP-96" });
+  const withExtra = await readToBe(page, halfBundleId);
+  const extraSop = withExtra.docs.find((doc) => doc.code === "SOP-96");
+  const extraWi = withExtra.docs.find((doc) => doc.code === "WI-96");
+  try {
+    await page.reload();
+    await page.locator(`[data-testid="tobe-id-${extraSop.id}-row"]`).waitFor({ timeout: T });
+    const parentRemove = page.locator(`[data-testid="tobe-id-${extraSop.id}-remove"]`);
+    check("an SOP with WIs under it cannot be removed, and says why", (await parentRemove.isDisabled()) && (await readTip(`tobe-id-${extraSop.id}-remove`)) === "WIs sit under this SOP. Delete them first.");
+    const counted = new Set((tobe.sentence_counts ?? []).map((row) => row.target_doc_id));
+    const busyWi = tobe.docs.find((doc) => doc.doc_type === "wi" && doc.entrance === "assign" && counted.has(doc.id));
+    check("the seed has a WI that holds sentences", busyWi !== undefined);
+    const busyRemove = page.locator(`[data-testid="tobe-id-${busyWi.id}-remove"]`);
+    check("a WI with sentences cannot be removed, and says why", (await busyRemove.isDisabled()) && (await readTip(`tobe-id-${busyWi.id}-remove`)) === "Sentences are assigned here. Clear them first.");
+    await parentRemove.click({ force: true });
+    await busyRemove.click({ force: true });
+    await page.waitForTimeout(300);
+    check("pressing a disabled Remove sends no delete", deletes.length === 0 && (await readToBe(page, halfBundleId)).docs.length === withExtra.docs.length, deletes.join(" | "));
+  } finally {
+    for (const doc of [extraWi, extraSop]) if (doc) await page.request.delete(`${BASE}/api/bundles/${halfBundleId}/tobe/docs/${doc.id}`, { headers: apiHeaders });
+    check("the extra SOP and WI are gone again", (await readToBe(page, halfBundleId)).docs.length === tobe.docs.length);
+  }
+  await page.reload();
+  await sopRow.waitFor({ timeout: T });
+  // 7. 좁은 틀 - 묶음 대신 ⋯ 하나가 같은 일을 메뉴로 한다. 앱 틀은 1120px 아래로 줄지 않아(.app min-width) 창을 줄여서는 목록 틀이 문턱(840px)보다 좁아지지 않는다 -
+  //    목록 틀의 폭만 문턱 아래로 묶어 컨테이너 질의를 본다(문턱이 바뀌면 이 폭도 맞춘다)
+  const narrow = await page.addStyleTag({ content: '[data-testid="tobe-list"] { max-width: 820px; }' });
+  try {
+    await page.mouse.move(0, 0);
+    check("a narrow list hides the button group", (await sopRow.evaluate((row) => getComputedStyle(row.querySelector(".doc-acts")).display)) === "none");
+    await sopRow.hover();
+    check("hovering shows the ⋯ button", await waitOpacityOf(page, `${sopPrefix}-more`, 1));
+    await page.locator(`[data-testid="${sopPrefix}-more"]`).click();
+    await wait(page, `${sopPrefix}-more-menu`);
+    check(
+      "the menu holds Edit and Remove",
+      (await page.locator(`[data-testid="${sopPrefix}-more-menu"] [data-testid="${sopPrefix}-edit-item"]`).count()) === 1 && (await page.locator(`[data-testid="${sopPrefix}-more-menu"] [data-testid="${sopPrefix}-remove-item"]`).count()) === 1,
+    );
+    await page.mouse.move(0, 0);
+    check("the ⋯ button stays while its menu is open", await waitOpacityOf(page, `${sopPrefix}-more`, 1));
+    await page.keyboard.press("Escape");
+    await page.locator(`[data-testid="${sopPrefix}-more-menu"]`).waitFor({ state: "detached", timeout: T });
+    check("Esc closes the menu", true);
+    await sopRow.hover();
+    await page.locator(`[data-testid="${sopPrefix}-more"]`).click();
+    await wait(page, `${sopPrefix}-more-menu`);
+    await page.locator('[data-testid="tobe-section"] h2').click();
+    await page.locator(`[data-testid="${sopPrefix}-more-menu"]`).waitFor({ state: "detached", timeout: T });
+    check("a click outside closes the menu", true);
+    await sopRow.hover();
+    await page.locator(`[data-testid="${sopPrefix}-more"]`).click();
+    await page.locator(`[data-testid="${sopPrefix}-edit-item"]`).click();
+    await panel(sopPrefix).waitFor({ timeout: T });
+    check("Edit in the menu opens the row", (await toggleOf(sopPrefix).getAttribute("aria-expanded")) === "true");
+    await toggleOf(sopPrefix).click();
+    await panel(sopPrefix).waitFor({ state: "detached", timeout: T });
+  } finally {
+    await narrow.evaluate((tag) => tag.remove());
+  }
+  // 8. 펼친 곳에서 고친다 - WI의 상위 SOP와 종류, 쓴 파일이 붙은 줄은 번호와 종류가 잠긴다
+  const wi = expected.find(({ doc }) => doc.doc_type === "wi" && doc.entrance === "assign").doc;
+  const wiPrefix = `tobe-id-${wi.id}`;
+  await toggleOf(wiPrefix).click();
+  await wait(page, `${wiPrefix}-parent`);
+  check("an open WI shows its parent SOP and its type", (await getText(page, `${wiPrefix}-parent`)).includes(wi.parent_code) && (await page.locator(`[data-testid="${wiPrefix}-type-wi"]`).getAttribute("aria-pressed")) === "true");
+  const writtenDoc = tobe.docs.find((doc) => doc.entrance === "match");
+  if (writtenDoc) {
+    const writtenPrefix = `tobe-id-${writtenDoc.id}`;
+    await toggleOf(writtenPrefix).click();
+    await wait(page, `${writtenPrefix}-code`);
+    check(
+      "a row with a written file keeps its number and type locked",
+      (await page.locator(`[data-testid="${writtenPrefix}-code"]`).isDisabled()) && (await page.locator(`[data-testid="${writtenPrefix}-type-sop"]`).isDisabled()) && (await page.locator(`[data-testid="${writtenPrefix}-type-wi"]`).isDisabled()),
+    );
+  }
+});
+
+// 읽기 전용(검토자 · 검토 대기 묶음) - 줄은 펼쳐지고 값은 글자로만 보인다. 고치는 칸 · 줄 끝 단추 · 칸 표의 단추 · 등록 칸이 없다
+await runStep("new documents: a reviewer reads the rows and the section table, nothing edits", { devUser: "qa.lead" }, async ({ page }) => {
+  await page.goto(`${BASE}/`);
+  await wait(page, "bundles-list");
+  const review = page.locator('[data-testid^="bundles-row-"]', { hasText: "검토 대기" });
+  const reviewId = Number((await review.getAttribute("data-testid")).replace("bundles-row-", ""));
+  const tobe = (await (await page.request.get(`${BASE}/api/bundles/${reviewId}/tobe`, { headers: { "X-Dev-User": "qa.lead" } })).json());
+  await page.goto(`${BASE}/bundles/${reviewId}/documents`);
+  await page.locator(TOBE_ROWS).first().waitFor({ timeout: T });
+  const sop = tobe.docs.find((doc) => doc.doc_type === "sop");
+  const wi = tobe.docs.find((doc) => doc.doc_type === "wi" && doc.parent_code === sop.code);
+  const sopPrefix = `tobe-id-${sop.id}`;
+  const wiPrefix = `tobe-id-${wi.id}`;
+  await page.locator(`[data-testid="${sopPrefix}-title-text"]`).click();
+  await wait(page, `${sopPrefix}-slots`);
+  await page.locator(`[data-testid="${wiPrefix}-row"]`).click();
+  await wait(page, `${wiPrefix}-code`);
+  check("rows open for a reviewer", (await page.locator(`[data-testid="${sopPrefix}-toggle"]`).getAttribute("aria-expanded")) === "true" && (await page.locator(`[data-testid="${wiPrefix}-toggle"]`).getAttribute("aria-expanded")) === "true");
+  const list = page.locator('[data-testid="tobe-list"]');
+  check("no field to edit anywhere in the list", (await list.locator('input, select, [role="checkbox"]').count()) === 0);
+  check("no row-end buttons", (await list.locator('[data-testid$="-acts"], [data-testid$="-more"], [data-testid$="-remove"], [data-testid$="-edit"]').count()) === 0);
+  check("the section table has no N/A buttons", (await page.locator(`[data-testid="${sopPrefix}-slots"]`).locator('button[data-testid$="-mark"], button[data-testid$="-edit"], button[data-testid$="-restore"]').count()) === 0);
+  check("no add field", (await page.locator('[data-testid="tobe-add-row"]').count()) === 0);
+  check(
+    "number, title, type and parent read as text",
+    (await getText(page, `${wiPrefix}-code`)).trim() === wi.code && (await getText(page, `${wiPrefix}-title`)).trim() === wi.title.trim() && (await getText(page, `${wiPrefix}-type`)).trim() === "WI" && (await getText(page, `${wiPrefix}-parent`)).trim() === sop.code,
+    `${await getText(page, `${wiPrefix}-code`)} | ${await getText(page, `${wiPrefix}-type`)} | ${await getText(page, `${wiPrefix}-parent`)}`,
+  );
+});
+
+// 등록 칸과 줄의 칸 상태 요약(Documents 화면 설계 §6) - 번호 칸은 목록 머리 바로 아래에서 무엇을 더할지 미리 적고, SOP 줄은 칸 15개의 막대와 요약 글, 단계는 문장 수를 보인다
+await runStep("new documents: the add field says what it will add, a row shows its sections at a glance", {}, async ({ page }) => {
+  const tobe = await readToBe(page, halfBundleId);
+  const apiHeaders = { "X-Dev-User": "qa.member" };
+  await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
+  await page.locator(TOBE_ROWS).first().waitFor({ timeout: T });
+  // 1. 등록 칸의 자리 - 목록 머리 바로 아래, 첫 줄 위
+  const addBox = await getBox(page, "tobe-add-row");
+  const firstRowBox = await page.locator(TOBE_ROWS).first().boundingBox();
+  check("the add field sits above the first row", addBox !== null && firstRowBox !== null && addBox.y < firstRowBox.y, `${addBox?.y} vs ${firstRowBox?.y}`);
+  // 2. 미리 보기 - 적는 동안 무엇이 더해질지(종류 · 어느 SOP 아래), 이미 있는 번호면 Add가 꺼진다
+  const input = page.locator('[data-testid="tobe-add-code"]');
+  const readPreview = async () => ((await page.locator('[data-testid="tobe-add-preview"]').textContent()) ?? "").trim();
+  const previewIs = (text) =>
+    page.waitForFunction((want) => (document.querySelector('[data-testid="tobe-add-preview"]')?.textContent ?? "").trim() === want, text, { timeout: 2000 }).then(() => true, () => false);
+  check("the preview speaks politely to screen readers", (await page.locator('[data-testid="tobe-add-preview"]').getAttribute("aria-live")) === "polite");
+  await input.fill("WI-77");
+  check("a WI number says which SOP it goes under", await previewIs("Adds WI WI-77 under SOP-CF"), await readPreview());
+  await input.fill("SOP-77");
+  check("an SOP number says it adds an SOP", await previewIs("Adds SOP SOP-77"), await readPreview());
+  const firstWi = tobe.docs.find((doc) => doc.doc_type === "wi");
+  await input.fill(firstWi.code);
+  check("a number on the list says so", await previewIs(`${firstWi.code} is already on the list`), await readPreview());
+  check("and Add is off", await page.locator('[data-testid="tobe-add"]').isDisabled());
+  await input.fill("A-1, B-2");
+  check("several numbers are counted", await previewIs("Adds 2 documents"), await readPreview());
+  await input.fill("");
+  check("an empty field shows the hint", await previewIs("Type a number and press Enter. Paste several lines to add them all."), await readPreview());
+  // 3. 더하면 그 줄이 SOP-CF 아래에 생겨 잠깐 강조되고 화면 안에 있다. 포커스는 비운 칸에 남는다
+  let added = null;
+  try {
+    await input.fill("WI-77");
+    await Promise.all([page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/tobe/docs"), { timeout: T }), input.press("Enter")]);
+    added = (await readToBe(page, halfBundleId)).docs.find((doc) => doc.code === "WI-77");
+    const addedRow = page.locator(`[data-testid="tobe-id-${added.id}-row"]`);
+    await addedRow.waitFor({ timeout: T });
+    const flashed = await page
+      .waitForFunction((id) => document.querySelector(`[data-testid="${id}"]`)?.hasAttribute("data-flash") === true, `tobe-id-${added.id}-row`, { timeout: 1500 })
+      .then(() => true, () => false);
+    check("the added row flashes", flashed);
+    const shown = await page.locator('[data-testid="tobe-list"] [data-testid$="-code-text"]').evaluateAll((els) => els.map((el) => (el.textContent ?? "").trim()));
+    const sopAt = shown.indexOf("SOP-CF");
+    const addedAt = shown.indexOf("WI-77");
+    const between = shown.slice(sopAt + 1, addedAt);
+    check(
+      "it sits under SOP-CF as a nested WI",
+      added.parent_code === "SOP-CF" && sopAt >= 0 && addedAt > sopAt && (await addedRow.getAttribute("data-child")) !== null && between.every((code) => tobe.docs.find((doc) => doc.code === code)?.doc_type === "wi"),
+      shown.join(","),
+    );
+    const inView = await page
+      .waitForFunction((id) => {
+        const rect = document.querySelector(`[data-testid="${id}"]`)?.getBoundingClientRect();
+        return rect !== undefined && rect.top >= 0 && rect.bottom <= window.innerHeight;
+      }, `tobe-id-${added.id}-row`, { timeout: 2000 })
+      .then(() => true, () => false);
+    check("the added row is on screen", inView);
+    check("the focus stays in the emptied field", (await page.evaluate(() => document.activeElement?.dataset.testid ?? "")) === "tobe-add-code" && (await input.inputValue()) === "");
+  } finally {
+    if (added) await page.request.delete(`${BASE}/api/bundles/${halfBundleId}/tobe/docs/${added.id}`, { headers: apiHeaders });
+  }
+  // Enter 두 번을 한 작업 안에서 보내도 한 번만 더한다(둘째가 첫 저장의 다시 그리기 전에 닿는다)
+  const posts = [];
+  const countPost = (request) => {
+    if (request.method() === "POST" && new URL(request.url()).pathname.endsWith("/tobe/docs")) posts.push(request.url());
+  };
+  page.on("request", countPost);
+  try {
+    await input.fill("SOP-78");
+    await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/tobe/docs"), { timeout: T }),
+      input.evaluate((el) => {
+        for (let i = 0; i < 2; i += 1) el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true }));
+      }),
+    ]);
+    await settleToBe(page);
+    check("Enter twice in the add field adds once", posts.length === 1, String(posts.length));
+  } finally {
+    page.off("request", countPost);
+    const extra = (await readToBe(page, halfBundleId)).docs.find((doc) => doc.code === "SOP-78");
+    if (extra) await page.request.delete(`${BASE}/api/bundles/${halfBundleId}/tobe/docs/${extra.id}`, { headers: apiHeaders });
+  }
+  await page.reload();
+  await page.locator(TOBE_ROWS).first().waitFor({ timeout: T });
+  // 4. 칸 상태 막대 - 장식(aria-hidden)이고 눈금 15개가 펼친 표의 칸 상태와 같은 순서다. 눈금에 올리면 칸 이름이 뜬다
+  const sop = tobe.docs.find((doc) => doc.code === "SOP-CF");
+  const sopPrefix = `tobe-id-${sop.id}`;
+  const bar = page.locator(`[data-testid="${sopPrefix}-bar"]`);
+  check("the bar is decoration for screen readers", (await bar.getAttribute("aria-hidden")) === "true");
+  const ticks = await bar.locator("i").evaluateAll((els) => els.map((el) => el.dataset.state));
+  await page.locator(`[data-testid="${sopPrefix}-toggle"]`).click();
+  await wait(page, `${sopPrefix}-slots`);
+  const states = await page.locator(`[data-testid="${sopPrefix}-slots"] [data-slot]`).evaluateAll((els) => els.map((el) => el.dataset.state));
+  check("fifteen ticks in the section table's order and states", ticks.length === 15 && JSON.stringify(ticks) === JSON.stringify(states), `${ticks.join(",")} | ${states.join(",")}`);
+  const troubleshootingAt = await page.locator(`[data-testid="${sopPrefix}-slots"] [data-slot]`).evaluateAll((els) => els.findIndex((el) => el.dataset.slot === "procedures.troubleshooting"));
+  await page.mouse.move(0, 0);
+  await bar.locator("i").nth(troubleshootingAt).hover();
+  const tip = page.locator('[data-testid="paper-tip"]');
+  await tip.waitFor({ timeout: T });
+  check("hovering a tick names the section", ((await tip.textContent()) ?? "").includes("6.3 Troubleshooting"), await tip.textContent());
+  // 5. 요약 글 - 표에서 센 수와 같다
+  const filled = states.filter((state) => state === "filled" || state === "sub").length;
+  const na = states.filter((state) => state === "na" || state === "covered").length;
+  const decide = states.filter((state) => state === "decide").length;
+  const textOf = async (testId) => ((await page.locator(`[data-testid="${testId}"]`).textContent()) ?? "").trim();
+  check("the row counts the filled sections", (await textOf(`${sopPrefix}-filled`)) === `${filled} of 15 sections filled`, await textOf(`${sopPrefix}-filled`));
+  const naSummary = await textOf(`${sopPrefix}-na-summary`);
+  check("the row counts N/A and names the first one", naSummary.includes(`N/A ${na}`) && naSummary.includes("6.3 Troubleshooting"), naSummary);
+  const decideCount = await page.locator(`[data-testid="${sopPrefix}-decide"]`).count();
+  check("the row counts the sections to decide", decide === 0 ? decideCount === 0 : (await textOf(`${sopPrefix}-decide`)) === `${decide} to decide`, `${decide} | ${decideCount}`);
+  // 첫 N/A 칸 이름 - 다 보이면 툴팁이 없고, 말줄임으로 줄었으면 전체 이름이 툴팁으로 뜬다(줄인 폭은 주입한다)
+  const naName = page.locator(`[data-testid="${sopPrefix}-na-name"]`);
+  const nameTip = page.locator('[role="tooltip"]').filter({ hasText: "6.3 Troubleshooting" });
+  await naName.hover();
+  await page.waitForTimeout(400);
+  check("a first N/A name shown in full has no tooltip", (await nameTip.count()) === 0);
+  await page.mouse.move(0, 0);
+  const narrowName = await page.addStyleTag({ content: `[data-testid="${sopPrefix}-na-name"] { max-width: 40px; }` });
+  await naName.focus();
+  check("a cut first N/A name shows the whole name on focus", await nameTip.first().waitFor({ timeout: 2000 }).then(() => true, () => false));
+  await narrowName.evaluate((el) => el.remove());
+  // 줄어드는 순서 - 딸린 정보 줄을 조금씩 좁히면 첫 N/A 칸 이름 → Equipment SOP 글자 → 막대 차례로 빠지고, 다 빠지기 전에는 잘리지 않는다
+  const metaLine = page.locator(`[data-testid="${sopPrefix}-row"] .doc-meta`);
+  const stages = [];
+  for (let width = 640; width >= 200; width -= 8) {
+    const pin = await page.addStyleTag({ content: `[data-testid="${sopPrefix}-row"] .doc-meta { max-width: ${width}px; }` });
+    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+    stages.push(
+      await metaLine.evaluate((meta, at) => {
+        const shown = (selector) => {
+          const el = meta.querySelector(selector);
+          return el !== null && getComputedStyle(el).display !== "none";
+        };
+        const label = meta.querySelector(".meta-na-label");
+        return { at, fit: Number(meta.dataset.fit), name: shown(".meta-na-name"), cut: label !== null && label.scrollWidth > label.clientWidth, eq: shown(".meta-eq-text"), bar: shown(".slot-bar"), over: meta.scrollWidth > meta.clientWidth };
+      }, width),
+    );
+    await pin.evaluate((el) => el.remove());
+  }
+  // 이름이 먼저 말줄임으로 줄고(그동안 나머지는 그대로), Equipment SOP 글자가 빠졌으면 이름도 빠졌고, 막대가 빠졌으면 둘 다 빠졌다
+  const inOrder = stages.every((s) => (s.eq || !s.name) && (s.bar || (!s.eq && !s.name)));
+  const reached = [stages.some((s) => s.name && s.cut && s.eq && s.bar), stages.some((s) => !s.name && !s.eq && s.bar), stages.some((s) => !s.bar)];
+  check("a narrowing row drops the first N/A name, then the Equipment SOP text, then the bar", inOrder && reached.every(Boolean), JSON.stringify(stages.filter((s, i) => i === 0 || JSON.stringify({ ...s, at: 0 }) !== JSON.stringify({ ...stages[i - 1], at: 0 }))));
+  check("nothing is cut off before the last stage", stages.every((s) => s.fit === 4 || !s.over), JSON.stringify(stages.filter((s) => s.over)));
+  await page.locator(`[data-testid="${sopPrefix}-toggle"]`).click();
+  await page.locator(`[data-testid="${sopPrefix}-panel"]`).waitFor({ state: "detached", timeout: T });
+  // 6. 단계의 문장 수 - 문장이 든 단계에는 수가 적히고 Remove step이 없다
+  const stepCounts = (tobe.sentence_counts ?? []).filter((row) => row.wi_step !== null && row.count > 0);
+  check("the seed has a WI step that holds sentences", stepCounts.length > 0);
+  const busy = stepCounts[0];
+  const busyWi = tobe.docs.find((doc) => doc.id === busy.target_doc_id);
+  const busyPrefix = `tobe-id-${busyWi.id}`;
+  const busySteps = tobe.wi_steps.filter((step) => step.code === busyWi.code);
+  check("the WI row counts its steps", (await textOf(`${busyPrefix}-steps-count`)) === `Steps ${busySteps.length}`, await textOf(`${busyPrefix}-steps-count`));
+  await page.locator(`[data-testid="${busyPrefix}-toggle"]`).click();
+  await wait(page, `${busyPrefix}-steps`);
+  check(
+    "a step with sentences shows how many and has no Remove step",
+    (await textOf(`${busyPrefix}-step-${busy.wi_step}-count`)) === (busy.count === 1 ? "1 sentence" : `${busy.count} sentences`) && (await page.locator(`[data-testid="${busyPrefix}-remove-step-${busy.wi_step}"]`).count()) === 0,
+    await textOf(`${busyPrefix}-step-${busy.wi_step}-count`).catch(() => "no count"),
+  );
+  const counted = new Set(stepCounts.map((row) => `${row.target_doc_id}|${row.wi_step}`));
+  const quietStep = tobe.wi_steps.find((step) => {
+    const doc = tobe.docs.find((item) => item.code === step.code);
+    return doc !== undefined && doc.id === busyWi.id && !counted.has(`${doc.id}|${step.step_no}`);
+  });
+  if (quietStep) {
+    check(
+      "a step without sentences has no count and keeps Remove step",
+      (await page.locator(`[data-testid="${busyPrefix}-step-${quietStep.step_no}-count"]`).count()) === 0 && (await page.locator(`[data-testid="${busyPrefix}-remove-step-${quietStep.step_no}"]`).count()) === 1,
+    );
+  } else check("the busy WI has a step without sentences", false, busySteps.map((step) => step.step_no).join(","));
+  // 7. 부모를 못 찾은 WI(있어서는 안 되는 자료) - 목록 끝 No parent SOP 묶음에 서고, 펼친 곳의 Parent SOP로 고칠 수 있다
+  const ghost = tobe.docs.find((doc) => doc.doc_type === "wi" && doc.entrance === "assign");
+  const tobeRoute = "**/api/bundles/*/tobe";
+  await page.route(tobeRoute, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const response = await route.fetch();
+    const body = await response.json();
+    body.docs = body.docs.map((doc) => (doc.id === ghost.id ? { ...doc, parent_code: "GHOST" } : doc));
+    return route.fulfill({ response, json: body });
+  });
+  try {
+    await page.reload();
+    await wait(page, "tobe-loose");
+    check("a WI without its parent sits under No parent SOP", (await textOf("tobe-loose")).includes("No parent SOP"), await textOf("tobe-loose"));
+    const last = await page.locator(TOBE_ROWS).last().getAttribute("data-testid");
+    check("that row is the last on the list", last === `tobe-id-${ghost.id}-row`, last);
+    check("it carries a No parent SOP pill", (await page.locator(`[data-testid="tobe-id-${ghost.id}-no-parent"]`).count()) === 1);
+    await page.locator(`[data-testid="tobe-id-${ghost.id}-toggle"]`).click();
+    await wait(page, `tobe-id-${ghost.id}-parent`);
+    check("opening it offers Parent SOP to fix it", (await page.locator(`[data-testid="tobe-id-${ghost.id}-parent"]`).count()) === 1);
+    // 고칠 수 있는 고르기 칸이고 목록의 SOP를 모두 보인다
+    const parentPick = page.locator(`[data-testid="tobe-id-${ghost.id}-parent"]`);
+    const isPicker = (await parentPick.getAttribute("role")) === "combobox" && (await parentPick.isEnabled());
+    await parentPick.click();
+    await wait(page, `tobe-id-${ghost.id}-parent-list`);
+    // 항목 값은 줄 키(id-<줄 id>), 글은 번호
+    const sopDocs = tobe.docs.filter((doc) => doc.doc_type === "sop");
+    const offered = await Promise.all(
+      sopDocs.map(async (doc) => {
+        const option = page.locator(`[data-testid="tobe-id-${ghost.id}-parent-option-id-${doc.id}"]`);
+        return (await option.count()) === 1 && ((await option.textContent()) ?? "").includes(doc.code) ? 1 : 0;
+      }),
+    );
+    check("Parent SOP is an editable pick list of the SOPs", isPicker && offered.every((count) => count === 1), `${isPicker} ${offered.join(",")}`);
+    await page.keyboard.press("Escape");
+  } finally {
+    await page.unroute(tobeRoute);
+  }
+});
+
+// 다시 받기가 저장 도중에 시작해(다른 칸의 거절) 저장 앞의 목록을 읽고 저장 뒤에 오면, 저장한 값이 되돌아 보였다 - 저장이 끝날 때 다시 받는 중이면 한 번 더 받는다.
+// 제목 저장(PATCH)은 1.5초 붙잡고, 그동안 다른 줄의 번호를 겹치게 고쳐 거절시킨다. 그 거절의 다시 받기(GET)는 바로 읽되 제목 저장의 응답 뒤까지 붙잡는다
+await runStep("new documents: a reload that starts during a save does not undo the save", { allowConsoleErrors: true }, async ({ page }) => {
+  const tobe = await readToBe(page, halfBundleId);
+  const sop = tobe.docs.find((doc) => doc.code === "SOP-CF");
+  const wi = tobe.docs.find((doc) => doc.doc_type === "wi" && doc.entrance === "assign");
+  const sopPrefix = `tobe-id-${sop.id}`;
+  const wiPrefix = `tobe-id-${wi.id}`;
+  await page.goto(`${BASE}/bundles/${halfBundleId}/documents`);
+  await page.locator(TOBE_ROWS).first().waitFor({ timeout: T });
+  await page.locator(`[data-testid="${sopPrefix}-toggle"]`).click();
+  await page.locator(`[data-testid="${wiPrefix}-toggle"]`).click();
+  await wait(page, `${wiPrefix}-code`);
+  const patchRoute = `**/api/bundles/${halfBundleId}/tobe/docs/${sop.id}`;
+  await page.route(patchRoute, async (route) => {
+    if (route.request().method() !== "PATCH") return route.continue();
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    return route.continue();
+  });
+  // 제목 저장의 응답이 화면에 닿고 조금 뒤 - 붙잡은 다시 받기를 그때 놓는다
+  const titleDone = page
+    .waitForResponse((response) => response.request().method() === "PATCH" && new URL(response.url()).pathname.endsWith(`/tobe/docs/${sop.id}`), { timeout: T })
+    .then(() => new Promise((resolve) => setTimeout(resolve, 300)));
+  let heldGets = 0;
+  const getRoute = `**/api/bundles/${halfBundleId}/tobe`;
+  await page.route(getRoute, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const response = await route.fetch();
+    heldGets += 1;
+    await titleDone;
+    return route.fulfill({ response });
+  });
+  const newTitle = "Smoke: saved during a reload";
+  try {
+    await page.locator(`[data-testid="${sopPrefix}-title"]`).fill(newTitle);
+    await page.keyboard.press("Enter");
+    // 제목 저장이 붙잡힌 동안 다른 줄의 번호를 SOP-CF로 - 서버가 거절하고 목록을 다시 받는다
+    await page.locator(`[data-testid="${wiPrefix}-code"]`).fill("SOP-CF");
+    await page.keyboard.press("Enter");
+    await page.locator('[data-testid="toast-error"]').first().waitFor({ timeout: T });
+    await titleDone;
+    await page.unroute(getRoute);
+    await settleToBe(page);
+    await page.waitForTimeout(500);
+    check("the reload started during the save and read before it", heldGets >= 1, String(heldGets));
+    check("the saved title is still on the row", ((await page.locator(`[data-testid="${sopPrefix}-title-text"]`).textContent()) ?? "").trim() === newTitle, await page.locator(`[data-testid="${sopPrefix}-title-text"]`).textContent());
+    check("and in the field", (await page.locator(`[data-testid="${sopPrefix}-title"]`).inputValue()) === newTitle);
+  } finally {
+    await page.unroute(patchRoute);
+    await page.unroute(getRoute);
+    await page.request.patch(`${BASE}/api/bundles/${halfBundleId}/tobe/docs/${sop.id}`, { headers: { "X-Dev-User": "qa.member", "Content-Type": "application/json" }, data: { title: sop.title } });
+    check("the title is back for the next steps", (await readToBe(page, halfBundleId)).docs.find((doc) => doc.id === sop.id).title === sop.title);
+  }
 });
 
 // Assign(v0.10.0) - Old 원문 조각이 곧 목록이다. 줄은 ↑↓·J/K로 옮기고, 지금 줄은 오른쪽 머리(assign-row-id·assign-row-status)로 읽는다
@@ -7028,7 +7858,11 @@ await runStep("documents: an Old list and a New list, with written files on thei
   check("a written file shows on its New row", (await cell.innerText()).includes(file.file_name.slice(0, 12)));
   check("rows without a file say so", (await page.locator('[data-testid$="-not-written"]').count()) === tobe.docs.filter((doc) => doc.document_id === null).length);
   await takeShot("sop-documents-two-lists.png");
-  await cell.locator('[data-testid$="-written-preview"]').click();
+  // 미리 보기는 그 줄을 펼친 곳의 Written file 묶음에 있다
+  const writtenRow = page.locator('[data-testid="tobe-list"] [data-testid$="-row"]').filter({ has: page.locator('[data-testid$="-written"]:not([data-testid$="-not-written"])') }).first();
+  const writtenPrefix = (await writtenRow.getAttribute("data-testid")).replace(/-row$/, "");
+  await page.locator(`[data-testid="${writtenPrefix}-toggle"]`).click();
+  await page.locator(`[data-testid="${writtenPrefix}-written-preview"]`).click();
   await wait(page, "documents-preview-split");
   check("the file's preview opens from the row", true);
   await page.keyboard.press("Escape");
@@ -7038,9 +7872,8 @@ await runStep("documents: an Old list and a New list, with written files on thei
   await wait(page, "tobe-more-menu");
   check("the Excel template and import sit in the menu", (await page.locator('[data-testid="tobe-template"]').count()) === 1 && (await page.locator('[data-testid="tobe-import"]').count()) === 1);
   await page.keyboard.press("Escape");
-  // 줄을 펼치면 그 파일의 버전과 언어 배치가 있다
-  await cell.locator("xpath=ancestor::tr").locator('[data-testid$="-toggle"]').click();
-  await page.locator('[data-testid$="-written-detail"]').first().waitFor({ timeout: T });
+  // 펼친 줄에 그 파일의 버전과 언어 배치가 있다
+  await page.locator(`[data-testid="${writtenPrefix}-written-detail"]`).waitFor({ timeout: T });
   check("opening the row shows the file's version and language layout", (await page.locator('[data-testid$="-written-version"]').count()) === 1 && (await page.locator('[data-testid$="-written-layout"]').count()) === 1);
 });
 
@@ -7160,8 +7993,8 @@ await runStep("documents: AI reads a free-form list into New rows", { devUser: "
   check("the picked rows are on the New list with kind, parent and title", after.docs.length === 4 && byCode["WI-QC-0301"]?.parent_code === "SOP-QC-0300" && byCode["QC-0400"]?.doc_type === "sop" && byCode["SOP-QC-0300"]?.title === "Synthetic cold storage", JSON.stringify(after.docs.map((doc) => [doc.code, doc.doc_type, doc.parent_code])));
   check("the WI's steps came with it", after.wi_steps.filter((item) => item.code === "WI-QC-0301").length > 0);
   // 목록은 창이 닫힌 뒤 다시 받는다 - 넷째 줄이 그려질 때까지 기다린다
-  await page.locator('[data-testid^="tobe-id-"][data-testid$="-code"]').nth(3).waitFor({ timeout: T });
-  const shownCodes = await page.locator('[data-testid^="tobe-id-"][data-testid$="-code"]').evaluateAll((cells) => cells.map((cell) => cell.value ?? cell.textContent));
+  await page.locator('[data-testid^="tobe-id-"][data-testid$="-code-text"]').nth(3).waitFor({ timeout: T });
+  const shownCodes = await page.locator('[data-testid^="tobe-id-"][data-testid$="-code-text"]').evaluateAll((cells) => cells.map((cell) => cell.value ?? cell.textContent));
   check("the new rows show on the list without a reload", ["SOP-QC-0300", "WI-QC-0301", "QC-0400"].every((code) => shownCodes.includes(code)), shownCodes.join(","));
   const left = await (await page.request.get(`${BASE}/api/bundles/${created.id}/tobe/read`, { headers })).json();
   check("the proposal is closed once it is used", left === null && (await page.locator('[data-testid="tobe-proposal"]').count()) === 0);

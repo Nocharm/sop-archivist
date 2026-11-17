@@ -14,11 +14,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.sop import tobe_excel
-from app.sop.models import Bundle, Document, TargetDoc, TargetDocNaSlot
+from app.sop.constants import SLOT_KEYS
+from app.sop.models import Bundle, Document, TargetDoc, TargetDocNaSlot, TargetSentence
 from app.sop.tobe import is_within_slot
 from app.sop.tobe_excel import parse_tobe_workbook
 from tests.access_helpers import run_in_session, update_row
-from tests.docx_factory import build_docx, p
+from tests.docx_factory import build_docx, p, tbl
 from tests.sop_helpers import (
     AUTHOR,
     OUTSIDER,
@@ -32,6 +33,8 @@ from tests.sop_helpers import (
     set_members,
     upload,
 )
+from tests.test_sop_numbering import PAIR_SLOT, _setup_pairs
+from tests.test_sop_slot_heading import _link_headings, _setup
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
 
@@ -175,7 +178,7 @@ def test_new_bundle_has_an_empty_tobe_list(client: TestClient) -> None:
     bundle = create_bundle(client)
 
     assert _get_tobe(client, bundle["id"]) == {
-        "revision": 1, "docs": [], "na_slots": [], "wi_steps": [], "sentence_counts": [],
+        "revision": 1, "docs": [], "na_slots": [], "wi_steps": [], "sentence_counts": [], "slot_counts": [],
     }
 
 
@@ -305,7 +308,7 @@ def test_tobe_rejects_bad_lists(client: TestClient, expected_code: str, docs, na
     assert response.json()["detail"]["code"] == expected_code
     # 거절된 요청은 아무것도 남기지 않는다
     assert _get_tobe(client, bundle["id"]) == {
-        "revision": 1, "docs": [], "na_slots": [], "wi_steps": [], "sentence_counts": [],
+        "revision": 1, "docs": [], "na_slots": [], "wi_steps": [], "sentence_counts": [], "slot_counts": [],
     }
 
 
@@ -1209,3 +1212,185 @@ def test_row_writes_need_the_author_and_refuse_a_row_with_a_file(client: TestCli
     assert (renamed.status_code, renamed.json()["detail"]) == (409, {"code": "match_doc_locked", "codes": ["WI-77"]})
     assert retitled.status_code == 200, retitled.text
 
+
+# ── 칸별 문장 수(slot_counts) ────────────────────────────────────────────────────
+
+
+def _slot_rows(tobe: dict, doc_id: int) -> list[tuple[str, int, int]]:
+    """그 문서의 (slot_key, count, heading_count) — 응답 순서 그대로."""
+    return [
+        (row["slot_key"], row["count"], row["heading_count"])
+        for row in tobe["slot_counts"]
+        if row["target_doc_id"] == doc_id
+    ]
+
+
+def _old_view(client: TestClient, bundle_id: int, body: str, name: str = "SYNTHETIC_OLD-1_Slots.docx") -> dict:
+    """한국어 문단만 든 옛 문서를 올려 원문 대조 데이터를 돌려준다 — 짝이 생기지 않는다."""
+    uploaded = upload(client, bundle_id, build_docx(body), name)
+    assert uploaded.status_code == 201, uploaded.text
+    return get_view(client, bundle_id, uploaded.json()["id"])
+
+
+def _set_status(target_doc_id: int, slot_key: str, status: str) -> None:
+    """그 문서 · 그 칸 새 문장의 상태만 바꾼다 — AI 제안 같은, 화면 없이는 만들기 어려운 상태를 심는다."""
+
+    async def _update(session: AsyncSession) -> None:
+        rows = await session.scalars(
+            select(TargetSentence).where(
+                TargetSentence.target_doc_id == target_doc_id, TargetSentence.slot_key == slot_key
+            )
+        )
+        for row in rows:
+            row.status = status
+        await session.commit()
+
+    run_in_session(_update)
+
+
+def test_slot_counts_count_the_items_each_sop_slot_holds(client: TestClient) -> None:
+    bundle_id, ids, base = _row_setup(client)  # SOP-A · WI-A(단계 1) · SOP-B
+    body = (
+        p("합성 첫 문장이다.") + p("합성 둘째 문장이다.") + p("합성 셋째 문장이다.")
+        + tbl([["합성 칸 가", "합성 칸 나"], ["합성 칸 다", "합성 칸 라"]])
+    )
+    view = _old_view(client, bundle_id, body)
+    (table,) = [unit for unit in view["units"] if unit["kind"] == "table"]
+    assign_as_is(client, bundle_id, find_unit(view, "합성 첫 문장이다."), ids["SOP-A"], slot_key="purpose")
+    assign_as_is(
+        client, bundle_id, find_unit(view, "합성 둘째 문장이다."), ids["SOP-A"],
+        slot_key="procedures.maintenance", hold_reason="Synthetic: check",
+    )
+    assign_as_is(client, bundle_id, find_unit(view, "합성 셋째 문장이다."), ids["WI-A"], wi_step=1, wi_part="instruction")
+    assign_as_is(client, bundle_id, table, ids["SOP-A"], slot_key="scope")
+    _set_status(ids["SOP-A"], "purpose", "ai_suggested")
+
+    tobe = _get_tobe(client, bundle_id)
+
+    # 표는 칸 새 문장이 넷이어도 1, 보류 · AI 제안도 센다, 하위 칸의 수는 상위 칸(procedures)에 더하지 않는다, WI와 빈 SOP는 나오지 않는다
+    assert tobe["slot_counts"] == [
+        {"target_doc_id": ids["SOP-A"], "slot_key": "purpose", "count": 1, "heading_count": 0},
+        {"target_doc_id": ids["SOP-A"], "slot_key": "scope", "count": 1, "heading_count": 0},
+        {"target_doc_id": ids["SOP-A"], "slot_key": "procedures.maintenance", "count": 1, "heading_count": 0},
+    ]
+    # sentence_counts의 모양은 그대로다 - SOP는 문서마다 한 줄, WI는 단계마다(값은 지금 있는 시험 둘이 지킨다)
+    assert [(row["target_doc_id"], row["wi_step"]) for row in tobe["sentence_counts"]] == [
+        (ids["SOP-A"], None), (ids["WI-A"], 1),
+    ]
+
+
+def test_slot_counts_count_each_language_of_a_pair(client: TestClient) -> None:
+    bundle_id, sop_id, _ = _setup_pairs(client)
+
+    assert _slot_rows(_get_tobe(client, bundle_id), sop_id) == [(PAIR_SLOT, 6, 0)]
+
+
+def test_a_slot_heading_counts_apart_and_still_blocks_na(client: TestClient) -> None:
+    fx = _setup(client)
+    _link_headings(client, fx, fx.old1)
+
+    tobe = _get_tobe(client, fx.bundle_id)
+
+    assert _slot_rows(tobe, fx.sop_id) == [("procedures.procedure", 0, 2)]
+    base = f"/api/bundles/{fx.bundle_id}/tobe/docs/{fx.sop_id}/na"
+    for slot_key in ("procedures.procedure", "procedures"):
+        refused = client.put(f"{base}/{slot_key}", json={"reason": "Synthetic: not needed"}, headers=AUTHOR)
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["detail"]["code"] == "slot_has_targets"
+
+
+def test_slot_counts_leave_out_written_docs(client: TestClient) -> None:
+    bundle_id, _ids, _base = _row_setup(client)
+    wi = upload(
+        client, bundle_id, build_docx(p("합성 새 WI의 문장이다.")), "SYNTHETIC_WI-77.docx",
+        side="new", doc_type="wi", parent_code="SOP-A",
+    )
+    sop = upload(
+        client, bundle_id, build_docx(p("합성 새 SOP의 문장이다.")), "SYNTHETIC_SOP-77.docx", side="new", doc_type="sop"
+    )
+    assert (wi.status_code, sop.status_code) == (201, 201), (wi.text, sop.text)
+
+    assert _get_tobe(client, bundle_id)["slot_counts"] == []
+
+
+def test_slot_counts_follow_a_move_to_another_slot(client: TestClient) -> None:
+    bundle_id, ids, _base = _row_setup(client)
+    view = _old_view(client, bundle_id, p("합성 첫 문장이다."))
+    (target,) = assign_as_is(
+        client, bundle_id, find_unit(view, "합성 첫 문장이다."), ids["SOP-A"], slot_key="purpose"
+    )["targets"]
+    assert _slot_rows(_get_tobe(client, bundle_id), ids["SOP-A"]) == [("purpose", 1, 0)]
+
+    moved = client.put(
+        f"/api/bundles/{bundle_id}/targets/order", headers=AUTHOR,
+        json={
+            "revision": get_bundle(client, bundle_id)["revision"], "target_doc_id": ids["SOP-A"],
+            "items": [{"target_id": target["id"], "slot_key": "scope"}],
+        },
+    )
+
+    assert moved.status_code == 200, moved.text
+    assert _slot_rows(_get_tobe(client, bundle_id), ids["SOP-A"]) == [("scope", 1, 0)]
+
+
+def test_every_row_write_returns_slot_counts(client: TestClient) -> None:
+    bundle_id, ids, base = _row_setup(client)
+    view = _old_view(client, bundle_id, p("합성 첫 문장이다."))
+    assign_as_is(client, bundle_id, find_unit(view, "합성 첫 문장이다."), ids["SOP-A"], slot_key="purpose")
+    expected = [{"target_doc_id": ids["SOP-A"], "slot_key": "purpose", "count": 1, "heading_count": 0}]
+
+    added = client.post(base, json={"code": "SOP-C", "doc_type": "sop"}, headers=AUTHOR)
+    patched = client.patch(f"{base}/{ids['SOP-B']}", json={"title": "Synthetic title"}, headers=AUTHOR)
+    saved = put_tobe(
+        client, bundle_id,
+        [_doc("SOP-A"), _doc("WI-A", "wi", parent="SOP-A", order=1), _doc("SOP-B", order=2), _doc("SOP-C", order=3)],
+        wi_steps=[_step("WI-A", 1)],
+    )
+    marked = client.put(f"{base}/{ids['SOP-B']}/na/scope", json={"reason": "Synthetic: not needed"}, headers=AUTHOR)
+    cleared = client.delete(f"{base}/{ids['SOP-B']}/na/scope", headers=AUTHOR)
+    step_added = client.post(f"{base}/{ids['WI-A']}/steps", json={}, headers=AUTHOR)
+    step_renamed = client.patch(f"{base}/{ids['WI-A']}/steps/2", json={"title": "Run"}, headers=AUTHOR)
+    step_removed = client.delete(f"{base}/{ids['WI-A']}/steps/2", headers=AUTHOR)
+    empty_row = [doc["id"] for doc in saved.json()["docs"] if doc["code"] == "SOP-C"][0]
+    row_removed = client.delete(f"{base}/{empty_row}", headers=AUTHOR)
+
+    responses = [added, patched, saved, marked, cleared, step_added, step_renamed, step_removed, row_removed]
+    assert [response.status_code for response in responses] == [201, 200, 200, 200, 200, 201, 200, 200, 200]
+    assert [response.json()["slot_counts"] for response in responses] == [expected] * len(responses)
+
+
+def test_slot_counts_mark_exactly_the_slots_na_refuses(client: TestClient) -> None:
+    """화면이 count + heading_count > 0으로 칸을 막는 것이 서버의 N/A 거절(409 slot_has_targets)과 같은 칸이다."""
+    fx = _setup(client)
+    _link_headings(client, fx, fx.old1)
+    view = _old_view(
+        client, fx.bundle_id, p("합성 안전 문장이다.") + p("합성 목적 문장이다.") + tbl([["합성 정의 가", "합성 정의 나"]]),
+        name="SYNTHETIC_OLD-3_Slots.docx",
+    )
+    (table,) = [unit for unit in view["units"] if unit["kind"] == "table"]
+    assign_as_is(client, fx.bundle_id, find_unit(view, "합성 목적 문장이다."), fx.sop_id, slot_key="purpose")
+    assign_as_is(
+        client, fx.bundle_id, find_unit(view, "합성 안전 문장이다."), fx.sop_id, slot_key="general_requirements.safety"
+    )
+    assign_as_is(client, fx.bundle_id, table, fx.sop_id, slot_key="definitions")
+    _set_status(fx.sop_id, "general_requirements.safety", "ai_suggested")
+
+    base = f"/api/bundles/{fx.bundle_id}/tobe/docs/{fx.sop_id}/na"
+    counted_rows = [row for row in _get_tobe(client, fx.bundle_id)["slot_counts"] if row["target_doc_id"] == fx.sop_id]
+    refused: set[str] = set()
+    counted: set[str] = set()
+    for key in SLOT_KEYS:
+        response = client.put(f"{base}/{key}", json={"reason": "Synthetic: probe"}, headers=AUTHOR)
+        if response.status_code == 409:
+            refused.add(key)
+        else:
+            assert response.status_code == 200, response.text
+            assert client.delete(f"{base}/{key}", headers=AUTHOR).status_code == 200
+        if any(is_within_slot(row["slot_key"], key) for row in counted_rows):
+            counted.add(key)
+
+    expected = {
+        "purpose", "definitions", "general_requirements", "general_requirements.safety",
+        "procedures", "procedures.procedure",
+    }
+    assert refused == counted == expected

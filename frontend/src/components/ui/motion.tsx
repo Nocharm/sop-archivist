@@ -144,24 +144,6 @@ export function Collapse({ open, children, testId, className, appear = false }: 
   );
 }
 
-/** 표 안의 펼침 행 - 행째 붙였다 떼고 칸 안쪽을 접기·펼치기로 전환한다 */
-export function CollapseRow({ open, colSpan, lead = true, className = "", children }: { open: boolean; colSpan: number; lead?: boolean; className?: string; children: ReactNode }) {
-  const { mounted, shown } = usePresence(open);
-  if (!mounted) return null;
-  return (
-    <tr className={className}>
-      {lead && <td className="border-0 p-0" />}
-      <td colSpan={colSpan} className="p-0">
-        <div className="fold" data-open={shown ? "" : undefined}>
-          <div className="fold-inner">
-            <div className="px-2.5 py-[var(--row-y)]">{children}</div>
-          </div>
-        </div>
-      </td>
-    </tr>
-  );
-}
-
 /** token이 바뀔 때마다 위를 한 번 쓸고 지나가는 쉬머 - 같은 자리의 내용이 바뀌었음을 알린다. 첫 그림에는 쓸지 않는다 */
 export function Refresh({ token, children, className = "" }: { token: string | number; children: ReactNode; className?: string }) {
   const [first] = useState(token);
