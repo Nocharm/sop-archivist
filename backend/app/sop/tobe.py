@@ -1,16 +1,18 @@
 """새 문서(To-Be) 목록 — 입력·출력 스키마, 읽기, 검사하며 저장하기(API와 Excel 가져오기가 공용), 올린 새 문서의 목록 줄."""
 
+import re
 from collections import Counter
 from collections.abc import Collection
 from typing import TYPE_CHECKING, Annotated, Literal
 
 from pydantic import BaseModel, BeforeValidator, Field, StringConstraints
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
 from app.clock import now
-from app.sop.constants import SLOT_KEYS, TARGET_DOC_TYPES
+from app.equis.rules import normalize_number
+from app.sop.constants import SLOT_HEADING, SLOT_KEYS, TARGET_DOC_TYPES
 from app.sop.errors import raise_rule
 from app.sop.events import record_event
 from app.sop.models import (
@@ -184,6 +186,42 @@ async def count_targets_by_step(session: AsyncSession, target_doc_ids: Collectio
     )
     counts = [PlaceCountOut(target_doc_id=doc_id, wi_step=step, count=count) for doc_id, step, count in rows]
     return sorted(counts, key=lambda row: (row.target_doc_id, row.wi_step or 0))
+
+
+class SlotCountOut(BaseModel):
+    target_doc_id: int
+    slot_key: str
+    count: int  # 칸 항목 수 — 딸린 줄(parent_target_id가 있는 줄: 표 칸 새 문장·캡션)과 칸 제목은 빼고, 언어마다 따로, 상태를 가리지 않는다
+    heading_count: int  # 그 칸 제목에 이은 옛 제목 수
+
+
+async def count_targets_by_slot(session: AsyncSession, target_doc_ids: Collection[int]) -> list[SlotCountOut]:
+    """(새 문서, SOP 칸)별 항목 수와 칸 제목 수 — 화면이 N/A로 둘 수 없는 칸을 미리 가린다. 하위 칸의 수는 상위 칸에 더하지 않는다."""
+    if not target_doc_ids:
+        return []
+    is_heading = TargetSentence.kind == SLOT_HEADING
+    rows = await session.execute(
+        select(
+            TargetSentence.target_doc_id,
+            TargetSentence.slot_key,
+            func.sum(case((is_heading, 0), (TargetSentence.parent_target_id.is_(None), 1), else_=0)),
+            func.sum(case((is_heading, 1), else_=0)),
+        )
+        .where(TargetSentence.target_doc_id.in_(target_doc_ids), TargetSentence.slot_key.is_not(None))
+        .group_by(TargetSentence.target_doc_id, TargetSentence.slot_key)
+    )
+    counts = [
+        SlotCountOut(target_doc_id=doc_id, slot_key=slot_key, count=count, heading_count=heading_count)
+        for doc_id, slot_key, count, heading_count in rows
+        if count or heading_count
+    ]
+    # SLOT_KEYS에 없는 키는 있어서는 안 되는 자료지만 막힘 판단이 서버와 같도록 싣고 끝에 둔다
+    return sorted(
+        counts,
+        key=lambda row: (
+            row.target_doc_id, SLOT_KEYS.index(row.slot_key) if row.slot_key in SLOT_KEYS else len(SLOT_KEYS),
+        ),
+    )
 
 
 # --- 검사하며 저장하기 ---
@@ -687,6 +725,14 @@ async def ensure_code_free(session: AsyncSession, bundle_id: int, code: str) -> 
 def temp_match_code(document_id: int) -> str:
     """번호 없는 새 문서의 목록 번호 — 번호를 지어내지 않고, 사람이 문서 번호를 고칠 때까지 쓰는 임시 번호."""
     return f"NEW-{document_id}"
+
+
+_TEMP_MATCH_CODE = re.compile(r"NEW-\d+")
+
+
+def is_temp_match_code(code: str) -> bool:
+    """앱이 붙인 임시 번호(NEW-<숫자>)인가 — 앞뒤 빈칸·대소문자를 가리지 않는다. 지어낸 번호라 조회하거나 남에게 보이지 않는다."""
+    return _TEMP_MATCH_CODE.fullmatch(normalize_number(code)) is not None
 
 
 async def add_match_doc(

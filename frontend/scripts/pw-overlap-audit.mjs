@@ -94,9 +94,6 @@ async function auditHover(page, selector, report) {
 
 const mbtnScenes = [
   { name: "documents", user: "qa.member", url: `/bundles/${BUNDLE}/documents`, ready: '[data-testid$="-delete"]', buttons: '.row-actions-quiet button:not(:disabled)' },
-  { name: "tobe", user: "qa.member", url: `/bundles/${BUNDLE}/documents`, ready: '[data-testid="tobe-list"]', buttons: '[data-testid$="-remove"]:not(:disabled)', long: async (page) => {
-    for (const input of await page.locator('input[data-testid$="-title"]').all()) await input.fill("SYNTHETIC very long document title that keeps going and going across the whole column width");
-  } },
   { name: "tobe-steps", user: "qa.member", url: `/bundles/${BUNDLE}/documents`, ready: '[data-testid="tobe-list"]', prepare: async (page) => {
     for (const toggle of await page.locator('[data-testid^="tobe-"][data-testid$="-toggle"]').all()) await toggle.click();
     await page.locator('[data-testid*="-remove-step-"]').first().waitFor({ timeout: T });
@@ -423,6 +420,53 @@ const exportPreviewScene = {
   },
 };
 
+// New 목록 줄 끝 단추(Documents 화면 설계 §4) - 쉴 때는 보이지 않고 줄에 올리면 줄 안 오른쪽 끝에 뜬다(넓으면 묶음, 좁으면 ⋯).
+// 올린 줄의 단추 자리는 그 줄의 제목 · 딸린 정보 글을 덮지 않고, 오른쪽 끝이 줄마다 같다(±1px). LONG=1이면 제목 · 딸린 정보 글을 길게 바꿔 본다
+const tobeRowActsScene = {
+  name: "tobe-row-acts",
+  user: "qa.member",
+  run: async (page, report) => {
+    await page.goto(`${BASE}/bundles/${BUNDLE}/documents`);
+    const rows = page.locator('[data-testid="tobe-list"] .doc-row[data-testid]');
+    await rows.first().waitFor({ timeout: T });
+    await page.waitForTimeout(400);
+    if (LONG) {
+      await page.locator('[data-testid="tobe-list"] [data-testid$="-title-text"]').evaluateAll((els) => els.slice(0, 6).forEach((el) => { el.textContent = "SYNTHETIC very long document title that keeps going and going across the whole column width and wraps onto a second line"; }));
+    }
+    const rights = new Set();
+    for (const row of (await rows.all()).slice(0, 6)) {
+      await row.scrollIntoViewIfNeeded();
+      // 제목 위에 올린다 - 앞 줄의 툴팁이 사라지는 중이면 그 자리를 가려 기다리게 되므로 행위 검사는 건너뛴다(:hover는 마우스 자리로 정해진다)
+      await row.locator(".doc-title").hover({ force: true });
+      await page.waitForTimeout(250);
+      const placed = await row.evaluate((el) => {
+        const acts = [...el.querySelectorAll(".doc-acts, .doc-more")].find((node) => getComputedStyle(node).display !== "none");
+        if (!acts) return null;
+        const box = acts.getBoundingClientRect();
+        const covered = [];
+        for (const selector of [".doc-title", ".doc-meta"]) {
+          const range = document.createRange();
+          range.selectNodeContents(el.querySelector(selector));
+          for (const rect of range.getClientRects()) {
+            if (Math.min(rect.right, box.right) - Math.max(rect.left, box.left) > 0 && Math.min(rect.bottom, box.bottom) - Math.max(rect.top, box.top) > 0) covered.push(selector);
+          }
+        }
+        return { right: Math.round(box.right), opacity: Number(getComputedStyle(acts).opacity), covered: [...new Set(covered)] };
+      });
+      const id = await row.getAttribute("data-testid");
+      if (placed === null) {
+        report(id, "no row-end buttons");
+        continue;
+      }
+      if (placed.opacity < 1) report(id, `row-end buttons not shown on hover (opacity ${placed.opacity})`);
+      if (placed.covered.length > 0) report(id, `row-end buttons cover ${placed.covered.join(", ")}`);
+      rights.add(placed.right);
+      await page.mouse.move(0, 0);
+    }
+    if (Math.max(...rights) - Math.min(...rights) > 1) report("tobe-row-acts", `right edges differ: ${[...rights].join(", ")}`);
+  },
+};
+
 // 엮은 문서 미리 보기(아직 안 쓴 SOP)의 칸 제목 출처 - 칸 이름 뒤에서 말줄임하고 칸 이름을 덮지 않는다. 출처 글은 응답에 넣어 길게 그린다(DB는 그대로)
 const composedHeadingScene = {
   name: "assign-new-heading-note",
@@ -508,7 +552,7 @@ const bundleHeadScene = {
   },
 };
 
-const scenes = [...mbtnScenes, outputsScene, outputsEndRowsScene, outputsReorderScene, exportPreviewScene, composedHeadingScene, linkMenuScene, aiJobsScene, bundleHeadScene].filter((scene) => !only || only.includes(scene.name));
+const scenes = [...mbtnScenes, tobeRowActsScene, outputsScene, outputsEndRowsScene, outputsReorderScene, exportPreviewScene, composedHeadingScene, linkMenuScene, aiJobsScene, bundleHeadScene].filter((scene) => !only || only.includes(scene.name));
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 let problems = 0;
 let runs = 0;

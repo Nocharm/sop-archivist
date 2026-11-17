@@ -16,9 +16,11 @@ interface TooltipProps {
   align?: "start" | "end" | "center";
   /** 감싼 단추가 연 층(목록)이 떠 있는 동안처럼 툴팁이 그 층을 가릴 때 끈다 */
   suppressed?: boolean;
+  /** 감싼 것이 줄 안에서 폭으로 줄어든다(가운데를 줄이는 파일 이름) - 기본은 줄지 않는다 */
+  shrinks?: boolean;
 }
 
-export function Tooltip({ label, children, align = "center", suppressed = false }: TooltipProps) {
+export function Tooltip({ label, children, align = "center", suppressed = false, shrinks = false }: TooltipProps) {
   const hostRef = useRef<HTMLSpanElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<number | null>(null);
@@ -56,7 +58,7 @@ export function Tooltip({ label, children, align = "center", suppressed = false 
   return (
     <span
       ref={hostRef}
-      className="inline-flex shrink-0"
+      className={shrinks ? "inline-flex min-w-0" : "inline-flex shrink-0"}
       onPointerEnter={show}
       onPointerLeave={hide}
       onFocus={show}

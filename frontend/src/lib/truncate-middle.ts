@@ -6,3 +6,10 @@ export function truncateMiddle(text: string, head: number, tail: number): string
   if (chars.length <= head + tail + 1) return text;
   return `${chars.slice(0, head).join("")}…${chars.slice(chars.length - tail).join("")}`;
 }
+
+/** 파일 이름을 머리와 꼬리(마지막 tail자 - 확장자가 든다)로 가른다. tail보다 짧으면 ["", name]. 화면이 머리만 폭에 맞춰 줄인다 */
+export function splitFileName(name: string, tail = 12): [head: string, tail: string] {
+  const chars = Array.from(name);
+  if (chars.length <= tail) return ["", name];
+  return [chars.slice(0, chars.length - tail).join(""), chars.slice(chars.length - tail).join("")];
+}

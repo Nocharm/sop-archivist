@@ -155,6 +155,7 @@ export const MANUAL_STAGE_SECTION: Record<StageKey, string> = {
   assign: "assign",
   order: "order",
   outputs: "outputs",
+  map: "map",
   history: "history",
 };
 

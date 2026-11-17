@@ -13,8 +13,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.settings import settings
+from app.sop.refs import is_document_number
 from scripts.seed_sop_demo import DemoStage, drive_stage, find_seed_refusal, main
-from scripts.synthetic_sop import BALANCE, LEVEL_BENCH, build_synthetic_bundle
+from scripts.synthetic_sop import BALANCE, LEVEL_BENCH, MOVE_TARGET_CODE, build_synthetic_bundle
 from tests.fake_ai import fake_ai_session
 from tests.sop_helpers import AUTHOR
 
@@ -25,6 +26,8 @@ EXPECTED_BUNDLES = [
     ("SYNTHETIC 2 분류 절반", "in_progress"),
     ("SYNTHETIC 3 검토 대기", "in_review"),
     (AI_STAGE_TITLE, "in_progress"),
+    ("SYNTHETIC 5 UV 분광광도계", "in_progress"),
+    ("SYNTHETIC 6 문서 관리", "in_progress"),
 ]
 DOCUMENTS_PER_BUNDLE = 9  # 옛 문서 7개 + 입구 2 새 문서 2개
 
@@ -101,7 +104,7 @@ def test_seed_creates_bundles_at_stages(seed_runs: SeedRuns) -> None:
     assert [(title, status) for _, title, status in bundles] == EXPECTED_BUNDLES
     ids = [bundle_id for bundle_id, _, _ in bundles]
     documents = _query(database_path, "SELECT bundle_id, count(*) FROM documents GROUP BY bundle_id ORDER BY bundle_id")
-    assert documents == [(bundle_id, DOCUMENTS_PER_BUNDLE) for bundle_id in ids]
+    assert documents == [(bundle_id, DOCUMENTS_PER_BUNDLE) for bundle_id in ids[:4]] + [(ids[4], 1), (ids[5], 1)]
     confirmed = dict(_query(
         database_path,
         "SELECT bundle_id, count(*) FROM unit_decisions WHERE status = 'confirmed' GROUP BY bundle_id",
@@ -119,6 +122,35 @@ def test_seed_creates_bundles_at_stages(seed_runs: SeedRuns) -> None:
 
     assert _query_bundles(database_path) == bundles
     assert second.stdout.count("skipped") == len(EXPECTED_BUNDLES)
+
+
+def test_seed_links_bundles_for_the_map(seed_runs: SeedRuns) -> None:
+    database_path, first, _, bundles = seed_runs
+    ids = [bundle_id for bundle_id, _, _ in bundles]
+
+    members = {
+        bundle_id: _query(
+            database_path, f"SELECT login_id, role FROM bundle_members WHERE bundle_id = {bundle_id} ORDER BY login_id"
+        )
+        for bundle_id in ids[4:]
+    }
+    assert members == {ids[4]: [("qa.lead", "reviewer"), ("qa.member", "author")], ids[5]: [("prod.member", "author")]}
+    documents = set(_query(database_path, "SELECT bundle_id, doc_code FROM documents"))
+    assert {(ids[4], "SOP-ABC-1016"), (ids[5], "SOP-ABC-1020")} <= documents
+    targets = set(_query(database_path, "SELECT bundle_id, code FROM target_docs"))
+    assert {(ids[4], "SOP-UV"), (ids[4], "WI-11"), (ids[5], MOVE_TARGET_CODE)} <= targets
+    refs = _query(
+        database_path,
+        "SELECT r.number FROM unit_refs r JOIN units u ON u.id = r.unit_id JOIN extractions e ON e.id = u.extraction_id"
+        f" JOIN documents d ON d.id = e.document_id WHERE r.state = 'confirmed' AND d.bundle_id IN ({ids[4]}, {ids[5]})",
+    )
+    assert len(refs) == 2
+    # 지도는 문서 번호 꼴만 Bundle을 건너 맞춘다 — 선을 그어야 할 번호가 모두 그 꼴이어야 지도에 나온다
+    edge_numbers = [number for (number,) in refs] + ["SOP-ABC-1016", "SOP-ABC-1020", MOVE_TARGET_CODE, "OLD-3"]
+    assert all(is_document_number(number) for number in edge_numbers), edge_numbers
+    # 출력은 제목과 결과뿐 — 문장 글은 싣지 않는다
+    assert "SYNTHETIC 5 UV 분광광도계" in first.stdout and "SYNTHETIC 6 문서 관리" in first.stdout
+    assert "Warm up the lamp" not in first.stdout
 
 
 def test_half_stage_leaves_a_captionless_table_unassigned(seed_runs: SeedRuns) -> None:
@@ -170,6 +202,7 @@ def test_seed_keeps_the_ai_worker_off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "embed_enabled", True)
     monkeypatch.setattr("app.main.run_ai_worker", record_worker)
     monkeypatch.setattr("scripts.seed_sop_demo.DEMO_STAGES", ())
+    monkeypatch.setattr("scripts.seed_sop_demo.MAP_BUNDLES", ())
 
     assert asyncio.run(main()) == 0
 

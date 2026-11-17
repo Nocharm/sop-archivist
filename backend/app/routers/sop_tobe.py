@@ -28,6 +28,7 @@ from app.sop.tobe import (
     NewDocIn,
     NewStepIn,
     PlaceCountOut,
+    SlotCountOut,
     TargetDocOut,
     ToBeIn,
     ToBeOut,
@@ -35,6 +36,7 @@ from app.sop.tobe import (
     add_wi_step,
     apply_tobe,
     build_tobe_out,
+    count_targets_by_slot,
     count_targets_by_step,
     remove_tobe_doc,
     remove_wi_step,
@@ -61,6 +63,8 @@ class ToBeViewOut(ToBeOut):
     docs: list[ToBeDocOut]  # type: ignore[assignment] -- 같은 줄에 EQUIS 표시만 더한 모양
     # 문장이 든 자리 — 배정 화면이 지울 수 없는 문서·단계를 미리 잠근다(서버는 지울 때 다시 검사한다)
     sentence_counts: list[PlaceCountOut] = []
+    # 칸에 보이는 항목 수와 칸 제목 수 — Documents 화면의 N/A 칸 상태 표가 N/A로 둘 수 없는 칸을 가린다
+    slot_counts: list[SlotCountOut] = []
 
 
 async def _build_tobe_view(
@@ -76,9 +80,10 @@ async def _build_tobe_view(
         ToBeDocOut(**doc.model_dump(), equis=build_equis_out(doc.code, "new", "", lookups, now)) for doc in tobe.docs
     ]
     sentence_counts = await count_targets_by_step(session, [doc.id for doc in tobe.docs])
+    slot_counts = await count_targets_by_slot(session, [doc.id for doc in tobe.docs])
     return ToBeViewOut(
         revision=tobe.revision, docs=docs, na_slots=tobe.na_slots, wi_steps=tobe.wi_steps,
-        sentence_counts=sentence_counts,
+        sentence_counts=sentence_counts, slot_counts=slot_counts,
     )
 
 

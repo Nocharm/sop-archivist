@@ -78,6 +78,10 @@ describe("isStageLocked", () => {
   it("reads the history page path", () => {
     expect(parseBundlePath("/bundles/3/history")).toEqual({ bundleId: 3, stage: "history" });
   });
+
+  it("keeps Map open without documents", () => {
+    expect(isStageLocked("map", 0)).toBe(false);
+  });
 });
 
 describe("STAGES", () => {
@@ -91,6 +95,13 @@ describe("STAGES", () => {
     expect(STAGES.some((stage) => stage.path === "/split")).toBe(false);
     expect(parseBundlePath("/bundles/3/split")).toEqual({ bundleId: 3, stage: null });
     expect(getEditOriginalHref(3, 12)).toBe("/bundles/3/assign?edit=12");
+  });
+
+  it("puts Map right before History, without a step number", () => {
+    expect(STAGES.map((s) => s.key)).toEqual(["overview", "documents", "assign", "order", "outputs", "map", "history"]);
+    expect(STAGES.find((s) => s.key === "map")).toEqual({ key: "map", path: "/map", ready: true });
+    expect(parseBundlePath("/bundles/3/map")).toEqual({ bundleId: 3, stage: "map" });
+    expect(getStageHref(4, "map")).toBe("/bundles/4/map");
   });
 
   it("reads the Order page path", () => {

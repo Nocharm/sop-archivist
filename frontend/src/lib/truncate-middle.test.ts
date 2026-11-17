@@ -1,7 +1,7 @@
 // 가운데 말줄임 - 짧으면 그대로, 길면 앞 head자 + "…" + 뒤 tail자(길이 head + tail + 1).
 import { describe, expect, it } from "vitest";
 
-import { truncateMiddle } from "./truncate-middle";
+import { splitFileName, truncateMiddle } from "./truncate-middle";
 
 describe("truncateMiddle", () => {
   it("keeps short text as is", () => {
@@ -23,5 +23,19 @@ describe("truncateMiddle", () => {
   it("counts characters, not UTF-16 units", () => {
     const text = "가".repeat(40);
     expect(truncateMiddle(text, 12, 10)).toBe(`${"가".repeat(12)}…${"가".repeat(10)}`);
+  });
+});
+
+describe("splitFileName", () => {
+  it("keeps the last 12 characters, extension included, as the tail", () => {
+    expect(splitFileName("SYNTHETIC_OLD-1_Eppendorf_Centrifuge.docx")).toEqual(["SYNTHETIC_OLD-1_Eppendorf_Cen", "trifuge.docx"]);
+  });
+
+  it("has no head when the name is not longer than the tail", () => {
+    expect(splitFileName("a.docx")).toEqual(["", "a.docx"]);
+  });
+
+  it("counts code points", () => {
+    expect(splitFileName("합성파일이름입니다열두자넘김.docx", 5)).toEqual(["합성파일이름입니다열두자넘김", ".docx"]);
   });
 });

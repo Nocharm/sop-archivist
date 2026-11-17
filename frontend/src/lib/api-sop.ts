@@ -581,6 +581,14 @@ export interface PlaceCount {
   count: number;
 }
 
+/** 문장이나 칸 제목이 든 SOP 칸 - count는 그 칸의 최상위 항목 수(표 칸 문장·캡션 같은 딸린 줄은 뺀다. 결과물 C는 캡션 줄도 그리므로 C의 줄 수와 다를 수 있다), heading_count는 칸 제목에 이은 옛 제목 수 */
+export interface SlotCount {
+  target_doc_id: number;
+  slot_key: string;
+  count: number;
+  heading_count: number;
+}
+
 export interface ToBe {
   revision: number;
   docs: TargetDoc[];
@@ -588,6 +596,8 @@ export interface ToBe {
   wi_steps: WiStep[];
   /** 문장이 든 자리만 실린다 - 배정 화면이 지울 수 없는 문서·단계의 지우기 단추를 잠근다 */
   sentence_counts?: PlaceCount[];
+  /** 문장이나 칸 제목이 든 SOP 칸만 실린다 - N/A 칸 상태 표가 N/A로 둘 수 없는 칸을 가린다 */
+  slot_counts?: SlotCount[];
 }
 
 export interface ToBeInput {
@@ -1416,4 +1426,51 @@ export function requestClassify(bundleId: number, unitIds: number[]): Promise<{ 
 
 export function getFigureImage(bundleId: number, docId: number, blockId: number): Promise<Blob> {
   return apiFetchBlob(`/bundles/${bundleId}/documents/${docId}/figures/${blockId}`);
+}
+
+// --- 참조 지도 (GET /bundles/{id}/map, 서버 app/sop/ref_map.py의 MapOut) ---
+
+export type MapScope = "linked" | "all";
+export type MapRelation = "self" | "member" | "summary";
+export interface MapBundle {
+  id: number;
+  code: string;
+  /** summary면 빈 글 - 구성원이 아닌 Bundle의 제목은 응답에 없다 */
+  title: string;
+  status: BundleStatus;
+  relation: MapRelation;
+  document_count: number;
+}
+export interface MapBecomes {
+  /** 임시 번호면 빈 글 */
+  code: string;
+  title: string;
+  doc_type: "sop" | "wi";
+}
+export interface MapNode {
+  id: string;
+  kind: "old" | "target" | "num";
+  bundle_id: number | null;
+  number: string;
+  title: string;
+  doc_type: "sop" | "wi" | null;
+  becomes: MapBecomes[];
+}
+export interface MapEdge {
+  source: string;
+  target: string;
+  kind: "ref" | "moved";
+  state: "confirmed" | "proposed";
+  lines: number;
+}
+export interface RefMap {
+  scope: MapScope;
+  truncated: boolean;
+  bundles: MapBundle[];
+  nodes: MapNode[];
+  edges: MapEdge[];
+}
+
+export function getRefMap(bundleId: number, scope: MapScope): Promise<RefMap> {
+  return apiFetch<RefMap>(`/bundles/${bundleId}/map?scope=${scope}`);
 }

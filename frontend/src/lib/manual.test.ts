@@ -139,6 +139,7 @@ describe("getManualHref", () => {
     expect(getManualHref("/")).toBe("/manual#start");
     expect(getManualHref("/admin")).toBe("/manual#account");
     expect(getManualHref("/account")).toBe("/manual#account");
+    expect(getManualHref("/bundles/1/map")).toBe("/manual#map");
   });
 
   it("opens the top of the manual from anywhere else", () => {
@@ -152,5 +153,6 @@ describe("getSectionStage", () => {
     expect(getSectionStage("tobe")).toBeNull(); // 단계가 아니라 Documents 화면 안의 영역이 되었다
     expect(getSectionStage("bundle")).toBe("overview");
     expect(getSectionStage("faq")).toBeNull();
+    expect(getSectionStage("map")).toBe("map");
   });
 });
