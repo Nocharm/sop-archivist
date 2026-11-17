@@ -641,6 +641,35 @@ class UnitRef(Base):
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class CaptionRef(Base):
+    """원문 글 안의 표·그림 참조 하나 — 자리는 블록 좌표라 단위 편집이 지나가도 옮길 일이 없다(그 자리를 덮는 활성 단위가 참조 문장)."""
+
+    __tablename__ = "caption_refs"
+    __table_args__ = (
+        CheckConstraint(_build_in_check("kind", ("table", "figure")), name="kind"),
+        CheckConstraint(_build_in_check("state", ("linked", "detached")), name="state"),
+        CheckConstraint(_build_in_check("origin", ("auto", "human")), name="origin"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    extraction_id: Mapped[int] = mapped_column(ForeignKey("extractions.id", ondelete="CASCADE"), index=True)
+    block_id: Mapped[int] = mapped_column(ForeignKey("source_blocks.id", ondelete="CASCADE"))
+    # 블록 안 토큰 범위 — 번호 참조는 숫자 글자, 자리 참조는 구 전체
+    start: Mapped[int] = mapped_column(Integer)
+    end: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(6))  # table | figure
+    number: Mapped[int | None] = mapped_column(Integer, default=None)  # 원문 번호 — 자리 참조는 None
+    # 표 참조의 대상 표, 그림 참조의 대상 그림 블록 — 둘 다 None이면 대상 없이 연결만 있다
+    target_table_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_tables.id", ondelete="CASCADE"), default=None
+    )
+    target_block_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_blocks.id", ondelete="CASCADE"), default=None
+    )
+    state: Mapped[str] = mapped_column(String(8), default="linked")  # linked | detached
+    origin: Mapped[str] = mapped_column(String(5), default="auto")  # auto | human
+
+
 # --- EQUIS 조회 ---
 
 

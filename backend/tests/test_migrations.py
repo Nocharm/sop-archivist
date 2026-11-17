@@ -505,3 +505,74 @@ def test_0020_downgrade_puts_caption_back_into_figure(tmp_path: pathlib.Path) ->
 
     assert (after.text, json.loads(after.spans)) == (before.text, json.loads(before.spans))
     assert tuple(leftovers) == (0, 0, 2, 2)
+
+
+def test_0021_backfills_references_for_old_documents(tmp_path: pathlib.Path) -> None:
+    # 올리기 전의 옛 문서 — 최신 추출의 번호 참조·자리 참조만 채우고, 지난 추출은 건드리지 않는다
+    db_path = tmp_path / "caption_refs.db"
+    config = _downgrade_to(db_path, "0020")
+    engine = _create_fk_engine(db_path)
+    sentence = "운전은 표 3을 따르고 아래 표를 본다."
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO bundles (id, title, description, status, is_synthetic, semantic_checks, revision,"
+                " created_by, created_at, updated_at) VALUES (1, 'SYNTHETIC', '', 'in_progress', 1, '{}', 1,"
+                " 'qa.member', '2026-11-10 09:00:00', '2026-11-10 09:00:00')"
+            ))
+            _, (old_extraction, latest) = _insert_document(conn, "old", ("2", "3"))
+            for extraction_id in (old_extraction, latest):
+                conn.execute(
+                    text("UPDATE source_blocks SET text = :t WHERE extraction_id = :e AND seq = 0"),
+                    {"t": sentence, "e": extraction_id},
+                )
+                _insert_unit(conn, extraction_id, 1, "sentence", sentence, "ko", 0)
+            table_id = _insert_row(
+                conn, "source_tables", extraction_id=latest, table_index=0, part="body", xml_path="/tbl[0]",
+                n_rows=1, n_cols=1, is_layout=False,
+            )
+            conn.execute(
+                text("UPDATE source_blocks SET kind = 'paragraph', text = '' WHERE extraction_id = :e AND seq = 1"),
+                {"e": latest},
+            )
+            _insert_row(
+                conn, "source_blocks", extraction_id=latest, seq=2, part="body", kind="table_cell", text="값",
+                xml_path="/tbl[0]/c", page_basis="estimated", section_label="", grid_span=1, row_span=1,
+                flags="[]", table_id=table_id, row_index=0, col_index=0,
+            )
+            _insert_row(
+                conn, "source_blocks", extraction_id=latest, seq=3, part="body", kind="paragraph", text="표 3. 운전",
+                xml_path="/p[3]", page_basis="estimated", section_label="", grid_span=1, row_span=1, flags="[]",
+            )
+            table_unit = _insert_row(
+                conn, "units", extraction_id=latest, local_no=3, kind="table", spans="[]", text="", lang="neutral",
+                table_id=table_id, status="active", boundary_confirmed=False, pos_seq=2, pos_start=-1,
+            )
+            caption_block = conn.execute(
+                text("SELECT id FROM source_blocks WHERE extraction_id = :e AND seq = 3"), {"e": latest}
+            ).scalar_one()
+            _insert_row(
+                conn, "units", extraction_id=latest, local_no=4, kind="caption", spans=f"[[{caption_block}, 0, 7]]",
+                text="표 3. 운전", lang="ko", group_unit_id=table_unit, status="active", boundary_confirmed=False,
+                pos_seq=3, pos_start=0,
+            )
+
+        command.upgrade(config, "0021")
+
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT extraction_id, block_id, start, \"end\", kind, number, target_table_id, target_block_id, state, origin"
+                " FROM caption_refs ORDER BY start"
+            )).all()
+            block_id = conn.execute(
+                text("SELECT id FROM source_blocks WHERE extraction_id = :e AND seq = 0"), {"e": latest}
+            ).scalar_one()
+    finally:
+        engine.dispose()
+
+    number_start = sentence.index("3")
+    place_start = sentence.index("아래 표")
+    assert [tuple(row) for row in rows] == [
+        (latest, block_id, number_start, number_start + 1, "table", 3, table_id, None, "linked", "auto"),
+        (latest, block_id, place_start, place_start + len("아래 표"), "table", None, table_id, None, "linked", "auto"),
+    ]

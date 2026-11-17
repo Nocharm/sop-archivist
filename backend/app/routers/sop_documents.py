@@ -20,6 +20,14 @@ from app.equis.rules import normalize_number
 from app.equis.view import EquisOut, build_equis_out
 from app.routers.admin import KstDatetime
 from app.routers.sop_equis import start_lookups
+from app.sop.caption_refs import (
+    CaptionRefIn,
+    CaptionRefOut,
+    CaptionRefResult,
+    build_caption_ref_outs,
+    find_covering_unit_ids,
+    update_caption_ref,
+)
 from app.sop.constants import LANGUAGE_LAYOUTS, MEMBER_ROLES
 from app.sop.decision_steps import record_unit_edit_step
 from app.sop.detach import detach_units, find_units_needing_confirm
@@ -43,6 +51,7 @@ from app.sop.events import record_event
 from app.sop.ingest import get_max_file_bytes, ingest_upload
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
 from app.sop.models import (
+    CaptionRef,
     Document,
     DocumentFile,
     Extraction,
@@ -253,6 +262,8 @@ class ViewUnitOut(BaseModel):
     split_suggestion_id: int | None
     # 참조 줄 제안·확정 — 참조가 아니면 null
     ref: ViewUnitRefOut | None = None
+    # 이 단위의 글 안 표·그림 참조(그 자리를 덮는 단위에 싣는다) — 나눈 뒤에도 참조가 든 쪽 단위가 갖는다
+    caption_refs: list[CaptionRefOut] = []
 
 
 def _to_ref_out(state: RefState | None) -> ViewUnitRefOut | None:
@@ -376,11 +387,11 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
         ViewBlockOut(**row._mapping, part_group=get_part_group_key(row.part, row.xml_path)) for row in block_rows
     ]
     block_id_by_seq = {block.seq: block.id for block in blocks}
-    units = await session.scalars(
+    units = (await session.scalars(
         select(Unit)
         .where(Unit.extraction_id == extraction.id, Unit.status == UNIT_ACTIVE)
         .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
-    )
+    )).all()
     decisions: dict[int, UnitDecision] = {}
     if document.side == "old":
         rows = await session.scalars(
@@ -406,6 +417,15 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
             select(UnitRef).join(Unit, Unit.id == UnitRef.unit_id).where(Unit.extraction_id == extraction.id)
         )
     }
+    ref_rows = (await session.scalars(
+        select(CaptionRef).where(CaptionRef.extraction_id == extraction.id).order_by(CaptionRef.block_id, CaptionRef.start)
+    )).all()
+    ref_outs = {
+        ref.id: out for ref, out in zip(ref_rows, await build_caption_ref_outs(session, ref_rows, units), strict=True)
+    }
+    refs_by_unit: dict[int, list[CaptionRefOut]] = {}
+    for ref_id, unit_id in find_covering_unit_ids(ref_rows, units).items():
+        refs_by_unit.setdefault(unit_id, []).append(ref_outs[ref_id])
     return DocumentViewOut(
         document=document_out,
         extraction=extraction,
@@ -440,6 +460,7 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 block_id=unit.spans[0][0] if unit.spans else block_id_by_seq[unit.pos_seq],
                 split_suggestion_id=split_suggestions.get(unit.id),
                 ref=_to_ref_out(read_ref_state(unit, ref_marks.get(unit.id))),
+                caption_refs=refs_by_unit.get(unit.id, []),
             )
             for unit in units
         ],
@@ -773,6 +794,21 @@ async def delete_unit_pair(
     document = await _lock_editable_document(session, ctx, doc_id, revision)
     await delete_pair(session, document, pair_id, ctx.login_id)
     result = PairResult(document_revision=document.revision, pair=None)
+    await session.commit()
+    return result
+
+
+@router.patch("/{bundle_id}/documents/{doc_id}/caption-refs/{ref_id}", response_model=CaptionRefResult)
+async def edit_caption_ref(
+    body: CaptionRefIn,
+    doc_id: IdPath,
+    ref_id: IdPath,
+    ctx: BundleContext = Depends(_require_author),
+    session: AsyncSession = Depends(get_session),
+) -> CaptionRefResult:
+    document = await _lock_editable_document(session, ctx, doc_id, body.revision)
+    ref = await update_caption_ref(session, ctx.bundle, document, ref_id, body, ctx.login_id)
+    result = CaptionRefResult(document_revision=document.revision, ref=ref)
     await session.commit()
     return result
 
