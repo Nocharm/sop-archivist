@@ -7,8 +7,18 @@ export type MapKeyAction = { kind: "focus"; id: MapFocus } | { kind: "select" } 
 
 const LANE_PREFIX = "lane:";
 
+/** 줄기 머리(접기 단추)의 포커스 자리 */
+export function getLaneFocus(laneKey: string): MapFocus {
+  return `${LANE_PREFIX}${laneKey}`;
+}
+
+/** 줄기 머리 자리면 그 줄기 열쇠, 마디면 null */
+export function readLaneFocus(focus: MapFocus): string | null {
+  return focus.startsWith(LANE_PREFIX) ? focus.slice(LANE_PREFIX.length) : null;
+}
+
 function getHeadFocus(lane: LaidLane): MapFocus {
-  return `${LANE_PREFIX}${lane.key}`;
+  return getLaneFocus(lane.key);
 }
 
 function makeFocus(id: string | undefined): MapKeyAction | null {
@@ -92,4 +102,17 @@ export function getEntryFocus(layout: MapLayout, selectedId: string | null): Map
   const first = layout.lanes[0];
   if (!first) return null;
   return first.nodeIds[0] ?? getHeadFocus(first);
+}
+
+/** 지도 안의 Tab 자리 하나(움직이는 tabindex) - 마지막으로 포커스한 마디·머리가 아직 그려져 있으면 그것, 아니면 들어설 자리 */
+export function getTabStop(layout: MapLayout, lastFocus: MapFocus | null, selectedId: string | null): MapFocus | null {
+  if (lastFocus !== null && locateFocus(lastFocus, layout) !== null) return lastFocus;
+  return getEntryFocus(layout, selectedId);
+}
+
+const MOVE_KEYS: ReadonlySet<string> = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"]);
+
+/** 지도 안에서 포커스를 옮기는 글쇠 - 옮길 곳이 없어도(끝) 칸을 스크롤하지 않게 늘 막는다 */
+export function isMapMoveKey(key: string): boolean {
+  return MOVE_KEYS.has(key);
 }

@@ -4,6 +4,7 @@
 import { useState, type ReactNode } from "react";
 
 import { Tooltip } from "@/components/ui/tooltip";
+import { isBoxDragActive } from "@/lib/box-drag";
 
 interface ClampTextProps {
   /** 툴팁에 띄울 전체 글 */
@@ -29,7 +30,10 @@ export function ClampText({ text, children, className = "", testId, tabbable = t
         tabIndex={tabbable ? 0 : undefined}
         className={`clamp-2 ${className}`}
         data-testid={testId}
-        onPointerEnter={(event) => checkClamped(event.currentTarget)}
+        // 상자를 끄는 동안 지나가는 글은 재지 않는다 - 포인터가 움직일 때마다 다시 그리지 않게(끌어다 놓기 G11). 툴팁도 그동안 뜨지 않는다
+        onPointerEnter={(event) => {
+          if (!isBoxDragActive()) checkClamped(event.currentTarget);
+        }}
         onFocus={(event) => checkClamped(event.currentTarget)}
       >
         {children ?? text}
