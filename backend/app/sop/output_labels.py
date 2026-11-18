@@ -16,6 +16,7 @@ class OutputLabels:
     parts: dict[str, str]  # 본문이 아닌 부분(머리말·꼬리말…)
     paragraph: str
     figure: str
+    band_table: str  # 띠 표 제목 줄의 위치(자리) — 번호는 절 칸에, 원문 칸은 제목만(F4 · F11)
     cell_template: str  # {table} {row} {col}
     table_template: str  # {table}
     table_row_template: str  # {table} {row}
@@ -47,6 +48,7 @@ LABELS = {
         parts={"header": "머리말", "footer": "꼬리말", "footnote": "각주", "endnote": "미주", "textbox": "텍스트 상자"},
         paragraph="문단",
         figure="그림",
+        band_table="띠 표",
         cell_template="표 {table} · {row}행 {col}열",
         table_template="표 {table}",
         table_row_template="표 {table} · {row}행",
@@ -79,6 +81,7 @@ LABELS = {
         parts={"header": "Header", "footer": "Footer", "footnote": "Footnote", "endnote": "Endnote", "textbox": "Text box"},
         paragraph="Paragraph",
         figure="Figure",
+        band_table="Band table",
         cell_template="Table {table} · R {row} C {col}",
         table_template="Table {table}",
         table_row_template="Table {table} · R {row}",

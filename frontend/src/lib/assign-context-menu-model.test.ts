@@ -448,3 +448,12 @@ describe("heading ↔ sentence (F8b)", () => {
     }
   });
 });
+
+describe("band heading line (F4)", () => {
+  it("does not turn a band heading into sentences - its way back is Back to band table", () => {
+    const band = makeUnit(2, { kind: "heading", table_id: 7 });
+    const { edit } = buildAssignMenu(ctx({ target: band }));
+
+    expect(edit.some((entry) => entry.action === "to_sentence" || entry.action === "to_heading")).toBe(false);
+  });
+});

@@ -33,6 +33,8 @@ from app.sop.segment import (
     build_unit_drafts,
     build_unit_text,
     count_pair_directions,
+    is_band_table,
+    is_certain_band,
     suggest_interleaved_pairs,
 )
 
@@ -70,12 +72,27 @@ async def create_initial_units(session: AsyncSession, document: Document, extrac
         .where(SourceBlock.extraction_id == extraction.id)
         .order_by(SourceBlock.seq)
     )
-    table_rows = await session.execute(
-        select(SourceTable.id, SourceTable.is_layout).where(SourceTable.extraction_id == extraction.id)
+    tables = (
+        await session.execute(
+            select(
+                SourceTable.id, SourceTable.is_layout, SourceTable.signals, SourceTable.parent_table_id, SourceTable.part
+            ).where(SourceTable.extraction_id == extraction.id)
+        )
+    ).all()
+    # 꼴이 확실한 띠 표는 올리자마자 벗긴 표(레이아웃)로 둔다 — 제목 줄이 되고, "표로 되돌리기"(set_layout_table)가 반대 길이다
+    # (F4 · §11-1). 띠 표는 표형 옛 SOP의 절 제목 표라 옛 문서만 본다
+    bands = (
+        {table_id for table_id, _, signals, parent, part in tables if is_certain_band(signals, parent, part)}
+        if document.side == "old" else set()
     )
+    if bands:
+        await session.execute(update(SourceTable).where(SourceTable.id.in_(bands)).values(is_layout=True))
+    table_rows = [
+        (table_id, is_layout or table_id in bands, is_band_table(signals)) for table_id, is_layout, signals, _, _ in tables
+    ]
     # 200만 자 쪼개기는 수 초까지 걸린다 — 단일 워커 backend가 묶음 잠금을 쥔 채 이벤트 루프를 막지 않게 스레드에서 돈다
     drafts, unit_rows = await asyncio.to_thread(
-        _build_unit_rows, extraction.id, block_rows.all(), table_rows.all(), document.language_layout,
+        _build_unit_rows, extraction.id, block_rows.all(), table_rows, document.language_layout,
         document.file_format == LINE_SPLIT_FORMAT, document.side == "old",
     )
     if not drafts:
