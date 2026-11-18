@@ -339,7 +339,7 @@ async def _load_old_units(
 async def _load_decision_units(
     session: AsyncSession, bundle_id: int, unit_ids: Collection[int]
 ) -> dict[int, tuple[Unit, UnitDecision]]:
-    """일괄 처분·배정 지우기의 단위 — 없으면 404, 묶인 칸 문장이면 422(처분은 그룹 단위가 담는다)."""
+    """일괄 처분·배정 지우기의 단위 — 없으면 404, 묶인 칸 문장이면 422(처분은 그룹 단위가 담는다), 목차 줄이면 422 noise_unit."""
     loaded = await _load_old_units(session, bundle_id, unit_ids)
     missing = sorted(set(unit_ids) - set(loaded))
     if missing:
@@ -347,6 +347,9 @@ async def _load_decision_units(
     bound = sorted(unit_id for unit_id, (unit, _) in loaded.items() if unit.group_unit_id is not None)
     if bound:
         raise_rule(422, "bound_cell_sentence", unit_ids=bound)
+    noise = sorted(unit_id for unit_id, (unit, _) in loaded.items() if unit.noise_kind is not None)
+    if noise:
+        raise_rule(422, "noise_unit", unit_ids=noise)
     return loaded
 
 
@@ -360,6 +363,10 @@ async def _load_state(session: AsyncSession, bundle_id: int, payload: GroupSaveI
     bound = sorted(unit_id for unit_id, (unit, _) in loaded.items() if unit.group_unit_id is not None)
     if bound:
         _reject("bound_cell_sentence", unit_ids=bound)
+    # 잡음 표시 줄(목차)은 판단하지 않는다 — 먼저 목차 아님(편집 clear_noise)으로 보통 줄로 돌린다
+    noise = sorted(unit_id for unit_id, (unit, _) in loaded.items() if unit.noise_kind is not None)
+    if noise:
+        _reject("noise_unit", unit_ids=noise)
     unknown_released = sorted(
         set(payload.release_unit_ids) - set(await _load_old_units(session, bundle_id, payload.release_unit_ids))
     )

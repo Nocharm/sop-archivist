@@ -58,6 +58,7 @@ async def create_initial_units(session: AsyncSession, document: Document, extrac
         select(
             SourceBlock.id, SourceBlock.seq, SourceBlock.kind, SourceBlock.part, SourceBlock.text,
             SourceBlock.heading_level, SourceBlock.flags, SourceBlock.table_id, SourceBlock.row_index,
+            SourceBlock.signals,
         )
         .where(SourceBlock.extraction_id == extraction.id)
         .order_by(SourceBlock.seq)
@@ -115,7 +116,7 @@ def _build_unit_rows(
             "extraction_id": extraction_id, "local_no": local_no, "kind": draft.kind,
             "spans": [list(span) for span in draft.spans], "text": build_unit_text(draft.spans, block_texts),
             "lang": draft.lang, "table_id": draft.table_id, "row_index": draft.row_index,
-            "pos_seq": draft.pos_seq, "pos_start": draft.pos_start,
+            "pos_seq": draft.pos_seq, "pos_start": draft.pos_start, "noise_kind": draft.noise_kind,
         }
         for local_no, draft in enumerate(drafts, start=1)
     ]
@@ -159,9 +160,10 @@ async def _find_code_pairs(session: AsyncSession, extraction_id: int) -> list[tu
     각주…)이 바뀌는 자리에서 순서를 끊는다 — 건너뛰면 그 너머의 단위끼리, 본문 끝 문장과 머리말이 짝지어진다.
     글자 단위의 표(표 밖은 None, 칸 안의 표는 그 표)가 바뀌는 자리에서도 끊는다(R34) — 레이아웃 표의 한/영 두 열은 행마다 짝이고
     표 앞뒤 문단과 섞이지 않는다. 그림·표 단위 같은 중립 단위는 짝을 맺지 않으므로 표 경계로 세지 않는다.
+    잡음 표시가 붙은 단위(목차 줄)는 짝을 맺지 않고 짝이 있는 단위처럼 순서를 끊는다 — 한글 목차와 영어 목차가 짝지어지지 않게.
     """
     rows = await session.execute(
-        select(Unit.id, Unit.lang, Unit.text, Unit.table_id, SourceBlock.part, UnitPairMember.pair_id)
+        select(Unit.id, Unit.lang, Unit.text, Unit.table_id, SourceBlock.part, UnitPairMember.pair_id, Unit.noise_kind)
         # 단위 자리(pos_seq)의 블록이 그 단위의 부분이다
         .join(SourceBlock, (SourceBlock.extraction_id == Unit.extraction_id) & (SourceBlock.seq == Unit.pos_seq))
         .outerjoin(UnitPairMember, UnitPairMember.unit_id == Unit.id)
@@ -171,11 +173,12 @@ async def _find_code_pairs(session: AsyncSession, extraction_id: int) -> list[tu
     segments: list[list[tuple[int, str, str]]] = [[]]
     previous_part = None
     previous_table: int | None = None
-    for unit_id, lang, text, table_id, part, pair_id in rows:
+    for unit_id, lang, text, table_id, part, pair_id, noise_kind in rows:
         is_table_change = lang != NEUTRAL and table_id != previous_table
-        if (pair_id is not None or part != previous_part or is_table_change) and segments[-1]:
+        is_closed = pair_id is not None or noise_kind is not None
+        if (is_closed or part != previous_part or is_table_change) and segments[-1]:
             segments.append([])
-        if pair_id is None:
+        if not is_closed:
             segments[-1].append((unit_id, lang, text))
         previous_part = part
         if lang != NEUTRAL:

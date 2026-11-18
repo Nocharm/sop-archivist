@@ -267,6 +267,8 @@ class ViewUnitOut(BaseModel):
     ref: ViewUnitRefOut | None = None
     # 이 단위의 글 안 표·그림 참조(그 자리를 덮는 단위에 싣는다) — 나눈 뒤에도 참조가 든 쪽 단위가 갖는다
     caption_refs: list[CaptionRefOut] = []
+    # 잡음 표시(noise.py) — "toc"면 목차 줄: 배정 줄이 없고 Assign 용지가 목차 블록으로 접는다. 편집 clear_noise가 비운다
+    noise_kind: str | None = None
 
 
 def _to_ref_out(state: RefState | None) -> ViewUnitRefOut | None:
@@ -464,6 +466,7 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 split_suggestion_id=split_suggestions.get(unit.id),
                 ref=_to_ref_out(read_ref_state(unit, ref_marks.get(unit.id))),
                 caption_refs=refs_by_unit.get(unit.id, []),
+                noise_kind=unit.noise_kind,
             )
             for unit in units
         ],

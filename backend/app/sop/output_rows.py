@@ -23,13 +23,23 @@ class MeaningRow:
     status: str  # 구성 단위 중 가장 덜 끝난 상태
 
 
-def _list_judged_units(snap: BundleSnapshot) -> list[UnitInfo]:
-    """옛 문서의 활성·묶이지 않은 단위(표·행 단위 포함), order_key 순 — 진행 숫자의 판단 단위와 같다."""
+def _list_old_free_units(snap: BundleSnapshot) -> list[UnitInfo]:
+    """옛 문서의 활성·묶이지 않은 단위(표·행 단위 포함), order_key 순."""
     old_document_ids = {document.id for document in snap.documents.values() if document.side == "old"}
     return sorted(
         (unit for unit in snap.units.values() if unit.document_id in old_document_ids and unit.group_unit_id is None),
         key=lambda unit: unit.order_key,
     )
+
+
+def _list_judged_units(snap: BundleSnapshot) -> list[UnitInfo]:
+    """판단 단위 — 옛 문서의 활성·묶이지 않은 단위 중 잡음 표시가 없는 것, order_key 순. 진행 숫자의 판단 단위와 같다."""
+    return [unit for unit in _list_old_free_units(snap) if unit.noise_kind is None]
+
+
+def list_noise_units(snap: BundleSnapshot) -> list[UnitInfo]:
+    """잡음 표시(목차 줄)가 붙은 옛 문서 단위, order_key 순 — 판단 줄이 아니라 결과물 A의 "삭제 · 목차" 줄과 요약의 수로만 나간다."""
+    return [unit for unit in _list_old_free_units(snap) if unit.noise_kind is not None]
 
 
 def get_meaning_key(snap: BundleSnapshot, unit_id: int) -> int:

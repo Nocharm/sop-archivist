@@ -168,7 +168,14 @@ export function OutputARowView({ line, index, destKindLabel, changeLabel, status
         )}
       </td>
       <td>
-        <UnitStatusChip status={status} />
+        {/* 목차 줄은 판단 상태가 없다 - 저절로 지운 줄이라 칩 대신 글(상태 표기는 화면 언어와 상관없이 영어) */}
+        {row.noise_kind ? (
+          <span className="text-xs text-ink-3" data-testid={`output-a-toc-${index}`}>
+            {t("outputs.tocStatus")}
+          </span>
+        ) : (
+          <UnitStatusChip status={status} />
+        )}
         {changeLabel && <span className="mt-0.5 block text-xs text-ink-3">{changeLabel}</span>}
       </td>
     </tr>

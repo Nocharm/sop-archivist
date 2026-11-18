@@ -74,8 +74,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useProgressiveList } from "@/lib/use-progressive-list";
 import { getNewDocumentsHref, getStageHref } from "@/lib/stages";
 
-/** 요약 숫자 순서 - 확정률은 따로 % 글로 */
-const SUMMARY_ITEMS = ["old_rows", "assigned", "no_destination", "duplicate", "deleted", "moved", "new", "translated", "single_language"] as const;
+/** 요약 숫자 순서 - 확정률은 따로 % 글로. 목차 · 저절로 삭제는 목차 줄이 있을 때만(Excel B 요약과 같다) */
+const SUMMARY_ITEMS = ["old_rows", "assigned", "no_destination", "duplicate", "deleted", "toc_deleted", "moved", "new", "translated", "single_language"] as const;
+const OPTIONAL_SUMMARY_ITEMS: ReadonlySet<string> = new Set(["toc_deleted"]);
 
 // 삭제·바깥 문서 이동처럼 자리가 없는 보낸 곳과 변경 종류는 코드값 대신 화면 문구로 보인다(모르는 값은 그대로)
 function labelCode(t: (key: string) => string, prefix: string, code: string): string {
@@ -591,7 +592,7 @@ export function OutputsWorkspace({ mode }: { mode: OutputsMode }) {
           <h2 className="side-box-title">{t("outputs.summary")}</h2>
           {sum ? (
             <dl className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 tabular-nums">
-              {SUMMARY_ITEMS.map((item) => (
+              {SUMMARY_ITEMS.filter((item) => !OPTIONAL_SUMMARY_ITEMS.has(item) || sum[item] > 0).map((item) => (
                 <div key={item} className="contents">
                   <dt className="text-ink-2">{t(`outputs.sum.${item}`)}</dt>
                   <dd className="text-right" data-testid={`outputs-sum-${item}`}>{sum[item]}</dd>
