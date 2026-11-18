@@ -8201,6 +8201,92 @@ await runStep("assign: unwrap table - ↺ Back to table asks once when a line is
   check("the original table line is back", (await waitView((view) => !isLayout(view) && view.units.some((item) => item.id === unit.id && item.status === "unassigned"))) !== null);
 });
 
+// 대응 표 함께 벗기기(MD 1 F8a) - 시드 8번 묶음은 한/영 따로 문서 하나(표 1 한글 작업 표 · 표 2 한글 값 표 · 표 3 영어 작업 표 · 표 4 영어 값 표, 값 표는 행 수가 다르다).
+// 한글 작업 표를 벗기면 창이 영어 작업 표를 미리 골라 묻고, 함께 벗기면 같은 행끼리 한/영 짝이 서고 Undo 한 번에 둘 다 표로 돌아온다(시드 그대로 둔다)
+const PAIR_TABLES_TITLE = "SYNTHETIC 8 한/영 따로 표";
+
+await runStep("assign: counterpart table - unwrapping asks once with the most similar table, both unwrap in one edit and pair by row, Undo wraps both", {}, async ({ page, takeShot }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const bundles = await (await page.request.get(`${BASE}/api/bundles`, { headers })).json();
+  const bundle = bundles.find((item) => item.title === PAIR_TABLES_TITLE);
+  check("the demo seed has the separate-tables bundle", bundle !== undefined);
+  if (!bundle) return;
+  const docs = await (await page.request.get(`${BASE}/api/bundles/${bundle.id}/documents`, { headers })).json();
+  const readView = async () => (await page.request.get(`${BASE}/api/bundles/${bundle.id}/documents/${docs[0].id}/view`, { headers })).json();
+  const waitView = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const view = await readView();
+      if (isDone(view)) return view;
+      await page.waitForTimeout(250);
+    }
+    return null;
+  };
+  const before = await readView();
+  const [koWork, koValue, enWork, enValue] = before.tables;
+  check("the Korean work table offers the English work table first", koWork.counterparts?.[0] === enWork.id, JSON.stringify(koWork.counterparts));
+  const tableUnit = (view, tableId) => view.units.find((item) => item.kind === "table" && item.table_id === tableId);
+  const unwrapFromShape = async (tableId) => {
+    const unit = tableUnit(await readView(), tableId);
+    const piece = page.locator(`[data-testid="assign-paper-piece-${unit.id}"]`);
+    await piece.waitFor({ timeout: T });
+    await piece.scrollIntoViewIfNeeded();
+    await piece.click();
+    await wait(page, `assign-shape-table_layout-${unit.id}`);
+    await page.locator(`[data-testid="assign-shape-table_layout-${unit.id}"]`).click();
+  };
+  await page.goto(`${BASE}/bundles/${bundle.id}/assign`);
+  await wait(page, "assign-bar");
+
+  // 묻는 창 - 가장 비슷한 표(영어 작업 표, 표 3)만 미리 골라져 있다
+  await unwrapFromShape(koWork.id);
+  await wait(page, "assign-counterpart");
+  check("the dialog names the English half and table 3", (await getText(page, "assign-counterpart")).includes("English half (table 3)"), await getText(page, "assign-counterpart"));
+  check("the most similar table is picked", await page.locator(`[data-testid="assign-counterpart-option-${enWork.id}"] input`).isChecked());
+  check("This table only is offered", (await page.locator('[data-testid="assign-counterpart-only"]').count()) === 1);
+  await takeShot("sop-assign-counterpart.png");
+  await page.locator('[data-testid="assign-counterpart-confirm"]').click();
+  const both = await waitView((view) => view.tables[0].is_layout && view.tables[2].is_layout);
+  check("both tables are unwrapped in one go", both !== null && !both.tables[1].is_layout && !both.tables[3].is_layout);
+  if (!both) return;
+  const texts = new Map(both.units.map((item) => [item.id, item.text]));
+  const korean = both.units.find((item) => item.text === "세척액 농도를 확인한다.");
+  const english = both.units.find((item) => item.text === "Check the detergent concentration.");
+  check("the same row and order lines are a suggested KO/EN pair", both.pairs.some((pair) => pair.unit_ids.includes(korean?.id) && pair.unit_ids.includes(english?.id)), JSON.stringify(both.pairs.map((pair) => pair.unit_ids.map((id) => texts.get(id)))));
+  // 짝 하나를 고르면 멀리 있는 다른 절반의 짝이 점선 테두리로 함께 보이고 오른쪽 칸에 두 줄이 같이 뜬다(지금 dev 그대로)
+  await page.locator(`[data-testid="assign-paper-piece-${korean.id}"]`).click();
+  await page.locator(`[data-testid="assign-paper-piece-${english.id}"][data-partner]`).waitFor({ timeout: T });
+  check("the right panel shows both lines", (await getText(page, "assign-shape")).includes("Check the detergent"), await getText(page, "assign-shape"));
+
+  // Undo 한 번에 두 표가 함께 표로 돌아온다
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("one Undo wraps both tables back", (await waitView((view) => view.tables.every((table) => !table.is_layout) && view.pairs.length === 0)) !== null);
+
+  // 행 수가 다른 값 표 - 함께 벗기면 짝 대신 알림과 문서 경고, Undo로 둘 다 돌아오고 경고도 사라진다
+  await unwrapFromShape(koValue.id);
+  await wait(page, "assign-counterpart");
+  check("the value table offers the English value table first", await page.locator(`[data-testid="assign-counterpart-option-${enValue.id}"] input`).isChecked());
+  await page.locator('[data-testid="assign-counterpart-confirm"]').click();
+  const differ = await waitView((view) => view.tables[1].is_layout && view.tables[3].is_layout);
+  check("mismatched rows build no pairs", differ !== null && differ.pairs.length === 0);
+  const toastShown = await page.locator('[data-testid="toast-ok"]', { hasText: "row counts differ" }).first().waitFor({ timeout: T }).then(() => true, () => false);
+  check("the toast says the row counts differ", toastShown);
+  const readWarnings = async () => ((await (await page.request.get(`${BASE}/api/bundles/${bundle.id}/documents`, { headers })).json())[0].extraction.warnings).filter((warning) => warning.kind === "pair_rows_differ");
+  check("a pair_rows_differ warning is left", (await readWarnings()).length === 1);
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("Undo wraps the value tables back", (await waitView((view) => view.tables.every((table) => !table.is_layout))) !== null);
+  check("the warning goes with Undo", (await readWarnings()).length === 0);
+
+  // 이 표만 - 창에서 고르면 그 표만 벗긴다
+  await unwrapFromShape(koWork.id);
+  await wait(page, "assign-counterpart");
+  await page.locator('[data-testid="assign-counterpart-only"] input').check();
+  await page.locator('[data-testid="assign-counterpart-confirm"]').click();
+  const only = await waitView((view) => view.tables[0].is_layout);
+  check("This table only unwraps just that table", only !== null && only.tables.filter((table) => table.is_layout).length === 1 && only.pairs.length === 0);
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("the seed bundle is left as found", (await waitView((view) => view.tables.every((table) => !table.is_layout))) !== null);
+});
+
 // 끌어서 보내기(끌어다 놓기 설계 §6, 3걸음) - Old 조각을 아직 쓰지 않은 New 문서(New · from Assign)의 두 문장 사이나 빈 칸에 놓으면 그 줄의 초안이 되고(저장하지 않는다),
 // Confirm 때 문장 사이면 그 자리까지 저장한다. 자리를 받은 저장은 그 문서의 순서를 굳히고(manual_order) 화면에서 되돌릴 길이 없다 - 그래서 시드 묶음을 쓰는 Assign·Order 단계가 모두 끝난 뒤에 둔다.
 // 자료는 이 단계가 API로 만든다(A·B·C를 칸 K에, P를 칸 K2에). 끝에 이 단계가 확정한 줄은 Clear(U)로 되돌린다(굳힌 순서는 남는다)

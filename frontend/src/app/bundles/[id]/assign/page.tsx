@@ -52,6 +52,7 @@ import { LangToken } from "@/components/paper/lang-token";
 import { FilterChip, UnitStatusChip } from "@/components/status";
 import { ClampText } from "@/components/ui/clamp-text";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { CounterpartModal } from "@/components/assign/counterpart-modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { BundleLoadError } from "@/components/bundle-load-error";
 import { flashElement, Truncate, useUnwrapMotion } from "@/components/ui/motion";
@@ -131,6 +132,7 @@ import {
   type UndoMeta,
   type UnitRefDetail,
   type UnitRow,
+  type ViewTable,
   type ViewUnit,
   type WrittenSentence,
 } from "@/lib/api-sop";
@@ -159,6 +161,7 @@ import {
 import { buildAssignMenu, getPairPickBlocker, getPairSetBlocker, planAssignJoin, planShapeMode, type AssignMenuAction, type AssignMenuGroups } from "@/lib/assign-context-menu-model";
 import { listHeadingBackUnits } from "@/lib/heading-shift-model";
 import { countDecidedLines, getTableNumber, getUnitUnwrapTable } from "@/lib/unwrap-model";
+import { buildUnwrapOp, listCounterpartChoices, readOtherHalf, type CounterpartChoice } from "@/lib/counterpart-model";
 import { resolveLineParam } from "@/lib/assign-line-param";
 import { readAssignView, writeAssignView } from "@/lib/assign-view-prefs";
 import { loadBundle, useBundle } from "@/lib/bundle-store";
@@ -801,6 +804,8 @@ export default function AssignPage() {
   // 배정이 걸린 문장을 자르거나 합치려 할 때 - 서버가 409 confirm_required로 물으면 확인을 받아 배정을 풀며 다시 보낸다(원문 고치기와 같은 규칙, 설계 2026-11-15 §3.5)
   // 다시 보낼 일은 함수가 아니라 값으로 둔다 - 확인을 누른 그때의 화면 값(원문 보기·문서 판)으로 보내야 고친 뒤 새 줄을 따라간다
   const [editConfirm, setEditConfirm] = useState<{ count: number; retry: ConfirmedEdit } | null>(null);
+  // 대응 표 함께 벗기기 창(F8a) - 벗기려는 표와 함께 벗길 후보(맨 앞이 가장 비슷한 표)
+  const [counterpartAsk, setCounterpartAsk] = useState<{ table: ViewTable; choices: CounterpartChoice[] } | null>(null);
   // 표 벗기기 · 다시 표로의 풀기 전환(걷기 · 펼치기 · 붙이기, F10) - Old 칸 안에서 바뀌는 표를 찾고 잰다
   const oldPaneRef = useRef<HTMLElement | null>(null);
   const unwrapMotion = useUnwrapMotion(oldPaneRef);
@@ -1332,7 +1337,8 @@ export default function AssignPage() {
             setFreshViews(current.map((view) => (view.document.id === docId ? fresh : view)));
             reloadAfterEdit();
           },
-          { scopes: [`t${op.table_id}`], reverse: !op.is_layout },
+          // 대응 표를 함께 벗기면(F8a) 두 표가 함께 풀린다
+          { scopes: [op.table_id, ...(op.is_layout && op.counterpart_table_id !== undefined ? [op.counterpart_table_id] : [])].map((id) => `t${id}`), reverse: !op.is_layout },
         );
       }
       showToast(okText);
@@ -1349,6 +1355,24 @@ export default function AssignPage() {
       if (!isAsking && !isReloaded) reloadAfterEdit();
       setBusy(false);
     }
+  }
+
+  /** 표 벗기기(F1) - 한/영 따로 문서에서 다른 언어 절반에 같은 꼴 대응 표가 있으면 창이 한 번 묻는다(F8a). 없으면 이 표만 바로 벗긴다 */
+  function unwrapTable(tableId: number) {
+    const tables = shapeView?.tables ?? [];
+    const table = tables.find((item) => item.id === tableId);
+    const choices = table && shapeView ? listCounterpartChoices(table, tables, shapeView.blocks) : [];
+    if (table && choices.length > 0) setCounterpartAsk({ table, choices });
+    else void runUnitEdit(buildUnwrapOp(tableId, null), t("assign.unwrap.didUnwrap"), null);
+  }
+
+  /** 대응 표 창에서 고른 것으로 벗긴다 - 함께 벗기면 편집 한 번(되돌리기 한 번에 둘 다), 행 수가 다르면 짝이 서지 않는다고 알린다 */
+  function confirmCounterpart(table: ViewTable, choice: CounterpartChoice | null) {
+    setCounterpartAsk(null);
+    const okText = choice === null
+      ? t("assign.unwrap.didUnwrap")
+      : t(choice.rowsDiffer ? "assign.counterpart.didRowsDiffer" : "assign.counterpart.didBoth", { a: getTableNumber(table), b: choice.number });
+    void runUnitEdit(buildUnwrapOp(table.id, choice?.tableId ?? null), okText, null);
   }
 
   /** 다시 표로(F1) - 벗긴 표 전체를 표 한 줄로 되돌린다. 그 표의 줄에 배정이 있으면 서버가 되묻고 확인창이 한 번 묻는다(표 밖 줄의 배정은 그대로) */
@@ -1611,7 +1635,7 @@ export default function AssignPage() {
       if (pairId !== null) void runPairChange((docId, revision) => deletePair(bundleId, docId, pairId, revision), t("split.pairRemoved"), target.id);
     } else if (action === "table_rows" && table) void runUnitEdit({ type: "split_table_rows", table_unit_id: table.id }, t("split.didSplit"), null);
     else if (action === "table_merge" && table && table.table_id !== null) void runUnitEdit({ type: "merge_table_rows", table_id: table.table_id }, t("split.didMerge"), null);
-    else if (action === "table_layout" && table && table.table_id !== null) void runUnitEdit({ type: "set_layout_table", table_id: table.table_id, is_layout: true }, t("assign.unwrap.didUnwrap"), null);
+    else if (action === "table_layout" && table && table.table_id !== null) unwrapTable(table.table_id);
     else if (action === "caption_attach_prev" || action === "caption_attach_next") {
       // 같은 일, 대상에 따라 짝이 바뀐다 - 묶음 대상이면 이웃 글을, 글 대상이면 이웃 묶음에 붙인다. 붙인 뒤 묶음 줄을 고른다
       const neighbor = findNeighbors(target)[action === "caption_attach_prev" ? "prev" : "next"];
@@ -4720,6 +4744,15 @@ export default function AssignPage() {
           testId="assign-identical-modal"
           onConfirm={() => void confirmIdenticalAll()}
           onClose={() => setConfirmingIdentical(false)}
+        />
+      )}
+      {counterpartAsk && (
+        <CounterpartModal
+          half={readOtherHalf(counterpartAsk.table)}
+          choices={counterpartAsk.choices}
+          busy={busy}
+          onConfirm={(counterpartId) => confirmCounterpart(counterpartAsk.table, counterpartAsk.choices.find((choice) => choice.tableId === counterpartId) ?? null)}
+          onClose={() => setCounterpartAsk(null)}
         />
       )}
       {editConfirm && (

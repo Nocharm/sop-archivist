@@ -29,6 +29,7 @@ from app.sop.caption_refs import (
     update_caption_ref,
 )
 from app.sop.constants import LANGUAGE_LAYOUTS, MEMBER_ROLES
+from app.sop.counterparts import build_table_facts, count_table_langs, list_counterpart_options
 from app.sop.decision_steps import record_unit_edit_step
 from app.sop.detach import detach_units, find_units_needing_confirm
 from app.sop.editing import (
@@ -89,7 +90,13 @@ from app.sop.refs import RefState, build_ref_text, read_ref_state
 from app.sop.schemas import NO_NUL, NoNulStr
 from app.sop.status import get_cover_status
 from app.sop.tobe import MAX_DB_INT, release_match_doc, rename_match_doc, temp_match_code
-from app.sop.units import UNIT_ACTIVE, compute_display_id, get_latest_extraction_id, refresh_code_pairs
+from app.sop.units import (
+    SEPARATE_LAYOUT,
+    UNIT_ACTIVE,
+    compute_display_id,
+    get_latest_extraction_id,
+    refresh_code_pairs,
+)
 
 router = APIRouter(prefix="/api/bundles", tags=["sop-documents"])
 
@@ -205,6 +212,10 @@ class ViewTableOut(BaseModel):
     n_rows: int
     n_cols: int
     is_layout: bool
+    # 칸 줄 언어가 많은 쪽 — "ko" | "en" | None(두 언어 표 · 빈 표). 한/영 따로 문서의 대응 표 판정에 쓴다(F8a)
+    lang: str | None = None
+    # 한/영 따로 문서에서 아직 벗기지 않은 이 표와 함께 벗길 대응 표 후보(비슷한 차례, 맨 앞이 같은 꼴인 가장 비슷한 표) — 비면 묻지 않는다
+    counterparts: list[int] = []
 
 
 class ViewBlockOut(BaseModel):
@@ -388,6 +399,21 @@ async def _get_document(session: AsyncSession, bundle_id: int, doc_id: int) -> D
     return document
 
 
+def _build_view_tables(
+    document: Document, tables: Sequence[SourceTable], units: Sequence[Unit]
+) -> list[ViewTableOut]:
+    """원문 표마다 언어와(한/영 따로 문서만) 함께 벗길 대응 표 후보 — 단위는 이미 읽은 활성 단위다(쿼리를 더하지 않는다)."""
+    facts = build_table_facts(tables, count_table_langs((unit.table_id, unit.lang) for unit in units))
+    lang_by_table = {table.id: table.lang for table in facts}
+    options = list_counterpart_options(facts) if document.language_layout == SEPARATE_LAYOUT else {}
+    return [
+        ViewTableOut.model_validate(table).model_copy(
+            update={"lang": lang_by_table[table.id], "counterparts": options.get(table.id, [])}
+        )
+        for table in tables
+    ]
+
+
 async def build_document_view(session: AsyncSession, document: Document) -> DocumentViewOut:
     """최신 추출의 표·블록과 활성 단위·짝 — DB 표마다 한 번씩만 읽어 단위 수와 무관하게 쿼리 수가 같다."""
     document_out = DocumentBase.model_validate(document)
@@ -400,9 +426,9 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
             document=document_out, extraction=None, has_number_ranges=False, tables=[], blocks=[], part_groups=[],
             units=[], pairs=[], edits=edits,
         )
-    tables = await session.scalars(
+    tables = list(await session.scalars(
         select(SourceTable).where(SourceTable.extraction_id == extraction.id).order_by(SourceTable.table_index)
-    )
+    ))
     block_rows = await session.execute(
         select(
             SourceBlock.id, SourceBlock.seq, SourceBlock.part, SourceBlock.kind, SourceBlock.text, SourceBlock.xml_path,
@@ -462,7 +488,7 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
         has_number_ranges=has_number_ranges(
             await session.scalar(select(Extraction.extractor_version).where(Extraction.id == extraction.id)) or ""
         ),
-        tables=[ViewTableOut.model_validate(table) for table in tables],
+        tables=_build_view_tables(document, tables, units),
         blocks=blocks,
         part_groups=[
             ViewPartGroupOut(

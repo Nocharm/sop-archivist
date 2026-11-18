@@ -1,4 +1,4 @@
-"""로컬 데모 시드 — 합성 SOP 묶음 네 개를 서로 다른 단계로, 그 뒤에 참조 지도용 묶음 둘과 목차 묶음 하나를 앱 API에 만든다. 로컬 개발 전용, 운영 실행 금지.
+"""로컬 데모 시드 — 합성 SOP 묶음 네 개를 서로 다른 단계로, 그 뒤에 참조 지도용 묶음 둘과 목차 묶음 · 한/영 따로 표 묶음 하나씩을 앱 API에 만든다. 로컬 개발 전용, 운영 실행 금지.
 
 단계: 1 쪼개기 직후(업로드·언어 배치·편집까지), 2 분류 절반(입구 1 답의 절반 저장), 3 검토 대기(전부 저장 후 검토 요청),
 4 AI 제안(가짜 AI의 분류·입구 2 짝 제안까지, 확정하지 않는다 — 합성 응답이고 실제 모델이 아니다).
@@ -7,6 +7,8 @@
 작성자에게 남의 Bundle). 단계 Bundle 넷의 OLD-1이 5번 문서 번호를, 단계 2·3의 이동 줄이 6번 New 문서를 가리키고 5·6번이 OLD-1~3을 가리킨다.
 목차: 7 목차(qa.member 작성자 — 목차 스타일 줄 7과 점 끌기 보통 줄 1, 본문에 띠 표 하나가 든 Old 문서 하나, 배정 없음.
 Assign 목차 블록·띠 표 제목 줄 스모크용).
+한/영 따로 표: 8 한/영 따로 표(qa.member 작성자 — 한글 절반 표 둘 다음 영어 절반 표 둘, 값 표는 행 수가 다름, 배정 없음.
+Assign 대응 표 함께 벗기기 스모크용).
 이미 같은 제목 묶음이 있으면 그 묶음은 건너뛰어 여러 번 돌려도 같은 결과다. 끝에 묶음별 상태·진행 숫자만 찍고 원문 글자는 찍지 않는다.
 
 개발 전용이다 — 합성 생성기가 개발 의존성 python-docx와 테스트 팩토리(tests.pdf_factory)를 쓰고, 합성 파일은 임시 디렉터리에
@@ -35,7 +37,7 @@ from app.sop.ai.runner import run_jobs_until_idle
 from scripts.reset_db import count_hr_rows, should_refuse_reset
 from scripts.sop_demo_driver import SyntheticDriver
 from scripts.synthetic_sop import MOVE_TARGET_CODE, SyntheticBundle, build_synthetic_bundle
-from tests.docx_factory import build_docx, make_band_table, make_style, p
+from tests.docx_factory import build_docx, make_band_table, make_grid_table, make_row, make_style, p
 from tests.fake_ai import SyntheticAnswers, fake_ai_session
 from tests.sop_helpers import (
     AUTHOR,
@@ -233,6 +235,36 @@ def _build_toc_bundle(client: TestClient, bundle_id: int) -> None:
     assert response.json()["status"] == "ready", response.json()["status"]
 
 
+# --- 한/영 따로 표 Bundle(8번) — Assign 대응 표 함께 벗기기 스모크용(MD 1 F8a) ---
+
+PAIR_TABLES_TITLE = "SYNTHETIC 8 한/영 따로 표"
+# 작업 표(2열 2.8 / 14.2 cm, 3행)는 두 절반이 같은 꼴 · 같은 행 수, 값 표(3열)는 영어 쪽이 한 행 더 많다
+PAIR_WORK_WIDTHS, PAIR_VALUE_WIDTHS = (1588, 8050), (2000, 2000, 2000)
+PAIR_KO_WORK = (("단계", "작업 내용"), ("준비", "세척액 농도를 확인한다."), ("점검", "펌프 압력을 기록한다."))
+PAIR_EN_WORK = (("Step", "Task"), ("Preparation", "Check the detergent concentration."), ("Check", "Record the pump pressure."))
+PAIR_KO_VALUE = (("항목", "기준", "단위"), ("농도", "5", "%"))
+PAIR_EN_VALUE = (("Item", "Limit", "Unit"), ("Concentration", "5", "%"), ("Temperature", "40", "°C"))
+
+
+def _build_pair_table(rows: Iterable[Iterable[str]], widths: tuple[int, ...]) -> str:
+    return make_grid_table(len(widths), "".join(make_row(list(row)) for row in rows), widths)
+
+
+def _build_pair_tables_bundle(client: TestClient, bundle_id: int) -> None:
+    response = set_members(client, bundle_id, [("qa.member", "author"), ("qa.lead", "reviewer")])
+    assert response.status_code == 200, response.text
+    put_tobe_codes(client, bundle_id, [build_tobe_doc("SOP-WSH", "SYNTHETIC Washer preparation")])
+    body = (
+        p("1. 세척 준비", "Heading1") + p("이 절은 합성 세척기의 준비를 다룬다.")
+        + _build_pair_table(PAIR_KO_WORK, PAIR_WORK_WIDTHS) + _build_pair_table(PAIR_KO_VALUE, PAIR_VALUE_WIDTHS)
+        + p("1. Cleaning preparation", "Heading1") + p("This section covers the preparation of the synthetic washer.")
+        + _build_pair_table(PAIR_EN_WORK, PAIR_WORK_WIDTHS) + _build_pair_table(PAIR_EN_VALUE, PAIR_VALUE_WIDTHS)
+    )
+    response = upload(client, bundle_id, build_docx(body), "SYNTHETIC_SYN-PAIR-1_Washer.docx")
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "ready", response.json()["status"]
+
+
 @dataclass(frozen=True)
 class MapBundle:
     title: str
@@ -244,11 +276,12 @@ MAP_BUNDLES = (
     MapBundle(MAP_UV_TITLE, AUTHOR, _build_uv_bundle),
     MapBundle(MAP_DOC_TITLE, OUTSIDER, _build_doc_bundle),
     MapBundle(TOC_TITLE, AUTHOR, _build_toc_bundle),
+    MapBundle(PAIR_TABLES_TITLE, AUTHOR, _build_pair_tables_bundle),
 )
 
 
 def seed_map_bundles(client: TestClient) -> dict[str, str]:
-    """지도용·목차 Bundle을 만들고 제목 → "created"|"skipped". 단계 Bundle 넷 뒤에 불러 id가 5·6·7이 되게 한다."""
+    """지도용·목차·한/영 따로 표 Bundle을 만들고 제목 → "created"|"skipped". 단계 Bundle 넷 뒤에 불러 id가 5-8이 되게 한다."""
     outcomes: dict[str, str] = {}
     for bundle in MAP_BUNDLES:
         if any(row["title"] == bundle.title for row in _list_bundles(client, bundle.lister)):
