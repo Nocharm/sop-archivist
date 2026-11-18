@@ -298,6 +298,14 @@ describe("foldCaptionRows", () => {
     expect(caption?.parts[0]).toMatchObject({ block: { id: 1 }, segments: [{ start: 0, end: 7, unitId: 21 }] });
   });
 
+  it("reads a caption lifted from the table's first row (a span on a table cell) as the table's caption (F7 ③)", () => {
+    const table = { id: 70, table_index: 0, parent_table_id: null, part: "body", n_rows: 2, n_cols: 1, is_layout: false };
+    const cell = makeBlock(3, 0, "표 2. 경보 목록", { kind: "table_cell", table_id: 70, row_index: 0 });
+    const row: PaperRow = { type: "table", key: "t70", item: { type: "table", table, rows: [[cell]], unitId: 9 } };
+    const [folded] = foldCaptionRows([row], units({ 9: { kind: "table" }, 6: { kind: "caption", group_unit_id: 9, spans: [[3, 0, 9]] } }));
+    expect(folded).toMatchObject({ type: "table", captions: [{ unitId: 6, parts: [{ block: { id: 3 }, segments: [{ start: 0, end: 9, unitId: 6 }] }] }] });
+  });
+
   it("leaves a caption whose bundle is not on the list as its own piece and gives a captionless bundle an empty list", () => {
     const rows = foldCaptionRows([pieceRow(5), tableRow(9)], units({ 5: { kind: "caption", group_unit_id: 8 }, 9: { kind: "table" } }));
     expect(rows.map((row) => row.type)).toEqual(["piece", "table"]);

@@ -258,9 +258,25 @@ export function getBundleHeader(row: Extract<PaperRow, { type: "table" | "figure
   return { kind: "table", unitId, displayId, preview };
 }
 
+/** 묶음 블록(그림 블록 · 표 칸) 안에 범위를 둔 캡션 - 블록 글자를 그대로 조각으로 편다(같은 블록의 범위는 한 부분) */
+function listInBlockCaptions(captions: readonly ViewUnit[], blocks: ReadonlyMap<number, ViewBlock>): CaptionPiece[] {
+  return captions.flatMap((caption): CaptionPiece[] => {
+    const parts: PiecePart[] = [];
+    for (const [blockId, start, end] of caption.spans) {
+      const block = blocks.get(blockId);
+      if (!block) continue;
+      const last = parts.at(-1);
+      if (last?.block.id === blockId) last.segments.push({ start, end, unitId: caption.id });
+      else parts.push({ block, segments: [{ start, end, unitId: caption.id }] });
+    }
+    return parts.length === 0 ? [] : [{ type: "piece", key: `c${caption.id}`, unitId: caption.id, parts }];
+  });
+}
+
 /**
- * 캡션 단위의 조각 줄을 빼서 그 묶음(group_unit_id) 표·그림 줄의 captions에 담는다 - 캡션은 머리 줄에서 한 번만 읽힌다.
+ * 캡션 단위의 조각 줄을 빼서 그 묶음(group_unit_id) 표·그림 줄의 captions에 담는다 - 캡션은 캡션 자리에서 한 번만 읽힌다.
  * 그림 줄은 그림 단위(범위 없음 - block_id로 찾는다)에 잇고, 옛 추출처럼 그림 블록 글을 범위로 가진 캡션도 그 그림의 캡션으로 둔다.
+ * 표 첫 행에서 올린 캡션(F7 ③ - 표 칸 위 범위)도 그 표의 캡션으로 둔다.
  * 묶음 줄이 이 목록에 없는 캡션(행으로 나눈 표 등)은 제 조각 줄로 남는다. 표·그림 줄의 captions는 늘 채운다(없으면 빈 목록).
  */
 export function foldCaptionRows(rows: PaperRow[], units: ReadonlyMap<number, ViewUnit>): PaperRow[] {
@@ -274,18 +290,13 @@ export function foldCaptionRows(rows: PaperRow[], units: ReadonlyMap<number, Vie
   const out = rows.map((row): PaperRow => {
     if (row.type === "piece") return row;
     if (row.type === "table") {
-      const next = { ...row, captions: [] };
+      const cells = new Map(row.item.rows.flat().map((cell) => [cell.id, cell]));
+      const next = { ...row, captions: row.item.unitId === null ? [] : listInBlockCaptions(anchored.get(row.item.unitId) ?? [], cells) };
       if (row.item.unitId !== null) bundles.set(row.item.unitId, next);
       return next;
     }
     const unitId = figureOfBlock.get(row.block.id) ?? (row.unitId !== null && units.get(row.unitId)?.kind === "caption" ? null : row.unitId);
-    // 그림 블록 안에 범위를 둔 캡션(옛 추출) - 블록 글자를 그대로 조각으로 편다
-    const inBlock = (unitId === null ? [] : (anchored.get(unitId) ?? []))
-      .map((caption): CaptionPiece | null => {
-        const segments = caption.spans.filter(([blockId]) => blockId === row.block.id).map(([, start, end]) => ({ start, end, unitId: caption.id }));
-        return segments.length === 0 ? null : { type: "piece", key: `c${caption.id}`, unitId: caption.id, parts: [{ block: row.block, segments }] };
-      })
-      .filter((piece) => piece !== null);
+    const inBlock = unitId === null ? [] : listInBlockCaptions(anchored.get(unitId) ?? [], new Map([[row.block.id, row.block]]));
     const next = { ...row, unitId, captions: inBlock };
     if (unitId !== null) bundles.set(unitId, next);
     return next;
