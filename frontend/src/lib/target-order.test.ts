@@ -5,7 +5,7 @@ import type { OutputCItem } from "./api-sop";
 import { canMoveTarget, readMoveKey } from "./target-order";
 
 function item(id: number, lang: string): OutputCItem {
-  return { target_id: id, kind: "sentence", lang, text: `t${id}`, ai_text: "", change_type: null, status: "confirmed", source_note: "", origin: "units", meaning_key: null, number: null, indent_level: 0, number_style: "numbered", cell_row: null, cell_col: null, children: [] };
+  return { target_id: id, kind: "sentence", lang, text: `t${id}`, ai_text: "", change_type: null, status: "confirmed", source_note: "", source_count: 1, origin: "units", meaning_key: null, number: null, indent_level: 0, number_style: "numbered", cell_row: null, cell_col: null, children: [] };
 }
 
 describe("canMoveTarget", () => {

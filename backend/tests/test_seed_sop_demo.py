@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from app.settings import settings
 from app.sop.refs import is_document_number
-from scripts.seed_sop_demo import DemoStage, drive_stage, find_seed_refusal, main
+from scripts.seed_sop_demo import TOC_AFTER, TOC_EN, TOC_KO, TOC_TITLE, DemoStage, drive_stage, find_seed_refusal, main
 from scripts.synthetic_sop import BALANCE, LEVEL_BENCH, MOVE_TARGET_CODE, build_synthetic_bundle
 from tests.fake_ai import fake_ai_session
 from tests.sop_helpers import AUTHOR
@@ -28,6 +28,7 @@ EXPECTED_BUNDLES = [
     (AI_STAGE_TITLE, "in_progress"),
     ("SYNTHETIC 5 UV 분광광도계", "in_progress"),
     ("SYNTHETIC 6 문서 관리", "in_progress"),
+    (TOC_TITLE, "in_progress"),
 ]
 DOCUMENTS_PER_BUNDLE = 9  # 옛 문서 7개 + 입구 2 새 문서 2개
 
@@ -104,7 +105,7 @@ def test_seed_creates_bundles_at_stages(seed_runs: SeedRuns) -> None:
     assert [(title, status) for _, title, status in bundles] == EXPECTED_BUNDLES
     ids = [bundle_id for bundle_id, _, _ in bundles]
     documents = _query(database_path, "SELECT bundle_id, count(*) FROM documents GROUP BY bundle_id ORDER BY bundle_id")
-    assert documents == [(bundle_id, DOCUMENTS_PER_BUNDLE) for bundle_id in ids[:4]] + [(ids[4], 1), (ids[5], 1)]
+    assert documents == [(bundle_id, DOCUMENTS_PER_BUNDLE) for bundle_id in ids[:4]] + [(ids[4], 1), (ids[5], 1), (ids[6], 1)]
     confirmed = dict(_query(
         database_path,
         "SELECT bundle_id, count(*) FROM unit_decisions WHERE status = 'confirmed' GROUP BY bundle_id",
@@ -132,7 +133,7 @@ def test_seed_links_bundles_for_the_map(seed_runs: SeedRuns) -> None:
         bundle_id: _query(
             database_path, f"SELECT login_id, role FROM bundle_members WHERE bundle_id = {bundle_id} ORDER BY login_id"
         )
-        for bundle_id in ids[4:]
+        for bundle_id in ids[4:6]
     }
     assert members == {ids[4]: [("qa.lead", "reviewer"), ("qa.member", "author")], ids[5]: [("prod.member", "author")]}
     documents = set(_query(database_path, "SELECT bundle_id, doc_code FROM documents"))
@@ -151,6 +152,23 @@ def test_seed_links_bundles_for_the_map(seed_runs: SeedRuns) -> None:
     # 출력은 제목과 결과뿐 — 문장 글은 싣지 않는다
     assert "SYNTHETIC 5 UV 분광광도계" in first.stdout and "SYNTHETIC 6 문서 관리" in first.stdout
     assert "Warm up the lamp" not in first.stdout
+
+
+def test_toc_bundle_marks_its_contents_lines(seed_runs: SeedRuns) -> None:
+    """목차 묶음 — 목차 스타일 줄과 그 뒤 점 끌기 줄이 목차 표시를 받고 판단은 없다(Assign 목차 블록 스모크가 쓴다)."""
+    database_path, first, _, bundles = seed_runs
+    (bundle_id,) = [bundle_id for bundle_id, title, _ in bundles if title == TOC_TITLE]
+
+    marked = _query(database_path, f"""
+        SELECT count(*) FROM units u JOIN extractions e ON e.id = u.extraction_id
+        JOIN documents d ON d.id = e.document_id
+        WHERE d.bundle_id = {bundle_id} AND u.status = 'active' AND u.noise_kind = 'toc'
+    """)
+
+    assert marked == [(len(TOC_KO) + len(TOC_EN) + 1,)]
+    decided = f"SELECT count(*) FROM unit_decisions WHERE bundle_id = {bundle_id} AND status != 'unassigned'"
+    assert _query(database_path, decided) == [(0,)]
+    assert TOC_AFTER not in first.stdout
 
 
 def test_half_stage_leaves_a_captionless_table_unassigned(seed_runs: SeedRuns) -> None:

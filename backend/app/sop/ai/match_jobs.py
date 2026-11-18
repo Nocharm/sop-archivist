@@ -230,7 +230,8 @@ async def _load_old_entries(
         .outerjoin(AiSuggestion, AiSuggestion.id == UnitDecision.suggestion_id)
         .where(
             Document.bundle_id == bundle_id, Document.side == "old", Unit.status == UNIT_ACTIVE,
-            Unit.group_unit_id.is_(None),
+            # 잡음 표시 줄(목차)은 맞추지도 삭제 후보로 쓰지도 않는다
+            Unit.group_unit_id.is_(None), Unit.noise_kind.is_(None),
         )
     )
     rows = await _read_rows(session, statement, Unit.id, unit_ids)

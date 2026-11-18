@@ -34,6 +34,10 @@ SYSTEM_HOLD_RELATED_CHANGED = "system:related_unit_changed"  # 화면은 "관련
 MAX_PAIR_SIDE = 3  # 한/영 짝 한쪽 최대 단위 수(작은 다대다)
 # 새 문장 들여쓰기 최대 깊이 — 9면 칸 번호 아래로 열 단계(6.1.1 … 6.1.1.1.1.1.1.1.1.1)까지. 순서 바꾸기 입력의 상한이다
 MAX_INDENT_LEVEL = 9
+# 글머리 기호 줄의 깊이는 0~2 세 단계(• ○ ▪)다. 저장 상한(MAX_INDENT_LEVEL)과 따로 읽을 때 눌러 읽는다 — 번호 줄과 따로 세어
+# 앞 글머리 기호 줄 깊이 + 1을 넘지 못한다(outputs.get_bullet_depths). 프런트 section-number.ts MAX_BULLET_LEVEL·BULLET_SYMBOLS와 같은 값
+MAX_BULLET_LEVEL = 2
+BULLET_SYMBOLS = ("•", "○", "▪")
 # 새 문장 번호 표시 — 번호(기본) | 번호 생략 | 주석(번호 없이 기울임) | 글머리 기호. 번호가 아닌 줄은 번호를 받지 않고 다음 번호 줄이 이어 센다.
 # 글머리 기호 줄은 결과물 A·Excel의 No.에 그 절(번호 없는 범주면 가장 가까운 번호 있는 상위 절)의 번호를 적는다(outputs.number_bullets).
 # 값은 8자까지다(target_sentences.number_style). SOP 줄의 기본값은 놓인 골격 항목의 default_style이다(target_placement)

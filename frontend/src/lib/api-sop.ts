@@ -421,6 +421,8 @@ export interface ViewUnit {
   ref: UnitRefMark | null;
   /** 이 단위의 글이 가리키는 표·그림("표 3"·"아래 표") - 캡션 자기 머리 번호는 빠진다 */
   caption_refs: ViewCaptionRef[];
+  /** 잡음 표시 - "toc"면 목차 줄: 배정 줄이 없고(남은 수에서 빠짐) Assign 용지가 목차 블록으로 접는다. 편집 clear_noise가 비운다 */
+  noise_kind?: "toc" | null;
 }
 
 /** 표·그림 참조 하나 - number가 null이면 위치 참조("아래 표"), target_unit_id는 이은 표·그림 묶음 단위(못 찾으면 null) */
@@ -495,7 +497,9 @@ export type EditOp =
   /** 참조 아님 - 참조 줄이면 그 전 언어로 돌리고, 제안뿐이었으면 다시 제안하지 않는다 */
   | { type: "clear_ref"; unit_id: number }
   /** 문단 번호 고치기 - number가 null이면 번호 없음(번호 범위가 글로 돌아간다). follow면 같은 목록의 뒤 번호도 한 편집으로 따라 고친다 */
-  | { type: "set_number"; unit_id: number; number: string | null; follow: boolean };
+  | { type: "set_number"; unit_id: number; number: string | null; follow: boolean }
+  /** 목차 아님(줄 하나) · 모두 목차 아님(블록 전체) - 잡음 표시만 비운다(단위는 그대로, 되돌리기가 다시 붙인다) */
+  | { type: "clear_noise"; unit_ids: number[] };
 
 export interface EditResult {
   document_revision: number;
@@ -1224,6 +1228,8 @@ export interface OutputARow {
   confirmed_at: string | null;
   group_id: string | null;
   warnings: Array<Record<string, string>>;
+  /** "toc"면 목차 줄 - 보낸 곳 Deleted, status "deleted"(판단 상태가 아니다), 저절로 */
+  noise_kind?: string | null;
 }
 
 export interface FlowGraph {
@@ -1268,6 +1274,8 @@ export interface OutputCItem {
   change_type: string | null;
   status: string;
   source_note: string;
+  /** 줄이 받은 옛 단위 수 - 2 이상(N:1)이면 C 화면이 줄에 올리거나 고를 때 source_note를 꼬리표로 보인다 */
+  source_count: number;
   /** units | translation | new_doc - AI 번역(translation)은 깊이가 출처를 따른다 */
   origin: string;
   /** 굵은 선 묶음 키(A와 같은 묶음) - "old:…" | "new:…", 출처가 은퇴한 번역은 null */
@@ -1319,6 +1327,8 @@ export interface OutputSummary {
   translated: number;
   confirmed_rate: number;
   single_language: number;
+  /** 목차 · 저절로 삭제 - 목차 줄 수(old_rows·assigned에 들고 deleted에는 들지 않는다) */
+  toc_deleted: number;
 }
 
 export function getOutputA(bundleId: number, labelLang: OutputLang): Promise<OutputARow[]> {
@@ -1389,6 +1399,8 @@ export interface PreviewCell {
   bold: boolean;
   head: boolean;
   numeric: boolean;
+  /** 칸 안 들여쓰기 단계 - C 시트 글머리 기호 줄의 Item 칸 */
+  indent: number;
   /** 색 칩으로 그리는 칸(A의 Status)의 색 - 확정 · AI 제안 · 삭제(흐림) · 미배정. 칩이 아닌 칸은 null */
   tone: PreviewTone | null;
 }
@@ -1425,6 +1437,8 @@ export interface PreviewSheet {
   image_row: number | null;
   total_rows: number;
   truncated: boolean;
+  /** 실린 첫 자료 줄 앞에서 뺀 줄 수(머리 줄 다음부터) - Assign 미리보기의 가운데 창만 0보다 크다 */
+  offset: number;
   /** 아래 셋은 미리보기에만 있다(A에만, 파일에는 쓰지 않는다) - 폭에 맞춘 열 비율(null이면 widths가 비율) · 열 무리 띠 · 열의 뜻 */
   fit_widths: number[] | null;
   bands: PreviewBand[];
@@ -1438,6 +1452,12 @@ export interface WorkbookPreview {
 
 export function getExportPreview(bundleId: number): Promise<WorkbookPreview> {
   return apiFetch<WorkbookPreview>(`/bundles/${bundleId}/export/preview`);
+}
+
+/** Assign Space 미리보기 - Old 문서 하나의 A 시트를 고른 단위를 가운데로 500줄 창까지(파일과 같은 줄) */
+export function getAssignSheetPreview(bundleId: number, docId: number, aroundUnitId: number | null): Promise<PreviewSheet> {
+  const around = aroundUnitId !== null ? `&around_unit_id=${aroundUnitId}` : "";
+  return apiFetch<PreviewSheet>(`/bundles/${bundleId}/export/preview/a?doc_id=${docId}${around}`);
 }
 
 /** 묶음당 파일 하나 - 판(lang)이 없다. 저장 이름은 서버가 짓는다(Content-Disposition) */

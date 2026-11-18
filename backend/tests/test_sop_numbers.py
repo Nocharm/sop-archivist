@@ -25,10 +25,12 @@ LEVELS = [("decimal", "%1"), ("decimal", "%1.%2"), ("decimal", "%1.%2.%3")]
 # P-NUM1 꼴 — 셋째 줄의 "1.2"는 1.1.1을 잘못 읽은 번호이고 그 뒤 번호가 하나씩 밀렸다
 TOP, CHECK, MISREAD, CHANGE = "1 합성 절차", "1.1 합성 필터 점검", "1.2 합성 필터 확인", "1.3 합성 필터 교체"
 STEP, TYPED, UNREAD, PLAIN = "1.3.1 합성 필터를 교체한다.", "2.1 합성 타자 번호 줄이다.", "합성 못 읽은 줄이다.", "합성 보통 문장이다."
+TYPED_HEADING = "3. 합성 타자 제목"
 BODY = (
     numbered("합성 절차", 1, 0, "Heading1") + numbered("합성 필터 점검", 1, 1, "Heading2")
     + numbered("합성 필터 확인", 1, 1, "Heading2") + p("합성 확인 내용이다.") + numbered("합성 필터 교체", 1, 1, "Heading2")
     + numbered("합성 필터를 교체한다.", 1, 2) + p(TYPED) + numbered(UNREAD, 99) + p(PLAIN)
+    + p(TYPED_HEADING, "Heading1")
     + tbl([["7", "", "합성 띠 제목"]])
 )
 
@@ -167,6 +169,12 @@ def test_auto_numbers_go_to_the_number_cell_and_typed_numbers_stay_text(client: 
         "value": None, "read": "2.1", "source": "typed", "is_set": False, "content_start": 0, "typed_len": 3,
     }
     assert find_unit(view, UNREAD)["number"]["value"] is None
+    # 절을 여는 줄(제목)의 타자 번호는 처음부터 번호 칸에 있다 — 본문 줄의 타자 번호만 글로 남는다
+    heading = find_unit(view, TYPED_HEADING)
+    assert heading["number"] == {
+        "value": "3.", "read": "3.", "source": "typed", "is_set": False, "content_start": 3, "typed_len": 0,
+    }
+    assert _content(heading) == "합성 타자 제목"
     assert next(unit for unit in view["units"] if unit["kind"] == "table")["number"] is None
     # 단위 목록의 줄도 같은 내용 경계를 싣는다 — 배정 화면의 새 문장 초안이 쓴다
     listed = client.get(f"/api/bundles/{bundle_id}/units", params={"document_id": doc_id}, headers=AUTHOR).json()["items"]
@@ -355,5 +363,10 @@ def test_new_sentence_and_output_a_use_the_content_and_the_fixed_number(client: 
     assert (fixed["source_text"], fixed["confirmed_text"]) == ("합성 필터 확인", "합성 필터 확인")
     assert (followed["location"]["section"], followed["source_text"]) == ("1.2 (읽은 값 1.3)", "합성 필터 교체")
     assert (top["location"]["section"], top["source_text"]) == ("1", "합성 절차")
+    # 본문 줄의 고친 번호는 속한 절 뒤에 잇는다(따라 고쳐진 1.3.1 → 1.2.1), 제목의 타자 번호는 내용에서 빠진다
+    step, heading = (ko[find_unit(view, text)["id"]] for text in (STEP, TYPED_HEADING))
+    assert (step["location"]["section"], step["source_text"]) == ("1.2 · 1.2.1 (읽은 값 1.3.1)", "합성 필터를 교체한다.")
+    assert en[step["unit_id"]]["location"]["section"] == "1.2 · 1.2.1 (read as 1.3.1)"
+    assert (heading["location"]["section"], heading["source_text"]) == ("3", "합성 타자 제목")
     # 타자로 친 번호는 번호로 삼기 전에는 글이다
     assert (typed["source_text"], typed["confirmed_text"]) == (TYPED, TYPED)

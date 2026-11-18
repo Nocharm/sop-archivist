@@ -29,6 +29,9 @@ class OutputLabels:
     split: str
     translated: str
     wi_parts: dict[str, str]
+    toc_place_template: str  # 목차 줄의 위치(자리) — {lang} {n}(그 문서·언어 안 차례)
+    toc_langs: dict[str, str]  # 목차 줄 위치의 언어 이름
+    toc_remark: str  # 목차 줄의 Remark(저절로)
 
 
 LABELS = {
@@ -38,7 +41,7 @@ LABELS = {
             "translated": "번역", "deleted": "삭제", "new": "신규", "table_restructured": "표 구성 변경",
             "translated_added": "번역 · 추가", "heading": "칸 제목",
         },
-        statuses={"unassigned": "미배정", "ai_suggested": "AI 제안", "confirmed": "확정", "on_hold": "보류"},
+        statuses={"unassigned": "미배정", "ai_suggested": "AI 제안", "confirmed": "확정", "on_hold": "보류", "deleted": "삭제"},
         dest_kinds={"sop": "새 SOP", "wi": "WI", "delete": "삭제", "move_external": "다른 문서로 이동"},
         unassigned="미배정",
         parts={"header": "머리말", "footer": "꼬리말", "footnote": "각주", "endnote": "미주", "textbox": "텍스트 상자"},
@@ -57,6 +60,9 @@ LABELS = {
         split="(나눔)",
         translated="(번역)",
         wi_parts=WI_PART_LABELS,
+        toc_place_template="목차 · {lang} · {n}행",
+        toc_langs={"ko": "한글", "en": "영어"},
+        toc_remark="목차 · 새 문서 목차는 앱이 만든다 (저절로)",
     ),
     "en": OutputLabels(
         change_types={
@@ -64,7 +70,10 @@ LABELS = {
             "translated": "Translated", "deleted": "Deleted", "new": "New", "table_restructured": "Table restructured",
             "translated_added": "Translated · Added", "heading": "Slot heading",
         },
-        statuses={"unassigned": "Unassigned", "ai_suggested": "AI suggested", "confirmed": "Confirmed", "on_hold": "On hold"},
+        statuses={
+            "unassigned": "Unassigned", "ai_suggested": "AI suggested", "confirmed": "Confirmed", "on_hold": "On hold",
+            "deleted": "Deleted",
+        },
         dest_kinds={"sop": "New SOP", "wi": "WI", "delete": "Deleted", "move_external": "Moved to another document"},
         unassigned="Unassigned",
         parts={"header": "Header", "footer": "Footer", "footnote": "Footnote", "endnote": "Endnote", "textbox": "Text box"},
@@ -83,5 +92,8 @@ LABELS = {
         split="(split)",
         translated="(translated)",
         wi_parts=WI_PART_LABELS,
+        toc_place_template="Contents · {lang} · line {n}",
+        toc_langs={"ko": "Korean", "en": "English"},
+        toc_remark="Contents · the app builds the new contents (automatic)",
     ),
 }

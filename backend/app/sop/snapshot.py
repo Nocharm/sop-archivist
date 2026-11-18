@@ -115,6 +115,7 @@ class UnitInfo:
     number_source: str | None = None
     number_len: int = 0
     number_set: str | None = None
+    noise_kind: str | None = None  # 잡음 표시(noise.py) — 목차 줄은 판단 줄이 아니라 결과물 A의 "삭제 · 목차" 줄이다
 
 
 @dataclass(frozen=True)
@@ -285,7 +286,7 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
             lang=unit.lang, text=unit.text if include_text else "", group_unit_id=unit.group_unit_id, table_id=unit.table_id,
             row_index=unit.row_index, order_key=build_unit_order_key(document, unit),
             block_id=unit.spans[0][0] if unit.spans else block_by_seq[(unit.extraction_id, unit.pos_seq)],
-            spans=tuple((block_id, start, end) for block_id, start, end in unit.spans),
+            spans=tuple((block_id, start, end) for block_id, start, end in unit.spans), noise_kind=unit.noise_kind,
             number_read=unit.number_read, number_source=unit.number_source, number_len=unit.number_len,
             number_set=unit.number_set,
         )
@@ -519,11 +520,14 @@ def _select_old_units(bundle_ids: Collection[int], *columns: Any) -> Select[Any]
 
 
 def _select_judged_units(bundle_ids: Collection[int], *columns: Any) -> Select[Any]:
-    """묶음들의 판단 단위(옛 문서·활성·최신 추출·묶이지 않은 단위, 판단 행 있음)에 짝 구성원을 바깥 조인한 질의."""
+    """묶음들의 판단 단위(옛 문서·활성·최신 추출·묶이지 않은 단위, 판단 행 있음, 잡음 표시 없음)에 짝 구성원을 바깥 조인한 질의.
+
+    잡음 표시(목차 줄)는 판단 줄이 아니라 남은 수·진행 숫자에서 빠진다(output_rows._list_judged_units와 같은 규칙).
+    """
     return (
         _select_old_units(bundle_ids, *columns)
         .join(UnitDecision, UnitDecision.unit_id == Unit.id)
-        .where(Unit.group_unit_id.is_(None))
+        .where(Unit.group_unit_id.is_(None), Unit.noise_kind.is_(None))
     )
 
 
@@ -571,7 +575,7 @@ async def load_bundle_progress(session: AsyncSession, bundle_ids: Collection[int
         .outerjoin(group_decision, group_decision.unit_id == Unit.group_unit_id)
         .where(
             # 참조 줄(REF)은 한 줄뿐인 글이라 짝이 없어도 세지 않는다
-            UnitPairMember.pair_id.is_(None), is_counted_kind, Unit.lang != REF_LANG,
+            UnitPairMember.pair_id.is_(None), is_counted_kind, Unit.lang != REF_LANG, Unit.noise_kind.is_(None),
             Document.language_layout.in_(TWO_LANGUAGE_LAYOUTS), ~has_other_language_target,
         )
         .group_by(Document.bundle_id)

@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from typing import Literal
 
 from app.sop.constants import MAX_PAIR_SIDE
+from app.sop.noise import NOISE_TOC, find_toc_block_ids
 
 # 공백 외에 "빈 글자"로 보는 보이지 않는 글자 — ZWSP·ZWNJ·ZWJ·WORD JOINER·BOM(ZWNBSP)
 INVISIBLE_CHARS = "\u200b\u200c\u200d\u2060\ufeff"
@@ -232,7 +233,7 @@ class BlockView:
     flags: Sequence[str]
     table_id: int | None
     row_index: int | None
-    signals: Mapping[str, object] | None = None  # 추출기 5 전의 추출은 없다
+    signals: Mapping[str, object] | None = None  # 블록 신호(source_blocks.signals) — 목차 판정(noise.py)과 번호 칸 붙이기가 읽는다. 추출기 5 전의 추출은 없다
 
 
 @dataclass(frozen=True)
@@ -256,6 +257,7 @@ class UnitDraft:
     group_index: int | None
     pos_seq: int
     pos_start: int
+    noise_kind: str | None = None  # 잡음 표시(noise.py) — 목차 줄이면 "toc"
 
 
 def build_unit_drafts(
@@ -273,7 +275,10 @@ def build_unit_drafts(
       독립 단위다.
     - 캡션: caption_of 표시가 있는 블록은 문장으로 쪼개지 않고 블록 전체 범위 하나의 캡션 단위로 그 그림·표 초안에 묶는다.
       이을 초안이 없으면(레이아웃 표) 표시를 무시하고 보통 문장으로 쪼갠다.
+    - 목차 줄(noise.find_toc_block_ids): 문장으로 쪼개지 않고 블록 전체 범위 하나의 문장 단위에 잡음 표시 "toc"를 붙인다 —
+      점 끌기("1. 목적 ........ 3")의 점에서 잘리면 목차 한 줄이 두 단위가 된다.
     """
+    toc_block_ids = find_toc_block_ids(blocks)
     layout_table_ids = {table.id for table in tables if table.is_layout}
     # 캡션이 묶음보다 앞에 올 수 있어 묶음 초안이 생길 블록 seq를 먼저 모은다 — 그림 블록, 데이터 표의 첫 칸 블록
     bundle_seqs: set[int] = set()
@@ -294,6 +299,11 @@ def build_unit_drafts(
         if number_cell is not None and not _is_same_row_cell(block, number_cell):
             drafts.append(number_cell)
             number_cell = None
+        if block.id in toc_block_ids:
+            line = trim_blank_range(block.text, 0, len(block.text))
+            if line is not None:
+                drafts.append(replace(_build_text_draft("sentence", block, *line), noise_kind=NOISE_TOC))
+            continue
         caption_of = _read_caption_of(block.flags)
         if caption_of is not None and caption_of in bundle_seqs:
             caption = trim_blank_range(block.text, 0, len(block.text))

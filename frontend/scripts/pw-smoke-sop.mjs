@@ -1,5 +1,5 @@
 // SOP 화면 스모크(Playwright + 시스템 Chrome) - 묶음 목록, 개요, 단계 이동(레일·상단 탭), 배치 메뉴, 첫 페인트 전 설정.
-// 전제: backend/에서 reset_db → seed_sop_demo(합성 묶음 4개 + 지도용 2개) 직후, backend 8777 + frontend 3777. 고친 값은 시나리오 안에서 되돌린다.
+// 전제: backend/에서 reset_db → seed_sop_demo(합성 묶음 4개 + 지도용 2개 + 목차 1개) 직후, backend 8777 + frontend 3777. 고친 값은 시나리오 안에서 되돌린다.
 // AI 나눔 확정 시나리오는 backend가 AI를 켜고 가짜 AI(FAKE_AI_SPLIT=1 node scripts/fake-ai-server.mjs)를 볼 때만 돈다 - 꺼져 있으면 건너뛴다.
 // PREPARE=1이면 "배정 화면 첫 진입 미리 분류" 시나리오 하나만 돈다(나머지는 건너뛴다). 전제: reset_db → seed_sop_demo 직후(시드는 AI_AUTO_PREPARE=false),
 // 가짜 AI(node scripts/fake-ai-server.mjs)를 보는 backend를 AI_ENABLED=true AI_AUTO_PREPARE=true로 띄운다. 이 backend에서는 작성자가 배정 화면에 들어갈 때마다
@@ -4079,8 +4079,132 @@ await runStep("outputs: A, B, C and the Excel preview", {}, async ({ page, takeS
   await page.waitForFunction(() => document.querySelector('[data-testid="outputs-check-numbers"]')?.checked === false, null, { timeout: T });
 });
 
+// --- 목차 블록(MD 1 F6) - 시드 7번 묶음 "SYNTHETIC 7 목차": 목차 스타일 줄 7(한글 4 · 영어 3)과 그 뒤 점 끌기 보통 줄 1이 목차로 잡히고 본문 3줄 ---
+const TOC_TITLE = "SYNTHETIC 7 목차";
+const TOC_LINES = 8;
+const TOC_AFTER_TEXT = "관련 서식";
+
+async function findTocBundle(page) {
+  const bundles = await (await page.request.get(`${BASE}/api/bundles`, { headers: { "X-Dev-User": "qa.member" } })).json();
+  return bundles.find((bundle) => bundle.title === TOC_TITLE) ?? null;
+}
+
+const readAllCount = async (page) => Number(await page.locator('[data-testid="assign-filter-all"] .schip-n').innerText());
+
+// 목차 블록 머리가 그 줄 수를 말할 때까지 - 편집 뒤 보기를 다시 받는다
+async function waitTocLines(page, n) {
+  await page.waitForFunction(
+    (expected) => [...document.querySelectorAll('[data-testid^="assign-paper-toc-head-"]')].some((el) => (el.textContent ?? "").includes(`${expected} lines`)),
+    n,
+    { timeout: T },
+  );
+}
+
+await runStep("assign: TOC block folds the contents, Not contents returns one line and undo puts it back", {}, async ({ page, takeShot }) => {
+  const toc = await findTocBundle(page);
+  check("the demo seed has the contents bundle", toc !== null);
+  if (!toc) return;
+  await page.goto(`${BASE}/bundles/${toc.id}/assign`);
+  const head = page.locator('[data-testid^="assign-paper-toc-head-"]');
+  await head.first().waitFor({ timeout: T });
+  const key = (await head.first().getAttribute("data-testid")).replace("assign-paper-toc-head-", "");
+  check("the contents are one folded block", (await head.count()) === 1 && (await head.getAttribute("aria-expanded")) === "false");
+  check("the block head says how many lines", (await head.innerText()).includes(`${TOC_LINES} lines`), await head.innerText());
+  check("the folded block shows the automatic delete line", await page.locator(`[data-testid="assign-paper-toc-note-${key}"]`).isVisible());
+  check("no contents line is drawn as a normal piece while folded", (await page.locator('[data-testid^="assign-paper-toc-line-"]').count()) === 0);
+  const before = await readAllCount(page);
+  check("the remaining count leaves the contents lines out", before === toc.progress.total && before === 3, `${before} | ${toc.progress.total}`);
+
+  await head.click();
+  await page.waitForFunction((testId) => document.querySelector(`[data-testid="${testId}"]`)?.getAttribute("aria-expanded") === "true", `assign-paper-toc-head-${key}`, { timeout: T });
+  const lines = page.locator('[data-testid^="assign-paper-toc-line-"]');
+  check("expanding shows every contents line", (await lines.count()) === TOC_LINES);
+  check("a dashed break sits between the Korean and English contents", (await page.locator(".toc-line[data-break]").count()) >= 1);
+  check("the expanded head offers None of these are contents", await page.locator(`[data-testid="assign-paper-toc-all-${key}"]`).isVisible());
+  check("Not contents waits until a line is picked", (await page.locator('[data-testid^="assign-paper-toc-not-"]').count()) === 0);
+  // 결정 칸(F12 G2) - 머리를 누르면 블록이 골라진다: 상태 칩 없는 머리, 줄 수와 언어별 수, 펼치기 · 모두 목차 아님, 까닭 글, 따로 할 일 없음 · 꺼진 Confirm
+  await wait(page, "assign-toc-panel");
+  check("the panel head reads Contents · 8 lines without a status chip", (await getText(page, "assign-toc-head")).trim() === `Contents · ${TOC_LINES} lines` && (await page.locator('[data-testid="assign-row-status"]').count()) === 0, await getText(page, "assign-toc-head"));
+  check("section 1 counts the lines by language", (await getText(page, "assign-toc-shape")).includes("Korean 4 · English 3 · then 1"), await getText(page, "assign-toc-shape"));
+  check("section 1 offers collapse and None of these are contents", (await getText(page, "assign-toc-toggle")).includes("Collapse") && (await page.locator('[data-testid="assign-toc-all"]').isVisible()));
+  check("section 2 explains instead of recommending", (await page.locator('[data-testid="assign-toc-why"]').isVisible()) && (await page.locator(".assign-pick .dest-card").count()) === 0);
+  check("section 3 has nothing to do and Confirm is off", (await getText(page, "assign-toc-nothing")).trim() === "Nothing to do here" && (await page.locator('[data-testid="assign-primary"]').isDisabled()));
+  const after = lines.filter({ hasText: TOC_AFTER_TEXT });
+  const afterId = (await after.getAttribute("data-testid")).replace("assign-paper-toc-line-", "");
+  await after.click();
+  check("picking a line shows Not contents on that line only", (await page.locator('[data-testid^="assign-paper-toc-not-"]').count()) === 1 && (await page.locator(`[data-testid="assign-paper-toc-not-${afterId}"]`).isVisible()));
+  // 결정 칸(F12 G3) - 줄 하나: "목차 · n행", 그 줄 글과 목차 아님 (이 줄만)
+  await page.waitForFunction((n) => document.querySelector('[data-testid="assign-toc-head"]')?.textContent?.trim() === `Contents · line ${n}`, TOC_LINES, { timeout: T });
+  check("the panel shows the picked line and Not contents (this line only)", (await getText(page, "assign-toc-shape")).includes(TOC_AFTER_TEXT) && (await getText(page, "assign-toc-not")).includes("this line only"));
+  await takeShot("sop-assign-toc-open.png");
+  await page.locator('[data-testid="assign-toc-not"]').click();
+  await waitTocLines(page, TOC_LINES - 1);
+  await page.locator(`[data-testid="assign-paper-piece-${afterId}"]`).waitFor({ timeout: T });
+  check("the returned line is a normal piece and counts again", (await readAllCount(page)) === before + 1);
+  // G4 - 돌린 줄이 골라져 보통 줄(Unassigned)의 결정 칸이 된다
+  await page.waitForFunction(() => document.querySelector('[data-testid="assign-row-status"]')?.textContent?.includes("Unassigned"), null, { timeout: T });
+  check("selection moves to the returned line as an Unassigned row", (await page.locator('[data-testid="assign-toc-panel"]').count()) === 0);
+
+  await page.locator('[data-testid="assign-undo"]').click();
+  await waitTocLines(page, TOC_LINES);
+  check("undo puts the line back into the contents", (await page.locator(`[data-testid="assign-paper-piece-${afterId}"]`).count()) === 0 && (await readAllCount(page)) === before);
+});
+
+await runStep("assign: TOC block None of these are contents returns the whole block and undo folds it back", {}, async ({ page }) => {
+  const toc = await findTocBundle(page);
+  if (!toc) return;
+  await page.goto(`${BASE}/bundles/${toc.id}/assign`);
+  const head = page.locator('[data-testid^="assign-paper-toc-head-"]');
+  await head.first().waitFor({ timeout: T });
+  const key = (await head.first().getAttribute("data-testid")).replace("assign-paper-toc-head-", "");
+  const before = await readAllCount(page);
+  // J로 줄을 밟으면 목차 블록이 한 자리로 골라진다(접힌 채) - 남은 수는 그대로
+  await page.keyboard.press("j");
+  await wait(page, "assign-toc-panel");
+  check("J lands on the folded contents block", (await getText(page, "assign-toc-shape")).includes("folded") && (await head.getAttribute("aria-expanded")) === "false" && (await readAllCount(page)) === before, await getText(page, "assign-toc-shape"));
+  await page.locator('[data-testid="assign-toc-toggle"]').click();
+  await page.waitForFunction((testId) => document.querySelector(`[data-testid="${testId}"]`)?.getAttribute("aria-expanded") === "true", `assign-paper-toc-head-${key}`, { timeout: T });
+  check("the panel's Expand opens the block in the paper", true);
+  await page.keyboard.press("j");
+  await page.locator('[data-testid="assign-row-status"]').waitFor({ timeout: T });
+  check("the next J goes on to the first body row", (await page.locator('[data-testid="assign-toc-panel"]').count()) === 0);
+  await page.keyboard.press("k");
+  await wait(page, "assign-toc-panel");
+  await page.locator('[data-testid="assign-toc-all"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid^="assign-paper-toc-head-"]').length === 0, null, { timeout: T });
+  check("every contents line becomes a normal row", (await readAllCount(page)) === before + TOC_LINES);
+  await page.locator('[data-testid="assign-undo"]').click();
+  await waitTocLines(page, TOC_LINES);
+  check("undo folds the block back, closed", (await page.locator('[data-testid^="assign-paper-toc-head-"]').getAttribute("aria-expanded")) === "false" && (await readAllCount(page)) === before);
+});
+
+await runStep("outputs: export preview folds TOC rows and Output A keeps them as automatic deletes", {}, async ({ page, takeShot }) => {
+  const toc = await findTocBundle(page);
+  if (!toc) return;
+  await page.goto(`${BASE}/bundles/${toc.id}/outputs`);
+  // 결과물 화면은 진행 상태에 따라 C 탭으로 열린다 - A를 눌러 연다
+  await page.locator('[data-testid="outputs-tab-a"]').click();
+  await wait(page, "output-a");
+  check("Output A has one Deleted row per contents line", (await page.locator('[data-testid^="output-a-toc-"]').count()) === TOC_LINES);
+  check("the summary counts the contents lines", (await getText(page, "outputs-sum-toc_deleted")).trim() === String(TOC_LINES));
+  await page.locator('[data-testid="outputs-export-open"]').click();
+  await wait(page, "export-preview-sheet");
+  const folded = page.locator('[data-testid^="export-preview-toc-"][data-toc="folded"]');
+  check("the A sheet folds the contents rows into one line", (await folded.count()) === 1 && (await folded.innerText()).includes(`${TOC_LINES} lines`), await folded.first().innerText());
+  const rowsBefore = await page.locator('[data-testid="export-preview-body"] tr').count();
+  await folded.click();
+  await page.locator('[data-testid^="export-preview-toc-"][data-toc="open"]').waitFor({ timeout: T });
+  check("clicking the folded line shows every contents row", (await page.locator('[data-testid="export-preview-body"] tr').count()) === rowsBefore + TOC_LINES - 1);
+  await takeShot("sop-outputs-preview-toc.png");
+  await page.locator('[data-testid^="export-preview-toc-"][data-toc="open"]').click();
+  await folded.first().waitFor({ timeout: T });
+  check("clicking the first row folds them again", (await folded.count()) === 1);
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="export-preview"]').waitFor({ state: "detached", timeout: T });
+});
+
 // 시트 보기(MD 2 S1) - 폭에 맞춘 한 장이라 20번째 열 머리까지 틀 안에 보이고, 스크롤바 없이 끌면 본문 transform이 바뀐다.
-// 높이가 낮은 창(560px)에서 본다 - 반쯤 한 묶음의 A 시트가 창 높이에 다 들어가면 옮길 것이 없어 끌기를 확인할 수 없다. 목차 줄 펼침은 목차 표시(MD 1 브랜치 7) 뒤에 더한다.
+// 높이가 낮은 창(560px)에서 본다 - 반쯤 한 묶음의 A 시트가 창 높이에 다 들어가면 옮길 것이 없어 끌기를 확인할 수 없다. 목차 줄 펼침은 위 "outputs: export preview folds TOC rows …"가 본다.
 await runStep("outputs: export preview fits the sheet, drags and switches tabs", {}, async ({ page, takeShot }) => {
   await page.setViewportSize({ width: 1280, height: 560 });
   await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
@@ -4444,7 +4568,10 @@ await runStep("order: indent a line on C and its section number changes", {}, as
   await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
   await wait(page, "output-c");
   // 들일 수 있는 첫 줄(앞줄이 있고 번호가 있는 줄) - SOP의 내용은 대부분 글머리 기호라 번호 줄이 있는 문서(WI나 절차가 든 SOP)를 찾아 연다
-  const [indentHit] = await findOrderDocs(page, () => document.querySelector('[data-testid^="output-c-indent-"]:not([disabled])')?.getAttribute("data-testid").replace("output-c-indent-", "") ?? null);
+  // 번호 줄만 - 글머리 기호 줄도 들일 수 있게 된 뒤로(MD 2 §S5 ①) 첫 들임 단추가 번호 없는 줄일 수 있다
+  const [indentHit] = await findOrderDocs(page, () => [...document.querySelectorAll('[data-testid^="output-c-indent-"]:not([disabled])')]
+    .map((node) => node.getAttribute("data-testid").replace("output-c-indent-", ""))
+    .find((id) => document.querySelector(`[data-testid="output-c-number-${id}"]`) !== null) ?? null);
   check("a document has a line that can be indented", Boolean(indentHit));
   if (!indentHit) return;
   const targetId = indentHit[1];
@@ -4464,6 +4591,118 @@ await runStep("order: indent a line on C and its section number changes", {}, as
   await page.keyboard.press("Shift+Tab");
   check("the outdent saves", (await outdented).ok());
   check("Shift+Tab on the picked row outdents it back", (await number.innerText()).trim() === before);
+});
+
+// 글머리 기호 줄은 번호 줄과 따로 센다 - 5장(General Requirements) 범주의 글머리 기호 줄은 앞 글머리 기호 줄 + 1까지, 단계 기호는 • ○ ▪(2026-11-18 MD 2 §S5 ①).
+// 5장 범주는 글머리 기호가 기본이라 번호 줄이 없다. 글머리 기호 줄이 둘 이상 든 5장 범주가 있는 문서를 찾아 연다. 들였다가 도로 내어 써 자료를 그대로 둔다
+await runStep("order: a chapter 5 bullet line indents with Tab to the second symbol and goes back with Shift+Tab", {}, async ({ page, takeShot }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  const [hit] = await findOrderDocs(page, () => {
+    for (const section of document.querySelectorAll('[data-testid="output-c"] section[data-location-key^="general_requirements."]')) {
+      const bullets = [...section.querySelectorAll('[data-testid^="output-c-bullet-"]')].map((node) => node.getAttribute("data-testid").replace("output-c-bullet-", ""));
+      // 둘째 줄이 들여지고(Indent가 켜짐) 첫 줄은 못 들이는 범주 - 둘 다 깊이 0인 글머리 기호 줄이다
+      const [first, second] = bullets;
+      if (!first || !second) continue;
+      const indentOf = (id) => document.querySelector(`[data-testid="output-c-indent-${id}"]`);
+      if (indentOf(first)?.disabled === true && indentOf(second)?.disabled === false) return { first, second };
+    }
+    return null;
+  });
+  const pair = hit ? hit[1] : null;
+  check("a chapter 5 category has two bullet lines, the first one not indentable", pair !== null);
+  if (!pair) return;
+  const symbol = (id) => page.locator(`[data-testid="output-c-bullet-${id}"]`).innerText().then((text) => text.trim());
+  check("both lines show the first symbol", (await symbol(pair.first)) === "•" && (await symbol(pair.second)) === "•", `${await symbol(pair.first)} ${await symbol(pair.second)}`);
+  const row = page.locator(`[data-testid="output-c-row-${pair.second}"]`);
+  await row.click({ position: { x: 4, y: 4 } });
+  const indented = waitOrderSave(page);
+  await page.keyboard.press("Tab");
+  check("Tab on the picked bullet line saves", (await indented).ok());
+  check("the second line now shows the second symbol", (await symbol(pair.second)) === "○", await symbol(pair.second));
+  check("and no number appears", (await page.locator(`[data-testid="output-c-number-${pair.second}"]`).count()) === 0);
+  const padding = await row.locator(".c-line").evaluate((node) => parseFloat(getComputedStyle(node).paddingLeft));
+  check("its text is indented by one level", padding > 0, String(padding));
+  // 앞 글머리 기호 줄(깊이 0) + 1에 닿았으니 더 들일 수 없고, 못 들이는 Tab은 삼키지 않는다
+  await row.hover();
+  check("one level below the previous bullet line, Indent is off", await page.locator(`[data-testid="output-c-indent-${pair.second}"]`).isDisabled());
+  await takeShot("sop-outputs-c-bullet-indent.png");
+  await row.click({ position: { x: 4, y: 4 } });
+  const outdented = waitOrderSave(page);
+  await page.keyboard.press("Shift+Tab");
+  check("Shift+Tab saves", (await outdented).ok());
+  check("the line is back to the first symbol", (await symbol(pair.second)) === "•", await symbol(pair.second));
+});
+
+// 번호 줄 규칙은 그대로다 - 6장 절차(번호가 기본)의 첫 번호 줄은 들일 수 없고, 둘째 번호 줄을 들이면 번호가 한 마디 늘고 기호는 없다
+await runStep("order: a chapter 6 numbered line keeps the numbered indent rule", {}, async ({ page }) => {
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  const [hit] = await findOrderDocs(page, () => {
+    // 데모 시드의 6장 절차에는 번호 줄이 둘 이상인 곳이 없을 수 있어 번호 줄이 든 칸이면 어디든(WI 단계 포함) 본다 - 규칙은 같다
+    for (const section of document.querySelectorAll('[data-testid="output-c"] section[data-location-key]')) {
+      const numbered = [...section.querySelectorAll('[data-testid^="output-c-number-"]')].map((node) => node.getAttribute("data-testid").replace("output-c-number-", ""));
+      const [first, second] = numbered;
+      if (!first || !second) continue;
+      const indentOf = (id) => document.querySelector(`[data-testid="output-c-indent-${id}"]`);
+      if (indentOf(first)?.disabled === true && indentOf(second)?.disabled === false) return { first, second };
+    }
+    return null;
+  });
+  const pair = hit ? hit[1] : null;
+  check("a section has two numbered lines, the first one not indentable", pair !== null);
+  if (!pair) return;
+  const number = page.locator(`[data-testid="output-c-number-${pair.second}"]`);
+  const before = (await number.innerText()).trim();
+  const row = page.locator(`[data-testid="output-c-row-${pair.second}"]`);
+  await row.click({ position: { x: 4, y: 4 } });
+  const indented = waitOrderSave(page);
+  await page.keyboard.press("Tab");
+  check("Tab saves", (await indented).ok());
+  const after = (await number.innerText()).trim();
+  check("the number gains a level", after.split(".").length === before.split(".").length + 1, `${before} -> ${after}`);
+  check("a numbered line never shows a bullet symbol", (await page.locator(`[data-testid="output-c-bullet-${pair.second}"]`).count()) === 0);
+  await row.click({ position: { x: 4, y: 4 } });
+  const outdented = waitOrderSave(page);
+  await page.keyboard.press("Shift+Tab");
+  check("Shift+Tab saves", (await outdented).ok());
+  check("the number is back", (await number.innerText()).trim() === before);
+});
+
+// N:1 출처 꼬리표 - 옛 두 줄 이상에서 온 줄에 올리거나 그 줄을 고르면 줄 아래에 source_note 그대로 뜨고, 출처가 하나인 줄에는 꼬리표가 없다(MD 2 §S5 ②)
+await runStep("order: a line merged from several Old lines shows its source tag on hover and when picked", {}, async ({ page }) => {
+  const headers = { "X-Dev-User": "qa.member" };
+  const output = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/outputs/c?lang=en`, { headers })).json();
+  const lines = output.docs.flatMap((doc) => doc.sections.flatMap((section) => section.items.map((item) => ({ ...item, docId: doc.target_doc_id }))));
+  const merged = lines.find((item) => item.source_count >= 2 && item.source_note !== "");
+  const single = lines.find((item) => item.source_count === 1 && item.docId === merged?.docId);
+  check("a New line comes from two or more Old lines", merged !== undefined);
+  if (!merged) return;
+  await page.goto(`${BASE}/bundles/${halfBundleId}/order`);
+  await wait(page, "output-c");
+  await page.locator(`[data-testid="order-doc-${merged.docId}"]`).click();
+  const rowOf = (id) => page.locator(`[data-testid="output-c-row-${id}"]`);
+  // 긴 문서는 나눠 그린다 - 그 줄이 그려질 때까지 이어 그리기 표지를 화면에 들인다
+  const more = page.locator('[data-testid="output-c-more"]');
+  for (let i = 0; i < 40 && (await rowOf(merged.target_id).count()) === 0 && (await more.count()) > 0; i += 1) {
+    await more.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(100);
+  }
+  await rowOf(merged.target_id).waitFor({ timeout: T });
+  const tag = page.locator(`[data-testid="output-c-source-${merged.target_id}"]`);
+  await page.mouse.move(0, 0);
+  check("the tag is hidden while the line is neither hovered nor picked", !(await tag.isVisible()));
+  await rowOf(merged.target_id).scrollIntoViewIfNeeded();
+  await rowOf(merged.target_id).hover();
+  check("hovering the line shows the tag", await tag.isVisible());
+  check("it carries the source note as is", (await tag.innerText()).trim() === merged.source_note.trim(), `${await tag.innerText()} | ${merged.source_note}`);
+  await rowOf(merged.target_id).click({ position: { x: 4, y: 4 } });
+  await page.mouse.move(0, 0);
+  check("a picked line keeps the tag", await tag.isVisible());
+  await page.keyboard.press("Escape");
+  if (single) {
+    check("a line from a single Old line has no tag", (await page.locator(`[data-testid="output-c-source-${single.target_id}"]`).count()) === 0);
+  }
 });
 
 await runStep("order: Alt+ArrowDown moves the picked line and keeps it picked", {}, async ({ page }) => {
@@ -6118,6 +6357,79 @@ await runStep("assign: New-side AI filter keeps only the picked line's suggestio
   check("off means nothing is hidden or dimmed", (await page.locator('[data-testid^="assign-new-ai-hidden-"], .new-item[data-ai-view]').count()) === 0);
 });
 
+// Space 미리보기(1.2.0 피드백 7번, MD 2 S2) - 누르는 동안 아래 시트에 지금 Old 문서의 Excel A, 짧게 탁이면 열어 둠, Esc · 탁으로 닫힘, 끌고 떼면 닫힘
+async function openFirstAssign(page) {
+  await page.goto(`${BASE}/`);
+  await page.locator('[data-testid^="bundles-row-"]').first().waitFor({ timeout: T });
+  const firstId = Number((await page.locator('[data-testid^="bundles-row-"]').first().getAttribute("data-testid")).replace("bundles-row-", ""));
+  await page.goto(`${BASE}/bundles/${firstId}/assign`);
+  await wait(page, "assign-bar");
+  // 단축키가 듣도록 포커스를 화면 바탕에 두고 줄 하나를 고른다
+  await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
+  await page.keyboard.press("j");
+}
+
+await runStep("assign: Space preview - hold shows the sheet, drag moves it, release closes", {}, async ({ page, takeShot }) => {
+  await openFirstAssign(page);
+  const sheet = page.locator('[data-testid="assign-space-preview"]');
+  console.log(`  (small hint shown: ${(await page.locator('[data-testid="assign-space-hint"]').count()) > 0})`);
+
+  // 단추에 포커스가 있으면 Space는 그 단추의 것이다
+  const rowNext = page.locator('[data-testid="assign-row-next"]').first();
+  if ((await rowNext.count()) > 0) {
+    await rowNext.focus();
+    await page.keyboard.down(" ");
+    check("Space on a focused button does not open the sheet", (await sheet.count()) === 0);
+    await page.keyboard.up(" ");
+    await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
+  }
+
+  await page.keyboard.down(" ");
+  await wait(page, "assign-space-preview");
+  check("holding Space shows the sheet", (await sheet.getAttribute("data-state")) === "held");
+  await wait(page, "assign-space-preview-body");
+  check("the picked line is painted", (await page.locator('[data-testid="assign-space-preview-body"] tr[data-mark="picked"]').count()) > 0);
+  check("the sheet stays inside the window", await sheet.evaluate((el) => el.getBoundingClientRect().right <= window.innerWidth + 1 && el.scrollWidth <= el.clientWidth + 1));
+  await takeShot("sop-assign-space-preview.png");
+  const frame = page.locator('[data-testid="assign-space-preview-sheet"]');
+  if ((await frame.getAttribute("data-movable")) !== null) {
+    const body = page.locator('[data-testid="assign-space-preview-body"]');
+    const before = await body.evaluate((el) => el.style.transform);
+    const box = await frame.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 - 120, box.y + box.height / 2 - 60, { steps: 6 });
+    await page.mouse.up();
+    check("dragging the sheet moves its body", (await body.evaluate((el) => el.style.transform)) !== before);
+    await page.keyboard.up(" ");
+    check("releasing Space after a drag closes the sheet, even after a short press", (await sheet.count()) === 0);
+  } else {
+    console.log("  (the sheet fits - nothing to drag)");
+    await page.waitForTimeout(300); // 짧게 탁(250ms 미만)이 되지 않게
+    await page.keyboard.up(" ");
+    check("releasing a long hold closes the sheet", (await sheet.count()) === 0);
+  }
+});
+
+await runStep("assign: Space preview - a short tap keeps it open, Esc and another tap close it", {}, async ({ page }) => {
+  await openFirstAssign(page);
+  const sheet = page.locator('[data-testid="assign-space-preview"]');
+  await page.keyboard.press(" ");
+  await wait(page, "assign-space-preview");
+  check("a short tap keeps the sheet open", (await sheet.getAttribute("data-state")) === "kept");
+  check("the head says how to close it", (await page.locator('[data-testid="assign-space-preview-state"]').innerText()).includes("Esc"));
+  // 열어 둔 동안에도 줄 옮기기는 그대로 - 시트는 남는다
+  await page.keyboard.press("j");
+  check("moving to the next line keeps the sheet", (await sheet.count()) === 1);
+  await page.keyboard.press("Escape");
+  check("Esc closes a kept sheet", (await sheet.count()) === 0);
+
+  await page.keyboard.press(" ");
+  await wait(page, "assign-space-preview");
+  await page.keyboard.press(" ");
+  check("another short tap closes it", (await sheet.count()) === 0);
+});
+
 // 필터 접기(2026-11-12) - 필터를 걸면 맞는 문장만 제 모양, 앞뒤 한 줄, 나머지는 묶음 한 줄. 목록은 걸 때의 스냅숏이라 확정해도 접히지 않는다
 await runStep("assign: a status filter folds the Old paper", {}, async ({ page, takeShot }) => {
   await page.goto(`${BASE}/`);
@@ -7075,38 +7387,48 @@ await runStep("assign: cutting an assigned sentence asks once, then clears its a
   check("Undo brings the sentence back as one", await waitUnits(before));
 });
 
-// 번호 칸(문단 번호, F5) - 번호는 늘 번호 칸에 산다. 타자로 친 번호는 "↤"로 번호가 되고, 번호를 고치면 같은 목록의 뒤 번호가 점선 미리 보기대로 따라 바뀐다.
+// 번호 칸(문단 번호, F5) - 번호는 늘 번호 칸에 산다. 제목의 타자 번호("1. 목적")와 자동 번호는 처음부터 번호 칸에 있고 글에서 빠진다.
+// 번호를 고치면 같은 목록의 뒤 번호가 점선 미리 보기대로 따라 바뀐다. 본문 줄의 타자 번호는 "↤"를 눌러야 번호가 된다(화면에 있을 때만 본다).
 // 원문 글자와 배정은 그대로이고 쪼개기 편집이라 Undo 한 번에 한 걸음씩 돌아온다. 끝에 이 단계가 한 편집을 모두 되돌려 시드 묶음을 처음 그대로 둔다
-await runStep("assign: number cell - a typed number becomes the number, a fix renumbers the list after a dashed preview, Undo steps back", {}, async ({ page }) => {
+await runStep("assign: number cell - a heading number sits in the cell, a fix renumbers the list after a dashed preview, Undo steps back", {}, async ({ page }) => {
   const headers = { "X-Dev-User": "qa.member" };
   const docs = await (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents`, { headers })).json();
   const readView = async (docId) => (await page.request.get(`${BASE}/api/bundles/${halfBundleId}/documents/${docId}/view`, { headers })).json();
   await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
   await wait(page, "assign-bar");
-  // 본문에 타자 번호("1." "2.")가 같은 언어로 둘 이상 있는 Old 문서 - 번호 범위는 추출기 5부터라 다시 시드한 자료여야 한다
+  // 본문에 번호("1." "2.")가 같은 언어로 잇달아 있는 Old 문서 - 번호 범위는 추출기 5부터라 다시 시드한 자료여야 한다
   let doc = null;
   let first = null;
   let second = null;
+  let typed = null;
   for (const candidate of docs.filter((item) => item.side === "old" && item.status === "ready")) {
     const view = await readView(candidate.id);
     if (!view.has_number_ranges) continue;
-    const typed = view.units.filter((item) => item.number && item.number.typed_len > 0 && /^\d+\.$/.test(item.number.read ?? "") && item.table_id === null);
+    const numbered = view.units.filter((item) => item.number && !item.number.is_set && /^\d+\.$/.test(item.number.value ?? "") && item.table_id === null);
     await page.locator('[data-testid="assign-old-doc"]').click();
     await page.locator(`[data-testid="assign-old-doc-option-${candidate.id}"]`).click();
     await page.locator(`[data-testid="assign-old"]`).waitFor({ timeout: T });
     await page.waitForTimeout(600);
-    for (const item of typed) {
-      const next = typed.find((other) => other.pos_seq > item.pos_seq && other.lang === item.lang && Number.parseInt(other.number.read, 10) === Number.parseInt(item.number.read, 10) + 1);
+    for (const item of numbered) {
+      const next = numbered.find((other) => other.pos_seq > item.pos_seq && other.lang === item.lang && Number.parseInt(other.number.value, 10) === Number.parseInt(item.number.value, 10) + 1);
       if (!next) continue;
-      if ((await page.locator(`[data-testid="assign-paper-num-typed-${item.id}"]`).count()) === 0 || (await page.locator(`[data-testid="assign-paper-num-typed-${next.id}"]`).count()) === 0) continue;
+      if ((await page.locator(`[data-testid="assign-paper-num-${item.id}"]`).count()) === 0 || (await page.locator(`[data-testid="assign-paper-num-${next.id}"]`).count()) === 0) continue;
       doc = candidate;
       first = item;
       second = next;
       break;
     }
-    if (first !== null) break;
+    if (first !== null) {
+      for (const item of view.units.filter((unit) => unit.number && unit.number.typed_len > 0)) {
+        if ((await page.locator(`[data-testid="assign-paper-num-typed-${item.id}"]`).count()) > 0) {
+          typed = item;
+          break;
+        }
+      }
+      break;
+    }
   }
-  check("the bundle has two typed numbers in a row on screen", first !== null);
+  check("the bundle has two numbered lines in a row on screen", first !== null);
   if (first === null) return;
   const readNumber = async (unitId) => (await readView(doc.id)).units.find((item) => item.id === unitId)?.number ?? null;
   const waitNumber = async (unitId, isDone) => {
@@ -7118,44 +7440,39 @@ await runStep("assign: number cell - a typed number becomes the number, a fix re
     return false;
   };
   const pieceText = async (unitId) => (await page.locator(`[data-testid="assign-paper-piece-${unitId}"] [data-testid="assign-paper-unit-${unitId}"]`).first().innerText()).trim();
-  check("a typed number starts as text", (await pieceText(first.id)).startsWith(first.number.read), await pieceText(first.id));
-  // "↤" - 글 앞 번호가 번호 칸으로 간다
-  for (const item of [first, second]) {
-    const handle = page.locator(`[data-testid="assign-paper-num-typed-${item.id}"]`);
-    await handle.scrollIntoViewIfNeeded();
-    await handle.click();
-    check(`the typed number ${item.number.read} becomes the number`, await waitNumber(item.id, (number) => number.value === item.number.read && number.content_start > 0));
-    await page.locator(`[data-testid="assign-paper-num-${item.id}"]`).waitFor({ timeout: T });
-  }
-  check("the number cell shows it", (await getText(page, `assign-paper-num-${first.id}`)).trim() === first.number.read);
-  check("the text no longer starts with the number", !(await pieceText(first.id)).startsWith(first.number.read), await pieceText(first.id));
+  check("the number cell shows the line's number", (await getText(page, `assign-paper-num-${first.id}`)).trim() === first.number.value);
+  check("the number is out of the content", first.number.content_start > 0 && !(await pieceText(first.id)).startsWith(first.number.value), await pieceText(first.id));
   // 번호 칸을 누르면 그 자리가 입력이 된다 - 뒤 번호 따라 고치기는 기본 켬이고 바뀔 번호가 점선으로 보인다
   await page.locator(`[data-testid="assign-paper-num-${first.id}"]`).click();
   await wait(page, "assign-paper-num-input");
   check("renumbering the rest of the list is on by default", await page.locator('[data-testid="assign-paper-num-follow"]').isChecked());
   await page.locator('[data-testid="assign-paper-num-input"]').fill("8.");
   await wait(page, "assign-paper-num-preview");
-  check("the strip previews the following number", (await getText(page, "assign-paper-num-preview")).includes(`${second.number.read} → 9.`), await getText(page, "assign-paper-num-preview"));
+  check("the strip previews the following number", (await getText(page, "assign-paper-num-preview")).includes(`${second.number.value} → 9.`), await getText(page, "assign-paper-num-preview"));
   check("the following number cell shows the preview dashed", (await page.locator(`[data-testid="assign-paper-num-${second.id}"]`).getAttribute("data-preview")) !== null);
-  check("nothing is saved while previewing", (await readNumber(second.id)).value === second.number.read);
+  check("nothing is saved while previewing", (await readNumber(second.id)).value === second.number.value);
   await page.locator('[data-testid="assign-paper-num-input"]').press("Enter");
   check("Enter saves the fixed number", await waitNumber(first.id, (number) => number.value === "8." && number.is_set));
   check("the following number follows in the same edit", await waitNumber(second.id, (number) => number.value === "9."));
   check("the read value stays on record", (await readNumber(first.id)).read === first.number.read);
   // Undo 한 번 = 고침과 따라 고침 한 걸음
   await page.locator('[data-testid="assign-undo"]').click();
-  check("one Undo brings both numbers back", (await waitNumber(first.id, (number) => number.value === first.number.read)) && (await waitNumber(second.id, (number) => number.value === second.number.read)));
+  check("one Undo brings both numbers back", (await waitNumber(first.id, (number) => number.value === first.number.value && !number.is_set)) && (await waitNumber(second.id, (number) => number.value === second.number.value)));
   // Esc는 저장하지 않고 닫는다
   await page.locator(`[data-testid="assign-paper-num-${first.id}"]`).click();
   await wait(page, "assign-paper-num-input");
   await page.locator('[data-testid="assign-paper-num-input"]').fill("5.");
   await page.locator('[data-testid="assign-paper-num-input"]').press("Escape");
   await page.locator('[data-testid="assign-paper-num-input"]').waitFor({ state: "detached", timeout: T });
-  check("Escape closes the input without saving", (await readNumber(first.id)).value === first.number.read);
-  // 두 "↤"도 되돌려 처음 그대로 둔다
-  for (const item of [second, first]) {
+  check("Escape closes the input without saving", (await readNumber(first.id)).value === first.number.value);
+  // 본문 줄의 타자 번호 - "↤"로 번호가 되고 Undo로 글로 돌아온다(그런 줄이 화면에 있을 때만)
+  if (typed !== null) {
+    const handle = page.locator(`[data-testid="assign-paper-num-typed-${typed.id}"]`);
+    await handle.scrollIntoViewIfNeeded();
+    await handle.click();
+    check("a typed number on a body line becomes the number", await waitNumber(typed.id, (number) => number.value === typed.number.read && number.content_start > 0));
     await page.locator('[data-testid="assign-undo"]').click();
-    check(`Undo turns ${item.number.read} back into text`, await waitNumber(item.id, (number) => number.value === null && number.typed_len > 0));
+    check("Undo turns it back into text", await waitNumber(typed.id, (number) => number.value === null && number.typed_len > 0));
   }
 });
 

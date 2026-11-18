@@ -45,12 +45,17 @@ export function isCoverUnit(unit: Pick<ViewUnit, "group_unit_id">): boolean {
   return unit.group_unit_id === null;
 }
 
-/** 문서 보기들(짝·원문 순서)과 단위 목록(상태)으로 줄을 만든다. 문서 순서 → 원문 순서 */
+/** 잡음 표시(목차 줄)가 붙은 단위 - 배정 줄이 아니다(남은 수·Next에서 빠지고 결과물에는 "삭제 · 목차"로 남는다) */
+export function isNoiseUnit(unit: Pick<ViewUnit, "noise_kind">): boolean {
+  return unit.noise_kind != null;
+}
+
+/** 문서 보기들(짝·원문 순서)과 단위 목록(상태)으로 줄을 만든다. 문서 순서 → 원문 순서. 목차 줄은 줄이 없다(서버 진행 숫자와 같은 규칙) */
 export function buildRows(views: DocumentView[], unitRows: Map<number, UnitRow>): ClassifyRow[] {
   const rows: ClassifyRow[] = [];
   for (const view of views) {
     const order = [...view.units]
-      .filter(isCoverUnit)
+      .filter((unit) => isCoverUnit(unit) && !isNoiseUnit(unit))
       .sort((a, b) => a.pos_seq - b.pos_seq || (a.spans[0]?.[1] ?? 0) - (b.spans[0]?.[1] ?? 0));
     const pairOf = new Map<number, (typeof view.pairs)[number]>();
     for (const pair of view.pairs) for (const id of pair.unit_ids) pairOf.set(id, pair);

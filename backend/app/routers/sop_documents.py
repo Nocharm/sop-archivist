@@ -267,7 +267,7 @@ class ViewUnitOut(BaseModel):
     spans: list[tuple[int, int, int]]
     text: str
     lang: str
-    # 번호 칸이 없는 단위(그림·표·행·캡션)는 null
+    # 번호 칸이 없는 단위(그림·표·행·캡션·목차 줄)는 null
     number: ViewNumberOut | None
     table_id: int | None
     row_index: int | None
@@ -288,6 +288,8 @@ class ViewUnitOut(BaseModel):
     ref: ViewUnitRefOut | None = None
     # 이 단위의 글 안 표·그림 참조(그 자리를 덮는 단위에 싣는다) — 나눈 뒤에도 참조가 든 쪽 단위가 갖는다
     caption_refs: list[CaptionRefOut] = []
+    # 잡음 표시(noise.py) — "toc"면 목차 줄: 배정 줄이 없고 Assign 용지가 목차 블록으로 접는다. 편집 clear_noise가 비운다
+    noise_kind: str | None = None
 
 
 def _to_ref_out(state: RefState | None) -> ViewUnitRefOut | None:
@@ -491,6 +493,7 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 split_suggestion_id=split_suggestions.get(unit.id),
                 ref=_to_ref_out(read_ref_state(unit, ref_marks.get(unit.id))),
                 caption_refs=refs_by_unit.get(unit.id, []),
+                noise_kind=unit.noise_kind,
             )
             for unit in units
         ],
@@ -729,7 +732,7 @@ async def get_unit_ref(
 
 
 def _to_number_out(unit: Unit) -> ViewNumberOut | None:
-    if unit.kind not in NUMBERED_KINDS:
+    if unit.kind not in NUMBERED_KINDS or unit.noise_kind is not None:  # 목차 줄은 번호 칸이 없다
         return None
     hidden = get_hidden_len(unit)
     is_typed_text = unit.number_source == NUMBER_TYPED and not hidden and unit.number_set is None

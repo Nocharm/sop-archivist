@@ -123,6 +123,7 @@ async def _load_items(
         .where(
             Unit.extraction_id == extraction_id, Unit.status == UNIT_ACTIVE, Unit.kind.in_(TEXT_KINDS),
             Unit.group_unit_id.is_(None), Unit.lang.in_(sorted(PAIR_LANGS)), UnitPairMember.unit_id.is_(None),
+            Unit.noise_kind.is_(None),  # 목차 줄은 짝을 맺지 않는다(units._find_code_pairs와 같은 규칙)
         )
         .order_by(Unit.pos_seq, Unit.pos_start, Unit.id)
     )

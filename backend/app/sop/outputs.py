@@ -24,6 +24,7 @@ from app.sop.caption_ref_rules import (
 from app.sop.captions import CAPTION_KIND, get_caption_lang_rank, is_caption_target, join_caption_texts
 from app.sop.constants import (
     COVER_KINDS,
+    MAX_BULLET_LEVEL,
     NUMBER_BULLET,
     NUMBER_NOTE,
     NUMBERED,
@@ -33,7 +34,7 @@ from app.sop.constants import (
     OutlineKind,
 )
 from app.sop.groups import TABLE_UNIT_KINDS, build_group_ids, collapse_table_members
-from app.sop.numbering import is_number_fixed, normalize_number, strip_number
+from app.sop.numbering import SECTION_KIND, is_number_fixed, normalize_number, strip_number
 from app.sop.outline import KIND_AUTO_LIST, DocOutline, get_parent_key, list_emitted_keys, number_outline
 from app.sop.output_labels import LABELS, OutputLabels
 from app.sop.output_rows import (
@@ -42,6 +43,7 @@ from app.sop.output_rows import (
     count_single_language,
     get_meaning_key,
     get_new_meaning_key,
+    list_noise_units,
 )
 from app.sop.renumber import (
     find_caption_number,
@@ -70,6 +72,8 @@ TRANSLATED_ADDED = "translated_added"
 CIRCLED_NUMBERS = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
 DISPOSITION_NODES = {"delete": "delete", "move_external": "move_external"}  # 그 밖(미배정)은 "unassigned"
 TAIL_NODES = ("delete", "move_external", "unassigned")  # 흐름도 오른쪽 열에서 새 문서들 뒤에 오는 노드
+# 잡음 표시 줄(목차)의 상태 — 결정 행이 아니라 코드 규칙으로 지운 줄이라 판단 상태(미배정·확정 …)를 쓰지 않는다(MD 1 F6·F11)
+STATUS_DELETED = "deleted"
 
 
 # --- 출력 모양 ---
@@ -110,11 +114,13 @@ class ARow(BaseModel):
     ai_text: str
     change_type: str  # 저장한 변경 종류, 그리고 표시 전용 translated_added
     remark: str  # 묶음의 Remark — 묶음의 모든 줄에 같은 값
-    status: str  # 옛 단위 줄은 커버 상태, 번역·신규 줄은 새 문장 상태
+    status: str  # 옛 단위 줄은 커버 상태, 번역·신규 줄은 새 문장 상태, 잡음 표시 줄(목차)은 STATUS_DELETED
     confirmed_by: str | None  # "이름 (ID)", 디렉터리에 없거나 퇴직이면 ID만(format_confirmer)
     confirmed_at: KstDatetime | None
     group_id: str | None
     warnings: list[dict[str, str]]
+    # 잡음 표시(noise.py) — "toc"면 목차 줄(보낸 곳 Deleted, 저절로). 시트 미리보기가 연달아 오는 목차 줄을 한 줄로 접는다
+    noise_kind: str | None = None
 
 
 class FlowNode(BaseModel):
@@ -152,6 +158,8 @@ class CItem(BaseModel):
     change_type: str | None
     status: str
     source_note: str
+    # 줄이 받은 옛 단위 수(중복 없이) — 2 이상이면 C 화면이 줄에 올리거나 고를 때 source_note를 꼬리표로 보인다(N:1)
+    source_count: int
     origin: str  # units | translation | new_doc — 프런트가 번역 기원의 깊이 단추만 숨긴다
     # 굵은 선 묶음 키(A와 같은 묶음) — "old:<옛 줄 키>" | "new:<새 문서 쪽 짝 키>" | None(출처가 은퇴한 번역)
     meaning_key: str | None
@@ -240,18 +248,23 @@ class COutput(BaseModel):
 
 
 class Summary(BaseModel):
-    """요약 숫자 한 벌(제품 명세 §7.13 요약 숫자) — 옛 쪽은 줄로 센다."""
+    """요약 숫자 한 벌(제품 명세 §7.13 요약 숫자) — 옛 쪽은 줄로 센다.
+
+    목차 줄(잡음 표시)은 결과물 A에 한 줄씩 남으므로 old_rows·assigned에 들고(저절로 지운 줄), 사람이 지운 deleted와 나눠
+    toc_deleted로 센다(MD 1 F11). 확정률은 판단 줄(목차 줄 제외)로 잰다 — 목차 줄은 사람이 확정하는 줄이 아니다.
+    """
 
     old_rows: int
-    assigned: int  # 처분이 미배정이 아닌 줄(삭제·이동 포함)
+    assigned: int  # 처분이 미배정이 아닌 줄(삭제·이동·목차 저절로 삭제 포함)
     no_destination: int  # 처분이 미배정인 줄 — 갈 곳 없는 보류·일부만 판단한 줄 포함, 진행 숫자의 Unassigned(상태 기준)와 다르다
     duplicate: int
-    deleted: int
+    deleted: int  # 사람이 지운 줄
     moved: int
     new: int  # 출처 없는 입구 2 새 문장을 새 문서 쪽 짝으로 묶은 수
     translated: int  # 번역 줄·Translated · Added 줄이 든 A 묶음 수
     confirmed_rate: float
     single_language: int
+    toc_deleted: int = 0  # 목차 · 저절로 삭제 — 잡음 표시가 붙은 줄
 
 
 # --- 공용 색인 ---
@@ -606,6 +619,21 @@ def number_lines(base: str, depths: Sequence[int | None]) -> list[str | None]:
         counters[level] += 1
         numbers.append(".".join([base, *map(str, counters)]))
     return numbers
+
+
+def get_bullet_depths(items: Sequence[CItem]) -> list[int | None]:
+    """칸 안 줄마다 글머리 기호 깊이 — 글머리 기호가 아닌 줄은 None. 번호 줄과 따로 세어 앞 글머리 기호 줄 깊이 + 1(상한 MAX_BULLET_LEVEL)까지만 읽고,
+    첫 글머리 기호 줄은 0이다. 번호 줄·생략·주석 줄은 건너뛴다. 저장한 깊이는 바꾸지 않는다(프런트 section-number.getSectionDepths와 같은 규칙)."""
+    previous: int | None = None
+    depths: list[int | None] = []
+    for item in items:
+        if item.number_style != NUMBER_BULLET:
+            depths.append(None)
+            continue
+        depth = max(0, min(item.indent_level, MAX_BULLET_LEVEL, 0 if previous is None else previous + 1))
+        depths.append(depth)
+        previous = depth
+    return depths
 
 
 def number_targets(index: _Index, labels: OutputLabels) -> dict[int, str]:
@@ -1038,10 +1066,12 @@ def _locate_unit(index: _Index, unit: UnitInfo, labels: OutputLabels) -> Locatio
     block = index.snap.blocks[unit.block_id]
     section = block.section_label
     if unit.number_set:
-        # 사람이 고친 번호가 그 줄의 자리다 — 읽은 값과 다르면 그 사실을 남긴다(변경 관리의 근거)
-        section = normalize_number(unit.number_set)
+        # 사람이 고친 번호 — 읽은 값과 다르면 그 사실을 남긴다(변경 관리의 근거). 절을 여는 줄은 고친 번호가 곧 절이고,
+        # 본문 줄은 속한 절 뒤에 그 줄의 번호를 잇는다("2 · 2.1 (읽은 값 2.2)")
+        number = normalize_number(unit.number_set)
         if is_number_fixed(unit):
-            section = labels.read_number_template.format(number=section, read=normalize_number(unit.number_read or ""))
+            number = labels.read_number_template.format(number=number, read=normalize_number(unit.number_read or ""))
+        section = number if unit.kind == SECTION_KIND or not section else f"{section} · {number}"
     return LocationOut(
         section=section, place=_format_place(index, unit, labels), page=block.page, page_basis=block.page_basis,
     )
@@ -1235,6 +1265,35 @@ def _build_old_group(ctx: _AContext, meaning: MeaningRow, row_no: int) -> list[A
     return rows
 
 
+def _number_toc_lines(units: Sequence[UnitInfo]) -> dict[int, int]:
+    """목차 줄 → 그 문서·언어 안 차례(1부터) — 위치 칸 "목차 · 한글 · 3행"의 수. units는 원문 순."""
+    counts: Counter[tuple[int, str]] = Counter()
+    numbers: dict[int, int] = {}
+    for unit in units:
+        counts[(unit.document_id, unit.lang)] += 1
+        numbers[unit.id] = counts[(unit.document_id, unit.lang)]
+    return numbers
+
+
+def _build_toc_row(ctx: _AContext, unit: UnitInfo, number: int, row_no: int) -> ARow:
+    """목차 줄 하나 — 보낸 곳 Deleted, 비고는 "목차 · 새 문서 목차는 앱이 만든다 (저절로)". 결정 행이 아니라 표시라 상태도
+    판단 상태가 아닌 STATUS_DELETED이고 확정한 사람이 없다(사람이 확정한 것처럼 꾸미지 않는다, MD 1 §11-2)."""
+    labels = ctx.labels
+    snap = ctx.index.snap
+    block = snap.blocks[unit.block_id]
+    document = snap.documents[unit.document_id]
+    place = labels.toc_place_template.format(lang=labels.toc_langs.get(unit.lang, unit.lang), n=number)
+    return ARow(
+        row_no=row_no, is_group_start=False, row_kind="unit", old_doc_code=_format_doc_code(document),
+        old_doc_version=document.doc_version,
+        location=LocationOut(section=block.section_label, place=place, page=block.page, page_basis=block.page_basis),
+        unit_id=unit.id, display_id=unit.display_id, source_text=unit.text, dest_kind="delete", dest_doc_code="",
+        dest_doc_title="", dest_location="", dest_number="", dest_is_note=False, confirmed_text="", ai_text="",
+        change_type="deleted", remark=labels.toc_remark, status=STATUS_DELETED, confirmed_by=None, confirmed_at=None,
+        group_id=None, warnings=[], noise_kind=unit.noise_kind,
+    )
+
+
 def _index_translations(snap: BundleSnapshot) -> dict[int, list[TargetInfo]]:
     """옛 단위 → 번역 줄로 나올 새 문장 — AI 번역은 번역 출처, 사람이 쓴 다른 언어 문장(translated)은 하나뿐인 출처 단위."""
     translations: dict[int, list[TargetInfo]] = defaultdict(list)
@@ -1285,10 +1344,22 @@ def _build_a_groups(index: _Index, labels: OutputLabels, people: Mapping[str, st
     ctx = _AContext(index, labels, get_number, people, _index_translations(snap), added, texts)
     groups: list[list[ARow]] = []
     placed: set[int] = set()
-    for meaning in build_meaning_rows(snap):
-        groups.append(_build_old_group(ctx, meaning, len(groups) + 1))
-        placed.update(meaning.unit_ids)
-        placed.update(cell.id for unit_id in meaning.unit_ids for cell in index.cells.get(unit_id, []))
+    noise_units = list_noise_units(snap)
+    toc_numbers = _number_toc_lines(noise_units)
+    # 옛 문서 줄은 원문 순 — 판단 줄(의미 묶음, 첫 단위 순)과 목차 줄(잡음 표시 단위 하나가 한 묶음)을 섞는다
+    entries: list[tuple[tuple[int, ...], MeaningRow | UnitInfo]] = [
+        (snap.units[meaning.unit_ids[0]].order_key, meaning) for meaning in build_meaning_rows(snap)
+    ]
+    entries += [(unit.order_key, unit) for unit in noise_units]
+    entries.sort(key=lambda entry: entry[0])
+    for _, entry in entries:
+        if isinstance(entry, UnitInfo):
+            groups.append([_build_toc_row(ctx, entry, toc_numbers[entry.id], len(groups) + 1)])
+            placed.add(entry.id)
+            continue
+        groups.append(_build_old_group(ctx, entry, len(groups) + 1))
+        placed.update(entry.unit_ids)
+        placed.update(cell.id for unit_id in entry.unit_ids for cell in index.cells.get(unit_id, []))
     # 출처 단위가 쪼개기 편집으로 은퇴한 번역(보류) — 줄 자리가 없어도 사람이 볼 수 있게 한 줄짜리 묶음으로 둔다
     for unit_id in sorted(ctx.translations.keys() - placed):
         for target in ctx.translations[unit_id]:
@@ -1314,13 +1385,17 @@ def build_output_b(snap: BundleSnapshot, lang: Lang) -> FlowGraph:
     """결과물 B 한 벌(제품 명세 §7.13 B) — 옛 문서(줄 수) → 새 문서·삭제·이동·미배정. lang은 노드 라벨 언어만 고른다.
 
     줄의 처분은 요약과 같은 _get_row_disposition이다: 배정 줄은 보낸 새 문서 집합에 한 번씩(나눔은 한 번, 중복 배정은 보낸 곳마다
-    한 번), 삭제·이동·갈 곳 없음(일부만 판단한 줄 포함, 제품 명세 §7.13 요약 숫자)은 그 처분 노드 하나 — 처분 노드 건수가 요약 숫자와 같다.
+    한 번), 삭제·이동·갈 곳 없음(일부만 판단한 줄 포함, 제품 명세 §7.13 요약 숫자)은 그 처분 노드 하나 — 처분 노드 건수가 요약 숫자와 같다
+    (삭제 노드는 요약의 deleted + toc_deleted — 목차 줄도 삭제로 흐른다).
     짝의 두 단위가 서로 다른 옛 문서에 있으면(드묾) 줄의 첫 단위 문서로 센다.
     """
     labels = LABELS[lang]
     index = _build_index(snap)
     old_counts: Counter[int] = Counter()
     edge_counts: Counter[tuple[int, str]] = Counter()
+    for unit in list_noise_units(snap):
+        old_counts[unit.document_id] += 1
+        edge_counts[(unit.document_id, DISPOSITION_NODES["delete"])] += 1
     for meaning in build_meaning_rows(snap):
         document_id = snap.units[meaning.unit_ids[0]].document_id
         old_counts[document_id] += 1
@@ -1375,12 +1450,17 @@ def _format_unit_refs(snap: BundleSnapshot, unit_ids: Iterable[int]) -> str:
     return "← " + ", ".join(dict.fromkeys(refs)) if refs else ""
 
 
+def _list_source_unit_ids(snap: BundleSnapshot, target: TargetInfo) -> tuple[int, ...]:
+    """줄이 받은 옛 단위 — 번역은 번역 출처 단위 하나다."""
+    if target.translation_source_unit_id in snap.units:
+        return (target.translation_source_unit_id,)
+    return tuple(target.source_unit_ids)
+
+
 def _format_source_note(index: _Index, target: TargetInfo, labels: OutputLabels) -> str:
     """받은 옛 단위 — "← OLD-1 §5.1, OLD-2 §5.1 (합침)". 번역은 번역 출처 단위."""
     snap = index.snap
-    unit_ids = target.source_unit_ids
-    if target.translation_source_unit_id in snap.units:
-        unit_ids = (target.translation_source_unit_id,)
+    unit_ids = _list_source_unit_ids(snap, target)
     note = _format_unit_refs(snap, unit_ids)
     suffix = {"merged": labels.merged, "split": labels.split, "translated": labels.translated}.get(target.change_type or "")
     return f"{note} {suffix}" if note and suffix else note
@@ -1444,7 +1524,7 @@ def _build_item(ctx: _CContext, target: TargetInfo) -> CItem:
     return CItem(
         target_id=target.id, kind=target.kind, lang=target.lang, text=text, ai_text=ai_text,
         change_type=target.change_type, status=target.status, source_note=_format_source_note(index, target, ctx.labels),
-        origin=target.origin, meaning_key=_format_meaning_key(ctx, target),
+        source_count=len(set(_list_source_unit_ids(index.snap, target))), origin=target.origin, meaning_key=_format_meaning_key(ctx, target),
         number=ctx.numbers.get(target.id), indent_level=target.indent_level,
         number_style=_get_number_style(index, target), cell_row=target.cell_row,
         cell_col=target.cell_col, children=[_build_item(ctx, child) for child in index.children.get(target.id, [])], caption=caption,
@@ -1701,17 +1781,19 @@ def build_composed_doc(snap: BundleSnapshot, target_doc_id: int, lang: Lang) -> 
 def build_summary(snap: BundleSnapshot) -> Summary:
     """요약 숫자 한 벌(제품 명세 §7.13 요약 숫자) — 줄은 진행 숫자와 같은 의미 묶음, 줄의 처분은 구성 단위가 모두 같을 때 그 값(아니면 미배정).
 
-    확정률은 줄 상태 기준(소수 넷째 자리, 줄이 없으면 0). 번역은 결과물 A 묶음 짓기를 그대로 센다.
+    목차 줄은 결과물 A의 줄처럼 old_rows·assigned에 더하고 toc_deleted로 따로 센다(Summary 참고).
+    확정률은 판단 줄의 상태 기준(소수 넷째 자리, 줄이 없으면 0). 번역은 결과물 A 묶음 짓기를 그대로 센다.
     """
     index = _build_index(snap)
     rows = build_meaning_rows(snap)
     dispositions = Counter(_get_row_disposition(snap, meaning) for meaning in rows)
     confirmed = sum(meaning.status == "confirmed" for meaning in rows)
+    toc_rows = len(list_noise_units(snap))
     labels = LABELS["en"]  # 숫자만 세므로 라벨 언어는 결과에 닿지 않는다
     groups = _build_a_groups(index, labels, {})
     return Summary(
-        old_rows=len(rows),
-        assigned=len(rows) - dispositions["unassigned"],
+        old_rows=len(rows) + toc_rows,
+        assigned=len(rows) + toc_rows - dispositions["unassigned"],
         no_destination=dispositions["unassigned"],
         duplicate=sum(_is_duplicate_row(index, meaning) for meaning in rows),
         deleted=dispositions["delete"],
@@ -1723,6 +1805,7 @@ def build_summary(snap: BundleSnapshot) -> Summary:
         ),
         confirmed_rate=round(confirmed / len(rows), 4) if rows else 0.0,
         single_language=count_single_language(snap),
+        toc_deleted=toc_rows,
     )
 
 

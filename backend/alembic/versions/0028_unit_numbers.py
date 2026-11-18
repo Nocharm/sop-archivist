@@ -1,7 +1,7 @@
 """Add the paragraph number columns on units and unit_edits.number_changes (number cell, F5).
 
-Revision ID: 0026
-Revises: 0025
+Revision ID: 0028
+Revises: 0027
 Create Date: 2026-11-18 22:00:00.000000
 
 """
@@ -11,8 +11,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "0026"
-down_revision: str | Sequence[str] | None = "0025"
+revision: str = "0028"
+down_revision: str | Sequence[str] | None = "0027"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -22,7 +22,16 @@ from app.db import engine
 from app.models import Employee
 from app.sop.models import TargetSentence, TargetSource, UnitDecision, UnitPair, UnitPairMember
 from app.sop.output_labels import LABELS
-from app.sop.outputs import BundleCellOut, Lang, Renumbering, _build_index, build_bundle_table, build_renumbering
+from app.sop.outputs import (
+    BundleCellOut,
+    CItem,
+    Lang,
+    Renumbering,
+    _build_index,
+    build_bundle_table,
+    build_renumbering,
+    get_bullet_depths,
+)
 from app.sop.snapshot import BundleSnapshot, load_bundle_snapshot
 from tests.access_helpers import run_in_session
 from tests.docx_factory import TINY_PNG, build_docx, make_drawing_run, p, tbl
@@ -961,11 +970,12 @@ def test_output_c_one_list_per_slot(client: TestClient) -> None:
 
     # 삭제·이동은 줄마다 한 번 — 짝이 없어 단위 하나씩
     assert [(d["display_id"], d["doc_code"], d["section"], d["source_text"], d["reason"]) for d in output["deleted"]] == [
-        (d1(OLD1_HEADINGS[0]), "OLD-1", "5", OLD1_HEADINGS[0], HEADING_REASON),
-        (d1(OLD1_HEADINGS[1]), "OLD-1", "5.1", OLD1_HEADINGS[1], HEADING_REASON),
+        # 원문 글은 번호를 뺀 내용이다 — 번호는 절 칸에 있다(문단 번호 F5)
+        (d1(OLD1_HEADINGS[0]), "OLD-1", "5", "절차", HEADING_REASON),
+        (d1(OLD1_HEADINGS[1]), "OLD-1", "5.1", "준비", HEADING_REASON),
         (d1(DELETED), "OLD-1", "5.1", DELETED, DELETE_REASON),
-        (d2(OLD2_HEADINGS[0]), "OLD-2", "5", OLD2_HEADINGS[0], HEADING_REASON),
-        (d2(OLD2_HEADINGS[1]), "OLD-2", "5.1", OLD2_HEADINGS[1], HEADING_REASON),
+        (d2(OLD2_HEADINGS[0]), "OLD-2", "5", "기록", HEADING_REASON),
+        (d2(OLD2_HEADINGS[1]), "OLD-2", "5.1", "보관", HEADING_REASON),
     ]
     assert output["moved"] == [{
         "display_id": d1(MOVED), "doc_code": "OLD-1", "section": "5.1", "source_text": MOVED,
@@ -1229,7 +1239,7 @@ def test_composed_doc_rejects_other_bundles_and_outsiders(client: TestClient) ->
 
 SUMMARY_KEYS = (
     "old_rows", "assigned", "no_destination", "duplicate", "deleted", "moved", "new", "translated", "confirmed_rate",
-    "single_language",
+    "single_language", "toc_deleted",
 )
 # 줄 기준 — 짝이 없어 단위마다 한 줄이고 표는 칸 넷을 묶어 한 줄이다: OLD-1 10줄(그림 보류·영어 미배정) + OLD-2 5줄.
 # 한 언어 글은 두 언어 문서(ko_en_separate)의 짝 없는 문장·제목 13개와 보류(처분은 배정)한 그림의 한글 캡션 하나다(번역 새 문장이 없다)
@@ -1246,7 +1256,7 @@ def test_summary_numbers(client: TestClient) -> None:
     # 한 벌 — 판 키가 없다. 줄 15(진행 숫자와 같은 줄), 확정 13(그림 보류·영어 미배정), 배정은 삭제·이동을 포함한다
     assert summary == {
         "old_rows": 15, "assigned": 14, "no_destination": 1, "duplicate": 1, "deleted": 5, "moved": 1, "new": 1,
-        "translated": 0, "confirmed_rate": 0.8667, "single_language": 14,
+        "translated": 0, "confirmed_rate": 0.8667, "single_language": 14, "toc_deleted": 0,
     }
     assert set(summary) == set(SUMMARY_KEYS)
     assert summary["old_rows"] == progress["total"]
@@ -1348,6 +1358,31 @@ def test_progress_in_list_and_overview(client: TestClient) -> None:
     assert get_bundle(client, fx.bundle_id)["progress"] == PROGRESS
     assert get_bundle(client, empty)["progress"] == EMPTY_PROGRESS
     assert PROGRESS["total"] == sum(PROGRESS[status] for status in ("unassigned", "ai_suggested", "confirmed", "on_hold"))
+
+
+def test_output_c_item_counts_the_old_units_it_came_from(client: TestClient) -> None:
+    fx = _setup(client)
+    sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
+
+    merged, single = _items_in(sop, "general_requirements.work")
+    (duplicate,) = _items_in(sop, "responsibilities")
+
+    # 옛 두 줄이 합쳐진 줄만 2 — 화면이 이 줄에 올리거나 고를 때 source_note를 꼬리표로 보인다
+    assert (merged["source_count"], single["source_count"], duplicate["source_count"]) == (2, 1, 1)
+    assert merged["source_note"] == "← OLD-1 §5.1, OLD-2 §5.1 (merged)"
+
+
+def _bullet_items(*levels: tuple[str, int]) -> list[CItem]:
+    return [CItem.model_construct(number_style=style, indent_level=level) for style, level in levels]
+
+
+def test_get_bullet_depths_count_bullets_apart_from_numbered_lines() -> None:
+    items = _bullet_items(("bullet", 5), ("numbered", 3), ("bullet", 1), ("omitted", 2), ("bullet", 9), ("bullet", 0), ("bullet", 2))
+
+    # 첫 글머리 기호는 0, 이어서 앞 글머리 기호 + 1(번호·생략 줄은 건너뜀), 상한 2, 내려갔다 다시 앞 줄 + 1까지
+    assert get_bullet_depths(items) == [0, None, 1, None, 2, 0, 1]
+    assert get_bullet_depths(_bullet_items(("bullet", 2), ("bullet", 2), ("bullet", 2))) == [0, 1, 2]
+    assert get_bullet_depths([]) == []
 
 
 # ── C 순서 바꾸기 ─────────────────────────────────────────────────────────────

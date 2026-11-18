@@ -15,6 +15,7 @@ NUMBER_AUTO, NUMBER_TYPED = "auto", "typed"  # docx_reader의 번호 출처와 �
 MAX_NUMBER_CHARS = 40  # units.number_read·number_set 열 길이
 NUMBERED_KINDS = ("sentence", "heading", "cell_sentence")  # 번호 칸이 있는 단위 — 캡션·그림·표는 없다
 FIRST_SIGNAL_VERSION = 5  # extract.types.EXTRACTOR_VERSION — 블록 신호(numbers)가 생긴 추출기
+SECTION_KIND = "heading"  # 절을 여는 줄 — 제목 스타일이거나 조항 번호만 있는 줄(segment.build_unit_drafts)
 NO_NUMBER = ""  # number_set의 "번호 없음" — 번호 범위를 글로 되돌린다(NULL은 사람이 고치지 않음)
 # 번호 마디를 가르는 글자와 끝에 붙는 글자 — "6.1.1." "A-1-2" "3)"
 _PART_SEPARATOR_RE = re.compile(r"[.\-]")
@@ -24,8 +25,9 @@ _DOUBLED_RE = re.compile(r"(.+?)\s+(\S+)")
 
 
 class NumberedUnit(Protocol):
-    """번호 열 넷 — Unit 행과 스냅숏 값이 함께 쓴다."""
+    """번호 열 넷과 단위 종류 — Unit 행과 스냅숏 값이 함께 쓴다."""
 
+    kind: str
     number_read: str | None
     number_source: str | None
     number_len: int
@@ -88,17 +90,23 @@ def _read_label(label: str) -> str:
 
 
 def get_number(unit: NumberedUnit) -> str | None:
-    """번호 칸의 값 — 사람이 고친 값이 먼저이고, 없으면 읽은 값(타자 번호는 사람이 번호로 삼기 전에는 글이다)."""
+    """번호 칸의 값 — 사람이 고친 값이 먼저이고, 없으면 읽은 값(본문 줄의 타자 번호는 사람이 번호로 삼기 전에는 글이다)."""
     if unit.number_set is not None:
         return unit.number_set or None
-    return unit.number_read if unit.number_source in (NUMBER_AUTO, NUMBER_CELL) else None
+    return None if _is_typed_text(unit) else unit.number_read
+
+
+def _is_typed_text(unit: NumberedUnit) -> bool:
+    """타자로 친 번호가 아직 글인가 — 절을 여는 줄(제목)의 타자 번호는 처음부터 번호 칸으로 가고(전에도 화면이 가리던 번호다),
+    본문 줄의 타자 번호는 사람이 "번호로"를 누르기 전에는 글이다(사용자 결정 2026-11-18)."""
+    return unit.number_source == NUMBER_TYPED and unit.number_set is None and unit.kind != SECTION_KIND
 
 
 def get_hidden_len(unit: NumberedUnit) -> int:
     """단위 글 앞에서 번호 칸으로 간 글자 수 — "번호 없음"이거나 아직 글인 타자 번호면 0."""
     if unit.number_set == NO_NUMBER or not unit.number_len:
         return 0
-    if unit.number_source == NUMBER_TYPED and unit.number_set is None:
+    if _is_typed_text(unit):
         return 0
     return unit.number_len
 
