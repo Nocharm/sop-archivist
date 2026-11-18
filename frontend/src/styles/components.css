@@ -1612,7 +1612,9 @@
   .space-key[data-mark="picked"] { background: var(--sheet-picked); box-shadow: inset 3px 0 0 var(--sheet-accent); }
   .space-key[data-mark="group"] { background: var(--sheet-group); }
   /* 닫혀 있을 때의 작은 안내 - 처음 몇 번만, 누를 수 없다 */
-  .space-hint { position: absolute; left: 14px; bottom: 14px; z-index: 5; margin: 0; padding: 2px 8px; border: 1px solid var(--line); border-radius: var(--r-2); background: color-mix(in oklab, var(--surface) 92%, transparent); font-size: 11px; line-height: 18px; color: var(--ink-3); pointer-events: none; }
+  /* 안내가 있는 동안 작업 화면 바닥에 제 줄을 비워 두고 거기 놓는다 - 위에 띄우면 Old 칸 맨 아래 카드 글을 덮었다(1120에서 잰 것) */
+  [data-testid="assign"]:has(> .space-hint) > .assign-desk { padding-bottom: 36px; }
+  .space-hint { position: absolute; left: 14px; bottom: 8px; z-index: 5; margin: 0; padding: 2px 8px; border: 1px solid var(--line); border-radius: var(--r-2); background: color-mix(in oklab, var(--surface) 92%, transparent); font-size: 11px; line-height: 18px; color: var(--ink-3); pointer-events: none; }
   .space-hint kbd { padding: 0 4px; border: 1px solid var(--line-2); border-radius: var(--r-1); font: 500 10px / 14px var(--font-mono); }
   .assign-pane { display: flex; flex-direction: column; gap: 6px; min-width: 0; min-height: 0; }
   .assign-pane > .pane-body { flex: 1 1 0; }
