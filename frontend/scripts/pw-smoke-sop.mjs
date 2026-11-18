@@ -4531,6 +4531,132 @@ await runStep("assign: band heading - Output A puts it at § 7.4 · 띠 표 with
   check("its location is the band number and Band table", row.location.section === BAND_NUMBER && row.location.place === "띠 표", JSON.stringify(row.location));
 });
 
+// --- 표 안 표(MD 1 F2) - 시드 8번 묶음 "SYNTHETIC 8 표 안 표": 작업 표 하나(표 1)의 첫 행 칸에 띠 표 7.1(표 2), "점검 항목" 칸의 두 문단 사이에
+// 값 표(표 3), "권한 표" 칸에 권한 표(표 4). 바깥을 벗기면 안쪽 표는 제 칸 글 사이 자리에 다시 표로, 띠 표는 제목 줄. 단계마다 끝에 문서 편집을 되돌려 시드를 그대로 둔다 ---
+const NESTED_TITLE = "SYNTHETIC 8 표 안 표";
+const NESTED_CHECK = ["전원 표시등이 켜졌는지 본다.", "차압계 값을 기록한다."];
+
+async function openNestedBundle(page) {
+  const headers = { "X-Dev-User": "qa.member" };
+  const bundles = await (await page.request.get(`${BASE}/api/bundles`, { headers })).json();
+  const bundle = bundles.find((item) => item.title === NESTED_TITLE) ?? null;
+  if (!bundle) return null;
+  const api = `${BASE}/api/bundles/${bundle.id}`;
+  const docs = await (await page.request.get(`${api}/documents`, { headers })).json();
+  const docId = docs[0].id;
+  const readView = async () => (await page.request.get(`${api}/documents/${docId}/view`, { headers })).json();
+  const waitView = async (isDone) => {
+    for (let tries = 0; tries < 60; tries += 1) {
+      const view = await readView();
+      if (isDone(view)) return view;
+      await page.waitForTimeout(250);
+    }
+    return null;
+  };
+  const edit = async (op) => {
+    const revision = (await readView()).document.revision;
+    return page.request.post(`${api}/documents/${docId}/edits`, { headers, data: { revision, confirm: false, op } });
+  };
+  // 문서 편집 기록을 n번 되돌린다 - 시드를 처음 그대로 둔다
+  const undo = async (times) => {
+    for (let step = 0; step < times; step += 1) {
+      const revision = (await readView()).document.revision;
+      const response = await page.request.post(`${api}/documents/${docId}/edits/undo`, { headers, data: { revision } });
+      check(`document edit undo ${step + 1} goes through`, response.ok(), String(response.status()));
+    }
+  };
+  return { bundle, readView, waitView, edit, undo, headers, api };
+}
+
+const readTableUnit = (view, table) => view.units.find((unit) => unit.kind === "table" && unit.table_id === table.id);
+const readTop = async (page, unitId) => (await page.locator(`[data-testid="assign-paper-piece-${unitId}"]`).boundingBox())?.y ?? Number.NaN;
+
+await runStep("assign: nested table - unwrapping the work table puts the value table between its cell paragraphs and turns the inner band into a heading line", {}, async ({ page, takeShot }) => {
+  const nested = await openNestedBundle(page);
+  check("the demo seed has the nested table bundle", nested !== null);
+  if (!nested) return;
+  const before = await nested.readView();
+  const [outer, band, value] = before.tables;
+  check("the inner tables carry their place in the outer cell", value.anchor !== null && band.is_band && outer.anchor === null, JSON.stringify(before.tables));
+  const outerUnit = readTableUnit(before, outer);
+  await page.goto(`${BASE}/bundles/${nested.bundle.id}/assign`);
+  const piece = page.locator(`[data-testid="assign-paper-piece-${outerUnit.id}"]`);
+  await piece.waitFor({ timeout: T });
+  await piece.scrollIntoViewIfNeeded();
+  await piece.click();
+  await wait(page, `assign-shape-table_layout-${outerUnit.id}`);
+  await page.locator(`[data-testid="assign-shape-table_layout-${outerUnit.id}"]`).click();
+  const view = await nested.waitView((item) => item.tables[0].is_layout);
+  check("Unwrap table unwraps the work table", view !== null);
+  if (view === null) return;
+  check("the inner band table is unwrapped with it", view.tables[1].is_layout === true && view.tables[2].is_layout === false);
+  const heading = view.units.find((unit) => unit.kind === "heading" && unit.table_id === band.id);
+  const valueUnit = readTableUnit(view, value);
+  const [first, second] = NESTED_CHECK.map((text) => view.units.find((unit) => unit.text === text));
+  check("the band is a heading line and the value table is still one table line", heading !== undefined && valueUnit !== undefined);
+  if (!heading || !valueUnit || !first || !second) return;
+  await page.locator(`[data-testid="assign-paper-piece-${valueUnit.id}"]`).waitFor({ timeout: T });
+  check("the band heading is drawn as a text piece", (await page.locator(`[data-testid="assign-paper-piece-${heading.id}"]`).getAttribute("data-kind")) === "piece");
+  check("the value table is drawn as a table", (await page.locator(`[data-testid="assign-paper-piece-${valueUnit.id}"]`).getAttribute("data-kind")) === "table");
+  // 제 행 자리 - 칸의 첫 문단 아래, 둘째 문단 위(바깥 표 뒤가 아니다)
+  const [topFirst, topValue, topSecond] = [await readTop(page, first.id), await readTop(page, valueUnit.id), await readTop(page, second.id)];
+  check("the value table sits between the two paragraphs of its cell", topFirst < topValue && topValue < topSecond, `${topFirst} < ${topValue} < ${topSecond}`);
+  const valueRow = page.locator(`[data-testid="assign-paper-piece-${valueUnit.id}"]`).locator("xpath=..");
+  check("the outer rail runs through the inner table line", (await valueRow.locator(".unwrap-rail").count()) === 1);
+  check("the outer table has its ↺ Back to table head", (await page.locator(`[data-testid="assign-paper-unwrap-head-${outer.id}"]`).count()) >= 1);
+  await takeShot("sop-assign-nested.png");
+  // 바깥 · 안쪽 띠 표가 한 편집이라 Undo 한 번에 처음 표 한 줄로
+  await page.locator('[data-testid="assign-undo"]').click();
+  check("Undo wraps both back in one step", (await nested.waitView((item) => !item.tables[0].is_layout && !item.tables[1].is_layout && item.units.some((unit) => unit.id === outerUnit.id))) !== null);
+  await piece.waitFor({ timeout: T });
+});
+
+await runStep("assign: nested table - an inner table unwraps again and ↺ Back to table wraps only the pressed layer", {}, async ({ page }) => {
+  const nested = await openNestedBundle(page);
+  if (!nested) return;
+  const before = await nested.readView();
+  const [outer, band, , access] = before.tables;
+  const unwrapped = await nested.edit({ type: "set_layout_table", table_id: outer.id, is_layout: true });
+  check("the work table is unwrapped first", unwrapped.ok(), String(unwrapped.status()));
+  const view = await nested.readView();
+  const accessUnit = readTableUnit(view, access);
+  await page.goto(`${BASE}/bundles/${nested.bundle.id}/assign`);
+  const piece = page.locator(`[data-testid="assign-paper-piece-${accessUnit.id}"]`);
+  await piece.waitFor({ timeout: T });
+  await piece.scrollIntoViewIfNeeded();
+  await piece.click();
+  // 안쪽 표도 같은 표 벗기기
+  await wait(page, `assign-shape-table_layout-${accessUnit.id}`);
+  await page.locator(`[data-testid="assign-shape-table_layout-${accessUnit.id}"]`).click();
+  const inner = await nested.waitView((item) => item.tables[3].is_layout);
+  check("the inner access table unwraps into sentence lines", inner !== null && inner.units.some((unit) => unit.text === "관리자" && unit.table_id === access.id && unit.group_unit_id === null));
+  await wait(page, `assign-paper-unwrap-head-${access.id}`);
+  check("the inner table has its own ↺ Back to table head", (await getText(page, `assign-paper-unwrap-head-${access.id}`)).trim() === "↺ Back to table");
+  // 바깥만 다시 표로 - 안쪽 권한 표는 벗긴 그대로, 바깥과 함께 제목 줄이 된 띠 표는 함께 표로
+  await page.locator(`[data-testid="assign-paper-rewrap-${outer.id}"]`).click();
+  const wrapped = await nested.waitView((item) => !item.tables[0].is_layout);
+  check("Back to table wraps the work table", wrapped !== null);
+  check("the inner access table stays unwrapped", wrapped?.tables[3].is_layout === true);
+  check("the inner band goes back to a table with the outer table", wrapped !== null && readTableUnit(wrapped, band) !== undefined);
+  await page.locator(`[data-testid="assign-paper-unwrap-head-${access.id}"]`).waitFor({ timeout: T });
+  await nested.undo(3); // 다시 표로 → 안쪽 벗기기 → 바깥 벗기기
+  check("the seed is back as it was", (await nested.waitView((item) => item.tables.every((table) => !table.is_layout) && item.units.some((unit) => unit.id === readTableUnit(before, outer).id))) !== null);
+});
+
+await runStep("assign: nested table - Output A locates an inner table line from the outside in", {}, async ({ page }) => {
+  const nested = await openNestedBundle(page);
+  if (!nested) return;
+  const [outer, , , access] = (await nested.readView()).tables;
+  for (const table of [outer, access]) {
+    const response = await nested.edit({ type: "set_layout_table", table_id: table.id, is_layout: true });
+    check(`table ${table.table_index + 1} unwraps`, response.ok(), String(response.status()));
+  }
+  const rows = await (await page.request.get(`${nested.api}/outputs/a?lang=ko`, { headers: nested.headers })).json();
+  const row = rows.find((item) => item.source_text === "관리자");
+  check("its place starts at the outer cell", row?.location.place === "표 1 · 3행 2열 › 표 4 · 2행 1열", JSON.stringify(row?.location));
+  await nested.undo(2);
+});
+
 await runStep("outputs: export preview folds TOC rows and Output A keeps them as automatic deletes", {}, async ({ page, takeShot }) => {
   const toc = await findTocBundle(page);
   if (!toc) return;

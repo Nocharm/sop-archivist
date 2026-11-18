@@ -341,6 +341,10 @@ export interface ViewTable {
   n_rows: number;
   n_cols: number;
   is_layout: boolean;
+  /** 띠 표 신호가 있다 - 바로 바깥 표를 벗기거나 다시 묶으면 함께 제목 줄 ↔ 표로 바뀐다(F2 · F4) */
+  is_band: boolean;
+  /** 안쪽 표가 놓인 바깥 칸 블록과 그 글에서 표 앞 글자 수(F2) - 바깥 표·옛 추출은 null */
+  anchor: { block_id: number; at: number } | null;
 }
 
 export interface ViewBlock {
