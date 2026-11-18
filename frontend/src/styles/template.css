@@ -76,4 +76,18 @@
   .view-switch button { padding: 4px 7px; border-radius: 2px; color: var(--ink-3); cursor: pointer; transition: background var(--dur-fast), color var(--dur-fast); }
   .view-switch button:hover { color: var(--ink); }
   .view-switch button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+  .view-switch button { display: inline-flex; align-items: center; gap: 4px; }
+  .view-switch-icon { display: none; }
+  /* 좁은 New 칸 머리(1280 반반 408px)에서는 전환을 아이콘 둘로, 확대의 % 글을 접는다 - 머리 항목 합이 83px 넘쳤다(잰 값) */
+  .assign-pane[data-pane="new"] > .pane-head { container-type: inline-size; }
+  @container (max-width: 520px) {
+    .view-switch-label { display: none; }
+    .view-switch-icon { display: block; }
+    .pane-zoom span { display: none; }
+  }
+  /* 1120 창 반반(342px)에서는 그래도 66px 넘쳤다 - 꼬리표("New · not written")를 접고 간격을 줄인다. 어느 문서인지는 문서 고르기가 보인다 */
+  @container (max-width: 400px) {
+    .assign-pane[data-pane="new"] > .pane-head { gap: 6px; }
+    .assign-pane[data-pane="new"] > .pane-head > .new-pane-tag { display: none; }
+  }
 }

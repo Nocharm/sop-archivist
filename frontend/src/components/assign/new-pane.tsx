@@ -12,7 +12,7 @@
 // 엮은 문서는 머리의 "기본 | 템플릿" 전환(viewSwitch)으로 같은 줄을 회사 템플릿 모양(components/template/template-view)으로도 본다 - 템플릿이면 몸에 그 보기를 그린다.
 "use client";
 
-import { ChevronDown, ChevronUp, FilePlus2, Scissors, Sparkles, Spline } from "lucide-react";
+import { AlignLeft, ChevronDown, ChevronUp, FilePlus2, LayoutTemplate, Scissors, Sparkles, Spline } from "lucide-react";
 import { Fragment, useEffect, useEffectEvent, useRef, useState, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { NewBundle } from "@/components/assign/new-bundle";
@@ -627,12 +627,19 @@ function ViewSwitch({ template, onChange }: { template: boolean; onChange: (temp
   const { t } = useI18n();
   return (
     <div className="view-switch" role="group" aria-label={t("assign.newView")} data-testid="assign-new-view">
-      <button type="button" aria-pressed={!template} data-testid="assign-new-view-basic" onClick={() => onChange(false)}>
-        {t("assign.newView.basic")}
-      </button>
-      <button type="button" aria-pressed={template} data-testid="assign-new-view-template" onClick={() => onChange(true)}>
-        {t("assign.newView.template")}
-      </button>
+      {/* 칸 머리가 좁으면 글을 접고 아이콘만(이름은 툴팁) - 1280 반반에서 머리가 칸 밖으로 넘쳤다 */}
+      <Tooltip label={t("assign.newView.basic")}>
+        <button type="button" aria-pressed={!template} aria-label={t("assign.newView.basic")} data-testid="assign-new-view-basic" onClick={() => onChange(false)}>
+          <AlignLeft size={13} strokeWidth={1.75} className="view-switch-icon" aria-hidden />
+          <span className="view-switch-label">{t("assign.newView.basic")}</span>
+        </button>
+      </Tooltip>
+      <Tooltip label={t("assign.newView.template")}>
+        <button type="button" aria-pressed={template} aria-label={t("assign.newView.template")} data-testid="assign-new-view-template" onClick={() => onChange(true)}>
+          <LayoutTemplate size={13} strokeWidth={1.75} className="view-switch-icon" aria-hidden />
+          <span className="view-switch-label">{t("assign.newView.template")}</span>
+        </button>
+      </Tooltip>
     </div>
   );
 }
