@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.sop.doc_meta import HeaderFields, detect_header_fields, detect_language_layout
 from app.sop.extract.types import ExtractedBlock
-from tests.docx_factory import build_docx, p
+from tests.docx_factory import build_docx, make_grid_table, make_row, p
 from tests.sop_helpers import create_bundle, upload
 
 
@@ -114,3 +114,80 @@ def test_layout_table_with_both_languages_keeps_interleaved() -> None:
     ]
 
     assert detect_language_layout(blocks) == "ko_en_interleaved"
+
+
+def _cell(seq: int, text: str, table: int, row: int, col: int, span: int = 1) -> ExtractedBlock:
+    return ExtractedBlock(
+        seq=seq, part="body", kind="table_cell", text=text, xml_path="", page=1, page_basis="estimated",
+        section_label="", heading_level=None, table_index=table, row_index=row, col_index=col, grid_span=span,
+        row_span=1, image_part=None, flags=(),
+    )
+
+
+def test_reads_values_from_the_cell_below_the_label() -> None:
+    # P-META: 표지 표는 라벨이 값의 위 칸이다 — 4열 격자, Document No.가 세 열을 차지한다
+    blocks = [
+        _cell(0, "Document No.", 0, 0, 0, 3), _cell(1, "Ver.", 0, 0, 3),
+        _cell(2, "SYN-00001", 0, 1, 0, 3), _cell(3, "1.0", 0, 1, 3),
+        _cell(4, "Record No.", 0, 2, 0), _cell(5, "Title", 0, 2, 1, 3),
+        _cell(6, "CC-000001", 0, 3, 0), _cell(7, "합성 필터 관리", 0, 3, 1, 3),
+    ]
+
+    assert detect_header_fields(blocks) == HeaderFields(doc_code="SYN-00001", version="1.0", record_no="CC-000001")
+
+
+def test_reads_values_below_labels_in_a_three_column_cover_table() -> None:
+    blocks = [
+        _cell(0, "문서번호", 0, 0, 0), _cell(1, "Version", 0, 0, 1), _cell(2, "Title", 0, 0, 2),
+        _cell(3, "syn-qc-0042", 0, 1, 0), _cell(4, "12", 0, 1, 1), _cell(5, "합성 원심분리기 운전", 0, 1, 2),
+    ]
+
+    assert detect_header_fields(blocks) == HeaderFields(doc_code="SYN-QC-0042", version="12")
+
+
+def test_cell_below_a_label_must_look_like_the_value() -> None:
+    # 라벨 아래가 값 꼴이 아니면(설명 글, 다른 열의 값) 읽지 않는다
+    blocks = [
+        _cell(0, "Document No.", 0, 0, 0), _cell(1, "Ver.", 0, 0, 1),
+        _cell(2, "아래 표를 참고한다", 0, 1, 0), _cell(3, "SYN-00001", 0, 1, 1),
+    ]
+
+    assert detect_header_fields(blocks) == HeaderFields(doc_code=None, version=None)
+
+
+def test_upload_reads_the_cover_table(client: TestClient) -> None:
+    bundle = create_bundle(client)
+    cover = make_grid_table(
+        4,
+        make_row(["Document No.", "Ver."], spans=[3, 1]) + make_row(["SYN-00001", "1.0"], spans=[3, 1])
+        + make_row(["Record No.", "Title"], spans=[1, 3]) + make_row(["CC-000001", "합성 필터 관리"], spans=[1, 3]),
+    )
+
+    response = upload(client, bundle["id"], build_docx(cover + p("필터를 교체한다.")), "SYNTHETIC_Filter_Care.docx")
+
+    assert response.status_code == 201, response.text
+    assert (response.json()["doc_code"], response.json()["doc_version"]) == ("SYN-00001", "1.0")
+
+
+def test_layout_counts_table_rows_when_the_body_is_mostly_tables() -> None:
+    # P-LAYOUT: 본문 문단 둘 + 표 둘(앞은 모두 한글, 뒤는 모두 영어) — 문단만 세면 판정할 것이 없다
+    korean = [_cell(2 + row * 2 + col, "필터를 꺼낸다." if col else "A", 0, row, col) for row in range(4) for col in range(2)]
+    english = [_cell(10 + row * 2 + col, "Take the filter out." if col else "A", 1, row, col) for row in range(4) for col in range(2)]
+    blocks = [_block(0, "필터 교체"), _block(1, "Filter change"), *korean, *english]
+
+    assert detect_language_layout(blocks) == "ko_en_separate"
+
+
+def test_layout_table_rows_with_both_languages_stay_interleaved() -> None:
+    # KO|EN 두 열 레이아웃 표는 행마다 한글이 있어 영어 줄이 없다 — 표의 코드 짝을 지키는 기본(연달아) 그대로
+    rows = [_cell(1 + row * 2 + col, "Wear gloves." if col else "장갑을 낀다.", 0, row, col) for row in range(5) for col in range(2)]
+
+    assert detect_language_layout([_block(0, "원심분리기 운전"), *rows]) == "ko_en_interleaved"
+
+
+def test_layout_trusts_language_half_marks_over_line_order() -> None:
+    blocks = [_block(index, "보호 장갑을 착용한다." if index % 2 == 0 else "Wear protective gloves.") for index in range(20)]
+
+    assert detect_language_layout(blocks, has_language_halves=True) == "ko_en_separate"
+    # 한 언어뿐이면 절반 표시가 있어도(빈 템플릿 절반) 그 언어 하나다
+    assert detect_language_layout([_block(0, "장갑을 낀다.")] * 3, has_language_halves=True) == "ko_only"
