@@ -24,7 +24,7 @@ import { buildFoldPlan, type FoldEntry, type FoldItem, type FoldOpen } from "@/l
 import { buildRows, foldCaptionRows, getBundleHeader, getGapMerge, getMarks, getTags, MERGE_BLOCKER_KEYS, resolvePickUnit, type PaperItem, type PaperModel, type PaperRow, type Segment, type UnitMark } from "@/lib/paper-model";
 import type { JoinKind, JoinPlan } from "@/lib/split-menu-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionHeads, getTabWidths, getSectionLevel, getSectionPill, getVisibleSkip, sliceVisible, type PairBracket } from "@/lib/strip-pill-model";
-import { buildTocBlock, shouldJoinTocCard, toggleTocOpen } from "@/lib/toc-block-model";
+import { buildTocBlock, shouldJoinTocCard } from "@/lib/toc-block-model";
 
 /** 조각 끝 표시 - 단위의 것(UnitMark)에 그 조각이 놓인 블록의 경고를 더한다 */
 type PaperMark = UnitMark | "warn";
@@ -174,8 +174,17 @@ interface PaperProps {
     /** Assign - 머리 줄에 "Caption needed"를 띄울 묶음(lib/caption-model isCaptionNeeded). 없으면 캡션이 없는 묶음 모두 */
     isCaptionNeeded?: (unitId: number, hasCaption: boolean) => boolean;
     /** Assign - 연달아 오는 목차 줄(noise_kind "toc")을 흐린 블록 하나로 접는다(처음엔 접힘, MD 1 F6). 없으면 보통 조각으로 그린다(Split).
-     *  canClear면 펼친 블록에서 줄 하나의 "목차 아님"과 머리의 "모두 목차 아님"을 보인다 - onClear(그 단위들)로 편집 clear_noise */
-    toc?: { canClear: boolean; busy: boolean; onClear: (unitIds: number[]) => void };
+     *  펼침(open)과 고른 블록·줄(selected - unitId null이면 블록 전체)은 화면이 쥔다(결정 칸이 같은 것을 보인다).
+     *  canClear면 펼친 블록에서 고른 줄 끝의 "목차 아님"과 머리의 "모두 목차 아님"을 보인다 - onClear(그 단위들)로 편집 clear_noise */
+    toc?: {
+      canClear: boolean;
+      busy: boolean;
+      onClear: (unitIds: number[]) => void;
+      open: ReadonlySet<number>;
+      selected: { key: number; unitId: number | null } | null;
+      onToggle: (key: number) => void;
+      onPick: (key: number, unitId: number | null) => void;
+    };
   };
   /** strips에서 고른 조각의 글 바로 아래 줄(확인·짝 풀기 등 단추) - 조각 상자가 펼쳐지며 밀려 내려오고, 고름이 옮겨 가면 접힌다 */
   renderUnitActions?: (unitId: number) => ReactNode;
@@ -261,10 +270,8 @@ export function Paper({
   // 단추 줄을 그리는 조각 - 지금 고른 것과 바로 전에 고른 것(접히는 동안). 수천 조각마다 접기 부품을 두지 않는다
   const [actionIds, setActionIds] = useState({ current: selectedId, previous: null as number | null });
   if (actionIds.current !== selectedId) setActionIds({ current: selectedId, previous: actionIds.current });
-  // 목차 블록 - 펼친 블록(첫 줄 단위 id)과 펼친 블록에서 고른 줄(그 줄 끝에만 "목차 아님"). 이 용지를 연 동안만 기억한다(처음엔 모두 접힘)
+  // 목차 블록 - 펼침·고름은 화면(strips.toc)이 쥔다
   const hasToc = strips?.toc !== undefined;
-  const [openTocs, setOpenTocs] = useState<ReadonlySet<number>>(() => new Set());
-  const [tocPick, setTocPick] = useState<number | null>(null);
 
   // 조각 줄 - 모델이 바뀔 때만 다시 편다(고르기·확인으로는 그대로)
   const sections = useMemo(() => {
@@ -876,7 +883,7 @@ export function Paper({
   }
 
   /** 목차 블록 - 연달아 오는 목차 줄을 흐린 블록 하나로(MD 1 F6). 접히면 머리 줄과 처리 줄 둘, 펼치면 원문 목차 모양 그대로 줄마다(한/영 사이 점선).
-   *  줄을 누르면 그 줄 끝에만 "목차 아님"이 뜬다. 줄은 배정 줄이 아니라 Assign 고름(selectedId)을 옮기지 않는다 */
+   *  머리를 누르면 펼치거나 접으며 블록을 고르고, 줄을 누르면 그 줄을 고른다(그 줄 끝에만 "목차 아님"). 고름은 배정 줄이 아니라 화면의 목차 고름이다(결정 칸 F12) */
   function renderTocBlock(rows: readonly PaperRow[]): ReactNode {
     const toc = strips?.toc;
     const units = rows.flatMap((row) => {
@@ -885,13 +892,14 @@ export function Paper({
     });
     const block = buildTocBlock(units);
     if (!toc || !block) return null;
-    const isOpen = openTocs.has(block.key);
+    const isOpen = toc.open.has(block.key);
+    const picked = toc.selected?.key === block.key ? toc.selected : null;
     const width = readTabWidth(rows[0]);
     const prefix = `${testId}-toc`;
     return (
       <div key={`toc-${block.key}`} className="strip-row">
         <span className="strip-lead-gap" style={{ width: width + STRIP_LEAD_EXTRA }} />
-        <div className="toc-block" data-open={isOpen ? "" : undefined} data-testid={`${prefix}-${block.key}`}>
+        <div className="toc-block" data-open={isOpen ? "" : undefined} data-sel={picked !== null && picked.unitId === null ? "" : undefined} data-testid={`${prefix}-${block.key}`}>
           <div className="toc-head-row">
             <button
               type="button"
@@ -899,8 +907,8 @@ export function Paper({
               aria-expanded={isOpen}
               data-testid={`${prefix}-head-${block.key}`}
               onClick={() => {
-                setOpenTocs((open) => toggleTocOpen(open, block.key));
-                setTocPick(null);
+                toc.onToggle(block.key);
+                toc.onPick(block.key, null);
               }}
             >
               <ChevronRight size={13} strokeWidth={1.75} className="toc-chevron" aria-hidden />
@@ -924,7 +932,7 @@ export function Paper({
             {() => (
               <ol className="toc-lines" style={{ fontFamily: "var(--font-source)" }}>
                 {block.lines.map((line) => {
-                  const isPicked = tocPick === line.unitId;
+                  const isPicked = picked?.unitId === line.unitId;
                   return (
                     <li key={line.unitId} className="toc-line" data-break={line.breakBefore ? "" : undefined} data-picked={isPicked ? "" : undefined}>
                       <button
@@ -932,7 +940,7 @@ export function Paper({
                         className="toc-line-text"
                         aria-pressed={isPicked}
                         data-testid={`${prefix}-line-${line.unitId}`}
-                        onClick={() => setTocPick(isPicked ? null : line.unitId)}
+                        onClick={() => toc.onPick(block.key, isPicked ? null : line.unitId)}
                       >
                         {line.text}
                       </button>
@@ -942,10 +950,7 @@ export function Paper({
                           className="btn toc-act"
                           disabled={toc.busy}
                           data-testid={`${prefix}-not-${line.unitId}`}
-                          onClick={() => {
-                            setTocPick(null);
-                            toc.onClear([line.unitId]);
-                          }}
+                          onClick={() => toc.onClear([line.unitId])}
                         >
                           {t("assign.toc.not")}
                         </button>
@@ -990,7 +995,7 @@ export function Paper({
       <PaperChunk
         key={group.cards[0][0].key}
         live={nearChunks === null || (group.index >= nearChunks.from && group.index <= nearChunks.to) || liveChunkIds.has(group.index)}
-        deps={[cardGroups, t, testId, dragBoxes, pickWholeBundle, openTocs, tocPick, strips?.toc?.busy, strips?.toc?.canClear]}
+        deps={[cardGroups, t, testId, dragBoxes, pickWholeBundle, strips?.toc?.open, strips?.toc?.selected, strips?.toc?.busy, strips?.toc?.canClear]}
         render={() => renderCards(group)}
       />
     ));

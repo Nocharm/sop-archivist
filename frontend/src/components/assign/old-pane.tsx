@@ -3,7 +3,7 @@
 "use client";
 
 import { ListFilter } from "lucide-react";
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 
 import { PaneZoom } from "@/components/assign/pane-zoom";
 import { Paper, type CutDragPos, type PaperCut } from "@/components/paper/paper";
@@ -44,7 +44,7 @@ interface OldPaneProps {
   /** 머리 줄에 "Caption needed"를 띄울 표·그림 단위(lib/caption-model isCaptionNeeded) */
   isCaptionNeeded: (unitId: number, hasCaption: boolean) => boolean;
   /** 목차 줄을 흐린 블록 하나로 접는다(Old 문서) - 없으면 보통 조각(한 단으로 연 New 문서) */
-  toc?: { canClear: boolean; busy: boolean; onClear: (unitIds: number[]) => void };
+  toc?: NonNullable<NonNullable<ComponentProps<typeof Paper>["strips"]>["toc"]>;
   /** 내용이 있는 본문·머리말·꼬리말 탭 - 둘 이상일 때만 탭 줄을 그린다 */
   partKeys: readonly PaperTabKey[];
   activePart: PaperTabKey;
