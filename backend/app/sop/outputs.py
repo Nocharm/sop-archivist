@@ -996,6 +996,22 @@ def _format_target_location(index: _Index, doc: TargetDocInfo, target: TargetInf
     return target.section_path
 
 
+def _format_outer_cells(index: _Index, table_id: int | None, labels: OutputLabels) -> str:
+    """안쪽 표 위치의 앞붙이 — 바깥부터 그 표가 든 칸마다 "표 3 · 1행 1열 › "(F2 · F11 · §11-6). 바깥 표면 빈 글이고, 칸 자리를
+    모르는 옛 추출은 바깥 표 번호만 적는다. 안쪽 표도 문서 안 표 순번을 그대로 쓴다."""
+    outer: list[str] = []
+    table = index.snap.tables.get(table_id) if table_id is not None else None
+    while table is not None and table.parent_id is not None:
+        parent = index.snap.tables[table.parent_id]
+        number = parent.table_index + 1
+        outer.append(
+            labels.table_template.format(table=number) if table.place is None
+            else labels.cell_template.format(table=number, row=table.place[0] + 1, col=table.place[1] + 1)
+        )
+        table = parent
+    return "".join(piece + labels.nested_separator for piece in reversed(outer))
+
+
 def _format_place(index: _Index, unit: UnitInfo, labels: OutputLabels) -> str:
     # 번호 칸("A" · "7")을 앞 조각으로 받은 풀린 표의 줄은 내용 칸을 가리킨다 — 번호는 번호 칸의 몫이다(F3)
     has_number_cell = unit.number_source == NUMBER_CELL and len(unit.spans) > 1
@@ -1003,18 +1019,20 @@ def _format_place(index: _Index, unit: UnitInfo, labels: OutputLabels) -> str:
     pieces = [labels.parts[block.part]] if block.part in labels.parts else []
     if unit.kind in TABLE_UNIT_KINDS:
         table_no = index.snap.tables[unit.table_id].table_index + 1  # 표·행 단위는 늘 원문 표를 가리킨다
+        outer = _format_outer_cells(index, unit.table_id, labels)
         if unit.kind == "table":
-            pieces.append(labels.table_template.format(table=table_no))
+            pieces.append(outer + labels.table_template.format(table=table_no))
         else:
-            pieces.append(labels.table_row_template.format(table=table_no, row=(unit.row_index or 0) + 1))
+            pieces.append(outer + labels.table_row_template.format(table=table_no, row=(unit.row_index or 0) + 1))
         return " · ".join(pieces)
     if is_band_heading(unit.kind, unit.table_id):
         # 띠 표 제목 줄은 칸 좌표가 아니라 "띠 표" — 번호(절)는 절 칸에 있다(F11)
-        pieces.append(labels.band_table)
+        pieces.append(_format_outer_cells(index, unit.table_id, labels) + labels.band_table)
         return " · ".join(pieces)
     if block.table_index is not None and block.row_index is not None and block.col_index is not None:
         pieces.append(
-            labels.cell_template.format(table=block.table_index + 1, row=block.row_index + 1, col=block.col_index + 1)
+            _format_outer_cells(index, block.table_id, labels)
+            + labels.cell_template.format(table=block.table_index + 1, row=block.row_index + 1, col=block.col_index + 1)
         )
     # 캡션은 제 문단 블록(새 추출)에도, 이행한 옛 그림 블록(0020)에도 있다 — 어느 쪽이든 문단으로 적는다
     if block.kind == "figure" and unit.kind != CAPTION_KIND:
