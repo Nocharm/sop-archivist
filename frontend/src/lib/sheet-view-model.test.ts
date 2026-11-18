@@ -28,7 +28,7 @@ import {
 } from "./sheet-view-model";
 
 const EXTENT: SheetExtent = { viewWidth: 1000, viewHeight: 400, contentWidth: 1180, contentHeight: 2000 };
-const cell = (text: string, extra: Partial<PreviewCell> = {}): PreviewCell => ({ text, faint: false, italic: false, bold: false, head: false, numeric: false, tone: null, ...extra });
+const cell = (text: string, extra: Partial<PreviewCell> = {}): PreviewCell => ({ text, faint: false, italic: false, bold: false, head: false, numeric: false, indent: 0, tone: null, ...extra });
 const row = (texts: string[], extra: Partial<PreviewRow> = {}): PreviewRow => ({ kind: "group_start", wrap: true, cells: texts.map((text) => cell(text)), unit_id: null, group_id: null, toc: false, ...extra });
 
 describe("move range", () => {

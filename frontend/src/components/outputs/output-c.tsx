@@ -35,9 +35,9 @@ import {
 import { previewEdit, type PlaceEdit } from "@/lib/c-edit-model";
 import { splitCTable } from "@/lib/composed-model";
 import { useI18n } from "@/lib/i18n";
-import { buildCLines, listMeaningStarts, type CLine } from "@/lib/output-groups";
+import { buildCLines, hasMergedSource, listMeaningStarts, type CLine } from "@/lib/output-groups";
 import { shouldRecenter } from "@/lib/paper-model";
-import { canChangeDepth, canChangeStyle, canIndent, getSectionDepths, listCounted, readIndentKey, readStyleChoices, type IndentDir } from "@/lib/section-number";
+import { canChangeDepth, canChangeStyle, canIndent, getSectionDepths, listBullets, listCounted, readBulletSymbol, readIndentKey, readStyleChoices, type IndentDir } from "@/lib/section-number";
 import { canMoveTarget, readMoveKey, type MoveDir } from "@/lib/target-order";
 import { useBoxDrag } from "@/lib/use-box-drag";
 import { useProgressiveList } from "@/lib/use-progressive-list";
@@ -294,7 +294,7 @@ function RowMenu({ items, item, onMove, indent, onMark, mark }: RowButtonsProps)
   );
 }
 
-/** 줄 앞 섹션 번호 - 깊이만큼 들여 그린다. 번호가 없는 칸(입구 2 문서·단계 없는 WI)도 깊이는 그린다. 글머리 기호 줄은 번호 자리에 기호 */
+/** 줄 앞 섹션 번호 - 깊이만큼 들여 그린다. 번호가 없는 칸(입구 2 문서·단계 없는 WI)도 깊이는 그린다. 글머리 기호 줄은 번호 자리에 그 깊이의 기호(• ○ ▪) */
 function NumberedLine({ item, depth, children }: { item: OutputCItem; depth: number; children: ReactNode }) {
   const isBullet = item.number === null && item.number_style === "bullet";
   return (
@@ -306,11 +306,24 @@ function NumberedLine({ item, depth, children }: { item: OutputCItem; depth: num
       )}
       {isBullet && (
         <span className="c-no c-no-bullet" aria-hidden data-testid={`output-c-bullet-${item.target_id}`}>
-          •
+          {readBulletSymbol(depth)}
         </span>
       )}
       <div className="min-w-0">{children}</div>
     </div>
+  );
+}
+
+/** N:1 출처 꼬리표 - 옛 두 줄 이상에서 온 줄에만, 줄 아래에 어둡게(올리거나 고를 때만 CSS가 보인다). 글은 서버의 source_note 그대로, 깊이만큼 들여 글 줄에 맞춘다 */
+function SourceTag({ item, depth }: { item: OutputCItem; depth: number }) {
+  if (!hasMergedSource(item)) return null;
+  return (
+    // 바깥 상자가 줄 글꼴 크기로 깊이만큼 들이고(em 단위), 안쪽 꼬리표만 작은 글자다
+    <span className="c-src-wrap" style={{ paddingLeft: `calc(${depth} * var(--c-indent))` }}>
+      <span className="c-src" data-testid={`output-c-source-${item.target_id}`}>
+        {item.source_note}
+      </span>
+    </span>
   );
 }
 
@@ -805,6 +818,7 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
               // 깊이·의미 선은 칸 전체 줄로 센다 - 아직 그리지 않은 줄도 앞줄 기준에 든다
               const depths = getSectionDepths(section);
               const counted = listCounted(section);
+              const bullets = listBullets(section);
               const starts = listMeaningStarts(section.items);
               return (
                 <section key={section.location_key} className="grid gap-1" data-location-key={section.location_key} data-na={section.na_reason !== null ? "" : undefined}>
@@ -846,9 +860,12 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
                     itemIndexes.map((index) => {
                       const item = section.items[index];
                       const line = (
-                        <NumberedLine item={item} depth={depths[index]}>
-                          <CItemView item={item} />
-                        </NumberedLine>
+                        <>
+                          <NumberedLine item={item} depth={depths[index]}>
+                            <CItemView item={item} />
+                          </NumberedLine>
+                          <SourceTag item={item} depth={depths[index]} />
+                        </>
                       );
                       // 의미 묶음의 첫 줄 위에 굵은 선 - 칸의 첫 줄은 칸 머리가 위에 있어 긋지 않는다
                       const meaningStart = starts[index] && index > 0 ? "" : undefined;
@@ -862,8 +879,8 @@ export function OutputCView({ data, onMove, onIndent, onMark, onPlace, resetKey 
                       const indent =
                         onIndent && canChangeDepth(doc.entrance, item)
                           ? {
-                              canOut: canIndent(depths, counted, index, -1),
-                              canIn: canIndent(depths, counted, index, 1),
+                              canOut: canIndent(depths, counted, index, -1, bullets),
+                              canIn: canIndent(depths, counted, index, 1, bullets),
                               onIndent: (dir: IndentDir) => onIndent(doc.target_doc_id, item.target_id, depths[index] + dir),
                             }
                           : null;

@@ -1,4 +1,4 @@
-// Excel 시트 한 장을 폭에 맞춘 한 장으로 그린다 - 서버 시트 모델(kind·wrap·head·faint·italic·bold·numeric·tone·bands)을 그대로 옮기고 모양을 다시 판정하지 않는다(제품 명세 §7.14 시트 모델).
+// Excel 시트 한 장을 폭에 맞춘 한 장으로 그린다 - 서버 시트 모델(kind·wrap·head·faint·italic·bold·numeric·indent·tone·bands)을 그대로 옮기고 모양을 다시 판정하지 않는다(제품 명세 §7.14 시트 모델).
 // 스크롤바 없이 끌기·휠·글쇠로 옮긴다(lib/sheet-pan.ts). 결과물 Export 미리보기와 Assign Space 미리보기가 같이 쓴다 - 고른 줄·확정 전 덮어 그리기는 Assign만 준다.
 // 종이와 표시 색은 테마와 무관한 --sheet-* 토큰이다(styles/sheet.css).
 "use client";
@@ -43,6 +43,8 @@ function getCellStyle(cell: PreviewCell, row: PreviewRow): CSSProperties {
   if (cell.bold || cell.head) style.fontWeight = 700;
   if (cell.italic) style.fontStyle = "italic";
   if (cell.numeric) style.textAlign = "right";
+  // 칸 안 들여쓰기(C 글머리 기호 줄의 Item 칸) - 기본 안쪽 여백 5px(.sv-t td)에 단계마다 9px
+  if (cell.indent > 0) style.paddingLeft = `${5 + cell.indent * 9}px`;
   return style;
 }
 

@@ -62,11 +62,17 @@ from tests.test_sop_outputs import (
     DUPLICATE,
     DUPLICATE_REASON,
     FIGURE_CAPTION_OUT,
+    MERGED,
+    RECORDS_EN,
     TABLE_CAPTION,
     TABLE_CAPTION_EN_OUT,
     TABLE_CAPTION_OUT,
     WRITTEN_CAPTION_OUT,
     _add_en_table_caption,
+    _get_output,
+    _items_in,
+    _order_body,
+    _put_order,
     _setup_captions,
 )
 from tests.test_sop_outputs import _setup as _setup_outputs_bundle
@@ -359,6 +365,27 @@ def test_sheet_c_indents_docs_slots_items_and_tails(client: TestClient) -> None:
     assert keep_a[number_a_col - 1].value == "4"  # 글머리 기호 줄의 No.는 그 절의 번호
 
 
+def test_sheet_c_writes_the_bullet_level_symbol_and_indents_the_item_cell(client: TestClient) -> None:
+    fx = _setup_outputs_bundle(client)
+    sop = _get_output(client, fx.bundle_id, "outputs/c")["docs"][0]
+    _, second = (item["target_id"] for item in _items_in(sop, "general_requirements.work"))
+    # 9는 저장은 되지만 읽을 때 앞 글머리 기호 줄 + 1(= 1)로 눌러 읽는다
+    body = _order_body(client, fx, 0, fx.sop_id, {second: {"indent_level": 9}})
+    assert _put_order(client, fx.bundle_id, body).status_code == 200
+
+    sheet = _load(client, fx.bundle_id)["C New documents"]
+    number_col, item_col = 3, 4
+    lines = {
+        row[item_col - 1].value: (row[number_col - 1].value, row[item_col - 1].alignment.indent)
+        for row in sheet.iter_rows(min_row=3)
+        if row[item_col - 1].value in (MERGED, RECORDS_EN)
+    }
+    assert lines == {MERGED: ("•", 0), RECORDS_EN: ("○", 1)}
+    # 미리보기도 같은 단계를 싣는다
+    c_rows = next(s for s in _get_preview(client, fx.bundle_id)["sheets"] if s["name"] == "C New documents")["rows"]
+    assert {r["cells"][item_col - 1]["text"]: r["cells"][item_col - 1]["indent"] for r in c_rows if r["cells"][item_col - 1]["text"] in (MERGED, RECORDS_EN)} == {MERGED: 0, RECORDS_EN: 1}
+
+
 def test_sheet_c_lists_child_wis_under_the_work_instructions_section(client: TestClient) -> None:
     fx = _setup_outputs_bundle(client)  # SOP-NEW 아래 WI-01이 있고, 7장은 N/A다
     slot_col, number_col, item_col = 1, 2, 3
@@ -504,6 +531,7 @@ def test_preview_matches_the_file(client: TestClient) -> None:
                 if cell["text"]:
                     assert (_is_faint(written), bool(written.font.i)) == (cell["faint"], cell["italic"])
                     assert bool(written.alignment.wrap_text) == row["wrap"], (sheet["name"], row_no, col_no)
+                    assert (written.alignment.indent or 0) == cell["indent"], (sheet["name"], row_no, col_no)
     (b,) = [sheet for sheet in preview["sheets"] if sheet["name"] == "B Flow"]
     assert b["image_png"] and b["image_row"] == len(b["rows"]) + 2
     # B의 두 칸짜리 Item·Value 머리는 뒤 채움 칸에 머리 모양이 없고, 상태·plain 줄은 접지 않는다

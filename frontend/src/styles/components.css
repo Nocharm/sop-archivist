@@ -2082,7 +2082,7 @@
 
 /* ---- 결과물 C 섹션 번호(2026-11-10): 줄 앞 번호와 깊이만큼 들여쓰기, 눌러 고른 줄(Tab으로 들이기) ---- */
 @layer components {
-  .c-line { --c-indent: 1.5em; }
+  .c-line, .c-src-wrap { --c-indent: 1.5em; }
   /* 줄은 글 + 줄 끝 단추 묶음의 감김 줄 - 터치 화면(hover: none)에서는 묶음이 늘 보이고, 글이 폭을 채우면 글 바로 아래 제 줄로 내려간다 */
   /* position - 끌 때 놓을 자리 선(.c-dropline)의 기준 */
   .c-order { container: c-order / inline-size; position: relative; }
@@ -2148,6 +2148,13 @@
   html[data-box-drag] .c-order .c-row > :is(.c-acts, .c-more) { opacity: 0; pointer-events: none; }
   html[data-box-drag] .c-order .c-row:not(:focus) { background: none; }
   html[data-box-drag] .c-order .c-row::after { content: none; }
+  /* N:1 출처 꼬리표(옛 두 줄 이상에서 온 줄) - 줄에 올리거나 줄을 고를 때만 줄 바로 아래에 어두운 꼬리표로 뜬다(.tip과 같은 색). 줄 높이를 바꾸지 않고(떠 있다),
+     마우스를 받지 않아 아래 줄 호버를 막지 않으며, 끄는 동안은 숨긴다 */
+  .c-row:has(> .c-src-wrap) { position: relative; }
+  .c-src-wrap { display: none; position: absolute; top: 100%; left: 0; right: 0; z-index: 2; margin-top: -2px; pointer-events: none; }
+  .c-src { display: inline-block; max-width: 100%; padding: 2px 8px; border-radius: var(--r-2); background: var(--ink); color: var(--surface); font-family: var(--font-ui); font-size: var(--fs-cap); line-height: var(--lh-cap); overflow-wrap: anywhere; }
+  .c-row:is(:hover, :focus, :focus-within) > .c-src-wrap { display: block; }
+  html[data-box-drag] .c-row > .c-src-wrap { display: none; }
   .c-line:is([data-numbered], [data-bullet]) { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; column-gap: 0.6em; }
   .c-no { font-family: var(--font-mono); font-size: 0.8em; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
   /* 글머리 기호 - 번호 글꼴 크기(0.8em)로는 점이 너무 작아 본문 크기로 그린다 */
