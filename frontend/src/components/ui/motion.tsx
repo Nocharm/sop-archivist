@@ -1,14 +1,30 @@
-// 움직임 부품 - 접기·펼치기, 내용이 바뀐 자리의 쉬머, 라벨에 따라 폭이 바뀌는 단추의 모핑, 넘치는 글의 말줄임과 호버 툴팁, 목록 자리 바꿈(FLIP), 옮겨 간 자리 번쩍임.
+// 움직임 부품 - 접기·펼치기, 내용이 바뀐 자리의 쉬머, 라벨에 따라 폭이 바뀌는 단추의 모핑, 넘치는 글의 말줄임과 호버 툴팁, 목록 자리 바꿈(FLIP), 옮겨 간 자리 번쩍임,
+// 풀기 전환(걷기 · 펼치기 · 붙이기 - useUnwrapMotion).
 // 값은 tokens(--dur-*, --ease-*)를 쓰고, 움직임 줄이기 설정에서는 토큰이 0이 되어 바로 바뀐다.
 "use client";
 
 import { Loader2 } from "lucide-react";
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 
 import { placeBelow, type FloatingPos } from "@/components/ui/floating";
 import { isBoxDragActive } from "@/lib/box-drag";
 import { computeFlipOffsets } from "@/lib/flip";
+import {
+  buildMarkerKeyframes,
+  computeStaggerDelays,
+  computeUnwrapShifts,
+  getSpreadEnd,
+  isOnScreen,
+  parseDurationMs,
+  pickOnScreenKeys,
+  planUnwrapPhases,
+  type MarkerPhase,
+  type MotionBox,
+  type MotionSnapshot,
+  type UnwrapMarker,
+  type UnwrapTimings,
+} from "@/lib/unwrap-motion";
 
 /** 이동해 간 자리를 잠깐 번쩍인다([data-flash], components.css) - 다시 이동하면 처음부터. Assign 이동과 Order의 다른 칸 놓기가 같이 쓴다 */
 export function flashElement(el: HTMLElement): void {
@@ -103,6 +119,154 @@ export function useFlip(containerRef: RefObject<HTMLElement | null>): { capture:
   }
 
   return { capture };
+}
+
+/** 그려져 있는 요소인가 - 화면 밖이라 브라우저가 건너뛴 덩어리(content-visibility) 안의 것은 재지 않는다(재면 그 덩어리를 배치하게 된다) */
+function isRendered(element: HTMLElement): boolean {
+  return typeof element.checkVisibility !== "function" || element.checkVisibility({ contentVisibilityAuto: true });
+}
+
+/** 그려져 있고 창의 세로 범위에 걸친 요소인가 */
+function isInWindow(element: HTMLElement): boolean {
+  if (!isRendered(element)) return false;
+  const { left, top, bottom } = element.getBoundingClientRect();
+  return isOnScreen({ left, top, bottom }, { top: 0, bottom: window.innerHeight });
+}
+
+/** [data-flip-key] 요소의 자리와 그때 창에 보이던 범위 - 감싼 요소 기준이라 재는 사이에 스크롤해도 어긋나지 않는다. 그려진 것만 잰다 */
+function takeUnwrapSnapshot(container: HTMLElement): { snapshot: MotionSnapshot; elements: Map<string, HTMLElement> } {
+  const base = container.getBoundingClientRect();
+  const elements = new Map<string, HTMLElement>();
+  const boxes = new Map<string, MotionBox>();
+  for (const element of container.querySelectorAll<HTMLElement>("[data-flip-key]")) {
+    const key = element.dataset.flipKey;
+    if (key === undefined || elements.has(key) || !isRendered(element)) continue;
+    const rect = element.getBoundingClientRect();
+    elements.set(key, element);
+    boxes.set(key, { left: rect.left - base.left, top: rect.top - base.top, bottom: rect.bottom - base.top });
+  }
+  return { snapshot: { boxes, view: { top: -base.top, bottom: window.innerHeight - base.top } }, elements };
+}
+
+/** 바뀌는 곳([data-unwrap-scope]) 가운데 화면에 있는 것 */
+function findUnwrapScopes(container: HTMLElement, scopes: readonly string[]): HTMLElement[] {
+  return scopes.flatMap((scope) => [...container.querySelectorAll<HTMLElement>(`[data-unwrap-scope=${JSON.stringify(scope)}]`)]).filter(isInWindow);
+}
+
+/** 바뀌는 곳에 바로 딸린 표시 가운데 화면에 있는 것 - 안쪽 표처럼 그 안의 다른 scope에 딸린 표시는 그 표를 풀 때 움직인다 */
+function findUnwrapMarks(container: HTMLElement, scopes: readonly string[], marker: UnwrapMarker): HTMLElement[] {
+  const attribute = `data-unwrap-${marker}`;
+  return findUnwrapScopes(container, scopes).flatMap((scope) =>
+    [scope, ...scope.querySelectorAll<HTMLElement>(`[${attribute}]`)].filter((element) => element.hasAttribute(attribute) && element.closest("[data-unwrap-scope]") === scope && isInWindow(element)),
+  );
+}
+
+/** tokens.css의 풀기 전환 값 - 시간은 ms로, 곡선은 animate에 넘길 글 그대로 */
+function readUnwrapTokens(): { timings: UnwrapTimings; easing: Record<MarkerPhase["easing"] | "move", string> } {
+  const style = getComputedStyle(document.documentElement);
+  const readMs = (name: string) => parseDurationMs(style.getPropertyValue(name));
+  const readEasing = (name: string) => style.getPropertyValue(name).trim();
+  return {
+    timings: { clear: readMs("--dur-base"), spread: readMs("--dur-spread"), attach: readMs("--dur-attach"), staggerStep: readMs("--stagger-step"), staggerMax: readMs("--stagger-max") },
+    easing: { exit: readEasing("--ease-exit"), move: readEasing("--ease-move"), pop: readEasing("--ease-pop") },
+  };
+}
+
+interface UnwrapRun {
+  animations: Animation[];
+  /** 걷는 동안 미뤄 둔 바꿈 - 적용하면 null */
+  change: (() => void) | null;
+}
+
+/** 돌던 전환을 멈춰 모두 제자리에 둔다 - 아직 걷는 중이라 적용하지 못한 바꿈이 있으면 돌려준다(부른 쪽이 적용해 잃지 않게) */
+function stopUnwrapRun(activeRef: RefObject<UnwrapRun | null>): (() => void) | null {
+  const active = activeRef.current;
+  activeRef.current = null;
+  if (!active) return null;
+  for (const animation of active.animations) animation.cancel();
+  const pending = active.change;
+  active.change = null;
+  return pending;
+}
+
+export interface UnwrapRunOptions {
+  /** 바뀌는 곳 - 옛 화면과 새 화면에서 그곳을 감싼 요소의 data-unwrap-scope 값(표 하나면 하나, 같은 꼴 표 모두면 여럿) */
+  scopes: readonly string[];
+  /** 되돌리기(다시 표로 · 떼기 · 접기) - 같은 표시로 같은 길을 거꾸로 간다 */
+  reverse?: boolean;
+}
+
+/**
+ * 풀기 전환 - 표 벗기기처럼 원문 모양이 바뀔 때 run(change)로 감싸면 세 단계로 바뀐다(명세 F10). 화면은 표시만 단다:
+ * - `data-unwrap-scope="<id>"` 바뀌는 곳을 감싼 요소(바꾸기 전과 뒤 모두)
+ * - `data-unwrap-leave` 바꾸면 사라지는 것(TABLE 표시 · "캡션 필요" 줄), `data-unwrap-enter` 바꾸면 생기는 것("다시 표로" · 캡션 칩).
+ *   값이 "frame"이면 글은 두고 틀(테두리 · 바탕 · 그림자)만 - 표 선과 음영, 왼쪽 세로선. 미끄러지는 글이 든 표시(캡션 칩)도 frame으로 단다(요소째 숨기면 글도 안 보인다)
+ * - `data-flip-key` 같은 글(같은 Unit · span)의 옛 자리와 새 자리. 뒤따르는 줄에도 달면 밀려나는 것이 함께 미끄러진다. 글 조각(span)은 inline-block이어야 움직이고,
+ *   키를 단 요소 안에 또 달지 않는다(안팎이 함께 옮겨져 두 번 움직인다)
+ *
+ * 1 걷기: leave 표시가 옅어진다(--dur-base · --ease-exit). 그동안 change는 미뤄 둔다 - 사라질 표시가 화면에 없으면 바로 바꾼다.
+ * 2 펼치기: change를 그 자리에서 그려(flushSync) 같은 키가 새 자리로 미끄러진다(--dur-spread · --ease-move, 위 줄부터 --stagger-step씩 늦게, --stagger-max까지).
+ * 3 붙이기: enter 표시가 펼치기 뒤에 나타난다(--dur-attach · --ease-pop).
+ * 긴 문서에서는 창에 보이는 것만 움직이고 나머지는 재지도 않고 바로 제자리다. 움직임 줄이기 설정이면 바로 바꾸고 바뀐 곳(scope)만 한 번 번쩍인다.
+ * 전환이 끝나면(다음 run이 앞지르면 그때) 풀리는 Promise를 돌려준다 - 되돌리기 알림은 부른 쪽이 띄운다. 이벤트 핸들러에서 부른다(이펙트 안에서는 flushSync를 쓸 수 없다)
+ */
+export function useUnwrapMotion(containerRef: RefObject<HTMLElement | null>): { run: (change: () => void, options: UnwrapRunOptions) => Promise<void> } {
+  const activeRef = useRef<UnwrapRun | null>(null);
+
+  // 걷는 중에 화면을 떠나면 미뤄 둔 바꿈을 그대로 적용한다 - 사람이 한 편집이다
+  useEffect(() => () => stopUnwrapRun(activeRef)?.(), []);
+
+  async function run(change: () => void, { scopes, reverse = false }: UnwrapRunOptions): Promise<void> {
+    // 앞선 전환이 아직 걷는 중이면 그 바꿈부터 - 차례가 바뀌지 않게
+    const earlier = stopUnwrapRun(activeRef);
+    if (earlier) flushSync(earlier);
+    const container = containerRef.current;
+    if (!container || typeof container.animate !== "function" || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      flushSync(change);
+      for (const place of container ? findUnwrapScopes(container, scopes) : []) flashElement(place);
+      return;
+    }
+    const { timings, easing } = readUnwrapTokens();
+    const { before, after, direction } = planUnwrapPhases(timings, reverse);
+    const readKind = (mark: HTMLElement, marker: UnwrapMarker) => mark.getAttribute(`data-unwrap-${marker}`) ?? "";
+    const active: UnwrapRun = { animations: [], change };
+    activeRef.current = active;
+
+    // 끝난 모양으로 붙들어 둔다(fill) - 바꿈이 그려지기 전에 다시 나타나지 않게
+    active.animations = findUnwrapMarks(container, scopes, before.marker).map((mark) =>
+      mark.animate(buildMarkerKeyframes(before.marker, readKind(mark, before.marker)), { duration: before.duration, easing: easing[before.easing], direction, fill: "forwards" }),
+    );
+    if (active.animations.length > 0) await Promise.allSettled(active.animations.map((animation) => animation.finished));
+    // 그사이 다음 run이나 화면 떠나기가 앞질렀다 - 바꿈은 거기서 적용했다
+    if (activeRef.current !== active) return;
+
+    const first = takeUnwrapSnapshot(container);
+    active.change = null;
+    flushSync(change);
+    // 바뀐 뒤에도 남은 표시가 숨은 채 굳지 않게 푼다
+    for (const animation of active.animations) animation.cancel();
+    const last = takeUnwrapSnapshot(container);
+    const shifts = computeUnwrapShifts(first.snapshot.boxes, last.snapshot.boxes, pickOnScreenKeys(first.snapshot, last.snapshot));
+    // 줄 차례는 펼친 쪽 화면의 자리로 센다 - 앞으로는 끝 자리, 되돌리기는 처음 자리
+    const spreadBoxes = (reverse ? first : last).snapshot.boxes;
+    const delays = computeStaggerDelays(new Map([...shifts.keys()].map((key) => [key, spreadBoxes.get(key)?.top ?? 0])), timings, reverse);
+    const animations: Animation[] = [];
+    for (const [key, { dx, dy }] of shifts) {
+      const element = last.elements.get(key);
+      // 늦게 떠나는 줄은 그때까지 옛 자리에 붙들어 둔다(fill)
+      if (element) animations.push(element.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: timings.spread, easing: easing.move, delay: delays.get(key) ?? 0, fill: "backwards" }));
+    }
+    const spreadEnd = getSpreadEnd(delays, timings.spread);
+    for (const mark of findUnwrapMarks(container, scopes, after.marker)) {
+      // 펼치기가 끝날 때까지 숨은 모양으로 붙들어 둔다(fill)
+      animations.push(mark.animate(buildMarkerKeyframes(after.marker, readKind(mark, after.marker)), { duration: after.duration, easing: easing[after.easing], direction, delay: spreadEnd, fill: "backwards" }));
+    }
+    active.animations = animations;
+    await Promise.allSettled(animations.map((animation) => animation.finished));
+    if (activeRef.current === active) activeRef.current = null;
+  }
+
+  return { run };
 }
 
 // 접힘 전환(--dur-slow 240ms)보다 조금 길게 기다린 뒤 내용을 뗀다
