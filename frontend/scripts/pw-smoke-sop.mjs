@@ -4182,6 +4182,8 @@ await runStep("outputs: export preview folds TOC rows and Output A keeps them as
   const toc = await findTocBundle(page);
   if (!toc) return;
   await page.goto(`${BASE}/bundles/${toc.id}/outputs`);
+  // 결과물 화면은 진행 상태에 따라 C 탭으로 열린다 - A를 눌러 연다
+  await page.locator('[data-testid="outputs-tab-a"]').click();
   await wait(page, "output-a");
   check("Output A has one Deleted row per contents line", (await page.locator('[data-testid^="output-a-toc-"]').count()) === TOC_LINES);
   check("the summary counts the contents lines", (await getText(page, "outputs-sum-toc_deleted")).trim() === String(TOC_LINES));
