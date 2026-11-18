@@ -1370,7 +1370,11 @@ export interface PreviewCell {
   numeric: boolean;
   /** 칸 안 들여쓰기 단계 - C 시트 글머리 기호 줄의 Item 칸 */
   indent: number;
+  /** 색 칩으로 그리는 칸(A의 Status)의 색 - 확정 · AI 제안 · 삭제(흐림) · 미배정. 칩이 아닌 칸은 null */
+  tone: PreviewTone | null;
 }
+
+export type PreviewTone = "ok" | "ai" | "del" | "un";
 
 export type PreviewRowKind = "status" | "header" | "group_start" | "in_group" | "doc" | "section" | "plain";
 
@@ -1378,6 +1382,18 @@ export interface PreviewRow {
   kind: PreviewRowKind;
   wrap: boolean;
   cells: PreviewCell[];
+  /** 이 줄의 옛 단위와 관계 묶음(A의 자료 줄에만) - 고른 줄 · 같은 무리를 칸 글이 아니라 이 값으로 맞춘다 */
+  unit_id: number | null;
+  group_id: string | null;
+  /** 목차 줄 - 연달아 오면 한 줄로 접어 그린다 */
+  toc: boolean;
+}
+
+/** 머리 위 열 무리 띠 한 칸 */
+export interface PreviewBand {
+  label: string;
+  span: number;
+  tone: "asis" | "tobe" | "decision" | "tracking";
 }
 
 export interface PreviewSheet {
@@ -1390,6 +1406,10 @@ export interface PreviewSheet {
   image_row: number | null;
   total_rows: number;
   truncated: boolean;
+  /** 아래 셋은 미리보기에만 있다(A에만, 파일에는 쓰지 않는다) - 폭에 맞춘 열 비율(null이면 widths가 비율) · 열 무리 띠 · 열의 뜻 */
+  fit_widths: number[] | null;
+  bands: PreviewBand[];
+  column_keys: string[] | null;
 }
 
 export interface WorkbookPreview {

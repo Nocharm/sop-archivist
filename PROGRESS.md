@@ -7,6 +7,13 @@
 - **글머리 기호 들여쓰기 · N:1 출처 꼬리표(`feat/order-bullet-indent`, MD 2 S5 ①②, 버전 올리기 전)** — 글머리 기호 줄이 번호 줄과 따로 앞 글머리 기호 줄 + 1까지(3단계 • ○ ▪) 들여진다: `canIndent`에 갈래를 더해 Tab · 단추 · ⋯ · 끌기가 같이 쓰고, 서버는 `get_bullet_depths`로 같은 규칙을 눌러 읽는다(저장 범위 0–9는 그대로 — Alembic 없음). Order · 결과물 C는 번호 자리에 단계 기호, Excel C는 No. 칸 기호 + Item 칸 들여쓰기(`SheetCell.indent`). `CItem.source_count`를 더해 옛 두 줄 이상에서 온 줄에 올리거나 고르면 `source_note`를 그대로 어두운 꼬리표로 보인다. ③ 템플릿 보기는 브랜치 f, ④⑤는 코드 변경 없음.
   - 확인: pytest · vitest · lint · tsc는 돌렸다. 스모크 `order:` 셋(5장 글머리 기호 Tab → ○ · 6장 번호 줄 규칙 그대로 · N:1 꼬리표)은 써만 두고 돌리지 않았다.
 
+- **New 쪽 AI 제안 필터(v1.1.33, `feat/assign-new-ai-filter`, MD 2 S4)** — New 칸 머리 칩 "고른 줄의 AI 제안만"(`sopa.assign.newAiOnly`, 처음 꺼짐)을 켜고 Old 줄을 고르면 그 줄의 제안·간 곳만 강조, 다른 줄 제안은 칸마다 띠로 접고 확정 줄은 흐리게, 다른 New 문서에 있으면 알약으로 열기·돌아가기. 규칙은 `lib/new-ai-filter-model.ts`, 프런트만(API·저장 무관). 스모크 단계는 써 두었으나 아직 돌리지 않았다.
+  - 메인 세션 확인(dev v1.1.31을 합친 뒤): vitest 1,370 · lint · tsc. 가짜 AI(나누기 모드)를 붙인 새 시드에서 `assign:` 스모크 580 통과(KO/EN 짝 추천 1건은 전부터 흔들림), AI 필터 단계 18 통과. New 칸 머리가 1280 반반에서 결정 칸 위로 넘치던 것(dev에도 있던 겹침 감사 실패, 칩이 하나 늘어 더 심해짐)을 고쳤다 — 출처 없는 New 칩과 "New · not written" 꼬리표가 말줄임으로 줄고(아이콘 · 수는 남음, 잘린 글은 툴팁), 겹침 감사 1280 · 1920 통과.
+
+- **시트 보기 부품 + Export 미리보기 창(v1.1.32, `feat/sheet-view`, MD 2 S1 · MD 1 §10 브랜치 b)** — `SheetView`를 폭에 맞춘 한 장(열 비율 `fit_widths`, 칸 11px, 머리는 띄어쓰기에서만 감음)으로 바꾸고 스크롤바 대신 끌기 · 휠 · 글쇠로 옮긴다(`lib/sheet-pan.ts`, 셈은 `lib/sheet-view-model.ts`). 띠 · Status 칩 · To-be 칠 · 위치 막대 · 고른 줄/같은 무리 · 확정 전 덮어 그리기 · 목차 줄 접기는 미리보기 모델 값만 그린다(파일 모양은 그대로). Export 미리보기는 거의 전체 화면 창(`Modal` `sheet` + `subtitle`). 고른 줄 · 확정 전 값은 Assign Space 미리보기(브랜치 c)가 주고, 목차 표시는 MD 1 브랜치 7에서 생겨 이번에는 vitest로만 본다.
+  - 확인: pytest `test_sop_excel` 29 · vitest(시트 셋 + 설명서 · i18n) · lint · tsc. 스모크 `outputs: export preview …`는 써 두고 돌리지 않았다.
+  - 메인 세션 확인(dev v1.1.31을 합친 뒤): backend 2,900 · vitest 1,391, 전체 스모크 1,454 통과(실패 5는 전부터 흔들리는 단계), 대비 감사 통과, 레이아웃 감사 P1을 새 구조에 맞춰 1120 · 1920 통과(R2 · N1과 겹침 감사의 Assign New 칸 머리 2건은 dev에도 있는 것), Outputs 스모크 51 통과. 시트 띠 라벨은 영어 그대로(사용자 결정 2026-11-18).
+
 - **풀기 전환 부품(v1.1.31, `feat/unwrap-motion`, F10 바탕)** — `useUnwrapMotion`(`motion.tsx`) + `lib/unwrap-motion.ts`: 걷기 160 → 펼치기 520(시차 28, 최대 280) → 붙이기 200 ms, 토큰 `--dur-spread/attach`·`--stagger-*`, 움직임 줄이기는 토큰 0 + 바로 바꿈·번쩍, 긴 문서는 화면 안만. `useFlip`은 그대로. 쓰는 곳은 뒤 브랜치들.
 
 - **표준 골격(v1.1.30, `feat/outline` 스텝 1–6, 계획 `2026-11-17-template-fit-1-outline-plan.md`)** — SOP 칸을 코드 상수 15개에서 "관리자가 고치는 표준 골격 + 문서마다 사본"으로 바꾸고(Alembic `0022`–`0024`), 표준을 회사 SOP 템플릿 1–9장으로 했다. 순서는 먼저 15칸을 그대로 사본으로 옮겨 읽는 쪽만 바꾸고(동작 그대로) 그다음 내용을 바꿨다 — 키의 점 위계는 남겨 접두사로 부모를 찾는 코드가 그대로 산다.
