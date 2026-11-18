@@ -27,8 +27,12 @@ const PANEL_WIDTH: Record<ModalSize, string> = {
   md: "max-w-md", // 입력 칸·짧은 목록
   lg: "max-w-lg", // 이어 읽는 글(문서 미리 보기)
   xl: "max-w-3xl", // 칸이 여럿 나란한 표(업로드 결과 행)
-  sheet: "max-w-[min(1280px,calc(100vw-32px))]", // Excel 미리보기 - 1280px, 좁은 화면이면 화면 폭
+  sheet: "max-w-none flex flex-col", // Excel 미리보기 - 뷰포트 가장자리에서 24px 안쪽 거의 전체(시트 보기가 남은 높이를 다 쓴다)
 };
+
+// 바탕(창을 놓는 틀)과 본문 - sheet만 창을 화면 높이에 맞춰 늘리고 본문이 남은 높이를 넘겨받는다
+const BACKDROP_LAYOUT: Record<"sheet" | "default", string> = { sheet: "items-stretch p-6", default: "items-start px-4 py-16" };
+const BODY_LAYOUT: Record<"sheet" | "default", string> = { sheet: "flex min-h-0 flex-1 flex-col gap-3 px-4 py-3", default: "space-y-4 px-4 py-4" };
 
 interface ModalProps {
   title: string;
@@ -41,10 +45,13 @@ interface ModalProps {
   isBusy?: boolean;
   /** 창 폭 - 기본은 입력 칸 폭(md). 확인 창은 sm */
   size?: ModalSize;
+  /** 제목 옆에 붙는 한 줄(파일 이름 등) */
+  subtitle?: ReactNode;
 }
 
-export function Modal({ title, onClose, testId, children, footer, isBusy = false, size = "md" }: ModalProps) {
+export function Modal({ title, onClose, testId, children, footer, isBusy = false, size = "md", subtitle }: ModalProps) {
   const { t } = useI18n();
+  const layout = size === "sheet" ? "sheet" : "default";
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
@@ -102,7 +109,7 @@ export function Modal({ title, onClose, testId, children, footer, isBusy = false
     // click이 아니라 mousedown 기준 - 모달 안에서 드래그를 시작해 바깥에서 손을 떼도 잘못 닫히지 않는다
     <div
       data-testid={`${testId}-backdrop`}
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-scrim px-4 py-16"
+      className={`fixed inset-0 z-50 flex justify-center overflow-y-auto bg-scrim ${BACKDROP_LAYOUT[layout]}`}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget && !isBusy) onClose();
       }}
@@ -121,13 +128,14 @@ export function Modal({ title, onClose, testId, children, footer, isBusy = false
           <h2 id={titleId} ref={titleRef} className="modal-title min-w-0 flex-1 text-base leading-[22px] font-semibold text-ink">
             <Truncate text={title} revealOnFocus />
           </h2>
+          {subtitle && <div className="min-w-0 flex-[2] text-[13px] text-ink-2">{subtitle}</div>}
           <Tooltip label={t("common.close")} align="end">
             <button type="button" data-testid={`${testId}-close`} data-modal-close className={BUTTON_ICON} aria-label={t("common.close")} disabled={isBusy} onClick={onClose}>
               <X size={16} strokeWidth={1.5} />
             </button>
           </Tooltip>
         </div>
-        <div data-modal-body className="space-y-4 px-4 py-4">{children}</div>
+        <div data-modal-body className={BODY_LAYOUT[layout]}>{children}</div>
         {footer && <div className="flex justify-end gap-2 border-t border-line px-4 py-3">{footer}</div>}
       </div>
     </div>

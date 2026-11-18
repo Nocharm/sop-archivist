@@ -2,6 +2,11 @@
 
 프로젝트 진행 현황 로그. 커밋 직전 갱신한다 (`rules/common/git.md` 규칙). v1.1.0(2026-11-16 정식 업데이트)까지의 항목은 [`docs/history/PROGRESS-archive.md`](docs/history/PROGRESS-archive.md)에 있다 — 정식 업데이트마다 그 릴리스까지의 항목을 거기로 옮긴다(`rules/common/git.md` "정식 업데이트 때 문서 정리").
 
+## 2026-11-18
+
+- **시트 보기 부품 + Export 미리보기 창(`feat/sheet-view`, MD 2 S1 · MD 1 §10 브랜치 b)** — `SheetView`를 폭에 맞춘 한 장(열 비율 `fit_widths`, 칸 11px, 머리는 띄어쓰기에서만 감음)으로 바꾸고 스크롤바 대신 끌기 · 휠 · 글쇠로 옮긴다(`lib/sheet-pan.ts`, 셈은 `lib/sheet-view-model.ts`). 띠 · Status 칩 · To-be 칠 · 위치 막대 · 고른 줄/같은 무리 · 확정 전 덮어 그리기 · 목차 줄 접기는 미리보기 모델 값만 그린다(파일 모양은 그대로). Export 미리보기는 거의 전체 화면 창(`Modal` `sheet` + `subtitle`). 고른 줄 · 확정 전 값은 Assign Space 미리보기(브랜치 c)가 주고, 목차 표시는 MD 1 브랜치 7에서 생겨 이번에는 vitest로만 본다.
+  - 확인: pytest `test_sop_excel` 29 · vitest(시트 셋 + 설명서 · i18n) · lint · tsc. 스모크 `outputs: export preview …`는 써 두고 돌리지 않았다.
+
 ## 2026-11-17
 
 - **표준을 회사 템플릿 1–9장으로(`feat/outline-4-template`, 표준 골격 계획 스텝 4)** — 표준 골격의 내용을 회사 SOP 템플릿으로 바꾸고(`outline.TEMPLATE_OUTLINE`: 1–4장, 5장 범주 표, 6장 절차, 7장 묶음 제목 아래 7.1 · 7.1.x(선택) · 7.2 자동 목록 · 7.3, 8장, 9장 부록) Alembic `0024`가 개발 데이터를 옮긴다(옛 키 → 새 키, 쓰이던 옛 하위 칸은 선언 항목으로, JSON 안의 키, 1–5 · 7 · 8장의 번호 줄은 글머리 기호로). 내용은 6장 · 부록만 번호이고 나머지는 글머리 기호가 기본이다. 번호는 실제로 내보내는 항목끼리 센다(빈 선택 항목 7.1.x는 건너뛴다). 묶음 제목 · 자동 목록에는 줄을 놓을 수 없다(`slot_not_assignable`). 7.2는 그 SOP의 자식 WI로 채운다. 장비 SOP의 N/A 권장과 검토 알림은 없앴다. AI 후보는 문서 사본에서 만들고 옛 규칙 ID에 잇는다(`match_rule_slot`, 규칙 · 프롬프트 글은 그대로).

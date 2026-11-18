@@ -6,6 +6,7 @@
 @import "../styles/markdown.css";
 @import "../styles/manual.css";
 @import "../styles/map.css";
+@import "../styles/sheet.css";
 
 /*
   Tailwind 이름을 디자인 토큰에 잇는다. raw 값은 tokens.css에만 둔다.
