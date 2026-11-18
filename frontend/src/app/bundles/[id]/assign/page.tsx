@@ -28,12 +28,13 @@ import { createDragLinkLine, type DragLinkLine } from "@/components/assign/drag-
 import { createDropGapLine, type DropGapLine } from "@/components/assign/drop-gap-line";
 import { findNewLine, findOldStrip, LinkLines, readNewLineEnd, readOldLineStart } from "@/components/assign/link-lines";
 import { JoinMenu, type JoinMenuItem } from "@/components/assign/join-menu";
+import { getSpotAttrs, PlaceGap, type PlaceSpotView, type SpotAttrs } from "@/components/assign/place-spot";
 import { LinkMenu } from "@/components/assign/link-menu";
 import { LinkBadge } from "@/components/assign/link-badge";
 import { MoveTargetField } from "@/components/assign/move-target-field";
 import { runPickFlight, type FlightSource } from "@/components/assign/pick-flight";
 import { NewBundle } from "@/components/assign/new-bundle";
-import { NewPane, NewPaneEmpty } from "@/components/assign/new-pane";
+import { NewPane, NewPaneEmpty, type NewPlaceSpots } from "@/components/assign/new-pane";
 import { DocDashboard } from "@/components/assign/doc-dashboard";
 import { OldPane } from "@/components/assign/old-pane";
 import { PairColumn, PairViewToggle } from "@/components/assign/pair-column";
@@ -45,7 +46,7 @@ import { ResetModal, type ResetScope } from "@/components/assign/reset-modal";
 import { type AiAskItem } from "@/components/manage/ai-ask-menu";
 import { Modal } from "@/components/modal";
 import { ReadOnlyNote } from "@/components/read-only-note";
-import { TemplateView } from "@/components/template/template-view";
+import { TemplateView, type TemplateSpot } from "@/components/template/template-view";
 import { CutPop } from "@/components/paper/cut-pop";
 import { LangToken } from "@/components/paper/lang-token";
 import { FilterChip, UnitStatusChip } from "@/components/status";
@@ -79,7 +80,7 @@ import {
   type SendDrop,
   type TreeDrop,
 } from "@/lib/assign-drop-model";
-import { buildPlaceSections, findPlaceBlock, formatPlacement, isSpotOpen, PLACE_REFUSAL_KEYS, readFixedSpot, resolvePlaceSpot, type PlaceSection, type PlaceSpot, type Placement } from "@/lib/place-spot-model";
+import { buildGapBlocks, buildPlaceSections, findPlaceBlock, formatGapLabel, formatPlacement, formatPlacePosition, isSpotOpen, listGapSpots, PLACE_REFUSAL_KEYS, readFixedSpot, readGapKey, readPlacePosition, resolvePlaceSpot, type PlaceSection, type PlaceSpot, type Placement } from "@/lib/place-spot-model";
 import { findUnderPoint, type BoxDragConfig, type DragHover, type DragPoint } from "@/lib/box-drag";
 import { useBoxDrag } from "@/lib/use-box-drag";
 import { findLastStep } from "@/lib/destination-manage-model";
@@ -840,6 +841,30 @@ export default function AssignPage() {
     const anchor = draftPosition.after !== null ? { anchorKey: `t:${draftPosition.after}`, side: "after" as const } : { anchorKey: `t:${draftSection.items[0].target_id}`, side: "before" as const };
     newDraft = { ...anchor, lines: [...listDraftLines(slots, draft.texts), ...blockLines] };
   } else if (draftSection && draftSection.items.length === 0) draftSlotKey = draftSection.location_key;
+
+  // --- 클릭 배치(MD 2 S3) - 엮은 문서의 자리 목록(끌기와 같은 place-spot-model)과 고른 줄로 본 답. 문서나 고른 줄이 바뀔 때만 다시 짓는다(긴 문서) ---
+  const placeUnitKey = row?.unitIds.join(",") ?? "";
+  const placeResolved = useMemo(() => {
+    if (!composedDoc) return null;
+    const keyOf = new Map(rows.flatMap((item) => item.unitIds.map((id) => [id, item.key] as const)));
+    const sections = buildPlaceSections(composedDoc.sections, (unitId) => keyOf.get(unitId));
+    const blocks = buildGapBlocks(sections);
+    const unitIds = placeUnitKey === "" ? [] : placeUnitKey.split(",").map(Number);
+    if (unitIds.length === 0) return { sections, blocks, heads: [], gaps: [] };
+    // 칸 머리는 그 칸 첫 줄(없으면 빈 칸 자리 표시)의 키로 - New 칸이 칸 머리를 첫 줄 앞에 그린다
+    const heads = composedDoc.sections.map((section) => ({
+      rowKey: section.items.length > 0 ? `t:${section.items[0].target_id}` : `slot:${section.location_key}`,
+      sectionKey: section.location_key,
+      placement: resolvePlaceSpot(sections, { kind: "section", sectionKey: section.location_key }, unitIds),
+    }));
+    const gaps = listGapSpots(sections, blocks).map((gap) => ({ ...gap, placement: resolvePlaceSpot(sections, gap.spot, unitIds) }));
+    return { sections, blocks, heads, gaps };
+  }, [composedDoc, rows, placeUnitKey]);
+  // 자리를 누를 수 있나 - 엮은 문서에 Old 줄을 고른 채 고칠 수 있을 때만(이미 쓴 문서는 지금처럼 문장 잇기만)
+  const canPlaceClick = canEdit && mode === "old" && row !== null && isComposedDoc && composedDoc !== null;
+  // 누른 자리 - 그 줄의 초안이 그 자리(보낼 곳 · 놓을 자리)인 동안만 칠한다. 다른 길로 고름을 바꾸면 저절로 풀린다
+  const [spotPick, setSpotPick] = useState<{ rowKey: string; key: string; placeId: string; after: number | null | "none" } | null>(null);
+  const pickedSpotKey = spotPick !== null && spotPick.rowKey === activeKey && draftPlace !== null && getDestinationId(draftPlace) === spotPick.placeId && (draftPosition ? draftPosition.after : "none") === spotPick.after ? spotPick.key : null;
 
   function scrollToUnit(unitId: number) {
     requestAnimationFrame(() => {
@@ -1678,11 +1703,14 @@ export default function AssignPage() {
       const at = draft.position && sectionKey !== null && body.targets.some((target) => target.position !== undefined) ? { sectionKey, after: draft.position.after } : null;
       // 놓인 문장에 잇기도 출처를 잇는 일이라 알림의 되돌리기 이름이 잇기다
       const op = destination?.kind === "join" && action === "confirm" ? "link" : pickSaveOp({ action, destinationKind: destination?.kind ?? null, savedLinkIds: savedDestination?.kind === "link" ? savedDestination.targetIds : [], nextLinkIds: linkIds });
+      // 엮은 문서의 칸에 놓는 확정은 어디 몇 번이 되는지 알리고 되돌리기를 단다(MD 2 S3) - 저장 전 자리로 센다
+      const placedNote = action === "confirm" ? formatPlacedToast() : null;
       const saved = await saveGroup(bundleId, body, buildUndo({ op, focus_unit_id: row.unitIds[0] }));
       markRecorded();
       // 저장했으면 메뉴의 고름은 끝났다 - 다음 줄이 없거나 같은 줄에 남아도 닫는다
       setMenu(null);
-      showToast(action === "hold" ? t("classify.held") : t("classify.confirmed"));
+      if (placedNote !== null) showToast(placedNote, "ok", { action: { label: t("common.undo"), run: () => void undoStepRef.current("undo") } });
+      else showToast(action === "hold" ? t("classify.held") : t("classify.confirmed"));
       const isSplit = applyPairSettle(row, saved, leftovers) && leftovers.length > 0;
       // 다음 미확정 줄로 - 지금 줄은 거르기 자리에 남는다. 남는 쪽을 풀었으면 남은 문장의 줄이 다음이다
       // 놓인 문장에 잇기는 그 줄에 머문다 - 곧바로 그 문장의 연필(Rewrite)로 포커스를 옮겨 고쳐 쓰게(MD 1 F12 E4)
@@ -1780,6 +1808,22 @@ export default function AssignPage() {
   }
 
   /** 되돌리기·다시 하기 - 다시 받은 뒤 그 단계의 줄(없으면 New 문장)을 고른다. 거절은 기록을 그대로 두고 이유만 알린다 */
+  /** 칸에 놓는 확정의 알림 글 - "확정함 · OLD-7-015 → 6.1. Filter change · 6.1.2"(번호를 세지 않는 칸은 번호 없이). 지금 초안이 열린 엮은 문서의 칸 · step이 아니면 null */
+  function formatPlacedToast(): string | null {
+    if (!row || !draftPlace || !composedDoc || !placeResolved || draftPlace.docId !== composedDoc.target_doc_id || draftSectionKey === null) return null;
+    const section = composedDoc.sections.find((candidate) => candidate.location_key === draftSectionKey);
+    const place = readPlacePosition(placeResolved.sections, draftSectionKey, draftPosition ? draftPosition.after : undefined);
+    if (!section || !place) return null;
+    const vars = { id: unitMap.get(row.unitIds[0])?.display_id ?? "", head: readSectionHead(section) };
+    return place.position.kind === "number" ? t("assign.place.toastNumber", { ...vars, n: place.position.numbers.becomes }) : t("assign.place.toast", vars);
+  }
+
+  // 알림의 되돌리기는 화면을 넘어 남는다 - 그 렌더의 함수를 붙들지 않게 가장 최근의 것을 미러한다(pairUndoRef와 같은 짜임)
+  const undoStepRef = useRef(runUndoStep);
+  useEffect(() => {
+    undoStepRef.current = runUndoStep;
+  });
+
   async function runUndoStep(kind: "undo" | "redo") {
     if (busy || !canEdit) return;
     setBusy(true);
@@ -2036,6 +2080,46 @@ export default function AssignPage() {
     requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="assign-primary"]')?.focus({ preventScroll: true }));
   }
 
+  /** 결정 칸의 Confirm으로 포커스 - 고른 자리에 남으면 ↵가 확정 대신 그 자리를 다시 누른다 */
+  function focusPrimary() {
+    requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="assign-primary"]')?.focus({ preventScroll: true }));
+  }
+
+  /** New 칸의 자리를 누름(클릭 배치, MD 2 S3) - 고르기만 한다. 끌기와 같은 자리 목록의 답으로 보낼 곳과 자리(position)를 정하고, 확정은 Confirm(↵) */
+  function pickPlaceSpot(spot: PlaceSpot, key: string) {
+    if (!row || !composedDoc || !placeResolved) return;
+    const placement = resolvePlaceSpot(placeResolved.sections, spot, row.unitIds);
+    if (placement.kind !== "place") return;
+    const destination = readSectionDestination(composedDoc.target_doc_id, placement.sectionKey);
+    if (destination === null) return;
+    const placeId = getDestinationId(destination);
+    // 빈 칸은 자리 없이(position 키를 넣지 않는다), 칸 끝 · 틈은 그 자리 - 저장 꼴은 TargetPosition 약속 그대로
+    if (placement.position === null) pickDestination(destination);
+    else {
+      setDraft({ destination, position: { placeId, after: placement.position.after }, linkChangeTypes: {} });
+      setPickSeq((seq) => seq + 1);
+    }
+    setSpotPick({ rowKey: row.key, key, placeId, after: placement.position ? placement.position.after : "none" });
+    focusPrimary();
+  }
+
+  /** 고른 줄 자신의 AI 제안 줄을 누름 - 오른쪽 AI 추천 카드를 누른 것과 같다(MD 2 §9-7). 카드가 없으면 그 칸을 고른다 */
+  function pickOwnAiLine(targetId: number) {
+    if (!composedDoc) return;
+    const docId = composedDoc.target_doc_id;
+    const section = composedDoc.sections.find((candidate) => candidate.items.some((item) => item.target_id === targetId));
+    if (!section) return;
+    const rec = recommendations.find((item) => item.source === "ai" && "docId" in item.destination && item.destination.docId === docId && getSectionKey(item.destination) === section.location_key);
+    if (rec) {
+      pickRecommendation(rec);
+      return;
+    }
+    const destination = readSectionDestination(docId, section.location_key);
+    if (destination === null) return;
+    pickDestination(destination);
+    focusPrimary();
+  }
+
   /** Old 조각 아래 "→ 간 곳"을 누름 - 그 줄을 고르고 New 문서(닫혀 있거나 다른 문서면 열어서)의 그 문장으로 간다 */
   function jumpToNew(unitId: number, targetId: number) {
     const key = rowOfUnit.get(unitId);
@@ -2087,6 +2171,11 @@ export default function AssignPage() {
 
   /** 템플릿 보기의 줄을 누름 - 출처 칩과 같은 길로 그 줄의 Old 출처를 고른다(지금 New 문서와 보기는 그대로) */
   function pickTemplateLine(item: ComposedItem) {
+    // 클릭 배치 중의 AI 제안 줄 - 고른 줄 자신의 것은 그 AI 추천을 고르고, 다른 줄의 것(확정 전)은 누를 수 없다
+    if (canPlaceClick && item.status === "ai_suggested") {
+      if (row && item.source_unit_ids.some((id) => row.unitIds.includes(id))) pickOwnAiLine(item.target_id);
+      return;
+    }
     const unitId = item.source_unit_ids[0];
     if (unitId !== undefined && newDocId !== null) jumpToOld(unitId, item.target_id, { docId: newDocId });
   }
@@ -2758,7 +2847,7 @@ export default function AssignPage() {
     }
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     // 포커스된 단추·링크(추천 카드·나무 항목 등)의 Enter·Space는 그 단추를 누른다
-    if ((event.key === "Enter" || event.key === " ") && event.target instanceof HTMLElement && event.target.closest("button, a, [role='option']")) return;
+    if ((event.key === "Enter" || event.key === " ") && event.target instanceof HTMLElement && event.target.closest("button, a, [role='option'], [role='button']")) return;
     // 세로선에 포커스가 있으면 ←→는 폭이다
     if (event.target instanceof HTMLElement && event.target.closest(".pane-divider")) return;
     const key = event.key.toLowerCase();
@@ -3277,6 +3366,8 @@ export default function AssignPage() {
       );
     }
     const placeLabel = isPlace ? renderPlaceLabel(destination) : null;
+    // 고른 칸 안의 위치(MD 2 S3) - 열린 엮은 문서의 칸을 고른 초안일 때만: "6.1.1 다음 (6.1.2가 된다)" · "글머리 기호 줄 · 끝에"
+    const placeAt = draftPlace && composedDoc && placeResolved && draftSectionKey !== null && draftPlace.docId === composedDoc.target_doc_id ? readPlacePosition(placeResolved.sections, draftSectionKey, draftPosition ? draftPosition.after : undefined) : null;
     // 놓인 문장에 잇기 - 그 문장(번호·글)과 잇고 나면 한 문장에 든 Old 줄 수. 문서를 다시 읽는 중이거나 다른 문서를 열었으면 문서 번호만
     const joinItem = destination.kind === "join" && composedDoc?.target_doc_id === destination.docId ? composedDoc.sections.flatMap((section) => section.items).find((item) => item.target_id === destination.targetId) : undefined;
     const joinCode = destination.kind === "join" ? ((tobeData?.docs ?? []).find((doc) => doc.id === destination.docId)?.code ?? "") : "";
@@ -3341,6 +3432,11 @@ export default function AssignPage() {
               <b className="flex-none font-mono text-[11px]">{placeLabel.title}</b>
               <Truncate text={placeLabel.text} />
             </span>
+            {placeAt && (
+              <span className="text-xs text-ink-2" data-testid="assign-chosen-position">
+                {formatPlacePosition(placeAt, t)}
+              </span>
+            )}
             {newSentences}
           </>
         )}
@@ -4105,6 +4201,51 @@ export default function AssignPage() {
   const highlightIds = new Set(isSolo ? soloUnits.map((unit) => unit.id) : (row?.unitIds ?? []));
   // 템플릿 보기에서 칠할 줄 - 고른 Old 줄에서 온 새 문장(짝이면 두 절반 모두)
   const templateSelected = new Set((composedDoc?.sections ?? []).flatMap((section) => section.items.filter((item) => item.source_unit_ids.some((id) => highlightIds.has(id))).map((item) => item.target_id)));
+  // 클릭 배치의 자리 보기(MD 2 S3) - 기본 보기와 템플릿 보기가 같은 보기를 쓴다(두 절반의 같은 자리는 같은 보기라 함께 골라진 모양이 된다)
+  let newPlace: NewPlaceSpots | null = null;
+  const placeBySection = new Map<string, PlaceSpotView>();
+  if (canPlaceClick && placeResolved && composedDoc && row) {
+    const toView = (key: string, placement: Placement, spot: PlaceSpot, label: string): PlaceSpotView => ({
+      key,
+      open: placement.kind === "place",
+      label: placement.kind === "refused" ? t(PLACE_REFUSAL_KEYS[placement.reason]) : label,
+      picked: key === pickedSpotKey,
+      onPick: () => pickPlaceSpot(spot, key),
+    });
+    const heads = new Map<string, PlaceSpotView>();
+    for (const head of placeResolved.heads) {
+      if (head.placement.kind === "none") continue;
+      // 선언한 부록이 없는 9장은 놓을 수 있되 알린다(사용자 결정 C, 2026-11-18)
+      const hint = head.placement.kind === "place" && head.placement.hint === "declare_appendix" ? t("template.drop.declareAppendix") : "";
+      const view = toView(`s:${head.sectionKey}`, head.placement, { kind: "section", sectionKey: head.sectionKey }, hint);
+      heads.set(head.rowKey, view);
+      placeBySection.set(head.sectionKey, view);
+    }
+    const gaps = new Map<string, PlaceSpotView>();
+    for (const gap of placeResolved.gaps) {
+      if (gap.placement.kind === "none") continue;
+      gaps.set(gap.key, toView(`g:${gap.key}`, gap.placement, gap.spot, gap.placement.kind === "place" ? formatGapLabel(gap.placement, t) : ""));
+    }
+    // 확정 전 AI 제안 줄 - 고른 줄의 것(mine)은 그 추천을 고르는 길, 다른 줄의 것은 누를 수 없다
+    const aiLines = new Map<number, "mine" | "other">();
+    for (const section of composedDoc.sections)
+      for (const item of section.items) if (item.status === "ai_suggested") aiLines.set(item.target_id, item.source_unit_ids.some((id) => row.unitIds.includes(id)) ? "mine" : "other");
+    newPlace = { heads, gaps, aiLines, aiOtherTip: t("assign.place.aiOther"), onPickAi: pickOwnAiLine };
+  }
+  /** 템플릿 보기의 자리 속성 - 칸 자리는 기본 보기와 같은 보기(WI 장은 그 단계의 instruction 칸), 앱이 만드는 것은 까닭, 다른 줄의 AI 제안 줄은 알림 */
+  function readTemplateSpotProps(spot: TemplateSpot): SpotAttrs | undefined {
+    if (!newPlace) return undefined;
+    if (spot.kind === "line") return newPlace.aiLines.get(spot.targetId) === "other" ? { "data-place-tip": newPlace.aiOtherTip } : undefined;
+    if (spot.kind === "fixed") return getSpotAttrs({ key: `f:${spot.what}`, open: false, label: t(PLACE_REFUSAL_KEYS[spot.what]), picked: false, onPick: () => undefined });
+    const view = placeBySection.get(spot.sectionKey) ?? placeBySection.get(`${spot.sectionKey}:instruction`);
+    return view ? getSpotAttrs(view) : undefined;
+  }
+  /** 템플릿 보기의 번호 줄 사이 틈 - 두 절반의 같은 자리(같은 의미 묶음 경계)는 기본 보기와 같은 틈 보기 */
+  function renderTemplateGap(_sectionKey: string, prevId: number | null, nextId: number | null, lang: string): ReactNode {
+    const key = newPlace && placeResolved ? readGapKey(placeResolved.blocks, prevId, nextId) : null;
+    const view = key === null ? undefined : newPlace?.gaps.get(key);
+    return view ? <PlaceGap view={view} testId={`assign-tpl-place-${lang}-${view.key}`} /> : null;
+  }
   // 양 단에서 다듬으려고 고른 New 문장의 줄, 그리고 나눌 선이 놓인 줄
   const editTargetId = isNewEdit && soloUnit !== null ? (written.find((item) => item.new_unit_id === soloUnit.id)?.target_id ?? null) : null;
   const cutTargetId = isNewEdit && cutUnit !== null ? (written.find((item) => item.new_unit_id === cutUnit.id)?.target_id ?? null) : null;
@@ -4445,6 +4586,7 @@ export default function AssignPage() {
                       </>
                     }
                     aiFilter={newAiFilter}
+                    place={newPlace}
                     viewSwitch={
                       isComposedDoc && composedDoc && templateTitles
                         ? {
@@ -4457,6 +4599,8 @@ export default function AssignPage() {
                                 selectedIds={templateSelected}
                                 onPickLine={pickTemplateLine}
                                 onMissing={canEdit ? fillTemplateMissing : undefined}
+                                spotProps={newPlace ? readTemplateSpotProps : undefined}
+                                renderGap={newPlace ? renderTemplateGap : undefined}
                                 renderBlock={(item) => (
                                   <NewBundle kind={item.kind === "figure" ? "figure" : "table"} table={item.table} figure={item.figure} caption={item.caption} renumber={item.renumber ?? null} captionRequired bundleId={bundleId} testId={`assign-new-tpl-block-${item.target_id}`} />
                                 )}

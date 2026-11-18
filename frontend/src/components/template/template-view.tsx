@@ -1,6 +1,7 @@
 // 템플릿 보기(MD 1 F9 · F8c) - 결과물 C 꼴의 문서(엮은 문서 · 결과물 C 문서)를 회사 템플릿 모양으로 그리는 부품 하나. 모양 규칙은 lib/template-model이고 여기는 그리기만 한다.
 // 머리글(글자만, 로고 없음) · 제목 · 빈 표지 표(Document No.만) · 앱이 만든 목차(읽기 전용) · 두 절반(SOP 영어 → 한글, WI 한글 → 영어) · CONFIDENTIAL.
-// 쓰는 쪽이 켜는 것: 줄 누르기(onPickLine), "번역 없음" 자리 누르기(onMissing), 표·그림 그리기(renderBlock), 자리마다 속성·핸들러(spotProps - 클릭 배치 · 끌어 놓기가 단다).
+// 쓰는 쪽이 켜는 것: 줄 누르기(onPickLine), "번역 없음" 자리 누르기(onMissing), 표·그림 그리기(renderBlock), 자리마다 속성·핸들러(spotProps - 클릭 배치 · 끌어 놓기가 단다),
+// 줄 사이 틈(renderGap - 클릭 배치가 번호 줄 사이에 그린다).
 // 아무것도 넘기지 않으면 읽기만 하는 보기다. 자리(장·절 제목 · 범주 행 · 빈 칸 · 줄)에는 늘 data-tpl-spot · data-section(줄은 data-row), 앱이 만드는 것에는 data-tpl-fixed가 달린다.
 "use client";
 
@@ -42,6 +43,8 @@ interface TemplateViewProps<T extends TemplateItem> {
   renderBlock?: (item: T) => ReactNode;
   /** 자리마다 붙일 속성·핸들러 - 클릭 배치(MD 2 S3)·끌어 놓기(F9)가 쓴다 */
   spotProps?: (spot: TemplateSpot) => HTMLAttributes<HTMLElement> | undefined;
+  /** 줄 묶음(장 · 절의 줄들)에서 두 줄 사이(prev 뒤 · next 앞, 맨 앞 · 맨 끝은 null)에 그릴 것 - 줄 id는 그 줄(번역 없음이면 비춘 줄)의 target id. 없으면 아무것도 */
+  renderGap?: (sectionKey: string, prevId: number | null, nextId: number | null, lang: HalfLang) => ReactNode;
   testId: string;
 }
 
@@ -63,7 +66,7 @@ function readLang(lang: string): string | undefined {
   return lang === "en" || lang === "ko" ? lang : undefined;
 }
 
-export function TemplateView<T extends TemplateItem>({ doc, titles, selectedIds = NO_IDS, onPickLine, onMissing, renderBlock, spotProps, testId }: TemplateViewProps<T>) {
+export function TemplateView<T extends TemplateItem>({ doc, titles, selectedIds = NO_IDS, onPickLine, onMissing, renderBlock, spotProps, renderGap, testId }: TemplateViewProps<T>) {
   const { t } = useI18n();
   const tip = useDelegatedTip();
   const layout = useMemo(() => buildTemplateLayout(doc, titles), [doc, titles]);
@@ -152,12 +155,30 @@ export function TemplateView<T extends TemplateItem>({ doc, titles, selectedIds 
             {renderMarks(block, idKey)}
           </p>
         );
-      case "lines":
+      case "lines": {
+        // 줄마다 그 줄의 id와 바로 앞에 그려진 줄의 id - 그리지 않는 줄(비춘 줄도 없는 번역 없음)은 틈을 두지 않고 건너뛴다
+        const ids = block.lines.map((line) => line.item?.target_id ?? line.source?.target_id ?? null);
+        const prevIds: (number | null)[] = [];
+        let lastId: number | null = null;
+        for (const id of ids) {
+          prevIds.push(lastId);
+          if (id !== null) lastId = id;
+        }
         return (
           <div key={block.key} className="tpl-lines" data-nested={block.nested ? "" : undefined}>
-            {block.lines.map((line) => renderLine(line, lang, block.sectionKey))}
+            {block.lines.map((line, index) => {
+              const id = ids[index];
+              return (
+                <Fragment key={line.key}>
+                  {renderGap && id !== null && renderGap(block.sectionKey, prevIds[index], id, lang)}
+                  {renderLine(line, lang, block.sectionKey)}
+                </Fragment>
+              );
+            })}
+            {renderGap && lastId !== null && renderGap(block.sectionKey, lastId, null, lang)}
           </div>
         );
+      }
       case "empty":
         return <Fragment key={block.key}>{renderEmpty(block.na, block.sectionKey, idKey)}</Fragment>;
       case "auto":

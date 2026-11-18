@@ -10,6 +10,7 @@
 // 칩 오른쪽 갈매기는 그 Old 조각이 왼쪽 칸 화면 위·아래 밖에 있다는 표시 - 스크롤마다 바뀌어 LinkLines가 data-dir로 단다(Old 배지와 같은 방식).
 // AI 제안 거르기(aiFilter, lib/new-ai-filter-model)가 걸리면 고른 줄의 제안·간 곳은 강조 테두리와 꼬리표, 다른 줄의 AI 제안은 칸마다 띠 하나로 접히고(누르면 흐리게 펼침), 나머지 줄은 흐리다.
 // 줄이 새로 들어오면 펼치며 나타나고 빠지면 접히며 사라진다(확정이 곧 보이는 실시간 넣기). 표·그림은 실제 표(좌우 스크롤)·그림 이미지로 보인다(new-bundle.tsx).
+// 클릭 배치(place, MD 2 S3) - 엮은 문서에서 Old 줄을 고른 채면 칸 머리 · 빈 칸 · 번호 줄 사이 틈을 눌러 보낼 곳을 고른다(칠하기 · 꼬리표는 CSS :hover).
 // 엮은 문서는 머리의 "기본 | 템플릿" 전환(viewSwitch)으로 같은 줄을 회사 템플릿 모양(components/template/template-view)으로도 본다 - 템플릿이면 몸에 그 보기를 그린다.
 "use client";
 
@@ -17,6 +18,7 @@ import { ChevronDown, ChevronUp, FilePlus2, Scissors, Sparkles, Spline } from "l
 import { Fragment, useEffect, useEffectEvent, useRef, useState, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { NewBundle } from "@/components/assign/new-bundle";
+import { getSpotAttrs, PlaceGap, type PlaceSpotView } from "@/components/assign/place-spot";
 import { PaneZoom } from "@/components/assign/pane-zoom";
 import { RefMark } from "@/components/assign/ref-mark";
 import { LangToken } from "@/components/paper/lang-token";
@@ -35,6 +37,16 @@ import { useI18n } from "@/lib/i18n";
 import { readNewAiSectionKey, type NewAiFilter } from "@/lib/new-ai-filter-model";
 import { readWrittenRefMark } from "@/lib/ref-model";
 import { getCardTops, getHiddenPrefixLength, getPairBrackets, getPillWidth, getSectionPill, getTabWidths } from "@/lib/strip-pill-model";
+
+/** 클릭 배치의 자리(MD 2 S3) - heads는 칸 첫 줄의 키(getNewRowKey)로 그 칸 머리(빈 칸이면 자리 표시도 같은 자리), gaps는 "before:<id>" · "after:<id>" */
+export interface NewPlaceSpots {
+  heads: ReadonlyMap<string, PlaceSpotView>;
+  gaps: ReadonlyMap<string, PlaceSpotView>;
+  /** AI 제안 줄 - mine은 고른 줄의 제안(누르면 그 AI 추천을 고른 것과 같다), other는 다른 줄의 제안(누를 수 없고 올리면 aiOtherTip) */
+  aiLines: ReadonlyMap<number, "mine" | "other">;
+  aiOtherTip: string;
+  onPickAi: (targetId: number) => void;
+}
 
 interface NewPaneProps {
   /** 그림 이미지를 받을 묶음 */
@@ -101,6 +113,8 @@ interface NewPaneProps {
   aiFilter?: NewAiFilter | null;
   /** 기본 | 템플릿 전환(엮은 문서만) - 넘기면 머리에 전환이 생기고, template이면 몸에 body(템플릿 보기)를 그린다 */
   viewSwitch?: { template: boolean; onChange: (template: boolean) => void; body: ReactNode } | null;
+  /** 클릭 배치 - 엮은 문서에서 Old 줄을 고른 채 고칠 수 있을 때만. 없으면 자리가 없다 */
+  place?: NewPlaceSpots | null;
 }
 
 function readState(row: WrittenSentence, props: NewPaneProps): string | undefined {
@@ -395,8 +409,14 @@ export function NewPane(props: NewPaneProps) {
                 >
                   {text}
                 </button>
+              ) : props.place?.aiLines.get(row.target_id) === "mine" ? (
+                <button type="button" className="new-hit" data-testid={`assign-new-ai-pick-${row.target_id}`} onClick={() => props.place?.onPickAi(row.target_id)}>
+                  {text}
+                </button>
               ) : (
-                <span className="new-hit is-static">{text}</span>
+                <span className="new-hit is-static" data-place-tip={props.place?.aiLines.get(row.target_id) === "other" ? props.place.aiOtherTip : undefined}>
+                  {text}
+                </span>
               )
             ) : (
               <button
@@ -433,16 +453,18 @@ export function NewPane(props: NewPaneProps) {
         {mark.isEmptyRequired && <EmptyRequiredMark testId={`assign-new-empty-required-${idKey}`} />}
       </>
     );
+    const spot = props.place?.heads.get(getNewRowKey(row));
+    const spotAttrs = spot ? { ...getSpotAttrs(spot), "data-testid": `assign-place-${spot.key}` } : undefined;
     if (!note)
       return (
-        <p className="new-sec">
+        <p className="new-sec" {...spotAttrs}>
           {label}
           {marks}
         </p>
       );
     // 출처 글은 칸 오른쪽 끝까지 가서, 첫 줄의 언어 탭(위 테두리에서 8px 위로 나온다)이 글에 닿지 않게 아래 여백을 4px 더 둔다
     return (
-      <p className="new-sec mb-2 flex gap-1.5">
+      <p className="new-sec mb-2 flex gap-1.5" {...spotAttrs}>
         <span>
           {label}
           {marks}
@@ -475,10 +497,13 @@ export function NewPane(props: NewPaneProps) {
           </div>
         );
       }
+      // 빈 칸 자리 표시는 그 칸 머리와 같은 자리(누르면 그 칸에 놓는다)
+      const slotSpot = props.place?.heads.get(getNewRowKey(row));
       return (
         <div className="strip-row">
           <span className="strip-lead-gap" style={{ width: getPillWidth(1) + STRIP_LEAD_EXTRA }} />
           <p
+            {...(slotSpot ? getSpotAttrs(slotSpot) : undefined)}
             className="new-slot-empty"
             data-slot={row.key}
             data-na={row.na ? "" : undefined}
@@ -601,9 +626,13 @@ export function NewPane(props: NewPaneProps) {
                 const aiSection = readNewAiSectionKey(row.section_path);
                 const isAiFolded = aiMark === "other_ai" && !aiOpen.sections.has(aiSection);
                 const aiBand = isAiFolded ? props.aiFilter?.bands.get(key) : undefined;
+                // 클릭 배치의 번호 줄 사이 틈 - 그 줄 바로 앞 · 뒤(빠지는 줄에는 없다)
+                const gapBefore = leaving || row.kind === "empty" ? undefined : props.place?.gaps.get(`before:${row.target_id}`);
+                const gapAfter = leaving || row.kind === "empty" ? undefined : props.place?.gaps.get(`after:${row.target_id}`);
                 return (
                   <Fragment key={key}>
                     {isSectionStart && renderSectionHead(row, isNumberInLead && !isAiFolded)}
+                    {gapBefore && <PlaceGap view={gapBefore} testId={`assign-place-${gapBefore.key}`} />}
                     {draftSide === "before" && props.draft && renderDraft(row, props.draft.lines)}
                     {aiBand && (
                       <button
@@ -632,6 +661,7 @@ export function NewPane(props: NewPaneProps) {
                         </div>
                       </div>
                     )}
+                    {gapAfter && <PlaceGap view={gapAfter} testId={`assign-place-${gapAfter.key}`} />}
                     {draftSide === "after" && props.draft && renderDraft(row, props.draft.lines)}
                   </Fragment>
                 );

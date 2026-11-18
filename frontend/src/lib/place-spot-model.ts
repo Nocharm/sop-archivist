@@ -160,6 +160,80 @@ export function isSpotOpen(sections: readonly PlaceSection[], spot: PlaceSpot, d
   return spot.kind === "section" && resolvePlaceSpot(sections, spot, dragUnitIds).kind === "place";
 }
 
+// --- 클릭 배치(MD 2 S3) - 끌기와 같은 자리 목록. 틈은 끌기의 줄 자리(위·아래 절반) 꼴로 만들어 resolvePlaceSpot이 같은 답을 낸다 ---
+
+/** 번호를 세는 칸의 줄마다 그 줄이 든 의미 묶음(첫 · 끝 줄) - 틈 자리를 한 번에(긴 문서) 읽으려고 문서마다 한 번 짓는다 */
+export function buildGapBlocks(sections: readonly PlaceSection[]): Map<number, DropBlock> {
+  const blocks = new Map<number, DropBlock>();
+  for (const section of sections) {
+    if (!section.countsLines) continue;
+    let start = 0;
+    section.items.forEach((item, index) => {
+      const next = section.items[index + 1];
+      // 묶음은 groupKey(null 아님)가 같은 이웃 줄들 - findDropBlock과 같은 규칙
+      if (next && item.groupKey !== null && next.groupKey === item.groupKey) return;
+      const block = { firstId: section.items[start].targetId, lastId: item.targetId };
+      for (let at = start; at <= index; at += 1) blocks.set(section.items[at].targetId, block);
+      start = index + 1;
+    });
+  }
+  return blocks;
+}
+
+/**
+ * 두 줄 사이(prev 뒤 · next 앞, 맨 앞 · 맨 끝은 null)의 틈 자리 키 - 번호를 세는 칸의 의미 묶음 경계에만 있다(묶음 안을 가르지 않는다, 끌기와 같다).
+ * 칸 첫 줄 앞은 "before:<첫 줄>", 그 밖은 "after:<앞 묶음의 끝 줄>". 템플릿 두 절반의 줄(영어 줄 · 한글 줄)도 같은 묶음이면 같은 키다. 없으면 null
+ */
+export function readGapKey(blocks: ReadonlyMap<number, DropBlock>, prevId: number | null, nextId: number | null): string | null {
+  const before = prevId === null ? null : blocks.get(prevId);
+  const after = nextId === null ? null : blocks.get(nextId);
+  if (before === undefined || after === undefined || (before === null && after === null)) return null;
+  if (before && after && before.firstId === after.firstId) return null;
+  return before ? `after:${before.lastId}` : `before:${after?.firstId}`;
+}
+
+/** 클릭 배치의 틈 - key는 readGapKey와 같은 키, spot은 끌기의 줄 자리 꼴(첫 줄 앞은 그 묶음의 위 절반, 그 밖은 앞 묶음의 아래 절반)이라 resolvePlaceSpot이 끌기와 같은 답을 낸다 */
+export interface GapSpot {
+  key: string;
+  anchorId: number;
+  side: "before" | "after";
+  spot: PlaceSpot;
+}
+
+/** 번호를 세는 칸마다 첫 줄 앞과 의미 묶음마다 끝 줄 뒤의 틈 - 기본 보기는 anchorId 줄의 앞 · 뒤에 그린다 */
+export function listGapSpots(sections: readonly PlaceSection[], blocks: ReadonlyMap<number, DropBlock> = buildGapBlocks(sections)): GapSpot[] {
+  const gaps: GapSpot[] = [];
+  for (const section of sections) {
+    if (!section.countsLines || section.items.length === 0) continue;
+    const first = section.items[0].targetId;
+    gaps.push({ key: `before:${first}`, anchorId: first, side: "before", spot: { kind: "line", targetId: first, isUpperHalf: true } });
+    for (const item of section.items) {
+      if (blocks.get(item.targetId)?.lastId !== item.targetId) continue;
+      gaps.push({ key: `after:${item.targetId}`, anchorId: item.targetId, side: "after", spot: { kind: "line", targetId: item.targetId, isUpperHalf: false } });
+    }
+  }
+  return gaps;
+}
+
+/** 고른 곳 상자의 위치 - 번호를 세는 칸은 번호 글, 아니면 줄의 맨 앞 · 사이 · 끝 */
+export type PlacePosition = { kind: "number"; numbers: PlaceNumbers } | { kind: "line"; at: "start" | "between" | "end"; isBullet: boolean };
+
+/**
+ * 칸과 저장할 자리로 위치를 읽는다 - after가 undefined면 position 키를 넣지 않는 저장(서버가 칸 끝에 넣는다)이라 마지막 줄 뒤로, 빈 칸이면 첫 줄로 센다.
+ * isBullet은 SOP 골격 칸(kind 있음) - 번호를 세지 않는 SOP 칸은 템플릿에서 글머리 기호 줄이다. 모르는 칸이면 null
+ */
+export function readPlacePosition(sections: readonly PlaceSection[], sectionKey: string, after: number | null | undefined): { position: PlacePosition; hint: "declare_appendix" | null } | null {
+  const section = findSection(sections, sectionKey);
+  if (!section) return null;
+  const last = section.items.at(-1)?.targetId ?? null;
+  const at = after === undefined ? last : after;
+  const hint = readHint(section);
+  const numbers = readNumbers(section, at);
+  if (numbers) return { position: { kind: "number", numbers }, hint };
+  const where = at === last ? "end" : at === null ? "start" : "between";
+  return { position: { kind: "line", at: where, isBullet: section.kind !== null }, hint };
+}
+
 /** 한글 번호 뒤 주격 조사 - 끝자리를 읽은 소리로(2 이 · 4 사 · 5 오 · 9 구는 "가", 나머지는 "이") */
 export function readSubjectParticle(number: string): "이" | "가" {
   return /[2459]$/.test(number) ? "가" : "이";
@@ -176,5 +250,27 @@ export function formatPlacement(placement: Extract<Placement, { kind: "place" }>
     parts.push(numbers.after === null ? t("template.drop.first", vars) : t("template.drop.after", { ...vars, after: numbers.after }));
   }
   if (placement.hint === "declare_appendix") parts.push(t("template.drop.declareAppendix"));
+  return parts.join(" · ");
+}
+
+function readNumberVars(numbers: PlaceNumbers): Record<string, string> {
+  return { n: numbers.becomes, p: readSubjectParticle(numbers.becomes), after: numbers.after ?? "" };
+}
+
+/** 틈 꼬리표 - "6.1.1 다음 — 6.1.2가 된다", 맨 앞은 "첫 줄 — 6.1.1이 된다". 번호가 없으면(번호를 세지 않는 칸) 빈 글 */
+export function formatGapLabel(placement: Extract<Placement, { kind: "place" }>, t: Translate): string {
+  const numbers = placement.numbers;
+  if (!numbers) return "";
+  return t(numbers.after === null ? "assign.place.gapFirst" : "assign.place.gapAfter", readNumberVars(numbers));
+}
+
+/** 고른 곳 상자의 위치 글 - "6.1.1 다음 (6.1.2가 된다)" · "첫 줄 (6.1.1이 된다)" · "글머리 기호 줄 · 끝에", 선언한 부록이 없는 9장은 알림을 붙인다 */
+export function formatPlacePosition(place: NonNullable<ReturnType<typeof readPlacePosition>>, t: Translate): string {
+  const { position } = place;
+  const parts =
+    position.kind === "number"
+      ? [t(position.numbers.after === null ? "template.drop.first" : "template.drop.after", readNumberVars(position.numbers))]
+      : [...(position.isBullet ? [t("assign.place.bullet")] : []), t(`assign.place.at.${position.at}`)];
+  if (place.hint === "declare_appendix") parts.push(t("template.drop.declareAppendix"));
   return parts.join(" · ");
 }

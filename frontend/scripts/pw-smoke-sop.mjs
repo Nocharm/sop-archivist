@@ -9028,6 +9028,211 @@ await runStep("assign: join a picked Old line to a placed New sentence of an unw
   check("both lines are unassigned again", [unitA, unitB].every((unit) => left.get(unit.unit_id) === "unassigned"));
 });
 
+// 클릭 배치(MD 2 S3) - 아직 쓰지 않은 SOP의 자리(번호 줄 사이 틈 · 범주 · 빈 칸)를 눌러 고르기만 하고 ↵로 확정한다. 저장 요청의 position까지 본다.
+// 준비: 번호를 세는 칸에 Old 줄 A · B를 API로 놓고, 화면에서 나머지 줄을 고른다. 끝에 모든 줄의 배정을 지운다
+async function prepareClickPlace(page, needed) {
+  const headers = { "X-Dev-User": "qa.member" };
+  const api = `${BASE}/api/bundles/${halfBundleId}`;
+  const getJson = async (path) => (await page.request.get(`${api}${path}`, { headers })).json();
+  const readUnits = async () => (await getJson("/units?limit=1000")).items;
+  const sop = (await getJson("/tobe")).docs.find((doc) => doc.entrance === "assign" && doc.doc_type === "sop");
+  if (!sop) return { error: "no SOP to write in Assign" };
+  const readSections = async () => (await getJson(`/outputs/c/docs/${sop.id}?lang=en`)).sections;
+  // 미배정·짝 없는 본문 문장이 가장 많은 Old 문서 - 모자라면 묶음 배정을 비우고 다시 고른다(이 뒤의 단계는 이 묶음의 배정을 읽지 않는다)
+  const findLoose = async () => {
+    const loose = (await readUnits()).filter((unit) => unit.kind === "sentence" && unit.status === "unassigned" && unit.decision.disposition === "unassigned" && unit.pair_id === null);
+    const byDoc = new Map();
+    for (const unit of loose) byDoc.set(unit.document_id, [...(byDoc.get(unit.document_id) ?? []), unit]);
+    return [...byDoc.values()].sort((a, b) => b.length - a.length)[0] ?? [];
+  };
+  let loose = await findLoose();
+  if (loose.length < needed + 4) {
+    await page.request.post(`${api}/decisions/reset`, { headers, data: { revision: (await getJson("")).revision } });
+    loose = await findLoose();
+  }
+  const sections = await readSections();
+  const isLeaf = (key) => !sections.some((section) => section.location_key.startsWith(`${key}.`));
+  const isOpen = (section) => takesLines(section) && section.na_reason === null && isLeaf(section.location_key);
+  const counted = sections.find((section) => isOpen(section) && section.counts_lines);
+  if (!counted) return { error: "no numbered section that takes lines" };
+  const saveTo = async (unit, slotKey) => {
+    const response = await page.request.post(`${api}/groups/save`, {
+      headers,
+      data: {
+        action: "confirm",
+        hold_reason: "",
+        units: [{ unit_id: unit.unit_id, revision: unit.decision.revision, disposition: "assigned", move_target_code: "", reason: "" }],
+        targets: [{ key: `u${unit.unit_id}`, target_doc_id: sop.id, slot_key: slotKey, kind: "sentence", lang: unit.lang, text: unit.text.trim(), change_type: "as_is", source_unit_ids: [unit.unit_id] }],
+        removed_target_ids: [],
+      },
+    });
+    return response.ok();
+  };
+  await page.goto(`${BASE}/bundles/${halfBundleId}/assign`);
+  await wait(page, "assign-bar");
+  await page.locator('[data-pane="old"] .strip[data-strip-unit]').first().waitFor({ timeout: T });
+  if (loose[0] && (await page.locator(`[data-testid="assign-paper-piece-${loose[0].unit_id}"]`).count()) === 0) {
+    await page.locator('[data-testid="assign-old-doc"]').click();
+    await page.locator(`[data-testid="assign-old-doc-option-${loose[0].document_id}"]`).click();
+    await page.locator(`[data-testid="assign-paper-piece-${loose[0].unit_id}"]`).waitFor({ timeout: T });
+  }
+  // 본문 용지에 조각이 보이는 것만(머리말·꼬리말 탭의 문장은 뺀다)
+  const shown = [];
+  for (const unit of loose) if ((await page.locator(`[data-testid="assign-paper-piece-${unit.unit_id}"]`).count()) > 0) shown.push(unit);
+  if (shown.length < needed + 2) return { error: `only ${shown.length} loose sentences on one Old paper` };
+  const [unitA, unitB, ...rest] = shown;
+  if (!(await saveTo(unitA, counted.location_key)) || !(await saveTo(unitB, counted.location_key))) return { error: "could not place A and B" };
+  const placed = (await readSections()).find((section) => section.location_key === counted.location_key).items;
+  const itemOf = (unit) => placed.find((item) => item.source_unit_ids.includes(unit.unit_id));
+  let saveRequests = 0;
+  page.on("request", (request) => {
+    if (request.url().includes("/groups/save") && request.method() === "POST") saveRequests += 1;
+  });
+  await page.reload();
+  await wait(page, "assign-bar");
+  await page.locator(`[data-testid="assign-paper-piece-${unitA.unit_id}"]`).waitFor({ timeout: T });
+  return {
+    sop,
+    sections,
+    counted,
+    itemA: itemOf(unitA),
+    itemB: itemOf(unitB),
+    units: rest.slice(0, needed),
+    saveCount: () => saveRequests,
+    // 줄을 고르고 New 칸을 그 SOP로
+    pickOld: async (unit) => {
+      const point = await page.locator(`[data-testid="assign-paper-unit-${unit.unit_id}"]`).first().evaluate((el) => {
+        el.scrollIntoView({ block: "center" });
+        const rect = el.getClientRects()[0];
+        return { x: rect.left + Math.min(24, rect.width / 2), y: rect.top + rect.height / 2 };
+      });
+      await page.mouse.click(point.x, point.y);
+      await page.waitForFunction((id) => document.querySelector(`[data-testid="assign-paper-piece-${id}"]`)?.hasAttribute("data-sel"), unit.unit_id, { timeout: T });
+      await wait(page, "assign-new");
+      if ((await page.locator('[data-testid="assign-new"]').getAttribute("data-doc")) !== String(sop.id)) {
+        await page.locator('[data-testid="assign-new-doc"]').click();
+        await page.locator(`[data-testid="assign-new-doc-option-${sop.id}"]`).click();
+      }
+    },
+    // ↵로 확정하고 그 줄(unit)의 저장 항목을 돌려준다
+    confirmWithEnter: async (unit) => {
+      const request = page.waitForRequest((item) => item.url().includes("/groups/save") && item.method() === "POST", { timeout: T });
+      const response = page.waitForResponse((item) => item.url().includes("/groups/save"), { timeout: T });
+      await page.keyboard.press("Enter");
+      const body = (await request).postDataJSON();
+      await response;
+      await page.waitForLoadState("networkidle");
+      return body.targets.find((target) => target.source_unit_ids?.includes(unit.unit_id));
+    },
+    cleanUp: async () => {
+      for (const unit of [unitA, unitB, ...rest.slice(0, needed)]) {
+        const now = (await readUnits()).find((item) => item.unit_id === unit.unit_id);
+        if (now && now.decision.disposition !== "unassigned") await page.request.post(`${api}/decisions/clear`, { headers, data: { unit_id: unit.unit_id, revision: now.decision.revision } });
+      }
+      const left = new Map((await readUnits()).map((unit) => [unit.unit_id, unit.status]));
+      return [unitA, unitB, ...rest.slice(0, needed)].every((unit) => left.get(unit.unit_id) === "unassigned");
+    },
+  };
+}
+
+await runStep("assign: click place - a gap between numbered lines, a category head, an empty slot and a refused group title in the basic view", {}, async ({ page, takeShot }) => {
+  const ctx = await prepareClickPlace(page, 4);
+  check("the bundle is ready for click placing", !ctx.error && ctx.itemA && ctx.itemB, ctx.error ?? "");
+  if (ctx.error || !ctx.itemA || !ctx.itemB) return;
+  const [unitC, unitD, unitE, unitF] = ctx.units;
+  const isLeaf = (key) => !ctx.sections.some((section) => section.location_key.startsWith(`${key}.`));
+  const isEmptyOpen = (section) => takesLines(section) && section.na_reason === null && isLeaf(section.location_key) && section.items.length === 0 && section.location_key !== ctx.counted.location_key;
+  const category = ctx.sections.find((section) => isEmptyOpen(section) && section.location_key.startsWith("general_requirements.") && !section.counts_lines);
+  const empty = ctx.sections.find((section) => isEmptyOpen(section) && section !== category);
+  const group = ctx.sections.find((section) => section.kind === "group");
+  check("the SOP has an empty category, another empty section and a group title", Boolean(category && empty && group), `${category?.location_key} ${empty?.location_key} ${group?.location_key}`);
+
+  // 틈 - 올리면 가로선과 꼬리표, 누르면 고르기만(저장 없음), 고른 곳 상자에 "after 6.x.1 (becomes 6.x.2)", 포커스는 Confirm
+  await ctx.pickOld(unitC);
+  const gap = page.locator(`[data-testid="assign-place-g:after:${ctx.itemA.target_id}"]`);
+  await gap.waitFor({ timeout: T });
+  await gap.hover();
+  const tag = await gap.evaluate((el) => getComputedStyle(el, "::after").content);
+  check("hovering a gap shows where the line goes and the number it gets", tag.includes(`After ${ctx.itemA.number}`) && tag.includes("becomes"), tag);
+  const before = ctx.saveCount();
+  await gap.click();
+  await wait(page, "assign-chosen-position");
+  const position = ((await page.locator('[data-testid="assign-chosen-position"]').textContent()) ?? "").trim();
+  check("the picked-place box says after which line and the number it becomes", position.startsWith(`after ${ctx.itemA.number} (becomes `), position);
+  check("clicking a spot only picks it - no save yet, Confirm has the focus", ctx.saveCount() === before && (await page.evaluate(() => document.activeElement?.getAttribute("data-testid"))) === "assign-primary");
+  check("the clicked gap stays drawn as picked", (await gap.getAttribute("data-place-picked")) === "");
+  await takeShot("sop-assign-click-place-gap.png");
+  const savedC = await ctx.confirmWithEnter(unitC);
+  check("Enter saves the line right after A", savedC?.position?.after_target_id === ctx.itemA.target_id, JSON.stringify(savedC?.position));
+  const toast = page.locator('[data-testid="toast-ok"]', { hasText: `Confirmed · ${unitC.display_id} →` }).last();
+  await toast.waitFor({ timeout: T });
+  check("the toast names the line, the place and the number, and offers Undo", ((await toast.textContent()) ?? "").includes(ctx.counted.label) && (await toast.locator('[data-testid^="toast-action-"]').count()) === 1, await toast.textContent());
+
+  // 범주 머리 - 빈 범주는 자리 없이 저장(position 키 없음), 위치 글은 글머리 기호 줄 · 끝에
+  if (category) {
+    await ctx.pickOld(unitD);
+    await page.locator(`[data-testid="assign-place-s:${category.location_key}"]`).click();
+    await wait(page, "assign-chosen-position");
+    check("a category head picks the end of that category as a bullet line", ((await page.locator('[data-testid="assign-chosen-position"]').textContent()) ?? "").trim() === "Bullet line · at the end");
+    const savedD = await ctx.confirmWithEnter(unitD);
+    check("an empty category saves without a position", savedD !== undefined && !("position" in savedD) && savedD.slot_key === category.location_key, JSON.stringify(savedD));
+  }
+
+  // 빈 칸 자리 표시 - 자리 없이 그 칸
+  if (empty) {
+    await ctx.pickOld(unitE);
+    await page.locator(`[data-testid="assign-new-slot-${empty.location_key}"]`).click();
+    await wait(page, "assign-chosen-position");
+    const savedE = await ctx.confirmWithEnter(unitE);
+    check("an empty slot saves into that section without a position", savedE !== undefined && !("position" in savedE) && savedE.slot_key === empty.location_key, JSON.stringify(savedE));
+  }
+
+  // 못 놓는 곳 - 빨간 꼬리표의 까닭, 눌러도 고름도 저장도 없다
+  if (group) {
+    await ctx.pickOld(unitF);
+    const head = page.locator(`[data-testid="assign-place-s:${group.location_key}"]`);
+    await head.waitFor({ timeout: T });
+    check("a group title is not placeable and says why", (await head.getAttribute("data-place")) === "refused" && ((await head.getAttribute("data-place-label")) ?? "").startsWith("Group title"), await head.getAttribute("data-place-label"));
+    const count = ctx.saveCount();
+    await head.click({ force: true });
+    await page.waitForTimeout(400);
+    check("clicking a refused spot makes no save request and picks nothing", ctx.saveCount() === count && (await page.locator('[data-testid="assign-chosen-position"]').count()) === 0);
+  }
+
+  check("every line is unassigned again after the clean-up", await ctx.cleanUp());
+});
+
+await runStep("assign: click place - the template view picks the same gap from either half and saves at that place", {}, async ({ page, takeShot }) => {
+  const ctx = await prepareClickPlace(page, 1);
+  check("the bundle is ready for click placing", !ctx.error && ctx.itemA && ctx.itemB, ctx.error ?? "");
+  if (ctx.error || !ctx.itemA || !ctx.itemB) return;
+  const [unitC] = ctx.units;
+  await ctx.pickOld(unitC);
+  await page.locator('[data-testid="assign-new-view-template"]').click();
+  await wait(page, "assign-new-tpl");
+  // 두 절반의 같은 틈 - 한쪽을 누르면 두 쪽이 함께 골라진 모양
+  const enGap = page.locator(`[data-testid="assign-tpl-place-en-g:after:${ctx.itemA.target_id}"]`);
+  const koGap = page.locator(`[data-testid="assign-tpl-place-ko-g:after:${ctx.itemA.target_id}"]`);
+  await enGap.waitFor({ timeout: T });
+  check("both halves draw the gap after A", (await koGap.count()) === 1);
+  const toc = page.locator('[data-testid="assign-new-tpl-toc"]');
+  check("the app-built contents are not placeable and say why", (await toc.getAttribute("data-place")) === "refused" && ((await toc.getAttribute("data-place-label")) ?? "").startsWith("The app builds the contents"), await toc.getAttribute("data-place-label"));
+  const count = ctx.saveCount();
+  await toc.click({ force: true });
+  await page.waitForTimeout(300);
+  check("clicking the contents makes no save request", ctx.saveCount() === count);
+  await koGap.scrollIntoViewIfNeeded();
+  await koGap.click();
+  await wait(page, "assign-chosen-position");
+  check("the picked gap lights in both halves", (await enGap.getAttribute("data-place-picked")) === "" && (await koGap.getAttribute("data-place-picked")) === "");
+  check("the picked-place box says the same place as the basic view", ((await page.locator('[data-testid="assign-chosen-position"]').textContent()) ?? "").trim().startsWith(`after ${ctx.itemA.number} (becomes `));
+  await takeShot("sop-assign-click-place-template.png");
+  const savedC = await ctx.confirmWithEnter(unitC);
+  check("Enter saves the line right after A from the template view too", savedC?.position?.after_target_id === ctx.itemA.target_id, JSON.stringify(savedC?.position));
+  await page.locator('[data-testid="assign-new-view-basic"]').click();
+  check("every line is unassigned again after the clean-up", await ctx.cleanUp());
+});
+
 // Pair view(끌어다 놓기 4걸음) - 한/영 따로 문서(합성 OLD-3)를 KO | EN 두 칸으로 펴고 끄면 보던 화면으로 돌아온다.
 // 검증 스택에는 임베딩이 없어 이 문서에 진짜 제안 짝을 만들 길이 없고, 합성 OLD-3에는 언어 없는 Unit이 없다 - 그 둘은 원문 보기 응답을 브라우저에서 바꿔(page.route) 그린다.
 // 자료는 API로 만들고 끝에 푼다. 이 뒤 단계는 이 묶음의 배정·짝을 읽지 않는다

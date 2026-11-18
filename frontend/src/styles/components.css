@@ -1839,6 +1839,35 @@
   .pg .new-slot-empty { flex: 1 1 0; min-width: 0; margin: 0; padding: 4px var(--pg-pad-l); border: 1px dashed var(--line); border-radius: var(--r-1); color: var(--ink-3); font: var(--fs-cap) / var(--lh-cap) var(--font-ui); }
   /* 고른 줄의 초안이 든 빈 칸(끌어 놓았거나 나무에서 고름) - 점선 그대로 색만 강조 */
   .pg .new-slot-empty[data-draft] { border-color: var(--accent); }
+  /* 클릭 배치(MD 2 S3) - Old 줄을 고른 채 엮은 문서의 자리(칸 머리 · 범주 행 · 빈 칸 · 번호 줄 사이 틈)를 눌러 고른다(기본 · 템플릿 보기 공통).
+     칠하기 · 꼬리표는 CSS :hover만 - 포인터가 움직일 때 종이를 다시 그리지 않는다(긴 문서). 고른 자리는 data-place-picked, 못 놓는 곳은 빨간 점선과 까닭 꼬리표. 끄는 동안(data-box-drag)은 끌기 표시만 */
+  [data-place] { position: relative; --place-tag-bg: var(--accent); --place-tag-ink: var(--on-accent); }
+  [data-place="open"] { cursor: pointer; }
+  [data-place="refused"] { cursor: not-allowed; --place-tag-bg: var(--danger-ink); --place-tag-ink: var(--surface); }
+  :where(html:not([data-box-drag])) [data-place="open"]:not(.place-gap):hover:not(:has([data-tpl-spot="line"]:hover, .place-gap:hover)),
+  [data-place="open"][data-place-picked]:not(.place-gap) { outline: 2px solid var(--accent); outline-offset: 1px; background: var(--accent-tint); }
+  :where(html:not([data-box-drag])) tr[data-place="open"]:hover:not(:has([data-tpl-spot="line"]:hover)) > *, tr[data-place="open"][data-place-picked] > * { background: var(--accent-tint); }
+  :where(html:not([data-box-drag])) [data-place="refused"]:not(.place-gap):hover { outline: 2px dashed var(--danger-ink); outline-offset: 1px; }
+  [data-place="open"]:not(.place-gap):focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  /* 틈 - 높이 없이 앞뒤 줄에 4px씩 걸친 누름 띠(줄이 밀리지 않는다). 올리거나 고르면 가로선, 꼬리표는 오른쪽 끝 */
+  .place-gap { display: block; width: 100%; height: 8px; margin: -4px 0; padding: 0; z-index: 2; background: none; --place-tag-left: auto; --place-tag-right: 6px; --place-tag-top: -6px; }
+  .place-gap::before { content: ""; position: absolute; left: 0; right: 0; top: 3px; border-top: 2px solid transparent; }
+  :where(html:not([data-box-drag])) .place-gap[data-place="open"]:hover::before, .place-gap[data-place-picked]::before, .place-gap:focus-visible::before { border-top-color: var(--accent); }
+  :where(html:not([data-box-drag])) .place-gap[data-place="refused"]:hover::before { border-top: 2px dashed var(--danger-ink); }
+  .place-gap:focus-visible { outline: none; }
+  /* 끄는 동안 틈은 비켜 선다 - 끌기가 포인터 밑의 줄 · 템플릿 자리를 읽는다 */
+  html[data-box-drag] .place-gap { pointer-events: none; }
+  /* 꼬리표 - 틈 위치("6.1.1 다음 — 6.1.2가 된다") · 못 놓는 까닭 · 알림(칸 자리는 그 아래 왼쪽), 다른 줄의 AI 제안 줄은 짙은 알림 */
+  :where(html:not([data-box-drag])) :is([data-place][data-place-label]:hover, .place-gap[data-place-label]:is([data-place-picked], :focus-visible))::after,
+  :where(html:not([data-box-drag])) .tpl-line[data-place-tip]:hover::after,
+  :where(html:not([data-box-drag])) .new-hit.is-static[data-place-tip]:hover::before {
+    position: absolute; z-index: 30; left: var(--place-tag-left, 8px); right: var(--place-tag-right, auto); top: var(--place-tag-top, calc(100% + 4px)); padding: 1px 8px; border-radius: var(--r-1);
+    background: var(--place-tag-bg); color: var(--place-tag-ink); font: 500 var(--fs-micro) / 18px var(--font-ui); white-space: nowrap; pointer-events: none;
+    content: attr(data-place-label);
+  }
+  .tpl-line[data-place-tip], .new-hit.is-static[data-place-tip] { --place-tag-bg: var(--ink); --place-tag-ink: var(--surface); }
+  .tpl-line[data-place-tip] { position: relative; cursor: not-allowed; }
+  :where(html:not([data-box-drag])) .tpl-line[data-place-tip]:hover::after, :where(html:not([data-box-drag])) .new-hit.is-static[data-place-tip]:hover::before { content: attr(data-place-tip); }
   /* 엮은 문서의 앱이 채우는 목록(자식 WI) - 읽기만 하는 줄이라 받을 자리의 점선 테두리가 없다(같은 들여쓰기, 긴 제목은 줄 안에서 접힌다) */
   .pg .new-auto { flex: 1 1 0; display: grid; gap: 2px; min-width: 0; margin: 0; padding: 2px var(--pg-pad-l); list-style: none; color: var(--ink-2); font: var(--fs-cap) / var(--lh-cap) var(--font-ui); overflow-wrap: anywhere; }
   /* 문장 사이에 끌어 놓은 저장 전 문장(점선 초안) - 후보 줄과 같은 점선의 문장 상자, 언어 탭은 늘. 줄 상자(.new-item)가 아니라 고르기·이음 선·놓기에 끼지 않는다 */
