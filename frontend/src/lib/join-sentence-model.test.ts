@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ComposedDoc, ComposedItem, ComposedSection } from "@/lib/api-sop";
 import { makeSectionOutline } from "@/lib/outline-fixture";
 
-import { applyJoinedSources, countJoinedLines, isJoinable, listJoinableIds } from "./join-sentence-model";
+import { applyJoinedSources, countJoinedLines, isJoinable, listJoinableIds, shouldAdvanceAfterSave } from "./join-sentence-model";
 
 function makeItem(targetId: number, extra: Partial<ComposedItem> = {}): ComposedItem {
   return { target_id: targetId, kind: "sentence", lang: "ko", text: `t${targetId}`, status: "confirmed", change_type: "as_is", number: `6.1.${targetId}`, number_style: "numbered", indent_level: 0, meaning_key: null, source_unit_ids: [targetId * 10], ...extra };
@@ -75,5 +75,19 @@ describe("applyJoinedSources", () => {
     expect(first).toMatchObject({ target_id: 1, change_type: "merged", source_unit_ids: [10, 90], number: "6.1.1", text: "t1" });
     expect(second).toBe(doc.sections[0].items[1]);
     expect(doc.sections[0].items[0].change_type).toBe("as_is");
+  });
+});
+
+describe("shouldAdvanceAfterSave", () => {
+  it("advances after an ordinary confirm", () => {
+    expect(shouldAdvanceAfterSave({ action: "confirm", destinationKind: "slot", isSplit: false })).toBe(true);
+    expect(shouldAdvanceAfterSave({ action: "confirm", destinationKind: "link", isSplit: false })).toBe(true);
+  });
+  it("stays on the line after joining a placed sentence so it can be rewritten", () => {
+    expect(shouldAdvanceAfterSave({ action: "confirm", destinationKind: "join", isSplit: false })).toBe(false);
+  });
+  it("does not advance after a hold or a pair split", () => {
+    expect(shouldAdvanceAfterSave({ action: "hold", destinationKind: null, isSplit: false })).toBe(false);
+    expect(shouldAdvanceAfterSave({ action: "confirm", destinationKind: "slot", isSplit: true })).toBe(false);
   });
 });

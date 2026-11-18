@@ -135,7 +135,7 @@ import {
 } from "@/lib/api-sop";
 import { listRefCandidates } from "@/lib/caption-ref-model";
 import { isBundleCaptionNeeded, isBundleKind, isCaptionGate, listCaptionFields, listCaptionPendingRowKeys, makeIsLinkedToWritten, type CaptionUnit } from "@/lib/caption-model";
-import { applyJoinedSources, countJoinedLines, listJoinableIds } from "@/lib/join-sentence-model";
+import { applyJoinedSources, countJoinedLines, listJoinableIds, shouldAdvanceAfterSave } from "@/lib/join-sentence-model";
 import { applySavedTargets, buildComposedRows, isWrittenRow, listHeadingNotes, listSectionMarks, readSectionHead, removeClearedUnits, type NewPaneRow } from "@/lib/composed-model";
 import {
   addPartnerTargets,
@@ -1685,7 +1685,9 @@ export default function AssignPage() {
       showToast(action === "hold" ? t("classify.held") : t("classify.confirmed"));
       const isSplit = applyPairSettle(row, saved, leftovers) && leftovers.length > 0;
       // 다음 미확정 줄로 - 지금 줄은 거르기 자리에 남는다. 남는 쪽을 풀었으면 남은 문장의 줄이 다음이다
-      const next = action === "confirm" && !isSplit ? findNextOpen(listKeys, rowMap, row.key) : null;
+      // 놓인 문장에 잇기는 그 줄에 머문다 - 곧바로 그 문장의 연필(Rewrite)로 포커스를 옮겨 고쳐 쓰게(MD 1 F12 E4)
+      const next = shouldAdvanceAfterSave({ action, destinationKind: destination?.kind ?? null, isSplit }) ? findNextOpen(listKeys, rowMap, row.key) : null;
+      if (action === "confirm" && destination?.kind === "join" && !isSplit) setEditFocus({ key: row.key });
       if (action === "confirm") showSent(row, saved, next ?? row.key, at);
       dropDraft(row.key);
       if (isSplit) setSplitRow({ from: row.key, unit: leftovers[0] });
@@ -2088,6 +2090,25 @@ export default function AssignPage() {
     const unitId = item.source_unit_ids[0];
     if (unitId !== undefined && newDocId !== null) jumpToOld(unitId, item.target_id, { docId: newDocId });
   }
+
+  // 놓인 문장에 잇고 난 뒤 - 그 줄의 결정 칸이 다시 그려지면(묶음을 다시 받기까지 몇 프레임) 문장 줄의 연필(Rewrite)로 포커스
+  const [editFocus, setEditFocus] = useState<{ key: string } | null>(null);
+  useEffect(() => {
+    if (editFocus === null) return;
+    let tries = 0;
+    let frame = requestAnimationFrame(function step() {
+      const button = document.querySelector<HTMLButtonElement>('[data-testid="assign-edit"]');
+      if (button && !button.disabled) {
+        button.focus();
+        setEditFocus(null);
+        return;
+      }
+      tries += 1;
+      if (tries < 180) frame = requestAnimationFrame(step);
+      else setEditFocus(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [editFocus]);
 
   // "번역 없음" 자리를 누른 뒤 - 고른 줄의 결정 칸이 그려지면(관계 묶음이 오기까지 몇 프레임) 번역 만들기(없으면 직접 쓰기) 단추로 포커스
   const [fillOtherSeq, setFillOtherSeq] = useState(0);
@@ -3259,6 +3280,8 @@ export default function AssignPage() {
     // 놓인 문장에 잇기 - 그 문장(번호·글)과 잇고 나면 한 문장에 든 Old 줄 수. 문서를 다시 읽는 중이거나 다른 문서를 열었으면 문서 번호만
     const joinItem = destination.kind === "join" && composedDoc?.target_doc_id === destination.docId ? composedDoc.sections.flatMap((section) => section.items).find((item) => item.target_id === destination.targetId) : undefined;
     const joinCode = destination.kind === "join" ? ((tobeData?.docs ?? []).find((doc) => doc.id === destination.docId)?.code ?? "") : "";
+    // 여러 Old 줄이 한 New 문장으로 합쳐진 곳(잇기로 이은 문장) - 머리가 "Old n줄 → New 1문장 · 고쳐 씀"
+    const mergedLines = isPlace ? Math.max(0, ...slots.filter((slot) => slot.target !== null && slot.sourceIds.length > 1).map((slot) => countJoinedLines(slot.sourceIds, activeKey ?? "", (unitId) => rowOfUnit.get(unitId)))) : 0;
     const isConfirmedView = row?.status === "confirmed" && draft.destination === null;
     const pickedRows = linkIds.map((id) => writtenMap.get(id)).filter((item): item is WrittenSentence => item !== undefined);
     // 줄에 없는 언어의 문장은 번역이다 - 종류를 고르지 않고, 나눔도 같은 언어 문장끼리만 센다(제품 명세 §6.7)
@@ -3279,7 +3302,7 @@ export default function AssignPage() {
         <span className="chosen-label">
           {isConfirmedView && <Check size={13} strokeWidth={2} className="flex-none" aria-hidden />}
           <Truncate
-            text={`${isConfirmedView ? `${t("assign.chosen.confirmed")} · ` : ""}${destination.kind === "link" ? `${t("assign.chosen.link")} · ${[...new Set(pickedRows.map((item) => item.doc_code))].join(", ")}` : destination.kind === "join" ? t("assign.chosen.join") : destination.kind === "slot_heading" ? t("assign.slotHeading") : isPlace ? t("assign.chosen.place") : t("assign.acc.move")}`}
+            text={`${isConfirmedView ? `${t("assign.chosen.confirmed")} · ` : ""}${destination.kind === "link" ? `${t("assign.chosen.link")} · ${[...new Set(pickedRows.map((item) => item.doc_code))].join(", ")}` : destination.kind === "join" ? t("assign.chosen.join") : destination.kind === "slot_heading" ? t("assign.slotHeading") : isPlace ? (mergedLines >= 2 ? t("assign.chosen.merged", { n: mergedLines }) : t("assign.chosen.place")) : t("assign.acc.move")}`}
           />
         </span>
         {(destination.kind === "delete" || destination.kind === "move") && (

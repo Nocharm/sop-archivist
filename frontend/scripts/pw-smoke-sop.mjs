@@ -9009,6 +9009,10 @@ await runStep("assign: join a picked Old line to a placed New sentence of an unw
   const joined = await readSources();
   check("the server keeps one merged sentence with both sources", joined?.change_type === "merged" && joined.source_unit_ids.length === 2 && joined.confirmed_text === placed.confirmed_text, JSON.stringify(joined));
   check("the placed line keeps its place and number after saving", (await page.locator(`[data-testid="assign-new-${placed.id}"]`).count()) === 1);
+  // 그 줄에 머문다 - 다음 줄로 넘어가지 않고, 고른 곳 상자 머리가 N:1 글이고 연필(Rewrite)에 포커스가 있다
+  await page.locator('[data-testid="assign-edit"]').waitFor({ timeout: T });
+  check("after joining the picked line stays and the box head names the merge", (await page.locator(`[data-testid="assign-paper-piece-${unitB.unit_id}"]`).evaluate((el) => el.hasAttribute("data-sel"))) && (((await page.locator('[data-testid="assign-chosen"] .chosen-label').textContent()) ?? "").includes("Old 2 lines → 1 New sentence · rewrite")), await page.locator('[data-testid="assign-chosen"] .chosen-label').textContent());
+  check("the Rewrite pencil of that sentence has the focus", (await page.evaluate(() => document.activeElement?.getAttribute("data-testid"))) === "assign-edit");
 
   // 되돌리기 - 출처가 다시 하나
   await page.keyboard.press("ControlOrMeta+z");

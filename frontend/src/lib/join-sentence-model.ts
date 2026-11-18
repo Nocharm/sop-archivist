@@ -38,3 +38,8 @@ export function applyJoinedSources(doc: ComposedDoc, targetId: number, unitIds: 
     })),
   };
 }
+
+/** 확정한 뒤 다음 미확정 줄로 넘어가나 - 놓인 문장에 잇기는 그 줄에 머문다(바로 그 문장을 고쳐 쓰게). 보류·짝이 풀려 남은 문장으로 가는 저장은 평소대로 */
+export function shouldAdvanceAfterSave(input: { action: "confirm" | "hold"; destinationKind: string | null; isSplit: boolean }): boolean {
+  return input.action === "confirm" && !input.isSplit && input.destinationKind !== "join";
+}
