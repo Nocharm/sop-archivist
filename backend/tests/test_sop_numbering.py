@@ -622,6 +622,13 @@ def test_composed_doc_numbers_one_sequence_like_c(client: TestClient) -> None:
     def read_lines(doc: dict) -> list[tuple[int, str | None]]:
         return [(item["target_id"], item["number"]) for section in doc["sections"] for item in section["items"]]
 
+    def read_marks(doc: dict) -> list[tuple[int, str, int, str | None]]:
+        """템플릿 보기가 읽는 표시 — 번호 표시 · 깊이 · 한/영 짝 묶음 키."""
+        return [
+            (item["target_id"], item["number_style"], item["indent_level"], item["meaning_key"])
+            for section in doc["sections"] for item in section["items"]
+        ]
+
     def read_both() -> tuple[dict, dict]:
         composed = _get_output(client, bundle_id, f"outputs/c/docs/{sop_id}")  # lang 없음 → en 라벨
         (c_doc,) = [doc for doc in _get_output(client, bundle_id, "outputs/c")["docs"] if doc["target_doc_id"] == sop_id]
@@ -638,6 +645,10 @@ def test_composed_doc_numbers_one_sequence_like_c(client: TestClient) -> None:
     composed, c_doc = read_both()
     assert read_lines(composed) == read_lines(c_doc)
     assert [number for _, number in read_lines(composed)] == ["6.1.1", None, "6.1.2", "6.1.3", "6.1.4", "6.1.5"]
+    # 템플릿 보기가 그리는 표시와 짝도 C 항목과 같은 값 - 짝 둘이 같은 묶음 키를 나눈다
+    assert read_marks(composed) == read_marks(c_doc)
+    keys = [key for _, _, _, key in read_marks(composed)]
+    assert keys[0] is not None and keys[0] == keys[1] and keys[1] != keys[2]
 
 
 def test_omitted_and_note_lines_are_skipped_across_languages(client: TestClient) -> None:
