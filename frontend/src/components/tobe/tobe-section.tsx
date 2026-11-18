@@ -22,6 +22,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api";
 import { humanizeApiError } from "@/lib/api-errors";
 import {
+  addOutlineItem,
   addToBeDoc,
   addWiStep,
   clearNaSlot,
@@ -29,7 +30,9 @@ import {
   getToBe,
   getToBeRead,
   importToBe,
+  patchOutlineItem,
   refreshEquis,
+  removeOutlineItem,
   removeToBeDoc,
   removeWiStep,
   renameWiStep,
@@ -725,6 +728,9 @@ export function ToBeSection({ bundleId, documents, file }: ToBeSectionProps) {
                           onAddStep={() => void runWrite(() => addWiStep(bundleId, docId, ""))}
                           onRenameStep={(stepNo, title) => runWrite(() => renameWiStep(bundleId, docId, stepNo, title))}
                           onRemoveStep={(stepNo) => void runWrite(() => removeWiStep(bundleId, docId, stepNo))}
+                          onAddOutline={(parentKey, titleEn) => runWrite(() => addOutlineItem(bundleId, docId, parentKey, titleEn))}
+                          onPatchOutline={(key, patch) => runWrite(() => patchOutlineItem(bundleId, docId, key, patch))}
+                          onRemoveOutline={(key) => void runWrite(() => removeOutlineItem(bundleId, docId, key))}
                           file={file}
                           sections={renderSections(doc, slots)}
                         />

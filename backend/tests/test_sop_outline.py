@@ -287,8 +287,10 @@ def test_doc_type_change_drops_and_recopies_outline(client: TestClient) -> None:
     as_sop = client.patch(url, json={"doc_type": "sop"}, headers=AUTHOR)
 
     assert as_sop.status_code == 200, as_sop.text
-    assert _load_outline_keys(doc_id) == list(NEW_SOP_KEYS)
-    assert [item["key"] for item in as_sop.json()["outline_items"] if item["code"] == "SOP-2"] == list(NEW_SOP_KEYS)
+    # 옛 첫 절차(p1)는 뺀 표시로 남아 키를 다시 쓰지 않는다 — 새 첫 절차는 다음 수를 받는다
+    expected = [key.replace("procedures.p1", "procedures.n1") for key in NEW_SOP_KEYS]
+    assert _load_outline_keys(doc_id) == expected
+    assert [item["key"] for item in as_sop.json()["outline_items"] if item["code"] == "SOP-2"] == expected
 
 
 def test_uploaded_sop_doc_gets_outline_copy(client: TestClient) -> None:

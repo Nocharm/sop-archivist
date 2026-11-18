@@ -14,15 +14,20 @@ from openpyxl.worksheet.worksheet import Worksheet
 from pydantic import ValidationError
 
 from app.sop.errors import raise_rule
+from app.sop.outline import KIND_NAMED_CHILDREN
+from app.sop.outline_edit import PROCEDURE_PARENT, ProcedureRowIn
 from app.sop.tobe import MAX_TOBE_ROWS, NaSlotIn, TargetDocIn, ToBeOut, WiStepIn
 
 DOC_SHEET = "새 문서"
 STEP_SHEET = "WI 단계"
+PROCEDURE_SHEET = "SOP 절차"
 DOC_HEADER = ("문서 번호", "제목", "종류", "부모 SOP 번호", "장비 SOP 여부")
 STEP_HEADER = ("WI 번호", "단계 번호", "단계 제목")
+PROCEDURE_HEADER = ("SOP 번호", "절차 번호", "영어 제목", "한글 제목")
 # 입력 모델 필드 → 머리 칸. 길이·범위 규칙은 모델이 정하고 파일 오류는 이 칸 이름으로 알린다
 DOC_COLUMNS = {"code": "문서 번호", "title": "제목", "parent_code": "부모 SOP 번호"}
 STEP_COLUMNS = {"code": "WI 번호", "step_no": "단계 번호", "title": "단계 제목"}
+PROCEDURE_COLUMNS = {"code": "SOP 번호", "number": "절차 번호", "title_en": "영어 제목", "title_ko": "한글 제목"}
 
 MAX_FILE_BYTES = 5 * 1024 * 1024
 # 압축을 푼 크기 상한 — 작게 압축된 거대한 시트로 서버가 오래 붙들리지 않게(zip 헤더에 적힌 크기 기준)
@@ -44,24 +49,33 @@ _UNREADABLE_WORKBOOK_ERRORS = (
 
 @dataclass
 class ParsedWorkbook:
-    """읽은 템플릿. N/A는 파일에 없으므로 None(저장이 N/A를 건드리지 않는다)."""
+    """읽은 템플릿. N/A는 파일에 없으므로 None(저장이 N/A를 건드리지 않는다).
+
+    procedures는 "SOP 절차" 시트의 줄 — 시트가 없는 파일(옛 템플릿)이면 None이고 저장이 골격을 건드리지 않는다.
+    """
 
     docs: list[TargetDocIn]
     wi_steps: list[WiStepIn]
     na_slots: list[NaSlotIn] | None = None
+    procedures: list[ProcedureRowIn] | None = None
 
 
 # --- 템플릿 ---
 
 
 def build_tobe_template(tobe: ToBeOut) -> bytes:
-    """현재 assign 목록으로 채운 템플릿 — 그대로 다시 가져오면 같은 목록이 된다(match 문서는 파일 업로드가 관리해 싣지 않는다)."""
+    """현재 assign 목록으로 채운 템플릿 — 그대로 다시 가져오면 같은 목록이 된다(match 문서는 파일 업로드가 관리해 싣지 않는다).
+
+    "SOP 절차" 시트에는 SOP마다 6장의 절차를 골격 순서로 싣는다(절차 번호 = 그 SOP 안의 자리 1…n).
+    """
     workbook = Workbook()
     doc_sheet = workbook.active
     doc_sheet.title = DOC_SHEET
     doc_sheet.append(DOC_HEADER)
     step_sheet = workbook.create_sheet(STEP_SHEET)
     step_sheet.append(STEP_HEADER)
+    procedure_sheet = workbook.create_sheet(PROCEDURE_SHEET)
+    procedure_sheet.append(PROCEDURE_HEADER)
 
     assign_codes = {doc.code for doc in tobe.docs if doc.entrance == "assign"}
     for doc in tobe.docs:
@@ -72,6 +86,15 @@ def build_tobe_template(tobe: ToBeOut) -> bytes:
     for step in tobe.wi_steps:
         if step.code in assign_codes:
             _append_row(step_sheet, [step.code, step.step_no, step.title])
+    # 6장이 하위를 선언하는 항목인 SOP만 — 가져오기가 그런 SOP의 절차만 받는다(outline_edit.plan_procedures)
+    declaring = assign_codes & {
+        item.code for item in tobe.outline_items if item.key == PROCEDURE_PARENT and item.kind == KIND_NAMED_CHILDREN
+    }
+    positions: dict[str, int] = {}
+    for item in tobe.outline_items:
+        if item.code in declaring and item.parent_key == PROCEDURE_PARENT:
+            positions[item.code] = positions.get(item.code, 0) + 1
+            _append_row(procedure_sheet, [item.code, positions[item.code], item.title_en, item.title_ko])
 
     buffer = BytesIO()
     workbook.save(buffer)
@@ -102,6 +125,8 @@ def parse_tobe_workbook(data: bytes) -> ParsedWorkbook:
             # read_only라 시트 내용은 여기서 처음 읽혀 깨진 XML·값이 이때 드러난다
             doc_rows = _read_rows(workbook, DOC_SHEET, DOC_HEADER)
             step_rows = _read_rows(workbook, STEP_SHEET, STEP_HEADER)
+            has_procedures = PROCEDURE_SHEET in workbook.sheetnames  # 없어도 되는 시트 — 옛 템플릿에는 없다
+            procedure_rows = _read_rows(workbook, PROCEDURE_SHEET, PROCEDURE_HEADER) if has_procedures else []
         finally:
             workbook.close()
     except _UNREADABLE_WORKBOOK_ERRORS:
@@ -109,7 +134,8 @@ def parse_tobe_workbook(data: bytes) -> ParsedWorkbook:
 
     docs = [_parse_doc_row(index, values, order) for order, (index, values) in enumerate(doc_rows)]
     steps = [_parse_step_row(index, values) for index, values in step_rows]
-    return ParsedWorkbook(docs=docs, wi_steps=steps)
+    procedures = [_parse_procedure_row(index, values) for index, values in procedure_rows] if has_procedures else None
+    return ParsedWorkbook(docs=docs, wi_steps=steps, procedures=procedures)
 
 
 def _check_archive(data: bytes) -> None:
@@ -212,3 +238,17 @@ def _parse_step_row(index: int, values: tuple) -> WiStepIn:
         return WiStepIn(code=code, step_no=step_no, title=title)
     except ValidationError as error:
         _raise_bad_cell(STEP_SHEET, index, STEP_COLUMNS.get(str(error.errors()[0]["loc"][0]), ""))
+
+
+def _parse_procedure_row(index: int, values: tuple) -> ProcedureRowIn:
+    code, title_en, title_ko = _read_text(values[0]), _read_text(values[2]), _read_text(values[3])
+    for text, column in ((code, "SOP 번호"), (title_en, "영어 제목"), (title_ko, "한글 제목")):
+        if text is None:
+            _raise_bad_cell(PROCEDURE_SHEET, index, column)
+    number = _read_step_no(values[1])
+    if number is None:
+        _raise_bad_cell(PROCEDURE_SHEET, index, "절차 번호")
+    try:
+        return ProcedureRowIn(code=code, number=number, title_en=title_en, title_ko=title_ko)
+    except ValidationError as error:
+        _raise_bad_cell(PROCEDURE_SHEET, index, PROCEDURE_COLUMNS.get(str(error.errors()[0]["loc"][0]), ""))

@@ -631,6 +631,8 @@ export interface ToBe {
   wi_steps: WiStep[];
   /** SOP 문서마다의 골격 항목 - 문서(code)별로 위계 순서. WI는 항목이 없다 */
   outline_items: OutlineItem[];
+  /** 문서가 하위 항목을 선언할 때 권하는 이름 - 선언을 받는 부모 항목의 키마다(표준 골격의 것이라 문서와 상관없다). 없으면 빈 객체 */
+  outline_suggestions: Record<string, string[]>;
   /** 문장이 든 자리만 실린다 - 배정 화면이 지울 수 없는 문서·단계의 지우기 단추를 잠근다 */
   sentence_counts?: PlaceCount[];
   /** 문장이나 칸 제목이 든 SOP 칸만 실린다 - N/A 칸 상태 표가 N/A로 둘 수 없는 칸을 가린다 */
@@ -700,6 +702,27 @@ export function clearNaSlot(bundleId: number, targetDocId: number, slotKey: stri
 
 export function renameWiStep(bundleId: number, targetDocId: number, stepNo: number, title: string): Promise<ToBe> {
   return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/steps/${stepNo}`, { method: "PATCH", body: JSON.stringify({ title }) });
+}
+
+// SOP가 선언하는 골격 항목(6장 절차 · 9장 부록 · 5장 범주) - 한 번에 하나씩 쓰고 새 목록이 돌아온다(revision을 보내지 않는다)
+/** 골격 항목 고치기 - 보낸 칸만 바뀐다. position은 같은 부모의 항목들 안에서의 자리(0부터). 키는 그대로이고 번호만 따라간다 */
+export interface OutlineItemPatch {
+  title_en?: string;
+  title_ko?: string;
+  position?: number;
+}
+
+/** 부모 항목 아래에 항목 하나를 선언한다 - 끝자리에 놓이고 키는 서버가 정한다 */
+export function addOutlineItem(bundleId: number, targetDocId: number, parentKey: string, titleEn: string, titleKo?: string): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/outline`, { method: "POST", body: JSON.stringify({ parent_key: parentKey, title_en: titleEn, title_ko: titleKo }) });
+}
+
+export function patchOutlineItem(bundleId: number, targetDocId: number, key: string, patch: OutlineItemPatch): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/outline/${encodeURIComponent(key)}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+export function removeOutlineItem(bundleId: number, targetDocId: number, key: string): Promise<ToBe> {
+  return apiFetch<ToBe>(`/bundles/${bundleId}/tobe/docs/${targetDocId}/outline/${encodeURIComponent(key)}`, { method: "DELETE" });
 }
 
 // 새 문서 목록 AI 읽기 - 템플릿에 맞지 않는 계획 파일이나 붙여 넣은 글에서 AI가 목록을 읽어 제안한다. AI는 목록에 쓰지 않는다
