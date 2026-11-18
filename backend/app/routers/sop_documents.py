@@ -50,6 +50,14 @@ from app.sop.errors import check_revision, raise_rule
 from app.sop.excel_export import build_export_file_name
 from app.sop.events import record_event
 from app.sop.ingest import get_max_file_bytes, ingest_upload
+from app.sop.numbering import (
+    NUMBER_TYPED,
+    NUMBERED_KINDS,
+    get_content_start,
+    get_hidden_len,
+    get_number,
+    has_number_ranges,
+)
 from app.sop.membership import BundleContext, ensure_editable, lock_bundle, require_bundle_role
 from app.sop.models import (
     CaptionRef,
@@ -241,6 +249,17 @@ class UnitRefDetailOut(BaseModel):
     suggested_text: str | None = None
 
 
+class ViewNumberOut(BaseModel):
+    """문단 번호 칸(numbering.py) — 값·내용 경계는 서버가 정하고 화면은 읽기만 한다."""
+
+    value: str | None  # 번호 칸에 보일 값 — 사람이 고친 값, 없으면 읽은 값(자동 번호·번호 칸). 없으면 null
+    read: str | None  # 추출기가 읽은 값 — 타자로 친 번호는 번호로 삼기 전에도 여기 있다
+    source: str | None  # auto | typed | cell
+    is_set: bool  # 사람이 고쳤다(번호 없음 포함)
+    content_start: int  # text에서 내용이 시작하는 자리 — 번호가 번호 칸으로 갔으면 그 뒤, 아니면 0
+    typed_len: int  # 번호로 삼을 수 있는 글 앞 타자 번호의 글자 수 — 없거나 이미 번호면 0
+
+
 class ViewUnitOut(BaseModel):
     id: int
     display_id: str
@@ -248,6 +267,8 @@ class ViewUnitOut(BaseModel):
     spans: list[tuple[int, int, int]]
     text: str
     lang: str
+    # 번호 칸이 없는 단위(그림·표·행·캡션)는 null
+    number: ViewNumberOut | None
     table_id: int | None
     row_index: int | None
     group_unit_id: int | None
@@ -305,6 +326,8 @@ class ViewEditsOut(BaseModel):
 class DocumentViewOut(BaseModel):
     document: DocumentBase
     extraction: ExtractionOut | None
+    # 추출이 번호 범위 신호를 남겼다(추출기 5부터) — 거짓이면 화면이 옛 방식(절 첫 줄의 번호만 가림)으로 그린다
+    has_number_ranges: bool
     tables: list[ViewTableOut]
     blocks: list[ViewBlockOut]
     part_groups: list[ViewPartGroupOut]
@@ -370,8 +393,8 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
     edits = ViewEditsOut(can_undo="applied" in edit_states, can_redo="undone" in edit_states)
     if extraction is None:  # 받지 않았거나 추출에 실패한 문서
         return DocumentViewOut(
-            document=document_out, extraction=None, tables=[], blocks=[], part_groups=[], units=[], pairs=[],
-            edits=edits,
+            document=document_out, extraction=None, has_number_ranges=False, tables=[], blocks=[], part_groups=[],
+            units=[], pairs=[], edits=edits,
         )
     tables = await session.scalars(
         select(SourceTable).where(SourceTable.extraction_id == extraction.id).order_by(SourceTable.table_index)
@@ -432,6 +455,9 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
     return DocumentViewOut(
         document=document_out,
         extraction=extraction,
+        has_number_ranges=has_number_ranges(
+            await session.scalar(select(Extraction.extractor_version).where(Extraction.id == extraction.id)) or ""
+        ),
         tables=[ViewTableOut.model_validate(table) for table in tables],
         blocks=blocks,
         part_groups=[
@@ -452,6 +478,7 @@ async def build_document_view(session: AsyncSession, document: Document) -> Docu
                 spans=unit.spans,
                 text=unit.text,
                 lang=unit.lang,
+                number=_to_number_out(unit),
                 table_id=unit.table_id,
                 row_index=unit.row_index,
                 group_unit_id=unit.group_unit_id,
@@ -699,6 +726,17 @@ async def get_unit_ref(
         else None
     )
     return UnitRefDetailOut(state=state.state, number=state.number, equis=equis, suggested_text=suggested)
+
+
+def _to_number_out(unit: Unit) -> ViewNumberOut | None:
+    if unit.kind not in NUMBERED_KINDS:
+        return None
+    hidden = get_hidden_len(unit)
+    is_typed_text = unit.number_source == NUMBER_TYPED and not hidden and unit.number_set is None
+    return ViewNumberOut(
+        value=get_number(unit), read=unit.number_read, source=unit.number_source, is_set=unit.number_set is not None,
+        content_start=get_content_start(unit.text, hidden), typed_len=unit.number_len if is_typed_text else 0,
+    )
 
 
 async def _lock_editable_document(

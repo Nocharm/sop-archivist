@@ -18,6 +18,7 @@ from app.sop.models import (
     UnitPair,
     UnitPairMember,
 )
+from app.sop.numbering import build_number_columns
 from app.sop.segment import (
     NEUTRAL,
     BlockView,
@@ -58,6 +59,7 @@ async def create_initial_units(session: AsyncSession, document: Document, extrac
         select(
             SourceBlock.id, SourceBlock.seq, SourceBlock.kind, SourceBlock.part, SourceBlock.text,
             SourceBlock.heading_level, SourceBlock.flags, SourceBlock.table_id, SourceBlock.row_index,
+            SourceBlock.signals,
         )
         .where(SourceBlock.extraction_id == extraction.id)
         .order_by(SourceBlock.seq)
@@ -110,12 +112,14 @@ def _build_unit_rows(
     blocks = [BlockView(*row) for row in block_rows]
     drafts = build_unit_drafts(blocks, [TableView(*row) for row in table_rows], layout, split_lines=split_lines)
     block_texts = {block.id: block.text for block in blocks}
+    signals = {block.id: block.signals for block in blocks if block.signals}
     rows = [
         {
             "extraction_id": extraction_id, "local_no": local_no, "kind": draft.kind,
             "spans": [list(span) for span in draft.spans], "text": build_unit_text(draft.spans, block_texts),
             "lang": draft.lang, "table_id": draft.table_id, "row_index": draft.row_index,
             "pos_seq": draft.pos_seq, "pos_start": draft.pos_start,
+            **build_number_columns(draft.kind, draft.spans, signals, block_texts),
         }
         for local_no, draft in enumerate(drafts, start=1)
     ]

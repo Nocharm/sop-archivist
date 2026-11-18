@@ -110,6 +110,11 @@ class UnitInfo:
     # 자리 블록 — 첫 범위의 블록, 범위가 없는 표·행·캡션 없는 그림은 자리(pos_seq)의 블록(R18)
     block_id: int
     spans: tuple[tuple[int, int, int], ...] = ()  # (블록 id, 시작, 끝) — 표·그림 참조 자리를 덮는 단위를 찾는다
+    # 문단 번호 열(units.number_*, numbering.py가 읽는다) — 결과물 A의 위치·원문 칸이 쓴다
+    number_read: str | None = None
+    number_source: str | None = None
+    number_len: int = 0
+    number_set: str | None = None
 
 
 @dataclass(frozen=True)
@@ -281,6 +286,8 @@ async def load_bundle_snapshot(session: AsyncSession, bundle_id: int, *, include
             row_index=unit.row_index, order_key=build_unit_order_key(document, unit),
             block_id=unit.spans[0][0] if unit.spans else block_by_seq[(unit.extraction_id, unit.pos_seq)],
             spans=tuple((block_id, start, end) for block_id, start, end in unit.spans),
+            number_read=unit.number_read, number_source=unit.number_source, number_len=unit.number_len,
+            number_set=unit.number_set,
         )
     caption_refs = tuple(
         CaptionRefInfo(

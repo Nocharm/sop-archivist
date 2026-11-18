@@ -357,6 +357,12 @@ def _insert_old_bundle(conn: Any) -> dict[str, int]:
             "figure_target_id": figure_target_id}
 
 
+_UNIT_NUMBER_COLUMNS = {
+    "number_read": "VARCHAR(40)", "number_source": "VARCHAR(5)", "number_len": "INTEGER NOT NULL DEFAULT 0",
+    "number_set": "VARCHAR(40)",
+}
+
+
 def _read_outputs(db_path: pathlib.Path) -> tuple[Any, list[Any], list[list[str]]]:
     """앱 코드로 읽은 검토 조건·결과물 C 항목·Excel C 시트 글."""
     import asyncio
@@ -383,6 +389,11 @@ def _read_outputs(db_path: pathlib.Path) -> tuple[Any, list[Any], list[list[str]
                 ]
                 for table in created:
                     await conn.run_sync(table.create)
+                # 단위의 번호 열(0026)도 같다 — 스냅숏이 단위 행을 통째로 읽는다
+                unit_columns = {row[1] for row in await conn.execute(text("PRAGMA table_info(units)"))}
+                added = [name for name in _UNIT_NUMBER_COLUMNS if name not in unit_columns]
+                for name in added:
+                    await conn.execute(text(f"ALTER TABLE units ADD COLUMN {name} {_UNIT_NUMBER_COLUMNS[name]}"))
             try:
                 async with AsyncSession(engine) as session:
                     return await load_bundle_snapshot(session, 1)
@@ -390,6 +401,8 @@ def _read_outputs(db_path: pathlib.Path) -> tuple[Any, list[Any], list[list[str]
                 async with engine.begin() as conn:
                     for table in created:
                         await conn.run_sync(table.drop)
+                    for name in added:
+                        await conn.execute(text(f"ALTER TABLE units DROP COLUMN {name}"))
         finally:
             await engine.dispose()
 
