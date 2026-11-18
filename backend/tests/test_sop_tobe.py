@@ -36,6 +36,11 @@ from tests.sop_helpers import (
     upload,
 )
 from tests.test_sop_numbering import PAIR_SLOT, _setup_pairs
+from tests.test_sop_outline_admin import _get_items as _get_standard_items
+from tests.test_sop_outline_admin import _put as _put_standard
+from tests.test_sop_outline_admin import (
+    restore_outline_standard,  # noqa: F401 -- 픽스처는 usefixtures가 이름으로 찾는다
+)
 from tests.test_sop_slot_heading import _link_headings, _setup
 
 pytestmark = pytest.mark.usefixtures("clean_sop")
@@ -725,6 +730,66 @@ def test_import_refuses_to_drop_a_procedure_with_lines(client: TestClient) -> No
         "code": "slot_has_targets", "slots": [{"doc_code": "SOP-NEW", "slot_key": "procedures.p1"}],
     }
     assert _get_tobe(client, fx.bundle_id) == before
+
+
+@pytest.mark.usefixtures("restore_outline_standard")
+def test_import_refuses_reordering_standard_procedures(client: TestClient) -> None:
+    # Arrange — 표준에 절차 둘(Alpha · Beta)이 든 SOP
+    items = _get_standard_items(client)
+    at = next(index for index, item in enumerate(items) if item["key"] == "procedures") + 1
+    extra = [
+        {**items[at - 1], "key": f"procedures.{name.lower()}", "title_en": name, "kind": "general", "suggestions": []}
+        for name in ("Alpha", "Beta")
+    ]
+    assert _put_standard(client, items[:at] + extra + items[at:]).status_code == 200
+    bundle_id = create_bundle(client)["id"]
+    put_tobe(client, bundle_id, [_doc("SOP-1")])
+    before = _get_tobe(client, bundle_id)
+
+    # Act — 표준 절차끼리 순서를 바꾼 시트
+    swapped = _build_template_with_procedures(client, bundle_id, [["SOP-1", 1, "Beta", None], ["SOP-1", 2, "Alpha", None]])
+    response = _post_import(client, bundle_id, swapped)
+
+    # Assert — API의 순서 바꾸기와 같이 거절한다. 선언 절차를 그 사이에 두는 것은 된다
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == {"code": "outline_standard_item", "doc_code": "SOP-1", "key": "procedures.beta"}
+    assert _get_tobe(client, bundle_id) == before
+    between = _build_template_with_procedures(
+        client, bundle_id, [["SOP-1", 1, "Alpha", None], ["SOP-1", 2, "Cleaning", None], ["SOP-1", 3, "Beta", "베타"]],
+    )
+    imported = _post_import(client, bundle_id, between)
+    assert imported.status_code == 200, imported.text
+    assert [row[2:] for row in _list_procedures(imported.json(), "SOP-1")] == [
+        ("Alpha", ""), ("Cleaning", ""), ("Beta", "베타"),  # 표준 절차의 한글 제목은 바꿀 수 있다
+    ]
+
+
+@pytest.mark.usefixtures("restore_outline_standard")
+def test_template_leaves_out_removed_procedures(client: TestClient) -> None:
+    # 뺀 표준 절차는 To-Be 목록에 되살리게 실려 오지만 시트에는 없다 — 그대로 가져와도 새 선언 절차로 돌아오지 않는다
+    items = _get_standard_items(client)
+    at = next(index for index, item in enumerate(items) if item["key"] == "procedures") + 1
+    extra = [
+        {**items[at - 1], "key": f"procedures.{name.lower()}", "title_en": name, "kind": "general", "suggestions": []}
+        for name in ("Alpha", "Beta")
+    ]
+    assert _put_standard(client, items[:at] + extra + items[at:]).status_code == 200
+    bundle_id = create_bundle(client)["id"]
+    sop_id = put_tobe(client, bundle_id, [_doc("SOP-1")]).json()["docs"][0]["id"]
+    removed = client.patch(
+        f"/api/bundles/{bundle_id}/tobe/docs/{sop_id}/outline/procedures.alpha",
+        json={"is_removed": True, "reason": "Synthetic: not used"}, headers=AUTHOR,
+    )
+    assert removed.status_code == 200, removed.text
+    before = _get_tobe(client, bundle_id)
+
+    template = client.get(f"/api/bundles/{bundle_id}/tobe/template.xlsx", headers=AUTHOR)
+
+    workbook = load_workbook(BytesIO(template.content), data_only=True)
+    assert [tuple(row) for row in workbook[PROCEDURE_SHEET].iter_rows(values_only=True)] == [
+        PROCEDURE_HEADER, ("SOP-1", 1, "Beta", None),
+    ]
+    assert _post_import(client, bundle_id, template.content).json() == before
 
 
 def test_import_without_sheet_leaves_outline(client: TestClient) -> None:

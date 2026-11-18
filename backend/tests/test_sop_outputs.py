@@ -2223,3 +2223,52 @@ def test_merged_sentence_with_a_detached_same_number_reference_is_left(client: T
     merged = _target_of(snap, first["id"])
     assert _codes(renum) == [("caption_ref_ambiguous", merged, first["id"])]
     assert merged not in renum.texts
+
+
+def test_empty_required_flag(client: TestClient) -> None:
+    # Arrange — 목적에만 줄이 있고, 정의는 이름을 바꿨고(표준과 다름), 책임은 N/A인 SOP
+    bundle_id = create_bundle(client, is_synthetic=True)["id"]
+    sop = {"code": "SOP-E", "title": "Synthetic SOP", "doc_type": "sop", "parent_code": None}
+    saved = put_tobe(client, bundle_id, [sop], na_slots=[{"code": "SOP-E", "slot_key": "responsibilities", "reason": "Synthetic"}])
+    sop_id = saved.json()["docs"][0]["id"]
+    uploaded = upload(client, bundle_id, build_docx(p(KO_KEEP)), "SYNTHETIC_OLD-E_Empty.docx")
+    assign_as_is(client, bundle_id, find_unit(get_view(client, bundle_id, uploaded.json()["id"]), KO_KEEP), sop_id, slot_key="purpose")
+    renamed = client.patch(
+        f"/api/bundles/{bundle_id}/tobe/docs/{sop_id}/outline/definitions",
+        json={"title_en": "Terms", "reason": "Synthetic: house style"}, headers=AUTHOR,
+    )
+    assert renamed.status_code == 200, renamed.text
+
+    # Act
+    c_doc = next(doc for doc in _get_output(client, bundle_id, "outputs/c")["docs"] if doc["target_doc_id"] == sop_id)
+    composed = _get_output(client, bundle_id, f"outputs/c/docs/{sop_id}", "en")
+
+    # Assert — 빈 필수 절과 표준과 다름은 결과물 C와 New 칸(쓰는 중 문서)이 같은 값이다
+    flags = {section["location_key"]: (section["is_empty_required"], section["deviation_reason"]) for section in c_doc["sections"]}
+    assert flags["purpose"] == (False, None)
+    assert flags["scope"] == (True, None)
+    assert flags["definitions"] == (True, "Synthetic: house style")
+    assert flags["responsibilities"] == (False, None)  # N/A는 비어 있음이 아니다
+    assert (flags["procedures"], flags["procedures.p1"]) == ((True, None), (True, None))
+    assert flags["document_relationships.work_instructions"] == (True, None)  # 자식 WI가 없는 자동 목록
+    assert "document_relationships.associated_documents.form" not in flags  # 빈 선택 항목은 절 자체가 없다
+    assert {
+        section["location_key"]: (section["is_empty_required"], section["deviation_reason"]) for section in composed["sections"]
+    } == flags
+
+    # 하위가 모두 N/A인 묶음 제목은 비어 있음이 아니다(7.1 아래 선택 항목 Form만 N/A로 둔 경우)
+    na_slots = [
+        {"code": "SOP-E", "slot_key": "responsibilities", "reason": "Synthetic"},
+        {"code": "SOP-E", "slot_key": "document_relationships.associated_documents.form", "reason": "Synthetic"},
+    ]
+    assert put_tobe(client, bundle_id, [sop], na_slots=na_slots).status_code == 200
+    c_doc = next(doc for doc in _get_output(client, bundle_id, "outputs/c")["docs"] if doc["target_doc_id"] == sop_id)
+    covered = {section["location_key"]: section["is_empty_required"] for section in c_doc["sections"]}
+    assert (covered["document_relationships.associated_documents"], covered["document_relationships"]) == (False, True)
+
+    # 자식 WI가 생기면 자동 목록과 그 묶음 제목은 비어 있지 않다
+    wi = {"code": "WI-E", "title": "Synthetic WI", "doc_type": "wi", "parent_code": "SOP-E"}
+    assert put_tobe(client, bundle_id, [sop, wi], na_slots=[{"code": "SOP-E", "slot_key": "responsibilities", "reason": "Synthetic"}]).status_code == 200
+    c_doc = next(doc for doc in _get_output(client, bundle_id, "outputs/c")["docs"] if doc["target_doc_id"] == sop_id)
+    after = {section["location_key"]: section["is_empty_required"] for section in c_doc["sections"]}
+    assert (after["document_relationships.work_instructions"], after["document_relationships"]) == (False, False)

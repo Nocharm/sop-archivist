@@ -152,6 +152,7 @@ def test_add_procedure_gets_next_number(client: TestClient) -> None:
         "title_en": "Cleaning", "title_ko": "세척", "label": "Procedures › Cleaning", "kind": "general",
         "is_required": True, "default_style": "numbered", "is_assignable": True, "counts_lines": True,
         "shows_number": True, "origin": "declared", "is_removed": False, "deviation_reason": None,
+        "is_deviation": False,
     }
     # 목록의 다른 한 줄 쓰기와 같은 기록이다 — 문서를 만든 저장과 이 더하기
     events = client.get(f"/api/bundles/{bundle_id}/events", headers=AUTHOR).json()
@@ -189,12 +190,16 @@ def test_add_appendix_label(client: TestClient) -> None:
     assert (second["number"], second["label"]) == ("2", "Appendix 2. Rotor table")
 
 
-@pytest.mark.parametrize("parent_key", ["purpose", "document_relationships", "procedures.p1", "no_such_item"])
+@pytest.mark.parametrize(
+    "parent_key", ["purpose", "procedures.p1", "document_relationships.work_instructions", "no_such_item"]
+)
 def test_parent_must_be_declarable(client: TestClient, parent_key: str) -> None:
+    # 일반 항목·자동 목록 아래에는 사유가 있어도 항목을 두지 않는다(직접 줄 번호와 하위 번호가 겹친다 — 표준의 children_under_leaf와 같다)
     bundle_id, sop_id, _doc_id = _create_sop_bundle(client, BODY)
     before = _get_tobe(client, bundle_id)
 
-    response = _add(client, bundle_id, sop_id, parent_key, "Synthetic item")
+    body = {"parent_key": parent_key, "title_en": "Synthetic item", "reason": "Synthetic: needed"}
+    response = client.post(_url(bundle_id, sop_id), json=body, headers=AUTHOR)
 
     _assert_rejected(response, 422, "outline_parent_not_declarable", doc_code=SOP, parent_key=parent_key)
     assert _get_tobe(client, bundle_id) == before
@@ -416,14 +421,15 @@ def test_patch_that_changes_nothing_keeps_the_revision(client: TestClient) -> No
         assert response.json() == before
 
 
-def test_standard_item_cannot_be_renamed_or_removed_yet(client: TestClient) -> None:
+def test_standard_item_cannot_be_reordered_or_deleted(client: TestClient) -> None:
+    # 표준 항목은 순서를 바꾸지 못하고, 빼기는 DELETE가 아니라 PATCH is_removed(사유)다
     bundle_id, sop_id, _doc_id = _create_sop_bundle(client, BODY)
     before = _get_tobe(client, bundle_id)
 
     for key in ("purpose", "procedures", "document_relationships.references"):
         for response in (
-            _patch(client, bundle_id, sop_id, key, title_en="Synthetic title"),
             _patch(client, bundle_id, sop_id, key, position=0),
+            _patch(client, bundle_id, sop_id, key, title_en="Synthetic title", reason="Synthetic", position=1),
             _remove(client, bundle_id, sop_id, key),
         ):
             _assert_rejected(response, 422, "outline_standard_item", doc_code=SOP, key=key)
@@ -501,3 +507,207 @@ def test_removed_item_keeps_a_retired_row(client: TestClient) -> None:
         return sorted((key, is_removed) for key, is_removed in rows)
 
     assert run_in_session(_load) == [("procedures.n1", True), ("procedures.p1", False)]
+
+
+# ── 벗어남(표준과 다름) ───────────────────────────────────────────────────────
+
+
+def _find_item(tobe: dict, key: str) -> dict:
+    return next(item for item in tobe["outline_items"] if item["key"] == key)
+
+
+def _numbers(tobe: dict) -> dict[str, str | None]:
+    """최상위 항목 → 번호(뺀 항목 포함)."""
+    return {item["key"]: item["number"] for item in tobe["outline_items"] if item["parent_key"] is None}
+
+
+def _deviation(item: dict) -> tuple[bool, str | None]:
+    return item["is_deviation"], item["deviation_reason"]
+
+
+def test_custom_item_needs_reason(client: TestClient) -> None:
+    bundle_id, sop_id, _doc_id = _create_sop_bundle(client, BODY)
+    before = _get_tobe(client, bundle_id)
+
+    # 묶음 제목(group) 아래와 최상위는 사용자 항목이라 사유가 있어야 한다
+    for parent_key in ("document_relationships", ""):
+        response = _add(client, bundle_id, sop_id, parent_key, "Synthetic item")
+
+        _assert_rejected(response, 422, "deviation_reason_required", doc_code=SOP, parent_key=parent_key)
+    assert _get_tobe(client, bundle_id) == before
+
+    under_group = client.post(
+        _url(bundle_id, sop_id),
+        json={"parent_key": "document_relationships", "title_en": "Audit Trail", "reason": "Synthetic: site rule"},
+        headers=AUTHOR,
+    )
+    top = client.post(
+        _url(bundle_id, sop_id), json={"parent_key": "", "title_en": "Glossary", "reason": "Synthetic: long list"},
+        headers=AUTHOR,
+    )
+
+    assert (under_group.status_code, top.status_code) == (201, 201), (under_group.text, top.text)
+    after = top.json()
+    custom = _find_item(after, "document_relationships.n1")
+    assert (custom["number"], custom["origin"], custom["kind"], custom["default_style"]) == (
+        "7.4", "custom", "general", "bullet",
+    )
+    assert _deviation(custom) == (True, "Synthetic: site rule")
+    glossary = _find_item(after, "n1")
+    assert (glossary["number"], glossary["parent_key"], glossary["is_assignable"]) == ("10", None, True)
+    assert _deviation(glossary) == (True, "Synthetic: long list")
+    # 사용자 항목은 이미 표준 밖이라 이름을 바꿔도 사유가 필요 없고, 사유만 고칠 수 있고, 빼면 뺀 표시로 남는다
+    assert _patch(client, bundle_id, sop_id, "n1", title_en="Terms").status_code == 200
+    edited = _patch(client, bundle_id, sop_id, "n1", reason="Synthetic: edited")
+    assert _deviation(_find_item(edited.json(), "n1")) == (True, "Synthetic: edited")
+    removed = _remove(client, bundle_id, sop_id, "n1")
+    assert removed.status_code == 200, removed.text
+    assert all(item["key"] != "n1" for item in removed.json()["outline_items"])
+
+
+def test_declaring_is_not_a_deviation(client: TestClient) -> None:
+    bundle_id, sop_id, _doc_id = _create_sop_bundle(client, BODY)
+
+    # 하위를 선언하는 항목 아래는 사유를 보내도 선언이다(사유는 남기지 않는다)
+    response = client.post(
+        _url(bundle_id, sop_id), json={"parent_key": "procedures", "title_en": "Cleaning", "reason": "Synthetic"},
+        headers=AUTHOR,
+    )
+
+    assert response.status_code == 201, response.text
+    item = _find_item(response.json(), "procedures.n1")
+    assert (item["origin"], *_deviation(item)) == ("declared", False, None)
+
+
+def test_rename_standard_needs_reason(client: TestClient) -> None:
+    bundle_id, sop_id, _doc_id = _create_sop_bundle(client, BODY)
+    before = _get_tobe(client, bundle_id)
+
+    refused = _patch(client, bundle_id, sop_id, "purpose", title_en="Aim")
+
+    _assert_rejected(refused, 422, "deviation_reason_required", doc_code=SOP, key="purpose")
+    assert _get_tobe(client, bundle_id) == before
+
+    renamed = _patch(client, bundle_id, sop_id, "purpose", title_en="Aim", reason="Synthetic: house style")
+    assert renamed.status_code == 200, renamed.text
+    item = _find_item(renamed.json(), "purpose")
+    assert (item["title_en"], item["number"], *_deviation(item)) == ("Aim", "1", True, "Synthetic: house style")
+    # 사유만 고친다
+    edited = _patch(client, bundle_id, sop_id, "purpose", reason="Synthetic: edited")
+    assert _deviation(_find_item(edited.json(), "purpose")) == (True, "Synthetic: edited")
+    # 한글 제목은 벗어남이 아니다 — 사유 없이 바꾼다
+    korean = _patch(client, bundle_id, sop_id, "scope", title_ko="범위")
+    assert korean.status_code == 200, korean.text
+    assert _deviation(_find_item(korean.json(), "scope")) == (False, None)
+    # 표준 제목으로 되돌리면 사유가 지워진다(사유를 보내지 않아도 된다)
+    back = _patch(client, bundle_id, sop_id, "purpose", title_en="Purpose")
+    assert back.status_code == 200, back.text
+    assert _deviation(_find_item(back.json(), "purpose")) == (False, None)
+
+
+def test_remove_required_needs_reason_and_shifts_numbers(client: TestClient) -> None:
+    bundle_id, sop_id, doc_id = _create_sop_bundle(client, BODY)
+    base = f"/api/bundles/{bundle_id}/tobe/docs/{sop_id}/na"
+    assert client.put(f"{base}/definitions", json={"reason": "Synthetic: none"}, headers=AUTHOR).status_code == 200
+    before = _get_tobe(client, bundle_id)
+
+    refused = _patch(client, bundle_id, sop_id, "definitions", is_removed=True)
+
+    _assert_rejected(refused, 422, "deviation_reason_required", doc_code=SOP, key="definitions")
+    assert _get_tobe(client, bundle_id) == before
+
+    removed = _patch(client, bundle_id, sop_id, "definitions", is_removed=True, reason="Synthetic: no terms")
+
+    assert removed.status_code == 200, removed.text
+    after = removed.json()
+    assert after["revision"] == before["revision"] + 1
+    assert after["na_slots"] == []  # 빠진 항목의 N/A도 지운다
+    # 빠진 항목은 번호를 세지 않아 뒤 장이 당겨지고, 목록에는 되살리게 제자리에 남는다
+    assert _numbers(after) == {
+        "purpose": "1", "scope": "2", "definitions": None, "responsibilities": "3", "general_requirements": "4",
+        "procedures": "5", "document_relationships": "6", "attachments": "7", "appendices": "8",
+    }
+    item = _find_item(after, "definitions")
+    assert (item["is_removed"], item["is_assignable"], *_deviation(item)) == (True, False, True, "Synthetic: no terms")
+    # 줄이 있는 항목은 뺄 수 없고, 하위까지 본다
+    view = get_view(client, bundle_id, doc_id)
+    assign_as_is(client, bundle_id, find_unit(view, SECOND), sop_id, slot_key="procedures.p1")
+    blocked = _patch(client, bundle_id, sop_id, "procedures", is_removed=True, reason="Synthetic")
+    _assert_rejected(blocked, 409, "slot_has_targets", slots=[{"doc_code": SOP, "slot_key": "procedures"}])
+    # 묶음 제목을 빼면 하위까지 함께 빠진다
+    group = _patch(client, bundle_id, sop_id, "document_relationships", is_removed=True, reason="Synthetic")
+    assert group.status_code == 200, group.text
+    assert not [item for item in group.json()["outline_items"] if item["key"].startswith("document_relationships.")]
+
+
+def test_restore_clears_reason(client: TestClient) -> None:
+    bundle_id, sop_id, _doc_id = _create_sop_bundle(client, BODY)
+    assert _patch(client, bundle_id, sop_id, "definitions", title_en="Terms", reason="Synthetic: rename").status_code == 200
+    assert _patch(client, bundle_id, sop_id, "definitions", is_removed=True, reason="Synthetic: none").status_code == 200
+    # 빠진 항목은 되살리기 말고는 고칠 것이 없다
+    _assert_rejected(_patch(client, bundle_id, sop_id, "definitions", title_en="Other", reason="Synthetic"), 404,
+                     "outline_item_not_found", doc_code=SOP, key="definitions")
+
+    restored = _patch(client, bundle_id, sop_id, "definitions", is_removed=False)
+
+    assert restored.status_code == 200, restored.text
+    item = _find_item(restored.json(), "definitions")
+    # 되살리면 표준 항목 그대로 — 사유가 지워지고 이름도 표준으로, 번호가 제자리
+    assert (item["is_removed"], item["title_en"], item["number"], *_deviation(item)) == (
+        False, "Definitions", "3", False, None,
+    )
+    assert _numbers(restored.json())["responsibilities"] == "4"
+    # 빠지지 않은 항목에 되살리기를 보내면 바뀌는 것이 없다
+    same = _patch(client, bundle_id, sop_id, "definitions", is_removed=False)
+    assert same.json()["revision"] == restored.json()["revision"]
+
+
+def test_na_is_not_a_deviation(client: TestClient) -> None:
+    bundle_id, sop_id, _doc_id = _create_sop_bundle(client, BODY)
+    base = f"/api/bundles/{bundle_id}/tobe/docs/{sop_id}/na"
+    assert client.put(f"{base}/scope", json={"reason": "Synthetic: none"}, headers=AUTHOR).status_code == 200
+    _added(client, bundle_id, sop_id, "appendices", "Alarm list")
+
+    # 선택 항목(7.1.x)을 빼는 것은 사유가 필요 없고 벗어남이 아니다
+    optional = "document_relationships.associated_documents.form"
+    removed = _patch(client, bundle_id, sop_id, optional, is_removed=True)
+
+    assert removed.status_code == 200, removed.text
+    after = removed.json()
+    assert _find_item(after, optional)["is_removed"] is True
+    assert [item["key"] for item in after["outline_items"] if item["is_deviation"]] == []
+
+
+def test_restored_item_returns_to_its_place(client: TestClient) -> None:
+    # 뺀 동안 더하거나 옮긴 사용자 항목이 뺀 표준 항목의 자리를 차지하지 않는다
+    bundle_id, sop_id, _doc_id = _create_sop_bundle(client, BODY)
+    reason = {"reason": "Synthetic: not used"}
+    assert _patch(client, bundle_id, sop_id, "document_relationships.references", is_removed=True, **reason).status_code == 200
+    assert _patch(client, bundle_id, sop_id, "definitions", is_removed=True, **reason).status_code == 200
+    for parent_key, title in (("document_relationships", "Audit Trail"), ("", "Glossary")):
+        body = {"parent_key": parent_key, "title_en": title, **reason}
+        assert client.post(_url(bundle_id, sop_id), json=body, headers=AUTHOR).status_code == 201
+    assert _patch(client, bundle_id, sop_id, "n1", position=2).status_code == 200  # Glossary를 Scope 뒤로(빠진 Definitions 자리 앞)
+
+    for key in ("document_relationships.references", "definitions"):
+        assert _patch(client, bundle_id, sop_id, key, is_removed=False).status_code == 200
+
+    after = _get_tobe(client, bundle_id)
+    numbers = {item["key"]: item["number"] for item in after["outline_items"]}
+    assert (numbers["document_relationships.references"], numbers["document_relationships.n1"]) == ("8.3", "8.4")  # Glossary가 장 하나
+    assert [item["key"] for item in after["outline_items"] if item["parent_key"] is None][:4] == [
+        "purpose", "scope", "n1", "definitions",
+    ]
+
+
+def test_restore_refuses_a_title_taken_meanwhile(client: TestClient) -> None:
+    bundle_id, sop_id, _doc_id = _create_sop_bundle(client, BODY)
+    assert _patch(client, bundle_id, sop_id, "definitions", is_removed=True, reason="Synthetic").status_code == 200
+    body = {"parent_key": "", "title_en": "definitions", "reason": "Synthetic: own list"}
+    assert client.post(_url(bundle_id, sop_id), json=body, headers=AUTHOR).status_code == 201
+    before = _get_tobe(client, bundle_id)
+
+    response = _patch(client, bundle_id, sop_id, "definitions", is_removed=False)
+
+    _assert_rejected(response, 422, "duplicate_outline_title", doc_code=SOP, parent_key=None)
+    assert _get_tobe(client, bundle_id) == before

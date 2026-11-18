@@ -25,9 +25,12 @@ from app.sop.models import (
 )
 from app.sop.outline import (
     KIND_AUTO_LIST,
+    LABEL_SEPARATOR,
     DocOutline,
+    OutlineItemInfo,
     copy_standard_to_doc,
     get_parent_key,
+    is_deviation,
     list_emitted_keys,
     load_doc_outlines,
     load_standard_outline,
@@ -113,8 +116,10 @@ class OutlineItemOut(BaseModel):
     counts_lines: bool  # 직접 놓인 줄에 번호를 세는가
     shows_number: bool  # 제목 앞에 번호를 따로 적는가 — 라벨에 번호가 든 부록("Appendix 1. 이름")만 거짓
     origin: OutlineOrigin
+    # 뺀 표준 항목 — 목록에 제자리로 실려 화면이 되살리기를 그린다(번호 없음, 줄을 받지 않음). 하위는 함께 빠져 실리지 않는다
     is_removed: bool
-    deviation_reason: str | None
+    deviation_reason: str | None  # 벗어난 사유 — 사용자 항목, 이름을 바꾸거나 필수인데 뺀 표준 항목
+    is_deviation: bool  # 표준과 다름(outline.is_deviation) — 선택 항목을 뺀 것·N/A·선언은 아니다
 
 
 class ToBeOut(BaseModel):
@@ -127,19 +132,30 @@ class ToBeOut(BaseModel):
 
 
 def _build_outline_items(code: str, outline: DocOutline, numbers: dict[str, str | None]) -> list[OutlineItemOut]:
-    """골격 사본의 항목 전부 — 번호(numbers)는 결과물이 내보낼 항목끼리 센 값이라, 비어 있는 선택 항목과 번호 없는 항목(범주)은 None이다."""
+    """골격 사본의 항목 전부와 뺀 표준 항목 — 번호(numbers)는 결과물이 내보낼 항목끼리 센 값이라, 비어 있는 선택 항목과 번호 없는 항목(범주),
+    뺀 항목은 None이다."""
     return [
         OutlineItemOut(
             code=code, key=item.key, parent_key=get_parent_key(item.key), level=outline.get_level(item.key),
             number=numbers.get(item.key), title_en=item.title_en, title_ko=item.title_ko,
-            label=outline.get_label(item.key, numbers), kind=item.kind, is_required=item.is_required,
+            label=_get_listed_label(outline, item, numbers), kind=item.kind, is_required=item.is_required,
             default_style=item.default_style, is_assignable=outline.is_assignable(item.key),
             counts_lines=outline.counts_lines(item.key), shows_number=outline.shows_number(item.key),
             origin=item.origin, is_removed=item.is_removed,
-            deviation_reason=item.deviation_reason,
+            deviation_reason=item.deviation_reason, is_deviation=is_deviation(item),
         )
-        for item in outline.items
+        for item in outline.listed_items
     ]
+
+
+def _get_listed_label(outline: DocOutline, item: OutlineItemInfo, numbers: dict[str, str | None]) -> str:
+    """목록에 적는 라벨 — 뺀 항목은 골격에 없어 부모 라벨 뒤에 제 제목을 잇는다."""
+    if not item.is_removed:
+        return outline.get_label(item.key, numbers)
+    parent_key = get_parent_key(item.key)
+    if parent_key is None:
+        return item.title_en
+    return f"{outline.get_label(parent_key, numbers)}{LABEL_SEPARATOR}{item.title_en}"
 
 
 def _get_outline_position(outline: DocOutline, key: str, default: int) -> int:
