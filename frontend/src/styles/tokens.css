@@ -172,6 +172,20 @@
   --sheet-line-medium: #5F6368;
   --sheet-line-thin: #9AA0A6;
   --sheet-faint: #9AA0A6;
+  /* Sheet view marks - also theme-free, on the white paper. Accent / AI / warn are the light-theme hues so the sheet reads the same in dark mode. */
+  --sheet-accent: oklch(.45 .125 250);
+  --sheet-ai: oklch(.47 .165 305);
+  --sheet-warn: oklch(.50 .145 48);
+  --sheet-picked: color-mix(in oklab, var(--sheet-accent) 14%, var(--sheet-paper));
+  --sheet-group: color-mix(in oklab, var(--sheet-accent) 7%, var(--sheet-paper));
+  --sheet-tobe: color-mix(in oklab, var(--sheet-accent) 4%, var(--sheet-paper));
+  --sheet-band-asis: #EEF0F3;
+  --sheet-band-tobe: color-mix(in oklab, var(--sheet-accent) 16%, var(--sheet-paper));
+  --sheet-band-decision: color-mix(in oklab, var(--sheet-ai) 12%, var(--sheet-paper));
+  --sheet-band-tracking: #EEF0F3;
+  --sheet-band-ink: #3C4043;
+  --sheet-rail: #E3E5E8;
+  --sheet-rail-thumb: #9AA0A6;
 }
 
 /* Tokens only change here. Screens never branch on the theme. Light gets reviewed first, and the toggle ships after it. */

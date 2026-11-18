@@ -4,6 +4,10 @@
 
 ## 2026-11-18
 
+- **시트 보기 부품 + Export 미리보기 창(v1.1.32, `feat/sheet-view`, MD 2 S1 · MD 1 §10 브랜치 b)** — `SheetView`를 폭에 맞춘 한 장(열 비율 `fit_widths`, 칸 11px, 머리는 띄어쓰기에서만 감음)으로 바꾸고 스크롤바 대신 끌기 · 휠 · 글쇠로 옮긴다(`lib/sheet-pan.ts`, 셈은 `lib/sheet-view-model.ts`). 띠 · Status 칩 · To-be 칠 · 위치 막대 · 고른 줄/같은 무리 · 확정 전 덮어 그리기 · 목차 줄 접기는 미리보기 모델 값만 그린다(파일 모양은 그대로). Export 미리보기는 거의 전체 화면 창(`Modal` `sheet` + `subtitle`). 고른 줄 · 확정 전 값은 Assign Space 미리보기(브랜치 c)가 주고, 목차 표시는 MD 1 브랜치 7에서 생겨 이번에는 vitest로만 본다.
+  - 확인: pytest `test_sop_excel` 29 · vitest(시트 셋 + 설명서 · i18n) · lint · tsc. 스모크 `outputs: export preview …`는 써 두고 돌리지 않았다.
+  - 메인 세션 확인(dev v1.1.31을 합친 뒤): backend 2,900 · vitest 1,391, 전체 스모크 1,454 통과(실패 5는 전부터 흔들리는 단계), 대비 감사 통과, 레이아웃 감사 P1을 새 구조에 맞춰 1120 · 1920 통과(R2 · N1과 겹침 감사의 Assign New 칸 머리 2건은 dev에도 있는 것), Outputs 스모크 51 통과. 시트 띠 라벨은 영어 그대로(사용자 결정 2026-11-18).
+
 - **풀기 전환 부품(v1.1.31, `feat/unwrap-motion`, F10 바탕)** — `useUnwrapMotion`(`motion.tsx`) + `lib/unwrap-motion.ts`: 걷기 160 → 펼치기 520(시차 28, 최대 280) → 붙이기 200 ms, 토큰 `--dur-spread/attach`·`--stagger-*`, 움직임 줄이기는 토큰 0 + 바로 바꿈·번쩍, 긴 문서는 화면 안만. `useFlip`은 그대로. 쓰는 곳은 뒤 브랜치들.
 
 - **표준 골격(v1.1.30, `feat/outline` 스텝 1–6, 계획 `2026-11-17-template-fit-1-outline-plan.md`)** — SOP 칸을 코드 상수 15개에서 "관리자가 고치는 표준 골격 + 문서마다 사본"으로 바꾸고(Alembic `0022`–`0024`), 표준을 회사 SOP 템플릿 1–9장으로 했다. 순서는 먼저 15칸을 그대로 사본으로 옮겨 읽는 쪽만 바꾸고(동작 그대로) 그다음 내용을 바꿨다 — 키의 점 위계는 남겨 접두사로 부모를 찾는 코드가 그대로 산다.

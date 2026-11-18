@@ -4079,6 +4079,54 @@ await runStep("outputs: A, B, C and the Excel preview", {}, async ({ page, takeS
   await page.waitForFunction(() => document.querySelector('[data-testid="outputs-check-numbers"]')?.checked === false, null, { timeout: T });
 });
 
+// 시트 보기(MD 2 S1) - 폭에 맞춘 한 장이라 20번째 열 머리까지 틀 안에 보이고, 스크롤바 없이 끌면 본문 transform이 바뀐다.
+// 높이가 낮은 창(560px)에서 본다 - 반쯤 한 묶음의 A 시트가 창 높이에 다 들어가면 옮길 것이 없어 끌기를 확인할 수 없다. 목차 줄 펼침은 목차 표시(MD 1 브랜치 7) 뒤에 더한다.
+await runStep("outputs: export preview fits the sheet, drags and switches tabs", {}, async ({ page, takeShot }) => {
+  await page.setViewportSize({ width: 1280, height: 560 });
+  await page.goto(`${BASE}/bundles/${halfBundleId}/outputs`);
+  await wait(page, "outputs-export-open");
+  await page.locator('[data-testid="outputs-export-open"]').click();
+  await wait(page, "export-preview-sheet");
+  const fit = await page.evaluate(() => {
+    const frame = document.querySelector('[data-testid="export-preview-sheet"]').getBoundingClientRect();
+    const heads = [...document.querySelectorAll('[data-testid="export-preview-head"] td[data-head]')];
+    const last = heads.at(-1)?.getBoundingClientRect();
+    return {
+      count: heads.length,
+      lastText: heads.at(-1)?.textContent?.trim() ?? "",
+      inside: Boolean(last) && last.left >= frame.left - 1 && last.right <= frame.right + 1,
+      pageOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      scrollbars: [...document.querySelectorAll('[data-testid="export-preview-sheet"], [data-testid="export-preview-sheet"] *')].some((el) => ["auto", "scroll"].includes(getComputedStyle(el).overflowY) || ["auto", "scroll"].includes(getComputedStyle(el).overflowX)),
+    };
+  });
+  check("the preview draws all 20 column heads", fit.count === 20, JSON.stringify(fit));
+  check("the 20th column head (Checks) shows inside the sheet", fit.inside && fit.lastText === "Checks", JSON.stringify(fit));
+  check("the preview has no horizontal page overflow", !fit.pageOverflow);
+  check("the sheet has no scroll box", !fit.scrollbars);
+  check("the A sheet carries the column bands", (await page.locator('[data-testid="export-preview-head"] .sv-band').count()) === 4);
+  const frame = page.locator('[data-testid="export-preview-sheet"]');
+  check("the sheet is movable in a low window", (await frame.getAttribute("data-movable")) !== null);
+  const body = page.locator('[data-testid="export-preview-body"]');
+  const before = await body.evaluate((el) => el.style.transform);
+  const box = await frame.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height * 0.75);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height * 0.25, { steps: 6 });
+  await page.mouse.up();
+  const dragged = await body.evaluate((el) => el.style.transform);
+  check("dragging moves the sheet body", dragged !== before && /translate\(-?\d+(\.\d+)?px, -\d/.test(dragged), `${before} -> ${dragged}`);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, -2000);
+  await page.waitForFunction(() => document.querySelector('[data-testid="export-preview-body"]')?.style.transform === "translate(0px, 0px)", null, { timeout: T });
+  check("the wheel scrolls back to the top", true);
+  await takeShot("sop-outputs-preview-fit.png");
+  await page.locator('[data-testid="export-preview-tab-1"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="export-preview-tab-1"]')?.getAttribute("aria-pressed") === "true", null, { timeout: T });
+  check("switching to B Flow drops the A bands", (await page.locator('[data-testid="export-preview-head"] .sv-band').count()) === 0);
+  await page.keyboard.press("Escape");
+  await page.locator('[data-testid="export-preview"]').waitFor({ state: "detached", timeout: T });
+});
+
 // 템플릿 골격의 문장을 받지 않는 절(Order 화면의 C) - 하위만 묶는 절은 머리만, 7.2 Work Instructions는 그 SOP의 자식 WI가 읽기만 하는 줄로, 5장의 범주는 번호 없는 머리로 그린다.
 // 기대값은 서버 C에서 읽는다(자식 WI의 번호 · 제목, 절의 이름)
 await runStep("order: C draws a group as its heading only, the work-instruction list read-only and a category without a number", {}, async ({ page }) => {

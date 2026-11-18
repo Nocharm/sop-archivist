@@ -17,6 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 from openpyxl import Workbook, load_workbook
 from openpyxl.cell.cell import Cell
+from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 from PIL import Image
 from sqlalchemy import select
@@ -33,7 +34,14 @@ from app.sop.excel_export import (
 from app.sop.flow_image import KIND_COLORS, MAX_COLUMN_NODES, _limit_nodes, draw_flow_png
 from app.sop.models import Bundle, BundleEvent, SourceBlock, Unit
 from app.sop.outputs import FlowGraph, FlowNode
-from app.sop.sheet_model import A_HEADERS, SHEET_NAMES, format_rate
+from app.sop.sheet_model import (
+    A_COLUMN_KEYS,
+    A_HEADERS,
+    A_PREVIEW_WIDTHS,
+    A_STATUS_COLUMN,
+    SHEET_NAMES,
+    format_rate,
+)
 from tests.access_helpers import run_in_session, update_row
 from tests.docx_factory import build_docx, p, tbl
 from tests.sop_helpers import (
@@ -556,6 +564,73 @@ def test_preview_of_an_empty_bundle(client: TestClient) -> None:
     assert (summary["Old rows"], summary["Confirmed rate"]) == ("0", "0%")
     assert preview["file_name"].startswith(f"BND-{bundle_id:04d}_")
     assert _load(client, bundle_id).sheetnames == list(SHEET_NAMES)
+
+
+def test_preview_a_carries_fit_widths_bands_and_column_keys(client: TestClient) -> None:
+    fx = _setup(client, [KEEP])
+
+    a, *others = _get_preview(client, fx.bundle_id)["sheets"]
+
+    assert a["fit_widths"] == list(A_PREVIEW_WIDTHS) and len(a["fit_widths"]) == len(A_HEADERS) == len(a["widths"])
+    assert a["bands"] == [
+        {"label": "As-is", "span": 6, "tone": "asis"}, {"label": "To-be", "span": 6, "tone": "tobe"},
+        {"label": "Decision", "span": 3, "tone": "decision"}, {"label": "Tracking", "span": 5, "tone": "tracking"},
+    ]
+    assert sum(band["span"] for band in a["bands"]) == len(A_HEADERS)
+    assert a["column_keys"] == list(A_COLUMN_KEYS) and len(a["column_keys"]) == len(A_HEADERS)
+    # 띠가 가르는 자리와 열의 뜻이 머리 글과 맞는다 — To-be는 Destination부터 New text까지, 칩은 Status 칸
+    keys = dict(zip(a["column_keys"], A_HEADERS, strict=True))
+    assert (keys["destination"], keys["new_text"], keys["status"]) == ("Destination", "New text", "Status")
+    assert (A_HEADERS[6], A_HEADERS[11], A_HEADERS[A_STATUS_COLUMN - 1]) == ("Destination", "New text", "Status")
+    # 다른 시트는 widths를 비율로 쓴다
+    assert [(sheet["fit_widths"], sheet["bands"], sheet["column_keys"]) for sheet in others] == [(None, [], None)] * 4
+
+
+def test_preview_a_rows_carry_unit_group_tone_and_toc(client: TestClient) -> None:
+    fx = _setup_outputs_bundle(client)  # 확정·미배정·보류 줄과 중복 배정·합침 묶음이 있다
+    a = _get_preview(client, fx.bundle_id)["sheets"][0]
+    column = {header: A_HEADERS.index(header) for header in ("Unit ID", "Status", "Group ID")}
+    frozen, data = a["rows"][:2], a["rows"][2:]
+
+    # 상태 줄·머리 줄에는 싣지 않는다
+    assert [(row["unit_id"], row["group_id"], row["toc"]) for row in frozen] == [(None, None, False)] * 2
+    # 칩 색은 Status 칸에만, 상태마다 한 값 — 보류는 칩이 없다
+    tones = {(row["cells"][column["Status"]]["text"], row["cells"][column["Status"]]["tone"]) for row in data}
+    assert tones == {("Confirmed", "ok"), ("Unassigned", "un"), ("On hold", None)}
+    assert not any(
+        cell["tone"] for row in a["rows"] for index, cell in enumerate(row["cells"]) if index != column["Status"]
+    )
+    # 줄의 단위는 Unit ID 칸의 그 단위, 관계 묶음은 Group ID 칸과 같다
+    ids = {unit["display_id"]: unit["id"] for unit in fx.old1["units"]}
+    with_unit = [row for row in data if row["cells"][column["Unit ID"]]["text"] in ids]
+    assert with_unit and all(row["unit_id"] == ids[row["cells"][column["Unit ID"]]["text"]] for row in with_unit)
+    assert all(row["group_id"] == (row["cells"][column["Group ID"]]["text"] or None) for row in data)
+    duplicate = [row for row in data if row["unit_id"] == find_unit(fx.old1, DUPLICATE)["id"]]
+    assert len(duplicate) == 2 and len({row["group_id"] for row in duplicate}) == 1 and duplicate[0]["group_id"]
+    assert not any(row["toc"] for row in a["rows"])  # 목차 표시는 뒤 브랜치에서 생긴다
+
+
+def test_preview_only_fields_follow_continued_rows_and_stay_out_of_the_file(client: TestClient) -> None:
+    long_text = "가" * 40_000
+    fx = _setup(client, [long_text])
+    unit = find_unit(fx.view, long_text)
+
+    a = _get_preview(client, fx.bundle_id)["sheets"][0]
+    first, continued = a["rows"][2:4]
+    status_col = A_HEADERS.index("Status")
+
+    assert (first["unit_id"], continued["unit_id"]) == (unit["id"], unit["id"])
+    assert first["group_id"] == continued["group_id"]
+    # 이어진 줄의 빈 Status 칸에는 칩이 없다
+    assert [(row["cells"][status_col]["text"], row["cells"][status_col]["tone"]) for row in (first, continued)] == [
+        ("Confirmed", "ok"), ("", None),
+    ]
+    # 파일은 그대로 — 폭은 Excel 폭, 2행이 머리(띠 줄 없음), Status는 글자뿐
+    sheet = _load(client, fx.bundle_id)["A Comparison"]
+    widths = [sheet.column_dimensions[get_column_letter(index)].width for index in range(1, len(A_HEADERS) + 1)]
+    assert widths == a["widths"] != a["fit_widths"]
+    assert [cell.value for cell in sheet[2]] == list(A_HEADERS)
+    assert (sheet.max_row, sheet.cell(3, status_col + 1).value) == (len(a["rows"]), "Confirmed")
 
 
 # ── 제어 문자·수식 글 ────────────────────────────────────────────────────────
