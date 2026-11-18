@@ -2,7 +2,23 @@ import { describe, expect, it } from "vitest";
 
 import type { ComposedItem, ComposedSection, OutlineKind } from "./api-sop";
 import { resolveGapDrop, resolveSlotDrop } from "./assign-drop-model";
-import { buildPlaceSections, findPlaceBlock, formatPlacement, isSpotOpen, PLACE_REFUSAL_KEYS, readFixedSpot, readSubjectParticle, resolvePlaceSpot, type Placement } from "./place-spot-model";
+import {
+  buildGapBlocks,
+  buildPlaceSections,
+  findPlaceBlock,
+  formatGapLabel,
+  formatPlacement,
+  formatPlacePosition,
+  isSpotOpen,
+  listGapSpots,
+  PLACE_REFUSAL_KEYS,
+  readFixedSpot,
+  readGapKey,
+  readPlacePosition,
+  readSubjectParticle,
+  resolvePlaceSpot,
+  type Placement,
+} from "./place-spot-model";
 
 function makeItem(target_id: number, unit: number, number: string | null = null, lang: ComposedItem["lang"] = "en"): ComposedItem {
   return { target_id, kind: "sentence", lang, text: `t${target_id}`, status: "confirmed", change_type: null, number, number_style: number ? "numbered" : "bullet", indent_level: 0, meaning_key: null, source_unit_ids: [unit] };
@@ -168,5 +184,93 @@ describe("formatPlacement · refusal keys", () => {
   });
   it("has a message key for every refusal", () => {
     expect(Object.keys(PLACE_REFUSAL_KEYS).sort()).toEqual(["auto_list", "cover", "group_title", "na_slot", "not_assignable", "same_slot", "scope_table", "system", "toc", "written_doc"]);
+  });
+});
+
+describe("click place - gaps between numbered lines (MD 2 S3)", () => {
+  const blocks = buildGapBlocks(sections);
+  const gaps = listGapSpots(sections, blocks);
+
+  it("lists the gap before the first line and after each meaning block, only in counted sections", () => {
+    // 한/영 짝(20 · 21)은 한 묶음이라 그 사이에는 틈이 없다. 5.1 Safety(번호 없음)에도 없다
+    expect(gaps.map((gap) => gap.key)).toEqual(["before:20", "after:21", "after:22"]);
+    expect(gaps.map((gap) => [gap.anchorId, gap.side])).toEqual([
+      [20, "before"],
+      [21, "after"],
+      [22, "after"],
+    ]);
+  });
+
+  it("saves each gap at the line before it (null = section start) with the number the line gets", () => {
+    const answers = gaps.map((gap) => expectPlace(resolvePlaceSpot(sections, gap.spot, [999])));
+    expect(answers.map((answer) => [answer.sectionKey, answer.position, answer.numbers])).toEqual([
+      ["procedures.p1", { after: null }, { after: null, becomes: "6.1.1" }],
+      ["procedures.p1", { after: 21 }, { after: "6.1.1", becomes: "6.1.2" }],
+      ["procedures.p1", { after: 22 }, { after: "6.1.2", becomes: "6.1.3" }],
+    ]);
+  });
+
+  it("gives the same answer as dragging onto that line half", () => {
+    const section = sections.find((candidate) => candidate.key === "procedures.p1");
+    if (!section) throw new Error("no section");
+    for (const gap of gaps)
+      for (const drag of [[999], [200]]) {
+        if (gap.spot.kind !== "line") throw new Error("gap is a line spot");
+        const basic = resolveGapDrop(section, gap.spot.targetId, gap.spot.isUpperHalf, drag);
+        const placed = resolvePlaceSpot(sections, gap.spot, drag);
+        if (basic.kind === "gap") expect(placed).toMatchObject({ kind: "place", position: { after: basic.after }, edge: basic.edge });
+        else expect(placed).toEqual(basic);
+      }
+  });
+
+  it("refuses every gap of the section the picked line is already in", () => {
+    for (const gap of gaps) expect(resolvePlaceSpot(sections, gap.spot, [201])).toEqual({ kind: "refused", reason: "same_slot" });
+  });
+
+  it("reads the same gap key from either template half", () => {
+    expect(readGapKey(blocks, null, 20)).toBe("before:20");
+    // 영어 절반 20 → 22, 한글 절반 21 → 22 - 같은 묶음 경계
+    expect(readGapKey(blocks, 20, 22)).toBe("after:21");
+    expect(readGapKey(blocks, 21, 22)).toBe("after:21");
+    expect(readGapKey(blocks, 22, null)).toBe("after:22");
+    // 묶음 안 · 번호를 세지 않는 칸 · 줄 없음
+    expect(readGapKey(blocks, 20, 21)).toBeNull();
+    expect(readGapKey(blocks, null, 10)).toBeNull();
+    expect(readGapKey(blocks, 10, null)).toBeNull();
+    expect(readGapKey(blocks, null, null)).toBeNull();
+  });
+
+  it("labels a gap with the line before it and the number it becomes", () => {
+    const t = (key: string, vars?: Record<string, string | number>) => `${key}${vars ? JSON.stringify(vars) : ""}`;
+    const [first, second] = gaps.map((gap) => expectPlace(resolvePlaceSpot(sections, gap.spot, [999])));
+    expect(formatGapLabel(first, t)).toBe('assign.place.gapFirst{"n":"6.1.1","p":"이","after":""}');
+    expect(formatGapLabel(second, t)).toBe('assign.place.gapAfter{"n":"6.1.2","p":"가","after":"6.1.1"}');
+    expect(formatGapLabel(expectPlace(resolvePlaceSpot(sections, { kind: "section", sectionKey: "general_requirements.safety" }, [999])), t)).toBe("");
+  });
+});
+
+describe("click place - the position line of the picked-place box", () => {
+  const t = (key: string, vars?: Record<string, string | number>) => (vars?.n ? `${key}(${vars.after ?? ""}→${vars.n}${vars.p})` : key);
+
+  it("counts the number from the saved position (none = after the last line, empty = first line)", () => {
+    expect(readPlacePosition(sections, "procedures.p1", 21)?.position).toEqual({ kind: "number", numbers: { after: "6.1.1", becomes: "6.1.2" } });
+    expect(readPlacePosition(sections, "procedures.p1", null)?.position).toEqual({ kind: "number", numbers: { after: null, becomes: "6.1.1" } });
+    expect(readPlacePosition(sections, "procedures.p1", undefined)?.position).toEqual({ kind: "number", numbers: { after: "6.1.2", becomes: "6.1.3" } });
+    expect(formatPlacePosition(readPlacePosition(sections, "procedures.p1", 21) ?? expect.fail(), t)).toBe("template.drop.after(6.1.1→6.1.2가)");
+    expect(formatPlacePosition(readPlacePosition(sections, "procedures.p1", null) ?? expect.fail(), t)).toBe("template.drop.first(→6.1.1이)");
+  });
+
+  it("says bullet line and where for sections that do not count lines", () => {
+    expect(formatPlacePosition(readPlacePosition(sections, "general_requirements.safety", 10) ?? expect.fail(), t)).toBe("assign.place.bullet · assign.place.at.end");
+    expect(formatPlacePosition(readPlacePosition(sections, "general_requirements.safety", undefined) ?? expect.fail(), t)).toBe("assign.place.bullet · assign.place.at.end");
+    expect(formatPlacePosition(readPlacePosition(sections, "general_requirements.safety", null) ?? expect.fail(), t)).toBe("assign.place.bullet · assign.place.at.start");
+    expect(formatPlacePosition(readPlacePosition(sections, "general_requirements.record", undefined) ?? expect.fail(), t)).toBe("assign.place.bullet · assign.place.at.end");
+    const wi = buildPlaceSections([makeSection("step:2:why", null, [makeItem(30, 300), makeItem(31, 301)])], rowKeyOf);
+    expect(formatPlacePosition(readPlacePosition(wi, "step:2:why", 30) ?? expect.fail(), t)).toBe("assign.place.at.between");
+  });
+
+  it("adds the appendix hint and skips unknown sections", () => {
+    expect(formatPlacePosition(readPlacePosition(sections, "appendices", undefined) ?? expect.fail(), t)).toBe("template.drop.first(→9.1이) · template.drop.declareAppendix");
+    expect(readPlacePosition(sections, "nope", undefined)).toBeNull();
   });
 });

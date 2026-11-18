@@ -8,6 +8,7 @@ import {
   getEdgeScrollDir,
   hasPassedThreshold,
   isBoxDragActive,
+  pickUnderPoint,
   type BoxDragConfig,
   type DragHover,
 } from "@/lib/box-drag";
@@ -407,5 +408,18 @@ describe("attachBoxDrag", () => {
     expect(key("keyup", "Alt").defaultPrevented).toBe(true);
     key("keydown", "Alt");
     expect(key("keyup", "Alt").defaultPrevented).toBe(false);
+  });
+});
+
+describe("pickUnderPoint", () => {
+  it("passes over data-drag-pass elements (the click-place gap strip) to the line under them", () => {
+    document.body.innerHTML = '<div class="new-item" data-row="t:1"><p id="line">A</p></div><button id="gap" class="place-gap" data-drag-pass=""></button>';
+    const gap = document.getElementById("gap") as HTMLElement;
+    const line = document.getElementById("line") as HTMLElement;
+    // 틈 띠가 줄 끝을 덮어 맨 위에 있어도 그 밑의 줄 상자를 읽는다(놓을 때는 data-box-drag가 걷혀 CSS로 비킬 수 없다)
+    expect(pickUnderPoint([gap, line, document.body], ".new-item[data-row]")?.dataset.row).toBe("t:1");
+    expect(pickUnderPoint([line], ".new-item[data-row]")?.dataset.row).toBe("t:1");
+    expect(pickUnderPoint([gap, document.body], ".new-item[data-row]")).toBeNull();
+    expect(pickUnderPoint([], ".new-item[data-row]")).toBeNull();
   });
 });
